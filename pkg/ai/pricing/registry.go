@@ -44,6 +44,23 @@ func RegistrySize() int {
 	return len(registry)
 }
 
+func ListModels(filter string) []ModelInfo {
+	EnsureLoaded()
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+
+	filterLower := strings.ToLower(filter)
+	result := make([]ModelInfo, 0)
+	for _, info := range registry {
+		if filter != "" && !strings.Contains(strings.ToLower(info.ModelID), filterLower) {
+			continue
+		}
+		result = append(result, info)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].ModelID < result[j].ModelID })
+	return result
+}
+
 type CostResult struct {
 	Model        string
 	InputTokens  int
