@@ -5,7 +5,7 @@ import (
 	"os"
 )
 
-type ProviderFactory func(model, apiKey string) Provider
+type ProviderFactory func(cfg Config) Provider
 
 var factories = map[Backend]ProviderFactory{}
 
@@ -26,18 +26,18 @@ func NewProvider(cfg Config) (Provider, error) {
 			return nil, err
 		}
 	}
+	cfg.Backend = backend
 
 	factory, ok := factories[backend]
 	if !ok {
 		return nil, fmt.Errorf("no provider registered for backend: %s", backend)
 	}
 
-	apiKey := cfg.APIKey
-	if apiKey == "" {
-		apiKey = GetAPIKeyFromEnv(backend)
+	if cfg.APIKey == "" {
+		cfg.APIKey = GetAPIKeyFromEnv(backend)
 	}
 
-	return factory(cfg.Model, apiKey), nil
+	return factory(cfg), nil
 }
 
 func GetAPIKeyFromEnv(backend Backend) string {

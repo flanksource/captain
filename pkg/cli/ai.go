@@ -6,7 +6,9 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
-	_ "github.com/flanksource/captain/pkg/ai/provider"
+	"github.com/flanksource/captain/pkg/ai/middleware"
+	"github.com/flanksource/captain/pkg/ai/provider"
+	"github.com/flanksource/commons/logger"
 )
 
 type AIPromptOptions struct {
@@ -32,8 +34,15 @@ func RunAIPrompt(opts AIPromptOptions) (any, error) {
 		return nil, fmt.Errorf("prompt text required (use --prompt or pipe via stdin)")
 	}
 
-	p, err := ai.NewProvider(ai.Config{Model: opts.Model})
+	cfg := ai.Config{Model: opts.Model}
+	if logger.IsDebugEnabled() {
+		cfg.HTTPClient = provider.NewLoggingHTTPClient()
+	}
+	p, err := ai.NewProvider(cfg)
 	if err != nil {
+		return nil, err
+	}
+	if p, err = middleware.Wrap(p, middleware.WithLogging()); err != nil {
 		return nil, err
 	}
 
@@ -62,7 +71,7 @@ func RunAIPrompt(opts AIPromptOptions) (any, error) {
 
 type AITestOptions struct {
 	Model   string        `flag:"model" help:"Model to test" short:"m" required:"true"`
-	Timeout time.Duration `flag:"timeout" help:"Request timeout" default:"30s"`
+	Timeout time.Duration `flag:"timeout" help:"Request timeout" default:"60s"`
 }
 
 type AITestResult struct {
@@ -73,8 +82,15 @@ type AITestResult struct {
 }
 
 func RunAITest(opts AITestOptions) (any, error) {
-	provider, err := ai.NewProvider(ai.Config{Model: opts.Model})
+	cfg := ai.Config{Model: opts.Model}
+	if logger.IsDebugEnabled() {
+		cfg.HTTPClient = provider.NewLoggingHTTPClient()
+	}
+	p, err := ai.NewProvider(cfg)
 	if err != nil {
+		return nil, err
+	}
+	if p, err = middleware.Wrap(p, middleware.WithLogging()); err != nil {
 		return nil, err
 	}
 
@@ -82,14 +98,14 @@ func RunAITest(opts AITestOptions) (any, error) {
 	defer cancel()
 
 	start := time.Now()
-	_, err = provider.Execute(ctx, ai.Request{
+	_, err = p.Execute(ctx, ai.Request{
 		Prompt:    "Respond with exactly: ok",
 		MaxTokens: 10,
 	})
 
 	result := AITestResult{
-		Model:   provider.GetModel(),
-		Backend: string(provider.GetBackend()),
+		Model:   p.GetModel(),
+		Backend: string(p.GetBackend()),
 		Latency: time.Since(start).Round(time.Millisecond).String(),
 	}
 

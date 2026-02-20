@@ -10,18 +10,20 @@ import (
 )
 
 func TestGeminiDefaults(t *testing.T) {
-	p := NewGemini("", "key")
+	p := NewGemini(ai.Config{APIKey: "key"})
 	require.Equal(t, "gemini-2.0-flash", p.GetModel())
 	require.Equal(t, ai.BackendGemini, p.GetBackend())
 
-	p2 := NewGemini("gemini-2.5-pro", "key")
+	p2 := NewGemini(ai.Config{Model: "gemini-2.5-pro", APIKey: "key"})
 	require.Equal(t, "gemini-2.5-pro", p2.GetModel())
 }
 
 func TestGeminiNoAPIKey(t *testing.T) {
-	p := NewGemini("gemini-2.0-flash", "")
+	t.Setenv("GEMINI_API_KEY", "")
+	t.Setenv("GOOGLE_API_KEY", "")
+	p := NewGemini(ai.Config{Model: "gemini-2.0-flash"})
 	_, err := p.Execute(context.Background(), ai.Request{Prompt: "hello"})
-	require.ErrorIs(t, err, ai.ErrNoAPIKey)
+	require.Error(t, err)
 }
 
 func TestGeminiIntegration(t *testing.T) {
@@ -30,7 +32,7 @@ func TestGeminiIntegration(t *testing.T) {
 		t.Skip("GEMINI_API_KEY not set")
 	}
 
-	p := NewGemini("", apiKey)
+	p := NewGemini(ai.Config{APIKey: apiKey})
 	resp, err := p.Execute(context.Background(), ai.Request{
 		Prompt:    "Reply with exactly: hello",
 		MaxTokens: 32,
@@ -53,7 +55,7 @@ func TestGeminiStructuredIntegration(t *testing.T) {
 		Country string `json:"country"`
 	}
 
-	p := NewGemini("", apiKey)
+	p := NewGemini(ai.Config{APIKey: apiKey})
 	var result Capital
 	resp, err := p.Execute(context.Background(), ai.Request{
 		Prompt:           "What is the capital of France? Return city and country.",

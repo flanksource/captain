@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -12,27 +13,33 @@ import (
 )
 
 type Anthropic struct {
-	model  string
-	apiKey string
+	model      string
+	apiKey     string
+	httpClient *http.Client
 }
 
-func NewAnthropic(model, apiKey string) *Anthropic {
+func NewAnthropic(cfg ai.Config) *Anthropic {
+	model := cfg.Model
 	if model == "" {
 		model = "claude-sonnet-4"
 	}
-	return &Anthropic{model: model, apiKey: apiKey}
+	return &Anthropic{model: model, apiKey: cfg.APIKey, httpClient: cfg.HTTPClient}
 }
 
 func (a *Anthropic) GetModel() string      { return a.model }
 func (a *Anthropic) GetBackend() ai.Backend { return ai.BackendAnthropic }
 
 func (a *Anthropic) Execute(ctx context.Context, req ai.Request) (*ai.Response, error) {
-	if a.apiKey == "" {
-		return nil, ai.ErrNoAPIKey
-	}
-
 	start := time.Now()
-	client := anthropic.NewClient(option.WithAPIKey(a.apiKey))
+
+	var opts []option.RequestOption
+	if a.apiKey != "" {
+		opts = append(opts, option.WithAPIKey(a.apiKey))
+	}
+	if a.httpClient != nil {
+		opts = append(opts, option.WithHTTPClient(a.httpClient))
+	}
+	client := anthropic.NewClient(opts...)
 
 	maxTokens := int64(req.MaxTokens)
 	if maxTokens <= 0 {
@@ -70,6 +77,9 @@ func (a *Anthropic) Execute(ctx context.Context, req ai.Request) (*ai.Response, 
 
 	msg, err := client.Messages.New(ctx, params)
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("%w: %v", ai.ErrTimeout, ctx.Err())
+		}
 		return nil, fmt.Errorf("anthropic API error: %w", err)
 	}
 

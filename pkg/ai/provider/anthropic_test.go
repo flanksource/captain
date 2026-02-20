@@ -10,18 +10,19 @@ import (
 )
 
 func TestAnthropicDefaults(t *testing.T) {
-	p := NewAnthropic("", "key")
+	p := NewAnthropic(ai.Config{APIKey: "key"})
 	require.Equal(t, "claude-sonnet-4", p.GetModel())
 	require.Equal(t, ai.BackendAnthropic, p.GetBackend())
 
-	p2 := NewAnthropic("claude-opus-4", "key")
+	p2 := NewAnthropic(ai.Config{Model: "claude-opus-4", APIKey: "key"})
 	require.Equal(t, "claude-opus-4", p2.GetModel())
 }
 
 func TestAnthropicNoAPIKey(t *testing.T) {
-	p := NewAnthropic("claude-sonnet-4", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	p := NewAnthropic(ai.Config{Model: "claude-sonnet-4"})
 	_, err := p.Execute(context.Background(), ai.Request{Prompt: "hello"})
-	require.ErrorIs(t, err, ai.ErrNoAPIKey)
+	require.Error(t, err)
 }
 
 func TestAnthropicIntegration(t *testing.T) {
@@ -30,7 +31,7 @@ func TestAnthropicIntegration(t *testing.T) {
 		t.Skip("ANTHROPIC_API_KEY not set")
 	}
 
-	p := NewAnthropic("", apiKey)
+	p := NewAnthropic(ai.Config{APIKey: apiKey})
 	resp, err := p.Execute(context.Background(), ai.Request{
 		Prompt:    "Reply with exactly: hello",
 		MaxTokens: 32,
@@ -53,7 +54,7 @@ func TestAnthropicStructuredIntegration(t *testing.T) {
 		Country string `json:"country"`
 	}
 
-	p := NewAnthropic("", apiKey)
+	p := NewAnthropic(ai.Config{APIKey: apiKey})
 	var result Capital
 	resp, err := p.Execute(context.Background(), ai.Request{
 		Prompt:           "What is the capital of France? Return city and country.",

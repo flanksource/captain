@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
@@ -11,30 +12,32 @@ import (
 )
 
 type Gemini struct {
-	model  string
-	apiKey string
+	model      string
+	apiKey     string
+	httpClient *http.Client
 }
 
-func NewGemini(model, apiKey string) *Gemini {
+func NewGemini(cfg ai.Config) *Gemini {
+	model := cfg.Model
 	if model == "" {
 		model = "gemini-2.0-flash"
 	}
-	return &Gemini{model: model, apiKey: apiKey}
+	return &Gemini{model: model, apiKey: cfg.APIKey, httpClient: cfg.HTTPClient}
 }
 
 func (g *Gemini) GetModel() string      { return g.model }
 func (g *Gemini) GetBackend() ai.Backend { return ai.BackendGemini }
 
 func (g *Gemini) Execute(ctx context.Context, req ai.Request) (*ai.Response, error) {
-	if g.apiKey == "" {
-		return nil, ai.ErrNoAPIKey
-	}
-
 	start := time.Now()
-	client, err := genai.NewClient(ctx, &genai.ClientConfig{
+	clientCfg := &genai.ClientConfig{
 		APIKey:  g.apiKey,
 		Backend: genai.BackendGeminiAPI,
-	})
+	}
+	if g.httpClient != nil {
+		clientCfg.HTTPClient = g.httpClient
+	}
+	client, err := genai.NewClient(ctx, clientCfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gemini client: %w", err)
 	}
@@ -65,6 +68,9 @@ func (g *Gemini) Execute(ctx context.Context, req ai.Request) (*ai.Response, err
 
 	resp, err := client.Models.GenerateContent(ctx, g.model, genai.Text(req.Prompt), config)
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("%w: %v", ai.ErrTimeout, ctx.Err())
+		}
 		return nil, fmt.Errorf("gemini API error: %w", err)
 	}
 
