@@ -181,3 +181,92 @@ rm old.log
 	paths := result.Paths()
 	assert.Equal(t, []string{"file.txt", "old.log"}, paths)
 }
+
+func TestAnalyzeExtractsCommands(t *testing.T) {
+	tests := []struct {
+		name     string
+		script   string
+		commands []string
+	}{
+		{
+			name:     "single command",
+			script:   "ls -la",
+			commands: []string{"ls -la"},
+		},
+		{
+			name:     "piped commands",
+			script:   "cat file.txt | grep pattern | wc -l",
+			commands: []string{"cat file.txt", "grep pattern", "wc -l"},
+		},
+		{
+			name:     "chained commands",
+			script:   "cd /tmp && go build && go test",
+			commands: []string{"cd /tmp", "go build", "go test"},
+		},
+		{
+			name:     "multi-line with comments",
+			script:   "# comment\nls /path\ngo build",
+			commands: []string{"ls /path", "go build"},
+		},
+		{
+			name:     "subshell commands",
+			script:   "(cd /tmp && ls)",
+			commands: []string{"cd /tmp", "ls"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := Analyze(tt.script)
+			require.NoError(t, err)
+			assert.Equal(t, tt.commands, result.Commands)
+		})
+	}
+}
+
+func TestAnalyzeExtractsReferencedPaths(t *testing.T) {
+	tests := []struct {
+		name  string
+		script string
+		paths []string
+	}{
+		{
+			name:   "cd command",
+			script: "cd /some/path",
+			paths:  []string{"/some/path"},
+		},
+		{
+			name:   "absolute path in argument",
+			script: "cat /etc/passwd",
+			paths:  []string{"/etc/passwd"},
+		},
+		{
+			name:   "multiple paths",
+			script: "cd /home/user && ls /var/log",
+			paths:  []string{"/home/user", "/var/log"},
+		},
+		{
+			name:   "excludes /dev paths",
+			script: "cat /dev/null",
+			paths:  nil,
+		},
+		{
+			name:   "relative path not included",
+			script: "cat ./file.txt",
+			paths:  nil,
+		},
+		{
+			name:   "mixed paths",
+			script: "cd /tmp && cat file.txt && ls /var",
+			paths:  []string{"/tmp", "/var"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := Analyze(tt.script)
+			require.NoError(t, err)
+			assert.Equal(t, tt.paths, result.ReferencedPaths)
+		})
+	}
+}

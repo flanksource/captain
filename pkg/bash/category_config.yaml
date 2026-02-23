@@ -1,0 +1,332 @@
+categories:
+  build:
+    commands:
+      - go build
+      - make build
+      - make all
+      - cargo build
+      - npm run build
+      - yarn build
+      - task build
+      - gradle build
+      - mvn compile
+      - mvn package
+      - dotnet build
+      - pnpm build
+      - bun build
+      - mage
+      - bazel build
+      - nx build
+      - turbo build
+      - javac
+    patterns:
+      - ".*gradle.*(build|compile|bootJar|jar).*"
+      - ".*mvn.*(compile|package)"
+      - "^go build"
+      - "^make\\s*$"
+      - "^make\\s+(build|all)\\b"
+      - "^cargo build"
+      - "^task build"
+
+  test:
+    commands:
+      - go test
+      - pytest
+      - npm test
+      - yarn test
+      - task test
+      - make test
+      - cargo test
+      - mvn test
+      - gradle test
+      - vitest
+      - jest
+      - bun test
+      - dotnet test
+      - ginkgo
+      - gotestsum
+      - zig test
+
+    patterns:
+      - ".*gradle.*test"
+      - ".*mvn.*test"
+      - "^go test"
+      - "^pytest"
+      - "^npm (run )?test"
+      - "^make\\s+test"
+      - "^vitest"
+      - "^jest"
+      - "^bun test"
+      - "^ginkgo"
+      - "^gotestsum"
+
+  install:
+    commands:
+      - npm install
+      - npm i
+      - yarn install
+      - yarn add
+      - go mod tidy
+      - go mod download
+      - go get
+      - pip install
+      - pip3 install
+      - cargo add
+      - brew install
+      - apt install
+      - apt-get install
+      - pnpm install
+      - pnpm add
+      - bun install
+      - bun add
+      - poetry install
+      - poetry add
+      - uv pip install
+      - pdm install
+      - pdm add
+    patterns:
+      - "^npm (install|i)\\b"
+      - "^yarn (install|add)\\b"
+      - "^pip3? install"
+      - "^go (mod tidy|mod download|get)"
+      - "^pnpm (install|add)\\b"
+      - "^bun (install|add)\\b"
+      - "^poetry (install|add)\\b"
+      - "^uv pip install"
+      - "^pdm (install|add)\\b"
+
+  explore:
+    tools:
+      - Read
+      - Grep
+      - Glob
+      - LSP
+      - WebFetch
+      - WebSearch
+    commands:
+      - ls
+      - md5
+      - echo
+      - find
+      - grep
+      - rg
+      - ag
+      - cat
+      - head
+      - tail
+      - less
+      - more
+      - tree
+      - wc
+      - file
+      - stat
+      - du
+      - df
+      - pwd
+      - which
+      - whereis
+      - type
+      - fd
+      - bat
+      - exa
+      - eza
+      - fzf
+      - jq
+      - yq
+      - ripgrep
+      - sd
+      - diff
+      - ps
+      - printenv
+      - sed
+    patterns:
+      - "^ls\\b"
+      - "^find\\b"
+      - "^grep\\b"
+      - "^rg\\b"
+      - "^cat\\b"
+      - "^head\\b"
+      - "^tail\\b"
+      - "^tree\\b"
+      - "^fd\\b"
+      - "^bat\\b"
+      - "^exa\\b"
+      - "^eza\\b"
+      - "^jq\\b"
+      - "^yq\\b"
+      - "^diff\\b"
+
+  lint:
+    commands:
+      - golangci-lint
+      - eslint
+      - gofmt
+      - go fmt
+      - prettier
+      - black
+      - flake8
+      - pylint
+      - rubocop
+      - shellcheck
+      - task fmt
+      - make fmt
+      - make lint
+      - biome
+      - ruff
+      - mypy
+      - staticcheck
+      - buf lint
+      - deno lint
+      - oxlint
+    patterns:
+      - "lint"
+      - "^go fmt"
+      - "^gofmt"
+      - "^prettier"
+      - "^black\\b"
+      - "^biome\\b"
+      - "^ruff\\b"
+      - "^mypy\\b"
+      - "^staticcheck\\b"
+
+  cleanup:
+    commands:
+      - rm
+      - rmdir
+      - git clean
+      - make clean
+      - cargo clean
+      - go clean
+      - npm cache clean
+      - docker prune
+      - docker system prune
+    patterns:
+      - "^rm\\b"
+      - "^rmdir\\b"
+      - "clean\\b"
+      - "prune\\b"
+
+  git:
+    commands:
+      - git status
+      - git diff
+      - git log
+      - git show
+      - git branch
+      - git checkout
+      - git switch
+      - git commit
+      - git push
+      - git pull
+      - git fetch
+      - git merge
+      - git rebase
+      - git stash
+      - git add
+      - git reset
+      - git clone
+      - git remote
+      - git tag
+    patterns:
+      - "^git\\b"
+
+  docker:
+    commands:
+      - docker run
+      - docker build
+      - docker push
+      - docker pull
+      - docker ps
+      - docker images
+      - docker logs
+      - docker exec
+      - docker stop
+      - docker start
+      - docker rm
+      - docker rmi
+      - docker-compose
+      - podman
+    patterns:
+      - "^docker\\b"
+      - "^docker-compose\\b"
+      - "^podman\\b"
+
+  k8s:
+    commands:
+      - kubectl
+      - helm
+      - k9s
+      - kubectx
+      - kubens
+      - kustomize
+      - minikube
+      - kind
+    patterns:
+      - "^kubectl\\b"
+      - "^helm\\b"
+      - "^k9s\\b"
+      - "^kubectx\\b"
+      - "^kubens\\b"
+      - "^kustomize\\b"
+      - "^minikube\\b"
+      - "^kind\\b"
+
+  run:
+    commands:
+      - go run
+      - python
+      - python3
+      - node
+      - bun run
+      - deno run
+      - ruby
+      - perl
+      - php
+      - java
+    patterns:
+      - ".*gradle.*run.*"
+      - "^go run\\b"
+      - "^python3?\\b"
+      - "^node\\b"
+      - "^bun run\\b"
+      - "^deno run\\b"
+      - "^ruby\\b"
+      - "^perl\\b"
+      - "^php\\b"
+      - "^java\\s+-jar\\b"
+      - "^\\./[\\w.-]+\\.(sh|bash|py|rb|pl)$"
+      - "^bash\\s+\\S+\\.sh"
+    tools:
+      - KillShell
+
+  plan:
+    tools:
+      - Task
+      - TodoWrite
+      - EnterPlanMode
+    commands:
+      - make help
+      - task explore
+      - task plan
+      - task todos
+      - task todo
+    patterns:
+      - "^task\\s*$"
+      - "^task\\s+--list"
+      - "^make\\s+help"
+
+  edit:
+    tools:
+      - Edit
+      - Write
+      - NotebookEdit
+    commands:
+      - mkdir
+    patterns:
+      - "sed.* -i"
+
+  clarify:
+    tools:
+      - AskUserQuestion
+      - ExitPlanMode
+      - TaskOutput
