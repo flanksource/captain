@@ -14,11 +14,19 @@ func RegisterProvider(backend Backend, factory ProviderFactory) {
 }
 
 func NewProvider(cfg Config) (Provider, error) {
-	if cfg.Model == "" {
-		return nil, fmt.Errorf("model cannot be empty")
+	backend := cfg.Backend
+
+	// If model is empty but backend is specified, use the default model for that backend
+	if cfg.Model == "" && backend != "" {
+		if def, ok := DefaultModel(backend); ok {
+			cfg.Model = def.ID
+		}
 	}
 
-	backend := cfg.Backend
+	if cfg.Model == "" {
+		return nil, fmt.Errorf("model cannot be empty; specify a model or backend (available: anthropic, gemini, codex-cli, claude-cli, gemini-cli)")
+	}
+
 	if backend == "" {
 		var err error
 		backend, err = InferBackend(cfg.Model)

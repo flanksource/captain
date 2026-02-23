@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -23,29 +24,29 @@ func NewClaudeCLI(model string) *ClaudeCLI {
 	return &ClaudeCLI{model: model}
 }
 
-func (c *ClaudeCLI) GetModel() string    { return c.model }
+func (c *ClaudeCLI) GetModel() string       { return c.model }
 func (c *ClaudeCLI) GetBackend() ai.Backend { return ai.BackendClaudeCLI }
 
-type claudeCLIRequest struct {
-	SystemPrompt string `json:"systemPrompt,omitempty"`
-	Prompt       string `json:"prompt"`
-	Schema       any    `json:"schema,omitempty"`
-	Model        string `json:"model"`
-}
-
 type claudeCLIResponse struct {
-	Text       string              `json:"text,omitempty"`
-	Structured any                 `json:"structured,omitempty"`
-	Usage      *claudeCLIUsage     `json:"usage,omitempty"`
-	Error      string              `json:"error,omitempty"`
+	Result       string          `json:"result,omitempty"`
+	Structured   any             `json:"structured,omitempty"`
+	Usage        *claudeCLIUsage `json:"usage,omitempty"`
+	Error        string          `json:"error,omitempty"`
+	IsError      bool            `json:"is_error,omitempty"`
+	SessionID    string          `json:"session_id,omitempty"`
+	CostUSD      float64         `json:"cost_usd,omitempty"`
+	DurationMS   float64         `json:"duration_ms,omitempty"`
+	DurationAPI  float64         `json:"duration_api_ms,omitempty"`
+	NumTurns     int             `json:"num_turns,omitempty"`
+	TotalCostUSD float64         `json:"total_cost,omitempty"`
 }
 
 type claudeCLIUsage struct {
-	InputTokens      int `json:"inputTokens"`
-	OutputTokens     int `json:"outputTokens"`
-	ReasoningTokens  int `json:"reasoningTokens,omitempty"`
-	CacheReadTokens  int `json:"cacheReadTokens,omitempty"`
-	CacheWriteTokens int `json:"cacheWriteTokens,omitempty"`
+	InputTokens      int `json:"input_tokens"`
+	OutputTokens     int `json:"output_tokens"`
+	ReasoningTokens  int `json:"reasoning_tokens,omitempty"`
+	CacheReadTokens  int `json:"cache_read_input_tokens,omitempty"`
+	CacheWriteTokens int `json:"cache_creation_input_tokens,omitempty"`
 }
 
 func (c *ClaudeCLI) Execute(ctx context.Context, req ai.Request) (*ai.Response, error) {
@@ -65,10 +66,16 @@ func (c *ClaudeCLI) Execute(ctx context.Context, req ai.Request) (*ai.Response, 
 
 	actualModel := MapClaudeCodeModel(c.model)
 
-	cliReq := claudeCLIRequest{
-		SystemPrompt: req.SystemPrompt,
-		Prompt:       req.Prompt,
-		Model:        actualModel,
+	args := []string{
+		"-p",
+		"--output-format", "json",
+		"--model", actualModel,
+		"--max-turns", "1",
+		"--no-session-persistence",
+	}
+
+	if req.SystemPrompt != "" {
+		args = append(args, "--system-prompt", req.SystemPrompt)
 	}
 
 	if req.StructuredOutput != nil {
@@ -76,15 +83,16 @@ func (c *ClaudeCLI) Execute(ctx context.Context, req ai.Request) (*ai.Response, 
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate schema: %w", err)
 		}
-		cliReq.Schema = schema
+		schemaBytes, err := json.Marshal(schema)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal schema: %w", err)
+		}
+		args = append(args, "--json-schema", string(schemaBytes))
 	}
 
-	reqBytes, err := json.Marshal(cliReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
+	args = append(args, req.Prompt)
 
-	stdoutData, stderrData, err := runCLI(ctx, "claude-code", reqBytes)
+	stdoutData, stderrData, err := runClaudeCLI(ctx, args)
 	if err != nil {
 		return nil, err
 	}
@@ -100,8 +108,12 @@ func (c *ClaudeCLI) Execute(ctx context.Context, req ai.Request) (*ai.Response, 
 	}
 	_ = stderrData
 
-	if cliResp.Error != "" {
-		return nil, fmt.Errorf("CLI returned error: %s", cliResp.Error)
+	if cliResp.IsError || cliResp.Error != "" {
+		msg := cliResp.Error
+		if msg == "" {
+			msg = cliResp.Result
+		}
+		return nil, fmt.Errorf("CLI returned error: %s", msg)
 	}
 
 	var structuredData any
@@ -130,7 +142,7 @@ func (c *ClaudeCLI) Execute(ctx context.Context, req ai.Request) (*ai.Response, 
 		}
 	}
 
-	text := cliResp.Text
+	text := cliResp.Result
 	if req.StructuredOutput != nil {
 		text = ""
 	}
@@ -146,13 +158,10 @@ func (c *ClaudeCLI) Execute(ctx context.Context, req ai.Request) (*ai.Response, 
 	}, nil
 }
 
-func runCLI(ctx context.Context, command string, stdinData []byte) (stdout []byte, stderr string, err error) {
-	cmd := exec.CommandContext(ctx, command)
+func runClaudeCLI(ctx context.Context, args []string) (stdout []byte, stderr string, err error) {
+	cmd := exec.CommandContext(ctx, "claude", args...)
+	cmd.Env = clearNestingEnv(os.Environ())
 
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to create stdin pipe: %w", err)
-	}
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to create stdout pipe: %w", err)
@@ -166,14 +175,8 @@ func runCLI(ctx context.Context, command string, stdinData []byte) (stdout []byt
 		if IsCommandNotFound(err) {
 			return nil, "", fmt.Errorf("%w: %v", ai.ErrCLINotFound, err)
 		}
-		return nil, "", fmt.Errorf("failed to start %s: %w", command, err)
+		return nil, "", fmt.Errorf("failed to start claude: %w", err)
 	}
-
-	if _, err := stdin.Write(stdinData); err != nil {
-		return nil, "", fmt.Errorf("failed to write to stdin: %w", err)
-	}
-	stdin.Write([]byte("\n"))
-	stdin.Close()
 
 	stdoutCh := make(chan []byte, 1)
 	stderrCh := make(chan string, 1)
@@ -207,7 +210,7 @@ func runCLI(ctx context.Context, command string, stdinData []byte) (stdout []byt
 	for range 3 {
 		select {
 		case <-ctx.Done():
-			cmd.Process.Kill()
+			_ = cmd.Process.Kill()
 			return nil, "", fmt.Errorf("%w: context cancelled", ai.ErrTimeout)
 		case e := <-errCh:
 			return nil, "", e

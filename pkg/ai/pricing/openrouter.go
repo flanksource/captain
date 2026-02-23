@@ -91,7 +91,7 @@ func fetchOpenRouterPricing() (map[string]*ModelInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch OpenRouter pricing: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("OpenRouter API returned status %d", resp.StatusCode)
@@ -144,7 +144,7 @@ func parsePrice(s string) float64 {
 		return 0
 	}
 	var p float64
-	fmt.Sscanf(s, "%f", &p)
+	_, _ = fmt.Sscanf(s, "%f", &p)
 	return p
 }
 
@@ -174,7 +174,7 @@ func loadFromDisk() (*PricingCache, error) {
 	}
 	var cache PricingCache
 	if err := json.Unmarshal(data, &cache); err != nil {
-		os.Remove(path)
+		_ = os.Remove(path)
 		return nil, err
 	}
 	return &cache, nil

@@ -12,6 +12,10 @@ func TestMapClaudeCodeModel(t *testing.T) {
 		{"claude-code-haiku", "claude-3-5-haiku-20241022"},
 		{"claude-code-sonnet-3.5", "claude-3-5-sonnet-20241022"},
 		{"claude-code-claude-sonnet-4", "claude-sonnet-4"},
+		{"claude-code-opus-4-6", "claude-opus-4-6"},
+		{"claude-code-sonnet-4-6", "claude-sonnet-4-6"},
+		{"claude-code-sonnet-4-5", "claude-sonnet-4-5"},
+		{"claude-code-haiku-4-5", "claude-haiku-4-5"},
 		{"claude-code-unknown", "claude-sonnet-4"},
 	}
 

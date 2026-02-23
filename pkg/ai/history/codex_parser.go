@@ -3,6 +3,7 @@ package history
 import (
 	"bufio"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,9 +22,12 @@ func ExtractCodexToolUses(sessionFile string) ([]ToolUse, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
+	return ExtractCodexToolUsesFromReader(file)
+}
 
-	scanner := bufio.NewScanner(file)
+func ExtractCodexToolUsesFromReader(r io.Reader) ([]ToolUse, error) {
+	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
 
 	var (
@@ -41,7 +45,7 @@ func ExtractCodexToolUses(sessionFile string) ([]ToolUse, error) {
 
 		event, err := ParseCodexLine(line)
 		if err != nil {
-			logger.Debugf("Error parsing codex line in %s: %v", sessionFile, err)
+			logger.Debugf("Error parsing codex line: %v", err)
 			continue
 		}
 

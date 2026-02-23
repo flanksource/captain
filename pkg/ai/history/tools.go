@@ -44,22 +44,27 @@ type Todo struct {
 	Status     string `json:"status,omitempty"`
 }
 
+// --- Typed tool structs ---
+// Each delegates to ToolUse.Pretty() for unified rendering.
+
 type Bash struct {
 	Command string `json:"command"`
 	CWD     string `json:"cwd,omitempty"`
+	Timeout float64 `json:"timeout,omitempty"`
 }
 
 func (b Bash) ToolName() string { return "Bash" }
 
 func (b Bash) Pretty() api.Text {
-	text := clicky.Text("").Add(icons.Icon{Unicode: "💻", Iconify: "codicon:terminal", Style: "muted"}).Append(" Bash", "text-green-600 font-medium")
-	if b.CWD != "" {
-		text = text.Append(" (", "text-gray-400").Append(b.CWD, "text-gray-500").Append(")", "text-gray-400")
+	return b.toToolUse().Pretty()
+}
+
+func (b Bash) toToolUse() ToolUse {
+	input := map[string]any{"command": b.Command}
+	if b.Timeout > 0 {
+		input["timeout"] = b.Timeout
 	}
-	if b.Command != "" {
-		text = text.NewLine().Add(clicky.CodeBlock(b.Command, "bash"))
-	}
-	return text
+	return ToolUse{Tool: "Bash", Input: input, CWD: b.CWD}
 }
 
 type Read struct {
@@ -71,14 +76,18 @@ type Read struct {
 func (r Read) ToolName() string { return "Read" }
 
 func (r Read) Pretty() api.Text {
-	text := clicky.Text("").Add(icons.File).Append(" Read", "text-blue-600 font-medium")
-	if r.Path != "" {
-		text = text.Append(": ", "text-gray-600").Append(r.Path, "text-gray-800")
-		if r.Limit > 0 || r.Offset > 0 {
-			text = text.Append(fmt.Sprintf(" [%.0f:%.0f]", r.Offset, r.Limit), "text-gray-500")
-		}
+	return r.toToolUse().Pretty()
+}
+
+func (r Read) toToolUse() ToolUse {
+	input := map[string]any{"path": r.Path}
+	if r.Limit > 0 {
+		input["limit"] = r.Limit
 	}
-	return text
+	if r.Offset > 0 {
+		input["offset"] = r.Offset
+	}
+	return ToolUse{Tool: "Read", Input: input}
 }
 
 type Write struct {
@@ -89,18 +98,15 @@ type Write struct {
 func (w Write) ToolName() string { return "Write" }
 
 func (w Write) Pretty() api.Text {
-	text := clicky.Text("").Add(icons.Icon{Unicode: "✏️", Iconify: "codicon:edit", Style: "muted"}).Append(" Write", "text-orange-600 font-medium")
-	if w.Path != "" {
-		text = text.Append(": ", "text-gray-600").Append(w.Path, "text-gray-800")
-	}
+	return w.toToolUse().Pretty()
+}
+
+func (w Write) toToolUse() ToolUse {
+	input := map[string]any{"path": w.Path}
 	if w.Content != "" {
-		preview := w.Content
-		if len(preview) > 100 {
-			preview = preview[:97] + "..."
-		}
-		text = text.NewLine().Append("Content: ", "text-gray-500").Append(preview, "text-gray-700")
+		input["content"] = w.Content
 	}
-	return text
+	return ToolUse{Tool: "Write", Input: input}
 }
 
 type Edit struct {
@@ -112,41 +118,46 @@ type Edit struct {
 func (e Edit) ToolName() string { return "Edit" }
 
 func (e Edit) Pretty() api.Text {
-	text := clicky.Text("").Add(icons.Icon{Unicode: "✏️", Iconify: "codicon:edit", Style: "muted"}).Append(" Edit", "text-purple-600 font-medium")
-	if e.Path != "" {
-		text = text.Append(": ", "text-gray-600").Append(e.Path, "text-gray-800")
+	return e.toToolUse().Pretty()
+}
+
+func (e Edit) toToolUse() ToolUse {
+	input := map[string]any{"path": e.Path}
+	if e.OldString != "" {
+		input["old_string"] = e.OldString
 	}
-	if e.OldString != "" && e.NewString != "" {
-		old, new := e.OldString, e.NewString
-		if len(old) > 50 {
-			old = old[:47] + "..."
-		}
-		if len(new) > 50 {
-			new = new[:47] + "..."
-		}
-		text = text.NewLine().Append("Replace: ", "text-gray-500").Append(old, "text-red-600").
-			Append(" → ", "text-gray-400").Append(new, "text-green-600")
+	if e.NewString != "" {
+		input["new_string"] = e.NewString
 	}
-	return text
+	return ToolUse{Tool: "Edit", Input: input}
 }
 
 type Grep struct {
-	OutputMode string `json:"output_mode,omitempty"`
+	Pattern    string `json:"pattern"`
+	Path       string `json:"path,omitempty"`
 	Glob       string `json:"glob,omitempty"`
+	OutputMode string `json:"output_mode,omitempty"`
 	Count      int    `json:"-n,omitempty"`
 }
 
 func (g Grep) ToolName() string { return "Grep" }
 
 func (g Grep) Pretty() api.Text {
-	text := clicky.Text("").Add(icons.Search).Append(" Grep", "text-yellow-600 font-medium")
+	return g.toToolUse().Pretty()
+}
+
+func (g Grep) toToolUse() ToolUse {
+	input := map[string]any{"pattern": g.Pattern}
+	if g.Path != "" {
+		input["path"] = g.Path
+	}
 	if g.Glob != "" {
-		text = text.Append(": ", "text-gray-600").Append(g.Glob, "text-gray-800")
+		input["glob"] = g.Glob
 	}
 	if g.OutputMode != "" {
-		text = text.Append(" (", "text-gray-400").Append(g.OutputMode, "text-gray-500").Append(")", "text-gray-400")
+		input["output_mode"] = g.OutputMode
 	}
-	return text
+	return ToolUse{Tool: "Grep", Input: input}
 }
 
 type Task struct {
@@ -158,14 +169,21 @@ type Task struct {
 func (t Task) ToolName() string { return "Task" }
 
 func (t Task) Pretty() api.Text {
-	text := clicky.Text("").Add(icons.Package).Append(" Task", "text-indigo-600 font-medium")
+	return t.toToolUse().Pretty()
+}
+
+func (t Task) toToolUse() ToolUse {
+	input := map[string]any{}
 	if t.Description != "" {
-		text = text.Append(": ", "text-gray-600").Append(t.Description, "text-gray-800")
+		input["description"] = t.Description
+	}
+	if t.Prompt != "" {
+		input["prompt"] = t.Prompt
 	}
 	if t.SubAgentType != "" {
-		text = text.Append(" (", "text-gray-400").Append(t.SubAgentType, "text-gray-500").Append(")", "text-gray-400")
+		input["subagent_type"] = t.SubAgentType
 	}
-	return text
+	return ToolUse{Tool: "Task", Input: input}
 }
 
 type MultiEdit struct {
@@ -175,7 +193,9 @@ type MultiEdit struct {
 func (m MultiEdit) ToolName() string { return "MultiEdit" }
 
 func (m MultiEdit) Pretty() api.Text {
-	text := clicky.Text("").Add(icons.Icon{Unicode: "✏️", Iconify: "codicon:edit", Style: "muted"}).Append(" MultiEdit", "text-purple-600 font-medium")
+	text := clicky.Text("").
+		Add(icons.Icon{Unicode: "✏️", Iconify: "codicon:edit", Style: "muted"}).
+		Append(" multi-edit", "text-purple-600 font-medium")
 	if len(m.Edits) > 0 {
 		text = text.Append(fmt.Sprintf(" (%d edits)", len(m.Edits)), "text-gray-500")
 	}
@@ -189,11 +209,12 @@ type Glob struct {
 func (g Glob) ToolName() string { return "Glob" }
 
 func (g Glob) Pretty() api.Text {
-	text := clicky.Text("").Add(icons.Search).Append(" Glob", "text-cyan-600 font-medium")
-	if g.Pattern != "" {
-		text = text.Append(": ", "text-gray-600").Append(g.Pattern, "text-gray-800")
-	}
-	return text
+	return g.toToolUse().Pretty()
+}
+
+func (g Glob) toToolUse() ToolUse {
+	input := map[string]any{"pattern": g.Pattern}
+	return ToolUse{Tool: "Glob", Input: input}
 }
 
 type WebFetch struct {
@@ -204,18 +225,15 @@ type WebFetch struct {
 func (w WebFetch) ToolName() string { return "WebFetch" }
 
 func (w WebFetch) Pretty() api.Text {
-	text := clicky.Text("").Add(icons.Cloud).Append(" WebFetch", "text-blue-600 font-medium")
-	if w.URL != "" {
-		text = text.Append(": ", "text-gray-600").Append(w.URL, "text-blue-700 underline")
-	}
+	return w.toToolUse().Pretty()
+}
+
+func (w WebFetch) toToolUse() ToolUse {
+	input := map[string]any{"url": w.URL}
 	if w.Prompt != "" {
-		prompt := w.Prompt
-		if len(prompt) > 60 {
-			prompt = prompt[:57] + "..."
-		}
-		text = text.NewLine().Append("Prompt: ", "text-gray-500").Append(prompt, "text-gray-700")
+		input["prompt"] = w.Prompt
 	}
-	return text
+	return ToolUse{Tool: "WebFetch", Input: input}
 }
 
 type BashOutput struct {
@@ -225,7 +243,9 @@ type BashOutput struct {
 func (b BashOutput) ToolName() string { return "BashOutput" }
 
 func (b BashOutput) Pretty() api.Text {
-	text := clicky.Text("").Add(icons.Icon{Unicode: "📋", Iconify: "codicon:output", Style: "muted"}).Append(" BashOutput", "text-green-600 font-medium")
+	text := clicky.Text("").
+		Add(icons.Icon{Unicode: "📋", Iconify: "codicon:output", Style: "muted"}).
+		Append(" bash-output", "text-green-600 font-medium")
 	if b.BashId != "" {
 		text = text.Append(" [", "text-gray-400").Append(b.BashId, "text-gray-600").Append("]", "text-gray-400")
 	}
@@ -239,7 +259,9 @@ type KillShell struct {
 func (k KillShell) ToolName() string { return "KillShell" }
 
 func (k KillShell) Pretty() api.Text {
-	text := clicky.Text("").Add(icons.Icon{Unicode: "🔴", Iconify: "codicon:debug-stop", Style: "muted"}).Append(" KillShell", "text-red-600 font-medium")
+	text := clicky.Text("").
+		Add(icons.Icon{Unicode: "🔴", Iconify: "codicon:debug-stop", Style: "muted"}).
+		Append(" kill-shell", "text-red-600 font-medium")
 	if k.ShellId != "" {
 		text = text.Append(" [", "text-gray-400").Append(k.ShellId, "text-gray-600").Append("]", "text-gray-400")
 	}
@@ -253,11 +275,11 @@ type WebSearch struct {
 func (w WebSearch) ToolName() string { return "WebSearch" }
 
 func (w WebSearch) Pretty() api.Text {
-	text := clicky.Text("").Add(icons.Search).Append(" WebSearch", "text-purple-600 font-medium")
-	if w.Query != "" {
-		text = text.Append(": ", "text-gray-600").Append(w.Query, "text-gray-800")
-	}
-	return text
+	return w.toToolUse().Pretty()
+}
+
+func (w WebSearch) toToolUse() ToolUse {
+	return ToolUse{Tool: "WebSearch", Input: map[string]any{"query": w.Query}}
 }
 
 type Skill struct {
@@ -267,7 +289,9 @@ type Skill struct {
 func (s Skill) ToolName() string { return "Skill" }
 
 func (s Skill) Pretty() api.Text {
-	text := clicky.Text("").Add(icons.Info).Append(" Skill", "text-teal-600 font-medium")
+	text := clicky.Text("").
+		Add(icons.Info).
+		Append(" skill", "text-teal-600 font-medium")
 	if s.Command != "" {
 		text = text.Append(": ", "text-gray-600").Append(s.Command, "text-gray-800")
 	}

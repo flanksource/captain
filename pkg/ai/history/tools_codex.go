@@ -19,17 +19,18 @@ func (c CodexCommand) ToolName() string { return "CodexCommand" }
 func (c CodexCommand) Pretty() api.Text {
 	text := clicky.Text("").
 		Add(icons.Icon{Unicode: "💻", Iconify: "codicon:terminal", Style: "muted"}).
-		Append(" Bash", "text-green-600 font-medium")
+		Append(" bash", "text-green-600 font-medium")
 	if c.Command != "" {
-		text = text.NewLine().Add(clicky.CodeBlock(c.Command, "bash"))
+		text = text.NewLine().Add(clicky.CodeBlock("bash", c.Command))
 	}
 	if c.Output != "" {
 		preview := c.Output
 		lines := strings.Split(preview, "\n")
-		if len(lines) > 20 {
-			preview = strings.Join(lines[:20], "\n") + fmt.Sprintf("\n... (%d more lines)", len(lines)-20)
+		if len(lines) > BashPreviewLines {
+			preview = strings.Join(lines[:BashPreviewLines], "\n") +
+				fmt.Sprintf("\n... (%d more lines)", len(lines)-BashPreviewLines)
 		}
-		text = text.NewLine().Add(clicky.CodeBlock(preview, ""))
+		text = text.NewLine().Add(clicky.CodeBlock("", preview))
 	}
 	return text
 }

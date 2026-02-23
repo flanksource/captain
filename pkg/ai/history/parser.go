@@ -72,7 +72,7 @@ func ExtractToolUses(sessionFile string) ([]ToolUse, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	var toolUses []ToolUse
 	scanner := bufio.NewScanner(file)
