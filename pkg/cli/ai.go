@@ -93,6 +93,9 @@ func RunAITest(opts AITestOptions) (any, error) {
 	if p, err = middleware.Wrap(p, middleware.WithLogging()); err != nil {
 		return nil, err
 	}
+	if opts.Timeout <= 0 {
+		opts.Timeout = 60 * time.Second
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), opts.Timeout)
 	defer cancel()

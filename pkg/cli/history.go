@@ -1,18 +1,18 @@
 package cli
 
 import (
-	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/flanksource/captain/pkg/bash"
 	"github.com/flanksource/captain/pkg/claude"
-	"github.com/flanksource/clicky/api"
 	"github.com/flanksource/commons/collections"
 )
 
 type HistoryOptions struct {
+	File       string    `flag:"file" help:"Read from a JSONL/JSON file instead of session history" short:"f"`
 	Tools      []string  `flag:"tool" help:"Filter by tool patterns" short:"t"`
 	Dirs       []string  `flag:"dir" help:"Filter by directory patterns" short:"d"`
 	Categories []string  `flag:"category" help:"Filter by category patterns" short:"c"`
@@ -23,6 +23,22 @@ type HistoryOptions struct {
 }
 
 func RunHistory(opts HistoryOptions) (any, error) {
+	if opts.File != "" {
+		data, err := os.ReadFile(opts.File)
+		if err != nil {
+			return nil, err
+		}
+		return runHistoryFromReader(data, opts)
+	}
+
+	if claude.IsStdinPiped() {
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return nil, err
+		}
+		return runHistoryFromReader(data, opts)
+	}
+
 	cwd, err := os.Getwd()
 	if err != nil {
 		return nil, err
@@ -63,7 +79,6 @@ func runHistoryAll(parseResult *claude.ParseResult, opts HistoryOptions, scanner
 			tu.ProjectRoot = claude.FindProjectRoot(tu.CWD)
 		}
 
-		cmd := tu.FormatCommand()
 		category := classifier.ClassifyToolWithPath(tu.Tool, tu.FilePath())
 		if category == bash.CategoryOther && tu.Tool == "Bash" {
 			if rawCmd, ok := tu.Input["command"].(string); ok {
@@ -75,6 +90,7 @@ func runHistoryAll(parseResult *claude.ParseResult, opts HistoryOptions, scanner
 			continue
 		}
 
+		cmd := tu.FormatCommand()
 		scanResult := scanner.Scan(cmd)
 		status := "✓"
 		if !scanResult.Allowed {
@@ -96,11 +112,11 @@ func runHistoryAll(parseResult *claude.ParseResult, opts HistoryOptions, scanner
 		row := ScanResultRow{
 			Project:  projectName,
 			Tool:     tu.Tool,
-			Command:  api.NewCode(cmd, toolToLanguage(tu.Tool)),
+			Command:  tu.PrettyCommand(),
 			Path:     tu.ExtractPath(),
 			Category: string(category),
 			Status:   status,
-			Time:     formatTimeAgo(tu.Timestamp),
+			Time:     tu.PrettyTimestamp(),
 		}
 		if opts.Debug {
 			row.ToolUse = &tu
@@ -130,7 +146,6 @@ func runHistorySingle(parseResult *claude.ParseResult, opts HistoryOptions, scan
 			result.Project = filepath.Base(tu.ProjectRoot)
 		}
 
-		cmd := tu.FormatCommand()
 		category := classifier.ClassifyToolWithPath(tu.Tool, tu.FilePath())
 		if category == bash.CategoryOther && tu.Tool == "Bash" {
 			if rawCmd, ok := tu.Input["command"].(string); ok {
@@ -142,6 +157,7 @@ func runHistorySingle(parseResult *claude.ParseResult, opts HistoryOptions, scan
 			continue
 		}
 
+		cmd := tu.FormatCommand()
 		scanResult := scanner.Scan(cmd)
 		status := "✓"
 		if !scanResult.Allowed {
@@ -157,11 +173,11 @@ func runHistorySingle(parseResult *claude.ParseResult, opts HistoryOptions, scan
 
 		row := ScanResultRowSingle{
 			Tool:     tu.Tool,
-			Command:  api.NewCode(cmd, toolToLanguage(tu.Tool)),
+			Command:  tu.PrettyCommand(),
 			Path:     tu.ExtractPath(),
 			Category: string(category),
 			Status:   status,
-			Time:     formatTimeAgo(tu.Timestamp),
+			Time:     tu.PrettyTimestamp(),
 		}
 		if opts.Debug {
 			row.ToolUse = &tu
@@ -174,30 +190,4 @@ func runHistorySingle(parseResult *claude.ParseResult, opts HistoryOptions, scan
 	}
 
 	return result, nil
-}
-
-func formatTimeAgo(t *time.Time) string {
-	if t == nil {
-		return ""
-	}
-	d := time.Since(*t)
-	switch {
-	case d < time.Minute:
-		return fmt.Sprintf("%ds ago", int(d.Seconds()))
-	case d < time.Hour:
-		return fmt.Sprintf("%dm ago", int(d.Minutes()))
-	case d < 24*time.Hour:
-		return fmt.Sprintf("%dh ago", int(d.Hours()))
-	default:
-		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
-	}
-}
-
-func toolToLanguage(tool string) string {
-	switch tool {
-	case "Bash":
-		return "bash"
-	default:
-		return ""
-	}
 }
