@@ -1,0 +1,51 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      created: ${{ steps.tag.outputs.created }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: go install github.com/caarlos0/svu@latest
+      - id: tag
+        run: |
+          next=$(svu patch)
+          current=$(svu current)
+          if [ "$next" = "$current" ]; then
+            echo "created=false" >> "$GITHUB_OUTPUT"
+            echo "No new version to tag (current: $current)"
+            exit 0
+          fi
+          git tag "$next"
+          git push origin "$next"
+          echo "tag=$next" >> "$GITHUB_OUTPUT"
+          echo "created=true" >> "$GITHUB_OUTPUT"
+
+  goreleaser:
+    needs: tag
+    if: needs.tag.outputs.created == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

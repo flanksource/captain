@@ -8,10 +8,17 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 func main() {
 	rootCmd := &cobra.Command{
-		Use:   "captain",
-		Short: "Claude Code analysis tools",
+		Use:     "captain",
+		Short:   "Claude Code analysis tools",
+		Version: version,
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
 			clicky.Flags.UseFlags()
 		},
