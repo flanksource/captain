@@ -18,7 +18,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - run: go install github.com/caarlos0/svu@latest
+
+      - uses: flanksource/deps@v1
+        with:
+          tools: |
+            svu
+          version: latest
       - id: tag
         run: |
           next=$(svu patch)
