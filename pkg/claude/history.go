@@ -17,10 +17,47 @@ type HistoryEntry struct {
 
 // Message represents a conversation message
 type Message struct {
+	Model      string         `json:"model,omitempty"`
 	Role       MessageRole    `json:"role"`
-	Content    []ContentBlock `json:"content"`
+	Content    []ContentBlock `json:"-"`
 	StopReason StopReason     `json:"stop_reason,omitempty"`
 	Usage      *Usage         `json:"usage,omitempty"`
+}
+
+// UnmarshalJSON handles polymorphic content field (string, array, or null)
+func (m *Message) UnmarshalJSON(data []byte) error {
+	type messageAlias struct {
+		Model      string          `json:"model,omitempty"`
+		Role       MessageRole     `json:"role"`
+		Content    json.RawMessage `json:"content"`
+		StopReason StopReason      `json:"stop_reason,omitempty"`
+		Usage      *Usage          `json:"usage,omitempty"`
+	}
+
+	var alias messageAlias
+	if err := json.Unmarshal(data, &alias); err != nil {
+		return err
+	}
+
+	m.Model = alias.Model
+	m.Role = alias.Role
+	m.StopReason = alias.StopReason
+	m.Usage = alias.Usage
+
+	if len(alias.Content) == 0 || string(alias.Content) == "null" {
+		return nil
+	}
+
+	if alias.Content[0] == '"' {
+		var text string
+		if err := json.Unmarshal(alias.Content, &text); err != nil {
+			return err
+		}
+		m.Content = []ContentBlock{{Type: ContentTypeText, Text: text}}
+		return nil
+	}
+
+	return json.Unmarshal(alias.Content, &m.Content)
 }
 
 // ContentBlock represents a single content item in a message
@@ -37,10 +74,24 @@ type ContentBlock struct {
 
 // Usage tracks token consumption
 type Usage struct {
-	InputTokens              int `json:"input_tokens"`
-	OutputTokens             int `json:"output_tokens"`
-	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
-	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
+	InputTokens              int             `json:"input_tokens"`
+	OutputTokens             int             `json:"output_tokens"`
+	CacheCreationInputTokens int             `json:"cache_creation_input_tokens,omitempty"`
+	CacheReadInputTokens     int             `json:"cache_read_input_tokens,omitempty"`
+	ServiceTier              string          `json:"service_tier,omitempty"`
+	CacheCreation            *CacheCreation  `json:"cache_creation,omitempty"`
+	ServerToolUse            *ServerToolUse  `json:"server_tool_use,omitempty"`
+}
+
+// CacheCreation contains detailed cache creation breakdown
+type CacheCreation struct {
+	Ephemeral5mInputTokens int `json:"ephemeral_5m_input_tokens,omitempty"`
+	Ephemeral1hInputTokens int `json:"ephemeral_1h_input_tokens,omitempty"`
+}
+
+// ServerToolUse tracks server-side tool usage
+type ServerToolUse struct {
+	WebSearchRequests int `json:"web_search_requests,omitempty"`
 }
 
 // IsUserMessage returns true if this is a user message
