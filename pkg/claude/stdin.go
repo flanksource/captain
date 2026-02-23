@@ -8,10 +8,11 @@ import (
 type StreamFormat string
 
 const (
-	FormatClaudeJSONL StreamFormat = "claude-jsonl"
-	FormatCodexJSONL  StreamFormat = "codex-jsonl"
-	FormatClaudeCLI   StreamFormat = "claude-cli"
-	FormatUnknown     StreamFormat = "unknown"
+	FormatClaudeJSONL      StreamFormat = "claude-jsonl"
+	FormatClaudeStreamJSON StreamFormat = "claude-stream-json"
+	FormatCodexJSONL       StreamFormat = "codex-jsonl"
+	FormatClaudeCLI        StreamFormat = "claude-cli"
+	FormatUnknown          StreamFormat = "unknown"
 )
 
 type ClaudeCLIOutput struct {
@@ -55,6 +56,13 @@ func DetectFormat(firstLine []byte) StreamFormat {
 		switch t {
 		case "session_meta", "response_item", "event_msg":
 			return FormatCodexJSONL
+		}
+	}
+
+	// Claude Code stream-json: has "type" and "session_id" (not a Codex type)
+	if _, hasType := m["type"]; hasType {
+		if _, hasSessionID := m["session_id"]; hasSessionID {
+			return FormatClaudeStreamJSON
 		}
 	}
 

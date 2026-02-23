@@ -33,6 +33,16 @@ func TestDetectFormat(t *testing.T) {
 			expected: FormatCodexJSONL,
 		},
 		{
+			name:     "claude stream-json init",
+			input:    `{"type":"system","subtype":"init","cwd":"/tmp/project","session_id":"sess-abc","model":"claude-sonnet-4-20250514","tools":["Bash","Read"]}`,
+			expected: FormatClaudeStreamJSON,
+		},
+		{
+			name:     "claude stream-json assistant",
+			input:    `{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Hello"}]},"session_id":"sess-abc","uuid":"msg-1"}`,
+			expected: FormatClaudeStreamJSON,
+		},
+		{
 			name:     "claude cli json",
 			input:    `{"result":"Hello world","session_id":"sess-abc","cost_usd":0.01,"duration_ms":1234,"num_turns":1,"usage":{"input_tokens":100,"output_tokens":50}}`,
 			expected: FormatClaudeCLI,

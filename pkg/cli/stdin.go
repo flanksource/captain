@@ -47,6 +47,16 @@ func parseFromReader(data []byte) (*stdinParseResult, error) {
 			ToolUses: claude.ExtractToolUses(entries),
 		}, nil
 
+	case claude.FormatClaudeStreamJSON:
+		entries, err := claude.ReadStreamJSON(bytes.NewReader(data))
+		if err != nil {
+			return nil, fmt.Errorf("parsing claude stream-json: %w", err)
+		}
+		return &stdinParseResult{
+			Format:   format,
+			ToolUses: claude.ExtractToolUses(entries),
+		}, nil
+
 	case claude.FormatCodexJSONL:
 		codexUses, err := history.ExtractCodexToolUsesFromReader(bytes.NewReader(data))
 		if err != nil {

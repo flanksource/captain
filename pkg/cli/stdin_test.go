@@ -39,6 +39,24 @@ func TestParseFromReader_CodexJSONL(t *testing.T) {
 	assert.Equal(t, "echo hello", result.ToolUses[0].Input["command"])
 }
 
+func TestParseFromReader_ClaudeStreamJSON(t *testing.T) {
+	data := []byte(`{"type":"system","subtype":"init","cwd":"/tmp","session_id":"sess-1","model":"claude-sonnet-4-20250514","tools":["Bash","Read"]}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"list files"}]},"session_id":"sess-1","uuid":"msg-1"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu-1","name":"Bash","input":{"command":"ls -la"}},{"type":"tool_use","id":"tu-2","name":"Read","input":{"file_path":"/tmp/foo.go"}}]},"session_id":"sess-1","uuid":"msg-2","timestamp":"2024-01-15T10:00:00Z"}
+{"type":"result","subtype":"success","session_id":"sess-1","cost_usd":0.01}
+`)
+
+	result, err := parseFromReader(data)
+	require.NoError(t, err)
+	assert.Equal(t, claude.FormatClaudeStreamJSON, result.Format)
+	assert.Nil(t, result.CLIOut)
+	require.Len(t, result.ToolUses, 2)
+	assert.Equal(t, "Bash", result.ToolUses[0].Tool)
+	assert.Equal(t, "ls -la", result.ToolUses[0].Input["command"])
+	assert.Equal(t, "Read", result.ToolUses[1].Tool)
+	assert.Equal(t, "/tmp/foo.go", result.ToolUses[1].Input["file_path"])
+}
+
 func TestParseFromReader_ClaudeCLI(t *testing.T) {
 	data := []byte(`{"result":"Hello world","session_id":"sess-abc","cost_usd":0.01,"duration_ms":1234,"num_turns":1,"usage":{"input_tokens":100,"output_tokens":50}}`)
 
