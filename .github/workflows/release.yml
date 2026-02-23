@@ -24,7 +24,7 @@ jobs:
           tools: |
             svu
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-     - id: tag
+      - id: tag
         run: |
           next=$(svu patch)
           current=$(svu current)
