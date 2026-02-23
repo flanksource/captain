@@ -19,12 +19,12 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: flanksource/deps@v1
+      - uses: flanksource/deps@v1.0.23
         with:
           tools: |
             svu
-          version: latest
-      - id: tag
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+     - id: tag
         run: |
           next=$(svu patch)
           current=$(svu current)
