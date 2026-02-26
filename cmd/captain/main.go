@@ -8,11 +8,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var (
-	version = "dev"
-	commit  = "none"
-	date    = "unknown"
-)
+var version = "dev"
 
 func main() {
 	rootCmd := &cobra.Command{

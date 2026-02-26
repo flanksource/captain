@@ -26,36 +26,42 @@ const (
 
 // toolIcons maps tool names to their display icons
 var toolIcons = map[string]icons.Icon{
-	"Bash":      {Unicode: "💻", Iconify: "codicon:terminal", Style: "muted"},
-	"Read":      icons.File,
-	"Write":     {Unicode: "✏️", Iconify: "codicon:edit", Style: "muted"},
-	"Edit":      {Unicode: "✏️", Iconify: "codicon:edit", Style: "muted"},
-	"MultiEdit": {Unicode: "✏️", Iconify: "codicon:edit", Style: "muted"},
-	"Grep":      icons.Search,
-	"Find":      icons.Search,
-	"Glob":      icons.Search,
-	"Ls":        icons.Folder,
-	"WebFetch":  icons.Cloud,
-	"WebSearch": icons.Search,
-	"Task":      icons.Package,
-	"Skill":     icons.Info,
+	"Bash":            {Unicode: "💻", Iconify: "codicon:terminal", Style: "muted"},
+	"Read":            icons.File,
+	"Write":           {Unicode: "✏️", Iconify: "codicon:edit", Style: "muted"},
+	"Edit":            {Unicode: "✏️", Iconify: "codicon:edit", Style: "muted"},
+	"MultiEdit":       {Unicode: "✏️", Iconify: "codicon:edit", Style: "muted"},
+	"Grep":            icons.Search,
+	"Find":            icons.Search,
+	"Glob":            icons.Search,
+	"Ls":              icons.Folder,
+	"WebFetch":        icons.Cloud,
+	"WebSearch":       icons.Search,
+	"Task":            icons.Package,
+	"TaskCreate":      icons.Package,
+	"TodoWrite":       icons.Package,
+	"AskUserQuestion": {Unicode: "❓", Iconify: "mdi:help-circle", Style: "muted"},
+	"Skill":           icons.Info,
 }
 
 // toolColors maps tool names to their title color class
 var toolColors = map[string]string{
-	"Bash":      "text-green-600 font-medium",
-	"Read":      "text-blue-600 font-medium",
-	"Write":     "text-orange-600 font-medium",
-	"Edit":      "text-purple-600 font-medium",
-	"MultiEdit": "text-purple-600 font-medium",
-	"Grep":      "text-yellow-600 font-medium",
-	"Find":      "text-cyan-600 font-medium",
-	"Glob":      "text-cyan-600 font-medium",
-	"Ls":        "text-blue-600 font-medium",
-	"WebFetch":  "text-blue-600 font-medium",
-	"WebSearch": "text-purple-600 font-medium",
-	"Task":      "text-indigo-600 font-medium",
-	"Skill":     "text-teal-600 font-medium",
+	"Bash":            "text-green-600 font-medium",
+	"Read":            "text-blue-600 font-medium",
+	"Write":           "text-orange-600 font-medium",
+	"Edit":            "text-purple-600 font-medium",
+	"MultiEdit":       "text-purple-600 font-medium",
+	"Grep":            "text-yellow-600 font-medium",
+	"Find":            "text-cyan-600 font-medium",
+	"Glob":            "text-cyan-600 font-medium",
+	"Ls":              "text-blue-600 font-medium",
+	"WebFetch":        "text-blue-600 font-medium",
+	"WebSearch":       "text-purple-600 font-medium",
+	"Task":            "text-indigo-600 font-medium",
+	"TaskCreate":      "text-indigo-600 font-medium",
+	"TodoWrite":       "text-indigo-600 font-medium",
+	"AskUserQuestion": "text-amber-600 font-medium",
+	"Skill":           "text-teal-600 font-medium",
 }
 
 // PrettyCommand returns a richly formatted api.Text for the tool use,
@@ -99,10 +105,12 @@ func (tu ToolUse) PrettyCommand() api.Text {
 		return tu.prettyWebSearch(icon, color, str)
 	case "Task":
 		return tu.prettyTask(icon, color, str)
+	case "TaskCreate":
+		return tu.prettyTaskCreate(icon, color, str)
 	case "TodoWrite":
-		return tu.prettyTodoWrite()
+		return tu.prettyTodoWrite(icon, color)
 	case "AskUserQuestion":
-		return tu.prettyAskUserQuestion()
+		return tu.prettyAsk(icon, color)
 	case "ExitPlanMode":
 		return tu.prettyExitPlanMode(str)
 	default:
@@ -132,7 +140,7 @@ func (tu ToolUse) prettyBash(icon icons.Icon, color string, str func(string) str
 		text = text.Append(fmt.Sprintf(" (timeout %ds)", secs), "text-gray-500")
 	}
 
-	text = text.NewLine().Add(clicky.CodeBlock("bash", cmd))
+	text = text.Append(" ", "").Add(clicky.CodeBlock("bash", cmd))
 	return text
 }
 
@@ -190,13 +198,13 @@ func (tu ToolUse) prettyWrite(icon icons.Icon, color string, str func(string) st
 		preview := content
 		if len(lines) > WritePreviewLines {
 			preview = strings.Join(lines[:WritePreviewLines], "\n")
-			text = text.NewLine().Add(api.NewCode(preview, lang))
-			text = text.NewLine().Append(
+			text = text.Append(" ", "").Add(api.NewCode(preview, lang))
+			text = text.Append(" ", "").Append(
 				fmt.Sprintf("... (%d more lines, %d total)", len(lines)-WritePreviewLines, len(lines)),
 				"text-gray-500",
 			)
 		} else {
-			text = text.NewLine().Add(api.NewCode(preview, lang))
+			text = text.Append(" ", "").Add(api.NewCode(preview, lang))
 		}
 	}
 
@@ -228,7 +236,7 @@ func (tu ToolUse) prettyEdit(icon icons.Icon, color string, str func(string) str
 		} else {
 			text = text.Append(" ", "").Append(path, "text-cyan-600 font-medium")
 		}
-		text = text.NewLine().Add(createUnifiedDiff(oldStr, newStr))
+		text = text.Append(" ", "").Add(createUnifiedDiff(oldStr, newStr))
 	} else {
 		text = text.Append(" ", "").Append(path, "text-cyan-600 font-medium")
 	}
@@ -333,7 +341,7 @@ func (tu ToolUse) prettyWebFetch(icon icons.Icon, color string, str func(string)
 		if len(prompt) > 60 {
 			prompt = prompt[:57] + "..."
 		}
-		text = text.NewLine().Append("Prompt: ", "text-gray-500").Append(prompt, "text-gray-700")
+		text = text.Append(" ", "").Append("Prompt: ", "text-gray-500").Append(prompt, "text-gray-700")
 	}
 
 	return text
@@ -373,8 +381,16 @@ func (tu ToolUse) prettyTask(icon icons.Icon, color string, str func(string) str
 	return text
 }
 
-func (tu ToolUse) prettyTodoWrite() api.Text {
-	text := clicky.Text("").Add(icons.ArrowRight).Append(" todo-write", "text-blue-600 font-medium")
+func (tu ToolUse) prettyTaskCreate(icon icons.Icon, color string, str func(string) string) api.Text {
+	text := clicky.Text("").Add(icon).Append(" task", color)
+	if subject := str("subject"); subject != "" {
+		text = text.Append(": ", "text-gray-400").Append(subject, "text-gray-700")
+	}
+	return text
+}
+
+func (tu ToolUse) prettyTodoWrite(icon icons.Icon, color string) api.Text {
+	text := clicky.Text("").Add(icon).Append(" task", color)
 
 	if todos, ok := tu.Input["todos"].([]any); ok {
 		text = text.Append(fmt.Sprintf(" (%d items)", len(todos)), "text-gray-500")
@@ -383,10 +399,8 @@ func (tu ToolUse) prettyTodoWrite() api.Text {
 	return text
 }
 
-func (tu ToolUse) prettyAskUserQuestion() api.Text {
-	text := clicky.Text("").
-		Add(icons.Icon{Unicode: "❓", Iconify: "mdi:help-circle", Style: "muted"}).
-		Append(" ask-user", "text-amber-600 font-medium")
+func (tu ToolUse) prettyAsk(icon icons.Icon, color string) api.Text {
+	text := clicky.Text("").Add(icon).Append(" ask", color)
 
 	if questions, ok := tu.Input["questions"].([]any); ok {
 		text = text.Append(fmt.Sprintf(" (%d questions)", len(questions)), "text-gray-500")
@@ -428,7 +442,7 @@ func (tu ToolUse) prettyGeneric(icon icons.Icon, color string) api.Text {
 				cleaned[k] = v
 			}
 		}
-		text = text.NewLine().Add(clicky.Map(cleaned, "max-w-[100ch]"))
+		text = text.Append(" ", "").Add(clicky.Map(cleaned, "max-w-[100ch]"))
 	}
 
 	return text
@@ -635,5 +649,3 @@ func FormatTimeAgo(t *time.Time) string {
 		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
 	}
 }
-
-

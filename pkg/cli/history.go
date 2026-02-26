@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -63,13 +64,15 @@ func RunHistory(opts HistoryOptions) (any, error) {
 	scanner := bash.NewScanner(cwd, nil)
 	classifier := bash.NewCategoryClassifier(bash.DefaultCategoryConfig())
 
+	costs, _ := claude.ParseCosts(cwd, opts.All, &opts.Since)
+
 	if opts.All {
-		return runHistoryAll(parseResult, opts, scanner, classifier)
+		return runHistoryAll(parseResult, opts, scanner, classifier, costs)
 	}
-	return runHistorySingle(parseResult, opts, scanner, classifier)
+	return runHistorySingle(parseResult, opts, scanner, classifier, costs)
 }
 
-func runHistoryAll(parseResult *claude.ParseResult, opts HistoryOptions, scanner *bash.Scanner, classifier *bash.CategoryClassifier) (any, error) {
+func runHistoryAll(parseResult *claude.ParseResult, opts HistoryOptions, scanner *bash.Scanner, classifier *bash.CategoryClassifier, costs []claude.SessionCost) (any, error) {
 	result := HistoryResultAll{
 		Results: make([]ScanResultRow, 0, len(parseResult.ToolUses)),
 	}
@@ -92,11 +95,11 @@ func runHistoryAll(parseResult *claude.ParseResult, opts HistoryOptions, scanner
 
 		cmd := tu.FormatCommand()
 		scanResult := scanner.Scan(cmd)
-		status := "✓"
+		safe := "✓"
 		if !scanResult.Allowed {
-			status = "✗"
+			safe = "✗"
 			if scanResult.Reason != "" {
-				status += " " + scanResult.Reason
+				safe += " " + scanResult.Reason
 			}
 			result.Denied++
 		} else {
@@ -111,11 +114,11 @@ func runHistoryAll(parseResult *claude.ParseResult, opts HistoryOptions, scanner
 
 		row := ScanResultRow{
 			Project:  projectName,
-			Tool:     tu.Tool,
-			Command:  tu.PrettyCommand(),
+			Tool:     tu.DisplayTool(),
+			Subject:  tu.PrettyCommand(),
 			Path:     tu.ExtractPath(),
 			Category: string(category),
-			Status:   status,
+			Safe:     safe,
 			Time:     tu.PrettyTimestamp(),
 		}
 		if opts.Debug {
@@ -128,10 +131,11 @@ func runHistoryAll(parseResult *claude.ParseResult, opts HistoryOptions, scanner
 		}
 	}
 
+	applyCostSummaryAll(&result, costs)
 	return result, nil
 }
 
-func runHistorySingle(parseResult *claude.ParseResult, opts HistoryOptions, scanner *bash.Scanner, classifier *bash.CategoryClassifier) (any, error) {
+func runHistorySingle(parseResult *claude.ParseResult, opts HistoryOptions, scanner *bash.Scanner, classifier *bash.CategoryClassifier, costs []claude.SessionCost) (any, error) {
 	result := HistoryResult{
 		Results: make([]ScanResultRowSingle, 0, len(parseResult.ToolUses)),
 	}
@@ -159,11 +163,11 @@ func runHistorySingle(parseResult *claude.ParseResult, opts HistoryOptions, scan
 
 		cmd := tu.FormatCommand()
 		scanResult := scanner.Scan(cmd)
-		status := "✓"
+		safe := "✓"
 		if !scanResult.Allowed {
-			status = "✗"
+			safe = "✗"
 			if scanResult.Reason != "" {
-				status += " " + scanResult.Reason
+				safe += " " + scanResult.Reason
 			}
 			result.Denied++
 		} else {
@@ -172,11 +176,11 @@ func runHistorySingle(parseResult *claude.ParseResult, opts HistoryOptions, scan
 		result.Total++
 
 		row := ScanResultRowSingle{
-			Tool:     tu.Tool,
-			Command:  tu.PrettyCommand(),
+			Tool:     tu.DisplayTool(),
+			Subject:  tu.PrettyCommand(),
 			Path:     tu.ExtractPath(),
 			Category: string(category),
-			Status:   status,
+			Safe:     safe,
 			Time:     tu.PrettyTimestamp(),
 		}
 		if opts.Debug {
@@ -189,5 +193,63 @@ func runHistorySingle(parseResult *claude.ParseResult, opts HistoryOptions, scan
 		}
 	}
 
+	applyCostSummarySingle(&result, costs)
 	return result, nil
+}
+
+func applyCostSummaryAll(result *HistoryResultAll, costs []claude.SessionCost) {
+	var totalTokens int
+	var totalCost float64
+	var minStart, maxEnd time.Time
+
+	for _, c := range costs {
+		totalTokens += c.Tokens.TotalTokens()
+		totalCost += c.Tokens.TotalCost
+		if minStart.IsZero() || c.Start.Before(minStart) {
+			minStart = c.Start
+		}
+		if c.End.After(maxEnd) {
+			maxEnd = c.End
+		}
+	}
+
+	result.Tokens = totalTokens
+	result.Cost = fmt.Sprintf("$%.4f", totalCost)
+	if !minStart.IsZero() && !maxEnd.IsZero() {
+		result.Duration = formatDuration(maxEnd.Sub(minStart))
+	}
+}
+
+func applyCostSummarySingle(result *HistoryResult, costs []claude.SessionCost) {
+	var totalTokens int
+	var totalCost float64
+	var minStart, maxEnd time.Time
+
+	for _, c := range costs {
+		totalTokens += c.Tokens.TotalTokens()
+		totalCost += c.Tokens.TotalCost
+		if minStart.IsZero() || c.Start.Before(minStart) {
+			minStart = c.Start
+		}
+		if c.End.After(maxEnd) {
+			maxEnd = c.End
+		}
+	}
+
+	result.Tokens = totalTokens
+	result.Cost = fmt.Sprintf("$%.4f", totalCost)
+	if !minStart.IsZero() && !maxEnd.IsZero() {
+		result.Duration = formatDuration(maxEnd.Sub(minStart))
+	}
+}
+
+func formatDuration(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm%ds", int(d.Minutes()), int(d.Seconds())%60)
+	default:
+		return fmt.Sprintf("%dh%dm", int(d.Hours()), int(d.Minutes())%60)
+	}
 }

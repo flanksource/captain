@@ -142,11 +142,11 @@ func runHistoryFromReader(data []byte, opts HistoryOptions) (any, error) {
 
 		cmd := tu.FormatCommand()
 		scanResult := scanner.Scan(cmd)
-		status := "✓"
+		safe := "✓"
 		if !scanResult.Allowed {
-			status = "✗"
+			safe = "✗"
 			if scanResult.Reason != "" {
-				status += " " + scanResult.Reason
+				safe += " " + scanResult.Reason
 			}
 			result.Denied++
 		} else {
@@ -155,11 +155,11 @@ func runHistoryFromReader(data []byte, opts HistoryOptions) (any, error) {
 		result.Total++
 
 		row := ScanResultRowSingle{
-			Tool:     tu.Tool,
-			Command:  tu.PrettyCommand(),
+			Tool:     tu.DisplayTool(),
+			Subject:  tu.PrettyCommand(),
 			Path:     tu.ExtractPath(),
 			Category: string(category),
-			Status:   status,
+			Safe:     safe,
 			Time:     tu.PrettyTimestamp(),
 		}
 		if opts.Debug {

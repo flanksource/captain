@@ -148,6 +148,22 @@ func relativePath(path, projectRoot string) string {
 	return path
 }
 
+func singleLine(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
+// DisplayTool returns the display name for the tool, normalizing related tools
+func (tu ToolUse) DisplayTool() string {
+	switch tu.Tool {
+	case "TaskCreate", "TodoWrite":
+		return "Task"
+	case "AskUserQuestion":
+		return "Ask"
+	default:
+		return tu.Tool
+	}
+}
+
 // FormatCommand extracts a human-readable command string from a ToolUse
 func (tu ToolUse) FormatCommand() string {
 	rel := func(path string) string {
@@ -158,9 +174,9 @@ func (tu ToolUse) FormatCommand() string {
 	case "Bash":
 		if cmd, ok := tu.Input["command"].(string); ok {
 			if tu.ProjectRoot != "" {
-				return strings.ReplaceAll(cmd, tu.ProjectRoot+"/", "")
+				cmd = strings.ReplaceAll(cmd, tu.ProjectRoot+"/", "")
 			}
-			return cmd
+			return singleLine(cmd)
 		}
 	case "Read", "Write", "Edit":
 		if path, ok := tu.Input["file_path"].(string); ok {
@@ -197,12 +213,16 @@ func (tu ToolUse) FormatCommand() string {
 		subType, _ := tu.Input["subagent_type"].(string)
 		desc, _ := tu.Input["description"].(string)
 		if subType != "" && desc != "" {
-			return subType + ": " + desc
+			return singleLine(subType + ": " + desc)
 		}
 		if desc != "" {
-			return desc
+			return singleLine(desc)
 		}
 		return subType
+	case "TaskCreate":
+		if subject, ok := tu.Input["subject"].(string); ok {
+			return subject
+		}
 	case "TodoWrite":
 		if todos, ok := tu.Input["todos"].([]any); ok {
 			return fmt.Sprintf("%d todos", len(todos))
@@ -214,7 +234,7 @@ func (tu ToolUse) FormatCommand() string {
 	}
 
 	b, _ := json.Marshal(tu.Input)
-	return string(b)
+	return singleLine(string(b))
 }
 
 // FilePath returns the file_path from tool input, if present
