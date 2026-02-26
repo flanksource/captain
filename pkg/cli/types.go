@@ -7,25 +7,33 @@ import (
 
 // ScanResultRow is used when --all flag is set (shows Project column)
 type ScanResultRow struct {
-	Project  string          `json:"project" pretty:"label=Project,table"`
-	Tool     string          `json:"tool" pretty:"label=Tool,table"`
-	Subject  api.Textable    `json:"subject" pretty:"label=Subject,width=80,table"`
-	Path     string          `json:"path" pretty:"label=Path,table"`
-	Category string          `json:"category" pretty:"label=Category,table"`
-	Safe     string          `json:"safe" pretty:"label=Safe,width=40,table"`
-	Time     string          `json:"time" pretty:"label=Time,table"`
-	ToolUse  *claude.ToolUse `json:"toolUse,omitempty" pretty:"-"`
+	Project         string          `json:"project" pretty:"label=Project,table"`
+	Tool            string          `json:"tool" pretty:"label=Tool,table"`
+	Subject         api.Textable    `json:"subject" pretty:"label=Subject,width=80,table"`
+	Paths           string          `json:"-" pretty:"label=Paths,table"`
+	ReadPaths       []string        `json:"readPaths,omitempty" pretty:"-"`
+	WritePaths      []string        `json:"writePaths,omitempty" pretty:"-"`
+	BinariesDisplay string          `json:"-" pretty:"label=Binaries,table"`
+	Binaries        []string        `json:"binaries,omitempty" pretty:"-"`
+	Category        string          `json:"category" pretty:"label=Category,table"`
+	Safe            string          `json:"safe" pretty:"label=Safe,width=40,table"`
+	Time            string          `json:"time" pretty:"label=Time,table"`
+	ToolUse         *claude.ToolUse `json:"toolUse,omitempty" pretty:"-"`
 }
 
 // ScanResultRowSingle is used for single project (no Project column)
 type ScanResultRowSingle struct {
-	Tool     string          `json:"tool" pretty:"label=Tool,table"`
-	Subject  api.Textable    `json:"subject" pretty:"label=Subject,width=80,table"`
-	Path     string          `json:"path" pretty:"label=Path,table"`
-	Category string          `json:"category" pretty:"label=Category,table"`
-	Safe     string          `json:"safe" pretty:"label=Safe,width=40,table"`
-	Time     string          `json:"time" pretty:"label=Time,table"`
-	ToolUse  *claude.ToolUse `json:"toolUse,omitempty" pretty:"-"`
+	Tool            string          `json:"tool" pretty:"label=Tool,table"`
+	Subject         api.Textable    `json:"subject" pretty:"label=Subject,width=80,table"`
+	Paths           string          `json:"-" pretty:"label=Paths,table"`
+	ReadPaths       []string        `json:"readPaths,omitempty" pretty:"-"`
+	WritePaths      []string        `json:"writePaths,omitempty" pretty:"-"`
+	BinariesDisplay string          `json:"-" pretty:"label=Binaries,table"`
+	Binaries        []string        `json:"binaries,omitempty" pretty:"-"`
+	Category        string          `json:"category" pretty:"label=Category,table"`
+	Safe            string          `json:"safe" pretty:"label=Safe,width=40,table"`
+	Time            string          `json:"time" pretty:"label=Time,table"`
+	ToolUse         *claude.ToolUse `json:"toolUse,omitempty" pretty:"-"`
 }
 
 // HistoryResultAll is used when --all flag is set

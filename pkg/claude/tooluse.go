@@ -123,9 +123,9 @@ func FilterToolUses(toolUses []ToolUse, filter Filter) []ToolUse {
 	return filtered
 }
 
-// relativePath makes an absolute path relative to projectRoot if possible.
+// RelativePath makes an absolute path relative to projectRoot if possible.
 // For paths outside the project (more than 1 parent level away), returns absolute path.
-func relativePath(path, projectRoot string) string {
+func RelativePath(path, projectRoot string) string {
 	if path == "" {
 		return path
 	}
@@ -167,7 +167,7 @@ func (tu ToolUse) DisplayTool() string {
 // FormatCommand extracts a human-readable command string from a ToolUse
 func (tu ToolUse) FormatCommand() string {
 	rel := func(path string) string {
-		return relativePath(path, tu.ProjectRoot)
+		return RelativePath(path, tu.ProjectRoot)
 	}
 
 	switch tu.Tool {
@@ -248,7 +248,7 @@ func (tu ToolUse) FilePath() string {
 // ExtractPath returns the relevant directory/file path for this tool use
 func (tu ToolUse) ExtractPath() string {
 	rel := func(path string) string {
-		return relativePath(path, tu.ProjectRoot)
+		return RelativePath(path, tu.ProjectRoot)
 	}
 
 	switch tu.Tool {

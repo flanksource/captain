@@ -24,6 +24,7 @@ func main() {
 	clicky.AddNamedCommand("history", rootCmd, cli.HistoryOptions{}, cli.RunHistory)
 	clicky.AddNamedCommand("info", rootCmd, cli.InfoOptions{}, cli.RunInfo)
 	clicky.AddNamedCommand("cost", rootCmd, cli.CostOptions{}, cli.RunCost)
+	clicky.AddNamedCommand("srt-generate", rootCmd, cli.SRTGenerateOptions{}, cli.RunSRTGenerate)
 
 	aiCmd := &cobra.Command{Use: "ai", Short: "AI provider commands"}
 	rootCmd.AddCommand(aiCmd)

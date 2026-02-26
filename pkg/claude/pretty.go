@@ -457,7 +457,7 @@ func (tu ToolUse) shortenPath(path string) string {
 
 	// Try relative to project root first
 	if tu.ProjectRoot != "" {
-		rel := relativePath(path, tu.ProjectRoot)
+		rel := RelativePath(path, tu.ProjectRoot)
 		if rel != path { // successfully made relative
 			return rel
 		}

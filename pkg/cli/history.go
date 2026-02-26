@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"strings"
+
 	"github.com/flanksource/captain/pkg/bash"
 	"github.com/flanksource/captain/pkg/claude"
 	"github.com/flanksource/commons/collections"
@@ -112,14 +114,19 @@ func runHistoryAll(parseResult *claude.ParseResult, opts HistoryOptions, scanner
 			projectName = filepath.Base(tu.ProjectRoot)
 		}
 
+		analysis := AnalyzeToolUse(tu, tu.ProjectRoot)
 		row := ScanResultRow{
-			Project:  projectName,
-			Tool:     tu.DisplayTool(),
-			Subject:  tu.PrettyCommand(),
-			Path:     tu.ExtractPath(),
-			Category: string(category),
-			Safe:     safe,
-			Time:     tu.PrettyTimestamp(),
+			Project:         projectName,
+			Tool:            tu.DisplayTool(),
+			Subject:         tu.PrettyCommand(),
+			Paths:           FormatPathsWithIcons(analysis.ReadPaths, analysis.WritePaths),
+			ReadPaths:       analysis.ReadPaths,
+			WritePaths:      analysis.WritePaths,
+			BinariesDisplay: strings.Join(analysis.Binaries, ", "),
+			Binaries:        analysis.Binaries,
+			Category:        string(category),
+			Safe:            safe,
+			Time:            tu.PrettyTimestamp(),
 		}
 		if opts.Debug {
 			row.ToolUse = &tu
@@ -145,7 +152,6 @@ func runHistorySingle(parseResult *claude.ParseResult, opts HistoryOptions, scan
 			tu.ProjectRoot = claude.FindProjectRoot(tu.CWD)
 		}
 
-		// Set project name from first tool use
 		if result.Project == "" && tu.ProjectRoot != "" {
 			result.Project = filepath.Base(tu.ProjectRoot)
 		}
@@ -175,13 +181,18 @@ func runHistorySingle(parseResult *claude.ParseResult, opts HistoryOptions, scan
 		}
 		result.Total++
 
+		analysis := AnalyzeToolUse(tu, tu.ProjectRoot)
 		row := ScanResultRowSingle{
-			Tool:     tu.DisplayTool(),
-			Subject:  tu.PrettyCommand(),
-			Path:     tu.ExtractPath(),
-			Category: string(category),
-			Safe:     safe,
-			Time:     tu.PrettyTimestamp(),
+			Tool:            tu.DisplayTool(),
+			Subject:         tu.PrettyCommand(),
+			Paths:           FormatPathsWithIcons(analysis.ReadPaths, analysis.WritePaths),
+			ReadPaths:       analysis.ReadPaths,
+			WritePaths:      analysis.WritePaths,
+			BinariesDisplay: strings.Join(analysis.Binaries, ", "),
+			Binaries:        analysis.Binaries,
+			Category:        string(category),
+			Safe:            safe,
+			Time:            tu.PrettyTimestamp(),
 		}
 		if opts.Debug {
 			row.ToolUse = &tu
