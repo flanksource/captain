@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flanksource/captain/pkg/bash"
 	"github.com/flanksource/clicky"
 	"github.com/flanksource/clicky/api"
 	"github.com/flanksource/clicky/api/icons"
@@ -119,7 +120,12 @@ func (tu ToolUse) PrettyCommand() api.Text {
 }
 
 func (tu ToolUse) prettyBash(icon icons.Icon, color string, str func(string) string) api.Text {
-	text := clicky.Text("").Add(icon).Append(" bash", color)
+	label, lang := "bash", "bash"
+	if interp := tu.Interpreter(); interp != "" {
+		label = strings.ToLower(interp)
+		lang = bash.InterpreterLanguage(interp)
+	}
+	text := clicky.Text("").Add(icon).Append(" "+label, color)
 
 	cmd := str("command")
 	if cmd == "" {
@@ -134,13 +140,16 @@ func (tu ToolUse) prettyBash(icon icons.Icon, color string, str func(string) str
 	if timeout, ok := tu.Input["timeout"].(float64); ok && timeout > 0 {
 		secs := int(timeout)
 		if timeout > 1000 {
-			// Likely milliseconds, convert
 			secs = int(timeout / 1000)
 		}
 		text = text.Append(fmt.Sprintf(" (timeout %ds)", secs), "text-gray-500")
 	}
 
-	text = text.Append(" ", "").Add(clicky.CodeBlock("bash", cmd))
+	display := cmd
+	if lang != "bash" {
+		display = bash.ExtractInterpreterBody(cmd)
+	}
+	text = text.Append(" ", "").Add(clicky.CodeBlock(lang, display))
 	return text
 }
 

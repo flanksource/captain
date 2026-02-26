@@ -34,6 +34,12 @@ func (s *Scanner) Scan(command string) *ScanResult {
 		SafeOperations: []string{},
 	}
 
+	if interpreter := DetectInterpreter(command); interpreter != "" {
+		result.SafeOperations = append(result.SafeOperations,
+			strings.ToLower(interpreter)+" (not analyzed)")
+		return result
+	}
+
 	parser := syntax.NewParser()
 	node, err := parser.Parse(strings.NewReader(command), "")
 	if err != nil {

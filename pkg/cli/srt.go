@@ -216,8 +216,8 @@ func extractBinaries(tu claude.ToolUse, binaries map[string]bool) {
 	if cmd == "" {
 		return
 	}
-	result, err := bash.Analyze(cmd)
-	if err != nil {
+	result, _ := bash.Analyze(cmd)
+	if result == nil {
 		return
 	}
 	for _, c := range result.Commands {

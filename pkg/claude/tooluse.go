@@ -152,9 +152,22 @@ func singleLine(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
+func (tu ToolUse) Interpreter() string {
+	if tu.Tool != "Bash" {
+		return ""
+	}
+	cmd, _ := tu.Input["command"].(string)
+	return bash.DetectInterpreter(cmd)
+}
+
 // DisplayTool returns the display name for the tool, normalizing related tools
 func (tu ToolUse) DisplayTool() string {
 	switch tu.Tool {
+	case "Bash":
+		if interp := tu.Interpreter(); interp != "" {
+			return interp
+		}
+		return "Bash"
 	case "TaskCreate", "TodoWrite":
 		return "Task"
 	case "AskUserQuestion":

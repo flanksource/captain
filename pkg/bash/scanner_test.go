@@ -215,6 +215,52 @@ func TestScanner_Scan_DeleteOperations(t *testing.T) {
 	}
 }
 
+func TestScanner_Scan_InterpreterCommands(t *testing.T) {
+	scanner := NewScanner("/Users/test/project", nil)
+
+	tests := []struct {
+		name     string
+		command  string
+		allowed  bool
+		safeNote string
+	}{
+		{
+			name:     "python3 -c is allowed without parse error",
+			command:  `python3 -c "print('hello')"`,
+			allowed:  true,
+			safeNote: "python (not analyzed)",
+		},
+		{
+			name:     "python3 heredoc is allowed",
+			command:  "python3 << 'PYEOF'\nprint('hello')\nPYEOF",
+			allowed:  true,
+			safeNote: "python (not analyzed)",
+		},
+		{
+			name:     "node -e is allowed",
+			command:  `node -e "console.log('hi')"`,
+			allowed:  true,
+			safeNote: "node (not analyzed)",
+		},
+		{
+			name:    "bash -c is still parsed as bash",
+			command: `bash -c "echo hello"`,
+			allowed: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := scanner.Scan(tt.command)
+			assert.Equal(t, tt.allowed, result.Allowed, "command: %s, violations: %v", tt.command, result.Violations)
+			assert.Empty(t, result.ParseError, "should not have parse error for: %s", tt.command)
+			if tt.safeNote != "" {
+				assert.Contains(t, result.SafeOperations, tt.safeNote)
+			}
+		})
+	}
+}
+
 func TestScanner_Scan_FindExecCommands(t *testing.T) {
 	scanner := NewScanner("/Users/test/project", nil)
 

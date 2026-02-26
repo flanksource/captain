@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -57,9 +58,10 @@ func (a *ToolAnalysis) analyzeBash(tu claude.ToolUse, rel func(string) string) {
 	}
 
 	result, err := bash.Analyze(cmd)
-	if err != nil {
+	if result == nil {
 		return
 	}
+	_ = err
 
 	for _, op := range result.Operations {
 		a.WritePaths = appendUnique(a.WritePaths, rel(op.Path))
@@ -89,14 +91,36 @@ func appendUnique(slice []string, val string) []string {
 	return append(slice, val)
 }
 
-// FormatPathsWithIcons returns a single string with ⬇/⬆ prefixed paths for table display.
+// FormatPathsWithIcons returns a single string with ⬇/⬆ prefixed directories for table display.
 func FormatPathsWithIcons(readPaths, writePaths []string) string {
 	var parts []string
+	seen := make(map[string]bool)
 	for _, p := range readPaths {
-		parts = append(parts, "⬇ "+p)
+		dir := pathToDir(p)
+		key := "r:" + dir
+		if !seen[key] {
+			seen[key] = true
+			parts = append(parts, "⬇ "+dir)
+		}
 	}
 	for _, p := range writePaths {
-		parts = append(parts, "⬆ "+p)
+		dir := pathToDir(p)
+		key := "w:" + dir
+		if !seen[key] {
+			seen[key] = true
+			parts = append(parts, "⬆ "+dir)
+		}
 	}
 	return strings.Join(parts, " ")
+}
+
+func pathToDir(p string) string {
+	if strings.HasSuffix(p, "/") || filepath.Ext(p) == "" {
+		return p
+	}
+	dir := filepath.Dir(p)
+	if dir == "." {
+		return "./"
+	}
+	return dir + "/"
 }

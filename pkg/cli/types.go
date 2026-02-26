@@ -10,10 +10,10 @@ type ScanResultRow struct {
 	Project         string          `json:"project" pretty:"label=Project,table"`
 	Tool            string          `json:"tool" pretty:"label=Tool,table"`
 	Subject         api.Textable    `json:"subject" pretty:"label=Subject,width=80,table"`
-	Paths           string          `json:"-" pretty:"label=Paths,table"`
+	Paths           string          `json:"paths,omitempty" pretty:"label=Paths,table"`
 	ReadPaths       []string        `json:"readPaths,omitempty" pretty:"-"`
 	WritePaths      []string        `json:"writePaths,omitempty" pretty:"-"`
-	BinariesDisplay string          `json:"-" pretty:"label=Binaries,table"`
+	BinariesDisplay string          `json:"binariesDisplay,omitempty" pretty:"label=Binaries,table"`
 	Binaries        []string        `json:"binaries,omitempty" pretty:"-"`
 	Category        string          `json:"category" pretty:"label=Category,table"`
 	Safe            string          `json:"safe" pretty:"label=Safe,width=40,table"`
@@ -25,10 +25,10 @@ type ScanResultRow struct {
 type ScanResultRowSingle struct {
 	Tool            string          `json:"tool" pretty:"label=Tool,table"`
 	Subject         api.Textable    `json:"subject" pretty:"label=Subject,width=80,table"`
-	Paths           string          `json:"-" pretty:"label=Paths,table"`
+	Paths           string          `json:"paths,omitempty" pretty:"label=Paths,table"`
 	ReadPaths       []string        `json:"readPaths,omitempty" pretty:"-"`
 	WritePaths      []string        `json:"writePaths,omitempty" pretty:"-"`
-	BinariesDisplay string          `json:"-" pretty:"label=Binaries,table"`
+	BinariesDisplay string          `json:"binariesDisplay,omitempty" pretty:"label=Binaries,table"`
 	Binaries        []string        `json:"binaries,omitempty" pretty:"-"`
 	Category        string          `json:"category" pretty:"label=Category,table"`
 	Safe            string          `json:"safe" pretty:"label=Safe,width=40,table"`

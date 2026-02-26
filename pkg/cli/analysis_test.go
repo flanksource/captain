@@ -145,24 +145,39 @@ func TestFormatPathsWithIcons(t *testing.T) {
 		expected   string
 	}{
 		{
-			name:       "reads and writes",
+			name:       "reads and writes show directories",
 			readPaths:  []string{"src/main.go"},
 			writePaths: []string{"pkg/out.go"},
-			expected:   "⬇ src/main.go ⬆ pkg/out.go",
+			expected:   "⬇ src/ ⬆ pkg/",
 		},
 		{
-			name:      "reads only",
+			name:      "root-level files deduplicated",
 			readPaths: []string{"a.go", "b.go"},
-			expected:  "⬇ a.go ⬇ b.go",
+			expected:  "⬇ ./",
 		},
 		{
 			name:       "writes only",
 			writePaths: []string{"c.go"},
-			expected:   "⬆ c.go",
+			expected:   "⬆ ./",
 		},
 		{
 			name:     "empty",
 			expected: "",
+		},
+		{
+			name:      "directory paths preserved",
+			readPaths: []string{"pkg/cli/"},
+			expected:  "⬇ pkg/cli/",
+		},
+		{
+			name:      "multiple files same dir deduplicated",
+			readPaths: []string{"pkg/cli/a.go", "pkg/cli/b.go", "pkg/api/c.go"},
+			expected:  "⬇ pkg/cli/ ⬇ pkg/api/",
+		},
+		{
+			name:      "extensionless paths kept as-is",
+			readPaths: []string{"Makefile", "Dockerfile"},
+			expected:  "⬇ Makefile ⬇ Dockerfile",
 		},
 	}
 
