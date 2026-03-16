@@ -32,6 +32,15 @@ func main() {
 	clicky.AddNamedCommand("models", aiCmd, cli.AIModelsOptions{}, cli.RunAIModels)
 	clicky.AddNamedCommand("test", aiCmd, cli.AITestOptions{}, cli.RunAITest)
 
+	dodCmd := &cobra.Command{Use: "dod", Short: "Definition of Done — gate Claude's stop on passing commands"}
+	rootCmd.AddCommand(dodCmd)
+	clicky.AddNamedCommand("set", dodCmd, cli.DodSetOptions{}, cli.RunDodSet)
+	clicky.AddNamedCommand("check", dodCmd, cli.DodCheckOptions{}, cli.RunDodCheck)
+	clicky.AddNamedCommand("clear", dodCmd, cli.DodClearOptions{}, cli.RunDodClear)
+	clicky.AddNamedCommand("status", dodCmd, cli.DodStatusOptions{}, cli.RunDodStatus)
+	clicky.AddNamedCommand("run", dodCmd, cli.DodRunOptions{}, cli.RunDodRun)
+	clicky.AddNamedCommand("install", dodCmd, cli.DodInstallOptions{}, cli.RunDodInstall)
+
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
