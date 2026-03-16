@@ -29,7 +29,7 @@ type retryProvider struct {
 	config   RetryConfig
 }
 
-func (r *retryProvider) GetModel() string      { return r.provider.GetModel() }
+func (r *retryProvider) GetModel() string       { return r.provider.GetModel() }
 func (r *retryProvider) GetBackend() ai.Backend { return r.provider.GetBackend() }
 
 func (r *retryProvider) Execute(ctx context.Context, req ai.Request) (*ai.Response, error) {

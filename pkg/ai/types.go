@@ -103,10 +103,10 @@ func (c Costs) ByModel() map[string]Cost {
 
 type Config struct {
 	Model         string
-	Backend       Backend       // empty = infer from model
-	APIKey        string        // empty = env lookup
+	Backend       Backend // empty = infer from model
+	APIKey        string  // empty = env lookup
 	APIURL        string
-	HTTPClient    *http.Client  // nil = default client
+	HTTPClient    *http.Client // nil = default client
 	MaxTokens     int
 	Temperature   float64
 	CacheDBPath   string

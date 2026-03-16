@@ -21,7 +21,7 @@ type cachingProvider struct {
 	ttl      time.Duration
 }
 
-func (c *cachingProvider) GetModel() string      { return c.provider.GetModel() }
+func (c *cachingProvider) GetModel() string       { return c.provider.GetModel() }
 func (c *cachingProvider) GetBackend() ai.Backend { return c.provider.GetBackend() }
 
 func (c *cachingProvider) Execute(ctx context.Context, req ai.Request) (*ai.Response, error) {

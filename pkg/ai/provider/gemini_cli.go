@@ -21,7 +21,7 @@ func NewGeminiCLI(model string) *GeminiCLI {
 	return &GeminiCLI{model: model}
 }
 
-func (g *GeminiCLI) GetModel() string      { return g.model }
+func (g *GeminiCLI) GetModel() string       { return g.model }
 func (g *GeminiCLI) GetBackend() ai.Backend { return ai.BackendGeminiCLI }
 
 type geminiCLIResponse struct {

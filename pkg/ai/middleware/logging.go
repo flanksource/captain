@@ -15,7 +15,7 @@ type loggingProvider struct {
 	provider ai.Provider
 }
 
-func (l *loggingProvider) GetModel() string      { return l.provider.GetModel() }
+func (l *loggingProvider) GetModel() string       { return l.provider.GetModel() }
 func (l *loggingProvider) GetBackend() ai.Backend { return l.provider.GetBackend() }
 
 func (l *loggingProvider) Execute(ctx context.Context, req ai.Request) (*ai.Response, error) {

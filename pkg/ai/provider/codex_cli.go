@@ -21,7 +21,7 @@ func NewCodexCLI(model string) *CodexCLI {
 	return &CodexCLI{model: model}
 }
 
-func (c *CodexCLI) GetModel() string      { return c.model }
+func (c *CodexCLI) GetModel() string       { return c.model }
 func (c *CodexCLI) GetBackend() ai.Backend { return ai.BackendCodexCLI }
 
 type codexCLIRequest struct {

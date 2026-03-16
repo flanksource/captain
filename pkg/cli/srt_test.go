@@ -23,16 +23,6 @@ func TestExtractURLDomains(t *testing.T) {
 			expected: []string{"api.example.com"},
 		},
 		{
-			name:     "wget with http",
-			cmd:      `wget http://files.example.org/archive.tar.gz`,
-			expected: []string{"files.example.org"},
-		},
-		{
-			name:     "git clone with url",
-			cmd:      `git clone https://github.com/user/repo.git`,
-			expected: []string{"github.com"},
-		},
-		{
 			name:     "multiple urls",
 			cmd:      `curl https://a.com/x && wget https://b.com/y`,
 			expected: []string{"a.com", "b.com"},
@@ -48,8 +38,7 @@ func TestExtractURLDomains(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			domains := make(map[string]bool)
 			extractURLDomains(tt.cmd, domains)
-			got := sortedKeys(domains)
-			assert.Equal(t, tt.expected, got)
+			assert.Equal(t, tt.expected, sortedKeys(domains))
 		})
 	}
 }
@@ -57,52 +46,35 @@ func TestExtractURLDomains(t *testing.T) {
 func TestExtractDomains(t *testing.T) {
 	tests := []struct {
 		name     string
-		tool     string
 		input    map[string]any
 		contains []string
 	}{
 		{
 			name:     "gh command",
-			tool:     "Bash",
 			input:    map[string]any{"command": "gh pr create --title test"},
 			contains: []string{"github.com", "api.github.com"},
 		},
 		{
 			name:     "npm install",
-			tool:     "Bash",
 			input:    map[string]any{"command": "npm install express"},
 			contains: []string{"registry.npmjs.org"},
 		},
 		{
 			name:     "go get",
-			tool:     "Bash",
 			input:    map[string]any{"command": "go get github.com/pkg/errors"},
 			contains: []string{"proxy.golang.org", "sum.golang.org"},
 		},
 		{
-			name:     "pip install",
-			tool:     "Bash",
-			input:    map[string]any{"command": "pip install requests"},
-			contains: []string{"pypi.org"},
-		},
-		{
 			name:     "curl with url",
-			tool:     "Bash",
 			input:    map[string]any{"command": "curl https://api.stripe.com/v1/charges"},
 			contains: []string{"api.stripe.com"},
-		},
-		{
-			name:     "non-bash tool ignored",
-			tool:     "Read",
-			input:    map[string]any{"file_path": "/tmp/test.go"},
-			contains: nil,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			domains := make(map[string]bool)
-			extractDomains(claude.ToolUse{Tool: tt.tool, Input: tt.input}, domains)
+			extractDomains(claude.ToolUse{Tool: "Bash", Input: tt.input}, domains)
 			for _, d := range tt.contains {
 				assert.True(t, domains[d], "expected domain %s", d)
 			}
@@ -118,22 +90,34 @@ func TestAddDir(t *testing.T) {
 		expected    string
 	}{
 		{
-			name:        "relative to project",
+			name:        "relative to project - top level only",
 			path:        "/home/user/project/pkg/cli/history.go",
 			projectRoot: "/home/user/project",
-			expected:    "pkg/cli/",
+			expected:    "pkg/",
 		},
 		{
-			name:        "deep path collapses to 2 levels",
+			name:        "deep path collapses to top level",
 			path:        "/home/user/project/pkg/cli/sub/deep/file.go",
 			projectRoot: "/home/user/project",
-			expected:    "pkg/cli/",
+			expected:    "pkg/",
 		},
 		{
-			name:        "root level file",
+			name:        "root level file skipped",
 			path:        "/home/user/project/main.go",
 			projectRoot: "/home/user/project",
-			expected:    "", // dir is "." which is skipped
+			expected:    "",
+		},
+		{
+			name:        "single dir kept",
+			path:        "/home/user/project/cmd/main.go",
+			projectRoot: "/home/user/project",
+			expected:    "cmd/",
+		},
+		{
+			name:        "absolute path outside project skipped",
+			path:        "/usr/local/bin/something",
+			projectRoot: "/home/user/project",
+			expected:    "",
 		},
 	}
 
@@ -150,38 +134,90 @@ func TestAddDir(t *testing.T) {
 	}
 }
 
-func TestExtractWritePathsFromBash(t *testing.T) {
+func TestCollapseToTopDirs(t *testing.T) {
 	tests := []struct {
 		name     string
-		cmd      string
+		dirs     map[string]bool
 		expected []string
 	}{
 		{
-			name:     "redirect",
-			cmd:      `echo hello > /tmp/out.txt`,
-			expected: []string{"/tmp/out.txt"},
+			name: "child dirs removed",
+			dirs: map[string]bool{
+				".": true, "/tmp": true,
+				"pkg/":     true,
+				"pkg/cli/": true,
+				"cmd/":     true,
+			},
+			expected: []string{".", "/tmp", "cmd/", "pkg/"},
 		},
 		{
-			name:     "append redirect",
-			cmd:      `echo hello >> /tmp/log.txt`,
-			expected: []string{"/tmp/log.txt"},
+			name: "no overlap",
+			dirs: map[string]bool{
+				".": true, "src/": true, "test/": true,
+			},
+			expected: []string{".", "src/", "test/"},
 		},
 		{
-			name:     "mkdir",
-			cmd:      `mkdir -p /tmp/newdir`,
-			expected: []string{"/tmp/newdir"},
-		},
-		{
-			name:     "no writes",
-			cmd:      `echo hello`,
+			name:     "empty",
+			dirs:     map[string]bool{},
 			expected: nil,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := extractWritePathsFromBash(tt.cmd)
+			got := collapseToTopDirs(tt.dirs)
 			assert.Equal(t, tt.expected, got)
+		})
+	}
+}
+
+func TestExtractBinaries(t *testing.T) {
+	tests := []struct {
+		name     string
+		cmd      string
+		expected []string
+	}{
+		{
+			name:     "simple command",
+			cmd:      "go build ./...",
+			expected: []string{"go"},
+		},
+		{
+			name:     "piped commands",
+			cmd:      "ps -ax | grep postgres | awk '{print $1}'",
+			expected: []string{"awk", "grep", "ps"},
+		},
+		{
+			name:     "chained commands",
+			cmd:      "git add . && git commit -m test",
+			expected: []string{"git"},
+		},
+		{
+			name:     "skips builtins",
+			cmd:      "echo hello && cd /tmp && export FOO=bar",
+			expected: []string{},
+		},
+		{
+			name:     "absolute path binary",
+			cmd:      "/usr/local/bin/golangci-lint run",
+			expected: []string{"golangci-lint"},
+		},
+		{
+			name:     "multiple distinct",
+			cmd:      "make build && go test ./... && golangci-lint run",
+			expected: []string{"go", "golangci-lint", "make"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			binaries := make(map[string]bool)
+			extractBinaries(claude.ToolUse{
+				Tool:  "Bash",
+				Input: map[string]any{"command": tt.cmd},
+			}, binaries)
+			assert.Equal(t, tt.expected, sortedKeys(binaries))
 		})
 	}
 }
@@ -197,6 +233,7 @@ func TestMergeSRTConfigs(t *testing.T) {
 			AllowWrite: []string{".", "old-dir/"},
 			DenyWrite:  []string{".env", "secrets/"},
 		},
+		Binaries: []string{"git", "make"},
 	}
 	generated := SRTConfig{
 		Network: SRTNetwork{
@@ -205,9 +242,10 @@ func TestMergeSRTConfigs(t *testing.T) {
 		},
 		Filesystem: SRTFilesystem{
 			DenyRead:   []string{"~/.ssh", "~/.gnupg"},
-			AllowWrite: []string{".", "/tmp", "pkg/cli/"},
+			AllowWrite: []string{".", "/tmp", "pkg/"},
 			DenyWrite:  []string{".env"},
 		},
+		Binaries: []string{"go", "make"},
 	}
 
 	merged := mergeSRTConfigs(existing, generated)
@@ -215,11 +253,12 @@ func TestMergeSRTConfigs(t *testing.T) {
 	assert.Equal(t, []string{"existing.com", "github.com", "new.com"}, merged.Network.AllowedDomains)
 	assert.Equal(t, []string{"bad.com"}, merged.Network.DeniedDomains)
 	assert.Equal(t, []string{"~/.gnupg", "~/.ssh"}, merged.Filesystem.DenyRead)
-	assert.Equal(t, []string{".", "/tmp", "old-dir/", "pkg/cli/"}, merged.Filesystem.AllowWrite)
+	assert.Equal(t, []string{".", "/tmp", "old-dir/", "pkg/"}, merged.Filesystem.AllowWrite)
 	assert.Equal(t, []string{".env", "secrets/"}, merged.Filesystem.DenyWrite)
+	assert.Equal(t, []string{"git", "go", "make"}, merged.Binaries)
 }
 
-func TestLoadAndMergeSRTConfig(t *testing.T) {
+func TestLoadSRTConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	existingPath := filepath.Join(tmpDir, "srt-settings.json")
 

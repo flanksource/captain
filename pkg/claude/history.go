@@ -74,13 +74,13 @@ type ContentBlock struct {
 
 // Usage tracks token consumption
 type Usage struct {
-	InputTokens              int             `json:"input_tokens"`
-	OutputTokens             int             `json:"output_tokens"`
-	CacheCreationInputTokens int             `json:"cache_creation_input_tokens,omitempty"`
-	CacheReadInputTokens     int             `json:"cache_read_input_tokens,omitempty"`
-	ServiceTier              string          `json:"service_tier,omitempty"`
-	CacheCreation            *CacheCreation  `json:"cache_creation,omitempty"`
-	ServerToolUse            *ServerToolUse  `json:"server_tool_use,omitempty"`
+	InputTokens              int            `json:"input_tokens"`
+	OutputTokens             int            `json:"output_tokens"`
+	CacheCreationInputTokens int            `json:"cache_creation_input_tokens,omitempty"`
+	CacheReadInputTokens     int            `json:"cache_read_input_tokens,omitempty"`
+	ServiceTier              string         `json:"service_tier,omitempty"`
+	CacheCreation            *CacheCreation `json:"cache_creation,omitempty"`
+	ServerToolUse            *ServerToolUse `json:"server_tool_use,omitempty"`
 }
 
 // CacheCreation contains detailed cache creation breakdown

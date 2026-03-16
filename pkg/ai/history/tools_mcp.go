@@ -134,8 +134,8 @@ func (m McpIcons8SearchIcons) Pretty() api.Text {
 }
 
 type McpGeminiGenerateContent struct {
-	UserPrompt string                   `json:"user_prompt"`
-	Model      string                   `json:"model,omitempty"`
+	UserPrompt string           `json:"user_prompt"`
+	Model      string           `json:"model,omitempty"`
 	Files      []map[string]any `json:"files,omitempty"`
 }
 

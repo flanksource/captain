@@ -25,7 +25,7 @@ func NewGemini(cfg ai.Config) *Gemini {
 	return &Gemini{model: model, apiKey: cfg.APIKey, httpClient: cfg.HTTPClient}
 }
 
-func (g *Gemini) GetModel() string      { return g.model }
+func (g *Gemini) GetModel() string       { return g.model }
 func (g *Gemini) GetBackend() ai.Backend { return ai.BackendGemini }
 
 func (g *Gemini) Execute(ctx context.Context, req ai.Request) (*ai.Response, error) {
