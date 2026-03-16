@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/flanksource/captain/pkg/ai/history"
@@ -109,8 +108,6 @@ func runHistoryFromReader(data []byte, opts HistoryOptions) (any, error) {
 		return r, nil
 	}
 
-	cwd, _ := os.Getwd()
-	scanner := bash.NewScanner(cwd, nil)
 	classifier := bash.NewCategoryClassifier(bash.DefaultCategoryConfig())
 
 	filter := claude.Filter{
@@ -124,6 +121,10 @@ func runHistoryFromReader(data []byte, opts HistoryOptions) (any, error) {
 		filter.Limit = opts.Limit
 	}
 	toolUses := claude.FilterToolUses(parsed.ToolUses, filter)
+
+	if opts.Summary {
+		return runHistorySummary(toolUses, opts, classifier, nil)
+	}
 
 	result := HistoryResult{
 		Results: make([]ScanResultRowSingle, 0, len(toolUses)),
@@ -141,31 +142,32 @@ func runHistoryFromReader(data []byte, opts HistoryOptions) (any, error) {
 			continue
 		}
 
-		cmd := tu.FormatCommand()
-		scanResult := scanner.Scan(cmd)
-		safe := "✓"
-		if !scanResult.Allowed {
-			safe = "✗"
-			if scanResult.Reason != "" {
-				safe += " " + scanResult.Reason
-			}
-			result.Denied++
-		} else {
-			result.Allowed++
+		if !matchApprovedFilter(opts.Approved, tu.Denied) {
+			continue
 		}
+
 		result.Total++
+
+		approved := "✓"
+		if tu.Denied {
+			approved = "✗"
+			if tu.DeniedReason != "" {
+				approved += " " + tu.DeniedReason
+			}
+			result.UserDenied++
+		}
 
 		analysis := AnalyzeToolUse(tu, tu.ProjectRoot)
 		row := ScanResultRowSingle{
 			Tool:            tu.DisplayTool(),
-			Subject:         tu.PrettyCommand(),
+			Subject:         formatSubject(tu, opts.Short),
 			Paths:           FormatPathsWithIcons(analysis.ReadPaths, analysis.WritePaths),
 			ReadPaths:       analysis.ReadPaths,
 			WritePaths:      analysis.WritePaths,
 			BinariesDisplay: strings.Join(analysis.Binaries, ", "),
 			Binaries:        analysis.Binaries,
 			Category:        string(category),
-			Safe:            safe,
+			Approved:        approved,
 			Time:            tu.PrettyTimestamp(),
 		}
 		if opts.Debug {
