@@ -1,6 +1,7 @@
 package container
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,19 +10,25 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/flanksource/captain/pkg/sandbox"
+	"github.com/flanksource/captain/pkg/sandbox/presets"
 	"gopkg.in/yaml.v3"
 )
 
 type SandboxConfig struct {
-	Image      string            `yaml:"image"`
-	Mode       Mode              `yaml:"mode"`
-	BaseImage  string            `yaml:"baseImage"`
-	Volumes    []Volume          `yaml:"volumes,omitempty"`
-	User       UserSpec          `yaml:"user"`
-	Components []string          `yaml:"components,omitempty"`
-	Options    map[string]string `yaml:"options,omitempty"`
-	Patches    []Patch           `yaml:"patches,omitempty"`
-	Presets    []string          `yaml:"presets,omitempty"`
+	Name           string            `yaml:"name,omitempty"`
+	Image          string            `yaml:"image"`
+	Mode           Mode              `yaml:"mode"`
+	BaseImage      string            `yaml:"baseImage"`
+	Volumes        []Volume          `yaml:"volumes,omitempty"`
+	User           UserSpec          `yaml:"user"`
+	Components     []string          `yaml:"components,omitempty"`
+	Options        map[string]string `yaml:"options,omitempty"`
+	Patches        []Patch           `yaml:"patches,omitempty"`
+	Presets        []string          `yaml:"presets,omitempty"`
+	Env            map[string]string `yaml:"env,omitempty"`
+	EnvPassthrough []string          `yaml:"envPassthrough,omitempty"`
+	Tokens         *sandbox.TokensConfig `yaml:"tokens,omitempty"`
 }
 
 type Patch struct {
@@ -227,6 +234,11 @@ func RunSandbox(cfg SandboxConfig, extraArgs []string) error {
 		"-w", os.Getenv("PWD"),
 		"-v", os.Getenv("PWD") + ":" + os.Getenv("PWD"),
 	}
+
+	if cfg.Name != "" {
+		args = append(args, "--name", cfg.Name)
+	}
+
 	if envToken := os.Getenv("CLAUDE_CODE_OAUTH_TOKEN"); envToken != "" {
 		args = append(args, "-e", "CLAUDE_CODE_OAUTH_TOKEN="+envToken)
 	} else if token := extractOAuthToken(cfg); token != "" {
@@ -250,6 +262,38 @@ func RunSandbox(cfg SandboxConfig, extraArgs []string) error {
 		args = append(args, "-v", fmt.Sprintf("%s:%s", v.Source, v.Target))
 	}
 
+	for _, name := range cfg.EnvPassthrough {
+		if val := os.Getenv(name); val != "" {
+			args = append(args, "-e", name+"="+val)
+		}
+	}
+
+	for k, v := range cfg.Env {
+		args = append(args, "-e", k+"="+os.ExpandEnv(v))
+	}
+
+	if cfg.Tokens != nil {
+		credDir, err := os.MkdirTemp("", "captain-tokens-*")
+		if err != nil {
+			return fmt.Errorf("creating token dir: %w", err)
+		}
+		defer func() { _ = os.RemoveAll(credDir) }()
+
+		tm := sandbox.NewTokenManager(credDir)
+		results, err := tm.Acquire(context.Background(), cfg.Tokens)
+		if err != nil {
+			return fmt.Errorf("acquiring tokens: %w", err)
+		}
+		for _, r := range results {
+			for k, v := range r.EnvVars {
+				args = append(args, "-e", k+"="+v)
+			}
+			for _, path := range r.WritePaths {
+				args = append(args, "-v", fmt.Sprintf("%s:%s:ro", path, path))
+			}
+		}
+	}
+
 	for _, v := range cfg.Volumes {
 		mount := fmt.Sprintf("%s:%s", v.Source, v.Target)
 		if v.ReadOnly {
@@ -271,6 +315,10 @@ func RunSandbox(cfg SandboxConfig, extraArgs []string) error {
 }
 
 func RebuildFromSandbox(cfg SandboxConfig) error {
+	if err := EnsureBaseImage(cfg.BaseImage); err != nil {
+		return fmt.Errorf("base image: %w", err)
+	}
+
 	components := DiscoverAll(DefaultDiscoverConfig())
 	ApplySelections(components, cfg.Components, cfg.Options)
 
@@ -282,12 +330,13 @@ func RebuildFromSandbox(cfg SandboxConfig) error {
 	}
 
 	contextDir, err := Generate(GenerateInput{
-		Name:       ImageTag(cfg.Presets),
-		BaseImage:  cfg.BaseImage,
-		Mode:       cfg.Mode,
-		Components: components,
-		User:       user,
-		Patches:    cfg.Patches,
+		Name:          ImageTag(cfg.Presets),
+		BaseImage:     cfg.BaseImage,
+		Mode:          cfg.Mode,
+		Components:    components,
+		User:          user,
+		Patches:       cfg.Patches,
+		PresetInstall: presets.InstallSnippets(cfg.Presets),
 	})
 	if err != nil {
 		return fmt.Errorf("generate: %w", err)

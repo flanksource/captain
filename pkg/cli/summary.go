@@ -105,7 +105,6 @@ func BuildSummary(toolUses []claude.ToolUse, classifier *bash.CategoryClassifier
 	return result
 }
 
-
 func toNameCounts(m map[string]int) []NameCount {
 	result := make([]NameCount, 0, len(m))
 	for k, v := range m {

@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
@@ -11,13 +12,38 @@ import (
 	"github.com/flanksource/commons/logger"
 )
 
+type AIProviderOptions struct {
+	Model   string `flag:"model" help:"Model name, e.g. claude-sonnet-4, gemini-2.0-flash" short:"m" required:"true"`
+	Backend string `flag:"backend" help:"Force backend: anthropic, gemini, codex-cli, claude-cli, gemini-cli (default: inferred from model)" short:"b"`
+	APIKey  string `flag:"api-key" help:"API key (env: ANTHROPIC_API_KEY, GEMINI_API_KEY, GOOGLE_API_KEY)"`
+	NoCache bool   `flag:"no-cache" help:"Disable response caching"`
+	Budget  string `flag:"budget" help:"Max spend in USD, 0=unlimited" default:"0"`
+	Debug   bool   `flag:"debug" help:"Enable debug logging for HTTP requests"`
+}
+
+func (o AIProviderOptions) ToConfig() ai.Config {
+	budget, _ := strconv.ParseFloat(o.Budget, 64)
+	cfg := ai.Config{
+		Model:     o.Model,
+		Backend:   ai.Backend(o.Backend),
+		APIKey:    o.APIKey,
+		NoCache:   o.NoCache,
+		BudgetUSD: budget,
+		Debug:     o.Debug,
+	}
+	if o.Debug || logger.IsDebugEnabled() {
+		cfg.HTTPClient = provider.NewLoggingHTTPClient()
+	}
+	return cfg
+}
+
 type AIPromptOptions struct {
-	Model       string        `flag:"model" help:"Model name (e.g. claude-code-sonnet, gemini-2.0-flash)" short:"m" required:"true"`
-	Prompt      string        `flag:"prompt" help:"Prompt text" short:"p" required:"true" stdin:"true"`
-	System      string        `flag:"system" help:"System prompt" short:"s"`
-	MaxTokens   int           `flag:"max-tokens" help:"Maximum output tokens" default:"4096"`
-	Temperature float64       `flag:"temperature" help:"Sampling temperature" default:"0"`
-	Timeout     time.Duration `flag:"timeout" help:"Request timeout" default:"120s"`
+	AIProviderOptions
+	Prompt      string `flag:"prompt" help:"Prompt text" short:"p" required:"true" stdin:"true"`
+	System      string `flag:"system" help:"System prompt" short:"s"`
+	MaxTokens   int    `flag:"max-tokens" help:"Maximum output tokens" default:"4096"`
+	Temperature string `flag:"temperature" help:"Sampling temperature" default:"0"`
+	Timeout     string `flag:"timeout" help:"Request timeout" default:"120s"`
 }
 
 type AIPromptResult struct {
@@ -34,11 +60,7 @@ func RunAIPrompt(opts AIPromptOptions) (any, error) {
 		return nil, fmt.Errorf("prompt text required (use --prompt or pipe via stdin)")
 	}
 
-	cfg := ai.Config{Model: opts.Model}
-	if logger.IsDebugEnabled() {
-		cfg.HTTPClient = provider.NewLoggingHTTPClient()
-	}
-	p, err := ai.NewProvider(cfg)
+	p, err := ai.NewProvider(opts.ToConfig())
 	if err != nil {
 		return nil, err
 	}
@@ -46,14 +68,19 @@ func RunAIPrompt(opts AIPromptOptions) (any, error) {
 		return nil, err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), opts.Timeout)
+	timeout, _ := time.ParseDuration(opts.Timeout)
+	if timeout <= 0 {
+		timeout = 120 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
+	temperature, _ := strconv.ParseFloat(opts.Temperature, 64)
 	resp, err := p.Execute(ctx, ai.Request{
 		SystemPrompt: opts.System,
 		Prompt:       opts.Prompt,
 		MaxTokens:    opts.MaxTokens,
-		Temperature:  opts.Temperature,
+		Temperature:  temperature,
 	})
 	if err != nil {
 		return nil, err
@@ -70,8 +97,8 @@ func RunAIPrompt(opts AIPromptOptions) (any, error) {
 }
 
 type AITestOptions struct {
-	Model   string        `flag:"model" help:"Model to test" short:"m" required:"true"`
-	Timeout time.Duration `flag:"timeout" help:"Request timeout" default:"60s"`
+	AIProviderOptions
+	Timeout string `flag:"timeout" help:"Request timeout" default:"60s"`
 }
 
 type AITestResult struct {
@@ -82,22 +109,19 @@ type AITestResult struct {
 }
 
 func RunAITest(opts AITestOptions) (any, error) {
-	cfg := ai.Config{Model: opts.Model}
-	if logger.IsDebugEnabled() {
-		cfg.HTTPClient = provider.NewLoggingHTTPClient()
-	}
-	p, err := ai.NewProvider(cfg)
+	p, err := ai.NewProvider(opts.ToConfig())
 	if err != nil {
 		return nil, err
 	}
 	if p, err = middleware.Wrap(p, middleware.WithLogging()); err != nil {
 		return nil, err
 	}
-	if opts.Timeout <= 0 {
-		opts.Timeout = 60 * time.Second
+	timeout, _ := time.ParseDuration(opts.Timeout)
+	if timeout <= 0 {
+		timeout = 60 * time.Second
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), opts.Timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	start := time.Now()

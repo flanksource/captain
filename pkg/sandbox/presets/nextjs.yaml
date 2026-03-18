@@ -1,0 +1,15 @@
+network:
+  allowLocalBinding: true
+filesystem:
+  allowWrite:
+    - .next
+    - node_modules
+    - $HOME/.npm
+passthroughEnv:
+  - NODE_ENV
+  - NEXT_PUBLIC_API_URL
+  - NEXTAUTH_URL
+  - NEXTAUTH_SECRET
+  - NEXT_TELEMETRY_DISABLED
+  - NODE_PATH
+  - NPM_CONFIG_PREFIX

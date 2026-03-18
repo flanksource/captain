@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/flanksource/captain/pkg/cli"
@@ -24,7 +25,16 @@ func main() {
 	clicky.AddNamedCommand("history", rootCmd, cli.HistoryOptions{}, cli.RunHistory)
 	clicky.AddNamedCommand("info", rootCmd, cli.InfoOptions{}, cli.RunInfo)
 	clicky.AddNamedCommand("cost", rootCmd, cli.CostOptions{}, cli.RunCost)
-	clicky.AddNamedCommand("srt-generate", rootCmd, cli.SRTGenerateOptions{}, cli.RunSRTGenerate)
+	sandboxCmd := &cobra.Command{
+		Use:   "sandbox",
+		Short: "Sandbox configuration tools",
+	}
+	sandboxCmd.SetHelpFunc(func(c *cobra.Command, args []string) {
+		fmt.Fprint(os.Stderr, cli.SandboxHelp().ANSI())
+	})
+	rootCmd.AddCommand(sandboxCmd)
+	clicky.AddNamedCommand("generate", sandboxCmd, cli.SRTGenerateOptions{}, cli.RunSRTGenerate).Short = "Generate sandbox-runtime config"
+	clicky.AddNamedCommand("presets", sandboxCmd, cli.SandboxPresetsOptions{}, cli.RunSandboxPresets).Short = "List available sandbox-runtime presets"
 
 	aiCmd := &cobra.Command{Use: "ai", Short: "AI provider commands"}
 	rootCmd.AddCommand(aiCmd)
@@ -40,6 +50,27 @@ func main() {
 	clicky.AddNamedCommand("status", dodCmd, cli.DodStatusOptions{}, cli.RunDodStatus)
 	clicky.AddNamedCommand("run", dodCmd, cli.DodRunOptions{}, cli.RunDodRun)
 	clicky.AddNamedCommand("install", dodCmd, cli.DodInstallOptions{}, cli.RunDodInstall)
+
+	projectsCmd := &cobra.Command{Use: "projects", Short: "Manage Claude Code project sessions"}
+	rootCmd.AddCommand(projectsCmd)
+	clicky.AddNamedCommand("list", projectsCmd, cli.ProjectsListOptions{}, cli.RunProjectsList)
+	clicky.AddNamedCommand("clean", projectsCmd, cli.ProjectsCleanOptions{}, cli.RunProjectsClean)
+
+	containerCmd := &cobra.Command{
+		Use:   "container",
+		Short: "Container sandbox builder for Claude Code",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cli.RunContainerTUI()
+		},
+	}
+	containerCmd.SetHelpFunc(func(c *cobra.Command, args []string) {
+		fmt.Fprint(os.Stderr, cli.ContainerHelp().ANSI())
+	})
+	rootCmd.AddCommand(containerCmd)
+	clicky.AddNamedCommand("list", containerCmd, cli.ContainerListOptions{}, cli.RunContainerList).Short = "List discovered components"
+	clicky.AddNamedCommand("generate", containerCmd, cli.ContainerGenerateOptions{}, cli.RunContainerGenerate).Short = "Generate Dockerfile and sandbox config"
+	clicky.AddNamedCommand("build", containerCmd, cli.ContainerBuildOptions{}, cli.RunContainerBuild).Short = "Build container image"
+	clicky.AddNamedCommand("run", containerCmd, cli.ContainerRunOptions{}, cli.RunContainerRun).Short = "Run container sandbox"
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)

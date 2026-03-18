@@ -14,13 +14,15 @@ import (
 
 // ToolUse represents a single tool invocation extracted from history
 type ToolUse struct {
-	Tool        string         `json:"tool,omitempty"`
-	Input       map[string]any `json:"input,omitempty"`
-	Timestamp   *time.Time     `json:"timestamp,omitempty"`
-	CWD         string         `json:"cwd,omitempty"`
-	SessionID   string         `json:"session_id,omitempty"`
-	ToolUseID   string         `json:"tool_use_id,omitempty"`
-	ProjectRoot string         `json:"project_root,omitempty"`
+	Tool         string         `json:"tool,omitempty"`
+	Input        map[string]any `json:"input,omitempty"`
+	Timestamp    *time.Time     `json:"timestamp,omitempty"`
+	CWD          string         `json:"cwd,omitempty"`
+	SessionID    string         `json:"session_id,omitempty"`
+	ToolUseID    string         `json:"tool_use_id,omitempty"`
+	ProjectRoot  string         `json:"project_root,omitempty"`
+	Denied       bool           `json:"denied,omitempty"`
+	DeniedReason string         `json:"deniedReason,omitempty"`
 }
 
 // Filter defines criteria for filtering tool uses
@@ -32,10 +34,14 @@ type Filter struct {
 	Limit  int
 }
 
+const denialPrefix = "The user doesn't want to proceed with this tool use."
+const denialCommentSeparator = "the user said:\n"
+
 // ExtractToolUses extracts ToolUse records from history entries
 func ExtractToolUses(entries []HistoryEntry) []ToolUse {
 	var toolUses []ToolUse
 
+	// Pass 1: extract tool_use blocks
 	for _, entry := range entries {
 		ts, _ := entry.ParseTimestamp()
 
@@ -72,7 +78,67 @@ func ExtractToolUses(entries []HistoryEntry) []ToolUse {
 		}
 	}
 
+	// Pass 2: scan user messages for denied tool_results
+	denials := buildDenialMap(entries)
+	for i := range toolUses {
+		if reason, ok := denials[toolUses[i].ToolUseID]; ok {
+			toolUses[i].Denied = true
+			toolUses[i].DeniedReason = reason
+		}
+	}
+
 	return toolUses
+}
+
+// buildDenialMap scans user messages for tool_result blocks that indicate
+// the user denied a tool use. Returns a map of toolUseID → user comment.
+func buildDenialMap(entries []HistoryEntry) map[string]string {
+	denials := make(map[string]string)
+	for _, entry := range entries {
+		if entry.Message.Role != MessageRoleUser {
+			continue
+		}
+		for _, block := range entry.Message.Content {
+			if block.Type != ContentTypeToolResult || !block.IsError || block.ToolUseID == "" {
+				continue
+			}
+			text := extractToolResultText(block)
+			if !strings.HasPrefix(text, denialPrefix) {
+				continue
+			}
+			reason := ""
+			if _, after, ok := strings.Cut(text, denialCommentSeparator); ok {
+				reason = strings.TrimSpace(after)
+			}
+			denials[block.ToolUseID] = reason
+		}
+	}
+	return denials
+}
+
+// extractToolResultText gets the text from a tool_result content block.
+// The Content field can be a JSON string or an array of content blocks.
+func extractToolResultText(block ContentBlock) string {
+	if block.Content == nil {
+		return block.Text
+	}
+	// Try as plain string first
+	var s string
+	if err := json.Unmarshal(block.Content, &s); err == nil {
+		return s
+	}
+	// Try as array of content blocks
+	var inner []ContentBlock
+	if err := json.Unmarshal(block.Content, &inner); err == nil {
+		var parts []string
+		for _, b := range inner {
+			if b.Type == ContentTypeText && b.Text != "" {
+				parts = append(parts, b.Text)
+			}
+		}
+		return strings.Join(parts, "")
+	}
+	return ""
 }
 
 // FilterToolUses applies filter criteria to tool uses

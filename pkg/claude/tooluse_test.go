@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -104,6 +105,102 @@ func TestFilterToolUses(t *testing.T) {
 			assert.Equal(t, tt.expected, got)
 		})
 	}
+}
+
+func TestExtractToolUses_DetectsDenials(t *testing.T) {
+	denialContent, _ := json.Marshal("The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). To tell you how to proceed, the user said:\nkeep commons/logger")
+
+	entries := []HistoryEntry{
+		{
+			Timestamp: "2024-01-01T10:00:00Z",
+			Message: Message{
+				Role: MessageRoleAssistant,
+				Content: []ContentBlock{
+					{Type: ContentTypeToolUse, ID: "tu-1", Name: "Edit", Input: []byte(`{"file_path":"/tmp/a.go"}`)},
+					{Type: ContentTypeToolUse, ID: "tu-2", Name: "Bash", Input: []byte(`{"command":"ls"}`)},
+				},
+			},
+		},
+		{
+			Timestamp: "2024-01-01T10:00:01Z",
+			Message: Message{
+				Role: MessageRoleUser,
+				Content: []ContentBlock{
+					{Type: ContentTypeToolResult, ToolUseID: "tu-1", IsError: true, Content: denialContent},
+					{Type: ContentTypeToolResult, ToolUseID: "tu-2", Content: []byte(`"ok"`)},
+				},
+			},
+		},
+	}
+
+	result := ExtractToolUses(entries)
+	assert.Len(t, result, 2)
+
+	assert.True(t, result[0].Denied)
+	assert.Equal(t, "keep commons/logger", result[0].DeniedReason)
+
+	assert.False(t, result[1].Denied)
+	assert.Empty(t, result[1].DeniedReason)
+}
+
+func TestExtractToolUses_DenialWithArrayContent(t *testing.T) {
+	entries := []HistoryEntry{
+		{
+			Timestamp: "2024-01-01T10:00:00Z",
+			Message: Message{
+				Role: MessageRoleAssistant,
+				Content: []ContentBlock{
+					{Type: ContentTypeToolUse, ID: "tu-1", Name: "Write", Input: []byte(`{"file_path":"/tmp/b.go"}`)},
+				},
+			},
+		},
+		{
+			Timestamp: "2024-01-01T10:00:01Z",
+			Message: Message{
+				Role: MessageRoleUser,
+				Content: []ContentBlock{
+					{
+						Type:      ContentTypeToolResult,
+						ToolUseID: "tu-1",
+						IsError:   true,
+						Content:   []byte(`[{"type":"text","text":"The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). To tell you how to proceed, the user said:\nuse a different approach"}]`),
+					},
+				},
+			},
+		},
+	}
+
+	result := ExtractToolUses(entries)
+	assert.Len(t, result, 1)
+	assert.True(t, result[0].Denied)
+	assert.Equal(t, "use a different approach", result[0].DeniedReason)
+}
+
+func TestExtractToolUses_ErrorNotDenial(t *testing.T) {
+	entries := []HistoryEntry{
+		{
+			Timestamp: "2024-01-01T10:00:00Z",
+			Message: Message{
+				Role: MessageRoleAssistant,
+				Content: []ContentBlock{
+					{Type: ContentTypeToolUse, ID: "tu-1", Name: "Bash", Input: []byte(`{"command":"false"}`)},
+				},
+			},
+		},
+		{
+			Timestamp: "2024-01-01T10:00:01Z",
+			Message: Message{
+				Role: MessageRoleUser,
+				Content: []ContentBlock{
+					{Type: ContentTypeToolResult, ToolUseID: "tu-1", IsError: true, Content: []byte(`"exit code 1"`)},
+				},
+			},
+		},
+	}
+
+	result := ExtractToolUses(entries)
+	assert.Len(t, result, 1)
+	assert.False(t, result[0].Denied)
 }
 
 func TestExtractToolUses_ExtractsCWD(t *testing.T) {

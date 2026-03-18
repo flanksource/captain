@@ -4,22 +4,12 @@ import (
 	"fmt"
 	"unicode/utf8"
 
-	"charm.land/huh/v2"
+	"github.com/charmbracelet/huh"
 )
 
 const maxLabelWidth = 72
 
-func RunTUI() error {
-	cfg := DefaultDiscoverConfig()
-	components := DiscoverAll(cfg)
-
-	sandboxPath := SandboxConfigPath()
-	if sandbox, err := LoadSandboxConfig(sandboxPath); err == nil {
-		ApplySelections(components, sandbox.Components, sandbox.Options)
-	} else {
-		ApplyDefaults(components, cfg.LocalDepPaths)
-	}
-
+func SelectComponents(components []Component) ([]Component, error) {
 	options := buildOptions(components)
 	selected := preselectedKeys(components)
 
@@ -35,10 +25,28 @@ func RunTUI() error {
 	)
 
 	if err := form.Run(); err != nil {
-		return err
+		return nil, err
 	}
 
 	applyFormSelection(components, selected)
+	return components, nil
+}
+
+func RunTUI() error {
+	cfg := DefaultDiscoverConfig()
+	components := DiscoverAll(cfg)
+
+	sandboxPath := SandboxConfigPath()
+	if sandbox, err := LoadSandboxConfig(sandboxPath); err == nil {
+		ApplySelections(components, sandbox.Components, sandbox.Options)
+	} else {
+		ApplyDefaults(components, cfg.LocalDepPaths)
+	}
+
+	components, err := SelectComponents(components)
+	if err != nil {
+		return err
+	}
 
 	user := DetectHostUser()
 	sandbox := BuildSandboxConfig(ModeCopy, "claude-env:base", components, user, nil)
@@ -46,7 +54,7 @@ func RunTUI() error {
 		return fmt.Errorf("saving sandbox config: %w", err)
 	}
 
-	fmt.Printf("Saved %d components to %s\n", len(selected), sandboxPath)
+	fmt.Printf("Saved %d components to %s\n", CountSelected(components), sandboxPath)
 	PrintRunInstructions(sandboxPath)
 	return nil
 }

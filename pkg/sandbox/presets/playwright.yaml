@@ -1,0 +1,17 @@
+network:
+  allowedDomains:
+    - "*.playwright.dev"
+    - "*.browsers.playwright.dev"
+  allowLocalBinding: true
+filesystem:
+  allowWrite:
+    - $HOME/.cache/ms-playwright
+    - test-results
+    - playwright-report
+passthroughEnv:
+  - PLAYWRIGHT_BROWSERS_PATH
+  - PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD
+  - PWDEBUG
+  - DEBUG
+install:
+  - npx playwright install --with-deps

@@ -233,6 +233,9 @@ func TestMergeSRTConfigs(t *testing.T) {
 			AllowWrite: []string{".", "old-dir/"},
 			DenyWrite:  []string{".env", "secrets/"},
 		},
+		Environment: SRTEnvironment{
+			Passthrough: []string{"HOME", "PATH", "CUSTOM_VAR"},
+		},
 		Binaries: []string{"git", "make"},
 	}
 	generated := SRTConfig{
@@ -245,6 +248,9 @@ func TestMergeSRTConfigs(t *testing.T) {
 			AllowWrite: []string{".", "/tmp", "pkg/"},
 			DenyWrite:  []string{".env"},
 		},
+		Environment: SRTEnvironment{
+			Passthrough: []string{"HOME", "PATH", "GOPATH"},
+		},
 		Binaries: []string{"go", "make"},
 	}
 
@@ -255,6 +261,7 @@ func TestMergeSRTConfigs(t *testing.T) {
 	assert.Equal(t, []string{"~/.gnupg", "~/.ssh"}, merged.Filesystem.DenyRead)
 	assert.Equal(t, []string{".", "/tmp", "old-dir/", "pkg/"}, merged.Filesystem.AllowWrite)
 	assert.Equal(t, []string{".env", "secrets/"}, merged.Filesystem.DenyWrite)
+	assert.Equal(t, []string{"CUSTOM_VAR", "GOPATH", "HOME", "PATH"}, merged.Environment.Passthrough)
 	assert.Equal(t, []string{"git", "go", "make"}, merged.Binaries)
 }
 
@@ -272,6 +279,9 @@ func TestLoadSRTConfig(t *testing.T) {
 			AllowWrite: []string{"."},
 			DenyWrite:  []string{".env"},
 		},
+		Environment: SRTEnvironment{
+			Passthrough: []string{"HOME", "PATH"},
+		},
 	}
 	data, _ := json.MarshalIndent(existing, "", "  ")
 	require.NoError(t, os.WriteFile(existingPath, data, 0644))
@@ -279,4 +289,53 @@ func TestLoadSRTConfig(t *testing.T) {
 	loaded, err := loadSRTConfig(existingPath)
 	require.NoError(t, err)
 	assert.Equal(t, existing, loaded)
+}
+
+func TestClassifyEnvVar(t *testing.T) {
+	passthrough := []string{"HOME", "PATH", "LC_*", "GOPATH"}
+
+	tests := []struct {
+		name     string
+		envVar   string
+		expected string
+	}{
+		{name: "exact match passthrough", envVar: "HOME", expected: "passthrough"},
+		{name: "glob prefix passthrough", envVar: "LC_ALL", expected: "passthrough"},
+		{name: "blocked suffix pattern", envVar: "GITHUB_TOKEN", expected: "blocked"},
+		{name: "blocked prefix pattern", envVar: "AWS_ACCESS_KEY_ID", expected: "blocked"},
+		{name: "blocked exact", envVar: "KUBECONFIG", expected: "blocked"},
+		{name: "blocked SSH", envVar: "SSH_AUTH_SOCK", expected: "blocked"},
+		{name: "ignored unknown", envVar: "MY_CUSTOM_THING", expected: "ignored"},
+		{name: "passthrough beats blocked", envVar: "GOPATH", expected: "passthrough"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, classifyEnvVar(tt.envVar, passthrough))
+		})
+	}
+}
+
+func TestMatchEnvPattern(t *testing.T) {
+	tests := []struct {
+		pattern  string
+		name     string
+		expected bool
+	}{
+		{"HOME", "HOME", true},
+		{"HOME", "HOMEDIR", false},
+		{"LC_*", "LC_ALL", true},
+		{"LC_*", "LC_", true},
+		{"LC_*", "XLC_ALL", false},
+		{"*_TOKEN", "GITHUB_TOKEN", true},
+		{"*_TOKEN", "TOKEN", false},
+		{"*_TOKEN", "TOKENIZER", false},
+		{"AWS_*", "AWS_SECRET_KEY", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.pattern+"_"+tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, matchEnvPattern(tt.pattern, tt.name))
+		})
+	}
 }

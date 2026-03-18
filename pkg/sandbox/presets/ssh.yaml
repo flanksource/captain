@@ -1,0 +1,3 @@
+filesystem:
+  denyWrite:
+    - $HOME/.ssh

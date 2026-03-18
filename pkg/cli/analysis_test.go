@@ -137,6 +137,44 @@ func TestAnalyzeToolUse_Bash(t *testing.T) {
 	}
 }
 
+func TestAnalyzeToolUse_WebFetch(t *testing.T) {
+	a := AnalyzeToolUse(claude.ToolUse{
+		Tool:  "WebFetch",
+		Input: map[string]any{"url": "https://docs.example.com/api/v1"},
+	}, "")
+
+	assert.Equal(t, []string{"docs.example.com"}, a.Domains)
+	assert.Empty(t, a.ReadPaths)
+	assert.Empty(t, a.WritePaths)
+}
+
+func TestAnalyzeToolUse_WebSearch(t *testing.T) {
+	a := AnalyzeToolUse(claude.ToolUse{
+		Tool:  "WebSearch",
+		Input: map[string]any{"query": "golang context"},
+	}, "")
+
+	assert.Equal(t, []string{"api.anthropic.com"}, a.Domains)
+}
+
+func TestAnalyzeToolUse_MCPWithURL(t *testing.T) {
+	a := AnalyzeToolUse(claude.ToolUse{
+		Tool:  "mcp__playwright__browser_navigate",
+		Input: map[string]any{"url": "https://app.example.com/dashboard"},
+	}, "")
+
+	assert.Equal(t, []string{"app.example.com"}, a.Domains)
+}
+
+func TestAnalyzeToolUse_MCPWithoutURL(t *testing.T) {
+	a := AnalyzeToolUse(claude.ToolUse{
+		Tool:  "mcp__playwright__browser_click",
+		Input: map[string]any{"selector": "#button"},
+	}, "")
+
+	assert.Empty(t, a.Domains)
+}
+
 func TestFormatPathsWithIcons(t *testing.T) {
 	tests := []struct {
 		name       string

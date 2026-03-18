@@ -61,12 +61,12 @@ type DodCheckOptions struct{}
 
 // StopHookInput is the JSON Claude Code passes to Stop hooks via stdin.
 type StopHookInput struct {
-	SessionID           string `json:"session_id"`
-	TranscriptPath      string `json:"transcript_path,omitempty"`
-	CWD                 string `json:"cwd,omitempty"`
-	StopHookActive      bool   `json:"stop_hook_active"`
-	LastAssistantMsg    string `json:"last_assistant_message,omitempty"`
-	HookEventName       string `json:"hook_event_name,omitempty"`
+	SessionID        string `json:"session_id"`
+	TranscriptPath   string `json:"transcript_path,omitempty"`
+	CWD              string `json:"cwd,omitempty"`
+	StopHookActive   bool   `json:"stop_hook_active"`
+	LastAssistantMsg string `json:"last_assistant_message,omitempty"`
+	HookEventName    string `json:"hook_event_name,omitempty"`
 }
 
 func RunDodCheck(_ DodCheckOptions) (any, error) {

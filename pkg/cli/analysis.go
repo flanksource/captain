@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"net/url"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -42,6 +43,24 @@ func AnalyzeToolUse(tu claude.ToolUse, projectRoot string) ToolAnalysis {
 		}
 	case "Bash":
 		a.analyzeBash(tu, rel)
+	case "WebFetch":
+		if urlStr, ok := tu.Input["url"].(string); ok {
+			if u, err := url.Parse(urlStr); err == nil && u.Host != "" {
+				a.Domains = append(a.Domains, u.Hostname())
+			}
+		}
+	case "WebSearch":
+		a.Domains = append(a.Domains, "api.anthropic.com")
+	default:
+		if strings.HasPrefix(tu.Tool, "mcp__") {
+			domains := make(map[string]bool)
+			for _, v := range tu.Input {
+				if s, ok := v.(string); ok {
+					extractURLDomains(s, domains)
+				}
+			}
+			a.Domains = sortedKeys(domains)
+		}
 	}
 
 	sort.Strings(a.ReadPaths)

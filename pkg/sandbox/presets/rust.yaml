@@ -1,0 +1,14 @@
+network:
+  allowedDomains:
+    - crates.io
+    - static.crates.io
+filesystem:
+  allowWrite:
+    - $HOME/.cargo
+env:
+  CARGO_HTTP_CHECK_REVOKE: "false"
+passthroughEnv:
+  - CARGO_HOME
+  - RUSTUP_HOME
+install:
+  - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path && ln -s /root/.cargo/bin/rustup /usr/local/bin/rustup && ln -s /root/.cargo/bin/cargo /usr/local/bin/cargo && ln -s /root/.cargo/bin/rustc /usr/local/bin/rustc

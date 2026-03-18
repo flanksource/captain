@@ -1,0 +1,14 @@
+network:
+  allowedDomains:
+    - "*.azure.com"
+    - "*.microsoft.com"
+    - "*.windows.net"
+filesystem:
+  allowWrite:
+    - $HOME/.azure
+passthroughEnv:
+  - AZURE_CLIENT_ID
+  - AZURE_CLIENT_SECRET
+  - AZURE_TENANT_ID
+  - AZURE_SUBSCRIPTION_ID
+  - AZURE_CONFIG_DIR

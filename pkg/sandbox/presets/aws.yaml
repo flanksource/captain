@@ -1,0 +1,18 @@
+network:
+  allowedDomains:
+    - "*.amazonaws.com"
+    - "*.aws.amazon.com"
+filesystem:
+  allowWrite:
+    - $HOME/.aws
+passthroughEnv:
+  - AWS_ACCESS_KEY_ID
+  - AWS_SECRET_ACCESS_KEY
+  - AWS_SESSION_TOKEN
+  - AWS_REGION
+  - AWS_DEFAULT_REGION
+  - AWS_PROFILE
+  - AWS_CONFIG_FILE
+  - AWS_SHARED_CREDENTIALS_FILE
+  - AWS_ROLE_ARN
+  - AWS_WEB_IDENTITY_TOKEN_FILE

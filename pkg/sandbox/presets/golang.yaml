@@ -1,0 +1,31 @@
+network:
+  allowedDomains:
+    - proxy.golang.org
+    - sum.golang.org
+    - "*.golang.org"
+    - storage.googleapis.com
+filesystem:
+  allowWrite:
+    - $GOPATH
+    - $GOMODCACHE
+env:
+  GONOSUMCHECK: "*"
+  GOFLAGS: "-insecure"
+  SSL_CERT_FILE: ""
+  GONOSUMDB: "*"
+passthroughEnv:
+  - GOPATH
+  - GOMODCACHE
+  - GOROOT
+  - GOPROXY
+  - GOPRIVATE
+  - GOBIN
+install:
+  - |
+    ARCH=$(dpkg --print-architecture) && \
+    GO_VERSION=1.24.2 && \
+    wget -qO /tmp/go.tar.gz "https://dl.google.com/go/go${GO_VERSION}.linux-${ARCH}.tar.gz" && \
+    tar -C /usr/local -xzf /tmp/go.tar.gz && \
+    rm /tmp/go.tar.gz && \
+    ln -s /usr/local/go/bin/go /usr/local/bin/go && \
+    ln -s /usr/local/go/bin/gofmt /usr/local/bin/gofmt

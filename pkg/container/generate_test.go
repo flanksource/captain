@@ -115,11 +115,89 @@ func TestGenerateNoSelection(t *testing.T) {
 		{Category: CategoryAgents, Name: "a", Selected: false},
 	}
 	_, err := Generate(GenerateInput{
-		Name:    "empty",
+		Name:       "empty",
 		Components: components,
 		OutputDir:  dir,
 	})
 	if err == nil {
 		t.Error("expected error for no selection")
+	}
+}
+
+func TestGenerateWithPresetInstall(t *testing.T) {
+	dir := t.TempDir()
+	srcDir := filepath.Join(dir, "src")
+	_ = os.MkdirAll(srcDir, 0o755)
+
+	agentFile := filepath.Join(srcDir, "test.md")
+	_ = os.WriteFile(agentFile, []byte("# test"), 0o644)
+
+	components := []Component{
+		{Category: CategoryAgents, Name: "test", SourcePath: agentFile, TargetPath: "/home/node/.claude/agents/test.md", Selected: true},
+	}
+
+	outDir := filepath.Join(dir, "out")
+	_ = os.MkdirAll(outDir, 0o755)
+
+	contextDir, err := Generate(GenerateInput{
+		Name:          "test-install",
+		BaseImage:     "mybase:latest",
+		Components:    components,
+		OutputDir:     outDir,
+		PresetInstall: []string{"apt-get install -y python3"},
+	})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(contextDir, "Dockerfile"))
+	if err != nil {
+		t.Fatalf("reading Dockerfile: %v", err)
+	}
+	content := string(data)
+
+	if !strings.Contains(content, "RUN apt-get install -y python3") {
+		t.Error("preset install block missing from Dockerfile")
+	}
+}
+
+func TestGenerateUserRoot(t *testing.T) {
+	dir := t.TempDir()
+	srcDir := filepath.Join(dir, "src")
+	_ = os.MkdirAll(srcDir, 0o755)
+
+	agentFile := filepath.Join(srcDir, "test.md")
+	_ = os.WriteFile(agentFile, []byte("# test"), 0o644)
+
+	components := []Component{
+		{Category: CategoryAgents, Name: "test", SourcePath: agentFile, TargetPath: "/home/node/.claude/agents/test.md", Selected: true},
+	}
+
+	outDir := filepath.Join(dir, "out")
+	_ = os.MkdirAll(outDir, 0o755)
+
+	for _, mode := range []Mode{ModeCopy, ModeMount} {
+		contextDir, err := Generate(GenerateInput{
+			Name:       "root-test",
+			BaseImage:  "mybase:latest",
+			Mode:       mode,
+			Components: components,
+			OutputDir:  outDir,
+		})
+		if err != nil {
+			t.Fatalf("Generate(%s): %v", mode, err)
+		}
+
+		data, err := os.ReadFile(filepath.Join(contextDir, "Dockerfile"))
+		if err != nil {
+			t.Fatalf("reading Dockerfile: %v", err)
+		}
+		content := string(data)
+
+		lines := strings.Split(strings.TrimRight(content, "\n"), "\n")
+		lastLine := lines[len(lines)-1]
+		if lastLine != "USER root" {
+			t.Errorf("mode=%s: expected last line 'USER root', got %q", mode, lastLine)
+		}
 	}
 }
