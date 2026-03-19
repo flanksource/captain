@@ -14,13 +14,13 @@ func TestFilterToolUses(t *testing.T) {
 	twoHoursAgo := now.Add(-2 * time.Hour)
 
 	toolUses := []ToolUse{
-		{Tool: "Bash", CWD: "/Users/moshe/project", Timestamp: &now},
-		{Tool: "Read", CWD: "/Users/moshe/project", Timestamp: &hourAgo},
-		{Tool: "Write", CWD: "/Users/moshe/other", Timestamp: &twoHoursAgo},
-		{Tool: "Edit", CWD: "/Users/moshe/project", Timestamp: &now},
+		{Tool: "Bash", CWD: "/home/ubuntu/project", Timestamp: &now},
+		{Tool: "Read", CWD: "/home/ubuntu/project", Timestamp: &hourAgo},
+		{Tool: "Write", CWD: "/home/ubuntu/other", Timestamp: &twoHoursAgo},
+		{Tool: "Edit", CWD: "/home/ubuntu/project", Timestamp: &now},
 		{Tool: "Grep", CWD: "", Timestamp: &now},
-		{Tool: "Write", CWD: "/Users/moshe/project", Input: map[string]any{"file_path": "/Users/moshe/.claude/plans/foo.md"}, Timestamp: &now},
-		{Tool: "Write", CWD: "/Users/moshe/project", Input: map[string]any{"file_path": "/Users/moshe/project/main.go"}, Timestamp: &hourAgo},
+		{Tool: "Write", CWD: "/home/ubuntu/project", Input: map[string]any{"file_path": "/home/ubuntu/.claude/plans/foo.md"}, Timestamp: &now},
+		{Tool: "Write", CWD: "/home/ubuntu/project", Input: map[string]any{"file_path": "/home/ubuntu/project/main.go"}, Timestamp: &hourAgo},
 	}
 
 	tests := []struct {
@@ -60,7 +60,7 @@ func TestFilterToolUses(t *testing.T) {
 		},
 		{
 			name:     "dir filter - exact",
-			filter:   Filter{Dirs: []string{"/Users/moshe/project"}},
+			filter:   Filter{Dirs: []string{"/home/ubuntu/project"}},
 			expected: []string{"Bash", "Read", "Edit", "Grep", "Write"},
 		},
 		{
@@ -70,12 +70,12 @@ func TestFilterToolUses(t *testing.T) {
 		},
 		{
 			name:     "dir filter - negation",
-			filter:   Filter{Dirs: []string{"!/Users/moshe/other"}},
+			filter:   Filter{Dirs: []string{"!/home/ubuntu/other"}},
 			expected: []string{"Bash", "Read", "Edit", "Grep", "Write", "Write"},
 		},
 		{
 			name:     "combined tool and dir",
-			filter:   Filter{Tools: []string{"Bash", "Read"}, Dirs: []string{"/Users/moshe/project"}},
+			filter:   Filter{Tools: []string{"Bash", "Read"}, Dirs: []string{"/home/ubuntu/project"}},
 			expected: []string{"Bash", "Read"},
 		},
 		{
@@ -85,7 +85,7 @@ func TestFilterToolUses(t *testing.T) {
 		},
 		{
 			name:     "dir filter prefers file_path over CWD",
-			filter:   Filter{Tools: []string{"Write"}, Dirs: []string{"/Users/moshe/project"}},
+			filter:   Filter{Tools: []string{"Write"}, Dirs: []string{"/home/ubuntu/project"}},
 			expected: []string{"Write"},
 		},
 		{

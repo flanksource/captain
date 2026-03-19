@@ -138,9 +138,9 @@ func TestSandboxConfigYAMLFormat(t *testing.T) {
 		Image:   "claude-env:golang",
 		Mode:    ModeMount,
 		Presets: []string{"golang"},
-		User:    UserSpec{Username: "moshe", UID: 501, GID: 20},
+		User:    UserSpec{Username: "claude", UID: 501, GID: 20},
 		Volumes: []Volume{
-			{Source: "/Users/moshe/project", Target: "/workspace/project"},
+			{Source: "/home/ubuntu/project", Target: "/workspace/project"},
 		},
 	}
 	_ = SaveSandboxConfig(path, cfg)
@@ -154,7 +154,7 @@ func TestSandboxConfigYAMLFormat(t *testing.T) {
 	if !strings.Contains(content, "mode: mount") {
 		t.Error("expected mode field in YAML")
 	}
-	if !strings.Contains(content, "username: moshe") {
+	if !strings.Contains(content, "username: claude") {
 		t.Error("expected username in YAML")
 	}
 }

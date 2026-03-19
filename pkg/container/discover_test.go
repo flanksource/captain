@@ -301,8 +301,8 @@ func TestProjectDisplayName(t *testing.T) {
 		path string
 		want string
 	}{
-		{"/Users/moshe/go/src/github.com/flanksource/captain", "flanksource/captain"},
-		{"/Users/moshe/.dotfiles", ".dotfiles"},
+		{"/home/ubuntu/go/src/github.com/flanksource/captain", "flanksource/captain"},
+		{"/home/ubuntu/.dotfiles", ".dotfiles"},
 	}
 	for _, tt := range tests {
 		got := projectDisplayName(tt.path)
