@@ -62,6 +62,17 @@ var devToolCommands = map[string]bool{
 	"task": true,
 }
 
+// CreateViolation constructs a Violation with severity, operation type, and recommendation
+func CreateViolation(severity Severity, operation OperationType, cmd, path, message string) Violation {
+	return Violation{
+		Message:   message,
+		Command:   cmd,
+		Path:      path,
+		Severity:  severity,
+		Operation: operation,
+	}
+}
+
 // IsSafePipeCommand checks if a command is safe in a pipeline
 func IsSafePipeCommand(cmd string) bool {
 	return safePipeCommands[cmd]

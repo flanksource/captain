@@ -41,9 +41,9 @@ type HookOutput struct {
 
 // HookSpecificOutput contains tool-specific hook results
 type HookSpecificOutput struct {
-	PermissionDecision PermissionDecision `json:"permissionDecision,omitempty"`
-	Reason             string             `json:"reason,omitempty"`
-	UpdatedInput       json.RawMessage    `json:"updatedInput,omitempty"`
+	PermissionDecision       PermissionDecision `json:"permissionDecision,omitempty"`
+	PermissionDecisionReason string             `json:"permissionDecisionReason,omitempty"`
+	UpdatedInput             json.RawMessage    `json:"updatedInput,omitempty"`
 }
 
 // BashToolInput represents the input for Bash tool

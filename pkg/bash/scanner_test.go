@@ -261,6 +261,81 @@ func TestScanner_Scan_InterpreterCommands(t *testing.T) {
 	}
 }
 
+func TestScanner_Scan_CompoundCommands(t *testing.T) {
+	scanner := NewScanner("/Users/test/project", nil)
+
+	tests := []struct {
+		name            string
+		command         string
+		wantViolation   string
+		wantSeverity    Severity
+	}{
+		{
+			name:          "B-1: && compound command is blocked",
+			command:       "git status && git diff",
+			wantViolation: "B-1: compound command '&&' is not allowed",
+			wantSeverity:  SeverityHigh,
+		},
+		{
+			name:          "B-1: ; sequential commands are blocked",
+			command:       "git status; git diff",
+			wantViolation: "B-1: compound command ';' is not allowed",
+			wantSeverity:  SeverityHigh,
+		},
+		{
+			name:    "pipe is still allowed",
+			command: "cat file.txt | grep foo",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := scanner.Scan(tt.command)
+			if tt.wantViolation == "" {
+				assert.True(t, result.Allowed, "expected allowed for: %s, violations: %v", tt.command, result.Violations)
+				return
+			}
+			assert.False(t, result.Allowed, "expected blocked for: %s", tt.command)
+			assert.NotEmpty(t, result.Violations)
+			assert.Contains(t, result.Violations[0].Message, tt.wantViolation)
+			assert.Equal(t, tt.wantSeverity, result.Violations[0].Severity)
+			assert.Equal(t, SeverityHigh, result.OverallSeverity)
+		})
+	}
+}
+
+func TestScanner_Scan_Heredoc(t *testing.T) {
+	scanner := NewScanner("/Users/test/project", nil)
+
+	tests := []struct {
+		name    string
+		command string
+	}{
+		{
+			name:    "cat heredoc is blocked",
+			command: "cat <<EOF\nhello world\nEOF",
+		},
+		{
+			name:    "go run with heredoc is blocked",
+			command: "go run -exec '' -mod=mod -v << 'GOEOF'\npackage main\n\nfunc main() {}\nGOEOF",
+		},
+		{
+			name:    "multi-statement script with heredoc is blocked with B-2",
+			command: "cd /Users/moshe/go/src/github.com/flanksource/clicky\ncat > /tmp/claude/debug_folio.go << 'GOEOF'\npackage main\n\nfunc main() {}\nGOEOF\ngo run /tmp/claude/debug_folio.go > /tmp/folio-debug.pdf 2>&1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := scanner.Scan(tt.command)
+			assert.False(t, result.Allowed, "heredoc should be blocked")
+			assert.NotEmpty(t, result.Violations)
+			assert.Contains(t, result.Violations[0].Message, "B-2: heredocs are not allowed")
+			assert.Equal(t, SeverityHigh, result.Violations[0].Severity)
+		})
+	}
+}
+
 func TestScanner_Scan_FindExecCommands(t *testing.T) {
 	scanner := NewScanner("/Users/test/project", nil)
 

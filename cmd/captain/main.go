@@ -49,7 +49,18 @@ func main() {
 	clicky.AddNamedCommand("clear", dodCmd, cli.DodClearOptions{}, cli.RunDodClear)
 	clicky.AddNamedCommand("status", dodCmd, cli.DodStatusOptions{}, cli.RunDodStatus)
 	clicky.AddNamedCommand("run", dodCmd, cli.DodRunOptions{}, cli.RunDodRun)
-	clicky.AddNamedCommand("install", dodCmd, cli.DodInstallOptions{}, cli.RunDodInstall)
+
+	hookCmd := &cobra.Command{Use: "hook", Short: "Claude Code hook commands"}
+	rootCmd.AddCommand(hookCmd)
+	bashCheckCmd := &cobra.Command{Use: "bash-check", Short: "Scan bash command for violations (PreToolUse hook)", RunE: func(cmd *cobra.Command, args []string) error {
+		_, err := cli.RunBashCheck(cli.BashCheckOptions{})
+		return err
+	}}
+	hookCmd.AddCommand(bashCheckCmd)
+	clicky.AddNamedCommand("install", bashCheckCmd, cli.HookInstallOptions{}, cli.RunBashCheckInstall)
+	dodHookCmd := &cobra.Command{Use: "dod", Short: "Definition of Done hook"}
+	hookCmd.AddCommand(dodHookCmd)
+	clicky.AddNamedCommand("install", dodHookCmd, cli.HookInstallOptions{}, cli.RunDodInstall)
 
 	projectsCmd := &cobra.Command{Use: "projects", Short: "Manage Claude Code project sessions"}
 	rootCmd.AddCommand(projectsCmd)
