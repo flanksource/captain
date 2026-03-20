@@ -1,0 +1,16 @@
+network:
+  allowedDomains:
+    - pypi.org
+    - files.pythonhosted.org
+filesystem:
+  allowWrite:
+    - $HOME/.local/lib
+    - $HOME/.cache/pip
+env:
+  PYTHONDONTWRITEBYTECODE: "1"
+passthroughEnv:
+  - VIRTUAL_ENV
+  - PYTHONPATH
+  - CONDA_PREFIX
+install:
+  - apt-get update && apt-get install -y --no-install-recommends python3 python3-pip python3-venv && apt-get clean && rm -rf /var/lib/apt/lists/*

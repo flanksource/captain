@@ -16,7 +16,7 @@ type costProvider struct {
 	budgetUSD float64
 }
 
-func (c *costProvider) GetModel() string      { return c.provider.GetModel() }
+func (c *costProvider) GetModel() string       { return c.provider.GetModel() }
 func (c *costProvider) GetBackend() ai.Backend { return c.provider.GetBackend() }
 
 func (c *costProvider) Execute(ctx context.Context, req ai.Request) (*ai.Response, error) {

@@ -79,7 +79,7 @@ func TestHookOutput_Marshal(t *testing.T) {
 		StopReason: "blocked by policy",
 		HookSpecificOutput: &HookSpecificOutput{
 			PermissionDecision: PermissionDeny,
-			Reason:             "dangerous command",
+			PermissionDecisionReason: "dangerous command",
 		},
 	}
 

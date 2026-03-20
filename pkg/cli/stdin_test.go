@@ -132,3 +132,36 @@ func TestRunHistoryFromReader_ClaudeJSONL(t *testing.T) {
 	require.Len(t, histResult.Results, 1)
 	assert.Equal(t, "Bash", histResult.Results[0].Tool)
 }
+
+func TestRunHistoryFromReader_ApprovedFilter(t *testing.T) {
+	data := []byte(`{"sessionId":"abc","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu-1","name":"Bash","input":{"command":"echo allowed"}}]},"uuid":"1","timestamp":"2024-01-01T10:00:00Z"}
+{"sessionId":"abc","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu-2","name":"Bash","input":{"command":"rm -rf /"}}]},"uuid":"2","timestamp":"2024-01-01T10:01:00Z"}
+{"sessionId":"abc","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu-2","is_error":true,"content":"The user doesn't want to proceed with this tool use."}]},"uuid":"2b","timestamp":"2024-01-01T10:01:01Z"}
+{"sessionId":"abc","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu-3","name":"Read","input":{"file_path":"/tmp/x"}}]},"uuid":"3","timestamp":"2024-01-01T10:02:00Z"}
+`)
+
+	t.Run("no filter returns all", func(t *testing.T) {
+		result, err := runHistoryFromReader(data, HistoryOptions{Limit: 100})
+		require.NoError(t, err)
+		histResult := result.(HistoryResult)
+		assert.Equal(t, 3, histResult.Total)
+	})
+
+	t.Run("approved=true filters out denied", func(t *testing.T) {
+		result, err := runHistoryFromReader(data, HistoryOptions{Limit: 100, Approved: "true"})
+		require.NoError(t, err)
+		histResult := result.(HistoryResult)
+		assert.Equal(t, 2, histResult.Total)
+		for _, r := range histResult.Results {
+			assert.Equal(t, "✓", r.Approved)
+		}
+	})
+
+	t.Run("approved=false shows only denied", func(t *testing.T) {
+		result, err := runHistoryFromReader(data, HistoryOptions{Limit: 100, Approved: "false"})
+		require.NoError(t, err)
+		histResult := result.(HistoryResult)
+		assert.Equal(t, 1, histResult.Total)
+		assert.Contains(t, histResult.Results[0].Approved, "✗")
+	})
+}

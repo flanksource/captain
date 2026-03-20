@@ -76,7 +76,7 @@ func HandleExitError(exitCode int, stderr string) error {
 // clearNestingEnv removes env vars that CLI tools use to detect nested sessions.
 func clearNestingEnv(environ []string) []string {
 	nestingVars := map[string]bool{
-		"CLAUDECODE":            true,
+		"CLAUDECODE":             true,
 		"CLAUDE_CODE_ENTRYPOINT": true,
 	}
 	var filtered []string

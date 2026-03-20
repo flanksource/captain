@@ -1,0 +1,14 @@
+network:
+  allowedDomains:
+    - "*.googleapis.com"
+    - "*.google.com"
+    - accounts.google.com
+filesystem:
+  allowWrite:
+    - $HOME/.config/gcloud
+passthroughEnv:
+  - GOOGLE_APPLICATION_CREDENTIALS
+  - GOOGLE_CLOUD_PROJECT
+  - GCLOUD_PROJECT
+  - CLOUDSDK_CORE_PROJECT
+  - CLOUDSDK_CONFIG

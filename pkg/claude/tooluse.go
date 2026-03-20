@@ -14,13 +14,15 @@ import (
 
 // ToolUse represents a single tool invocation extracted from history
 type ToolUse struct {
-	Tool        string         `json:"tool,omitempty"`
-	Input       map[string]any `json:"input,omitempty"`
-	Timestamp   *time.Time     `json:"timestamp,omitempty"`
-	CWD         string         `json:"cwd,omitempty"`
-	SessionID   string         `json:"session_id,omitempty"`
-	ToolUseID   string         `json:"tool_use_id,omitempty"`
-	ProjectRoot string         `json:"project_root,omitempty"`
+	Tool         string         `json:"tool,omitempty"`
+	Input        map[string]any `json:"input,omitempty"`
+	Timestamp    *time.Time     `json:"timestamp,omitempty"`
+	CWD          string         `json:"cwd,omitempty"`
+	SessionID    string         `json:"session_id,omitempty"`
+	ToolUseID    string         `json:"tool_use_id,omitempty"`
+	ProjectRoot  string         `json:"project_root,omitempty"`
+	Denied       bool           `json:"denied,omitempty"`
+	DeniedReason string         `json:"deniedReason,omitempty"`
 }
 
 // Filter defines criteria for filtering tool uses
@@ -32,10 +34,14 @@ type Filter struct {
 	Limit  int
 }
 
+const denialPrefix = "The user doesn't want to proceed with this tool use."
+const denialCommentSeparator = "the user said:\n"
+
 // ExtractToolUses extracts ToolUse records from history entries
 func ExtractToolUses(entries []HistoryEntry) []ToolUse {
 	var toolUses []ToolUse
 
+	// Pass 1: extract tool_use blocks
 	for _, entry := range entries {
 		ts, _ := entry.ParseTimestamp()
 
@@ -72,7 +78,67 @@ func ExtractToolUses(entries []HistoryEntry) []ToolUse {
 		}
 	}
 
+	// Pass 2: scan user messages for denied tool_results
+	denials := buildDenialMap(entries)
+	for i := range toolUses {
+		if reason, ok := denials[toolUses[i].ToolUseID]; ok {
+			toolUses[i].Denied = true
+			toolUses[i].DeniedReason = reason
+		}
+	}
+
 	return toolUses
+}
+
+// buildDenialMap scans user messages for tool_result blocks that indicate
+// the user denied a tool use. Returns a map of toolUseID → user comment.
+func buildDenialMap(entries []HistoryEntry) map[string]string {
+	denials := make(map[string]string)
+	for _, entry := range entries {
+		if entry.Message.Role != MessageRoleUser {
+			continue
+		}
+		for _, block := range entry.Message.Content {
+			if block.Type != ContentTypeToolResult || !block.IsError || block.ToolUseID == "" {
+				continue
+			}
+			text := extractToolResultText(block)
+			if !strings.HasPrefix(text, denialPrefix) {
+				continue
+			}
+			reason := ""
+			if _, after, ok := strings.Cut(text, denialCommentSeparator); ok {
+				reason = strings.TrimSpace(after)
+			}
+			denials[block.ToolUseID] = reason
+		}
+	}
+	return denials
+}
+
+// extractToolResultText gets the text from a tool_result content block.
+// The Content field can be a JSON string or an array of content blocks.
+func extractToolResultText(block ContentBlock) string {
+	if block.Content == nil {
+		return block.Text
+	}
+	// Try as plain string first
+	var s string
+	if err := json.Unmarshal(block.Content, &s); err == nil {
+		return s
+	}
+	// Try as array of content blocks
+	var inner []ContentBlock
+	if err := json.Unmarshal(block.Content, &inner); err == nil {
+		var parts []string
+		for _, b := range inner {
+			if b.Type == ContentTypeText && b.Text != "" {
+				parts = append(parts, b.Text)
+			}
+		}
+		return strings.Join(parts, "")
+	}
+	return ""
 }
 
 // FilterToolUses applies filter criteria to tool uses
@@ -123,9 +189,9 @@ func FilterToolUses(toolUses []ToolUse, filter Filter) []ToolUse {
 	return filtered
 }
 
-// relativePath makes an absolute path relative to projectRoot if possible.
+// RelativePath makes an absolute path relative to projectRoot if possible.
 // For paths outside the project (more than 1 parent level away), returns absolute path.
-func relativePath(path, projectRoot string) string {
+func RelativePath(path, projectRoot string) string {
 	if path == "" {
 		return path
 	}
@@ -148,19 +214,48 @@ func relativePath(path, projectRoot string) string {
 	return path
 }
 
+func singleLine(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
+func (tu ToolUse) Interpreter() string {
+	if tu.Tool != "Bash" {
+		return ""
+	}
+	cmd, _ := tu.Input["command"].(string)
+	return bash.DetectInterpreter(cmd)
+}
+
+// DisplayTool returns the display name for the tool, normalizing related tools
+func (tu ToolUse) DisplayTool() string {
+	switch tu.Tool {
+	case "Bash":
+		if interp := tu.Interpreter(); interp != "" {
+			return interp
+		}
+		return "Bash"
+	case "TaskCreate", "TodoWrite":
+		return "Task"
+	case "AskUserQuestion":
+		return "Ask"
+	default:
+		return tu.Tool
+	}
+}
+
 // FormatCommand extracts a human-readable command string from a ToolUse
 func (tu ToolUse) FormatCommand() string {
 	rel := func(path string) string {
-		return relativePath(path, tu.ProjectRoot)
+		return RelativePath(path, tu.ProjectRoot)
 	}
 
 	switch tu.Tool {
 	case "Bash":
 		if cmd, ok := tu.Input["command"].(string); ok {
 			if tu.ProjectRoot != "" {
-				return strings.ReplaceAll(cmd, tu.ProjectRoot+"/", "")
+				cmd = strings.ReplaceAll(cmd, tu.ProjectRoot+"/", "")
 			}
-			return cmd
+			return singleLine(cmd)
 		}
 	case "Read", "Write", "Edit":
 		if path, ok := tu.Input["file_path"].(string); ok {
@@ -197,12 +292,16 @@ func (tu ToolUse) FormatCommand() string {
 		subType, _ := tu.Input["subagent_type"].(string)
 		desc, _ := tu.Input["description"].(string)
 		if subType != "" && desc != "" {
-			return subType + ": " + desc
+			return singleLine(subType + ": " + desc)
 		}
 		if desc != "" {
-			return desc
+			return singleLine(desc)
 		}
 		return subType
+	case "TaskCreate":
+		if subject, ok := tu.Input["subject"].(string); ok {
+			return subject
+		}
 	case "TodoWrite":
 		if todos, ok := tu.Input["todos"].([]any); ok {
 			return fmt.Sprintf("%d todos", len(todos))
@@ -214,7 +313,7 @@ func (tu ToolUse) FormatCommand() string {
 	}
 
 	b, _ := json.Marshal(tu.Input)
-	return string(b)
+	return singleLine(string(b))
 }
 
 // FilePath returns the file_path from tool input, if present
@@ -228,7 +327,7 @@ func (tu ToolUse) FilePath() string {
 // ExtractPath returns the relevant directory/file path for this tool use
 func (tu ToolUse) ExtractPath() string {
 	rel := func(path string) string {
-		return relativePath(path, tu.ProjectRoot)
+		return RelativePath(path, tu.ProjectRoot)
 	}
 
 	switch tu.Tool {

@@ -1,0 +1,14 @@
+network:
+  allowedDomains:
+    - registry.npmjs.org
+    - "*.npmjs.org"
+    - registry.yarnpkg.com
+filesystem:
+  allowWrite:
+    - node_modules
+    - $HOME/.npm
+env:
+  NODE_TLS_REJECT_UNAUTHORIZED: "0"
+passthroughEnv:
+  - NODE_PATH
+  - NPM_CONFIG_PREFIX

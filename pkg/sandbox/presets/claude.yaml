@@ -1,0 +1,13 @@
+network:
+  allowedDomains:
+    - "*.claude.ai"
+    - "*.anthropic.com"
+  allowUnixSockets:
+    - /var/run/docker.sock
+  allowLocalBinding: true
+
+enableWeakerNetworkIsolation: true
+ignoreViolations:
+  "*": ["/usr/bin", "/System"]
+  "git push": ["/usr/bin/nc"]
+  "npm": ["/private/tmp"]

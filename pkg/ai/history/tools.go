@@ -48,8 +48,8 @@ type Todo struct {
 // Each delegates to ToolUse.Pretty() for unified rendering.
 
 type Bash struct {
-	Command string `json:"command"`
-	CWD     string `json:"cwd,omitempty"`
+	Command string  `json:"command"`
+	CWD     string  `json:"cwd,omitempty"`
 	Timeout float64 `json:"timeout,omitempty"`
 }
 

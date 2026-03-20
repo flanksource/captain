@@ -249,11 +249,11 @@ func TestClassifyToolWithPath(t *testing.T) {
 		filePath string
 		expected Category
 	}{
-		{"Write", "/Users/moshe/.claude/plans/foo.md", CategoryPlan},
+		{"Write", "/home/ubuntu/.claude/plans/foo.md", CategoryPlan},
 		{"Edit", "/home/user/.claude/plans/bar.md", CategoryPlan},
-		{"Write", "/Users/moshe/project/main.go", CategoryEdit},
+		{"Write", "/home/ubuntu/project/main.go", CategoryEdit},
 		{"Write", "", CategoryEdit},
-		{"Read", "/Users/moshe/.claude/plans/foo.md", CategoryPlan},
+		{"Read", "/home/ubuntu/.claude/plans/foo.md", CategoryPlan},
 		{"Bash", "", CategoryOther},
 	}
 

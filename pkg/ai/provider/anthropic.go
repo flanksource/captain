@@ -26,7 +26,7 @@ func NewAnthropic(cfg ai.Config) *Anthropic {
 	return &Anthropic{model: model, apiKey: cfg.APIKey, httpClient: cfg.HTTPClient}
 }
 
-func (a *Anthropic) GetModel() string      { return a.model }
+func (a *Anthropic) GetModel() string       { return a.model }
 func (a *Anthropic) GetBackend() ai.Backend { return ai.BackendAnthropic }
 
 func (a *Anthropic) Execute(ctx context.Context, req ai.Request) (*ai.Response, error) {

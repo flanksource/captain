@@ -1,0 +1,11 @@
+envPassThrough:
+  - GH_TOKEN
+  - GITHUB_TOKEN
+network:
+  allowedDomains:
+    - github.com
+    - "*.github.com"
+    - "*.githubusercontent.com"
+    - gitlab.com
+filesystem:
+  allowGitConfig: true

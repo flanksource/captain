@@ -1,6 +1,9 @@
 package bash
 
-import "strings"
+import (
+	"path/filepath"
+	"strings"
+)
 
 var safePipeCommands = map[string]bool{
 	"grep": true, "egrep": true, "fgrep": true,
@@ -57,6 +60,17 @@ var devToolCommands = map[string]bool{
 	"cargo": true, "rustc": true,
 	"mvn": true, "gradle": true,
 	"task": true,
+}
+
+// CreateViolation constructs a Violation with severity, operation type, and recommendation
+func CreateViolation(severity Severity, operation OperationType, cmd, path, message string) Violation {
+	return Violation{
+		Message:   message,
+		Command:   cmd,
+		Path:      path,
+		Severity:  severity,
+		Operation: operation,
+	}
 }
 
 // IsSafePipeCommand checks if a command is safe in a pipeline
@@ -171,6 +185,73 @@ func CheckFileWrite(cmd string, args []string) (bool, string) {
 func IsPythonCommand(cmd string) bool {
 	return cmd == "python" || cmd == "python3" || cmd == "python2" ||
 		strings.HasPrefix(cmd, "python3.") || strings.HasPrefix(cmd, "python2.")
+}
+
+var nonBashInterpreters = map[string]string{
+	"python": "Python", "python2": "Python", "python3": "Python",
+	"node": "Node",
+	"ruby": "Ruby",
+	"perl": "Perl",
+	"php":  "PHP",
+}
+
+func DetectInterpreter(cmd string) string {
+	firstLine := strings.TrimSpace(strings.SplitN(cmd, "\n", 2)[0])
+	if idx := strings.Index(firstLine, "<<"); idx > 0 {
+		firstLine = strings.TrimSpace(firstLine[:idx])
+	}
+	fields := strings.Fields(firstLine)
+	if len(fields) == 0 {
+		return ""
+	}
+	binary := filepath.Base(fields[0])
+	if strings.HasPrefix(binary, "python3.") || strings.HasPrefix(binary, "python2.") {
+		return "Python"
+	}
+	return nonBashInterpreters[binary]
+}
+
+func ExtractInterpreterBody(cmd string) string {
+	parts := strings.SplitN(cmd, "\n", 2)
+	firstLine := parts[0]
+
+	// Heredoc: extract body between first and last line
+	if idx := strings.Index(firstLine, "<<"); idx > 0 && len(parts) == 2 {
+		body := parts[1]
+		// Strip the closing delimiter line (last non-empty line)
+		if last := strings.LastIndex(body, "\n"); last >= 0 {
+			body = body[:last]
+		}
+		return strings.TrimSpace(body)
+	}
+
+	// Inline: python3 -c "code" or node -e "code"
+	fields := strings.Fields(firstLine)
+	for i, f := range fields {
+		if (f == "-c" || f == "-e") && i+1 < len(fields) {
+			arg := strings.Join(fields[i+1:], " ")
+			return strings.Trim(arg, `"'`)
+		}
+	}
+
+	return cmd
+}
+
+func InterpreterLanguage(interpreter string) string {
+	switch interpreter {
+	case "Python":
+		return "python"
+	case "Node":
+		return "javascript"
+	case "Ruby":
+		return "ruby"
+	case "Perl":
+		return "perl"
+	case "PHP":
+		return "php"
+	default:
+		return "bash"
+	}
 }
 
 // IsFindCommand checks if a command is find

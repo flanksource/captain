@@ -16,17 +16,17 @@ const (
 )
 
 type ClaudeCLIOutput struct {
-	Result       string           `json:"result,omitempty"`
-	Structured   any              `json:"structured,omitempty"`
-	Usage        *ClaudeCLIUsage  `json:"usage,omitempty"`
-	Error        string           `json:"error,omitempty"`
-	IsError      bool             `json:"is_error,omitempty"`
-	SessionID    string           `json:"session_id,omitempty"`
-	CostUSD      float64          `json:"cost_usd,omitempty"`
-	DurationMS   float64          `json:"duration_ms,omitempty"`
-	DurationAPI  float64          `json:"duration_api_ms,omitempty"`
-	NumTurns     int              `json:"num_turns,omitempty"`
-	TotalCostUSD float64          `json:"total_cost,omitempty"`
+	Result       string          `json:"result,omitempty"`
+	Structured   any             `json:"structured,omitempty"`
+	Usage        *ClaudeCLIUsage `json:"usage,omitempty"`
+	Error        string          `json:"error,omitempty"`
+	IsError      bool            `json:"is_error,omitempty"`
+	SessionID    string          `json:"session_id,omitempty"`
+	CostUSD      float64         `json:"cost_usd,omitempty"`
+	DurationMS   float64         `json:"duration_ms,omitempty"`
+	DurationAPI  float64         `json:"duration_api_ms,omitempty"`
+	NumTurns     int             `json:"num_turns,omitempty"`
+	TotalCostUSD float64         `json:"total_cost,omitempty"`
 }
 
 type ClaudeCLIUsage struct {

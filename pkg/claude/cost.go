@@ -72,11 +72,11 @@ func CalculateCost(usage *Usage, model string) float64 {
 
 // TokenSummary aggregates token counts and cost across multiple messages.
 type TokenSummary struct {
-	InputTokens       int     `json:"inputTokens" pretty:"label=Input"`
-	OutputTokens      int     `json:"outputTokens" pretty:"label=Output"`
-	CacheWriteTokens  int     `json:"cacheWriteTokens" pretty:"label=Cache Write"`
-	CacheReadTokens   int     `json:"cacheReadTokens" pretty:"label=Cache Read"`
-	TotalCost         float64 `json:"totalCost"`
+	InputTokens      int     `json:"inputTokens" pretty:"label=Input"`
+	OutputTokens     int     `json:"outputTokens" pretty:"label=Output"`
+	CacheWriteTokens int     `json:"cacheWriteTokens" pretty:"label=Cache Write"`
+	CacheReadTokens  int     `json:"cacheReadTokens" pretty:"label=Cache Read"`
+	TotalCost        float64 `json:"totalCost"`
 }
 
 func (s *TokenSummary) Add(usage *Usage, model string) {

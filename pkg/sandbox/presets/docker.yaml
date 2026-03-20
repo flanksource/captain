@@ -1,0 +1,7 @@
+network:
+  allowedDomains:
+    - "*.docker.com"
+    - "*.docker.io"
+    - hub.docker.com
+  allowUnixSockets:
+    - /var/run/docker.sock

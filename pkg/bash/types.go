@@ -5,9 +5,22 @@ import "encoding/json"
 type OperationType string
 
 const (
-	OpCreate OperationType = "create"
-	OpModify OperationType = "modify"
-	OpDelete OperationType = "delete"
+	OpCreate         OperationType = "create"
+	OpModify         OperationType = "modify"
+	OpDelete         OperationType = "delete"
+	OpNetwork        OperationType = "network"
+	OpPackageInstall OperationType = "package_install"
+	OpFileDelete     OperationType = "file_delete"
+	OpPermission     OperationType = "permission"
+)
+
+type Severity int
+
+const (
+	SeveritySafe   Severity = 0
+	SeverityLow    Severity = 1
+	SeverityMedium Severity = 2
+	SeverityHigh   Severity = 3
 )
 
 type FileOperation struct {
@@ -27,20 +40,23 @@ type AnalysisResult struct {
 
 // Violation represents a detected safety issue in the bash command
 type Violation struct {
-	Message        string `json:"message"`
-	Command        string `json:"command"`
-	Path           string `json:"path,omitempty"`
-	Recommendation string `json:"recommendation,omitempty"`
+	Message        string        `json:"message"`
+	Command        string        `json:"command"`
+	Path           string        `json:"path,omitempty"`
+	Recommendation string        `json:"recommendation,omitempty"`
+	Severity       Severity      `json:"severity,omitempty"`
+	Operation      OperationType `json:"operation,omitempty"`
 }
 
 // ScanResult contains the complete analysis of a bash command
 type ScanResult struct {
-	Allowed        bool            `json:"allowed"`
-	Reason         string          `json:"reason,omitempty"`
-	Violations     []Violation     `json:"violations,omitempty"`
-	Operations     []FileOperation `json:"operations,omitempty"`
-	SafeOperations []string        `json:"safe_operations,omitempty"`
-	ParseError     string          `json:"parse_error,omitempty"`
+	Allowed         bool            `json:"allowed"`
+	Reason          string          `json:"reason,omitempty"`
+	Violations      []Violation     `json:"violations,omitempty"`
+	Operations      []FileOperation `json:"operations,omitempty"`
+	SafeOperations  []string        `json:"safe_operations,omitempty"`
+	ParseError      string          `json:"parse_error,omitempty"`
+	OverallSeverity Severity        `json:"overall_severity,omitempty"`
 }
 
 // Config represents the scanner configuration from YAML file
@@ -51,9 +67,10 @@ type Config struct {
 
 // PathClassification represents the safety classification of a file path
 type PathClassification struct {
-	Path   string
-	IsSafe bool
-	Reason string
+	Path     string
+	IsSafe   bool
+	Reason   string
+	Severity Severity
 }
 
 // HookInput represents the JSON structure received from Claude Code hooks

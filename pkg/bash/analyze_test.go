@@ -224,11 +224,72 @@ func TestAnalyzeExtractsCommands(t *testing.T) {
 	}
 }
 
+func TestInlineInterpretersNoReferencedPaths(t *testing.T) {
+	tests := []struct {
+		name   string
+		script string
+		paths  []string
+	}{
+		{
+			name:   "python3 -c",
+			script: `python3 -c "import os; print(os.getcwd())"`,
+			paths:  nil,
+		},
+		{
+			name:   "node -e",
+			script: `node -e "console.log('hi')"`,
+			paths:  nil,
+		},
+		{
+			name:   "ruby -e",
+			script: `ruby -e "puts 'hello'"`,
+			paths:  nil,
+		},
+		{
+			name:   "bash -c",
+			script: `bash -c "echo /etc/passwd"`,
+			paths:  nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := Analyze(tt.script)
+			require.NoError(t, err)
+			assert.Equal(t, tt.paths, result.ReferencedPaths)
+		})
+	}
+}
+
+func TestFirstLineFallback(t *testing.T) {
+	script := "python3 -c\nimport json\nprint(json.dumps({}))"
+	result, err := Analyze(script)
+	require.Error(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, []string{"python3 -c"}, result.Commands)
+}
+
+func TestFirstLineFallbackStripsHeredoc(t *testing.T) {
+	script := "python3 << 'PYEOF'\n{invalid python that breaks bash parser"
+	result, err := Analyze(script)
+	require.Error(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, []string{"python3"}, result.Commands)
+}
+
+func TestHeredocParsesCorrectly(t *testing.T) {
+	script := "python3 << 'PYEOF'\nimport json\nprint(json.dumps({}))\nPYEOF"
+	result, err := Analyze(script)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Nil(t, result.ReferencedPaths, "inline interpreter should not produce referenced paths")
+}
+
 func TestAnalyzeExtractsReferencedPaths(t *testing.T) {
 	tests := []struct {
-		name  string
+		name   string
 		script string
-		paths []string
+		paths  []string
 	}{
 		{
 			name:   "cd command",

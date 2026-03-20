@@ -46,6 +46,7 @@ var projectMarkers = []string{
 // ProjectInfo contains information about a detected project
 type ProjectInfo struct {
 	Root       string
+	MainRoot   string // For worktrees, the main repo root; empty otherwise
 	MarkerFile string
 }
 
@@ -55,7 +56,9 @@ func FindProjectRoot(dir string) string {
 	return info.Root
 }
 
-// FindProjectInfo walks up from dir looking for project marker files and returns details
+// FindProjectInfo walks up from dir looking for project marker files and returns details.
+// For git worktrees (where .git is a file), Root is the worktree directory (for correct
+// relative paths) and MainRoot is the main repository root (for project naming).
 func FindProjectInfo(dir string) ProjectInfo {
 	if dir == "" {
 		return ProjectInfo{}
@@ -63,9 +66,16 @@ func FindProjectInfo(dir string) ProjectInfo {
 	current := dir
 	for {
 		for _, marker := range projectMarkers {
-			if _, err := os.Stat(filepath.Join(current, marker)); err == nil {
-				return ProjectInfo{Root: current, MarkerFile: marker}
+			markerPath := filepath.Join(current, marker)
+			info, err := os.Stat(markerPath)
+			if err != nil {
+				continue
 			}
+			pi := ProjectInfo{Root: current, MarkerFile: marker}
+			if marker == ".git" && !info.IsDir() {
+				pi.MainRoot = resolveWorktreeRoot(markerPath)
+			}
+			return pi
 		}
 		parent := filepath.Dir(current)
 		if parent == current {
@@ -73,6 +83,37 @@ func FindProjectInfo(dir string) ProjectInfo {
 		}
 		current = parent
 	}
+}
+
+// resolveWorktreeRoot reads a .git file (used by worktrees) and resolves
+// the main repository root. A worktree .git file contains:
+//
+//	gitdir: /path/to/main-repo/.git/worktrees/<name>
+//
+// This function extracts the main repo root from that path.
+func resolveWorktreeRoot(gitFilePath string) string {
+	data, err := os.ReadFile(gitFilePath)
+	if err != nil {
+		return ""
+	}
+	line := strings.TrimSpace(string(data))
+	if !strings.HasPrefix(line, "gitdir: ") {
+		return ""
+	}
+	gitdir := strings.TrimPrefix(line, "gitdir: ")
+	// gitdir looks like: /path/to/repo/.git/worktrees/<name>
+	// Walk up to find the .git directory, then its parent is the repo root
+	parts := strings.Split(filepath.ToSlash(gitdir), "/")
+	for i := len(parts) - 1; i >= 0; i-- {
+		if parts[i] == ".git" {
+			root := filepath.FromSlash(strings.Join(parts[:i], "/"))
+			if _, err := os.Stat(root); err == nil {
+				return root
+			}
+			break
+		}
+	}
+	return ""
 }
 
 // FindSessionFiles discovers Claude Code session JSONL files in the projects directory.

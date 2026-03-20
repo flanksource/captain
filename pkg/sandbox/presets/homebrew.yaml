@@ -1,0 +1,9 @@
+network:
+  allowedDomains:
+    - formulae.brew.sh
+    - ghcr.io
+    - "*.githubusercontent.com"
+filesystem:
+  allowWrite:
+    - /opt/homebrew
+    - /usr/local/Cellar

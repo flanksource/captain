@@ -34,6 +34,12 @@ func (s *Scanner) Scan(command string) *ScanResult {
 		SafeOperations: []string{},
 	}
 
+	if interpreter := DetectInterpreter(command); interpreter != "" {
+		result.SafeOperations = append(result.SafeOperations,
+			strings.ToLower(interpreter)+" (not analyzed)")
+		return result
+	}
+
 	parser := syntax.NewParser()
 	node, err := parser.Parse(strings.NewReader(command), "")
 	if err != nil {
@@ -55,6 +61,12 @@ func (s *Scanner) Scan(command string) *ScanResult {
 
 	s.walkNode(node, result)
 
+	for _, v := range result.Violations {
+		if v.Severity > result.OverallSeverity {
+			result.OverallSeverity = v.Severity
+		}
+	}
+
 	if len(result.Violations) > 0 {
 		result.Allowed = false
 		result.Reason = result.Violations[0].Message
@@ -70,6 +82,21 @@ func (s *Scanner) walkNode(node syntax.Node, result *ScanResult) {
 
 	switch n := node.(type) {
 	case *syntax.File:
+		if len(n.Stmts) > 1 {
+			for _, stmt := range n.Stmts {
+				for _, redir := range stmt.Redirs {
+					if redir.Hdoc != nil {
+						s.analyzeHeredoc(redir, result)
+						return
+					}
+				}
+			}
+			result.Violations = append(result.Violations, CreateViolation(
+				SeverityHigh, OpModify, ";", "",
+				"B-1: compound command ';' is not allowed — split into separate Bash calls",
+			))
+			return
+		}
 		for _, stmt := range n.Stmts {
 			s.walkNode(stmt, result)
 		}
@@ -83,6 +110,17 @@ func (s *Scanner) walkNode(node syntax.Node, result *ScanResult) {
 	case *syntax.CallExpr:
 		s.analyzeCommand(n, result)
 	case *syntax.BinaryCmd:
+		if n.Op == syntax.AndStmt || n.Op == syntax.OrStmt {
+			op := "&&"
+			if n.Op == syntax.OrStmt {
+				op = "||"
+			}
+			result.Violations = append(result.Violations, CreateViolation(
+				SeverityHigh, OpModify, op, "",
+				fmt.Sprintf("B-1: compound command '%s' is not allowed — split into separate Bash calls", op),
+			))
+			return
+		}
 		s.walkNode(n.X, result)
 		s.walkNode(n.Y, result)
 	case *syntax.Subshell:
@@ -334,45 +372,11 @@ func (s *Scanner) analyzeFindCommand(cmd string, args []string, result *ScanResu
 	}
 }
 
-func (s *Scanner) analyzeHeredoc(redir *syntax.Redirect, result *ScanResult) {
-	heredocContent := s.getWordValue(redir.Hdoc)
-	if !s.looksLikeScript(heredocContent) {
-		result.SafeOperations = append(result.SafeOperations, "heredoc (data)")
-		return
-	}
-
-	heredocResult := s.Scan(heredocContent)
-	for _, v := range heredocResult.Violations {
-		v.Message = fmt.Sprintf("In heredoc script: %s", v.Message)
-		result.Violations = append(result.Violations, v)
-	}
-	for _, op := range heredocResult.SafeOperations {
-		result.SafeOperations = append(result.SafeOperations, fmt.Sprintf("heredoc: %s", op))
-	}
-}
-
-func (s *Scanner) looksLikeScript(content string) bool {
-	trimmed := strings.TrimSpace(content)
-	if trimmed == "" {
-		return false
-	}
-	if strings.HasPrefix(trimmed, "#!") {
-		return true
-	}
-	bashKeywords := []string{
-		"if ", "then", "else", "fi",
-		"for ", "while ", "do", "done",
-		"case ", "esac",
-		"function ",
-		"echo ", "cat ", "grep ", "awk ", "sed ",
-		"cd ", "ls ", "rm ", "cp ", "mv ",
-	}
-	for _, keyword := range bashKeywords {
-		if strings.Contains(trimmed, keyword) {
-			return true
-		}
-	}
-	return false
+func (s *Scanner) analyzeHeredoc(_ *syntax.Redirect, result *ScanResult) {
+	result.Violations = append(result.Violations, CreateViolation(
+		SeverityHigh, OpModify, "heredoc", "",
+		"B-2: heredocs are not allowed",
+	))
 }
 
 func (s *Scanner) getCommandName(call *syntax.CallExpr) string {
