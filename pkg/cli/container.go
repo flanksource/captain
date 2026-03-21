@@ -2,8 +2,10 @@ package cli
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/flanksource/captain/pkg/container"
+	"github.com/flanksource/captain/pkg/sandbox/presets"
 	"github.com/flanksource/clicky"
 	"github.com/flanksource/clicky/api"
 )
@@ -35,6 +37,8 @@ type ContainerRunOptions struct {
 	Env            map[string]string `flag:"env" help:"additional env vars (KEY=VALUE) to pass into the container" short:"e"`
 	EnvPassthrough []string          `flag:"env-passthrough" help:"additional host env vars to forward into the container"`
 	Name           string            `flag:"name" help:"override container name (--name)"`
+	Interactive    bool              `flag:"interactive" help:"interactively select tokens, presets, and env vars" short:"i"`
+	Remove         bool              `flag:"rm" help:"stop and remove container after exec exits"`
 }
 
 func RunContainerTUI() error {
@@ -66,30 +70,43 @@ func RunContainerGenerate(opts ContainerGenerateOptions) (any, error) {
 	user := container.DetectHostUser()
 	components := discoverDefaultSelected()
 
+	selectedPresets := opts.Presets
+	var wizardResult *container.WizardResult
+
 	if opts.Interactive {
 		var err error
-		if components, err = container.SelectComponents(components); err != nil {
+		wizardResult, err = container.RunWizard(components)
+		if err != nil {
 			return nil, err
 		}
+		components = wizardResult.Components
+		selectedPresets = wizardResult.Presets
 	}
 
-	tag := container.ImageTag(opts.Presets)
+	base, versions := resolvePresetVersions(selectedPresets, opts.Base)
+	tag := container.ImageTag(selectedPresets)
 
 	contextDir, err := container.Generate(container.GenerateInput{
-		Name:       tag,
-		BaseImage:  opts.Base,
-		Mode:       container.Mode(opts.Mode),
-		Components: components,
-		User:       user,
+		Name:          tag,
+		BaseImage:     base,
+		Mode:          container.Mode(opts.Mode),
+		Components:    components,
+		User:          user,
+		PresetInstall: presets.ResolveInstallSnippets(selectedPresets, versions),
 	})
 	if err != nil {
 		return nil, err
 	}
 	fmt.Printf("Generated: %s\n", contextDir)
 
-	sandbox := container.BuildSandboxConfig(container.Mode(opts.Mode), opts.Base, components, user, opts.Presets)
+	sb := container.BuildSandboxConfig(container.Mode(opts.Mode), base, components, user, selectedPresets)
+	if wizardResult != nil {
+		sb.Tokens = wizardResult.Tokens
+		sb.Env = wizardResult.Env
+		sb.EnvPassthrough = wizardResult.EnvPassthrough
+	}
 	sandboxPath := container.SandboxConfigPath()
-	if err := container.SaveSandboxConfig(sandboxPath, sandbox); err != nil {
+	if err := container.SaveSandboxConfig(sandboxPath, sb); err != nil {
 		fmt.Printf("warning: could not save sandbox config: %v\n", err)
 	}
 	container.PrintRunInstructions(sandboxPath)
@@ -97,36 +114,50 @@ func RunContainerGenerate(opts ContainerGenerateOptions) (any, error) {
 }
 
 func RunContainerBuild(opts ContainerBuildOptions) (any, error) {
-	if err := container.EnsureBaseImage(opts.Base); err != nil {
-		return nil, fmt.Errorf("base image: %w", err)
-	}
-
 	user := container.DetectHostUser()
 	components := discoverDefaultSelected()
 
+	selectedPresets := opts.Presets
+	var wizardResult *container.WizardResult
+
 	if opts.Interactive {
 		var err error
-		if components, err = container.SelectComponents(components); err != nil {
+		wizardResult, err = container.RunWizard(components)
+		if err != nil {
 			return nil, err
 		}
+		components = wizardResult.Components
+		selectedPresets = wizardResult.Presets
 	}
 
-	tag := container.ImageTag(opts.Presets)
+	base, versions := resolvePresetVersions(selectedPresets, opts.Base)
+
+	if err := container.EnsureBaseImage(base); err != nil {
+		return nil, fmt.Errorf("base image: %w", err)
+	}
+
+	tag := container.ImageTag(selectedPresets)
 
 	contextDir, err := container.Generate(container.GenerateInput{
-		Name:       tag,
-		BaseImage:  opts.Base,
-		Mode:       container.Mode(opts.Mode),
-		Components: components,
-		User:       user,
+		Name:          tag,
+		BaseImage:     base,
+		Mode:          container.Mode(opts.Mode),
+		Components:    components,
+		User:          user,
+		PresetInstall: presets.ResolveInstallSnippets(selectedPresets, versions),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("generate: %w", err)
 	}
 
-	sandbox := container.BuildSandboxConfig(container.Mode(opts.Mode), opts.Base, components, user, opts.Presets)
+	sb := container.BuildSandboxConfig(container.Mode(opts.Mode), base, components, user, selectedPresets)
+	if wizardResult != nil {
+		sb.Tokens = wizardResult.Tokens
+		sb.Env = wizardResult.Env
+		sb.EnvPassthrough = wizardResult.EnvPassthrough
+	}
 	sandboxPath := container.SandboxConfigPath()
-	if err := container.SaveSandboxConfig(sandboxPath, sandbox); err != nil {
+	if err := container.SaveSandboxConfig(sandboxPath, sb); err != nil {
 		fmt.Printf("warning: could not save sandbox config: %v\n", err)
 	}
 
@@ -176,6 +207,12 @@ func RunContainerRun(opts ContainerRunOptions) (any, error) {
 		return nil, fmt.Errorf("base image: %w", err)
 	}
 
+	if opts.Interactive {
+		if err := InteractiveRunConfig(&cfg); err != nil {
+			return nil, fmt.Errorf("interactive config: %w", err)
+		}
+	}
+
 	if opts.Build {
 		fmt.Printf("Rebuilding %s...\n", cfg.Image)
 		if err := container.RebuildFromSandbox(cfg); err != nil {
@@ -184,7 +221,7 @@ func RunContainerRun(opts ContainerRunOptions) (any, error) {
 		fmt.Println("Rebuild complete.")
 	}
 
-	if err := container.RunSandbox(cfg, nil); err != nil {
+	if err := container.RunSandbox(cfg, container.RunOptions{Remove: opts.Remove}); err != nil {
 		return nil, fmt.Errorf("run: %w", err)
 	}
 	return nil, nil
@@ -220,8 +257,12 @@ func containerHelp() api.Text {
 		AddText("  -m, --mode string", "text-yellow-400").
 		AddText("     config mode: copy or mount (default: copy)", "text-gray-400").NewLine().NewLine().
 		AddText("run Flags:", "font-bold text-blue-400").NewLine().
+		AddText("  -i, --interactive", "text-yellow-400").
+		AddText("       interactively select tokens, presets, and env vars", "text-gray-400").NewLine().
 		AddText("  --build", "text-yellow-400").
 		AddText("                   rebuild image before running", "text-gray-400").NewLine().
+		AddText("  --rm", "text-yellow-400").
+		AddText("                      stop and remove container after exec exits", "text-gray-400").NewLine().
 		AddText("  -p, --preset strings", "text-yellow-400").
 		AddText("  merge additional sandbox-runtime presets", "text-gray-400").NewLine().
 		AddText("  -e, --env KEY=VALUE", "text-yellow-400").
@@ -273,6 +314,17 @@ func containerHelp() api.Text {
 		AddText("  captain container list", "text-green-400").
 		AddText("    — show discovered components", "text-gray-500").NewLine()
 	return text
+}
+
+func resolvePresetVersions(presetNames []string, base string) (string, map[string]string) {
+	pwd, _ := os.Getwd()
+	versions := container.DetectVersions(pwd)
+	if base == "claude-env:base" {
+		if presetBase := presets.GetBaseImage(presetNames, versions); presetBase != "" {
+			base = presetBase
+		}
+	}
+	return base, versions
 }
 
 func discoverDefaultSelected() []container.Component {

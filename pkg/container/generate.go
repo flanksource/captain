@@ -36,16 +36,17 @@ FROM {{.BaseImage}}
 
 USER root
 ` + dockerfileUserBlock + dockerfileClaudeInstall + dockerfileInstallBlocks + `
+# Create mount-point directories for bind-mounted .claude content
+RUN mkdir -p {{.HomeDir}}/.claude/agents \
+             {{.HomeDir}}/.claude/commands \
+             {{.HomeDir}}/.claude/hooks \
+             {{.HomeDir}}/.claude/plugins \
+             {{.HomeDir}}/.claude/skills \
+             {{.HomeDir}}/.claude/mcp
 {{- range .CopyBlocks}}
 
 # {{.Comment}}
 {{.Instruction}}
-{{- end}}
-
-{{- if .HookFiles}}
-
-# Make hooks executable
-RUN chmod +x {{range .HookFiles}}{{$.HomeDir}}/.claude/hooks/{{.}} {{end}}
 {{- end}}
 
 # Fix permissions
@@ -150,32 +151,8 @@ func generateCopy(input GenerateInput, selected []Component) (string, error) {
 		InstallBlocks: input.PresetInstall,
 	}
 
-	grouped := GroupByCategory(selected)
-	for _, cat := range AllCategories {
-		items, ok := grouped[cat]
-		if !ok {
-			continue
-		}
-		var fileItems []Component
-		for _, item := range items {
-			if item.ContentKey != "" {
-				continue
-			}
-			fileItems = append(fileItems, item)
-		}
-		if len(fileItems) > 0 {
-			blocks, hookFiles, hasDotfiles, err := stageCategoryFiles(contextDir, cat, fileItems)
-			if err != nil {
-				return "", fmt.Errorf("staging %s: %w", cat, err)
-			}
-			data.CopyBlocks = append(data.CopyBlocks, blocks...)
-			data.HookFiles = append(data.HookFiles, hookFiles...)
-			if hasDotfiles {
-				data.HasDotfiles = true
-			}
-		}
-	}
-
+	// File-based components (agents, skills, etc.) are volume-mounted at runtime,
+	// so we only stage settings.json and .claude.json which need JSON filtering.
 	homeDir := input.User.ContainerHome()
 	settingsPath := filepath.Join(input.User.HomeDir, ".claude", "settings.json")
 	if _, err := os.Stat(settingsPath); err == nil {

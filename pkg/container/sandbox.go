@@ -111,37 +111,76 @@ func BuildSandboxConfig(mode Mode, baseImage string, components []Component, use
 		cfg.Options = options
 	}
 
-	if mode == ModeMount {
-		home := user.ContainerHome()
-		for _, c := range components {
-			if !c.Selected {
-				continue
-			}
-			if c.ContentKey != "" {
-				if c.GitRoot != "" {
-					cfg.Volumes = append(cfg.Volumes, Volume{
-						Source: c.GitRoot,
-						Target: "/workspace/" + filepath.Base(c.GitRoot),
-					})
-				}
-				if c.ProjectPath != "" {
-					cfg.Volumes = append(cfg.Volumes, Volume{
-						Source:   c.ProjectPath,
-						Target:   home + "/.claude/projects/" + filepath.Base(c.ProjectPath),
-						ReadOnly: true,
-					})
-				}
-				continue
-			}
-			src := c.SourcePath
-			target := c.TargetPath
-			if c.IsDir {
-				src += "/"
-				target += "/"
-			}
+	home := user.ContainerHome()
+	claudeDir := filepath.Join(os.Getenv("HOME"), ".claude")
+	grouped := GroupByCategory(components)
+
+	// Categories eligible for folder-level mounts
+	mountableCategories := []Category{
+		CategoryAgents, CategorySkills, CategoryCommands, CategoryHooks, CategoryMCP,
+	}
+	for _, cat := range mountableCategories {
+		all := grouped[cat]
+		if len(all) == 0 {
+			continue
+		}
+		selected := FilterSelected(all)
+		if len(selected) == 0 {
+			continue
+		}
+		if len(selected) == len(all) {
 			cfg.Volumes = append(cfg.Volumes, Volume{
-				Source:   src,
-				Target:   target,
+				Source:   filepath.Join(claudeDir, string(cat)),
+				Target:   home + "/.claude/" + string(cat),
+				ReadOnly: true,
+			})
+		} else {
+			for _, c := range selected {
+				src, target := c.SourcePath, c.TargetPath
+				if c.IsDir {
+					src += "/"
+					target += "/"
+				}
+				cfg.Volumes = append(cfg.Volumes, Volume{
+					Source:   src,
+					Target:   target,
+					ReadOnly: true,
+				})
+			}
+		}
+	}
+
+	// Mount individual file components (CLAUDE.md, plugins, etc.)
+	for _, c := range components {
+		if !c.Selected || c.ContentKey != "" {
+			continue
+		}
+		switch c.Category {
+		case CategoryAgents, CategorySkills, CategoryCommands, CategoryHooks, CategoryMCP:
+			continue // already handled above
+		}
+		cfg.Volumes = append(cfg.Volumes, Volume{
+			Source:   c.SourcePath,
+			Target:   c.TargetPath,
+			ReadOnly: true,
+		})
+	}
+
+	// Project volumes (workspace + project metadata)
+	for _, c := range components {
+		if !c.Selected || c.ContentKey == "" {
+			continue
+		}
+		if c.GitRoot != "" {
+			cfg.Volumes = append(cfg.Volumes, Volume{
+				Source: c.GitRoot,
+				Target: "/workspace/" + filepath.Base(c.GitRoot),
+			})
+		}
+		if c.ProjectPath != "" {
+			cfg.Volumes = append(cfg.Volumes, Volume{
+				Source:   c.ProjectPath,
+				Target:   home + "/.claude/projects/" + filepath.Base(c.ProjectPath),
 				ReadOnly: true,
 			})
 		}
@@ -229,14 +268,30 @@ func extractMCPEnvVars(cfg SandboxConfig, claudeJSON string) []string {
 	return result
 }
 
-func RunSandbox(cfg SandboxConfig, extraArgs []string) error {
-	args := []string{"run", "-it", "--rm",
+type RunOptions struct {
+	Remove bool
+}
+
+func DefaultContainerName(image, workDir string) string {
+	tag := strings.ReplaceAll(image, ":", "-")
+	tag = strings.ReplaceAll(tag, "/", "-")
+	dir := filepath.Base(workDir)
+	return tag + "-" + dir
+}
+
+func IsContainerRunning(name string) bool {
+	out, err := exec.Command("docker", "inspect", "--format", "{{.State.Running}}", name).Output()
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(out)) == "true"
+}
+
+func buildDockerRunArgs(cfg SandboxConfig) ([]string, func(), error) {
+	args := []string{"run", "-d",
 		"-w", os.Getenv("PWD"),
 		"-v", os.Getenv("PWD") + ":" + os.Getenv("PWD"),
-	}
-
-	if cfg.Name != "" {
-		args = append(args, "--name", cfg.Name)
+		"--name", cfg.Name,
 	}
 
 	if envToken := os.Getenv("CLAUDE_CODE_OAUTH_TOKEN"); envToken != "" {
@@ -252,13 +307,16 @@ func RunSandbox(cfg SandboxConfig, extraArgs []string) error {
 		args = append(args, "-e", envVar)
 	}
 
-	// Apply sandbox preset env vars and cache volumes
 	user := HostUser{Username: cfg.User.Username, UID: cfg.User.UID, GID: cfg.User.GID}
 	sandboxEnvVars, sandboxVolumes := ResolveSandboxEnv(cfg.Presets, user.ContainerHome())
 	for _, e := range sandboxEnvVars {
 		args = append(args, "-e", e)
 	}
 	for _, v := range sandboxVolumes {
+		args = append(args, "-v", fmt.Sprintf("%s:%s", v.Source, v.Target))
+	}
+
+	for _, v := range ResolveDependencyVolumes(cfg.Presets, os.Getenv("PWD"), user.ContainerHome()) {
 		args = append(args, "-v", fmt.Sprintf("%s:%s", v.Source, v.Target))
 	}
 
@@ -272,17 +330,19 @@ func RunSandbox(cfg SandboxConfig, extraArgs []string) error {
 		args = append(args, "-e", k+"="+os.ExpandEnv(v))
 	}
 
+	var cleanup func()
 	if cfg.Tokens != nil {
 		credDir, err := os.MkdirTemp("", "captain-tokens-*")
 		if err != nil {
-			return fmt.Errorf("creating token dir: %w", err)
+			return nil, nil, fmt.Errorf("creating token dir: %w", err)
 		}
-		defer func() { _ = os.RemoveAll(credDir) }()
+		cleanup = func() { _ = os.RemoveAll(credDir) }
 
 		tm := sandbox.NewTokenManager(credDir)
 		results, err := tm.Acquire(context.Background(), cfg.Tokens)
 		if err != nil {
-			return fmt.Errorf("acquiring tokens: %w", err)
+			cleanup()
+			return nil, nil, fmt.Errorf("acquiring tokens: %w", err)
 		}
 		for _, r := range results {
 			for k, v := range r.EnvVars {
@@ -303,9 +363,52 @@ func RunSandbox(cfg SandboxConfig, extraArgs []string) error {
 	}
 
 	args = append(args, cfg.Image)
-	args = append(args, extraArgs...)
+	args = append(args, "sleep", "infinity")
+
+	return args, cleanup, nil
+}
+
+func StartContainer(cfg SandboxConfig) error {
+	if cfg.Name == "" {
+		cfg.Name = DefaultContainerName(cfg.Image, os.Getenv("PWD"))
+	}
+
+	if IsContainerRunning(cfg.Name) {
+		fmt.Printf("Container %s is already running\n", cfg.Name)
+		return nil
+	}
+
+	// Remove stopped container with the same name if it exists
+	_ = exec.Command("docker", "rm", "-f", cfg.Name).Run()
+
+	args, cleanup, err := buildDockerRunArgs(cfg)
+	if err != nil {
+		return err
+	}
+	if cleanup != nil {
+		defer cleanup()
+	}
 
 	printDockerCommand(args)
+
+	cmd := exec.Command("docker", args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("starting container: %w", err)
+	}
+
+	fmt.Printf("Container %s started\n", cfg.Name)
+	return nil
+}
+
+func ExecContainer(name string, extraArgs []string) error {
+	args := []string{"exec", "-it", name}
+	if len(extraArgs) > 0 {
+		args = append(args, extraArgs...)
+	} else {
+		args = append(args, "bash")
+	}
 
 	cmd := exec.Command("docker", args...)
 	cmd.Stdin = os.Stdin
@@ -314,8 +417,41 @@ func RunSandbox(cfg SandboxConfig, extraArgs []string) error {
 	return cmd.Run()
 }
 
+func StopContainer(name string) error {
+	return exec.Command("docker", "rm", "-f", name).Run()
+}
+
+func RunSandbox(cfg SandboxConfig, opts RunOptions) error {
+	if cfg.Name == "" {
+		cfg.Name = DefaultContainerName(cfg.Image, os.Getenv("PWD"))
+	}
+
+	if err := StartContainer(cfg); err != nil {
+		return err
+	}
+
+	execErr := ExecContainer(cfg.Name, nil)
+
+	if opts.Remove {
+		fmt.Printf("Removing container %s...\n", cfg.Name)
+		_ = StopContainer(cfg.Name)
+	}
+
+	return execErr
+}
+
 func RebuildFromSandbox(cfg SandboxConfig) error {
-	if err := EnsureBaseImage(cfg.BaseImage); err != nil {
+	pwd, _ := os.Getwd()
+	versions := DetectVersions(pwd)
+
+	base := cfg.BaseImage
+	if base == "claude-env:base" {
+		if presetBase := presets.GetBaseImage(cfg.Presets, versions); presetBase != "" {
+			base = presetBase
+		}
+	}
+
+	if err := EnsureBaseImage(base); err != nil {
 		return fmt.Errorf("base image: %w", err)
 	}
 
@@ -331,12 +467,12 @@ func RebuildFromSandbox(cfg SandboxConfig) error {
 
 	contextDir, err := Generate(GenerateInput{
 		Name:          ImageTag(cfg.Presets),
-		BaseImage:     cfg.BaseImage,
+		BaseImage:     base,
 		Mode:          cfg.Mode,
 		Components:    components,
 		User:          user,
 		Patches:       cfg.Patches,
-		PresetInstall: presets.InstallSnippets(cfg.Presets),
+		PresetInstall: presets.ResolveInstallSnippets(cfg.Presets, versions),
 	})
 	if err != nil {
 		return fmt.Errorf("generate: %w", err)
