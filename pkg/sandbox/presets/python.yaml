@@ -6,11 +6,15 @@ filesystem:
   allowWrite:
     - $HOME/.local/lib
     - $HOME/.cache/pip
+dependencyDirs:
+  - .venv
+  - __pycache__
 env:
   PYTHONDONTWRITEBYTECODE: "1"
 passthroughEnv:
   - VIRTUAL_ENV
   - PYTHONPATH
   - CONDA_PREFIX
+baseImage: "python:{{.python}}"
 install:
-  - apt-get update && apt-get install -y --no-install-recommends python3 python3-pip python3-venv && apt-get clean && rm -rf /var/lib/apt/lists/*
+  - curl -fsSL https://deb.nodesource.com/setup_{{.nodeVersion}}.x | bash - && apt-get install -y --no-install-recommends nodejs && apt-get clean && rm -rf /var/lib/apt/lists/*

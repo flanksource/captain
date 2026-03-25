@@ -5,10 +5,13 @@ network:
 filesystem:
   allowWrite:
     - $HOME/.cargo
+dependencyDirs:
+  - target
 env:
   CARGO_HTTP_CHECK_REVOKE: "false"
 passthroughEnv:
   - CARGO_HOME
   - RUSTUP_HOME
+baseImage: "rust:{{.rust}}"
 install:
-  - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path && ln -s /root/.cargo/bin/rustup /usr/local/bin/rustup && ln -s /root/.cargo/bin/cargo /usr/local/bin/cargo && ln -s /root/.cargo/bin/rustc /usr/local/bin/rustc
+  - curl -fsSL https://deb.nodesource.com/setup_{{.nodeVersion}}.x | bash - && apt-get install -y --no-install-recommends nodejs && apt-get clean && rm -rf /var/lib/apt/lists/*

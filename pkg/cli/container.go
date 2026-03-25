@@ -3,6 +3,8 @@ package cli
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 
 	"github.com/flanksource/captain/pkg/container"
 	"github.com/flanksource/captain/pkg/sandbox/presets"
@@ -31,14 +33,8 @@ type ContainerBuildOptions struct {
 func (ContainerBuildOptions) Help() api.Textable { return containerHelp() }
 
 type ContainerRunOptions struct {
-	Build          bool              `flag:"build" help:"rebuild image before running"`
-	Config         string            `args:"true" help:"path to sandbox config"`
-	Presets        []string          `flag:"preset" help:"sandbox-runtime presets to merge in" short:"p"`
-	Env            map[string]string `flag:"env" help:"additional env vars (KEY=VALUE) to pass into the container" short:"e"`
-	EnvPassthrough []string          `flag:"env-passthrough" help:"additional host env vars to forward into the container"`
-	Name           string            `flag:"name" help:"override container name (--name)"`
-	Interactive    bool              `flag:"interactive" help:"interactively select tokens, presets, and env vars" short:"i"`
-	Remove         bool              `flag:"rm" help:"stop and remove container after exec exits"`
+	Build  bool   `flag:"build" help:"rebuild image before running"`
+	Config string `args:"true" help:"path to sandbox config"`
 }
 
 func RunContainerTUI() error {
@@ -73,9 +69,25 @@ func RunContainerGenerate(opts ContainerGenerateOptions) (any, error) {
 	selectedPresets := opts.Presets
 	var wizardResult *container.WizardResult
 
+	// Load existing config to pre-populate interactive selections
+	var existing *container.SandboxConfig
+	if cfg, err := container.LoadSandboxConfig(container.SandboxConfigPath()); err == nil {
+		existing = &cfg
+		container.ApplySelections(components, cfg.Components, cfg.Options)
+		if len(selectedPresets) == 0 {
+			selectedPresets = cfg.Presets
+		}
+		if opts.Base == "claude-env:base" && cfg.BaseImage != "" {
+			opts.Base = cfg.BaseImage
+		}
+		if opts.Mode == "copy" && cfg.Mode != "" {
+			opts.Mode = string(cfg.Mode)
+		}
+	}
+
 	if opts.Interactive {
 		var err error
-		wizardResult, err = container.RunWizard(components)
+		wizardResult, err = container.RunWizard(components, existing)
 		if err != nil {
 			return nil, err
 		}
@@ -126,9 +138,24 @@ func RunContainerBuild(opts ContainerBuildOptions) (any, error) {
 	selectedPresets := opts.Presets
 	var wizardResult *container.WizardResult
 
+	var existing *container.SandboxConfig
+	if cfg, err := container.LoadSandboxConfig(container.SandboxConfigPath()); err == nil {
+		existing = &cfg
+		container.ApplySelections(components, cfg.Components, cfg.Options)
+		if len(selectedPresets) == 0 {
+			selectedPresets = cfg.Presets
+		}
+		if opts.Base == "claude-env:base" && cfg.BaseImage != "" {
+			opts.Base = cfg.BaseImage
+		}
+		if opts.Mode == "copy" && cfg.Mode != "" {
+			opts.Mode = string(cfg.Mode)
+		}
+	}
+
 	if opts.Interactive {
 		var err error
-		wizardResult, err = container.RunWizard(components)
+		wizardResult, err = container.RunWizard(components, existing)
 		if err != nil {
 			return nil, err
 		}
@@ -176,7 +203,7 @@ func RunContainerBuild(opts ContainerBuildOptions) (any, error) {
 		fmt.Printf("warning: could not generate shortcuts: %v\n", err)
 	}
 
-	container.PrintBuildInstructions(tag, container.Mode(opts.Mode), "")
+	container.PrintBuildInstructions(tag)
 	container.PrintRunInstructions(sandboxPath)
 	return nil, nil
 }
@@ -192,34 +219,6 @@ func RunContainerRun(opts ContainerRunOptions) (any, error) {
 		return nil, fmt.Errorf("loading sandbox config: %w\nRun 'captain container build' first", err)
 	}
 
-	if len(opts.Presets) > 0 {
-		cfg.Presets = append(cfg.Presets, opts.Presets...)
-	}
-	if len(opts.Env) > 0 {
-		if cfg.Env == nil {
-			cfg.Env = make(map[string]string)
-		}
-		for k, v := range opts.Env {
-			cfg.Env[k] = v
-		}
-	}
-	if len(opts.EnvPassthrough) > 0 {
-		cfg.EnvPassthrough = append(cfg.EnvPassthrough, opts.EnvPassthrough...)
-	}
-	if opts.Name != "" {
-		cfg.Name = opts.Name
-	}
-
-	if err := container.EnsureBaseImage(cfg.BaseImage); err != nil {
-		return nil, fmt.Errorf("base image: %w", err)
-	}
-
-	if opts.Interactive {
-		if err := InteractiveRunConfig(&cfg); err != nil {
-			return nil, fmt.Errorf("interactive config: %w", err)
-		}
-	}
-
 	if opts.Build {
 		fmt.Printf("Rebuilding %s...\n", cfg.Image)
 		if err := container.RebuildFromSandbox(cfg); err != nil {
@@ -228,10 +227,17 @@ func RunContainerRun(opts ContainerRunOptions) (any, error) {
 		fmt.Println("Rebuild complete.")
 	}
 
-	if err := container.RunSandbox(cfg, container.RunOptions{Remove: opts.Remove}); err != nil {
-		return nil, fmt.Errorf("run: %w", err)
+	pwd, _ := os.Getwd()
+	script := filepath.Join(pwd, ".container-sandbox", "sbx-run")
+	if _, err := os.Stat(script); err != nil {
+		return nil, fmt.Errorf("sbx-run not found — run 'captain container build' first")
 	}
-	return nil, nil
+
+	cmd := exec.Command(script)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return nil, cmd.Run()
 }
 
 func ContainerHelp() api.Text { return containerHelp() }

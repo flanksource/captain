@@ -1,7 +1,6 @@
 package container
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -268,9 +267,6 @@ func extractMCPEnvVars(cfg SandboxConfig, claudeJSON string) []string {
 	return result
 }
 
-type RunOptions struct {
-	Remove bool
-}
 
 func DefaultContainerName(image, workDir string) string {
 	tag := strings.ReplaceAll(image, ":", "-")
@@ -285,159 +281,6 @@ func IsContainerRunning(name string) bool {
 		return false
 	}
 	return strings.TrimSpace(string(out)) == "true"
-}
-
-func buildDockerRunArgs(cfg SandboxConfig) ([]string, func(), error) {
-	args := []string{"run", "-d",
-		"-w", os.Getenv("PWD"),
-		"-v", os.Getenv("PWD") + ":" + os.Getenv("PWD"),
-		"--name", cfg.Name,
-	}
-
-	if envToken := os.Getenv("CLAUDE_CODE_OAUTH_TOKEN"); envToken != "" {
-		args = append(args, "-e", "CLAUDE_CODE_OAUTH_TOKEN="+envToken)
-	} else if token := extractOAuthToken(cfg); token != "" {
-		args = append(args, "-e", "CLAUDE_CODE_OAUTH_TOKEN="+token)
-	} else if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
-		args = append(args, "-e", "ANTHROPIC_API_KEY="+key)
-	}
-
-	claudeJSON := filepath.Join(os.Getenv("HOME"), ".claude.json")
-	for _, envVar := range extractMCPEnvVars(cfg, claudeJSON) {
-		args = append(args, "-e", envVar)
-	}
-
-	user := HostUser{Username: cfg.User.Username, UID: cfg.User.UID, GID: cfg.User.GID}
-	sandboxEnvVars, sandboxVolumes := ResolveSandboxEnv(cfg.Presets, user.ContainerHome())
-	for _, e := range sandboxEnvVars {
-		args = append(args, "-e", e)
-	}
-	for _, v := range sandboxVolumes {
-		args = append(args, "-v", fmt.Sprintf("%s:%s", v.Source, v.Target))
-	}
-
-	for _, v := range ResolveDependencyVolumes(cfg.Presets, os.Getenv("PWD"), user.ContainerHome()) {
-		args = append(args, "-v", fmt.Sprintf("%s:%s", v.Source, v.Target))
-	}
-
-	for _, name := range cfg.EnvPassthrough {
-		if val := os.Getenv(name); val != "" {
-			args = append(args, "-e", name+"="+val)
-		}
-	}
-
-	for k, v := range cfg.Env {
-		args = append(args, "-e", k+"="+os.ExpandEnv(v))
-	}
-
-	var cleanup func()
-	if cfg.Tokens != nil {
-		credDir, err := os.MkdirTemp("", "captain-tokens-*")
-		if err != nil {
-			return nil, nil, fmt.Errorf("creating token dir: %w", err)
-		}
-		cleanup = func() { _ = os.RemoveAll(credDir) }
-
-		tm := sandbox.NewTokenManager(credDir)
-		results, err := tm.Acquire(context.Background(), cfg.Tokens)
-		if err != nil {
-			cleanup()
-			return nil, nil, fmt.Errorf("acquiring tokens: %w", err)
-		}
-		for _, r := range results {
-			for k, v := range r.EnvVars {
-				args = append(args, "-e", k+"="+v)
-			}
-			for _, path := range r.WritePaths {
-				args = append(args, "-v", fmt.Sprintf("%s:%s:ro", path, path))
-			}
-		}
-	}
-
-	for _, v := range cfg.Volumes {
-		mount := fmt.Sprintf("%s:%s", v.Source, v.Target)
-		if v.ReadOnly {
-			mount += ":ro"
-		}
-		args = append(args, "-v", mount)
-	}
-
-	args = append(args, cfg.Image)
-	args = append(args, "sleep", "infinity")
-
-	return args, cleanup, nil
-}
-
-func StartContainer(cfg SandboxConfig) error {
-	if cfg.Name == "" {
-		cfg.Name = DefaultContainerName(cfg.Image, os.Getenv("PWD"))
-	}
-
-	if IsContainerRunning(cfg.Name) {
-		fmt.Printf("Container %s is already running\n", cfg.Name)
-		return nil
-	}
-
-	// Remove stopped container with the same name if it exists
-	_ = exec.Command("docker", "rm", "-f", cfg.Name).Run()
-
-	args, cleanup, err := buildDockerRunArgs(cfg)
-	if err != nil {
-		return err
-	}
-	if cleanup != nil {
-		defer cleanup()
-	}
-
-	printDockerCommand(args)
-
-	cmd := exec.Command("docker", args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("starting container: %w", err)
-	}
-
-	fmt.Printf("Container %s started\n", cfg.Name)
-	return nil
-}
-
-func ExecContainer(name string, extraArgs []string) error {
-	args := []string{"exec", "-it", name}
-	if len(extraArgs) > 0 {
-		args = append(args, extraArgs...)
-	} else {
-		args = append(args, "bash")
-	}
-
-	cmd := exec.Command("docker", args...)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
-}
-
-func StopContainer(name string) error {
-	return exec.Command("docker", "rm", "-f", name).Run()
-}
-
-func RunSandbox(cfg SandboxConfig, opts RunOptions) error {
-	if cfg.Name == "" {
-		cfg.Name = DefaultContainerName(cfg.Image, os.Getenv("PWD"))
-	}
-
-	if err := StartContainer(cfg); err != nil {
-		return err
-	}
-
-	execErr := ExecContainer(cfg.Name, nil)
-
-	if opts.Remove {
-		fmt.Printf("Removing container %s...\n", cfg.Name)
-		_ = StopContainer(cfg.Name)
-	}
-
-	return execErr
 }
 
 func RebuildFromSandbox(cfg SandboxConfig) error {
@@ -507,44 +350,14 @@ func PrintRunInstructions(sandboxPath string) {
 	fmt.Println()
 	fmt.Printf("  Sandbox config: %s\n", sandboxPath)
 	fmt.Println()
-	fmt.Println("  Run:")
-	fmt.Printf("    captain container run\n")
+	fmt.Println("  Add to PATH:")
+	fmt.Println("    export PATH=\"$PWD/.container-sandbox:$PATH\"")
 	fmt.Println()
-	fmt.Println("  Rebuild and run:")
-	fmt.Printf("    captain container run --build\n")
-
-	rel, err := filepath.Rel(os.Getenv("HOME"), sandboxPath)
-	if err == nil && !strings.HasPrefix(rel, "..") {
-		fmt.Println()
-		fmt.Printf("  Or with explicit config:\n")
-		fmt.Printf("    captain container run ~/%s\n", rel)
-	}
-}
-
-var flagsWithValues = map[string]bool{
-	"-e": true, "-v": true, "-w": true,
-	"--name": true, "--network": true, "-p": true,
-}
-
-var redactPrefixes = []string{"CLAUDE_CODE_OAUTH_TOKEN=", "ANTHROPIC_API_KEY="}
-
-func printDockerCommand(args []string) {
-	var lines []string
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		if flagsWithValues[a] && i+1 < len(args) {
-			val := args[i+1]
-			for _, prefix := range redactPrefixes {
-				if strings.HasPrefix(val, prefix) {
-					val = prefix + val[len(prefix):len(prefix)+8] + "..."
-					break
-				}
-			}
-			lines = append(lines, a+" "+val)
-			i++
-		} else {
-			lines = append(lines, a)
-		}
-	}
-	fmt.Printf("docker %s\n\n", strings.Join(lines, " \\\n  "))
+	fmt.Println("  Then:")
+	fmt.Println("    sbx-build    # build the image")
+	fmt.Println("    sbx-start    # start container in background")
+	fmt.Println("    sbx-exec     # exec into container (or sbx-exec <cmd>)")
+	fmt.Println("    sbx-run      # start + exec in one step")
+	fmt.Println("    sbx-stop     # stop the container")
+	fmt.Println("    sbx-rm       # remove the container")
 }

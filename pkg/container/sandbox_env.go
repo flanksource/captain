@@ -1,10 +1,14 @@
 package container
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/flanksource/captain/pkg/sandbox/presets"
 	"github.com/flanksource/sandbox-runtime/sandbox"
 )
 
@@ -83,4 +87,54 @@ func ResolveSandboxEnv(presetNames []string, containerHome string) (envVars []st
 	}
 
 	return envVars, volumes
+}
+
+func depVolumeName(pwd, depPath string) string {
+	h := sha256.Sum256([]byte(pwd))
+	hash8 := hex.EncodeToString(h[:4])
+	base := filepath.Base(depPath)
+	safe := strings.TrimLeft(base, ".")
+	if safe == "" {
+		safe = "dep"
+	}
+	return fmt.Sprintf("dep-%s-%s", hash8, safe)
+}
+
+func ResolveDependencyVolumes(presetNames []string, pwd, containerHome string) []Volume {
+	dirs := presets.GetDependencyDirs(presetNames)
+	if len(dirs) == 0 {
+		return nil
+	}
+
+	cacheTargets := make(map[string]bool)
+	for _, cm := range cacheMappings {
+		target := strings.ReplaceAll(cm.mountTarget, "{home}", containerHome)
+		cacheTargets[target] = true
+	}
+
+	var volumes []Volume
+	for _, dir := range dirs {
+		expanded := os.ExpandEnv(dir)
+		var target string
+		if filepath.IsAbs(expanded) {
+			home := os.Getenv("HOME")
+			if home != "" && strings.HasPrefix(expanded, home) {
+				target = containerHome + expanded[len(home):]
+			} else {
+				target = expanded
+			}
+		} else {
+			target = filepath.Join(pwd, expanded)
+		}
+
+		if cacheTargets[target] {
+			continue
+		}
+
+		volumes = append(volumes, Volume{
+			Source: depVolumeName(pwd, dir),
+			Target: target,
+		})
+	}
+	return volumes
 }

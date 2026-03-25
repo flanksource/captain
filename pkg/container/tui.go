@@ -31,10 +31,13 @@ type WizardResult struct {
 	EnvPassthrough []string
 }
 
-func RunWizard(components []Component) (*WizardResult, error) {
+func RunWizard(components []Component, existing *SandboxConfig) (*WizardResult, error) {
 	h := termHeight()
 
 	var selectedPresets []string
+	if existing != nil {
+		selectedPresets = existing.Presets
+	}
 	presetNames := presets.List()
 	presetOptions := make([]huh.Option[string], len(presetNames))
 	for i, name := range presetNames {
@@ -44,22 +47,26 @@ func RunWizard(components []Component) (*WizardResult, error) {
 	grouped := GroupByCategory(components)
 
 	agentKeys := preselectedKeys(grouped[CategoryAgents])
-	agentKeys = append(agentKeys, preselectedKeys(grouped[CategorySkills])...)
-	agentOpts := buildCategoryOptions(grouped[CategoryAgents])
-	agentOpts = append(agentOpts, buildCategoryOptions(grouped[CategorySkills])...)
+	agentOpts := sortedCategoryOptions(grouped[CategoryAgents])
+
+	skillKeys := preselectedKeys(grouped[CategorySkills])
+	skillOpts := sortedCategoryOptions(grouped[CategorySkills])
+
+	pluginKeys := preselectedKeys(grouped[CategoryPlugins])
+	pluginOpts := sortedCategoryOptions(grouped[CategoryPlugins])
 
 	projectKeys := preselectedKeys(grouped[CategoryProjects])
-	projectOpts := buildCategoryOptions(grouped[CategoryProjects])
+	projectOpts := sortedCategoryOptions(grouped[CategoryProjects])
 
 	mcpKeys := preselectedKeys(grouped[CategoryMCPServers])
-	mcpOpts := buildCategoryOptions(grouped[CategoryMCPServers])
+	mcpOpts := sortedCategoryOptions(grouped[CategoryMCPServers])
 
 	// Settings page: split permissions/sandbox toggles from the rest
 	var permissionsAllowAll, sandboxDisable bool
 	var hasPermissions, hasSandbox bool
 	settingsCategories := []Category{
 		CategorySettings, CategoryAuth, CategoryFeatureFlags,
-		CategoryHooks, CategoryCommands, CategoryPlugins, CategoryClaudeMD,
+		CategoryHooks, CategoryCommands, CategoryClaudeMD,
 	}
 	var settingsKeys []string
 	var settingsOpts []huh.Option[string]
@@ -92,6 +99,23 @@ func RunWizard(components []Component) (*WizardResult, error) {
 	}
 
 	var selectedTokens []string
+	if existing != nil && existing.Tokens != nil {
+		if existing.Tokens.AWS != nil {
+			selectedTokens = append(selectedTokens, "aws")
+		}
+		if existing.Tokens.GCP != nil {
+			selectedTokens = append(selectedTokens, "gcp")
+		}
+		if existing.Tokens.Azure != nil {
+			selectedTokens = append(selectedTokens, "azure")
+		}
+		if existing.Tokens.GitHub != nil {
+			selectedTokens = append(selectedTokens, "github")
+		}
+		if existing.Tokens.Kubernetes != nil {
+			selectedTokens = append(selectedTokens, "kubernetes")
+		}
+	}
 	tokenOptions := []huh.Option[string]{
 		huh.NewOption("AWS", "aws"),
 		huh.NewOption("GCP", "gcp"),
@@ -100,13 +124,23 @@ func RunWizard(components []Component) (*WizardResult, error) {
 		huh.NewOption("Kubernetes", "kubernetes"),
 	}
 
-	var envInput string
+	var envKeys []string
+	if existing != nil {
+		for k := range existing.Env {
+			envKeys = append(envKeys, k)
+		}
+		sort.Strings(envKeys)
+	}
 	var selectedPassthrough []string
+	if existing != nil {
+		selectedPassthrough = existing.EnvPassthrough
+	}
 
+	page := 0
 	groups := []*huh.Group{
 		huh.NewGroup(
 			huh.NewMultiSelect[string]().
-				Title("1/7 Presets").
+				Title(pageTitle(&page, "Presets")).
 				Description("Language/tool presets (env vars, cache volumes, network domains)").
 				Options(presetOptions...).
 				Value(&selectedPresets).
@@ -118,9 +152,31 @@ func RunWizard(components []Component) (*WizardResult, error) {
 	if len(agentOpts) > 0 {
 		groups = append(groups, huh.NewGroup(
 			huh.NewMultiSelect[string]().
-				Title("2/7 Agents & Skills").
+				Title(pageTitle(&page, "Agents")).
 				Options(agentOpts...).
 				Value(&agentKeys).
+				Height(h).
+				Filterable(true),
+		))
+	}
+
+	if len(skillOpts) > 0 {
+		groups = append(groups, huh.NewGroup(
+			huh.NewMultiSelect[string]().
+				Title(pageTitle(&page, "Skills")).
+				Options(skillOpts...).
+				Value(&skillKeys).
+				Height(h).
+				Filterable(true),
+		))
+	}
+
+	if len(pluginOpts) > 0 {
+		groups = append(groups, huh.NewGroup(
+			huh.NewMultiSelect[string]().
+				Title(pageTitle(&page, "Plugins")).
+				Options(pluginOpts...).
+				Value(&pluginKeys).
 				Height(h).
 				Filterable(true),
 		))
@@ -129,7 +185,7 @@ func RunWizard(components []Component) (*WizardResult, error) {
 	if len(projectOpts) > 0 {
 		groups = append(groups, huh.NewGroup(
 			huh.NewMultiSelect[string]().
-				Title("3/7 Projects").
+				Title(pageTitle(&page, "Projects")).
 				Description("Project context and working trees to mount").
 				Options(projectOpts...).
 				Value(&projectKeys).
@@ -141,7 +197,7 @@ func RunWizard(components []Component) (*WizardResult, error) {
 	if len(mcpOpts) > 0 {
 		groups = append(groups, huh.NewGroup(
 			huh.NewMultiSelect[string]().
-				Title("4/7 MCP Servers").
+				Title(pageTitle(&page, "MCP Servers")).
 				Description("MCP servers from ~/.claude.json").
 				Options(mcpOpts...).
 				Value(&mcpKeys).
@@ -166,8 +222,8 @@ func RunWizard(components []Component) (*WizardResult, error) {
 		}
 		if len(settingsOpts) > 0 {
 			settingsFields = append(settingsFields, huh.NewMultiSelect[string]().
-				Title("5/7 Settings & Config").
-				Description("Settings, auth, hooks, commands, plugins, CLAUDE.md").
+				Title(pageTitle(&page, "Settings & Config")).
+				Description("Settings, auth, hooks, commands, CLAUDE.md").
 				Options(settingsOpts...).
 				Value(&settingsKeys).
 				Height(h).
@@ -179,16 +235,16 @@ func RunWizard(components []Component) (*WizardResult, error) {
 	groups = append(groups,
 		huh.NewGroup(
 			huh.NewMultiSelect[string]().
-				Title("6/7 Token Providers").
+				Title(pageTitle(&page, "Token Providers")).
 				Description("Cloud credentials to inject into the container").
 				Options(tokenOptions...).
 				Value(&selectedTokens),
 		),
 		huh.NewGroup(
 			huh.NewMultiSelect[string]().
-				Title("7/7 Env Passthrough").
-				Description("Host env vars to forward into the container").
-				Options(EnvVarOptions()...).
+				Title(pageTitle(&page, "Env Passthrough")).
+				Description("Host env var names to forward into the container (values loaded at runtime)").
+				Options(EnvVarKeyOptions()...).
 				Value(&selectedPassthrough).
 				Height(h).
 				Filterable(true),
@@ -202,7 +258,7 @@ func RunWizard(components []Component) (*WizardResult, error) {
 
 	// Merge all selections back into components
 	allSelected := make(map[string]bool)
-	for _, lists := range [][]string{agentKeys, projectKeys, mcpKeys, settingsKeys} {
+	for _, lists := range [][]string{agentKeys, skillKeys, pluginKeys, projectKeys, mcpKeys, settingsKeys} {
 		for _, k := range lists {
 			allSelected[k] = true
 		}
@@ -230,16 +286,25 @@ func RunWizard(components []Component) (*WizardResult, error) {
 	result.Tokens = buildTokensConfig(selectedTokens)
 
 	result.Env = make(map[string]string)
-	for _, line := range strings.Split(envInput, "\n") {
-		line = strings.TrimSpace(line)
-		if k, v, ok := strings.Cut(line, "="); ok && k != "" {
+	if existing != nil {
+		for k, v := range existing.Env {
 			result.Env[k] = v
+		}
+	}
+	for _, k := range envKeys {
+		if _, exists := result.Env[k]; !exists {
+			result.Env[k] = ""
 		}
 	}
 
 	result.EnvPassthrough = selectedPassthrough
 
 	return result, nil
+}
+
+func pageTitle(counter *int, name string) string {
+	*counter++
+	return fmt.Sprintf("%d. %s", *counter, name)
 }
 
 func buildTokensConfig(selected []string) *sandbox.TokensConfig {
@@ -320,6 +385,15 @@ func RunTUI() error {
 	return nil
 }
 
+func sortedCategoryOptions(components []Component) []huh.Option[string] {
+	sorted := make([]Component, len(components))
+	copy(sorted, components)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].Name < sorted[j].Name
+	})
+	return buildCategoryOptions(sorted)
+}
+
 func buildCategoryOptions(components []Component) []huh.Option[string] {
 	var options []huh.Option[string]
 	for _, c := range components {
@@ -371,21 +445,17 @@ func applyFormSelection(components []Component, selected []string) {
 	}
 }
 
-func EnvVarOptions() []huh.Option[string] {
+func EnvVarKeyOptions() []huh.Option[string] {
 	env := os.Environ()
-	sort.Strings(env)
-	options := make([]huh.Option[string], 0, len(env))
+	keys := make([]string, 0, len(env))
 	for _, e := range env {
-		key, val, _ := strings.Cut(e, "=")
-		label := key
-		if val != "" {
-			preview := val
-			if len(preview) > maxLabelWidth-len(key)-1 {
-				preview = preview[:maxLabelWidth-len(key)-4] + "..."
-			}
-			label = key + "=" + preview
-		}
-		options = append(options, huh.NewOption(label, key))
+		key, _, _ := strings.Cut(e, "=")
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	options := make([]huh.Option[string], len(keys))
+	for i, k := range keys {
+		options[i] = huh.NewOption(k, k)
 	}
 	return options
 }

@@ -1,5 +1,9 @@
 network:
   allowLocalBinding: true
+baseImage: "node:{{.node}}"
+dependencyDirs:
+  - node_modules
+  - .next
 filesystem:
   allowWrite:
     - .next

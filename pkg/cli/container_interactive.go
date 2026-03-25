@@ -72,7 +72,7 @@ func InteractiveRunConfig(cfg *container.SandboxConfig) error {
 			huh.NewMultiSelect[string]().
 				Title("Env passthrough").
 				Description("Host env vars to forward into the container").
-				Options(container.EnvVarOptions()...).
+				Options(container.EnvVarKeyOptions()...).
 				Value(&selectedPassthrough).
 				Height(20).
 				Filterable(true),
