@@ -1,6 +1,10 @@
 package claude
 
-import "strings"
+import (
+	"encoding/json"
+	"sort"
+	"strings"
+)
 
 type ModelFamily string
 
@@ -92,4 +96,61 @@ func (s *TokenSummary) Add(usage *Usage, model string) {
 
 func (s *TokenSummary) TotalTokens() int {
 	return s.InputTokens + s.OutputTokens + s.CacheWriteTokens + s.CacheReadTokens
+}
+
+// EstimateTokens estimates token count from text using ~4 characters per token heuristic.
+func EstimateTokens(text string) int {
+	if len(text) == 0 {
+		return 0
+	}
+	return (len(text) + 3) / 4
+}
+
+// EstimateContentTokens estimates tokens from a JSON raw message.
+func EstimateContentTokens(content json.RawMessage) int {
+	if len(content) == 0 {
+		return 0
+	}
+	return EstimateTokens(string(content))
+}
+
+// ToolTokenSummary aggregates token estimates for a single tool type.
+type ToolTokenSummary struct {
+	Tool         string `json:"tool" pretty:"label=Tool,table"`
+	CallCount    int    `json:"callCount" pretty:"label=Calls,table"`
+	InputTokens  int    `json:"inputTokens" pretty:"label=Input,table"`
+	OutputTokens int    `json:"outputTokens" pretty:"label=Output,table"`
+	ErrorCount   int    `json:"errorCount" pretty:"label=Errors,table"`
+}
+
+func (t ToolTokenSummary) TotalTokens() int {
+	return t.InputTokens + t.OutputTokens
+}
+
+// AggregateByTool groups tool uses by tool name and sums their estimated tokens.
+func AggregateByTool(toolUses []ToolUse) []ToolTokenSummary {
+	byTool := make(map[string]*ToolTokenSummary)
+	for _, tu := range toolUses {
+		name := tu.DisplayTool()
+		s, ok := byTool[name]
+		if !ok {
+			s = &ToolTokenSummary{Tool: name}
+			byTool[name] = s
+		}
+		s.CallCount++
+		s.InputTokens += tu.InputTokens
+		s.OutputTokens += tu.OutputTokens
+		if tu.IsError {
+			s.ErrorCount++
+		}
+	}
+
+	result := make([]ToolTokenSummary, 0, len(byTool))
+	for _, s := range byTool {
+		result = append(result, *s)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].TotalTokens() > result[j].TotalTokens()
+	})
+	return result
 }

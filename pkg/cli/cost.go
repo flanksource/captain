@@ -13,7 +13,7 @@ import (
 type CostOptions struct {
 	Since   time.Time `flag:"since" help:"Only include sessions after this time" default:"now-7d" short:"s"`
 	All     bool      `flag:"all" help:"Search all projects" short:"a"`
-	GroupBy string    `flag:"group-by" help:"Group results: session, project, model, day, dir, file" default:"session" short:"g"`
+	GroupBy string    `flag:"group-by" help:"Group results: session, project, model, day, dir, file, tool, category" default:"session" short:"g"`
 }
 
 type CostRow struct {
@@ -35,10 +35,38 @@ type CostResult struct {
 	Rows         []CostRow `json:"rows"`
 }
 
+type ToolCostRow struct {
+	Tool   string `json:"tool" pretty:"label=Tool,table"`
+	Calls  int    `json:"calls" pretty:"label=Calls,table"`
+	Input  string `json:"input" pretty:"label=Input (est),table"`
+	Output string `json:"output" pretty:"label=Output (est),table"`
+	Errors int    `json:"errors" pretty:"label=Errors,table"`
+}
+
+type ToolCostResult struct {
+	TotalTokens string        `json:"totalTokens" pretty:"label=Total Estimated Tokens"`
+	Rows        []ToolCostRow `json:"rows"`
+}
+
+type CategoryCostRow struct {
+	Category string `json:"category" pretty:"label=Category,table"`
+	Tokens   string `json:"tokens" pretty:"label=Tokens (est),table"`
+	Percent  string `json:"percent" pretty:"label=%,table"`
+}
+
+type CategoryCostResult struct {
+	TotalTokens string            `json:"totalTokens" pretty:"label=Total Estimated Tokens"`
+	Rows        []CategoryCostRow `json:"rows"`
+}
+
 func RunCost(opts CostOptions) (any, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return nil, err
+	}
+
+	if opts.GroupBy == "tool" || opts.GroupBy == "category" {
+		return runCostDetailed(cwd, opts)
 	}
 
 	sessions, err := claude.ParseCosts(cwd, opts.All, &opts.Since)
@@ -80,6 +108,94 @@ func RunCost(opts CostOptions) (any, error) {
 		TotalTokens:  formatTokens(total.TotalTokens()),
 		Rows:         rows,
 	}, nil
+}
+
+func runCostDetailed(cwd string, opts CostOptions) (any, error) {
+	sessions, err := claude.ParseCostsDetailed(cwd, opts.All, &opts.Since)
+	if err != nil {
+		return nil, err
+	}
+
+	if opts.GroupBy == "tool" {
+		return aggregateToolCosts(sessions), nil
+	}
+	return aggregateCategoryCosts(sessions), nil
+}
+
+func aggregateToolCosts(sessions []claude.SessionCost) ToolCostResult {
+	merged := make(map[string]*claude.ToolTokenSummary)
+	for _, s := range sessions {
+		for _, tc := range s.ToolCosts {
+			m, ok := merged[tc.Tool]
+			if !ok {
+				cp := tc
+				merged[tc.Tool] = &cp
+				continue
+			}
+			m.CallCount += tc.CallCount
+			m.InputTokens += tc.InputTokens
+			m.OutputTokens += tc.OutputTokens
+			m.ErrorCount += tc.ErrorCount
+		}
+	}
+
+	var rows []ToolCostRow
+	var total int
+	for _, m := range merged {
+		total += m.TotalTokens()
+		rows = append(rows, ToolCostRow{
+			Tool:   m.Tool,
+			Calls:  m.CallCount,
+			Input:  formatTokens(m.InputTokens),
+			Output: formatTokens(m.OutputTokens),
+			Errors: m.ErrorCount,
+		})
+	}
+
+	sort.Slice(rows, func(i, j int) bool {
+		return rows[i].Calls > rows[j].Calls
+	})
+
+	return ToolCostResult{
+		TotalTokens: formatTokens(total),
+		Rows:        rows,
+	}
+}
+
+func aggregateCategoryCosts(sessions []claude.SessionCost) CategoryCostResult {
+	totals := make(map[claude.ContentCategory]int)
+	var grand int
+	for _, s := range sessions {
+		if s.Context == nil {
+			continue
+		}
+		for cat, tokens := range s.Context.Categories {
+			totals[cat] += tokens
+			grand += tokens
+		}
+	}
+
+	var rows []CategoryCostRow
+	for cat, tokens := range totals {
+		pct := 0.0
+		if grand > 0 {
+			pct = float64(tokens) / float64(grand) * 100
+		}
+		rows = append(rows, CategoryCostRow{
+			Category: string(cat),
+			Tokens:   formatTokens(tokens),
+			Percent:  fmt.Sprintf("%.1f%%", pct),
+		})
+	}
+
+	sort.Slice(rows, func(i, j int) bool {
+		return rows[i].Category < rows[j].Category
+	})
+
+	return CategoryCostResult{
+		TotalTokens: formatTokens(grand),
+		Rows:        rows,
+	}
 }
 
 func groupSessions(sessions []claude.SessionCost, groupBy string) []claude.SessionCost {

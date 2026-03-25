@@ -23,6 +23,9 @@ type ToolUse struct {
 	ProjectRoot  string         `json:"project_root,omitempty"`
 	Denied       bool           `json:"denied,omitempty"`
 	DeniedReason string         `json:"deniedReason,omitempty"`
+	InputTokens  int            `json:"inputTokens,omitempty"`
+	OutputTokens int            `json:"outputTokens,omitempty"`
+	IsError      bool           `json:"isError,omitempty"`
 }
 
 // Filter defines criteria for filtering tool uses
@@ -84,6 +87,50 @@ func ExtractToolUses(entries []HistoryEntry) []ToolUse {
 		if reason, ok := denials[toolUses[i].ToolUseID]; ok {
 			toolUses[i].Denied = true
 			toolUses[i].DeniedReason = reason
+		}
+	}
+
+	return toolUses
+}
+
+// toolResult holds matched result data for a tool call.
+type toolResult struct {
+	content json.RawMessage
+	isError bool
+}
+
+// ExtractToolUsesWithTokens extracts tool uses and links them to their results,
+// estimating token consumption for each call input and result output.
+func ExtractToolUsesWithTokens(entries []HistoryEntry) []ToolUse {
+	toolUses := ExtractToolUses(entries)
+
+	// Build map of toolUseID → result content from user messages
+	results := make(map[string]toolResult)
+	for _, entry := range entries {
+		if entry.Message.Role != MessageRoleUser {
+			continue
+		}
+		for _, block := range entry.Message.Content {
+			if block.Type != ContentTypeToolResult || block.ToolUseID == "" {
+				continue
+			}
+			results[block.ToolUseID] = toolResult{
+				content: block.Content,
+				isError: block.IsError,
+			}
+		}
+	}
+
+	for i := range toolUses {
+		// Estimate input tokens from tool call input
+		if raw, err := json.Marshal(toolUses[i].Input); err == nil {
+			toolUses[i].InputTokens = EstimateTokens(string(raw))
+		}
+
+		// Link result and estimate output tokens
+		if r, ok := results[toolUses[i].ToolUseID]; ok {
+			toolUses[i].OutputTokens = EstimateContentTokens(r.content)
+			toolUses[i].IsError = r.isError
 		}
 	}
 

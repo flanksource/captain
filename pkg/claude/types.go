@@ -51,9 +51,16 @@ const (
 type ContentType string
 
 const (
-	ContentTypeText       ContentType = "text"
-	ContentTypeToolUse    ContentType = "tool_use"
-	ContentTypeToolResult ContentType = "tool_result"
+	ContentTypeText             ContentType = "text"
+	ContentTypeToolUse          ContentType = "tool_use"
+	ContentTypeToolResult       ContentType = "tool_result"
+	ContentTypeThinking         ContentType = "thinking"
+	ContentTypeRedactedThinking ContentType = "redacted_thinking"
+	ContentTypeImage            ContentType = "image"
+	ContentTypeServerToolUse    ContentType = "server_tool_use"
+	ContentTypeServerToolResult ContentType = "server_tool_result"
+	ContentTypeMCPToolUse       ContentType = "mcp_tool_use"
+	ContentTypeMCPToolResult    ContentType = "mcp_tool_result"
 )
 
 // StopReason represents why Claude stopped

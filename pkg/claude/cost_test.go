@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -114,4 +115,54 @@ func TestTokenSummary_Add(t *testing.T) {
 	// nil usage should be a no-op
 	s.Add(nil, "claude-sonnet-4-6")
 	assert.Equal(t, 500, s.InputTokens)
+}
+
+func TestEstimateTokens(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected int
+	}{
+		{"", 0},
+		{"hi", 1},           // 2 chars → ceil(2/4) = 1
+		{"hello", 2},        // 5 chars → ceil(5/4) = 2
+		{"12345678", 2},     // 8 chars → exactly 2
+		{"123456789", 3},    // 9 chars → ceil(9/4) = 3
+		{"hello world foo", 4}, // 15 chars → ceil(15/4) = 4
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			assert.Equal(t, tt.expected, EstimateTokens(tt.input))
+		})
+	}
+}
+
+func TestEstimateContentTokens(t *testing.T) {
+	assert.Equal(t, 0, EstimateContentTokens(nil))
+	assert.Equal(t, 0, EstimateContentTokens(json.RawMessage{}))
+	assert.Greater(t, EstimateContentTokens(json.RawMessage(`{"file_path":"/tmp/foo.go"}`)), 0)
+}
+
+func TestAggregateByTool(t *testing.T) {
+	toolUses := []ToolUse{
+		{Tool: "Bash", InputTokens: 100, OutputTokens: 500},
+		{Tool: "Bash", InputTokens: 50, OutputTokens: 200, IsError: true},
+		{Tool: "Read", InputTokens: 20, OutputTokens: 1000},
+		{Tool: "Edit", InputTokens: 80, OutputTokens: 30},
+	}
+
+	result := AggregateByTool(toolUses)
+
+	assert.Len(t, result, 3)
+	// Sorted by total tokens descending: Read (1020), Bash (850), Edit (110)
+	assert.Equal(t, "Read", result[0].Tool)
+	assert.Equal(t, 1, result[0].CallCount)
+	assert.Equal(t, 1020, result[0].TotalTokens())
+
+	assert.Equal(t, "Bash", result[1].Tool)
+	assert.Equal(t, 2, result[1].CallCount)
+	assert.Equal(t, 1, result[1].ErrorCount)
+	assert.Equal(t, 150, result[1].InputTokens)
+	assert.Equal(t, 700, result[1].OutputTokens)
+
+	assert.Equal(t, "Edit", result[2].Tool)
 }

@@ -2,6 +2,7 @@ package claude
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -70,6 +71,8 @@ type ContentBlock struct {
 	ToolUseID string          `json:"tool_use_id,omitempty"`
 	Content   json.RawMessage `json:"content,omitempty"`
 	IsError   bool            `json:"is_error,omitempty"`
+	Thinking  string          `json:"thinking,omitempty"`
+	Signature string          `json:"signature,omitempty"`
 }
 
 // Usage tracks token consumption
@@ -113,6 +116,17 @@ func (m *Message) GetTextContent() string {
 		}
 	}
 	return result
+}
+
+// GetThinkingContent returns concatenated thinking text from all thinking blocks
+func (m *Message) GetThinkingContent() string {
+	var b strings.Builder
+	for _, block := range m.Content {
+		if block.Type == ContentTypeThinking && block.Thinking != "" {
+			b.WriteString(block.Thinking)
+		}
+	}
+	return b.String()
 }
 
 // GetToolUses returns all tool_use content blocks

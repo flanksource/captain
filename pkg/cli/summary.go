@@ -11,26 +11,27 @@ import (
 )
 
 type SummaryResult struct {
-	TotalToolUses int           `json:"totalToolUses" pretty:"label=Total Tool Uses"`
-	DeniedCount   int           `json:"deniedCount,omitempty" pretty:"label=Denied"`
-	Tools         []NameCount   `json:"tools" pretty:"label=Tools"`
-	Paths         []PathSummary `json:"paths" pretty:"label=Paths"`
-	Domains       []NameCount   `json:"domains" pretty:"label=Domains"`
-	EnvVars       []NameCount   `json:"envVars" pretty:"label=Env Vars"`
-	Binaries      []NameCount   `json:"binaries" pretty:"label=Binaries"`
-	Categories    []NameCount   `json:"categories" pretty:"label=Categories"`
-	Cost          CostSummary   `json:"cost" pretty:"label=Cost"`
+	TotalToolUses    int                      `json:"totalToolUses" pretty:"label=Total Tool Uses"`
+	DeniedCount      int                      `json:"deniedCount,omitempty" pretty:"label=Denied"`
+	Tools            []UsageSummary           `json:"tools" pretty:"label=Tools"`
+	Paths            []UsageSummary           `json:"paths" pretty:"label=Paths"`
+	Domains          []UsageSummary           `json:"domains" pretty:"label=Domains"`
+	EnvVars          []UsageSummary           `json:"envVars" pretty:"label=Env Vars"`
+	Binaries         []UsageSummary           `json:"binaries" pretty:"label=Binaries"`
+	Categories       []UsageSummary           `json:"categories" pretty:"label=Categories"`
+	Cost             CostSummary              `json:"cost" pretty:"label=Cost"`
+	ContextBreakdown *claude.ContextBreakdown `json:"contextBreakdown,omitempty" pretty:"label=Context Breakdown"`
 }
 
-type NameCount struct {
-	Name  string `json:"name" pretty:"label=Name,table"`
-	Count int    `json:"count" pretty:"label=Count,table"`
-}
+type UsageSummary struct {
+	Name     string `json:"name" pretty:"label=Name,table"`
+	Count    int    `json:"count" pretty:"label=Count,table"`
+	Tokens   string `json:"tokens,omitempty" pretty:"label=Tokens,table"`
+	Cost     string `json:"cost,omitempty" pretty:"label=Cost,table"`
+	Errors   int    `json:"errors,omitempty" pretty:"label=Errors,table"`
+	Duration string `json:"duration,omitempty" pretty:"label=Duration,table"`
 
-type PathSummary struct {
-	Path       string `json:"path" pretty:"label=Path,table"`
-	ReadCount  int    `json:"readCount" pretty:"label=Reads,table"`
-	WriteCount int    `json:"writeCount" pretty:"label=Writes,table"`
+	tokens int // raw token count for sorting
 }
 
 type CostSummary struct {
@@ -45,12 +46,17 @@ type CostSummary struct {
 
 func BuildSummary(toolUses []claude.ToolUse, classifier *bash.CategoryClassifier, costs []claude.SessionCost) SummaryResult {
 	tools := make(map[string]int)
-	readDirs := make(map[string]int)
-	writeDirs := make(map[string]int)
+	toolTokens := make(map[string]int)
+	toolErrors := make(map[string]int)
+	paths := make(map[string]int)
+	pathTokens := make(map[string]int)
 	domains := make(map[string]int)
+	domainTokens := make(map[string]int)
 	envVars := make(map[string]int)
 	binaries := make(map[string]int)
+	binaryTokens := make(map[string]int)
 	categories := make(map[string]int)
+	categoryTokens := make(map[string]int)
 	var denied int
 
 	for _, tu := range toolUses {
@@ -58,7 +64,13 @@ func BuildSummary(toolUses []claude.ToolUse, classifier *bash.CategoryClassifier
 			tu.ProjectRoot = claude.FindProjectRoot(tu.CWD)
 		}
 
-		tools[tu.DisplayTool()]++
+		name := tu.DisplayTool()
+		tuTokens := tu.InputTokens + tu.OutputTokens
+		tools[name]++
+		toolTokens[name] += tuTokens
+		if tu.IsError {
+			toolErrors[name]++
+		}
 
 		if tu.Denied {
 			denied++
@@ -71,46 +83,71 @@ func BuildSummary(toolUses []claude.ToolUse, classifier *bash.CategoryClassifier
 			}
 		}
 		categories[string(category)]++
+		categoryTokens[string(category)] += tuTokens
 
 		analysis := AnalyzeToolUse(tu, tu.ProjectRoot)
 		for _, p := range analysis.ReadPaths {
-			readDirs[p]++
+			paths[p]++
+			pathTokens[p] += tuTokens
 		}
 		for _, p := range analysis.WritePaths {
-			writeDirs[p]++
+			paths[p]++
+			pathTokens[p] += tuTokens
 		}
 		for _, d := range analysis.Domains {
 			domains[d]++
+			domainTokens[d] += tuTokens
 		}
 		for _, b := range analysis.Binaries {
 			binaries[b]++
+			binaryTokens[b] += tuTokens
 		}
 		for _, v := range ExtractEnvVars(tu) {
 			envVars[v]++
 		}
 	}
 
+	toolSummaries := toUsageSummaries(tools, toolTokens)
+	for i := range toolSummaries {
+		toolSummaries[i].Errors = toolErrors[toolSummaries[i].Name]
+	}
+
 	result := SummaryResult{
 		TotalToolUses: len(toolUses),
 		DeniedCount:   denied,
-		Tools:         toNameCounts(tools),
-		Domains:       toNameCounts(domains),
-		EnvVars:       toNameCounts(envVars),
-		Binaries:      toNameCounts(binaries),
-		Categories:    toNameCounts(categories),
-		Paths:         toPathSummaries(readDirs, writeDirs),
+		Tools:         toolSummaries,
+		Paths:         toUsageSummaries(paths, pathTokens),
+		Domains:       toUsageSummaries(domains, domainTokens),
+		EnvVars:       toUsageSummaries(envVars, nil),
+		Binaries:      toUsageSummaries(binaries, binaryTokens),
+		Categories:    toUsageSummaries(categories, categoryTokens),
 	}
 
 	applyCostToSummary(&result, costs)
 	return result
 }
 
-func toNameCounts(m map[string]int) []NameCount {
-	result := make([]NameCount, 0, len(m))
-	for k, v := range m {
-		result = append(result, NameCount{Name: k, Count: v})
+func toUsageSummaries(counts map[string]int, tokens map[string]int) []UsageSummary {
+	result := make([]UsageSummary, 0, len(counts))
+	for name, count := range counts {
+		t := 0
+		if tokens != nil {
+			t = tokens[name]
+		}
+		us := UsageSummary{
+			Name:   name,
+			Count:  count,
+			tokens: t,
+		}
+		if t > 0 {
+			us.Tokens = formatTokens(t)
+		}
+		result = append(result, us)
 	}
 	sort.Slice(result, func(i, j int) bool {
+		if result[i].tokens != result[j].tokens {
+			return result[i].tokens > result[j].tokens
+		}
 		if result[i].Count != result[j].Count {
 			return result[i].Count > result[j].Count
 		}
@@ -119,42 +156,33 @@ func toNameCounts(m map[string]int) []NameCount {
 	return result
 }
 
-func toPathSummaries(reads, writes map[string]int) []PathSummary {
-	allPaths := make(map[string]bool)
-	for k := range reads {
-		allPaths[k] = true
-	}
-	for k := range writes {
-		allPaths[k] = true
-	}
-
-	result := make([]PathSummary, 0, len(allPaths))
-	for p := range allPaths {
-		result = append(result, PathSummary{
-			Path:       p,
-			ReadCount:  reads[p],
-			WriteCount: writes[p],
-		})
-	}
-	sort.Slice(result, func(i, j int) bool {
-		return result[i].Path < result[j].Path
-	})
-	return result
-}
-
 func applyCostToSummary(result *SummaryResult, costs []claude.SessionCost) {
+	cb := &claude.ContextBreakdown{Categories: make(map[claude.ContentCategory]int)}
+
 	for _, c := range costs {
 		result.Cost.InputTokens += c.Tokens.InputTokens
 		result.Cost.OutputTokens += c.Tokens.OutputTokens
 		result.Cost.CacheReadTokens += c.Tokens.CacheReadTokens
 		result.Cost.CacheWriteTokens += c.Tokens.CacheWriteTokens
 		result.Cost.TotalCost += c.Tokens.TotalCost
+
+		if c.Context != nil {
+			for cat, tokens := range c.Context.Categories {
+				cb.Categories[cat] += tokens
+				cb.Total += tokens
+			}
+		}
 	}
+
 	result.Cost.CostDisplay = fmt.Sprintf("$%.4f", result.Cost.TotalCost)
 
 	totalInput := result.Cost.InputTokens + result.Cost.CacheReadTokens + result.Cost.CacheWriteTokens
 	if totalInput > 0 {
 		result.Cost.CacheHitRatio = float64(result.Cost.CacheReadTokens) / float64(totalInput) * 100
+	}
+
+	if cb.Total > 0 {
+		result.ContextBreakdown = cb
 	}
 }
 

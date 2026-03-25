@@ -81,13 +81,13 @@ func TestExtractEnvVars(t *testing.T) {
 
 func TestBuildSummary(t *testing.T) {
 	toolUses := []claude.ToolUse{
-		{Tool: "Bash", Input: map[string]any{"command": "go build ./..."}, ProjectRoot: "/project"},
-		{Tool: "Bash", Input: map[string]any{"command": "echo $HOME"}, ProjectRoot: "/project"},
-		{Tool: "Read", Input: map[string]any{"file_path": "/project/pkg/cli/history.go"}, ProjectRoot: "/project"},
-		{Tool: "Read", Input: map[string]any{"file_path": "/project/pkg/cli/types.go"}, ProjectRoot: "/project"},
-		{Tool: "Write", Input: map[string]any{"file_path": "/project/pkg/cli/summary.go"}, ProjectRoot: "/project"},
-		{Tool: "Edit", Input: map[string]any{"file_path": "/project/cmd/main.go"}, ProjectRoot: "/project"},
-		{Tool: "WebFetch", Input: map[string]any{"url": "https://docs.example.com/api"}, ProjectRoot: "/project"},
+		{Tool: "Bash", Input: map[string]any{"command": "go build ./..."}, ProjectRoot: "/project", InputTokens: 10, OutputTokens: 50},
+		{Tool: "Bash", Input: map[string]any{"command": "echo $HOME"}, ProjectRoot: "/project", InputTokens: 5, OutputTokens: 20},
+		{Tool: "Read", Input: map[string]any{"file_path": "/project/pkg/cli/history.go"}, ProjectRoot: "/project", InputTokens: 8, OutputTokens: 200},
+		{Tool: "Read", Input: map[string]any{"file_path": "/project/pkg/cli/types.go"}, ProjectRoot: "/project", InputTokens: 8, OutputTokens: 100},
+		{Tool: "Write", Input: map[string]any{"file_path": "/project/pkg/cli/summary.go"}, ProjectRoot: "/project", InputTokens: 50, OutputTokens: 10},
+		{Tool: "Edit", Input: map[string]any{"file_path": "/project/cmd/main.go"}, ProjectRoot: "/project", InputTokens: 30, OutputTokens: 5},
+		{Tool: "WebFetch", Input: map[string]any{"url": "https://docs.example.com/api"}, ProjectRoot: "/project", InputTokens: 5, OutputTokens: 500},
 	}
 
 	classifier := bash.NewCategoryClassifier(bash.DefaultCategoryConfig())
@@ -96,29 +96,33 @@ func TestBuildSummary(t *testing.T) {
 	assert.Equal(t, 7, result.TotalToolUses)
 	assert.Equal(t, 0, result.DeniedCount)
 
-	toolMap := make(map[string]int)
+	toolMap := make(map[string]UsageSummary)
 	for _, tc := range result.Tools {
-		toolMap[tc.Name] = tc.Count
+		toolMap[tc.Name] = tc
 	}
-	assert.Equal(t, 2, toolMap["Bash"])
-	assert.Equal(t, 2, toolMap["Read"])
-	assert.Equal(t, 1, toolMap["Write"])
-	assert.Equal(t, 1, toolMap["Edit"])
-	assert.Equal(t, 1, toolMap["WebFetch"])
+	assert.Equal(t, 2, toolMap["Bash"].Count)
+	assert.Equal(t, 2, toolMap["Read"].Count)
+	assert.Equal(t, 1, toolMap["Write"].Count)
+	assert.Equal(t, 1, toolMap["Edit"].Count)
+	assert.Equal(t, 1, toolMap["WebFetch"].Count)
+
+	// WebFetch has most tokens (505), should be first
+	assert.Equal(t, "WebFetch", result.Tools[0].Name)
+	assert.NotEmpty(t, result.Tools[0].Tokens)
 
 	assert.NotEmpty(t, result.Paths)
 
-	domainMap := make(map[string]int)
+	domainMap := make(map[string]UsageSummary)
 	for _, d := range result.Domains {
-		domainMap[d.Name] = d.Count
+		domainMap[d.Name] = d
 	}
-	assert.Equal(t, 1, domainMap["docs.example.com"])
+	assert.Equal(t, 1, domainMap["docs.example.com"].Count)
 
-	envMap := make(map[string]int)
+	envMap := make(map[string]UsageSummary)
 	for _, e := range result.EnvVars {
-		envMap[e.Name] = e.Count
+		envMap[e.Name] = e
 	}
-	assert.Equal(t, 1, envMap["HOME"])
+	assert.Equal(t, 1, envMap["HOME"].Count)
 }
 
 func TestBuildSummary_DeniedCounts(t *testing.T) {
@@ -168,31 +172,46 @@ func TestBuildSummary_WithCosts(t *testing.T) {
 	assert.InDelta(t, 23.26, result.Cost.CacheHitRatio, 0.01)
 }
 
-func TestToNameCounts_SortedByCountDesc(t *testing.T) {
-	m := map[string]int{"Read": 10, "Bash": 20, "Write": 5}
-	result := toNameCounts(m)
+func TestToUsageSummaries_SortedByTokensDesc(t *testing.T) {
+	counts := map[string]int{"Read": 10, "Bash": 20, "Write": 5}
+	tokens := map[string]int{"Read": 500, "Bash": 100, "Write": 1000}
 
-	assert.Equal(t, "Bash", result[0].Name)
-	assert.Equal(t, 20, result[0].Count)
+	result := toUsageSummaries(counts, tokens)
+
+	// Sorted by tokens desc: Write(1000), Read(500), Bash(100)
+	assert.Equal(t, "Write", result[0].Name)
+	assert.Equal(t, 5, result[0].Count)
 	assert.Equal(t, "Read", result[1].Name)
 	assert.Equal(t, 10, result[1].Count)
-	assert.Equal(t, "Write", result[2].Name)
-	assert.Equal(t, 5, result[2].Count)
+	assert.Equal(t, "Bash", result[2].Name)
+	assert.Equal(t, 20, result[2].Count)
 }
 
-func TestToPathSummaries(t *testing.T) {
-	reads := map[string]int{"pkg/cli/history.go": 5, "cmd/main.go": 1}
-	writes := map[string]int{"pkg/cli/history.go": 3, "pkg/claude/cost.go": 2}
+func TestToUsageSummaries_NoTokensFallsBackToCount(t *testing.T) {
+	counts := map[string]int{"Read": 10, "Bash": 20, "Write": 5}
 
-	result := toPathSummaries(reads, writes)
+	result := toUsageSummaries(counts, nil)
 
-	assert.Len(t, result, 3)
-	// sorted alphabetically
-	assert.Equal(t, "cmd/main.go", result[0].Path)
-	assert.Equal(t, 1, result[0].ReadCount)
-	assert.Equal(t, 0, result[0].WriteCount)
-	assert.Equal(t, "pkg/claude/cost.go", result[1].Path)
-	assert.Equal(t, "pkg/cli/history.go", result[2].Path)
-	assert.Equal(t, 5, result[2].ReadCount)
-	assert.Equal(t, 3, result[2].WriteCount)
+	// All tokens=0, so sorted by count desc: Bash(20), Read(10), Write(5)
+	assert.Equal(t, "Bash", result[0].Name)
+	assert.Equal(t, "Read", result[1].Name)
+	assert.Equal(t, "Write", result[2].Name)
+}
+
+func TestBuildSummary_ToolErrors(t *testing.T) {
+	toolUses := []claude.ToolUse{
+		{Tool: "Bash", Input: map[string]any{"command": "ls"}, ProjectRoot: "/p", InputTokens: 5, OutputTokens: 10},
+		{Tool: "Bash", Input: map[string]any{"command": "false"}, ProjectRoot: "/p", InputTokens: 5, OutputTokens: 10, IsError: true},
+		{Tool: "Read", Input: map[string]any{"file_path": "/p/f.go"}, ProjectRoot: "/p", InputTokens: 5, OutputTokens: 100},
+	}
+
+	classifier := bash.NewCategoryClassifier(bash.DefaultCategoryConfig())
+	result := BuildSummary(toolUses, classifier, nil)
+
+	toolMap := make(map[string]UsageSummary)
+	for _, tc := range result.Tools {
+		toolMap[tc.Name] = tc
+	}
+	assert.Equal(t, 1, toolMap["Bash"].Errors)
+	assert.Equal(t, 0, toolMap["Read"].Errors)
 }

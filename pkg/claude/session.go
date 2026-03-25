@@ -277,15 +277,17 @@ func ParseHistory(currentDir string, searchAll bool, filter Filter) (*ParseResul
 }
 
 type SessionCost struct {
-	SessionID string       `json:"sessionId"`
-	Project   string       `json:"project"`
-	Model     string       `json:"model"`
-	Tier      string       `json:"tier"`
-	Start     time.Time    `json:"start"`
-	End       time.Time    `json:"end"`
-	Tokens    TokenSummary `json:"tokens"`
-	Messages  int          `json:"messages"`
-	Files     []string     `json:"files,omitempty"`
+	SessionID string            `json:"sessionId"`
+	Project   string            `json:"project"`
+	Model     string            `json:"model"`
+	Tier      string            `json:"tier"`
+	Start     time.Time         `json:"start"`
+	End       time.Time         `json:"end"`
+	Tokens    TokenSummary      `json:"tokens"`
+	Messages  int               `json:"messages"`
+	Files     []string          `json:"files,omitempty"`
+	Context   *ContextBreakdown `json:"context,omitempty"`
+	ToolCosts []ToolTokenSummary `json:"toolCosts,omitempty"`
 }
 
 func ParseCosts(currentDir string, searchAll bool, since *time.Time) ([]SessionCost, error) {
@@ -377,6 +379,108 @@ func ParseCosts(currentDir string, searchAll bool, since *time.Time) ([]SessionC
 		for f := range filesets[key] {
 			sc.Files = append(sc.Files, f)
 		}
+		result = append(result, *sc)
+	}
+	return result, nil
+}
+
+// ParseCostsDetailed extends ParseCosts with context categorization and per-tool token breakdown.
+func ParseCostsDetailed(currentDir string, searchAll bool, since *time.Time) ([]SessionCost, error) {
+	sessionFiles, err := FindSessionFiles(GetProjectsDir(), currentDir, searchAll)
+	if err != nil {
+		return nil, err
+	}
+
+	type sessionKey struct {
+		sessionID string
+		file      string
+	}
+
+	costs := make(map[sessionKey]*SessionCost)
+	filesets := make(map[sessionKey]map[string]bool)
+	sessionEntries := make(map[sessionKey][]HistoryEntry)
+	var order []sessionKey
+
+	for _, sessionFile := range sessionFiles {
+		projectPath := ExtractProjectPath(sessionFile)
+		projectRoot := FindProjectRoot(projectPath)
+		project := filepath.Base(projectRoot)
+
+		entries, err := ReadHistoryFile(sessionFile)
+		if err != nil {
+			continue
+		}
+
+		for _, entry := range entries {
+			ts, _ := entry.ParseTimestamp()
+			if since != nil && !ts.IsZero() && ts.Before(*since) {
+				continue
+			}
+
+			key := sessionKey{sessionID: entry.SessionID, file: sessionFile}
+			sessionEntries[key] = append(sessionEntries[key], entry)
+
+			for _, tu := range ExtractToolUses([]HistoryEntry{entry}) {
+				tu.ProjectRoot = projectRoot
+				if p := tu.ExtractPath(); p != "" {
+					if filesets[key] == nil {
+						filesets[key] = make(map[string]bool)
+					}
+					filesets[key][p] = true
+				}
+			}
+
+			if !entry.IsAssistantMessage() || entry.Message.Usage == nil {
+				continue
+			}
+			if ts.IsZero() {
+				continue
+			}
+
+			sc, ok := costs[key]
+			if !ok {
+				sc = &SessionCost{
+					SessionID: entry.SessionID,
+					Project:   project,
+					Start:     ts,
+					End:       ts,
+				}
+				costs[key] = sc
+				order = append(order, key)
+			}
+
+			if ts.Before(sc.Start) {
+				sc.Start = ts
+			}
+			if ts.After(sc.End) {
+				sc.End = ts
+			}
+
+			model := entry.Message.Model
+			if model != "" {
+				sc.Model = model
+			}
+			if tier := entry.Message.Usage.ServiceTier; tier != "" {
+				sc.Tier = tier
+			}
+
+			sc.Tokens.Add(entry.Message.Usage, model)
+			sc.Messages++
+		}
+	}
+
+	result := make([]SessionCost, 0, len(order))
+	for _, key := range order {
+		sc := costs[key]
+		for f := range filesets[key] {
+			sc.Files = append(sc.Files, f)
+		}
+
+		entries := sessionEntries[key]
+		cb := CategorizeEntries(entries)
+		sc.Context = &cb
+		sc.ToolCosts = AggregateByTool(ExtractToolUsesWithTokens(entries))
+
 		result = append(result, *sc)
 	}
 	return result, nil

@@ -70,11 +70,13 @@ func RunHistory(opts HistoryOptions) (any, error) {
 
 	classifier := bash.NewCategoryClassifier(bash.DefaultCategoryConfig())
 
-	costs, _ := claude.ParseCosts(cwd, opts.All, &opts.Since)
-
+	var costs []claude.SessionCost
 	if opts.Summary {
+		costs, _ = claude.ParseCostsDetailed(cwd, opts.All, &opts.Since)
 		return runHistorySummary(parseResult.ToolUses, opts, classifier, costs)
 	}
+
+	costs, _ = claude.ParseCosts(cwd, opts.All, &opts.Since)
 	if opts.All {
 		return runHistoryAll(parseResult, opts, classifier, costs)
 	}
@@ -236,13 +238,15 @@ func matchApprovedFilter(filter string, denied bool) bool {
 }
 
 func applyCostSummaryAll(result *HistoryResultAll, costs []claude.SessionCost) {
-	var totalTokens int
-	var totalCost float64
+	var totals claude.TokenSummary
 	var minStart, maxEnd time.Time
 
 	for _, c := range costs {
-		totalTokens += c.Tokens.TotalTokens()
-		totalCost += c.Tokens.TotalCost
+		totals.InputTokens += c.Tokens.InputTokens
+		totals.OutputTokens += c.Tokens.OutputTokens
+		totals.CacheReadTokens += c.Tokens.CacheReadTokens
+		totals.CacheWriteTokens += c.Tokens.CacheWriteTokens
+		totals.TotalCost += c.Tokens.TotalCost
 		if minStart.IsZero() || c.Start.Before(minStart) {
 			minStart = c.Start
 		}
@@ -251,21 +255,27 @@ func applyCostSummaryAll(result *HistoryResultAll, costs []claude.SessionCost) {
 		}
 	}
 
-	result.Tokens = totalTokens
-	result.Cost = fmt.Sprintf("$%.4f", totalCost)
+	result.Tokens = totals.TotalTokens()
+	result.InputTokens = formatTokens(totals.InputTokens)
+	result.OutputTokens = formatTokens(totals.OutputTokens)
+	result.CacheRead = formatTokens(totals.CacheReadTokens)
+	result.CacheWrite = formatTokens(totals.CacheWriteTokens)
+	result.Cost = formatCost(totals.TotalCost)
 	if !minStart.IsZero() && !maxEnd.IsZero() {
 		result.Duration = formatDuration(maxEnd.Sub(minStart))
 	}
 }
 
 func applyCostSummarySingle(result *HistoryResult, costs []claude.SessionCost) {
-	var totalTokens int
-	var totalCost float64
+	var totals claude.TokenSummary
 	var minStart, maxEnd time.Time
 
 	for _, c := range costs {
-		totalTokens += c.Tokens.TotalTokens()
-		totalCost += c.Tokens.TotalCost
+		totals.InputTokens += c.Tokens.InputTokens
+		totals.OutputTokens += c.Tokens.OutputTokens
+		totals.CacheReadTokens += c.Tokens.CacheReadTokens
+		totals.CacheWriteTokens += c.Tokens.CacheWriteTokens
+		totals.TotalCost += c.Tokens.TotalCost
 		if minStart.IsZero() || c.Start.Before(minStart) {
 			minStart = c.Start
 		}
@@ -274,8 +284,12 @@ func applyCostSummarySingle(result *HistoryResult, costs []claude.SessionCost) {
 		}
 	}
 
-	result.Tokens = totalTokens
-	result.Cost = fmt.Sprintf("$%.4f", totalCost)
+	result.Tokens = totals.TotalTokens()
+	result.InputTokens = formatTokens(totals.InputTokens)
+	result.OutputTokens = formatTokens(totals.OutputTokens)
+	result.CacheRead = formatTokens(totals.CacheReadTokens)
+	result.CacheWrite = formatTokens(totals.CacheWriteTokens)
+	result.Cost = formatCost(totals.TotalCost)
 	if !minStart.IsZero() && !maxEnd.IsZero() {
 		result.Duration = formatDuration(maxEnd.Sub(minStart))
 	}

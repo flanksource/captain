@@ -38,21 +38,29 @@ type ScanResultRowSingle struct {
 
 // HistoryResultAll is used when --all flag is set
 type HistoryResultAll struct {
-	Total      int             `json:"total" pretty:"label=Total"`
-	UserDenied int             `json:"userDenied,omitempty" pretty:"label=User Denied"`
-	Duration   string          `json:"duration,omitempty" pretty:"label=Duration"`
-	Tokens     int             `json:"tokens,omitempty" pretty:"label=Tokens"`
-	Cost       string          `json:"cost,omitempty" pretty:"label=Cost"`
-	Results    []ScanResultRow `json:"results"`
+	Total        int             `json:"total" pretty:"label=Total"`
+	UserDenied   int             `json:"userDenied,omitempty" pretty:"label=User Denied"`
+	Duration     string          `json:"duration,omitempty" pretty:"label=Duration"`
+	Tokens       int             `json:"tokens,omitempty" pretty:"label=Tokens"`
+	InputTokens  string          `json:"inputTokens,omitempty" pretty:"label=Input"`
+	OutputTokens string          `json:"outputTokens,omitempty" pretty:"label=Output"`
+	CacheRead    string          `json:"cacheRead,omitempty" pretty:"label=Cache Read"`
+	CacheWrite   string          `json:"cacheWrite,omitempty" pretty:"label=Cache Write"`
+	Cost         string          `json:"cost,omitempty" pretty:"label=Cost"`
+	Results      []ScanResultRow `json:"results"`
 }
 
 // HistoryResult is used for single project view
 type HistoryResult struct {
-	Project    string                `json:"project" pretty:"label=Project"`
-	Total      int                   `json:"total" pretty:"label=Total"`
-	UserDenied int                   `json:"userDenied,omitempty" pretty:"label=User Denied"`
-	Duration   string                `json:"duration,omitempty" pretty:"label=Duration"`
-	Tokens     int                   `json:"tokens,omitempty" pretty:"label=Tokens"`
-	Cost       string                `json:"cost,omitempty" pretty:"label=Cost"`
-	Results    []ScanResultRowSingle `json:"results"`
+	Project      string                `json:"project" pretty:"label=Project"`
+	Total        int                   `json:"total" pretty:"label=Total"`
+	UserDenied   int                   `json:"userDenied,omitempty" pretty:"label=User Denied"`
+	Duration     string                `json:"duration,omitempty" pretty:"label=Duration"`
+	Tokens       int                   `json:"tokens,omitempty" pretty:"label=Tokens"`
+	InputTokens  string                `json:"inputTokens,omitempty" pretty:"label=Input"`
+	OutputTokens string                `json:"outputTokens,omitempty" pretty:"label=Output"`
+	CacheRead    string                `json:"cacheRead,omitempty" pretty:"label=Cache Read"`
+	CacheWrite   string                `json:"cacheWrite,omitempty" pretty:"label=Cache Write"`
+	Cost         string                `json:"cost,omitempty" pretty:"label=Cost"`
+	Results      []ScanResultRowSingle `json:"results"`
 }

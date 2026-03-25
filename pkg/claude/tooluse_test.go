@@ -203,6 +203,71 @@ func TestExtractToolUses_ErrorNotDenial(t *testing.T) {
 	assert.False(t, result[0].Denied)
 }
 
+func TestExtractToolUsesWithTokens(t *testing.T) {
+	entries := []HistoryEntry{
+		{
+			Timestamp: "2024-01-01T10:00:00Z",
+			Message: Message{
+				Role: MessageRoleAssistant,
+				Content: []ContentBlock{
+					{Type: ContentTypeToolUse, ID: "tu-1", Name: "Read", Input: json.RawMessage(`{"file_path":"/tmp/foo.go"}`)},
+					{Type: ContentTypeToolUse, ID: "tu-2", Name: "Bash", Input: json.RawMessage(`{"command":"ls -la"}`)},
+				},
+			},
+		},
+		{
+			Timestamp: "2024-01-01T10:00:01Z",
+			Message: Message{
+				Role: MessageRoleUser,
+				Content: []ContentBlock{
+					{Type: ContentTypeToolResult, ToolUseID: "tu-1", Content: json.RawMessage(`"package main\nfunc main() {}\\n"`)},
+					{Type: ContentTypeToolResult, ToolUseID: "tu-2", Content: json.RawMessage(`"total 42\ndrwxr-xr-x 5 user staff 160"`)},
+				},
+			},
+		},
+	}
+
+	result := ExtractToolUsesWithTokens(entries)
+	assert.Len(t, result, 2)
+
+	// Both should have estimated input and output tokens
+	assert.Greater(t, result[0].InputTokens, 0)
+	assert.Greater(t, result[0].OutputTokens, 0)
+	assert.False(t, result[0].IsError)
+
+	assert.Greater(t, result[1].InputTokens, 0)
+	assert.Greater(t, result[1].OutputTokens, 0)
+	assert.False(t, result[1].IsError)
+}
+
+func TestExtractToolUsesWithTokens_Error(t *testing.T) {
+	entries := []HistoryEntry{
+		{
+			Timestamp: "2024-01-01T10:00:00Z",
+			Message: Message{
+				Role: MessageRoleAssistant,
+				Content: []ContentBlock{
+					{Type: ContentTypeToolUse, ID: "tu-1", Name: "Bash", Input: json.RawMessage(`{"command":"false"}`)},
+				},
+			},
+		},
+		{
+			Timestamp: "2024-01-01T10:00:01Z",
+			Message: Message{
+				Role: MessageRoleUser,
+				Content: []ContentBlock{
+					{Type: ContentTypeToolResult, ToolUseID: "tu-1", IsError: true, Content: json.RawMessage(`"exit code 1"`)},
+				},
+			},
+		},
+	}
+
+	result := ExtractToolUsesWithTokens(entries)
+	assert.Len(t, result, 1)
+	assert.True(t, result[0].IsError)
+	assert.Greater(t, result[0].OutputTokens, 0)
+}
+
 func TestExtractToolUses_ExtractsCWD(t *testing.T) {
 	entries := []HistoryEntry{
 		{
