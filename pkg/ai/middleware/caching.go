@@ -2,23 +2,17 @@ package middleware
 
 import (
 	"context"
-	"crypto/sha256"
-	"fmt"
+	"errors"
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/ai/cache"
 	"github.com/flanksource/commons/logger"
 )
 
-type Cache interface {
-	Get(key string) (string, bool)
-	Set(key string, value string, ttl time.Duration)
-}
-
 type cachingProvider struct {
 	provider ai.Provider
-	cache    Cache
-	ttl      time.Duration
+	cache    *cache.Cache
 }
 
 func (c *cachingProvider) GetModel() string       { return c.provider.GetModel() }
@@ -29,39 +23,77 @@ func (c *cachingProvider) Execute(ctx context.Context, req ai.Request) (*ai.Resp
 		return c.provider.Execute(ctx, req)
 	}
 
-	key := cacheKey(req.Prompt, c.provider.GetModel())
-
-	if cached, ok := c.cache.Get(key); ok {
+	entry, err := c.cache.Get(req.Prompt, c.provider.GetModel())
+	if err == nil && entry != nil && entry.Error == "" {
 		logger.Infof("[%s/%s] cache hit", c.provider.GetBackend(), c.provider.GetModel())
 		return &ai.Response{
-			Text:     cached,
-			Model:    c.provider.GetModel(),
+			Text:     entry.Response,
+			Model:    entry.Model,
 			Backend:  c.provider.GetBackend(),
 			CacheHit: true,
+			Usage: ai.Usage{
+				InputTokens:      entry.TokensInput,
+				OutputTokens:     entry.TokensOutput,
+				ReasoningTokens:  entry.TokensReasoning,
+				CacheReadTokens:  entry.TokensCacheRead,
+				CacheWriteTokens: entry.TokensCacheWrite,
+			},
 		}, nil
+	} else if err != nil && !errors.Is(err, cache.ErrNotFound) && !errors.Is(err, cache.ErrCacheDisabled) {
+		return nil, err
 	}
 
 	logger.Debugf("[%s/%s] cache miss", c.provider.GetBackend(), c.provider.GetModel())
 
-	resp, err := c.provider.Execute(ctx, req)
-	if err != nil {
-		return resp, err
+	start := time.Now()
+	resp, execErr := c.provider.Execute(ctx, req)
+	duration := time.Since(start)
+
+	cacheEntry := &cache.Entry{
+		Model:      c.provider.GetModel(),
+		Prompt:     req.Prompt,
+		DurationMS: duration.Milliseconds(),
+		Provider:   string(c.provider.GetBackend()),
 	}
 
-	if resp.Text != "" {
-		c.cache.Set(key, resp.Text, c.ttl)
+	if execErr != nil {
+		cacheEntry.Error = execErr.Error()
+		_ = c.cache.Set(cacheEntry)
+		return resp, execErr
 	}
 
+	cacheEntry.Response = resp.Text
+	cacheEntry.TokensInput = resp.Usage.InputTokens
+	cacheEntry.TokensOutput = resp.Usage.OutputTokens
+	cacheEntry.TokensReasoning = resp.Usage.ReasoningTokens
+	cacheEntry.TokensCacheRead = resp.Usage.CacheReadTokens
+	cacheEntry.TokensCacheWrite = resp.Usage.CacheWriteTokens
+	cacheEntry.TokensTotal = resp.Usage.TotalTokens()
+	cacheEntry.MaxTokens = req.MaxTokens
+	cacheEntry.Temperature = req.Temperature
+
+	_ = c.cache.Set(cacheEntry)
 	return resp, nil
 }
 
-func cacheKey(prompt, model string) string {
-	h := sha256.Sum256([]byte(fmt.Sprintf("%s|%s", prompt, model)))
-	return fmt.Sprintf("%x", h)
+func WithCache(configs ...cache.Config) Option {
+	return func(p ai.Provider) (ai.Provider, error) {
+		var cfg cache.Config
+		if len(configs) > 0 {
+			cfg = configs[0]
+		} else {
+			cfg = cache.Config{TTL: 7 * 24 * time.Hour}
+		}
+		c, err := cache.New(cfg)
+		if err != nil {
+			return nil, err
+		}
+		return &cachingProvider{provider: p, cache: c}, nil
+	}
 }
 
-func WithCache(cache Cache, ttl time.Duration) Option {
+func WithCacheInstance(c *cache.Cache) Option {
 	return func(p ai.Provider) (ai.Provider, error) {
-		return &cachingProvider{provider: p, cache: cache, ttl: ttl}, nil
+		return &cachingProvider{provider: p, cache: c}, nil
 	}
 }

@@ -18,4 +18,7 @@ func init() {
 	ai.RegisterProvider(ai.BackendGemini, func(cfg ai.Config) ai.Provider {
 		return NewGemini(cfg)
 	})
+	ai.RegisterProvider(ai.BackendOpenAI, func(cfg ai.Config) ai.Provider {
+		return NewOpenAI(cfg)
+	})
 }

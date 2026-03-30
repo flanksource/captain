@@ -11,6 +11,7 @@ type Backend string
 const (
 	BackendAnthropic Backend = "anthropic"
 	BackendGemini    Backend = "gemini"
+	BackendOpenAI    Backend = "openai"
 	BackendClaudeCLI Backend = "claude-cli"
 	BackendCodexCLI  Backend = "codex-cli"
 	BackendGeminiCLI Backend = "gemini-cli"
@@ -48,8 +49,11 @@ func InferBackend(model string) (Backend, error) {
 	if strings.HasPrefix(m, "gemini-") || strings.HasPrefix(m, "models/gemini-") {
 		return BackendGemini, nil
 	}
-	if strings.HasPrefix(m, "gpt-") || strings.HasPrefix(m, "o1") || strings.HasPrefix(m, "o3") || strings.HasPrefix(m, "o4") || strings.HasPrefix(m, "grok-") {
+	if strings.HasPrefix(m, "grok-") {
 		return BackendCodexCLI, nil
+	}
+	if strings.HasPrefix(m, "gpt-") || strings.HasPrefix(m, "o1") || strings.HasPrefix(m, "o3") || strings.HasPrefix(m, "o4") {
+		return BackendOpenAI, nil
 	}
 
 	// Check if the model is in the default catalog
@@ -59,5 +63,5 @@ func InferBackend(model string) (Backend, error) {
 		}
 	}
 
-	return "", fmt.Errorf("unable to infer backend from model name: %s (known backends: anthropic, gemini, codex-cli, claude-cli, gemini-cli)", model)
+	return "", fmt.Errorf("unable to infer backend from model name: %s (known backends: anthropic, gemini, openai, codex-cli, claude-cli, gemini-cli)", model)
 }

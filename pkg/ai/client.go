@@ -24,7 +24,7 @@ func NewProvider(cfg Config) (Provider, error) {
 	}
 
 	if cfg.Model == "" {
-		return nil, fmt.Errorf("model cannot be empty; specify a model or backend (available: anthropic, gemini, codex-cli, claude-cli, gemini-cli)")
+		return nil, fmt.Errorf("model cannot be empty; specify a model or backend (available: anthropic, gemini, openai, codex-cli, claude-cli, gemini-cli)")
 	}
 
 	if backend == "" {
@@ -52,6 +52,7 @@ func GetAPIKeyFromEnv(backend Backend) string {
 	envVars := map[Backend][]string{
 		BackendAnthropic: {"ANTHROPIC_API_KEY"},
 		BackendGemini:    {"GEMINI_API_KEY", "GOOGLE_API_KEY"},
+		BackendOpenAI:    {"OPENAI_API_KEY"},
 		BackendGeminiCLI: {},
 		BackendClaudeCLI: {},
 		BackendCodexCLI:  {},

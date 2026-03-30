@@ -12,6 +12,8 @@ require (
 	github.com/flanksource/clicky v1.19.0
 	github.com/flanksource/commons v1.48.1
 	github.com/flanksource/sandbox-runtime v1.0.2
+	github.com/mattn/go-sqlite3 v1.14.38
+	github.com/openai/openai-go v1.12.0
 	github.com/samber/lo v1.53.0
 	github.com/sergi/go-diff v1.4.0
 	github.com/spf13/cobra v1.10.2

@@ -108,51 +108,51 @@ var defaultModels = []ModelDef{
 	{ID: "gemini-1.5-flash-8b", Name: "Gemini 1.5 Flash-8B", Backend: BackendGemini, Reasoning: false, ContextWindow: 1000000, MaxTokens: 8192, InputPrice: 0.0375, OutputPrice: 0.15, CacheRead: 0.01},
 
 	// =========================================================================
-	// OpenAI (via Codex CLI or API) — https://platform.openai.com/docs/models
+	// OpenAI (API) — https://platform.openai.com/docs/models
 	// =========================================================================
 
 	// GPT-5.3
-	{ID: "gpt-5.3-codex", Name: "GPT-5.3 Codex", Backend: BackendCodexCLI, Reasoning: true, ContextWindow: 400000, MaxTokens: 128000, InputPrice: 1.75, OutputPrice: 14.00, CacheRead: 0.175, Default: true},
-	{ID: "gpt-5.3-codex-spark", Name: "GPT-5.3 Codex Spark", Backend: BackendCodexCLI, Reasoning: true, ContextWindow: 128000, MaxTokens: 32000, InputPrice: 1.75, OutputPrice: 14.00, CacheRead: 0.175},
+	{ID: "gpt-5.3-codex", Name: "GPT-5.3 Codex", Backend: BackendOpenAI, Reasoning: true, ContextWindow: 400000, MaxTokens: 128000, InputPrice: 1.75, OutputPrice: 14.00, CacheRead: 0.175, Default: true},
+	{ID: "gpt-5.3-codex-spark", Name: "GPT-5.3 Codex Spark", Backend: BackendOpenAI, Reasoning: true, ContextWindow: 128000, MaxTokens: 32000, InputPrice: 1.75, OutputPrice: 14.00, CacheRead: 0.175},
 
 	// GPT-5.2
-	{ID: "gpt-5.2-codex", Name: "GPT-5.2 Codex", Backend: BackendCodexCLI, Reasoning: true, ContextWindow: 400000, MaxTokens: 128000, InputPrice: 1.75, OutputPrice: 14.00, CacheRead: 0.175},
-	{ID: "gpt-5.2", Name: "GPT-5.2", Backend: BackendCodexCLI, Reasoning: true, ContextWindow: 400000, MaxTokens: 128000, InputPrice: 1.75, OutputPrice: 14.00, CacheRead: 0.175},
-	{ID: "gpt-5.2-pro", Name: "GPT-5.2 Pro", Backend: BackendCodexCLI, Reasoning: true, ContextWindow: 400000, MaxTokens: 128000, InputPrice: 21.00, OutputPrice: 168.00},
+	{ID: "gpt-5.2-codex", Name: "GPT-5.2 Codex", Backend: BackendOpenAI, Reasoning: true, ContextWindow: 400000, MaxTokens: 128000, InputPrice: 1.75, OutputPrice: 14.00, CacheRead: 0.175},
+	{ID: "gpt-5.2", Name: "GPT-5.2", Backend: BackendOpenAI, Reasoning: true, ContextWindow: 400000, MaxTokens: 128000, InputPrice: 1.75, OutputPrice: 14.00, CacheRead: 0.175},
+	{ID: "gpt-5.2-pro", Name: "GPT-5.2 Pro", Backend: BackendOpenAI, Reasoning: true, ContextWindow: 400000, MaxTokens: 128000, InputPrice: 21.00, OutputPrice: 168.00},
 
 	// GPT-5.1
-	{ID: "gpt-5.1-codex-max", Name: "GPT-5.1 Codex Max", Backend: BackendCodexCLI, Reasoning: true, ContextWindow: 400000, MaxTokens: 128000, InputPrice: 1.25, OutputPrice: 10.00, CacheRead: 0.125},
-	{ID: "gpt-5.1-codex-mini", Name: "GPT-5.1 Codex Mini", Backend: BackendCodexCLI, Reasoning: true, ContextWindow: 400000, MaxTokens: 128000, InputPrice: 0.25, OutputPrice: 2.00, CacheRead: 0.025},
-	{ID: "gpt-5.1", Name: "GPT-5.1", Backend: BackendCodexCLI, Reasoning: true, ContextWindow: 400000, MaxTokens: 128000, InputPrice: 1.25, OutputPrice: 10.00, CacheRead: 0.13},
+	{ID: "gpt-5.1-codex-max", Name: "GPT-5.1 Codex Max", Backend: BackendOpenAI, Reasoning: true, ContextWindow: 400000, MaxTokens: 128000, InputPrice: 1.25, OutputPrice: 10.00, CacheRead: 0.125},
+	{ID: "gpt-5.1-codex-mini", Name: "GPT-5.1 Codex Mini", Backend: BackendOpenAI, Reasoning: true, ContextWindow: 400000, MaxTokens: 128000, InputPrice: 0.25, OutputPrice: 2.00, CacheRead: 0.025},
+	{ID: "gpt-5.1", Name: "GPT-5.1", Backend: BackendOpenAI, Reasoning: true, ContextWindow: 400000, MaxTokens: 128000, InputPrice: 1.25, OutputPrice: 10.00, CacheRead: 0.13},
 
 	// GPT-5
-	{ID: "gpt-5", Name: "GPT-5", Backend: BackendCodexCLI, Reasoning: true, ContextWindow: 400000, MaxTokens: 128000, InputPrice: 1.25, OutputPrice: 10.00, CacheRead: 0.125},
-	{ID: "gpt-5-codex", Name: "GPT-5 Codex", Backend: BackendCodexCLI, Reasoning: true, ContextWindow: 400000, MaxTokens: 128000, InputPrice: 1.25, OutputPrice: 10.00, CacheRead: 0.125},
-	{ID: "gpt-5-mini", Name: "GPT-5 Mini", Backend: BackendCodexCLI, Reasoning: true, ContextWindow: 400000, MaxTokens: 128000, InputPrice: 0.25, OutputPrice: 2.00, CacheRead: 0.025},
-	{ID: "gpt-5-nano", Name: "GPT-5 Nano", Backend: BackendCodexCLI, Reasoning: true, ContextWindow: 400000, MaxTokens: 128000, InputPrice: 0.05, OutputPrice: 0.40, CacheRead: 0.005},
-	{ID: "gpt-5-pro", Name: "GPT-5 Pro", Backend: BackendCodexCLI, Reasoning: true, ContextWindow: 400000, MaxTokens: 272000, InputPrice: 15.00, OutputPrice: 120.00},
+	{ID: "gpt-5", Name: "GPT-5", Backend: BackendOpenAI, Reasoning: true, ContextWindow: 400000, MaxTokens: 128000, InputPrice: 1.25, OutputPrice: 10.00, CacheRead: 0.125},
+	{ID: "gpt-5-codex", Name: "GPT-5 Codex", Backend: BackendOpenAI, Reasoning: true, ContextWindow: 400000, MaxTokens: 128000, InputPrice: 1.25, OutputPrice: 10.00, CacheRead: 0.125},
+	{ID: "gpt-5-mini", Name: "GPT-5 Mini", Backend: BackendOpenAI, Reasoning: true, ContextWindow: 400000, MaxTokens: 128000, InputPrice: 0.25, OutputPrice: 2.00, CacheRead: 0.025},
+	{ID: "gpt-5-nano", Name: "GPT-5 Nano", Backend: BackendOpenAI, Reasoning: true, ContextWindow: 400000, MaxTokens: 128000, InputPrice: 0.05, OutputPrice: 0.40, CacheRead: 0.005},
+	{ID: "gpt-5-pro", Name: "GPT-5 Pro", Backend: BackendOpenAI, Reasoning: true, ContextWindow: 400000, MaxTokens: 272000, InputPrice: 15.00, OutputPrice: 120.00},
 
 	// GPT-4.1
-	{ID: "gpt-4.1", Name: "GPT-4.1", Backend: BackendCodexCLI, Reasoning: false, ContextWindow: 1047576, MaxTokens: 32768, InputPrice: 2.00, OutputPrice: 8.00, CacheRead: 0.50},
-	{ID: "gpt-4.1-mini", Name: "GPT-4.1 Mini", Backend: BackendCodexCLI, Reasoning: false, ContextWindow: 1047576, MaxTokens: 32768, InputPrice: 0.40, OutputPrice: 1.60, CacheRead: 0.10},
-	{ID: "gpt-4.1-nano", Name: "GPT-4.1 Nano", Backend: BackendCodexCLI, Reasoning: false, ContextWindow: 1047576, MaxTokens: 32768, InputPrice: 0.10, OutputPrice: 0.40, CacheRead: 0.03},
+	{ID: "gpt-4.1", Name: "GPT-4.1", Backend: BackendOpenAI, Reasoning: false, ContextWindow: 1047576, MaxTokens: 32768, InputPrice: 2.00, OutputPrice: 8.00, CacheRead: 0.50},
+	{ID: "gpt-4.1-mini", Name: "GPT-4.1 Mini", Backend: BackendOpenAI, Reasoning: false, ContextWindow: 1047576, MaxTokens: 32768, InputPrice: 0.40, OutputPrice: 1.60, CacheRead: 0.10},
+	{ID: "gpt-4.1-nano", Name: "GPT-4.1 Nano", Backend: BackendOpenAI, Reasoning: false, ContextWindow: 1047576, MaxTokens: 32768, InputPrice: 0.10, OutputPrice: 0.40, CacheRead: 0.03},
 
 	// GPT-4o
-	{ID: "gpt-4o", Name: "GPT-4o", Backend: BackendCodexCLI, Reasoning: false, ContextWindow: 128000, MaxTokens: 16384, InputPrice: 2.50, OutputPrice: 10.00, CacheRead: 1.25},
-	{ID: "gpt-4o-mini", Name: "GPT-4o Mini", Backend: BackendCodexCLI, Reasoning: false, ContextWindow: 128000, MaxTokens: 16384, InputPrice: 0.15, OutputPrice: 0.60, CacheRead: 0.08},
+	{ID: "gpt-4o", Name: "GPT-4o", Backend: BackendOpenAI, Reasoning: false, ContextWindow: 128000, MaxTokens: 16384, InputPrice: 2.50, OutputPrice: 10.00, CacheRead: 1.25},
+	{ID: "gpt-4o-mini", Name: "GPT-4o Mini", Backend: BackendOpenAI, Reasoning: false, ContextWindow: 128000, MaxTokens: 16384, InputPrice: 0.15, OutputPrice: 0.60, CacheRead: 0.08},
 
 	// o-series reasoning models
-	{ID: "o4-mini", Name: "o4-mini", Backend: BackendCodexCLI, Reasoning: true, ContextWindow: 200000, MaxTokens: 100000, InputPrice: 1.10, OutputPrice: 4.40, CacheRead: 0.28},
-	{ID: "o4-mini-deep-research", Name: "o4-mini Deep Research", Backend: BackendCodexCLI, Reasoning: true, ContextWindow: 200000, MaxTokens: 100000, InputPrice: 2.00, OutputPrice: 8.00, CacheRead: 0.50},
-	{ID: "o3", Name: "o3", Backend: BackendCodexCLI, Reasoning: true, ContextWindow: 200000, MaxTokens: 100000, InputPrice: 2.00, OutputPrice: 8.00, CacheRead: 0.50},
-	{ID: "o3-pro", Name: "o3 Pro", Backend: BackendCodexCLI, Reasoning: true, ContextWindow: 200000, MaxTokens: 100000, InputPrice: 20.00, OutputPrice: 80.00},
-	{ID: "o3-mini", Name: "o3-mini", Backend: BackendCodexCLI, Reasoning: true, ContextWindow: 200000, MaxTokens: 100000, InputPrice: 1.10, OutputPrice: 4.40, CacheRead: 0.55},
-	{ID: "o3-deep-research", Name: "o3 Deep Research", Backend: BackendCodexCLI, Reasoning: true, ContextWindow: 200000, MaxTokens: 100000, InputPrice: 10.00, OutputPrice: 40.00, CacheRead: 2.50},
-	{ID: "o1", Name: "o1", Backend: BackendCodexCLI, Reasoning: true, ContextWindow: 200000, MaxTokens: 100000, InputPrice: 15.00, OutputPrice: 60.00, CacheRead: 7.50},
-	{ID: "o1-pro", Name: "o1 Pro", Backend: BackendCodexCLI, Reasoning: true, ContextWindow: 200000, MaxTokens: 100000, InputPrice: 150.00, OutputPrice: 600.00},
+	{ID: "o4-mini", Name: "o4-mini", Backend: BackendOpenAI, Reasoning: true, ContextWindow: 200000, MaxTokens: 100000, InputPrice: 1.10, OutputPrice: 4.40, CacheRead: 0.28},
+	{ID: "o4-mini-deep-research", Name: "o4-mini Deep Research", Backend: BackendOpenAI, Reasoning: true, ContextWindow: 200000, MaxTokens: 100000, InputPrice: 2.00, OutputPrice: 8.00, CacheRead: 0.50},
+	{ID: "o3", Name: "o3", Backend: BackendOpenAI, Reasoning: true, ContextWindow: 200000, MaxTokens: 100000, InputPrice: 2.00, OutputPrice: 8.00, CacheRead: 0.50},
+	{ID: "o3-pro", Name: "o3 Pro", Backend: BackendOpenAI, Reasoning: true, ContextWindow: 200000, MaxTokens: 100000, InputPrice: 20.00, OutputPrice: 80.00},
+	{ID: "o3-mini", Name: "o3-mini", Backend: BackendOpenAI, Reasoning: true, ContextWindow: 200000, MaxTokens: 100000, InputPrice: 1.10, OutputPrice: 4.40, CacheRead: 0.55},
+	{ID: "o3-deep-research", Name: "o3 Deep Research", Backend: BackendOpenAI, Reasoning: true, ContextWindow: 200000, MaxTokens: 100000, InputPrice: 10.00, OutputPrice: 40.00, CacheRead: 2.50},
+	{ID: "o1", Name: "o1", Backend: BackendOpenAI, Reasoning: true, ContextWindow: 200000, MaxTokens: 100000, InputPrice: 15.00, OutputPrice: 60.00, CacheRead: 7.50},
+	{ID: "o1-pro", Name: "o1 Pro", Backend: BackendOpenAI, Reasoning: true, ContextWindow: 200000, MaxTokens: 100000, InputPrice: 150.00, OutputPrice: 600.00},
 
 	// Codex
-	{ID: "codex-mini-latest", Name: "Codex Mini", Backend: BackendCodexCLI, Reasoning: true, ContextWindow: 200000, MaxTokens: 100000, InputPrice: 1.50, OutputPrice: 6.00, CacheRead: 0.375},
+	{ID: "codex-mini-latest", Name: "Codex Mini", Backend: BackendOpenAI, Reasoning: true, ContextWindow: 200000, MaxTokens: 100000, InputPrice: 1.50, OutputPrice: 6.00, CacheRead: 0.375},
 
 	// =========================================================================
 	// Claude CLI (claude-code-* prefix)
