@@ -31,6 +31,12 @@ tasks:
     cmds:
       - go test -v ./...
 
+  test:fixtures:
+    desc: Run gavel fixture tests
+    deps: [build]
+    cmds:
+      - PATH="$PWD/.bin:$PATH" gavel fixtures pkg/cli/testdata/history_test.md
+
   install:
     desc: Build and install captain to /usr/local/bin
     deps: [build]

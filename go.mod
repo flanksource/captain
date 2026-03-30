@@ -196,4 +196,4 @@ require (
 
 // replace github.com/flanksource/sandbox-runtime => ../sandbox-runtime
 
-// replace github.com/flanksource/clicky => ../clicky
+replace github.com/flanksource/clicky => ../clicky

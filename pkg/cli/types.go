@@ -1,39 +1,90 @@
 package cli
 
 import (
-	"github.com/flanksource/captain/pkg/claude"
 	"github.com/flanksource/clicky/api"
 )
 
 // ScanResultRow is used when --all flag is set (shows Project column)
 type ScanResultRow struct {
-	Project         string          `json:"project" pretty:"label=Project,table"`
-	Tool            string          `json:"tool" pretty:"label=Tool,table"`
-	Subject         api.Textable    `json:"subject" pretty:"label=Subject,width=80,table"`
-	Paths           string          `json:"paths,omitempty" pretty:"label=Paths,table"`
-	ReadPaths       []string        `json:"readPaths,omitempty" pretty:"-"`
-	WritePaths      []string        `json:"writePaths,omitempty" pretty:"-"`
-	BinariesDisplay string          `json:"binariesDisplay,omitempty" pretty:"label=Binaries,table"`
-	Binaries        []string        `json:"binaries,omitempty" pretty:"-"`
-	Category        string          `json:"category" pretty:"label=Category,table"`
-	Approved        string          `json:"approved,omitempty" pretty:"label=Approved,table"`
-	Time            string          `json:"time" pretty:"label=Time,table"`
-	ToolUse         *claude.ToolUse `json:"toolUse,omitempty" pretty:"-"`
+	Project         string          `json:"project"`
+	Tool            string          `json:"tool"`
+	Summary         string          `json:"summary"`
+	Subject         api.Textable    `json:"-"`
+	Detail          api.Textable    `json:"-"`
+	Paths           string          `json:"paths,omitempty"`
+	ReadPaths       []string        `json:"readPaths,omitempty"`
+	WritePaths      []string        `json:"writePaths,omitempty"`
+	BinariesDisplay string          `json:"binariesDisplay,omitempty"`
+	Binaries        []string        `json:"binaries,omitempty"`
+	Category        string          `json:"category"`
+	Approved        string          `json:"approved,omitempty"`
+	Time            string          `json:"time"`
+}
+
+func (r ScanResultRow) Columns() []api.ColumnDef {
+	return []api.ColumnDef{
+		api.Column("time").Label("Time").Build(),
+		api.Column("project").Label("Project").Build(),
+		api.Column("tool").Label("Tool").Build(),
+		api.Column("subject").Label("Subject").Build(),
+		api.Column("category").Label("Category").Build(),
+		api.Column("approved").Label("Approved").Build(),
+	}
+}
+
+func (r ScanResultRow) Row() map[string]any {
+	return map[string]any{
+		"time":     r.Time,
+		"project":  r.Project,
+		"tool":     r.Tool,
+		"subject":  r.Subject,
+		"category": r.Category,
+		"approved": r.Approved,
+	}
+}
+
+func (r ScanResultRow) RowDetail() api.Textable {
+	return r.Detail
 }
 
 // ScanResultRowSingle is used for single project (no Project column)
 type ScanResultRowSingle struct {
-	Tool            string          `json:"tool" pretty:"label=Tool,table"`
-	Subject         api.Textable    `json:"subject" pretty:"label=Subject,width=80,table"`
-	Paths           string          `json:"paths,omitempty" pretty:"label=Paths,table"`
-	ReadPaths       []string        `json:"readPaths,omitempty" pretty:"-"`
-	WritePaths      []string        `json:"writePaths,omitempty" pretty:"-"`
-	BinariesDisplay string          `json:"binariesDisplay,omitempty" pretty:"label=Binaries,table"`
-	Binaries        []string        `json:"binaries,omitempty" pretty:"-"`
-	Category        string          `json:"category" pretty:"label=Category,table"`
-	Approved        string          `json:"approved,omitempty" pretty:"label=Approved,table"`
-	Time            string          `json:"time" pretty:"label=Time,table"`
-	ToolUse         *claude.ToolUse `json:"toolUse,omitempty" pretty:"-"`
+	Tool            string          `json:"tool"`
+	Summary         string          `json:"summary"`
+	Subject         api.Textable    `json:"-"`
+	Detail          api.Textable    `json:"-"`
+	Paths           string          `json:"paths,omitempty"`
+	ReadPaths       []string        `json:"readPaths,omitempty"`
+	WritePaths      []string        `json:"writePaths,omitempty"`
+	BinariesDisplay string          `json:"binariesDisplay,omitempty"`
+	Binaries        []string        `json:"binaries,omitempty"`
+	Category        string          `json:"category"`
+	Approved        string          `json:"approved,omitempty"`
+	Time            string          `json:"time"`
+}
+
+func (r ScanResultRowSingle) Columns() []api.ColumnDef {
+	return []api.ColumnDef{
+		api.Column("time").Label("Time").Build(),
+		api.Column("tool").Label("Tool").Build(),
+		api.Column("subject").Label("Subject").Build(),
+		api.Column("category").Label("Category").Build(),
+		api.Column("approved").Label("Approved").Build(),
+	}
+}
+
+func (r ScanResultRowSingle) Row() map[string]any {
+	return map[string]any{
+		"time":     r.Time,
+		"tool":     r.Tool,
+		"subject":  r.Subject,
+		"category": r.Category,
+		"approved": r.Approved,
+	}
+}
+
+func (r ScanResultRowSingle) RowDetail() api.Textable {
+	return r.Detail
 }
 
 // HistoryResultAll is used when --all flag is set

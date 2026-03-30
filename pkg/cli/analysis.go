@@ -8,6 +8,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/bash"
 	"github.com/flanksource/captain/pkg/claude"
+	"github.com/flanksource/captain/pkg/claude/tools"
 )
 
 type ToolAnalysis struct {
@@ -17,34 +18,45 @@ type ToolAnalysis struct {
 	Binaries   []string `json:"binaries,omitempty"`
 }
 
-func AnalyzeToolUse(tu claude.ToolUse, projectRoot string) ToolAnalysis {
+// AnalyzeToolUseLegacy is the old API for callers still using claude.ToolUse.
+func AnalyzeToolUseLegacy(tu claude.ToolUse, projectRoot string) ToolAnalysis {
+	base := tools.BaseTool{
+		RawTool:     tu.Tool,
+		Input:       tu.Input,
+		ProjectRoot: projectRoot,
+	}
+	return AnalyzeToolUse(tools.NewTool(base))
+}
+
+func AnalyzeToolUse(t tools.Tool) ToolAnalysis {
 	var a ToolAnalysis
+	base := t.Base()
 
 	rel := func(path string) string {
-		return claude.RelativePath(path, projectRoot)
+		return claude.RelativePath(path, base.ProjectRoot)
 	}
 
-	switch tu.Tool {
+	switch base.RawTool {
 	case "Read":
-		if path := tu.FilePath(); path != "" {
+		if path := t.FilePath(); path != "" {
 			a.ReadPaths = append(a.ReadPaths, rel(path))
 		}
 	case "Grep":
-		if path, ok := tu.Input["path"].(string); ok && path != "" {
+		if path, ok := base.Input["path"].(string); ok && path != "" {
 			a.ReadPaths = append(a.ReadPaths, rel(path))
 		}
 	case "Glob":
-		if path, ok := tu.Input["path"].(string); ok && path != "" {
+		if path, ok := base.Input["path"].(string); ok && path != "" {
 			a.ReadPaths = append(a.ReadPaths, rel(path))
 		}
 	case "Write", "Edit":
-		if path := tu.FilePath(); path != "" {
+		if path := t.FilePath(); path != "" {
 			a.WritePaths = append(a.WritePaths, rel(path))
 		}
 	case "Bash":
-		a.analyzeBash(tu, rel)
+		a.analyzeBash(base.Input, rel)
 	case "WebFetch":
-		if urlStr, ok := tu.Input["url"].(string); ok {
+		if urlStr, ok := base.Input["url"].(string); ok {
 			if u, err := url.Parse(urlStr); err == nil && u.Host != "" {
 				a.Domains = append(a.Domains, u.Hostname())
 			}
@@ -52,9 +64,9 @@ func AnalyzeToolUse(tu claude.ToolUse, projectRoot string) ToolAnalysis {
 	case "WebSearch":
 		a.Domains = append(a.Domains, "api.anthropic.com")
 	default:
-		if strings.HasPrefix(tu.Tool, "mcp__") {
+		if strings.HasPrefix(base.RawTool, "mcp__") {
 			domains := make(map[string]bool)
-			for _, v := range tu.Input {
+			for _, v := range base.Input {
 				if s, ok := v.(string); ok {
 					extractURLDomains(s, domains)
 				}
@@ -70,8 +82,8 @@ func AnalyzeToolUse(tu claude.ToolUse, projectRoot string) ToolAnalysis {
 	return a
 }
 
-func (a *ToolAnalysis) analyzeBash(tu claude.ToolUse, rel func(string) string) {
-	cmd, _ := tu.Input["command"].(string)
+func (a *ToolAnalysis) analyzeBash(input map[string]any, rel func(string) string) {
+	cmd, _ := input["command"].(string)
 	if cmd == "" {
 		return
 	}
@@ -93,12 +105,46 @@ func (a *ToolAnalysis) analyzeBash(tu claude.ToolUse, rel func(string) string) {
 	}
 
 	binaries := make(map[string]bool)
-	extractBinaries(tu, binaries)
+	extractBinariesFromInput(input, binaries)
 	a.Binaries = sortedKeys(binaries)
 
 	domains := make(map[string]bool)
-	extractDomains(tu, domains)
+	extractDomainsFromInput(input, domains)
 	a.Domains = sortedKeys(domains)
+}
+
+func extractBinariesFromInput(input map[string]any, binaries map[string]bool) {
+	cmd, _ := input["command"].(string)
+	if cmd == "" {
+		return
+	}
+	result, _ := bash.Analyze(cmd)
+	if result == nil {
+		return
+	}
+	for _, c := range result.Commands {
+		if fields := strings.Fields(c); len(fields) > 0 {
+			binary := filepath.Base(fields[0])
+			if !skipBinaries[binary] {
+				binaries[binary] = true
+			}
+		}
+	}
+}
+
+func extractDomainsFromInput(input map[string]any, domains map[string]bool) {
+	cmd, _ := input["command"].(string)
+	if cmd == "" {
+		return
+	}
+	for pattern, ds := range domainPatterns {
+		if pattern.MatchString(cmd) {
+			for _, d := range ds {
+				domains[d] = true
+			}
+		}
+	}
+	extractURLDomains(cmd, domains)
 }
 
 func appendUnique(slice []string, val string) []string {
@@ -110,7 +156,6 @@ func appendUnique(slice []string, val string) []string {
 	return append(slice, val)
 }
 
-// FormatPathsWithIcons returns a single string with ⬇/⬆ prefixed directories for table display.
 func FormatPathsWithIcons(readPaths, writePaths []string) string {
 	var parts []string
 	seen := make(map[string]bool)

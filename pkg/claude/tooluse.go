@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/bash"
+	"github.com/flanksource/captain/pkg/claude/tools"
 	"github.com/flanksource/commons/collections"
 )
 
@@ -26,6 +27,7 @@ type ToolUse struct {
 	InputTokens  int            `json:"inputTokens,omitempty"`
 	OutputTokens int            `json:"outputTokens,omitempty"`
 	IsError      bool           `json:"isError,omitempty"`
+	Response     string         `json:"response,omitempty"`
 }
 
 // Filter defines criteria for filtering tool uses
@@ -39,6 +41,8 @@ type Filter struct {
 
 const denialPrefix = "The user doesn't want to proceed with this tool use."
 const denialCommentSeparator = "the user said:\n"
+const boilerplatePrefix = "\n\nNote: The user"
+const askAnswerPrefix = "User has answered your question."
 
 // ExtractToolUses extracts ToolUse records from history entries
 func ExtractToolUses(entries []HistoryEntry) []ToolUse {
@@ -81,16 +85,20 @@ func ExtractToolUses(entries []HistoryEntry) []ToolUse {
 		}
 	}
 
-	// Pass 2: scan user messages for denied tool_results
+	// Pass 2: scan user messages for denied tool_results and responses
 	denials := buildDenialMap(entries)
+	responses := buildResponseMap(entries)
 	for i := range toolUses {
 		if reason, ok := denials[toolUses[i].ToolUseID]; ok {
 			toolUses[i].Denied = true
 			toolUses[i].DeniedReason = reason
 		}
+		if resp, ok := responses[toolUses[i].ToolUseID]; ok {
+			toolUses[i].Response = resp
+		}
 	}
 
-	return toolUses
+	return expandUserRows(toolUses)
 }
 
 // toolResult holds matched result data for a tool call.
@@ -122,19 +130,228 @@ func ExtractToolUsesWithTokens(entries []HistoryEntry) []ToolUse {
 	}
 
 	for i := range toolUses {
-		// Estimate input tokens from tool call input
 		if raw, err := json.Marshal(toolUses[i].Input); err == nil {
 			toolUses[i].InputTokens = EstimateTokens(string(raw))
 		}
-
-		// Link result and estimate output tokens
 		if r, ok := results[toolUses[i].ToolUseID]; ok {
 			toolUses[i].OutputTokens = EstimateContentTokens(r.content)
 			toolUses[i].IsError = r.isError
+			toolUses[i].Response = extractResultText(r.content)
 		}
 	}
 
 	return toolUses
+}
+
+// ExtractTools returns Tool interface implementations from history entries.
+func ExtractTools(entries []HistoryEntry) []tools.Tool {
+	return toTools(ExtractToolUses(entries), entries)
+}
+
+// ExtractToolsWithTokens returns Tool interface implementations with token estimates.
+func ExtractToolsWithTokens(entries []HistoryEntry) []tools.Tool {
+	return toTools(ExtractToolUsesWithTokens(entries), entries)
+}
+
+func toTools(toolUses []ToolUse, entries []HistoryEntry) []tools.Tool {
+	// Build map of toolUseID → (model, usage) from assistant messages
+	type msgInfo struct {
+		model string
+		usage *Usage
+	}
+	toolMsg := make(map[string]msgInfo)
+	for _, entry := range entries {
+		if entry.Message.Role != MessageRoleAssistant {
+			continue
+		}
+		for _, block := range entry.Message.Content {
+			if block.Type == ContentTypeToolUse && block.ID != "" {
+				toolMsg[block.ID] = msgInfo{
+					model: entry.Message.Model,
+					usage: entry.Message.Usage,
+				}
+			}
+		}
+	}
+
+	result := make([]tools.Tool, 0, len(toolUses))
+	for _, tu := range toolUses {
+		base := tools.BaseTool{
+			RawTool:      tu.Tool,
+			Input:        tu.Input,
+			Timestamp:    tu.Timestamp,
+			CWD:          tu.CWD,
+			SessionID:    tu.SessionID,
+			ToolUseID:    tu.ToolUseID,
+			ProjectRoot:  tu.ProjectRoot,
+			Denied:       tu.Denied,
+			DeniedReason: tu.DeniedReason,
+			IsError:      tu.IsError,
+			Response:     tu.Response,
+		}
+
+		if info, ok := toolMsg[tu.ToolUseID]; ok && info.usage != nil {
+			mu := tools.ModelUsage{
+				Model:                    info.model,
+				InputTokens:              info.usage.InputTokens,
+				OutputTokens:             info.usage.OutputTokens,
+				CacheCreationInputTokens: info.usage.CacheCreationInputTokens,
+				CacheReadInputTokens:     info.usage.CacheReadInputTokens,
+				ServiceTier:              info.usage.ServiceTier,
+				Cost:                     CalculateCost(info.usage, info.model),
+			}
+			base.Models = tools.Models{mu}
+		} else if tu.InputTokens > 0 || tu.OutputTokens > 0 {
+			base.Models = tools.Models{{
+				InputTokens:  tu.InputTokens,
+				OutputTokens: tu.OutputTokens,
+			}}
+		}
+
+		result = append(result, tools.NewTool(base))
+	}
+	return result
+}
+
+// ToolUsesToTools converts a slice of ToolUse to Tool interfaces.
+func ToolUsesToTools(toolUses []ToolUse) []tools.Tool {
+	result := make([]tools.Tool, 0, len(toolUses))
+	for _, tu := range toolUses {
+		base := tools.BaseTool{
+			RawTool:      tu.Tool,
+			Input:        tu.Input,
+			Timestamp:    tu.Timestamp,
+			CWD:          tu.CWD,
+			SessionID:    tu.SessionID,
+			ToolUseID:    tu.ToolUseID,
+			ProjectRoot:  tu.ProjectRoot,
+			Denied:       tu.Denied,
+			DeniedReason: tu.DeniedReason,
+			IsError:      tu.IsError,
+			Response:     tu.Response,
+		}
+		if tu.InputTokens > 0 || tu.OutputTokens > 0 {
+			base.Models = tools.Models{{
+				InputTokens:  tu.InputTokens,
+				OutputTokens: tu.OutputTokens,
+			}}
+		}
+		result = append(result, tools.NewTool(base))
+	}
+	return result
+}
+
+// expandUserRows inserts synthetic "User" rows after tool uses that have
+// user responses (denied tools, AskUserQuestion answers).
+func expandUserRows(toolUses []ToolUse) []ToolUse {
+	var result []ToolUse
+	for _, tu := range toolUses {
+		// Merge ExitPlanMode into the preceding Plan write row
+		if tu.Tool == "ExitPlanMode" {
+			if tu.Denied {
+				// Set Denied on the previous Plan row if it exists
+				for i := len(result) - 1; i >= 0; i-- {
+					if isPlanFileToolUse(result[i]) {
+						result[i].Denied = true
+						result[i].DeniedReason = tu.DeniedReason
+						break
+					}
+				}
+				// Still create User row for the denial comment
+				if tu.DeniedReason != "" {
+					result = append(result, ToolUse{
+						Tool:      "User",
+						Input:     map[string]any{"text": tu.DeniedReason},
+						Timestamp: tu.Timestamp,
+						SessionID: tu.SessionID,
+					})
+				}
+			}
+			// Skip the ExitPlanMode row itself (approved or denied)
+			continue
+		}
+
+		result = append(result, tu)
+
+		var userText string
+		switch {
+		case tu.Denied && tu.DeniedReason != "":
+			userText = tu.DeniedReason
+		case tu.Tool == "AskUserQuestion" && tu.Response != "":
+			userText = tu.Response
+		}
+		if userText == "" {
+			continue
+		}
+		result = append(result, ToolUse{
+			Tool:      "User",
+			Input:     map[string]any{"text": userText},
+			Timestamp: tu.Timestamp,
+			SessionID: tu.SessionID,
+		})
+	}
+	return result
+}
+
+func isPlanFileToolUse(tu ToolUse) bool {
+	if tu.Tool != "Write" && tu.Tool != "Edit" && tu.Tool != "Read" {
+		return false
+	}
+	if fp, ok := tu.Input["file_path"].(string); ok {
+		return strings.Contains(fp, "/.claude/plans/")
+	}
+	return false
+}
+
+func extractResultText(content json.RawMessage) string {
+	if len(content) == 0 {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(content, &s) == nil {
+		return s
+	}
+	var blocks []ContentBlock
+	if json.Unmarshal(content, &blocks) == nil {
+		var parts []string
+		for _, b := range blocks {
+			if b.Type == ContentTypeText && b.Text != "" {
+				parts = append(parts, b.Text)
+			}
+		}
+		return strings.Join(parts, "")
+	}
+	return ""
+}
+
+func stripBoilerplate(s string) string {
+	if i := strings.Index(s, boilerplatePrefix); i >= 0 {
+		s = strings.TrimSpace(s[:i])
+	}
+	if strings.HasPrefix(s, askAnswerPrefix) {
+		s = strings.TrimSpace(strings.TrimPrefix(s, askAnswerPrefix))
+	}
+	return s
+}
+
+// buildResponseMap extracts non-denial tool_result text for tools that need it.
+func buildResponseMap(entries []HistoryEntry) map[string]string {
+	responses := make(map[string]string)
+	for _, entry := range entries {
+		if entry.Message.Role != MessageRoleUser {
+			continue
+		}
+		for _, block := range entry.Message.Content {
+			if block.Type != ContentTypeToolResult || block.ToolUseID == "" || block.IsError {
+				continue
+			}
+			text := stripBoilerplate(extractToolResultText(block))
+			if text != "" {
+				responses[block.ToolUseID] = text
+			}
+		}
+	}
+	return responses
 }
 
 // buildDenialMap scans user messages for tool_result blocks that indicate
@@ -155,7 +372,7 @@ func buildDenialMap(entries []HistoryEntry) map[string]string {
 			}
 			reason := ""
 			if _, after, ok := strings.Cut(text, denialCommentSeparator); ok {
-				reason = strings.TrimSpace(after)
+				reason = stripBoilerplate(strings.TrimSpace(after))
 			}
 			denials[block.ToolUseID] = reason
 		}
@@ -193,7 +410,7 @@ func FilterToolUses(toolUses []ToolUse, filter Filter) []ToolUse {
 	var filtered []ToolUse
 
 	for _, tu := range toolUses {
-		if len(filter.Tools) > 0 && !collections.MatchItems(tu.Tool, filter.Tools...) {
+		if len(filter.Tools) > 0 && !MatchItemsInsensitive(tu.Tool, filter.Tools) {
 			continue
 		}
 
@@ -265,6 +482,31 @@ func singleLine(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
+func MatchItemsInsensitive(item string, patterns []string) bool {
+	lower := make([]string, len(patterns))
+	for i, p := range patterns {
+		lower[i] = strings.ToLower(p)
+	}
+	return collections.MatchItems(strings.ToLower(item), lower...)
+}
+
+func (tu ToolUse) firstQuestion() string {
+	if q, ok := tu.Input["question"].(string); ok {
+		return q
+	}
+	if questions, ok := tu.Input["questions"].([]any); ok && len(questions) > 0 {
+		if q, ok := questions[0].(map[string]any); ok {
+			if text, ok := q["question"].(string); ok {
+				return text
+			}
+		}
+		if q, ok := questions[0].(string); ok {
+			return q
+		}
+	}
+	return ""
+}
+
 func (tu ToolUse) Interpreter() string {
 	if tu.Tool != "Bash" {
 		return ""
@@ -275,12 +517,19 @@ func (tu ToolUse) Interpreter() string {
 
 // DisplayTool returns the display name for the tool, normalizing related tools
 func (tu ToolUse) DisplayTool() string {
+	if tu.isPlanFile() {
+		return "Plan"
+	}
 	switch tu.Tool {
 	case "Bash":
 		if interp := tu.Interpreter(); interp != "" {
 			return interp
 		}
 		return "Bash"
+	case "Agent":
+		return "Agent"
+	case "ExitPlanMode":
+		return "Plan"
 	case "TaskCreate", "TodoWrite":
 		return "Task"
 	case "AskUserQuestion":
@@ -290,8 +539,20 @@ func (tu ToolUse) DisplayTool() string {
 	}
 }
 
+func (tu ToolUse) isPlanFile() bool {
+	if tu.Tool != "Write" && tu.Tool != "Edit" && tu.Tool != "Read" {
+		return false
+	}
+	return strings.Contains(tu.FilePath(), "/.claude/plans/")
+}
+
 // FormatCommand extracts a human-readable command string from a ToolUse
 func (tu ToolUse) FormatCommand() string {
+	if tu.isPlanFile() {
+		name := filepath.Base(tu.FilePath())
+		return strings.TrimSuffix(name, ".md")
+	}
+
 	rel := func(path string) string {
 		return RelativePath(path, tu.ProjectRoot)
 	}
@@ -324,18 +585,15 @@ func (tu ToolUse) FormatCommand() string {
 			return url
 		}
 	case "AskUserQuestion":
-		if questions, ok := tu.Input["questions"].([]any); ok {
-			return fmt.Sprintf("%d questions", len(questions))
+		if q := tu.firstQuestion(); q != "" {
+			return q
 		}
 	case "ExitPlanMode":
-		if plan, ok := tu.Input["plan"].(string); ok {
-			if len(plan) > 50 {
-				return plan[:50] + "..."
-			}
-			return plan
+		if tu.Denied {
+			return "✗ disapproved"
 		}
-		return "exit plan mode"
-	case "Task":
+		return "✓ approved"
+	case "Agent", "Task":
 		subType, _ := tu.Input["subagent_type"].(string)
 		desc, _ := tu.Input["description"].(string)
 		if subType != "" && desc != "" {
@@ -356,6 +614,10 @@ func (tu ToolUse) FormatCommand() string {
 	case "WebSearch":
 		if query, ok := tu.Input["query"].(string); ok {
 			return query
+		}
+	case "User":
+		if text, ok := tu.Input["text"].(string); ok {
+			return text
 		}
 	}
 

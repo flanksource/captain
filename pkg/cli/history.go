@@ -5,15 +5,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"time"
-
 	"strings"
+	"time"
 
 	"github.com/flanksource/captain/pkg/bash"
 	"github.com/flanksource/captain/pkg/claude"
-	"github.com/flanksource/clicky"
+	"github.com/flanksource/captain/pkg/claude/tools"
 	"github.com/flanksource/clicky/api"
-	"github.com/flanksource/commons/collections"
 )
 
 type HistoryOptions struct {
@@ -26,6 +24,7 @@ type HistoryOptions struct {
 	Since      time.Time `flag:"since" help:"Only include commands after this time" default:"now-7d" short:"s"`
 	All        bool      `flag:"all" help:"Search all projects, not just current directory" short:"a"`
 	Short      bool      `flag:"short" help:"Compact output without diffs and code blocks" short:"S"`
+	Compact    bool      `flag:"compact" help:"Single line per entry" short:"C"`
 	Summary    bool      `flag:"summary" help:"Show aggregate summary instead of individual tool uses"`
 	Debug      bool      `flag:"debug" help:"Include original Claude history struct in results"`
 }
@@ -58,7 +57,6 @@ func RunHistory(opts HistoryOptions) (any, error) {
 		Since: &opts.Since,
 	}
 
-	// Apply limit in FilterToolUses only when no category filtering
 	if len(opts.Categories) == 0 {
 		filter.Limit = opts.Limit
 	}
@@ -77,153 +75,165 @@ func RunHistory(opts HistoryOptions) (any, error) {
 	}
 
 	costs, _ = claude.ParseCosts(cwd, opts.All, &opts.Since)
+	// Convert ToolUses to Tool interface
+	tl := claude.ToolUsesToTools(parseResult.ToolUses)
 	if opts.All {
-		return runHistoryAll(parseResult, opts, classifier, costs)
+		return runHistoryAll(tl, opts, classifier, costs)
 	}
-	return runHistorySingle(parseResult, opts, classifier, costs)
+	return runHistorySingle(tl, opts, classifier, costs)
 }
 
-func runHistoryAll(parseResult *claude.ParseResult, opts HistoryOptions, classifier *bash.CategoryClassifier, costs []claude.SessionCost) (any, error) {
-	result := HistoryResultAll{
-		Results: make([]ScanResultRow, 0, len(parseResult.ToolUses)),
+func runHistoryAll(tl []tools.Tool, opts HistoryOptions, classifier *bash.CategoryClassifier, costs []claude.SessionCost) (any, error) {
+	filtered := filterTools(tl, opts, classifier)
+
+	if !useStructuredOutput() {
+		renderLineByLine(filtered, opts.Compact || opts.Short)
+		return nil, nil
 	}
 
-	for _, tu := range parseResult.ToolUses {
-		if tu.CWD != "" && tu.ProjectRoot == "" {
-			tu.ProjectRoot = claude.FindProjectRoot(tu.CWD)
-		}
+	result := HistoryResultAll{
+		Results: make([]ScanResultRow, 0, len(filtered)),
+	}
 
-		category := classifier.ClassifyToolWithPath(tu.Tool, tu.FilePath())
-		if category == bash.CategoryOther && tu.Tool == "Bash" {
-			if rawCmd, ok := tu.Input["command"].(string); ok {
-				category = classifier.ClassifyBash(rawCmd)
-			}
-		}
-
-		if len(opts.Categories) > 0 && !collections.MatchItems(string(category), opts.Categories...) {
-			continue
-		}
-
-		if !matchApprovedFilter(opts.Approved, tu.Denied) {
-			continue
-		}
-
+	for _, t := range filtered {
+		base := t.Base()
 		result.Total++
 
-		approved := "✓"
-		if tu.Denied {
-			approved = "✗"
-			if tu.DeniedReason != "" {
-				approved += " " + tu.DeniedReason
-			}
+		approved := approvedStatus(t)
+		if base.Denied {
 			result.UserDenied++
 		}
 
 		projectName := ""
-		if tu.ProjectRoot != "" {
-			projectName = filepath.Base(tu.ProjectRoot)
+		if base.ProjectRoot != "" {
+			projectName = filepath.Base(base.ProjectRoot)
 		}
 
-		analysis := AnalyzeToolUse(tu, tu.ProjectRoot)
+		analysis := AnalyzeToolUse(t)
 		row := ScanResultRow{
 			Project:         projectName,
-			Tool:            tu.DisplayTool(),
-			Subject:         formatSubject(tu, opts.Short),
+			Tool:            t.Name(),
+			Summary:         firstLine(t.Pretty().String()),
+			Subject:         t.Pretty(),
+			Detail:          t.Detail(),
 			Paths:           FormatPathsWithIcons(analysis.ReadPaths, analysis.WritePaths),
 			ReadPaths:       analysis.ReadPaths,
 			WritePaths:      analysis.WritePaths,
 			BinariesDisplay: strings.Join(analysis.Binaries, ", "),
 			Binaries:        analysis.Binaries,
-			Category:        string(category),
 			Approved:        approved,
-			Time:            tu.PrettyTimestamp(),
+			Time:            base.PrettyTimestamp(),
 		}
-		if opts.Debug {
-			row.ToolUse = &tu
+		if !opts.Compact {
+			row.Category = classifyTool(t, classifier)
 		}
 		result.Results = append(result.Results, row)
-
-		if opts.Limit > 0 && len(result.Results) >= opts.Limit {
-			break
-		}
 	}
 
 	applyCostSummaryAll(&result, costs)
+	if useTableOutput() {
+		return api.NewTableFrom(result.Results), nil
+	}
 	return result, nil
 }
 
-func runHistorySingle(parseResult *claude.ParseResult, opts HistoryOptions, classifier *bash.CategoryClassifier, costs []claude.SessionCost) (any, error) {
-	result := HistoryResult{
-		Results: make([]ScanResultRowSingle, 0, len(parseResult.ToolUses)),
+func runHistorySingle(tl []tools.Tool, opts HistoryOptions, classifier *bash.CategoryClassifier, costs []claude.SessionCost) (any, error) {
+	filtered := filterTools(tl, opts, classifier)
+
+	if !useStructuredOutput() {
+		renderLineByLine(filtered, opts.Compact || opts.Short)
+		return nil, nil
 	}
 
-	for _, tu := range parseResult.ToolUses {
-		if tu.CWD != "" && tu.ProjectRoot == "" {
-			tu.ProjectRoot = claude.FindProjectRoot(tu.CWD)
-		}
+	result := HistoryResult{
+		Results: make([]ScanResultRowSingle, 0, len(filtered)),
+	}
 
-		if result.Project == "" && tu.ProjectRoot != "" {
-			result.Project = filepath.Base(tu.ProjectRoot)
-		}
-
-		category := classifier.ClassifyToolWithPath(tu.Tool, tu.FilePath())
-		if category == bash.CategoryOther && tu.Tool == "Bash" {
-			if rawCmd, ok := tu.Input["command"].(string); ok {
-				category = classifier.ClassifyBash(rawCmd)
-			}
-		}
-
-		if len(opts.Categories) > 0 && !collections.MatchItems(string(category), opts.Categories...) {
-			continue
-		}
-
-		if !matchApprovedFilter(opts.Approved, tu.Denied) {
-			continue
+	for _, t := range filtered {
+		base := t.Base()
+		if result.Project == "" && base.ProjectRoot != "" {
+			result.Project = filepath.Base(base.ProjectRoot)
 		}
 
 		result.Total++
 
-		approved := "✓"
-		if tu.Denied {
-			approved = "✗"
-			if tu.DeniedReason != "" {
-				approved += " " + tu.DeniedReason
-			}
+		approved := approvedStatus(t)
+		if base.Denied {
 			result.UserDenied++
 		}
 
-		analysis := AnalyzeToolUse(tu, tu.ProjectRoot)
+		analysis := AnalyzeToolUse(t)
 		row := ScanResultRowSingle{
-			Tool:            tu.DisplayTool(),
-			Subject:         formatSubject(tu, opts.Short),
+			Tool:            t.Name(),
+			Summary:         firstLine(t.Pretty().String()),
+			Subject:         t.Pretty(),
+			Detail:          t.Detail(),
 			Paths:           FormatPathsWithIcons(analysis.ReadPaths, analysis.WritePaths),
 			ReadPaths:       analysis.ReadPaths,
 			WritePaths:      analysis.WritePaths,
 			BinariesDisplay: strings.Join(analysis.Binaries, ", "),
 			Binaries:        analysis.Binaries,
-			Category:        string(category),
 			Approved:        approved,
-			Time:            tu.PrettyTimestamp(),
+			Time:            base.PrettyTimestamp(),
 		}
-		if opts.Debug {
-			row.ToolUse = &tu
+		if !opts.Compact {
+			row.Category = classifyTool(t, classifier)
 		}
 		result.Results = append(result.Results, row)
-
-		if opts.Limit > 0 && len(result.Results) >= opts.Limit {
-			break
-		}
 	}
 
 	applyCostSummarySingle(&result, costs)
+	if useTableOutput() {
+		return api.NewTableFrom(result.Results), nil
+	}
 	return result, nil
 }
 
-func formatSubject(tu claude.ToolUse, short bool) api.Textable {
-	if short {
-		return clicky.Text(tu.FormatCommand())
+func filterTools(tl []tools.Tool, opts HistoryOptions, classifier *bash.CategoryClassifier) []tools.Tool {
+	var result []tools.Tool
+	for _, t := range tl {
+		base := t.Base()
+
+		cat := classifyTool(t, classifier)
+		if len(opts.Categories) > 0 && !claude.MatchItemsInsensitive(cat, opts.Categories) {
+			continue
+		}
+		if !matchApprovedFilter(opts.Approved, base.Denied) {
+			continue
+		}
+
+		result = append(result, t)
+		if opts.Limit > 0 && len(result) >= opts.Limit {
+			break
+		}
 	}
-	return tu.PrettyCommand()
+	return result
+}
+
+func classifyTool(t tools.Tool, classifier *bash.CategoryClassifier) string {
+	if cat := t.Category(); cat != "" {
+		return cat
+	}
+	base := t.Base()
+	cat := classifier.ClassifyToolWithPath(base.RawTool, t.FilePath())
+	if cat == bash.CategoryOther && base.RawTool == "Bash" {
+		if rawCmd, ok := base.Input["command"].(string); ok {
+			cat = classifier.ClassifyBash(rawCmd)
+		}
+	}
+	return string(cat)
+}
+
+func approvedStatus(t tools.Tool) string {
+	base := t.Base()
+	name := t.Name()
+	if base.RawTool == "ExitPlanMode" || base.RawTool == "User" || name == "Plan" {
+		return ""
+	}
+	if base.Denied {
+		return "✗"
+	}
+	return "✓"
 }
 
 func matchApprovedFilter(filter string, denied bool) bool {
@@ -308,7 +318,7 @@ func runHistorySummary(toolUses []claude.ToolUse, opts HistoryOptions, classifie
 					category = classifier.ClassifyBash(rawCmd)
 				}
 			}
-			if !collections.MatchItems(string(category), opts.Categories...) {
+			if !claude.MatchItemsInsensitive(string(category), opts.Categories) {
 				continue
 			}
 		}

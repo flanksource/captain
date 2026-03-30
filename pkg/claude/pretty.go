@@ -38,31 +38,37 @@ var toolIcons = map[string]icons.Icon{
 	"Ls":              icons.Folder,
 	"WebFetch":        icons.Cloud,
 	"WebSearch":       icons.Search,
+	"Agent":           {Unicode: "🤖", Iconify: "mdi:robot", Style: "muted"},
 	"Task":            icons.Package,
 	"TaskCreate":      icons.Package,
 	"TodoWrite":       icons.Package,
+	"Plan":            {Unicode: "📋", Iconify: "mdi:clipboard-text", Style: "muted"},
 	"AskUserQuestion": {Unicode: "❓", Iconify: "mdi:help-circle", Style: "muted"},
+	"User":            {Unicode: "💬", Iconify: "mdi:account", Style: "muted"},
 	"Skill":           icons.Info,
 }
 
 // toolColors maps tool names to their title color class
 var toolColors = map[string]string{
-	"Bash":            "text-green-600 font-medium",
-	"Read":            "text-blue-600 font-medium",
-	"Write":           "text-orange-600 font-medium",
-	"Edit":            "text-purple-600 font-medium",
-	"MultiEdit":       "text-purple-600 font-medium",
-	"Grep":            "text-yellow-600 font-medium",
-	"Find":            "text-cyan-600 font-medium",
-	"Glob":            "text-cyan-600 font-medium",
-	"Ls":              "text-blue-600 font-medium",
-	"WebFetch":        "text-blue-600 font-medium",
-	"WebSearch":       "text-purple-600 font-medium",
-	"Task":            "text-indigo-600 font-medium",
-	"TaskCreate":      "text-indigo-600 font-medium",
-	"TodoWrite":       "text-indigo-600 font-medium",
-	"AskUserQuestion": "text-amber-600 font-medium",
-	"Skill":           "text-teal-600 font-medium",
+	"Bash":            "text-green-400 font-medium",
+	"Read":            "text-blue-400 font-medium",
+	"Write":           "text-orange-400 font-medium",
+	"Edit":            "text-purple-400 font-medium",
+	"MultiEdit":       "text-purple-400 font-medium",
+	"Grep":            "text-yellow-400 font-medium",
+	"Find":            "text-cyan-400 font-medium",
+	"Glob":            "text-cyan-400 font-medium",
+	"Ls":              "text-blue-400 font-medium",
+	"WebFetch":        "text-blue-400 font-medium",
+	"WebSearch":       "text-purple-400 font-medium",
+	"Agent":           "text-indigo-400 font-medium",
+	"Task":            "text-indigo-400 font-medium",
+	"TaskCreate":      "text-indigo-400 font-medium",
+	"TodoWrite":       "text-indigo-400 font-medium",
+	"Plan":            "text-green-400 font-medium",
+	"AskUserQuestion": "text-amber-400 font-medium",
+	"User":            "text-amber-400 font-medium",
+	"Skill":           "text-teal-400 font-medium",
 }
 
 // PrettyCommand returns a richly formatted api.Text for the tool use,
@@ -79,6 +85,10 @@ func (tu ToolUse) PrettyCommand() api.Text {
 			return v
 		}
 		return ""
+	}
+
+	if tu.isPlanFile() {
+		return tu.prettyPlan(str)
 	}
 
 	switch tu.Tool {
@@ -104,7 +114,7 @@ func (tu ToolUse) PrettyCommand() api.Text {
 		return tu.prettyWebFetch(icon, color, str)
 	case "WebSearch":
 		return tu.prettyWebSearch(icon, color, str)
-	case "Task":
+	case "Agent", "Task":
 		return tu.prettyTask(icon, color, str)
 	case "TaskCreate":
 		return tu.prettyTaskCreate(icon, color, str)
@@ -113,7 +123,9 @@ func (tu ToolUse) PrettyCommand() api.Text {
 	case "AskUserQuestion":
 		return tu.prettyAsk(icon, color)
 	case "ExitPlanMode":
-		return tu.prettyExitPlanMode(str)
+		return tu.prettyExitPlan()
+	case "User":
+		return tu.prettyUser(icon, color, str)
 	default:
 		return tu.prettyGeneric(icon, color)
 	}
@@ -276,7 +288,7 @@ func (tu ToolUse) prettyGrep(icon icons.Icon, color string, str func(string) str
 
 	if searchPath != "" {
 		path := tu.shortenPath(searchPath)
-		text = text.Append(" in ", "text-gray-500").Append(path, "text-gray-700")
+		text = text.Append(" in ", "text-gray-500").Append(path, "text-gray-400")
 	}
 
 	if glob := str("glob"); glob != "" {
@@ -302,7 +314,7 @@ func (tu ToolUse) prettyFind(icon icons.Icon, color string, str func(string) str
 
 	if searchPath != "" {
 		path := tu.shortenPath(searchPath)
-		text = text.Append(" in ", "text-gray-500").Append(path, "text-gray-700")
+		text = text.Append(" in ", "text-gray-500").Append(path, "text-gray-400")
 	}
 
 	if limit, ok := tu.Input["limit"].(float64); ok && limit > 0 {
@@ -343,14 +355,14 @@ func (tu ToolUse) prettyWebFetch(icon icons.Icon, color string, str func(string)
 	text := clicky.Text("").Add(icon).Append(" web-fetch", color)
 
 	if url := str("url"); url != "" {
-		text = text.Append(": ", "text-gray-600").Append(url, "text-blue-700 underline")
+		text = text.Append(": ", "text-gray-500").Append(url, "text-blue-400 underline")
 	}
 
 	if prompt := str("prompt"); prompt != "" {
 		if len(prompt) > 60 {
 			prompt = prompt[:57] + "..."
 		}
-		text = text.Append(" ", "").Append("Prompt: ", "text-gray-500").Append(prompt, "text-gray-700")
+		text = text.Append(" ", "").Append("Prompt: ", "text-gray-500").Append(prompt, "text-gray-400")
 	}
 
 	return text
@@ -360,7 +372,7 @@ func (tu ToolUse) prettyWebSearch(icon icons.Icon, color string, str func(string
 	text := clicky.Text("").Add(icon).Append(" web-search", color)
 
 	if query := str("query"); query != "" {
-		text = text.Append(": ", "text-gray-600").Append(query, "text-gray-800")
+		text = text.Append(": ", "text-gray-500").Append(query, "text-gray-400")
 	}
 
 	return text
@@ -380,7 +392,7 @@ func (tu ToolUse) prettyTask(icon icons.Icon, color string, str func(string) str
 	}
 
 	if desc != "" {
-		text = text.Append(": ", "text-gray-400").Append(desc, "text-gray-700")
+		text = text.Append(": ", "text-gray-400").Append(desc, "text-gray-400")
 	}
 
 	if subType := str("subagent_type"); subType != "" {
@@ -393,7 +405,7 @@ func (tu ToolUse) prettyTask(icon icons.Icon, color string, str func(string) str
 func (tu ToolUse) prettyTaskCreate(icon icons.Icon, color string, str func(string) string) api.Text {
 	text := clicky.Text("").Add(icon).Append(" task", color)
 	if subject := str("subject"); subject != "" {
-		text = text.Append(": ", "text-gray-400").Append(subject, "text-gray-700")
+		text = text.Append(": ", "text-gray-400").Append(subject, "text-gray-400")
 	}
 	return text
 }
@@ -410,26 +422,62 @@ func (tu ToolUse) prettyTodoWrite(icon icons.Icon, color string) api.Text {
 
 func (tu ToolUse) prettyAsk(icon icons.Icon, color string) api.Text {
 	text := clicky.Text("").Add(icon).Append(" ask", color)
-
-	if questions, ok := tu.Input["questions"].([]any); ok {
-		text = text.Append(fmt.Sprintf(" (%d questions)", len(questions)), "text-gray-500")
+	question := tu.firstQuestion()
+	if question != "" {
+		if len(question) > 50 {
+			question = question[:50] + "..."
+		}
+		text = text.Append(" "+question, "")
 	}
-
 	return text
 }
 
-func (tu ToolUse) prettyExitPlanMode(str func(string) string) api.Text {
-	text := clicky.Text("").
-		Add(icons.Icon{Unicode: "📋", Iconify: "mdi:clipboard-check", Style: "muted"}).
-		Append(" exit-plan", "text-green-600 font-medium")
 
-	if plan := str("plan"); plan != "" {
-		if len(plan) > 80 {
-			plan = plan[:77] + "..."
-		}
-		text = text.Append(": ", "text-gray-400").Append(plan, "text-gray-700")
+func (tu ToolUse) prettyExitPlan() api.Text {
+	icon := toolIcons["Plan"]
+	color := toolColors["Plan"]
+	text := clicky.Text("").Add(icon).Append(" plan", color)
+	if tu.Denied {
+		text = text.Append(" ✗ disapproved", "text-red-600")
+	} else {
+		text = text.Append(" ✓ approved", "text-green-600")
 	}
+	return text
+}
 
+func (tu ToolUse) prettyPlan(str func(string) string) api.Text {
+	icon := toolIcons["Plan"]
+	color := toolColors["Plan"]
+	text := clicky.Text("").Add(icon).Append(" plan", color)
+
+	filePath := tu.FilePath()
+	name := filepath.Base(filePath)
+	name = strings.TrimSuffix(name, ".md")
+	text = text.Append(" "+name, "text-cyan-600 font-medium")
+
+	// Extract plan title from content (first # heading)
+	content := str("content")
+	if content == "" {
+		content = str("new_string")
+	}
+	if content != "" {
+		for _, line := range strings.SplitN(content, "\n", 10) {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "# ") {
+				title := strings.TrimPrefix(line, "# ")
+				text = text.Append(" — ", "text-gray-400").Append(title, "max-w-[tw-30ch]")
+				break
+			}
+		}
+	}
+	return text
+}
+
+func (tu ToolUse) prettyUser(icon icons.Icon, color string, str func(string) string) api.Text {
+	text := clicky.Text("").Add(icon).Append(" user", color)
+	if t := str("text"); t != "" {
+		text = text.Append(" "+t, "max-w-[tw-20ch]")
+	}
 	return text
 }
 
@@ -607,9 +655,9 @@ func flushDiffLines(result api.Text, removedLines, addedLines []string, oldLineN
 	// Single line change: show intra-line diff with word-level highlighting
 	if len(removedLines) == 1 && len(addedLines) == 1 {
 		result = result.
-			Append(fmt.Sprintf("-%d ", *oldLineNum), "text-red-700").
+			Append(fmt.Sprintf("-%d ", *oldLineNum), "text-red-500").
 			Append(removedLines[0], "text-red-500").NewLine().
-			Append(fmt.Sprintf("+%d ", *newLineNum), "text-green-700").
+			Append(fmt.Sprintf("+%d ", *newLineNum), "text-green-500").
 			Append(addedLines[0], "text-green-500").NewLine()
 		*oldLineNum++
 		*newLineNum++
@@ -619,18 +667,174 @@ func flushDiffLines(result api.Text, removedLines, addedLines []string, oldLineN
 	// Multiple lines: show all removed, then all added
 	for _, line := range removedLines {
 		result = result.
-			Append(fmt.Sprintf("-%d ", *oldLineNum), "text-red-700").
+			Append(fmt.Sprintf("-%d ", *oldLineNum), "text-red-500").
 			Append(line, "text-red-500").NewLine()
 		*oldLineNum++
 	}
 	for _, line := range addedLines {
 		result = result.
-			Append(fmt.Sprintf("+%d ", *newLineNum), "text-green-700").
+			Append(fmt.Sprintf("+%d ", *newLineNum), "text-green-500").
 			Append(line, "text-green-500").NewLine()
 		*newLineNum++
 	}
 
 	return result
+}
+
+// PrettyHeader returns just the icon + tool label + one-line command summary.
+// maxWidth limits the command portion; 0 means no limit.
+func (tu ToolUse) PrettyHeaderWith(maxWidth int) api.Text {
+	icon := toolIcons[tu.Tool]
+	color := toolColors[tu.Tool]
+	if color == "" {
+		color = "text-blue-600 font-medium"
+	}
+	label := strings.ToLower(tu.DisplayTool())
+	text := clicky.Text("").Add(icon).Append(" "+label, color)
+	cmd := tu.FormatCommand()
+	if cmd == "" {
+		return text
+	}
+	style := ""
+	if maxWidth > 0 {
+		style = fmt.Sprintf("max-w-[%dch]", maxWidth)
+	}
+	text = text.Append(" "+cmd, style)
+	return text
+}
+
+func (tu ToolUse) PrettyHeader() api.Text {
+	icon := toolIcons[tu.Tool]
+	color := toolColors[tu.Tool]
+	if color == "" {
+		color = "text-blue-600 font-medium"
+	}
+	label := strings.ToLower(tu.DisplayTool())
+	text := clicky.Text("").Add(icon).Append(" "+label, color)
+	cmd := tu.FormatCommand()
+	if cmd != "" {
+		text = text.Append(" "+cmd, "max-w-[tw-20ch]")
+	}
+	return text
+}
+
+// PrettyDetail returns the expanded body (code blocks, diffs) without the header.
+// Returns nil for tools that have no expanded content.
+func (tu ToolUse) PrettyDetail() api.Textable {
+	str := func(key string) string {
+		if v, ok := tu.Input[key].(string); ok {
+			return v
+		}
+		return ""
+	}
+
+	if tu.isPlanFile() {
+		content := str("content")
+		if content == "" {
+			content = str("new_string")
+		}
+		if content == "" {
+			return nil
+		}
+		return api.NewCode(content, "markdown")
+	}
+
+	switch tu.Tool {
+	case "Bash":
+		cmd := str("command")
+		if cmd == "" {
+			return nil
+		}
+		if tu.ProjectRoot != "" {
+			cmd = strings.ReplaceAll(cmd, tu.ProjectRoot+"/", "")
+		}
+		lang := "bash"
+		if interp := tu.Interpreter(); interp != "" {
+			lang = bash.InterpreterLanguage(interp)
+			cmd = bash.ExtractInterpreterBody(cmd)
+		}
+		return api.NewCode(cmd, lang)
+
+	case "Write":
+		content := str("content")
+		if content == "" {
+			return nil
+		}
+		lines := strings.Split(content, "\n")
+		lang := detectLanguage(str("file_path"))
+		if len(lines) > WritePreviewLines {
+			content = strings.Join(lines[:WritePreviewLines], "\n")
+		}
+		return api.NewCode(content, lang)
+
+	case "Edit":
+		oldStr, newStr := str("old_string"), str("new_string")
+		if oldStr == "" || newStr == "" {
+			return nil
+		}
+		text := createUnifiedDiff(oldStr, newStr)
+		return &text
+
+	case "AskUserQuestion":
+		text := clicky.Text("")
+		q := tu.firstQuestion()
+		if q != "" {
+			text = text.Append("Q: ", "font-bold").Append(q, "")
+		}
+		if tu.Response != "" {
+			if q != "" {
+				text = text.NewLine()
+			}
+			text = text.Append("A: ", "font-bold text-green-600").Append(tu.Response, "")
+		}
+		if text.String() == "" {
+			return nil
+		}
+		return &text
+
+	case "Task":
+		prompt := str("prompt")
+		if prompt == "" {
+			return nil
+		}
+		if len(prompt) > 500 {
+			prompt = prompt[:500] + "..."
+		}
+		return api.NewCode(prompt, "")
+
+	case "ExitPlanMode":
+		if prompts, ok := tu.Input["allowedPrompts"].([]any); ok && len(prompts) > 0 {
+			var lines []string
+			for _, p := range prompts {
+				if pm, ok := p.(map[string]any); ok {
+					prompt, _ := pm["prompt"].(string)
+					tool, _ := pm["tool"].(string)
+					if prompt != "" {
+						if tool != "" {
+							lines = append(lines, tool+": "+prompt)
+						} else {
+							lines = append(lines, prompt)
+						}
+					}
+				}
+			}
+			if len(lines) > 0 {
+				text := clicky.Text("").Append("Allowed:", "font-bold").NewLine()
+				for _, l := range lines {
+					text = text.Append("  • "+l, "").NewLine()
+				}
+				return &text
+			}
+		}
+		return nil
+
+	default:
+		if tu.Denied && tu.DeniedReason != "" {
+			text := clicky.Text("").Append("User: ", "font-bold text-red-600").Append(tu.DeniedReason, "")
+			return &text
+		}
+		return nil
+	}
 }
 
 // PrettyTimestamp returns a formatted timestamp string
@@ -643,18 +847,5 @@ func (tu ToolUse) PrettyTimestamp() string {
 
 // FormatTimeAgo returns a human-readable time ago string
 func FormatTimeAgo(t *time.Time) string {
-	if t == nil {
-		return ""
-	}
-	d := time.Since(*t)
-	switch {
-	case d < time.Minute:
-		return fmt.Sprintf("%ds ago", int(d.Seconds()))
-	case d < time.Hour:
-		return fmt.Sprintf("%dm ago", int(d.Minutes()))
-	case d < 24*time.Hour:
-		return fmt.Sprintf("%dh ago", int(d.Hours()))
-	default:
-		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
-	}
+	return api.TimeAgo(t).String()
 }

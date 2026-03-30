@@ -134,13 +134,14 @@ func TestExtractToolUses_DetectsDenials(t *testing.T) {
 	}
 
 	result := ExtractToolUses(entries)
-	assert.Len(t, result, 2)
+	assert.Len(t, result, 3) // Edit + User (denial) + Bash
 
 	assert.True(t, result[0].Denied)
 	assert.Equal(t, "keep commons/logger", result[0].DeniedReason)
+	assert.Equal(t, "User", result[1].Tool)
+	assert.Equal(t, "keep commons/logger", result[1].Input["text"])
 
-	assert.False(t, result[1].Denied)
-	assert.Empty(t, result[1].DeniedReason)
+	assert.False(t, result[2].Denied)
 }
 
 func TestExtractToolUses_DenialWithArrayContent(t *testing.T) {
@@ -171,9 +172,10 @@ func TestExtractToolUses_DenialWithArrayContent(t *testing.T) {
 	}
 
 	result := ExtractToolUses(entries)
-	assert.Len(t, result, 1)
+	assert.Len(t, result, 2) // Write + User (denial)
 	assert.True(t, result[0].Denied)
 	assert.Equal(t, "use a different approach", result[0].DeniedReason)
+	assert.Equal(t, "User", result[1].Tool)
 }
 
 func TestExtractToolUses_ErrorNotDenial(t *testing.T) {

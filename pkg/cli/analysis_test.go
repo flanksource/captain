@@ -8,7 +8,7 @@ import (
 )
 
 func TestAnalyzeToolUse_Read(t *testing.T) {
-	a := AnalyzeToolUse(claude.ToolUse{
+	a := AnalyzeToolUseLegacy(claude.ToolUse{
 		Tool:  "Read",
 		Input: map[string]any{"file_path": "/home/user/project/src/main.go"},
 	}, "/home/user/project")
@@ -20,7 +20,7 @@ func TestAnalyzeToolUse_Read(t *testing.T) {
 }
 
 func TestAnalyzeToolUse_Grep(t *testing.T) {
-	a := AnalyzeToolUse(claude.ToolUse{
+	a := AnalyzeToolUseLegacy(claude.ToolUse{
 		Tool:  "Grep",
 		Input: map[string]any{"pattern": "TODO", "path": "/home/user/project/pkg/"},
 	}, "/home/user/project")
@@ -30,7 +30,7 @@ func TestAnalyzeToolUse_Grep(t *testing.T) {
 }
 
 func TestAnalyzeToolUse_Glob(t *testing.T) {
-	a := AnalyzeToolUse(claude.ToolUse{
+	a := AnalyzeToolUseLegacy(claude.ToolUse{
 		Tool:  "Glob",
 		Input: map[string]any{"pattern": "**/*.go", "path": "/home/user/project/pkg"},
 	}, "/home/user/project")
@@ -40,7 +40,7 @@ func TestAnalyzeToolUse_Glob(t *testing.T) {
 }
 
 func TestAnalyzeToolUse_Write(t *testing.T) {
-	a := AnalyzeToolUse(claude.ToolUse{
+	a := AnalyzeToolUseLegacy(claude.ToolUse{
 		Tool:  "Write",
 		Input: map[string]any{"file_path": "/home/user/project/pkg/cli/new.go", "content": "package cli"},
 	}, "/home/user/project")
@@ -50,7 +50,7 @@ func TestAnalyzeToolUse_Write(t *testing.T) {
 }
 
 func TestAnalyzeToolUse_Edit(t *testing.T) {
-	a := AnalyzeToolUse(claude.ToolUse{
+	a := AnalyzeToolUseLegacy(claude.ToolUse{
 		Tool:  "Edit",
 		Input: map[string]any{"file_path": "/home/user/project/cmd/main.go"},
 	}, "/home/user/project")
@@ -124,7 +124,7 @@ func TestAnalyzeToolUse_Bash(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			a := AnalyzeToolUse(claude.ToolUse{
+			a := AnalyzeToolUseLegacy(claude.ToolUse{
 				Tool:  "Bash",
 				Input: map[string]any{"command": tt.cmd},
 			}, "/home/user/project")
@@ -138,7 +138,7 @@ func TestAnalyzeToolUse_Bash(t *testing.T) {
 }
 
 func TestAnalyzeToolUse_WebFetch(t *testing.T) {
-	a := AnalyzeToolUse(claude.ToolUse{
+	a := AnalyzeToolUseLegacy(claude.ToolUse{
 		Tool:  "WebFetch",
 		Input: map[string]any{"url": "https://docs.example.com/api/v1"},
 	}, "")
@@ -149,7 +149,7 @@ func TestAnalyzeToolUse_WebFetch(t *testing.T) {
 }
 
 func TestAnalyzeToolUse_WebSearch(t *testing.T) {
-	a := AnalyzeToolUse(claude.ToolUse{
+	a := AnalyzeToolUseLegacy(claude.ToolUse{
 		Tool:  "WebSearch",
 		Input: map[string]any{"query": "golang context"},
 	}, "")
@@ -158,7 +158,7 @@ func TestAnalyzeToolUse_WebSearch(t *testing.T) {
 }
 
 func TestAnalyzeToolUse_MCPWithURL(t *testing.T) {
-	a := AnalyzeToolUse(claude.ToolUse{
+	a := AnalyzeToolUseLegacy(claude.ToolUse{
 		Tool:  "mcp__playwright__browser_navigate",
 		Input: map[string]any{"url": "https://app.example.com/dashboard"},
 	}, "")
@@ -167,7 +167,7 @@ func TestAnalyzeToolUse_MCPWithURL(t *testing.T) {
 }
 
 func TestAnalyzeToolUse_MCPWithoutURL(t *testing.T) {
-	a := AnalyzeToolUse(claude.ToolUse{
+	a := AnalyzeToolUseLegacy(claude.ToolUse{
 		Tool:  "mcp__playwright__browser_click",
 		Input: map[string]any{"selector": "#button"},
 	}, "")

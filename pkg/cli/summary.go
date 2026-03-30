@@ -85,7 +85,7 @@ func BuildSummary(toolUses []claude.ToolUse, classifier *bash.CategoryClassifier
 		categories[string(category)]++
 		categoryTokens[string(category)] += tuTokens
 
-		analysis := AnalyzeToolUse(tu, tu.ProjectRoot)
+		analysis := AnalyzeToolUseLegacy(tu, tu.ProjectRoot)
 		for _, p := range analysis.ReadPaths {
 			paths[p]++
 			pathTokens[p] += tuTokens

@@ -4,12 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/flanksource/captain/pkg/ai/history"
 	"github.com/flanksource/captain/pkg/bash"
 	"github.com/flanksource/captain/pkg/claude"
-	"github.com/flanksource/commons/collections"
 )
 
 type CLIOutputResult struct {
@@ -44,7 +42,7 @@ func parseFromReader(data []byte) (*stdinParseResult, error) {
 		}
 		return &stdinParseResult{
 			Format:   format,
-			ToolUses: claude.ExtractToolUses(entries),
+			ToolUses: claude.ExtractToolUsesWithTokens(entries),
 		}, nil
 
 	case claude.FormatClaudeStreamJSON:
@@ -54,7 +52,7 @@ func parseFromReader(data []byte) (*stdinParseResult, error) {
 		}
 		return &stdinParseResult{
 			Format:   format,
-			ToolUses: claude.ExtractToolUses(entries),
+			ToolUses: claude.ExtractToolUsesWithTokens(entries),
 		}, nil
 
 	case claude.FormatCodexJSONL:
@@ -126,61 +124,8 @@ func runHistoryFromReader(data []byte, opts HistoryOptions) (any, error) {
 		return runHistorySummary(toolUses, opts, classifier, nil)
 	}
 
-	result := HistoryResult{
-		Results: make([]ScanResultRowSingle, 0, len(toolUses)),
-	}
-
-	for _, tu := range toolUses {
-		category := classifier.ClassifyToolWithPath(tu.Tool, tu.FilePath())
-		if category == bash.CategoryOther && tu.Tool == "Bash" {
-			if rawCmd, ok := tu.Input["command"].(string); ok {
-				category = classifier.ClassifyBash(rawCmd)
-			}
-		}
-
-		if len(opts.Categories) > 0 && !collections.MatchItems(string(category), opts.Categories...) {
-			continue
-		}
-
-		if !matchApprovedFilter(opts.Approved, tu.Denied) {
-			continue
-		}
-
-		result.Total++
-
-		approved := "✓"
-		if tu.Denied {
-			approved = "✗"
-			if tu.DeniedReason != "" {
-				approved += " " + tu.DeniedReason
-			}
-			result.UserDenied++
-		}
-
-		analysis := AnalyzeToolUse(tu, tu.ProjectRoot)
-		row := ScanResultRowSingle{
-			Tool:            tu.DisplayTool(),
-			Subject:         formatSubject(tu, opts.Short),
-			Paths:           FormatPathsWithIcons(analysis.ReadPaths, analysis.WritePaths),
-			ReadPaths:       analysis.ReadPaths,
-			WritePaths:      analysis.WritePaths,
-			BinariesDisplay: strings.Join(analysis.Binaries, ", "),
-			Binaries:        analysis.Binaries,
-			Category:        string(category),
-			Approved:        approved,
-			Time:            tu.PrettyTimestamp(),
-		}
-		if opts.Debug {
-			row.ToolUse = &tu
-		}
-		result.Results = append(result.Results, row)
-
-		if opts.Limit > 0 && len(result.Results) >= opts.Limit {
-			break
-		}
-	}
-
-	return result, nil
+	tl := claude.ToolUsesToTools(toolUses)
+	return runHistorySingle(tl, opts, classifier, nil)
 }
 
 func firstNonEmptyLine(data []byte) []byte {

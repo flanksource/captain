@@ -271,7 +271,7 @@ func RunSRTGenerate(opts SRTGenerateOptions) (any, error) {
 		if tu.ProjectRoot == "" {
 			tu.ProjectRoot = projectRoot
 		}
-		analysis := AnalyzeToolUse(tu, projectRoot)
+		analysis := AnalyzeToolUseLegacy(tu, projectRoot)
 		for _, p := range analysis.WritePaths {
 			addDir(writeDirs, p, "")
 		}
