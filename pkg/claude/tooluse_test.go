@@ -60,22 +60,22 @@ func TestFilterToolUses(t *testing.T) {
 		},
 		{
 			name:     "dir filter - exact",
-			filter:   Filter{Dirs: []string{"/home/ubuntu/project"}},
+			filter:   Filter{Paths: []string{"/home/ubuntu/project"}},
 			expected: []string{"Bash", "Read", "Edit", "Grep", "Write"},
 		},
 		{
 			name:     "dir filter - prefix wildcard",
-			filter:   Filter{Dirs: []string{"*/project"}},
+			filter:   Filter{Paths: []string{"*/project"}},
 			expected: []string{"Bash", "Read", "Edit", "Grep", "Write"},
 		},
 		{
 			name:     "dir filter - negation",
-			filter:   Filter{Dirs: []string{"!/home/ubuntu/other"}},
+			filter:   Filter{Paths: []string{"!/home/ubuntu/other"}},
 			expected: []string{"Bash", "Read", "Edit", "Grep", "Write", "Write"},
 		},
 		{
 			name:     "combined tool and dir",
-			filter:   Filter{Tools: []string{"Bash", "Read"}, Dirs: []string{"/home/ubuntu/project"}},
+			filter:   Filter{Tools: []string{"Bash", "Read"}, Paths: []string{"/home/ubuntu/project"}},
 			expected: []string{"Bash", "Read"},
 		},
 		{
@@ -85,7 +85,7 @@ func TestFilterToolUses(t *testing.T) {
 		},
 		{
 			name:     "dir filter prefers file_path over CWD",
-			filter:   Filter{Tools: []string{"Write"}, Dirs: []string{"/home/ubuntu/project"}},
+			filter:   Filter{Tools: []string{"Write"}, Paths: []string{"/home/ubuntu/project"}},
 			expected: []string{"Write"},
 		},
 		{

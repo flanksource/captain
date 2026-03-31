@@ -37,7 +37,10 @@ func (t *BashTool) Pretty() api.Text {
 		lang = bash.InterpreterLanguage(interp)
 		cmd = bash.ExtractInterpreterBody(cmd)
 	}
-	text = text.NewLine().Add(api.NewCode(cmd, lang))
+	if i := strings.IndexByte(cmd, '\n'); i >= 0 {
+		cmd = cmd[:i]
+	}
+	text = text.Space().Add(api.CodeBlock(lang, cmd).Trim())
 	return text
 }
 

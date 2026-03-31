@@ -3,6 +3,7 @@ package claude
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/bash"
 	"github.com/flanksource/captain/pkg/claude/tools"
+	captainCollections "github.com/flanksource/captain/pkg/collections"
 	"github.com/flanksource/commons/collections"
 )
 
@@ -33,7 +35,7 @@ type ToolUse struct {
 // Filter defines criteria for filtering tool uses
 type Filter struct {
 	Tools  []string
-	Dirs   []string
+	Paths  []string
 	Since  *time.Time
 	Before *time.Time
 	Limit  int
@@ -405,22 +407,33 @@ func extractToolResultText(block ContentBlock) string {
 	return ""
 }
 
-// FilterToolUses applies filter criteria to tool uses
+// FilterToolUses applies filter criteria to tool uses.
+// When filters produce no results, suggestions are printed to stderr.
 func FilterToolUses(toolUses []ToolUse, filter Filter) []ToolUse {
 	var filtered []ToolUse
+	toolNames := make(map[string]struct{})
+	dirs := make(map[string]struct{})
 
 	for _, tu := range toolUses {
-		if len(filter.Tools) > 0 && !MatchItemsInsensitive(tu.Tool, filter.Tools) {
+		toolNames[tu.Tool] = struct{}{}
+
+		if len(filter.Tools) > 0 && !collections.MatchItems(tu.Tool, filter.Tools...) {
 			continue
 		}
 
-		if len(filter.Dirs) > 0 {
-			dirToCheck := tu.CWD
-			if fp := tu.FilePath(); fp != "" {
-				dirToCheck = filepath.Dir(fp)
+		if len(filter.Paths) > 0 {
+			fp := tu.FilePath()
+			dir := tu.CWD
+			if fp != "" {
+				dir = filepath.Dir(fp)
 			}
-			if dirToCheck != "" && !collections.MatchItems(dirToCheck, filter.Dirs...) {
-				continue
+			if dir != "" {
+				dirs[dir] = struct{}{}
+				matched := collections.MatchItems(dir, filter.Paths...) ||
+					(fp != "" && collections.MatchItems(fp, filter.Paths...))
+				if !matched {
+					continue
+				}
 			}
 		}
 
@@ -450,7 +463,27 @@ func FilterToolUses(toolUses []ToolUse, filter Filter) []ToolUse {
 		}
 	}
 
+	if len(filtered) == 0 {
+		suggestFilters("tool", filter.Tools, toolNames)
+		suggestFilters("path", filter.Paths, dirs)
+	}
+
 	return filtered
+}
+
+func suggestFilters(filterName string, filters []string, available map[string]struct{}) {
+	if len(filters) == 0 || len(available) == 0 {
+		return
+	}
+	candidates := make([]string, 0, len(available))
+	for v := range available {
+		candidates = append(candidates, v)
+	}
+	for _, f := range filters {
+		if similar := captainCollections.FindSimilar(f, candidates, 3); len(similar) > 0 {
+			fmt.Fprintf(os.Stderr, "%s filter %q matched nothing. Did you mean: %s?\n", filterName, f, strings.Join(similar, ", "))
+		}
+	}
 }
 
 // RelativePath makes an absolute path relative to projectRoot if possible.
@@ -482,13 +515,6 @@ func singleLine(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
-func MatchItemsInsensitive(item string, patterns []string) bool {
-	lower := make([]string, len(patterns))
-	for i, p := range patterns {
-		lower[i] = strings.ToLower(p)
-	}
-	return collections.MatchItems(strings.ToLower(item), lower...)
-}
 
 func (tu ToolUse) firstQuestion() string {
 	if q, ok := tu.Input["question"].(string); ok {

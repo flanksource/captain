@@ -21,15 +21,16 @@ func (t *ReadTool) Category() string { return "" }
 func (t *ReadTool) Pretty() api.Text {
 	text := t.header(icons.File, "read", "text-blue-400 font-medium")
 	path := t.Rel(t.FilePath())
+	text = text.Append(" "+path, "text-gray-500 max-w-[tw-20ch]")
 	if offset := t.Float("offset"); offset > 0 {
 		limit := t.Float("limit")
 		if limit > 0 {
-			path += fmt.Sprintf(":%d-%d", int(offset), int(offset+limit))
+			text = text.Append(fmt.Sprintf(":%d-%d", int(offset), int(offset+limit)), "text-yellow-400")
 		} else {
-			path += fmt.Sprintf(":%d", int(offset))
+			text = text.Append(fmt.Sprintf(":%d", int(offset)), "text-yellow-400")
 		}
 	}
-	return text.Append(" "+path, "max-w-[tw-20ch]")
+	return text
 }
 
 func (t *ReadTool) Detail() api.Textable   { return nil }
@@ -46,16 +47,10 @@ func (t *WriteTool) Pretty() api.Text {
 	icon := icons.Icon{Unicode: "✏️", Iconify: "mdi:file-edit", Style: "muted"}
 	text := t.header(icon, "write", "text-orange-400 font-medium")
 	path := t.Rel(t.FilePath())
-	text = text.Append(" "+path, "max-w-[tw-20ch]")
-	content := t.Str("content")
-	if content != "" {
-		lines := strings.Split(content, "\n")
-		lang := detectLanguage(t.FilePath())
-		if len(lines) > WritePreviewLines {
-			content = strings.Join(lines[:WritePreviewLines], "\n")
-			content += fmt.Sprintf("\n... (%d more lines)", len(lines)-WritePreviewLines)
-		}
-		text = text.NewLine().Add(api.NewCode(content, lang))
+	text = text.Append(" "+path, "text-gray-500 max-w-[tw-20ch]")
+	if content := t.Str("content"); content != "" {
+		lines := strings.Count(content, "\n") + 1
+		text = text.Append(fmt.Sprintf(" (%d lines)", lines), "text-yellow-400")
 	}
 	return text
 }
@@ -86,10 +81,12 @@ func (t *EditTool) Pretty() api.Text {
 	icon := icons.Icon{Unicode: "✏️", Iconify: "mdi:file-edit", Style: "muted"}
 	text := t.header(icon, "edit", "text-purple-400 font-medium")
 	path := t.Rel(t.FilePath())
-	text = text.Append(" "+path, "max-w-[tw-20ch]")
+	text = text.Append(" "+path, "text-gray-500 max-w-[tw-20ch]")
 	oldStr, newStr := t.Str("old_string"), t.Str("new_string")
 	if oldStr != "" && newStr != "" {
-		text = text.NewLine().Add(CreateUnifiedDiff(oldStr, newStr))
+		oldLines := strings.Count(oldStr, "\n") + 1
+		newLines := strings.Count(newStr, "\n") + 1
+		text = text.Append(fmt.Sprintf(" -%d +%d", oldLines, newLines), "text-yellow-400")
 	}
 	return text
 }
@@ -116,9 +113,9 @@ func (t *MultiEditTool) Pretty() api.Text {
 	icon := icons.Icon{Unicode: "✏️", Iconify: "mdi:file-edit", Style: "muted"}
 	text := t.header(icon, "multi-edit", "text-purple-400 font-medium")
 	path := t.Rel(t.FilePath())
-	text = text.Append(" "+path, "max-w-[tw-20ch]")
+	text = text.Append(" "+path, "text-gray-500 max-w-[tw-20ch]")
 	if edits, ok := t.Input["edits"].([]any); ok {
-		text = text.Append(fmt.Sprintf(" (%d edits)", len(edits)), "text-gray-500")
+		text = text.Append(fmt.Sprintf(" (%d edits)", len(edits)), "text-yellow-400")
 	}
 	return text
 }

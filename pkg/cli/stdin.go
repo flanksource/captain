@@ -110,7 +110,7 @@ func runHistoryFromReader(data []byte, opts HistoryOptions) (any, error) {
 
 	filter := claude.Filter{
 		Tools: opts.Tools,
-		Dirs:  opts.Dirs,
+		Paths: resolvePaths(opts.Paths),
 	}
 	if !opts.Since.IsZero() {
 		filter.Since = &opts.Since

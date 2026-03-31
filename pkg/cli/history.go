@@ -11,13 +11,15 @@ import (
 	"github.com/flanksource/captain/pkg/bash"
 	"github.com/flanksource/captain/pkg/claude"
 	"github.com/flanksource/captain/pkg/claude/tools"
+	captainCollections "github.com/flanksource/captain/pkg/collections"
 	"github.com/flanksource/clicky/api"
+	"github.com/flanksource/commons/collections"
 )
 
 type HistoryOptions struct {
+	Paths      []string  `args:"true" help:"Filter by file or directory paths"`
 	File       string    `flag:"file" help:"Read from a JSONL/JSON file instead of session history" short:"f"`
 	Tools      []string  `flag:"tool" help:"Filter by tool patterns" short:"t"`
-	Dirs       []string  `flag:"dir" help:"Filter by directory patterns" short:"d"`
 	Categories []string  `flag:"category" help:"Filter by category patterns" short:"c"`
 	Approved   string    `flag:"approved" help:"Filter by approval status (true=approved, false=denied)"`
 	Limit      int       `flag:"limit" help:"Maximum results" default:"100" short:"l"`
@@ -53,7 +55,7 @@ func RunHistory(opts HistoryOptions) (any, error) {
 
 	filter := claude.Filter{
 		Tools: opts.Tools,
-		Dirs:  opts.Dirs,
+		Paths: resolvePaths(opts.Paths),
 		Since: &opts.Since,
 	}
 
@@ -191,11 +193,14 @@ func runHistorySingle(tl []tools.Tool, opts HistoryOptions, classifier *bash.Cat
 
 func filterTools(tl []tools.Tool, opts HistoryOptions, classifier *bash.CategoryClassifier) []tools.Tool {
 	var result []tools.Tool
+	categorySet := make(map[string]struct{})
+
 	for _, t := range tl {
 		base := t.Base()
-
 		cat := classifyTool(t, classifier)
-		if len(opts.Categories) > 0 && !claude.MatchItemsInsensitive(cat, opts.Categories) {
+		categorySet[cat] = struct{}{}
+
+		if len(opts.Categories) > 0 && !collections.MatchItems(cat, opts.Categories...) {
 			continue
 		}
 		if !matchApprovedFilter(opts.Approved, base.Denied) {
@@ -207,6 +212,19 @@ func filterTools(tl []tools.Tool, opts HistoryOptions, classifier *bash.Category
 			break
 		}
 	}
+
+	if len(result) == 0 && len(opts.Categories) > 0 {
+		categories := make([]string, 0, len(categorySet))
+		for c := range categorySet {
+			categories = append(categories, c)
+		}
+		for _, filter := range opts.Categories {
+			if similar := captainCollections.FindSimilar(filter, categories, 3); len(similar) > 0 {
+				fmt.Fprintf(os.Stderr, "category %q matched nothing. Did you mean: %s?\n", filter, strings.Join(similar, ", "))
+			}
+		}
+	}
+
 	return result
 }
 
@@ -318,13 +336,33 @@ func runHistorySummary(toolUses []claude.ToolUse, opts HistoryOptions, classifie
 					category = classifier.ClassifyBash(rawCmd)
 				}
 			}
-			if !claude.MatchItemsInsensitive(string(category), opts.Categories) {
+			if !collections.MatchItems(string(category), opts.Categories...) {
 				continue
 			}
 		}
 		filtered = append(filtered, tu)
 	}
 	return BuildSummary(filtered, classifier, costs), nil
+}
+
+func resolvePaths(paths []string) []string {
+	if len(paths) == 0 {
+		return nil
+	}
+	resolved := make([]string, 0, len(paths))
+	for _, p := range paths {
+		abs, err := filepath.Abs(p)
+		if err != nil {
+			abs = p
+		}
+		info, err := os.Stat(abs)
+		if err == nil && info.IsDir() {
+			resolved = append(resolved, abs+"*")
+		} else {
+			resolved = append(resolved, abs)
+		}
+	}
+	return resolved
 }
 
 func formatDuration(d time.Duration) string {
