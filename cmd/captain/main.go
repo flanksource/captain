@@ -41,6 +41,7 @@ func main() {
 	clicky.AddNamedCommand("prompt", aiCmd, cli.AIPromptOptions{}, cli.RunAIPrompt)
 	clicky.AddNamedCommand("models", aiCmd, cli.AIModelsOptions{}, cli.RunAIModels)
 	clicky.AddNamedCommand("test", aiCmd, cli.AITestOptions{}, cli.RunAITest)
+	clicky.AddNamedCommand("fixture", aiCmd, cli.AIFixtureOptions{}, cli.RunAIFixture).Short = "Run a YAML fixture across multiple Claude configurations"
 
 	dodCmd := &cobra.Command{Use: "dod", Short: "Definition of Done — gate Claude's stop on passing commands"}
 	rootCmd.AddCommand(dodCmd)

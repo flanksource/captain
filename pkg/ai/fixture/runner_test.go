@@ -1,0 +1,227 @@
+package fixture
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// fakeClaudeScript emits a canned stream-json response depending on --model.
+const fakeClaudeScript = `#!/bin/sh
+set -eu
+model=""
+prev=""
+for arg in "$@"; do
+  printf '%s\n' "$arg" >> "$ARGS_LOG"
+  if [ "$prev" = "--model" ]; then
+    model="$arg"
+  fi
+  prev="$arg"
+done
+printf '%s\n' '---' >> "$ARGS_LOG"
+
+if [ "$model" = "direct-model" ]; then
+  cat <<'EOF'
+{"type":"assistant","session_id":"sess-direct","message":{"role":"assistant","content":[{"type":"tool_use","id":"1","name":"Bash","input":{"command":"kubectl get pods"}},{"type":"tool_use","id":"2","name":"Bash","input":{"command":"aws eks describe-cluster"}}],"usage":{"input_tokens":1000,"output_tokens":150,"cache_read_input_tokens":40,"cache_creation_input_tokens":20}}}
+{"type":"result","subtype":"success","session_id":"sess-direct","cost_usd":0.08,"duration_ms":4000}
+EOF
+  exit 0
+fi
+
+cat <<'EOF'
+{"type":"assistant","session_id":"sess-mcp","message":{"role":"assistant","content":[{"type":"tool_use","id":"1","name":"mcp__mission-control__query","input":{"query":"pods"}}],"usage":{"input_tokens":500,"output_tokens":120,"cache_read_input_tokens":200,"cache_creation_input_tokens":10}}}
+{"type":"result","subtype":"success","session_id":"sess-mcp","cost_usd":0.01,"duration_ms":1000}
+EOF
+`
+
+func installFakeClaude(t *testing.T, dir string) string {
+	t.Helper()
+	path := filepath.Join(dir, "claude")
+	if err := os.WriteFile(path, []byte(fakeClaudeScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func setupFixtureDir(t *testing.T, yaml string) (string, string) {
+	t.Helper()
+	tmp := t.TempDir()
+	installFakeClaude(t, tmp)
+
+	fixturePath := filepath.Join(tmp, "fixture.yaml")
+	if err := os.WriteFile(fixturePath, []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "settings.json"), []byte(`{"env":{"FOO":"bar"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "mcp.json"), []byte(`{"mcpServers":{}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(tmp, "workspace"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	argsLog := filepath.Join(tmp, "args.log")
+	t.Setenv("PATH", tmp+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("ARGS_LOG", argsLog)
+	return fixturePath, argsLog
+}
+
+func TestExecute_ComparesBaseline(t *testing.T) {
+	yaml := `name: mc-benchmark
+description: MC vs direct bash
+prompt: Which cluster is unhealthy?
+baseline: direct
+defaults:
+  timeout: 5s
+  promptCaching: true
+  strictMCPConfig: true
+  settings: settings.json
+  mcpConfig:
+    - mcp.json
+  addDir:
+    - workspace
+  extraArgs:
+    - --verbose
+runs:
+  - name: direct
+    model: direct-model
+    tools: [Bash, Read]
+    allowedTools:
+      - Bash(kubectl *)
+      - Bash(aws *)
+  - name: mission-control
+    model: mcp-model
+    tools: [default]
+    allowedTools:
+      - mcp__mission-control__*
+`
+	path, argsLog := setupFixtureDir(t, yaml)
+
+	f, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := Execute(context.Background(), f, Options{})
+	if err != nil {
+		t.Fatalf("Execute error = %v", err)
+	}
+	if len(result.Rows) != 2 {
+		t.Fatalf("got %d rows, want 2", len(result.Rows))
+	}
+
+	direct := result.Rows[0]
+	if direct.Name != "direct" || direct.Status != "OK" {
+		t.Errorf("unexpected direct row: %+v", direct)
+	}
+	if direct.BashCalls != 2 || direct.MCPCalls != 0 {
+		t.Errorf("direct tool counts: bash=%d mcp=%d", direct.BashCalls, direct.MCPCalls)
+	}
+	if direct.Speedup != "1.00x" || direct.Cheaper != "1.00x" {
+		t.Errorf("direct ratios: speedup=%s cheaper=%s", direct.Speedup, direct.Cheaper)
+	}
+
+	mcp := result.Rows[1]
+	if mcp.MCPCalls != 1 || mcp.BashCalls != 0 {
+		t.Errorf("mcp tool counts: bash=%d mcp=%d", mcp.BashCalls, mcp.MCPCalls)
+	}
+	if mcp.Speedup != "4.00x" || mcp.Cheaper != "8.00x" {
+		t.Errorf("mcp ratios: speedup=%s cheaper=%s", mcp.Speedup, mcp.Cheaper)
+	}
+	if mcp.CacheRead != 200 {
+		t.Errorf("mcp cache read = %d, want 200", mcp.CacheRead)
+	}
+
+	logged, err := os.ReadFile(argsLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := string(logged)
+	for _, want := range []string{
+		"--exclude-dynamic-system-prompt-sections",
+		"--strict-mcp-config",
+		filepath.Join(filepath.Dir(path), "settings.json"),
+		filepath.Join(filepath.Dir(path), "mcp.json"),
+		filepath.Join(filepath.Dir(path), "workspace"),
+		"Bash(kubectl *)",
+		"mcp__mission-control__*",
+	} {
+		if !strings.Contains(args, want) {
+			t.Errorf("logged args missing %q", want)
+		}
+	}
+}
+
+func TestExecute_RepeatAveragesAndCapturesArtifacts(t *testing.T) {
+	yaml := `prompt: hi
+baseline: a
+runs:
+  - name: a
+    model: direct-model
+    timeout: 5s
+    repeat: 3
+  - name: b
+    model: mcp-model
+    timeout: 5s
+    repeat: 2
+`
+	path, _ := setupFixtureDir(t, yaml)
+	artifactDir := filepath.Join(t.TempDir(), "artifacts")
+
+	f, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := Execute(context.Background(), f, Options{ArtifactDir: artifactDir})
+	if err != nil {
+		t.Fatalf("Execute error = %v", err)
+	}
+	if result.Rows[0].Repeat != 3 {
+		t.Errorf("row a Repeat = %d, want 3", result.Rows[0].Repeat)
+	}
+	if result.Rows[1].Repeat != 2 {
+		t.Errorf("row b Repeat = %d, want 2", result.Rows[1].Repeat)
+	}
+	if result.Rows[0].DurationStdevMS != 0 {
+		t.Errorf("identical runs should produce stdev=0, got %v", result.Rows[0].DurationStdevMS)
+	}
+	if result.Rows[0].DurationMeanMS != 4000 {
+		t.Errorf("duration mean = %v, want 4000", result.Rows[0].DurationMeanMS)
+	}
+
+	for _, want := range []string{"a-1.jsonl", "a-2.jsonl", "a-3.jsonl", "b-1.jsonl", "b-2.jsonl"} {
+		info, err := os.Stat(filepath.Join(artifactDir, want))
+		if err != nil {
+			t.Errorf("artifact %s missing: %v", want, err)
+			continue
+		}
+		if info.Size() == 0 {
+			t.Errorf("artifact %s is empty", want)
+		}
+	}
+}
+
+func TestExecute_FixtureLevelRepeatApplies(t *testing.T) {
+	yaml := `prompt: hi
+repeat: 2
+runs:
+  - name: a
+    model: direct-model
+    timeout: 5s
+`
+	path, _ := setupFixtureDir(t, yaml)
+	f, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := Execute(context.Background(), f, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Rows[0].Repeat != 2 {
+		t.Errorf("Repeat = %d, want 2 (inherited from fixture)", result.Rows[0].Repeat)
+	}
+}
