@@ -276,16 +276,41 @@ runs:
   - name: mission-control
     tools: [default]
     mcpConfig: [.mcp.json]
-    strictMCPConfig: true
     allowedTools: ["mcp__mission-control__*"]
     repeat: 5           # overrides fixture-level repeat for this run
 ```
+
+#### Isolation guarantees
+
+Two rules the runner enforces for you so direct-vs-MCP comparisons stay
+honest — both are automatic, no extra flags needed:
+
+- **MCP is opt-in per run.** A run gets MCP servers only when `mcpConfig`
+  is set. With no `mcpConfig`, the runner passes `--strict-mcp-config`
+  with an empty inline config, so ambient `.mcp.json` in the fixture
+  directory and user-level MCP servers are never picked up.
+- **`allowedTools` is treated as a real allowlist.** Claude CLI's
+  `--allowedTools` is natively an auto-approve list, not a restriction —
+  under `bypassPermissions` the model can still reach for anything. When
+  a run specifies `allowedTools`, the runner demotes the effective
+  `--permission-mode` from `bypassPermissions` to `default` so unlisted
+  tools are denied in non-interactive mode. If you set `permissionMode`
+  to anything other than `bypassPermissions` explicitly, your choice is
+  preserved. Runs without `allowedTools` keep whatever permission mode
+  they asked for.
+
+Practical consequence for a direct-vs-MCP fixture: the `direct` run with
+`allowedTools: [Bash(kubectl *), ...]` can only shell out to those
+patterns; the `mission-control` run with
+`allowedTools: [mcp__mission-control__*]` can only use MCP — Bash is off
+even though it's a built-in. Neither run can accidentally borrow from
+the other's toolset.
 
 Supported per-run fields: `name`, `prompt`, `system`, `model`, `timeout`,
 `cwd`, `permissionMode`, `appendSystemPrompt`, `settings`,
 `maxBudgetUSD`, `repeat`, `tools`, `allowedTools`, `disallowedTools`,
 `mcpConfig`, `addDir`, `betas`, `extraArgs`, `env`, `promptCaching`,
-`strictMCPConfig`, `noSessionPersistence`, `bare`. See
+`noSessionPersistence`, `bare`. See
 [`examples/ai-fixtures/`](examples/ai-fixtures/) for working benchmarks.
 
 Repeats (`repeat: N`) execute each run N times and report the mean

@@ -1,6 +1,7 @@
-
 .bin/
 out.html
 captain
 specs/
 .claude/
+.mcp.json
+.captain/

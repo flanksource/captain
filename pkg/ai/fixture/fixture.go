@@ -46,7 +46,6 @@ type Run struct {
 	ExtraArgs            []string          `yaml:"extraArgs,omitempty"`
 	Env                  map[string]string `yaml:"env,omitempty"`
 	PromptCaching        *bool             `yaml:"promptCaching,omitempty"`
-	StrictMCPConfig      *bool             `yaml:"strictMCPConfig,omitempty"`
 	NoSessionPersistence *bool             `yaml:"noSessionPersistence,omitempty"`
 	Bare                 *bool             `yaml:"bare,omitempty"`
 }
@@ -63,7 +62,11 @@ func Load(path string) (*Fixture, error) {
 	if len(f.Runs) == 0 {
 		return nil, fmt.Errorf("fixture must contain at least one run")
 	}
-	f.Dir = filepath.Dir(path)
+	dir := filepath.Dir(path)
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
+	}
+	f.Dir = dir
 	return &f, nil
 }
 
@@ -128,9 +131,6 @@ func (f *Fixture) Merge(run Run) Run {
 	}
 	if run.PromptCaching != nil {
 		merged.PromptCaching = run.PromptCaching
-	}
-	if run.StrictMCPConfig != nil {
-		merged.StrictMCPConfig = run.StrictMCPConfig
 	}
 	if run.NoSessionPersistence != nil {
 		merged.NoSessionPersistence = run.NoSessionPersistence

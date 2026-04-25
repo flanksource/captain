@@ -26,9 +26,32 @@ func WriteMarkdown(w io.Writer, r *Result) error {
 
 	bw.writeBaselineCallout(r)
 	bw.writeMetricsTable(r)
+	bw.writeFindings(r)
 	bw.writeConfigSection(r)
 
 	return bw.err
+}
+
+func (b *mdBuf) writeFindings(r *Result) {
+	any := false
+	for _, row := range r.Rows {
+		if strings.TrimSpace(row.Result) != "" {
+			any = true
+			break
+		}
+	}
+	if !any {
+		return
+	}
+	b.writef("## Findings\n\n")
+	for _, row := range r.Rows {
+		text := strings.TrimSpace(row.Result)
+		if text == "" {
+			continue
+		}
+		b.writef("### `%s`\n\n", row.Name)
+		b.writef("%s\n\n", text)
+	}
 }
 
 type mdBuf struct {
@@ -121,9 +144,8 @@ func (b *mdBuf) writeConfigSection(r *Result) {
 		}
 		if len(merged.MCPConfig) > 0 {
 			b.writef("- MCP config: `%s`\n", strings.Join(merged.MCPConfig, ", "))
-		}
-		if merged.StrictMCPConfig != nil && *merged.StrictMCPConfig {
-			b.writef("- Strict MCP: `true`\n")
+		} else {
+			b.writef("- MCP: none\n")
 		}
 		b.writef("\n")
 	}

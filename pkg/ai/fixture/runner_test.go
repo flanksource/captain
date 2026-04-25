@@ -1,6 +1,7 @@
 package fixture
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -20,7 +21,21 @@ for arg in "$@"; do
   fi
   prev="$arg"
 done
+printf 'STDIN_BEGIN\n' >> "$ARGS_LOG"
+cat >> "$ARGS_LOG"
+printf '\nSTDIN_END\n' >> "$ARGS_LOG"
 printf '%s\n' '---' >> "$ARGS_LOG"
+
+if [ "$model" = "chatty" ]; then
+  cat <<'EOF'
+{"type":"system","subtype":"init","session_id":"sess-chatty"}
+{"type":"assistant","session_id":"sess-chatty","message":{"role":"assistant","content":[{"type":"text","text":"Let me check the cluster state."}]}}
+{"type":"assistant","session_id":"sess-chatty","message":{"role":"assistant","content":[{"type":"tool_use","id":"1","name":"Bash","input":{"command":"kubectl get pods -n prod"}}]}}
+{"type":"assistant","session_id":"sess-chatty","message":{"role":"assistant","content":[{"type":"tool_use","id":"2","name":"mcp__mission-control__query","input":{"query":"unhealthy pods"}}]}}
+{"type":"result","subtype":"success","session_id":"sess-chatty","result":"Root cause: checkout-api deployment image is tagged latest and was force-pulled to a broken build. Rollback.","cost_usd":0.02,"duration_ms":3000}
+EOF
+  exit 0
+fi
 
 if [ "$model" = "direct-model" ]; then
   cat <<'EOF'
@@ -78,7 +93,6 @@ baseline: direct
 defaults:
   timeout: 5s
   promptCaching: true
-  strictMCPConfig: true
   settings: settings.json
   mcpConfig:
     - mcp.json
@@ -141,6 +155,7 @@ runs:
 	}
 	args := string(logged)
 	for _, want := range []string{
+		"--verbose",
 		"--exclude-dynamic-system-prompt-sections",
 		"--strict-mcp-config",
 		filepath.Join(filepath.Dir(path), "settings.json"),
@@ -148,10 +163,100 @@ runs:
 		filepath.Join(filepath.Dir(path), "workspace"),
 		"Bash(kubectl *)",
 		"mcp__mission-control__*",
+		"STDIN_BEGIN\nWhich cluster is unhealthy?\nSTDIN_END",
 	} {
 		if !strings.Contains(args, want) {
 			t.Errorf("logged args missing %q", want)
 		}
+	}
+	if strings.Contains(args, "--max-turns") {
+		t.Errorf("args contain removed --max-turns flag:\n%s", args)
+	}
+}
+
+func TestExecute_AllowedToolsOverridesBypassPermissions(t *testing.T) {
+	yaml := `prompt: hi
+defaults:
+  timeout: 5s
+  permissionMode: bypassPermissions
+runs:
+  - name: restricted
+    model: direct-model
+    allowedTools:
+      - Bash(kubectl *)
+  - name: open
+    model: direct-model
+  - name: explicit
+    model: direct-model
+    permissionMode: acceptEdits
+    allowedTools:
+      - Read
+`
+	path, argsLog := setupFixtureDir(t, yaml)
+	f, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Execute(context.Background(), f, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	logged, err := os.ReadFile(argsLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks := strings.Split(string(logged), "---\n")
+	if len(blocks) < 3 {
+		t.Fatalf("expected 3 run blocks, got %d", len(blocks))
+	}
+	restricted, open, explicit := blocks[0], blocks[1], blocks[2]
+
+	if strings.Contains(restricted, "bypassPermissions") {
+		t.Errorf("allowedTools must demote bypassPermissions; args:\n%s", restricted)
+	}
+	if !strings.Contains(restricted, "--permission-mode\ndefault") {
+		t.Errorf("allowedTools run should fall back to default mode; args:\n%s", restricted)
+	}
+	if !strings.Contains(open, "--permission-mode\nbypassPermissions") {
+		t.Errorf("run without allowedTools should keep bypassPermissions; args:\n%s", open)
+	}
+	if !strings.Contains(explicit, "--permission-mode\nacceptEdits") {
+		t.Errorf("explicit non-bypass mode must be preserved; args:\n%s", explicit)
+	}
+}
+
+func TestExecute_MCPOnlyWhenMCPConfigSet(t *testing.T) {
+	yaml := `prompt: hi
+runs:
+  - name: direct
+    model: direct-model
+    timeout: 5s
+  - name: explicit
+    model: direct-model
+    timeout: 5s
+    mcpConfig:
+      - '{"mcpServers":{"keep":{}}}'
+`
+	path, argsLog := setupFixtureDir(t, yaml)
+	f, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Execute(context.Background(), f, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	args, err := os.ReadFile(argsLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(args)
+	if strings.Count(s, "--strict-mcp-config") != 2 {
+		t.Errorf("every run must pass --strict-mcp-config; args:\n%s", s)
+	}
+	if !strings.Contains(s, `{"mcpServers":{}}`) {
+		t.Errorf("run with no mcpConfig should inject empty config; args:\n%s", s)
+	}
+	if !strings.Contains(s, `{"mcpServers":{"keep":{}}}`) {
+		t.Errorf("explicit mcpConfig must be preserved; args:\n%s", s)
 	}
 }
 
@@ -201,6 +306,90 @@ runs:
 		if info.Size() == 0 {
 			t.Errorf("artifact %s is empty", want)
 		}
+	}
+}
+
+func TestExecute_WritesProgressPerIteration(t *testing.T) {
+	yaml := `prompt: hi
+runs:
+  - name: a
+    model: direct-model
+    timeout: 5s
+    repeat: 2
+  - name: b
+    model: mcp-model
+    timeout: 5s
+    repeat: 1
+`
+	path, _ := setupFixtureDir(t, yaml)
+	f, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var progress bytes.Buffer
+	if _, err := Execute(context.Background(), f, Options{Progress: &progress}); err != nil {
+		t.Fatal(err)
+	}
+	out := progress.String()
+	for _, want := range []string{
+		`run "a" iteration 1/2`,
+		`run "a" iteration 2/2`,
+		`run "b" iteration 1/1`,
+		"ok in",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("progress missing %q\n---\n%s", want, out)
+		}
+	}
+}
+
+func TestExecute_StreamsEventsToProgress(t *testing.T) {
+	yaml := `prompt: investigate
+runs:
+  - name: trace
+    model: chatty
+    timeout: 5s
+`
+	path, _ := setupFixtureDir(t, yaml)
+	f, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var progress bytes.Buffer
+	if _, err := Execute(context.Background(), f, Options{Progress: &progress}); err != nil {
+		t.Fatal(err)
+	}
+	out := progress.String()
+	for _, want := range []string{
+		"session sess-chatty",
+		"💭 Let me check the cluster state.",
+		"→ Bash kubectl get pods -n prod",
+		"→ mcp__mission-control__query unhealthy pods",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("progress missing %q\n---\n%s", want, out)
+		}
+	}
+}
+
+func TestExecute_CapturesResultText(t *testing.T) {
+	yaml := `prompt: investigate
+runs:
+  - name: trace
+    model: chatty
+    timeout: 5s
+`
+	path, _ := setupFixtureDir(t, yaml)
+	f, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := Execute(context.Background(), f, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Rows[0].Result, "Root cause") {
+		t.Errorf("row Result missing final text: %q", result.Rows[0].Result)
 	}
 }
 

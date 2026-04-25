@@ -40,10 +40,13 @@ func RunAIFixture(opts AIFixtureOptions) (any, error) {
 
 	result, err := fixture.Execute(context.Background(), f, fixture.Options{
 		ArtifactDir: artifactDir,
+		Progress:    os.Stderr,
 	})
 	if err != nil {
 		return nil, err
 	}
+
+	printFindings(os.Stderr, result)
 
 	if opts.Report != "" {
 		if err := writeReport(opts.Report, result); err != nil {
@@ -52,6 +55,28 @@ func RunAIFixture(opts AIFixtureOptions) (any, error) {
 	}
 
 	return *result, nil
+}
+
+func printFindings(w *os.File, r *fixture.Result) {
+	any := false
+	for _, row := range r.Rows {
+		if row.Result != "" {
+			any = true
+			break
+		}
+	}
+	if !any {
+		return
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "── Findings ──")
+	for _, row := range r.Rows {
+		if row.Result == "" {
+			continue
+		}
+		fmt.Fprintf(w, "\n# %s (%s)\n%s\n", row.Name, row.Model, row.Result)
+	}
+	fmt.Fprintln(w)
 }
 
 func writeReport(path string, r *fixture.Result) error {
