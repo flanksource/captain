@@ -320,6 +320,33 @@ are noisy and N≥3 makes comparisons defensible. The raw per-iteration
 `stream-json` is saved under the artifacts directory so every claim in
 the report is reproducible.
 
+#### Kubernetes proxy capture
+
+Set `captureKubernetesProxy: true` at the fixture level to route every
+`kubectl` call made during the fixture through a captain-managed reverse
+proxy, and record both layers of activity:
+
+```yaml
+captureKubernetesProxy: true
+kubeconfig: ~/.kube/config   # optional; defaults to client-go discovery
+```
+
+When enabled, the runner:
+
+- starts a localhost reverse proxy that loads the user's kubeconfig (auth
+  plugins included) and forwards to the real cluster
+- generates a temp kubeconfig pointing at the proxy and injects
+  `KUBECONFIG=<that path>` into every run's environment, so kubectl can't
+  bypass it
+- writes a JSONL log per run/iteration to
+  `<artifacts>/<run>-<iter>.kubectl.jsonl` with two record types:
+    - `{"type":"command","command":"kubectl get pods -n prod"}` — literal
+      CLI invocation parsed from the model's Bash tool calls
+    - `{"type":"request","method":"GET","path":"/api/v1/...","status":200}`
+      — every API call observed by the proxy
+- surfaces a **Kubectl activity** section in the report with per-run CLI
+  and API counts plus a few sample commands
+
 ### Container sandbox workflow
 
 ```bash

@@ -47,6 +47,7 @@ func RunAIFixture(opts AIFixtureOptions) (any, error) {
 		return nil, err
 	}
 
+	printKubectlSummary(os.Stderr, result)
 	printFindings(os.Stderr, result)
 
 	if opts.Report != "" {
@@ -60,6 +61,34 @@ func RunAIFixture(opts AIFixtureOptions) (any, error) {
 	}
 
 	return *result, nil
+}
+
+func printKubectlSummary(w *os.File, r *fixture.Result) {
+	if r.KubectlProxy == "" {
+		return
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintf(w, "── Kubernetes proxy ──\n")
+	fmt.Fprintf(w, "endpoint: %s\n", r.KubectlProxy)
+	for _, row := range r.Rows {
+		if row.KubectlCalls == 0 && row.KubectlAPICalls == 0 {
+			continue
+		}
+		fmt.Fprintf(w, "\n  %s: %d kubectl calls / %d API requests  (%s)\n",
+			row.Name, row.KubectlCalls, row.KubectlAPICalls, row.KubectlLogPath)
+		if len(row.KubectlCommandLog) > 0 {
+			fmt.Fprintf(w, "    command log (%d):\n", len(row.KubectlCommandLog))
+			for _, c := range row.KubectlCommandLog {
+				fmt.Fprintf(w, "      %s\n", c.Format())
+			}
+		}
+		if len(row.KubectlAPILog) > 0 {
+			fmt.Fprintf(w, "    api access log (%d):\n", len(row.KubectlAPILog))
+			for _, u := range row.KubectlAPILog {
+				fmt.Fprintf(w, "      %s\n", u.Format())
+			}
+		}
+	}
 }
 
 func printFindings(w *os.File, r *fixture.Result) {

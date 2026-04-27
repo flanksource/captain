@@ -16,30 +16,38 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/flanksource/captain/pkg/ai/fixture/kubeproxy"
 )
 
 type Row struct {
-	Name        string `json:"name" pretty:"label=Run,width=20,table"`
-	Model       string `json:"model" pretty:"label=Model,width=28,table"`
-	Status      string `json:"status" pretty:"label=Status,table"`
-	Repeat      int    `json:"repeat,omitempty" pretty:"label=N,table"`
-	DurationMS  string `json:"durationMs" pretty:"label=Duration,table"`
-	DurationStd string `json:"durationStddev,omitempty" pretty:"label=±dur,table"`
-	CostUSD     string `json:"costUsd" pretty:"label=Cost,table"`
-	Input       int    `json:"inputTokens" pretty:"label=Input,table"`
-	Output      int    `json:"outputTokens" pretty:"label=Output,table"`
-	CacheRead   int    `json:"cacheReadTokens" pretty:"label=Cache Read,table"`
-	CacheWrite  int    `json:"cacheWriteTokens" pretty:"label=Cache Write,table"`
-	ToolCalls   int    `json:"toolCalls" pretty:"label=Tools,table"`
-	MCPCalls    int    `json:"mcpCalls" pretty:"label=MCP,table"`
-	BashCalls   int    `json:"bashCalls" pretty:"label=Bash,table"`
-	ToolSummary string `json:"toolSummary,omitempty" pretty:"label=Tool Summary,width=32,table"`
-	Speedup     string `json:"speedupVsBaseline,omitempty" pretty:"label=Speedup,table"`
-	Cheaper     string `json:"cheaperVsBaseline,omitempty" pretty:"label=Cheaper,table"`
-	SessionID   string `json:"sessionId,omitempty" pretty:"label=Session"`
-	Result      string `json:"result,omitempty" pretty:"-"`
-	Error       string `json:"error,omitempty" pretty:"label=Error"`
+	Name             string   `json:"name" pretty:"label=Run,width=20,table"`
+	Model            string   `json:"model" pretty:"label=Model,width=28,table"`
+	Status           string   `json:"status" pretty:"label=Status,table"`
+	Repeat           int      `json:"repeat,omitempty" pretty:"label=N,table"`
+	DurationMS       string   `json:"durationMs" pretty:"label=Duration,table"`
+	DurationStd      string   `json:"durationStddev,omitempty" pretty:"label=±dur,table"`
+	CostUSD          string   `json:"costUsd" pretty:"label=Cost,table"`
+	Input            int      `json:"inputTokens" pretty:"label=Input,table"`
+	Output           int      `json:"outputTokens" pretty:"label=Output,table"`
+	CacheRead        int      `json:"cacheReadTokens" pretty:"label=Cache Read,table"`
+	CacheWrite       int      `json:"cacheWriteTokens" pretty:"label=Cache Write,table"`
+	ToolCalls        int      `json:"toolCalls" pretty:"label=Tools,table"`
+	MCPCalls         int      `json:"mcpCalls" pretty:"label=MCP,table"`
+	BashCalls        int      `json:"bashCalls" pretty:"label=Bash,table"`
+	KubectlCalls      int                   `json:"kubectlCalls,omitempty" pretty:"-"`
+	KubectlAPICalls   int                   `json:"kubectlApiCalls,omitempty" pretty:"-"`
+	KubectlCommandLog []KubectlCommandEntry `json:"kubectlCommandLog,omitempty" pretty:"-"`
+	KubectlAPILog     []KubectlAPIEntry     `json:"kubectlApiLog,omitempty" pretty:"-"`
+	KubectlLogPath    string                `json:"kubectlLogPath,omitempty" pretty:"-"`
+	ToolSummary      string   `json:"toolSummary,omitempty" pretty:"label=Tool Summary,width=32,table"`
+	Speedup          string   `json:"speedupVsBaseline,omitempty" pretty:"label=Speedup,table"`
+	Cheaper          string   `json:"cheaperVsBaseline,omitempty" pretty:"label=Cheaper,table"`
+	SessionID        string   `json:"sessionId,omitempty" pretty:"label=Session"`
+	Result           string   `json:"result,omitempty" pretty:"-"`
+	Error            string   `json:"error,omitempty" pretty:"label=Error"`
 
 	DurationMeanMS  float64 `json:"-" pretty:"-"`
 	DurationStdevMS float64 `json:"-" pretty:"-"`
@@ -47,10 +55,11 @@ type Row struct {
 }
 
 type Result struct {
-	Name        string `json:"name,omitempty" pretty:"label=Fixture"`
-	Description string `json:"description,omitempty" pretty:"label=Description"`
-	Baseline    string `json:"baseline,omitempty" pretty:"label=Baseline"`
-	Rows        []Row  `json:"rows"`
+	Name          string `json:"name,omitempty" pretty:"label=Fixture"`
+	Description   string `json:"description,omitempty" pretty:"label=Description"`
+	Baseline      string `json:"baseline,omitempty" pretty:"label=Baseline"`
+	KubectlProxy  string `json:"kubectlProxy,omitempty" pretty:"-"`
+	Rows          []Row  `json:"rows"`
 
 	Fixture *Fixture `json:"-" pretty:"-"`
 }
@@ -65,6 +74,26 @@ func Execute(ctx context.Context, f *Fixture, opts Options) (*Result, error) {
 	baselineName := f.Baseline
 	rows := make([]Row, 0, len(f.Runs))
 	rowMetrics := make(map[string]aggregate, len(f.Runs))
+
+	var proxy *kubeproxy.Proxy
+	var proxyKubeconfig string
+	var proxyURL string
+	if f.CaptureKubernetesProxy {
+		p, err := kubeproxy.Start(f.Kubeconfig)
+		if err != nil {
+			return nil, fmt.Errorf("starting kubernetes proxy: %w", err)
+		}
+		defer p.Close()
+		proxyDir := filepath.Join(opts.ArtifactDir, ".proxy")
+		kc, err := p.WriteKubeconfig(proxyDir)
+		if err != nil {
+			return nil, fmt.Errorf("writing proxy kubeconfig: %w", err)
+		}
+		proxy = p
+		proxyKubeconfig = kc
+		proxyURL = p.URL()
+		progressf(opts.Progress, "▶ kubernetes proxy: %s  (KUBECONFIG=%s)", proxyURL, kc)
+	}
 
 	for i, raw := range f.Runs {
 		merged := f.Merge(raw)
@@ -92,11 +121,17 @@ func Execute(ctx context.Context, f *Fixture, opts Options) (*Result, error) {
 		agg := aggregate{}
 		var runErr error
 		var lastResult string
+		var kubectlLogPath string
 		for iter := 0; iter < reps; iter++ {
 			progressf(opts.Progress, "[%d/%d] run %q iteration %d/%d (model=%s)…",
 				i+1, len(f.Runs), merged.Name, iter+1, reps, merged.Model)
 			start := time.Now()
-			summary, err := executeRun(ctx, f.Dir, merged, opts, iter)
+			runOpts := runEnv{proxy: proxy, kubeconfig: proxyKubeconfig}
+			if proxy != nil && opts.ArtifactDir != "" {
+				runOpts.kubectlLogPath = filepath.Join(opts.ArtifactDir, fmt.Sprintf("%s-%d.kubectl.jsonl", merged.Name, iter+1))
+				kubectlLogPath = runOpts.kubectlLogPath
+			}
+			summary, err := executeRun(ctx, f.Dir, merged, opts, iter, runOpts)
 			elapsed := time.Since(start).Round(time.Millisecond)
 			switch {
 			case err != nil:
@@ -137,6 +172,11 @@ func Execute(ctx context.Context, f *Fixture, opts Options) (*Result, error) {
 			ToolCalls:       agg.ToolCalls,
 			MCPCalls:        agg.MCPCalls,
 			BashCalls:       agg.BashCalls,
+			KubectlCalls:      agg.KubectlCalls,
+			KubectlAPICalls:   agg.KubectlAPICalls,
+			KubectlCommandLog: agg.KubectlCommandLog,
+			KubectlAPILog:     agg.KubectlAPILog,
+			KubectlLogPath:    kubectlLogPath,
 			ToolSummary:     formatToolCounts(agg.ToolCounts),
 			SessionID:       agg.SessionID,
 			DurationMeanMS:  agg.DurationMean,
@@ -163,15 +203,22 @@ func Execute(ctx context.Context, f *Fixture, opts Options) (*Result, error) {
 	}
 
 	return &Result{
-		Name:        f.Name,
-		Description: f.Description,
-		Baseline:    baselineName,
-		Rows:        rows,
-		Fixture:     f,
+		Name:         f.Name,
+		Description:  f.Description,
+		Baseline:     baselineName,
+		KubectlProxy: proxyURL,
+		Rows:         rows,
+		Fixture:      f,
 	}, nil
 }
 
-func executeRun(parent context.Context, fixtureDir string, run Run, opts Options, iter int) (Summary, error) {
+type runEnv struct {
+	proxy          *kubeproxy.Proxy
+	kubeconfig     string
+	kubectlLogPath string
+}
+
+func executeRun(parent context.Context, fixtureDir string, run Run, opts Options, iter int, env runEnv) (Summary, error) {
 	timeout := 5 * time.Minute
 	if run.Timeout != "" {
 		parsed, err := time.ParseDuration(run.Timeout)
@@ -256,10 +303,32 @@ func executeRun(parent context.Context, fixtureDir string, run Run, opts Options
 		cmd.Dir = resolvePath(fixtureDir, run.CWD)
 	}
 	cmd.Env = os.Environ()
+	if env.kubeconfig != "" {
+		cmd.Env = append(cmd.Env, "KUBECONFIG="+env.kubeconfig)
+	}
 	for k, v := range run.Env {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
 	cmd.Stdin = strings.NewReader(run.Prompt)
+
+	var kubectlLog *os.File
+	var kubectlLogger *kubeproxy.RequestLogger
+	if env.proxy != nil && env.kubectlLogPath != "" {
+		if err := os.MkdirAll(filepath.Dir(env.kubectlLogPath), 0o755); err != nil {
+			return Summary{}, fmt.Errorf("creating kubectl log dir for %q: %w", run.Name, err)
+		}
+		f, err := os.Create(env.kubectlLogPath)
+		if err != nil {
+			return Summary{}, fmt.Errorf("creating kubectl log for %q: %w", run.Name, err)
+		}
+		kubectlLog = f
+		kubectlLogger = kubeproxy.NewRequestLogger(f)
+		env.proxy.SetLogger(kubectlLogger)
+		defer func() {
+			env.proxy.SetLogger(nil)
+			f.Close()
+		}()
+	}
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
@@ -289,6 +358,27 @@ func executeRun(parent context.Context, fixtureDir string, run Run, opts Options
 	summary := Summary{ToolCounts: map[string]int{}}
 	scanner := bufio.NewScanner(stdoutPipe)
 	scanner.Buffer(make([]byte, 1024*1024), 10*1024*1024)
+
+	progressf(opts.Progress, "    · pid=%d, awaiting first stream-json event…", cmd.Process.Pid)
+	heartbeatStart := time.Now()
+	heartbeatDone := make(chan struct{})
+	hb := &heartbeatState{lastEvent: "—"}
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-heartbeatDone:
+				return
+			case <-ticker.C:
+				lines, last := hb.snapshot()
+				elapsed := time.Since(heartbeatStart).Round(time.Second)
+				progressf(opts.Progress, "    · still running (%s elapsed, %d lines, last: %s)", elapsed, lines, last)
+			}
+		}
+	}()
+	defer close(heartbeatDone)
+
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		if artifact != nil {
@@ -297,13 +387,33 @@ func executeRun(parent context.Context, fixtureDir string, run Run, opts Options
 		}
 		ev, ok := ParseLine(line)
 		if !ok {
+			hb.update("malformed")
 			continue
 		}
+		hb.update(eventDescription(ev))
 		summary.Apply(ev)
+		if kubectlLogger != nil {
+			for _, c := range ev.Content {
+				if c.Type != "tool_use" || c.Name != "Bash" {
+					continue
+				}
+				cmd := strings.TrimSpace(bashCommandFrom(c.Input))
+				if isKubectlCommand(cmd) {
+					kubectlLogger.LogCommand(kubeproxy.CommandEvent{
+						Type:    "command",
+						Time:    time.Now().UTC(),
+						Command: cmd,
+					})
+				}
+			}
+		}
 		renderEvent(opts.Progress, ev)
 	}
 
 	runErr := cmd.Wait()
+	if kubectlLog != nil {
+		kubectlLog.Sync()
+	}
 	if runErr != nil {
 		msg := strings.TrimSpace(stderrBuf.String())
 		if msg == "" {
@@ -317,7 +427,145 @@ func executeRun(parent context.Context, fixtureDir string, run Run, opts Options
 		}
 		return summary, fmt.Errorf("claude run %q failed: %s", run.Name, msg)
 	}
+	if kubectlLog != nil {
+		summary.KubectlCommandLog, summary.KubectlAPILog = readKubectlLog(env.kubectlLogPath)
+		summary.KubectlAPICalls = len(summary.KubectlAPILog)
+	}
 	return summary, nil
+}
+
+type heartbeatState struct {
+	mu        sync.Mutex
+	lines     int
+	lastEvent string
+}
+
+func (h *heartbeatState) update(desc string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.lines++
+	h.lastEvent = desc
+}
+
+func (h *heartbeatState) snapshot() (int, string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.lines, h.lastEvent
+}
+
+// eventDescription summarizes a stream-json event for the heartbeat line so
+// users can see what claude is doing between renders (esp. tool_results which
+// renderEvent suppresses to keep output clean).
+func eventDescription(ev Event) string {
+	switch ev.Type {
+	case "system":
+		if ev.Subtype != "" {
+			return "system " + ev.Subtype
+		}
+		return "system"
+	case "assistant":
+		for _, c := range ev.Content {
+			switch c.Type {
+			case "tool_use":
+				return "tool_use " + c.Name
+			case "text":
+				return "assistant text"
+			}
+		}
+		return "assistant"
+	case "user":
+		return "tool_result"
+	case "result":
+		if ev.Subtype != "" {
+			return "result " + ev.Subtype
+		}
+		return "result"
+	}
+	if ev.Type != "" {
+		return ev.Type
+	}
+	return "—"
+}
+
+// KubectlCommandEntry is one literal CLI invocation captured from the model's
+// Bash tool calls.
+type KubectlCommandEntry struct {
+	Time    time.Time `json:"time"`
+	Command string    `json:"command"`
+}
+
+// KubectlAPIEntry is one HTTP request observed flowing through the proxy.
+type KubectlAPIEntry struct {
+	Time     time.Time `json:"time"`
+	Method   string    `json:"method"`
+	URL      string    `json:"url"`
+	Status   int       `json:"status"`
+	Duration string    `json:"duration"`
+	Bytes    int64     `json:"bytes"`
+}
+
+func (e KubectlCommandEntry) Format() string {
+	return fmt.Sprintf("%s  %s", e.Time.Local().Format("15:04:05.000"), e.Command)
+}
+
+func (e KubectlAPIEntry) Format() string {
+	return fmt.Sprintf("%s  %s %s  %d  %s  %s",
+		e.Time.Local().Format("15:04:05.000"), e.Method, e.URL, e.Status, e.Duration, humanBytes(e.Bytes))
+}
+
+// readKubectlLog parses a kubectl.jsonl file into structured chronological
+// command and API entries.
+func readKubectlLog(path string) (commands []KubectlCommandEntry, api []KubectlAPIEntry) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, nil
+	}
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	scanner.Buffer(make([]byte, 1024*1024), 10*1024*1024)
+	for scanner.Scan() {
+		var ev struct {
+			Type     string    `json:"type"`
+			Time     time.Time `json:"time"`
+			Command  string    `json:"command"`
+			Method   string    `json:"method"`
+			Path     string    `json:"path"`
+			Query    string    `json:"query"`
+			Status   int       `json:"status"`
+			Duration string    `json:"duration"`
+			Bytes    int64     `json:"bytes"`
+		}
+		if err := json.Unmarshal(scanner.Bytes(), &ev); err != nil {
+			continue
+		}
+		switch ev.Type {
+		case "command":
+			commands = append(commands, KubectlCommandEntry{Time: ev.Time, Command: ev.Command})
+		case "request":
+			url := ev.Path
+			if ev.Query != "" {
+				url += "?" + ev.Query
+			}
+			api = append(api, KubectlAPIEntry{
+				Time: ev.Time, Method: ev.Method, URL: url,
+				Status: ev.Status, Duration: ev.Duration, Bytes: ev.Bytes,
+			})
+		}
+	}
+	return commands, api
+}
+
+func humanBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for x := n / unit; x >= unit; x /= unit {
+		div *= unit
+		exp++
+	}
+	suffix := "KMGTPE"[exp]
+	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), suffix)
 }
 
 // effectivePermissionMode demotes bypassPermissions to default whenever the
@@ -398,21 +646,25 @@ func summarizeToolInput(name string, input json.RawMessage) string {
 }
 
 type aggregate struct {
-	N             int
-	Success       bool
-	Error         string
-	SessionID     string
-	DurationMean  float64
-	DurationStdev float64
-	CostMean      float64
-	Input         int
-	Output        int
-	CacheRead     int
-	CacheWrite    int
-	ToolCalls     int
-	MCPCalls      int
-	BashCalls     int
-	ToolCounts    map[string]int
+	N               int
+	Success         bool
+	Error           string
+	SessionID       string
+	DurationMean    float64
+	DurationStdev   float64
+	CostMean        float64
+	Input           int
+	Output          int
+	CacheRead       int
+	CacheWrite      int
+	ToolCalls       int
+	MCPCalls        int
+	BashCalls       int
+	KubectlCalls      int
+	KubectlAPICalls   int
+	KubectlCommandLog []KubectlCommandEntry
+	KubectlAPILog     []KubectlAPIEntry
+	ToolCounts        map[string]int
 
 	durations []float64
 	costs     []float64
@@ -439,6 +691,10 @@ func (a *aggregate) add(s Summary) {
 	a.ToolCalls += s.ToolCalls
 	a.MCPCalls += s.MCPCalls
 	a.BashCalls += s.BashCalls
+	a.KubectlCalls += s.KubectlCalls
+	a.KubectlAPICalls += s.KubectlAPICalls
+	a.KubectlCommandLog = append(a.KubectlCommandLog, s.KubectlCommandLog...)
+	a.KubectlAPILog = append(a.KubectlAPILog, s.KubectlAPILog...)
 	if a.ToolCounts == nil {
 		a.ToolCounts = map[string]int{}
 	}
@@ -462,6 +718,8 @@ func (a *aggregate) finalize() {
 	a.ToolCalls /= a.N
 	a.MCPCalls /= a.N
 	a.BashCalls /= a.N
+	a.KubectlCalls /= a.N
+	a.KubectlAPICalls /= a.N
 	for k, v := range a.ToolCounts {
 		a.ToolCounts[k] = v / a.N
 	}

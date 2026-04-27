@@ -4,15 +4,68 @@
 package fixture
 
 import (
+	"bytes"
 	"fmt"
 	"html"
 	"io"
-	"sort"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/flanksource/clicky/api"
+	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/extension"
 )
+
+// MarkdownDoc is a free-form markdown document that satisfies clicky's
+// Textable interface — String/ANSI keep the raw markdown (terminals render it
+// readably as-is), Markdown returns the source, HTML runs it through goldmark
+// with GFM tables enabled. Lives here for now; promote to clicky if it ever
+// gets reused.
+type MarkdownDoc struct {
+	Source string
+}
+
+func (m MarkdownDoc) String() string   { return m.Source }
+func (m MarkdownDoc) ANSI() string     { return m.Source }
+func (m MarkdownDoc) Markdown() string { return m.Source }
+func (m MarkdownDoc) HTML() string {
+	md := goldmark.New(goldmark.WithExtensions(extension.GFM))
+	var buf bytes.Buffer
+	if err := md.Convert([]byte(m.Source), &buf); err != nil {
+		return html.EscapeString(m.Source)
+	}
+	return buf.String()
+}
+
+// compile-time check that MarkdownDoc satisfies clicky's Textable.
+var _ api.Textable = MarkdownDoc{}
+
+var (
+	mdInlineBold = regexp.MustCompile(`\*\*([^*\n]+)\*\*`)
+	mdInlineCode = regexp.MustCompile("`([^`\n]+)`")
+	mdInlineEm   = regexp.MustCompile(`(^|[\s(])_([^_\n]+)_($|[\s.,;:)])`)
+)
+
+// inlineMarkdownToHTML escapes HTML special chars first, then converts the
+// limited inline markdown we emit (`code`, **bold**, _em_) into HTML tags.
+func inlineMarkdownToHTML(s string) string {
+	s = html.EscapeString(s)
+	s = mdInlineBold.ReplaceAllString(s, "<strong>$1</strong>")
+	s = mdInlineCode.ReplaceAllString(s, "<code>$1</code>")
+	s = mdInlineEm.ReplaceAllString(s, "$1<em>$2</em>$3")
+	return s
+}
+
+// stripInlineMarkdown removes the markdown markers we use, leaving readable
+// plain text for ANSI mode.
+func stripInlineMarkdown(s string) string {
+	s = mdInlineBold.ReplaceAllString(s, "$1")
+	s = mdInlineCode.ReplaceAllString(s, "$1")
+	s = mdInlineEm.ReplaceAllString(s, "$1$2$3")
+	return s
+}
+
 
 type Format string
 
@@ -41,6 +94,11 @@ func WriteReport(w io.Writer, r *Result, format Format) error {
 	if title == "" {
 		title = "AI Fixture Result"
 	}
+
+	if format == FormatHTML {
+		b.writeHTMLHeader(title)
+	}
+
 	b.heading(1, title)
 	if r.Description != "" {
 		b.paragraph(r.Description)
@@ -52,7 +110,65 @@ func WriteReport(w io.Writer, r *Result, format Format) error {
 	b.writeFindings(r)
 	b.writeConfigSection(r)
 
+	if format == FormatHTML {
+		b.writeHTMLFooter()
+	}
+
 	return b.err
+}
+
+// reportCSS extends Tailwind defaults so our markdown-rendered findings (which
+// goldmark emits as plain <h1>/<p>/<ul>/<table>/<pre>) look readable. Tailwind
+// resets most of those, so without these rules headings collapse and lists
+// lose their bullets.
+const reportCSS = `
+.finding h1 { font-size: 1.5rem; font-weight: 700; margin: 1.25rem 0 0.5rem; }
+.finding h2 { font-size: 1.25rem; font-weight: 600; margin: 1rem 0 0.5rem; color: #1f2937; }
+.finding h3 { font-size: 1.05rem; font-weight: 600; margin: 0.75rem 0 0.4rem; color: #374151; }
+.finding p  { margin: 0.5rem 0; line-height: 1.6; }
+.finding ul { list-style: disc; margin: 0.5rem 0 0.5rem 1.5rem; }
+.finding ol { list-style: decimal; margin: 0.5rem 0 0.5rem 1.5rem; }
+.finding li { margin: 0.2rem 0; }
+.finding code { background: #f3f4f6; padding: 0.1rem 0.3rem; border-radius: 3px; font-size: 0.9em; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+.finding pre { background: #1f2937; color: #f3f4f6; padding: 0.85rem 1rem; border-radius: 6px; overflow-x: auto; margin: 0.75rem 0; }
+.finding pre code { background: transparent; color: inherit; padding: 0; }
+.finding table { border-collapse: collapse; width: 100%; margin: 0.75rem 0; font-size: 0.95em; }
+.finding th, .finding td { border: 1px solid #d1d5db; padding: 0.4rem 0.6rem; text-align: left; }
+.finding th { background: #f3f4f6; font-weight: 600; }
+
+.finding-header { display: flex; align-items: baseline; gap: 0.75rem; margin: 1.75rem 0 0.5rem; padding: 0.6rem 1rem; background: #1e3a8a; color: #fff; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+.finding-header .finding-name { font-size: 1.4rem; font-weight: 700; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+.finding-header .finding-model { font-size: 0.85rem; opacity: 0.75; font-weight: 500; }
+
+h1.report-title { font-size: 2rem; font-weight: 700; margin: 0 0 0.5rem; }
+h2.report-section { font-size: 1.5rem; font-weight: 600; margin: 1.5rem 0 0.75rem; padding-bottom: 0.25rem; border-bottom: 1px solid #e5e7eb; }
+h3.report-subsection { font-size: 1.15rem; font-weight: 600; margin: 1rem 0 0.5rem; color: #374151; }
+.report ul { list-style: disc; margin-left: 1.5rem; margin-bottom: 0.75rem; }
+.report li { margin: 0.2rem 0; }
+.report pre { background: #f3f4f6; padding: 0.75rem 1rem; border-radius: 6px; overflow-x: auto; }
+.report p  { margin: 0.5rem 0; }
+`
+
+func (b *reportBuf) writeHTMLHeader(title string) {
+	b.writef(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>%s</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.10.0/build/styles/atom-one-dark.min.css">
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.10.0/build/highlight.min.js"></script>
+<style>%s</style>
+</head>
+<body class="bg-gray-50 min-h-screen text-gray-800">
+<div class="max-w-6xl mx-auto px-6 py-8 report">
+`, html.EscapeString(title), reportCSS)
+}
+
+func (b *reportBuf) writeHTMLFooter() {
+	b.raw(`<script>document.querySelectorAll('pre code').forEach(el => { if (window.hljs) hljs.highlightElement(el); });</script>`)
+	b.raw("\n</div>\n</body>\n</html>\n")
 }
 
 type reportBuf struct {
@@ -82,9 +198,19 @@ func (b *reportBuf) raw(s string) {
 func (b *reportBuf) heading(level int, text string) {
 	switch b.format {
 	case FormatHTML:
-		b.writef("<h%d>%s</h%d>\n\n", level, html.EscapeString(text), level)
+		var class string
+		switch level {
+		case 1:
+			class = ` class="report-title"`
+		case 2:
+			class = ` class="report-section"`
+		case 3:
+			class = ` class="report-subsection"`
+		}
+		b.writef("<h%d%s>%s</h%d>\n\n", level, class, inlineMarkdownToHTML(text), level)
 	case FormatANSI:
-		b.writef("\n%s\n%s\n\n", text, strings.Repeat("─", len(text)))
+		plain := stripInlineMarkdown(text)
+		b.writef("\n%s\n%s\n\n", plain, strings.Repeat("─", len(plain)))
 	default:
 		b.writef("%s %s\n\n", strings.Repeat("#", level), text)
 	}
@@ -93,7 +219,9 @@ func (b *reportBuf) heading(level int, text string) {
 func (b *reportBuf) paragraph(text string) {
 	switch b.format {
 	case FormatHTML:
-		b.writef("<p>%s</p>\n\n", html.EscapeString(text))
+		b.writef("<p>%s</p>\n\n", inlineMarkdownToHTML(text))
+	case FormatANSI:
+		b.writef("%s\n\n", stripInlineMarkdown(text))
 	default:
 		b.writef("%s\n\n", text)
 	}
@@ -102,7 +230,9 @@ func (b *reportBuf) paragraph(text string) {
 func (b *reportBuf) bullet(text string) {
 	switch b.format {
 	case FormatHTML:
-		b.writef("<li>%s</li>\n", text)
+		b.writef("<li>%s</li>\n", inlineMarkdownToHTML(text))
+	case FormatANSI:
+		b.writef("- %s\n", stripInlineMarkdown(text))
 	default:
 		b.writef("- %s\n", text)
 	}
@@ -120,6 +250,24 @@ func (b *reportBuf) listClose() {
 		b.raw("</ul>\n\n")
 	default:
 		b.raw("\n")
+	}
+}
+
+// richBlock renders a free-form markdown document (e.g. claude's findings)
+// via the Textable interface so each format gets its proper representation.
+func (b *reportBuf) richBlock(content string) {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return
+	}
+	doc := MarkdownDoc{Source: content}
+	switch b.format {
+	case FormatHTML:
+		b.writef("<div class=\"finding\">\n%s</div>\n\n", doc.HTML())
+	case FormatANSI:
+		b.writef("%s\n\n", doc.ANSI())
+	default:
+		b.writef("%s\n\n", doc.Markdown())
 	}
 }
 
@@ -242,8 +390,33 @@ func (b *reportBuf) writeFindings(r *Result) {
 		if text == "" {
 			continue
 		}
-		b.heading(3, fmt.Sprintf("`%s`", row.Name))
-		b.paragraph(text)
+		b.findingHeader(row.Name, row.Model)
+		b.richBlock(text)
+	}
+}
+
+// findingHeader emits a visually prominent header for each run's findings
+// section — name as the lead, model as a subtle subtitle.
+func (b *reportBuf) findingHeader(name, model string) {
+	switch b.format {
+	case FormatHTML:
+		b.writef(`<div class="finding-header"><span class="finding-name">%s</span>`, html.EscapeString(name))
+		if model != "" {
+			b.writef(`<span class="finding-model">%s</span>`, html.EscapeString(model))
+		}
+		b.raw("</div>\n")
+	case FormatANSI:
+		title := name
+		if model != "" {
+			title = fmt.Sprintf("%s  (%s)", name, model)
+		}
+		b.writef("\n%s\n%s\n\n", title, strings.Repeat("━", len(title)))
+	default:
+		if model != "" {
+			b.writef("### `%s` — %s\n\n", name, model)
+		} else {
+			b.writef("### `%s`\n\n", name)
+		}
 	}
 }
 
@@ -279,17 +452,106 @@ func (b *reportBuf) writeConfigSection(r *Result) {
 		b.codeBlock(prompt)
 	}
 
-	if len(r.Rows) > 0 {
-		b.heading(2, "Tool usage")
-		b.listOpen()
-		for _, row := range r.Rows {
-			if row.ToolSummary == "" {
+	b.writeToolUsageTable(r)
+
+	b.writeKubectlSection(r)
+}
+
+var toolUsageHeaders = []string{"Run", "Tool", "Count"}
+
+func (b *reportBuf) writeToolUsageTable(r *Result) {
+	type cell struct{ run, tool, count string }
+	var rows []cell
+	for _, row := range r.Rows {
+		if row.ToolSummary == "" {
+			continue
+		}
+		for _, pair := range strings.Split(row.ToolSummary, ", ") {
+			parts := strings.SplitN(pair, ":", 2)
+			if len(parts) != 2 {
 				continue
 			}
-			b.bullet(fmt.Sprintf("`%s`: %s", row.Name, formatToolUsage(row.ToolSummary)))
+			rows = append(rows, cell{run: row.Name, tool: parts[0], count: parts[1]})
+		}
+	}
+	if len(rows) == 0 {
+		return
+	}
+	b.heading(2, "Tool usage")
+
+	table := api.TextTable{
+		Headers:    headerList(toolUsageHeaders),
+		FieldNames: toolUsageHeaders,
+	}
+	for _, c := range rows {
+		table.Rows = append(table.Rows, toTableRow(map[string]string{
+			"Run":   c.run,
+			"Tool":  c.tool,
+			"Count": c.count,
+		}))
+	}
+	b.renderTable(table)
+}
+
+func (b *reportBuf) writeKubectlSection(r *Result) {
+	any := false
+	for _, row := range r.Rows {
+		if row.KubectlCalls > 0 || row.KubectlAPICalls > 0 || len(row.KubectlCommandLog) > 0 {
+			any = true
+			break
+		}
+	}
+	if !any && r.KubectlProxy == "" {
+		return
+	}
+	if r.KubectlProxy != "" {
+		b.paragraph(fmt.Sprintf("Kubernetes proxy endpoint: `%s`", r.KubectlProxy))
+	}
+	for _, row := range r.Rows {
+		if row.KubectlCalls == 0 && row.KubectlAPICalls == 0 {
+			continue
+		}
+		b.heading(2, fmt.Sprintf("Kubectl: `%s`", row.Name))
+		b.listOpen()
+		b.bullet(fmt.Sprintf("CLI invocations: %d", row.KubectlCalls))
+		b.bullet(fmt.Sprintf("API requests through proxy: %d", row.KubectlAPICalls))
+		if row.KubectlLogPath != "" {
+			b.bullet(fmt.Sprintf("Log: `%s`", row.KubectlLogPath))
 		}
 		b.listClose()
+		if len(row.KubectlCommandLog) > 0 {
+			b.heading(3, "CLI command log")
+			lines := make([]string, len(row.KubectlCommandLog))
+			for i, c := range row.KubectlCommandLog {
+				lines[i] = c.Format()
+			}
+			b.codeBlock(strings.Join(lines, "\n"))
+		}
+		if len(row.KubectlAPILog) > 0 {
+			b.heading(3, "API access log")
+			b.renderTable(buildAPILogTable(row.KubectlAPILog))
+		}
 	}
+}
+
+var apiLogHeaders = []string{"Time", "Method", "URL", "Status", "Duration", "Size"}
+
+func buildAPILogTable(entries []KubectlAPIEntry) api.TextTable {
+	t := api.TextTable{
+		Headers:    headerList(apiLogHeaders),
+		FieldNames: apiLogHeaders,
+	}
+	for _, e := range entries {
+		t.Rows = append(t.Rows, toTableRow(map[string]string{
+			"Time":     e.Time.Local().Format("15:04:05.000"),
+			"Method":   e.Method,
+			"URL":      e.URL,
+			"Status":   fmt.Sprintf("%d", e.Status),
+			"Duration": e.Duration,
+			"Size":     humanBytes(e.Bytes),
+		}))
+	}
+	return t
 }
 
 func headerList(names []string) api.TextList {
@@ -318,12 +580,6 @@ func fixturePrompt(f *Fixture) string {
 		}
 	}
 	return ""
-}
-
-func formatToolUsage(summary string) string {
-	parts := strings.Split(summary, ", ")
-	sort.Strings(parts)
-	return strings.Join(parts, ", ")
 }
 
 func dash(s string) string {

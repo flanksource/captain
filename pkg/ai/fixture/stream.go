@@ -7,24 +7,29 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"regexp"
 	"strings"
 )
 
 type Summary struct {
-	SessionID  string
-	Result     string
-	Success    bool
-	Error      string
-	DurationMS float64
-	CostUSD    float64
-	Input      int
-	Output     int
-	CacheRead  int
-	CacheWrite int
-	ToolCalls  int
-	MCPCalls   int
-	BashCalls  int
-	ToolCounts map[string]int
+	SessionID    string
+	Result       string
+	Success      bool
+	Error        string
+	DurationMS   float64
+	CostUSD      float64
+	Input        int
+	Output       int
+	CacheRead    int
+	CacheWrite   int
+	ToolCalls    int
+	MCPCalls     int
+	BashCalls         int
+	KubectlCalls      int
+	KubectlAPICalls   int
+	KubectlCommandLog []KubectlCommandEntry
+	KubectlAPILog     []KubectlAPIEntry
+	ToolCounts        map[string]int
 }
 
 type streamEvent struct {
@@ -134,6 +139,9 @@ func (s *Summary) Apply(ev Event) {
 		}
 		if use.Name == "Bash" {
 			s.BashCalls++
+			if isKubectlCommand(bashCommandFrom(use.Input)) {
+				s.KubectlCalls++
+			}
 		}
 	}
 	if ev.Usage != nil {
@@ -159,6 +167,28 @@ func (s *Summary) Apply(ev Event) {
 			s.Success = true
 		}
 	}
+}
+
+func bashCommandFrom(input json.RawMessage) string {
+	if len(input) == 0 {
+		return ""
+	}
+	var decoded struct {
+		Command string `json:"command"`
+	}
+	if err := json.Unmarshal(input, &decoded); err != nil {
+		return ""
+	}
+	return decoded.Command
+}
+
+var kubectlMatcher = regexp.MustCompile(`(?:^|[\s;|&(])kubectl(?:\s|$)`)
+
+func isKubectlCommand(cmd string) bool {
+	if cmd == "" {
+		return false
+	}
+	return kubectlMatcher.MatchString(cmd)
 }
 
 func ParseStream(data []byte) Summary {

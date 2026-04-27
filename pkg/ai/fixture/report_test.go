@@ -66,6 +66,7 @@ func TestWriteReport_Markdown(t *testing.T) {
 
 func TestWriteReport_HTML(t *testing.T) {
 	r := sampleResult()
+	r.Rows[0].Result = "## Heading\n\n| col | val |\n|---|---|\n| a | 1 |\n\n```bash\nkubectl get pods\n```\n"
 	var buf bytes.Buffer
 	if err := WriteReport(&buf, r, FormatHTML); err != nil {
 		t.Fatal(err)
@@ -73,16 +74,39 @@ func TestWriteReport_HTML(t *testing.T) {
 	out := buf.String()
 
 	wants := []string{
-		"<h1>mc-bench</h1>",
+		"<!DOCTYPE html>",
+		"cdn.tailwindcss.com",
+		`<h1 class="report-title">mc-bench</h1>`,
 		"MC vs direct",
-		"<h2>Headline</h2>",
+		`<h2 class="report-section">Headline</h2>`,
+		"<code>direct</code>",
+		"<strong><code>mcp</code></strong>",
+		"<em>Generated",
 		"4.00x faster",
-		"<h2>Metrics</h2>",
+		`<h2 class="report-section">Metrics</h2>`,
 		"<table",
-		"direct",
-		"mcp",
-		"<h2>Run configurations</h2>",
+		`<div class="finding-header"><span class="finding-name">direct</span><span class="finding-model">sonnet-4</span></div>`,
+		`<h2 class="report-section">Run configurations</h2>`,
+		`<h3 class="report-subsection"><code>direct</code></h3>`,
+		"<code>true</code>",
 		"Which cluster is unhealthy?",
+		// Findings body should render as real HTML, not literal markdown
+		`<div class="finding">`,
+		"<h2>Heading</h2>",
+		"<table>",
+		"<th>col</th>",
+		"<td>a</td>",
+		"<pre><code class=\"language-bash\">kubectl get pods",
+	}
+	notWants := []string{
+		"`direct`",
+		"**`mcp`**",
+		"_Generated",
+	}
+	for _, w := range notWants {
+		if strings.Contains(out, w) {
+			t.Errorf("html still contains literal markdown %q\n---\n%s", w, out)
+		}
 	}
 	for _, w := range wants {
 		if !strings.Contains(out, w) {
