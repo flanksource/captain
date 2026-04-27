@@ -248,7 +248,8 @@ captain ai fixture -f examples/ai-fixtures/mission-control-multistep.yaml --repe
 Flags:
 
 - `--file` / `-f` — path to the YAML fixture (required)
-- `--report` / `-r` — write a markdown evidence report (headline, metrics table, per-run config, tool-usage breakdown) to this path
+- `--report` / `-r` — write an evidence report (headline, metrics table, per-run config, tool-usage breakdown) to this path
+- `--format` — report format: `markdown` (default), `html`, or `ansi`
 - `--artifacts` — directory for per-run `stream-json` captures (default: `<fixture-dir>/.captain/fixtures/<name>/`)
 - `--repeat` — override every run's repeat count (useful for smoke tests: `--repeat 1`)
 

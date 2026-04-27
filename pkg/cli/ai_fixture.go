@@ -1,5 +1,5 @@
 // ABOUTME: CLI entrypoint for `captain ai fixture`.
-// ABOUTME: Loads a YAML fixture, executes it via pkg/ai/fixture, optionally writes markdown.
+// ABOUTME: Loads a YAML fixture, executes it via pkg/ai/fixture, optionally writes a report.
 
 package cli
 
@@ -14,7 +14,8 @@ import (
 
 type AIFixtureOptions struct {
 	File        string `flag:"file" help:"Path to YAML fixture" short:"f" required:"true"`
-	Report      string `flag:"report" help:"Write a markdown evidence report to this path" short:"r"`
+	Report      string `flag:"report" help:"Write an evidence report to this path" short:"r"`
+	Format      string `flag:"format" help:"Report format: markdown, html, ansi" default:"markdown"`
 	ArtifactDir string `flag:"artifacts" help:"Directory to capture per-run stream-json (defaults to <fixture-dir>/.captain/fixtures/<name>)"`
 	Repeat      int    `flag:"repeat" help:"Override repeat count for every run (>=1)"`
 }
@@ -49,7 +50,11 @@ func RunAIFixture(opts AIFixtureOptions) (any, error) {
 	printFindings(os.Stderr, result)
 
 	if opts.Report != "" {
-		if err := writeReport(opts.Report, result); err != nil {
+		format, err := fixture.ParseFormat(opts.Format)
+		if err != nil {
+			return nil, err
+		}
+		if err := writeReport(opts.Report, result, format); err != nil {
 			return nil, fmt.Errorf("writing report: %w", err)
 		}
 	}
@@ -79,7 +84,7 @@ func printFindings(w *os.File, r *fixture.Result) {
 	fmt.Fprintln(w)
 }
 
-func writeReport(path string, r *fixture.Result) error {
+func writeReport(path string, r *fixture.Result, format fixture.Format) error {
 	if dir := filepath.Dir(path); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err
@@ -90,5 +95,5 @@ func writeReport(path string, r *fixture.Result) error {
 		return err
 	}
 	defer file.Close()
-	return fixture.WriteMarkdown(file, r)
+	return fixture.WriteReport(file, r, format)
 }

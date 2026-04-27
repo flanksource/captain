@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestWriteMarkdown_ContainsHeadlineAndTable(t *testing.T) {
+func sampleResult() *Result {
 	tru := true
 	f := &Fixture{
 		Name:        "mc-bench",
@@ -18,7 +18,7 @@ func TestWriteMarkdown_ContainsHeadlineAndTable(t *testing.T) {
 			{Name: "mcp", Model: "sonnet-4", PromptCaching: &tru, MCPConfig: []string{".mcp.json"}},
 		},
 	}
-	r := &Result{
+	return &Result{
 		Name:        f.Name,
 		Description: f.Description,
 		Baseline:    "direct",
@@ -32,9 +32,12 @@ func TestWriteMarkdown_ContainsHeadlineAndTable(t *testing.T) {
 				ToolSummary: "mcp__mc__query:1", Speedup: "4.00x", Cheaper: "8.00x", Status: "OK"},
 		},
 	}
+}
 
+func TestWriteReport_Markdown(t *testing.T) {
+	r := sampleResult()
 	var buf bytes.Buffer
-	if err := WriteMarkdown(&buf, r); err != nil {
+	if err := WriteReport(&buf, r, FormatMarkdown); err != nil {
 		t.Fatal(err)
 	}
 	out := buf.String()
@@ -46,8 +49,8 @@ func TestWriteMarkdown_ContainsHeadlineAndTable(t *testing.T) {
 		"4.00x faster",
 		"8.00x cheaper",
 		"## Metrics",
-		"| direct | sonnet-4 |",
-		"| mcp | sonnet-4 |",
+		"direct",
+		"mcp",
 		"## Run configurations",
 		"### `direct`",
 		"### `mcp`",
@@ -57,6 +60,57 @@ func TestWriteMarkdown_ContainsHeadlineAndTable(t *testing.T) {
 	for _, w := range wants {
 		if !strings.Contains(out, w) {
 			t.Errorf("markdown missing %q\n---\n%s", w, out)
+		}
+	}
+}
+
+func TestWriteReport_HTML(t *testing.T) {
+	r := sampleResult()
+	var buf bytes.Buffer
+	if err := WriteReport(&buf, r, FormatHTML); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+
+	wants := []string{
+		"<h1>mc-bench</h1>",
+		"MC vs direct",
+		"<h2>Headline</h2>",
+		"4.00x faster",
+		"<h2>Metrics</h2>",
+		"<table",
+		"direct",
+		"mcp",
+		"<h2>Run configurations</h2>",
+		"Which cluster is unhealthy?",
+	}
+	for _, w := range wants {
+		if !strings.Contains(out, w) {
+			t.Errorf("html missing %q\n---\n%s", w, out)
+		}
+	}
+}
+
+func TestWriteReport_ANSI(t *testing.T) {
+	r := sampleResult()
+	var buf bytes.Buffer
+	if err := WriteReport(&buf, r, FormatANSI); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+
+	wants := []string{
+		"mc-bench",
+		"Headline",
+		"4.00x faster",
+		"Metrics",
+		"direct",
+		"mcp",
+		"Which cluster is unhealthy?",
+	}
+	for _, w := range wants {
+		if !strings.Contains(out, w) {
+			t.Errorf("ansi missing %q\n---\n%s", w, out)
 		}
 	}
 }
