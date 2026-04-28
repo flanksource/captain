@@ -398,13 +398,16 @@ func (b *reportBuf) writeMetricsTable(r *Result) {
 
 // writePerRunSections groups everything that pertains to a single run —
 // findings markdown, tool calls (each row collapsible to show output), and
-// the proxy network log — under one prominent header per run.
+// the proxy network logs — under one prominent header per run.
 func (b *reportBuf) writePerRunSections(r *Result) {
 	if !anyRunHasContent(r) {
 		return
 	}
 	if r.KubectlProxy != "" {
 		b.paragraph(fmt.Sprintf("Kubernetes proxy endpoint: `%s`", r.KubectlProxy))
+	}
+	for _, info := range r.MCPProxies {
+		b.paragraph(fmt.Sprintf("MCP proxy: `%s` → `%s` (upstream `%s`)", info.Server, info.ProxyURL, info.Upstream))
 	}
 	for _, row := range r.Rows {
 		if !rowHasContent(row) {
@@ -423,8 +426,15 @@ func (b *reportBuf) writePerRunSections(r *Result) {
 			b.heading(3, "Kubectl network log")
 			b.renderTable(buildAPILogTable(row.KubectlAPILog))
 		}
+		if len(row.MCPAPILog) > 0 {
+			b.heading(3, "MCP network log")
+			b.renderTable(buildMCPAPILogTable(row.MCPAPILog))
+		}
 		if row.KubectlLogPath != "" {
-			b.paragraph(fmt.Sprintf("Raw log: `%s`", row.KubectlLogPath))
+			b.paragraph(fmt.Sprintf("Raw kubectl log: `%s`", row.KubectlLogPath))
+		}
+		if row.MCPLogPath != "" {
+			b.paragraph(fmt.Sprintf("Raw MCP log: `%s`", row.MCPLogPath))
 		}
 	}
 }
@@ -442,7 +452,7 @@ func rowHasContent(row Row) bool {
 	if strings.TrimSpace(row.Result) != "" {
 		return true
 	}
-	if len(row.ToolCallLog) > 0 || len(row.KubectlAPILog) > 0 {
+	if len(row.ToolCallLog) > 0 || len(row.KubectlAPILog) > 0 || len(row.MCPAPILog) > 0 {
 		return true
 	}
 	return false
@@ -546,7 +556,7 @@ func compactNum(n int) string {
 }
 
 func formatNet(e ToolCallEntry) string {
-	if !e.IsKubectl {
+	if !e.IsKubectl && !e.IsMCPProxy {
 		return "-"
 	}
 	return fmt.Sprintf("%d", e.NetworkRequests)
@@ -616,6 +626,7 @@ func (b *reportBuf) writeConfigSection(r *Result) {
 }
 
 var apiLogHeaders = []string{"Time", "Method", "URL", "Status", "Duration", "Size"}
+var mcpAPILogHeaders = []string{"Time", "Server", "Operation", "Method", "URL", "Status", "Duration", "Size"}
 
 func buildAPILogTable(entries []KubectlAPIEntry) api.TextTable {
 	t := api.TextTable{
@@ -630,6 +641,30 @@ func buildAPILogTable(entries []KubectlAPIEntry) api.TextTable {
 			"Status":   fmt.Sprintf("%d", e.Status),
 			"Duration": e.Duration,
 			"Size":     humanBytes(e.Bytes),
+		}))
+	}
+	return t
+}
+
+func buildMCPAPILogTable(entries []MCPAPIEntry) api.TextTable {
+	t := api.TextTable{
+		Headers:    headerList(mcpAPILogHeaders),
+		FieldNames: mcpAPILogHeaders,
+	}
+	for _, e := range entries {
+		op := e.Operation()
+		if op == "" {
+			op = "-"
+		}
+		t.Rows = append(t.Rows, toTableRow(map[string]string{
+			"Time":      e.Time.Local().Format("15:04:05.000"),
+			"Server":    e.Server,
+			"Operation": op,
+			"Method":    e.Method,
+			"URL":       e.URL,
+			"Status":    fmt.Sprintf("%d", e.Status),
+			"Duration":  e.Duration,
+			"Size":      humanBytes(e.Bytes),
 		}))
 	}
 	return t

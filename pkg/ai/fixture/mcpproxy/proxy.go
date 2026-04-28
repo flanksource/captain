@@ -1,0 +1,247 @@
+// ABOUTME: Reverse proxy for HTTP MCP servers — logs every request and lets us inject extra headers.
+// ABOUTME: Bearer auth and other client headers are forwarded untouched; we only add what's in the inject map.
+
+package mcpproxy
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
+	"os"
+	"sync"
+	"time"
+)
+
+type Proxy struct {
+	server   *httptest.Server
+	upstream *url.URL
+	name     string
+	inject   map[string]string
+
+	mu     sync.Mutex
+	logger *RequestLogger
+}
+
+type RequestLogger struct {
+	mu  sync.Mutex
+	w   *json.Encoder
+	raw interface{ Sync() error }
+}
+
+type RequestEvent struct {
+	Type      string    `json:"type"`
+	Time      time.Time `json:"time"`
+	Server    string    `json:"server,omitempty"`
+	Method    string    `json:"method"`
+	Path      string    `json:"path"`
+	Query     string    `json:"query,omitempty"`
+	Status    int       `json:"status"`
+	Duration  string    `json:"duration"`
+	Bytes     int64     `json:"bytes"`
+	ErrorBody string    `json:"errorBody,omitempty"`
+
+	// JSON-RPC introspection: when the request body parses as a JSON-RPC
+	// envelope, RPCMethod is the method ("tools/call", "initialize", etc.)
+	// and Tool is the tool name when RPCMethod is "tools/call".
+	RPCMethod string `json:"rpcMethod,omitempty"`
+	Tool      string `json:"tool,omitempty"`
+}
+
+// errorBodyCap is how many bytes of an error response body we capture into the
+// log. Plenty for typical "invalid content-type" / "auth failed" messages
+// without bloating logs when servers stream back large error pages.
+const errorBodyCap = 4096
+
+// Start spins up a reverse proxy in front of upstreamURL. Headers in `inject`
+// are added to forwarded requests (without removing existing ones — bearer
+// tokens and other headers from the client pass through untouched).
+func Start(name, upstreamURL string, inject map[string]string) (*Proxy, error) {
+	upstream, err := url.Parse(upstreamURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse upstream %q: %w", upstreamURL, err)
+	}
+	if upstream.Scheme == "" || upstream.Host == "" {
+		return nil, fmt.Errorf("upstream %q missing scheme or host", upstreamURL)
+	}
+
+	p := &Proxy{name: name, upstream: upstream, inject: inject}
+
+	// We expose the proxy URL as <localhost>:<port><upstream.Path>, so the
+	// client's outgoing path already matches the upstream's. The director only
+	// rewrites scheme/host — leaving r.URL.Path alone avoids double-prefixing
+	// when the client follows a relative redirect that strips trailing slashes.
+	rp := &httputil.ReverseProxy{
+		Director: func(r *http.Request) {
+			r.URL.Scheme = upstream.Scheme
+			r.URL.Host = upstream.Host
+			r.Host = upstream.Host
+			for k, v := range p.inject {
+				r.Header.Set(k, v)
+			}
+		},
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rpcMethod, toolName := peekJSONRPC(r)
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		rp.ServeHTTP(rec, r)
+		p.logRequest(r, rec, rpcMethod, toolName, time.Since(start))
+	})
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, fmt.Errorf("listen: %w", err)
+	}
+	srv := &httptest.Server{
+		Listener: listener,
+		Config:   &http.Server{Handler: handler},
+	}
+	srv.Start()
+	p.server = srv
+	return p, nil
+}
+
+// URL is the proxy endpoint *with the upstream's path appended*. The MCP
+// config given to claude points at this URL so the outgoing request path
+// already matches the upstream's expected route.
+func (p *Proxy) URL() string {
+	if p.upstream.Path == "" || p.upstream.Path == "/" {
+		return p.server.URL
+	}
+	return p.server.URL + p.upstream.Path
+}
+
+func (p *Proxy) Name() string { return p.name }
+
+func (p *Proxy) Close() {
+	if p == nil || p.server == nil {
+		return
+	}
+	p.server.Close()
+}
+
+// SetLogger swaps the request log destination. Pass nil to drop logs.
+func (p *Proxy) SetLogger(l *RequestLogger) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.logger = l
+}
+
+func (p *Proxy) logRequest(r *http.Request, rec *statusRecorder, rpcMethod, tool string, dur time.Duration) {
+	p.mu.Lock()
+	logger := p.logger
+	p.mu.Unlock()
+	if logger == nil {
+		return
+	}
+	logger.LogRequest(RequestEvent{
+		Type:      "request",
+		Time:      time.Now().UTC(),
+		Server:    p.name,
+		Method:    r.Method,
+		Path:      r.URL.Path,
+		Query:     r.URL.RawQuery,
+		Status:    rec.status,
+		Duration:  dur.Round(time.Millisecond).String(),
+		Bytes:     rec.bytes,
+		ErrorBody: rec.errBodyString(),
+		RPCMethod: rpcMethod,
+		Tool:      tool,
+	})
+}
+
+// peekJSONRPC reads up to peekCap bytes of the request body, parses it as a
+// JSON-RPC envelope, extracts method (and tool name when method=="tools/call"),
+// then resets r.Body so ReverseProxy can still forward it. Bodies larger than
+// peekCap are forwarded as-is and only the first peekCap bytes are scanned.
+func peekJSONRPC(r *http.Request) (rpcMethod, tool string) {
+	if r.Method != http.MethodPost || r.Body == nil {
+		return "", ""
+	}
+	const peekCap = 64 * 1024
+	body, err := io.ReadAll(io.LimitReader(r.Body, peekCap+1))
+	if err != nil {
+		return "", ""
+	}
+	// Restore body for the reverse proxy. If we hit the cap, append whatever
+	// the underlying reader still has so nothing is silently truncated.
+	if int64(len(body)) > peekCap {
+		r.Body = struct {
+			io.Reader
+			io.Closer
+		}{io.MultiReader(bytes.NewReader(body), r.Body), r.Body}
+	} else {
+		_ = r.Body.Close()
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		r.ContentLength = int64(len(body))
+	}
+
+	var env struct {
+		Method string `json:"method"`
+		Params struct {
+			Name string `json:"name"`
+		} `json:"params"`
+	}
+	scan := body
+	if int64(len(scan)) > peekCap {
+		scan = scan[:peekCap]
+	}
+	if err := json.Unmarshal(scan, &env); err != nil {
+		return "", ""
+	}
+	return env.Method, env.Params.Name
+}
+
+func NewRequestLogger(f *os.File) *RequestLogger {
+	return &RequestLogger{w: json.NewEncoder(f), raw: f}
+}
+
+func (l *RequestLogger) LogRequest(ev RequestEvent) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	_ = l.w.Encode(ev)
+	if l.raw != nil {
+		_ = l.raw.Sync()
+	}
+}
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status  int
+	bytes   int64
+	wrote   bool
+	errBody []byte // captured body when status >= 400, capped at errorBodyCap
+}
+
+func (s *statusRecorder) WriteHeader(code int) {
+	if !s.wrote {
+		s.status = code
+		s.wrote = true
+	}
+	s.ResponseWriter.WriteHeader(code)
+}
+
+func (s *statusRecorder) Write(b []byte) (int, error) {
+	n, err := s.ResponseWriter.Write(b)
+	s.bytes += int64(n)
+	if s.status >= 400 && len(s.errBody) < errorBodyCap {
+		need := min(errorBodyCap-len(s.errBody), n)
+		s.errBody = append(s.errBody, b[:need]...)
+	}
+	return n, err
+}
+
+func (s *statusRecorder) errBodyString() string {
+	if s.status < 400 || len(s.errBody) == 0 {
+		return ""
+	}
+	return string(s.errBody)
+}
+

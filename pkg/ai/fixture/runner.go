@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai/fixture/kubeproxy"
+	"github.com/flanksource/captain/pkg/ai/fixture/mcpproxy"
 	"github.com/flanksource/captain/pkg/ai/pricing"
 
 	// Side-effect import: pkg/ai's init populates pricing registry with the
@@ -46,8 +47,11 @@ type Row struct {
 	KubectlCalls      int               `json:"kubectlCalls,omitempty" pretty:"-"`
 	KubectlAPICalls   int               `json:"kubectlApiCalls,omitempty" pretty:"-"`
 	KubectlAPILog     []KubectlAPIEntry `json:"kubectlApiLog,omitempty" pretty:"-"`
+	MCPAPICalls       int               `json:"mcpApiCalls,omitempty" pretty:"-"`
+	MCPAPILog         []MCPAPIEntry     `json:"mcpApiLog,omitempty" pretty:"-"`
 	ToolCallLog       []ToolCallEntry   `json:"toolCallLog,omitempty" pretty:"-"`
 	KubectlLogPath    string            `json:"kubectlLogPath,omitempty" pretty:"-"`
+	MCPLogPath        string            `json:"mcpLogPath,omitempty" pretty:"-"`
 	ToolSummary      string   `json:"toolSummary,omitempty" pretty:"label=Tool Summary,width=32,table"`
 	Speedup          string   `json:"speedupVsBaseline,omitempty" pretty:"label=Speedup,table"`
 	Cheaper          string   `json:"cheaperVsBaseline,omitempty" pretty:"label=Cheaper,table"`
@@ -61,13 +65,22 @@ type Row struct {
 }
 
 type Result struct {
-	Name          string `json:"name,omitempty" pretty:"label=Fixture"`
-	Description   string `json:"description,omitempty" pretty:"label=Description"`
-	Baseline      string `json:"baseline,omitempty" pretty:"label=Baseline"`
-	KubectlProxy  string `json:"kubectlProxy,omitempty" pretty:"-"`
-	Rows          []Row  `json:"rows"`
+	Name          string         `json:"name,omitempty" pretty:"label=Fixture"`
+	Description   string         `json:"description,omitempty" pretty:"label=Description"`
+	Baseline      string         `json:"baseline,omitempty" pretty:"label=Baseline"`
+	KubectlProxy  string         `json:"kubectlProxy,omitempty" pretty:"-"`
+	MCPProxies    []MCPProxyInfo `json:"mcpProxies,omitempty" pretty:"-"`
+	Rows          []Row          `json:"rows"`
 
 	Fixture *Fixture `json:"-" pretty:"-"`
+}
+
+// MCPProxyInfo records one (server name → upstream → proxy URL) mapping for
+// each HTTP MCP server we put a reverse proxy in front of.
+type MCPProxyInfo struct {
+	Server   string `json:"server"`
+	Upstream string `json:"upstream"`
+	ProxyURL string `json:"proxyUrl"`
 }
 
 type Options struct {
@@ -101,6 +114,32 @@ func Execute(ctx context.Context, f *Fixture, opts Options) (*Result, error) {
 		progressf(opts.Progress, "▶ kubernetes proxy: %s  (KUBECONFIG=%s)", proxyURL, kc)
 	}
 
+	var mcpProxies []*mcpproxy.Proxy
+	var mcpProxyInfo []MCPProxyInfo
+	mcpRewrites := map[string][]string{} // run name -> rewritten config paths
+	if f.MCPProxy.Capture {
+		proxies, infos, rewrites, err := setupMCPProxies(f, opts.ArtifactDir)
+		if err != nil {
+			return nil, fmt.Errorf("starting MCP proxies: %w", err)
+		}
+		mcpProxies = proxies
+		mcpProxyInfo = infos
+		mcpRewrites = rewrites
+		defer func() {
+			for _, p := range mcpProxies {
+				p.Close()
+			}
+		}()
+		if len(infos) > 0 {
+			progressf(opts.Progress, "▶ MCP proxy active: %d HTTP server(s)", len(infos))
+			for _, info := range infos {
+				progressf(opts.Progress, "    %s  %s → %s", info.Server, info.Upstream, info.ProxyURL)
+			}
+		} else {
+			progressf(opts.Progress, "▶ MCP proxy enabled but no HTTP MCP servers found in any run's mcpConfig")
+		}
+	}
+
 	for i, raw := range f.Runs {
 		merged := f.Merge(raw)
 		if merged.Name == "" {
@@ -124,18 +163,30 @@ func Execute(ctx context.Context, f *Fixture, opts Options) (*Result, error) {
 			reps = 1
 		}
 
+		if rewrites, ok := mcpRewrites[merged.Name]; ok && len(rewrites) > 0 {
+			merged.MCPConfig = rewrites
+		}
+
 		agg := aggregate{}
 		var runErr error
 		var lastResult string
-		var kubectlLogPath string
+		var kubectlLogPath, mcpLogPath string
 		for iter := 0; iter < reps; iter++ {
 			progressf(opts.Progress, "[%d/%d] run %q iteration %d/%d (model=%s)…",
 				i+1, len(f.Runs), merged.Name, iter+1, reps, merged.Model)
 			start := time.Now()
-			runOpts := runEnv{proxy: proxy, kubeconfig: proxyKubeconfig}
+			runOpts := runEnv{
+				proxy:      proxy,
+				kubeconfig: proxyKubeconfig,
+				mcpProxies: mcpProxies,
+			}
 			if proxy != nil && opts.ArtifactDir != "" {
 				runOpts.kubectlLogPath = filepath.Join(opts.ArtifactDir, fmt.Sprintf("%s-%d.kubectl.jsonl", merged.Name, iter+1))
 				kubectlLogPath = runOpts.kubectlLogPath
+			}
+			if len(mcpProxies) > 0 && opts.ArtifactDir != "" {
+				runOpts.mcpLogPath = filepath.Join(opts.ArtifactDir, fmt.Sprintf("%s-%d.mcp.jsonl", merged.Name, iter+1))
+				mcpLogPath = runOpts.mcpLogPath
 			}
 			summary, err := executeRun(ctx, f.Dir, merged, opts, iter, runOpts)
 			elapsed := time.Since(start).Round(time.Millisecond)
@@ -183,8 +234,11 @@ func Execute(ctx context.Context, f *Fixture, opts Options) (*Result, error) {
 			KubectlCalls:      agg.KubectlCalls,
 			KubectlAPICalls:   agg.KubectlAPICalls,
 			KubectlAPILog:     agg.KubectlAPILog,
+			MCPAPICalls:       agg.MCPAPICalls,
+			MCPAPILog:         agg.MCPAPILog,
 			ToolCallLog:       agg.ToolCallLog,
 			KubectlLogPath:    kubectlLogPath,
+			MCPLogPath:        mcpLogPath,
 			ToolSummary:     formatToolCounts(agg.ToolCounts),
 			SessionID:       agg.SessionID,
 			DurationMeanMS:  agg.DurationMean,
@@ -215,6 +269,7 @@ func Execute(ctx context.Context, f *Fixture, opts Options) (*Result, error) {
 		Description:  f.Description,
 		Baseline:     baselineName,
 		KubectlProxy: proxyURL,
+		MCPProxies:   mcpProxyInfo,
 		Rows:         rows,
 		Fixture:      f,
 	}, nil
@@ -224,6 +279,9 @@ type runEnv struct {
 	proxy          *kubeproxy.Proxy
 	kubeconfig     string
 	kubectlLogPath string
+
+	mcpProxies []*mcpproxy.Proxy
+	mcpLogPath string
 }
 
 func executeRun(parent context.Context, fixtureDir string, run Run, opts Options, iter int, env runEnv) (Summary, error) {
@@ -337,6 +395,27 @@ func executeRun(parent context.Context, fixtureDir string, run Run, opts Options
 			f.Close()
 		}()
 	}
+	var mcpLog *os.File
+	if len(env.mcpProxies) > 0 && env.mcpLogPath != "" {
+		if err := os.MkdirAll(filepath.Dir(env.mcpLogPath), 0o755); err != nil {
+			return Summary{}, fmt.Errorf("creating mcp log dir for %q: %w", run.Name, err)
+		}
+		f, err := os.Create(env.mcpLogPath)
+		if err != nil {
+			return Summary{}, fmt.Errorf("creating mcp log for %q: %w", run.Name, err)
+		}
+		mcpLog = f
+		mcpLogger := mcpproxy.NewRequestLogger(f)
+		for _, p := range env.mcpProxies {
+			p.SetLogger(mcpLogger)
+		}
+		defer func() {
+			for _, p := range env.mcpProxies {
+				p.SetLogger(nil)
+			}
+			f.Close()
+		}()
+	}
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
@@ -411,6 +490,9 @@ func executeRun(parent context.Context, fixtureDir string, run Run, opts Options
 	if kubectlLog != nil {
 		kubectlLog.Sync()
 	}
+	if mcpLog != nil {
+		mcpLog.Sync()
+	}
 	if runErr != nil {
 		msg := strings.TrimSpace(stderrBuf.String())
 		if msg == "" {
@@ -428,6 +510,11 @@ func executeRun(parent context.Context, fixtureDir string, run Run, opts Options
 		summary.KubectlAPILog = readKubectlAPILog(env.kubectlLogPath)
 		summary.KubectlAPICalls = len(summary.KubectlAPILog)
 		correlateKubectlNetworkRequests(summary.ToolCallLog, summary.KubectlAPILog)
+	}
+	if mcpLog != nil {
+		summary.MCPAPILog = readMCPAPILog(env.mcpLogPath)
+		summary.MCPAPICalls = len(summary.MCPAPILog)
+		correlateMCPNetworkRequests(summary.ToolCallLog, summary.MCPAPILog)
 	}
 	return summary, nil
 }
@@ -543,6 +630,206 @@ func correlateKubectlNetworkRequests(calls []ToolCallEntry, api []KubectlAPIEntr
 	}
 }
 
+// correlateMCPNetworkRequests counts MCP proxy requests whose timestamps fall
+// inside each MCP tool_use→tool_result window. Marks the call as proxied so
+// the report knows to render a number (rather than "-") in the Net column.
+func correlateMCPNetworkRequests(calls []ToolCallEntry, api []MCPAPIEntry) {
+	for i := range calls {
+		c := &calls[i]
+		if !strings.HasPrefix(c.ToolName, "mcp__") {
+			continue
+		}
+		c.IsMCPProxy = true
+		for _, req := range api {
+			if !req.Time.Before(c.Time) && !req.Time.After(c.EndTime) {
+				c.NetworkRequests++
+			}
+		}
+	}
+}
+
+// setupMCPProxies walks every run's mcpConfig, parses each config, finds HTTP
+// MCP servers (those with a "url" field), and spins up a reverse proxy per
+// unique upstream URL. Returns the proxies, their (server→upstream→proxy URL)
+// summary, and a map of run name → rewritten config file paths that should
+// replace the originals when claude is invoked.
+func setupMCPProxies(f *Fixture, artifactDir string) (proxies []*mcpproxy.Proxy, infos []MCPProxyInfo, rewrites map[string][]string, err error) {
+	rewrites = map[string][]string{}
+	proxiesByURL := map[string]*mcpproxy.Proxy{}
+
+	rewriteDir := filepath.Join(artifactDir, ".mcpconfigs")
+	if err := os.MkdirAll(rewriteDir, 0o755); err != nil {
+		return nil, nil, nil, err
+	}
+
+	for _, raw := range f.Runs {
+		merged := f.Merge(raw)
+		if len(merged.MCPConfig) == 0 {
+			continue
+		}
+		var rewritten []string
+		anyRewrite := false
+		for idx, cfg := range merged.MCPConfig {
+			data, srcLabel, readErr := readMCPConfigContent(f.Dir, cfg)
+			if readErr != nil {
+				return nil, nil, nil, fmt.Errorf("reading mcp config %s for %q: %w", srcLabel, merged.Name, readErr)
+			}
+			if len(data) == 0 {
+				rewritten = append(rewritten, cfg)
+				continue
+			}
+			newData, newInfos, rewriteErr := rewriteMCPConfig(data, proxiesByURL, f.MCPProxy.Headers)
+			if rewriteErr != nil {
+				return nil, nil, nil, fmt.Errorf("rewriting mcp config %s for %q: %w", srcLabel, merged.Name, rewriteErr)
+			}
+			infos = append(infos, newInfos...)
+			outPath := filepath.Join(rewriteDir, fmt.Sprintf("%s-%d.json", merged.Name, idx+1))
+			if err := os.WriteFile(outPath, newData, 0o600); err != nil {
+				return nil, nil, nil, err
+			}
+			rewritten = append(rewritten, outPath)
+			anyRewrite = true
+		}
+		if anyRewrite {
+			rewrites[merged.Name] = rewritten
+		}
+	}
+
+	for _, p := range proxiesByURL {
+		proxies = append(proxies, p)
+	}
+	return proxies, infos, rewrites, nil
+}
+
+// readMCPConfigContent loads the contents of one mcpConfig entry, which may be
+// either inline JSON or a file path (relative to the fixture dir). srcLabel is
+// a human-readable identifier for error messages.
+func readMCPConfigContent(fixtureDir, cfg string) (data []byte, srcLabel string, err error) {
+	trimmed := strings.TrimSpace(cfg)
+	if trimmed == "" {
+		return nil, "(empty)", nil
+	}
+	if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
+		return []byte(cfg), "(inline)", nil
+	}
+	path := cfg
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(fixtureDir, path)
+	}
+	bytes, err := os.ReadFile(path)
+	if err != nil {
+		return nil, path, err
+	}
+	return bytes, path, nil
+}
+
+// rewriteMCPConfig parses an mcp config JSON, replaces every HTTP server's URL
+// with a proxy URL (creating new proxies as needed via proxiesByURL), and
+// returns the rewritten JSON plus info on any new proxies that were created.
+func rewriteMCPConfig(data []byte, proxiesByURL map[string]*mcpproxy.Proxy, inject map[string]string) ([]byte, []MCPProxyInfo, error) {
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(data, &top); err != nil {
+		return nil, nil, fmt.Errorf("invalid mcp config json: %w", err)
+	}
+	serversRaw, ok := top["mcpServers"]
+	if !ok {
+		return data, nil, nil
+	}
+	var servers map[string]map[string]json.RawMessage
+	if err := json.Unmarshal(serversRaw, &servers); err != nil {
+		return nil, nil, fmt.Errorf("invalid mcpServers map: %w", err)
+	}
+	var newInfos []MCPProxyInfo
+	for name, srv := range servers {
+		urlRaw, hasURL := srv["url"]
+		if !hasURL {
+			continue
+		}
+		var urlStr string
+		if err := json.Unmarshal(urlRaw, &urlStr); err != nil || urlStr == "" {
+			continue
+		}
+		p, exists := proxiesByURL[urlStr]
+		if !exists {
+			np, startErr := mcpproxy.Start(name, urlStr, inject)
+			if startErr != nil {
+				return nil, nil, fmt.Errorf("starting proxy for mcp server %q: %w", name, startErr)
+			}
+			proxiesByURL[urlStr] = np
+			p = np
+			newInfos = append(newInfos, MCPProxyInfo{
+				Server:   name,
+				Upstream: urlStr,
+				ProxyURL: np.URL(),
+			})
+		}
+		newURL, err := json.Marshal(p.URL())
+		if err != nil {
+			return nil, nil, err
+		}
+		srv["url"] = newURL
+		servers[name] = srv
+	}
+	newServersRaw, err := json.Marshal(servers)
+	if err != nil {
+		return nil, nil, err
+	}
+	top["mcpServers"] = newServersRaw
+	out, err := json.Marshal(top)
+	if err != nil {
+		return nil, nil, err
+	}
+	return out, newInfos, nil
+}
+
+// readMCPAPILog parses an MCP proxy JSONL file into chronological API entries.
+func readMCPAPILog(path string) []MCPAPIEntry {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	scanner.Buffer(make([]byte, 1024*1024), 10*1024*1024)
+	var api []MCPAPIEntry
+	for scanner.Scan() {
+		var ev struct {
+			Type      string    `json:"type"`
+			Time      time.Time `json:"time"`
+			Server    string    `json:"server"`
+			Method    string    `json:"method"`
+			Path      string    `json:"path"`
+			Query     string    `json:"query"`
+			Status    int       `json:"status"`
+			Duration  string    `json:"duration"`
+			Bytes     int64     `json:"bytes"`
+			RPCMethod string    `json:"rpcMethod"`
+			Tool      string    `json:"tool"`
+		}
+		if err := json.Unmarshal(scanner.Bytes(), &ev); err != nil {
+			continue
+		}
+		if ev.Type != "request" {
+			continue
+		}
+		url := ev.Path
+		if ev.Query != "" {
+			url += "?" + ev.Query
+		}
+		api = append(api, MCPAPIEntry{
+			Time:      ev.Time,
+			Server:    ev.Server,
+			Method:    ev.Method,
+			URL:       url,
+			RPCMethod: ev.RPCMethod,
+			Tool:      ev.Tool,
+			Status:    ev.Status,
+			Duration:  ev.Duration,
+			Bytes:     ev.Bytes,
+		})
+	}
+	return api
+}
+
 type heartbeatState struct {
 	mu        sync.Mutex
 	lines     int
@@ -613,6 +900,7 @@ type ToolCallEntry struct {
 	Output          string    `json:"output,omitempty"`
 	NetworkRequests int       `json:"networkRequests,omitempty"`
 	IsKubectl       bool      `json:"isKubectl,omitempty"`
+	IsMCPProxy      bool      `json:"isMcpProxy,omitempty"`
 }
 
 // Label returns what to show in the unified tool-call table's command column:
@@ -637,6 +925,43 @@ type KubectlAPIEntry struct {
 func (e KubectlAPIEntry) Format() string {
 	return fmt.Sprintf("%s  %s %s  %d  %s  %s",
 		e.Time.Local().Format("15:04:05.000"), e.Method, e.URL, e.Status, e.Duration, humanBytes(e.Bytes))
+}
+
+// MCPAPIEntry is one HTTP request observed flowing through an MCP HTTP proxy.
+// Server is the MCP server name from the mcpConfig that fielded the request.
+// RPCMethod and Tool come from peeking the JSON-RPC request body before
+// forwarding (e.g. "tools/call" + "mission-control__query").
+type MCPAPIEntry struct {
+	Time      time.Time `json:"time"`
+	Server    string    `json:"server,omitempty"`
+	Method    string    `json:"method"`
+	URL       string    `json:"url"`
+	RPCMethod string    `json:"rpcMethod,omitempty"`
+	Tool      string    `json:"tool,omitempty"`
+	Status    int       `json:"status"`
+	Duration  string    `json:"duration"`
+	Bytes     int64     `json:"bytes"`
+}
+
+// Operation returns a one-line human label of what this request was doing —
+// either the JSON-RPC method, or "tools/call: <tool>" when calling a tool.
+func (e MCPAPIEntry) Operation() string {
+	if e.RPCMethod == "" {
+		return ""
+	}
+	if e.RPCMethod == "tools/call" && e.Tool != "" {
+		return e.RPCMethod + ": " + e.Tool
+	}
+	return e.RPCMethod
+}
+
+func (e MCPAPIEntry) Format() string {
+	op := e.Operation()
+	if op == "" {
+		op = "-"
+	}
+	return fmt.Sprintf("%s  %s %s %s  [%s]  %d  %s  %s",
+		e.Time.Local().Format("15:04:05.000"), e.Server, e.Method, e.URL, op, e.Status, e.Duration, humanBytes(e.Bytes))
 }
 
 // readKubectlAPILog parses a kubectl.jsonl file into chronological API entries.
@@ -787,6 +1112,8 @@ type aggregate struct {
 	KubectlCalls      int
 	KubectlAPICalls   int
 	KubectlAPILog     []KubectlAPIEntry
+	MCPAPICalls       int
+	MCPAPILog         []MCPAPIEntry
 	ToolCallLog       []ToolCallEntry
 	ToolCounts        map[string]int
 
@@ -818,6 +1145,8 @@ func (a *aggregate) add(s Summary) {
 	a.KubectlCalls += s.KubectlCalls
 	a.KubectlAPICalls += s.KubectlAPICalls
 	a.KubectlAPILog = append(a.KubectlAPILog, s.KubectlAPILog...)
+	a.MCPAPICalls += s.MCPAPICalls
+	a.MCPAPILog = append(a.MCPAPILog, s.MCPAPILog...)
 	a.ToolCallLog = append(a.ToolCallLog, s.ToolCallLog...)
 	if a.ToolCounts == nil {
 		a.ToolCounts = map[string]int{}
@@ -844,6 +1173,7 @@ func (a *aggregate) finalize() {
 	a.BashCalls /= a.N
 	a.KubectlCalls /= a.N
 	a.KubectlAPICalls /= a.N
+	a.MCPAPICalls /= a.N
 	for k, v := range a.ToolCounts {
 		a.ToolCounts[k] = v / a.N
 	}

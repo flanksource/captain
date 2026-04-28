@@ -48,6 +48,7 @@ func RunAIFixture(opts AIFixtureOptions) (any, error) {
 	}
 
 	printKubectlSummary(os.Stderr, result)
+	printMCPSummary(os.Stderr, result)
 	printFindings(os.Stderr, result)
 
 	if opts.Report != "" {
@@ -97,6 +98,46 @@ func printKubectlSummary(w *os.File, r *fixture.Result) {
 		if len(row.KubectlAPILog) > 0 {
 			fmt.Fprintf(w, "    api access log (%d):\n", len(row.KubectlAPILog))
 			for _, u := range row.KubectlAPILog {
+				fmt.Fprintf(w, "      %s\n", u.Format())
+			}
+		}
+	}
+}
+
+func printMCPSummary(w *os.File, r *fixture.Result) {
+	if len(r.MCPProxies) == 0 {
+		return
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintf(w, "── MCP proxies ──\n")
+	for _, info := range r.MCPProxies {
+		fmt.Fprintf(w, "  %s  %s → %s\n", info.Server, info.Upstream, info.ProxyURL)
+	}
+	for _, row := range r.Rows {
+		if row.MCPAPICalls == 0 {
+			continue
+		}
+		fmt.Fprintf(w, "\n  %s: %d MCP API requests  (%s)\n",
+			row.Name, row.MCPAPICalls, row.MCPLogPath)
+		mcpCalls := 0
+		for _, c := range row.ToolCallLog {
+			if c.IsMCPProxy {
+				mcpCalls++
+			}
+		}
+		if mcpCalls > 0 {
+			fmt.Fprintf(w, "    mcp tool calls (%d):\n", mcpCalls)
+			for _, c := range row.ToolCallLog {
+				if !c.IsMCPProxy {
+					continue
+				}
+				fmt.Fprintf(w, "      %s  %s  (%d net req, %s)\n",
+					c.Time.Local().Format("15:04:05.000"), c.ToolName, c.NetworkRequests, c.Duration)
+			}
+		}
+		if len(row.MCPAPILog) > 0 {
+			fmt.Fprintf(w, "    api access log (%d):\n", len(row.MCPAPILog))
+			for _, u := range row.MCPAPILog {
 				fmt.Fprintf(w, "      %s\n", u.Format())
 			}
 		}

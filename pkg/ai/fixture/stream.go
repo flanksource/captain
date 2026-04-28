@@ -28,6 +28,8 @@ type Summary struct {
 	KubectlCalls      int
 	KubectlAPICalls   int
 	KubectlAPILog     []KubectlAPIEntry
+	MCPAPICalls       int
+	MCPAPILog         []MCPAPIEntry
 	ToolCallLog       []ToolCallEntry
 	ToolCounts        map[string]int
 }

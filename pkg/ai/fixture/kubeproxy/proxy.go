@@ -36,15 +36,18 @@ type RequestLogger struct {
 }
 
 type RequestEvent struct {
-	Type     string    `json:"type"`
-	Time     time.Time `json:"time"`
-	Method   string    `json:"method"`
-	Path     string    `json:"path"`
-	Query    string    `json:"query,omitempty"`
-	Status   int       `json:"status"`
-	Duration string    `json:"duration"`
-	Bytes    int64     `json:"bytes"`
+	Type      string    `json:"type"`
+	Time      time.Time `json:"time"`
+	Method    string    `json:"method"`
+	Path      string    `json:"path"`
+	Query     string    `json:"query,omitempty"`
+	Status    int       `json:"status"`
+	Duration  string    `json:"duration"`
+	Bytes     int64     `json:"bytes"`
+	ErrorBody string    `json:"errorBody,omitempty"`
 }
+
+const errorBodyCap = 4096
 
 type CommandEvent struct {
 	Type    string    `json:"type"`
@@ -83,7 +86,7 @@ func Start(kubeconfigPath string) (*Proxy, error) {
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		rp.ServeHTTP(rec, r)
-		p.logRequest(r, rec.status, rec.bytes, time.Since(start))
+		p.logRequest(r, rec, time.Since(start))
 	})
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -122,7 +125,7 @@ func (p *Proxy) SetLogger(l *RequestLogger) {
 	p.logger = l
 }
 
-func (p *Proxy) logRequest(r *http.Request, status int, bytesOut int64, dur time.Duration) {
+func (p *Proxy) logRequest(r *http.Request, rec *statusRecorder, dur time.Duration) {
 	p.mu.Lock()
 	logger := p.logger
 	p.mu.Unlock()
@@ -130,14 +133,15 @@ func (p *Proxy) logRequest(r *http.Request, status int, bytesOut int64, dur time
 		return
 	}
 	logger.LogRequest(RequestEvent{
-		Type:     "request",
-		Time:     time.Now().UTC(),
-		Method:   r.Method,
-		Path:     r.URL.Path,
-		Query:    r.URL.RawQuery,
-		Status:   status,
-		Duration: dur.Round(time.Millisecond).String(),
-		Bytes:    bytesOut,
+		Type:      "request",
+		Time:      time.Now().UTC(),
+		Method:    r.Method,
+		Path:      r.URL.Path,
+		Query:     r.URL.RawQuery,
+		Status:    rec.status,
+		Duration:  dur.Round(time.Millisecond).String(),
+		Bytes:     rec.bytes,
+		ErrorBody: rec.errBodyString(),
 	})
 }
 
@@ -217,9 +221,10 @@ func (l *RequestLogger) LogCommand(ev CommandEvent) {
 
 type statusRecorder struct {
 	http.ResponseWriter
-	status int
-	bytes  int64
-	wrote  bool
+	status  int
+	bytes   int64
+	wrote   bool
+	errBody []byte
 }
 
 func (s *statusRecorder) WriteHeader(code int) {
@@ -233,6 +238,17 @@ func (s *statusRecorder) WriteHeader(code int) {
 func (s *statusRecorder) Write(b []byte) (int, error) {
 	n, err := s.ResponseWriter.Write(b)
 	s.bytes += int64(n)
+	if s.status >= 400 && len(s.errBody) < errorBodyCap {
+		need := min(errorBodyCap-len(s.errBody), n)
+		s.errBody = append(s.errBody, b[:need]...)
+	}
 	return n, err
+}
+
+func (s *statusRecorder) errBodyString() string {
+	if s.status < 400 || len(s.errBody) == 0 {
+		return ""
+	}
+	return string(s.errBody)
 }
 
