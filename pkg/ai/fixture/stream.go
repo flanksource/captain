@@ -27,8 +27,8 @@ type Summary struct {
 	BashCalls         int
 	KubectlCalls      int
 	KubectlAPICalls   int
-	KubectlCommandLog []KubectlCommandEntry
 	KubectlAPILog     []KubectlAPIEntry
+	ToolCallLog       []ToolCallEntry
 	ToolCounts        map[string]int
 }
 
@@ -51,10 +51,39 @@ type streamMessage struct {
 }
 
 type streamContent struct {
-	Type  string          `json:"type,omitempty"`
-	Name  string          `json:"name,omitempty"`
-	Text  string          `json:"text,omitempty"`
-	Input json.RawMessage `json:"input,omitempty"`
+	Type      string          `json:"type,omitempty"`
+	Name      string          `json:"name,omitempty"`
+	Text      string          `json:"text,omitempty"`
+	Input     json.RawMessage `json:"input,omitempty"`
+	ID        string          `json:"id,omitempty"`           // assistant tool_use id
+	ToolUseID string          `json:"tool_use_id,omitempty"`  // user tool_result link
+	Content   json.RawMessage `json:"content,omitempty"`      // tool_result body (string or [{type,text}])
+}
+
+// ToolResultText extracts the text body from a tool_result content field, which
+// the Claude CLI emits either as a plain string or as an array of content blocks.
+func ToolResultText(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s
+	}
+	var arr []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(raw, &arr); err == nil {
+		var parts []string
+		for _, p := range arr {
+			if p.Text != "" {
+				parts = append(parts, p.Text)
+			}
+		}
+		return strings.Join(parts, "\n")
+	}
+	return ""
 }
 
 type streamUsage struct {
@@ -144,12 +173,10 @@ func (s *Summary) Apply(ev Event) {
 			}
 		}
 	}
-	if ev.Usage != nil {
-		s.Input = ev.Usage.InputTokens
-		s.Output = ev.Usage.OutputTokens
-		s.CacheRead = ev.Usage.CacheReadInputTokens
-		s.CacheWrite = ev.Usage.CacheCreationInputTokens
-	}
+	// Note: deliberately do not consume ev.Usage on the top-level result event.
+	// That field's semantics (cumulative vs final-turn) are unclear and used to
+	// overwrite the per-message accumulation, dropping earlier turns' tokens.
+	// Per-message usage from streamMessage.Usage above is the source of truth.
 	if ev.Type == "result" || ev.Result != "" || ev.Error != "" {
 		if ev.Result != "" {
 			s.Result = ev.Result

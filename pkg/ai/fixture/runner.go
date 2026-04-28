@@ -20,6 +20,12 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai/fixture/kubeproxy"
+	"github.com/flanksource/captain/pkg/ai/pricing"
+
+	// Side-effect import: pkg/ai's init populates pricing registry with the
+	// built-in model catalog so resolveCost works offline (no OpenRouter fetch
+	// needed for known models).
+	_ "github.com/flanksource/captain/pkg/ai"
 )
 
 type Row struct {
@@ -37,11 +43,11 @@ type Row struct {
 	ToolCalls        int      `json:"toolCalls" pretty:"label=Tools,table"`
 	MCPCalls         int      `json:"mcpCalls" pretty:"label=MCP,table"`
 	BashCalls        int      `json:"bashCalls" pretty:"label=Bash,table"`
-	KubectlCalls      int                   `json:"kubectlCalls,omitempty" pretty:"-"`
-	KubectlAPICalls   int                   `json:"kubectlApiCalls,omitempty" pretty:"-"`
-	KubectlCommandLog []KubectlCommandEntry `json:"kubectlCommandLog,omitempty" pretty:"-"`
-	KubectlAPILog     []KubectlAPIEntry     `json:"kubectlApiLog,omitempty" pretty:"-"`
-	KubectlLogPath    string                `json:"kubectlLogPath,omitempty" pretty:"-"`
+	KubectlCalls      int               `json:"kubectlCalls,omitempty" pretty:"-"`
+	KubectlAPICalls   int               `json:"kubectlApiCalls,omitempty" pretty:"-"`
+	KubectlAPILog     []KubectlAPIEntry `json:"kubectlApiLog,omitempty" pretty:"-"`
+	ToolCallLog       []ToolCallEntry   `json:"toolCallLog,omitempty" pretty:"-"`
+	KubectlLogPath    string            `json:"kubectlLogPath,omitempty" pretty:"-"`
 	ToolSummary      string   `json:"toolSummary,omitempty" pretty:"label=Tool Summary,width=32,table"`
 	Speedup          string   `json:"speedupVsBaseline,omitempty" pretty:"label=Speedup,table"`
 	Cheaper          string   `json:"cheaperVsBaseline,omitempty" pretty:"label=Cheaper,table"`
@@ -155,6 +161,8 @@ func Execute(ctx context.Context, f *Fixture, opts Options) (*Result, error) {
 		}
 
 		agg.finalize()
+		costMean, costEstimated := resolveCost(merged.Model, agg)
+		agg.CostMean = costMean
 		rowMetrics[merged.Name] = agg
 
 		row := Row{
@@ -164,7 +172,7 @@ func Execute(ctx context.Context, f *Fixture, opts Options) (*Result, error) {
 			Status:          statusText(agg.Success, runErr, agg.Error),
 			Repeat:          agg.N,
 			DurationMS:      formatDurationMS(agg.DurationMean),
-			CostUSD:         formatUSD(agg.CostMean),
+			CostUSD:         formatCostWithEstimate(costMean, costEstimated),
 			Input:           agg.Input,
 			Output:          agg.Output,
 			CacheRead:       agg.CacheRead,
@@ -174,8 +182,8 @@ func Execute(ctx context.Context, f *Fixture, opts Options) (*Result, error) {
 			BashCalls:       agg.BashCalls,
 			KubectlCalls:      agg.KubectlCalls,
 			KubectlAPICalls:   agg.KubectlAPICalls,
-			KubectlCommandLog: agg.KubectlCommandLog,
 			KubectlAPILog:     agg.KubectlAPILog,
+			ToolCallLog:       agg.ToolCallLog,
 			KubectlLogPath:    kubectlLogPath,
 			ToolSummary:     formatToolCounts(agg.ToolCounts),
 			SessionID:       agg.SessionID,
@@ -379,6 +387,8 @@ func executeRun(parent context.Context, fixtureDir string, run Run, opts Options
 	}()
 	defer close(heartbeatDone)
 
+	inflight := map[string]*pendingCall{}
+
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		if artifact != nil {
@@ -392,25 +402,12 @@ func executeRun(parent context.Context, fixtureDir string, run Run, opts Options
 		}
 		hb.update(eventDescription(ev))
 		summary.Apply(ev)
-		if kubectlLogger != nil {
-			for _, c := range ev.Content {
-				if c.Type != "tool_use" || c.Name != "Bash" {
-					continue
-				}
-				cmd := strings.TrimSpace(bashCommandFrom(c.Input))
-				if isKubectlCommand(cmd) {
-					kubectlLogger.LogCommand(kubeproxy.CommandEvent{
-						Type:    "command",
-						Time:    time.Now().UTC(),
-						Command: cmd,
-					})
-				}
-			}
-		}
+		trackToolCalls(ev, inflight, &summary)
 		renderEvent(opts.Progress, ev)
 	}
 
 	runErr := cmd.Wait()
+	flushPendingCalls(inflight, &summary)
 	if kubectlLog != nil {
 		kubectlLog.Sync()
 	}
@@ -428,10 +425,122 @@ func executeRun(parent context.Context, fixtureDir string, run Run, opts Options
 		return summary, fmt.Errorf("claude run %q failed: %s", run.Name, msg)
 	}
 	if kubectlLog != nil {
-		summary.KubectlCommandLog, summary.KubectlAPILog = readKubectlLog(env.kubectlLogPath)
+		summary.KubectlAPILog = readKubectlAPILog(env.kubectlLogPath)
 		summary.KubectlAPICalls = len(summary.KubectlAPILog)
+		correlateKubectlNetworkRequests(summary.ToolCallLog, summary.KubectlAPILog)
 	}
 	return summary, nil
+}
+
+// pendingCall is a tool_use awaiting its matching tool_result. We snapshot
+// timing, the call label, and the size of the input arguments at issuance
+// time; the matching tool_result supplies the output payload size. Tokens are
+// rough text-length estimates (~4 chars/token), matching the convention used
+// by `captain history`.
+type pendingCall struct {
+	Time        time.Time
+	ToolName    string
+	Command     string
+	InputTokens int
+	IsKubectl   bool
+}
+
+// estimateTokens approximates token count from text length using the same
+// 4-chars-per-token heuristic as pkg/claude/cost.EstimateTokens.
+func estimateTokens(s string) int {
+	if len(s) == 0 {
+		return 0
+	}
+	return (len(s) + 3) / 4
+}
+
+// trackToolCalls walks an event's content blocks: assistant tool_use opens an
+// inflight call; user tool_result closes one and appends a finalized
+// ToolCallEntry to the summary.
+func trackToolCalls(ev Event, inflight map[string]*pendingCall, summary *Summary) {
+	switch ev.Type {
+	case "assistant":
+		for _, c := range ev.Content {
+			if c.Type != "tool_use" || c.ID == "" {
+				continue
+			}
+			cmd := ""
+			isKube := false
+			if c.Name == "Bash" {
+				cmd = strings.TrimSpace(bashCommandFrom(c.Input))
+				isKube = isKubectlCommand(cmd)
+			}
+			inflight[c.ID] = &pendingCall{
+				Time:        time.Now().UTC(),
+				ToolName:    c.Name,
+				Command:     cmd,
+				InputTokens: estimateTokens(string(c.Input)),
+				IsKubectl:   isKube,
+			}
+		}
+	case "user":
+		for _, c := range ev.Content {
+			if c.Type != "tool_result" || c.ToolUseID == "" {
+				continue
+			}
+			pc, ok := inflight[c.ToolUseID]
+			if !ok {
+				continue
+			}
+			delete(inflight, c.ToolUseID)
+			end := time.Now().UTC()
+			dur := end.Sub(pc.Time)
+			output := ToolResultText(c.Content)
+			summary.ToolCallLog = append(summary.ToolCallLog, ToolCallEntry{
+				Time:         pc.Time,
+				EndTime:      end,
+				ToolName:     pc.ToolName,
+				Command:      pc.Command,
+				Duration:     dur.Round(time.Millisecond).String(),
+				DurationMS:   float64(dur) / float64(time.Millisecond),
+				InputTokens:  pc.InputTokens,
+				OutputTokens: estimateTokens(output),
+				Output:       output,
+				IsKubectl:    pc.IsKubectl,
+			})
+		}
+	}
+}
+
+// flushPendingCalls finalizes any tool_uses that never got a matching
+// tool_result (claude exited mid-call, malformed stream, etc.) so we don't
+// silently drop them from the per-run log. Duration and output are unknown.
+func flushPendingCalls(inflight map[string]*pendingCall, summary *Summary) {
+	for _, pc := range inflight {
+		summary.ToolCallLog = append(summary.ToolCallLog, ToolCallEntry{
+			Time:        pc.Time,
+			EndTime:     pc.Time,
+			ToolName:    pc.ToolName,
+			Command:     pc.Command,
+			Duration:    "-",
+			InputTokens: pc.InputTokens,
+			IsKubectl:   pc.IsKubectl,
+		})
+	}
+	for k := range inflight {
+		delete(inflight, k)
+	}
+}
+
+// correlateKubectlNetworkRequests counts proxy API requests whose timestamps
+// fall inside each kubectl Bash call's tool_use→tool_result window.
+func correlateKubectlNetworkRequests(calls []ToolCallEntry, api []KubectlAPIEntry) {
+	for i := range calls {
+		c := &calls[i]
+		if !c.IsKubectl {
+			continue
+		}
+		for _, req := range api {
+			if !req.Time.Before(c.Time) && !req.Time.After(c.EndTime) {
+				c.NetworkRequests++
+			}
+		}
+	}
 }
 
 type heartbeatState struct {
@@ -487,11 +596,32 @@ func eventDescription(ev Event) string {
 	return "—"
 }
 
-// KubectlCommandEntry is one literal CLI invocation captured from the model's
-// Bash tool calls.
-type KubectlCommandEntry struct {
-	Time    time.Time `json:"time"`
-	Command string    `json:"command"`
+// ToolCallEntry is one tool_use/tool_result pair captured from the stream:
+// when the model issued the call, what it issued, how long it took, what came
+// back, and how many tokens the parent assistant turn cost. NetworkRequests is
+// populated only for kubectl Bash invocations once the run completes and the
+// proxy log has been correlated by timestamp window.
+type ToolCallEntry struct {
+	Time            time.Time `json:"time"`
+	EndTime         time.Time `json:"endTime"`
+	ToolName        string    `json:"toolName"`
+	Command         string    `json:"command,omitempty"`
+	Duration        string    `json:"duration"`
+	DurationMS      float64   `json:"durationMs"`
+	InputTokens     int       `json:"inputTokens"`
+	OutputTokens    int       `json:"outputTokens"`
+	Output          string    `json:"output,omitempty"`
+	NetworkRequests int       `json:"networkRequests,omitempty"`
+	IsKubectl       bool      `json:"isKubectl,omitempty"`
+}
+
+// Label returns what to show in the unified tool-call table's command column:
+// the literal bash command for Bash, the tool name for everything else.
+func (e ToolCallEntry) Label() string {
+	if e.ToolName == "Bash" {
+		return e.Command
+	}
+	return e.ToolName
 }
 
 // KubectlAPIEntry is one HTTP request observed flowing through the proxy.
@@ -504,29 +634,25 @@ type KubectlAPIEntry struct {
 	Bytes    int64     `json:"bytes"`
 }
 
-func (e KubectlCommandEntry) Format() string {
-	return fmt.Sprintf("%s  %s", e.Time.Local().Format("15:04:05.000"), e.Command)
-}
-
 func (e KubectlAPIEntry) Format() string {
 	return fmt.Sprintf("%s  %s %s  %d  %s  %s",
 		e.Time.Local().Format("15:04:05.000"), e.Method, e.URL, e.Status, e.Duration, humanBytes(e.Bytes))
 }
 
-// readKubectlLog parses a kubectl.jsonl file into structured chronological
-// command and API entries.
-func readKubectlLog(path string) (commands []KubectlCommandEntry, api []KubectlAPIEntry) {
+// readKubectlAPILog parses a kubectl.jsonl file into chronological API entries.
+// Tool calls themselves are captured live from the stream-json output.
+func readKubectlAPILog(path string) []KubectlAPIEntry {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, nil
+		return nil
 	}
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	scanner.Buffer(make([]byte, 1024*1024), 10*1024*1024)
+	var api []KubectlAPIEntry
 	for scanner.Scan() {
 		var ev struct {
 			Type     string    `json:"type"`
 			Time     time.Time `json:"time"`
-			Command  string    `json:"command"`
 			Method   string    `json:"method"`
 			Path     string    `json:"path"`
 			Query    string    `json:"query"`
@@ -537,21 +663,19 @@ func readKubectlLog(path string) (commands []KubectlCommandEntry, api []KubectlA
 		if err := json.Unmarshal(scanner.Bytes(), &ev); err != nil {
 			continue
 		}
-		switch ev.Type {
-		case "command":
-			commands = append(commands, KubectlCommandEntry{Time: ev.Time, Command: ev.Command})
-		case "request":
-			url := ev.Path
-			if ev.Query != "" {
-				url += "?" + ev.Query
-			}
-			api = append(api, KubectlAPIEntry{
-				Time: ev.Time, Method: ev.Method, URL: url,
-				Status: ev.Status, Duration: ev.Duration, Bytes: ev.Bytes,
-			})
+		if ev.Type != "request" {
+			continue
 		}
+		url := ev.Path
+		if ev.Query != "" {
+			url += "?" + ev.Query
+		}
+		api = append(api, KubectlAPIEntry{
+			Time: ev.Time, Method: ev.Method, URL: url,
+			Status: ev.Status, Duration: ev.Duration, Bytes: ev.Bytes,
+		})
 	}
-	return commands, api
+	return api
 }
 
 func humanBytes(n int64) string {
@@ -662,8 +786,8 @@ type aggregate struct {
 	BashCalls       int
 	KubectlCalls      int
 	KubectlAPICalls   int
-	KubectlCommandLog []KubectlCommandEntry
 	KubectlAPILog     []KubectlAPIEntry
+	ToolCallLog       []ToolCallEntry
 	ToolCounts        map[string]int
 
 	durations []float64
@@ -693,8 +817,8 @@ func (a *aggregate) add(s Summary) {
 	a.BashCalls += s.BashCalls
 	a.KubectlCalls += s.KubectlCalls
 	a.KubectlAPICalls += s.KubectlAPICalls
-	a.KubectlCommandLog = append(a.KubectlCommandLog, s.KubectlCommandLog...)
 	a.KubectlAPILog = append(a.KubectlAPILog, s.KubectlAPILog...)
+	a.ToolCallLog = append(a.ToolCallLog, s.ToolCallLog...)
 	if a.ToolCounts == nil {
 		a.ToolCounts = map[string]int{}
 	}
@@ -785,6 +909,33 @@ func formatUSD(v float64) string {
 		return "$0"
 	}
 	return fmt.Sprintf("$%.4f", v)
+}
+
+// resolveCost returns the per-iteration cost for a row. If the underlying
+// claude CLI didn't report a cost (CostMean == 0) we fall back to the
+// OpenRouter-backed pricing registry to estimate from the token counts.
+// Returns (cost, estimated) — estimated is true when the value is from the
+// fallback path.
+func resolveCost(model string, a aggregate) (float64, bool) {
+	if a.CostMean > 0 {
+		return a.CostMean, false
+	}
+	if a.Input == 0 && a.Output == 0 && a.CacheRead == 0 && a.CacheWrite == 0 {
+		return 0, false
+	}
+	res, err := pricing.CalculateCost(model, a.Input, a.Output, 0, a.CacheRead, a.CacheWrite)
+	if err != nil {
+		return 0, false
+	}
+	return res.TotalCost, true
+}
+
+func formatCostWithEstimate(v float64, estimated bool) string {
+	s := formatUSD(v)
+	if estimated && v > 0 {
+		return s + " (est)"
+	}
+	return s
 }
 
 func formatToolCounts(m map[string]int) string {

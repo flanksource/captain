@@ -154,6 +154,21 @@ h3.report-subsection { font-size: 1.15rem; font-weight: 600; margin: 1rem 0 0.5r
 .report li { margin: 0.2rem 0; }
 .report pre { margin: 0.75rem 0; border-radius: 6px; overflow: hidden; background: #282c34; }
 .report pre code, .report pre code.hljs { display: block; background: #282c34 !important; color: #abb2bf !important; padding: 0.85rem 1rem; overflow-x: auto; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.9em; }
+
+.tool-calls { display: flex; flex-direction: column; border: 1px solid #d1d5db; border-radius: 6px; overflow: hidden; margin: 0.75rem 0; }
+.tool-calls .tc-row { display: grid; grid-template-columns: 110px minmax(0, 1fr) 110px 90px 60px; gap: 0.5rem; padding: 0.5rem 0.75rem; align-items: center; border-bottom: 1px solid #e5e7eb; background: #fff; }
+.tool-calls .tc-row:last-child { border-bottom: 0; }
+.tool-calls .tc-header { background: #f3f4f6; font-weight: 600; font-size: 0.85em; color: #4b5563; text-transform: uppercase; letter-spacing: 0.04em; }
+.tool-calls details.tc-row { display: block; padding: 0; }
+.tool-calls details.tc-row .tc-summary { display: grid; grid-template-columns: 110px minmax(0, 1fr) 110px 90px 60px; gap: 0.5rem; padding: 0.5rem 0.75rem; align-items: center; cursor: pointer; list-style: none; }
+.tool-calls details.tc-row .tc-summary::-webkit-details-marker { display: none; }
+.tool-calls details.tc-row .tc-summary:hover { background: #f9fafb; }
+.tool-calls details.tc-row[open] .tc-summary { background: #eef2ff; border-bottom: 1px solid #e5e7eb; }
+.tool-calls .tc-time { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.85em; color: #6b7280; }
+.tool-calls .tc-cmd { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool-calls .tc-cmd code { background: transparent; padding: 0; font-size: 0.9em; color: #111827; }
+.tool-calls .tc-tokens, .tool-calls .tc-dur, .tool-calls .tc-net { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.85em; color: #4b5563; }
+.tool-calls .tc-output { margin: 0; padding: 0.85rem 1rem; background: #282c34 !important; color: #abb2bf !important; border-radius: 0; max-height: 480px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
 .report p  { margin: 0.5rem 0; }
 `
 
@@ -382,8 +397,8 @@ func (b *reportBuf) writeMetricsTable(r *Result) {
 }
 
 // writePerRunSections groups everything that pertains to a single run —
-// findings markdown, tool usage table, kubectl CLI log, kubectl API log —
-// under one prominent header per run.
+// findings markdown, tool calls (each row collapsible to show output), and
+// the proxy network log — under one prominent header per run.
 func (b *reportBuf) writePerRunSections(r *Result) {
 	if !anyRunHasContent(r) {
 		return
@@ -400,20 +415,12 @@ func (b *reportBuf) writePerRunSections(r *Result) {
 			b.heading(3, "Findings")
 			b.richBlock(text)
 		}
-		if tools := parseToolSummary(row.ToolSummary); len(tools) > 0 {
-			b.heading(3, "Tool usage")
-			b.renderTable(buildToolUsageTable(tools))
-		}
-		if len(row.KubectlCommandLog) > 0 {
-			b.heading(3, "CLI command log")
-			lines := make([]string, len(row.KubectlCommandLog))
-			for i, c := range row.KubectlCommandLog {
-				lines[i] = c.Format()
-			}
-			b.codeBlock(strings.Join(lines, "\n"))
+		if len(row.ToolCallLog) > 0 {
+			b.heading(3, "Tool calls")
+			b.writeToolCallTable(row.ToolCallLog)
 		}
 		if len(row.KubectlAPILog) > 0 {
-			b.heading(3, "Kubectl command log")
+			b.heading(3, "Kubectl network log")
 			b.renderTable(buildAPILogTable(row.KubectlAPILog))
 		}
 		if row.KubectlLogPath != "" {
@@ -435,45 +442,119 @@ func rowHasContent(row Row) bool {
 	if strings.TrimSpace(row.Result) != "" {
 		return true
 	}
-	if row.ToolSummary != "" {
-		return true
-	}
-	if len(row.KubectlCommandLog) > 0 || len(row.KubectlAPILog) > 0 {
+	if len(row.ToolCallLog) > 0 || len(row.KubectlAPILog) > 0 {
 		return true
 	}
 	return false
 }
 
-type toolCount struct {
-	tool  string
-	count string
+// writeToolCallTable renders the per-call log: each call gets a row with
+// timestamp, the call (bash command for Bash, tool name otherwise), tokens,
+// duration, and (for kubectl) the count of correlated proxy API calls. In
+// HTML and markdown the row is a <details> that expands to show the
+// tool_result body; in ANSI the body is dumped under the table.
+func (b *reportBuf) writeToolCallTable(entries []ToolCallEntry) {
+	switch b.format {
+	case FormatHTML:
+		b.writeToolCallHTML(entries)
+	case FormatANSI:
+		b.writeToolCallANSI(entries)
+	default:
+		b.writeToolCallMarkdown(entries)
+	}
 }
 
-func parseToolSummary(s string) []toolCount {
-	if s == "" {
-		return nil
+var toolCallHeaders = []string{"Time", "Command", "Tokens", "Duration", "Net"}
+
+func (b *reportBuf) writeToolCallHTML(entries []ToolCallEntry) {
+	b.raw(`<div class="tool-calls">` + "\n")
+	b.raw(`<div class="tc-row tc-header"><span>Time</span><span>Command</span><span>Tokens</span><span>Duration</span><span>Net</span></div>` + "\n")
+	for _, e := range entries {
+		b.writef(`<details class="tc-row tc-call"><summary class="tc-summary"><span class="tc-time">%s</span><span class="tc-cmd"><code>%s</code></span><span class="tc-tokens">%s</span><span class="tc-dur">%s</span><span class="tc-net">%s</span></summary>`,
+			e.Time.Local().Format("15:04:05.000"),
+			html.EscapeString(truncate(e.Label(), 200)),
+			html.EscapeString(formatTokens(e.InputTokens, e.OutputTokens)),
+			html.EscapeString(e.Duration),
+			html.EscapeString(formatNet(e)),
+		)
+		b.writef(`<pre class="tc-output"><code>%s</code></pre>`, html.EscapeString(e.Output))
+		b.raw("</details>\n")
 	}
-	out := make([]toolCount, 0)
-	for _, pair := range strings.Split(s, ", ") {
-		parts := strings.SplitN(pair, ":", 2)
-		if len(parts) != 2 {
+	b.raw("</div>\n\n")
+}
+
+func (b *reportBuf) writeToolCallMarkdown(entries []ToolCallEntry) {
+	b.raw("| Time | Command | Tokens | Duration | Net |\n")
+	b.raw("|---|---|---|---|---|\n")
+	for _, e := range entries {
+		b.writef("| %s | `%s` | %s | %s | %s |\n",
+			e.Time.Local().Format("15:04:05.000"),
+			mdTableEscape(truncate(e.Label(), 120)),
+			formatTokens(e.InputTokens, e.OutputTokens),
+			e.Duration,
+			formatNet(e),
+		)
+	}
+	b.raw("\n")
+	for i, e := range entries {
+		if strings.TrimSpace(e.Output) == "" {
 			continue
 		}
-		out = append(out, toolCount{tool: parts[0], count: parts[1]})
+		b.writef("<details><summary>%d. %s — <code>%s</code></summary>\n\n```\n%s\n```\n\n</details>\n\n",
+			i+1, e.Time.Local().Format("15:04:05.000"), truncate(e.Label(), 120), e.Output)
 	}
-	return out
 }
 
-func buildToolUsageTable(tools []toolCount) api.TextTable {
-	headers := []string{"Tool", "Count"}
-	t := api.TextTable{Headers: headerList(headers), FieldNames: headers}
-	for _, c := range tools {
+func (b *reportBuf) writeToolCallANSI(entries []ToolCallEntry) {
+	t := api.TextTable{Headers: headerList(toolCallHeaders), FieldNames: toolCallHeaders}
+	for _, e := range entries {
 		t.Rows = append(t.Rows, toTableRow(map[string]string{
-			"Tool":  c.tool,
-			"Count": c.count,
+			"Time":     e.Time.Local().Format("15:04:05.000"),
+			"Command":  truncate(e.Label(), 80),
+			"Tokens":   formatTokens(e.InputTokens, e.OutputTokens),
+			"Duration": e.Duration,
+			"Net":      formatNet(e),
 		}))
 	}
-	return t
+	b.writef("%s\n", t.ANSI())
+	for i, e := range entries {
+		if strings.TrimSpace(e.Output) == "" {
+			continue
+		}
+		b.writef("\n  %d. %s — %s\n%s\n",
+			i+1, e.Time.Local().Format("15:04:05.000"), truncate(e.Label(), 80),
+			indentLines(e.Output, "    "))
+	}
+	b.raw("\n")
+}
+
+func formatTokens(in, out int) string {
+	if in == 0 && out == 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%s / %s", compactNum(in), compactNum(out))
+}
+
+func compactNum(n int) string {
+	if n < 1000 {
+		return fmt.Sprintf("%d", n)
+	}
+	if n < 1_000_000 {
+		return fmt.Sprintf("%.1fk", float64(n)/1000)
+	}
+	return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+}
+
+func formatNet(e ToolCallEntry) string {
+	if !e.IsKubectl {
+		return "-"
+	}
+	return fmt.Sprintf("%d", e.NetworkRequests)
+}
+
+func mdTableEscape(s string) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	return strings.ReplaceAll(s, "|", `\|`)
 }
 
 // findingHeader emits a visually prominent header for each run's findings

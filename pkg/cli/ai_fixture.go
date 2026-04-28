@@ -76,10 +76,22 @@ func printKubectlSummary(w *os.File, r *fixture.Result) {
 		}
 		fmt.Fprintf(w, "\n  %s: %d kubectl calls / %d API requests  (%s)\n",
 			row.Name, row.KubectlCalls, row.KubectlAPICalls, row.KubectlLogPath)
-		if len(row.KubectlCommandLog) > 0 {
-			fmt.Fprintf(w, "    command log (%d):\n", len(row.KubectlCommandLog))
-			for _, c := range row.KubectlCommandLog {
-				fmt.Fprintf(w, "      %s\n", c.Format())
+		if len(row.ToolCallLog) > 0 {
+			kubectlOnly := 0
+			for _, c := range row.ToolCallLog {
+				if c.IsKubectl {
+					kubectlOnly++
+				}
+			}
+			if kubectlOnly > 0 {
+				fmt.Fprintf(w, "    kubectl commands (%d):\n", kubectlOnly)
+				for _, c := range row.ToolCallLog {
+					if !c.IsKubectl {
+						continue
+					}
+					fmt.Fprintf(w, "      %s  %s  (%d net req, %s)\n",
+						c.Time.Local().Format("15:04:05.000"), c.Command, c.NetworkRequests, c.Duration)
+				}
 			}
 		}
 		if len(row.KubectlAPILog) > 0 {

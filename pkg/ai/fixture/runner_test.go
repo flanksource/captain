@@ -462,7 +462,8 @@ curl -sk -o /dev/null "$proxy_url/api/v1/namespaces/prod/pods?limit=10" || true
 
 cat <<'EOF2'
 {"type":"system","subtype":"init","session_id":"sess-kc"}
-{"type":"assistant","session_id":"sess-kc","message":{"role":"assistant","content":[{"type":"tool_use","id":"1","name":"Bash","input":{"command":"kubectl get pods -n prod"}}],"usage":{"input_tokens":10,"output_tokens":5}}}
+{"type":"assistant","session_id":"sess-kc","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"kubectl get pods -n prod"}}],"usage":{"input_tokens":10,"output_tokens":5}}}
+{"type":"user","session_id":"sess-kc","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"NAME    READY   STATUS\nfoo-1    1/1   Running"}]}}
 {"type":"result","subtype":"success","session_id":"sess-kc","cost_usd":0.001,"duration_ms":50}
 EOF2
 `
@@ -535,8 +536,14 @@ runs:
 	if hits == 0 {
 		t.Errorf("upstream got 0 hits")
 	}
-	if len(row.KubectlCommandLog) == 0 || row.KubectlCommandLog[0].Command != "kubectl get pods -n prod" {
-		t.Errorf("KubectlCommandLog = %v, want first command %q", row.KubectlCommandLog, "kubectl get pods -n prod")
+	var kubectlCalls []ToolCallEntry
+	for _, c := range row.ToolCallLog {
+		if c.IsKubectl {
+			kubectlCalls = append(kubectlCalls, c)
+		}
+	}
+	if len(kubectlCalls) == 0 || kubectlCalls[0].Command != "kubectl get pods -n prod" {
+		t.Errorf("ToolCallLog kubectl entries = %v, want first command %q", kubectlCalls, "kubectl get pods -n prod")
 	}
 	if len(row.KubectlAPILog) == 0 {
 		t.Fatalf("KubectlAPILog empty")
@@ -550,30 +557,19 @@ runs:
 	if err != nil {
 		t.Fatalf("read kubectl log: %v", err)
 	}
-	var sawCmd, sawReq bool
+	var sawReq bool
 	for _, line := range strings.Split(strings.TrimSpace(string(logData)), "\n") {
 		var ev struct {
-			Type    string `json:"type"`
-			Command string `json:"command"`
-			Path    string `json:"path"`
+			Type string `json:"type"`
+			Path string `json:"path"`
 		}
 		if err := json.Unmarshal([]byte(line), &ev); err != nil {
 			t.Errorf("bad log line %q: %v", line, err)
 			continue
 		}
-		switch ev.Type {
-		case "command":
-			if strings.Contains(ev.Command, "kubectl get pods") {
-				sawCmd = true
-			}
-		case "request":
-			if strings.Contains(ev.Path, "/api/v1/namespaces/prod/pods") {
-				sawReq = true
-			}
+		if ev.Type == "request" && strings.Contains(ev.Path, "/api/v1/namespaces/prod/pods") {
+			sawReq = true
 		}
-	}
-	if !sawCmd {
-		t.Errorf("kubectl log missing CLI command entry:\n%s", logData)
 	}
 	if !sawReq {
 		t.Errorf("kubectl log missing API request entry:\n%s", logData)
