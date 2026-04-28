@@ -8,6 +8,7 @@ prompt: |
   and where the evidence came from and what can I do to fix it
 baseline: direct
 repeat: 1
+captureKubernetesProxy: true
 
 defaults:
   timeout: 3m

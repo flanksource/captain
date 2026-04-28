@@ -107,8 +107,8 @@ func WriteReport(w io.Writer, r *Result, format Format) error {
 
 	b.writeBaselineCallout(r)
 	b.writeMetricsTable(r)
-	b.writeFindings(r)
 	b.writeConfigSection(r)
+	b.writePerRunSections(r)
 
 	if format == FormatHTML {
 		b.writeHTMLFooter()
@@ -130,8 +130,15 @@ const reportCSS = `
 .finding ol { list-style: decimal; margin: 0.5rem 0 0.5rem 1.5rem; }
 .finding li { margin: 0.2rem 0; }
 .finding code { background: #f3f4f6; padding: 0.1rem 0.3rem; border-radius: 3px; font-size: 0.9em; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
-.finding pre { background: #1f2937; color: #f3f4f6; padding: 0.85rem 1rem; border-radius: 6px; overflow-x: auto; margin: 0.75rem 0; }
-.finding pre code { background: transparent; color: inherit; padding: 0; }
+.finding pre { margin: 0.75rem 0; border-radius: 6px; overflow: hidden; background: #282c34; }
+.finding pre code, .finding pre code.hljs { display: block; background: #282c34 !important; color: #abb2bf !important; padding: 0.85rem 1rem; border-radius: 6px; overflow-x: auto; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.9em; }
+.finding pre code .hljs-keyword, .finding pre code .hljs-selector-tag, .finding pre code .hljs-built_in, .finding pre code .hljs-name, .finding pre code .hljs-tag { color: #c678dd !important; }
+.finding pre code .hljs-string, .finding pre code .hljs-attr, .finding pre code .hljs-symbol, .finding pre code .hljs-bullet, .finding pre code .hljs-addition { color: #98c379 !important; }
+.finding pre code .hljs-number, .finding pre code .hljs-literal, .finding pre code .hljs-meta, .finding pre code .hljs-link { color: #d19a66 !important; }
+.finding pre code .hljs-comment, .finding pre code .hljs-quote { color: #5c6370 !important; font-style: italic; }
+.finding pre code .hljs-title, .finding pre code .hljs-section, .finding pre code .hljs-function .hljs-title { color: #61afef !important; }
+.finding pre code .hljs-variable, .finding pre code .hljs-template-variable, .finding pre code .hljs-attribute, .finding pre code .hljs-deletion { color: #e06c75 !important; }
+.finding pre code .hljs-type, .finding pre code .hljs-class .hljs-title { color: #e6c07b !important; }
 .finding table { border-collapse: collapse; width: 100%; margin: 0.75rem 0; font-size: 0.95em; }
 .finding th, .finding td { border: 1px solid #d1d5db; padding: 0.4rem 0.6rem; text-align: left; }
 .finding th { background: #f3f4f6; font-weight: 600; }
@@ -145,7 +152,8 @@ h2.report-section { font-size: 1.5rem; font-weight: 600; margin: 1.5rem 0 0.75re
 h3.report-subsection { font-size: 1.15rem; font-weight: 600; margin: 1rem 0 0.5rem; color: #374151; }
 .report ul { list-style: disc; margin-left: 1.5rem; margin-bottom: 0.75rem; }
 .report li { margin: 0.2rem 0; }
-.report pre { background: #f3f4f6; padding: 0.75rem 1rem; border-radius: 6px; overflow-x: auto; }
+.report pre { margin: 0.75rem 0; border-radius: 6px; overflow: hidden; background: #282c34; }
+.report pre code, .report pre code.hljs { display: block; background: #282c34 !important; color: #abb2bf !important; padding: 0.85rem 1rem; overflow-x: auto; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.9em; }
 .report p  { margin: 0.5rem 0; }
 `
 
@@ -373,26 +381,99 @@ func (b *reportBuf) writeMetricsTable(r *Result) {
 	b.renderTable(table)
 }
 
-func (b *reportBuf) writeFindings(r *Result) {
-	any := false
-	for _, row := range r.Rows {
-		if strings.TrimSpace(row.Result) != "" {
-			any = true
-			break
-		}
-	}
-	if !any {
+// writePerRunSections groups everything that pertains to a single run —
+// findings markdown, tool usage table, kubectl CLI log, kubectl API log —
+// under one prominent header per run.
+func (b *reportBuf) writePerRunSections(r *Result) {
+	if !anyRunHasContent(r) {
 		return
 	}
-	b.heading(2, "Findings")
+	if r.KubectlProxy != "" {
+		b.paragraph(fmt.Sprintf("Kubernetes proxy endpoint: `%s`", r.KubectlProxy))
+	}
 	for _, row := range r.Rows {
-		text := strings.TrimSpace(row.Result)
-		if text == "" {
+		if !rowHasContent(row) {
 			continue
 		}
 		b.findingHeader(row.Name, row.Model)
-		b.richBlock(text)
+		if text := strings.TrimSpace(row.Result); text != "" {
+			b.heading(3, "Findings")
+			b.richBlock(text)
+		}
+		if tools := parseToolSummary(row.ToolSummary); len(tools) > 0 {
+			b.heading(3, "Tool usage")
+			b.renderTable(buildToolUsageTable(tools))
+		}
+		if len(row.KubectlCommandLog) > 0 {
+			b.heading(3, "CLI command log")
+			lines := make([]string, len(row.KubectlCommandLog))
+			for i, c := range row.KubectlCommandLog {
+				lines[i] = c.Format()
+			}
+			b.codeBlock(strings.Join(lines, "\n"))
+		}
+		if len(row.KubectlAPILog) > 0 {
+			b.heading(3, "Kubectl command log")
+			b.renderTable(buildAPILogTable(row.KubectlAPILog))
+		}
+		if row.KubectlLogPath != "" {
+			b.paragraph(fmt.Sprintf("Raw log: `%s`", row.KubectlLogPath))
+		}
 	}
+}
+
+func anyRunHasContent(r *Result) bool {
+	for _, row := range r.Rows {
+		if rowHasContent(row) {
+			return true
+		}
+	}
+	return false
+}
+
+func rowHasContent(row Row) bool {
+	if strings.TrimSpace(row.Result) != "" {
+		return true
+	}
+	if row.ToolSummary != "" {
+		return true
+	}
+	if len(row.KubectlCommandLog) > 0 || len(row.KubectlAPILog) > 0 {
+		return true
+	}
+	return false
+}
+
+type toolCount struct {
+	tool  string
+	count string
+}
+
+func parseToolSummary(s string) []toolCount {
+	if s == "" {
+		return nil
+	}
+	out := make([]toolCount, 0)
+	for _, pair := range strings.Split(s, ", ") {
+		parts := strings.SplitN(pair, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		out = append(out, toolCount{tool: parts[0], count: parts[1]})
+	}
+	return out
+}
+
+func buildToolUsageTable(tools []toolCount) api.TextTable {
+	headers := []string{"Tool", "Count"}
+	t := api.TextTable{Headers: headerList(headers), FieldNames: headers}
+	for _, c := range tools {
+		t.Rows = append(t.Rows, toTableRow(map[string]string{
+			"Tool":  c.tool,
+			"Count": c.count,
+		}))
+	}
+	return t
 }
 
 // findingHeader emits a visually prominent header for each run's findings
@@ -413,9 +494,9 @@ func (b *reportBuf) findingHeader(name, model string) {
 		b.writef("\n%s\n%s\n\n", title, strings.Repeat("━", len(title)))
 	default:
 		if model != "" {
-			b.writef("### `%s` — %s\n\n", name, model)
+			b.writef("## `%s` — %s\n\n", name, model)
 		} else {
-			b.writef("### `%s`\n\n", name)
+			b.writef("## `%s`\n\n", name)
 		}
 	}
 }
@@ -450,87 +531,6 @@ func (b *reportBuf) writeConfigSection(r *Result) {
 	if prompt := fixturePrompt(r.Fixture); prompt != "" {
 		b.heading(2, "Prompt")
 		b.codeBlock(prompt)
-	}
-
-	b.writeToolUsageTable(r)
-
-	b.writeKubectlSection(r)
-}
-
-var toolUsageHeaders = []string{"Run", "Tool", "Count"}
-
-func (b *reportBuf) writeToolUsageTable(r *Result) {
-	type cell struct{ run, tool, count string }
-	var rows []cell
-	for _, row := range r.Rows {
-		if row.ToolSummary == "" {
-			continue
-		}
-		for _, pair := range strings.Split(row.ToolSummary, ", ") {
-			parts := strings.SplitN(pair, ":", 2)
-			if len(parts) != 2 {
-				continue
-			}
-			rows = append(rows, cell{run: row.Name, tool: parts[0], count: parts[1]})
-		}
-	}
-	if len(rows) == 0 {
-		return
-	}
-	b.heading(2, "Tool usage")
-
-	table := api.TextTable{
-		Headers:    headerList(toolUsageHeaders),
-		FieldNames: toolUsageHeaders,
-	}
-	for _, c := range rows {
-		table.Rows = append(table.Rows, toTableRow(map[string]string{
-			"Run":   c.run,
-			"Tool":  c.tool,
-			"Count": c.count,
-		}))
-	}
-	b.renderTable(table)
-}
-
-func (b *reportBuf) writeKubectlSection(r *Result) {
-	any := false
-	for _, row := range r.Rows {
-		if row.KubectlCalls > 0 || row.KubectlAPICalls > 0 || len(row.KubectlCommandLog) > 0 {
-			any = true
-			break
-		}
-	}
-	if !any && r.KubectlProxy == "" {
-		return
-	}
-	if r.KubectlProxy != "" {
-		b.paragraph(fmt.Sprintf("Kubernetes proxy endpoint: `%s`", r.KubectlProxy))
-	}
-	for _, row := range r.Rows {
-		if row.KubectlCalls == 0 && row.KubectlAPICalls == 0 {
-			continue
-		}
-		b.heading(2, fmt.Sprintf("Kubectl: `%s`", row.Name))
-		b.listOpen()
-		b.bullet(fmt.Sprintf("CLI invocations: %d", row.KubectlCalls))
-		b.bullet(fmt.Sprintf("API requests through proxy: %d", row.KubectlAPICalls))
-		if row.KubectlLogPath != "" {
-			b.bullet(fmt.Sprintf("Log: `%s`", row.KubectlLogPath))
-		}
-		b.listClose()
-		if len(row.KubectlCommandLog) > 0 {
-			b.heading(3, "CLI command log")
-			lines := make([]string, len(row.KubectlCommandLog))
-			for i, c := range row.KubectlCommandLog {
-				lines[i] = c.Format()
-			}
-			b.codeBlock(strings.Join(lines, "\n"))
-		}
-		if len(row.KubectlAPILog) > 0 {
-			b.heading(3, "API access log")
-			b.renderTable(buildAPILogTable(row.KubectlAPILog))
-		}
 	}
 }
 
