@@ -1,0 +1,35 @@
+name: mission-control-investigate
+description: |
+  Investigate a degraded production service. Compares direct kubectl/aws
+  Bash access against the Mission Control MCP, with and without prompt caching.
+prompt: |
+  The helm release canary-checker is not working, it says upgrade failed
+  Investigate and identify the most likely root cause. Summarise what you found
+  and where the evidence came from and what can I do to fix it
+baseline: direct
+repeat: 1
+captureKubernetesProxy: true
+
+defaults:
+  timeout: 3m
+  permissionMode: bypassPermissions
+  noSessionPersistence: true
+  model: claude-sonnet-4-6
+
+runs:
+  - name: direct
+    promptCaching: false
+    tools: [Bash, Read]
+    allowedTools:
+      - Bash(kubectl *)
+      - Bash(aws *)
+      - Bash(curl *)
+      - Read
+
+  - name: mission-control
+    promptCaching: true
+    tools: [default]
+    mcpConfig:
+      - .mcp.json
+    allowedTools:
+      - mcp__mission-control__*
