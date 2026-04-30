@@ -4,7 +4,6 @@
 package kubeproxy
 
 import (
-	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -19,7 +18,18 @@ import (
 	"gopkg.in/yaml.v3"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+
+	"github.com/flanksource/captain/pkg/ai/fixture/proxylog"
 )
+
+// RequestLogger is the JSONL writer for proxy events. Aliased from proxylog
+// so callers continue to type *kubeproxy.RequestLogger.
+type RequestLogger = proxylog.Logger
+
+// NewRequestLogger constructs a JSONL Logger writing to f.
+func NewRequestLogger(f *os.File) *RequestLogger {
+	return proxylog.NewLogger(f)
+}
 
 type Proxy struct {
 	server *httptest.Server
@@ -27,12 +37,6 @@ type Proxy struct {
 
 	mu     sync.Mutex
 	logger *RequestLogger
-}
-
-type RequestLogger struct {
-	mu  sync.Mutex
-	w   *json.Encoder
-	raw interface{ Sync() error }
 }
 
 type RequestEvent struct {
@@ -47,8 +51,10 @@ type RequestEvent struct {
 	ErrorBody string    `json:"errorBody,omitempty"`
 }
 
-const errorBodyCap = 4096
-
+// CommandEvent is left in the public API for downstream callers; the runner
+// no longer emits these (kubectl Bash invocations are captured from the
+// stream-json output now), but tooling that already parses the JSONL may
+// still expect the type.
 type CommandEvent struct {
 	Type    string    `json:"type"`
 	Time    time.Time `json:"time"`
@@ -84,7 +90,7 @@ func Start(kubeconfigPath string) (*Proxy, error) {
 	p := &Proxy{}
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		rec := proxylog.NewStatusRecorder(w)
 		rp.ServeHTTP(rec, r)
 		p.logRequest(r, rec, time.Since(start))
 	})
@@ -125,23 +131,23 @@ func (p *Proxy) SetLogger(l *RequestLogger) {
 	p.logger = l
 }
 
-func (p *Proxy) logRequest(r *http.Request, rec *statusRecorder, dur time.Duration) {
+func (p *Proxy) logRequest(r *http.Request, rec *proxylog.StatusRecorder, dur time.Duration) {
 	p.mu.Lock()
 	logger := p.logger
 	p.mu.Unlock()
 	if logger == nil {
 		return
 	}
-	logger.LogRequest(RequestEvent{
+	logger.Write(RequestEvent{
 		Type:      "request",
 		Time:      time.Now().UTC(),
 		Method:    r.Method,
 		Path:      r.URL.Path,
 		Query:     r.URL.RawQuery,
-		Status:    rec.status,
+		Status:    rec.Status,
 		Duration:  dur.Round(time.Millisecond).String(),
-		Bytes:     rec.bytes,
-		ErrorBody: rec.errBodyString(),
+		Bytes:     rec.Bytes,
+		ErrorBody: rec.ErrorBody(),
 	})
 }
 
@@ -193,62 +199,3 @@ func loadConfig(kubeconfigPath string) (*rest.Config, error) {
 	overrides := &clientcmd.ConfigOverrides{}
 	return clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, overrides).ClientConfig()
 }
-
-func NewRequestLogger(f *os.File) *RequestLogger {
-	return &RequestLogger{
-		w:   json.NewEncoder(f),
-		raw: f,
-	}
-}
-
-func (l *RequestLogger) LogRequest(ev RequestEvent) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	_ = l.w.Encode(ev)
-	if l.raw != nil {
-		_ = l.raw.Sync()
-	}
-}
-
-func (l *RequestLogger) LogCommand(ev CommandEvent) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	_ = l.w.Encode(ev)
-	if l.raw != nil {
-		_ = l.raw.Sync()
-	}
-}
-
-type statusRecorder struct {
-	http.ResponseWriter
-	status  int
-	bytes   int64
-	wrote   bool
-	errBody []byte
-}
-
-func (s *statusRecorder) WriteHeader(code int) {
-	if !s.wrote {
-		s.status = code
-		s.wrote = true
-	}
-	s.ResponseWriter.WriteHeader(code)
-}
-
-func (s *statusRecorder) Write(b []byte) (int, error) {
-	n, err := s.ResponseWriter.Write(b)
-	s.bytes += int64(n)
-	if s.status >= 400 && len(s.errBody) < errorBodyCap {
-		need := min(errorBodyCap-len(s.errBody), n)
-		s.errBody = append(s.errBody, b[:need]...)
-	}
-	return n, err
-}
-
-func (s *statusRecorder) errBodyString() string {
-	if s.status < 400 || len(s.errBody) == 0 {
-		return ""
-	}
-	return string(s.errBody)
-}
-

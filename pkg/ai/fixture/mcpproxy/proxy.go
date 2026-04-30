@@ -16,7 +16,23 @@ import (
 	"os"
 	"sync"
 	"time"
+
+	"github.com/flanksource/captain/pkg/ai/fixture/proxylog"
 )
+
+// peekCap is the largest body prefix we read up-front to introspect JSON-RPC
+// envelopes. Bodies bigger than this still forward intact (via a MultiReader)
+// but only the first peekCap bytes are scanned for method/tool extraction.
+const peekCap = 64 * 1024
+
+// RequestLogger is the JSONL writer for proxy events. Aliased from proxylog
+// so callers continue to type *mcpproxy.RequestLogger.
+type RequestLogger = proxylog.Logger
+
+// NewRequestLogger constructs a JSONL Logger writing to f.
+func NewRequestLogger(f *os.File) *RequestLogger {
+	return proxylog.NewLogger(f)
+}
 
 type Proxy struct {
 	server   *httptest.Server
@@ -26,12 +42,6 @@ type Proxy struct {
 
 	mu     sync.Mutex
 	logger *RequestLogger
-}
-
-type RequestLogger struct {
-	mu  sync.Mutex
-	w   *json.Encoder
-	raw interface{ Sync() error }
 }
 
 type RequestEvent struct {
@@ -52,11 +62,6 @@ type RequestEvent struct {
 	RPCMethod string `json:"rpcMethod,omitempty"`
 	Tool      string `json:"tool,omitempty"`
 }
-
-// errorBodyCap is how many bytes of an error response body we capture into the
-// log. Plenty for typical "invalid content-type" / "auth failed" messages
-// without bloating logs when servers stream back large error pages.
-const errorBodyCap = 4096
 
 // Start spins up a reverse proxy in front of upstreamURL. Headers in `inject`
 // are added to forwarded requests (without removing existing ones — bearer
@@ -90,7 +95,7 @@ func Start(name, upstreamURL string, inject map[string]string) (*Proxy, error) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rpcMethod, toolName := peekJSONRPC(r)
 		start := time.Now()
-		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		rec := proxylog.NewStatusRecorder(w)
 		rp.ServeHTTP(rec, r)
 		p.logRequest(r, rec, rpcMethod, toolName, time.Since(start))
 	})
@@ -134,24 +139,24 @@ func (p *Proxy) SetLogger(l *RequestLogger) {
 	p.logger = l
 }
 
-func (p *Proxy) logRequest(r *http.Request, rec *statusRecorder, rpcMethod, tool string, dur time.Duration) {
+func (p *Proxy) logRequest(r *http.Request, rec *proxylog.StatusRecorder, rpcMethod, tool string, dur time.Duration) {
 	p.mu.Lock()
 	logger := p.logger
 	p.mu.Unlock()
 	if logger == nil {
 		return
 	}
-	logger.LogRequest(RequestEvent{
+	logger.Write(RequestEvent{
 		Type:      "request",
 		Time:      time.Now().UTC(),
 		Server:    p.name,
 		Method:    r.Method,
 		Path:      r.URL.Path,
 		Query:     r.URL.RawQuery,
-		Status:    rec.status,
+		Status:    rec.Status,
 		Duration:  dur.Round(time.Millisecond).String(),
-		Bytes:     rec.bytes,
-		ErrorBody: rec.errBodyString(),
+		Bytes:     rec.Bytes,
+		ErrorBody: rec.ErrorBody(),
 		RPCMethod: rpcMethod,
 		Tool:      tool,
 	})
@@ -161,24 +166,26 @@ func (p *Proxy) logRequest(r *http.Request, rec *statusRecorder, rpcMethod, tool
 // JSON-RPC envelope, extracts method (and tool name when method=="tools/call"),
 // then resets r.Body so ReverseProxy can still forward it. Bodies larger than
 // peekCap are forwarded as-is and only the first peekCap bytes are scanned.
+// On any error, r.Body is restored from whatever was already read so we don't
+// leave the body half-drained for ServeHTTP.
 func peekJSONRPC(r *http.Request) (rpcMethod, tool string) {
 	if r.Method != http.MethodPost || r.Body == nil {
 		return "", ""
 	}
-	const peekCap = 64 * 1024
-	body, err := io.ReadAll(io.LimitReader(r.Body, peekCap+1))
-	if err != nil {
-		return "", ""
-	}
-	// Restore body for the reverse proxy. If we hit the cap, append whatever
-	// the underlying reader still has so nothing is silently truncated.
+	original := r.Body
+	body, _ := io.ReadAll(io.LimitReader(original, peekCap+1))
+
+	// Restore body for the reverse proxy regardless of what happened during
+	// the read — anything we already buffered must be replayed first. Even
+	// on a partial read, the buffered prefix is enough to extract a JSON-RPC
+	// envelope when the method/params fields fit within it.
 	if int64(len(body)) > peekCap {
 		r.Body = struct {
 			io.Reader
 			io.Closer
-		}{io.MultiReader(bytes.NewReader(body), r.Body), r.Body}
+		}{io.MultiReader(bytes.NewReader(body), original), original}
 	} else {
-		_ = r.Body.Close()
+		_ = original.Close()
 		r.Body = io.NopCloser(bytes.NewReader(body))
 		r.ContentLength = int64(len(body))
 	}
@@ -198,50 +205,3 @@ func peekJSONRPC(r *http.Request) (rpcMethod, tool string) {
 	}
 	return env.Method, env.Params.Name
 }
-
-func NewRequestLogger(f *os.File) *RequestLogger {
-	return &RequestLogger{w: json.NewEncoder(f), raw: f}
-}
-
-func (l *RequestLogger) LogRequest(ev RequestEvent) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	_ = l.w.Encode(ev)
-	if l.raw != nil {
-		_ = l.raw.Sync()
-	}
-}
-
-type statusRecorder struct {
-	http.ResponseWriter
-	status  int
-	bytes   int64
-	wrote   bool
-	errBody []byte // captured body when status >= 400, capped at errorBodyCap
-}
-
-func (s *statusRecorder) WriteHeader(code int) {
-	if !s.wrote {
-		s.status = code
-		s.wrote = true
-	}
-	s.ResponseWriter.WriteHeader(code)
-}
-
-func (s *statusRecorder) Write(b []byte) (int, error) {
-	n, err := s.ResponseWriter.Write(b)
-	s.bytes += int64(n)
-	if s.status >= 400 && len(s.errBody) < errorBodyCap {
-		need := min(errorBodyCap-len(s.errBody), n)
-		s.errBody = append(s.errBody, b[:need]...)
-	}
-	return n, err
-}
-
-func (s *statusRecorder) errBodyString() string {
-	if s.status < 400 || len(s.errBody) == 0 {
-		return ""
-	}
-	return string(s.errBody)
-}
-

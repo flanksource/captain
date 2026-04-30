@@ -155,12 +155,12 @@ h3.report-subsection { font-size: 1.15rem; font-weight: 600; margin: 1rem 0 0.5r
 .report pre { margin: 0.75rem 0; border-radius: 6px; overflow: hidden; background: #282c34; }
 .report pre code, .report pre code.hljs { display: block; background: #282c34 !important; color: #abb2bf !important; padding: 0.85rem 1rem; overflow-x: auto; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.9em; }
 
-.tool-calls { display: flex; flex-direction: column; border: 1px solid #d1d5db; border-radius: 6px; overflow: hidden; margin: 0.75rem 0; }
-.tool-calls .tc-row { display: grid; grid-template-columns: 110px minmax(0, 1fr) 110px 90px 60px; gap: 0.5rem; padding: 0.5rem 0.75rem; align-items: center; border-bottom: 1px solid #e5e7eb; background: #fff; }
+.tool-calls { --tc-cols: 110px minmax(0, 1fr) 110px 90px 60px; display: flex; flex-direction: column; border: 1px solid #d1d5db; border-radius: 6px; overflow: hidden; margin: 0.75rem 0; }
+.tool-calls .tc-row { display: grid; grid-template-columns: var(--tc-cols); gap: 0.5rem; padding: 0.5rem 0.75rem; align-items: center; border-bottom: 1px solid #e5e7eb; background: #fff; }
 .tool-calls .tc-row:last-child { border-bottom: 0; }
 .tool-calls .tc-header { background: #f3f4f6; font-weight: 600; font-size: 0.85em; color: #4b5563; text-transform: uppercase; letter-spacing: 0.04em; }
 .tool-calls details.tc-row { display: block; padding: 0; }
-.tool-calls details.tc-row .tc-summary { display: grid; grid-template-columns: 110px minmax(0, 1fr) 110px 90px 60px; gap: 0.5rem; padding: 0.5rem 0.75rem; align-items: center; cursor: pointer; list-style: none; }
+.tool-calls details.tc-row .tc-summary { display: grid; grid-template-columns: var(--tc-cols); gap: 0.5rem; padding: 0.5rem 0.75rem; align-items: center; cursor: pointer; list-style: none; }
 .tool-calls details.tc-row .tc-summary::-webkit-details-marker { display: none; }
 .tool-calls details.tc-row .tc-summary:hover { background: #f9fafb; }
 .tool-calls details.tc-row[open] .tc-summary { background: #eef2ff; border-bottom: 1px solid #e5e7eb; }

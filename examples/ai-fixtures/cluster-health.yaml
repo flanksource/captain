@@ -1,0 +1,36 @@
+name: mission-control-investigate
+description: |
+  Get cluster health
+prompt: |
+  Tell me about the general health of the kubernetes cluster, whats happening and what changed recently
+baseline: direct
+repeat: 1
+captureKubernetesProxy: true
+mcpProxy:
+  capture: true
+  headers:
+    Accept: text/markdown
+
+defaults:
+  timeout: 3m
+  permissionMode: bypassPermissions
+  noSessionPersistence: true
+  model: claude-sonnet-4-6
+
+runs:
+  - name: direct
+    promptCaching: false
+    tools: [Bash, Read]
+    allowedTools:
+      - Bash(kubectl *)
+      - Bash(aws *)
+      - Bash(curl *)
+      - Read
+
+  - name: mission-control
+    promptCaching: true
+    tools: [default]
+    mcpConfig:
+      - .mcp.json
+    allowedTools:
+      - mcp__mission-control__*
