@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"encoding/json"
+
 	"github.com/flanksource/clicky/api"
 )
 
@@ -19,10 +21,17 @@ type ScanResultRow struct {
 	Category        string          `json:"category"`
 	Approved        string          `json:"approved,omitempty"`
 	Time            string          `json:"time"`
+	Cost            string          `json:"cost,omitempty"`
+	Raw             json.RawMessage `json:"-"` // surfaced via MarshalJSON when --raw is set
+}
+
+func (r ScanResultRow) MarshalJSON() ([]byte, error) {
+	type alias ScanResultRow
+	return mergeRowWithRaw(alias(r), r.Raw)
 }
 
 func (r ScanResultRow) Columns() []api.ColumnDef {
-	return []api.ColumnDef{
+	cols := []api.ColumnDef{
 		api.Column("time").Label("Time").Build(),
 		api.Column("project").Label("Project").Build(),
 		api.Column("tool").Label("Tool").Build(),
@@ -30,6 +39,10 @@ func (r ScanResultRow) Columns() []api.ColumnDef {
 		api.Column("category").Label("Category").Build(),
 		api.Column("approved").Label("Approved").Build(),
 	}
+	if r.Cost != "" {
+		cols = append(cols, api.Column("cost").Label("Cost").Build())
+	}
+	return cols
 }
 
 func (r ScanResultRow) Row() map[string]any {
@@ -40,6 +53,7 @@ func (r ScanResultRow) Row() map[string]any {
 		"subject":  r.Subject,
 		"category": r.Category,
 		"approved": r.Approved,
+		"cost":     r.Cost,
 	}
 }
 
@@ -61,16 +75,57 @@ type ScanResultRowSingle struct {
 	Category        string          `json:"category"`
 	Approved        string          `json:"approved,omitempty"`
 	Time            string          `json:"time"`
+	Cost            string          `json:"cost,omitempty"`
+	Raw             json.RawMessage `json:"-"` // surfaced via MarshalJSON when --raw is set
+}
+
+func (r ScanResultRowSingle) MarshalJSON() ([]byte, error) {
+	type alias ScanResultRowSingle
+	return mergeRowWithRaw(alias(r), r.Raw)
+}
+
+// mergeRowWithRaw marshals the row's standard fields, then if raw is non-empty
+// merges its top-level keys into the resulting JSON object. Standard row
+// fields take precedence on conflict so the row's category/tool/etc. don't
+// get overwritten by raw fields with the same name.
+func mergeRowWithRaw(row any, raw json.RawMessage) ([]byte, error) {
+	rowJSON, err := json.Marshal(row)
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) == 0 {
+		return rowJSON, nil
+	}
+	var rowMap map[string]json.RawMessage
+	if err := json.Unmarshal(rowJSON, &rowMap); err != nil {
+		return rowJSON, nil
+	}
+	var rawMap map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &rawMap); err != nil {
+		// Raw isn't a JSON object — surface it under a "raw" key.
+		rowMap["raw"] = raw
+		return json.Marshal(rowMap)
+	}
+	for k, v := range rawMap {
+		if _, exists := rowMap[k]; !exists {
+			rowMap[k] = v
+		}
+	}
+	return json.Marshal(rowMap)
 }
 
 func (r ScanResultRowSingle) Columns() []api.ColumnDef {
-	return []api.ColumnDef{
+	cols := []api.ColumnDef{
 		api.Column("time").Label("Time").Build(),
 		api.Column("tool").Label("Tool").Build(),
 		api.Column("subject").Label("Subject").Build(),
 		api.Column("category").Label("Category").Build(),
 		api.Column("approved").Label("Approved").Build(),
 	}
+	if r.Cost != "" {
+		cols = append(cols, api.Column("cost").Label("Cost").Build())
+	}
+	return cols
 }
 
 func (r ScanResultRowSingle) Row() map[string]any {
@@ -80,6 +135,7 @@ func (r ScanResultRowSingle) Row() map[string]any {
 		"subject":  r.Subject,
 		"category": r.Category,
 		"approved": r.Approved,
+		"cost":     r.Cost,
 	}
 }
 

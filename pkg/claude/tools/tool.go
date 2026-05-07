@@ -124,18 +124,19 @@ func (m Models) Pretty() api.Text {
 }
 
 type BaseTool struct {
-	RawTool      string         `json:"tool,omitempty"`
-	Input        map[string]any `json:"input,omitempty"`
-	Timestamp    *time.Time     `json:"timestamp,omitempty"`
-	CWD          string         `json:"cwd,omitempty"`
-	SessionID    string         `json:"sessionId,omitempty"`
-	ToolUseID    string         `json:"toolUseId,omitempty"`
-	ProjectRoot  string         `json:"projectRoot,omitempty"`
-	Denied       bool           `json:"denied,omitempty"`
-	DeniedReason string         `json:"deniedReason,omitempty"`
-	IsError      bool           `json:"isError,omitempty"`
-	Response     string         `json:"response,omitempty"`
-	Models       Models         `json:"models,omitempty"`
+	RawTool      string          `json:"tool,omitempty"`
+	Input        map[string]any  `json:"input,omitempty"`
+	Timestamp    *time.Time      `json:"timestamp,omitempty"`
+	CWD          string          `json:"cwd,omitempty"`
+	SessionID    string          `json:"sessionId,omitempty"`
+	ToolUseID    string          `json:"toolUseId,omitempty"`
+	ProjectRoot  string          `json:"projectRoot,omitempty"`
+	Denied       bool            `json:"denied,omitempty"`
+	DeniedReason string          `json:"deniedReason,omitempty"`
+	IsError      bool            `json:"isError,omitempty"`
+	Response     string          `json:"response,omitempty"`
+	Models       Models          `json:"models,omitempty"`
+	RawEntry     json.RawMessage `json:"-"`
 }
 
 func (b *BaseTool) Base() *BaseTool { return b }
@@ -232,6 +233,26 @@ func NewTool(base BaseTool) Tool {
 		return &UserTool{BaseTool: base}
 	case "Skill":
 		return &SkillTool{BaseTool: base}
+	case "SessionInit":
+		return &SystemInitTool{BaseTool: base}
+	case "HookStart":
+		return &HookStartedTool{BaseTool: base}
+	case "HookResponse":
+		return &HookResponseTool{BaseTool: base}
+	case "Result":
+		return &ResultSummaryTool{BaseTool: base}
+	case "StopHookSummary":
+		return &StopHookSummaryTool{BaseTool: base}
+	case "TurnDuration":
+		return &TurnDurationTool{BaseTool: base}
+	case "AwaySummary":
+		return &AwaySummaryTool{BaseTool: base}
+	case "SessionTitle":
+		return &SessionTitleTool{BaseTool: base}
+	case "ApiError":
+		return &ApiErrorTool{BaseTool: base}
+	case "ParseError":
+		return &ParseErrorTool{BaseTool: base}
 	default:
 		return &GenericTool{BaseTool: base}
 	}

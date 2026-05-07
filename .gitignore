@@ -5,3 +5,4 @@ specs/
 .claude/
 .mcp.json
 .captain/
+!cmd/captain/

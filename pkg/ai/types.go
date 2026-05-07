@@ -6,12 +6,38 @@ import (
 )
 
 type Request struct {
-	SystemPrompt     string
-	Prompt           string
-	MaxTokens        int
-	Temperature      float64
-	StructuredOutput any               // nil = text mode, non-nil = JSON schema target
-	Metadata         map[string]string // arbitrary caller metadata
+	SystemPrompt       string
+	AppendSystemPrompt string            // claude --append-system-prompt
+	Prompt             string
+	MaxTokens          int
+	Temperature        float64
+	StructuredOutput   any               // nil = text mode, non-nil = JSON schema target
+	Metadata           map[string]string // arbitrary caller metadata
+
+	// Per-request CLI knobs honoured by ExecuteStream-capable providers
+	// (currently claude_cli). Zero values are equivalent to "let the
+	// provider/CLI use its default" so existing buffered Execute callers
+	// stay byte-identical.
+	SessionID      string // resume an existing session (claude --session-id)
+	PermissionMode string // claude --permission-mode (e.g. "acceptEdits")
+	StrictMCP      bool   // claude --strict-mcp-config
+	Verbose        bool   // claude --verbose (required for stream-json)
+	MaxTurns       int    // claude --max-turns (0 = omit, let CLI default)
+
+	// Safety / sandbox knobs. Zero values mean "use provider/CLI default".
+	// Each provider translates what it understands; unknowns are ignored or
+	// surfaced as a config error.
+	Edit            bool     // shorthand: acceptEdits + curated Read/Edit/Write/Glob/Grep allowlist
+	AllowedTools    []string // claude --allowedTools / codex: not supported
+	DisallowedTools []string // claude --disallowedTools / codex: not supported
+	NoMCP           bool     // claude --strict-mcp-config + empty inline / codex -c mcp_servers={}
+	NoHooks         bool     // claude: requires --bare or --setting-sources / codex --ignore-rules
+	NoSkills        bool     // claude --disable-slash-commands / codex --ignore-rules (best effort)
+	SkillDirs       []string // claude --plugin-dir (repeatable)
+	NoUser          bool     // claude --setting-sources without "user" / codex --ignore-user-config
+	NoProject       bool     // claude --setting-sources without "project,local" / codex --ignore-rules
+	NoMemory        bool     // claude: requires --bare / codex --ephemeral
+	Bare            bool     // claude --bare / codex composite (--ignore-user-config --ignore-rules --ephemeral)
 }
 
 type Response struct {
