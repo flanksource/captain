@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -18,7 +19,7 @@ import (
 
 type HistoryOptions struct {
 	Paths      []string  `args:"true" help:"Filter by file or directory paths"`
-	File       string    `flag:"file" help:"Read from a JSONL/JSON file instead of session history" short:"f"`
+	File       string    `flag:"file" help:"Read from a JSONL/JSON file ('-' for stdin) instead of session history" short:"f"`
 	Tools      []string  `flag:"tool" help:"Filter by tool patterns" short:"t"`
 	Categories []string  `flag:"category" help:"Filter by category patterns" short:"c"`
 	Approved   string    `flag:"approved" help:"Filter by approval status (true=approved, false=denied)"`
@@ -28,24 +29,32 @@ type HistoryOptions struct {
 	Short      bool      `flag:"short" help:"Compact output without diffs and code blocks" short:"S"`
 	Compact    bool      `flag:"compact" help:"Single line per entry" short:"C"`
 	Summary    bool      `flag:"summary" help:"Show aggregate summary instead of individual tool uses"`
+	Cost       bool      `flag:"cost" help:"Include per-row token breakdown and dollar cost in row detail"`
+	Raw        bool      `flag:"raw" help:"Include the raw Claude session JSONL line in row detail"`
 	Debug      bool      `flag:"debug" help:"Include original Claude history struct in results"`
 }
 
 func RunHistory(opts HistoryOptions) (any, error) {
+	if opts.File == "-" || opts.File == "/dev/stdin" || (opts.File == "" && claude.IsStdinPiped()) {
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return nil, err
+		}
+		claude.ResetUnhandledStreamTypes()
+		out, err := runHistoryFromReader(data, opts)
+		reportUnhandledStreamTypes()
+		return out, err
+	}
+
 	if opts.File != "" {
 		data, err := os.ReadFile(opts.File)
 		if err != nil {
 			return nil, err
 		}
-		return runHistoryFromReader(data, opts)
-	}
-
-	if claude.IsStdinPiped() {
-		data, err := io.ReadAll(os.Stdin)
-		if err != nil {
-			return nil, err
-		}
-		return runHistoryFromReader(data, opts)
+		claude.ResetUnhandledStreamTypes()
+		out, err := runHistoryFromReader(data, opts)
+		reportUnhandledStreamTypes()
+		return out, err
 	}
 
 	cwd, err := os.Getwd()
@@ -77,8 +86,15 @@ func RunHistory(opts HistoryOptions) (any, error) {
 	}
 
 	costs, _ = claude.ParseCosts(cwd, opts.All, &opts.Since)
-	// Convert ToolUses to Tool interface
-	tl := claude.ToolUsesToTools(parseResult.ToolUses)
+	var tl []tools.Tool
+	if opts.Cost {
+		tl, err = claude.ParseHistoryTools(cwd, opts.All, filter)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		tl = claude.ToolUsesToTools(parseResult.ToolUses)
+	}
 	if opts.All {
 		return runHistoryAll(tl, opts, classifier, costs)
 	}
@@ -117,7 +133,7 @@ func runHistoryAll(tl []tools.Tool, opts HistoryOptions, classifier *bash.Catego
 			Tool:            t.Name(),
 			Summary:         firstLine(t.Pretty().String()),
 			Subject:         t.Pretty(),
-			Detail:          t.Detail(),
+			Detail:          buildRowDetail(t, opts),
 			Paths:           FormatPathsWithIcons(analysis.ReadPaths, analysis.WritePaths),
 			ReadPaths:       analysis.ReadPaths,
 			WritePaths:      analysis.WritePaths,
@@ -125,6 +141,10 @@ func runHistoryAll(tl []tools.Tool, opts HistoryOptions, classifier *bash.Catego
 			Binaries:        analysis.Binaries,
 			Approved:        approved,
 			Time:            base.PrettyTimestamp(),
+			Cost:            rowCost(base, opts),
+		}
+		if opts.Raw {
+			row.Raw = base.RawEntry
 		}
 		if !opts.Compact {
 			row.Category = classifyTool(t, classifier)
@@ -169,7 +189,7 @@ func runHistorySingle(tl []tools.Tool, opts HistoryOptions, classifier *bash.Cat
 			Tool:            t.Name(),
 			Summary:         firstLine(t.Pretty().String()),
 			Subject:         t.Pretty(),
-			Detail:          t.Detail(),
+			Detail:          buildRowDetail(t, opts),
 			Paths:           FormatPathsWithIcons(analysis.ReadPaths, analysis.WritePaths),
 			ReadPaths:       analysis.ReadPaths,
 			WritePaths:      analysis.WritePaths,
@@ -177,6 +197,10 @@ func runHistorySingle(tl []tools.Tool, opts HistoryOptions, classifier *bash.Cat
 			Binaries:        analysis.Binaries,
 			Approved:        approved,
 			Time:            base.PrettyTimestamp(),
+			Cost:            rowCost(base, opts),
+		}
+		if opts.Raw {
+			row.Raw = base.RawEntry
 		}
 		if !opts.Compact {
 			row.Category = classifyTool(t, classifier)
@@ -363,6 +387,23 @@ func resolvePaths(paths []string) []string {
 		}
 	}
 	return resolved
+}
+
+func reportUnhandledStreamTypes() {
+	snap := claude.SnapshotUnhandledStreamTypes()
+	if len(snap) == 0 {
+		return
+	}
+	keys := make([]string, 0, len(snap))
+	for k := range snap {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, len(keys))
+	for i, k := range keys {
+		parts[i] = fmt.Sprintf("%s=%d", k, snap[k])
+	}
+	fmt.Fprintf(os.Stderr, "unhandled stream types: %s\n", strings.Join(parts, ", "))
 }
 
 func formatDuration(d time.Duration) string {

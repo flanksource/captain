@@ -45,54 +45,214 @@ func TestReadHistory_EmptyLines(t *testing.T) {
 }
 
 func TestReadHistory_InvalidJSON(t *testing.T) {
+	// Bad lines now surface as ParseError synthetic rows rather than
+	// short-circuiting the read. Subsequent good lines are still parsed.
 	jsonl := `{"uuid":"1","sessionId":"s1","timestamp":"2024-01-15T10:00:00Z","message":{"role":"user","content":[]}}
 not valid json
 {"uuid":"2","sessionId":"s1","timestamp":"2024-01-15T10:01:00Z","message":{"role":"assistant","content":[]}}`
 
 	entries, err := ReadHistory(strings.NewReader(jsonl))
-	if err == nil {
-		t.Error("expected error for invalid JSON")
+	if err != nil {
+		t.Fatalf("ReadHistory should not fail; bad lines surface as ParseError rows: %v", err)
 	}
-
-	if len(entries) != 1 {
-		t.Errorf("expected 1 entry before error, got %d", len(entries))
+	if len(entries) != 3 {
+		t.Fatalf("expected 3 entries (user, ParseError, assistant), got %d", len(entries))
+	}
+	parseErr := entries[1].Message.GetToolUses()
+	if len(parseErr) != 1 || parseErr[0].Name != "ParseError" {
+		t.Errorf("entry[1] expected ParseError, got %+v", parseErr)
+	}
+	if entries[2].UUID != "2" {
+		t.Errorf("entry[2] should be the post-bad-line assistant message, got UUID=%s", entries[2].UUID)
 	}
 }
 
 func TestReadStreamJSON(t *testing.T) {
-	input := `{"type":"system","subtype":"init","cwd":"/tmp","session_id":"sess-1","model":"claude-sonnet-4-20250514","tools":["Bash","Read"]}
+	input := `{"type":"system","subtype":"init","cwd":"/tmp","session_id":"sess-1","uuid":"u-init","model":"claude-sonnet-4-20250514","tools":["Bash","Read"]}
 {"type":"user","message":{"role":"user","content":[{"type":"text","text":"list files"}]},"session_id":"sess-1","uuid":"msg-1"}
 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I'll list the files."},{"type":"tool_use","id":"tu-1","name":"Bash","input":{"command":"ls -la"}}]},"session_id":"sess-1","uuid":"msg-2","timestamp":"2024-01-15T10:00:00Z"}
 {"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu-2","name":"Read","input":{"file_path":"/tmp/foo.go"}}]},"session_id":"sess-1","uuid":"msg-3","timestamp":"2024-01-15T10:01:00Z"}
-{"type":"result","subtype":"success","session_id":"sess-1","cost_usd":0.01,"duration_ms":500}`
+{"type":"result","subtype":"success","session_id":"sess-1","uuid":"u-result","total_cost_usd":0.01,"duration_ms":500,"num_turns":2,"result":"Done."}`
 
+	ResetUnhandledStreamTypes()
 	entries, err := ReadStreamJSON(strings.NewReader(input))
 	if err != nil {
 		t.Fatalf("ReadStreamJSON failed: %v", err)
 	}
 
+	// Entries: system/init (synthetic), user, assistant, assistant, result (synthetic) = 5
+	if len(entries) != 5 {
+		t.Fatalf("expected 5 entries (init, user, 2x assistant, result), got %d", len(entries))
+	}
+
+	// First entry is the synthesized system/init
+	initTU := entries[0].Message.GetToolUses()
+	if len(initTU) != 1 || initTU[0].Name != "SessionInit" {
+		t.Errorf("expected SessionInit synthetic tool use, got %+v", initTU)
+	}
+
+	// Real assistant entries with native tool_use blocks
+	bashTU := entries[2].Message.GetToolUses()
+	if len(bashTU) != 1 || bashTU[0].Name != "Bash" {
+		t.Errorf("expected Bash tool use in entry 2, got %+v", bashTU)
+	}
+
+	readTU := entries[3].Message.GetToolUses()
+	if len(readTU) != 1 || readTU[0].Name != "Read" {
+		t.Errorf("expected Read tool use in entry 3, got %+v", readTU)
+	}
+
+	// Last entry is the synthesized result
+	resultTU := entries[4].Message.GetToolUses()
+	if len(resultTU) != 1 || resultTU[0].Name != "Result" {
+		t.Errorf("expected Result synthetic tool use, got %+v", resultTU)
+	}
+
+	if got := SnapshotUnhandledStreamTypes(); len(got) != 0 {
+		t.Errorf("expected no unhandled types, got %v", got)
+	}
+}
+
+func TestReadStreamJSON_HookEvents(t *testing.T) {
+	input := `{"type":"system","subtype":"hook_started","hook_id":"h1","hook_name":"SessionStart:startup","hook_event":"SessionStart","session_id":"s","uuid":"u1"}
+{"type":"system","subtype":"hook_response","hook_id":"h1","hook_name":"SessionStart:startup","outcome":"success","exit_code":0,"stdout":"OK\n","stderr":"","session_id":"s","uuid":"u2"}`
+
+	entries, err := ReadStreamJSON(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("ReadStreamJSON failed: %v", err)
+	}
 	if len(entries) != 2 {
-		t.Fatalf("expected 2 assistant entries, got %d", len(entries))
+		t.Fatalf("expected 2 hook entries, got %d", len(entries))
+	}
+	if name := entries[0].Message.GetToolUses()[0].Name; name != "HookStart" {
+		t.Errorf("expected HookStart, got %s", name)
+	}
+	if name := entries[1].Message.GetToolUses()[0].Name; name != "HookResponse" {
+		t.Errorf("expected HookResponse, got %s", name)
+	}
+}
+
+func TestReadStreamJSON_UnhandledTypes(t *testing.T) {
+	ResetUnhandledStreamTypes()
+	input := `{"type":"file-history-snapshot","messageId":"x","snapshot":{}}
+{"type":"agent-name","name":"foo"}
+{"type":"completely-novel-type","x":1}
+{"type":"system","subtype":"init","cwd":"/tmp","session_id":"s","uuid":"u"}`
+
+	entries, err := ReadStreamJSON(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("ReadStreamJSON failed: %v", err)
+	}
+	// system/init produces an entry. file-history-snapshot and agent-name are
+	// known session-storage types (recognized, not surfaced, NOT counted).
+	// Only completely-novel-type is unknown and counted.
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
 	}
 
-	if entries[0].UUID != "msg-2" {
-		t.Errorf("expected UUID msg-2, got %s", entries[0].UUID)
+	snap := SnapshotUnhandledStreamTypes()
+	if snap["completely-novel-type"] != 1 {
+		t.Errorf("expected completely-novel-type=1, got %d", snap["completely-novel-type"])
 	}
-	if entries[0].SessionID != "sess-1" {
-		t.Errorf("expected session sess-1, got %s", entries[0].SessionID)
+	if _, ok := snap["file-history-snapshot"]; ok {
+		t.Errorf("file-history-snapshot is a known-but-skipped type, should NOT be in unhandled snapshot, got %v", snap)
 	}
-	if entries[0].Timestamp != "2024-01-15T10:00:00Z" {
-		t.Errorf("expected timestamp 2024-01-15T10:00:00Z, got %s", entries[0].Timestamp)
+	if _, ok := snap["agent-name"]; ok {
+		t.Errorf("agent-name is a known-but-skipped type, should NOT be in unhandled snapshot, got %v", snap)
+	}
+}
+
+func TestReadHistory_SessionFileEvents(t *testing.T) {
+	// On-disk session files use camelCase fields and a different mix of
+	// types from stream-json. ReadHistory must recognize the same set of
+	// events ReadStreamJSON does.
+	jsonl := `{"sessionId":"s","uuid":"1","timestamp":"2024-01-01T10:00:00Z","message":{"role":"user","content":[{"type":"text","text":"hi"}]}}
+{"type":"ai-title","aiTitle":"My Session","sessionId":"s"}
+{"type":"system","subtype":"turn_duration","durationMs":1234,"messageCount":5,"sessionId":"s","uuid":"td","timestamp":"2024-01-01T10:01:00Z"}
+{"type":"system","subtype":"stop_hook_summary","hookCount":3,"hookErrors":0,"stopReason":"end_turn","sessionId":"s","uuid":"sh","timestamp":"2024-01-01T10:02:00Z"}
+{"type":"system","subtype":"away_summary","content":"User stepped away","sessionId":"s","uuid":"as"}
+{"type":"agent-name","agentName":"foo","sessionId":"s"}
+{"type":"file-history-snapshot","messageId":"m","snapshot":{}}
+{"type":"permission-mode","permissionMode":"plan","sessionId":"s"}
+{"type":"attachment","attachment":"x","sessionId":"s","uuid":"a"}`
+
+	ResetUnhandledStreamTypes()
+	entries, err := ReadHistory(strings.NewReader(jsonl))
+	if err != nil {
+		t.Fatalf("ReadHistory failed: %v", err)
 	}
 
-	toolUses := entries[0].Message.GetToolUses()
-	if len(toolUses) != 1 || toolUses[0].Name != "Bash" {
-		t.Errorf("expected Bash tool use in first entry, got %+v", toolUses)
+	// Entries: user message + 4 surfaced events (title, turn_duration,
+	// stop_hook_summary, away_summary). Storage types are silently dropped.
+	if len(entries) != 5 {
+		t.Fatalf("expected 5 entries (user + 4 events), got %d:\n%+v", len(entries), entries)
 	}
 
-	toolUses = entries[1].Message.GetToolUses()
-	if len(toolUses) != 1 || toolUses[0].Name != "Read" {
-		t.Errorf("expected Read tool use in second entry, got %+v", toolUses)
+	wantNames := []string{"", "SessionTitle", "TurnDuration", "StopHookSummary", "AwaySummary"}
+	for i, want := range wantNames {
+		if want == "" {
+			// First entry is a real user message — no synthetic tool name.
+			if entries[i].Message.Role != MessageRoleUser {
+				t.Errorf("entry[0] expected user role, got %s", entries[i].Message.Role)
+			}
+			continue
+		}
+		uses := entries[i].Message.GetToolUses()
+		if len(uses) != 1 || uses[0].Name != want {
+			t.Errorf("entry[%d] expected synthetic tool %q, got %+v", i, want, uses)
+		}
+	}
+
+	if got := SnapshotUnhandledStreamTypes(); len(got) != 0 {
+		t.Errorf("session-storage types should be known-but-skipped, got unhandled: %v", got)
+	}
+}
+
+func TestReadStreamJSON_AssistantErrorEmitsApiError(t *testing.T) {
+	// An assistant line carrying a top-level "error" field must surface as
+	// both the assistant message AND a separate ApiError synthetic row,
+	// otherwise the failure would be invisible in history output.
+	input := `{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"oops"}]},"session_id":"s","uuid":"u","error":"invalid_request","api_error_status":404}`
+
+	entries, err := ReadStreamJSON(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("ReadStreamJSON failed: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries (assistant + ApiError), got %d", len(entries))
+	}
+	if entries[0].Message.Role != MessageRoleAssistant {
+		t.Errorf("entry[0] expected assistant role, got %s", entries[0].Message.Role)
+	}
+	uses := entries[1].Message.GetToolUses()
+	if len(uses) != 1 || uses[0].Name != "ApiError" {
+		t.Errorf("entry[1] expected ApiError synthetic tool, got %+v", uses)
+	}
+}
+
+func TestReadStreamJSON_ParseErrorIsSurfaced(t *testing.T) {
+	// Lines that fail to unmarshal must produce ParseError rows rather than
+	// being silently dropped (CW-2).
+	input := `{"type":"system","subtype":"init","cwd":"/tmp","session_id":"s","uuid":"u"}
+not valid json
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]},"session_id":"s","uuid":"u2"}`
+
+	entries, err := ReadStreamJSON(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("ReadStreamJSON failed: %v", err)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("expected 3 entries (init, ParseError, assistant), got %d", len(entries))
+	}
+
+	parseErr := entries[1].Message.GetToolUses()
+	if len(parseErr) != 1 || parseErr[0].Name != "ParseError" {
+		t.Errorf("entry[1] expected ParseError, got %+v", parseErr)
+	}
+
+	// The assistant message after the bad line should still be parsed.
+	if entries[2].UUID != "u2" {
+		t.Errorf("entry[2] expected to be assistant (uuid=u2), got UUID=%s", entries[2].UUID)
 	}
 }
 

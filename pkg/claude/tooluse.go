@@ -17,19 +17,20 @@ import (
 
 // ToolUse represents a single tool invocation extracted from history
 type ToolUse struct {
-	Tool         string         `json:"tool,omitempty"`
-	Input        map[string]any `json:"input,omitempty"`
-	Timestamp    *time.Time     `json:"timestamp,omitempty"`
-	CWD          string         `json:"cwd,omitempty"`
-	SessionID    string         `json:"session_id,omitempty"`
-	ToolUseID    string         `json:"tool_use_id,omitempty"`
-	ProjectRoot  string         `json:"project_root,omitempty"`
-	Denied       bool           `json:"denied,omitempty"`
-	DeniedReason string         `json:"deniedReason,omitempty"`
-	InputTokens  int            `json:"inputTokens,omitempty"`
-	OutputTokens int            `json:"outputTokens,omitempty"`
-	IsError      bool           `json:"isError,omitempty"`
-	Response     string         `json:"response,omitempty"`
+	Tool         string          `json:"tool,omitempty"`
+	Input        map[string]any  `json:"input,omitempty"`
+	Timestamp    *time.Time      `json:"timestamp,omitempty"`
+	CWD          string          `json:"cwd,omitempty"`
+	SessionID    string          `json:"session_id,omitempty"`
+	ToolUseID    string          `json:"tool_use_id,omitempty"`
+	ProjectRoot  string          `json:"project_root,omitempty"`
+	Denied       bool            `json:"denied,omitempty"`
+	DeniedReason string          `json:"deniedReason,omitempty"`
+	InputTokens  int             `json:"inputTokens,omitempty"`
+	OutputTokens int             `json:"outputTokens,omitempty"`
+	IsError      bool            `json:"isError,omitempty"`
+	Response     string          `json:"response,omitempty"`
+	RawEntry     json.RawMessage `json:"-"`
 }
 
 // Filter defines criteria for filtering tool uses
@@ -83,6 +84,7 @@ func ExtractToolUses(entries []HistoryEntry) []ToolUse {
 				CWD:       cwd,
 				SessionID: entry.SessionID,
 				ToolUseID: content.ID,
+				RawEntry:  entry.RawLine,
 			})
 		}
 	}
@@ -190,6 +192,7 @@ func toTools(toolUses []ToolUse, entries []HistoryEntry) []tools.Tool {
 			DeniedReason: tu.DeniedReason,
 			IsError:      tu.IsError,
 			Response:     tu.Response,
+			RawEntry:     tu.RawEntry,
 		}
 
 		if info, ok := toolMsg[tu.ToolUseID]; ok && info.usage != nil {
@@ -231,6 +234,7 @@ func ToolUsesToTools(toolUses []ToolUse) []tools.Tool {
 			DeniedReason: tu.DeniedReason,
 			IsError:      tu.IsError,
 			Response:     tu.Response,
+			RawEntry:     tu.RawEntry,
 		}
 		if tu.InputTokens > 0 || tu.OutputTokens > 0 {
 			base.Models = tools.Models{{

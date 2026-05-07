@@ -50,11 +50,18 @@ func TestParseFromReader_ClaudeStreamJSON(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, claude.FormatClaudeStreamJSON, result.Format)
 	assert.Nil(t, result.CLIOut)
-	require.Len(t, result.ToolUses, 2)
-	assert.Equal(t, "Bash", result.ToolUses[0].Tool)
-	assert.Equal(t, "ls -la", result.ToolUses[0].Input["command"])
-	assert.Equal(t, "Read", result.ToolUses[1].Tool)
-	assert.Equal(t, "/tmp/foo.go", result.ToolUses[1].Input["file_path"])
+	// Stream-json now surfaces system/init and result/* as synthetic tools
+	// alongside real tool_use blocks.
+	require.Len(t, result.ToolUses, 4)
+	names := []string{
+		result.ToolUses[0].Tool,
+		result.ToolUses[1].Tool,
+		result.ToolUses[2].Tool,
+		result.ToolUses[3].Tool,
+	}
+	assert.Equal(t, []string{"SessionInit", "Bash", "Read", "Result"}, names)
+	assert.Equal(t, "ls -la", result.ToolUses[1].Input["command"])
+	assert.Equal(t, "/tmp/foo.go", result.ToolUses[2].Input["file_path"])
 }
 
 func TestParseFromReader_ClaudeCLI(t *testing.T) {
@@ -101,6 +108,67 @@ func TestFirstNonEmptyLine(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := firstNonEmptyLine([]byte(tt.input))
 			assert.Equal(t, tt.expected, string(got))
+		})
+	}
+}
+
+func TestParseFromReader_SkipsLeadingMetadata(t *testing.T) {
+	// Newer Claude Code session JSONL files lead with metadata records
+	// (file-history-snapshot, last-prompt, permission-mode, system/local_command)
+	// that don't match any known format. parseFromReader must scan past them
+	// to find the underlying stream format.
+	data := []byte(`{"type":"file-history-snapshot","messageId":"x","snapshot":{}}
+{"type":"last-prompt","leafUuid":"y","sessionId":"abc"}
+{"type":"permission-mode","permissionMode":"plan","sessionId":"abc"}
+{"sessionId":"abc","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu-1","name":"Bash","input":{"command":"ls"}}]},"uuid":"1","timestamp":"2024-01-01T10:00:00Z"}
+`)
+
+	result, err := parseFromReader(data)
+	require.NoError(t, err)
+	assert.Equal(t, claude.FormatClaudeJSONL, result.Format)
+	require.Len(t, result.ToolUses, 1)
+	assert.Equal(t, "Bash", result.ToolUses[0].Tool)
+}
+
+func TestDetectStreamFormat(t *testing.T) {
+	tests := []struct {
+		name           string
+		input          string
+		expectedFormat claude.StreamFormat
+	}{
+		{
+			name:           "plain claude jsonl on first line",
+			input:          `{"sessionId":"abc","message":{"role":"user","content":"hi"},"uuid":"1","timestamp":"t"}`,
+			expectedFormat: claude.FormatClaudeJSONL,
+		},
+		{
+			name: "metadata then claude jsonl",
+			input: `{"type":"file-history-snapshot","snapshot":{}}
+{"sessionId":"abc","message":{"role":"user","content":"hi"},"uuid":"1","timestamp":"t"}`,
+			expectedFormat: claude.FormatClaudeJSONL,
+		},
+		{
+			name: "metadata then stream-json",
+			input: `{"type":"file-history-snapshot","snapshot":{}}
+{"type":"assistant","session_id":"abc","message":{"role":"assistant","content":[]}}`,
+			expectedFormat: claude.FormatClaudeStreamJSON,
+		},
+		{
+			name:           "all metadata, no recognizable format",
+			input:          `{"type":"file-history-snapshot","snapshot":{}}`,
+			expectedFormat: claude.FormatUnknown,
+		},
+		{
+			name:           "empty input",
+			input:          "",
+			expectedFormat: claude.FormatUnknown,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			format, _ := detectStreamFormat([]byte(tt.input))
+			assert.Equal(t, tt.expectedFormat, format)
 		})
 	}
 }

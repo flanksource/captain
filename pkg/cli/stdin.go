@@ -27,12 +27,10 @@ type stdinParseResult struct {
 }
 
 func parseFromReader(data []byte) (*stdinParseResult, error) {
-	first := firstNonEmptyLine(data)
-	if len(first) == 0 {
+	format, sample := detectStreamFormat(data)
+	if len(sample) == 0 {
 		return nil, fmt.Errorf("empty input")
 	}
-
-	format := claude.DetectFormat(first)
 
 	switch format {
 	case claude.FormatClaudeJSONL:
@@ -81,8 +79,33 @@ func parseFromReader(data []byte) (*stdinParseResult, error) {
 		return &stdinParseResult{Format: format, CLIOut: &out}, nil
 
 	default:
-		return nil, fmt.Errorf("unrecognized stream format (first line: %s)", truncate(string(first), 120))
+		return nil, fmt.Errorf("unrecognized stream format (first line: %s)", truncate(string(sample), 120))
 	}
+}
+
+// detectStreamFormat scans non-empty lines and returns the first non-Unknown
+// format found, along with the sample line that produced it. Newer Claude Code
+// session JSONL files lead with metadata records (file-history-snapshot,
+// last-prompt, permission-mode, system/local_command) that no format matches —
+// scanning past them lets us identify the underlying stream. If the first line
+// already maps to FormatClaudeCLI (a single-object format), we accept it
+// immediately so we don't keep scanning a single-line payload.
+func detectStreamFormat(data []byte) (claude.StreamFormat, []byte) {
+	var firstLine []byte
+	for _, line := range bytes.Split(data, []byte("\n")) {
+		trimmed := bytes.TrimSpace(line)
+		if len(trimmed) == 0 {
+			continue
+		}
+		if firstLine == nil {
+			firstLine = trimmed
+		}
+		f := claude.DetectFormat(trimmed)
+		if f != claude.FormatUnknown {
+			return f, trimmed
+		}
+	}
+	return claude.FormatUnknown, firstLine
 }
 
 func runHistoryFromReader(data []byte, opts HistoryOptions) (any, error) {

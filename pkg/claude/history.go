@@ -8,12 +8,13 @@ import (
 
 // HistoryEntry represents a single line in a JSONL transcript
 type HistoryEntry struct {
-	ParentUUID string  `json:"parentUuid,omitempty"`
-	SessionID  string  `json:"sessionId"`
-	Version    string  `json:"version,omitempty"`
-	Message    Message `json:"message"`
-	UUID       string  `json:"uuid"`
-	Timestamp  string  `json:"timestamp"`
+	ParentUUID string          `json:"parentUuid,omitempty"`
+	SessionID  string          `json:"sessionId"`
+	Version    string          `json:"version,omitempty"`
+	Message    Message         `json:"message"`
+	UUID       string          `json:"uuid"`
+	Timestamp  string          `json:"timestamp"`
+	RawLine    json.RawMessage `json:"-"`
 }
 
 // Message represents a conversation message

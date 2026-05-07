@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/flanksource/captain/pkg/claude/tools"
 )
 
 // GetClaudeHome returns the path to the Claude Code home directory (~/.claude)
@@ -274,6 +276,53 @@ func ParseHistory(currentDir string, searchAll bool, filter Filter) (*ParseResul
 
 	result.ToolUses = FilterToolUses(allToolUses, filter)
 	return result, nil
+}
+
+// ParseHistoryTools is like ParseHistory but returns Tool implementations
+// with per-tool model usage and cost data populated from assistant message Usage.
+// Use this when callers need cost/token breakdown per tool call.
+func ParseHistoryTools(currentDir string, searchAll bool, filter Filter) ([]tools.Tool, error) {
+	projectsDir := GetProjectsDir()
+
+	sessionFiles, err := FindSessionFiles(projectsDir, currentDir, searchAll)
+	if err != nil {
+		return nil, err
+	}
+
+	var allToolUses []ToolUse
+	uses := make(map[string][]HistoryEntry)
+	for _, sessionFile := range sessionFiles {
+		entries, err := ReadHistoryFile(sessionFile)
+		if err != nil {
+			continue
+		}
+		if len(entries) == 0 {
+			continue
+		}
+		projectPath := ExtractProjectPath(sessionFile)
+		projectRoot := FindProjectRoot(projectPath)
+		toolUses := ExtractToolUsesWithTokens(entries)
+		for i := range toolUses {
+			if toolUses[i].CWD == "" {
+				toolUses[i].CWD = projectPath
+			}
+			if toolUses[i].ProjectRoot == "" {
+				toolUses[i].ProjectRoot = projectRoot
+			}
+		}
+		allToolUses = append(allToolUses, toolUses...)
+		uses[sessionFile] = entries
+	}
+
+	filtered := FilterToolUses(allToolUses, filter)
+
+	// Re-link filtered tool uses to entries to populate Models with model and cost.
+	// Build a single combined entry list once; toTools indexes by ToolUseID.
+	var allEntries []HistoryEntry
+	for _, entries := range uses {
+		allEntries = append(allEntries, entries...)
+	}
+	return toTools(filtered, allEntries), nil
 }
 
 type SessionCost struct {
