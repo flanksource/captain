@@ -20,6 +20,13 @@ func main() {
 		Short:   "Search and analyze Claude Code tool use history",
 		Long:    "Search Claude Code session history by tool, category, file path, or time range. When stdin is piped, transcripts can be streamed in directly (e.g. 'cat session.jsonl | captain'). All other commands are available as subcommands.",
 		Version: version,
+		// Cobra dumps the full usage block by default whenever any RunE
+		// returns an error. For runtime errors (parse failures, network
+		// errors, etc.) the help text is just noise and buries the real
+		// message. Setting SilenceUsage on the root makes every subcommand
+		// respect it (cobra walks up the tree), so a runtime error from any
+		// command prints just the error.
+		SilenceUsage: true,
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
 			clicky.Flags.UseFlags()
 		},
@@ -71,6 +78,10 @@ func main() {
 	clicky.AddNamedCommand("models", aiCmd, cli.AIModelsOptions{}, cli.RunAIModels)
 	clicky.AddNamedCommand("test", aiCmd, cli.AITestOptions{}, cli.RunAITest)
 	clicky.AddNamedCommand("fixture", aiCmd, cli.AIFixtureOptions{}, cli.RunAIFixture).Short = "Run a YAML fixture across multiple Claude configurations"
+
+	configureCmd := clicky.AddNamedCommand("configure", rootCmd, cli.ConfigureOptions{}, cli.RunConfigure)
+	configureCmd.Short = "Interactive wizard to set default model, backend, budget, and safety toggles"
+	configureCmd.Long = "Run an interactive form to configure ~/.captain.yaml. These defaults are applied to `captain ai prompt`, `captain ai test`, and other AI commands when corresponding flags are not passed."
 
 	dodCmd := &cobra.Command{
 		Use:   "dod",

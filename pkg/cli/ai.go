@@ -10,12 +10,26 @@ import (
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/middleware"
 	"github.com/flanksource/captain/pkg/ai/provider"
+	"github.com/flanksource/captain/pkg/captainconfig"
+	"github.com/flanksource/captain/pkg/claude"
 	"github.com/flanksource/commons/logger"
 )
 
+// loadSavedAI returns the saved AI defaults from ~/.captain.yaml. Errors are
+// surfaced as zero-valued defaults rather than failing the command — a missing
+// or unreadable config should never block `captain ai prompt`.
+func loadSavedAI() captainconfig.AIDefaults {
+	cfg, _, err := captainconfig.Load()
+	if err != nil {
+		logger.Debugf("captainconfig load: %v (continuing with zero defaults)", err)
+		return captainconfig.AIDefaults{}
+	}
+	return cfg.AI
+}
+
 type AIProviderOptions struct {
-	Model   string `flag:"model" help:"Model name, e.g. claude-sonnet-4, gemini-2.0-flash" short:"m" required:"true"`
-	Backend string `flag:"backend" help:"Force backend: anthropic, gemini, codex-cli, claude-cli, gemini-cli (default: inferred from model)" short:"b"`
+	Model   string `flag:"model" help:"Model name, e.g. claude-sonnet-4, gemini-2.0-flash (defaults to the value saved by 'captain configure')" short:"m"`
+	Backend string `flag:"backend" help:"Force backend: anthropic, gemini, codex-cli, claude-cli, gemini-cli (default: inferred from model or saved by 'captain configure')" short:"b"`
 	APIKey  string `flag:"api-key" help:"API key (env: ANTHROPIC_API_KEY, GEMINI_API_KEY, GOOGLE_API_KEY)"`
 	NoCache bool   `flag:"no-cache" help:"Disable response caching"`
 	Budget  string `flag:"budget" help:"Max spend in USD, 0=unlimited" default:"0"`
@@ -23,12 +37,27 @@ type AIProviderOptions struct {
 }
 
 func (o AIProviderOptions) ToConfig() ai.Config {
+	saved := loadSavedAI()
 	budget, _ := strconv.ParseFloat(o.Budget, 64)
+
+	model := o.Model
+	if model == "" {
+		model = saved.Model
+	}
+	backend := o.Backend
+	if backend == "" {
+		backend = saved.Backend
+	}
+	if budget == 0 {
+		budget = saved.BudgetUSD
+	}
+	noCache := o.NoCache || saved.NoCache
+
 	cfg := ai.Config{
-		Model:     o.Model,
-		Backend:   ai.Backend(o.Backend),
+		Model:     model,
+		Backend:   ai.Backend(backend),
 		APIKey:    o.APIKey,
-		NoCache:   o.NoCache,
+		NoCache:   noCache,
 		BudgetUSD: budget,
 		Debug:     o.Debug,
 	}
@@ -79,25 +108,48 @@ type AIPromptResult struct {
 // No*-style fields the providers consume. When --bare is set, it implicitly
 // strips memory/hooks/skills/user/project regardless of those flags' values
 // (claude --bare composes them) so we let the provider decide the final argv.
+//
+// Saved defaults from ~/.captain.yaml overlay onto unset fields. For the
+// boolean toggles, "saved off" wins over "flag default on" because clicky does
+// not yet expose a Changed() bit.
+//
+// WORKAROUND(no-flag-changed-bit): The boolean toggles default to true, so we
+// cannot tell whether --mcp=true was passed explicitly or inherited from the
+// default. As a result, when the saved config has NoMCP=true the user cannot
+// force MCP back on from the command line by passing --mcp=true alone — they
+// must edit ~/.captain.yaml or rerun `captain configure`.
+// Correct fix: thread clicky's per-flag Changed() bit (or a tri-state flag
+// type) through AIPromptOptions so we can distinguish "explicitly true" from
+// "default true". Ref: discussed with user 2026-05-07.
 func (o AIPromptOptions) ToRequest() ai.Request {
+	saved := loadSavedAI()
 	temperature, _ := strconv.ParseFloat(o.Temperature, 64)
+
+	maxTokens := o.MaxTokens
+	if maxTokens == 4096 && saved.MaxTokens != 0 {
+		maxTokens = saved.MaxTokens
+	}
+
+	effort := saved.ReasoningEffort
+
 	return ai.Request{
 		SystemPrompt:       o.System,
 		AppendSystemPrompt: o.AppendSystem,
 		Prompt:             o.Prompt,
-		MaxTokens:          o.MaxTokens,
+		MaxTokens:          maxTokens,
 		Temperature:        temperature,
+		ReasoningEffort:    effort,
 		PermissionMode:     o.PermissionMode,
 		Edit:               o.Edit,
 		AllowedTools:       o.AllowedTools,
 		DisallowedTools:    o.DisallowedTools,
-		NoMCP:              !o.MCP,
-		NoHooks:            !o.Hooks,
-		NoSkills:           !o.Skills,
+		NoMCP:              !o.MCP || saved.NoMCP,
+		NoHooks:            !o.Hooks || saved.NoHooks,
+		NoSkills:           !o.Skills || saved.NoSkills,
 		SkillDirs:          o.SkillDirs,
-		NoUser:             !o.User,
-		NoProject:          !o.Project,
-		NoMemory:           !o.Memory,
+		NoUser:             !o.User || saved.NoUser,
+		NoProject:          !o.Project || saved.NoProject,
+		NoMemory:           !o.Memory || saved.NoMemory,
 		Bare:               o.Bare,
 	}
 }
@@ -107,9 +159,14 @@ func RunAIPrompt(opts AIPromptOptions) (any, error) {
 		return nil, fmt.Errorf("prompt text required (use --prompt or pipe via stdin)")
 	}
 
+	cfg := opts.ToConfig()
+	if cfg.Model == "" {
+		return nil, fmt.Errorf("no model: pass --model or run 'captain configure' to set a default")
+	}
+
 	req := opts.ToRequest()
 
-	p, err := ai.NewProvider(opts.ToConfig())
+	p, err := ai.NewProvider(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -200,15 +257,24 @@ func runStreaming(ctx context.Context, sp ai.StreamingProvider, req ai.Request) 
 	}, nil
 }
 
-// renderEvent writes a one-line, human-readable representation of an
-// ai.Event to w. Used by --stream to emit tool/token/step progress on stderr
-// while the final response collects on stdout.
+// renderEvent writes a human-readable representation of an ai.Event to w.
+// When the event carries a claude.HistoryEntry in Raw, route through the
+// shared history renderer so live `captain ai prompt` output matches
+// `claude … | captain` for the same stream.
 func renderEvent(w *os.File, ev ai.Event) {
+	if entry, ok := ev.Raw.(claude.HistoryEntry); ok {
+		if renderClaudeEntry(w, ev, entry) {
+			return
+		}
+	}
+
 	switch ev.Kind {
 	case ai.EventText:
 		fmt.Fprintf(w, "%s", ev.Text)
 	case ai.EventThinking:
-		fmt.Fprintf(w, "[thinking] %s\n", truncForStderr(ev.Text, 200))
+		if logger.IsDebugEnabled() {
+			fmt.Fprintf(w, "[thinking] %s\n", truncForStderr(ev.Text, 200))
+		}
 	case ai.EventToolUse:
 		fmt.Fprintf(w, "\n[tool] %s %s\n", ev.Tool, summariseInput(ev.Input))
 	case ai.EventResult:
@@ -220,11 +286,49 @@ func renderEvent(w *os.File, ev ai.Event) {
 		}
 	case ai.EventError:
 		fmt.Fprintf(w, "\n[error] %s\n", ev.Error)
+		logger.Errorf("%s", ev.Error)
 	case ai.EventSystem:
 		if ev.SessionID != "" {
 			fmt.Fprintf(w, "[session] %s\n", ev.SessionID)
 		}
 	}
+}
+
+// renderClaudeEntry tries to render a claude HistoryEntry using the shared
+// pretty-printers (ExtractToolsWithTokens + toLineEntry). Returns false when
+// the entry has no tool uses to render so callers fall back to the generic
+// switch (text/thinking events).
+func renderClaudeEntry(w *os.File, ev ai.Event, entry claude.HistoryEntry) bool {
+	if ev.Kind != ai.EventToolUse {
+		return false
+	}
+	tl := claude.ExtractToolsWithTokens([]claude.HistoryEntry{entry})
+	if len(tl) == 0 {
+		return false
+	}
+	toolWidth := 8
+	for _, t := range tl {
+		if n := len(t.Name()); n > toolWidth {
+			toolWidth = n
+		}
+	}
+	for _, t := range tl {
+		e := toLineEntry(t, true, termWidth(), toolWidth)
+		timeStr := e.Time
+		if timeStr != "" {
+			timeStr += " "
+		}
+		marker := ""
+		if e.Denied {
+			marker = "✗ "
+		}
+		if e.Usage != "" {
+			fmt.Fprintf(w, "%s%s%s %s %s\n", timeStr, marker, padRight(e.Tool, toolWidth), e.Command, e.Usage)
+		} else {
+			fmt.Fprintf(w, "%s%s%s %s\n", timeStr, marker, padRight(e.Tool, toolWidth), e.Command)
+		}
+	}
+	return true
 }
 
 func summariseInput(input map[string]any) string {
@@ -273,7 +377,11 @@ type AITestResult struct {
 }
 
 func RunAITest(opts AITestOptions) (any, error) {
-	p, err := ai.NewProvider(opts.ToConfig())
+	cfg := opts.ToConfig()
+	if cfg.Model == "" {
+		return nil, fmt.Errorf("no model: pass --model or run 'captain configure' to set a default")
+	}
+	p, err := ai.NewProvider(cfg)
 	if err != nil {
 		return nil, err
 	}
