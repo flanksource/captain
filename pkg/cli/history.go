@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flanksource/captain/pkg/ai/history"
 	"github.com/flanksource/captain/pkg/bash"
 	"github.com/flanksource/captain/pkg/claude"
 	"github.com/flanksource/captain/pkg/claude/tools"
@@ -26,6 +27,8 @@ type HistoryOptions struct {
 	Limit      int       `flag:"limit" help:"Maximum results" default:"100" short:"l"`
 	Since      time.Time `flag:"since" help:"Only include commands after this time" default:"now-7d" short:"s"`
 	All        bool      `flag:"all" help:"Search all projects, not just current directory" short:"a"`
+	Claude     bool      `flag:"claude" help:"Show only Claude history"`
+	Codex      bool      `flag:"codex" help:"Show only Codex history"`
 	Short      bool      `flag:"short" help:"Compact output without diffs and code blocks" short:"S"`
 	Compact    bool      `flag:"compact" help:"Single line per entry" short:"C"`
 	Summary    bool      `flag:"summary" help:"Show aggregate summary instead of individual tool uses"`
@@ -72,33 +75,106 @@ func RunHistory(opts HistoryOptions) (any, error) {
 		filter.Limit = opts.Limit
 	}
 
-	parseResult, err := claude.ParseHistory(cwd, opts.All, filter)
-	if err != nil {
-		return nil, err
+	showClaude := opts.Claude || (!opts.Claude && !opts.Codex)
+	showCodex := opts.Codex || (!opts.Claude && !opts.Codex)
+
+	var allToolUses []claude.ToolUse
+
+	if showClaude {
+		parseResult, err := claude.ParseHistory(cwd, opts.All, filter)
+		if err != nil {
+			return nil, err
+		}
+		for i := range parseResult.ToolUses {
+			if parseResult.ToolUses[i].Source == "" {
+				parseResult.ToolUses[i].Source = "claude"
+			}
+		}
+		allToolUses = append(allToolUses, parseResult.ToolUses...)
 	}
+
+	if showCodex {
+		codexUses, err := collectCodexHistory(cwd, opts.All)
+		if err == nil {
+			converted := codexToClaudeToolUses(codexUses)
+			converted = claude.FilterToolUses(converted, filter)
+			allToolUses = append(allToolUses, converted...)
+		}
+	}
+
+	sortToolUsesByTime(allToolUses)
 
 	classifier := bash.NewCategoryClassifier(bash.DefaultCategoryConfig())
 
 	var costs []claude.SessionCost
 	if opts.Summary {
-		costs, _ = claude.ParseCostsDetailed(cwd, opts.All, &opts.Since)
-		return runHistorySummary(parseResult.ToolUses, opts, classifier, costs)
+		if showClaude {
+			costs, _ = claude.ParseCostsDetailed(cwd, opts.All, &opts.Since)
+		}
+		return runHistorySummary(allToolUses, opts, classifier, costs)
 	}
 
-	costs, _ = claude.ParseCosts(cwd, opts.All, &opts.Since)
+	if showClaude {
+		costs, _ = claude.ParseCosts(cwd, opts.All, &opts.Since)
+	}
+
 	var tl []tools.Tool
-	if opts.Cost {
+	switch {
+	case opts.Cost && showClaude && !showCodex:
 		tl, err = claude.ParseHistoryTools(cwd, opts.All, filter)
 		if err != nil {
 			return nil, err
 		}
-	} else {
-		tl = claude.ToolUsesToTools(parseResult.ToolUses)
+	default:
+		tl = claude.ToolUsesToTools(allToolUses)
 	}
+
 	if opts.All {
 		return runHistoryAll(tl, opts, classifier, costs)
 	}
 	return runHistorySingle(tl, opts, classifier, costs)
+}
+
+// collectCodexHistory loads codex sessions and returns their tool uses
+// filtered to the current project (or all if searchAll is true).
+func collectCodexHistory(cwd string, searchAll bool) ([]history.ToolUse, error) {
+	files, err := history.FindCodexSessionFiles()
+	if err != nil {
+		return nil, err
+	}
+
+	projectInfo := claude.FindProjectInfo(cwd)
+	matchRoot := projectInfo.Root
+	if matchRoot == "" {
+		matchRoot = cwd
+	}
+
+	var out []history.ToolUse
+	for _, f := range files {
+		uses, err := history.ExtractCodexToolUses(f)
+		if err != nil || len(uses) == 0 {
+			continue
+		}
+		if !searchAll && !codexSessionMatchesProject(uses, matchRoot) {
+			continue
+		}
+		out = append(out, uses...)
+	}
+	return out, nil
+}
+
+func sortToolUsesByTime(uses []claude.ToolUse) {
+	sort.Slice(uses, func(i, j int) bool {
+		ti := uses[i].Timestamp
+		tj := uses[j].Timestamp
+		if ti == nil {
+			return false
+		}
+		if tj == nil {
+			return true
+		}
+		return ti.Before(*tj)
+	})
 }
 
 func runHistoryAll(tl []tools.Tool, opts HistoryOptions, classifier *bash.CategoryClassifier, costs []claude.SessionCost) (any, error) {

@@ -17,20 +17,23 @@ import (
 
 // ToolUse represents a single tool invocation extracted from history
 type ToolUse struct {
-	Tool         string          `json:"tool,omitempty"`
-	Input        map[string]any  `json:"input,omitempty"`
-	Timestamp    *time.Time      `json:"timestamp,omitempty"`
-	CWD          string          `json:"cwd,omitempty"`
-	SessionID    string          `json:"session_id,omitempty"`
-	ToolUseID    string          `json:"tool_use_id,omitempty"`
-	ProjectRoot  string          `json:"project_root,omitempty"`
-	Denied       bool            `json:"denied,omitempty"`
-	DeniedReason string          `json:"deniedReason,omitempty"`
-	InputTokens  int             `json:"inputTokens,omitempty"`
-	OutputTokens int             `json:"outputTokens,omitempty"`
-	IsError      bool            `json:"isError,omitempty"`
-	Response     string          `json:"response,omitempty"`
-	RawEntry     json.RawMessage `json:"-"`
+	Tool            string          `json:"tool,omitempty"`
+	Input           map[string]any  `json:"input,omitempty"`
+	Timestamp       *time.Time      `json:"timestamp,omitempty"`
+	CWD             string          `json:"cwd,omitempty"`
+	SessionID       string          `json:"session_id,omitempty"`
+	ToolUseID       string          `json:"tool_use_id,omitempty"`
+	ProjectRoot     string          `json:"project_root,omitempty"`
+	Denied          bool            `json:"denied,omitempty"`
+	DeniedReason    string          `json:"deniedReason,omitempty"`
+	InputTokens     int             `json:"inputTokens,omitempty"`
+	OutputTokens    int             `json:"outputTokens,omitempty"`
+	IsError         bool            `json:"isError,omitempty"`
+	Response        string          `json:"response,omitempty"`
+	Source          string          `json:"source,omitempty"` // "claude" or "codex"
+	Model           string          `json:"model,omitempty"`
+	ReasoningEffort string          `json:"reasoningEffort,omitempty"`
+	RawEntry        json.RawMessage `json:"-"`
 }
 
 // Filter defines criteria for filtering tool uses
@@ -223,21 +226,24 @@ func ToolUsesToTools(toolUses []ToolUse) []tools.Tool {
 	result := make([]tools.Tool, 0, len(toolUses))
 	for _, tu := range toolUses {
 		base := tools.BaseTool{
-			RawTool:      tu.Tool,
-			Input:        tu.Input,
-			Timestamp:    tu.Timestamp,
-			CWD:          tu.CWD,
-			SessionID:    tu.SessionID,
-			ToolUseID:    tu.ToolUseID,
-			ProjectRoot:  tu.ProjectRoot,
-			Denied:       tu.Denied,
-			DeniedReason: tu.DeniedReason,
-			IsError:      tu.IsError,
-			Response:     tu.Response,
-			RawEntry:     tu.RawEntry,
+			RawTool:         tu.Tool,
+			Input:           tu.Input,
+			Timestamp:       tu.Timestamp,
+			CWD:             tu.CWD,
+			SessionID:       tu.SessionID,
+			ToolUseID:       tu.ToolUseID,
+			ProjectRoot:     tu.ProjectRoot,
+			Denied:          tu.Denied,
+			DeniedReason:    tu.DeniedReason,
+			IsError:         tu.IsError,
+			Response:        tu.Response,
+			Source:          tu.Source,
+			ReasoningEffort: tu.ReasoningEffort,
+			RawEntry:        tu.RawEntry,
 		}
-		if tu.InputTokens > 0 || tu.OutputTokens > 0 {
+		if tu.Model != "" || tu.InputTokens > 0 || tu.OutputTokens > 0 {
 			base.Models = tools.Models{{
+				Model:        tu.Model,
 				InputTokens:  tu.InputTokens,
 				OutputTokens: tu.OutputTokens,
 			}}

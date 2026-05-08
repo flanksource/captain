@@ -33,6 +33,21 @@ func TestDetectFormat(t *testing.T) {
 			expected: FormatCodexJSONL,
 		},
 		{
+			name:     "codex live thread.started",
+			input:    `{"type":"thread.started","thread_id":"019e0365-dc2a-7ad0-a5a8-78936481a928"}`,
+			expected: FormatCodexJSONL,
+		},
+		{
+			name:     "codex live turn.failed",
+			input:    `{"type":"turn.failed","error":{"message":"boom"}}`,
+			expected: FormatCodexJSONL,
+		},
+		{
+			name:     "codex live item.completed",
+			input:    `{"type":"item.completed","item":{"type":"message","text":"hi"}}`,
+			expected: FormatCodexJSONL,
+		},
+		{
 			name:     "claude stream-json init",
 			input:    `{"type":"system","subtype":"init","cwd":"/tmp/project","session_id":"sess-abc","model":"claude-sonnet-4-20250514","tools":["Bash","Read"]}`,
 			expected: FormatClaudeStreamJSON,

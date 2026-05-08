@@ -85,37 +85,6 @@ func (t ToolUse) Pretty() api.Text {
 		delete(data, "command")
 		delete(data, "timeout")
 
-	case "CodexCommand":
-		if cmd, ok := t.Input["command"].(string); ok && cmd != "" {
-			text = text.Add(clicky.CodeBlock("bash", cmd))
-		}
-		if output, ok := t.Input["output"].(string); ok && output != "" {
-			lines := strings.Split(output, "\n")
-			preview := output
-			if len(lines) > BashPreviewLines {
-				preview = strings.Join(lines[:BashPreviewLines], "\n") +
-					fmt.Sprintf("\n... (%d more lines)", len(lines)-BashPreviewLines)
-			}
-			text = text.NewLine().Add(clicky.CodeBlock("", preview))
-		}
-		data = nil
-
-	case "CodexReasoning":
-		if reasoning, ok := t.Input["text"].(string); ok && reasoning != "" {
-			text = clicky.Text("").
-				Add(icons.Icon{Unicode: "💭", Iconify: "mdi:thought-bubble", Style: "muted"}).
-				Append(" ", "").Append(reasoning, "text-gray-500 italic")
-		}
-		data = nil
-
-	case "CodexMessage":
-		if msg, ok := t.Input["text"].(string); ok && msg != "" {
-			text = clicky.Text("").
-				Add(icons.Icon{Unicode: "🤖", Iconify: "mdi:robot", Style: "muted"}).
-				Append(" Assistant", "text-blue-600 font-medium").
-				NewLine().Append(msg, "text-gray-700")
-		}
-		data = nil
 
 	case "Edit":
 		oldStr, _ := t.Input["old_string"].(string)
@@ -351,7 +320,6 @@ func (e NoResultsError) Error() string {
 func toolIcon(tool string) icons.Icon {
 	m := map[string]icons.Icon{
 		"Bash":         {Unicode: "💻", Iconify: "codicon:terminal", Style: "muted"},
-		"CodexCommand": {Unicode: "💻", Iconify: "codicon:terminal", Style: "muted"},
 		"Read":         icons.File,
 		"Write":        {Unicode: "✏️", Iconify: "codicon:edit", Style: "muted"},
 		"Edit":         {Unicode: "✏️", Iconify: "codicon:edit", Style: "muted"},
@@ -373,7 +341,6 @@ func toolIcon(tool string) icons.Icon {
 func toolColor(tool string) string {
 	m := map[string]string{
 		"Bash":         "text-green-600 font-medium",
-		"CodexCommand": "text-green-600 font-medium",
 		"Read":         "text-blue-600 font-medium",
 		"Write":        "text-orange-600 font-medium",
 		"Edit":         "text-purple-600 font-medium",

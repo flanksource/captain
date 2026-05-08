@@ -35,8 +35,10 @@ func TestParseFromReader_CodexJSONL(t *testing.T) {
 	assert.Equal(t, claude.FormatCodexJSONL, result.Format)
 	assert.Nil(t, result.CLIOut)
 	require.NotEmpty(t, result.ToolUses)
-	assert.Equal(t, "CodexCommand", result.ToolUses[0].Tool)
+	assert.Equal(t, "Bash", result.ToolUses[0].Tool)
 	assert.Equal(t, "echo hello", result.ToolUses[0].Input["command"])
+	assert.Equal(t, "hello", result.ToolUses[0].Response)
+	assert.Equal(t, "codex", result.ToolUses[0].Source)
 }
 
 func TestParseFromReader_ClaudeStreamJSON(t *testing.T) {

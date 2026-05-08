@@ -46,7 +46,7 @@ func (t *BashTool) Pretty() api.Text {
 
 func (t *BashTool) Detail() api.Textable {
 	cmd := t.command()
-	if cmd == "" {
+	if cmd == "" && t.Response == "" {
 		return nil
 	}
 	lang := "bash"
@@ -54,7 +54,14 @@ func (t *BashTool) Detail() api.Textable {
 		lang = bash.InterpreterLanguage(interp)
 		cmd = bash.ExtractInterpreterBody(cmd)
 	}
-	return api.NewCode(cmd, lang)
+	if t.Response == "" {
+		return api.NewCode(cmd, lang)
+	}
+	out := api.Text{}
+	if cmd != "" {
+		out = out.Add(api.NewCode(cmd, lang)).NewLine()
+	}
+	return out.Add(api.NewCode(t.Response, ""))
 }
 
 func (t *BashTool) FilePath() string { return "" }

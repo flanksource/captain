@@ -3,13 +3,16 @@ package history
 import "time"
 
 type ToolUse struct {
-	Tool      string         `json:"tool,omitempty"`
-	Input     map[string]any `json:"input,omitempty"`
-	Timestamp *time.Time     `json:"timestamp,omitempty"`
-	CWD       string         `json:"cwd,omitempty"`
-	SessionID string         `json:"session_id,omitempty"`
-	ToolUseID string         `json:"tool_use_id,omitempty"`
-	Source    string         `json:"source,omitempty"` // "claude" or "codex"
+	Tool            string         `json:"tool,omitempty"`
+	Input           map[string]any `json:"input,omitempty"`
+	Timestamp       *time.Time     `json:"timestamp,omitempty"`
+	CWD             string         `json:"cwd,omitempty"`
+	SessionID       string         `json:"session_id,omitempty"`
+	ToolUseID       string         `json:"tool_use_id,omitempty"`
+	Source          string         `json:"source,omitempty"` // "claude" or "codex"
+	Model           string         `json:"model,omitempty"`
+	ReasoningEffort string         `json:"reasoning_effort,omitempty"`
+	Response        string         `json:"response,omitempty"`
 }
 
 type Filter struct {

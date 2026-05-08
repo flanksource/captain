@@ -122,7 +122,7 @@ func ExtractToolUses(sessionFile string) ([]ToolUse, error) {
 
 func FormatCommand(toolUse ToolUse) string {
 	switch toolUse.Tool {
-	case "Bash", "CodexCommand":
+	case "Bash":
 		if cmd, ok := toolUse.Input["command"].(string); ok {
 			return cmd
 		}

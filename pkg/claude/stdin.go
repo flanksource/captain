@@ -51,10 +51,17 @@ func DetectFormat(firstLine []byte) StreamFormat {
 		}
 	}
 
-	// Codex JSONL: has "type" with known event types
+	// Codex JSONL: has "type" with known event types. Two schemas exist
+	// across codex versions: the persisted rollout schema
+	// (session_meta/response_item/event_msg) and the newer live `codex exec
+	// --json` schema with dotted names (thread.started, turn.started,
+	// turn.completed, turn.failed, item.started, item.completed, item.delta).
 	if t, hasType := m["type"].(string); hasType {
 		switch t {
 		case "session_meta", "response_item", "event_msg":
+			return FormatCodexJSONL
+		case "thread.started", "turn.started", "turn.completed", "turn.failed",
+			"item.started", "item.completed", "item.delta":
 			return FormatCodexJSONL
 		}
 	}

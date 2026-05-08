@@ -11,6 +11,8 @@ type HistoryEntry struct {
 	ParentUUID string          `json:"parentUuid,omitempty"`
 	SessionID  string          `json:"sessionId"`
 	Version    string          `json:"version,omitempty"`
+	CWD        string          `json:"cwd,omitempty"`
+	GitBranch  string          `json:"gitBranch,omitempty"`
 	Message    Message         `json:"message"`
 	UUID       string          `json:"uuid"`
 	Timestamp  string          `json:"timestamp"`

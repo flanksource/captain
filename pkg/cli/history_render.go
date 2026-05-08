@@ -48,10 +48,84 @@ func renderLineByLine(tl []tools.Tool, compact bool) {
 			toolWidth = n
 		}
 	}
-	for _, t := range tl {
+
+	var prevKey sessionKey
+	for i, t := range tl {
+		key := keyForTool(t)
+		if i == 0 || key != prevKey {
+			printSessionHeader(t)
+			prevKey = key
+		}
 		e := toLineEntry(t, compact, w, toolWidth)
 		printLeft(e, toolWidth)
 	}
+}
+
+// sessionKey identifies a contiguous run of tool calls that share the same
+// session, source, and model. A change in any field triggers a fresh
+// session-start indicator in renderLineByLine.
+type sessionKey struct {
+	source    string
+	sessionID string
+	model     string
+	effort    string
+}
+
+func keyForTool(t tools.Tool) sessionKey {
+	base := t.Base()
+	model := ""
+	if len(base.Models) > 0 {
+		model = base.Models[0].Model
+	}
+	return sessionKey{
+		source:    base.Source,
+		sessionID: base.SessionID,
+		model:     model,
+		effort:    base.ReasoningEffort,
+	}
+}
+
+func printSessionHeader(t tools.Tool) {
+	base := t.Base()
+	source := base.Source
+	if source == "" {
+		source = "claude"
+	}
+	icon := "✨"
+	if source == "codex" {
+		icon = "🤖"
+	}
+
+	parts := []string{fmt.Sprintf("\x1b[1;36m%s %s\x1b[0m", icon, capitalize(source))}
+	if len(base.Models) > 0 && base.Models[0].Model != "" {
+		parts = append(parts, fmt.Sprintf("\x1b[35m%s\x1b[0m", base.Models[0].Model))
+	}
+	if base.ReasoningEffort != "" {
+		parts = append(parts, fmt.Sprintf("\x1b[33mreasoning=%s\x1b[0m", base.ReasoningEffort))
+	}
+	if base.SessionID != "" {
+		parts = append(parts, fmt.Sprintf("\x1b[90m%s\x1b[0m", shortSessionID(base.SessionID)))
+	}
+	if base.Timestamp != nil {
+		parts = append(parts, fmt.Sprintf("\x1b[90m%s\x1b[0m", base.Timestamp.Format("2006-01-02 15:04")))
+	}
+
+	fmt.Println()
+	fmt.Println("──", strings.Join(parts, "  "))
+}
+
+func shortSessionID(id string) string {
+	if len(id) > 8 {
+		return id[:8]
+	}
+	return id
+}
+
+func capitalize(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 func toLineEntry(t tools.Tool, compact bool, width, toolWidth int) lineEntry {

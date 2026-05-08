@@ -58,17 +58,7 @@ func parseFromReader(data []byte) (*stdinParseResult, error) {
 		if err != nil {
 			return nil, fmt.Errorf("parsing codex jsonl: %w", err)
 		}
-		toolUses := make([]claude.ToolUse, len(codexUses))
-		for i, cu := range codexUses {
-			toolUses[i] = claude.ToolUse{
-				Tool:      cu.Tool,
-				Input:     cu.Input,
-				Timestamp: cu.Timestamp,
-				CWD:       cu.CWD,
-				SessionID: cu.SessionID,
-				ToolUseID: cu.ToolUseID,
-			}
-		}
+		toolUses := codexToClaudeToolUses(codexUses)
 		return &stdinParseResult{Format: format, ToolUses: toolUses}, nil
 
 	case claude.FormatClaudeCLI:
@@ -166,4 +156,31 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return s[:max] + "..."
+}
+
+// codexToClaudeToolUses converts codex history.ToolUse records into the
+// claude.ToolUse shape used by the rendering pipeline. Source/model/effort and
+// the captured shell output (Response) are preserved so the same Claude tool
+// types (BashTool, AssistantTool, …) can render codex rows.
+func codexToClaudeToolUses(uses []history.ToolUse) []claude.ToolUse {
+	out := make([]claude.ToolUse, len(uses))
+	for i, cu := range uses {
+		source := cu.Source
+		if source == "" {
+			source = "codex"
+		}
+		out[i] = claude.ToolUse{
+			Tool:            cu.Tool,
+			Input:           cu.Input,
+			Timestamp:       cu.Timestamp,
+			CWD:             cu.CWD,
+			SessionID:       cu.SessionID,
+			ToolUseID:       cu.ToolUseID,
+			Source:          source,
+			Model:           cu.Model,
+			ReasoningEffort: cu.ReasoningEffort,
+			Response:        cu.Response,
+		}
+	}
+	return out
 }

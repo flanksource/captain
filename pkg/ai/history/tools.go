@@ -305,6 +305,5 @@ func AllTools() []Tool {
 		BashOutput{}, KillShell{}, WebSearch{},
 	}
 	tools = append(tools, McpTools...)
-	tools = append(tools, CodexTools...)
 	return tools
 }

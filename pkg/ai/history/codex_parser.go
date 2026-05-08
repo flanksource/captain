@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/flanksource/commons/logger"
 )
@@ -26,16 +27,104 @@ func ExtractCodexToolUses(sessionFile string) ([]ToolUse, error) {
 	return ExtractCodexToolUsesFromReader(file)
 }
 
+// CodexSessionInfo is the first-line summary of a codex rollout file:
+// session id, cwd, cli version, model provider, git branch, etc.
+type CodexSessionInfo struct {
+	ID              string
+	CWD             string
+	CLIVersion      string
+	ModelProvider   string
+	Originator      string
+	GitBranch       string
+	GitCommit       string
+	StartedAt       *time.Time
+	Model           string // from the first turn_context payload
+	ReasoningEffort string // "low", "medium", "high" — per turn_context
+}
+
+// ReadCodexSessionInfo parses just the leading `session_meta` event from a
+// codex rollout file. Returns nil if the file has no session_meta header.
+func ReadCodexSessionInfo(sessionFile string) (*CodexSessionInfo, error) {
+	file, err := os.Open(sessionFile)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = file.Close() }()
+
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
+	var info *CodexSessionInfo
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		event, err := ParseCodexLine(line)
+		if err != nil {
+			continue
+		}
+		switch event.Type {
+		case "session_meta":
+			if info != nil {
+				continue
+			}
+			info = &CodexSessionInfo{
+				ID:            event.Payload.ID,
+				CWD:           event.Payload.CWD,
+				CLIVersion:    event.Payload.CLIVersion,
+				ModelProvider: event.Payload.ModelProvider,
+				Originator:    event.Payload.Originator,
+				StartedAt:     event.Time(),
+			}
+			if event.Payload.Git != nil {
+				info.GitBranch = event.Payload.Git.Branch
+				info.GitCommit = event.Payload.Git.CommitHash
+			}
+		case "turn_context":
+			if info == nil {
+				info = &CodexSessionInfo{StartedAt: event.Time()}
+			}
+			if info.Model == "" && event.Payload.Model != "" {
+				info.Model = event.Payload.Model
+			}
+			if info.ReasoningEffort == "" && event.Payload.Effort != "" {
+				info.ReasoningEffort = event.Payload.Effort
+			}
+			if info.Model != "" && info.ReasoningEffort != "" {
+				return info, nil
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return info, err
+	}
+	return info, nil
+}
+
 func ExtractCodexToolUsesFromReader(r io.Reader) ([]ToolUse, error) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
 
 	var (
-		toolUses    []ToolUse
-		sessionCWD  string
-		sessionID   string
-		pendingCall = make(map[string]CodexEvent)
+		toolUses     []ToolUse
+		sessionCWD   string
+		sessionID    string
+		currentModel string
+		currentEff   string
+		pendingCall  = make(map[string]CodexEvent)
 	)
+
+	stamp := func(uses []ToolUse) []ToolUse {
+		for i := range uses {
+			if uses[i].Model == "" {
+				uses[i].Model = currentModel
+			}
+			if uses[i].ReasoningEffort == "" {
+				uses[i].ReasoningEffort = currentEff
+			}
+		}
+		return uses
+	}
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -54,16 +143,40 @@ func ExtractCodexToolUsesFromReader(r io.Reader) ([]ToolUse, error) {
 			sessionCWD = event.Payload.CWD
 			sessionID = event.Payload.ID
 
+		case "turn_context":
+			if event.Payload.Model != "" {
+				currentModel = event.Payload.Model
+			}
+			if event.Payload.Effort != "" {
+				currentEff = event.Payload.Effort
+			}
+
 		case "response_item":
-			toolUses = append(toolUses, extractResponseItem(event, pendingCall, sessionCWD, sessionID)...)
+			toolUses = append(toolUses, stamp(extractResponseItem(event, pendingCall, sessionCWD, sessionID))...)
 
 		case "event_msg":
-			toolUses = append(toolUses, extractEventMsg(event, sessionCWD, sessionID)...)
+			toolUses = append(toolUses, stamp(extractEventMsg(event, sessionCWD, sessionID))...)
+
+		// --- Newer dotted-name `codex exec --json` schema ---
+		case "thread.started":
+			if event.ThreadID != "" {
+				sessionID = event.ThreadID
+			}
+
+		case "item.completed":
+			toolUses = append(toolUses, stamp(extractLiveItemCompleted(event, sessionCWD, sessionID))...)
+
+		case "turn.failed", "error":
+			toolUses = append(toolUses, stamp(extractLiveError(event, sessionCWD, sessionID))...)
+
+			// turn.started, turn.completed, item.started, item.delta carry
+			// no tool-use information for our history view; intentionally
+			// dropped to keep parity with the legacy schema.
 		}
 	}
 
 	for _, callEvent := range pendingCall {
-		toolUses = append(toolUses, buildToolUse(callEvent, CodexEvent{}, sessionCWD, sessionID))
+		toolUses = append(toolUses, stamp([]ToolUse{buildToolUse(callEvent, CodexEvent{}, sessionCWD, sessionID)})...)
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -87,8 +200,12 @@ func extractResponseItem(event CodexEvent, pendingCall map[string]CodexEvent, cw
 		return []ToolUse{buildToolUse(callEvent, event, cwd, sessionID)}
 
 	case "reasoning":
+		var summaries []CodexReasoningSummary
+		if len(event.Payload.Summary) > 0 {
+			_ = json.Unmarshal(event.Payload.Summary, &summaries)
+		}
 		var text string
-		for _, s := range event.Payload.Summary {
+		for _, s := range summaries {
 			if s.Text != "" {
 				text = s.Text
 			}
@@ -97,7 +214,7 @@ func extractResponseItem(event CodexEvent, pendingCall map[string]CodexEvent, cw
 			return nil
 		}
 		return []ToolUse{{
-			Tool:      "CodexReasoning",
+			Tool:      "Reasoning",
 			Input:     map[string]any{"text": text},
 			Timestamp: event.Time(),
 			CWD:       cwd,
@@ -119,7 +236,7 @@ func extractResponseItem(event CodexEvent, pendingCall map[string]CodexEvent, cw
 			return nil
 		}
 		return []ToolUse{{
-			Tool:      "CodexMessage",
+			Tool:      "Assistant",
 			Input:     map[string]any{"text": text},
 			Timestamp: event.Time(),
 			CWD:       cwd,
@@ -130,6 +247,81 @@ func extractResponseItem(event CodexEvent, pendingCall map[string]CodexEvent, cw
 	return nil
 }
 
+// extractLiveItemCompleted handles `item.completed` events from the newer
+// `codex exec --json` schema. The item carries either a top-level Text field
+// or a Content array shaped like response_item.message.
+func extractLiveItemCompleted(event CodexEvent, cwd, sessionID string) []ToolUse {
+	if event.Item == nil {
+		return nil
+	}
+	text := event.Item.Text
+	if text == "" {
+		for _, c := range event.Item.Content {
+			if c.Type == "output_text" && c.Text != "" {
+				text += c.Text
+			}
+		}
+	}
+	if text == "" {
+		return nil
+	}
+	return []ToolUse{{
+		Tool:      "Assistant",
+		Input:     map[string]any{"text": text},
+		Timestamp: event.Time(),
+		CWD:       cwd,
+		SessionID: sessionID,
+		Source:    "codex",
+	}}
+}
+
+// extractLiveError surfaces a `turn.failed` or top-level `error` event as an
+// ApiError tool use, peeling one layer of stringified-JSON nesting that
+// codex sometimes uses when relaying provider errors back to the user.
+func extractLiveError(event CodexEvent, cwd, sessionID string) []ToolUse {
+	var msg string
+	if event.Error != nil {
+		msg = event.Error.Message
+	}
+	if msg == "" {
+		msg = event.Message
+	}
+	msg = unwrapCodexErrorMessage(msg)
+	if msg == "" {
+		return nil
+	}
+	return []ToolUse{{
+		Tool:      "ApiError",
+		Input:     map[string]any{"error": msg},
+		Timestamp: event.Time(),
+		CWD:       cwd,
+		SessionID: sessionID,
+		Source:    "codex",
+	}}
+}
+
+func unwrapCodexErrorMessage(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || !strings.HasPrefix(raw, "{") {
+		return raw
+	}
+	var inner CodexErrorBlock
+	wrapper := struct {
+		Error   *CodexErrorBlock `json:"error"`
+		Message string           `json:"message"`
+	}{Error: &inner}
+	if err := json.Unmarshal([]byte(raw), &wrapper); err != nil {
+		return raw
+	}
+	if wrapper.Error != nil && wrapper.Error.Message != "" {
+		return wrapper.Error.Message
+	}
+	if wrapper.Message != "" {
+		return wrapper.Message
+	}
+	return raw
+}
+
 func extractEventMsg(event CodexEvent, cwd, sessionID string) []ToolUse {
 	switch event.Payload.Type {
 	case "agent_reasoning":
@@ -137,7 +329,7 @@ func extractEventMsg(event CodexEvent, cwd, sessionID string) []ToolUse {
 			return nil
 		}
 		return []ToolUse{{
-			Tool:      "CodexReasoning",
+			Tool:      "Reasoning",
 			Input:     map[string]any{"text": event.Payload.Text},
 			Timestamp: event.Time(),
 			CWD:       cwd,
@@ -150,7 +342,7 @@ func extractEventMsg(event CodexEvent, cwd, sessionID string) []ToolUse {
 			return nil
 		}
 		return []ToolUse{{
-			Tool:      "CodexMessage",
+			Tool:      "Assistant",
 			Input:     map[string]any{"text": event.Payload.Message},
 			Timestamp: event.Time(),
 			CWD:       cwd,
@@ -165,21 +357,23 @@ func buildToolUse(callEvent, outputEvent CodexEvent, cwd, sessionID string) Tool
 	input := map[string]any{
 		"command": extractCommand(callEvent.Payload.Arguments),
 	}
+	var response string
 	if outputEvent.Payload.Output != "" {
-		input["output"] = extractCommandOutput(outputEvent.Payload.Output)
+		response = extractCommandOutput(outputEvent.Payload.Output)
 	}
 	ts := callEvent.Time()
 	if ts == nil {
 		ts = outputEvent.Time()
 	}
 	return ToolUse{
-		Tool:      "CodexCommand",
+		Tool:      "Bash",
 		Input:     input,
 		Timestamp: ts,
 		CWD:       cwd,
 		SessionID: sessionID,
 		ToolUseID: callEvent.Payload.CallID,
 		Source:    "codex",
+		Response:  response,
 	}
 }
 

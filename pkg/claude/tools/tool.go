@@ -124,19 +124,21 @@ func (m Models) Pretty() api.Text {
 }
 
 type BaseTool struct {
-	RawTool      string          `json:"tool,omitempty"`
-	Input        map[string]any  `json:"input,omitempty"`
-	Timestamp    *time.Time      `json:"timestamp,omitempty"`
-	CWD          string          `json:"cwd,omitempty"`
-	SessionID    string          `json:"sessionId,omitempty"`
-	ToolUseID    string          `json:"toolUseId,omitempty"`
-	ProjectRoot  string          `json:"projectRoot,omitempty"`
-	Denied       bool            `json:"denied,omitempty"`
-	DeniedReason string          `json:"deniedReason,omitempty"`
-	IsError      bool            `json:"isError,omitempty"`
-	Response     string          `json:"response,omitempty"`
-	Models       Models          `json:"models,omitempty"`
-	RawEntry     json.RawMessage `json:"-"`
+	RawTool         string          `json:"tool,omitempty"`
+	Input           map[string]any  `json:"input,omitempty"`
+	Timestamp       *time.Time      `json:"timestamp,omitempty"`
+	CWD             string          `json:"cwd,omitempty"`
+	SessionID       string          `json:"sessionId,omitempty"`
+	ToolUseID       string          `json:"toolUseId,omitempty"`
+	ProjectRoot     string          `json:"projectRoot,omitempty"`
+	Denied          bool            `json:"denied,omitempty"`
+	DeniedReason    string          `json:"deniedReason,omitempty"`
+	IsError         bool            `json:"isError,omitempty"`
+	Response        string          `json:"response,omitempty"`
+	Models          Models          `json:"models,omitempty"`
+	Source          string          `json:"source,omitempty"`
+	ReasoningEffort string          `json:"reasoningEffort,omitempty"`
+	RawEntry        json.RawMessage `json:"-"`
 }
 
 func (b *BaseTool) Base() *BaseTool { return b }
@@ -231,6 +233,10 @@ func NewTool(base BaseTool) Tool {
 		return &ExitPlanTool{BaseTool: base}
 	case "User":
 		return &UserTool{BaseTool: base}
+	case "Assistant":
+		return &AssistantTool{BaseTool: base}
+	case "Reasoning":
+		return &ReasoningTool{BaseTool: base}
 	case "Skill":
 		return &SkillTool{BaseTool: base}
 	case "SessionInit":

@@ -98,6 +98,9 @@ type streamJSONLine struct {
 	// Session-file fields
 	SessionIDCamel string `json:"sessionId,omitempty"`
 	UUID           string `json:"uuid,omitempty"`
+	Version        string `json:"version,omitempty"`
+	CWD            string `json:"cwd,omitempty"`
+	GitBranch      string `json:"gitBranch,omitempty"`
 }
 
 func (sj streamJSONLine) sessionID() string {
@@ -141,6 +144,9 @@ func dispatchEvent(sj streamJSONLine, raw []byte, lineNo int) []HistoryEntry {
 			SessionID: sj.sessionID(),
 			UUID:      sj.UUID,
 			Timestamp: sj.timestamp(),
+			Version:   sj.Version,
+			CWD:       sj.CWD,
+			GitBranch: sj.GitBranch,
 			Message:   msg,
 		}}
 		if errEntry, ok := apiErrorFromAssistantLine(sj, raw); ok {
