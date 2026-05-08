@@ -12,6 +12,7 @@ import (
 	"github.com/flanksource/captain/pkg/ai/provider"
 	"github.com/flanksource/captain/pkg/captainconfig"
 	"github.com/flanksource/captain/pkg/claude"
+	"github.com/flanksource/captain/pkg/claude/tools"
 	"github.com/flanksource/commons/logger"
 )
 
@@ -215,6 +216,7 @@ func runStreaming(ctx context.Context, sp ai.StreamingProvider, req ai.Request) 
 		backend = string(sp.GetBackend())
 		model   = sp.GetModel()
 	)
+	renderer := newLineRenderer(os.Stderr, 8)
 	loop, err := ai.RunUntil(ctx, ai.LoopOptions{
 		Provider:      sp,
 		MaxIterations: 1,
@@ -228,7 +230,7 @@ func runStreaming(ctx context.Context, sp ai.StreamingProvider, req ai.Request) 
 			if ev.Model != "" {
 				model = ev.Model
 			}
-			renderEvent(os.Stderr, ev)
+			renderEvent(os.Stderr, renderer, ev)
 			if ev.Kind == ai.EventText {
 				text += ev.Text
 			}
@@ -259,11 +261,11 @@ func runStreaming(ctx context.Context, sp ai.StreamingProvider, req ai.Request) 
 
 // renderEvent writes a human-readable representation of an ai.Event to w.
 // When the event carries a claude.HistoryEntry in Raw, route through the
-// shared history renderer so live `captain ai prompt` output matches
-// `claude … | captain` for the same stream.
-func renderEvent(w *os.File, ev ai.Event) {
+// shared lineRenderer so live `captain ai prompt` output matches
+// `captain history` for the same tools (including session-start banners).
+func renderEvent(w *os.File, renderer *lineRenderer, ev ai.Event) {
 	if entry, ok := ev.Raw.(claude.HistoryEntry); ok {
-		if renderClaudeEntry(w, ev, entry) {
+		if renderClaudeEntry(renderer, ev, entry) {
 			return
 		}
 	}
@@ -278,12 +280,7 @@ func renderEvent(w *os.File, ev ai.Event) {
 	case ai.EventToolUse:
 		fmt.Fprintf(w, "\n[tool] %s %s\n", ev.Tool, summariseInput(ev.Input))
 	case ai.EventResult:
-		if ev.Success {
-			fmt.Fprintf(w, "\n[result] tokens=%d/%d cost=$%.4f\n",
-				safeUsageInput(ev.Usage), safeUsageOutput(ev.Usage), ev.CostUSD)
-		} else {
-			fmt.Fprintf(w, "\n[result] FAIL: %s\n", ev.Error)
-		}
+		renderResultEvent(renderer, ev)
 	case ai.EventError:
 		fmt.Fprintf(w, "\n[error] %s\n", ev.Error)
 		logger.Errorf("%s", ev.Error)
@@ -294,39 +291,57 @@ func renderEvent(w *os.File, ev ai.Event) {
 	}
 }
 
-// renderClaudeEntry tries to render a claude HistoryEntry using the shared
-// pretty-printers (ExtractToolsWithTokens + toLineEntry). Returns false when
-// the entry has no tool uses to render so callers fall back to the generic
-// switch (text/thinking events).
-func renderClaudeEntry(w *os.File, ev ai.Event, entry claude.HistoryEntry) bool {
-	if ev.Kind != ai.EventToolUse {
+// renderResultEvent synthesizes a Result tools.Tool from the ai.Event so
+// streaming output renders end-of-session result lines with the same
+// "🏁 result turns=N $X 1.2s" formatting as `captain history`.
+func renderResultEvent(renderer *lineRenderer, ev ai.Event) {
+	input := map[string]any{}
+	for k, v := range ev.Input {
+		input[k] = v
+	}
+	if ev.CostUSD > 0 {
+		if _, ok := input["total_cost_usd"]; !ok {
+			input["total_cost_usd"] = ev.CostUSD
+		}
+	}
+	if !ev.Success {
+		input["is_error"] = true
+		if _, ok := input["result"]; !ok && ev.Error != "" {
+			input["result"] = ev.Error
+		}
+	}
+	base := tools.BaseTool{
+		RawTool:   "Result",
+		Input:     input,
+		Timestamp: nil,
+	}
+	if ev.Usage != nil && (ev.Usage.InputTokens > 0 || ev.Usage.OutputTokens > 0) {
+		base.Models = tools.Models{{
+			Model:        ev.Model,
+			InputTokens:  ev.Usage.InputTokens,
+			OutputTokens: ev.Usage.OutputTokens,
+		}}
+	}
+	renderer.Render(tools.NewTool(base), true)
+}
+
+// renderClaudeEntry feeds a claude HistoryEntry through the shared lineRenderer
+// so live streaming output uses the same row format and session-start banners
+// as `captain history`. Both real tool uses and synthetic Result/SessionInit
+// entries flow through the same rendering path. Returns false when there is
+// nothing renderable so the caller can fall back to generic event handling.
+func renderClaudeEntry(renderer *lineRenderer, ev ai.Event, entry claude.HistoryEntry) bool {
+	switch ev.Kind {
+	case ai.EventToolUse, ai.EventResult, ai.EventSystem:
+	default:
 		return false
 	}
 	tl := claude.ExtractToolsWithTokens([]claude.HistoryEntry{entry})
 	if len(tl) == 0 {
 		return false
 	}
-	toolWidth := 8
 	for _, t := range tl {
-		if n := len(t.Name()); n > toolWidth {
-			toolWidth = n
-		}
-	}
-	for _, t := range tl {
-		e := toLineEntry(t, true, termWidth(), toolWidth)
-		timeStr := e.Time
-		if timeStr != "" {
-			timeStr += " "
-		}
-		marker := ""
-		if e.Denied {
-			marker = "✗ "
-		}
-		if e.Usage != "" {
-			fmt.Fprintf(w, "%s%s%s %s %s\n", timeStr, marker, padRight(e.Tool, toolWidth), e.Command, e.Usage)
-		} else {
-			fmt.Fprintf(w, "%s%s%s %s\n", timeStr, marker, padRight(e.Tool, toolWidth), e.Command)
-		}
+		renderer.Render(t, true)
 	}
 	return true
 }
@@ -348,20 +363,6 @@ func truncForStderr(s string, max int) string {
 		return s
 	}
 	return s[:max] + "…"
-}
-
-func safeUsageInput(u *ai.Usage) int {
-	if u == nil {
-		return 0
-	}
-	return u.InputTokens
-}
-
-func safeUsageOutput(u *ai.Usage) int {
-	if u == nil {
-		return 0
-	}
-	return u.OutputTokens
 }
 
 type AITestOptions struct {

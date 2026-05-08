@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -40,24 +41,56 @@ func termWidth() int {
 	return w
 }
 
+// lineRenderer prints tool history rows to an io.Writer, emitting a synthetic
+// session-start banner whenever the (source, session, model, effort) key
+// changes. Both `captain history` (batched) and `captain ai prompt`
+// (streaming) drive the same renderer so output stays consistent.
+type lineRenderer struct {
+	w         io.Writer
+	width     int
+	toolWidth int
+	prevKey   sessionKey
+	hasPrev   bool
+}
+
+func newLineRenderer(w io.Writer, toolWidth int) *lineRenderer {
+	if toolWidth < 8 {
+		toolWidth = 8
+	}
+	return &lineRenderer{w: w, width: termWidth(), toolWidth: toolWidth}
+}
+
+// Render emits a single tool row, preceded by a session header if the session
+// boundary changed compared with the previous call.
+func (r *lineRenderer) Render(t tools.Tool, compact bool) {
+	if n := len(t.Name()); n > r.toolWidth {
+		r.toolWidth = n
+	}
+	key := keyForTool(t)
+	if !r.hasPrev || key != r.prevKey {
+		r.printHeader(t)
+		r.prevKey = key
+		r.hasPrev = true
+	}
+	e := toLineEntry(t, compact, r.width, r.toolWidth)
+	printLeftTo(r.w, e, r.toolWidth)
+}
+
+func (r *lineRenderer) printHeader(t tools.Tool) {
+	fmt.Fprintln(r.w)
+	fmt.Fprintln(r.w, "──", sessionHeaderText(t))
+}
+
 func renderLineByLine(tl []tools.Tool, compact bool) {
-	w := termWidth()
-	toolWidth := 8
+	maxName := 8
 	for _, t := range tl {
-		if n := len(t.Name()); n > toolWidth {
-			toolWidth = n
+		if n := len(t.Name()); n > maxName {
+			maxName = n
 		}
 	}
-
-	var prevKey sessionKey
-	for i, t := range tl {
-		key := keyForTool(t)
-		if i == 0 || key != prevKey {
-			printSessionHeader(t)
-			prevKey = key
-		}
-		e := toLineEntry(t, compact, w, toolWidth)
-		printLeft(e, toolWidth)
+	r := newLineRenderer(os.Stdout, maxName)
+	for _, t := range tl {
+		r.Render(t, compact)
 	}
 }
 
@@ -85,7 +118,9 @@ func keyForTool(t tools.Tool) sessionKey {
 	}
 }
 
-func printSessionHeader(t tools.Tool) {
+// sessionHeaderText composes the colorized "── ✨ Claude  model  reasoning=…  id  time"
+// banner shown above a contiguous run of rows that share a session.
+func sessionHeaderText(t tools.Tool) string {
 	base := t.Base()
 	source := base.Source
 	if source == "" {
@@ -109,9 +144,7 @@ func printSessionHeader(t tools.Tool) {
 	if base.Timestamp != nil {
 		parts = append(parts, fmt.Sprintf("\x1b[90m%s\x1b[0m", base.Timestamp.Format("2006-01-02 15:04")))
 	}
-
-	fmt.Println()
-	fmt.Println("──", strings.Join(parts, "  "))
+	return strings.Join(parts, "  ")
 }
 
 func shortSessionID(id string) string {
@@ -157,6 +190,10 @@ func toLineEntry(t tools.Tool, compact bool, width, toolWidth int) lineEntry {
 }
 
 func printLeft(e lineEntry, toolWidth int) {
+	printLeftTo(os.Stdout, e, toolWidth)
+}
+
+func printLeftTo(w io.Writer, e lineEntry, toolWidth int) {
 	timeStr := e.Time
 	if timeStr != "" {
 		timeStr += " "
@@ -166,9 +203,9 @@ func printLeft(e lineEntry, toolWidth int) {
 		marker = "✗ "
 	}
 	if e.Usage != "" {
-		fmt.Printf("%s%s%s %s %s\n", timeStr, marker, padRight(e.Tool, toolWidth), e.Command, e.Usage)
+		fmt.Fprintf(w, "%s%s%s %s %s\n", timeStr, marker, padRight(e.Tool, toolWidth), e.Command, e.Usage)
 	} else {
-		fmt.Printf("%s%s%s %s\n", timeStr, marker, padRight(e.Tool, toolWidth), e.Command)
+		fmt.Fprintf(w, "%s%s%s %s\n", timeStr, marker, padRight(e.Tool, toolWidth), e.Command)
 	}
 }
 

@@ -29,6 +29,7 @@ type HistoryOptions struct {
 	All        bool      `flag:"all" help:"Search all projects, not just current directory" short:"a"`
 	Claude     bool      `flag:"claude" help:"Show only Claude history"`
 	Codex      bool      `flag:"codex" help:"Show only Codex history"`
+	Last       bool      `flag:"last" help:"Show only the most-recent session"`
 	Short      bool      `flag:"short" help:"Compact output without diffs and code blocks" short:"S"`
 	Compact    bool      `flag:"compact" help:"Single line per entry" short:"C"`
 	Summary    bool      `flag:"summary" help:"Show aggregate summary instead of individual tool uses"`
@@ -71,7 +72,7 @@ func RunHistory(opts HistoryOptions) (any, error) {
 		Since: &opts.Since,
 	}
 
-	if len(opts.Categories) == 0 {
+	if len(opts.Categories) == 0 && !opts.Last {
 		filter.Limit = opts.Limit
 	}
 
@@ -129,10 +130,32 @@ func RunHistory(opts HistoryOptions) (any, error) {
 		tl = claude.ToolUsesToTools(allToolUses)
 	}
 
+	if opts.Last {
+		tl = lastSessionTools(tl)
+		// --last means "the whole most-recent session" — don't let the row
+		// limit clip the session in the downstream filter pass.
+		opts.Limit = 0
+	}
+
 	if opts.All {
 		return runHistoryAll(tl, opts, classifier, costs)
 	}
 	return runHistorySingle(tl, opts, classifier, costs)
+}
+
+// lastSessionTools returns the trailing run of tools that share a sessionKey
+// with the final tool. The input is expected to be sorted oldest-first; the
+// result preserves that order.
+func lastSessionTools(tl []tools.Tool) []tools.Tool {
+	if len(tl) == 0 {
+		return tl
+	}
+	last := keyForTool(tl[len(tl)-1])
+	start := len(tl) - 1
+	for start > 0 && keyForTool(tl[start-1]) == last {
+		start--
+	}
+	return tl[start:]
 }
 
 // collectCodexHistory loads codex sessions and returns their tool uses
