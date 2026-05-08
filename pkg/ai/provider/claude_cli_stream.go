@@ -13,6 +13,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/claude"
+	"github.com/flanksource/commons/logger"
 )
 
 // ExecuteStream spawns `claude -p ... --output-format stream-json` and
@@ -36,6 +37,8 @@ func (c *ClaudeCLI) ExecuteStream(ctx context.Context, req ai.Request) (<-chan a
 
 	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Env = clearNestingEnv(os.Environ())
+
+	logger.Debugf("[claude-cli] exec: claude %s", strings.Join(redactClaudeArgs(args), " "))
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
@@ -91,10 +94,13 @@ func (c *ClaudeCLI) ExecuteStream(ctx context.Context, req ai.Request) (<-chan a
 
 		<-stderrDone
 		waitErr := cmd.Wait()
+		stderrMu.Lock()
+		stderrText := stderrBuf.String()
+		stderrMu.Unlock()
 		if waitErr != nil {
-			stderrMu.Lock()
-			stderrText := stderrBuf.String()
-			stderrMu.Unlock()
+			if stderrText != "" {
+				logger.Debugf("[claude-cli stderr]\n%s", truncate(stderrText, 4096))
+			}
 			select {
 			case events <- ai.Event{
 				Kind:  ai.EventError,
@@ -102,6 +108,8 @@ func (c *ClaudeCLI) ExecuteStream(ctx context.Context, req ai.Request) (<-chan a
 			}:
 			case <-ctx.Done():
 			}
+		} else if stderrText != "" && logger.IsTraceEnabled() {
+			logger.Tracef("[claude-cli stderr]\n%s", truncate(stderrText, 4096))
 		}
 	}()
 
@@ -229,6 +237,7 @@ func mapHistoryEntry(entry claude.HistoryEntry, fallbackModel string) []ai.Event
 	var out []ai.Event
 	for _, block := range entry.Message.Content {
 		if ev, ok := mapContentBlock(block, entry, model); ok {
+			ev.Raw = entry
 			out = append(out, ev)
 		}
 	}
@@ -419,4 +428,20 @@ func finaliseCoalescedResponse(model, text string, usage ai.Usage, lastResult *a
 		}
 	}
 	return resp, nil
+}
+
+// redactClaudeArgs returns a copy of args with the trailing prompt truncated so
+// debug logs stay readable. The prompt is the only positional argument and
+// always sits at the end of the argv built by buildClaudeStreamArgs.
+func redactClaudeArgs(args []string) []string {
+	if len(args) == 0 {
+		return args
+	}
+	out := make([]string, len(args))
+	copy(out, args)
+	last := len(out) - 1
+	if !strings.HasPrefix(out[last], "-") {
+		out[last] = truncate(out[last], 120)
+	}
+	return out
 }

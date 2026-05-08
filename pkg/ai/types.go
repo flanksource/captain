@@ -18,11 +18,12 @@ type Request struct {
 	// (currently claude_cli). Zero values are equivalent to "let the
 	// provider/CLI use its default" so existing buffered Execute callers
 	// stay byte-identical.
-	SessionID      string // resume an existing session (claude --session-id)
-	PermissionMode string // claude --permission-mode (e.g. "acceptEdits")
-	StrictMCP      bool   // claude --strict-mcp-config
-	Verbose        bool   // claude --verbose (required for stream-json)
-	MaxTurns       int    // claude --max-turns (0 = omit, let CLI default)
+	SessionID       string // resume an existing session (claude --session-id)
+	PermissionMode  string // claude --permission-mode (e.g. "acceptEdits")
+	StrictMCP       bool   // claude --strict-mcp-config
+	Verbose         bool   // claude --verbose (required for stream-json)
+	MaxTurns        int    // claude --max-turns (0 = omit, let CLI default)
+	ReasoningEffort string // codex -c model_reasoning_effort=... ("low" | "medium" | "high"); other providers ignore
 
 	// Safety / sandbox knobs. Zero values mean "use provider/CLI default".
 	// Each provider translates what it understands; unknowns are ignored or
@@ -85,6 +86,11 @@ type Event struct {
 	SessionID string         // when Kind == EventSystem
 	Model     string
 	Error     string // when Kind == EventError
+
+	// Raw carries the backend-native event (e.g. claude.HistoryEntry for the
+	// claude_cli stream) so renderers can use the rich pretty-printers in
+	// pkg/claude/tools instead of reformatting from Tool/Input.
+	Raw any
 }
 
 type Cost struct {

@@ -25,7 +25,7 @@ func (c *cachingProvider) Execute(ctx context.Context, req ai.Request) (*ai.Resp
 
 	entry, err := c.cache.Get(req.Prompt, c.provider.GetModel())
 	if err == nil && entry != nil && entry.Error == "" {
-		logger.Infof("[%s/%s] cache hit", c.provider.GetBackend(), c.provider.GetModel())
+		logger.Debugf("[%s/%s] cache hit", c.provider.GetBackend(), c.provider.GetModel())
 		return &ai.Response{
 			Text:     entry.Response,
 			Model:    entry.Model,

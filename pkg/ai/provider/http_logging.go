@@ -46,7 +46,7 @@ func (t *loggingRoundTripper) RoundTrip(req *http.Request) (*http.Response, erro
 	elapsed := time.Since(start)
 
 	if err != nil {
-		logger.Debugf("%v", clicky.Text("").
+		logger.Warnf("%v", clicky.Text("").
 			Add(icons.Error).
 			Append(fmt.Sprintf(" %s %s", req.Method, req.URL), "text-red-600").
 			Append(fmt.Sprintf(" failed after %v: %v", elapsed, err), "text-red-500"))

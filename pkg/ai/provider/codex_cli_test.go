@@ -21,8 +21,50 @@ func TestBuildCodexExecArgs_BasicShape(t *testing.T) {
 			t.Errorf("args missing %q\n got: %s", want, have)
 		}
 	}
+	if strings.Contains(have, "model_reasoning_effort") {
+		t.Errorf("non-default model should not set reasoning effort\n got: %s", have)
+	}
 	if args[len(args)-1] != "hello" {
 		t.Errorf("last arg = %q, want prompt", args[len(args)-1])
+	}
+}
+
+func TestBuildCodexExecArgs_ReasoningEffortOptIn(t *testing.T) {
+	args, err := buildCodexExecArgs("o3", ai.Request{Prompt: "hi", ReasoningEffort: "high"})
+	if err != nil {
+		t.Fatalf("buildCodexExecArgs: %v", err)
+	}
+	have := strings.Join(args, " ")
+	if !strings.Contains(have, `model_reasoning_effort="high"`) {
+		t.Errorf("expected reasoning_effort=high when set on Request\n got: %s", have)
+	}
+}
+
+func TestBuildCodexExecArgs_NoReasoningEffortByDefault(t *testing.T) {
+	args, err := buildCodexExecArgs("", ai.Request{Prompt: "hi"})
+	if err != nil {
+		t.Fatalf("buildCodexExecArgs: %v", err)
+	}
+	have := strings.Join(args, " ")
+	if strings.Contains(have, "model_reasoning_effort") {
+		t.Errorf("captain should not auto-set reasoning_effort\n got: %s", have)
+	}
+	if strings.Contains(have, "--model") {
+		t.Errorf("empty model should be passed through to codex (no --model flag)\n got: %s", have)
+	}
+}
+
+func TestNewCodexCLI_DefaultModel(t *testing.T) {
+	c := NewCodexCLI("")
+	if got := c.GetModel(); got != CodexCLIDefaultModel {
+		t.Errorf("default model = %q, want %q", got, CodexCLIDefaultModel)
+	}
+}
+
+func TestNewClaudeCLI_DefaultModel(t *testing.T) {
+	c := NewClaudeCLI("")
+	if got := c.GetModel(); got != ClaudeCLIDefaultModel {
+		t.Errorf("default model = %q, want %q", got, ClaudeCLIDefaultModel)
 	}
 }
 
@@ -164,6 +206,105 @@ func TestMapCodexEvent(t *testing.T) {
 	}
 	if _, ok := mapCodexEvent(`not json`, "m"); ok {
 		t.Errorf("non-json should be dropped")
+	}
+}
+
+func TestMapCodexEvent_DottedSchema(t *testing.T) {
+	tests := []struct {
+		name      string
+		line      string
+		want      ai.EventKind
+		drop      bool
+		wantField func(t *testing.T, ev ai.Event)
+	}{
+		{
+			name: "thread.started carries thread_id as session id",
+			line: `{"type":"thread.started","thread_id":"019e0365-dc2a-7ad0-a5a8-78936481a928"}`,
+			want: ai.EventSystem,
+			wantField: func(t *testing.T, ev ai.Event) {
+				if ev.SessionID != "019e0365-dc2a-7ad0-a5a8-78936481a928" {
+					t.Errorf("SessionID = %q", ev.SessionID)
+				}
+				if ev.Tool != "SessionInit" {
+					t.Errorf("Tool = %q", ev.Tool)
+				}
+			},
+		},
+		{
+			name: "turn.started is dropped as heartbeat",
+			line: `{"type":"turn.started"}`,
+			drop: true,
+		},
+		{
+			name: "top-level error with stringified payload is unwrapped",
+			line: `{"type":"error","message":"{\"type\":\"error\",\"status\":400,\"error\":{\"type\":\"invalid_request_error\",\"message\":\"The 'gpt-5.5-codex' model is not supported when using Codex with a ChatGPT account.\"}}"}`,
+			want: ai.EventError,
+			wantField: func(t *testing.T, ev ai.Event) {
+				want := "The 'gpt-5.5-codex' model is not supported when using Codex with a ChatGPT account."
+				if ev.Error != want {
+					t.Errorf("Error = %q\n want %q", ev.Error, want)
+				}
+			},
+		},
+		{
+			name: "turn.failed surfaces nested error.message",
+			line: `{"type":"turn.failed","error":{"message":"{\"type\":\"error\",\"status\":400,\"error\":{\"type\":\"invalid_request_error\",\"message\":\"The 'gpt-5.5-codex' model is not supported when using Codex with a ChatGPT account.\"}}"}}`,
+			want: ai.EventError,
+			wantField: func(t *testing.T, ev ai.Event) {
+				want := "The 'gpt-5.5-codex' model is not supported when using Codex with a ChatGPT account."
+				if ev.Error != want {
+					t.Errorf("Error = %q\n want %q", ev.Error, want)
+				}
+			},
+		},
+		{
+			name: "item.completed surfaces text",
+			line: `{"type":"item.completed","item":{"type":"message","text":"hello"}}`,
+			want: ai.EventText,
+			wantField: func(t *testing.T, ev ai.Event) {
+				if ev.Text != "hello" {
+					t.Errorf("Text = %q", ev.Text)
+				}
+			},
+		},
+		{
+			name: "item.started is dropped (streaming partial)",
+			line: `{"type":"item.started","item":{"type":"message"}}`,
+			drop: true,
+		},
+		{
+			name: "turn.completed carries usage",
+			line: `{"type":"turn.completed","usage":{"input_tokens":100,"output_tokens":42}}`,
+			want: ai.EventResult,
+			wantField: func(t *testing.T, ev ai.Event) {
+				if ev.Usage == nil || ev.Usage.InputTokens != 100 || ev.Usage.OutputTokens != 42 {
+					t.Errorf("Usage = %+v", ev.Usage)
+				}
+				if !ev.Success {
+					t.Error("expected Success=true")
+				}
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ev, ok := mapCodexEvent(tc.line, "gpt-5")
+			if tc.drop {
+				if ok {
+					t.Fatalf("expected drop, got event %+v", ev)
+				}
+				return
+			}
+			if !ok {
+				t.Fatalf("mapCodexEvent dropped line: %s", tc.line)
+			}
+			if ev.Kind != tc.want {
+				t.Errorf("kind = %q, want %q", ev.Kind, tc.want)
+			}
+			if tc.wantField != nil {
+				tc.wantField(t, ev)
+			}
+		})
 	}
 }
 

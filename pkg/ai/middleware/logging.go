@@ -38,7 +38,7 @@ func (l *loggingProvider) Execute(ctx context.Context, req ai.Request) (*ai.Resp
 		return resp, err
 	}
 
-	logger.Infof("%v", clicky.Text("").
+	logger.Debugf("%v", clicky.Text("").
 		Add(icons.Check).
 		Append(fmt.Sprintf(" %s/%s", l.provider.GetBackend(), l.provider.GetModel()), "text-green-600 font-medium").
 		Append(fmt.Sprintf(" %v", duration.Round(time.Millisecond)), "text-gray-500").
@@ -53,6 +53,26 @@ func (l *loggingProvider) Execute(ctx context.Context, req ai.Request) (*ai.Resp
 	}
 
 	return resp, nil
+}
+
+// ExecuteStream forwards to the inner provider when it implements
+// ai.StreamingProvider. The startup line is logged here so callers see the
+// dispatch even when they bypass Execute. The success/failure summary is
+// emitted by whoever drains the channel (Execute via CoalesceStream, or the
+// CLI via runStreaming).
+func (l *loggingProvider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai.Event, error) {
+	streamer, ok := l.provider.(ai.StreamingProvider)
+	if !ok {
+		return nil, fmt.Errorf("provider %s/%s does not support streaming", l.provider.GetBackend(), l.provider.GetModel())
+	}
+
+	logger.Debugf("%v", clicky.Text("").
+		Add(icons.AI).
+		Append(fmt.Sprintf(" %s/%s (stream)", l.provider.GetBackend(), l.provider.GetModel()), "text-purple-600 font-medium").
+		NewLine().
+		Append(req.Prompt, "text-gray-600 max-w-[100ch]"))
+
+	return streamer.ExecuteStream(ctx, req)
 }
 
 func WithLogging() Option {

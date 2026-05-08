@@ -13,15 +13,22 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/commons/logger"
 )
 
 type CodexCLI struct {
 	model string
 }
 
+// CodexCLIDefaultModel is the default model used when the caller does not
+// specify one. Empty means "let `codex` pick its own default" — captain no
+// longer ships a hard-coded id since the static model catalog was removed
+// in favour of live `/v1/models` listings.
+const CodexCLIDefaultModel = ""
+
 func NewCodexCLI(model string) *CodexCLI {
 	if model == "" {
-		model = "codex"
+		model = CodexCLIDefaultModel
 	}
 	return &CodexCLI{model: model}
 }
@@ -61,6 +68,8 @@ func (c *CodexCLI) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai
 
 	cmd := exec.CommandContext(ctx, "codex", args...)
 	cmd.Env = clearNestingEnv(os.Environ())
+
+	logger.Debugf("[codex-cli] exec: codex %s", strings.Join(redactCodexArgs(args), " "))
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
@@ -122,10 +131,13 @@ func (c *CodexCLI) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai
 
 		<-stderrDone
 		waitErr := cmd.Wait()
+		stderrMu.Lock()
+		stderrText := stderrBuf.String()
+		stderrMu.Unlock()
 		if waitErr != nil {
-			stderrMu.Lock()
-			stderrText := stderrBuf.String()
-			stderrMu.Unlock()
+			if stderrText != "" {
+				logger.Debugf("[codex-cli stderr]\n%s", truncate(stderrText, 4096))
+			}
 			select {
 			case events <- ai.Event{
 				Kind:  ai.EventError,
@@ -133,6 +145,8 @@ func (c *CodexCLI) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai
 			}:
 			case <-ctx.Done():
 			}
+		} else if stderrText != "" && logger.IsTraceEnabled() {
+			logger.Tracef("[codex-cli stderr]\n%s", truncate(stderrText, 4096))
 		}
 	}()
 
@@ -149,6 +163,9 @@ func buildCodexExecArgs(model string, req ai.Request) ([]string, error) {
 
 	if model != "" {
 		args = append(args, "--model", model)
+	}
+	if req.ReasoningEffort != "" {
+		args = append(args, "-c", fmt.Sprintf(`model_reasoning_effort=%q`, req.ReasoningEffort))
 	}
 
 	if req.Edit && req.PermissionMode == "" {
@@ -182,13 +199,26 @@ func buildCodexExecArgs(model string, req ai.Request) ([]string, error) {
 }
 
 // codexEvent is a permissive subset of the JSON envelope codex emits with
-// --json. Codex events carry a "type" or "msg.type" discriminator; we accept
-// either to insulate captain from minor shape changes across codex versions.
+// --json. Codex emits two related schemas across versions:
+//   - the legacy "msg" envelope: `{"id":..,"msg":{"type":"agent_message",..}}`
+//   - the newer dotted "type" envelope: `{"type":"thread.started","thread_id":..}`,
+//     `{"type":"item.completed","item":{"text":..}}`, `{"type":"turn.completed",..}`,
+//     `{"type":"turn.failed","error":{"message":..}}`, top-level `{"type":"error","message":..}`.
+//
+// We unmarshal into a permissive shape that captures both, then dispatch on
+// the discriminator. Top-level fields like `message`, `thread_id`, `item`, and
+// `error` are read directly so callers don't need to know which schema codex
+// happened to emit on a given run.
 type codexEvent struct {
-	ID   string          `json:"id"`
-	Type string          `json:"type"`
-	Msg  *codexMsg       `json:"msg"`
-	Data json.RawMessage `json:"data"`
+	ID       string          `json:"id"`
+	Type     string          `json:"type"`
+	ThreadID string          `json:"thread_id"`
+	Message  string          `json:"message"` // top-level error envelope
+	Msg      *codexMsg       `json:"msg"`
+	Item     *codexItem      `json:"item"`
+	Error    *codexError     `json:"error"`
+	Usage    *codexUsage     `json:"usage"`
+	Data     json.RawMessage `json:"data"`
 }
 
 type codexMsg struct {
@@ -203,9 +233,48 @@ type codexMsg struct {
 	Cost    float64         `json:"cost_usd"`
 }
 
+type codexItem struct {
+	Type    string `json:"type"`
+	Text    string `json:"text"`
+	Content string `json:"content"`
+	Name    string `json:"name"`
+}
+
+type codexError struct {
+	Type    string `json:"type"`
+	Message string `json:"message"`
+	Status  int    `json:"status"`
+}
+
 type codexUsage struct {
 	InputTokens  int `json:"input_tokens"`
 	OutputTokens int `json:"output_tokens"`
+}
+
+// extractCodexErrorText pulls a human-readable message out of codex's error
+// envelopes. Codex sometimes nests JSON-encoded payloads inside the `message`
+// field (e.g. an OpenAI 400 served back as a stringified error envelope), so we
+// best-effort unwrap one level when the message itself parses as JSON.
+func extractCodexErrorText(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || !strings.HasPrefix(raw, "{") {
+		return raw
+	}
+	var nested codexError
+	wrapper := struct {
+		Error   *codexError `json:"error"`
+		Message string      `json:"message"`
+	}{Error: &nested}
+	if err := json.Unmarshal([]byte(raw), &wrapper); err != nil {
+		return raw
+	}
+	if wrapper.Error != nil && wrapper.Error.Message != "" {
+		return wrapper.Error.Message
+	}
+	if wrapper.Message != "" {
+		return wrapper.Message
+	}
+	return raw
 }
 
 // mapCodexEvent maps one JSONL line into an ai.Event. Returns ok=false when
@@ -251,9 +320,47 @@ func mapCodexEvent(line, model string) (ai.Event, bool) {
 		}
 		return out, true
 	case "error", "task_error":
-		return ai.Event{Kind: ai.EventError, Error: firstNonEmpty(msg.Error, msg.Message), Model: model}, true
+		errText := firstNonEmpty(msg.Error, msg.Message, ev.Message)
+		if ev.Error != nil {
+			errText = firstNonEmpty(ev.Error.Message, errText)
+		}
+		return ai.Event{Kind: ai.EventError, Error: extractCodexErrorText(errText), Model: model}, true
 	case "session_configured", "session_init":
 		return ai.Event{Kind: ai.EventSystem, Tool: "SessionInit", SessionID: ev.ID, Model: model}, true
+
+	// --- Newer dotted-type schema ---
+	case "thread.started":
+		sessionID := firstNonEmpty(ev.ThreadID, ev.ID)
+		return ai.Event{Kind: ai.EventSystem, Tool: "SessionInit", SessionID: sessionID, Model: model}, true
+	case "turn.started":
+		// Heartbeat — captain does not surface this.
+		return ai.Event{}, false
+	case "item.started", "item.delta":
+		// Streaming partials; drop until item.completed to keep parity with
+		// the legacy schema's coarse-grained text events.
+		return ai.Event{}, false
+	case "item.completed":
+		if ev.Item == nil {
+			return ai.Event{}, false
+		}
+		text := firstNonEmpty(ev.Item.Text, ev.Item.Content)
+		if text == "" {
+			return ai.Event{}, false
+		}
+		return ai.Event{Kind: ai.EventText, Text: text, Model: model}, true
+	case "turn.completed":
+		out := ai.Event{Kind: ai.EventResult, Tool: "Result", Model: model, Success: true}
+		if ev.Usage != nil {
+			out.Usage = &ai.Usage{InputTokens: ev.Usage.InputTokens, OutputTokens: ev.Usage.OutputTokens}
+		}
+		return out, true
+	case "turn.failed":
+		var errText string
+		if ev.Error != nil {
+			errText = ev.Error.Message
+		}
+		errText = firstNonEmpty(errText, ev.Message)
+		return ai.Event{Kind: ai.EventError, Error: extractCodexErrorText(errText), Model: model}, true
 	}
 	return ai.Event{}, false
 }
@@ -265,4 +372,20 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// redactCodexArgs returns a copy of args with the trailing prompt truncated so
+// debug logs stay readable. The prompt is the only positional argument and
+// always sits at the end of the argv built by buildCodexExecArgs.
+func redactCodexArgs(args []string) []string {
+	if len(args) == 0 {
+		return args
+	}
+	out := make([]string, len(args))
+	copy(out, args)
+	last := len(out) - 1
+	if !strings.HasPrefix(out[last], "-") {
+		out[last] = truncate(out[last], 120)
+	}
+	return out
 }

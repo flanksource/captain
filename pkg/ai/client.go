@@ -16,15 +16,8 @@ func RegisterProvider(backend Backend, factory ProviderFactory) {
 func NewProvider(cfg Config) (Provider, error) {
 	backend := cfg.Backend
 
-	// If model is empty but backend is specified, use the default model for that backend
-	if cfg.Model == "" && backend != "" {
-		if def, ok := DefaultModel(backend); ok {
-			cfg.Model = def.ID
-		}
-	}
-
 	if cfg.Model == "" {
-		return nil, fmt.Errorf("model cannot be empty; specify a model or backend (available: anthropic, gemini, openai, codex-cli, claude-cli, gemini-cli)")
+		return nil, fmt.Errorf("model cannot be empty; pass --model or run `captain configure` to set a default")
 	}
 
 	if backend == "" {

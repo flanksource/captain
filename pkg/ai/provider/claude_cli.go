@@ -11,15 +11,22 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/commons/logger"
 )
 
 type ClaudeCLI struct {
 	model string
 }
 
+// ClaudeCLIDefaultModel is the default model used when the caller does not
+// specify one. The claude-code- prefix routes InferBackend back to claude-cli
+// and MapClaudeCodeModel resolves it to the latest Sonnet for the CLI's
+// --model flag.
+const ClaudeCLIDefaultModel = "claude-code-sonnet"
+
 func NewClaudeCLI(model string) *ClaudeCLI {
 	if model == "" {
-		model = "claude-code-sonnet"
+		model = ClaudeCLIDefaultModel
 	}
 	return &ClaudeCLI{model: model}
 }
@@ -162,6 +169,8 @@ func runClaudeCLI(ctx context.Context, args []string) (stdout []byte, stderr str
 	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Env = clearNestingEnv(os.Environ())
 
+	logger.Debugf("[claude-cli] exec: claude %s", strings.Join(redactClaudeArgs(args), " "))
+
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to create stdout pipe: %w", err)
@@ -224,8 +233,14 @@ func runClaudeCLI(ctx context.Context, args []string) (stdout []byte, stderr str
 	}
 
 	if waitErr != nil {
+		if stderrData != "" {
+			logger.Debugf("[claude-cli stderr]\n%s", truncate(stderrData, 4096))
+		}
 		return nil, stderrData, HandleExitError(GetExitCode(waitErr), ParseStderr(stderrData))
 	}
 
+	if stderrData != "" && logger.IsTraceEnabled() {
+		logger.Tracef("[claude-cli stderr]\n%s", truncate(stderrData, 4096))
+	}
 	return stdoutData, stderrData, nil
 }

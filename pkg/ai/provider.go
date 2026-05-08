@@ -56,12 +56,5 @@ func InferBackend(model string) (Backend, error) {
 		return BackendOpenAI, nil
 	}
 
-	// Check if the model is in the default catalog
-	for _, def := range defaultModels {
-		if strings.EqualFold(def.ID, model) {
-			return def.Backend, nil
-		}
-	}
-
-	return "", fmt.Errorf("unable to infer backend from model name: %s (known backends: anthropic, gemini, openai, codex-cli, claude-cli, gemini-cli)", model)
+	return "", fmt.Errorf("unable to infer backend from model name: %s (pass --backend explicitly: anthropic, gemini, openai, codex-cli, claude-cli, gemini-cli)", model)
 }
