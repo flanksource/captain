@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/claude"
 	"github.com/flanksource/commons/logger"
 )
 
@@ -309,7 +310,9 @@ func mapCodexEvent(line, model string) (ai.Event, bool) {
 		if len(msg.Input) > 0 {
 			_ = json.Unmarshal(msg.Input, &input)
 		}
-		return ai.Event{Kind: ai.EventToolUse, Tool: msg.Name, Input: input, Model: model}, true
+		out := ai.Event{Kind: ai.EventToolUse, Tool: msg.Name, Input: input, Model: model}
+		out.Raw = codexToolUse(msg.Name, input, ev.ID, model)
+		return out, true
 	case "task_complete", "result", "completion":
 		out := ai.Event{Kind: ai.EventResult, Tool: "Result", Model: model, Success: msg.Error == "", CostUSD: msg.Cost}
 		if msg.Usage != nil {
@@ -318,6 +321,7 @@ func mapCodexEvent(line, model string) (ai.Event, bool) {
 		if msg.Error != "" {
 			out.Error = msg.Error
 		}
+		out.Raw = codexResultToolUse(out, ev.ID)
 		return out, true
 	case "error", "task_error":
 		errText := firstNonEmpty(msg.Error, msg.Message, ev.Message)
@@ -326,12 +330,16 @@ func mapCodexEvent(line, model string) (ai.Event, bool) {
 		}
 		return ai.Event{Kind: ai.EventError, Error: extractCodexErrorText(errText), Model: model}, true
 	case "session_configured", "session_init":
-		return ai.Event{Kind: ai.EventSystem, Tool: "SessionInit", SessionID: ev.ID, Model: model}, true
+		out := ai.Event{Kind: ai.EventSystem, Tool: "SessionInit", SessionID: ev.ID, Model: model}
+		out.Raw = codexSessionToolUse(ev.ID, model)
+		return out, true
 
 	// --- Newer dotted-type schema ---
 	case "thread.started":
 		sessionID := firstNonEmpty(ev.ThreadID, ev.ID)
-		return ai.Event{Kind: ai.EventSystem, Tool: "SessionInit", SessionID: sessionID, Model: model}, true
+		out := ai.Event{Kind: ai.EventSystem, Tool: "SessionInit", SessionID: sessionID, Model: model}
+		out.Raw = codexSessionToolUse(sessionID, model)
+		return out, true
 	case "turn.started":
 		// Heartbeat — captain does not surface this.
 		return ai.Event{}, false
@@ -353,6 +361,7 @@ func mapCodexEvent(line, model string) (ai.Event, bool) {
 		if ev.Usage != nil {
 			out.Usage = &ai.Usage{InputTokens: ev.Usage.InputTokens, OutputTokens: ev.Usage.OutputTokens}
 		}
+		out.Raw = codexResultToolUse(out, firstNonEmpty(ev.ThreadID, ev.ID))
 		return out, true
 	case "turn.failed":
 		var errText string
@@ -372,6 +381,67 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// codexToolUse builds the claude.ToolUse stand-in that mapCodexEvent stashes
+// on ai.Event.Raw so the shared lineRenderer in pkg/cli renders codex live
+// streams identically to `captain history` output. Source is hard-coded to
+// "codex" so sessionKey/sessionHeaderText pick the codex icon and label.
+func codexToolUse(name string, input map[string]any, sessionID, model string) claude.ToolUse {
+	return claude.ToolUse{
+		Tool:      name,
+		Input:     input,
+		SessionID: sessionID,
+		Source:    "codex",
+		Model:     model,
+	}
+}
+
+// codexResultToolUse mirrors the synthetic Result row that
+// pkg/cli/ai.go's renderResultEvent constructs for Claude, preserving cost,
+// usage, and error state so the "🏁 result …" footer renders consistently.
+func codexResultToolUse(ev ai.Event, sessionID string) claude.ToolUse {
+	input := map[string]any{}
+	for k, v := range ev.Input {
+		input[k] = v
+	}
+	if ev.CostUSD > 0 {
+		if _, ok := input["total_cost_usd"]; !ok {
+			input["total_cost_usd"] = ev.CostUSD
+		}
+	}
+	tu := claude.ToolUse{
+		Tool:      "Result",
+		Input:     input,
+		SessionID: sessionID,
+		Source:    "codex",
+		Model:     ev.Model,
+	}
+	if ev.Usage != nil {
+		tu.InputTokens = ev.Usage.InputTokens
+		tu.OutputTokens = ev.Usage.OutputTokens
+	}
+	if !ev.Success {
+		tu.IsError = true
+		if ev.Error != "" {
+			if _, ok := tu.Input["result"]; !ok {
+				tu.Input["result"] = ev.Error
+			}
+		}
+	}
+	return tu
+}
+
+// codexSessionToolUse builds the synthetic SessionInit row used by the
+// shared renderer to emit a session-start banner the first time a sessionKey
+// is seen. The lineRenderer treats SessionInit just like any other tool row.
+func codexSessionToolUse(sessionID, model string) claude.ToolUse {
+	return claude.ToolUse{
+		Tool:      "SessionInit",
+		SessionID: sessionID,
+		Source:    "codex",
+		Model:     model,
+	}
 }
 
 // redactCodexArgs returns a copy of args with the trailing prompt truncated so

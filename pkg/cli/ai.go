@@ -269,6 +269,11 @@ func renderEvent(w *os.File, renderer *lineRenderer, ev ai.Event) {
 			return
 		}
 	}
+	if tu, ok := ev.Raw.(claude.ToolUse); ok {
+		if renderCodexEntry(renderer, ev, tu) {
+			return
+		}
+	}
 
 	switch ev.Kind {
 	case ai.EventText:
@@ -337,6 +342,27 @@ func renderClaudeEntry(renderer *lineRenderer, ev ai.Event, entry claude.History
 		return false
 	}
 	tl := claude.ExtractToolsWithTokens([]claude.HistoryEntry{entry})
+	if len(tl) == 0 {
+		return false
+	}
+	for _, t := range tl {
+		renderer.Render(t, true)
+	}
+	return true
+}
+
+// renderCodexEntry mirrors renderClaudeEntry for codex live events, which
+// stash a synthesized claude.ToolUse on ev.Raw rather than a HistoryEntry
+// (codex's stream schema does not match Claude's message-shaped envelope).
+// Routing the codex tool use through ToolUsesToTools keeps the rendering
+// path identical to `captain history` for codex JSONL.
+func renderCodexEntry(renderer *lineRenderer, ev ai.Event, tu claude.ToolUse) bool {
+	switch ev.Kind {
+	case ai.EventToolUse, ai.EventResult, ai.EventSystem:
+	default:
+		return false
+	}
+	tl := claude.ToolUsesToTools([]claude.ToolUse{tu})
 	if len(tl) == 0 {
 		return false
 	}
