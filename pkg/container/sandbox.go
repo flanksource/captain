@@ -15,18 +15,18 @@ import (
 )
 
 type SandboxConfig struct {
-	Name           string            `yaml:"name,omitempty"`
-	Image          string            `yaml:"image"`
-	Mode           Mode              `yaml:"mode"`
-	BaseImage      string            `yaml:"baseImage"`
-	Volumes        []Volume          `yaml:"volumes,omitempty"`
-	User           UserSpec          `yaml:"user"`
-	Components     []string          `yaml:"components,omitempty"`
-	Options        map[string]string `yaml:"options,omitempty"`
-	Patches        []Patch           `yaml:"patches,omitempty"`
-	Presets        []string          `yaml:"presets,omitempty"`
-	Env            map[string]string `yaml:"env,omitempty"`
-	EnvPassthrough []string          `yaml:"envPassthrough,omitempty"`
+	Name           string                `yaml:"name,omitempty"`
+	Image          string                `yaml:"image"`
+	Mode           Mode                  `yaml:"mode"`
+	BaseImage      string                `yaml:"baseImage"`
+	Volumes        []Volume              `yaml:"volumes,omitempty"`
+	User           UserSpec              `yaml:"user"`
+	Components     []string              `yaml:"components,omitempty"`
+	Options        map[string]string     `yaml:"options,omitempty"`
+	Patches        []Patch               `yaml:"patches,omitempty"`
+	Presets        []string              `yaml:"presets,omitempty"`
+	Env            map[string]string     `yaml:"env,omitempty"`
+	EnvPassthrough []string              `yaml:"envPassthrough,omitempty"`
 	Tokens         *sandbox.TokensConfig `yaml:"tokens,omitempty"`
 }
 
@@ -188,35 +188,6 @@ func BuildSandboxConfig(mode Mode, baseImage string, components []Component, use
 	return cfg
 }
 
-func (cfg SandboxConfig) hasOAuth() bool {
-	for _, c := range cfg.Components {
-		if c == "auth/OAuth account" {
-			return true
-		}
-	}
-	return false
-}
-
-func extractOAuthToken(cfg SandboxConfig) string {
-	if !cfg.hasOAuth() {
-		return ""
-	}
-	out, err := exec.Command("security", "find-generic-password",
-		"-s", "Claude Code-credentials", "-a", cfg.User.Username, "-w").Output()
-	if err != nil {
-		return ""
-	}
-	var creds struct {
-		ClaudeAiOauth struct {
-			AccessToken string `json:"accessToken"`
-		} `json:"claudeAiOauth"`
-	}
-	if json.Unmarshal(out, &creds) != nil {
-		return ""
-	}
-	return creds.ClaudeAiOauth.AccessToken
-}
-
 var envVarPattern = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
 
 func extractMCPEnvVars(cfg SandboxConfig, claudeJSON string) []string {
@@ -266,7 +237,6 @@ func extractMCPEnvVars(cfg SandboxConfig, claudeJSON string) []string {
 	}
 	return result
 }
-
 
 func DefaultContainerName(image, workDir string) string {
 	tag := strings.ReplaceAll(image, ":", "-")

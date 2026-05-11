@@ -68,16 +68,21 @@ func (o AIProviderOptions) ToConfig() ai.Config {
 	return cfg
 }
 
-type AIPromptOptions struct {
+// AIRuntimeOptions binds the per-invocation knobs every AI command shares —
+// model selection (via embedded AIProviderOptions), generation parameters
+// (max tokens, temperature, timeout, reasoning), permission/sandbox toggles
+// (edit, allowed/disallowed tools, permission mode), and ambient-context
+// toggles (mcp/hooks/skills/user/project/memory/bare). It deliberately
+// omits the user-prompt fields so non-prompt commands (e.g. gavel's lint
+// --ai-fix loop) can embed it without inheriting a required --prompt flag.
+//
+// AIPromptOptions embeds this struct and adds Prompt/System/AppendSystem/
+// NoStream on top.
+type AIRuntimeOptions struct {
 	AIProviderOptions
-	Prompt       string `flag:"prompt" help:"Prompt text" short:"p" required:"true" stdin:"true"`
-	System       string `flag:"system" help:"System prompt" short:"s"`
-	AppendSystem string `flag:"append-system" help:"Append text to the default system prompt"`
-	MaxTokens    int    `flag:"max-tokens" help:"Maximum output tokens" default:"4096"`
-	Temperature  string `flag:"temperature" help:"Sampling temperature" default:"0"`
-	Timeout      string `flag:"timeout" help:"Request timeout" default:"120s"`
 
-	NoStream bool `flag:"no-stream" help:"Disable streaming; print only the final text to stdout"`
+	MaxTokens   int    `flag:"max-tokens" help:"Maximum output tokens" default:"4096"`
+	Temperature string `flag:"temperature" help:"Sampling temperature" default:"0"`
 
 	Edit            bool     `flag:"edit" help:"Safe defaults: acceptEdits + Read/Edit/Write/Glob/Grep allowlist"`
 	AllowedTools    []string `flag:"allowed-tools" help:"Override --edit's built-in allowlist (claude only)"`
@@ -94,6 +99,16 @@ type AIPromptOptions struct {
 	Bare      bool     `flag:"bare" help:"Skip hooks, skills, memory, and ambient settings"`
 }
 
+type AIPromptOptions struct {
+	AIRuntimeOptions
+
+	Prompt       string `flag:"prompt" help:"Prompt text" short:"p" required:"true" stdin:"true"`
+	System       string `flag:"system" help:"System prompt" short:"s"`
+	AppendSystem string `flag:"append-system" help:"Append text to the default system prompt"`
+	Timeout      string `flag:"timeout" help:"Request timeout" default:"120s"`
+	NoStream     bool   `flag:"no-stream" help:"Disable streaming; print only the final text to stdout"`
+}
+
 type AIPromptResult struct {
 	Text     string  `json:"text" pretty:"label=Response"`
 	Model    string  `json:"model" pretty:"label=Model"`
@@ -104,25 +119,29 @@ type AIPromptResult struct {
 	Duration string  `json:"duration" pretty:"label=Duration"`
 }
 
-// ToRequest translates the user-facing AIPromptOptions into the typed
-// ai.Request. Truthy flags like --mcp/--hooks/--memory invert into the
-// No*-style fields the providers consume. When --bare is set, it implicitly
-// strips memory/hooks/skills/user/project regardless of those flags' values
-// (claude --bare composes them) so we let the provider decide the final argv.
+// ToRequest translates the runtime knobs into the typed ai.Request. Truthy
+// flags like --mcp/--hooks/--memory invert into the No*-style fields the
+// providers consume. When --bare is set, it implicitly strips memory/hooks/
+// skills/user/project regardless of those flags' values (claude --bare
+// composes them) so we let the provider decide the final argv.
+//
+// systemPrompt / appendSystemPrompt / userPrompt are passed explicitly so
+// non-prompt callers (gavel's ai-fix loop) can build them per-iteration
+// without leaking those fields into the shared runtime struct.
 //
 // Saved defaults from ~/.captain.yaml overlay onto unset fields. For the
-// boolean toggles, "saved off" wins over "flag default on" because clicky does
-// not yet expose a Changed() bit.
+// boolean toggles, "saved off" wins over "flag default on" because clicky
+// does not yet expose a Changed() bit.
 //
-// WORKAROUND(no-flag-changed-bit): The boolean toggles default to true, so we
-// cannot tell whether --mcp=true was passed explicitly or inherited from the
-// default. As a result, when the saved config has NoMCP=true the user cannot
-// force MCP back on from the command line by passing --mcp=true alone — they
-// must edit ~/.captain.yaml or rerun `captain configure`.
+// WORKAROUND(no-flag-changed-bit): The boolean toggles default to true, so
+// we cannot tell whether --mcp=true was passed explicitly or inherited from
+// the default. As a result, when the saved config has NoMCP=true the user
+// cannot force MCP back on from the command line by passing --mcp=true alone
+// — they must edit ~/.captain.yaml or rerun `captain configure`.
 // Correct fix: thread clicky's per-flag Changed() bit (or a tri-state flag
-// type) through AIPromptOptions so we can distinguish "explicitly true" from
-// "default true". Ref: discussed with user 2026-05-07.
-func (o AIPromptOptions) ToRequest() ai.Request {
+// type) through AIRuntimeOptions so we can distinguish "explicitly true"
+// from "default true". Ref: discussed with user 2026-05-07.
+func (o AIRuntimeOptions) ToRequest(systemPrompt, appendSystemPrompt, userPrompt string) ai.Request {
 	saved := loadSavedAI()
 	temperature, _ := strconv.ParseFloat(o.Temperature, 64)
 
@@ -134,9 +153,9 @@ func (o AIPromptOptions) ToRequest() ai.Request {
 	effort := saved.ReasoningEffort
 
 	return ai.Request{
-		SystemPrompt:       o.System,
-		AppendSystemPrompt: o.AppendSystem,
-		Prompt:             o.Prompt,
+		SystemPrompt:       systemPrompt,
+		AppendSystemPrompt: appendSystemPrompt,
+		Prompt:             userPrompt,
 		MaxTokens:          maxTokens,
 		Temperature:        temperature,
 		ReasoningEffort:    effort,
@@ -153,6 +172,12 @@ func (o AIPromptOptions) ToRequest() ai.Request {
 		NoMemory:           !o.Memory || saved.NoMemory,
 		Bare:               o.Bare,
 	}
+}
+
+// ToRequest delegates to AIRuntimeOptions.ToRequest, lifting the prompt
+// fields the prompt-shaped command owns onto the typed request.
+func (o AIPromptOptions) ToRequest() ai.Request {
+	return o.AIRuntimeOptions.ToRequest(o.System, o.AppendSystem, o.Prompt)
 }
 
 func RunAIPrompt(opts AIPromptOptions) (any, error) {

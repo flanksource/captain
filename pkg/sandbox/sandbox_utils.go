@@ -345,32 +345,6 @@ func GlobToRegex(globPattern string) string {
 	return "^" + p + "$"
 }
 
-func quoteShellArg(s string) string {
-	if s == "" {
-		return "''"
-	}
-	safe := true
-	for _, r := range s {
-		if !(r == '-' || r == '_' || r == '.' || r == '/' || r == ':' || r == '@' ||
-			(r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')) {
-			safe = false
-			break
-		}
-	}
-	if safe {
-		return s
-	}
-	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
-}
-
-func quoteShellArgs(args ...string) string {
-	quoted := make([]string, len(args))
-	for i, a := range args {
-		quoted[i] = quoteShellArg(a)
-	}
-	return strings.Join(quoted, " ")
-}
-
 func itoa(v int) string {
 	return strconv.Itoa(v)
 }

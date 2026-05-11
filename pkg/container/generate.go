@@ -2,10 +2,8 @@ package container
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"text/template"
 )
 
@@ -223,73 +221,4 @@ func renderDockerfile(contextDir, tmplStr string, data templateData) (string, er
 		return "", fmt.Errorf("executing template: %w", err)
 	}
 	return dockerfilePath, nil
-}
-
-func stageCategoryFiles(contextDir string, cat Category, items []Component) ([]copyBlock, []string, bool, error) {
-	var blocks []copyBlock
-	var hookFiles []string
-	hasDotfiles := false
-
-	for _, item := range items {
-		relPath := filepath.Join(string(cat), item.Name)
-		destInContext := filepath.Join(contextDir, relPath)
-
-		if err := os.MkdirAll(filepath.Dir(destInContext), 0o755); err != nil {
-			return nil, nil, false, err
-		}
-
-		if item.IsDir {
-			if err := copyDir(item.SourcePath, destInContext); err != nil {
-				return nil, nil, false, fmt.Errorf("copying dir %s: %w", item.Name, err)
-			}
-		} else {
-			if err := copyFile(item.SourcePath, destInContext); err != nil {
-				return nil, nil, false, fmt.Errorf("copying file %s: %w", item.Name, err)
-			}
-		}
-
-		blocks = append(blocks, copyBlock{
-			Comment:     fmt.Sprintf("%s: %s", cat, item.Name),
-			Instruction: fmt.Sprintf("COPY %s %s", relPath, item.TargetPath),
-		})
-
-		if cat == CategoryHooks {
-			hookFiles = append(hookFiles, item.Name)
-		}
-		if strings.Contains(item.TargetPath, ".dotfiles") {
-			hasDotfiles = true
-		}
-	}
-	return blocks, hookFiles, hasDotfiles, nil
-}
-
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close() //nolint:errcheck
-
-	out, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer out.Close() //nolint:errcheck
-
-	_, err = io.Copy(out, in)
-	return err
-}
-
-func copyDir(src, dst string) error {
-	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, _ := filepath.Rel(src, path)
-		target := filepath.Join(dst, rel)
-		if info.IsDir() {
-			return os.MkdirAll(target, 0o755)
-		}
-		return copyFile(path, target)
-	})
 }
