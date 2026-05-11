@@ -1,11 +1,29 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
+
+	"github.com/flanksource/captain/pkg/captainconfig"
 )
 
+// isolateSavedAI redirects captainconfig.Path() to an empty file inside
+// t.TempDir() so loadSavedAI() returns zero defaults rather than leaking
+// the developer's real ~/.captain.yaml into table-test expectations.
+func isolateSavedAI(t *testing.T) {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), ".captain.yaml")
+	if err := os.WriteFile(p, []byte(""), 0o644); err != nil {
+		t.Fatalf("seed empty captain config: %v", err)
+	}
+	captainconfig.SetPathForTesting(p)
+	t.Cleanup(func() { captainconfig.SetPathForTesting("") })
+}
+
 func TestAIPromptOptions_ToRequest_Defaults(t *testing.T) {
+	isolateSavedAI(t)
 	opts := defaultPromptOptions(t)
 	req := opts.ToRequest()
 
@@ -29,6 +47,7 @@ func TestAIPromptOptions_ToRequest_Defaults(t *testing.T) {
 }
 
 func TestAIPromptOptions_ToRequest_TruthyInversion(t *testing.T) {
+	isolateSavedAI(t)
 	cases := []struct {
 		name   string
 		mutate func(*AIPromptOptions)
@@ -101,6 +120,7 @@ func TestAIPromptOptions_ToRequest_TruthyInversion(t *testing.T) {
 }
 
 func TestAIPromptOptions_ToRequest_PassesScalars(t *testing.T) {
+	isolateSavedAI(t)
 	opts := defaultPromptOptions(t)
 	opts.System = "be careful"
 	opts.AppendSystem = "also be brief"
@@ -146,19 +166,66 @@ func TestAIPromptOptions_ToRequest_PassesScalars(t *testing.T) {
 	}
 }
 
+// TestAIRuntimeOptions_ToRequest_OverlaysSaved verifies the path gavel (and any
+// other embedder) takes: AIRuntimeOptions with zero/default flag values should
+// still pick up NoMCP/NoHooks/MaxTokens/ReasoningEffort from ~/.captain.yaml.
+func TestAIRuntimeOptions_ToRequest_OverlaysSaved(t *testing.T) {
+	tmp := filepath.Join(t.TempDir(), ".captain.yaml")
+	saved := []byte("ai:\n  noMCP: true\n  noHooks: true\n  noSkills: true\n  noUser: true\n  noProject: true\n  noMemory: true\n  maxTokens: 16000\n  reasoningEffort: high\n")
+	if err := os.WriteFile(tmp, saved, 0o644); err != nil {
+		t.Fatalf("seed captain config: %v", err)
+	}
+	captainconfig.SetPathForTesting(tmp)
+	t.Cleanup(func() { captainconfig.SetPathForTesting("") })
+
+	opts := AIRuntimeOptions{
+		MaxTokens: 4096, // sentinel default — should be overridden by saved 16000
+		MCP:       true, // flag-default true; saved NoMCP=true must still win
+		Hooks:     true,
+		Skills:    true,
+		User:      true,
+		Project:   true,
+		Memory:    true,
+	}
+	req := opts.ToRequest("sys", "", "user")
+
+	if req.SystemPrompt != "sys" {
+		t.Errorf("SystemPrompt = %q, want sys", req.SystemPrompt)
+	}
+	if req.Prompt != "user" {
+		t.Errorf("Prompt = %q, want user", req.Prompt)
+	}
+	if req.MaxTokens != 16000 {
+		t.Errorf("MaxTokens = %d, want 16000 (saved overlay)", req.MaxTokens)
+	}
+	if req.ReasoningEffort != "high" {
+		t.Errorf("ReasoningEffort = %q, want high", req.ReasoningEffort)
+	}
+	for name, got := range map[string]bool{
+		"NoMCP": req.NoMCP, "NoHooks": req.NoHooks, "NoSkills": req.NoSkills,
+		"NoUser": req.NoUser, "NoProject": req.NoProject, "NoMemory": req.NoMemory,
+	} {
+		if !got {
+			t.Errorf("%s = false, want true (from saved config)", name)
+		}
+	}
+}
+
 func defaultPromptOptions(t *testing.T) AIPromptOptions {
 	t.Helper()
 	return AIPromptOptions{
-		Prompt:      "hello",
-		MaxTokens:   4096,
-		Temperature: "0",
-		Timeout:     "120s",
-		MCP:         true,
-		Hooks:       true,
-		Skills:      true,
-		User:        true,
-		Project:     true,
-		Memory:      true,
+		AIRuntimeOptions: AIRuntimeOptions{
+			MaxTokens:   4096,
+			Temperature: "0",
+			MCP:         true,
+			Hooks:       true,
+			Skills:      true,
+			User:        true,
+			Project:     true,
+			Memory:      true,
+		},
+		Timeout: "120s",
+		Prompt:  "hello",
 	}
 }
 

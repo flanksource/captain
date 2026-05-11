@@ -189,10 +189,6 @@ func toLineEntry(t tools.Tool, compact bool, width, toolWidth int) lineEntry {
 	return e
 }
 
-func printLeft(e lineEntry, toolWidth int) {
-	printLeftTo(os.Stdout, e, toolWidth)
-}
-
 func printLeftTo(w io.Writer, e lineEntry, toolWidth int) {
 	timeStr := e.Time
 	if timeStr != "" {

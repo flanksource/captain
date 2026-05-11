@@ -382,12 +382,16 @@ func executeRun(parent context.Context, fixtureDir string, run Run, opts Options
 	defer stopHeartbeat()
 
 	inflight := map[string]*pendingCall{}
+	var artifactErr error
 
 	for scanner.Scan() {
 		line := scanner.Bytes()
-		if artifact != nil {
-			artifact.Write(line)
-			artifact.Write([]byte{'\n'})
+		if artifact != nil && artifactErr == nil {
+			if _, err := artifact.Write(line); err != nil {
+				artifactErr = fmt.Errorf("writing artifact for %q: %w", run.Name, err)
+			} else if _, err := artifact.Write([]byte{'\n'}); err != nil {
+				artifactErr = fmt.Errorf("writing artifact for %q: %w", run.Name, err)
+			}
 		}
 		ev, ok := ParseLine(line)
 		if !ok {
@@ -402,14 +406,25 @@ func executeRun(parent context.Context, fixtureDir string, run Run, opts Options
 
 	runErr := cmd.Wait()
 	flushPendingCalls(inflight, &summary)
+	var syncErr error
 	if kubectlLog != nil {
-		kubectlLog.Sync()
+		if err := kubectlLog.Sync(); err != nil {
+			syncErr = fmt.Errorf("syncing kubectl api log: %w", err)
+		}
 	}
 	if mcpLog != nil {
-		mcpLog.Sync()
+		if err := mcpLog.Sync(); err != nil && syncErr == nil {
+			syncErr = fmt.Errorf("syncing mcp api log: %w", err)
+		}
 	}
 	if runErr != nil {
 		return summary, claudeRunError(run.Name, stderrBuf, summary, runErr)
+	}
+	if artifactErr != nil {
+		return summary, artifactErr
+	}
+	if syncErr != nil {
+		return summary, syncErr
 	}
 	if kubectlLog != nil {
 		summary.KubectlAPILog = readKubectlAPILog(env.kubectlLogPath)
