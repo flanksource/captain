@@ -65,3 +65,20 @@ func TestFindProjectInfo_Worktree(t *testing.T) {
 		assert.Equal(t, ".git", info.MarkerFile)
 	})
 }
+
+func TestFindSessionFiles_CaseInsensitiveProjectDirectory(t *testing.T) {
+	projectsDir := t.TempDir()
+	currentDir := "/Users/moshe/work/om/oma/oipa-cli"
+	actualProjectDir := filepath.Join(projectsDir, NormalizePath("/Users/moshe/work/om/oma/OIPA-CLI"))
+	siblingDir := filepath.Join(projectsDir, NormalizePath(currentDir+"-www"))
+
+	require.NoError(t, os.MkdirAll(actualProjectDir, 0755))
+	require.NoError(t, os.MkdirAll(siblingDir, 0755))
+	sessionPath := filepath.Join(actualProjectDir, "session.jsonl")
+	require.NoError(t, os.WriteFile(sessionPath, []byte("{}\n"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(siblingDir, "sibling.jsonl"), []byte("{}\n"), 0644))
+
+	files, err := FindSessionFiles(projectsDir, currentDir, false)
+	require.NoError(t, err)
+	require.Equal(t, []string{sessionPath}, files)
+}

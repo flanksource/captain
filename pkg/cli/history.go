@@ -19,11 +19,12 @@ import (
 )
 
 type HistoryOptions struct {
-	Paths      []string  `args:"true" help:"Filter by file or directory paths"`
-	File       string    `flag:"file" help:"Read from a JSONL/JSON file ('-' for stdin) instead of session history" short:"f"`
-	Tools      []string  `flag:"tool" help:"Filter by tool patterns" short:"t"`
-	Categories []string  `flag:"category" help:"Filter by category patterns" short:"c"`
-	Approved   string    `flag:"approved" help:"Filter by approval status (true=approved, false=denied)"`
+	Paths      []string `args:"true" help:"Filter by file or directory paths"`
+	File       string   `flag:"file" help:"Read from a JSONL/JSON file ('-' for stdin) instead of session history" short:"f"`
+	Tools      []string `flag:"tool" help:"Filter by tool patterns" short:"t"`
+	Categories []string `flag:"category" help:"Filter by category patterns" short:"c"`
+	Approved   string   `flag:"approved" help:"Filter by approval status (true=approved, false=denied)"`
+	TextFilter string
 	Limit      int       `flag:"limit" help:"Maximum results" default:"100" short:"l"`
 	Since      time.Time `flag:"since" help:"Only include commands after this time" default:"now-7d" short:"s"`
 	All        bool      `flag:"all" help:"Search all projects, not just current directory" short:"a"`
@@ -72,7 +73,7 @@ func RunHistory(opts HistoryOptions) (any, error) {
 		Since: &opts.Since,
 	}
 
-	if len(opts.Categories) == 0 && !opts.Last {
+	if len(opts.Categories) == 0 && opts.TextFilter == "" && !opts.Last {
 		filter.Limit = opts.Limit
 	}
 
@@ -323,10 +324,13 @@ func filterTools(tl []tools.Tool, opts HistoryOptions, classifier *bash.Category
 		cat := classifyTool(t, classifier)
 		categorySet[cat] = struct{}{}
 
-		if len(opts.Categories) > 0 && !collections.MatchItems(cat, opts.Categories...) {
+		if len(opts.Categories) > 0 && !matchCategoryFilters(categoryFilterCandidates(t, cat), opts.Categories) {
 			continue
 		}
 		if !matchApprovedFilter(opts.Approved, base.Denied) {
+			continue
+		}
+		if !matchesHistoryTextFilter(t, cat, opts.TextFilter) {
 			continue
 		}
 
@@ -349,6 +353,137 @@ func filterTools(tl []tools.Tool, opts HistoryOptions, classifier *bash.Category
 	}
 
 	return result
+}
+
+func matchCategoryFilters(candidates []string, filters []string) bool {
+	filters = normalizeCategoryFilters(filters)
+	if len(filters) == 0 {
+		return true
+	}
+
+	hasInclude := false
+	for _, filter := range filters {
+		if strings.HasPrefix(filter, "!") {
+			pattern := strings.TrimSpace(strings.TrimPrefix(filter, "!"))
+			if pattern != "" && matchesAnyCategoryCandidate(candidates, pattern) {
+				return false
+			}
+			continue
+		}
+
+		hasInclude = true
+		if matchesAnyCategoryCandidate(candidates, filter) {
+			return true
+		}
+	}
+	return !hasInclude
+}
+
+func normalizeCategoryFilters(filters []string) []string {
+	var out []string
+	for _, filter := range filters {
+		for _, part := range strings.Split(filter, ",") {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				out = append(out, part)
+			}
+		}
+	}
+	return out
+}
+
+func matchesAnyCategoryCandidate(candidates []string, pattern string) bool {
+	for _, candidate := range candidates {
+		if candidate != "" && collections.MatchItems(candidate, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+func categoryFilterCandidates(t tools.Tool, category string) []string {
+	base := t.Base()
+	return uniqueNonEmpty(
+		category,
+		t.Name(),
+		base.RawTool,
+		messageAlias(t.Name()),
+	)
+}
+
+func toolUseCategoryFilterCandidates(tu claude.ToolUse, category string) []string {
+	return uniqueNonEmpty(
+		category,
+		tu.Tool,
+		tu.DisplayTool(),
+		messageAlias(tu.DisplayTool()),
+	)
+}
+
+func messageAlias(tool string) string {
+	switch strings.ToLower(tool) {
+	case "assistant", "reasoning":
+		return "message"
+	default:
+		return ""
+	}
+}
+
+func uniqueNonEmpty(values ...string) []string {
+	seen := make(map[string]struct{}, len(values))
+	var out []string
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		key := strings.ToLower(value)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
+func HistoryTextFilterFromGlobal(filter string) string {
+	filter = strings.TrimSpace(filter)
+	if filter == "" || strings.ContainsAny(filter, "=<>!&|()'\"") {
+		return ""
+	}
+	return filter
+}
+
+func matchesHistoryTextFilter(t tools.Tool, category, filter string) bool {
+	filter = strings.ToLower(strings.TrimSpace(filter))
+	if filter == "" {
+		return true
+	}
+
+	base := t.Base()
+	values := []string{
+		t.Name(),
+		category,
+		t.FilePath(),
+		t.ExtractPath(),
+		base.RawTool,
+		base.CWD,
+		base.ProjectRoot,
+		base.SessionID,
+		base.ToolUseID,
+		base.DeniedReason,
+	}
+	for k, v := range base.Input {
+		values = append(values, k, fmt.Sprint(v))
+	}
+
+	for _, value := range values {
+		if strings.Contains(strings.ToLower(value), filter) {
+			return true
+		}
+	}
+	return false
 }
 
 func classifyTool(t tools.Tool, classifier *bash.CategoryClassifier) string {
@@ -452,20 +587,58 @@ func runHistorySummary(toolUses []claude.ToolUse, opts HistoryOptions, classifie
 		if !matchApprovedFilter(opts.Approved, tu.Denied) {
 			continue
 		}
+		category := classifyToolUse(tu, classifier)
 		if len(opts.Categories) > 0 {
-			category := classifier.ClassifyToolWithPath(tu.Tool, tu.FilePath())
-			if category == bash.CategoryOther && tu.Tool == "Bash" {
-				if rawCmd, ok := tu.Input["command"].(string); ok {
-					category = classifier.ClassifyBash(rawCmd)
-				}
-			}
-			if !collections.MatchItems(string(category), opts.Categories...) {
+			if !matchCategoryFilters(toolUseCategoryFilterCandidates(tu, category), opts.Categories) {
 				continue
 			}
+		}
+		if !matchesToolUseTextFilter(tu, category, opts.TextFilter) {
+			continue
 		}
 		filtered = append(filtered, tu)
 	}
 	return BuildSummary(filtered, classifier, costs), nil
+}
+
+func classifyToolUse(tu claude.ToolUse, classifier *bash.CategoryClassifier) string {
+	category := classifier.ClassifyToolWithPath(tu.Tool, tu.FilePath())
+	if category == bash.CategoryOther && tu.Tool == "Bash" {
+		if rawCmd, ok := tu.Input["command"].(string); ok {
+			category = classifier.ClassifyBash(rawCmd)
+		}
+	}
+	return string(category)
+}
+
+func matchesToolUseTextFilter(tu claude.ToolUse, category, filter string) bool {
+	filter = strings.ToLower(strings.TrimSpace(filter))
+	if filter == "" {
+		return true
+	}
+
+	values := []string{
+		tu.Tool,
+		tu.DisplayTool(),
+		category,
+		tu.FilePath(),
+		tu.FormatCommand(),
+		tu.CWD,
+		tu.ProjectRoot,
+		tu.SessionID,
+		tu.ToolUseID,
+		tu.DeniedReason,
+	}
+	for k, v := range tu.Input {
+		values = append(values, k, fmt.Sprint(v))
+	}
+
+	for _, value := range values {
+		if strings.Contains(strings.ToLower(value), filter) {
+			return true
+		}
+	}
+	return false
 }
 
 func resolvePaths(paths []string) []string {

@@ -234,4 +234,39 @@ func TestRunHistoryFromReader_ApprovedFilter(t *testing.T) {
 		assert.Equal(t, 1, histResult.Total)
 		assert.Contains(t, histResult.Results[0].Approved, "✗")
 	})
+
+	t.Run("text filter matches command content before limit", func(t *testing.T) {
+		result, err := runHistoryFromReader(data, HistoryOptions{Limit: 1, TextFilter: "allowed"})
+		require.NoError(t, err)
+		histResult := result.(HistoryResult)
+		assert.Equal(t, 1, histResult.Total)
+		require.Len(t, histResult.Results, 1)
+		assert.Contains(t, histResult.Results[0].Summary, "allowed")
+	})
+}
+
+func TestHistoryTextFilterFromGlobal(t *testing.T) {
+	assert.Equal(t, "arthas", HistoryTextFilterFromGlobal(" arthas "))
+	assert.Equal(t, "cmd/arthas.go", HistoryTextFilterFromGlobal("cmd/arthas.go"))
+	assert.Empty(t, HistoryTextFilterFromGlobal(`category == "test"`))
+	assert.Empty(t, HistoryTextFilterFromGlobal(`summary.contains("arthas")`))
+}
+
+func TestRunHistoryFromReader_CategoryAliases(t *testing.T) {
+	data := []byte(`{"timestamp":"2026-06-01T10:00:00Z","type":"session_meta","payload":{"id":"sess-1","cwd":"/p"}}
+{"timestamp":"2026-06-01T10:00:01Z","type":"event_msg","payload":{"type":"agent_message","message":"Arthas assistant note"}}
+{"timestamp":"2026-06-01T10:00:02Z","type":"response_item","payload":{"type":"function_call","name":"update_plan","call_id":"call-plan","arguments":"{\"plan\":[{\"step\":\"Inspect Arthas\",\"status\":\"completed\"}]}"}}`)
+
+	result, err := runHistoryFromReader(data, HistoryOptions{
+		Limit:      100,
+		Categories: []string{"!explore", "!assistant"},
+		TextFilter: "arthas",
+	})
+	require.NoError(t, err)
+
+	histResult := result.(HistoryResult)
+	require.Len(t, histResult.Results, 1)
+	assert.Equal(t, "Task", histResult.Results[0].Tool)
+	assert.Equal(t, "plan", histResult.Results[0].Category)
+	assert.NotContains(t, histResult.Results[0].Summary, `{"plan"`)
 }

@@ -136,6 +136,10 @@ categories:
       - ripgrep
       - sd
       - diff
+      - go list
+      - git status
+      - git diff
+      - git log
       - ps
       - printenv
       - sed
@@ -155,6 +159,8 @@ categories:
       - "^jq\\b"
       - "^yq\\b"
       - "^diff\\b"
+      - "^go list\\b"
+      - "^git\\s+(status|diff|log)\\b"
 
   lint:
     commands:
@@ -208,9 +214,6 @@ categories:
 
   git:
     commands:
-      - git status
-      - git diff
-      - git log
       - git show
       - git branch
       - git checkout
@@ -305,6 +308,7 @@ categories:
       - TodoWrite
       - EnterPlanMode
     commands:
+      - task
       - make help
       - task explore
       - task plan

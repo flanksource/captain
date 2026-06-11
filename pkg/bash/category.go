@@ -65,6 +65,12 @@ type CategoryClassifier struct {
 	compiled map[Category][]*regexp.Regexp
 }
 
+type categoryMatch struct {
+	category    Category
+	specificity int
+	matched     bool
+}
+
 func NewCategoryClassifier(config *CategoryConfig) *CategoryClassifier {
 	c := &CategoryClassifier{
 		config:   config,
@@ -86,10 +92,15 @@ func (c *CategoryClassifier) Classify(command string) Category {
 		return CategoryOther
 	}
 
+	best := categoryMatch{category: CategoryOther}
 	for cat, rule := range c.config.Categories {
 		for _, prefix := range rule.Commands {
 			if cmd == prefix || strings.HasPrefix(cmd, prefix+" ") {
-				return cat
+				best = betterCategoryMatch(best, categoryMatch{
+					category:    cat,
+					specificity: len(prefix),
+					matched:     true,
+				})
 			}
 		}
 	}
@@ -97,12 +108,63 @@ func (c *CategoryClassifier) Classify(command string) Category {
 	for cat, regexps := range c.compiled {
 		for _, re := range regexps {
 			if re.MatchString(cmd) {
-				return cat
+				best = betterCategoryMatch(best, categoryMatch{
+					category:    cat,
+					specificity: len(re.String()),
+					matched:     true,
+				})
 			}
 		}
 	}
 
-	return CategoryOther
+	return best.category
+}
+
+func higherPriorityCategory(current, candidate Category) Category {
+	if candidate == CategoryOther {
+		return current
+	}
+	if current == CategoryOther {
+		return candidate
+	}
+
+	currentPriority := categoryPriority[current]
+	candidatePriority := categoryPriority[candidate]
+	if candidatePriority > currentPriority {
+		return candidate
+	}
+	if candidatePriority == currentPriority && current != CategoryOther && string(candidate) < string(current) {
+		return candidate
+	}
+	return current
+}
+
+func betterCategoryMatch(current, candidate categoryMatch) categoryMatch {
+	if !candidate.matched || candidate.category == CategoryOther {
+		return current
+	}
+	if !current.matched || current.category == CategoryOther {
+		return candidate
+	}
+	if candidate.specificity > current.specificity {
+		return candidate
+	}
+	if candidate.specificity < current.specificity {
+		return current
+	}
+
+	candidatePriority := categoryPriority[candidate.category]
+	currentPriority := categoryPriority[current.category]
+	if candidatePriority > currentPriority {
+		return candidate
+	}
+	if candidatePriority < currentPriority {
+		return current
+	}
+	if string(candidate.category) < string(current.category) {
+		return candidate
+	}
+	return current
 }
 
 func LoadCategoryConfig(path string) (*CategoryConfig, error) {
@@ -154,9 +216,7 @@ func (c *CategoryClassifier) ClassifyBash(command string) Category {
 	highest := CategoryOther
 	for _, cmd := range result.Commands {
 		cat := c.Classify(cmd)
-		if categoryPriority[cat] > categoryPriority[highest] {
-			highest = cat
-		}
+		highest = higherPriorityCategory(highest, cat)
 	}
 	return highest
 }
