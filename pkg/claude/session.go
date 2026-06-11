@@ -145,7 +145,7 @@ func FindSessionFiles(projectsDir, currentDir string, searchAll bool) ([]string,
 		projectPath := filepath.Join(projectsDir, entry.Name())
 
 		if !searchAll && currentDir != "" {
-			if !strings.HasSuffix(entry.Name(), normalized) {
+			if !hasSuffixFold(entry.Name(), normalized) {
 				continue
 			}
 		}
@@ -159,6 +159,13 @@ func FindSessionFiles(projectsDir, currentDir string, searchAll bool) ([]string,
 	}
 
 	return sessionFiles, nil
+}
+
+func hasSuffixFold(s, suffix string) bool {
+	if len(suffix) > len(s) {
+		return false
+	}
+	return strings.EqualFold(s[len(s)-len(suffix):], suffix)
 }
 
 // ParseResult contains the results of parsing Claude Code session history
@@ -326,16 +333,16 @@ func ParseHistoryTools(currentDir string, searchAll bool, filter Filter) ([]tool
 }
 
 type SessionCost struct {
-	SessionID string            `json:"sessionId"`
-	Project   string            `json:"project"`
-	Model     string            `json:"model"`
-	Tier      string            `json:"tier"`
-	Start     time.Time         `json:"start"`
-	End       time.Time         `json:"end"`
-	Tokens    TokenSummary      `json:"tokens"`
-	Messages  int               `json:"messages"`
-	Files     []string          `json:"files,omitempty"`
-	Context   *ContextBreakdown `json:"context,omitempty"`
+	SessionID string             `json:"sessionId"`
+	Project   string             `json:"project"`
+	Model     string             `json:"model"`
+	Tier      string             `json:"tier"`
+	Start     time.Time          `json:"start"`
+	End       time.Time          `json:"end"`
+	Tokens    TokenSummary       `json:"tokens"`
+	Messages  int                `json:"messages"`
+	Files     []string           `json:"files,omitempty"`
+	Context   *ContextBreakdown  `json:"context,omitempty"`
 	ToolCosts []ToolTokenSummary `json:"toolCosts,omitempty"`
 }
 

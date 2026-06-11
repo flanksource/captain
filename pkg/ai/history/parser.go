@@ -47,7 +47,7 @@ func FindSessionFiles(projectsDir, currentDir string, searchAll bool) ([]string,
 		projectPath := filepath.Join(projectsDir, entry.Name())
 
 		if !searchAll && currentDir != "" {
-			if !strings.HasSuffix(entry.Name(), normalized) {
+			if !hasSuffixFold(entry.Name(), normalized) {
 				continue
 			}
 			logger.Debugf("Matched directory: %s", entry.Name())
@@ -65,6 +65,13 @@ func FindSessionFiles(projectsDir, currentDir string, searchAll bool) ([]string,
 
 	logger.Debugf("Total session files found: %d", len(sessionFiles))
 	return sessionFiles, nil
+}
+
+func hasSuffixFold(s, suffix string) bool {
+	if len(suffix) > len(s) {
+		return false
+	}
+	return strings.EqualFold(s[len(s)-len(suffix):], suffix)
 }
 
 func ExtractToolUses(sessionFile string) ([]ToolUse, error) {

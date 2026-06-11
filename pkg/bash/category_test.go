@@ -46,9 +46,17 @@ func TestCategoryClassifier_Classify(t *testing.T) {
 		{"ls -la", CategoryExplore},
 		{"find . -name '*.go'", CategoryExplore},
 		{"grep -r 'TODO' .", CategoryExplore},
+		{"rg 'TODO' .", CategoryExplore},
+		{"go list ./...", CategoryExplore},
+		{"git status", CategoryExplore},
+		{"git status --short", CategoryExplore},
+		{"git diff", CategoryExplore},
+		{"git diff --stat", CategoryExplore},
+		{"git log --oneline", CategoryExplore},
 		{"cat README.md", CategoryExplore},
 		{"head -n 10 file.txt", CategoryExplore},
 		{"tail -f log.txt", CategoryExplore},
+		{"sed -n '1,20p' file.go", CategoryExplore},
 		{"tree", CategoryExplore},
 		{"wc -l file.txt", CategoryExplore},
 
@@ -71,9 +79,6 @@ func TestCategoryClassifier_Classify(t *testing.T) {
 		{"docker system prune", CategoryCleanup},
 
 		// Git commands
-		{"git status", CategoryGit},
-		{"git diff", CategoryGit},
-		{"git log --oneline", CategoryGit},
 		{"git show HEAD", CategoryGit},
 		{"git branch -a", CategoryGit},
 		{"git checkout main", CategoryGit},
@@ -136,6 +141,7 @@ func TestCategoryClassifier_Classify(t *testing.T) {
 		// Plan commands
 		{"task", CategoryPlan},
 		{"task --list", CategoryPlan},
+		{"task --summary", CategoryPlan},
 		{"make help", CategoryPlan},
 		{"task explore", CategoryPlan},
 		{"task plan", CategoryPlan},
@@ -173,6 +179,9 @@ func TestCategoryClassifier_Classify(t *testing.T) {
 
 		// Explore commands including echo
 		{"echo hello", CategoryExplore},
+
+		// Edit commands
+		{"sed -i 's/a/b/g' file.go", CategoryEdit},
 
 		// Other commands
 		{"", CategoryOther},
@@ -314,6 +323,31 @@ func TestClassifyBash(t *testing.T) {
 			name:     "simple go run",
 			command:  "go run main.go",
 			expected: CategoryRun,
+		},
+		{
+			name:     "find and rg pipeline",
+			command:  "find . -name '*.go' | rg TODO",
+			expected: CategoryExplore,
+		},
+		{
+			name:     "rg and read only sed pipeline",
+			command:  "rg TODO . | sed -n '1,10p'",
+			expected: CategoryExplore,
+		},
+		{
+			name:     "go test and ginkgo pipeline",
+			command:  "go test ./... | ginkgo -r",
+			expected: CategoryTest,
+		},
+		{
+			name:     "read-only git and rg stay explore",
+			command:  "git status --short && rg TODO",
+			expected: CategoryExplore,
+		},
+		{
+			name:     "go test wins over git diff explore",
+			command:  "git diff --stat && go test ./...",
+			expected: CategoryTest,
 		},
 	}
 

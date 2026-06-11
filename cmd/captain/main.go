@@ -218,6 +218,10 @@ func bindHistoryAtRoot(cmd *cobra.Command) {
 		}
 
 		opts := optsValue.Interface().(cli.HistoryOptions)
+		if filter := cli.HistoryTextFilterFromGlobal(clicky.Flags.Filter); filter != "" {
+			opts.TextFilter = filter
+			clicky.Flags.Filter = ""
+		}
 		result, err := cli.RunHistory(opts)
 		if err != nil {
 			return err

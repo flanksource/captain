@@ -255,6 +255,9 @@ func collectClaudeStats(path string, searchAll bool, result *InfoResult) SourceS
 	if err != nil || len(sessionFiles) == 0 {
 		return stats
 	}
+	if !searchAll {
+		result.ClaudeDir = filepath.Dir(sessionFiles[0])
+	}
 	stats.SessionCount = len(sessionFiles)
 
 	for _, sessionFile := range sessionFiles {

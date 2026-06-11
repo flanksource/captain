@@ -88,6 +88,33 @@ func TestExtractCodexToolUses_ModelAndEffortStamping(t *testing.T) {
 	}
 }
 
+func TestExtractCodexToolUses_MapsCodexControlCalls(t *testing.T) {
+	stream := strings.Join([]string{
+		`{"timestamp":"2026-06-01T10:00:00Z","type":"session_meta","payload":{"id":"sess-1","cwd":"/p"}}`,
+		`{"timestamp":"2026-06-01T10:00:01Z","type":"response_item","payload":{"type":"function_call","name":"update_plan","call_id":"call-plan","arguments":"{\"plan\":[{\"step\":\"Inspect Arthas\",\"status\":\"completed\"},{\"step\":\"Run tests\",\"status\":\"in_progress\"}]}"}}`,
+		`{"timestamp":"2026-06-01T10:00:02Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call-plan","output":"ok"}}`,
+		`{"timestamp":"2026-06-01T10:00:03Z","type":"response_item","payload":{"type":"function_call","name":"request_user_input","call_id":"call-ask","arguments":"{\"questions\":[{\"id\":\"scope\",\"question\":\"Which Arthas scope?\"}]}"}}`,
+	}, "\n")
+
+	uses, err := ExtractCodexToolUsesFromReader(strings.NewReader(stream))
+	if err != nil {
+		t.Fatalf("ExtractCodexToolUsesFromReader: %v", err)
+	}
+	if len(uses) != 2 {
+		t.Fatalf("expected 2 tool uses, got %d: %+v", len(uses), uses)
+	}
+	if uses[0].Tool != "TodoWrite" {
+		t.Fatalf("update_plan tool = %q, want TodoWrite", uses[0].Tool)
+	}
+	todos, ok := uses[0].Input["todos"].([]any)
+	if !ok || len(todos) != 2 {
+		t.Fatalf("update_plan todos = %#v, want 2 plan items", uses[0].Input["todos"])
+	}
+	if uses[1].Tool != "AskUserQuestion" {
+		t.Fatalf("request_user_input tool = %q, want AskUserQuestion", uses[1].Tool)
+	}
+}
+
 func TestReadCodexSessionInfo_ModelAndEffort(t *testing.T) {
 	stream := strings.Join([]string{
 		`{"timestamp":"2026-05-07T18:44:49.553Z","type":"session_meta","payload":{"id":"sess-1","cwd":"/p","cli_version":"0.128","model_provider":"openai","originator":"codex_exec","git":{"branch":"main","commit_hash":"abc"}}}`,

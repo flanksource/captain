@@ -354,9 +354,6 @@ func extractEventMsg(event CodexEvent, cwd, sessionID string) []ToolUse {
 }
 
 func buildToolUse(callEvent, outputEvent CodexEvent, cwd, sessionID string) ToolUse {
-	input := map[string]any{
-		"command": extractCommand(callEvent.Payload.Arguments),
-	}
 	var response string
 	if outputEvent.Payload.Output != "" {
 		response = extractCommandOutput(outputEvent.Payload.Output)
@@ -364,6 +361,39 @@ func buildToolUse(callEvent, outputEvent CodexEvent, cwd, sessionID string) Tool
 	ts := callEvent.Time()
 	if ts == nil {
 		ts = outputEvent.Time()
+	}
+
+	switch callEvent.Payload.Name {
+	case "update_plan":
+		args := extractArgumentsMap(callEvent.Payload.Arguments)
+		if plan, ok := args["plan"]; ok {
+			args["todos"] = plan
+		}
+		return ToolUse{
+			Tool:      "TodoWrite",
+			Input:     args,
+			Timestamp: ts,
+			CWD:       cwd,
+			SessionID: sessionID,
+			ToolUseID: callEvent.Payload.CallID,
+			Source:    "codex",
+			Response:  response,
+		}
+	case "request_user_input":
+		return ToolUse{
+			Tool:      "AskUserQuestion",
+			Input:     extractArgumentsMap(callEvent.Payload.Arguments),
+			Timestamp: ts,
+			CWD:       cwd,
+			SessionID: sessionID,
+			ToolUseID: callEvent.Payload.CallID,
+			Source:    "codex",
+			Response:  response,
+		}
+	}
+
+	input := map[string]any{
+		"command": extractCommand(callEvent.Payload.Arguments),
 	}
 	return ToolUse{
 		Tool:      "Bash",
@@ -375,6 +405,14 @@ func buildToolUse(callEvent, outputEvent CodexEvent, cwd, sessionID string) Tool
 		Source:    "codex",
 		Response:  response,
 	}
+}
+
+func extractArgumentsMap(argsJSON string) map[string]any {
+	var args map[string]any
+	if argsJSON == "" || json.Unmarshal([]byte(argsJSON), &args) != nil {
+		return map[string]any{}
+	}
+	return args
 }
 
 func extractCommand(argsJSON string) string {
