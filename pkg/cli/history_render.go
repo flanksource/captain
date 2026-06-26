@@ -170,6 +170,9 @@ func toLineEntry(t tools.Tool, compact bool, width, toolWidth int) lineEntry {
 		Denied:  base.Denied && name != "Plan" && name != "User",
 		Command: t.Pretty().ANSI(),
 	}
+	if base.IsSidechain {
+		e.Command = sidechainBadge(base) + e.Command
+	}
 	if compact {
 		e.Command = firstLine(e.Command)
 		e.Usage = base.Models.Pretty().ANSI()
@@ -187,6 +190,31 @@ func toLineEntry(t tools.Tool, compact bool, width, toolWidth int) lineEntry {
 		}
 	}
 	return e
+}
+
+// toolAgentLabel is the sub-agent attribution for a tool row: the task
+// description if known, else the agent type. Empty for main-thread rows.
+func toolAgentLabel(base *tools.BaseTool) string {
+	if !base.IsSidechain {
+		return ""
+	}
+	if base.AgentDesc != "" {
+		return base.AgentDesc
+	}
+	if base.AgentType != "" {
+		return base.AgentType
+	}
+	return "agent"
+}
+
+// sidechainBadge is the compact "↳ <agent>" prefix marking a transcript row that
+// was produced by a nested sub-agent rather than the main thread.
+func sidechainBadge(base *tools.BaseTool) string {
+	label := base.AgentType
+	if label == "" {
+		label = "agent"
+	}
+	return clicky.Text("↳ ", "text-gray-500").Append(label+" ", "text-violet-400").ANSI()
 }
 
 func printLeftTo(w io.Writer, e lineEntry, toolWidth int) {

@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -121,11 +122,22 @@ func resolveWorktreeRoot(gitFilePath string) string {
 // FindSessionFiles discovers Claude Code session JSONL files in the projects directory.
 // If searchAll is false, it only searches for sessions matching the currentDir path.
 func FindSessionFiles(projectsDir, currentDir string, searchAll bool) ([]string, error) {
+	return findProjectFiles(projectsDir, currentDir, searchAll, "*.jsonl")
+}
+
+// FindAgentTranscripts returns the nested sub-agent JSONL files for the in-scope
+// sessions: <projectPath>/<session-uuid>/subagents/agent-*.jsonl. Agents at any
+// spawn depth land flat in that one directory, so a single glob covers nesting.
+func FindAgentTranscripts(projectsDir, currentDir string, searchAll bool) ([]string, error) {
+	return findProjectFiles(projectsDir, currentDir, searchAll, "*", "subagents", "agent-*.jsonl")
+}
+
+// findProjectFiles globs each in-scope project directory under projectsDir for
+// files matching the given path segments (joined onto the project dir).
+func findProjectFiles(projectsDir, currentDir string, searchAll bool, globParts ...string) ([]string, error) {
 	if _, err := os.Stat(projectsDir); os.IsNotExist(err) {
 		return nil, nil
 	}
-
-	var sessionFiles []string
 
 	entries, err := os.ReadDir(projectsDir)
 	if err != nil {
@@ -137,12 +149,11 @@ func FindSessionFiles(projectsDir, currentDir string, searchAll bool) ([]string,
 		normalized = NormalizePath(currentDir)
 	}
 
+	var files []string
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
-
-		projectPath := filepath.Join(projectsDir, entry.Name())
 
 		if !searchAll && currentDir != "" {
 			if !hasSuffixFold(entry.Name(), normalized) {
@@ -150,15 +161,60 @@ func FindSessionFiles(projectsDir, currentDir string, searchAll bool) ([]string,
 			}
 		}
 
-		matches, err := filepath.Glob(filepath.Join(projectPath, "*.jsonl"))
+		projectPath := filepath.Join(projectsDir, entry.Name())
+		pattern := filepath.Join(append([]string{projectPath}, globParts...)...)
+		matches, err := filepath.Glob(pattern)
 		if err != nil {
 			continue
 		}
-
-		sessionFiles = append(sessionFiles, matches...)
+		files = append(files, matches...)
 	}
 
-	return sessionFiles, nil
+	return files, nil
+}
+
+// isAgentTranscript reports whether a session file is a nested sub-agent transcript
+// (lives under a session's subagents/ directory).
+func isAgentTranscript(path string) bool {
+	return strings.Contains(filepath.ToSlash(path), "/subagents/")
+}
+
+// agentMeta is the sidecar JSON Claude Code writes next to each sub-agent
+// transcript (agent-<id>.meta.json).
+type agentMeta struct {
+	AgentType   string `json:"agentType"`
+	Description string `json:"description"`
+}
+
+// readAgentMeta loads the agentType/description from the agent-<id>.meta.json
+// sibling of a sub-agent transcript. Missing/unreadable meta yields empty strings.
+func readAgentMeta(transcriptPath string) (agentType, desc string) {
+	metaPath := strings.TrimSuffix(transcriptPath, ".jsonl") + ".meta.json"
+	data, err := os.ReadFile(metaPath)
+	if err != nil {
+		return "", ""
+	}
+	var m agentMeta
+	if err := json.Unmarshal(data, &m); err != nil {
+		return "", ""
+	}
+	return m.AgentType, m.Description
+}
+
+// projectPathForFile resolves the original project directory for a session file,
+// working for both top-level (<slug>/<uuid>.jsonl) and nested sub-agent
+// (<slug>/<uuid>/subagents/agent-*.jsonl) transcripts by denormalizing the slug
+// segment directly under projectsDir.
+func projectPathForFile(projectsDir, sessionFile string) string {
+	rel, err := filepath.Rel(projectsDir, sessionFile)
+	if err != nil {
+		return ExtractProjectPath(sessionFile)
+	}
+	parts := strings.Split(rel, string(filepath.Separator))
+	if len(parts) == 0 || parts[0] == "" || parts[0] == ".." {
+		return ExtractProjectPath(sessionFile)
+	}
+	return DenormalizePath(parts[0])
 }
 
 func hasSuffixFold(s, suffix string) bool {
@@ -249,6 +305,11 @@ func ParseHistory(currentDir string, searchAll bool, filter Filter) (*ParseResul
 	if err != nil {
 		return nil, err
 	}
+	if filter.IncludeAgents {
+		if agentFiles, err := FindAgentTranscripts(projectsDir, currentDir, searchAll); err == nil {
+			sessionFiles = append(sessionFiles, agentFiles...)
+		}
+	}
 
 	result := &ParseResult{
 		SessionsFound: len(sessionFiles),
@@ -266,23 +327,55 @@ func ParseHistory(currentDir string, searchAll bool, filter Filter) (*ParseResul
 		}
 		if len(entries) > 0 {
 			result.SessionsScanned++
-			projectPath := ExtractProjectPath(sessionFile)
-			projectRoot := FindProjectRoot(projectPath)
-			toolUses := ExtractToolUses(entries)
-			for i := range toolUses {
-				if toolUses[i].CWD == "" {
-					toolUses[i].CWD = projectPath
-				}
-				if toolUses[i].ProjectRoot == "" {
-					toolUses[i].ProjectRoot = projectRoot
-				}
-			}
+			toolUses := stampToolUses(ExtractToolUses(entries), projectsDir, sessionFile)
 			allToolUses = append(allToolUses, toolUses...)
 		}
 	}
 
 	result.ToolUses = FilterToolUses(allToolUses, filter)
 	return result, nil
+}
+
+// stampToolUses backfills CWD/ProjectRoot and, for sub-agent transcripts, the
+// owning agent's type/description (from the agent-<id>.meta.json sidecar).
+func stampToolUses(toolUses []ToolUse, projectsDir, sessionFile string) []ToolUse {
+	projectPath := ExtractProjectPath(sessionFile)
+	var agentType, agentDesc, agentID string
+	sidechain := isAgentTranscript(sessionFile)
+	if sidechain {
+		projectPath = projectPathForFile(projectsDir, sessionFile)
+		agentType, agentDesc = readAgentMeta(sessionFile)
+		agentID = agentIDFromPath(sessionFile)
+	}
+	projectRoot := FindProjectRoot(projectPath)
+	for i := range toolUses {
+		if toolUses[i].CWD == "" {
+			toolUses[i].CWD = projectPath
+		}
+		if toolUses[i].ProjectRoot == "" {
+			toolUses[i].ProjectRoot = projectRoot
+		}
+		if sidechain {
+			toolUses[i].IsSidechain = true
+		}
+		if agentID != "" && toolUses[i].AgentID == "" {
+			toolUses[i].AgentID = agentID
+		}
+		if agentType != "" && toolUses[i].AgentType == "" {
+			toolUses[i].AgentType = agentType
+		}
+		if agentDesc != "" && toolUses[i].AgentDesc == "" {
+			toolUses[i].AgentDesc = agentDesc
+		}
+	}
+	return toolUses
+}
+
+// agentIDFromPath extracts the agent id from a sub-agent transcript filename
+// (".../agent-<id>.jsonl" → "<id>").
+func agentIDFromPath(transcriptPath string) string {
+	base := strings.TrimSuffix(filepath.Base(transcriptPath), ".jsonl")
+	return strings.TrimPrefix(base, "agent-")
 }
 
 // ParseHistoryTools is like ParseHistory but returns Tool implementations
@@ -295,6 +388,11 @@ func ParseHistoryTools(currentDir string, searchAll bool, filter Filter) ([]tool
 	if err != nil {
 		return nil, err
 	}
+	if filter.IncludeAgents {
+		if agentFiles, err := FindAgentTranscripts(projectsDir, currentDir, searchAll); err == nil {
+			sessionFiles = append(sessionFiles, agentFiles...)
+		}
+	}
 
 	var allToolUses []ToolUse
 	uses := make(map[string][]HistoryEntry)
@@ -306,17 +404,7 @@ func ParseHistoryTools(currentDir string, searchAll bool, filter Filter) ([]tool
 		if len(entries) == 0 {
 			continue
 		}
-		projectPath := ExtractProjectPath(sessionFile)
-		projectRoot := FindProjectRoot(projectPath)
-		toolUses := ExtractToolUsesWithTokens(entries)
-		for i := range toolUses {
-			if toolUses[i].CWD == "" {
-				toolUses[i].CWD = projectPath
-			}
-			if toolUses[i].ProjectRoot == "" {
-				toolUses[i].ProjectRoot = projectRoot
-			}
-		}
+		toolUses := stampToolUses(ExtractToolUsesWithTokens(entries), projectsDir, sessionFile)
 		allToolUses = append(allToolUses, toolUses...)
 		uses[sessionFile] = entries
 	}

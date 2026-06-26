@@ -14,10 +14,10 @@ func TestFilterToolUses(t *testing.T) {
 	twoHoursAgo := now.Add(-2 * time.Hour)
 
 	toolUses := []ToolUse{
-		{Tool: "Bash", CWD: "/home/ubuntu/project", Timestamp: &now},
-		{Tool: "Read", CWD: "/home/ubuntu/project", Timestamp: &hourAgo},
-		{Tool: "Write", CWD: "/home/ubuntu/other", Timestamp: &twoHoursAgo},
-		{Tool: "Edit", CWD: "/home/ubuntu/project", Timestamp: &now},
+		{Tool: "Bash", CWD: "/home/ubuntu/project", Timestamp: &now, SessionID: "sess-aaaa1111"},
+		{Tool: "Read", CWD: "/home/ubuntu/project", Timestamp: &hourAgo, SessionID: "sess-aaaa1111"},
+		{Tool: "Write", CWD: "/home/ubuntu/other", Timestamp: &twoHoursAgo, SessionID: "sess-bbbb2222"},
+		{Tool: "Edit", CWD: "/home/ubuntu/project", Timestamp: &now, SessionID: "sess-bbbb2222"},
 		{Tool: "Grep", CWD: "", Timestamp: &now},
 		{Tool: "Write", CWD: "/home/ubuntu/project", Input: map[string]any{"file_path": "/home/ubuntu/.claude/plans/foo.md"}, Timestamp: &now},
 		{Tool: "Write", CWD: "/home/ubuntu/project", Input: map[string]any{"file_path": "/home/ubuntu/project/main.go"}, Timestamp: &hourAgo},
@@ -92,6 +92,21 @@ func TestFilterToolUses(t *testing.T) {
 			name:     "limit returns most recent first",
 			filter:   Filter{Limit: 2},
 			expected: []string{"Bash", "Edit"},
+		},
+		{
+			name:     "session exact match",
+			filter:   Filter{SessionID: "sess-aaaa1111"},
+			expected: []string{"Bash", "Read"},
+		},
+		{
+			name:     "session prefix match",
+			filter:   Filter{SessionID: "sess-bbbb"},
+			expected: []string{"Write", "Edit"},
+		},
+		{
+			name:     "session and tool combined",
+			filter:   Filter{SessionID: "sess-aaaa1111", Tools: []string{"Read"}},
+			expected: []string{"Read"},
 		},
 	}
 

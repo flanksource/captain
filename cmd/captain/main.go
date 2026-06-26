@@ -61,6 +61,10 @@ func main() {
 	costCmd.Short = "Show token usage and estimated costs"
 	costCmd.Long = "Display token consumption (input, output, cache read/write) and estimated costs across Claude Code sessions."
 
+	changesCmd := clicky.AddNamedCommand("changes", rootCmd, cli.ChangesOptions{}, cli.RunChanges)
+	changesCmd.Short = "List files modified by a session"
+	changesCmd.Long = "List the files written or edited during a Claude Code or Codex session. Pass --session-id to target a specific session; otherwise the most recent session in the current directory is used."
+
 	sandboxCmd := &cobra.Command{
 		Use:   "sandbox",
 		Short: "Sandbox configuration tools",
