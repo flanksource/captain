@@ -69,6 +69,9 @@ func (c *CodexCLI) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai
 
 	cmd := exec.CommandContext(ctx, "codex", args...)
 	cmd.Env = clearNestingEnv(os.Environ())
+	if req.Cwd != "" {
+		cmd.Dir = req.Cwd
+	}
 
 	logger.Debugf("[codex-cli] exec: codex %s", strings.Join(redactCodexArgs(args), " "))
 

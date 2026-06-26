@@ -11,7 +11,6 @@ import (
 	"github.com/flanksource/clicky/api"
 	"github.com/flanksource/clicky/api/icons"
 	"github.com/flanksource/commons/logger"
-	"github.com/sergi/go-diff/diffmatchpatch"
 )
 
 // Preview line limits matching pi-mono's tool-execution.ts
@@ -35,7 +34,7 @@ func (t ToolUse) Pretty() api.Text {
 	icon := toolIcon(t.Tool)
 	color := toolColor(t.Tool)
 
-	text = text.Add(icon).Append(" "+strings.ToLower(t.Tool), color)
+	text = text.Add(icon).Append(" "+toolLabel(t.Tool), color)
 
 	if t.Timestamp != nil || t.CWD != "" {
 		text = text.NewLine()
@@ -57,10 +56,6 @@ func (t ToolUse) Pretty() api.Text {
 	}
 	data := copyMap(t.Input)
 
-	if desc, ok := data["description"].(string); ok && desc != "" {
-		text = text.Append(": ", "text-gray-400").Append(desc, "text-gray-700")
-		delete(data, "description")
-	}
 	if timeout, ok := data["timeout"].(float64); ok && timeout > 0 {
 		data["timeout"] = time.Duration(timeout) * time.Millisecond
 	}
@@ -84,7 +79,6 @@ func (t ToolUse) Pretty() api.Text {
 		}
 		delete(data, "command")
 		delete(data, "timeout")
-
 
 	case "Edit":
 		oldStr, _ := t.Input["old_string"].(string)
@@ -222,7 +216,13 @@ func (t ToolUse) Pretty() api.Text {
 		data = nil
 
 	default:
-		// Generic fallback with clean key-value summary
+		if updated, ok := renderExtendedTool(t, text, data, cwd); ok {
+			text = updated
+		} else if desc, ok := data["description"].(string); ok && desc != "" {
+			text = text.Append(": ", "text-gray-400").Append(desc, "text-gray-700")
+			delete(data, "description")
+		}
+		// Generic fallback with clean key-value summary for any leftover args
 		if len(data) > 0 {
 			// Truncate long string values for generic display
 			cleaned := make(map[string]any)
@@ -318,19 +318,39 @@ func (e NoResultsError) Error() string {
 // --- Helper functions ---
 
 func toolIcon(tool string) icons.Icon {
+	if server, _, ok := splitMcpTool(tool); ok {
+		return mcpServerIcon(server)
+	}
 	m := map[string]icons.Icon{
-		"Bash":         {Unicode: "💻", Iconify: "codicon:terminal", Style: "muted"},
-		"Read":         icons.File,
-		"Write":        {Unicode: "✏️", Iconify: "codicon:edit", Style: "muted"},
-		"Edit":         {Unicode: "✏️", Iconify: "codicon:edit", Style: "muted"},
-		"MultiEdit":    {Unicode: "✏️", Iconify: "codicon:edit", Style: "muted"},
-		"Grep":         icons.Search,
-		"Glob":         icons.Search,
-		"WebFetch":     icons.Cloud,
-		"WebSearch":    icons.Search,
-		"Task":         icons.Package,
-		"TodoWrite":    icons.ArrowRight,
-		"Skill":        icons.Info,
+		"Bash":             {Unicode: "💻", Iconify: "codicon:terminal", Style: "muted"},
+		"Read":             icons.File,
+		"Write":            {Unicode: "✏️", Iconify: "codicon:edit", Style: "muted"},
+		"Edit":             {Unicode: "✏️", Iconify: "codicon:edit", Style: "muted"},
+		"MultiEdit":        {Unicode: "✏️", Iconify: "codicon:edit", Style: "muted"},
+		"NotebookEdit":     {Unicode: "📓", Iconify: "codicon:notebook", Style: "muted"},
+		"Grep":             icons.Search,
+		"Glob":             icons.Search,
+		"WebFetch":         icons.Cloud,
+		"WebSearch":        icons.Search,
+		"Task":             icons.Package,
+		"Agent":            icons.Robot,
+		"TodoWrite":        icons.ArrowRight,
+		"Skill":            icons.Info,
+		"ToolSearch":       icons.Search,
+		"AskUserQuestion":  icons.QuestionRed,
+		"ExitPlanMode":     {Unicode: "📋", Iconify: "codicon:checklist", Style: "muted"},
+		"EnterPlanMode":    {Unicode: "📋", Iconify: "codicon:checklist", Style: "muted"},
+		"Monitor":          {Unicode: "📡", Iconify: "codicon:pulse", Style: "muted"},
+		"ScheduleWakeup":   {Unicode: "⏰", Iconify: "codicon:watch", Style: "muted"},
+		"PushNotification": {Unicode: "🔔", Iconify: "codicon:bell", Style: "muted"},
+		"Workflow":         icons.Loop,
+		"DesignSync":       {Unicode: "🎨", Iconify: "mdi:palette", Style: "muted"},
+		"TaskCreate":       {Unicode: "➕", Iconify: "codicon:add", Style: "muted"},
+		"TaskUpdate":       icons.Loop,
+		"TaskList":         {Unicode: "📋", Iconify: "codicon:list-unordered", Style: "muted"},
+		"TaskGet":          {Unicode: "📋", Iconify: "codicon:list-unordered", Style: "muted"},
+		"TaskOutput":       {Unicode: "📋", Iconify: "codicon:output", Style: "muted"},
+		"TaskStop":         icons.Stop,
 	}
 	if icon, ok := m[tool]; ok {
 		return icon
@@ -339,19 +359,39 @@ func toolIcon(tool string) icons.Icon {
 }
 
 func toolColor(tool string) string {
+	if _, _, ok := splitMcpTool(tool); ok {
+		return "text-pink-600 font-medium"
+	}
 	m := map[string]string{
-		"Bash":         "text-green-600 font-medium",
-		"Read":         "text-blue-600 font-medium",
-		"Write":        "text-orange-600 font-medium",
-		"Edit":         "text-purple-600 font-medium",
-		"MultiEdit":    "text-purple-600 font-medium",
-		"Grep":         "text-yellow-600 font-medium",
-		"Glob":         "text-cyan-600 font-medium",
-		"WebFetch":     "text-blue-600 font-medium",
-		"WebSearch":    "text-purple-600 font-medium",
-		"Task":         "text-indigo-600 font-medium",
-		"TodoWrite":    "text-blue-600 font-medium",
-		"Skill":        "text-teal-600 font-medium",
+		"Bash":             "text-green-600 font-medium",
+		"Read":             "text-blue-600 font-medium",
+		"Write":            "text-orange-600 font-medium",
+		"Edit":             "text-purple-600 font-medium",
+		"MultiEdit":        "text-purple-600 font-medium",
+		"NotebookEdit":     "text-purple-600 font-medium",
+		"Grep":             "text-yellow-600 font-medium",
+		"Glob":             "text-cyan-600 font-medium",
+		"WebFetch":         "text-blue-600 font-medium",
+		"WebSearch":        "text-purple-600 font-medium",
+		"Task":             "text-indigo-600 font-medium",
+		"Agent":            "text-indigo-600 font-medium",
+		"TodoWrite":        "text-blue-600 font-medium",
+		"Skill":            "text-teal-600 font-medium",
+		"ToolSearch":       "text-yellow-600 font-medium",
+		"AskUserQuestion":  "text-amber-600 font-medium",
+		"ExitPlanMode":     "text-teal-600 font-medium",
+		"EnterPlanMode":    "text-teal-600 font-medium",
+		"Monitor":          "text-cyan-600 font-medium",
+		"ScheduleWakeup":   "text-cyan-600 font-medium",
+		"PushNotification": "text-amber-600 font-medium",
+		"Workflow":         "text-indigo-600 font-medium",
+		"DesignSync":       "text-pink-600 font-medium",
+		"TaskCreate":       "text-green-600 font-medium",
+		"TaskUpdate":       "text-blue-600 font-medium",
+		"TaskList":         "text-gray-600 font-medium",
+		"TaskGet":          "text-gray-600 font-medium",
+		"TaskOutput":       "text-gray-600 font-medium",
+		"TaskStop":         "text-red-600 font-medium",
 	}
 	if color, ok := m[tool]; ok {
 		return color
@@ -396,110 +436,4 @@ func copyMap(m map[string]any) map[string]any {
 		result[k] = v
 	}
 	return result
-}
-
-// createUnifiedDiff creates a line-based unified diff with line numbers,
-// matching pi-mono's diff.ts rendering style.
-func createUnifiedDiff(oldStr, newStr string) api.Text {
-	dmp := diffmatchpatch.New()
-	diffs := dmp.DiffMain(oldStr, newStr, true)
-	diffs = dmp.DiffCleanupSemantic(diffs)
-
-	result := clicky.Text("")
-
-	// Track line numbers and collect lines by type
-	oldLineNum := 1
-	newLineNum := 1
-
-	var removedLines []string
-	var addedLines []string
-	var contextBuf []string
-
-	flushChanges := func() {
-		if len(removedLines) == 0 && len(addedLines) == 0 {
-			return
-		}
-
-		// Show context lines before changes (max 3)
-		start := 0
-		if len(contextBuf) > 3 {
-			start = len(contextBuf) - 3
-		}
-		for _, cl := range contextBuf[start:] {
-			result = result.Append(fmt.Sprintf(" %s", cl), "text-gray-400").NewLine()
-		}
-		contextBuf = nil
-
-		// Render removed/added with line numbers
-		if len(removedLines) == 1 && len(addedLines) == 1 {
-			// Single line change: inline diff
-			result = result.
-				Append(fmt.Sprintf("-%d ", oldLineNum), "text-red-700").
-				Append(removedLines[0], "text-red-500").NewLine().
-				Append(fmt.Sprintf("+%d ", newLineNum), "text-green-700").
-				Append(addedLines[0], "text-green-500").NewLine()
-			oldLineNum++
-			newLineNum++
-		} else {
-			for _, line := range removedLines {
-				result = result.
-					Append(fmt.Sprintf("-%d ", oldLineNum), "text-red-700").
-					Append(line, "text-red-500").NewLine()
-				oldLineNum++
-			}
-			for _, line := range addedLines {
-				result = result.
-					Append(fmt.Sprintf("+%d ", newLineNum), "text-green-700").
-					Append(line, "text-green-500").NewLine()
-				newLineNum++
-			}
-		}
-		removedLines = nil
-		addedLines = nil
-	}
-
-	for _, diff := range diffs {
-		lines := strings.Split(diff.Text, "\n")
-		for i, line := range lines {
-			if i == len(lines)-1 && line == "" && len(lines) > 1 {
-				continue
-			}
-
-			switch diff.Type {
-			case diffmatchpatch.DiffEqual:
-				flushChanges()
-				contextBuf = append(contextBuf, line)
-				oldLineNum++
-				newLineNum++
-
-			case diffmatchpatch.DiffDelete:
-				removedLines = append(removedLines, line)
-
-			case diffmatchpatch.DiffInsert:
-				addedLines = append(addedLines, line)
-			}
-		}
-	}
-
-	flushChanges()
-
-	return result
-}
-
-func detectLanguage(filePath string) string {
-	langMap := map[string]string{
-		".go": "go", ".py": "python", ".js": "javascript", ".ts": "typescript",
-		".tsx": "typescript", ".jsx": "javascript", ".md": "markdown",
-		".yaml": "yaml", ".yml": "yaml", ".json": "json",
-		".sh": "bash", ".bash": "bash", ".sql": "sql",
-		".html": "html", ".css": "css", ".rs": "rust",
-		".rb": "ruby", ".java": "java", ".kt": "kotlin",
-		".swift": "swift", ".c": "c", ".cpp": "cpp",
-		".h": "c", ".hpp": "cpp", ".toml": "toml",
-		".xml": "xml", ".tf": "hcl", ".proto": "protobuf",
-	}
-	if lang, ok := langMap[filepath.Ext(filePath)]; ok {
-		return lang
-	}
-	return ""
 }
