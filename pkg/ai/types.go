@@ -7,12 +7,17 @@ import (
 
 type Request struct {
 	SystemPrompt       string
-	AppendSystemPrompt string            // claude --append-system-prompt
+	AppendSystemPrompt string // claude --append-system-prompt
 	Prompt             string
 	MaxTokens          int
 	Temperature        float64
 	StructuredOutput   any               // nil = text mode, non-nil = JSON schema target
 	Metadata           map[string]string // arbitrary caller metadata
+
+	// Cwd runs the CLI provider's subprocess in this working directory. Empty
+	// means the calling process's cwd (the prior behaviour), so existing callers
+	// are unaffected. Honoured by the streaming CLI providers (claude_cli, codex_cli).
+	Cwd string
 
 	// Per-request CLI knobs honoured by ExecuteStream-capable providers
 	// (currently claude_cli). Zero values are equivalent to "let the

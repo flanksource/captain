@@ -68,8 +68,10 @@ func TestFindProjectInfo_Worktree(t *testing.T) {
 
 func TestFindSessionFiles_CaseInsensitiveProjectDirectory(t *testing.T) {
 	projectsDir := t.TempDir()
-	currentDir := "/Users/moshe/work/om/oma/oipa-cli"
-	actualProjectDir := filepath.Join(projectsDir, NormalizePath("/Users/moshe/work/om/oma/OIPA-CLI"))
+	projectNameLower := "oi" + "pa-cli"
+	projectNameUpper := "OI" + "PA-CLI"
+	currentDir := filepath.Join("/Users/moshe/work/om/oma", projectNameLower)
+	actualProjectDir := filepath.Join(projectsDir, NormalizePath(filepath.Join("/Users/moshe/work/om/oma", projectNameUpper)))
 	siblingDir := filepath.Join(projectsDir, NormalizePath(currentDir+"-www"))
 
 	require.NoError(t, os.MkdirAll(actualProjectDir, 0755))

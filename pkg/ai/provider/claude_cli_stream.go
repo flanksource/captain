@@ -37,6 +37,9 @@ func (c *ClaudeCLI) ExecuteStream(ctx context.Context, req ai.Request) (<-chan a
 
 	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Env = clearNestingEnv(os.Environ())
+	if req.Cwd != "" {
+		cmd.Dir = req.Cwd
+	}
 
 	logger.Debugf("[claude-cli] exec: claude %s", strings.Join(redactClaudeArgs(args), " "))
 
