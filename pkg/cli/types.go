@@ -20,6 +20,7 @@ type ScanResultRow struct {
 	Binaries        []string        `json:"binaries,omitempty"`
 	Category        string          `json:"category"`
 	Approved        string          `json:"approved,omitempty"`
+	Agent           string          `json:"agent,omitempty"` // sub-agent attribution for sidechain rows
 	Time            string          `json:"time"`
 	Cost            string          `json:"cost,omitempty"`
 	Raw             json.RawMessage `json:"-"` // surfaced via MarshalJSON when --raw is set
@@ -39,6 +40,9 @@ func (r ScanResultRow) Columns() []api.ColumnDef {
 		api.Column("category").Label("Category").Build(),
 		api.Column("approved").Label("Approved").Build(),
 	}
+	if r.Agent != "" {
+		cols = append(cols, api.Column("agent").Label("Agent").Build())
+	}
 	if r.Cost != "" {
 		cols = append(cols, api.Column("cost").Label("Cost").Build())
 	}
@@ -53,6 +57,7 @@ func (r ScanResultRow) Row() map[string]any {
 		"subject":  r.Subject,
 		"category": r.Category,
 		"approved": r.Approved,
+		"agent":    r.Agent,
 		"cost":     r.Cost,
 	}
 }
@@ -74,6 +79,7 @@ type ScanResultRowSingle struct {
 	Binaries        []string        `json:"binaries,omitempty"`
 	Category        string          `json:"category"`
 	Approved        string          `json:"approved,omitempty"`
+	Agent           string          `json:"agent,omitempty"` // sub-agent attribution for sidechain rows
 	Time            string          `json:"time"`
 	Cost            string          `json:"cost,omitempty"`
 	Raw             json.RawMessage `json:"-"` // surfaced via MarshalJSON when --raw is set
@@ -122,6 +128,9 @@ func (r ScanResultRowSingle) Columns() []api.ColumnDef {
 		api.Column("category").Label("Category").Build(),
 		api.Column("approved").Label("Approved").Build(),
 	}
+	if r.Agent != "" {
+		cols = append(cols, api.Column("agent").Label("Agent").Build())
+	}
 	if r.Cost != "" {
 		cols = append(cols, api.Column("cost").Label("Cost").Build())
 	}
@@ -135,6 +144,7 @@ func (r ScanResultRowSingle) Row() map[string]any {
 		"subject":  r.Subject,
 		"category": r.Category,
 		"approved": r.Approved,
+		"agent":    r.Agent,
 		"cost":     r.Cost,
 	}
 }

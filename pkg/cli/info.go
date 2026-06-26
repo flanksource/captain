@@ -20,6 +20,7 @@ type InfoOptions struct {
 	All    bool   `flag:"all" help:"Include sessions from all projects, not just the current path" short:"a"`
 	Claude bool   `flag:"claude" help:"Show only Claude sessions"`
 	Codex  bool   `flag:"codex" help:"Show only Codex sessions"`
+	Agents bool   `flag:"agents" help:"Count tool calls from nested sub-agents (Task/Agent); --agents=false for the main thread only" default:"true"`
 }
 
 // SessionInfo describes a single session's start metadata.
@@ -34,6 +35,7 @@ type SessionInfo struct {
 	Provider        string     `json:"provider,omitempty"`
 	CWD             string     `json:"cwd,omitempty"`
 	ToolCalls       int        `json:"toolCalls"`
+	Current         bool       `json:"current,omitempty"`
 }
 
 // SourceStats summarizes session history for a single agent source (claude or codex).
@@ -70,6 +72,8 @@ func (s SourceStats) Pretty() api.Text {
 }
 
 // Pretty renders a session start indicator: timestamp, model, version, branch.
+// The detected current session shows its full (copyable) ID and a "current" badge;
+// others show a short ID.
 func (s SessionInfo) Pretty() api.Text {
 	t := api.Text{}.Add(icons.Play).Space()
 	if s.StartedAt != nil {
@@ -103,8 +107,16 @@ func (s SessionInfo) Pretty() api.Text {
 			Append(fmt.Sprintf("%d calls", s.ToolCalls), "text-gray-500")
 	}
 	if s.ID != "" {
+		id := shortID(s.ID)
+		if s.Current {
+			id = s.ID
+		}
 		t = t.Append("  ", "").
-			Append(shortID(s.ID), "text-gray-400 italic")
+			Append(id, "text-gray-400 italic")
+	}
+	if s.Current {
+		t = t.Append("  ", "").
+			Append("current", "text-green-600 font-bold")
 	}
 	return t
 }
@@ -229,10 +241,18 @@ func RunInfo(opts InfoOptions) (any, error) {
 	}
 
 	if showClaude {
-		result.Claude = collectClaudeStats(path, opts.All, &result)
+		result.Claude = collectClaudeStats(path, opts.All, opts.Agents, &result)
 	}
 	if showCodex {
 		result.Codex = collectCodexStats(matchRoot, opts.All, &result)
+	}
+
+	// The most-recent session for the current directory is the detected
+	// "current" session. Marking it surfaces its full ID for use with
+	// `captain history --session` and `captain changes --session-id`.
+	if !opts.All {
+		markCurrentSession(result.Claude.Sessions)
+		markCurrentSession(result.Codex.Sessions)
 	}
 
 	result.TotalSessions = result.Claude.SessionCount + result.Codex.SessionCount
@@ -241,7 +261,7 @@ func RunInfo(opts InfoOptions) (any, error) {
 	return result, nil
 }
 
-func collectClaudeStats(path string, searchAll bool, result *InfoResult) SourceStats {
+func collectClaudeStats(path string, searchAll, includeAgents bool, result *InfoResult) SourceStats {
 	stats := SourceStats{}
 
 	projectsDir := claude.GetProjectsDir()
@@ -301,8 +321,47 @@ func collectClaudeStats(path string, searchAll bool, result *InfoResult) SourceS
 		}
 		stats.Sessions = append(stats.Sessions, session)
 	}
+
+	if includeAgents {
+		addAgentToolCalls(&stats, projectsDir, path, searchAll)
+	}
+
 	sortSessionsRecent(stats.Sessions)
 	return stats
+}
+
+// addAgentToolCalls folds nested sub-agent (Task/Agent) tool calls into the
+// total and into their parent session's count, without inflating SessionCount —
+// sub-agents belong to the session that spawned them, not to new sessions.
+func addAgentToolCalls(stats *SourceStats, projectsDir, path string, searchAll bool) {
+	agentFiles, err := claude.FindAgentTranscripts(projectsDir, path, searchAll)
+	if err != nil {
+		return
+	}
+	byID := make(map[string]*SessionInfo, len(stats.Sessions))
+	for i := range stats.Sessions {
+		byID[stats.Sessions[i].ID] = &stats.Sessions[i]
+	}
+	for _, af := range agentFiles {
+		entries, err := claude.ReadHistoryFile(af)
+		if err != nil {
+			continue
+		}
+		count, parentID := 0, ""
+		for _, entry := range entries {
+			count += len(entry.Message.GetToolUses())
+			if parentID == "" && entry.SessionID != "" {
+				parentID = entry.SessionID
+			}
+			if ts, err := entry.ParseTimestamp(); err == nil {
+				updateRange(stats, ts)
+			}
+		}
+		stats.TotalToolCalls += count
+		if s := byID[parentID]; s != nil {
+			s.ToolCalls += count
+		}
+	}
 }
 
 func collectCodexStats(projectRoot string, searchAll bool, result *InfoResult) SourceStats {
@@ -371,6 +430,14 @@ func collectCodexStats(projectRoot string, searchAll bool, result *InfoResult) S
 	}
 	sortSessionsRecent(stats.Sessions)
 	return stats
+}
+
+// markCurrentSession flags the most-recent session (sessions are sorted
+// recent-first) as the detected current session.
+func markCurrentSession(sessions []SessionInfo) {
+	if len(sessions) > 0 {
+		sessions[0].Current = true
+	}
 }
 
 func sortSessionsRecent(s []SessionInfo) {

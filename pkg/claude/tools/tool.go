@@ -138,6 +138,10 @@ type BaseTool struct {
 	Models          Models          `json:"models,omitempty"`
 	Source          string          `json:"source,omitempty"`
 	ReasoningEffort string          `json:"reasoningEffort,omitempty"`
+	IsSidechain     bool            `json:"isSidechain,omitempty"`
+	AgentID         string          `json:"agentId,omitempty"`
+	AgentType       string          `json:"agentType,omitempty"`
+	AgentDesc       string          `json:"agentDesc,omitempty"`
 	RawEntry        json.RawMessage `json:"-"`
 }
 

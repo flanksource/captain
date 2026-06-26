@@ -33,16 +33,34 @@ type ToolUse struct {
 	Source          string          `json:"source,omitempty"` // "claude" or "codex"
 	Model           string          `json:"model,omitempty"`
 	ReasoningEffort string          `json:"reasoningEffort,omitempty"`
+	IsSidechain     bool            `json:"isSidechain,omitempty"` // made by a nested sub-agent (Task/Agent)
+	AgentID         string          `json:"agentId,omitempty"`
+	AgentType       string          `json:"agentType,omitempty"` // sub-agent type, from agent-<id>.meta.json
+	AgentDesc       string          `json:"agentDesc,omitempty"` // sub-agent task description, from meta.json
 	RawEntry        json.RawMessage `json:"-"`
 }
 
 // Filter defines criteria for filtering tool uses
 type Filter struct {
-	Tools  []string
-	Paths  []string
-	Since  *time.Time
-	Before *time.Time
-	Limit  int
+	Tools     []string
+	Paths     []string
+	Since     *time.Time
+	Before    *time.Time
+	Limit     int
+	SessionID string // exact or prefix match against ToolUse.SessionID
+	// IncludeAgents, when set, makes ParseHistory also read nested sub-agent
+	// transcripts (<session>/subagents/agent-*.jsonl) for the in-scope sessions.
+	IncludeAgents bool
+}
+
+// MatchesSessionID reports whether sessionID satisfies the filter's SessionID
+// criterion. An empty filter matches everything; otherwise an exact match or a
+// prefix match (so the short IDs printed by `captain info` work) succeeds.
+func (f Filter) MatchesSessionID(sessionID string) bool {
+	if f.SessionID == "" {
+		return true
+	}
+	return sessionID == f.SessionID || strings.HasPrefix(sessionID, f.SessionID)
 }
 
 const denialPrefix = "The user doesn't want to proceed with this tool use."
@@ -81,13 +99,15 @@ func ExtractToolUses(entries []HistoryEntry) []ToolUse {
 			}
 
 			toolUses = append(toolUses, ToolUse{
-				Tool:      content.Name,
-				Input:     inputMap,
-				Timestamp: timestamp,
-				CWD:       cwd,
-				SessionID: entry.SessionID,
-				ToolUseID: content.ID,
-				RawEntry:  entry.RawLine,
+				Tool:        content.Name,
+				Input:       inputMap,
+				Timestamp:   timestamp,
+				CWD:         cwd,
+				SessionID:   entry.SessionID,
+				ToolUseID:   content.ID,
+				IsSidechain: entry.IsSidechain,
+				AgentID:     entry.AgentID,
+				RawEntry:    entry.RawLine,
 			})
 		}
 	}
@@ -195,6 +215,10 @@ func toTools(toolUses []ToolUse, entries []HistoryEntry) []tools.Tool {
 			DeniedReason: tu.DeniedReason,
 			IsError:      tu.IsError,
 			Response:     tu.Response,
+			IsSidechain:  tu.IsSidechain,
+			AgentID:      tu.AgentID,
+			AgentType:    tu.AgentType,
+			AgentDesc:    tu.AgentDesc,
 			RawEntry:     tu.RawEntry,
 		}
 
@@ -239,6 +263,10 @@ func ToolUsesToTools(toolUses []ToolUse) []tools.Tool {
 			Response:        tu.Response,
 			Source:          tu.Source,
 			ReasoningEffort: tu.ReasoningEffort,
+			IsSidechain:     tu.IsSidechain,
+			AgentID:         tu.AgentID,
+			AgentType:       tu.AgentType,
+			AgentDesc:       tu.AgentDesc,
 			RawEntry:        tu.RawEntry,
 		}
 		if tu.Model != "" || tu.InputTokens > 0 || tu.OutputTokens > 0 {
@@ -427,6 +455,10 @@ func FilterToolUses(toolUses []ToolUse, filter Filter) []ToolUse {
 	for _, tu := range toolUses {
 		toolNames[tu.Tool] = struct{}{}
 
+		if !filter.MatchesSessionID(tu.SessionID) {
+			continue
+		}
+
 		if len(filter.Tools) > 0 && !collections.MatchItems(tu.Tool, filter.Tools...) {
 			continue
 		}
@@ -524,7 +556,6 @@ func RelativePath(path, projectRoot string) string {
 func singleLine(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
-
 
 func (tu ToolUse) firstQuestion() string {
 	if q, ok := tu.Input["question"].(string); ok {
