@@ -6,3 +6,4 @@ specs/
 .mcp.json
 .captain/
 !cmd/captain/
+*.png
