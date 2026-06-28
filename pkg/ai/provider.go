@@ -15,6 +15,10 @@ const (
 	BackendClaudeCLI Backend = "claude-cli"
 	BackendCodexCLI  Backend = "codex-cli"
 	BackendGeminiCLI Backend = "gemini-cli"
+	// BackendClaudeAgent runs the Claude Agent SDK as a long-lived clicky-supervised
+	// TS process spoken to over JSON-RPC stdio. It replaces the one-shot claude_cli
+	// (`claude -p`) path for agentic, multi-turn, tool-using runs.
+	BackendClaudeAgent Backend = "claude-agent"
 )
 
 type Provider interface {
@@ -32,6 +36,9 @@ func InferBackend(model string) (Backend, error) {
 	m := strings.ToLower(model)
 
 	// CLI backends (check before API backends to avoid prefix conflicts)
+	if strings.HasPrefix(m, "claude-agent-") {
+		return BackendClaudeAgent, nil
+	}
 	if strings.HasPrefix(m, "claude-code-") {
 		return BackendClaudeCLI, nil
 	}
