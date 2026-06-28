@@ -15,8 +15,15 @@
 //     message/text   {text}
 //     message/thinking {text}
 //     message/tool_use {tool, input, id}
+//     message/tool_result {id, content, is_error}
 //     turn/completed {success, session_id, cost_usd, usage, num_turns, result_text}
 //     turn/error     {message}
+//   server -> client requests (only when approvalMode === "ask"):
+//     can_use_tool {tool, input, tool_use_id}
+//                 -> reply {allow, message?, updatedInput?}
+//   The transport is bidirectional: the host's reply to can_use_tool arrives on
+//   stdin as an id-bearing response (no method) and resolves the pending callHost
+//   promise, so a tool call blocks only until the host decides.
 //
 // One query({prompt, options}) SDK session stays alive for the whole process;
 // turns are fed by pushing user messages onto TurnQueue (a push async-iterable),
@@ -67,6 +74,59 @@ function replyError(id: JsonRpcId, code: number, message: string) {
 }
 function diag(msg: string) {
   process.stderr.write(`[claude-agent] ${msg}\n`);
+}
+
+// callHost issues a server->client request to the Go host and resolves when the
+// matching id-bearing response arrives on stdin (routed by handleResponse). Ids
+// are string-prefixed so they never collide with the host's numeric Call ids.
+interface HostResponse {
+  result?: unknown;
+  error?: { code: number; message: string };
+}
+let nextHostId = 1;
+const pendingHostCalls = new Map<string, (resp: HostResponse) => void>();
+
+function callHost(
+  method: string,
+  params: Record<string, unknown>,
+): Promise<unknown> {
+  const id = `agent-${nextHostId++}`;
+  return new Promise((resolve, reject) => {
+    pendingHostCalls.set(id, (resp) => {
+      if (resp.error) {
+        reject(new Error(resp.error.message));
+      } else {
+        resolve(resp.result);
+      }
+    });
+    send({ jsonrpc: "2.0", id, method, params });
+  });
+}
+
+// handleResponse resolves a pending callHost when a host response (id, no method)
+// arrives. Returns true if the frame was a response we were waiting for.
+function handleResponse(frame: {
+  id?: JsonRpcId;
+  result?: unknown;
+  error?: { code: number; message: string };
+}): boolean {
+  if (frame.id == null || typeof frame.id !== "string") {
+    return false;
+  }
+  const waiter = pendingHostCalls.get(frame.id);
+  if (!waiter) {
+    return false;
+  }
+  pendingHostCalls.delete(frame.id);
+  waiter({ result: frame.result, error: frame.error });
+  return true;
+}
+
+// HostDecision is the can_use_tool reply shape from the Go host.
+interface HostDecision {
+  allow?: boolean;
+  message?: string;
+  updatedInput?: Record<string, unknown>;
 }
 
 // TurnQueue is a push async-iterable of SDKUserMessage. Pushing a user message
@@ -123,14 +183,18 @@ let turns: TurnQueue | null = null;
 let activeQuery: Query | null = null;
 
 function buildOptions(params: InitializeParams): Options {
+  // brokered: the host vets each tool over the can_use_tool round-trip, so the
+  // SDK must consult canUseTool rather than auto-approving. bypassPermissions /
+  // allowDangerouslySkipPermissions would skip canUseTool entirely.
+  const brokered = params.approvalMode === "ask";
   const options: Options = {
     cwd: params.cwd,
     model: params.model,
     maxTurns: params.maxTurns || undefined,
     maxBudgetUsd: params.maxBudgetUsd || undefined,
     permissionMode: (params.permissionMode as Options["permissionMode"]) ||
-      "bypassPermissions",
-    allowDangerouslySkipPermissions: true,
+      (brokered ? "default" : "bypassPermissions"),
+    allowDangerouslySkipPermissions: !brokered,
     allowedTools:
       params.allowedTools && params.allowedTools.length
         ? params.allowedTools
@@ -176,10 +240,33 @@ function buildOptions(params: InitializeParams): Options {
     options.resume = params.resume;
   }
 
-  // TODO: a full server->client approval round-trip (canUseTool / OnRequest) is
-  // not implemented; the provider relies on permissionMode bypassPermissions
-  // (auto-approve) plus the PreToolUse git add/commit block above. approvalMode
-  // is accepted for protocol parity but currently only the bypass path is wired.
+  // When the host brokers approvals, forward each tool-permission check to it
+  // over can_use_tool and map the decision onto the SDK PermissionResult. The
+  // PreToolUse git add/commit block above still applies first.
+  if (brokered) {
+    options.canUseTool = async (toolName, input, opts) => {
+      const toolUseId =
+        (opts as { toolUseId?: string } | undefined)?.toolUseId ?? "";
+      let decision: HostDecision;
+      try {
+        decision = (await callHost("can_use_tool", {
+          tool: toolName,
+          input,
+          tool_use_id: toolUseId,
+        })) as HostDecision;
+      } catch (err) {
+        return {
+          behavior: "deny",
+          message: `permission bridge error: ${(err as Error)?.message || err}`,
+        };
+      }
+      if (decision?.allow) {
+        return { behavior: "allow", updatedInput: decision.updatedInput ?? input };
+      }
+      return { behavior: "deny", message: decision?.message || "denied by host" };
+    };
+  }
+
   return options;
 }
 
@@ -239,6 +326,26 @@ async function pump(stream: Query) {
   }
 }
 
+// stringifyToolResult flattens an SDK tool_result `content` (a string, or an
+// array of content blocks) into plain text for the message/tool_result payload.
+function stringifyToolResult(content: unknown): string {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (Array.isArray(content)) {
+    return content
+      .map((block) => {
+        const rec = block as Record<string, unknown>;
+        return typeof rec.text === "string" ? rec.text : JSON.stringify(block);
+      })
+      .join("");
+  }
+  if (content == null) {
+    return "";
+  }
+  return JSON.stringify(content);
+}
+
 function handleMessage(message: SDKMessage) {
   switch (message.type) {
     case "system":
@@ -270,6 +377,22 @@ function handleMessage(message: SDKMessage) {
       break;
     }
 
+    case "user": {
+      // Tool results arrive as tool_result blocks on user-role messages.
+      const content =
+        (message as { message?: { content?: unknown[] } }).message?.content ?? [];
+      for (const block of content as Array<Record<string, unknown>>) {
+        if (block.type === "tool_result") {
+          notify("message/tool_result", {
+            id: block.tool_use_id,
+            content: stringifyToolResult(block.content),
+            is_error: block.is_error === true,
+          });
+        }
+      }
+      break;
+    }
+
     case "result":
       notify("turn/completed", {
         success: !(message as { is_error?: boolean }).is_error,
@@ -289,11 +412,21 @@ rl.on("line", (line) => {
   if (!trimmed) {
     return;
   }
-  let req: { id?: JsonRpcId; method?: string; params?: unknown };
+  let req: {
+    id?: JsonRpcId;
+    method?: string;
+    params?: unknown;
+    result?: unknown;
+    error?: { code: number; message: string };
+  };
   try {
     req = JSON.parse(trimmed);
   } catch {
     diag(`ignoring non-JSON line: ${trimmed.slice(0, 200)}`);
+    return;
+  }
+  // A response to one of our callHost requests (id, no method) resolves it.
+  if (req.method === undefined && handleResponse(req)) {
     return;
   }
   const id = req.id ?? null;
