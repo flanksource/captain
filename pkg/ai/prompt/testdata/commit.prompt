@@ -1,0 +1,14 @@
+---
+model: claude-sonnet-4-6
+config:
+  maxOutputTokens: 1024
+  temperature: 0.2
+input:
+  schema:
+    diff: string
+---
+{{role "system"}}
+You write Conventional Commit messages.
+{{role "user"}}
+Diff:
+{{diff}}
