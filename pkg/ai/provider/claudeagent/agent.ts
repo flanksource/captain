@@ -1,0 +1,323 @@
+// agent.ts is captain's claude-agent backend: a long-lived JSON-RPC 2.0 stdio
+// server wrapping the Claude Agent SDK. It is go:embed'd into the Go provider
+// (pkg/ai/provider/claudeagent) and run via tsx as a clicky-supervised process.
+//
+// Protocol (newline-delimited JSON, one object per line on stdout):
+//   client -> server requests:
+//     initialize {cwd, model, systemPrompt, appendSystemPrompt, allowedTools,
+//                 maxTurns, maxBudgetUsd, permissionMode, resume, approvalMode}
+//                 -> reply {ok:true}
+//     prompt {text}      -> reply {accepted:true}
+//     interrupt          -> reply {}
+//     shutdown           -> reply {} then exit
+//   server -> client notifications:
+//     session/init   {session_id, model, tools}
+//     message/text   {text}
+//     message/thinking {text}
+//     message/tool_use {tool, input, id}
+//     turn/completed {success, session_id, cost_usd, usage, num_turns, result_text}
+//     turn/error     {message}
+//
+// One query({prompt, options}) SDK session stays alive for the whole process;
+// turns are fed by pushing user messages onto TurnQueue (a push async-iterable),
+// which keeps the session (and any resumed history) alive across turns.
+
+import { query } from "@anthropic-ai/claude-agent-sdk";
+import type {
+  Options,
+  Query,
+  SDKMessage,
+  SDKUserMessage,
+} from "@anthropic-ai/claude-agent-sdk";
+import { createInterface } from "readline";
+
+// Strip nested-session markers so the SDK does not refuse to run inside captain
+// (which may itself have been launched from a Claude Code session). The Go
+// runner also blanks these, but deleting here is the authoritative strip since
+// the SDK reads process.env at query() time.
+delete process.env.CLAUDECODE;
+delete process.env.CLAUDE_CODE_ENTRYPOINT;
+
+interface InitializeParams {
+  cwd?: string;
+  model?: string;
+  systemPrompt?: string;
+  appendSystemPrompt?: string;
+  allowedTools?: string[];
+  maxTurns?: number;
+  maxBudgetUsd?: number;
+  permissionMode?: string;
+  resume?: string;
+  approvalMode?: string;
+}
+
+type JsonRpcId = number | string | null;
+
+function send(obj: Record<string, unknown>) {
+  process.stdout.write(JSON.stringify(obj) + "\n");
+}
+function notify(method: string, params: Record<string, unknown>) {
+  send({ jsonrpc: "2.0", method, params });
+}
+function reply(id: JsonRpcId, result: unknown) {
+  send({ jsonrpc: "2.0", id, result });
+}
+function replyError(id: JsonRpcId, code: number, message: string) {
+  send({ jsonrpc: "2.0", id, error: { code, message } });
+}
+function diag(msg: string) {
+  process.stderr.write(`[claude-agent] ${msg}\n`);
+}
+
+// TurnQueue is a push async-iterable of SDKUserMessage. Pushing a user message
+// resolves the SDK's pending next() so a single query() session processes turns
+// as they arrive instead of ending after the first.
+class TurnQueue implements AsyncIterable<SDKUserMessage> {
+  private pending: SDKUserMessage[] = [];
+  private waiters: ((r: IteratorResult<SDKUserMessage>) => void)[] = [];
+  private ended = false;
+
+  push(text: string) {
+    const msg: SDKUserMessage = {
+      type: "user",
+      message: { role: "user", content: text },
+      parent_tool_use_id: null,
+      session_id: "",
+    };
+    const waiter = this.waiters.shift();
+    if (waiter) {
+      waiter({ value: msg, done: false });
+    } else {
+      this.pending.push(msg);
+    }
+  }
+
+  end() {
+    this.ended = true;
+    const waiter = this.waiters.shift();
+    if (waiter) {
+      waiter({ value: undefined as unknown as SDKUserMessage, done: true });
+    }
+  }
+
+  [Symbol.asyncIterator](): AsyncIterator<SDKUserMessage> {
+    return {
+      next: (): Promise<IteratorResult<SDKUserMessage>> => {
+        const queued = this.pending.shift();
+        if (queued) {
+          return Promise.resolve({ value: queued, done: false });
+        }
+        if (this.ended) {
+          return Promise.resolve({
+            value: undefined as unknown as SDKUserMessage,
+            done: true,
+          });
+        }
+        return new Promise((resolve) => this.waiters.push(resolve));
+      },
+    };
+  }
+}
+
+let turns: TurnQueue | null = null;
+let activeQuery: Query | null = null;
+
+function buildOptions(params: InitializeParams): Options {
+  const options: Options = {
+    cwd: params.cwd,
+    model: params.model,
+    maxTurns: params.maxTurns || undefined,
+    maxBudgetUsd: params.maxBudgetUsd || undefined,
+    permissionMode: (params.permissionMode as Options["permissionMode"]) ||
+      "bypassPermissions",
+    allowDangerouslySkipPermissions: true,
+    allowedTools:
+      params.allowedTools && params.allowedTools.length
+        ? params.allowedTools
+        : undefined,
+    stderr: (data: string) => process.stderr.write(data),
+    hooks: {
+      PreToolUse: [
+        {
+          matcher: "Bash",
+          hooks: [
+            async (input) => {
+              const cmd = (input as { tool_input?: { command?: string } })
+                .tool_input?.command || "";
+              if (/\bgit\s+(add|commit)\b/.test(cmd)) {
+                return {
+                  decision: "block" as const,
+                  reason: "git add/commit is managed by captain, not the agent",
+                };
+              }
+              return { decision: "approve" as const };
+            },
+          ],
+        },
+      ],
+    },
+  };
+
+  // appendSystemPrompt is not a top-level Options field; it must ride on the
+  // claude_code preset. A custom systemPrompt string replaces the default.
+  if (params.systemPrompt && params.appendSystemPrompt) {
+    options.systemPrompt = params.systemPrompt + "\n\n" + params.appendSystemPrompt;
+  } else if (params.systemPrompt) {
+    options.systemPrompt = params.systemPrompt;
+  } else if (params.appendSystemPrompt) {
+    options.systemPrompt = {
+      type: "preset",
+      preset: "claude_code",
+      append: params.appendSystemPrompt,
+    };
+  }
+
+  if (params.resume) {
+    options.resume = params.resume;
+  }
+
+  // TODO: a full server->client approval round-trip (canUseTool / OnRequest) is
+  // not implemented; the provider relies on permissionMode bypassPermissions
+  // (auto-approve) plus the PreToolUse git add/commit block above. approvalMode
+  // is accepted for protocol parity but currently only the bypass path is wired.
+  return options;
+}
+
+function handleInitialize(id: JsonRpcId, params: InitializeParams) {
+  if (turns) {
+    // Already initialized; treat as idempotent so a re-bind after a restart is
+    // not fatal.
+    reply(id, { ok: true });
+    return;
+  }
+  try {
+    turns = new TurnQueue();
+    activeQuery = query({ prompt: turns, options: buildOptions(params) });
+    reply(id, { ok: true });
+    pump(activeQuery).catch((err) => {
+      notify("turn/error", { message: err?.message || String(err) });
+    });
+  } catch (err) {
+    turns = null;
+    activeQuery = null;
+    replyError(id, -32603, `initialize failed: ${(err as Error)?.message || err}`);
+  }
+}
+
+function handlePrompt(id: JsonRpcId, params: { text?: string }) {
+  if (!turns) {
+    replyError(id, -32002, "not initialized");
+    return;
+  }
+  turns.push(params.text || "");
+  reply(id, { accepted: true });
+}
+
+async function handleInterrupt(id: JsonRpcId) {
+  try {
+    if (activeQuery) {
+      await activeQuery.interrupt();
+    }
+  } catch (err) {
+    diag(`interrupt: ${(err as Error)?.message || err}`);
+  }
+  reply(id, {});
+}
+
+function handleShutdown(id: JsonRpcId) {
+  if (turns) {
+    turns.end();
+  }
+  reply(id, {});
+  // Give stdout a tick to flush the reply before exiting.
+  setTimeout(() => process.exit(0), 50);
+}
+
+async function pump(stream: Query) {
+  for await (const message of stream) {
+    handleMessage(message);
+  }
+}
+
+function handleMessage(message: SDKMessage) {
+  switch (message.type) {
+    case "system":
+      if ((message as { subtype?: string }).subtype === "init") {
+        notify("session/init", {
+          session_id: message.session_id,
+          model: (message as { model?: string }).model,
+          tools: (message as { tools?: string[] }).tools,
+        });
+      }
+      break;
+
+    case "assistant": {
+      const content =
+        (message as { message?: { content?: unknown[] } }).message?.content ?? [];
+      for (const block of content as Array<Record<string, unknown>>) {
+        if (block.type === "text") {
+          notify("message/text", { text: block.text });
+        } else if (block.type === "thinking") {
+          notify("message/thinking", { text: block.thinking });
+        } else if (block.type === "tool_use") {
+          notify("message/tool_use", {
+            tool: block.name,
+            input: block.input,
+            id: block.id,
+          });
+        }
+      }
+      break;
+    }
+
+    case "result":
+      notify("turn/completed", {
+        success: !(message as { is_error?: boolean }).is_error,
+        session_id: message.session_id,
+        cost_usd: (message as { total_cost_usd?: number }).total_cost_usd,
+        usage: (message as { usage?: unknown }).usage,
+        num_turns: (message as { num_turns?: number }).num_turns,
+        result_text: (message as { result?: string }).result,
+      });
+      break;
+  }
+}
+
+const rl = createInterface({ input: process.stdin });
+rl.on("line", (line) => {
+  const trimmed = line.trim();
+  if (!trimmed) {
+    return;
+  }
+  let req: { id?: JsonRpcId; method?: string; params?: unknown };
+  try {
+    req = JSON.parse(trimmed);
+  } catch {
+    diag(`ignoring non-JSON line: ${trimmed.slice(0, 200)}`);
+    return;
+  }
+  const id = req.id ?? null;
+  switch (req.method) {
+    case "initialize":
+      handleInitialize(id, (req.params as InitializeParams) || {});
+      break;
+    case "prompt":
+      handlePrompt(id, (req.params as { text?: string }) || {});
+      break;
+    case "interrupt":
+      handleInterrupt(id);
+      break;
+    case "shutdown":
+      handleShutdown(id);
+      break;
+    default:
+      if (req.id !== undefined) {
+        replyError(id, -32601, `method not found: ${req.method}`);
+      }
+  }
+});
+rl.on("close", () => {
+  if (turns) {
+    turns.end();
+  }
+});

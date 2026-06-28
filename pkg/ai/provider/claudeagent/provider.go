@@ -1,0 +1,497 @@
+// Package claudeagent implements captain's claude-agent provider: the Claude
+// Agent SDK run as a long-lived clicky-supervised TypeScript process, spoken to
+// over JSON-RPC stdio. It replaces the one-shot `claude -p` claude_cli provider
+// for agentic, multi-turn, tool-using runs.
+//
+// One supervised tsx process per Provider hosts a single SDK query() session.
+// It is started lazily on the first ExecuteStream (which provisions the agent
+// dir, installs deps, binds a jsonrpc.Client to the child's stdio, and sends the
+// initialize handshake). Each ExecuteStream pushes one user turn over the
+// JSON-RPC `prompt` method and streams the resulting notifications back as
+// ai.Events; turns are serialized so the single SDK session stays consistent.
+//
+// pkg/ai/provider/init.go registers claudeagent.New for ai.BackendClaudeAgent.
+package claudeagent
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/ai/provider/jsonrpc"
+	"github.com/flanksource/clicky/exec"
+	"github.com/flanksource/commons/logger"
+)
+
+// JSON-RPC request methods sent to agent.ts.
+const (
+	methodInitialize = "initialize"
+	methodPrompt     = "prompt"
+	methodInterrupt  = "interrupt"
+	methodShutdown   = "shutdown"
+)
+
+const (
+	defaultModel = "claude-agent-sonnet"
+	// initTimeout bounds the initialize handshake (after provisioning). The npm
+	// install / tsx cold start happen synchronously before this window.
+	initTimeout = 2 * time.Minute
+	// initCallTimeout bounds the single initialize Call once stdio is bound.
+	initCallTimeout = 90 * time.Second
+)
+
+// safeEditAllowlist mirrors provider.SafeEditAllowlist; duplicated here so this
+// package never imports pkg/ai/provider (which imports it back).
+var safeEditAllowlist = []string{"Read", "Edit", "Write", "Glob", "Grep"}
+
+// newAgentProcess builds the supervised child command. It is a package var so
+// tests can substitute a fake JSON-RPC server without npm or a claude binary.
+var newAgentProcess = func(*Provider) (*exec.Process, error) {
+	agentDir, err := prepareAgentDir()
+	if err != nil {
+		return nil, err
+	}
+	if err := ensureDependencies(agentDir); err != nil {
+		return nil, err
+	}
+	tsxPath, err := findTsx(agentDir)
+	if err != nil {
+		return nil, err
+	}
+	agentTSPath := agentDir + string(os.PathSeparator) + "agent.ts"
+	logger.Debugf("[claude-agent] exec: %s %s (cwd=%s)", tsxPath, agentTSPath, agentDir)
+	return exec.NewExec(tsxPath, agentTSPath).
+		WithCwd(agentDir).
+		WithStdioPipe().
+		WithEnv(nestingEnvOverrides(os.Environ())), nil
+}
+
+// turnState carries the channels a single in-flight turn uses to receive mapped
+// events from the JSON-RPC notification handler. inbox is the handler->turn
+// path; term is closed by the handler on a terminal notification; quit is closed
+// by the turn goroutine on exit so a late handler send does not block.
+type turnState struct {
+	inbox chan ai.Event
+	term  chan struct{}
+	quit  chan struct{}
+}
+
+// Provider drives a supervised Claude Agent SDK process over JSON-RPC.
+type Provider struct {
+	model string
+	cfg   ai.Config
+
+	baseCtx    context.Context
+	baseCancel context.CancelFunc
+
+	startOnce sync.Once
+	initMu    sync.Mutex
+	initDone  chan struct{}
+	initErr   error
+
+	procExited     chan struct{}
+	procExitedOnce sync.Once
+
+	sup *exec.SupervisedProcess
+	rpc *jsonrpc.Client
+
+	turnMu sync.Mutex // serializes turns (single SDK session)
+
+	activeMu sync.Mutex
+	active   *turnState
+
+	sessMu    sync.Mutex
+	sessionID string
+}
+
+// New builds a claude-agent provider. The supervised process is started lazily
+// on the first ExecuteStream.
+func New(cfg ai.Config) (*Provider, error) {
+	model := cfg.Model
+	if model == "" {
+		model = defaultModel
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	return &Provider{
+		model:      model,
+		cfg:        cfg,
+		baseCtx:    ctx,
+		baseCancel: cancel,
+		initDone:   make(chan struct{}),
+		procExited: make(chan struct{}),
+	}, nil
+}
+
+func (p *Provider) GetModel() string       { return p.model }
+func (p *Provider) GetBackend() ai.Backend { return ai.BackendClaudeAgent }
+
+// Execute drains its own ExecuteStream into a buffered ai.Response.
+func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, error) {
+	if req.StructuredOutput != nil {
+		return nil, fmt.Errorf("claude-agent does not support StructuredOutput")
+	}
+	start := time.Now()
+	events, err := p.ExecuteStream(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	var (
+		text      strings.Builder
+		usage     ai.Usage
+		sessionID string
+		success   = true
+		sawResult bool
+		lastErr   string
+	)
+	for ev := range events {
+		switch ev.Kind {
+		case ai.EventText:
+			text.WriteString(ev.Text)
+		case ai.EventSystem:
+			if ev.SessionID != "" {
+				sessionID = ev.SessionID
+			}
+		case ai.EventResult:
+			sawResult = true
+			success = ev.Success
+			if ev.Usage != nil {
+				usage = *ev.Usage
+			}
+			if ev.SessionID != "" {
+				sessionID = ev.SessionID
+			}
+		case ai.EventError:
+			lastErr = ev.Error
+		}
+	}
+
+	if !sawResult && lastErr != "" {
+		return nil, fmt.Errorf("%w: %s", ai.ErrCLIExecutionFailed, lastErr)
+	}
+	if sawResult && !success {
+		msg := lastErr
+		if msg == "" {
+			msg = "claude-agent returned is_error=true"
+		}
+		return nil, fmt.Errorf("%w: %s", ai.ErrCLIExecutionFailed, msg)
+	}
+
+	resp := &ai.Response{
+		Text:     text.String(),
+		Model:    p.model,
+		Backend:  ai.BackendClaudeAgent,
+		Usage:    usage,
+		Duration: time.Since(start),
+	}
+	if sessionID != "" {
+		resp.Raw = map[string]any{"session_id": sessionID}
+	}
+	return resp, nil
+}
+
+// ExecuteStream pushes one user turn to the SDK session and streams the mapped
+// events back. Turns are serialized via turnMu so the single SDK session is
+// never driven by two prompts at once.
+func (p *Provider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai.Event, error) {
+	if req.StructuredOutput != nil {
+		return nil, fmt.Errorf("claude-agent stream mode does not support StructuredOutput")
+	}
+	if err := p.ensureStarted(req); err != nil {
+		return nil, err
+	}
+
+	events := make(chan ai.Event, 16)
+	go p.runTurn(ctx, req, events)
+	return events, nil
+}
+
+// Close shuts the SDK session down (best-effort shutdown RPC), stops the
+// supervised process, and cancels the provider's base context.
+func (p *Provider) Close() error {
+	if p.rpc != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		_, _ = p.rpc.Call(ctx, methodShutdown, nil)
+		cancel()
+	}
+	if p.sup != nil {
+		p.sup.Stop()
+	}
+	if p.baseCancel != nil {
+		p.baseCancel()
+	}
+	return nil
+}
+
+// ensureStarted provisions and supervises the process and waits for the
+// initialize handshake exactly once. Subsequent calls return the cached result.
+func (p *Provider) ensureStarted(req ai.Request) error {
+	p.startOnce.Do(func() {
+		if err := p.provisionAndSupervise(req); err != nil {
+			p.setInitResult(err)
+		}
+		// On success, onChildStarted (or OnExit) calls setInitResult.
+	})
+
+	select {
+	case <-p.initDone:
+		return p.initErr
+	case <-time.After(initTimeout):
+		return fmt.Errorf("claude-agent: initialize handshake timed out after %s", initTimeout)
+	}
+}
+
+func (p *Provider) provisionAndSupervise(req ai.Request) error {
+	proc, err := newAgentProcess(p)
+	if err != nil {
+		return err
+	}
+
+	sup := proc.Supervise(exec.SuperviseOptions{
+		RestartPolicy: exec.RestartNo,
+		OnStarted: func(child *exec.Process) {
+			go p.onChildStarted(child, req)
+		},
+		OnExit: func() {
+			p.procExitedOnce.Do(func() { close(p.procExited) })
+			// If the process exited before the handshake completed, surface a
+			// loud error instead of letting ensureStarted wait out its timeout.
+			p.setInitResult(fmt.Errorf("claude-agent: process exited before initialize completed"))
+		},
+	})
+	p.sup = sup
+	sup.Start()
+	return nil
+}
+
+// onChildStarted binds a fresh jsonrpc.Client to the running child's stdio,
+// starts the read loop, and performs the initialize handshake.
+func (p *Provider) onChildStarted(child *exec.Process, req ai.Request) {
+	stdin := child.Stdin()
+	stdout := child.StdoutReader()
+	if stdin == nil || stdout == nil {
+		p.setInitResult(fmt.Errorf("claude-agent: child stdio pipes unavailable"))
+		return
+	}
+
+	rpc := jsonrpc.New(stdin, stdout, false, jsonrpc.Handlers{
+		OnNotification: p.onNotification,
+	})
+	p.rpc = rpc
+	go func() { _ = rpc.Run(p.baseCtx) }()
+
+	ctx, cancel := context.WithTimeout(p.baseCtx, initCallTimeout)
+	defer cancel()
+	if _, err := rpc.Call(ctx, methodInitialize, p.initializeParams(req)); err != nil {
+		p.setInitResult(fmt.Errorf("claude-agent: initialize failed: %w", err))
+		return
+	}
+	p.setInitResult(nil)
+}
+
+// runTurn owns one turn's event channel: it sends the prompt, forwards mapped
+// notifications, and emits the terminal result (or a loud error on cancellation
+// / mid-turn process exit).
+func (p *Provider) runTurn(ctx context.Context, req ai.Request, events chan ai.Event) {
+	defer close(events)
+
+	p.turnMu.Lock()
+	defer p.turnMu.Unlock()
+
+	ts := &turnState{
+		inbox: make(chan ai.Event, 16),
+		term:  make(chan struct{}),
+		quit:  make(chan struct{}),
+	}
+	p.setActive(ts)
+	defer func() {
+		close(ts.quit)
+		p.clearActive()
+	}()
+
+	if _, err := p.rpc.Call(ctx, methodPrompt, promptParams{Text: composePrompt(req)}); err != nil {
+		emit(ctx, events, ai.Event{Kind: ai.EventError, Error: fmt.Sprintf("claude-agent prompt failed: %v", err), Model: p.model})
+		return
+	}
+
+	for {
+		select {
+		case ev := <-ts.inbox:
+			if !emit(ctx, events, ev) {
+				return
+			}
+		case <-ts.term:
+			drainInbox(ctx, ts.inbox, events)
+			return
+		case <-ctx.Done():
+			p.interrupt()
+			emit(context.Background(), events, ai.Event{Kind: ai.EventError, Error: "claude-agent: context cancelled", Model: p.model})
+			return
+		case <-p.baseCtx.Done():
+			emit(context.Background(), events, ai.Event{Kind: ai.EventError, Error: "claude-agent: provider closed", Model: p.model})
+			return
+		case <-p.procExited:
+			emit(context.Background(), events, ai.Event{Kind: ai.EventError, Error: "claude-agent: process exited mid-turn", Model: p.model})
+			return
+		}
+	}
+}
+
+// onNotification routes a server notification to the active turn. It runs on the
+// jsonrpc read loop goroutine, so it must not block indefinitely: sends select
+// on the turn's quit and the provider's base context.
+func (p *Provider) onNotification(method string, params json.RawMessage) {
+	ev, ok := mapNotification(method, params, p.model)
+	if ok && ev.SessionID != "" {
+		p.rememberSession(ev.SessionID)
+	}
+
+	p.activeMu.Lock()
+	ts := p.active
+	p.activeMu.Unlock()
+	if ts == nil {
+		return
+	}
+
+	if ok {
+		select {
+		case ts.inbox <- ev:
+		case <-ts.quit:
+		case <-p.baseCtx.Done():
+		}
+	}
+	if method == notifyTurnDone || method == notifyTurnError {
+		select {
+		case <-ts.term:
+		default:
+			close(ts.term)
+		}
+	}
+}
+
+func (p *Provider) interrupt() {
+	if p.rpc == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, _ = p.rpc.Call(ctx, methodInterrupt, nil)
+}
+
+// initializeParams maps the first request + provider config onto the SDK
+// Options the agent.ts initialize handler understands.
+func (p *Provider) initializeParams(req ai.Request) initializeParams {
+	mode := req.PermissionMode
+	allowed := req.AllowedTools
+	if req.Edit {
+		if mode == "" {
+			mode = "acceptEdits"
+		}
+		if len(allowed) == 0 {
+			allowed = safeEditAllowlist
+		}
+	}
+	if mode == "" {
+		mode = "bypassPermissions"
+	}
+
+	resume := req.SessionID
+	if resume == "" {
+		resume = p.cfg.SessionID
+	}
+
+	return initializeParams{
+		Cwd:                req.Cwd,
+		Model:              aliasModel(p.model),
+		SystemPrompt:       req.SystemPrompt,
+		AppendSystemPrompt: req.AppendSystemPrompt,
+		AllowedTools:       allowed,
+		MaxTurns:           req.MaxTurns,
+		MaxBudgetUsd:       p.cfg.BudgetUSD,
+		PermissionMode:     mode,
+		Resume:             resume,
+		ApprovalMode:       "auto",
+	}
+}
+
+type initializeParams struct {
+	Cwd                string   `json:"cwd,omitempty"`
+	Model              string   `json:"model,omitempty"`
+	SystemPrompt       string   `json:"systemPrompt,omitempty"`
+	AppendSystemPrompt string   `json:"appendSystemPrompt,omitempty"`
+	AllowedTools       []string `json:"allowedTools,omitempty"`
+	MaxTurns           int      `json:"maxTurns,omitempty"`
+	MaxBudgetUsd       float64  `json:"maxBudgetUsd,omitempty"`
+	PermissionMode     string   `json:"permissionMode,omitempty"`
+	Resume             string   `json:"resume,omitempty"`
+	ApprovalMode       string   `json:"approvalMode,omitempty"`
+}
+
+type promptParams struct {
+	Text string `json:"text"`
+}
+
+func composePrompt(req ai.Request) string {
+	return req.Prompt
+}
+
+func (p *Provider) setInitResult(err error) {
+	p.initMu.Lock()
+	defer p.initMu.Unlock()
+	select {
+	case <-p.initDone:
+		return // already resolved
+	default:
+		p.initErr = err
+		close(p.initDone)
+	}
+}
+
+func (p *Provider) setActive(ts *turnState) {
+	p.activeMu.Lock()
+	p.active = ts
+	p.activeMu.Unlock()
+}
+
+func (p *Provider) clearActive() {
+	p.activeMu.Lock()
+	p.active = nil
+	p.activeMu.Unlock()
+}
+
+func (p *Provider) rememberSession(id string) {
+	p.sessMu.Lock()
+	p.sessionID = id
+	p.sessMu.Unlock()
+}
+
+// emit sends ev on events, honouring ctx cancellation. Returns false if ctx was
+// cancelled before the send completed.
+func emit(ctx context.Context, events chan ai.Event, ev ai.Event) bool {
+	select {
+	case events <- ev:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// drainInbox flushes any events the handler already queued (e.g. the terminal
+// result enqueued just before term closed) without blocking.
+func drainInbox(ctx context.Context, inbox chan ai.Event, events chan ai.Event) {
+	for {
+		select {
+		case ev := <-inbox:
+			if !emit(ctx, events, ev) {
+				return
+			}
+		default:
+			return
+		}
+	}
+}
