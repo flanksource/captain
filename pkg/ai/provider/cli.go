@@ -73,22 +73,6 @@ func HandleExitError(exitCode int, stderr string) error {
 	}
 }
 
-// clearNestingEnv removes env vars that CLI tools use to detect nested sessions.
-func clearNestingEnv(environ []string) []string {
-	nestingVars := map[string]bool{
-		"CLAUDECODE":             true,
-		"CLAUDE_CODE_ENTRYPOINT": true,
-	}
-	var filtered []string
-	for _, e := range environ {
-		key, _, _ := strings.Cut(e, "=")
-		if !nestingVars[key] {
-			filtered = append(filtered, e)
-		}
-	}
-	return filtered
-}
-
 func runCLI(ctx context.Context, command string, stdinData []byte) (stdout []byte, stderr string, err error) {
 	cmd := exec.CommandContext(ctx, command)
 
@@ -168,32 +152,4 @@ func runCLI(ctx context.Context, command string, stdinData []byte) (stdout []byt
 	}
 
 	return stdoutData, stderrData, nil
-}
-
-func MapClaudeCodeModel(model string) string {
-	model = strings.TrimPrefix(model, "claude-code-")
-
-	switch model {
-	case "sonnet":
-		return "claude-sonnet-4"
-	case "sonnet-4", "sonnet-4.0":
-		return "claude-sonnet-4"
-	case "sonnet-3.5", "sonnet-3-5":
-		return "claude-3-5-sonnet-20241022"
-	case "opus":
-		return "claude-3-opus-20240229"
-	case "haiku":
-		return "claude-3-5-haiku-20241022"
-	default:
-		if strings.HasPrefix(model, "claude-") {
-			return model
-		}
-		// Handle versioned names like "opus-4-6" or "sonnet-4-5" -> "claude-opus-4-6"
-		for _, family := range []string{"opus", "sonnet", "haiku"} {
-			if strings.HasPrefix(model, family+"-") {
-				return "claude-" + model
-			}
-		}
-		return "claude-sonnet-4"
-	}
 }
