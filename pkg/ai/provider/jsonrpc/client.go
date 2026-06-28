@@ -35,7 +35,6 @@ type Client struct {
 
 	closeOnce sync.Once
 	closed    chan struct{}
-	runErr    atomic.Pointer[error]
 }
 
 // New builds a client over the given stdin (writer) and stdout (reader) of a

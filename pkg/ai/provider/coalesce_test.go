@@ -1,0 +1,60 @@
+package provider
+
+import (
+	"context"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/flanksource/captain/pkg/ai"
+)
+
+// feedEvents pushes events onto a buffered channel and closes it, mimicking a
+// finished stream for CoalesceStream to drain.
+func feedEvents(events []ai.Event) <-chan ai.Event {
+	ch := make(chan ai.Event, len(events))
+	for _, ev := range events {
+		ch <- ev
+	}
+	close(ch)
+	return ch
+}
+
+func TestCoalesceStream_AccumulatesTextAndUsageFromResult(t *testing.T) {
+	const model = "claude-3-5-sonnet-20241022"
+	events := []ai.Event{
+		{Kind: ai.EventSystem, Tool: "SessionInit", SessionID: "sess-1", Model: model},
+		{Kind: ai.EventThinking, Text: "Need to inspect the file.", Model: model},
+		{Kind: ai.EventText, Text: "I'll ", Model: model},
+		{Kind: ai.EventText, Text: "read it.", Model: model},
+		{Kind: ai.EventToolUse, Tool: "Read", Input: map[string]any{"file_path": "/repo/foo.go"}, Model: model},
+		{Kind: ai.EventResult, Tool: "Result", Success: true, CostUSD: 0.0123, Model: model,
+			Usage: &ai.Usage{InputTokens: 42, OutputTokens: 17, CacheReadTokens: 3, CacheWriteTokens: 1}},
+	}
+
+	resp, err := CoalesceStream(context.Background(), model, feedEvents(events), time.Now())
+	if err != nil {
+		t.Fatalf("CoalesceStream err: %v", err)
+	}
+	if resp.Text != "I'll read it." {
+		t.Errorf("Text = %q, want %q", resp.Text, "I'll read it.")
+	}
+	if resp.Usage.InputTokens != 42 || resp.Usage.OutputTokens != 17 {
+		t.Errorf("Usage = %+v, want input=42 output=17", resp.Usage)
+	}
+}
+
+func TestCoalesceStream_ResultErrorReturnsError(t *testing.T) {
+	const wantMsg = "upstream 500"
+	events := []ai.Event{
+		{Kind: ai.EventResult, Tool: "Result", Success: false, Error: wantMsg, Model: "m"},
+	}
+
+	resp, err := CoalesceStream(context.Background(), "m", feedEvents(events), time.Now())
+	if err == nil {
+		t.Fatalf("expected error, got resp=%+v", resp)
+	}
+	if !strings.Contains(err.Error(), wantMsg) {
+		t.Errorf("err = %v, want to mention %q", err, wantMsg)
+	}
+}

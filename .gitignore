@@ -7,3 +7,5 @@ specs/
 .captain/
 !cmd/captain/
 *.png
+go.work
+go.work.sum
