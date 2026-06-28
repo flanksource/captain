@@ -33,8 +33,8 @@ func (t *ReadTool) Pretty() api.Text {
 	return text
 }
 
-func (t *ReadTool) Detail() api.Textable   { return nil }
-func (t *ReadTool) ExtractPath() string     { return t.Rel(t.FilePath()) }
+func (t *ReadTool) Detail() api.Textable { return nil }
+func (t *ReadTool) ExtractPath() string  { return t.Rel(t.FilePath()) }
 
 // WriteTool
 
@@ -120,8 +120,8 @@ func (t *MultiEditTool) Pretty() api.Text {
 	return text
 }
 
-func (t *MultiEditTool) Detail() api.Textable   { return nil }
-func (t *MultiEditTool) ExtractPath() string     { return t.Rel(t.FilePath()) }
+func (t *MultiEditTool) Detail() api.Textable { return nil }
+func (t *MultiEditTool) ExtractPath() string  { return t.Rel(t.FilePath()) }
 
 // detectLanguage returns the syntax highlighting language from a file path.
 func detectLanguage(path string) string {

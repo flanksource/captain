@@ -16,9 +16,9 @@ type mockProvider struct {
 	closed bool
 }
 
-func (m *mockProvider) GetModel() string       { return m.model }
-func (m *mockProvider) GetBackend() Backend     { return BackendAnthropic }
-func (m *mockProvider) Close() error            { m.closed = true; return nil }
+func (m *mockProvider) GetModel() string    { return m.model }
+func (m *mockProvider) GetBackend() Backend { return BackendAnthropic }
+func (m *mockProvider) Close() error        { m.closed = true; return nil }
 func (m *mockProvider) Execute(_ context.Context, req Request) (*Response, error) {
 	if m.err != nil {
 		return nil, m.err

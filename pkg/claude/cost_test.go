@@ -123,10 +123,10 @@ func TestEstimateTokens(t *testing.T) {
 		expected int
 	}{
 		{"", 0},
-		{"hi", 1},           // 2 chars → ceil(2/4) = 1
-		{"hello", 2},        // 5 chars → ceil(5/4) = 2
-		{"12345678", 2},     // 8 chars → exactly 2
-		{"123456789", 3},    // 9 chars → ceil(9/4) = 3
+		{"hi", 1},              // 2 chars → ceil(2/4) = 1
+		{"hello", 2},           // 5 chars → ceil(5/4) = 2
+		{"12345678", 2},        // 8 chars → exactly 2
+		{"123456789", 3},       // 9 chars → ceil(9/4) = 3
 		{"hello world foo", 4}, // 15 chars → ceil(15/4) = 4
 	}
 	for _, tt := range tests {

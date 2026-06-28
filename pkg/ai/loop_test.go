@@ -15,7 +15,7 @@ type fakeStreamingProvider struct {
 	err      error
 }
 
-func (f *fakeStreamingProvider) GetModel() string  { return "fake" }
+func (f *fakeStreamingProvider) GetModel() string    { return "fake" }
 func (f *fakeStreamingProvider) GetBackend() Backend { return Backend("fake") }
 func (f *fakeStreamingProvider) Execute(ctx context.Context, req Request) (*Response, error) {
 	return nil, errors.New("not used")

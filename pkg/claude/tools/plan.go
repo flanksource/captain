@@ -61,9 +61,9 @@ func extractMarkdownTitle(content string) string {
 
 type ExitPlanTool struct{ BaseTool }
 
-func (t *ExitPlanTool) Name() string     { return "Plan" }
-func (t *ExitPlanTool) Category() string { return "" }
-func (t *ExitPlanTool) FilePath() string { return "" }
+func (t *ExitPlanTool) Name() string        { return "Plan" }
+func (t *ExitPlanTool) Category() string    { return "" }
+func (t *ExitPlanTool) FilePath() string    { return "" }
 func (t *ExitPlanTool) ExtractPath() string { return "" }
 
 func (t *ExitPlanTool) Pretty() api.Text {

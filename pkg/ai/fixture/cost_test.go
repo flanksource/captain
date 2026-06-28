@@ -56,12 +56,12 @@ func TestFormatCostWithEstimate(t *testing.T) {
 
 func TestHumanBytes(t *testing.T) {
 	cases := map[int64]string{
-		0:                "0 B",
-		512:              "512 B",
-		1024:             "1.0 KB",
-		1024 * 1024:      "1.0 MB",
-		1536:             "1.5 KB",
-		1024 * 1024 * 5:  "5.0 MB",
+		0:               "0 B",
+		512:             "512 B",
+		1024:            "1.0 KB",
+		1024 * 1024:     "1.0 MB",
+		1536:            "1.5 KB",
+		1024 * 1024 * 5: "5.0 MB",
 	}
 	for in, want := range cases {
 		if got := humanBytes(in); got != want {

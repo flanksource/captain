@@ -9,10 +9,10 @@ import (
 
 type WebFetchTool struct{ BaseTool }
 
-func (t *WebFetchTool) Name() string     { return "WebFetch" }
-func (t *WebFetchTool) FilePath() string { return "" }
-func (t *WebFetchTool) ExtractPath() string { return "" }
-func (t *WebFetchTool) Category() string { return "" }
+func (t *WebFetchTool) Name() string         { return "WebFetch" }
+func (t *WebFetchTool) FilePath() string     { return "" }
+func (t *WebFetchTool) ExtractPath() string  { return "" }
+func (t *WebFetchTool) Category() string     { return "" }
 func (t *WebFetchTool) Detail() api.Textable { return nil }
 
 func (t *WebFetchTool) Pretty() api.Text {
@@ -26,10 +26,10 @@ func (t *WebFetchTool) Pretty() api.Text {
 
 type WebSearchTool struct{ BaseTool }
 
-func (t *WebSearchTool) Name() string        { return "WebSearch" }
-func (t *WebSearchTool) FilePath() string    { return "" }
-func (t *WebSearchTool) ExtractPath() string { return "" }
-func (t *WebSearchTool) Category() string    { return "" }
+func (t *WebSearchTool) Name() string         { return "WebSearch" }
+func (t *WebSearchTool) FilePath() string     { return "" }
+func (t *WebSearchTool) ExtractPath() string  { return "" }
+func (t *WebSearchTool) Category() string     { return "" }
 func (t *WebSearchTool) Detail() api.Textable { return nil }
 
 func (t *WebSearchTool) Pretty() api.Text {

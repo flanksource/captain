@@ -12,18 +12,18 @@ import (
 )
 
 type Fixture struct {
-	Name                    string         `yaml:"name,omitempty"`
-	Description             string         `yaml:"description,omitempty"`
-	Prompt                  string         `yaml:"prompt,omitempty"`
-	System                  string         `yaml:"system,omitempty"`
-	CWD                     string         `yaml:"cwd,omitempty"`
-	Baseline                string         `yaml:"baseline,omitempty"`
-	Repeat                  int            `yaml:"repeat,omitempty"`
-	CaptureKubernetesProxy  bool           `yaml:"captureKubernetesProxy,omitempty"`
-	Kubeconfig              string         `yaml:"kubeconfig,omitempty"`
-	MCPProxy                MCPProxyConfig `yaml:"mcpProxy,omitempty"`
-	Defaults                Run            `yaml:"defaults,omitempty"`
-	Runs                    []Run          `yaml:"runs"`
+	Name                   string         `yaml:"name,omitempty"`
+	Description            string         `yaml:"description,omitempty"`
+	Prompt                 string         `yaml:"prompt,omitempty"`
+	System                 string         `yaml:"system,omitempty"`
+	CWD                    string         `yaml:"cwd,omitempty"`
+	Baseline               string         `yaml:"baseline,omitempty"`
+	Repeat                 int            `yaml:"repeat,omitempty"`
+	CaptureKubernetesProxy bool           `yaml:"captureKubernetesProxy,omitempty"`
+	Kubeconfig             string         `yaml:"kubeconfig,omitempty"`
+	MCPProxy               MCPProxyConfig `yaml:"mcpProxy,omitempty"`
+	Defaults               Run            `yaml:"defaults,omitempty"`
+	Runs                   []Run          `yaml:"runs"`
 
 	Dir string `yaml:"-"`
 }
