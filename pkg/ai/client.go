@@ -5,7 +5,7 @@ import (
 	"os"
 )
 
-type ProviderFactory func(cfg Config) Provider
+type ProviderFactory func(cfg Config) (Provider, error)
 
 var factories = map[Backend]ProviderFactory{}
 
@@ -38,7 +38,7 @@ func NewProvider(cfg Config) (Provider, error) {
 		cfg.APIKey = GetAPIKeyFromEnv(backend)
 	}
 
-	return factory(cfg), nil
+	return factory(cfg)
 }
 
 func GetAPIKeyFromEnv(backend Backend) string {
