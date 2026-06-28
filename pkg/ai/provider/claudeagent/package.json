@@ -1,0 +1,10 @@
+{
+  "name": "captain-claude-agent",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "latest",
+    "tsx": "latest",
+    "typescript": "latest"
+  }
+}
