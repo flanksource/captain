@@ -11,6 +11,10 @@ import (
 	"github.com/flanksource/commons/logger"
 )
 
+// log is the package-scoped logger for AI provider middleware. Its level
+// follows -v/--log-level and can be tuned with -Plog.level.ai=debug.
+var log = logger.GetLogger("ai")
+
 type loggingProvider struct {
 	provider ai.Provider
 }
@@ -21,31 +25,35 @@ func (l *loggingProvider) GetBackend() ai.Backend { return l.provider.GetBackend
 func (l *loggingProvider) Execute(ctx context.Context, req ai.Request) (*ai.Response, error) {
 	start := time.Now()
 
-	logger.Debugf("%v", clicky.Text("").
-		Add(icons.AI).
-		Append(fmt.Sprintf(" %s/%s", l.provider.GetBackend(), l.provider.GetModel()), "text-purple-600 font-medium").
-		NewLine().
-		Append(req.Prompt, "text-gray-600 max-w-[100ch]"))
+	if log.IsDebugEnabled() {
+		log.Debugf("%v", clicky.Text("").
+			Add(icons.AI).
+			Append(fmt.Sprintf(" %s/%s", l.provider.GetBackend(), l.provider.GetModel()), "text-purple-600 font-medium").
+			NewLine().
+			Append(req.Prompt, "text-gray-600 max-w-[100ch]"))
+	}
 
 	resp, err := l.provider.Execute(ctx, req)
 	duration := time.Since(start)
 
 	if err != nil {
-		logger.Errorf("%v", clicky.Text("").
+		log.Errorf("%v", clicky.Text("").
 			Add(icons.Error).
 			Append(fmt.Sprintf(" %s/%s", l.provider.GetBackend(), l.provider.GetModel()), "text-red-600 font-medium").
 			Append(fmt.Sprintf(" failed after %v: %v", duration.Round(time.Millisecond), err), "text-red-500"))
 		return resp, err
 	}
 
-	logger.Debugf("%v", clicky.Text("").
-		Add(icons.Check).
-		Append(fmt.Sprintf(" %s/%s", l.provider.GetBackend(), l.provider.GetModel()), "text-green-600 font-medium").
-		Append(fmt.Sprintf(" %v", duration.Round(time.Millisecond)), "text-gray-500").
-		Append(fmt.Sprintf(" (tokens: %d in / %d out)", resp.Usage.InputTokens, resp.Usage.OutputTokens), "text-gray-400"))
+	if log.IsDebugEnabled() {
+		log.Debugf("%v", clicky.Text("").
+			Add(icons.Check).
+			Append(fmt.Sprintf(" %s/%s", l.provider.GetBackend(), l.provider.GetModel()), "text-green-600 font-medium").
+			Append(fmt.Sprintf(" %v", duration.Round(time.Millisecond)), "text-gray-500").
+			Append(fmt.Sprintf(" (tokens: %d in / %d out)", resp.Usage.InputTokens, resp.Usage.OutputTokens), "text-gray-400"))
+	}
 
-	if logger.IsTraceEnabled() {
-		logger.Tracef("%v", clicky.Text("").
+	if log.IsTraceEnabled() {
+		log.Tracef("%v", clicky.Text("").
 			Add(icons.ArrowDown).
 			Append(" response", "text-gray-500").
 			NewLine().
@@ -66,11 +74,13 @@ func (l *loggingProvider) ExecuteStream(ctx context.Context, req ai.Request) (<-
 		return nil, fmt.Errorf("provider %s/%s does not support streaming", l.provider.GetBackend(), l.provider.GetModel())
 	}
 
-	logger.Debugf("%v", clicky.Text("").
-		Add(icons.AI).
-		Append(fmt.Sprintf(" %s/%s (stream)", l.provider.GetBackend(), l.provider.GetModel()), "text-purple-600 font-medium").
-		NewLine().
-		Append(req.Prompt, "text-gray-600 max-w-[100ch]"))
+	if log.IsDebugEnabled() {
+		log.Debugf("%v", clicky.Text("").
+			Add(icons.AI).
+			Append(fmt.Sprintf(" %s/%s (stream)", l.provider.GetBackend(), l.provider.GetModel()), "text-purple-600 font-medium").
+			NewLine().
+			Append(req.Prompt, "text-gray-600 max-w-[100ch]"))
+	}
 
 	return streamer.ExecuteStream(ctx, req)
 }

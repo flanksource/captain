@@ -9,6 +9,7 @@ import (
 	"github.com/flanksource/clicky"
 	"github.com/flanksource/clicky/flags"
 	"github.com/flanksource/clicky/mcp"
+	"github.com/flanksource/commons/properties"
 	"github.com/spf13/cobra"
 )
 
@@ -29,10 +30,14 @@ func main() {
 		SilenceUsage: true,
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
 			clicky.Flags.UseFlags()
+			cli.EnableHTTPWireLogging()
 		},
 	}
 
 	clicky.BindAllFlags(rootCmd.PersistentFlags(), "format")
+	// Bind commons' -P/--properties flag so per-subsystem log levels and HTTP
+	// wire logging can be toggled, e.g. -Plog.level.http=trace3.
+	properties.BindFlags(rootCmd.PersistentFlags())
 
 	// Bind HistoryOptions directly on rootCmd so 'captain' IS 'captain history'.
 	// All history flags (--tool, --category, --since, --limit, -f, ...) work
@@ -76,7 +81,15 @@ func main() {
 	clicky.AddNamedCommand("generate", sandboxCmd, cli.SRTGenerateOptions{}, cli.RunSRTGenerate).Short = "Generate sandbox-runtime config"
 	clicky.AddNamedCommand("presets", sandboxCmd, cli.SandboxPresetsOptions{}, cli.RunSandboxPresets).Short = "List available sandbox-runtime presets"
 
-	aiCmd := &cobra.Command{Use: "ai", Short: "AI provider commands"}
+	aiCmd := &cobra.Command{
+		Use:   "ai",
+		Short: "AI provider commands",
+		Long: "AI provider commands.\n\n" +
+			"Logging: increase application verbosity with -v/-vv or --log-level=debug. " +
+			"To log HTTP requests/responses to the provider APIs (with sensitive headers " +
+			"redacted), set -Plog.level.http=trace3 for headers and timing, or trace4 to " +
+			"also include request/response bodies.",
+	}
 	rootCmd.AddCommand(aiCmd)
 	clicky.AddNamedCommand("prompt", aiCmd, cli.AIPromptOptions{}, cli.RunAIPrompt)
 	clicky.AddNamedCommand("models", aiCmd, cli.AIModelsOptions{}, cli.RunAIModels)
@@ -158,7 +171,12 @@ func main() {
 		},
 	}
 	mcpCmd := mcp.NewCommandWithConfig(mcpConfig)
-	mcpCmd.PersistentFlags().Lookup("verbose").Shorthand = ""
+	// Clear the -v shorthand only if the mcp command registers a verbose flag;
+	// newer clicky versions don't, and an unconditional Lookup(...).Shorthand
+	// dereferences nil.
+	if vf := mcpCmd.PersistentFlags().Lookup("verbose"); vf != nil {
+		vf.Shorthand = ""
+	}
 	rootCmd.AddCommand(mcpCmd)
 
 	cmuxCmd := &cobra.Command{Use: "cmux", Short: "Cmux terminal multiplexer commands"}
