@@ -297,6 +297,7 @@ func TestApplyDefaultsAutoSelectsLocalDeps(t *testing.T) {
 }
 
 func TestProjectDisplayName(t *testing.T) {
+	t.Setenv("HOME", "/home/ubuntu")
 	tests := []struct {
 		path string
 		want string

@@ -7,11 +7,13 @@ import (
 	"fmt"
 
 	"github.com/flanksource/captain/pkg/ai/pricing"
+	"github.com/flanksource/captain/pkg/claude"
 )
 
 // resolveCost returns the per-iteration cost for a row. If the underlying
-// claude CLI didn't report a cost (CostMean == 0) we fall back to the
-// OpenRouter-backed pricing registry to estimate from the token counts.
+// claude CLI didn't report a cost (CostMean == 0) we estimate from the token
+// counts: Claude models use captain's deterministic pricing table, everything
+// else falls back to the OpenRouter-backed pricing registry.
 // Returns (cost, estimated) — estimated is true when the value is from the
 // fallback path.
 func resolveCost(model string, a *aggregate) (float64, bool) {
@@ -20,6 +22,15 @@ func resolveCost(model string, a *aggregate) (float64, bool) {
 	}
 	if a.Input == 0 && a.Output == 0 && a.CacheRead == 0 && a.CacheWrite == 0 {
 		return 0, false
+	}
+	if claude.ClassifyModel(model) != claude.ModelFamilyUnknown {
+		cost := claude.CalculateCost(&claude.Usage{
+			InputTokens:              a.Input,
+			OutputTokens:             a.Output,
+			CacheReadInputTokens:     a.CacheRead,
+			CacheCreationInputTokens: a.CacheWrite,
+		}, model)
+		return cost, true
 	}
 	res, err := pricing.CalculateCost(model, a.Input, a.Output, 0, a.CacheRead, a.CacheWrite)
 	if err != nil {

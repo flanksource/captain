@@ -110,6 +110,12 @@ func BuildSandboxConfig(mode Mode, baseImage string, components []Component, use
 		cfg.Options = options
 	}
 
+	// Copy mode bakes the selected components into the image (see generateCopy),
+	// so it produces no host volume mounts. Only mount mode maps them as volumes.
+	if mode != ModeMount {
+		return cfg
+	}
+
 	home := user.ContainerHome()
 	claudeDir := filepath.Join(os.Getenv("HOME"), ".claude")
 	grouped := GroupByCategory(components)
