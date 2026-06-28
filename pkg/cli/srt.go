@@ -13,7 +13,6 @@ import (
 
 	"github.com/flanksource/captain/pkg/bash"
 	"github.com/flanksource/captain/pkg/claude"
-	"github.com/flanksource/commons/logger"
 )
 
 type SRTGenerateOptions struct {
@@ -207,7 +206,7 @@ func matchEnvPattern(pattern, name string) bool {
 }
 
 func logEnvClassification(passthrough []string) {
-	if !logger.IsDebugEnabled() {
+	if !log.IsDebugEnabled() {
 		return
 	}
 	var passed, blocked, ignored []string
@@ -225,9 +224,9 @@ func logEnvClassification(passthrough []string) {
 	sort.Strings(passed)
 	sort.Strings(blocked)
 	sort.Strings(ignored)
-	logger.Debugf("env passthrough (%d): %s", len(passed), strings.Join(passed, ", "))
-	logger.Debugf("env blocked (%d): %s", len(blocked), strings.Join(blocked, ", "))
-	logger.Debugf("env ignored (%d): %s", len(ignored), strings.Join(ignored, ", "))
+	log.Debugf("env passthrough (%d): %s", len(passed), strings.Join(passed, ", "))
+	log.Debugf("env blocked (%d): %s", len(blocked), strings.Join(blocked, ", "))
+	log.Debugf("env ignored (%d): %s", len(ignored), strings.Join(ignored, ", "))
 }
 
 func RunSRTGenerate(opts SRTGenerateOptions) (any, error) {

@@ -9,11 +9,9 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/middleware"
-	"github.com/flanksource/captain/pkg/ai/provider"
 	"github.com/flanksource/captain/pkg/captainconfig"
 	"github.com/flanksource/captain/pkg/claude"
 	"github.com/flanksource/captain/pkg/claude/tools"
-	"github.com/flanksource/commons/logger"
 )
 
 // loadSavedAI returns the saved AI defaults from ~/.captain.yaml. Errors are
@@ -22,7 +20,7 @@ import (
 func loadSavedAI() captainconfig.AIDefaults {
 	cfg, _, err := captainconfig.Load()
 	if err != nil {
-		logger.Debugf("captainconfig load: %v (continuing with zero defaults)", err)
+		log.Debugf("captainconfig load: %v (continuing with zero defaults)", err)
 		return captainconfig.AIDefaults{}
 	}
 	return cfg.AI
@@ -34,7 +32,6 @@ type AIProviderOptions struct {
 	APIKey  string `flag:"api-key" help:"API key (env: ANTHROPIC_API_KEY, GEMINI_API_KEY, GOOGLE_API_KEY)"`
 	NoCache bool   `flag:"no-cache" help:"Disable response caching"`
 	Budget  string `flag:"budget" help:"Max spend in USD, 0=unlimited" default:"0"`
-	Debug   bool   `flag:"debug" help:"Enable debug logging for HTTP requests"`
 }
 
 func (o AIProviderOptions) ToConfig() ai.Config {
@@ -60,10 +57,6 @@ func (o AIProviderOptions) ToConfig() ai.Config {
 		APIKey:    o.APIKey,
 		NoCache:   noCache,
 		BudgetUSD: budget,
-		Debug:     o.Debug,
-	}
-	if o.Debug || logger.IsDebugEnabled() {
-		cfg.HTTPClient = provider.NewLoggingHTTPClient()
 	}
 	return cfg
 }
@@ -304,16 +297,26 @@ func renderEvent(w *os.File, renderer *lineRenderer, ev ai.Event) {
 	case ai.EventText:
 		fmt.Fprintf(w, "%s", ev.Text)
 	case ai.EventThinking:
-		if logger.IsDebugEnabled() {
+		if log.IsDebugEnabled() {
 			fmt.Fprintf(w, "[thinking] %s\n", truncForStderr(ev.Text, 200))
 		}
 	case ai.EventToolUse:
 		fmt.Fprintf(w, "\n[tool] %s %s\n", ev.Tool, summariseInput(ev.Input))
+	case ai.EventPermission:
+		fmt.Fprintf(w, "\n[permission] %s %s awaiting approval\n", ev.Tool, summariseInput(ev.Input))
+	case ai.EventToolResult:
+		if ev.Text != "" {
+			label := "tool-result"
+			if !ev.Success {
+				label = "tool-error"
+			}
+			fmt.Fprintf(w, "[%s] %s\n", label, truncForStderr(ev.Text, 500))
+		}
 	case ai.EventResult:
 		renderResultEvent(renderer, ev)
 	case ai.EventError:
 		fmt.Fprintf(w, "\n[error] %s\n", ev.Error)
-		logger.Errorf("%s", ev.Error)
+		log.Errorf("%s", ev.Error)
 	case ai.EventSystem:
 		if ev.SessionID != "" {
 			fmt.Fprintf(w, "[session] %s\n", ev.SessionID)

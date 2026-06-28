@@ -47,7 +47,7 @@ func RunContainerList(_ ContainerListOptions) (any, error) {
 	for _, c := range components {
 		if c.Category != currentCat {
 			currentCat = c.Category
-			fmt.Printf("\n%s %s\n", c.Category.Icon(), c.Category)
+			clicky.Printf("\n%s %s\n", c.Category.Icon(), c.Category)
 		}
 		desc := ""
 		if c.Description != "" {
@@ -57,7 +57,7 @@ func RunContainerList(_ ContainerListOptions) (any, error) {
 		if c.IsDir {
 			dir = "/"
 		}
-		fmt.Printf("  %s%s%s\n", c.Name, dir, desc)
+		clicky.Printf("  %s%s%s\n", c.Name, dir, desc)
 	}
 	return nil, nil
 }
@@ -109,7 +109,7 @@ func RunContainerGenerate(opts ContainerGenerateOptions) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	fmt.Printf("Generated: %s\n", contextDir)
+	clicky.Printf("Generated: %s\n", contextDir)
 
 	sb := container.BuildSandboxConfig(container.Mode(opts.Mode), base, components, user, selectedPresets)
 	if wizardResult != nil {
@@ -119,12 +119,12 @@ func RunContainerGenerate(opts ContainerGenerateOptions) (any, error) {
 	}
 	sandboxPath := container.SandboxConfigPath()
 	if err := container.SaveSandboxConfig(sandboxPath, sb); err != nil {
-		fmt.Printf("warning: could not save sandbox config: %v\n", err)
+		log.Warnf("could not save sandbox config: %v", err)
 	}
 
 	buildInput := container.BuildInput{Tag: tag, ContextDir: contextDir, User: user}
 	if err := container.GenerateShortcuts(container.ShortcutsInput{Dir: contextDir, Config: sb, BuildArgs: buildInput, Components: components}); err != nil {
-		fmt.Printf("warning: could not generate shortcuts: %v\n", err)
+		log.Warnf("could not generate shortcuts: %v", err)
 	}
 
 	container.PrintRunInstructions(sandboxPath)
@@ -191,7 +191,7 @@ func RunContainerBuild(opts ContainerBuildOptions) (any, error) {
 	}
 	sandboxPath := container.SandboxConfigPath()
 	if err := container.SaveSandboxConfig(sandboxPath, sb); err != nil {
-		fmt.Printf("warning: could not save sandbox config: %v\n", err)
+		log.Warnf("could not save sandbox config: %v", err)
 	}
 
 	buildInput := container.BuildInput{Tag: tag, ContextDir: contextDir, User: user}
@@ -200,7 +200,7 @@ func RunContainerBuild(opts ContainerBuildOptions) (any, error) {
 	}
 
 	if err := container.GenerateShortcuts(container.ShortcutsInput{Dir: contextDir, Config: sb, BuildArgs: buildInput, Components: components}); err != nil {
-		fmt.Printf("warning: could not generate shortcuts: %v\n", err)
+		log.Warnf("could not generate shortcuts: %v", err)
 	}
 
 	container.PrintBuildInstructions(tag)
@@ -220,11 +220,11 @@ func RunContainerRun(opts ContainerRunOptions) (any, error) {
 	}
 
 	if opts.Build {
-		fmt.Printf("Rebuilding %s...\n", cfg.Image)
+		clicky.Printf("Rebuilding %s...\n", cfg.Image)
 		if err := container.RebuildFromSandbox(cfg); err != nil {
 			return nil, fmt.Errorf("rebuild: %w", err)
 		}
-		fmt.Println("Rebuild complete.")
+		clicky.Println("Rebuild complete.")
 	}
 
 	pwd, _ := os.Getwd()
