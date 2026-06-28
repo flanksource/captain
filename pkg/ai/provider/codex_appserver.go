@@ -14,6 +14,10 @@ import (
 	"github.com/flanksource/commons/logger"
 )
 
+// log is the package-scoped logger for AI providers. Its level follows
+// -v/--log-level and can be tuned with -Plog.level.ai=debug.
+var log = logger.GetLogger("ai")
+
 // CodexAppServer drives `codex app-server` over JSON-RPC 2.0 stdio (the codex
 // app-server v2 schema: slash-delimited methods, camelCase params), replacing
 // the one-shot `codex exec --json` path in codex_cli.go. Each Execute runs one
@@ -167,7 +171,7 @@ func (c *CodexAppServer) ensureStarted(ctx context.Context) error {
 	c.mu.Lock()
 	c.sup = sup
 	c.mu.Unlock()
-	logger.Debugf("[codex-appserver] starting codex app-server")
+	log.Debugf("[codex-appserver] starting codex app-server")
 	sup.Start()
 
 	select {

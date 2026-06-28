@@ -10,7 +10,6 @@ import (
 	"github.com/flanksource/clicky"
 	"github.com/flanksource/clicky/api"
 	"github.com/flanksource/clicky/api/icons"
-	"github.com/flanksource/commons/logger"
 )
 
 // Preview line limits matching pi-mono's tool-execution.ts
@@ -46,7 +45,7 @@ func (t ToolUse) Pretty() api.Text {
 			text = text.Append(t.Timestamp.Format("2006-01-02")+"  ", "text-gray-500")
 		}
 	}
-	if logger.IsDebugEnabled() && t.CWD != "" {
+	if log.IsDebugEnabled() && t.CWD != "" {
 		text = text.Add(icons.Folder).Append(" "+getRelativePath(t.CWD, cwd), "text-gray-400 text-xs")
 	}
 

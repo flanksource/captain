@@ -14,6 +14,10 @@ import (
 	"github.com/flanksource/commons/logger"
 )
 
+// log is the package-scoped logger for session-history parsing. Its level
+// follows -v/--log-level and can be tuned with -Plog.level.history=debug.
+var log = logger.GetLogger("history")
+
 func NormalizePath(path string) string {
 	normalized := strings.ReplaceAll(path, "/", "-")
 	return strings.ReplaceAll(normalized, ".", "-")
@@ -21,7 +25,7 @@ func NormalizePath(path string) string {
 
 func FindSessionFiles(projectsDir, currentDir string, searchAll bool) ([]string, error) {
 	if _, err := os.Stat(projectsDir); os.IsNotExist(err) {
-		logger.Debugf("Projects directory does not exist: %s", projectsDir)
+		log.Debugf("Projects directory does not exist: %s", projectsDir)
 		return nil, nil
 	}
 
@@ -30,12 +34,12 @@ func FindSessionFiles(projectsDir, currentDir string, searchAll bool) ([]string,
 		return nil, err
 	}
 
-	logger.Debugf("Found %d project directories in %s", len(entries), projectsDir)
+	log.Debugf("Found %d project directories in %s", len(entries), projectsDir)
 
 	var normalized string
 	if !searchAll && currentDir != "" {
 		normalized = NormalizePath(currentDir)
-		logger.Debugf("Looking for directories matching: %s", normalized)
+		log.Debugf("Looking for directories matching: %s", normalized)
 	}
 
 	var sessionFiles []string
@@ -50,20 +54,20 @@ func FindSessionFiles(projectsDir, currentDir string, searchAll bool) ([]string,
 			if !hasSuffixFold(entry.Name(), normalized) {
 				continue
 			}
-			logger.Debugf("Matched directory: %s", entry.Name())
+			log.Debugf("Matched directory: %s", entry.Name())
 		}
 
 		matches, err := filepath.Glob(filepath.Join(projectPath, "*.jsonl"))
 		if err != nil {
-			logger.Warnf("Error globbing session files in %s: %v", projectPath, err)
+			log.Warnf("Error globbing session files in %s: %v", projectPath, err)
 			continue
 		}
 
-		logger.Debugf("Found %d session files in %s", len(matches), projectPath)
+		log.Debugf("Found %d session files in %s", len(matches), projectPath)
 		sessionFiles = append(sessionFiles, matches...)
 	}
 
-	logger.Debugf("Total session files found: %d", len(sessionFiles))
+	log.Debugf("Total session files found: %d", len(sessionFiles))
 	return sessionFiles, nil
 }
 
@@ -93,7 +97,7 @@ func ExtractToolUses(sessionFile string) ([]ToolUse, error) {
 
 		var entry SessionEntry
 		if err := json.Unmarshal([]byte(line), &entry); err != nil {
-			logger.Debugf("Error parsing line in %s: %v", sessionFile, err)
+			log.Debugf("Error parsing line in %s: %v", sessionFile, err)
 			continue
 		}
 
@@ -232,7 +236,7 @@ func ParseHistory(currentDir string, searchAll bool, filter Filter) (*ParseResul
 		for _, f := range claudeFiles {
 			toolUses, err := ExtractToolUses(f)
 			if err != nil {
-				logger.Warnf("Error extracting tool uses from %s: %v", f, err)
+				log.Warnf("Error extracting tool uses from %s: %v", f, err)
 				continue
 			}
 			if len(toolUses) > 0 {
@@ -245,13 +249,13 @@ func ParseHistory(currentDir string, searchAll bool, filter Filter) (*ParseResul
 	if filter.Source == "" || filter.Source == "codex" {
 		codexFiles, err := FindCodexSessionFiles()
 		if err != nil {
-			logger.Warnf("Error finding codex sessions: %v", err)
+			log.Warnf("Error finding codex sessions: %v", err)
 		} else {
 			result.SessionsFound += len(codexFiles)
 			for _, f := range codexFiles {
 				toolUses, err := ExtractCodexToolUses(f)
 				if err != nil {
-					logger.Warnf("Error extracting codex tool uses from %s: %v", f, err)
+					log.Warnf("Error extracting codex tool uses from %s: %v", f, err)
 					continue
 				}
 				if len(toolUses) > 0 {

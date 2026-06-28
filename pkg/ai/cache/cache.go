@@ -14,6 +14,10 @@ import (
 	"github.com/samber/lo"
 )
 
+// log is the package-scoped logger for AI providers. Its level follows
+// -v/--log-level and can be tuned with -Plog.level.ai=debug.
+var log = logger.GetLogger("ai")
+
 var (
 	ErrCacheDisabled = errors.New("caching is disabled")
 	ErrNotFound      = errors.New("cache entry not found")
@@ -178,7 +182,7 @@ func (c *Cache) Set(entry *Entry) error {
 	entry.CacheKey = generateCacheKey(entry.Prompt, entry.Model)
 	entry.PromptHash = entry.CacheKey
 
-	logger.Tracef("[%s] caching response for %s (hash:%s)", entry.Model, lo.Ellipsis(entry.Prompt, 20), entry.PromptHash)
+	log.Tracef("[%s] caching response for %s (hash:%s)", entry.Model, lo.Ellipsis(entry.Prompt, 20), entry.PromptHash)
 
 	var expiresAt *time.Time
 	if c.config.TTL > 0 {

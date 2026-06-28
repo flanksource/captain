@@ -12,6 +12,10 @@ import (
 	"github.com/flanksource/commons/logger"
 )
 
+// log is the package-scoped logger for AI providers. Its level follows
+// -v/--log-level and can be tuned with -Plog.level.ai=debug.
+var log = logger.GetLogger("ai")
+
 const (
 	openRouterAPIURL    = "https://openrouter.ai/api/v1/models"
 	cacheExpiryDuration = 24 * time.Hour
@@ -68,7 +72,7 @@ func EnsureLoaded() {
 
 	if pricingCache == nil {
 		if cache, err := loadFromDisk(); err == nil && cache != nil && !cache.IsExpired() {
-			logger.Debugf("Loaded OpenRouter pricing from cache (age: %s)", time.Since(cache.Timestamp))
+			log.Debugf("Loaded OpenRouter pricing from cache (age: %s)", time.Since(cache.Timestamp))
 			pricingCache = cache
 			MergeModels(cache.Models)
 			return
@@ -77,7 +81,7 @@ func EnsureLoaded() {
 
 	models, err := fetchOpenRouterPricing()
 	if err != nil {
-		logger.Warnf("Failed to fetch OpenRouter pricing: %v", err)
+		log.Warnf("Failed to fetch OpenRouter pricing: %v", err)
 		pricingCacheErr = err
 		return
 	}
@@ -106,7 +110,7 @@ func fetchOpenRouterPricing() (map[string]*ModelInfo, error) {
 
 	cache := &PricingCache{Timestamp: time.Now(), Models: models}
 	if err := saveToDisk(cache); err != nil {
-		logger.Warnf("Failed to save OpenRouter pricing cache: %v", err)
+		log.Warnf("Failed to save OpenRouter pricing cache: %v", err)
 	}
 
 	return models, nil

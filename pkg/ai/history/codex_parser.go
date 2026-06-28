@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/flanksource/commons/logger"
 )
 
 func ParseCodexLine(line string) (CodexEvent, error) {
@@ -134,7 +132,7 @@ func ExtractCodexToolUsesFromReader(r io.Reader) ([]ToolUse, error) {
 
 		event, err := ParseCodexLine(line)
 		if err != nil {
-			logger.Debugf("Error parsing codex line: %v", err)
+			log.Debugf("Error parsing codex line: %v", err)
 			continue
 		}
 

@@ -97,7 +97,12 @@ func (c *Client) dispatch(line []byte) {
 			chAny.(chan Frame) <- f
 		}
 	case f.isRequest():
-		c.handleServerRequest(f)
+		// Handle on its own goroutine: a server→client request handler may block
+		// (e.g. a tool-permission round-trip awaiting a human), and the read loop
+		// must keep flowing so responses to in-flight Calls (such as the interrupt
+		// that unblocks a pending approval) are still delivered. Writes are
+		// serialized by wmu, so concurrent replies are safe.
+		go c.handleServerRequest(f)
 	case f.isNotification():
 		if c.h.OnNotification != nil {
 			c.h.OnNotification(f.Method, f.Params)

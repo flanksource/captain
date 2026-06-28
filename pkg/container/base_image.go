@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"github.com/flanksource/clicky"
 )
 
 //go:embed base/Dockerfile
@@ -41,7 +43,7 @@ func buildBaseImage() error {
 		return fmt.Errorf("writing base context: %w", err)
 	}
 
-	fmt.Printf("Building base image %s...\n", baseImageTag)
+	clicky.Printf("Building base image %s...\n", baseImageTag)
 	cmd := exec.Command("docker", "build", "-t", baseImageTag, dir)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

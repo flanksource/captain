@@ -7,7 +7,6 @@ import (
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/pricing"
 	"github.com/flanksource/captain/pkg/ai/session"
-	"github.com/flanksource/commons/logger"
 )
 
 type costProvider struct {
@@ -40,7 +39,7 @@ func (c *costProvider) Execute(ctx context.Context, req ai.Request) (*ai.Respons
 		resp.Usage.ReasoningTokens, resp.Usage.CacheReadTokens, resp.Usage.CacheWriteTokens)
 
 	if calcErr != nil {
-		logger.Debugf("Cost calculation failed for %s: %v", resp.Model, calcErr)
+		log.Debugf("Cost calculation failed for %s: %v", resp.Model, calcErr)
 	} else {
 		c.session.AddCost(ai.Cost{
 			Model:        resp.Model,
