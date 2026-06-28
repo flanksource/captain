@@ -21,6 +21,10 @@ import (
 	gk "github.com/firebase/genkit/go/genkit"
 )
 
+// log is the package-scoped logger for AI providers. Its level follows
+// -v/--log-level and can be tuned with -Plog.level.ai=debug.
+var log = logger.GetLogger("ai")
+
 // Provider is a genkit-backed ai.StreamingProvider for one API backend.
 type Provider struct {
 	cfg      ai.Config
@@ -98,7 +102,7 @@ func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, e
 	}
 
 	if cost := p.costUSD(out.Usage); cost > 0 {
-		logger.Debugf("genkit %s cost: $%.6f (model=%s)", p.backend, cost, p.cfg.Model)
+		log.Debugf("genkit %s cost: $%.6f (model=%s)", p.backend, cost, p.cfg.Model)
 	}
 
 	return out, nil
@@ -168,7 +172,7 @@ func (p *Provider) costUSD(u ai.Usage) float64 {
 	id := pricingModelID(p.backend, p.cfg.Model)
 	res, err := pricing.CalculateCost(id, u.InputTokens, u.OutputTokens, u.ReasoningTokens, u.CacheReadTokens, u.CacheWriteTokens)
 	if err != nil {
-		logger.Debugf("genkit provider: cost lookup failed for %q: %v", id, err)
+		log.Debugf("genkit provider: cost lookup failed for %q: %v", id, err)
 		return 0
 	}
 	return res.TotalCost

@@ -11,6 +11,10 @@ import (
 	"github.com/flanksource/commons/logger"
 )
 
+// log is the package-scoped logger for sandbox token management. Its level
+// follows -v/--log-level and can be tuned with -Plog.level.sandbox=debug.
+var log = logger.GetLogger("sandbox")
+
 type AWSTokenConfig struct {
 	Profile    string `yaml:"profile,omitempty" json:"profile,omitempty"`
 	AssumeRole string `yaml:"assumeRole,omitempty" json:"assumeRole,omitempty"`
@@ -98,19 +102,19 @@ func (tm *TokenManager) Acquire(ctx context.Context, config *TokensConfig) ([]To
 	}
 
 	for _, p := range providers {
-		logger.Infof("Acquiring %s token...", p.name)
+		log.Infof("Acquiring %s token", p.name)
 		r, err := p.acquire()
 		if err != nil {
 			return nil, fmt.Errorf("%s token: %w", p.name, err)
 		}
 		for _, path := range r.WritePaths {
-			logger.Infof("  wrote credentials to %s", path)
+			log.Debugf("wrote %s credentials to %s", p.name, path)
 		}
 		for k := range r.EnvVars {
-			logger.Infof("  set %s", k)
+			log.Debugf("set %s env var for %s", k, p.name)
 		}
 		if !r.Expiry.IsZero() {
-			logger.Infof("  expires %s", r.Expiry.Format("15:04:05"))
+			log.Debugf("%s token expires %s", p.name, r.Expiry.Format("15:04:05"))
 		}
 		results = append(results, *r)
 	}
@@ -134,11 +138,11 @@ func (tm *TokenManager) StartRefresh(ctx context.Context, config *TokensConfig, 
 					if r.Expiry.IsZero() || time.Until(r.Expiry) > 5*time.Minute {
 						continue
 					}
-					logger.V(3).Infof("Refreshing token for provider %s (expires %s)", r.Provider, r.Expiry)
+					log.Debugf("Refreshing token for provider %s (expires %s)", r.Provider, r.Expiry)
 				}
 				tm.mu.Unlock()
 				if _, err := tm.Acquire(ctx, config); err != nil {
-					logger.V(3).Infof("Token refresh failed: %v", err)
+					log.Warnf("Token refresh failed: %v", err)
 				}
 			case <-tm.stopCh:
 				return

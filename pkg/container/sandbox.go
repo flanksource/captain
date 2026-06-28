@@ -11,6 +11,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/sandbox"
 	"github.com/flanksource/captain/pkg/sandbox/presets"
+	"github.com/flanksource/clicky"
 	"gopkg.in/yaml.v3"
 )
 
@@ -323,17 +324,17 @@ func SandboxConfigPath() string {
 }
 
 func PrintRunInstructions(sandboxPath string) {
-	fmt.Println()
-	fmt.Printf("  Sandbox config: %s\n", sandboxPath)
-	fmt.Println()
-	fmt.Println("  Add to PATH:")
-	fmt.Println("    export PATH=\"$PWD/.container-sandbox:$PATH\"")
-	fmt.Println()
-	fmt.Println("  Then:")
-	fmt.Println("    sbx-build    # build the image")
-	fmt.Println("    sbx-start    # start container in background")
-	fmt.Println("    sbx-exec     # exec into container (or sbx-exec <cmd>)")
-	fmt.Println("    sbx-run      # start + exec in one step")
-	fmt.Println("    sbx-stop     # stop the container")
-	fmt.Println("    sbx-rm       # remove the container")
+	clicky.Println()
+	clicky.Printf("  Sandbox config: %s\n", sandboxPath)
+	clicky.Println()
+	clicky.Println("  Add to PATH:")
+	clicky.Println("    export PATH=\"$PWD/.container-sandbox:$PATH\"")
+	clicky.Println()
+	clicky.Println("  Then:")
+	clicky.Println("    sbx-build    # build the image")
+	clicky.Println("    sbx-start    # start container in background")
+	clicky.Println("    sbx-exec     # exec into container (or sbx-exec <cmd>)")
+	clicky.Println("    sbx-run      # start + exec in one step")
+	clicky.Println("    sbx-stop     # stop the container")
+	clicky.Println("    sbx-rm       # remove the container")
 }

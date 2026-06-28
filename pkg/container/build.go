@@ -5,6 +5,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"github.com/flanksource/clicky"
 )
 
 type BuildInput struct {
@@ -39,7 +41,7 @@ func Build(input BuildInput) error {
 }
 
 func PrintBuildInstructions(tag string) {
-	fmt.Println()
-	fmt.Println("Build complete!")
-	fmt.Printf("  Image: %s\n", tag)
+	clicky.Println()
+	clicky.Println("Build complete!")
+	clicky.Printf("  Image: %s\n", tag)
 }

@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-
-	"github.com/flanksource/commons/logger"
 )
 
 // fileMutatingTools are the Claude Code tools whose tool_use input names a file
@@ -86,7 +84,7 @@ func FindSessionFile(sessionID string) (string, error) {
 				newest, newestMod = m, mod
 			}
 		}
-		logger.Warnf("session %s matched %d logs; using most recent %s", sessionID, len(matches), newest)
+		log.Warnf("session %s matched %d logs; using most recent %s", sessionID, len(matches), newest)
 		return newest, nil
 	}
 }

@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
-	"github.com/flanksource/commons/logger"
 )
 
 type RetryConfig struct {
@@ -57,7 +56,7 @@ func (r *retryProvider) Execute(ctx context.Context, req ai.Request) (*ai.Respon
 		jitter := time.Duration(rand.Int64N(int64(delay) / 4))
 		delay += jitter
 
-		logger.Infof("[%s] retrying after %v (attempt %d/%d): %v",
+		log.Infof("[%s] retrying after %v (attempt %d/%d): %v",
 			r.provider.GetModel(), delay, attempt+1, r.config.MaxRetries, err)
 
 		select {

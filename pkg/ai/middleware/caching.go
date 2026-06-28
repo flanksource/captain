@@ -7,7 +7,6 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/cache"
-	"github.com/flanksource/commons/logger"
 )
 
 type cachingProvider struct {
@@ -25,7 +24,7 @@ func (c *cachingProvider) Execute(ctx context.Context, req ai.Request) (*ai.Resp
 
 	entry, err := c.cache.Get(req.Prompt, c.provider.GetModel())
 	if err == nil && entry != nil && entry.Error == "" {
-		logger.Debugf("[%s/%s] cache hit", c.provider.GetBackend(), c.provider.GetModel())
+		log.Debugf("[%s/%s] cache hit", c.provider.GetBackend(), c.provider.GetModel())
 		return &ai.Response{
 			Text:     entry.Response,
 			Model:    entry.Model,
@@ -43,7 +42,7 @@ func (c *cachingProvider) Execute(ctx context.Context, req ai.Request) (*ai.Resp
 		return nil, err
 	}
 
-	logger.Debugf("[%s/%s] cache miss", c.provider.GetBackend(), c.provider.GetModel())
+	log.Debugf("[%s/%s] cache miss", c.provider.GetBackend(), c.provider.GetModel())
 
 	start := time.Now()
 	resp, execErr := c.provider.Execute(ctx, req)

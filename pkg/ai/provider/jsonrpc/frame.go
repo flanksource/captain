@@ -54,6 +54,8 @@ type Handlers struct {
 	OnNotification func(method string, params json.RawMessage)
 	// OnRequest is invoked for every id-bearing server→client request (e.g. an
 	// approval prompt). The returned value is marshalled as the result; a
-	// non-nil *RPCError is sent as the error instead.
+	// non-nil *RPCError is sent as the error instead. It runs on its own goroutine
+	// (one per request), so it may block — awaiting a human approval, say — without
+	// stalling the read loop or other concurrent requests.
 	OnRequest func(method string, params json.RawMessage) (any, *RPCError)
 }

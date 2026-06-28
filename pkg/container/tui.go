@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/flanksource/captain/pkg/sandbox"
 	"github.com/flanksource/captain/pkg/sandbox/presets"
+	"github.com/flanksource/clicky"
 	"golang.org/x/term"
 )
 
@@ -380,7 +381,7 @@ func RunTUI() error {
 		return fmt.Errorf("saving sandbox config: %w", err)
 	}
 
-	fmt.Printf("Saved %d components to %s\n", CountSelected(components), sandboxPath)
+	clicky.Printf("Saved %d components to %s\n", CountSelected(components), sandboxPath)
 	PrintRunInstructions(sandboxPath)
 	return nil
 }
