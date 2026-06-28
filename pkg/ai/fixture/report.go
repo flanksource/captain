@@ -66,7 +66,6 @@ func stripInlineMarkdown(s string) string {
 	return s
 }
 
-
 type Format string
 
 const (

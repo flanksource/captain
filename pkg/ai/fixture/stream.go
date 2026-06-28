@@ -12,26 +12,26 @@ import (
 )
 
 type Summary struct {
-	SessionID    string
-	Result       string
-	Success      bool
-	Error        string
-	DurationMS   float64
-	CostUSD      float64
-	Input        int
-	Output       int
-	CacheRead    int
-	CacheWrite   int
-	ToolCalls    int
-	MCPCalls     int
-	BashCalls         int
-	KubectlCalls      int
-	KubectlAPICalls   int
-	KubectlAPILog     []KubectlAPIEntry
-	MCPAPICalls       int
-	MCPAPILog         []MCPAPIEntry
-	ToolCallLog       []ToolCallEntry
-	ToolCounts        map[string]int
+	SessionID       string
+	Result          string
+	Success         bool
+	Error           string
+	DurationMS      float64
+	CostUSD         float64
+	Input           int
+	Output          int
+	CacheRead       int
+	CacheWrite      int
+	ToolCalls       int
+	MCPCalls        int
+	BashCalls       int
+	KubectlCalls    int
+	KubectlAPICalls int
+	KubectlAPILog   []KubectlAPIEntry
+	MCPAPICalls     int
+	MCPAPILog       []MCPAPIEntry
+	ToolCallLog     []ToolCallEntry
+	ToolCounts      map[string]int
 }
 
 type streamEvent struct {
@@ -57,9 +57,9 @@ type streamContent struct {
 	Name      string          `json:"name,omitempty"`
 	Text      string          `json:"text,omitempty"`
 	Input     json.RawMessage `json:"input,omitempty"`
-	ID        string          `json:"id,omitempty"`           // assistant tool_use id
-	ToolUseID string          `json:"tool_use_id,omitempty"`  // user tool_result link
-	Content   json.RawMessage `json:"content,omitempty"`      // tool_result body (string or [{type,text}])
+	ID        string          `json:"id,omitempty"`          // assistant tool_use id
+	ToolUseID string          `json:"tool_use_id,omitempty"` // user tool_result link
+	Content   json.RawMessage `json:"content,omitempty"`     // tool_result body (string or [{type,text}])
 }
 
 // ToolResultText extracts the text body from a tool_result content field, which

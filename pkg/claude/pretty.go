@@ -432,7 +432,6 @@ func (tu ToolUse) prettyAsk(icon icons.Icon, color string) api.Text {
 	return text
 }
 
-
 func (tu ToolUse) prettyExitPlan() api.Text {
 	icon := toolIcons["Plan"]
 	color := toolColors["Plan"]

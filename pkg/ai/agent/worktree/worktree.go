@@ -13,11 +13,11 @@ import (
 
 // Plugin isolates an agent run in a git worktree.
 type Plugin struct {
-	Repo      string // repo root; defaults to RunContext.Repo when empty
-	Branch    string // new branch name (required)
-	Base      string // base ref; HEAD when empty
-	CommitMsg string // when set, the GENERIC commit path: commit all changes on teardown
-	KeepOnExit bool  // keep the worktree + branch for inspection instead of removing
+	Repo       string // repo root; defaults to RunContext.Repo when empty
+	Branch     string // new branch name (required)
+	Base       string // base ref; HEAD when empty
+	CommitMsg  string // when set, the GENERIC commit path: commit all changes on teardown
+	KeepOnExit bool   // keep the worktree + branch for inspection instead of removing
 
 	Result *Result
 }

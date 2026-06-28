@@ -265,10 +265,10 @@ func TestScanner_Scan_CompoundCommands(t *testing.T) {
 	scanner := NewScanner("/Users/test/project", nil)
 
 	tests := []struct {
-		name            string
-		command         string
-		wantViolation   string
-		wantSeverity    Severity
+		name          string
+		command       string
+		wantViolation string
+		wantSeverity  Severity
 	}{
 		{
 			name:          "B-1: && compound command is blocked",

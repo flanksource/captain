@@ -35,8 +35,8 @@ func (t *GrepTool) Pretty() api.Text {
 }
 
 func (t *GrepTool) Detail() api.Textable { return nil }
-func (t *GrepTool) FilePath() string      { return "" }
-func (t *GrepTool) ExtractPath() string   { return t.Rel(t.Str("path")) }
+func (t *GrepTool) FilePath() string     { return "" }
+func (t *GrepTool) ExtractPath() string  { return t.Rel(t.Str("path")) }
 
 // GlobTool
 
@@ -52,7 +52,7 @@ func (t *GlobTool) Pretty() api.Text {
 }
 
 func (t *GlobTool) Detail() api.Textable { return nil }
-func (t *GlobTool) ExtractPath() string   { return t.Rel(t.Str("path")) }
+func (t *GlobTool) ExtractPath() string  { return t.Rel(t.Str("path")) }
 
 // FindTool
 
@@ -78,7 +78,7 @@ func (t *FindTool) Pretty() api.Text {
 }
 
 func (t *FindTool) Detail() api.Textable { return nil }
-func (t *FindTool) ExtractPath() string   { return t.Rel(t.Str("path")) }
+func (t *FindTool) ExtractPath() string  { return t.Rel(t.Str("path")) }
 
 // LsTool
 
@@ -100,4 +100,4 @@ func (t *LsTool) Pretty() api.Text {
 }
 
 func (t *LsTool) Detail() api.Textable { return nil }
-func (t *LsTool) ExtractPath() string   { return t.Rel(t.Str("path")) }
+func (t *LsTool) ExtractPath() string  { return t.Rel(t.Str("path")) }

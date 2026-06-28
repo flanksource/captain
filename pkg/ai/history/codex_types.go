@@ -54,13 +54,13 @@ type CodexPayload struct {
 	Type string `json:"type"`
 
 	// session_meta
-	ID            string         `json:"id,omitempty"`
-	CWD           string         `json:"cwd,omitempty"`
-	CLIVersion    string         `json:"cli_version,omitempty"`
-	Source        string         `json:"source,omitempty"`
-	ModelProvider string         `json:"model_provider,omitempty"`
-	Originator    string         `json:"originator,omitempty"`
-	Git           *CodexGitMeta  `json:"git,omitempty"`
+	ID            string        `json:"id,omitempty"`
+	CWD           string        `json:"cwd,omitempty"`
+	CLIVersion    string        `json:"cli_version,omitempty"`
+	Source        string        `json:"source,omitempty"`
+	ModelProvider string        `json:"model_provider,omitempty"`
+	Originator    string        `json:"originator,omitempty"`
+	Git           *CodexGitMeta `json:"git,omitempty"`
 
 	// response_item: function_call
 	Name      string `json:"name,omitempty"`

@@ -9,7 +9,7 @@ const (
 	CategoryUserMessage   ContentCategory = "user-message"
 	CategoryAssistantText ContentCategory = "assistant-text"
 	CategoryThinking      ContentCategory = "thinking"
-	CategorySystemContext  ContentCategory = "system-context"
+	CategorySystemContext ContentCategory = "system-context"
 )
 
 // ContextBreakdown tracks estimated token consumption by content category.

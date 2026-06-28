@@ -167,20 +167,20 @@ func TestIsLegacyModelID(t *testing.T) {
 		"grok-code-fast-1": true,
 
 		// Kept (current generation chat/reasoning):
-		"gpt-5":             false,
-		"gpt-5.1":           false,
-		"gpt-5.2":           false,
-		"gpt-5.3":           false,
-		"o4-mini":           false,
-		"claude-sonnet-4-5": false,
-		"claude-sonnet-4-6": false,
-		"claude-opus-4-5":   false,
-		"claude-haiku-4-5":  false,
-		"gemini-2.5-flash":  false,
-		"gemini-2.5-pro":    false,
+		"gpt-5":                false,
+		"gpt-5.1":              false,
+		"gpt-5.2":              false,
+		"gpt-5.3":              false,
+		"o4-mini":              false,
+		"claude-sonnet-4-5":    false,
+		"claude-sonnet-4-6":    false,
+		"claude-opus-4-5":      false,
+		"claude-haiku-4-5":     false,
+		"gemini-2.5-flash":     false,
+		"gemini-2.5-pro":       false,
 		"gemini-3-pro-preview": false,
-		"grok-4":            false,
-		"grok-4-fast":       false,
+		"grok-4":               false,
+		"grok-4-fast":          false,
 	}
 	for id, want := range cases {
 		if got := isLegacyModelID(id); got != want {

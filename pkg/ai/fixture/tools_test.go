@@ -7,10 +7,10 @@ import (
 
 func TestEstimateTokens(t *testing.T) {
 	cases := map[string]int{
-		"":      0,
-		"a":     1,
-		"abcd":  1,
-		"abcde": 2,
+		"":           0,
+		"a":          1,
+		"abcd":       1,
+		"abcde":      2,
 		"abcdefghij": 3, // 10 chars / 4 → ceil = 3
 	}
 	for in, want := range cases {
@@ -28,11 +28,11 @@ func TestCorrelateKubectlNetworkRequests(t *testing.T) {
 		{ToolName: "Bash", IsKubectl: true, Time: t0.Add(5 * time.Second), EndTime: t0.Add(6 * time.Second)},
 	}
 	api := []KubectlAPIEntry{
-		{Time: t0.Add(500 * time.Millisecond)},                                 // → call 0
-		{Time: t0.Add(1500 * time.Millisecond)},                                // → call 0
-		{Time: t0.Add(3500 * time.Millisecond)},                                // skipped (non-kubectl Bash)
-		{Time: t0.Add(5500 * time.Millisecond)},                                // → call 2
-		{Time: t0.Add(10 * time.Second)},                                       // outside any window
+		{Time: t0.Add(500 * time.Millisecond)},  // → call 0
+		{Time: t0.Add(1500 * time.Millisecond)}, // → call 0
+		{Time: t0.Add(3500 * time.Millisecond)}, // skipped (non-kubectl Bash)
+		{Time: t0.Add(5500 * time.Millisecond)}, // → call 2
+		{Time: t0.Add(10 * time.Second)},        // outside any window
 	}
 	correlateKubectlNetworkRequests(calls, api)
 	if calls[0].NetworkRequests != 2 {

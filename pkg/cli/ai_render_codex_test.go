@@ -67,11 +67,11 @@ func TestRenderEvent_CodexLiveUsesLineRenderer(t *testing.T) {
 
 	out := buf.String()
 	for _, want := range []string{
-		"Codex",     // session header capitalises the source name
-		"gpt-5",     // model in the header
-		"019e0365",  // shortened session id
-		"Bash",      // tool row label
-		"$0.5",      // cost
+		"Codex",    // session header capitalises the source name
+		"gpt-5",    // model in the header
+		"019e0365", // shortened session id
+		"Bash",     // tool row label
+		"$0.5",     // cost
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("rendered output missing %q\nfull output:\n%s", want, out)
