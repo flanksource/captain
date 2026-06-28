@@ -22,7 +22,7 @@ func GenerateJSONSchema(v any) (*JSONSchema, error) {
 	if t == nil {
 		return nil, fmt.Errorf("cannot generate schema from nil")
 	}
-	for t.Kind() == reflect.Ptr {
+	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 	if t.Kind() != reflect.Struct {
@@ -32,7 +32,7 @@ func GenerateJSONSchema(v any) (*JSONSchema, error) {
 }
 
 func buildSchema(t reflect.Type) *JSONSchema {
-	for t.Kind() == reflect.Ptr {
+	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 
