@@ -7,16 +7,24 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/ai/provider/jsonrpc"
 )
 
 // turnState carries the channels a single in-flight turn uses to receive mapped
 // events from the JSON-RPC notification handler. inbox is the handler->turn
 // path; term is closed by the handler on a terminal notification; quit is closed
 // by the turn goroutine on exit so a late handler send does not block.
+//
+// ctx and canUseTool let the server-request handler (onRequest, which runs on its
+// own goroutine) reach the turn's deadline and permission callback so a
+// can_use_tool round-trip is scoped to the turn and unblocks on cancellation.
 type turnState struct {
 	inbox chan ai.Event
 	term  chan struct{}
 	quit  chan struct{}
+
+	ctx        context.Context
+	canUseTool ai.PermissionFunc
 }
 
 type promptParams struct {
@@ -37,9 +45,11 @@ func (p *Provider) runTurn(ctx context.Context, req ai.Request, events chan ai.E
 	defer p.turnMu.Unlock()
 
 	ts := &turnState{
-		inbox: make(chan ai.Event, 16),
-		term:  make(chan struct{}),
-		quit:  make(chan struct{}),
+		inbox:      make(chan ai.Event, 16),
+		term:       make(chan struct{}),
+		quit:       make(chan struct{}),
+		ctx:        ctx,
+		canUseTool: req.CanUseTool,
 	}
 	p.setActive(ts)
 	defer func() {
@@ -104,6 +114,86 @@ func (p *Provider) onNotification(method string, params json.RawMessage) {
 		default:
 			close(ts.term)
 		}
+	}
+}
+
+// onRequest answers a server→client request from agent.ts. It runs on its own
+// goroutine (per jsonrpc.Handlers.OnRequest), so blocking on a human approval is
+// safe. The only request is can_use_tool; unknown methods get method-not-found.
+func (p *Provider) onRequest(method string, params json.RawMessage) (any, *jsonrpc.RPCError) {
+	if method != methodCanUseTool {
+		return nil, &jsonrpc.RPCError{Code: -32601, Message: "method not found: " + method}
+	}
+	return p.handleCanUseTool(params)
+}
+
+// canUseToolParams is the agent.ts can_use_tool request payload.
+type canUseToolParams struct {
+	Tool      string         `json:"tool"`
+	Input     map[string]any `json:"input"`
+	ToolUseID string         `json:"tool_use_id"`
+}
+
+// canUseToolResult is the decision agent.ts maps onto an SDK PermissionResult.
+type canUseToolResult struct {
+	Allow        bool           `json:"allow"`
+	Message      string         `json:"message,omitempty"`
+	UpdatedInput map[string]any `json:"updatedInput,omitempty"`
+}
+
+// handleCanUseTool routes a tool-permission request to the active turn's
+// CanUseTool callback, surfacing an EventPermission so callers can observe what
+// is awaiting approval. With no callback (or no active turn) it allows the tool,
+// matching the bypass default for non-brokered runs.
+func (p *Provider) handleCanUseTool(params json.RawMessage) (any, *jsonrpc.RPCError) {
+	var in canUseToolParams
+	if err := json.Unmarshal(params, &in); err != nil {
+		return nil, &jsonrpc.RPCError{Code: -32602, Message: "invalid can_use_tool params: " + err.Error()}
+	}
+
+	p.activeMu.Lock()
+	ts := p.active
+	p.activeMu.Unlock()
+	if ts == nil || ts.canUseTool == nil {
+		return canUseToolResult{Allow: true, UpdatedInput: in.Input}, nil
+	}
+
+	p.sessMu.Lock()
+	sessionID := p.sessionID
+	p.sessMu.Unlock()
+
+	p.deliver(ts, ai.Event{
+		Kind:       ai.EventPermission,
+		Tool:       in.Tool,
+		Input:      in.Input,
+		ToolCallID: in.ToolUseID,
+		SessionID:  sessionID,
+		Model:      p.model,
+	})
+
+	decision, err := ts.canUseTool(ts.ctx, ai.PermissionRequest{
+		Tool:      in.Tool,
+		Input:     in.Input,
+		ToolUseID: in.ToolUseID,
+		SessionID: sessionID,
+	})
+	if err != nil {
+		return canUseToolResult{Allow: false, Message: err.Error()}, nil
+	}
+	return canUseToolResult{
+		Allow:        decision.Allow,
+		Message:      decision.Message,
+		UpdatedInput: decision.UpdatedInput,
+	}, nil
+}
+
+// deliver forwards ev to the active turn without blocking past the turn's life:
+// it returns once enqueued, the turn exits, or the provider closes.
+func (p *Provider) deliver(ts *turnState, ev ai.Event) {
+	select {
+	case ts.inbox <- ev:
+	case <-ts.quit:
+	case <-p.baseCtx.Done():
 	}
 }
 

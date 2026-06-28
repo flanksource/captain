@@ -13,6 +13,7 @@ const (
 	notifyMessageText  = "message/text"
 	notifyMessageThink = "message/thinking"
 	notifyToolUse      = "message/tool_use"
+	notifyToolResult   = "message/tool_result"
 	notifyTurnDone     = "turn/completed"
 	notifyTurnError    = "turn/error"
 )
@@ -78,12 +79,30 @@ func mapNotification(method string, params json.RawMessage, model string) (ai.Ev
 		}
 		_ = json.Unmarshal(params, &p)
 		ev := ai.Event{
-			Kind:  ai.EventToolUse,
-			Tool:  p.Tool,
-			Input: p.Input,
-			Model: model,
+			Kind:       ai.EventToolUse,
+			Tool:       p.Tool,
+			Input:      p.Input,
+			ToolCallID: p.ID,
+			Model:      model,
 		}
 		ev.Raw = toolUse(p.Tool, p.Input, p.ID, model)
+		return ev, true
+
+	case notifyToolResult:
+		var p struct {
+			ID      string `json:"id"`
+			Content string `json:"content"`
+			IsError bool   `json:"is_error"`
+		}
+		_ = json.Unmarshal(params, &p)
+		ev := ai.Event{
+			Kind:       ai.EventToolResult,
+			Text:       p.Content,
+			ToolCallID: p.ID,
+			Success:    !p.IsError,
+			Model:      model,
+		}
+		ev.Raw = toolResultUse(p.ID, p.Content, p.IsError, model)
 		return ev, true
 
 	case notifyTurnDone:
@@ -139,6 +158,19 @@ func toolUse(name string, input map[string]any, id, model string) claude.ToolUse
 		Tool:      name,
 		Input:     input,
 		ToolUseID: id,
+		Source:    claudeSource,
+		Model:     model,
+	}
+}
+
+// toolResultUse builds the claude.ToolUse stand-in for a tool result row: the
+// output (Response) and error state keyed by the originating call id, so the
+// shared renderer pairs it with the call.
+func toolResultUse(id, content string, isError bool, model string) claude.ToolUse {
+	return claude.ToolUse{
+		ToolUseID: id,
+		Response:  content,
+		IsError:   isError,
 		Source:    claudeSource,
 		Model:     model,
 	}

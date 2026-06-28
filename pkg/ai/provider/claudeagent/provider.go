@@ -27,6 +27,10 @@ import (
 	"github.com/flanksource/commons/logger"
 )
 
+// log is the package-scoped logger for AI providers. Its level follows
+// -v/--log-level and can be tuned with -Plog.level.ai=debug.
+var log = logger.GetLogger("ai")
+
 // JSON-RPC request methods sent to agent.ts.
 const (
 	methodInitialize = "initialize"
@@ -34,6 +38,10 @@ const (
 	methodInterrupt  = "interrupt"
 	methodShutdown   = "shutdown"
 )
+
+// methodCanUseTool is the server→client request agent.ts sends to broker a
+// tool-permission decision (the stream-json control protocol's can_use_tool).
+const methodCanUseTool = "can_use_tool"
 
 const (
 	defaultModel = "claude-agent-sonnet"
@@ -67,7 +75,7 @@ var newAgentProcess = func(*Provider) (*exec.Process, error) {
 		return nil, err
 	}
 	agentTSPath := agentDir + string(os.PathSeparator) + "agent.ts"
-	logger.Debugf("[claude-agent] exec: %s %s (cwd=%s)", tsxPath, agentTSPath, agentDir)
+	log.Debugf("[claude-agent] exec: %s %s (cwd=%s)", tsxPath, agentTSPath, agentDir)
 	return exec.NewExec(tsxPath, agentTSPath).
 		WithCwd(agentDir).
 		WithStdioPipe().
@@ -274,6 +282,7 @@ func (p *Provider) onChildStarted(child *exec.Process, req ai.Request) {
 
 	rpc := jsonrpc.New(stdin, stdout, false, jsonrpc.Handlers{
 		OnNotification: p.onNotification,
+		OnRequest:      p.onRequest,
 	})
 	p.rpc = rpc
 	go func() { _ = rpc.Run(p.baseCtx) }()
@@ -290,6 +299,11 @@ func (p *Provider) onChildStarted(child *exec.Process, req ai.Request) {
 // initializeParams maps the first request + provider config onto the SDK
 // Options the agent.ts initialize handler understands.
 func (p *Provider) initializeParams(req ai.Request) initializeParams {
+	// brokered means the caller wants to vet each tool over the can_use_tool
+	// round-trip, so the SDK must consult canUseTool instead of auto-approving:
+	// bypassPermissions / allowDangerouslySkipPermissions would skip it entirely.
+	brokered := req.CanUseTool != nil
+
 	mode := req.PermissionMode
 	allowed := req.AllowedTools
 	if req.Edit {
@@ -301,7 +315,16 @@ func (p *Provider) initializeParams(req ai.Request) initializeParams {
 		}
 	}
 	if mode == "" {
-		mode = "bypassPermissions"
+		if brokered {
+			mode = "default"
+		} else {
+			mode = "bypassPermissions"
+		}
+	}
+
+	approvalMode := "auto"
+	if brokered {
+		approvalMode = "ask"
 	}
 
 	resume := req.SessionID
@@ -319,7 +342,7 @@ func (p *Provider) initializeParams(req ai.Request) initializeParams {
 		MaxBudgetUsd:       p.cfg.BudgetUSD,
 		PermissionMode:     mode,
 		Resume:             resume,
-		ApprovalMode:       "auto",
+		ApprovalMode:       approvalMode,
 	}
 }
 

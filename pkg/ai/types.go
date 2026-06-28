@@ -1,7 +1,7 @@
 package ai
 
 import (
-	"net/http"
+	"context"
 	"time"
 )
 
@@ -44,6 +44,37 @@ type Request struct {
 	NoProject       bool     // claude --setting-sources without "project,local" / codex --ignore-rules
 	NoMemory        bool     // claude: requires --bare / codex --ephemeral
 	Bare            bool     // claude --bare / codex composite (--ignore-user-config --ignore-rules --ephemeral)
+
+	// CanUseTool, when set, brokers tool permissions over the stream-json control
+	// protocol: the streaming provider asks this callback before a tool that needs
+	// approval runs, and forwards the decision to the agent. Only providers that
+	// support a server→client permission round-trip honour it (claude-agent);
+	// others ignore it. A nil callback keeps the auto-approve (bypass) behaviour.
+	// It is never serialized (the agent process never sees the Go closure).
+	CanUseTool PermissionFunc `json:"-"`
+}
+
+// PermissionFunc decides whether an agent may run a tool. It is invoked by a
+// streaming provider on a can_use_tool control request; returning an error denies
+// the tool with the error text fed back to the agent as the reason.
+type PermissionFunc func(ctx context.Context, req PermissionRequest) (PermissionDecision, error)
+
+// PermissionRequest describes the tool an agent wants to run. SessionID is filled
+// in by the provider from the live session so a caller can key approvals by it.
+type PermissionRequest struct {
+	Tool      string
+	Input     map[string]any
+	ToolUseID string
+	SessionID string
+}
+
+// PermissionDecision is the answer to a PermissionRequest. On Allow the tool runs
+// (with UpdatedInput substituted when non-nil); otherwise it is denied and Message
+// is fed back to the agent as the reason.
+type PermissionDecision struct {
+	Allow        bool
+	Message      string
+	UpdatedInput map[string]any
 }
 
 type Response struct {
@@ -72,23 +103,36 @@ func (u Usage) TotalTokens() int {
 type EventKind string
 
 const (
-	EventText     EventKind = "text"
-	EventThinking EventKind = "thinking"
-	EventToolUse  EventKind = "tool_use"
-	EventResult   EventKind = "result"
-	EventError    EventKind = "error"
-	EventSystem   EventKind = "system"
+	EventText       EventKind = "text"
+	EventThinking   EventKind = "thinking"
+	EventToolUse    EventKind = "tool_use"
+	EventToolResult EventKind = "tool_result"
+	EventResult     EventKind = "result"
+	EventError      EventKind = "error"
+	EventSystem     EventKind = "system"
+	// EventPermission surfaces a tool-permission request brokered via CanUseTool
+	// so callers can observe what is awaiting approval. Tool/Input/ToolCallID carry
+	// the requested tool; the decision itself flows back through the CanUseTool
+	// callback, not through the event stream.
+	EventPermission EventKind = "permission"
 )
 
 type Event struct {
-	Kind      EventKind
-	Text      string
-	Tool      string         // when Kind == EventToolUse
-	Input     map[string]any // when Kind == EventToolUse
-	Usage     *Usage         // when Kind == EventResult
-	CostUSD   float64        // when Kind == EventResult
-	Success   bool           // when Kind == EventResult
-	SessionID string         // when Kind == EventSystem
+	Kind EventKind
+	Text string // text content; tool output when Kind == EventToolResult
+
+	Tool  string         // when Kind == EventToolUse
+	Input map[string]any // when Kind == EventToolUse
+
+	// ToolCallID correlates a tool call with its result. Set on EventToolUse
+	// (the call) and EventToolResult (its complete output). Backends that stream
+	// output incrementally accumulate it and emit a single EventToolResult.
+	ToolCallID string
+
+	Usage     *Usage  // when Kind == EventResult
+	CostUSD   float64 // when Kind == EventResult
+	Success   bool    // when Kind == EventResult; for EventToolResult, false = the tool errored
+	SessionID string  // when Kind == EventSystem
 	Model     string
 	Error     string // when Kind == EventError
 
@@ -143,14 +187,12 @@ type Config struct {
 	Backend       Backend // empty = infer from model
 	APIKey        string  // empty = env lookup
 	APIURL        string
-	HTTPClient    *http.Client // nil = default client
 	MaxTokens     int
 	Temperature   float64
 	CacheDBPath   string
 	CacheTTL      time.Duration
 	NoCache       bool
 	MaxConcurrent int
-	Debug         bool
 	SessionID     string
 	ProjectName   string
 	BudgetUSD     float64 // 0 = no budget

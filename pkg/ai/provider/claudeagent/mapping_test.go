@@ -75,6 +75,7 @@ func TestMapNotification_ToolUse(t *testing.T) {
 
 	assert.Equal(t, ai.EventToolUse, ev.Kind)
 	assert.Equal(t, "Bash", ev.Tool)
+	assert.Equal(t, "toolu_42", ev.ToolCallID)
 	assert.Equal(t, "ls -la", ev.Input["command"])
 
 	tu, ok := ev.Raw.(claude.ToolUse)
@@ -84,6 +85,33 @@ func TestMapNotification_ToolUse(t *testing.T) {
 	assert.Equal(t, claudeSource, tu.Source)
 	assert.Equal(t, testModel, tu.Model)
 	assert.Equal(t, "ls -la", tu.Input["command"])
+}
+
+func TestMapNotification_ToolResult(t *testing.T) {
+	ev := mustMap(t, notifyToolResult,
+		`{"id":"toolu_42","content":"total 8\ndrwxr-xr-x","is_error":false}`)
+
+	assert.Equal(t, ai.EventToolResult, ev.Kind)
+	assert.Equal(t, "toolu_42", ev.ToolCallID, "result correlates to its call by id")
+	assert.Equal(t, "total 8\ndrwxr-xr-x", ev.Text)
+	assert.True(t, ev.Success)
+
+	tu, ok := ev.Raw.(claude.ToolUse)
+	require.True(t, ok, "Raw should be a claude.ToolUse")
+	assert.Equal(t, "toolu_42", tu.ToolUseID)
+	assert.Equal(t, "total 8\ndrwxr-xr-x", tu.Response)
+	assert.False(t, tu.IsError)
+	assert.Equal(t, claudeSource, tu.Source)
+}
+
+func TestMapNotification_ToolResultError(t *testing.T) {
+	ev := mustMap(t, notifyToolResult,
+		`{"id":"toolu_7","content":"permission denied","is_error":true}`)
+
+	assert.Equal(t, ai.EventToolResult, ev.Kind)
+	assert.False(t, ev.Success, "is_error true => Success false")
+	tu := ev.Raw.(claude.ToolUse)
+	assert.True(t, tu.IsError)
 }
 
 func TestMapNotification_TurnCompletedSuccess(t *testing.T) {
