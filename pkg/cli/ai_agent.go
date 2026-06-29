@@ -60,14 +60,7 @@ Working directory: {{cwd}}
 Changed files: {{changed}}`
 
 func scopeFromFlag(s string) (agent.Scope, error) {
-	switch s {
-	case "", "all":
-		return agent.ScopeAll, nil
-	case "changed":
-		return agent.ScopeChanged, nil
-	default:
-		return "", fmt.Errorf("invalid --scope %q (valid: changed|all)", s)
-	}
+	return agent.ParseScope(s)
 }
 
 // buildAgentPlugins assembles the verify/worktree/judge plugins from the flags.
@@ -130,7 +123,7 @@ func RunAIAgent(opts AIAgentOptions) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Validate runtime knobs (temperature/permission-mode/reasoning-effort) and
+	// Validate runtime knobs (temperature/permission-mode/effort) and
 	// snapshot the base request once; Build only varies the prompt per turn.
 	baseReq, err := opts.ToRequest(opts.System, opts.AppendSystem, opts.Prompt)
 	if err != nil {

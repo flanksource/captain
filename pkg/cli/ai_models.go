@@ -103,10 +103,15 @@ func RunAIModels(opts AIModelsOptions) (any, error) {
 // being shown a stale hard-coded catalog.
 func runLiveModels(opts AIModelsOptions) (any, error) {
 	backendFilter := ai.Backend(strings.TrimSpace(opts.Backend))
+	// CLI/agent backends authenticate internally, so their models come from the
+	// static catalog without an API key.
+	if backendFilter != "" && backendFilter.Kind() == "cli" {
+		return catalogModelsResult(opts, backendFilter), nil
+	}
 	switch backendFilter {
 	case "", ai.BackendOpenAI, ai.BackendAnthropic:
 	default:
-		return nil, fmt.Errorf("--backend must be one of: openai, anthropic (got %q)", opts.Backend)
+		return nil, fmt.Errorf("--backend must be one of: openai, anthropic, or a CLI backend (%s) (got %q)", strings.Join(cliBackendNames(), ", "), opts.Backend)
 	}
 
 	ctx := context.Background()
@@ -184,6 +189,43 @@ func runLiveModels(opts AIModelsOptions) (any, error) {
 	}
 
 	return AIModelsResult{Total: len(rows), Rows: rows}, nil
+}
+
+// catalogModelsResult lists a CLI/agent backend's models from the static
+// catalog (no API key). --filter narrows by id/name substring; pricing and
+// context columns are filled when the OpenRouter registry knows the model and
+// shown as "-" otherwise. Rows arrive pre-sorted by id from agentCatalogModels.
+func catalogModelsResult(opts AIModelsOptions, backend ai.Backend) AIModelsResult {
+	filterLower := strings.ToLower(opts.Filter)
+	rows := make([]AIModelRow, 0)
+	for _, m := range agentCatalogModels(backend) {
+		if opts.Filter != "" && !strings.Contains(strings.ToLower(m.ID), filterLower) && !strings.Contains(strings.ToLower(m.Name), filterLower) {
+			continue
+		}
+		row := AIModelRow{Model: m.ID, Backend: string(backend), Input: "-", Output: "-", Context: "-", MaxTokens: "-"}
+		if info, ok := lookupPricing(backend, m.ID); ok {
+			row.Input = formatPrice(info.InputPrice)
+			row.Output = formatPrice(info.OutputPrice)
+			row.Context = formatContext(info.ContextWindow)
+			row.MaxTokens = formatContext(info.MaxTokens)
+		}
+		rows = append(rows, row)
+	}
+	if opts.Limit > 0 && len(rows) > opts.Limit {
+		rows = rows[:opts.Limit]
+	}
+	return AIModelsResult{Total: len(rows), Rows: rows}
+}
+
+// cliBackendNames lists the CLI/agent backends, for the --backend error message.
+func cliBackendNames() []string {
+	out := make([]string, 0)
+	for _, b := range ai.AllBackends() {
+		if b.Kind() == "cli" {
+			out = append(out, string(b))
+		}
+	}
+	return out
 }
 
 func openAIAPIKey() string    { return strings.TrimSpace(os.Getenv("OPENAI_API_KEY")) }

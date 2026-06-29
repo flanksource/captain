@@ -13,6 +13,7 @@ import (
 	"github.com/flanksource/captain/pkg/captainconfig"
 	"github.com/flanksource/captain/pkg/claude"
 	"github.com/flanksource/captain/pkg/claude/tools"
+	"github.com/flanksource/clicky/aichat"
 )
 
 // loadSavedAI returns the saved AI defaults from ~/.captain.yaml. Errors are
@@ -92,11 +93,11 @@ func (o AIProviderOptions) ToConfig() (ai.Config, error) {
 type AIRuntimeOptions struct {
 	AIProviderOptions
 
-	MaxTokens       int    `flag:"max-tokens" help:"Maximum output tokens (0 = saved default or 4096)"`
-	Temperature     string `flag:"temperature" help:"Sampling temperature" default:"0"`
-	ReasoningEffort string `flag:"reasoning-effort" help:"Reasoning effort: low|medium|high (codex/genkit; others ignore)"`
-	MaxTurns        int    `flag:"max-turns" help:"Max agent turns, 0 = provider default (claude-agent)"`
-	Resume          string `flag:"resume" help:"Resume an existing session by id (claude-agent, codex)"`
+	MaxTokens   int    `flag:"max-tokens" help:"Maximum output tokens (0 = saved default or 4096)"`
+	Temperature string `flag:"temperature" help:"Sampling temperature (0.0-2.0)" default:"0"`
+	Effort      string `flag:"effort" help:"Reasoning effort: low|medium|high (codex/genkit; others ignore)"`
+	MaxTurns    int    `flag:"max-turns" help:"Max agent turns 0-100, 0 = provider default (claude-agent)"`
+	Resume      string `flag:"resume" help:"Resume an existing session by id (claude-agent, codex)"`
 
 	Edit            bool     `flag:"edit" help:"Safe defaults: acceptEdits + Read/Edit/Write/Glob/Grep allowlist"`
 	AllowedTools    []string `flag:"allowed-tools" help:"Override --edit's built-in allowlist (claude only)"`
@@ -127,20 +128,6 @@ func validatePermissionMode(s string) error {
 	return fmt.Errorf("invalid --permission-mode %q (valid: %s)", s, strings.Join(validPermissionModes, "|"))
 }
 
-var validReasoningEfforts = []string{"low", "medium", "high"}
-
-func validateReasoningEffort(s string) error {
-	if s == "" {
-		return nil
-	}
-	for _, e := range validReasoningEfforts {
-		if s == e {
-			return nil
-		}
-	}
-	return fmt.Errorf("invalid --reasoning-effort %q (valid: %s)", s, strings.Join(validReasoningEfforts, "|"))
-}
-
 type AIPromptOptions struct {
 	AIRuntimeOptions
 
@@ -164,7 +151,7 @@ type AIPromptResult struct {
 // ToRequest translates the runtime knobs into the typed ai.Request, overlaying
 // saved defaults from ~/.captain.yaml onto unset fields. Precedence is
 // flag > saved > built-in: max-tokens uses the explicit flag when > 0, else the
-// saved default, else 4096; reasoning-effort uses the flag when set, else saved.
+// saved default, else 4096; --effort uses the flag when set, else saved.
 // The ambient toggles are negative flags (--no-mcp, …) that compose with the
 // saved No* defaults via OR, so either a flag or a saved default switches a
 // feature off; re-enabling a saved-off feature is done via `captain configure`.
@@ -180,6 +167,12 @@ func (o AIRuntimeOptions) ToRequest(systemPrompt, appendSystemPrompt, userPrompt
 	if err != nil {
 		return ai.Request{}, err
 	}
+	if temperature < 0 || temperature > 2 {
+		return ai.Request{}, fmt.Errorf("invalid --temperature %v (valid: 0.0-2.0)", temperature)
+	}
+	if o.MaxTurns < 0 || o.MaxTurns > 100 {
+		return ai.Request{}, fmt.Errorf("invalid --max-turns %d (valid: 0-100, 0=provider default)", o.MaxTurns)
+	}
 	if err := validatePermissionMode(o.PermissionMode); err != nil {
 		return ai.Request{}, err
 	}
@@ -193,12 +186,12 @@ func (o AIRuntimeOptions) ToRequest(systemPrompt, appendSystemPrompt, userPrompt
 		maxTokens = 4096
 	}
 
-	effort := o.ReasoningEffort
+	effort := o.Effort
 	if effort == "" {
 		effort = saved.ReasoningEffort
 	}
-	if err := validateReasoningEffort(effort); err != nil {
-		return ai.Request{}, err
+	if err := aichat.ValidateEffort(aichat.Effort(effort)); err != nil {
+		return ai.Request{}, fmt.Errorf("invalid --effort %q (valid: low|medium|high): %w", effort, err)
 	}
 
 	return ai.Request{

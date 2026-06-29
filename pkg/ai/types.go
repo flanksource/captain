@@ -3,6 +3,8 @@ package ai
 import (
 	"context"
 	"time"
+
+	"github.com/flanksource/captain/pkg/api"
 )
 
 type Request struct {
@@ -91,17 +93,8 @@ type Response struct {
 	Raw            any
 }
 
-type Usage struct {
-	InputTokens      int
-	OutputTokens     int
-	ReasoningTokens  int
-	CacheReadTokens  int
-	CacheWriteTokens int
-}
-
-func (u Usage) TotalTokens() int {
-	return u.InputTokens + u.OutputTokens + u.ReasoningTokens + u.CacheReadTokens + u.CacheWriteTokens
-}
+// Usage is an alias for the canonical api.Usage (per-call token breakdown).
+type Usage = api.Usage
 
 type EventKind string
 
@@ -145,45 +138,10 @@ type Event struct {
 	Raw any
 }
 
-type Cost struct {
-	Model        string
-	InputTokens  int
-	OutputTokens int
-	TotalTokens  int
-	InputCost    float64
-	OutputCost   float64
-}
-
-func (c Cost) Total() float64 { return c.InputCost + c.OutputCost }
-
-func (c Cost) Add(other Cost) Cost {
-	return Cost{
-		Model:        c.Model,
-		InputTokens:  c.InputTokens + other.InputTokens,
-		OutputTokens: c.OutputTokens + other.OutputTokens,
-		TotalTokens:  c.TotalTokens + other.TotalTokens,
-		InputCost:    c.InputCost + other.InputCost,
-		OutputCost:   c.OutputCost + other.OutputCost,
-	}
-}
-
-type Costs []Cost
-
-func (c Costs) Sum() Cost {
-	var total Cost
-	for _, cost := range c {
-		total = total.Add(cost)
-	}
-	return total
-}
-
-func (c Costs) ByModel() map[string]Cost {
-	m := make(map[string]Cost)
-	for _, cost := range c {
-		m[cost.Model] = m[cost.Model].Add(cost)
-	}
-	return m
-}
+// Cost and Costs are aliases for the canonical api types (token + money
+// accounting). The methods (Total/Add/Sum/ByModel) live on the api types.
+type Cost = api.Cost
+type Costs = api.Costs
 
 type Config struct {
 	Model         string

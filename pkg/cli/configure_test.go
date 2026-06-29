@@ -100,14 +100,15 @@ func TestTogglesFromConfig_RoundTripsThroughBuildConfig(t *testing.T) {
 }
 
 func TestModelOptionsFor_NoKeyShowsErrorRow(t *testing.T) {
-	// With the static catalog gone, a missing API key surfaces as a
-	// single sentinel option carrying the error so the user can fix
-	// their environment without leaving the wizard.
+	// API backends have no static fallback: a missing key surfaces as a single
+	// sentinel option carrying the error so the user can fix their environment
+	// without leaving the wizard. CLI/agent backends are covered separately —
+	// they list from the catalog and never require a key.
 	t.Setenv("OPENAI_API_KEY", "")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("GEMINI_API_KEY", "")
 
-	for _, b := range []ai.Backend{ai.BackendAnthropic, ai.BackendOpenAI, ai.BackendGemini, ai.BackendCodexCLI} {
+	for _, b := range []ai.Backend{ai.BackendAnthropic, ai.BackendOpenAI, ai.BackendGemini} {
 		opts := modelOptionsFor(b)
 		if len(opts) != 1 {
 			t.Errorf("backend=%s: expected 1 sentinel row, got %d (%+v)", b, len(opts), opts)
@@ -119,14 +120,35 @@ func TestModelOptionsFor_NoKeyShowsErrorRow(t *testing.T) {
 	}
 }
 
+// TestModelOptionsFor_CLIBackendsUseCatalogWithoutKey verifies CLI/agent
+// backends populate the picker from the static catalog with no API key set:
+// they authenticate internally, so the wizard must never gate them on a key.
+func TestModelOptionsFor_CLIBackendsUseCatalogWithoutKey(t *testing.T) {
+	installTestCatalog(t)
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("GEMINI_API_KEY", "")
+
+	opts := modelOptionsFor(ai.BackendCodexCLI)
+	if len(opts) != 1 {
+		t.Fatalf("codex-cli picker = %+v, want a single catalog option", opts)
+	}
+	// huh.Option.Key is the display label; the selectable value is the runtime
+	// slug the codex provider expects verbatim.
+	if opts[0].Value != "gpt-5-codex" {
+		t.Errorf("codex-cli option value = %q, want catalog slug gpt-5-codex", opts[0].Value)
+	}
+}
+
 func TestDefaultModelFor_HardcodedPerBackend(t *testing.T) {
 	cases := map[ai.Backend]string{
-		ai.BackendAnthropic: "claude-sonnet-4-5",
-		ai.BackendClaudeCLI: "claude-sonnet-4-5",
-		ai.BackendOpenAI:    "gpt-5",
-		ai.BackendCodexCLI:  "gpt-5-codex",
-		ai.BackendGemini:    "gemini-2.5-flash",
-		ai.BackendGeminiCLI: "gemini-2.5-flash",
+		ai.BackendAnthropic:   "claude-sonnet-4-5",
+		ai.BackendClaudeCLI:   "claude-agent-sonnet",
+		ai.BackendClaudeAgent: "claude-agent-sonnet",
+		ai.BackendOpenAI:      "gpt-5.5",
+		ai.BackendCodexCLI:    "gpt-5-codex",
+		ai.BackendGemini:      "gemini-3.5-flash",
+		ai.BackendGeminiCLI:   "gemini-3.5-flash",
 	}
 	for b, want := range cases {
 		if got := defaultModelFor(b); got != want {

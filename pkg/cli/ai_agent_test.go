@@ -30,6 +30,8 @@ func TestScopeFromFlag(t *testing.T) {
 		if exp.wantErr {
 			if err == nil {
 				t.Errorf("scopeFromFlag(%q) err = nil, want error", in)
+			} else if !strings.Contains(err.Error(), agent.ScopeList()) {
+				t.Errorf("scopeFromFlag(%q) err = %v, want mention of valid scopes %q", in, err, agent.ScopeList())
 			}
 			continue
 		}

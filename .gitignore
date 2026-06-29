@@ -13,3 +13,4 @@ pkg/cli/webapp/node_modules/
 pkg/cli/webapp/*.tsbuildinfo
 !pkg/cli/webapp/dist/
 !pkg/cli/webapp/dist/**
+dist/

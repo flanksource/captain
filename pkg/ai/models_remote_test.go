@@ -139,10 +139,25 @@ func TestListModels_ErrorsOnMissingKey(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("GEMINI_API_KEY", "")
 
-	for _, b := range []Backend{BackendOpenAI, BackendAnthropic, BackendGemini, BackendClaudeCLI, BackendCodexCLI, BackendGeminiCLI} {
+	for _, b := range []Backend{BackendOpenAI, BackendAnthropic, BackendGemini} {
 		_, err := ListModels(context.Background(), b)
 		if err == nil {
 			t.Errorf("backend=%s: expected error when no API key set", b)
+		}
+	}
+}
+
+// TestListModels_RejectsCLIBackends pins that CLI/agent backends have no live
+// listing path: they authenticate internally and enumerate from the static
+// catalog (pkg/cli), so ListModels must fail loud rather than require an API key.
+func TestListModels_RejectsCLIBackends(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "sk-test")
+	t.Setenv("ANTHROPIC_API_KEY", "ant-test")
+	t.Setenv("GEMINI_API_KEY", "g-test")
+
+	for _, b := range []Backend{BackendClaudeCLI, BackendClaudeAgent, BackendCodexCLI, BackendGeminiCLI} {
+		if _, err := ListModels(context.Background(), b); err == nil {
+			t.Errorf("backend=%s: expected error (no live listing for CLI/agent backends)", b)
 		}
 	}
 }
@@ -157,33 +172,6 @@ func TestListModels_ErrorsOnHTTPFailure(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "sk-test")
 	if _, err := ListModels(context.Background(), BackendOpenAI); err == nil {
 		t.Fatal("expected HTTP 500 to be surfaced as an error (no static fallback)")
-	}
-}
-
-func TestListModels_CodexCLIRoutesThroughOpenAI(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer sk-test" {
-			t.Errorf("OpenAI auth header not forwarded: %q", r.Header.Get("Authorization"))
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"data": []map[string]any{{"id": "gpt-5"}, {"id": "gpt-5-codex"}},
-		})
-	}))
-	defer srv.Close()
-	withTestServer(t, srv)
-
-	t.Setenv("OPENAI_API_KEY", "sk-test")
-	got, err := ListModels(context.Background(), BackendCodexCLI)
-	if err != nil {
-		t.Fatalf("ListModels: %v", err)
-	}
-	if len(got) != 2 {
-		t.Fatalf("len = %d, want 2", len(got))
-	}
-	for _, m := range got {
-		if m.Backend != BackendCodexCLI {
-			t.Errorf("expected re-tagged Backend=codex-cli, got %q on %+v", m.Backend, m)
-		}
 	}
 }
 

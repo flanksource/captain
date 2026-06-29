@@ -6,11 +6,16 @@ It provides tools to:
 
 - inspect Claude Code project/session history
 - summarize tool usage, paths, binaries, and API cost
+- list files changed by a session
 - install Claude Code hooks
 - enforce a session-specific **Definition of Done** gate
 - test and use AI providers from the command line
+- run iterative AI agents with verifiers, worktrees, and commits
 - generate/build/run containerized Claude Code sandboxes
 - inspect and clean stored Claude project session data
+- expose captain commands as an MCP server
+- run a web UI for launching and chatting with AI agents
+- configure default backend, model, and AI safety toggles
 
 ## What it does
 
@@ -57,11 +62,23 @@ Captain supports a per-session Definition of Done workflow:
 
 This lets Claude continue iterating until required checks pass.
 
-### 4. AI provider utilities
+### 4. Session changes
+
+`captain changes` lists the files written or edited during a Claude Code or Codex session:
+
+- defaults to the most recent session in the current directory
+- `--session-id` targets a specific session by exact or prefix match
+- `--all` searches across all projects
+- `--claude` / `--codex` filter by session source
+- `--agents` (default: true) includes files edited by nested sub-agents
+- `--plans` / `--ignored` control whether plan files and git-ignored files are shown
+
+### 5. AI provider utilities
 
 Captain includes provider-agnostic AI utilities under `captain ai`:
 
 - `ai prompt` — send a prompt to a selected backend/model
+- `ai agent` — run an iterative agent loop with optional verifiers, a throwaway git worktree, commit, and LLM judge
 - `ai models` — list model information
 - `ai test` — verify provider connectivity
 - `ai fixture` — run a YAML benchmark fixture across multiple Claude configurations and capture a markdown evidence report
@@ -71,9 +88,24 @@ Supported backends are inferred from code and dependencies, including:
 - Anthropic
 - Gemini / Google
 - OpenAI-compatible paths via the internal provider layer
-- CLI/provider abstractions for local tool-backed backends
+- CLI/provider abstractions for local tool-backed backends (claude, codex, gemini)
 
-### 5. Container sandbox builder
+### 6. Adapter status and configuration
+
+- `whoami` — lists every AI adapter (API providers and CLI agents), how each is authenticated, whether its binary is installed, and the models it exposes
+- `configure` — interactive wizard to set default backend, model, reasoning effort, budget, timeout, and feature toggles (caching, MCP, hooks, skills, user/project settings, memory) saved to `~/.captain.yaml`
+
+### 7. Web UI and MCP server
+
+- `serve` — starts an HTTP API and embedded web UI for launching AI agents and opening follow-up chat sessions; supports `--dev` to proxy to the Vite dev server
+- `mcp` — exposes captain commands (history, info, cost, changes, dod, etc.) as MCP tools so Claude Code can invoke them directly
+
+### 8. Utility commands
+
+- `cmux screenshot` — captures a screenshot of the active browser surface in cmux and copies the path to the clipboard
+- `port kill <port>` — finds and kills the process listening on a TCP port
+
+### 9. Container sandbox builder
 
 Captain can discover Claude-related local configuration and package it into a container sandbox.
 
@@ -103,12 +135,19 @@ The container workflow is designed to package things like:
 captain/
 ├── cmd/captain/           # CLI entrypoint
 ├── pkg/ai/                # AI abstraction, provider config, models
+├── pkg/ai/agent/          # Iterative agent loop, plugins (verify, worktree, judge)
 ├── pkg/ai/fixture/        # YAML fixture runner for Claude configuration benchmarks
+├── pkg/api/               # HTTP API types and handlers (used by serve)
 ├── pkg/bash/              # Bash scanning, classification, rules
+├── pkg/captainconfig/     # ~/.captain.yaml config load/save
 ├── pkg/claude/            # Claude history, sessions, parsing, formatting
 ├── pkg/cli/               # Cobra/clicky command implementations
+├── pkg/cli/webapp/        # Embedded React web UI (served by captain serve)
+├── pkg/cmux/              # Terminal multiplexer integration (screenshot)
+├── pkg/collections/       # Generic collection utilities
 ├── pkg/container/         # Sandbox discovery, generation, build/run logic
 ├── pkg/dod/               # Definition of Done persistence and execution
+├── pkg/git/               # Git worktree helpers
 ├── pkg/sandbox/           # Token/preset/sandbox helpers
 ├── Dockerfile             # Container image for captain/Claude tooling
 ├── entrypoint.sh          # gosu-based user switching entrypoint
@@ -124,12 +163,19 @@ Top-level commands exposed by `cmd/captain/main.go`:
 captain history
 captain info
 captain cost
+captain changes
 captain sandbox
 captain ai
+captain whoami
+captain configure
+captain serve
 captain dod
 captain hook
 captain projects
 captain container
+captain mcp
+captain cmux
+captain port
 ```
 
 ### History
@@ -187,6 +233,18 @@ Supported groupings from the code:
 - `tool`
 - `category`
 
+### Changes
+
+```bash
+captain changes
+captain changes --session-id <session-id>
+captain changes --all --since now-7d
+captain changes --claude
+captain changes --agents=false
+```
+
+Lists the files written or edited during a Claude Code or Codex session. Defaults to the most recent session in the current directory.
+
 ### Hook installation
 
 Install the bash safety hook:
@@ -216,6 +274,8 @@ captain dod clear --session-id <session-id>
 
 ```bash
 captain ai prompt --model claude-sonnet-4 --prompt "Summarize this diff"
+captain ai agent --prompt "Fix the failing tests" --verify "go test ./..."
+captain ai agent --prompt "Refactor this module" --worktree --commit --judge "all tests pass"
 captain ai test --model gemini-2.0-flash
 captain ai models
 captain ai fixture --file examples/ai-fixtures/mission-control-investigate.yaml
@@ -229,6 +289,20 @@ Relevant provider flags include:
 - `--no-cache`
 - `--budget`
 - `--debug`
+
+#### AI agent
+
+`captain ai agent` runs an iterative AI agent loop with optional quality gates:
+
+- `--prompt` / `-p` — task prompt (required; can be piped from stdin)
+- `--system` / `-s` — system prompt override
+- `--verify` — shell command run after each turn; non-zero exit triggers a re-run (repeatable)
+- `--max-iterations` — max verify-and-rerun iterations (default: 1)
+- `--scope` — verifier scope: `changed` (only changed files) or `all` (default)
+- `--worktree` — run in a throwaway git branch/worktree
+- `--branch` — worktree branch name (default: `captain/agent-<timestamp>`)
+- `--commit` — commit changes on the worktree branch (requires `--worktree`)
+- `--judge` — LLM rubric; fails a turn when the judge rejects the result
 
 #### Fixture benchmarks
 
@@ -366,6 +440,52 @@ Important generate/build flags:
 - `--base`
 - `--mode copy|mount`
 
+### Whoami
+
+```bash
+captain whoami
+captain whoami --backend anthropic
+captain whoami --models=false
+```
+
+Lists every AI adapter (API providers and CLI agents: `anthropic`, `openai`, `gemini`, `claude-cli`, `claude-agent`, `codex-cli`, `gemini-cli`), their authentication method, binary availability, and a live model listing.
+
+### Configure
+
+```bash
+captain configure
+```
+
+Interactive wizard that writes `~/.captain.yaml` with defaults for backend, model, reasoning effort, budget, timeout, and feature toggles (caching, MCP, hooks, skills, user/project settings, memory). These defaults apply to `captain ai prompt`, `captain ai agent`, `captain ai test`, and other AI commands.
+
+### Serve
+
+```bash
+captain serve
+captain serve --port 8080
+captain serve --dev
+```
+
+Starts an HTTP API and embedded web UI. The UI launches `captain ai agent` operations and opens follow-up chat windows that resume the returned session. `--dev` starts the Vite dev server from `pkg/cli/webapp` and proxies `/api` back to the Go process.
+
+### MCP server
+
+```bash
+captain mcp
+```
+
+Exposes captain commands as MCP tools. Auto-exposes all commands except `sandbox`, `projects`, `container`, `hook`, `ai`, `dod set/clear/run`.
+
+### Utility commands
+
+```bash
+# Screenshot active browser surface in cmux
+captain cmux screenshot
+
+# Kill the process on a TCP port
+captain port kill 3000
+```
+
 ## Build and development
 
 This repo uses `task` as the main task runner.
@@ -431,21 +551,10 @@ Primary stack:
 - **Go 1.25.8**
 - **Cobra** for CLI wiring
 - **clicky** for formatting/output/flag binding
+- **charmbracelet/huh** for the interactive `configure` TUI
 - **sandbox-runtime** for sandbox preset handling
 - AI SDKs for Anthropic, OpenAI, and Gemini/Google
 - shell parsing via `mvdan.cc/sh/v3`
-
-## Current state
-
-This README reflects the current code layout.
-
-At the time of generation, `go test ./...` in this checkout does **not** fully pass. Observed issues included:
-
-- a build failure around `pkg/claude/tools`
-- failing container tests
-- AI integration tests requiring valid external provider credits/config
-
-So treat this repository as **active/in-progress** rather than guaranteed green in the current local state.
 
 ## Quick start
 
@@ -454,7 +563,15 @@ cd captain
 make build
 .bin/captain info
 .bin/captain history --summary
+.bin/captain changes
 .bin/captain container list
+```
+
+Configure defaults:
+
+```bash
+.bin/captain configure
+.bin/captain whoami
 ```
 
 If you want to use hooks:
@@ -464,9 +581,16 @@ If you want to use hooks:
 .bin/captain hook dod install --user
 ```
 
+Start the web UI:
+
+```bash
+.bin/captain serve
+```
+
 ## Notes
 
 - Captain is tightly focused on **Claude Code workflows**.
 - It is both an analysis tool and an execution/control tool.
 - The container/sandbox functionality is a major part of the project, not a side feature.
 - Many commands assume the presence of Claude local state under the user’s Claude config/projects directories.
+- Configuration is persisted to `~/.captain.yaml` via `captain configure`.

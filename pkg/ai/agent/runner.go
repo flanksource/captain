@@ -30,6 +30,46 @@ const (
 	ScopeAll     Scope = "all"
 )
 
+// AllScopes lists every verifier scope in canonical order. It is the single
+// source of truth behind Scope.Valid, ScopeList, ParseScope, and the
+// help/error/completion strings that enumerate scopes.
+func AllScopes() []Scope {
+	return []Scope{ScopeAll, ScopeChanged}
+}
+
+// Valid reports whether s is one of the supported scopes.
+func (s Scope) Valid() bool {
+	for _, x := range AllScopes() {
+		if s == x {
+			return true
+		}
+	}
+	return false
+}
+
+// ScopeList renders the supported scopes as a comma-separated string for
+// help/error text.
+func ScopeList() string {
+	parts := make([]string, len(AllScopes()))
+	for i, s := range AllScopes() {
+		parts[i] = string(s)
+	}
+	return strings.Join(parts, ", ")
+}
+
+// ParseScope resolves a CLI/flag value into a Scope, defaulting empty to
+// ScopeAll. It fails loud on any other value, naming the valid set.
+func ParseScope(s string) (Scope, error) {
+	switch Scope(s) {
+	case "", ScopeAll:
+		return ScopeAll, nil
+	case ScopeChanged:
+		return ScopeChanged, nil
+	default:
+		return "", fmt.Errorf("invalid --scope %q (valid: %s)", s, ScopeList())
+	}
+}
+
 // RunContext is the shared per-run state passed to every plugin. Setup plugins
 // may rewrite Cwd (a worktree); the Runner fills SessionID/ChangedFiles from the
 // event stream as the loop progresses.

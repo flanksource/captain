@@ -132,14 +132,14 @@ func doModelsRequest(req *http.Request, backend Backend) ([]ModelDef, error) {
 	return out, nil
 }
 
-// ListModels fetches the live model catalogue for a backend. Live data is the
-// only source of truth: there is no static fallback, so a missing API key or
-// a network failure surfaces as an error to the caller. CLI backends inherit
-// from their parent provider's API (claude-cli ↔ Anthropic, codex-cli ↔
-// OpenAI, gemini-cli ↔ Gemini) because the CLIs themselves don't expose a
-// listing endpoint and run against those same models under the hood.
+// ListModels fetches the live model catalogue for an API backend. Live data is
+// the only source of truth: there is no static fallback, so a missing API key
+// or a network failure surfaces as an error to the caller. CLI/agent backends
+// have no live listing here — they authenticate internally and enumerate their
+// models from the static catalog in pkg/cli (agentCatalogModels), so passing
+// one returns an error.
 func ListModels(ctx context.Context, backend Backend) ([]ModelDef, error) {
-	fetch, apiKey, parent := remoteFetcherFor(backend)
+	fetch, apiKey := remoteFetcherFor(backend)
 	if fetch == nil {
 		return nil, fmt.Errorf("backend %s has no live model listing", backend)
 	}
@@ -152,33 +152,22 @@ func ListModels(ctx context.Context, backend Backend) ([]ModelDef, error) {
 		return nil, err
 	}
 
-	// CLI backends share the underlying API but want their own backend tag
-	// on display so the picker stays grouped by chosen UX (claude-cli rows
-	// are visually distinct from anthropic API rows even though the IDs
-	// overlap).
-	if parent != backend {
-		for i := range models {
-			models[i].Backend = backend
-		}
-	}
-
 	sort.SliceStable(models, func(i, j int) bool { return models[i].ID < models[j].ID })
 	return models, nil
 }
 
-// remoteFetcherFor returns the live-list function, API key, and parent API
-// backend for the given backend. CLI backends are routed to the API of the
-// same provider — they call the same models under the hood. Returns
-// (nil, "", "") for backends without a known listing path.
-func remoteFetcherFor(backend Backend) (fetch func(context.Context, string) ([]ModelDef, error), apiKey string, parent Backend) {
+// remoteFetcherFor returns the live-list function and API key for an API
+// backend. Returns (nil, "") for any backend without a live listing endpoint
+// (every CLI/agent backend, which lists from the static catalog instead).
+func remoteFetcherFor(backend Backend) (fetch func(context.Context, string) ([]ModelDef, error), apiKey string) {
 	switch backend {
-	case BackendOpenAI, BackendCodexCLI:
-		return FetchOpenAIModels, GetAPIKeyFromEnv(backend), BackendOpenAI
-	case BackendAnthropic, BackendClaudeCLI, BackendClaudeAgent:
-		return FetchAnthropicModels, GetAPIKeyFromEnv(backend), BackendAnthropic
-	case BackendGemini, BackendGeminiCLI:
-		return FetchGeminiModels, GetAPIKeyFromEnv(backend), BackendGemini
+	case BackendOpenAI:
+		return FetchOpenAIModels, GetAPIKeyFromEnv(backend)
+	case BackendAnthropic:
+		return FetchAnthropicModels, GetAPIKeyFromEnv(backend)
+	case BackendGemini:
+		return FetchGeminiModels, GetAPIKeyFromEnv(backend)
 	default:
-		return nil, "", ""
+		return nil, ""
 	}
 }

@@ -213,12 +213,18 @@ func backendOptions() []huh.Option[string] {
 	}
 }
 
-// modelOptionsFor fetches the live model catalogue for the chosen backend
-// and renders it as huh select options. Live data is the only source of
-// truth — there is no static fallback. If the API key is missing or the call
-// fails, the picker shows a single sentinel row carrying the error so the
-// user can fix their environment without dropping out of the form.
+// modelOptionsFor renders the chosen backend's models as huh select options.
+// CLI/agent backends authenticate internally, so their models come from the
+// static catalog (no API key). API backends fetch the live /v1/models
+// catalogue — the only source of truth, with no static fallback: if the key is
+// missing or the call fails, the picker shows a single sentinel row carrying
+// the error so the user can fix their environment without dropping out of the
+// form.
 func modelOptionsFor(b ai.Backend) []huh.Option[string] {
+	if b.Kind() == "cli" {
+		return modelHuhOptions(agentCatalogModels(b))
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -229,7 +235,9 @@ func modelOptionsFor(b ai.Backend) []huh.Option[string] {
 
 	// Drop legacy / non-chat IDs (Grok 3 mini, gpt-3.5, dall-e, ...) so the
 	// picker shows only models worth defaulting to. Shared with `captain ai
-	// models` so both surfaces stay consistent.
+	// models` so both surfaces stay consistent. The catalog used for CLI
+	// backends is already curated, so this filter applies only to the raw
+	// live list.
 	filtered := make([]ai.ModelDef, 0, len(models))
 	for _, m := range models {
 		if isLegacyModelID(m.ID) {
@@ -237,33 +245,39 @@ func modelOptionsFor(b ai.Backend) []huh.Option[string] {
 		}
 		filtered = append(filtered, m)
 	}
-	if len(filtered) == 0 {
+	return modelHuhOptions(filtered)
+}
+
+// modelHuhOptions renders a (pre-sorted) model list as picker options, falling
+// back to a single disabled sentinel row when the list is empty.
+func modelHuhOptions(models []ai.ModelDef) []huh.Option[string] {
+	if len(models) == 0 {
 		return []huh.Option[string]{huh.NewOption("(no models available)", "")}
 	}
-
-	// Already sorted alphabetically by ListModels.
-	out := make([]huh.Option[string], 0, len(filtered))
-	for _, m := range filtered {
+	out := make([]huh.Option[string], 0, len(models))
+	for _, m := range models {
 		out = append(out, huh.NewOption(m.Name, m.ID))
 	}
 	return out
 }
 
-// defaultModelFor returns a hard-coded picker default per backend. With the
-// static catalogue gone the API itself doesn't expose a "default" flag, so we
-// fall back to the most-current model id we expect each provider to keep
-// stable. The user can pick anything else from the live list; this just
-// seeds the form.
+// defaultModelFor returns a hard-coded picker default per backend that seeds the
+// form. CLI/agent backends use the catalog slug their picker actually lists
+// (agentCatalogModels) so the seeded default is a selectable option. API
+// backends have no "default" flag on /v1/models, so we use the most-current id
+// we expect each provider to keep stable; the user can pick anything else.
 func defaultModelFor(b ai.Backend) string {
 	switch b {
-	case ai.BackendAnthropic, ai.BackendClaudeCLI, ai.BackendClaudeAgent:
+	case ai.BackendAnthropic:
 		return "claude-sonnet-4-5"
+	case ai.BackendClaudeCLI, ai.BackendClaudeAgent:
+		return "claude-agent-sonnet"
 	case ai.BackendOpenAI:
-		return "gpt-5"
+		return "gpt-5.5"
 	case ai.BackendCodexCLI:
 		return "gpt-5-codex"
 	case ai.BackendGemini, ai.BackendGeminiCLI:
-		return "gemini-2.5-flash"
+		return "gemini-3.5-flash"
 	}
 	return ""
 }

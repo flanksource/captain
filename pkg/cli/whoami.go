@@ -163,21 +163,6 @@ func maskKey(s string) string {
 	return s[:4] + "…" + s[len(s)-4:]
 }
 
-// parentBackend maps a CLI backend onto the API backend whose /v1/models
-// endpoint and key it shares; API backends are their own parent.
-func parentBackend(b ai.Backend) ai.Backend {
-	switch b {
-	case ai.BackendCodexCLI:
-		return ai.BackendOpenAI
-	case ai.BackendClaudeCLI, ai.BackendClaudeAgent:
-		return ai.BackendAnthropic
-	case ai.BackendGeminiCLI:
-		return ai.BackendGemini
-	default:
-		return b
-	}
-}
-
 func firstEnv(vars []string, getenv func(string) string) string {
 	for _, v := range vars {
 		if val := getenv(v); strings.TrimSpace(val) != "" {
@@ -201,7 +186,7 @@ func RunWhoami(opts WhoamiOptions) (any, error) {
 
 	var models map[ai.Backend]modelFetch
 	if opts.Models {
-		models = fetchParentModels(backends, probe.getenv)
+		models = fetchAPIModels(backends, probe.getenv)
 	}
 
 	result := WhoamiResult{sampleLimit: opts.Limit, showModels: opts.Models}
@@ -220,46 +205,52 @@ type modelFetch struct {
 	err    error
 }
 
-// fetchParentModels hits each distinct parent provider's models endpoint once,
-// concurrently, so claude-cli and claude-agent don't both re-query Anthropic.
-// A parent with no API key in the environment is skipped entirely (the listing
-// endpoint requires the key even when the CLI is logged in via OAuth).
-func fetchParentModels(backends []ai.Backend, getenv func(string) string) map[ai.Backend]modelFetch {
-	parents := map[ai.Backend]bool{}
+// fetchAPIModels hits each API backend's /v1/models endpoint once, concurrently.
+// Only API backends are fetched: CLI/agent backends list from the static
+// catalog (see applyModels) since their model menu needs no API key. An API
+// backend with no key in the environment is skipped (the listing endpoint
+// requires the key).
+func fetchAPIModels(backends []ai.Backend, getenv func(string) string) map[ai.Backend]modelFetch {
+	apis := map[ai.Backend]bool{}
 	for _, b := range backends {
-		p := parentBackend(b)
-		if firstEnv(ai.AuthEnvVars(p), getenv) != "" {
-			parents[p] = true
+		if b.Kind() == "api" && firstEnv(ai.AuthEnvVars(b), getenv) != "" {
+			apis[b] = true
 		}
 	}
 
-	out := make(map[ai.Backend]modelFetch, len(parents))
+	out := make(map[ai.Backend]modelFetch, len(apis))
 	var mu sync.Mutex
 	var wg sync.WaitGroup
-	for p := range parents {
+	for b := range apis {
 		wg.Add(1)
-		go func(parent ai.Backend) {
+		go func(backend ai.Backend) {
 			defer wg.Done()
-			m, err := ai.ListModels(context.Background(), parent)
+			m, err := ai.ListModels(context.Background(), backend)
 			mu.Lock()
-			out[parent] = modelFetch{models: m, err: err}
+			out[backend] = modelFetch{models: m, err: err}
 			mu.Unlock()
-		}(p)
+		}(b)
 	}
 	wg.Wait()
 	return out
 }
 
 // applyModels fills in the model listing (or the reason it is unavailable) for a
-// single adapter from the pre-fetched per-parent results.
+// single adapter. CLI/agent backends are served from the static catalog without
+// an API key; API backends use the pre-fetched live results.
 func applyModels(st *AdapterStatus, b ai.Backend, cache map[ai.Backend]modelFetch, getenv func(string) string) {
+	if b.Kind() == "cli" {
+		setModels(st, agentCatalogModels(b))
+		return
+	}
+
 	envVars := ai.AuthEnvVars(b)
 	if firstEnv(envVars, getenv) == "" {
 		st.ModelError = "set " + strings.Join(envVars, " or ") + " to list models"
 		return
 	}
 
-	fetch, ok := cache[parentBackend(b)]
+	fetch, ok := cache[b]
 	if !ok {
 		return
 	}
@@ -267,10 +258,14 @@ func applyModels(st *AdapterStatus, b ai.Backend, cache map[ai.Backend]modelFetc
 		st.ModelError = fetch.err.Error()
 		return
 	}
+	setModels(st, fetch.models)
+}
 
-	st.ModelCount = len(fetch.models)
-	ids := make([]string, 0, len(fetch.models))
-	for _, m := range fetch.models {
+// setModels copies a model list onto the adapter status as a count plus id list.
+func setModels(st *AdapterStatus, models []ai.ModelDef) {
+	st.ModelCount = len(models)
+	ids := make([]string, 0, len(models))
+	for _, m := range models {
 		ids = append(ids, m.ID)
 	}
 	st.Models = ids
