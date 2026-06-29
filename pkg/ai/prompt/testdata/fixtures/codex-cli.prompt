@@ -1,0 +1,20 @@
+---
+model: gpt-5-codex
+backend: codex-cli
+effort: medium
+context:
+  dir: .
+permissions:
+  presets:
+    - edit
+  mcp:
+    disabled: true
+memory:
+  bare: true
+---
+{{role "system"}}
+You are a Codex agent. Apply scoped edits, keep the worktree clean, and verify the change.
+{{role "user"}}
+Code task:
+{{task}}
+

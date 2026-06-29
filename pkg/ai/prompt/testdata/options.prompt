@@ -1,0 +1,26 @@
+---
+model: claude-sonnet-4-6
+config:
+  maxOutputTokens: 1024
+  temperature: 0.2
+maxTurns: 3
+permissions:
+  mode: acceptEdits
+  presets:
+    - edit
+  tools:
+    allow:
+      - Read
+      - Edit
+  mcp:
+    disabled: true
+memory:
+  skipUser: true
+budget:
+  maxTokens: 5000
+---
+{{role "system"}}
+You are a careful refactoring assistant.
+{{role "user"}}
+Refactor:
+{{target}}

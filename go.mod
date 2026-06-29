@@ -14,6 +14,7 @@ require (
 	github.com/flanksource/commons v1.51.3
 	github.com/flanksource/sandbox-runtime v1.0.2
 	github.com/google/dotprompt/go v0.0.0-20260502013637-5cd4a8405ca3
+	github.com/google/uuid v1.6.0
 	github.com/invopop/jsonschema v0.13.0
 	github.com/mattn/go-sqlite3 v1.14.38
 	github.com/onsi/ginkgo/v2 v2.28.0
@@ -105,7 +106,6 @@ require (
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/pprof v0.0.0-20260115054156-294ebfa9ad83 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.14 // indirect
 	github.com/googleapis/gax-go/v2 v2.18.0 // indirect
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674 // indirect

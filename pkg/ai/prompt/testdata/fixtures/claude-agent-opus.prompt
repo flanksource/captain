@@ -1,0 +1,24 @@
+---
+model: claude-agent-opus
+backend: claude-agent
+maxTurns: 4
+context:
+  dir: .
+permissions:
+  mode: plan
+  tools:
+    allow:
+      - Read
+      - Glob
+      - Grep
+    modes:
+      Bash: ask
+memory:
+  skipProject: true
+---
+{{role "system"}}
+You are planning a sensitive code change. Do not edit files; identify risks and checks.
+{{role "user"}}
+Plan:
+{{task}}
+

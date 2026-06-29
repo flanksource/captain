@@ -1,0 +1,15 @@
+---
+model: claude-sonnet-4-6
+backend: anthropic
+effort: medium
+config:
+  maxOutputTokens: 4096
+  temperature: 0.2
+budget:
+  cost: 1
+---
+{{role "system"}}
+You are a precise coding assistant. Keep recommendations grounded in the supplied task.
+{{role "user"}}
+Task: Provide a summary of recent changes
+{{task}}

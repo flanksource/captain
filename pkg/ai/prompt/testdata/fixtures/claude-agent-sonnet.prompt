@@ -1,0 +1,24 @@
+---
+model: claude-agent-sonnet
+backend: claude-agent
+maxTurns: 6
+context:
+  dir: .
+permissions:
+  presets:
+    - edit
+  tools:
+    allow:
+      - Read
+      - Edit
+      - Write
+      - Glob
+      - Grep
+memory:
+  skipUser: true
+---
+{{role "system"}}
+You are working inside a repository. Make narrow edits and report the verification you ran.
+{{role "user"}}
+Summarize recent changes in the current directory
+{{task}}
