@@ -54,7 +54,7 @@ func (g *GeminiCLI) Execute(ctx context.Context, req ai.Request) (*ai.Response, 
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	stdoutData, _, err := runCLI(ctx, "gemini", reqBytes)
+	stdoutData, _, err := runCLI(ctx, "gemini", reqBytes, req.Context.Dir)
 	if err != nil {
 		return nil, err
 	}

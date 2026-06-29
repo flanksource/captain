@@ -1,6 +1,15 @@
 package provider
 
-import "testing"
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/api"
+)
 
 func TestParseStderr(t *testing.T) {
 	tests := []struct {
@@ -20,5 +29,68 @@ func TestParseStderr(t *testing.T) {
 				t.Errorf("ParseStderr = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestRunCLIUsesContextDir(t *testing.T) {
+	cwd := filepath.Join(t.TempDir(), "workspace")
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+	bin := filepath.Join(t.TempDir(), "fake-cli")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\npwd\ncat >/dev/null\n"), 0o755); err != nil {
+		t.Fatalf("write fake cli: %v", err)
+	}
+
+	stdout, _, err := runCLI(context.Background(), bin, []byte("input"), cwd)
+	if err != nil {
+		t.Fatalf("runCLI: %v", err)
+	}
+	got, err := filepath.EvalSymlinks(filepath.Clean(strings.TrimSpace(string(stdout))))
+	if err != nil {
+		t.Fatalf("eval pwd: %v", err)
+	}
+	want, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		t.Fatalf("eval cwd: %v", err)
+	}
+	if got != want {
+		t.Errorf("pwd = %q, want %q", got, want)
+	}
+}
+
+func TestGeminiCLIUsesContextDir(t *testing.T) {
+	cwd := filepath.Join(t.TempDir(), "workspace")
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+	binDir := t.TempDir()
+	gemini := filepath.Join(binDir, "gemini")
+	script := "#!/bin/sh\nprintf '{\"text\":\"%s\",\"usage\":{\"input_tokens\":1,\"output_tokens\":2}}\\n' \"$(pwd)\"\ncat >/dev/null\n"
+	if err := os.WriteFile(gemini, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake gemini: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	resp, err := NewGeminiCLI("gemini-cli-pro").Execute(context.Background(), ai.Request{
+		Prompt:  api.Prompt{User: "hello"},
+		Context: api.Context{Dir: cwd},
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	got, err := filepath.EvalSymlinks(filepath.Clean(resp.Text))
+	if err != nil {
+		t.Fatalf("eval response text: %v", err)
+	}
+	want, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		t.Fatalf("eval cwd: %v", err)
+	}
+	if got != want {
+		t.Errorf("response text = %q, want %q", got, want)
+	}
+	if resp.Usage.InputTokens != 1 || resp.Usage.OutputTokens != 2 {
+		t.Errorf("usage = %+v, want input=1 output=2", resp.Usage)
 	}
 }

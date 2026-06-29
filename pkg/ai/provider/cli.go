@@ -73,8 +73,11 @@ func HandleExitError(exitCode int, stderr string) error {
 	}
 }
 
-func runCLI(ctx context.Context, command string, stdinData []byte) (stdout []byte, stderr string, err error) {
+func runCLI(ctx context.Context, command string, stdinData []byte, cwd string) (stdout []byte, stderr string, err error) {
 	cmd := exec.CommandContext(ctx, command)
+	if cwd != "" {
+		cmd.Dir = cwd
+	}
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
