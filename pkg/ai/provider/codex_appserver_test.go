@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/claude"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -259,15 +260,24 @@ func TestThreadID(t *testing.T) {
 }
 
 func TestComposePrompt(t *testing.T) {
-	assert.Equal(t, "task", composePrompt(ai.Request{Prompt: "task"}))
-	assert.Equal(t, "be brief\n\ntask", composePrompt(ai.Request{Prompt: "task", SystemPrompt: "be brief"}))
-	assert.Equal(t, "task\n\ntail", composePrompt(ai.Request{Prompt: "task", AppendSystemPrompt: "tail"}))
+	assert.Equal(t, "task", composePrompt(req(api.Prompt{User: "task"})))
+	assert.Equal(t, "be brief\n\ntask", composePrompt(req(api.Prompt{User: "task", System: "be brief"})))
+	assert.Equal(t, "task\n\ntail", composePrompt(req(api.Prompt{User: "task", AppendSystem: "tail"})))
 	assert.Equal(t, "sys\n\ntask\n\ntail",
-		composePrompt(ai.Request{Prompt: "task", SystemPrompt: "sys", AppendSystemPrompt: "tail"}))
+		composePrompt(req(api.Prompt{User: "task", System: "sys", AppendSystem: "tail"})))
+}
+
+// req builds an ai.Request carrying only the given prompt, keeping the nested
+// api.Spec literal out of the table tests above.
+func req(p api.Prompt) ai.Request {
+	return ai.Request{Prompt: p}
 }
 
 func TestBuildTurnStartParams(t *testing.T) {
-	p := buildTurnStartParams("gpt-5", ai.Request{Prompt: "hi", ReasoningEffort: "high"}, "thread-1")
+	p := buildTurnStartParams("gpt-5", ai.Request{
+		Prompt: api.Prompt{User: "hi"},
+		Model:  api.Model{Effort: api.EffortHigh},
+	}, "thread-1")
 	assert.Equal(t, "thread-1", p["threadId"])
 	assert.Equal(t, "gpt-5", p["model"])
 	assert.Equal(t, "high", p["effort"])
@@ -279,7 +289,7 @@ func TestBuildTurnStartParams(t *testing.T) {
 	assert.Equal(t, "hi", input[0]["text"])
 
 	// No reasoning effort / empty model should be omitted entirely.
-	bare := buildTurnStartParams("", ai.Request{Prompt: "hi"}, "t")
+	bare := buildTurnStartParams("", req(api.Prompt{User: "hi"}), "t")
 	_, hasModel := bare["model"]
 	_, hasEffort := bare["effort"]
 	assert.False(t, hasModel, "empty model must be omitted")
@@ -297,45 +307,63 @@ func TestBuildThreadStartParams_Safety(t *testing.T) {
 	}{
 		{
 			name:         "default is read-only on-request",
-			req:          ai.Request{Prompt: "p"},
+			req:          req(api.Prompt{User: "p"}),
 			wantSandbox:  "read-only",
 			wantApproval: "on-request",
 		},
 		{
-			name:         "edit maps to workspace-write",
-			req:          ai.Request{Prompt: "p", Edit: true},
+			name: "edit maps to workspace-write",
+			req: ai.Request{
+				Prompt:      api.Prompt{User: "p"},
+				Permissions: api.Permissions{Presets: []api.Preset{api.PresetEdit}},
+			},
 			wantSandbox:  "workspace-write",
 			wantApproval: "on-request",
 		},
 		{
-			name:         "explicit permission mode skips workspace-write default",
-			req:          ai.Request{Prompt: "p", Edit: true, PermissionMode: "default"},
+			name: "explicit permission mode skips workspace-write default",
+			req: ai.Request{
+				Prompt:      api.Prompt{User: "p"},
+				Permissions: api.Permissions{Presets: []api.Preset{api.PresetEdit}, Mode: api.PermissionDefault},
+			},
 			wantSandbox:  "read-only",
 			wantApproval: "on-request",
 		},
 		{
-			name:         "bypass permissions maps to danger-full-access never",
-			req:          ai.Request{Prompt: "p", PermissionMode: "bypassPermissions"},
+			name: "bypass permissions maps to danger-full-access never",
+			req: ai.Request{
+				Prompt:      api.Prompt{User: "p"},
+				Permissions: api.Permissions{Mode: api.PermissionBypass},
+			},
 			wantSandbox:  "danger-full-access",
 			wantApproval: "never",
 		},
 		{
-			name:         "no-memory sets ephemeral",
-			req:          ai.Request{Prompt: "p", NoMemory: true},
+			name: "no-memory sets ephemeral",
+			req: ai.Request{
+				Prompt: api.Prompt{User: "p"},
+				Memory: api.Memory{SkipMemory: true},
+			},
 			wantSandbox:  "read-only",
 			wantApproval: "on-request",
 			wantEphem:    true,
 		},
 		{
-			name:         "bare sets ephemeral",
-			req:          ai.Request{Prompt: "p", Bare: true},
+			name: "bare sets ephemeral",
+			req: ai.Request{
+				Prompt: api.Prompt{User: "p"},
+				Memory: api.Memory{Bare: true},
+			},
 			wantSandbox:  "read-only",
 			wantApproval: "on-request",
 			wantEphem:    true,
 		},
 		{
-			name:         "no-mcp sets empty mcp_servers override",
-			req:          ai.Request{Prompt: "p", NoMCP: true},
+			name: "no-mcp sets empty mcp_servers override",
+			req: ai.Request{
+				Prompt:      api.Prompt{User: "p"},
+				Permissions: api.Permissions{MCP: api.MCP{Disabled: true}},
+			},
 			wantSandbox:  "read-only",
 			wantApproval: "on-request",
 			wantNoMCP:    true,
@@ -360,17 +388,23 @@ func TestBuildThreadStartParams_Safety(t *testing.T) {
 }
 
 func TestBuildThreadStartParams_CwdAndModel(t *testing.T) {
-	p := buildThreadStartParams("gpt-5", ai.Request{Prompt: "p", Cwd: "/repo"})
+	p := buildThreadStartParams("gpt-5", ai.Request{
+		Prompt:  api.Prompt{User: "p"},
+		Context: api.Context{Dir: "/repo"},
+	})
 	assert.Equal(t, "/repo", p["cwd"])
 	assert.Equal(t, "gpt-5", p["model"])
 
-	noModel := buildThreadStartParams("", ai.Request{Prompt: "p"})
+	noModel := buildThreadStartParams("", req(api.Prompt{User: "p"}))
 	_, hasModel := noModel["model"]
 	assert.False(t, hasModel, "empty model must be omitted")
 }
 
 func TestBuildResumeParams(t *testing.T) {
-	p := buildResumeParams(ai.Request{SessionID: "thread-9", Cwd: "/repo"})
+	p := buildResumeParams(ai.Request{
+		SessionID: "thread-9",
+		Context:   api.Context{Dir: "/repo"},
+	})
 	assert.Equal(t, "thread-9", p["threadId"])
 	assert.Equal(t, "/repo", p["cwd"])
 }

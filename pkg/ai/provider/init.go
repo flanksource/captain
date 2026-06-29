@@ -18,8 +18,8 @@ func init() {
 	ai.RegisterProvider(ai.BackendClaudeCLI, func(cfg ai.Config) (ai.Provider, error) { return claudeagent.New(cfg) })
 
 	// Codex via `codex app-server` (JSON-RPC) replaces `codex exec --json`.
-	ai.RegisterProvider(ai.BackendCodexCLI, func(cfg ai.Config) (ai.Provider, error) { return NewCodexAppServer(cfg.Model) })
+	ai.RegisterProvider(ai.BackendCodexCLI, func(cfg ai.Config) (ai.Provider, error) { return NewCodexAppServer(cfg.Model.Name) })
 
 	// Gemini CLI is unchanged.
-	ai.RegisterProvider(ai.BackendGeminiCLI, func(cfg ai.Config) (ai.Provider, error) { return NewGeminiCLI(cfg.Model), nil })
+	ai.RegisterProvider(ai.BackendGeminiCLI, func(cfg ai.Config) (ai.Provider, error) { return NewGeminiCLI(cfg.Model.Name), nil })
 }

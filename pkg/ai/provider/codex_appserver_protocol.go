@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/api"
 )
 
 // This file holds the PURE (no I/O, no process/goroutine state) half of the
@@ -208,35 +209,35 @@ func appServerStreamedAgentMessage(params json.RawMessage, streamed map[string]b
 // --- request params --------------------------------------------------------
 
 func composePrompt(req ai.Request) string {
-	prompt := req.Prompt
-	if req.SystemPrompt != "" {
-		prompt = req.SystemPrompt + "\n\n" + prompt
+	prompt := req.Prompt.User
+	if req.Prompt.System != "" {
+		prompt = req.Prompt.System + "\n\n" + prompt
 	}
-	if req.AppendSystemPrompt != "" {
-		prompt = prompt + "\n\n" + req.AppendSystemPrompt
+	if req.Prompt.AppendSystem != "" {
+		prompt = prompt + "\n\n" + req.Prompt.AppendSystem
 	}
 	return prompt
 }
 
 // buildThreadStartParams translates the provider-agnostic safety knobs into
 // thread/start params. The CLI-only ignore-user-config / ignore-rules flags
-// (req.NoUser/NoProject/NoHooks) have no first-class equivalent in the versioned
-// thread/start schema, so only ephemeral + an empty mcp_servers override (the
-// knobs the protocol exposes) are emitted.
+// (req.Memory.SkipUser/SkipProject/SkipHooks) have no first-class equivalent in
+// the versioned thread/start schema, so only ephemeral + an empty mcp_servers
+// override (the knobs the protocol exposes) are emitted.
 func buildThreadStartParams(model string, req ai.Request) map[string]any {
 	p := map[string]any{}
-	if req.Cwd != "" {
-		p["cwd"] = req.Cwd
+	if req.Context.Dir != "" {
+		p["cwd"] = req.Context.Dir
 	}
 	if model != "" {
 		p["model"] = model
 	}
 	sandbox, approval := codexSafety(req)
 	p["sandbox"], p["approvalPolicy"] = sandbox, approval
-	if req.NoMemory || req.Bare {
+	if req.Memory.SkipMemory || req.Memory.Bare {
 		p["ephemeral"] = true
 	}
-	if req.NoMCP {
+	if req.Permissions.MCP.Disabled {
 		p["config"] = map[string]any{"mcp_servers": map[string]any{}}
 	}
 	return p
@@ -247,9 +248,9 @@ func buildThreadStartParams(model string, req ai.Request) map[string]any {
 // when codex prompts, never whether work proceeds.
 func codexSafety(req ai.Request) (sandbox, approval string) {
 	switch {
-	case req.PermissionMode == "bypassPermissions":
+	case req.Permissions.Mode == api.PermissionBypass:
 		return "danger-full-access", "never"
-	case req.Edit && req.PermissionMode == "":
+	case req.Permissions.HasPreset(api.PresetEdit) && req.Permissions.Mode == "":
 		return "workspace-write", "on-request"
 	default:
 		return "read-only", "on-request"
@@ -264,16 +265,16 @@ func buildTurnStartParams(model string, req ai.Request, threadID string) map[str
 	if model != "" {
 		p["model"] = model
 	}
-	if req.ReasoningEffort != "" {
-		p["effort"] = req.ReasoningEffort
+	if req.Effort != "" {
+		p["effort"] = string(req.Effort)
 	}
 	return p
 }
 
 func buildResumeParams(req ai.Request) map[string]any {
 	p := map[string]any{"threadId": req.SessionID}
-	if req.Cwd != "" {
-		p["cwd"] = req.Cwd
+	if req.Context.Dir != "" {
+		p["cwd"] = req.Context.Dir
 	}
 	return p
 }

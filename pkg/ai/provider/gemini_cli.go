@@ -46,7 +46,7 @@ func (g *GeminiCLI) Execute(ctx context.Context, req ai.Request) (*ai.Response, 
 	defer cancel()
 
 	cliReq := map[string]string{
-		"prompt": req.Prompt,
+		"prompt": req.Prompt.User,
 		"model":  g.model,
 	}
 	reqBytes, err := json.Marshal(cliReq)

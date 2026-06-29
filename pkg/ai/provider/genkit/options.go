@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/api"
 
 	gkai "github.com/firebase/genkit/go/ai"
 )
@@ -12,29 +13,6 @@ import (
 // defaultMaxOutputTokens is the visible-answer budget Anthropic requires on every
 // request; it is added on top of any extended-thinking budget.
 const defaultMaxOutputTokens = 4096
-
-// effort is the normalized reasoning level parsed from ai.Request.ReasoningEffort.
-type effort string
-
-const (
-	effortNone   effort = ""
-	effortLow    effort = "low"
-	effortMedium effort = "medium"
-	effortHigh   effort = "high"
-)
-
-func parseEffort(s string) effort {
-	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "low":
-		return effortLow
-	case "medium":
-		return effortMedium
-	case "high":
-		return effortHigh
-	default:
-		return effortNone
-	}
-}
 
 // bareModel strips a leading provider prefix so a model id can be re-prefixed for
 // either a genkit ref (anthropic/openai/googleai) or an OpenRouter pricing key.
@@ -66,41 +44,41 @@ func modelRef(backend ai.Backend, model string) (string, error) {
 	}
 }
 
-func anthropicThinkingBudget(e effort) int {
+// thinkingBudget maps a reasoning effort to an extended-thinking token budget
+// (shared by Anthropic and Gemini). xhigh is captain's top tier.
+func thinkingBudget(e api.Effort) int {
 	switch e {
-	case effortLow:
+	case api.EffortLow:
 		return 2048
-	case effortMedium:
+	case api.EffortMedium:
 		return 8192
-	case effortHigh:
+	case api.EffortHigh:
 		return 24576
+	case api.EffortXHigh:
+		return 32768
 	default:
 		return 0
 	}
 }
 
-func geminiThinkingBudget(e effort) int {
-	switch e {
-	case effortLow:
-		return 2048
-	case effortMedium:
-		return 8192
-	case effortHigh:
-		return 24576
-	default:
-		return 0
+// openaiReasoningEffort maps captain's effort onto OpenAI's reasoning_effort
+// values; OpenAI tops out at "high", so xhigh clamps to it.
+func openaiReasoningEffort(e api.Effort) string {
+	if e == api.EffortXHigh {
+		return string(api.EffortHigh)
 	}
+	return string(e)
 }
 
 // anthropicMaxTokens returns max_tokens for an Anthropic request. The thinking
 // budget is counted inside max_tokens, so leave room for the visible answer on
-// top of it; honour an explicit ai.Request.MaxTokens as the visible-answer base.
-func anthropicMaxTokens(req ai.Request, e effort) int {
-	base := req.MaxTokens
+// top of it; honour an explicit budget MaxTokens as the visible-answer base.
+func anthropicMaxTokens(req ai.Request, e api.Effort) int {
+	base := req.Budget.MaxTokens
 	if base <= 0 {
 		base = defaultMaxOutputTokens
 	}
-	budget := anthropicThinkingBudget(e)
+	budget := thinkingBudget(e)
 	if budget == 0 {
 		return base
 	}
@@ -111,24 +89,24 @@ func anthropicMaxTokens(req ai.Request, e effort) int {
 // request's reasoning effort into each backend's native control. Anthropic also
 // requires max_tokens on every request, so it always returns a config.
 func effortConfig(backend ai.Backend, req ai.Request) map[string]any {
-	e := parseEffort(req.ReasoningEffort)
+	e := req.Effort
 	switch backend {
 	case ai.BackendOpenAI:
-		if e == effortNone {
+		if e == api.EffortNone {
 			return nil
 		}
-		return map[string]any{"reasoning_effort": string(e)}
+		return map[string]any{"reasoning_effort": openaiReasoningEffort(e)}
 	case ai.BackendGemini:
-		if e == effortNone {
+		if e == api.EffortNone {
 			return nil
 		}
-		return map[string]any{"thinkingConfig": map[string]any{"thinkingBudget": geminiThinkingBudget(e)}}
+		return map[string]any{"thinkingConfig": map[string]any{"thinkingBudget": thinkingBudget(e)}}
 	case ai.BackendAnthropic:
 		cfg := map[string]any{"max_tokens": anthropicMaxTokens(req, e)}
-		if e != effortNone {
+		if e != api.EffortNone {
 			cfg["thinking"] = map[string]any{
 				"type":          "enabled",
-				"budget_tokens": anthropicThinkingBudget(e),
+				"budget_tokens": thinkingBudget(e),
 			}
 		}
 		return cfg
@@ -144,10 +122,10 @@ func effortConfig(backend ai.Backend, req ai.Request) map[string]any {
 func generateOptions(p *Provider, req ai.Request, stream gkai.ModelStreamCallback) []gkai.GenerateOption {
 	opts := []gkai.GenerateOption{gkai.WithModelName(p.modelRef)}
 
-	if req.SystemPrompt != "" {
-		opts = append(opts, gkai.WithSystem(req.SystemPrompt))
+	if req.Prompt.System != "" {
+		opts = append(opts, gkai.WithSystem(req.Prompt.System))
 	}
-	opts = append(opts, gkai.WithPrompt(req.Prompt))
+	opts = append(opts, gkai.WithPrompt(req.Prompt.User))
 
 	if cfg := effortConfig(p.backend, req); cfg != nil {
 		opts = append(opts, gkai.WithConfig(cfg))
@@ -155,8 +133,8 @@ func generateOptions(p *Provider, req ai.Request, stream gkai.ModelStreamCallbac
 	if stream != nil {
 		opts = append(opts, gkai.WithStreaming(stream))
 	}
-	if req.StructuredOutput != nil && stream == nil {
-		opts = append(opts, gkai.WithOutputType(req.StructuredOutput))
+	if req.Prompt.Schema != nil && stream == nil {
+		opts = append(opts, gkai.WithOutputType(req.Prompt.Schema))
 	}
 	return opts
 }
