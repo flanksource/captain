@@ -14,20 +14,20 @@ func RegisterProvider(backend Backend, factory ProviderFactory) {
 }
 
 func NewProvider(cfg Config) (Provider, error) {
-	backend := cfg.Backend
+	backend := cfg.Model.Backend
 
-	if cfg.Model == "" {
+	if cfg.Model.Name == "" {
 		return nil, fmt.Errorf("model cannot be empty; pass --model or run `captain configure` to set a default")
 	}
 
 	if backend == "" {
 		var err error
-		backend, err = InferBackend(cfg.Model)
+		backend, err = InferBackend(cfg.Model.Name)
 		if err != nil {
 			return nil, err
 		}
 	}
-	cfg.Backend = backend
+	cfg.Model.Backend = backend
 
 	factory, ok := factories[backend]
 	if !ok {

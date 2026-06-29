@@ -19,14 +19,16 @@ func TestRender_FrontmatterAndMessages(t *testing.T) {
 	req, cfg, err := tmpl.Render(map[string]any{"diff": "+added a line"}, nil)
 	require.NoError(t, err)
 
-	assert.Contains(t, req.SystemPrompt, "Conventional Commit")
-	assert.Contains(t, req.Prompt, "+added a line")
-	assert.NotContains(t, req.Prompt, "Conventional Commit", "system text must not leak into the user prompt")
+	assert.Contains(t, req.Prompt.System, "Conventional Commit")
+	assert.Contains(t, req.Prompt.User, "+added a line")
+	assert.NotContains(t, req.Prompt.User, "Conventional Commit", "system text must not leak into the user prompt")
 
-	assert.Equal(t, "claude-sonnet-4-6", cfg.Model)
-	assert.Equal(t, ai.BackendAnthropic, cfg.Backend, "model name should infer the anthropic backend")
-	assert.Equal(t, 1024, req.MaxTokens)
-	assert.InDelta(t, 0.2, req.Temperature, 1e-9)
+	assert.Equal(t, "claude-sonnet-4-6", cfg.Model.Name)
+	assert.Equal(t, ai.BackendAnthropic, cfg.Model.Backend, "model name should infer the anthropic backend")
+	assert.Equal(t, 1024, req.Budget.MaxTokens)
+	temp, ok := req.Temp()
+	require.True(t, ok, "temperature should be set from frontmatter")
+	assert.InDelta(t, 0.2, temp, 1e-9)
 }
 
 func TestRender_StructuredOutputTarget(t *testing.T) {
@@ -38,13 +40,13 @@ func TestRender_StructuredOutputTarget(t *testing.T) {
 
 	req, _, err := Load("{{role \"user\"}}\nhi").Render(nil, out)
 	require.NoError(t, err)
-	assert.Same(t, out, req.StructuredOutput)
+	assert.Same(t, out, req.Prompt.Schema)
 }
 
 func TestLibrary_Render(t *testing.T) {
 	lib := NewLibrary(library)
 	req, cfg, err := lib.Render("testdata/commit.prompt", map[string]any{"diff": "x"}, nil)
 	require.NoError(t, err)
-	assert.Equal(t, "claude-sonnet-4-6", cfg.Model)
-	assert.Contains(t, req.Prompt, "x")
+	assert.Equal(t, "claude-sonnet-4-6", cfg.Model.Name)
+	assert.Contains(t, req.Prompt.User, "x")
 }

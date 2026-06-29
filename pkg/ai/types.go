@@ -7,57 +7,14 @@ import (
 	"github.com/flanksource/captain/pkg/api"
 )
 
-type Request struct {
-	SystemPrompt       string
-	AppendSystemPrompt string // claude --append-system-prompt
-	Prompt             string
-	MaxTokens          int
-	Temperature        float64
-	StructuredOutput   any               // nil = text mode, non-nil = JSON schema target
-	Metadata           map[string]string // arbitrary caller metadata
-
-	// Source identifies the prompt's origin (e.g. the .prompt filename), purely
-	// for diagnostics — the logging middleware prints it so callers can tell which
-	// template produced a request. Empty means unknown.
-	Source string
-
-	// Cwd runs the CLI provider's subprocess in this working directory. Empty
-	// means the calling process's cwd (the prior behaviour), so existing callers
-	// are unaffected. Honoured by the streaming CLI providers (claude_cli, codex_cli).
-	Cwd string
-
-	// Per-request CLI knobs honoured by ExecuteStream-capable providers
-	// (currently claude_cli). Zero values are equivalent to "let the
-	// provider/CLI use its default" so existing buffered Execute callers
-	// stay byte-identical.
-	SessionID       string // resume an existing session (claude --session-id)
-	PermissionMode  string // claude --permission-mode (e.g. "acceptEdits")
-	MaxTurns        int    // claude --max-turns (0 = omit, let CLI default)
-	ReasoningEffort string // codex -c model_reasoning_effort=... ("low" | "medium" | "high"); other providers ignore
-
-	// Safety / sandbox knobs. Zero values mean "use provider/CLI default".
-	// Each provider translates what it understands; unknowns are ignored or
-	// surfaced as a config error.
-	Edit            bool     // shorthand: acceptEdits + curated Read/Edit/Write/Glob/Grep allowlist
-	AllowedTools    []string // claude --allowedTools / codex: not supported
-	DisallowedTools []string // claude --disallowedTools / codex: not supported
-	NoMCP           bool     // claude --strict-mcp-config + empty inline / codex -c mcp_servers={}
-	NoHooks         bool     // claude: requires --bare or --setting-sources / codex --ignore-rules
-	NoSkills        bool     // claude --disable-slash-commands / codex --ignore-rules (best effort)
-	SkillDirs       []string // claude --plugin-dir (repeatable)
-	NoUser          bool     // claude --setting-sources without "user" / codex --ignore-user-config
-	NoProject       bool     // claude --setting-sources without "project,local" / codex --ignore-rules
-	NoMemory        bool     // claude: requires --bare / codex --ephemeral
-	Bare            bool     // claude --bare / codex composite (--ignore-user-config --ignore-rules --ephemeral)
-
-	// CanUseTool, when set, brokers tool permissions over the stream-json control
-	// protocol: the streaming provider asks this callback before a tool that needs
-	// approval runs, and forwards the decision to the agent. Only providers that
-	// support a server→client permission round-trip honour it (claude-agent);
-	// others ignore it. A nil callback keeps the auto-approve (bypass) behaviour.
-	// It is never serialized (the agent process never sees the Go closure).
-	CanUseTool PermissionFunc `json:"-"`
-}
+// Request is one model/agent call. It is a type alias for the serializable
+// api.Spec (model, prompt, budget, memory, permissions, context, session,
+// turns) — ai.Request IS the spec, so providers read the nested fields directly:
+// req.Temperature/req.Effort (Model is inlined), req.Prompt.User,
+// req.Permissions.Mode, req.Context.Dir, req.Memory.Skills. The structured-output
+// Go type rides on Prompt.Schema; the
+// runtime-only tool-permission broker callback lives on Config.CanUseTool.
+type Request = api.Spec
 
 // PermissionFunc decides whether an agent may run a tool. It is invoked by a
 // streaming provider on a can_use_tool control request; returning an error denies
@@ -143,18 +100,26 @@ type Event struct {
 type Cost = api.Cost
 type Costs = api.Costs
 
+// Config is the provider construction/runtime config. Model (name/backend/temp/
+// effort) and Budget (cost ceiling, max tokens) come from api; the rest are
+// transport/runtime concerns that never belong in the serializable Spec.
 type Config struct {
-	Model         string
-	Backend       Backend // empty = infer from model
-	APIKey        string  // empty = env lookup
+	Model         api.Model  // Name, ID, Backend (empty = infer), Temperature, Effort
+	Budget        api.Budget // Cost (USD ceiling, 0 = unlimited), MaxTokens
+	APIKey        string     // empty = env lookup
 	APIURL        string
-	MaxTokens     int
-	Temperature   float64
 	CacheDBPath   string
 	CacheTTL      time.Duration
 	NoCache       bool
 	MaxConcurrent int
 	SessionID     string
 	ProjectName   string
-	BudgetUSD     float64 // 0 = no budget
+
+	// CanUseTool, when set, brokers tool permissions over the stream-json control
+	// protocol: the streaming provider asks this callback before a tool that needs
+	// approval runs, and forwards the decision to the agent. Only providers that
+	// support a server→client permission round-trip honour it (claude-agent);
+	// others ignore it. A nil callback keeps the auto-approve (bypass) behaviour.
+	// It is never serialized (the agent process never sees the Go closure).
+	CanUseTool PermissionFunc `json:"-"`
 }

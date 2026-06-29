@@ -1,6 +1,9 @@
 package api
 
-import "fmt"
+import (
+	"fmt"
+	"slices"
+)
 
 // Permissions governs what an agent may do: the base posture, named presets,
 // per-tool policy, MCP servers, and plugin directories. Consolidates the legacy
@@ -32,6 +35,11 @@ type MCP struct {
 	Disabled bool `json:"disabled,omitempty" yaml:"disabled,omitempty" pretty:"label=Disabled"`
 	// Servers is an optional allowlist subset of configured servers.
 	Servers []string `json:"servers,omitempty" yaml:"servers,omitempty" pretty:"label=Servers"`
+}
+
+// HasPreset reports whether the named preset is enabled.
+func (p Permissions) HasPreset(x Preset) bool {
+	return slices.Contains(p.Presets, x)
 }
 
 // Validate checks the mode, presets, and tool modes are recognised.

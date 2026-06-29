@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/commons/logger"
 )
 
@@ -76,9 +77,11 @@ func TestLoggingProvider_EmitsSourceAndSchemas(t *testing.T) {
 	}
 
 	if _, err := p.Execute(context.Background(), ai.Request{
-		Prompt:           "rendered input prompt",
-		Source:           "ai-commit-message.prompt",
-		StructuredOutput: &sampleOut{},
+		Prompt: api.Prompt{
+			User:   "rendered input prompt",
+			Source: "ai-commit-message.prompt",
+			Schema: &sampleOut{},
+		},
 	}); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}

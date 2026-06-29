@@ -31,11 +31,11 @@ func (l *loggingProvider) Execute(ctx context.Context, req ai.Request) (*ai.Resp
 		t := clicky.Text("").
 			Add(icons.AI).
 			Append(fmt.Sprintf(" %s/%s", l.provider.GetBackend(), l.provider.GetModel()), "text-purple-600 font-medium")
-		if req.Source != "" {
-			t = t.Append(fmt.Sprintf(" [%s]", req.Source), "text-gray-500")
+		if req.Prompt.Source != "" {
+			t = t.Append(fmt.Sprintf(" [%s]", req.Prompt.Source), "text-gray-500")
 		}
-		t = t.NewLine().Append(req.Prompt, "text-gray-600")
-		if s := schemaInJSON(req.StructuredOutput); s != "" {
+		t = t.NewLine().Append(req.Prompt.User, "text-gray-600")
+		if s := schemaInJSON(req.Prompt.Schema); s != "" {
 			t = t.NewLine().Append("schema-in ", "text-gray-500").Append(s, "text-gray-600")
 		}
 		log.Debugf("%v", t)
@@ -90,10 +90,10 @@ func (l *loggingProvider) ExecuteStream(ctx context.Context, req ai.Request) (<-
 		t := clicky.Text("").
 			Add(icons.AI).
 			Append(fmt.Sprintf(" %s/%s (stream)", l.provider.GetBackend(), l.provider.GetModel()), "text-purple-600 font-medium")
-		if req.Source != "" {
-			t = t.Append(fmt.Sprintf(" [%s]", req.Source), "text-gray-500")
+		if req.Prompt.Source != "" {
+			t = t.Append(fmt.Sprintf(" [%s]", req.Prompt.Source), "text-gray-500")
 		}
-		log.Debugf("%v", t.NewLine().Append(req.Prompt, "text-gray-600"))
+		log.Debugf("%v", t.NewLine().Append(req.Prompt.User, "text-gray-600"))
 	}
 
 	return streamer.ExecuteStream(ctx, req)

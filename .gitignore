@@ -14,3 +14,4 @@ pkg/cli/webapp/*.tsbuildinfo
 !pkg/cli/webapp/dist/
 !pkg/cli/webapp/dist/**
 dist/
+.grite/

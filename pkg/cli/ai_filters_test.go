@@ -6,7 +6,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/agent"
-	"github.com/flanksource/clicky/aichat"
+	capapi "github.com/flanksource/captain/pkg/api"
 )
 
 // optionKeys returns the sorted option keys of the aiFilters filter with the
@@ -30,7 +30,10 @@ func optionKeys(t *testing.T, key string) []string {
 }
 
 func TestAIFilters_EffortFromSharedEnum(t *testing.T) {
-	want := []string{string(aichat.EffortHigh), string(aichat.EffortLow), string(aichat.EffortMedium)}
+	want := make([]string, 0, len(capapi.AllEfforts()))
+	for _, e := range capapi.AllEfforts() {
+		want = append(want, string(e)) // includes the captain-owned "xhigh" tier
+	}
 	sort.Strings(want)
 	if got := optionKeys(t, "effort"); !equalStrings(got, want) {
 		t.Errorf("effort options = %v, want %v", got, want)

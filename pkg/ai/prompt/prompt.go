@@ -4,9 +4,9 @@
 // {{role "user"}} markers split the rendered output into messages.
 //
 // Structured output is driven by the Go target passed to Render (out), which
-// becomes ai.Request.StructuredOutput — captain's providers derive the JSON
+// becomes ai.Request.Prompt.Schema — captain's providers derive the JSON
 // schema from that Go type. The frontmatter output schema is advisory and is
-// not used to populate StructuredOutput (captain cannot consume a bare schema
+// not used to populate the schema target (captain cannot consume a bare schema
 // map), so pass a Go struct when you want structured results.
 package prompt
 
@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/api"
 	dp "github.com/google/dotprompt/go/dotprompt"
 )
 
@@ -56,7 +57,7 @@ func LoadFS(fsys fs.FS, path string) (*Template, error) {
 
 // Render executes the template body with data and folds the frontmatter into an
 // ai.Request and ai.Config. When out is non-nil it becomes
-// Request.StructuredOutput (the structured-output target).
+// Request.Prompt.Schema (the structured-output target).
 func (t *Template) Render(data map[string]any, out any) (ai.Request, ai.Config, error) {
 	rendered, err := t.dp.Render(t.source, &dp.DataArgument{Input: data}, nil)
 	if err != nil {
@@ -73,20 +74,20 @@ func (t *Template) Render(data map[string]any, out any) (ai.Request, ai.Config, 
 		}
 	}
 
-	req := ai.Request{
-		SystemPrompt: strings.TrimSpace(strings.Join(system, "\n")),
-		Prompt:       strings.TrimSpace(strings.Join(user, "\n")),
-		Source:       t.name,
-	}
-	cfg := ai.Config{Model: rendered.Model}
+	req := ai.Request{Prompt: api.Prompt{
+		System: strings.TrimSpace(strings.Join(system, "\n")),
+		User:   strings.TrimSpace(strings.Join(user, "\n")),
+		Source: t.name,
+	}}
+	cfg := ai.Config{Model: api.Model{Name: rendered.Model}}
 	if rendered.Model != "" {
 		if b, berr := ai.InferBackend(rendered.Model); berr == nil {
-			cfg.Backend = b
+			cfg.Model.Backend = b
 		}
 	}
 	applyModelConfig(rendered.Config, &req, &cfg)
 	if out != nil {
-		req.StructuredOutput = out
+		req.Prompt.Schema = out
 	}
 	return req, cfg, nil
 }
@@ -111,15 +112,16 @@ func (l *Library) Render(name string, data map[string]any, out any) (ai.Request,
 // the captain request/config.
 func applyModelConfig(c dp.ModelConfig, req *ai.Request, cfg *ai.Config) {
 	if v, ok := floatOf(c["maxOutputTokens"]); ok {
-		req.MaxTokens = int(v)
-		cfg.MaxTokens = int(v)
+		req.Budget.MaxTokens = int(v)
+		cfg.Budget.MaxTokens = int(v)
 	}
 	if v, ok := floatOf(c["temperature"]); ok {
-		req.Temperature = v
-		cfg.Temperature = v
+		temp := v
+		req.Temperature = &temp
+		cfg.Model.Temperature = &temp
 	}
 	if s, ok := c["reasoning"].(string); ok {
-		req.ReasoningEffort = s
+		req.Effort = api.Effort(s)
 	}
 }
 
