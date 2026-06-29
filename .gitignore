@@ -9,3 +9,7 @@ specs/
 *.png
 go.work
 go.work.sum
+pkg/cli/webapp/node_modules/
+pkg/cli/webapp/*.tsbuildinfo
+!pkg/cli/webapp/dist/
+!pkg/cli/webapp/dist/**

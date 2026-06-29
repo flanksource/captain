@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"sort"
 	"strings"
 	"time"
@@ -174,11 +173,11 @@ func ListModels(ctx context.Context, backend Backend) ([]ModelDef, error) {
 func remoteFetcherFor(backend Backend) (fetch func(context.Context, string) ([]ModelDef, error), apiKey string, parent Backend) {
 	switch backend {
 	case BackendOpenAI, BackendCodexCLI:
-		return FetchOpenAIModels, os.Getenv("OPENAI_API_KEY"), BackendOpenAI
+		return FetchOpenAIModels, GetAPIKeyFromEnv(backend), BackendOpenAI
 	case BackendAnthropic, BackendClaudeCLI, BackendClaudeAgent:
-		return FetchAnthropicModels, os.Getenv("ANTHROPIC_API_KEY"), BackendAnthropic
+		return FetchAnthropicModels, GetAPIKeyFromEnv(backend), BackendAnthropic
 	case BackendGemini, BackendGeminiCLI:
-		return FetchGeminiModels, os.Getenv("GEMINI_API_KEY"), BackendGemini
+		return FetchGeminiModels, GetAPIKeyFromEnv(backend), BackendGemini
 	default:
 		return nil, "", ""
 	}

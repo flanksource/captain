@@ -42,15 +42,7 @@ func NewProvider(cfg Config) (Provider, error) {
 }
 
 func GetAPIKeyFromEnv(backend Backend) string {
-	envVars := map[Backend][]string{
-		BackendAnthropic: {"ANTHROPIC_API_KEY"},
-		BackendGemini:    {"GEMINI_API_KEY", "GOOGLE_API_KEY"},
-		BackendOpenAI:    {"OPENAI_API_KEY"},
-		BackendGeminiCLI: {},
-		BackendClaudeCLI: {},
-		BackendCodexCLI:  {},
-	}
-	for _, envVar := range envVars[backend] {
+	for _, envVar := range AuthEnvVars(backend) {
 		if key := os.Getenv(envVar); key != "" {
 			return key
 		}
