@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/clicky/exec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -140,7 +141,7 @@ func withFakeAgentProcessEnv(t *testing.T, env map[string]string) {
 func TestProvider_StreamLifecycle(t *testing.T) {
 	withFakeAgentProcess(t)
 
-	p, err := New(ai.Config{Model: "claude-agent-sonnet"})
+	p, err := New(ai.Config{Model: api.Model{Name: "claude-agent-sonnet"}})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = p.Close() })
 
@@ -150,7 +151,7 @@ func TestProvider_StreamLifecycle(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	events, err := p.ExecuteStream(ctx, ai.Request{Prompt: "hello"})
+	events, err := p.ExecuteStream(ctx, ai.Request{Prompt: api.Prompt{User: "hello"}})
 	require.NoError(t, err)
 
 	var kinds []ai.EventKind
@@ -176,14 +177,14 @@ func TestProvider_StreamLifecycle(t *testing.T) {
 func TestProvider_ExecuteCoalesce(t *testing.T) {
 	withFakeAgentProcess(t)
 
-	p, err := New(ai.Config{Model: "claude-agent-sonnet"})
+	p, err := New(ai.Config{Model: api.Model{Name: "claude-agent-sonnet"}})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = p.Close() })
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	resp, err := p.Execute(ctx, ai.Request{Prompt: "hello"})
+	resp, err := p.Execute(ctx, ai.Request{Prompt: api.Prompt{User: "hello"}})
 	require.NoError(t, err)
 	assert.Equal(t, "hi from fake", resp.Text)
 	assert.Equal(t, ai.BackendClaudeAgent, resp.Backend)
@@ -193,7 +194,7 @@ func TestProvider_ExecuteCoalesce(t *testing.T) {
 func TestProvider_MultiTurnSerialized(t *testing.T) {
 	withFakeAgentProcess(t)
 
-	p, err := New(ai.Config{Model: "claude-agent-sonnet"})
+	p, err := New(ai.Config{Model: api.Model{Name: "claude-agent-sonnet"}})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = p.Close() })
 
@@ -202,7 +203,7 @@ func TestProvider_MultiTurnSerialized(t *testing.T) {
 
 	// Two sequential turns over the same supervised session must both complete.
 	for turn := 0; turn < 2; turn++ {
-		events, err := p.ExecuteStream(ctx, ai.Request{Prompt: "go"})
+		events, err := p.ExecuteStream(ctx, ai.Request{Prompt: api.Prompt{User: "go"}})
 		require.NoError(t, err)
 		var sawResult bool
 		for ev := range events {
@@ -222,25 +223,23 @@ func TestProvider_MultiTurnSerialized(t *testing.T) {
 func TestProvider_CanUseTool(t *testing.T) {
 	withFakeAgentProcessEnv(t, map[string]string{fakeServerEnv: "1", fakeModeEnv: "approval"})
 
-	p, err := New(ai.Config{Model: "claude-agent-sonnet"})
+	var gotReq ai.PermissionRequest
+	called := make(chan struct{}, 1)
+	canUseTool := func(_ context.Context, r ai.PermissionRequest) (ai.PermissionDecision, error) {
+		gotReq = r
+		called <- struct{}{}
+		return ai.PermissionDecision{Allow: true, UpdatedInput: map[string]any{"command": "ls -la"}}, nil
+	}
+
+	// CanUseTool is a runtime concern, set on the provider's Config (not the request).
+	p, err := New(ai.Config{Model: api.Model{Name: "claude-agent-sonnet"}, CanUseTool: canUseTool})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = p.Close() })
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	var gotReq ai.PermissionRequest
-	called := make(chan struct{}, 1)
-	req := ai.Request{
-		Prompt: "use a tool",
-		CanUseTool: func(_ context.Context, r ai.PermissionRequest) (ai.PermissionDecision, error) {
-			gotReq = r
-			called <- struct{}{}
-			return ai.PermissionDecision{Allow: true, UpdatedInput: map[string]any{"command": "ls -la"}}, nil
-		},
-	}
-
-	events, err := p.ExecuteStream(ctx, req)
+	events, err := p.ExecuteStream(ctx, ai.Request{Prompt: api.Prompt{User: "use a tool"}})
 	require.NoError(t, err)
 
 	var sawPermission bool
@@ -292,14 +291,14 @@ func TestProvider_InterruptNoKill(t *testing.T) {
 		fakeMarkerEnv: marker,
 	})
 
-	p, err := New(ai.Config{Model: "claude-agent-sonnet"})
+	p, err := New(ai.Config{Model: api.Model{Name: "claude-agent-sonnet"}})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = p.Close() })
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	events, err := p.ExecuteStream(ctx, ai.Request{Prompt: "go"})
+	events, err := p.ExecuteStream(ctx, ai.Request{Prompt: api.Prompt{User: "go"}})
 	require.NoError(t, err)
 
 	var sawError bool
