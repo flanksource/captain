@@ -84,3 +84,23 @@ func TestFindSessionFiles_CaseInsensitiveProjectDirectory(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{sessionPath}, files)
 }
+
+func TestFilterSessionFilesBySessionID(t *testing.T) {
+	projectsDir := t.TempDir()
+	projectDir := filepath.Join(projectsDir, NormalizePath("/work/project"))
+	sessionA := "11111111-1111-1111-1111-111111111111"
+	sessionB := "22222222-2222-2222-2222-222222222222"
+	mainA := filepath.Join(projectDir, sessionA+".jsonl")
+	mainB := filepath.Join(projectDir, sessionB+".jsonl")
+	agentA := filepath.Join(projectDir, sessionA, "subagents", "agent-a.jsonl")
+	agentB := filepath.Join(projectDir, sessionB, "subagents", "agent-b.jsonl")
+
+	for _, path := range []string{mainA, mainB, agentA, agentB} {
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, []byte("{}\n"), 0o644))
+	}
+
+	files := []string{mainA, mainB, agentA, agentB}
+	assert.Equal(t, files, filterSessionFilesBySessionID(files, Filter{}))
+	assert.Equal(t, []string{mainA, agentA}, filterSessionFilesBySessionID(files, Filter{SessionID: "11111111"}))
+}

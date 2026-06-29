@@ -467,21 +467,28 @@ func codexSessionMatchesProject(uses []history.ToolUse, projectRoot string) bool
 	if projectRoot == "" {
 		return true
 	}
-	rootAbs := canonicalPath(projectRoot)
 	for _, u := range uses {
-		if u.CWD == "" {
-			continue
-		}
-		cwdAbs := canonicalPath(u.CWD)
-		if cwdAbs == rootAbs {
-			return true
-		}
-		rel, err := filepath.Rel(rootAbs, cwdAbs)
-		if err == nil && rel != ".." && !startsWithParent(rel) {
+		if codexCWDMatchesProject(u.CWD, projectRoot) {
 			return true
 		}
 	}
 	return false
+}
+
+func codexCWDMatchesProject(cwd, projectRoot string) bool {
+	if projectRoot == "" {
+		return true
+	}
+	if cwd == "" {
+		return false
+	}
+	rootAbs := canonicalPath(projectRoot)
+	cwdAbs := canonicalPath(cwd)
+	if cwdAbs == rootAbs {
+		return true
+	}
+	rel, err := filepath.Rel(rootAbs, cwdAbs)
+	return err == nil && rel != ".." && !startsWithParent(rel)
 }
 
 func canonicalPath(path string) string {

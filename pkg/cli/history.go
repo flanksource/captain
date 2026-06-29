@@ -19,12 +19,13 @@ import (
 )
 
 type HistoryOptions struct {
-	Paths      []string `args:"true" help:"Filter by file or directory paths"`
+	Paths      []string `args:"true" help:"Filter by file or directory paths; canonical UUID args are treated as session IDs"`
 	File       string   `flag:"file" help:"Read from a JSONL/JSON file ('-' for stdin) instead of session history" short:"f"`
 	Tools      []string `flag:"tool" help:"Filter by tool patterns" short:"t"`
 	Categories []string `flag:"category" help:"Filter by category patterns" short:"c"`
 	Approved   string   `flag:"approved" help:"Filter by approval status (true=approved, false=denied)"`
-	Session    string   `flag:"session" help:"Filter by session ID (exact or prefix match)"`
+	Session    string   `flag:"session" help:"Alias for --session-id (exact or prefix match)"`
+	SessionID  string   `flag:"session-id" help:"Filter by session ID (exact or prefix match)"`
 	TextFilter string
 	Limit      int       `flag:"limit" help:"Maximum results" default:"100" short:"l"`
 	Since      time.Time `flag:"since" help:"Only include commands after this time" default:"now-7d" short:"s"`
@@ -66,16 +67,25 @@ func RunHistory(opts HistoryOptions) (any, error) {
 		return out, err
 	}
 
+	var sessionIDs []string
+	var err error
+	opts, sessionIDs, err = normalizeHistoryOptions(opts)
+	if err != nil {
+		return nil, err
+	}
+
 	cwd, err := os.Getwd()
 	if err != nil {
 		return nil, err
 	}
+	cwd = historyScanCWD(cwd, opts.Paths, opts.All)
 
 	filter := claude.Filter{
 		Tools:         opts.Tools,
 		Paths:         resolvePaths(opts.Paths),
 		Since:         &opts.Since,
-		SessionID:     opts.Session,
+		SessionID:     firstSessionID(sessionIDs),
+		SessionIDs:    sessionIDs,
 		IncludeAgents: opts.Agents,
 	}
 
@@ -98,13 +108,15 @@ func RunHistory(opts HistoryOptions) (any, error) {
 	var costs []claude.SessionCost
 	if opts.Summary {
 		if showClaude {
-			costs, _ = claude.ParseCostsDetailed(cwd, opts.All, &opts.Since)
+			costs, _ = claude.ParseCostsDetailedWithFilter(cwd, opts.All, &opts.Since, filter)
+			costs = filterCostsBySessionID(costs, sessionIDs)
 		}
 		return runHistorySummary(allToolUses, opts, classifier, costs)
 	}
 
 	if showClaude {
-		costs, _ = claude.ParseCosts(cwd, opts.All, &opts.Since)
+		costs, _ = claude.ParseCostsWithFilter(cwd, opts.All, &opts.Since, filter)
+		costs = filterCostsBySessionID(costs, sessionIDs)
 	}
 
 	var tl []tools.Tool
@@ -133,6 +145,16 @@ func RunHistory(opts HistoryOptions) (any, error) {
 		return runHistoryAll(tl, opts, classifier, costs)
 	}
 	return runHistorySingle(tl, opts, classifier, costs)
+}
+
+func normalizeHistoryOptions(opts HistoryOptions) (HistoryOptions, []string, error) {
+	positionalIDs, paths := splitSessionIDPathArgs(opts.Paths)
+	sessionIDs, err := normalizeSessionIDFilters(opts.Session, opts.SessionID, positionalIDs)
+	if err != nil {
+		return opts, nil, err
+	}
+	opts.Paths = paths
+	return opts, sessionIDs, nil
 }
 
 // lastSessionTools returns the trailing run of tools that share a sessionKey
@@ -170,7 +192,7 @@ func gatherToolUses(cwd string, searchAll, showClaude, showCodex bool, filter cl
 	}
 
 	if showCodex {
-		codexUses, err := collectCodexHistory(cwd, searchAll)
+		codexUses, err := collectCodexHistory(cwd, searchAll, filter)
 		if err == nil {
 			converted := codexToClaudeToolUses(codexUses)
 			converted = claude.FilterToolUses(converted, filter)
@@ -183,7 +205,7 @@ func gatherToolUses(cwd string, searchAll, showClaude, showCodex bool, filter cl
 
 // collectCodexHistory loads codex sessions and returns their tool uses
 // filtered to the current project (or all if searchAll is true).
-func collectCodexHistory(cwd string, searchAll bool) ([]history.ToolUse, error) {
+func collectCodexHistory(cwd string, searchAll bool, filter claude.Filter) ([]history.ToolUse, error) {
 	files, err := history.FindCodexSessionFiles()
 	if err != nil {
 		return nil, err
@@ -197,8 +219,25 @@ func collectCodexHistory(cwd string, searchAll bool) ([]history.ToolUse, error) 
 
 	var out []history.ToolUse
 	for _, f := range files {
+		info, infoErr := history.ReadCodexSessionMeta(f)
+		if infoErr == nil && info != nil {
+			if info.ID != "" && !filter.MatchesSessionID(info.ID) {
+				continue
+			}
+			if !searchAll && info.CWD != "" && !codexCWDMatchesProject(info.CWD, matchRoot) {
+				continue
+			}
+			if filter.HasSessionIDFilter() && info.ID == "" {
+				// Fall through to full parsing: older/live schemas may only expose
+				// the session id on later events.
+			}
+		}
+
 		uses, err := history.ExtractCodexToolUses(f)
 		if err != nil || len(uses) == 0 {
+			continue
+		}
+		if !codexUsesMatchSession(uses, filter) {
 			continue
 		}
 		if !searchAll && !codexSessionMatchesProject(uses, matchRoot) {
@@ -207,6 +246,18 @@ func collectCodexHistory(cwd string, searchAll bool) ([]history.ToolUse, error) 
 		out = append(out, uses...)
 	}
 	return out, nil
+}
+
+func codexUsesMatchSession(uses []history.ToolUse, filter claude.Filter) bool {
+	if !filter.HasSessionIDFilter() {
+		return true
+	}
+	for _, use := range uses {
+		if filter.MatchesSessionID(use.SessionID) {
+			return true
+		}
+	}
+	return false
 }
 
 func sortToolUsesByTime(uses []claude.ToolUse) {
