@@ -163,18 +163,23 @@ func (a *Agent) accrue(resp *Response) Cost {
 		model = a.cfg.Model.Name
 	}
 	cost := Cost{
-		Model:        model,
-		InputTokens:  resp.Usage.InputTokens,
-		OutputTokens: resp.Usage.OutputTokens,
-		TotalTokens:  resp.Usage.TotalTokens(),
+		Model:            model,
+		InputTokens:      resp.Usage.InputTokens,
+		OutputTokens:     resp.Usage.OutputTokens,
+		ReasoningTokens:  resp.Usage.ReasoningTokens,
+		CacheReadTokens:  resp.Usage.CacheReadTokens,
+		CacheWriteTokens: resp.Usage.CacheWriteTokens,
+		TotalTokens:      resp.Usage.TotalTokens(),
 	}
 	// The pricing registry is keyed on OpenRouter-style ids (provider/model);
-	// try the backend-prefixed id first, then the bare model. The split between
-	// input/output cost is not modelled by the registry, so the total is carried
-	// in InputCost (Cost.Total() stays correct for reporting).
+	// try the backend-prefixed id first, then the bare model.
 	for _, id := range pricingIDs(a.provider.GetBackend(), model) {
 		if res, err := pricing.CalculateCost(id, cost.InputTokens, cost.OutputTokens, resp.Usage.ReasoningTokens, resp.Usage.CacheReadTokens, resp.Usage.CacheWriteTokens); err == nil {
-			cost.InputCost = res.TotalCost
+			cost.InputCost = res.InputCost
+			cost.OutputCost = res.OutputCost
+			cost.ReasoningCost = res.ReasoningCost
+			cost.CacheReadCost = res.CacheReadCost
+			cost.CacheWriteCost = res.CacheWriteCost
 			break
 		}
 	}

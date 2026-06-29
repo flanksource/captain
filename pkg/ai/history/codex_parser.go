@@ -40,6 +40,54 @@ type CodexSessionInfo struct {
 	ReasoningEffort string // "low", "medium", "high" — per turn_context
 }
 
+// ReadCodexSessionMeta parses only the leading session metadata needed for
+// cheap history candidate filtering. It intentionally stops before scanning
+// turns or response items.
+func ReadCodexSessionMeta(sessionFile string) (*CodexSessionInfo, error) {
+	file, err := os.Open(sessionFile)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = file.Close() }()
+
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		event, err := ParseCodexLine(line)
+		if err != nil {
+			continue
+		}
+		switch event.Type {
+		case "session_meta":
+			info := &CodexSessionInfo{
+				ID:            event.Payload.ID,
+				CWD:           event.Payload.CWD,
+				CLIVersion:    event.Payload.CLIVersion,
+				ModelProvider: event.Payload.ModelProvider,
+				Originator:    event.Payload.Originator,
+				StartedAt:     event.Time(),
+			}
+			if event.Payload.Git != nil {
+				info.GitBranch = event.Payload.Git.Branch
+				info.GitCommit = event.Payload.Git.CommitHash
+			}
+			return info, nil
+		case "thread.started":
+			return &CodexSessionInfo{ID: event.ThreadID, StartedAt: event.Time()}, nil
+		case "turn_context", "response_item", "event_msg", "item.completed", "turn.failed", "error":
+			return nil, nil
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return nil, nil
+}
+
 // ReadCodexSessionInfo parses just the leading `session_meta` event from a
 // codex rollout file. Returns nil if the file has no session_meta header.
 func ReadCodexSessionInfo(sessionFile string) (*CodexSessionInfo, error) {
@@ -77,6 +125,13 @@ func ReadCodexSessionInfo(sessionFile string) (*CodexSessionInfo, error) {
 			if event.Payload.Git != nil {
 				info.GitBranch = event.Payload.Git.Branch
 				info.GitCommit = event.Payload.Git.CommitHash
+			}
+		case "thread.started":
+			if info == nil {
+				info = &CodexSessionInfo{StartedAt: event.Time()}
+			}
+			if info.ID == "" {
+				info.ID = event.ThreadID
 			}
 		case "turn_context":
 			if info == nil {

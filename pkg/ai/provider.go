@@ -21,6 +21,8 @@ const (
 	BackendCodexCLI    = api.BackendCodexCLI
 	BackendGeminiCLI   = api.BackendGeminiCLI
 	BackendClaudeAgent = api.BackendClaudeAgent
+	BackendClaudeCmux  = api.BackendClaudeCmux
+	BackendCodexCmux   = api.BackendCodexCmux
 )
 
 // AllBackends lists every supported backend in canonical order.

@@ -42,12 +42,18 @@ func (c *costProvider) Execute(ctx context.Context, req ai.Request) (*ai.Respons
 		log.Debugf("Cost calculation failed for %s: %v", resp.Model, calcErr)
 	} else {
 		c.session.AddCost(ai.Cost{
-			Model:        resp.Model,
-			InputTokens:  result.InputTokens,
-			OutputTokens: result.OutputTokens,
-			TotalTokens:  resp.Usage.TotalTokens(),
-			InputCost:    result.TotalCost * float64(result.InputTokens) / float64(max(result.InputTokens+result.OutputTokens, 1)),
-			OutputCost:   result.TotalCost * float64(result.OutputTokens) / float64(max(result.InputTokens+result.OutputTokens, 1)),
+			Model:            resp.Model,
+			InputTokens:      result.InputTokens,
+			OutputTokens:     result.OutputTokens,
+			ReasoningTokens:  result.ReasoningTokens,
+			CacheReadTokens:  result.CacheReadTokens,
+			CacheWriteTokens: result.CacheWriteTokens,
+			TotalTokens:      resp.Usage.TotalTokens(),
+			InputCost:        result.InputCost,
+			OutputCost:       result.OutputCost,
+			ReasoningCost:    result.ReasoningCost,
+			CacheReadCost:    result.CacheReadCost,
+			CacheWriteCost:   result.CacheWriteCost,
 		})
 	}
 

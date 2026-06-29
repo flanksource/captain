@@ -140,6 +140,56 @@ func TestReadCodexSessionInfo_ModelAndEffort(t *testing.T) {
 	}
 }
 
+func TestReadCodexSessionInfo_LiveThreadStarted(t *testing.T) {
+	stream := strings.Join([]string{
+		`{"timestamp":"2026-05-07T18:44:49.553Z","type":"thread.started","thread_id":"019e0365-dc2a-7ad0-a5a8-78936481a928"}`,
+		`{"timestamp":"2026-05-07T18:44:49.557Z","type":"turn_context","payload":{"model":"gpt-5-codex","effort":"high"}}`,
+	}, "\n")
+	dir := t.TempDir()
+	path := dir + "/sess.jsonl"
+	if err := os.WriteFile(path, []byte(stream), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	info, err := ReadCodexSessionInfo(path)
+	if err != nil {
+		t.Fatalf("ReadCodexSessionInfo: %v", err)
+	}
+	if info == nil {
+		t.Fatal("info should not be nil")
+	}
+	if info.ID != "019e0365-dc2a-7ad0-a5a8-78936481a928" {
+		t.Errorf("ID = %q", info.ID)
+	}
+	if info.Model != "gpt-5-codex" || info.ReasoningEffort != "high" {
+		t.Errorf("model/effort = %q/%q, want gpt-5-codex/high", info.Model, info.ReasoningEffort)
+	}
+}
+
+func TestReadCodexSessionMetaStopsAtHeader(t *testing.T) {
+	stream := strings.Join([]string{
+		`{"timestamp":"2026-05-07T18:44:49.553Z","type":"session_meta","payload":{"id":"sess-1","cwd":"/p","cli_version":"0.128","model_provider":"openai"}}`,
+		`{"timestamp":"2026-05-07T18:44:49.557Z","type":"turn_context","payload":{"model":"gpt-5.5","effort":"high"}}`,
+	}, "\n")
+	dir := t.TempDir()
+	path := dir + "/sess.jsonl"
+	if err := os.WriteFile(path, []byte(stream), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	info, err := ReadCodexSessionMeta(path)
+	if err != nil {
+		t.Fatalf("ReadCodexSessionMeta: %v", err)
+	}
+	if info == nil {
+		t.Fatal("info should not be nil")
+	}
+	if info.ID != "sess-1" || info.CWD != "/p" || info.ModelProvider != "openai" {
+		t.Errorf("info = %+v", info)
+	}
+	if info.Model != "" || info.ReasoningEffort != "" {
+		t.Errorf("meta reader should not scan turn_context, got model/effort %q/%q", info.Model, info.ReasoningEffort)
+	}
+}
+
 func TestUnwrapCodexErrorMessage(t *testing.T) {
 	tests := []struct {
 		name string
