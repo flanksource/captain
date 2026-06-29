@@ -2,10 +2,12 @@ package middleware
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/ai/provider"
 	"github.com/flanksource/clicky"
 	"github.com/flanksource/clicky/api/icons"
 	"github.com/flanksource/commons/logger"
@@ -26,11 +28,17 @@ func (l *loggingProvider) Execute(ctx context.Context, req ai.Request) (*ai.Resp
 	start := time.Now()
 
 	if log.IsDebugEnabled() {
-		log.Debugf("%v", clicky.Text("").
+		t := clicky.Text("").
 			Add(icons.AI).
-			Append(fmt.Sprintf(" %s/%s", l.provider.GetBackend(), l.provider.GetModel()), "text-purple-600 font-medium").
-			NewLine().
-			Append(req.Prompt, "text-gray-600 max-w-[100ch]"))
+			Append(fmt.Sprintf(" %s/%s", l.provider.GetBackend(), l.provider.GetModel()), "text-purple-600 font-medium")
+		if req.Source != "" {
+			t = t.Append(fmt.Sprintf(" [%s]", req.Source), "text-gray-500")
+		}
+		t = t.NewLine().Append(req.Prompt, "text-gray-600")
+		if s := schemaInJSON(req.StructuredOutput); s != "" {
+			t = t.NewLine().Append("schema-in ", "text-gray-500").Append(s, "text-gray-600")
+		}
+		log.Debugf("%v", t)
 	}
 
 	resp, err := l.provider.Execute(ctx, req)
@@ -53,11 +61,15 @@ func (l *loggingProvider) Execute(ctx context.Context, req ai.Request) (*ai.Resp
 	}
 
 	if log.IsTraceEnabled() {
-		log.Tracef("%v", clicky.Text("").
+		t := clicky.Text("").
 			Add(icons.ArrowDown).
 			Append(" response", "text-gray-500").
 			NewLine().
-			Append(resp.Text, "text-gray-600 max-w-[100ch]"))
+			Append(resp.Text, "text-gray-600")
+		if s := structuredOutJSON(resp.StructuredData); s != "" {
+			t = t.NewLine().Append("schema-out ", "text-gray-500").Append(s, "text-gray-600")
+		}
+		log.Tracef("%v", t)
 	}
 
 	return resp, nil
@@ -75,11 +87,13 @@ func (l *loggingProvider) ExecuteStream(ctx context.Context, req ai.Request) (<-
 	}
 
 	if log.IsDebugEnabled() {
-		log.Debugf("%v", clicky.Text("").
+		t := clicky.Text("").
 			Add(icons.AI).
-			Append(fmt.Sprintf(" %s/%s (stream)", l.provider.GetBackend(), l.provider.GetModel()), "text-purple-600 font-medium").
-			NewLine().
-			Append(req.Prompt, "text-gray-600 max-w-[100ch]"))
+			Append(fmt.Sprintf(" %s/%s (stream)", l.provider.GetBackend(), l.provider.GetModel()), "text-purple-600 font-medium")
+		if req.Source != "" {
+			t = t.Append(fmt.Sprintf(" [%s]", req.Source), "text-gray-500")
+		}
+		log.Debugf("%v", t.NewLine().Append(req.Prompt, "text-gray-600"))
 	}
 
 	return streamer.ExecuteStream(ctx, req)
@@ -89,4 +103,36 @@ func WithLogging() Option {
 	return func(p ai.Provider) (ai.Provider, error) {
 		return &loggingProvider{provider: p}, nil
 	}
+}
+
+// schemaInJSON renders the JSON schema captain derives from a structured-output
+// target. Returns "" for text-mode requests (nil target); a non-struct target or
+// marshal failure is surfaced inline rather than swallowed, since this is
+// diagnostics that must never abort the run.
+func schemaInJSON(out any) string {
+	if out == nil {
+		return ""
+	}
+	schema, err := provider.GenerateJSONSchema(out)
+	if err != nil {
+		return fmt.Sprintf("<schema-in error: %v>", err)
+	}
+	s, err := provider.SchemaToJSON(schema)
+	if err != nil {
+		return fmt.Sprintf("<schema-in error: %v>", err)
+	}
+	return s
+}
+
+// structuredOutJSON renders the structured response the provider parsed into the
+// caller's target. Returns "" when the response was text-only (nil StructuredData).
+func structuredOutJSON(data any) string {
+	if data == nil {
+		return ""
+	}
+	b, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return fmt.Sprintf("<schema-out error: %v>", err)
+	}
+	return string(b)
 }

@@ -71,7 +71,7 @@ func RunConfigure(opts ConfigureOptions) (any, error) {
 				Value(&model),
 			huh.NewSelect[string]().
 				Title("Reasoning effort").
-				Description("Currently honoured by codex-cli only; other providers ignore.").
+				Description("Honoured by codex-cli and the API backends (thinking budget); CLI wrappers may ignore.").
 				Options(
 					huh.NewOption("low", "low"),
 					huh.NewOption("medium", "medium"),
@@ -97,7 +97,7 @@ func RunConfigure(opts ConfigureOptions) (any, error) {
 		huh.NewGroup(
 			huh.NewMultiSelect[string]().
 				Title("Defaults to ENABLE").
-				Description("Selected = on. Unselected items are disabled by default; pass --mcp=true etc. to override per-call.").
+				Description("Selected = enabled by default. Per call, --no-mcp/--no-hooks/etc. disable further; re-enable a disabled default by rerunning configure.").
 				Options(toggleHuhOptions()...).
 				Value(&enabled),
 		),
@@ -207,6 +207,7 @@ func backendOptions() []huh.Option[string] {
 		huh.NewOption("Google Gemini API", string(ai.BackendGemini)),
 		huh.NewOption("OpenAI API", string(ai.BackendOpenAI)),
 		huh.NewOption("Claude CLI", string(ai.BackendClaudeCLI)),
+		huh.NewOption("Claude Agent (SDK)", string(ai.BackendClaudeAgent)),
 		huh.NewOption("Codex CLI", string(ai.BackendCodexCLI)),
 		huh.NewOption("Gemini CLI", string(ai.BackendGeminiCLI)),
 	}
@@ -255,7 +256,7 @@ func modelOptionsFor(b ai.Backend) []huh.Option[string] {
 // seeds the form.
 func defaultModelFor(b ai.Backend) string {
 	switch b {
-	case ai.BackendAnthropic, ai.BackendClaudeCLI:
+	case ai.BackendAnthropic, ai.BackendClaudeCLI, ai.BackendClaudeAgent:
 		return "claude-sonnet-4-5"
 	case ai.BackendOpenAI:
 		return "gpt-5"

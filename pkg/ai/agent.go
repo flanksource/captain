@@ -30,6 +30,10 @@ type PromptRequest struct {
 	SystemPrompt     string            `json:"system_prompt,omitempty"`
 	Context          map[string]string `json:"context,omitempty"`
 	StructuredOutput any               `json:"structured_output,omitempty"`
+	// Source identifies the prompt template (e.g. the .prompt filename) for
+	// diagnostics; forwarded to ai.Request.Source and printed by the logging
+	// middleware.
+	Source string `json:"source,omitempty"`
 }
 
 // PromptResponse is the result of one PromptRequest.
@@ -75,6 +79,7 @@ func (a *Agent) ExecutePrompt(ctx context.Context, req PromptRequest) (*PromptRe
 		SystemPrompt:     req.SystemPrompt,
 		Prompt:           req.Prompt,
 		StructuredOutput: req.StructuredOutput,
+		Source:           req.Source,
 	})
 	if err != nil {
 		return &PromptResponse{Request: req, Model: a.cfg.Model, Error: err.Error(), Duration: time.Since(start)}, err

@@ -76,6 +76,7 @@ func (t *Template) Render(data map[string]any, out any) (ai.Request, ai.Config, 
 	req := ai.Request{
 		SystemPrompt: strings.TrimSpace(strings.Join(system, "\n")),
 		Prompt:       strings.TrimSpace(strings.Join(user, "\n")),
+		Source:       t.name,
 	}
 	cfg := ai.Config{Model: rendered.Model}
 	if rendered.Model != "" {

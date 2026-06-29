@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
@@ -28,15 +29,31 @@ func loadSavedAI() captainconfig.AIDefaults {
 
 type AIProviderOptions struct {
 	Model   string `flag:"model" help:"Model name, e.g. claude-sonnet-4, gemini-2.0-flash (defaults to the value saved by 'captain configure')" short:"m"`
-	Backend string `flag:"backend" help:"Force backend: anthropic, gemini, codex-cli, claude-cli, gemini-cli (default: inferred from model or saved by 'captain configure')" short:"b"`
+	Backend string `flag:"backend" help:"Force backend: anthropic|gemini|openai|claude-cli|claude-agent|codex-cli|gemini-cli (default: inferred from model or saved by 'captain configure')" short:"b"`
 	APIKey  string `flag:"api-key" help:"API key (env: ANTHROPIC_API_KEY, GEMINI_API_KEY, GOOGLE_API_KEY)"`
 	NoCache bool   `flag:"no-cache" help:"Disable response caching"`
 	Budget  string `flag:"budget" help:"Max spend in USD, 0=unlimited" default:"0"`
 }
 
-func (o AIProviderOptions) ToConfig() ai.Config {
+// parseFloatFlag parses a numeric string flag, returning a descriptive error
+// instead of silently coercing malformed input to zero.
+func parseFloatFlag(name, val string) (float64, error) {
+	if val == "" {
+		return 0, nil
+	}
+	f, err := strconv.ParseFloat(val, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid --%s %q: %w", name, val, err)
+	}
+	return f, nil
+}
+
+func (o AIProviderOptions) ToConfig() (ai.Config, error) {
 	saved := loadSavedAI()
-	budget, _ := strconv.ParseFloat(o.Budget, 64)
+	budget, err := parseFloatFlag("budget", o.Budget)
+	if err != nil {
+		return ai.Config{}, err
+	}
 
 	model := o.Model
 	if model == "" {
@@ -46,19 +63,20 @@ func (o AIProviderOptions) ToConfig() ai.Config {
 	if backend == "" {
 		backend = saved.Backend
 	}
+	if backend != "" && !ai.Backend(backend).Valid() {
+		return ai.Config{}, fmt.Errorf("invalid --backend %q (valid: %s)", backend, ai.BackendList())
+	}
 	if budget == 0 {
 		budget = saved.BudgetUSD
 	}
-	noCache := o.NoCache || saved.NoCache
 
-	cfg := ai.Config{
+	return ai.Config{
 		Model:     model,
 		Backend:   ai.Backend(backend),
 		APIKey:    o.APIKey,
-		NoCache:   noCache,
+		NoCache:   o.NoCache || saved.NoCache,
 		BudgetUSD: budget,
-	}
-	return cfg
+	}, nil
 }
 
 // AIRuntimeOptions binds the per-invocation knobs every AI command shares —
@@ -74,22 +92,53 @@ func (o AIProviderOptions) ToConfig() ai.Config {
 type AIRuntimeOptions struct {
 	AIProviderOptions
 
-	MaxTokens   int    `flag:"max-tokens" help:"Maximum output tokens" default:"4096"`
-	Temperature string `flag:"temperature" help:"Sampling temperature" default:"0"`
+	MaxTokens       int    `flag:"max-tokens" help:"Maximum output tokens (0 = saved default or 4096)"`
+	Temperature     string `flag:"temperature" help:"Sampling temperature" default:"0"`
+	ReasoningEffort string `flag:"reasoning-effort" help:"Reasoning effort: low|medium|high (codex/genkit; others ignore)"`
+	MaxTurns        int    `flag:"max-turns" help:"Max agent turns, 0 = provider default (claude-agent)"`
+	Resume          string `flag:"resume" help:"Resume an existing session by id (claude-agent, codex)"`
 
 	Edit            bool     `flag:"edit" help:"Safe defaults: acceptEdits + Read/Edit/Write/Glob/Grep allowlist"`
 	AllowedTools    []string `flag:"allowed-tools" help:"Override --edit's built-in allowlist (claude only)"`
 	DisallowedTools []string `flag:"disallowed-tools" help:"Tools to deny (claude only)"`
 	PermissionMode  string   `flag:"permission-mode" help:"acceptEdits|auto|bypassPermissions|default|plan"`
 
-	MCP       bool     `flag:"mcp" help:"Set --mcp=false to disable all MCP servers" default:"true"`
-	Hooks     bool     `flag:"hooks" help:"Set --hooks=false to skip hooks" default:"true"`
-	Skills    bool     `flag:"skills" help:"Set --skills=false to disable slash commands" default:"true"`
+	NoMCP     bool     `flag:"no-mcp" help:"Disable all MCP servers"`
+	NoHooks   bool     `flag:"no-hooks" help:"Skip hooks"`
+	NoSkills  bool     `flag:"no-skills" help:"Disable slash commands"`
 	SkillDirs []string `flag:"skill-dir" help:"Additional skill/plugin directory (repeatable)"`
-	User      bool     `flag:"user" help:"Load user-level settings" default:"true"`
-	Project   bool     `flag:"project" help:"Load project-level settings" default:"true"`
-	Memory    bool     `flag:"memory" help:"Load auto-memory and CLAUDE.md" default:"true"`
+	NoUser    bool     `flag:"no-user" help:"Skip user-level settings"`
+	NoProject bool     `flag:"no-project" help:"Skip project-level settings"`
+	NoMemory  bool     `flag:"no-memory" help:"Skip auto-memory and CLAUDE.md"`
 	Bare      bool     `flag:"bare" help:"Skip hooks, skills, memory, and ambient settings"`
+}
+
+var validPermissionModes = []string{"acceptEdits", "auto", "bypassPermissions", "default", "plan"}
+
+func validatePermissionMode(s string) error {
+	if s == "" {
+		return nil
+	}
+	for _, m := range validPermissionModes {
+		if s == m {
+			return nil
+		}
+	}
+	return fmt.Errorf("invalid --permission-mode %q (valid: %s)", s, strings.Join(validPermissionModes, "|"))
+}
+
+var validReasoningEfforts = []string{"low", "medium", "high"}
+
+func validateReasoningEffort(s string) error {
+	if s == "" {
+		return nil
+	}
+	for _, e := range validReasoningEfforts {
+		if s == e {
+			return nil
+		}
+	}
+	return fmt.Errorf("invalid --reasoning-effort %q (valid: %s)", s, strings.Join(validReasoningEfforts, "|"))
 }
 
 type AIPromptOptions struct {
@@ -112,38 +161,45 @@ type AIPromptResult struct {
 	Duration string  `json:"duration" pretty:"label=Duration"`
 }
 
-// ToRequest translates the runtime knobs into the typed ai.Request. Truthy
-// flags like --mcp/--hooks/--memory invert into the No*-style fields the
-// providers consume. When --bare is set, it implicitly strips memory/hooks/
-// skills/user/project regardless of those flags' values (claude --bare
-// composes them) so we let the provider decide the final argv.
+// ToRequest translates the runtime knobs into the typed ai.Request, overlaying
+// saved defaults from ~/.captain.yaml onto unset fields. Precedence is
+// flag > saved > built-in: max-tokens uses the explicit flag when > 0, else the
+// saved default, else 4096; reasoning-effort uses the flag when set, else saved.
+// The ambient toggles are negative flags (--no-mcp, …) that compose with the
+// saved No* defaults via OR, so either a flag or a saved default switches a
+// feature off; re-enabling a saved-off feature is done via `captain configure`.
 //
 // systemPrompt / appendSystemPrompt / userPrompt are passed explicitly so
-// non-prompt callers (gavel's ai-fix loop) can build them per-iteration
-// without leaking those fields into the shared runtime struct.
-//
-// Saved defaults from ~/.captain.yaml overlay onto unset fields. For the
-// boolean toggles, "saved off" wins over "flag default on" because clicky
-// does not yet expose a Changed() bit.
-//
-// WORKAROUND(no-flag-changed-bit): The boolean toggles default to true, so
-// we cannot tell whether --mcp=true was passed explicitly or inherited from
-// the default. As a result, when the saved config has NoMCP=true the user
-// cannot force MCP back on from the command line by passing --mcp=true alone
-// — they must edit ~/.captain.yaml or rerun `captain configure`.
-// Correct fix: thread clicky's per-flag Changed() bit (or a tri-state flag
-// type) through AIRuntimeOptions so we can distinguish "explicitly true"
-// from "default true". Ref: discussed with user 2026-05-07.
-func (o AIRuntimeOptions) ToRequest(systemPrompt, appendSystemPrompt, userPrompt string) ai.Request {
+// non-prompt callers (gavel's ai-fix loop) can build them per-iteration without
+// leaking those fields into the shared runtime struct. Parse/validation errors
+// are returned rather than silently coerced to zero values.
+func (o AIRuntimeOptions) ToRequest(systemPrompt, appendSystemPrompt, userPrompt string) (ai.Request, error) {
 	saved := loadSavedAI()
-	temperature, _ := strconv.ParseFloat(o.Temperature, 64)
 
-	maxTokens := o.MaxTokens
-	if maxTokens == 4096 && saved.MaxTokens != 0 {
-		maxTokens = saved.MaxTokens
+	temperature, err := parseFloatFlag("temperature", o.Temperature)
+	if err != nil {
+		return ai.Request{}, err
+	}
+	if err := validatePermissionMode(o.PermissionMode); err != nil {
+		return ai.Request{}, err
 	}
 
-	effort := saved.ReasoningEffort
+	maxTokens := o.MaxTokens
+	switch {
+	case maxTokens > 0: // explicit flag wins
+	case saved.MaxTokens != 0:
+		maxTokens = saved.MaxTokens
+	default:
+		maxTokens = 4096
+	}
+
+	effort := o.ReasoningEffort
+	if effort == "" {
+		effort = saved.ReasoningEffort
+	}
+	if err := validateReasoningEffort(effort); err != nil {
+		return ai.Request{}, err
+	}
 
 	return ai.Request{
 		SystemPrompt:       systemPrompt,
@@ -152,24 +208,26 @@ func (o AIRuntimeOptions) ToRequest(systemPrompt, appendSystemPrompt, userPrompt
 		MaxTokens:          maxTokens,
 		Temperature:        temperature,
 		ReasoningEffort:    effort,
+		MaxTurns:           o.MaxTurns,
+		SessionID:          o.Resume,
 		PermissionMode:     o.PermissionMode,
 		Edit:               o.Edit,
 		AllowedTools:       o.AllowedTools,
 		DisallowedTools:    o.DisallowedTools,
-		NoMCP:              !o.MCP || saved.NoMCP,
-		NoHooks:            !o.Hooks || saved.NoHooks,
-		NoSkills:           !o.Skills || saved.NoSkills,
+		NoMCP:              o.NoMCP || saved.NoMCP,
+		NoHooks:            o.NoHooks || saved.NoHooks,
+		NoSkills:           o.NoSkills || saved.NoSkills,
 		SkillDirs:          o.SkillDirs,
-		NoUser:             !o.User || saved.NoUser,
-		NoProject:          !o.Project || saved.NoProject,
-		NoMemory:           !o.Memory || saved.NoMemory,
+		NoUser:             o.NoUser || saved.NoUser,
+		NoProject:          o.NoProject || saved.NoProject,
+		NoMemory:           o.NoMemory || saved.NoMemory,
 		Bare:               o.Bare,
-	}
+	}, nil
 }
 
 // ToRequest delegates to AIRuntimeOptions.ToRequest, lifting the prompt
 // fields the prompt-shaped command owns onto the typed request.
-func (o AIPromptOptions) ToRequest() ai.Request {
+func (o AIPromptOptions) ToRequest() (ai.Request, error) {
 	return o.AIRuntimeOptions.ToRequest(o.System, o.AppendSystem, o.Prompt)
 }
 
@@ -178,12 +236,18 @@ func RunAIPrompt(opts AIPromptOptions) (any, error) {
 		return nil, fmt.Errorf("prompt text required (use --prompt or pipe via stdin)")
 	}
 
-	cfg := opts.ToConfig()
+	cfg, err := opts.ToConfig()
+	if err != nil {
+		return nil, err
+	}
 	if cfg.Model == "" {
 		return nil, fmt.Errorf("no model: pass --model or run 'captain configure' to set a default")
 	}
 
-	req := opts.ToRequest()
+	req, err := opts.ToRequest()
+	if err != nil {
+		return nil, err
+	}
 
 	p, err := ai.NewProvider(cfg)
 	if err != nil {
@@ -432,7 +496,10 @@ type AITestResult struct {
 }
 
 func RunAITest(opts AITestOptions) (any, error) {
-	cfg := opts.ToConfig()
+	cfg, err := opts.ToConfig()
+	if err != nil {
+		return nil, err
+	}
 	if cfg.Model == "" {
 		return nil, fmt.Errorf("no model: pass --model or run 'captain configure' to set a default")
 	}
