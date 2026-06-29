@@ -467,18 +467,12 @@ func codexSessionMatchesProject(uses []history.ToolUse, projectRoot string) bool
 	if projectRoot == "" {
 		return true
 	}
-	rootAbs, err := filepath.Abs(projectRoot)
-	if err != nil {
-		rootAbs = projectRoot
-	}
+	rootAbs := canonicalPath(projectRoot)
 	for _, u := range uses {
 		if u.CWD == "" {
 			continue
 		}
-		cwdAbs, err := filepath.Abs(u.CWD)
-		if err != nil {
-			cwdAbs = u.CWD
-		}
+		cwdAbs := canonicalPath(u.CWD)
 		if cwdAbs == rootAbs {
 			return true
 		}
@@ -488,6 +482,17 @@ func codexSessionMatchesProject(uses []history.ToolUse, projectRoot string) bool
 		}
 	}
 	return false
+}
+
+func canonicalPath(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		abs = path
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved
+	}
+	return abs
 }
 
 func startsWithParent(rel string) bool {

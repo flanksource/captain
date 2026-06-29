@@ -1,6 +1,7 @@
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
+  AppShell,
   Button,
   DensitySwitcher,
   ThemeSwitcher,
@@ -15,6 +16,7 @@ import { apiClient } from "./api";
 import { AgentLauncher } from "./AgentLauncher";
 import { ChatLayer } from "./ChatLayer";
 import { ChatRoute } from "./ChatRoute";
+import { SessionBrowser } from "./SessionBrowser";
 
 export function App() {
   const queryClient = useMemo(
@@ -31,35 +33,18 @@ export function App() {
     <QueryClientProvider client={queryClient}>
       <RouterProvider adapter={router}>
         <ChatWindowManagerProvider storageId="captain-chat">
-          <div className="flex h-screen min-h-0 flex-col bg-background text-foreground">
-            <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border bg-card px-3">
-              <button
-                type="button"
-                className="mr-2 text-sm font-semibold"
-                onClick={() => router.navigate("/")}
-              >
-                Captain
-              </button>
-              <Button
-                size="sm"
-                variant={route.kind === "launcher" ? "secondary" : "ghost"}
-                onClick={() => router.navigate("/")}
-              >
-                Agent
-              </Button>
-              <Button
-                size="sm"
-                variant={route.kind === "operations" ? "secondary" : "ghost"}
-                onClick={() => router.navigate("/operations")}
-              >
-                Operations
-              </Button>
-              <div className="flex-1" />
-              <ThemeSwitcher />
-              <DensitySwitcher />
-            </header>
-
-            <main className="min-h-0 flex-1 overflow-hidden">
+          {route.kind === "sessions" ? (
+            <SessionBrowser
+              selectedId={route.sessionId}
+              onNavigate={router.navigate}
+              nav={<CaptainNav active="sessions" onNavigate={router.navigate} />}
+              actions={<ShellActions />}
+            />
+          ) : (
+            <CaptainShell
+              active={route.kind === "operations" ? "operations" : "agent"}
+              onNavigate={router.navigate}
+            >
               {route.kind === "operations" ? (
                 <EntityExplorerApp
                   client={apiClient}
@@ -77,22 +62,111 @@ export function App() {
                   <AgentLauncher onNavigate={router.navigate} />
                 </div>
               )}
-            </main>
-            <ChatLayer />
-          </div>
+            </CaptainShell>
+          )}
+          <ChatLayer />
         </ChatWindowManagerProvider>
       </RouterProvider>
     </QueryClientProvider>
   );
 }
 
+type PrimaryRoute = "agent" | "sessions" | "operations";
+
+function CaptainShell({
+  active,
+  onNavigate,
+  children,
+}: {
+  active: PrimaryRoute;
+  onNavigate: (to: string, opts?: { replace?: boolean }) => void;
+  children: ReactNode;
+}) {
+  return (
+    <AppShell
+      className="h-screen"
+      brand={<ShellBrand onNavigate={onNavigate} />}
+      nav={<CaptainNav active={active} onNavigate={onNavigate} />}
+      actions={<ShellActions />}
+      contentClassName="p-0 overflow-hidden"
+    >
+      {children}
+    </AppShell>
+  );
+}
+
+function ShellBrand({
+  onNavigate,
+}: {
+  onNavigate: (to: string, opts?: { replace?: boolean }) => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="text-sm font-semibold"
+      onClick={() => onNavigate("/")}
+    >
+      Captain
+    </button>
+  );
+}
+
+function CaptainNav({
+  active,
+  onNavigate,
+}: {
+  active: PrimaryRoute;
+  onNavigate: (to: string, opts?: { replace?: boolean }) => void;
+}) {
+  return (
+    <div className="flex items-center gap-1">
+      <Button
+        size="sm"
+        variant={active === "agent" ? "secondary" : "ghost"}
+        onClick={() => onNavigate("/")}
+      >
+        Agent
+      </Button>
+      <Button
+        size="sm"
+        variant={active === "sessions" ? "secondary" : "ghost"}
+        onClick={() => onNavigate("/sessions")}
+      >
+        Sessions
+      </Button>
+      <Button
+        size="sm"
+        variant={active === "operations" ? "secondary" : "ghost"}
+        onClick={() => onNavigate("/operations")}
+      >
+        Operations
+      </Button>
+    </div>
+  );
+}
+
+function ShellActions() {
+  return (
+    <>
+      <ThemeSwitcher />
+      <DensitySwitcher />
+    </>
+  );
+}
+
 type Route =
   | { kind: "launcher" }
+  | { kind: "sessions"; sessionId?: string }
   | { kind: "operations" }
   | { kind: "chat"; threadId: string; model?: string };
 
 function parseRoute(pathname: string, search: string): Route {
   if (pathname.startsWith("/operations")) return { kind: "operations" };
+  if (pathname.startsWith("/sessions")) {
+    const raw = pathname.slice("/sessions".length).replace(/^\/+/, "");
+    const sessionId = raw ? decodeURIComponent(raw.split("/")[0] ?? "") : undefined;
+    return sessionId ? { kind: "sessions", sessionId } : { kind: "sessions" };
+  }
   if (pathname.startsWith("/chat/")) {
     const threadId = decodeURIComponent(pathname.slice("/chat/".length).split("/")[0] ?? "");
     const model = new URLSearchParams(search).get("model") || undefined;

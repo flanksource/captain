@@ -99,7 +99,7 @@ func TestAIPromptOptions_ToRequest_PassesScalars(t *testing.T) {
 	opts.Bare = true
 	opts.MaxTokens = 1024
 	opts.Temperature = "0.5"
-	opts.ReasoningEffort = "high"
+	opts.Effort = "high"
 	opts.MaxTurns = 7
 	opts.Resume = "sess-123"
 
@@ -158,8 +158,12 @@ func TestAIRuntimeOptions_ToRequest_ValidationErrors(t *testing.T) {
 		want   string
 	}{
 		{"bad temperature", func(o *AIPromptOptions) { o.Temperature = "hot" }, "temperature"},
+		{"temperature above max", func(o *AIPromptOptions) { o.Temperature = "3" }, "0.0-2.0"},
+		{"temperature below min", func(o *AIPromptOptions) { o.Temperature = "-1" }, "0.0-2.0"},
 		{"bad permission-mode", func(o *AIPromptOptions) { o.PermissionMode = "yolo" }, "permission-mode"},
-		{"bad reasoning-effort", func(o *AIPromptOptions) { o.ReasoningEffort = "max" }, "reasoning-effort"},
+		{"bad effort", func(o *AIPromptOptions) { o.Effort = "max" }, "effort"},
+		{"max-turns above max", func(o *AIPromptOptions) { o.MaxTurns = 200 }, "max-turns"},
+		{"max-turns below min", func(o *AIPromptOptions) { o.MaxTurns = -1 }, "max-turns"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -220,11 +224,11 @@ func TestAIRuntimeOptions_ToRequest_MaxTokensPrecedence(t *testing.T) {
 // TestAIRuntimeOptions_ToRequest_OverlaysSaved verifies the path gavel (and any
 // other embedder) takes: AIRuntimeOptions with zero flag values should pick up
 // NoMCP/.../MaxTokens/ReasoningEffort from ~/.captain.yaml, and an explicit
-// reasoning-effort flag should override the saved value.
+// --effort flag should override the saved value.
 func TestAIRuntimeOptions_ToRequest_OverlaysSaved(t *testing.T) {
 	seedSavedAI(t, "ai:\n  noMCP: true\n  noHooks: true\n  noSkills: true\n  noUser: true\n  noProject: true\n  noMemory: true\n  maxTokens: 16000\n  reasoningEffort: low\n")
 
-	opts := AIRuntimeOptions{ReasoningEffort: "high"} // flag overrides saved low
+	opts := AIRuntimeOptions{Effort: "high"} // flag overrides saved low
 	req, err := opts.ToRequest("sys", "", "user")
 	if err != nil {
 		t.Fatalf("ToRequest: %v", err)

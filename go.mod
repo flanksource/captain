@@ -14,6 +14,7 @@ require (
 	github.com/flanksource/commons v1.51.3
 	github.com/flanksource/sandbox-runtime v1.0.2
 	github.com/google/dotprompt/go v0.0.0-20260502013637-5cd4a8405ca3
+	github.com/invopop/jsonschema v0.13.0
 	github.com/mattn/go-sqlite3 v1.14.38
 	github.com/onsi/ginkgo/v2 v2.28.0
 	github.com/onsi/gomega v1.39.1
@@ -113,7 +114,6 @@ require (
 	github.com/hairyhenderson/toml v0.4.2-0.20210923231440-40456b8e66cf // indirect
 	github.com/hairyhenderson/yaml v0.0.0-20220618171115-2d35fca545ce // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
-	github.com/invopop/jsonschema v0.13.0 // indirect
 	github.com/itchyny/gojq v0.12.19 // indirect
 	github.com/itchyny/timefmt-go v0.1.8 // indirect
 	github.com/jeremywohl/flatten v1.0.1 // indirect

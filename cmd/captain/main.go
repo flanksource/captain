@@ -70,6 +70,11 @@ func main() {
 	changesCmd.Short = "List files modified by a session"
 	changesCmd.Long = "List the files written or edited during a Claude Code or Codex session. Pass --session-id to target a specific session; otherwise the most recent session in the current directory is used."
 
+	sessionsCmd := &cobra.Command{Use: "sessions", Short: "Browse Claude and Codex sessions"}
+	rootCmd.AddCommand(sessionsCmd)
+	clicky.AddNamedCommand("list", sessionsCmd, cli.SessionListOptions{}, cli.RunSessionList).Short = "List discovered sessions"
+	clicky.AddNamedCommand("get", sessionsCmd, cli.SessionGetOptions{}, cli.RunSessionGet).Short = "Show a session transcript"
+
 	sandboxCmd := &cobra.Command{
 		Use:   "sandbox",
 		Short: "Sandbox configuration tools",
