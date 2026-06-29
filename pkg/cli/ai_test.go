@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -11,6 +13,40 @@ import (
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/captainconfig"
 )
+
+type promptResultProvider struct{}
+
+func (promptResultProvider) GetModel() string { return "claude-sonnet-4-6" }
+
+func (promptResultProvider) GetBackend() ai.Backend { return ai.BackendAnthropic }
+
+func (promptResultProvider) Execute(context.Context, ai.Request) (*ai.Response, error) {
+	return &ai.Response{
+		Text:    "done",
+		Model:   "claude-sonnet-4-6",
+		Backend: ai.BackendAnthropic,
+		Usage:   ai.Usage{InputTokens: 12, OutputTokens: 7},
+	}, nil
+}
+
+type promptResultStreamingProvider struct{}
+
+func (promptResultStreamingProvider) GetModel() string { return "gpt-5-codex" }
+
+func (promptResultStreamingProvider) GetBackend() ai.Backend { return ai.BackendCodexCLI }
+
+func (promptResultStreamingProvider) Execute(context.Context, ai.Request) (*ai.Response, error) {
+	return nil, nil
+}
+
+func (promptResultStreamingProvider) ExecuteStream(_ context.Context, _ ai.Request) (<-chan ai.Event, error) {
+	events := make(chan ai.Event, 3)
+	events <- ai.Event{Kind: ai.EventSystem, SessionID: "stream-session-1", Model: "gpt-5-codex"}
+	events <- ai.Event{Kind: ai.EventText, Text: "streamed", Model: "gpt-5-codex"}
+	events <- ai.Event{Kind: ai.EventResult, Model: "gpt-5-codex", Usage: &ai.Usage{InputTokens: 21, OutputTokens: 9}, CostUSD: 0.02}
+	close(events)
+	return events, nil
+}
 
 // isolateSavedAI redirects captainconfig.Path() to an empty file inside
 // t.TempDir() so loadSavedAI() returns zero defaults rather than leaking
@@ -274,6 +310,95 @@ func TestBackendHelpEnumeratesAllBackends(t *testing.T) {
 				t.Errorf("%s Backend help %q is missing backend %q", c.name, help, b)
 			}
 		}
+	}
+}
+
+func TestRunBuffered_JSONIncludesFullInputSpec(t *testing.T) {
+	req := ai.Request{
+		Model:   api.Model{Name: "claude-sonnet-4-6", Backend: api.BackendAnthropic, Effort: api.EffortMedium},
+		Prompt:  api.Prompt{System: "be precise", User: "summarize"},
+		Budget:  api.Budget{MaxTokens: 2048},
+		Context: api.Context{Dir: "/repo"},
+		Permissions: api.Permissions{
+			Presets: []api.Preset{api.PresetEdit},
+			Tools:   api.Tools{Allow: []string{"Read"}},
+		},
+		SessionID: "resume-1",
+	}
+
+	got, err := runBuffered(context.Background(), promptResultProvider{}, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, ok := got.(AIPromptResult)
+	if !ok {
+		t.Fatalf("runBuffered returned %T, want AIPromptResult", got)
+	}
+	if result.Input.Prompt.User != "summarize" || result.Input.Model.Name != "claude-sonnet-4-6" {
+		t.Fatalf("result input = %+v, want original request", result.Input)
+	}
+	if result.InputTokens != 12 {
+		t.Fatalf("InputTokens = %d, want 12", result.InputTokens)
+	}
+	if result.Model != "claude-sonnet-4-6" || result.Backend != "anthropic" || result.Dir != "/repo" || result.SessionID != "resume-1" {
+		t.Fatalf("resolved fields = model %q backend %q dir %q session %q", result.Model, result.Backend, result.Dir, result.SessionID)
+	}
+
+	var encoded map[string]any
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &encoded); err != nil {
+		t.Fatal(err)
+	}
+	input, ok := encoded["input"].(map[string]any)
+	if !ok {
+		t.Fatalf("json input = %T, want object: %s", encoded["input"], data)
+	}
+	prompt, ok := input["prompt"].(map[string]any)
+	if !ok || prompt["user"] != "summarize" || prompt["system"] != "be precise" {
+		t.Fatalf("json input.prompt = %#v, want rendered prompt", input["prompt"])
+	}
+	if input["model"] != "claude-sonnet-4-6" || input["backend"] != "anthropic" || input["effort"] != "medium" {
+		t.Fatalf("json input model fields = %#v", input)
+	}
+	context, ok := input["context"].(map[string]any)
+	if !ok || context["dir"] != "/repo" {
+		t.Fatalf("json input.context = %#v, want dir /repo", input["context"])
+	}
+	if input["sessionId"] != "resume-1" || encoded["sessionId"] != "resume-1" || encoded["dir"] != "/repo" {
+		t.Fatalf("json session/dir fields = top %#v input %#v", encoded, input)
+	}
+	if got := encoded["inputTokens"]; got != float64(12) {
+		t.Fatalf("json inputTokens = %#v, want 12", got)
+	}
+}
+
+func TestRunStreaming_JSONIncludesFullInputSpec(t *testing.T) {
+	req := ai.Request{
+		Model:       api.Model{Name: "gpt-5-codex", Backend: api.BackendCodexCLI, Effort: api.EffortHigh},
+		Prompt:      api.Prompt{User: "fix tests"},
+		Context:     api.Context{Dir: "/repo"},
+		Permissions: api.Permissions{MCP: api.MCP{Disabled: true}},
+	}
+
+	got, err := runStreaming(context.Background(), promptResultStreamingProvider{}, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, ok := got.(AIPromptResult)
+	if !ok {
+		t.Fatalf("runStreaming returned %T, want AIPromptResult", got)
+	}
+	if result.Input.Prompt.User != "fix tests" || result.Input.Model.Backend != api.BackendCodexCLI {
+		t.Fatalf("result input = %+v, want original request", result.Input)
+	}
+	if result.Dir != "/repo" || result.SessionID != "stream-session-1" || result.Input.SessionID != "stream-session-1" {
+		t.Fatalf("dir/session = dir %q session %q input session %q", result.Dir, result.SessionID, result.Input.SessionID)
+	}
+	if result.InputTokens != 21 || result.Output != 9 || result.CostUSD != 0.02 {
+		t.Fatalf("usage/cost = input %d output %d cost %f", result.InputTokens, result.Output, result.CostUSD)
 	}
 }
 

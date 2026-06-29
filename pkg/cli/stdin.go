@@ -99,6 +99,13 @@ func detectStreamFormat(data []byte) (claude.StreamFormat, []byte) {
 }
 
 func runHistoryFromReader(data []byte, opts HistoryOptions) (any, error) {
+	var sessionIDs []string
+	var err error
+	opts, sessionIDs, err = normalizeHistoryOptions(opts)
+	if err != nil {
+		return nil, err
+	}
+
 	parsed, err := parseFromReader(data)
 	if err != nil {
 		return nil, err
@@ -122,8 +129,10 @@ func runHistoryFromReader(data []byte, opts HistoryOptions) (any, error) {
 	classifier := bash.NewCategoryClassifier(bash.DefaultCategoryConfig())
 
 	filter := claude.Filter{
-		Tools: opts.Tools,
-		Paths: resolvePaths(opts.Paths),
+		Tools:      opts.Tools,
+		Paths:      resolvePaths(opts.Paths),
+		SessionID:  firstSessionID(sessionIDs),
+		SessionIDs: sessionIDs,
 	}
 	if !opts.Since.IsZero() {
 		filter.Since = &opts.Since

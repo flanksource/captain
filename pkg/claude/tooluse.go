@@ -42,12 +42,13 @@ type ToolUse struct {
 
 // Filter defines criteria for filtering tool uses
 type Filter struct {
-	Tools     []string
-	Paths     []string
-	Since     *time.Time
-	Before    *time.Time
-	Limit     int
-	SessionID string // exact or prefix match against ToolUse.SessionID
+	Tools      []string
+	Paths      []string
+	Since      *time.Time
+	Before     *time.Time
+	Limit      int
+	SessionID  string   // exact or prefix match against ToolUse.SessionID
+	SessionIDs []string // exact or prefix match against ToolUse.SessionID
 	// IncludeAgents, when set, makes ParseHistory also read nested sub-agent
 	// transcripts (<session>/subagents/agent-*.jsonl) for the in-scope sessions.
 	IncludeAgents bool
@@ -57,10 +58,35 @@ type Filter struct {
 // criterion. An empty filter matches everything; otherwise an exact match or a
 // prefix match (so the short IDs printed by `captain info` work) succeeds.
 func (f Filter) MatchesSessionID(sessionID string) bool {
-	if f.SessionID == "" {
+	if matchesSessionID(sessionID, f.SessionID) {
 		return true
 	}
-	return sessionID == f.SessionID || strings.HasPrefix(sessionID, f.SessionID)
+	for _, filter := range f.SessionIDs {
+		if matchesSessionID(sessionID, filter) {
+			return true
+		}
+	}
+	return !f.HasSessionIDFilter()
+}
+
+func (f Filter) HasSessionIDFilter() bool {
+	if strings.TrimSpace(f.SessionID) != "" {
+		return true
+	}
+	for _, filter := range f.SessionIDs {
+		if strings.TrimSpace(filter) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func matchesSessionID(sessionID, filter string) bool {
+	filter = strings.TrimSpace(filter)
+	if filter == "" {
+		return false
+	}
+	return sessionID == filter || strings.HasPrefix(sessionID, filter)
 }
 
 const denialPrefix = "The user doesn't want to proceed with this tool use."

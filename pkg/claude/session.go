@@ -132,6 +132,30 @@ func FindAgentTranscripts(projectsDir, currentDir string, searchAll bool) ([]str
 	return findProjectFiles(projectsDir, currentDir, searchAll, "*", "subagents", "agent-*.jsonl")
 }
 
+func filterSessionFilesBySessionID(files []string, filter Filter) []string {
+	if !filter.HasSessionIDFilter() {
+		return files
+	}
+	out := make([]string, 0, len(files))
+	for _, file := range files {
+		if filter.MatchesSessionID(sessionIDFromTranscriptPath(file)) {
+			out = append(out, file)
+		}
+	}
+	return out
+}
+
+func sessionIDFromTranscriptPath(path string) string {
+	parts := strings.Split(filepath.ToSlash(path), "/")
+	for i, part := range parts {
+		if part == "subagents" && i > 0 {
+			return parts[i-1]
+		}
+	}
+	base := filepath.Base(path)
+	return strings.TrimSuffix(base, filepath.Ext(base))
+}
+
 // findProjectFiles globs each in-scope project directory under projectsDir for
 // files matching the given path segments (joined onto the project dir).
 func findProjectFiles(projectsDir, currentDir string, searchAll bool, globParts ...string) ([]string, error) {
@@ -310,6 +334,7 @@ func ParseHistory(currentDir string, searchAll bool, filter Filter) (*ParseResul
 			sessionFiles = append(sessionFiles, agentFiles...)
 		}
 	}
+	sessionFiles = filterSessionFilesBySessionID(sessionFiles, filter)
 
 	result := &ParseResult{
 		SessionsFound: len(sessionFiles),
@@ -393,6 +418,7 @@ func ParseHistoryTools(currentDir string, searchAll bool, filter Filter) ([]tool
 			sessionFiles = append(sessionFiles, agentFiles...)
 		}
 	}
+	sessionFiles = filterSessionFilesBySessionID(sessionFiles, filter)
 
 	var allToolUses []ToolUse
 	uses := make(map[string][]HistoryEntry)
@@ -435,10 +461,15 @@ type SessionCost struct {
 }
 
 func ParseCosts(currentDir string, searchAll bool, since *time.Time) ([]SessionCost, error) {
+	return ParseCostsWithFilter(currentDir, searchAll, since, Filter{})
+}
+
+func ParseCostsWithFilter(currentDir string, searchAll bool, since *time.Time, filter Filter) ([]SessionCost, error) {
 	sessionFiles, err := FindSessionFiles(GetProjectsDir(), currentDir, searchAll)
 	if err != nil {
 		return nil, err
 	}
+	sessionFiles = filterSessionFilesBySessionID(sessionFiles, filter)
 
 	type sessionKey struct {
 		sessionID string
@@ -530,10 +561,16 @@ func ParseCosts(currentDir string, searchAll bool, since *time.Time) ([]SessionC
 
 // ParseCostsDetailed extends ParseCosts with context categorization and per-tool token breakdown.
 func ParseCostsDetailed(currentDir string, searchAll bool, since *time.Time) ([]SessionCost, error) {
+	return ParseCostsDetailedWithFilter(currentDir, searchAll, since, Filter{})
+}
+
+// ParseCostsDetailedWithFilter extends ParseCostsWithFilter with context categorization and per-tool token breakdown.
+func ParseCostsDetailedWithFilter(currentDir string, searchAll bool, since *time.Time, filter Filter) ([]SessionCost, error) {
 	sessionFiles, err := FindSessionFiles(GetProjectsDir(), currentDir, searchAll)
 	if err != nil {
 		return nil, err
 	}
+	sessionFiles = filterSessionFilesBySessionID(sessionFiles, filter)
 
 	type sessionKey struct {
 		sessionID string

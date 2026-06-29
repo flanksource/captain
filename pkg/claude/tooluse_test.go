@@ -104,6 +104,11 @@ func TestFilterToolUses(t *testing.T) {
 			expected: []string{"Write", "Edit"},
 		},
 		{
+			name:     "multiple session filters",
+			filter:   Filter{SessionIDs: []string{"sess-aaaa", "sess-bbbb"}},
+			expected: []string{"Bash", "Read", "Write", "Edit"},
+		},
+		{
 			name:     "session and tool combined",
 			filter:   Filter{SessionID: "sess-aaaa1111", Tools: []string{"Read"}},
 			expected: []string{"Read"},

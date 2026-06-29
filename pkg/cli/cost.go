@@ -11,9 +11,10 @@ import (
 )
 
 type CostOptions struct {
-	Since   time.Time `flag:"since" help:"Only include sessions after this time" default:"now-7d" short:"s"`
-	All     bool      `flag:"all" help:"Search all projects" short:"a"`
-	GroupBy string    `flag:"group-by" help:"Group results: session, project, model, day, dir, file, tool, category" default:"session" short:"g"`
+	Since     time.Time `flag:"since" help:"Only include sessions after this time" default:"now-7d" short:"s"`
+	All       bool      `flag:"all" help:"Search all projects" short:"a"`
+	GroupBy   string    `flag:"group-by" help:"Group results: session, project, model, day, dir, file, tool, category" default:"session" short:"g"`
+	SessionID string    `flag:"session-id" help:"Filter by session ID (exact or prefix match)"`
 }
 
 type CostRow struct {
@@ -69,10 +70,12 @@ func RunCost(opts CostOptions) (any, error) {
 		return runCostDetailed(cwd, opts)
 	}
 
-	sessions, err := claude.ParseCosts(cwd, opts.All, &opts.Since)
+	sessionIDs := costSessionIDs(opts)
+	sessions, err := claude.ParseCostsWithFilter(cwd, opts.All, &opts.Since, claude.Filter{SessionIDs: sessionIDs})
 	if err != nil {
 		return nil, err
 	}
+	sessions = filterCostsBySessionID(sessions, sessionIDs)
 
 	grouped := groupSessions(sessions, opts.GroupBy)
 
@@ -111,15 +114,22 @@ func RunCost(opts CostOptions) (any, error) {
 }
 
 func runCostDetailed(cwd string, opts CostOptions) (any, error) {
-	sessions, err := claude.ParseCostsDetailed(cwd, opts.All, &opts.Since)
+	sessionIDs := costSessionIDs(opts)
+	sessions, err := claude.ParseCostsDetailedWithFilter(cwd, opts.All, &opts.Since, claude.Filter{SessionIDs: sessionIDs})
 	if err != nil {
 		return nil, err
 	}
+	sessions = filterCostsBySessionID(sessions, sessionIDs)
 
 	if opts.GroupBy == "tool" {
 		return aggregateToolCosts(sessions), nil
 	}
 	return aggregateCategoryCosts(sessions), nil
+}
+
+func costSessionIDs(opts CostOptions) []string {
+	ids, _ := normalizeSessionIDFilters("", opts.SessionID, nil)
+	return ids
 }
 
 func aggregateToolCosts(sessions []claude.SessionCost) ToolCostResult {

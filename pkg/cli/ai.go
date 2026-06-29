@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -130,21 +131,28 @@ func validatePermissionMode(s string) error {
 type AIPromptOptions struct {
 	AIRuntimeOptions
 
-	Prompt       string `flag:"prompt" help:"Prompt text" short:"p" required:"true" stdin:"true"`
-	System       string `flag:"system" help:"System prompt" short:"s"`
-	AppendSystem string `flag:"append-system" help:"Append text to the default system prompt"`
-	Timeout      string `flag:"timeout" help:"Request timeout" default:"120s"`
-	NoStream     bool   `flag:"no-stream" help:"Disable streaming; print only the final text to stdout"`
+	// File is a positional .prompt template path rendered through pkg/ai/prompt.
+	// The frontmatter sets model + any ai.Request option; the body is the prompt.
+	File         string   `args:"true" help:"Path to a .prompt template to render"`
+	Prompt       string   `flag:"prompt" help:"Prompt text, or @file to load and render a .prompt template" short:"p"`
+	System       string   `flag:"system" help:"System prompt" short:"s"`
+	AppendSystem string   `flag:"append-system" help:"Append text to the default system prompt"`
+	Var          []string `flag:"var" help:"Template variable key=value (repeatable)" short:"V"`
+	Timeout      string   `flag:"timeout" help:"Request timeout" default:"120s"`
+	NoStream     bool     `flag:"no-stream" help:"Disable streaming; print only the final text to stdout"`
 }
 
 type AIPromptResult struct {
-	Text     string  `json:"text" pretty:"label=Response"`
-	Model    string  `json:"model" pretty:"label=Model"`
-	Backend  string  `json:"backend" pretty:"label=Backend"`
-	Input    int     `json:"inputTokens" pretty:"label=Input Tokens"`
-	Output   int     `json:"outputTokens" pretty:"label=Output Tokens"`
-	CostUSD  float64 `json:"costUSD,omitempty" pretty:"label=Cost USD"`
-	Duration string  `json:"duration" pretty:"label=Duration"`
+	Text        string     `json:"text" pretty:"label=Response"`
+	Model       string     `json:"model" pretty:"label=Model"`
+	Backend     string     `json:"backend" pretty:"label=Backend"`
+	Dir         string     `json:"dir,omitempty" pretty:"label=Dir"`
+	SessionID   string     `json:"sessionId,omitempty" pretty:"label=Session"`
+	Input       ai.Request `json:"input" pretty:"-"`
+	InputTokens int        `json:"inputTokens" pretty:"label=Input Tokens"`
+	Output      int        `json:"outputTokens" pretty:"label=Output Tokens"`
+	CostUSD     float64    `json:"costUSD,omitempty" pretty:"label=Cost USD"`
+	Duration    string     `json:"duration" pretty:"label=Duration"`
 }
 
 // ToRequest translates the runtime knobs into the typed ai.Request, overlaying
@@ -237,20 +245,51 @@ func (o AIPromptOptions) ToRequest() (ai.Request, error) {
 }
 
 func RunAIPrompt(opts AIPromptOptions) (any, error) {
-	if opts.Prompt == "" {
-		return nil, fmt.Errorf("prompt text required (use --prompt or pipe via stdin)")
+	var stdin string
+	if claude.IsStdinPiped() {
+		b, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return nil, fmt.Errorf("read stdin: %w", err)
+		}
+		stdin = string(b)
 	}
 
-	cfg, err := opts.ToConfig()
+	tmpl, usedStdin, err := resolvePromptTemplate(opts, stdin)
 	if err != nil {
 		return nil, err
+	}
+
+	data, err := parseVars(opts.Var)
+	if err != nil {
+		return nil, err
+	}
+	if s := strings.TrimSpace(stdin); s != "" && !usedStdin {
+		data["input"] = s
+	}
+
+	fileReq, fileCfg, err := tmpl.Render(data, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req, cfg, err := overlayCLI(fileReq, fileCfg, opts)
+	if err != nil {
+		return nil, err
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("get working directory: %w", err)
+	}
+	if err := normalizePromptContextDir(&req, cwd); err != nil {
+		return nil, err
+	}
+	if req.Prompt.User == "" {
+		return nil, fmt.Errorf("prompt text required (use --prompt/-p, a file arg, or pipe via stdin)")
 	}
 	if cfg.Model.Name == "" {
 		return nil, fmt.Errorf("no model: pass --model or run 'captain configure' to set a default")
 	}
-
-	req, err := opts.ToRequest()
-	if err != nil {
+	if err := req.Validate(); err != nil {
 		return nil, err
 	}
 
@@ -281,13 +320,19 @@ func runBuffered(ctx context.Context, p ai.Provider, req ai.Request) (any, error
 	if err != nil {
 		return nil, err
 	}
+	model := firstNonEmpty(resp.Model, p.GetModel(), req.Model.Name)
+	backend := firstNonEmpty(string(resp.Backend), string(p.GetBackend()), string(req.Model.Backend))
+	input := resolvedPromptInput(req, model, backend, req.SessionID)
 	return AIPromptResult{
-		Text:     resp.Text,
-		Model:    resp.Model,
-		Backend:  string(resp.Backend),
-		Input:    resp.Usage.InputTokens,
-		Output:   resp.Usage.OutputTokens,
-		Duration: time.Since(start).Round(time.Millisecond).String(),
+		Text:        resp.Text,
+		Model:       model,
+		Backend:     backend,
+		Dir:         input.Context.Dir,
+		SessionID:   input.SessionID,
+		Input:       input,
+		InputTokens: resp.Usage.InputTokens,
+		Output:      resp.Usage.OutputTokens,
+		Duration:    time.Since(start).Round(time.Millisecond).String(),
 	}, nil
 }
 
@@ -302,6 +347,7 @@ func runStreaming(ctx context.Context, sp ai.StreamingProvider, req ai.Request) 
 		cost    float64
 		backend = string(sp.GetBackend())
 		model   = sp.GetModel()
+		session = req.SessionID
 	)
 	renderer := newLineRenderer(os.Stderr, 8)
 	loop, err := ai.RunUntil(ctx, ai.LoopOptions{
@@ -316,6 +362,9 @@ func runStreaming(ctx context.Context, sp ai.StreamingProvider, req ai.Request) 
 		OnEvent: func(_ int, ev ai.Event) {
 			if ev.Model != "" {
 				model = ev.Model
+			}
+			if ev.SessionID != "" {
+				session = ev.SessionID
 			}
 			renderEvent(os.Stderr, renderer, ev)
 			if ev.Kind == ai.EventText {
@@ -335,15 +384,36 @@ func runStreaming(ctx context.Context, sp ai.StreamingProvider, req ai.Request) 
 	if loop.StopReason == "error" {
 		return nil, fmt.Errorf("streaming loop stopped: %s", loop.StopReason)
 	}
+	if session == "" && len(loop.Iterations) > 0 {
+		session = loop.Iterations[0].SessionID
+	}
+	input := resolvedPromptInput(req, model, backend, session)
 	return AIPromptResult{
-		Text:     text,
-		Model:    model,
-		Backend:  backend,
-		Input:    usage.InputTokens,
-		Output:   usage.OutputTokens,
-		CostUSD:  cost,
-		Duration: time.Since(start).Round(time.Millisecond).String(),
+		Text:        text,
+		Model:       model,
+		Backend:     backend,
+		Dir:         input.Context.Dir,
+		SessionID:   input.SessionID,
+		Input:       input,
+		InputTokens: usage.InputTokens,
+		Output:      usage.OutputTokens,
+		CostUSD:     cost,
+		Duration:    time.Since(start).Round(time.Millisecond).String(),
 	}, nil
+}
+
+func resolvedPromptInput(req ai.Request, model, backend, sessionID string) ai.Request {
+	out := req
+	if model != "" {
+		out.Model.Name = model
+	}
+	if backend != "" {
+		out.Model.Backend = api.Backend(backend)
+	}
+	if sessionID != "" {
+		out.SessionID = sessionID
+	}
+	return out
 }
 
 // renderEvent writes a human-readable representation of an ai.Event to w.
