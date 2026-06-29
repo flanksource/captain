@@ -92,6 +92,7 @@ func main() {
 	}
 	rootCmd.AddCommand(aiCmd)
 	clicky.AddNamedCommand("prompt", aiCmd, cli.AIPromptOptions{}, cli.RunAIPrompt)
+	clicky.AddNamedCommand("agent", aiCmd, cli.AIAgentOptions{}, cli.RunAIAgent).Short = "Run an iterative agent with verifiers, worktree, and commit"
 	clicky.AddNamedCommand("models", aiCmd, cli.AIModelsOptions{}, cli.RunAIModels)
 	clicky.AddNamedCommand("test", aiCmd, cli.AITestOptions{}, cli.RunAITest)
 	clicky.AddNamedCommand("fixture", aiCmd, cli.AIFixtureOptions{}, cli.RunAIFixture).Short = "Run a YAML fixture across multiple Claude configurations"

@@ -67,7 +67,7 @@ func isLegacyModelID(id string) bool {
 
 type AIModelsOptions struct {
 	Filter  string `flag:"filter" help:"Filter models by name substring" short:"f"`
-	Backend string `flag:"backend" help:"Filter by backend (anthropic, openai)" short:"b"`
+	Backend string `flag:"backend" help:"Filter by backend: anthropic|gemini|openai|claude-cli|claude-agent|codex-cli|gemini-cli" short:"b"`
 	Limit   int    `flag:"limit" help:"Maximum models to show" default:"50" short:"l"`
 	All     bool   `flag:"all" help:"Include all OpenRouter models" short:"a"`
 }

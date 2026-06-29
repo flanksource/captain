@@ -175,7 +175,7 @@ func remoteFetcherFor(backend Backend) (fetch func(context.Context, string) ([]M
 	switch backend {
 	case BackendOpenAI, BackendCodexCLI:
 		return FetchOpenAIModels, os.Getenv("OPENAI_API_KEY"), BackendOpenAI
-	case BackendAnthropic, BackendClaudeCLI:
+	case BackendAnthropic, BackendClaudeCLI, BackendClaudeAgent:
 		return FetchAnthropicModels, os.Getenv("ANTHROPIC_API_KEY"), BackendAnthropic
 	case BackendGemini, BackendGeminiCLI:
 		return FetchGeminiModels, os.Getenv("GEMINI_API_KEY"), BackendGemini

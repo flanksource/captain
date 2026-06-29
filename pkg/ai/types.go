@@ -14,6 +14,11 @@ type Request struct {
 	StructuredOutput   any               // nil = text mode, non-nil = JSON schema target
 	Metadata           map[string]string // arbitrary caller metadata
 
+	// Source identifies the prompt's origin (e.g. the .prompt filename), purely
+	// for diagnostics — the logging middleware prints it so callers can tell which
+	// template produced a request. Empty means unknown.
+	Source string
+
 	// Cwd runs the CLI provider's subprocess in this working directory. Empty
 	// means the calling process's cwd (the prior behaviour), so existing callers
 	// are unaffected. Honoured by the streaming CLI providers (claude_cli, codex_cli).
@@ -25,8 +30,6 @@ type Request struct {
 	// stay byte-identical.
 	SessionID       string // resume an existing session (claude --session-id)
 	PermissionMode  string // claude --permission-mode (e.g. "acceptEdits")
-	StrictMCP       bool   // claude --strict-mcp-config
-	Verbose         bool   // claude --verbose (required for stream-json)
 	MaxTurns        int    // claude --max-turns (0 = omit, let CLI default)
 	ReasoningEffort string // codex -c model_reasoning_effort=... ("low" | "medium" | "high"); other providers ignore
 
