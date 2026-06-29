@@ -10,17 +10,43 @@ func TestUsageTotalTokens(t *testing.T) {
 }
 
 func TestCostAddAndTotal(t *testing.T) {
-	a := Cost{Model: "m1", InputTokens: 100, OutputTokens: 50, TotalTokens: 150, InputCost: 0.10, OutputCost: 0.25}
-	b := Cost{Model: "ignored", InputTokens: 10, OutputTokens: 5, TotalTokens: 15, InputCost: 0.01, OutputCost: 0.02}
+	a := Cost{
+		Model:            "m1",
+		InputTokens:      100,
+		OutputTokens:     50,
+		ReasoningTokens:  20,
+		CacheReadTokens:  30,
+		CacheWriteTokens: 10,
+		TotalTokens:      210,
+		InputCost:        0.10,
+		OutputCost:       0.25,
+		ReasoningCost:    0.03,
+		CacheReadCost:    0.02,
+		CacheWriteCost:   0.04,
+	}
+	b := Cost{
+		Model:            "ignored",
+		InputTokens:      10,
+		OutputTokens:     5,
+		ReasoningTokens:  2,
+		CacheReadTokens:  3,
+		CacheWriteTokens: 1,
+		TotalTokens:      21,
+		InputCost:        0.01,
+		OutputCost:       0.02,
+		ReasoningCost:    0.003,
+		CacheReadCost:    0.002,
+		CacheWriteCost:   0.004,
+	}
 	sum := a.Add(b)
 	if sum.Model != "m1" {
 		t.Errorf("Add keeps receiver Model, got %q", sum.Model)
 	}
-	if sum.InputTokens != 110 || sum.TotalTokens != 165 {
+	if sum.InputTokens != 110 || sum.ReasoningTokens != 22 || sum.CacheReadTokens != 33 || sum.CacheWriteTokens != 11 || sum.TotalTokens != 231 {
 		t.Errorf("Add tokens wrong: %+v", sum)
 	}
-	if got := sum.Total(); got < 0.379999 || got > 0.380001 {
-		t.Errorf("Total() = %v, want 0.38", got)
+	if got := sum.Total(); got < 0.478999 || got > 0.479001 {
+		t.Errorf("Total() = %v, want 0.479", got)
 	}
 }
 

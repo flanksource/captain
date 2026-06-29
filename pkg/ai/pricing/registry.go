@@ -64,10 +64,18 @@ func ListModels(filter string) []ModelInfo {
 }
 
 type CostResult struct {
-	Model        string
-	InputTokens  int
-	OutputTokens int
-	TotalCost    float64
+	Model            string
+	InputTokens      int
+	OutputTokens     int
+	ReasoningTokens  int
+	CacheReadTokens  int
+	CacheWriteTokens int
+	InputCost        float64
+	OutputCost       float64
+	ReasoningCost    float64
+	CacheReadCost    float64
+	CacheWriteCost   float64
+	TotalCost        float64
 }
 
 func CalculateCost(model string, inputTokens, outputTokens, reasoningTokens, cacheReadTokens, cacheWriteTokens int) (CostResult, error) {
@@ -78,22 +86,33 @@ func CalculateCost(model string, inputTokens, outputTokens, reasoningTokens, cac
 			model, RegistrySize(), strings.Join(suggestions, ", "))
 	}
 
-	cost := float64(inputTokens)*info.InputPrice/1_000_000 +
-		float64(outputTokens)*info.OutputPrice/1_000_000 +
-		float64(reasoningTokens)*info.OutputPrice/1_000_000
+	inputCost := float64(inputTokens) * info.InputPrice / 1_000_000
+	outputCost := float64(outputTokens) * info.OutputPrice / 1_000_000
+	reasoningCost := float64(reasoningTokens) * info.OutputPrice / 1_000_000
 
+	var cacheReadCost float64
 	if cacheReadTokens > 0 && info.CacheReadsPrice > 0 {
-		cost += float64(cacheReadTokens) * info.CacheReadsPrice / 1_000_000
+		cacheReadCost = float64(cacheReadTokens) * info.CacheReadsPrice / 1_000_000
 	}
+	var cacheWriteCost float64
 	if cacheWriteTokens > 0 && info.CacheWritesPrice > 0 {
-		cost += float64(cacheWriteTokens) * info.CacheWritesPrice / 1_000_000
+		cacheWriteCost = float64(cacheWriteTokens) * info.CacheWritesPrice / 1_000_000
 	}
+	cost := inputCost + outputCost + reasoningCost + cacheReadCost + cacheWriteCost
 
 	return CostResult{
-		Model:        model,
-		InputTokens:  inputTokens,
-		OutputTokens: outputTokens,
-		TotalCost:    cost,
+		Model:            model,
+		InputTokens:      inputTokens,
+		OutputTokens:     outputTokens,
+		ReasoningTokens:  reasoningTokens,
+		CacheReadTokens:  cacheReadTokens,
+		CacheWriteTokens: cacheWriteTokens,
+		InputCost:        inputCost,
+		OutputCost:       outputCost,
+		ReasoningCost:    reasoningCost,
+		CacheReadCost:    cacheReadCost,
+		CacheWriteCost:   cacheWriteCost,
+		TotalCost:        cost,
 	}, nil
 }
 

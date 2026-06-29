@@ -23,6 +23,15 @@ const (
 	BackendCodexCLI    Backend = "codex-cli"
 	BackendGeminiCLI   Backend = "gemini-cli"
 	BackendClaudeAgent Backend = "claude-agent"
+	// BackendClaudeCmux / BackendCodexCmux drive an interactive claude/codex TUI
+	// inside a tmux/cmux surface (the cmux provider), tailing the session JSONL.
+	// They are registered providers selected explicitly by a host (gavel), not
+	// part of AllBackends(): they are not user-facing, carry no prompt-rendering
+	// fixture (the provider pastes the host's prompt verbatim), and are never
+	// inferred from a model name. Backend.Valid() is therefore false for them,
+	// which is fine — nothing in the run path validates the backend.
+	BackendClaudeCmux Backend = "claude-cmux"
+	BackendCodexCmux  Backend = "codex-cmux"
 )
 
 // AllBackends lists every supported backend in canonical order — the single
@@ -59,9 +68,9 @@ func (b Backend) Kind() string {
 // key, in priority order. CLI backends share their parent provider's key.
 func AuthEnvVars(b Backend) []string {
 	switch b {
-	case BackendAnthropic, BackendClaudeCLI, BackendClaudeAgent:
+	case BackendAnthropic, BackendClaudeCLI, BackendClaudeAgent, BackendClaudeCmux:
 		return []string{"ANTHROPIC_API_KEY"}
-	case BackendOpenAI, BackendCodexCLI:
+	case BackendOpenAI, BackendCodexCLI, BackendCodexCmux:
 		return []string{"OPENAI_API_KEY"}
 	case BackendGemini, BackendGeminiCLI:
 		return []string{"GEMINI_API_KEY", "GOOGLE_API_KEY"}

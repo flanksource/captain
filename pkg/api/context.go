@@ -13,6 +13,10 @@ type Context struct {
 	Git *Git `json:"git,omitempty" yaml:"git,omitempty"`
 	// Worktree isolates the run in a dedicated git worktree on a new branch.
 	Worktree *Worktree `json:"worktree,omitempty" yaml:"worktree,omitempty"`
+	// Env are extra environment variables exported to the agent process for the
+	// run (e.g. host-app metadata a tool the agent runs reads back). CLI/cmux
+	// providers that launch a child process apply them; API providers ignore them.
+	Env map[string]string `json:"env,omitempty" yaml:"env,omitempty" pretty:"label=Env"`
 }
 
 // Git pins a run to a repository, revision, and optional pull request.
