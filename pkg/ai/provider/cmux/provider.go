@@ -1,0 +1,351 @@
+// Package cmux implements captain's interactive-TUI provider: it drives a real
+// claude/codex CLI inside a cmux.app terminal surface (terminal automation, not
+// JSON-RPC), tailing the Claude session JSONL for structured progress. It backs
+// the ai.BackendClaudeCmux / ai.BackendCodexCmux backends.
+//
+// One Provider serves one backend (claude or codex, derived from cfg.Model.Backend).
+// Each ExecuteStream spawns a goroutine that ensures a cmux workspace + terminal
+// surface, launches the agent, submits the host-assembled prompt, and streams the
+// resulting session events back as ai.Events, always ending in exactly one
+// EventResult. Tool-permission dialogs are brokered through cfg.CanUseTool.
+//
+// Prompt assembly stays with the host: this provider pastes req.Prompt.User as-is.
+package cmux
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/commons/logger"
+)
+
+// log is the package-scoped logger for the cmux provider. Its level follows
+// -v/--log-level and can be tuned with -Plog.level.cmux=debug.
+var log = logger.GetLogger("cmux")
+
+// Provider drives an interactive claude/codex TUI inside a cmux surface.
+type Provider struct {
+	model string
+	agent string
+	cfg   ai.Config
+}
+
+var _ ai.StreamingProvider = (*Provider)(nil)
+
+// New builds a cmux provider for the claude or codex agent, derived from
+// cfg.Model.Backend. The model name (cfg.Model.Name) may be empty, a bare agent
+// name ("claude"/"codex"), or a concrete model ("opus"/"gpt-…").
+func New(cfg ai.Config) (*Provider, error) {
+	agent, err := agentForBackend(cfg.Model.Backend)
+	if err != nil {
+		return nil, err
+	}
+	return &Provider{
+		model: cfg.Model.Name,
+		agent: agent,
+		cfg:   cfg,
+	}, nil
+}
+
+func agentForBackend(b api.Backend) (string, error) {
+	switch b {
+	case api.BackendClaudeCmux:
+		return "claude", nil
+	case api.BackendCodexCmux:
+		return "codex", nil
+	default:
+		return "", fmt.Errorf("cmux provider: unsupported backend %q (want %s or %s)", b, api.BackendClaudeCmux, api.BackendCodexCmux)
+	}
+}
+
+func (p *Provider) GetModel() string { return p.model }
+
+func (p *Provider) GetBackend() ai.Backend {
+	if p.agent == "codex" {
+		return api.BackendCodexCmux
+	}
+	return api.BackendClaudeCmux
+}
+
+// Execute drains its own ExecuteStream into a buffered ai.Response.
+func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, error) {
+	if req.Prompt.Schema != nil {
+		return nil, fmt.Errorf("cmux provider does not support StructuredOutput")
+	}
+	start := time.Now()
+	events, err := p.ExecuteStream(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	var (
+		text      strings.Builder
+		usage     ai.Usage
+		sessionID string
+		success   = true
+		sawResult bool
+		lastErr   string
+	)
+	for ev := range events {
+		switch ev.Kind {
+		case ai.EventText:
+			text.WriteString(ev.Text)
+		case ai.EventSystem:
+			if ev.SessionID != "" {
+				sessionID = ev.SessionID
+			}
+		case ai.EventResult:
+			sawResult = true
+			success = ev.Success
+			if ev.Usage != nil {
+				usage = *ev.Usage
+			}
+			if ev.SessionID != "" {
+				sessionID = ev.SessionID
+			}
+		case ai.EventError:
+			lastErr = ev.Error
+		}
+	}
+
+	if !sawResult && lastErr != "" {
+		return nil, fmt.Errorf("%w: %s", ai.ErrCLIExecutionFailed, lastErr)
+	}
+	if sawResult && !success {
+		msg := lastErr
+		if msg == "" {
+			msg = "cmux run returned a failure result"
+		}
+		return nil, fmt.Errorf("%w: %s", ai.ErrCLIExecutionFailed, msg)
+	}
+
+	resp := &ai.Response{
+		Text:     text.String(),
+		Model:    p.model,
+		Backend:  p.GetBackend(),
+		Usage:    usage,
+		Duration: time.Since(start),
+	}
+	if sessionID != "" {
+		resp.Raw = map[string]any{"session_id": sessionID}
+	}
+	return resp, nil
+}
+
+// ExecuteStream drives one cmux run in a goroutine and streams ai.Events on a
+// buffered channel, closing it when done (always after exactly one EventResult).
+func (p *Provider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai.Event, error) {
+	if req.Prompt.Schema != nil {
+		return nil, fmt.Errorf("cmux provider does not support StructuredOutput")
+	}
+	if req.Prompt.User == "" {
+		return nil, fmt.Errorf("cmux provider: prompt is required")
+	}
+	events := make(chan ai.Event, 32)
+	go p.drive(ctx, req, events)
+	return events, nil
+}
+
+// drive runs the session and translates its outcome into the single terminal
+// EventResult (preceded by an EventError on failure) before closing the channel.
+func (p *Provider) drive(ctx context.Context, req ai.Request, events chan ai.Event) {
+	defer close(events)
+
+	r := &run{
+		client:     NewClient(""),
+		emit:       func(ev ai.Event) { emit(ctx, events, ev) },
+		canUseTool: p.cfg.CanUseTool,
+	}
+
+	usage, cost, err := p.execute(ctx, req, r)
+	if err != nil {
+		emit(ctx, events, ai.Event{Kind: ai.EventError, Error: err.Error(), Model: p.model})
+		emit(ctx, events, ai.Event{Kind: ai.EventResult, Success: false, Error: err.Error(), Model: p.model})
+		return
+	}
+	emit(ctx, events, ai.Event{Kind: ai.EventResult, Success: true, Usage: usage, CostUSD: cost, Model: p.model})
+}
+
+// execute mirrors gavel's CmuxExecutor.ExecuteGroup: it ensures a workspace +
+// surface, launches the agent, submits the prompt, and (for claude) tails the
+// session log under a stall watchdog. It returns the run's usage/cost on success,
+// or an error describing the failure. Streaming events are emitted via r.emit.
+func (p *Provider) execute(ctx context.Context, req ai.Request, r *run) (*ai.Usage, float64, error) {
+	start := time.Now()
+	agent := p.agent
+	model := modelFlag(agent, p.model)
+	workDir := groupWorkDir(req.Context.Dir)
+
+	// Resolve the Claude session id. Resume reuses req.SessionID (launch with
+	// --resume, tail from the end). A fresh run pre-generates one (or takes
+	// cfg.SessionID) and launches with --session-id so the session log can be
+	// tailed. codex manages its own sessions and keeps the screen-idle path.
+	sessionID := ""
+	resume := false
+	if agent == "claude" {
+		if req.SessionID != "" {
+			sessionID = req.SessionID
+			resume = true
+		} else if p.cfg.SessionID != "" {
+			sessionID = p.cfg.SessionID
+		} else {
+			sessionID = uuid.NewString()
+		}
+	}
+	if sessionID != "" {
+		r.emit(ai.Event{Kind: ai.EventSystem, SessionID: sessionID})
+	}
+
+	agentCommand := withEnv(AgentCommand(AgentCommandOpts{
+		Agent:           agent,
+		Model:           model,
+		SessionID:       sessionID,
+		Resume:          resume,
+		Plan:            req.Permissions.Mode == api.PermissionPlan,
+		PermissionMode:  req.Permissions.Mode,
+		AllowedTools:    req.Permissions.Tools.Allow,
+		DisallowedTools: req.Permissions.Tools.Deny,
+	}), req.Context.Env)
+
+	timeout := r.timeout()
+	log.Infof("cmux: dispatching with %s in %s", agent, workDir)
+	log.Debugf("cmux command: cmux ping")
+	if err := r.client.Available(ctx); err != nil {
+		return nil, 0, err
+	}
+
+	name := AgentWorkspaceName(workDir, agent)
+	log.Infof("cmux: ensuring workspace %q for %s", name, agent)
+	workspace, reused, err := r.client.EnsureWorkspace(ctx, EnsureWorkspaceOpts{
+		Cwd:         workDir,
+		Name:        name,
+		Description: fmt.Sprintf("gavel todos %s workspace for %s", agent, workDir),
+		Focus:       true,
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	if reused {
+		log.Infof("cmux: reusing workspace %s", workspace.String())
+	} else {
+		log.Infof("cmux: created workspace %s", workspace.String())
+	}
+
+	log.Infof("cmux: creating %s terminal surface in workspace %s", agent, workspace.String())
+	ref, err := r.client.NewSurface(ctx, NewSurfaceOpts{
+		WorkspaceRef: workspace.String(),
+		Cwd:          workDir,
+		SurfaceType:  "terminal",
+		Focus:        true,
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+
+	log.Infof("cmux: waiting for terminal surface to stabilize before launching %s", agent)
+	beforeAgentScreen, err := r.waitForScreenIdle(ctx, ref, "before agent launch", timeout, "", false)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	if err := r.sendSurfaceText(ctx, ref.String(), ref.SurfaceID, "agent command", agentCommand); err != nil {
+		return nil, 0, err
+	}
+
+	// Wait until the agent is ready for the prompt. claude gates on a positive
+	// REPL-readiness signal (its input prompt appearing); codex keeps screen-idle.
+	log.Infof("cmux: waiting for %s to be ready for the prompt", agent)
+	var beforePromptScreen string
+	if agent == "claude" {
+		if _, err := r.waitForREPLReady(ctx, ref, timeout, beforeAgentScreen); err != nil {
+			return nil, 0, err
+		}
+	} else {
+		beforePromptScreen, err = r.waitForScreenIdle(ctx, ref, "after agent launch", timeout, beforeAgentScreen, true)
+		if err != nil {
+			return nil, 0, err
+		}
+	}
+
+	instruction, err := r.buildInstruction(workDir, sessionID, req.Prompt.User)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	if sessionID != "" {
+		logPath, err := SessionLogPath(workDir, sessionID)
+		if err != nil {
+			return nil, 0, err
+		}
+		// The initial prompt's Enter occasionally gets dropped by cmux, leaving the
+		// prompt typed but unsent. submitAndConfirm re-presses Enter until the
+		// session demonstrably started (its log appeared or the surface advanced).
+		if err := r.submitAndConfirm(ctx, ref, "initial prompt", instruction, submitConfirm{logPath: logPath}); err != nil {
+			return nil, 0, err
+		}
+
+		// Register the run as a live in-progress session so the dashboard reads
+		// token/cost totals from the tailer. Finish freezes the elapsed clock.
+		acc := GlobalSessionStats().Begin(sessionID, agent, model, string(req.Effort), start)
+		_, completed, serr := r.awaitWithStallWatchdog(ctx, ref, sessionID, workDir, timeout, resume, acc)
+		acc.Finish()
+		snap := acc.snapshot()
+
+		switch {
+		case errors.Is(serr, errSessionLogNotFound):
+			// A pre-generated claude session must produce its log; if it never
+			// appears we fail loudly rather than inferring completion from the screen.
+			return nil, 0, fmt.Errorf("claude session %s log %s did not appear within %s", sessionID, logPath, r.sessionLogAppearTimeout(timeout))
+		case serr != nil:
+			return nil, 0, serr
+		case !completed:
+			return nil, 0, fmt.Errorf("claude session %s did not complete within %s", sessionID, timeout)
+		default:
+			log.Infof("cmux: claude session %s completed", sessionID)
+			r.lastSurface = ref
+			r.lastSessionID = sessionID
+			r.lastWorkDir = workDir
+			usage := usageFromStats(snap)
+			return &usage, snap.CostUSD, nil
+		}
+	}
+
+	// codex: no session log to tail, so completion is the screen settling.
+	if err := r.sendSurfaceText(ctx, ref.String(), ref.SurfaceID, "initial prompt", instruction); err != nil {
+		return nil, 0, err
+	}
+	log.Infof("cmux: waiting for %s screen to change and stabilize after prompt dispatch", agent)
+	if _, err := r.waitForScreenIdle(ctx, ref, "after prompt dispatch", timeout, beforePromptScreen, true); err != nil {
+		return nil, 0, err
+	}
+	return nil, 0, nil
+}
+
+// usageFromStats projects the session accumulator's token totals onto an
+// ai.Usage so the terminal EventResult carries the run's token usage.
+func usageFromStats(s SessionStats) ai.Usage {
+	return ai.Usage{
+		InputTokens:      s.InputTokens,
+		OutputTokens:     s.OutputTokens,
+		CacheReadTokens:  s.CacheReadTokens,
+		CacheWriteTokens: s.CacheCreationTokens,
+	}
+}
+
+// emit sends ev on events, honouring ctx cancellation. Returns false if ctx was
+// cancelled before the send completed.
+func emit(ctx context.Context, events chan ai.Event, ev ai.Event) bool {
+	select {
+	case events <- ev:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
