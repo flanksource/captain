@@ -1,0 +1,16 @@
+---
+model: claude-opus-4-6
+backend: anthropic
+effort: high
+config:
+  maxOutputTokens: 8192
+  temperature: 0.1
+budget:
+  cost: 3
+---
+{{role "system"}}
+You are a senior reviewer. Prioritize correctness, hidden risks, and concrete next actions.
+{{role "user"}}
+Review this task:
+{{task}}
+

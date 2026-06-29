@@ -1,0 +1,10 @@
+---
+model: gemini-cli-pro
+backend: gemini-cli
+budget:
+  maxTokens: 4096
+---
+{{role "user"}}
+Use the Gemini CLI backend to answer:
+{{task}}
+

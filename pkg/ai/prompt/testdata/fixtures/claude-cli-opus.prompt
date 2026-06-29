@@ -1,0 +1,23 @@
+---
+model: claude-agent-opus
+backend: claude-cli
+maxTurns: 3
+permissions:
+  mode: default
+  tools:
+    allow:
+      - Read
+      - Glob
+      - Grep
+    modes:
+      Bash: ask
+memory:
+  skipHooks: true
+  skipUser: true
+---
+{{role "system"}}
+You are using the Claude CLI backend for high-signal review. Be specific about evidence.
+{{role "user"}}
+Review:
+{{task}}
+

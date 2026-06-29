@@ -1,7 +1,15 @@
 // Package prompt renders Google dotprompt (.prompt) templates into captain's
-// ai.Request / ai.Config. A .prompt file carries YAML frontmatter (model,
-// config, input/output schema) and a Handlebars body whose {{role "system"}} /
-// {{role "user"}} markers split the rendered output into messages.
+// ai.Request / ai.Config. A .prompt file carries YAML frontmatter and a
+// Handlebars body whose {{role "system"}} / {{role "user"}} markers split the
+// rendered output into messages.
+//
+// The frontmatter is parsed twice: once by dotprompt for its built-in keys
+// (model, config.maxOutputTokens/temperature/reasoning, input/output schema),
+// and a second time straight into the spec (ai.Request = api.Spec) so any
+// request option can be declared in its native, nested shape — e.g.
+// permissions.mode, permissions.tools.allow, memory.skipUser, budget.maxTokens,
+// context.dir, effort, sessionId, maxTurns. When a file mixes both dialects the
+// dotprompt config: block wins for the three knobs it owns.
 //
 // Structured output is driven by the Go target passed to Render (out), which
 // becomes ai.Request.Prompt.Schema — captain's providers derive the JSON
@@ -19,6 +27,7 @@ import (
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
 	dp "github.com/google/dotprompt/go/dotprompt"
+	"gopkg.in/yaml.v3"
 )
 
 // Template is a parsed .prompt source ready to render with runtime data.
@@ -74,22 +83,54 @@ func (t *Template) Render(data map[string]any, out any) (ai.Request, ai.Config, 
 		}
 	}
 
-	req := ai.Request{Prompt: api.Prompt{
-		System: strings.TrimSpace(strings.Join(system, "\n")),
-		User:   strings.TrimSpace(strings.Join(user, "\n")),
-		Source: t.name,
-	}}
-	cfg := ai.Config{Model: api.Model{Name: rendered.Model}}
-	if rendered.Model != "" {
-		if b, berr := ai.InferBackend(rendered.Model); berr == nil {
+	// Second parse: fold the full frontmatter into the spec so any request option
+	// (permissions, memory, budget, context, …) can be declared in the file.
+	var req ai.Request
+	if err := decodeSpecFrontmatter(rendered.Raw, &req); err != nil {
+		return ai.Request{}, ai.Config{}, fmt.Errorf("decode prompt %s frontmatter into ai.Request: %w", t.name, err)
+	}
+
+	// The rendered template body wins over any frontmatter prompt.user/system.
+	if s := strings.TrimSpace(strings.Join(system, "\n")); s != "" {
+		req.Prompt.System = s
+	}
+	if u := strings.TrimSpace(strings.Join(user, "\n")); u != "" {
+		req.Prompt.User = u
+	}
+	req.Prompt.Source = t.name
+
+	cfg := ai.Config{Model: req.Model}
+	if cfg.Model.Name == "" {
+		cfg.Model.Name = rendered.Model
+	}
+	if cfg.Model.Backend == "" && cfg.Model.Name != "" {
+		if b, berr := ai.InferBackend(cfg.Model.Name); berr == nil {
 			cfg.Model.Backend = b
 		}
 	}
+	// The dotprompt config: block stays canonical for maxOutputTokens/temperature/
+	// reasoning when a file mixes both frontmatter dialects, so apply it last.
 	applyModelConfig(rendered.Config, &req, &cfg)
+	cfg.Budget = req.Budget
 	if out != nil {
 		req.Prompt.Schema = out
 	}
 	return req, cfg, nil
+}
+
+// decodeSpecFrontmatter folds the raw dotprompt frontmatter map into the spec
+// (ai.Request) by re-encoding it as YAML and unmarshalling into the typed spec.
+// Spec-native keys land on their fields; dotprompt-only keys (config, input,
+// output) have no spec field and are ignored. It is a no-op for empty frontmatter.
+func decodeSpecFrontmatter(raw map[string]any, req *ai.Request) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	b, err := yaml.Marshal(raw)
+	if err != nil {
+		return fmt.Errorf("re-encode frontmatter: %w", err)
+	}
+	return yaml.Unmarshal(b, req)
 }
 
 // Library renders named .prompt files from an fs.FS (typically an embed.FS), the

@@ -1,0 +1,16 @@
+---
+model: gemini-2.5-pro
+backend: gemini
+effort: medium
+config:
+  maxOutputTokens: 4096
+  temperature: 0.25
+budget:
+  cost: 1
+---
+{{role "system"}}
+You are an analysis assistant. Compare alternatives and call out assumptions.
+{{role "user"}}
+Analyze:
+{{task}}
+
