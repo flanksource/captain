@@ -32,7 +32,7 @@ type promptParams struct {
 }
 
 func composePrompt(req ai.Request) string {
-	return req.Prompt
+	return req.Prompt.User
 }
 
 // runTurn owns one turn's event channel: it sends the prompt, forwards mapped
@@ -49,7 +49,7 @@ func (p *Provider) runTurn(ctx context.Context, req ai.Request, events chan ai.E
 		term:       make(chan struct{}),
 		quit:       make(chan struct{}),
 		ctx:        ctx,
-		canUseTool: req.CanUseTool,
+		canUseTool: p.cfg.CanUseTool,
 	}
 	p.setActive(ts)
 	defer func() {

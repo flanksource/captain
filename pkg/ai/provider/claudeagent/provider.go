@@ -23,6 +23,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/provider/jsonrpc"
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/clicky/exec"
 	"github.com/flanksource/commons/logger"
 )
@@ -113,7 +114,7 @@ type Provider struct {
 // New builds a claude-agent provider. The supervised process is started lazily
 // on the first ExecuteStream.
 func New(cfg ai.Config) (*Provider, error) {
-	model := cfg.Model
+	model := cfg.Model.Name
 	if model == "" {
 		model = defaultModel
 	}
@@ -133,7 +134,7 @@ func (p *Provider) GetBackend() ai.Backend { return ai.BackendClaudeAgent }
 
 // Execute drains its own ExecuteStream into a buffered ai.Response.
 func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, error) {
-	if req.StructuredOutput != nil {
+	if req.Prompt.Schema != nil {
 		return nil, fmt.Errorf("claude-agent does not support StructuredOutput")
 	}
 	start := time.Now()
@@ -200,7 +201,7 @@ func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, e
 // events back. Turns are serialized via turnMu so the single SDK session is
 // never driven by two prompts at once.
 func (p *Provider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai.Event, error) {
-	if req.StructuredOutput != nil {
+	if req.Prompt.Schema != nil {
 		return nil, fmt.Errorf("claude-agent stream mode does not support StructuredOutput")
 	}
 	if err := p.ensureStarted(req); err != nil {
@@ -302,11 +303,12 @@ func (p *Provider) initializeParams(req ai.Request) initializeParams {
 	// brokered means the caller wants to vet each tool over the can_use_tool
 	// round-trip, so the SDK must consult canUseTool instead of auto-approving:
 	// bypassPermissions / allowDangerouslySkipPermissions would skip it entirely.
-	brokered := req.CanUseTool != nil
+	// The broker callback is a runtime concern, carried on the provider's Config.
+	brokered := p.cfg.CanUseTool != nil
 
-	mode := req.PermissionMode
-	allowed := req.AllowedTools
-	if req.Edit {
+	mode := string(req.Permissions.Mode)
+	allowed := req.Permissions.Tools.Allow
+	if req.Permissions.HasPreset(api.PresetEdit) {
 		if mode == "" {
 			mode = "acceptEdits"
 		}
@@ -333,13 +335,13 @@ func (p *Provider) initializeParams(req ai.Request) initializeParams {
 	}
 
 	return initializeParams{
-		Cwd:                req.Cwd,
+		Cwd:                req.Context.Dir,
 		Model:              aliasModel(p.model),
-		SystemPrompt:       req.SystemPrompt,
-		AppendSystemPrompt: req.AppendSystemPrompt,
+		SystemPrompt:       req.Prompt.System,
+		AppendSystemPrompt: req.Prompt.AppendSystem,
 		AllowedTools:       allowed,
 		MaxTurns:           req.MaxTurns,
-		MaxBudgetUsd:       p.cfg.BudgetUSD,
+		MaxBudgetUsd:       p.cfg.Budget.Cost,
 		PermissionMode:     mode,
 		Resume:             resume,
 		ApprovalMode:       approvalMode,
