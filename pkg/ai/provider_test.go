@@ -45,6 +45,61 @@ func TestInferBackendErrorListsAllBackends(t *testing.T) {
 	}
 }
 
+func TestBackendKind(t *testing.T) {
+	api := map[Backend]bool{BackendAnthropic: true, BackendGemini: true, BackendOpenAI: true}
+	for _, b := range AllBackends() {
+		want := "cli"
+		if api[b] {
+			want = "api"
+		}
+		if got := b.Kind(); got != want {
+			t.Errorf("Backend(%q).Kind() = %q, want %q", b, got, want)
+		}
+	}
+}
+
+// TestAuthEnvVars pins each backend to the env vars it authenticates with,
+// including the CLI backends that share their parent provider's key. Every
+// backend must resolve to a non-empty list so model listing and whoami never
+// silently treat a backend as keyless.
+func TestAuthEnvVars(t *testing.T) {
+	cases := map[Backend][]string{
+		BackendAnthropic:   {"ANTHROPIC_API_KEY"},
+		BackendClaudeCLI:   {"ANTHROPIC_API_KEY"},
+		BackendClaudeAgent: {"ANTHROPIC_API_KEY"},
+		BackendOpenAI:      {"OPENAI_API_KEY"},
+		BackendCodexCLI:    {"OPENAI_API_KEY"},
+		BackendGemini:      {"GEMINI_API_KEY", "GOOGLE_API_KEY"},
+		BackendGeminiCLI:   {"GEMINI_API_KEY", "GOOGLE_API_KEY"},
+	}
+	for _, b := range AllBackends() {
+		want, ok := cases[b]
+		if !ok {
+			t.Errorf("backend %q has no AuthEnvVars expectation in test", b)
+			continue
+		}
+		got := AuthEnvVars(b)
+		if strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Errorf("AuthEnvVars(%q) = %v, want %v", b, got, want)
+		}
+	}
+}
+
+// TestGetAPIKeyFromEnvPrefersFirstSet verifies the priority order and that a CLI
+// backend resolves the same key as its parent API backend.
+func TestGetAPIKeyFromEnvPrefersFirstSet(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "")
+	t.Setenv("GOOGLE_API_KEY", "from-google")
+	if got := GetAPIKeyFromEnv(BackendGemini); got != "from-google" {
+		t.Errorf("GetAPIKeyFromEnv(gemini) = %q, want fallback to GOOGLE_API_KEY", got)
+	}
+
+	t.Setenv("ANTHROPIC_API_KEY", "ant-123")
+	if got := GetAPIKeyFromEnv(BackendClaudeCLI); got != "ant-123" {
+		t.Errorf("GetAPIKeyFromEnv(claude-cli) = %q, want claude-cli to share ANTHROPIC_API_KEY", got)
+	}
+}
+
 func TestInferBackendKnownPrefixes(t *testing.T) {
 	cases := map[string]Backend{
 		"claude-agent-sonnet": BackendClaudeAgent,

@@ -97,9 +97,15 @@ func main() {
 	clicky.AddNamedCommand("test", aiCmd, cli.AITestOptions{}, cli.RunAITest)
 	clicky.AddNamedCommand("fixture", aiCmd, cli.AIFixtureOptions{}, cli.RunAIFixture).Short = "Run a YAML fixture across multiple Claude configurations"
 
+	whoamiCmd := clicky.AddNamedCommand("whoami", rootCmd, cli.WhoamiOptions{}, cli.RunWhoami)
+	whoamiCmd.Short = "List agent adapters, auth methods, and available models"
+	whoamiCmd.Long = "Show every AI agent adapter (API providers and CLI agents), how each is authenticated (API-key env var or CLI login), whether its CLI binary is installed, and the models each provider exposes via a live API call. Pass --models=false to skip the network probes, or --backend to inspect a single adapter."
+
 	configureCmd := clicky.AddNamedCommand("configure", rootCmd, cli.ConfigureOptions{}, cli.RunConfigure)
 	configureCmd.Short = "Interactive wizard to set default model, backend, budget, and safety toggles"
 	configureCmd.Long = "Run an interactive form to configure ~/.captain.yaml. These defaults are applied to `captain ai prompt`, `captain ai test`, and other AI commands when corresponding flags are not passed."
+
+	rootCmd.AddCommand(cli.NewServeCommand(version))
 
 	dodCmd := &cobra.Command{
 		Use:   "dod",

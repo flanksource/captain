@@ -41,6 +41,37 @@ func (b Backend) Valid() bool {
 	return false
 }
 
+// Kind classifies a backend as "api" (called directly over HTTP with an API
+// key) or "cli" (delegated to an installed coding-agent binary that carries its
+// own auth/login). Used by `captain whoami` to group adapters and decide which
+// auth signals to probe.
+func (b Backend) Kind() string {
+	switch b {
+	case BackendAnthropic, BackendGemini, BackendOpenAI:
+		return "api"
+	default:
+		return "cli"
+	}
+}
+
+// AuthEnvVars returns the environment variables consulted for a backend's API
+// key, in priority order. CLI backends share their parent provider's key (the
+// CLIs honour the same env var and the model-listing endpoints are the parent
+// provider's), so this is the single source of truth for both NewProvider's key
+// resolution and the live model listing in models_remote.go.
+func AuthEnvVars(b Backend) []string {
+	switch b {
+	case BackendAnthropic, BackendClaudeCLI, BackendClaudeAgent:
+		return []string{"ANTHROPIC_API_KEY"}
+	case BackendOpenAI, BackendCodexCLI:
+		return []string{"OPENAI_API_KEY"}
+	case BackendGemini, BackendGeminiCLI:
+		return []string{"GEMINI_API_KEY", "GOOGLE_API_KEY"}
+	default:
+		return nil
+	}
+}
+
 // BackendList renders AllBackends as a comma-separated string for help text and
 // error messages so the enumeration lives in exactly one place.
 func BackendList() string {
