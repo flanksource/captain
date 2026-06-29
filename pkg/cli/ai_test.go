@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/captainconfig"
 )
 
@@ -38,16 +39,16 @@ func TestAIPromptOptions_ToRequest_Defaults(t *testing.T) {
 		t.Fatalf("ToRequest: %v", err)
 	}
 
-	if req.Prompt != "hello" {
-		t.Errorf("Prompt = %q, want hello", req.Prompt)
+	if req.Prompt.User != "hello" {
+		t.Errorf("Prompt = %q, want hello", req.Prompt.User)
 	}
-	if req.MaxTokens != 4096 {
-		t.Errorf("MaxTokens = %d, want 4096 built-in default", req.MaxTokens)
+	if req.Budget.MaxTokens != 4096 {
+		t.Errorf("MaxTokens = %d, want 4096 built-in default", req.Budget.MaxTokens)
 	}
 	for name, got := range map[string]bool{
-		"NoMCP": req.NoMCP, "NoHooks": req.NoHooks, "NoSkills": req.NoSkills,
-		"NoUser": req.NoUser, "NoProject": req.NoProject, "NoMemory": req.NoMemory,
-		"Bare": req.Bare, "Edit": req.Edit,
+		"NoMCP": req.Permissions.MCP.Disabled, "NoHooks": req.Memory.SkipHooks, "NoSkills": req.Memory.SkipSkills,
+		"NoUser": req.Memory.SkipUser, "NoProject": req.Memory.SkipProject, "NoMemory": req.Memory.SkipMemory,
+		"Bare": req.Memory.Bare, "Edit": req.Permissions.HasPreset(api.PresetEdit),
 	} {
 		if got {
 			t.Errorf("%s = true; default-shape options must not flip any No*/Bare/Edit", name)
@@ -62,14 +63,14 @@ func TestAIPromptOptions_ToRequest_NegativeFlags(t *testing.T) {
 	cases := []struct {
 		name   string
 		mutate func(*AIPromptOptions)
-		field  string
+		get    func(ai.Request) bool
 	}{
-		{"no-mcp", func(o *AIPromptOptions) { o.NoMCP = true }, "NoMCP"},
-		{"no-hooks", func(o *AIPromptOptions) { o.NoHooks = true }, "NoHooks"},
-		{"no-skills", func(o *AIPromptOptions) { o.NoSkills = true }, "NoSkills"},
-		{"no-user", func(o *AIPromptOptions) { o.NoUser = true }, "NoUser"},
-		{"no-project", func(o *AIPromptOptions) { o.NoProject = true }, "NoProject"},
-		{"no-memory", func(o *AIPromptOptions) { o.NoMemory = true }, "NoMemory"},
+		{"no-mcp", func(o *AIPromptOptions) { o.NoMCP = true }, func(r ai.Request) bool { return r.Permissions.MCP.Disabled }},
+		{"no-hooks", func(o *AIPromptOptions) { o.NoHooks = true }, func(r ai.Request) bool { return r.Memory.SkipHooks }},
+		{"no-skills", func(o *AIPromptOptions) { o.NoSkills = true }, func(r ai.Request) bool { return r.Memory.SkipSkills }},
+		{"no-user", func(o *AIPromptOptions) { o.NoUser = true }, func(r ai.Request) bool { return r.Memory.SkipUser }},
+		{"no-project", func(o *AIPromptOptions) { o.NoProject = true }, func(r ai.Request) bool { return r.Memory.SkipProject }},
+		{"no-memory", func(o *AIPromptOptions) { o.NoMemory = true }, func(r ai.Request) bool { return r.Memory.SkipMemory }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -79,8 +80,8 @@ func TestAIPromptOptions_ToRequest_NegativeFlags(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ToRequest: %v", err)
 			}
-			if !reflect.ValueOf(req).FieldByName(tc.field).Bool() {
-				t.Errorf("%s = false, want true after --%s", tc.field, tc.name)
+			if !tc.get(req) {
+				t.Errorf("flag --%s did not set the mapped request field", tc.name)
 			}
 		})
 	}
@@ -107,38 +108,38 @@ func TestAIPromptOptions_ToRequest_PassesScalars(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ToRequest: %v", err)
 	}
-	if req.SystemPrompt != "be careful" {
-		t.Errorf("SystemPrompt = %q", req.SystemPrompt)
+	if req.Prompt.System != "be careful" {
+		t.Errorf("SystemPrompt = %q", req.Prompt.System)
 	}
-	if req.AppendSystemPrompt != "also be brief" {
-		t.Errorf("AppendSystemPrompt = %q", req.AppendSystemPrompt)
+	if req.Prompt.AppendSystem != "also be brief" {
+		t.Errorf("AppendSystemPrompt = %q", req.Prompt.AppendSystem)
 	}
-	if req.PermissionMode != "acceptEdits" {
-		t.Errorf("PermissionMode = %q", req.PermissionMode)
+	if req.Permissions.Mode != api.PermissionAcceptEdits {
+		t.Errorf("PermissionMode = %q", req.Permissions.Mode)
 	}
-	if !req.Edit {
-		t.Error("Edit not propagated")
+	if !req.Permissions.HasPreset(api.PresetEdit) {
+		t.Error("Edit preset not propagated")
 	}
-	if !reflect.DeepEqual(req.AllowedTools, []string{"Read", "Bash"}) {
-		t.Errorf("AllowedTools = %v", req.AllowedTools)
+	if !reflect.DeepEqual(req.Permissions.Tools.Allow, []string{"Read", "Bash"}) {
+		t.Errorf("AllowedTools = %v", req.Permissions.Tools.Allow)
 	}
-	if !reflect.DeepEqual(req.DisallowedTools, []string{"Write"}) {
-		t.Errorf("DisallowedTools = %v", req.DisallowedTools)
+	if !reflect.DeepEqual(req.Permissions.Tools.Deny, []string{"Write"}) {
+		t.Errorf("DisallowedTools = %v", req.Permissions.Tools.Deny)
 	}
-	if !reflect.DeepEqual(req.SkillDirs, []string{"/skills/a", "/skills/b"}) {
-		t.Errorf("SkillDirs = %v", req.SkillDirs)
+	if !reflect.DeepEqual(req.Memory.Skills, []string{"/skills/a", "/skills/b"}) {
+		t.Errorf("SkillDirs = %v", req.Memory.Skills)
 	}
-	if !req.Bare {
+	if !req.Memory.Bare {
 		t.Error("Bare not propagated")
 	}
-	if req.MaxTokens != 1024 {
-		t.Errorf("MaxTokens = %d", req.MaxTokens)
+	if req.Budget.MaxTokens != 1024 {
+		t.Errorf("MaxTokens = %d", req.Budget.MaxTokens)
 	}
-	if req.Temperature != 0.5 {
-		t.Errorf("Temperature = %v", req.Temperature)
+	if temp, ok := req.Temp(); !ok || temp != 0.5 {
+		t.Errorf("Temperature = %v (set=%v)", temp, ok)
 	}
-	if req.ReasoningEffort != "high" {
-		t.Errorf("ReasoningEffort = %q", req.ReasoningEffort)
+	if req.Effort != api.EffortHigh {
+		t.Errorf("ReasoningEffort = %q", req.Effort)
 	}
 	if req.MaxTurns != 7 {
 		t.Errorf("MaxTurns = %d", req.MaxTurns)
@@ -195,8 +196,8 @@ func TestAIRuntimeOptions_ToRequest_MaxTokensPrecedence(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if req.MaxTokens != 2048 {
-			t.Errorf("MaxTokens = %d, want 2048 (explicit flag)", req.MaxTokens)
+		if req.Budget.MaxTokens != 2048 {
+			t.Errorf("MaxTokens = %d, want 2048 (explicit flag)", req.Budget.MaxTokens)
 		}
 	})
 	t.Run("unset falls back to saved", func(t *testing.T) {
@@ -205,8 +206,8 @@ func TestAIRuntimeOptions_ToRequest_MaxTokensPrecedence(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if req.MaxTokens != 16000 {
-			t.Errorf("MaxTokens = %d, want 16000 (saved)", req.MaxTokens)
+		if req.Budget.MaxTokens != 16000 {
+			t.Errorf("MaxTokens = %d, want 16000 (saved)", req.Budget.MaxTokens)
 		}
 	})
 	t.Run("unset with no saved uses built-in 4096", func(t *testing.T) {
@@ -215,8 +216,8 @@ func TestAIRuntimeOptions_ToRequest_MaxTokensPrecedence(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if req.MaxTokens != 4096 {
-			t.Errorf("MaxTokens = %d, want 4096 (built-in)", req.MaxTokens)
+		if req.Budget.MaxTokens != 4096 {
+			t.Errorf("MaxTokens = %d, want 4096 (built-in)", req.Budget.MaxTokens)
 		}
 	})
 }
@@ -234,18 +235,18 @@ func TestAIRuntimeOptions_ToRequest_OverlaysSaved(t *testing.T) {
 		t.Fatalf("ToRequest: %v", err)
 	}
 
-	if req.SystemPrompt != "sys" || req.Prompt != "user" {
-		t.Errorf("prompt fields = %q/%q, want sys/user", req.SystemPrompt, req.Prompt)
+	if req.Prompt.System != "sys" || req.Prompt.User != "user" {
+		t.Errorf("prompt fields = %q/%q, want sys/user", req.Prompt.System, req.Prompt.User)
 	}
-	if req.MaxTokens != 16000 {
-		t.Errorf("MaxTokens = %d, want 16000 (saved overlay)", req.MaxTokens)
+	if req.Budget.MaxTokens != 16000 {
+		t.Errorf("MaxTokens = %d, want 16000 (saved overlay)", req.Budget.MaxTokens)
 	}
-	if req.ReasoningEffort != "high" {
-		t.Errorf("ReasoningEffort = %q, want high (flag overrides saved)", req.ReasoningEffort)
+	if req.Effort != api.EffortHigh {
+		t.Errorf("ReasoningEffort = %q, want high (flag overrides saved)", req.Effort)
 	}
 	for name, got := range map[string]bool{
-		"NoMCP": req.NoMCP, "NoHooks": req.NoHooks, "NoSkills": req.NoSkills,
-		"NoUser": req.NoUser, "NoProject": req.NoProject, "NoMemory": req.NoMemory,
+		"NoMCP": req.Permissions.MCP.Disabled, "NoHooks": req.Memory.SkipHooks, "NoSkills": req.Memory.SkipSkills,
+		"NoUser": req.Memory.SkipUser, "NoProject": req.Memory.SkipProject, "NoMemory": req.Memory.SkipMemory,
 	} {
 		if !got {
 			t.Errorf("%s = false, want true (from saved config)", name)

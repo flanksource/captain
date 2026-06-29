@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/flanksource/captain/pkg/api"
 )
 
 // fakeStreamingProvider replays a scripted sequence of event slices, one per
@@ -75,7 +77,7 @@ func TestRunUntil_StopsWhenConditionMetAfterFirstRun(t *testing.T) {
 		Provider: p,
 		BuildRequest: func(iter int, prev *LoopIteration) (Request, bool) {
 			if iter == 0 {
-				return Request{Prompt: "first"}, true
+				return Request{Prompt: api.Prompt{User: "first"}}, true
 			}
 			return Request{}, false
 		},
@@ -103,7 +105,9 @@ func TestRunUntil_HitsMaxIterations(t *testing.T) {
 	res, err := RunUntil(context.Background(), LoopOptions{
 		Provider:      p,
 		MaxIterations: 2,
-		BuildRequest:  func(iter int, prev *LoopIteration) (Request, bool) { return Request{Prompt: "loop"}, true },
+		BuildRequest: func(iter int, prev *LoopIteration) (Request, bool) {
+			return Request{Prompt: api.Prompt{User: "loop"}}, true
+		},
 	})
 	if err != nil {
 		t.Fatalf("RunUntil err: %v", err)
@@ -128,7 +132,9 @@ func TestRunUntil_HitsMaxCost(t *testing.T) {
 		Provider:      p,
 		MaxIterations: 10,
 		MaxCostUSD:    0.07,
-		BuildRequest:  func(iter int, prev *LoopIteration) (Request, bool) { return Request{Prompt: "loop"}, true },
+		BuildRequest: func(iter int, prev *LoopIteration) (Request, bool) {
+			return Request{Prompt: api.Prompt{User: "loop"}}, true
+		},
 	})
 	if err != nil {
 		t.Fatalf("RunUntil err: %v", err)
@@ -160,7 +166,7 @@ func TestRunUntil_SessionReuse(t *testing.T) {
 		MaxIterations: 2,
 		SessionReuse:  true,
 		BuildRequest: func(iter int, prev *LoopIteration) (Request, bool) {
-			return Request{Prompt: "loop"}, true
+			return Request{Prompt: api.Prompt{User: "loop"}}, true
 		},
 	})
 	if err != nil {

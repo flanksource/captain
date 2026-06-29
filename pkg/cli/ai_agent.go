@@ -116,7 +116,7 @@ func RunAIAgent(opts AIAgentOptions) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if cfg.Model == "" {
+	if cfg.Model.Name == "" {
 		return nil, fmt.Errorf("no model: pass --model or run 'captain configure' to set a default")
 	}
 	scope, err := scopeFromFlag(opts.Scope)
@@ -139,7 +139,7 @@ func RunAIAgent(opts AIAgentOptions) (any, error) {
 	}
 	sp, ok := p.(ai.StreamingProvider)
 	if !ok {
-		return nil, fmt.Errorf("backend %s does not support the streaming agent loop", cfg.Backend)
+		return nil, fmt.Errorf("backend %s does not support the streaming agent loop", cfg.Model.Backend)
 	}
 
 	plugins, wt, err := buildAgentPlugins(opts, p)
@@ -163,7 +163,7 @@ func RunAIAgent(opts AIAgentOptions) (any, error) {
 		Build: func(_ *agent.RunContext, _ int, _ *ai.LoopIteration, feedback string) ai.Request {
 			req := baseReq
 			if feedback != "" {
-				req.Prompt = opts.Prompt + "\n\n[verifier feedback]\n" + feedback + "\n\nFix the issues above and continue."
+				req.Prompt.User = opts.Prompt + "\n\n[verifier feedback]\n" + feedback + "\n\nFix the issues above and continue."
 			}
 			return req
 		},

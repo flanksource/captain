@@ -10,10 +10,10 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/middleware"
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/captainconfig"
 	"github.com/flanksource/captain/pkg/claude"
 	"github.com/flanksource/captain/pkg/claude/tools"
-	"github.com/flanksource/clicky/aichat"
 )
 
 // loadSavedAI returns the saved AI defaults from ~/.captain.yaml. Errors are
@@ -72,11 +72,10 @@ func (o AIProviderOptions) ToConfig() (ai.Config, error) {
 	}
 
 	return ai.Config{
-		Model:     model,
-		Backend:   ai.Backend(backend),
-		APIKey:    o.APIKey,
-		NoCache:   o.NoCache || saved.NoCache,
-		BudgetUSD: budget,
+		Model:   api.Model{Name: model, Backend: ai.Backend(backend)},
+		Budget:  api.Budget{Cost: budget},
+		APIKey:  o.APIKey,
+		NoCache: o.NoCache || saved.NoCache,
 	}, nil
 }
 
@@ -95,7 +94,7 @@ type AIRuntimeOptions struct {
 
 	MaxTokens   int    `flag:"max-tokens" help:"Maximum output tokens (0 = saved default or 4096)"`
 	Temperature string `flag:"temperature" help:"Sampling temperature (0.0-2.0)" default:"0"`
-	Effort      string `flag:"effort" help:"Reasoning effort: low|medium|high (codex/genkit; others ignore)"`
+	Effort      string `flag:"effort" help:"Reasoning effort: low|medium|high|xhigh (codex/genkit; others ignore)"`
 	MaxTurns    int    `flag:"max-turns" help:"Max agent turns 0-100, 0 = provider default (claude-agent)"`
 	Resume      string `flag:"resume" help:"Resume an existing session by id (claude-agent, codex)"`
 
@@ -190,31 +189,44 @@ func (o AIRuntimeOptions) ToRequest(systemPrompt, appendSystemPrompt, userPrompt
 	if effort == "" {
 		effort = saved.ReasoningEffort
 	}
-	if err := aichat.ValidateEffort(aichat.Effort(effort)); err != nil {
-		return ai.Request{}, fmt.Errorf("invalid --effort %q (valid: low|medium|high): %w", effort, err)
+	if err := api.Effort(effort).Validate(); err != nil {
+		return ai.Request{}, fmt.Errorf("invalid --effort %q: %w", effort, err)
+	}
+
+	// Temperature is *float64 on the model: leave it nil for the default 0 so an
+	// explicit 0 and "unset" hash identically (matches the prior flat behaviour);
+	// no captain provider sends temperature to the model, only the cache key.
+	var temperaturePtr *float64
+	if temperature != 0 {
+		t := temperature
+		temperaturePtr = &t
+	}
+
+	perms := api.Permissions{
+		Mode:  api.PermissionMode(o.PermissionMode),
+		Tools: api.Tools{Allow: o.AllowedTools, Deny: o.DisallowedTools},
+		MCP:   api.MCP{Disabled: o.NoMCP || saved.NoMCP},
+	}
+	if o.Edit {
+		perms.Presets = append(perms.Presets, api.PresetEdit)
 	}
 
 	return ai.Request{
-		SystemPrompt:       systemPrompt,
-		AppendSystemPrompt: appendSystemPrompt,
-		Prompt:             userPrompt,
-		MaxTokens:          maxTokens,
-		Temperature:        temperature,
-		ReasoningEffort:    effort,
-		MaxTurns:           o.MaxTurns,
-		SessionID:          o.Resume,
-		PermissionMode:     o.PermissionMode,
-		Edit:               o.Edit,
-		AllowedTools:       o.AllowedTools,
-		DisallowedTools:    o.DisallowedTools,
-		NoMCP:              o.NoMCP || saved.NoMCP,
-		NoHooks:            o.NoHooks || saved.NoHooks,
-		NoSkills:           o.NoSkills || saved.NoSkills,
-		SkillDirs:          o.SkillDirs,
-		NoUser:             o.NoUser || saved.NoUser,
-		NoProject:          o.NoProject || saved.NoProject,
-		NoMemory:           o.NoMemory || saved.NoMemory,
-		Bare:               o.Bare,
+		Prompt: api.Prompt{System: systemPrompt, AppendSystem: appendSystemPrompt, User: userPrompt},
+		Model:  api.Model{Temperature: temperaturePtr, Effort: api.Effort(effort)},
+		Budget: api.Budget{MaxTokens: maxTokens},
+		Memory: api.Memory{
+			Skills:      o.SkillDirs,
+			SkipHooks:   o.NoHooks || saved.NoHooks,
+			SkipSkills:  o.NoSkills || saved.NoSkills,
+			SkipUser:    o.NoUser || saved.NoUser,
+			SkipProject: o.NoProject || saved.NoProject,
+			SkipMemory:  o.NoMemory || saved.NoMemory,
+			Bare:        o.Bare,
+		},
+		Permissions: perms,
+		SessionID:   o.Resume,
+		MaxTurns:    o.MaxTurns,
 	}, nil
 }
 
@@ -233,7 +245,7 @@ func RunAIPrompt(opts AIPromptOptions) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if cfg.Model == "" {
+	if cfg.Model.Name == "" {
 		return nil, fmt.Errorf("no model: pass --model or run 'captain configure' to set a default")
 	}
 
@@ -493,7 +505,7 @@ func RunAITest(opts AITestOptions) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if cfg.Model == "" {
+	if cfg.Model.Name == "" {
 		return nil, fmt.Errorf("no model: pass --model or run 'captain configure' to set a default")
 	}
 	p, err := ai.NewProvider(cfg)
@@ -513,8 +525,8 @@ func RunAITest(opts AITestOptions) (any, error) {
 
 	start := time.Now()
 	_, err = p.Execute(ctx, ai.Request{
-		Prompt:    "Respond with exactly: ok",
-		MaxTokens: 10,
+		Prompt: api.Prompt{User: "Respond with exactly: ok"},
+		Budget: api.Budget{MaxTokens: 10},
 	})
 
 	result := AITestResult{

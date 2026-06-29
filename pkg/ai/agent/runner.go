@@ -212,7 +212,7 @@ func (r *Runner) Run(ctx context.Context) (*RunResult, error) {
 			feedback = v.Feedback
 		}
 		req := r.Build(rc, iter, prev, feedback)
-		req.Cwd = rc.Cwd
+		req.Context.Dir = rc.Cwd
 		return req, true
 	}
 

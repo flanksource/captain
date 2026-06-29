@@ -36,6 +36,15 @@ func (m Model) ResolveBackend() (Backend, error) {
 	return InferBackend(m.Name)
 }
 
+// Temp returns the temperature and whether it was explicitly set (non-nil), so
+// providers can distinguish an intentional 0.0 from "unset, use the default".
+func (m Model) Temp() (float64, bool) {
+	if m.Temperature == nil {
+		return 0, false
+	}
+	return *m.Temperature, true
+}
+
 // Validate checks the model name is present and the knobs are in range.
 func (m Model) Validate() error {
 	if m.Name == "" {

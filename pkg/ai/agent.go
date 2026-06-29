@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai/pricing"
+	"github.com/flanksource/captain/pkg/api"
 )
 
 // Agent is a convenience wrapper over a Provider that offers the named-prompt /
@@ -75,14 +76,14 @@ func (a *Agent) GetBackend() Backend { return a.provider.GetBackend() }
 // ExecutePrompt runs one prompt and accrues its cost onto the agent.
 func (a *Agent) ExecutePrompt(ctx context.Context, req PromptRequest) (*PromptResponse, error) {
 	start := time.Now()
-	resp, err := a.provider.Execute(ctx, Request{
-		SystemPrompt:     req.SystemPrompt,
-		Prompt:           req.Prompt,
-		StructuredOutput: req.StructuredOutput,
-		Source:           req.Source,
-	})
+	resp, err := a.provider.Execute(ctx, Request{Prompt: api.Prompt{
+		User:   req.Prompt,
+		System: req.SystemPrompt,
+		Source: req.Source,
+		Schema: req.StructuredOutput,
+	}})
 	if err != nil {
-		return &PromptResponse{Request: req, Model: a.cfg.Model, Error: err.Error(), Duration: time.Since(start)}, err
+		return &PromptResponse{Request: req, Model: a.cfg.Model.Name, Error: err.Error(), Duration: time.Since(start)}, err
 	}
 
 	cost := a.accrue(resp)
@@ -159,7 +160,7 @@ func (a *Agent) Close() error {
 func (a *Agent) accrue(resp *Response) Cost {
 	model := resp.Model
 	if model == "" {
-		model = a.cfg.Model
+		model = a.cfg.Model.Name
 	}
 	cost := Cost{
 		Model:        model,

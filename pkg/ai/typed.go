@@ -8,7 +8,7 @@ import (
 
 func ExecuteTyped[T any](ctx context.Context, p Provider, req Request) (*T, *Response, error) {
 	var zero T
-	req.StructuredOutput = &zero
+	req.Prompt.Schema = &zero
 
 	resp, err := p.Execute(ctx, req)
 	if err != nil {

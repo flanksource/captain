@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -24,7 +25,7 @@ func (m *mockProvider) Execute(_ context.Context, req Request) (*Response, error
 		return nil, m.err
 	}
 	return &Response{
-		Text:    m.text + ":" + req.Prompt,
+		Text:    m.text + ":" + req.Prompt.User,
 		Model:   m.model,
 		Backend: BackendAnthropic,
 		Usage:   Usage{InputTokens: 10, OutputTokens: 5},
@@ -32,7 +33,7 @@ func (m *mockProvider) Execute(_ context.Context, req Request) (*Response, error
 }
 
 func TestAgent_ExecutePromptAccruesCost(t *testing.T) {
-	a := NewAgentWithProvider(&mockProvider{model: "test-model", text: "out"}, Config{Model: "test-model"})
+	a := NewAgentWithProvider(&mockProvider{model: "test-model", text: "out"}, Config{Model: api.Model{Name: "test-model"}})
 
 	resp, err := a.ExecutePrompt(context.Background(), PromptRequest{Name: "p1", Prompt: "hi"})
 	require.NoError(t, err)
@@ -48,7 +49,7 @@ func TestAgent_ExecutePromptAccruesCost(t *testing.T) {
 }
 
 func TestAgent_ExecutePromptError(t *testing.T) {
-	a := NewAgentWithProvider(&mockProvider{model: "m", err: fmt.Errorf("boom")}, Config{Model: "m"})
+	a := NewAgentWithProvider(&mockProvider{model: "m", err: fmt.Errorf("boom")}, Config{Model: api.Model{Name: "m"}})
 	resp, err := a.ExecutePrompt(context.Background(), PromptRequest{Name: "p", Prompt: "x"})
 	require.Error(t, err)
 	assert.False(t, resp.IsOK())
@@ -57,7 +58,7 @@ func TestAgent_ExecutePromptError(t *testing.T) {
 }
 
 func TestAgent_ExecuteBatchKeyedByName(t *testing.T) {
-	a := NewAgentWithProvider(&mockProvider{model: "m", text: "r"}, Config{Model: "m", MaxConcurrent: 2})
+	a := NewAgentWithProvider(&mockProvider{model: "m", text: "r"}, Config{Model: api.Model{Name: "m"}, MaxConcurrent: 2})
 	reqs := []PromptRequest{
 		{Name: "a", Prompt: "1"},
 		{Name: "b", Prompt: "2"},
@@ -74,7 +75,7 @@ func TestAgent_ExecuteBatchKeyedByName(t *testing.T) {
 
 func TestAgent_Close(t *testing.T) {
 	mp := &mockProvider{model: "m"}
-	a := NewAgentWithProvider(mp, Config{Model: "m"})
+	a := NewAgentWithProvider(mp, Config{Model: api.Model{Name: "m"}})
 	require.NoError(t, a.Close())
 	assert.True(t, mp.closed)
 }

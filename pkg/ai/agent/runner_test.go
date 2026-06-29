@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -48,7 +49,7 @@ func TestRunner_CapturesSessionAndChangedFiles(t *testing.T) {
 		Provider: prov,
 		Repo:     "/repo",
 		Build: func(_ *RunContext, _ int, _ *ai.LoopIteration, _ string) ai.Request {
-			return ai.Request{Prompt: "go"}
+			return ai.Request{Prompt: api.Prompt{User: "go"}}
 		},
 	}
 	res, err := r.Run(context.Background())
@@ -80,7 +81,7 @@ func TestRunner_VerifyDrivesRerunThenStops(t *testing.T) {
 		},
 		Build: func(_ *RunContext, _ int, _ *ai.LoopIteration, feedback string) ai.Request {
 			feedbackSeen = append(feedbackSeen, feedback)
-			return ai.Request{Prompt: "go"}
+			return ai.Request{Prompt: api.Prompt{User: "go"}}
 		},
 	}
 

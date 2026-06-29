@@ -5,6 +5,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/agent"
+	capapi "github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/clicky/aichat"
 	"github.com/flanksource/clicky/api"
 	"github.com/flanksource/clicky/entity"
@@ -39,14 +40,21 @@ func aiFilters[T any]() []entity.Filter[T] {
 	}
 }
 
-// effortOptions sources the reasoning-effort values from clicky/aichat's shared
-// Effort enum (the same source ToRequest validates against via ValidateEffort).
+// effortFilterOptions sources the reasoning-effort values from captain's shared
+// api.Effort enum — the same source ToRequest validates against — so completion
+// includes the captain-owned xhigh tier that clicky's aichat.Effort lacks.
 func effortFilterOptions() map[string]api.Textable {
-	return map[string]api.Textable{
-		string(aichat.EffortLow):    api.Text{Content: "Low"},
-		string(aichat.EffortMedium): api.Text{Content: "Medium"},
-		string(aichat.EffortHigh):   api.Text{Content: "High"},
+	labels := map[capapi.Effort]string{
+		capapi.EffortLow:    "Low",
+		capapi.EffortMedium: "Medium",
+		capapi.EffortHigh:   "High",
+		capapi.EffortXHigh:  "Extra High",
 	}
+	out := make(map[string]api.Textable, len(capapi.AllEfforts()))
+	for _, e := range capapi.AllEfforts() {
+		out[string(e)] = api.Text{Content: labels[e]}
+	}
+	return out
 }
 
 // scopeOptions sources the verifier scopes from agent.AllScopes (the same source
