@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/api"
 
 	gkai "github.com/firebase/genkit/go/ai"
 	"github.com/stretchr/testify/assert"
@@ -26,7 +27,7 @@ func TestEffortConfig(t *testing.T) {
 		{
 			name:    "anthropic high effort adds thinking budget on top of base",
 			backend: ai.BackendAnthropic,
-			req:     ai.Request{ReasoningEffort: "high"},
+			req:     ai.Request{Model: api.Model{Effort: api.EffortHigh}},
 			want: map[string]any{
 				"max_tokens": 24576 + 4096,
 				"thinking":   map[string]any{"type": "enabled", "budget_tokens": 24576},
@@ -35,7 +36,7 @@ func TestEffortConfig(t *testing.T) {
 		{
 			name:    "anthropic medium honours explicit max tokens as base",
 			backend: ai.BackendAnthropic,
-			req:     ai.Request{ReasoningEffort: "medium", MaxTokens: 1000},
+			req:     ai.Request{Model: api.Model{Effort: api.EffortMedium}, Budget: api.Budget{MaxTokens: 1000}},
 			want: map[string]any{
 				"max_tokens": 8192 + 1000,
 				"thinking":   map[string]any{"type": "enabled", "budget_tokens": 8192},
@@ -44,7 +45,7 @@ func TestEffortConfig(t *testing.T) {
 		{
 			name:    "openai high effort sets reasoning_effort",
 			backend: ai.BackendOpenAI,
-			req:     ai.Request{ReasoningEffort: "high"},
+			req:     ai.Request{Model: api.Model{Effort: api.EffortHigh}},
 			want:    map[string]any{"reasoning_effort": "high"},
 		},
 		{
@@ -56,7 +57,7 @@ func TestEffortConfig(t *testing.T) {
 		{
 			name:    "gemini low effort sets thinkingBudget",
 			backend: ai.BackendGemini,
-			req:     ai.Request{ReasoningEffort: "low"},
+			req:     ai.Request{Model: api.Model{Effort: api.EffortLow}},
 			want:    map[string]any{"thinkingConfig": map[string]any{"thinkingBudget": 2048}},
 		},
 		{
@@ -138,7 +139,7 @@ func TestNewMissingAPIKey(t *testing.T) {
 
 	for _, backend := range []ai.Backend{ai.BackendAnthropic, ai.BackendOpenAI, ai.BackendGemini} {
 		t.Run(string(backend), func(t *testing.T) {
-			_, err := New(ai.Config{Backend: backend, Model: "some-model"})
+			_, err := New(ai.Config{Model: api.Model{Backend: backend, Name: "some-model"}})
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "no API key")
 		})
@@ -146,7 +147,7 @@ func TestNewMissingAPIKey(t *testing.T) {
 }
 
 func TestNewUnsupportedBackend(t *testing.T) {
-	_, err := New(ai.Config{Backend: ai.BackendClaudeCLI, Model: "claude-code-foo", APIKey: "x"})
+	_, err := New(ai.Config{Model: api.Model{Backend: ai.BackendClaudeCLI, Name: "claude-code-foo"}, APIKey: "x"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "does not support backend")
 }

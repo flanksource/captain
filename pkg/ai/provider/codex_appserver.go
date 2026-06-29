@@ -66,7 +66,7 @@ func (c *CodexAppServer) Execute(ctx context.Context, req ai.Request) (*ai.Respo
 // ExecuteStream runs a single turn; the channel closes on turn/completed, a
 // fatal error, ctx cancellation, or a child crash.
 func (c *CodexAppServer) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai.Event, error) {
-	if req.StructuredOutput != nil {
+	if req.Prompt.Schema != nil {
 		return nil, fmt.Errorf("codex app-server does not support StructuredOutput; use a direct API backend")
 	}
 
