@@ -11,7 +11,7 @@ require (
 	github.com/firebase/genkit/go v1.8.0
 	github.com/flanksource/clicky v1.21.33
 	github.com/flanksource/clicky/aichat v1.21.33
-	github.com/flanksource/commons v1.51.3
+	github.com/flanksource/commons v1.53.1
 	github.com/flanksource/sandbox-runtime v1.0.2
 	github.com/google/dotprompt/go v0.0.0-20260502013637-5cd4a8405ca3
 	github.com/google/uuid v1.6.0
