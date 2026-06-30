@@ -64,8 +64,11 @@ func TestAIFilters_BackendFromAllBackends(t *testing.T) {
 
 // TestAIFilters_ModelSuggestsBareNames pins that genkit catalog ids are
 // suggested without their "provider/" prefix, so the value is directly usable as
-// --model (captain's InferBackend matches bare prefixes).
+// --model (captain's InferBackend matches bare prefixes). The synthetic catalog
+// keeps the assertion deterministic across clicky/aichat dependency bumps.
 func TestAIFilters_ModelSuggestsBareNames(t *testing.T) {
+	installTestCatalog(t)
+
 	keys := optionKeys(t, "model")
 	if !contains(keys, "claude-sonnet-4-5") {
 		t.Errorf("model options %v missing bare name claude-sonnet-4-5", keys)
