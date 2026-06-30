@@ -27,17 +27,74 @@ var (
 func GetModelInfo(model string) (ModelInfo, bool) {
 	EnsureLoaded()
 	registryMu.RLock()
-	defer registryMu.RUnlock()
 	info, ok := registry[model]
-	return info, ok
+	registryMu.RUnlock()
+	if ok {
+		return info, true
+	}
+	// Classify-on-miss: arbitrary Claude ids (e.g. catalog "claude-sonnet-4-6")
+	// that OpenRouter never lists are still priced from the static table.
+	return claudeStaticInfo(model)
 }
 
+// MergeMode controls how MergeModel/MergeModels reconcile an incoming row with
+// an existing registry entry for the same id.
+type MergeMode int
+
+const (
+	// MergeOverlay replaces the whole row (OpenRouter's authoritative refresh).
+	MergeOverlay MergeMode = iota
+	// MergeFillMissing keeps existing non-zero fields and only fills the zero
+	// ones from the incoming row (used to fill gaps without clobbering prices).
+	MergeFillMissing
+)
+
+// MergeModel merges a single row into the registry under the given mode.
+func MergeModel(id string, in ModelInfo, mode MergeMode) {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	mergeLocked(id, in, mode)
+}
+
+// MergeModels overlays each row into the registry (full replace per id).
 func MergeModels(models map[string]*ModelInfo) {
 	registryMu.Lock()
 	defer registryMu.Unlock()
 	for id, info := range models {
-		registry[id] = *info
+		mergeLocked(id, *info, MergeOverlay)
 	}
+}
+
+// mergeLocked performs the merge; callers must hold registryMu.
+func mergeLocked(id string, in ModelInfo, mode MergeMode) {
+	existing, ok := registry[id]
+	if !ok || mode == MergeOverlay {
+		in.ModelID = id
+		registry[id] = in
+		return
+	}
+	if existing.ModelID == "" {
+		existing.ModelID = id
+	}
+	if existing.MaxTokens == 0 {
+		existing.MaxTokens = in.MaxTokens
+	}
+	if existing.ContextWindow == 0 {
+		existing.ContextWindow = in.ContextWindow
+	}
+	if existing.InputPrice == 0 {
+		existing.InputPrice = in.InputPrice
+	}
+	if existing.OutputPrice == 0 {
+		existing.OutputPrice = in.OutputPrice
+	}
+	if existing.CacheReadsPrice == 0 {
+		existing.CacheReadsPrice = in.CacheReadsPrice
+	}
+	if existing.CacheWritesPrice == 0 {
+		existing.CacheWritesPrice = in.CacheWritesPrice
+	}
+	registry[id] = existing
 }
 
 func RegistrySize() int {

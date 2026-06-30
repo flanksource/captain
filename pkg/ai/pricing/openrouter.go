@@ -75,6 +75,7 @@ func EnsureLoaded() {
 			log.Debugf("Loaded OpenRouter pricing from cache (age: %s)", time.Since(cache.Timestamp))
 			pricingCache = cache
 			MergeModels(cache.Models)
+			applyStaticClaude()
 			return
 		}
 	}
@@ -88,6 +89,7 @@ func EnsureLoaded() {
 
 	pricingCache = &PricingCache{Timestamp: time.Now(), Models: models}
 	MergeModels(models)
+	applyStaticClaude()
 }
 
 func fetchOpenRouterPricing() (map[string]*ModelInfo, error) {
