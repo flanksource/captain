@@ -1,6 +1,8 @@
 package cmux
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -102,16 +104,44 @@ func TestAgentWorkspaceName(t *testing.T) {
 	}
 }
 
-func TestTruncatePrompt(t *testing.T) {
-	if body, truncated := truncatePrompt("short", 100); truncated || body != "short" {
-		t.Fatalf("truncatePrompt(short) = (%q, %v), want (short, false)", body, truncated)
+func TestPromptTitle(t *testing.T) {
+	cases := map[string]string{
+		"Fix the bug":              "Fix the bug",
+		"# Heading\n\nbody":        "Heading",
+		"\n\n## Cmux switch\nrest": "Cmux switch",
+		"   ":                      "Task",
+		"":                         "Task",
 	}
-	long := strings.Repeat("line\n", 100)
-	body, truncated := truncatePrompt(long, 20)
-	if !truncated {
-		t.Fatal("truncatePrompt(long) truncated = false, want true")
+	for in, want := range cases {
+		if got := promptTitle(in); got != want {
+			t.Errorf("promptTitle(%q) = %q, want %q", in, got, want)
+		}
 	}
-	if len(body) > 20 {
-		t.Fatalf("truncated body = %d bytes, want <= 20", len(body))
+	if got := promptTitle(strings.Repeat("a", 200)); len(got) != maxTitleBytes {
+		t.Errorf("promptTitle(long) len = %d, want %d", len(got), maxTitleBytes)
+	}
+}
+
+func TestBuildInstruction(t *testing.T) {
+	dir := t.TempDir()
+	r := &run{}
+	prompt := "# Switch to input file\n\nDo the thing across many lines.\n"
+
+	got, err := r.buildInstruction(dir, "sess-1", prompt)
+	if err != nil {
+		t.Fatalf("buildInstruction: %v", err)
+	}
+
+	path := filepath.Join(dir, ".gavel", "cmux", "prompt-sess-1.md")
+	if want := "Switch to input file - See " + path + " for full details"; got != want {
+		t.Fatalf("buildInstruction = %q, want %q", got, want)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read prompt file: %v", err)
+	}
+	if !strings.Contains(string(data), "Do the thing across many lines.") {
+		t.Errorf("prompt file missing full body: %q", data)
 	}
 }

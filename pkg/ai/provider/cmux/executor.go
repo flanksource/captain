@@ -306,30 +306,45 @@ func modelFlag(agent, model string) string {
 	return model
 }
 
-// maxInlinePromptBytes bounds how much of the prompt is dispatched directly to
-// the agent surface. Prompts at or below this are inlined in full; larger ones
-// are truncated to this size with a pointer to the prompt file for the rest.
-const maxInlinePromptBytes = 10 * 1024
+// maxTitleBytes caps the prompt title inlined onto the surface. The title is only
+// a pointer into the input file, so a prompt whose first line is itself huge can't
+// reintroduce the large-paste failures this design avoids.
+const maxTitleBytes = 120
 
-// buildInstruction renders the message dispatched to the agent surface from the
-// host-assembled prompt body. Small prompts are pasted verbatim; large ones are
-// truncated and the full text is written to <workDir>/.gavel/cmux/prompt-*.md
-// with a pointer appended.
+// buildInstruction writes the full host-assembled prompt to an input file under
+// <workDir>/.gavel/cmux/ and returns the one-line message dispatched to the agent
+// surface: the prompt's title plus a pointer to that file. Always routing the
+// inputs through a file keeps the surface paste short and reliable, sidestepping
+// the terminal paste truncation and dropped-Enter failures that large inline
+// prompts trigger.
 func (r *run) buildInstruction(workDir, sessionID, prompt string) (string, error) {
-	body, truncated := truncatePrompt(prompt, maxInlinePromptBytes)
-	if !truncated {
-		return body, nil
-	}
 	path, err := writePromptFile(workDir, sessionID, prompt)
 	if err != nil {
 		return "", err
 	}
-	return body + fmt.Sprintf("\n\n... (prompt truncated — read %s for the full prompt)", path), nil
+	return fmt.Sprintf("%s - See %s for full details", promptTitle(prompt), path), nil
 }
 
-// writePromptFile persists the full prompt body so the truncated surface paste
-// can point the agent at it. The filename is keyed on the session id (or "group"
-// when there is none, e.g. codex).
+// promptTitle derives a one-line title from the prompt: its first non-empty line
+// with leading markdown heading markers stripped, capped to maxTitleBytes. It
+// falls back to "Task" when the prompt has no usable text.
+func promptTitle(prompt string) string {
+	for _, line := range strings.Split(prompt, "\n") {
+		line = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(line), "#"))
+		if line == "" {
+			continue
+		}
+		if len(line) > maxTitleBytes {
+			line = strings.TrimSpace(line[:maxTitleBytes])
+		}
+		return line
+	}
+	return "Task"
+}
+
+// writePromptFile persists the full prompt body so the surface paste can point the
+// agent at it. The filename is keyed on the session id (or "group" when there is
+// none, e.g. codex).
 func writePromptFile(workDir, sessionID, prompt string) (string, error) {
 	if workDir == "" {
 		return "", fmt.Errorf("workDir is required")
@@ -351,20 +366,6 @@ func writePromptFile(workDir, sessionID, prompt string) (string, error) {
 		return "", err
 	}
 	return path, nil
-}
-
-// truncatePrompt clamps prompt to max bytes, cutting on the last line boundary so
-// the inlined body never ends mid-line. The bool reports whether truncation happened.
-func truncatePrompt(prompt string, max int) (string, bool) {
-	prompt = strings.TrimSpace(prompt)
-	if len(prompt) <= max {
-		return prompt, false
-	}
-	clipped := prompt[:max]
-	if idx := strings.LastIndexByte(clipped, '\n'); idx > 0 {
-		clipped = clipped[:idx]
-	}
-	return strings.TrimRight(clipped, "\n"), true
 }
 
 func (r *run) timeout() time.Duration {
