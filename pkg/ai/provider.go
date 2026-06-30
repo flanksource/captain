@@ -1,8 +1,6 @@
 package ai
 
 import (
-	"context"
-
 	"github.com/flanksource/captain/pkg/api"
 )
 
@@ -34,16 +32,11 @@ func AuthEnvVars(b Backend) []string { return api.AuthEnvVars(b) }
 // BackendList renders AllBackends as a comma-separated string for help/error text.
 func BackendList() string { return api.BackendList() }
 
-type Provider interface {
-	Execute(ctx context.Context, req Request) (*Response, error)
-	GetModel() string
-	GetBackend() Backend
-}
-
-type StreamingProvider interface {
-	Provider
-	ExecuteStream(ctx context.Context, req Request) (<-chan Event, error)
-}
+// Provider and StreamingProvider are the buffered/streaming execution interfaces.
+// They live in pkg/api (the stable runtime contract) and are re-exported here so
+// existing call sites keep compiling unchanged.
+type Provider = api.Provider
+type StreamingProvider = api.StreamingProvider
 
 // InferBackend resolves the backend from a model name prefix (delegates to pkg/api).
 func InferBackend(model string) (Backend, error) { return api.InferBackend(model) }
