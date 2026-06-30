@@ -147,17 +147,24 @@ func TestListModels_ErrorsOnMissingKey(t *testing.T) {
 	}
 }
 
-// TestListModels_RejectsCLIBackends pins that CLI/agent backends have no live
+// TestListModels_RejectsNonAPIBackends pins that non-API backends have no live
 // listing path: they authenticate internally and enumerate from the static
 // catalog (pkg/cli), so ListModels must fail loud rather than require an API key.
-func TestListModels_RejectsCLIBackends(t *testing.T) {
+func TestListModels_RejectsNonAPIBackends(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "sk-test")
 	t.Setenv("ANTHROPIC_API_KEY", "ant-test")
 	t.Setenv("GEMINI_API_KEY", "g-test")
 
-	for _, b := range []Backend{BackendClaudeCLI, BackendClaudeAgent, BackendCodexCLI, BackendGeminiCLI} {
+	for _, b := range []Backend{
+		BackendClaudeCLI,
+		BackendClaudeAgent,
+		BackendCodexCLI,
+		BackendGeminiCLI,
+		BackendClaudeCmux,
+		BackendCodexCmux,
+	} {
 		if _, err := ListModels(context.Background(), b); err == nil {
-			t.Errorf("backend=%s: expected error (no live listing for CLI/agent backends)", b)
+			t.Errorf("backend=%s: expected error (no live listing for non-API backends)", b)
 		}
 	}
 }
