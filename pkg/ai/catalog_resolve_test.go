@@ -93,10 +93,10 @@ func TestResolveModels_TokensUnionDedup(t *testing.T) {
 }
 
 func TestResolveModels_LiveErrorFailsLoud(t *testing.T) {
-	t.Setenv("ANTHROPIC_API_KEY", "k")
 	stubLiveFetcher(t, func(b Backend) ([]ModelDef, error) {
 		return nil, errors.New("boom")
 	})
+	t.Setenv("ANTHROPIC_API_KEY", "k") // after stub clears the key set
 
 	if _, err := ResolveModels(context.Background(), ResolveOptions{Backend: BackendAnthropic, UseTokens: true}); err == nil {
 		t.Fatal("expected live fetch error to propagate (fail loud)")
@@ -104,13 +104,13 @@ func TestResolveModels_LiveErrorFailsLoud(t *testing.T) {
 }
 
 func TestResolveModels_LegacyHiddenUnlessFiltered(t *testing.T) {
-	t.Setenv("ANTHROPIC_API_KEY", "k")
 	stubLiveFetcher(t, func(b Backend) ([]ModelDef, error) {
 		if b != BackendAnthropic {
 			return nil, nil
 		}
 		return []ModelDef{{ID: "claude-3-5-sonnet-20241022", Backend: BackendAnthropic}}, nil
 	})
+	t.Setenv("ANTHROPIC_API_KEY", "k") // after stub clears the key set
 
 	noFilter, err := ResolveModels(context.Background(), ResolveOptions{Backend: BackendAnthropic, UseTokens: true})
 	if err != nil {
@@ -130,7 +130,6 @@ func TestResolveModels_LegacyHiddenUnlessFiltered(t *testing.T) {
 }
 
 func TestResolveModels_CacheWrittenAndReused(t *testing.T) {
-	t.Setenv("ANTHROPIC_API_KEY", "k")
 	calls := 0
 	stubLiveFetcher(t, func(b Backend) ([]ModelDef, error) {
 		if b == BackendAnthropic {
@@ -138,6 +137,7 @@ func TestResolveModels_CacheWrittenAndReused(t *testing.T) {
 		}
 		return nil, nil
 	})
+	t.Setenv("ANTHROPIC_API_KEY", "k") // after stub clears the key set
 
 	opts := ResolveOptions{Backend: BackendAnthropic, UseTokens: true}
 	if _, err := ResolveModels(context.Background(), opts); err != nil {
