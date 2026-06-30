@@ -1,51 +1,27 @@
 package ai
 
 import (
-	"fmt"
-	"os"
+	"github.com/flanksource/captain/pkg/api"
 )
 
-type ProviderFactory func(cfg Config) (Provider, error)
+// The provider registry now lives in pkg/api (the stable runtime contract).
+// ProviderFactory is re-exported as an alias; the registration/construction
+// entrypoints are thin wrappers so existing call sites (and the blank-import
+// self-registration in pkg/ai/provider) keep funneling into the single api
+// registry unchanged.
+type ProviderFactory = api.ProviderFactory
 
-var factories = map[Backend]ProviderFactory{}
-
+// RegisterProvider registers a factory for a backend in the shared api registry.
 func RegisterProvider(backend Backend, factory ProviderFactory) {
-	factories[backend] = factory
+	api.RegisterProvider(backend, factory)
 }
 
+// NewProvider constructs the registered provider for cfg's backend.
 func NewProvider(cfg Config) (Provider, error) {
-	backend := cfg.Model.Backend
-
-	if cfg.Model.Name == "" {
-		return nil, fmt.Errorf("model cannot be empty; pass --model or run `captain configure` to set a default")
-	}
-
-	if backend == "" {
-		var err error
-		backend, err = InferBackend(cfg.Model.Name)
-		if err != nil {
-			return nil, err
-		}
-	}
-	cfg.Model.Backend = backend
-
-	factory, ok := factories[backend]
-	if !ok {
-		return nil, fmt.Errorf("no provider registered for backend: %s", backend)
-	}
-
-	if cfg.APIKey == "" {
-		cfg.APIKey = GetAPIKeyFromEnv(backend)
-	}
-
-	return factory(cfg)
+	return api.NewProvider(cfg)
 }
 
+// GetAPIKeyFromEnv returns the first non-empty value among a backend's auth env vars.
 func GetAPIKeyFromEnv(backend Backend) string {
-	for _, envVar := range AuthEnvVars(backend) {
-		if key := os.Getenv(envVar); key != "" {
-			return key
-		}
-	}
-	return ""
+	return api.GetAPIKeyFromEnv(backend)
 }
