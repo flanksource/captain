@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 )
 
 // ReadHistoryFile reads all entries from a JSONL history file
@@ -96,11 +97,13 @@ type streamJSONLine struct {
 	TimestampSnake string `json:"timestamp,omitempty"`
 
 	// Session-file fields
-	SessionIDCamel string `json:"sessionId,omitempty"`
-	UUID           string `json:"uuid,omitempty"`
-	Version        string `json:"version,omitempty"`
-	CWD            string `json:"cwd,omitempty"`
-	GitBranch      string `json:"gitBranch,omitempty"`
+	SessionIDCamel string          `json:"sessionId,omitempty"`
+	UUID           string          `json:"uuid,omitempty"`
+	Version        string          `json:"version,omitempty"`
+	CWD            string          `json:"cwd,omitempty"`
+	GitBranch      string          `json:"gitBranch,omitempty"`
+	Slug           string          `json:"slug,omitempty"`
+	Attachment     json.RawMessage `json:"attachment,omitempty"`
 }
 
 func (sj streamJSONLine) sessionID() string {
@@ -122,7 +125,38 @@ var knownSessionStorageTypes = map[string]bool{
 	"last-prompt":           true,
 	"permission-mode":       true,
 	"agent-name":            true,
-	"attachment":            true,
+}
+
+// planAttachment is the plan-mode attachment Claude Code writes when entering
+// ("plan_mode") and exiting ("plan_mode_exit") plan mode. It names the plan file
+// even for sessions whose transcript carries no ExitPlanMode tool call.
+type planAttachment struct {
+	Type         string `json:"type"`
+	PlanFilePath string `json:"planFilePath"`
+}
+
+// attachmentEntry surfaces plan-mode attachments as a synthetic, message-less
+// HistoryEntry carrying the plan file path. Non-plan attachments are dropped.
+func attachmentEntry(sj streamJSONLine) []HistoryEntry {
+	if len(sj.Attachment) == 0 {
+		return nil
+	}
+	var a planAttachment
+	if err := json.Unmarshal(sj.Attachment, &a); err != nil {
+		return nil
+	}
+	if !strings.HasPrefix(a.Type, "plan_mode") || a.PlanFilePath == "" {
+		return nil
+	}
+	return single(HistoryEntry{
+		SessionID:    sj.sessionID(),
+		UUID:         sj.UUID,
+		Timestamp:    sj.timestamp(),
+		CWD:          sj.CWD,
+		GitBranch:    sj.GitBranch,
+		Slug:         sj.Slug,
+		PlanFilePath: a.PlanFilePath,
+	})
 }
 
 // dispatchEvent routes a typed line to zero, one, or more HistoryEntry rows.
@@ -147,6 +181,7 @@ func dispatchEvent(sj streamJSONLine, raw []byte, lineNo int) []HistoryEntry {
 			Version:   sj.Version,
 			CWD:       sj.CWD,
 			GitBranch: sj.GitBranch,
+			Slug:      sj.Slug,
 			Message:   msg,
 		}}
 		if errEntry, ok := apiErrorFromAssistantLine(sj, raw); ok {
@@ -194,6 +229,9 @@ func dispatchEvent(sj streamJSONLine, raw []byte, lineNo int) []HistoryEntry {
 
 	case "ai-title":
 		return single(syntheticEntry(sj, "SessionTitle", raw, []string{"aiTitle"}))
+
+	case "attachment":
+		return attachmentEntry(sj)
 	}
 
 	if knownSessionStorageTypes[sj.Type] {

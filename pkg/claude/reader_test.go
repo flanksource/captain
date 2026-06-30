@@ -67,6 +67,36 @@ not valid json
 	}
 }
 
+func TestReadHistory_SlugAndPlanModeAttachment(t *testing.T) {
+	// Session-file lines carry a `type`, so they route through dispatchEvent.
+	// The plan_mode_exit attachment surfaces as a message-less entry holding the
+	// plan path; the non-plan attachment is dropped.
+	jsonl := `{"type":"assistant","sessionId":"s1","uuid":"a1","timestamp":"2026-06-01T10:00:00Z","slug":"keen-otter","message":{"role":"assistant","content":[{"type":"text","text":"hi"}]}}
+{"type":"attachment","sessionId":"s1","uuid":"at1","timestamp":"2026-06-01T10:00:01Z","slug":"keen-otter","cwd":"/repo","attachment":{"type":"plan_mode_exit","planFilePath":"/home/u/.claude/plans/keen-otter.md","planExists":true}}
+{"type":"attachment","sessionId":"s1","uuid":"at2","attachment":{"type":"file_edit","path":"/x"}}`
+
+	entries, err := ReadHistory(strings.NewReader(jsonl))
+	if err != nil {
+		t.Fatalf("ReadHistory failed: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries (assistant + plan attachment), got %d", len(entries))
+	}
+	if entries[0].Slug != "keen-otter" {
+		t.Errorf("assistant slug = %q, want keen-otter", entries[0].Slug)
+	}
+	plan := entries[1]
+	if plan.PlanFilePath != "/home/u/.claude/plans/keen-otter.md" {
+		t.Errorf("attachment PlanFilePath = %q", plan.PlanFilePath)
+	}
+	if plan.Slug != "keen-otter" || plan.CWD != "/repo" {
+		t.Errorf("attachment slug/cwd = %q/%q", plan.Slug, plan.CWD)
+	}
+	if len(plan.Message.Content) != 0 {
+		t.Errorf("plan attachment entry should be message-less, got %+v", plan.Message.Content)
+	}
+}
+
 func TestReadStreamJSON(t *testing.T) {
 	input := `{"type":"system","subtype":"init","cwd":"/tmp","session_id":"sess-1","uuid":"u-init","model":"claude-sonnet-4-20250514","tools":["Bash","Read"]}
 {"type":"user","message":{"role":"user","content":[{"type":"text","text":"list files"}]},"session_id":"sess-1","uuid":"msg-1"}

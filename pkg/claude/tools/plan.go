@@ -22,8 +22,7 @@ func (t *PlanTool) Pretty() api.Text {
 	if t.Denied {
 		text = text.Append(" ✗", "text-red-500")
 	}
-	filename := strings.TrimSuffix(filepath.Base(t.FilePath()), ".md")
-	text = text.Append(" "+filename, "text-cyan-400")
+	text = text.Append(" "+planName(t.FilePath()), "text-cyan-400")
 	content := t.Str("content")
 	if content == "" {
 		content = t.Str("new_string")
@@ -48,6 +47,15 @@ func (t *PlanTool) Detail() api.Textable {
 
 func (t *PlanTool) ExtractPath() string { return t.Rel(t.FilePath()) }
 
+// planName is the human-facing plan label: the plan file's basename without its
+// .md extension.
+func planName(path string) string {
+	if path == "" {
+		return ""
+	}
+	return strings.TrimSuffix(filepath.Base(path), ".md")
+}
+
 func extractMarkdownTitle(content string) string {
 	for _, line := range strings.SplitN(content, "\n", 20) {
 		if strings.HasPrefix(line, "# ") {
@@ -61,13 +69,25 @@ func extractMarkdownTitle(content string) string {
 
 type ExitPlanTool struct{ BaseTool }
 
-func (t *ExitPlanTool) Name() string        { return "Plan" }
-func (t *ExitPlanTool) Category() string    { return "" }
-func (t *ExitPlanTool) FilePath() string    { return "" }
-func (t *ExitPlanTool) ExtractPath() string { return "" }
+func (t *ExitPlanTool) Name() string     { return "Plan" }
+func (t *ExitPlanTool) Category() string { return "" }
+
+// FilePath returns the plan file the agent exited plan mode against, so plan
+// writes and the exit row attribute to the same file.
+func (t *ExitPlanTool) FilePath() string { return t.Str("planFilePath") }
+
+func (t *ExitPlanTool) ExtractPath() string {
+	if p := t.FilePath(); p != "" {
+		return t.Rel(p)
+	}
+	return ""
+}
 
 func (t *ExitPlanTool) Pretty() api.Text {
 	text := t.header(planIcon, "plan", planColor)
+	if name := planName(t.FilePath()); name != "" {
+		text = text.Append(" "+name, "text-cyan-400")
+	}
 	if t.Denied {
 		text = text.Append(" ✗", "text-red-500")
 	} else {
