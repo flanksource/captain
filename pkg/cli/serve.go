@@ -24,7 +24,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
-//go:embed webapp/dist
+// all: keeps the committed dist/.gitkeep placeholder in the embed so the binary
+// compiles without a built webapp (dist is gitignored and built on demand or in
+// the release workflow). When index.html is absent, serve.go reports it at runtime.
+//
+//go:embed all:webapp/dist
 var captainWebappFS embed.FS
 
 type ServeOptions struct {
