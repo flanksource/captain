@@ -149,8 +149,8 @@ github.com/firebase/genkit/go v1.8.0 h1:jIL9xS3ZxW9sTWN2SG9RyupPd0srjXmfB1749FPI
 github.com/firebase/genkit/go v1.8.0/go.mod h1:AzmlJrm+2PjSrLnBHwY0uTbRC/GsazMa0JYpBrVf18E=
 github.com/flanksource/clicky v1.21.33 h1:fiZ4+sjKdtcmqGgaJiER5wM/34QSjS9pL29gQ84BKOs=
 github.com/flanksource/clicky v1.21.33/go.mod h1:1vjQu7ZeWqvEy98bIlZWUni6F+fy9KtWgaHCtAJs6yE=
-github.com/flanksource/clicky/aichat v1.21.33 h1:SquXXDXlCarx5w7yCpRGDxDDnBrH1KG1bnDcWkDnNjo=
-github.com/flanksource/clicky/aichat v1.21.33/go.mod h1:fgCn0YNytYOFWOWHrd9JDmCFy73XG/iCNdUdgqXNoaY=
+github.com/flanksource/clicky/aichat v1.21.34-0.20260630075958-cd55f2f4fce3 h1:mXkj1sHYNWi+9TJwo3xV8oI7soPmfWMce7AR4/7Y2NM=
+github.com/flanksource/clicky/aichat v1.21.34-0.20260630075958-cd55f2f4fce3/go.mod h1:u0m4ogkrOCW9/TAc/f06D4kBgZOZaxvLQ7HCyglL9kI=
 github.com/flanksource/commons v1.53.1 h1:WiMvY9XGG//L4ndYKTcmp0NjWXg4B7Wbn4hYWkITUmY=
 github.com/flanksource/commons v1.53.1/go.mod h1:ZII22jIDJ3fd/Mz7l0SzLFEv8aoSUg+xwfJAAVf8up4=
 github.com/flanksource/gomplate/v3 v3.24.82 h1:22HOZYeNRMX40G8OF3qRAqRoR5Lkf8Vm4x3WDqugZkE=
