@@ -186,6 +186,8 @@ captain history --summary
 captain history --all
 captain history --tool Bash --since now-7d
 captain history --category git --compact
+captain history --session-id 019e0365-dc2a-7ad0-a5a8-78936481a928
+captain history 019e0365-dc2a-7ad0-a5a8-78936481a928
 ```
 
 Useful flags include:
@@ -195,6 +197,7 @@ Useful flags include:
 - `--dir`
 - `--category`
 - `--approved`
+- `--session-id`
 - `--limit`
 - `--since`
 - `--all`
@@ -219,6 +222,7 @@ captain cost --group-by project
 captain cost --group-by model
 captain cost --group-by tool
 captain cost --group-by category
+captain cost --session-id 019e0365-dc2a-7ad0-a5a8-78936481a928
 captain cost --all --since now-30d
 ```
 
