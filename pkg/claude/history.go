@@ -18,7 +18,14 @@ type HistoryEntry struct {
 	Timestamp   string          `json:"timestamp"`
 	IsSidechain bool            `json:"isSidechain,omitempty"`
 	AgentID     string          `json:"agentId,omitempty"`
-	RawLine     json.RawMessage `json:"-"`
+	// Slug is Claude Code's session title slug. It doubles as the basename of the
+	// exit-plan-mode plan file (~/.claude/plans/<slug>.md) when a plan exists.
+	Slug string `json:"slug,omitempty"`
+	// PlanFilePath is set on synthetic entries surfaced from plan_mode /
+	// plan_mode_exit attachments; it points at the session's plan file even when
+	// the transcript carries no ExitPlanMode tool call or plan-file write.
+	PlanFilePath string          `json:"-"`
+	RawLine      json.RawMessage `json:"-"`
 }
 
 // Message represents a conversation message

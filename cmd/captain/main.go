@@ -70,6 +70,10 @@ func main() {
 	changesCmd.Short = "List files modified by a session"
 	changesCmd.Long = "List the files written or edited during a Claude Code or Codex session. Pass --session-id to target a specific session; otherwise the most recent session in the current directory is used."
 
+	planCmd := clicky.AddNamedCommand("plan", rootCmd, cli.PlanOptions{}, cli.RunPlan)
+	planCmd.Short = "Show the exit-plan-mode plan for a session"
+	planCmd.Long = "Determine the plan file path and content for a Claude Code or Codex session. Pass a session ID (exact or prefix) to target a specific session; otherwise the most recent session with a plan in the current directory is used. Claude plans resolve to a ~/.claude/plans/<slug>.md file; Codex plans are inline update_plan checklists. Use --path to print only the plan file path."
+
 	sessionsCmd := &cobra.Command{Use: "sessions", Short: "Browse Claude and Codex sessions"}
 	rootCmd.AddCommand(sessionsCmd)
 	clicky.AddNamedCommand("list", sessionsCmd, cli.SessionListOptions{}, cli.RunSessionList).Short = "List discovered sessions"
