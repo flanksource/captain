@@ -320,8 +320,8 @@ func runBuffered(ctx context.Context, p ai.Provider, req ai.Request) (any, error
 	if err != nil {
 		return nil, err
 	}
-	model := firstNonEmpty(resp.Model, p.GetModel(), req.Model.Name)
-	backend := firstNonEmpty(string(resp.Backend), string(p.GetBackend()), string(req.Model.Backend))
+	model := firstNonEmpty(resp.Model, p.GetModel(), req.Name)
+	backend := firstNonEmpty(string(resp.Backend), string(p.GetBackend()), string(req.Backend))
 	input := resolvedPromptInput(req, model, backend, req.SessionID)
 	return AIPromptResult{
 		Text:        resp.Text,
@@ -405,10 +405,10 @@ func runStreaming(ctx context.Context, sp ai.StreamingProvider, req ai.Request) 
 func resolvedPromptInput(req ai.Request, model, backend, sessionID string) ai.Request {
 	out := req
 	if model != "" {
-		out.Model.Name = model
+		out.Name = model
 	}
 	if backend != "" {
-		out.Model.Backend = api.Backend(backend)
+		out.Backend = api.Backend(backend)
 	}
 	if sessionID != "" {
 		out.SessionID = sessionID

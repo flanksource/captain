@@ -227,10 +227,9 @@ func collectCodexHistory(cwd string, searchAll bool, filter claude.Filter) ([]hi
 			if !searchAll && info.CWD != "" && !codexCWDMatchesProject(info.CWD, matchRoot) {
 				continue
 			}
-			if filter.HasSessionIDFilter() && info.ID == "" {
-				// Fall through to full parsing: older/live schemas may only expose
-				// the session id on later events.
-			}
+			// When a session-id filter is set but the metadata has no id yet, fall
+			// through to full parsing: older/live schemas may only expose the session
+			// id on later events.
 		}
 
 		uses, err := history.ExtractCodexToolUses(f)
