@@ -41,15 +41,15 @@ func (r ResolvedModel) Context() int {
 	if r.Price.ContextWindow > 0 {
 		return r.Price.ContextWindow
 	}
-	return r.Model.ContextWindow
+	return r.ContextWindow
 }
 
 // ResolveOptions controls a ResolveModels query.
 type ResolveOptions struct {
-	Backend  Backend // empty = all backends
-	Filter   string  // substring filter on id/label; non-empty also reveals legacy ids
-	UseTokens bool   // when true, augment API backends (that have a key) with live /v1/models
-	Refresh  bool    // bypass the persisted cache and re-resolve
+	Backend   Backend // empty = all backends
+	Filter    string  // substring filter on id/label; non-empty also reveals legacy ids
+	UseTokens bool    // when true, augment API backends (that have a key) with live /v1/models
+	Refresh   bool    // bypass the persisted cache and re-resolve
 }
 
 // liveModelFetcher fetches a backend's live model list. It is a package var so

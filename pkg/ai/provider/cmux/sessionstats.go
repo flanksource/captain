@@ -264,17 +264,29 @@ func modelIDCandidates(model string) []string {
 }
 
 // modelInfo resolves a session-log model id to its pricing registry entry,
-// returning false when no candidate id matches.
+// returning false when no candidate id matches. It prefers a candidate carrying a
+// context window: the bare hyphenated id classifies to the static Claude price
+// table (prices only, ContextWindow zero), so stopping at the first match would
+// read zero context even when the dotted OpenRouter id carries it.
 func modelInfo(model string) (pricing.ModelInfo, bool) {
 	if model == "" {
 		return pricing.ModelInfo{}, false
 	}
+	var fallback pricing.ModelInfo
+	var found bool
 	for _, id := range modelIDCandidates(model) {
-		if info, ok := pricing.GetModelInfo(id); ok {
+		info, ok := pricing.GetModelInfo(id)
+		if !ok {
+			continue
+		}
+		if info.ContextWindow > 0 {
 			return info, true
 		}
+		if !found {
+			fallback, found = info, true
+		}
 	}
-	return pricing.ModelInfo{}, false
+	return fallback, found
 }
 
 // sessionCost prices the session's tokens via captain's pricing registry. Claude
