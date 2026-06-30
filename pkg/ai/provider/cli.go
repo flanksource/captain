@@ -2,10 +2,10 @@ package provider
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os/exec"
 	"strings"
 
@@ -79,17 +79,17 @@ func runCLI(ctx context.Context, command string, stdinData []byte, cwd string) (
 		cmd.Dir = cwd
 	}
 
+	// Buffer stdout/stderr instead of using StdoutPipe/StderrPipe: cmd.Wait closes
+	// those pipes when the process exits, so reading them in a goroutine that races
+	// Wait fails with "file already closed" (deterministic on Linux). With buffers,
+	// Wait blocks until the os/exec output copiers finish, making the reads safe.
+	var stdoutBuf, stderrBuf bytes.Buffer
+	cmd.Stdout = &stdoutBuf
+	cmd.Stderr = &stderrBuf
+
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to create stdin pipe: %w", err)
-	}
-	stdoutPipe, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to create stdout pipe: %w", err)
-	}
-	stderrPipe, err := cmd.StderrPipe()
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to create stderr pipe: %w", err)
 	}
 
 	if err := cmd.Start(); err != nil {
@@ -99,60 +99,24 @@ func runCLI(ctx context.Context, command string, stdinData []byte, cwd string) (
 		return nil, "", fmt.Errorf("failed to start %s: %w", command, err)
 	}
 
-	if _, err := stdin.Write(stdinData); err != nil {
-		return nil, "", fmt.Errorf("failed to write to stdin: %w", err)
-	}
-	_, _ = stdin.Write([]byte("\n"))
-	_ = stdin.Close()
-
-	stdoutCh := make(chan []byte, 1)
-	stderrCh := make(chan string, 1)
-	errCh := make(chan error, 2)
-
+	// Feed stdin in the background so a large prompt cannot deadlock against a
+	// process that only drains stdin after producing its output.
 	go func() {
-		data, err := io.ReadAll(stdoutPipe)
-		if err != nil {
-			errCh <- fmt.Errorf("failed to read stdout: %w", err)
-			return
-		}
-		stdoutCh <- data
+		_, _ = stdin.Write(stdinData)
+		_, _ = stdin.Write([]byte("\n"))
+		_ = stdin.Close()
 	}()
 
-	go func() {
-		data, err := io.ReadAll(stderrPipe)
-		if err != nil {
-			errCh <- fmt.Errorf("failed to read stderr: %w", err)
-			return
-		}
-		stderrCh <- string(data)
-	}()
-
-	waitCh := make(chan error, 1)
-	go func() { waitCh <- cmd.Wait() }()
-
-	var stdoutData []byte
-	var stderrData string
-	var waitErr error
-
-	for range 3 {
-		select {
-		case <-ctx.Done():
-			_ = cmd.Process.Kill()
-			return nil, "", fmt.Errorf("%w: context cancelled", ai.ErrTimeout)
-		case e := <-errCh:
-			return nil, "", e
-		case data := <-stdoutCh:
-			stdoutData = data
-		case data := <-stderrCh:
-			stderrData = data
-		case e := <-waitCh:
-			waitErr = e
-		}
+	// CommandContext kills the process when ctx is cancelled, which unblocks Wait.
+	waitErr := cmd.Wait()
+	if ctx.Err() != nil {
+		return nil, "", fmt.Errorf("%w: context cancelled", ai.ErrTimeout)
 	}
 
+	stderrData := stderrBuf.String()
 	if waitErr != nil {
 		return nil, stderrData, HandleExitError(GetExitCode(waitErr), ParseStderr(stderrData))
 	}
 
-	return stdoutData, stderrData, nil
+	return stdoutBuf.Bytes(), stderrData, nil
 }
