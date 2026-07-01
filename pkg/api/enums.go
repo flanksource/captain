@@ -25,11 +25,7 @@ const (
 	BackendClaudeAgent Backend = "claude-agent"
 	// BackendClaudeCmux / BackendCodexCmux drive an interactive claude/codex TUI
 	// inside a tmux/cmux surface (the cmux provider), tailing the session JSONL.
-	// They are registered providers selected explicitly by a host (gavel), not
-	// part of AllBackends(): they are not user-facing, carry no prompt-rendering
-	// fixture (the provider pastes the host's prompt verbatim), and are never
-	// inferred from a model name. Backend.Valid() is therefore false for them,
-	// which is fine — nothing in the run path validates the backend.
+	// They are selected explicitly, not inferred from a model name.
 	BackendClaudeCmux Backend = "claude-cmux"
 	BackendCodexCmux  Backend = "codex-cmux"
 )
@@ -39,7 +35,8 @@ const (
 func AllBackends() []Backend {
 	return []Backend{
 		BackendAnthropic, BackendGemini, BackendOpenAI,
-		BackendClaudeCLI, BackendClaudeAgent, BackendCodexCLI, BackendGeminiCLI,
+		BackendClaudeCLI, BackendClaudeAgent, BackendClaudeCmux,
+		BackendCodexCLI, BackendCodexCmux, BackendGeminiCLI,
 	}
 }
 
