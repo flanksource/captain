@@ -13,7 +13,7 @@ import (
 )
 
 type WhoamiOptions struct {
-	Backend string `flag:"backend" help:"Show only this backend: anthropic|openai|gemini|claude-cli|claude-agent|codex-cli|gemini-cli" short:"b"`
+	Backend string `flag:"backend" help:"Show only this backend: anthropic|openai|gemini|claude-cli|claude-agent|claude-cmux|codex-cli|codex-cmux|gemini-cli" short:"b"`
 	Models  bool   `flag:"models" help:"Probe each provider's models endpoint via a live API call" default:"true" short:"m"`
 	Limit   int    `flag:"limit" help:"Max sample model IDs to show per adapter in pretty output (0 = all)" default:"10" short:"l"`
 }

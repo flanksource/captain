@@ -16,6 +16,7 @@ import { apiClient } from "./api";
 import { AgentLauncher } from "./AgentLauncher";
 import { ChatLayer } from "./ChatLayer";
 import { ChatRoute } from "./ChatRoute";
+import { PromptWorkbench } from "./PromptWorkbench";
 import { SessionBrowser } from "./SessionBrowser";
 
 export function App() {
@@ -38,6 +39,13 @@ export function App() {
               selectedId={route.sessionId}
               onNavigate={router.navigate}
               nav={<CaptainNav active="sessions" onNavigate={router.navigate} />}
+              actions={<ShellActions />}
+            />
+          ) : route.kind === "prompts" ? (
+            <PromptWorkbench
+              selectedId={route.promptId}
+              onNavigate={router.navigate}
+              nav={<CaptainNav active="prompts" onNavigate={router.navigate} />}
               actions={<ShellActions />}
             />
           ) : (
@@ -71,7 +79,7 @@ export function App() {
   );
 }
 
-type PrimaryRoute = "agent" | "sessions" | "operations";
+type PrimaryRoute = "agent" | "sessions" | "prompts" | "operations";
 
 function CaptainShell({
   active,
@@ -136,6 +144,13 @@ function CaptainNav({
       </Button>
       <Button
         size="sm"
+        variant={active === "prompts" ? "secondary" : "ghost"}
+        onClick={() => onNavigate("/prompts")}
+      >
+        Prompts
+      </Button>
+      <Button
+        size="sm"
         variant={active === "operations" ? "secondary" : "ghost"}
         onClick={() => onNavigate("/operations")}
       >
@@ -157,11 +172,17 @@ function ShellActions() {
 type Route =
   | { kind: "launcher" }
   | { kind: "sessions"; sessionId?: string }
+  | { kind: "prompts"; promptId?: string }
   | { kind: "operations" }
   | { kind: "chat"; threadId: string; model?: string };
 
 function parseRoute(pathname: string, search: string): Route {
   if (pathname.startsWith("/operations")) return { kind: "operations" };
+  if (pathname.startsWith("/prompts")) {
+    const raw = pathname.slice("/prompts".length).replace(/^\/+/, "");
+    const promptId = raw ? decodeURIComponent(raw.split("/")[0] ?? "") : undefined;
+    return promptId ? { kind: "prompts", promptId } : { kind: "prompts" };
+  }
   if (pathname.startsWith("/sessions")) {
     const raw = pathname.slice("/sessions".length).replace(/^\/+/, "");
     const sessionId = raw ? decodeURIComponent(raw.split("/")[0] ?? "") : undefined;

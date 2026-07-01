@@ -1,4 +1,6 @@
 @import "tailwindcss";
+@source "./**/*.{ts,tsx}";
+@source "../../../../../clicky-ui/packages/ui/src/**/*.{ts,tsx}";
 
 html,
 body,
@@ -17,4 +19,70 @@ input,
 select,
 textarea {
   font: inherit;
+}
+
+@media (min-width: 40rem) {
+  .sm\:grid-cols-2 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 48rem) {
+  .md\:hidden {
+    display: none !important;
+  }
+
+  .md\:block {
+    display: block !important;
+  }
+
+  .md\:flex {
+    display: flex !important;
+  }
+
+  .md\:grid {
+    display: grid !important;
+  }
+
+  .md\:inline-flex {
+    display: inline-flex !important;
+  }
+
+  .md\:flex-row {
+    flex-direction: row;
+  }
+
+  .md\:items-start {
+    align-items: flex-start;
+  }
+
+  .md\:justify-between {
+    justify-content: space-between;
+  }
+
+  .md\:gap-density-3 {
+    gap: var(--spacing-density-3);
+  }
+
+  .md\:px-density-4 {
+    padding-inline: var(--spacing-density-4);
+  }
+
+  .md\:p-density-6 {
+    padding: var(--spacing-density-6);
+  }
+
+  .md\:p-6 {
+    padding: calc(var(--spacing) * 6);
+  }
+
+  .md\:grid-cols-3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 80rem) {
+  .xl\:grid-cols-\[minmax\(340px\,0\.9fr\)_minmax\(0\,1\.1fr\)\] {
+    grid-template-columns: minmax(340px, 0.9fr) minmax(0, 1.1fr);
+  }
 }
