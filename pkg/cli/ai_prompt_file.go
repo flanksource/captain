@@ -63,6 +63,18 @@ func overlayCLI(base ai.Request, baseCfg ai.Config, o AIPromptOptions) (ai.Reque
 	req := base
 
 	bm := base.Model
+	if bm.Name == "" {
+		bm.Name = baseCfg.Model.Name
+	}
+	if bm.Backend == "" {
+		bm.Backend = baseCfg.Model.Backend
+	}
+	if bm.Temperature == nil {
+		bm.Temperature = baseCfg.Model.Temperature
+	}
+	if bm.Effort == "" {
+		bm.Effort = baseCfg.Model.Effort
+	}
 	m := bm
 	m.Name = firstNonEmpty(o.Model, bm.Name, saved.Model)
 	m.Backend = api.Backend(firstNonEmpty(o.Backend, string(bm.Backend), saved.Backend))
@@ -73,8 +85,8 @@ func overlayCLI(base ai.Request, baseCfg ai.Config, o AIPromptOptions) (ai.Reque
 	m.Effort = api.Effort(firstNonEmpty(o.Effort, string(bm.Effort), saved.ReasoningEffort))
 	req.Model = m
 
-	req.Budget.MaxTokens = firstPositive(o.MaxTokens, base.Budget.MaxTokens, saved.MaxTokens, 4096)
-	req.Budget.Cost = firstPositiveFloat(budget, base.Budget.Cost, saved.BudgetUSD)
+	req.Budget.MaxTokens = firstPositive(o.MaxTokens, base.Budget.MaxTokens, baseCfg.Budget.MaxTokens, saved.MaxTokens, 4096)
+	req.Budget.Cost = firstPositiveFloat(budget, base.Budget.Cost, baseCfg.Budget.Cost, saved.BudgetUSD)
 
 	if o.System != "" {
 		req.Prompt.System = o.System
