@@ -57,20 +57,212 @@ func (r *timedRunner) run(_ context.Context, _, _ string, _ time.Duration, args 
 	return "ok", nil
 }
 
-func TestSendSurfaceTextSettlesBetweenPasteAndEnter(t *testing.T) {
-	runner := &timedRunner{}
-	r := newTestRun(runConfig{SendSettleDelay: 50 * time.Millisecond}, runner.run)
+// firstTimeOf returns the time the runner first saw op (and whether it saw it).
+func (r *timedRunner) firstTimeOf(op string) (time.Time, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i, o := range r.ops {
+		if o == op {
+			return r.times[i], true
+		}
+	}
+	return time.Time{}, false
+}
 
-	if err := r.sendSurfaceText(context.Background(), "workspace:ws1", "surface:sf1", "prompt", "hello"); err != nil {
+// pasteRunner serves the pre-paste baseline until a paste (send) arrives, then a
+// changed screen, so a test drives waitForPasteLanded through a real surface change.
+type pasteRunner struct {
+	mu       sync.Mutex
+	baseline string
+	after    string
+	sent     bool
+	ops      []string
+}
+
+func (r *pasteRunner) run(_ context.Context, _, _ string, _ time.Duration, args ...string) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.ops = append(r.ops, args[0])
+	switch args[0] {
+	case "read-screen":
+		if r.sent {
+			return r.after, nil
+		}
+		return r.baseline, nil
+	case "send":
+		r.sent = true
+	}
+	return "ok", nil
+}
+
+func (r *pasteRunner) opSequence() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.ops...)
+}
+
+// codexSurfaceRunner models codex's composer: the paste lands (the surface changes
+// from the pre-paste baseline) but the first Enter is dropped, so the composer keeps
+// showing the typed prompt until a re-press submits it and the surface advances to a
+// working state (after the second Enter).
+type codexSurfaceRunner struct {
+	mu     sync.Mutex
+	sent   bool
+	enters int
+}
+
+func (r *codexSurfaceRunner) run(_ context.Context, _, _ string, _ time.Duration, args ...string) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	switch args[0] {
+	case "read-screen":
+		switch {
+		case !r.sent:
+			return "codex ready\n> ", nil
+		case r.enters >= 2:
+			return "codex working…\nesc to interrupt", nil
+		default:
+			return "codex ready\n> run the task", nil
+		}
+	case "send":
+		r.sent = true
+	case "send-key":
+		if args[len(args)-1] == "Enter" {
+			r.enters++
+		}
+	}
+	return "ok", nil
+}
+
+func (r *codexSurfaceRunner) enterCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.enters
+}
+
+func TestWaitForPasteLandedDetectsChangeThenQuiesce(t *testing.T) {
+	// The surface differs from the pre-paste baseline and holds stable, so the paste
+	// is confirmed landed within the settle/quiesce window.
+	r := newTestRun(runConfig{
+		PasteLandTimeout:      2 * time.Second,
+		PasteLandPollInterval: 2 * time.Millisecond,
+		SendSettleDelay:       20 * time.Millisecond,
+	}, constantScreenRunner("idle\n> prompt text"))
+
+	landed, err := r.waitForPasteLanded(context.Background(), testSurface, "idle")
+	if err != nil {
+		t.Fatalf("waitForPasteLanded() error = %v", err)
+	}
+	if !landed {
+		t.Fatal("waitForPasteLanded() = false, want true once the surface changed and held stable")
+	}
+}
+
+func TestWaitForPasteLandedTimesOutWhenNoChange(t *testing.T) {
+	// The surface never changes from the baseline, so the paste is never observed
+	// landing; the wait must time out so the caller falls back to the fixed settle.
+	r := newTestRun(runConfig{
+		PasteLandTimeout:      30 * time.Millisecond,
+		PasteLandPollInterval: 2 * time.Millisecond,
+		SendSettleDelay:       20 * time.Millisecond,
+	}, constantScreenRunner("idle"))
+
+	start := time.Now()
+	landed, err := r.waitForPasteLanded(context.Background(), testSurface, "idle")
+	if err != nil {
+		t.Fatalf("waitForPasteLanded() error = %v", err)
+	}
+	if landed {
+		t.Fatal("waitForPasteLanded() = true, want false when the surface never changed")
+	}
+	if elapsed := time.Since(start); elapsed < 30*time.Millisecond {
+		t.Fatalf("waitForPasteLanded returned after %s, want it to wait ~PasteLandTimeout (30ms)", elapsed)
+	}
+}
+
+func TestSendSurfaceTextPressesEnterOncePasteLands(t *testing.T) {
+	runner := &pasteRunner{baseline: "codex ready\n> ", after: "codex ready\n> hello"}
+	// A large PasteLandTimeout (2s) with a small settle/quiesce (20ms): the paste
+	// lands on-screen immediately, so Enter must fire ~one quiesce window later. Had
+	// the change not been observed, the send would burn the full 2s timeout first.
+	r := newTestRun(runConfig{
+		PasteLandTimeout:      2 * time.Second,
+		PasteLandPollInterval: 2 * time.Millisecond,
+		SendSettleDelay:       20 * time.Millisecond,
+	}, runner.run)
+
+	start := time.Now()
+	if err := r.sendSurfaceText(context.Background(), testSurface, "prompt", "hello"); err != nil {
+		t.Fatalf("sendSurfaceText() error = %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("sendSurfaceText took %s, want Enter pressed adaptively once the paste landed, not after the 2s timeout", elapsed)
+	}
+
+	ops := runner.opSequence()
+	sendIdx, sendKeyIdx, polls := -1, -1, 0
+	for i, op := range ops {
+		switch {
+		case op == "send" && sendIdx == -1:
+			sendIdx = i
+		case op == "send-key" && sendKeyIdx == -1:
+			sendKeyIdx = i
+		case op == "read-screen" && sendIdx != -1 && sendKeyIdx == -1:
+			polls++
+		}
+	}
+	if sendIdx == -1 || sendKeyIdx == -1 || sendKeyIdx < sendIdx {
+		t.Fatalf("ops = %v, want a send followed by a send-key", ops)
+	}
+	if polls == 0 {
+		t.Fatalf("ops = %v, want the send to poll read-screen for the paste to land before Enter", ops)
+	}
+}
+
+func TestSendSurfaceTextFallsBackToSettleWhenPasteUnobserved(t *testing.T) {
+	runner := &timedRunner{}
+	// timedRunner's read-screen never changes, so the paste is never observed
+	// landing and the send must fall back to the settle delay before Enter.
+	r := newTestRun(runConfig{
+		PasteLandTimeout:      20 * time.Millisecond,
+		PasteLandPollInterval: 2 * time.Millisecond,
+		SendSettleDelay:       50 * time.Millisecond,
+	}, runner.run)
+
+	if err := r.sendSurfaceText(context.Background(), testSurface, "prompt", "hello"); err != nil {
 		t.Fatalf("sendSurfaceText() error = %v", err)
 	}
 
-	if len(runner.ops) != 2 || runner.ops[0] != "send" || runner.ops[1] != "send-key" {
-		t.Fatalf("ops = %v, want [send send-key]", runner.ops)
+	sendAt, ok := runner.firstTimeOf("send")
+	if !ok {
+		t.Fatal("no send op recorded")
 	}
-	gap := runner.times[1].Sub(runner.times[0])
-	if gap < 45*time.Millisecond {
-		t.Fatalf("paste→Enter gap = %s, want >= ~50ms settle delay", gap)
+	sendKeyAt, ok := runner.firstTimeOf("send-key")
+	if !ok {
+		t.Fatal("no send-key op recorded; Enter was never pressed on the fallback path")
+	}
+	// Fallback path waits PasteLandTimeout (20ms) then the settle (50ms) before Enter.
+	if gap := sendKeyAt.Sub(sendAt); gap < 45*time.Millisecond {
+		t.Fatalf("paste→Enter gap = %s, want >= ~50ms settle fallback", gap)
+	}
+}
+
+func TestSubmitAndConfirmRepressesEnterUntilSurfaceAdvances(t *testing.T) {
+	runner := &codexSurfaceRunner{}
+	r := newTestRun(runConfig{
+		PasteLandTimeout:        time.Second,
+		PasteLandPollInterval:   time.Millisecond,
+		SendSettleDelay:         2 * time.Millisecond,
+		SessionStartRetryDelays: []time.Duration{2 * time.Millisecond, 2 * time.Millisecond, 2 * time.Millisecond, 2 * time.Millisecond},
+	}, runner.run)
+
+	// submitConfirm{} carries no session log (the codex path), so confirmation is
+	// purely the surface advancing past the just-submitted screen.
+	if err := r.submitAndConfirm(context.Background(), testSurface, "initial prompt", "run the task", submitConfirm{}); err != nil {
+		t.Fatalf("submitAndConfirm() error = %v", err)
+	}
+	if got := runner.enterCount(); got != 2 {
+		t.Fatalf("Enter presses = %d, want 2 (initial send + one re-press before the surface advanced)", got)
 	}
 }
 
