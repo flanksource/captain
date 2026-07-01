@@ -3,6 +3,7 @@ package captainconfig
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -24,7 +25,7 @@ func TestLoad_MissingFileReturnsZero(t *testing.T) {
 	if exists {
 		t.Errorf("Load() exists = true, want false for missing file")
 	}
-	if cfg != (Config{}) {
+	if !reflect.DeepEqual(cfg, Config{}) {
 		t.Errorf("Load() cfg = %+v, want zero", cfg)
 	}
 }
@@ -65,7 +66,7 @@ func TestSaveLoad_RoundTrip(t *testing.T) {
 	if !exists {
 		t.Fatalf("Load() exists = false after Save")
 	}
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Errorf("round-trip mismatch:\n got  = %+v\n want = %+v", got, want)
 	}
 }
