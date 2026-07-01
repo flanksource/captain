@@ -25,7 +25,6 @@ import {
 import "@flanksource/clicky-ui/mdx-editor.css";
 import { MdxEditorField } from "@flanksource/clicky-ui/mdx-editor";
 import {
-  SpecRuntimeEditor,
   ToolPreferences,
   buildAISpecRuntimePayload,
   type AISpecRuntimeValue,
@@ -1156,12 +1155,6 @@ function RuntimeControls({
           Skip project config
         </label>
       </div>
-      <SpecRuntimeEditor
-        value={runtime.spec}
-        onChange={(spec) => update({ spec })}
-        models={models}
-        tools={tools}
-      />
       <div className="flex min-w-0 flex-wrap gap-density-2 text-xs text-muted-foreground">
         <span>{labelForBackend(runtime.backend || selectedBackend)}</span>
         {selectedModel && <span>{selectedModel.label}</span>}
