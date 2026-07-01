@@ -31,7 +31,7 @@ func loadSavedAI() captainconfig.AIDefaults {
 
 type AIProviderOptions struct {
 	Model   string `flag:"model" help:"Model name, e.g. claude-sonnet-4, gemini-2.0-flash (defaults to the value saved by 'captain configure')" short:"m"`
-	Backend string `flag:"backend" help:"Force backend: anthropic|gemini|openai|claude-cli|claude-agent|codex-cli|gemini-cli (default: inferred from model or saved by 'captain configure')" short:"b"`
+	Backend string `flag:"backend" help:"Force backend: anthropic|gemini|openai|claude-cli|claude-agent|claude-cmux|codex-cli|codex-cmux|gemini-cli (default: inferred from model or saved by 'captain configure')" short:"b"`
 	APIKey  string `flag:"api-key" help:"API key (env: ANTHROPIC_API_KEY, GEMINI_API_KEY, GOOGLE_API_KEY)"`
 	NoCache bool   `flag:"no-cache" help:"Disable response caching"`
 	Budget  string `flag:"budget" help:"Max spend in USD, 0=unlimited" default:"0"`
@@ -293,6 +293,14 @@ func RunAIPrompt(opts AIPromptOptions) (any, error) {
 		return nil, err
 	}
 
+	timeout, _ := time.ParseDuration(opts.Timeout)
+	if timeout <= 0 {
+		timeout = 120 * time.Second
+	}
+	return executePromptRequest(context.Background(), req, cfg, timeout, opts.NoStream)
+}
+
+func executePromptRequest(parent context.Context, req ai.Request, cfg ai.Config, timeout time.Duration, noStream bool) (any, error) {
 	p, err := ai.NewProvider(cfg)
 	if err != nil {
 		return nil, err
@@ -301,14 +309,16 @@ func RunAIPrompt(opts AIPromptOptions) (any, error) {
 		return nil, err
 	}
 
-	timeout, _ := time.ParseDuration(opts.Timeout)
+	if parent == nil {
+		parent = context.Background()
+	}
 	if timeout <= 0 {
 		timeout = 120 * time.Second
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 
-	if streamer, ok := p.(ai.StreamingProvider); ok && !opts.NoStream {
+	if streamer, ok := p.(ai.StreamingProvider); ok && !noStream {
 		return runStreaming(ctx, streamer, req)
 	}
 	return runBuffered(ctx, p, req)
