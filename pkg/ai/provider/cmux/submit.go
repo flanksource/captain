@@ -37,7 +37,7 @@ type submitConfirm struct {
 // returns nil and lets the downstream wait surface the loud failure rather than
 // masking it here.
 func (r *run) submitAndConfirm(ctx context.Context, ref WorkspaceRef, label, text string, sc submitConfirm) error {
-	if err := r.sendSurfaceText(ctx, ref.String(), ref.SurfaceID, label, text); err != nil {
+	if err := r.sendSurfaceText(ctx, ref, label, text); err != nil {
 		return err
 	}
 	return r.confirmSubmitted(ctx, ref, label, sc)
@@ -102,13 +102,16 @@ func (r *run) confirmStarted(ctx context.Context, ref WorkspaceRef, sc submitCon
 }
 
 // sendSurfaceText pastes text onto the surface and presses Enter, retrying the
-// whole paste+Enter on transient cmux errors. A settle delay separates the paste
-// from the Enter so a fast paste→Enter doesn't submit a half-applied buffer or
-// get swallowed while the surface is still in paste mode.
-func (r *run) sendSurfaceText(ctx context.Context, workspaceRef, surfaceRef, label, text string) error {
+// whole paste+Enter on transient cmux errors. Between the paste and the Enter it
+// waits for the paste to actually land on the surface (waitForPasteLanded) rather
+// than firing Enter blindly, so a slow input event queue doesn't get Enter pressed
+// into a half-applied buffer or swallowed while the surface is still in paste mode.
+func (r *run) sendSurfaceText(ctx context.Context, ref WorkspaceRef, label, text string) error {
 	attempts := r.sendAttempts()
 	delay := r.sendRetryDelay()
 	settle := r.sendSettleDelay()
+	workspaceRef := ref.String()
+	surfaceRef := ref.SurfaceID
 	text = strings.TrimRight(text, "\r\n")
 	var lastErr error
 	for attempt := 1; attempt <= attempts; attempt++ {
@@ -122,6 +125,7 @@ func (r *run) sendSurfaceText(ctx context.Context, workspaceRef, surfaceRef, lab
 		log.Debugf("cmux command: cmux send --workspace %q --surface %q -- <%s>", workspaceRef, surfaceRef, label)
 		log.Debugf("cmux command: cmux send-key --workspace %q --surface %q Enter", workspaceRef, surfaceRef)
 		log.Debugf("cmux send payload:\n%s", text)
+		before := r.readScreen(ctx, ref)
 		if err := r.client.SendSurface(ctx, workspaceRef, surfaceRef, text); err != nil {
 			lastErr = err
 			if ctx.Err() != nil {
@@ -134,8 +138,15 @@ func (r *run) sendSurfaceText(ctx context.Context, workspaceRef, surfaceRef, lab
 			}
 			continue
 		}
-		if err := sleepContext(ctx, settle); err != nil {
+		landed, err := r.waitForPasteLanded(ctx, ref, before)
+		if err != nil {
 			return err
+		}
+		if !landed {
+			log.Warnf("cmux: %s paste not observed on surface within %s; pressing Enter after %s settle fallback", label, r.pasteLandTimeout(), settle)
+			if err := sleepContext(ctx, settle); err != nil {
+				return err
+			}
 		}
 		if err := r.client.SendKeySurface(ctx, workspaceRef, surfaceRef, "Enter"); err != nil {
 			lastErr = err
@@ -153,6 +164,43 @@ func (r *run) sendSurfaceText(ctx context.Context, workspaceRef, surfaceRef, lab
 		return nil
 	}
 	return fmt.Errorf("send cmux %s after %d attempts: %w", label, attempts, lastErr)
+}
+
+// waitForPasteLanded polls the surface until the paste has rendered — the screen
+// changes from the pre-paste baseline and then holds stable for the settle window,
+// confirming cmux finished applying the paste rather than pressing Enter into a
+// half-filled buffer. Sends are always issued from a quiesced surface, so any
+// change is attributable to the paste. Returns true once landed; false on timeout,
+// where the caller falls back to the fixed settle so a send never regresses below
+// the previous fixed-delay behaviour.
+func (r *run) waitForPasteLanded(ctx context.Context, ref WorkspaceRef, before string) (bool, error) {
+	timeout := r.pasteLandTimeout()
+	poll := r.pasteLandPollInterval()
+	quiesce := r.sendSettleDelay()
+	base := normalizeScreen(before)
+	deadline := time.Now().Add(timeout)
+	var stable string
+	var stableSince time.Time
+	for {
+		screen := normalizeScreen(r.readScreen(ctx, ref))
+		if screen != "" && screen != base {
+			if screen == stable {
+				if time.Since(stableSince) >= quiesce {
+					log.Debugf("cmux: paste landed (surface changed and held stable for %s)", quiesce)
+					return true, nil
+				}
+			} else {
+				stable = screen
+				stableSince = time.Now()
+			}
+		}
+		if time.Now().After(deadline) {
+			return false, nil
+		}
+		if err := sleepContext(ctx, poll); err != nil {
+			return false, err
+		}
+	}
 }
 
 // waitForREPLReady polls the surface until the claude input prompt appears,

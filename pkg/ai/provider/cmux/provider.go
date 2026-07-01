@@ -255,7 +255,7 @@ func (p *Provider) execute(ctx context.Context, req ai.Request, r *run) (*ai.Usa
 		return nil, 0, err
 	}
 
-	if err := r.sendSurfaceText(ctx, ref.String(), ref.SurfaceID, "agent command", agentCommand); err != nil {
+	if err := r.sendSurfaceText(ctx, ref, "agent command", agentCommand); err != nil {
 		return nil, 0, err
 	}
 
@@ -318,7 +318,12 @@ func (p *Provider) execute(ctx context.Context, req ai.Request, r *run) (*ai.Usa
 	}
 
 	// codex: no session log to tail, so completion is the screen settling.
-	if err := r.sendSurfaceText(ctx, ref.String(), ref.SurfaceID, "initial prompt", instruction); err != nil {
+	//
+	// codex has no session log, so submission confirmation is purely the surface
+	// advancing past the just-submitted screen. submitAndConfirm re-presses Enter
+	// until it does, closing the silent no-submit where waitForScreenIdle would
+	// otherwise settle on the typed-but-unsent prompt and report success.
+	if err := r.submitAndConfirm(ctx, ref, "initial prompt", instruction, submitConfirm{}); err != nil {
 		return nil, 0, err
 	}
 	log.Infof("cmux: waiting for %s screen to change and stabilize after prompt dispatch", agent)

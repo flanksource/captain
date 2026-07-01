@@ -31,11 +31,24 @@ const defaultScreenLines = 120
 // a dropped Enter is recovered in seconds rather than tens of seconds.
 var defaultSessionStartRetryDelays = []time.Duration{2 * time.Second, 4 * time.Second, 8 * time.Second, 15 * time.Second}
 
-// defaultSendSettleDelay is the pause between pasting text onto the surface
-// (SendSurface) and pressing Enter (SendKeySurface). cmux can still be applying
-// the paste when the Enter arrives, submitting a half-applied buffer or
-// swallowing the Enter in paste mode; the settle gives the paste time to land.
-const defaultSendSettleDelay = 150 * time.Millisecond
+// defaultSendSettleDelay is the settle/quiesce window a send waits for the paste
+// to hold stable on the surface before pressing Enter (SendKeySurface). cmux can
+// still be applying the paste when the Enter arrives, submitting a half-applied
+// buffer or swallowing the Enter in paste mode; requiring the surface to stay
+// unchanged for this window gives the paste time to fully land. It is also the
+// fixed fallback delay used when the paste is never observed landing (see
+// waitForPasteLanded).
+const defaultSendSettleDelay = 2 * time.Second
+
+// defaultPasteLandTimeout bounds how long a send polls for the pasted text to
+// render on the surface before giving up and falling back to the fixed settle
+// delay + Enter. Generous so a slow claude/codex input event queue still lands the
+// paste before the fallback fires.
+const defaultPasteLandTimeout = 60 * time.Second
+
+// defaultPasteLandPollInterval is how often a send re-reads the surface while
+// waiting for the paste to land.
+const defaultPasteLandPollInterval = 500 * time.Millisecond
 
 // defaultREPLReadyTimeout bounds how long the claude launch waits for the REPL's
 // input prompt to appear before falling back to plain screen-idle detection.
@@ -61,8 +74,15 @@ type runConfig struct {
 	// keystroke did not start the turn. Defaults to defaultSessionStartRetryDelays.
 	SessionStartRetryDelays []time.Duration
 
-	// SendSettleDelay is the pause between pasting text and pressing Enter.
+	// SendSettleDelay is the settle/quiesce window between the paste landing and
+	// pressing Enter (also the fixed fallback when the paste is never observed).
 	SendSettleDelay time.Duration
+	// PasteLandTimeout bounds how long a send waits for the pasted text to render on
+	// the surface before falling back to SendSettleDelay and pressing Enter.
+	PasteLandTimeout time.Duration
+	// PasteLandPollInterval is how often the send re-reads the surface while waiting
+	// for the paste to land.
+	PasteLandPollInterval time.Duration
 	// REPLReadyTimeout bounds the wait for the claude REPL input prompt before
 	// falling back to screen-idle.
 	REPLReadyTimeout time.Duration
@@ -422,6 +442,20 @@ func (r *run) screenLines() int {
 		return r.cfg.ScreenLines
 	}
 	return defaultScreenLines
+}
+
+func (r *run) pasteLandTimeout() time.Duration {
+	if r.cfg.PasteLandTimeout > 0 {
+		return r.cfg.PasteLandTimeout
+	}
+	return defaultPasteLandTimeout
+}
+
+func (r *run) pasteLandPollInterval() time.Duration {
+	if r.cfg.PasteLandPollInterval > 0 {
+		return r.cfg.PasteLandPollInterval
+	}
+	return defaultPasteLandPollInterval
 }
 
 func sleepContext(ctx context.Context, delay time.Duration) error {
