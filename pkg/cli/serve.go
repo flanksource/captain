@@ -38,6 +38,7 @@ type ServeOptions struct {
 	UIPort      int
 	Open        bool
 	ThreadsFile string
+	PromptDirs  []string
 }
 
 func NewServeCommand(version string) *cobra.Command {
@@ -74,6 +75,7 @@ proxies /api back to this Go process.`,
 	cmd.Flags().IntVar(&opts.UIPort, "ui-port", opts.UIPort, "Port for the Vite dev server when --dev is set")
 	cmd.Flags().BoolVar(&opts.Open, "open", false, "Open the web UI in the default browser")
 	cmd.Flags().StringVar(&opts.ThreadsFile, "threads-file", opts.ThreadsFile, "Path to persisted chat thread JSON")
+	cmd.Flags().StringArrayVar(&opts.PromptDirs, "prompt-dir", nil, "Additional local directory containing .prompt files (repeatable)")
 
 	return cmd
 }
@@ -90,6 +92,9 @@ func (o ServeOptions) validate() error {
 	}
 	if strings.TrimSpace(o.ThreadsFile) == "" {
 		return fmt.Errorf("threads file cannot be empty")
+	}
+	if err := ValidatePromptDirs(o.PromptDirs); err != nil {
+		return err
 	}
 	return nil
 }
@@ -157,7 +162,7 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	addr := fmt.Sprintf("%s:%d", opts.Host, opts.Port)
 	httpSrv := &http.Server{
 		Addr:        addr,
-		Handler:     mux,
+		Handler:     PromptDirsMiddleware(mux, opts.PromptDirs),
 		ReadTimeout: 30 * time.Second,
 		// /api/chat streams SSE; a fixed write timeout truncates long turns.
 		IdleTimeout: 60 * time.Second,

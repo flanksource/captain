@@ -38,7 +38,7 @@ func TestBuildConfigFromForm_TogglesInvert(t *testing.T) {
 			NoMemory:        true,
 		},
 	}
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Errorf("buildConfigFromForm()\n got  = %+v\n want = %+v", got, want)
 	}
 }

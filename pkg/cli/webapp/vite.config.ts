@@ -66,6 +66,14 @@ function clickySourceAliases(enabled: boolean) {
       replacement: path.resolve(clickySourceRoot, "hooks.ts"),
     },
     {
+      find: "@flanksource/clicky-ui/mdx-editor.css",
+      replacement: path.resolve(clickySourceRoot, "styles/mdx-editor.css"),
+    },
+    {
+      find: "@flanksource/clicky-ui/mdx-editor",
+      replacement: path.resolve(clickySourceRoot, "mdx-editor.ts"),
+    },
+    {
       find: "@flanksource/clicky-ui/utils",
       replacement: path.resolve(clickySourceRoot, "utils.ts"),
     },
