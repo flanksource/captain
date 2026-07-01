@@ -16,7 +16,8 @@ import (
 )
 
 type Config struct {
-	AI AIDefaults `yaml:"ai"`
+	AI      AIDefaults     `yaml:"ai"`
+	Prompts PromptDefaults `yaml:"prompts"`
 }
 
 type AIDefaults struct {
@@ -34,6 +35,10 @@ type AIDefaults struct {
 	NoUser          bool    `yaml:"noUser,omitempty"`
 	NoProject       bool    `yaml:"noProject,omitempty"`
 	NoMemory        bool    `yaml:"noMemory,omitempty"`
+}
+
+type PromptDefaults struct {
+	Dirs []string `yaml:"dirs,omitempty"`
 }
 
 // pathOverride lets tests redirect Path() to a temp directory without touching
