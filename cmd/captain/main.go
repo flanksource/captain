@@ -169,6 +169,9 @@ func main() {
 	clicky.AddNamedCommand("build", containerCmd, cli.ContainerBuildOptions{}, cli.RunContainerBuild).Short = "Build container image"
 	clicky.AddNamedCommand("run", containerCmd, cli.ContainerRunOptions{}, cli.RunContainerRun).Short = "Run container sandbox"
 
+	cli.RegisterPromptEntity()
+	clicky.GenerateCLI(rootCmd)
+
 	mcpConfig := &mcp.Config{
 		Name:    "captain",
 		Version: version,
