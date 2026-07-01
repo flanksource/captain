@@ -208,7 +208,9 @@ func backendOptions() []huh.Option[string] {
 		huh.NewOption("OpenAI API", string(ai.BackendOpenAI)),
 		huh.NewOption("Claude CLI", string(ai.BackendClaudeCLI)),
 		huh.NewOption("Claude Agent (SDK)", string(ai.BackendClaudeAgent)),
+		huh.NewOption("Claude cmux", string(ai.BackendClaudeCmux)),
 		huh.NewOption("Codex CLI", string(ai.BackendCodexCLI)),
+		huh.NewOption("Codex cmux", string(ai.BackendCodexCmux)),
 		huh.NewOption("Gemini CLI", string(ai.BackendGeminiCLI)),
 	}
 }
