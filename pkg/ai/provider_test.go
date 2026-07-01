@@ -67,8 +67,10 @@ func TestAuthEnvVars(t *testing.T) {
 		BackendAnthropic:   {"ANTHROPIC_API_KEY"},
 		BackendClaudeCLI:   {"ANTHROPIC_API_KEY"},
 		BackendClaudeAgent: {"ANTHROPIC_API_KEY"},
+		BackendClaudeCmux:  {"ANTHROPIC_API_KEY"},
 		BackendOpenAI:      {"OPENAI_API_KEY"},
 		BackendCodexCLI:    {"OPENAI_API_KEY"},
+		BackendCodexCmux:   {"OPENAI_API_KEY"},
 		BackendGemini:      {"GEMINI_API_KEY", "GOOGLE_API_KEY"},
 		BackendGeminiCLI:   {"GEMINI_API_KEY", "GOOGLE_API_KEY"},
 	}

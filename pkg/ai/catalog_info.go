@@ -66,9 +66,9 @@ func CatalogInfo(configuredProviders []string) []ModelInfo {
 // claude-cli need `tsx` on PATH. A turn still fails loud if the probe is wrong.
 func agentBackendAvailable(b Backend) bool {
 	switch b {
-	case BackendCodexCLI:
+	case BackendCodexCLI, BackendCodexCmux:
 		return binaryOnPath("codex")
-	case BackendClaudeAgent, BackendClaudeCLI:
+	case BackendClaudeAgent, BackendClaudeCLI, BackendClaudeCmux:
 		return binaryOnPath("tsx")
 	default:
 		return false
