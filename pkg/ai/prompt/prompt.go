@@ -19,6 +19,7 @@
 package prompt
 
 import (
+	"bytes"
 	"fmt"
 	"io/fs"
 	"os"
@@ -126,11 +127,25 @@ func decodeSpecFrontmatter(raw map[string]any, req *ai.Request) error {
 	if len(raw) == 0 {
 		return nil
 	}
-	b, err := yaml.Marshal(raw)
+	specRaw := map[string]any{}
+	for key, value := range raw {
+		switch key {
+		case "config", "input", "output", "name", "description":
+			continue
+		default:
+			specRaw[key] = value
+		}
+	}
+	if len(specRaw) == 0 {
+		return nil
+	}
+	b, err := yaml.Marshal(specRaw)
 	if err != nil {
 		return fmt.Errorf("re-encode frontmatter: %w", err)
 	}
-	return yaml.Unmarshal(b, req)
+	dec := yaml.NewDecoder(bytes.NewReader(b))
+	dec.KnownFields(true)
+	return dec.Decode(req)
 }
 
 // Library renders named .prompt files from an fs.FS (typically an embed.FS), the

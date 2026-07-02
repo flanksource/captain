@@ -36,7 +36,7 @@ func TestRender_FrontmatterAndMessages(t *testing.T) {
 }
 
 // TestRender_SpecFrontmatter exercises the second parse: spec-native frontmatter
-// (permissions/memory/budget/maxTurns) lands on the nested ai.Request groups,
+// (permissions/memory/budget) lands on the nested ai.Request groups,
 // while the dotprompt config: block stays canonical for the knobs it owns.
 func TestRender_SpecFrontmatter(t *testing.T) {
 	tmpl, err := LoadFS(library, "testdata/options.prompt")
@@ -51,7 +51,7 @@ func TestRender_SpecFrontmatter(t *testing.T) {
 	assert.Equal(t, []string{"Read", "Edit"}, req.Permissions.Tools.Allow)
 	assert.True(t, req.Permissions.MCP.Disabled)
 	assert.True(t, req.Memory.SkipUser)
-	assert.Equal(t, 3, req.MaxTurns)
+	assert.Equal(t, 3, req.Budget.MaxTurns)
 
 	// The dotprompt config: block wins for the knobs it owns: config.maxOutputTokens
 	// (1024) overrides the spec-native budget.maxTokens (5000), and config.temperature
@@ -95,8 +95,11 @@ func TestRender_BackendFixtureExamples(t *testing.T) {
 		"testdata/fixtures/anthropic-claude-sonnet.prompt": {backend: api.BackendAnthropic, model: "claude-sonnet-4-6"},
 		"testdata/fixtures/claude-agent-opus.prompt":       {backend: api.BackendClaudeAgent, model: "claude-agent-opus"},
 		"testdata/fixtures/claude-agent-sonnet.prompt":     {backend: api.BackendClaudeAgent, model: "claude-agent-sonnet"},
+		"testdata/fixtures/claude-cmux-opus.prompt":        {backend: api.BackendClaudeCmux, model: "claude-cmux-opus"},
+		"testdata/fixtures/claude-cmux-sonnet.prompt":      {backend: api.BackendClaudeCmux, model: "claude-cmux-sonnet"},
 		"testdata/fixtures/claude-cli-opus.prompt":         {backend: api.BackendClaudeCLI, model: "claude-agent-opus"},
 		"testdata/fixtures/claude-cli-sonnet.prompt":       {backend: api.BackendClaudeCLI, model: "claude-agent-sonnet"},
+		"testdata/fixtures/codex-cmux.prompt":              {backend: api.BackendCodexCmux, model: "gpt-5-codex"},
 		"testdata/fixtures/codex-cli.prompt":               {backend: api.BackendCodexCLI, model: "gpt-5-codex"},
 		"testdata/fixtures/gemini-api.prompt":              {backend: api.BackendGemini, model: "gemini-2.5-pro"},
 		"testdata/fixtures/gemini-cli.prompt":              {backend: api.BackendGeminiCLI, model: "gemini-cli-pro"},
@@ -109,6 +112,7 @@ func TestRender_BackendFixtureExamples(t *testing.T) {
 		api.BackendAnthropic:   {},
 		api.BackendClaudeAgent: {},
 		api.BackendClaudeCLI:   {},
+		api.BackendClaudeCmux:  {},
 	}
 
 	err := fs.WalkDir(library, "testdata/fixtures", func(path string, d fs.DirEntry, err error) error {

@@ -1,6 +1,6 @@
 ---
 model: gpt-5-codex
-backend: codex-cli
+backend: codex-cmux
 effort: medium
 setup:
   cwd: .
@@ -13,7 +13,7 @@ memory:
   bare: true
 ---
 {{role "system"}}
-You are a Codex agent. Apply scoped edits, keep the worktree clean, and verify the change.
+You are working through a cmux Codex surface. Apply scoped edits and report verification.
 {{role "user"}}
 Code task:
 {{task}}

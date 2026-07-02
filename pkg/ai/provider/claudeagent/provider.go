@@ -335,12 +335,12 @@ func (p *Provider) initializeParams(req ai.Request) initializeParams {
 	}
 
 	return initializeParams{
-		Cwd:                req.Context.Dir,
+		Cwd:                req.Cwd(),
 		Model:              aliasModel(p.model),
 		SystemPrompt:       req.Prompt.System,
 		AppendSystemPrompt: req.Prompt.AppendSystem,
 		AllowedTools:       allowed,
-		MaxTurns:           req.MaxTurns,
+		MaxTurns:           req.Budget.MaxTurns,
 		MaxBudgetUsd:       p.cfg.Budget.Cost,
 		PermissionMode:     mode,
 		Resume:             resume,

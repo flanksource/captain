@@ -35,6 +35,23 @@ var errSessionStalled = errors.New("claude session stalled: no log or surface ac
 // the signal that the turn is paused awaiting a human allow/deny.
 var approvalPromptRe = regexp.MustCompile(`(?i)\bdo you want to\b`)
 
+// planKeepPlanningRe / planAutoAcceptRe match the two option labels that co-occur
+// only in claude's ExitPlanMode approval dialog ("Yes, and auto-accept edits" /
+// "No, keep planning"). "keep planning" is unique to that dialog; "auto-accept
+// edits" also appears on the *persistent* acceptEdits mode indicator ("⏵⏵
+// auto-accept edits on"), so requiring BOTH excludes the indicator — keying on
+// "auto-accept edits" alone would treat every acceptEdits-mode run as permanently
+// awaiting a human and disable stall detection.
+var planKeepPlanningRe = regexp.MustCompile(`(?i)\bkeep planning\b`)
+var planAutoAcceptRe = regexp.MustCompile(`(?i)auto-accept edits`)
+
+// isPlanApprovalDialog reports whether the surface shows claude's ExitPlanMode
+// plan-approval dialog, which pauses a plan-mode turn awaiting the user's decision
+// to proceed (approve, switching to acceptEdits) or keep planning (reject).
+func isPlanApprovalDialog(screen string) bool {
+	return planKeepPlanningRe.MatchString(screen) && planAutoAcceptRe.MatchString(screen)
+}
+
 // awaitWithStallWatchdog runs awaitSessionCompletion under a dual-signal stall
 // watchdog. A watcher goroutine samples the session jsonl (log byte-growth and
 // the accumulator's last-activity time) and the cmux surface (readScreen); if
@@ -183,7 +200,7 @@ func (w *stallWatchdog) fingerprint(screen string) stallSignal {
 // awaitingHuman reports whether the turn is paused on a human: a tool-permission
 // dialog on the surface, an approval already in flight, or an ask-tool state.
 func (w *stallWatchdog) awaitingHuman(screen string) bool {
-	if approvalPromptRe.MatchString(screen) || w.approving.Load() {
+	if approvalPromptRe.MatchString(screen) || isPlanApprovalDialog(screen) || w.approving.Load() {
 		return true
 	}
 	if w.acc != nil && w.acc.state() == sessionStateAsk {
@@ -207,16 +224,13 @@ func (w *stallWatchdog) markAwaitingHuman() {
 // at most once per dialog. With no broker the dialog is left up for an
 // interactive terminal user to answer (the stall clock is held by awaitingHuman).
 func (w *stallWatchdog) maybeRequestApproval(ctx context.Context, screen string) {
-	if !approvalPromptRe.MatchString(screen) {
-		return
-	}
-	if w.r.canUseTool == nil {
+	req, ok := detectApprovalRequest(w.sessionID, screen)
+	if !ok || w.r.canUseTool == nil {
 		return
 	}
 	if !w.approving.CompareAndSwap(false, true) {
 		return
 	}
-	req := parseApprovalRequest(w.sessionID, screen)
 	w.r.approvals.Add(1)
 	go func() {
 		defer w.r.approvals.Done()
@@ -225,12 +239,26 @@ func (w *stallWatchdog) maybeRequestApproval(ctx context.Context, screen string)
 	}()
 }
 
+// detectApprovalRequest recognises either claude dialog awaiting an allow/deny and
+// builds the matching PermissionRequest. The plan dialog is checked first: it is the
+// more specific match and its header can also satisfy approvalPromptRe, so ordering
+// keeps a plan approval labelled ExitPlanMode rather than a generic tool.
+func detectApprovalRequest(sessionID, screen string) (ai.PermissionRequest, bool) {
+	if isPlanApprovalDialog(screen) {
+		return parsePlanApprovalRequest(sessionID), true
+	}
+	if approvalPromptRe.MatchString(screen) {
+		return parseApprovalRequest(sessionID, screen), true
+	}
+	return ai.PermissionRequest{}, false
+}
+
 // handleApproval brokers a tool-permission request via the CanUseTool callback
 // and applies the decision on the surface: Enter accepts the highlighted "Yes",
 // Escape cancels (deny). It emits an EventPermission first so the host can observe
 // what is awaiting approval, then blocks on the callback (which honours ctx).
 func (r *run) handleApproval(ctx context.Context, ref WorkspaceRef, req ai.PermissionRequest) {
-	log.Infof("cmux: session %s awaiting tool-permission approval: %s", req.SessionID, approvalSummary(req))
+	log.Infof("cmux: session %s awaiting tool-permission approval: %s", req.SessionID, screenSnippet(approvalSummary(req)))
 	r.emit(ai.Event{Kind: ai.EventPermission, Tool: req.Tool, Input: req.Input})
 	if r.canUseTool == nil {
 		return
@@ -250,6 +278,18 @@ func (r *run) handleApproval(ctx context.Context, ref WorkspaceRef, req ai.Permi
 	log.Infof("cmux: approval for session %s denied; cancelling on surface", req.SessionID)
 	if err := r.client.SendKeySurface(ctx, ref.String(), ref.SurfaceID, "Escape"); err != nil {
 		log.Warnf("cmux: failed to send approval deny key: %v", err)
+	}
+}
+
+// parsePlanApprovalRequest builds a PermissionRequest for claude's ExitPlanMode
+// plan-approval dialog. The full plan lives in the session log (surfaced separately
+// by the host), so the request carries only a human-readable summary; Tool is
+// "ExitPlanMode" to match the session-log tool name and the host's ask-tool set.
+func parsePlanApprovalRequest(sessionID string) ai.PermissionRequest {
+	return ai.PermissionRequest{
+		SessionID: sessionID,
+		Tool:      "ExitPlanMode",
+		Input:     map[string]any{"prompt": "Claude finished planning; approve to proceed (auto-accept edits) or deny to keep planning"},
 	}
 }
 

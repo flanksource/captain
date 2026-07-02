@@ -1,6 +1,6 @@
 ---
-model: claude-agent-sonnet
-backend: claude-agent
+model: claude-cmux-sonnet
+backend: claude-cmux
 budget:
   maxTurns: 6
 setup:
@@ -12,14 +12,13 @@ permissions:
     allow:
       - Read
       - Edit
-      - Write
       - Glob
       - Grep
 memory:
   skipUser: true
 ---
 {{role "system"}}
-You are working inside a repository. Make narrow edits and report the verification you ran.
+You are working through a cmux Claude surface. Keep edits scoped and verify the result.
 {{role "user"}}
-Summarize recent changes in the current directory
+Task:
 {{task}}

@@ -100,37 +100,9 @@ type PromptWriteRequest struct {
 	Content string `json:"content"`
 }
 
-type PromptRuntimeOptions struct {
-	Model           string    `json:"model,omitempty"`
-	Backend         string    `json:"backend,omitempty"`
-	System          string    `json:"system,omitempty"`
-	AppendSystem    string    `json:"appendSystem,omitempty"`
-	Timeout         string    `json:"timeout,omitempty"`
-	MaxTokens       int       `json:"maxTokens,omitempty"`
-	Temperature     string    `json:"temperature,omitempty"`
-	Effort          string    `json:"effort,omitempty"`
-	Budget          string    `json:"budget,omitempty"`
-	MaxTurns        int       `json:"maxTurns,omitempty"`
-	Resume          string    `json:"resume,omitempty"`
-	Edit            bool      `json:"edit,omitempty"`
-	AllowedTools    []string  `json:"allowedTools,omitempty"`
-	DisallowedTools []string  `json:"disallowedTools,omitempty"`
-	PermissionMode  string    `json:"permissionMode,omitempty"`
-	NoMCP           bool      `json:"noMcp,omitempty"`
-	NoHooks         bool      `json:"noHooks,omitempty"`
-	NoSkills        bool      `json:"noSkills,omitempty"`
-	SkillDirs       []string  `json:"skillDirs,omitempty"`
-	NoUser          bool      `json:"noUser,omitempty"`
-	NoProject       bool      `json:"noProject,omitempty"`
-	NoMemory        bool      `json:"noMemory,omitempty"`
-	Bare            bool      `json:"bare,omitempty"`
-	NoCache         bool      `json:"noCache,omitempty"`
-	Spec            *api.Spec `json:"spec,omitempty"`
-}
-
 type PromptRenderRequest struct {
-	Variables map[string]any       `json:"variables,omitempty"`
-	Runtime   PromptRuntimeOptions `json:"runtime,omitempty"`
+	Variables map[string]any `json:"variables,omitempty"`
+	Spec      *api.Spec      `json:"spec,omitempty"`
 }
 
 type PromptRenderResult struct {
@@ -259,6 +231,10 @@ func createPrompt(ctx context.Context, body map[string]any) (PromptDetail, error
 	if err := decodePromptBody(ctx, body, &req); err != nil {
 		return PromptDetail{}, err
 	}
+	return writeNewLocalPrompt(ctx, req)
+}
+
+func writeNewLocalPrompt(ctx context.Context, req PromptWriteRequest) (PromptDetail, error) {
 	sources, err := buildPromptSources(ctx)
 	if err != nil {
 		return PromptDetail{}, err
@@ -300,15 +276,18 @@ func updatePrompt(ctx context.Context, id string, body map[string]any) (PromptDe
 	if err != nil {
 		return PromptDetail{}, err
 	}
-	if !record.Source.Writable {
-		return PromptDetail{}, fmt.Errorf("embedded prompts are read-only")
-	}
 	var req PromptWriteRequest
 	if err := decodePromptBody(ctx, body, &req); err != nil {
 		return PromptDetail{}, err
 	}
 	if strings.TrimSpace(req.Content) == "" {
 		return PromptDetail{}, fmt.Errorf("prompt content cannot be empty")
+	}
+	if !record.Source.Writable {
+		if strings.TrimSpace(req.RelPath) == "" {
+			req.RelPath = localForkRelPath(record)
+		}
+		return writeNewLocalPrompt(ctx, req)
 	}
 	full, err := safeLocalPromptPath(record.Source, record.Rel)
 	if err != nil {
@@ -318,6 +297,17 @@ func updatePrompt(ctx context.Context, id string, body map[string]any) (PromptDe
 		return PromptDetail{}, fmt.Errorf("write prompt: %w", err)
 	}
 	return promptDetail(record)
+}
+
+// localForkRelPath derives the destination path for a read-only (embedded)
+// prompt saved into a writable source, stripping the source walk root so an
+// embedded "testdata/commit.prompt" lands as "commit.prompt".
+func localForkRelPath(record promptRecord) string {
+	rel := record.Rel
+	if root := record.Source.WalkRoot; root != "" {
+		rel = strings.TrimPrefix(rel, root+"/")
+	}
+	return rel
 }
 
 func deletePrompt(ctx context.Context, id string) error {
@@ -346,30 +336,6 @@ func renderPromptAction(ctx context.Context, id string, flags map[string]string)
 	return renderPrompt(ctx, id, req)
 }
 
-func runPromptAction(ctx context.Context, id string, flags map[string]string) (AIPromptResult, error) {
-	req, err := readRenderRequest(ctx, flags)
-	if err != nil {
-		return AIPromptResult{}, err
-	}
-	rendered, err := renderPrompt(ctx, id, req)
-	if err != nil {
-		return AIPromptResult{}, err
-	}
-	if rendered.ValidationError != "" {
-		return AIPromptResult{}, errors.New(rendered.ValidationError)
-	}
-	timeout := runtimeTimeout(req.Runtime.Timeout)
-	got, err := executePromptRequest(ctx, rendered.Input, rendered.Config, timeout, true)
-	if err != nil {
-		return AIPromptResult{}, err
-	}
-	result, ok := got.(AIPromptResult)
-	if !ok {
-		return AIPromptResult{}, fmt.Errorf("unexpected prompt result %T", got)
-	}
-	return result, nil
-}
-
 func renderPrompt(ctx context.Context, id string, renderReq PromptRenderRequest) (PromptRenderResult, error) {
 	record, err := resolvePromptRecord(ctx, id)
 	if err != nil {
@@ -387,14 +353,12 @@ func renderPrompt(ctx context.Context, id string, renderReq PromptRenderRequest)
 	if err != nil {
 		return PromptRenderResult{}, err
 	}
-	req, cfg, err := overlayCLI(fileReq, fileCfg, renderReq.Runtime.toAIPromptOptions())
-	if err != nil {
-		return PromptRenderResult{}, err
-	}
+	req, cfg := fileReq, fileCfg
 	req.Prompt.Source = record.Rel
-	if renderReq.Runtime.Spec != nil {
-		overlayRuntimeSpec(&req, &cfg, *renderReq.Runtime.Spec)
+	if renderReq.Spec != nil {
+		overlayRuntimeSpec(&req, &cfg, *renderReq.Spec)
 	}
+	applyPromptDefaults(&req, &cfg)
 	cwd, err := os.Getwd()
 	if err != nil {
 		return PromptRenderResult{}, fmt.Errorf("get working directory: %w", err)
@@ -431,61 +395,29 @@ func renderPrompt(ctx context.Context, id string, renderReq PromptRenderRequest)
 	return result, nil
 }
 
-func (o PromptRuntimeOptions) toAIPromptOptions() AIPromptOptions {
-	return AIPromptOptions{
-		AIRuntimeOptions: AIRuntimeOptions{
-			AIProviderOptions: AIProviderOptions{
-				Model:   o.Model,
-				Backend: o.Backend,
-				NoCache: o.NoCache,
-				Budget:  o.Budget,
-			},
-			MaxTokens:       o.MaxTokens,
-			Temperature:     o.Temperature,
-			Effort:          o.Effort,
-			MaxTurns:        o.MaxTurns,
-			Resume:          o.Resume,
-			Edit:            o.Edit,
-			AllowedTools:    o.AllowedTools,
-			DisallowedTools: o.DisallowedTools,
-			PermissionMode:  o.PermissionMode,
-			NoMCP:           o.NoMCP,
-			NoHooks:         o.NoHooks,
-			NoSkills:        o.NoSkills,
-			SkillDirs:       o.SkillDirs,
-			NoUser:          o.NoUser,
-			NoProject:       o.NoProject,
-			NoMemory:        o.NoMemory,
-			Bare:            o.Bare,
-		},
-		System:       o.System,
-		AppendSystem: o.AppendSystem,
-		Timeout:      o.Timeout,
-		NoStream:     true,
-	}
-}
-
 func overlayRuntimeSpec(req *ai.Request, cfg *ai.Config, spec api.Spec) {
-	if spec.Model.Name != "" {
-		req.Model.Name = spec.Model.Name
-		cfg.Model.Name = spec.Model.Name
+	if spec.Name != "" {
+		req.Name = spec.Name
+		cfg.Model.Name = spec.Name
 	}
-	if spec.Model.ID != "" {
-		req.Model.ID = spec.Model.ID
-		cfg.Model.ID = spec.Model.ID
+	if spec.ID != "" {
+		req.ID = spec.ID
+		cfg.Model.ID = spec.ID
 	}
-	if spec.Model.Backend != "" {
-		req.Model.Backend = spec.Model.Backend
-		cfg.Model.Backend = spec.Model.Backend
+	if spec.Backend != "" {
+		req.Backend = spec.Backend
+		cfg.Model.Backend = spec.Backend
 	}
-	if spec.Model.Temperature != nil {
-		req.Model.Temperature = spec.Model.Temperature
-		cfg.Model.Temperature = spec.Model.Temperature
+	if spec.Temperature != nil {
+		req.Temperature = spec.Temperature
+		cfg.Model.Temperature = spec.Temperature
 	}
-	if spec.Model.Effort != "" {
-		req.Model.Effort = spec.Model.Effort
-		cfg.Model.Effort = spec.Model.Effort
+	if spec.Effort != "" {
+		req.Effort = spec.Effort
+		cfg.Model.Effort = spec.Effort
 	}
+	req.NoCache = req.NoCache || spec.NoCache
+	cfg.NoCache = cfg.NoCache || spec.NoCache
 	if spec.Budget.Cost > 0 {
 		req.Budget.Cost = spec.Budget.Cost
 		cfg.Budget.Cost = spec.Budget.Cost
@@ -493,6 +425,14 @@ func overlayRuntimeSpec(req *ai.Request, cfg *ai.Config, spec api.Spec) {
 	if spec.Budget.MaxTokens > 0 {
 		req.Budget.MaxTokens = spec.Budget.MaxTokens
 		cfg.Budget.MaxTokens = spec.Budget.MaxTokens
+	}
+	if spec.Budget.MaxTurns > 0 {
+		req.Budget.MaxTurns = spec.Budget.MaxTurns
+		cfg.Budget.MaxTurns = spec.Budget.MaxTurns
+	}
+	if spec.Budget.Timeout != "" {
+		req.Budget.Timeout = spec.Budget.Timeout
+		cfg.Budget.Timeout = spec.Budget.Timeout
 	}
 
 	if spec.Prompt.User != "" {
@@ -513,23 +453,43 @@ func overlayRuntimeSpec(req *ai.Request, cfg *ai.Config, spec api.Spec) {
 		req.Permissions.Mode = spec.Permissions.Mode
 	}
 	req.Permissions.Presets = mergePresets(req.Permissions.Presets, spec.Permissions.Presets)
-	if len(spec.Permissions.Tools.Allow) > 0 {
-		req.Permissions.Tools.Allow = append([]string(nil), spec.Permissions.Tools.Allow...)
-	}
-	if len(spec.Permissions.Tools.Deny) > 0 {
-		req.Permissions.Tools.Deny = append([]string(nil), spec.Permissions.Tools.Deny...)
+	toolPolicies := spec.Permissions.Tools.Policies()
+	if len(toolPolicies) > 0 {
+		req.Permissions.Tools.Allow = nil
+		req.Permissions.Tools.Deny = nil
+		req.Permissions.Tools.Modes = nil
+		for _, tool := range sortedStringKeys(toolPolicies) {
+			switch toolPolicies[tool] {
+			case api.ToolPolicyAllow:
+				req.Permissions.Tools.Allow = append(req.Permissions.Tools.Allow, tool)
+			case api.ToolPolicyDeny:
+				req.Permissions.Tools.Deny = append(req.Permissions.Tools.Deny, tool)
+			case api.ToolPolicyAsk:
+				if req.Permissions.Tools.Modes == nil {
+					req.Permissions.Tools.Modes = map[string]api.ToolMode{}
+				}
+				req.Permissions.Tools.Modes[tool] = api.ToolModeAsk
+			case api.ToolPolicyAuto:
+				if req.Permissions.Tools.Modes == nil {
+					req.Permissions.Tools.Modes = map[string]api.ToolMode{}
+				}
+				req.Permissions.Tools.Modes[tool] = api.ToolModeEnabled
+			}
+		}
 	}
 	req.Permissions.Tools.Modes = mergeToolModes(req.Permissions.Tools.Modes, spec.Permissions.Tools.Modes)
 	req.Permissions.MCP.Disabled = req.Permissions.MCP.Disabled || spec.Permissions.MCP.Disabled
-	if len(spec.Permissions.MCP.Servers) > 0 {
-		req.Permissions.MCP.Servers = append([]string(nil), spec.Permissions.MCP.Servers...)
+	if servers := spec.Permissions.MCP.EnabledServers(); len(servers) > 0 {
+		req.Permissions.MCP.Servers = servers
 	}
 	if len(spec.Permissions.Plugins) > 0 {
-		req.Permissions.Plugins = append([]string(nil), spec.Permissions.Plugins...)
+		req.Permissions.Plugins = enabledResourcePolicies(spec.Permissions.Plugins)
 	}
 
-	if len(spec.Memory.Skills) > 0 {
-		req.Memory.Skills = append([]string(nil), spec.Memory.Skills...)
+	skills := append([]string(nil), spec.Memory.Skills...)
+	skills = append(skills, spec.Permissions.Skills.Enabled()...)
+	if len(skills) > 0 {
+		req.Memory.Skills = dedupeStrings(skills)
 	}
 	req.Memory.SkipProject = req.Memory.SkipProject || spec.Memory.SkipProject
 	req.Memory.SkipUser = req.Memory.SkipUser || spec.Memory.SkipUser
@@ -538,59 +498,38 @@ func overlayRuntimeSpec(req *ai.Request, cfg *ai.Config, spec api.Spec) {
 	req.Memory.SkipMemory = req.Memory.SkipMemory || spec.Memory.SkipMemory
 	req.Memory.Bare = req.Memory.Bare || spec.Memory.Bare
 
-	if spec.Context.Dir != "" {
-		req.Context.Dir = spec.Context.Dir
+	if spec.Setup != nil {
+		req.Setup = spec.Setup
 	}
-	if spec.Context.Diff != "" {
-		req.Context.Diff = spec.Context.Diff
-	}
-	if len(spec.Context.Files) > 0 {
-		req.Context.Files = append([]string(nil), spec.Context.Files...)
-	}
-	if spec.Context.Git != nil {
-		if req.Context.Git == nil {
-			req.Context.Git = &api.Git{}
-		}
-		if spec.Context.Git.Repo != "" {
-			req.Context.Git.Repo = spec.Context.Git.Repo
-		}
-		if spec.Context.Git.SHA != "" {
-			req.Context.Git.SHA = spec.Context.Git.SHA
-		}
-		if spec.Context.Git.PR != "" {
-			req.Context.Git.PR = spec.Context.Git.PR
-		}
-	}
-	if spec.Context.Worktree != nil {
-		if req.Context.Worktree == nil {
-			req.Context.Worktree = &api.Worktree{}
-		}
-		if spec.Context.Worktree.Branch != "" {
-			req.Context.Worktree.Branch = spec.Context.Worktree.Branch
-		}
-		if spec.Context.Worktree.Base != "" {
-			req.Context.Worktree.Base = spec.Context.Worktree.Base
-		}
-		if spec.Context.Worktree.CommitMsg != "" {
-			req.Context.Worktree.CommitMsg = spec.Context.Worktree.CommitMsg
-		}
-		req.Context.Worktree.KeepOnExit = req.Context.Worktree.KeepOnExit || spec.Context.Worktree.KeepOnExit
-		if spec.Context.Worktree.Path != "" {
-			req.Context.Worktree.Path = spec.Context.Worktree.Path
-		}
-		if spec.Context.Worktree.Commit != "" {
-			req.Context.Worktree.Commit = spec.Context.Worktree.Commit
-		}
-	}
-	req.Context.Env = mergeStringMaps(req.Context.Env, spec.Context.Env)
 
 	if spec.SessionID != "" {
 		req.SessionID = spec.SessionID
 		cfg.SessionID = spec.SessionID
 	}
-	if spec.MaxTurns > 0 {
-		req.MaxTurns = spec.MaxTurns
+}
+
+func applyPromptDefaults(req *ai.Request, cfg *ai.Config) {
+	saved := loadSavedAI()
+	if req.Name == "" {
+		req.Name = firstNonEmpty(cfg.Model.Name, saved.Model)
 	}
+	if req.Backend == "" {
+		req.Backend = api.Backend(firstNonEmpty(string(cfg.Model.Backend), saved.Backend))
+	}
+	if req.Effort == "" {
+		req.Effort = api.Effort(firstNonEmpty(string(cfg.Model.Effort), saved.ReasoningEffort))
+	}
+	req.NoCache = req.NoCache || saved.NoCache
+	if req.Budget.MaxTokens == 0 {
+		req.Budget.MaxTokens = firstPositive(cfg.Budget.MaxTokens, saved.MaxTokens, 4096)
+	}
+	if req.Budget.Cost == 0 {
+		req.Budget.Cost = firstPositiveFloat(cfg.Budget.Cost, saved.BudgetUSD)
+	}
+
+	cfg.Model = req.Model
+	cfg.Budget = req.Budget
+	cfg.NoCache = req.NoCache
 }
 
 func mergeStringMaps(base, overlay map[string]string) map[string]string {
@@ -644,6 +583,40 @@ func mergePresets(base, overlay []api.Preset) []api.Preset {
 	return out
 }
 
+func sortedStringKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		if key != "" {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func enabledResourcePolicies(in api.ResourcePolicies) api.ResourcePolicies {
+	out := api.ResourcePolicies{}
+	for _, key := range sortedStringKeys(in) {
+		if in[key] == api.ResourceEnabled {
+			out[key] = api.ResourceEnabled
+		}
+	}
+	return out
+}
+
+func dedupeStrings(in []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, item := range in {
+		if item == "" || seen[item] {
+			continue
+		}
+		seen[item] = true
+		out = append(out, item)
+	}
+	return out
+}
+
 func readRenderRequest(ctx context.Context, flags map[string]string) (PromptRenderRequest, error) {
 	var req PromptRenderRequest
 	if err := decodePromptBody(ctx, map[string]any{}, &req); err != nil {
@@ -670,22 +643,29 @@ func mergePromptActionFlags(req *PromptRenderRequest, flags map[string]string) e
 		req.Variables = vars
 	}
 	if v := strings.TrimSpace(flags["model"]); v != "" {
-		req.Runtime.Model = v
+		ensureRenderSpec(req).Name = v
 	}
 	if v := strings.TrimSpace(flags["backend"]); v != "" {
-		req.Runtime.Backend = v
+		ensureRenderSpec(req).Backend = api.Backend(v)
 	}
 	if v := strings.TrimSpace(flags["timeout"]); v != "" {
-		req.Runtime.Timeout = v
+		ensureRenderSpec(req).Budget.Timeout = v
 	}
 	if v := strings.TrimSpace(flags["max-tokens"]); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil {
 			return fmt.Errorf("invalid --max-tokens %q: %w", v, err)
 		}
-		req.Runtime.MaxTokens = n
+		ensureRenderSpec(req).Budget.MaxTokens = n
 	}
 	return nil
+}
+
+func ensureRenderSpec(req *PromptRenderRequest) *api.Spec {
+	if req.Spec == nil {
+		req.Spec = &api.Spec{}
+	}
+	return req.Spec
 }
 
 func decodePromptBody(ctx context.Context, flat map[string]any, dst any) error {
@@ -696,7 +676,9 @@ func decodePromptBody(ctx context.Context, flat map[string]any, dst any) error {
 		}
 		r.Body = io.NopCloser(strings.NewReader(string(body)))
 		if len(strings.TrimSpace(string(body))) > 0 {
-			if err := json.Unmarshal(body, dst); err != nil {
+			decoder := json.NewDecoder(strings.NewReader(string(body)))
+			decoder.DisallowUnknownFields()
+			if err := decoder.Decode(dst); err != nil {
 				return fmt.Errorf("decode request body: %w", err)
 			}
 			return nil
@@ -709,7 +691,9 @@ func decodePromptBody(ctx context.Context, flat map[string]any, dst any) error {
 	if err != nil {
 		return err
 	}
-	if err := json.Unmarshal(data, dst); err != nil {
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(dst); err != nil {
 		return fmt.Errorf("decode command body: %w", err)
 	}
 	return nil
@@ -886,8 +870,8 @@ func promptSummaryFromContent(record promptRecord, content string) (PromptSummar
 	if v, ok := inspection.Metadata["description"].(string); ok {
 		summary.Description = strings.TrimSpace(v)
 	}
-	summary.Model = firstNonEmpty(cfg.Model.Name, req.Model.Name)
-	summary.Backend = firstNonEmpty(string(cfg.Model.Backend), string(req.Model.Backend))
+	summary.Model = firstNonEmpty(cfg.Model.Name, req.Name)
+	summary.Backend = firstNonEmpty(string(cfg.Model.Backend), string(req.Backend))
 	summary.Variables = inspection.Variables
 	return summary, nil
 }
