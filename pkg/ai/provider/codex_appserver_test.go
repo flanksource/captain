@@ -7,6 +7,7 @@ import (
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/claude"
+	"github.com/flanksource/commons-db/shell"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -389,8 +390,8 @@ func TestBuildThreadStartParams_Safety(t *testing.T) {
 
 func TestBuildThreadStartParams_CwdAndModel(t *testing.T) {
 	p := buildThreadStartParams("gpt-5", ai.Request{
-		Prompt:  api.Prompt{User: "p"},
-		Context: api.Context{Dir: "/repo"},
+		Prompt: api.Prompt{User: "p"},
+		Setup:  &shell.Setup{Cwd: "/repo"},
 	})
 	assert.Equal(t, "/repo", p["cwd"])
 	assert.Equal(t, "gpt-5", p["model"])
@@ -403,7 +404,7 @@ func TestBuildThreadStartParams_CwdAndModel(t *testing.T) {
 func TestBuildResumeParams(t *testing.T) {
 	p := buildResumeParams(ai.Request{
 		SessionID: "thread-9",
-		Context:   api.Context{Dir: "/repo"},
+		Setup:     &shell.Setup{Cwd: "/repo"},
 	})
 	assert.Equal(t, "thread-9", p["threadId"])
 	assert.Equal(t, "/repo", p["cwd"])

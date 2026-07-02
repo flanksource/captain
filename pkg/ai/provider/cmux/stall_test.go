@@ -7,11 +7,29 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
 )
+
+// planApprovalScreen is claude's ExitPlanMode plan-approval dialog as rendered on
+// the cmux surface: a plan followed by the three-option select.
+const planApprovalScreen = `╭─────────────────────────────────────╮
+│ Ready to code?                       │
+│ Here is Claude's plan:               │
+│   1. Do the thing                    │
+│ Would you like to proceed?           │
+│ ❯ 1. Yes, and auto-accept edits      │
+│   2. Yes, and manually approve edits │
+│   3. No, keep planning               │
+╰─────────────────────────────────────╯`
+
+// acceptEditsIndicatorScreen is the *persistent* mode indicator shown after a run
+// switches to acceptEdits — it contains "auto-accept edits" but is NOT a dialog, so
+// it must not be treated as awaiting a human (else stall detection is disabled).
+const acceptEditsIndicatorScreen = "⏵⏵ auto-accept edits on (shift+tab to cycle)\nclaude working, no surface change"
 
 // stallRunner is a thread-safe cmux Runner for the watchdog tests: it serves a
 // (possibly per-call changing) read-screen and counts the Enter/Escape keys the
@@ -104,6 +122,193 @@ func TestApprovalPromptRe(t *testing.T) {
 		if got := approvalPromptRe.MatchString(tc.screen); got != tc.want {
 			t.Errorf("approvalPromptRe.MatchString(%q) = %v, want %v", tc.screen, got, tc.want)
 		}
+	}
+}
+
+func TestIsPlanApprovalDialog(t *testing.T) {
+	cases := []struct {
+		name   string
+		screen string
+		want   bool
+	}{
+		{"plan dialog", planApprovalScreen, true},
+		{"mode indicator only", acceptEditsIndicatorScreen, false},
+		{"tool edit dialog", "│ Do you want to make this edit to foo.go? │", false},
+		{"header without options", "Would you like to proceed?", false},
+		{"keep planning without auto-accept", "❯ 3. No, keep planning", false},
+		{"empty", "", false},
+		{"working", "claude is working", false},
+	}
+	for _, tc := range cases {
+		if got := isPlanApprovalDialog(tc.screen); got != tc.want {
+			t.Errorf("isPlanApprovalDialog(%s) = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestDetectApprovalRequest(t *testing.T) {
+	cases := []struct {
+		name     string
+		screen   string
+		wantOK   bool
+		wantTool string
+	}{
+		{"plan dialog", planApprovalScreen, true, "ExitPlanMode"},
+		{"edit dialog", "Do you want to make this edit to foo.go?", true, "Edit"},
+		// A plan dialog whose header also matches approvalPromptRe must stay labelled
+		// ExitPlanMode (plan-first precedence), not the generic tool.
+		{"plan dialog with do-you-want header", planApprovalScreen + "\nDo you want to proceed?", true, "ExitPlanMode"},
+		{"working screen", "claude working, no surface change", false, ""},
+	}
+	for _, tc := range cases {
+		req, ok := detectApprovalRequest("sess", tc.screen)
+		if ok != tc.wantOK {
+			t.Fatalf("detectApprovalRequest(%s) ok = %v, want %v", tc.name, ok, tc.wantOK)
+		}
+		if ok && req.Tool != tc.wantTool {
+			t.Errorf("detectApprovalRequest(%s) tool = %q, want %q", tc.name, req.Tool, tc.wantTool)
+		}
+	}
+}
+
+func TestHandleApprovalPlanAllowSendsEnter(t *testing.T) {
+	runner := &stallRunner{}
+	r, events := recordingRun(runConfig{}, runner.run)
+	r.canUseTool = func(_ context.Context, _ ai.PermissionRequest) (ai.PermissionDecision, error) {
+		return ai.PermissionDecision{Allow: true}, nil
+	}
+
+	r.handleApproval(context.Background(), testSurface, parsePlanApprovalRequest("plan-allow"))
+
+	if runner.enterCount() != 1 {
+		t.Fatalf("approve key sent %d times, want 1 (Enter selects auto-accept edits)", runner.enterCount())
+	}
+	if runner.escapeCount() != 0 {
+		t.Fatalf("escape sent on plan approve: %d", runner.escapeCount())
+	}
+	if !hasPermissionEvent(*events, "ExitPlanMode") {
+		t.Fatalf("no EventPermission emitted for ExitPlanMode, got %v", *events)
+	}
+}
+
+func TestHandleApprovalPlanDenyKeepsPlanning(t *testing.T) {
+	runner := &stallRunner{}
+	r, events := recordingRun(runConfig{}, runner.run)
+	r.canUseTool = func(_ context.Context, _ ai.PermissionRequest) (ai.PermissionDecision, error) {
+		return ai.PermissionDecision{Allow: false, Message: "keep planning"}, nil
+	}
+
+	r.handleApproval(context.Background(), testSurface, parsePlanApprovalRequest("plan-deny"))
+
+	if runner.escapeCount() != 1 {
+		t.Fatalf("deny key sent %d times, want 1 (Escape keeps planning)", runner.escapeCount())
+	}
+	if runner.enterCount() != 0 {
+		t.Fatalf("enter sent on plan deny: %d", runner.enterCount())
+	}
+	if !hasPermissionEvent(*events, "ExitPlanMode") {
+		t.Fatalf("no EventPermission emitted for ExitPlanMode, got %v", *events)
+	}
+}
+
+func TestStallWatchdogPlanDialogSuppressesStall(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "s.jsonl")
+	writeSessionLog(t, logPath, "seed") // static log
+	runner := &stallRunner{}
+	runner.setScreen(planApprovalScreen) // plan-approval dialog stays up
+	// No CanUseTool broker: an interactive terminal user answers, so the dialog is
+	// left up and the stall clock is held while it is present (no nudges, no give-up).
+	r := newTestRun(runConfig{}, runner.run)
+	wd := newWatchdog(r, "plan-await", logPath, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan bool, 1)
+	go func() { result <- wd.watch(ctx) }()
+
+	time.Sleep(80 * time.Millisecond) // far longer than the stall timeout
+	cancel()
+	if gaveUp := <-result; gaveUp {
+		t.Fatal("watchdog gave up while a plan-approval dialog is up")
+	}
+	if n := runner.enterCount(); n != 0 {
+		t.Fatalf("nudges = %d, want 0 while a plan-approval dialog is up", n)
+	}
+}
+
+func TestStallWatchdogAcceptEditsIndicatorStillStalls(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "s.jsonl")
+	writeSessionLog(t, logPath, "seed") // static log
+	runner := &stallRunner{}
+	// The persistent acceptEdits indicator contains "auto-accept edits" but is not a
+	// dialog: the watchdog must still detect the stall and nudge/give up, not treat
+	// the indicator as awaiting a human forever.
+	runner.setScreen(acceptEditsIndicatorScreen)
+	r := newTestRun(runConfig{}, runner.run)
+	wd := newWatchdog(r, "indicator-stall", logPath, nil) // maxNudges = 2
+
+	gaveUp := wd.watch(context.Background())
+
+	if !gaveUp {
+		t.Fatal("watchdog did not give up on a static acceptEdits-indicator screen")
+	}
+	if n := runner.enterCount(); n != 2 {
+		t.Fatalf("nudges = %d, want 2 (StallNudges) before giving up", n)
+	}
+}
+
+func TestStallWatchdogPlanApprovalBrokeredOnce(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "s.jsonl")
+	writeSessionLog(t, logPath, "seed")
+
+	// The runner serves the plan dialog until an Enter is sent, then an advancing
+	// (non-dialog) screen — mirroring the dialog dismissing on approval and the turn
+	// resuming work. A correct watchdog brokers the plan exactly once and, seeing the
+	// surface advance afterwards, does not nudge, so only the approval Enter is sent.
+	var mu sync.Mutex
+	var enters, frame int
+	runner := func(_ context.Context, _, _ string, _ time.Duration, args ...string) (string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch args[0] {
+		case "read-screen":
+			if enters == 0 {
+				return planApprovalScreen, nil
+			}
+			frame++
+			return fmt.Sprintf("claude working %d", frame), nil
+		case "send-key":
+			if args[len(args)-1] == "Enter" {
+				enters++
+			}
+		}
+		return "ok", nil
+	}
+	r := newTestRun(runConfig{}, runner)
+	var broker atomic.Int32
+	r.canUseTool = func(_ context.Context, _ ai.PermissionRequest) (ai.PermissionDecision, error) {
+		broker.Add(1)
+		return ai.PermissionDecision{Allow: true}, nil
+	}
+	wd := newWatchdog(r, "plan-once", logPath, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan bool, 1)
+	go func() { result <- wd.watch(ctx) }()
+
+	waitFor(t, "plan approval brokered", func() bool { return broker.Load() >= 1 })
+	time.Sleep(40 * time.Millisecond) // give any erroneous re-broker time to fire
+	cancel()
+	<-result
+	r.approvals.Wait()
+
+	if got := broker.Load(); got != 1 {
+		t.Fatalf("plan approval brokered %d times, want exactly 1", got)
+	}
+	mu.Lock()
+	gotEnters := enters
+	mu.Unlock()
+	if gotEnters != 1 {
+		t.Fatalf("Enter sent %d times, want 1 (approve once)", gotEnters)
 	}
 }
 

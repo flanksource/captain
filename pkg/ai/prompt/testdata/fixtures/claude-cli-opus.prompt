@@ -1,7 +1,8 @@
 ---
 model: claude-agent-opus
 backend: claude-cli
-maxTurns: 3
+budget:
+  maxTurns: 3
 permissions:
   mode: default
   tools:
@@ -20,4 +21,3 @@ You are using the Claude CLI backend for high-signal review. Be specific about e
 {{role "user"}}
 Review:
 {{task}}
-

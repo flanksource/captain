@@ -1,7 +1,8 @@
 ---
 model: claude-agent-sonnet
 backend: claude-cli
-maxTurns: 3
+budget:
+  maxTurns: 3
 permissions:
   mode: default
   tools:
@@ -19,4 +20,3 @@ You are using the Claude CLI backend. Keep the answer concise and actionable.
 {{role "user"}}
 Handle:
 {{task}}
-

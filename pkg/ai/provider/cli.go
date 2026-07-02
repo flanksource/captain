@@ -73,10 +73,13 @@ func HandleExitError(exitCode int, stderr string) error {
 	}
 }
 
-func runCLI(ctx context.Context, command string, stdinData []byte, cwd string) (stdout []byte, stderr string, err error) {
+func runCLI(ctx context.Context, command string, stdinData []byte, cwd string, env ...[]string) (stdout []byte, stderr string, err error) {
 	cmd := exec.CommandContext(ctx, command)
 	if cwd != "" {
 		cmd.Dir = cwd
+	}
+	if len(env) > 0 && len(env[0]) > 0 {
+		cmd.Env = env[0]
 	}
 
 	// Buffer stdout/stderr instead of using StdoutPipe/StderrPipe: cmd.Wait closes

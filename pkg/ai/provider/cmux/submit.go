@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/flanksource/captain/pkg/ai"
 )
 
 // replReadyRe matches the claude REPL's input prompt — the box-drawn "> " / "❯ "
@@ -121,10 +123,10 @@ func (r *run) sendSurfaceText(ctx context.Context, ref WorkspaceRef, label, text
 				return err
 			}
 		}
-		log.Infof("cmux: sending %s to workspace %s surface %s (attempt %d/%d)", label, workspaceRef, surfaceRef, attempt, attempts)
+		ai.LoggerFromContext(ctx, log).Tracef("cmux: sending %s to workspace %s surface %s (attempt %d/%d)", label, workspaceRef, surfaceRef, attempt, attempts)
 		log.Debugf("cmux command: cmux send --workspace %q --surface %q -- <%s>", workspaceRef, surfaceRef, label)
 		log.Debugf("cmux command: cmux send-key --workspace %q --surface %q Enter", workspaceRef, surfaceRef)
-		log.Debugf("cmux send payload:\n%s", text)
+		log.Debugf("cmux send payload:\n%s", screenSnippet(text))
 		before := r.readScreen(ctx, ref)
 		if err := r.client.SendSurface(ctx, workspaceRef, surfaceRef, text); err != nil {
 			lastErr = err

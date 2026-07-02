@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/captainconfig"
+	"github.com/flanksource/commons-db/shell"
 )
 
 func TestPromptEntityListsEmbeddedExamples(t *testing.T) {
@@ -144,8 +146,8 @@ Hello {{name}}
 	if rendered.Model != "claude-sonnet-4-6" || rendered.Backend != "anthropic" {
 		t.Fatalf("rendered model/backend = %s/%s, want claude-sonnet-4-6/anthropic", rendered.Model, rendered.Backend)
 	}
-	if rendered.Input.Context.Dir == "" || !filepath.IsAbs(rendered.Input.Context.Dir) {
-		t.Fatalf("rendered context dir = %q, want absolute", rendered.Input.Context.Dir)
+	if rendered.Input.Cwd() == "" || !filepath.IsAbs(rendered.Input.Cwd()) {
+		t.Fatalf("rendered setup cwd = %q, want absolute", rendered.Input.Cwd())
 	}
 
 	updated, err := updatePrompt(ctx, created.ID, map[string]any{
@@ -164,6 +166,72 @@ Hello {{name}}
 	if _, err := os.Stat(filepath.Join(dir, "greeting.prompt")); !os.IsNotExist(err) {
 		t.Fatalf("deleted prompt stat err = %v, want not exist", err)
 	}
+}
+
+func TestUpdateEmbeddedPromptForksToLocal(t *testing.T) {
+	isolateCaptainConfig(t)
+
+	dir := t.TempDir()
+	ctx := ContextWithPromptDirs(context.Background(), []string{dir})
+
+	embedded, err := findEmbeddedPrompt(ctx, "testdata/commit.prompt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if embedded.Writable {
+		t.Fatalf("embedded prompt reported writable")
+	}
+
+	original, err := getPrompt(ctx, embedded.ID)
+	if err != nil {
+		t.Fatalf("getPrompt(embedded) err = %v", err)
+	}
+	newContent := original.Content + "\n{{! local override }}\n"
+
+	forked, err := updatePrompt(ctx, embedded.ID, map[string]any{"content": newContent})
+	if err != nil {
+		t.Fatalf("updatePrompt(embedded) err = %v", err)
+	}
+	if !forked.Writable || forked.SourceKind != "local" {
+		t.Fatalf("forked prompt = kind %q writable %v, want local writable", forked.SourceKind, forked.Writable)
+	}
+	if forked.ID == embedded.ID {
+		t.Fatalf("forked prompt kept embedded id %q", forked.ID)
+	}
+	if forked.RelPath != "commit.prompt" {
+		t.Fatalf("forked relPath = %q, want commit.prompt (testdata/ stripped)", forked.RelPath)
+	}
+	if !strings.Contains(forked.Content, "local override") {
+		t.Fatalf("forked content did not persist edit: %q", forked.Content)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "commit.prompt")); err != nil {
+		t.Fatalf("forked prompt file missing: %v", err)
+	}
+
+	stillEmbedded, err := getPrompt(ctx, embedded.ID)
+	if err != nil {
+		t.Fatalf("getPrompt(embedded) after fork err = %v", err)
+	}
+	if strings.Contains(stillEmbedded.Content, "local override") {
+		t.Fatalf("embedded prompt was mutated by fork")
+	}
+
+	if _, err := updatePrompt(ctx, embedded.ID, map[string]any{"content": newContent}); err == nil {
+		t.Fatalf("second fork of same prompt should fail with already-exists")
+	}
+}
+
+func findEmbeddedPrompt(ctx context.Context, relPath string) (PromptSummary, error) {
+	prompts, err := listPrompts(ctx, PromptListOptions{Source: "embedded"})
+	if err != nil {
+		return PromptSummary{}, err
+	}
+	for _, prompt := range prompts {
+		if prompt.RelPath == relPath {
+			return prompt, nil
+		}
+	}
+	return PromptSummary{}, fmt.Errorf("embedded prompt %q not found", relPath)
 }
 
 func TestRenderPromptAppliesRuntimeSpec(t *testing.T) {
@@ -191,52 +259,59 @@ Hello {{name}}
 	temp := 0.2
 	rendered, err := renderPrompt(ctx, created.ID, PromptRenderRequest{
 		Variables: map[string]any{"name": "Ada"},
-		Runtime: PromptRuntimeOptions{
-			Spec: &api.Spec{
-				Model: api.Model{
-					Name:        "gpt-4o",
-					ID:          "openai/gpt-4o",
-					Backend:     api.BackendOpenAI,
-					Temperature: &temp,
-					Effort:      api.EffortLow,
-				},
-				Prompt: api.Prompt{
-					System:       "runtime system",
-					AppendSystem: "runtime append",
-					Source:       "runtime-source",
-					Metadata:     map[string]string{"surface": "prompt-ui"},
-				},
-				Budget: api.Budget{Cost: 0.5, MaxTokens: 1234},
-				Permissions: api.Permissions{
-					Mode:    api.PermissionAcceptEdits,
-					Presets: []api.Preset{api.PresetEdit},
-					Tools: api.Tools{
-						Allow: []string{"Read"},
-						Deny:  []string{"Bash"},
-						Modes: map[string]api.ToolMode{"Bash": api.ToolModeDisabled},
-					},
-					MCP:     api.MCP{Disabled: true, Servers: []string{"filesystem"}},
-					Plugins: []string{"/plugins"},
-				},
-				Memory: api.Memory{
-					Skills:     []string{"/skills"},
-					SkipUser:   true,
-					SkipMemory: true,
-					Bare:       true,
-				},
-				Context: api.Context{
-					Dir:   "workspace",
-					Files: []string{"a.go"},
-					Git:   &api.Git{Repo: "/repo", SHA: "abc123", PR: "42"},
-					Worktree: &api.Worktree{
-						Branch:     "runtime-branch",
-						KeepOnExit: true,
-					},
-					Env: map[string]string{"CAPTAIN_UI": "1"},
-				},
-				SessionID: "sess-runtime",
-				MaxTurns:  4,
+		Spec: &api.Spec{
+			Model: api.Model{
+				Name:        "gpt-4o",
+				ID:          "openai/gpt-4o",
+				Backend:     api.BackendOpenAI,
+				Temperature: &temp,
+				Effort:      api.EffortLow,
+				NoCache:     true,
 			},
+			Prompt: api.Prompt{
+				System:       "runtime system",
+				AppendSystem: "runtime append",
+				Source:       "runtime-source",
+				Metadata:     map[string]string{"surface": "prompt-ui"},
+			},
+			Budget: api.Budget{Cost: 0.5, MaxTokens: 1234, MaxTurns: 4, Timeout: "90s"},
+			Permissions: api.Permissions{
+				Mode:    api.PermissionAcceptEdits,
+				Presets: []api.Preset{api.PresetEdit},
+				Tools: api.Tools{
+					Allow: []string{"Read"},
+					Deny:  []string{"Bash"},
+					Modes: map[string]api.ToolMode{"Bash": api.ToolModeDisabled},
+				},
+				MCP: api.MCP{
+					Disabled: true,
+					Servers:  []string{"filesystem"},
+					Modes:    api.ResourcePolicies{"gavel": api.ResourceDisabled},
+				},
+				Plugins: api.ResourcePolicies{"/plugins": api.ResourceEnabled},
+				Skills:  api.ResourcePolicies{"/permission-skills": api.ResourceEnabled},
+			},
+			Memory: api.Memory{
+				Skills:     []string{"/skills"},
+				SkipUser:   true,
+				SkipMemory: true,
+				Bare:       true,
+			},
+			Setup: &shell.Setup{
+				Cwd:    "workspace",
+				DotEnv: []string{".env"},
+				Checkout: &shell.Checkout{
+					Mode: shell.CheckoutLocal,
+					Path: "/repo",
+					Ref:  "abc123",
+					Worktree: &shell.Worktree{
+						Mode:   shell.WorktreeNew,
+						Prefix: "runtime-branch",
+						Keep:   true,
+					},
+				},
+			},
+			SessionID: "sess-runtime",
 		},
 	})
 	if err != nil {
@@ -254,8 +329,12 @@ Hello {{name}}
 	if rendered.Input.Temperature == nil || *rendered.Input.Temperature != temp {
 		t.Fatalf("temperature = %v, want %v", rendered.Input.Temperature, temp)
 	}
-	if rendered.Input.Budget.Cost != 0.5 || rendered.Input.Budget.MaxTokens != 1234 {
+	if rendered.Input.Budget.Cost != 0.5 || rendered.Input.Budget.MaxTokens != 1234 ||
+		rendered.Input.Budget.MaxTurns != 4 || rendered.Input.Budget.Timeout != "90s" {
 		t.Fatalf("budget = %+v, want cost/maxTokens override", rendered.Input.Budget)
+	}
+	if !rendered.Input.Model.NoCache || !rendered.Config.NoCache {
+		t.Fatalf("noCache = input %v config %v, want true", rendered.Input.Model.NoCache, rendered.Config.NoCache)
 	}
 	if rendered.Input.Prompt.System != "runtime system" || rendered.Input.Prompt.AppendSystem != "runtime append" {
 		t.Fatalf("prompt system fields = %+v, want runtime overrides", rendered.Input.Prompt)
@@ -268,20 +347,26 @@ Hello {{name}}
 		!rendered.Input.Permissions.MCP.Disabled {
 		t.Fatalf("permissions = %+v, want runtime overrides", rendered.Input.Permissions)
 	}
+	if rendered.Input.Permissions.Plugins["/plugins"] != api.ResourceEnabled {
+		t.Fatalf("plugins = %+v, want enabled runtime plugin", rendered.Input.Permissions.Plugins)
+	}
+	if !strings.Contains(strings.Join(rendered.Input.Memory.Skills, ","), "/permission-skills") {
+		t.Fatalf("skills = %+v, want permission skills merged into memory skills", rendered.Input.Memory.Skills)
+	}
 	if !rendered.Input.Memory.SkipUser || !rendered.Input.Memory.SkipMemory || !rendered.Input.Memory.Bare {
 		t.Fatalf("memory = %+v, want runtime overrides", rendered.Input.Memory)
 	}
-	if rendered.Input.Context.Dir != filepath.Join(cwd, "workspace") {
-		t.Fatalf("context dir = %q, want cwd-relative runtime dir", rendered.Input.Context.Dir)
+	if rendered.Input.Cwd() != filepath.Join(cwd, "workspace") {
+		t.Fatalf("setup cwd = %q, want cwd-relative runtime dir", rendered.Input.Cwd())
 	}
-	if rendered.Input.Context.Git == nil || rendered.Input.Context.Git.SHA != "abc123" {
-		t.Fatalf("git context = %+v, want runtime git overlay", rendered.Input.Context.Git)
+	if rendered.Input.Setup == nil || rendered.Input.Setup.Checkout == nil || rendered.Input.Setup.Checkout.Ref != "abc123" {
+		t.Fatalf("setup checkout = %+v, want runtime git checkout overlay", rendered.Input.Setup)
 	}
-	if rendered.Input.Context.Worktree == nil || !rendered.Input.Context.Worktree.KeepOnExit {
-		t.Fatalf("worktree context = %+v, want runtime worktree overlay", rendered.Input.Context.Worktree)
+	if rendered.Input.Setup.Checkout.Worktree == nil || !rendered.Input.Setup.Checkout.Worktree.Keep {
+		t.Fatalf("worktree setup = %+v, want runtime worktree overlay", rendered.Input.Setup.Checkout.Worktree)
 	}
-	if rendered.Input.Context.Env["CAPTAIN_UI"] != "1" || rendered.Input.SessionID != "sess-runtime" || rendered.Input.MaxTurns != 4 {
-		t.Fatalf("runtime tail fields = input=%+v context=%+v", rendered.Input, rendered.Input.Context)
+	if rendered.Input.SessionID != "sess-runtime" {
+		t.Fatalf("runtime session = input=%+v", rendered.Input)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/commons-db/shell"
 )
 
 func TestParseStderr(t *testing.T) {
@@ -73,8 +74,8 @@ func TestGeminiCLIUsesContextDir(t *testing.T) {
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	resp, err := NewGeminiCLI("gemini-cli-pro").Execute(context.Background(), ai.Request{
-		Prompt:  api.Prompt{User: "hello"},
-		Context: api.Context{Dir: cwd},
+		Prompt: api.Prompt{User: "hello"},
+		Setup:  &shell.Setup{Cwd: cwd},
 	})
 	if err != nil {
 		t.Fatalf("Execute: %v", err)

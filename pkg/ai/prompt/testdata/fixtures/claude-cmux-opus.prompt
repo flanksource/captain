@@ -1,6 +1,6 @@
 ---
-model: claude-agent-opus
-backend: claude-agent
+model: claude-cmux-opus
+backend: claude-cmux
 budget:
   maxTurns: 4
 setup:
@@ -18,7 +18,7 @@ memory:
   skipProject: true
 ---
 {{role "system"}}
-You are planning a sensitive code change. Do not edit files; identify risks and checks.
+You are working through a cmux Claude surface. Plan carefully before making changes.
 {{role "user"}}
-Plan:
+Task:
 {{task}}

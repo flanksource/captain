@@ -8,6 +8,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/commons-db/shell"
 )
 
 func TestNewDerivesAgentAndBackend(t *testing.T) {
@@ -86,7 +87,7 @@ func TestExecuteFailsLoudWhenCmuxUnavailable(t *testing.T) {
 	r := newTestRun(runConfig{}, func(_ context.Context, _, _ string, _ time.Duration, args ...string) (string, error) {
 		return "", errors.New("cmux not running")
 	})
-	if _, _, err := p.execute(context.Background(), ai.Request{Prompt: api.Prompt{User: "hi"}, Context: api.Context{Dir: t.TempDir()}}, r); err == nil {
+	if _, _, err := p.execute(context.Background(), ai.Request{Prompt: api.Prompt{User: "hi"}, Setup: &shell.Setup{Cwd: t.TempDir()}}, r); err == nil {
 		t.Fatal("execute() error = nil, want a failure when cmux ping fails")
 	}
 }

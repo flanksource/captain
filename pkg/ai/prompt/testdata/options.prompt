@@ -3,7 +3,6 @@ model: claude-sonnet-4-6
 config:
   maxOutputTokens: 1024
   temperature: 0.2
-maxTurns: 3
 permissions:
   mode: acceptEdits
   presets:
@@ -18,6 +17,7 @@ memory:
   skipUser: true
 budget:
   maxTokens: 5000
+  maxTurns: 3
 ---
 {{role "system"}}
 You are a careful refactoring assistant.
