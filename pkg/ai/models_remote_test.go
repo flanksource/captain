@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // withTestServer redirects http.DefaultClient.Do to the given test server by
@@ -54,7 +55,7 @@ func TestFetchOpenAIModels_HappyPath(t *testing.T) {
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"data": []map[string]any{
-				{"id": "gpt-5"},
+				{"id": "gpt-5", "created": time.Date(2026, 3, 2, 0, 0, 0, 0, time.UTC).Unix()},
 				{"id": "gpt-5-mini"},
 				{"id": "gpt-99-future"},
 			},
@@ -69,6 +70,9 @@ func TestFetchOpenAIModels_HappyPath(t *testing.T) {
 	}
 	if len(got) != 3 {
 		t.Fatalf("len = %d", len(got))
+	}
+	if got[0].ReleaseDate != "2026-03-02" {
+		t.Errorf("ReleaseDate = %q, want parsed OpenAI created date", got[0].ReleaseDate)
 	}
 	for _, m := range got {
 		if m.Backend != BackendOpenAI {
@@ -109,7 +113,7 @@ func TestFetchAnthropicModels_HappyPath(t *testing.T) {
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"data": []map[string]any{
-				{"id": "claude-sonnet-4-6", "display_name": "Claude Sonnet 4.6"},
+				{"id": "claude-sonnet-4-6", "display_name": "Claude Sonnet 4.6", "created_at": "2026-04-05T12:30:00Z"},
 				{"id": "claude-future-1", "display_name": "Claude Future 1"},
 			},
 		})
@@ -126,6 +130,9 @@ func TestFetchAnthropicModels_HappyPath(t *testing.T) {
 	}
 	if got[0].Name != "Claude Sonnet 4.6" {
 		t.Errorf("display_name not surfaced: %+v", got[0])
+	}
+	if got[0].ReleaseDate != "2026-04-05" {
+		t.Errorf("ReleaseDate = %q, want parsed Anthropic created_at date", got[0].ReleaseDate)
 	}
 	for _, m := range got {
 		if m.Backend != BackendAnthropic {
@@ -226,6 +233,9 @@ func TestFetchGeminiModels_StripsModelsPrefix(t *testing.T) {
 	}
 	if len(got) != 2 || got[0].ID != "gemini-2.5-flash" || got[0].Name != "Gemini 2.5 Flash" {
 		t.Errorf("unexpected: %+v", got)
+	}
+	if got[1].ID != "gemini-2.5-pro" || got[1].ReleaseDate == "" {
+		t.Errorf("expected Gemini catalog release-date fallback, got %+v", got)
 	}
 	for _, m := range got {
 		if m.Backend != BackendGemini {

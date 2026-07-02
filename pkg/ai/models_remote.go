@@ -15,9 +15,10 @@ import (
 // and context data live in pkg/ai/pricing (sourced from OpenRouter) and are
 // looked up by id at render time.
 type ModelDef struct {
-	ID      string
-	Name    string
-	Backend Backend
+	ID          string
+	Name        string
+	Backend     Backend
+	ReleaseDate string `json:"-"`
 }
 
 // remoteModelsTimeout caps each /v1/models call. The configure wizard is an
@@ -38,6 +39,8 @@ type modelEntry struct {
 	ID          string `json:"id"`
 	DisplayName string `json:"display_name"`
 	Name        string `json:"name"` // gemini surfaces "models/<id>" here
+	Created     int64  `json:"created"`
+	CreatedAt   string `json:"created_at"`
 }
 
 // FetchOpenAIModels calls https://api.openai.com/v1/models and returns the
@@ -127,9 +130,20 @@ func doModelsRequest(req *http.Request, backend Backend) ([]ModelDef, error) {
 		if name == "" {
 			name = id
 		}
-		out = append(out, ModelDef{ID: id, Name: name, Backend: backend})
+		releaseDate := m.releaseDate()
+		if releaseDate == "" {
+			releaseDate = CatalogReleaseDate(backend, id)
+		}
+		out = append(out, ModelDef{ID: id, Name: name, Backend: backend, ReleaseDate: releaseDate})
 	}
 	return out, nil
+}
+
+func (m modelEntry) releaseDate() string {
+	if m.Created > 0 {
+		return time.Unix(m.Created, 0).UTC().Format("2006-01-02")
+	}
+	return normalizeReleaseDate(m.CreatedAt)
 }
 
 // ListModels fetches the live model catalogue for an API backend. Live data is

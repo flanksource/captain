@@ -5,23 +5,21 @@ import (
 	"testing"
 
 	"github.com/flanksource/captain/pkg/ai"
-	"github.com/flanksource/clicky/aichat"
 )
 
 // installTestCatalog swaps in a deterministic catalog for the duration of the
-// test so the assertions don't drift with clicky's shipped model list. The
-// catalog mixes a genkit (API) entry with agent entries for two backends so the
-// filtering — agent-engine only, exact backend match — is actually exercised.
+// test so the assertions don't drift with the shipped model list. The catalog
+// mixes an API entry with agent entries for two backends so exact backend
+// filtering is exercised.
 func installTestCatalog(t *testing.T) {
 	t.Helper()
-	prev := aichat.Catalog()
-	t.Cleanup(func() { _ = aichat.SetModelCatalog(prev) })
+	t.Cleanup(ai.ResetModelCatalog)
 
-	if err := aichat.SetModelCatalog([]aichat.Model{
-		{ID: "anthropic/claude-sonnet-4-5", Provider: aichat.ProviderAnthropic, Label: "Claude Sonnet 4.5"},
-		{ID: "claude-agent-opus", Engine: aichat.EngineAgent, Backend: ai.BackendClaudeAgent, Provider: "claude-agent", Label: "Claude Agent · Opus"},
-		{ID: "claude-agent-sonnet", Engine: aichat.EngineAgent, Backend: ai.BackendClaudeAgent, Provider: "claude-agent", Label: "Claude Agent · Sonnet"},
-		{ID: "codex-gpt-5-codex", Engine: aichat.EngineAgent, Backend: ai.BackendCodexCLI, AgentModel: "gpt-5-codex", Provider: "codex-cli", Label: "Codex · GPT-5"},
+	if err := ai.SetModelCatalog([]ai.Model{
+		{ID: "anthropic/claude-sonnet-4-5", Backend: ai.BackendAnthropic, Label: "Claude Sonnet 4.5"},
+		{ID: "claude-agent-opus", Backend: ai.BackendClaudeAgent, Label: "Claude Agent · Opus"},
+		{ID: "claude-agent-sonnet", Backend: ai.BackendClaudeAgent, Label: "Claude Agent · Sonnet"},
+		{ID: "codex-gpt-5-codex", Backend: ai.BackendCodexCLI, AgentModel: "gpt-5-codex", Label: "Codex · GPT-5"},
 	}); err != nil {
 		t.Fatalf("SetModelCatalog: %v", err)
 	}

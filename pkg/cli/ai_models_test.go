@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/flanksource/captain/pkg/ai"
 )
 
 type aiModelsRewriteTransport struct {
@@ -132,6 +134,7 @@ func TestIsLegacyModelID(t *testing.T) {
 		"gpt-5-pro":              true,
 		"o1":                     true,
 		"o1-pro":                 true,
+		"o3":                     true,
 		"o3-pro":                 true,
 		"o3-mini":                true,
 		"codex-mini-latest":      true,
@@ -183,7 +186,7 @@ func TestIsLegacyModelID(t *testing.T) {
 		"grok-4-fast":          false,
 	}
 	for id, want := range cases {
-		if got := isLegacyModelID(id); got != want {
+		if got := ai.IsLegacyModelID(id); got != want {
 			t.Errorf("isLegacyModelID(%q) = %v, want %v", id, got, want)
 		}
 	}

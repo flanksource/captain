@@ -167,7 +167,7 @@ func unionLive(ctx context.Context, backend Backend, rows *[]ResolvedModel, inde
 			}
 			index[key] = len(*rows)
 			*rows = append(*rows, ResolvedModel{
-				Model: Model{ID: d.ID, Backend: b, Label: d.Name},
+				Model: Model{ID: d.ID, Backend: b, Label: d.Name, ReleaseDate: d.ReleaseDate},
 				Live:  true,
 			})
 		}
@@ -185,7 +185,7 @@ func filterResolved(rows []ResolvedModel, filter string) []ResolvedModel {
 			if !strings.Contains(strings.ToLower(r.ID), fl) && !strings.Contains(strings.ToLower(r.Label), fl) {
 				continue
 			}
-		} else if isLegacyModelID(r.ID) {
+		} else if IsLegacyModelIDForBackend(r.ID, r.Backend) {
 			continue
 		}
 		out = append(out, r)
@@ -235,7 +235,7 @@ func AgentCatalogModels(b Backend) []ModelDef {
 		if label == "" {
 			label = id
 		}
-		out = append(out, ModelDef{ID: id, Name: label, Backend: b})
+		out = append(out, ModelDef{ID: id, Name: label, Backend: b, ReleaseDate: m.ReleaseDate})
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
@@ -270,52 +270,4 @@ func orPrefix(backend Backend) string {
 		return "google"
 	}
 	return ""
-}
-
-// legacyModelPrefixes hides model IDs that are superseded by a newer generation
-// or aren't chat completions (image/audio/embedding/moderation). Shared by
-// `ai models` and the `configure` picker. An explicit --filter overrides it.
-var legacyModelPrefixes = []string{
-	// OpenAI legacy
-	"gpt-3",
-	"gpt-4",  // covers gpt-4, gpt-4o, gpt-4.1, gpt-4-turbo, ...
-	"gpt-5-", // hides gpt-5 variants (mini, nano, codex, pro) but keeps bare "gpt-5", "gpt-5.1/.2/.3"
-	"o1",
-	"o3-",
-	"codex-mini",
-	// OpenAI non-chat endpoints
-	"dall-",
-	"whisper",
-	"tts-",
-	"text-embedding",
-	"text-moderation",
-	"omni-moderation",
-	"babbage",
-	"davinci",
-	"chatgpt-",
-	"computer-use-preview",
-	// Claude legacy (3.x and earlier 4-line latests/dated)
-	"claude-3",
-	"claude-2",
-	"claude-instant",
-	"claude-sonnet-4-0",
-	"claude-sonnet-4-2",
-	"claude-opus-4-0",
-	"claude-opus-4-1",
-	// Gemini legacy
-	"gemini-1",
-	"gemini-2.0",
-	// Grok legacy
-	"grok-3",
-	"grok-code-fast-1",
-}
-
-func isLegacyModelID(id string) bool {
-	idLower := strings.ToLower(id)
-	for _, p := range legacyModelPrefixes {
-		if strings.HasPrefix(idLower, p) {
-			return true
-		}
-	}
-	return false
 }
