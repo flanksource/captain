@@ -60,8 +60,8 @@ func TestResolveModels_TokensUnionDedup(t *testing.T) {
 			return nil, nil
 		}
 		return []ModelDef{
-			{ID: "claude-sonnet-4-5", Backend: BackendAnthropic}, // dedups with catalog anthropic/claude-sonnet-4-5
-			{ID: "claude-new-xyz", Backend: BackendAnthropic},    // net-new live model
+			{ID: "claude-sonnet-5", Backend: BackendAnthropic}, // dedups with catalog anthropic/claude-sonnet-5
+			{ID: "claude-new-xyz", Backend: BackendAnthropic},  // net-new live model
 		}, nil
 	})
 	t.Setenv("ANTHROPIC_API_KEY", "k") // after stub clears the key set
@@ -71,7 +71,7 @@ func TestResolveModels_TokensUnionDedup(t *testing.T) {
 		t.Fatalf("ResolveModels: %v", err)
 	}
 
-	catalogRow, ok := hasModelID(rows, "anthropic/claude-sonnet-4-5")
+	catalogRow, ok := hasModelID(rows, "anthropic/claude-sonnet-5")
 	if !ok || !catalogRow.Live {
 		t.Fatalf("catalog row should survive and be marked Live: %+v ok=%v", catalogRow, ok)
 	}
@@ -80,15 +80,15 @@ func TestResolveModels_TokensUnionDedup(t *testing.T) {
 		t.Fatalf("net-new live model missing/!Live: %+v ok=%v", liveRow, ok)
 	}
 
-	// No duplicate (backend, bareID) for claude-sonnet-4-5.
+	// No duplicate (backend, bareID) for claude-sonnet-5.
 	bareCount := 0
 	for _, r := range rows {
-		if r.Backend == BackendAnthropic && r.BareID() == "claude-sonnet-4-5" {
+		if r.Backend == BackendAnthropic && r.BareID() == "claude-sonnet-5" {
 			bareCount++
 		}
 	}
 	if bareCount != 1 {
-		t.Fatalf("claude-sonnet-4-5 appears %d times, want deduped to 1", bareCount)
+		t.Fatalf("claude-sonnet-5 appears %d times, want deduped to 1", bareCount)
 	}
 }
 

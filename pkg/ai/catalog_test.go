@@ -119,4 +119,46 @@ func TestRegisterModelValidation(t *testing.T) {
 	if err := RegisterModel(Model{ID: "x/y", Backend: Backend("nonsense")}); err == nil {
 		t.Fatal("expected error for invalid Backend")
 	}
+	if err := RegisterModel(Model{ID: "x/y", Backend: BackendOpenAI, ReleaseDate: "not-a-date"}); err == nil {
+		t.Fatal("expected error for invalid release date")
+	}
+}
+
+func TestCatalogReleaseDateMatchesBareAndRuntimeIDs(t *testing.T) {
+	t.Cleanup(ResetModelCatalog)
+
+	if err := SetModelCatalog([]Model{
+		{ID: "openai/gpt-test", Backend: BackendOpenAI, ReleaseDate: "2026-01-02"},
+		{ID: "codex-gpt-test", Backend: BackendCodexCLI, AgentModel: "gpt-test-runtime", ReleaseDate: "2026-03-04"},
+	}); err != nil {
+		t.Fatalf("SetModelCatalog: %v", err)
+	}
+
+	if got := CatalogReleaseDate(BackendOpenAI, "gpt-test"); got != "2026-01-02" {
+		t.Fatalf("bare API release date = %q", got)
+	}
+	if got := CatalogReleaseDate(BackendCodexCLI, "gpt-test-runtime"); got != "2026-03-04" {
+		t.Fatalf("agent runtime release date = %q", got)
+	}
+}
+
+func TestCurrentModelsByReleaseDateFiltersAndSorts(t *testing.T) {
+	models := []ModelDef{
+		{ID: "gpt-old-unknown", Backend: BackendOpenAI},
+		{ID: "gpt-4o", Backend: BackendOpenAI, ReleaseDate: "2026-04-01"},
+		{ID: "gpt-new", Backend: BackendOpenAI, ReleaseDate: "2026-05-01"},
+		{ID: "gpt-mid", Backend: BackendOpenAI, ReleaseDate: "2026-04-15"},
+		{ID: "gpt-5-codex", Backend: BackendCodexCLI, ReleaseDate: "2026-03-01"},
+	}
+
+	got := CurrentModelsByReleaseDate(models)
+	want := []string{"gpt-new", "gpt-mid", "gpt-5-codex", "gpt-old-unknown"}
+	if len(got) != len(want) {
+		t.Fatalf("len = %d, want %d: %+v", len(got), len(want), got)
+	}
+	for i, w := range want {
+		if got[i].ID != w {
+			t.Errorf("got[%d].ID = %q, want %q", i, got[i].ID, w)
+		}
+	}
 }

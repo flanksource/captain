@@ -19,6 +19,7 @@ type Model struct {
 	Label         string // human-friendly menu label
 	Reasoning     bool   // model honours Effort
 	ContextWindow int    // max context tokens, for a usage gauge's denominator
+	ReleaseDate   string // YYYY-MM-DD release date, when known
 	// AgentModel is the model slug passed to the captain backend when it differs
 	// from ID (e.g. menu id "codex-gpt-5-codex" → backend model "gpt-5-codex").
 	// Empty means use ID. Unused for API backends.
@@ -48,31 +49,37 @@ func (m Model) BareID() string {
 
 // DefaultModelID is the chat backend's default (captain's NewAnthropic default).
 // The catalog entry with this ID sets Default: true.
-const DefaultModelID = "anthropic/claude-sonnet-4-5"
+const DefaultModelID = "anthropic/claude-sonnet-5"
 
-// defaultCatalog is the v1 model menu. API entries carry the genkit
-// "provider/model" id (kept byte-identical so the web menu and stored-thread
-// model ids stay stable); agent entries carry the captain backend explicitly so
-// codex slugs (which look like gpt-*) are not misrouted.
+// defaultCatalog is the model menu: only the latest generally-available model
+// per tier for each provider — no preview or superseded entries. API entries
+// carry the genkit "provider/model" id (kept byte-identical so the web menu and
+// stored-thread model ids stay stable); agent entries carry the captain backend
+// explicitly so codex slugs (which look like gpt-*) are not misrouted.
+//
+// Provider currency (reviewed 2026-07-02):
+//   - Anthropic: Fable 5 (most capable), Opus 4.8, Sonnet 5, Haiku 4.5. Mythos 5
+//     is Project Glasswing invite-only, so it is intentionally excluded.
+//   - OpenAI: GPT-5.5 (flagship) and GPT-5.4 mini. GPT-5.6 is preview-only.
+//   - Google: Gemini 2.5 Pro is the newest GA Pro (all Gemini 3.x Pro models are
+//     still preview), paired with the GA Gemini 3.5 Flash.
 var defaultCatalog = []Model{
-	{ID: "anthropic/claude-sonnet-4-6", Backend: BackendAnthropic, Label: "Claude Sonnet 4.6", Reasoning: true, ContextWindow: 200000},
-	{ID: "anthropic/claude-opus-4-8", Backend: BackendAnthropic, Label: "Claude Opus 4.8", Reasoning: true, ContextWindow: 200000},
-	{ID: "anthropic/claude-haiku-4-5", Backend: BackendAnthropic, Label: "Claude Haiku 4.5", Reasoning: true, ContextWindow: 200000},
-	{ID: "anthropic/claude-sonnet-4-5", Backend: BackendAnthropic, Label: "Claude Sonnet 4.5", Reasoning: true, ContextWindow: 200000, Default: true},
-	{ID: "anthropic/claude-opus-4-1", Backend: BackendAnthropic, Label: "Claude Opus 4.1", Reasoning: true, ContextWindow: 200000},
-	{ID: "anthropic/claude-3-5-haiku-latest", Backend: BackendAnthropic, Label: "Claude 3.5 Haiku", Reasoning: false, ContextWindow: 200000},
-	{ID: "openai/gpt-4o", Backend: BackendOpenAI, Label: "GPT-4o", Reasoning: false, ContextWindow: 128000},
-	{ID: "openai/o3", Backend: BackendOpenAI, Label: "OpenAI o3", Reasoning: true, ContextWindow: 200000},
-	{ID: "openai/o4-mini", Backend: BackendOpenAI, Label: "OpenAI o4-mini", Reasoning: true, ContextWindow: 200000},
-	{ID: "googleai/gemini-2.5-pro", Backend: BackendGemini, Label: "Gemini 2.5 Pro", Reasoning: true, ContextWindow: 1048576},
-	{ID: "googleai/gemini-2.5-flash", Backend: BackendGemini, Label: "Gemini 2.5 Flash", Reasoning: true, ContextWindow: 1048576},
+	{ID: "anthropic/claude-fable-5", Backend: BackendAnthropic, Label: "Claude Fable 5", Reasoning: true, ContextWindow: 1000000, ReleaseDate: "2026-06-15"},
+	{ID: "anthropic/claude-opus-4-8", Backend: BackendAnthropic, Label: "Claude Opus 4.8", Reasoning: true, ContextWindow: 1000000, ReleaseDate: "2026-04-15"},
+	{ID: "anthropic/claude-sonnet-5", Backend: BackendAnthropic, Label: "Claude Sonnet 5", Reasoning: true, ContextWindow: 1000000, ReleaseDate: "2026-05-20", Default: true},
+	{ID: "anthropic/claude-haiku-4-5", Backend: BackendAnthropic, Label: "Claude Haiku 4.5", Reasoning: true, ContextWindow: 200000, ReleaseDate: "2025-10-15"},
+	{ID: "openai/gpt-5.5", Backend: BackendOpenAI, Label: "GPT-5.5", Reasoning: true, ContextWindow: 1000000, ReleaseDate: "2026-06-01"},
+	{ID: "openai/gpt-5.4-mini", Backend: BackendOpenAI, Label: "GPT-5.4 mini", Reasoning: true, ContextWindow: 400000, ReleaseDate: "2026-05-15"},
+	{ID: "googleai/gemini-2.5-pro", Backend: BackendGemini, Label: "Gemini 2.5 Pro", Reasoning: true, ContextWindow: 1048576, ReleaseDate: "2025-06-17"},
+	{ID: "googleai/gemini-3.5-flash", Backend: BackendGemini, Label: "Gemini 3.5 Flash", Reasoning: true, ContextWindow: 1048576, ReleaseDate: "2026-06-10"},
 
 	// Agent-framework models (captain pkg/ai StreamingProvider). These run a
-	// supervised local subprocess that owns its own tools.
-	{ID: "claude-agent-sonnet", Backend: BackendClaudeAgent, Label: "Claude Agent · Sonnet", Reasoning: true, ContextWindow: 200000},
-	{ID: "claude-agent-opus", Backend: BackendClaudeAgent, Label: "Claude Agent · Opus", Reasoning: true, ContextWindow: 200000},
-	{ID: "claude-agent-haiku", Backend: BackendClaudeAgent, Label: "Claude Agent · Haiku", Reasoning: true, ContextWindow: 200000},
-	{ID: "codex-gpt-5-codex", Backend: BackendCodexCLI, AgentModel: "gpt-5-codex", Label: "Codex · GPT-5", Reasoning: true, ContextWindow: 400000},
+	// supervised local subprocess that owns its own tools. IDs are tier aliases
+	// (not version-pinned), so they always resolve to the installed CLI's latest.
+	{ID: "claude-agent-sonnet", Backend: BackendClaudeAgent, Label: "Claude Agent · Sonnet", Reasoning: true, ContextWindow: 1000000, ReleaseDate: "2026-05-20"},
+	{ID: "claude-agent-opus", Backend: BackendClaudeAgent, Label: "Claude Agent · Opus", Reasoning: true, ContextWindow: 1000000, ReleaseDate: "2026-04-15"},
+	{ID: "claude-agent-haiku", Backend: BackendClaudeAgent, Label: "Claude Agent · Haiku", Reasoning: true, ContextWindow: 200000, ReleaseDate: "2025-10-15"},
+	{ID: "codex-gpt-5-codex", Backend: BackendCodexCLI, AgentModel: "gpt-5-codex", Label: "Codex · GPT-5", Reasoning: true, ContextWindow: 400000, ReleaseDate: "2025-08-07"},
 }
 
 var (
@@ -165,6 +172,7 @@ func normalizeModels(models []Model, rejectDuplicateIDs bool) ([]Model, error) {
 func normalizeModel(model Model) (Model, error) {
 	model.ID = strings.TrimSpace(model.ID)
 	model.Label = strings.TrimSpace(model.Label)
+	model.ReleaseDate = strings.TrimSpace(model.ReleaseDate)
 	if model.ID == "" {
 		return Model{}, fmt.Errorf("model ID is required")
 	}
@@ -176,6 +184,13 @@ func normalizeModel(model Model) (Model, error) {
 	}
 	if model.Label == "" {
 		model.Label = model.ID
+	}
+	if model.ReleaseDate != "" {
+		normalized := normalizeReleaseDate(model.ReleaseDate)
+		if normalized == "" {
+			return Model{}, fmt.Errorf("model %q has invalid release date %q; want YYYY-MM-DD", model.ID, model.ReleaseDate)
+		}
+		model.ReleaseDate = normalized
 	}
 	return model, nil
 }

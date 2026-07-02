@@ -11,60 +11,6 @@ import (
 	"github.com/flanksource/captain/pkg/ai/pricing"
 )
 
-// legacyModelPrefixes hides model IDs that are either superseded by a newer
-// generation (so almost no one should be picking them) or aren't chat
-// completions at all (image/audio/embedding/moderation endpoints). Used by
-// both the `ai models` listing and the `configure` wizard's model picker so
-// the two views stay consistent.
-//
-// `--filter` (or any explicit substring filter) overrides the blacklist —
-// "ai models -f gpt-3.5" or a user typing "grok-3" into the picker will
-// still see those entries.
-var legacyModelPrefixes = []string{
-	// OpenAI legacy
-	"gpt-3",
-	"gpt-4",  // covers gpt-4, gpt-4o, gpt-4.1, gpt-4-turbo, ...
-	"gpt-5-", // hides every gpt-5 variant (mini, nano, codex, pro, ...) but keeps the bare "gpt-5", "gpt-5.1", "gpt-5.2", "gpt-5.3"
-	"o1",
-	"o3-",
-	"codex-mini",
-	// OpenAI non-chat endpoints
-	"dall-",
-	"whisper",
-	"tts-",
-	"text-embedding",
-	"text-moderation",
-	"omni-moderation",
-	"babbage",
-	"davinci",
-	"chatgpt-",
-	"computer-use-preview",
-	// Claude legacy (3.x and earlier 4-line latests/dated)
-	"claude-3",
-	"claude-2",
-	"claude-instant",
-	"claude-sonnet-4-0",
-	"claude-sonnet-4-2",
-	"claude-opus-4-0",
-	"claude-opus-4-1",
-	// Gemini legacy
-	"gemini-1",
-	"gemini-2.0",
-	// Grok legacy (3-line is two generations behind grok-4)
-	"grok-3",
-	"grok-code-fast-1",
-}
-
-func isLegacyModelID(id string) bool {
-	idLower := strings.ToLower(id)
-	for _, p := range legacyModelPrefixes {
-		if strings.HasPrefix(idLower, p) {
-			return true
-		}
-	}
-	return false
-}
-
 type AIModelsOptions struct {
 	Filter  string `flag:"filter" help:"Filter models by name substring" short:"f"`
 	Backend string `flag:"backend" help:"Filter by backend: anthropic|gemini|openai|claude-cli|claude-agent|claude-cmux|codex-cli|codex-cmux|gemini-cli" short:"b"`
@@ -150,7 +96,7 @@ func runLiveModels(opts AIModelsOptions) (any, error) {
 			// Hide legacy/non-chat IDs unless the user asked for them by
 			// name via --filter. Filtering by user intent overrides the
 			// blacklist so "ai models -f gpt-3.5" still works.
-			if opts.Filter == "" && isLegacyModelID(m.ID) {
+			if opts.Filter == "" && ai.IsLegacyModelID(m.ID) {
 				continue
 			}
 

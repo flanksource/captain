@@ -6,7 +6,6 @@ import (
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/agent"
 	capapi "github.com/flanksource/captain/pkg/api"
-	"github.com/flanksource/clicky/aichat"
 	"github.com/flanksource/clicky/api"
 	"github.com/flanksource/clicky/entity"
 )
@@ -77,19 +76,19 @@ func backendFilterOptions() map[string]api.Textable {
 	return out
 }
 
-// modelOptions suggests the clicky/aichat model catalog as bare model names that
-// captain's --model accepts (InferBackend matches bare prefixes). Genkit ids are
-// "provider/model" so the provider prefix is stripped; agent ids already carry a
-// captain-recognised backend prefix (claude-agent-*, codex-*) and are used
+// modelOptions suggests the captain model catalog as bare model names that
+// captain's --model accepts (InferBackend matches bare prefixes). API ids are
+// "provider/model" so the provider prefix is stripped; agent ids already carry
+// a captain-recognised backend prefix (claude-agent-*, codex-*) and are used
 // verbatim — using their AgentModel slug instead would misroute (e.g.
-// "gpt-5-codex" infers OpenAI, not codex). Completion is suggest-only: arbitrary
-// models are still accepted, so the catalog need not be exhaustive.
+// "gpt-5-codex" infers OpenAI, not codex). Completion is suggest-only:
+// arbitrary models are still accepted, so the catalog need not be exhaustive.
 func modelFilterOptions() map[string]api.Textable {
-	catalog := aichat.Catalog()
+	catalog := ai.Catalog()
 	out := make(map[string]api.Textable, len(catalog))
 	for _, m := range catalog {
 		id := m.ID
-		if m.Engine == aichat.EngineGenkit {
+		if !m.IsAgent() {
 			if i := strings.IndexByte(id, '/'); i >= 0 {
 				id = id[i+1:]
 			}
