@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/flanksource/captain/pkg/claude"
 )
@@ -145,6 +146,138 @@ func TestRunSessionGetUnknown(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("err = %v", err)
 	}
+}
+
+func TestRunSessionLiveEnrichesSummaryWithProcessHealth(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	project := filepath.Join(home, "work", "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(project)
+
+	writeJSONL(t, filepath.Join(home, ".claude", "projects", claude.NormalizePath(project), "sess-live.jsonl"),
+		map[string]any{
+			"type":      "user",
+			"sessionId": "sess-live",
+			"timestamp": "2026-06-01T10:00:00Z",
+			"cwd":       project,
+			"message": map[string]any{
+				"role":    "user",
+				"content": []any{map[string]any{"type": "text", "text": "run something"}},
+			},
+		},
+		map[string]any{
+			"type":      "assistant",
+			"sessionId": "sess-live",
+			"timestamp": "2026-06-01T10:00:02Z",
+			"cwd":       project,
+			"message": map[string]any{
+				"role":    "assistant",
+				"model":   "claude-sonnet-4",
+				"content": []any{map[string]any{"type": "text", "text": "working"}},
+				"usage": map[string]any{
+					"input_tokens":                930000,
+					"cache_read_input_tokens":     10000,
+					"cache_creation_input_tokens": 0,
+					"output_tokens":               1000,
+				},
+			},
+		},
+	)
+
+	started := time.Date(2026, 6, 1, 9, 59, 0, 0, time.UTC)
+	orig := discoverSessionProcesses
+	discoverSessionProcesses = func() ([]agentProcess, error) {
+		return []agentProcess{{
+			Source:        "claude",
+			PID:           12345,
+			Status:        "active",
+			Active:        true,
+			CPUPercent:    2.5,
+			MemoryPercent: 1.25,
+			StartedAt:     &started,
+			CWD:           project,
+			Command:       "claude",
+		}}, nil
+	}
+	t.Cleanup(func() { discoverSessionProcesses = orig })
+
+	result, err := RunSessionLive(SessionLiveOptions{Source: "claude", Limit: 10})
+	if err != nil {
+		t.Fatalf("RunSessionLive: %v", err)
+	}
+	if result.Total != 1 || len(result.Sessions) != 1 {
+		t.Fatalf("live sessions = %+v", result)
+	}
+	session := result.Sessions[0]
+	if session.Live == nil || session.Live.PID != 12345 {
+		t.Fatalf("live state = %+v", session.Live)
+	}
+	if session.Context == nil || session.Context.FreePercent != 6 {
+		t.Fatalf("context = %+v", session.Context)
+	}
+	if !hasHealth(session.Health, "low_context", "critical") {
+		t.Fatalf("health = %+v", session.Health)
+	}
+	if result.Summary.ActiveSessions != 1 || result.Summary.AlertSessions != 1 {
+		t.Fatalf("summary = %+v", result.Summary)
+	}
+	if result.Summary.LowestContextFree == nil || *result.Summary.LowestContextFree != 6 {
+		t.Fatalf("lowest context = %+v", result.Summary.LowestContextFree)
+	}
+}
+
+func TestRunSessionLiveScopesUnmatchedProcessesToCurrentProject(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	project := filepath.Join(home, "work", "project")
+	otherProject := filepath.Join(home, "work", "other")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(otherProject, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(project)
+
+	orig := discoverSessionProcesses
+	discoverSessionProcesses = func() ([]agentProcess, error) {
+		return []agentProcess{
+			{Source: "codex", PID: 100, Status: "sleeping", Active: true, CWD: project, Command: "codex"},
+			{Source: "claude", PID: 200, Status: "sleeping", Active: true, CWD: otherProject, Command: "claude"},
+		}, nil
+	}
+	t.Cleanup(func() { discoverSessionProcesses = orig })
+
+	result, err := RunSessionLive(SessionLiveOptions{Source: "all", Limit: 10})
+	if err != nil {
+		t.Fatalf("RunSessionLive: %v", err)
+	}
+	if result.Total != 1 || len(result.Sessions) != 1 {
+		t.Fatalf("live sessions = %+v", result)
+	}
+	if result.Sessions[0].Live == nil || result.Sessions[0].Live.PID != 100 {
+		t.Fatalf("scoped live session = %+v", result.Sessions[0])
+	}
+
+	all, err := RunSessionLive(SessionLiveOptions{Source: "all", All: true, Limit: 10})
+	if err != nil {
+		t.Fatalf("RunSessionLive all: %v", err)
+	}
+	if all.Total != 2 {
+		t.Fatalf("all project live sessions = %+v", all)
+	}
+}
+
+func hasHealth(signals []SessionHealthWire, kind, severity string) bool {
+	for _, signal := range signals {
+		if signal.Kind == kind && signal.Severity == severity {
+			return true
+		}
+	}
+	return false
 }
 
 func writeCodexSession(t *testing.T, path, id, cwd string) {

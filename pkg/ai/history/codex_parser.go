@@ -2,7 +2,7 @@ package history
 
 import (
 	"bufio"
-	"encoding/json"
+	"github.com/segmentio/encoding/json"
 	"io"
 	"os"
 	"path/filepath"

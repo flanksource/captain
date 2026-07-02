@@ -2,7 +2,6 @@ package history
 
 import (
 	"bufio"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/flanksource/commons/collections"
 	"github.com/flanksource/commons/logger"
+	"github.com/segmentio/encoding/json"
 )
 
 // log is the package-scoped logger for session-history parsing. Its level

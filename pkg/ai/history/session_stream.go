@@ -1,6 +1,6 @@
 package history
 
-import "encoding/json"
+import "github.com/segmentio/encoding/json"
 
 // SessionEventKind classifies a streamed event parsed from a Claude session log.
 type SessionEventKind string

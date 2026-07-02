@@ -1,7 +1,7 @@
 package history
 
 import (
-	"encoding/json"
+	"github.com/segmentio/encoding/json"
 	"time"
 )
 
@@ -113,8 +113,9 @@ type CodexContent struct {
 }
 
 type CodexTokenInfo struct {
-	TotalTokenUsage CodexTokenUsage `json:"total_token_usage"`
-	LastTokenUsage  CodexTokenUsage `json:"last_token_usage"`
+	TotalTokenUsage    CodexTokenUsage `json:"total_token_usage"`
+	LastTokenUsage     CodexTokenUsage `json:"last_token_usage"`
+	ModelContextWindow int             `json:"model_context_window,omitempty"`
 }
 
 type CodexTokenUsage struct {
