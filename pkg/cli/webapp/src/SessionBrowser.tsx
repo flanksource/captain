@@ -6,53 +6,36 @@ import {
   SearchInput,
   SegmentedControl,
   Switch,
+  type AppShellNavSection,
 } from "@flanksource/clicky-ui/components";
-import { SessionViewer, type SessionEntry } from "@flanksource/clicky-ui/ai";
-import { apiClient } from "./api";
-
-type SourceFilter = "all" | "claude" | "codex";
-
-type SessionListResult = {
-  sessions: SessionRecord[];
-  total: number;
-  source: SourceFilter;
-  scope: "current" | "all";
-};
-
-type SessionRecord = {
-  key: string;
-  id: string;
-  source: "claude" | "codex";
-  startedAt?: string;
-  endedAt?: string;
-  model?: string;
-  reasoningEffort?: string;
-  version?: string;
-  gitBranch?: string;
-  provider?: string;
-  cwd?: string;
-  toolCalls: number;
-  messages: number;
-  entries?: SessionEntry[];
-};
+import { SessionViewer } from "@flanksource/clicky-ui/ai";
+import { CAPTAIN_SIDEBAR_COLLAPSE_KEY } from "./shell";
+import {
+  SOURCE_OPTIONS,
+  errorMessage,
+  fetchLiveSessions,
+  fetchSession,
+  formatCompactNumber,
+  formatCost,
+  formatTime,
+  healthClassName,
+  sessionTitle,
+  type SessionDashboard,
+  type SessionRecord,
+  type SourceFilter,
+} from "./sessionData";
 
 type SessionBrowserProps = {
   selectedId?: string;
   onNavigate: (to: string, opts?: { replace?: boolean }) => void;
-  nav: ReactNode;
+  navSections: AppShellNavSection[];
   actions: ReactNode;
 };
-
-const SOURCE_OPTIONS = [
-  { id: "all", label: "All" },
-  { id: "claude", label: "Claude" },
-  { id: "codex", label: "Codex" },
-] satisfies Array<{ id: SourceFilter; label: string }>;
 
 export function SessionBrowser({
   selectedId,
   onNavigate,
-  nav,
+  navSections,
   actions,
 }: SessionBrowserProps) {
   const [source, setSource] = useState<SourceFilter>("all");
@@ -61,13 +44,15 @@ export function SessionBrowser({
 
   const listQuery = useQuery({
     queryKey: ["sessions", source, allProjects, query],
-    queryFn: () => fetchSessions({ source, allProjects, query }),
+    queryFn: () => fetchLiveSessions({ source, allProjects, query }),
   });
   const sessions = listQuery.data?.sessions ?? [];
 
   useEffect(() => {
     if (selectedId || sessions.length === 0) return;
-    onNavigate(`/sessions/${encodeURIComponent(sessions[0].key)}`, { replace: true });
+    const firstDetail = sessions.find((session) => session.detailAvailable !== false);
+    if (!firstDetail) return;
+    onNavigate(`/sessions/${encodeURIComponent(firstDetail.key)}`, { replace: true });
   }, [onNavigate, selectedId, sessions]);
 
   const selectedSummary = useMemo(
@@ -86,7 +71,8 @@ export function SessionBrowser({
     <AppShell
       className="h-screen"
       brand={<div className="text-sm font-semibold">Captain</div>}
-      nav={nav}
+      navSections={navSections}
+      collapsedStorageKey={CAPTAIN_SIDEBAR_COLLAPSE_KEY}
       actions={actions}
       bodySidebar={
         <SessionSidebar
@@ -97,6 +83,7 @@ export function SessionBrowser({
           query={query}
           onQueryChange={setQuery}
           sessions={sessions}
+          summary={listQuery.data?.summary}
           selectedId={selectedId}
           total={listQuery.data?.total ?? 0}
           loading={listQuery.isLoading}
@@ -139,6 +126,7 @@ function SessionSidebar({
   query,
   onQueryChange,
   sessions,
+  summary,
   selectedId,
   total,
   loading,
@@ -153,6 +141,7 @@ function SessionSidebar({
   query: string;
   onQueryChange: (query: string) => void;
   sessions: SessionRecord[];
+  summary?: SessionDashboard;
   selectedId?: string;
   total: number;
   loading: boolean;
@@ -188,6 +177,7 @@ function SessionSidebar({
           onChange={onAllProjectsChange}
           label="All projects"
         />
+        <SessionSummary summary={summary} loading={loading} />
         <div className="text-xs text-muted-foreground">
           {loading ? "Loading..." : `${sessions.length} shown / ${total} total`}
         </div>
@@ -202,14 +192,17 @@ function SessionSidebar({
           <div className="divide-y divide-border">
             {sessions.map((session) => {
               const active = session.key === selectedId || session.id === selectedId;
+              const detailAvailable = session.detailAvailable !== false;
               return (
                 <button
                   key={session.key}
                   type="button"
-                  onClick={() => onSelect(session)}
+                  onClick={() => detailAvailable && onSelect(session)}
+                  disabled={!detailAvailable}
                   className={[
                     "block w-full px-density-3 py-density-2 text-left transition-colors",
                     active ? "bg-accent text-accent-foreground" : "hover:bg-muted/60",
+                    detailAvailable ? "" : "cursor-default opacity-75",
                   ].join(" ")}
                 >
                   <div className="flex min-w-0 items-center justify-between gap-density-2">
@@ -220,6 +213,7 @@ function SessionSidebar({
                       {session.source}
                     </span>
                   </div>
+                  <SessionBadges session={session} />
                   <div className="mt-1 truncate text-xs text-muted-foreground">
                     {formatTime(session.endedAt ?? session.startedAt)}
                     {session.model ? ` - ${session.model}` : ""}
@@ -262,12 +256,20 @@ function SessionHeader({
         <span className="rounded border border-border px-1.5 py-0.5 text-[11px] uppercase text-muted-foreground">
           {session.source}
         </span>
+        {session.live && (
+          <span className="rounded border border-border px-1.5 py-0.5 text-[11px] uppercase text-muted-foreground">
+            {session.live.status || "live"}
+          </span>
+        )}
       </div>
       <div className="mt-1 flex min-w-0 flex-wrap gap-x-density-3 gap-y-1 text-xs text-muted-foreground">
         {session.model && <span>{session.model}</span>}
         {session.reasoningEffort && <span>reasoning={session.reasoningEffort}</span>}
         <span>{session.toolCalls} actions</span>
         <span>{session.messages} messages</span>
+        {session.context && <span>{session.context.freePercent}% context free</span>}
+        {session.costUsd ? <span>{formatCost(session.costUsd)}</span> : null}
+        {session.live?.pid && <span>pid={session.live.pid}</span>}
         {session.cwd && <span className="max-w-full truncate">{session.cwd}</span>}
       </div>
     </div>
@@ -287,84 +289,89 @@ function SessionDetail({
 }) {
   if (!hasSelection) {
     return (
-      <div className="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">
+      <div className="flex min-h-0 flex-1 items-center justify-center p-6 text-sm text-muted-foreground">
         Select a session.
       </div>
     );
   }
   if (loading) {
     return (
-      <div className="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">
+      <div className="flex min-h-0 flex-1 items-center justify-center p-6 text-sm text-muted-foreground">
         Loading session...
       </div>
     );
   }
   if (error) {
     return (
-      <div className="h-full overflow-auto p-6 text-sm text-destructive">
+      <div className="min-h-0 flex-1 overflow-auto p-6 text-sm text-destructive">
         {errorMessage(error)}
       </div>
     );
   }
   return (
-    <div className="h-full overflow-auto p-density-4 md:p-density-6">
+    <div className="min-h-0 flex-1 overflow-auto p-density-4 md:p-density-6">
       <SessionViewer session={session?.entries ?? []} defaultExpanded={false} />
     </div>
   );
 }
 
-async function fetchSessions(params: {
-  source: SourceFilter;
-  allProjects: boolean;
-  query: string;
+function SessionSummary({
+  summary,
+  loading,
+}: {
+  summary?: SessionDashboard;
+  loading: boolean;
 }) {
-  const response = await apiClient.executeCommand(
-    "/api/v1/sessions",
-    "GET",
-    {
-      source: params.source,
-      all: params.allProjects ? "true" : "false",
-      q: params.query,
-      limit: "100",
-    },
-    { Accept: "application/json" },
-  );
-  if (!response.success) {
-    throw new Error(response.error || "Failed to load sessions.");
+  if (!summary && loading) {
+    return null;
   }
-  return response.parsed as SessionListResult;
-}
-
-async function fetchSession(id: string) {
-  const response = await apiClient.executeCommand(
-    "/api/v1/sessions/{id}",
-    "GET",
-    { id },
-    { Accept: "application/json" },
+  const values = [
+    ["Live", summary ? `${summary.liveSessions}/${summary.totalSessions}` : "--"],
+    ["Active", summary?.activeSessions ?? 0],
+    ["Alerts", summary?.alertSessions ?? 0],
+    ["Tokens", formatCompactNumber(summary?.totalTokens ?? 0)],
+    ["Cost", formatCost(summary?.costUsd ?? 0)],
+    ["Context", summary?.lowestContextFree !== undefined ? `${summary.lowestContextFree}%` : "--"],
+  ];
+  return (
+    <div className="grid grid-cols-3 gap-1.5">
+      {values.map(([label, value]) => (
+        <div key={label} className="min-w-0 rounded border border-border px-2 py-1">
+          <div className="truncate text-[10px] uppercase text-muted-foreground">{label}</div>
+          <div className="truncate text-xs font-medium">{value}</div>
+        </div>
+      ))}
+    </div>
   );
-  if (!response.success) {
-    throw new Error(response.error || "Failed to load session.");
-  }
-  return response.parsed as SessionRecord;
 }
 
-function sessionTitle(session: SessionRecord) {
-  if (session.gitBranch) return `${session.gitBranch} - ${shortID(session.id)}`;
-  if (session.model) return `${session.model} - ${shortID(session.id)}`;
-  return shortID(session.id) || session.key;
-}
-
-function shortID(id: string) {
-  return id.length > 12 ? id.slice(0, 12) : id;
-}
-
-function formatTime(value: string | undefined) {
-  if (!value) return "No timestamp";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString();
-}
-
-function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
+function SessionBadges({ session }: { session: SessionRecord }) {
+  const health = session.health ?? [];
+  const badges = [
+    session.live
+      ? {
+          key: "live",
+          label: session.live.status || "live",
+          className: "border-emerald-500/40 text-emerald-700",
+        }
+      : null,
+    ...health.slice(0, 2).map((signal) => ({
+      key: signal.kind,
+      label: signal.kind.replace(/_/g, " "),
+      className: healthClassName(signal.severity),
+    })),
+  ].filter(Boolean) as Array<{ key: string; label: string; className: string }>;
+  if (badges.length === 0) return null;
+  return (
+    <div className="mt-1 flex min-w-0 flex-wrap gap-1">
+      {badges.map((badge) => (
+        <span
+          key={badge.key}
+          className={`rounded border px-1.5 py-0.5 text-[10px] uppercase ${badge.className}`}
+        >
+          {badge.label}
+        </span>
+      ))}
+    </div>
+  );
 }
