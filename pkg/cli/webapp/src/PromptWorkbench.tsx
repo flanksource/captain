@@ -8,7 +8,11 @@ import {
   SearchInput,
   SegmentedControl,
   Tabs,
+  type AppShellNavSection,
+  type KeyPreview,
   type JsonSchemaObject,
+  type SecretKind,
+  type SecretResource,
 } from "@flanksource/clicky-ui/components";
 import {
   CodeBlock,
@@ -25,8 +29,11 @@ import {
 import "@flanksource/clicky-ui/mdx-editor.css";
 import { MdxEditorField } from "@flanksource/clicky-ui/mdx-editor";
 import {
+  SpecRuntimeEditor,
   ToolPreferences,
   buildAISpecRuntimePayload,
+  type AISpecRuntimePermissionCatalog,
+  type AISpecRuntimePermissions,
   type AISpecRuntimeValue,
   type ClaudePermissionMode,
   type ToolMeta,
@@ -41,11 +48,15 @@ import {
 } from "@flanksource/clicky-ui/chat";
 import { useOperations, type ExecutionResponse, type ResolvedOperation } from "@flanksource/clicky-ui/rpc";
 import { apiClient } from "./api";
+import { PromptRunStream } from "./PromptRunStream";
+import { RunningPrompts } from "./RunningPrompts";
+import type { PromptRunHandle } from "./hooks/usePromptRunStream";
+import { CAPTAIN_SIDEBAR_COLLAPSE_KEY } from "./shell";
 
 type Navigate = (to: string, opts?: { replace?: boolean }) => void;
 
 type SourceFilter = "all" | "embedded" | "local";
-type DetailTab = "source" | "runner";
+type DetailTab = "source" | "runner" | "runs";
 
 type PromptVariable = {
   name: string;
@@ -92,19 +103,6 @@ type PromptRenderResult = {
   validationError?: string;
 };
 
-type PromptRunResult = {
-  text: string;
-  model?: string;
-  backend?: string;
-  dir?: string;
-  sessionId?: string;
-  inputTokens?: number;
-  outputTokens?: number;
-  costUSD?: number;
-  duration?: string;
-  input?: unknown;
-};
-
 type RuntimeForm = {
   family: ProviderFamily;
   mode: RuntimeMode;
@@ -124,6 +122,9 @@ type RuntimeForm = {
   noProject: boolean;
   noMemory: boolean;
   spec: AISpecRuntimeValue;
+  // cliArgs are the "extra cmux args" edited via JsonSchemaForm for the
+  // claude-cmux / codex-cmux backends, keyed by the option struct json fields.
+  cliArgs: Record<string, unknown>;
 };
 
 type ProviderFamily = "claude" | "codex" | "openai" | "anthropic" | "gemini";
@@ -142,7 +143,7 @@ type PromptOps = {
 type PromptWorkbenchProps = {
   selectedId?: string;
   onNavigate: Navigate;
-  nav: ReactNode;
+  navSections: AppShellNavSection[];
   actions: ReactNode;
 };
 
@@ -170,6 +171,7 @@ const EMPTY_RUNTIME: RuntimeForm = {
   noProject: false,
   noMemory: false,
   spec: {},
+  cliArgs: {},
 };
 
 const REASONING_EFFORTS = ["low", "medium", "high", "xhigh"];
@@ -290,7 +292,7 @@ const AGENT_TOOLS = [
 export function PromptWorkbench({
   selectedId,
   onNavigate,
-  nav,
+  navSections,
   actions,
 }: PromptWorkbenchProps) {
   const { operations, isLoading: operationsLoading, error: operationsError } = useOperations(apiClient);
@@ -303,7 +305,7 @@ export function PromptWorkbench({
   const [variablesText, setVariablesText] = useState("{}");
   const [runtime, setRuntime] = useState<RuntimeForm>(EMPTY_RUNTIME);
   const [renderResult, setRenderResult] = useState<PromptRenderResult | undefined>();
-  const [runResult, setRunResult] = useState<PromptRunResult | undefined>();
+  const [activeRunID, setActiveRunID] = useState<string | undefined>();
   const [actionError, setActionError] = useState<string | undefined>();
   const [actionLoading, setActionLoading] = useState<"save" | "render" | "run" | "delete" | undefined>();
   const [createOpen, setCreateOpen] = useState(false);
@@ -316,6 +318,10 @@ export function PromptWorkbench({
   const modelsQuery = useQuery({
     queryKey: ["chat-models"],
     queryFn: fetchChatModels,
+  });
+  const permissionCatalogQuery = useQuery({
+    queryKey: ["permission-catalog"],
+    queryFn: () => fetchPermissionCatalog(),
   });
 
   const prompts = listQuery.data ?? [];
@@ -340,7 +346,9 @@ export function PromptWorkbench({
   const selected = detailQuery.data ?? selectedSummary;
   const detail = detailQuery.data;
   const writableSources = useMemo(() => uniqueWritableSources(prompts), [prompts]);
-  const canSave = Boolean(detail?.writable && promptOps.update && draft !== detail.content);
+  const canSave = Boolean(
+    detail && promptOps.update && (detail.writable ? draft !== detail.content : true),
+  );
   const hasSelection = Boolean(selectedId);
   const operationsReady = Boolean(promptOps.list && promptOps.get && promptOps.render && promptOps.run);
 
@@ -352,7 +360,7 @@ export function PromptWorkbench({
     setVariablesText(JSON.stringify(defaults, null, 2));
     setRuntime({ ...EMPTY_RUNTIME, ...runtimeSelectionFromPrompt(detail) });
     setRenderResult(undefined);
-    setRunResult(undefined);
+    setActiveRunID(undefined);
     setActionError(undefined);
   }, [detail?.id]);
 
@@ -371,8 +379,15 @@ export function PromptWorkbench({
         { id: detail.id },
         { content: draft },
       );
-      setDraft(saved.content);
-      await refreshAll();
+      await listQuery.refetch();
+      if (saved.id === detail.id) {
+        setDraft(saved.content);
+        await detailQuery.refetch();
+      } else {
+        // Saving a read-only (embedded) prompt forks it to a local copy;
+        // switch to the new writable prompt.
+        onNavigate(`/prompts/${encodeURIComponent(saved.id)}`);
+      }
     } catch (error) {
       setActionError(errorMessage(error));
     } finally {
@@ -388,10 +403,10 @@ export function PromptWorkbench({
       const rendered = await submitPromptOperation<PromptRenderResult>(
         promptOps.render,
         { id: detail.id },
-        { variables, runtime: runtimePayload(runtime, models) },
+        { variables, ...runtimePayload(runtime, models) },
       );
       setRenderResult(rendered);
-      setRunResult(undefined);
+      setActiveRunID(undefined);
     } catch (error) {
       setActionError(errorMessage(error));
     } finally {
@@ -404,13 +419,14 @@ export function PromptWorkbench({
     setActionError(undefined);
     setActionLoading("run");
     try {
-      const result = await submitPromptOperation<PromptRunResult>(
+      const handle = await submitPromptOperation<PromptRunHandle>(
         promptOps.run,
         { id: detail.id },
-        { variables, runtime: runtimePayload(runtime, models) },
+        { variables, ...runtimePayload(runtime, models) },
       );
-      setRunResult(result);
       setRenderResult(undefined);
+      setActiveRunID(handle.runId);
+      setTab("runner");
     } catch (error) {
       setActionError(errorMessage(error));
     } finally {
@@ -437,7 +453,8 @@ export function PromptWorkbench({
     <AppShell
       className="h-screen"
       brand={<div className="text-sm font-semibold">Captain</div>}
-      nav={nav}
+      navSections={navSections}
+      collapsedStorageKey={CAPTAIN_SIDEBAR_COLLAPSE_KEY}
       actions={actions}
       bodySidebar={
         <PromptSidebar
@@ -457,6 +474,12 @@ export function PromptWorkbench({
       bodyHeader={<PromptHeader prompt={selected} loading={detailQuery.isLoading} ready={operationsReady} />}
       bodyActions={
         <div className="flex items-center gap-density-2">
+          <RunningPrompts.Badge
+            onSelectRun={(id) => {
+              setActiveRunID(id);
+              setTab("runner");
+            }}
+          />
           {detail?.writable && promptOps.delete && (
             <Button
               size="sm"
@@ -468,7 +491,7 @@ export function PromptWorkbench({
               Delete
             </Button>
           )}
-          {detail?.writable && (
+          {detail && promptOps.update && (
             <Button
               size="sm"
               variant="outline"
@@ -477,7 +500,7 @@ export function PromptWorkbench({
               onClick={() => void saveDraft()}
             >
               <Icon icon={UiSave} className="size-4" />
-              Save
+              {detail.writable ? "Save" : "Save to Local"}
             </Button>
           )}
           <Button size="sm" variant="outline" onClick={() => void refreshAll()}>
@@ -515,8 +538,13 @@ export function PromptWorkbench({
         modelsLoading={modelsQuery.isLoading}
         modelsError={modelsQuery.error}
         tools={AGENT_TOOLS}
+        permissionCatalog={permissionCatalogQuery.data}
         renderResult={renderResult}
-        runResult={runResult}
+        activeRunID={activeRunID}
+        onSelectRun={(id) => {
+          setActiveRunID(id);
+          if (id) setTab("runner");
+        }}
         onRender={() => void renderPrompt()}
         onRun={() => void runPrompt()}
         renderLoading={actionLoading === "render"}
@@ -717,8 +745,10 @@ function PromptDetailPane({
   modelsLoading,
   modelsError,
   tools,
+  permissionCatalog,
   renderResult,
-  runResult,
+  activeRunID,
+  onSelectRun,
   onRender,
   onRun,
   renderLoading,
@@ -744,8 +774,10 @@ function PromptDetailPane({
   modelsLoading: boolean;
   modelsError: unknown;
   tools: ToolMeta[];
+  permissionCatalog?: AISpecRuntimePermissionCatalog;
   renderResult?: PromptRenderResult;
-  runResult?: PromptRunResult;
+  activeRunID?: string;
+  onSelectRun: (id: string | undefined) => void;
   onRender: () => void;
   onRun: () => void;
   renderLoading: boolean;
@@ -789,6 +821,7 @@ function PromptDetailPane({
           tabs={[
             { id: "runner", label: "Run", icon: UiPlay },
             { id: "source", label: "Source", icon: UiCode2 },
+            { id: "runs", label: "Runs", icon: UiTerminal },
           ]}
         />
       </div>
@@ -802,6 +835,8 @@ function PromptDetailPane({
             draft={draft}
             onDraftChange={onDraftChange}
           />
+        ) : tab === "runs" ? (
+          <RunningPrompts.RunsTab activeRunID={activeRunID} onSelectRun={onSelectRun} />
         ) : (
           <div className="grid min-h-full gap-density-4 xl:grid-cols-[minmax(340px,0.9fr)_minmax(0,1.1fr)]">
             <div className="space-y-density-4">
@@ -843,6 +878,7 @@ function PromptDetailPane({
                 modelsLoading={modelsLoading}
                 modelsError={modelsError}
                 tools={tools}
+                permissionCatalog={permissionCatalog}
               />
 
               <div className="flex flex-wrap gap-density-2">
@@ -868,7 +904,7 @@ function PromptDetailPane({
               </div>
             </div>
 
-            <RunnerOutput renderResult={renderResult} runResult={runResult} />
+            <RunnerOutput renderResult={renderResult} activeRunID={activeRunID} />
           </div>
         )}
       </div>
@@ -886,13 +922,19 @@ function SourceEditor({
   onDraftChange: (value: string) => void;
 }) {
   return (
-    <PromptSourceMarkdownEditor
-      label="Prompt Source"
-      value={detail.writable ? draft : detail.content}
-      onChange={detail.writable ? onDraftChange : undefined}
-      readOnly={!detail.writable}
-      minHeight="calc(100vh - 18rem)"
-    />
+    <div className="space-y-density-2">
+      {!detail.writable && (
+        <div className="rounded-md border border-border bg-muted/40 px-density-3 py-density-2 text-xs text-muted-foreground">
+          This is an embedded prompt. Saving your edits creates a local, editable copy.
+        </div>
+      )}
+      <PromptSourceMarkdownEditor
+        label="Prompt Source"
+        value={draft}
+        onChange={onDraftChange}
+        minHeight="calc(100vh - 18rem)"
+      />
+    </div>
   );
 }
 
@@ -950,6 +992,7 @@ function RuntimeControls({
   modelsLoading,
   modelsError,
   tools,
+  permissionCatalog,
 }: {
   runtime: RuntimeForm;
   onChange: (value: RuntimeForm) => void;
@@ -957,17 +1000,25 @@ function RuntimeControls({
   modelsLoading: boolean;
   modelsError: unknown;
   tools: ToolMeta[];
+  permissionCatalog?: AISpecRuntimePermissionCatalog;
 }) {
   const update = (patch: Partial<RuntimeForm>) => onChange({ ...runtime, ...patch });
+  const selectableModels = useMemo(() => promptSelectableModels(models), [models]);
   const modeOptions = FAMILY_MODES[runtime.family];
   const activeMode = modeOptions.some((mode) => mode.id === runtime.mode)
     ? runtime.mode
     : modeOptions[0].id;
   const selectedBackend = backendForFamilyMode(runtime.family, activeMode);
-  const modeModels = modelsForBackend(models, selectedBackend);
-  const selectedModel = models.find((model) => model.id === runtime.model);
+  const modeModels = modelsForBackend(selectableModels, selectedBackend);
+  const selectedModel = selectableModels.find((model) => model.id === runtime.model);
   const showModelSelector = models.length > 0;
   const permissionSummary = runtime.permissionMode === "default" ? "Default" : runtime.permissionMode;
+  const isCmuxBackend = selectedBackend === "claude-cmux" || selectedBackend === "codex-cmux";
+  const cliOptionsQuery = useQuery({
+    queryKey: ["cli-options", selectedBackend],
+    queryFn: () => fetchCliOptionsSchema(selectedBackend),
+    enabled: isCmuxBackend,
+  });
   const updateFamily = (family: ProviderFamily) => {
     const nextMode = FAMILY_MODES[family][0].id;
     const backend = backendForFamilyMode(family, nextMode);
@@ -977,6 +1028,8 @@ function RuntimeControls({
       mode: nextMode,
       backend,
       model: modelBelongsToBackend(runtime.model, models, backend) ? runtime.model : "",
+      // Different backends expose different CLI-arg schemas; drop stale values.
+      cliArgs: {},
     });
   };
   const updateMode = (mode: RuntimeMode) => {
@@ -986,6 +1039,7 @@ function RuntimeControls({
       mode,
       backend,
       model: modelBelongsToBackend(runtime.model, models, backend) ? runtime.model : "",
+      cliArgs: {},
     });
   };
   return (
@@ -1155,6 +1209,39 @@ function RuntimeControls({
           Skip project config
         </label>
       </div>
+      {isCmuxBackend && (
+        <div className="rounded-md border border-border p-density-3">
+          <div className="mb-density-2 flex items-center gap-density-2 text-sm font-semibold">
+            <Icon icon={UiTerminal} className="size-4 text-muted-foreground" />
+            Extra CLI args
+          </div>
+          {cliOptionsQuery.data ? (
+            <JsonSchemaForm
+              idPrefix={`cli-args-${selectedBackend}`}
+              schema={cliOptionsQuery.data}
+              value={runtime.cliArgs}
+              onChange={(cliArgs) => update({ cliArgs })}
+              showPreferencesMenu={false}
+              persistPreferences={false}
+            />
+          ) : (
+            <div className="text-xs text-muted-foreground">
+              {cliOptionsQuery.error
+                ? errorMessage(cliOptionsQuery.error)
+                : `Loading ${labelForBackend(selectedBackend)} CLI flags…`}
+            </div>
+          )}
+        </div>
+      )}
+      <SpecRuntimeEditor
+        value={runtime.spec}
+        onChange={(spec) => update({ spec })}
+        models={modeModels}
+        tools={tools}
+        permissionCatalog={permissionCatalog}
+        secretSelector={CAPTAIN_SECRET_SELECTOR}
+        title="Spec runtime"
+      />
       <div className="flex min-w-0 flex-wrap gap-density-2 text-xs text-muted-foreground">
         <span>{labelForBackend(runtime.backend || selectedBackend)}</span>
         {selectedModel && <span>{selectedModel.label}</span>}
@@ -1181,28 +1268,13 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 
 function RunnerOutput({
   renderResult,
-  runResult,
+  activeRunID,
 }: {
   renderResult?: PromptRenderResult;
-  runResult?: PromptRunResult;
+  activeRunID?: string;
 }) {
-  if (runResult) {
-    return (
-      <div className="space-y-density-3">
-        <div className="flex min-w-0 flex-wrap gap-density-2 text-xs text-muted-foreground">
-          {runResult.model && <span>{runResult.model}</span>}
-          {runResult.backend && <span>{runResult.backend}</span>}
-          {runResult.duration && <span>{runResult.duration}</span>}
-          {runResult.inputTokens != null && <span>{runResult.inputTokens} in</span>}
-          {runResult.outputTokens != null && <span>{runResult.outputTokens} out</span>}
-          {runResult.sessionId && <span className="truncate">session {runResult.sessionId}</span>}
-        </div>
-        <CodeBlock language="markdown" source={runResult.text || ""} />
-        {runResult.input != null && (
-          <CodeBlock language="json" source={JSON.stringify(runResult.input, null, 2)} />
-        )}
-      </div>
-    );
+  if (activeRunID) {
+    return <PromptRunStream runID={activeRunID} />;
   }
   if (renderResult) {
     return (
@@ -1400,6 +1472,51 @@ async function fetchChatModels() {
   return (await response.json()) as ChatModel[];
 }
 
+async function fetchPermissionCatalog() {
+  const response = await fetch("/api/captain/ai/permissions/catalog", {
+    headers: { Accept: "application/json" },
+  });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Permission catalog failed with ${response.status}`);
+  }
+  return (await response.json()) as AISpecRuntimePermissionCatalog;
+}
+
+async function fetchCliOptionsSchema(backend: string): Promise<JsonSchemaObject> {
+  const response = await fetch(
+    `/api/captain/ai/cli-options/catalog?backend=${encodeURIComponent(backend)}`,
+    { headers: { Accept: "application/json" } },
+  );
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `CLI options catalog failed with ${response.status}`);
+  }
+  return (await response.json()) as JsonSchemaObject;
+}
+
+const CAPTAIN_SECRET_SELECTOR = {
+  loadResources: fetchSecretResources,
+  loadKeyPreview: fetchSecretKeyPreview,
+};
+
+async function fetchSecretResources(kind: SecretKind): Promise<SecretResource[]> {
+  const response = await fetch(`/api/captain/secrets/resources?kind=${encodeURIComponent(kind)}`, {
+    headers: { Accept: "application/json" },
+  });
+  if (!response.ok) return [];
+  return (await response.json()) as SecretResource[];
+}
+
+async function fetchSecretKeyPreview(kind: SecretKind, name: string): Promise<KeyPreview[]> {
+  const response = await fetch(
+    `/api/captain/secrets/preview?kind=${encodeURIComponent(kind)}&name=${encodeURIComponent(name)}`,
+    { headers: { Accept: "application/json" } },
+  );
+  if (!response.ok) return [];
+  return (await response.json()) as KeyPreview[];
+}
+
 async function fetchPromptDetail(op: ResolvedOperation, id: string) {
   const response = await apiClient.executeCommand(
     op.path,
@@ -1503,32 +1620,64 @@ function parseJsonObject(raw: string):
 }
 
 function runtimePayload(runtime: RuntimeForm, models: ChatModel[]) {
-  const payload: Record<string, unknown> = {};
+  const spec: AISpecRuntimeValue = { ...runtime.spec };
   const selected = normalizeRuntimeModel(runtime.model, models);
-  if (selected.model) payload.model = selected.model;
+  if (selected.model) spec.model = selected.model;
   if (runtime.backend.trim()) {
-    payload.backend = runtime.backend.trim();
+    spec.backend = runtime.backend.trim();
   } else if (selected.backend) {
-    payload.backend = selected.backend;
+    spec.backend = selected.backend;
   }
-  if (runtime.timeout.trim()) payload.timeout = runtime.timeout.trim();
-  if (runtime.effort.trim()) payload.effort = runtime.effort.trim();
-  if (runtime.temperature != null) payload.temperature = String(runtime.temperature);
-  if (runtime.budget.maxTokens != null) payload.maxTokens = runtime.budget.maxTokens;
-  if (runtime.budget.cost != null) payload.budget = String(runtime.budget.cost);
+  if (runtime.effort.trim()) spec.effort = runtime.effort.trim();
+  if (runtime.temperature != null) spec.temperature = runtime.temperature;
+
+  const budget = { ...(spec.budget ?? {}) };
+  if (runtime.budget.maxTokens != null) budget.maxTokens = runtime.budget.maxTokens;
+  if (runtime.budget.cost != null) budget.cost = runtime.budget.cost;
+  if (runtime.timeout.trim()) budget.timeout = runtime.timeout.trim();
   const maxTurns = Number.parseInt(runtime.maxTurns, 10);
-  if (Number.isFinite(maxTurns) && maxTurns > 0) payload.maxTurns = maxTurns;
-  if (runtime.permissionMode !== "default") payload.permissionMode = runtime.permissionMode;
+  if (Number.isFinite(maxTurns) && maxTurns > 0) budget.maxTurns = maxTurns;
+  if (Object.keys(budget).length > 0) spec.budget = budget;
+
+  const permissions = { ...(spec.permissions ?? {}) };
+  const permissionMode = specPermissionMode(runtime.permissionMode);
+  if (permissionMode) permissions.mode = permissionMode;
   const { allowedTools, disallowedTools } = splitToolPreferences(runtime.toolPreferences);
-  if (allowedTools.length > 0) payload.allowedTools = allowedTools;
-  if (disallowedTools.length > 0) payload.disallowedTools = disallowedTools;
-  if (runtime.noMcp) payload.noMcp = true;
-  if (runtime.noHooks) payload.noHooks = true;
-  if (runtime.noSkills) payload.noSkills = true;
-  if (runtime.noUser) payload.noUser = true;
-  if (runtime.noProject) payload.noProject = true;
-  if (runtime.noMemory) payload.noMemory = true;
-  return { ...payload, ...normalizeSpecRuntimePayload(buildAISpecRuntimePayload(runtime.spec), models) };
+  if (allowedTools.length > 0 || disallowedTools.length > 0) {
+    const tools =
+      permissions.tools && !Array.isArray(permissions.tools)
+        ? { ...(permissions.tools as Record<string, unknown>) }
+        : {};
+    for (const tool of allowedTools) tools[tool] = "allow";
+    for (const tool of disallowedTools) tools[tool] = "deny";
+    permissions.tools = tools as NonNullable<AISpecRuntimePermissions["tools"]>;
+  }
+  if (runtime.noMcp) {
+    permissions.mcp = { ...(permissions.mcp ?? {}), disabled: true };
+  }
+  if (Object.keys(permissions).length > 0) spec.permissions = permissions;
+
+  const memory = { ...(spec.memory ?? {}) };
+  if (runtime.noHooks) memory.skipHooks = true;
+  if (runtime.noSkills) memory.skipSkills = true;
+  if (runtime.noUser) memory.skipUser = true;
+  if (runtime.noProject) memory.skipProject = true;
+  if (runtime.noMemory) memory.skipMemory = true;
+  if (Object.keys(memory).length > 0) spec.memory = memory;
+
+  const payload = normalizeSpecRuntimePayload(buildAISpecRuntimePayload(spec), models);
+  // cliArgs bypass buildAISpecRuntimePayload's field whitelist, so inject them
+  // onto the final spec directly (the cmux provider reads Spec.cliArgs).
+  if (runtime.cliArgs && Object.keys(runtime.cliArgs).length > 0) {
+    const existingSpec = payload.spec;
+    const specRecord =
+      existingSpec && typeof existingSpec === "object" && !Array.isArray(existingSpec)
+        ? { ...(existingSpec as Record<string, unknown>) }
+        : {};
+    specRecord.cliArgs = runtime.cliArgs;
+    return { ...payload, spec: specRecord };
+  }
+  return payload;
 }
 
 function normalizeSpecRuntimePayload(payload: Record<string, unknown>, models: ChatModel[]) {
@@ -1548,6 +1697,13 @@ function normalizeSpecRuntimePayload(payload: Record<string, unknown>, models: C
     }
   }
   return { ...payload, spec: specRecord };
+}
+
+function specPermissionMode(
+  mode: ClaudePermissionMode,
+): AISpecRuntimePermissions["mode"] | undefined {
+  if (mode === "default" || mode === "dontAsk") return undefined;
+  return mode;
 }
 
 function updateModelSelection(
@@ -1630,6 +1786,12 @@ function inferBackendFromModel(model: string) {
 function modelsForBackend(models: ChatModel[], backend: string) {
   const provider = providerForBackend(backend);
   return provider ? models.filter((model) => model.provider === provider) : models;
+}
+
+function promptSelectableModels(models: ChatModel[]) {
+  return models.map((model) =>
+    model.configured === false ? { ...model, configured: true } : model,
+  );
 }
 
 function modelBelongsToBackend(model: string, models: ChatModel[], backend: string) {

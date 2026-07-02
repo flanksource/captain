@@ -21,6 +21,7 @@ import (
 
 	"github.com/flanksource/clicky/aichat"
 	"github.com/flanksource/clicky/rpc"
+	"github.com/flanksource/clicky/task"
 	"github.com/spf13/cobra"
 )
 
@@ -147,9 +148,26 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	})
 	defer chat.Close()
 
+	// Prompt runs are tracked as clicky task groups. Disable terminal rendering:
+	// serve runs on a TTY, so otherwise the task manager draws progress bars over
+	// the server log. Concurrency is the global manager's worker pool (4), which
+	// is plenty for parallel prompt runs.
+	task.SetNoRender(true)
+
 	mux := http.NewServeMux()
 	rpcServer.RegisterRoutes(mux)
 	mux.HandleFunc("POST /api/captain/chat/threads/from-agent", handleThreadFromAgent(threadStore))
+	mux.HandleFunc("GET /api/captain/ai/permissions/catalog", handlePermissionCatalog(cwd))
+	mux.HandleFunc("GET /api/captain/ai/cli-options/catalog", handleCLIOptionsCatalog())
+	mux.HandleFunc("GET /api/captain/secrets/resources", handleSecretResources())
+	mux.HandleFunc("GET /api/captain/secrets/preview", handleSecretPreview())
+	// Task tracking: /api/captain/tasks, /tasks/stream, /tasks/{id}; plus the
+	// run-list SSE the clicky-ui useTaskRuns hook subscribes to.
+	task.RegisterHandlers(mux, "/api/captain")
+	mux.Handle("GET /api/captain/tasks/runs/stream", task.RunsSSEHandler(nil))
+	// Live session history for a prompt run.
+	mux.Handle("GET /api/captain/prompt/runs/{runId}/stream", handlePromptRunStream(promptRuns))
+	mux.Handle("GET /api/captain/prompt/runs/{runId}", handlePromptRunSnapshot(promptRuns))
 	mux.Handle("/api/chat", chat.Handler())
 	mux.Handle("/api/chat/", chat.Handler())
 
@@ -170,6 +188,8 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	go prunePromptRuns(ctx, promptRuns)
 
 	errCh := make(chan error, 1)
 	go func() {

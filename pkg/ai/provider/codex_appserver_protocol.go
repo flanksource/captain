@@ -226,8 +226,8 @@ func composePrompt(req ai.Request) string {
 // override (the knobs the protocol exposes) are emitted.
 func buildThreadStartParams(model string, req ai.Request) map[string]any {
 	p := map[string]any{}
-	if req.Context.Dir != "" {
-		p["cwd"] = req.Context.Dir
+	if cwd := req.Cwd(); cwd != "" {
+		p["cwd"] = cwd
 	}
 	if model != "" {
 		p["model"] = model
@@ -244,17 +244,12 @@ func buildThreadStartParams(model string, req ai.Request) map[string]any {
 }
 
 // codexSafety maps edit/permission knobs onto the SandboxMode + AskForApproval
-// enums. Approvals are auto-accepted (handleApproval), so the policy only affects
-// when codex prompts, never whether work proceeds.
+// enums via the shared api.CodexSafety mapping (also used by the cmux backend).
+// Approvals are auto-accepted (handleApproval), so the policy only affects when
+// codex prompts, never whether work proceeds.
 func codexSafety(req ai.Request) (sandbox, approval string) {
-	switch {
-	case req.Permissions.Mode == api.PermissionBypass:
-		return "danger-full-access", "never"
-	case req.Permissions.HasPreset(api.PresetEdit) && req.Permissions.Mode == "":
-		return "workspace-write", "on-request"
-	default:
-		return "read-only", "on-request"
-	}
+	s, a := api.CodexSafety(req.Permissions)
+	return string(s), string(a)
 }
 
 func buildTurnStartParams(model string, req ai.Request, threadID string) map[string]any {
@@ -273,8 +268,8 @@ func buildTurnStartParams(model string, req ai.Request, threadID string) map[str
 
 func buildResumeParams(req ai.Request) map[string]any {
 	p := map[string]any{"threadId": req.SessionID}
-	if req.Context.Dir != "" {
-		p["cwd"] = req.Context.Dir
+	if cwd := req.Cwd(); cwd != "" {
+		p["cwd"] = cwd
 	}
 	return p
 }
