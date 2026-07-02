@@ -23,6 +23,7 @@ import {
   UiPlay,
   UiRefresh,
   UiSave,
+  UiSliders,
   UiTerminal,
   UiTrash,
 } from "@flanksource/clicky-ui/data";
@@ -121,10 +122,9 @@ type RuntimeForm = {
   noUser: boolean;
   noProject: boolean;
   noMemory: boolean;
+  // spec carries the full runtime spec, including spec.cliArgs (the "extra
+  // cmux args" for the claude-cmux / codex-cmux backends).
   spec: AISpecRuntimeValue;
-  // cliArgs are the "extra cmux args" edited via JsonSchemaForm for the
-  // claude-cmux / codex-cmux backends, keyed by the option struct json fields.
-  cliArgs: Record<string, unknown>;
 };
 
 type ProviderFamily = "claude" | "codex" | "openai" | "anthropic" | "gemini";
@@ -171,7 +171,6 @@ const EMPTY_RUNTIME: RuntimeForm = {
   noProject: false,
   noMemory: false,
   spec: {},
-  cliArgs: {},
 };
 
 const REASONING_EFFORTS = ["low", "medium", "high", "xhigh"];
@@ -962,7 +961,8 @@ function PromptSourceMarkdownEditor({
           onChange={onChange}
           readOnly={readOnly}
           size="xl"
-          frontmatter
+          // Prompt frontmatter is raw runtime source; MDXEditor's structured
+          // frontmatter plugin parses transient incomplete YAML while typing.
           codeBlocks={{ defaultLanguage: "markdown" }}
           codeMirror={{
             languages: {
@@ -1019,6 +1019,17 @@ function RuntimeControls({
     queryFn: () => fetchCliOptionsSchema(selectedBackend),
     enabled: isCmuxBackend,
   });
+  // Draft copy of runtime.spec edited in the full-screen modal; null = closed.
+  const [specDraft, setSpecDraft] = useState<AISpecRuntimeValue | null>(null);
+  const specDraftDirty =
+    specDraft !== null &&
+    JSON.stringify(buildAISpecRuntimePayload(specDraft)) !==
+      JSON.stringify(buildAISpecRuntimePayload(runtime.spec));
+  const closeSpecEditor = () => setSpecDraft(null);
+  const saveSpecEditor = () => {
+    if (specDraft !== null) update({ spec: specDraft });
+    setSpecDraft(null);
+  };
   const updateFamily = (family: ProviderFamily) => {
     const nextMode = FAMILY_MODES[family][0].id;
     const backend = backendForFamilyMode(family, nextMode);
@@ -1029,7 +1040,7 @@ function RuntimeControls({
       backend,
       model: modelBelongsToBackend(runtime.model, models, backend) ? runtime.model : "",
       // Different backends expose different CLI-arg schemas; drop stale values.
-      cliArgs: {},
+      spec: withoutCliArgs(runtime.spec),
     });
   };
   const updateMode = (mode: RuntimeMode) => {
@@ -1039,7 +1050,7 @@ function RuntimeControls({
       mode,
       backend,
       model: modelBelongsToBackend(runtime.model, models, backend) ? runtime.model : "",
-      cliArgs: {},
+      spec: withoutCliArgs(runtime.spec),
     });
   };
   return (
@@ -1209,39 +1220,43 @@ function RuntimeControls({
           Skip project config
         </label>
       </div>
-      {isCmuxBackend && (
-        <div className="rounded-md border border-border p-density-3">
-          <div className="mb-density-2 flex items-center gap-density-2 text-sm font-semibold">
-            <Icon icon={UiTerminal} className="size-4 text-muted-foreground" />
-            Extra CLI args
-          </div>
-          {cliOptionsQuery.data ? (
-            <JsonSchemaForm
-              idPrefix={`cli-args-${selectedBackend}`}
-              schema={cliOptionsQuery.data}
-              value={runtime.cliArgs}
-              onChange={(cliArgs) => update({ cliArgs })}
-              showPreferencesMenu={false}
-              persistPreferences={false}
-            />
-          ) : (
-            <div className="text-xs text-muted-foreground">
-              {cliOptionsQuery.error
-                ? errorMessage(cliOptionsQuery.error)
-                : `Loading ${labelForBackend(selectedBackend)} CLI flags…`}
-            </div>
-          )}
-        </div>
+      <div>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => setSpecDraft(runtime.spec)}
+        >
+          <Icon icon={UiSliders} className="size-4" />
+          Edit spec
+        </Button>
+      </div>
+      {specDraft !== null && (
+        <Modal
+          open
+          onClose={closeSpecEditor}
+          confirmClose={specDraftDirty}
+          title="Runtime spec"
+          size="full"
+          closeOnEsc
+          className="h-[95vh]"
+        >
+          <SpecRuntimeEditor
+            value={specDraft}
+            onChange={setSpecDraft}
+            models={modeModels}
+            tools={tools}
+            permissionCatalog={permissionCatalog}
+            secretSelector={CAPTAIN_SECRET_SELECTOR}
+            {...(isCmuxBackend && cliOptionsQuery.data
+              ? { cliOptions: { schema: cliOptionsQuery.data } }
+              : {})}
+            onSave={saveSpecEditor}
+            onCancel={closeSpecEditor}
+            saveLabel="Save spec"
+            footerStatus={specDraftDirty ? "Unsaved changes" : "No changes"}
+          />
+        </Modal>
       )}
-      <SpecRuntimeEditor
-        value={runtime.spec}
-        onChange={(spec) => update({ spec })}
-        models={modeModels}
-        tools={tools}
-        permissionCatalog={permissionCatalog}
-        secretSelector={CAPTAIN_SECRET_SELECTOR}
-        title="Spec runtime"
-      />
       <div className="flex min-w-0 flex-wrap gap-density-2 text-xs text-muted-foreground">
         <span>{labelForBackend(runtime.backend || selectedBackend)}</span>
         {selectedModel && <span>{selectedModel.label}</span>}
@@ -1665,19 +1680,15 @@ function runtimePayload(runtime: RuntimeForm, models: ChatModel[]) {
   if (runtime.noMemory) memory.skipMemory = true;
   if (Object.keys(memory).length > 0) spec.memory = memory;
 
-  const payload = normalizeSpecRuntimePayload(buildAISpecRuntimePayload(spec), models);
-  // cliArgs bypass buildAISpecRuntimePayload's field whitelist, so inject them
-  // onto the final spec directly (the cmux provider reads Spec.cliArgs).
-  if (runtime.cliArgs && Object.keys(runtime.cliArgs).length > 0) {
-    const existingSpec = payload.spec;
-    const specRecord =
-      existingSpec && typeof existingSpec === "object" && !Array.isArray(existingSpec)
-        ? { ...(existingSpec as Record<string, unknown>) }
-        : {};
-    specRecord.cliArgs = runtime.cliArgs;
-    return { ...payload, spec: specRecord };
-  }
-  return payload;
+  return normalizeSpecRuntimePayload(buildAISpecRuntimePayload(spec), models);
+}
+
+// Different backends expose different CLI-arg schemas, so a backend switch
+// drops any stale spec.cliArgs.
+function withoutCliArgs(spec: AISpecRuntimeValue): AISpecRuntimeValue {
+  if (!spec.cliArgs) return spec;
+  const { cliArgs: _cliArgs, ...rest } = spec;
+  return rest;
 }
 
 function normalizeSpecRuntimePayload(payload: Record<string, unknown>, models: ChatModel[]) {
@@ -1702,7 +1713,7 @@ function normalizeSpecRuntimePayload(payload: Record<string, unknown>, models: C
 function specPermissionMode(
   mode: ClaudePermissionMode,
 ): AISpecRuntimePermissions["mode"] | undefined {
-  if (mode === "default" || mode === "dontAsk") return undefined;
+  if (mode === "default") return undefined;
   return mode;
 }
 

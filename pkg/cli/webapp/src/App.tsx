@@ -1,11 +1,6 @@
 import { useMemo, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  AppShell,
-  Button,
-  DensitySwitcher,
-  ThemeSwitcher,
-} from "@flanksource/clicky-ui/components";
+import { AppShell } from "@flanksource/clicky-ui/components";
 import {
   RouterProvider,
   useBrowserRouter,
@@ -16,8 +11,15 @@ import { apiClient } from "./api";
 import { AgentLauncher } from "./AgentLauncher";
 import { ChatLayer } from "./ChatLayer";
 import { ChatRoute } from "./ChatRoute";
+import { HomeDashboard } from "./HomeDashboard";
 import { PromptWorkbench } from "./PromptWorkbench";
 import { SessionBrowser } from "./SessionBrowser";
+import {
+  CAPTAIN_SIDEBAR_COLLAPSE_KEY,
+  ShellActions,
+  captainNavSections,
+  type PrimaryRoute,
+} from "./shell";
 
 export function App() {
   const queryClient = useMemo(
@@ -38,22 +40,21 @@ export function App() {
             <SessionBrowser
               selectedId={route.sessionId}
               onNavigate={router.navigate}
-              nav={<CaptainNav active="sessions" onNavigate={router.navigate} />}
+              navSections={captainNavSections("sessions")}
               actions={<ShellActions />}
             />
           ) : route.kind === "prompts" ? (
             <PromptWorkbench
               selectedId={route.promptId}
               onNavigate={router.navigate}
-              nav={<CaptainNav active="prompts" onNavigate={router.navigate} />}
+              navSections={captainNavSections("prompts")}
               actions={<ShellActions />}
             />
           ) : (
-            <CaptainShell
-              active={route.kind === "operations" ? "operations" : "agent"}
-              onNavigate={router.navigate}
-            >
-              {route.kind === "operations" ? (
+            <CaptainShell active={primaryRoute(route)} onNavigate={router.navigate}>
+              {route.kind === "dashboard" ? (
+                <HomeDashboard onNavigate={router.navigate} />
+              ) : route.kind === "operations" ? (
                 <EntityExplorerApp
                   client={apiClient}
                   basePath="/operations"
@@ -79,8 +80,6 @@ export function App() {
   );
 }
 
-type PrimaryRoute = "agent" | "sessions" | "prompts" | "operations";
-
 function CaptainShell({
   active,
   onNavigate,
@@ -94,7 +93,8 @@ function CaptainShell({
     <AppShell
       className="h-screen"
       brand={<ShellBrand onNavigate={onNavigate} />}
-      nav={<CaptainNav active={active} onNavigate={onNavigate} />}
+      navSections={captainNavSections(active)}
+      collapsedStorageKey={CAPTAIN_SIDEBAR_COLLAPSE_KEY}
       actions={<ShellActions />}
       contentClassName="p-0 overflow-hidden"
     >
@@ -119,62 +119,21 @@ function ShellBrand({
   );
 }
 
-function CaptainNav({
-  active,
-  onNavigate,
-}: {
-  active: PrimaryRoute;
-  onNavigate: (to: string, opts?: { replace?: boolean }) => void;
-}) {
-  return (
-    <div className="flex items-center gap-1">
-      <Button
-        size="sm"
-        variant={active === "agent" ? "secondary" : "ghost"}
-        onClick={() => onNavigate("/")}
-      >
-        Agent
-      </Button>
-      <Button
-        size="sm"
-        variant={active === "sessions" ? "secondary" : "ghost"}
-        onClick={() => onNavigate("/sessions")}
-      >
-        Sessions
-      </Button>
-      <Button
-        size="sm"
-        variant={active === "prompts" ? "secondary" : "ghost"}
-        onClick={() => onNavigate("/prompts")}
-      >
-        Prompts
-      </Button>
-      <Button
-        size="sm"
-        variant={active === "operations" ? "secondary" : "ghost"}
-        onClick={() => onNavigate("/operations")}
-      >
-        Operations
-      </Button>
-    </div>
-  );
-}
-
-function ShellActions() {
-  return (
-    <>
-      <ThemeSwitcher />
-      <DensitySwitcher />
-    </>
-  );
-}
-
 type Route =
-  | { kind: "launcher" }
+  | { kind: "dashboard" }
+  | { kind: "agent" }
   | { kind: "sessions"; sessionId?: string }
   | { kind: "prompts"; promptId?: string }
   | { kind: "operations" }
   | { kind: "chat"; threadId: string; model?: string };
+
+function primaryRoute(route: Route): PrimaryRoute {
+  if (route.kind === "dashboard") return "dashboard";
+  if (route.kind === "operations") return "operations";
+  if (route.kind === "prompts") return "prompts";
+  if (route.kind === "sessions") return "sessions";
+  return "agent";
+}
 
 function parseRoute(pathname: string, search: string): Route {
   if (pathname.startsWith("/operations")) return { kind: "operations" };
@@ -191,7 +150,8 @@ function parseRoute(pathname: string, search: string): Route {
   if (pathname.startsWith("/chat/")) {
     const threadId = decodeURIComponent(pathname.slice("/chat/".length).split("/")[0] ?? "");
     const model = new URLSearchParams(search).get("model") || undefined;
-    return threadId ? { kind: "chat", threadId, model } : { kind: "launcher" };
+    return threadId ? { kind: "chat", threadId, model } : { kind: "dashboard" };
   }
-  return { kind: "launcher" };
+  if (pathname.startsWith("/agent")) return { kind: "agent" };
+  return { kind: "dashboard" };
 }
