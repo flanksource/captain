@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -236,10 +237,19 @@ type AgentCommandOpts struct {
 	// --disallowedTools. codex ignores them.
 	AllowedTools    []string
 	DisallowedTools []string
+	// Effort maps onto claude --effort (from Spec.Model.Effort). codex ignores it.
+	Effort api.Effort
+	// Memory drives claude --bare / --disable-slash-commands / --setting-sources
+	// (from Spec.Memory). codex ignores it.
+	Memory api.Memory
+	// Extra carries the backend's "extra cmux args": *api.ClaudeCmuxOptions for
+	// claude, *api.CodexCmuxOptions for codex. A nil/mismatched value emits none.
+	Extra any
 }
 
 // cliPermissionMode maps an api.PermissionMode onto the claude --permission-mode
-// flag value. default/auto/"" all collapse to "default".
+// flag value. Unset/"" collapses to "default"; every recognised mode passes
+// through to its CLI-native value.
 func cliPermissionMode(m api.PermissionMode) string {
 	switch m {
 	case api.PermissionPlan:
@@ -248,6 +258,10 @@ func cliPermissionMode(m api.PermissionMode) string {
 		return "acceptEdits"
 	case api.PermissionBypass:
 		return "bypassPermissions"
+	case api.PermissionAuto:
+		return "auto"
+	case api.PermissionDontAsk:
+		return "dontAsk"
 	default:
 		return "default"
 	}
@@ -256,17 +270,21 @@ func cliPermissionMode(m api.PermissionMode) string {
 func AgentCommand(opts AgentCommandOpts) string {
 	switch opts.Agent {
 	case "codex":
+		tokens := []string{"codex"}
 		if opts.Model != "" {
-			return "codex -m " + opts.Model
+			tokens = append(tokens, "-m", opts.Model)
 		}
-		return "codex"
+		if extra, ok := opts.Extra.(*api.CodexCmuxOptions); ok && extra != nil {
+			tokens = append(tokens, flagArgs(*extra)...)
+		}
+		return joinCommand(tokens)
 	default:
-		cmd := "claude"
+		tokens := []string{"claude"}
 		if opts.SessionID != "" {
 			if opts.Resume {
-				cmd += " --resume " + opts.SessionID
+				tokens = append(tokens, "--resume", opts.SessionID)
 			} else {
-				cmd += " --session-id " + opts.SessionID
+				tokens = append(tokens, "--session-id", opts.SessionID)
 			}
 		}
 		mode := opts.PermissionMode
@@ -274,25 +292,115 @@ func AgentCommand(opts AgentCommandOpts) string {
 			mode = api.PermissionPlan
 		}
 		if opts.Plan || opts.PermissionMode != "" {
-			cmd += " --permission-mode " + cliPermissionMode(mode)
+			tokens = append(tokens, "--permission-mode", cliPermissionMode(mode))
 		}
 		if len(opts.AllowedTools) > 0 {
-			cmd += " --allowedTools " + strings.Join(opts.AllowedTools, ",")
+			tokens = append(tokens, "--allowedTools", strings.Join(opts.AllowedTools, ","))
 		}
 		if len(opts.DisallowedTools) > 0 {
-			cmd += " --disallowedTools " + strings.Join(opts.DisallowedTools, ",")
+			tokens = append(tokens, "--disallowedTools", strings.Join(opts.DisallowedTools, ","))
 		}
 		if opts.Model != "" {
-			cmd += " --model " + opts.Model
+			tokens = append(tokens, "--model", opts.Model)
 		}
-		return cmd
+		if opts.Effort != "" {
+			tokens = append(tokens, "--effort", string(opts.Effort))
+		}
+		tokens = append(tokens, claudeMemoryArgs(opts.Memory)...)
+		if extra, ok := opts.Extra.(*api.ClaudeCmuxOptions); ok && extra != nil {
+			tokens = append(tokens, flagArgs(*extra)...)
+		}
+		return joinCommand(tokens)
 	}
+}
+
+// claudeMemoryArgs maps Spec.Memory toggles onto claude flags: Bare -> --bare,
+// SkipSkills -> --disable-slash-commands, and SkipProject/SkipUser -> a narrowed
+// --setting-sources list. SkipHooks/SkipMemory have no granular claude flag (only
+// --bare covers them), so they are intentionally not emitted here.
+func claudeMemoryArgs(m api.Memory) []string {
+	var args []string
+	if m.Bare {
+		args = append(args, "--bare")
+	}
+	if m.SkipSkills {
+		args = append(args, "--disable-slash-commands")
+	}
+	if m.SkipProject || m.SkipUser {
+		var sources []string
+		if !m.SkipUser {
+			sources = append(sources, "user")
+		}
+		if !m.SkipProject {
+			sources = append(sources, "project", "local")
+		}
+		if len(sources) > 0 {
+			args = append(args, "--setting-sources", strings.Join(sources, ","))
+		}
+	}
+	return args
+}
+
+// flagArgs renders the "extra cmux args" from a struct's `flag:` tags and current
+// field values: bools emit "--flag" when true, strings emit "--flag value" when
+// non-empty, and []string emit "--flag v1 v2 ..." (the repeatable/space form both
+// CLIs accept). Fields emit in declaration order (matching the clicky form order).
+func flagArgs(v any) []string {
+	rv := reflect.ValueOf(v)
+	rt := rv.Type()
+	var args []string
+	for i := 0; i < rt.NumField(); i++ {
+		flag := rt.Field(i).Tag.Get("flag")
+		if flag == "" {
+			continue
+		}
+		field := rv.Field(i)
+		switch field.Kind() {
+		case reflect.Bool:
+			if field.Bool() {
+				args = append(args, "--"+flag)
+			}
+		case reflect.String:
+			if s := field.String(); s != "" {
+				args = append(args, "--"+flag, s)
+			}
+		case reflect.Slice:
+			if field.Len() == 0 {
+				continue
+			}
+			args = append(args, "--"+flag)
+			for j := 0; j < field.Len(); j++ {
+				args = append(args, field.Index(j).String())
+			}
+		}
+	}
+	return args
+}
+
+// joinCommand renders command tokens into the single shell string pasted onto the
+// cmux surface, single-quoting any token that isn't a bare shell-safe word so
+// values with spaces or metacharacters (system prompts, JSON settings) survive.
+func joinCommand(tokens []string) string {
+	quoted := make([]string, len(tokens))
+	for i, t := range tokens {
+		quoted[i] = shellQuoteIfNeeded(t)
+	}
+	return strings.Join(quoted, " ")
+}
+
+var shellSafeToken = regexp.MustCompile(`^[A-Za-z0-9_@%+=:,./-]+$`)
+
+func shellQuoteIfNeeded(s string) string {
+	if s != "" && shellSafeToken.MatchString(s) {
+		return s
+	}
+	return shellSingleQuote(s)
 }
 
 // withEnv prepends KEY='value' assignments (sorted by key for deterministic
 // output) to the agent launch command so the terminal shell exports them to the
 // agent process, whose tool children inherit them. The host supplies the env via
-// req.Context.Env.
+// the prepared setup on api.Spec.
 func withEnv(command string, env map[string]string) string {
 	if len(env) == 0 {
 		return command

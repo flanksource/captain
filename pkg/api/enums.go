@@ -1,9 +1,8 @@
 // Package api holds captain's root domain types — the serializable, nested
 // specification of a model/agent run (Model, Cost, Budget, Memory, Permissions,
-// Context, Prompt) and the Spec that composes them. It is a leaf package: it
-// imports only clicky/api (pretty-printing), invopop/jsonschema, and the stdlib,
-// never pkg/ai. pkg/ai re-exports the enum/value types here via aliases, so this
-// package is the single source of truth for Backend/Effort/Cost.
+// Setup, Prompt) and the Spec that composes them. It never imports pkg/ai;
+// pkg/ai re-exports the enum/value types here via aliases, so this package is
+// the single source of truth for Backend/Effort/Cost.
 package api
 
 import (
@@ -170,6 +169,45 @@ func (m ToolMode) Valid() bool {
 	}
 }
 
+// ToolPolicy is the runtime-spec policy map value for one tool. It keeps the
+// wire shape close to coding-agent UX: auto, ask, allow, deny.
+type ToolPolicy string
+
+const (
+	ToolPolicyAuto  ToolPolicy = "auto"
+	ToolPolicyAsk   ToolPolicy = "ask"
+	ToolPolicyAllow ToolPolicy = "allow"
+	ToolPolicyDeny  ToolPolicy = "deny"
+)
+
+// Valid reports whether p is a recognised runtime tool policy.
+func (p ToolPolicy) Valid() bool {
+	switch p {
+	case ToolPolicyAuto, ToolPolicyAsk, ToolPolicyAllow, ToolPolicyDeny:
+		return true
+	default:
+		return false
+	}
+}
+
+// ResourceMode is the enabled/disabled policy for MCP servers, plugins, and skills.
+type ResourceMode string
+
+const (
+	ResourceEnabled  ResourceMode = "enabled"
+	ResourceDisabled ResourceMode = "disabled"
+)
+
+// Valid reports whether m is a recognised resource mode.
+func (m ResourceMode) Valid() bool {
+	switch m {
+	case ResourceEnabled, ResourceDisabled:
+		return true
+	default:
+		return false
+	}
+}
+
 // PermissionMode is the base permission posture (claude --permission-mode).
 type PermissionMode string
 
@@ -179,12 +217,14 @@ const (
 	PermissionAcceptEdits PermissionMode = "acceptEdits"
 	PermissionAuto        PermissionMode = "auto"
 	PermissionBypass      PermissionMode = "bypassPermissions"
+	PermissionDontAsk     PermissionMode = "dontAsk"
 )
 
-// AllPermissionModes lists the permission postures in canonical order.
+// AllPermissionModes lists the permission postures in canonical order. Mirrors
+// the `claude --permission-mode` choices so the mapping is lossless.
 func AllPermissionModes() []PermissionMode {
 	return []PermissionMode{
-		PermissionAcceptEdits, PermissionAuto, PermissionBypass, PermissionDefault, PermissionPlan,
+		PermissionAcceptEdits, PermissionAuto, PermissionBypass, PermissionDefault, PermissionDontAsk, PermissionPlan,
 	}
 }
 

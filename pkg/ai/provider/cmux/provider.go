@@ -14,6 +14,7 @@ package cmux
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -173,6 +174,47 @@ func (p *Provider) drive(ctx context.Context, req ai.Request, events chan ai.Eve
 	emit(ctx, events, ai.Event{Kind: ai.EventResult, Success: true, Usage: usage, CostUSD: cost, Model: p.model})
 }
 
+// cmuxExtraArgs decodes req.CLIArgs into the backend's typed "extra cmux args"
+// struct. For codex it seeds the sandbox/approval posture from Permissions.Mode
+// (via api.CodexSafety) when the caller left them unset, so an unspecified form
+// still reflects the run's permission posture while an explicit value overrides it.
+func cmuxExtraArgs(agent string, req ai.Request) (any, error) {
+	switch agent {
+	case "codex":
+		opts := api.CodexCmuxOptions{}
+		if err := decodeCLIArgs(req.CLIArgs, &opts); err != nil {
+			return nil, err
+		}
+		sandbox, approval := api.CodexSafety(req.Permissions)
+		if opts.Sandbox == "" {
+			opts.Sandbox = sandbox
+		}
+		if opts.AskForApproval == "" {
+			opts.AskForApproval = approval
+		}
+		return &opts, nil
+	default:
+		opts := api.ClaudeCmuxOptions{}
+		if err := decodeCLIArgs(req.CLIArgs, &opts); err != nil {
+			return nil, err
+		}
+		return &opts, nil
+	}
+}
+
+// decodeCLIArgs round-trips the free-form CLIArgs map through JSON into the typed
+// option struct, failing loud on a type mismatch rather than silently dropping it.
+func decodeCLIArgs(args map[string]any, out any) error {
+	if len(args) == 0 {
+		return nil
+	}
+	data, err := json.Marshal(args)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data, out)
+}
+
 // execute mirrors gavel's CmuxExecutor.ExecuteGroup: it ensures a workspace +
 // surface, launches the agent, submits the prompt, and (for claude) tails the
 // session log under a stall watchdog. It returns the run's usage/cost on success,
@@ -181,7 +223,7 @@ func (p *Provider) execute(ctx context.Context, req ai.Request, r *run) (*ai.Usa
 	start := time.Now()
 	agent := p.agent
 	model := modelFlag(agent, p.model)
-	workDir := groupWorkDir(req.Context.Dir)
+	workDir := groupWorkDir(req.Cwd())
 
 	// Resolve the Claude session id. Resume reuses req.SessionID (launch with
 	// --resume, tail from the end). A fresh run pre-generates one (or takes
@@ -203,6 +245,10 @@ func (p *Provider) execute(ctx context.Context, req ai.Request, r *run) (*ai.Usa
 		r.emit(ai.Event{Kind: ai.EventSystem, SessionID: sessionID})
 	}
 
+	extra, err := cmuxExtraArgs(agent, req)
+	if err != nil {
+		return nil, 0, fmt.Errorf("cmux: invalid cliArgs: %w", err)
+	}
 	agentCommand := withEnv(AgentCommand(AgentCommandOpts{
 		Agent:           agent,
 		Model:           model,
@@ -212,17 +258,24 @@ func (p *Provider) execute(ctx context.Context, req ai.Request, r *run) (*ai.Usa
 		PermissionMode:  req.Permissions.Mode,
 		AllowedTools:    req.Permissions.Tools.Allow,
 		DisallowedTools: req.Permissions.Tools.Deny,
-	}), req.Context.Env)
+		Effort:          req.Effort,
+		Memory:          req.Memory,
+		Extra:           extra,
+	}), req.EnvMap())
 
 	timeout := r.timeout()
-	log.Infof("cmux: dispatching with %s in %s", agent, workDir)
+	// ctxLog routes internal step-by-step narration to the run's clicky task
+	// (its own buffered trace log) when one is attached to ctx, falling back to
+	// the plain "cmux" logger for callers with no task (e.g. bare-CLI runs).
+	ctxLog := ai.LoggerFromContext(ctx, log)
+	log.Infof("cmux: dispatching with %s (model=%s) in %s", agent, model, workDir)
 	log.Debugf("cmux command: cmux ping")
 	if err := r.client.Available(ctx); err != nil {
 		return nil, 0, err
 	}
 
 	name := AgentWorkspaceName(workDir, agent)
-	log.Infof("cmux: ensuring workspace %q for %s", name, agent)
+	ctxLog.Tracef("cmux: ensuring workspace %q for %s", name, agent)
 	workspace, reused, err := r.client.EnsureWorkspace(ctx, EnsureWorkspaceOpts{
 		Cwd:         workDir,
 		Name:        name,
@@ -233,12 +286,12 @@ func (p *Provider) execute(ctx context.Context, req ai.Request, r *run) (*ai.Usa
 		return nil, 0, err
 	}
 	if reused {
-		log.Infof("cmux: reusing workspace %s", workspace.String())
+		ctxLog.Tracef("cmux: reusing workspace %s", workspace.String())
 	} else {
-		log.Infof("cmux: created workspace %s", workspace.String())
+		ctxLog.Tracef("cmux: created workspace %s", workspace.String())
 	}
 
-	log.Infof("cmux: creating %s terminal surface in workspace %s", agent, workspace.String())
+	ctxLog.Tracef("cmux: creating %s terminal surface in workspace %s", agent, workspace.String())
 	ref, err := r.client.NewSurface(ctx, NewSurfaceOpts{
 		WorkspaceRef: workspace.String(),
 		Cwd:          workDir,
@@ -249,7 +302,7 @@ func (p *Provider) execute(ctx context.Context, req ai.Request, r *run) (*ai.Usa
 		return nil, 0, err
 	}
 
-	log.Infof("cmux: waiting for terminal surface to stabilize before launching %s", agent)
+	ctxLog.Tracef("cmux: waiting for terminal surface to stabilize before launching %s", agent)
 	beforeAgentScreen, err := r.waitForScreenIdle(ctx, ref, "before agent launch", timeout, "", false)
 	if err != nil {
 		return nil, 0, err
@@ -261,7 +314,7 @@ func (p *Provider) execute(ctx context.Context, req ai.Request, r *run) (*ai.Usa
 
 	// Wait until the agent is ready for the prompt. claude gates on a positive
 	// REPL-readiness signal (its input prompt appearing); codex keeps screen-idle.
-	log.Infof("cmux: waiting for %s to be ready for the prompt", agent)
+	ctxLog.Tracef("cmux: waiting for %s to be ready for the prompt", agent)
 	var beforePromptScreen string
 	if agent == "claude" {
 		if _, err := r.waitForREPLReady(ctx, ref, timeout, beforeAgentScreen); err != nil {
@@ -326,7 +379,7 @@ func (p *Provider) execute(ctx context.Context, req ai.Request, r *run) (*ai.Usa
 	if err := r.submitAndConfirm(ctx, ref, "initial prompt", instruction, submitConfirm{}); err != nil {
 		return nil, 0, err
 	}
-	log.Infof("cmux: waiting for %s screen to change and stabilize after prompt dispatch", agent)
+	ctxLog.Tracef("cmux: waiting for %s screen to change and stabilize after prompt dispatch", agent)
 	if _, err := r.waitForScreenIdle(ctx, ref, "after prompt dispatch", timeout, beforePromptScreen, true); err != nil {
 		return nil, 0, err
 	}
