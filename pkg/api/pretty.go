@@ -22,18 +22,6 @@ func (c Cost) Pretty() clickyapi.Text {
 		Appendf("· %d in / %d out", c.InputTokens, c.OutputTokens)
 }
 
-// summary renders the git pin as "repo@sha (PR pr)".
-func (g Git) summary() string {
-	s := orDash(g.Repo)
-	if g.SHA != "" {
-		s += "@" + g.SHA
-	}
-	if g.PR != "" {
-		s += " (PR " + g.PR + ")"
-	}
-	return s
-}
-
 // Pretty renders a one-line permissions summary instead of a noisy field dump.
 func (p Permissions) Pretty() clickyapi.Text {
 	mode := string(p.Mode)
@@ -56,22 +44,6 @@ func (p Permissions) Pretty() clickyapi.Text {
 	return t
 }
 
-// Pretty renders the workspace as a small tree: the working dir, then git, file
-// count, and worktree branch as indented children.
-func (c Context) Pretty() clickyapi.Text {
-	t := clickyapi.Text{}.Add(icons.Folder).Space().Append(orDash(c.Dir), "font-medium")
-	if c.Git != nil {
-		t = t.NewLine().Append("  ").Add(icons.Git).Space().Append(c.Git.summary())
-	}
-	if n := len(c.Files); n > 0 {
-		t = t.NewLine().Append("  ").Add(icons.File).Space().Appendf("%d changed file(s)", n)
-	}
-	if c.Worktree != nil && c.Worktree.Branch != "" {
-		t = t.NewLine().Append("  ").Add(icons.Git).Space().Appendf("worktree %s", c.Worktree.Branch)
-	}
-	return t
-}
-
 // Pretty renders the spec as a compact multi-line summary headed by the model.
 func (s Spec) Pretty() clickyapi.Text {
 	t := clickyapi.Text{}.Add(icons.Robot).Space().
@@ -84,8 +56,8 @@ func (s Spec) Pretty() clickyapi.Text {
 		t = t.NewLine().Append(fmt.Sprintf("  budget: $%.2f / %d tokens", s.Budget.Cost, s.Budget.MaxTokens))
 	}
 	t = t.NewLine().Append("  perms: ").Add(s.Permissions.Pretty())
-	if s.Context.Dir != "" || s.Context.Git != nil {
-		t = t.NewLine().Append("  ").Add(s.Context.Pretty())
+	if cwd := s.Cwd(); cwd != "" {
+		t = t.NewLine().Append("  ").Add(icons.Folder).Space().Append(cwd, "font-medium")
 	}
 	return t
 }

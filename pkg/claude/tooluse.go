@@ -1,7 +1,6 @@
 package claude
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +12,7 @@ import (
 	"github.com/flanksource/captain/pkg/claude/tools"
 	captainCollections "github.com/flanksource/captain/pkg/collections"
 	"github.com/flanksource/commons/collections"
+	"github.com/segmentio/encoding/json"
 )
 
 // ToolUse represents a single tool invocation extracted from history
@@ -42,13 +42,15 @@ type ToolUse struct {
 
 // Filter defines criteria for filtering tool uses
 type Filter struct {
-	Tools      []string
-	Paths      []string
-	Since      *time.Time
-	Before     *time.Time
-	Limit      int
-	SessionID  string   // exact or prefix match against ToolUse.SessionID
-	SessionIDs []string // exact or prefix match against ToolUse.SessionID
+	Tools        []string
+	Paths        []string
+	Since        *time.Time
+	Before       *time.Time
+	Limit        int
+	SessionID    string   // exact or prefix match against ToolUse.SessionID
+	SessionIDs   []string // exact or prefix match against ToolUse.SessionID
+	KeepRaw      bool     // retain raw JSONL lines for --raw output
+	IncludeCosts bool     // aggregate session costs while parsing history
 	// IncludeAgents, when set, makes ParseHistory also read nested sub-agent
 	// transcripts (<session>/subagents/agent-*.jsonl) for the in-scope sessions.
 	IncludeAgents bool

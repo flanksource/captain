@@ -2,21 +2,34 @@ package claude
 
 import (
 	"bufio"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"strings"
+
+	"github.com/segmentio/encoding/json"
 )
 
-// ReadHistoryFile reads all entries from a JSONL history file
+// ReadOptions controls optional reader behavior.
+type ReadOptions struct {
+	KeepRaw bool
+}
+
+// ReadHistoryFile reads all entries from a JSONL history file.
+// It preserves raw JSONL lines for backwards compatibility.
 func ReadHistoryFile(path string) ([]HistoryEntry, error) {
+	return ReadHistoryFileWithOptions(path, ReadOptions{KeepRaw: true})
+}
+
+// ReadHistoryFileWithOptions reads all entries from a JSONL history file with
+// caller-selected optional fields.
+func ReadHistoryFileWithOptions(path string, opts ReadOptions) ([]HistoryEntry, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()
-	return ReadHistory(f)
+	return ReadHistoryWithOptions(f, opts)
 }
 
 // ReadHistory reads all entries from a JSONL reader. It uses the same
@@ -24,7 +37,13 @@ func ReadHistoryFile(path string) ([]HistoryEntry, error) {
 // input and on-disk session files surface the same set of synthetic
 // rows (session init, hooks, result/turn summaries, etc.).
 func ReadHistory(r io.Reader) ([]HistoryEntry, error) {
-	return readJSONL(r, true)
+	return ReadHistoryWithOptions(r, ReadOptions{KeepRaw: true})
+}
+
+// ReadHistoryWithOptions reads Claude history JSONL with caller-selected
+// optional fields.
+func ReadHistoryWithOptions(r io.Reader, opts ReadOptions) ([]HistoryEntry, error) {
+	return readJSONL(r, true, opts)
 }
 
 // ReadStreamJSON reads Claude Code stream-json JSONL.
@@ -36,7 +55,7 @@ func ReadHistory(r io.Reader) ([]HistoryEntry, error) {
 // these into history rows. Unrecognized (type, subtype) tuples are counted
 // via RecordUnhandledStreamType and otherwise ignored — they never error.
 func ReadStreamJSON(r io.Reader) ([]HistoryEntry, error) {
-	return readJSONL(r, false)
+	return readJSONL(r, false, ReadOptions{KeepRaw: true})
 }
 
 // readJSONL is the shared scanner used by both ReadHistory and ReadStreamJSON.
@@ -45,7 +64,7 @@ func ReadStreamJSON(r io.Reader) ([]HistoryEntry, error) {
 // implicitly a HistoryEntry) are unmarshaled directly into a HistoryEntry.
 // Stream-json sets it false: every line carries a `type` and is routed by
 // dispatchEvent.
-func readJSONL(r io.Reader, fallbackToHistoryEntry bool) ([]HistoryEntry, error) {
+func readJSONL(r io.Reader, fallbackToHistoryEntry bool, opts ReadOptions) ([]HistoryEntry, error) {
 	var entries []HistoryEntry
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 1024*1024), 10*1024*1024)
@@ -70,13 +89,17 @@ func readJSONL(r io.Reader, fallbackToHistoryEntry bool) ([]HistoryEntry, error)
 				entries = append(entries, parseErrorEntry(lineNo, line, err))
 				continue
 			}
-			entry.RawLine = append(json.RawMessage(nil), line...)
+			if opts.KeepRaw {
+				entry.RawLine = append(json.RawMessage(nil), line...)
+			}
 			entries = append(entries, entry)
 			continue
 		}
 
 		for _, entry := range dispatchEvent(sj, line, lineNo) {
-			entry.RawLine = append(json.RawMessage(nil), line...)
+			if opts.KeepRaw {
+				entry.RawLine = append(json.RawMessage(nil), line...)
+			}
 			entries = append(entries, entry)
 		}
 	}
@@ -103,6 +126,7 @@ type streamJSONLine struct {
 	CWD            string          `json:"cwd,omitempty"`
 	GitBranch      string          `json:"gitBranch,omitempty"`
 	Slug           string          `json:"slug,omitempty"`
+	Error          string          `json:"error,omitempty"`
 	Attachment     json.RawMessage `json:"attachment,omitempty"`
 }
 
@@ -253,12 +277,7 @@ func single(e HistoryEntry) []HistoryEntry { return []HistoryEntry{e} }
 // carries a top-level "error" field (e.g. invalid_request, 4xx/5xx from the
 // model API). The error would otherwise be invisible in history output.
 func apiErrorFromAssistantLine(sj streamJSONLine, raw []byte) (HistoryEntry, bool) {
-	var full map[string]any
-	if err := json.Unmarshal(raw, &full); err != nil {
-		return HistoryEntry{}, false
-	}
-	errStr, _ := full["error"].(string)
-	if errStr == "" {
+	if sj.Error == "" {
 		return HistoryEntry{}, false
 	}
 	return syntheticEntry(sj, "ApiError", raw, []string{

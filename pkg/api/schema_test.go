@@ -18,7 +18,7 @@ func TestSchemaJSON(t *testing.T) {
 		t.Fatalf("schema is not valid JSON: %v", err)
 	}
 	s := string(data)
-	for _, want := range []string{"xhigh", "Permissions", "Context", "Budget", `"maxTokens"`} {
+	for _, want := range []string{"xhigh", "Permissions", "Setup", "Budget", `"maxTokens"`} {
 		if !strings.Contains(s, want) {
 			t.Errorf("schema missing %q\n%s", want, s)
 		}

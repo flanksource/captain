@@ -17,18 +17,9 @@ func TestCostPretty(t *testing.T) {
 
 func TestSpecPretty(t *testing.T) {
 	got := sampleSpec().Pretty().String()
-	for _, want := range []string{"Spec", "claude-sonnet-4-6", "effort=xhigh", "mode=acceptEdits"} {
+	for _, want := range []string{"Spec", "claude-sonnet-4-6", "effort=xhigh", "mode=acceptEdits", "/repo"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("Spec.Pretty() = %q, want substring %q", got, want)
-		}
-	}
-}
-
-func TestContextPretty(t *testing.T) {
-	got := sampleSpec().Context.Pretty().String()
-	for _, want := range []string{"/repo", "abc123", "PR 42", "1 changed file"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("Context.Pretty() = %q, want substring %q", got, want)
 		}
 	}
 }

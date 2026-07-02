@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/flanksource/commons-db/shell"
 	"gopkg.in/yaml.v3"
 )
 
@@ -14,19 +15,31 @@ func floatPtr(f float64) *float64 { return &f }
 // sampleSpec is a fully-populated spec used across round-trip and render tests.
 func sampleSpec() Spec {
 	return Spec{
-		Model:  Model{Name: "claude-sonnet-4-6", Backend: BackendAnthropic, Temperature: floatPtr(0.7), Effort: EffortXHigh},
+		Model:  Model{Name: "claude-sonnet-4-6", Backend: BackendAnthropic, Temperature: floatPtr(0.7), Effort: EffortXHigh, NoCache: true},
 		Prompt: Prompt{User: "refactor the parser", System: "be precise", Source: "cli"},
-		Budget: Budget{Cost: 2.5, MaxTokens: 8000},
+		Budget: Budget{Cost: 2.5, MaxTokens: 8000, MaxTurns: 5, Timeout: "120s"},
 		Memory: Memory{Skills: []string{"/skills/a"}, SkipUser: true},
 		Permissions: Permissions{
 			Mode:    PermissionAcceptEdits,
 			Presets: []Preset{PresetEdit},
-			Tools:   Tools{Allow: []string{"Read", "Edit"}, Modes: map[string]ToolMode{"Bash": ToolModeAsk}},
+			Tools:   Tools{Allow: []string{"Edit", "Read"}, Modes: map[string]ToolMode{"Bash": ToolModeAsk}},
 			MCP:     MCP{Disabled: true},
+			Plugins: ResourcePolicies{"/plugins": ResourceEnabled},
+			Skills:  ResourcePolicies{"/skills/b": ResourceDisabled},
 		},
-		Context:   Context{Dir: "/repo", Files: []string{"parser.go"}, Git: &Git{Repo: "/repo", SHA: "abc123", PR: "42"}},
+		Setup: &shell.Setup{
+			Cwd:    "/repo",
+			DotEnv: []string{".env"},
+			Checkout: &shell.Checkout{
+				Mode: shell.CheckoutLocal,
+				Path: "/repo",
+				Worktree: &shell.Worktree{
+					Mode:   shell.WorktreeNew,
+					Prefix: "captain",
+				},
+			},
+		},
 		SessionID: "sess-1",
-		MaxTurns:  5,
 	}
 }
 
@@ -64,7 +77,7 @@ func TestSpec_YAMLRoundTrip(t *testing.T) {
 func TestSpec_JSONFieldNames(t *testing.T) {
 	data, _ := json.Marshal(sampleSpec())
 	s := string(data)
-	for _, want := range []string{`"model"`, `"prompt"`, `"budget"`, `"permissions"`, `"context"`, `"maxTokens"`, `"skipUser"`, `"sessionId"`, `"effort":"xhigh"`} {
+	for _, want := range []string{`"model"`, `"prompt"`, `"budget"`, `"permissions"`, `"setup"`, `"maxTokens"`, `"maxTurns"`, `"timeout"`, `"noCache"`, `"skipUser"`, `"sessionId"`, `"effort":"xhigh"`} {
 		if !strings.Contains(s, want) {
 			t.Errorf("marshalled spec missing %s\ngot: %s", want, s)
 		}
@@ -125,7 +138,7 @@ func TestSpec_Validate(t *testing.T) {
 		{"bad backend", func(s *Spec) { s.Model.Backend = "nope" }, "invalid backend"},
 		{"empty prompt", func(s *Spec) { s.Prompt.User = "" }, "prompt text is required"},
 		{"negative budget", func(s *Spec) { s.Budget.Cost = -1 }, "budget cost"},
-		{"too many turns", func(s *Spec) { s.MaxTurns = 200 }, "0-100"},
+		{"too many turns", func(s *Spec) { s.Budget.MaxTurns = 200 }, "0-100"},
 		{"bad permission mode", func(s *Spec) { s.Permissions.Mode = "yolo" }, "invalid permission mode"},
 	}
 	for _, tc := range cases {

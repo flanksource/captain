@@ -28,6 +28,34 @@ func TestReadHistory(t *testing.T) {
 	}
 }
 
+func TestReadHistoryWithOptionsCanSkipRawLines(t *testing.T) {
+	jsonl := `{"uuid":"1","sessionId":"s1","timestamp":"2024-01-15T10:00:00Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu-1","name":"Bash","input":{"command":"pwd"}}]}}`
+
+	withRaw, err := ReadHistory(strings.NewReader(jsonl))
+	if err != nil {
+		t.Fatalf("ReadHistory failed: %v", err)
+	}
+	if len(withRaw) != 1 || len(withRaw[0].RawLine) == 0 {
+		t.Fatalf("ReadHistory should keep raw lines by default, got %+v", withRaw)
+	}
+
+	withoutRaw, err := ReadHistoryWithOptions(strings.NewReader(jsonl), ReadOptions{})
+	if err != nil {
+		t.Fatalf("ReadHistoryWithOptions failed: %v", err)
+	}
+	if len(withoutRaw) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(withoutRaw))
+	}
+	if len(withoutRaw[0].RawLine) != 0 {
+		t.Fatalf("ReadHistoryWithOptions without KeepRaw should omit raw line, got %q", string(withoutRaw[0].RawLine))
+	}
+
+	uses := ExtractToolUses(withoutRaw)
+	if len(uses) != 1 || len(uses[0].RawEntry) != 0 {
+		t.Fatalf("tool use should not carry raw entry when KeepRaw is false: %+v", uses)
+	}
+}
+
 func TestReadHistory_EmptyLines(t *testing.T) {
 	jsonl := `{"uuid":"1","sessionId":"s1","timestamp":"2024-01-15T10:00:00Z","message":{"role":"user","content":[]}}
 

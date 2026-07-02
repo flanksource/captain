@@ -1,7 +1,7 @@
 package claude
 
 import (
-	"encoding/json"
+	"github.com/segmentio/encoding/json"
 	"path/filepath"
 	"strings"
 )

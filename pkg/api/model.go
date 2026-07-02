@@ -23,6 +23,9 @@ type Model struct {
 
 	// Effort is the reasoning effort for thinking-capable models.
 	Effort Effort `json:"effort,omitempty" yaml:"effort,omitempty" jsonschema:"enum=,enum=low,enum=medium,enum=high,enum=xhigh" pretty:"label=Effort"`
+
+	// NoCache disables model response caching for this run.
+	NoCache bool `json:"noCache,omitempty" yaml:"noCache,omitempty" pretty:"label=No Cache"`
 }
 
 // ResolveBackend returns Backend when set, otherwise infers it from Name.
