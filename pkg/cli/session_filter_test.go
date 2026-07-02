@@ -98,6 +98,86 @@ func TestCollectCodexHistoryFiltersByMetadata(t *testing.T) {
 	assert.Empty(t, uses)
 }
 
+func TestNarrowHistorySourcesUsesSingleClaudeMatch(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	repo := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "go.mod"), []byte("module example.com/repo\n"), 0o644))
+
+	writeClaudeHistoryFixture(t, home, repo, "095ba120-06f4-4a34-a091-8e0cfa53c20e")
+	writeCodexHistoryFixture(t, home, "other", "019e0365-dc2a-7ad0-a5a8-78936481a928", repo, "skip")
+
+	showClaude, showCodex := narrowHistorySources(repo, false, true, true, claude.Filter{
+		SessionID:     "095ba120-06f4-4a34-a091-8e0cfa53c20e",
+		IncludeAgents: true,
+	})
+	assert.True(t, showClaude)
+	assert.False(t, showCodex)
+}
+
+func TestNarrowHistorySourcesUsesSingleCodexMatch(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	repo := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "go.mod"), []byte("module example.com/repo\n"), 0o644))
+
+	writeCodexHistoryFixture(t, home, "match", "095ba120-06f4-4a34-a091-8e0cfa53c20e", repo, "hello")
+
+	showClaude, showCodex := narrowHistorySources(repo, false, true, true, claude.Filter{
+		SessionID: "095ba120-06f4-4a34-a091-8e0cfa53c20e",
+	})
+	assert.False(t, showClaude)
+	assert.True(t, showCodex)
+}
+
+func TestNarrowHistorySourcesKeepsAmbiguousMatches(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	repo := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "go.mod"), []byte("module example.com/repo\n"), 0o644))
+
+	sessionID := "095ba120-06f4-4a34-a091-8e0cfa53c20e"
+	writeClaudeHistoryFixture(t, home, repo, sessionID)
+	writeCodexHistoryFixture(t, home, "match", sessionID, repo, "hello")
+
+	showClaude, showCodex := narrowHistorySources(repo, false, true, true, claude.Filter{
+		SessionID: "095ba120",
+	})
+	assert.True(t, showClaude)
+	assert.True(t, showCodex)
+}
+
+func TestNarrowHistorySourcesFullClaudeUUIDSkipsCodexAmbiguityScan(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	repo := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "go.mod"), []byte("module example.com/repo\n"), 0o644))
+
+	sessionID := "095ba120-06f4-4a34-a091-8e0cfa53c20e"
+	writeClaudeHistoryFixture(t, home, repo, sessionID)
+	writeCodexHistoryFixture(t, home, "match", sessionID, repo, "hello")
+
+	showClaude, showCodex := narrowHistorySources(repo, false, true, true, claude.Filter{
+		SessionID: sessionID,
+	})
+	assert.True(t, showClaude)
+	assert.False(t, showCodex)
+}
+
+func TestCodexFileNameMatchesSessionFilter(t *testing.T) {
+	sessionID := "095ba120-06f4-4a34-a091-8e0cfa53c20e"
+	filter := claude.Filter{SessionID: sessionID}
+
+	assert.False(t, codexFileNameMatchesSessionFilter(
+		"/tmp/rollout-2026-07-02-unrelated.jsonl",
+		filter,
+	))
+	assert.True(t, codexFileNameMatchesSessionFilter(
+		fmt.Sprintf("/tmp/rollout-%s.jsonl", sessionID),
+		filter,
+	))
+}
+
 func writeCodexHistoryFixture(t *testing.T, home, name, sessionID, cwd, message string) {
 	t.Helper()
 	dir := filepath.Join(home, ".codex", "sessions", "2026", "06", "29")
@@ -110,4 +190,16 @@ func writeCodexHistoryFixture(t *testing.T, home, name, sessionID, cwd, message 
 		message,
 	)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, name+".jsonl"), []byte(content), 0o644))
+}
+
+func writeClaudeHistoryFixture(t *testing.T, home, repo, sessionID string) {
+	t.Helper()
+	dir := filepath.Join(home, ".claude", "projects", claude.NormalizePath(repo))
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	content := fmt.Sprintf(
+		`{"type":"assistant","sessionId":%q,"uuid":"u1","timestamp":"2026-06-29T10:00:00Z","cwd":%q,"message":{"role":"assistant","content":[{"type":"tool_use","id":"tu-1","name":"Bash","input":{"command":"pwd"}}]}}`+"\n",
+		sessionID,
+		repo,
+	)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, sessionID+".jsonl"), []byte(content), 0o644))
 }

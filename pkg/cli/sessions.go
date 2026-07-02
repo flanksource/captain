@@ -36,21 +36,166 @@ type SessionListResult struct {
 	Scope    string          `json:"scope"`
 }
 
+type SessionLiveOptions struct {
+	Source string `flag:"source" help:"Filter source: all, claude, codex" default:"all"`
+	All    bool   `flag:"all" help:"Include sessions from all projects" short:"a"`
+	Query  string `flag:"q" help:"Search session id, model, cwd, branch, provider, pid, or health"`
+	Limit  int    `flag:"limit" help:"Maximum sessions to return" default:"25" short:"l"`
+	Full   bool   `flag:"full" help:"Parse all matching history exactly; ignores --limit"`
+}
+
+type SessionLiveResult struct {
+	Sessions []SessionRecord      `json:"sessions"`
+	Total    int                  `json:"total"`
+	Source   string               `json:"source"`
+	Scope    string               `json:"scope"`
+	Summary  SessionDashboardWire `json:"summary"`
+}
+
 type SessionRecord struct {
-	Key             string             `json:"key"`
-	ID              string             `json:"id"`
-	Source          string             `json:"source"`
-	StartedAt       *time.Time         `json:"startedAt,omitempty"`
-	EndedAt         *time.Time         `json:"endedAt,omitempty"`
-	Model           string             `json:"model,omitempty"`
-	ReasoningEffort string             `json:"reasoningEffort,omitempty"`
-	Version         string             `json:"version,omitempty"`
-	GitBranch       string             `json:"gitBranch,omitempty"`
-	Provider        string             `json:"provider,omitempty"`
-	CWD             string             `json:"cwd,omitempty"`
-	ToolCalls       int                `json:"toolCalls"`
-	Messages        int                `json:"messages"`
-	Entries         []SessionEntryWire `json:"entries,omitempty"`
+	Key             string              `json:"key"`
+	ID              string              `json:"id"`
+	Source          string              `json:"source"`
+	StartedAt       *time.Time          `json:"startedAt,omitempty"`
+	EndedAt         *time.Time          `json:"endedAt,omitempty"`
+	Model           string              `json:"model,omitempty"`
+	ReasoningEffort string              `json:"reasoningEffort,omitempty"`
+	Version         string              `json:"version,omitempty"`
+	GitBranch       string              `json:"gitBranch,omitempty"`
+	Provider        string              `json:"provider,omitempty"`
+	CWD             string              `json:"cwd,omitempty"`
+	ToolCalls       int                 `json:"toolCalls"`
+	Messages        int                 `json:"messages"`
+	DetailAvailable bool                `json:"detailAvailable"`
+	Tokens          *SessionTokensWire  `json:"tokens,omitempty"`
+	Context         *SessionContextWire `json:"context,omitempty"`
+	CostUSD         float64             `json:"costUsd,omitempty"`
+	Live            *SessionLiveWire    `json:"live,omitempty"`
+	Health          []SessionHealthWire `json:"health,omitempty"`
+	Entries         []SessionEntryWire  `json:"entries,omitempty"`
+}
+
+type SessionTokensWire struct {
+	InputTokens         int `json:"inputTokens,omitempty"`
+	OutputTokens        int `json:"outputTokens,omitempty"`
+	CacheReadTokens     int `json:"cacheReadTokens,omitempty"`
+	CacheCreationTokens int `json:"cacheCreationTokens,omitempty"`
+	TotalTokens         int `json:"totalTokens,omitempty"`
+}
+
+type SessionContextWire struct {
+	UsedTokens   int `json:"usedTokens,omitempty"`
+	WindowTokens int `json:"windowTokens,omitempty"`
+	FreePercent  int `json:"freePercent"`
+}
+
+type SessionLiveWire struct {
+	PID           int        `json:"pid,omitempty"`
+	Status        string     `json:"status,omitempty"`
+	Active        bool       `json:"active"`
+	CPUPercent    float64    `json:"cpuPercent,omitempty"`
+	MemoryPercent float64    `json:"memoryPercent,omitempty"`
+	StartedAt     *time.Time `json:"startedAt,omitempty"`
+	CWD           string     `json:"cwd,omitempty"`
+	Command       string     `json:"command,omitempty"`
+}
+
+type SessionHealthWire struct {
+	Kind     string `json:"kind"`
+	Severity string `json:"severity"`
+	Message  string `json:"message"`
+}
+
+type SessionDashboardWire struct {
+	TotalSessions       int     `json:"totalSessions"`
+	LiveSessions        int     `json:"liveSessions"`
+	ActiveSessions      int     `json:"activeSessions"`
+	StoppedSessions     int     `json:"stoppedSessions"`
+	AlertSessions       int     `json:"alertSessions"`
+	InputTokens         int     `json:"inputTokens,omitempty"`
+	OutputTokens        int     `json:"outputTokens,omitempty"`
+	CacheReadTokens     int     `json:"cacheReadTokens,omitempty"`
+	CacheCreationTokens int     `json:"cacheCreationTokens,omitempty"`
+	TotalTokens         int     `json:"totalTokens,omitempty"`
+	CostUSD             float64 `json:"costUsd,omitempty"`
+	LowestContextFree   *int    `json:"lowestContextFree,omitempty"`
+}
+
+func (t SessionTokensWire) String() string {
+	if t.TotalTokens > 0 {
+		return compactSessionInt(t.TotalTokens)
+	}
+	total := t.InputTokens + t.OutputTokens + t.CacheReadTokens + t.CacheCreationTokens
+	if total > 0 {
+		return compactSessionInt(total)
+	}
+	return ""
+}
+
+func (c SessionContextWire) String() string {
+	if c.WindowTokens > 0 {
+		return fmt.Sprintf("%d%% free", c.FreePercent)
+	}
+	if c.FreePercent > 0 {
+		return fmt.Sprintf("%d%% free", c.FreePercent)
+	}
+	return ""
+}
+
+func (l SessionLiveWire) String() string {
+	if l.PID == 0 && l.Status == "" && l.Command == "" {
+		return ""
+	}
+	parts := make([]string, 0, 4)
+	if l.PID > 0 {
+		parts = append(parts, fmt.Sprintf("pid %d", l.PID))
+	}
+	if l.Status != "" {
+		parts = append(parts, l.Status)
+	}
+	if l.CPUPercent > 0 {
+		parts = append(parts, fmt.Sprintf("%.1f%% cpu", l.CPUPercent))
+	}
+	if l.MemoryPercent > 0 {
+		parts = append(parts, fmt.Sprintf("%.1f%% mem", l.MemoryPercent))
+	}
+	if command := compactSessionCommand(l.Command); command != "" {
+		parts = append(parts, command)
+	}
+	return strings.Join(parts, " ")
+}
+
+func (h SessionHealthWire) String() string {
+	if h.Kind == "" {
+		return h.Message
+	}
+	if h.Severity == "" {
+		return h.Kind
+	}
+	return h.Severity + ":" + h.Kind
+}
+
+func compactSessionCommand(command string) string {
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return ""
+	}
+	base := filepath.Base(strings.Trim(fields[0], `"'`))
+	if len(fields) > 1 {
+		return base + " ..."
+	}
+	return base
+}
+
+func compactSessionInt(value int) string {
+	switch {
+	case value >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(value)/1_000_000)
+	case value >= 1_000:
+		return fmt.Sprintf("%dk", value/1_000)
+	default:
+		return fmt.Sprintf("%d", value)
+	}
 }
 
 type SessionEntryWire struct {
@@ -202,11 +347,10 @@ func discoverClaudeSessions(cwd string, searchAll bool) ([]sessionCandidate, err
 	}
 	candidates := make([]sessionCandidate, 0, len(files))
 	for _, file := range files {
-		entries, err := claude.ReadHistoryFile(file)
+		record, err := summarizeClaudeSessionFile(file)
 		if err != nil {
 			continue
 		}
-		record := summarizeClaudeSession(file, entries)
 		candidates = append(candidates, sessionCandidate{record: record, path: file})
 	}
 	return candidates, nil
@@ -227,24 +371,34 @@ func discoverCodexSessions(cwd string, searchAll bool) ([]sessionCandidate, erro
 
 	candidates := make([]sessionCandidate, 0, len(files))
 	for _, file := range files {
-		uses, err := history.ExtractCodexToolUses(file)
-		if err != nil || len(uses) == 0 {
+		if !searchAll {
+			meta, err := history.ReadCodexSessionMeta(file)
+			if err != nil || meta == nil || !codexMetaMatchesProject(meta, matchRoot) {
+				continue
+			}
+		}
+		record, err := summarizeCodexSessionFile(file)
+		if err != nil || record.ID == "" {
 			continue
 		}
-		if !searchAll && !codexSessionMatchesProject(uses, matchRoot) {
-			continue
-		}
-		record := summarizeCodexSession(file, uses)
 		candidates = append(candidates, sessionCandidate{record: record, path: file})
 	}
 	return candidates, nil
 }
 
+func codexMetaMatchesProject(meta *history.CodexSessionInfo, projectRoot string) bool {
+	if meta == nil {
+		return false
+	}
+	return sessionRecordMatchesProject(SessionRecord{CWD: meta.CWD}, projectRoot)
+}
+
 func summarizeClaudeSession(file string, entries []claude.HistoryEntry) SessionRecord {
 	record := SessionRecord{
-		Key:    sessionRecordKey("claude", file),
-		ID:     sessionIDFromFile(file),
-		Source: "claude",
+		Key:             sessionRecordKey("claude", file),
+		ID:              sessionIDFromFile(file),
+		Source:          "claude",
+		DetailAvailable: true,
 	}
 	for _, entry := range entries {
 		ts, err := entry.ParseTimestamp()
@@ -278,8 +432,9 @@ func summarizeClaudeSession(file string, entries []claude.HistoryEntry) SessionR
 
 func summarizeCodexSession(file string, uses []history.ToolUse) SessionRecord {
 	record := SessionRecord{
-		Key:    sessionRecordKey("codex", file),
-		Source: "codex",
+		Key:             sessionRecordKey("codex", file),
+		Source:          "codex",
+		DetailAvailable: true,
 	}
 	for _, use := range uses {
 		if use.SessionID != "" {
@@ -524,6 +679,9 @@ func sessionMatchesQuery(record SessionRecord, query string) bool {
 		if strings.Contains(strings.ToLower(value), query) {
 			return true
 		}
+	}
+	if liveMatchesQuery(record.Live, query) || healthMatchesQuery(record.Health, query) {
+		return true
 	}
 	return false
 }
