@@ -15,6 +15,8 @@ import (
 	"github.com/flanksource/captain/pkg/captainconfig"
 	"github.com/flanksource/captain/pkg/claude"
 	"github.com/flanksource/captain/pkg/claude/tools"
+	dbcontext "github.com/flanksource/commons-db/context"
+	"github.com/flanksource/commons-db/shell"
 )
 
 // loadSavedAI returns the saved AI defaults from ~/.captain.yaml. Errors are
@@ -23,7 +25,7 @@ import (
 func loadSavedAI() captainconfig.AIDefaults {
 	cfg, _, err := captainconfig.Load()
 	if err != nil {
-		log.Debugf("captainconfig load: %v (continuing with zero defaults)", err)
+		log.Warnf("captainconfig load: %v (continuing with zero defaults)", err)
 		return captainconfig.AIDefaults{}
 	}
 	return cfg.AI
@@ -221,8 +223,8 @@ func (o AIRuntimeOptions) ToRequest(systemPrompt, appendSystemPrompt, userPrompt
 
 	return ai.Request{
 		Prompt: api.Prompt{System: systemPrompt, AppendSystem: appendSystemPrompt, User: userPrompt},
-		Model:  api.Model{Temperature: temperaturePtr, Effort: api.Effort(effort)},
-		Budget: api.Budget{MaxTokens: maxTokens},
+		Model:  api.Model{Temperature: temperaturePtr, Effort: api.Effort(effort), NoCache: o.NoCache || saved.NoCache},
+		Budget: api.Budget{MaxTokens: maxTokens, MaxTurns: o.MaxTurns},
 		Memory: api.Memory{
 			Skills:      o.SkillDirs,
 			SkipHooks:   o.NoHooks || saved.NoHooks,
@@ -234,7 +236,6 @@ func (o AIRuntimeOptions) ToRequest(systemPrompt, appendSystemPrompt, userPrompt
 		},
 		Permissions: perms,
 		SessionID:   o.Resume,
-		MaxTurns:    o.MaxTurns,
 	}, nil
 }
 
@@ -293,35 +294,69 @@ func RunAIPrompt(opts AIPromptOptions) (any, error) {
 		return nil, err
 	}
 
-	timeout, _ := time.ParseDuration(opts.Timeout)
-	if timeout <= 0 {
-		timeout = 120 * time.Second
-	}
-	return executePromptRequest(context.Background(), req, cfg, timeout, opts.NoStream)
+	return executePromptRequest(context.Background(), req, cfg, runtimeTimeout(req.Budget.Timeout), opts.NoStream)
 }
 
 func executePromptRequest(parent context.Context, req ai.Request, cfg ai.Config, timeout time.Duration, noStream bool) (any, error) {
-	p, err := ai.NewProvider(cfg)
+	ctx, cancel := runContext(parent, req, timeout)
+	defer cancel()
+
+	p, cleanup, err := buildProvider(ctx, &req, cfg)
 	if err != nil {
 		return nil, err
 	}
-	if p, err = middleware.Wrap(p, middleware.WithLogging()); err != nil {
-		return nil, err
-	}
-
-	if parent == nil {
-		parent = context.Background()
-	}
-	if timeout <= 0 {
-		timeout = 120 * time.Second
-	}
-	ctx, cancel := context.WithTimeout(parent, timeout)
-	defer cancel()
+	defer cleanup()
 
 	if streamer, ok := p.(ai.StreamingProvider); ok && !noStream {
 		return runStreaming(ctx, streamer, req)
 	}
 	return runBuffered(ctx, p, req)
+}
+
+// runContext derives the timeout-bounded context for a prompt execution. A
+// non-empty req.Budget.Timeout overrides the caller-supplied timeout; a
+// non-positive timeout falls back to 120s.
+func runContext(parent context.Context, req ai.Request, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if parent == nil {
+		parent = context.Background()
+	}
+	if req.Budget.Timeout != "" {
+		timeout = runtimeTimeout(req.Budget.Timeout)
+	}
+	if timeout <= 0 {
+		timeout = 120 * time.Second
+	}
+	return context.WithTimeout(parent, timeout)
+}
+
+// buildProvider constructs the logging-wrapped AI provider for req/cfg. When
+// req.Setup is present it runs the shell preparation (mutating req's cwd/env to
+// the prepared sandbox) and returns its cleanup; callers MUST defer the returned
+// cleanup. ctx should already carry the run timeout.
+func buildProvider(ctx context.Context, req *ai.Request, cfg ai.Config) (ai.Provider, func(), error) {
+	cleanup := func() {}
+	if req.NoCache {
+		cfg.NoCache = true
+	}
+	if req.Setup != nil {
+		setup, err := shell.Prepare(dbcontext.NewContext(ctx), req.Setup)
+		if err != nil {
+			return nil, cleanup, err
+		}
+		cleanup = func() { _ = setup.Cleanup() }
+		req.SetCwd(setup.Cwd)
+		req.Setup.Env = setup.Env
+	}
+	p, err := ai.NewProvider(cfg)
+	if err != nil {
+		cleanup()
+		return nil, func() {}, err
+	}
+	if p, err = middleware.Wrap(p, middleware.WithLogging()); err != nil {
+		cleanup()
+		return nil, func() {}, err
+	}
+	return p, cleanup, nil
 }
 
 func runBuffered(ctx context.Context, p ai.Provider, req ai.Request) (any, error) {
@@ -337,7 +372,7 @@ func runBuffered(ctx context.Context, p ai.Provider, req ai.Request) (any, error
 		Text:        resp.Text,
 		Model:       model,
 		Backend:     backend,
-		Dir:         input.Context.Dir,
+		Dir:         input.Cwd(),
 		SessionID:   input.SessionID,
 		Input:       input,
 		InputTokens: resp.Usage.InputTokens,
@@ -402,7 +437,7 @@ func runStreaming(ctx context.Context, sp ai.StreamingProvider, req ai.Request) 
 		Text:        text,
 		Model:       model,
 		Backend:     backend,
-		Dir:         input.Context.Dir,
+		Dir:         input.Cwd(),
 		SessionID:   input.SessionID,
 		Input:       input,
 		InputTokens: usage.InputTokens,

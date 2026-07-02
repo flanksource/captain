@@ -157,6 +157,7 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	mux := http.NewServeMux()
 	rpcServer.RegisterRoutes(mux)
 	mux.HandleFunc("POST /api/captain/chat/threads/from-agent", handleThreadFromAgent(threadStore))
+	mux.HandleFunc("GET /api/captain/sessions/live", handleSessionsLive())
 	mux.HandleFunc("GET /api/captain/ai/permissions/catalog", handlePermissionCatalog(cwd))
 	mux.HandleFunc("GET /api/captain/ai/cli-options/catalog", handleCLIOptionsCatalog())
 	mux.HandleFunc("GET /api/captain/secrets/resources", handleSecretResources())
@@ -237,6 +238,38 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 		return httpSrv.Shutdown(shutdownCtx)
 	case err := <-errCh:
 		return err
+	}
+}
+
+func handleSessionsLive() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query()
+		opts := SessionLiveOptions{
+			Source: strings.TrimSpace(query.Get("source")),
+			Query:  strings.TrimSpace(query.Get("q")),
+			Limit:  100,
+		}
+		if opts.Source == "" {
+			opts.Source = "all"
+		}
+		if raw := strings.TrimSpace(query.Get("all")); raw != "" {
+			opts.All, _ = strconv.ParseBool(raw)
+		}
+		if raw := strings.TrimSpace(query.Get("limit")); raw != "" {
+			limit, err := strconv.Atoi(raw)
+			if err != nil {
+				http.Error(w, fmt.Sprintf("invalid limit %q", raw), http.StatusBadRequest)
+				return
+			}
+			opts.Limit = limit
+		}
+
+		result, err := RunSessionLive(opts)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeServeJSON(w, http.StatusOK, result)
 	}
 }
 

@@ -104,16 +104,25 @@ func (a AdapterStatus) appendModels(t api.Text, limit int) api.Text {
 	t = t.Append("  ", "").
 		Append(fmt.Sprintf("%d models", a.ModelCount), "text-blue-600 font-medium")
 
-	sample := a.Models
+	sample := a.modelDetails
+	if len(sample) == 0 && len(a.Models) > 0 {
+		sample = make([]ai.ModelDef, 0, len(a.Models))
+		for _, id := range a.Models {
+			sample = append(sample, ai.ModelDef{ID: id, ReleaseDate: ai.CatalogReleaseDate(ai.Backend(a.Backend), id)})
+		}
+	}
 	if limit > 0 && len(sample) > limit {
 		sample = sample[:limit]
 	}
-	if len(sample) > 0 {
-		line := strings.Join(sample, ", ")
-		if len(sample) < a.ModelCount {
-			line += fmt.Sprintf(", … (+%d more)", a.ModelCount-len(sample))
+	for _, model := range sample {
+		label := model.ID
+		if model.ReleaseDate != "" {
+			label += " (" + model.ReleaseDate + ")"
 		}
-		t = t.NewLine().Append("      ", "").Append(line, "text-gray-500")
+		t = t.NewLine().Append("      - ", "").Append(label, "text-gray-500")
+	}
+	if len(sample) < a.ModelCount {
+		t = t.NewLine().Append("      ", "").Append(fmt.Sprintf("... (+%d more)", a.ModelCount-len(sample)), "text-gray-500")
 	}
 	return t
 }

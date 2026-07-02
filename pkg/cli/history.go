@@ -86,6 +86,8 @@ func RunHistory(opts HistoryOptions) (any, error) {
 		Since:         &opts.Since,
 		SessionID:     firstSessionID(sessionIDs),
 		SessionIDs:    sessionIDs,
+		KeepRaw:       opts.Raw,
+		IncludeCosts:  useStructuredOutput() && !opts.Summary,
 		IncludeAgents: opts.Agents,
 	}
 
@@ -95,8 +97,9 @@ func RunHistory(opts HistoryOptions) (any, error) {
 
 	showClaude := opts.Claude || (!opts.Claude && !opts.Codex)
 	showCodex := opts.Codex || (!opts.Claude && !opts.Codex)
+	showClaude, showCodex = narrowHistorySources(cwd, opts.All, showClaude, showCodex, filter)
 
-	allToolUses, err := gatherToolUses(cwd, opts.All, showClaude, showCodex, filter)
+	allToolUses, parsedCosts, err := gatherHistory(cwd, opts.All, showClaude, showCodex, filter)
 	if err != nil {
 		return nil, err
 	}
@@ -115,8 +118,7 @@ func RunHistory(opts HistoryOptions) (any, error) {
 	}
 
 	if showClaude {
-		costs, _ = claude.ParseCostsWithFilter(cwd, opts.All, &opts.Since, filter)
-		costs = filterCostsBySessionID(costs, sessionIDs)
+		costs = filterCostsBySessionID(parsedCosts, sessionIDs)
 	}
 
 	var tl []tools.Tool
@@ -176,12 +178,18 @@ func lastSessionTools(tl []tools.Tool) []tools.Tool {
 // tags each with its source, and applies the filter (including any session ID)
 // to both. It is the shared front-end for the history and changes commands.
 func gatherToolUses(cwd string, searchAll, showClaude, showCodex bool, filter claude.Filter) ([]claude.ToolUse, error) {
+	uses, _, err := gatherHistory(cwd, searchAll, showClaude, showCodex, filter)
+	return uses, err
+}
+
+func gatherHistory(cwd string, searchAll, showClaude, showCodex bool, filter claude.Filter) ([]claude.ToolUse, []claude.SessionCost, error) {
 	var allToolUses []claude.ToolUse
+	var costs []claude.SessionCost
 
 	if showClaude {
 		parseResult, err := claude.ParseHistory(cwd, searchAll, filter)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		for i := range parseResult.ToolUses {
 			if parseResult.ToolUses[i].Source == "" {
@@ -189,6 +197,7 @@ func gatherToolUses(cwd string, searchAll, showClaude, showCodex bool, filter cl
 			}
 		}
 		allToolUses = append(allToolUses, parseResult.ToolUses...)
+		costs = append(costs, parseResult.Costs...)
 	}
 
 	if showCodex {
@@ -200,7 +209,7 @@ func gatherToolUses(cwd string, searchAll, showClaude, showCodex bool, filter cl
 		}
 	}
 
-	return allToolUses, nil
+	return allToolUses, costs, nil
 }
 
 // collectCodexHistory loads codex sessions and returns their tool uses
@@ -219,19 +228,9 @@ func collectCodexHistory(cwd string, searchAll bool, filter claude.Filter) ([]hi
 
 	var out []history.ToolUse
 	for _, f := range files {
-		info, infoErr := history.ReadCodexSessionMeta(f)
-		if infoErr == nil && info != nil {
-			if info.ID != "" && !filter.MatchesSessionID(info.ID) {
-				continue
-			}
-			if !searchAll && info.CWD != "" && !codexCWDMatchesProject(info.CWD, matchRoot) {
-				continue
-			}
-			// When a session-id filter is set but the metadata has no id yet, fall
-			// through to full parsing: older/live schemas may only expose the session
-			// id on later events.
+		if !codexHistoryCandidateMatches(f, searchAll, matchRoot, filter) {
+			continue
 		}
-
 		uses, err := history.ExtractCodexToolUses(f)
 		if err != nil || len(uses) == 0 {
 			continue
@@ -245,6 +244,144 @@ func collectCodexHistory(cwd string, searchAll bool, filter claude.Filter) ([]hi
 		out = append(out, uses...)
 	}
 	return out, nil
+}
+
+func narrowHistorySources(cwd string, searchAll, showClaude, showCodex bool, filter claude.Filter) (bool, bool) {
+	if !showClaude || !showCodex || !filter.HasSessionIDFilter() {
+		return showClaude, showCodex
+	}
+
+	claudeMatch := claudeHistoryHasSession(cwd, searchAll, filter)
+	if claudeMatch && hasSingleCanonicalSessionFilter(filter) {
+		return true, false
+	}
+	codexMatch := codexHistoryHasSession(cwd, searchAll, filter)
+
+	switch {
+	case claudeMatch && !codexMatch:
+		return true, false
+	case codexMatch && !claudeMatch:
+		return false, true
+	default:
+		return showClaude, showCodex
+	}
+}
+
+func hasSingleCanonicalSessionFilter(filter claude.Filter) bool {
+	var ids []string
+	seen := map[string]bool{}
+	add := func(id string) {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return
+		}
+		key := strings.ToLower(id)
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		ids = append(ids, id)
+	}
+	if strings.TrimSpace(filter.SessionID) != "" {
+		add(filter.SessionID)
+	}
+	for _, id := range filter.SessionIDs {
+		add(id)
+	}
+	if len(ids) != 1 {
+		return false
+	}
+	return canonicalUUIDArgRE.MatchString(ids[0])
+}
+
+func claudeHistoryHasSession(cwd string, searchAll bool, filter claude.Filter) bool {
+	projectsDir := claude.GetProjectsDir()
+	files, err := claude.FindSessionFiles(projectsDir, cwd, searchAll)
+	if err != nil {
+		return false
+	}
+	if filter.IncludeAgents {
+		if agentFiles, err := claude.FindAgentTranscripts(projectsDir, cwd, searchAll); err == nil {
+			files = append(files, agentFiles...)
+		}
+	}
+	for _, f := range files {
+		if filter.MatchesSessionID(claudeSessionIDFromPath(f)) {
+			return true
+		}
+	}
+	return false
+}
+
+func claudeSessionIDFromPath(path string) string {
+	parts := strings.Split(filepath.ToSlash(path), "/")
+	for i, part := range parts {
+		if part == "subagents" && i > 0 {
+			return parts[i-1]
+		}
+	}
+	base := filepath.Base(path)
+	return strings.TrimSuffix(base, filepath.Ext(base))
+}
+
+func codexHistoryHasSession(cwd string, searchAll bool, filter claude.Filter) bool {
+	files, err := history.FindCodexSessionFiles()
+	if err != nil {
+		return false
+	}
+	projectInfo := claude.FindProjectInfo(cwd)
+	matchRoot := projectInfo.Root
+	if matchRoot == "" {
+		matchRoot = cwd
+	}
+	for _, f := range files {
+		if codexHistoryCandidateMatches(f, searchAll, matchRoot, filter) {
+			return true
+		}
+	}
+	return false
+}
+
+func codexHistoryCandidateMatches(file string, searchAll bool, matchRoot string, filter claude.Filter) bool {
+	info, infoErr := history.ReadCodexSessionMeta(file)
+	if infoErr == nil && info != nil {
+		if info.ID != "" && !filter.MatchesSessionID(info.ID) {
+			return false
+		}
+		if filter.HasSessionIDFilter() && info.ID == "" && !codexFileNameMatchesSessionFilter(file, filter) {
+			return false
+		}
+		if !searchAll && info.CWD != "" && !codexCWDMatchesProject(info.CWD, matchRoot) {
+			return false
+		}
+		return true
+	}
+	if filter.HasSessionIDFilter() && !codexFileNameMatchesSessionFilter(file, filter) {
+		return false
+	}
+	return true
+}
+
+func codexFileNameMatchesSessionFilter(file string, filter claude.Filter) bool {
+	name := strings.ToLower(filepath.Base(file))
+	var filters []string
+	if strings.TrimSpace(filter.SessionID) != "" {
+		filters = append(filters, strings.ToLower(strings.TrimSpace(filter.SessionID)))
+	}
+	for _, id := range filter.SessionIDs {
+		if strings.TrimSpace(id) != "" {
+			filters = append(filters, strings.ToLower(strings.TrimSpace(id)))
+		}
+	}
+	if len(filters) == 0 {
+		return true
+	}
+	for _, id := range filters {
+		if strings.Contains(name, id) {
+			return true
+		}
+	}
+	return false
 }
 
 func codexUsesMatchSession(uses []history.ToolUse, filter claude.Filter) bool {

@@ -142,7 +142,7 @@ func TestModelOptionsFor_CLIBackendsUseCatalogWithoutKey(t *testing.T) {
 
 func TestDefaultModelFor_HardcodedPerBackend(t *testing.T) {
 	cases := map[ai.Backend]string{
-		ai.BackendAnthropic:   "claude-sonnet-4-5",
+		ai.BackendAnthropic:   "claude-sonnet-5",
 		ai.BackendClaudeCLI:   "claude-agent-sonnet",
 		ai.BackendClaudeAgent: "claude-agent-sonnet",
 		ai.BackendOpenAI:      "gpt-5.5",

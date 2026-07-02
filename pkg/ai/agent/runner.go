@@ -19,7 +19,12 @@ import (
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/history"
 	"github.com/flanksource/captain/pkg/claude"
+	"github.com/flanksource/commons/logger"
 )
+
+// fallbackLog is used when ctx carries no task-scoped logger (ai.ContextWithLogger).
+// Tunable via -Plog.level.agent=trace.
+var fallbackLog = logger.GetLogger("agent")
 
 // Scope controls how much verifiers/finalizers act on. ScopeChanged restricts
 // them to the files the agent edited; ScopeAll lets each act on the whole tree.
@@ -158,6 +163,7 @@ func (r *Runner) Run(ctx context.Context) (*RunResult, error) {
 		rc.Scope = ScopeAll
 	}
 	result := &RunResult{}
+	log := ai.LoggerFromContext(ctx, fallbackLog)
 
 	// 1. Setup plugins (in order); collect teardowns to run LIFO at the end.
 	var teardowns []func() error
@@ -207,16 +213,21 @@ func (r *Runner) Run(ctx context.Context) (*RunResult, error) {
 			}
 			result.Verdicts = append(result.Verdicts, v)
 			if v.OK {
+				log.Tracef("agent: iteration %d verified OK; stopping", iter)
 				return ai.Request{}, false // success → stop ("condition-met")
 			}
 			feedback = v.Feedback
 		}
+		log.Tracef("agent: building iteration %d (feedback=%t)", iter, feedback != "")
 		req := r.Build(rc, iter, prev, feedback)
-		req.Context.Dir = rc.Cwd
+		req.SetCwd(rc.Cwd)
 		return req, true
 	}
 
 	lr, loopErr := ai.RunUntil(ctx, loop)
+	if lr != nil {
+		log.Tracef("agent: loop finished after %d iteration(s), err=%v", len(lr.Iterations), loopErr)
+	}
 	result.Loop = lr
 	result.Cwd = rc.Cwd
 	result.SessionID = rc.SessionID
@@ -279,6 +290,7 @@ func (r *Runner) recordEvent(rc *RunContext, ev ai.Event) {
 // runVerifiers runs every VerifyPlugin; the run is OK only if all are OK, and
 // each failing plugin's feedback is concatenated for the next prompt.
 func (r *Runner) runVerifiers(rc *RunContext, iter *ai.LoopIteration) (Verdict, error) {
+	log := ai.LoggerFromContext(rc.Ctx, fallbackLog)
 	overall := Verdict{OK: true}
 	var reasons, feedbacks []string
 	for _, p := range r.Plugins {
@@ -290,6 +302,7 @@ func (r *Runner) runVerifiers(rc *RunContext, iter *ai.LoopIteration) (Verdict, 
 		if err != nil {
 			return Verdict{}, fmt.Errorf("verify plugin %q: %w", p.Name(), err)
 		}
+		log.Tracef("agent: verifier %q ok=%t reason=%q", p.Name(), v.OK, v.Reason)
 		if !v.OK {
 			overall.OK = false
 			if v.Reason != "" {

@@ -83,10 +83,13 @@ func overlayCLI(base ai.Request, baseCfg ai.Config, o AIPromptOptions) (ai.Reque
 		m.Temperature = &t
 	}
 	m.Effort = api.Effort(firstNonEmpty(o.Effort, string(bm.Effort), saved.ReasoningEffort))
+	m.NoCache = o.NoCache || bm.NoCache || saved.NoCache
 	req.Model = m
 
 	req.Budget.MaxTokens = firstPositive(o.MaxTokens, base.Budget.MaxTokens, baseCfg.Budget.MaxTokens, saved.MaxTokens, 4096)
 	req.Budget.Cost = firstPositiveFloat(budget, base.Budget.Cost, baseCfg.Budget.Cost, saved.BudgetUSD)
+	req.Budget.MaxTurns = firstPositive(o.MaxTurns, base.Budget.MaxTurns)
+	req.Budget.Timeout = firstNonEmpty(o.Timeout, base.Budget.Timeout)
 
 	if o.System != "" {
 		req.Prompt.System = o.System
@@ -122,23 +125,20 @@ func overlayCLI(base ai.Request, baseCfg ai.Config, o AIPromptOptions) (ai.Reque
 	if o.Resume != "" {
 		req.SessionID = o.Resume
 	}
-	if o.MaxTurns > 0 {
-		req.MaxTurns = o.MaxTurns
-	}
 
 	// Config mirrors the resolved model + budget; runtime-only knobs from CLI+saved.
 	cfg := baseCfg
 	cfg.Model = req.Model
 	cfg.Budget = req.Budget
 	cfg.APIKey = o.APIKey
-	cfg.NoCache = o.NoCache || saved.NoCache
+	cfg.NoCache = req.NoCache
 	return req, cfg, nil
 }
 
 // normalizePromptContextDir makes the prompt command's workspace explicit before
 // providers see the request. Empty means the invocation cwd; relative values are
 // interpreted from that same cwd so SDK child-process directories cannot change
-// the meaning of context.dir: .
+// the meaning of setup.cwd: .
 func normalizePromptContextDir(req *ai.Request, cwd string) error {
 	if cwd == "" {
 		return fmt.Errorf("working directory is required")
@@ -150,15 +150,15 @@ func normalizePromptContextDir(req *ai.Request, cwd string) error {
 		}
 		cwd = abs
 	}
-	if req.Context.Dir == "" {
-		req.Context.Dir = filepath.Clean(cwd)
+	if req.Cwd() == "" {
+		req.SetCwd(filepath.Clean(cwd))
 		return nil
 	}
-	if filepath.IsAbs(req.Context.Dir) {
-		req.Context.Dir = filepath.Clean(req.Context.Dir)
+	if filepath.IsAbs(req.Cwd()) {
+		req.SetCwd(filepath.Clean(req.Cwd()))
 		return nil
 	}
-	req.Context.Dir = filepath.Clean(filepath.Join(cwd, req.Context.Dir))
+	req.SetCwd(filepath.Clean(filepath.Join(cwd, req.Cwd())))
 	return nil
 }
 
