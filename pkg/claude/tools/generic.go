@@ -1,7 +1,7 @@
 package tools
 
 import (
-	"encoding/json"
+	"github.com/segmentio/encoding/json"
 	"strings"
 
 	"github.com/flanksource/clicky"

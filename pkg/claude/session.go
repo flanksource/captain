@@ -1,7 +1,7 @@
 package claude
 
 import (
-	"encoding/json"
+	"github.com/segmentio/encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -251,6 +251,7 @@ func hasSuffixFold(s, suffix string) bool {
 // ParseResult contains the results of parsing Claude Code session history
 type ParseResult struct {
 	ToolUses        []ToolUse
+	Costs           []SessionCost
 	SessionsFound   int
 	SessionsScanned int
 }
@@ -346,12 +347,17 @@ func ParseHistory(currentDir string, searchAll bool, filter Filter) (*ParseResul
 
 	var allToolUses []ToolUse
 	for _, sessionFile := range sessionFiles {
-		entries, err := ReadHistoryFile(sessionFile)
+		entries, err := ReadHistoryFileWithOptions(sessionFile, ReadOptions{KeepRaw: filter.KeepRaw})
 		if err != nil {
 			continue
 		}
 		if len(entries) > 0 {
 			result.SessionsScanned++
+			projectPath := ExtractProjectPath(sessionFile)
+			projectRoot := FindProjectRoot(projectPath)
+			if filter.IncludeCosts {
+				result.Costs = append(result.Costs, costsFromEntries(sessionFile, entries, projectRoot, filter.Since)...)
+			}
 			toolUses := stampToolUses(ExtractToolUses(entries), projectsDir, sessionFile)
 			allToolUses = append(allToolUses, toolUses...)
 		}
@@ -423,7 +429,7 @@ func ParseHistoryTools(currentDir string, searchAll bool, filter Filter) ([]tool
 	var allToolUses []ToolUse
 	uses := make(map[string][]HistoryEntry)
 	for _, sessionFile := range sessionFiles {
-		entries, err := ReadHistoryFile(sessionFile)
+		entries, err := ReadHistoryFileWithOptions(sessionFile, ReadOptions{KeepRaw: filter.KeepRaw})
 		if err != nil {
 			continue
 		}
@@ -471,81 +477,86 @@ func ParseCostsWithFilter(currentDir string, searchAll bool, since *time.Time, f
 	}
 	sessionFiles = filterSessionFilesBySessionID(sessionFiles, filter)
 
+	var result []SessionCost
+	for _, sessionFile := range sessionFiles {
+		projectPath := ExtractProjectPath(sessionFile)
+		projectRoot := FindProjectRoot(projectPath)
+
+		entries, err := ReadHistoryFileWithOptions(sessionFile, ReadOptions{})
+		if err != nil {
+			continue
+		}
+		result = append(result, costsFromEntries(sessionFile, entries, projectRoot, since)...)
+	}
+	return result, nil
+}
+
+func costsFromEntries(sessionFile string, entries []HistoryEntry, projectRoot string, since *time.Time) []SessionCost {
 	type sessionKey struct {
 		sessionID string
 		file      string
 	}
 
+	project := filepath.Base(projectRoot)
 	costs := make(map[sessionKey]*SessionCost)
 	filesets := make(map[sessionKey]map[string]bool)
 	var order []sessionKey
 
-	for _, sessionFile := range sessionFiles {
-		projectPath := ExtractProjectPath(sessionFile)
-		projectRoot := FindProjectRoot(projectPath)
-		project := filepath.Base(projectRoot)
-
-		entries, err := ReadHistoryFile(sessionFile)
-		if err != nil {
+	for _, entry := range entries {
+		ts, _ := entry.ParseTimestamp()
+		if since != nil && !ts.IsZero() && ts.Before(*since) {
 			continue
 		}
 
-		for _, entry := range entries {
-			ts, _ := entry.ParseTimestamp()
-			if since != nil && !ts.IsZero() && ts.Before(*since) {
-				continue
-			}
+		key := sessionKey{sessionID: entry.SessionID, file: sessionFile}
 
-			key := sessionKey{sessionID: entry.SessionID, file: sessionFile}
-
-			// Collect file paths from tool uses in all messages
-			for _, tu := range ExtractToolUses([]HistoryEntry{entry}) {
-				tu.ProjectRoot = projectRoot
-				if p := tu.ExtractPath(); p != "" {
-					if filesets[key] == nil {
-						filesets[key] = make(map[string]bool)
-					}
-					filesets[key][p] = true
+		// Collect file paths from tool uses in all messages.
+		for _, tu := range ExtractToolUses([]HistoryEntry{entry}) {
+			tu.ProjectRoot = projectRoot
+			if p := tu.ExtractPath(); p != "" {
+				if filesets[key] == nil {
+					filesets[key] = make(map[string]bool)
 				}
+				filesets[key][p] = true
 			}
-
-			if !entry.IsAssistantMessage() || entry.Message.Usage == nil {
-				continue
-			}
-			if ts.IsZero() {
-				continue
-			}
-
-			sc, ok := costs[key]
-			if !ok {
-				sc = &SessionCost{
-					SessionID: entry.SessionID,
-					Project:   project,
-					Start:     ts,
-					End:       ts,
-				}
-				costs[key] = sc
-				order = append(order, key)
-			}
-
-			if ts.Before(sc.Start) {
-				sc.Start = ts
-			}
-			if ts.After(sc.End) {
-				sc.End = ts
-			}
-
-			model := entry.Message.Model
-			if model != "" {
-				sc.Model = model
-			}
-			if tier := entry.Message.Usage.ServiceTier; tier != "" {
-				sc.Tier = tier
-			}
-
-			sc.Tokens.Add(entry.Message.Usage, model)
-			sc.Messages++
 		}
+
+		if !entry.IsAssistantMessage() || entry.Message.Usage == nil {
+			continue
+		}
+		if ts.IsZero() {
+			continue
+		}
+
+		sc, ok := costs[key]
+		if !ok {
+			sc = &SessionCost{
+				SessionID: entry.SessionID,
+				Project:   project,
+				Start:     ts,
+				End:       ts,
+			}
+			costs[key] = sc
+			order = append(order, key)
+		}
+
+		if ts.Before(sc.Start) {
+			sc.Start = ts
+		}
+		if ts.After(sc.End) {
+			sc.End = ts
+		}
+
+		model := entry.Message.Model
+		if model != "" {
+			sc.Model = model
+		}
+		if tier := entry.Message.Usage.ServiceTier; tier != "" {
+			sc.Tier = tier
+		}
+
+		sc.Tokens.Add(entry.Message.Usage, model)
+		sc.Messages++
 	}
 
 	result := make([]SessionCost, 0, len(order))
@@ -556,7 +567,7 @@ func ParseCostsWithFilter(currentDir string, searchAll bool, since *time.Time, f
 		}
 		result = append(result, *sc)
 	}
-	return result, nil
+	return result
 }
 
 // ParseCostsDetailed extends ParseCosts with context categorization and per-tool token breakdown.
@@ -587,7 +598,7 @@ func ParseCostsDetailedWithFilter(currentDir string, searchAll bool, since *time
 		projectRoot := FindProjectRoot(projectPath)
 		project := filepath.Base(projectRoot)
 
-		entries, err := ReadHistoryFile(sessionFile)
+		entries, err := ReadHistoryFileWithOptions(sessionFile, ReadOptions{})
 		if err != nil {
 			continue
 		}

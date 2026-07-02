@@ -1,6 +1,6 @@
 package claude
 
-import "encoding/json"
+import "github.com/segmentio/encoding/json"
 
 // HooksConfig is the top-level hooks configuration
 type HooksConfig struct {
