@@ -15,7 +15,7 @@ import (
 type WhoamiOptions struct {
 	Backend string `flag:"backend" help:"Show only this backend: anthropic|openai|gemini|claude-cli|claude-agent|claude-cmux|codex-cli|codex-cmux|gemini-cli" short:"b"`
 	Models  bool   `flag:"models" help:"Probe each provider's models endpoint via a live API call" default:"true" short:"m"`
-	Limit   int    `flag:"limit" help:"Max sample model IDs to show per adapter in pretty output (0 = all)" default:"10" short:"l"`
+	Limit   int    `flag:"limit" help:"Max sample model IDs to show per adapter in pretty output (0 = all)" default:"5" short:"l"`
 }
 
 // AdapterStatus is the resolved auth/availability of a single agent adapter
@@ -32,6 +32,8 @@ type AdapterStatus struct {
 	ModelCount    int      `json:"modelCount"`
 	Models        []string `json:"models,omitempty"`
 	ModelError    string   `json:"modelError,omitempty"`
+
+	modelDetails []ai.ModelDef
 }
 
 // Ready reports whether the adapter can actually run: authenticated, and (for
@@ -261,12 +263,16 @@ func applyModels(st *AdapterStatus, b ai.Backend, cache map[ai.Backend]modelFetc
 	setModels(st, fetch.models)
 }
 
-// setModels copies a model list onto the adapter status as a count plus id list.
+// setModels filters legacy entries and copies the sorted model list onto the
+// adapter status as a count plus id list. The richer details are retained only
+// for pretty output; JSON stays as the historical []string model list.
 func setModels(st *AdapterStatus, models []ai.ModelDef) {
+	models = ai.CurrentModelsByReleaseDate(models)
 	st.ModelCount = len(models)
 	ids := make([]string, 0, len(models))
 	for _, m := range models {
 		ids = append(ids, m.ID)
 	}
 	st.Models = ids
+	st.modelDetails = models
 }

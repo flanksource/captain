@@ -5,11 +5,11 @@ import (
 )
 
 // Request is one model/agent call. It is a type alias for the serializable
-// api.Spec (model, prompt, budget, memory, permissions, context, session,
-// turns) — ai.Request IS the spec, so providers read the nested fields directly:
+// api.Spec (model, prompt, budget, memory, permissions, setup, session) —
+// ai.Request IS the spec, so providers read the nested fields directly:
 // req.Temperature/req.Effort (Model is inlined), req.Prompt.User,
-// req.Permissions.Mode, req.Context.Dir, req.Memory.Skills. The structured-output
-// Go type rides on Prompt.Schema; the
+// req.Permissions.Mode, req.Cwd(), req.Memory.Skills. The structured-output Go
+// type rides on Prompt.Schema; the
 // runtime-only tool-permission broker callback lives on Config.CanUseTool.
 type Request = api.Spec
 

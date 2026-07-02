@@ -8,6 +8,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/commons-db/shell"
 )
 
 func TestParseVars(t *testing.T) {
@@ -223,12 +224,12 @@ func TestNormalizePromptContextDir(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			req := ai.Request{Context: api.Context{Dir: tc.dir}}
+			req := ai.Request{Setup: &shell.Setup{Cwd: tc.dir}}
 			if err := normalizePromptContextDir(&req, cwd); err != nil {
 				t.Fatalf("normalizePromptContextDir: %v", err)
 			}
-			if req.Context.Dir != tc.want {
-				t.Errorf("Context.Dir = %q, want %q", req.Context.Dir, tc.want)
+			if req.Cwd() != tc.want {
+				t.Errorf("Setup.Cwd = %q, want %q", req.Cwd(), tc.want)
 			}
 		})
 	}

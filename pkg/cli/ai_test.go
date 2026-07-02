@@ -12,6 +12,7 @@ import (
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/captainconfig"
+	"github.com/flanksource/commons-db/shell"
 )
 
 type promptResultProvider struct{}
@@ -177,8 +178,8 @@ func TestAIPromptOptions_ToRequest_PassesScalars(t *testing.T) {
 	if req.Effort != api.EffortHigh {
 		t.Errorf("ReasoningEffort = %q", req.Effort)
 	}
-	if req.MaxTurns != 7 {
-		t.Errorf("MaxTurns = %d", req.MaxTurns)
+	if req.Budget.MaxTurns != 7 {
+		t.Errorf("MaxTurns = %d", req.Budget.MaxTurns)
 	}
 	if req.SessionID != "sess-123" {
 		t.Errorf("SessionID = %q (from --resume)", req.SessionID)
@@ -315,10 +316,10 @@ func TestBackendHelpEnumeratesAllBackends(t *testing.T) {
 
 func TestRunBuffered_JSONIncludesFullInputSpec(t *testing.T) {
 	req := ai.Request{
-		Model:   api.Model{Name: "claude-sonnet-4-6", Backend: api.BackendAnthropic, Effort: api.EffortMedium},
-		Prompt:  api.Prompt{System: "be precise", User: "summarize"},
-		Budget:  api.Budget{MaxTokens: 2048},
-		Context: api.Context{Dir: "/repo"},
+		Model:  api.Model{Name: "claude-sonnet-4-6", Backend: api.BackendAnthropic, Effort: api.EffortMedium},
+		Prompt: api.Prompt{System: "be precise", User: "summarize"},
+		Budget: api.Budget{MaxTokens: 2048},
+		Setup:  &shell.Setup{Cwd: "/repo"},
 		Permissions: api.Permissions{
 			Presets: []api.Preset{api.PresetEdit},
 			Tools:   api.Tools{Allow: []string{"Read"}},
@@ -363,9 +364,9 @@ func TestRunBuffered_JSONIncludesFullInputSpec(t *testing.T) {
 	if input["model"] != "claude-sonnet-4-6" || input["backend"] != "anthropic" || input["effort"] != "medium" {
 		t.Fatalf("json input model fields = %#v", input)
 	}
-	context, ok := input["context"].(map[string]any)
-	if !ok || context["dir"] != "/repo" {
-		t.Fatalf("json input.context = %#v, want dir /repo", input["context"])
+	setup, ok := input["setup"].(map[string]any)
+	if !ok || setup["cwd"] != "/repo" {
+		t.Fatalf("json input.setup = %#v, want cwd /repo", input["setup"])
 	}
 	if input["sessionId"] != "resume-1" || encoded["sessionId"] != "resume-1" || encoded["dir"] != "/repo" {
 		t.Fatalf("json session/dir fields = top %#v input %#v", encoded, input)
@@ -379,7 +380,7 @@ func TestRunStreaming_JSONIncludesFullInputSpec(t *testing.T) {
 	req := ai.Request{
 		Model:       api.Model{Name: "gpt-5-codex", Backend: api.BackendCodexCLI, Effort: api.EffortHigh},
 		Prompt:      api.Prompt{User: "fix tests"},
-		Context:     api.Context{Dir: "/repo"},
+		Setup:       &shell.Setup{Cwd: "/repo"},
 		Permissions: api.Permissions{MCP: api.MCP{Disabled: true}},
 	}
 

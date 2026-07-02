@@ -242,7 +242,7 @@ func modelOptionsFor(b ai.Backend) []huh.Option[string] {
 	// live list.
 	filtered := make([]ai.ModelDef, 0, len(models))
 	for _, m := range models {
-		if isLegacyModelID(m.ID) {
+		if ai.IsLegacyModelID(m.ID) {
 			continue
 		}
 		filtered = append(filtered, m)
@@ -271,7 +271,7 @@ func modelHuhOptions(models []ai.ModelDef) []huh.Option[string] {
 func defaultModelFor(b ai.Backend) string {
 	switch b {
 	case ai.BackendAnthropic:
-		return "claude-sonnet-4-5"
+		return "claude-sonnet-5"
 	case ai.BackendClaudeCLI, ai.BackendClaudeAgent:
 		return "claude-agent-sonnet"
 	case ai.BackendOpenAI:

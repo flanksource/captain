@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/flanksource/captain/pkg/ai"
@@ -143,5 +144,78 @@ func TestRunWhoami_NoModelsCoversEveryBackend(t *testing.T) {
 func TestRunWhoami_RejectsUnknownBackend(t *testing.T) {
 	if _, err := RunWhoami(WhoamiOptions{Backend: "bogus", Models: false}); err == nil {
 		t.Fatal("expected error for unknown --backend")
+	}
+}
+
+func TestSetModelsFiltersAndSortsByReleaseDate(t *testing.T) {
+	st := AdapterStatus{Backend: string(ai.BackendOpenAI)}
+	setModels(&st, []ai.ModelDef{
+		{ID: "gpt-old-unknown", Backend: ai.BackendOpenAI},
+		{ID: "gpt-4o", Backend: ai.BackendOpenAI, ReleaseDate: "2026-07-01"},
+		{ID: "gpt-new", Backend: ai.BackendOpenAI, ReleaseDate: "2026-06-01"},
+		{ID: "gpt-mid", Backend: ai.BackendOpenAI, ReleaseDate: "2026-05-15"},
+	})
+
+	want := []string{"gpt-new", "gpt-mid", "gpt-old-unknown"}
+	if st.ModelCount != len(want) {
+		t.Fatalf("ModelCount = %d, want %d (%+v)", st.ModelCount, len(want), st)
+	}
+	for i, w := range want {
+		if st.Models[i] != w {
+			t.Errorf("Models[%d] = %q, want %q", i, st.Models[i], w)
+		}
+	}
+}
+
+func TestSetModelsKeepsCurrentCLIModelSlugs(t *testing.T) {
+	st := AdapterStatus{Backend: string(ai.BackendCodexCLI)}
+	setModels(&st, []ai.ModelDef{
+		{ID: "gpt-5-codex", Backend: ai.BackendCodexCLI, ReleaseDate: "2025-08-07"},
+	})
+
+	if st.ModelCount != 1 || len(st.Models) != 1 || st.Models[0] != "gpt-5-codex" {
+		t.Fatalf("codex CLI model should not be blacklisted: %+v", st)
+	}
+}
+
+func TestWhoamiPrettyRendersModelListItems(t *testing.T) {
+	adapter := AdapterStatus{
+		Backend:       string(ai.BackendOpenAI),
+		Type:          "api",
+		Authenticated: true,
+		AuthMethod:    "OPENAI_API_KEY (env)",
+		ModelCount:    6,
+		Models:        []string{"m6", "m5", "m4", "m3", "m2", "m1"},
+		modelDetails: []ai.ModelDef{
+			{ID: "m6", ReleaseDate: "2026-06-01"},
+			{ID: "m5", ReleaseDate: "2026-05-01"},
+			{ID: "m4", ReleaseDate: "2026-04-01"},
+			{ID: "m3", ReleaseDate: "2026-03-01"},
+			{ID: "m2", ReleaseDate: "2026-02-01"},
+			{ID: "m1", ReleaseDate: "2026-01-01"},
+		},
+	}
+
+	got := (WhoamiResult{
+		Adapters:    []AdapterStatus{adapter},
+		sampleLimit: 5,
+		showModels:  true,
+	}).Pretty().String()
+
+	for _, want := range []string{
+		"6 models",
+		"- m6 (2026-06-01)",
+		"- m2 (2026-02-01)",
+		"... (+1 more)",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Pretty() = %q, want substring %q", got, want)
+		}
+	}
+	if strings.Contains(got, "m6, m5") {
+		t.Errorf("Pretty() still renders a comma-separated model line: %q", got)
+	}
+	if strings.Contains(got, "- m1") {
+		t.Errorf("Pretty() ignored sample limit: %q", got)
 	}
 }

@@ -27,14 +27,16 @@ func (l *loggingProvider) GetBackend() ai.Backend { return l.provider.GetBackend
 func (l *loggingProvider) Execute(ctx context.Context, req ai.Request) (*ai.Response, error) {
 	start := time.Now()
 
+	dispatch := clicky.Text("").
+		Add(icons.AI).
+		Append(fmt.Sprintf(" %s/%s", l.provider.GetBackend(), l.provider.GetModel()), "text-purple-600 font-medium")
+	if req.Prompt.Source != "" {
+		dispatch = dispatch.Append(fmt.Sprintf(" [%s]", req.Prompt.Source), "text-gray-500")
+	}
+	log.Infof("%v", dispatch)
+
 	if log.IsDebugEnabled() {
-		t := clicky.Text("").
-			Add(icons.AI).
-			Append(fmt.Sprintf(" %s/%s", l.provider.GetBackend(), l.provider.GetModel()), "text-purple-600 font-medium")
-		if req.Prompt.Source != "" {
-			t = t.Append(fmt.Sprintf(" [%s]", req.Prompt.Source), "text-gray-500")
-		}
-		t = t.NewLine().Append(req.Prompt.User, "text-gray-600")
+		t := dispatch.NewLine().Append(req.Prompt.User, "text-gray-600")
 		if s := schemaInJSON(req.Prompt.Schema); s != "" {
 			t = t.NewLine().Append("schema-in ", "text-gray-500").Append(s, "text-gray-600")
 		}
@@ -52,13 +54,11 @@ func (l *loggingProvider) Execute(ctx context.Context, req ai.Request) (*ai.Resp
 		return resp, err
 	}
 
-	if log.IsDebugEnabled() {
-		log.Debugf("%v", clicky.Text("").
-			Add(icons.Check).
-			Append(fmt.Sprintf(" %s/%s", l.provider.GetBackend(), l.provider.GetModel()), "text-green-600 font-medium").
-			Append(fmt.Sprintf(" %v", duration.Round(time.Millisecond)), "text-gray-500").
-			Append(fmt.Sprintf(" (tokens: %d in / %d out)", resp.Usage.InputTokens, resp.Usage.OutputTokens), "text-gray-400"))
-	}
+	log.Infof("%v", clicky.Text("").
+		Add(icons.Check).
+		Append(fmt.Sprintf(" %s/%s", l.provider.GetBackend(), l.provider.GetModel()), "text-green-600 font-medium").
+		Append(fmt.Sprintf(" %v", duration.Round(time.Millisecond)), "text-gray-500").
+		Append(fmt.Sprintf(" (tokens: %d in / %d out)", resp.Usage.InputTokens, resp.Usage.OutputTokens), "text-gray-400"))
 
 	if log.IsTraceEnabled() {
 		t := clicky.Text("").
@@ -86,14 +86,16 @@ func (l *loggingProvider) ExecuteStream(ctx context.Context, req ai.Request) (<-
 		return nil, fmt.Errorf("provider %s/%s does not support streaming", l.provider.GetBackend(), l.provider.GetModel())
 	}
 
+	dispatch := clicky.Text("").
+		Add(icons.AI).
+		Append(fmt.Sprintf(" %s/%s (stream)", l.provider.GetBackend(), l.provider.GetModel()), "text-purple-600 font-medium")
+	if req.Prompt.Source != "" {
+		dispatch = dispatch.Append(fmt.Sprintf(" [%s]", req.Prompt.Source), "text-gray-500")
+	}
+	log.Infof("%v", dispatch)
+
 	if log.IsDebugEnabled() {
-		t := clicky.Text("").
-			Add(icons.AI).
-			Append(fmt.Sprintf(" %s/%s (stream)", l.provider.GetBackend(), l.provider.GetModel()), "text-purple-600 font-medium")
-		if req.Prompt.Source != "" {
-			t = t.Append(fmt.Sprintf(" [%s]", req.Prompt.Source), "text-gray-500")
-		}
-		log.Debugf("%v", t.NewLine().Append(req.Prompt.User, "text-gray-600"))
+		log.Debugf("%v", dispatch.NewLine().Append(req.Prompt.User, "text-gray-600"))
 	}
 
 	return streamer.ExecuteStream(ctx, req)
