@@ -168,6 +168,69 @@ Hello {{name}}
 	}
 }
 
+func TestPromptEntityExposesOutputSchema(t *testing.T) {
+	isolateCaptainConfig(t)
+
+	dir := t.TempDir()
+	ctx := ContextWithPromptDirs(context.Background(), []string{dir})
+	content := `---
+name: Structured
+model: claude-sonnet-4-6
+input:
+  schema:
+    topic: string
+output:
+  schema:
+    answer: string
+    score: integer
+---
+{{role "user"}}
+Summarize {{topic}}
+`
+
+	created, err := createPrompt(ctx, map[string]any{"name": "Structured", "content": content})
+	if err != nil {
+		t.Fatalf("createPrompt() err = %v", err)
+	}
+
+	// get → PromptDetail carries the frontmatter output.schema.
+	detail, err := getPrompt(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("getPrompt() err = %v", err)
+	}
+	assertSchemaHasProps(t, "detail.OutputSchema", detail.OutputSchema, "answer", "score")
+
+	// render → PromptRenderResult carries the same output schema.
+	rendered, err := renderPrompt(ctx, created.ID, PromptRenderRequest{
+		Variables: map[string]any{"topic": "Go"},
+	})
+	if err != nil {
+		t.Fatalf("renderPrompt() err = %v", err)
+	}
+	if rendered.ValidationError != "" {
+		t.Fatalf("render validation error = %q", rendered.ValidationError)
+	}
+	assertSchemaHasProps(t, "rendered.OutputSchema", rendered.OutputSchema, "answer", "score")
+}
+
+// assertSchemaHasProps checks a JSON-Schema map exposes the given top-level
+// properties, tolerating the exact picoschema-expanded shape.
+func assertSchemaHasProps(t *testing.T, label string, schema map[string]any, keys ...string) {
+	t.Helper()
+	if schema == nil {
+		t.Fatalf("%s is nil, want an object schema", label)
+	}
+	props, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("%s.properties = %T, want map[string]any", label, schema["properties"])
+	}
+	for _, k := range keys {
+		if _, ok := props[k]; !ok {
+			t.Fatalf("%s.properties missing %q; got %v", label, k, props)
+		}
+	}
+}
+
 func TestUpdateEmbeddedPromptForksToLocal(t *testing.T) {
 	isolateCaptainConfig(t)
 

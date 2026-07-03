@@ -53,21 +53,55 @@ func NewCodexAppServer(model string) (*CodexAppServer, error) {
 func (c *CodexAppServer) GetModel() string       { return c.model }
 func (c *CodexAppServer) GetBackend() ai.Backend { return ai.BackendCodexCLI }
 
-// Execute drains the streaming output into a buffered ai.Response.
+// Execute drains the streaming output into a buffered ai.Response. When the
+// request carries a structured-output schema, the final agent message's JSON is
+// unmarshalled into req.Prompt.Schema and surfaced as StructuredData (mirroring
+// the genkit and claude-agent providers).
 func (c *CodexAppServer) Execute(ctx context.Context, req ai.Request) (*ai.Response, error) {
 	start := time.Now()
 	events, err := c.ExecuteStream(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	return CoalesceStream(ctx, c.model, events, start)
+	resp, err := CoalesceStream(ctx, c.model, events, start)
+	if err != nil {
+		return nil, err
+	}
+	if req.Prompt.Schema != nil {
+		raw, _ := resp.StructuredData.(json.RawMessage)
+		if err := ai.BindStructuredOutput(req.Prompt.Schema, raw); err != nil {
+			return nil, err
+		}
+		resp.StructuredData = req.Prompt.Schema
+		resp.Text = ""
+	} else if len(req.Prompt.SchemaJSON) > 0 {
+		// A pre-built JSON schema has no Go target to bind into; leave the raw
+		// structured JSON on Text for tolerant decoders.
+		if raw, ok := resp.StructuredData.(json.RawMessage); ok && len(raw) > 0 {
+			resp.Text = string(raw)
+		}
+	}
+	return resp, nil
+}
+
+// codexOutputSchema derives the JSON schema codex should constrain the final
+// message to (a reflected Go struct or a verbatim Prompt.SchemaJSON), or nil for
+// a text-mode request. A non-struct target fails loudly rather than silently
+// dropping the schema.
+func codexOutputSchema(req ai.Request) (json.RawMessage, error) {
+	schema, err := ai.SchemaJSONFor(req.Prompt)
+	if err != nil {
+		return nil, fmt.Errorf("codex app-server: cannot derive structured-output schema: %w", err)
+	}
+	return schema, nil
 }
 
 // ExecuteStream runs a single turn; the channel closes on turn/completed, a
 // fatal error, ctx cancellation, or a child crash.
 func (c *CodexAppServer) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai.Event, error) {
-	if req.Prompt.Schema != nil {
-		return nil, fmt.Errorf("codex app-server does not support StructuredOutput; use a direct API backend")
+	schema, err := codexOutputSchema(req)
+	if err != nil {
+		return nil, err
 	}
 
 	c.turnMu.Lock()
@@ -80,11 +114,12 @@ func (c *CodexAppServer) ExecuteStream(ctx context.Context, req ai.Request) (<-c
 	c.mu.Unlock()
 
 	ts := &turnState{
-		ch:       make(chan ai.Event, 16),
-		usage:    &ai.Usage{},
-		model:    c.model,
-		streamed: map[string]bool{},
-		terminal: make(chan struct{}),
+		ch:           make(chan ai.Event, 16),
+		usage:        &ai.Usage{},
+		model:        c.model,
+		streamed:     map[string]bool{},
+		terminal:     make(chan struct{}),
+		outputSchema: schema,
 	}
 	c.setActive(ts)
 
@@ -102,7 +137,7 @@ func (c *CodexAppServer) driveTurn(ctx context.Context, req ai.Request, ts *turn
 		c.failTurn(ts, err)
 		return
 	}
-	turnID, err := c.startTurn(ctx, req, threadID)
+	turnID, err := c.startTurn(ctx, req, threadID, ts.outputSchema)
 	if err != nil {
 		c.failTurn(ts, err)
 		return
@@ -234,12 +269,12 @@ func (c *CodexAppServer) startThread(ctx context.Context, req ai.Request) (strin
 	return parseAppServerNotif(raw).threadID(), nil
 }
 
-func (c *CodexAppServer) startTurn(ctx context.Context, req ai.Request, threadID string) (string, error) {
+func (c *CodexAppServer) startTurn(ctx context.Context, req ai.Request, threadID string, outputSchema json.RawMessage) (string, error) {
 	rpc := c.client()
 	if rpc == nil {
 		return "", fmt.Errorf("codex app-server: not started")
 	}
-	raw, err := rpc.Call(ctx, "turn/start", buildTurnStartParams(c.model, req, threadID))
+	raw, err := rpc.Call(ctx, "turn/start", buildTurnStartParams(c.model, req, threadID, outputSchema))
 	if err != nil {
 		return "", err
 	}
@@ -275,13 +310,20 @@ func (c *CodexAppServer) handleNotification(method string, params json.RawMessag
 			ts.streamed[id] = true
 		}
 	case "item/completed":
-		// The final agent message repeats text already streamed via deltas; drop
-		// it so CoalesceStream / renderers don't double-count.
+		// The completed agent message carries the full text (structured runs use it
+		// as the validated JSON result). Capture it, then drop the duplicate so
+		// CoalesceStream / renderers don't double-count already-streamed deltas.
+		if it := parseAppServerNotif(params).Item; it != nil && it.Type == "agentMessage" {
+			ts.lastAgentMessage = it.Text
+		}
 		if appServerStreamedAgentMessage(params, ts.streamed) {
 			return
 		}
 	}
 	if ev, ok := mapAppServerNotification(method, params, ts.model, ts.usage); ok {
+		if ev.Kind == ai.EventResult && len(ts.outputSchema) > 0 {
+			ev.StructuredData = json.RawMessage(ts.lastAgentMessage)
+		}
 		ts.send(ev)
 	}
 	if method == "turn/completed" || appServerErrorIsFatal(method, params) {
@@ -316,6 +358,13 @@ type turnState struct {
 	usage    *ai.Usage
 	model    string
 	streamed map[string]bool // agent-message item IDs already streamed via deltas
+
+	// outputSchema is non-nil when the turn requested structured output; it drives
+	// the turn/start outputSchema and gates capturing lastAgentMessage as the
+	// structured result. lastAgentMessage is the full text of the most recent
+	// completed agentMessage (codex returns structured JSON as that text).
+	outputSchema     json.RawMessage
+	lastAgentMessage string
 
 	terminal chan struct{} // closed when the turn is over (by codex or by finish)
 	termOnce sync.Once

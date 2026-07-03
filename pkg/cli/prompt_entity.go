@@ -90,6 +90,7 @@ type PromptDetail struct {
 	Content      string         `json:"content"`
 	InputSchema  map[string]any `json:"inputSchema,omitempty"`
 	InputDefault map[string]any `json:"inputDefault,omitempty"`
+	OutputSchema map[string]any `json:"outputSchema,omitempty"`
 	Metadata     map[string]any `json:"metadata,omitempty"`
 }
 
@@ -116,6 +117,7 @@ type PromptRenderResult struct {
 	Config          ai.Config      `json:"config"`
 	InputSchema     map[string]any `json:"inputSchema,omitempty"`
 	InputDefault    map[string]any `json:"inputDefault,omitempty"`
+	OutputSchema    map[string]any `json:"outputSchema,omitempty"`
 	ValidationError string         `json:"validationError,omitempty"`
 }
 
@@ -157,6 +159,7 @@ type promptInspection struct {
 	Metadata     map[string]any
 	InputSchema  map[string]any
 	InputDefault map[string]any
+	OutputSchema map[string]any
 	Variables    []PromptVariable
 }
 
@@ -381,6 +384,7 @@ func renderPrompt(ctx context.Context, id string, renderReq PromptRenderRequest)
 		Config:       cfg,
 		InputSchema:  detail.InputSchema,
 		InputDefault: detail.InputDefault,
+		OutputSchema: detail.OutputSchema,
 	}
 	switch {
 	case req.Prompt.User == "":
@@ -849,6 +853,7 @@ func promptDetailFromContent(record promptRecord, content string) (PromptDetail,
 		Content:       content,
 		InputSchema:   inspection.InputSchema,
 		InputDefault:  inspection.InputDefault,
+		OutputSchema:  inspection.OutputSchema,
 		Metadata:      inspection.Metadata,
 	}, nil
 }
@@ -948,6 +953,7 @@ func inspectPrompt(content string, data map[string]any) (promptInspection, error
 		Metadata:     metadata,
 		InputSchema:  inputSchema,
 		InputDefault: inputDefault,
+		OutputSchema: anyToMap(rendered.Output.Schema),
 		Variables:    variablesFromSchema(inputSchema),
 	}, nil
 }

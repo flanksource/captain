@@ -3,6 +3,7 @@ package cmux
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,6 +11,38 @@ import (
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/commons-db/shell"
 )
+
+func TestWithSchemaPrompt(t *testing.T) {
+	// A raw JSON schema is appended to the prompt and the native fields cleared,
+	// so the cmux run is a plain text turn that still asks for JSON.
+	req := ai.Request{Prompt: api.Prompt{
+		User:       "review the diff",
+		SchemaJSON: []byte(`{"type":"object","required":["pass"]}`),
+	}}
+	got, err := withSchemaPrompt(req)
+	if err != nil {
+		t.Fatalf("withSchemaPrompt: %v", err)
+	}
+	if got.Prompt.Schema != nil || got.Prompt.SchemaJSON != nil {
+		t.Errorf("native schema fields must be cleared, got Schema=%v SchemaJSON=%s", got.Prompt.Schema, got.Prompt.SchemaJSON)
+	}
+	if !strings.Contains(got.Prompt.User, "review the diff") {
+		t.Errorf("original prompt lost: %q", got.Prompt.User)
+	}
+	if !strings.Contains(got.Prompt.User, `"required":["pass"]`) {
+		t.Errorf("schema not appended to prompt: %q", got.Prompt.User)
+	}
+
+	// A text-mode request is returned unchanged.
+	plain := ai.Request{Prompt: api.Prompt{User: "hi"}}
+	got, err = withSchemaPrompt(plain)
+	if err != nil {
+		t.Fatalf("withSchemaPrompt(text): %v", err)
+	}
+	if got.Prompt.User != "hi" {
+		t.Errorf("text prompt altered: %q", got.Prompt.User)
+	}
+}
 
 func TestNewDerivesAgentAndBackend(t *testing.T) {
 	cases := []struct {

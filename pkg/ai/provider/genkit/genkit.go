@@ -10,6 +10,7 @@ package genkit
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -49,9 +50,9 @@ func New(cfg ai.Config) (*Provider, error) {
 	}
 
 	switch backend {
-	case ai.BackendAnthropic, ai.BackendOpenAI, ai.BackendGemini:
+	case ai.BackendAnthropic, ai.BackendOpenAI, ai.BackendGemini, ai.BackendDeepSeek:
 	default:
-		return nil, fmt.Errorf("genkit provider does not support backend %q (supported: anthropic, openai, gemini)", backend)
+		return nil, fmt.Errorf("genkit provider does not support backend %q (supported: anthropic, openai, gemini, deepseek)", backend)
 	}
 
 	apiKey := cfg.APIKey
@@ -59,7 +60,7 @@ func New(cfg ai.Config) (*Provider, error) {
 		apiKey = ai.GetAPIKeyFromEnv(backend)
 	}
 	if apiKey == "" {
-		return nil, fmt.Errorf("genkit provider: no API key for backend %q (set the provider's API key, e.g. ANTHROPIC_API_KEY/OPENAI_API_KEY/GEMINI_API_KEY)", backend)
+		return nil, fmt.Errorf("genkit provider: no API key for backend %q (set the provider's API key, e.g. ANTHROPIC_API_KEY/OPENAI_API_KEY/GEMINI_API_KEY/DEEPSEEK_API_KEY)", backend)
 	}
 
 	ref, err := modelRef(backend, cfg.Model.Name)
@@ -83,7 +84,11 @@ func (p *Provider) GetBackend() ai.Backend { return p.backend }
 func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, error) {
 	start := time.Now()
 
-	resp, err := gk.Generate(ctx, p.g, generateOptions(p, req, nil)...)
+	opts, err := generateOptions(p, req, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := gk.Generate(ctx, p.g, opts...)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, fmt.Errorf("%w: %v", ai.ErrTimeout, ctx.Err())
@@ -99,6 +104,12 @@ func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, e
 		}
 		out.StructuredData = req.Prompt.Schema
 		out.Text = ""
+	} else if len(req.Prompt.SchemaJSON) > 0 {
+		// A pre-built JSON schema has no Go target to bind into; genkit returns the
+		// constrained JSON as text — surface it as raw structured data too.
+		if out.Text != "" {
+			out.StructuredData = json.RawMessage(out.Text)
+		}
 	}
 
 	if cost := p.costUSD(out.Usage); cost > 0 {
@@ -112,7 +123,7 @@ func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, e
 // and a terminal EventResult carrying usage + best-effort cost. Structured
 // output is unsupported in stream mode (mirrors the claude_cli stream provider).
 func (p *Provider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai.Event, error) {
-	if req.Prompt.Schema != nil {
+	if req.Prompt.HasSchema() {
 		return nil, fmt.Errorf("genkit stream mode does not support structured output; use Execute")
 	}
 
@@ -128,7 +139,10 @@ func (p *Provider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai
 		return nil
 	}
 
-	opts := generateOptions(p, req, cb)
+	opts, err := generateOptions(p, req, cb)
+	if err != nil {
+		return nil, err
+	}
 	go func() {
 		defer close(ch)
 		resp, err := gk.Generate(ctx, p.g, opts...)
@@ -160,6 +174,8 @@ func pricingModelID(backend ai.Backend, model string) string {
 		return "openai/" + bare
 	case ai.BackendGemini:
 		return "google/" + bare
+	case ai.BackendDeepSeek:
+		return "deepseek/" + bare
 	default:
 		return model
 	}

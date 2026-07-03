@@ -12,6 +12,9 @@ func init() {
 	ai.RegisterProvider(ai.BackendAnthropic, func(cfg ai.Config) (ai.Provider, error) { return genkit.New(cfg) })
 	ai.RegisterProvider(ai.BackendOpenAI, func(cfg ai.Config) (ai.Provider, error) { return genkit.New(cfg) })
 	ai.RegisterProvider(ai.BackendGemini, func(cfg ai.Config) (ai.Provider, error) { return genkit.New(cfg) })
+	// DeepSeek exposes an OpenAI-compatible API; genkit serves it via compat_oai
+	// with a custom base URL (see pluginFor).
+	ai.RegisterProvider(ai.BackendDeepSeek, func(cfg ai.Config) (ai.Provider, error) { return genkit.New(cfg) })
 
 	// Claude Agent SDK as a supervised TS process over JSON-RPC replaces the
 	// one-shot `claude -p` path; claude-code-* models route here too.

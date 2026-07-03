@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/flanksource/captain/pkg/ai"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/text"
@@ -179,61 +180,17 @@ func FindLastJSONLine(output string, predicate func(map[string]any) bool) (json.
 // Bracket-counting extractors
 // ---------------------------------------------------------------------------
 
-// ExtractJSONObject finds and extracts the first complete JSON object from
-// a string using bracket-counting to handle nested braces correctly.
+// ExtractJSONObject finds and extracts the first complete JSON object from a
+// string using bracket-counting (canonical implementation in pkg/ai). ANSI codes
+// are stripped first so agent-terminal output is handled.
 func ExtractJSONObject(s string) (string, bool) {
-	return extractBalanced(StripANSI(s), '{', '}')
+	return ai.ExtractJSONObject(StripANSI(s))
 }
 
-// extractJSONArray finds and extracts the first complete JSON array from
-// a string using bracket-counting.
+// extractJSONArray finds and extracts the first complete JSON array from a
+// string using bracket-counting.
 func extractJSONArray(s string) (string, bool) {
-	return extractBalanced(StripANSI(s), '[', ']')
-}
-
-// extractBalanced finds text from the first occurrence of open to the matching
-// close character, respecting nesting and JSON string escaping.
-func extractBalanced(s string, open, close byte) (string, bool) {
-	start := strings.IndexByte(s, open)
-	if start < 0 {
-		return "", false
-	}
-
-	depth := 0
-	inString := false
-	escaped := false
-
-	for i := start; i < len(s); i++ {
-		ch := s[i]
-		if escaped {
-			escaped = false
-			continue
-		}
-		if ch == '\\' && inString {
-			escaped = true
-			continue
-		}
-		if ch == '"' {
-			inString = !inString
-			continue
-		}
-		if inString {
-			continue
-		}
-		switch ch {
-		case open:
-			depth++
-		case close:
-			depth--
-			if depth == 0 {
-				candidate := s[start : i+1]
-				if isValidJSON(candidate) {
-					return candidate, true
-				}
-			}
-		}
-	}
-	return "", false
+	return ai.ExtractJSONArray(StripANSI(s))
 }
 
 // ---------------------------------------------------------------------------
@@ -256,24 +213,12 @@ func UnmarshalWithCleanup(data string, v any) error {
 
 // StripMarkdownFences removes common markdown fence prefixes/suffixes.
 // Prefer extractMarkdownJSON for structured extraction; this is a fast
-// best-effort helper for simple cases.
-func StripMarkdownFences(s string) string {
-	for _, prefix := range []string{"```json\n", "```json", "```yaml\n", "```yaml", "```yml\n", "```yml", "```\n", "```"} {
-		s = strings.TrimPrefix(s, prefix)
-	}
-	s = strings.TrimSuffix(s, "\n```")
-	s = strings.TrimSuffix(s, "```")
-	return s
-}
+// best-effort helper for simple cases (canonical implementation in pkg/ai).
+func StripMarkdownFences(s string) string { return ai.StripMarkdownFences(s) }
 
-// ExtractYAMLBlock extracts content between the first pair of --- delimiters.
-func ExtractYAMLBlock(s string) string {
-	parts := strings.Split(s, "---")
-	if len(parts) >= 3 {
-		return strings.TrimSpace(parts[1])
-	}
-	return ""
-}
+// ExtractYAMLBlock extracts content between the first pair of --- delimiters
+// (canonical implementation in pkg/ai).
+func ExtractYAMLBlock(s string) string { return ai.ExtractYAMLBlock(s) }
 
 // ExtractMarkdownCodeBlocks exposes the goldmark-based code block extractor
 // for use outside this package. langs filters by info string (empty = all).

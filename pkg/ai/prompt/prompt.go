@@ -11,15 +11,17 @@
 // context.dir, effort, sessionId, maxTurns. When a file mixes both dialects the
 // dotprompt config: block wins for the three knobs it owns.
 //
-// Structured output is driven by the Go target passed to Render (out), which
-// becomes ai.Request.Prompt.Schema — captain's providers derive the JSON
-// schema from that Go type. The frontmatter output schema is advisory and is
-// not used to populate the schema target (captain cannot consume a bare schema
-// map), so pass a Go struct when you want structured results.
+// Structured output can come from either the Go target passed to Render (out),
+// which becomes ai.Request.Prompt.Schema (providers reflect the JSON schema from
+// that Go type), or the frontmatter `output.schema` block (picoschema or raw
+// JSON Schema), which the dotprompt library resolves and Render marshals onto
+// ai.Request.Prompt.SchemaJSON (sent to the model verbatim). A Go target takes
+// precedence; pass out == nil to use the schema declared in the file.
 package prompt
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -115,6 +117,14 @@ func (t *Template) Render(data map[string]any, out any) (ai.Request, ai.Config, 
 	cfg.Budget = req.Budget
 	if out != nil {
 		req.Prompt.Schema = out
+	} else if rendered.Output.Schema != nil {
+		// A frontmatter `output.schema` block (resolved by the dotprompt library
+		// from picoschema or a raw JSON Schema) becomes the verbatim SchemaJSON.
+		raw, err := json.Marshal(rendered.Output.Schema)
+		if err != nil {
+			return ai.Request{}, ai.Config{}, fmt.Errorf("marshal prompt %s output schema: %w", t.name, err)
+		}
+		req.Prompt.SchemaJSON = raw
 	}
 	return req, cfg, nil
 }

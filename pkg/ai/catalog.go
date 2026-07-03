@@ -73,6 +73,11 @@ var defaultCatalog = []Model{
 	{ID: "googleai/gemini-2.5-pro", Backend: BackendGemini, Label: "Gemini 2.5 Pro", Reasoning: true, ContextWindow: 1048576, ReleaseDate: "2025-06-17"},
 	{ID: "googleai/gemini-3.0-pro", Backend: BackendGemini, Label: "Gemini 3.0 Pro", Reasoning: true, ContextWindow: 1048576},
 	{ID: "googleai/gemini-3.5-flash", Backend: BackendGemini, Label: "Gemini 3.5 Flash", Reasoning: true, ContextWindow: 1048576, ReleaseDate: "2026-06-10"},
+	// DeepSeek is OpenAI-compatible; deepseek-chat is the non-thinking model and
+	// deepseek-reasoner is the thinking model (reasoning selected by model, not
+	// effort). IDs are stable aliases that always resolve to DeepSeek's latest.
+	{ID: "deepseek/deepseek-chat", Backend: BackendDeepSeek, Label: "DeepSeek Chat", ContextWindow: 131072},
+	{ID: "deepseek/deepseek-reasoner", Backend: BackendDeepSeek, Label: "DeepSeek Reasoner", Reasoning: true, ContextWindow: 131072},
 
 	// Agent-framework models (captain pkg/ai StreamingProvider). These run a
 	// supervised local subprocess that owns its own tools. IDs are tier aliases

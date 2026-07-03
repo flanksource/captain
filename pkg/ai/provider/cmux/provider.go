@@ -75,11 +75,12 @@ func (p *Provider) GetBackend() ai.Backend {
 	return api.BackendClaudeCmux
 }
 
-// Execute drains its own ExecuteStream into a buffered ai.Response.
+// Execute drains its own ExecuteStream into a buffered ai.Response. cmux cannot
+// constrain output natively, so a structured-output request is served by
+// appending a schema instruction to the prompt (see ExecuteStream) and
+// extracting the JSON object from the reply here.
 func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, error) {
-	if req.Prompt.Schema != nil {
-		return nil, fmt.Errorf("cmux provider does not support StructuredOutput")
-	}
+	schemaRequested := req.Prompt.HasSchema()
 	start := time.Now()
 	events, err := p.ExecuteStream(ctx, req)
 	if err != nil {
@@ -137,14 +138,20 @@ func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, e
 	if sessionID != "" {
 		resp.Raw = map[string]any{"session_id": sessionID}
 	}
+	if schemaRequested {
+		if obj, ok := ai.ExtractJSONObject(resp.Text); ok {
+			resp.StructuredData = json.RawMessage(obj)
+		}
+	}
 	return resp, nil
 }
 
 // ExecuteStream drives one cmux run in a goroutine and streams ai.Events on a
 // buffered channel, closing it when done (always after exactly one EventResult).
 func (p *Provider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai.Event, error) {
-	if req.Prompt.Schema != nil {
-		return nil, fmt.Errorf("cmux provider does not support StructuredOutput")
+	req, err := withSchemaPrompt(req)
+	if err != nil {
+		return nil, err
 	}
 	if req.Prompt.User == "" {
 		return nil, fmt.Errorf("cmux provider: prompt is required")
@@ -152,6 +159,23 @@ func (p *Provider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai
 	events := make(chan ai.Event, 32)
 	go p.drive(ctx, req, events)
 	return events, nil
+}
+
+// withSchemaPrompt makes a structured-output request runnable on cmux (which
+// cannot enforce a schema natively) by appending a JSON-only schema instruction
+// to the user prompt and clearing the native schema fields so the run is a plain
+// text turn. The reply's JSON is recovered in Execute.
+func withSchemaPrompt(req ai.Request) (ai.Request, error) {
+	schema, err := ai.SchemaJSONFor(req.Prompt)
+	if err != nil {
+		return req, err
+	}
+	if len(schema) > 0 {
+		req.Prompt.User = strings.TrimRight(req.Prompt.User, "\n") + "\n\n" + ai.SchemaInstruction(string(schema))
+	}
+	req.Prompt.Schema = nil
+	req.Prompt.SchemaJSON = nil
+	return req, nil
 }
 
 // drive runs the session and translates its outcome into the single terminal

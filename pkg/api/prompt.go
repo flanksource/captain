@@ -1,6 +1,9 @@
 package api
 
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 // Prompt is the instruction payload: the user prompt plus optional system
 // framing, a structured-output schema target, and diagnostic metadata.
@@ -18,9 +21,21 @@ type Prompt struct {
 	// Schema is the Go struct the response must conform to (structured output); a
 	// runtime-only Go type, never serialized as data. (ai.Request.StructuredOutput)
 	Schema any `json:"-" yaml:"-" pretty:"-"`
+	// SchemaJSON is a pre-built JSON Schema (e.g. from a .prompt frontmatter
+	// output block or a caller-generated schema) that the response must conform
+	// to. Unlike Schema it is sent to the model verbatim — never reflected from a
+	// Go type and never round-tripped through JSONSchema — so it preserves the
+	// full JSON Schema vocabulary (minItems, maxLength, …). When set, the raw JSON
+	// reply is also left on Response.Text for tolerant callers. Schema and
+	// SchemaJSON are mutually exclusive.
+	SchemaJSON json.RawMessage `json:"schemaJSON,omitempty" yaml:"schemaJSON,omitempty" pretty:"-"`
 	// Metadata is arbitrary caller metadata. (ai.Request.Metadata)
 	Metadata map[string]string `json:"metadata,omitempty" yaml:"metadata,omitempty" pretty:"label=Metadata"`
 }
+
+// HasSchema reports whether the prompt requests structured output by either
+// mechanism (a reflected Go struct or a pre-built JSON schema).
+func (p Prompt) HasSchema() bool { return p.Schema != nil || len(p.SchemaJSON) > 0 }
 
 // Validate requires a non-empty user prompt.
 func (p Prompt) Validate() error {

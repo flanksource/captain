@@ -66,6 +66,12 @@ func TestEffortConfig(t *testing.T) {
 			req:     ai.Request{},
 			want:    nil,
 		},
+		{
+			name:    "deepseek omits config (reasoning is selected by model)",
+			backend: ai.BackendDeepSeek,
+			req:     ai.Request{Model: api.Model{Effort: api.EffortHigh}},
+			want:    nil,
+		},
 	}
 
 	for _, tt := range tests {
@@ -106,6 +112,8 @@ func TestModelRef(t *testing.T) {
 		{"openai bare", ai.BackendOpenAI, "gpt-4o", "openai/gpt-4o", false},
 		{"gemini bare", ai.BackendGemini, "gemini-2.5-pro", "googleai/gemini-2.5-pro", false},
 		{"gemini normalizes models prefix", ai.BackendGemini, "models/gemini-2.5-pro", "googleai/gemini-2.5-pro", false},
+		{"deepseek bare", ai.BackendDeepSeek, "deepseek-chat", "deepseek/deepseek-chat", false},
+		{"deepseek re-prefixes existing", ai.BackendDeepSeek, "deepseek/deepseek-reasoner", "deepseek/deepseek-reasoner", false},
 		{"anthropic re-prefixes existing", ai.BackendAnthropic, "anthropic/claude-opus-4", "anthropic/claude-opus-4", false},
 		{"unsupported backend errors", ai.BackendClaudeCLI, "claude-code-foo", "", true},
 		{"empty model errors", ai.BackendAnthropic, "", "", true},
@@ -129,15 +137,16 @@ func TestPricingModelID(t *testing.T) {
 	assert.Equal(t, "openai/gpt-4o", pricingModelID(ai.BackendOpenAI, "gpt-4o"))
 	// Gemini's OpenRouter pricing key is google/, not the genkit googleai/ ref.
 	assert.Equal(t, "google/gemini-2.5-pro", pricingModelID(ai.BackendGemini, "googleai/gemini-2.5-pro"))
+	assert.Equal(t, "deepseek/deepseek-chat", pricingModelID(ai.BackendDeepSeek, "deepseek/deepseek-chat"))
 }
 
 func TestNewMissingAPIKey(t *testing.T) {
 	// Ensure no provider key leaks in from the environment.
-	for _, env := range []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"} {
+	for _, env := range []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "DEEPSEEK_API_KEY"} {
 		t.Setenv(env, "")
 	}
 
-	for _, backend := range []ai.Backend{ai.BackendAnthropic, ai.BackendOpenAI, ai.BackendGemini} {
+	for _, backend := range []ai.Backend{ai.BackendAnthropic, ai.BackendOpenAI, ai.BackendGemini, ai.BackendDeepSeek} {
 		t.Run(string(backend), func(t *testing.T) {
 			_, err := New(ai.Config{Model: api.Model{Backend: backend, Name: "some-model"}})
 			require.Error(t, err)

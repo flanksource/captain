@@ -206,6 +206,7 @@ func backendOptions() []huh.Option[string] {
 		huh.NewOption("Anthropic API", string(ai.BackendAnthropic)),
 		huh.NewOption("Google Gemini API", string(ai.BackendGemini)),
 		huh.NewOption("OpenAI API", string(ai.BackendOpenAI)),
+		huh.NewOption("DeepSeek API", string(ai.BackendDeepSeek)),
 		huh.NewOption("Claude CLI", string(ai.BackendClaudeCLI)),
 		huh.NewOption("Claude Agent (SDK)", string(ai.BackendClaudeAgent)),
 		huh.NewOption("Claude cmux", string(ai.BackendClaudeCmux)),
@@ -276,6 +277,8 @@ func defaultModelFor(b ai.Backend) string {
 		return "claude-agent-sonnet"
 	case ai.BackendOpenAI:
 		return "gpt-5.5"
+	case ai.BackendDeepSeek:
+		return "deepseek-reasoner"
 	case ai.BackendCodexCLI:
 		return "gpt-5-codex"
 	case ai.BackendGemini, ai.BackendGeminiCLI:
