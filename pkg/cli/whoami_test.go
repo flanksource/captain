@@ -89,6 +89,36 @@ func TestResolveAdapter_CLILoginFile(t *testing.T) {
 	}
 }
 
+func TestResolveAdapter_CmuxUsesLocalLoginWithoutAPIKey(t *testing.T) {
+	home := "/home/u"
+	claudeAuth := filepath.Join(home, ".claude.json")
+	codexAuth := filepath.Join(home, ".codex", "auth.json")
+
+	claude := resolveAdapter(ai.BackendClaudeCmux, fakeProbe(
+		nil,
+		map[string]string{"claude": "/usr/local/bin/claude"},
+		map[string]bool{claudeAuth: true},
+		home))
+	if claude.Type != "cli" || !claude.Ready() {
+		t.Fatalf("claude-cmux should be ready through local claude login, got %+v", claude)
+	}
+	if claude.AuthMethod != "claude login" || claude.AuthDetail != claudeAuth {
+		t.Fatalf("claude-cmux auth = %q %q", claude.AuthMethod, claude.AuthDetail)
+	}
+
+	codex := resolveAdapter(ai.BackendCodexCmux, fakeProbe(
+		nil,
+		map[string]string{"codex": "/usr/local/bin/codex"},
+		map[string]bool{codexAuth: true},
+		home))
+	if codex.Type != "cli" || !codex.Ready() {
+		t.Fatalf("codex-cmux should be ready through local codex login, got %+v", codex)
+	}
+	if codex.AuthMethod != "codex login" || codex.AuthDetail != codexAuth {
+		t.Fatalf("codex-cmux auth = %q %q", codex.AuthMethod, codex.AuthDetail)
+	}
+}
+
 func TestResolveAdapter_CLIBinaryMissingNotReady(t *testing.T) {
 	home := "/home/u"
 	st := resolveAdapter(ai.BackendGeminiCLI, fakeProbe(
@@ -120,6 +150,23 @@ func TestResolveAdapter_EnvKeyPreferredOverLogin(t *testing.T) {
 	}
 }
 
+func TestWhoamiPrettyKeylessCmuxDoesNotRequestAPIKey(t *testing.T) {
+	got := (WhoamiResult{
+		Adapters: []AdapterStatus{{
+			Backend:       string(ai.BackendClaudeCmux),
+			Type:          "cli",
+			BinaryMissing: "claude",
+		}},
+	}).Pretty().String()
+
+	if strings.Contains(got, "ANTHROPIC_API_KEY") || strings.Contains(got, "OPENAI_API_KEY") {
+		t.Fatalf("keyless cmux pretty output should not request provider API keys: %q", got)
+	}
+	if !strings.Contains(got, "not configured") || !strings.Contains(got, "claude not in PATH") {
+		t.Fatalf("pretty output should still explain local readiness, got %q", got)
+	}
+}
+
 // TestRunWhoami_NoModelsCoversEveryBackend asserts the command lists exactly one
 // adapter per backend without making any network calls when --models=false.
 func TestRunWhoami_NoModelsCoversEveryBackend(t *testing.T) {
@@ -148,15 +195,37 @@ func TestRunWhoami_RejectsUnknownBackend(t *testing.T) {
 }
 
 func TestSetModelsFiltersAndSortsByReleaseDate(t *testing.T) {
-	st := AdapterStatus{Backend: string(ai.BackendOpenAI)}
+	st := AdapterStatus{Backend: string(ai.BackendAnthropic)}
 	setModels(&st, []ai.ModelDef{
-		{ID: "gpt-old-unknown", Backend: ai.BackendOpenAI},
-		{ID: "gpt-4o", Backend: ai.BackendOpenAI, ReleaseDate: "2026-07-01"},
-		{ID: "gpt-new", Backend: ai.BackendOpenAI, ReleaseDate: "2026-06-01"},
-		{ID: "gpt-mid", Backend: ai.BackendOpenAI, ReleaseDate: "2026-05-15"},
+		{ID: "claude-sonnet-5", Backend: ai.BackendAnthropic, ReleaseDate: "2026-06-01"},
+		{ID: "claude-sonnet-4-6", Backend: ai.BackendAnthropic, ReleaseDate: "2026-05-01"},
+		{ID: "claude-sonnet-4-5", Backend: ai.BackendAnthropic, ReleaseDate: "2026-04-01"},
+		{ID: "claude-sonnet-4-4", Backend: ai.BackendAnthropic, ReleaseDate: "2026-03-01"},
+		{ID: "claude-haiku-4-5", Backend: ai.BackendAnthropic, ReleaseDate: "2025-10-15"},
+		{ID: "claude-3-5-sonnet-20241022", Backend: ai.BackendAnthropic, ReleaseDate: "2024-10-22"},
 	})
 
-	want := []string{"gpt-new", "gpt-mid", "gpt-old-unknown"}
+	want := []string{"claude-sonnet-5", "claude-sonnet-4-6", "claude-sonnet-4-5", "claude-haiku-4-5"}
+	if st.ModelCount != len(want) {
+		t.Fatalf("ModelCount = %d, want %d (%+v)", st.ModelCount, len(want), st)
+	}
+	for i, w := range want {
+		if st.Models[i] != w {
+			t.Errorf("Models[%d] = %q, want %q", i, st.Models[i], w)
+		}
+	}
+}
+
+func TestSetModelsKeepsGeminiProFamily(t *testing.T) {
+	st := AdapterStatus{Backend: string(ai.BackendGemini)}
+	setModels(&st, []ai.ModelDef{
+		{ID: "gemini-3.5-flash", Backend: ai.BackendGemini, ReleaseDate: "2026-06-10"},
+		{ID: "gemini-3.0-pro", Backend: ai.BackendGemini},
+		{ID: "gemini-2.5-pro", Backend: ai.BackendGemini, ReleaseDate: "2025-06-17"},
+		{ID: "gemini-2.0-flash", Backend: ai.BackendGemini, ReleaseDate: "2025-02-05"},
+	})
+
+	want := []string{"gemini-3.5-flash", "gemini-3.0-pro", "gemini-2.5-pro"}
 	if st.ModelCount != len(want) {
 		t.Fatalf("ModelCount = %d, want %d (%+v)", st.ModelCount, len(want), st)
 	}

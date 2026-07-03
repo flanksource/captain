@@ -144,21 +144,48 @@ func TestCatalogReleaseDateMatchesBareAndRuntimeIDs(t *testing.T) {
 
 func TestCurrentModelsByReleaseDateFiltersAndSorts(t *testing.T) {
 	models := []ModelDef{
-		{ID: "gpt-old-unknown", Backend: BackendOpenAI},
+		{ID: "claude-sonnet-5", Backend: BackendAnthropic, ReleaseDate: "2026-06-01"},
+		{ID: "claude-sonnet-4-6", Backend: BackendAnthropic, ReleaseDate: "2026-05-01"},
+		{ID: "claude-sonnet-4-5", Backend: BackendAnthropic, ReleaseDate: "2026-04-01"},
+		{ID: "claude-sonnet-4-4", Backend: BackendAnthropic, ReleaseDate: "2026-03-01"},
+		{ID: "claude-haiku-4-5", Backend: BackendAnthropic, ReleaseDate: "2025-10-15"},
+		{ID: "gemini-3.0-pro", Backend: BackendGemini},
 		{ID: "gpt-4o", Backend: BackendOpenAI, ReleaseDate: "2026-04-01"},
-		{ID: "gpt-new", Backend: BackendOpenAI, ReleaseDate: "2026-05-01"},
-		{ID: "gpt-mid", Backend: BackendOpenAI, ReleaseDate: "2026-04-15"},
 		{ID: "gpt-5-codex", Backend: BackendCodexCLI, ReleaseDate: "2026-03-01"},
 	}
 
 	got := CurrentModelsByReleaseDate(models)
-	want := []string{"gpt-new", "gpt-mid", "gpt-5-codex", "gpt-old-unknown"}
+	want := []string{
+		"claude-sonnet-5",
+		"claude-sonnet-4-6",
+		"claude-sonnet-4-5",
+		"gpt-5-codex",
+		"claude-haiku-4-5",
+		"gemini-3.0-pro",
+	}
 	if len(got) != len(want) {
 		t.Fatalf("len = %d, want %d: %+v", len(got), len(want), got)
 	}
 	for i, w := range want {
 		if got[i].ID != w {
 			t.Errorf("got[%d].ID = %q, want %q", i, got[i].ID, w)
+		}
+	}
+}
+
+func TestModelFamilyPrefix(t *testing.T) {
+	cases := map[string]string{
+		"anthropic/claude-haiku-4-5": "claude-haiku",
+		"claude-agent-sonnet":        "claude-agent-sonnet",
+		"googleai/gemini-3.0-pro":    "gemini-pro",
+		"gemini-3.5-flash":           "gemini-flash",
+		"gemini-2.5-flash-lite":      "gemini-flash-lite",
+		"openai/gpt-5.4-mini":        "gpt-mini",
+		"openai/gpt-5.5":             "gpt",
+	}
+	for id, want := range cases {
+		if got := ModelFamilyPrefix(id); got != want {
+			t.Errorf("ModelFamilyPrefix(%q) = %q, want %q", id, got, want)
 		}
 	}
 }

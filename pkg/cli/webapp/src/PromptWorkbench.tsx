@@ -158,7 +158,7 @@ const EMPTY_RUNTIME: RuntimeForm = {
   mode: "agent",
   model: "",
   backend: "",
-  timeout: "120s",
+  timeout: "2h",
   effort: "",
   budget: {},
   maxTurns: "",
@@ -1154,10 +1154,9 @@ function RuntimeControls({
       </div>
       <div className="grid gap-density-2 sm:grid-cols-2">
         <Field label="Timeout">
-          <input
+          <DurationPicker
             value={runtime.timeout}
-            onChange={(event) => update({ timeout: event.target.value })}
-            className="h-control-h w-full rounded-md border border-border bg-background px-density-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+            onChange={(timeout) => update({ timeout })}
           />
         </Field>
         <Field label="Max Turns">
@@ -1269,6 +1268,65 @@ function RuntimeControls({
         )}
       </div>
     </section>
+  );
+}
+
+type DurationUnit = "s" | "m" | "h";
+
+const DURATION_UNITS = [
+  { id: "s", label: "Seconds" },
+  { id: "m", label: "Minutes" },
+  { id: "h", label: "Hours" },
+] satisfies Array<{ id: DurationUnit; label: string }>;
+
+function DurationPicker({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const parsed = parseDurationValue(value);
+  const amount = parsed?.amount ?? "";
+  const unit = parsed?.unit ?? "h";
+
+  const updateAmount = (nextAmount: string) => {
+    if (!nextAmount.trim()) {
+      onChange("");
+      return;
+    }
+    onChange(formatDurationPickerValue(nextAmount, unit));
+  };
+
+  const updateUnit = (nextUnit: DurationUnit) => {
+    onChange(formatDurationPickerValue(amount || "2", nextUnit));
+  };
+
+  return (
+    <div className="flex min-w-0 overflow-hidden rounded-md border border-border bg-background focus-within:ring-2 focus-within:ring-ring">
+      <input
+        type="number"
+        min="1"
+        step="1"
+        value={amount}
+        onChange={(event) => updateAmount(event.target.value)}
+        className="h-control-h min-w-0 flex-1 border-none bg-transparent px-density-3 text-sm outline-none"
+        aria-label="Timeout duration"
+        placeholder="2"
+      />
+      <select
+        value={unit}
+        onChange={(event) => updateUnit(event.target.value as DurationUnit)}
+        className="h-control-h shrink-0 border-l border-border bg-muted/40 px-density-2 text-sm outline-none"
+        aria-label="Timeout unit"
+      >
+        {DURATION_UNITS.map((option) => (
+          <option key={option.id} value={option.id}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </div>
   );
 }
 
@@ -1632,6 +1690,18 @@ function parseJsonObject(raw: string):
   } catch (error) {
     return { ok: false, error: errorMessage(error) };
   }
+}
+
+function parseDurationValue(value: string): { amount: string; unit: DurationUnit } | undefined {
+  const match = value.trim().match(/^(\d+(?:\.\d+)?)(s|m|h)$/);
+  if (!match) return undefined;
+  return { amount: match[1], unit: match[2] as DurationUnit };
+}
+
+function formatDurationPickerValue(amount: string, unit: DurationUnit) {
+  const numeric = Number.parseFloat(amount);
+  if (!Number.isFinite(numeric) || numeric <= 0) return "";
+  return `${Number.isInteger(numeric) ? numeric.toFixed(0) : String(numeric)}${unit}`;
 }
 
 function runtimePayload(runtime: RuntimeForm, models: ChatModel[]) {

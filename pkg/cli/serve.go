@@ -45,8 +45,8 @@ type ServeOptions struct {
 func NewServeCommand(version string) *cobra.Command {
 	opts := ServeOptions{
 		Host:        "localhost",
-		Port:        8080,
-		UIPort:      5173,
+		Port:        9020,
+		UIPort:      5183,
 		ThreadsFile: ".captain/chat-threads.json",
 	}
 

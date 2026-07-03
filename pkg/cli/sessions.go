@@ -292,6 +292,12 @@ func RunSessionGet(opts SessionGetOptions) (SessionRecord, error) {
 		return SessionRecord{}, fmt.Errorf("id is required")
 	}
 
+	if candidate, ok, err := findSessionCandidateByID(id, source); err != nil {
+		return SessionRecord{}, err
+	} else if ok {
+		return loadSessionDetail(candidate)
+	}
+
 	candidates, err := discoverSessionCandidates("", true, source)
 	if err != nil {
 		return SessionRecord{}, err
@@ -338,6 +344,100 @@ func discoverSessionCandidates(cwd string, searchAll bool, source string) ([]ses
 		candidates = append(candidates, codexSessions...)
 	}
 	return candidates, nil
+}
+
+func findSessionCandidateByID(id string, source string) (sessionCandidate, bool, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return sessionCandidate{}, false, nil
+	}
+	if source == "all" || source == "claude" {
+		candidate, ok, err := findClaudeSessionCandidateByID(id)
+		if err != nil || ok {
+			return candidate, ok, err
+		}
+	}
+	if source == "all" || source == "codex" {
+		candidate, ok, err := findCodexSessionCandidateByID(id)
+		if err != nil || ok {
+			return candidate, ok, err
+		}
+	}
+	return sessionCandidate{}, false, nil
+}
+
+func findClaudeSessionCandidateByID(id string) (sessionCandidate, bool, error) {
+	if hasPathOrGlobMeta(id) {
+		return sessionCandidate{}, false, nil
+	}
+	projectsDir := claude.GetProjectsDir()
+	if _, err := os.Stat(projectsDir); os.IsNotExist(err) {
+		return sessionCandidate{}, false, nil
+	} else if err != nil {
+		return sessionCandidate{}, false, err
+	}
+
+	files, err := filepath.Glob(filepath.Join(projectsDir, "*", id+"*.jsonl"))
+	if err != nil {
+		return sessionCandidate{}, false, err
+	}
+	sort.Strings(files)
+	for _, file := range files {
+		sessionID := sessionIDFromFile(file)
+		if sessionID != id && !strings.HasPrefix(sessionID, id) {
+			continue
+		}
+		return sessionCandidate{
+			record: minimalSessionRecord("claude", file, sessionID),
+			path:   file,
+		}, true, nil
+	}
+	return sessionCandidate{}, false, nil
+}
+
+func findCodexSessionCandidateByID(id string) (sessionCandidate, bool, error) {
+	files, err := history.FindCodexSessionFiles()
+	if err != nil {
+		return sessionCandidate{}, false, err
+	}
+	sort.Strings(files)
+	for _, file := range files {
+		key := sessionRecordKey("codex", file)
+		fileID := sessionIDFromFile(file)
+		if key == id || fileID == id || (fileID != "" && strings.HasPrefix(fileID, id)) {
+			return sessionCandidate{
+				record: minimalSessionRecord("codex", file, fileID),
+				path:   file,
+			}, true, nil
+		}
+		meta, err := history.ReadCodexSessionMeta(file)
+		if err != nil || meta == nil || meta.ID == "" {
+			continue
+		}
+		if meta.ID == id || strings.HasPrefix(meta.ID, id) {
+			record := minimalSessionRecord("codex", file, meta.ID)
+			record.CWD = meta.CWD
+			record.Provider = meta.ModelProvider
+			record.Version = meta.CLIVersion
+			record.GitBranch = meta.GitBranch
+			record.StartedAt = meta.StartedAt
+			return sessionCandidate{record: record, path: file}, true, nil
+		}
+	}
+	return sessionCandidate{}, false, nil
+}
+
+func minimalSessionRecord(source, file, id string) SessionRecord {
+	return SessionRecord{
+		Key:             sessionRecordKey(source, file),
+		ID:              id,
+		Source:          source,
+		DetailAvailable: true,
+	}
+}
+
+func hasPathOrGlobMeta(s string) bool {
+	return strings.ContainsAny(s, `/\*?[`)
 }
 
 func discoverClaudeSessions(cwd string, searchAll bool) ([]sessionCandidate, error) {

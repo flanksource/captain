@@ -61,8 +61,8 @@ const DefaultModelID = "anthropic/claude-sonnet-5"
 //   - Anthropic: Fable 5 (most capable), Opus 4.8, Sonnet 5, Haiku 4.5. Mythos 5
 //     is Project Glasswing invite-only, so it is intentionally excluded.
 //   - OpenAI: GPT-5.5 (flagship) and GPT-5.4 mini. GPT-5.6 is preview-only.
-//   - Google: Gemini 2.5 Pro is the newest GA Pro (all Gemini 3.x Pro models are
-//     still preview), paired with the GA Gemini 3.5 Flash.
+//   - Google: keep recent Pro and Flash families visible separately so a newer
+//     Flash model does not hide recent Pro entries.
 var defaultCatalog = []Model{
 	{ID: "anthropic/claude-fable-5", Backend: BackendAnthropic, Label: "Claude Fable 5", Reasoning: true, ContextWindow: 1000000, ReleaseDate: "2026-06-15"},
 	{ID: "anthropic/claude-opus-4-8", Backend: BackendAnthropic, Label: "Claude Opus 4.8", Reasoning: true, ContextWindow: 1000000, ReleaseDate: "2026-04-15"},
@@ -71,6 +71,7 @@ var defaultCatalog = []Model{
 	{ID: "openai/gpt-5.5", Backend: BackendOpenAI, Label: "GPT-5.5", Reasoning: true, ContextWindow: 1000000, ReleaseDate: "2026-06-01"},
 	{ID: "openai/gpt-5.4-mini", Backend: BackendOpenAI, Label: "GPT-5.4 mini", Reasoning: true, ContextWindow: 400000, ReleaseDate: "2026-05-15"},
 	{ID: "googleai/gemini-2.5-pro", Backend: BackendGemini, Label: "Gemini 2.5 Pro", Reasoning: true, ContextWindow: 1048576, ReleaseDate: "2025-06-17"},
+	{ID: "googleai/gemini-3.0-pro", Backend: BackendGemini, Label: "Gemini 3.0 Pro", Reasoning: true, ContextWindow: 1048576},
 	{ID: "googleai/gemini-3.5-flash", Backend: BackendGemini, Label: "Gemini 3.5 Flash", Reasoning: true, ContextWindow: 1048576, ReleaseDate: "2026-06-10"},
 
 	// Agent-framework models (captain pkg/ai StreamingProvider). These run a

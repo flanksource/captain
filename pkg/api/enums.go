@@ -61,12 +61,13 @@ func (b Backend) Kind() string {
 }
 
 // AuthEnvVars returns the environment variables consulted for a backend's API
-// key, in priority order. CLI backends share their parent provider's key.
+// key, in priority order. Some CLI backends can use a parent provider key, while
+// cmux backends are keyless and rely on the local CLI login.
 func AuthEnvVars(b Backend) []string {
 	switch b {
-	case BackendAnthropic, BackendClaudeCLI, BackendClaudeAgent, BackendClaudeCmux:
+	case BackendAnthropic, BackendClaudeCLI, BackendClaudeAgent:
 		return []string{"ANTHROPIC_API_KEY"}
-	case BackendOpenAI, BackendCodexCLI, BackendCodexCmux:
+	case BackendOpenAI, BackendCodexCLI:
 		return []string{"OPENAI_API_KEY"}
 	case BackendGemini, BackendGeminiCLI:
 		return []string{"GEMINI_API_KEY", "GOOGLE_API_KEY"}

@@ -181,6 +181,7 @@ func TestIsLegacyModelID(t *testing.T) {
 		"claude-haiku-4-5":     false,
 		"gemini-2.5-flash":     false,
 		"gemini-2.5-pro":       false,
+		"gemini-3.0-pro":       false,
 		"gemini-3-pro-preview": false,
 		"grok-4":               false,
 		"grok-4-fast":          false,

@@ -148,6 +148,33 @@ func TestRunSessionGetUnknown(t *testing.T) {
 	}
 }
 
+func TestFindSessionCandidateByIDClaudeFilename(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	project := filepath.Join(home, "work", "project")
+	sessionFile := filepath.Join(home, ".claude", "projects", claude.NormalizePath(project), "sess-fast.jsonl")
+	if err := os.MkdirAll(filepath.Dir(sessionFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sessionFile, []byte("{not-json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	candidate, ok, err := findSessionCandidateByID("sess-fast", "all")
+	if err != nil {
+		t.Fatalf("findSessionCandidateByID: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected candidate")
+	}
+	if candidate.path != sessionFile {
+		t.Fatalf("candidate.path = %q, want %q", candidate.path, sessionFile)
+	}
+	if candidate.record.ID != "sess-fast" || candidate.record.Source != "claude" {
+		t.Fatalf("candidate.record = %+v", candidate.record)
+	}
+}
+
 func TestRunSessionLiveEnrichesSummaryWithProcessHealth(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

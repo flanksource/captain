@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+const currentModelsPerFamily = 3
+
 // legacyModelPrefixes hides model IDs that are either superseded by a newer
 // generation or aren't chat completions (image/audio/embedding/moderation).
 var legacyModelPrefixes = []string{
@@ -65,8 +67,9 @@ func IsLegacyModelIDForBackend(id string, backend Backend) bool {
 	return IsLegacyModelID(id)
 }
 
-// CurrentModelsByReleaseDate returns a filtered copy sorted newest first. Known
-// catalog release dates fill gaps left by provider list endpoints.
+// CurrentModelsByReleaseDate returns a filtered copy sorted newest first,
+// retaining the newest few models per family prefix. Known catalog release
+// dates fill gaps left by provider list endpoints.
 func CurrentModelsByReleaseDate(models []ModelDef) []ModelDef {
 	out := make([]ModelDef, 0, len(models))
 	for _, m := range models {
@@ -79,13 +82,18 @@ func CurrentModelsByReleaseDate(models []ModelDef) []ModelDef {
 		out = append(out, m)
 	}
 	SortModelsByReleaseDateDesc(out)
-	return out
+	return limitModelsPerFamily(out, currentModelsPerFamily)
 }
 
 // SortModelsByReleaseDateDesc sorts in-place by release date descending, with
 // unknown dates last and id descending as the stable deterministic tie-breaker.
 func SortModelsByReleaseDateDesc(models []ModelDef) {
 	sort.SliceStable(models, func(i, j int) bool {
+		if ModelFamilyPrefix(models[i].ID) == ModelFamilyPrefix(models[j].ID) {
+			if cmp := compareModelVersions(models[i].ID, models[j].ID); cmp != 0 {
+				return cmp > 0
+			}
+		}
 		left := models[i].ReleaseDate
 		if left == "" {
 			left = CatalogReleaseDate(models[i].Backend, models[i].ID)
@@ -125,6 +133,126 @@ func CatalogReleaseDate(backend Backend, id string) string {
 		}
 	}
 	return ""
+}
+
+// ModelFamilyPrefix groups versioned model ids by tier so recent entries from
+// each tier survive filtering, e.g. claude-haiku, claude-sonnet, gemini-pro.
+func ModelFamilyPrefix(id string) string {
+	id = strings.TrimPrefix(strings.TrimSpace(id), "models/")
+	id = bareModelID(id)
+	parts := strings.Split(strings.ToLower(id), "-")
+	if len(parts) < 2 {
+		return strings.ToLower(id)
+	}
+
+	switch parts[0] {
+	case "claude":
+		if len(parts) >= 3 && parts[1] == "agent" {
+			return strings.Join(parts[:3], "-")
+		}
+		return "claude-" + parts[1]
+	case "gemini":
+		for i := 1; i < len(parts); i++ {
+			if isModelVersionToken(parts[i]) {
+				continue
+			}
+			if parts[i] == "flash" && i+1 < len(parts) && parts[i+1] == "lite" {
+				return "gemini-flash-lite"
+			}
+			return "gemini-" + parts[i]
+		}
+		return "gemini"
+	case "gpt":
+		if len(parts) >= 3 {
+			return "gpt-" + parts[2]
+		}
+		return "gpt"
+	case "grok":
+		return "grok-" + parts[1]
+	default:
+		if strings.HasPrefix(parts[0], "o") && len(parts) >= 2 {
+			return parts[0] + "-" + parts[1]
+		}
+		return strings.Join(parts[:2], "-")
+	}
+}
+
+func limitModelsPerFamily(models []ModelDef, limit int) []ModelDef {
+	if limit <= 0 {
+		out := make([]ModelDef, len(models))
+		copy(out, models)
+		return out
+	}
+	counts := map[string]int{}
+	out := make([]ModelDef, 0, len(models))
+	for _, model := range models {
+		family := ModelFamilyPrefix(model.ID)
+		if counts[family] >= limit {
+			continue
+		}
+		counts[family]++
+		out = append(out, model)
+	}
+	return out
+}
+
+func isModelVersionToken(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if (r < '0' || r > '9') && r != '.' {
+			return false
+		}
+	}
+	return true
+}
+
+func compareModelVersions(left, right string) int {
+	lv := modelVersion(left)
+	rv := modelVersion(right)
+	if len(lv) == 0 || len(rv) == 0 {
+		return 0
+	}
+	maxLen := len(lv)
+	if len(rv) > maxLen {
+		maxLen = len(rv)
+	}
+	for i := 0; i < maxLen; i++ {
+		l, r := 0, 0
+		if i < len(lv) {
+			l = lv[i]
+		}
+		if i < len(rv) {
+			r = rv[i]
+		}
+		if l != r {
+			return l - r
+		}
+	}
+	return 0
+}
+
+func modelVersion(id string) []int {
+	id = bareModelID(strings.TrimPrefix(strings.TrimSpace(id), "models/"))
+	parts := strings.Split(strings.ToLower(id), "-")
+	var out []int
+	for _, part := range parts {
+		if !isModelVersionToken(part) {
+			continue
+		}
+		for _, piece := range strings.Split(part, ".") {
+			if piece == "" {
+				continue
+			}
+			n := 0
+			for _, r := range piece {
+				n = n*10 + int(r-'0')
+			}
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 func normalizeReleaseDate(value string) string {
