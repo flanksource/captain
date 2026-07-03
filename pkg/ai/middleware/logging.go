@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
-	"github.com/flanksource/captain/pkg/ai/provider"
 	"github.com/flanksource/clicky"
 	"github.com/flanksource/clicky/api/icons"
 	"github.com/flanksource/commons/logger"
@@ -115,11 +114,11 @@ func schemaInJSON(out any) string {
 	if out == nil {
 		return ""
 	}
-	schema, err := provider.GenerateJSONSchema(out)
+	schema, err := ai.GenerateJSONSchema(out)
 	if err != nil {
 		return fmt.Sprintf("<schema-in error: %v>", err)
 	}
-	s, err := provider.SchemaToJSON(schema)
+	s, err := ai.SchemaToJSON(schema)
 	if err != nil {
 		return fmt.Sprintf("<schema-in error: %v>", err)
 	}

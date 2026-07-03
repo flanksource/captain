@@ -65,6 +65,10 @@ func runFakeServer() {
 		}})
 	}
 
+	// initHadSchema records whether the host sent an outputSchema on initialize,
+	// so the "structured" turn can prove the Go→TS schema wiring end to end.
+	initHadSchema := false
+
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	for scanner.Scan() {
@@ -72,6 +76,9 @@ func runFakeServer() {
 			ID     json.RawMessage `json:"id"`
 			Method string          `json:"method"`
 			Result json.RawMessage `json:"result"`
+			Params struct {
+				OutputSchema json.RawMessage `json:"outputSchema"`
+			} `json:"params"`
 		}
 		if err := json.Unmarshal(scanner.Bytes(), &frame); err != nil {
 			continue
@@ -85,6 +92,7 @@ func runFakeServer() {
 		}
 		switch frame.Method {
 		case "initialize":
+			initHadSchema = len(frame.Params.OutputSchema) > 0
 			enc(map[string]any{"jsonrpc": "2.0", "id": id(frame.ID), "result": map[string]any{"ok": true}})
 			enc(map[string]any{"jsonrpc": "2.0", "method": "session/init", "params": map[string]any{
 				"session_id": "fake-sess", "model": "claude-sonnet-4-5", "tools": []string{"Read", "Bash"},
@@ -101,6 +109,18 @@ func runFakeServer() {
 				}})
 			case "hang":
 				// Emit nothing more; wait for the interrupt control request.
+			case "structured":
+				// Complete with a structured_output payload, echoing whether the
+				// host actually transmitted the schema on initialize.
+				enc(map[string]any{"jsonrpc": "2.0", "method": "turn/completed", "params": map[string]any{
+					"success": true, "session_id": "fake-sess", "cost_usd": 0.01, "subtype": "success",
+					"usage": map[string]any{"input_tokens": 10, "output_tokens": 5},
+					"structured_output": map[string]any{
+						"company_name":    "Anthropic",
+						"founded_year":    2021,
+						"received_schema": initHadSchema,
+					},
+				}})
 			default:
 				enc(map[string]any{"jsonrpc": "2.0", "method": "message/tool_use", "params": map[string]any{
 					"tool": "Read", "id": "t1", "input": map[string]any{"file_path": "/x"},
@@ -189,6 +209,77 @@ func TestProvider_ExecuteCoalesce(t *testing.T) {
 	assert.Equal(t, "hi from fake", resp.Text)
 	assert.Equal(t, ai.BackendClaudeAgent, resp.Backend)
 	assert.Equal(t, 10, resp.Usage.InputTokens)
+}
+
+// companyInfo is the structured-output target for the round-trip test.
+type companyInfo struct {
+	CompanyName    string `json:"company_name"`
+	FoundedYear    int    `json:"founded_year"`
+	ReceivedSchema bool   `json:"received_schema"`
+}
+
+// TestProvider_StructuredOutput drives the structured-output path end to end: the
+// provider derives a JSON schema from the target, transmits it on initialize
+// (the fake echoes that it arrived), and unmarshals the SDK's structured_output
+// back into the caller's Go struct with Text cleared.
+func TestProvider_StructuredOutput(t *testing.T) {
+	withFakeAgentProcessEnv(t, map[string]string{fakeServerEnv: "1", fakeModeEnv: "structured"})
+
+	p, err := New(ai.Config{Model: api.Model{Name: "claude-agent-sonnet"}})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = p.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	var out companyInfo
+	resp, err := p.Execute(ctx, ai.Request{Prompt: api.Prompt{User: "research Anthropic", Schema: &out}})
+	require.NoError(t, err)
+
+	assert.True(t, out.ReceivedSchema, "provider should transmit the derived schema on initialize")
+	assert.Equal(t, "Anthropic", out.CompanyName)
+	assert.Equal(t, 2021, out.FoundedYear)
+
+	assert.Same(t, &out, resp.StructuredData, "StructuredData points at the populated target")
+	assert.Empty(t, resp.Text, "structured runs clear the text answer")
+}
+
+// TestRequestSchemaJSON checks the schema captain derives from a structured
+// target and that initializeParams carries it as outputSchema.
+func TestRequestSchemaJSON(t *testing.T) {
+	type plan struct {
+		Summary string   `json:"summary"`
+		Steps   []string `json:"steps"`
+	}
+
+	t.Run("nil target is text mode", func(t *testing.T) {
+		raw, err := requestSchemaJSON(ai.Request{Prompt: api.Prompt{User: "x"}})
+		require.NoError(t, err)
+		assert.Nil(t, raw)
+	})
+
+	t.Run("struct target derives an object schema wired into initializeParams", func(t *testing.T) {
+		raw, err := requestSchemaJSON(ai.Request{Prompt: api.Prompt{Schema: &plan{}}})
+		require.NoError(t, err)
+		require.NotEmpty(t, raw)
+
+		p := &Provider{model: "claude-agent-sonnet", sessionSchema: raw}
+		ip := p.initializeParams(ai.Request{Prompt: api.Prompt{User: "x", Schema: &plan{}}})
+		require.NotEmpty(t, ip.OutputSchema, "outputSchema should be set from the session schema")
+
+		var decoded map[string]any
+		require.NoError(t, json.Unmarshal(ip.OutputSchema, &decoded))
+		assert.Equal(t, "object", decoded["type"])
+		props, ok := decoded["properties"].(map[string]any)
+		require.True(t, ok)
+		assert.Contains(t, props, "summary")
+		assert.Contains(t, props, "steps")
+	})
+
+	t.Run("non-struct target fails loudly", func(t *testing.T) {
+		_, err := requestSchemaJSON(ai.Request{Prompt: api.Prompt{Schema: "not a struct"}})
+		require.Error(t, err)
+	})
 }
 
 func TestProvider_MultiTurnSerialized(t *testing.T) {
