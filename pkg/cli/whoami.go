@@ -15,7 +15,7 @@ import (
 type WhoamiOptions struct {
 	Backend string `flag:"backend" help:"Show only this backend: anthropic|openai|gemini|claude-cli|claude-agent|claude-cmux|codex-cli|codex-cmux|gemini-cli" short:"b"`
 	Models  bool   `flag:"models" help:"Probe each provider's models endpoint via a live API call" default:"true" short:"m"`
-	Limit   int    `flag:"limit" help:"Max sample model IDs to show per adapter in pretty output (0 = all)" default:"5" short:"l"`
+	Limit   int    `flag:"limit" help:"Max sample model IDs to show per adapter in pretty output after per-prefix filtering (0 = all)" default:"0" short:"l"`
 }
 
 // AdapterStatus is the resolved auth/availability of a single agent adapter
@@ -103,7 +103,12 @@ func cliAdapters() map[ai.Backend]cliAdapter {
 	return map[ai.Backend]cliAdapter{
 		ai.BackendClaudeAgent: claude,
 		ai.BackendClaudeCLI:   claude,
+		ai.BackendClaudeCmux:  claude,
 		ai.BackendCodexCLI: {
+			binary: "codex",
+			logins: []loginFile{{rel: filepath.Join(".codex", "auth.json"), label: "codex login"}},
+		},
+		ai.BackendCodexCmux: {
 			binary: "codex",
 			logins: []loginFile{{rel: filepath.Join(".codex", "auth.json"), label: "codex login"}},
 		},

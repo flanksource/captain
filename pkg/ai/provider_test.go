@@ -58,19 +58,17 @@ func TestBackendKind(t *testing.T) {
 	}
 }
 
-// TestAuthEnvVars pins each backend to the env vars it authenticates with,
-// including the CLI backends that share their parent provider's key. Every
-// backend must resolve to a non-empty list so model listing and whoami never
-// silently treat a backend as keyless.
+// TestAuthEnvVars pins each backend to the env vars it authenticates with.
+// Cmux backends are intentionally keyless: they use the local CLI login.
 func TestAuthEnvVars(t *testing.T) {
 	cases := map[Backend][]string{
 		BackendAnthropic:   {"ANTHROPIC_API_KEY"},
 		BackendClaudeCLI:   {"ANTHROPIC_API_KEY"},
 		BackendClaudeAgent: {"ANTHROPIC_API_KEY"},
-		BackendClaudeCmux:  {"ANTHROPIC_API_KEY"},
+		BackendClaudeCmux:  nil,
 		BackendOpenAI:      {"OPENAI_API_KEY"},
 		BackendCodexCLI:    {"OPENAI_API_KEY"},
-		BackendCodexCmux:   {"OPENAI_API_KEY"},
+		BackendCodexCmux:   nil,
 		BackendGemini:      {"GEMINI_API_KEY", "GOOGLE_API_KEY"},
 		BackendGeminiCLI:   {"GEMINI_API_KEY", "GOOGLE_API_KEY"},
 	}
@@ -99,6 +97,14 @@ func TestGetAPIKeyFromEnvPrefersFirstSet(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "ant-123")
 	if got := GetAPIKeyFromEnv(BackendClaudeCLI); got != "ant-123" {
 		t.Errorf("GetAPIKeyFromEnv(claude-cli) = %q, want claude-cli to share ANTHROPIC_API_KEY", got)
+	}
+
+	t.Setenv("OPENAI_API_KEY", "openai-123")
+	if got := GetAPIKeyFromEnv(BackendClaudeCmux); got != "" {
+		t.Errorf("GetAPIKeyFromEnv(claude-cmux) = %q, want keyless cmux", got)
+	}
+	if got := GetAPIKeyFromEnv(BackendCodexCmux); got != "" {
+		t.Errorf("GetAPIKeyFromEnv(codex-cmux) = %q, want keyless cmux", got)
 	}
 }
 

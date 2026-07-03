@@ -56,6 +56,23 @@ func TestRunPlanClaudePrefersDiskContent(t *testing.T) {
 	assert.Equal(t, "# Tidy otter\n\non-disk body", got.Content)
 }
 
+func TestRunPlanClaudeDefaultSourceUsesDirectSessionLookup(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	project := filepath.Join(home, "work", "proj")
+	require.NoError(t, os.MkdirAll(project, 0o755))
+	t.Chdir(project)
+
+	planPath := filepath.Join(home, ".claude", "plans", "quick-plan.md")
+	claudePlanSession(t, home, project, "sess-direct", "quick-plan", planPath, "# direct lookup")
+
+	got, err := RunPlan(PlanOptions{SessionID: "sess-direct"})
+	require.NoError(t, err)
+	assert.Equal(t, "sess-direct", got.SessionID)
+	assert.Equal(t, "claude", got.Source)
+	assert.Equal(t, "# direct lookup", got.Content)
+}
+
 func TestRunPlanClaudeInlineWhenMissingOnDisk(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

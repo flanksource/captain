@@ -46,7 +46,22 @@ func RunPlan(opts PlanOptions) (PlanResult, error) {
 
 	id := strings.TrimSpace(opts.SessionID)
 	if id != "" {
-		// A session id can name a session in any project, so search everywhere.
+		if candidate, ok, err := findSessionCandidateByID(id, source); err != nil {
+			return PlanResult{}, err
+		} else if ok {
+			plan, err := resolveSessionPlan(candidate)
+			if err != nil {
+				return PlanResult{}, err
+			}
+			if plan == nil {
+				return PlanResult{}, fmt.Errorf("session %q has no plan", id)
+			}
+			plan.pathOnly = opts.PathOnly
+			return *plan, nil
+		}
+
+		// A hashed session key cannot be found from the transcript filename, so
+		// keep the older all-project scan as a fallback for that less-common form.
 		candidates, err := discoverSessionCandidates("", true, source)
 		if err != nil {
 			return PlanResult{}, err
