@@ -1,6 +1,9 @@
 package api
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // Response is the result of a buffered (non-streaming) provider execution.
 type Response struct {
@@ -51,6 +54,12 @@ type Event struct {
 	SessionID string  // when Kind == EventSystem
 	Model     string
 	Error     string // when Kind == EventError
+
+	// StructuredData is the validated structured output (raw JSON) carried on an
+	// EventResult when the request supplied a schema; nil for text-mode runs. It
+	// is raw JSON because the streaming contract does not know the caller's Go
+	// type — the buffered Execute path unmarshals it into Request.Prompt.Schema.
+	StructuredData json.RawMessage
 
 	// Raw carries the backend-native event (e.g. claude.HistoryEntry for the
 	// claude_cli stream) so renderers can use the rich pretty-printers in

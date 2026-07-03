@@ -150,6 +150,32 @@ func TestMapNotification_TurnCompletedSuccess(t *testing.T) {
 	assert.False(t, tu.IsError)
 }
 
+func TestMapNotification_TurnCompletedStructured(t *testing.T) {
+	ev := mustMap(t, notifyTurnDone, `{
+		"success": true,
+		"session_id": "s3",
+		"subtype": "success",
+		"structured_output": {"company_name": "Anthropic", "founded_year": 2021}
+	}`)
+
+	assert.Equal(t, ai.EventResult, ev.Kind)
+	assert.Equal(t, "success", ev.Input["subtype"])
+	require.NotEmpty(t, ev.StructuredData, "structured_output should ride on the result event")
+
+	var out map[string]any
+	require.NoError(t, json.Unmarshal(ev.StructuredData, &out))
+	assert.Equal(t, "Anthropic", out["company_name"])
+}
+
+func TestMapNotification_TurnCompletedNoStructured(t *testing.T) {
+	// A text-mode result and an explicit null both leave StructuredData nil.
+	ev := mustMap(t, notifyTurnDone, `{"success": true, "session_id": "s4"}`)
+	assert.Nil(t, ev.StructuredData)
+
+	ev = mustMap(t, notifyTurnDone, `{"success": true, "structured_output": null}`)
+	assert.Nil(t, ev.StructuredData, "explicit null is not structured output")
+}
+
 func TestMapNotification_TurnCompletedFailure(t *testing.T) {
 	ev := mustMap(t, notifyTurnDone, `{"success": false, "session_id": "s2"}`)
 

@@ -14,7 +14,9 @@
 package claudeagent
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -109,6 +111,12 @@ type Provider struct {
 
 	sessMu    sync.Mutex
 	sessionID string
+
+	// sessionSchema is the JSON schema the SDK query() session was initialized
+	// with (nil = text mode). The SDK's outputFormat is a session-level option,
+	// so it is pinned from the first turn and every later turn must match it.
+	sessionSchemaOnce sync.Once
+	sessionSchema     json.RawMessage
 }
 
 // New builds a claude-agent provider. The supervised process is started lazily
@@ -132,11 +140,11 @@ func New(cfg ai.Config) (*Provider, error) {
 func (p *Provider) GetModel() string       { return p.model }
 func (p *Provider) GetBackend() ai.Backend { return ai.BackendClaudeAgent }
 
-// Execute drains its own ExecuteStream into a buffered ai.Response.
+// Execute drains its own ExecuteStream into a buffered ai.Response. When the
+// request carries a structured-output schema, the validated JSON the SDK
+// returns is unmarshalled into req.Prompt.Schema and surfaced as StructuredData
+// (mirroring the genkit provider).
 func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, error) {
-	if req.Prompt.Schema != nil {
-		return nil, fmt.Errorf("claude-agent does not support StructuredOutput")
-	}
 	start := time.Now()
 	events, err := p.ExecuteStream(ctx, req)
 	if err != nil {
@@ -144,12 +152,14 @@ func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, e
 	}
 
 	var (
-		text      strings.Builder
-		usage     ai.Usage
-		sessionID string
-		success   = true
-		sawResult bool
-		lastErr   string
+		text       strings.Builder
+		usage      ai.Usage
+		sessionID  string
+		structured json.RawMessage
+		subtype    string
+		success    = true
+		sawResult  bool
+		lastErr    string
 	)
 	for ev := range events {
 		switch ev.Kind {
@@ -168,6 +178,12 @@ func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, e
 			if ev.SessionID != "" {
 				sessionID = ev.SessionID
 			}
+			if len(ev.StructuredData) > 0 {
+				structured = ev.StructuredData
+			}
+			if s, ok := ev.Input["subtype"].(string); ok {
+				subtype = s
+			}
 		case ai.EventError:
 			lastErr = ev.Error
 		}
@@ -177,11 +193,7 @@ func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, e
 		return nil, fmt.Errorf("%w: %s", ai.ErrCLIExecutionFailed, lastErr)
 	}
 	if sawResult && !success {
-		msg := lastErr
-		if msg == "" {
-			msg = "claude-agent returned is_error=true"
-		}
-		return nil, fmt.Errorf("%w: %s", ai.ErrCLIExecutionFailed, msg)
+		return nil, p.resultError(req, subtype, lastErr)
 	}
 
 	resp := &ai.Response{
@@ -194,23 +206,84 @@ func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, e
 	if sessionID != "" {
 		resp.Raw = map[string]any{"session_id": sessionID}
 	}
+	if req.Prompt.Schema != nil {
+		if err := bindStructuredOutput(req.Prompt.Schema, structured); err != nil {
+			return nil, err
+		}
+		resp.StructuredData = req.Prompt.Schema
+		resp.Text = ""
+	}
 	return resp, nil
+}
+
+// resultError builds the failure error for a turn that finished with is_error.
+// A structured-output run that exhausted its validation retries reports a
+// schema-validation failure so the caller can tell it apart from an agent crash.
+func (p *Provider) resultError(req ai.Request, subtype, lastErr string) error {
+	if req.Prompt.Schema != nil && subtype == "error_max_structured_output_retries" {
+		return fmt.Errorf("%w: claude-agent could not produce output matching the schema after its retry limit", ai.ErrSchemaValidation)
+	}
+	msg := lastErr
+	if msg == "" {
+		msg = "claude-agent returned is_error=true"
+	}
+	return fmt.Errorf("%w: %s", ai.ErrCLIExecutionFailed, msg)
+}
+
+// bindStructuredOutput unmarshals the SDK's validated structured output into the
+// caller's Go target. Missing output on an otherwise-successful run is a loud
+// failure: the SDK guarantees structured_output whenever a schema was supplied.
+func bindStructuredOutput(target any, raw json.RawMessage) error {
+	if len(raw) == 0 {
+		return fmt.Errorf("%w: claude-agent returned no structured output", ai.ErrSchemaValidation)
+	}
+	if err := json.Unmarshal(raw, target); err != nil {
+		return fmt.Errorf("%w: %v", ai.ErrSchemaValidation, err)
+	}
+	return nil
 }
 
 // ExecuteStream pushes one user turn to the SDK session and streams the mapped
 // events back. Turns are serialized via turnMu so the single SDK session is
 // never driven by two prompts at once.
 func (p *Provider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai.Event, error) {
-	if req.Prompt.Schema != nil {
-		return nil, fmt.Errorf("claude-agent stream mode does not support StructuredOutput")
+	schema, err := requestSchemaJSON(req)
+	if err != nil {
+		return nil, err
 	}
+	// The SDK's outputFormat is fixed for the whole query() session, so the first
+	// turn pins the schema and every later turn must match it (a text turn on a
+	// structured session, or a differing schema, cannot be honoured).
+	p.sessionSchemaOnce.Do(func() { p.sessionSchema = schema })
+
 	if err := p.ensureStarted(req); err != nil {
 		return nil, err
+	}
+	if !bytes.Equal(schema, p.sessionSchema) {
+		return nil, fmt.Errorf("claude-agent: structured-output schema is fixed when the session starts and cannot change between turns")
 	}
 
 	events := make(chan ai.Event, 16)
 	go p.runTurn(ctx, req, events)
 	return events, nil
+}
+
+// requestSchemaJSON derives the JSON schema captain sends to the SDK from the
+// request's structured-output target, or nil for a text-mode request. A
+// non-struct target fails loudly rather than silently dropping the schema.
+func requestSchemaJSON(req ai.Request) (json.RawMessage, error) {
+	if req.Prompt.Schema == nil {
+		return nil, nil
+	}
+	schema, err := ai.GenerateJSONSchema(req.Prompt.Schema)
+	if err != nil {
+		return nil, fmt.Errorf("claude-agent: cannot derive structured-output schema: %w", err)
+	}
+	raw, err := json.Marshal(schema)
+	if err != nil {
+		return nil, fmt.Errorf("claude-agent: cannot marshal structured-output schema: %w", err)
+	}
+	return raw, nil
 }
 
 // Close shuts the SDK session down (best-effort shutdown RPC), stops the
@@ -345,20 +418,22 @@ func (p *Provider) initializeParams(req ai.Request) initializeParams {
 		PermissionMode:     mode,
 		Resume:             resume,
 		ApprovalMode:       approvalMode,
+		OutputSchema:       p.sessionSchema,
 	}
 }
 
 type initializeParams struct {
-	Cwd                string   `json:"cwd,omitempty"`
-	Model              string   `json:"model,omitempty"`
-	SystemPrompt       string   `json:"systemPrompt,omitempty"`
-	AppendSystemPrompt string   `json:"appendSystemPrompt,omitempty"`
-	AllowedTools       []string `json:"allowedTools,omitempty"`
-	MaxTurns           int      `json:"maxTurns,omitempty"`
-	MaxBudgetUsd       float64  `json:"maxBudgetUsd,omitempty"`
-	PermissionMode     string   `json:"permissionMode,omitempty"`
-	Resume             string   `json:"resume,omitempty"`
-	ApprovalMode       string   `json:"approvalMode,omitempty"`
+	Cwd                string          `json:"cwd,omitempty"`
+	Model              string          `json:"model,omitempty"`
+	SystemPrompt       string          `json:"systemPrompt,omitempty"`
+	AppendSystemPrompt string          `json:"appendSystemPrompt,omitempty"`
+	AllowedTools       []string        `json:"allowedTools,omitempty"`
+	MaxTurns           int             `json:"maxTurns,omitempty"`
+	MaxBudgetUsd       float64         `json:"maxBudgetUsd,omitempty"`
+	PermissionMode     string          `json:"permissionMode,omitempty"`
+	Resume             string          `json:"resume,omitempty"`
+	ApprovalMode       string          `json:"approvalMode,omitempty"`
+	OutputSchema       json.RawMessage `json:"outputSchema,omitempty"`
 }
 
 func (p *Provider) setInitResult(err error) {

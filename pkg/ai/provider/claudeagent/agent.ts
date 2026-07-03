@@ -5,7 +5,8 @@
 // Protocol (newline-delimited JSON, one object per line on stdout):
 //   client -> server requests:
 //     initialize {cwd, model, systemPrompt, appendSystemPrompt, allowedTools,
-//                 maxTurns, maxBudgetUsd, permissionMode, resume, approvalMode}
+//                 maxTurns, maxBudgetUsd, permissionMode, resume, approvalMode,
+//                 outputSchema}
 //                 -> reply {ok:true}
 //     prompt {text}      -> reply {accepted:true}
 //     interrupt          -> reply {}
@@ -16,7 +17,8 @@
 //     message/thinking {text}
 //     message/tool_use {tool, input, id}
 //     message/tool_result {id, content, is_error}
-//     turn/completed {success, session_id, cost_usd, usage, num_turns, result_text}
+//     turn/completed {success, subtype, session_id, cost_usd, usage, num_turns,
+//                     result_text, structured_output}
 //     turn/error     {message}
 //   server -> client requests (only when approvalMode === "ask"):
 //     can_use_tool {tool, input, tool_use_id}
@@ -56,6 +58,10 @@ interface InitializeParams {
   permissionMode?: string;
   resume?: string;
   approvalMode?: string;
+  // outputSchema is the JSON Schema captain derives from the request's
+  // structured-output target. Present => the SDK is asked for validated JSON
+  // (options.outputFormat) and every turn's result carries structured_output.
+  outputSchema?: Record<string, unknown>;
 }
 
 type JsonRpcId = number | string | null;
@@ -240,6 +246,16 @@ function buildOptions(params: InitializeParams): Options {
     options.resume = params.resume;
   }
 
+  // Structured output: ask the SDK to validate the final answer against the
+  // caller's JSON Schema and return it on result.structured_output. The schema
+  // is a session-level option, so it applies to every turn of this query().
+  if (params.outputSchema) {
+    options.outputFormat = {
+      type: "json_schema",
+      schema: params.outputSchema,
+    };
+  }
+
   // When the host brokers approvals, forward each tool-permission check to it
   // over can_use_tool and map the decision onto the SDK PermissionResult. The
   // PreToolUse git add/commit block above still applies first.
@@ -396,11 +412,14 @@ function handleMessage(message: SDKMessage) {
     case "result":
       notify("turn/completed", {
         success: !(message as { is_error?: boolean }).is_error,
+        subtype: (message as { subtype?: string }).subtype,
         session_id: message.session_id,
         cost_usd: (message as { total_cost_usd?: number }).total_cost_usd,
         usage: (message as { usage?: unknown }).usage,
         num_turns: (message as { num_turns?: number }).num_turns,
         result_text: (message as { result?: string }).result,
+        structured_output: (message as { structured_output?: unknown })
+          .structured_output,
       });
       break;
   }

@@ -107,12 +107,14 @@ func mapNotification(method string, params json.RawMessage, model string) (ai.Ev
 
 	case notifyTurnDone:
 		var p struct {
-			Success    bool            `json:"success"`
-			SessionID  string          `json:"session_id"`
-			CostUSD    float64         `json:"cost_usd"`
-			Usage      json.RawMessage `json:"usage"`
-			NumTurns   int             `json:"num_turns"`
-			ResultText string          `json:"result_text"`
+			Success          bool            `json:"success"`
+			Subtype          string          `json:"subtype"`
+			SessionID        string          `json:"session_id"`
+			CostUSD          float64         `json:"cost_usd"`
+			Usage            json.RawMessage `json:"usage"`
+			NumTurns         int             `json:"num_turns"`
+			ResultText       string          `json:"result_text"`
+			StructuredOutput json.RawMessage `json:"structured_output"`
 		}
 		_ = json.Unmarshal(params, &p)
 		ev := ai.Event{
@@ -124,7 +126,13 @@ func mapNotification(method string, params json.RawMessage, model string) (ai.Ev
 			Usage:     decodeUsage(p.Usage),
 			Model:     model,
 		}
+		if len(p.StructuredOutput) > 0 && string(p.StructuredOutput) != "null" {
+			ev.StructuredData = p.StructuredOutput
+		}
 		input := map[string]any{"is_error": !p.Success}
+		if p.Subtype != "" {
+			input["subtype"] = p.Subtype
+		}
 		if p.CostUSD > 0 {
 			input["total_cost_usd"] = p.CostUSD
 		}
