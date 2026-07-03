@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+
+	"github.com/flanksource/captain/pkg/api"
 )
 
 // JSONSchema is captain's minimal JSON Schema rendering of a Go struct: enough of
@@ -127,4 +129,36 @@ func SchemaToJSON(schema *JSONSchema) (string, error) {
 		return "", fmt.Errorf("failed to marshal schema: %w", err)
 	}
 	return string(data), nil
+}
+
+// SchemaJSONFor resolves the JSON schema a provider should send the model for a
+// prompt: Prompt.SchemaJSON verbatim when set (preserving the full JSON Schema
+// vocabulary), otherwise the reflected Prompt.Schema, otherwise nil for a
+// text-mode request. It is the single entry point every provider uses so the two
+// schema mechanisms behave identically across backends.
+func SchemaJSONFor(p api.Prompt) (json.RawMessage, error) {
+	if len(p.SchemaJSON) > 0 {
+		return p.SchemaJSON, nil
+	}
+	if p.Schema == nil {
+		return nil, nil
+	}
+	schema, err := GenerateJSONSchema(p.Schema)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(schema)
+}
+
+// BindStructuredOutput unmarshals a provider's validated structured-output JSON
+// into the caller's Go target. Missing or malformed output fails loudly with
+// ErrSchemaValidation rather than leaving the target zero-valued.
+func BindStructuredOutput(target any, raw json.RawMessage) error {
+	if len(raw) == 0 {
+		return fmt.Errorf("%w: no structured output returned", ErrSchemaValidation)
+	}
+	if err := json.Unmarshal(raw, target); err != nil {
+		return fmt.Errorf("%w: %v", ErrSchemaValidation, err)
+	}
+	return nil
 }

@@ -59,7 +59,7 @@ var liveModelFetcher = func(ctx context.Context, b Backend) ([]ModelDef, error) 
 }
 
 // apiBackends are the direct-API backends the resolver can list live.
-var apiBackends = []Backend{BackendAnthropic, BackendOpenAI, BackendGemini}
+var apiBackends = []Backend{BackendAnthropic, BackendOpenAI, BackendGemini, BackendDeepSeek}
 
 // ResolveModels returns the merged catalog ∪ live-API view for opts, joined to
 // merged OpenRouter/static pricing and persisted to ~/.config/captain/models.json.
@@ -268,6 +268,8 @@ func orPrefix(backend Backend) string {
 		return "anthropic"
 	case BackendGemini:
 		return "google"
+	case BackendDeepSeek:
+		return "deepseek"
 	}
 	return ""
 }

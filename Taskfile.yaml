@@ -16,6 +16,35 @@ tasks:
       - mkdir -p {{.BIN_DIR}}
       - go build -o {{.BIN_DIR}}/{{.BINARY}} ./cmd/captain
 
+  www:build:
+    desc: Build the embedded Captain web UI
+    dir: pkg/cli/webapp
+    cmds:
+      - CI=true pnpm install --frozen-lockfile
+      - pnpm run build
+      - touch dist/.gitkeep
+
+  www:dev:
+    desc: Start Captain with the Vite dev proxy and open the browser
+    dir: pkg/cli/webapp
+    cmds:
+      - CI=true pnpm install --frozen-lockfile
+      - cd ../../.. && go run ./cmd/captain serve --dev --open
+
+  docs:build:
+    desc: Build the Captain Astro documentation site
+    dir: docs
+    cmds:
+      - CI=true pnpm install --frozen-lockfile
+      - pnpm run build
+
+  docs:dev:
+    desc: Start the Captain Astro documentation site
+    dir: docs
+    cmds:
+      - CI=true pnpm install --frozen-lockfile
+      - pnpm run dev
+
   lint:
     desc: Run linters
     cmds:

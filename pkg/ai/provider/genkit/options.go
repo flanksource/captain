@@ -1,6 +1,7 @@
 package genkit
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -17,7 +18,7 @@ const defaultMaxOutputTokens = 4096
 // bareModel strips a leading provider prefix so a model id can be re-prefixed for
 // either a genkit ref (anthropic/openai/googleai) or an OpenRouter pricing key.
 func bareModel(model string) string {
-	for _, prefix := range []string{"anthropic/", "openai/", "googleai/", "google/", "models/"} {
+	for _, prefix := range []string{"anthropic/", "openai/", "googleai/", "google/", "deepseek/", "models/"} {
 		if strings.HasPrefix(model, prefix) {
 			return strings.TrimPrefix(model, prefix)
 		}
@@ -39,6 +40,8 @@ func modelRef(backend ai.Backend, model string) (string, error) {
 		return "openai/" + bare, nil
 	case ai.BackendGemini:
 		return "googleai/" + bare, nil
+	case ai.BackendDeepSeek:
+		return "deepseek/" + bare, nil
 	default:
 		return "", fmt.Errorf("genkit provider: unsupported backend %q", backend)
 	}
@@ -101,6 +104,10 @@ func effortConfig(backend ai.Backend, req ai.Request) map[string]any {
 			return nil
 		}
 		return map[string]any{"thinkingConfig": map[string]any{"thinkingBudget": thinkingBudget(e)}}
+	case ai.BackendDeepSeek:
+		// DeepSeek selects reasoning by model (deepseek-reasoner vs deepseek-chat),
+		// not a per-request effort knob, so there is no effort config to send.
+		return nil
 	case ai.BackendAnthropic:
 		cfg := map[string]any{"max_tokens": anthropicMaxTokens(req, e)}
 		if e != api.EffortNone {
@@ -119,7 +126,7 @@ func effortConfig(backend ai.Backend, req ai.Request) map[string]any {
 // system prompt, user prompt, effort config, and (when streaming) the callback.
 // WithOutputType is added only for the non-streaming structured-output path;
 // ExecuteStream rejects structured output before calling this.
-func generateOptions(p *Provider, req ai.Request, stream gkai.ModelStreamCallback) []gkai.GenerateOption {
+func generateOptions(p *Provider, req ai.Request, stream gkai.ModelStreamCallback) ([]gkai.GenerateOption, error) {
 	opts := []gkai.GenerateOption{gkai.WithModelName(p.modelRef)}
 
 	if req.Prompt.System != "" {
@@ -133,8 +140,16 @@ func generateOptions(p *Provider, req ai.Request, stream gkai.ModelStreamCallbac
 	if stream != nil {
 		opts = append(opts, gkai.WithStreaming(stream))
 	}
-	if req.Prompt.Schema != nil && stream == nil {
-		opts = append(opts, gkai.WithOutputType(req.Prompt.Schema))
+	if stream == nil {
+		if len(req.Prompt.SchemaJSON) > 0 {
+			var schema map[string]any
+			if err := json.Unmarshal(req.Prompt.SchemaJSON, &schema); err != nil {
+				return nil, fmt.Errorf("genkit %s: invalid Prompt.SchemaJSON: %w", p.backend, err)
+			}
+			opts = append(opts, gkai.WithOutputSchema(schema))
+		} else if req.Prompt.Schema != nil {
+			opts = append(opts, gkai.WithOutputType(req.Prompt.Schema))
+		}
 	}
-	return opts
+	return opts, nil
 }

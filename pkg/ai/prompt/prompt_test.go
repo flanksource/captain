@@ -2,6 +2,7 @@ package prompt
 
 import (
 	"embed"
+	"encoding/json"
 	"io/fs"
 	"path/filepath"
 	"strings"
@@ -76,6 +77,36 @@ func TestRender_StructuredOutputTarget(t *testing.T) {
 	req, _, err := Load("{{role \"user\"}}\nhi").Render(nil, out)
 	require.NoError(t, err)
 	assert.Same(t, out, req.Prompt.Schema)
+	assert.Empty(t, req.Prompt.SchemaJSON, "a Go target takes precedence over any frontmatter schema")
+}
+
+// A frontmatter output.schema is resolved and marshalled onto SchemaJSON when no
+// Go target is passed, so schemas can be declared in the .prompt file.
+func TestRender_FrontmatterOutputSchema(t *testing.T) {
+	src := "---\n" +
+		"output:\n" +
+		"  schema:\n" +
+		"    type: object\n" +
+		"    additionalProperties: false\n" +
+		"    properties:\n" +
+		"      title:\n" +
+		"        type: string\n" +
+		"    required:\n" +
+		"      - title\n" +
+		"---\n" +
+		"{{role \"user\"}}\nname a PR"
+
+	req, _, err := Load(src).Render(nil, nil)
+	require.NoError(t, err)
+	require.Nil(t, req.Prompt.Schema, "no Go target was passed")
+	require.NotEmpty(t, req.Prompt.SchemaJSON, "frontmatter output.schema must reach SchemaJSON")
+
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(req.Prompt.SchemaJSON, &decoded))
+	assert.Equal(t, "object", decoded["type"])
+	props, ok := decoded["properties"].(map[string]any)
+	require.True(t, ok, "resolved schema must carry properties")
+	assert.Contains(t, props, "title")
 }
 
 func TestLibrary_Render(t *testing.T) {
@@ -100,6 +131,7 @@ func TestRender_BackendFixtureExamples(t *testing.T) {
 		"testdata/fixtures/claude-cli-opus.prompt":         {backend: api.BackendClaudeCLI, model: "claude-agent-opus"},
 		"testdata/fixtures/claude-cli-sonnet.prompt":       {backend: api.BackendClaudeCLI, model: "claude-agent-sonnet"},
 		"testdata/fixtures/codex-cmux.prompt":              {backend: api.BackendCodexCmux, model: "gpt-5-codex"},
+		"testdata/fixtures/deepseek.prompt":                {backend: api.BackendDeepSeek, model: "deepseek-reasoner"},
 		"testdata/fixtures/codex-cli.prompt":               {backend: api.BackendCodexCLI, model: "gpt-5-codex"},
 		"testdata/fixtures/gemini-api.prompt":              {backend: api.BackendGemini, model: "gemini-2.5-pro"},
 		"testdata/fixtures/gemini-cli.prompt":              {backend: api.BackendGeminiCLI, model: "gemini-cli-pro"},

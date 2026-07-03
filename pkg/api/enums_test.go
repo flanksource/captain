@@ -16,6 +16,7 @@ func TestInferBackend(t *testing.T) {
 		"gemini-cli-pro":    BackendGeminiCLI,
 		"codex-gpt-5-codex": BackendCodexCLI,
 		"grok-2":            BackendCodexCLI,
+		"deepseek-chat":     BackendDeepSeek,
 	}
 	for model, want := range cases {
 		got, err := InferBackend(model)

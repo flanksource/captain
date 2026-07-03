@@ -18,6 +18,7 @@ const (
 	BackendAnthropic   Backend = "anthropic"
 	BackendGemini      Backend = "gemini"
 	BackendOpenAI      Backend = "openai"
+	BackendDeepSeek    Backend = "deepseek"
 	BackendClaudeCLI   Backend = "claude-cli"
 	BackendCodexCLI    Backend = "codex-cli"
 	BackendGeminiCLI   Backend = "gemini-cli"
@@ -33,7 +34,7 @@ const (
 // source of truth behind Valid, BackendList, and the help/error strings.
 func AllBackends() []Backend {
 	return []Backend{
-		BackendAnthropic, BackendGemini, BackendOpenAI,
+		BackendAnthropic, BackendGemini, BackendOpenAI, BackendDeepSeek,
 		BackendClaudeCLI, BackendClaudeAgent, BackendClaudeCmux,
 		BackendCodexCLI, BackendCodexCmux, BackendGeminiCLI,
 	}
@@ -53,7 +54,7 @@ func (b Backend) Valid() bool {
 // or "cli" (delegated to an installed coding-agent binary with its own auth).
 func (b Backend) Kind() string {
 	switch b {
-	case BackendAnthropic, BackendGemini, BackendOpenAI:
+	case BackendAnthropic, BackendGemini, BackendOpenAI, BackendDeepSeek:
 		return "api"
 	default:
 		return "cli"
@@ -69,6 +70,8 @@ func AuthEnvVars(b Backend) []string {
 		return []string{"ANTHROPIC_API_KEY"}
 	case BackendOpenAI, BackendCodexCLI:
 		return []string{"OPENAI_API_KEY"}
+	case BackendDeepSeek:
+		return []string{"DEEPSEEK_API_KEY"}
 	case BackendGemini, BackendGeminiCLI:
 		return []string{"GEMINI_API_KEY", "GOOGLE_API_KEY"}
 	default:
@@ -111,6 +114,8 @@ func InferBackend(model string) (Backend, error) {
 		return BackendCodexCLI, nil
 	case strings.HasPrefix(m, "gpt-"), strings.HasPrefix(m, "o1"), strings.HasPrefix(m, "o3"), strings.HasPrefix(m, "o4"):
 		return BackendOpenAI, nil
+	case strings.HasPrefix(m, "deepseek"):
+		return BackendDeepSeek, nil
 	}
 
 	return "", fmt.Errorf("unable to infer backend from model name: %s (pass an explicit backend: %s)", model, BackendList())

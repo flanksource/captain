@@ -175,6 +175,80 @@ func TestMapAppServerNotification_Kinds(t *testing.T) {
 	}
 }
 
+// drainEvents non-blockingly collects everything buffered on a turn's channel.
+func drainEvents(ts *turnState) []ai.Event {
+	var out []ai.Event
+	for {
+		select {
+		case ev := <-ts.ch:
+			out = append(out, ev)
+		default:
+			return out
+		}
+	}
+}
+
+// activeTurn wires a turnState onto a fresh provider so handleNotification can
+// route to it, mirroring what ExecuteStream sets up.
+func activeTurn(t *testing.T, schema json.RawMessage) (*CodexAppServer, *turnState) {
+	t.Helper()
+	c, err := NewCodexAppServer("gpt-5")
+	require.NoError(t, err)
+	ts := &turnState{
+		ch:           make(chan ai.Event, 16),
+		usage:        &ai.Usage{},
+		model:        "gpt-5",
+		streamed:     map[string]bool{},
+		terminal:     make(chan struct{}),
+		outputSchema: schema,
+	}
+	c.setActive(ts)
+	return c, ts
+}
+
+func resultEvent(t *testing.T, evs []ai.Event) ai.Event {
+	t.Helper()
+	for _, ev := range evs {
+		if ev.Kind == ai.EventResult {
+			return ev
+		}
+	}
+	t.Fatalf("no EventResult in %+v", evs)
+	return ai.Event{}
+}
+
+// A structured turn attaches the final agentMessage JSON to the terminal result.
+func TestHandleNotification_StructuredOutput(t *testing.T) {
+	schema, err := ai.SchemaJSONFor(api.Prompt{Schema: &struct {
+		Answer string `json:"answer"`
+	}{}})
+	require.NoError(t, err)
+
+	c, ts := activeTurn(t, schema)
+	// The final agent message's text IS the validated JSON (codex has no separate
+	// structured field).
+	c.handleNotification("item/completed",
+		json.RawMessage(`{"item":{"id":"a1","type":"agentMessage","text":"{\"answer\":\"42\"}"}}`))
+	c.handleNotification("turn/completed",
+		json.RawMessage(`{"threadId":"t","turn":{"id":"u","status":"completed"}}`))
+
+	result := resultEvent(t, drainEvents(ts))
+	require.NotEmpty(t, result.StructuredData, "structured turn should carry the final JSON on the result")
+	assert.JSONEq(t, `{"answer":"42"}`, string(result.StructuredData))
+}
+
+// A text-mode turn (no schema) leaves the result's StructuredData empty.
+func TestHandleNotification_NoStructuredWithoutSchema(t *testing.T) {
+	c, ts := activeTurn(t, nil)
+	c.handleNotification("item/completed",
+		json.RawMessage(`{"item":{"id":"a1","type":"agentMessage","text":"plain answer"}}`))
+	c.handleNotification("turn/completed",
+		json.RawMessage(`{"threadId":"t","turn":{"id":"u","status":"completed"}}`))
+
+	result := resultEvent(t, drainEvents(ts))
+	assert.Empty(t, result.StructuredData, "text-mode turn must not attach structured output")
+}
+
 func TestMapAppServerNotification_ErrorUnwrapping(t *testing.T) {
 	nested := `The 'gpt-5.5-codex' model is not supported when using Codex with a ChatGPT account.`
 	params := `{"threadId":"t","turnId":"u","willRetry":false,"error":{"message":"{\"type\":\"error\",\"status\":400,\"error\":{\"type\":\"invalid_request_error\",\"message\":\"` + nested + `\"}}"}}`
@@ -278,7 +352,7 @@ func TestBuildTurnStartParams(t *testing.T) {
 	p := buildTurnStartParams("gpt-5", ai.Request{
 		Prompt: api.Prompt{User: "hi"},
 		Model:  api.Model{Effort: api.EffortHigh},
-	}, "thread-1")
+	}, "thread-1", nil)
 	assert.Equal(t, "thread-1", p["threadId"])
 	assert.Equal(t, "gpt-5", p["model"])
 	assert.Equal(t, "high", p["effort"])
@@ -289,12 +363,35 @@ func TestBuildTurnStartParams(t *testing.T) {
 	assert.Equal(t, "text", input[0]["type"])
 	assert.Equal(t, "hi", input[0]["text"])
 
-	// No reasoning effort / empty model should be omitted entirely.
-	bare := buildTurnStartParams("", req(api.Prompt{User: "hi"}), "t")
+	// No reasoning effort / empty model / nil schema should be omitted entirely.
+	bare := buildTurnStartParams("", req(api.Prompt{User: "hi"}), "t", nil)
 	_, hasModel := bare["model"]
 	_, hasEffort := bare["effort"]
+	_, hasSchema := bare["outputSchema"]
 	assert.False(t, hasModel, "empty model must be omitted")
 	assert.False(t, hasEffort, "absent reasoning effort must be omitted")
+	assert.False(t, hasSchema, "nil schema must omit outputSchema")
+}
+
+func TestBuildTurnStartParams_OutputSchema(t *testing.T) {
+	type answer struct {
+		Answer string `json:"answer"`
+	}
+	schema, err := ai.SchemaJSONFor(api.Prompt{Schema: &answer{}})
+	require.NoError(t, err)
+
+	p := buildTurnStartParams("gpt-5", req(api.Prompt{User: "solve"}), "t", schema)
+	require.Contains(t, p, "outputSchema", "a derived schema must be sent as outputSchema")
+
+	// It must serialize to a JSON Schema object describing the target struct.
+	raw, err := json.Marshal(p["outputSchema"])
+	require.NoError(t, err)
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(raw, &decoded))
+	assert.Equal(t, "object", decoded["type"])
+	props, ok := decoded["properties"].(map[string]any)
+	require.True(t, ok)
+	assert.Contains(t, props, "answer")
 }
 
 func TestBuildThreadStartParams_Safety(t *testing.T) {

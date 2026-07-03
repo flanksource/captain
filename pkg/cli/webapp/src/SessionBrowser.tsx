@@ -309,8 +309,10 @@ function SessionDetail({
     );
   }
   return (
-    <div className="min-h-0 flex-1 overflow-auto p-density-4 md:p-density-6">
-      <SessionViewer session={session?.entries ?? []} defaultExpanded={false} />
+    // AppShell's content region is a bounded block (h-full), not a flex parent, so
+    // `h-full` (not `flex-1`) is what gives the viewer a definite height to scroll within.
+    <div className="flex h-full min-h-0 flex-col">
+      <SessionViewer session={session?.entries ?? []} defaultExpanded={false} scrollable />
     </div>
   );
 }

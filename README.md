@@ -134,6 +134,7 @@ The container workflow is designed to package things like:
 ```text
 captain/
 ├── cmd/captain/           # CLI entrypoint
+├── docs/                  # Astro documentation site
 ├── pkg/ai/                # AI abstraction, provider config, models
 ├── pkg/ai/agent/          # Iterative agent loop, plugins (verify, worktree, judge)
 ├── pkg/ai/fixture/        # YAML fixture runner for Claude configuration benchmarks
@@ -468,9 +469,12 @@ Interactive wizard that writes `~/.captain.yaml` with defaults for backend, mode
 captain serve
 captain serve --port 8080
 captain serve --dev
+go run ./cmd/captain serve --dev --open
+task www:dev
+task www:build
 ```
 
-Starts an HTTP API and embedded web UI. The UI launches `captain ai agent` operations and opens follow-up chat windows that resume the returned session. `--dev` starts the Vite dev server from `pkg/cli/webapp` and proxies `/api` back to the Go process.
+Starts an HTTP API and embedded web UI. The UI launches `captain ai agent` operations and opens follow-up chat windows that resume the returned session. `--dev` starts the Vite dev server from `pkg/cli/webapp` and proxies `/api` back to the Go process. Use `task www:dev` for the local Go-backed Vite proxy with the browser opened, and `task www:build` to rebuild the embedded web UI assets.
 
 ### MCP server
 
@@ -507,6 +511,15 @@ Binary output:
 ```text
 .bin/captain
 ```
+
+### Docs
+
+```bash
+task docs:dev
+task docs:build
+```
+
+The Astro docs site lives in `docs/`. The prompts engine is the first complete section; other Captain areas are scaffolded for future expansion.
 
 ### Test
 

@@ -33,8 +33,8 @@ func loadSavedAI() captainconfig.AIDefaults {
 
 type AIProviderOptions struct {
 	Model   string `flag:"model" help:"Model name, e.g. claude-sonnet-4, gemini-2.0-flash (defaults to the value saved by 'captain configure')" short:"m"`
-	Backend string `flag:"backend" help:"Force backend: anthropic|gemini|openai|claude-cli|claude-agent|claude-cmux|codex-cli|codex-cmux|gemini-cli (default: inferred from model or saved by 'captain configure')" short:"b"`
-	APIKey  string `flag:"api-key" help:"API key (env: ANTHROPIC_API_KEY, GEMINI_API_KEY, GOOGLE_API_KEY)"`
+	Backend string `flag:"backend" help:"Force backend: anthropic|gemini|openai|deepseek|claude-cli|claude-agent|claude-cmux|codex-cli|codex-cmux|gemini-cli (default: inferred from model or saved by 'captain configure')" short:"b"`
+	APIKey  string `flag:"api-key" help:"API key (env: ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, GOOGLE_API_KEY, DEEPSEEK_API_KEY)"`
 	NoCache bool   `flag:"no-cache" help:"Disable response caching"`
 	Budget  string `flag:"budget" help:"Max spend in USD, 0=unlimited" default:"0"`
 }

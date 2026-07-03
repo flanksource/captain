@@ -141,12 +141,54 @@ func TestFetchAnthropicModels_HappyPath(t *testing.T) {
 	}
 }
 
+func TestFetchDeepSeekModels_HappyPath(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer ds-test" {
+			t.Errorf("Authorization = %q", got)
+		}
+		if !strings.HasSuffix(r.URL.Path, "/models") {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{
+				{"id": "deepseek-chat"},
+				{"id": "deepseek-reasoner"},
+			},
+		})
+	}))
+	defer srv.Close()
+	withTestServer(t, srv)
+
+	got, err := FetchDeepSeekModels(context.Background(), "ds-test")
+	if err != nil {
+		t.Fatalf("FetchDeepSeekModels: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len = %d", len(got))
+	}
+	for _, m := range got {
+		if m.Backend != BackendDeepSeek {
+			t.Errorf("Backend = %q on %+v", m.Backend, m)
+		}
+		if m.ID == "" || m.Name == "" {
+			t.Errorf("missing fields: %+v", m)
+		}
+	}
+}
+
+func TestFetchDeepSeekModels_EmptyKey(t *testing.T) {
+	if _, err := FetchDeepSeekModels(context.Background(), ""); err == nil {
+		t.Fatal("expected error for empty api key")
+	}
+}
+
 func TestListModels_ErrorsOnMissingKey(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("GEMINI_API_KEY", "")
+	t.Setenv("DEEPSEEK_API_KEY", "")
 
-	for _, b := range []Backend{BackendOpenAI, BackendAnthropic, BackendGemini} {
+	for _, b := range []Backend{BackendOpenAI, BackendAnthropic, BackendGemini, BackendDeepSeek} {
 		_, err := ListModels(context.Background(), b)
 		if err == nil {
 			t.Errorf("backend=%s: expected error when no API key set", b)

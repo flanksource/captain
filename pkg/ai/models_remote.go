@@ -92,6 +92,22 @@ func FetchGeminiModels(ctx context.Context, apiKey string) ([]ModelDef, error) {
 	return doModelsRequest(req, BackendGemini)
 }
 
+// FetchDeepSeekModels calls https://api.deepseek.com/models and returns the
+// available model IDs as ModelDefs scoped to BackendDeepSeek. DeepSeek's API is
+// OpenAI-compatible, so the endpoint is a Bearer-authenticated, OpenAI-shaped
+// listing. An empty apiKey returns an error without making a request.
+func FetchDeepSeekModels(ctx context.Context, apiKey string) ([]ModelDef, error) {
+	if strings.TrimSpace(apiKey) == "" {
+		return nil, fmt.Errorf("DEEPSEEK_API_KEY is not set")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.deepseek.com/models", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	return doModelsRequest(req, BackendDeepSeek)
+}
+
 // doModelsRequest issues req with the default client and decodes the
 // permissive listing shape, projecting each entry into a ModelDef tagged
 // with the supplied backend. Centralising this keeps the three fetchers
@@ -181,6 +197,8 @@ func remoteFetcherFor(backend Backend) (fetch func(context.Context, string) ([]M
 		return FetchAnthropicModels, GetAPIKeyFromEnv(backend)
 	case BackendGemini:
 		return FetchGeminiModels, GetAPIKeyFromEnv(backend)
+	case BackendDeepSeek:
+		return FetchDeepSeekModels, GetAPIKeyFromEnv(backend)
 	default:
 		return nil, ""
 	}

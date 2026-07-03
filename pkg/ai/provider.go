@@ -15,6 +15,7 @@ const (
 	BackendAnthropic   = api.BackendAnthropic
 	BackendGemini      = api.BackendGemini
 	BackendOpenAI      = api.BackendOpenAI
+	BackendDeepSeek    = api.BackendDeepSeek
 	BackendClaudeCLI   = api.BackendClaudeCLI
 	BackendCodexCLI    = api.BackendCodexCLI
 	BackendGeminiCLI   = api.BackendGeminiCLI

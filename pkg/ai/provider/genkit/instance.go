@@ -10,9 +10,14 @@ import (
 	"github.com/firebase/genkit/go/core/api"
 	gk "github.com/firebase/genkit/go/genkit"
 	"github.com/firebase/genkit/go/plugins/anthropic"
+	"github.com/firebase/genkit/go/plugins/compat_oai"
 	"github.com/firebase/genkit/go/plugins/compat_oai/openai"
 	"github.com/firebase/genkit/go/plugins/googlegenai"
 )
+
+// deepSeekBaseURL is DeepSeek's OpenAI-compatible endpoint. The compat_oai
+// client appends /chat/completions, which DeepSeek serves at this base.
+const deepSeekBaseURL = "https://api.deepseek.com"
 
 // instanceKey identifies a cached genkit instance. genkit.Init is heavy and
 // registers a key-scoped plugin, so one instance is reused per (backend, apiKey).
@@ -60,7 +65,11 @@ func pluginFor(backend ai.Backend, apiKey string) (api.Plugin, error) {
 		return &openai.OpenAI{APIKey: apiKey}, nil
 	case ai.BackendGemini:
 		return &googlegenai.GoogleAI{APIKey: apiKey}, nil
+	case ai.BackendDeepSeek:
+		// DeepSeek is OpenAI-compatible; the compat_oai plugin resolves models
+		// dynamically under the "deepseek/" provider namespace.
+		return &compat_oai.OpenAICompatible{Provider: "deepseek", APIKey: apiKey, BaseURL: deepSeekBaseURL}, nil
 	default:
-		return nil, fmt.Errorf("genkit provider: unsupported backend %q (supported: anthropic, openai, gemini)", backend)
+		return nil, fmt.Errorf("genkit provider: unsupported backend %q (supported: anthropic, openai, gemini, deepseek)", backend)
 	}
 }

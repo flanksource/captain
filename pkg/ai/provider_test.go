@@ -46,7 +46,7 @@ func TestInferBackendErrorListsAllBackends(t *testing.T) {
 }
 
 func TestBackendKind(t *testing.T) {
-	api := map[Backend]bool{BackendAnthropic: true, BackendGemini: true, BackendOpenAI: true}
+	api := map[Backend]bool{BackendAnthropic: true, BackendGemini: true, BackendOpenAI: true, BackendDeepSeek: true}
 	for _, b := range AllBackends() {
 		want := "cli"
 		if api[b] {
@@ -69,6 +69,7 @@ func TestAuthEnvVars(t *testing.T) {
 		BackendOpenAI:      {"OPENAI_API_KEY"},
 		BackendCodexCLI:    {"OPENAI_API_KEY"},
 		BackendCodexCmux:   nil,
+		BackendDeepSeek:    {"DEEPSEEK_API_KEY"},
 		BackendGemini:      {"GEMINI_API_KEY", "GOOGLE_API_KEY"},
 		BackendGeminiCLI:   {"GEMINI_API_KEY", "GOOGLE_API_KEY"},
 	}
@@ -117,6 +118,7 @@ func TestInferBackendKnownPrefixes(t *testing.T) {
 		"gemini-cli-pro":      BackendGeminiCLI,
 		"gpt-4o":              BackendOpenAI,
 		"codex-mini":          BackendCodexCLI,
+		"deepseek-reasoner":   BackendDeepSeek,
 	}
 	for model, want := range cases {
 		got, err := InferBackend(model)

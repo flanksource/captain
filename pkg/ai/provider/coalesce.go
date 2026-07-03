@@ -71,6 +71,11 @@ func finaliseCoalescedResponse(model, text string, usage ai.Usage, lastResult *a
 	}
 	if lastResult != nil {
 		resp.Raw = lastResult.Input
+		// Carry any validated structured output (raw JSON) the terminal result
+		// event holds; the caller's Execute binds it into its schema target.
+		if len(lastResult.StructuredData) > 0 {
+			resp.StructuredData = lastResult.StructuredData
+		}
 	}
 	if sessionID != "" {
 		if resp.Raw == nil {

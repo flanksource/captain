@@ -252,7 +252,11 @@ func codexSafety(req ai.Request) (sandbox, approval string) {
 	return string(s), string(a)
 }
 
-func buildTurnStartParams(model string, req ai.Request, threadID string) map[string]any {
+// buildTurnStartParams builds the turn/start params. outputSchema, when
+// non-empty, is sent as the turn-scoped `outputSchema` that constrains the final
+// assistant message to validated JSON (structured output); the raw JSON Schema
+// bytes are embedded inline verbatim.
+func buildTurnStartParams(model string, req ai.Request, threadID string, outputSchema json.RawMessage) map[string]any {
 	p := map[string]any{
 		"threadId": threadID,
 		"input":    []map[string]any{{"type": "text", "text": composePrompt(req)}},
@@ -262,6 +266,9 @@ func buildTurnStartParams(model string, req ai.Request, threadID string) map[str
 	}
 	if req.Effort != "" {
 		p["effort"] = string(req.Effort)
+	}
+	if len(outputSchema) > 0 {
+		p["outputSchema"] = outputSchema
 	}
 	return p
 }

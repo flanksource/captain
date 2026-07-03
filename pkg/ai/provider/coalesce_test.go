@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -41,6 +42,27 @@ func TestCoalesceStream_AccumulatesTextAndUsageFromResult(t *testing.T) {
 	}
 	if resp.Usage.InputTokens != 42 || resp.Usage.OutputTokens != 17 {
 		t.Errorf("Usage = %+v, want input=42 output=17", resp.Usage)
+	}
+}
+
+func TestCoalesceStream_CarriesStructuredData(t *testing.T) {
+	const model = "gpt-5"
+	structured := json.RawMessage(`{"answer":"42"}`)
+	events := []ai.Event{
+		{Kind: ai.EventText, Text: `{"answer":"42"}`, Model: model},
+		{Kind: ai.EventResult, Tool: "Result", Success: true, Model: model, StructuredData: structured},
+	}
+
+	resp, err := CoalesceStream(context.Background(), model, feedEvents(events), time.Now())
+	if err != nil {
+		t.Fatalf("CoalesceStream err: %v", err)
+	}
+	raw, ok := resp.StructuredData.(json.RawMessage)
+	if !ok {
+		t.Fatalf("StructuredData = %T, want json.RawMessage", resp.StructuredData)
+	}
+	if string(raw) != string(structured) {
+		t.Errorf("StructuredData = %s, want %s", raw, structured)
 	}
 }
 

@@ -207,11 +207,16 @@ func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, e
 		resp.Raw = map[string]any{"session_id": sessionID}
 	}
 	if req.Prompt.Schema != nil {
-		if err := bindStructuredOutput(req.Prompt.Schema, structured); err != nil {
+		if err := ai.BindStructuredOutput(req.Prompt.Schema, structured); err != nil {
 			return nil, err
 		}
 		resp.StructuredData = req.Prompt.Schema
 		resp.Text = ""
+	} else if len(req.Prompt.SchemaJSON) > 0 && len(structured) > 0 {
+		// A pre-built JSON schema has no Go target to bind into; surface the raw
+		// structured JSON and leave it on Text for tolerant decoders.
+		resp.StructuredData = structured
+		resp.Text = string(structured)
 	}
 	return resp, nil
 }
@@ -228,19 +233,6 @@ func (p *Provider) resultError(req ai.Request, subtype, lastErr string) error {
 		msg = "claude-agent returned is_error=true"
 	}
 	return fmt.Errorf("%w: %s", ai.ErrCLIExecutionFailed, msg)
-}
-
-// bindStructuredOutput unmarshals the SDK's validated structured output into the
-// caller's Go target. Missing output on an otherwise-successful run is a loud
-// failure: the SDK guarantees structured_output whenever a schema was supplied.
-func bindStructuredOutput(target any, raw json.RawMessage) error {
-	if len(raw) == 0 {
-		return fmt.Errorf("%w: claude-agent returned no structured output", ai.ErrSchemaValidation)
-	}
-	if err := json.Unmarshal(raw, target); err != nil {
-		return fmt.Errorf("%w: %v", ai.ErrSchemaValidation, err)
-	}
-	return nil
 }
 
 // ExecuteStream pushes one user turn to the SDK session and streams the mapped
@@ -269,21 +261,15 @@ func (p *Provider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai
 }
 
 // requestSchemaJSON derives the JSON schema captain sends to the SDK from the
-// request's structured-output target, or nil for a text-mode request. A
-// non-struct target fails loudly rather than silently dropping the schema.
+// request's structured-output target (a reflected Go struct or a verbatim
+// Prompt.SchemaJSON), or nil for a text-mode request. A non-struct target fails
+// loudly rather than silently dropping the schema.
 func requestSchemaJSON(req ai.Request) (json.RawMessage, error) {
-	if req.Prompt.Schema == nil {
-		return nil, nil
-	}
-	schema, err := ai.GenerateJSONSchema(req.Prompt.Schema)
+	schema, err := ai.SchemaJSONFor(req.Prompt)
 	if err != nil {
 		return nil, fmt.Errorf("claude-agent: cannot derive structured-output schema: %w", err)
 	}
-	raw, err := json.Marshal(schema)
-	if err != nil {
-		return nil, fmt.Errorf("claude-agent: cannot marshal structured-output schema: %w", err)
-	}
-	return raw, nil
+	return schema, nil
 }
 
 // Close shuts the SDK session down (best-effort shutdown RPC), stops the

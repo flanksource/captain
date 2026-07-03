@@ -17,9 +17,11 @@ import {
 import {
   CodeBlock,
   Icon,
+  SchemaViewer,
   UiAdd,
   UiCode2,
   UiFileSearch,
+  UiListTree,
   UiPlay,
   UiRefresh,
   UiSave,
@@ -57,7 +59,7 @@ import { CAPTAIN_SIDEBAR_COLLAPSE_KEY } from "./shell";
 type Navigate = (to: string, opts?: { replace?: boolean }) => void;
 
 type SourceFilter = "all" | "embedded" | "local";
-type DetailTab = "source" | "runner" | "runs";
+type DetailTab = "source" | "runner" | "schema" | "runs";
 
 type PromptVariable = {
   name: string;
@@ -87,6 +89,7 @@ type PromptDetail = PromptSummary & {
   content: string;
   inputSchema?: Record<string, unknown>;
   inputDefault?: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
 };
 
@@ -101,6 +104,7 @@ type PromptRenderResult = {
   config?: unknown;
   inputSchema?: Record<string, unknown>;
   inputDefault?: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
   validationError?: string;
 };
 
@@ -127,7 +131,7 @@ type RuntimeForm = {
   spec: AISpecRuntimeValue;
 };
 
-type ProviderFamily = "claude" | "codex" | "openai" | "anthropic" | "gemini";
+type ProviderFamily = "claude" | "codex" | "openai" | "anthropic" | "gemini" | "deepseek";
 type RuntimeMode = "agent" | "cli" | "cmux" | "api";
 
 type PromptOps = {
@@ -181,6 +185,7 @@ const FAMILY_OPTIONS = [
   { id: "openai", label: "OpenAI" },
   { id: "anthropic", label: "Anthropic" },
   { id: "gemini", label: "Gemini" },
+  { id: "deepseek", label: "DeepSeek" },
 ] satisfies Array<{ id: ProviderFamily; label: string }>;
 
 const FAMILY_MODES = {
@@ -199,6 +204,7 @@ const FAMILY_MODES = {
     { id: "api", label: "API", backend: "gemini" },
     { id: "cli", label: "CLI", backend: "gemini-cli" },
   ],
+  deepseek: [{ id: "api", label: "API", backend: "deepseek" }],
 } satisfies Record<ProviderFamily, Array<{ id: RuntimeMode; label: string; backend: string }>>;
 
 const AGENT_TOOLS = [
@@ -819,6 +825,7 @@ function PromptDetailPane({
           onChange={onTabChange}
           tabs={[
             { id: "runner", label: "Run", icon: UiPlay },
+            { id: "schema", label: "Schema", icon: UiListTree },
             { id: "source", label: "Source", icon: UiCode2 },
             { id: "runs", label: "Runs", icon: UiTerminal },
           ]}
@@ -836,6 +843,11 @@ function PromptDetailPane({
           />
         ) : tab === "runs" ? (
           <RunningPrompts.RunsTab activeRunID={activeRunID} onSelectRun={onSelectRun} />
+        ) : tab === "schema" ? (
+          <SchemaPreview
+            inputSchema={schema}
+            outputSchema={normalizeObjectSchema(detail.outputSchema)}
+          />
         ) : (
           <div className="grid min-h-full gap-density-4 xl:grid-cols-[minmax(340px,0.9fr)_minmax(0,1.1fr)]">
             <div className="space-y-density-4">
@@ -1369,6 +1381,64 @@ function RunnerOutput({
   );
 }
 
+// SchemaPreview browses the prompt's input and output JSON schemas read-only,
+// via clicky-ui's SchemaViewer. Absent schemas (most prompts declare no
+// output.schema) degrade to an empty state rather than an error.
+function SchemaPreview({
+  inputSchema,
+  outputSchema,
+}: {
+  inputSchema?: JsonSchemaObject;
+  outputSchema?: JsonSchemaObject;
+}) {
+  return (
+    <div className="grid min-h-full gap-density-4 xl:grid-cols-2">
+      <SchemaPanel
+        title="Input schema"
+        icon={<Icon icon={UiFileSearch} className="size-4 text-muted-foreground" />}
+        schema={inputSchema}
+        emptyLabel="This prompt declares no input schema."
+      />
+      <SchemaPanel
+        title="Output schema"
+        icon={<Icon icon={UiListTree} className="size-4 text-muted-foreground" />}
+        schema={outputSchema}
+        emptyLabel="This prompt declares no output schema."
+      />
+    </div>
+  );
+}
+
+function SchemaPanel({
+  title,
+  icon,
+  schema,
+  emptyLabel,
+}: {
+  title: string;
+  icon: ReactNode;
+  schema?: JsonSchemaObject;
+  emptyLabel: string;
+}) {
+  return (
+    <section className="space-y-density-2">
+      <div className="flex items-center gap-density-2 text-sm font-semibold">
+        {icon}
+        {title}
+      </div>
+      {schema ? (
+        <div className="rounded-md border border-border p-density-3">
+          <SchemaViewer schema={schema} showControls defaultOpenDepth={1} />
+        </div>
+      ) : (
+        <div className="flex min-h-[120px] items-center justify-center rounded-md border border-dashed border-border p-density-4 text-sm text-muted-foreground">
+          {emptyLabel}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function CreatePromptModal({
   open,
   onClose,
@@ -1841,6 +1911,8 @@ function selectionForBackend(backend: string | undefined): { family: ProviderFam
       return { family: "gemini", mode: "api" };
     case "gemini-cli":
       return { family: "gemini", mode: "cli" };
+    case "deepseek":
+      return { family: "deepseek", mode: "api" };
     default:
       return { family: "claude", mode: "agent" };
   }
@@ -1852,6 +1924,7 @@ function inferBackendFromModel(model: string) {
   if (value.startsWith("anthropic/")) return "anthropic";
   if (value.startsWith("openai/")) return "openai";
   if (value.startsWith("googleai/")) return "gemini";
+  if (value.startsWith("deepseek/") || value.startsWith("deepseek-")) return "deepseek";
   if (value.startsWith("claude-agent-")) return "claude-agent";
   if (value.startsWith("claude-code-")) return "claude-cli";
   if (value.startsWith("codex")) return "codex-cli";
@@ -1891,6 +1964,8 @@ function providerForBackend(backend: string) {
     case "gemini":
     case "gemini-cli":
       return "googleai";
+    case "deepseek":
+      return "deepseek";
     case "claude-agent":
     case "claude-cli":
     case "claude-cmux":
@@ -1913,6 +1988,8 @@ function labelForBackend(backend: string) {
       return "Gemini API";
     case "gemini-cli":
       return "Gemini CLI";
+    case "deepseek":
+      return "DeepSeek API";
     case "claude-agent":
       return "Claude Agent";
     case "claude-cli":
@@ -1936,7 +2013,12 @@ function normalizeRuntimeModel(model: string, models: ChatModel[]) {
   if (!selected) return { model: id, backend: "" };
 
   const backend = providerToBackend(selected.provider);
-  if (selected.provider === "anthropic" || selected.provider === "openai" || selected.provider === "googleai") {
+  if (
+    selected.provider === "anthropic" ||
+    selected.provider === "openai" ||
+    selected.provider === "googleai" ||
+    selected.provider === "deepseek"
+  ) {
     return { model: stripProviderPrefix(id), backend };
   }
   if (selected.provider === "codex-cli" && id.startsWith("codex-")) {
@@ -1951,6 +2033,7 @@ function providerToBackend(provider: string) {
       return "gemini";
     case "anthropic":
     case "openai":
+    case "deepseek":
     case "claude-agent":
     case "claude-cli":
     case "codex-cli":

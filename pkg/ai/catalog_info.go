@@ -29,6 +29,8 @@ func BackendToProvider(b Backend) string {
 		return "openai"
 	case BackendGemini:
 		return "googleai"
+	case BackendDeepSeek:
+		return "deepseek"
 	default:
 		return string(b)
 	}

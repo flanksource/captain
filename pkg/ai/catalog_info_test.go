@@ -7,6 +7,7 @@ func TestBackendToProvider(t *testing.T) {
 		BackendAnthropic:   "anthropic",
 		BackendOpenAI:      "openai",
 		BackendGemini:      "googleai",
+		BackendDeepSeek:    "deepseek",
 		BackendClaudeAgent: "claude-agent",
 		BackendCodexCLI:    "codex-cli",
 	}
