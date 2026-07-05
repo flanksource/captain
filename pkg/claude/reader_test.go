@@ -273,6 +273,52 @@ func TestReadStreamJSON_PrLinkSurfaced(t *testing.T) {
 	}
 }
 
+// TestReadStreamJSON_ContentSystemSubtypes verifies the content-bearing system
+// subtypes surface as synthetic rows (carrying their content) rather than being
+// dropped as unhandled.
+func TestReadStreamJSON_ContentSystemSubtypes(t *testing.T) {
+	ResetUnhandledStreamTypes()
+	input := `{"type":"system","subtype":"compact_boundary","content":"Conversation compacted","uuid":"c"}
+{"type":"system","subtype":"local_command","content":"<local-command-stdout>ok</local-command-stdout>","uuid":"l"}
+{"type":"system","subtype":"scheduled_task_fire","content":"resuming /loop","uuid":"s"}
+{"type":"system","subtype":"informational","content":"Remote Control disconnected","uuid":"i"}`
+
+	entries, err := ReadStreamJSON(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("ReadStreamJSON failed: %v", err)
+	}
+	wantRows := map[string]string{
+		"CompactBoundary":   "Conversation compacted",
+		"LocalCommand":      "<local-command-stdout>ok</local-command-stdout>",
+		"ScheduledTaskFire": "resuming /loop",
+		"Informational":     "Remote Control disconnected",
+	}
+	if len(entries) != len(wantRows) {
+		t.Fatalf("expected %d rows, got %d", len(wantRows), len(entries))
+	}
+	for _, e := range entries {
+		uses := e.Message.GetToolUses()
+		if len(uses) != 1 {
+			t.Fatalf("entry has %d tool uses, want 1", len(uses))
+		}
+		wantContent, ok := wantRows[uses[0].Name]
+		if !ok {
+			t.Errorf("unexpected row %q", uses[0].Name)
+			continue
+		}
+		var in map[string]any
+		if err := json.Unmarshal(uses[0].Input, &in); err != nil {
+			t.Fatalf("unmarshal %s input: %v", uses[0].Name, err)
+		}
+		if in["content"] != wantContent {
+			t.Errorf("%s content = %v, want %q", uses[0].Name, in["content"], wantContent)
+		}
+	}
+	if got := SnapshotUnhandledStreamTypes(); len(got) != 0 {
+		t.Errorf("content system subtypes should be handled, got unhandled: %v", got)
+	}
+}
+
 func TestReadHistory_SessionFileEvents(t *testing.T) {
 	// On-disk session files use camelCase fields and a different mix of
 	// types from stream-json. ReadHistory must recognize the same set of
