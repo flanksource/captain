@@ -14,6 +14,7 @@ import (
 	"github.com/flanksource/captain/pkg/claude"
 	"github.com/flanksource/captain/pkg/claude/tools"
 	captainCollections "github.com/flanksource/captain/pkg/collections"
+	"github.com/flanksource/captain/pkg/session"
 	"github.com/flanksource/clicky/api"
 	"github.com/flanksource/commons/collections"
 )
@@ -450,8 +451,8 @@ func runHistoryAll(tl []tools.Tool, opts HistoryOptions, classifier *bash.Catego
 		return nil, nil
 	}
 
-	result := HistoryResultAll{
-		Results: make([]ScanResultRow, 0, len(filtered)),
+	result := session.HistoryResultAll{
+		Results: make([]session.ScanResultRow, 0, len(filtered)),
 	}
 
 	for _, t := range filtered {
@@ -469,12 +470,12 @@ func runHistoryAll(tl []tools.Tool, opts HistoryOptions, classifier *bash.Catego
 		}
 
 		analysis := AnalyzeToolUse(t)
-		row := ScanResultRow{
+		row := session.ScanResultRow{
 			Project:         projectName,
 			Tool:            t.Name(),
 			Summary:         firstLine(t.Pretty().String()),
 			Subject:         t.Pretty(),
-			Detail:          buildRowDetail(t, opts),
+			Detail:          session.BuildRowDetail(t, session.RowOptions{Cost: opts.Cost, Raw: opts.Raw}),
 			Paths:           FormatPathsWithIcons(analysis.ReadPaths, analysis.WritePaths),
 			ReadPaths:       analysis.ReadPaths,
 			WritePaths:      analysis.WritePaths,
@@ -483,7 +484,7 @@ func runHistoryAll(tl []tools.Tool, opts HistoryOptions, classifier *bash.Catego
 			Approved:        approved,
 			Agent:           toolAgentLabel(base),
 			Time:            base.PrettyTimestamp(),
-			Cost:            rowCost(base, opts),
+			Cost:            session.RowCost(base, session.RowOptions{Cost: opts.Cost, Raw: opts.Raw}),
 		}
 		if opts.Raw {
 			row.Raw = base.RawEntry
@@ -509,8 +510,8 @@ func runHistorySingle(tl []tools.Tool, opts HistoryOptions, classifier *bash.Cat
 		return nil, nil
 	}
 
-	result := HistoryResult{
-		Results: make([]ScanResultRowSingle, 0, len(filtered)),
+	result := session.HistoryResult{
+		Results: make([]session.ScanResultRowSingle, 0, len(filtered)),
 	}
 
 	for _, t := range filtered {
@@ -527,11 +528,11 @@ func runHistorySingle(tl []tools.Tool, opts HistoryOptions, classifier *bash.Cat
 		}
 
 		analysis := AnalyzeToolUse(t)
-		row := ScanResultRowSingle{
+		row := session.ScanResultRowSingle{
 			Tool:            t.Name(),
 			Summary:         firstLine(t.Pretty().String()),
 			Subject:         t.Pretty(),
-			Detail:          buildRowDetail(t, opts),
+			Detail:          session.BuildRowDetail(t, session.RowOptions{Cost: opts.Cost, Raw: opts.Raw}),
 			Paths:           FormatPathsWithIcons(analysis.ReadPaths, analysis.WritePaths),
 			ReadPaths:       analysis.ReadPaths,
 			WritePaths:      analysis.WritePaths,
@@ -540,7 +541,7 @@ func runHistorySingle(tl []tools.Tool, opts HistoryOptions, classifier *bash.Cat
 			Approved:        approved,
 			Agent:           toolAgentLabel(base),
 			Time:            base.PrettyTimestamp(),
-			Cost:            rowCost(base, opts),
+			Cost:            session.RowCost(base, session.RowOptions{Cost: opts.Cost, Raw: opts.Raw}),
 		}
 		if opts.Raw {
 			row.Raw = base.RawEntry
@@ -766,7 +767,7 @@ func matchApprovedFilter(filter string, denied bool) bool {
 	}
 }
 
-func applyCostSummaryAll(result *HistoryResultAll, costs []claude.SessionCost) {
+func applyCostSummaryAll(result *session.HistoryResultAll, costs []claude.SessionCost) {
 	var totals claude.TokenSummary
 	var minStart, maxEnd time.Time
 
@@ -785,17 +786,17 @@ func applyCostSummaryAll(result *HistoryResultAll, costs []claude.SessionCost) {
 	}
 
 	result.Tokens = totals.TotalTokens()
-	result.InputTokens = formatTokens(totals.InputTokens)
-	result.OutputTokens = formatTokens(totals.OutputTokens)
-	result.CacheRead = formatTokens(totals.CacheReadTokens)
-	result.CacheWrite = formatTokens(totals.CacheWriteTokens)
-	result.Cost = formatCost(totals.TotalCost)
+	result.InputTokens = session.FormatTokens(totals.InputTokens)
+	result.OutputTokens = session.FormatTokens(totals.OutputTokens)
+	result.CacheRead = session.FormatTokens(totals.CacheReadTokens)
+	result.CacheWrite = session.FormatTokens(totals.CacheWriteTokens)
+	result.Cost = session.FormatCost(totals.TotalCost)
 	if !minStart.IsZero() && !maxEnd.IsZero() {
 		result.Duration = formatDuration(maxEnd.Sub(minStart))
 	}
 }
 
-func applyCostSummarySingle(result *HistoryResult, costs []claude.SessionCost) {
+func applyCostSummarySingle(result *session.HistoryResult, costs []claude.SessionCost) {
 	var totals claude.TokenSummary
 	var minStart, maxEnd time.Time
 
@@ -814,11 +815,11 @@ func applyCostSummarySingle(result *HistoryResult, costs []claude.SessionCost) {
 	}
 
 	result.Tokens = totals.TotalTokens()
-	result.InputTokens = formatTokens(totals.InputTokens)
-	result.OutputTokens = formatTokens(totals.OutputTokens)
-	result.CacheRead = formatTokens(totals.CacheReadTokens)
-	result.CacheWrite = formatTokens(totals.CacheWriteTokens)
-	result.Cost = formatCost(totals.TotalCost)
+	result.InputTokens = session.FormatTokens(totals.InputTokens)
+	result.OutputTokens = session.FormatTokens(totals.OutputTokens)
+	result.CacheRead = session.FormatTokens(totals.CacheReadTokens)
+	result.CacheWrite = session.FormatTokens(totals.CacheWriteTokens)
+	result.Cost = session.FormatCost(totals.TotalCost)
 	if !minStart.IsZero() && !maxEnd.IsZero() {
 		result.Duration = formatDuration(maxEnd.Sub(minStart))
 	}

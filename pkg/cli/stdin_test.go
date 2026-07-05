@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/flanksource/captain/pkg/claude"
+	"github.com/flanksource/captain/pkg/session"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -197,7 +198,7 @@ func TestRunHistoryFromReader_ClaudeJSONL(t *testing.T) {
 	result, err := runHistoryFromReader(data, HistoryOptions{Limit: 10})
 	require.NoError(t, err)
 
-	histResult, ok := result.(HistoryResult)
+	histResult, ok := result.(session.HistoryResult)
 	require.True(t, ok, "expected HistoryResult, got %T", result)
 	require.Len(t, histResult.Results, 1)
 	assert.Equal(t, "Bash", histResult.Results[0].Tool)
@@ -213,14 +214,14 @@ func TestRunHistoryFromReader_ApprovedFilter(t *testing.T) {
 	t.Run("no filter returns all", func(t *testing.T) {
 		result, err := runHistoryFromReader(data, HistoryOptions{Limit: 100})
 		require.NoError(t, err)
-		histResult := result.(HistoryResult)
+		histResult := result.(session.HistoryResult)
 		assert.Equal(t, 3, histResult.Total)
 	})
 
 	t.Run("approved=true filters out denied", func(t *testing.T) {
 		result, err := runHistoryFromReader(data, HistoryOptions{Limit: 100, Approved: "true"})
 		require.NoError(t, err)
-		histResult := result.(HistoryResult)
+		histResult := result.(session.HistoryResult)
 		assert.Equal(t, 2, histResult.Total)
 		for _, r := range histResult.Results {
 			assert.Equal(t, "✓", r.Approved)
@@ -230,7 +231,7 @@ func TestRunHistoryFromReader_ApprovedFilter(t *testing.T) {
 	t.Run("approved=false shows only denied", func(t *testing.T) {
 		result, err := runHistoryFromReader(data, HistoryOptions{Limit: 100, Approved: "false"})
 		require.NoError(t, err)
-		histResult := result.(HistoryResult)
+		histResult := result.(session.HistoryResult)
 		assert.Equal(t, 1, histResult.Total)
 		assert.Contains(t, histResult.Results[0].Approved, "✗")
 	})
@@ -238,7 +239,7 @@ func TestRunHistoryFromReader_ApprovedFilter(t *testing.T) {
 	t.Run("text filter matches command content before limit", func(t *testing.T) {
 		result, err := runHistoryFromReader(data, HistoryOptions{Limit: 1, TextFilter: "allowed"})
 		require.NoError(t, err)
-		histResult := result.(HistoryResult)
+		histResult := result.(session.HistoryResult)
 		assert.Equal(t, 1, histResult.Total)
 		require.Len(t, histResult.Results, 1)
 		assert.Contains(t, histResult.Results[0].Summary, "allowed")
@@ -264,7 +265,7 @@ func TestRunHistoryFromReader_CategoryAliases(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	histResult := result.(HistoryResult)
+	histResult := result.(session.HistoryResult)
 	require.Len(t, histResult.Results, 1)
 	assert.Equal(t, "Task", histResult.Results[0].Tool)
 	assert.Equal(t, "plan", histResult.Results[0].Category)
