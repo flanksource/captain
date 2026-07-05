@@ -3,6 +3,8 @@ package claude
 import (
 	"strings"
 	"testing"
+
+	"github.com/segmentio/encoding/json"
 )
 
 func TestReadHistory(t *testing.T) {
@@ -222,6 +224,52 @@ func TestReadStreamJSON_UnhandledTypes(t *testing.T) {
 	}
 	if _, ok := snap["agent-name"]; ok {
 		t.Errorf("agent-name is a known-but-skipped type, should NOT be in unhandled snapshot, got %v", snap)
+	}
+
+	// Operational state types are classified (not reported) so the diagnostic
+	// stays signal-heavy.
+	ResetUnhandledStreamTypes()
+	state := `{"type":"mode","mode":"normal"}
+{"type":"bridge-session","bridgeSessionId":"cse_x"}
+{"type":"progress","x":1}
+{"type":"queue-operation","operation":"enqueue"}`
+	stateEntries, err := ReadStreamJSON(strings.NewReader(state))
+	if err != nil {
+		t.Fatalf("ReadStreamJSON(state) failed: %v", err)
+	}
+	if len(stateEntries) != 0 {
+		t.Errorf("operational state types should produce no rows, got %d", len(stateEntries))
+	}
+	if got := SnapshotUnhandledStreamTypes(); len(got) != 0 {
+		t.Errorf("operational state types should not be reported as unhandled, got %v", got)
+	}
+}
+
+// TestReadStreamJSON_PrLinkSurfaced verifies a pr-link line becomes a PrLink
+// synthetic row carrying the PR fields, rather than being dropped as unhandled.
+func TestReadStreamJSON_PrLinkSurfaced(t *testing.T) {
+	ResetUnhandledStreamTypes()
+	input := `{"type":"pr-link","sessionId":"s","prNumber":133,"prUrl":"https://github.com/o/r/pull/133","prRepository":"o/r"}`
+	entries, err := ReadStreamJSON(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("ReadStreamJSON failed: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 PrLink entry, got %d", len(entries))
+	}
+	uses := entries[0].Message.GetToolUses()
+	if len(uses) != 1 || uses[0].Name != "PrLink" {
+		t.Fatalf("expected a PrLink tool_use row, got %+v", uses)
+	}
+	var input2 map[string]any
+	if err := json.Unmarshal(uses[0].Input, &input2); err != nil {
+		t.Fatalf("unmarshal PrLink input: %v", err)
+	}
+	if input2["prUrl"] != "https://github.com/o/r/pull/133" || input2["prRepository"] != "o/r" {
+		t.Errorf("PrLink input missing PR fields: %v", input2)
+	}
+	if got := SnapshotUnhandledStreamTypes(); got["pr-link"] != 0 {
+		t.Errorf("pr-link should be handled, not counted unhandled: %v", got)
 	}
 }
 

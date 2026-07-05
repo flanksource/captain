@@ -159,6 +159,13 @@ var knownSessionStorageTypes = map[string]bool{
 	"last-prompt":           true,
 	"permission-mode":       true,
 	"agent-name":            true,
+	// Operational/streaming state with no unique row-level content — the real
+	// content surfaces via the actual user/assistant messages. Listed so they
+	// don't pollute the unhandled-types diagnostic.
+	"mode":            true, // active mode marker (e.g. {"mode":"normal"})
+	"bridge-session":  true, // cloud bridge-session linkage
+	"progress":        true, // intermediate streaming progress, superseded by the final message
+	"queue-operation": true, // message-queue bookkeeping; dequeued content appears as a real message
 }
 
 // planAttachment is the plan-mode attachment Claude Code writes when entering
@@ -263,6 +270,12 @@ func dispatchEvent(sj streamJSONLine, raw []byte, lineNo int) []HistoryEntry {
 
 	case "ai-title":
 		return single(syntheticEntry(sj, "SessionTitle", raw, []string{"aiTitle"}))
+
+	case "pr-link":
+		// Workflow state: links the session to a pull request.
+		return single(syntheticEntry(sj, "PrLink", raw, []string{
+			"prNumber", "prUrl", "prRepository",
+		}))
 
 	case "attachment":
 		return attachmentEntry(sj)
