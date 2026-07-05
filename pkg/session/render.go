@@ -1,12 +1,43 @@
-package cli
+package session
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 
+	"github.com/flanksource/captain/pkg/claude/tools"
+	"github.com/flanksource/clicky"
 	"github.com/flanksource/clicky/api"
 )
 
-// ScanResultRow is used when --all flag is set (shows Project column)
+// RowOptions carries the per-row render toggles the history table honors,
+// decoupling the render provider from the CLI's flag struct.
+type RowOptions struct {
+	Cost bool // include per-model token/cost breakdown in row detail + the Cost column
+	Raw  bool // include the raw JSONL line in row detail and merge it into JSON output
+}
+
+// FormatTokens renders a token count compactly (1.2M / 3.4K / 42).
+func FormatTokens(n int) string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1e6)
+	case n >= 1_000:
+		return fmt.Sprintf("%.1fK", float64(n)/1e3)
+	default:
+		return fmt.Sprintf("%d", n)
+	}
+}
+
+// FormatCost renders a USD cost, using 4 decimals for sub-cent amounts.
+func FormatCost(cost float64) string {
+	if cost < 0.01 {
+		return fmt.Sprintf("$%.4f", cost)
+	}
+	return fmt.Sprintf("$%.2f", cost)
+}
+
+// ScanResultRow is a history row for the --all view (includes the Project column).
 type ScanResultRow struct {
 	Project         string          `json:"project"`
 	Tool            string          `json:"tool"`
@@ -66,7 +97,7 @@ func (r ScanResultRow) RowDetail() api.Textable {
 	return r.Detail
 }
 
-// ScanResultRowSingle is used for single project (no Project column)
+// ScanResultRowSingle is a history row for the single-project view (no Project column).
 type ScanResultRowSingle struct {
 	Tool            string          `json:"tool"`
 	Summary         string          `json:"summary"`
@@ -153,7 +184,7 @@ func (r ScanResultRowSingle) RowDetail() api.Textable {
 	return r.Detail
 }
 
-// HistoryResultAll is used when --all flag is set
+// HistoryResultAll is the --all history view (summary + project-tagged rows).
 type HistoryResultAll struct {
 	Total        int             `json:"total" pretty:"label=Total"`
 	UserDenied   int             `json:"userDenied,omitempty" pretty:"label=User Denied"`
@@ -167,7 +198,7 @@ type HistoryResultAll struct {
 	Results      []ScanResultRow `json:"results"`
 }
 
-// HistoryResult is used for single project view
+// HistoryResult is the single-project history view.
 type HistoryResult struct {
 	Project      string                `json:"project" pretty:"label=Project"`
 	Total        int                   `json:"total" pretty:"label=Total"`
@@ -180,4 +211,125 @@ type HistoryResult struct {
 	CacheWrite   string                `json:"cacheWrite,omitempty" pretty:"label=Cache Write"`
 	Cost         string                `json:"cost,omitempty" pretty:"label=Cost"`
 	Results      []ScanResultRowSingle `json:"results"`
+}
+
+// BuildRowDetail composes the row-detail Textable rendered by the table view.
+// The base detail (denial reasons etc.) is rendered first, followed by an
+// optional cost breakdown (--cost) and raw JSONL line (--raw).
+func BuildRowDetail(t tools.Tool, opts RowOptions) api.Textable {
+	base := t.Detail()
+	if !opts.Cost && !opts.Raw {
+		return base
+	}
+
+	out := clicky.Text("")
+	first := true
+	addTextable := func(child api.Textable) {
+		if !first {
+			out = out.Append("\n")
+		}
+		out = out.Add(child)
+		first = false
+	}
+	addText := func(section api.Text) {
+		addTextable(&section)
+	}
+
+	if base != nil {
+		addTextable(base)
+	}
+	if opts.Cost {
+		if section, ok := costSection(t.Base()); ok {
+			addText(section)
+		}
+	}
+	if opts.Raw {
+		if section, ok := rawSection(t.Base()); ok {
+			addText(section)
+		}
+	}
+
+	if first {
+		return base
+	}
+	return &out
+}
+
+// RowCost returns the formatted total cost for a row when --cost is set, or the
+// empty string otherwise (so the Cost column hides itself).
+func RowCost(b *tools.BaseTool, opts RowOptions) string {
+	if !opts.Cost || b == nil || len(b.Models) == 0 {
+		return ""
+	}
+	cost := b.Models.TotalCost()
+	if cost == 0 {
+		return ""
+	}
+	return FormatCost(cost)
+}
+
+// costSection renders per-model token & cost breakdown using clicky Badges.
+func costSection(b *tools.BaseTool) (api.Text, bool) {
+	if b == nil || len(b.Models) == 0 {
+		return clicky.Text(""), false
+	}
+
+	section := clicky.Text("").Append("Cost", "font-bold")
+	for _, m := range b.Models {
+		section = section.Append("\n")
+		section = appendModelBadges(section, m)
+	}
+
+	if len(b.Models) > 1 {
+		section = section.Append("\n")
+		section = section.Append("Total", "font-bold").Append(" ")
+		section = section.
+			Add(api.Badge("In:"+FormatTokens(b.Models.TotalInput()), "bg-blue-100")).
+			Add(api.Badge("Out:"+FormatTokens(b.Models.TotalOutput()), "bg-purple-100")).
+			Add(api.Badge("Cache:"+FormatTokens(b.Models.TotalCacheRead()), "bg-amber-100")).
+			Add(api.Badge(FormatCost(b.Models.TotalCost()), "bg-green-100"))
+	}
+
+	return section, true
+}
+
+func appendModelBadges(section api.Text, m tools.ModelUsage) api.Text {
+	if m.Model != "" {
+		section = section.Add(api.Badge(m.Model, "bg-gray-200"))
+	}
+	if m.ServiceTier != "" {
+		section = section.Add(api.Badge(m.ServiceTier, "bg-gray-100"))
+	}
+	if m.InputTokens > 0 {
+		section = section.Add(api.Badge("In:"+FormatTokens(m.InputTokens), "bg-blue-100"))
+	}
+	if m.OutputTokens > 0 {
+		section = section.Add(api.Badge("Out:"+FormatTokens(m.OutputTokens), "bg-purple-100"))
+	}
+	if m.CacheReadInputTokens > 0 {
+		section = section.Add(api.Badge("CacheRead:"+FormatTokens(m.CacheReadInputTokens), "bg-amber-100"))
+	}
+	if m.CacheCreationInputTokens > 0 {
+		section = section.Add(api.Badge("CacheWrite:"+FormatTokens(m.CacheCreationInputTokens), "bg-amber-200"))
+	}
+	if m.Cost > 0 {
+		section = section.Add(api.Badge(FormatCost(m.Cost), "bg-green-100"))
+	}
+	return section
+}
+
+func rawSection(b *tools.BaseTool) (api.Text, bool) {
+	if b == nil || len(b.RawEntry) == 0 {
+		return clicky.Text(""), false
+	}
+	var buf bytes.Buffer
+	body := string(b.RawEntry)
+	if err := json.Indent(&buf, b.RawEntry, "", "  "); err == nil {
+		body = buf.String()
+	}
+	section := clicky.Text("").
+		Append("Raw", "font-bold").
+		NewLine().
+		Add(clicky.CodeBlock("json", body))
+	return section, true
 }

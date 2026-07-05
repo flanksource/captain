@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/claude"
+	"github.com/flanksource/captain/pkg/session"
 )
 
 type CostOptions struct {
@@ -96,19 +97,19 @@ func RunCost(opts CostOptions) (any, error) {
 			Project:    s.Project,
 			Model:      s.Model,
 			Tier:       s.Tier,
-			Input:      formatTokens(s.Tokens.InputTokens),
-			Output:     formatTokens(s.Tokens.OutputTokens),
-			CacheRead:  formatTokens(s.Tokens.CacheReadTokens),
-			CacheWrite: formatTokens(s.Tokens.CacheWriteTokens),
+			Input:      session.FormatTokens(s.Tokens.InputTokens),
+			Output:     session.FormatTokens(s.Tokens.OutputTokens),
+			CacheRead:  session.FormatTokens(s.Tokens.CacheReadTokens),
+			CacheWrite: session.FormatTokens(s.Tokens.CacheWriteTokens),
 			Msgs:       s.Messages,
-			APICost:    formatCost(s.Tokens.TotalCost),
+			APICost:    session.FormatCost(s.Tokens.TotalCost),
 			Time:       claude.FormatTimeAgo(&s.End),
 		})
 	}
 
 	return CostResult{
-		TotalAPICost: formatCost(total.TotalCost),
-		TotalTokens:  formatTokens(total.TotalTokens()),
+		TotalAPICost: session.FormatCost(total.TotalCost),
+		TotalTokens:  session.FormatTokens(total.TotalTokens()),
 		Rows:         rows,
 	}, nil
 }
@@ -156,8 +157,8 @@ func aggregateToolCosts(sessions []claude.SessionCost) ToolCostResult {
 		rows = append(rows, ToolCostRow{
 			Tool:   m.Tool,
 			Calls:  m.CallCount,
-			Input:  formatTokens(m.InputTokens),
-			Output: formatTokens(m.OutputTokens),
+			Input:  session.FormatTokens(m.InputTokens),
+			Output: session.FormatTokens(m.OutputTokens),
 			Errors: m.ErrorCount,
 		})
 	}
@@ -167,7 +168,7 @@ func aggregateToolCosts(sessions []claude.SessionCost) ToolCostResult {
 	})
 
 	return ToolCostResult{
-		TotalTokens: formatTokens(total),
+		TotalTokens: session.FormatTokens(total),
 		Rows:        rows,
 	}
 }
@@ -193,7 +194,7 @@ func aggregateCategoryCosts(sessions []claude.SessionCost) CategoryCostResult {
 		}
 		rows = append(rows, CategoryCostRow{
 			Category: string(cat),
-			Tokens:   formatTokens(tokens),
+			Tokens:   session.FormatTokens(tokens),
 			Percent:  fmt.Sprintf("%.1f%%", pct),
 		})
 	}
@@ -203,7 +204,7 @@ func aggregateCategoryCosts(sessions []claude.SessionCost) CategoryCostResult {
 	})
 
 	return CategoryCostResult{
-		TotalTokens: formatTokens(grand),
+		TotalTokens: session.FormatTokens(grand),
 		Rows:        rows,
 	}
 }
@@ -337,22 +338,4 @@ func mergeInto(g *claude.SessionCost, s claude.SessionCost) {
 	if s.Tier != "" {
 		g.Tier = s.Tier
 	}
-}
-
-func formatTokens(n int) string {
-	switch {
-	case n >= 1_000_000:
-		return fmt.Sprintf("%.1fM", float64(n)/1e6)
-	case n >= 1_000:
-		return fmt.Sprintf("%.1fK", float64(n)/1e3)
-	default:
-		return fmt.Sprintf("%d", n)
-	}
-}
-
-func formatCost(cost float64) string {
-	if cost < 0.01 {
-		return fmt.Sprintf("$%.4f", cost)
-	}
-	return fmt.Sprintf("$%.2f", cost)
 }

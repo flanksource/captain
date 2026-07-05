@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/claude"
+	"github.com/flanksource/captain/pkg/session"
 )
 
 // TestRunHistory_CostWithoutClaudeFlag is the F5 regression: `history --cost`
@@ -52,7 +53,7 @@ func TestRunHistory_CostWithoutClaudeFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunHistory: %v", err)
 	}
-	result, ok := out.(HistoryResult)
+	result, ok := out.(session.HistoryResult)
 	if !ok {
 		t.Fatalf("RunHistory returned %T, want HistoryResult", out)
 	}

@@ -8,6 +8,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/bash"
 	"github.com/flanksource/captain/pkg/claude"
+	"github.com/flanksource/captain/pkg/session"
 )
 
 type SummaryResult struct {
@@ -140,7 +141,7 @@ func toUsageSummaries(counts map[string]int, tokens map[string]int) []UsageSumma
 			tokens: t,
 		}
 		if t > 0 {
-			us.Tokens = formatTokens(t)
+			us.Tokens = session.FormatTokens(t)
 		}
 		result = append(result, us)
 	}
