@@ -90,6 +90,11 @@ not valid json
 	if len(parseErr) != 1 || parseErr[0].Name != "ParseError" {
 		t.Errorf("entry[1] expected ParseError, got %+v", parseErr)
 	}
+	// The ParseError row inherits the surrounding timestamp so it sorts among its
+	// neighbors instead of last (where the row limit would discard it first).
+	if entries[1].Timestamp != "2024-01-15T10:00:00Z" {
+		t.Errorf("ParseError timestamp = %q, want inherited 2024-01-15T10:00:00Z", entries[1].Timestamp)
+	}
 	if entries[2].UUID != "2" {
 		t.Errorf("entry[2] should be the post-bad-line assistant message, got UUID=%s", entries[2].UUID)
 	}

@@ -349,6 +349,7 @@ func ParseHistory(currentDir string, searchAll bool, filter Filter) (*ParseResul
 	for _, sessionFile := range sessionFiles {
 		entries, err := ReadHistoryFileWithOptions(sessionFile, ReadOptions{KeepRaw: filter.KeepRaw})
 		if err != nil {
+			parseLog.Warnf("skipping unreadable transcript %s: %v", sessionFile, err)
 			continue
 		}
 		if len(entries) > 0 {
@@ -431,6 +432,7 @@ func ParseHistoryTools(currentDir string, searchAll bool, filter Filter) ([]tool
 	for _, sessionFile := range sessionFiles {
 		entries, err := ReadHistoryFileWithOptions(sessionFile, ReadOptions{KeepRaw: filter.KeepRaw})
 		if err != nil {
+			parseLog.Warnf("skipping unreadable transcript %s: %v", sessionFile, err)
 			continue
 		}
 		if len(entries) == 0 {
