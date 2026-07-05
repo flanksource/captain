@@ -59,15 +59,20 @@ func ClassifyModel(model string) ModelFamily {
 	}
 }
 
+// PricingFor returns the per-million-token pricing for a model, falling back to
+// Sonnet rates for unrecognized model families (matching CalculateCost).
+func PricingFor(model string) ModelPricing {
+	if pricing, ok := PricingTable[ClassifyModel(model)]; ok {
+		return pricing
+	}
+	return PricingTable[ModelFamilySonnet4]
+}
+
 func CalculateCost(usage *Usage, model string) float64 {
 	if usage == nil {
 		return 0
 	}
-	family := ClassifyModel(model)
-	pricing, ok := PricingTable[family]
-	if !ok {
-		pricing = PricingTable[ModelFamilySonnet4]
-	}
+	pricing := PricingFor(model)
 	return float64(usage.InputTokens)*pricing.InputPerMTok/1e6 +
 		float64(usage.OutputTokens)*pricing.OutputPerMTok/1e6 +
 		float64(usage.CacheCreationInputTokens)*pricing.CacheWritePerMTok/1e6 +

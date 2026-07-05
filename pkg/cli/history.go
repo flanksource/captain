@@ -38,22 +38,24 @@ type HistoryOptions struct {
 	Summary    bool      `flag:"summary" help:"Show aggregate summary instead of individual tool uses"`
 	Cost       bool      `flag:"cost" help:"Include per-row token breakdown and dollar cost in row detail"`
 	Raw        bool      `flag:"raw" help:"Include the raw Claude session JSONL line in row detail"`
-	Debug      bool      `flag:"debug" help:"Include original Claude history struct in results"`
 	Agents     bool      `flag:"agents" help:"Include tool calls from nested sub-agents (Task/Agent); --agents=false for the main thread only" default:"true"`
 	Plans      bool      `flag:"plans" help:"Include writes to plan files (~/.claude/plans); --plans=true to show them"`
 	Ignored    bool      `flag:"ignored" help:"Include writes to gitignored / out-of-repo files; --ignored=true to show them"`
 }
 
 func RunHistory(opts HistoryOptions) (any, error) {
+	// Surface stream types the parser can't handle on every path — not just the
+	// piped/--file path — so unknown Claude Code line types are never silently
+	// dropped when scanning on-disk sessions.
+	claude.ResetUnhandledStreamTypes()
+	defer reportUnhandledStreamTypes()
+
 	if opts.File == "-" || opts.File == "/dev/stdin" || (opts.File == "" && claude.IsStdinPiped()) {
 		data, err := io.ReadAll(os.Stdin)
 		if err != nil {
 			return nil, err
 		}
-		claude.ResetUnhandledStreamTypes()
-		out, err := runHistoryFromReader(data, opts)
-		reportUnhandledStreamTypes()
-		return out, err
+		return runHistoryFromReader(data, opts)
 	}
 
 	if opts.File != "" {
@@ -61,10 +63,7 @@ func RunHistory(opts HistoryOptions) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		claude.ResetUnhandledStreamTypes()
-		out, err := runHistoryFromReader(data, opts)
-		reportUnhandledStreamTypes()
-		return out, err
+		return runHistoryFromReader(data, opts)
 	}
 
 	var sessionIDs []string
@@ -122,13 +121,20 @@ func RunHistory(opts HistoryOptions) (any, error) {
 	}
 
 	var tl []tools.Tool
-	switch {
-	case opts.Cost && showClaude && !showCodex:
-		tl, err = claude.ParseHistoryTools(cwd, opts.All, filter)
+	if opts.Cost && showClaude {
+		// Per-row cost needs the token-linked tool build. Use it for the Claude
+		// portion regardless of whether Codex history is also in scope (Codex
+		// rows carry no per-row cost), then re-sort the merged list by time.
+		claudeTools, err := claude.ParseHistoryTools(cwd, opts.All, filter)
 		if err != nil {
 			return nil, err
 		}
-	default:
+		tl = claudeTools
+		if showCodex {
+			tl = append(tl, claude.ToolUsesToTools(codexToolUses(allToolUses))...)
+			sortToolsByTime(tl)
+		}
+	} else {
 		tl = claude.ToolUsesToTools(allToolUses)
 	}
 
@@ -400,6 +406,32 @@ func sortToolUsesByTime(uses []claude.ToolUse) {
 	sort.Slice(uses, func(i, j int) bool {
 		ti := uses[i].Timestamp
 		tj := uses[j].Timestamp
+		if ti == nil {
+			return false
+		}
+		if tj == nil {
+			return true
+		}
+		return ti.Before(*tj)
+	})
+}
+
+// codexToolUses returns the Codex-sourced subset of a mixed tool-use slice.
+func codexToolUses(uses []claude.ToolUse) []claude.ToolUse {
+	var out []claude.ToolUse
+	for _, tu := range uses {
+		if tu.Source == "codex" {
+			out = append(out, tu)
+		}
+	}
+	return out
+}
+
+// sortToolsByTime orders tools oldest-first; tools without a timestamp sort last.
+func sortToolsByTime(tl []tools.Tool) {
+	sort.SliceStable(tl, func(i, j int) bool {
+		ti := tl[i].Base().Timestamp
+		tj := tl[j].Base().Timestamp
 		if ti == nil {
 			return false
 		}

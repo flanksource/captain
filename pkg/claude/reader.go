@@ -70,6 +70,10 @@ func readJSONL(r io.Reader, fallbackToHistoryEntry bool, opts ReadOptions) ([]Hi
 	scanner.Buffer(make([]byte, 1024*1024), 10*1024*1024)
 
 	lineNo := 0
+	// lastTS tracks the most recent successfully-parsed line timestamp so a
+	// synthetic ParseError row can inherit it — otherwise ParseError rows have no
+	// timestamp, sort last, and are the first discarded by the row limit.
+	lastTS := ""
 	for scanner.Scan() {
 		lineNo++
 		line := scanner.Bytes()
@@ -79,15 +83,18 @@ func readJSONL(r io.Reader, fallbackToHistoryEntry bool, opts ReadOptions) ([]Hi
 
 		var sj streamJSONLine
 		if err := json.Unmarshal(line, &sj); err != nil {
-			entries = append(entries, parseErrorEntry(lineNo, line, err))
+			entries = append(entries, parseErrorEntry(lineNo, line, err, lastTS))
 			continue
 		}
 
 		if fallbackToHistoryEntry && sj.Type == "" {
 			var entry HistoryEntry
 			if err := json.Unmarshal(line, &entry); err != nil {
-				entries = append(entries, parseErrorEntry(lineNo, line, err))
+				entries = append(entries, parseErrorEntry(lineNo, line, err, lastTS))
 				continue
+			}
+			if entry.Timestamp != "" {
+				lastTS = entry.Timestamp
 			}
 			if opts.KeepRaw {
 				entry.RawLine = append(json.RawMessage(nil), line...)
@@ -96,6 +103,9 @@ func readJSONL(r io.Reader, fallbackToHistoryEntry bool, opts ReadOptions) ([]Hi
 			continue
 		}
 
+		if sj.timestamp() != "" {
+			lastTS = sj.timestamp()
+		}
 		for _, entry := range dispatchEvent(sj, line, lineNo) {
 			if opts.KeepRaw {
 				entry.RawLine = append(json.RawMessage(nil), line...)
@@ -196,7 +206,7 @@ func dispatchEvent(sj streamJSONLine, raw []byte, lineNo int) []HistoryEntry {
 		}
 		var msg Message
 		if err := json.Unmarshal(sj.Message, &msg); err != nil {
-			return []HistoryEntry{parseErrorEntry(lineNo, raw, err)}
+			return []HistoryEntry{parseErrorEntry(lineNo, raw, err, sj.timestamp())}
 		}
 		out := []HistoryEntry{{
 			SessionID: sj.sessionID(),
@@ -286,8 +296,10 @@ func apiErrorFromAssistantLine(sj streamJSONLine, raw []byte) (HistoryEntry, boo
 }
 
 // parseErrorEntry builds a synthetic ParseError row for a line that failed
-// to unmarshal. The line content is truncated to keep the row scannable.
-func parseErrorEntry(lineNo int, raw []byte, err error) HistoryEntry {
+// to unmarshal. The line content is truncated to keep the row scannable. ts is
+// the surrounding lines' timestamp (RFC3339), inherited so the row sorts among
+// its neighbors rather than last.
+func parseErrorEntry(lineNo int, raw []byte, err error, ts string) HistoryEntry {
 	preview := string(raw)
 	if len(preview) > 200 {
 		preview = preview[:197] + "..."
@@ -299,6 +311,7 @@ func parseErrorEntry(lineNo int, raw []byte, err error) HistoryEntry {
 	}
 	inputJSON, _ := json.Marshal(input)
 	return HistoryEntry{
+		Timestamp: ts,
 		Message: Message{
 			Role: MessageRoleAssistant,
 			Content: []ContentBlock{{
@@ -431,7 +444,7 @@ func (it *StreamJSONIterator) Next() bool {
 
 		var sj streamJSONLine
 		if err := json.Unmarshal(line, &sj); err != nil {
-			it.current = parseErrorEntry(it.lineNo, line, err)
+			it.current = parseErrorEntry(it.lineNo, line, err, "")
 			it.current.RawLine = append(json.RawMessage(nil), line...)
 			return true
 		}
