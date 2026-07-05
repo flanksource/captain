@@ -918,7 +918,9 @@ func reportUnhandledStreamTypes() {
 	for i, k := range keys {
 		parts[i] = fmt.Sprintf("%s=%d", k, snap[k])
 	}
-	fmt.Fprintf(os.Stderr, "unhandled stream types: %s\n", strings.Join(parts, ", "))
+	// Warn (not raw stderr) so the diagnostic is suppressible via log level while
+	// still visible by default — un-parseable line types must not vanish silently.
+	log.Warnf("unhandled stream types: %s", strings.Join(parts, ", "))
 }
 
 func formatDuration(d time.Duration) string {
