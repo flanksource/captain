@@ -258,6 +258,16 @@ func dispatchEvent(sj streamJSONLine, raw []byte, lineNo int) []HistoryEntry {
 			}))
 		case "away_summary":
 			return single(syntheticEntry(sj, "AwaySummary", raw, []string{"content"}))
+		case "compact_boundary":
+			return single(syntheticEntry(sj, "CompactBoundary", raw, []string{
+				"content", "compactMetadata", "level",
+			}))
+		case "local_command":
+			return single(syntheticEntry(sj, "LocalCommand", raw, []string{"content", "level"}))
+		case "scheduled_task_fire":
+			return single(syntheticEntry(sj, "ScheduledTaskFire", raw, []string{"content"}))
+		case "informational":
+			return single(syntheticEntry(sj, "Informational", raw, []string{"content", "level"}))
 		}
 
 	case "result":
