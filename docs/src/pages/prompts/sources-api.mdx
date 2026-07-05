@@ -1,0 +1,75 @@
+---
+layout: ../../layouts/DocsLayout.astro
+title: Sources and API
+description: Prompt source discovery, prompt entities, render action, and run stream.
+section: Prompts
+---
+
+import CodeExample from "../../components/CodeExample.tsx";
+import PromptApiShapes from "../../components/PromptApiShapes.tsx";
+
+# Sources and API
+
+The prompts UI and Clicky operation surface are backed by a prompt entity. The entity lists prompt sources, reads prompt details, writes local prompts, renders without calling a model, and runs prompts asynchronously.
+
+<PromptApiShapes client:load />
+
+## Source discovery
+
+Captain discovers prompt sources in this order:
+
+1. Embedded examples from `pkg/ai/prompt/testdata`, exposed as a read-only source.
+2. Directories configured under `prompts.dirs` in `~/.captain.yaml`.
+3. Directories passed to `captain serve --prompt-dir`.
+4. An implicit writable local source at `.captain/prompts` when no other writable source exists.
+
+Embedded prompts are read-only. Saving an embedded prompt from the workbench writes a local fork, stripping the embedded walk root so `testdata/commit.prompt` becomes `commit.prompt`.
+
+## Entity records
+
+<CodeExample client:load language="json" title="PromptSummary" source={`
+{
+  "id": "embedded\\u0000embedded\\u0000testdata/commit.prompt",
+  "name": "commit",
+  "description": "",
+  "sourceKind": "embedded",
+  "sourceId": "embedded",
+  "source": "Embedded examples",
+  "path": "testdata/commit.prompt",
+  "relPath": "testdata/commit.prompt",
+  "writable": false,
+  "model": "claude-sonnet-4-6",
+  "variables": [
+    { "name": "diff", "type": "string" }
+  ]
+}
+`} />
+
+`PromptDetail` extends the summary with raw `content`, `inputSchema`, `inputDefault`, and metadata extracted by dotprompt.
+
+## Render request
+
+Rendering accepts template variables and an optional runtime `spec` overlay. It returns the rendered user/system prompt, full typed request input, config mirror, schema metadata, and a validation error field when the request is incomplete.
+
+<CodeExample client:load language="json" title="PromptRenderRequest" source={`
+{
+  "variables": {
+    "diff": "diff --git a/README.md b/README.md"
+  },
+  "spec": {
+    "model": {
+      "name": "claude-sonnet-4-6",
+      "backend": "anthropic"
+    },
+    "budget": {
+      "timeout": "2h",
+      "maxTokens": 4096
+    }
+  }
+}
+`} />
+
+## Run stream
+
+The `run` action renders synchronously, creates a prompt run id, then streams session entries through `/api/captain/prompt/runs/{runId}/stream`. A snapshot endpoint at `/api/captain/prompt/runs/{runId}` lets the UI recover entries, completion state, summary, and error text.
+
