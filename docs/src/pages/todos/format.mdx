@@ -1,0 +1,125 @@
+---
+layout: ../../layouts/DocsLayout.astro
+title: Todo Format
+description: TODO providers, file schema, statuses, and creation paths.
+section: Todos
+---
+
+import CodeExample from "../../components/CodeExample.tsx";
+
+# Todo format
+
+A TODO is a unit of work with a priority, a status, free-form implementation instructions, and executable definition-of-done tests. TODOs are persisted by one of two providers, selected with the persistent `--provider` flag on every `gavel todos` subcommand.
+
+## Providers
+
+<div className="docs-card-grid">
+  <div className="docs-card">
+    <h3>grite (default)</h3>
+    <p>TODOs are issues in the git-backed `grite` issue tracker. Gavel maps state onto namespaced labels (`status:*`, `priority:*`, `session:*`, `plan:*`, `mode:*`) plus a marked state comment for long values such as the plan path and blocking questions. `--dir` is rejected for this provider.</p>
+  </div>
+  <div className="docs-card">
+    <h3>todos (files)</h3>
+    <p>TODOs are markdown files in a `.todos/` directory at the repo root (override with `--dir`). Enable with `--provider=todos`. Each file is YAML frontmatter plus named markdown sections.</p>
+  </div>
+</div>
+
+## File schema
+
+<CodeExample client:load language="markdown" title=".todos/fix-test.md" source={`
+---
+priority: high
+status: pending
+attempts: 0
+language: go
+---
+
+# TODO: Test Fix
+
+## Steps to Reproduce
+
+### command: test-command
+
+\`\`\`bash
+go test ./pkg
+\`\`\`
+
+## Implementation
+
+Fix the test
+
+## Verification
+
+### command: verify-test
+
+\`\`\`bash
+go test ./pkg
+\`\`\`
+`} />
+
+### Frontmatter
+
+`priority` (`high` / `medium` / `low`) is required; `status` and `language` (`go` / `typescript` / `python`) are validated. The frontmatter embeds the fixture `FrontMatter`, so fixture keys like `build`, `exec`, `cwd`, and `env` are also available.
+
+| Field | Purpose |
+| --- | --- |
+| `title`, `priority`, `status` | Identity and scheduling |
+| `created`, `last_run`, `attempts` | Run bookkeeping |
+| `language`, `path`, `cwd`, `branch`, `working_commit` | Scope — `cwd` defaults to the git root |
+| `llm` | Model, `max_tokens`, `max_cost`, `max_turns`, `session_id`, plus recorded `tokens_used` / `cost_incurred` |
+| `verify` | AI verification gate: `categories` and `score_threshold` (default 80) |
+| `checks` | Per-TODO override of the post-completion check loop |
+| `pr` | PR linkage: `number`, `url`, `head`, `base`, `comment_id` |
+| `prompt` | Prompt override for the agent run |
+| `plan_path`, `plan_status`, `run_mode` | Plan-mode state and last run mode |
+| `last_run_summary`, `questions` | Agent's final summary and blocking questions when status is `ask` |
+
+### Body sections
+
+- **`## Steps to Reproduce`** — executable fixture commands. If they already pass before the run, the TODO is marked `skipped` without invoking the agent.
+- **`## Implementation`** — free-form instructions rendered into the agent prompt.
+- **`## Verification`** — executable fixture commands that are the TODO's definition of done. They run as in-loop verifiers during execution; a failure drives another agent iteration in the same session.
+- **`## Custom Validations`** — additional validation tests.
+- **`## Acceptance Criteria`** — a `- [ ]` checklist scored by `gavel todos verify`.
+
+## Statuses
+
+| Status | Meaning |
+| --- | --- |
+| `draft` | Not ready to run |
+| `pending` | Ready, not started |
+| `in_progress` | Agent running |
+| `review` | A plan awaits human approval (plan mode) |
+| `ask` | Agent blocked on questions a human must answer |
+| `verified` | Implemented and definition-of-done fixtures passed |
+| `unverified` | Implemented but the definition of done was still failing when the iteration budget ran out |
+| `completed` | Finished successfully with no definition-of-done verifier |
+| `failed` | Execution failed |
+| `skipped` | Reproduction steps already passed |
+
+## Where TODOs come from
+
+Most TODOs are generated from failures by other gavel commands:
+
+<CodeExample client:load language="bash" title="Sync paths" source={`
+gavel test --sync-todos            # one TODO per failing test (priority: high)
+gavel lint --sync-todos .todos     # violations, grouped by file/package/message
+gavel verify --sync-todos          # TODOs from verify findings
+gavel pr status --sync-todos       # one TODO per failed CI job, under .todos/<pr#>/
+gavel pr fix                       # sync + choose + execute in one step
+`} />
+
+PR-sourced TODOs carry the PR metadata in frontmatter and a `build` step that fetches and checks out the PR head; a re-failure appends an `## Attempt N` section, and a later passing job flips the TODO to `completed` automatically.
+
+TODOs can also be authored directly:
+
+<CodeExample client:load language="bash" title="Manual authoring" source={`
+gavel todos create "Fix flaky session cache test" --priority high
+gavel todos criteria generate .todos/fix-flaky.md     # AI-draft acceptance criteria
+gavel todos edit .todos/fix-flaky.md --body-file notes.md
+gavel todos comment .todos/fix-flaky.md "blocked on upstream fix"
+gavel todos reopen .todos/fix-flaky.md --comment "regressed"
+gavel todos transfer fix-flaky --to other-project
+`} />
+
+`gavel todos create` drafts acceptance criteria with AI by default (`--criteria=false` to skip).

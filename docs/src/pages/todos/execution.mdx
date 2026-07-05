@@ -1,0 +1,98 @@
+---
+layout: ../../layouts/DocsLayout.astro
+title: Execution and Verification
+description: Run modes, drivers, the check loop, plan review, and AI verification.
+section: Todos
+---
+
+import CodeExample from "../../components/CodeExample.tsx";
+
+# Execution and verification
+
+`gavel todos run` selects TODOs, renders a mode-specific Captain dotprompt, and drives a coding agent through Captain's `agent.Runner`. The agent is explicitly told not to `git add` or `git commit` — gavel finalizes commits itself.
+
+## Run modes
+
+`--mode` selects what the agent is asked to do:
+
+| Mode | Behavior | Resulting status |
+| --- | --- | --- |
+| `run` (default) | Implement the TODO; `Verification` fixtures run in-loop | `verified` / `unverified` / `completed` / `failed` |
+| `plan` | Read-only: the agent produces a reviewable plan in its native plan mode | `review` (new or updated plan), `pending` (unchanged), or `ask` |
+| `verify` | Score already-committed work against acceptance criteria (same as `gavel todos verify`) | `verified` at or above threshold |
+
+## Drivers
+
+`--driver` is `<agent>-<mechanism>`, defaulting to `claude-cmux`:
+
+- **`claude-cmux` / `codex-cmux`** — drives the agent's interactive TUI inside a cmux terminal surface, via Captain's `BackendClaudeCmux` / `BackendCodexCmux`. `--dry-run` prints the exact cmux command sequence and rendered prompt without executing.
+- **`claude-headless` / `codex-headless`** — `claude -p --output-format stream-json` / `codex exec --json` streamed through the same executor.
+
+Both mechanisms route through the same executor composing Captain's `agent.Runner` with provider, plugins, and loop settings.
+
+## `gavel todos run` flags
+
+| Flag | Default | Purpose |
+| --- | --- | --- |
+| `--dir` | `.todos` | TODO directory (files provider only) |
+| `--status` | | Filter by status |
+| `-i, --interactive` | `false` | Multi-select TODOs to run |
+| `--group-by` | `repo` for cmux | `file` / `directory` / `repo` / `all` / `none`; a group shares one agent session |
+| `--mode` | `run` | `run` / `plan` / `verify` |
+| `--driver` | `claude-cmux` | Agent and mechanism |
+| `--model` | | LLM model override |
+| `--effort` | `medium` | Reasoning effort: `low` / `medium` / `high` / `xhigh` |
+| `--resume` | `false` | Resume the TODO's prior agent session |
+| `--max-retries` | `3` | Retry attempts |
+| `--max-budget`, `--max-turns` | `0` | USD and turn caps passed to the Captain request |
+| `--dirty` | `false` | Skip git stash/checkout; run on a dirty tree |
+| `--dry-run` | `false` | Print commands and prompts without executing |
+| `--commit` | `true` | Run `gavel commit` after each TODO |
+| `--check` | `false` | Post-completion test/lint loop (below) |
+
+## Execution lifecycle
+
+1. **Discover and group** — the provider lists TODOs (excluding `completed`), filters apply, and TODOs are grouped so a group shares one agent session.
+2. **Start** — status flips to `in_progress`; the session id is persisted immediately so `--resume` works even after interruption.
+3. **Skip check** — outside plan mode, if `Steps to Reproduce` already pass the TODO is marked `skipped` and the agent never runs.
+4. **Agent run** — the mode-specific prompt renders with the TODO body, effort directive, and a structured-output envelope schema. `Verification` fixtures are compiled into in-loop verifier plugins: a failing definition of done feeds back into the same session for another iteration, bounded by `maxIterations` (default 3).
+5. **Outcome** — the agent's envelope maps to a status: definition-of-done ran and passed → `verified`; ran and failed → `unverified`; no verifier → `completed`; blocking questions → `ask`; reported failure → `failed`.
+6. **Commit** — unless `--commit=false` (or the run was a plan or ended in `ask`), `gavel commit` stages and commits the agent's changes.
+
+## Post-completion check loop
+
+With `--check`, after the agent finishes gavel runs the configured test/lint suite and feeds failures back into the same session until they pass or `maxIterations` is reached. Configure globally in `.gavel.yaml` or per-TODO under the `checks` frontmatter key:
+
+<CodeExample client:load language="yaml" title=".gavel.yaml" source={`
+checks:
+  enabled: true
+  maxIterations: 3
+  test:
+    changed: true      # only packages affected by the agent's changes
+    timeout: 5m
+  lint:
+    changed: true      # only new violations vs the base ref
+`} />
+
+## Plan review
+
+`--mode plan` runs the agent read-only; the plan file path is recorded on the TODO and the status becomes `review`. From there:
+
+<CodeExample client:load language="bash" title="Plan review actions" source={`
+gavel todos plan reject my-todo                              # back to pending, plan cleared
+gavel todos plan revise my-todo --feedback "use a mutex"     # resume plan session with feedback
+gavel todos run my-todo                                      # approved plan feeds the implement prompt
+`} />
+
+## Checking and verifying
+
+Two distinct gates:
+
+- **`gavel todos check [files...]`** — deterministic: runs each TODO's `Verification` fixtures (`--timeout` default 2m) and exits non-zero if any fail. Useful in CI.
+- **`gavel todos verify [ids...]`** — agentic: Captain's verify engine reviews the TODO's commits against its `Acceptance Criteria` checklist and scores them. `--threshold` (default 80) sets the promote-to-`verified` score; `--strict` exits non-zero when any TODO fails verification.
+
+<CodeExample client:load language="bash" title="Verification" source={`
+gavel todos check                    # fixture tests only, exit non-zero on failure
+gavel todos verify --threshold 80    # AI-score commits vs acceptance criteria
+gavel todos verify --strict          # fail the build on unimplemented criteria
+`} />
