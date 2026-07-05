@@ -1,0 +1,76 @@
+---
+layout: ../../layouts/DocsLayout.astro
+title: Runtime Overlay
+description: Prompt runtime spec, override precedence, and model controls.
+section: Prompts
+---
+
+import CodeExample from "../../components/CodeExample.tsx";
+import RuntimeSpecDemo from "../../components/RuntimeSpecDemo.tsx";
+
+# Runtime overlay
+
+The prompt file provides the base request, but it is not the last word. Captain resolves the final runtime request by layering command flags, saved defaults, and workbench edits over the rendered prompt.
+
+<RuntimeSpecDemo client:only="react" />
+
+## Precedence
+
+<div className="docs-step">
+  <h3>1. Prompt frontmatter</h3>
+  <p>The `.prompt` file declares the base model, budget, permissions, memory, setup, and prompt metadata.</p>
+</div>
+<div className="docs-step">
+  <h3>2. Saved defaults</h3>
+  <p>`captain configure` values fill gaps such as default model, backend, max tokens, budget, no-cache, and memory toggles.</p>
+</div>
+<div className="docs-step">
+  <h3>3. CLI or UI overlay</h3>
+  <p>Explicit runtime choices override the base file and defaults. Negative toggles such as no-MCP and no-hooks stay enabled once set by any layer.</p>
+</div>
+<div className="docs-step">
+  <h3>4. Context normalization</h3>
+  <p>The prompt command resolves an empty workspace directory to the invocation cwd and resolves relative directories from that same cwd before provider dispatch.</p>
+</div>
+
+## Runtime payload
+
+<CodeExample client:load language="json" title="Resolved request sketch" source={`
+{
+  "model": {
+    "name": "claude-sonnet-4-6",
+    "backend": "anthropic"
+  },
+  "prompt": {
+    "source": "options.prompt",
+    "system": "You are a careful refactoring assistant.",
+    "user": "Refactor:\\n{{target}}"
+  },
+  "budget": {
+    "maxTokens": 5000,
+    "maxTurns": 3,
+    "timeout": "2h"
+  },
+  "permissions": {
+    "mode": "acceptEdits",
+    "presets": ["edit"],
+    "tools": {
+      "allow": ["Read", "Edit"]
+    },
+    "mcp": {
+      "disabled": true
+    }
+  },
+  "memory": {
+    "skipUser": true
+  },
+  "setup": {
+    "cwd": "."
+  }
+}
+`} />
+
+## Model and backend
+
+The prompt workbench keeps runtime selection catalog-backed. The UI groups by provider family first, then mode/backend, then the model list filtered to that backend. Prompt files can still name `model` and `backend` directly when the runtime should be pinned.
+

@@ -1,0 +1,62 @@
+---
+layout: ../../layouts/DocsLayout.astro
+title: Prompts Overview
+description: Captain prompt engine responsibilities and data flow.
+section: Prompts
+---
+
+import PromptPipeline from "../../components/PromptPipeline.tsx";
+import CodeExample from "../../components/CodeExample.tsx";
+
+# Prompts engine
+
+Captain prompts are `.prompt` templates rendered through Google dotprompt and folded into Captain's typed AI request shape. The engine lets prompt authors keep the instruction text, model choice, permissions, memory controls, budget, setup, and runtime metadata in one file while still allowing CLI and UI overrides.
+
+<PromptPipeline client:load />
+
+## Mental model
+
+<div className="docs-card-grid">
+  <div className="docs-card">
+    <h3>Source</h3>
+    <p>A prompt can come from a positional file, `--prompt`, stdin, embedded examples, configured prompt dirs, or the implicit `.captain/prompts` directory.</p>
+  </div>
+  <div className="docs-card">
+    <h3>Template</h3>
+    <p>dotprompt renders YAML frontmatter, input schema, defaults, and role-marked body blocks such as `{{role "system"}}` and `{{role "user"}}`.</p>
+  </div>
+  <div className="docs-card">
+    <h3>Spec</h3>
+    <p>Captain decodes spec-native frontmatter directly into `ai.Request`, which aliases the public `api.Spec` runtime shape.</p>
+  </div>
+  <div className="docs-card">
+    <h3>Runtime</h3>
+    <p>CLI flags, saved defaults, and workbench edits overlay the rendered file before validation and provider dispatch.</p>
+  </div>
+</div>
+
+## Minimal prompt
+
+<CodeExample client:load language="yaml" title="pkg/ai/prompt/testdata/commit.prompt" source={`
+---
+model: claude-sonnet-4-6
+config:
+  maxOutputTokens: 1024
+  temperature: 0.2
+input:
+  schema:
+    diff: string
+---
+{{role "system"}}
+You write Conventional Commit messages.
+{{role "user"}}
+Diff:
+{{diff}}
+`} />
+
+## Where to go next
+
+- [Prompt Format](/prompts/format/) covers frontmatter, roles, variables, and config precedence.
+- [Runtime Overlay](/prompts/runtime/) covers `api.Spec`, budgets, permissions, memory, model selection, and setup.
+- [Sources and API](/prompts/sources-api/) covers embedded/local sources and render/run API payloads.
+

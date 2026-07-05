@@ -1,0 +1,102 @@
+---
+layout: ../../layouts/DocsLayout.astro
+title: Prompt Format
+description: .prompt frontmatter, roles, variables, and schema behavior.
+section: Prompts
+---
+
+import CodeExample from "../../components/CodeExample.tsx";
+
+# Prompt format
+
+A `.prompt` file has YAML frontmatter followed by a Handlebars body. dotprompt owns the template render and the built-in `model`, `config`, `input`, and `output` keys. Captain then reads the same frontmatter a second time and decodes any spec-native keys into `ai.Request`.
+
+## Frontmatter dialects
+
+<table className="docs-table">
+  <thead>
+    <tr>
+      <th>Key family</th>
+      <th>Owner</th>
+      <th>Behavior</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>model</code></td>
+      <td>dotprompt and Captain config</td>
+      <td>Seeds the model name. Captain infers the backend when possible.</td>
+    </tr>
+    <tr>
+      <td><code>config.maxOutputTokens</code>, <code>temperature</code>, <code>reasoning</code></td>
+      <td>dotprompt config block</td>
+      <td>Applied after spec decoding, so this block wins for those knobs.</td>
+    </tr>
+    <tr>
+      <td><code>input.schema</code>, <code>input.default</code></td>
+      <td>dotprompt metadata</td>
+      <td>Used by the workbench to discover variables and defaults.</td>
+    </tr>
+    <tr>
+      <td><code>permissions</code>, <code>memory</code>, <code>budget</code>, <code>setup</code></td>
+      <td>Captain spec</td>
+      <td>Decoded into `api.Spec` with strict field validation.</td>
+    </tr>
+  </tbody>
+</table>
+
+## Roles
+
+The rendered body is split with dotprompt role markers. Captain treats rendered body text as authoritative: role output replaces any `prompt.user` or `prompt.system` values supplied in frontmatter.
+
+<CodeExample client:load language="yaml" title="Role-marked body" source={`
+---
+model: claude-agent-sonnet
+backend: claude-cli
+permissions:
+  mode: default
+---
+{{role "system"}}
+You are using the Claude CLI backend. Keep the answer concise.
+{{role "user"}}
+Handle:
+{{task}}
+`} />
+
+## Spec-native frontmatter
+
+Spec fields use the same nested shape consumed by the runtime editor and providers. The file can express permissions, memory, budget, setup, and model details without a separate translation layer.
+
+<CodeExample client:load language="yaml" title="Spec-native prompt options" source={`
+---
+model: claude-sonnet-4-6
+config:
+  maxOutputTokens: 1024
+  temperature: 0.2
+permissions:
+  mode: acceptEdits
+  presets:
+    - edit
+  tools:
+    allow:
+      - Read
+      - Edit
+  mcp:
+    disabled: true
+memory:
+  skipUser: true
+budget:
+  maxTokens: 5000
+  maxTurns: 3
+---
+{{role "system"}}
+You are a careful refactoring assistant.
+{{role "user"}}
+Refactor:
+{{target}}
+`} />
+
+## Structured output
+
+Captain does not turn a bare dotprompt `output` schema into a provider schema target. Structured output is attached by Go callers that pass a concrete output type to `Render`; providers derive the JSON schema from that Go type.
+
