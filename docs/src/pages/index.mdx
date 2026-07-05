@@ -1,0 +1,38 @@
+---
+layout: ../layouts/DocsLayout.astro
+title: Overview
+description: Captain documentation map.
+section: Start
+---
+
+# Captain documentation
+
+This site is the documentation home for Captain. Authored sections cover the prompts engine — how `.prompt` files are loaded, rendered, merged into `api.Spec`, and executed from the CLI and web UI — and todo execution, where gavel drives Captain's agent runtime to implement, check, and verify TODOs.
+
+<div className="docs-card-grid">
+  <a className="docs-card no-underline" href="/prompts/">
+    <h2>Prompts</h2>
+    <p>Prompt format, render pipeline, runtime overlays, sources, and API surfaces.</p>
+  </a>
+  <a className="docs-card no-underline" href="/todos/">
+    <h2>Todo Execution</h2>
+    <p>How gavel turns failures into TODOs and executes them through Captain's agent runtime.</p>
+  </a>
+  <a className="docs-card no-underline" href="/serve/">
+    <h2>Serve</h2>
+    <p>Placeholder for the embedded API and React web UI docs.</p>
+  </a>
+  <a className="docs-card no-underline" href="/agents/">
+    <h2>AI Agents</h2>
+    <p>Placeholder for agent loop, verifier, worktree, commit, and judge docs.</p>
+  </a>
+  <a className="docs-card no-underline" href="/sessions/">
+    <h2>Sessions</h2>
+    <p>Placeholder for session history, live runs, cost, and change tracking docs.</p>
+  </a>
+</div>
+
+## Current focus
+
+The prompts section is grounded in the implementation under `pkg/ai/prompt`, `pkg/cli/ai_prompt_file.go`, and `pkg/cli/prompt_entity.go`. The docs intentionally describe the existing runtime behavior instead of creating a second prompt workbench.
+

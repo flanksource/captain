@@ -1,0 +1,69 @@
+---
+layout: ../../layouts/DocsLayout.astro
+title: Todo Execution
+description: How gavel drives Captain's agent runtime to execute TODOs.
+section: Todos
+---
+
+import CodeExample from "../../components/CodeExample.tsx";
+
+# Todo execution
+
+Gavel's `todos` subsystem is the task-execution side of its failure-to-fix loop. Other gavel commands *create* TODOs from failing tests, lint violations, CI jobs, and PR review comments; `gavel todos` inspects, plans, executes, verifies, and commits them. The actual implementation work is done by a Claude or Codex coding agent driven **in-process through Captain's AI runtime** — gavel imports `github.com/flanksource/captain/pkg/ai` and composes an `agent.Runner`; it never shells out to a `claude` or `captain` binary in the run path.
+
+## How Captain and gavel relate
+
+The dependency is one-directional: gavel embeds Captain, Captain has no awareness of gavel.
+
+<div className="docs-card-grid">
+  <div className="docs-card">
+    <h3>Gavel owns the workflow</h3>
+    <p>TODO files, providers, discovery, grouping, statuses, prompts, retry loops, and commit finalization all live in gavel's `todos/` package and `gavel todos` CLI.</p>
+  </div>
+  <div className="docs-card">
+    <h3>Captain owns the agent runtime</h3>
+    <p>Gavel builds Captain `ai.Request`s, selects Captain backends (`BackendClaudeCmux`, `BackendClaudeAgent`, `BackendCodexCLI`, …), and streams events from Captain's `agent.Runner` — the same runtime documented under <a href="/agents/">AI Agents</a>.</p>
+  </div>
+  <div className="docs-card">
+    <h3>Prompts are Captain prompts</h3>
+    <p>The run and plan instructions are dotprompt files (`todos/prompt/todos-run.prompt`, `todos-plan.prompt`) rendered through the same engine described in <a href="/prompts/">Prompts</a>.</p>
+  </div>
+  <div className="docs-card">
+    <h3>Verification reuses fixtures</h3>
+    <p>A TODO's `Steps to Reproduce` and `Verification` sections are executable fixture tests, compiled into in-loop verifier plugins so a failing definition-of-done drives another agent iteration.</p>
+  </div>
+</div>
+
+## Lifecycle at a glance
+
+1. **Create** — `gavel test|lint|verify|pr status --sync-todos` writes TODOs from failures, or author one with `gavel todos create`.
+2. **Select** — `gavel todos run` discovers pending TODOs (filter with `--status`, pick interactively with `-i`, batch with `--group-by`).
+3. **Plan (optional)** — `--mode plan` runs the agent read-only and parks the TODO in `review` until a human approves, rejects, or revises the plan.
+4. **Execute** — the agent implements the change; `Verification` fixtures run in-loop until they pass or the iteration budget runs out.
+5. **Commit** — gavel (not the agent) stages and commits via `gavel commit` after each TODO, unless `--commit=false`.
+6. **Verify** — `gavel todos verify` scores the committed work against the TODO's acceptance criteria with an agentic review pass and promotes it to `verified` at or above the threshold.
+
+## Quick start
+
+<CodeExample client:load language="bash" title="Typical flow" source={`
+# turn failures into TODOs
+gavel test --sync-todos
+gavel pr status --sync-todos     # one TODO per failed CI job
+
+# inspect
+gavel todos list --status pending
+gavel todos get .todos/fix-bug.md
+
+# execute with the agent
+gavel todos run                  # all pending, grouped per repo session
+gavel todos run --mode plan      # propose a reviewable plan first
+gavel todos run --check          # re-run tests/lint after the agent, feed failures back
+
+# score committed work against acceptance criteria
+gavel todos verify --strict
+`} />
+
+## Where to go next
+
+- [Todo Format](/todos/format/) covers providers (grite vs `.todos/` files), frontmatter, body sections, statuses, and the `--sync-todos` creation paths.
+- [Execution and Verification](/todos/execution/) covers run modes, drivers, flags, the check loop, plan review, and AI verification.
