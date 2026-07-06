@@ -6,9 +6,14 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
+
+// ErrInferBackend marks the "can't infer a backend from this model name" failure
+// so callers can enrich it (e.g. with "did you mean" model suggestions).
+var ErrInferBackend = errors.New("unable to infer backend from model name")
 
 // Backend is the provider/runtime that serves a request. This is the canonical
 // definition; pkg/ai re-exports it via `type Backend = api.Backend`.
@@ -118,7 +123,7 @@ func InferBackend(model string) (Backend, error) {
 		return BackendDeepSeek, nil
 	}
 
-	return "", fmt.Errorf("unable to infer backend from model name: %s (pass an explicit backend: %s)", model, BackendList())
+	return "", fmt.Errorf("%w: %s (pass an explicit backend: %s)", ErrInferBackend, model, BackendList())
 }
 
 // Effort is the per-request reasoning effort. captain owns this enum (it adds

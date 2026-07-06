@@ -1,7 +1,12 @@
 package ai
 
 import (
+	"errors"
+	"fmt"
+	"strings"
+
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/collections"
 )
 
 // The provider registry now lives in pkg/api (the stable runtime contract).
@@ -16,9 +21,39 @@ func RegisterProvider(backend Backend, factory ProviderFactory) {
 	api.RegisterProvider(backend, factory)
 }
 
-// NewProvider constructs the registered provider for cfg's backend.
+// NewProvider constructs the registered provider for cfg's backend. When the
+// model name is unrecognized, the error is enriched with the closest known model
+// names ("did you mean …").
 func NewProvider(cfg Config) (Provider, error) {
-	return api.NewProvider(cfg)
+	p, err := api.NewProvider(cfg)
+	if err != nil {
+		return nil, suggestModelName(err, cfg.Model.Name)
+	}
+	return p, nil
+}
+
+// suggestModelName appends the closest catalog model ids to an unresolvable-model
+// error, so e.g. "claud-sonnet-4" points at "claude-sonnet-4".
+func suggestModelName(err error, model string) error {
+	if model == "" || !errors.Is(err, api.ErrInferBackend) {
+		return err
+	}
+	// Candidates are the catalog base names ("claude-sonnet-5"), which is the form
+	// users type — the prefixed id ("anthropic/claude-sonnet-5") is far in edit
+	// distance from a bare typo.
+	var candidates []string
+	for _, id := range modelIDsFrom(Catalog()) {
+		if i := strings.LastIndex(id, "/"); i >= 0 {
+			candidates = append(candidates, id[i+1:])
+		} else {
+			candidates = append(candidates, id)
+		}
+	}
+	similar := collections.FindSimilar(model, candidates, 3)
+	if len(similar) == 0 {
+		return err
+	}
+	return fmt.Errorf("%w; did you mean: %s", err, strings.Join(similar, ", "))
 }
 
 // GetAPIKeyFromEnv returns the first non-empty value among a backend's auth env vars.
