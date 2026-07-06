@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"sync"
 	"time"
@@ -31,6 +32,11 @@ type PromptRequest struct {
 	SystemPrompt     string            `json:"system_prompt,omitempty"`
 	Context          map[string]string `json:"context,omitempty"`
 	StructuredOutput any               `json:"structured_output,omitempty"`
+	// SchemaJSON is a pre-built JSON Schema (e.g. from a .prompt frontmatter
+	// output block) forwarded verbatim to ai.Request.Prompt.SchemaJSON. Prefer it
+	// over StructuredOutput when the schema is declared in the prompt file rather
+	// than a Go type; the two are mutually exclusive.
+	SchemaJSON json.RawMessage `json:"schema_json,omitempty"`
 	// Source identifies the prompt template (e.g. the .prompt filename) for
 	// diagnostics; forwarded to ai.Request.Source and printed by the logging
 	// middleware.
@@ -77,10 +83,11 @@ func (a *Agent) GetBackend() Backend { return a.provider.GetBackend() }
 func (a *Agent) ExecutePrompt(ctx context.Context, req PromptRequest) (*PromptResponse, error) {
 	start := time.Now()
 	resp, err := a.provider.Execute(ctx, Request{Prompt: api.Prompt{
-		User:   req.Prompt,
-		System: req.SystemPrompt,
-		Source: req.Source,
-		Schema: req.StructuredOutput,
+		User:       req.Prompt,
+		System:     req.SystemPrompt,
+		Source:     req.Source,
+		Schema:     req.StructuredOutput,
+		SchemaJSON: req.SchemaJSON,
 	}})
 	if err != nil {
 		return &PromptResponse{Request: req, Model: a.cfg.Model.Name, Error: err.Error(), Duration: time.Since(start)}, err

@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 
@@ -11,16 +12,18 @@ import (
 )
 
 type mockProvider struct {
-	model  string
-	text   string
-	err    error
-	closed bool
+	model   string
+	text    string
+	err     error
+	closed  bool
+	lastReq Request
 }
 
 func (m *mockProvider) GetModel() string    { return m.model }
 func (m *mockProvider) GetBackend() Backend { return BackendAnthropic }
 func (m *mockProvider) Close() error        { m.closed = true; return nil }
 func (m *mockProvider) Execute(_ context.Context, req Request) (*Response, error) {
+	m.lastReq = req
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -46,6 +49,17 @@ func TestAgent_ExecutePromptAccruesCost(t *testing.T) {
 	costs := a.GetCosts()
 	require.Len(t, costs, 1)
 	assert.Equal(t, "test-model", costs[0].Model)
+}
+
+func TestAgent_ExecutePromptForwardsSchemaJSON(t *testing.T) {
+	mp := &mockProvider{model: "m", text: "out"}
+	a := NewAgentWithProvider(mp, Config{Model: api.Model{Name: "m"}})
+
+	schema := json.RawMessage(`{"type":"object","required":["pass"]}`)
+	_, err := a.ExecutePrompt(context.Background(), PromptRequest{Name: "p", Prompt: "hi", SchemaJSON: schema})
+	require.NoError(t, err)
+	assert.JSONEq(t, string(schema), string(mp.lastReq.Prompt.SchemaJSON),
+		"PromptRequest.SchemaJSON must be forwarded to the provider request")
 }
 
 func TestAgent_ExecutePromptError(t *testing.T) {
