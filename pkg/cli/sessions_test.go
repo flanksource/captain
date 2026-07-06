@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/claude"
+	rpchttp "github.com/flanksource/clicky/rpc/http"
 )
 
 func TestRunSessionListAndGetClaude(t *testing.T) {
@@ -69,7 +71,7 @@ func TestRunSessionListAndGetClaude(t *testing.T) {
 		},
 	)
 
-	list, err := RunSessionList(SessionListOptions{Source: "claude", Limit: 10})
+	list, err := RunSessionList(context.Background(), SessionListOptions{Source: "claude", Limit: 10})
 	if err != nil {
 		t.Fatalf("RunSessionList: %v", err)
 	}
@@ -87,7 +89,7 @@ func TestRunSessionListAndGetClaude(t *testing.T) {
 		t.Fatal("empty session key")
 	}
 
-	detail, err := RunSessionGet(SessionGetOptions{ID: session.Key})
+	detail, err := RunSessionGet(context.Background(), SessionGetOptions{ID: session.Key})
 	if err != nil {
 		t.Fatalf("RunSessionGet: %v", err)
 	}
@@ -122,7 +124,7 @@ func TestRunSessionListCodexScope(t *testing.T) {
 	writeCodexSession(t, filepath.Join(home, ".codex", "sessions", "2026", "06", "rollout-current.jsonl"), "codex-current", actualProject)
 	writeCodexSession(t, filepath.Join(home, ".codex", "sessions", "2026", "06", "rollout-other.jsonl"), "codex-other", other)
 
-	current, err := RunSessionList(SessionListOptions{Source: "codex", Limit: 10})
+	current, err := RunSessionList(context.Background(), SessionListOptions{Source: "codex", Limit: 10})
 	if err != nil {
 		t.Fatalf("RunSessionList current: %v", err)
 	}
@@ -130,7 +132,7 @@ func TestRunSessionListCodexScope(t *testing.T) {
 		t.Fatalf("current sessions = %+v", current)
 	}
 
-	all, err := RunSessionList(SessionListOptions{Source: "codex", All: true, Limit: 10})
+	all, err := RunSessionList(context.Background(), SessionListOptions{Source: "codex", All: true, Limit: 10})
 	if err != nil {
 		t.Fatalf("RunSessionList all: %v", err)
 	}
@@ -142,7 +144,7 @@ func TestRunSessionListCodexScope(t *testing.T) {
 func TestRunSessionGetUnknown(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	_, err := RunSessionGet(SessionGetOptions{ID: "missing"})
+	_, err := RunSessionGet(context.Background(), SessionGetOptions{ID: "missing"})
 	if err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("err = %v", err)
 	}
@@ -231,7 +233,7 @@ func TestRunSessionLiveEnrichesSummaryWithProcessHealth(t *testing.T) {
 	}
 	t.Cleanup(func() { discoverSessionProcesses = orig })
 
-	result, err := RunSessionLive(SessionLiveOptions{Source: "claude", Limit: 10})
+	result, err := RunSessionLive(context.Background(), SessionLiveOptions{Source: "claude", Limit: 10})
 	if err != nil {
 		t.Fatalf("RunSessionLive: %v", err)
 	}
@@ -278,7 +280,7 @@ func TestRunSessionLiveScopesUnmatchedProcessesToCurrentProject(t *testing.T) {
 	}
 	t.Cleanup(func() { discoverSessionProcesses = orig })
 
-	result, err := RunSessionLive(SessionLiveOptions{Source: "all", Limit: 10})
+	result, err := RunSessionLive(context.Background(), SessionLiveOptions{Source: "all", Limit: 10})
 	if err != nil {
 		t.Fatalf("RunSessionLive: %v", err)
 	}
@@ -289,12 +291,51 @@ func TestRunSessionLiveScopesUnmatchedProcessesToCurrentProject(t *testing.T) {
 		t.Fatalf("scoped live session = %+v", result.Sessions[0])
 	}
 
-	all, err := RunSessionLive(SessionLiveOptions{Source: "all", All: true, Limit: 10})
+	all, err := RunSessionLive(context.Background(), SessionLiveOptions{Source: "all", All: true, Limit: 10})
 	if err != nil {
 		t.Fatalf("RunSessionLive all: %v", err)
 	}
 	if all.Total != 2 {
 		t.Fatalf("all project live sessions = %+v", all)
+	}
+}
+
+func TestRunSessionLiveRecordsPhaseTimings(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	project := filepath.Join(home, "work", "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(project)
+
+	writeJSONL(t, filepath.Join(home, ".claude", "projects", claude.NormalizePath(project), "sess-timing.jsonl"),
+		map[string]any{
+			"type":      "user",
+			"sessionId": "sess-timing",
+			"timestamp": "2026-06-01T10:00:00Z",
+			"cwd":       project,
+			"message": map[string]any{
+				"role":    "user",
+				"content": []any{map[string]any{"type": "text", "text": "hi"}},
+			},
+		},
+	)
+
+	orig := discoverSessionProcesses
+	discoverSessionProcesses = func() ([]agentProcess, error) { return nil, nil }
+	t.Cleanup(func() { discoverSessionProcesses = orig })
+
+	ctx, timings := rpchttp.WithTimings(context.Background())
+	if _, err := RunSessionLive(ctx, SessionLiveOptions{Source: "claude", Limit: 10}); err != nil {
+		t.Fatalf("RunSessionLive: %v", err)
+	}
+
+	header := timings.Header()
+	for _, phase := range []string{"find", "parse", "enrich"} {
+		if !strings.Contains(header, phase+";dur=") {
+			t.Fatalf("Header() = %q, missing phase %q", header, phase)
+		}
 	}
 }
 

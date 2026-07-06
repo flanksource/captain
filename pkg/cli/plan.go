@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"sort"
@@ -62,7 +63,7 @@ func RunPlan(opts PlanOptions) (PlanResult, error) {
 
 		// A hashed session key cannot be found from the transcript filename, so
 		// keep the older all-project scan as a fallback for that less-common form.
-		candidates, err := discoverSessionCandidates("", true, source)
+		candidates, err := discoverSessionCandidates(context.Background(), "", true, source)
 		if err != nil {
 			return PlanResult{}, err
 		}
@@ -81,7 +82,7 @@ func RunPlan(opts PlanOptions) (PlanResult, error) {
 		return *plan, nil
 	}
 
-	candidates, err := discoverSessionCandidates(cwd, opts.All, source)
+	candidates, err := discoverSessionCandidates(context.Background(), cwd, opts.All, source)
 	if err != nil {
 		return PlanResult{}, err
 	}

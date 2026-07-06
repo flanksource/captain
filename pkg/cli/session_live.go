@@ -1,19 +1,21 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/flanksource/captain/pkg/claude"
+	rpchttp "github.com/flanksource/clicky/rpc/http"
 )
 
 var discoverSessionProcesses = discoverAgentProcesses
 
 const defaultSessionLiveLimit = 25
 
-func RunSessionLive(opts SessionLiveOptions) (SessionLiveResult, error) {
+func RunSessionLive(ctx context.Context, opts SessionLiveOptions) (SessionLiveResult, error) {
 	source, err := normalizeSessionSource(opts.Source)
 	if err != nil {
 		return SessionLiveResult{}, err
@@ -31,11 +33,12 @@ func RunSessionLive(opts SessionLiveOptions) (SessionLiveResult, error) {
 	if limit <= 0 && !opts.Full {
 		limit = defaultSessionLiveLimit
 	}
-	records, err := discoverLiveSessionRecords(cwd, opts.All, source, limit, opts.Full)
+	records, err := discoverLiveSessionRecords(ctx, cwd, opts.All, source, limit, opts.Full)
 	if err != nil {
 		return SessionLiveResult{}, err
 	}
 
+	stopEnrich := rpchttp.Track(ctx, "enrich")
 	processes, _ := discoverSessionProcesses()
 	if !opts.All {
 		processes = filterAgentProcessesByProject(processes, sessionProjectRoot(cwd))
@@ -50,6 +53,7 @@ func RunSessionLive(opts SessionLiveOptions) (SessionLiveResult, error) {
 	sortSessionRecords(filtered)
 	total := len(filtered)
 	summary := summarizeSessionDashboard(filtered)
+	stopEnrich()
 	if !opts.Full && limit > 0 && len(filtered) > limit {
 		filtered = filtered[:limit]
 	}
@@ -63,9 +67,9 @@ func RunSessionLive(opts SessionLiveOptions) (SessionLiveResult, error) {
 	}, nil
 }
 
-func discoverLiveSessionRecords(cwd string, searchAll bool, source string, limit int, full bool) ([]SessionRecord, error) {
+func discoverLiveSessionRecords(ctx context.Context, cwd string, searchAll bool, source string, limit int, full bool) ([]SessionRecord, error) {
 	if full {
-		list, err := RunSessionList(SessionListOptions{
+		list, err := RunSessionList(ctx, SessionListOptions{
 			Source: source,
 			All:    searchAll,
 			Query:  "",
@@ -77,7 +81,7 @@ func discoverLiveSessionRecords(cwd string, searchAll bool, source string, limit
 		return list.Sessions, nil
 	}
 
-	candidates, err := discoverLiveSessionCandidates(cwd, searchAll, source, limit)
+	candidates, err := discoverLiveSessionCandidates(ctx, cwd, searchAll, source, limit)
 	if err != nil {
 		return nil, err
 	}
