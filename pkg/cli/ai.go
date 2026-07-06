@@ -11,6 +11,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/middleware"
+	"github.com/flanksource/captain/pkg/ai/pricing"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/collections"
 	"github.com/flanksource/captain/pkg/captainconfig"
@@ -321,31 +322,59 @@ func runContext(parent context.Context, req ai.Request, timeout time.Duration) (
 // InferBackend's suggestion never fires). Non-blocking: an unrecognized model may
 // still be a valid provider/OpenRouter id, so the run proceeds.
 func warnIfLikelyModelTypo(model string) {
-	if suggestion, ok := suggestCatalogModel(model); ok {
+	if suggestion, ok := suggestKnownModel(model); ok {
 		log.Warnf("model %q is not a recognized model; did you mean %q?", model, suggestion)
 	}
 }
 
-// suggestCatalogModel returns the closest catalog model to model and true when it
-// is an unrecognized-but-close (edit-distance ≤ 2) match — a likely typo. An
-// exact catalog match, or a name far from any catalog entry (a plausibly-valid
-// non-catalog id), returns ("", false).
-func suggestCatalogModel(model string) (string, bool) {
+// suggestKnownModel returns the closest known model to model and true when it is
+// unrecognized-but-close (edit-distance ≤ 2) — a likely typo. A model known to
+// the catalog or the pricing registry, or one far from any known name (a
+// plausibly-valid id we simply don't list), returns ("", false).
+//
+// The catalog is checked first (in-memory, no I/O); only a catalog miss consults
+// the pricing registry, which loads from its disk cache (fetching once if stale)
+// and degrades to catalog-only if unavailable.
+func suggestKnownModel(model string) (string, bool) {
 	if model == "" {
 		return "", false
 	}
+	for _, m := range ai.Catalog() {
+		if m.ID == model || baseModelName(m.ID) == model {
+			return "", false // known catalog model
+		}
+	}
+	if pricing.Contains(model) {
+		return "", false // known pricing-registry (e.g. OpenRouter) model
+	}
+	return closestModel(model, knownModelNames())
+}
+
+// knownModelNames is every model name captain can suggest: catalog canonical ids
+// and their base names, plus the pricing registry's ids.
+func knownModelNames() []string {
+	catalog := ai.Catalog()
+	names := make([]string, 0, len(catalog)*2+pricing.RegistrySize())
+	for _, m := range catalog {
+		names = append(names, m.ID, baseModelName(m.ID))
+	}
+	for _, mi := range pricing.ListModels("") {
+		names = append(names, mi.ModelID, baseModelName(mi.ModelID))
+	}
+	return names
+}
+
+// closestModel returns the nearest candidate to model and true when it is a
+// likely typo (edit-distance ≤ 2, not an exact match).
+func closestModel(model string, candidates []string) (string, bool) {
 	lower := strings.ToLower(model)
 	best, bestDist := "", -1
-	for _, m := range ai.Catalog() {
-		// Compare against both the canonical id ("anthropic/claude-sonnet-5") and
-		// its base name ("claude-sonnet-5"), since users pass either form.
-		for _, cand := range []string{m.ID, baseModelName(m.ID)} {
-			if cand == model {
-				return "", false // exact match — a known model
-			}
-			if d := collections.Levenshtein(lower, strings.ToLower(cand)); bestDist < 0 || d < bestDist {
-				best, bestDist = cand, d
-			}
+	for _, cand := range candidates {
+		if cand == model {
+			return "", false
+		}
+		if d := collections.Levenshtein(lower, strings.ToLower(cand)); bestDist < 0 || d < bestDist {
+			best, bestDist = cand, d
 		}
 	}
 	if best != "" && bestDist >= 0 && bestDist <= 2 {
