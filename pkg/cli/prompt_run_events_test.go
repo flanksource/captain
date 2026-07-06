@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/session"
+	"github.com/segmentio/encoding/json"
 )
 
 type fakeTaskSink struct{}
@@ -15,99 +17,112 @@ func (fakeTaskSink) Infof(string, ...interface{})  {}
 func (fakeTaskSink) Warnf(string, ...interface{})  {}
 func (fakeTaskSink) Errorf(string, ...interface{}) {}
 
-func collectEntries(model, backend string, events ...ai.Event) []SessionEntryWire {
-	var out []SessionEntryWire
-	acc := newPromptEventAccumulator(func(e SessionEntryWire) { out = append(out, e) }, fakeTaskSink{}, model, backend)
+func collectEntries(model, backend string, events ...ai.Event) []session.Message {
+	var out []session.Message
+	acc := newPromptEventAccumulator(func(m session.Message) { out = append(out, m) }, fakeTaskSink{}, model, backend)
 	for _, ev := range events {
 		acc.handle(0, ev)
 	}
 	return out
 }
 
+// partText decodes a tool part's JSON-string Output back to plain text.
+func partText(raw json.RawMessage) string {
+	var s string
+	_ = json.Unmarshal(raw, &s)
+	return s
+}
+
 func TestPromptRunAccumulator_CoalescesTextDeltas(t *testing.T) {
-	entries := collectEntries("m", "b",
+	msgs := collectEntries("m", "b",
 		ai.Event{Kind: ai.EventText, Text: "Hello "},
 		ai.Event{Kind: ai.EventText, Text: "world"},
 	)
-	if len(entries) != 2 {
-		t.Fatalf("want one frame per delta (2), got %d", len(entries))
+	if len(msgs) != 2 {
+		t.Fatalf("want one frame per delta (2), got %d", len(msgs))
 	}
-	if entries[0].UUID != entries[1].UUID {
-		t.Fatalf("text deltas must share a UUID: %q vs %q", entries[0].UUID, entries[1].UUID)
+	if msgs[0].ID != msgs[1].ID {
+		t.Fatalf("text deltas must share an id: %q vs %q", msgs[0].ID, msgs[1].ID)
 	}
-	if got := entries[1].Message.Content[0].Text; got != "Hello world" {
+	if got := msgs[1].Parts[0].Text; got != "Hello world" {
 		t.Fatalf("coalesced text = %q, want %q", got, "Hello world")
 	}
 }
 
 func TestPromptRunAccumulator_ThinkingAndTextAreSeparateTurns(t *testing.T) {
-	entries := collectEntries("m", "b",
+	msgs := collectEntries("m", "b",
 		ai.Event{Kind: ai.EventThinking, Text: "hmm"},
 		ai.Event{Kind: ai.EventText, Text: "answer"},
 	)
-	if len(entries) != 2 {
-		t.Fatalf("want 2 frames, got %d", len(entries))
+	if len(msgs) != 2 {
+		t.Fatalf("want 2 frames, got %d", len(msgs))
 	}
-	if entries[0].UUID == entries[1].UUID {
-		t.Fatalf("thinking and text must not share a UUID")
+	if msgs[0].ID == msgs[1].ID {
+		t.Fatalf("thinking and text must not share an id")
 	}
-	if entries[0].Message.Content[0].Type != "thinking" {
-		t.Fatalf("first frame type = %q, want thinking", entries[0].Message.Content[0].Type)
+	if msgs[0].Parts[0].Type != session.PartReasoning {
+		t.Fatalf("first frame part type = %q, want reasoning", msgs[0].Parts[0].Type)
 	}
-	if entries[1].Message.Content[0].Type != "text" {
-		t.Fatalf("second frame type = %q, want text", entries[1].Message.Content[0].Type)
+	if msgs[1].Parts[0].Type != session.PartText {
+		t.Fatalf("second frame part type = %q, want text", msgs[1].Parts[0].Type)
 	}
 }
 
 func TestPromptRunAccumulator_CorrelatesToolResult(t *testing.T) {
-	entries := collectEntries("m", "claude",
+	msgs := collectEntries("m", "claude",
 		ai.Event{Kind: ai.EventToolUse, Tool: "Bash", Input: map[string]any{"command": "ls"}, ToolCallID: "t1"},
 		ai.Event{Kind: ai.EventToolResult, Text: "file.txt", Success: true, ToolCallID: "t1"},
 	)
-	if len(entries) != 2 {
-		t.Fatalf("want 2 frames (use + result), got %d", len(entries))
+	if len(msgs) != 2 {
+		t.Fatalf("want 2 frames (use + result), got %d", len(msgs))
 	}
-	for i, e := range entries {
-		if e.UUID != "t1" {
-			t.Fatalf("frame %d UUID = %q, want tool call id t1", i, e.UUID)
+	for i, m := range msgs {
+		if m.ID != "t1" {
+			t.Fatalf("frame %d id = %q, want tool call id t1", i, m.ID)
 		}
-		if e.ToolUse == nil {
-			t.Fatalf("frame %d missing tool_use", i)
+		if m.Parts[0].Type != session.PartTool {
+			t.Fatalf("frame %d part type = %q, want a tool part", i, m.Parts[0].Type)
 		}
 	}
-	if got := entries[1].ToolUse.Response; got != "file.txt" {
-		t.Fatalf("tool response = %q, want file.txt", got)
+	if got := partText(msgs[1].Parts[0].Output); got != "file.txt" {
+		t.Fatalf("tool output = %q, want file.txt", got)
 	}
-	if entries[1].ToolUse.Tool != "Bash" {
-		t.Fatalf("result frame must carry original tool name, got %q", entries[1].ToolUse.Tool)
+	if msgs[1].Parts[0].ToolName != "Bash" {
+		t.Fatalf("result frame must carry original tool name, got %q", msgs[1].Parts[0].ToolName)
+	}
+	if msgs[1].Parts[0].State != session.ToolStateOutputAvailable {
+		t.Fatalf("result state = %q, want output-available", msgs[1].Parts[0].State)
 	}
 }
 
 func TestPromptRunAccumulator_MarksFailedToolResult(t *testing.T) {
-	entries := collectEntries("m", "claude",
+	msgs := collectEntries("m", "claude",
 		ai.Event{Kind: ai.EventToolUse, Tool: "Bash", ToolCallID: "t1"},
 		ai.Event{Kind: ai.EventToolResult, Text: "boom", Success: false, ToolCallID: "t1"},
 	)
-	resp := entries[len(entries)-1].ToolUse.Response
-	if !strings.HasPrefix(resp, "[error]") {
-		t.Fatalf("failed tool response = %q, want [error] prefix", resp)
+	last := msgs[len(msgs)-1].Parts[0]
+	if resp := partText(last.Output); !strings.HasPrefix(resp, "[error]") {
+		t.Fatalf("failed tool output = %q, want [error] prefix", resp)
+	}
+	if last.State != session.ToolStateOutputError {
+		t.Fatalf("failed tool state = %q, want output-error", last.State)
 	}
 }
 
 func TestPromptRunAccumulator_EmitsErrorFrame(t *testing.T) {
-	entries := collectEntries("m", "b",
+	msgs := collectEntries("m", "b",
 		ai.Event{Kind: ai.EventError, Error: "rate limited"},
 	)
-	if len(entries) != 1 {
-		t.Fatalf("want 1 error frame, got %d", len(entries))
+	if len(msgs) != 1 {
+		t.Fatalf("want 1 error frame, got %d", len(msgs))
 	}
-	if e := entries[0]; !e.IsAPIErrorMessage || e.Error != "rate limited" {
-		t.Fatalf("error frame = %+v, want IsAPIErrorMessage + Error=rate limited", e)
+	if got := msgs[0].Parts[0].Text; got != "rate limited" {
+		t.Fatalf("error frame text = %q, want rate limited", got)
 	}
 }
 
 func TestPromptRunAccumulator_CapturesSessionAndUsage(t *testing.T) {
-	acc := newPromptEventAccumulator(func(SessionEntryWire) {}, fakeTaskSink{}, "m", "b")
+	acc := newPromptEventAccumulator(func(session.Message) {}, fakeTaskSink{}, "m", "b")
 	acc.handle(0, ai.Event{Kind: ai.EventSystem, SessionID: "sess-1"})
 	acc.handle(0, ai.Event{Kind: ai.EventResult, Usage: &ai.Usage{InputTokens: 10, OutputTokens: 4}, CostUSD: 0.02})
 	if acc.sessionID != "sess-1" {

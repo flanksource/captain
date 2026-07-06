@@ -5,10 +5,12 @@ import (
 	"strings"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/session"
+	"github.com/segmentio/encoding/json"
 )
 
 // taskSink is the subset of *task.Task the accumulator drives. Injecting it as
-// an interface keeps the ai.Event → SessionEntryWire mapping unit-testable
+// an interface keeps the ai.Event → session.Message mapping unit-testable
 // without a live clicky task.
 type taskSink interface {
 	SetDescription(string)
@@ -19,12 +21,12 @@ type taskSink interface {
 }
 
 // promptEventAccumulator converts the ai.Event stream of one prompt run into
-// SessionEntryWire frames (the shape SessionViewer consumes) and drives the
-// backing task's live status. It coalesces consecutive text/thinking deltas
-// into a single entry keyed by a stable UUID so the viewer replaces-in-place,
+// unified session.Message frames (the shape SessionViewer consumes) and drives
+// the backing task's live status. It coalesces consecutive text/reasoning deltas
+// into a single message keyed by a stable id so the viewer replaces-in-place,
 // and correlates each tool call with its later result via ToolCallID.
 type promptEventAccumulator struct {
-	emit func(SessionEntryWire)
+	emit func(session.Message)
 	task taskSink
 
 	sessionID string
@@ -32,26 +34,26 @@ type promptEventAccumulator struct {
 	backend   string
 	cwd       string
 
-	toolByID map[string]*SessionToolUseWire
+	toolByID map[string]*session.Message
 
-	seq       int    // monotonic turn counter for text/thinking/error UUIDs
-	textUUID  string // non-empty while a text turn is in flight
-	textBuf   strings.Builder
-	thinkUUID string // non-empty while a thinking turn is in flight
-	thinkBuf  strings.Builder
+	seq      int    // monotonic turn counter for text/reasoning/error ids
+	textID   string // non-empty while a text turn is in flight
+	textBuf  strings.Builder
+	thinkID  string // non-empty while a reasoning turn is in flight
+	thinkBuf strings.Builder
 
 	tools int
 	usage ai.Usage
 	cost  float64
 }
 
-func newPromptEventAccumulator(emit func(SessionEntryWire), t taskSink, model, backend string) *promptEventAccumulator {
+func newPromptEventAccumulator(emit func(session.Message), t taskSink, model, backend string) *promptEventAccumulator {
 	return &promptEventAccumulator{
 		emit:     emit,
 		task:     t,
 		model:    model,
 		backend:  backend,
-		toolByID: map[string]*SessionToolUseWire{},
+		toolByID: map[string]*session.Message{},
 	}
 }
 
@@ -96,24 +98,28 @@ func (a *promptEventAccumulator) handle(_ int, ev ai.Event) {
 	}
 }
 
+// provenance is the transcript metadata carried on each live message.
+func (a *promptEventAccumulator) provenance() *session.Provenance {
+	return &session.Provenance{SessionID: a.sessionID, CWD: a.cwd, Model: a.model, Source: a.backend}
+}
+
 func (a *promptEventAccumulator) appendText(delta string) {
 	if delta == "" {
 		return
 	}
-	if a.thinkUUID != "" {
-		a.thinkUUID = ""
+	if a.thinkID != "" {
+		a.thinkID = ""
 		a.thinkBuf.Reset()
 	}
-	if a.textUUID == "" {
-		a.textUUID = a.nextUUID("text")
+	if a.textID == "" {
+		a.textID = a.nextID("text")
 	}
 	a.textBuf.WriteString(delta)
-	a.emit(SessionEntryWire{
-		Type:      "assistant",
-		Message:   &SessionMessageWire{Role: "assistant", Content: []SessionContentWire{{Type: "text", Text: a.textBuf.String()}}},
-		SessionID: a.sessionID,
-		CWD:       a.cwd,
-		UUID:      a.textUUID,
+	a.emit(session.Message{
+		ID:         a.textID,
+		Role:       "assistant",
+		Parts:      []session.Part{{Type: session.PartText, Text: a.textBuf.String()}},
+		Provenance: a.provenance(),
 	})
 }
 
@@ -121,104 +127,119 @@ func (a *promptEventAccumulator) appendThinking(delta string) {
 	if delta == "" {
 		return
 	}
-	if a.textUUID != "" {
-		a.textUUID = ""
+	if a.textID != "" {
+		a.textID = ""
 		a.textBuf.Reset()
 	}
-	if a.thinkUUID == "" {
-		a.thinkUUID = a.nextUUID("think")
+	if a.thinkID == "" {
+		a.thinkID = a.nextID("think")
 	}
 	a.thinkBuf.WriteString(delta)
-	a.emit(SessionEntryWire{
-		Type:      "assistant",
-		Message:   &SessionMessageWire{Role: "assistant", Content: []SessionContentWire{{Type: "thinking", Thinking: a.thinkBuf.String()}}},
-		SessionID: a.sessionID,
-		CWD:       a.cwd,
-		UUID:      a.thinkUUID,
+	a.emit(session.Message{
+		ID:         a.thinkID,
+		Role:       "assistant",
+		Parts:      []session.Part{{Type: session.PartReasoning, Text: a.thinkBuf.String()}},
+		Provenance: a.provenance(),
 	})
 }
 
-// flush finalizes any in-flight text/thinking turn so the next one starts a
-// fresh UUID.
+// flush finalizes any in-flight text/reasoning turn so the next one starts a
+// fresh id.
 func (a *promptEventAccumulator) flush() {
-	a.textUUID = ""
+	a.textID = ""
 	a.textBuf.Reset()
-	a.thinkUUID = ""
+	a.thinkID = ""
 	a.thinkBuf.Reset()
 }
 
 func (a *promptEventAccumulator) emitToolUse(ev ai.Event) {
 	a.tools++
-	tu := &SessionToolUseWire{
-		Tool:      ev.Tool,
-		Input:     ev.Input,
-		SessionID: a.sessionID,
-		CWD:       a.cwd,
-		ToolUseID: ev.ToolCallID,
-		Model:     a.model,
-		Source:    a.backend,
+	msg := &session.Message{
+		ID:   a.toolID(ev.ToolCallID),
+		Role: "assistant",
+		Parts: []session.Part{{
+			Type:       session.PartTool,
+			ToolName:   ev.Tool,
+			ToolCallID: ev.ToolCallID,
+			State:      session.ToolStateInputAvailable,
+			Input:      mapToRaw(ev.Input),
+		}},
+		Provenance: a.provenance(),
 	}
 	if ev.ToolCallID != "" {
-		a.toolByID[ev.ToolCallID] = tu
+		a.toolByID[ev.ToolCallID] = msg
 	}
 	a.task.SetProgress(a.tools, 0)
 	a.task.SetDescription("tool: " + ev.Tool)
 	a.task.Infof("tool %s", ev.Tool)
-	a.emit(SessionEntryWire{
-		Type:      "assistant",
-		ToolUse:   tu,
-		SessionID: a.sessionID,
-		CWD:       a.cwd,
-		UUID:      a.toolUUID(ev.ToolCallID),
-	})
+	a.emit(*msg)
 }
 
 func (a *promptEventAccumulator) emitToolResult(ev ai.Event) {
-	tu := a.toolByID[ev.ToolCallID]
-	if tu == nil {
-		tu = &SessionToolUseWire{ToolUseID: ev.ToolCallID, SessionID: a.sessionID, CWD: a.cwd, Source: a.backend}
+	msg := a.toolByID[ev.ToolCallID]
+	if msg == nil {
+		msg = &session.Message{
+			ID:         a.toolID(ev.ToolCallID),
+			Role:       "assistant",
+			Parts:      []session.Part{{Type: session.PartTool, ToolCallID: ev.ToolCallID}},
+			Provenance: a.provenance(),
+		}
 		if ev.ToolCallID != "" {
-			a.toolByID[ev.ToolCallID] = tu
+			a.toolByID[ev.ToolCallID] = msg
 		}
 	}
-	tu.Response = ev.Text
+	text, state := ev.Text, session.ToolStateOutputAvailable
 	if !ev.Success {
-		a.task.Warnf("tool %s failed", tu.Tool)
-		tu.Response = "[error] " + ev.Text
+		a.task.Warnf("tool %s failed", msg.Parts[0].ToolName)
+		text = "[error] " + ev.Text
+		state = session.ToolStateOutputError
 	}
-	// Re-emit the same UUID so the viewer merges the response into the tool row.
-	a.emit(SessionEntryWire{
-		Type:      "assistant",
-		ToolUse:   tu,
-		SessionID: a.sessionID,
-		CWD:       a.cwd,
-		UUID:      a.toolUUID(ev.ToolCallID),
-	})
+	// Re-emit the same id so the viewer merges the output into the tool row.
+	msg.Parts[0].Output = textToRaw(text)
+	msg.Parts[0].State = state
+	a.emit(*msg)
 }
 
 func (a *promptEventAccumulator) emitError(ev ai.Event) {
 	a.task.Errorf("%s", ev.Error)
-	a.emit(SessionEntryWire{
-		Type:              "assistant",
-		IsAPIErrorMessage: true,
-		Error:             ev.Error,
-		Message:           &SessionMessageWire{Role: "assistant", Content: []SessionContentWire{{Type: "text", Text: ev.Error}}},
-		SessionID:         a.sessionID,
-		CWD:               a.cwd,
-		UUID:              a.nextUUID("error"),
+	a.emit(session.Message{
+		ID:         a.nextID("error"),
+		Role:       "assistant",
+		Parts:      []session.Part{{Type: session.PartText, Text: ev.Error}},
+		Provenance: a.provenance(),
 	})
 }
 
-func (a *promptEventAccumulator) nextUUID(kind string) string {
+func (a *promptEventAccumulator) nextID(kind string) string {
 	a.seq++
 	return fmt.Sprintf("%s-%d", kind, a.seq)
 }
 
-// toolUUID keys a tool row by its ToolCallID so the call and its later result
+// toolID keys a tool message by its ToolCallID so the call and its later result
 // share an identity. Falls back to a monotonic id when the backend omits one.
-func (a *promptEventAccumulator) toolUUID(id string) string {
+func (a *promptEventAccumulator) toolID(id string) string {
 	if id != "" {
 		return id
 	}
-	return a.nextUUID("tool")
+	return a.nextID("tool")
+}
+
+// mapToRaw encodes a tool input map as a Part's Input JSON; empty → nil.
+func mapToRaw(m map[string]any) json.RawMessage {
+	if len(m) == 0 {
+		return nil
+	}
+	if b, err := json.Marshal(m); err == nil {
+		return b
+	}
+	return nil
+}
+
+// textToRaw encodes tool output text as a JSON string, the form the viewer
+// renders directly.
+func textToRaw(s string) json.RawMessage {
+	if b, err := json.Marshal(s); err == nil {
+		return b
+	}
+	return nil
 }

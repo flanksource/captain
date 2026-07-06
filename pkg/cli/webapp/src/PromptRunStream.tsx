@@ -3,12 +3,12 @@ import { usePromptRunStream, type PromptRunStreamStatus, type PromptRunSummary }
 
 /**
  * PromptRunStream renders a prompt run's session history live: it subscribes to
- * the run's SSE stream and feeds the growing SessionEntry[] into SessionViewer,
+ * the run's SSE stream and feeds the growing session.Message[] into SessionViewer,
  * with a status pill and a completion summary footer.
  */
 export function PromptRunStream({ runID }: { runID: string }) {
-  const { entries, summary, status, error } = usePromptRunStream(runID);
-  const empty = entries.length === 0;
+  const { messages, summary, status, error } = usePromptRunStream(runID);
+  const empty = messages.length === 0;
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-density-3">
@@ -27,7 +27,7 @@ export function PromptRunStream({ runID }: { runID: string }) {
           </div>
         ) : (
           <div className="p-density-4">
-            <SessionViewer session={entries} defaultExpanded={false} />
+            <SessionViewer session={messages} defaultExpanded={false} />
           </div>
         )}
       </div>

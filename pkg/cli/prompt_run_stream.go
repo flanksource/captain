@@ -7,19 +7,21 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/flanksource/captain/pkg/session"
 )
 
 // runSubBuffer bounds each SSE subscriber's channel. A subscriber that can't
 // keep up is dropped (and reconnects to replay) rather than stalling the run.
 const runSubBuffer = 64
 
-// runStream is the in-process pub/sub buffer for one prompt run's SessionEntry
+// runStream is the in-process pub/sub buffer for one prompt run's session.Message
 // frames. Every frame is buffered for replay to late/reconnecting subscribers
 // and fanned out to current subscribers.
 type runStream struct {
 	mu      sync.Mutex
-	entries []SessionEntryWire
-	subs    map[chan SessionEntryWire]struct{}
+	entries []session.Message
+	subs    map[chan session.Message]struct{}
 	done    bool
 	summary *PromptRunSummary
 	errMsg  string
@@ -27,12 +29,12 @@ type runStream struct {
 }
 
 func newRunStream() *runStream {
-	return &runStream{subs: map[chan SessionEntryWire]struct{}{}}
+	return &runStream{subs: map[chan session.Message]struct{}{}}
 }
 
 // publish appends a frame and fans it out. A subscriber whose buffer is full is
 // dropped (it can reconnect and replay) rather than blocking the producer.
-func (s *runStream) publish(e SessionEntryWire) {
+func (s *runStream) publish(e session.Message) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.done {
@@ -74,19 +76,19 @@ func (s *runStream) finish(sum *PromptRunSummary, errMsg string) {
 // subscribe atomically snapshots the replay buffer and registers a live channel
 // under one lock, so no frame is missed between replay and live delivery. When
 // the run already finished, ch is nil and the terminal state is returned.
-func (s *runStream) subscribe() (replay []SessionEntryWire, ch chan SessionEntryWire, done bool, summary *PromptRunSummary, errMsg string) {
+func (s *runStream) subscribe() (replay []session.Message, ch chan session.Message, done bool, summary *PromptRunSummary, errMsg string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	replay = append([]SessionEntryWire(nil), s.entries...)
+	replay = append([]session.Message(nil), s.entries...)
 	if s.done {
 		return replay, nil, true, s.summary, s.errMsg
 	}
-	ch = make(chan SessionEntryWire, runSubBuffer)
+	ch = make(chan session.Message, runSubBuffer)
 	s.subs[ch] = struct{}{}
 	return replay, ch, false, nil, ""
 }
 
-func (s *runStream) unsubscribe(ch chan SessionEntryWire) {
+func (s *runStream) unsubscribe(ch chan session.Message) {
 	if ch == nil {
 		return
 	}
@@ -104,10 +106,10 @@ func (s *runStream) state() (bool, *PromptRunSummary, string) {
 	return s.done, s.summary, s.errMsg
 }
 
-func (s *runStream) snapshot() ([]SessionEntryWire, bool, *PromptRunSummary, string) {
+func (s *runStream) snapshot() ([]session.Message, bool, *PromptRunSummary, string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return append([]SessionEntryWire(nil), s.entries...), s.done, s.summary, s.errMsg
+	return append([]session.Message(nil), s.entries...), s.done, s.summary, s.errMsg
 }
 
 func (s *runStream) terminalAt() (bool, time.Time) {
@@ -168,15 +170,15 @@ func (b *runBroker) prune(maxAge time.Duration) {
 }
 
 type promptRunSnapshotBody struct {
-	Entries []SessionEntryWire `json:"entries"`
+	Entries []session.Message `json:"entries"`
 	Done    bool               `json:"done"`
 	Summary *PromptRunSummary  `json:"summary,omitempty"`
 	Error   string             `json:"error,omitempty"`
 }
 
-// handlePromptRunStream streams a run's SessionEntry frames as SSE:
+// handlePromptRunStream streams a run's session.Message frames as SSE:
 //
-//	event: entry  data: <SessionEntryWire>   (one per frame; replayed on connect)
+//	event: entry  data: <session.Message>   (one per frame; replayed on connect)
 //	event: done   data: <PromptRunSummary>   (terminal, success)
 //	event: error  data: {"error": "..."}     (terminal, failure)
 func handlePromptRunStream(b *runBroker) http.HandlerFunc {

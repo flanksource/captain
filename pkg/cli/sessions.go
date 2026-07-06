@@ -200,47 +200,6 @@ func compactSessionInt(value int) string {
 	}
 }
 
-type SessionEntryWire struct {
-	Type              string              `json:"type,omitempty"`
-	ToolUse           *SessionToolUseWire `json:"tool_use,omitempty"`
-	Message           *SessionMessageWire `json:"message,omitempty"`
-	Timestamp         string              `json:"timestamp,omitempty"`
-	CWD               string              `json:"cwd,omitempty"`
-	SessionID         string              `json:"sessionId,omitempty"`
-	UUID              string              `json:"uuid,omitempty"`
-	IsAPIErrorMessage bool                `json:"isApiErrorMessage,omitempty"`
-	APIErrorStatus    int                 `json:"apiErrorStatus,omitempty"`
-	Error             string              `json:"error,omitempty"`
-}
-
-type SessionMessageWire struct {
-	Role       string               `json:"role,omitempty"`
-	StopReason string               `json:"stop_reason,omitempty"`
-	Content    []SessionContentWire `json:"content,omitempty"`
-}
-
-type SessionContentWire struct {
-	Type     string         `json:"type,omitempty"`
-	Text     string         `json:"text,omitempty"`
-	Thinking string         `json:"thinking,omitempty"`
-	Name     string         `json:"name,omitempty"`
-	Input    map[string]any `json:"input,omitempty"`
-	ID       string         `json:"id,omitempty"`
-}
-
-type SessionToolUseWire struct {
-	Tool            string         `json:"tool,omitempty"`
-	Input           map[string]any `json:"input,omitempty"`
-	Timestamp       string         `json:"timestamp,omitempty"`
-	CWD             string         `json:"cwd,omitempty"`
-	SessionID       string         `json:"session_id,omitempty"`
-	ToolUseID       string         `json:"tool_use_id,omitempty"`
-	Source          string         `json:"source,omitempty"`
-	Model           string         `json:"model,omitempty"`
-	ReasoningEffort string         `json:"reasoning_effort,omitempty"`
-	Response        string         `json:"response,omitempty"`
-}
-
 type sessionCandidate struct {
 	record SessionRecord
 	path   string

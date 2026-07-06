@@ -1,4 +1,4 @@
-import type { SessionEntry, SessionUIMessage } from "@flanksource/clicky-ui/ai";
+import type { SessionUIMessage } from "@flanksource/clicky-ui/ai";
 import { apiClient } from "./api";
 import { parseServerTiming, type TimingMetric } from "./serverTiming";
 
@@ -32,7 +32,6 @@ export type SessionRecord = {
   costUsd?: number;
   live?: SessionLive;
   health?: SessionHealth[];
-  entries?: SessionEntry[];
 };
 
 // UnifiedSession is captain's canonical session.Session (served by the sessions
