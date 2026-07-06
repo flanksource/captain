@@ -37,6 +37,17 @@ func GetModelInfo(model string) (ModelInfo, bool) {
 	return claudeStaticInfo(model)
 }
 
+// Contains reports whether model is an exact id in the pricing registry. Unlike
+// GetModelInfo it has no static-Claude fallback (which prices any claude-ish id,
+// including typos), so use Contains for membership/validation, not for pricing.
+func Contains(model string) bool {
+	EnsureLoaded()
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+	_, ok := registry[model]
+	return ok
+}
+
 // MergeMode controls how MergeModel/MergeModels reconcile an incoming row with
 // an existing registry entry for the same id.
 type MergeMode int

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/flanksource/captain/pkg/ai/pricing"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/collections"
 )
@@ -40,7 +41,8 @@ func suggestModelName(err error, model string) error {
 	}
 	// Candidates are the catalog base names ("claude-sonnet-5"), which is the form
 	// users type — the prefixed id ("anthropic/claude-sonnet-5") is far in edit
-	// distance from a bare typo.
+	// distance from a bare typo — plus the pricing registry's ids for broader
+	// coverage (loaded from its disk cache; degrades to catalog-only if absent).
 	var candidates []string
 	for _, id := range modelIDsFrom(Catalog()) {
 		if i := strings.LastIndex(id, "/"); i >= 0 {
@@ -48,6 +50,10 @@ func suggestModelName(err error, model string) error {
 		} else {
 			candidates = append(candidates, id)
 		}
+	}
+	pricing.EnsureLoaded()
+	for _, mi := range pricing.ListModels("") {
+		candidates = append(candidates, mi.ModelID)
 	}
 	similar := collections.FindSimilar(model, candidates, 3)
 	if len(similar) == 0 {
