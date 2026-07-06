@@ -245,7 +245,13 @@ func (o AIPromptOptions) ToRequest() (ai.Request, error) {
 	return o.AIRuntimeOptions.ToRequest(o.System, o.AppendSystem, o.Prompt)
 }
 
+// RunAIPrompt is a deprecated alias for `captain prompt run`. It routes through
+// the same shared render + execute core (renderPromptSource + executePromptRequest)
+// so there is one implementation; the positional `.prompt` file, --prompt/-p, and
+// stdin all still work.
 func RunAIPrompt(opts AIPromptOptions) (any, error) {
+	log.Warnf("`captain ai prompt` is deprecated; use `captain prompt run` (it accepts a .prompt file, id, --prompt/-p, or stdin)")
+
 	var stdin string
 	if claude.IsStdinPiped() {
 		b, err := io.ReadAll(os.Stdin)
@@ -255,33 +261,9 @@ func RunAIPrompt(opts AIPromptOptions) (any, error) {
 		stdin = string(b)
 	}
 
-	tmpl, usedStdin, err := resolvePromptTemplate(opts, stdin)
+	ctx := context.Background()
+	req, cfg, err := renderPromptSource(ctx, opts.File, opts, "", stdin)
 	if err != nil {
-		return nil, err
-	}
-
-	data, err := parseVars(opts.Var)
-	if err != nil {
-		return nil, err
-	}
-	if s := strings.TrimSpace(stdin); s != "" && !usedStdin {
-		data["input"] = s
-	}
-
-	fileReq, fileCfg, err := tmpl.Render(data, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	req, cfg, err := overlayCLI(fileReq, fileCfg, opts)
-	if err != nil {
-		return nil, err
-	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return nil, fmt.Errorf("get working directory: %w", err)
-	}
-	if err := normalizePromptContextDir(&req, cwd); err != nil {
 		return nil, err
 	}
 	if req.Prompt.User == "" {
@@ -293,8 +275,7 @@ func RunAIPrompt(opts AIPromptOptions) (any, error) {
 	if err := req.Validate(); err != nil {
 		return nil, err
 	}
-
-	return executePromptRequest(context.Background(), req, cfg, runtimeTimeout(req.Budget.Timeout), opts.NoStream)
+	return executePromptRequest(ctx, req, cfg, runtimeTimeout(req.Budget.Timeout), opts.NoStream)
 }
 
 func executePromptRequest(parent context.Context, req ai.Request, cfg ai.Config, timeout time.Duration, noStream bool) (any, error) {

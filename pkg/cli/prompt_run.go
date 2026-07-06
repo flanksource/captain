@@ -7,20 +7,28 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
+	clickyrpc "github.com/flanksource/clicky/rpc"
 	"github.com/flanksource/clicky/task"
 	flanksourceContext "github.com/flanksource/commons/context"
 	"github.com/google/uuid"
 )
 
-// PromptRunHandle is the immediate response of the async "run" action: the run
-// executes in the background as a clicky task; the client streams its session
-// history from /api/captain/prompt/runs/{runId}/stream and its status from
-// /api/captain/tasks.
-type PromptRunHandle struct {
-	RunID   string `json:"runId"`
-	Status  string `json:"status"`
-	Model   string `json:"model,omitempty"`
-	Backend string `json:"backend,omitempty"`
+// PromptRunResult is the unified result of the "run" action. Over HTTP (serve)
+// it carries the async handle (RunID + Status "running") — the web UI then
+// streams from /api/captain/prompt/runs/{runId}/stream. On the CLI it carries the
+// synchronous result (Text + tokens/cost). One type serves both transports.
+type PromptRunResult struct {
+	RunID   string `json:"runId,omitempty"`
+	Status  string `json:"status,omitempty" pretty:"label=Status"`
+	Model   string `json:"model,omitempty" pretty:"label=Model"`
+	Backend string `json:"backend,omitempty" pretty:"label=Backend"`
+
+	Text         string  `json:"text,omitempty" pretty:"label=Response"`
+	SessionID    string  `json:"sessionId,omitempty" pretty:"label=Session"`
+	InputTokens  int     `json:"inputTokens,omitempty" pretty:"label=Input Tokens"`
+	OutputTokens int     `json:"outputTokens,omitempty" pretty:"label=Output Tokens"`
+	CostUSD      float64 `json:"costUSD,omitempty" pretty:"label=Cost USD"`
+	Duration     string  `json:"duration,omitempty" pretty:"label=Duration"`
 }
 
 // PromptRunSummary is the terminal payload of a run: the SSE stream ends with it
@@ -38,22 +46,45 @@ type PromptRunSummary struct {
 	Error        string  `json:"error,omitempty"`
 }
 
-// runPromptAction renders the prompt synchronously (so render/validation errors
-// surface to the caller) then launches the model run in the background as a
-// clicky task group and returns immediately with a handle to stream from.
-func runPromptAction(ctx context.Context, id string, flags map[string]string) (PromptRunHandle, error) {
-	req, err := readRenderRequest(ctx, flags)
-	if err != nil {
-		return PromptRunHandle{}, err
-	}
-	rendered, err := renderPrompt(ctx, id, req)
-	if err != nil {
-		return PromptRunHandle{}, err
+// runPromptAction renders the prompt (from an id | .prompt filepath | --prompt |
+// stdin), then executes it — synchronously on the CLI (returns the text + cost)
+// or asynchronously over HTTP (returns a run handle to stream from). This is the
+// single prompt-run implementation; `captain ai prompt` is a deprecated alias.
+func runPromptAction(ctx context.Context, id string, flags map[string]string) (PromptRunResult, error) {
+	_, isHTTP := clickyrpc.RequestFromContext(ctx)
+
+	var rendered PromptRenderResult
+	var opts AIPromptOptions
+	if isHTTP {
+		req, err := readRenderRequest(ctx, flags)
+		if err != nil {
+			return PromptRunResult{}, err
+		}
+		if rendered, err = renderPrompt(ctx, id, req); err != nil {
+			return PromptRunResult{}, err
+		}
+	} else {
+		var err error
+		if opts, err = actionFlagsToOptions(flags); err != nil {
+			return PromptRunResult{}, err
+		}
+		if rendered, err = renderPromptCLI(ctx, id, opts, flags["vars"], readStdinIfCLI(ctx)); err != nil {
+			return PromptRunResult{}, err
+		}
 	}
 	if rendered.ValidationError != "" {
-		return PromptRunHandle{}, errors.New(rendered.ValidationError)
+		return PromptRunResult{}, errors.New(rendered.ValidationError)
 	}
 
+	if isHTTP {
+		return launchAsyncRun(id, rendered), nil
+	}
+	return executeSyncRun(ctx, rendered, opts)
+}
+
+// launchAsyncRun starts the background clicky task + SSE stream and returns the
+// run handle (the serve/web-UI contract).
+func launchAsyncRun(id string, rendered PromptRenderResult) PromptRunResult {
 	runID := uuid.NewString()
 	stream := promptRuns.create(runID)
 	timeout := runtimeTimeout(rendered.Input.Budget.Timeout)
@@ -71,8 +102,38 @@ func runPromptAction(ctx context.Context, id string, flags map[string]string) (P
 	group.Add("execute", func(_ flanksourceContext.Context, t *task.Task) (PromptRunSummary, error) {
 		return runPromptStream(t, rendered, timeout, runID, stream)
 	})
+	return PromptRunResult{RunID: runID, Status: "running", Model: rendered.Model, Backend: rendered.Backend}
+}
 
-	return PromptRunHandle{RunID: runID, Status: "running", Model: rendered.Model, Backend: rendered.Backend}, nil
+// executeSyncRun runs the prompt in-process (CLI) — live output to stderr, final
+// result returned — and persists the realized prompt for the launched session.
+func executeSyncRun(ctx context.Context, rendered PromptRenderResult, opts AIPromptOptions) (PromptRunResult, error) {
+	out, err := executePromptRequest(ctx, rendered.Input, rendered.Config, runtimeTimeout(rendered.Input.Budget.Timeout), opts.NoStream)
+	if err != nil {
+		return PromptRunResult{}, err
+	}
+	r, _ := out.(AIPromptResult)
+	if r.SessionID != "" {
+		if st := sessionStore(); st != nil {
+			st.upsertPrompt(StoredPrompt{
+				SessionID: r.SessionID,
+				Model:     r.Model,
+				Backend:   r.Backend,
+				Realized:  rendered,
+			})
+		}
+	}
+	return PromptRunResult{
+		Status:       "completed",
+		Model:        r.Model,
+		Backend:      r.Backend,
+		Text:         r.Text,
+		SessionID:    r.SessionID,
+		InputTokens:  r.InputTokens,
+		OutputTokens: r.Output,
+		CostUSD:      r.CostUSD,
+		Duration:     r.Duration,
+	}, nil
 }
 
 // runPromptStream drives a single streaming iteration, converting each ai.Event

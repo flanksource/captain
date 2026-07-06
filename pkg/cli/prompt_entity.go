@@ -121,12 +121,20 @@ type PromptRenderResult struct {
 	ValidationError string         `json:"validationError,omitempty"`
 }
 
+// PromptActionFlags is the full flag surface for `captain prompt run|render` —
+// the same knobs as `captain ai prompt` (AIRuntimeOptions) plus the prompt-body
+// fields — so the two commands are one. The positional (a .prompt filepath or a
+// registry id) is the prompt source; --prompt/-p and stdin are alternatives.
 type PromptActionFlags struct {
-	Vars      string `flag:"vars" help:"JSON object of template variables"`
-	Model     string `flag:"model" help:"Model override"`
-	Backend   string `flag:"backend" help:"Backend override"`
-	Timeout   string `flag:"timeout" help:"Request timeout" default:"120s"`
-	MaxTokens int    `flag:"max-tokens" help:"Maximum output tokens"`
+	AIRuntimeOptions
+
+	Prompt       string   `flag:"prompt" help:"Prompt text (or @file); alternative to the positional" short:"p"`
+	System       string   `flag:"system" help:"System prompt" short:"s"`
+	AppendSystem string   `flag:"append-system" help:"Append text to the default system prompt"`
+	Var          []string `flag:"var" help:"Template variable key=value (repeatable)" short:"V"`
+	Vars         string   `flag:"vars" help:"JSON object of template variables (HTTP callers)"`
+	Timeout      string   `flag:"timeout" help:"Request timeout" default:"120s"`
+	NoStream     bool     `flag:"no-stream" help:"Disable streaming; print only the final text (CLI)"`
 }
 
 func (PromptActionFlags) ClickyActionFlags() {}
@@ -174,9 +182,11 @@ func RegisterPromptEntity() {
 			UpdateWithContext(updatePrompt).
 			DeleteWithContext(deletePrompt).
 			WithAction(clicky.ActionWithFlagsAndContext("render", PromptActionFlags{}, renderPromptAction).
-				WithShort("Render the prompt without calling a model")).
+				WithShort("Render a prompt (id, .prompt file, --prompt/-p, or stdin) without calling a model").
+				WithOptionalID()).
 			WithAction(clicky.ActionWithFlagsAndContext("run", PromptActionFlags{}, runPromptAction).
-				WithShort("Render and execute the prompt")).
+				WithShort("Run a prompt (id, .prompt file, --prompt/-p, or stdin)").
+				WithOptionalID()).
 			Register()
 	})
 }
@@ -331,14 +341,26 @@ func deletePrompt(ctx context.Context, id string) error {
 	return nil
 }
 
+// renderPromptAction renders a prompt for `captain prompt render`. HTTP callers
+// pass a structured api.Spec in the body (rich overlay via overlayRuntimeSpec);
+// the CLI passes flat flags (overlayCLI) plus filepath/-p/stdin sources.
 func renderPromptAction(ctx context.Context, id string, flags map[string]string) (PromptRenderResult, error) {
-	req, err := readRenderRequest(ctx, flags)
+	if _, isHTTP := clickyrpc.RequestFromContext(ctx); isHTTP {
+		req, err := readRenderRequest(ctx, flags)
+		if err != nil {
+			return PromptRenderResult{}, err
+		}
+		return renderPrompt(ctx, id, req)
+	}
+	opts, err := actionFlagsToOptions(flags)
 	if err != nil {
 		return PromptRenderResult{}, err
 	}
-	return renderPrompt(ctx, id, req)
+	return renderPromptCLI(ctx, id, opts, flags["vars"], readStdinIfCLI(ctx))
 }
 
+// renderPrompt is the HTTP/Spec render path: overlay a structured api.Spec (the
+// web UI's rich runtime overrides) onto the rendered template.
 func renderPrompt(ctx context.Context, id string, renderReq PromptRenderRequest) (PromptRenderResult, error) {
 	record, err := resolvePromptRecord(ctx, id)
 	if err != nil {
@@ -352,11 +374,10 @@ func renderPrompt(ctx context.Context, id string, renderReq PromptRenderRequest)
 	if vars == nil {
 		vars = map[string]any{}
 	}
-	fileReq, fileCfg, err := promptlib.Load(content).Render(vars, nil)
+	req, cfg, err := promptlib.Load(content).Render(vars, nil)
 	if err != nil {
 		return PromptRenderResult{}, err
 	}
-	req, cfg := fileReq, fileCfg
 	req.Prompt.Source = record.Rel
 	if renderReq.Spec != nil {
 		overlayRuntimeSpec(&req, &cfg, *renderReq.Spec)
@@ -369,6 +390,30 @@ func renderPrompt(ctx context.Context, id string, renderReq PromptRenderRequest)
 	if err := normalizePromptContextDir(&req, cwd); err != nil {
 		return PromptRenderResult{}, err
 	}
+	return finalizeRenderResult(record, content, req, cfg)
+}
+
+// renderPromptCLI is the CLI render path: load from id | .prompt filepath | -p |
+// stdin and overlay the flat CLI flags (overlayCLI).
+func renderPromptCLI(ctx context.Context, id string, opts AIPromptOptions, varsJSON, stdin string) (PromptRenderResult, error) {
+	content, source, usedStdin, record, err := loadPromptContent(ctx, id, opts, stdin)
+	if err != nil {
+		return PromptRenderResult{}, err
+	}
+	vars, err := promptVars(opts, varsJSON, stdin, usedStdin)
+	if err != nil {
+		return PromptRenderResult{}, err
+	}
+	req, cfg, err := renderLoadedContent(content, source, vars, opts)
+	if err != nil {
+		return PromptRenderResult{}, err
+	}
+	return finalizeRenderResult(record, content, req, cfg)
+}
+
+// finalizeRenderResult packages the rendered request/config + prompt detail into
+// a PromptRenderResult and sets the validation error (shared by both paths).
+func finalizeRenderResult(record promptRecord, content string, req ai.Request, cfg ai.Config) (PromptRenderResult, error) {
 	detail, err := promptDetailFromContent(record, content)
 	if err != nil {
 		return PromptRenderResult{}, err
@@ -794,6 +839,9 @@ func listPromptRecordsFromSource(source promptSource) ([]promptRecord, error) {
 }
 
 func resolvePromptRecord(ctx context.Context, id string) (promptRecord, error) {
+	if looksLikePromptPath(id) {
+		return filePromptRecord(id)
+	}
 	ref, err := decodePromptID(id)
 	if err != nil {
 		return promptRecord{}, err
@@ -813,6 +861,38 @@ func resolvePromptRecord(ctx context.Context, id string) (promptRecord, error) {
 		return promptRecord{Source: source, ID: id, Path: path, Rel: ref.RelPath}, nil
 	}
 	return promptRecord{}, fmt.Errorf("prompt source %q not found", ref.SourceID)
+}
+
+// looksLikePromptPath reports whether id is a filesystem path rather than a
+// base64 registry id. Registry ids are base64-raw-url (no ".", "/", or leading
+// "."), so a .prompt suffix, a path separator, or a leading "." marks a path.
+func looksLikePromptPath(id string) bool {
+	return strings.HasSuffix(id, ".prompt") ||
+		strings.ContainsRune(id, os.PathSeparator) ||
+		strings.HasPrefix(id, ".")
+}
+
+// filePromptRecord resolves an ad-hoc .prompt file path (not a registered id)
+// into a record readable via readPromptContent/safeLocalPromptPath. Mirrors the
+// captain-ai-prompt file loader so `captain prompt run|render ./x.prompt` works.
+func filePromptRecord(id string) (promptRecord, error) {
+	abs, err := filepath.Abs(id)
+	if err != nil {
+		return promptRecord{}, err
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return promptRecord{}, fmt.Errorf("prompt file %s: %w", id, err)
+	}
+	if info.IsDir() {
+		return promptRecord{}, fmt.Errorf("%s is a directory, not a .prompt file", id)
+	}
+	return promptRecord{
+		Source: promptSource{Kind: "file", ID: "file", Label: "File", Root: filepath.Dir(abs)},
+		ID:     id,
+		Path:   abs,
+		Rel:    filepath.Base(abs),
+	}, nil
 }
 
 func promptSummary(record promptRecord) (PromptSummary, error) {
