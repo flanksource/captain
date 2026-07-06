@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai/history"
 	"github.com/flanksource/captain/pkg/claude"
+	"github.com/flanksource/captain/pkg/session"
 	rpchttp "github.com/flanksource/clicky/rpc/http"
 )
 
@@ -74,7 +74,6 @@ type SessionRecord struct {
 	CostUSD         float64             `json:"costUsd,omitempty"`
 	Live            *SessionLiveWire    `json:"live,omitempty"`
 	Health          []SessionHealthWire `json:"health,omitempty"`
-	Entries         []SessionEntryWire  `json:"entries,omitempty"`
 }
 
 type SessionTokensWire struct {
@@ -284,40 +283,79 @@ func RunSessionList(ctx context.Context, opts SessionListOptions) (SessionListRe
 	}, nil
 }
 
-func RunSessionGet(ctx context.Context, opts SessionGetOptions) (SessionRecord, error) {
+// RunSessionGet returns the unified session model for a session id. The viewer
+// consumes this model natively — one shape for both Claude and Codex, carrying
+// the agent hierarchy, cost, changed files, plan events, approvals, and the
+// message stream (with per-message provenance and the raw JSONL line).
+func RunSessionGet(ctx context.Context, opts SessionGetOptions) (*session.Session, error) {
 	source, err := normalizeSessionSource(opts.Source)
 	if err != nil {
-		return SessionRecord{}, err
+		return nil, err
 	}
 	id := strings.TrimSpace(opts.ID)
 	if id == "" {
-		return SessionRecord{}, fmt.Errorf("id is required")
+		return nil, fmt.Errorf("id is required")
 	}
 
 	stopFind := rpchttp.Track(ctx, "find")
 	candidate, found, err := findSessionCandidateByID(id, source)
 	stopFind()
 	if err != nil {
-		return SessionRecord{}, err
+		return nil, err
 	} else if found {
-		return loadSessionDetail(ctx, candidate)
+		return buildUnifiedSession(ctx, candidate)
 	}
 
 	candidates, err := discoverSessionCandidates(ctx, "", true, source)
 	if err != nil {
-		return SessionRecord{}, err
+		return nil, err
 	}
 	for _, candidate := range candidates {
 		if candidate.record.Key != id && candidate.record.ID != id && !strings.HasPrefix(candidate.record.ID, id) {
 			continue
 		}
-		record, err := loadSessionDetail(ctx, candidate)
-		if err != nil {
-			return SessionRecord{}, err
-		}
-		return record, nil
+		return buildUnifiedSession(ctx, candidate)
 	}
-	return SessionRecord{}, fmt.Errorf("session %q not found", id)
+	return nil, fmt.Errorf("session %q not found", id)
+}
+
+// buildUnifiedSession builds the pkg/session model for a resolved candidate: a
+// Claude session (root + sub-agent transcripts, resolved by id) or a Codex
+// session file.
+func buildUnifiedSession(ctx context.Context, candidate sessionCandidate) (*session.Session, error) {
+	defer rpchttp.Track(ctx, "parse")()
+	switch candidate.record.Source {
+	case "claude":
+		id := candidate.record.ID
+		if id == "" {
+			id = sessionIDFromFile(candidate.path)
+		}
+		sessions, err := session.Build("", true, claude.Filter{
+			SessionIDs:    []string{id},
+			KeepRaw:       true,
+			IncludeAgents: true,
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, s := range sessions {
+			if s.ID == id {
+				return s, nil
+			}
+		}
+		if len(sessions) > 0 {
+			return sessions[0], nil
+		}
+		return nil, fmt.Errorf("session %q not found", id)
+	case "codex":
+		sessions := session.BuildCodex([]string{candidate.path})
+		if len(sessions) == 0 {
+			return nil, fmt.Errorf("codex session %q not parseable", candidate.path)
+		}
+		return sessions[0], nil
+	default:
+		return nil, fmt.Errorf("unknown session source %q", candidate.record.Source)
+	}
 }
 
 func normalizeSessionSource(source string) (string, error) {
@@ -494,255 +532,6 @@ func codexMetaMatchesProject(meta *history.CodexSessionInfo, projectRoot string)
 	return sessionRecordMatchesProject(SessionRecord{CWD: meta.CWD}, projectRoot)
 }
 
-func summarizeClaudeSession(file string, entries []claude.HistoryEntry) SessionRecord {
-	record := SessionRecord{
-		Key:             sessionRecordKey("claude", file),
-		ID:              sessionIDFromFile(file),
-		Source:          "claude",
-		DetailAvailable: true,
-	}
-	for _, entry := range entries {
-		ts, err := entry.ParseTimestamp()
-		if err == nil {
-			extendSessionRange(&record, ts)
-		}
-		if entry.SessionID != "" {
-			record.ID = entry.SessionID
-		}
-		if record.Model == "" && entry.Message.Model != "" {
-			record.Model = entry.Message.Model
-		}
-		if record.Version == "" && entry.Version != "" {
-			record.Version = entry.Version
-		}
-		if record.GitBranch == "" && entry.GitBranch != "" {
-			record.GitBranch = entry.GitBranch
-		}
-		if record.CWD == "" && entry.CWD != "" {
-			record.CWD = entry.CWD
-		}
-		if entry.Message.Role == claude.MessageRoleUser || entry.Message.Role == claude.MessageRoleAssistant {
-			if len(messageTextBlocks(entry)) > 0 {
-				record.Messages++
-			}
-		}
-		record.ToolCalls += len(entry.Message.GetToolUses())
-	}
-	return record
-}
-
-func summarizeCodexSession(file string, uses []history.ToolUse) SessionRecord {
-	record := SessionRecord{
-		Key:             sessionRecordKey("codex", file),
-		Source:          "codex",
-		DetailAvailable: true,
-	}
-	for _, use := range uses {
-		if use.SessionID != "" {
-			record.ID = use.SessionID
-		}
-		if use.Timestamp != nil {
-			extendSessionRange(&record, *use.Timestamp)
-		}
-		if record.CWD == "" && use.CWD != "" {
-			record.CWD = use.CWD
-		}
-		if record.Model == "" && use.Model != "" {
-			record.Model = use.Model
-		}
-		if record.ReasoningEffort == "" && use.ReasoningEffort != "" {
-			record.ReasoningEffort = use.ReasoningEffort
-		}
-		if use.Tool == "Assistant" || use.Tool == "Reasoning" {
-			record.Messages++
-		} else {
-			record.ToolCalls++
-		}
-	}
-	if meta, err := history.ReadCodexSessionInfo(file); err == nil && meta != nil {
-		if record.ID == "" {
-			record.ID = meta.ID
-		}
-		if record.CWD == "" {
-			record.CWD = meta.CWD
-		}
-		record.Provider = meta.ModelProvider
-		record.Version = meta.CLIVersion
-		record.GitBranch = meta.GitBranch
-		if record.Model == "" {
-			record.Model = meta.Model
-		}
-		if record.ReasoningEffort == "" {
-			record.ReasoningEffort = meta.ReasoningEffort
-		}
-		if record.StartedAt == nil && meta.StartedAt != nil {
-			record.StartedAt = meta.StartedAt
-		}
-	}
-	if record.ID == "" {
-		record.ID = sessionIDFromFile(file)
-	}
-	return record
-}
-
-func loadSessionDetail(ctx context.Context, candidate sessionCandidate) (SessionRecord, error) {
-	defer rpchttp.Track(ctx, "parse")()
-	record := candidate.record
-	switch record.Source {
-	case "claude":
-		// KeepRaw copies every line into HistoryEntry.RawLine; the viewer never
-		// reads it, so skip the per-line copy on the detail path.
-		entries, err := claude.ReadHistoryFileWithOptions(candidate.path, claude.ReadOptions{KeepRaw: false})
-		if err != nil {
-			return SessionRecord{}, err
-		}
-		record = summarizeClaudeSession(candidate.path, entries)
-		record.Entries = claudeEntriesForViewer(entries)
-	case "codex":
-		uses, err := history.ExtractCodexToolUses(candidate.path)
-		if err != nil {
-			return SessionRecord{}, err
-		}
-		record = summarizeCodexSession(candidate.path, uses)
-		record.Entries = codexEntriesForViewer(uses)
-	default:
-		return SessionRecord{}, fmt.Errorf("unknown session source %q", record.Source)
-	}
-	return record, nil
-}
-
-func claudeEntriesForViewer(entries []claude.HistoryEntry) []SessionEntryWire {
-	toolUses := claude.ExtractToolUsesWithTokens(entries)
-	toolByID := make(map[string]claude.ToolUse, len(toolUses))
-	for _, use := range toolUses {
-		if use.ToolUseID != "" {
-			toolByID[use.ToolUseID] = use
-		}
-	}
-
-	var out []SessionEntryWire
-	for entryIndex, entry := range entries {
-		if blocks := messageTextBlocks(entry); len(blocks) > 0 {
-			out = append(out, SessionEntryWire{
-				Type:      string(entry.Message.Role),
-				Message:   &SessionMessageWire{Role: string(entry.Message.Role), StopReason: string(entry.Message.StopReason), Content: blocks},
-				Timestamp: entry.Timestamp,
-				CWD:       entry.CWD,
-				SessionID: entry.SessionID,
-				UUID:      entry.UUID,
-			})
-		}
-
-		for blockIndex, block := range entry.Message.Content {
-			if block.Type != claude.ContentTypeToolUse {
-				continue
-			}
-			use, ok := toolByID[block.ID]
-			if !ok {
-				use = claude.ToolUse{
-					Tool:      block.Name,
-					Input:     rawJSONMap(block.Input),
-					SessionID: entry.SessionID,
-					ToolUseID: block.ID,
-					Source:    "claude",
-				}
-				if ts, err := entry.ParseTimestamp(); err == nil {
-					use.Timestamp = &ts
-				}
-			}
-			if use.Source == "" {
-				use.Source = "claude"
-			}
-			if use.Model == "" {
-				use.Model = entry.Message.Model
-			}
-			if use.CWD == "" {
-				use.CWD = entry.CWD
-			}
-			out = append(out, SessionEntryWire{
-				Type:      "assistant",
-				ToolUse:   claudeToolUseForViewer(use),
-				Timestamp: entry.Timestamp,
-				CWD:       entry.CWD,
-				SessionID: entry.SessionID,
-				UUID:      fallbackUUID(entry.UUID, entryIndex, blockIndex),
-			})
-		}
-	}
-	return out
-}
-
-func codexEntriesForViewer(uses []history.ToolUse) []SessionEntryWire {
-	out := make([]SessionEntryWire, 0, len(uses))
-	for i, use := range uses {
-		out = append(out, SessionEntryWire{
-			Type:      "assistant",
-			ToolUse:   codexToolUseForViewer(use),
-			Timestamp: formatOptionalTime(use.Timestamp),
-			CWD:       use.CWD,
-			SessionID: use.SessionID,
-			UUID:      fmt.Sprintf("codex-%d", i),
-		})
-	}
-	return out
-}
-
-func messageTextBlocks(entry claude.HistoryEntry) []SessionContentWire {
-	var blocks []SessionContentWire
-	for _, block := range entry.Message.Content {
-		switch block.Type {
-		case claude.ContentTypeText:
-			if block.Text != "" {
-				blocks = append(blocks, SessionContentWire{Type: "text", Text: block.Text, ID: block.ID})
-			}
-		case claude.ContentTypeThinking, claude.ContentTypeRedactedThinking:
-			if block.Thinking != "" {
-				blocks = append(blocks, SessionContentWire{Type: "thinking", Thinking: block.Thinking, ID: block.ID})
-			}
-		}
-	}
-	return blocks
-}
-
-func claudeToolUseForViewer(use claude.ToolUse) *SessionToolUseWire {
-	return &SessionToolUseWire{
-		Tool:            use.Tool,
-		Input:           use.Input,
-		Timestamp:       formatOptionalTime(use.Timestamp),
-		CWD:             use.CWD,
-		SessionID:       use.SessionID,
-		ToolUseID:       use.ToolUseID,
-		Source:          use.Source,
-		Model:           use.Model,
-		ReasoningEffort: use.ReasoningEffort,
-		Response:        use.Response,
-	}
-}
-
-func codexToolUseForViewer(use history.ToolUse) *SessionToolUseWire {
-	return &SessionToolUseWire{
-		Tool:            use.Tool,
-		Input:           use.Input,
-		Timestamp:       formatOptionalTime(use.Timestamp),
-		CWD:             use.CWD,
-		SessionID:       use.SessionID,
-		ToolUseID:       use.ToolUseID,
-		Source:          use.Source,
-		Model:           use.Model,
-		ReasoningEffort: use.ReasoningEffort,
-		Response:        use.Response,
-	}
-}
-
-func rawJSONMap(raw json.RawMessage) map[string]any {
-	if len(raw) == 0 {
-		return nil
-	}
-	var out map[string]any
-	_ = json.Unmarshal(raw, &out)
-	return out
-}
-
 func sessionRecordKey(source, path string) string {
 	sum := sha256.Sum256([]byte(source + "\x00" + path))
 	return source + "-" + hex.EncodeToString(sum[:])[:16]
@@ -804,18 +593,4 @@ func sessionSortTime(record SessionRecord) time.Time {
 		return *record.StartedAt
 	}
 	return time.Time{}
-}
-
-func formatOptionalTime(t *time.Time) string {
-	if t == nil || t.IsZero() {
-		return ""
-	}
-	return t.Format(time.RFC3339)
-}
-
-func fallbackUUID(base string, entryIndex, blockIndex int) string {
-	if base != "" {
-		return fmt.Sprintf("%s-tool-%d", base, blockIndex)
-	}
-	return fmt.Sprintf("entry-%d-tool-%d", entryIndex, blockIndex)
 }
