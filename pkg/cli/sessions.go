@@ -25,7 +25,7 @@ type SessionListOptions struct {
 }
 
 type SessionGetOptions struct {
-	ID     string `flag:"id" args:"true" help:"Session key or session id" required:"true"`
+	ID     string `flag:"id" args:"true" help:"Session key or session id"`
 	Source string `flag:"source" help:"Restrict source: all, claude, codex" default:"all"`
 }
 
