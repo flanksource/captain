@@ -31,6 +31,39 @@ type ParsedSession struct {
 	Transcripts []ParsedTranscript
 }
 
+// ParseTranscript parses a single transcript file into a ParsedTranscript
+// (entries + agent-stamped, token-bearing tool uses) and returns the root
+// session id derived from the path. It is the single-file counterpart to
+// ParseSessions, used by the persistent summary cache to (re)build one file.
+func ParseTranscript(path string) (ParsedTranscript, string, error) {
+	entries, err := ReadHistoryFileWithOptions(path, ReadOptions{KeepRaw: false})
+	if err != nil {
+		return ParsedTranscript{}, "", err
+	}
+	projectsDir := GetProjectsDir()
+	t := ParsedTranscript{
+		Path:     path,
+		IsAgent:  isAgentTranscript(path),
+		Entries:  entries,
+		ToolUses: stampToolUses(ExtractToolUsesWithTokens(entries), projectsDir, path),
+	}
+	sessionID := sessionIDFromTranscriptPath(path)
+	if t.IsAgent {
+		t.AgentID = agentIDFromPath(path)
+		t.AgentType, t.AgentDesc = readAgentMeta(path)
+	} else {
+		// Root sessions: prefer the in-file sessionId (authoritative) over the
+		// filename-derived id.
+		for _, e := range entries {
+			if e.SessionID != "" {
+				sessionID = e.SessionID
+				break
+			}
+		}
+	}
+	return t, sessionID, nil
+}
+
 // ParseSessions discovers the in-scope session transcripts (root + sub-agents
 // when filter.IncludeAgents) and returns them grouped by root session id, each
 // transcript parsed into entries + token/cost-bearing, agent-stamped tool uses.

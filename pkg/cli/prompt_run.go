@@ -120,6 +120,19 @@ func runPromptStream(t *task.Task, rendered PromptRenderResult, timeout time.Dur
 	if session == "" && len(loop.Iterations) > 0 {
 		session = loop.Iterations[0].SessionID
 	}
+	// Persist the realized prompt for this launched session so `sessions get` can
+	// show what produced it. External (non-captain) sessions have no such record.
+	if session != "" {
+		if st := sessionStore(); st != nil {
+			st.upsertPrompt(StoredPrompt{
+				SessionID: session,
+				RunID:     runID,
+				Model:     acc.model,
+				Backend:   rendered.Backend,
+				Realized:  rendered,
+			})
+		}
+	}
 	summary := PromptRunSummary{
 		RunID:        runID,
 		SessionID:    session,

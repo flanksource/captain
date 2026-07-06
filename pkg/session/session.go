@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/segmentio/encoding/json"
 )
 
 // Session is the unified session aggregate. It is the single source of truth the
@@ -36,6 +37,11 @@ type Session struct {
 	Approvals ApprovalStats `json:"approvals,omitempty"`
 	Health    []Health      `json:"health,omitempty"`
 	Live      *LiveProcess  `json:"live,omitempty"`
+
+	// Prompt is the realized prompt that launched this session (opaque JSON of
+	// the render result), attached from the persistent store for captain-launched
+	// sessions; nil for external sessions.
+	Prompt json.RawMessage `json:"prompt,omitempty"`
 }
 
 // GitState is the git/workflow state captured for a session.
