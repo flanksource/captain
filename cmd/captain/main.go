@@ -76,9 +76,9 @@ func main() {
 
 	sessionsCmd := &cobra.Command{Use: "sessions", Short: "Browse Claude and Codex sessions"}
 	rootCmd.AddCommand(sessionsCmd)
-	clicky.AddNamedCommand("list", sessionsCmd, cli.SessionListOptions{}, cli.RunSessionList).Short = "List discovered sessions"
-	clicky.AddNamedCommand("live", sessionsCmd, cli.SessionLiveOptions{}, cli.RunSessionLive).Short = "List sessions with live process health"
-	clicky.AddNamedCommand("get", sessionsCmd, cli.SessionGetOptions{}, cli.RunSessionGet).Short = "Show a session transcript"
+	clicky.AddNamedCommandWithContext("list", sessionsCmd, cli.SessionListOptions{}, cli.RunSessionList).Short = "List discovered sessions"
+	clicky.AddNamedCommandWithContext("live", sessionsCmd, cli.SessionLiveOptions{}, cli.RunSessionLive).Short = "List sessions with live process health"
+	clicky.AddNamedCommandWithContext("get", sessionsCmd, cli.SessionGetOptions{}, cli.RunSessionGet).Short = "Show a session transcript"
 
 	sandboxCmd := &cobra.Command{
 		Use:   "sandbox",

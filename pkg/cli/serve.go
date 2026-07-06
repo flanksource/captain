@@ -21,6 +21,7 @@ import (
 
 	"github.com/flanksource/clicky/aichat"
 	"github.com/flanksource/clicky/rpc"
+	rpchttp "github.com/flanksource/clicky/rpc/http"
 	"github.com/flanksource/clicky/task"
 	"github.com/spf13/cobra"
 )
@@ -181,7 +182,7 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	addr := fmt.Sprintf("%s:%d", opts.Host, opts.Port)
 	httpSrv := &http.Server{
 		Addr:        addr,
-		Handler:     PromptDirsMiddleware(mux, opts.PromptDirs),
+		Handler:     rpchttp.TimingMiddleware(PromptDirsMiddleware(mux, opts.PromptDirs)),
 		ReadTimeout: 30 * time.Second,
 		// /api/chat streams SSE; a fixed write timeout truncates long turns.
 		IdleTimeout: 60 * time.Second,
@@ -264,7 +265,7 @@ func handleSessionsLive() http.HandlerFunc {
 			opts.Limit = limit
 		}
 
-		result, err := RunSessionLive(opts)
+		result, err := RunSessionLive(r.Context(), opts)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return

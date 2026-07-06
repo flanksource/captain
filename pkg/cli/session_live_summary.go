@@ -2,14 +2,16 @@ package cli
 
 import (
 	"bufio"
+	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"os"
 	"sort"
-	"strings"
 
 	"github.com/flanksource/captain/pkg/ai/history"
 	"github.com/flanksource/captain/pkg/claude"
+	rpchttp "github.com/flanksource/clicky/rpc/http"
 )
 
 const (
@@ -24,8 +26,10 @@ type liveSessionFile struct {
 	modUnix int64
 }
 
-func discoverLiveSessionCandidates(cwd string, searchAll bool, source string, limit int) ([]sessionCandidate, error) {
+func discoverLiveSessionCandidates(ctx context.Context, cwd string, searchAll bool, source string, limit int) ([]sessionCandidate, error) {
+	stopFind := rpchttp.Track(ctx, "find")
 	files, err := discoverLiveSessionFiles(cwd, searchAll, source)
+	stopFind()
 	if err != nil {
 		return nil, err
 	}
@@ -39,26 +43,11 @@ func discoverLiveSessionCandidates(cwd string, searchAll bool, source string, li
 		files = files[:limit]
 	}
 
-	candidates := make([]sessionCandidate, 0, len(files))
-	for _, file := range files {
-		var (
-			record SessionRecord
-			err    error
-		)
-		switch file.source {
-		case "claude":
-			record, err = summarizeClaudeSessionFileFast(file.path)
-		case "codex":
-			record, err = summarizeCodexSessionFileFast(file.path)
-		default:
-			continue
-		}
-		if err != nil || record.ID == "" {
-			continue
-		}
-		candidates = append(candidates, sessionCandidate{record: record, path: file.path})
+	refs := make([]sessionFileRef, len(files))
+	for i, file := range files {
+		refs[i] = sessionFileRef{source: file.source, path: file.path}
 	}
-	return candidates, nil
+	return summarizeSessionRefs(ctx, refs), nil
 }
 
 func discoverLiveSessionFiles(cwd string, searchAll bool, source string) ([]liveSessionFile, error) {
@@ -123,7 +112,7 @@ func summarizeClaudeSessionFileFast(file string) (SessionRecord, error) {
 	}
 	for _, line := range lines {
 		var entry claudeSummaryLine
-		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+		if err := json.Unmarshal(line, &entry); err != nil {
 			continue
 		}
 		if ts := parseSessionSummaryTime(entry.Timestamp); !ts.IsZero() {
@@ -189,7 +178,7 @@ func summarizeCodexSessionFileFast(file string) (SessionRecord, error) {
 		record.StartedAt = meta.StartedAt
 	}
 	for _, line := range lines {
-		event, err := history.ParseCodexLine(line)
+		event, err := history.ParseCodexLine(string(line))
 		if err != nil {
 			continue
 		}
@@ -268,7 +257,12 @@ func applyCodexSummaryEvent(record *SessionRecord, event history.CodexEvent) {
 	}
 }
 
-func sampledJSONLLines(file string) ([]string, error) {
+// sampledJSONLLines returns the head and tail JSONL lines of a session file as
+// raw byte slices, deduplicated and trimmed. Working in bytes avoids the
+// per-line string allocation and the []byte(string) round-trip on the parse
+// path. Returned slices are owned by the caller (head lines are copied; tail
+// lines slice into a private read buffer).
+func sampledJSONLLines(file string) ([][]byte, error) {
 	head, err := readHeadLines(file, liveSummaryHeadLines)
 	if err != nil {
 		return nil, err
@@ -277,23 +271,23 @@ func sampledJSONLLines(file string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	lines := make([]string, 0, len(head)+len(tail))
+	lines := make([][]byte, 0, len(head)+len(tail))
 	seen := make(map[string]struct{}, len(head)+len(tail))
 	for _, line := range append(head, tail...) {
-		line = strings.TrimSpace(line)
-		if line == "" {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
 			continue
 		}
-		if _, ok := seen[line]; ok {
+		if _, ok := seen[string(line)]; ok {
 			continue
 		}
-		seen[line] = struct{}{}
+		seen[string(line)] = struct{}{}
 		lines = append(lines, line)
 	}
 	return lines, nil
 }
 
-func readHeadLines(file string, maxLines int) ([]string, error) {
+func readHeadLines(file string, maxLines int) ([][]byte, error) {
 	f, err := os.Open(file)
 	if err != nil {
 		return nil, err
@@ -302,9 +296,10 @@ func readHeadLines(file string, maxLines int) ([]string, error) {
 
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
-	lines := make([]string, 0, maxLines)
+	lines := make([][]byte, 0, maxLines)
 	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
+		// Scanner reuses its buffer across Scan calls, so copy each retained line.
+		lines = append(lines, append([]byte(nil), scanner.Bytes()...))
 		if len(lines) >= maxLines {
 			break
 		}
@@ -315,7 +310,7 @@ func readHeadLines(file string, maxLines int) ([]string, error) {
 	return lines, nil
 }
 
-func readTailLines(file string, maxLines int, maxBytes int64) ([]string, error) {
+func readTailLines(file string, maxLines int, maxBytes int64) ([][]byte, error) {
 	f, err := os.Open(file)
 	if err != nil {
 		return nil, err
@@ -339,11 +334,11 @@ func readTailLines(file string, maxLines int, maxBytes int64) ([]string, error) 
 	if _, err := f.ReadAt(buf, offset); err != nil && err != io.EOF {
 		return nil, err
 	}
-	text := strings.TrimRight(string(buf), "\n")
-	if text == "" {
+	trimmed := bytes.TrimRight(buf, "\n")
+	if len(trimmed) == 0 {
 		return nil, nil
 	}
-	lines := strings.Split(text, "\n")
+	lines := bytes.Split(trimmed, []byte{'\n'})
 	if offset > 0 && len(lines) > 0 {
 		lines = lines[1:]
 	}

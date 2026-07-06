@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai/history"
 	"github.com/flanksource/captain/pkg/claude"
+	rpchttp "github.com/flanksource/clicky/rpc/http"
 )
 
 type SessionListOptions struct {
@@ -244,7 +246,7 @@ type sessionCandidate struct {
 	path   string
 }
 
-func RunSessionList(opts SessionListOptions) (SessionListResult, error) {
+func RunSessionList(ctx context.Context, opts SessionListOptions) (SessionListResult, error) {
 	source, err := normalizeSessionSource(opts.Source)
 	if err != nil {
 		return SessionListResult{}, err
@@ -254,7 +256,7 @@ func RunSessionList(opts SessionListOptions) (SessionListResult, error) {
 		return SessionListResult{}, err
 	}
 
-	candidates, err := discoverSessionCandidates(cwd, opts.All, source)
+	candidates, err := discoverSessionCandidates(ctx, cwd, opts.All, source)
 	if err != nil {
 		return SessionListResult{}, err
 	}
@@ -282,7 +284,7 @@ func RunSessionList(opts SessionListOptions) (SessionListResult, error) {
 	}, nil
 }
 
-func RunSessionGet(opts SessionGetOptions) (SessionRecord, error) {
+func RunSessionGet(ctx context.Context, opts SessionGetOptions) (SessionRecord, error) {
 	source, err := normalizeSessionSource(opts.Source)
 	if err != nil {
 		return SessionRecord{}, err
@@ -292,13 +294,16 @@ func RunSessionGet(opts SessionGetOptions) (SessionRecord, error) {
 		return SessionRecord{}, fmt.Errorf("id is required")
 	}
 
-	if candidate, ok, err := findSessionCandidateByID(id, source); err != nil {
+	stopFind := rpchttp.Track(ctx, "find")
+	candidate, found, err := findSessionCandidateByID(id, source)
+	stopFind()
+	if err != nil {
 		return SessionRecord{}, err
-	} else if ok {
-		return loadSessionDetail(candidate)
+	} else if found {
+		return loadSessionDetail(ctx, candidate)
 	}
 
-	candidates, err := discoverSessionCandidates("", true, source)
+	candidates, err := discoverSessionCandidates(ctx, "", true, source)
 	if err != nil {
 		return SessionRecord{}, err
 	}
@@ -306,7 +311,7 @@ func RunSessionGet(opts SessionGetOptions) (SessionRecord, error) {
 		if candidate.record.Key != id && candidate.record.ID != id && !strings.HasPrefix(candidate.record.ID, id) {
 			continue
 		}
-		record, err := loadSessionDetail(candidate)
+		record, err := loadSessionDetail(ctx, candidate)
 		if err != nil {
 			return SessionRecord{}, err
 		}
@@ -327,17 +332,17 @@ func normalizeSessionSource(source string) (string, error) {
 	}
 }
 
-func discoverSessionCandidates(cwd string, searchAll bool, source string) ([]sessionCandidate, error) {
+func discoverSessionCandidates(ctx context.Context, cwd string, searchAll bool, source string) ([]sessionCandidate, error) {
 	var candidates []sessionCandidate
 	if source == "all" || source == "claude" {
-		claudeSessions, err := discoverClaudeSessions(cwd, searchAll)
+		claudeSessions, err := discoverClaudeSessions(ctx, cwd, searchAll)
 		if err != nil {
 			return nil, err
 		}
 		candidates = append(candidates, claudeSessions...)
 	}
 	if source == "all" || source == "codex" {
-		codexSessions, err := discoverCodexSessions(cwd, searchAll)
+		codexSessions, err := discoverCodexSessions(ctx, cwd, searchAll)
 		if err != nil {
 			return nil, err
 		}
@@ -440,25 +445,25 @@ func hasPathOrGlobMeta(s string) bool {
 	return strings.ContainsAny(s, `/\*?[`)
 }
 
-func discoverClaudeSessions(cwd string, searchAll bool) ([]sessionCandidate, error) {
+func discoverClaudeSessions(ctx context.Context, cwd string, searchAll bool) ([]sessionCandidate, error) {
+	stopFind := rpchttp.Track(ctx, "find")
 	files, err := claude.FindSessionFiles(claude.GetProjectsDir(), cwd, searchAll)
+	stopFind()
 	if err != nil {
 		return nil, err
 	}
-	candidates := make([]sessionCandidate, 0, len(files))
-	for _, file := range files {
-		record, err := summarizeClaudeSessionFile(file)
-		if err != nil {
-			continue
-		}
-		candidates = append(candidates, sessionCandidate{record: record, path: file})
+	refs := make([]sessionFileRef, len(files))
+	for i, file := range files {
+		refs[i] = sessionFileRef{source: "claude", path: file}
 	}
-	return candidates, nil
+	return summarizeSessionRefs(ctx, refs), nil
 }
 
-func discoverCodexSessions(cwd string, searchAll bool) ([]sessionCandidate, error) {
+func discoverCodexSessions(ctx context.Context, cwd string, searchAll bool) ([]sessionCandidate, error) {
+	stopFind := rpchttp.Track(ctx, "find")
 	files, err := history.FindCodexSessionFiles()
 	if err != nil {
+		stopFind()
 		return nil, err
 	}
 	matchRoot := cwd
@@ -468,8 +473,7 @@ func discoverCodexSessions(cwd string, searchAll bool) ([]sessionCandidate, erro
 			matchRoot = projectInfo.Root
 		}
 	}
-
-	candidates := make([]sessionCandidate, 0, len(files))
+	refs := make([]sessionFileRef, 0, len(files))
 	for _, file := range files {
 		if !searchAll {
 			meta, err := history.ReadCodexSessionMeta(file)
@@ -477,13 +481,10 @@ func discoverCodexSessions(cwd string, searchAll bool) ([]sessionCandidate, erro
 				continue
 			}
 		}
-		record, err := summarizeCodexSessionFile(file)
-		if err != nil || record.ID == "" {
-			continue
-		}
-		candidates = append(candidates, sessionCandidate{record: record, path: file})
+		refs = append(refs, sessionFileRef{source: "codex", path: file})
 	}
-	return candidates, nil
+	stopFind()
+	return summarizeSessionRefs(ctx, refs), nil
 }
 
 func codexMetaMatchesProject(meta *history.CodexSessionInfo, projectRoot string) bool {
@@ -584,11 +585,14 @@ func summarizeCodexSession(file string, uses []history.ToolUse) SessionRecord {
 	return record
 }
 
-func loadSessionDetail(candidate sessionCandidate) (SessionRecord, error) {
+func loadSessionDetail(ctx context.Context, candidate sessionCandidate) (SessionRecord, error) {
+	defer rpchttp.Track(ctx, "parse")()
 	record := candidate.record
 	switch record.Source {
 	case "claude":
-		entries, err := claude.ReadHistoryFile(candidate.path)
+		// KeepRaw copies every line into HistoryEntry.RawLine; the viewer never
+		// reads it, so skip the per-line copy on the detail path.
+		entries, err := claude.ReadHistoryFileWithOptions(candidate.path, claude.ReadOptions{KeepRaw: false})
 		if err != nil {
 			return SessionRecord{}, err
 		}
