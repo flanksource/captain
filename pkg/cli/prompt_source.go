@@ -42,14 +42,21 @@ func loadPromptContent(ctx context.Context, id string, opts AIPromptOptions, std
 		if err != nil {
 			return "", "", false, promptRecord{}, err
 		}
+		if record.Source.Kind == "file" {
+			log.Debugf("prompt source: file %s (positional %q)", record.Path, id)
+		} else {
+			log.Debugf("prompt source: registry id %q → %s/%s", id, record.Source.Kind, record.Rel)
+		}
 		c, err := readPromptContent(record)
 		if err != nil {
 			return "", "", false, promptRecord{}, err
 		}
 		return c, record.Rel, false, record, nil
 	case opts.Prompt != "":
+		log.Debugf("prompt source: inline --prompt/-p (%d chars)", len(opts.Prompt))
 		return opts.Prompt, "<inline>", false, promptRecord{Rel: "inline.prompt"}, nil
 	case strings.TrimSpace(stdin) != "":
+		log.Debugf("prompt source: stdin (%d chars)", len(stdin))
 		return stdin, "<stdin>", true, promptRecord{Rel: "stdin.prompt"}, nil
 	default:
 		return "", "", false, promptRecord{}, fmt.Errorf("prompt required: pass a .prompt file/id, --prompt/-p text, or pipe via stdin")
