@@ -21,10 +21,14 @@ import {
   formatCost,
   formatTime,
   healthClassName,
+  sessionCostTotal,
   sessionTitle,
+  sessionToolCount,
+  unifiedSessionTitle,
   type SessionDashboard,
   type SessionRecord,
   type SourceFilter,
+  type UnifiedSession,
 } from "./sessionData";
 
 type Navigate = (to: string, opts?: { replace?: boolean }) => void;
@@ -267,7 +271,7 @@ function SessionHeader({
   timing,
   loading,
 }: {
-  session?: SessionRecord;
+  session?: UnifiedSession;
   timing?: TimingMetric[];
   loading: boolean;
 }) {
@@ -285,7 +289,7 @@ function SessionHeader({
   return (
     <div className="min-w-0">
       <div className="flex min-w-0 flex-wrap items-center gap-density-2">
-        <div className="truncate text-sm font-semibold">{sessionTitle(session)}</div>
+        <div className="truncate text-sm font-semibold">{unifiedSessionTitle(session)}</div>
         <span className="rounded border border-border px-1.5 py-0.5 text-[11px] uppercase text-muted-foreground">
           {session.source}
         </span>
@@ -298,11 +302,9 @@ function SessionHeader({
       </div>
       <div className="mt-1 flex min-w-0 flex-wrap gap-x-density-3 gap-y-1 text-xs text-muted-foreground">
         {session.model && <span>{session.model}</span>}
-        {session.reasoningEffort && <span>reasoning={session.reasoningEffort}</span>}
-        <span>{session.toolCalls} actions</span>
-        <span>{session.messages} messages</span>
-        {session.context && <span>{session.context.freePercent}% context free</span>}
-        {session.costUsd ? <span>{formatCost(session.costUsd)}</span> : null}
+        <span>{sessionToolCount(session.messages)} actions</span>
+        <span>{session.messages?.length ?? 0} messages</span>
+        {sessionCostTotal(session.cost) ? <span>{formatCost(sessionCostTotal(session.cost))}</span> : null}
         {session.live?.pid && <span>pid={session.live.pid}</span>}
         {session.cwd && <span className="max-w-full truncate">{session.cwd}</span>}
       </div>
@@ -315,7 +317,7 @@ function SessionDetail({
   loading,
   error,
 }: {
-  session?: SessionRecord;
+  session?: UnifiedSession;
   loading: boolean;
   error: unknown;
 }) {
@@ -337,7 +339,7 @@ function SessionDetail({
     // AppShell's content region is a bounded block (h-full), not a flex parent, so
     // `h-full` (not `flex-1`) is what gives the viewer a definite height to scroll within.
     <div className="flex h-full min-h-0 flex-col">
-      <SessionViewer session={session?.entries ?? []} defaultExpanded={false} scrollable />
+      <SessionViewer session={session?.messages ?? []} defaultExpanded={false} scrollable />
     </div>
   );
 }
