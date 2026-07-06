@@ -1,4 +1,4 @@
-import type { SessionEntry } from "@flanksource/clicky-ui/ai";
+import type { SessionEntry, SessionUIMessage } from "@flanksource/clicky-ui/ai";
 import { apiClient } from "./api";
 import { parseServerTiming, type TimingMetric } from "./serverTiming";
 
@@ -33,6 +33,45 @@ export type SessionRecord = {
   live?: SessionLive;
   health?: SessionHealth[];
   entries?: SessionEntry[];
+};
+
+// UnifiedSession is captain's canonical session.Session (served by the sessions
+// `get` action at /api/v1/sessions/{id}). The detail view consumes it directly —
+// its `messages` (SessionUIMessage[]) feed the SessionViewer.
+export type UnifiedGit = { branch?: string; commit?: string; worktree?: string; diff?: string };
+
+export type UnifiedUsage = {
+  inputTokens?: number;
+  outputTokens?: number;
+  reasoningTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+};
+
+export type UnifiedCost = {
+  inputCost?: number;
+  outputCost?: number;
+  reasoningCost?: number;
+  cacheReadCost?: number;
+  cacheWriteCost?: number;
+};
+
+export type UnifiedSession = {
+  id: string;
+  source: "claude" | "codex";
+  project?: string;
+  cwd?: string;
+  slug?: string;
+  version?: string;
+  provider?: string;
+  model?: string;
+  git?: UnifiedGit;
+  startedAt?: string;
+  endedAt?: string;
+  usage?: UnifiedUsage;
+  cost?: UnifiedCost;
+  live?: SessionLive;
+  messages?: SessionUIMessage[];
 };
 
 export type SessionTokens = {
@@ -113,7 +152,7 @@ export async function fetchLiveSessions(params: {
 
 export async function fetchSession(
   id: string,
-): Promise<SessionRecord & { timing?: TimingMetric[] }> {
+): Promise<UnifiedSession & { timing?: TimingMetric[] }> {
   const response = await apiClient.executeCommand(
     "/api/v1/sessions/{id}",
     "GET",
@@ -124,7 +163,36 @@ export async function fetchSession(
     throw new Error(response.error || "Failed to load session.");
   }
   const timing = parseServerTiming(response.responseHeaders?.["server-timing"]);
-  return { ...(response.parsed as SessionRecord), ...(timing.length ? { timing } : {}) };
+  return { ...(response.parsed as UnifiedSession), ...(timing.length ? { timing } : {}) };
+}
+
+/** Sum a unified session's per-bucket costs into a total USD. */
+export function sessionCostTotal(cost: UnifiedCost | undefined): number {
+  if (!cost) return 0;
+  return (
+    (cost.inputCost ?? 0) +
+    (cost.outputCost ?? 0) +
+    (cost.reasoningCost ?? 0) +
+    (cost.cacheReadCost ?? 0) +
+    (cost.cacheWriteCost ?? 0)
+  );
+}
+
+/** Count tool-call parts across a unified session's messages. */
+export function sessionToolCount(messages: SessionUIMessage[] | undefined): number {
+  let count = 0;
+  for (const message of messages ?? []) {
+    for (const part of message.parts) {
+      if (part.type === "dynamic-tool" || part.type.startsWith("tool-")) count += 1;
+    }
+  }
+  return count;
+}
+
+export function unifiedSessionTitle(session: UnifiedSession): string {
+  if (session.git?.branch) return `${session.git.branch} - ${shortID(session.id)}`;
+  if (session.model) return `${session.model} - ${shortID(session.id)}`;
+  return shortID(session.id);
 }
 
 export function sessionTitle(session: SessionRecord) {
