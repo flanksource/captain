@@ -93,17 +93,21 @@ func TestRunSessionListAndGetClaude(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunSessionGet: %v", err)
 	}
-	if len(detail.Entries) != 2 {
-		t.Fatalf("entries = %+v", detail.Entries)
+	if detail.Source != "claude" || detail.ID != "sess-claude" {
+		t.Fatalf("session detail meta = %+v", detail)
 	}
-	if got := detail.Entries[0].Message.Content[0].Text; got != "inspect this repo" {
+	entries := detail.ToReplayEntries()
+	if len(entries) != 2 {
+		t.Fatalf("entries = %+v", entries)
+	}
+	if got := entries[0].Message.Content[0].Text; got != "inspect this repo" {
 		t.Fatalf("first message text = %q", got)
 	}
-	if detail.Entries[1].ToolUse == nil {
-		t.Fatalf("second entry should be tool use: %+v", detail.Entries[1])
+	if entries[1].ToolUse == nil {
+		t.Fatalf("second entry should be tool use: %+v", entries[1])
 	}
-	if detail.Entries[1].ToolUse.Response != "README contents" {
-		t.Fatalf("tool response = %q", detail.Entries[1].ToolUse.Response)
+	if entries[1].ToolUse.Response != "README contents" {
+		t.Fatalf("tool response = %q", entries[1].ToolUse.Response)
 	}
 }
 
