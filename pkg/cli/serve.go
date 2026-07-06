@@ -159,6 +159,7 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	rpcServer.RegisterRoutes(mux)
 	mux.HandleFunc("POST /api/captain/chat/threads/from-agent", handleThreadFromAgent(threadStore))
 	mux.HandleFunc("GET /api/captain/sessions/live", handleSessionsLive())
+	mux.HandleFunc("GET /api/captain/sessions/{id}", handleSessionGet())
 	mux.HandleFunc("GET /api/captain/ai/permissions/catalog", handlePermissionCatalog(cwd))
 	mux.HandleFunc("GET /api/captain/ai/cli-options/catalog", handleCLIOptionsCatalog())
 	mux.HandleFunc("GET /api/captain/secrets/resources", handleSecretResources())
@@ -271,6 +272,29 @@ func handleSessionsLive() http.HandlerFunc {
 			return
 		}
 		writeServeJSON(w, http.StatusOK, result)
+	}
+}
+
+// handleSessionGet serves the unified session model for one session id at
+// GET /api/captain/sessions/{id}, so the web UI can render the same model the
+// CLI `sessions get` returns.
+func handleSessionGet() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimSpace(r.PathValue("id"))
+		if id == "" {
+			http.Error(w, "session id is required", http.StatusBadRequest)
+			return
+		}
+		source := strings.TrimSpace(r.URL.Query().Get("source"))
+		if source == "" {
+			source = "all"
+		}
+		s, err := RunSessionGet(r.Context(), SessionGetOptions{ID: id, Source: source})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		writeServeJSON(w, http.StatusOK, s)
 	}
 }
 
