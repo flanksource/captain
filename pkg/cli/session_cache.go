@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"sync"
 
+	"github.com/flanksource/captain/pkg/session"
 	rpchttp "github.com/flanksource/clicky/rpc/http"
 )
 
@@ -16,24 +17,10 @@ type sessionFileRef struct {
 	path   string
 }
 
-// summaryEntry is a cached sampled summary keyed by the file's identity at read
-// time; a changed mtime or size invalidates it.
-type summaryEntry struct {
-	modUnix int64
-	size    int64
-	record  SessionRecord
-}
-
-// summaryCache memoizes sampled session summaries across requests (path →
-// summaryEntry). Session files are append-only and there are at most a few
-// thousand of them, so the cache is left unbounded — a changed mtime/size
-// re-summarizes the one file that moved. It makes the dashboard's 5s poll and
-// repeated listings effectively free after the first scan.
-var summaryCache sync.Map
-
-// summarizeSessionFileCached returns the sampled summary for a session file,
-// reusing a cached result when the file's mtime and size are unchanged. The
-// stat is one syscall versus reading the file, so a cache hit skips the read.
+// summarizeSessionFileCached returns the persisted summary for a session file,
+// reusing the stored row when the file's mtime+size are unchanged and otherwise
+// rebuilding the rich rows (root + sub-agents) and upserting them. When the
+// store is unavailable it degrades to building the summary uncached.
 func summarizeSessionFileCached(ref sessionFileRef) (SessionRecord, error) {
 	info, err := os.Stat(ref.path)
 	if err != nil {
@@ -43,29 +30,30 @@ func summarizeSessionFileCached(ref sessionFileRef) (SessionRecord, error) {
 		return SessionRecord{}, fmt.Errorf("%s is a directory", ref.path)
 	}
 	modUnix, size := info.ModTime().UnixNano(), info.Size()
-	if cached, ok := summaryCache.Load(ref.path); ok {
-		entry := cached.(summaryEntry)
-		if entry.modUnix == modUnix && entry.size == size {
-			return entry.record, nil
+
+	st := sessionStore()
+	if st != nil {
+		if row, ok := st.lookupFresh(ref.path, modUnix, size); ok {
+			return row.toRecord(), nil
 		}
 	}
-	record, err := summarizeSessionFileFast(ref.source, ref.path)
+
+	rows, err := session.RowsFromFile(ref.path, ref.source)
 	if err != nil {
 		return SessionRecord{}, err
 	}
-	summaryCache.Store(ref.path, summaryEntry{modUnix: modUnix, size: size, record: record})
-	return record, nil
-}
-
-func summarizeSessionFileFast(source, path string) (SessionRecord, error) {
-	switch source {
-	case "claude":
-		return summarizeClaudeSessionFileFast(path)
-	case "codex":
-		return summarizeCodexSessionFileFast(path)
-	default:
-		return SessionRecord{}, fmt.Errorf("unknown session source %q", source)
+	if st != nil {
+		st.upsertRows(rows)
 	}
+	for _, r := range rows {
+		if r.Path == ref.path {
+			return recordFromRow(r), nil
+		}
+	}
+	if len(rows) > 0 {
+		return recordFromRow(rows[0]), nil
+	}
+	return SessionRecord{}, fmt.Errorf("no summary for %s", ref.path)
 }
 
 // summarizeSessionRefs sampled-summarizes files concurrently (bounded by

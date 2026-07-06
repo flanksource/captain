@@ -1,0 +1,310 @@
+package cli
+
+import (
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
+
+	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/session"
+	commonsdb "github.com/flanksource/commons-db/db"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+)
+
+// StoredSession is one persisted transcript summary — a root session or a
+// sub-agent (linked by ParentID) — invalidated by the file's ModUnix+Size. The
+// rich fields are stored as Postgres jsonb.
+type StoredSession struct {
+	Path      string  `gorm:"primaryKey;column:path"`
+	ID        string  `gorm:"index;column:id"`
+	ParentID  *string `gorm:"index;column:parent_id"`
+	Source    string  `gorm:"column:source"`
+	IsAgent   bool    `gorm:"column:is_agent"`
+	AgentType string  `gorm:"column:agent_type"`
+	AgentDesc string  `gorm:"column:agent_desc"`
+
+	ModUnix int64 `gorm:"column:mod_unix"`
+	Size    int64 `gorm:"column:size"`
+
+	Project string `gorm:"column:project"`
+	CWD     string `gorm:"column:cwd"`
+	Model   string `gorm:"column:model"`
+
+	Git      session.GitState `gorm:"serializer:json;type:jsonb;column:git"`
+	Provider ProviderInfo     `gorm:"serializer:json;type:jsonb;column:provider"`
+
+	StartedAt *time.Time `gorm:"column:started_at"`
+	EndedAt   *time.Time `gorm:"column:ended_at"`
+
+	Cost      api.Cost              `gorm:"serializer:json;type:jsonb;column:cost"`
+	Usage     api.Usage             `gorm:"serializer:json;type:jsonb;column:usage"`
+	Files     session.ChangedFiles  `gorm:"serializer:json;type:jsonb;column:files"`
+	Approvals session.ApprovalStats `gorm:"serializer:json;type:jsonb;column:approvals"`
+
+	ToolCalls     int `gorm:"column:tool_calls"`
+	MessageCount  int `gorm:"column:message_count"`
+	ContextTokens int `gorm:"column:context_tokens"`
+
+	Slug     string `gorm:"column:slug"`
+	PlanPath string `gorm:"column:plan_path"`
+	PlanSlug string `gorm:"column:plan_slug"`
+
+	UpdatedAt time.Time
+}
+
+func (StoredSession) TableName() string { return "captain_sessions" }
+
+// ProviderInfo is the provider block stored as jsonb.
+type ProviderInfo struct {
+	Name            string `json:"name,omitempty"`
+	Version         string `json:"version,omitempty"`
+	ReasoningEffort string `json:"reasoningEffort,omitempty"`
+	Backend         string `json:"backend,omitempty"`
+}
+
+// StoredPrompt is the realized prompt for a captain-launched session, keyed by
+// session id and written by the prompt-run path.
+type StoredPrompt struct {
+	SessionID string             `gorm:"primaryKey;column:session_id"`
+	RunID     string             `gorm:"column:run_id"`
+	Model     string             `gorm:"column:model"`
+	Backend   string             `gorm:"column:backend"`
+	Realized  PromptRenderResult `gorm:"serializer:json;type:jsonb;column:realized"`
+	CreatedAt time.Time
+}
+
+func (StoredPrompt) TableName() string { return "captain_session_prompts" }
+
+// sessionDB wraps the gorm handle; a nil *sessionDB means "no store — uncached".
+type sessionDB struct{ gdb *gorm.DB }
+
+var (
+	storeOnce sync.Once
+	store     *sessionDB
+)
+
+// sessionStore returns the persistent session store, opening it once. It returns
+// nil (and logs a single Warn) when the DB is unavailable, so callers degrade to
+// uncached summarization.
+func sessionStore() *sessionDB {
+	storeOnce.Do(func() { store = openSessionStore() })
+	return store
+}
+
+func openSessionStore() *sessionDB {
+	dsn := os.Getenv("CAPTAIN_SESSION_DB_URL")
+	if dsn == "off" {
+		return nil // explicitly disabled (tests, or users who opt out)
+	}
+	if dsn == "" {
+		dir, err := sessionDBDir()
+		if err != nil {
+			// WORKAROUND(session-cache): user-approved degrade-to-uncached when the
+			// summary DB can't be opened; summarization still works, just uncached.
+			log.Warnf("session store unavailable: %v; continuing uncached", err)
+			return nil
+		}
+		embeddedDSN, _, err := commonsdb.StartEmbedded(commonsdb.EmbeddedConfig{DataDir: dir})
+		if err != nil {
+			log.Warnf("session store unavailable: %v; continuing uncached", err)
+			return nil
+		}
+		dsn = embeddedDSN // shared daemon: leave running, don't call stop()
+	}
+	gdb, _, err := commonsdb.SetupDB(dsn, "session-cache")
+	if err != nil {
+		log.Warnf("session store unavailable: %v; continuing uncached", err)
+		return nil
+	}
+	if err := gdb.AutoMigrate(&StoredSession{}, &StoredPrompt{}); err != nil {
+		log.Warnf("session store migrate failed: %v; continuing uncached", err)
+		return nil
+	}
+	return &sessionDB{gdb: gdb}
+}
+
+// sessionDBDir is the embedded-postgres data directory (shared across processes).
+func sessionDBDir() (string, error) {
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(cache, "captain", "session-db"), nil
+}
+
+// lookupFresh returns the stored row for path when it exists and its mtime+size
+// still match the file (a fresh cache hit).
+func (s *sessionDB) lookupFresh(path string, modUnix, size int64) (*StoredSession, bool) {
+	var row StoredSession
+	if err := s.gdb.Where("path = ?", path).First(&row).Error; err != nil {
+		return nil, false
+	}
+	if row.ModUnix != modUnix || row.Size != size {
+		return nil, false
+	}
+	return &row, true
+}
+
+// upsertRows persists each Row (one transcript), stamping the file's mtime+size.
+func (s *sessionDB) upsertRows(rows []session.Row) {
+	for _, r := range rows {
+		stored, ok := storedFromRow(r)
+		if !ok {
+			continue
+		}
+		if err := s.gdb.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "path"}},
+			UpdateAll: true,
+		}).Create(&stored).Error; err != nil {
+			log.Warnf("session store upsert %s: %v", r.Path, err)
+		}
+	}
+}
+
+// prompt returns the realized-prompt record for a session id, if any.
+func (s *sessionDB) prompt(sessionID string) (*StoredPrompt, bool) {
+	var p StoredPrompt
+	if err := s.gdb.Where("session_id = ?", sessionID).First(&p).Error; err != nil {
+		return nil, false
+	}
+	return &p, true
+}
+
+// upsertPrompt records the realized prompt for a launched session.
+func (s *sessionDB) upsertPrompt(p StoredPrompt) {
+	if err := s.gdb.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "session_id"}},
+		UpdateAll: true,
+	}).Create(&p).Error; err != nil {
+		log.Warnf("session store upsert prompt %s: %v", p.SessionID, err)
+	}
+}
+
+// storedBase maps a session.Row to a StoredSession without the file identity
+// (ModUnix/Size) — the fields shared by persistence and projection.
+func storedBase(r session.Row) StoredSession {
+	var parent *string
+	if r.ParentID != "" {
+		p := r.ParentID
+		parent = &p
+	}
+	row := StoredSession{
+		Path:          r.Path,
+		ID:            r.ID,
+		ParentID:      parent,
+		Source:        r.Source,
+		IsAgent:       r.IsAgent,
+		AgentType:     r.AgentType,
+		AgentDesc:     r.AgentDesc,
+		Project:       r.Project,
+		CWD:           r.CWD,
+		Model:         r.Model,
+		Git:           r.Git,
+		Provider:      ProviderInfo{Name: r.Provider, Version: r.Version, ReasoningEffort: r.ReasoningEffort},
+		StartedAt:     r.StartedAt,
+		EndedAt:       r.EndedAt,
+		Cost:          r.Cost,
+		Usage:         r.Usage,
+		Files:         r.Files,
+		Approvals:     r.Approvals,
+		ToolCalls:     r.ToolCalls,
+		MessageCount:  r.Messages,
+		ContextTokens: r.ContextTokens,
+	}
+	if r.Plan != nil {
+		row.PlanPath = r.Plan.Path
+		row.PlanSlug = r.Plan.Slug
+	}
+	return row
+}
+
+// storedFromRow maps a session.Row to a StoredSession, stamping the transcript
+// file's mtime+size. Returns ok=false when the file can't be stat'd.
+func storedFromRow(r session.Row) (StoredSession, bool) {
+	info, err := os.Stat(r.Path)
+	if err != nil {
+		return StoredSession{}, false
+	}
+	row := storedBase(r)
+	row.ModUnix = info.ModTime().UnixNano()
+	row.Size = info.Size()
+	return row, true
+}
+
+const (
+	claudeContextWindow = 1_000_000
+	codexContextWindow  = 200_000
+)
+
+// contextWindow returns the model context window for a source.
+func contextWindow(source string) int {
+	if source == "codex" {
+		return codexContextWindow
+	}
+	return claudeContextWindow
+}
+
+// freeContextPercent is 100 minus the used fraction of the window, clamped.
+func freeContextPercent(used, window int) int {
+	if window <= 0 {
+		return 0
+	}
+	if used < 0 {
+		used = 0
+	}
+	free := 100 - int(float64(used)/float64(window)*100)
+	if free < 0 {
+		return 0
+	}
+	if free > 100 {
+		return 100
+	}
+	return free
+}
+
+// recordFromRow projects a session.Row straight to a SessionRecord (miss path,
+// where the store may be unavailable).
+func recordFromRow(r session.Row) SessionRecord {
+	return storedBase(r).toRecord()
+}
+
+// toRecord projects a StoredSession to the SessionRecord list/live wire shape.
+func (row StoredSession) toRecord() SessionRecord {
+	rec := SessionRecord{
+		Key:             sessionRecordKey(row.Source, row.Path),
+		ID:              row.ID,
+		Source:          row.Source,
+		Model:           row.Model,
+		ReasoningEffort: row.Provider.ReasoningEffort,
+		Version:         row.Provider.Version,
+		Provider:        row.Provider.Name,
+		GitBranch:       row.Git.Branch,
+		CWD:             row.CWD,
+		StartedAt:       row.StartedAt,
+		EndedAt:         row.EndedAt,
+		ToolCalls:       row.ToolCalls,
+		Messages:        row.MessageCount,
+		DetailAvailable: true,
+		CostUSD:         row.Cost.Total(),
+	}
+	if u := row.Usage; u.TotalTokens() > 0 {
+		rec.Tokens = &SessionTokensWire{
+			InputTokens:         u.InputTokens,
+			OutputTokens:        u.OutputTokens,
+			CacheReadTokens:     u.CacheReadTokens,
+			CacheCreationTokens: u.CacheWriteTokens,
+			TotalTokens:         u.TotalTokens(),
+		}
+	}
+	if row.ContextTokens > 0 {
+		window := contextWindow(row.Source)
+		rec.Context = &SessionContextWire{
+			UsedTokens:   row.ContextTokens,
+			WindowTokens: window,
+			FreePercent:  freeContextPercent(row.ContextTokens, window),
+		}
+	}
+	return rec
+}

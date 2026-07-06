@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -324,6 +325,16 @@ func RunSessionGet(ctx context.Context, opts SessionGetOptions) (*session.Sessio
 // session file.
 func buildUnifiedSession(ctx context.Context, candidate sessionCandidate) (*session.Session, error) {
 	defer rpchttp.Track(ctx, "parse")()
+	s, err := buildSessionModel(candidate)
+	if err != nil {
+		return nil, err
+	}
+	persistSessionRows(candidate, s)
+	attachStoredPrompt(s)
+	return s, nil
+}
+
+func buildSessionModel(candidate sessionCandidate) (*session.Session, error) {
 	switch candidate.record.Source {
 	case "claude":
 		id := candidate.record.ID
@@ -355,6 +366,45 @@ func buildUnifiedSession(ctx context.Context, candidate sessionCandidate) (*sess
 		return sessions[0], nil
 	default:
 		return nil, fmt.Errorf("unknown session source %q", candidate.record.Source)
+	}
+}
+
+// persistSessionRows upserts the session's rows (root + sub-agents linked by
+// parent) so the store's hierarchy is populated on a detailed read.
+func persistSessionRows(candidate sessionCandidate, s *session.Session) {
+	st := sessionStore()
+	if st == nil {
+		return
+	}
+	switch candidate.record.Source {
+	case "claude":
+		parsed, err := claude.ParseSessions("", true, claude.Filter{SessionIDs: []string{s.ID}, IncludeAgents: true})
+		if err != nil {
+			return
+		}
+		for _, ps := range parsed {
+			if ps.SessionID == s.ID {
+				st.upsertRows(session.Rows(ps))
+			}
+		}
+	case "codex":
+		if r, ok := session.CodexRow(candidate.path); ok {
+			st.upsertRows([]session.Row{r})
+		}
+	}
+}
+
+// attachStoredPrompt attaches the realized prompt (for captain-launched
+// sessions) from the store to the session model.
+func attachStoredPrompt(s *session.Session) {
+	st := sessionStore()
+	if st == nil || s.ID == "" {
+		return
+	}
+	if p, ok := st.prompt(s.ID); ok {
+		if raw, err := json.Marshal(p.Realized); err == nil {
+			s.Prompt = raw
+		}
 	}
 }
 
@@ -535,20 +585,6 @@ func codexMetaMatchesProject(meta *history.CodexSessionInfo, projectRoot string)
 func sessionRecordKey(source, path string) string {
 	sum := sha256.Sum256([]byte(source + "\x00" + path))
 	return source + "-" + hex.EncodeToString(sum[:])[:16]
-}
-
-func extendSessionRange(record *SessionRecord, ts time.Time) {
-	if ts.IsZero() {
-		return
-	}
-	if record.StartedAt == nil || ts.Before(*record.StartedAt) {
-		t := ts
-		record.StartedAt = &t
-	}
-	if record.EndedAt == nil || ts.After(*record.EndedAt) {
-		t := ts
-		record.EndedAt = &t
-	}
 }
 
 func sessionMatchesQuery(record SessionRecord, query string) bool {
