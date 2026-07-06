@@ -12,6 +12,7 @@ import (
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/middleware"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/collections"
 	"github.com/flanksource/captain/pkg/captainconfig"
 	"github.com/flanksource/captain/pkg/claude"
 	"github.com/flanksource/captain/pkg/claude/tools"
@@ -314,7 +315,54 @@ func runContext(parent context.Context, req ai.Request, timeout time.Duration) (
 // req.Setup is present it runs the shell preparation (mutating req's cwd/env to
 // the prepared sandbox) and returns its cleanup; callers MUST defer the returned
 // cleanup. ctx should already carry the run timeout.
+// warnIfLikelyModelTypo emits a "did you mean" hint when the model name is not a
+// known catalog id but is a close (edit-distance ≤ 2) match to one — catching
+// typos like "claud-sonnet-4" even when an explicit backend is configured (so
+// InferBackend's suggestion never fires). Non-blocking: an unrecognized model may
+// still be a valid provider/OpenRouter id, so the run proceeds.
+func warnIfLikelyModelTypo(model string) {
+	if suggestion, ok := suggestCatalogModel(model); ok {
+		log.Warnf("model %q is not a recognized model; did you mean %q?", model, suggestion)
+	}
+}
+
+// suggestCatalogModel returns the closest catalog model to model and true when it
+// is an unrecognized-but-close (edit-distance ≤ 2) match — a likely typo. An
+// exact catalog match, or a name far from any catalog entry (a plausibly-valid
+// non-catalog id), returns ("", false).
+func suggestCatalogModel(model string) (string, bool) {
+	if model == "" {
+		return "", false
+	}
+	lower := strings.ToLower(model)
+	best, bestDist := "", -1
+	for _, m := range ai.Catalog() {
+		// Compare against both the canonical id ("anthropic/claude-sonnet-5") and
+		// its base name ("claude-sonnet-5"), since users pass either form.
+		for _, cand := range []string{m.ID, baseModelName(m.ID)} {
+			if cand == model {
+				return "", false // exact match — a known model
+			}
+			if d := collections.Levenshtein(lower, strings.ToLower(cand)); bestDist < 0 || d < bestDist {
+				best, bestDist = cand, d
+			}
+		}
+	}
+	if best != "" && bestDist >= 0 && bestDist <= 2 {
+		return best, true
+	}
+	return "", false
+}
+
+func baseModelName(id string) string {
+	if i := strings.LastIndex(id, "/"); i >= 0 {
+		return id[i+1:]
+	}
+	return id
+}
+
 func buildProvider(ctx context.Context, req *ai.Request, cfg ai.Config) (ai.Provider, func(), error) {
+	warnIfLikelyModelTypo(cfg.Model.Name)
 	cleanup := func() {}
 	if req.NoCache {
 		cfg.NoCache = true
