@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   AppShell,
@@ -10,6 +10,8 @@ import {
 } from "@flanksource/clicky-ui/components";
 import { SessionViewer } from "@flanksource/clicky-ui/ai";
 import { CAPTAIN_SIDEBAR_COLLAPSE_KEY } from "./shell";
+import { TimingBadge } from "./TimingBadge";
+import type { TimingMetric } from "./serverTiming";
 import {
   SOURCE_OPTIONS,
   errorMessage,
@@ -25,9 +27,11 @@ import {
   type SourceFilter,
 } from "./sessionData";
 
+type Navigate = (to: string, opts?: { replace?: boolean }) => void;
+
 type SessionBrowserProps = {
   selectedId?: string;
-  onNavigate: (to: string, opts?: { replace?: boolean }) => void;
+  onNavigate: Navigate;
   navSections: AppShellNavSection[];
   actions: ReactNode;
 };
@@ -38,6 +42,81 @@ export function SessionBrowser({
   navSections,
   actions,
 }: SessionBrowserProps) {
+  return selectedId ? (
+    <SessionDetailPage
+      selectedId={selectedId}
+      onNavigate={onNavigate}
+      navSections={navSections}
+      actions={actions}
+    />
+  ) : (
+    <SessionListPage onNavigate={onNavigate} navSections={navSections} actions={actions} />
+  );
+}
+
+// The detail page is a listing-free view: the dedicated session listing lives on
+// /sessions (SessionListPage) and on the home dashboard, so here we render only
+// the selected session's header and transcript.
+function SessionDetailPage({
+  selectedId,
+  onNavigate,
+  navSections,
+  actions,
+}: {
+  selectedId: string;
+  onNavigate: Navigate;
+  navSections: AppShellNavSection[];
+  actions: ReactNode;
+}) {
+  const detailQuery = useQuery({
+    queryKey: ["session", selectedId],
+    queryFn: () => fetchSession(selectedId),
+  });
+
+  return (
+    <AppShell
+      className="h-screen"
+      brand={<div className="text-sm font-semibold">Captain</div>}
+      navSections={navSections}
+      collapsedStorageKey={CAPTAIN_SIDEBAR_COLLAPSE_KEY}
+      actions={actions}
+      bodyHeader={
+        <SessionHeader
+          session={detailQuery.data}
+          timing={detailQuery.data?.timing}
+          loading={detailQuery.isLoading}
+        />
+      }
+      bodyActions={
+        <div className="flex items-center gap-density-2">
+          <Button size="sm" variant="ghost" onClick={() => onNavigate("/sessions")}>
+            ← Sessions
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => void detailQuery.refetch()}>
+            Refresh
+          </Button>
+        </div>
+      }
+      contentClassName="p-0 overflow-hidden"
+    >
+      <SessionDetail
+        session={detailQuery.data}
+        loading={detailQuery.isLoading}
+        error={detailQuery.error}
+      />
+    </AppShell>
+  );
+}
+
+function SessionListPage({
+  onNavigate,
+  navSections,
+  actions,
+}: {
+  onNavigate: Navigate;
+  navSections: AppShellNavSection[];
+  actions: ReactNode;
+}) {
   const [source, setSource] = useState<SourceFilter>("all");
   const [allProjects, setAllProjects] = useState(false);
   const [query, setQuery] = useState("");
@@ -48,25 +127,6 @@ export function SessionBrowser({
   });
   const sessions = listQuery.data?.sessions ?? [];
 
-  useEffect(() => {
-    if (selectedId || sessions.length === 0) return;
-    const firstDetail = sessions.find((session) => session.detailAvailable !== false);
-    if (!firstDetail) return;
-    onNavigate(`/sessions/${encodeURIComponent(firstDetail.key)}`, { replace: true });
-  }, [onNavigate, selectedId, sessions]);
-
-  const selectedSummary = useMemo(
-    () => sessions.find((session) => session.key === selectedId || session.id === selectedId),
-    [selectedId, sessions],
-  );
-
-  const detailQuery = useQuery({
-    queryKey: ["session", selectedId],
-    queryFn: () => fetchSession(String(selectedId)),
-    enabled: Boolean(selectedId),
-  });
-  const selected = detailQuery.data ?? selectedSummary;
-
   return (
     <AppShell
       className="h-screen"
@@ -74,51 +134,34 @@ export function SessionBrowser({
       navSections={navSections}
       collapsedStorageKey={CAPTAIN_SIDEBAR_COLLAPSE_KEY}
       actions={actions}
-      bodySidebar={
-        <SessionSidebar
-          source={source}
-          onSourceChange={setSource}
-          allProjects={allProjects}
-          onAllProjectsChange={setAllProjects}
-          query={query}
-          onQueryChange={setQuery}
-          sessions={sessions}
-          summary={listQuery.data?.summary}
-          selectedId={selectedId}
-          total={listQuery.data?.total ?? 0}
-          loading={listQuery.isLoading}
-          error={listQuery.error}
-          onSelect={(session) => onNavigate(`/sessions/${encodeURIComponent(session.key)}`)}
-          onRefresh={() => void listQuery.refetch()}
-        />
-      }
-      bodyHeader={<SessionHeader session={selected} loading={detailQuery.isLoading} />}
+      bodyHeader={<div className="text-sm font-semibold">Sessions</div>}
       bodyActions={
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => {
-            void listQuery.refetch();
-            if (selectedId) void detailQuery.refetch();
-          }}
-        >
+        <Button size="sm" variant="outline" onClick={() => void listQuery.refetch()}>
           Refresh
         </Button>
       }
-      bodySplit={28}
       contentClassName="p-0 overflow-hidden"
     >
-      <SessionDetail
-        session={detailQuery.data}
-        loading={detailQuery.isLoading}
-        error={detailQuery.error}
-        hasSelection={Boolean(selectedId)}
+      <SessionList
+        source={source}
+        onSourceChange={setSource}
+        allProjects={allProjects}
+        onAllProjectsChange={setAllProjects}
+        query={query}
+        onQueryChange={setQuery}
+        sessions={sessions}
+        summary={listQuery.data?.summary}
+        timing={listQuery.data?.timing}
+        total={listQuery.data?.total ?? 0}
+        loading={listQuery.isLoading}
+        error={listQuery.error}
+        onSelect={(session) => onNavigate(`/sessions/${encodeURIComponent(session.key)}`)}
       />
     </AppShell>
   );
 }
 
-function SessionSidebar({
+function SessionList({
   source,
   onSourceChange,
   allProjects,
@@ -127,12 +170,11 @@ function SessionSidebar({
   onQueryChange,
   sessions,
   summary,
-  selectedId,
+  timing,
   total,
   loading,
   error,
   onSelect,
-  onRefresh,
 }: {
   source: SourceFilter;
   onSourceChange: (source: SourceFilter) => void;
@@ -142,44 +184,35 @@ function SessionSidebar({
   onQueryChange: (query: string) => void;
   sessions: SessionRecord[];
   summary?: SessionDashboard;
-  selectedId?: string;
+  timing?: TimingMetric[];
   total: number;
   loading: boolean;
   error: unknown;
   onSelect: (session: SessionRecord) => void;
-  onRefresh: () => void;
 }) {
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
       <div className="shrink-0 space-y-density-2 border-b border-border p-density-3">
-        <div className="flex items-center justify-between gap-density-2">
-          <div className="text-sm font-semibold">Sessions</div>
-          <Button size="sm" variant="ghost" onClick={onRefresh}>
-            Refresh
-          </Button>
+        <div className="grid gap-density-2 md:grid-cols-[minmax(14rem,1fr)_auto_auto]">
+          <SearchInput
+            value={query}
+            onChange={onQueryChange}
+            placeholder="Search sessions"
+            shortcut={null}
+          />
+          <SegmentedControl
+            value={source}
+            options={SOURCE_OPTIONS}
+            onChange={onSourceChange}
+            size="sm"
+            aria-label="Session source"
+          />
+          <Switch checked={allProjects} onChange={onAllProjectsChange} label="All projects" />
         </div>
-        <SearchInput
-          value={query}
-          onChange={onQueryChange}
-          placeholder="Search sessions"
-          shortcut={null}
-        />
-        <SegmentedControl
-          value={source}
-          options={SOURCE_OPTIONS}
-          onChange={onSourceChange}
-          size="sm"
-          aria-label="Session source"
-          className="w-full"
-        />
-        <Switch
-          checked={allProjects}
-          onChange={onAllProjectsChange}
-          label="All projects"
-        />
         <SessionSummary summary={summary} loading={loading} />
-        <div className="text-xs text-muted-foreground">
-          {loading ? "Loading..." : `${sessions.length} shown / ${total} total`}
+        <div className="flex items-center justify-between gap-density-2 text-xs text-muted-foreground">
+          <span>{loading ? "Loading..." : `${sessions.length} shown / ${total} total`}</span>
+          <TimingBadge metrics={timing} align="right" />
         </div>
       </div>
 
@@ -189,9 +222,8 @@ function SessionSidebar({
         ) : sessions.length === 0 && !loading ? (
           <div className="p-density-3 text-sm text-muted-foreground">No sessions found.</div>
         ) : (
-          <div className="divide-y divide-border">
+          <div className="mx-auto max-w-4xl divide-y divide-border">
             {sessions.map((session) => {
-              const active = session.key === selectedId || session.id === selectedId;
               const detailAvailable = session.detailAvailable !== false;
               return (
                 <button
@@ -201,8 +233,7 @@ function SessionSidebar({
                   disabled={!detailAvailable}
                   className={[
                     "block w-full px-density-3 py-density-2 text-left transition-colors",
-                    active ? "bg-accent text-accent-foreground" : "hover:bg-muted/60",
-                    detailAvailable ? "" : "cursor-default opacity-75",
+                    detailAvailable ? "hover:bg-muted/60" : "cursor-default opacity-75",
                   ].join(" ")}
                 >
                   <div className="flex min-w-0 items-center justify-between gap-density-2">
@@ -233,9 +264,11 @@ function SessionSidebar({
 
 function SessionHeader({
   session,
+  timing,
   loading,
 }: {
   session?: SessionRecord;
+  timing?: TimingMetric[];
   loading: boolean;
 }) {
   if (loading && !session) {
@@ -261,6 +294,7 @@ function SessionHeader({
             {session.live.status || "live"}
           </span>
         )}
+        <TimingBadge metrics={timing} />
       </div>
       <div className="mt-1 flex min-w-0 flex-wrap gap-x-density-3 gap-y-1 text-xs text-muted-foreground">
         {session.model && <span>{session.model}</span>}
@@ -280,20 +314,11 @@ function SessionDetail({
   session,
   loading,
   error,
-  hasSelection,
 }: {
   session?: SessionRecord;
   loading: boolean;
   error: unknown;
-  hasSelection: boolean;
 }) {
-  if (!hasSelection) {
-    return (
-      <div className="flex min-h-0 flex-1 items-center justify-center p-6 text-sm text-muted-foreground">
-        Select a session.
-      </div>
-    );
-  }
   if (loading) {
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center p-6 text-sm text-muted-foreground">
@@ -336,7 +361,7 @@ function SessionSummary({
     ["Context", summary?.lowestContextFree !== undefined ? `${summary.lowestContextFree}%` : "--"],
   ];
   return (
-    <div className="grid grid-cols-3 gap-1.5">
+    <div className="grid grid-cols-3 gap-1.5 md:grid-cols-6">
       {values.map(([label, value]) => (
         <div key={label} className="min-w-0 rounded border border-border px-2 py-1">
           <div className="truncate text-[10px] uppercase text-muted-foreground">{label}</div>
