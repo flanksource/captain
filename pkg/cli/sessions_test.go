@@ -119,6 +119,7 @@ func TestRunSessionListCodexScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	markProjectRoot(t, actualProject)
 	other := filepath.Join(filepath.Dir(actualProject), "other")
 
 	writeCodexSession(t, filepath.Join(home, ".codex", "sessions", "2026", "06", "rollout-current.jsonl"), "codex-current", actualProject)
@@ -270,6 +271,7 @@ func TestRunSessionLiveScopesUnmatchedProcessesToCurrentProject(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Chdir(project)
+	markProjectRoot(t, project)
 
 	orig := discoverSessionProcesses
 	discoverSessionProcesses = func() ([]agentProcess, error) {
@@ -336,6 +338,19 @@ func TestRunSessionLiveRecordsPhaseTimings(t *testing.T) {
 		if !strings.Contains(header, phase+";dur=") {
 			t.Fatalf("Header() = %q, missing phase %q", header, phase)
 		}
+	}
+}
+
+// markProjectRoot writes a project marker in dir so claude.FindProjectInfo
+// resolves dir as the project root deterministically. Without it, a temp project
+// dir has no marker and FindProjectInfo walks to the filesystem root — under
+// `go test ./...` a concurrent package's test can leave a go.mod/.git in the
+// shared temp root, resolving matchRoot above the project and letting
+// sibling-project sessions leak into the current scope.
+func markProjectRoot(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module test\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 
