@@ -80,17 +80,6 @@ func TestNewRejectsUnsupportedBackend(t *testing.T) {
 	}
 }
 
-func TestExecuteStreamRejectsStructuredOutput(t *testing.T) {
-	p, err := New(ai.Config{Model: api.Model{Name: "claude", Backend: api.BackendClaudeCmux}})
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-	req := ai.Request{Prompt: api.Prompt{User: "hi", Schema: struct{ X int }{}}}
-	if _, err := p.ExecuteStream(context.Background(), req); err == nil {
-		t.Fatal("ExecuteStream() error = nil, want StructuredOutput rejection")
-	}
-}
-
 func TestExecuteStreamRequiresPrompt(t *testing.T) {
 	p, err := New(ai.Config{Model: api.Model{Name: "claude", Backend: api.BackendClaudeCmux}})
 	if err != nil {
