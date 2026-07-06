@@ -414,6 +414,7 @@ func renderPromptCLI(ctx context.Context, id string, opts AIPromptOptions, varsJ
 // finalizeRenderResult packages the rendered request/config + prompt detail into
 // a PromptRenderResult and sets the validation error (shared by both paths).
 func finalizeRenderResult(record promptRecord, content string, req ai.Request, cfg ai.Config) (PromptRenderResult, error) {
+	warnIfLikelyModelTypo(cfg.Model.Name) // catch a mistyped model at render time, not just on run
 	detail, err := promptDetailFromContent(record, content)
 	if err != nil {
 		return PromptRenderResult{}, err
