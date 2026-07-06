@@ -1,5 +1,6 @@
 import type { SessionEntry } from "@flanksource/clicky-ui/ai";
 import { apiClient } from "./api";
+import { parseServerTiming, type TimingMetric } from "./serverTiming";
 
 export type SourceFilter = "all" | "claude" | "codex";
 
@@ -91,7 +92,7 @@ export async function fetchLiveSessions(params: {
   allProjects: boolean;
   query?: string;
   limit?: number;
-}) {
+}): Promise<SessionListResult & { timing?: TimingMetric[] }> {
   const response = await apiClient.executeCommand(
     "/api/captain/sessions/live",
     "GET",
@@ -106,10 +107,13 @@ export async function fetchLiveSessions(params: {
   if (!response.success) {
     throw new Error(response.error || "Failed to load sessions.");
   }
-  return response.parsed as SessionListResult;
+  const timing = parseServerTiming(response.responseHeaders?.["server-timing"]);
+  return { ...(response.parsed as SessionListResult), ...(timing.length ? { timing } : {}) };
 }
 
-export async function fetchSession(id: string) {
+export async function fetchSession(
+  id: string,
+): Promise<SessionRecord & { timing?: TimingMetric[] }> {
   const response = await apiClient.executeCommand(
     "/api/v1/sessions/{id}",
     "GET",
@@ -119,7 +123,8 @@ export async function fetchSession(id: string) {
   if (!response.success) {
     throw new Error(response.error || "Failed to load session.");
   }
-  return response.parsed as SessionRecord;
+  const timing = parseServerTiming(response.responseHeaders?.["server-timing"]);
+  return { ...(response.parsed as SessionRecord), ...(timing.length ? { timing } : {}) };
 }
 
 export function sessionTitle(session: SessionRecord) {
