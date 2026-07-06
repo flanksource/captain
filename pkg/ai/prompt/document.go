@@ -1,0 +1,80 @@
+package prompt
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/flanksource/captain/pkg/api"
+	dp "github.com/google/dotprompt/go/dotprompt"
+	"gopkg.in/yaml.v3"
+)
+
+// Document is a parsed .prompt split into its raw YAML frontmatter, the
+// spec-native fold of that frontmatter, and the unrendered Handlebars body.
+//
+// Unlike Render, Parse does not execute the template, so a Document round-trips
+// an editable prompt: Frontmatter keeps every key (including the dotprompt-only
+// config/input/output and any nested content the spec does not model, e.g.
+// output.schema), Spec is the typed view for validation, and Body is left
+// verbatim. String reserializes the document so Parse(d.String()) preserves the
+// frontmatter keys and body.
+type Document struct {
+	// Frontmatter is the full YAML frontmatter as a map, nil when the source has
+	// no frontmatter. It is the lossless source of truth for reserialization.
+	Frontmatter map[string]any
+	// Spec is the frontmatter decoded into the typed spec (the dotprompt-only
+	// keys config/input/output/name/description are stripped). Zero when the
+	// source is body-only or declares no spec-native keys.
+	Spec api.Spec
+	// Body is the unrendered Handlebars template body.
+	Body string
+}
+
+// Parse splits a .prompt source into frontmatter and body WITHOUT rendering the
+// body, then decodes the spec-native frontmatter into Spec. It fails loud on
+// malformed YAML or on a spec-native key the spec does not model — the opposite
+// of the dotprompt library's ParseDocument, which prints and swallows YAML
+// errors.
+func Parse(source string) (*Document, error) {
+	frontmatter, body, hasFrontmatter := splitFrontmatter(source)
+	doc := &Document{Body: body}
+	if !hasFrontmatter || strings.TrimSpace(frontmatter) == "" {
+		return doc, nil
+	}
+	raw := map[string]any{}
+	if err := yaml.Unmarshal([]byte(frontmatter), &raw); err != nil {
+		return nil, fmt.Errorf("parse prompt frontmatter: %w", err)
+	}
+	doc.Frontmatter = raw
+	if err := decodeSpecFrontmatter(raw, &doc.Spec); err != nil {
+		return nil, fmt.Errorf("decode prompt frontmatter into spec: %w", err)
+	}
+	return doc, nil
+}
+
+// String reserializes the document to .prompt text: "---\n<yaml>\n---\n<body>",
+// or the body alone when there is no frontmatter. The output satisfies the
+// dotprompt frontmatter grammar so Parse can read it back.
+func (d *Document) String() (string, error) {
+	if len(d.Frontmatter) == 0 {
+		return d.Body, nil
+	}
+	y, err := yaml.Marshal(d.Frontmatter)
+	if err != nil {
+		return "", fmt.Errorf("marshal prompt frontmatter: %w", err)
+	}
+	return "---\n" + string(y) + "---\n" + d.Body, nil
+}
+
+// splitFrontmatter separates the YAML frontmatter from the body using the
+// dotprompt grammar. A source with no frontmatter markers is treated as all
+// body.
+func splitFrontmatter(source string) (frontmatter, body string, hasFrontmatter bool) {
+	if m := dp.FrontmatterAndBodyRegex.FindStringSubmatch(source); m != nil {
+		return m[1], m[2], true
+	}
+	if m := dp.EmptyFrontmatterRegex.FindStringSubmatch(source); m != nil {
+		return "", m[1], true
+	}
+	return "", source, false
+}
