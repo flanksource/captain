@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { SessionEntry } from "@flanksource/clicky-ui/ai";
+import type { SessionUIMessage } from "@flanksource/clicky-ui/ai";
 import { useEventSource } from "./useEventSource";
 
 /** Immediate response of the async prompt "run" action. */
@@ -27,7 +27,7 @@ export interface PromptRunSummary {
 export type PromptRunStreamStatus = "idle" | "connecting" | "streaming" | "done" | "error";
 
 export interface PromptRunStreamState {
-  entries: SessionEntry[];
+  messages: SessionUIMessage[];
   summary?: PromptRunSummary;
   status: PromptRunStreamStatus;
   error?: string;
@@ -36,27 +36,27 @@ export interface PromptRunStreamState {
 const PROMPT_RUN_BASE = "/api/captain/prompt/runs";
 
 /**
- * usePromptRunStream subscribes to a run's SessionEntry SSE stream and
- * accumulates a growing SessionEntry[] suitable for <SessionViewer>. Frames are
- * deduped by uuid so the buffered replay a run sends on (re)connect is
+ * usePromptRunStream subscribes to a run's unified session.Message SSE stream and
+ * accumulates a growing SessionUIMessage[] suitable for <SessionViewer>. Frames
+ * are deduped by message id so the buffered replay a run sends on (re)connect is
  * idempotent, and the terminal `done`/`error` events stop the connection.
  */
 export function usePromptRunStream(runID: string | undefined, basePath = PROMPT_RUN_BASE): PromptRunStreamState {
-  const [entries, setEntries] = useState<SessionEntry[]>([]);
+  const [messages, setMessages] = useState<SessionUIMessage[]>([]);
   const [summary, setSummary] = useState<PromptRunSummary | undefined>();
   const [status, setStatus] = useState<PromptRunStreamStatus>("idle");
   const [error, setError] = useState<string | undefined>();
   const [done, setDone] = useState(false);
 
-  const byUUID = useRef(new Map<string, SessionEntry>());
+  const byId = useRef(new Map<string, SessionUIMessage>());
   const order = useRef<string[]>([]);
   const autoSeq = useRef(0);
 
   useEffect(() => {
-    byUUID.current = new Map();
+    byId.current = new Map();
     order.current = [];
     autoSeq.current = 0;
-    setEntries([]);
+    setMessages([]);
     setSummary(undefined);
     setError(undefined);
     setDone(false);
@@ -82,19 +82,19 @@ export function usePromptRunStream(runID: string | undefined, basePath = PROMPT_
       setDone(true);
       return;
     }
-    const entry = parse<SessionEntry>(data);
-    if (!entry) return;
-    const key = entry.uuid ?? `auto-${autoSeq.current++}`;
-    if (!byUUID.current.has(key)) order.current.push(key);
-    byUUID.current.set(key, entry);
-    setEntries(order.current.map((k) => byUUID.current.get(k)!));
+    const message = parse<SessionUIMessage>(data);
+    if (!message) return;
+    const key = message.id ?? `auto-${autoSeq.current++}`;
+    if (!byId.current.has(key)) order.current.push(key);
+    byId.current.set(key, message);
+    setMessages(order.current.map((k) => byId.current.get(k)!));
     setStatus((s) => (s === "done" || s === "error" ? s : "streaming"));
   }, []);
 
   const url = runID ? `${basePath}/${encodeURIComponent(runID)}/stream` : undefined;
   useEventSource(url, { enabled: Boolean(url) && !done, events: ["entry", "done", "error"], onEvent });
 
-  return { entries, summary, status, error };
+  return { messages, summary, status, error };
 }
 
 function parse<T>(data: string): T | undefined {

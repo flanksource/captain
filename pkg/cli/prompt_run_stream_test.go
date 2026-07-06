@@ -7,26 +7,28 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/flanksource/captain/pkg/session"
 )
 
 func TestRunStream_ReplayThenLive(t *testing.T) {
 	s := newRunStream()
-	s.publish(SessionEntryWire{UUID: "a"})
-	s.publish(SessionEntryWire{UUID: "b"})
+	s.publish(session.Message{ID: "a"})
+	s.publish(session.Message{ID: "b"})
 
 	replay, ch, done, _, _ := s.subscribe()
 	if done {
 		t.Fatal("stream should not be done")
 	}
-	if len(replay) != 2 || replay[0].UUID != "a" || replay[1].UUID != "b" {
+	if len(replay) != 2 || replay[0].ID != "a" || replay[1].ID != "b" {
 		t.Fatalf("replay = %+v, want [a b]", replay)
 	}
 
-	s.publish(SessionEntryWire{UUID: "c"})
+	s.publish(session.Message{ID: "c"})
 	select {
 	case e := <-ch:
-		if e.UUID != "c" {
-			t.Fatalf("live frame = %q, want c", e.UUID)
+		if e.ID != "c" {
+			t.Fatalf("live frame = %q, want c", e.ID)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("did not receive live frame")
@@ -40,7 +42,7 @@ func TestRunStream_ReplayThenLive(t *testing.T) {
 
 func TestRunStream_SubscribeAfterDone(t *testing.T) {
 	s := newRunStream()
-	s.publish(SessionEntryWire{UUID: "a"})
+	s.publish(session.Message{ID: "a"})
 	s.complete(PromptRunSummary{RunID: "r", Success: true, Duration: "1s"})
 
 	replay, ch, done, summary, errMsg := s.subscribe()
@@ -75,7 +77,7 @@ func TestRunStream_DropsSlowSubscriber(t *testing.T) {
 	pumped := make(chan struct{})
 	go func() {
 		for i := 0; i < runSubBuffer+10; i++ {
-			s.publish(SessionEntryWire{UUID: fmt.Sprintf("e%d", i)})
+			s.publish(session.Message{ID: fmt.Sprintf("e%d", i)})
 		}
 		close(pumped)
 	}()
@@ -117,7 +119,7 @@ func TestRunBroker_PruneRemovesFinishedOldRuns(t *testing.T) {
 func TestHandlePromptRunSnapshot(t *testing.T) {
 	b := &runBroker{runs: map[string]*runStream{}}
 	s := b.create("r1")
-	s.publish(SessionEntryWire{UUID: "a", Type: "assistant"})
+	s.publish(session.Message{ID: "a"})
 	s.complete(PromptRunSummary{RunID: "r1", Success: true, Model: "m"})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/captain/prompt/runs/r1", nil)
