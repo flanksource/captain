@@ -9,6 +9,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai/history"
 	"github.com/flanksource/captain/pkg/claude"
+	captainsession "github.com/flanksource/captain/pkg/session"
 	"github.com/flanksource/clicky"
 	"github.com/flanksource/clicky/api"
 	"github.com/flanksource/clicky/api/icons"
@@ -166,55 +167,15 @@ func resolveCodexPlan(candidate sessionCandidate) (*PlanResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	content := latestCodexPlan(uses)
-	if content == "" {
+	plan := captainsession.CodexPlanFromToolUses(uses)
+	if plan == nil || strings.TrimSpace(plan.Content) == "" {
 		return nil, nil
 	}
 	return &PlanResult{
 		SessionID: candidate.record.ID,
 		Source:    "codex",
-		Content:   content,
+		Content:   plan.Content,
 	}, nil
-}
-
-// latestCodexPlan renders the most recent Codex update_plan checklist as markdown.
-// Codex keeps its plan inline (no file), revising it via update_plan; the last
-// revision is the final plan.
-func latestCodexPlan(uses []history.ToolUse) string {
-	var steps []any
-	for _, use := range uses {
-		if use.Tool != "TodoWrite" {
-			continue
-		}
-		if todos, ok := use.Input["todos"].([]any); ok && len(todos) > 0 {
-			steps = todos
-		}
-	}
-	if len(steps) == 0 {
-		return ""
-	}
-	var b strings.Builder
-	for _, raw := range steps {
-		step, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		text, _ := step["step"].(string)
-		if text == "" {
-			text, _ = step["content"].(string)
-		}
-		status, _ := step["status"].(string)
-		mark := " "
-		suffix := ""
-		switch status {
-		case "completed", "done":
-			mark = "x"
-		case "in_progress":
-			suffix = " _(in progress)_"
-		}
-		fmt.Fprintf(&b, "- [%s] %s%s\n", mark, text, suffix)
-	}
-	return strings.TrimRight(b.String(), "\n")
 }
 
 // shortenHomePath rewrites a leading home directory to ~ for display.

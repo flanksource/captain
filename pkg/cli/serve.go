@@ -161,7 +161,7 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	mux.HandleFunc("GET /api/captain/sessions/live", handleSessionsLive())
 	mux.HandleFunc("GET /api/captain/sessions/{id}", handleSessionGet())
 	mux.HandleFunc("GET /api/captain/ai/permissions/catalog", handlePermissionCatalog(cwd))
-	mux.HandleFunc("GET /api/captain/ai/cli-options/catalog", handleCLIOptionsCatalog())
+	mux.HandleFunc("GET /api/captain/ai/prompt/schema", handlePromptSchema())
 	mux.HandleFunc("GET /api/captain/secrets/resources", handleSecretResources())
 	mux.HandleFunc("GET /api/captain/secrets/preview", handleSecretPreview())
 	// Task tracking: /api/captain/tasks, /tasks/stream, /tasks/{id}; plus the

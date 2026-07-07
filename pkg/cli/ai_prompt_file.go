@@ -84,7 +84,8 @@ func overlayCLI(base ai.Request, baseCfg ai.Config, o AIPromptOptions) (ai.Reque
 	}
 	m.Effort = api.Effort(firstNonEmpty(o.Effort, string(bm.Effort), saved.ReasoningEffort))
 	m.NoCache = o.NoCache || bm.NoCache || saved.NoCache
-	req.Model = m
+	m.Fallbacks = firstFallbacks(o.Fallback, bm.Fallbacks)
+	req.Model = m.ExpandCSV()
 
 	req.Budget.MaxTokens = firstPositive(o.MaxTokens, base.Budget.MaxTokens, baseCfg.Budget.MaxTokens, saved.MaxTokens, 4096)
 	req.Budget.Cost = firstPositiveFloat(budget, base.Budget.Cost, baseCfg.Budget.Cost, saved.BudgetUSD)
@@ -160,6 +161,29 @@ func normalizePromptContextDir(req *ai.Request, cwd string) error {
 	}
 	req.SetCwd(filepath.Clean(filepath.Join(cwd, req.Cwd())))
 	return nil
+}
+
+// fallbackModelsFromFlags turns repeated (and optionally comma-separated) --fallback
+// values into name-only fallback Models, in the order given.
+func fallbackModelsFromFlags(flags []string) []api.Model {
+	var out []api.Model
+	for _, flag := range flags {
+		for _, name := range strings.Split(flag, ",") {
+			if name = strings.TrimSpace(name); name != "" {
+				out = append(out, api.Model{Name: name})
+			}
+		}
+	}
+	return out
+}
+
+// firstFallbacks implements the CLI-over-frontmatter precedence for the fallback
+// list: the --fallback flags win when present, otherwise the frontmatter list stands.
+func firstFallbacks(flags []string, frontmatter []api.Model) []api.Model {
+	if models := fallbackModelsFromFlags(flags); len(models) > 0 {
+		return models
+	}
+	return frontmatter
 }
 
 // firstNonEmpty returns the first non-empty string, or "" when all are empty.

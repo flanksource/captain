@@ -18,6 +18,7 @@ export function ChatLayer() {
       <ChatWindowLayer
         threadsApi="/api/chat/threads"
         tools={tools}
+        defaultToolMode="auto"
         chat={{
           api: "/api/chat",
           modelsApi: "/api/chat/models",
@@ -35,4 +36,3 @@ export function ChatLayer() {
     </>
   );
 }
-

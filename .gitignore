@@ -21,3 +21,4 @@ pkg/cli/webapp/*.tsbuildinfo
 !pkg/cli/webapp/dist/**
 .grite/
 pkg/cli/webapp/dist/
+hack/

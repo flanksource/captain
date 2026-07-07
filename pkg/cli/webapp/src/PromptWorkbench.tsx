@@ -37,7 +37,11 @@ import {
   type ToolMeta,
 } from "@flanksource/clicky-ui/ai";
 import { type ChatModel } from "@flanksource/clicky-ui/chat";
-import { useOperations, type ExecutionResponse, type ResolvedOperation } from "@flanksource/clicky-ui/rpc";
+import {
+  useOperations,
+  type ExecutionResponse,
+  type ResolvedOperation,
+} from "@flanksource/clicky-ui/rpc";
 import { apiClient } from "./api";
 import { PromptRunStream } from "./PromptRunStream";
 import { RunningPrompts } from "./RunningPrompts";
@@ -127,84 +131,84 @@ const AGENT_TOOLS = [
     label: "Read",
     group: "Files",
     description: "Read files from the workspace.",
-    defaultMode: "ask",
+    defaultPermission: "ask",
   },
   {
     name: "Edit",
     label: "Edit",
     group: "Files",
     description: "Apply targeted file edits.",
-    defaultMode: "ask",
+    defaultPermission: "ask",
   },
   {
     name: "MultiEdit",
     label: "MultiEdit",
     group: "Files",
     description: "Apply multiple edits to one file.",
-    defaultMode: "ask",
+    defaultPermission: "ask",
   },
   {
     name: "Write",
     label: "Write",
     group: "Files",
     description: "Create or overwrite files.",
-    defaultMode: "ask",
+    defaultPermission: "ask",
   },
   {
     name: "Glob",
     label: "Glob",
     group: "Search",
     description: "Find files by glob pattern.",
-    defaultMode: "ask",
+    defaultPermission: "ask",
   },
   {
     name: "Grep",
     label: "Grep",
     group: "Search",
     description: "Search file contents.",
-    defaultMode: "ask",
+    defaultPermission: "ask",
   },
   {
     name: "LS",
     label: "List",
     group: "Search",
     description: "List directory contents.",
-    defaultMode: "ask",
+    defaultPermission: "ask",
   },
   {
     name: "Bash",
     label: "Bash",
     group: "Shell",
     description: "Run shell commands.",
-    defaultMode: "ask",
+    defaultPermission: "ask",
   },
   {
     name: "Task",
     label: "Task",
     group: "Agent",
     description: "Launch a delegated agent task.",
-    defaultMode: "ask",
+    defaultPermission: "ask",
   },
   {
     name: "TodoWrite",
     label: "Todos",
     group: "Agent",
     description: "Track an agent todo list.",
-    defaultMode: "ask",
+    defaultPermission: "ask",
   },
   {
     name: "WebFetch",
     label: "Web Fetch",
     group: "Web",
     description: "Fetch content from a URL.",
-    defaultMode: "ask",
+    defaultPermission: "ask",
   },
   {
     name: "WebSearch",
     label: "Web Search",
     group: "Web",
     description: "Search the web.",
-    defaultMode: "ask",
+    defaultPermission: "ask",
   },
 ] satisfies ToolMeta[];
 
@@ -214,7 +218,11 @@ export function PromptWorkbench({
   navSections,
   actions,
 }: PromptWorkbenchProps) {
-  const { operations, isLoading: operationsLoading, error: operationsError } = useOperations(apiClient);
+  const {
+    operations,
+    isLoading: operationsLoading,
+    error: operationsError,
+  } = useOperations(apiClient);
   const promptOps = useMemo(() => resolvePromptOps(operations), [operations]);
   const [source, setSource] = useState<SourceFilter>("all");
   const [query, setQuery] = useState("");
@@ -223,15 +231,29 @@ export function PromptWorkbench({
   const [variables, setVariables] = useState<Record<string, unknown>>({});
   const [variablesValid, setVariablesValid] = useState(true);
   const [runtime, setRuntime] = useState<AISpecRuntimeValue>(EMPTY_RUNTIME);
-  const [renderResult, setRenderResult] = useState<PromptRenderResult | undefined>();
+  const [renderResult, setRenderResult] = useState<
+    PromptRenderResult | undefined
+  >();
   const [activeRunID, setActiveRunID] = useState<string | undefined>();
   const [actionError, setActionError] = useState<string | undefined>();
-  const [actionLoading, setActionLoading] = useState<"save" | "render" | "run" | "delete" | undefined>();
+  const [actionLoading, setActionLoading] = useState<
+    "save" | "render" | "run" | "delete" | undefined
+  >();
   const [createOpen, setCreateOpen] = useState(false);
 
   const listQuery = useQuery({
-    queryKey: ["prompts", promptOps.list?.path, promptOps.list?.method, source, query],
-    queryFn: () => fetchPromptList(requiredOperation(promptOps.list, "list"), { source, query }),
+    queryKey: [
+      "prompts",
+      promptOps.list?.path,
+      promptOps.list?.method,
+      source,
+      query,
+    ],
+    queryFn: () =>
+      fetchPromptList(requiredOperation(promptOps.list, "list"), {
+        source,
+        query,
+      }),
     enabled: Boolean(promptOps.list),
   });
   const modelsQuery = useQuery({
@@ -248,7 +270,9 @@ export function PromptWorkbench({
 
   useEffect(() => {
     if (selectedId || prompts.length === 0) return;
-    onNavigate(`/prompts/${encodeURIComponent(prompts[0].id)}`, { replace: true });
+    onNavigate(`/prompts/${encodeURIComponent(prompts[0].id)}`, {
+      replace: true,
+    });
   }, [onNavigate, prompts, selectedId]);
 
   const selectedSummary = useMemo(
@@ -257,19 +281,35 @@ export function PromptWorkbench({
   );
 
   const detailQuery = useQuery({
-    queryKey: ["prompt", promptOps.get?.path, promptOps.get?.method, selectedId],
-    queryFn: () => fetchPromptDetail(requiredOperation(promptOps.get, "get"), String(selectedId)),
+    queryKey: [
+      "prompt",
+      promptOps.get?.path,
+      promptOps.get?.method,
+      selectedId,
+    ],
+    queryFn: () =>
+      fetchPromptDetail(
+        requiredOperation(promptOps.get, "get"),
+        String(selectedId),
+      ),
     enabled: Boolean(promptOps.get && selectedId),
   });
 
   const selected = detailQuery.data ?? selectedSummary;
   const detail = detailQuery.data;
-  const writableSources = useMemo(() => uniqueWritableSources(prompts), [prompts]);
+  const writableSources = useMemo(
+    () => uniqueWritableSources(prompts),
+    [prompts],
+  );
   const canSave = Boolean(
-    detail && promptOps.update && (detail.writable ? draft !== detail.content : true),
+    detail &&
+    promptOps.update &&
+    (detail.writable ? draft !== detail.content : true),
   );
   const hasSelection = Boolean(selectedId);
-  const operationsReady = Boolean(promptOps.list && promptOps.get && promptOps.render && promptOps.run);
+  const operationsReady = Boolean(
+    promptOps.list && promptOps.get && promptOps.render && promptOps.run,
+  );
 
   useEffect(() => {
     if (!detail) return;
@@ -385,12 +425,20 @@ export function PromptWorkbench({
           selectedId={selectedId}
           loading={listQuery.isLoading || operationsLoading}
           error={listQuery.error ?? operationsError}
-          onSelect={(prompt) => onNavigate(`/prompts/${encodeURIComponent(prompt.id)}`)}
+          onSelect={(prompt) =>
+            onNavigate(`/prompts/${encodeURIComponent(prompt.id)}`)
+          }
           onRefresh={() => void refreshAll()}
           onCreate={() => setCreateOpen(true)}
         />
       }
-      bodyHeader={<PromptHeader prompt={selected} loading={detailQuery.isLoading} ready={operationsReady} />}
+      bodyHeader={
+        <PromptHeader
+          prompt={selected}
+          loading={detailQuery.isLoading}
+          ready={operationsReady}
+        />
+      }
       bodyActions={
         <div className="flex items-center gap-density-2">
           <RunningPrompts.Badge
@@ -509,10 +557,20 @@ function PromptSidebar({
         <div className="flex items-center justify-between gap-density-2">
           <div className="text-sm font-semibold">Prompts</div>
           <div className="flex items-center gap-density-1">
-            <Button size="sm" variant="ghost" onClick={onRefresh} title="Refresh prompts">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={onRefresh}
+              title="Refresh prompts"
+            >
               <Icon icon={UiRefresh} className="size-4" />
             </Button>
-            <Button size="sm" variant="ghost" onClick={onCreate} title="Create prompt">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={onCreate}
+              title="Create prompt"
+            >
               <Icon icon={UiAdd} className="size-4" />
             </Button>
           </div>
@@ -538,9 +596,13 @@ function PromptSidebar({
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {error ? (
-          <div className="p-density-3 text-sm text-destructive">{errorMessage(error)}</div>
+          <div className="p-density-3 text-sm text-destructive">
+            {errorMessage(error)}
+          </div>
         ) : prompts.length === 0 && !loading ? (
-          <div className="p-density-3 text-sm text-muted-foreground">No prompts found.</div>
+          <div className="p-density-3 text-sm text-muted-foreground">
+            No prompts found.
+          </div>
         ) : (
           <div className="divide-y divide-border">
             {prompts.map((prompt) => {
@@ -552,18 +614,24 @@ function PromptSidebar({
                   onClick={() => onSelect(prompt)}
                   className={[
                     "block w-full px-density-3 py-density-2 text-left transition-colors",
-                    active ? "bg-accent text-accent-foreground" : "hover:bg-muted/60",
+                    active
+                      ? "bg-accent text-accent-foreground"
+                      : "hover:bg-muted/60",
                   ].join(" ")}
                 >
                   <div className="flex min-w-0 items-center justify-between gap-density-2">
-                    <span className="min-w-0 truncate text-sm font-medium">{prompt.name}</span>
+                    <span className="min-w-0 truncate text-sm font-medium">
+                      {prompt.name}
+                    </span>
                     <span className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[11px] uppercase text-muted-foreground">
                       {prompt.sourceKind}
                     </span>
                   </div>
                   <div className="mt-1 truncate text-xs text-muted-foreground">
                     {prompt.model || prompt.backend || "no model"}
-                    {prompt.variables?.length ? ` - ${prompt.variables.length} vars` : ""}
+                    {prompt.variables?.length
+                      ? ` - ${prompt.variables.length} vars`
+                      : ""}
                   </div>
                   <div className="mt-1 truncate text-xs text-muted-foreground">
                     {prompt.relPath}
@@ -574,7 +642,9 @@ function PromptSidebar({
                     </div>
                   )}
                   {prompt.parseError && (
-                    <div className="mt-1 truncate text-xs text-destructive">{prompt.parseError}</div>
+                    <div className="mt-1 truncate text-xs text-destructive">
+                      {prompt.parseError}
+                    </div>
                   )}
                 </button>
               );
@@ -599,18 +669,24 @@ function PromptHeader({
     return (
       <div>
         <div className="text-sm font-semibold">Prompt Workbench</div>
-        <div className="text-xs text-muted-foreground">Loading prompt operations...</div>
+        <div className="text-xs text-muted-foreground">
+          Loading prompt operations...
+        </div>
       </div>
     );
   }
   if (loading && !prompt) {
-    return <div className="text-sm text-muted-foreground">Loading prompt...</div>;
+    return (
+      <div className="text-sm text-muted-foreground">Loading prompt...</div>
+    );
   }
   if (!prompt) {
     return (
       <div>
         <div className="text-sm font-semibold">Prompt Workbench</div>
-        <div className="text-xs text-muted-foreground">Select or create a prompt.</div>
+        <div className="text-xs text-muted-foreground">
+          Select or create a prompt.
+        </div>
       </div>
     );
   }
@@ -739,7 +815,9 @@ function PromptDetailPane({
       </div>
       <div className="min-h-0 flex-1 overflow-auto p-density-4">
         {Boolean(error) && (
-          <div className="mb-density-3 text-sm text-destructive">{errorMessage(error)}</div>
+          <div className="mb-density-3 text-sm text-destructive">
+            {errorMessage(error)}
+          </div>
         )}
         {tab === "source" ? (
           <SourceEditor
@@ -748,7 +826,10 @@ function PromptDetailPane({
             onDraftChange={onDraftChange}
           />
         ) : tab === "runs" ? (
-          <RunningPrompts.RunsTab activeRunID={activeRunID} onSelectRun={onSelectRun} />
+          <RunningPrompts.RunsTab
+            activeRunID={activeRunID}
+            onSelectRun={onSelectRun}
+          />
         ) : tab === "schema" ? (
           <SchemaPreview
             inputSchema={schema}
@@ -769,7 +850,9 @@ function PromptDetailPane({
                 onVariablesValidityChange={onVariablesValidityChange}
                 {...(permissionCatalog ? { permissionCatalog } : {})}
                 {...(schema ? { variablesSchema: schema } : {})}
-                {...(backendCliArgs ? { cliOptions: { schema: backendCliArgs } } : {})}
+                {...(backendCliArgs
+                  ? { cliOptions: { schema: backendCliArgs } }
+                  : {})}
               />
 
               <div className="flex flex-wrap gap-density-2">
@@ -795,7 +878,10 @@ function PromptDetailPane({
               </div>
             </div>
 
-            <RunnerOutput renderResult={renderResult} activeRunID={activeRunID} />
+            <RunnerOutput
+              renderResult={renderResult}
+              activeRunID={activeRunID}
+            />
           </div>
         )}
       </div>
@@ -816,7 +902,8 @@ function SourceEditor({
     <div className="space-y-density-2">
       {!detail.writable && (
         <div className="rounded-md border border-border bg-muted/40 px-density-3 py-density-2 text-xs text-muted-foreground">
-          This is an embedded prompt. Saving your edits creates a local, editable copy.
+          This is an embedded prompt. Saving your edits creates a local,
+          editable copy.
         </div>
       )}
       <PromptSourceMarkdownEditor
@@ -905,7 +992,10 @@ function RunnerOutput({
           </div>
         )}
         <CodeBlock language="markdown" source={renderResult.user || ""} />
-        <CodeBlock language="json" source={JSON.stringify(renderResult.input ?? renderResult, null, 2)} />
+        <CodeBlock
+          language="json"
+          source={JSON.stringify(renderResult.input ?? renderResult, null, 2)}
+        />
       </div>
     );
   }
@@ -930,13 +1020,17 @@ function SchemaPreview({
     <div className="grid min-h-full gap-density-4 xl:grid-cols-2">
       <SchemaPanel
         title="Input schema"
-        icon={<Icon icon={UiFileSearch} className="size-4 text-muted-foreground" />}
+        icon={
+          <Icon icon={UiFileSearch} className="size-4 text-muted-foreground" />
+        }
         schema={inputSchema}
         emptyLabel="This prompt declares no input schema."
       />
       <SchemaPanel
         title="Output schema"
-        icon={<Icon icon={UiListTree} className="size-4 text-muted-foreground" />}
+        icon={
+          <Icon icon={UiListTree} className="size-4 text-muted-foreground" />
+        }
         schema={outputSchema}
         emptyLabel="This prompt declares no output schema."
       />
@@ -1010,12 +1104,16 @@ function CreatePromptModal({
     setLoading(true);
     setError(undefined);
     try {
-      const created = await submitPromptOperation<PromptDetail>(createOp, {}, {
-        target,
-        name,
-        relPath,
-        content,
-      });
+      const created = await submitPromptOperation<PromptDetail>(
+        createOp,
+        {},
+        {
+          target,
+          name,
+          relPath,
+          content,
+        },
+      );
       onCreated(created);
     } catch (err) {
       setError(errorMessage(err));
@@ -1035,7 +1133,12 @@ function CreatePromptModal({
           <Button size="sm" variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button size="sm" loading={loading} disabled={!createOp} onClick={() => void submit()}>
+          <Button
+            size="sm"
+            loading={loading}
+            disabled={!createOp}
+            onClick={() => void submit()}
+          >
             <Icon icon={UiAdd} className="size-4" />
             Create
           </Button>
@@ -1117,7 +1220,13 @@ function findPromptOperation(
     const surface = (meta.surface || "").toLowerCase();
     const command = (meta.command || "").toLowerCase();
     const path = op.path.toLowerCase();
-    return surface === "prompt" || surface === "prompts" || command === "prompt" || command.startsWith("prompt ") || path.includes("/prompt");
+    return (
+      surface === "prompt" ||
+      surface === "prompts" ||
+      command === "prompt" ||
+      command.startsWith("prompt ") ||
+      path.includes("/prompt")
+    );
   });
 }
 
@@ -1156,7 +1265,9 @@ async function fetchPermissionCatalog() {
   });
   if (!response.ok) {
     const message = await response.text();
-    throw new Error(message || `Permission catalog failed with ${response.status}`);
+    throw new Error(
+      message || `Permission catalog failed with ${response.status}`,
+    );
   }
   return (await response.json()) as AISpecRuntimePermissionCatalog;
 }
@@ -1197,15 +1308,23 @@ const CAPTAIN_SECRET_SELECTOR = {
   loadKeyPreview: fetchSecretKeyPreview,
 };
 
-async function fetchSecretResources(kind: SecretKind): Promise<SecretResource[]> {
-  const response = await fetch(`/api/captain/secrets/resources?kind=${encodeURIComponent(kind)}`, {
-    headers: { Accept: "application/json" },
-  });
+async function fetchSecretResources(
+  kind: SecretKind,
+): Promise<SecretResource[]> {
+  const response = await fetch(
+    `/api/captain/secrets/resources?kind=${encodeURIComponent(kind)}`,
+    {
+      headers: { Accept: "application/json" },
+    },
+  );
   if (!response.ok) return [];
   return (await response.json()) as SecretResource[];
 }
 
-async function fetchSecretKeyPreview(kind: SecretKind, name: string): Promise<KeyPreview[]> {
+async function fetchSecretKeyPreview(
+  kind: SecretKind,
+  name: string,
+): Promise<KeyPreview[]> {
   const response = await fetch(
     `/api/captain/secrets/preview?kind=${encodeURIComponent(kind)}&name=${encodeURIComponent(name)}`,
     { headers: { Accept: "application/json" } },
@@ -1291,10 +1410,17 @@ function uniqueWritableSources(prompts: PromptSummary[]) {
   return out;
 }
 
-function normalizeObjectSchema(schema: Record<string, unknown> | undefined): JsonSchemaObject | undefined {
+function normalizeObjectSchema(
+  schema: Record<string, unknown> | undefined,
+): JsonSchemaObject | undefined {
   if (!schema || typeof schema !== "object") return undefined;
   const properties = schema.properties;
-  if (!properties || typeof properties !== "object" || Array.isArray(properties)) return undefined;
+  if (
+    !properties ||
+    typeof properties !== "object" ||
+    Array.isArray(properties)
+  )
+    return undefined;
   return {
     ...schema,
     type: "object",
@@ -1306,10 +1432,16 @@ function normalizeObjectSchema(schema: Record<string, unknown> | undefined): Jso
 // "Edit spec" modal both edit this one AISpecRuntimeValue, so the payload is
 // just the compacted spec (plus catalog model/backend normalization).
 function runtimePayload(runtime: AISpecRuntimeValue, models: ChatModel[]) {
-  return normalizeSpecRuntimePayload(buildAISpecRuntimePayload(runtime), models);
+  return normalizeSpecRuntimePayload(
+    buildAISpecRuntimePayload(runtime),
+    models,
+  );
 }
 
-function normalizeSpecRuntimePayload(payload: Record<string, unknown>, models: ChatModel[]) {
+function normalizeSpecRuntimePayload(
+  payload: Record<string, unknown>,
+  models: ChatModel[],
+) {
   const spec = payload.spec;
   if (!spec || typeof spec !== "object" || Array.isArray(spec)) return payload;
   const specRecord = { ...(spec as Record<string, unknown>) };
@@ -1321,7 +1453,10 @@ function normalizeSpecRuntimePayload(payload: Record<string, unknown>, models: C
       }
       specRecord.model = selected.model;
     }
-    if (selected.backend && (typeof specRecord.backend !== "string" || !specRecord.backend.trim())) {
+    if (
+      selected.backend &&
+      (typeof specRecord.backend !== "string" || !specRecord.backend.trim())
+    ) {
       specRecord.backend = selected.backend;
     }
   }
@@ -1331,7 +1466,8 @@ function normalizeSpecRuntimePayload(payload: Record<string, unknown>, models: C
 // Seeds the runtime spec's backend from the prompt (explicit, else inferred from
 // the model). The PromptRunEditor derives the family/mode picker from spec.backend.
 function runtimeSelectionFromPrompt(prompt: PromptSummary): AISpecRuntimeValue {
-  const backend = prompt.backend?.trim() || inferBackendFromModel(prompt.model || "");
+  const backend =
+    prompt.backend?.trim() || inferBackendFromModel(prompt.model || "");
   return backend ? { backend } : {};
 }
 
@@ -1341,14 +1477,21 @@ function inferBackendFromModel(model: string) {
   if (value.startsWith("anthropic/")) return "anthropic";
   if (value.startsWith("openai/")) return "openai";
   if (value.startsWith("googleai/")) return "gemini";
-  if (value.startsWith("deepseek/") || value.startsWith("deepseek-")) return "deepseek";
+  if (value.startsWith("deepseek/") || value.startsWith("deepseek-"))
+    return "deepseek";
   if (value.startsWith("claude-agent-")) return "claude-agent";
   if (value.startsWith("claude-code-")) return "claude-cli";
   if (value.startsWith("codex")) return "codex-cli";
   if (value.startsWith("gemini-cli-")) return "gemini-cli";
   if (value.startsWith("claude-")) return "anthropic";
-  if (value.startsWith("gemini-") || value.startsWith("models/gemini-")) return "gemini";
-  if (value.startsWith("gpt-") || value.startsWith("o1") || value.startsWith("o3") || value.startsWith("o4")) {
+  if (value.startsWith("gemini-") || value.startsWith("models/gemini-"))
+    return "gemini";
+  if (
+    value.startsWith("gpt-") ||
+    value.startsWith("o1") ||
+    value.startsWith("o3") ||
+    value.startsWith("o4")
+  ) {
     return "openai";
   }
   return "";

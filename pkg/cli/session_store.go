@@ -1,9 +1,16 @@
 package cli
 
 import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/flanksource/captain/pkg/api"
@@ -47,9 +54,10 @@ type StoredSession struct {
 	MessageCount  int `gorm:"column:message_count"`
 	ContextTokens int `gorm:"column:context_tokens"`
 
-	Slug     string `gorm:"column:slug"`
-	PlanPath string `gorm:"column:plan_path"`
-	PlanSlug string `gorm:"column:plan_slug"`
+	Slug     string        `gorm:"column:slug"`
+	PlanPath string        `gorm:"column:plan_path"`
+	PlanSlug string        `gorm:"column:plan_slug"`
+	Plan     *session.Plan `gorm:"serializer:json;type:jsonb;column:plan"`
 
 	UpdatedAt time.Time
 }
@@ -85,6 +93,14 @@ var (
 	store     *sessionDB
 )
 
+const (
+	captainSessionEnvDSN = "CAPTAIN_SESSION_DB_URL"
+	gavelCacheEnvDSN     = "GAVEL_GITHUB_CACHE_DSN"
+
+	gavelDBModeDSN      = "dsn"
+	gavelDBModeEmbedded = "embedded"
+)
+
 // sessionStore returns the persistent session store, opening it once. It returns
 // nil (and logs a single Warn) when the DB is unavailable, so callers degrade to
 // uncached summarization.
@@ -94,9 +110,12 @@ func sessionStore() *sessionDB {
 }
 
 func openSessionStore() *sessionDB {
-	dsn := os.Getenv("CAPTAIN_SESSION_DB_URL")
-	if dsn == "off" {
+	dsn, source, disabled, err := configuredSessionDSN()
+	if disabled {
 		return nil // explicitly disabled (tests, or users who opt out)
+	}
+	if err != nil {
+		log.Warnf("gavel session store unavailable: %v; falling back to captain session store", err)
 	}
 	if dsn == "" {
 		dir, err := sessionDBDir()
@@ -112,7 +131,9 @@ func openSessionStore() *sessionDB {
 			return nil
 		}
 		dsn = embeddedDSN // shared daemon: leave running, don't call stop()
+		source = "captain embedded session DB"
 	}
+	log.Debugf("session store using %s", source)
 	gdb, _, err := commonsdb.SetupDB(dsn, "session-cache")
 	if err != nil {
 		log.Warnf("session store unavailable: %v; continuing uncached", err)
@@ -125,6 +146,22 @@ func openSessionStore() *sessionDB {
 	return &sessionDB{gdb: gdb}
 }
 
+func configuredSessionDSN() (dsn string, source string, disabled bool, err error) {
+	if dsn := strings.TrimSpace(os.Getenv(gavelCacheEnvDSN)); dsn != "" {
+		return dsn, gavelCacheEnvDSN, false, nil
+	}
+
+	if dsn := os.Getenv(captainSessionEnvDSN); dsn != "" {
+		if dsn == "off" {
+			return "", "", true, nil
+		}
+		return dsn, captainSessionEnvDSN, false, nil
+	}
+
+	dsn, source, err = gavelConfiguredSessionDSN()
+	return dsn, source, false, err
+}
+
 // sessionDBDir is the embedded-postgres data directory (shared across processes).
 func sessionDBDir() (string, error) {
 	cache, err := os.UserCacheDir()
@@ -132,6 +169,164 @@ func sessionDBDir() (string, error) {
 		return "", err
 	}
 	return filepath.Join(cache, "captain", "session-db"), nil
+}
+
+type gavelDBConfig struct {
+	Mode string `json:"mode"`
+	DSN  string `json:"dsn,omitempty"`
+}
+
+func gavelSessionDSN() (string, string, error) {
+	if dsn := strings.TrimSpace(os.Getenv(gavelCacheEnvDSN)); dsn != "" {
+		return dsn, gavelCacheEnvDSN, nil
+	}
+	return gavelConfiguredSessionDSN()
+}
+
+func gavelConfiguredSessionDSN() (string, string, error) {
+	cfg, path, err := loadGavelDBConfig()
+	if err != nil {
+		return "", "", err
+	}
+	switch cfg.Mode {
+	case "":
+		return "", "", nil
+	case gavelDBModeDSN:
+		if strings.TrimSpace(cfg.DSN) == "" {
+			return "", "", fmt.Errorf("%s has mode=%s but empty dsn", path, gavelDBModeDSN)
+		}
+		return cfg.DSN, path, nil
+	case gavelDBModeEmbedded:
+		running, err := findRunningGavelEmbeddedPostgres()
+		if err != nil {
+			return "", "", err
+		}
+		if running != nil {
+			return gavelEmbeddedDSN(running.Port), path, nil
+		}
+		dataDir, err := gavelEmbeddedDataDir()
+		if err != nil {
+			return "", "", err
+		}
+		dsn, _, err := commonsdb.StartEmbedded(commonsdb.EmbeddedConfig{
+			DataDir:  dataDir,
+			Database: "gavel",
+		})
+		if err != nil {
+			return "", "", err
+		}
+		return dsn, path, nil
+	default:
+		return "", "", fmt.Errorf("%s has unsupported mode %q", path, cfg.Mode)
+	}
+}
+
+func loadGavelDBConfig() (gavelDBConfig, string, error) {
+	path, err := gavelDBConfigPath()
+	if err != nil {
+		return gavelDBConfig{}, "", err
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return gavelDBConfig{}, path, nil
+		}
+		return gavelDBConfig{}, path, fmt.Errorf("read %s: %w", path, err)
+	}
+	var cfg gavelDBConfig
+	if err := json.Unmarshal(b, &cfg); err != nil {
+		return gavelDBConfig{}, path, fmt.Errorf("parse %s: %w", path, err)
+	}
+	return cfg, path, nil
+}
+
+func gavelDBConfigPath() (string, error) {
+	dir, err := gavelStateDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "db.json"), nil
+}
+
+func gavelEmbeddedDataDir() (string, error) {
+	dir, err := gavelStateDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "embedded-pg"), nil
+}
+
+func gavelStateDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve home dir: %w", err)
+	}
+	dir := filepath.Join(home, ".config", "gavel")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("create gavel state dir %s: %w", dir, err)
+	}
+	return dir, nil
+}
+
+type runningGavelEmbeddedPostgres struct {
+	PID  int
+	Port int
+}
+
+func findRunningGavelEmbeddedPostgres() (*runningGavelEmbeddedPostgres, error) {
+	dataDir, err := gavelEmbeddedDataDir()
+	if err != nil {
+		return nil, err
+	}
+	pidPath := filepath.Join(dataDir, "data", "postmaster.pid")
+	raw, err := os.ReadFile(pidPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read %s: %w", pidPath, err)
+	}
+	lines := strings.Split(string(raw), "\n")
+	const postmasterLinePort = 3
+	if len(lines) <= postmasterLinePort {
+		return nil, fmt.Errorf("%s has %d lines, need >%d", pidPath, len(lines), postmasterLinePort)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(lines[0]))
+	if err != nil || pid <= 0 {
+		return nil, fmt.Errorf("%s: invalid pid %q: %w", pidPath, lines[0], err)
+	}
+	port, err := strconv.Atoi(strings.TrimSpace(lines[postmasterLinePort]))
+	if err != nil || port <= 0 || port > 65535 {
+		return nil, fmt.Errorf("%s: invalid port %q: %w", pidPath, lines[postmasterLinePort], err)
+	}
+	if !processAlive(pid) || !tcpPortReachable("localhost", port) {
+		return nil, nil
+	}
+	return &runningGavelEmbeddedPostgres{PID: pid, Port: port}, nil
+}
+
+func gavelEmbeddedDSN(port int) string {
+	return fmt.Sprintf("postgres://postgres:postgres@localhost:%d/gavel?sslmode=disable", port)
+}
+
+func processAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	return p.Signal(syscall.Signal(0)) == nil
+}
+
+func tcpPortReachable(host string, port int) bool {
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), 200*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
 }
 
 // lookupFresh returns the stored row for path when it exists and its mtime+size
@@ -216,6 +411,8 @@ func storedBase(r session.Row) StoredSession {
 	if r.Plan != nil {
 		row.PlanPath = r.Plan.Path
 		row.PlanSlug = r.Plan.Slug
+		plan := *r.Plan
+		row.Plan = &plan
 	}
 	return row
 }

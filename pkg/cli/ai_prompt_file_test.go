@@ -205,6 +205,71 @@ func TestOverlayCLI_BooleansOR(t *testing.T) {
 	}
 }
 
+func fallbackNames(models []api.Model) []string {
+	if len(models) == 0 {
+		return nil
+	}
+	out := make([]string, len(models))
+	for i, m := range models {
+		out[i] = m.Name
+	}
+	return out
+}
+
+func TestOverlayCLI_ModelCSVExpandsToFallbacks(t *testing.T) {
+	isolateSavedAI(t)
+	opts := AIPromptOptions{}
+	opts.Model = "claude-primary-5,gpt-4o,gemini-2.0-flash"
+
+	req, cfg, err := overlayCLI(baseFileReq(), ai.Config{}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.Model.Name != "claude-primary-5" {
+		t.Errorf("Model.Name = %q, want CSV head claude-primary-5", req.Model.Name)
+	}
+	if got := fallbackNames(req.Model.Fallbacks); !reflect.DeepEqual(got, []string{"gpt-4o", "gemini-2.0-flash"}) {
+		t.Errorf("req fallbacks = %v, want [gpt-4o gemini-2.0-flash]", got)
+	}
+	if got := fallbackNames(cfg.Model.Fallbacks); !reflect.DeepEqual(got, []string{"gpt-4o", "gemini-2.0-flash"}) {
+		t.Errorf("cfg fallbacks = %v, want mirrored into config", got)
+	}
+}
+
+func TestOverlayCLI_FallbackFlagOverridesFrontmatter(t *testing.T) {
+	isolateSavedAI(t)
+	base := baseFileReq()
+	base.Model.Fallbacks = []api.Model{{Name: "frontmatter-fallback"}}
+	opts := AIPromptOptions{}
+	opts.Fallback = []string{"cli-fallback-a", "cli-fallback-b,cli-fallback-c"} // repeatable + comma-split
+
+	req, _, err := overlayCLI(base, ai.Config{}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"cli-fallback-a", "cli-fallback-b", "cli-fallback-c"}
+	if got := fallbackNames(req.Model.Fallbacks); !reflect.DeepEqual(got, want) {
+		t.Errorf("fallbacks = %v, want CLI flags %v (override frontmatter)", got, want)
+	}
+}
+
+func TestOverlayCLI_FrontmatterFallbacksStandWithoutFlag(t *testing.T) {
+	isolateSavedAI(t)
+	base := baseFileReq()
+	base.Model.Fallbacks = []api.Model{{Name: "gpt-4o", Effort: api.EffortHigh}}
+
+	req, _, err := overlayCLI(base, ai.Config{}, AIPromptOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fallbackNames(req.Model.Fallbacks); !reflect.DeepEqual(got, []string{"gpt-4o"}) {
+		t.Errorf("fallbacks = %v, want frontmatter [gpt-4o] when no --fallback", got)
+	}
+	if req.Model.Fallbacks[0].Effort != api.EffortHigh {
+		t.Errorf("frontmatter fallback effort = %q, want preserved high", req.Model.Fallbacks[0].Effort)
+	}
+}
+
 func TestNormalizePromptContextDir(t *testing.T) {
 	cwd := filepath.Join(t.TempDir(), "repo")
 	if err := os.MkdirAll(cwd, 0o755); err != nil {

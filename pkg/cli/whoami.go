@@ -180,6 +180,19 @@ func firstEnv(vars []string, getenv func(string) string) string {
 }
 
 func RunWhoami(opts WhoamiOptions) (any, error) {
+	adapters, err := ProbeAdapters(opts, osAuthProbe())
+	if err != nil {
+		return nil, err
+	}
+	return WhoamiResult{Adapters: adapters, sampleLimit: opts.Limit, showModels: opts.Models}, nil
+}
+
+// ProbeAdapters resolves each backend's auth/availability and (when opts.Models)
+// its model listing against the supplied environment probe. It is the shared,
+// injectable core behind both `captain whoami` and the prompt --schema builder,
+// so passing a stub authProbe keeps callers hermetic (no live API calls when the
+// probe reports no API keys).
+func ProbeAdapters(opts WhoamiOptions, probe authProbe) ([]AdapterStatus, error) {
 	backends := ai.AllBackends()
 	if opts.Backend != "" {
 		b := ai.Backend(opts.Backend)
@@ -189,22 +202,20 @@ func RunWhoami(opts WhoamiOptions) (any, error) {
 		backends = []ai.Backend{b}
 	}
 
-	probe := osAuthProbe()
-
 	var models map[ai.Backend]modelFetch
 	if opts.Models {
 		models = fetchAPIModels(backends, probe.getenv)
 	}
 
-	result := WhoamiResult{sampleLimit: opts.Limit, showModels: opts.Models}
+	adapters := make([]AdapterStatus, 0, len(backends))
 	for _, b := range backends {
 		st := resolveAdapter(b, probe)
 		if opts.Models {
 			applyModels(&st, b, models, probe.getenv)
 		}
-		result.Adapters = append(result.Adapters, st)
+		adapters = append(adapters, st)
 	}
-	return result, nil
+	return adapters, nil
 }
 
 type modelFetch struct {
