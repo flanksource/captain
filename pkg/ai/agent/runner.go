@@ -75,6 +75,17 @@ type HookContext struct {
 	Response  *ai.Response
 	Iteration int
 	Scope     Scope
+
+	// Verified and Failed describe the run's outcome so PostRun hooks (e.g. the
+	// worktree merge/cleanup gate) can act on it. Runner.Run sets both right
+	// before invoking PostRun hooks; they are meaningless beforehand.
+	//
+	// Verified mirrors VerifyPassed(result.Verdicts) — true when the last verify
+	// verdict passed, or trivially true when no Verify hooks ran at all.
+	Verified bool
+	// Failed is true when the generate/verify run itself returned an error
+	// (a provider failure, not a failing verdict).
+	Failed bool
 }
 
 // Workspace returns the run's working-dir state, allocating it if needed (so it
@@ -158,6 +169,7 @@ func (r *Runner[T]) Run(ctx context.Context) (Result[T], error) {
 	for _, h := range r.Hooks {
 		if pr, ok := h.(PreRun); ok {
 			if err := pr.PreRun(hc); err != nil {
+				hc.Failed = true
 				_ = r.runPostRun(hc) // best-effort teardown
 				return zero, fmt.Errorf("agent: preRun %q: %w", pr.Name(), err)
 			}
@@ -174,6 +186,8 @@ func (r *Runner[T]) Run(ctx context.Context) (Result[T], error) {
 		runErr = r.runLoop(ctx, hc, &result)
 	}
 
+	hc.Failed = runErr != nil
+	hc.Verified = verifyPassed(result.Verdicts)
 	postErr := r.runPostRun(hc)
 	if runErr != nil {
 		return result, runErr
@@ -268,6 +282,17 @@ func (r *Runner[T]) runLoop(ctx context.Context, hc *HookContext, result *Result
 		return loopErr
 	}
 	return verifyErr
+}
+
+// verifyPassed reports whether the run's last verify verdict passed, or
+// trivially true when no Verify hooks ran at all. Runner.Run uses it to set
+// HookContext.Verified for PostRun hooks; mirrors pkg/cli's own verifyPassed,
+// which summarizes the same Result.Verdicts for CLI output.
+func verifyPassed(verdicts []VerifyResult) bool {
+	if len(verdicts) == 0 {
+		return true
+	}
+	return verdicts[len(verdicts)-1].Valid
 }
 
 // verify runs every Verify hook; allValid is true only if all passed. retry is

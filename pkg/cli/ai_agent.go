@@ -80,7 +80,14 @@ func buildAgentPlugins(opts AIAgentOptions, p ai.Provider) ([]any, *worktree.Plu
 		}
 		wt = &worktree.Plugin{Branch: branch}
 		if opts.Commit {
-			wt.CommitMsg = "captain: " + commitSubject(opts.Prompt)
+			// --commit: merge the isolated branch into trunk once the run
+			// succeeds, then remove the worktree.
+			wt.Merge = worktree.WorktreeMergeOnSuccess
+			wt.Cleanup = worktree.WorktreeCleanupOnMerge
+		} else {
+			// --worktree alone: never merge, and only clean up a worktree whose
+			// changes verified — otherwise keep it around for inspection.
+			wt.Cleanup = worktree.WorktreeCleanupOnVerify
 		}
 		hooks = append(hooks, wt)
 	}
@@ -196,13 +203,4 @@ func RunAIAgent(opts AIAgentOptions) (any, error) {
 		return res, runErr
 	}
 	return res, nil
-}
-
-// commitSubject derives a one-line, length-capped commit subject from the prompt.
-func commitSubject(s string) string {
-	s = strings.TrimSpace(firstLine(s))
-	if len(s) > 72 {
-		s = s[:72]
-	}
-	return s
 }

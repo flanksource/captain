@@ -109,6 +109,62 @@ func TestRunner_PreRunPostRunOrder(t *testing.T) {
 	assert.Equal(t, []string{"preRun", "postRun"}, log)
 }
 
+func TestRunner_PostRunSeesVerifiedAndFailed(t *testing.T) {
+	cases := []struct {
+		name         string
+		provider     ai.StreamingProvider
+		hook         verifyHook
+		wantVerified bool
+		wantFailed   bool
+	}{
+		{
+			name:     "passing verify, no run error",
+			provider: &fakeProvider{events: func(int) []ai.Event { return []ai.Event{{Kind: ai.EventResult, Success: true}} }},
+			hook: verifyHook{name: "lint", fn: func(*HookContext) (VerifyResult, error) {
+				return VerifyResult{Valid: true}, nil
+			}},
+			wantVerified: true,
+			wantFailed:   false,
+		},
+		{
+			name:     "failing verify with no retry, no run error",
+			provider: &fakeProvider{events: func(int) []ai.Event { return []ai.Event{{Kind: ai.EventResult, Success: true}} }},
+			hook: verifyHook{name: "lint", fn: func(*HookContext) (VerifyResult, error) {
+				return VerifyResult{Valid: false}, nil
+			}},
+			wantVerified: false,
+			wantFailed:   false,
+		},
+		{
+			name:     "missing provider surfaces as a run error",
+			provider: nil,
+			hook: verifyHook{name: "lint", fn: func(*HookContext) (VerifyResult, error) {
+				return VerifyResult{Valid: true}, nil
+			}},
+			wantVerified: true, // no verdicts recorded before the run error
+			wantFailed:   true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var sawVerified, sawFailed bool
+			outcome := &outcomeHook{onPostRun: func(hc *HookContext) {
+				sawVerified = hc.Verified
+				sawFailed = hc.Failed
+			}}
+			r := &Runner[string]{
+				Provider: tc.provider,
+				Request:  ai.Request{Prompt: api.Prompt{User: "go"}},
+				Hooks:    []any{tc.hook, outcome},
+			}
+			_, _ = r.Run(context.Background())
+			assert.Equal(t, tc.wantVerified, sawVerified, "hc.Verified")
+			assert.Equal(t, tc.wantFailed, sawFailed, "hc.Failed")
+		})
+	}
+}
+
 func TestRunner_VerifyOnlySkipsGeneration(t *testing.T) {
 	var verifyCalls int
 	// Empty prompt body ⇒ verify-only: no provider, no generation loop.
@@ -137,11 +193,18 @@ type verifyHook struct {
 	fn   func(*HookContext) (VerifyResult, error)
 }
 
-func (v verifyHook) Name() string                              { return v.name }
+func (v verifyHook) Name() string                                 { return v.name }
 func (v verifyHook) Verify(hc *HookContext) (VerifyResult, error) { return v.fn(hc) }
+
+// outcomeHook records the HookContext.Verified/Failed values PostRun observes,
+// e.g. what a worktree.Plugin reads to gate merge/cleanup.
+type outcomeHook struct{ onPostRun func(*HookContext) }
+
+func (o *outcomeHook) Name() string                  { return "outcome" }
+func (o *outcomeHook) PostRun(hc *HookContext) error { o.onPostRun(hc); return nil }
 
 type lifecycleHook struct{ log *[]string }
 
-func (l *lifecycleHook) Name() string                { return "lifecycle" }
-func (l *lifecycleHook) PreRun(*HookContext) error   { *l.log = append(*l.log, "preRun"); return nil }
-func (l *lifecycleHook) PostRun(*HookContext) error  { *l.log = append(*l.log, "postRun"); return nil }
+func (l *lifecycleHook) Name() string               { return "lifecycle" }
+func (l *lifecycleHook) PreRun(*HookContext) error  { *l.log = append(*l.log, "preRun"); return nil }
+func (l *lifecycleHook) PostRun(*HookContext) error { *l.log = append(*l.log, "postRun"); return nil }
