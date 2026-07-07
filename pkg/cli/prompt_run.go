@@ -8,6 +8,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/agent"
+	"github.com/flanksource/captain/pkg/ai/agent/verify"
 	clickyrpc "github.com/flanksource/clicky/rpc"
 	"github.com/flanksource/clicky/task"
 	flanksourceContext "github.com/flanksource/commons/context"
@@ -180,15 +181,15 @@ func runPromptStream(t *task.Task, rendered PromptRenderResult, timeout time.Dur
 	}
 	runner := &agent.Runner{
 		Provider: streamer,
-		Plugins:  workflowPlugins(req.Workflow),
+		Plugins:  verify.PluginsForWorkflow(req.Workflow),
 		Loop: ai.LoopOptions{
-			MaxIterations: workflowMaxIterations(req.Workflow),
+			MaxIterations: verify.MaxIterationsForWorkflow(req.Workflow),
 			OnEvent:       acc.handle,
 		},
 		Build: build,
 		Repo:  req.Cwd(),
 		Cwd:   req.Cwd(),
-		Scope: workflowScope(req.Workflow),
+		Scope: verify.ScopeForWorkflow(req.Workflow),
 	}
 	runResult, err := runner.Run(ctx)
 	if err != nil {
