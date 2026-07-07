@@ -3,7 +3,6 @@ package middleware
 import (
 	"context"
 	"math/rand/v2"
-	"strings"
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
@@ -42,7 +41,7 @@ func (r *retryProvider) Execute(ctx context.Context, req ai.Request) (*ai.Respon
 
 		lastErr = err
 
-		if !isRetryable(err) {
+		if !ai.IsRetryable(err) {
 			return resp, err
 		}
 		if attempt >= r.config.MaxRetries {
@@ -67,15 +66,6 @@ func (r *retryProvider) Execute(ctx context.Context, req ai.Request) (*ai.Respon
 	}
 
 	return nil, lastErr
-}
-
-func isRetryable(err error) bool {
-	msg := err.Error()
-	return strings.Contains(msg, "rate limit") ||
-		strings.Contains(msg, "429") ||
-		strings.Contains(msg, "503") ||
-		strings.Contains(msg, "overloaded") ||
-		strings.Contains(msg, "timeout")
 }
 
 func WithRetry(config RetryConfig) Option {

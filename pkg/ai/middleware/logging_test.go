@@ -3,6 +3,7 @@ package middleware
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"regexp"
 	"strings"
 	"testing"
@@ -28,18 +29,24 @@ func (s stubProvider) GetModel() string       { return "test-model" }
 func (s stubProvider) GetBackend() ai.Backend { return ai.BackendAnthropic }
 
 func TestSchemaInJSON(t *testing.T) {
-	if got := schemaInJSON(nil); got != "" {
-		t.Fatalf("text-mode (nil target): want empty, got %q", got)
+	if got := schemaInJSON(api.Prompt{}); got != "" {
+		t.Fatalf("text-mode (no schema): want empty, got %q", got)
 	}
 
-	got := schemaInJSON(&sampleOut{})
+	got := schemaInJSON(api.Prompt{Schema: &sampleOut{}})
 	for _, want := range []string{`"type":"object"`, `"description":"conventional type"`, `"required":["type"]`} {
 		if !strings.Contains(got, want) {
-			t.Errorf("schema-in %q missing %q", got, want)
+			t.Errorf("reflected schema-in %q missing %q", got, want)
 		}
 	}
 
-	if got := schemaInJSON("not-a-struct"); !strings.Contains(got, "schema-in error") {
+	// A pre-built SchemaJSON is printed verbatim, preserving vocabulary the reflected
+	// path can't express (e.g. maxItems) — the commit-grouping cap must be visible under -v.
+	if got := schemaInJSON(api.Prompt{SchemaJSON: json.RawMessage(`{"type":"object","properties":{"groups":{"type":"array","maxItems":2}}}`)}); !strings.Contains(got, `"maxItems":2`) {
+		t.Errorf("pre-built SchemaJSON should print verbatim, got %q", got)
+	}
+
+	if got := schemaInJSON(api.Prompt{Schema: "not-a-struct"}); !strings.Contains(got, "schema-in error") {
 		t.Errorf("non-struct target: want inline error marker, got %q", got)
 	}
 }
@@ -97,6 +104,39 @@ func TestLoggingProvider_EmitsSourceAndSchemas(t *testing.T) {
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("logging middleware output missing %q\n--- output ---\n%s", want, got)
+		}
+	}
+}
+
+// TestLoggingProvider_EmitsSchemaJSON drives a request whose schema is a pre-built
+// SchemaJSON (no Go target) — the commit-grouping path — through the logging
+// middleware at debug level and asserts the schema-in with its maxItems cap appears.
+// Before this, schema-in only rendered the reflected Go-target schema, so
+// `gavel commit -G -v` could not show the grouping cap.
+func TestLoggingProvider_EmitsSchemaJSON(t *testing.T) {
+	prev := logger.GetOutput()
+	t.Cleanup(func() { logger.SetOutput(prev) })
+	var buf bytes.Buffer
+	logger.SetOutput(&buf)
+	logger.GetLogger("ai").SetLogLevel("debug")
+
+	p, err := WithLogging()(stubProvider{resp: &ai.Response{Text: `{"groups":[]}`, Model: "test-model"}})
+	if err != nil {
+		t.Fatalf("WithLogging: %v", err)
+	}
+
+	if _, err := p.Execute(context.Background(), ai.Request{Prompt: api.Prompt{
+		User:       "group the files",
+		Source:     "commit-grouping.prompt",
+		SchemaJSON: json.RawMessage(`{"type":"object","properties":{"groups":{"type":"array","maxItems":2}}}`),
+	}}); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	got := ansi.ReplaceAllString(buf.String(), "")
+	for _, want := range []string{"schema-in", `"maxItems":2`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("debug output missing %q\n--- output ---\n%s", want, got)
 		}
 	}
 }

@@ -25,13 +25,47 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
 	dp "github.com/google/dotprompt/go/dotprompt"
+	"github.com/mbleigh/raymond"
 	"gopkg.in/yaml.v3"
 )
+
+// frontmatterRe splits a .prompt source into YAML frontmatter (group 1) and body
+// (group 2). The pattern is copied from google/dotprompt's FrontmatterAndBodyRegex
+// so the split matches exactly what the dotprompt library re-parses.
+var frontmatterRe = regexp.MustCompile(
+	`^(?:(?:#[^\n]*|[ \t]*)\n)*---\s*(?:\r\n|\r|\n)([\s\S]*?)(?:\r\n|\r|\n)---\s*(?:\r\n|\r|\n)([\s\S]*)$`)
+
+// renderFrontmatter templates the YAML frontmatter of a .prompt source with data
+// (the same map used to render the body), so authors can parametrize frontmatter —
+// notably output.schema constraints like `maxItems: {{maxCommits}}`. Only the
+// frontmatter is rendered here; the body is left for dotprompt so its {{role …}}
+// helpers and partials render normally. No-op when the source has no frontmatter or
+// the frontmatter contains no `{{`.
+func renderFrontmatter(source string, data map[string]any) (string, error) {
+	loc := frontmatterRe.FindStringSubmatchIndex(source)
+	if loc == nil {
+		return source, nil
+	}
+	fm := source[loc[2]:loc[3]]
+	if !strings.Contains(fm, "{{") {
+		return source, nil
+	}
+	tpl, err := raymond.Parse(fm)
+	if err != nil {
+		return "", fmt.Errorf("parse frontmatter template: %w", err)
+	}
+	out, err := tpl.ExecWith(data, raymond.NewDataFrame(), &raymond.ExecOptions{NoEscape: true})
+	if err != nil {
+		return "", fmt.Errorf("render frontmatter template: %w", err)
+	}
+	return source[:loc[2]] + out + source[loc[3]:], nil
+}
 
 // Template is a parsed .prompt source ready to render with runtime data.
 type Template struct {
@@ -71,7 +105,11 @@ func LoadFS(fsys fs.FS, path string) (*Template, error) {
 // ai.Request and ai.Config. When out is non-nil it becomes
 // Request.Prompt.Schema (the structured-output target).
 func (t *Template) Render(data map[string]any, out any) (ai.Request, ai.Config, error) {
-	rendered, err := t.dp.Render(t.source, &dp.DataArgument{Input: data}, nil)
+	src, err := renderFrontmatter(t.source, data)
+	if err != nil {
+		return ai.Request{}, ai.Config{}, fmt.Errorf("render prompt %s frontmatter: %w", t.name, err)
+	}
+	rendered, err := t.dp.Render(src, &dp.DataArgument{Input: data}, nil)
 	if err != nil {
 		return ai.Request{}, ai.Config{}, fmt.Errorf("render prompt %s: %w", t.name, err)
 	}

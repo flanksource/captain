@@ -37,6 +37,10 @@ type PromptRequest struct {
 	// over StructuredOutput when the schema is declared in the prompt file rather
 	// than a Go type; the two are mutually exclusive.
 	SchemaJSON json.RawMessage `json:"schema_json,omitempty"`
+	// SchemaStrictness forwards api.Prompt.SchemaStrictness — the policy for a
+	// response that fails schema validation (warning/error/retry). "" (default)
+	// skips validation.
+	SchemaStrictness api.SchemaStrictness `json:"schema_strictness,omitempty"`
 	// Source identifies the prompt template (e.g. the .prompt filename) for
 	// diagnostics; forwarded to ai.Request.Source and printed by the logging
 	// middleware.
@@ -83,11 +87,12 @@ func (a *Agent) GetBackend() Backend { return a.provider.GetBackend() }
 func (a *Agent) ExecutePrompt(ctx context.Context, req PromptRequest) (*PromptResponse, error) {
 	start := time.Now()
 	resp, err := a.provider.Execute(ctx, Request{Prompt: api.Prompt{
-		User:       req.Prompt,
-		System:     req.SystemPrompt,
-		Source:     req.Source,
-		Schema:     req.StructuredOutput,
-		SchemaJSON: req.SchemaJSON,
+		User:             req.Prompt,
+		System:           req.SystemPrompt,
+		Source:           req.Source,
+		Schema:           req.StructuredOutput,
+		SchemaJSON:       req.SchemaJSON,
+		SchemaStrictness: req.SchemaStrictness,
 	}})
 	if err != nil {
 		return &PromptResponse{Request: req, Model: a.cfg.Model.Name, Error: err.Error(), Duration: time.Since(start)}, err
