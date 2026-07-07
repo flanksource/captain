@@ -7,10 +7,12 @@ import (
 	"github.com/flanksource/captain/pkg/ai/agent"
 )
 
-func pluginNames(ps []agent.Plugin) []string {
-	out := make([]string, len(ps))
-	for i, p := range ps {
-		out[i] = p.Name()
+func pluginNames(hooks []any) []string {
+	out := make([]string, len(hooks))
+	for i, h := range hooks {
+		if n, ok := h.(interface{ Name() string }); ok {
+			out[i] = n.Name()
+		}
 	}
 	return out
 }
@@ -91,18 +93,15 @@ func TestBuildAgentPlugins_VerifyAndJudge(t *testing.T) {
 	}
 }
 
-func TestVerdictsPassed(t *testing.T) {
-	if !verdictsPassed(nil, nil) {
-		t.Error("no verdicts + no error should pass")
+func TestVerifyPassed(t *testing.T) {
+	if !verifyPassed(nil) {
+		t.Error("no verdicts should pass")
 	}
-	if verdictsPassed(nil, errSentinel) {
-		t.Error("no verdicts + error should fail")
+	if !verifyPassed([]agent.VerifyResult{{Valid: false}, {Valid: true}}) {
+		t.Error("last verdict valid should pass")
 	}
-	if !verdictsPassed([]agent.Verdict{{OK: false}, {OK: true}}, nil) {
-		t.Error("last verdict OK should pass")
-	}
-	if verdictsPassed([]agent.Verdict{{OK: true}, {OK: false}}, nil) {
-		t.Error("last verdict not OK should fail")
+	if verifyPassed([]agent.VerifyResult{{Valid: true}, {Valid: false}}) {
+		t.Error("last verdict not valid should fail")
 	}
 }
 
@@ -115,9 +114,3 @@ func TestCommitSubject(t *testing.T) {
 		t.Errorf("commitSubject len = %d, want 72 (capped)", len(got))
 	}
 }
-
-var errSentinel = errSentinelType("boom")
-
-type errSentinelType string
-
-func (e errSentinelType) Error() string { return string(e) }

@@ -7,21 +7,22 @@ import (
 	"github.com/flanksource/captain/pkg/api"
 )
 
-func TestPluginsForWorkflow(t *testing.T) {
-	if PluginsForWorkflow(nil) != nil {
-		t.Errorf("nil workflow should yield no plugins")
+func TestHooksForWorkflow(t *testing.T) {
+	if HooksForWorkflow(nil) != nil {
+		t.Errorf("nil workflow should yield no hooks")
 	}
-	if PluginsForWorkflow(&api.Workflow{}) != nil {
-		t.Errorf("workflow without verify should yield no plugins")
+	if HooksForWorkflow(&api.Workflow{}) != nil {
+		t.Errorf("workflow without verify should yield no hooks")
 	}
 
 	wf := &api.Workflow{Verify: &api.Verify{Commands: []string{"go test ./...", "  ", "go vet ./..."}}}
-	plugins := PluginsForWorkflow(wf)
-	if len(plugins) != 2 {
-		t.Fatalf("want 2 plugins (blank command skipped), got %d", len(plugins))
+	hooks := HooksForWorkflow(wf)
+	if len(hooks) != 2 {
+		t.Fatalf("want 2 hooks (blank command skipped), got %d", len(hooks))
 	}
-	if plugins[0].Name() != "verify:go test ./..." {
-		t.Errorf("unexpected plugin name %q", plugins[0].Name())
+	named, ok := hooks[0].(interface{ Name() string })
+	if !ok || named.Name() != "verify:go test ./..." {
+		t.Errorf("unexpected first hook %v", hooks[0])
 	}
 }
 

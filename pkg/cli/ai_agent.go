@@ -66,12 +66,12 @@ func scopeFromFlag(s string) (agent.Scope, error) {
 // buildAgentPlugins assembles the verify/worktree/judge plugins from the flags.
 // The worktree plugin owns the commit (it commits the branch on teardown), so
 // --commit requires --worktree.
-func buildAgentPlugins(opts AIAgentOptions, p ai.Provider) ([]agent.Plugin, *worktree.Plugin, error) {
+func buildAgentPlugins(opts AIAgentOptions, p ai.Provider) ([]any, *worktree.Plugin, error) {
 	if opts.Commit && !opts.Worktree {
 		return nil, nil, fmt.Errorf("--commit requires --worktree (captain commits the isolated branch, not your working tree)")
 	}
 
-	var plugins []agent.Plugin
+	var hooks []any
 	var wt *worktree.Plugin
 	if opts.Worktree {
 		branch := opts.Branch
@@ -82,7 +82,7 @@ func buildAgentPlugins(opts AIAgentOptions, p ai.Provider) ([]agent.Plugin, *wor
 		if opts.Commit {
 			wt.CommitMsg = "captain: " + commitSubject(opts.Prompt)
 		}
-		plugins = append(plugins, wt)
+		hooks = append(hooks, wt)
 	}
 
 	for _, cmd := range opts.Verify {
@@ -90,7 +90,7 @@ func buildAgentPlugins(opts AIAgentOptions, p ai.Provider) ([]agent.Plugin, *wor
 		if cmd == "" {
 			continue
 		}
-		plugins = append(plugins, verify.New("verify:"+cmd, &verify.CmdVerifier{Cmd: "sh", Args: []string{"-c", cmd}}))
+		hooks = append(hooks, verify.New("verify:"+cmd, &verify.CmdVerifier{Cmd: "sh", Args: []string{"-c", cmd}}))
 	}
 
 	if opts.Judge != "" {
@@ -101,10 +101,10 @@ func buildAgentPlugins(opts AIAgentOptions, p ai.Provider) ([]agent.Plugin, *wor
 				return map[string]any{"cwd": cwd, "changed": strings.Join(changed, ", "), "rubric": opts.Judge}
 			},
 		}
-		plugins = append(plugins, verify.New("judge", judge))
+		hooks = append(hooks, verify.New("judge", judge))
 	}
 
-	return plugins, wt, nil
+	return hooks, wt, nil
 }
 
 func RunAIAgent(opts AIAgentOptions) (any, error) {
@@ -142,7 +142,7 @@ func RunAIAgent(opts AIAgentOptions) (any, error) {
 		return nil, fmt.Errorf("backend %s does not support the streaming agent loop", cfg.Model.Backend)
 	}
 
-	plugins, wt, err := buildAgentPlugins(opts, p)
+	hooks, _, err := buildAgentPlugins(opts, p)
 	if err != nil {
 		return nil, err
 	}
@@ -153,23 +153,15 @@ func RunAIAgent(opts AIAgentOptions) (any, error) {
 	}
 
 	renderer := newLineRenderer(os.Stderr, 8)
-	runner := &agent.Runner{
-		Provider: sp,
-		Plugins:  plugins,
-		Loop: ai.LoopOptions{
-			MaxIterations: opts.MaxIterations,
-			OnEvent:       func(_ int, ev ai.Event) { renderEvent(os.Stderr, renderer, ev) },
-		},
-		Build: func(_ *agent.RunContext, _ int, _ *ai.LoopIteration, feedback string) ai.Request {
-			req := baseReq
-			if feedback != "" {
-				req.Prompt.User = opts.Prompt + "\n\n[verifier feedback]\n" + feedback + "\n\nFix the issues above and continue."
-			}
-			return req
-		},
-		Repo:  cwd,
-		Cwd:   cwd,
-		Scope: scope,
+	runner := &agent.Runner[string]{
+		Provider:      sp,
+		Request:       baseReq,
+		Hooks:         hooks,
+		MaxIterations: opts.MaxIterations,
+		Repo:          cwd,
+		Cwd:           cwd,
+		Scope:         scope,
+		OnEvent:       func(_ int, ev ai.Event) { renderEvent(os.Stderr, renderer, ev) },
 	}
 
 	timeout, _ := time.ParseDuration(opts.Timeout)
@@ -181,23 +173,21 @@ func RunAIAgent(opts AIAgentOptions) (any, error) {
 
 	start := time.Now()
 	result, runErr := runner.Run(ctx)
-	if result == nil {
-		return nil, runErr
-	}
+	ws := result.Response.Workspace
 
 	res := AIAgentResult{
-		ChangedFiles: result.ChangedFiles,
-		SessionID:    result.SessionID,
-		Duration:     time.Since(start).Round(time.Millisecond).String(),
-		Passed:       verdictsPassed(result.Verdicts, runErr),
+		Duration: time.Since(start).Round(time.Millisecond).String(),
+		Passed:   verifyPassed(result.Verdicts),
+	}
+	if ws != nil {
+		res.ChangedFiles = ws.Changed
+		res.SessionID = ws.SessionID
+		res.Branch = ws.Branch
 	}
 	if result.Loop != nil {
 		res.Iterations = len(result.Loop.Iterations)
 		res.StopReason = result.Loop.StopReason
 		res.CostUSD = result.Loop.TotalCost
-	}
-	if wt != nil && wt.Result != nil {
-		res.Branch = wt.Result.Branch
 	}
 	// A failed loop/verify is surfaced through the result (Passed=false), not as
 	// a command error, so --format output is still rendered. A genuine provider
@@ -206,15 +196,6 @@ func RunAIAgent(opts AIAgentOptions) (any, error) {
 		return res, runErr
 	}
 	return res, nil
-}
-
-// verdictsPassed reports whether the last verifier verdict was OK. With no
-// verifiers, the run passed when the loop returned no error.
-func verdictsPassed(verdicts []agent.Verdict, runErr error) bool {
-	if len(verdicts) == 0 {
-		return runErr == nil
-	}
-	return verdicts[len(verdicts)-1].OK
 }
 
 // commitSubject derives a one-line, length-capped commit subject from the prompt.

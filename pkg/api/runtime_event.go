@@ -15,6 +15,10 @@ type Response struct {
 	Duration       time.Duration
 	CacheHit       bool
 	Raw            any
+
+	// Workspace is the run's working-dir runtime state (cwd, git details, changed
+	// files, commits, plan). Populated by the agent runner + worktree hook.
+	Workspace *Workspace
 }
 
 // EventKind classifies a streaming provider Event.

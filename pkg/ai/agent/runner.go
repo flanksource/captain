@@ -1,14 +1,12 @@
-// Package agent composes pre/post lifecycle plugins around an iterative AI run.
+// Package agent composes a generate→verify run out of generic hooks.
 //
-// It sits one layer above ai.RunUntil: a Runner drives the loop while
-// SetupPlugins (e.g. a git worktree) run once before it, VerifyPlugins (e.g.
-// lint/test/LLM-judge) vote after every iteration and drive re-runs when they
-// fail, and FinalizePlugins (e.g. a commit) run once after the loop. This is the
-// extension point ai/middleware (a single-call decorator) cannot express.
-//
-// The Runner also taps the event stream to record the run's SessionID and the
-// set of files the agent changed (reusing pkg/ai/history's file-mutating tool
-// table), so verifiers and finalizers can scope themselves to just those files.
+// A Runner[T] drives an iterative AI run: PreRun hooks (e.g. a git worktree) run
+// once before the loop; Verify hooks vote after every iteration and, when a run
+// fails, return the exact next request to re-run; PostRun hooks (e.g. commit +
+// worktree teardown) run once after; an optional Output hook produces the typed
+// final result T. Every hook receives a HookContext carrying the rendered
+// request and the accumulating api.Response — whose Workspace holds the run's
+// cwd/git/changed/commits/plan state.
 package agent
 
 import (
@@ -18,16 +16,16 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/history"
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/claude"
 	"github.com/flanksource/commons/logger"
 )
 
 // fallbackLog is used when ctx carries no task-scoped logger (ai.ContextWithLogger).
-// Tunable via -Plog.level.agent=trace.
 var fallbackLog = logger.GetLogger("agent")
 
-// Scope controls how much verifiers/finalizers act on. ScopeChanged restricts
-// them to the files the agent edited; ScopeAll lets each act on the whole tree.
+// Scope controls how much hooks act on. ScopeChanged restricts them to the files
+// the agent edited; ScopeAll lets each act on the whole tree.
 type Scope string
 
 const (
@@ -35,12 +33,8 @@ const (
 	ScopeAll     Scope = "all"
 )
 
-// AllScopes lists every verifier scope in canonical order. It is the single
-// source of truth behind Scope.Valid, ScopeList, ParseScope, and the
-// help/error/completion strings that enumerate scopes.
-func AllScopes() []Scope {
-	return []Scope{ScopeAll, ScopeChanged}
-}
+// AllScopes lists every scope in canonical order.
+func AllScopes() []Scope { return []Scope{ScopeAll, ScopeChanged} }
 
 // Valid reports whether s is one of the supported scopes.
 func (s Scope) Valid() bool {
@@ -52,8 +46,7 @@ func (s Scope) Valid() bool {
 	return false
 }
 
-// ScopeList renders the supported scopes as a comma-separated string for
-// help/error text.
+// ScopeList renders the supported scopes as a comma-separated string.
 func ScopeList() string {
 	parts := make([]string, len(AllScopes()))
 	for i, s := range AllScopes() {
@@ -62,8 +55,7 @@ func ScopeList() string {
 	return strings.Join(parts, ", ")
 }
 
-// ParseScope resolves a CLI/flag value into a Scope, defaulting empty to
-// ScopeAll. It fails loud on any other value, naming the valid set.
+// ParseScope resolves a CLI/flag value into a Scope, defaulting empty to ScopeAll.
 func ParseScope(s string) (Scope, error) {
 	switch Scope(s) {
 	case "", ScopeAll:
@@ -75,215 +67,263 @@ func ParseScope(s string) (Scope, error) {
 	}
 }
 
-// RunContext is the shared per-run state passed to every plugin. Setup plugins
-// may rewrite Cwd (a worktree); the Runner fills SessionID/ChangedFiles from the
-// event stream as the loop progresses.
-type RunContext struct {
-	Ctx   context.Context
-	Repo  string // repo root (for git/commit/test scoping)
-	Cwd   string // working dir the provider runs in; a worktree plugin rewrites it
-	Scope Scope  // ScopeChanged ⇒ verifiers/finalizers act on ChangedFiles only
-
-	SessionID    string   // last EventSystem.SessionID seen
-	ChangedFiles []string // distinct repo-relative paths from file-mutating tool_use events
-
-	Metadata map[string]any // plugin scratch (worktree path/branch/diff, …)
+// HookContext carries what hooks read/mutate: the request for this iteration and
+// the accumulating response, whose Workspace holds the run's working-dir state.
+type HookContext struct {
+	context.Context
+	Request   *ai.Request
+	Response  *ai.Response
+	Iteration int
+	Scope     Scope
 }
 
-// Verdict is a verifier's judgement on an iteration. Feedback is appended to the
-// next iteration's prompt when OK is false.
-type Verdict struct {
-	OK       bool
-	Reason   string
-	Feedback string
-}
-
-// Plugin is the common base; concrete plugins also implement one or more of the
-// hook interfaces below.
-type Plugin interface{ Name() string }
-
-// SetupPlugin runs once before the loop and returns a teardown closure run after
-// it (teardowns run in LIFO order). A worktree plugin creates the worktree here.
-type SetupPlugin interface {
-	Plugin
-	Setup(rc *RunContext) (teardown func() error, err error)
-}
-
-// VerifyPlugin runs after each completed iteration and votes. A non-OK verdict
-// triggers a re-run with the verdict's Feedback appended to the prompt.
-type VerifyPlugin interface {
-	Plugin
-	Verify(rc *RunContext, iter *ai.LoopIteration) (Verdict, error)
-}
-
-// FinalizePlugin runs once after the loop ends cleanly, before teardowns — so a
-// commit plugin can stage and commit while a worktree still exists.
-type FinalizePlugin interface {
-	Plugin
-	Finalize(rc *RunContext, result *RunResult) error
-}
-
-// Runner composes plugins around ai.RunUntil.
-type Runner struct {
-	Provider ai.StreamingProvider
-	Plugins  []Plugin
-	Loop     ai.LoopOptions // MaxIterations, MaxCostUSD, SessionReuse, OnEvent honoured
-
-	// Build assembles the per-iteration request. feedback is the aggregated
-	// verifier feedback from the previous turn ("" on the first turn).
-	Build func(rc *RunContext, iter int, prev *ai.LoopIteration, feedback string) ai.Request
-
-	Repo  string // seeds RunContext.Repo
-	Cwd   string // seeds RunContext.Cwd
-	Scope Scope  // seeds RunContext.Scope (defaults to ScopeAll)
-}
-
-// RunResult bundles the outcome.
-type RunResult struct {
-	Loop         *ai.LoopResult
-	Verdicts     []Verdict
-	Cwd          string
-	SessionID    string
-	ChangedFiles []string
-}
-
-// Run executes the full pipeline: setup → loop (with per-iteration verify) →
-// finalize → teardown. Errors are surfaced in priority order (loop, verify,
-// finalize, teardown); teardowns always run.
-func (r *Runner) Run(ctx context.Context) (*RunResult, error) {
-	// Build == nil ⇒ verify-only: skip generation and verify the current state
-	// once (e.g. score already-committed work), then finalize.
-	verifyOnly := r.Build == nil
-	if !verifyOnly && r.Provider == nil {
-		return nil, fmt.Errorf("agent.Runner: Provider is required")
+// Workspace returns the run's working-dir state, allocating it if needed (so it
+// is never nil for a hook to read/mutate).
+func (hc *HookContext) Workspace() *api.Workspace {
+	if hc.Response.Workspace == nil {
+		hc.Response.Workspace = &api.Workspace{}
 	}
+	return hc.Response.Workspace
+}
 
-	rc := &RunContext{Ctx: ctx, Repo: r.Repo, Cwd: r.Cwd, Scope: r.Scope, Metadata: map[string]any{}}
-	if rc.Scope == "" {
-		rc.Scope = ScopeAll
+// VerifyResult is a Verify hook's judgement on an iteration. When !Valid, Retry
+// (if non-nil) is the exact next request to run — the hook bakes its feedback
+// into that request's prompt. Output carries structured verify output.
+type VerifyResult struct {
+	Valid  bool
+	Retry  *ai.Request
+	Output any
+}
+
+// PreRun runs once before the loop.
+type PreRun interface {
+	Name() string
+	PreRun(*HookContext) error
+}
+
+// Verify runs after each completed iteration and votes.
+type Verify interface {
+	Name() string
+	Verify(*HookContext) (VerifyResult, error)
+}
+
+// PostRun runs once after the loop, always (commit + teardown).
+type PostRun interface {
+	Name() string
+	PostRun(*HookContext) error
+}
+
+// Output produces the workflow's typed final result. Optional; when absent the
+// runner leaves Result.Output at its zero value.
+type Output[T any] interface {
+	Name() string
+	Output(*HookContext) (T, error)
+}
+
+// Runner drives a generate→verify loop composed of hooks, producing a typed
+// result T. Hooks is a heterogeneous list; each element may implement any of
+// PreRun/Verify/PostRun/Output[T].
+type Runner[T any] struct {
+	Provider      ai.StreamingProvider
+	Request       ai.Request // the initial rendered request
+	Hooks         []any
+	MaxIterations int // 0 ⇒ 1
+	Repo, Cwd     string
+	Scope         Scope
+	OnEvent       func(iter int, ev ai.Event) // live progress tap
+}
+
+// Result bundles the run outcome. Response carries the final text/structured
+// data + Workspace; Output is the typed final result.
+type Result[T any] struct {
+	Response *ai.Response
+	Output   T
+	Verdicts []VerifyResult
+	Loop     *ai.LoopResult
+}
+
+// Run executes the pipeline: PreRun → loop(generate + verify) | verify-only →
+// PostRun (always) → Output. An empty prompt body runs verify-only (no
+// generation); no Verify hooks runs generate-only.
+func (r *Runner[T]) Run(ctx context.Context) (Result[T], error) {
+	var zero Result[T]
+	scope := r.Scope
+	if scope == "" {
+		scope = ScopeAll
 	}
-	result := &RunResult{}
-	log := ai.LoggerFromContext(ctx, fallbackLog)
+	resp := &ai.Response{Workspace: &api.Workspace{Repo: r.Repo, Cwd: r.Cwd}}
+	hc := &HookContext{Context: ctx, Request: &r.Request, Response: resp, Scope: scope}
+	result := Result[T]{Response: resp}
 
-	// 1. Setup plugins (in order); collect teardowns to run LIFO at the end.
-	var teardowns []func() error
-	runTeardowns := func() error {
-		var firstErr error
-		for i := len(teardowns) - 1; i >= 0; i-- {
-			if err := teardowns[i](); err != nil && firstErr == nil {
-				firstErr = err
+	for _, h := range r.Hooks {
+		if pr, ok := h.(PreRun); ok {
+			if err := pr.PreRun(hc); err != nil {
+				_ = r.runPostRun(hc) // best-effort teardown
+				return zero, fmt.Errorf("agent: preRun %q: %w", pr.Name(), err)
 			}
 		}
-		return firstErr
-	}
-	for _, p := range r.Plugins {
-		sp, ok := p.(SetupPlugin)
-		if !ok {
-			continue
-		}
-		td, err := sp.Setup(rc)
-		if err != nil {
-			_ = runTeardowns()
-			return nil, fmt.Errorf("agent: setup plugin %q: %w", p.Name(), err)
-		}
-		if td != nil {
-			teardowns = append(teardowns, td)
-		}
 	}
 
-	// 2. Generate + verify each iteration, or — verify-only — verify once. The
-	// event tap records session + changed files; the BuildRequest hook runs
-	// verifiers between iterations.
-	var loopErr, verifyErr error
+	verifyOnly := strings.TrimSpace(r.Request.Prompt.User) == ""
+	var runErr error
 	if verifyOnly {
-		v, err := r.runVerifiers(rc, nil)
-		if err != nil {
-			verifyErr = err
-		} else {
-			result.Verdicts = append(result.Verdicts, v)
-		}
+		runErr = r.runVerifyOnce(hc, &result)
+	} else if r.Provider == nil {
+		runErr = fmt.Errorf("agent: Provider is required")
 	} else {
-		var feedback string
-		loop := r.Loop
-		loop.Provider = r.Provider
-		callerOnEvent := r.Loop.OnEvent
-		loop.OnEvent = func(iter int, ev ai.Event) {
-			r.recordEvent(rc, ev)
-			if callerOnEvent != nil {
-				callerOnEvent(iter, ev)
-			}
-		}
-		loop.BuildRequest = func(iter int, prev *ai.LoopIteration) (ai.Request, bool) {
-			if prev != nil {
-				v, err := r.runVerifiers(rc, prev)
-				if err != nil {
-					verifyErr = err
-					return ai.Request{}, false
-				}
-				result.Verdicts = append(result.Verdicts, v)
-				if v.OK {
-					log.Tracef("agent: iteration %d verified OK; stopping", iter)
-					return ai.Request{}, false // success → stop ("condition-met")
-				}
-				feedback = v.Feedback
-			}
-			log.Tracef("agent: building iteration %d (feedback=%t)", iter, feedback != "")
-			req := r.Build(rc, iter, prev, feedback)
-			req.SetCwd(rc.Cwd)
-			return req, true
-		}
-
-		var lr *ai.LoopResult
-		lr, loopErr = ai.RunUntil(ctx, loop)
-		if lr != nil {
-			log.Tracef("agent: loop finished after %d iteration(s), err=%v", len(lr.Iterations), loopErr)
-		}
-		result.Loop = lr
-	}
-	result.Cwd = rc.Cwd
-	result.SessionID = rc.SessionID
-	result.ChangedFiles = rc.ChangedFiles
-
-	// 3. Finalize (only on a clean loop) — runs before teardown so a commit
-	// lands while a worktree still exists.
-	var finalizeErr error
-	if loopErr == nil && verifyErr == nil {
-		for _, p := range r.Plugins {
-			fp, ok := p.(FinalizePlugin)
-			if !ok {
-				continue
-			}
-			if err := fp.Finalize(rc, result); err != nil {
-				finalizeErr = fmt.Errorf("agent: finalize plugin %q: %w", p.Name(), err)
-				break
-			}
-		}
+		runErr = r.runLoop(ctx, hc, &result)
 	}
 
-	// 4. Teardown (always).
-	teardownErr := runTeardowns()
+	postErr := r.runPostRun(hc)
+	if runErr != nil {
+		return result, runErr
+	}
+	if postErr != nil {
+		return result, postErr
+	}
 
-	switch {
-	case loopErr != nil:
-		return result, loopErr
-	case verifyErr != nil:
-		return result, verifyErr
-	case finalizeErr != nil:
-		return result, finalizeErr
-	case teardownErr != nil:
-		return result, fmt.Errorf("agent: teardown: %w", teardownErr)
+	for _, h := range r.Hooks {
+		if oh, ok := h.(Output[T]); ok {
+			out, err := oh.Output(hc)
+			if err != nil {
+				return result, fmt.Errorf("agent: output %q: %w", oh.Name(), err)
+			}
+			result.Output = out
+			break
+		}
 	}
 	return result, nil
 }
 
-// recordEvent updates the run context from one streamed event: session id from
-// system events, and changed files from file-mutating tool_use events (reusing
-// history's canonical tool table). Paths are normalized to repo-relative.
-func (r *Runner) recordEvent(rc *RunContext, ev ai.Event) {
+// runPostRun runs every PostRun hook, always; returns the first error.
+func (r *Runner[T]) runPostRun(hc *HookContext) error {
+	var firstErr error
+	for _, h := range r.Hooks {
+		if pr, ok := h.(PostRun); ok {
+			if err := pr.PostRun(hc); err != nil && firstErr == nil {
+				firstErr = fmt.Errorf("agent: postRun %q: %w", pr.Name(), err)
+			}
+		}
+	}
+	return firstErr
+}
+
+// runVerifyOnce runs the Verify hooks a single time against the current state
+// (no generation) — e.g. scoring already-committed work.
+func (r *Runner[T]) runVerifyOnce(hc *HookContext, result *Result[T]) error {
+	verdicts, _, _, err := r.verify(hc)
+	if err != nil {
+		return err
+	}
+	result.Verdicts = append(result.Verdicts, verdicts...)
+	return nil
+}
+
+// runLoop drives ai.RunUntil; verifiers run in the BuildRequest hook between
+// iterations, and a failing verdict's Retry becomes the next request.
+func (r *Runner[T]) runLoop(ctx context.Context, hc *HookContext, result *Result[T]) error {
+	log := ai.LoggerFromContext(ctx, fallbackLog)
+	maxIter := r.MaxIterations
+	if maxIter <= 0 {
+		maxIter = 1
+	}
+	req := r.Request
+	var verifyErr error
+
+	loop, loopErr := ai.RunUntil(ctx, ai.LoopOptions{
+		Provider:      r.Provider,
+		MaxIterations: maxIter,
+		OnEvent: func(iter int, ev ai.Event) {
+			r.recordEvent(hc, ev)
+			if r.OnEvent != nil {
+				r.OnEvent(iter, ev)
+			}
+		},
+		BuildRequest: func(iter int, prev *ai.LoopIteration) (ai.Request, bool) {
+			if prev != nil {
+				r.updateResponse(hc, prev)
+				verdicts, retry, allValid, err := r.verify(hc)
+				if err != nil {
+					verifyErr = err
+					return ai.Request{}, false
+				}
+				result.Verdicts = append(result.Verdicts, verdicts...)
+				if allValid {
+					log.Tracef("agent: iteration %d verified OK; stopping", iter)
+					return ai.Request{}, false
+				}
+				if retry == nil {
+					return ai.Request{}, false // failed, no retry proposed
+				}
+				req = *retry
+			}
+			hc.Iteration = iter
+			hc.Request = &req
+			req.SetCwd(hc.Workspace().Cwd)
+			return req, true
+		},
+	})
+	result.Loop = loop
+	if loopErr != nil {
+		return loopErr
+	}
+	return verifyErr
+}
+
+// verify runs every Verify hook; allValid is true only if all passed. retry is
+// the first failing hook's proposed next request.
+func (r *Runner[T]) verify(hc *HookContext) (verdicts []VerifyResult, retry *ai.Request, allValid bool, err error) {
+	allValid = true
+	for _, h := range r.Hooks {
+		v, ok := h.(Verify)
+		if !ok {
+			continue
+		}
+		res, verr := v.Verify(hc)
+		if verr != nil {
+			return verdicts, nil, false, fmt.Errorf("agent: verify %q: %w", v.Name(), verr)
+		}
+		verdicts = append(verdicts, res)
+		if !res.Valid {
+			allValid = false
+			if retry == nil && res.Retry != nil {
+				retry = res.Retry
+			}
+		}
+	}
+	return verdicts, retry, allValid, nil
+}
+
+// updateResponse folds one completed iteration into the accumulating response:
+// its assembled text, structured data, usage, and session id.
+func (r *Runner[T]) updateResponse(hc *HookContext, prev *ai.LoopIteration) {
+	ws := hc.Workspace()
+	if prev.SessionID != "" {
+		ws.SessionID = prev.SessionID
+	}
+	var text strings.Builder
+	for _, ev := range prev.Events {
+		switch ev.Kind {
+		case ai.EventText:
+			text.WriteString(ev.Text)
+		case ai.EventResult:
+			if len(ev.StructuredData) > 0 {
+				hc.Response.StructuredData = ev.StructuredData
+			}
+		}
+	}
+	hc.Response.Text = text.String()
+	hc.Response.Usage = prev.Usage
+}
+
+// recordEvent updates the workspace from one streamed event: session id and the
+// set of files the agent changed (repo-relative).
+func (r *Runner[T]) recordEvent(hc *HookContext, ev ai.Event) {
+	ws := hc.Workspace()
 	switch ev.Kind {
 	case ai.EventSystem:
 		if ev.SessionID != "" {
-			rc.SessionID = ev.SessionID
+			ws.SessionID = ev.SessionID
 		}
 	case ai.EventToolUse:
 		path, ok := mutatedPath(ev)
@@ -291,42 +331,11 @@ func (r *Runner) recordEvent(rc *RunContext, ev ai.Event) {
 			return
 		}
 		rel := path
-		if rc.Repo != "" {
-			rel = claude.RelativePath(path, rc.Repo)
+		if ws.Repo != "" {
+			rel = claude.RelativePath(path, ws.Repo)
 		}
-		rc.ChangedFiles = addUnique(rc.ChangedFiles, rel)
+		ws.Changed = addUnique(ws.Changed, rel)
 	}
-}
-
-// runVerifiers runs every VerifyPlugin; the run is OK only if all are OK, and
-// each failing plugin's feedback is concatenated for the next prompt.
-func (r *Runner) runVerifiers(rc *RunContext, iter *ai.LoopIteration) (Verdict, error) {
-	log := ai.LoggerFromContext(rc.Ctx, fallbackLog)
-	overall := Verdict{OK: true}
-	var reasons, feedbacks []string
-	for _, p := range r.Plugins {
-		vp, ok := p.(VerifyPlugin)
-		if !ok {
-			continue
-		}
-		v, err := vp.Verify(rc, iter)
-		if err != nil {
-			return Verdict{}, fmt.Errorf("verify plugin %q: %w", p.Name(), err)
-		}
-		log.Tracef("agent: verifier %q ok=%t reason=%q", p.Name(), v.OK, v.Reason)
-		if !v.OK {
-			overall.OK = false
-			if v.Reason != "" {
-				reasons = append(reasons, p.Name()+": "+v.Reason)
-			}
-			if v.Feedback != "" {
-				feedbacks = append(feedbacks, v.Feedback)
-			}
-		}
-	}
-	overall.Reason = strings.Join(reasons, "; ")
-	overall.Feedback = strings.Join(feedbacks, "\n\n")
-	return overall, nil
 }
 
 // mutatedPath extracts the file an Edit/Write/MultiEdit/NotebookEdit tool_use

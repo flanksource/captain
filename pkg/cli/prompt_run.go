@@ -164,32 +164,18 @@ func runPromptStream(t *task.Task, rendered PromptRenderResult, timeout time.Dur
 	acc := newPromptEventAccumulator(stream.publish, t, rendered.Model, rendered.Backend)
 	acc.cwd = req.Cwd()
 
-	// Drive the generate→verify loop declared by spec.Workflow. With no verify,
-	// this is a single generation (MaxIterations 1, no plugins); with verify
-	// commands it re-runs on failure, appending feedback, up to maxIterations.
-	// A verify-only spec (no body) leaves Build nil, so the runner skips
-	// generation and only verifies the current state.
-	var build func(*agent.RunContext, int, *ai.LoopIteration, string) ai.Request
-	if !req.IsVerifyOnly() {
-		build = func(_ *agent.RunContext, _ int, _ *ai.LoopIteration, feedback string) ai.Request {
-			r := req
-			if feedback != "" {
-				r.Prompt.User = req.Prompt.User + "\n\n[verifier feedback]\n" + feedback + "\n\nFix the issues above and continue."
-			}
-			return r
-		}
-	}
-	runner := &agent.Runner{
-		Provider: streamer,
-		Plugins:  verify.PluginsForWorkflow(req.Workflow),
-		Loop: ai.LoopOptions{
-			MaxIterations: verify.MaxIterationsForWorkflow(req.Workflow),
-			OnEvent:       acc.handle,
-		},
-		Build: build,
-		Repo:  req.Cwd(),
-		Cwd:   req.Cwd(),
-		Scope: verify.ScopeForWorkflow(req.Workflow),
+	// Drive the generate→verify loop declared by spec.Workflow via the hook
+	// runner: no verify ⇒ a single generation; verify commands re-run on failure
+	// (feedback appended) up to maxIterations; a body-less spec verifies only.
+	runner := &agent.Runner[string]{
+		Provider:      streamer,
+		Request:       req,
+		Hooks:         verify.HooksForWorkflow(req.Workflow),
+		MaxIterations: verify.MaxIterationsForWorkflow(req.Workflow),
+		Repo:          req.Cwd(),
+		Cwd:           req.Cwd(),
+		Scope:         verify.ScopeForWorkflow(req.Workflow),
+		OnEvent:       acc.handle,
 	}
 	runResult, err := runner.Run(ctx)
 	if err != nil {
@@ -198,8 +184,8 @@ func runPromptStream(t *task.Task, rendered PromptRenderResult, timeout time.Dur
 	loop := runResult.Loop
 
 	session := acc.sessionID
-	if session == "" {
-		session = runResult.SessionID
+	if session == "" && runResult.Response.Workspace != nil {
+		session = runResult.Response.Workspace.SessionID
 	}
 	if session == "" && loop != nil && len(loop.Iterations) > 0 {
 		session = loop.Iterations[0].SessionID
@@ -217,7 +203,7 @@ func runPromptStream(t *task.Task, rendered PromptRenderResult, timeout time.Dur
 			})
 		}
 	}
-	passed := verdictsPassed(runResult.Verdicts, nil)
+	passed := verifyPassed(runResult.Verdicts)
 	summary := PromptRunSummary{
 		RunID:        runID,
 		SessionID:    session,
@@ -230,7 +216,7 @@ func runPromptStream(t *task.Task, rendered PromptRenderResult, timeout time.Dur
 		Success:      passed,
 	}
 	if !passed {
-		summary.Error = verdictReason(runResult.Verdicts)
+		summary.Error = verifyReason(runResult.Verdicts)
 	}
 	stream.complete(summary)
 	t.Success()
