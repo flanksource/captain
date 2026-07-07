@@ -1,9 +1,8 @@
-import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   AppShell,
   Button,
-  JsonSchemaForm,
   Modal,
   SearchInput,
   SegmentedControl,
@@ -25,30 +24,19 @@ import {
   UiPlay,
   UiRefresh,
   UiSave,
-  UiSliders,
   UiTerminal,
   UiTrash,
 } from "@flanksource/clicky-ui/data";
 import "@flanksource/clicky-ui/mdx-editor.css";
 import { MdxEditorField } from "@flanksource/clicky-ui/mdx-editor";
 import {
-  SpecRuntimeEditor,
-  ToolPreferences,
+  PromptRunEditor,
   buildAISpecRuntimePayload,
   type AISpecRuntimePermissionCatalog,
-  type AISpecRuntimePermissions,
   type AISpecRuntimeValue,
-  type ClaudePermissionMode,
   type ToolMeta,
-  type ToolMode,
 } from "@flanksource/clicky-ui/ai";
-import {
-  BudgetSelector,
-  EffortSelector,
-  ModelSelector,
-  type ChatBudgetConfig,
-  type ChatModel,
-} from "@flanksource/clicky-ui/chat";
+import { type ChatModel } from "@flanksource/clicky-ui/chat";
 import { useOperations, type ExecutionResponse, type ResolvedOperation } from "@flanksource/clicky-ui/rpc";
 import { apiClient } from "./api";
 import { PromptRunStream } from "./PromptRunStream";
@@ -108,32 +96,6 @@ type PromptRenderResult = {
   validationError?: string;
 };
 
-type RuntimeForm = {
-  family: ProviderFamily;
-  mode: RuntimeMode;
-  model: string;
-  backend: string;
-  timeout: string;
-  effort: string;
-  temperature?: number;
-  budget: ChatBudgetConfig;
-  maxTurns: string;
-  permissionMode: ClaudePermissionMode;
-  toolPreferences: Record<string, ToolMode>;
-  noMcp: boolean;
-  noHooks: boolean;
-  noSkills: boolean;
-  noUser: boolean;
-  noProject: boolean;
-  noMemory: boolean;
-  // spec carries the full runtime spec, including spec.cliArgs (the "extra
-  // cmux args" for the claude-cmux / codex-cmux backends).
-  spec: AISpecRuntimeValue;
-};
-
-type ProviderFamily = "claude" | "codex" | "openai" | "anthropic" | "gemini" | "deepseek";
-type RuntimeMode = "agent" | "cli" | "cmux" | "api";
-
 type PromptOps = {
   list?: ResolvedOperation;
   get?: ResolvedOperation;
@@ -157,55 +119,7 @@ const SOURCE_OPTIONS = [
   { id: "local", label: "Local" },
 ] satisfies Array<{ id: SourceFilter; label: string }>;
 
-const EMPTY_RUNTIME: RuntimeForm = {
-  family: "claude",
-  mode: "agent",
-  model: "",
-  backend: "",
-  timeout: "2h",
-  effort: "",
-  budget: {},
-  maxTurns: "",
-  permissionMode: "default",
-  toolPreferences: {},
-  noMcp: false,
-  noHooks: false,
-  noSkills: false,
-  noUser: false,
-  noProject: false,
-  noMemory: false,
-  spec: {},
-};
-
-const REASONING_EFFORTS = ["low", "medium", "high", "xhigh"];
-
-const FAMILY_OPTIONS = [
-  { id: "claude", label: "Claude" },
-  { id: "codex", label: "Codex" },
-  { id: "openai", label: "OpenAI" },
-  { id: "anthropic", label: "Anthropic" },
-  { id: "gemini", label: "Gemini" },
-  { id: "deepseek", label: "DeepSeek" },
-] satisfies Array<{ id: ProviderFamily; label: string }>;
-
-const FAMILY_MODES = {
-  claude: [
-    { id: "agent", label: "Agent", backend: "claude-agent" },
-    { id: "cli", label: "CLI", backend: "claude-cli" },
-    { id: "cmux", label: "cmux", backend: "claude-cmux" },
-  ],
-  codex: [
-    { id: "cli", label: "CLI", backend: "codex-cli" },
-    { id: "cmux", label: "cmux", backend: "codex-cmux" },
-  ],
-  openai: [{ id: "api", label: "API", backend: "openai" }],
-  anthropic: [{ id: "api", label: "API", backend: "anthropic" }],
-  gemini: [
-    { id: "api", label: "API", backend: "gemini" },
-    { id: "cli", label: "CLI", backend: "gemini-cli" },
-  ],
-  deepseek: [{ id: "api", label: "API", backend: "deepseek" }],
-} satisfies Record<ProviderFamily, Array<{ id: RuntimeMode; label: string; backend: string }>>;
+const EMPTY_RUNTIME: AISpecRuntimeValue = { budget: { timeout: "2h" } };
 
 const AGENT_TOOLS = [
   {
@@ -307,8 +221,8 @@ export function PromptWorkbench({
   const [tab, setTab] = useState<DetailTab>("runner");
   const [draft, setDraft] = useState("");
   const [variables, setVariables] = useState<Record<string, unknown>>({});
-  const [variablesText, setVariablesText] = useState("{}");
-  const [runtime, setRuntime] = useState<RuntimeForm>(EMPTY_RUNTIME);
+  const [variablesValid, setVariablesValid] = useState(true);
+  const [runtime, setRuntime] = useState<AISpecRuntimeValue>(EMPTY_RUNTIME);
   const [renderResult, setRenderResult] = useState<PromptRenderResult | undefined>();
   const [activeRunID, setActiveRunID] = useState<string | undefined>();
   const [actionError, setActionError] = useState<string | undefined>();
@@ -362,7 +276,7 @@ export function PromptWorkbench({
     setDraft(detail.content);
     const defaults = detail.inputDefault ?? {};
     setVariables(defaults);
-    setVariablesText(JSON.stringify(defaults, null, 2));
+    setVariablesValid(true);
     setRuntime({ ...EMPTY_RUNTIME, ...runtimeSelectionFromPrompt(detail) });
     setRenderResult(undefined);
     setActiveRunID(undefined);
@@ -527,21 +441,12 @@ export function PromptWorkbench({
         draft={draft}
         onDraftChange={setDraft}
         variables={variables}
-        variablesText={variablesText}
-        onVariablesChange={(next) => {
-          setVariables(next);
-          setVariablesText(JSON.stringify(next, null, 2));
-        }}
-        onVariablesTextChange={(next) => {
-          setVariablesText(next);
-          const parsed = parseJsonObject(next);
-          if (parsed.ok) setVariables(parsed.value);
-        }}
+        variablesValid={variablesValid}
+        onVariablesChange={setVariables}
+        onVariablesValidityChange={setVariablesValid}
         runtime={runtime}
         onRuntimeChange={setRuntime}
         models={models}
-        modelsLoading={modelsQuery.isLoading}
-        modelsError={modelsQuery.error}
         tools={AGENT_TOOLS}
         permissionCatalog={permissionCatalogQuery.data}
         renderResult={renderResult}
@@ -741,14 +646,12 @@ function PromptDetailPane({
   draft,
   onDraftChange,
   variables,
-  variablesText,
+  variablesValid,
   onVariablesChange,
-  onVariablesTextChange,
+  onVariablesValidityChange,
   runtime,
   onRuntimeChange,
   models,
-  modelsLoading,
-  modelsError,
   tools,
   permissionCatalog,
   renderResult,
@@ -770,14 +673,12 @@ function PromptDetailPane({
   draft: string;
   onDraftChange: (value: string) => void;
   variables: Record<string, unknown>;
-  variablesText: string;
+  variablesValid: boolean;
   onVariablesChange: (value: Record<string, unknown>) => void;
-  onVariablesTextChange: (value: string) => void;
-  runtime: RuntimeForm;
-  onRuntimeChange: (value: RuntimeForm) => void;
+  onVariablesValidityChange: (valid: boolean) => void;
+  runtime: AISpecRuntimeValue;
+  onRuntimeChange: (value: AISpecRuntimeValue) => void;
   models: ChatModel[];
-  modelsLoading: boolean;
-  modelsError: unknown;
   tools: ToolMeta[];
   permissionCatalog?: AISpecRuntimePermissionCatalog;
   renderResult?: PromptRenderResult;
@@ -790,7 +691,10 @@ function PromptDetailPane({
   renderEnabled: boolean;
   runEnabled: boolean;
 }) {
-  const variablesFormId = useId();
+  const promptSchemaQuery = useQuery({
+    queryKey: ["prompt-schema"],
+    queryFn: fetchPromptSchema,
+  });
 
   if (!hasSelection) {
     return (
@@ -815,7 +719,9 @@ function PromptDetailPane({
   }
 
   const schema = normalizeObjectSchema(detail.inputSchema);
-  const variablesParse = parseJsonObject(variablesText);
+  const backendCliArgs = promptSchemaQuery.data?.backends?.find(
+    (backend) => backend.backend === runtime.backend,
+  )?.args;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -851,45 +757,19 @@ function PromptDetailPane({
         ) : (
           <div className="grid min-h-full gap-density-4 xl:grid-cols-[minmax(340px,0.9fr)_minmax(0,1.1fr)]">
             <div className="space-y-density-4">
-              <section className="space-y-density-2">
-                <div className="flex items-center gap-density-2 text-sm font-semibold">
-                  <Icon icon={UiFileSearch} className="size-4 text-muted-foreground" />
-                  Variables
-                </div>
-                {schema ? (
-                  <div className="rounded-md border border-border p-density-3">
-                    <JsonSchemaForm
-                      idPrefix={`prompt-vars-${variablesFormId}`}
-                      schema={schema}
-                      value={variables}
-                      onChange={onVariablesChange}
-                      showPreferencesMenu={false}
-                      persistPreferences={false}
-                    />
-                  </div>
-                ) : (
-                  <div className="space-y-density-1">
-                    <textarea
-                      value={variablesText}
-                      onChange={(event) => onVariablesTextChange(event.target.value)}
-                      className="min-h-[180px] w-full resize-y rounded-md border border-border bg-background p-density-3 font-mono text-xs outline-none focus:ring-2 focus:ring-ring"
-                      spellCheck={false}
-                    />
-                    {!variablesParse.ok && (
-                      <div className="text-xs text-destructive">{variablesParse.error}</div>
-                    )}
-                  </div>
-                )}
-              </section>
-
-              <RuntimeControls
-                runtime={runtime}
+              <PromptRunEditor
+                key={detail.id}
+                value={runtime}
                 onChange={onRuntimeChange}
-                models={models}
-                modelsLoading={modelsLoading}
-                modelsError={modelsError}
+                models={promptSelectableModels(models)}
                 tools={tools}
-                permissionCatalog={permissionCatalog}
+                secretSelector={CAPTAIN_SECRET_SELECTOR}
+                variables={variables}
+                onVariablesChange={onVariablesChange}
+                onVariablesValidityChange={onVariablesValidityChange}
+                {...(permissionCatalog ? { permissionCatalog } : {})}
+                {...(schema ? { variablesSchema: schema } : {})}
+                {...(backendCliArgs ? { cliOptions: { schema: backendCliArgs } } : {})}
               />
 
               <div className="flex flex-wrap gap-density-2">
@@ -897,7 +777,7 @@ function PromptDetailPane({
                   size="sm"
                   variant="outline"
                   loading={renderLoading}
-                  disabled={!renderEnabled || (!schema && !variablesParse.ok)}
+                  disabled={!renderEnabled || (!schema && !variablesValid)}
                   onClick={onRender}
                 >
                   <Icon icon={UiCode2} className="size-4" />
@@ -906,7 +786,7 @@ function PromptDetailPane({
                 <Button
                   size="sm"
                   loading={runLoading}
-                  disabled={!runEnabled || (!schema && !variablesParse.ok)}
+                  disabled={!runEnabled || (!schema && !variablesValid)}
                   onClick={onRun}
                 >
                   <Icon icon={UiPlay} className="size-4" />
@@ -993,351 +873,6 @@ function PromptSourceMarkdownEditor({
           placeholder="Prompt markdown"
         />
       </div>
-    </div>
-  );
-}
-
-function RuntimeControls({
-  runtime,
-  onChange,
-  models,
-  modelsLoading,
-  modelsError,
-  tools,
-  permissionCatalog,
-}: {
-  runtime: RuntimeForm;
-  onChange: (value: RuntimeForm) => void;
-  models: ChatModel[];
-  modelsLoading: boolean;
-  modelsError: unknown;
-  tools: ToolMeta[];
-  permissionCatalog?: AISpecRuntimePermissionCatalog;
-}) {
-  const update = (patch: Partial<RuntimeForm>) => onChange({ ...runtime, ...patch });
-  const selectableModels = useMemo(() => promptSelectableModels(models), [models]);
-  const modeOptions = FAMILY_MODES[runtime.family];
-  const activeMode = modeOptions.some((mode) => mode.id === runtime.mode)
-    ? runtime.mode
-    : modeOptions[0].id;
-  const selectedBackend = backendForFamilyMode(runtime.family, activeMode);
-  const modeModels = modelsForBackend(selectableModels, selectedBackend);
-  const selectedModel = selectableModels.find((model) => model.id === runtime.model);
-  const showModelSelector = models.length > 0;
-  const permissionSummary = runtime.permissionMode === "default" ? "Default" : runtime.permissionMode;
-  const isCmuxBackend = selectedBackend === "claude-cmux" || selectedBackend === "codex-cmux";
-  const cliOptionsQuery = useQuery({
-    queryKey: ["cli-options", selectedBackend],
-    queryFn: () => fetchCliOptionsSchema(selectedBackend),
-    enabled: isCmuxBackend,
-  });
-  // Draft copy of runtime.spec edited in the full-screen modal; null = closed.
-  const [specDraft, setSpecDraft] = useState<AISpecRuntimeValue | null>(null);
-  const specDraftDirty =
-    specDraft !== null &&
-    JSON.stringify(buildAISpecRuntimePayload(specDraft)) !==
-      JSON.stringify(buildAISpecRuntimePayload(runtime.spec));
-  const closeSpecEditor = () => setSpecDraft(null);
-  const saveSpecEditor = () => {
-    if (specDraft !== null) update({ spec: specDraft });
-    setSpecDraft(null);
-  };
-  const updateFamily = (family: ProviderFamily) => {
-    const nextMode = FAMILY_MODES[family][0].id;
-    const backend = backendForFamilyMode(family, nextMode);
-    onChange({
-      ...runtime,
-      family,
-      mode: nextMode,
-      backend,
-      model: modelBelongsToBackend(runtime.model, models, backend) ? runtime.model : "",
-      // Different backends expose different CLI-arg schemas; drop stale values.
-      spec: withoutCliArgs(runtime.spec),
-    });
-  };
-  const updateMode = (mode: RuntimeMode) => {
-    const backend = backendForFamilyMode(runtime.family, mode);
-    onChange({
-      ...runtime,
-      mode,
-      backend,
-      model: modelBelongsToBackend(runtime.model, models, backend) ? runtime.model : "",
-      spec: withoutCliArgs(runtime.spec),
-    });
-  };
-  return (
-    <section className="space-y-density-2">
-      <div className="flex min-w-0 items-center justify-between gap-density-2">
-        <div className="flex items-center gap-density-2 text-sm font-semibold">
-          <Icon icon={UiTerminal} className="size-4 text-muted-foreground" />
-          Runtime
-        </div>
-        <ToolPreferences
-          tools={tools}
-          value={runtime.toolPreferences}
-          onChange={(toolPreferences) => update({ toolPreferences })}
-          models={modeModels}
-          model={runtime.model || undefined}
-          onModelChange={(model) => updateModelSelection(runtime, model, models, onChange)}
-          reasoningEfforts={REASONING_EFFORTS}
-          reasoningEffort={runtime.effort}
-          onReasoningEffortChange={(effort) => update({ effort })}
-          permissionMode={runtime.permissionMode}
-          onPermissionModeChange={(permissionMode) => update({ permissionMode })}
-          temperature={runtime.temperature}
-          onTemperatureChange={(temperature) => update({ temperature })}
-          budget={runtime.budget}
-          onBudgetChange={(budget) => update({ budget })}
-          toolsLoading={false}
-          toolsError={modelsError ? "Model catalog unavailable" : null}
-        />
-      </div>
-      <div className="rounded-md border border-border p-density-3">
-        <div className="grid gap-density-3">
-          <div className="grid gap-density-2">
-            <Field label="Family">
-              <SegmentedControl
-                value={runtime.family}
-                options={FAMILY_OPTIONS}
-                onChange={(family) => updateFamily(family as ProviderFamily)}
-                size="sm"
-                aria-label="Provider family"
-                className="max-w-full flex-wrap"
-              />
-            </Field>
-            <Field label="Mode">
-              <SegmentedControl
-                value={activeMode}
-                options={modeOptions.map((mode) => ({ id: mode.id, label: mode.label }))}
-                onChange={(mode) => updateMode(mode as RuntimeMode)}
-                size="sm"
-                aria-label="Runtime mode"
-                className="max-w-full flex-wrap"
-              />
-            </Field>
-          </div>
-          <div className="flex min-w-0 flex-wrap items-end gap-density-2">
-            <Field label="Model">
-              {showModelSelector && modeModels.length > 0 ? (
-                <div className="flex min-w-0 items-center gap-density-2">
-                  <ModelSelector
-                    models={modeModels}
-                    value={runtime.model || undefined}
-                    onChange={(model) => updateModelSelection(runtime, model, models, onChange)}
-                    className="w-64 max-w-full"
-                  />
-                  {runtime.model && (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => update({ model: "", backend: "" })}
-                    >
-                      Default
-                    </Button>
-                  )}
-                </div>
-              ) : (
-                <input
-                  value={runtime.model}
-                  onChange={(event) => update({ model: event.target.value })}
-                  className="h-control-h w-full rounded-md border border-border bg-background px-density-3 text-sm outline-none focus:ring-2 focus:ring-ring"
-                  placeholder={modelsLoading ? "Loading models..." : "frontmatter/default"}
-                />
-              )}
-            </Field>
-            <Field label="Effort">
-              <EffortSelector
-                efforts={REASONING_EFFORTS}
-                value={runtime.effort}
-                onChange={(effort) => update({ effort })}
-                className="w-44"
-              />
-            </Field>
-          </div>
-          {Boolean(modelsError) && (
-            <div className="text-xs text-destructive">{errorMessage(modelsError)}</div>
-          )}
-          <BudgetSelector
-            budget={runtime.budget}
-            onBudgetChange={(budget) => update({ budget })}
-            className="max-w-md"
-          />
-        </div>
-      </div>
-      <div className="grid gap-density-2 sm:grid-cols-2">
-        <Field label="Timeout">
-          <DurationPicker
-            value={runtime.timeout}
-            onChange={(timeout) => update({ timeout })}
-          />
-        </Field>
-        <Field label="Max Turns">
-          <input
-            value={runtime.maxTurns}
-            onChange={(event) => update({ maxTurns: event.target.value })}
-            className="h-control-h w-full rounded-md border border-border bg-background px-density-3 text-sm outline-none focus:ring-2 focus:ring-ring"
-            inputMode="numeric"
-            placeholder="default"
-          />
-        </Field>
-      </div>
-      <div className="grid gap-density-2 rounded-md border border-border p-density-3 text-xs sm:grid-cols-2">
-        <label className="flex items-center gap-density-2 text-muted-foreground">
-          <input
-            type="checkbox"
-            checked={runtime.noMcp}
-            onChange={(event) => update({ noMcp: event.target.checked })}
-          />
-          Disable MCP tools
-        </label>
-        <label className="flex items-center gap-density-2 text-muted-foreground">
-          <input
-            type="checkbox"
-            checked={runtime.noHooks}
-            onChange={(event) => update({ noHooks: event.target.checked })}
-          />
-          Skip hooks
-        </label>
-        <label className="flex items-center gap-density-2 text-muted-foreground">
-          <input
-            type="checkbox"
-            checked={runtime.noSkills}
-            onChange={(event) => update({ noSkills: event.target.checked })}
-          />
-          Skip skills
-        </label>
-        <label className="flex items-center gap-density-2 text-muted-foreground">
-          <input
-            type="checkbox"
-            checked={runtime.noMemory}
-            onChange={(event) => update({ noMemory: event.target.checked })}
-          />
-          Skip memory
-        </label>
-        <label className="flex items-center gap-density-2 text-muted-foreground">
-          <input
-            type="checkbox"
-            checked={runtime.noUser}
-            onChange={(event) => update({ noUser: event.target.checked })}
-          />
-          Skip user config
-        </label>
-        <label className="flex items-center gap-density-2 text-muted-foreground">
-          <input
-            type="checkbox"
-            checked={runtime.noProject}
-            onChange={(event) => update({ noProject: event.target.checked })}
-          />
-          Skip project config
-        </label>
-      </div>
-      <div>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => setSpecDraft(runtime.spec)}
-        >
-          <Icon icon={UiSliders} className="size-4" />
-          Edit spec
-        </Button>
-      </div>
-      {specDraft !== null && (
-        <Modal
-          open
-          onClose={closeSpecEditor}
-          confirmClose={specDraftDirty}
-          title="Runtime spec"
-          size="full"
-          closeOnEsc
-          className="h-[95vh]"
-        >
-          <SpecRuntimeEditor
-            value={specDraft}
-            onChange={setSpecDraft}
-            models={modeModels}
-            tools={tools}
-            permissionCatalog={permissionCatalog}
-            secretSelector={CAPTAIN_SECRET_SELECTOR}
-            {...(isCmuxBackend && cliOptionsQuery.data
-              ? { cliOptions: { schema: cliOptionsQuery.data } }
-              : {})}
-            onSave={saveSpecEditor}
-            onCancel={closeSpecEditor}
-            saveLabel="Save spec"
-            footerStatus={specDraftDirty ? "Unsaved changes" : "No changes"}
-          />
-        </Modal>
-      )}
-      <div className="flex min-w-0 flex-wrap gap-density-2 text-xs text-muted-foreground">
-        <span>{labelForBackend(runtime.backend || selectedBackend)}</span>
-        {selectedModel && <span>{selectedModel.label}</span>}
-        <span>permissions={permissionSummary}</span>
-        {toolModeCount(runtime.toolPreferences, "enabled") > 0 && (
-          <span>{toolModeCount(runtime.toolPreferences, "enabled")} allowed tools</span>
-        )}
-        {toolModeCount(runtime.toolPreferences, "disabled") > 0 && (
-          <span>{toolModeCount(runtime.toolPreferences, "disabled")} denied tools</span>
-        )}
-      </div>
-    </section>
-  );
-}
-
-type DurationUnit = "s" | "m" | "h";
-
-const DURATION_UNITS = [
-  { id: "s", label: "Seconds" },
-  { id: "m", label: "Minutes" },
-  { id: "h", label: "Hours" },
-] satisfies Array<{ id: DurationUnit; label: string }>;
-
-function DurationPicker({
-  value,
-  onChange,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  const parsed = parseDurationValue(value);
-  const amount = parsed?.amount ?? "";
-  const unit = parsed?.unit ?? "h";
-
-  const updateAmount = (nextAmount: string) => {
-    if (!nextAmount.trim()) {
-      onChange("");
-      return;
-    }
-    onChange(formatDurationPickerValue(nextAmount, unit));
-  };
-
-  const updateUnit = (nextUnit: DurationUnit) => {
-    onChange(formatDurationPickerValue(amount || "2", nextUnit));
-  };
-
-  return (
-    <div className="flex min-w-0 overflow-hidden rounded-md border border-border bg-background focus-within:ring-2 focus-within:ring-ring">
-      <input
-        type="number"
-        min="1"
-        step="1"
-        value={amount}
-        onChange={(event) => updateAmount(event.target.value)}
-        className="h-control-h min-w-0 flex-1 border-none bg-transparent px-density-3 text-sm outline-none"
-        aria-label="Timeout duration"
-        placeholder="2"
-      />
-      <select
-        value={unit}
-        onChange={(event) => updateUnit(event.target.value as DurationUnit)}
-        className="h-control-h shrink-0 border-l border-border bg-muted/40 px-density-2 text-sm outline-none"
-        aria-label="Timeout unit"
-      >
-        {DURATION_UNITS.map((option) => (
-          <option key={option.id} value={option.id}>
-            {option.label}
-          </option>
-        ))}
-      </select>
     </div>
   );
 }
@@ -1626,16 +1161,35 @@ async function fetchPermissionCatalog() {
   return (await response.json()) as AISpecRuntimePermissionCatalog;
 }
 
-async function fetchCliOptionsSchema(backend: string): Promise<JsonSchemaObject> {
-  const response = await fetch(
-    `/api/captain/ai/cli-options/catalog?backend=${encodeURIComponent(backend)}`,
-    { headers: { Accept: "application/json" } },
-  );
+// One backend entry from `captain prompt --schema`: its kind/auth/model status
+// plus, for cmux backends, the JSON schema for its extra CLI args.
+type PromptSchemaBackend = {
+  backend: string;
+  kind?: string;
+  authenticated?: boolean;
+  ready?: boolean;
+  models?: string[];
+  args?: JsonSchemaObject;
+};
+
+// The `captain prompt --schema` document. Only the fields the workbench consumes
+// are typed; the served document also carries `spec`/`prompt`/`promptAction`
+// schemas and a flat `models` list.
+type PromptSchemaDoc = {
+  schemaVersion: number;
+  backends?: PromptSchemaBackend[];
+  spec?: JsonSchemaObject;
+};
+
+async function fetchPromptSchema(): Promise<PromptSchemaDoc> {
+  const response = await fetch("/api/captain/ai/prompt/schema", {
+    headers: { Accept: "application/json" },
+  });
   if (!response.ok) {
     const message = await response.text();
-    throw new Error(message || `CLI options catalog failed with ${response.status}`);
+    throw new Error(message || `Prompt schema failed with ${response.status}`);
   }
-  return (await response.json()) as JsonSchemaObject;
+  return (await response.json()) as PromptSchemaDoc;
 }
 
 const CAPTAIN_SECRET_SELECTOR = {
@@ -1748,87 +1302,11 @@ function normalizeObjectSchema(schema: Record<string, unknown> | undefined): Jso
   } as JsonSchemaObject;
 }
 
-function parseJsonObject(raw: string):
-  | { ok: true; value: Record<string, unknown> }
-  | { ok: false; error: string } {
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return { ok: false, error: "Variables must be a JSON object." };
-    }
-    return { ok: true, value: parsed as Record<string, unknown> };
-  } catch (error) {
-    return { ok: false, error: errorMessage(error) };
-  }
-}
-
-function parseDurationValue(value: string): { amount: string; unit: DurationUnit } | undefined {
-  const match = value.trim().match(/^(\d+(?:\.\d+)?)(s|m|h)$/);
-  if (!match) return undefined;
-  return { amount: match[1], unit: match[2] as DurationUnit };
-}
-
-function formatDurationPickerValue(amount: string, unit: DurationUnit) {
-  const numeric = Number.parseFloat(amount);
-  if (!Number.isFinite(numeric) || numeric <= 0) return "";
-  return `${Number.isInteger(numeric) ? numeric.toFixed(0) : String(numeric)}${unit}`;
-}
-
-function runtimePayload(runtime: RuntimeForm, models: ChatModel[]) {
-  const spec: AISpecRuntimeValue = { ...runtime.spec };
-  const selected = normalizeRuntimeModel(runtime.model, models);
-  if (selected.model) spec.model = selected.model;
-  if (runtime.backend.trim()) {
-    spec.backend = runtime.backend.trim();
-  } else if (selected.backend) {
-    spec.backend = selected.backend;
-  }
-  if (runtime.effort.trim()) spec.effort = runtime.effort.trim();
-  if (runtime.temperature != null) spec.temperature = runtime.temperature;
-
-  const budget = { ...(spec.budget ?? {}) };
-  if (runtime.budget.maxTokens != null) budget.maxTokens = runtime.budget.maxTokens;
-  if (runtime.budget.cost != null) budget.cost = runtime.budget.cost;
-  if (runtime.timeout.trim()) budget.timeout = runtime.timeout.trim();
-  const maxTurns = Number.parseInt(runtime.maxTurns, 10);
-  if (Number.isFinite(maxTurns) && maxTurns > 0) budget.maxTurns = maxTurns;
-  if (Object.keys(budget).length > 0) spec.budget = budget;
-
-  const permissions = { ...(spec.permissions ?? {}) };
-  const permissionMode = specPermissionMode(runtime.permissionMode);
-  if (permissionMode) permissions.mode = permissionMode;
-  const { allowedTools, disallowedTools } = splitToolPreferences(runtime.toolPreferences);
-  if (allowedTools.length > 0 || disallowedTools.length > 0) {
-    const tools =
-      permissions.tools && !Array.isArray(permissions.tools)
-        ? { ...(permissions.tools as Record<string, unknown>) }
-        : {};
-    for (const tool of allowedTools) tools[tool] = "allow";
-    for (const tool of disallowedTools) tools[tool] = "deny";
-    permissions.tools = tools as NonNullable<AISpecRuntimePermissions["tools"]>;
-  }
-  if (runtime.noMcp) {
-    permissions.mcp = { ...(permissions.mcp ?? {}), disabled: true };
-  }
-  if (Object.keys(permissions).length > 0) spec.permissions = permissions;
-
-  const memory = { ...(spec.memory ?? {}) };
-  if (runtime.noHooks) memory.skipHooks = true;
-  if (runtime.noSkills) memory.skipSkills = true;
-  if (runtime.noUser) memory.skipUser = true;
-  if (runtime.noProject) memory.skipProject = true;
-  if (runtime.noMemory) memory.skipMemory = true;
-  if (Object.keys(memory).length > 0) spec.memory = memory;
-
-  return normalizeSpecRuntimePayload(buildAISpecRuntimePayload(spec), models);
-}
-
-// Different backends expose different CLI-arg schemas, so a backend switch
-// drops any stale spec.cliArgs.
-function withoutCliArgs(spec: AISpecRuntimeValue): AISpecRuntimeValue {
-  if (!spec.cliArgs) return spec;
-  const { cliArgs: _cliArgs, ...rest } = spec;
-  return rest;
+// runtime is the single source of truth: the inline PromptRunEditor and its
+// "Edit spec" modal both edit this one AISpecRuntimeValue, so the payload is
+// just the compacted spec (plus catalog model/backend normalization).
+function runtimePayload(runtime: AISpecRuntimeValue, models: ChatModel[]) {
+  return normalizeSpecRuntimePayload(buildAISpecRuntimePayload(runtime), models);
 }
 
 function normalizeSpecRuntimePayload(payload: Record<string, unknown>, models: ChatModel[]) {
@@ -1850,72 +1328,11 @@ function normalizeSpecRuntimePayload(payload: Record<string, unknown>, models: C
   return { ...payload, spec: specRecord };
 }
 
-function specPermissionMode(
-  mode: ClaudePermissionMode,
-): AISpecRuntimePermissions["mode"] | undefined {
-  if (mode === "default") return undefined;
-  return mode;
-}
-
-function updateModelSelection(
-  runtime: RuntimeForm,
-  model: string,
-  models: ChatModel[],
-  onChange: (value: RuntimeForm) => void,
-) {
-  const selected = normalizeRuntimeModel(model, models);
-  const backend = runtime.backend || selected.backend;
-  const selection = backend ? selectionForBackend(backend) : undefined;
-  onChange({
-    ...runtime,
-    ...(selection ? { family: selection.family, mode: selection.mode } : {}),
-    model,
-    backend,
-  });
-}
-
-function runtimeSelectionFromPrompt(prompt: PromptSummary) {
+// Seeds the runtime spec's backend from the prompt (explicit, else inferred from
+// the model). The PromptRunEditor derives the family/mode picker from spec.backend.
+function runtimeSelectionFromPrompt(prompt: PromptSummary): AISpecRuntimeValue {
   const backend = prompt.backend?.trim() || inferBackendFromModel(prompt.model || "");
-  const selection = selectionForBackend(backend);
-  return {
-    family: selection.family,
-    mode: selection.mode,
-    backend: prompt.backend?.trim() || "",
-  };
-}
-
-function backendForFamilyMode(family: ProviderFamily, mode: RuntimeMode) {
-  return (
-    FAMILY_MODES[family].find((candidate) => candidate.id === mode) ??
-    FAMILY_MODES[family][0]
-  ).backend;
-}
-
-function selectionForBackend(backend: string | undefined): { family: ProviderFamily; mode: RuntimeMode } {
-  switch ((backend || "").toLowerCase()) {
-    case "claude-agent":
-      return { family: "claude", mode: "agent" };
-    case "claude-cli":
-      return { family: "claude", mode: "cli" };
-    case "claude-cmux":
-      return { family: "claude", mode: "cmux" };
-    case "codex-cli":
-      return { family: "codex", mode: "cli" };
-    case "codex-cmux":
-      return { family: "codex", mode: "cmux" };
-    case "openai":
-      return { family: "openai", mode: "api" };
-    case "anthropic":
-      return { family: "anthropic", mode: "api" };
-    case "gemini":
-      return { family: "gemini", mode: "api" };
-    case "gemini-cli":
-      return { family: "gemini", mode: "cli" };
-    case "deepseek":
-      return { family: "deepseek", mode: "api" };
-    default:
-      return { family: "claude", mode: "agent" };
-  }
+  return backend ? { backend } : {};
 }
 
 function inferBackendFromModel(model: string) {
@@ -1937,72 +1354,10 @@ function inferBackendFromModel(model: string) {
   return "";
 }
 
-function modelsForBackend(models: ChatModel[], backend: string) {
-  const provider = providerForBackend(backend);
-  return provider ? models.filter((model) => model.provider === provider) : models;
-}
-
 function promptSelectableModels(models: ChatModel[]) {
   return models.map((model) =>
     model.configured === false ? { ...model, configured: true } : model,
   );
-}
-
-function modelBelongsToBackend(model: string, models: ChatModel[], backend: string) {
-  if (!model) return true;
-  const selected = models.find((entry) => entry.id === model);
-  if (!selected) return false;
-  return selected.provider === providerForBackend(backend);
-}
-
-function providerForBackend(backend: string) {
-  switch (backend) {
-    case "anthropic":
-      return "anthropic";
-    case "openai":
-      return "openai";
-    case "gemini":
-    case "gemini-cli":
-      return "googleai";
-    case "deepseek":
-      return "deepseek";
-    case "claude-agent":
-    case "claude-cli":
-    case "claude-cmux":
-      return "claude-agent";
-    case "codex-cli":
-    case "codex-cmux":
-      return "codex-cli";
-    default:
-      return "";
-  }
-}
-
-function labelForBackend(backend: string) {
-  switch (backend) {
-    case "anthropic":
-      return "Anthropic API";
-    case "openai":
-      return "OpenAI API";
-    case "gemini":
-      return "Gemini API";
-    case "gemini-cli":
-      return "Gemini CLI";
-    case "deepseek":
-      return "DeepSeek API";
-    case "claude-agent":
-      return "Claude Agent";
-    case "claude-cli":
-      return "Claude CLI";
-    case "claude-cmux":
-      return "Claude cmux";
-    case "codex-cli":
-      return "Codex CLI";
-    case "codex-cmux":
-      return "Codex cmux";
-    default:
-      return "Prompt default";
-  }
 }
 
 function normalizeRuntimeModel(model: string, models: ChatModel[]) {
@@ -2047,20 +1402,6 @@ function providerToBackend(provider: string) {
 function stripProviderPrefix(model: string) {
   const slash = model.indexOf("/");
   return slash >= 0 ? model.slice(slash + 1) : model;
-}
-
-function splitToolPreferences(toolPreferences: Record<string, ToolMode>) {
-  const allowedTools: string[] = [];
-  const disallowedTools: string[] = [];
-  for (const [tool, mode] of Object.entries(toolPreferences)) {
-    if (mode === "enabled") allowedTools.push(tool);
-    if (mode === "disabled") disallowedTools.push(tool);
-  }
-  return { allowedTools, disallowedTools };
-}
-
-function toolModeCount(toolPreferences: Record<string, ToolMode>, mode: ToolMode) {
-  return Object.values(toolPreferences).filter((value) => value === mode).length;
 }
 
 function defaultPromptContent(name: string) {
