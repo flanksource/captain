@@ -45,18 +45,17 @@ func TestRunner_CapturesSessionAndChangedFiles(t *testing.T) {
 		}
 	}}
 
-	r := &Runner{
+	r := &Runner[string]{
 		Provider: prov,
 		Repo:     "/repo",
-		Build: func(_ *RunContext, _ int, _ *ai.LoopIteration, _ string) ai.Request {
-			return ai.Request{Prompt: api.Prompt{User: "go"}}
-		},
+		Request:  ai.Request{Prompt: api.Prompt{User: "go"}},
 	}
 	res, err := r.Run(context.Background())
 	require.NoError(t, err)
-	assert.Equal(t, "sess-1", res.SessionID)
-	assert.Equal(t, []string{"pkg/a.go", "pkg/b.go"}, res.ChangedFiles)
-	assert.Equal(t, 1, prov.calls, "no verifiers ⇒ exactly one iteration")
+	require.NotNil(t, res.Response.Workspace)
+	assert.Equal(t, "sess-1", res.Response.Workspace.SessionID)
+	assert.Equal(t, []string{"pkg/a.go", "pkg/b.go"}, res.Response.Workspace.Changed)
+	assert.Equal(t, 1, prov.calls, "no verify hooks ⇒ exactly one iteration")
 }
 
 func TestRunner_VerifyDrivesRerunThenStops(t *testing.T) {
@@ -65,69 +64,60 @@ func TestRunner_VerifyDrivesRerunThenStops(t *testing.T) {
 	}}
 
 	var verifyCalls int
-	var feedbackSeen []string
-
-	r := &Runner{
-		Provider: prov,
-		Scope:    ScopeAll,
-		Plugins: []Plugin{
-			verifyPlugin{name: "lint", fn: func(*RunContext, *ai.LoopIteration) (Verdict, error) {
+	r := &Runner[string]{
+		Provider:      prov,
+		Scope:         ScopeAll,
+		MaxIterations: 3,
+		Request:       ai.Request{Prompt: api.Prompt{User: "go"}},
+		Hooks: []any{
+			verifyHook{name: "lint", fn: func(hc *HookContext) (VerifyResult, error) {
 				verifyCalls++
 				if verifyCalls == 1 {
-					return Verdict{OK: false, Reason: "1 violation", Feedback: "fix line 7"}, nil
+					// fail: the hook returns the exact next request to re-run.
+					next := *hc.Request
+					next.Prompt.User = hc.Request.Prompt.User + "\n\nfix line 7"
+					return VerifyResult{Valid: false, Retry: &next}, nil
 				}
-				return Verdict{OK: true}, nil
+				return VerifyResult{Valid: true}, nil
 			}},
-		},
-		Build: func(_ *RunContext, _ int, _ *ai.LoopIteration, feedback string) ai.Request {
-			feedbackSeen = append(feedbackSeen, feedback)
-			return ai.Request{Prompt: api.Prompt{User: "go"}}
 		},
 	}
 
 	res, err := r.Run(context.Background())
 	require.NoError(t, err)
-	assert.Equal(t, 2, prov.calls, "should re-run once after the first failing verify")
+	assert.Equal(t, 2, prov.calls, "re-run once after the first failing verify")
 	assert.Equal(t, 2, verifyCalls)
 	require.Len(t, res.Verdicts, 2)
-	assert.False(t, res.Verdicts[0].OK)
-	assert.True(t, res.Verdicts[1].OK)
-	// iter0 has no feedback; iter1 carries the failing verdict's feedback.
-	assert.Equal(t, []string{"", "fix line 7"}, feedbackSeen)
+	assert.False(t, res.Verdicts[0].Valid)
+	assert.True(t, res.Verdicts[1].Valid)
 }
 
-func TestRunner_SetupFinalizeTeardownOrder(t *testing.T) {
+func TestRunner_PreRunPostRunOrder(t *testing.T) {
 	prov := &fakeProvider{events: func(int) []ai.Event {
 		return []ai.Event{{Kind: ai.EventResult, Success: true}}
 	}}
 
 	var log []string
-	plugin := &lifecyclePlugin{log: &log}
-
-	r := &Runner{
+	r := &Runner[string]{
 		Provider: prov,
-		Plugins:  []Plugin{plugin},
-		Build: func(*RunContext, int, *ai.LoopIteration, string) ai.Request {
-			log = append(log, "build")
-			return ai.Request{}
-		},
+		Request:  ai.Request{Prompt: api.Prompt{User: "go"}},
+		Hooks:    []any{&lifecycleHook{log: &log}},
 	}
 	_, err := r.Run(context.Background())
 	require.NoError(t, err)
-	// setup before the loop; finalize after; teardown last.
-	assert.Equal(t, []string{"setup", "build", "finalize", "teardown"}, log)
+	// PreRun before the loop; PostRun after.
+	assert.Equal(t, []string{"preRun", "postRun"}, log)
 }
 
 func TestRunner_VerifyOnlySkipsGeneration(t *testing.T) {
 	var verifyCalls int
-	// Build == nil ⇒ verify-only: no provider, no generation loop.
-	r := &Runner{
+	// Empty prompt body ⇒ verify-only: no provider, no generation loop.
+	r := &Runner[string]{
 		Scope: ScopeAll,
-		Plugins: []Plugin{
-			verifyPlugin{name: "score", fn: func(_ *RunContext, it *ai.LoopIteration) (Verdict, error) {
+		Hooks: []any{
+			verifyHook{name: "score", fn: func(*HookContext) (VerifyResult, error) {
 				verifyCalls++
-				assert.Nil(t, it, "verify-only passes a nil iteration")
-				return Verdict{OK: true}, nil
+				return VerifyResult{Valid: true}, nil
 			}},
 		},
 	}
@@ -136,30 +126,22 @@ func TestRunner_VerifyOnlySkipsGeneration(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, verifyCalls, "verify runs exactly once")
 	require.Len(t, res.Verdicts, 1)
-	assert.True(t, res.Verdicts[0].OK)
+	assert.True(t, res.Verdicts[0].Valid)
 	assert.Nil(t, res.Loop, "no generation loop in verify-only")
 }
 
-// --- test plugins -----------------------------------------------------------
+// --- test hooks -------------------------------------------------------------
 
-type verifyPlugin struct {
+type verifyHook struct {
 	name string
-	fn   func(*RunContext, *ai.LoopIteration) (Verdict, error)
+	fn   func(*HookContext) (VerifyResult, error)
 }
 
-func (v verifyPlugin) Name() string { return v.name }
-func (v verifyPlugin) Verify(rc *RunContext, it *ai.LoopIteration) (Verdict, error) {
-	return v.fn(rc, it)
-}
+func (v verifyHook) Name() string                              { return v.name }
+func (v verifyHook) Verify(hc *HookContext) (VerifyResult, error) { return v.fn(hc) }
 
-type lifecyclePlugin struct{ log *[]string }
+type lifecycleHook struct{ log *[]string }
 
-func (l *lifecyclePlugin) Name() string { return "lifecycle" }
-func (l *lifecyclePlugin) Setup(*RunContext) (func() error, error) {
-	*l.log = append(*l.log, "setup")
-	return func() error { *l.log = append(*l.log, "teardown"); return nil }, nil
-}
-func (l *lifecyclePlugin) Finalize(*RunContext, *RunResult) error {
-	*l.log = append(*l.log, "finalize")
-	return nil
-}
+func (l *lifecycleHook) Name() string                { return "lifecycle" }
+func (l *lifecycleHook) PreRun(*HookContext) error   { *l.log = append(*l.log, "preRun"); return nil }
+func (l *lifecycleHook) PostRun(*HookContext) error  { *l.log = append(*l.log, "postRun"); return nil }

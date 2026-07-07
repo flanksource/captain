@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/flanksource/captain/pkg/ai"
-	"github.com/flanksource/captain/pkg/ai/agent"
 	"github.com/flanksource/captain/pkg/ai/prompt"
 )
 
@@ -27,9 +26,9 @@ type LLMJudgeVerifier struct {
 	Data func(cwd string, changed []string) map[string]any
 }
 
-func (j *LLMJudgeVerifier) Verify(ctx context.Context, cwd string, changed []string) (agent.Verdict, error) {
+func (j *LLMJudgeVerifier) Verify(ctx context.Context, cwd string, changed []string) (Verdict, error) {
 	if j.Provider == nil || j.Prompt == nil {
-		return agent.Verdict{}, fmt.Errorf("LLMJudgeVerifier: Provider and Prompt are required")
+		return Verdict{}, fmt.Errorf("LLMJudgeVerifier: Provider and Prompt are required")
 	}
 	data := map[string]any{"cwd": cwd, "changed": changed}
 	if j.Data != nil {
@@ -39,10 +38,10 @@ func (j *LLMJudgeVerifier) Verify(ctx context.Context, cwd string, changed []str
 	out := &judgeVerdict{}
 	req, _, err := j.Prompt.Render(data, out)
 	if err != nil {
-		return agent.Verdict{}, err
+		return Verdict{}, err
 	}
 	if _, err := j.Provider.Execute(ctx, req); err != nil {
-		return agent.Verdict{}, err
+		return Verdict{}, err
 	}
-	return agent.Verdict{OK: out.OK, Reason: out.Reason, Feedback: out.Feedback}, nil
+	return Verdict{OK: out.OK, Reason: out.Reason, Feedback: out.Feedback}, nil
 }
