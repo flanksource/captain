@@ -29,6 +29,11 @@ type Prompt struct {
 	// reply is also left on Response.Text for tolerant callers. Schema and
 	// SchemaJSON are mutually exclusive.
 	SchemaJSON json.RawMessage `json:"schemaJSON,omitempty" yaml:"schemaJSON,omitempty" pretty:"-"`
+	// SchemaStrictness governs how a response that fails JSON-schema validation is
+	// handled: "" (default) skips post-response validation; "warning" logs and
+	// continues; "error" fails; "retry" re-asks the model once with the validation
+	// error, then fails. Only meaningful alongside a schema (Schema or SchemaJSON).
+	SchemaStrictness SchemaStrictness `json:"schemaStrictness,omitempty" yaml:"schemaStrictness,omitempty" pretty:"-"`
 	// Metadata is arbitrary caller metadata. (ai.Request.Metadata)
 	Metadata map[string]string `json:"metadata,omitempty" yaml:"metadata,omitempty" pretty:"label=Metadata"`
 }
@@ -41,6 +46,9 @@ func (p Prompt) HasSchema() bool { return p.Schema != nil || len(p.SchemaJSON) >
 func (p Prompt) Validate() error {
 	if p.User == "" {
 		return fmt.Errorf("prompt text is required")
+	}
+	if err := p.SchemaStrictness.Validate(); err != nil {
+		return err
 	}
 	return nil
 }
