@@ -1,6 +1,10 @@
 package session
 
 import (
+	"fmt"
+	"strings"
+	"time"
+
 	"github.com/flanksource/captain/pkg/ai/history"
 	"github.com/flanksource/captain/pkg/claude"
 	"github.com/flanksource/commons/logger"
@@ -10,7 +14,7 @@ import (
 var codexLog = logger.GetLogger("session")
 
 // BuildCodex builds the unified model for each given Codex session file. Codex
-// sessions are flat (no sub-agent hierarchy), carry no plan/approval data, and
+// sessions are flat (no sub-agent hierarchy), carry inline plan updates, and
 // have no per-message token usage, so Cost is zero. Unreadable files are logged
 // at Warn and skipped.
 func BuildCodex(files []string) []*Session {
@@ -80,7 +84,68 @@ func buildCodexSession(uses []history.ToolUse, info *history.CodexSessionInfo) *
 		Read:    sortedUnique(relativizeAll(read, s.CWD)),
 		Written: sortedUnique(relativizeAll(written, s.CWD)),
 	}
+	s.Plan = CodexPlanFromToolUses(uses)
 	return s
+}
+
+// CodexPlanFromToolUses renders the latest Codex update_plan/TodoWrite state as
+// a canonical inline Plan. Codex revises plans in-place rather than writing plan
+// files, so the final TodoWrite payload is the durable plan content.
+func CodexPlanFromToolUses(uses []history.ToolUse) *Plan {
+	var latest []any
+	var ts *time.Time
+	for _, use := range uses {
+		if use.Tool != "TodoWrite" {
+			continue
+		}
+		todos, ok := use.Input["todos"].([]any)
+		if !ok || len(todos) == 0 {
+			continue
+		}
+		latest = todos
+		ts = use.Timestamp
+	}
+	if len(latest) == 0 {
+		return nil
+	}
+	content := renderCodexPlan(latest)
+	if strings.TrimSpace(content) == "" {
+		return nil
+	}
+	return &Plan{
+		Content:  content,
+		Explicit: true,
+		Events:   []PlanEvent{{Kind: PlanWrite, Timestamp: ts}},
+	}
+}
+
+func renderCodexPlan(steps []any) string {
+	var b strings.Builder
+	for _, raw := range steps {
+		step, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		text, _ := step["step"].(string)
+		if text == "" {
+			text, _ = step["content"].(string)
+		}
+		text = strings.TrimSpace(text)
+		if text == "" {
+			continue
+		}
+		status, _ := step["status"].(string)
+		mark := " "
+		suffix := ""
+		switch status {
+		case "completed", "done":
+			mark = "x"
+		case "in_progress":
+			suffix = " _(in progress)_"
+		}
+		fmt.Fprintf(&b, "- [%s] %s%s\n", mark, text, suffix)
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 // relativizeAll makes paths relative to cwd for consistency with the claude

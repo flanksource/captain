@@ -166,6 +166,7 @@ func CodexRow(path string) (Row, bool) {
 		Usage:     s.Usage,
 		Files:     s.Files,
 		Slug:      s.Slug,
+		Plan:      s.Plan,
 	}
 	if info != nil {
 		r.ReasoningEffort = info.ReasoningEffort

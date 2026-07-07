@@ -172,6 +172,10 @@ func main() {
 
 	cli.RegisterPromptEntity()
 	clicky.GenerateCLI(rootCmd)
+	if err := cli.AttachPromptSchemaFlag(rootCmd); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to attach prompt schema flag: %v\n", err)
+		os.Exit(1)
+	}
 
 	mcpConfig := &mcp.Config{
 		Name:    "captain",
