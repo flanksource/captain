@@ -34,11 +34,12 @@ func loadSavedAI() captainconfig.AIDefaults {
 }
 
 type AIProviderOptions struct {
-	Model   string `flag:"model" help:"Model name, e.g. claude-sonnet-4, gemini-2.0-flash (defaults to the value saved by 'captain configure')" short:"m"`
-	Backend string `flag:"backend" help:"Force backend: anthropic|gemini|openai|deepseek|claude-cli|claude-agent|claude-cmux|codex-cli|codex-cmux|gemini-cli (default: inferred from model or saved by 'captain configure')" short:"b"`
-	APIKey  string `flag:"api-key" help:"API key (env: ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, GOOGLE_API_KEY, DEEPSEEK_API_KEY)"`
-	NoCache bool   `flag:"no-cache" help:"Disable response caching"`
-	Budget  string `flag:"budget" help:"Max spend in USD, 0=unlimited" default:"0"`
+	Model    string   `flag:"model" help:"Model name(s), e.g. claude-sonnet-5 or a comma-separated primary,fallback list like claude-sonnet-5,gpt-4o (defaults to the value saved by 'captain configure')" short:"m"`
+	Fallback []string `flag:"fallback" help:"Model to try if the primary is unavailable (repeatable; comma-separated allowed)"`
+	Backend  string   `flag:"backend" help:"Force backend: anthropic|gemini|openai|deepseek|claude-cli|claude-agent|claude-cmux|codex-cli|codex-cmux|gemini-cli (default: inferred from model or saved by 'captain configure')" short:"b"`
+	APIKey   string   `flag:"api-key" help:"API key (env: ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, GOOGLE_API_KEY, DEEPSEEK_API_KEY)"`
+	NoCache  bool     `flag:"no-cache" help:"Disable response caching"`
+	Budget   string   `flag:"budget" help:"Max spend in USD, 0=unlimited" default:"0"`
 }
 
 // parseFloatFlag parses a numeric string flag, returning a descriptive error
@@ -76,8 +77,9 @@ func (o AIProviderOptions) ToConfig() (ai.Config, error) {
 		budget = saved.BudgetUSD
 	}
 
+	m := api.Model{Name: model, Backend: ai.Backend(backend), Fallbacks: fallbackModelsFromFlags(o.Fallback)}
 	return ai.Config{
-		Model:   api.Model{Name: model, Backend: ai.Backend(backend)},
+		Model:   m.ExpandCSV(),
 		Budget:  api.Budget{Cost: budget},
 		APIKey:  o.APIKey,
 		NoCache: o.NoCache || saved.NoCache,
@@ -391,7 +393,9 @@ func baseModelName(id string) string {
 }
 
 func buildProvider(ctx context.Context, req *ai.Request, cfg ai.Config) (ai.Provider, func(), error) {
-	warnIfLikelyModelTypo(cfg.Model.Name)
+	for _, c := range cfg.Model.Candidates() {
+		warnIfLikelyModelTypo(c.Name)
+	}
 	cleanup := func() {}
 	if req.NoCache {
 		cfg.NoCache = true
@@ -410,7 +414,7 @@ func buildProvider(ctx context.Context, req *ai.Request, cfg ai.Config) (ai.Prov
 		cleanup()
 		return nil, func() {}, err
 	}
-	if p, err = middleware.Wrap(p, middleware.WithLogging()); err != nil {
+	if p, err = middleware.Wrap(p, middleware.WithLogging(), middleware.WithSchemaValidation()); err != nil {
 		cleanup()
 		return nil, func() {}, err
 	}

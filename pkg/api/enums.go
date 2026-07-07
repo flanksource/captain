@@ -161,6 +161,74 @@ func (e Effort) Validate() error {
 	return fmt.Errorf("invalid reasoning effort %q; want one of: low, medium, high, xhigh", e)
 }
 
+// SchemaStrictness governs what captain does when a structured-output response
+// fails validation against the request's JSON schema. "" disables post-response
+// validation (the default — the schema is still sent to the model, just never
+// checked on the way back).
+type SchemaStrictness string
+
+const (
+	SchemaStrictnessNone    SchemaStrictness = ""
+	SchemaStrictnessWarning SchemaStrictness = "warning"
+	SchemaStrictnessError   SchemaStrictness = "error"
+	SchemaStrictnessRetry   SchemaStrictness = "retry"
+)
+
+// AllSchemaStrictness lists the non-empty strictness modes.
+func AllSchemaStrictness() []SchemaStrictness {
+	return []SchemaStrictness{SchemaStrictnessWarning, SchemaStrictnessError, SchemaStrictnessRetry}
+}
+
+// Valid reports whether s is a recognised strictness mode (including none/"").
+func (s SchemaStrictness) Valid() bool {
+	switch s {
+	case SchemaStrictnessNone, SchemaStrictnessWarning, SchemaStrictnessError, SchemaStrictnessRetry:
+		return true
+	default:
+		return false
+	}
+}
+
+// Validate fails loud on an unknown strictness mode, naming the valid set.
+func (s SchemaStrictness) Validate() error {
+	if s.Valid() {
+		return nil
+	}
+	return fmt.Errorf("invalid schemaStrictness %q; want one of: warning, error, retry", s)
+}
+
+// VerifyScope narrows a workflow's verification to the changed files vs the
+// whole tree. "" defaults to all.
+type VerifyScope string
+
+const (
+	VerifyScopeAll     VerifyScope = "all"
+	VerifyScopeChanged VerifyScope = "changed"
+)
+
+// AllVerifyScopes lists the non-empty verification scopes.
+func AllVerifyScopes() []VerifyScope {
+	return []VerifyScope{VerifyScopeAll, VerifyScopeChanged}
+}
+
+// Valid reports whether s is a recognised scope (including the default "").
+func (s VerifyScope) Valid() bool {
+	switch s {
+	case "", VerifyScopeAll, VerifyScopeChanged:
+		return true
+	default:
+		return false
+	}
+}
+
+// Validate fails loud on an unknown scope, naming the valid set.
+func (s VerifyScope) Validate() error {
+	if s.Valid() {
+		return nil
+	}
+	return fmt.Errorf("invalid verify scope %q; want one of: all, changed", s)
+}
+
 // ToolMode is the per-tool exposure for one request.
 type ToolMode string
 

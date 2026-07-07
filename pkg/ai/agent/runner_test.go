@@ -118,6 +118,28 @@ func TestRunner_SetupFinalizeTeardownOrder(t *testing.T) {
 	assert.Equal(t, []string{"setup", "build", "finalize", "teardown"}, log)
 }
 
+func TestRunner_VerifyOnlySkipsGeneration(t *testing.T) {
+	var verifyCalls int
+	// Build == nil ⇒ verify-only: no provider, no generation loop.
+	r := &Runner{
+		Scope: ScopeAll,
+		Plugins: []Plugin{
+			verifyPlugin{name: "score", fn: func(_ *RunContext, it *ai.LoopIteration) (Verdict, error) {
+				verifyCalls++
+				assert.Nil(t, it, "verify-only passes a nil iteration")
+				return Verdict{OK: true}, nil
+			}},
+		},
+	}
+
+	res, err := r.Run(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 1, verifyCalls, "verify runs exactly once")
+	require.Len(t, res.Verdicts, 1)
+	assert.True(t, res.Verdicts[0].OK)
+	assert.Nil(t, res.Loop, "no generation loop in verify-only")
+}
+
 // --- test plugins -----------------------------------------------------------
 
 type verifyPlugin struct {
