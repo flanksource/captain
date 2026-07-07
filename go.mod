@@ -9,10 +9,9 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.42.0
 	github.com/charmbracelet/huh v1.0.0
 	github.com/firebase/genkit/go v1.8.0
-	github.com/flanksource/clicky v1.21.34-0.20260630075958-cd55f2f4fce3
-	github.com/flanksource/clicky/aichat v1.21.34-0.20260630075958-cd55f2f4fce3
+	github.com/flanksource/clicky v1.21.37-0.20260707073215-39f9301d5c01
+	github.com/flanksource/clicky/aichat v1.21.37-0.20260707073215-39f9301d5c01
 	github.com/flanksource/commons v1.53.1
-	github.com/flanksource/commons-db v0.0.0
 	github.com/flanksource/sandbox-runtime v1.0.2
 	github.com/google/dotprompt/go v0.0.0-20260502013637-5cd4a8405ca3
 	github.com/google/uuid v1.6.0
@@ -34,6 +33,18 @@ require (
 	k8s.io/apimachinery v0.36.1
 	k8s.io/client-go v0.36.1
 	mvdan.cc/sh/v3 v3.13.0
+	sigs.k8s.io/yaml v1.6.0
+)
+
+require github.com/flanksource/commons-db v0.1.14
+
+require (
+	cloud.google.com/go/cloudsqlconn v1.22.1 // indirect
+	github.com/exaring/otelpgx v0.9.3 // indirect
+	github.com/fergusstrange/embedded-postgres v1.34.0 // indirect
+	github.com/xi2/xz v0.0.0-20171230120015-48954b6210f8 // indirect
+	go.opencensus.io v0.24.0 // indirect
+	gorm.io/driver/postgres v1.6.0 // indirect
 )
 
 require (
@@ -95,7 +106,7 @@ require (
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bmatcuk/doublestar/v4 v4.9.1 // indirect
-	github.com/buger/jsonparser v1.1.1 // indirect
+	github.com/buger/jsonparser v1.1.2 // indirect
 	github.com/catppuccin/go v0.3.0 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cert-manager/cert-manager v1.20.0 // indirect
@@ -218,7 +229,7 @@ require (
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-localereader v0.0.1 // indirect
 	github.com/mattn/go-runewidth v0.0.21 // indirect
-	github.com/mbleigh/raymond v0.0.0-20250414171441-6b3a58ab9e0a // indirect
+	github.com/mbleigh/raymond v0.0.0-20250414171441-6b3a58ab9e0a
 	github.com/microsoft/go-mssqldb v1.10.0 // indirect
 	github.com/mitchellh/hashstructure/v2 v2.0.2 // indirect
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
@@ -290,7 +301,7 @@ require (
 	github.com/xanzy/ssh-agent v0.3.3 // indirect
 	github.com/xeipuuv/gojsonpointer v0.0.0-20190905194746-02993c407bfb // indirect
 	github.com/xeipuuv/gojsonreference v0.0.0-20180127040603-bd5ef7bd5415 // indirect
-	github.com/xeipuuv/gojsonschema v1.2.0 // indirect
+	github.com/xeipuuv/gojsonschema v1.2.0
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	github.com/xuri/efp v0.0.1 // indirect
 	github.com/xuri/excelize/v2 v2.10.1 // indirect
@@ -336,7 +347,7 @@ require (
 	gopkg.in/sourcemap.v1 v1.0.5 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
-	gorm.io/gorm v1.31.0 // indirect
+	gorm.io/gorm v1.31.0
 	k8s.io/apiextensions-apiserver v0.36.1 // indirect
 	k8s.io/klog/v2 v2.140.0 // indirect
 	k8s.io/kube-openapi v0.0.0-20260317180543-43fb72c5454a // indirect
@@ -347,13 +358,4 @@ require (
 	sigs.k8s.io/json v0.0.0-20250730193827-2d320260d730 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.2 // indirect
-	sigs.k8s.io/yaml v1.6.0 // indirect
 )
-
-// replace github.com/flanksource/sandbox-runtime => ../sandbox-runtime
-
-// Local dev builds against ../clicky via go.work; tagged builds use the
-// required clicky version above.
-// replace github.com/flanksource/clicky => ../clicky
-
-replace github.com/flanksource/commons-db => ../commons-db
