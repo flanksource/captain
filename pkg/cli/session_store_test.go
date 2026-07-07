@@ -46,6 +46,93 @@ func TestRecordFromRow_ProjectsRichFields(t *testing.T) {
 	}
 }
 
+func TestStoredBase_PersistsInlinePlan(t *testing.T) {
+	r := session.Row{
+		ID:     "codex-plan",
+		Source: "codex",
+		Plan: &session.Plan{
+			Content:  "- [x] inspect\n- [ ] test",
+			Explicit: true,
+			Events:   []session.PlanEvent{{Kind: session.PlanWrite}},
+		},
+	}
+
+	stored := storedBase(r)
+
+	if stored.Plan == nil {
+		t.Fatal("stored plan is nil")
+	}
+	if stored.Plan.Content != r.Plan.Content || !stored.Plan.Explicit {
+		t.Fatalf("stored plan = %+v, want %+v", stored.Plan, r.Plan)
+	}
+}
+
+func TestGavelSessionDSNPrefersEnv(t *testing.T) {
+	t.Setenv(gavelCacheEnvDSN, "postgres://env-dsn")
+
+	dsn, source, err := gavelSessionDSN()
+	if err != nil {
+		t.Fatalf("gavelSessionDSN: %v", err)
+	}
+	if dsn != "postgres://env-dsn" || source != gavelCacheEnvDSN {
+		t.Fatalf("dsn/source = %q/%q", dsn, source)
+	}
+}
+
+func TestConfiguredSessionDSNPrefersGavelEnvOverCaptainEnv(t *testing.T) {
+	t.Setenv(gavelCacheEnvDSN, "postgres://gavel-dsn")
+	t.Setenv(captainSessionEnvDSN, "postgres://captain-dsn")
+
+	dsn, source, disabled, err := configuredSessionDSN()
+	if err != nil {
+		t.Fatalf("configuredSessionDSN: %v", err)
+	}
+	if disabled {
+		t.Fatal("configuredSessionDSN unexpectedly disabled")
+	}
+	if dsn != "postgres://gavel-dsn" || source != gavelCacheEnvDSN {
+		t.Fatalf("dsn/source = %q/%q", dsn, source)
+	}
+}
+
+func TestConfiguredSessionDSNFallsBackToCaptainEnv(t *testing.T) {
+	t.Setenv(gavelCacheEnvDSN, "")
+	t.Setenv(captainSessionEnvDSN, "postgres://captain-dsn")
+
+	dsn, source, disabled, err := configuredSessionDSN()
+	if err != nil {
+		t.Fatalf("configuredSessionDSN: %v", err)
+	}
+	if disabled {
+		t.Fatal("configuredSessionDSN unexpectedly disabled")
+	}
+	if dsn != "postgres://captain-dsn" || source != captainSessionEnvDSN {
+		t.Fatalf("dsn/source = %q/%q", dsn, source)
+	}
+}
+
+func TestGavelSessionDSNFromDBConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv(gavelCacheEnvDSN, "")
+	dir := filepath.Join(home, ".config", "gavel")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	path := filepath.Join(dir, "db.json")
+	if err := os.WriteFile(path, []byte(`{"mode":"dsn","dsn":"postgres://configured-dsn"}`), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	dsn, source, err := gavelSessionDSN()
+	if err != nil {
+		t.Fatalf("gavelSessionDSN: %v", err)
+	}
+	if dsn != "postgres://configured-dsn" || source != path {
+		t.Fatalf("dsn/source = %q/%q", dsn, source)
+	}
+}
+
 // TestSessionStoreRoundTrip exercises the real gorm store: fresh miss inserts,
 // unchanged hit is served from the row (parent-linked child included), a changed
 // file invalidates, and a realized prompt round-trips. Gated on a Postgres DSN.
