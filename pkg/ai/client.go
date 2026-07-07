@@ -22,10 +22,17 @@ func RegisterProvider(backend Backend, factory ProviderFactory) {
 	api.RegisterProvider(backend, factory)
 }
 
-// NewProvider constructs the registered provider for cfg's backend. When the
-// model name is unrecognized, the error is enriched with the closest known model
-// names ("did you mean …").
+// NewProvider constructs the registered provider for cfg's backend. When the model
+// name is unrecognized, the error is enriched with the closest known model names
+// ("did you mean …"). When cfg.Model resolves to more than one candidate (a
+// comma-separated Name or a Fallbacks list), a fallback provider is returned that
+// tries each in order on a retryable failure.
 func NewProvider(cfg Config) (Provider, error) {
+	candidates := cfg.Model.Candidates()
+	cfg.Model = candidates[0]
+	if len(candidates) > 1 {
+		return newFallbackProvider(cfg, candidates), nil
+	}
 	p, err := api.NewProvider(cfg)
 	if err != nil {
 		return nil, suggestModelName(err, cfg.Model.Name)

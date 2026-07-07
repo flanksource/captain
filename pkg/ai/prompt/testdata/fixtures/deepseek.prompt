@@ -1,0 +1,15 @@
+---
+model: deepseek-reasoner
+backend: deepseek
+config:
+  maxOutputTokens: 4096
+  temperature: 0.3
+budget:
+  cost: 1
+---
+{{role "system"}}
+You are a direct implementation planner. Return the smallest practical sequence of steps.
+{{role "user"}}
+Plan the work for:
+{{task}}
+

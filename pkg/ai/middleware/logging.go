@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/clicky"
 	"github.com/flanksource/clicky/api/icons"
 	"github.com/flanksource/commons/logger"
@@ -36,7 +37,7 @@ func (l *loggingProvider) Execute(ctx context.Context, req ai.Request) (*ai.Resp
 
 	if log.IsDebugEnabled() {
 		t := dispatch.NewLine().Append(req.Prompt.User, "text-gray-600")
-		if s := schemaInJSON(req.Prompt.Schema); s != "" {
+		if s := schemaInJSON(req.Prompt); s != "" {
 			t = t.NewLine().Append("schema-in ", "text-gray-500").Append(s, "text-gray-600")
 		}
 		log.Debugf("%v", t)
@@ -106,23 +107,21 @@ func WithLogging() Option {
 	}
 }
 
-// schemaInJSON renders the JSON schema captain derives from a structured-output
-// target. Returns "" for text-mode requests (nil target); a non-struct target or
-// marshal failure is surfaced inline rather than swallowed, since this is
-// diagnostics that must never abort the run.
-func schemaInJSON(out any) string {
-	if out == nil {
+// schemaInJSON renders the JSON schema captain will send the model for a prompt:
+// the pre-built Prompt.SchemaJSON verbatim when set (preserving the full JSON
+// Schema vocabulary, e.g. maxItems), else the schema reflected from the Prompt.Schema
+// Go target. Returns "" for text-mode requests (no schema); a resolution failure is
+// surfaced inline rather than swallowed, since this is diagnostics that must never
+// abort the run.
+func schemaInJSON(p api.Prompt) string {
+	raw, err := ai.SchemaJSONFor(p)
+	if err != nil {
+		return fmt.Sprintf("<schema-in error: %v>", err)
+	}
+	if len(raw) == 0 {
 		return ""
 	}
-	schema, err := ai.GenerateJSONSchema(out)
-	if err != nil {
-		return fmt.Sprintf("<schema-in error: %v>", err)
-	}
-	s, err := ai.SchemaToJSON(schema)
-	if err != nil {
-		return fmt.Sprintf("<schema-in error: %v>", err)
-	}
-	return s
+	return string(raw)
 }
 
 // structuredOutJSON renders the structured response the provider parsed into the
