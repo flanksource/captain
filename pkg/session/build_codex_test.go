@@ -53,3 +53,28 @@ func TestBuildCodexSession_MapsMessagesFilesAndMeta(t *testing.T) {
 		t.Errorf("codex cost = %v, want 0", s.Cost.Total())
 	}
 }
+
+func TestBuildCodexSession_AttachesLatestInlinePlan(t *testing.T) {
+	ts := time.Date(2026, 7, 6, 10, 0, 0, 0, time.UTC)
+	uses := []history.ToolUse{
+		{Tool: "TodoWrite", Input: map[string]any{"todos": []any{
+			map[string]any{"step": "old step", "status": "in_progress"},
+		}}, Timestamp: &ts, SessionID: "cx-plan", Source: "codex"},
+		{Tool: "TodoWrite", Input: map[string]any{"todos": []any{
+			map[string]any{"step": "inspect code", "status": "completed"},
+			map[string]any{"content": "run tests", "status": "in_progress"},
+		}}, Timestamp: &ts, SessionID: "cx-plan", Source: "codex"},
+	}
+
+	s := buildCodexSession(uses, &history.CodexSessionInfo{ID: "cx-plan", CWD: "/repo"})
+
+	if s.Plan == nil {
+		t.Fatal("plan is nil")
+	}
+	if got, want := s.Plan.Content, "- [x] inspect code\n- [ ] run tests _(in progress)_"; got != want {
+		t.Fatalf("plan content = %q, want %q", got, want)
+	}
+	if !s.Plan.Explicit || len(s.Plan.Events) != 1 || s.Plan.Events[0].Kind != PlanWrite {
+		t.Fatalf("plan metadata = %+v", s.Plan)
+	}
+}
