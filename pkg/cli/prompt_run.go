@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/ai/agent"
 	clickyrpc "github.com/flanksource/clicky/rpc"
 	"github.com/flanksource/clicky/task"
 	flanksourceContext "github.com/flanksource/commons/context"
@@ -154,7 +155,7 @@ func runPromptStream(t *task.Task, rendered PromptRenderResult, timeout time.Dur
 	defer cleanup()
 
 	streamer, ok := p.(ai.StreamingProvider)
-	if !ok {
+	if !ok && !req.IsVerifyOnly() {
 		return failRun(t, stream, fmt.Errorf("backend %s does not support streaming", rendered.Backend))
 	}
 
@@ -162,23 +163,44 @@ func runPromptStream(t *task.Task, rendered PromptRenderResult, timeout time.Dur
 	acc := newPromptEventAccumulator(stream.publish, t, rendered.Model, rendered.Backend)
 	acc.cwd = req.Cwd()
 
-	loop, err := ai.RunUntil(ctx, ai.LoopOptions{
-		Provider:      streamer,
-		MaxIterations: 1,
-		BuildRequest: func(iter int, _ *ai.LoopIteration) (ai.Request, bool) {
-			if iter > 0 {
-				return ai.Request{}, false
+	// Drive the generate→verify loop declared by spec.Workflow. With no verify,
+	// this is a single generation (MaxIterations 1, no plugins); with verify
+	// commands it re-runs on failure, appending feedback, up to maxIterations.
+	// A verify-only spec (no body) leaves Build nil, so the runner skips
+	// generation and only verifies the current state.
+	var build func(*agent.RunContext, int, *ai.LoopIteration, string) ai.Request
+	if !req.IsVerifyOnly() {
+		build = func(_ *agent.RunContext, _ int, _ *ai.LoopIteration, feedback string) ai.Request {
+			r := req
+			if feedback != "" {
+				r.Prompt.User = req.Prompt.User + "\n\n[verifier feedback]\n" + feedback + "\n\nFix the issues above and continue."
 			}
-			return req, true
+			return r
+		}
+	}
+	runner := &agent.Runner{
+		Provider: streamer,
+		Plugins:  workflowPlugins(req.Workflow),
+		Loop: ai.LoopOptions{
+			MaxIterations: workflowMaxIterations(req.Workflow),
+			OnEvent:       acc.handle,
 		},
-		OnEvent: acc.handle,
-	})
+		Build: build,
+		Repo:  req.Cwd(),
+		Cwd:   req.Cwd(),
+		Scope: workflowScope(req.Workflow),
+	}
+	runResult, err := runner.Run(ctx)
 	if err != nil {
 		return failRun(t, stream, err)
 	}
+	loop := runResult.Loop
 
 	session := acc.sessionID
-	if session == "" && len(loop.Iterations) > 0 {
+	if session == "" {
+		session = runResult.SessionID
+	}
+	if session == "" && loop != nil && len(loop.Iterations) > 0 {
 		session = loop.Iterations[0].SessionID
 	}
 	// Persist the realized prompt for this launched session so `sessions get` can
@@ -194,6 +216,7 @@ func runPromptStream(t *task.Task, rendered PromptRenderResult, timeout time.Dur
 			})
 		}
 	}
+	passed := verdictsPassed(runResult.Verdicts, nil)
 	summary := PromptRunSummary{
 		RunID:        runID,
 		SessionID:    session,
@@ -203,7 +226,10 @@ func runPromptStream(t *task.Task, rendered PromptRenderResult, timeout time.Dur
 		OutputTokens: acc.usage.OutputTokens,
 		CostUSD:      acc.cost,
 		Duration:     time.Since(start).Round(time.Millisecond).String(),
-		Success:      true,
+		Success:      passed,
+	}
+	if !passed {
+		summary.Error = verdictReason(runResult.Verdicts)
 	}
 	stream.complete(summary)
 	t.Success()

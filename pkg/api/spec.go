@@ -23,6 +23,10 @@ type Spec struct {
 	Permissions Permissions  `json:"permissions,omitempty" yaml:"permissions,omitempty"`
 	Setup       *shell.Setup `json:"setup,omitempty" yaml:"setup,omitempty"`
 
+	// Workflow declares the generate→verify loop (verification + finalize) around
+	// the run. Absent = single generation, no verification.
+	Workflow *Workflow `json:"workflow,omitempty" yaml:"workflow,omitempty"`
+
 	// SessionID resumes an existing session. (ai.Request.SessionID)
 	SessionID string `json:"sessionId,omitempty" yaml:"sessionId,omitempty" pretty:"label=Session"`
 
@@ -37,7 +41,13 @@ func (s Spec) Validate() error {
 	if err := s.Model.Validate(); err != nil {
 		return fmt.Errorf("model: %w", err)
 	}
-	if err := s.Prompt.Validate(); err != nil {
+	// A verify-only spec (no body, workflow.verify present) legitimately has an
+	// empty prompt; only its strictness setting is checked.
+	if s.IsVerifyOnly() {
+		if err := s.Prompt.SchemaStrictness.Validate(); err != nil {
+			return fmt.Errorf("prompt: %w", err)
+		}
+	} else if err := s.Prompt.Validate(); err != nil {
 		return fmt.Errorf("prompt: %w", err)
 	}
 	if err := s.Budget.Validate(); err != nil {
@@ -46,7 +56,17 @@ func (s Spec) Validate() error {
 	if err := s.Permissions.Validate(); err != nil {
 		return fmt.Errorf("permissions: %w", err)
 	}
+	if err := s.Workflow.Validate(); err != nil {
+		return fmt.Errorf("workflow: %w", err)
+	}
 	return nil
+}
+
+// IsVerifyOnly reports whether the spec has no prompt body but declares a
+// verification — a verify-only run that skips generation and verifies the
+// current state (e.g. scoring already-committed work).
+func (s Spec) IsVerifyOnly() bool {
+	return s.Prompt.User == "" && s.Workflow != nil && s.Workflow.Verify != nil
 }
 
 func (s Spec) Cwd() string {

@@ -414,7 +414,14 @@ func renderPromptCLI(ctx context.Context, id string, opts AIPromptOptions, varsJ
 // finalizeRenderResult packages the rendered request/config + prompt detail into
 // a PromptRenderResult and sets the validation error (shared by both paths).
 func finalizeRenderResult(record promptRecord, content string, req ai.Request, cfg ai.Config) (PromptRenderResult, error) {
-	warnIfLikelyModelTypo(cfg.Model.Name) // catch a mistyped model at render time, not just on run
+	// Normalize a comma-separated model into a clean primary + fallbacks so the
+	// displayed Model is a single name, then catch a mistyped model (primary or any
+	// fallback) at render time, not just on run.
+	req.Model = req.ExpandCSV()
+	cfg.Model = cfg.Model.ExpandCSV()
+	for _, c := range cfg.Model.Candidates() {
+		warnIfLikelyModelTypo(c.Name)
+	}
 	detail, err := promptDetailFromContent(record, content)
 	if err != nil {
 		return PromptRenderResult{}, err
@@ -433,7 +440,7 @@ func finalizeRenderResult(record promptRecord, content string, req ai.Request, c
 		OutputSchema: detail.OutputSchema,
 	}
 	switch {
-	case req.Prompt.User == "":
+	case req.Prompt.User == "" && !req.IsVerifyOnly():
 		result.ValidationError = "prompt text required"
 	case cfg.Model.Name == "":
 		result.ValidationError = "no model: set prompt frontmatter, pass a model override, or run 'captain configure'"
@@ -465,6 +472,10 @@ func overlayRuntimeSpec(req *ai.Request, cfg *ai.Config, spec api.Spec) {
 	if spec.Effort != "" {
 		req.Effort = spec.Effort
 		cfg.Model.Effort = spec.Effort
+	}
+	if len(spec.Fallbacks) > 0 {
+		req.Fallbacks = spec.Fallbacks
+		cfg.Model.Fallbacks = spec.Fallbacks
 	}
 	req.NoCache = req.NoCache || spec.NoCache
 	cfg.NoCache = cfg.NoCache || spec.NoCache
@@ -498,6 +509,15 @@ func overlayRuntimeSpec(req *ai.Request, cfg *ai.Config, spec api.Spec) {
 		req.Prompt.Source = spec.Prompt.Source
 	}
 	req.Prompt.Metadata = mergeStringMaps(req.Prompt.Metadata, spec.Prompt.Metadata)
+	if len(spec.Prompt.SchemaJSON) > 0 {
+		req.Prompt.SchemaJSON = spec.Prompt.SchemaJSON
+	}
+	if spec.Prompt.SchemaStrictness != "" {
+		req.Prompt.SchemaStrictness = spec.Prompt.SchemaStrictness
+	}
+	if spec.Workflow != nil {
+		req.Workflow = spec.Workflow
+	}
 
 	if spec.Permissions.Mode != "" {
 		req.Permissions.Mode = spec.Permissions.Mode
@@ -694,6 +714,9 @@ func mergePromptActionFlags(req *PromptRenderRequest, flags map[string]string) e
 	}
 	if v := strings.TrimSpace(flags["model"]); v != "" {
 		ensureRenderSpec(req).Name = v
+	}
+	if v := strings.TrimSpace(flags["fallback"]); v != "" {
+		ensureRenderSpec(req).Fallbacks = fallbackModelsFromFlags([]string{v})
 	}
 	if v := strings.TrimSpace(flags["backend"]); v != "" {
 		ensureRenderSpec(req).Backend = api.Backend(v)

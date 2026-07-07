@@ -151,11 +151,11 @@ type RunResult struct {
 // finalize → teardown. Errors are surfaced in priority order (loop, verify,
 // finalize, teardown); teardowns always run.
 func (r *Runner) Run(ctx context.Context) (*RunResult, error) {
-	if r.Provider == nil {
+	// Build == nil ⇒ verify-only: skip generation and verify the current state
+	// once (e.g. score already-committed work), then finalize.
+	verifyOnly := r.Build == nil
+	if !verifyOnly && r.Provider == nil {
 		return nil, fmt.Errorf("agent.Runner: Provider is required")
-	}
-	if r.Build == nil {
-		return nil, fmt.Errorf("agent.Runner: Build is required")
 	}
 
 	rc := &RunContext{Ctx: ctx, Repo: r.Repo, Cwd: r.Cwd, Scope: r.Scope, Metadata: map[string]any{}}
@@ -191,44 +191,55 @@ func (r *Runner) Run(ctx context.Context) (*RunResult, error) {
 		}
 	}
 
-	// 2. Drive the loop. The event tap records session + changed files; the
-	// BuildRequest hook runs verifiers between iterations.
-	var verifyErr error
-	var feedback string
-	loop := r.Loop
-	loop.Provider = r.Provider
-	callerOnEvent := r.Loop.OnEvent
-	loop.OnEvent = func(iter int, ev ai.Event) {
-		r.recordEvent(rc, ev)
-		if callerOnEvent != nil {
-			callerOnEvent(iter, ev)
-		}
-	}
-	loop.BuildRequest = func(iter int, prev *ai.LoopIteration) (ai.Request, bool) {
-		if prev != nil {
-			v, err := r.runVerifiers(rc, prev)
-			if err != nil {
-				verifyErr = err
-				return ai.Request{}, false
-			}
+	// 2. Generate + verify each iteration, or — verify-only — verify once. The
+	// event tap records session + changed files; the BuildRequest hook runs
+	// verifiers between iterations.
+	var loopErr, verifyErr error
+	if verifyOnly {
+		v, err := r.runVerifiers(rc, nil)
+		if err != nil {
+			verifyErr = err
+		} else {
 			result.Verdicts = append(result.Verdicts, v)
-			if v.OK {
-				log.Tracef("agent: iteration %d verified OK; stopping", iter)
-				return ai.Request{}, false // success → stop ("condition-met")
-			}
-			feedback = v.Feedback
 		}
-		log.Tracef("agent: building iteration %d (feedback=%t)", iter, feedback != "")
-		req := r.Build(rc, iter, prev, feedback)
-		req.SetCwd(rc.Cwd)
-		return req, true
-	}
+	} else {
+		var feedback string
+		loop := r.Loop
+		loop.Provider = r.Provider
+		callerOnEvent := r.Loop.OnEvent
+		loop.OnEvent = func(iter int, ev ai.Event) {
+			r.recordEvent(rc, ev)
+			if callerOnEvent != nil {
+				callerOnEvent(iter, ev)
+			}
+		}
+		loop.BuildRequest = func(iter int, prev *ai.LoopIteration) (ai.Request, bool) {
+			if prev != nil {
+				v, err := r.runVerifiers(rc, prev)
+				if err != nil {
+					verifyErr = err
+					return ai.Request{}, false
+				}
+				result.Verdicts = append(result.Verdicts, v)
+				if v.OK {
+					log.Tracef("agent: iteration %d verified OK; stopping", iter)
+					return ai.Request{}, false // success → stop ("condition-met")
+				}
+				feedback = v.Feedback
+			}
+			log.Tracef("agent: building iteration %d (feedback=%t)", iter, feedback != "")
+			req := r.Build(rc, iter, prev, feedback)
+			req.SetCwd(rc.Cwd)
+			return req, true
+		}
 
-	lr, loopErr := ai.RunUntil(ctx, loop)
-	if lr != nil {
-		log.Tracef("agent: loop finished after %d iteration(s), err=%v", len(lr.Iterations), loopErr)
+		var lr *ai.LoopResult
+		lr, loopErr = ai.RunUntil(ctx, loop)
+		if lr != nil {
+			log.Tracef("agent: loop finished after %d iteration(s), err=%v", len(lr.Iterations), loopErr)
+		}
+		result.Loop = lr
 	}
-	result.Loop = lr
 	result.Cwd = rc.Cwd
 	result.SessionID = rc.SessionID
 	result.ChangedFiles = rc.ChangedFiles
