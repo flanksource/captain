@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/flanksource/captain/pkg/ai/agent"
+	"github.com/flanksource/captain/pkg/ai/agent/worktree"
 )
 
 func pluginNames(hooks []any) []string {
@@ -66,11 +67,28 @@ func TestBuildAgentPlugins_WorktreeBranchAndCommit(t *testing.T) {
 	if !strings.HasPrefix(wt.Branch, "captain/agent-") {
 		t.Errorf("default branch = %q, want captain/agent-<ts> prefix", wt.Branch)
 	}
-	if wt.CommitMsg != "captain: fix the failing lint" {
-		t.Errorf("CommitMsg = %q, want one-line prompt subject", wt.CommitMsg)
+	if wt.Merge != worktree.WorktreeMergeOnSuccess {
+		t.Errorf("Merge = %q, want %q", wt.Merge, worktree.WorktreeMergeOnSuccess)
+	}
+	if wt.Cleanup != worktree.WorktreeCleanupOnMerge {
+		t.Errorf("Cleanup = %q, want %q", wt.Cleanup, worktree.WorktreeCleanupOnMerge)
 	}
 	if names := pluginNames(plugins); len(names) != 1 || names[0] != "worktree" {
 		t.Errorf("plugins = %v, want [worktree]", names)
+	}
+}
+
+func TestBuildAgentPlugins_WorktreeWithoutCommit(t *testing.T) {
+	opts := AIAgentOptions{Worktree: true}
+	_, wt, err := buildAgentPlugins(opts, nil)
+	if err != nil {
+		t.Fatalf("buildAgentPlugins: %v", err)
+	}
+	if wt.Merge != "" {
+		t.Errorf("Merge = %q, want the zero value (never merge without --commit)", wt.Merge)
+	}
+	if wt.Cleanup != worktree.WorktreeCleanupOnVerify {
+		t.Errorf("Cleanup = %q, want %q", wt.Cleanup, worktree.WorktreeCleanupOnVerify)
 	}
 }
 
@@ -102,15 +120,5 @@ func TestVerifyPassed(t *testing.T) {
 	}
 	if verifyPassed([]agent.VerifyResult{{Valid: true}, {Valid: false}}) {
 		t.Error("last verdict not valid should fail")
-	}
-}
-
-func TestCommitSubject(t *testing.T) {
-	if got := commitSubject("  one line  \nrest"); got != "one line" {
-		t.Errorf("commitSubject = %q, want %q", got, "one line")
-	}
-	long := strings.Repeat("x", 100)
-	if got := commitSubject(long); len(got) != 72 {
-		t.Errorf("commitSubject len = %d, want 72 (capped)", len(got))
 	}
 }
