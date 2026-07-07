@@ -13,11 +13,12 @@ func TestWorkflowSpecRoundTrip(t *testing.T) {
 		Workflow: &Workflow{
 			Verify: &Verify{
 				Commands:      []string{"go test ./...", "go vet ./..."},
+				Fixture:       "- [ ] covers the edge case",
 				Scope:         VerifyScopeChanged,
 				MaxIterations: 3,
-				Gavel:         true,
 			},
-			Finalize: &Finalize{Commit: true, CommitMessage: "apply"},
+			PostRun: &PostRun{Commit: true, CommitMessage: "apply"},
+			Output:  &Output{SchemaJSON: json.RawMessage(`{"type":"object"}`)},
 		},
 	}
 
@@ -36,11 +37,14 @@ func TestWorkflowSpecRoundTrip(t *testing.T) {
 	if got.Workflow.Verify.MaxIterations != 3 || got.Workflow.Verify.Scope != VerifyScopeChanged {
 		t.Errorf("verify fields not preserved: %+v", got.Workflow.Verify)
 	}
-	if !got.Workflow.Verify.Gavel || len(got.Workflow.Verify.Commands) != 2 {
-		t.Errorf("verify commands/gavel not preserved: %+v", got.Workflow.Verify)
+	if got.Workflow.Verify.Fixture != spec.Workflow.Verify.Fixture || len(got.Workflow.Verify.Commands) != 2 {
+		t.Errorf("verify commands/fixture not preserved: %+v", got.Workflow.Verify)
 	}
-	if got.Workflow.Finalize == nil || !got.Workflow.Finalize.Commit {
-		t.Errorf("finalize not preserved: %+v", got.Workflow.Finalize)
+	if got.Workflow.PostRun == nil || !got.Workflow.PostRun.Commit {
+		t.Errorf("postRun not preserved: %+v", got.Workflow.PostRun)
+	}
+	if got.Workflow.Output == nil || string(got.Workflow.Output.SchemaJSON) != string(spec.Workflow.Output.SchemaJSON) {
+		t.Errorf("output schema not preserved: %+v", got.Workflow.Output)
 	}
 }
 
