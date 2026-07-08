@@ -13,12 +13,16 @@ pkg/cli/webapp/node_modules/
 pkg/cli/webapp/*.tsbuildinfo
 # goreleaser output at repo root.
 /dist/
-# Keep pkg/cli/webapp/dist tracked so the webapp is embedded by //go:embed in
-# serve.go (it cannot be built in CI due to the local clicky-ui link: dependency).
-# These negations override a global `dist/` ignore; re-include the directory
-# before its contents.
+# The built webapp under pkg/cli/webapp/dist is gitignored — it's a large
+# minified bundle whose vite build needs a local clicky-ui link: dependency
+# that isn't available in CI. A global `dist/` ignore excludes the directory,
+# so re-include the directory first, then ignore its contents except the
+# .gitkeep placeholder — enough for //go:embed all:webapp/dist in serve.go to
+# compile. serve.go reports a missing index.html at runtime; build the real
+# webapp locally with `task www:build`.
 !pkg/cli/webapp/dist/
-!pkg/cli/webapp/dist/**
+pkg/cli/webapp/dist/*
+!pkg/cli/webapp/dist/.gitkeep
+!pkg/cli/webapp/dist/index.html
 .grite/
-pkg/cli/webapp/dist/
 hack/
