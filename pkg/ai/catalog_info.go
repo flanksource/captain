@@ -64,13 +64,16 @@ func CatalogInfo(configuredProviders []string) []ModelInfo {
 }
 
 // agentBackendAvailable reports whether an agent backend's local binary is
-// installed (best effort): codex needs the `codex` binary; claude-agent /
-// claude-cli need `tsx` on PATH. A turn still fails loud if the probe is wrong.
+// installed (best effort): codex backends need the `codex` binary; claude-cli
+// needs `claude`; claude-agent needs `tsx`. A turn still fails loud if the probe
+// is wrong.
 func agentBackendAvailable(b Backend) bool {
 	switch b {
-	case BackendCodexCLI, BackendCodexCmux:
+	case BackendCodexCLI, BackendCodexAgent, BackendCodexCmux:
 		return binaryOnPath("codex")
-	case BackendClaudeAgent, BackendClaudeCLI, BackendClaudeCmux:
+	case BackendClaudeCLI, BackendClaudeCmux:
+		return binaryOnPath("claude")
+	case BackendClaudeAgent:
 		return binaryOnPath("tsx")
 	default:
 		return false

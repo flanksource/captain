@@ -9,7 +9,7 @@ import (
 const currentModelsPerFamily = 3
 
 // legacyModelPrefixes hides model IDs that are either superseded by a newer
-// generation or aren't chat completions (image/audio/embedding/moderation).
+// generation or aren't primary text models.
 var legacyModelPrefixes = []string{
 	// OpenAI legacy
 	"gpt-3",
@@ -17,9 +17,16 @@ var legacyModelPrefixes = []string{
 	"gpt-5-", // API variants like mini/nano/codex/pro; CLI Codex is exempt by backend
 	"o1",
 	"o3",
+	"o4",
 	"codex-mini",
-	// OpenAI non-chat endpoints
+	// OpenAI non-primary endpoints and aliases
+	"gpt-realtime",
+	"gpt-image",
+	"gpt-audio",
+	"sora",
 	"dall-",
+	"image-",
+	"audio-",
 	"whisper",
 	"tts-",
 	"text-embedding",
@@ -27,6 +34,7 @@ var legacyModelPrefixes = []string{
 	"omni-moderation",
 	"babbage",
 	"davinci",
+	"chat-latest",
 	"chatgpt-",
 	"computer-use-preview",
 	// Claude legacy
@@ -37,6 +45,10 @@ var legacyModelPrefixes = []string{
 	"claude-sonnet-4-2",
 	"claude-opus-4-0",
 	"claude-opus-4-1",
+	"fable-",
+	"opus-",
+	"sonnet-",
+	"haiku-",
 	// Gemini legacy
 	"gemini-1",
 	"gemini-2.0",
@@ -49,6 +61,9 @@ var legacyModelPrefixes = []string{
 // model id. Call IsLegacyModelIDForBackend when backend context is available.
 func IsLegacyModelID(id string) bool {
 	idLower := strings.ToLower(bareModelID(strings.TrimPrefix(strings.TrimSpace(id), "models/")))
+	if IsIgnoredOpenAIModelID(idLower) {
+		return true
+	}
 	for _, p := range legacyModelPrefixes {
 		if strings.HasPrefix(idLower, p) {
 			return true
@@ -57,13 +72,56 @@ func IsLegacyModelID(id string) bool {
 	return false
 }
 
-// IsLegacyModelIDForBackend keeps API model menus clean while preserving local
-// agent model slugs such as gpt-5-codex, which are current for Codex CLI even
-// though the same id would be noisy in an OpenAI API model listing.
-func IsLegacyModelIDForBackend(id string, backend Backend) bool {
-	if backend.Kind() == "cli" {
+// IsIgnoredOpenAIModelID reports whether an OpenAI model-list id should be
+// hidden from ordinary model pickers. OpenAI exposes many non-primary surfaces
+// (realtime, audio, image, Sora, code/chat aliases, dated and size variants);
+// Captain's picker keeps the stable primary GPT text ids such as gpt-5 and
+// gpt-5.5. Use this before remapping live OpenAI ids onto Codex CLI/cmux
+// backends.
+func IsIgnoredOpenAIModelID(id string) bool {
+	idLower := strings.ToLower(bareModelID(strings.TrimPrefix(strings.TrimSpace(id), "models/")))
+	if idLower == "" {
 		return false
 	}
+	for _, p := range legacyModelPrefixes {
+		if strings.HasPrefix(idLower, p) {
+			return true
+		}
+	}
+	if strings.HasPrefix(idLower, "gpt-") {
+		return !isPrimaryGPTModelID(idLower)
+	}
+	for _, needle := range []string{"realtime", "image", "audio", "whisper", "tts", "sora", "codex", "code", "chat-latest", "chatgpt", "computer-use"} {
+		if strings.Contains(idLower, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func isPrimaryGPTModelID(id string) bool {
+	version := strings.TrimPrefix(id, "gpt-")
+	if version == "" || version == id {
+		return false
+	}
+	sawDigit := false
+	for _, r := range version {
+		switch {
+		case r >= '0' && r <= '9':
+			sawDigit = true
+		case r == '.':
+			continue
+		default:
+			return false
+		}
+	}
+	return sawDigit
+}
+
+// IsLegacyModelIDForBackend keeps model menus clean for every backend. CLI and
+// agent backends receive exact provider IDs too, so code/chat/realtime/audio
+// variants are hidden there just as they are for direct API backends.
+func IsLegacyModelIDForBackend(id string, backend Backend) bool {
 	return IsLegacyModelID(id)
 }
 
@@ -151,6 +209,8 @@ func ModelFamilyPrefix(id string) string {
 			return strings.Join(parts[:3], "-")
 		}
 		return "claude-" + parts[1]
+	case "fable", "opus", "sonnet", "haiku":
+		return parts[0]
 	case "gemini":
 		for i := 1; i < len(parts); i++ {
 			if isModelVersionToken(parts[i]) {

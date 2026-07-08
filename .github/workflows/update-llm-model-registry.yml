@@ -1,0 +1,72 @@
+name: Update LLM Model Registry
+
+on:
+  schedule:
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: update-llm-model-registry
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    env:
+      PR_BRANCH: chore/update-llm-model-registry
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+
+      - name: Generate model registry
+        run: make generate-llm-model-registry
+
+      - name: Check for registry changes
+        id: changes
+        run: |
+          if git diff --quiet -- pkg/ai/model_registry_static.go; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            git diff --stat -- pkg/ai/model_registry_static.go
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit and push registry update
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$PR_BRANCH"
+          git add pkg/ai/model_registry_static.go
+          git commit -m "chore: update llm model registry"
+          git push --force-with-lease origin "$PR_BRANCH"
+
+      - name: Create pull request
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh pr view "$PR_BRANCH" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Pull request already exists for $PR_BRANCH"
+            exit 0
+          fi
+
+          gh pr create \
+            --repo "${{ github.repository }}" \
+            --base "${{ github.event.repository.default_branch }}" \
+            --head "$PR_BRANCH" \
+            --title "chore: update llm model registry" \
+            --body "Automated update from models.dev using \`make generate-llm-model-registry\`."

@@ -43,8 +43,8 @@ func TestBareID(t *testing.T) {
 	}{
 		"api strips provider prefix": {Model{ID: "anthropic/claude-sonnet-4-5", Backend: BackendAnthropic}, "claude-sonnet-4-5"},
 		"gemini googleai prefix":     {Model{ID: "googleai/gemini-2.5-pro", Backend: BackendGemini}, "gemini-2.5-pro"},
-		"agent id verbatim":          {Model{ID: "claude-agent-sonnet", Backend: BackendClaudeAgent}, "claude-agent-sonnet"},
-		"codex slug id verbatim":     {Model{ID: "codex-gpt-5-codex", Backend: BackendCodexCLI, AgentModel: "gpt-5-codex"}, "codex-gpt-5-codex"},
+		"agent id verbatim":          {Model{ID: "claude-sonnet-5", Backend: BackendClaudeAgent}, "claude-sonnet-5"},
+		"codex slug id verbatim":     {Model{ID: "gpt-5.5", Backend: BackendCodexCLI}, "gpt-5.5"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -148,6 +148,8 @@ func TestCurrentModelsByReleaseDateFiltersAndSorts(t *testing.T) {
 		{ID: "claude-sonnet-4-6", Backend: BackendAnthropic, ReleaseDate: "2026-05-01"},
 		{ID: "claude-sonnet-4-5", Backend: BackendAnthropic, ReleaseDate: "2026-04-01"},
 		{ID: "claude-sonnet-4-4", Backend: BackendAnthropic, ReleaseDate: "2026-03-01"},
+		{ID: "sonnet-5", Backend: BackendClaudeCmux, ReleaseDate: "2026-06-01"},
+		{ID: "sonnet-4-6", Backend: BackendClaudeCmux, ReleaseDate: "2026-05-01"},
 		{ID: "claude-haiku-4-5", Backend: BackendAnthropic, ReleaseDate: "2025-10-15"},
 		{ID: "gemini-3.0-pro", Backend: BackendGemini},
 		{ID: "gpt-4o", Backend: BackendOpenAI, ReleaseDate: "2026-04-01"},
@@ -159,7 +161,6 @@ func TestCurrentModelsByReleaseDateFiltersAndSorts(t *testing.T) {
 		"claude-sonnet-5",
 		"claude-sonnet-4-6",
 		"claude-sonnet-4-5",
-		"gpt-5-codex",
 		"claude-haiku-4-5",
 		"gemini-3.0-pro",
 	}
@@ -177,6 +178,10 @@ func TestModelFamilyPrefix(t *testing.T) {
 	cases := map[string]string{
 		"anthropic/claude-haiku-4-5": "claude-haiku",
 		"claude-agent-sonnet":        "claude-agent-sonnet",
+		"claude-sonnet-5":            "claude-sonnet",
+		"sonnet-5":                   "sonnet",
+		"sonnet-4-6":                 "sonnet",
+		"opus-4-8":                   "opus",
 		"googleai/gemini-3.0-pro":    "gemini-pro",
 		"gemini-3.5-flash":           "gemini-flash",
 		"gemini-2.5-flash-lite":      "gemini-flash-lite",

@@ -28,7 +28,15 @@ func RegisterProvider(backend Backend, factory ProviderFactory) {
 // comma-separated Name or a Fallbacks list), a fallback provider is returned that
 // tries each in order on a retryable failure.
 func NewProvider(cfg Config) (Provider, error) {
+	resolved, err := ResolveModelSelectors(cfg.Model)
+	if err != nil {
+		return nil, err
+	}
+	cfg.Model = normalizeProviderModel(resolved)
 	candidates := cfg.Model.Candidates()
+	for i := range candidates {
+		candidates[i] = normalizeProviderModel(candidates[i])
+	}
 	cfg.Model = candidates[0]
 	if len(candidates) > 1 {
 		return newFallbackProvider(cfg, candidates), nil
@@ -38,6 +46,20 @@ func NewProvider(cfg Config) (Provider, error) {
 		return nil, suggestModelName(err, cfg.Model.Name)
 	}
 	return p, nil
+}
+
+func normalizeProviderModel(model api.Model) api.Model {
+	backend := model.Backend
+	if backend == "" {
+		if inferred, err := api.InferBackend(model.Name); err == nil {
+			backend = inferred
+		}
+	}
+	if backend != "" {
+		model.Name = NormalizeModelForBackend(backend, model.Name)
+		model.Backend = backend
+	}
+	return model
 }
 
 // suggestModelName appends the closest catalog model ids to an unresolvable-model

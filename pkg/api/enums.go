@@ -28,6 +28,7 @@ const (
 	BackendCodexCLI    Backend = "codex-cli"
 	BackendGeminiCLI   Backend = "gemini-cli"
 	BackendClaudeAgent Backend = "claude-agent"
+	BackendCodexAgent  Backend = "codex-agent"
 	// BackendClaudeCmux / BackendCodexCmux drive an interactive claude/codex TUI
 	// inside a tmux/cmux surface (the cmux provider), tailing the session JSONL.
 	// They are selected explicitly, not inferred from a model name.
@@ -41,7 +42,7 @@ func AllBackends() []Backend {
 	return []Backend{
 		BackendAnthropic, BackendGemini, BackendOpenAI, BackendDeepSeek,
 		BackendClaudeCLI, BackendClaudeAgent, BackendClaudeCmux,
-		BackendCodexCLI, BackendCodexCmux, BackendGeminiCLI,
+		BackendCodexCLI, BackendCodexAgent, BackendCodexCmux, BackendGeminiCLI,
 	}
 }
 
@@ -73,7 +74,7 @@ func AuthEnvVars(b Backend) []string {
 	switch b {
 	case BackendAnthropic, BackendClaudeCLI, BackendClaudeAgent:
 		return []string{"ANTHROPIC_API_KEY"}
-	case BackendOpenAI, BackendCodexCLI:
+	case BackendOpenAI, BackendCodexCLI, BackendCodexAgent:
 		return []string{"OPENAI_API_KEY"}
 	case BackendDeepSeek:
 		return []string{"DEEPSEEK_API_KEY"}
@@ -104,6 +105,8 @@ func InferBackend(model string) (Backend, error) {
 		return BackendClaudeAgent, nil
 	case strings.HasPrefix(m, "claude-code-"):
 		return BackendClaudeCLI, nil
+	case strings.HasPrefix(m, "codex-agent-"):
+		return BackendCodexAgent, nil
 	case strings.HasPrefix(m, "codex"):
 		return BackendCodexCLI, nil
 	case strings.HasPrefix(m, "gemini-cli-"):
@@ -111,7 +114,7 @@ func InferBackend(model string) (Backend, error) {
 	}
 
 	switch {
-	case strings.HasPrefix(m, "claude-"):
+	case strings.HasPrefix(m, "claude-"), strings.HasPrefix(m, "opus"), strings.HasPrefix(m, "sonnet"), strings.HasPrefix(m, "haiku"), strings.HasPrefix(m, "fable"):
 		return BackendAnthropic, nil
 	case strings.HasPrefix(m, "gemini-"), strings.HasPrefix(m, "models/gemini-"):
 		return BackendGemini, nil

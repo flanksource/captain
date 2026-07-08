@@ -134,13 +134,16 @@ func seedCatalog(backend Backend) ([]ResolvedModel, map[modelKey]int) {
 }
 
 // catalogBackendMatch reports whether a catalog model's backend satisfies the
-// requested filter. claude-cli shares the claude-agent catalog entries.
+// requested filter. cli/cmux backends share their agent catalog entries.
 func catalogBackendMatch(want, modelBackend Backend) bool {
 	if want == "" {
 		return true
 	}
-	if want == BackendClaudeCLI {
+	switch want {
+	case BackendClaudeCLI, BackendClaudeCmux:
 		want = BackendClaudeAgent
+	case BackendCodexCLI, BackendCodexCmux:
+		want = BackendCodexAgent
 	}
 	return modelBackend == want
 }
@@ -213,13 +216,15 @@ func bareModelID(id string) string {
 
 // AgentCatalogModels returns the model list for a CLI/agent backend from the
 // catalog — the key-free source of truth shared with the chat menu and shell
-// completion. The returned ID is the run-time slug the captain provider expects:
-// AgentModel when set (e.g. codex's "gpt-5-codex"), otherwise the catalog ID
-// (e.g. "claude-agent-sonnet"). claude-cli shares the claude-agent entries.
+// completion. Returned IDs are exact provider model IDs; legacy AgentModel is
+// still honored for externally registered old entries.
 func AgentCatalogModels(b Backend) []ModelDef {
 	want := b
-	if want == BackendClaudeCLI {
+	switch want {
+	case BackendClaudeCLI, BackendClaudeCmux:
 		want = BackendClaudeAgent
+	case BackendCodexCLI, BackendCodexCmux:
+		want = BackendCodexAgent
 	}
 
 	out := []ModelDef{}

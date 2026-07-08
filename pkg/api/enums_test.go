@@ -10,6 +10,8 @@ func TestInferBackend(t *testing.T) {
 		"claude-sonnet-4-6": BackendAnthropic,
 		"claude-agent-opus": BackendClaudeAgent,
 		"claude-code-x":     BackendClaudeCLI,
+		"opus-4-8":          BackendAnthropic,
+		"sonnet":            BackendAnthropic,
 		"gpt-5.5":           BackendOpenAI,
 		"o3":                BackendOpenAI,
 		"gemini-2.5-pro":    BackendGemini,
