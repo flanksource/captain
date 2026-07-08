@@ -161,12 +161,12 @@ func withFakeAgentProcessEnv(t *testing.T, env map[string]string) {
 func TestProvider_StreamLifecycle(t *testing.T) {
 	withFakeAgentProcess(t)
 
-	p, err := New(ai.Config{Model: api.Model{Name: "claude-agent-sonnet"}})
+	p, err := New(ai.Config{Model: api.Model{Name: "claude-sonnet-5"}})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = p.Close() })
 
 	assert.Equal(t, ai.BackendClaudeAgent, p.GetBackend())
-	assert.Equal(t, "claude-agent-sonnet", p.GetModel())
+	assert.Equal(t, "claude-sonnet-5", p.GetModel())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -197,7 +197,7 @@ func TestProvider_StreamLifecycle(t *testing.T) {
 func TestProvider_ExecuteCoalesce(t *testing.T) {
 	withFakeAgentProcess(t)
 
-	p, err := New(ai.Config{Model: api.Model{Name: "claude-agent-sonnet"}})
+	p, err := New(ai.Config{Model: api.Model{Name: "claude-sonnet-5"}})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = p.Close() })
 
@@ -225,7 +225,7 @@ type companyInfo struct {
 func TestProvider_StructuredOutput(t *testing.T) {
 	withFakeAgentProcessEnv(t, map[string]string{fakeServerEnv: "1", fakeModeEnv: "structured"})
 
-	p, err := New(ai.Config{Model: api.Model{Name: "claude-agent-sonnet"}})
+	p, err := New(ai.Config{Model: api.Model{Name: "claude-sonnet-5"}})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = p.Close() })
 
@@ -263,7 +263,7 @@ func TestRequestSchemaJSON(t *testing.T) {
 		require.NoError(t, err)
 		require.NotEmpty(t, raw)
 
-		p := &Provider{model: "claude-agent-sonnet", sessionSchema: raw}
+		p := &Provider{model: "claude-sonnet-5", sessionSchema: raw}
 		ip := p.initializeParams(ai.Request{Prompt: api.Prompt{User: "x", Schema: &plan{}}})
 		require.NotEmpty(t, ip.OutputSchema, "outputSchema should be set from the session schema")
 
@@ -285,7 +285,7 @@ func TestRequestSchemaJSON(t *testing.T) {
 func TestProvider_MultiTurnSerialized(t *testing.T) {
 	withFakeAgentProcess(t)
 
-	p, err := New(ai.Config{Model: api.Model{Name: "claude-agent-sonnet"}})
+	p, err := New(ai.Config{Model: api.Model{Name: "claude-sonnet-5"}})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = p.Close() })
 
@@ -323,7 +323,7 @@ func TestProvider_CanUseTool(t *testing.T) {
 	}
 
 	// CanUseTool is a runtime concern, set on the provider's Config (not the request).
-	p, err := New(ai.Config{Model: api.Model{Name: "claude-agent-sonnet"}, CanUseTool: canUseTool})
+	p, err := New(ai.Config{Model: api.Model{Name: "claude-sonnet-5"}, CanUseTool: canUseTool})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = p.Close() })
 
@@ -382,7 +382,7 @@ func TestProvider_InterruptNoKill(t *testing.T) {
 		fakeMarkerEnv: marker,
 	})
 
-	p, err := New(ai.Config{Model: api.Model{Name: "claude-agent-sonnet"}})
+	p, err := New(ai.Config{Model: api.Model{Name: "claude-sonnet-5"}})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = p.Close() })
 

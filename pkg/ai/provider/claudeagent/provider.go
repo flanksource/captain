@@ -47,7 +47,7 @@ const (
 const methodCanUseTool = "can_use_tool"
 
 const (
-	defaultModel = "claude-agent-sonnet"
+	defaultModel = "claude-sonnet-5"
 	// initTimeout bounds the initialize handshake (after provisioning). The npm
 	// install / tsx cold start happen synchronously before this window.
 	initTimeout = 2 * time.Minute
@@ -126,6 +126,7 @@ func New(cfg ai.Config) (*Provider, error) {
 	if model == "" {
 		model = defaultModel
 	}
+	model = ai.NormalizeModelForBackend(ai.BackendClaudeAgent, model)
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Provider{
 		model:      model,

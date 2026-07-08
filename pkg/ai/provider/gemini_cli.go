@@ -16,8 +16,9 @@ type GeminiCLI struct {
 
 func NewGeminiCLI(model string) *GeminiCLI {
 	if model == "" {
-		model = "gemini-cli-pro"
+		model = "gemini-3.5-flash"
 	}
+	model = ai.NormalizeModelForBackend(ai.BackendGeminiCLI, model)
 	return &GeminiCLI{model: model}
 }
 

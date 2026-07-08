@@ -73,6 +73,28 @@ func openaiReasoningEffort(e api.Effort) string {
 	return string(e)
 }
 
+func anthropicOutputEffort(e api.Effort) string {
+	if e == api.EffortXHigh {
+		return string(api.EffortHigh)
+	}
+	return string(e)
+}
+
+func usesAnthropicAdaptiveThinking(model string) bool {
+	bare := bareModel(model)
+	for _, prefix := range []string{
+		"claude-fable-5",
+		"claude-haiku-5",
+		"claude-opus-5",
+		"claude-sonnet-5",
+	} {
+		if strings.HasPrefix(bare, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // anthropicMaxTokens returns max_tokens for an Anthropic request. The thinking
 // budget is counted inside max_tokens, so leave room for the visible answer on
 // top of it; honour an explicit budget MaxTokens as the visible-answer base.
@@ -111,9 +133,14 @@ func effortConfig(backend ai.Backend, req ai.Request) map[string]any {
 	case ai.BackendAnthropic:
 		cfg := map[string]any{"max_tokens": anthropicMaxTokens(req, e)}
 		if e != api.EffortNone {
-			cfg["thinking"] = map[string]any{
-				"type":          "enabled",
-				"budget_tokens": thinkingBudget(e),
+			if usesAnthropicAdaptiveThinking(req.Model.Name) || usesAnthropicAdaptiveThinking(req.Model.ID) {
+				cfg["thinking"] = map[string]any{"type": "adaptive"}
+				cfg["output_config"] = map[string]any{"effort": anthropicOutputEffort(e)}
+			} else {
+				cfg["thinking"] = map[string]any{
+					"type":          "enabled",
+					"budget_tokens": thinkingBudget(e),
+				}
 			}
 		}
 		return cfg

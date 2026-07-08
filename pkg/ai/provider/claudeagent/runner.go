@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/flanksource/captain/pkg/ai"
 )
 
 //go:embed agent.ts
@@ -115,15 +117,13 @@ func nestingEnvOverrides(environ []string) map[string]string {
 	return overrides
 }
 
-// aliasModel strips the captain backend prefix from a model id and passes the
-// remainder (e.g. "sonnet", "opus", "claude-sonnet-4-5") straight to the SDK,
-// which resolves the short aliases via the Claude Code CLI. Kept local so the
-// claudeagent package never imports pkg/ai/provider (which imports it back).
+// aliasModel is retained as the local model renderer for the agent.ts bridge.
+// It accepts legacy backend-prefixed aliases as input compatibility, but returns
+// the exact Claude model ID the SDK should receive.
 func aliasModel(model string) string {
-	m := strings.TrimPrefix(model, "claude-agent-")
-	m = strings.TrimPrefix(m, "claude-code-")
-	if m == "" {
-		return "sonnet"
+	m := strings.TrimSpace(model)
+	if m == "" || m == "claude" {
+		return "claude-sonnet-5"
 	}
-	return m
+	return ai.NormalizeModelForBackend(ai.BackendClaudeAgent, m)
 }

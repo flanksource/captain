@@ -1,6 +1,7 @@
 package genkit
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/flanksource/captain/pkg/ai"
@@ -27,16 +28,36 @@ func TestEffortConfig(t *testing.T) {
 		{
 			name:    "anthropic high effort adds thinking budget on top of base",
 			backend: ai.BackendAnthropic,
-			req:     ai.Request{Model: api.Model{Effort: api.EffortHigh}},
+			req:     ai.Request{Model: api.Model{Name: "claude-sonnet-4-6", Effort: api.EffortHigh}},
 			want: map[string]any{
 				"max_tokens": 24576 + 4096,
 				"thinking":   map[string]any{"type": "enabled", "budget_tokens": 24576},
 			},
 		},
 		{
+			name:    "anthropic claude 5 effort uses adaptive output config",
+			backend: ai.BackendAnthropic,
+			req:     ai.Request{Model: api.Model{Name: "claude-sonnet-5", Effort: api.EffortHigh}},
+			want: map[string]any{
+				"max_tokens":    24576 + 4096,
+				"thinking":      map[string]any{"type": "adaptive"},
+				"output_config": map[string]any{"effort": "high"},
+			},
+		},
+		{
+			name:    "anthropic claude 5 clamps xhigh output effort",
+			backend: ai.BackendAnthropic,
+			req:     ai.Request{Model: api.Model{Name: "anthropic/claude-fable-5", Effort: api.EffortXHigh}},
+			want: map[string]any{
+				"max_tokens":    32768 + 4096,
+				"thinking":      map[string]any{"type": "adaptive"},
+				"output_config": map[string]any{"effort": "high"},
+			},
+		},
+		{
 			name:    "anthropic medium honours explicit max tokens as base",
 			backend: ai.BackendAnthropic,
-			req:     ai.Request{Model: api.Model{Effort: api.EffortMedium}, Budget: api.Budget{MaxTokens: 1000}},
+			req:     ai.Request{Model: api.Model{Name: "claude-sonnet-4-6", Effort: api.EffortMedium}, Budget: api.Budget{MaxTokens: 1000}},
 			want: map[string]any{
 				"max_tokens": 8192 + 1000,
 				"thinking":   map[string]any{"type": "enabled", "budget_tokens": 8192},
@@ -77,6 +98,24 @@ func TestEffortConfig(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, effortConfig(tt.backend, tt.req))
+		})
+	}
+}
+
+func TestUsesAnthropicAdaptiveThinking(t *testing.T) {
+	tests := []struct {
+		model string
+		want  bool
+	}{
+		{"claude-sonnet-5", true},
+		{"anthropic/claude-fable-5", true},
+		{"claude-haiku-4-5", false},
+		{"claude-3-5-sonnet-20241022", false},
+		{"claude-opus-4-8", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.model, func(t *testing.T) {
+			assert.Equal(t, tt.want, usesAnthropicAdaptiveThinking(tt.model))
 		})
 	}
 }
@@ -159,4 +198,38 @@ func TestNewUnsupportedBackend(t *testing.T) {
 	_, err := New(ai.Config{Model: api.Model{Backend: ai.BackendClaudeCLI, Name: "claude-code-foo"}, APIKey: "x"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "does not support backend")
+}
+
+func TestIsSchemaMismatch(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "genkit constrained-output rejection",
+			err:  fmt.Errorf("model failed to generate output matching expected schema: data did not match expected schema:\n- title: String length must be less than or equal to 40"),
+			want: true,
+		},
+		{
+			name: "genkit inner detail phrasing",
+			err:  fmt.Errorf("data did not match expected schema:\n- branch: String length must be less than or equal to 40"),
+			want: true,
+		},
+		{
+			name: "unrelated transport error",
+			err:  fmt.Errorf("dial tcp: connection refused"),
+			want: false,
+		},
+		{
+			name: "rate-limit error is not a schema mismatch",
+			err:  fmt.Errorf("429 rate limit exceeded"),
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, isSchemaMismatch(tt.err))
+		})
+	}
 }

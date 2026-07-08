@@ -48,8 +48,9 @@ func New(cfg ai.Config) (*Provider, error) {
 	if err != nil {
 		return nil, err
 	}
+	model := ai.NormalizeModelForBackend(cfg.Model.Backend, cfg.Model.Name)
 	return &Provider{
-		model: cfg.Model.Name,
+		model: model,
 		agent: agent,
 		cfg:   cfg,
 	}, nil

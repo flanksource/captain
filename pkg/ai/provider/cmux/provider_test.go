@@ -49,11 +49,12 @@ func TestNewDerivesAgentAndBackend(t *testing.T) {
 		name        string
 		backend     api.Backend
 		model       string
+		wantModel   string
 		wantAgent   string
 		wantBackend api.Backend
 	}{
-		{"claude cmux", api.BackendClaudeCmux, "opus", "claude", api.BackendClaudeCmux},
-		{"codex cmux", api.BackendCodexCmux, "gpt-5", "codex", api.BackendCodexCmux},
+		{"claude cmux", api.BackendClaudeCmux, "opus", "claude-opus-4-8", "claude", api.BackendClaudeCmux},
+		{"codex cmux", api.BackendCodexCmux, "gpt-5", "gpt-5", "codex", api.BackendCodexCmux},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -64,8 +65,8 @@ func TestNewDerivesAgentAndBackend(t *testing.T) {
 			if p.agent != tc.wantAgent {
 				t.Fatalf("agent = %q, want %q", p.agent, tc.wantAgent)
 			}
-			if p.GetModel() != tc.model {
-				t.Fatalf("GetModel() = %q, want %q", p.GetModel(), tc.model)
+			if p.GetModel() != tc.wantModel {
+				t.Fatalf("GetModel() = %q, want %q", p.GetModel(), tc.wantModel)
 			}
 			if p.GetBackend() != tc.wantBackend {
 				t.Fatalf("GetBackend() = %q, want %q", p.GetBackend(), tc.wantBackend)

@@ -16,11 +16,11 @@ func TestNewCodexAppServer_Defaults(t *testing.T) {
 	c, err := NewCodexAppServer("")
 	require.NoError(t, err)
 	assert.Equal(t, CodexCLIDefaultModel, c.GetModel())
-	assert.Equal(t, ai.BackendCodexCLI, c.GetBackend())
+	assert.Equal(t, ai.BackendCodexAgent, c.GetBackend())
 
-	c2, err := NewCodexAppServer("gpt-5-codex")
+	c2, err := NewCodexAppServer("gpt-5.4")
 	require.NoError(t, err)
-	assert.Equal(t, "gpt-5-codex", c2.GetModel())
+	assert.Equal(t, "gpt-5.4", c2.GetModel())
 }
 
 func TestMapAppServerNotification_Kinds(t *testing.T) {

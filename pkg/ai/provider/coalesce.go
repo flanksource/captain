@@ -14,6 +14,10 @@ import (
 // the live event stream call this on a tee'd channel; for one-shot use, prefer
 // Provider.Execute.
 func CoalesceStream(ctx context.Context, model string, events <-chan ai.Event, start time.Time) (*ai.Response, error) {
+	return CoalesceStreamForBackend(ctx, ai.BackendClaudeCLI, model, events, start)
+}
+
+func CoalesceStreamForBackend(ctx context.Context, backend ai.Backend, model string, events <-chan ai.Event, start time.Time) (*ai.Response, error) {
 	var (
 		text       strings.Builder
 		usage      ai.Usage
@@ -26,7 +30,7 @@ func CoalesceStream(ctx context.Context, model string, events <-chan ai.Event, s
 		select {
 		case ev, ok := <-events:
 			if !ok {
-				return finaliseCoalescedResponse(model, text.String(), usage, lastResult, errEvents, sessionID, start)
+				return finaliseCoalescedResponse(backend, model, text.String(), usage, lastResult, errEvents, sessionID, start)
 			}
 			switch ev.Kind {
 			case ai.EventText:
@@ -34,6 +38,9 @@ func CoalesceStream(ctx context.Context, model string, events <-chan ai.Event, s
 			case ai.EventResult:
 				cp := ev
 				lastResult = &cp
+				if ev.Text != "" && text.Len() == 0 {
+					text.WriteString(ev.Text)
+				}
 				if ev.Usage != nil {
 					usage = *ev.Usage
 				}
@@ -50,7 +57,7 @@ func CoalesceStream(ctx context.Context, model string, events <-chan ai.Event, s
 	}
 }
 
-func finaliseCoalescedResponse(model, text string, usage ai.Usage, lastResult *ai.Event, errEvents []ai.Event, sessionID string, start time.Time) (*ai.Response, error) {
+func finaliseCoalescedResponse(backend ai.Backend, model, text string, usage ai.Usage, lastResult *ai.Event, errEvents []ai.Event, sessionID string, start time.Time) (*ai.Response, error) {
 	if lastResult != nil && !lastResult.Success {
 		msg := lastResult.Error
 		if msg == "" {
@@ -65,7 +72,7 @@ func finaliseCoalescedResponse(model, text string, usage ai.Usage, lastResult *a
 	resp := &ai.Response{
 		Text:     text,
 		Model:    model,
-		Backend:  ai.BackendClaudeCLI,
+		Backend:  backend,
 		Usage:    usage,
 		Duration: time.Since(start),
 	}

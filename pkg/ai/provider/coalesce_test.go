@@ -66,6 +66,21 @@ func TestCoalesceStream_CarriesStructuredData(t *testing.T) {
 	}
 }
 
+func TestCoalesceStream_UsesResultTextWhenNoTextEvents(t *testing.T) {
+	const model = "claude-sonnet-5"
+	events := []ai.Event{
+		{Kind: ai.EventResult, Tool: "Result", Success: true, Text: "final answer", Model: model},
+	}
+
+	resp, err := CoalesceStream(context.Background(), model, feedEvents(events), time.Now())
+	if err != nil {
+		t.Fatalf("CoalesceStream err: %v", err)
+	}
+	if resp.Text != "final answer" {
+		t.Errorf("Text = %q, want final answer", resp.Text)
+	}
+}
+
 func TestCoalesceStream_ResultErrorReturnsError(t *testing.T) {
 	const wantMsg = "upstream 500"
 	events := []ai.Event{

@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
@@ -93,6 +94,13 @@ func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, e
 		if ctx.Err() != nil {
 			return nil, fmt.Errorf("%w: %v", ai.ErrTimeout, ctx.Err())
 		}
+		// genkit validates the model's constrained output against the request
+		// schema during generation; a rejection is recoverable by re-asking the
+		// model with the errors, so classify it as ErrSchemaValidation (preserving
+		// genkit's detail lines) for the schema-validation middleware to act on.
+		if isSchemaMismatch(err) {
+			return nil, fmt.Errorf("%w: %v", ai.ErrSchemaValidation, err)
+		}
 		return nil, fmt.Errorf("genkit %s generate: %w", p.backend, err)
 	}
 
@@ -117,6 +125,15 @@ func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, e
 	}
 
 	return out, nil
+}
+
+// isSchemaMismatch reports whether a genkit Generate error is the library's
+// constrained-output validation failure (vs a transport/model error), so the
+// middleware can re-ask the model with the errors instead of failing.
+func isSchemaMismatch(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "did not match expected schema") ||
+		strings.Contains(msg, "output matching expected schema")
 }
 
 // ExecuteStream runs a streaming generation, publishing each chunk as ai.Events

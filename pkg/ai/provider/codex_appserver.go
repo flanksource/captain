@@ -47,11 +47,12 @@ func NewCodexAppServer(model string) (*CodexAppServer, error) {
 	if model == "" {
 		model = CodexCLIDefaultModel
 	}
+	model = ai.NormalizeModelForBackend(ai.BackendCodexAgent, model)
 	return &CodexAppServer{model: model}, nil
 }
 
 func (c *CodexAppServer) GetModel() string       { return c.model }
-func (c *CodexAppServer) GetBackend() ai.Backend { return ai.BackendCodexCLI }
+func (c *CodexAppServer) GetBackend() ai.Backend { return ai.BackendCodexAgent }
 
 // Execute drains the streaming output into a buffered ai.Response. When the
 // request carries a structured-output schema, the final agent message's JSON is
@@ -63,7 +64,7 @@ func (c *CodexAppServer) Execute(ctx context.Context, req ai.Request) (*ai.Respo
 	if err != nil {
 		return nil, err
 	}
-	resp, err := CoalesceStream(ctx, c.model, events, start)
+	resp, err := CoalesceStreamForBackend(ctx, ai.BackendCodexAgent, c.model, events, start)
 	if err != nil {
 		return nil, err
 	}
