@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -10,6 +11,11 @@ import (
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/xeipuuv/gojsonschema"
 )
+
+// maxSchemaRetries bounds the number of fix-up re-asks the retry strictness makes
+// when a structured response fails schema validation before giving up with a hard
+// error.
+const maxSchemaRetries = 2
 
 // validatingProvider validates a structured-output response against the request's
 // JSON schema and applies the prompt's SchemaStrictness policy: warning (log and
@@ -33,11 +39,20 @@ func WithSchemaValidation() Option {
 
 func (v *validatingProvider) Execute(ctx context.Context, req ai.Request) (*ai.Response, error) {
 	resp, err := v.provider.Execute(ctx, req)
+	strictness := req.Prompt.SchemaStrictness
 	if err != nil {
+		// A provider that validates the model's structured output during generation
+		// (e.g. genkit's constrained output) rejects it before we ever see a
+		// response. Under "retry" that rejection is recoverable: re-ask the model
+		// with the schema errors instead of failing outright.
+		if strictness == api.SchemaStrictnessRetry && errors.Is(err, ai.ErrSchemaValidation) {
+			if schema, serr := ai.SchemaJSONFor(req.Prompt); serr == nil && len(schema) > 0 {
+				return v.retryWithFeedback(ctx, req, schema, err.Error(), nil)
+			}
+		}
 		return resp, err
 	}
 
-	strictness := req.Prompt.SchemaStrictness
 	if strictness == api.SchemaStrictnessNone {
 		return resp, nil
 	}
@@ -59,7 +74,7 @@ func (v *validatingProvider) Execute(ctx context.Context, req ai.Request) (*ai.R
 		log.Warnf("schema validation failed (%s/%s): %s", v.provider.GetBackend(), v.provider.GetModel(), verrs)
 		return resp, nil
 	case api.SchemaStrictnessRetry:
-		return v.retry(ctx, req, resp, schema, verrs)
+		return v.retryWithFeedback(ctx, req, schema, verrs, resp)
 	case api.SchemaStrictnessError:
 		return resp, fmt.Errorf("%w: %s", ai.ErrSchemaValidation, verrs)
 	default:
@@ -67,31 +82,55 @@ func (v *validatingProvider) Execute(ctx context.Context, req ai.Request) (*ai.R
 	}
 }
 
-// retry re-asks the model once, feeding back the previous response and the schema
-// validation errors, then re-validates. A still-invalid response is a hard error
-// (retry → then error).
-func (v *validatingProvider) retry(ctx context.Context, req ai.Request, prev *ai.Response, schema json.RawMessage, verrs string) (*ai.Response, error) {
-	correction := fmt.Sprintf(
+// retryWithFeedback re-asks the model up to maxSchemaRetries times, feeding back
+// the schema validation errors (and the previous response when we have one) so it
+// can correct itself. It serves both failure modes: a post-response validation
+// failure (prev is the offending response) and a provider-side rejection during
+// generation (prev is nil because the response never surfaced). A response that is
+// still invalid after the last attempt is a hard error.
+func (v *validatingProvider) retryWithFeedback(ctx context.Context, req ai.Request, schema json.RawMessage, verrs string, prev *ai.Response) (*ai.Response, error) {
+	for attempt := 1; attempt <= maxSchemaRetries; attempt++ {
+		req2 := req
+		req2.Prompt.User = req.Prompt.User + correctionFeedback(prev, verrs)
+
+		resp, err := v.provider.Execute(ctx, req2)
+		if err != nil {
+			// The provider rejected the corrected output too; feed the new errors
+			// back and keep trying until the retry budget is exhausted.
+			if errors.Is(err, ai.ErrSchemaValidation) && attempt < maxSchemaRetries {
+				verrs, prev = err.Error(), nil
+				continue
+			}
+			return resp, err
+		}
+
+		verrs, err = validateResponse(schema, resp)
+		if err != nil {
+			return resp, err
+		}
+		if verrs == "" {
+			return resp, nil
+		}
+		prev = resp
+	}
+	return nil, fmt.Errorf("%w: still invalid after %d retries: %s", ai.ErrSchemaValidation, maxSchemaRetries, verrs)
+}
+
+// correctionFeedback builds the instruction appended to the user prompt on a
+// retry: the schema errors, plus the previous response when one was captured.
+func correctionFeedback(prev *ai.Response, verrs string) string {
+	if prev == nil {
+		return fmt.Sprintf(
+			"\n\nYour previous response did not conform to the required JSON schema.\n"+
+				"Schema validation errors:\n%s\n\n"+
+				"Return a corrected JSON response that satisfies the schema.",
+			verrs)
+	}
+	return fmt.Sprintf(
 		"\n\nYour previous response did not conform to the required JSON schema.\n"+
 			"Previous response:\n%s\n\nSchema validation errors:\n%s\n\n"+
 			"Return a corrected JSON response that satisfies the schema.",
 		responseJSON(prev), verrs)
-
-	req2 := req
-	req2.Prompt.User = req.Prompt.User + correction
-
-	resp2, err := v.provider.Execute(ctx, req2)
-	if err != nil {
-		return resp2, err
-	}
-	verrs2, err := validateResponse(schema, resp2)
-	if err != nil {
-		return resp2, err
-	}
-	if verrs2 == "" {
-		return resp2, nil
-	}
-	return resp2, fmt.Errorf("%w: still invalid after retry: %s", ai.ErrSchemaValidation, verrs2)
 }
 
 // ExecuteStream tees the stream: it forwards every event unchanged, accumulates

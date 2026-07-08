@@ -10,7 +10,7 @@ import (
 type AssistantTool struct{ BaseTool }
 
 func (t *AssistantTool) Name() string        { return "Assistant" }
-func (t *AssistantTool) Category() string    { return "message" }
+func (t *AssistantTool) Category() string    { return "chat" }
 func (t *AssistantTool) FilePath() string    { return "" }
 func (t *AssistantTool) ExtractPath() string { return "" }
 
@@ -30,7 +30,7 @@ func (t *AssistantTool) Detail() api.Textable { return t.BaseTool.Detail() }
 type ReasoningTool struct{ BaseTool }
 
 func (t *ReasoningTool) Name() string        { return "Reasoning" }
-func (t *ReasoningTool) Category() string    { return "message" }
+func (t *ReasoningTool) Category() string    { return "chat" }
 func (t *ReasoningTool) FilePath() string    { return "" }
 func (t *ReasoningTool) ExtractPath() string { return "" }
 

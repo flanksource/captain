@@ -76,7 +76,18 @@ func TestResultSummaryTool_NameCategoryPretty(t *testing.T) {
 }
 
 func TestNewTool_DispatchSyntheticTypes(t *testing.T) {
-	for _, name := range []string{"SessionInit", "HookStart", "HookResponse", "Result"} {
+	for _, name := range []string{
+		"SessionInit", "HookStart", "HookResponse", "Result",
+		"TokenCount", "TaskStarted", "TaskComplete", "TurnAborted",
+		"ContextCompacted", "ThreadRolledBack", "ItemCompleted",
+		"CodexExecCommand", "CodexPatchApply", "MCPToolCall",
+		"WebSearchEvent", "ViewImage", "GuardianAssessment", "ReviewMode",
+		"CollabAgentSpawn", "CollabAgentInteraction", "CollabWaiting",
+		"CollabClose", "QueueOperation", "DeferredToolsDelta",
+		"AgentListingDelta", "SkillListing", "Budget", "PrLink",
+		"CompactBoundary", "LocalCommand", "ScheduledTaskFire",
+		"Informational", "WorktreeState", "Relocated", "Started",
+	} {
 		got := NewTool(BaseTool{RawTool: name})
 		assert.Equal(t, name, got.Name(), "expected NewTool to return the right concrete type for %q", name)
 	}

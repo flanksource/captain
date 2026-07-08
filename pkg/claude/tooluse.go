@@ -96,47 +96,86 @@ const denialCommentSeparator = "the user said:\n"
 const boilerplatePrefix = "\n\nNote: The user"
 const askAnswerPrefix = "User has answered your question."
 
-// ExtractToolUses extracts ToolUse records from history entries
+// ExtractToolUses extracts history activity rows from transcript entries:
+// user/assistant text, reasoning, metadata events, and real tool calls.
 func ExtractToolUses(entries []HistoryEntry) []ToolUse {
 	var toolUses []ToolUse
 
-	// Pass 1: extract tool_use blocks
 	for _, entry := range entries {
 		ts, _ := entry.ParseTimestamp()
+		var timestamp *time.Time
+		if !ts.IsZero() {
+			timestamp = &ts
+		}
+
+		if isVisibleTranscriptEvent(entry.Event) {
+			toolUses = append(toolUses, ToolUse{
+				Tool:      tools.EventToolName(entry.Event.Type),
+				Input:     eventInput(entry.Event),
+				Timestamp: timestamp,
+				CWD:       entry.CWD,
+				SessionID: entry.SessionID,
+				ToolUseID: entry.UUID,
+				RawEntry:  entry.RawLine,
+			})
+		}
 
 		for _, content := range entry.Message.Content {
-			if content.Type != ContentTypeToolUse {
-				continue
-			}
-
-			var inputMap map[string]any
-			if content.Input != nil {
-				_ = json.Unmarshal(content.Input, &inputMap)
-			}
-
-			var timestamp *time.Time
-			if !ts.IsZero() {
-				timestamp = &ts
-			}
-
-			var cwd string
-			if inputMap != nil {
-				if v, ok := inputMap["cwd"].(string); ok {
-					cwd = v
+			switch content.Type {
+			case ContentTypeText:
+				tool := messageTool(entry.Message.Role)
+				if tool == "" || content.Text == "" {
+					continue
 				}
-			}
+				toolUses = append(toolUses, ToolUse{
+					Tool:        tool,
+					Input:       map[string]any{"text": content.Text},
+					Timestamp:   timestamp,
+					CWD:         entry.CWD,
+					SessionID:   entry.SessionID,
+					IsSidechain: entry.IsSidechain,
+					AgentID:     entry.AgentID,
+					RawEntry:    entry.RawLine,
+				})
+			case ContentTypeThinking, ContentTypeRedactedThinking:
+				if content.Thinking == "" {
+					continue
+				}
+				toolUses = append(toolUses, ToolUse{
+					Tool:        "Reasoning",
+					Input:       map[string]any{"text": content.Thinking},
+					Timestamp:   timestamp,
+					CWD:         entry.CWD,
+					SessionID:   entry.SessionID,
+					IsSidechain: entry.IsSidechain,
+					AgentID:     entry.AgentID,
+					RawEntry:    entry.RawLine,
+				})
+			case ContentTypeToolUse:
+				var inputMap map[string]any
+				if content.Input != nil {
+					_ = json.Unmarshal(content.Input, &inputMap)
+				}
 
-			toolUses = append(toolUses, ToolUse{
-				Tool:        content.Name,
-				Input:       inputMap,
-				Timestamp:   timestamp,
-				CWD:         cwd,
-				SessionID:   entry.SessionID,
-				ToolUseID:   content.ID,
-				IsSidechain: entry.IsSidechain,
-				AgentID:     entry.AgentID,
-				RawEntry:    entry.RawLine,
-			})
+				var cwd string
+				if inputMap != nil {
+					if v, ok := inputMap["cwd"].(string); ok {
+						cwd = v
+					}
+				}
+
+				toolUses = append(toolUses, ToolUse{
+					Tool:        content.Name,
+					Input:       inputMap,
+					Timestamp:   timestamp,
+					CWD:         cwd,
+					SessionID:   entry.SessionID,
+					ToolUseID:   content.ID,
+					IsSidechain: entry.IsSidechain,
+					AgentID:     entry.AgentID,
+					RawEntry:    entry.RawLine,
+				})
+			}
 		}
 	}
 
@@ -154,6 +193,43 @@ func ExtractToolUses(entries []HistoryEntry) []ToolUse {
 	}
 
 	return expandUserRows(toolUses)
+}
+
+func isVisibleTranscriptEvent(event *TranscriptEvent) bool {
+	if event == nil {
+		return false
+	}
+	switch event.Type {
+	case "file-history-snapshot", "last-prompt", "permission-mode", "agent-name":
+		return false
+	default:
+		return true
+	}
+}
+
+func messageTool(role MessageRole) string {
+	switch role {
+	case MessageRoleUser:
+		return "User"
+	case MessageRoleAssistant:
+		return "Assistant"
+	default:
+		return ""
+	}
+}
+
+func eventInput(event *TranscriptEvent) map[string]any {
+	input := map[string]any{"event": event.Type}
+	if event.Scope != "" {
+		input["scope"] = event.Scope
+	}
+	if event.Subtype != "" {
+		input["subtype"] = event.Subtype
+	}
+	for k, v := range event.Data {
+		input[k] = v
+	}
+	return input
 }
 
 // toolResult holds matched result data for a tool call.

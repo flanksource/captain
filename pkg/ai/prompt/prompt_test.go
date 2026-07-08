@@ -130,6 +130,7 @@ func TestRender_BackendFixtureExamples(t *testing.T) {
 		"testdata/fixtures/claude-cmux-sonnet.prompt":      {backend: api.BackendClaudeCmux, model: "claude-cmux-sonnet"},
 		"testdata/fixtures/claude-cli-opus.prompt":         {backend: api.BackendClaudeCLI, model: "claude-agent-opus"},
 		"testdata/fixtures/claude-cli-sonnet.prompt":       {backend: api.BackendClaudeCLI, model: "claude-agent-sonnet"},
+		"testdata/fixtures/codex-agent.prompt":             {backend: api.BackendCodexAgent, model: "gpt-5-codex"},
 		"testdata/fixtures/codex-cmux.prompt":              {backend: api.BackendCodexCmux, model: "gpt-5-codex"},
 		"testdata/fixtures/deepseek.prompt":                {backend: api.BackendDeepSeek, model: "deepseek-reasoner"},
 		"testdata/fixtures/codex-cli.prompt":               {backend: api.BackendCodexCLI, model: "gpt-5-codex"},

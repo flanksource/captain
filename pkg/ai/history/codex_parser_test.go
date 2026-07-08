@@ -115,6 +115,47 @@ func TestExtractCodexToolUses_MapsCodexControlCalls(t *testing.T) {
 	}
 }
 
+func TestExtractCodexToolUses_RolloutChatAndEvents(t *testing.T) {
+	stream := strings.Join([]string{
+		`{"timestamp":"2026-07-08T11:19:57.028Z","type":"session_meta","payload":{"id":"sess-rollout","cwd":"/repo","cli_version":"0.143.0","model_provider":"openai"}}`,
+		`{"timestamp":"2026-07-08T11:19:57.028Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1","started_at":"2026-07-08T11:19:57.028Z","model_context_window":258400}}`,
+		`{"timestamp":"2026-07-08T11:19:58.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>\n  <cwd>/repo</cwd>\n</environment_context>"}]}}`,
+		`{"timestamp":"2026-07-08T11:19:58.758Z","type":"turn_context","payload":{"model":"gpt-5.5","effort":"high"}}`,
+		`{"timestamp":"2026-07-08T11:19:58.760Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}}`,
+		`{"timestamp":"2026-07-08T11:19:58.760Z","type":"event_msg","payload":{"type":"user_message","message":"hi"}}`,
+		`{"timestamp":"2026-07-08T11:20:00.403Z","type":"event_msg","payload":{"type":"agent_message","message":"Hi. What do you want to work on in ` + "`captain`" + `?"}}`,
+		`{"timestamp":"2026-07-08T11:20:00.403Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Hi. What do you want to work on in ` + "`captain`" + `?"}]}}`,
+		`{"timestamp":"2026-07-08T11:20:00.432Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":10,"cached_input_tokens":5,"output_tokens":2,"total_tokens":12},"model_context_window":258400}}}`,
+		`{"timestamp":"2026-07-08T11:20:00.435Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-1","duration_ms":3519,"time_to_first_token_ms":3123}}`,
+	}, "\n")
+
+	uses, err := ExtractCodexToolUsesFromReader(strings.NewReader(stream))
+	if err != nil {
+		t.Fatalf("ExtractCodexToolUsesFromReader: %v", err)
+	}
+
+	var got []string
+	var texts []string
+	for _, use := range uses {
+		got = append(got, use.Tool)
+		if text, _ := use.Input["text"].(string); text != "" {
+			texts = append(texts, text)
+		}
+	}
+	want := []string{"TaskStarted", "User", "Assistant", "TokenCount", "TaskComplete"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("tools = %v, want %v; uses=%+v", got, want, uses)
+	}
+	if len(texts) != 2 || texts[0] != "hi" || texts[1] != "Hi. What do you want to work on in `captain`?" {
+		t.Fatalf("texts = %v", texts)
+	}
+	for _, use := range uses {
+		if use.Model != "" && use.Model != "gpt-5.5" {
+			t.Fatalf("unexpected model on %s: %q", use.Tool, use.Model)
+		}
+	}
+}
+
 func TestReadCodexSessionInfo_ModelAndEffort(t *testing.T) {
 	stream := strings.Join([]string{
 		`{"timestamp":"2026-05-07T18:44:49.553Z","type":"session_meta","payload":{"id":"sess-1","cwd":"/p","cli_version":"0.128","model_provider":"openai","originator":"codex_exec","git":{"branch":"main","commit_hash":"abc"}}}`,

@@ -156,7 +156,7 @@ func (t *ApiErrorTool) Pretty() api.Text {
 	text := clicky.Text("").
 		Add(icons.Icon{Unicode: "❌", Iconify: "mdi:alert-circle", Style: "muted"}).
 		Append(" api-error", "text-red-500 font-bold")
-	if errStr := t.Str("error"); errStr != "" {
+	if errStr := errorSummary(t.Input["error"]); errStr != "" {
 		text = text.Append(" "+errStr, "text-red-500")
 	}
 	if status := int(t.Float("api_error_status")); status > 0 {
@@ -166,6 +166,23 @@ func (t *ApiErrorTool) Pretty() api.Text {
 		text = text.Append(" ("+reason+")", "text-gray-500")
 	}
 	return text
+}
+
+func errorSummary(value any) string {
+	switch v := value.(type) {
+	case string:
+		return v
+	case map[string]any:
+		for _, key := range []string{"formatted", "message", "status"} {
+			if s, ok := v[key].(string); ok && s != "" {
+				return s
+			}
+			if n, ok := v[key].(float64); ok && n != 0 {
+				return fmt.Sprintf("%.0f", n)
+			}
+		}
+	}
+	return ""
 }
 
 func (t *ApiErrorTool) Detail() api.Textable {

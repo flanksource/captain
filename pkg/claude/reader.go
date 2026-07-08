@@ -136,7 +136,7 @@ type streamJSONLine struct {
 	CWD            string          `json:"cwd,omitempty"`
 	GitBranch      string          `json:"gitBranch,omitempty"`
 	Slug           string          `json:"slug,omitempty"`
-	Error          string          `json:"error,omitempty"`
+	Error          json.RawMessage `json:"error,omitempty"`
 	Attachment     json.RawMessage `json:"attachment,omitempty"`
 }
 
@@ -156,16 +156,14 @@ func (sj streamJSONLine) timestamp() string {
 // Listed explicitly so they don't pollute the unhandled-types diagnostic.
 var knownSessionStorageTypes = map[string]bool{
 	"file-history-snapshot": true,
-	"last-prompt":           true,
 	"permission-mode":       true,
 	"agent-name":            true,
 	// Operational/streaming state with no unique row-level content — the real
 	// content surfaces via the actual user/assistant messages. Listed so they
 	// don't pollute the unhandled-types diagnostic.
-	"mode":            true, // active mode marker (e.g. {"mode":"normal"})
-	"bridge-session":  true, // cloud bridge-session linkage
-	"progress":        true, // intermediate streaming progress, superseded by the final message
-	"queue-operation": true, // message-queue bookkeeping; dequeued content appears as a real message
+	"mode":           true, // active mode marker (e.g. {"mode":"normal"})
+	"bridge-session": true, // cloud bridge-session linkage
+	"progress":       true, // intermediate streaming progress, superseded by the final message
 }
 
 // planAttachment is the plan-mode attachment Claude Code writes when entering
@@ -200,6 +198,50 @@ func attachmentEntry(sj streamJSONLine) []HistoryEntry {
 	})
 }
 
+func metadataEventEntry(sj streamJSONLine, eventType, scope string, data map[string]any) []HistoryEntry {
+	if eventType == "" {
+		return nil
+	}
+	return single(HistoryEntry{
+		SessionID: sj.sessionID(),
+		UUID:      sj.UUID,
+		Timestamp: sj.timestamp(),
+		CWD:       sj.CWD,
+		GitBranch: sj.GitBranch,
+		Slug:      sj.Slug,
+		Event: &TranscriptEvent{
+			Type:  eventType,
+			Scope: scope,
+			Data:  data,
+		},
+	})
+}
+
+func rawObject(raw []byte) map[string]any {
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil
+	}
+	delete(out, "message")
+	return out
+}
+
+func attachmentEventEntry(sj streamJSONLine, raw []byte) []HistoryEntry {
+	var attachment map[string]any
+	if err := json.Unmarshal(sj.Attachment, &attachment); err != nil {
+		return nil
+	}
+	typ, _ := attachment["type"].(string)
+	switch typ {
+	case "deferred_tools_delta", "agent_listing_delta", "skill_listing":
+		return metadataEventEntry(sj, typ, "session", attachment)
+	case "budget_usd":
+		return metadataEventEntry(sj, typ, "turn", attachment)
+	default:
+		return attachmentEntry(sj)
+	}
+}
+
 // dispatchEvent routes a typed line to zero, one, or more HistoryEntry rows.
 // A single line can emit multiple entries — e.g. an assistant message with a
 // top-level "error" field yields both the regular assistant entry and an
@@ -229,6 +271,9 @@ func dispatchEvent(sj streamJSONLine, raw []byte, lineNo int) []HistoryEntry {
 			out = append(out, errEntry)
 		}
 		return out
+
+	case "queue-operation":
+		return metadataEventEntry(sj, "queue-operation", "turn", rawObject(raw))
 
 	case "system":
 		switch sj.Subtype {
@@ -263,11 +308,16 @@ func dispatchEvent(sj streamJSONLine, raw []byte, lineNo int) []HistoryEntry {
 				"content", "compactMetadata", "level",
 			}))
 		case "local_command":
-			return single(syntheticEntry(sj, "LocalCommand", raw, []string{"content", "level"}))
+			return single(syntheticEntry(sj, "LocalCommand", raw, []string{"content", "level", "cwd"}))
 		case "scheduled_task_fire":
 			return single(syntheticEntry(sj, "ScheduledTaskFire", raw, []string{"content"}))
 		case "informational":
 			return single(syntheticEntry(sj, "Informational", raw, []string{"content", "level"}))
+		case "api_error":
+			return single(syntheticEntry(sj, "ApiError", raw, []string{
+				"error", "level", "retryInMs", "retryAttempt", "maxRetries",
+				"api_error_status",
+			}))
 		}
 
 	case "result":
@@ -287,8 +337,20 @@ func dispatchEvent(sj streamJSONLine, raw []byte, lineNo int) []HistoryEntry {
 			"prNumber", "prUrl", "prRepository",
 		}))
 
+	case "worktree-state":
+		return single(syntheticEntry(sj, "WorktreeState", raw, []string{"worktreeSession"}))
+
+	case "relocated":
+		return single(syntheticEntry(sj, "Relocated", raw, []string{"relocatedCwd"}))
+
+	case "started":
+		return single(syntheticEntry(sj, "Started", raw, []string{"cwd"}))
+
 	case "attachment":
-		return attachmentEntry(sj)
+		return attachmentEventEntry(sj, raw)
+
+	case "last-prompt":
+		return metadataEventEntry(sj, "last-prompt", "session", rawObject(raw))
 	}
 
 	if knownSessionStorageTypes[sj.Type] {
@@ -310,7 +372,7 @@ func single(e HistoryEntry) []HistoryEntry { return []HistoryEntry{e} }
 // carries a top-level "error" field (e.g. invalid_request, 4xx/5xx from the
 // model API). The error would otherwise be invisible in history output.
 func apiErrorFromAssistantLine(sj streamJSONLine, raw []byte) (HistoryEntry, bool) {
-	if sj.Error == "" {
+	if len(sj.Error) == 0 || string(sj.Error) == "null" {
 		return HistoryEntry{}, false
 	}
 	return syntheticEntry(sj, "ApiError", raw, []string{

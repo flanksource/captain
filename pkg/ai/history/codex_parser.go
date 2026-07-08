@@ -2,6 +2,7 @@ package history
 
 import (
 	"bufio"
+	"github.com/flanksource/captain/pkg/claude/tools"
 	"github.com/segmentio/encoding/json"
 	"io"
 	"os"
@@ -235,7 +236,7 @@ func ExtractCodexToolUsesFromReader(r io.Reader) ([]ToolUse, error) {
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
-	return toolUses, nil
+	return dedupeCodexToolUses(toolUses), nil
 }
 
 func extractResponseItem(event CodexEvent, pendingCall map[string]CodexEvent, cwd, sessionID string) []ToolUse {
@@ -267,34 +268,42 @@ func extractResponseItem(event CodexEvent, pendingCall map[string]CodexEvent, cw
 			return nil
 		}
 		return []ToolUse{{
-			Tool:      "Reasoning",
-			Input:     map[string]any{"text": text},
-			Timestamp: event.Time(),
-			CWD:       cwd,
-			SessionID: sessionID,
-			Source:    "codex",
+			Tool:       "Reasoning",
+			Input:      map[string]any{"text": text},
+			Timestamp:  event.Time(),
+			CWD:        cwd,
+			SessionID:  sessionID,
+			Source:     "codex",
+			RecordType: "response_item.reasoning",
 		}}
 
 	case "message":
-		if event.Payload.Role != "assistant" {
-			return nil
-		}
+		var tool string
 		var text string
-		for _, c := range event.Payload.Content {
-			if c.Type == "output_text" && c.Text != "" {
-				text += c.Text
+		switch event.Payload.Role {
+		case "assistant":
+			tool = "Assistant"
+			text = codexContentText(event.Payload.Content, "output_text", "text")
+		case "user":
+			tool = "User"
+			text = codexContentText(event.Payload.Content, "input_text", "text")
+			if isCodexInternalUserText(text) {
+				return nil
 			}
+		default:
+			return nil
 		}
 		if text == "" {
 			return nil
 		}
 		return []ToolUse{{
-			Tool:      "Assistant",
-			Input:     map[string]any{"text": text},
-			Timestamp: event.Time(),
-			CWD:       cwd,
-			SessionID: sessionID,
-			Source:    "codex",
+			Tool:       tool,
+			Input:      map[string]any{"text": text},
+			Timestamp:  event.Time(),
+			CWD:        cwd,
+			SessionID:  sessionID,
+			Source:     "codex",
+			RecordType: "response_item.message",
 		}}
 	}
 	return nil
@@ -307,24 +316,24 @@ func extractLiveItemCompleted(event CodexEvent, cwd, sessionID string) []ToolUse
 	if event.Item == nil {
 		return nil
 	}
+	if event.Item.Role != "" && event.Item.Role != "assistant" {
+		return nil
+	}
 	text := event.Item.Text
 	if text == "" {
-		for _, c := range event.Item.Content {
-			if c.Type == "output_text" && c.Text != "" {
-				text += c.Text
-			}
-		}
+		text = codexContentText(event.Item.Content, "output_text", "text")
 	}
 	if text == "" {
 		return nil
 	}
 	return []ToolUse{{
-		Tool:      "Assistant",
-		Input:     map[string]any{"text": text},
-		Timestamp: event.Time(),
-		CWD:       cwd,
-		SessionID: sessionID,
-		Source:    "codex",
+		Tool:       "Assistant",
+		Input:      map[string]any{"text": text},
+		Timestamp:  event.Time(),
+		CWD:        cwd,
+		SessionID:  sessionID,
+		Source:     "codex",
+		RecordType: "item.completed",
 	}}
 }
 
@@ -382,12 +391,13 @@ func extractEventMsg(event CodexEvent, cwd, sessionID string) []ToolUse {
 			return nil
 		}
 		return []ToolUse{{
-			Tool:      "Reasoning",
-			Input:     map[string]any{"text": event.Payload.Text},
-			Timestamp: event.Time(),
-			CWD:       cwd,
-			SessionID: sessionID,
-			Source:    "codex",
+			Tool:       "Reasoning",
+			Input:      map[string]any{"text": event.Payload.Text},
+			Timestamp:  event.Time(),
+			CWD:        cwd,
+			SessionID:  sessionID,
+			Source:     "codex",
+			RecordType: "event_msg.agent_reasoning",
 		}}
 
 	case "agent_message":
@@ -395,15 +405,175 @@ func extractEventMsg(event CodexEvent, cwd, sessionID string) []ToolUse {
 			return nil
 		}
 		return []ToolUse{{
-			Tool:      "Assistant",
-			Input:     map[string]any{"text": event.Payload.Message},
-			Timestamp: event.Time(),
-			CWD:       cwd,
-			SessionID: sessionID,
-			Source:    "codex",
+			Tool:       "Assistant",
+			Input:      map[string]any{"text": event.Payload.Message},
+			Timestamp:  event.Time(),
+			CWD:        cwd,
+			SessionID:  sessionID,
+			Source:     "codex",
+			RecordType: "event_msg.agent_message",
+		}}
+
+	case "user_message":
+		text := event.Payload.Message
+		if text == "" {
+			text = event.Payload.Text
+		}
+		if text == "" || isCodexInternalUserText(text) {
+			return nil
+		}
+		return []ToolUse{{
+			Tool:       "User",
+			Input:      map[string]any{"text": text},
+			Timestamp:  event.Time(),
+			CWD:        cwd,
+			SessionID:  sessionID,
+			Source:     "codex",
+			RecordType: "event_msg.user_message",
 		}}
 	}
-	return nil
+	if event.Payload.Type == "" {
+		return nil
+	}
+	return []ToolUse{buildCodexEventUse(event, cwd, sessionID)}
+}
+
+func codexContentText(content []CodexContent, accepted ...string) string {
+	accept := make(map[string]struct{}, len(accepted))
+	for _, typ := range accepted {
+		accept[typ] = struct{}{}
+	}
+	var text string
+	for _, c := range content {
+		if _, ok := accept[c.Type]; ok && c.Text != "" {
+			text += c.Text
+		}
+	}
+	return text
+}
+
+func isCodexInternalUserText(text string) bool {
+	text = strings.TrimSpace(text)
+	return strings.HasPrefix(text, "<environment_context>") ||
+		strings.HasPrefix(text, "<developer_context>") ||
+		strings.HasPrefix(text, "<plugins_instructions>") ||
+		strings.HasPrefix(text, "<skills_instructions>")
+}
+
+func buildCodexEventUse(event CodexEvent, cwd, sessionID string) ToolUse {
+	input := make(map[string]any, len(event.Payload.Raw)+1)
+	for k, v := range event.Payload.Raw {
+		input[k] = v
+	}
+	input["event"] = event.Payload.Type
+	add := func(key string, value any) {
+		switch v := value.(type) {
+		case string:
+			if v != "" {
+				input[key] = v
+			}
+		case int:
+			if v != 0 {
+				input[key] = v
+			}
+		case int64:
+			if v != 0 {
+				input[key] = v
+			}
+		case float64:
+			if v != 0 {
+				input[key] = v
+			}
+		}
+	}
+	add("turn_id", event.Payload.TurnID)
+	add("message", event.Payload.Message)
+	add("phase", event.Payload.Phase)
+	add("started_at", event.Payload.StartedAt)
+	add("completed_at", event.Payload.CompletedAt)
+	add("duration_ms", event.Payload.DurationMS)
+	add("time_to_first_token_ms", event.Payload.TimeToFirstTokenMS)
+	add("last_agent_message", event.Payload.LastAgentMessage)
+	add("model_context_window", event.Payload.ModelContextWindow)
+	add("collaboration_mode_kind", event.Payload.CollaborationModeKind)
+	if event.Payload.Info != nil {
+		input["total_tokens"] = event.Payload.Info.LastTokenUsage.TotalTokens
+		input["input_tokens"] = event.Payload.Info.LastTokenUsage.InputTokens
+		input["output_tokens"] = event.Payload.Info.LastTokenUsage.OutputTokens
+		input["cached_input_tokens"] = event.Payload.Info.LastTokenUsage.CachedInputTokens
+		if event.Payload.Info.ModelContextWindow != 0 {
+			input["model_context_window"] = event.Payload.Info.ModelContextWindow
+		}
+	}
+	return ToolUse{
+		Tool:       tools.EventToolName(event.Payload.Type),
+		Input:      input,
+		Timestamp:  event.Time(),
+		CWD:        cwd,
+		SessionID:  sessionID,
+		Source:     "codex",
+		RecordType: "event_msg." + event.Payload.Type,
+	}
+}
+
+func dedupeCodexToolUses(uses []ToolUse) []ToolUse {
+	var out []ToolUse
+	seen := map[string]int{}
+	priorities := map[string]int{}
+	for _, use := range uses {
+		key, ok := codexChatDedupeKey(use)
+		if !ok {
+			out = append(out, use)
+			continue
+		}
+		priority := codexRecordPriority(use.RecordType)
+		if idx, exists := seen[key]; exists {
+			if priority > priorities[key] {
+				out[idx] = use
+				priorities[key] = priority
+			}
+			continue
+		}
+		seen[key] = len(out)
+		priorities[key] = priority
+		out = append(out, use)
+	}
+	return out
+}
+
+func codexChatDedupeKey(use ToolUse) (string, bool) {
+	switch use.Tool {
+	case "User", "Assistant", "Reasoning":
+	default:
+		return "", false
+	}
+	if use.Timestamp == nil {
+		return "", false
+	}
+	text, _ := use.Input["text"].(string)
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return "", false
+	}
+	return strings.Join([]string{
+		use.SessionID,
+		use.Tool,
+		use.Timestamp.UTC().Format(time.RFC3339Nano),
+		text,
+	}, "\x00"), true
+}
+
+func codexRecordPriority(recordType string) int {
+	switch {
+	case strings.HasPrefix(recordType, "response_item."):
+		return 3
+	case strings.HasPrefix(recordType, "item.completed"):
+		return 2
+	case strings.HasPrefix(recordType, "event_msg."):
+		return 1
+	default:
+		return 0
+	}
 }
 
 func buildToolUse(callEvent, outputEvent CodexEvent, cwd, sessionID string) ToolUse {

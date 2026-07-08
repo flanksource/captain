@@ -51,7 +51,8 @@ func (e CodexEvent) Time() *time.Time {
 }
 
 type CodexPayload struct {
-	Type string `json:"type"`
+	Type string         `json:"type"`
+	Raw  map[string]any `json:"-"`
 
 	// session_meta
 	ID            string        `json:"id,omitempty"`
@@ -80,8 +81,16 @@ type CodexPayload struct {
 	Content []CodexContent `json:"content,omitempty"`
 
 	// event_msg: agent_reasoning / agent_message / user_message
-	Text    string `json:"text,omitempty"`
-	Message string `json:"message,omitempty"`
+	Text                  string `json:"text,omitempty"`
+	Message               string `json:"message,omitempty"`
+	Phase                 string `json:"phase,omitempty"`
+	StartedAt             any    `json:"started_at,omitempty"`
+	CompletedAt           int64  `json:"completed_at,omitempty"`
+	DurationMS            int64  `json:"duration_ms,omitempty"`
+	TimeToFirstTokenMS    int64  `json:"time_to_first_token_ms,omitempty"`
+	LastAgentMessage      string `json:"last_agent_message,omitempty"`
+	ModelContextWindow    int    `json:"model_context_window,omitempty"`
+	CollaborationModeKind string `json:"collaboration_mode_kind,omitempty"`
 
 	// event_msg: token_count
 	Info *CodexTokenInfo `json:"info,omitempty"`
@@ -94,6 +103,20 @@ type CodexPayload struct {
 	// older payloads also expose `reasoning_effort` inside collaboration_mode.
 	Model  string `json:"model,omitempty"`
 	Effort string `json:"effort,omitempty"`
+}
+
+func (p *CodexPayload) UnmarshalJSON(data []byte) error {
+	type alias CodexPayload
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	*p = CodexPayload(a)
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err == nil {
+		p.Raw = raw
+	}
+	return nil
 }
 
 type CodexGitMeta struct {

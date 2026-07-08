@@ -24,8 +24,19 @@ type HistoryEntry struct {
 	// PlanFilePath is set on synthetic entries surfaced from plan_mode /
 	// plan_mode_exit attachments; it points at the session's plan file even when
 	// the transcript carries no ExitPlanMode tool call or plan-file write.
-	PlanFilePath string          `json:"-"`
-	RawLine      json.RawMessage `json:"-"`
+	PlanFilePath string           `json:"-"`
+	Event        *TranscriptEvent `json:"-"`
+	RawLine      json.RawMessage  `json:"-"`
+}
+
+// TranscriptEvent is a non-message, non-tool transcript line. It lets callers
+// preserve session/turn metadata without pretending discovery or budget records
+// are model messages.
+type TranscriptEvent struct {
+	Type    string         `json:"type"`
+	Scope   string         `json:"scope,omitempty"`
+	Subtype string         `json:"subtype,omitempty"`
+	Data    map[string]any `json:"data,omitempty"`
 }
 
 // Message represents a conversation message
@@ -107,6 +118,7 @@ type CacheCreation struct {
 // ServerToolUse tracks server-side tool usage
 type ServerToolUse struct {
 	WebSearchRequests int `json:"web_search_requests,omitempty"`
+	WebFetchRequests  int `json:"web_fetch_requests,omitempty"`
 }
 
 // IsUserMessage returns true if this is a user message

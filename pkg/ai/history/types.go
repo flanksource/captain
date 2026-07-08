@@ -13,6 +13,7 @@ type ToolUse struct {
 	Model           string         `json:"model,omitempty"`
 	ReasoningEffort string         `json:"reasoning_effort,omitempty"`
 	Response        string         `json:"response,omitempty"`
+	RecordType      string         `json:"-"`
 }
 
 type Filter struct {

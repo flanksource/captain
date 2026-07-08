@@ -26,10 +26,11 @@ func (l *loggingProvider) GetBackend() ai.Backend { return l.provider.GetBackend
 
 func (l *loggingProvider) Execute(ctx context.Context, req ai.Request) (*ai.Response, error) {
 	start := time.Now()
+	backend, model := logRuntime(l.provider, req)
 
 	dispatch := clicky.Text("").
 		Add(icons.AI).
-		Append(fmt.Sprintf(" %s/%s", l.provider.GetBackend(), l.provider.GetModel()), "text-purple-600 font-medium")
+		Append(fmt.Sprintf(" %s/%s", backend, model), "text-purple-600 font-medium")
 	if req.Prompt.Source != "" {
 		dispatch = dispatch.Append(fmt.Sprintf(" [%s]", req.Prompt.Source), "text-gray-500")
 	}
@@ -49,14 +50,14 @@ func (l *loggingProvider) Execute(ctx context.Context, req ai.Request) (*ai.Resp
 	if err != nil {
 		log.Errorf("%v", clicky.Text("").
 			Add(icons.Error).
-			Append(fmt.Sprintf(" %s/%s", l.provider.GetBackend(), l.provider.GetModel()), "text-red-600 font-medium").
+			Append(fmt.Sprintf(" %s/%s", backend, model), "text-red-600 font-medium").
 			Append(fmt.Sprintf(" failed after %v: %v", duration.Round(time.Millisecond), err), "text-red-500"))
 		return resp, err
 	}
 
 	log.Infof("%v", clicky.Text("").
 		Add(icons.Check).
-		Append(fmt.Sprintf(" %s/%s", l.provider.GetBackend(), l.provider.GetModel()), "text-green-600 font-medium").
+		Append(fmt.Sprintf(" %s/%s", backend, model), "text-green-600 font-medium").
 		Append(fmt.Sprintf(" %v", duration.Round(time.Millisecond)), "text-gray-500").
 		Append(fmt.Sprintf(" (tokens: %d in / %d out)", resp.Usage.InputTokens, resp.Usage.OutputTokens), "text-gray-400"))
 
@@ -85,10 +86,11 @@ func (l *loggingProvider) ExecuteStream(ctx context.Context, req ai.Request) (<-
 	if !ok {
 		return nil, fmt.Errorf("provider %s/%s does not support streaming", l.provider.GetBackend(), l.provider.GetModel())
 	}
+	backend, model := logRuntime(l.provider, req)
 
 	dispatch := clicky.Text("").
 		Add(icons.AI).
-		Append(fmt.Sprintf(" %s/%s (stream)", l.provider.GetBackend(), l.provider.GetModel()), "text-purple-600 font-medium")
+		Append(fmt.Sprintf(" %s/%s (stream)", backend, model), "text-purple-600 font-medium")
 	if req.Prompt.Source != "" {
 		dispatch = dispatch.Append(fmt.Sprintf(" [%s]", req.Prompt.Source), "text-gray-500")
 	}
@@ -99,6 +101,18 @@ func (l *loggingProvider) ExecuteStream(ctx context.Context, req ai.Request) (<-
 	}
 
 	return streamer.ExecuteStream(ctx, req)
+}
+
+func logRuntime(provider ai.Provider, req ai.Request) (api.Backend, string) {
+	backend := req.Model.Backend
+	if backend == "" {
+		backend = provider.GetBackend()
+	}
+	model := req.Model.Name
+	if model == "" {
+		model = provider.GetModel()
+	}
+	return backend, model
 }
 
 func WithLogging() Option {
