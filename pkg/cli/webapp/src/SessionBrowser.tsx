@@ -8,7 +8,7 @@ import {
   Switch,
   type AppShellNavSection,
 } from "@flanksource/clicky-ui/components";
-import { SessionViewer } from "@flanksource/clicky-ui/ai";
+import { SessionViewer, type SessionInput } from "@flanksource/clicky-ui/ai";
 import { CAPTAIN_SIDEBAR_COLLAPSE_KEY } from "./shell";
 import { TimingBadge } from "./TimingBadge";
 import type { TimingMetric } from "./serverTiming";
@@ -339,7 +339,11 @@ function SessionDetail({
     // AppShell's content region is a bounded block (h-full), not a flex parent, so
     // `h-full` (not `flex-1`) is what gives the viewer a definite height to scroll within.
     <div className="flex h-full min-h-0 flex-col">
-      <SessionViewer session={session?.messages ?? []} defaultExpanded={false} scrollable />
+      <SessionViewer
+        session={(session ?? []) as unknown as SessionInput}
+        defaultExpanded={false}
+        scrollable
+      />
     </div>
   );
 }

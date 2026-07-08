@@ -1481,7 +1481,8 @@ function inferBackendFromModel(model: string) {
     return "deepseek";
   if (value.startsWith("claude-agent-")) return "claude-agent";
   if (value.startsWith("claude-code-")) return "claude-cli";
-  if (value.startsWith("codex")) return "codex-cli";
+  if (value.startsWith("codex-agent-") || value.startsWith("codex"))
+    return "codex-agent";
   if (value.startsWith("gemini-cli-")) return "gemini-cli";
   if (value.startsWith("claude-")) return "anthropic";
   if (value.startsWith("gemini-") || value.startsWith("models/gemini-"))
@@ -1519,7 +1520,11 @@ function normalizeRuntimeModel(model: string, models: ChatModel[]) {
   ) {
     return { model: stripProviderPrefix(id), backend };
   }
-  if (selected.provider === "codex-cli" && id.startsWith("codex-")) {
+  if (
+    (selected.provider === "codex-cli" ||
+      selected.provider === "codex-agent") &&
+    id.startsWith("codex-")
+  ) {
     return { model: id.slice("codex-".length), backend };
   }
   return { model: id, backend };
@@ -1535,6 +1540,7 @@ function providerToBackend(provider: string) {
     case "claude-agent":
     case "claude-cli":
     case "codex-cli":
+    case "codex-agent":
     case "gemini-cli":
       return provider;
     default:

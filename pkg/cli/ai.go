@@ -36,7 +36,7 @@ func loadSavedAI() captainconfig.AIDefaults {
 type AIProviderOptions struct {
 	Model    string   `flag:"model" help:"Model name(s), e.g. claude-sonnet-5 or a comma-separated primary,fallback list like claude-sonnet-5,gpt-4o (defaults to the value saved by 'captain configure')" short:"m"`
 	Fallback []string `flag:"fallback" help:"Model to try if the primary is unavailable (repeatable; comma-separated allowed)"`
-	Backend  string   `flag:"backend" help:"Force backend: anthropic|gemini|openai|deepseek|claude-cli|claude-agent|claude-cmux|codex-cli|codex-cmux|gemini-cli (default: inferred from model or saved by 'captain configure')" short:"b"`
+	Backend  string   `flag:"backend" help:"Force backend: anthropic|gemini|openai|deepseek|claude-cli|claude-agent|claude-cmux|codex-cli|codex-agent|codex-cmux|gemini-cli (default: inferred from model or saved by 'captain configure')" short:"b"`
 	APIKey   string   `flag:"api-key" help:"API key (env: ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, GOOGLE_API_KEY, DEEPSEEK_API_KEY)"`
 	NoCache  bool     `flag:"no-cache" help:"Disable response caching"`
 	Budget   string   `flag:"budget" help:"Max spend in USD, 0=unlimited" default:"0"`
@@ -70,6 +70,9 @@ func (o AIProviderOptions) ToConfig() (ai.Config, error) {
 	if backend == "" {
 		backend = saved.Backend
 	}
+	if o.Backend == "" && ai.ContainsRuntimeSelector(model) {
+		backend = ""
+	}
 	if backend != "" && !ai.Backend(backend).Valid() {
 		return ai.Config{}, fmt.Errorf("invalid --backend %q (valid: %s)", backend, ai.BackendList())
 	}
@@ -78,8 +81,12 @@ func (o AIProviderOptions) ToConfig() (ai.Config, error) {
 	}
 
 	m := api.Model{Name: model, Backend: ai.Backend(backend), Fallbacks: fallbackModelsFromFlags(o.Fallback)}
+	m, err = ai.ResolveModelSelectors(m)
+	if err != nil {
+		return ai.Config{}, err
+	}
 	return ai.Config{
-		Model:   m.ExpandCSV(),
+		Model:   m,
 		Budget:  api.Budget{Cost: budget},
 		APIKey:  o.APIKey,
 		NoCache: o.NoCache || saved.NoCache,
@@ -144,6 +151,7 @@ type AIPromptOptions struct {
 	System       string   `flag:"system" help:"System prompt" short:"s"`
 	AppendSystem string   `flag:"append-system" help:"Append text to the default system prompt"`
 	Var          []string `flag:"var" help:"Template variable key=value (repeatable)" short:"V"`
+	MultiModels  []string `flag:"multi-models" help:"Run prompt once per runtime selector in parallel, e.g. cli:sonnet-5,cmux:opus (repeatable; comma-separated allowed)" short:"M"`
 	Timeout      string   `flag:"timeout" help:"Request timeout" default:"120s"`
 	NoStream     bool     `flag:"no-stream" help:"Disable streaming; print only the final text to stdout"`
 }
@@ -154,6 +162,7 @@ type AIPromptResult struct {
 	Backend     string     `json:"backend" pretty:"label=Backend"`
 	Dir         string     `json:"dir,omitempty" pretty:"label=Dir"`
 	SessionID   string     `json:"sessionId,omitempty" pretty:"label=Session"`
+	HistoryFile string     `json:"historyFile,omitempty" pretty:"label=History"`
 	Input       ai.Request `json:"input" pretty:"-"`
 	InputTokens int        `json:"inputTokens" pretty:"label=Input Tokens"`
 	Output      int        `json:"outputTokens" pretty:"label=Output Tokens"`
@@ -278,6 +287,16 @@ func RunAIPrompt(opts AIPromptOptions) (any, error) {
 	}
 	if err := req.Validate(); err != nil {
 		return nil, err
+	}
+	if len(opts.MultiModels) > 0 {
+		rendered := PromptRenderResult{
+			Name:    "prompt",
+			Model:   cfg.Model.Name,
+			Backend: string(cfg.Model.Backend),
+			Input:   req,
+			Config:  cfg,
+		}
+		return executeSyncRun(ctx, rendered, opts)
 	}
 	return executePromptRequest(ctx, req, cfg, runtimeTimeout(req.Budget.Timeout), opts.NoStream)
 }
@@ -430,12 +449,14 @@ func runBuffered(ctx context.Context, p ai.Provider, req ai.Request) (any, error
 	model := firstNonEmpty(resp.Model, p.GetModel(), req.Name)
 	backend := firstNonEmpty(string(resp.Backend), string(p.GetBackend()), string(req.Backend))
 	input := resolvedPromptInput(req, model, backend, req.SessionID)
+	dir := actualRunDir(input)
 	return AIPromptResult{
 		Text:        resp.Text,
 		Model:       model,
 		Backend:     backend,
-		Dir:         input.Cwd(),
+		Dir:         dir,
 		SessionID:   input.SessionID,
+		HistoryFile: historyFileForRun(api.Backend(backend), input.SessionID, dir),
 		Input:       input,
 		InputTokens: resp.Usage.InputTokens,
 		Output:      resp.Usage.OutputTokens,
@@ -495,12 +516,14 @@ func runStreaming(ctx context.Context, sp ai.StreamingProvider, req ai.Request) 
 		session = loop.Iterations[0].SessionID
 	}
 	input := resolvedPromptInput(req, model, backend, session)
+	dir := actualRunDir(input)
 	return AIPromptResult{
 		Text:        text,
 		Model:       model,
 		Backend:     backend,
-		Dir:         input.Cwd(),
+		Dir:         dir,
 		SessionID:   input.SessionID,
+		HistoryFile: historyFileForRun(api.Backend(backend), input.SessionID, dir),
 		Input:       input,
 		InputTokens: usage.InputTokens,
 		Output:      usage.OutputTokens,
@@ -521,6 +544,17 @@ func resolvedPromptInput(req ai.Request, model, backend, sessionID string) ai.Re
 		out.SessionID = sessionID
 	}
 	return out
+}
+
+func actualRunDir(req ai.Request) string {
+	if cwd := req.Cwd(); cwd != "" {
+		return cwd
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	return wd
 }
 
 // renderEvent writes a human-readable representation of an ai.Event to w.

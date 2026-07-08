@@ -590,6 +590,9 @@ func filterTools(tl []tools.Tool, opts HistoryOptions, classifier *bash.Category
 			categories = append(categories, c)
 		}
 		for _, filter := range opts.Categories {
+			if strings.HasPrefix(strings.TrimSpace(filter), "!") {
+				continue
+			}
 			if similar := captainCollections.FindSimilar(filter, categories, 3); len(similar) > 0 {
 				fmt.Fprintf(os.Stderr, "category %q matched nothing. Did you mean: %s?\n", filter, strings.Join(similar, ", "))
 			}
@@ -647,29 +650,40 @@ func matchesAnyCategoryCandidate(candidates []string, pattern string) bool {
 
 func categoryFilterCandidates(t tools.Tool, category string) []string {
 	base := t.Base()
-	return uniqueNonEmpty(
+	values := []string{
 		category,
 		t.Name(),
 		base.RawTool,
-		messageAlias(t.Name()),
-	)
+	}
+	values = append(values, chatCategoryAliases(t.Name())...)
+	values = append(values, chatCategoryAliases(base.RawTool)...)
+	return uniqueNonEmpty(values...)
 }
 
 func toolUseCategoryFilterCandidates(tu claude.ToolUse, category string) []string {
-	return uniqueNonEmpty(
+	values := []string{
 		category,
 		tu.Tool,
 		tu.DisplayTool(),
-		messageAlias(tu.DisplayTool()),
-	)
+	}
+	values = append(values, chatCategoryAliases(tu.Tool)...)
+	values = append(values, chatCategoryAliases(tu.DisplayTool())...)
+	return uniqueNonEmpty(values...)
 }
 
-func messageAlias(tool string) string {
+func chatCategoryAliases(tool string) []string {
+	if tools.IsEventToolName(tool) {
+		return []string{"chat", "event"}
+	}
 	switch strings.ToLower(tool) {
 	case "assistant", "reasoning":
-		return "message"
+		return []string{"chat", "message"}
+	case "user":
+		return []string{"chat", "message"}
+	case "event":
+		return []string{"chat", "event"}
 	default:
-		return ""
+		return nil
 	}
 }
 
@@ -747,7 +761,7 @@ func classifyTool(t tools.Tool, classifier *bash.CategoryClassifier) string {
 func approvedStatus(t tools.Tool) string {
 	base := t.Base()
 	name := t.Name()
-	if base.RawTool == "ExitPlanMode" || base.RawTool == "User" || name == "Plan" {
+	if base.RawTool == "ExitPlanMode" || isChatHistoryTool(base.RawTool) || name == "Plan" {
 		return ""
 	}
 	if base.Denied {
@@ -846,6 +860,9 @@ func runHistorySummary(toolUses []claude.ToolUse, opts HistoryOptions, classifie
 }
 
 func classifyToolUse(tu claude.ToolUse, classifier *bash.CategoryClassifier) string {
+	if isChatHistoryTool(tu.Tool) {
+		return "chat"
+	}
 	category := classifier.ClassifyToolWithPath(tu.Tool, tu.FilePath())
 	if category == bash.CategoryOther && tu.Tool == "Bash" {
 		if rawCmd, ok := tu.Input["command"].(string); ok {
@@ -853,6 +870,18 @@ func classifyToolUse(tu claude.ToolUse, classifier *bash.CategoryClassifier) str
 		}
 	}
 	return string(category)
+}
+
+func isChatHistoryTool(tool string) bool {
+	if tools.IsEventToolName(tool) {
+		return true
+	}
+	switch tool {
+	case "User", "Assistant", "Reasoning", "Event":
+		return true
+	default:
+		return false
+	}
 }
 
 func matchesToolUseTextFilter(tu claude.ToolUse, category, filter string) bool {

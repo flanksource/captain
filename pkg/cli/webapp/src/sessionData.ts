@@ -55,6 +55,44 @@ export type UnifiedCost = {
   cacheWriteCost?: number;
 };
 
+export type UnifiedBudget = {
+  used?: number;
+  total?: number;
+  remaining?: number;
+  updatedAt?: string;
+};
+
+export type UnifiedCapabilities = {
+  tools?: string[];
+  pendingMcpServers?: string[];
+  agents?: string[];
+  skills?: string[];
+};
+
+export type UnifiedMetadataEvent = {
+  type: string;
+  scope?: string;
+  turnId?: string;
+  timestamp?: string;
+  uuid?: string;
+  data?: Record<string, unknown>;
+};
+
+export type UnifiedTurn = {
+  id: string;
+  index: number;
+  startedAt?: string;
+  endedAt?: string;
+  stopReason?: string;
+  model?: string;
+  messageIds?: string[];
+  usage?: Record<string, unknown>;
+  cost?: Record<string, unknown>;
+  context?: SessionContext;
+  budget?: UnifiedBudget;
+  events?: UnifiedMetadataEvent[];
+};
+
 export type UnifiedSession = {
   id: string;
   source: "claude" | "codex";
@@ -69,6 +107,11 @@ export type UnifiedSession = {
   endedAt?: string;
   usage?: UnifiedUsage;
   cost?: UnifiedCost;
+  context?: SessionContext;
+  budget?: UnifiedBudget;
+  capabilities?: UnifiedCapabilities;
+  events?: UnifiedMetadataEvent[];
+  turns?: UnifiedTurn[];
   live?: SessionLive;
   messages?: SessionUIMessage[];
 };

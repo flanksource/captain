@@ -77,14 +77,9 @@ func BuildSummary(toolUses []claude.ToolUse, classifier *bash.CategoryClassifier
 			denied++
 		}
 
-		category := classifier.ClassifyToolWithPath(tu.Tool, tu.FilePath())
-		if category == bash.CategoryOther && tu.Tool == "Bash" {
-			if rawCmd, ok := tu.Input["command"].(string); ok {
-				category = classifier.ClassifyBash(rawCmd)
-			}
-		}
-		categories[string(category)]++
-		categoryTokens[string(category)] += tuTokens
+		category := classifyToolUse(tu, classifier)
+		categories[category]++
+		categoryTokens[category] += tuTokens
 
 		analysis := AnalyzeToolUseLegacy(tu, tu.ProjectRoot)
 		for _, p := range analysis.ReadPaths {

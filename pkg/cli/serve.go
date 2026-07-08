@@ -26,9 +26,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// all: keeps the committed dist/.gitkeep placeholder in the embed so the binary
-// compiles without a built webapp (dist is gitignored and built on demand or in
-// the release workflow). When index.html is absent, serve.go reports it at runtime.
+// The built webapp is committed under webapp/dist (see .gitignore) because the
+// vite build depends on a local clicky-ui link: dependency that is unavailable
+// in CI and in the goreleaser release job, so the binary embeds the checked-in
+// dist rather than building it. all: ensures dotfiles are embedded too. When
+// index.html is absent, serve.go reports it at runtime.
 //
 //go:embed all:webapp/dist
 var captainWebappFS embed.FS

@@ -153,11 +153,6 @@ func promptSchemaExampleSpec() map[string]any {
 			"user":         "Update the prompt runtime editor and keep the payload compact.",
 			"system":       "Answer with direct implementation guidance.",
 			"appendSystem": "Prefer existing clicky-ui primitives.",
-			"source":       "storybook/demo.prompt",
-			"metadata": map[string]any{
-				"surface": "prompt-workbench",
-				"owner":   "captain",
-			},
 		},
 		"budget": map[string]any{
 			"cost":      0.5,
@@ -192,9 +187,9 @@ func promptSchemaExampleSpec() map[string]any {
 			"cwd":     ".",
 			"baseDir": ".shell",
 			"dotenv":  []string{".env", ".env.local"},
-			"env": []string{
-				"CAPTAIN_RUNTIME=storybook",
-				"GAVEL_PROFILE=local",
+			"envVars": []map[string]any{
+				{"name": "CAPTAIN_RUNTIME", "value": "storybook"},
+				{"name": "GAVEL_PROFILE", "value": "local"},
 			},
 		},
 		"cliArgs": map[string]any{

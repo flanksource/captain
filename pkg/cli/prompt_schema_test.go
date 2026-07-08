@@ -12,10 +12,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// fakeSchemaProbe reports no API keys and no CLI login files but all CLI binaries
-// present. This keeps the probe hermetic (fetchAPIModels makes no network call
-// without an API key) while CLI/agent backends still list their static catalog
-// models, giving a deterministic adapter set.
+// fakeSchemaProbe reports no API keys and no CLI login files but all CLI
+// binaries present. This keeps the probe hermetic: fetchAPIModels makes no
+// network call without an API key, API backends stay key-gated, and CLI-style
+// backends project exact IDs from Captain's internal registry.
 func fakeSchemaProbe() authProbe {
 	return authProbe{
 		getenv:     func(string) string { return "" },
@@ -63,22 +63,20 @@ func TestPromptSchemaDocumentBackendsAndConditionals(t *testing.T) {
 		}
 	}
 
-	// codex-cli's models come from the static catalog (one entry, AgentModel
-	// "gpt-5-codex") - an independent baseline unaffected by API keys.
-	codexModels := byName[string(api.BackendCodexCLI)]["models"].([]string)
-	if !contains(codexModels, "gpt-5-codex") {
-		t.Errorf("codex-cli models = %v, want to contain gpt-5-codex", codexModels)
+	codexCLIModels, hasModels := byName[string(api.BackendCodexCLI)]["models"].([]string)
+	if !hasModels || len(codexCLIModels) == 0 {
+		t.Fatalf("codex-cli should expose exact registry models without API provider data: %+v", byName[string(api.BackendCodexCLI)])
+	}
+	if got := codexCLIModels[0]; got != "gpt-5.5" {
+		t.Errorf("codex-cli first model = %q, want gpt-5.5", got)
 	}
 
-	// anthropic is unauthenticated in the fake probe, so its models fall back to
-	// the catalog and the "set your key" hint is cleared.
 	anthropic := byName[string(api.BackendAnthropic)]
-	anthropicModels, _ := anthropic["models"].([]string)
-	if !contains(anthropicModels, "claude-sonnet-5") {
-		t.Errorf("unauthenticated anthropic models = %v, want catalog fallback incl claude-sonnet-5", anthropicModels)
+	if _, hasModels := anthropic["models"]; hasModels {
+		t.Errorf("anthropic should not synthesize models without live provider data: %+v", anthropic)
 	}
-	if _, hasErr := anthropic["modelError"]; hasErr {
-		t.Errorf("anthropic should carry no modelError once the catalog answers")
+	if errText, _ := anthropic["modelError"].(string); !strings.Contains(errText, "ANTHROPIC_API_KEY") {
+		t.Errorf("anthropic modelError = %q, want missing-key hint", errText)
 	}
 
 	spec := doc["spec"].(map[string]any)
@@ -151,6 +149,19 @@ func TestPromptSchemaExampleIsPortable(t *testing.T) {
 	}
 	if _, err := api.InferBackend(model); err != nil {
 		t.Errorf("example model %q does not resolve to a backend: %v", model, err)
+	}
+	prompt := ex["prompt"].(map[string]any)
+	for _, excluded := range []string{"source", "metadata"} {
+		if _, ok := prompt[excluded]; ok {
+			t.Errorf("example prompt includes editor-excluded %q", excluded)
+		}
+	}
+	setup := ex["setup"].(map[string]any)
+	if _, ok := setup["env"]; ok {
+		t.Errorf("example setup uses stale env key: %+v", setup)
+	}
+	if _, ok := setup["envVars"]; !ok {
+		t.Errorf("example setup missing envVars: %+v", setup)
 	}
 
 	// The example selects claude-cmux, so its cliArgs must validate as

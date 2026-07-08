@@ -134,20 +134,19 @@ func TestModelOptionsFor_CLIBackendsUseCatalogWithoutKey(t *testing.T) {
 	if len(opts) != 1 {
 		t.Fatalf("codex-cli picker = %+v, want a single catalog option", opts)
 	}
-	// huh.Option.Key is the display label; the selectable value is the runtime
-	// slug the codex provider expects verbatim.
-	if opts[0].Value != "gpt-5-codex" {
-		t.Errorf("codex-cli option value = %q, want catalog slug gpt-5-codex", opts[0].Value)
+	if opts[0].Value != "gpt-5.5" {
+		t.Errorf("codex-cli option value = %q, want exact model gpt-5.5", opts[0].Value)
 	}
 }
 
 func TestDefaultModelFor_HardcodedPerBackend(t *testing.T) {
 	cases := map[ai.Backend]string{
 		ai.BackendAnthropic:   "claude-sonnet-5",
-		ai.BackendClaudeCLI:   "claude-agent-sonnet",
-		ai.BackendClaudeAgent: "claude-agent-sonnet",
+		ai.BackendClaudeCLI:   "claude-sonnet-5",
+		ai.BackendClaudeAgent: "claude-sonnet-5",
 		ai.BackendOpenAI:      "gpt-5.5",
-		ai.BackendCodexCLI:    "gpt-5-codex",
+		ai.BackendCodexCLI:    "gpt-5.5",
+		ai.BackendCodexAgent:  "gpt-5.5",
 		ai.BackendGemini:      "gemini-3.5-flash",
 		ai.BackendGeminiCLI:   "gemini-3.5-flash",
 	}

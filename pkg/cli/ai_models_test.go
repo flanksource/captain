@@ -132,13 +132,29 @@ func TestIsLegacyModelID(t *testing.T) {
 		"gpt-5-nano":             true,
 		"gpt-5-codex":            true,
 		"gpt-5-pro":              true,
+		"gpt-5.5-pro":            true,
+		"gpt-5.5-nano":           true,
+		"gpt-5.5-mini":           true,
+		"gpt-5.4-mini":           true,
+		"gpt-5.5-chat-latest":    true,
+		"gpt-5.5-2026-04-23":     true,
+		"gpt-realtime-2.1":       true,
+		"gpt-realtime-2.1-mini":  true,
+		"gpt-image-2":            true,
+		"gpt-audio-1.5":          true,
+		"gpt-5.3-codex":          true,
+		"gpt-5.3-code":           true,
 		"o1":                     true,
 		"o1-pro":                 true,
 		"o3":                     true,
 		"o3-pro":                 true,
 		"o3-mini":                true,
+		"o4-mini":                true,
+		"sora-2":                 true,
 		"codex-mini-latest":      true,
 		"dall-e-3":               true,
+		"image-alpha-001":        true,
+		"audio-alpha-001":        true,
 		"dall-e-2":               true,
 		"whisper-1":              true,
 		"tts-1":                  true,
@@ -174,7 +190,8 @@ func TestIsLegacyModelID(t *testing.T) {
 		"gpt-5.1":              false,
 		"gpt-5.2":              false,
 		"gpt-5.3":              false,
-		"o4-mini":              false,
+		"gpt-5.4":              false,
+		"gpt-5.5":              false,
 		"claude-sonnet-4-5":    false,
 		"claude-sonnet-4-6":    false,
 		"claude-opus-4-5":      false,
@@ -205,6 +222,11 @@ func TestRunAIModels_HidesLegacyByDefault(t *testing.T) {
 					{"id": "gpt-5.1"},
 					{"id": "gpt-5-mini"},
 					{"id": "gpt-5-codex"},
+					{"id": "gpt-5.5-pro"},
+					{"id": "gpt-realtime-2.1"},
+					{"id": "gpt-image-2"},
+					{"id": "gpt-audio-1.5"},
+					{"id": "sora-2"},
 					{"id": "gpt-3.5-turbo"},
 					{"id": "gpt-4"},
 					{"id": "gpt-4o-mini"},
@@ -227,7 +249,7 @@ func TestRunAIModels_HidesLegacyByDefault(t *testing.T) {
 	}
 	res := got.(AIModelsResult)
 
-	want := []string{"gpt-5", "gpt-5.1", "o4-mini"}
+	want := []string{"gpt-5", "gpt-5.1"}
 	if len(res.Rows) != len(want) {
 		t.Fatalf("rows = %d, want %d (%v)", len(res.Rows), len(want), res.Rows)
 	}

@@ -13,7 +13,7 @@ import (
 )
 
 type WhoamiOptions struct {
-	Backend string `flag:"backend" help:"Show only this backend: anthropic|openai|gemini|deepseek|claude-cli|claude-agent|claude-cmux|codex-cli|codex-cmux|gemini-cli" short:"b"`
+	Backend string `flag:"backend" help:"Show only this backend: anthropic|openai|gemini|deepseek|claude-cli|claude-agent|claude-cmux|codex-cli|codex-agent|codex-cmux|gemini-cli" short:"b"`
 	Models  bool   `flag:"models" help:"Probe each provider's models endpoint via a live API call" default:"true" short:"m"`
 	Limit   int    `flag:"limit" help:"Max sample model IDs to show per adapter in pretty output after per-prefix filtering (0 = all)" default:"0" short:"l"`
 }
@@ -33,7 +33,7 @@ type AdapterStatus struct {
 	Models        []string `json:"models,omitempty"`
 	ModelError    string   `json:"modelError,omitempty"`
 
-	modelDetails []ai.ModelDef
+	ModelDetails []ai.ModelDef `json:"-"`
 }
 
 // Ready reports whether the adapter can actually run: authenticated, and (for
@@ -105,6 +105,10 @@ func cliAdapters() map[ai.Backend]cliAdapter {
 		ai.BackendClaudeCLI:   claude,
 		ai.BackendClaudeCmux:  claude,
 		ai.BackendCodexCLI: {
+			binary: "codex",
+			logins: []loginFile{{rel: filepath.Join(".codex", "auth.json"), label: "codex login"}},
+		},
+		ai.BackendCodexAgent: {
 			binary: "codex",
 			logins: []loginFile{{rel: filepath.Join(".codex", "auth.json"), label: "codex login"}},
 		},
@@ -223,16 +227,21 @@ type modelFetch struct {
 	err    error
 }
 
-// fetchAPIModels hits each API backend's /v1/models endpoint once, concurrently.
-// Only API backends are fetched: CLI/agent backends list from the static
-// catalog (see applyModels) since their model menu needs no API key. An API
-// backend with no key in the environment is skipped (the listing endpoint
-// requires the key).
+var resolveModelRows = ai.ResolveModels
+
+// fetchAPIModels resolves each provider's live /v1/models endpoint once,
+// concurrently. The resolver is Captain's cached model path, so repeated whoami
+// calls reuse a fresh cache instead of hitting providers every time. CLI/agent
+// backends are mapped to their parent API provider before fetching.
 func fetchAPIModels(backends []ai.Backend, getenv func(string) string) map[ai.Backend]modelFetch {
 	apis := map[ai.Backend]bool{}
 	for _, b := range backends {
-		if b.Kind() == "api" && firstEnv(ai.AuthEnvVars(b), getenv) != "" {
-			apis[b] = true
+		source := modelSourceBackend(b)
+		if source == "" {
+			continue
+		}
+		if firstEnv(ai.AuthEnvVars(source), getenv) != "" {
+			apis[source] = true
 		}
 	}
 
@@ -243,7 +252,8 @@ func fetchAPIModels(backends []ai.Backend, getenv func(string) string) map[ai.Ba
 		wg.Add(1)
 		go func(backend ai.Backend) {
 			defer wg.Done()
-			m, err := ai.ListModels(context.Background(), backend)
+			rows, err := resolveModelRows(context.Background(), ai.ResolveOptions{Backend: backend, UseTokens: true})
+			m := liveModelDefs(rows, backend)
 			mu.Lock()
 			out[backend] = modelFetch{models: m, err: err}
 			mu.Unlock()
@@ -253,22 +263,47 @@ func fetchAPIModels(backends []ai.Backend, getenv func(string) string) map[ai.Ba
 	return out
 }
 
-// applyModels fills in the model listing (or the reason it is unavailable) for a
-// single adapter. CLI/agent backends are served from the static catalog without
-// an API key; API backends use the pre-fetched live results.
+func liveModelDefs(rows []ai.ResolvedModel, backend ai.Backend) []ai.ModelDef {
+	out := make([]ai.ModelDef, 0, len(rows))
+	for _, row := range rows {
+		if !row.Live {
+			continue
+		}
+		id := row.RuntimeID()
+		if id == "" {
+			continue
+		}
+		name := row.Label
+		if name == "" {
+			name = id
+		}
+		out = append(out, ai.ModelDef{ID: id, Name: name, Backend: backend, ReleaseDate: row.ReleaseDate})
+	}
+	return out
+}
+
+// applyModels fills in the model listing (or the reason it is unavailable) for
+// a single adapter. All backends use live provider model rows from Captain's
+// cached resolver; CLI/agent backends map those provider rows into the runtime
+// model slugs their local binaries accept.
 func applyModels(st *AdapterStatus, b ai.Backend, cache map[ai.Backend]modelFetch, getenv func(string) string) {
-	if b.Kind() == "cli" {
-		setModels(st, agentCatalogModels(b))
+	source := modelSourceBackend(b)
+	if source == "" {
+		st.ModelError = fmt.Sprintf("backend %s has no model listing", b)
 		return
 	}
 
-	envVars := ai.AuthEnvVars(b)
+	envVars := ai.AuthEnvVars(source)
 	if firstEnv(envVars, getenv) == "" {
+		if b.Kind() == "cli" {
+			setModels(st, ai.RegistryModelDefs(b))
+			return
+		}
 		st.ModelError = "set " + strings.Join(envVars, " or ") + " to list models"
 		return
 	}
 
-	fetch, ok := cache[b]
+	fetch, ok := cache[source]
 	if !ok {
 		return
 	}
@@ -276,7 +311,72 @@ func applyModels(st *AdapterStatus, b ai.Backend, cache map[ai.Backend]modelFetc
 		st.ModelError = fetch.err.Error()
 		return
 	}
-	setModels(st, fetch.models)
+	setModels(st, modelsForAdapterBackend(b, fetch.models))
+}
+
+func modelSourceBackend(backend ai.Backend) ai.Backend {
+	switch backend {
+	case ai.BackendAnthropic, ai.BackendClaudeAgent, ai.BackendClaudeCLI, ai.BackendClaudeCmux:
+		return ai.BackendAnthropic
+	case ai.BackendOpenAI, ai.BackendCodexAgent, ai.BackendCodexCLI, ai.BackendCodexCmux:
+		return ai.BackendOpenAI
+	case ai.BackendGemini, ai.BackendGeminiCLI:
+		return ai.BackendGemini
+	case ai.BackendDeepSeek:
+		return ai.BackendDeepSeek
+	default:
+		return ""
+	}
+}
+
+func modelsForAdapterBackend(backend ai.Backend, models []ai.ModelDef) []ai.ModelDef {
+	out := make([]ai.ModelDef, 0, len(models))
+	positions := map[string]int{}
+	for _, model := range models {
+		if model.Backend == ai.BackendOpenAI && ai.IsIgnoredOpenAIModelID(model.ID) {
+			continue
+		}
+		id := modelIDForAdapterBackend(backend, model.ID)
+		if id == "" {
+			continue
+		}
+		name := model.Name
+		if name == "" {
+			name = id
+		}
+		next := ai.ModelDef{ID: id, Name: name, Backend: backend, ReleaseDate: model.ReleaseDate}
+		if idx, ok := positions[id]; ok {
+			if modelDefNewer(next, out[idx]) {
+				out[idx] = next
+			}
+			continue
+		}
+		positions[id] = len(out)
+		out = append(out, next)
+	}
+	return out
+}
+
+func modelIDForAdapterBackend(backend ai.Backend, id string) string {
+	return ai.NormalizeModelForBackend(backend, bareProviderModelID(id))
+}
+
+func modelDefNewer(left, right ai.ModelDef) bool {
+	if left.ReleaseDate == "" {
+		return false
+	}
+	if right.ReleaseDate == "" {
+		return true
+	}
+	return left.ReleaseDate > right.ReleaseDate
+}
+
+func bareProviderModelID(id string) string {
+	id = strings.TrimSpace(id)
+	if i := strings.LastIndex(id, "/"); i >= 0 {
+		return id[i+1:]
+	}
+	return id
 }
 
 // setModels filters legacy entries and copies the sorted model list onto the
@@ -290,5 +390,5 @@ func setModels(st *AdapterStatus, models []ai.ModelDef) {
 		ids = append(ids, m.ID)
 	}
 	st.Models = ids
-	st.modelDetails = models
+	st.ModelDetails = models
 }

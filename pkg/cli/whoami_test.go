@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -150,6 +151,92 @@ func TestResolveAdapter_EnvKeyPreferredOverLogin(t *testing.T) {
 	}
 }
 
+func TestProbeAdaptersUsesLiveProviderModelsForClaudeCmux(t *testing.T) {
+	prev := resolveModelRows
+	resolveModelRows = func(_ context.Context, opts ai.ResolveOptions) ([]ai.ResolvedModel, error) {
+		if opts.Backend != ai.BackendAnthropic || !opts.UseTokens {
+			t.Fatalf("resolve opts = %+v, want anthropic live token resolve", opts)
+		}
+		return []ai.ResolvedModel{
+			{Model: ai.Model{ID: "anthropic/claude-sonnet-5", Backend: ai.BackendAnthropic, Label: "Claude Sonnet 5", ReleaseDate: "2026-05-20"}, Live: true},
+			{Model: ai.Model{ID: "claude-sonnet-4-6", Backend: ai.BackendAnthropic, Label: "Claude Sonnet 4.6", ReleaseDate: "2026-05-01"}, Live: true},
+			{Model: ai.Model{ID: "claude-opus-4-8", Backend: ai.BackendAnthropic, Label: "Claude Opus 4.8", ReleaseDate: "2026-04-15"}, Live: true},
+			{Model: ai.Model{ID: "anthropic/claude-sonnet-static", Backend: ai.BackendAnthropic, Label: "Static Sonnet"}, Live: false},
+		}, nil
+	}
+	t.Cleanup(func() { resolveModelRows = prev })
+
+	adapters, err := ProbeAdapters(WhoamiOptions{Backend: string(ai.BackendClaudeCmux), Models: true}, fakeProbe(
+		map[string]string{"ANTHROPIC_API_KEY": "sk-ant-test"},
+		map[string]string{"claude": "/usr/local/bin/claude"},
+		nil,
+		"/home/u",
+	))
+	if err != nil {
+		t.Fatalf("ProbeAdapters: %v", err)
+	}
+	if len(adapters) != 1 {
+		t.Fatalf("adapter count = %d, want 1", len(adapters))
+	}
+	got := adapters[0].Models
+	for _, want := range []string{"claude-sonnet-5", "claude-sonnet-4-6", "claude-opus-4-8"} {
+		if !stringSliceContains(got, want) {
+			t.Fatalf("models = %v, want exact runtime model %q from live provider model list", got, want)
+		}
+	}
+	for _, rejected := range []string{"sonnet-5", "sonnet-4-6", "opus-4-8", "claude-agent-sonnet", "claude-agent-opus", "claude-sonnet-static"} {
+		if stringSliceContains(got, rejected) {
+			t.Fatalf("models = %v, should not include alias/static id %q after adapter normalization", got, rejected)
+		}
+	}
+}
+
+func TestProbeAdaptersFiltersNoisyOpenAIModelsForCodexCmux(t *testing.T) {
+	prev := resolveModelRows
+	resolveModelRows = func(_ context.Context, opts ai.ResolveOptions) ([]ai.ResolvedModel, error) {
+		if opts.Backend != ai.BackendOpenAI || !opts.UseTokens {
+			t.Fatalf("resolve opts = %+v, want openai live token resolve", opts)
+		}
+		return []ai.ResolvedModel{
+			{Model: ai.Model{ID: "openai/gpt-5.5", Backend: ai.BackendOpenAI, Label: "GPT-5.5", ReleaseDate: "2026-06-01"}, Live: true},
+			{Model: ai.Model{ID: "openai/gpt-5.4", Backend: ai.BackendOpenAI, Label: "GPT-5.4", ReleaseDate: "2026-05-15"}, Live: true},
+			{Model: ai.Model{ID: "openai/gpt-realtime-2.1", Backend: ai.BackendOpenAI, Label: "Realtime"}, Live: true},
+			{Model: ai.Model{ID: "openai/gpt-image-2", Backend: ai.BackendOpenAI, Label: "Image"}, Live: true},
+			{Model: ai.Model{ID: "openai/gpt-audio-1.5", Backend: ai.BackendOpenAI, Label: "Audio"}, Live: true},
+			{Model: ai.Model{ID: "openai/gpt-5.3-codex", Backend: ai.BackendOpenAI, Label: "Codex"}, Live: true},
+			{Model: ai.Model{ID: "openai/gpt-5.3-chat-latest", Backend: ai.BackendOpenAI, Label: "Chat latest"}, Live: true},
+			{Model: ai.Model{ID: "openai/gpt-5.5-pro", Backend: ai.BackendOpenAI, Label: "Pro"}, Live: true},
+			{Model: ai.Model{ID: "openai/o4-mini", Backend: ai.BackendOpenAI, Label: "O4 mini"}, Live: true},
+			{Model: ai.Model{ID: "openai/sora-2", Backend: ai.BackendOpenAI, Label: "Sora"}, Live: true},
+		}, nil
+	}
+	t.Cleanup(func() { resolveModelRows = prev })
+
+	adapters, err := ProbeAdapters(WhoamiOptions{Backend: string(ai.BackendCodexCmux), Models: true}, fakeProbe(
+		map[string]string{"OPENAI_API_KEY": "sk-test"},
+		map[string]string{"codex": "/usr/local/bin/codex"},
+		nil,
+		"/home/u",
+	))
+	if err != nil {
+		t.Fatalf("ProbeAdapters: %v", err)
+	}
+	if len(adapters) != 1 {
+		t.Fatalf("adapter count = %d, want 1", len(adapters))
+	}
+	got := adapters[0].Models
+	for _, want := range []string{"gpt-5.5", "gpt-5.4"} {
+		if !stringSliceContains(got, want) {
+			t.Fatalf("models = %v, want primary OpenAI model %q", got, want)
+		}
+	}
+	for _, hidden := range []string{"gpt-realtime-2.1", "gpt-image-2", "gpt-audio-1.5", "gpt-5.3-codex", "gpt-5.3-chat-latest", "gpt-5.5-pro", "o4-mini", "sora-2"} {
+		if stringSliceContains(got, hidden) {
+			t.Fatalf("models = %v, should hide noisy OpenAI model %q", got, hidden)
+		}
+	}
+}
+
 func TestWhoamiPrettyKeylessCmuxDoesNotRequestAPIKey(t *testing.T) {
 	got := (WhoamiResult{
 		Adapters: []AdapterStatus{{
@@ -236,14 +323,14 @@ func TestSetModelsKeepsGeminiProFamily(t *testing.T) {
 	}
 }
 
-func TestSetModelsKeepsCurrentCLIModelSlugs(t *testing.T) {
+func TestSetModelsHidesCodexCodeVariantsForCLI(t *testing.T) {
 	st := AdapterStatus{Backend: string(ai.BackendCodexCLI)}
 	setModels(&st, []ai.ModelDef{
 		{ID: "gpt-5-codex", Backend: ai.BackendCodexCLI, ReleaseDate: "2025-08-07"},
 	})
 
-	if st.ModelCount != 1 || len(st.Models) != 1 || st.Models[0] != "gpt-5-codex" {
-		t.Fatalf("codex CLI model should not be blacklisted: %+v", st)
+	if st.ModelCount != 0 || len(st.Models) != 0 {
+		t.Fatalf("codex code variant should be hidden for CLI: %+v", st)
 	}
 }
 
@@ -255,7 +342,7 @@ func TestWhoamiPrettyRendersModelListItems(t *testing.T) {
 		AuthMethod:    "OPENAI_API_KEY (env)",
 		ModelCount:    6,
 		Models:        []string{"m6", "m5", "m4", "m3", "m2", "m1"},
-		modelDetails: []ai.ModelDef{
+		ModelDetails: []ai.ModelDef{
 			{ID: "m6", ReleaseDate: "2026-06-01"},
 			{ID: "m5", ReleaseDate: "2026-05-01"},
 			{ID: "m4", ReleaseDate: "2026-04-01"},
@@ -287,4 +374,13 @@ func TestWhoamiPrettyRendersModelListItems(t *testing.T) {
 	if strings.Contains(got, "- m1") {
 		t.Errorf("Pretty() ignored sample limit: %q", got)
 	}
+}
+
+func stringSliceContains(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
+			return true
+		}
+	}
+	return false
 }

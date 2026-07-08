@@ -134,6 +134,7 @@ type PromptActionFlags struct {
 	AppendSystem string   `flag:"append-system" help:"Append text to the default system prompt"`
 	Var          []string `flag:"var" help:"Template variable key=value (repeatable)" short:"V"`
 	Vars         string   `flag:"vars" help:"JSON object of template variables (HTTP callers)"`
+	MultiModels  []string `flag:"multi-models" help:"Run prompt once per runtime selector in parallel, e.g. cli:sonnet-5,cmux:opus (repeatable; comma-separated allowed)" short:"M"`
 	Timeout      string   `flag:"timeout" help:"Request timeout" default:"120s"`
 	NoStream     bool     `flag:"no-stream" help:"Disable streaming; print only the final text (CLI)"`
 }
@@ -420,6 +421,15 @@ func finalizeRenderResult(record promptRecord, content string, req ai.Request, c
 	// fallback) at render time, not just on run.
 	req.Model = req.ExpandCSV()
 	cfg.Model = cfg.Model.ExpandCSV()
+	var err error
+	req.Model, err = ai.ResolveModelSelectors(req.Model)
+	if err != nil {
+		return PromptRenderResult{}, err
+	}
+	cfg.Model, err = ai.ResolveModelSelectors(cfg.Model)
+	if err != nil {
+		return PromptRenderResult{}, err
+	}
 	for _, c := range cfg.Model.Candidates() {
 		warnIfLikelyModelTypo(c.Name)
 	}

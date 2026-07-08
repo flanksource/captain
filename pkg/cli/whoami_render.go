@@ -104,7 +104,7 @@ func (a AdapterStatus) appendModels(t api.Text, limit int) api.Text {
 	t = t.Append("  ", "").
 		Append(fmt.Sprintf("%d models", a.ModelCount), "text-blue-600 font-medium")
 
-	sample := a.modelDetails
+	sample := a.ModelDetails
 	if len(sample) == 0 && len(a.Models) > 0 {
 		sample = make([]ai.ModelDef, 0, len(a.Models))
 		for _, id := range a.Models {

@@ -77,7 +77,11 @@ func overlayCLI(base ai.Request, baseCfg ai.Config, o AIPromptOptions) (ai.Reque
 	}
 	m := bm
 	m.Name = firstNonEmpty(o.Model, bm.Name, saved.Model)
-	m.Backend = api.Backend(firstNonEmpty(o.Backend, string(bm.Backend), saved.Backend))
+	backend := firstNonEmpty(o.Backend, string(bm.Backend), saved.Backend)
+	if o.Backend == "" && ai.ContainsRuntimeSelector(m.Name) {
+		backend = ""
+	}
+	m.Backend = api.Backend(backend)
 	if temperature != 0 {
 		t := temperature
 		m.Temperature = &t
@@ -85,7 +89,10 @@ func overlayCLI(base ai.Request, baseCfg ai.Config, o AIPromptOptions) (ai.Reque
 	m.Effort = api.Effort(firstNonEmpty(o.Effort, string(bm.Effort), saved.ReasoningEffort))
 	m.NoCache = o.NoCache || bm.NoCache || saved.NoCache
 	m.Fallbacks = firstFallbacks(o.Fallback, bm.Fallbacks)
-	req.Model = m.ExpandCSV()
+	req.Model, err = ai.ResolveModelSelectors(m)
+	if err != nil {
+		return base, baseCfg, err
+	}
 
 	req.Budget.MaxTokens = firstPositive(o.MaxTokens, base.Budget.MaxTokens, baseCfg.Budget.MaxTokens, saved.MaxTokens, 4096)
 	req.Budget.Cost = firstPositiveFloat(budget, base.Budget.Cost, baseCfg.Budget.Cost, saved.BudgetUSD)

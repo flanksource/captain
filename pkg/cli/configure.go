@@ -71,7 +71,7 @@ func RunConfigure(opts ConfigureOptions) (any, error) {
 				Value(&model),
 			huh.NewSelect[string]().
 				Title("Reasoning effort").
-				Description("Honoured by codex-cli and the API backends (thinking budget); CLI wrappers may ignore.").
+				Description("Honoured by codex-agent and the API backends (thinking budget); CLI wrappers may ignore.").
 				Options(
 					huh.NewOption("low", "low"),
 					huh.NewOption("medium", "medium"),
@@ -211,6 +211,7 @@ func backendOptions() []huh.Option[string] {
 		huh.NewOption("Claude Agent (SDK)", string(ai.BackendClaudeAgent)),
 		huh.NewOption("Claude cmux", string(ai.BackendClaudeCmux)),
 		huh.NewOption("Codex CLI", string(ai.BackendCodexCLI)),
+		huh.NewOption("Codex Agent (app-server)", string(ai.BackendCodexAgent)),
 		huh.NewOption("Codex cmux", string(ai.BackendCodexCmux)),
 		huh.NewOption("Gemini CLI", string(ai.BackendGeminiCLI)),
 	}
@@ -265,8 +266,8 @@ func modelHuhOptions(models []ai.ModelDef) []huh.Option[string] {
 }
 
 // defaultModelFor returns a hard-coded picker default per backend that seeds the
-// form. CLI/agent backends use the catalog slug their picker actually lists
-// (agentCatalogModels) so the seeded default is a selectable option. API
+// form. CLI/agent backends use exact provider model IDs from the catalog so the
+// seeded default is a selectable option. API
 // backends have no "default" flag on /v1/models, so we use the most-current id
 // we expect each provider to keep stable; the user can pick anything else.
 func defaultModelFor(b ai.Backend) string {
@@ -274,13 +275,13 @@ func defaultModelFor(b ai.Backend) string {
 	case ai.BackendAnthropic:
 		return "claude-sonnet-5"
 	case ai.BackendClaudeCLI, ai.BackendClaudeAgent:
-		return "claude-agent-sonnet"
+		return "claude-sonnet-5"
 	case ai.BackendOpenAI:
 		return "gpt-5.5"
 	case ai.BackendDeepSeek:
 		return "deepseek-reasoner"
-	case ai.BackendCodexCLI:
-		return "gpt-5-codex"
+	case ai.BackendCodexCLI, ai.BackendCodexAgent:
+		return "gpt-5.5"
 	case ai.BackendGemini, ai.BackendGeminiCLI:
 		return "gemini-3.5-flash"
 	}

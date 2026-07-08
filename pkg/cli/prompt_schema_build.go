@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
 	clickyrpc "github.com/flanksource/clicky/rpc"
 )
@@ -13,8 +12,6 @@ import (
 // buildPromptSchemaDocument is the pure assembler (no I/O), taking a probed
 // adapter set so tests can drive it with a deterministic, network-free stub.
 func buildPromptSchemaDocument(adapters []AdapterStatus) (map[string]any, error) {
-	adapters = withCatalogModelFallback(adapters)
-
 	reflected, err := reflectedSchemas()
 	if err != nil {
 		return nil, err
@@ -162,38 +159,6 @@ func injectSpecConditionals(specMap map[string]any, adapters []AdapterStatus, ar
 	}
 	specMap["allOf"] = allOf
 	return nil
-}
-
-// withCatalogModelFallback fills a backend's model list from the static catalog
-// when it is unauthenticated and the live probe returned nothing, so the editor
-// still offers model choices instead of an empty enum. The catalog answered, so
-// the "set your key" hint is cleared. CLI/agent backends already list catalog
-// models regardless of auth, so this only affects unauthenticated API backends
-// (and no-ops where the catalog has no entry, e.g. the cmux backends).
-func withCatalogModelFallback(adapters []AdapterStatus) []AdapterStatus {
-	out := make([]AdapterStatus, len(adapters))
-	for i, a := range adapters {
-		if !a.Authenticated && len(a.Models) == 0 {
-			if ids := catalogModelIDs(api.Backend(a.Backend)); len(ids) > 0 {
-				a.Models = ids
-				a.ModelError = ""
-			}
-		}
-		out[i] = a
-	}
-	return out
-}
-
-// catalogModelIDs returns the catalog's model slugs for a backend, bare (no
-// provider prefix) to match how spec.model names models.
-func catalogModelIDs(b api.Backend) []string {
-	var out []string
-	for _, m := range ai.Catalog() {
-		if m.Backend == b {
-			out = append(out, m.BareID())
-		}
-	}
-	return out
 }
 
 // flatModels is a convenience union of every available model across adapters.

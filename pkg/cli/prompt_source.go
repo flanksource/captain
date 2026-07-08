@@ -161,6 +161,7 @@ func actionFlagsToOptions(f map[string]string) (AIPromptOptions, error) {
 	o.System = f["system"]
 	o.AppendSystem = f["append-system"]
 	o.Var = flagSlice(f["var"])
+	o.MultiModels = flagSlice(f["multi-models"])
 	o.Timeout = f["timeout"]
 	o.NoStream = flagBool(f["no-stream"])
 	return o, nil

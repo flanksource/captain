@@ -53,18 +53,19 @@ func TestParseFromReader_ClaudeStreamJSON(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, claude.FormatClaudeStreamJSON, result.Format)
 	assert.Nil(t, result.CLIOut)
-	// Stream-json now surfaces system/init and result/* as synthetic tools
-	// alongside real tool_use blocks.
-	require.Len(t, result.ToolUses, 4)
+	// Stream-json now surfaces chat, system/init, and result/* rows alongside
+	// real tool_use blocks.
+	require.Len(t, result.ToolUses, 5)
 	names := []string{
 		result.ToolUses[0].Tool,
 		result.ToolUses[1].Tool,
 		result.ToolUses[2].Tool,
 		result.ToolUses[3].Tool,
+		result.ToolUses[4].Tool,
 	}
-	assert.Equal(t, []string{"SessionInit", "Bash", "Read", "Result"}, names)
-	assert.Equal(t, "ls -la", result.ToolUses[1].Input["command"])
-	assert.Equal(t, "/tmp/foo.go", result.ToolUses[2].Input["file_path"])
+	assert.Equal(t, []string{"SessionInit", "User", "Bash", "Read", "Result"}, names)
+	assert.Equal(t, "ls -la", result.ToolUses[2].Input["command"])
+	assert.Equal(t, "/tmp/foo.go", result.ToolUses[3].Input["file_path"])
 }
 
 func TestParseFromReader_ClaudeCLI(t *testing.T) {
@@ -270,4 +271,34 @@ func TestRunHistoryFromReader_CategoryAliases(t *testing.T) {
 	assert.Equal(t, "Task", histResult.Results[0].Tool)
 	assert.Equal(t, "plan", histResult.Results[0].Category)
 	assert.NotContains(t, histResult.Results[0].Summary, `{"plan"`)
+}
+
+func TestRunHistoryFromReader_CodexChatRowsAndChatCategoryFilter(t *testing.T) {
+	data := []byte(`{"timestamp":"2026-07-08T11:19:57.028Z","type":"session_meta","payload":{"id":"sess-rollout","cwd":"/repo","cli_version":"0.143.0","model_provider":"openai"}}
+{"timestamp":"2026-07-08T11:19:57.028Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"}}
+{"timestamp":"2026-07-08T11:19:58.758Z","type":"turn_context","payload":{"model":"gpt-5.5","effort":"high"}}
+{"timestamp":"2026-07-08T11:19:58.760Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}}
+{"timestamp":"2026-07-08T11:19:58.760Z","type":"event_msg","payload":{"type":"user_message","message":"hi"}}
+{"timestamp":"2026-07-08T11:20:00.403Z","type":"event_msg","payload":{"type":"agent_message","message":"hello"}}
+{"timestamp":"2026-07-08T11:20:00.403Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hello"}]}}
+{"timestamp":"2026-07-08T11:20:00.435Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-1","duration_ms":3519}}
+`)
+
+	result, err := runHistoryFromReader(data, HistoryOptions{})
+	require.NoError(t, err)
+	histResult := result.(session.HistoryResult)
+	require.Len(t, histResult.Results, 4)
+	assert.Equal(t, []string{"TaskStarted", "User", "Assistant", "TaskComplete"}, []string{
+		histResult.Results[0].Tool,
+		histResult.Results[1].Tool,
+		histResult.Results[2].Tool,
+		histResult.Results[3].Tool,
+	})
+	for _, row := range histResult.Results {
+		assert.Equal(t, "chat", row.Category)
+	}
+
+	filtered, err := runHistoryFromReader(data, HistoryOptions{Categories: []string{"!chat"}})
+	require.NoError(t, err)
+	assert.Empty(t, filtered.(session.HistoryResult).Results)
 }
