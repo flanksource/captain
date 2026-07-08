@@ -83,6 +83,7 @@ type Message struct {
 	ID         string          `json:"id,omitempty"`
 	Role       string          `json:"role"`
 	Parts      []Part          `json:"parts"`
+	TurnID     string          `json:"turnId,omitempty"`
 	Provenance *Provenance     `json:"provenance,omitempty"`
 	Raw        json.RawMessage `json:"raw,omitempty"`
 

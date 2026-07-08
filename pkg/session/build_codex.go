@@ -7,6 +7,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai/history"
 	"github.com/flanksource/captain/pkg/claude"
+	"github.com/flanksource/captain/pkg/claude/tools"
 	"github.com/flanksource/commons/logger"
 	"github.com/segmentio/encoding/json"
 )
@@ -29,7 +30,12 @@ func BuildCodex(files []string) []*Session {
 			continue
 		}
 		info, _ := history.ReadCodexSessionInfo(f)
-		out = append(out, buildCodexSession(uses, info))
+		s := buildCodexSession(uses, info)
+		s.HistoryFile = f
+		if s.Root != nil {
+			s.Root.HistoryFile = f
+		}
+		out = append(out, s)
 	}
 	return out
 }
@@ -54,6 +60,10 @@ func buildCodexSession(uses []history.ToolUse, info *history.CodexSessionInfo) *
 		if u.Timestamp != nil {
 			extendRange(s, *u.Timestamp)
 		}
+		if tools.IsEventToolName(u.Tool) || u.Tool == "ApiError" {
+			s.Events = append(s.Events, codexUseToEvent(u))
+			continue
+		}
 		collectCodexPaths(u, &read, &written)
 		s.Messages = append(s.Messages, codexUseToMessage(u))
 	}
@@ -72,8 +82,8 @@ func buildCodexSession(uses []history.ToolUse, info *history.CodexSessionInfo) *
 		if s.Model == "" {
 			s.Model = info.Model
 		}
-		if s.StartedAt == nil && info.StartedAt != nil {
-			s.StartedAt = info.StartedAt
+		if info.StartedAt != nil {
+			extendRange(s, *info.StartedAt)
 		}
 	}
 
@@ -171,6 +181,8 @@ func codexUseToMessage(u history.ToolUse) Message {
 		Timestamp:       u.Timestamp,
 	}
 	switch u.Tool {
+	case "User":
+		return Message{Role: "user", Parts: []Part{{Type: PartText, Text: codexText(u)}}, Provenance: prov}
 	case "Assistant":
 		return Message{Role: "assistant", Parts: []Part{{Type: PartText, Text: codexText(u)}}, Provenance: prov}
 	case "Reasoning":
@@ -190,6 +202,26 @@ func codexUseToMessage(u history.ToolUse) Message {
 			part.State = ToolStateOutputAvailable
 		}
 		return Message{Role: "assistant", Parts: []Part{part}, Provenance: prov}
+	}
+}
+
+func codexUseToEvent(u history.ToolUse) Event {
+	typ, _ := u.Input["event"].(string)
+	if typ == "" {
+		typ = "event"
+	}
+	data := make(map[string]any, len(u.Input))
+	for k, v := range u.Input {
+		if k == "event" {
+			continue
+		}
+		data[k] = v
+	}
+	return Event{
+		Type:      typ,
+		Scope:     "session",
+		Timestamp: u.Timestamp,
+		Data:      data,
 	}
 }
 

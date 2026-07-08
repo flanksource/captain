@@ -53,7 +53,7 @@ func TestBuildHierarchy_MultiLevelParentLinkage(t *testing.T) {
 		Entries: []claude.HistoryEntry{{UUID: "grand-1", ParentUUID: "child-1", Timestamp: "2026-07-05T10:02:00Z", Message: claude.Message{Role: claude.MessageRoleAssistant}}},
 	}
 
-	h := buildHierarchy(claude.ParsedSession{SessionID: "root-sess", Transcripts: []claude.ParsedTranscript{root, child, grandchild}})
+	h := buildHierarchy(claude.ParsedSession{SessionID: "root-sess", Transcripts: []claude.ParsedTranscript{root, child, grandchild}}, nil)
 
 	byID := map[string]*Agent{}
 	for _, a := range h.agents {
@@ -61,6 +61,12 @@ func TestBuildHierarchy_MultiLevelParentLinkage(t *testing.T) {
 	}
 	if got := byID["child"].ParentID; got != "root-sess" {
 		t.Errorf("child parent = %q, want root-sess", got)
+	}
+	if got := byID["root-sess"].HistoryFile; got != "/p/root-sess.jsonl" {
+		t.Errorf("root history file = %q, want /p/root-sess.jsonl", got)
+	}
+	if got := byID["child"].HistoryFile; got != "/p/root-sess/subagents/agent-child.jsonl" {
+		t.Errorf("child history file = %q, want agent transcript path", got)
 	}
 	if got := byID["grand"].ParentID; got != "child" {
 		t.Errorf("grandchild parent = %q, want child (flattened to root would be the bug)", got)
@@ -135,6 +141,9 @@ func TestBuildSession_CostFilesPlanApprovals(t *testing.T) {
 
 	s := buildSession(ps)
 
+	if got := s.HistoryFile; got != "/p/root-sess.jsonl" {
+		t.Errorf("history file = %q, want /p/root-sess.jsonl", got)
+	}
 	if want := 0.0525; math.Abs(s.Cost.Total()-want) > 1e-9 {
 		t.Errorf("session cost = %v, want %v", s.Cost.Total(), want)
 	}
@@ -153,6 +162,150 @@ func TestBuildSession_CostFilesPlanApprovals(t *testing.T) {
 	// Write + ExitPlanMode both counted; ExitPlanMode excluded from approvals.
 	if s.Approvals.Approved != 1 {
 		t.Errorf("approved = %d, want 1 (Write only)", s.Approvals.Approved)
+	}
+}
+
+func TestBuildSession_MetadataTurnsCapabilitiesBudget(t *testing.T) {
+	entries := []claude.HistoryEntry{
+		{
+			UUID:      "tools-1",
+			SessionID: "root-sess",
+			Timestamp: "2026-07-05T10:00:00Z",
+			Event: &claude.TranscriptEvent{
+				Type:  "deferred_tools_delta",
+				Scope: "session",
+				Data: map[string]any{
+					"addedNames":        []any{"Read", "Bash"},
+					"pendingMcpServers": []any{"github"},
+				},
+			},
+		},
+		{
+			UUID:      "agents-1",
+			SessionID: "root-sess",
+			Timestamp: "2026-07-05T10:00:01Z",
+			Event: &claude.TranscriptEvent{
+				Type:  "agent_listing_delta",
+				Scope: "session",
+				Data:  map[string]any{"addedTypes": []any{"general-purpose"}},
+			},
+		},
+		{
+			UUID:      "skills-1",
+			SessionID: "root-sess",
+			Timestamp: "2026-07-05T10:00:02Z",
+			Event: &claude.TranscriptEvent{
+				Type:  "skill_listing",
+				Scope: "session",
+				Data:  map[string]any{"content": "- gavel-runner: Run gavel tests\n- iconography: Pick icons"},
+			},
+		},
+		{
+			UUID:      "queue-1",
+			SessionID: "root-sess",
+			Timestamp: "2026-07-05T10:00:03Z",
+			Event: &claude.TranscriptEvent{
+				Type:  "queue-operation",
+				Scope: "turn",
+				Data:  map[string]any{"operation": "enqueue"},
+			},
+		},
+		{
+			UUID:      "budget-1",
+			SessionID: "root-sess",
+			Timestamp: "2026-07-05T10:00:04Z",
+			Event: &claude.TranscriptEvent{
+				Type:  "budget_usd",
+				Scope: "turn",
+				Data:  map[string]any{"used": 1.25, "total": 5.0, "remaining": 3.75},
+			},
+		},
+		{
+			UUID:      "user-1",
+			SessionID: "root-sess",
+			Timestamp: "2026-07-05T10:00:05Z",
+			Message: claude.Message{
+				Role:    claude.MessageRoleUser,
+				Content: []claude.ContentBlock{{Type: claude.ContentTypeText, Text: "fix it"}},
+			},
+		},
+		{
+			UUID:      "assistant-1",
+			SessionID: "root-sess",
+			Timestamp: "2026-07-05T10:00:06Z",
+			Message: claude.Message{
+				Role:       claude.MessageRoleAssistant,
+				Model:      "claude-opus-4",
+				StopReason: claude.StopReasonEndTurn,
+				Usage: &claude.Usage{
+					InputTokens:              1000,
+					OutputTokens:             500,
+					CacheCreationInputTokens: 200,
+					CacheReadInputTokens:     300,
+				},
+				Content: []claude.ContentBlock{{Type: claude.ContentTypeText, Text: "done"}},
+			},
+		},
+		{
+			UUID:      "prompt-1",
+			SessionID: "root-sess",
+			Timestamp: "2026-07-05T10:00:07Z",
+			Event: &claude.TranscriptEvent{
+				Type:  "last-prompt",
+				Scope: "session",
+				Data:  map[string]any{"content": "fix it"},
+			},
+		},
+	}
+
+	s := buildSession(claude.ParsedSession{
+		SessionID:   "root-sess",
+		Transcripts: []claude.ParsedTranscript{{Path: "/p/root-sess.jsonl", Entries: entries}},
+	})
+
+	if !equalStrings(s.Capabilities.Tools, []string{"Bash", "Read"}) {
+		t.Errorf("tools = %v, want Bash/Read", s.Capabilities.Tools)
+	}
+	if !equalStrings(s.Capabilities.PendingMCPServers, []string{"github"}) {
+		t.Errorf("pending MCP = %v, want github", s.Capabilities.PendingMCPServers)
+	}
+	if !equalStrings(s.Capabilities.Agents, []string{"general-purpose"}) {
+		t.Errorf("agents = %v, want general-purpose", s.Capabilities.Agents)
+	}
+	if !equalStrings(s.Capabilities.Skills, []string{"gavel-runner", "iconography"}) {
+		t.Errorf("skills = %v, want extracted skill names", s.Capabilities.Skills)
+	}
+	if s.Budget == nil || s.Budget.Used != 1.25 || s.Budget.Total != 5.0 || s.Budget.Remaining != 3.75 {
+		t.Fatalf("budget = %+v, want transcript budget", s.Budget)
+	}
+	if s.Context == nil || s.Context.UsedTokens != 1500 || s.Context.WindowTokens != claudeContextWindow {
+		t.Fatalf("context = %+v, want input+cache occupancy", s.Context)
+	}
+	if len(s.Events) != 4 {
+		t.Fatalf("session events = %d, want 4", len(s.Events))
+	}
+	if len(s.Turns) != 1 {
+		t.Fatalf("turns = %d, want 1: %+v", len(s.Turns), s.Turns)
+	}
+	turn := s.Turns[0]
+	if turn.Budget == nil || turn.Budget.Used != 1.25 {
+		t.Errorf("turn budget = %+v, want budget_usd", turn.Budget)
+	}
+	if len(turn.Events) != 2 || turn.Events[0].Type != "queue-operation" || turn.Events[1].Type != "budget_usd" {
+		t.Errorf("turn events = %+v, want queue-operation and budget_usd", turn.Events)
+	}
+	if turn.Model != "claude-opus-4" || turn.StopReason != string(claude.StopReasonEndTurn) {
+		t.Errorf("turn model/stop = %q/%q", turn.Model, turn.StopReason)
+	}
+	if !equalStrings(turn.MessageIDs, []string{"user-1", "assistant-1"}) {
+		t.Errorf("turn messages = %v, want user and assistant ids", turn.MessageIDs)
+	}
+	for _, msg := range s.Messages {
+		if msg.ID == "user-1" || msg.ID == "assistant-1" {
+			if msg.TurnID != turn.ID {
+				t.Errorf("message %s turnId = %q, want %q", msg.ID, msg.TurnID, turn.ID)
+			}
+		}
 	}
 }
 

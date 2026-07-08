@@ -20,7 +20,7 @@ type hierarchy struct {
 // points at the spawning tool call in its parent), falling back to the root
 // session when the parent cannot be resolved — fixing the flat-attribution gap
 // where grandchild agents were mis-attributed to the root.
-func buildHierarchy(ps claude.ParsedSession) hierarchy {
+func buildHierarchy(ps claude.ParsedSession, turnByEntry map[string]string) hierarchy {
 	// uuid -> owning agent id ("" == root), so a sub-agent's parentUuid can be
 	// resolved to the agent that produced the referenced entry.
 	uuidOwner := map[string]string{}
@@ -44,12 +44,15 @@ func buildHierarchy(ps claude.ParsedSession) hierarchy {
 	for _, t := range ps.Transcripts {
 		var node *Agent
 		if t.IsAgent {
-			node = &Agent{ID: t.AgentID, Type: t.AgentType, Desc: t.AgentDesc}
+			node = &Agent{ID: t.AgentID, Type: t.AgentType, Desc: t.AgentDesc, HistoryFile: t.Path}
 			node.ParentID = resolveParent(t, uuidOwner, ps.SessionID)
 			byID[t.AgentID] = node
 			agents = append(agents, node)
 		} else {
 			node = root
+			if node.HistoryFile == "" {
+				node.HistoryFile = t.Path
+			}
 		}
 
 		costs := api.Costs{}
@@ -57,7 +60,7 @@ func buildHierarchy(ps claude.ParsedSession) hierarchy {
 			if e.IsAssistantMessage() && e.Message.Usage != nil {
 				costs = append(costs, CostFromUsage(e.Message.Usage, e.Message.Model))
 			}
-			if m, ok := entryToMessage(e, node.ID); ok {
+			if m, ok := entryToMessage(e, node.ID, turnByEntry[e.UUID]); ok {
 				messages = append(messages, m)
 			}
 		}
@@ -103,7 +106,7 @@ func resolveParent(t claude.ParsedTranscript, uuidOwner map[string]string, rootI
 // entryToMessage projects a transcript entry into a canonical Message. It
 // returns ok=false for entries with no renderable content (e.g. bare
 // state-tracking lines).
-func entryToMessage(e claude.HistoryEntry, agentID string) (Message, bool) {
+func entryToMessage(e claude.HistoryEntry, agentID, turnID string) (Message, bool) {
 	parts := partsFromEntry(e)
 	if len(parts) == 0 {
 		return Message{}, false
@@ -114,6 +117,7 @@ func entryToMessage(e claude.HistoryEntry, agentID string) (Message, bool) {
 		Parts:      parts,
 		Provenance: provenanceFromEntry(e, agentID),
 		AgentID:    agentID,
+		TurnID:     turnID,
 	}
 	if len(e.RawLine) > 0 {
 		m.Raw = e.RawLine

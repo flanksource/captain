@@ -6,6 +6,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/claude"
+	"github.com/flanksource/captain/pkg/claude/tools"
 )
 
 // Build discovers the in-scope sessions and returns the unified model for each,
@@ -25,22 +26,28 @@ func Build(currentDir string, searchAll bool, filter claude.Filter) ([]*Session,
 
 // buildSession assembles one Session from a parsed root+sub-agent group.
 func buildSession(ps claude.ParsedSession) *Session {
-	h := buildHierarchy(ps)
-
-	s := &Session{
-		ID:       ps.SessionID,
-		Source:   "claude",
-		Root:     h.root,
-		Agents:   h.agents,
-		Messages: h.messages,
-	}
-
 	var allEntries []claude.HistoryEntry
 	var allToolUses []claude.ToolUse
 	costs := api.Costs{}
 	for _, t := range ps.Transcripts {
 		allEntries = append(allEntries, t.Entries...)
 		allToolUses = append(allToolUses, t.ToolUses...)
+	}
+	meta := buildSessionMetadata("claude", allEntries)
+	h := buildHierarchy(ps, meta.turnByEntry)
+
+	s := &Session{
+		ID:           ps.SessionID,
+		Source:       "claude",
+		HistoryFile:  h.root.HistoryFile,
+		Context:      latestContext(meta.turns),
+		Budget:       meta.budget,
+		Capabilities: meta.capabilities,
+		Events:       meta.events,
+		Turns:        meta.turns,
+		Root:         h.root,
+		Agents:       h.agents,
+		Messages:     h.messages,
 	}
 
 	applyMetadata(s, ps, allEntries)
@@ -175,11 +182,39 @@ func approvalStats(uses []claude.ToolUse) ApprovalStats {
 				Tool:      tu.Tool,
 				Reason:    tu.DeniedReason,
 			})
-		case tu.Tool == "ExitPlanMode" || tu.Tool == "User":
+		case isNonApprovalActivity(tu.Tool):
 			// plan/synthetic rows are not approvals
 		default:
 			stats.Approved++
 		}
 	}
 	return stats
+}
+
+func isNonApprovalActivity(tool string) bool {
+	if tools.IsEventToolName(tool) {
+		return true
+	}
+	switch tool {
+	case "ExitPlanMode", "User", "Assistant", "Reasoning", "Event",
+		"ApiError", "ParseError", "Result", "SessionInit", "HookStart",
+		"HookResponse", "StopHookSummary", "TurnDuration", "AwaySummary",
+		"SessionTitle":
+		return true
+	default:
+		return false
+	}
+}
+
+func isChatActivity(tool string) bool {
+	switch tool {
+	case "User", "Assistant", "Reasoning":
+		return true
+	default:
+		return false
+	}
+}
+
+func isOperationalToolActivity(tool string) bool {
+	return !isNonApprovalActivity(tool) && tool != ""
 }

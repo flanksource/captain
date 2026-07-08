@@ -133,7 +133,7 @@ func rowFromTranscript(sessionID string, t claude.ParsedTranscript, uuidOwner ma
 	r.Usage = usageFromCost(r.Cost)
 	r.Files = changedFiles(t.ToolUses)
 	r.Approvals = approvalStats(t.ToolUses)
-	r.ToolCalls = len(t.ToolUses)
+	r.ToolCalls = countOperationalToolUses(t.ToolUses)
 	r.Messages = countEntryMessages(t.Entries)
 	if !t.IsAgent {
 		r.Plan = buildPlan(t.Entries, t.ToolUses)
@@ -172,13 +172,23 @@ func CodexRow(path string) (Row, bool) {
 		r.ReasoningEffort = info.ReasoningEffort
 	}
 	for _, u := range uses {
-		if u.Tool == "Assistant" || u.Tool == "Reasoning" {
+		if isChatActivity(u.Tool) {
 			r.Messages++
-		} else {
+		} else if isOperationalToolActivity(u.Tool) {
 			r.ToolCalls++
 		}
 	}
 	return r, true
+}
+
+func countOperationalToolUses(uses []claude.ToolUse) int {
+	n := 0
+	for _, use := range uses {
+		if isOperationalToolActivity(use.Tool) {
+			n++
+		}
+	}
+	return n
 }
 
 func extendRowRange(r *Row, ts time.Time) {

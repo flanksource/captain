@@ -11,14 +11,15 @@ import (
 // history/sessions commands render, the viewer consumes, and the chat/live
 // surfaces project from.
 type Session struct {
-	ID       string `json:"id"`
-	Source   string `json:"source,omitempty"` // "claude" | "codex"
-	Project  string `json:"project,omitempty"`
-	CWD      string `json:"cwd,omitempty"`
-	Slug     string `json:"slug,omitempty"`
-	Version  string `json:"version,omitempty"`
-	Provider string `json:"provider,omitempty"`
-	Model    string `json:"model,omitempty"` // primary model
+	ID          string `json:"id"`
+	Source      string `json:"source,omitempty"` // "claude" | "codex"
+	Project     string `json:"project,omitempty"`
+	CWD         string `json:"cwd,omitempty"`
+	Slug        string `json:"slug,omitempty"`
+	Version     string `json:"version,omitempty"`
+	Provider    string `json:"provider,omitempty"`
+	Model       string `json:"model,omitempty"` // primary model
+	HistoryFile string `json:"historyFile,omitempty"`
 
 	Git       GitState   `json:"git,omitempty"`
 	StartedAt *time.Time `json:"startedAt,omitempty"`
@@ -27,6 +28,12 @@ type Session struct {
 	Usage     api.Usage `json:"usage,omitempty"`
 	Cost      api.Cost  `json:"cost,omitempty"`
 	ToolCosts api.Costs `json:"toolCosts,omitempty"` // per-model breakdown
+	Context   *Context  `json:"context,omitempty"`
+	Budget    *Budget   `json:"budget,omitempty"`
+
+	Capabilities Capabilities `json:"capabilities,omitempty"`
+	Events       []Event      `json:"events,omitempty"`
+	Turns        []Turn       `json:"turns,omitempty"`
 
 	Root   *Agent   `json:"root,omitempty"`   // agent hierarchy tree
 	Agents []*Agent `json:"agents,omitempty"` // flat index (root first)
@@ -55,14 +62,65 @@ type GitState struct {
 // Agent is one node in the session's agent hierarchy. The root node represents
 // the top-level session; children are sub-agents (Task/Agent spawns).
 type Agent struct {
-	ID       string    `json:"id,omitempty"`
-	ParentID string    `json:"parentId,omitempty"`
-	Type     string    `json:"type,omitempty"` // agentType (from meta.json)
-	Desc     string    `json:"desc,omitempty"` // task description
-	IsRoot   bool      `json:"isRoot,omitempty"`
-	Children []*Agent  `json:"children,omitempty"`
-	Usage    api.Usage `json:"usage,omitempty"`
-	Cost     api.Cost  `json:"cost,omitempty"`
+	ID          string    `json:"id,omitempty"`
+	ParentID    string    `json:"parentId,omitempty"`
+	Type        string    `json:"type,omitempty"` // agentType (from meta.json)
+	Desc        string    `json:"desc,omitempty"` // task description
+	IsRoot      bool      `json:"isRoot,omitempty"`
+	HistoryFile string    `json:"historyFile,omitempty"`
+	Children    []*Agent  `json:"children,omitempty"`
+	Usage       api.Usage `json:"usage,omitempty"`
+	Cost        api.Cost  `json:"cost,omitempty"`
+}
+
+// Context is the context-window occupancy for a session or turn.
+type Context struct {
+	UsedTokens   int `json:"usedTokens,omitempty"`
+	WindowTokens int `json:"windowTokens,omitempty"`
+	FreePercent  int `json:"freePercent"`
+}
+
+// Budget is the latest budget state observed in the transcript.
+type Budget struct {
+	Used      float64    `json:"used,omitempty"`
+	Total     float64    `json:"total,omitempty"`
+	Remaining float64    `json:"remaining,omitempty"`
+	UpdatedAt *time.Time `json:"updatedAt,omitempty"`
+}
+
+// Capabilities is the session-level discovery state surfaced by Claude Code.
+type Capabilities struct {
+	Tools             []string `json:"tools,omitempty"`
+	PendingMCPServers []string `json:"pendingMcpServers,omitempty"`
+	Agents            []string `json:"agents,omitempty"`
+	Skills            []string `json:"skills,omitempty"`
+}
+
+// Event is a non-message transcript event captured at session or turn scope.
+type Event struct {
+	Type      string         `json:"type"`
+	Scope     string         `json:"scope,omitempty"`
+	TurnID    string         `json:"turnId,omitempty"`
+	Timestamp *time.Time     `json:"timestamp,omitempty"`
+	UUID      string         `json:"uuid,omitempty"`
+	Data      map[string]any `json:"data,omitempty"`
+}
+
+// Turn groups user/assistant messages, tool calls, usage, cost, and contextual
+// state for one model turn.
+type Turn struct {
+	ID         string     `json:"id"`
+	Index      int        `json:"index"`
+	StartedAt  *time.Time `json:"startedAt,omitempty"`
+	EndedAt    *time.Time `json:"endedAt,omitempty"`
+	StopReason string     `json:"stopReason,omitempty"`
+	Model      string     `json:"model,omitempty"`
+	MessageIDs []string   `json:"messageIds,omitempty"`
+	Usage      api.Usage  `json:"usage,omitempty"`
+	Cost       api.Cost   `json:"cost,omitempty"`
+	Context    *Context   `json:"context,omitempty"`
+	Budget     *Budget    `json:"budget,omitempty"`
+	Events     []Event    `json:"events,omitempty"`
 }
 
 // ChangedFiles is the read/write file set aggregated across a session,
