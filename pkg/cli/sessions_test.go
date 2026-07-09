@@ -306,6 +306,69 @@ func TestRunSessionLiveScopesUnmatchedProcessesToCurrentProject(t *testing.T) {
 	}
 }
 
+func TestRunSessionLiveRestrictsExplicitProject(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	project := filepath.Join(home, "work", "project")
+	otherProject := filepath.Join(home, "work", "other")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(otherProject, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(project)
+	markProjectRoot(t, project)
+	markProjectRoot(t, otherProject)
+
+	writeJSONL(t, filepath.Join(home, ".claude", "projects", claude.NormalizePath(project), "sess-current.jsonl"),
+		map[string]any{
+			"type":      "assistant",
+			"sessionId": "sess-current",
+			"timestamp": "2026-06-01T10:00:00Z",
+			"cwd":       project,
+			"message": map[string]any{
+				"role":    "assistant",
+				"model":   "claude-sonnet-4",
+				"content": []any{map[string]any{"type": "text", "text": "current"}},
+			},
+		},
+	)
+	writeJSONL(t, filepath.Join(home, ".claude", "projects", claude.NormalizePath(otherProject), "sess-other.jsonl"),
+		map[string]any{
+			"type":      "assistant",
+			"sessionId": "sess-other",
+			"timestamp": "2026-06-01T10:00:01Z",
+			"cwd":       otherProject,
+			"message": map[string]any{
+				"role":    "assistant",
+				"model":   "claude-sonnet-4",
+				"content": []any{map[string]any{"type": "text", "text": "other"}},
+			},
+		},
+	)
+
+	orig := discoverSessionProcesses
+	discoverSessionProcesses = func() ([]agentProcess, error) { return nil, nil }
+	t.Cleanup(func() { discoverSessionProcesses = orig })
+
+	result, err := RunSessionLive(context.Background(), SessionLiveOptions{
+		Source:  "claude",
+		All:     true,
+		Project: otherProject,
+		Limit:   10,
+	})
+	if err != nil {
+		t.Fatalf("RunSessionLive: %v", err)
+	}
+	if result.Scope != "project" || result.Project != otherProject {
+		t.Fatalf("scope/project = %q/%q, want project/%q", result.Scope, result.Project, otherProject)
+	}
+	if result.Total != 1 || len(result.Sessions) != 1 || result.Sessions[0].ID != "sess-other" {
+		t.Fatalf("project-scoped sessions = %+v", result)
+	}
+}
+
 func TestRunSessionLiveRecordsPhaseTimings(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

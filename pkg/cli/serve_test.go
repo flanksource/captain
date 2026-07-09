@@ -102,3 +102,44 @@ func TestHandleSessionGetReturnsUnifiedModel(t *testing.T) {
 		t.Fatalf("messages = %+v", got.Messages)
 	}
 }
+
+func TestHandleProjectsReturnsOptions(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	project := filepath.Join(home, "work", "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	markProjectRoot(t, project)
+	writeJSONL(t, filepath.Join(home, ".claude", "projects", claude.NormalizePath(project), "sess-web.jsonl"),
+		map[string]any{
+			"type":      "assistant",
+			"sessionId": "sess-web",
+			"timestamp": "2026-07-06T10:00:00Z",
+			"cwd":       project,
+			"message": map[string]any{
+				"role":    "assistant",
+				"content": []any{map[string]any{"type": "text", "text": "hello"}},
+			},
+		},
+	)
+
+	orig := discoverSessionProcesses
+	discoverSessionProcesses = func() ([]agentProcess, error) { return nil, nil }
+	t.Cleanup(func() { discoverSessionProcesses = orig })
+
+	req := httptest.NewRequest(http.MethodGet, "/api/captain/projects", nil)
+	rec := httptest.NewRecorder()
+	handleProjects()(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var got ProjectOptionsResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v (body=%s)", err, rec.Body.String())
+	}
+	if got.Total != 1 || got.Projects[0].Value != project {
+		t.Fatalf("projects = %+v, want %q", got, project)
+	}
+}

@@ -6,8 +6,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 	"time"
 
+	"github.com/flanksource/captain/pkg/ai/history"
 	"github.com/flanksource/captain/pkg/claude"
 	"github.com/timberio/go-datemath"
 )
@@ -24,6 +26,27 @@ type ProjectRow struct {
 type ProjectsListResult struct {
 	Total int          `json:"total" pretty:"label=Total Projects"`
 	Rows  []ProjectRow `json:"rows"`
+}
+
+type ProjectOption struct {
+	Value    string     `json:"value"`
+	Label    string     `json:"label"`
+	Path     string     `json:"path"`
+	Sources  []string   `json:"sources,omitempty"`
+	Sessions int        `json:"sessions,omitempty"`
+	LastUsed *time.Time `json:"lastUsed,omitempty"`
+}
+
+type ProjectOptionsResult struct {
+	Total    int             `json:"total"`
+	Projects []ProjectOption `json:"projects"`
+}
+
+type projectOptionAccumulator struct {
+	path     string
+	sources  map[string]bool
+	sessions int
+	lastUsed time.Time
 }
 
 func RunProjectsList(_ ProjectsListOptions) (any, error) {
@@ -47,6 +70,146 @@ func RunProjectsList(_ ProjectsListOptions) (any, error) {
 	}
 
 	return ProjectsListResult{Total: len(projects), Rows: rows}, nil
+}
+
+func RunProjectOptions() (ProjectOptionsResult, error) {
+	accs := map[string]*projectOptionAccumulator{}
+
+	projects, err := scanProjects()
+	if err != nil {
+		return ProjectOptionsResult{}, err
+	}
+	for _, project := range projects {
+		addProjectOption(accs, projectOptionPath(project), "claude", project.sessions, project.lastUsed)
+	}
+
+	if codexFiles, err := history.FindCodexSessionFiles(); err == nil {
+		for _, file := range codexFiles {
+			meta, err := history.ReadCodexSessionMeta(file)
+			if err != nil || meta == nil || strings.TrimSpace(meta.CWD) == "" {
+				continue
+			}
+			lastUsed := time.Time{}
+			if info, err := os.Stat(file); err == nil {
+				lastUsed = info.ModTime()
+			}
+			if meta.StartedAt != nil && meta.StartedAt.After(lastUsed) {
+				lastUsed = *meta.StartedAt
+			}
+			addProjectOption(accs, sessionProjectRoot(meta.CWD), "codex", 1, lastUsed)
+		}
+	}
+
+	if processes, err := discoverSessionProcesses(); err == nil {
+		for _, proc := range processes {
+			if strings.TrimSpace(proc.CWD) == "" {
+				continue
+			}
+			lastUsed := time.Time{}
+			if proc.StartedAt != nil {
+				lastUsed = *proc.StartedAt
+			}
+			addProjectOption(accs, sessionProjectRoot(proc.CWD), "live", 0, lastUsed)
+		}
+	}
+
+	projectsOut := make([]ProjectOption, 0, len(accs))
+	for _, acc := range accs {
+		sources := make([]string, 0, len(acc.sources))
+		for source := range acc.sources {
+			sources = append(sources, source)
+		}
+		sort.Strings(sources)
+		var lastUsed *time.Time
+		if !acc.lastUsed.IsZero() {
+			value := acc.lastUsed
+			lastUsed = &value
+		}
+		projectsOut = append(projectsOut, ProjectOption{
+			Value:    acc.path,
+			Label:    projectOptionLabel(acc.path),
+			Path:     acc.path,
+			Sources:  sources,
+			Sessions: acc.sessions,
+			LastUsed: lastUsed,
+		})
+	}
+
+	sort.Slice(projectsOut, func(i, j int) bool {
+		left, right := projectsOut[i], projectsOut[j]
+		if left.LastUsed != nil && right.LastUsed != nil && !left.LastUsed.Equal(*right.LastUsed) {
+			return left.LastUsed.After(*right.LastUsed)
+		}
+		if left.LastUsed != nil && right.LastUsed == nil {
+			return true
+		}
+		if left.LastUsed == nil && right.LastUsed != nil {
+			return false
+		}
+		return left.Label < right.Label
+	})
+
+	return ProjectOptionsResult{Total: len(projectsOut), Projects: projectsOut}, nil
+}
+
+func addProjectOption(accs map[string]*projectOptionAccumulator, path, source string, sessions int, lastUsed time.Time) {
+	path = normalizeSessionProject(path)
+	if path == "" {
+		return
+	}
+	acc := accs[path]
+	if acc == nil {
+		acc = &projectOptionAccumulator{path: path, sources: map[string]bool{}}
+		accs[path] = acc
+	}
+	if source != "" {
+		acc.sources[source] = true
+	}
+	acc.sessions += sessions
+	if lastUsed.After(acc.lastUsed) {
+		acc.lastUsed = lastUsed
+	}
+}
+
+func projectOptionPath(project projectDirInfo) string {
+	sessions, _ := filepath.Glob(filepath.Join(project.dirPath, "*.jsonl"))
+	sort.Slice(sessions, func(i, j int) bool {
+		left, leftErr := os.Stat(sessions[i])
+		right, rightErr := os.Stat(sessions[j])
+		if leftErr != nil || rightErr != nil {
+			return sessions[i] < sessions[j]
+		}
+		return left.ModTime().After(right.ModTime())
+	})
+	for _, sessionFile := range sessions {
+		entries, err := claude.ReadHistoryFileWithOptions(sessionFile, claude.ReadOptions{})
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if strings.TrimSpace(entry.CWD) != "" {
+				return sessionProjectRoot(entry.CWD)
+			}
+		}
+	}
+	return project.name
+}
+
+func projectOptionLabel(path string) string {
+	parts := strings.Split(filepath.ToSlash(path), "/")
+	filtered := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part != "" {
+			filtered = append(filtered, part)
+		}
+	}
+	if len(filtered) >= 2 {
+		return strings.Join(filtered[len(filtered)-2:], "/")
+	}
+	if len(filtered) == 1 {
+		return filtered[0]
+	}
+	return path
 }
 
 type ProjectsCleanOptions struct {

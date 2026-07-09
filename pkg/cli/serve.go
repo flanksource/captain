@@ -160,7 +160,9 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	mux := http.NewServeMux()
 	rpcServer.RegisterRoutes(mux)
 	mux.HandleFunc("POST /api/captain/chat/threads/from-agent", handleThreadFromAgent(threadStore))
+	mux.HandleFunc("GET /api/captain/projects", handleProjects())
 	mux.HandleFunc("GET /api/captain/sessions/live", handleSessionsLive())
+	mux.HandleFunc("GET /api/captain/sessions/throughput", handleSessionsThroughput())
 	mux.HandleFunc("GET /api/captain/sessions/{id}", handleSessionGet())
 	mux.HandleFunc("GET /api/captain/ai/permissions/catalog", handlePermissionCatalog(cwd))
 	mux.HandleFunc("GET /api/captain/ai/prompt/schema", handlePromptSchema())
@@ -249,15 +251,22 @@ func handleSessionsLive() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query()
 		opts := SessionLiveOptions{
-			Source: strings.TrimSpace(query.Get("source")),
-			Query:  strings.TrimSpace(query.Get("q")),
-			Limit:  100,
+			Source:  strings.TrimSpace(query.Get("source")),
+			Project: strings.TrimSpace(query.Get("project")),
+			Query:   strings.TrimSpace(query.Get("q")),
+			Limit:   100,
 		}
 		if opts.Source == "" {
 			opts.Source = "all"
 		}
 		if raw := strings.TrimSpace(query.Get("all")); raw != "" {
 			opts.All, _ = strconv.ParseBool(raw)
+		}
+		if strings.EqualFold(opts.Project, "all") {
+			opts.Project = ""
+			opts.All = true
+		} else if opts.Project != "" {
+			opts.All = false
 		}
 		if raw := strings.TrimSpace(query.Get("limit")); raw != "" {
 			limit, err := strconv.Atoi(raw)
@@ -269,6 +278,56 @@ func handleSessionsLive() http.HandlerFunc {
 		}
 
 		result, err := RunSessionLive(r.Context(), opts)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeServeJSON(w, http.StatusOK, result)
+	}
+}
+
+func handleSessionsThroughput() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query()
+		opts := SessionThroughputOptions{
+			Source:  strings.TrimSpace(query.Get("source")),
+			Project: strings.TrimSpace(query.Get("project")),
+			Query:   strings.TrimSpace(query.Get("q")),
+			Limit:   defaultSessionThroughputLimit,
+		}
+		if opts.Source == "" {
+			opts.Source = "all"
+		}
+		if raw := strings.TrimSpace(query.Get("all")); raw != "" {
+			opts.All, _ = strconv.ParseBool(raw)
+		}
+		if strings.EqualFold(opts.Project, "all") {
+			opts.Project = ""
+			opts.All = true
+		} else if opts.Project != "" {
+			opts.All = false
+		}
+		if raw := strings.TrimSpace(query.Get("limit")); raw != "" {
+			limit, err := strconv.Atoi(raw)
+			if err != nil {
+				http.Error(w, fmt.Sprintf("invalid limit %q", raw), http.StatusBadRequest)
+				return
+			}
+			opts.Limit = limit
+		}
+
+		result, err := RunSessionThroughput(r.Context(), opts)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeServeJSON(w, http.StatusOK, result)
+	}
+}
+
+func handleProjects() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		result, err := RunProjectOptions()
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return

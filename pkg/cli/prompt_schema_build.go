@@ -161,19 +161,126 @@ func injectSpecConditionals(specMap map[string]any, adapters []AdapterStatus, ar
 	return nil
 }
 
-// flatModels is a convenience union of every available model across adapters.
+// flatModels is a convenience union of every available model across adapters,
+// shaped like clicky-ui's ChatModel catalog while retaining the legacy backend
+// and ready fields for older consumers.
 func flatModels(adapters []AdapterStatus) []map[string]any {
-	out := []map[string]any{}
+	type entry struct {
+		data     map[string]any
+		backends []string
+	}
+	out := []entry{}
+	positions := map[string]int{}
 	for _, a := range adapters {
-		for _, id := range a.Models {
-			out = append(out, map[string]any{
-				"id":      id,
-				"backend": a.Backend,
-				"ready":   a.Ready(),
+		provider := modelProviderForBackend(api.Backend(a.Backend))
+		for _, model := range flatModelDetails(a) {
+			id := strings.TrimSpace(model.id)
+			if id == "" {
+				continue
+			}
+			key := provider + "\x00" + id
+			if idx, ok := positions[key]; ok {
+				if !containsString(out[idx].backends, a.Backend) {
+					out[idx].backends = append(out[idx].backends, a.Backend)
+					out[idx].data["backends"] = out[idx].backends
+				}
+				if a.Ready() {
+					out[idx].data["configured"] = true
+					out[idx].data["ready"] = true
+				}
+				continue
+			}
+			label := strings.TrimSpace(model.label)
+			if label == "" {
+				label = id
+			}
+			backends := []string{a.Backend}
+			positions[key] = len(out)
+			out = append(out, entry{
+				backends: backends,
+				data: map[string]any{
+					"id":         id,
+					"label":      label,
+					"provider":   provider,
+					"reasoning":  modelSupportsReasoning(id),
+					"configured": a.Ready(),
+					"backends":   backends,
+					"backend":    a.Backend,
+					"ready":      a.Ready(),
+				},
 			})
 		}
 	}
+	flat := make([]map[string]any, 0, len(out))
+	for _, item := range out {
+		flat = append(flat, item.data)
+	}
+	return flat
+}
+
+type flatModelDetail struct {
+	id    string
+	label string
+}
+
+func flatModelDetails(adapter AdapterStatus) []flatModelDetail {
+	if len(adapter.ModelDetails) > 0 {
+		out := make([]flatModelDetail, 0, len(adapter.ModelDetails))
+		for _, model := range adapter.ModelDetails {
+			out = append(out, flatModelDetail{id: model.ID, label: model.Name})
+		}
+		return out
+	}
+	out := make([]flatModelDetail, 0, len(adapter.Models))
+	for _, id := range adapter.Models {
+		out = append(out, flatModelDetail{id: id, label: id})
+	}
 	return out
+}
+
+func modelProviderForBackend(backend api.Backend) string {
+	switch backend {
+	case api.BackendClaudeAgent, api.BackendClaudeCLI, api.BackendClaudeCmux:
+		return "claude-agent"
+	case api.BackendCodexAgent, api.BackendCodexCLI, api.BackendCodexCmux:
+		return "codex-cli"
+	case api.BackendGemini, api.BackendGeminiCLI:
+		return "googleai"
+	default:
+		return string(backend)
+	}
+}
+
+func modelSupportsReasoning(id string) bool {
+	token := strings.ToLower(strings.TrimSpace(id))
+	if slash := strings.LastIndex(token, "/"); slash >= 0 {
+		token = token[slash+1:]
+	}
+	token = strings.TrimPrefix(token, "models/")
+	switch {
+	case strings.HasPrefix(token, "claude-"),
+		strings.HasPrefix(token, "opus"),
+		strings.HasPrefix(token, "sonnet"),
+		strings.HasPrefix(token, "haiku"),
+		strings.HasPrefix(token, "gpt-"),
+		strings.HasPrefix(token, "o1"),
+		strings.HasPrefix(token, "o3"),
+		strings.HasPrefix(token, "o4"),
+		strings.HasPrefix(token, "gemini-"),
+		strings.HasPrefix(token, "deepseek"):
+		return true
+	default:
+		return false
+	}
+}
+
+func containsString(values []string, needle string) bool {
+	for _, value := range values {
+		if value == needle {
+			return true
+		}
+	}
+	return false
 }
 
 // argDefName is the $defs key for a backend's args schema, e.g.

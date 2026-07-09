@@ -1,8 +1,13 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
+	"slices"
 	"testing"
 	"time"
+
+	"github.com/flanksource/captain/pkg/claude"
 )
 
 func TestFormatBytes(t *testing.T) {
@@ -44,6 +49,79 @@ func TestUuidStem(t *testing.T) {
 			t.Errorf("uuidStem(%q) = %q, want %q", tt.input, got, tt.expected)
 		}
 	}
+}
+
+func TestRunProjectOptionsMergesClaudeCodexAndLive(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	claudeProject := filepath.Join(home, "work", "claude-project")
+	codexProject := filepath.Join(home, "work", "codex-project")
+	liveProject := filepath.Join(home, "work", "live-project")
+	for _, dir := range []string{claudeProject, codexProject, liveProject} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		markProjectRoot(t, dir)
+	}
+
+	writeJSONL(t, filepath.Join(home, ".claude", "projects", claude.NormalizePath(claudeProject), "sess-claude.jsonl"),
+		map[string]any{
+			"type":      "assistant",
+			"sessionId": "sess-claude",
+			"timestamp": "2026-06-01T10:00:00Z",
+			"cwd":       claudeProject,
+			"message": map[string]any{
+				"role":    "assistant",
+				"content": []any{map[string]any{"type": "text", "text": "ok"}},
+			},
+		},
+	)
+	writeCodexSession(t, filepath.Join(home, ".codex", "sessions", "2026", "06", "rollout-codex.jsonl"), "codex-project", codexProject)
+
+	started := time.Date(2026, 6, 1, 11, 0, 0, 0, time.UTC)
+	orig := discoverSessionProcesses
+	discoverSessionProcesses = func() ([]agentProcess, error) {
+		return []agentProcess{{
+			Source:    "codex",
+			PID:       101,
+			Active:    true,
+			StartedAt: &started,
+			CWD:       liveProject,
+			Command:   "codex",
+		}}, nil
+	}
+	t.Cleanup(func() { discoverSessionProcesses = orig })
+
+	result, err := RunProjectOptions()
+	if err != nil {
+		t.Fatalf("RunProjectOptions: %v", err)
+	}
+	if result.Total != 3 {
+		t.Fatalf("projects = %+v", result)
+	}
+	assertProjectOption(t, result.Projects, claudeProject, "claude")
+	assertProjectOption(t, result.Projects, codexProject, "codex")
+	assertProjectOption(t, result.Projects, liveProject, "live")
+}
+
+func assertProjectOption(t *testing.T, projects []ProjectOption, path, source string) {
+	t.Helper()
+	for _, project := range projects {
+		if project.Value != path {
+			continue
+		}
+		if project.Path != path {
+			t.Fatalf("project path = %q, want %q", project.Path, path)
+		}
+		if project.Label == "" {
+			t.Fatalf("empty label for %+v", project)
+		}
+		if !slices.Contains(project.Sources, source) {
+			t.Fatalf("sources for %q = %v, want %q", path, project.Sources, source)
+		}
+		return
+	}
+	t.Fatalf("project %q not found in %+v", path, projects)
 }
 
 func TestShellQuote(t *testing.T) {

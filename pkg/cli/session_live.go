@@ -25,23 +25,20 @@ func RunSessionLive(ctx context.Context, opts SessionLiveOptions) (SessionLiveRe
 		return SessionLiveResult{}, err
 	}
 
-	scope := "current"
-	if opts.All {
-		scope = "all"
-	}
+	scope, projectRoot, searchAll := resolveSessionScope(cwd, opts.All, opts.Project)
 	limit := opts.Limit
 	if limit <= 0 && !opts.Full {
 		limit = defaultSessionLiveLimit
 	}
-	records, err := discoverLiveSessionRecords(ctx, cwd, opts.All, source, limit, opts.Full)
+	records, err := discoverLiveSessionRecords(ctx, cwd, searchAll, source, limit, opts.Full, projectRoot)
 	if err != nil {
 		return SessionLiveResult{}, err
 	}
 
 	stopEnrich := rpchttp.Track(ctx, "enrich")
 	processes, _ := discoverSessionProcesses()
-	if !opts.All {
-		processes = filterAgentProcessesByProject(processes, sessionProjectRoot(cwd))
+	if projectRoot != "" {
+		processes = filterAgentProcessesByProject(processes, projectRoot)
 	}
 	records = enrichSessionsWithLive(records, processes)
 	filtered := make([]SessionRecord, 0, len(records))
@@ -63,17 +60,23 @@ func RunSessionLive(ctx context.Context, opts SessionLiveOptions) (SessionLiveRe
 		Total:    total,
 		Source:   source,
 		Scope:    scope,
+		Project:  projectResultValue(scope, projectRoot),
 		Summary:  summary,
 	}, nil
 }
 
-func discoverLiveSessionRecords(ctx context.Context, cwd string, searchAll bool, source string, limit int, full bool) ([]SessionRecord, error) {
+func discoverLiveSessionRecords(ctx context.Context, cwd string, searchAll bool, source string, limit int, full bool, projectRoot string) ([]SessionRecord, error) {
 	if full {
+		project := ""
+		if searchAll && projectRoot != "" {
+			project = projectRoot
+		}
 		list, err := RunSessionList(ctx, SessionListOptions{
-			Source: source,
-			All:    searchAll,
-			Query:  "",
-			Limit:  0,
+			Source:  source,
+			All:     searchAll,
+			Project: project,
+			Query:   "",
+			Limit:   0,
 		})
 		if err != nil {
 			return nil, err
@@ -81,10 +84,15 @@ func discoverLiveSessionRecords(ctx context.Context, cwd string, searchAll bool,
 		return list.Sessions, nil
 	}
 
-	candidates, err := discoverLiveSessionCandidates(ctx, cwd, searchAll, source, limit)
+	candidateLimit := limit
+	if searchAll && projectRoot != "" {
+		candidateLimit = 0
+	}
+	candidates, err := discoverLiveSessionCandidates(ctx, cwd, searchAll, source, candidateLimit)
 	if err != nil {
 		return nil, err
 	}
+	candidates = filterSessionCandidatesByProject(candidates, projectRoot)
 	records := make([]SessionRecord, 0, len(candidates))
 	for _, candidate := range candidates {
 		records = append(records, candidate.record)

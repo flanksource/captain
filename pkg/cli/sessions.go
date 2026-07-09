@@ -19,10 +19,11 @@ import (
 )
 
 type SessionListOptions struct {
-	Source string `flag:"source" help:"Filter source: all, claude, codex" default:"all"`
-	All    bool   `flag:"all" help:"Include sessions from all projects" short:"a"`
-	Query  string `flag:"q" help:"Search session id, model, cwd, branch, or provider"`
-	Limit  int    `flag:"limit" help:"Maximum sessions to return; 0 means no limit" default:"100" short:"l"`
+	Source  string `flag:"source" help:"Filter source: all, claude, codex" default:"all"`
+	All     bool   `flag:"all" help:"Include sessions from all projects" short:"a"`
+	Project string `flag:"project" help:"Restrict sessions to an explicit project path"`
+	Query   string `flag:"q" help:"Search session id, model, cwd, branch, or provider"`
+	Limit   int    `flag:"limit" help:"Maximum sessions to return; 0 means no limit" default:"100" short:"l"`
 }
 
 type SessionGetOptions struct {
@@ -37,14 +38,16 @@ type SessionListResult struct {
 	Total    int             `json:"total"`
 	Source   string          `json:"source"`
 	Scope    string          `json:"scope"`
+	Project  string          `json:"project,omitempty"`
 }
 
 type SessionLiveOptions struct {
-	Source string `flag:"source" help:"Filter source: all, claude, codex" default:"all"`
-	All    bool   `flag:"all" help:"Include sessions from all projects" short:"a"`
-	Query  string `flag:"q" help:"Search session id, model, cwd, branch, provider, pid, or health"`
-	Limit  int    `flag:"limit" help:"Maximum sessions to return" default:"25" short:"l"`
-	Full   bool   `flag:"full" help:"Parse all matching history exactly; ignores --limit"`
+	Source  string `flag:"source" help:"Filter source: all, claude, codex" default:"all"`
+	All     bool   `flag:"all" help:"Include sessions from all projects" short:"a"`
+	Project string `flag:"project" help:"Restrict sessions to an explicit project path"`
+	Query   string `flag:"q" help:"Search session id, model, cwd, branch, provider, pid, or health"`
+	Limit   int    `flag:"limit" help:"Maximum sessions to return" default:"25" short:"l"`
+	Full    bool   `flag:"full" help:"Parse all matching history exactly; ignores --limit"`
 }
 
 type SessionLiveResult struct {
@@ -52,6 +55,7 @@ type SessionLiveResult struct {
 	Total    int                  `json:"total"`
 	Source   string               `json:"source"`
 	Scope    string               `json:"scope"`
+	Project  string               `json:"project,omitempty"`
 	Summary  SessionDashboardWire `json:"summary"`
 }
 
@@ -215,10 +219,12 @@ func RunSessionList(ctx context.Context, opts SessionListOptions) (SessionListRe
 		return SessionListResult{}, err
 	}
 
-	candidates, err := discoverSessionCandidates(ctx, cwd, opts.All, source)
+	scope, projectRoot, searchAll := resolveSessionScope(cwd, opts.All, opts.Project)
+	candidates, err := discoverSessionCandidates(ctx, cwd, searchAll, source)
 	if err != nil {
 		return SessionListResult{}, err
 	}
+	candidates = filterSessionCandidatesByProject(candidates, projectRoot)
 	records := make([]SessionRecord, 0, len(candidates))
 	for _, candidate := range candidates {
 		if sessionMatchesQuery(candidate.record, opts.Query) {
@@ -231,15 +237,12 @@ func RunSessionList(ctx context.Context, opts SessionListOptions) (SessionListRe
 		records = records[:opts.Limit]
 	}
 
-	scope := "current"
-	if opts.All {
-		scope = "all"
-	}
 	return SessionListResult{
 		Sessions: records,
 		Total:    total,
 		Source:   source,
 		Scope:    scope,
+		Project:  projectResultValue(scope, projectRoot),
 	}, nil
 }
 
@@ -377,6 +380,47 @@ func normalizeSessionSource(source string) (string, error) {
 	default:
 		return "", fmt.Errorf("invalid source %q: expected all, claude, or codex", source)
 	}
+}
+
+func normalizeSessionProject(project string) string {
+	project = strings.TrimSpace(project)
+	if project == "" || strings.EqualFold(project, "all") {
+		return ""
+	}
+	if abs, err := filepath.Abs(project); err == nil {
+		project = abs
+	}
+	return filepath.Clean(project)
+}
+
+func resolveSessionScope(cwd string, all bool, project string) (scope string, projectRoot string, searchAll bool) {
+	if project = normalizeSessionProject(project); project != "" {
+		return "project", sessionProjectRoot(project), true
+	}
+	if all {
+		return "all", "", true
+	}
+	return "current", sessionProjectRoot(cwd), false
+}
+
+func projectResultValue(scope, projectRoot string) string {
+	if scope == "project" {
+		return projectRoot
+	}
+	return ""
+}
+
+func filterSessionCandidatesByProject(candidates []sessionCandidate, projectRoot string) []sessionCandidate {
+	if projectRoot == "" {
+		return candidates
+	}
+	filtered := make([]sessionCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if sessionRecordMatchesProject(candidate.record, projectRoot) {
+			filtered = append(filtered, candidate)
+		}
+	}
+	return filtered
 }
 
 func discoverSessionCandidates(ctx context.Context, cwd string, searchAll bool, source string) ([]sessionCandidate, error) {

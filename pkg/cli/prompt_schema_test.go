@@ -70,6 +70,21 @@ func TestPromptSchemaDocumentBackendsAndConditionals(t *testing.T) {
 	if got := codexCLIModels[0]; got != "gpt-5.5" {
 		t.Errorf("codex-cli first model = %q, want gpt-5.5", got)
 	}
+	flat := doc["models"].([]map[string]any)
+	codexModel := schemaModelForBackend(t, flat, "gpt-5.5", string(api.BackendCodexCLI))
+	if got := codexModel["provider"]; got != "codex-cli" {
+		t.Errorf("flat model provider = %v, want codex-cli", got)
+	}
+	if got, ok := codexModel["label"].(string); !ok || got == "" {
+		t.Errorf("flat model label = %#v, want non-empty string", codexModel["label"])
+	}
+	if _, ok := codexModel["reasoning"].(bool); !ok {
+		t.Errorf("flat model reasoning = %#v, want bool", codexModel["reasoning"])
+	}
+	if got, ok := codexModel["configured"].(bool); !ok || got {
+		t.Errorf("flat model configured = %#v, want false for fake unauthenticated CLI", codexModel["configured"])
+	}
+	assertSchemaModelBackends(t, codexModel, string(api.BackendCodexCLI), string(api.BackendCodexAgent), string(api.BackendCodexCmux))
 
 	anthropic := byName[string(api.BackendAnthropic)]
 	if _, hasModels := anthropic["models"]; hasModels {
@@ -128,6 +143,37 @@ func TestPromptSchemaDocumentBackendsAndConditionals(t *testing.T) {
 			if enum[i].(string) != models[i] {
 				t.Errorf("backend %s enum[%d] = %q, want %q", backend, i, enum[i], models[i])
 			}
+		}
+	}
+}
+
+func schemaModelForBackend(t *testing.T, models []map[string]any, id, backend string) map[string]any {
+	t.Helper()
+	for _, model := range models {
+		if model["id"] != id {
+			continue
+		}
+		backends, ok := model["backends"].([]string)
+		if !ok {
+			t.Fatalf("model %s backends = %T, want []string", id, model["backends"])
+		}
+		if containsString(backends, backend) {
+			return model
+		}
+	}
+	t.Fatalf("models[] missing id %q with backend %q: %+v", id, backend, models)
+	return nil
+}
+
+func assertSchemaModelBackends(t *testing.T, model map[string]any, want ...string) {
+	t.Helper()
+	backends, ok := model["backends"].([]string)
+	if !ok {
+		t.Fatalf("model backends = %T, want []string", model["backends"])
+	}
+	for _, backend := range want {
+		if !containsString(backends, backend) {
+			t.Errorf("model backends = %v, missing %s", backends, backend)
 		}
 	}
 }

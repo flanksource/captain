@@ -364,6 +364,9 @@ func renderPromptAction(ctx context.Context, id string, flags map[string]string)
 // renderPrompt is the HTTP/Spec render path: overlay a structured api.Spec (the
 // web UI's rich runtime overrides) onto the rendered template.
 func renderPrompt(ctx context.Context, id string, renderReq PromptRenderRequest) (PromptRenderResult, error) {
+	if strings.TrimSpace(id) == "" {
+		return renderEphemeralPrompt(renderReq)
+	}
 	record, err := resolvePromptRecord(ctx, id)
 	if err != nil {
 		return PromptRenderResult{}, err
@@ -393,6 +396,42 @@ func renderPrompt(ctx context.Context, id string, renderReq PromptRenderRequest)
 		return PromptRenderResult{}, err
 	}
 	return finalizeRenderResult(record, content, req, cfg)
+}
+
+func renderEphemeralPrompt(renderReq PromptRenderRequest) (PromptRenderResult, error) {
+	record := promptRecord{
+		Source: promptSource{Kind: "ephemeral", ID: "ephemeral", Label: "Ephemeral"},
+		ID:     "",
+		Path:   "<ephemeral>",
+		Rel:    "scratch.prompt",
+	}
+	content := ephemeralPromptContent()
+	var req ai.Request
+	var cfg ai.Config
+	if renderReq.Spec != nil {
+		overlayRuntimeSpec(&req, &cfg, *renderReq.Spec)
+	}
+	if req.Prompt.Source == "" {
+		req.Prompt.Source = "<ephemeral>"
+	}
+	applyPromptDefaults(&req, &cfg)
+	cwd, err := os.Getwd()
+	if err != nil {
+		return PromptRenderResult{}, fmt.Errorf("get working directory: %w", err)
+	}
+	if err := normalizePromptContextDir(&req, cwd); err != nil {
+		return PromptRenderResult{}, err
+	}
+	return finalizeRenderResult(record, content, req, cfg)
+}
+
+func ephemeralPromptContent() string {
+	return `---
+name: Scratch Prompt
+description: Ephemeral prompt
+---
+{{role "user"}}
+`
 }
 
 // renderPromptCLI is the CLI render path: load from id | .prompt filepath | -p |

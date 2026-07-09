@@ -188,6 +188,11 @@ func codexToClaudeToolUses(uses []history.ToolUse) []claude.ToolUse {
 			Source:          source,
 			Model:           cu.Model,
 			ReasoningEffort: cu.ReasoningEffort,
+			InputTokens:     cu.InputTokens + cu.CacheReadTokens,
+			OutputTokens:    cu.OutputTokens,
+			AgentID:         cu.AgentID,
+			AgentType:       cu.AgentType,
+			AgentDesc:       cu.AgentDesc,
 			Response:        cu.Response,
 		}
 	}
