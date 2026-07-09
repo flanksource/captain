@@ -64,6 +64,9 @@ func New(cfg ai.Config) (*Provider, error) {
 		return nil, fmt.Errorf("genkit provider: no API key for backend %q (set the provider's API key, e.g. ANTHROPIC_API_KEY/OPENAI_API_KEY/GEMINI_API_KEY/DEEPSEEK_API_KEY)", backend)
 	}
 
+	cfg.Model.Backend = backend
+	cfg.Model.Name = ai.NormalizeModelForBackend(backend, cfg.Model.Name)
+
 	ref, err := modelRef(backend, cfg.Model.Name)
 	if err != nil {
 		return nil, err
@@ -74,7 +77,6 @@ func New(cfg ai.Config) (*Provider, error) {
 		return nil, err
 	}
 
-	cfg.Model.Backend = backend
 	return &Provider{cfg: cfg, backend: backend, g: g, modelRef: ref}, nil
 }
 

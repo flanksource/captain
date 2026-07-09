@@ -171,6 +171,17 @@ func TestModelRef(t *testing.T) {
 	}
 }
 
+func TestNewNormalizesBackendModelName(t *testing.T) {
+	p, err := New(ai.Config{
+		Model:  api.Model{Backend: ai.BackendAnthropic, Name: "opus-4-8"},
+		APIKey: "test-anthropic-key",
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, "claude-opus-4-8", p.GetModel())
+	assert.Equal(t, "anthropic/claude-opus-4-8", p.modelRef)
+}
+
 func TestPricingModelID(t *testing.T) {
 	assert.Equal(t, "anthropic/claude-sonnet-4", pricingModelID(ai.BackendAnthropic, "claude-sonnet-4"))
 	assert.Equal(t, "openai/gpt-4o", pricingModelID(ai.BackendOpenAI, "gpt-4o"))

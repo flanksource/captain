@@ -104,11 +104,11 @@ func (l *loggingProvider) ExecuteStream(ctx context.Context, req ai.Request) (<-
 }
 
 func logRuntime(provider ai.Provider, req ai.Request) (api.Backend, string) {
-	backend := req.Model.Backend
+	backend := req.Backend
 	if backend == "" {
 		backend = provider.GetBackend()
 	}
-	model := req.Model.Name
+	model := req.Name
 	if model == "" {
 		model = provider.GetModel()
 	}

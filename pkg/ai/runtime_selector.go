@@ -109,7 +109,6 @@ func resolveSelectorPart(raw, baseName string, forced api.Backend, allowWildcard
 		if isSelectorPrefix(raw) {
 			prefix = strings.ToLower(raw)
 			modelName = strings.TrimSpace(baseName)
-			hasPrefix = true
 		} else {
 			return []api.Model{{Name: raw, Backend: forced}}, nil
 		}
@@ -263,80 +262,6 @@ func normalizeSelectorModel(backend api.Backend, model string) string {
 func NormalizeModelForBackend(backend api.Backend, model string) string {
 	resolved, _ := ResolveExactModelForBackend(backend, model)
 	return resolved
-}
-
-func lookupSelectorCatalogModel(backend api.Backend, model string) (string, bool) {
-	want := selectorCatalogBackend(backend)
-	for _, m := range Catalog() {
-		if m.Backend != want {
-			continue
-		}
-		if !selectorCatalogMatch(m, model, backend) {
-			continue
-		}
-		if m.IsAgent() {
-			if m.AgentModel != "" {
-				return m.AgentModel, true
-			}
-			return m.ID, true
-		}
-		return m.BareID(), true
-	}
-	return "", false
-}
-
-func selectorCatalogBackend(backend api.Backend) api.Backend {
-	switch backend {
-	case api.BackendClaudeCLI, api.BackendClaudeCmux:
-		return api.BackendClaudeAgent
-	case api.BackendCodexCLI, api.BackendCodexCmux:
-		return api.BackendCodexAgent
-	default:
-		return backend
-	}
-}
-
-func selectorCatalogMatch(m Model, model string, backend api.Backend) bool {
-	needle := strings.ToLower(strings.TrimSpace(model))
-	if i := strings.LastIndex(needle, "/"); i >= 0 {
-		needle = needle[i+1:]
-	}
-	candidates := []string{m.ID, m.BareID(), m.AgentModel}
-	for _, c := range candidates {
-		c = strings.ToLower(strings.TrimSpace(c))
-		if c == "" {
-			continue
-		}
-		if c == needle {
-			return true
-		}
-		if i := strings.LastIndex(c, "/"); i >= 0 && c[i+1:] == needle {
-			return true
-		}
-	}
-	catalogBackend := selectorCatalogBackend(backend)
-	if catalogBackend == api.BackendClaudeAgent || backend == api.BackendAnthropic {
-		if tier := claudeTier(needle); tier != "" && tier == claudeTier(m.ID) {
-			if catalogBackend == api.BackendClaudeAgent {
-				return true
-			}
-			if strings.Contains(needle, "-") {
-				return strings.Contains(strings.ToLower(m.ID), needle)
-			}
-			return true
-		}
-	}
-	return false
-}
-
-func claudeTier(model string) string {
-	m := strings.ToLower(model)
-	for _, tier := range []string{"fable", "opus", "sonnet", "haiku"} {
-		if strings.Contains(m, tier) {
-			return tier
-		}
-	}
-	return ""
 }
 
 func mergeModelRuntime(original, resolved api.Model) api.Model {

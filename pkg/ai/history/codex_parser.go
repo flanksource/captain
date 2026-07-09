@@ -163,6 +163,7 @@ func ExtractCodexToolUsesFromReader(r io.Reader) ([]ToolUse, error) {
 		toolUses     []ToolUse
 		sessionCWD   string
 		sessionID    string
+		currentTurn  string
 		currentModel string
 		currentEff   string
 		pendingCall  = make(map[string]CodexEvent)
@@ -170,6 +171,9 @@ func ExtractCodexToolUsesFromReader(r io.Reader) ([]ToolUse, error) {
 
 	stamp := func(uses []ToolUse) []ToolUse {
 		for i := range uses {
+			if uses[i].TurnID == "" {
+				uses[i].TurnID = currentTurn
+			}
 			if uses[i].Model == "" {
 				uses[i].Model = currentModel
 			}
@@ -198,6 +202,9 @@ func ExtractCodexToolUsesFromReader(r io.Reader) ([]ToolUse, error) {
 			sessionID = event.Payload.ID
 
 		case "turn_context":
+			if event.Payload.TurnID != "" {
+				currentTurn = event.Payload.TurnID
+			}
 			if event.Payload.Model != "" {
 				currentModel = event.Payload.Model
 			}
@@ -209,7 +216,13 @@ func ExtractCodexToolUsesFromReader(r io.Reader) ([]ToolUse, error) {
 			toolUses = append(toolUses, stamp(extractResponseItem(event, pendingCall, sessionCWD, sessionID))...)
 
 		case "event_msg":
+			if event.Payload.TurnID != "" {
+				currentTurn = event.Payload.TurnID
+			}
 			toolUses = append(toolUses, stamp(extractEventMsg(event, sessionCWD, sessionID))...)
+
+		case "world_state":
+			toolUses = append(toolUses, stamp([]ToolUse{buildCodexTopLevelEventUse(event, "world_state", sessionCWD, sessionID)})...)
 
 		// --- Newer dotted-name `codex exec --json` schema ---
 		case "thread.started":
@@ -245,6 +258,10 @@ func extractResponseItem(event CodexEvent, pendingCall map[string]CodexEvent, cw
 		pendingCall[event.Payload.CallID] = event
 		return nil
 
+	case "tool_search_call":
+		pendingCall[event.Payload.CallID] = event
+		return nil
+
 	case "function_call_output":
 		callEvent, ok := pendingCall[event.Payload.CallID]
 		if !ok {
@@ -252,6 +269,13 @@ func extractResponseItem(event CodexEvent, pendingCall map[string]CodexEvent, cw
 		}
 		delete(pendingCall, event.Payload.CallID)
 		return []ToolUse{buildToolUse(callEvent, event, cwd, sessionID)}
+
+	case "tool_search_output":
+		callEvent, ok := pendingCall[event.Payload.CallID]
+		if ok {
+			delete(pendingCall, event.Payload.CallID)
+		}
+		return buildToolSearchUses(callEvent, event, cwd, sessionID)
 
 	case "reasoning":
 		var summaries []CodexReasoningSummary
@@ -273,6 +297,7 @@ func extractResponseItem(event CodexEvent, pendingCall map[string]CodexEvent, cw
 			Timestamp:  event.Time(),
 			CWD:        cwd,
 			SessionID:  sessionID,
+			TurnID:     codexEventTurnID(event),
 			Source:     "codex",
 			RecordType: "response_item.reasoning",
 		}}
@@ -302,6 +327,7 @@ func extractResponseItem(event CodexEvent, pendingCall map[string]CodexEvent, cw
 			Timestamp:  event.Time(),
 			CWD:        cwd,
 			SessionID:  sessionID,
+			TurnID:     codexEventTurnID(event),
 			Source:     "codex",
 			RecordType: "response_item.message",
 		}}
@@ -332,6 +358,7 @@ func extractLiveItemCompleted(event CodexEvent, cwd, sessionID string) []ToolUse
 		Timestamp:  event.Time(),
 		CWD:        cwd,
 		SessionID:  sessionID,
+		TurnID:     codexEventTurnID(event),
 		Source:     "codex",
 		RecordType: "item.completed",
 	}}
@@ -358,6 +385,7 @@ func extractLiveError(event CodexEvent, cwd, sessionID string) []ToolUse {
 		Timestamp: event.Time(),
 		CWD:       cwd,
 		SessionID: sessionID,
+		TurnID:    codexEventTurnID(event),
 		Source:    "codex",
 	}}
 }
@@ -396,6 +424,7 @@ func extractEventMsg(event CodexEvent, cwd, sessionID string) []ToolUse {
 			Timestamp:  event.Time(),
 			CWD:        cwd,
 			SessionID:  sessionID,
+			TurnID:     codexEventTurnID(event),
 			Source:     "codex",
 			RecordType: "event_msg.agent_reasoning",
 		}}
@@ -410,6 +439,7 @@ func extractEventMsg(event CodexEvent, cwd, sessionID string) []ToolUse {
 			Timestamp:  event.Time(),
 			CWD:        cwd,
 			SessionID:  sessionID,
+			TurnID:     codexEventTurnID(event),
 			Source:     "codex",
 			RecordType: "event_msg.agent_message",
 		}}
@@ -428,6 +458,7 @@ func extractEventMsg(event CodexEvent, cwd, sessionID string) []ToolUse {
 			Timestamp:  event.Time(),
 			CWD:        cwd,
 			SessionID:  sessionID,
+			TurnID:     codexEventTurnID(event),
 			Source:     "codex",
 			RecordType: "event_msg.user_message",
 		}}
@@ -436,6 +467,55 @@ func extractEventMsg(event CodexEvent, cwd, sessionID string) []ToolUse {
 		return nil
 	}
 	return []ToolUse{buildCodexEventUse(event, cwd, sessionID)}
+}
+
+func buildToolSearchUses(callEvent, outputEvent CodexEvent, cwd, sessionID string) []ToolUse {
+	names := codexToolSearchNames(outputEvent.Payload.Tools)
+	if len(names) == 0 {
+		return nil
+	}
+	input := map[string]any{
+		"event":      "deferred_tools_delta",
+		"addedNames": names,
+	}
+	if len(callEvent.Payload.Arguments) > 0 {
+		for k, v := range extractArgumentsMap(callEvent.Payload.Arguments) {
+			input[k] = v
+		}
+	}
+	return []ToolUse{{
+		Tool:       "DeferredToolsDelta",
+		Input:      input,
+		Timestamp:  outputEvent.Time(),
+		CWD:        cwd,
+		SessionID:  sessionID,
+		TurnID:     firstNonEmpty(codexEventTurnID(outputEvent), codexEventTurnID(callEvent)),
+		ToolUseID:  outputEvent.Payload.CallID,
+		Source:     "codex",
+		RecordType: "response_item.tool_search_output",
+	}}
+}
+
+func codexToolSearchNames(groups []CodexToolSearchNamespace) []string {
+	var names []string
+	seen := map[string]struct{}{}
+	add := func(name string) {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return
+		}
+		if _, ok := seen[name]; ok {
+			return
+		}
+		seen[name] = struct{}{}
+		names = append(names, name)
+	}
+	for _, group := range groups {
+		for _, tool := range group.Tools {
+			add(tool.Name)
+		}
+	}
+	return names
 }
 
 func codexContentText(content []CodexContent, accepted ...string) string {
@@ -458,6 +538,25 @@ func isCodexInternalUserText(text string) bool {
 		strings.HasPrefix(text, "<developer_context>") ||
 		strings.HasPrefix(text, "<plugins_instructions>") ||
 		strings.HasPrefix(text, "<skills_instructions>")
+}
+
+func codexEventTurnID(event CodexEvent) string {
+	if event.Payload.TurnID != "" {
+		return event.Payload.TurnID
+	}
+	if event.Payload.Metadata != nil {
+		return event.Payload.Metadata.TurnID
+	}
+	return ""
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func buildCodexEventUse(event CodexEvent, cwd, sessionID string) ToolUse {
@@ -501,19 +600,76 @@ func buildCodexEventUse(event CodexEvent, cwd, sessionID string) ToolUse {
 		input["input_tokens"] = event.Payload.Info.LastTokenUsage.InputTokens
 		input["output_tokens"] = event.Payload.Info.LastTokenUsage.OutputTokens
 		input["cached_input_tokens"] = event.Payload.Info.LastTokenUsage.CachedInputTokens
+		input["cumulative_total_tokens"] = event.Payload.Info.TotalTokenUsage.TotalTokens
+		input["cumulative_input_tokens"] = event.Payload.Info.TotalTokenUsage.InputTokens
+		input["cumulative_output_tokens"] = event.Payload.Info.TotalTokenUsage.OutputTokens
+		input["cumulative_cached_input_tokens"] = event.Payload.Info.TotalTokenUsage.CachedInputTokens
+		if event.Payload.Info.LastTokenUsage.ReasoningOutputTokens != 0 {
+			input["reasoning_output_tokens"] = event.Payload.Info.LastTokenUsage.ReasoningOutputTokens
+		}
 		if event.Payload.Info.ModelContextWindow != 0 {
 			input["model_context_window"] = event.Payload.Info.ModelContextWindow
 		}
 	}
+	usage := eventTokenUsage(event)
 	return ToolUse{
-		Tool:       tools.EventToolName(event.Payload.Type),
+		Tool:            tools.EventToolName(event.Payload.Type),
+		Input:           input,
+		Timestamp:       event.Time(),
+		CWD:             cwd,
+		SessionID:       sessionID,
+		TurnID:          codexEventTurnID(event),
+		Source:          "codex",
+		InputTokens:     codexNonCachedInputTokens(usage),
+		OutputTokens:    usage.OutputTokens,
+		CacheReadTokens: usage.CachedInputTokens,
+		TotalTokens:     usage.TotalTokens,
+		ContextWindow:   eventContextWindow(event),
+		RecordType:      "event_msg." + event.Payload.Type,
+	}
+}
+
+func buildCodexTopLevelEventUse(event CodexEvent, eventType, cwd, sessionID string) ToolUse {
+	input := make(map[string]any, len(event.Payload.Raw)+1)
+	for k, v := range event.Payload.Raw {
+		input[k] = v
+	}
+	input["event"] = eventType
+	return ToolUse{
+		Tool:       tools.EventToolName(eventType),
 		Input:      input,
 		Timestamp:  event.Time(),
 		CWD:        cwd,
 		SessionID:  sessionID,
+		TurnID:     codexEventTurnID(event),
 		Source:     "codex",
-		RecordType: "event_msg." + event.Payload.Type,
+		RecordType: event.Type,
 	}
+}
+
+func eventTokenUsage(event CodexEvent) CodexTokenUsage {
+	if event.Payload.Info == nil {
+		return CodexTokenUsage{}
+	}
+	return event.Payload.Info.LastTokenUsage
+}
+
+func eventContextWindow(event CodexEvent) int {
+	if event.Payload.Info == nil {
+		return 0
+	}
+	return event.Payload.Info.ModelContextWindow
+}
+
+func codexNonCachedInputTokens(usage CodexTokenUsage) int {
+	if usage.CachedInputTokens <= 0 {
+		return usage.InputTokens
+	}
+	input := usage.InputTokens - usage.CachedInputTokens
+	if input < 0 {
+		return usage.InputTokens
+	}
+	return input
 }
 
 func dedupeCodexToolUses(uses []ToolUse) []ToolUse {
@@ -598,9 +754,11 @@ func buildToolUse(callEvent, outputEvent CodexEvent, cwd, sessionID string) Tool
 			Timestamp: ts,
 			CWD:       cwd,
 			SessionID: sessionID,
+			TurnID:    firstNonEmpty(codexEventTurnID(callEvent), codexEventTurnID(outputEvent)),
 			ToolUseID: callEvent.Payload.CallID,
 			Source:    "codex",
 			Response:  response,
+			Namespace: callEvent.Payload.Namespace,
 		}
 	case "request_user_input":
 		return ToolUse{
@@ -609,10 +767,52 @@ func buildToolUse(callEvent, outputEvent CodexEvent, cwd, sessionID string) Tool
 			Timestamp: ts,
 			CWD:       cwd,
 			SessionID: sessionID,
+			TurnID:    firstNonEmpty(codexEventTurnID(callEvent), codexEventTurnID(outputEvent)),
 			ToolUseID: callEvent.Payload.CallID,
 			Source:    "codex",
 			Response:  response,
+			Namespace: callEvent.Payload.Namespace,
 		}
+	case "spawn_agent":
+		args := extractArgumentsMap(callEvent.Payload.Arguments)
+		agentType, _ := args["agent_type"].(string)
+		desc, _ := args["message"].(string)
+		input := map[string]any{}
+		for k, v := range args {
+			input[k] = v
+		}
+		input["subagent_type"] = agentType
+		input["description"] = desc
+		input["prompt"] = desc
+		agentID, nickname := codexAgentOutput(response)
+		if agentID != "" {
+			input["agent_id"] = agentID
+		}
+		if nickname != "" {
+			input["nickname"] = nickname
+		}
+		return ToolUse{
+			Tool:       "Agent",
+			Input:      input,
+			Timestamp:  ts,
+			CWD:        cwd,
+			SessionID:  sessionID,
+			TurnID:     firstNonEmpty(codexEventTurnID(callEvent), codexEventTurnID(outputEvent)),
+			ToolUseID:  callEvent.Payload.CallID,
+			Source:     "codex",
+			Response:   response,
+			Namespace:  callEvent.Payload.Namespace,
+			AgentID:    agentID,
+			AgentType:  agentType,
+			AgentDesc:  desc,
+			RecordType: "response_item.function_call",
+		}
+	case "wait_agent":
+		return codexNamedCallUse("CollabWaiting", callEvent, outputEvent, ts, cwd, sessionID, response)
+	case "close_agent":
+		return codexNamedCallUse("CollabClose", callEvent, outputEvent, ts, cwd, sessionID, response)
+	case "send_input", "resume_agent":
+		return codexNamedCallUse("CollabAgentInteraction", callEvent, outputEvent, ts, cwd, sessionID, response)
 	}
 
 	input := map[string]any{
@@ -624,31 +824,75 @@ func buildToolUse(callEvent, outputEvent CodexEvent, cwd, sessionID string) Tool
 		Timestamp: ts,
 		CWD:       cwd,
 		SessionID: sessionID,
+		TurnID:    firstNonEmpty(codexEventTurnID(callEvent), codexEventTurnID(outputEvent)),
 		ToolUseID: callEvent.Payload.CallID,
 		Source:    "codex",
 		Response:  response,
+		Namespace: callEvent.Payload.Namespace,
 	}
 }
 
-func extractArgumentsMap(argsJSON string) map[string]any {
+func codexNamedCallUse(tool string, callEvent, outputEvent CodexEvent, ts *time.Time, cwd, sessionID, response string) ToolUse {
+	input := extractArgumentsMap(callEvent.Payload.Arguments)
+	input["event"] = callEvent.Payload.Name
+	return ToolUse{
+		Tool:       tool,
+		Input:      input,
+		Timestamp:  ts,
+		CWD:        cwd,
+		SessionID:  sessionID,
+		TurnID:     firstNonEmpty(codexEventTurnID(callEvent), codexEventTurnID(outputEvent)),
+		ToolUseID:  callEvent.Payload.CallID,
+		Source:     "codex",
+		Response:   response,
+		Namespace:  callEvent.Payload.Namespace,
+		RecordType: "response_item.function_call",
+	}
+}
+
+func codexAgentOutput(response string) (agentID, nickname string) {
+	var payload struct {
+		AgentID  string `json:"agent_id"`
+		Nickname string `json:"nickname"`
+	}
+	if json.Unmarshal([]byte(strings.TrimSpace(response)), &payload) == nil {
+		return payload.AgentID, payload.Nickname
+	}
+	return "", ""
+}
+
+func extractArgumentsMap(argsJSON json.RawMessage) map[string]any {
+	raw := normalizeCodexArguments(argsJSON)
 	var args map[string]any
-	if argsJSON == "" || json.Unmarshal([]byte(argsJSON), &args) != nil {
+	if raw == "" || json.Unmarshal([]byte(raw), &args) != nil {
 		return map[string]any{}
 	}
 	return args
 }
 
-func extractCommand(argsJSON string) string {
-	if argsJSON == "" {
+func extractCommand(argsJSON json.RawMessage) string {
+	raw := normalizeCodexArguments(argsJSON)
+	if raw == "" {
 		return ""
 	}
 	var args struct {
 		Cmd string `json:"cmd"`
 	}
-	if json.Unmarshal([]byte(argsJSON), &args) == nil && args.Cmd != "" {
+	if json.Unmarshal([]byte(raw), &args) == nil && args.Cmd != "" {
 		return args.Cmd
 	}
-	return argsJSON
+	return raw
+}
+
+func normalizeCodexArguments(argsJSON json.RawMessage) string {
+	if len(argsJSON) == 0 || string(argsJSON) == "null" {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(argsJSON, &s) == nil {
+		return s
+	}
+	return string(argsJSON)
 }
 
 func extractCommandOutput(raw string) string {

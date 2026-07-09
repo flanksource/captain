@@ -64,12 +64,15 @@ type CodexPayload struct {
 	Git           *CodexGitMeta `json:"git,omitempty"`
 
 	// response_item: function_call
-	Name      string `json:"name,omitempty"`
-	Arguments string `json:"arguments,omitempty"`
-	CallID    string `json:"call_id,omitempty"`
+	Name      string          `json:"name,omitempty"`
+	Namespace string          `json:"namespace,omitempty"`
+	Arguments json.RawMessage `json:"arguments,omitempty"`
+	CallID    string          `json:"call_id,omitempty"`
+	Metadata  *CodexMetadata  `json:"internal_chat_message_metadata_passthrough,omitempty"`
 
 	// response_item: function_call_output
-	Output string `json:"output,omitempty"`
+	Output string                     `json:"output,omitempty"`
+	Tools  []CodexToolSearchNamespace `json:"tools,omitempty"`
 
 	// response_item: reasoning carries an array of CodexReasoningSummary;
 	// turn_context carries a plain string ("none", "auto", etc.). Use a
@@ -125,6 +128,24 @@ type CodexGitMeta struct {
 	RepositoryURL string `json:"repository_url,omitempty"`
 }
 
+type CodexMetadata struct {
+	TurnID string `json:"turn_id,omitempty"`
+}
+
+type CodexToolSearchNamespace struct {
+	Type        string                 `json:"type,omitempty"`
+	Name        string                 `json:"name,omitempty"`
+	Description string                 `json:"description,omitempty"`
+	Tools       []CodexToolSearchEntry `json:"tools,omitempty"`
+}
+
+type CodexToolSearchEntry struct {
+	Type        string         `json:"type,omitempty"`
+	Name        string         `json:"name,omitempty"`
+	Description string         `json:"description,omitempty"`
+	Parameters  map[string]any `json:"parameters,omitempty"`
+}
+
 type CodexReasoningSummary struct {
 	Type string `json:"type"`
 	Text string `json:"text"`
@@ -142,8 +163,9 @@ type CodexTokenInfo struct {
 }
 
 type CodexTokenUsage struct {
-	InputTokens       int `json:"input_tokens"`
-	CachedInputTokens int `json:"cached_input_tokens"`
-	OutputTokens      int `json:"output_tokens"`
-	TotalTokens       int `json:"total_tokens"`
+	InputTokens           int `json:"input_tokens"`
+	CachedInputTokens     int `json:"cached_input_tokens"`
+	OutputTokens          int `json:"output_tokens"`
+	ReasoningOutputTokens int `json:"reasoning_output_tokens"`
+	TotalTokens           int `json:"total_tokens"`
 }

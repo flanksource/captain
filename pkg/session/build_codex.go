@@ -2,10 +2,14 @@ package session
 
 import (
 	"fmt"
+	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai/history"
+	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/bash"
 	"github.com/flanksource/captain/pkg/claude"
 	"github.com/flanksource/captain/pkg/claude/tools"
 	"github.com/flanksource/commons/logger"
@@ -14,10 +18,8 @@ import (
 
 var codexLog = logger.GetLogger("session")
 
-// BuildCodex builds the unified model for each given Codex session file. Codex
-// sessions are flat (no sub-agent hierarchy), carry inline plan updates, and
-// have no per-message token usage, so Cost is zero. Unreadable files are logged
-// at Warn and skipped.
+// BuildCodex builds the unified model for each given Codex session file.
+// Unreadable files are logged at Warn and skipped.
 func BuildCodex(files []string) []*Session {
 	out := make([]*Session, 0, len(files))
 	for _, f := range files {
@@ -47,6 +49,11 @@ func buildCodexSession(uses []history.ToolUse, info *history.CodexSessionInfo) *
 	root := &Agent{IsRoot: true}
 
 	var read, written []string
+	costs := api.Costs{}
+	turns := newCodexTurnBuilder()
+	agents := map[string]*Agent{}
+	var latestContext *Context
+
 	for _, u := range uses {
 		if s.ID == "" && u.SessionID != "" {
 			s.ID = u.SessionID
@@ -61,11 +68,39 @@ func buildCodexSession(uses []history.ToolUse, info *history.CodexSessionInfo) *
 			extendRange(s, *u.Timestamp)
 		}
 		if tools.IsEventToolName(u.Tool) || u.Tool == "ApiError" {
-			s.Events = append(s.Events, codexUseToEvent(u))
+			ev := codexUseToEvent(u)
+			if ev.Scope == "turn" {
+				turns.addEvent(u, ev)
+			} else {
+				s.Events = append(s.Events, ev)
+			}
+			mergeCodexCapabilities(&s.Capabilities, u)
+			if u.Tool == "TokenCount" {
+				cost := codexCostFromUse(u)
+				if cost.TotalTokens != 0 {
+					costs = append(costs, cost)
+					turns.addUsage(u, cost)
+				}
+				if ctx := codexContextFromUse(u); ctx != nil {
+					latestContext = ctx
+				}
+			}
 			continue
 		}
+		mergeCodexCapabilities(&s.Capabilities, u)
+		if u.Tool == "Agent" && u.AgentID != "" {
+			if agents[u.AgentID] == nil {
+				agents[u.AgentID] = &Agent{
+					ID:   u.AgentID,
+					Type: u.AgentType,
+					Desc: u.AgentDesc,
+				}
+			}
+		}
 		collectCodexPaths(u, &read, &written)
-		s.Messages = append(s.Messages, codexUseToMessage(u))
+		msg := codexUseToMessage(u)
+		turns.addMessage(u, msg.ID)
+		s.Messages = append(s.Messages, msg)
 	}
 
 	if info != nil {
@@ -86,15 +121,34 @@ func buildCodexSession(uses []history.ToolUse, info *history.CodexSessionInfo) *
 			extendRange(s, *info.StartedAt)
 		}
 	}
+	if s.Project == "" && s.CWD != "" {
+		s.Project = filepath.Base(claude.FindProjectRoot(s.CWD))
+	}
 
 	root.ID = s.ID
+	root.Cost = costs.Sum()
+	root.Usage = usageFromCost(root.Cost)
 	s.Root = root
 	s.Agents = []*Agent{root}
+	for _, agent := range sortedCodexAgents(agents) {
+		agent.ParentID = root.ID
+		root.Children = append(root.Children, agent)
+		s.Agents = append(s.Agents, agent)
+	}
 	s.Files = ChangedFiles{
 		Read:    sortedUnique(relativizeAll(read, s.CWD)),
 		Written: sortedUnique(relativizeAll(written, s.CWD)),
 	}
 	s.Plan = CodexPlanFromToolUses(uses)
+	s.Cost = costs.Sum()
+	s.Usage = usageFromCost(s.Cost)
+	s.ToolCosts = collapseByModel(costs)
+	s.Context = latestContext
+	s.Turns = turns.finish()
+	s.Capabilities.Tools = sortedStrings(s.Capabilities.Tools)
+	s.Capabilities.PendingMCPServers = sortedStrings(s.Capabilities.PendingMCPServers)
+	s.Capabilities.Agents = sortedStrings(s.Capabilities.Agents)
+	s.Capabilities.Skills = sortedStrings(s.Capabilities.Skills)
 	return s
 }
 
@@ -172,21 +226,24 @@ func relativizeAll(paths []string, cwd string) []string {
 // and "Reasoning" become text/reasoning turns, everything else a tool part with
 // the inline response as its output.
 func codexUseToMessage(u history.ToolUse) Message {
+	id := codexMessageID(u)
+	agentID := u.SessionID
 	prov := &Provenance{
 		Source:          "codex",
 		CWD:             u.CWD,
 		Model:           u.Model,
 		ReasoningEffort: u.ReasoningEffort,
 		SessionID:       u.SessionID,
+		AgentID:         agentID,
 		Timestamp:       u.Timestamp,
 	}
 	switch u.Tool {
 	case "User":
-		return Message{Role: "user", Parts: []Part{{Type: PartText, Text: codexText(u)}}, Provenance: prov}
+		return Message{ID: id, Role: "user", Parts: []Part{{Type: PartText, Text: codexText(u)}}, TurnID: u.TurnID, Provenance: prov, AgentID: agentID}
 	case "Assistant":
-		return Message{Role: "assistant", Parts: []Part{{Type: PartText, Text: codexText(u)}}, Provenance: prov}
+		return Message{ID: id, Role: "assistant", Parts: []Part{{Type: PartText, Text: codexText(u)}}, TurnID: u.TurnID, Provenance: prov, AgentID: agentID}
 	case "Reasoning":
-		return Message{Role: "assistant", Parts: []Part{{Type: PartReasoning, Text: codexText(u)}}, Provenance: prov}
+		return Message{ID: id, Role: "assistant", Parts: []Part{{Type: PartReasoning, Text: codexText(u)}}, TurnID: u.TurnID, Provenance: prov, AgentID: agentID}
 	default:
 		part := Part{
 			Type:       PartTool,
@@ -201,7 +258,7 @@ func codexUseToMessage(u history.ToolUse) Message {
 			}
 			part.State = ToolStateOutputAvailable
 		}
-		return Message{Role: "assistant", Parts: []Part{part}, Provenance: prov}
+		return Message{ID: id, Role: "assistant", Parts: []Part{part}, TurnID: u.TurnID, Provenance: prov, AgentID: agentID}
 	}
 }
 
@@ -217,12 +274,27 @@ func codexUseToEvent(u history.ToolUse) Event {
 		}
 		data[k] = v
 	}
+	scope := "session"
+	if u.TurnID != "" {
+		scope = "turn"
+	}
 	return Event{
 		Type:      typ,
-		Scope:     "session",
+		Scope:     scope,
+		TurnID:    u.TurnID,
 		Timestamp: u.Timestamp,
 		Data:      data,
 	}
+}
+
+func codexMessageID(u history.ToolUse) string {
+	if u.ToolUseID != "" {
+		return u.ToolUseID
+	}
+	if u.Timestamp != nil {
+		return fmt.Sprintf("codex-%s-%s-%d", u.TurnID, u.Tool, u.Timestamp.UnixNano())
+	}
+	return fmt.Sprintf("codex-%s-%s", u.TurnID, u.Tool)
 }
 
 func codexText(u history.ToolUse) string {
@@ -257,5 +329,183 @@ func collectCodexPaths(u history.ToolUse, read, written *[]string) {
 		if p, ok := u.Input["file_path"].(string); ok {
 			*written = append(*written, p)
 		}
+	case "Bash":
+		cmd, _ := u.Input["command"].(string)
+		if cmd == "" {
+			return
+		}
+		result, err := bash.Analyze(cmd)
+		if err != nil {
+			return
+		}
+		writePaths := map[string]struct{}{}
+		for _, op := range append(append(result.Created(), result.Modified()...), result.Deleted()...) {
+			if op.Path == "" {
+				continue
+			}
+			*written = append(*written, op.Path)
+			writePaths[op.Path] = struct{}{}
+		}
+		for _, p := range result.ReferencedPaths {
+			if p == "" {
+				continue
+			}
+			if _, ok := writePaths[p]; ok {
+				continue
+			}
+			*read = append(*read, p)
+		}
 	}
+}
+
+type codexTurnBuilder struct {
+	order []string
+	byID  map[string]*Turn
+}
+
+func newCodexTurnBuilder() *codexTurnBuilder {
+	return &codexTurnBuilder{byID: map[string]*Turn{}}
+}
+
+func (b *codexTurnBuilder) ensure(id string, ts *time.Time) *Turn {
+	if id == "" {
+		return nil
+	}
+	if turn := b.byID[id]; turn != nil {
+		if turn.StartedAt == nil && ts != nil {
+			turn.StartedAt = cloneTime(ts)
+		}
+		return turn
+	}
+	turn := &Turn{
+		ID:    id,
+		Index: len(b.order) + 1,
+	}
+	if ts != nil {
+		turn.StartedAt = cloneTime(ts)
+	}
+	b.byID[id] = turn
+	b.order = append(b.order, id)
+	return turn
+}
+
+func (b *codexTurnBuilder) addMessage(u history.ToolUse, messageID string) {
+	turn := b.ensure(u.TurnID, u.Timestamp)
+	if turn == nil {
+		return
+	}
+	turn.MessageIDs = appendUnique(turn.MessageIDs, messageID)
+	if u.Model != "" {
+		turn.Model = u.Model
+	}
+}
+
+func (b *codexTurnBuilder) addEvent(u history.ToolUse, ev Event) {
+	turn := b.ensure(u.TurnID, u.Timestamp)
+	if turn == nil {
+		return
+	}
+	if u.Tool == "TaskStarted" && u.Timestamp != nil {
+		turn.StartedAt = cloneTime(u.Timestamp)
+	}
+	if u.Tool == "TaskComplete" && u.Timestamp != nil {
+		turn.EndedAt = cloneTime(u.Timestamp)
+	}
+	turn.Events = append(turn.Events, ev)
+	if u.Model != "" {
+		turn.Model = u.Model
+	}
+}
+
+func (b *codexTurnBuilder) addUsage(u history.ToolUse, cost api.Cost) {
+	turn := b.ensure(u.TurnID, u.Timestamp)
+	if turn == nil {
+		return
+	}
+	turn.Cost = turn.Cost.Add(cost)
+	turn.Usage = usageFromCost(turn.Cost)
+	if ctx := codexContextFromUse(u); ctx != nil {
+		turn.Context = ctx
+	}
+	if u.Model != "" {
+		turn.Model = u.Model
+	}
+}
+
+func (b *codexTurnBuilder) finish() []Turn {
+	turns := make([]Turn, 0, len(b.order))
+	for _, id := range b.order {
+		turn := b.byID[id]
+		if turn == nil {
+			continue
+		}
+		if turn.EndedAt == nil {
+			for i := len(turn.Events) - 1; i >= 0; i-- {
+				if turn.Events[i].Timestamp != nil {
+					turn.EndedAt = cloneTime(turn.Events[i].Timestamp)
+					break
+				}
+			}
+		}
+		turns = append(turns, *turn)
+	}
+	return turns
+}
+
+func codexCostFromUse(u history.ToolUse) api.Cost {
+	if u.TotalTokens == 0 && u.InputTokens == 0 && u.OutputTokens == 0 && u.CacheReadTokens == 0 {
+		return api.Cost{Model: u.Model}
+	}
+	p := claude.PricingFor(u.Model)
+	total := u.TotalTokens
+	if total == 0 {
+		total = u.InputTokens + u.OutputTokens + u.CacheReadTokens
+	}
+	return api.Cost{
+		Model:           u.Model,
+		InputTokens:     u.InputTokens,
+		OutputTokens:    u.OutputTokens,
+		CacheReadTokens: u.CacheReadTokens,
+		TotalTokens:     total,
+		InputCost:       float64(u.InputTokens) * p.InputPerMTok / 1e6,
+		OutputCost:      float64(u.OutputTokens) * p.OutputPerMTok / 1e6,
+		CacheReadCost:   float64(u.CacheReadTokens) * p.CacheReadPerMTok / 1e6,
+	}
+}
+
+func codexContextFromUse(u history.ToolUse) *Context {
+	if u.ContextWindow == 0 {
+		return nil
+	}
+	used := u.InputTokens + u.CacheReadTokens
+	return &Context{
+		UsedTokens:   used,
+		WindowTokens: u.ContextWindow,
+		FreePercent:  freeContextPercent(used, u.ContextWindow),
+	}
+}
+
+func mergeCodexCapabilities(c *Capabilities, u history.ToolUse) {
+	switch u.Tool {
+	case "DeferredToolsDelta":
+		c.Tools = append(c.Tools, stringsFromAny(u.Input["addedNames"])...)
+		c.PendingMCPServers = append(c.PendingMCPServers, stringsFromAny(u.Input["pendingMcpServers"])...)
+	case "Agent":
+		if u.AgentType != "" {
+			c.Agents = append(c.Agents, u.AgentType)
+		}
+	case "SkillListing":
+		c.Skills = append(c.Skills, stringsFromAny(u.Input["names"])...)
+	}
+}
+
+func sortedCodexAgents(agents map[string]*Agent) []*Agent {
+	out := make([]*Agent, 0, len(agents))
+	for _, agent := range agents {
+		out = append(out, agent)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].ID < out[j].ID
+	})
+	return out
 }

@@ -133,7 +133,7 @@ func effortConfig(backend ai.Backend, req ai.Request) map[string]any {
 	case ai.BackendAnthropic:
 		cfg := map[string]any{"max_tokens": anthropicMaxTokens(req, e)}
 		if e != api.EffortNone {
-			if usesAnthropicAdaptiveThinking(req.Model.Name) || usesAnthropicAdaptiveThinking(req.Model.ID) {
+			if usesAnthropicAdaptiveThinking(req.Name) || usesAnthropicAdaptiveThinking(req.ID) {
 				cfg["thinking"] = map[string]any{"type": "adaptive"}
 				cfg["output_config"] = map[string]any{"effort": anthropicOutputEffort(e)}
 			} else {
@@ -155,6 +155,12 @@ func effortConfig(backend ai.Backend, req ai.Request) map[string]any {
 // ExecuteStream rejects structured output before calling this.
 func generateOptions(p *Provider, req ai.Request, stream gkai.ModelStreamCallback) ([]gkai.GenerateOption, error) {
 	opts := []gkai.GenerateOption{gkai.WithModelName(p.modelRef)}
+	if p.cfg.Model.Name != "" {
+		req.Name = p.cfg.Model.Name
+	}
+	if p.cfg.Model.ID != "" && req.ID == "" {
+		req.ID = p.cfg.Model.ID
+	}
 
 	if req.Prompt.System != "" {
 		opts = append(opts, gkai.WithSystem(req.Prompt.System))
