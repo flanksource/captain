@@ -225,6 +225,8 @@ func generatedModelFromModelsDev(provider, id string, model modelsDevModel) (gen
 	if label == "" {
 		label = titleModelID(id)
 	}
+	// Preferred is opt-in: models default to non-preferred and are surfaced in
+	// menus only when patches.json explicitly sets "preferred": true.
 	return generatedModel{
 		ID:            id,
 		Provider:      provider,
@@ -234,7 +236,6 @@ func generatedModelFromModelsDev(provider, id string, model modelsDevModel) (gen
 		ReleaseDate:   model.ReleaseDate,
 		Reasoning:     model.Reasoning,
 		ContextWindow: model.Limit.Context,
-		Preferred:     !isNonPreferredID(id),
 	}, true
 }
 
@@ -281,32 +282,11 @@ func supportedFamily(identity captainai.ModelIdentity) bool {
 	return false
 }
 
-func isNonPreferredID(id string) bool {
-	lower := strings.ToLower(id)
-	return hasTrailingDateID(lower) || strings.Contains(lower, "preview") || strings.Contains(lower, "latest")
-}
-
-func hasTrailingDateID(id string) bool {
-	parts := strings.Split(id, "-")
-	if len(parts) == 0 {
-		return false
-	}
-	last := parts[len(parts)-1]
-	if len(last) != 8 {
-		return false
-	}
-	for _, r := range last {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return true
-}
-
 // applyPatches overlays the per-model merge patches onto the fetched catalog.
-// Each patch overwrites only the fields it names; a patch whose ID is absent
-// from the catalog is treated as a new full entry and must name provider,
-// family, and label.
+// Each patch overwrites only the fields it names (RFC 7386 merge semantics); a
+// null patch value drops the model from the catalog entirely, and a patch whose
+// ID is absent from the catalog is treated as a new full entry that must name
+// provider, family, and label.
 func applyPatches(out map[string]generatedModel, patches map[string]json.RawMessage) error {
 	ids := make([]string, 0, len(patches))
 	for id := range patches {
@@ -314,11 +294,16 @@ func applyPatches(out map[string]generatedModel, patches map[string]json.RawMess
 	}
 	sort.Strings(ids)
 	for _, id := range ids {
+		raw := patches[id]
+		if strings.TrimSpace(string(raw)) == "null" {
+			delete(out, id)
+			continue
+		}
 		m, existed := out[id]
 		if m.ID == "" {
 			m.ID = id
 		}
-		if err := json.Unmarshal(patches[id], &m); err != nil {
+		if err := json.Unmarshal(raw, &m); err != nil {
 			return fmt.Errorf("patch %q: %w", id, err)
 		}
 		if !existed && (m.Provider == "" || m.Family == "" || m.Label == "") {

@@ -82,10 +82,10 @@ tasks:
     cmds:
       - go mod tidy
 
-  generate:llm-model-registry:
-    desc: Regenerate the exact LLM model registry from models.dev
+  models:update:
+    desc: Regenerate the embedded LLM model registry from models.dev + local patches
     cmds:
-      - go run ./pkg/ai/internal/gen-model-registry --output pkg/ai/model_registry_static.go
+      - go run ./pkg/ai/internal/gen-model-registry --patches pkg/ai/internal/gen-model-registry/patches.json --output pkg/ai/model_registry.json
 
   clean:
     desc: Remove build artifacts

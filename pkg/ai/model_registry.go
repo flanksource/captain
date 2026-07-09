@@ -17,15 +17,16 @@ type ModelIdentity struct {
 }
 
 type registryModel struct {
-	ID            string
-	Provider      string
-	Family        string
-	Version       string
-	Label         string
-	ReleaseDate   string
-	Reasoning     bool
-	ContextWindow int
-	Preferred     bool
+	ID               string `json:"id"`
+	Provider         string `json:"provider"`
+	Family           string `json:"family"`
+	Version          string `json:"version"`
+	Label            string `json:"label"`
+	ReleaseDate      string `json:"releaseDate,omitempty"`
+	Reasoning        bool   `json:"reasoning,omitempty"`
+	ContextWindow    int    `json:"contextWindow,omitempty"`
+	Preferred        bool   `json:"preferred,omitempty"`
+	AdaptiveThinking bool   `json:"adaptiveThinking,omitempty"`
 }
 
 const (
@@ -162,7 +163,9 @@ func ResolveExactModelForBackend(backend Backend, model string) (string, bool) {
 		return stripModelProviderPrefix(model), false
 	}
 	if m, ok := lookupRegistryExact(provider, model); ok {
-		return m.ID, true
+		if !isSupersededRegistryExact(m.ID) {
+			return m.ID, true
+		}
 	}
 	identity, ok := ParseModelIdentity(provider, model)
 	if !ok {
@@ -171,16 +174,31 @@ func ResolveExactModelForBackend(backend Backend, model string) (string, bool) {
 	if identity.Provider != provider {
 		return stripModelProviderPrefix(model), false
 	}
-	if m, ok := resolveRegistryIdentity(identity); ok {
-		return m.ID, true
+	if identity.Version != "" {
+		if m, ok := latestRegistryModelForVersionLine(identity); ok {
+			return m.ID, true
+		}
 	}
-	if m, ok := latestRegistryModelForVersionLine(identity); ok {
+	if m, ok := resolveRegistryIdentity(identity); ok {
 		return m.ID, true
 	}
 	if m, ok := latestRegistryModel(identity.Provider, identity.Family); ok {
 		return m.ID, true
 	}
 	return stripModelProviderPrefix(model), false
+}
+
+// ModelUsesAdaptiveThinking reports whether an Anthropic model uses adaptive
+// thinking, per the registry's adaptiveThinking annotation. It accepts aliases,
+// provider-prefixed, and dated model tokens by resolving them to their exact
+// registry entry first.
+func ModelUsesAdaptiveThinking(model string) bool {
+	exact, ok := ResolveExactModelForBackend(BackendAnthropic, model)
+	if !ok {
+		return false
+	}
+	m, ok := lookupRegistryExact(modelProviderAnthropic, exact)
+	return ok && m.AdaptiveThinking
 }
 
 func backendAgentSentinel(backend Backend) string {
@@ -205,6 +223,15 @@ func lookupRegistryExact(provider, model string) (registryModel, bool) {
 		}
 	}
 	return registryModel{}, false
+}
+
+func isSupersededRegistryExact(id string) bool {
+	switch canonicalModelToken(id) {
+	case "claude-sonnet-4-5", "claude-sonnet-4-5-20250929":
+		return true
+	default:
+		return false
+	}
 }
 
 // ParseModelIdentity parses a model token into the provider/family/version tuple
@@ -264,13 +291,21 @@ func splitKnownFamily(token string, families []string) (family, version string, 
 
 func resolveRegistryIdentity(identity ModelIdentity) (registryModel, bool) {
 	candidates := make([]registryModel, 0)
+	fallback := make([]registryModel, 0)
 	for _, m := range exactModelRegistry {
-		if !m.Preferred || m.Provider != identity.Provider || m.Family != identity.Family {
+		if m.Provider != identity.Provider || m.Family != identity.Family {
 			continue
 		}
 		if identity.Version == "" || modelVersionMatches(m.Version, identity.Version) {
-			candidates = append(candidates, m)
+			if m.Preferred {
+				candidates = append(candidates, m)
+			} else if identity.Version != "" {
+				fallback = append(fallback, m)
+			}
 		}
+	}
+	if len(candidates) == 0 {
+		candidates = fallback
 	}
 	if len(candidates) == 0 {
 		return registryModel{}, false
@@ -307,7 +342,7 @@ func latestRegistryModelForVersionLine(identity ModelIdentity) (registryModel, b
 	}
 	candidates := make([]registryModel, 0)
 	for _, m := range exactModelRegistry {
-		if !m.Preferred || m.Provider != identity.Provider || m.Family != identity.Family {
+		if m.Provider != identity.Provider || m.Family != identity.Family {
 			continue
 		}
 		if modelVersionMatches(m.Version, major) {
@@ -317,13 +352,26 @@ func latestRegistryModelForVersionLine(identity ModelIdentity) (registryModel, b
 	if len(candidates) == 0 {
 		return registryModel{}, false
 	}
-	sortRegistryModels(candidates)
+	sortRegistryModelsForResolution(candidates)
 	return candidates[0], true
 }
 
 func sortRegistryModels(models []registryModel) {
 	sort.SliceStable(models, func(i, j int) bool {
 		left, right := models[i], models[j]
+		if left.ReleaseDate == right.ReleaseDate {
+			return compareModelVersions(left.ID, right.ID) > 0
+		}
+		return left.ReleaseDate > right.ReleaseDate
+	})
+}
+
+func sortRegistryModelsForResolution(models []registryModel) {
+	sort.SliceStable(models, func(i, j int) bool {
+		left, right := models[i], models[j]
+		if left.ReleaseDate == right.ReleaseDate && left.Preferred != right.Preferred {
+			return left.Preferred
+		}
 		if left.ReleaseDate == right.ReleaseDate {
 			return compareModelVersions(left.ID, right.ID) > 0
 		}
