@@ -109,8 +109,82 @@ func TestBuildCodexSession_MapsUserMessagesAndEvents(t *testing.T) {
 	if s.Messages[1].Role != "assistant" || s.Messages[1].Parts[0].Text != "hello" {
 		t.Fatalf("second message = %+v, want assistant hello", s.Messages[1])
 	}
-	if len(s.Events) != 2 || s.Events[0].Type != "task_started" || s.Events[1].Type != "task_complete" {
-		t.Fatalf("events = %+v", s.Events)
+	if len(s.Turns) != 1 {
+		t.Fatalf("turns = %+v, want one turn", s.Turns)
+	}
+	if got := s.Turns[0].ID; got != "turn-1" {
+		t.Fatalf("turn id = %q, want turn-1", got)
+	}
+	if len(s.Turns[0].Events) != 2 || s.Turns[0].Events[0].Type != "task_started" || s.Turns[0].Events[1].Type != "task_complete" {
+		t.Fatalf("turn events = %+v", s.Turns[0].Events)
+	}
+}
+
+func TestBuildCodexSession_RichCodexMetadata(t *testing.T) {
+	stream := strings.Join([]string{
+		`{"timestamp":"2026-07-09T06:13:17.184Z","type":"session_meta","payload":{"id":"rich-codex","cwd":"/repo","cli_version":"0.143.0","model_provider":"openai"}}`,
+		`{"timestamp":"2026-07-09T06:13:17.197Z","type":"world_state","payload":{"full":true,"state":{"skills":{"includeInstructions":true}}}}`,
+		`{"timestamp":"2026-07-09T06:13:17.197Z","type":"turn_context","payload":{"turn_id":"turn-rich","model":"gpt-5.5","effort":"xhigh"}}`,
+		`{"timestamp":"2026-07-09T06:13:17.198Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-rich"}}`,
+		`{"timestamp":"2026-07-09T06:13:18.000Z","type":"response_item","payload":{"type":"tool_search_call","call_id":"search-1","arguments":{"query":"multi-agent","limit":8},"internal_chat_message_metadata_passthrough":{"turn_id":"turn-rich"}}}`,
+		`{"timestamp":"2026-07-09T06:13:18.010Z","type":"response_item","payload":{"type":"tool_search_output","call_id":"search-1","tools":[{"type":"namespace","name":"multi_agent_v1","tools":[{"type":"function","name":"spawn_agent"},{"type":"function","name":"wait_agent"}]}],"internal_chat_message_metadata_passthrough":{"turn_id":"turn-rich"}}}`,
+		`{"timestamp":"2026-07-09T06:13:19.000Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":1000,"cached_input_tokens":300,"output_tokens":50,"reasoning_output_tokens":10,"total_tokens":1050},"total_token_usage":{"input_tokens":1000,"cached_input_tokens":300,"output_tokens":50,"reasoning_output_tokens":10,"total_tokens":1050},"model_context_window":2000}}}`,
+		`{"timestamp":"2026-07-09T06:13:20.000Z","type":"response_item","payload":{"type":"function_call","name":"spawn_agent","namespace":"multi_agent_v1","arguments":"{\"agent_type\":\"worker\",\"message\":\"Fix lint\"}","call_id":"spawn-1","internal_chat_message_metadata_passthrough":{"turn_id":"turn-rich"}}}`,
+		`{"timestamp":"2026-07-09T06:13:20.500Z","type":"response_item","payload":{"type":"function_call_output","call_id":"spawn-1","output":"{\"agent_id\":\"agent-1\",\"nickname\":\"Ada\"}","internal_chat_message_metadata_passthrough":{"turn_id":"turn-rich"}}}`,
+		`{"timestamp":"2026-07-09T06:13:21.000Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"sed -n '1p' /repo/c.go\"}","call_id":"exec-1","internal_chat_message_metadata_passthrough":{"turn_id":"turn-rich"}}}`,
+		`{"timestamp":"2026-07-09T06:13:21.500Z","type":"response_item","payload":{"type":"function_call_output","call_id":"exec-1","output":"ok","internal_chat_message_metadata_passthrough":{"turn_id":"turn-rich"}}}`,
+		`{"timestamp":"2026-07-09T06:13:22.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-rich","duration_ms":4800}}`,
+	}, "\n")
+	uses, err := history.ExtractCodexToolUsesFromReader(strings.NewReader(stream))
+	if err != nil {
+		t.Fatalf("ExtractCodexToolUsesFromReader: %v", err)
+	}
+
+	s := buildCodexSession(uses, &history.CodexSessionInfo{ID: "rich-codex", CWD: "/repo", Model: "gpt-5.5"})
+
+	if got, want := s.Usage.InputTokens, 700; got != want {
+		t.Fatalf("input tokens = %d, want %d", got, want)
+	}
+	if got, want := s.Usage.CacheReadTokens, 300; got != want {
+		t.Fatalf("cache read tokens = %d, want %d", got, want)
+	}
+	if got, want := s.Usage.OutputTokens, 50; got != want {
+		t.Fatalf("output tokens = %d, want %d", got, want)
+	}
+	if s.Cost.TotalTokens != 1050 {
+		t.Fatalf("total tokens = %d, want 1050", s.Cost.TotalTokens)
+	}
+	if s.Context == nil || s.Context.UsedTokens != 1000 || s.Context.WindowTokens != 2000 || s.Context.FreePercent != 50 {
+		t.Fatalf("context = %+v, want 1000/2000/50", s.Context)
+	}
+	if len(s.Turns) != 1 || s.Turns[0].ID != "turn-rich" || s.Turns[0].Usage.TotalTokens() != 1050 {
+		t.Fatalf("turns = %+v", s.Turns)
+	}
+	if len(s.Agents) != 2 || s.Agents[1].ID != "agent-1" || s.Agents[1].Type != "worker" || s.Agents[1].Desc != "Fix lint" {
+		t.Fatalf("agents = %+v", s.Agents)
+	}
+	if want := []string{"spawn_agent", "wait_agent"}; !equalStrings(s.Capabilities.Tools, want) {
+		t.Fatalf("tools = %v, want %v", s.Capabilities.Tools, want)
+	}
+	if want := []string{"worker"}; !equalStrings(s.Capabilities.Agents, want) {
+		t.Fatalf("capability agents = %v, want %v", s.Capabilities.Agents, want)
+	}
+	if want := []string{"c.go"}; !equalStrings(s.Files.Read, want) {
+		t.Fatalf("read files = %v, want %v", s.Files.Read, want)
+	}
+	var foundAgentTool bool
+	for _, msg := range s.Messages {
+		for _, part := range msg.Parts {
+			if part.ToolName == "Agent" {
+				foundAgentTool = true
+			}
+		}
+	}
+	if !foundAgentTool {
+		t.Fatalf("messages did not include Agent tool part: %+v", s.Messages)
+	}
+	if len(s.Events) != 1 || s.Events[0].Type != "world_state" {
+		t.Fatalf("session events = %+v, want world_state", s.Events)
 	}
 }
 

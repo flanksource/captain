@@ -137,7 +137,7 @@ func runHistoryFromReader(data []byte, opts HistoryOptions) (any, error) {
 	if !opts.Since.IsZero() {
 		filter.Since = &opts.Since
 	}
-	if len(opts.Categories) == 0 && opts.TextFilter == "" {
+	if len(opts.Categories) == 0 && opts.TextFilter == "" && !usesDefaultHiddenHistoryTools(opts) {
 		filter.Limit = opts.Limit
 	}
 	toolUses := claude.FilterToolUses(parsed.ToolUses, filter)

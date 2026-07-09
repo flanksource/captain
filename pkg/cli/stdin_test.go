@@ -281,6 +281,7 @@ func TestRunHistoryFromReader_CodexChatRowsAndChatCategoryFilter(t *testing.T) {
 {"timestamp":"2026-07-08T11:19:58.760Z","type":"event_msg","payload":{"type":"user_message","message":"hi"}}
 {"timestamp":"2026-07-08T11:20:00.403Z","type":"event_msg","payload":{"type":"agent_message","message":"hello"}}
 {"timestamp":"2026-07-08T11:20:00.403Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hello"}]}}
+{"timestamp":"2026-07-08T11:20:00.430Z","type":"event_msg","payload":{"type":"token_count","turn_id":"turn-1","info":{"last_token_usage":{"input_tokens":10,"cached_input_tokens":4,"output_tokens":2,"total_tokens":12},"total_token_usage":{"input_tokens":10,"cached_input_tokens":4,"output_tokens":2,"total_tokens":12},"model_context_window":100}}}
 {"timestamp":"2026-07-08T11:20:00.435Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-1","duration_ms":3519}}
 `)
 
@@ -301,4 +302,23 @@ func TestRunHistoryFromReader_CodexChatRowsAndChatCategoryFilter(t *testing.T) {
 	filtered, err := runHistoryFromReader(data, HistoryOptions{Categories: []string{"!chat"}})
 	require.NoError(t, err)
 	assert.Empty(t, filtered.(session.HistoryResult).Results)
+
+	tokens, err := runHistoryFromReader(data, HistoryOptions{Tools: []string{"TokenCount"}})
+	require.NoError(t, err)
+	tokenResult := tokens.(session.HistoryResult)
+	require.Len(t, tokenResult.Results, 1)
+	assert.Equal(t, "TokenCount", tokenResult.Results[0].Tool)
+}
+
+func TestRunHistoryFromReader_HidesCodexTokenCountBeforeLimit(t *testing.T) {
+	data := []byte(`{"timestamp":"2026-07-08T11:19:57.028Z","type":"session_meta","payload":{"id":"sess-rollout","cwd":"/repo","cli_version":"0.143.0","model_provider":"openai"}}
+{"timestamp":"2026-07-08T11:20:00.430Z","type":"event_msg","payload":{"type":"token_count","turn_id":"turn-1","info":{"last_token_usage":{"input_tokens":10,"cached_input_tokens":4,"output_tokens":2,"total_tokens":12},"total_token_usage":{"input_tokens":10,"cached_input_tokens":4,"output_tokens":2,"total_tokens":12},"model_context_window":100}}}
+{"timestamp":"2026-07-08T11:20:00.435Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"}}
+`)
+
+	result, err := runHistoryFromReader(data, HistoryOptions{Limit: 1})
+	require.NoError(t, err)
+	histResult := result.(session.HistoryResult)
+	require.Len(t, histResult.Results, 1)
+	assert.Equal(t, "TaskStarted", histResult.Results[0].Tool)
 }

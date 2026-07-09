@@ -91,7 +91,7 @@ func RunHistory(opts HistoryOptions) (any, error) {
 		IncludeAgents: opts.Agents,
 	}
 
-	if len(opts.Categories) == 0 && opts.TextFilter == "" && !opts.Last {
+	if len(opts.Categories) == 0 && opts.TextFilter == "" && !opts.Last && !usesDefaultHiddenHistoryTools(opts) {
 		filter.Limit = opts.Limit
 	}
 
@@ -568,6 +568,9 @@ func filterTools(tl []tools.Tool, opts HistoryOptions, classifier *bash.Category
 		cat := classifyTool(t, classifier)
 		categorySet[cat] = struct{}{}
 
+		if hideDefaultHistoryTool(t, opts) {
+			continue
+		}
 		if len(opts.Categories) > 0 && !matchCategoryFilters(categoryFilterCandidates(t, cat), opts.Categories) {
 			continue
 		}
@@ -600,6 +603,48 @@ func filterTools(tl []tools.Tool, opts HistoryOptions, classifier *bash.Category
 	}
 
 	return result
+}
+
+func hideDefaultHistoryTool(t tools.Tool, opts HistoryOptions) bool {
+	base := t.Base()
+	switch {
+	case t.Name() == "TokenCount", base.RawTool == "TokenCount":
+		return usesDefaultHiddenHistoryTools(opts)
+	default:
+		return false
+	}
+}
+
+func usesDefaultHiddenHistoryTools(opts HistoryOptions) bool {
+	return !hasExplicitToolFilter(opts.Tools, "TokenCount") && toolFiltersMayInclude(opts.Tools, "TokenCount")
+}
+
+func hasExplicitToolFilter(filters []string, tool string) bool {
+	for _, filter := range filters {
+		for _, part := range strings.Split(filter, ",") {
+			part = strings.TrimSpace(part)
+			if part == "" || strings.HasPrefix(part, "!") {
+				continue
+			}
+			if collections.MatchItems(tool, part) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func toolFiltersMayInclude(filters []string, tool string) bool {
+	var parts []string
+	for _, filter := range filters {
+		for _, part := range strings.Split(filter, ",") {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				parts = append(parts, part)
+			}
+		}
+	}
+	return collections.MatchItems(tool, parts...)
 }
 
 func matchCategoryFilters(candidates []string, filters []string) bool {

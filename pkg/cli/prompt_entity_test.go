@@ -433,6 +433,50 @@ Hello {{name}}
 	}
 }
 
+func TestRenderPromptEphemeralSpec(t *testing.T) {
+	isolateCaptainConfig(t)
+
+	cwd := t.TempDir()
+	t.Chdir(cwd)
+	temp := 0.1
+	rendered, err := renderPrompt(context.Background(), "", PromptRenderRequest{
+		Spec: &api.Spec{
+			Model: api.Model{
+				Name:        "gpt-5.5",
+				Backend:     api.BackendCodexAgent,
+				Temperature: &temp,
+				Effort:      api.EffortHigh,
+			},
+			Prompt: api.Prompt{
+				System: "scratch system",
+				User:   "Draft a deployment plan",
+			},
+			Budget: api.Budget{Timeout: "2h"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("renderPrompt() err = %v", err)
+	}
+	if rendered.ValidationError != "" {
+		t.Fatalf("render validation error = %q", rendered.ValidationError)
+	}
+	if rendered.ID != "" || rendered.Name != "Scratch Prompt" {
+		t.Fatalf("rendered prompt identity = id %q name %q, want scratch prompt", rendered.ID, rendered.Name)
+	}
+	if rendered.User != "Draft a deployment plan" || rendered.System != "scratch system" {
+		t.Fatalf("rendered prompt = user %q system %q", rendered.User, rendered.System)
+	}
+	if rendered.Model != "gpt-5.5" || rendered.Backend != "codex-agent" {
+		t.Fatalf("rendered model/backend = %s/%s, want gpt-5.5/codex-agent", rendered.Model, rendered.Backend)
+	}
+	if rendered.Input.Prompt.Source != "<ephemeral>" {
+		t.Fatalf("prompt source = %q, want <ephemeral>", rendered.Input.Prompt.Source)
+	}
+	if rendered.Input.Cwd() != cwd {
+		t.Fatalf("setup cwd = %q, want %q", rendered.Input.Cwd(), cwd)
+	}
+}
+
 func isolateCaptainConfig(t *testing.T) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), ".captain.yaml")
