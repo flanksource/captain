@@ -26,3 +26,4 @@ pkg/cli/webapp/dist/*
 !pkg/cli/webapp/dist/index.html
 .grite/
 hack/
+dist/
