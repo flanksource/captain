@@ -102,7 +102,7 @@ func TestEffortConfig(t *testing.T) {
 	}
 }
 
-func TestUsesAnthropicAdaptiveThinking(t *testing.T) {
+func TestModelUsesAdaptiveThinking(t *testing.T) {
 	tests := []struct {
 		model string
 		want  bool
@@ -115,7 +115,7 @@ func TestUsesAnthropicAdaptiveThinking(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.model, func(t *testing.T) {
-			assert.Equal(t, tt.want, usesAnthropicAdaptiveThinking(tt.model))
+			assert.Equal(t, tt.want, ai.ModelUsesAdaptiveThinking(tt.model))
 		})
 	}
 }

@@ -337,10 +337,11 @@ func (s *codexCLIState) buildFunctionToolUse(call, output history.CodexEvent) cl
 	return tu
 }
 
-func codexArgumentsMap(argsJSON string) map[string]any {
+func codexArgumentsMap(argsJSON json.RawMessage) map[string]any {
+	raw := normalizeCodexArguments(argsJSON)
 	var args map[string]any
-	if argsJSON != "" {
-		_ = json.Unmarshal([]byte(argsJSON), &args)
+	if raw != "" {
+		_ = json.Unmarshal([]byte(raw), &args)
 	}
 	if args == nil {
 		args = map[string]any{}
@@ -348,14 +349,25 @@ func codexArgumentsMap(argsJSON string) map[string]any {
 	return args
 }
 
-func codexCommand(argsJSON string) string {
+func codexCommand(argsJSON json.RawMessage) string {
 	args := codexArgumentsMap(argsJSON)
 	for _, key := range []string{"command", "cmd"} {
 		if value, _ := args[key].(string); value != "" {
 			return value
 		}
 	}
-	return argsJSON
+	return normalizeCodexArguments(argsJSON)
+}
+
+func normalizeCodexArguments(argsJSON json.RawMessage) string {
+	if len(argsJSON) == 0 || string(argsJSON) == "null" {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(argsJSON, &s) == nil {
+		return s
+	}
+	return string(argsJSON)
 }
 
 func codexReasoningText(event history.CodexEvent) string {
