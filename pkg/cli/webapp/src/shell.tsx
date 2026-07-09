@@ -1,42 +1,50 @@
 import {
+  Combobox,
   DensitySwitcher,
   ThemeSwitcher,
-  type AppShellNavSection,
 } from "@flanksource/clicky-ui/components";
+import { useQuery } from "@tanstack/react-query";
 import {
-  UiActivity,
-  UiFileText,
-  UiHistory,
-  UiRobotAi,
-  UiServer,
-} from "@flanksource/clicky-ui/data";
-
-export type PrimaryRoute = "dashboard" | "agent" | "sessions" | "prompts" | "operations";
-
-/** localStorage key persisting the AppShell sidebar rail's collapsed state. */
-export const CAPTAIN_SIDEBAR_COLLAPSE_KEY = "captain:sidebar:collapsed";
-
-/** Sidebar rail sections for the Captain shell, with `active` set for the current route. */
-export function captainNavSections(active: PrimaryRoute): AppShellNavSection[] {
-  return [
-    {
-      items: [
-        { key: "dashboard", label: "Dashboard", to: "/", icon: UiActivity, active: active === "dashboard" },
-        { key: "agent", label: "Agent", to: "/agent", icon: UiRobotAi, active: active === "agent" },
-        { key: "sessions", label: "Sessions", to: "/sessions", icon: UiHistory, active: active === "sessions" },
-        { key: "prompts", label: "Prompts", to: "/prompts", icon: UiFileText, active: active === "prompts" },
-        { key: "operations", label: "Operations", to: "/operations", icon: UiServer, active: active === "operations" },
-      ],
-    },
-  ];
-}
+  ALL_PROJECTS_SCOPE,
+  fetchProjectOptions,
+  type ProjectOption,
+  type ProjectScope,
+} from "./sessionData";
+import { projectOptions } from "./shellHelpers";
 
 /** Right-aligned top-bar cluster shared across every route. */
-export function ShellActions() {
+export function ShellActions({
+  projectScope = ALL_PROJECTS_SCOPE,
+  onProjectScopeChange,
+}: {
+  projectScope?: ProjectScope;
+  onProjectScopeChange?: (scope: ProjectScope) => void;
+}) {
+  const projectsQuery = useQuery({
+    queryKey: ["project-options"],
+    queryFn: fetchProjectOptions,
+    staleTime: 30_000,
+  });
+  const options = projectOptions(projectScope, projectsQuery.data?.projects ?? EMPTY_PROJECTS);
+
   return (
     <>
+      <Combobox
+        className="w-64 max-w-[40vw]"
+        value={projectScope || ALL_PROJECTS_SCOPE}
+        onChange={(value) => onProjectScopeChange?.(value || ALL_PROJECTS_SCOPE)}
+        options={options}
+        label="Project"
+        ariaLabel="Project"
+        placeholder="All projects"
+        allowCustomValue={false}
+        loading={projectsQuery.isFetching}
+        size="sm"
+      />
       <ThemeSwitcher />
       <DensitySwitcher />
     </>
   );
 }
+
+const EMPTY_PROJECTS: ProjectOption[] = [];

@@ -1,6 +1,6 @@
-import { useMemo, type ReactNode } from "react";
+import { useMemo, useSyncExternalStore } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { AppShell } from "@flanksource/clicky-ui/components";
+import { AppShell, type AppShellProps } from "@flanksource/clicky-ui/components";
 import {
   RouterProvider,
   useBrowserRouter,
@@ -14,12 +14,17 @@ import { ChatRoute } from "./ChatRoute";
 import { HomeDashboard } from "./HomeDashboard";
 import { PromptWorkbench } from "./PromptWorkbench";
 import { SessionBrowser } from "./SessionBrowser";
+import { ShellActions } from "./shell";
 import {
-  CAPTAIN_SIDEBAR_COLLAPSE_KEY,
-  ShellActions,
   captainNavSections,
+  CAPTAIN_SIDEBAR_COLLAPSE_KEY,
+  getProjectScopeSnapshot,
+  setProjectScopeInLocation,
+  subscribeProjectScope,
+  withProjectScope,
   type PrimaryRoute,
-} from "./shell";
+} from "./shellHelpers";
+import type { ProjectScope } from "./sessionData";
 
 export function App() {
   const queryClient = useMemo(
@@ -31,6 +36,18 @@ export function App() {
   );
   const router = useBrowserRouter();
   const route = parseRoute(router.pathname, window.location.search);
+  const projectScope = useSyncExternalStore(
+    subscribeProjectScope,
+    getProjectScopeSnapshot,
+    getProjectScopeSnapshot,
+  );
+
+  const setProjectScope = (scope: ProjectScope) => {
+    setProjectScopeInLocation(scope, router.navigate, router.pathname, window.location.search);
+  };
+  const shellActions = (
+    <ShellActions projectScope={projectScope} onProjectScopeChange={setProjectScope} />
+  );
 
   return (
     <QueryClientProvider client={queryClient}>
@@ -40,20 +57,26 @@ export function App() {
             <SessionBrowser
               selectedId={route.sessionId}
               onNavigate={router.navigate}
-              navSections={captainNavSections("sessions")}
-              actions={<ShellActions />}
+              navSections={captainNavSections("sessions", projectScope)}
+              actions={shellActions}
+              projectScope={projectScope}
             />
           ) : route.kind === "prompts" ? (
             <PromptWorkbench
               selectedId={route.promptId}
               onNavigate={router.navigate}
-              navSections={captainNavSections("prompts")}
-              actions={<ShellActions />}
+              navSections={captainNavSections("prompts", projectScope)}
+              actions={shellActions}
             />
           ) : (
-            <CaptainShell active={primaryRoute(route)} onNavigate={router.navigate}>
+            <CaptainShell
+              active={primaryRoute(route)}
+              onNavigate={router.navigate}
+              projectScope={projectScope}
+              actions={shellActions}
+            >
               {route.kind === "dashboard" ? (
-                <HomeDashboard onNavigate={router.navigate} />
+                <HomeDashboard onNavigate={router.navigate} projectScope={projectScope} />
               ) : route.kind === "operations" ? (
                 <EntityExplorerApp
                   client={apiClient}
@@ -83,19 +106,23 @@ export function App() {
 function CaptainShell({
   active,
   onNavigate,
+  projectScope,
+  actions,
   children,
 }: {
   active: PrimaryRoute;
   onNavigate: (to: string, opts?: { replace?: boolean }) => void;
-  children: ReactNode;
+  projectScope: ProjectScope;
+  actions: AppShellProps["actions"];
+  children: AppShellProps["children"];
 }) {
   return (
     <AppShell
       className="h-screen"
-      brand={<ShellBrand onNavigate={onNavigate} />}
-      navSections={captainNavSections(active)}
+      brand={<ShellBrand onNavigate={onNavigate} projectScope={projectScope} />}
+      navSections={captainNavSections(active, projectScope)}
       collapsedStorageKey={CAPTAIN_SIDEBAR_COLLAPSE_KEY}
-      actions={<ShellActions />}
+      actions={actions}
       contentClassName="p-0 overflow-hidden"
     >
       {children}
@@ -105,14 +132,16 @@ function CaptainShell({
 
 function ShellBrand({
   onNavigate,
+  projectScope,
 }: {
   onNavigate: (to: string, opts?: { replace?: boolean }) => void;
+  projectScope: ProjectScope;
 }) {
   return (
     <button
       type="button"
       className="text-sm font-semibold"
-      onClick={() => onNavigate("/")}
+      onClick={() => onNavigate(withProjectScope("/", projectScope))}
     >
       Captain
     </button>

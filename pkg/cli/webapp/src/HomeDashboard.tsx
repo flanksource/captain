@@ -4,11 +4,11 @@ import {
   Button,
   SearchInput,
   SegmentedControl,
-  Switch,
 } from "@flanksource/clicky-ui/components";
 import {
   Icon,
   ProgressBars,
+  TimeseriesPanel,
   UiActivity,
   UiArrowDown,
   UiArrowUp,
@@ -23,12 +23,15 @@ import {
   UiRobotAi,
   UiSparkles,
   UiTerminal,
+  type TimeseriesResponse,
+  type TimeseriesSeries,
 } from "@flanksource/clicky-ui/data";
 import {
   SOURCE_OPTIONS,
   commandLabel,
   errorMessage,
   fetchLiveSessions,
+  fetchSessionThroughput,
   formatCompactNumber,
   formatCost,
   formatTime,
@@ -40,8 +43,12 @@ import {
   type SessionDashboard,
   type SessionLive,
   type SessionRecord,
+  type SessionThroughputGroup,
+  type SessionThroughputResult,
+  type ProjectScope,
   type SourceFilter,
 } from "./sessionData";
+import { withProjectScope } from "./shellHelpers";
 
 type DashboardView = "list" | "cards";
 type DashboardSort = "model" | "health" | "context" | "cpu" | "memory" | "tokens" | "recent";
@@ -54,6 +61,11 @@ type ProjectSessionGroup = {
   label: string;
   detail?: string;
   sessions: LiveSessionRecord[];
+};
+type ThroughputMetric = "outputTokensPerSecond" | "contextTokensPerSecond";
+type ThroughputChartModel = {
+  series: TimeseriesSeries[];
+  responses: Record<string, TimeseriesResponse>;
 };
 
 const PERCENT_UNIT = {
@@ -92,22 +104,35 @@ const SESSION_COLUMNS = [
   { label: "Actions" },
 ] satisfies Array<{ label: string; sort?: DashboardSort }>;
 
-export function HomeDashboard({ onNavigate }: { onNavigate: Navigate }) {
+const EMPTY_SESSIONS: SessionRecord[] = [];
+const EMPTY_THROUGHPUT_GROUPS: SessionThroughputGroup[] = [];
+
+export function HomeDashboard({
+  onNavigate,
+  projectScope,
+}: {
+  onNavigate: Navigate;
+  projectScope: ProjectScope;
+}) {
   const [source, setSource] = useState<SourceFilter>("all");
-  const [allProjects, setAllProjects] = useState(false);
   const [query, setQuery] = useState("");
   const [view, setView] = useState<DashboardView>("list");
   const [sort, setSort] = useState<DashboardSort>("health");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
 
   const sessionsQuery = useQuery({
-    queryKey: ["sessions-dashboard", source, allProjects, query],
-    queryFn: () => fetchLiveSessions({ source, allProjects, query, limit: 200 }),
+    queryKey: ["sessions-dashboard", source, projectScope, query],
+    queryFn: () => fetchLiveSessions({ source, project: projectScope, query, limit: 200 }),
     refetchInterval: 5000,
     refetchIntervalInBackground: false,
   });
+  const throughputQuery = useQuery({
+    queryKey: ["sessions-throughput", source, projectScope, query],
+    queryFn: () => fetchSessionThroughput({ source, project: projectScope, query, limit: 500 }),
+    refetchInterval: false,
+  });
 
-  const sessions = sessionsQuery.data?.sessions ?? [];
+  const sessions = sessionsQuery.data?.sessions ?? EMPTY_SESSIONS;
   const liveSessions = useMemo(
     () =>
       sessions
@@ -137,7 +162,7 @@ export function HomeDashboard({ onNavigate }: { onNavigate: Navigate }) {
 
   const openSession = (session: SessionRecord) => {
     if (session.detailAvailable === false) return;
-    onNavigate(`/sessions/${encodeURIComponent(session.key)}`);
+    onNavigate(withProjectScope(`/sessions/${encodeURIComponent(session.key)}`, projectScope));
   };
 
   const selectSort = (nextSort: DashboardSort) => {
@@ -158,16 +183,17 @@ export function HomeDashboard({ onNavigate }: { onNavigate: Navigate }) {
       <DashboardToolbar
         source={source}
         onSourceChange={setSource}
-        allProjects={allProjects}
-        onAllProjectsChange={setAllProjects}
         query={query}
         onQueryChange={setQuery}
         view={view}
         onViewChange={setView}
         sort={sort}
         onSortChange={selectSort}
-        loading={sessionsQuery.isFetching}
-        onRefresh={() => void sessionsQuery.refetch()}
+        loading={sessionsQuery.isFetching || throughputQuery.isFetching}
+        onRefresh={() => {
+          void sessionsQuery.refetch();
+          void throughputQuery.refetch();
+        }}
         onNewAgent={() => onNavigate("/agent")}
       />
 
@@ -182,6 +208,11 @@ export function HomeDashboard({ onNavigate }: { onNavigate: Navigate }) {
           summary={sessionsQuery.data?.summary}
           liveCount={liveSessions.length}
           loading={sessionsQuery.isLoading}
+        />
+        <ThroughputPanel
+          result={throughputQuery.data}
+          loading={throughputQuery.isLoading}
+          error={throughputQuery.error}
         />
 
         <div className="grid min-h-0 gap-density-4 px-density-4 pb-density-4 xl:grid-cols-[minmax(0,1fr)_22rem]">
@@ -223,8 +254,6 @@ export function HomeDashboard({ onNavigate }: { onNavigate: Navigate }) {
 function DashboardToolbar({
   source,
   onSourceChange,
-  allProjects,
-  onAllProjectsChange,
   query,
   onQueryChange,
   view,
@@ -237,8 +266,6 @@ function DashboardToolbar({
 }: {
   source: SourceFilter;
   onSourceChange: (source: SourceFilter) => void;
-  allProjects: boolean;
-  onAllProjectsChange: (enabled: boolean) => void;
   query: string;
   onQueryChange: (query: string) => void;
   view: DashboardView;
@@ -270,7 +297,7 @@ function DashboardToolbar({
         </div>
       </div>
 
-      <div className="mt-density-3 grid gap-density-2 lg:grid-cols-[minmax(14rem,1fr)_auto_auto_auto_auto]">
+      <div className="mt-density-3 grid gap-density-2 lg:grid-cols-[minmax(14rem,1fr)_auto_auto_auto]">
         <SearchInput
           value={query}
           onChange={onQueryChange}
@@ -283,11 +310,6 @@ function DashboardToolbar({
           onChange={onSourceChange}
           size="sm"
           aria-label="Session source"
-        />
-        <Switch
-          checked={allProjects}
-          onChange={onAllProjectsChange}
-          label="All projects"
         />
         <SegmentedControl
           value={view}
@@ -400,6 +422,155 @@ function MetricTile({
   );
 }
 
+function ThroughputPanel({
+  result,
+  loading,
+  error,
+}: {
+  result?: SessionThroughputResult;
+  loading: boolean;
+  error: unknown;
+}) {
+  const groups = result?.groups ?? EMPTY_THROUGHPUT_GROUPS;
+  const outputChart = useMemo(
+    () => buildThroughputChart(groups, "outputTokensPerSecond"),
+    [groups],
+  );
+  const contextChart = useMemo(
+    () => buildThroughputChart(groups, "contextTokensPerSecond"),
+    [groups],
+  );
+
+  return (
+    <section className="px-density-4 pb-density-4">
+      <div className="mb-density-2 flex min-w-0 flex-wrap items-end justify-between gap-density-2">
+        <div className="min-w-0">
+          <div className="text-sm font-semibold">Token Throughput</div>
+          <div className="truncate text-xs text-muted-foreground">
+            {loading ? "Loading completed sessions..." : `${result?.total ?? 0} completed sessions sampled`}
+          </div>
+        </div>
+        {result?.skipped ? (
+          <div className="shrink-0 text-xs text-muted-foreground">{result.skipped} skipped</div>
+        ) : null}
+      </div>
+
+      {error ? (
+        <div className="rounded border border-destructive/30 px-density-3 py-density-2 text-sm text-destructive">
+          {errorMessage(error)}
+        </div>
+      ) : loading ? (
+        <div className="rounded border border-border px-density-3 py-density-6 text-center text-xs text-muted-foreground">
+          Loading throughput...
+        </div>
+      ) : groups.length === 0 ? (
+        <div className="rounded border border-dashed border-border px-density-3 py-density-6 text-center text-xs text-muted-foreground">
+          No completed sessions with duration and token usage.
+        </div>
+      ) : (
+        <>
+          <div className="grid gap-density-3 xl:grid-cols-2">
+            <StaticThroughputChart
+              title="Output tokens/sec"
+              icon={UiTerminal}
+              model={outputChart}
+              empty="At least two completed sessions per model are needed."
+            />
+            <StaticThroughputChart
+              title="Context tokens/sec"
+              icon={UiMemoryStick}
+              model={contextChart}
+              empty="No completed sessions have enough context samples."
+            />
+          </div>
+          <ThroughputTable groups={groups.slice(0, 8)} />
+        </>
+      )}
+    </section>
+  );
+}
+
+function StaticThroughputChart({
+  title,
+  icon,
+  model,
+  empty,
+}: {
+  title: string;
+  icon: DashboardIcon;
+  model: ThroughputChartModel;
+  empty: string;
+}) {
+  const fetcher = useMemo(
+    () => staticThroughputFetcher(model.responses),
+    [model.responses],
+  );
+  if (model.series.length === 0) {
+    return (
+      <div className="flex min-h-[14rem] items-center justify-center rounded-lg border border-border bg-card px-density-3 py-density-6 text-center text-xs text-muted-foreground">
+        {empty}
+      </div>
+    );
+  }
+  return (
+    <TimeseriesPanel
+      title={title}
+      icon={icon}
+      series={model.series}
+      fetcher={fetcher}
+      refreshMs={0}
+      height={180}
+      variant="line"
+      unit=" tok/s"
+    />
+  );
+}
+
+function ThroughputTable({ groups }: { groups: SessionThroughputGroup[] }) {
+  return (
+    <div className="mt-density-3 overflow-hidden rounded border border-border">
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[48rem] text-left text-sm">
+          <thead className="border-b border-border bg-muted/40 text-[11px] uppercase text-muted-foreground">
+            <tr>
+              <th className="px-density-3 py-2 font-medium">Model</th>
+              <th className="px-density-3 py-2 font-medium">Sessions</th>
+              <th className="px-density-3 py-2 font-medium">Output</th>
+              <th className="px-density-3 py-2 font-medium">Total</th>
+              <th className="px-density-3 py-2 font-medium">Context</th>
+              <th className="px-density-3 py-2 font-medium">Context Used</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {groups.map((group) => (
+              <tr key={group.key}>
+                <td className="min-w-0 px-density-3 py-2">
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <span className="grid size-6 shrink-0 place-items-center rounded border border-border bg-muted/50 text-muted-foreground">
+                      <Icon icon={modelIcon(group)} className="size-3.5" />
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block truncate font-medium">{group.model}</span>
+                      <span className="block truncate text-[11px] text-muted-foreground">
+                        {group.source} / {effortLabel(group.reasoningEffort) ?? "default"}
+                      </span>
+                    </span>
+                  </div>
+                </td>
+                <td className="px-density-3 py-2 tabular-nums text-muted-foreground">{group.sessions}</td>
+                <td className="px-density-3 py-2 tabular-nums">{formatRate(group.outputTokensPerSecond)}</td>
+                <td className="px-density-3 py-2 tabular-nums text-muted-foreground">{formatRate(group.totalTokensPerSecond)}</td>
+                <td className="px-density-3 py-2 tabular-nums text-muted-foreground">{formatOptionalRate(group.contextTokensPerSecond)}</td>
+                <td className="px-density-3 py-2 tabular-nums text-muted-foreground">{formatOptionalPercent(group.avgContextUsedPercent)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function SessionTable({
   groups,
   sort,
@@ -488,7 +659,7 @@ function SessionHeaderCell({
   return (
     <button
       type="button"
-      aria-sort={active ? (sortDirection === "asc" ? "ascending" : "descending") : "none"}
+      aria-pressed={active}
       onClick={() => onSortChange(column.sort)}
       className="inline-flex min-w-0 items-center gap-1 rounded px-1 py-0.5 text-left uppercase transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
@@ -953,6 +1124,70 @@ function tokenTotal(session: SessionRecord) {
   return session.tokens?.totalTokens ?? 0;
 }
 
+function buildThroughputChart(
+  groups: SessionThroughputGroup[],
+  metric: ThroughputMetric,
+): ThroughputChartModel {
+  const responses: Record<string, TimeseriesResponse> = {};
+  const series: TimeseriesSeries[] = [];
+  const ranked = [...groups]
+    .filter((group) => (group.points?.length ?? 0) >= 2 && (group[metric] ?? 0) > 0)
+    .sort((left, right) => (right[metric] ?? 0) - (left[metric] ?? 0))
+    .slice(0, 5);
+
+  for (const [index, group] of ranked.entries()) {
+    const id = `${metric}-${index}-${hashThroughputGroup(group)}`;
+    const points = [];
+    for (const point of group.points ?? []) {
+      const value = point[metric] ?? 0;
+      if (!Number.isFinite(value)) continue;
+      points.push({ at: point.at, value });
+    }
+    if (points.length < 2) continue;
+    series.push({
+      id,
+      label: throughputGroupLabel(group),
+      unit: " tok/s",
+    });
+    responses[id] = { id, points };
+  }
+
+  return { series, responses };
+}
+
+function staticThroughputFetcher(responses: Record<string, TimeseriesResponse>) {
+  return async (url: string): Promise<TimeseriesResponse> => {
+    const path = url.split("?")[0] ?? url;
+    const id = decodeURIComponent(path.split("/").filter(Boolean).pop() ?? path);
+    return responses[id] ?? { id, points: [] };
+  };
+}
+
+function throughputGroupLabel(group: SessionThroughputGroup) {
+  const effort = effortLabel(group.reasoningEffort);
+  return effort && effort !== "default" ? `${group.model} / ${effort}` : group.model;
+}
+
+function hashThroughputGroup(group: SessionThroughputGroup) {
+  const lastPoint = group.points?.[group.points.length - 1];
+  const input = [
+    group.key,
+    group.sessions,
+    group.durationSeconds,
+    group.outputTokens,
+    group.totalTokens,
+    group.contextTokens,
+    lastPoint?.at,
+    lastPoint?.outputTokensPerSecond,
+    lastPoint?.contextTokensPerSecond,
+  ].join("|");
+  let hash = 0;
+  for (let i = 0; i < input.length; i++) {
+    hash = (hash * 31 + input.charCodeAt(i)) >>> 0;
+  }
+  return hash.toString(36);
+}
+
 function groupSessionsByProject(sessions: LiveSessionRecord[]): ProjectSessionGroup[] {
   const groups = new Map<string, ProjectSessionGroup>();
 
@@ -993,11 +1228,11 @@ function handleSessionKeyDown(
   activateSession(session, onOpen);
 }
 
-function modelLabel(session: SessionRecord) {
-  return session.model || session.provider || session.source;
+function modelLabel(session: { model?: string; provider?: string; source?: string }) {
+  return session.model || session.provider || session.source || "";
 }
 
-function modelIcon(session: SessionRecord): DashboardIcon {
+function modelIcon(session: { model?: string; provider?: string; source?: string }): DashboardIcon {
   const value = `${session.provider ?? ""} ${session.model ?? ""} ${session.source}`.toLowerCase();
   if (value.includes("claude") || value.includes("anthropic")) return UiSparkles;
   if (value.includes("codex") || value.includes("openai") || value.includes("gpt")) return UiRobotAi;
@@ -1021,6 +1256,22 @@ function formatRelativeTime(value: string | undefined) {
   if (delta < 3_600_000) return `${Math.round(delta / 60_000)}m ago`;
   if (delta < 86_400_000) return `${Math.round(delta / 3_600_000)}h ago`;
   return `${Math.round(delta / 86_400_000)}d ago`;
+}
+
+function formatRate(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return "0/s";
+  if (value >= 1000) return `${formatCompactNumber(Math.round(value))}/s`;
+  if (value >= 10) return `${value.toFixed(0)}/s`;
+  return `${value.toFixed(1)}/s`;
+}
+
+function formatOptionalRate(value: number | undefined) {
+  return value !== undefined && value > 0 ? formatRate(value) : "--";
+}
+
+function formatOptionalPercent(value: number | undefined) {
+  if (value === undefined || !Number.isFinite(value) || value <= 0) return "--";
+  return `${value.toFixed(value >= 10 ? 0 : 1)}%`;
 }
 
 function contextTone(percent: number) {

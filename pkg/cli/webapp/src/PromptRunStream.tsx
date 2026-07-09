@@ -62,19 +62,19 @@ function StatusPill({ status }: { status: PromptRunStreamStatus }) {
 }
 
 function RunSummaryFooter({ summary }: { summary: PromptRunSummary }) {
-  const parts: string[] = [];
-  if (summary.model) parts.push(summary.model);
-  if (summary.backend) parts.push(summary.backend);
-  if (summary.duration) parts.push(summary.duration);
-  if (summary.inputTokens != null) parts.push(`${summary.inputTokens} in`);
-  if (summary.outputTokens != null) parts.push(`${summary.outputTokens} out`);
-  if (summary.costUSD != null) parts.push(`$${summary.costUSD.toFixed(4)}`);
-  if (summary.sessionId) parts.push(`session ${summary.sessionId}`);
+  const parts: Array<{ id: string; label: string }> = [];
+  if (summary.model) parts.push({ id: "model", label: summary.model });
+  if (summary.backend) parts.push({ id: "backend", label: summary.backend });
+  if (summary.duration) parts.push({ id: "duration", label: summary.duration });
+  if (summary.inputTokens != null) parts.push({ id: "input-tokens", label: `${summary.inputTokens} in` });
+  if (summary.outputTokens != null) parts.push({ id: "output-tokens", label: `${summary.outputTokens} out` });
+  if (summary.costUSD != null) parts.push({ id: "cost", label: `$${summary.costUSD.toFixed(4)}` });
+  if (summary.sessionId) parts.push({ id: "session", label: `session ${summary.sessionId}` });
   return (
     <div className="flex flex-wrap gap-density-2 border-t border-border pt-density-2 text-xs text-muted-foreground">
-      {parts.map((part, i) => (
-        <span key={i} className="truncate">
-          {part}
+      {parts.map((part) => (
+        <span key={part.id} className="truncate">
+          {part.label}
         </span>
       ))}
     </div>

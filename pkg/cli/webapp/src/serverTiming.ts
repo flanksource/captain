@@ -32,10 +32,10 @@ export function parseServerTiming(header: string | null | undefined): TimingMetr
   if (!header) return [];
   const metrics: TimingMetric[] = [];
   for (const entry of header.split(",")) {
-    const tokens = entry
-      .split(";")
-      .map((token) => token.trim())
-      .filter(Boolean);
+    const tokens = entry.split(";").flatMap((token) => {
+      const trimmed = token.trim();
+      return trimmed ? [trimmed] : [];
+    });
     if (tokens.length === 0) continue;
     const metric: TimingMetric = { name: tokens[0], dur: 0 };
     for (const token of tokens.slice(1)) {

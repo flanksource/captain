@@ -1,15 +1,15 @@
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   AppShell,
   Button,
   SearchInput,
   SegmentedControl,
-  Switch,
+  type AppShellProps,
   type AppShellNavSection,
 } from "@flanksource/clicky-ui/components";
-import { SessionViewer, type SessionInput } from "@flanksource/clicky-ui/ai";
-import { CAPTAIN_SIDEBAR_COLLAPSE_KEY } from "./shell";
+import { SessionInspector } from "@flanksource/clicky-ui/ai";
+import { CAPTAIN_SIDEBAR_COLLAPSE_KEY, withProjectScope } from "./shellHelpers";
 import { TimingBadge } from "./TimingBadge";
 import type { TimingMetric } from "./serverTiming";
 import {
@@ -27,6 +27,7 @@ import {
   unifiedSessionTitle,
   type SessionDashboard,
   type SessionRecord,
+  type ProjectScope,
   type SourceFilter,
   type UnifiedSession,
 } from "./sessionData";
@@ -37,7 +38,8 @@ type SessionBrowserProps = {
   selectedId?: string;
   onNavigate: Navigate;
   navSections: AppShellNavSection[];
-  actions: ReactNode;
+  actions: AppShellProps["actions"];
+  projectScope: ProjectScope;
 };
 
 export function SessionBrowser({
@@ -45,6 +47,7 @@ export function SessionBrowser({
   onNavigate,
   navSections,
   actions,
+  projectScope,
 }: SessionBrowserProps) {
   return selectedId ? (
     <SessionDetailPage
@@ -52,9 +55,15 @@ export function SessionBrowser({
       onNavigate={onNavigate}
       navSections={navSections}
       actions={actions}
+      projectScope={projectScope}
     />
   ) : (
-    <SessionListPage onNavigate={onNavigate} navSections={navSections} actions={actions} />
+    <SessionListPage
+      onNavigate={onNavigate}
+      navSections={navSections}
+      actions={actions}
+      projectScope={projectScope}
+    />
   );
 }
 
@@ -66,11 +75,13 @@ function SessionDetailPage({
   onNavigate,
   navSections,
   actions,
+  projectScope,
 }: {
   selectedId: string;
   onNavigate: Navigate;
   navSections: AppShellNavSection[];
-  actions: ReactNode;
+  actions: AppShellProps["actions"];
+  projectScope: ProjectScope;
 }) {
   const detailQuery = useQuery({
     queryKey: ["session", selectedId],
@@ -93,7 +104,7 @@ function SessionDetailPage({
       }
       bodyActions={
         <div className="flex items-center gap-density-2">
-          <Button size="sm" variant="ghost" onClick={() => onNavigate("/sessions")}>
+          <Button size="sm" variant="ghost" onClick={() => onNavigate(withProjectScope("/sessions", projectScope))}>
             ← Sessions
           </Button>
           <Button size="sm" variant="outline" onClick={() => void detailQuery.refetch()}>
@@ -116,18 +127,19 @@ function SessionListPage({
   onNavigate,
   navSections,
   actions,
+  projectScope,
 }: {
   onNavigate: Navigate;
   navSections: AppShellNavSection[];
-  actions: ReactNode;
+  actions: AppShellProps["actions"];
+  projectScope: ProjectScope;
 }) {
   const [source, setSource] = useState<SourceFilter>("all");
-  const [allProjects, setAllProjects] = useState(false);
   const [query, setQuery] = useState("");
 
   const listQuery = useQuery({
-    queryKey: ["sessions", source, allProjects, query],
-    queryFn: () => fetchLiveSessions({ source, allProjects, query }),
+    queryKey: ["sessions", source, projectScope, query],
+    queryFn: () => fetchLiveSessions({ source, project: projectScope, query }),
   });
   const sessions = listQuery.data?.sessions ?? [];
 
@@ -149,8 +161,6 @@ function SessionListPage({
       <SessionList
         source={source}
         onSourceChange={setSource}
-        allProjects={allProjects}
-        onAllProjectsChange={setAllProjects}
         query={query}
         onQueryChange={setQuery}
         sessions={sessions}
@@ -159,7 +169,7 @@ function SessionListPage({
         total={listQuery.data?.total ?? 0}
         loading={listQuery.isLoading}
         error={listQuery.error}
-        onSelect={(session) => onNavigate(`/sessions/${encodeURIComponent(session.key)}`)}
+        onSelect={(session) => onNavigate(withProjectScope(`/sessions/${encodeURIComponent(session.key)}`, projectScope))}
       />
     </AppShell>
   );
@@ -168,8 +178,6 @@ function SessionListPage({
 function SessionList({
   source,
   onSourceChange,
-  allProjects,
-  onAllProjectsChange,
   query,
   onQueryChange,
   sessions,
@@ -182,8 +190,6 @@ function SessionList({
 }: {
   source: SourceFilter;
   onSourceChange: (source: SourceFilter) => void;
-  allProjects: boolean;
-  onAllProjectsChange: (enabled: boolean) => void;
   query: string;
   onQueryChange: (query: string) => void;
   sessions: SessionRecord[];
@@ -197,7 +203,7 @@ function SessionList({
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
       <div className="shrink-0 space-y-density-2 border-b border-border p-density-3">
-        <div className="grid gap-density-2 md:grid-cols-[minmax(14rem,1fr)_auto_auto]">
+        <div className="grid gap-density-2 md:grid-cols-[minmax(14rem,1fr)_auto]">
           <SearchInput
             value={query}
             onChange={onQueryChange}
@@ -211,7 +217,6 @@ function SessionList({
             size="sm"
             aria-label="Session source"
           />
-          <Switch checked={allProjects} onChange={onAllProjectsChange} label="All projects" />
         </div>
         <SessionSummary summary={summary} loading={loading} />
         <div className="flex items-center justify-between gap-density-2 text-xs text-muted-foreground">
@@ -304,8 +309,16 @@ function SessionHeader({
         {session.model && <span>{session.model}</span>}
         <span>{sessionToolCount(session.messages)} actions</span>
         <span>{session.messages?.length ?? 0} messages</span>
+        {session.turns?.length ? <span>{session.turns.length} turns</span> : null}
+        {session.agents?.length ? <span>{session.agents.length} agents</span> : null}
+        {session.files ? <span>{fileCountLabel(session.files)}</span> : null}
+        {session.approvals ? <span>{approvalCountLabel(session.approvals)}</span> : null}
         {sessionCostTotal(session.cost) ? <span>{formatCost(sessionCostTotal(session.cost))}</span> : null}
+        {session.provider && <span>{session.provider}</span>}
+        {session.version && <span>{session.version}</span>}
+        {session.git?.branch && <span>{session.git.branch}</span>}
         {session.live?.pid && <span>pid={session.live.pid}</span>}
+        {session.historyFile && <span className="max-w-full truncate">{session.historyFile}</span>}
         {session.cwd && <span className="max-w-full truncate">{session.cwd}</span>}
       </div>
     </div>
@@ -339,13 +352,27 @@ function SessionDetail({
     // AppShell's content region is a bounded block (h-full), not a flex parent, so
     // `h-full` (not `flex-1`) is what gives the viewer a definite height to scroll within.
     <div className="flex h-full min-h-0 flex-col">
-      <SessionViewer
-        session={(session ?? []) as unknown as SessionInput}
-        defaultExpanded={false}
-        scrollable
-      />
+      <SessionInspector session={session ?? []} transcriptProps={{ defaultExpanded: false }} />
     </div>
   );
+}
+
+function fileCountLabel(files: NonNullable<UnifiedSession["files"]>) {
+  const read = files.read?.length ?? 0;
+  const written = files.written?.length ?? 0;
+  if (read && written) return `${read} read / ${written} written`;
+  if (read) return `${read} read`;
+  if (written) return `${written} written`;
+  return "0 files";
+}
+
+function approvalCountLabel(approvals: NonNullable<UnifiedSession["approvals"]>) {
+  const approved = approvals.approved ?? 0;
+  const denied = approvals.denied ?? 0;
+  if (approved && denied) return `${approved} approved / ${denied} denied`;
+  if (approved) return `${approved} approved`;
+  if (denied) return `${denied} denied`;
+  return "0 approvals";
 }
 
 function SessionSummary({

@@ -3,12 +3,15 @@ import { apiClient } from "./api";
 import { parseServerTiming, type TimingMetric } from "./serverTiming";
 
 export type SourceFilter = "all" | "claude" | "codex";
+export const ALL_PROJECTS_SCOPE = "all";
+export type ProjectScope = typeof ALL_PROJECTS_SCOPE | string;
 
 export type SessionListResult = {
   sessions: SessionRecord[];
   total: number;
   source: SourceFilter;
-  scope: "current" | "all";
+  scope: "current" | "all" | "project";
+  project?: string;
   summary?: SessionDashboard;
 };
 
@@ -45,14 +48,65 @@ export type UnifiedUsage = {
   reasoningTokens?: number;
   cacheReadTokens?: number;
   cacheWriteTokens?: number;
+  totalTokens?: number;
 };
 
 export type UnifiedCost = {
+  model?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  reasoningTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  totalTokens?: number;
   inputCost?: number;
   outputCost?: number;
   reasoningCost?: number;
   cacheReadCost?: number;
   cacheWriteCost?: number;
+};
+
+export type UnifiedAgent = {
+  id?: string;
+  parentId?: string;
+  type?: string;
+  desc?: string;
+  isRoot?: boolean;
+  historyFile?: string;
+  children?: UnifiedAgent[];
+  usage?: UnifiedUsage;
+  cost?: UnifiedCost;
+};
+
+export type UnifiedChangedFiles = {
+  read?: string[];
+  written?: string[];
+};
+
+export type UnifiedPlanEvent = {
+  kind: string;
+  timestamp?: string;
+  reason?: string;
+};
+
+export type UnifiedPlan = {
+  path?: string;
+  slug?: string;
+  content?: string;
+  explicit?: boolean;
+  events?: UnifiedPlanEvent[];
+};
+
+export type UnifiedDenial = {
+  toolUseId?: string;
+  tool?: string;
+  reason?: string;
+};
+
+export type UnifiedApprovalStats = {
+  approved?: number;
+  denied?: number;
+  denials?: UnifiedDenial[];
 };
 
 export type UnifiedBudget = {
@@ -102,18 +156,27 @@ export type UnifiedSession = {
   version?: string;
   provider?: string;
   model?: string;
+  historyFile?: string;
   git?: UnifiedGit;
   startedAt?: string;
   endedAt?: string;
   usage?: UnifiedUsage;
   cost?: UnifiedCost;
+  toolCosts?: UnifiedCost[];
   context?: SessionContext;
   budget?: UnifiedBudget;
   capabilities?: UnifiedCapabilities;
   events?: UnifiedMetadataEvent[];
   turns?: UnifiedTurn[];
+  root?: UnifiedAgent;
+  agents?: UnifiedAgent[];
+  files?: UnifiedChangedFiles;
+  plan?: UnifiedPlan;
+  approvals?: UnifiedApprovalStats;
+  health?: SessionHealth[];
   live?: SessionLive;
   messages?: SessionUIMessage[];
+  prompt?: unknown;
 };
 
 export type SessionTokens = {
@@ -162,6 +225,59 @@ export type SessionDashboard = {
   lowestContextFree?: number;
 };
 
+export type SessionThroughputPoint = {
+  at: string;
+  sessionId: string;
+  outputTokensPerSecond: number;
+  totalTokensPerSecond: number;
+  contextTokensPerSecond?: number;
+  contextUsedPercent?: number;
+};
+
+export type SessionThroughputGroup = {
+  key: string;
+  source: string;
+  model: string;
+  reasoningEffort: string;
+  sessions: number;
+  durationSeconds: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
+  totalTokens?: number;
+  contextTokens?: number;
+  contextSamples?: number;
+  outputTokensPerSecond: number;
+  totalTokensPerSecond: number;
+  contextTokensPerSecond?: number;
+  avgContextUsedPercent?: number;
+  points?: SessionThroughputPoint[];
+};
+
+export type SessionThroughputResult = {
+  groups: SessionThroughputGroup[];
+  total: number;
+  skipped: number;
+  source: SourceFilter;
+  scope: "current" | "all" | "project";
+  project?: string;
+};
+
+export type ProjectOption = {
+  value: string;
+  label: string;
+  path: string;
+  sources?: string[];
+  sessions?: number;
+  lastUsed?: string;
+};
+
+export type ProjectOptionsResult = {
+  total: number;
+  projects: ProjectOption[];
+};
+
 export const SOURCE_OPTIONS = [
   { id: "all", label: "All" },
   { id: "claude", label: "Claude" },
@@ -170,7 +286,7 @@ export const SOURCE_OPTIONS = [
 
 export async function fetchLiveSessions(params: {
   source: SourceFilter;
-  allProjects: boolean;
+  project: ProjectScope;
   query?: string;
   limit?: number;
 }): Promise<SessionListResult & { timing?: TimingMetric[] }> {
@@ -179,7 +295,7 @@ export async function fetchLiveSessions(params: {
     "GET",
     {
       source: params.source,
-      all: params.allProjects ? "true" : "false",
+      ...projectScopeQuery(params.project),
       q: params.query ?? "",
       limit: String(params.limit ?? 100),
     },
@@ -190,6 +306,43 @@ export async function fetchLiveSessions(params: {
   }
   const timing = parseServerTiming(response.responseHeaders?.["server-timing"]);
   return { ...(response.parsed as SessionListResult), ...(timing.length ? { timing } : {}) };
+}
+
+export async function fetchSessionThroughput(params: {
+  source: SourceFilter;
+  project: ProjectScope;
+  query?: string;
+  limit?: number;
+}): Promise<SessionThroughputResult & { timing?: TimingMetric[] }> {
+  const response = await apiClient.executeCommand(
+    "/api/captain/sessions/throughput",
+    "GET",
+    {
+      source: params.source,
+      ...projectScopeQuery(params.project),
+      q: params.query ?? "",
+      limit: String(params.limit ?? 500),
+    },
+    { Accept: "application/json" },
+  );
+  if (!response.success) {
+    throw new Error(response.error || "Failed to load session throughput.");
+  }
+  const timing = parseServerTiming(response.responseHeaders?.["server-timing"]);
+  return { ...(response.parsed as SessionThroughputResult), ...(timing.length ? { timing } : {}) };
+}
+
+export async function fetchProjectOptions(): Promise<ProjectOptionsResult> {
+  const response = await apiClient.executeCommand(
+    "/api/captain/projects",
+    "GET",
+    {},
+    { Accept: "application/json" },
+  );
+  if (!response.success) {
+    throw new Error(response.error || "Failed to load projects.");
+  }
+  return response.parsed as ProjectOptionsResult;
 }
 
 export async function fetchSession(
@@ -275,18 +428,17 @@ export function projectLabel(path: string | undefined) {
   return parts.slice(-2).join("/") || path;
 }
 
+export function projectScopeQuery(project: ProjectScope): Record<string, string> {
+  if (!project || project === ALL_PROJECTS_SCOPE) {
+    return { all: "true" };
+  }
+  return { project };
+}
+
 export function commandLabel(command: string | undefined) {
   if (!command) return "No command";
   const first = command.split(/\s+/)[0] ?? command;
   return first.split("/").pop() || first;
-}
-
-export function processUsageLabel(live: SessionLive | undefined) {
-  if (!live) return "";
-  const parts = [];
-  if (live.cpuPercent !== undefined) parts.push(`${live.cpuPercent.toFixed(1)}% CPU`);
-  if (live.memoryPercent !== undefined) parts.push(`${live.memoryPercent.toFixed(1)}% MEM`);
-  return parts.length > 0 ? parts.join(" / ") : live.status ?? "active";
 }
 
 export function sessionSortTime(session: SessionRecord) {
