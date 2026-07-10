@@ -6,6 +6,7 @@
     "version": "5",
     "label": "Claude Sonnet 5",
     "releaseDate": "2026-06-29",
+    "reasoning": true,
     "contextWindow": 1000000,
     "preferred": true,
     "adaptiveThinking": true
@@ -30,7 +31,8 @@
     "releaseDate": "2026-05-28",
     "reasoning": true,
     "contextWindow": 1000000,
-    "preferred": true
+    "preferred": true,
+    "adaptiveThinking": true
   },
   {
     "id": "claude-opus-4-7",
@@ -40,7 +42,8 @@
     "label": "Claude Opus 4.7",
     "releaseDate": "2026-04-14",
     "reasoning": true,
-    "contextWindow": 1000000
+    "contextWindow": 1000000,
+    "adaptiveThinking": true
   },
   {
     "id": "claude-sonnet-4-6",
@@ -49,6 +52,8 @@
     "version": "4.6",
     "label": "Claude Sonnet 4.6",
     "releaseDate": "2026-02-17",
+    "reasoning": true,
+    "temperature": true,
     "contextWindow": 1000000,
     "preferred": true
   },
@@ -60,6 +65,7 @@
     "label": "Claude Opus 4.6",
     "releaseDate": "2026-02-04",
     "reasoning": true,
+    "temperature": true,
     "contextWindow": 1000000
   },
   {
@@ -70,6 +76,7 @@
     "label": "Claude Opus 4.5 (latest)",
     "releaseDate": "2025-11-24",
     "reasoning": true,
+    "temperature": true,
     "contextWindow": 200000
   },
   {
@@ -80,6 +87,7 @@
     "label": "Claude Opus 4.5",
     "releaseDate": "2025-11-24",
     "reasoning": true,
+    "temperature": true,
     "contextWindow": 200000
   },
   {
@@ -89,6 +97,8 @@
     "version": "4.5",
     "label": "Claude Haiku 4.5 (latest)",
     "releaseDate": "2025-10-15",
+    "reasoning": true,
+    "temperature": true,
     "contextWindow": 200000,
     "preferred": true
   },
@@ -99,6 +109,8 @@
     "version": "4.5-20251001",
     "label": "Claude Haiku 4.5",
     "releaseDate": "2025-10-15",
+    "reasoning": true,
+    "temperature": true,
     "contextWindow": 200000
   },
   {
@@ -109,6 +121,7 @@
     "label": "Claude Sonnet 4.5 (latest)",
     "releaseDate": "2025-09-29",
     "reasoning": true,
+    "temperature": true,
     "contextWindow": 1000000
   },
   {
@@ -119,6 +132,7 @@
     "label": "Claude Sonnet 4.5",
     "releaseDate": "2025-09-29",
     "reasoning": true,
+    "temperature": true,
     "contextWindow": 1000000
   },
   {
@@ -180,6 +194,7 @@
     "label": "Gemini 3.5 Flash",
     "releaseDate": "2026-05-19",
     "reasoning": true,
+    "temperature": true,
     "contextWindow": 1048576,
     "preferred": true
   },
@@ -191,6 +206,7 @@
     "label": "Gemini 3.1 Flash Lite",
     "releaseDate": "2026-05-07",
     "reasoning": true,
+    "temperature": true,
     "contextWindow": 1048576
   },
   {
@@ -201,6 +217,7 @@
     "label": "Gemini 3.1 Flash Lite Preview",
     "releaseDate": "2026-03-03",
     "reasoning": true,
+    "temperature": true,
     "contextWindow": 1048576
   },
   {
@@ -211,6 +228,7 @@
     "label": "Gemini 3.1 Pro Preview",
     "releaseDate": "2026-02-19",
     "reasoning": true,
+    "temperature": true,
     "contextWindow": 1048576
   },
   {
@@ -221,6 +239,7 @@
     "label": "Gemini 3.1 Pro Preview Custom Tools",
     "releaseDate": "2026-02-19",
     "reasoning": true,
+    "temperature": true,
     "contextWindow": 1048576
   },
   {
@@ -231,6 +250,7 @@
     "label": "Gemini 3 Flash Preview",
     "releaseDate": "2025-12-17",
     "reasoning": true,
+    "temperature": true,
     "contextWindow": 1048576
   },
   {
@@ -241,6 +261,7 @@
     "label": "Gemini 3 Pro Preview",
     "releaseDate": "2025-11-18",
     "reasoning": true,
+    "temperature": true,
     "contextWindow": 1048576
   },
   {
@@ -251,6 +272,7 @@
     "label": "Gemini Flash Latest",
     "releaseDate": "2025-09-25",
     "reasoning": true,
+    "temperature": true,
     "contextWindow": 1048576
   },
   {
@@ -261,6 +283,7 @@
     "label": "Gemini Flash-Lite Latest",
     "releaseDate": "2025-09-25",
     "reasoning": true,
+    "temperature": true,
     "contextWindow": 1048576
   },
   {
@@ -271,6 +294,7 @@
     "label": "Gemini 2.5 Flash",
     "releaseDate": "2025-06-17",
     "reasoning": true,
+    "temperature": true,
     "contextWindow": 1048576,
     "preferred": true
   },
@@ -282,6 +306,7 @@
     "label": "Gemini 2.5 Flash-Lite",
     "releaseDate": "2025-06-17",
     "reasoning": true,
+    "temperature": true,
     "contextWindow": 1048576
   },
   {
@@ -292,6 +317,7 @@
     "label": "Gemini 2.5 Pro",
     "releaseDate": "2025-06-17",
     "reasoning": true,
+    "temperature": true,
     "contextWindow": 1048576,
     "preferred": true
   },
@@ -302,6 +328,7 @@
     "version": "2.0-flash",
     "label": "Gemini 2.0 Flash",
     "releaseDate": "2024-12-11",
+    "temperature": true,
     "contextWindow": 1048576
   },
   {
@@ -311,6 +338,7 @@
     "version": "2.0-flash-lite",
     "label": "Gemini 2.0 Flash-Lite",
     "releaseDate": "2024-12-11",
+    "temperature": true,
     "contextWindow": 1048576
   },
   {
@@ -321,6 +349,7 @@
     "label": "DeepSeek V4 Flash",
     "releaseDate": "2026-04-24",
     "reasoning": true,
+    "temperature": true,
     "contextWindow": 1000000,
     "preferred": true
   },
@@ -332,6 +361,7 @@
     "label": "DeepSeek V4 Pro",
     "releaseDate": "2026-04-24",
     "reasoning": true,
+    "temperature": true,
     "contextWindow": 1000000,
     "preferred": true
   }

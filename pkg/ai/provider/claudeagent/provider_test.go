@@ -276,6 +276,20 @@ func TestRequestSchemaJSON(t *testing.T) {
 		assert.Contains(t, props, "steps")
 	})
 
+	t.Run("raw schema is sanitized for anthropic structured output", func(t *testing.T) {
+		raw, err := requestSchemaJSON(ai.Request{Prompt: api.Prompt{
+			SchemaJSON: json.RawMessage(`{"type":"object","properties":{"answer":{"type":"string","maxLength":12}}}`),
+		}})
+		require.NoError(t, err)
+		var decoded map[string]any
+		require.NoError(t, json.Unmarshal(raw, &decoded))
+		answer := decoded["properties"].(map[string]any)["answer"].(map[string]any)
+		if _, ok := answer["maxLength"]; ok {
+			t.Fatalf("request schema should strip maxLength key, got %s", raw)
+		}
+		assert.NotEmpty(t, answer["description"])
+	})
+
 	t.Run("non-struct target fails loudly", func(t *testing.T) {
 		_, err := requestSchemaJSON(ai.Request{Prompt: api.Prompt{Schema: "not a struct"}})
 		require.Error(t, err)

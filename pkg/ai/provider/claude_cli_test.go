@@ -16,7 +16,7 @@ func TestBuildClaudeCLIArgs(t *testing.T) {
 			User:         "hello",
 			System:       "system prompt",
 			AppendSystem: "append system",
-			SchemaJSON:   json.RawMessage(`{"type":"object","properties":{"answer":{"type":"string"}}}`),
+			SchemaJSON:   json.RawMessage(`{"type":"object","properties":{"answer":{"type":"string","minLength":2}}}`),
 		},
 		Model:     api.Model{Effort: api.EffortHigh},
 		Budget:    api.Budget{Cost: 1.25},
@@ -54,13 +54,24 @@ func TestBuildClaudeCLIArgs(t *testing.T) {
 	requireFlagValue(t, args, "--allowedTools", "Read,Grep")
 	requireFlagValue(t, args, "--disallowedTools", "Bash")
 	requireFlagValue(t, args, "--plugin-dir", "/skills/a")
-	requireFlagValue(t, args, "--mcp-config", "{}")
+	requireFlagValue(t, args, "--mcp-config", `{"mcpServers":{}}`)
 	requireHasArg(t, args, "--strict-mcp-config")
 	requireHasArg(t, args, "--disable-slash-commands")
 	requireHasArg(t, args, "--bare")
 	schema := flagValue(t, args, "--json-schema")
 	if !json.Valid([]byte(schema)) {
 		t.Fatalf("--json-schema = %q, want valid JSON", schema)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(schema), &decoded); err != nil {
+		t.Fatalf("unmarshal schema: %v", err)
+	}
+	answer := decoded["properties"].(map[string]any)["answer"].(map[string]any)
+	if _, ok := answer["minLength"]; ok {
+		t.Fatalf("--json-schema should strip minLength key, got %s", schema)
+	}
+	if answer["description"] == "" {
+		t.Fatalf("--json-schema should describe removed constraints, got %s", schema)
 	}
 }
 

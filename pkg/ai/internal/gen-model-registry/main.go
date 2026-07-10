@@ -22,13 +22,22 @@ type modelsDevProvider struct {
 }
 
 type modelsDevModel struct {
-	ID          string              `json:"id"`
-	Name        string              `json:"name"`
-	Family      string              `json:"family"`
-	Reasoning   bool                `json:"reasoning"`
-	ReleaseDate string              `json:"release_date"`
-	Modalities  modelsDevModalities `json:"modalities"`
-	Limit       modelsDevLimit      `json:"limit"`
+	ID               string                     `json:"id"`
+	Name             string                     `json:"name"`
+	Family           string                     `json:"family"`
+	Reasoning        bool                       `json:"reasoning"`
+	Temperature      bool                       `json:"temperature"`
+	ReasoningOptions []modelsDevReasoningOption `json:"reasoning_options"`
+	ReleaseDate      string                     `json:"release_date"`
+	Modalities       modelsDevModalities        `json:"modalities"`
+	Limit            modelsDevLimit             `json:"limit"`
+}
+
+// modelsDevReasoningOption is one entry of a model's reasoning_options; only its
+// type ("effort", "budget_tokens", "toggle", …) is needed to classify how the
+// model controls thinking.
+type modelsDevReasoningOption struct {
+	Type string `json:"type"`
 }
 
 type modelsDevModalities struct {
@@ -49,6 +58,7 @@ type generatedModel struct {
 	Label            string `json:"label"`
 	ReleaseDate      string `json:"releaseDate,omitempty"`
 	Reasoning        bool   `json:"reasoning,omitempty"`
+	Temperature      bool   `json:"temperature,omitempty"`
 	ContextWindow    int    `json:"contextWindow,omitempty"`
 	Preferred        bool   `json:"preferred,omitempty"`
 	AdaptiveThinking bool   `json:"adaptiveThinking,omitempty"`
@@ -228,15 +238,38 @@ func generatedModelFromModelsDev(provider, id string, model modelsDevModel) (gen
 	// Preferred is opt-in: models default to non-preferred and are surfaced in
 	// menus only when patches.json explicitly sets "preferred": true.
 	return generatedModel{
-		ID:            id,
-		Provider:      provider,
-		Family:        identity.Family,
-		Version:       identity.Version,
-		Label:         label,
-		ReleaseDate:   model.ReleaseDate,
-		Reasoning:     model.Reasoning,
-		ContextWindow: model.Limit.Context,
+		ID:               id,
+		Provider:         provider,
+		Family:           identity.Family,
+		Version:          identity.Version,
+		Label:            label,
+		ReleaseDate:      model.ReleaseDate,
+		Reasoning:        model.Reasoning,
+		Temperature:      model.Temperature,
+		ContextWindow:    model.Limit.Context,
+		AdaptiveThinking: deriveAdaptiveThinking(provider, model),
 	}, true
+}
+
+// deriveAdaptiveThinking reports whether an Anthropic model uses the adaptive
+// thinking schema (thinking:{type:adaptive} + output_config.effort) rather than
+// the legacy enabled schema. models.dev encodes this in reasoning_options: an
+// effort control with no budget_tokens control means adaptive. It is
+// Anthropic-only; other providers carry their own effort mechanisms.
+func deriveAdaptiveThinking(provider string, model modelsDevModel) bool {
+	if provider != "anthropic" || !model.Reasoning {
+		return false
+	}
+	hasEffort, hasBudget := false, false
+	for _, opt := range model.ReasoningOptions {
+		switch opt.Type {
+		case "effort":
+			hasEffort = true
+		case "budget_tokens":
+			hasBudget = true
+		}
+	}
+	return hasEffort && !hasBudget
 }
 
 func supportsTextOutput(model modelsDevModel) bool {

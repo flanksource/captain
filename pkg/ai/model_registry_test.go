@@ -25,20 +25,24 @@ func TestEmbeddedRegistryLoads(t *testing.T) {
 	}
 }
 
-// TestRegistryKnownModelCorrections locks the patch-driven corrections that
-// models.dev reports differently, guarding against the pre-patch staleness that
-// motivated this change.
-func TestRegistryKnownModelCorrections(t *testing.T) {
+// TestRegistryDerivedCapabilities locks the capability flags the generator
+// derives from models.dev: reasoning, temperature support, and the adaptive-vs-
+// enabled thinking schema. The opus-4-8/4-7 adaptive values guard the 400 that
+// legacy `thinking:{type:enabled}` triggers on those models.
+func TestRegistryDerivedCapabilities(t *testing.T) {
 	cases := []struct {
 		id            string
 		wantReasoning bool
+		wantTemp      bool
 		wantPreferred bool
 		wantAdaptive  bool
 	}{
-		{"claude-sonnet-5", false, true, true},
-		{"claude-fable-5", true, false, true},
-		{"claude-opus-4-8", true, true, false},
-		{"claude-haiku-4-5", false, true, false},
+		{"claude-sonnet-5", true, false, true, true},
+		{"claude-fable-5", true, false, false, true},
+		{"claude-opus-4-8", true, false, true, true},
+		{"claude-opus-4-7", true, false, false, true},
+		{"claude-sonnet-4-6", true, true, true, false},
+		{"claude-haiku-4-5", true, true, true, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.id, func(t *testing.T) {
@@ -48,6 +52,9 @@ func TestRegistryKnownModelCorrections(t *testing.T) {
 			}
 			if m.Reasoning != tc.wantReasoning {
 				t.Errorf("Reasoning = %v, want %v", m.Reasoning, tc.wantReasoning)
+			}
+			if m.Temperature != tc.wantTemp {
+				t.Errorf("Temperature = %v, want %v", m.Temperature, tc.wantTemp)
 			}
 			if m.Preferred != tc.wantPreferred {
 				t.Errorf("Preferred = %v, want %v", m.Preferred, tc.wantPreferred)
@@ -67,8 +74,10 @@ func TestModelUsesAdaptiveThinking(t *testing.T) {
 		{"claude-sonnet-5", true},
 		{"anthropic/claude-fable-5", true},
 		{"sonnet-5", true},
-		{"claude-opus-4-8", false},
+		{"claude-opus-4-8", true},
+		{"claude-opus-4-7", true},
 		{"claude-haiku-4-5", false},
+		{"claude-sonnet-4-6", false},
 		{"claude-3-5-sonnet-20241022", false},
 		{"gpt-5.5", false},
 	}

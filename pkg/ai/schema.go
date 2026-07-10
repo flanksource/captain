@@ -150,6 +150,145 @@ func SchemaJSONFor(p api.Prompt) (json.RawMessage, error) {
 	return json.Marshal(schema)
 }
 
+// SchemaJSONForBackend resolves the schema a provider should send to its
+// backend. Anthropic native structured-output backends receive a transformed
+// subset of the caller's original JSON Schema; every other backend receives the
+// original schema from SchemaJSONFor.
+func SchemaJSONForBackend(backend api.Backend, p api.Prompt) (json.RawMessage, error) {
+	schema, err := SchemaJSONFor(p)
+	if err != nil || len(schema) == 0 || !UsesAnthropicSchemaSubset(backend) {
+		return schema, err
+	}
+	return AnthropicCompatibleSchema(schema)
+}
+
+// UsesAnthropicSchemaSubset reports whether a backend sends JSON Schema to
+// Claude's native structured-output machinery and therefore needs Captain to
+// apply Anthropic's supported-subset transformation before dispatch.
+func UsesAnthropicSchemaSubset(backend api.Backend) bool {
+	switch backend {
+	case api.BackendAnthropic, api.BackendClaudeAgent, api.BackendClaudeCLI:
+		return true
+	default:
+		return false
+	}
+}
+
+// AnthropicCompatibleSchema returns a copy of schema with constraints that
+// Claude structured outputs do not accept removed from the provider-facing
+// payload. The original schema must still be used for local validation.
+func AnthropicCompatibleSchema(schema json.RawMessage) (json.RawMessage, error) {
+	var v any
+	if err := json.Unmarshal(schema, &v); err != nil {
+		return nil, fmt.Errorf("anthropic schema transform: invalid JSON schema: %w", err)
+	}
+	sanitizeAnthropicSchema(v)
+	out, err := json.Marshal(v)
+	if err != nil {
+		return nil, fmt.Errorf("anthropic schema transform: marshal schema: %w", err)
+	}
+	return out, nil
+}
+
+var anthropicUnsupportedConstraints = map[string]string{
+	"minimum":               "minimum",
+	"maximum":               "maximum",
+	"exclusiveMinimum":      "exclusiveMinimum",
+	"exclusiveMaximum":      "exclusiveMaximum",
+	"multipleOf":            "multipleOf",
+	"minLength":             "minLength",
+	"maxLength":             "maxLength",
+	"pattern":               "pattern",
+	"minItems":              "minItems",
+	"maxItems":              "maxItems",
+	"uniqueItems":           "uniqueItems",
+	"contains":              "contains",
+	"minContains":           "minContains",
+	"maxContains":           "maxContains",
+	"minProperties":         "minProperties",
+	"maxProperties":         "maxProperties",
+	"dependentRequired":     "dependentRequired",
+	"dependentSchemas":      "dependentSchemas",
+	"propertyNames":         "propertyNames",
+	"unevaluatedItems":      "unevaluatedItems",
+	"unevaluatedProperties": "unevaluatedProperties",
+}
+
+var anthropicSupportedFormats = map[string]bool{
+	"date":      true,
+	"date-time": true,
+	"email":     true,
+	"hostname":  true,
+	"ipv4":      true,
+	"ipv6":      true,
+	"uri":       true,
+	"uuid":      true,
+}
+
+func sanitizeAnthropicSchema(v any) {
+	switch node := v.(type) {
+	case map[string]any:
+		var hints []string
+		for key, label := range anthropicUnsupportedConstraints {
+			if value, ok := node[key]; ok {
+				hints = append(hints, label+"="+jsonValue(value))
+				delete(node, key)
+			}
+		}
+		if value, ok := node["format"].(string); ok && !anthropicSupportedFormats[value] {
+			hints = append(hints, "format="+value)
+			delete(node, "format")
+		}
+
+		for _, value := range node {
+			sanitizeAnthropicSchema(value)
+		}
+		if isObjectSchema(node) {
+			if _, ok := node["additionalProperties"]; !ok {
+				node["additionalProperties"] = false
+			}
+		}
+		if len(hints) > 0 {
+			node["description"] = appendConstraintDescription(node["description"], hints)
+		}
+	case []any:
+		for _, value := range node {
+			sanitizeAnthropicSchema(value)
+		}
+	}
+}
+
+func isObjectSchema(node map[string]any) bool {
+	if t, ok := node["type"].(string); ok && t == "object" {
+		return true
+	}
+	if ts, ok := node["type"].([]any); ok {
+		for _, t := range ts {
+			if s, ok := t.(string); ok && s == "object" {
+				return true
+			}
+		}
+	}
+	_, hasProperties := node["properties"]
+	return hasProperties
+}
+
+func appendConstraintDescription(existing any, hints []string) string {
+	prefix := strings.TrimSpace(fmt.Sprint(existing))
+	if prefix == "" || prefix == "<nil>" {
+		return "Constraints preserved for local validation: " + strings.Join(hints, ", ") + "."
+	}
+	return strings.TrimRight(prefix, ".") + ". Constraints preserved for local validation: " + strings.Join(hints, ", ") + "."
+}
+
+func jsonValue(v any) string {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Sprint(v)
+	}
+	return string(data)
+}
+
 // BindStructuredOutput unmarshals a provider's validated structured-output JSON
 // into the caller's Go target. Missing or malformed output fails loudly with
 // ErrSchemaValidation rather than leaving the target zero-valued.

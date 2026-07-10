@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -26,6 +28,7 @@ const (
 type scriptedProvider struct {
 	responses []string
 	calls     int
+	backend   ai.Backend
 }
 
 func (s *scriptedProvider) Execute(context.Context, ai.Request) (*ai.Response, error) {
@@ -36,8 +39,13 @@ func (s *scriptedProvider) Execute(context.Context, ai.Request) (*ai.Response, e
 	s.calls++
 	return &ai.Response{Text: s.responses[idx], Model: "test-model"}, nil
 }
-func (s *scriptedProvider) GetModel() string       { return "test-model" }
-func (s *scriptedProvider) GetBackend() ai.Backend { return ai.BackendAnthropic }
+func (s *scriptedProvider) GetModel() string { return "test-model" }
+func (s *scriptedProvider) GetBackend() ai.Backend {
+	if s.backend != "" {
+		return s.backend
+	}
+	return ai.BackendOpenAI
+}
 
 // outcome is one scripted provider result: a text response or an error.
 type outcome struct {
@@ -52,6 +60,7 @@ type erroringProvider struct {
 	outcomes []outcome
 	calls    int
 	prompts  []string
+	backend  ai.Backend
 }
 
 func (e *erroringProvider) Execute(_ context.Context, req ai.Request) (*ai.Response, error) {
@@ -66,8 +75,13 @@ func (e *erroringProvider) Execute(_ context.Context, req ai.Request) (*ai.Respo
 	}
 	return &ai.Response{Text: e.outcomes[idx].text, Model: "test-model"}, nil
 }
-func (e *erroringProvider) GetModel() string       { return "test-model" }
-func (e *erroringProvider) GetBackend() ai.Backend { return ai.BackendAnthropic }
+func (e *erroringProvider) GetModel() string { return "test-model" }
+func (e *erroringProvider) GetBackend() ai.Backend {
+	if e.backend != "" {
+		return e.backend
+	}
+	return ai.BackendOpenAI
+}
 
 func capRequest(strictness api.SchemaStrictness) ai.Request {
 	return ai.Request{Prompt: api.Prompt{
@@ -99,6 +113,39 @@ func TestValidation_NoStrictnessSkipsValidation(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Errorf("want 1 provider call, got %d", calls)
+	}
+}
+
+func TestValidation_AnthropicNoStrictnessDefaultsToRetry(t *testing.T) {
+	inner := &scriptedProvider{backend: ai.BackendAnthropic, responses: []string{overCapJSON, validJSON}}
+	p, err := WithSchemaValidation()(inner)
+	if err != nil {
+		t.Fatalf("WithSchemaValidation: %v", err)
+	}
+	resp, err := p.Execute(context.Background(), capRequest(api.SchemaStrictnessNone))
+	if err != nil {
+		t.Fatalf("anthropic default retry should recover, got %v", err)
+	}
+	if resp.Text != validJSON {
+		t.Fatalf("response = %q, want corrected JSON", resp.Text)
+	}
+	if inner.calls != 2 {
+		t.Fatalf("calls = %d, want initial + repair", inner.calls)
+	}
+}
+
+func TestValidation_AnthropicExplicitNoneSkipsValidation(t *testing.T) {
+	inner := &scriptedProvider{backend: ai.BackendAnthropic, responses: []string{overCapJSON}}
+	p, err := WithSchemaValidation()(inner)
+	if err != nil {
+		t.Fatalf("WithSchemaValidation: %v", err)
+	}
+	resp, err := p.Execute(context.Background(), capRequest(api.SchemaStrictnessDisabled))
+	if err != nil {
+		t.Fatalf("explicit none should pass through, got %v", err)
+	}
+	if resp.Text != overCapJSON || inner.calls != 1 {
+		t.Fatalf("pass-through = calls %d resp %q", inner.calls, resp.Text)
 	}
 }
 
@@ -216,5 +263,57 @@ func TestValidation_ProviderSchemaErrorExhaustsRetries(t *testing.T) {
 	}
 	if want := 1 + maxSchemaRetries; inner.calls != want {
 		t.Errorf("want %d calls, got %d", want, inner.calls)
+	}
+}
+
+func TestValidation_RepairRequestUsesConfiguredModel(t *testing.T) {
+	v := &validatingProvider{
+		provider: &scriptedProvider{backend: ai.BackendAnthropic},
+		cfg: ai.Config{SchemaRepair: api.SchemaRepairConfig{
+			Model: api.Model{Name: "gpt-5", Backend: ai.BackendOpenAI},
+		}},
+	}
+	req, cfg, useParent, err := v.repairRequest(capRequest(api.SchemaStrictnessRetry), json.RawMessage(capSchema), "bad", &ai.Response{Text: overCapJSON}, 1)
+	if err != nil {
+		t.Fatalf("repairRequest: %v", err)
+	}
+	if useParent {
+		t.Fatal("repair with configured model should not reuse parent provider")
+	}
+	if cfg.Model.Name != "gpt-5" || cfg.Model.Backend != ai.BackendOpenAI {
+		t.Fatalf("repair cfg model = %#v", cfg.Model)
+	}
+	if req.Prompt.SchemaStrictness != api.SchemaStrictnessDisabled {
+		t.Fatalf("repair prompt strictness = %q, want explicit none", req.Prompt.SchemaStrictness)
+	}
+	if !strings.Contains(req.Prompt.User, "Array must") && !strings.Contains(req.Prompt.User, "bad") {
+		t.Fatalf("repair prompt should include validation errors, got %q", req.Prompt.User)
+	}
+}
+
+func TestValidation_RepairRequestUsesConfiguredPromptFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "repair.prompt")
+	if err := os.WriteFile(path, []byte(`{{role "user"}}
+Fix this: {{validationErrors}}
+Previous: {{previousResponse}}
+`), 0o644); err != nil {
+		t.Fatalf("write repair prompt: %v", err)
+	}
+	v := &validatingProvider{
+		provider: &scriptedProvider{backend: ai.BackendAnthropic},
+		cfg:      ai.Config{SchemaRepair: api.SchemaRepairConfig{Prompt: path}},
+	}
+	req, _, useParent, err := v.repairRequest(capRequest(api.SchemaStrictnessRetry), json.RawMessage(capSchema), "custom-error", &ai.Response{Text: overCapJSON}, 1)
+	if err != nil {
+		t.Fatalf("repairRequest: %v", err)
+	}
+	if !useParent {
+		t.Fatal("custom prompt without model override should reuse parent provider")
+	}
+	if !strings.Contains(req.Prompt.User, "custom-error") || !strings.Contains(req.Prompt.User, overCapJSON) {
+		t.Fatalf("configured repair prompt did not render variables: %q", req.Prompt.User)
+	}
+	if req.Prompt.Source != path {
+		t.Fatalf("repair prompt source = %q, want %q", req.Prompt.Source, path)
 	}
 }

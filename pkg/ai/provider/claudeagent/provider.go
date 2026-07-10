@@ -266,7 +266,7 @@ func (p *Provider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai
 // Prompt.SchemaJSON), or nil for a text-mode request. A non-struct target fails
 // loudly rather than silently dropping the schema.
 func requestSchemaJSON(req ai.Request) (json.RawMessage, error) {
-	schema, err := ai.SchemaJSONFor(req.Prompt)
+	schema, err := ai.SchemaJSONForBackend(ai.BackendClaudeAgent, req.Prompt)
 	if err != nil {
 		return nil, fmt.Errorf("claude-agent: cannot derive structured-output schema: %w", err)
 	}

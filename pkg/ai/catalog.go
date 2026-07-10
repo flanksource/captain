@@ -13,12 +13,17 @@ import (
 // stability, while CLI/agent backends carry the exact provider model ID that the
 // local backend receives (never a family alias or synthetic backend prefix).
 type Model struct {
-	ID            string
-	Backend       Backend
-	Label         string // human-friendly menu label
-	Reasoning     bool   // model honours Effort
-	ContextWindow int    // max context tokens, for a usage gauge's denominator
-	ReleaseDate   string // YYYY-MM-DD release date, when known
+	ID          string
+	Backend     Backend
+	Label       string // human-friendly menu label
+	Reasoning   bool   // model honours Effort
+	Temperature bool   // model honours the temperature sampling control
+	// AdaptiveThinking marks Anthropic models that use the adaptive thinking
+	// schema (thinking:{type:adaptive} + output_config.effort) instead of the
+	// legacy enabled schema.
+	AdaptiveThinking bool
+	ContextWindow    int    // max context tokens, for a usage gauge's denominator
+	ReleaseDate      string // YYYY-MM-DD release date, when known
 	// AgentModel is retained for backward compatibility with older registered
 	// models. New catalog entries should use exact runtime IDs directly in ID and
 	// leave AgentModel empty.

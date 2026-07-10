@@ -3,6 +3,7 @@ package ai
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/flanksource/captain/pkg/api"
@@ -44,6 +45,97 @@ func TestSchemaJSONFor(t *testing.T) {
 	if got, err := SchemaJSONFor(api.Prompt{User: "hi"}); err != nil || got != nil {
 		t.Errorf("SchemaJSONFor(text) = (%s, %v), want (nil, nil)", got, err)
 	}
+}
+
+func TestSchemaJSONForBackend_AnthropicSanitizesUnsupportedConstraints(t *testing.T) {
+	raw := json.RawMessage(`{
+		"type":"object",
+		"properties":{
+			"title":{"type":"string","minLength":3,"maxLength":40,"format":"slug"},
+			"items":{"type":"array","minItems":1,"maxItems":2,"items":{"type":"object","properties":{"name":{"type":"string","pattern":"^[a-z]+$"}}}}
+		},
+		"required":["title"]
+	}`)
+	got, err := SchemaJSONForBackend(api.BackendAnthropic, api.Prompt{SchemaJSON: raw})
+	if err != nil {
+		t.Fatalf("SchemaJSONForBackend: %v", err)
+	}
+	if string(raw) == string(got) {
+		t.Fatal("anthropic schema should be transformed, got original")
+	}
+	if !json.Valid(raw) || !containsJSONKey(t, raw, "maxItems") {
+		t.Fatalf("original schema should remain unchanged: %s", raw)
+	}
+
+	var schema map[string]any
+	if err := json.Unmarshal(got, &schema); err != nil {
+		t.Fatalf("transformed schema invalid JSON: %v", err)
+	}
+	if schema["additionalProperties"] != false {
+		t.Fatalf("root additionalProperties = %v, want false", schema["additionalProperties"])
+	}
+	title := schema["properties"].(map[string]any)["title"].(map[string]any)
+	for _, key := range []string{"minLength", "maxLength", "format"} {
+		if _, ok := title[key]; ok {
+			t.Fatalf("title still has unsupported %s: %#v", key, title)
+		}
+	}
+	if desc := title["description"].(string); !strings.Contains(desc, "minLength=3") || !strings.Contains(desc, "format=slug") {
+		t.Fatalf("title description = %q, want removed constraints", desc)
+	}
+	items := schema["properties"].(map[string]any)["items"].(map[string]any)
+	if _, ok := items["maxItems"]; ok {
+		t.Fatalf("items still has maxItems: %#v", items)
+	}
+	nested := items["items"].(map[string]any)
+	if nested["additionalProperties"] != false {
+		t.Fatalf("nested additionalProperties = %v, want false", nested["additionalProperties"])
+	}
+	name := nested["properties"].(map[string]any)["name"].(map[string]any)
+	if _, ok := name["pattern"]; ok {
+		t.Fatalf("name still has pattern: %#v", name)
+	}
+}
+
+func TestSchemaJSONForBackend_NonAnthropicKeepsOriginalSchema(t *testing.T) {
+	raw := json.RawMessage(`{"type":"array","maxItems":2}`)
+	got, err := SchemaJSONForBackend(api.BackendOpenAI, api.Prompt{SchemaJSON: raw})
+	if err != nil {
+		t.Fatalf("SchemaJSONForBackend: %v", err)
+	}
+	if string(got) != string(raw) {
+		t.Fatalf("non-anthropic schema changed: got %s want %s", got, raw)
+	}
+}
+
+func containsJSONKey(t *testing.T, raw json.RawMessage, key string) bool {
+	t.Helper()
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	var walk func(any) bool
+	walk = func(node any) bool {
+		switch n := node.(type) {
+		case map[string]any:
+			if _, ok := n[key]; ok {
+				return true
+			}
+			for _, child := range n {
+				if walk(child) {
+					return true
+				}
+			}
+		case []any:
+			for _, child := range n {
+				if walk(child) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	return walk(v)
 }
 
 func TestGenerateJSONSchema(t *testing.T) {

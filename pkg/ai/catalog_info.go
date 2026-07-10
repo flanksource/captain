@@ -13,6 +13,7 @@ type ModelInfo struct {
 	Provider      string `json:"provider"`
 	Label         string `json:"label"`
 	Reasoning     bool   `json:"reasoning"`
+	Temperature   bool   `json:"temperature"`
 	Configured    bool   `json:"configured"`
 	ContextWindow int    `json:"contextWindow"`
 }
@@ -56,6 +57,7 @@ func CatalogInfo(configuredProviders []string) []ModelInfo {
 			Provider:      BackendToProvider(m.Backend),
 			Label:         m.Label,
 			Reasoning:     m.Reasoning,
+			Temperature:   m.Temperature,
 			Configured:    configured,
 			ContextWindow: m.ContextWindow,
 		}

@@ -1,10 +1,8 @@
 {
-  "claude-sonnet-5": { "preferred": true, "reasoning": false, "adaptiveThinking": true },
-  "claude-fable-5": { "adaptiveThinking": true },
+  "claude-sonnet-5": { "preferred": true },
   "claude-opus-4-8": { "preferred": true },
-  "claude-sonnet-4-6": { "preferred": true, "reasoning": false },
-  "claude-haiku-4-5": { "preferred": true, "reasoning": false },
-  "claude-haiku-4-5-20251001": { "reasoning": false },
+  "claude-sonnet-4-6": { "preferred": true },
+  "claude-haiku-4-5": { "preferred": true },
   "gpt-5.5": { "preferred": true },
   "gemini-3.5-flash": { "preferred": true },
   "gemini-2.5-pro": { "preferred": true },

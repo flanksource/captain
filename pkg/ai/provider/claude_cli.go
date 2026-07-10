@@ -127,9 +127,9 @@ func buildClaudeCLIArgs(model string, req ai.Request) ([]string, error) {
 		args = append(args, "--bare")
 	}
 	if req.Permissions.MCP.Disabled {
-		args = append(args, "--mcp-config", "{}", "--strict-mcp-config")
+		args = append(args, "--mcp-config", `{"mcpServers":{}}`, "--strict-mcp-config")
 	}
-	schema, err := ai.SchemaJSONFor(req.Prompt)
+	schema, err := ai.SchemaJSONForBackend(ai.BackendClaudeCLI, req.Prompt)
 	if err != nil {
 		return nil, fmt.Errorf("claude-cli: cannot derive structured-output schema: %w", err)
 	}

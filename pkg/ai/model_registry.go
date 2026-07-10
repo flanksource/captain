@@ -24,6 +24,7 @@ type registryModel struct {
 	Label            string `json:"label"`
 	ReleaseDate      string `json:"releaseDate,omitempty"`
 	Reasoning        bool   `json:"reasoning,omitempty"`
+	Temperature      bool   `json:"temperature,omitempty"`
 	ContextWindow    int    `json:"contextWindow,omitempty"`
 	Preferred        bool   `json:"preferred,omitempty"`
 	AdaptiveThinking bool   `json:"adaptiveThinking,omitempty"`
@@ -86,13 +87,15 @@ func registryCatalogModels() []Model {
 			continue
 		}
 		out = append(out, Model{
-			ID:            registryProviderPrefix(m.Provider) + "/" + m.ID,
-			Backend:       backend,
-			Label:         m.Label,
-			Reasoning:     m.Reasoning,
-			ContextWindow: m.ContextWindow,
-			ReleaseDate:   m.ReleaseDate,
-			Default:       m.Provider == modelProviderAnthropic && m.ID == "claude-sonnet-5",
+			ID:               registryProviderPrefix(m.Provider) + "/" + m.ID,
+			Backend:          backend,
+			Label:            m.Label,
+			Reasoning:        m.Reasoning,
+			Temperature:      m.Temperature,
+			AdaptiveThinking: m.AdaptiveThinking,
+			ContextWindow:    m.ContextWindow,
+			ReleaseDate:      m.ReleaseDate,
+			Default:          m.Provider == modelProviderAnthropic && m.ID == "claude-sonnet-5",
 		})
 	}
 	for _, m := range exactModelRegistry {
@@ -105,12 +108,14 @@ func registryCatalogModels() []Model {
 				continue
 			}
 			out = append(out, Model{
-				ID:            m.ID,
-				Backend:       BackendClaudeAgent,
-				Label:         "Claude Agent · " + strings.TrimPrefix(m.Label, "Claude "),
-				Reasoning:     m.Reasoning,
-				ContextWindow: m.ContextWindow,
-				ReleaseDate:   m.ReleaseDate,
+				ID:               m.ID,
+				Backend:          BackendClaudeAgent,
+				Label:            "Claude Agent · " + strings.TrimPrefix(m.Label, "Claude "),
+				Reasoning:        m.Reasoning,
+				Temperature:      m.Temperature,
+				AdaptiveThinking: m.AdaptiveThinking,
+				ContextWindow:    m.ContextWindow,
+				ReleaseDate:      m.ReleaseDate,
 			})
 		case modelProviderOpenAI:
 			out = append(out, Model{
@@ -118,6 +123,7 @@ func registryCatalogModels() []Model {
 				Backend:       BackendCodexAgent,
 				Label:         "Codex Agent · " + m.Label,
 				Reasoning:     m.Reasoning,
+				Temperature:   m.Temperature,
 				ContextWindow: m.ContextWindow,
 				ReleaseDate:   m.ReleaseDate,
 			})
@@ -174,13 +180,16 @@ func ResolveExactModelForBackend(backend Backend, model string) (string, bool) {
 	if identity.Provider != provider {
 		return stripModelProviderPrefix(model), false
 	}
-	if identity.Version != "" {
+	if shouldResolveLatestVersionLine(identity.Version) {
 		if m, ok := latestRegistryModelForVersionLine(identity); ok {
 			return m.ID, true
 		}
 	}
 	if m, ok := resolveRegistryIdentity(identity); ok {
 		return m.ID, true
+	}
+	if identity.Version != "" {
+		return stripModelProviderPrefix(model), false
 	}
 	if m, ok := latestRegistryModel(identity.Provider, identity.Family); ok {
 		return m.ID, true
@@ -354,6 +363,19 @@ func latestRegistryModelForVersionLine(identity ModelIdentity) (registryModel, b
 	}
 	sortRegistryModelsForResolution(candidates)
 	return candidates[0], true
+}
+
+func shouldResolveLatestVersionLine(version string) bool {
+	version = normalizeModelVersion(version)
+	if version == "" {
+		return false
+	}
+	for _, part := range strings.Split(version, ".") {
+		if !isRegistryNumericVersionPart(part) {
+			return false
+		}
+	}
+	return true
 }
 
 func sortRegistryModels(models []registryModel) {

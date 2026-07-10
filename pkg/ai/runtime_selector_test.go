@@ -76,6 +76,7 @@ func TestNormalizeModelForBackend(t *testing.T) {
 		{api.BackendClaudeAgent, "haiku-4", "claude-haiku-4-5"},
 		{api.BackendClaudeAgent, "haiku-4.5", "claude-haiku-4-5"},
 		{api.BackendCodexCmux, "openai/gpt-5.5", "gpt-5.5"},
+		{api.BackendCodexAgent, "gpt-5.4-mini", "gpt-5.4-mini"},
 	}
 	for _, tc := range cases {
 		if got := NormalizeModelForBackend(tc.backend, tc.model); got != tc.want {
@@ -94,6 +95,7 @@ func TestParseModelIdentity(t *testing.T) {
 		{"claude-agent-sonnet", ModelIdentity{Provider: modelProviderAnthropic, Family: "sonnet"}},
 		{"openai/gpt-5.5", ModelIdentity{Provider: modelProviderOpenAI, Family: "gpt", Version: "5.5"}},
 		{"codex-gpt-5.4", ModelIdentity{Provider: modelProviderOpenAI, Family: "gpt", Version: "5.4"}},
+		{"gpt-5.4-mini", ModelIdentity{Provider: modelProviderOpenAI, Family: "gpt", Version: "5.4-mini"}},
 	}
 	for _, tc := range cases {
 		got, ok := ParseModelIdentity(modelProviderAnthropic, tc.model)
@@ -157,6 +159,19 @@ func TestResolveRuntimeSelectors_RequiresModelForPrefixOnly(t *testing.T) {
 	}
 	if _, err := ResolveRuntimeSelectors([]string{"cmux"}, api.Model{}); err == nil {
 		t.Fatal("expected missing base model error")
+	}
+}
+
+func TestResolveRuntimeSelectors_PreservesExplicitUncatalogedVariant(t *testing.T) {
+	got, err := ResolveRuntimeSelectors([]string{"agent:gpt-5.4-mini"}, api.Model{})
+	if err != nil {
+		t.Fatalf("ResolveRuntimeSelectors: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d models, want 1: %#v", len(got), got)
+	}
+	if got[0].Backend != api.BackendCodexAgent || got[0].Name != "gpt-5.4-mini" {
+		t.Fatalf("got %s/%s, want %s/gpt-5.4-mini", got[0].Backend, got[0].Name, api.BackendCodexAgent)
 	}
 }
 
