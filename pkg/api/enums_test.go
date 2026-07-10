@@ -31,16 +31,16 @@ func TestInferBackend(t *testing.T) {
 	}
 }
 
-func TestEffortValidateIncludesXHigh(t *testing.T) {
-	for _, e := range []Effort{EffortNone, EffortLow, EffortMedium, EffortHigh, EffortXHigh} {
+func TestEffortValidateIncludesCodexTiers(t *testing.T) {
+	for _, e := range []Effort{EffortNone, EffortLow, EffortMedium, EffortHigh, EffortXHigh, EffortMax, EffortUltra} {
 		if err := e.Validate(); err != nil {
 			t.Errorf("Effort(%q).Validate() = %v, want nil", e, err)
 		}
 	}
-	if err := Effort("max").Validate(); err == nil {
-		t.Error("Effort(max).Validate() should fail (only low/medium/high/xhigh)")
+	if err := Effort("extreme").Validate(); err == nil {
+		t.Error("Effort(extreme).Validate() should fail")
 	}
-	if want := []Effort{EffortLow, EffortMedium, EffortHigh, EffortXHigh}; !reflect.DeepEqual(AllEfforts(), want) {
+	if want := []Effort{EffortLow, EffortMedium, EffortHigh, EffortXHigh, EffortMax, EffortUltra}; !reflect.DeepEqual(AllEfforts(), want) {
 		t.Errorf("AllEfforts() = %v, want %v", AllEfforts(), want)
 	}
 }

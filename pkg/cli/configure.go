@@ -9,6 +9,7 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/captainconfig"
 )
 
@@ -72,11 +73,9 @@ func RunConfigure(opts ConfigureOptions) (any, error) {
 			huh.NewSelect[string]().
 				Title("Reasoning effort").
 				Description("Honoured by codex-agent and the API backends (thinking budget); CLI wrappers may ignore.").
-				Options(
-					huh.NewOption("low", "low"),
-					huh.NewOption("medium", "medium"),
-					huh.NewOption("high", "high"),
-				).
+				OptionsFunc(func() []huh.Option[string] {
+					return effortHuhOptionsFor(ai.Backend(backend), model)
+				}, []any{&backend, &model}).
 				Value(&effort),
 			huh.NewInput().
 				Title("Budget (USD)").
@@ -277,15 +276,37 @@ func defaultModelFor(b ai.Backend) string {
 	case ai.BackendClaudeCLI, ai.BackendClaudeAgent:
 		return "claude-sonnet-5"
 	case ai.BackendOpenAI:
-		return "gpt-5.5"
+		return "gpt-5.6"
 	case ai.BackendDeepSeek:
 		return "deepseek-reasoner"
-	case ai.BackendCodexCLI, ai.BackendCodexAgent:
-		return "gpt-5.5"
+	case ai.BackendCodexCLI, ai.BackendCodexAgent, ai.BackendCodexCmux:
+		return "gpt-5.6-sol"
 	case ai.BackendGemini, ai.BackendGeminiCLI:
 		return "gemini-3.5-flash"
 	}
 	return ""
+}
+
+func effortHuhOptions() []huh.Option[string] {
+	return effortOptions(api.AllEfforts())
+}
+
+func effortHuhOptionsFor(backend ai.Backend, model string) []huh.Option[string] {
+	if supported, _, ok := ai.ModelEfforts(backend, model); ok {
+		if len(supported) == 0 {
+			return []huh.Option[string]{huh.NewOption("Backend default", "")}
+		}
+		return effortOptions(supported)
+	}
+	return effortHuhOptions()
+}
+
+func effortOptions(efforts []api.Effort) []huh.Option[string] {
+	out := make([]huh.Option[string], 0, len(efforts))
+	for _, effort := range efforts {
+		out = append(out, huh.NewOption(string(effort), string(effort)))
+	}
+	return out
 }
 
 func defaultString(v, fallback string) string {

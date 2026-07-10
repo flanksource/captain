@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/captainconfig"
 	"github.com/flanksource/commons-db/shell"
@@ -474,6 +475,23 @@ func TestRenderPromptEphemeralSpec(t *testing.T) {
 	}
 	if rendered.Input.Cwd() != cwd {
 		t.Fatalf("setup cwd = %q, want %q", rendered.Input.Cwd(), cwd)
+	}
+}
+
+func TestApplyPromptDefaultsSelectorEffortWins(t *testing.T) {
+	isolateCaptainConfig(t)
+	req := ai.Request{Model: api.Model{Effort: api.EffortLow}}
+	cfg := ai.Config{Model: api.Model{
+		Name:    "gpt-5.6-sol",
+		Backend: api.BackendCodexAgent,
+		Effort:  api.EffortHigh,
+	}}
+	applyPromptDefaults(&req, &cfg)
+	if req.Name != "gpt-5.6-sol" || req.Backend != api.BackendCodexAgent || req.Effort != api.EffortHigh {
+		t.Fatalf("request = %+v, want selector model/effort", req.Model)
+	}
+	if cfg.Model.Effort != api.EffortHigh {
+		t.Fatalf("config effort = %q, want high", cfg.Model.Effort)
 	}
 }
 

@@ -3,6 +3,7 @@ package provider
 import (
 	"encoding/json"
 	"os"
+	"reflect"
 	"testing"
 
 	"github.com/flanksource/captain/pkg/ai"
@@ -14,6 +15,7 @@ import (
 func TestBuildCodexCLIArgs(t *testing.T) {
 	cwd := t.TempDir()
 	req := ai.Request{
+		Model: api.Model{Effort: api.EffortUltra},
 		Prompt: api.Prompt{
 			User:       "hello",
 			SchemaJSON: json.RawMessage(`{"type":"object","properties":{"answer":{"type":"string"}}}`),
@@ -35,6 +37,7 @@ func TestBuildCodexCLIArgs(t *testing.T) {
 	}
 	defer cleanup()
 	requireFlagValue(t, args, "-m", "gpt-5.5")
+	requireFlagValue(t, args, "-c", `model_reasoning_effort="ultra"`)
 	requireFlagValue(t, args, "-C", cwd)
 	requireFlagValue(t, args, "--sandbox", "workspace-write")
 	requireHasArg(t, args, "--json")
@@ -51,6 +54,16 @@ func TestBuildCodexCLIArgs(t *testing.T) {
 	}
 	if !json.Valid(data) {
 		t.Fatalf("schema file is not valid JSON: %s", data)
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(data, &schema); err != nil {
+		t.Fatalf("decode schema file: %v", err)
+	}
+	if got := schema["required"]; !reflect.DeepEqual(got, []any{"answer"}) {
+		t.Fatalf("schema required = %#v, want [answer]", got)
+	}
+	if schema["additionalProperties"] != false {
+		t.Fatalf("schema additionalProperties = %v, want false", schema["additionalProperties"])
 	}
 	cleanup()
 	if _, err := os.Stat(schemaPath); !os.IsNotExist(err) {

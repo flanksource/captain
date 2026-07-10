@@ -17,7 +17,7 @@ const (
 )
 
 // ContainsRuntimeSelector reports whether s contains a backend/mode selector such
-// as "cmux:gpt-5.5" or "*:sonnet-5". Comma-separated fallback lists are scanned
+// as "cmux:gpt-5.6-sol" or "*:sonnet-5". Comma-separated fallback lists are scanned
 // item by item.
 func ContainsRuntimeSelector(s string) bool {
 	for _, part := range splitSelectorCSV(s) {
@@ -69,9 +69,11 @@ func ResolveRuntimeSelectors(values []string, base api.Model) ([]api.Model, erro
 		}
 		for _, m := range models {
 			m.Temperature = base.Temperature
-			m.Effort = base.Effort
+			if m.Effort == api.EffortNone {
+				m.Effort = base.Effort
+			}
 			m.NoCache = base.NoCache
-			key := string(m.Backend) + "\x00" + m.Name
+			key := string(m.Backend) + "\x00" + m.Name + "\x00" + string(m.Effort)
 			if seen[key] {
 				continue
 			}
@@ -105,12 +107,19 @@ func resolveSelectorPart(raw, baseName string, forced api.Backend, allowWildcard
 	prefix, modelName, hasPrefix := strings.Cut(raw, ":")
 	prefix = strings.ToLower(strings.TrimSpace(prefix))
 	modelName = strings.TrimSpace(modelName)
+	selectorEffort := api.EffortNone
 	if !hasPrefix {
 		if isSelectorPrefix(raw) {
 			prefix = strings.ToLower(raw)
 			modelName = strings.TrimSpace(baseName)
 		} else {
 			return []api.Model{{Name: raw, Backend: forced}}, nil
+		}
+	} else {
+		var err error
+		modelName, selectorEffort, err = splitSelectorEffort(raw, modelName)
+		if err != nil {
+			return nil, err
 		}
 	}
 	if !isSelectorPrefix(prefix) {
@@ -133,7 +142,17 @@ func resolveSelectorPart(raw, baseName string, forced api.Backend, allowWildcard
 		backends := wildcardBackends(family)
 		out := make([]api.Model, 0, len(backends))
 		for _, backend := range backends {
-			out = append(out, api.Model{Name: normalizeSelectorModel(backend, modelName), Backend: backend})
+			resolved, err := normalizeSelectorModel(backend, modelName)
+			if err != nil {
+				continue
+			}
+			if err := ValidateModelEffort(backend, resolved, selectorEffort); err != nil {
+				continue
+			}
+			out = append(out, api.Model{Name: resolved, Backend: backend, Effort: selectorEffort})
+		}
+		if len(out) == 0 {
+			return nil, fmt.Errorf("runtime selector %q is not available on any backend", raw)
 		}
 		return out, nil
 	}
@@ -145,7 +164,27 @@ func resolveSelectorPart(raw, baseName string, forced api.Backend, allowWildcard
 	if forced != "" && backend != forced {
 		return nil, fmt.Errorf("runtime selector %q resolves to backend %q but --backend is %q", raw, backend, forced)
 	}
-	return []api.Model{{Name: normalizeSelectorModel(backend, modelName), Backend: backend}}, nil
+	resolved, err := normalizeSelectorModel(backend, modelName)
+	if err != nil {
+		return nil, fmt.Errorf("runtime selector %q: %w", raw, err)
+	}
+	if err := ValidateModelEffort(backend, resolved, selectorEffort); err != nil {
+		return nil, fmt.Errorf("runtime selector %q: %w", raw, err)
+	}
+	return []api.Model{{Name: resolved, Backend: backend, Effort: selectorEffort}}, nil
+}
+
+func splitSelectorEffort(raw, model string) (string, api.Effort, error) {
+	i := strings.LastIndex(model, ":")
+	if i < 0 {
+		return model, api.EffortNone, nil
+	}
+	name := strings.TrimSpace(model[:i])
+	effort := api.Effort(strings.ToLower(strings.TrimSpace(model[i+1:])))
+	if name == "" || effort == api.EffortNone || !effort.Valid() {
+		return "", api.EffortNone, fmt.Errorf("invalid effort suffix in runtime selector %q; want one of: low, medium, high, xhigh, max, ultra", raw)
+	}
+	return name, effort, nil
 }
 
 func selectorBackend(prefix, model string) (api.Backend, error) {
@@ -196,7 +235,7 @@ func selectorBackend(prefix, model string) (api.Backend, error) {
 }
 
 func selectorModelFamily(model string) (selectorFamily, error) {
-	m := strings.ToLower(strings.TrimSpace(model))
+	m := strings.ToLower(strings.TrimSpace(normalizeCodexVariantAlias(model)))
 	if i := strings.LastIndex(m, "/"); i >= 0 {
 		m = m[i+1:]
 	}
@@ -251,8 +290,12 @@ func wildcardBackends(family selectorFamily) []api.Backend {
 	}
 }
 
-func normalizeSelectorModel(backend api.Backend, model string) string {
-	return NormalizeModelForBackend(backend, model)
+func normalizeSelectorModel(backend api.Backend, model string) (string, error) {
+	model = normalizeCodexVariantAlias(model)
+	if known, available := RegistryModelAvailability(backend, model); known && !available {
+		return "", fmt.Errorf("model %q is not available on backend %q", model, backend)
+	}
+	return NormalizeModelForBackend(backend, model), nil
 }
 
 // NormalizeModelForBackend maps a catalog/live/provider model id onto the exact
@@ -274,6 +317,9 @@ func mergeModelRuntime(original, resolved api.Model) api.Model {
 	}
 	if resolved.Backend != "" {
 		out.Backend = resolved.Backend
+	}
+	if resolved.Effort != api.EffortNone {
+		out.Effort = resolved.Effort
 	}
 	return out
 }

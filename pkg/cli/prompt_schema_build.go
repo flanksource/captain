@@ -97,6 +97,9 @@ func buildBackendsCatalog(adapters []AdapterStatus, argsByBackend map[api.Backen
 		if len(a.Models) > 0 {
 			entry["models"] = a.Models
 		}
+		if len(a.ModelDetails) > 0 {
+			entry["modelDetails"] = a.ModelDetails
+		}
 		if a.ModelError != "" {
 			entry["modelError"] = a.ModelError
 		}
@@ -148,13 +151,33 @@ func injectSpecConditionals(specMap map[string]any, adapters []AdapterStatus, ar
 		if len(a.Models) > 0 {
 			thenProps["model"] = map[string]any{"enum": toAnySlice(a.Models)}
 		}
+		thenSchema := map[string]any{"properties": thenProps}
+		var effortRules []any
+		for _, model := range a.ModelDetails {
+			efforts := []any{""}
+			for _, effort := range model.SupportedEfforts {
+				efforts = append(efforts, string(effort))
+			}
+			effortRules = append(effortRules, map[string]any{
+				"if": map[string]any{
+					"required":   []any{"model"},
+					"properties": map[string]any{"model": map[string]any{"const": model.ID}},
+				},
+				"then": map[string]any{
+					"properties": map[string]any{"effort": map[string]any{"enum": efforts}},
+				},
+			})
+		}
+		if len(effortRules) > 0 {
+			thenSchema["allOf"] = effortRules
+		}
 
 		allOf = append(allOf, map[string]any{
 			"if": map[string]any{
 				"required":   []any{"backend"},
 				"properties": map[string]any{"backend": map[string]any{"const": a.Backend}},
 			},
-			"then": map[string]any{"properties": thenProps},
+			"then": thenSchema,
 		})
 	}
 	specMap["allOf"] = allOf
@@ -209,6 +232,16 @@ func flatModels(adapters []AdapterStatus) []map[string]any {
 					"ready":      a.Ready(),
 				},
 			})
+			if len(model.supportedEfforts) > 0 {
+				values := make([]string, 0, len(model.supportedEfforts))
+				for _, effort := range model.supportedEfforts {
+					values = append(values, string(effort))
+				}
+				out[len(out)-1].data["supportedEfforts"] = values
+			}
+			if model.defaultEffort != api.EffortNone {
+				out[len(out)-1].data["defaultEffort"] = string(model.defaultEffort)
+			}
 		}
 	}
 	flat := make([]map[string]any, 0, len(out))
@@ -219,15 +252,22 @@ func flatModels(adapters []AdapterStatus) []map[string]any {
 }
 
 type flatModelDetail struct {
-	id    string
-	label string
+	id               string
+	label            string
+	supportedEfforts []api.Effort
+	defaultEffort    api.Effort
 }
 
 func flatModelDetails(adapter AdapterStatus) []flatModelDetail {
 	if len(adapter.ModelDetails) > 0 {
 		out := make([]flatModelDetail, 0, len(adapter.ModelDetails))
 		for _, model := range adapter.ModelDetails {
-			out = append(out, flatModelDetail{id: model.ID, label: model.Name})
+			out = append(out, flatModelDetail{
+				id:               model.ID,
+				label:            model.Name,
+				supportedEfforts: model.SupportedEfforts,
+				defaultEffort:    model.DefaultEffort,
+			})
 		}
 		return out
 	}

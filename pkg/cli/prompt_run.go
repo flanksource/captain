@@ -331,6 +331,9 @@ func executeSyncBatch(ctx context.Context, rendered PromptRenderResult, opts AIP
 	for i, model := range models {
 		i, model := i, model
 		selector := string(model.Backend) + ":" + model.Name
+		if model.Effort != api.EffortNone {
+			selector += ":" + string(model.Effort)
+		}
 		tasks[i] = group.Add(selector, func(_ flanksourceContext.Context, t *task.Task) (PromptRunItem, error) {
 			variant := renderVariant(rendered, model, fallbackModelsFromFlags(opts.Fallback))
 			variantOpts := opts
@@ -496,6 +499,7 @@ func variantModel(base api.Model, model api.Model, fallbacks []api.Model) api.Mo
 	out.Name = model.Name
 	out.ID = model.ID
 	out.Backend = model.Backend
+	out.Effort = model.Effort
 	out.Fallbacks = fallbacks
 	return out
 }

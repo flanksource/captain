@@ -199,7 +199,7 @@ func TestAIRuntimeOptions_ToRequest_ValidationErrors(t *testing.T) {
 		{"temperature above max", func(o *AIPromptOptions) { o.Temperature = "3" }, "0.0-2.0"},
 		{"temperature below min", func(o *AIPromptOptions) { o.Temperature = "-1" }, "0.0-2.0"},
 		{"bad permission-mode", func(o *AIPromptOptions) { o.PermissionMode = "yolo" }, "permission-mode"},
-		{"bad effort", func(o *AIPromptOptions) { o.Effort = "max" }, "effort"},
+		{"bad effort", func(o *AIPromptOptions) { o.Effort = "extreme" }, "effort"},
 		{"max-turns above max", func(o *AIPromptOptions) { o.MaxTurns = 200 }, "max-turns"},
 		{"max-turns below min", func(o *AIPromptOptions) { o.MaxTurns = -1 }, "max-turns"},
 	}

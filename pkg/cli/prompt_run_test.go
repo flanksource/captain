@@ -149,6 +149,15 @@ func TestExecuteSyncRunMultiModelsRejectsResume(t *testing.T) {
 	}
 }
 
+func TestVariantModelUsesSelectorEffort(t *testing.T) {
+	base := api.Model{Name: "gpt-5.6-sol", Backend: api.BackendCodexAgent, Effort: api.EffortLow}
+	selector := api.Model{Name: "gpt-5.6-terra", Backend: api.BackendCodexCmux, Effort: api.EffortUltra}
+	got := variantModel(base, selector, nil)
+	if got.Name != selector.Name || got.Backend != selector.Backend || got.Effort != api.EffortUltra {
+		t.Fatalf("variant = %+v, want selector model/backend/effort", got)
+	}
+}
+
 func TestPromptRunResultPrettyRendersRunsAsColumns(t *testing.T) {
 	result := PromptRunResult{
 		Status:    "partial",

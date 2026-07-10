@@ -144,9 +144,10 @@ func TestDefaultModelFor_HardcodedPerBackend(t *testing.T) {
 		ai.BackendAnthropic:   "claude-sonnet-5",
 		ai.BackendClaudeCLI:   "claude-sonnet-5",
 		ai.BackendClaudeAgent: "claude-sonnet-5",
-		ai.BackendOpenAI:      "gpt-5.5",
-		ai.BackendCodexCLI:    "gpt-5.5",
-		ai.BackendCodexAgent:  "gpt-5.5",
+		ai.BackendOpenAI:      "gpt-5.6",
+		ai.BackendCodexCLI:    "gpt-5.6-sol",
+		ai.BackendCodexAgent:  "gpt-5.6-sol",
+		ai.BackendCodexCmux:   "gpt-5.6-sol",
 		ai.BackendGemini:      "gemini-3.5-flash",
 		ai.BackendGeminiCLI:   "gemini-3.5-flash",
 	}
@@ -154,6 +155,27 @@ func TestDefaultModelFor_HardcodedPerBackend(t *testing.T) {
 		if got := defaultModelFor(b); got != want {
 			t.Errorf("defaultModelFor(%s) = %q, want %q", b, got, want)
 		}
+	}
+}
+
+func TestEffortHuhOptionsForModel(t *testing.T) {
+	luna := effortHuhOptionsFor(ai.BackendCodexAgent, "luna")
+	for _, option := range luna {
+		if option.Value == "ultra" {
+			t.Fatalf("Luna options should not include ultra: %+v", luna)
+		}
+	}
+	sol := effortHuhOptionsFor(ai.BackendCodexAgent, "sol")
+	foundMax := false
+	for _, option := range sol {
+		foundMax = foundMax || option.Value == "max"
+	}
+	if !foundMax {
+		t.Fatalf("Sol options should include max: %+v", sol)
+	}
+	noEffort := effortHuhOptionsFor(ai.BackendDeepSeek, "deepseek-v4-pro")
+	if len(noEffort) != 1 || noEffort[0].Value != "" {
+		t.Fatalf("DeepSeek options = %+v, want only the backend default", noEffort)
 	}
 }
 

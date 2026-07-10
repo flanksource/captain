@@ -50,12 +50,12 @@ func TestEffortConfig(t *testing.T) {
 			},
 		},
 		{
-			name:    "anthropic xhigh clamps output effort to high",
+			name:    "anthropic xhigh passes source-supported output effort through",
 			backend: BackendAnthropic, model: "anthropic/claude-fable-5", effort: EffortXHigh,
 			want: map[string]any{
 				"max_tokens":    32768 + 4096,
 				"thinking":      map[string]any{"type": "adaptive"},
-				"output_config": map[string]any{"effort": "high"},
+				"output_config": map[string]any{"effort": "xhigh"},
 			},
 		},
 		{
@@ -75,6 +75,11 @@ func TestEffortConfig(t *testing.T) {
 			name:    "openai reasoning model sets reasoning_effort",
 			backend: BackendOpenAI, model: "gpt-5.5", effort: EffortHigh,
 			want: map[string]any{"reasoning_effort": "high"},
+		},
+		{
+			name:    "openai gpt-5.6 passes max effort through",
+			backend: BackendOpenAI, model: "gpt-5.6", effort: EffortMax,
+			want: map[string]any{"reasoning_effort": "max"},
 		},
 		{
 			name:    "openai no effort omits config",

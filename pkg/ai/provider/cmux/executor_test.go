@@ -35,6 +35,7 @@ func TestAgentCommand(t *testing.T) {
 		{"claude ignores codex extras", AgentCommandOpts{Agent: "claude", Extra: &api.CodexCmuxOptions{Search: true}}, "claude"},
 		{"codex bare", AgentCommandOpts{Agent: "codex"}, "codex"},
 		{"codex with model", AgentCommandOpts{Agent: "codex", Model: "gpt-5"}, "codex -m gpt-5"},
+		{"codex effort config", AgentCommandOpts{Agent: "codex", Model: "gpt-5.6-sol", Effort: api.EffortUltra}, `codex -m gpt-5.6-sol -c 'model_reasoning_effort="ultra"'`},
 		{"codex ignores tools and permission", AgentCommandOpts{Agent: "codex", AllowedTools: []string{"Read"}, PermissionMode: api.PermissionPlan}, "codex"},
 		{"codex extra posture and flags", AgentCommandOpts{Agent: "codex", Model: "gpt-5", Extra: &api.CodexCmuxOptions{Sandbox: api.CodexSandboxWorkspaceWrite, AskForApproval: api.CodexApprovalOnRequest, Search: true}}, "codex -m gpt-5 --sandbox workspace-write --ask-for-approval on-request --search"},
 		{"codex ignores claude extras", AgentCommandOpts{Agent: "codex", Extra: &api.ClaudeCmuxOptions{AddDir: []string{"x"}}}, "codex"},

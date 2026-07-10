@@ -237,7 +237,7 @@ type AgentCommandOpts struct {
 	// --disallowedTools. codex ignores them.
 	AllowedTools    []string
 	DisallowedTools []string
-	// Effort maps onto claude --effort (from Spec.Model.Effort). codex ignores it.
+	// Effort maps onto claude --effort or Codex's model_reasoning_effort config.
 	Effort api.Effort
 	// Memory drives claude --bare / --disable-slash-commands / --setting-sources
 	// (from Spec.Memory). codex ignores it.
@@ -273,6 +273,9 @@ func AgentCommand(opts AgentCommandOpts) string {
 		tokens := []string{"codex"}
 		if opts.Model != "" {
 			tokens = append(tokens, "-m", opts.Model)
+		}
+		if opts.Effort != api.EffortNone {
+			tokens = append(tokens, "-c", fmt.Sprintf("model_reasoning_effort=%q", opts.Effort))
 		}
 		if extra, ok := opts.Extra.(*api.CodexCmuxOptions); ok && extra != nil {
 			tokens = append(tokens, flagArgs(*extra)...)

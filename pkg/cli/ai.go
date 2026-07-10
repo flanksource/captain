@@ -132,7 +132,7 @@ type AIRuntimeOptions struct {
 
 	MaxTokens   int    `flag:"max-tokens" help:"Maximum output tokens (0 = saved default or 4096)"`
 	Temperature string `flag:"temperature" help:"Sampling temperature (0.0-2.0)" default:"0"`
-	Effort      string `flag:"effort" help:"Reasoning effort: low|medium|high|xhigh (codex/genkit; others ignore)"`
+	Effort      string `flag:"effort" help:"Reasoning effort: low|medium|high|xhigh|max|ultra (model-dependent)"`
 	MaxTurns    int    `flag:"max-turns" help:"Max agent turns 0-100, 0 = provider default (claude-agent)"`
 	Resume      string `flag:"resume" help:"Resume an existing session by id (claude-agent, codex)"`
 

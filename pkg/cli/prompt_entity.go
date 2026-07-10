@@ -637,7 +637,11 @@ func applyPromptDefaults(req *ai.Request, cfg *ai.Config) {
 	if req.Backend == "" {
 		req.Backend = api.Backend(firstNonEmpty(string(cfg.Model.Backend), saved.Backend))
 	}
-	if req.Effort == "" {
+	if cfg.Model.Effort != api.EffortNone {
+		// An effort-qualified model selector (for example agent:sol:high)
+		// is model-local and intentionally overrides the request-wide flag/default.
+		req.Effort = cfg.Model.Effort
+	} else if req.Effort == "" {
 		req.Effort = api.Effort(firstNonEmpty(string(cfg.Model.Effort), saved.ReasoningEffort))
 	}
 	req.NoCache = req.NoCache || saved.NoCache

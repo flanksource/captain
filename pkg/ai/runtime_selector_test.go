@@ -186,3 +186,61 @@ func TestResolveModelSelectors_UnknownPrefixFails(t *testing.T) {
 		t.Fatal("expected unknown selector prefix error")
 	}
 }
+
+func TestResolveModelSelectors_EffortQualifiedAlias(t *testing.T) {
+	got, err := ResolveModelSelectors(api.Model{
+		Name:   "agent:sol:high",
+		Effort: api.EffortLow,
+	})
+	if err != nil {
+		t.Fatalf("ResolveModelSelectors: %v", err)
+	}
+	if got.Backend != api.BackendCodexAgent || got.Name != "gpt-5.6-sol" || got.Effort != api.EffortHigh {
+		t.Fatalf("got %s/%s/%s, want codex-agent/gpt-5.6-sol/high", got.Backend, got.Name, got.Effort)
+	}
+}
+
+func TestResolveRuntimeSelectors_PerSelectorEffortAndDedup(t *testing.T) {
+	got, err := ResolveRuntimeSelectors(
+		[]string{"agent:sol:high,agent:sol:xhigh,cmux:terra:max"},
+		api.Model{Effort: api.EffortLow},
+	)
+	if err != nil {
+		t.Fatalf("ResolveRuntimeSelectors: %v", err)
+	}
+	want := []api.Model{
+		{Name: "gpt-5.6-sol", Backend: api.BackendCodexAgent, Effort: api.EffortHigh},
+		{Name: "gpt-5.6-sol", Backend: api.BackendCodexAgent, Effort: api.EffortXHigh},
+		{Name: "gpt-5.6-terra", Backend: api.BackendCodexCmux, Effort: api.EffortMax},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %#v, want %#v", got, want)
+	}
+}
+
+func TestResolveRuntimeSelectors_WildcardRespectsAvailability(t *testing.T) {
+	got, err := ResolveRuntimeSelectors([]string{"*:sol:high"}, api.Model{})
+	if err != nil {
+		t.Fatalf("ResolveRuntimeSelectors: %v", err)
+	}
+	var backends []api.Backend
+	for _, model := range got {
+		backends = append(backends, model.Backend)
+		if model.Name != "gpt-5.6-sol" || model.Effort != api.EffortHigh {
+			t.Fatalf("unexpected model: %+v", model)
+		}
+	}
+	want := []api.Backend{api.BackendCodexAgent, api.BackendCodexCLI, api.BackendCodexCmux}
+	if !reflect.DeepEqual(backends, want) {
+		t.Fatalf("backends = %v, want %v", backends, want)
+	}
+}
+
+func TestResolveModelSelectors_EffortErrors(t *testing.T) {
+	if _, err := ResolveModelSelectors(api.Model{Name: "agent:sol:extreme"}); err == nil {
+		t.Fatal("expected invalid effort suffix error")
+	}
+	if _, err := ResolveModelSelectors(api.Model{Name: "openai:sol:high"}); err == nil {
+		t.Fatal("expected Codex-only Sol to be rejected by OpenAI backend")
+	}
+}

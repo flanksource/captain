@@ -97,6 +97,9 @@ func (c *CodexCLI) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai
 func buildCodexCLIArgs(model string, req ai.Request) ([]string, func(), error) {
 	args := []string{"exec", "--json"}
 	cleanup := func() {}
+	if req.Effort != api.EffortNone {
+		args = append(args, "-c", fmt.Sprintf("model_reasoning_effort=%q", req.Effort))
+	}
 	if m := strings.TrimSpace(model); m != "" && m != "codex" {
 		args = append(args, "-m", m)
 	}
@@ -116,7 +119,7 @@ func buildCodexCLIArgs(model string, req ai.Request) ([]string, func(), error) {
 	if req.Memory.SkipProject || req.Memory.SkipHooks {
 		args = append(args, "--ignore-rules")
 	}
-	schema, err := ai.SchemaJSONFor(req.Prompt)
+	schema, err := ai.SchemaJSONForBackend(ai.BackendCodexCLI, req.Prompt)
 	if err != nil {
 		return nil, cleanup, fmt.Errorf("codex-cli: cannot derive structured-output schema: %w", err)
 	}

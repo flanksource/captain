@@ -47,7 +47,7 @@ func EffortConfig(backend Backend, model string, effort Effort, maxTokens int, t
 			cfg["max_tokens"] = base + budget
 			if caps.AdaptiveThinking {
 				cfg["thinking"] = map[string]any{"type": "adaptive"}
-				cfg["output_config"] = map[string]any{"effort": anthropicOutputEffort(effort)}
+				cfg["output_config"] = map[string]any{"effort": string(effort)}
 			} else {
 				cfg["thinking"] = map[string]any{"type": "enabled", "budget_tokens": budget}
 			}
@@ -88,27 +88,15 @@ func thinkingBudget(e Effort) int {
 		return 8192
 	case EffortHigh:
 		return 24576
-	case EffortXHigh:
+	case EffortXHigh, EffortMax, EffortUltra:
 		return 32768
 	default:
 		return 0
 	}
 }
 
-// openaiReasoningEffort maps captain's effort onto OpenAI's reasoning_effort
-// values; OpenAI tops out at "high", so xhigh clamps to it.
+// openaiReasoningEffort passes Captain's model-validated OpenAI effort through
+// unchanged. Unsupported model/tier combinations fail before provider execution.
 func openaiReasoningEffort(e Effort) string {
-	if e == EffortXHigh {
-		return string(EffortHigh)
-	}
-	return string(e)
-}
-
-// anthropicOutputEffort maps captain's effort onto Anthropic's output_config
-// effort; xhigh clamps to "high".
-func anthropicOutputEffort(e Effort) string {
-	if e == EffortXHigh {
-		return string(EffortHigh)
-	}
 	return string(e)
 }

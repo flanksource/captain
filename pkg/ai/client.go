@@ -41,11 +41,19 @@ func NewProvider(cfg Config) (Provider, error) {
 	if len(candidates) > 1 {
 		return newFallbackProvider(cfg, candidates), nil
 	}
-	p, err := api.NewProvider(cfg)
+	p, err := newResolvedProvider(cfg)
 	if err != nil {
 		return nil, suggestModelName(err, cfg.Model.Name)
 	}
 	return p, nil
+}
+
+func newResolvedProvider(cfg Config) (Provider, error) {
+	p, err := api.NewProvider(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return withEffortValidation(p, cfg.Model.Effort), nil
 }
 
 func normalizeProviderModel(model api.Model) api.Model {

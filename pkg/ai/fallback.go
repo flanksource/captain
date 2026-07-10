@@ -33,7 +33,7 @@ func newFallbackProvider(base Config, candidates []api.Model) *fallbackProvider 
 	return &fallbackProvider{
 		base:       base,
 		candidates: candidates,
-		build:      api.NewProvider,
+		build:      newResolvedProvider,
 		built:      make([]Provider, len(candidates)),
 	}
 }
@@ -108,7 +108,9 @@ func (f *fallbackProvider) Execute(ctx context.Context, req Request) (*Response,
 			continue
 		}
 		f.setActive(i)
-		resp, err := p.Execute(ctx, req)
+		candidateReq := req
+		candidateReq.Effort = f.candidates[i].Effort
+		resp, err := p.Execute(ctx, candidateReq)
 		if err == nil {
 			return resp, nil
 		}
@@ -157,7 +159,9 @@ func (f *fallbackProvider) ExecuteStream(ctx context.Context, req Request) (<-ch
 			}
 			f.setActive(i)
 
-			ch, err := sp.ExecuteStream(ctx, req)
+			candidateReq := req
+			candidateReq.Effort = f.candidates[i].Effort
+			ch, err := sp.ExecuteStream(ctx, candidateReq)
 			if err != nil {
 				record(err)
 				if IsRetryable(err) && !last {

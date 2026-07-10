@@ -27,7 +27,7 @@ type Model struct {
 	Temperature *float64 `json:"temperature,omitempty" yaml:"temperature,omitempty" pretty:"label=Temp"`
 
 	// Effort is the reasoning effort for thinking-capable models.
-	Effort Effort `json:"effort,omitempty" yaml:"effort,omitempty" jsonschema:"enum=,enum=low,enum=medium,enum=high,enum=xhigh" pretty:"label=Effort"`
+	Effort Effort `json:"effort,omitempty" yaml:"effort,omitempty" jsonschema:"enum=,enum=low,enum=medium,enum=high,enum=xhigh,enum=max,enum=ultra" pretty:"label=Effort"`
 
 	// NoCache disables model response caching for this run.
 	NoCache bool `json:"noCache,omitempty" yaml:"noCache,omitempty" pretty:"label=No Cache"`

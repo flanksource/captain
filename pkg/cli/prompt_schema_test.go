@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/spf13/cobra"
 )
@@ -67,11 +69,11 @@ func TestPromptSchemaDocumentBackendsAndConditionals(t *testing.T) {
 	if !hasModels || len(codexCLIModels) == 0 {
 		t.Fatalf("codex-cli should expose exact registry models without API provider data: %+v", byName[string(api.BackendCodexCLI)])
 	}
-	if got := codexCLIModels[0]; got != "gpt-5.5" {
-		t.Errorf("codex-cli first model = %q, want gpt-5.5", got)
+	if got := codexCLIModels[0]; got != "gpt-5.6-sol" {
+		t.Errorf("codex-cli first model = %q, want gpt-5.6-sol", got)
 	}
 	flat := doc["models"].([]map[string]any)
-	codexModel := schemaModelForBackend(t, flat, "gpt-5.5", string(api.BackendCodexCLI))
+	codexModel := schemaModelForBackend(t, flat, "gpt-5.6-sol", string(api.BackendCodexCLI))
 	if got := codexModel["provider"]; got != "codex-cli" {
 		t.Errorf("flat model provider = %v, want codex-cli", got)
 	}
@@ -80,6 +82,12 @@ func TestPromptSchemaDocumentBackendsAndConditionals(t *testing.T) {
 	}
 	if _, ok := codexModel["reasoning"].(bool); !ok {
 		t.Errorf("flat model reasoning = %#v, want bool", codexModel["reasoning"])
+	}
+	if efforts, ok := codexModel["supportedEfforts"].([]string); !ok || !containsString(efforts, "max") || !containsString(efforts, "ultra") {
+		t.Errorf("flat model supportedEfforts = %#v, want patched Codex ultra", codexModel["supportedEfforts"])
+	}
+	if _, ok := codexModel["defaultEffort"]; ok {
+		t.Errorf("flat model should not have a locally patched default effort: %#v", codexModel["defaultEffort"])
 	}
 	if got, ok := codexModel["configured"].(bool); !ok || got {
 		t.Errorf("flat model configured = %#v, want false for fake unauthenticated CLI", codexModel["configured"])
@@ -144,6 +152,33 @@ func TestPromptSchemaDocumentBackendsAndConditionals(t *testing.T) {
 				t.Errorf("backend %s enum[%d] = %q, want %q", backend, i, enum[i], models[i])
 			}
 		}
+	}
+}
+
+func TestInjectSpecConditionalsUsesOnlyModelBackedEfforts(t *testing.T) {
+	spec := map[string]any{}
+	adapters := []AdapterStatus{{
+		Backend: string(api.BackendCodexAgent),
+		ModelDetails: []ai.ModelDef{
+			{ID: "gpt-5.6-sol", SupportedEfforts: []api.Effort{api.EffortLow, api.EffortMax}},
+			{ID: "no-effort-model"},
+		},
+	}}
+	if err := injectSpecConditionals(spec, adapters, nil); err != nil {
+		t.Fatalf("injectSpecConditionals: %v", err)
+	}
+	rules := spec["allOf"].([]any)[0].(map[string]any)["then"].(map[string]any)["allOf"].([]any)
+	got := map[string][]any{}
+	for _, raw := range rules {
+		rule := raw.(map[string]any)
+		model := rule["if"].(map[string]any)["properties"].(map[string]any)["model"].(map[string]any)["const"].(string)
+		got[model] = rule["then"].(map[string]any)["properties"].(map[string]any)["effort"].(map[string]any)["enum"].([]any)
+	}
+	if want := []any{"", "low", "max"}; !reflect.DeepEqual(got["gpt-5.6-sol"], want) {
+		t.Errorf("Sol effort enum = %v, want %v", got["gpt-5.6-sol"], want)
+	}
+	if want := []any{""}; !reflect.DeepEqual(got["no-effort-model"], want) {
+		t.Errorf("no-effort model enum = %v, want %v", got["no-effort-model"], want)
 	}
 }
 
