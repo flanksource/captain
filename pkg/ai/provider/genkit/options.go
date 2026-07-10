@@ -71,15 +71,9 @@ func generateOptions(p *Provider, req ai.Request, stream gkai.ModelStreamCallbac
 		opts = append(opts, gkai.WithStreaming(stream))
 	}
 	if stream == nil {
-		if p.backend == ai.BackendAnthropic && req.Prompt.HasSchema() {
-			raw, err := ai.SchemaJSONForBackend(p.backend, req.Prompt)
-			if err != nil {
-				return nil, fmt.Errorf("genkit %s: cannot derive Prompt schema: %w", p.backend, err)
-			}
-			var schema map[string]any
-			if err := json.Unmarshal(raw, &schema); err != nil {
-				return nil, fmt.Errorf("genkit %s: invalid Prompt schema: %w", p.backend, err)
-			}
+		if schema, handled, err := backendOutputSchema(p.backend, req); err != nil {
+			return nil, err
+		} else if handled {
 			opts = append(opts, gkai.WithOutputSchema(schema))
 		} else if len(req.Prompt.SchemaJSON) > 0 {
 			var schema map[string]any
@@ -92,4 +86,23 @@ func generateOptions(p *Provider, req ai.Request, stream gkai.ModelStreamCallbac
 		}
 	}
 	return opts, nil
+}
+
+// backendOutputSchema resolves schemas for native providers whose supported
+// JSON Schema subset differs from Captain's caller-facing schema. The bool is
+// false for backends that should retain Genkit's existing WithOutputType or raw
+// SchemaJSON behavior.
+func backendOutputSchema(backend ai.Backend, req ai.Request) (map[string]any, bool, error) {
+	if !req.Prompt.HasSchema() || (!ai.UsesAnthropicSchemaSubset(backend) && !ai.UsesOpenAISchemaSubset(backend)) {
+		return nil, false, nil
+	}
+	raw, err := ai.SchemaJSONForBackend(backend, req.Prompt)
+	if err != nil {
+		return nil, true, fmt.Errorf("genkit %s: cannot derive Prompt schema: %w", backend, err)
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		return nil, true, fmt.Errorf("genkit %s: invalid Prompt schema: %w", backend, err)
+	}
+	return schema, true, nil
 }

@@ -90,7 +90,7 @@ func (c *CodexAppServer) Execute(ctx context.Context, req ai.Request) (*ai.Respo
 // a text-mode request. A non-struct target fails loudly rather than silently
 // dropping the schema.
 func codexOutputSchema(req ai.Request) (json.RawMessage, error) {
-	schema, err := ai.SchemaJSONFor(req.Prompt)
+	schema, err := ai.SchemaJSONForBackend(ai.BackendCodexAgent, req.Prompt)
 	if err != nil {
 		return nil, fmt.Errorf("codex app-server: cannot derive structured-output schema: %w", err)
 	}

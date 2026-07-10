@@ -351,11 +351,11 @@ func req(p api.Prompt) ai.Request {
 func TestBuildTurnStartParams(t *testing.T) {
 	p := buildTurnStartParams("gpt-5", ai.Request{
 		Prompt: api.Prompt{User: "hi"},
-		Model:  api.Model{Effort: api.EffortHigh},
+		Model:  api.Model{Effort: api.EffortUltra},
 	}, "thread-1", nil)
 	assert.Equal(t, "thread-1", p["threadId"])
 	assert.Equal(t, "gpt-5", p["model"])
-	assert.Equal(t, "high", p["effort"])
+	assert.Equal(t, "ultra", p["effort"])
 
 	input, ok := p["input"].([]map[string]any)
 	require.True(t, ok, "input must be a slice of text elements")
@@ -376,11 +376,13 @@ func TestBuildTurnStartParams(t *testing.T) {
 func TestBuildTurnStartParams_OutputSchema(t *testing.T) {
 	type answer struct {
 		Answer string `json:"answer"`
+		Detail string `json:"detail,omitempty"`
 	}
-	schema, err := ai.SchemaJSONFor(api.Prompt{Schema: &answer{}})
+	request := req(api.Prompt{User: "solve", Schema: &answer{}})
+	schema, err := codexOutputSchema(request)
 	require.NoError(t, err)
 
-	p := buildTurnStartParams("gpt-5", req(api.Prompt{User: "solve"}), "t", schema)
+	p := buildTurnStartParams("gpt-5", request, "t", schema)
 	require.Contains(t, p, "outputSchema", "a derived schema must be sent as outputSchema")
 
 	// It must serialize to a JSON Schema object describing the target struct.
@@ -392,6 +394,9 @@ func TestBuildTurnStartParams_OutputSchema(t *testing.T) {
 	props, ok := decoded["properties"].(map[string]any)
 	require.True(t, ok)
 	assert.Contains(t, props, "answer")
+	assert.Contains(t, props, "detail")
+	assert.Equal(t, []any{"answer", "detail"}, decoded["required"])
+	assert.Equal(t, false, decoded["additionalProperties"])
 }
 
 func TestBuildThreadStartParams_Safety(t *testing.T) {

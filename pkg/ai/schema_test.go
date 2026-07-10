@@ -3,6 +3,7 @@ package ai
 import (
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -97,15 +98,146 @@ func TestSchemaJSONForBackend_AnthropicSanitizesUnsupportedConstraints(t *testin
 	}
 }
 
-func TestSchemaJSONForBackend_NonAnthropicKeepsOriginalSchema(t *testing.T) {
+func TestSchemaJSONForBackend_OpenAIRequiresAllCommitMessageProperties(t *testing.T) {
+	original := json.RawMessage(`{
+		"type":"object",
+		"additionalProperties":false,
+		"required":["type","subject"],
+		"properties":{
+			"type":{"type":"string"},
+			"scope":{"type":"string","description":"Optional scope"},
+			"subject":{"type":"string"},
+			"body":{"type":"string","description":"Optional body explaining why and impact"}
+		}
+	}`)
+	prompt := api.Prompt{SchemaJSON: original}
+	got, err := SchemaJSONForBackend(api.BackendCodexAgent, prompt)
+	if err != nil {
+		t.Fatalf("SchemaJSONForBackend: %v", err)
+	}
+
+	originalObject := decodeSchemaObject(t, original)
+	if required := schemaRequired(t, originalObject); !reflect.DeepEqual(required, []string{"type", "subject"}) {
+		t.Fatalf("original required = %v, want [type subject]", required)
+	}
+	if originalObject["additionalProperties"] != false {
+		t.Fatal("provider transform mutated the original commit-message schema")
+	}
+
+	strictObject := decodeSchemaObject(t, got)
+	if required := schemaRequired(t, strictObject); !reflect.DeepEqual(required, []string{"body", "scope", "subject", "type"}) {
+		t.Fatalf("openai required = %v, want every property in sorted order", required)
+	}
+	if strictObject["additionalProperties"] != false {
+		t.Fatalf("additionalProperties = %v, want false", strictObject["additionalProperties"])
+	}
+	body := strictObject["properties"].(map[string]any)["body"].(map[string]any)
+	if body["type"] != "string" {
+		t.Fatalf("optional body type = %v, want string (not nullable)", body["type"])
+	}
+}
+
+func TestOpenAICompatibleSchema_RecursesWithoutMutatingInput(t *testing.T) {
+	raw := json.RawMessage(`{
+		"type":"object",
+		"properties":{
+			"result":{"type":"object","properties":{"z":{"type":"string"},"a":{"type":"string"}}},
+			"rows":{"type":"array","items":{"type":"object","properties":{"value":{"type":"integer"}}}}
+		},
+		"$defs":{"detail":{"type":"object","properties":{"note":{"type":"string"}}}}
+	}`)
+	original := append(json.RawMessage(nil), raw...)
+
+	got, err := OpenAICompatibleSchema(raw)
+	if err != nil {
+		t.Fatalf("OpenAICompatibleSchema: %v", err)
+	}
+	if string(raw) != string(original) {
+		t.Fatal("OpenAICompatibleSchema mutated its input")
+	}
+
+	root := decodeSchemaObject(t, got)
+	if required := schemaRequired(t, root); !reflect.DeepEqual(required, []string{"result", "rows"}) {
+		t.Fatalf("root required = %v", required)
+	}
+	properties := root["properties"].(map[string]any)
+	result := properties["result"].(map[string]any)
+	if required := schemaRequired(t, result); !reflect.DeepEqual(required, []string{"a", "z"}) {
+		t.Fatalf("nested required = %v", required)
+	}
+	row := properties["rows"].(map[string]any)["items"].(map[string]any)
+	if required := schemaRequired(t, row); !reflect.DeepEqual(required, []string{"value"}) {
+		t.Fatalf("array item required = %v", required)
+	}
+	detail := root["$defs"].(map[string]any)["detail"].(map[string]any)
+	if required := schemaRequired(t, detail); !reflect.DeepEqual(required, []string{"note"}) {
+		t.Fatalf("$defs required = %v", required)
+	}
+	for name, object := range map[string]map[string]any{"root": root, "result": result, "row": row, "detail": detail} {
+		if object["additionalProperties"] != false {
+			t.Errorf("%s additionalProperties = %v, want false", name, object["additionalProperties"])
+		}
+	}
+}
+
+func TestOpenAICompatibleSchema_RejectsOpenEndedObjects(t *testing.T) {
+	type labels struct {
+		Values map[string]string `json:"values"`
+	}
+	_, err := SchemaJSONForBackend(api.BackendOpenAI, api.Prompt{Schema: &labels{}})
+	if err == nil || !strings.Contains(err.Error(), "additionalProperties must be false") {
+		t.Fatalf("error = %v, want open-ended object rejection", err)
+	}
+}
+
+func TestUsesOpenAISchemaSubset(t *testing.T) {
+	for _, backend := range []api.Backend{api.BackendOpenAI, api.BackendCodexCLI, api.BackendCodexAgent} {
+		if !UsesOpenAISchemaSubset(backend) {
+			t.Errorf("UsesOpenAISchemaSubset(%s) = false, want true", backend)
+		}
+	}
+	for _, backend := range []api.Backend{api.BackendAnthropic, api.BackendGemini, api.BackendCodexCmux} {
+		if UsesOpenAISchemaSubset(backend) {
+			t.Errorf("UsesOpenAISchemaSubset(%s) = true, want false", backend)
+		}
+	}
+}
+
+func TestSchemaJSONForBackend_NativeTransformNotUsedForGemini(t *testing.T) {
 	raw := json.RawMessage(`{"type":"array","maxItems":2}`)
-	got, err := SchemaJSONForBackend(api.BackendOpenAI, api.Prompt{SchemaJSON: raw})
+	got, err := SchemaJSONForBackend(api.BackendGemini, api.Prompt{SchemaJSON: raw})
 	if err != nil {
 		t.Fatalf("SchemaJSONForBackend: %v", err)
 	}
 	if string(got) != string(raw) {
-		t.Fatalf("non-anthropic schema changed: got %s want %s", got, raw)
+		t.Fatalf("gemini schema changed: got %s want %s", got, raw)
 	}
+}
+
+func decodeSchemaObject(t *testing.T, raw json.RawMessage) map[string]any {
+	t.Helper()
+	var object map[string]any
+	if err := json.Unmarshal(raw, &object); err != nil {
+		t.Fatalf("decode schema: %v", err)
+	}
+	return object
+}
+
+func schemaRequired(t *testing.T, object map[string]any) []string {
+	t.Helper()
+	raw, ok := object["required"].([]any)
+	if !ok {
+		t.Fatalf("required = %#v, want array", object["required"])
+	}
+	out := make([]string, len(raw))
+	for i, value := range raw {
+		var ok bool
+		out[i], ok = value.(string)
+		if !ok {
+			t.Fatalf("required[%d] = %#v, want string", i, value)
+		}
+	}
+	return out
 }
 
 func containsJSONKey(t *testing.T, raw json.RawMessage, key string) bool {

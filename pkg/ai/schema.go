@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 
 	"github.com/flanksource/captain/pkg/api"
@@ -151,15 +152,22 @@ func SchemaJSONFor(p api.Prompt) (json.RawMessage, error) {
 }
 
 // SchemaJSONForBackend resolves the schema a provider should send to its
-// backend. Anthropic native structured-output backends receive a transformed
-// subset of the caller's original JSON Schema; every other backend receives the
-// original schema from SchemaJSONFor.
+// backend. Native structured-output backends receive a transformed subset of
+// the caller's original JSON Schema when their API imposes stricter schema
+// rules; every other backend receives the original schema from SchemaJSONFor.
 func SchemaJSONForBackend(backend api.Backend, p api.Prompt) (json.RawMessage, error) {
 	schema, err := SchemaJSONFor(p)
-	if err != nil || len(schema) == 0 || !UsesAnthropicSchemaSubset(backend) {
+	if err != nil || len(schema) == 0 {
 		return schema, err
 	}
-	return AnthropicCompatibleSchema(schema)
+	switch {
+	case UsesAnthropicSchemaSubset(backend):
+		return AnthropicCompatibleSchema(schema)
+	case UsesOpenAISchemaSubset(backend):
+		return OpenAICompatibleSchema(schema)
+	default:
+		return schema, nil
+	}
 }
 
 // UsesAnthropicSchemaSubset reports whether a backend sends JSON Schema to
@@ -172,6 +180,99 @@ func UsesAnthropicSchemaSubset(backend api.Backend) bool {
 	default:
 		return false
 	}
+}
+
+// UsesOpenAISchemaSubset reports whether a backend sends JSON Schema to
+// OpenAI's native strict structured-output machinery. Prompt-only Codex cmux
+// sessions are deliberately excluded because they do not submit a response
+// format to OpenAI.
+func UsesOpenAISchemaSubset(backend api.Backend) bool {
+	switch backend {
+	case api.BackendOpenAI, api.BackendCodexCLI, api.BackendCodexAgent:
+		return true
+	default:
+		return false
+	}
+}
+
+// OpenAICompatibleSchema returns a provider-facing copy of schema that obeys
+// OpenAI strict structured-output object rules: every declared property is
+// required and every object is closed. Property types and constraints are left
+// unchanged so the original schema remains the source of truth for local
+// validation. Open-ended map schemas cannot be represented by this subset and
+// fail loudly instead of being silently narrowed to an empty object.
+func OpenAICompatibleSchema(schema json.RawMessage) (json.RawMessage, error) {
+	var v any
+	if err := json.Unmarshal(schema, &v); err != nil {
+		return nil, fmt.Errorf("openai schema transform: invalid JSON schema: %w", err)
+	}
+	if err := normalizeOpenAISchema(v, "$"); err != nil {
+		return nil, err
+	}
+	out, err := json.Marshal(v)
+	if err != nil {
+		return nil, fmt.Errorf("openai schema transform: marshal schema: %w", err)
+	}
+	return out, nil
+}
+
+func normalizeOpenAISchema(v any, path string) error {
+	node, ok := v.(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	if isObjectSchema(node) {
+		if additional, exists := node["additionalProperties"]; exists {
+			allowed, isBool := additional.(bool)
+			if !isBool || allowed {
+				return fmt.Errorf("openai schema transform: %s is open-ended; additionalProperties must be false", path)
+			}
+		}
+
+		var required []string
+		if rawProperties, exists := node["properties"]; exists {
+			properties, ok := rawProperties.(map[string]any)
+			if !ok {
+				return fmt.Errorf("openai schema transform: %s.properties must be an object", path)
+			}
+			required = make([]string, 0, len(properties))
+			for name := range properties {
+				required = append(required, name)
+			}
+			sort.Strings(required)
+		}
+		if required == nil {
+			required = []string{}
+		}
+		node["required"] = required
+		node["additionalProperties"] = false
+	}
+
+	for _, key := range []string{"properties", "$defs", "definitions", "patternProperties", "dependentSchemas"} {
+		children, _ := node[key].(map[string]any)
+		for name, child := range children {
+			if err := normalizeOpenAISchema(child, path+"."+key+"."+name); err != nil {
+				return err
+			}
+		}
+	}
+	for _, key := range []string{"items", "contains", "propertyNames", "not", "if", "then", "else"} {
+		if child, ok := node[key].(map[string]any); ok {
+			if err := normalizeOpenAISchema(child, path+"."+key); err != nil {
+				return err
+			}
+		}
+	}
+	for _, key := range []string{"allOf", "anyOf", "oneOf", "prefixItems"} {
+		children, _ := node[key].([]any)
+		for i, child := range children {
+			if err := normalizeOpenAISchema(child, fmt.Sprintf("%s.%s[%d]", path, key, i)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // AnthropicCompatibleSchema returns a copy of schema with constraints that

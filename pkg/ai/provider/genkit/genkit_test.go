@@ -136,3 +136,21 @@ func TestIsSchemaMismatch(t *testing.T) {
 		})
 	}
 }
+
+func TestBackendOutputSchema_NormalizesOpenAIStructuredOutput(t *testing.T) {
+	type answer struct {
+		Answer string `json:"answer"`
+		Detail string `json:"detail,omitempty"`
+	}
+	req := ai.Request{Prompt: api.Prompt{Schema: &answer{}}}
+
+	schema, handled, err := backendOutputSchema(ai.BackendOpenAI, req)
+	require.NoError(t, err)
+	require.True(t, handled)
+	assert.Equal(t, []any{"answer", "detail"}, schema["required"])
+	assert.Equal(t, false, schema["additionalProperties"])
+
+	_, handled, err = backendOutputSchema(ai.BackendGemini, req)
+	require.NoError(t, err)
+	assert.False(t, handled, "Gemini should retain Genkit's WithOutputType path")
+}
