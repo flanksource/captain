@@ -63,6 +63,7 @@ type SessionRecord struct {
 	Key             string              `json:"key"`
 	ID              string              `json:"id"`
 	Source          string              `json:"source"`
+	Slug            string              `json:"slug,omitempty"`
 	StartedAt       *time.Time          `json:"startedAt,omitempty"`
 	EndedAt         *time.Time          `json:"endedAt,omitempty"`
 	Model           string              `json:"model,omitempty"`
@@ -96,14 +97,35 @@ type SessionContextWire struct {
 }
 
 type SessionLiveWire struct {
-	PID           int        `json:"pid,omitempty"`
-	Status        string     `json:"status,omitempty"`
-	Active        bool       `json:"active"`
-	CPUPercent    float64    `json:"cpuPercent,omitempty"`
-	MemoryPercent float64    `json:"memoryPercent,omitempty"`
-	StartedAt     *time.Time `json:"startedAt,omitempty"`
-	CWD           string     `json:"cwd,omitempty"`
-	Command       string     `json:"command,omitempty"`
+	PID           int          `json:"pid,omitempty"`
+	Status        string       `json:"status,omitempty"`
+	Active        bool         `json:"active"`
+	CPUPercent    float64      `json:"cpuPercent,omitempty"`
+	MemoryPercent float64      `json:"memoryPercent,omitempty"`
+	StartedAt     *time.Time   `json:"startedAt,omitempty"`
+	CWD           string       `json:"cwd,omitempty"`
+	Command       string       `json:"command,omitempty"`
+	SessionID     string       `json:"sessionId,omitempty"`
+	AgentIDs      []string     `json:"agentIds,omitempty"`
+	LastActivity  *time.Time   `json:"lastActivity,omitempty"`
+	SessionFile   string       `json:"sessionFile,omitempty"`
+	Surface       *CmuxSurface `json:"surface,omitempty"`
+}
+
+// CmuxSurface identifies the cmux multiplexer surface hosting an agent process.
+// SurfaceID/WorkspaceID/… are derived from the process's CMUX_* environment
+// variables; Title/Workspace are the authoritative names joined from cmux itself.
+type CmuxSurface struct {
+	SurfaceID   string `json:"surfaceId,omitempty"`
+	WorkspaceID string `json:"workspaceId,omitempty"`
+	TabID       string `json:"tabId,omitempty"`
+	PanelID     string `json:"panelId,omitempty"`
+	Port        int    `json:"port,omitempty"`
+	AgentKind   string `json:"agentKind,omitempty"`
+	SocketPath  string `json:"socketPath,omitempty"`
+	ClaudePID   int    `json:"claudePid,omitempty"`
+	Title       string `json:"title,omitempty"`
+	Workspace   string `json:"workspace,omitempty"`
 }
 
 type SessionHealthWire struct {
@@ -152,7 +174,7 @@ func (l SessionLiveWire) String() string {
 	if l.PID == 0 && l.Status == "" && l.Command == "" {
 		return ""
 	}
-	parts := make([]string, 0, 4)
+	parts := make([]string, 0, 6)
 	if l.PID > 0 {
 		parts = append(parts, fmt.Sprintf("pid %d", l.PID))
 	}
@@ -164,6 +186,12 @@ func (l SessionLiveWire) String() string {
 	}
 	if l.MemoryPercent > 0 {
 		parts = append(parts, fmt.Sprintf("%.1f%% mem", l.MemoryPercent))
+	}
+	if len(l.AgentIDs) > 0 {
+		parts = append(parts, fmt.Sprintf("%d agents", len(l.AgentIDs)))
+	}
+	if l.Surface != nil && l.Surface.SurfaceID != "" {
+		parts = append(parts, "cmux:"+shortSessionID(l.Surface.SurfaceID))
 	}
 	if command := compactSessionCommand(l.Command); command != "" {
 		parts = append(parts, command)

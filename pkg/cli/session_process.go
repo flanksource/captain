@@ -20,6 +20,11 @@ type agentProcess struct {
 	StartedAt     *time.Time
 	CWD           string
 	Command       string
+	SessionID     string
+	AgentIDs      []string
+	LastActivity  *time.Time
+	SessionFile   string
+	Surface       *CmuxSurface
 }
 
 func (p agentProcess) wire() *SessionLiveWire {
@@ -32,7 +37,30 @@ func (p agentProcess) wire() *SessionLiveWire {
 		StartedAt:     p.StartedAt,
 		CWD:           p.CWD,
 		Command:       p.Command,
+		SessionID:     p.SessionID,
+		AgentIDs:      p.AgentIDs,
+		LastActivity:  p.LastActivity,
+		SessionFile:   p.SessionFile,
+		Surface:       p.Surface,
 	}
+}
+
+// parseClaudeSessionIDFromCommand extracts the session id claude was launched
+// with, from its "--session-id <uuid>" / "--resume <uuid>" argv (either the
+// space-separated or "=<uuid>" form). Returns "" when absent.
+func parseClaudeSessionIDFromCommand(command string) string {
+	fields := strings.Fields(command)
+	for i, field := range fields {
+		for _, flag := range []string{"--session-id", "--resume"} {
+			if field == flag && i+1 < len(fields) {
+				return fields[i+1]
+			}
+			if value, ok := strings.CutPrefix(field, flag+"="); ok {
+				return value
+			}
+		}
+	}
+	return ""
 }
 
 func discoverAgentProcesses() ([]agentProcess, error) {
@@ -109,6 +137,11 @@ func processSource(command string) string {
 		strings.Contains(lower, "codex-linux") ||
 		strings.Contains(lower, "codex-win") ||
 		commandNameMatches(lower, "codex") {
+		// mcp-server / app-server are codex's tool/IPC servers, not interactive
+		// sessions — they never hold a rollout transcript open.
+		if commandNameMatches(lower, "mcp-server") || commandNameMatches(lower, "app-server") {
+			return ""
+		}
 		return "codex"
 	}
 	return ""

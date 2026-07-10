@@ -407,6 +407,7 @@ func storedBase(r session.Row) StoredSession {
 		ToolCalls:     r.ToolCalls,
 		MessageCount:  r.Messages,
 		ContextTokens: r.ContextTokens,
+		Slug:          r.Slug,
 	}
 	if r.Plan != nil {
 		row.PlanPath = r.Plan.Path
@@ -473,6 +474,7 @@ func (row StoredSession) toRecord() SessionRecord {
 		Key:             sessionRecordKey(row.Source, row.Path),
 		ID:              row.ID,
 		Source:          row.Source,
+		Slug:            row.Slug,
 		Model:           row.Model,
 		ReasoningEffort: row.Provider.ReasoningEffort,
 		Version:         row.Provider.Version,

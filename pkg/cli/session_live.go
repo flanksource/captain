@@ -306,6 +306,11 @@ func liveMatchesQuery(live *SessionLiveWire, query string) bool {
 		live.Status,
 		live.CWD,
 		live.Command,
+		live.SessionID,
+	}
+	values = append(values, live.AgentIDs...)
+	if live.Surface != nil {
+		values = append(values, live.Surface.SurfaceID, live.Surface.TabID, live.Surface.WorkspaceID, live.Surface.AgentKind)
 	}
 	for _, value := range values {
 		if strings.Contains(strings.ToLower(value), query) {
