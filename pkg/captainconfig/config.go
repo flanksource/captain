@@ -38,7 +38,14 @@ type AIDefaults struct {
 }
 
 type PromptDefaults struct {
-	Dirs []string `yaml:"dirs,omitempty"`
+	Dirs         []string             `yaml:"dirs,omitempty"`
+	SchemaRepair SchemaRepairDefaults `yaml:"schemaRepair,omitempty"`
+}
+
+type SchemaRepairDefaults struct {
+	Model   string `yaml:"model,omitempty"`
+	Backend string `yaml:"backend,omitempty"`
+	Prompt  string `yaml:"prompt,omitempty"`
 }
 
 // pathOverride lets tests redirect Path() to a temp directory without touching

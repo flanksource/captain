@@ -80,6 +80,11 @@ func main() {
 	clicky.AddNamedCommandWithContext("live", sessionsCmd, cli.SessionLiveOptions{}, cli.RunSessionLive).Short = "List sessions with live process health"
 	clicky.AddNamedCommandWithContext("get", sessionsCmd, cli.SessionGetOptions{}, cli.RunSessionGet).Short = "Show a session transcript"
 
+	psCmd := clicky.AddNamedCommandWithContext("ps", rootCmd, cli.PSOptions{}, cli.RunPS)
+	psCmd.Short = "List live agent sessions (claude/codex) with session id, agents, and cmux surface"
+	psCmd.Long = "Detect running claude/codex agent processes (via ps + lsof), resolve each one's session id, sub-agent ids, cmux surface (from CMUX_* env vars), and last activity, then augment with cached token/cost/context data. Only currently-active sessions are listed."
+	clicky.AddNamedCommandWithContext("ps", sessionsCmd, cli.PSOptions{}, cli.RunPS).Short = psCmd.Short
+
 	sandboxCmd := &cobra.Command{
 		Use:   "sandbox",
 		Short: "Sandbox configuration tools",

@@ -46,6 +46,14 @@ func TestSaveLoad_RoundTrip(t *testing.T) {
 			NoHooks:         false,
 			NoMemory:        true,
 		},
+		Prompts: PromptDefaults{
+			Dirs: []string{"/repo/prompts"},
+			SchemaRepair: SchemaRepairDefaults{
+				Model:   "gpt-5",
+				Backend: "openai",
+				Prompt:  "/repo/prompts/json-repair.prompt",
+			},
+		},
 	}
 	if err := Save(want); err != nil {
 		t.Fatalf("Save() err = %v", err)
