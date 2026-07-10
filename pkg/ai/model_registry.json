@@ -9,7 +9,14 @@
     "reasoning": true,
     "contextWindow": 1000000,
     "preferred": true,
-    "adaptiveThinking": true
+    "adaptiveThinking": true,
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ]
   },
   {
     "id": "claude-fable-5",
@@ -20,7 +27,14 @@
     "releaseDate": "2026-06-07",
     "reasoning": true,
     "contextWindow": 1000000,
-    "adaptiveThinking": true
+    "adaptiveThinking": true,
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ]
   },
   {
     "id": "claude-opus-4-8",
@@ -32,7 +46,14 @@
     "reasoning": true,
     "contextWindow": 1000000,
     "preferred": true,
-    "adaptiveThinking": true
+    "adaptiveThinking": true,
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ]
   },
   {
     "id": "claude-opus-4-7",
@@ -43,7 +64,14 @@
     "releaseDate": "2026-04-14",
     "reasoning": true,
     "contextWindow": 1000000,
-    "adaptiveThinking": true
+    "adaptiveThinking": true,
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ]
   },
   {
     "id": "claude-sonnet-4-6",
@@ -136,6 +164,95 @@
     "contextWindow": 1000000
   },
   {
+    "id": "gpt-5.6",
+    "provider": "openai",
+    "family": "gpt",
+    "version": "5.6",
+    "label": "GPT-5.6",
+    "releaseDate": "2026-07-09",
+    "reasoning": true,
+    "contextWindow": 1050000,
+    "preferred": true,
+    "availability": [
+      "api"
+    ],
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ]
+  },
+  {
+    "id": "gpt-5.6-luna",
+    "provider": "openai",
+    "family": "gpt",
+    "version": "5.6-luna",
+    "label": "GPT-5.6 Luna",
+    "releaseDate": "2026-07-09",
+    "reasoning": true,
+    "contextWindow": 1050000,
+    "preferred": true,
+    "availability": [
+      "codex"
+    ],
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ],
+    "priority": 3
+  },
+  {
+    "id": "gpt-5.6-sol",
+    "provider": "openai",
+    "family": "gpt",
+    "version": "5.6-sol",
+    "label": "GPT-5.6 Sol",
+    "releaseDate": "2026-07-09",
+    "reasoning": true,
+    "contextWindow": 1050000,
+    "preferred": true,
+    "availability": [
+      "codex"
+    ],
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      "ultra"
+    ],
+    "priority": 1
+  },
+  {
+    "id": "gpt-5.6-terra",
+    "provider": "openai",
+    "family": "gpt",
+    "version": "5.6-terra",
+    "label": "GPT-5.6 Terra",
+    "releaseDate": "2026-07-09",
+    "reasoning": true,
+    "contextWindow": 1050000,
+    "preferred": true,
+    "availability": [
+      "codex"
+    ],
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      "ultra"
+    ],
+    "priority": 2
+  },
+  {
     "id": "gpt-5.5",
     "provider": "openai",
     "family": "gpt",
@@ -144,7 +261,13 @@
     "releaseDate": "2026-04-23",
     "reasoning": true,
     "contextWindow": 1050000,
-    "preferred": true
+    "preferred": true,
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh"
+    ]
   },
   {
     "id": "gpt-5.4",
@@ -154,7 +277,13 @@
     "label": "GPT-5.4",
     "releaseDate": "2026-03-05",
     "reasoning": true,
-    "contextWindow": 1050000
+    "contextWindow": 1050000,
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh"
+    ]
   },
   {
     "id": "gpt-5.2",
@@ -164,7 +293,13 @@
     "label": "GPT-5.2",
     "releaseDate": "2025-12-11",
     "reasoning": true,
-    "contextWindow": 400000
+    "contextWindow": 400000,
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh"
+    ]
   },
   {
     "id": "gpt-5.1",
@@ -174,7 +309,12 @@
     "label": "GPT-5.1",
     "releaseDate": "2025-11-13",
     "reasoning": true,
-    "contextWindow": 400000
+    "contextWindow": 400000,
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high"
+    ]
   },
   {
     "id": "gpt-5",
@@ -184,7 +324,12 @@
     "label": "GPT-5",
     "releaseDate": "2025-08-07",
     "reasoning": true,
-    "contextWindow": 400000
+    "contextWindow": 400000,
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high"
+    ]
   },
   {
     "id": "gemini-3.5-flash",
@@ -196,7 +341,12 @@
     "reasoning": true,
     "temperature": true,
     "contextWindow": 1048576,
-    "preferred": true
+    "preferred": true,
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high"
+    ]
   },
   {
     "id": "gemini-3.1-flash-lite",
@@ -207,7 +357,12 @@
     "releaseDate": "2026-05-07",
     "reasoning": true,
     "temperature": true,
-    "contextWindow": 1048576
+    "contextWindow": 1048576,
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high"
+    ]
   },
   {
     "id": "gemini-3.1-flash-lite-preview",
@@ -218,7 +373,12 @@
     "releaseDate": "2026-03-03",
     "reasoning": true,
     "temperature": true,
-    "contextWindow": 1048576
+    "contextWindow": 1048576,
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high"
+    ]
   },
   {
     "id": "gemini-3.1-pro-preview",
@@ -229,7 +389,12 @@
     "releaseDate": "2026-02-19",
     "reasoning": true,
     "temperature": true,
-    "contextWindow": 1048576
+    "contextWindow": 1048576,
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high"
+    ]
   },
   {
     "id": "gemini-3.1-pro-preview-customtools",
@@ -240,7 +405,12 @@
     "releaseDate": "2026-02-19",
     "reasoning": true,
     "temperature": true,
-    "contextWindow": 1048576
+    "contextWindow": 1048576,
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high"
+    ]
   },
   {
     "id": "gemini-3-flash-preview",
@@ -251,7 +421,12 @@
     "releaseDate": "2025-12-17",
     "reasoning": true,
     "temperature": true,
-    "contextWindow": 1048576
+    "contextWindow": 1048576,
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high"
+    ]
   },
   {
     "id": "gemini-3-pro-preview",
@@ -262,7 +437,11 @@
     "releaseDate": "2025-11-18",
     "reasoning": true,
     "temperature": true,
-    "contextWindow": 1048576
+    "contextWindow": 1048576,
+    "supportedEfforts": [
+      "low",
+      "high"
+    ]
   },
   {
     "id": "gemini-flash-latest",
