@@ -28,6 +28,14 @@ type PermissionDecision struct {
 	UpdatedInput map[string]any
 }
 
+// SchemaRepairConfig controls the optional second pass used when structured
+// output fails local JSON-schema validation. Empty means use the parent
+// provider/model and captain's embedded repair prompt.
+type SchemaRepairConfig struct {
+	Model  Model  // optional override; empty means the parent model/backend
+	Prompt string // optional .prompt file path; empty means embedded default
+}
+
 // Config is the provider construction/runtime config. Model (name/backend/temp/
 // effort) and Budget (cost ceiling, max tokens) come from the serializable spec
 // types; the rest are transport/runtime concerns that never belong in Spec. It is
@@ -44,6 +52,7 @@ type Config struct {
 	MaxConcurrent int
 	SessionID     string
 	ProjectName   string
+	SchemaRepair  SchemaRepairConfig
 
 	// CanUseTool, when set, brokers tool permissions over the stream-json control
 	// protocol: the streaming provider asks this callback before a tool that needs

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -150,42 +149,75 @@ func TestExecuteSyncRunMultiModelsRejectsResume(t *testing.T) {
 	}
 }
 
-func TestPromptRunResultPrettyIncludesRuntimeColumns(t *testing.T) {
+func TestPromptRunResultPrettyRendersRunsAsColumns(t *testing.T) {
 	result := PromptRunResult{
-		Status:    "completed",
-		Total:     1,
+		Status:    "partial",
+		Total:     2,
 		Succeeded: 1,
-		Runs: []PromptRunItem{{
-			Selector:     "api:sonnet-5",
-			Status:       "completed",
-			Backend:      "anthropic",
-			Model:        "claude-sonnet-5",
-			Dir:          "/repo",
-			SessionID:    "0123456789abcdef",
-			HistoryFile:  "/repo/.claude/session.jsonl",
-			InputTokens:  8,
-			OutputTokens: 14,
-			CostUSD:      0.0002,
-			Duration:     "1s",
-			Text:         "ok",
-		}},
+		Failed:    1,
+		Runs: []PromptRunItem{
+			{
+				Selector:     "api:sonnet-5",
+				Status:       "completed",
+				Backend:      "anthropic",
+				Model:        "claude-sonnet-5",
+				Dir:          "/repo",
+				SessionID:    "0123456789abcdef",
+				HistoryFile:  "/repo/.claude/session.jsonl",
+				InputTokens:  8,
+				OutputTokens: 14,
+				CostUSD:      0.0002,
+				Duration:     "1s",
+				Text:         "api ok",
+			},
+			{
+				Selector: "cmux:opus",
+				Status:   "failed",
+				Backend:  "claude-cmux",
+				Model:    "claude-opus-4-8",
+				Duration: "2s",
+				Error:    "cmux unavailable",
+			},
+		},
 	}
 
 	table := firstPrettyTable(t, result.Pretty())
-	for _, field := range []string{"dir", "history", "tokens", "cost", "duration"} {
-		if !slices.Contains(table.FieldNames, field) {
-			t.Fatalf("field names = %v, want %q", table.FieldNames, field)
+	wantFields := []string{"metric", "run1", "run2"}
+	if strings.Join(table.FieldNames, ",") != strings.Join(wantFields, ",") {
+		t.Fatalf("field names = %v, want %v", table.FieldNames, wantFields)
+	}
+	if len(table.Headers) != 3 {
+		t.Fatalf("headers = %d, want 3", len(table.Headers))
+	}
+	wantHeaders := []string{"Metric", "api:sonnet-5", "cmux:opus"}
+	for i, want := range wantHeaders {
+		if got := table.Headers[i].String(); got != want {
+			t.Fatalf("header[%d] = %q, want %q", i, got, want)
 		}
 	}
-	row := table.Rows[0]
-	if row["tokens"].String() != "8/14" {
-		t.Fatalf("tokens cell = %q", row["tokens"].String())
+
+	tests := []struct {
+		metric string
+		run1   string
+		run2   string
+	}{
+		{"Status", "completed", "failed"},
+		{"Backend", "anthropic", "claude-cmux"},
+		{"Model", "claude-sonnet-5", "claude-opus-4-8"},
+		{"Response", "api ok", ""},
+		{"Error", "", "cmux unavailable"},
+		{"Duration", "1s", "2s"},
+		{"Tokens", "8/14", ""},
+		{"Cost", "$0.0002", ""},
+		{"Session", "0123456789ab", ""},
+		{"History", "/repo/.claude/session.jsonl", ""},
+		{"Dir", "/repo", ""},
 	}
-	if row["cost"].String() != "$0.0002" {
-		t.Fatalf("cost cell = %q", row["cost"].String())
-	}
-	if row["dir"].String() != "/repo" || row["history"].String() != "/repo/.claude/session.jsonl" {
-		t.Fatalf("dir/history cells = %q / %q", row["dir"].String(), row["history"].String())
+	for _, tt := range tests {
+		row := tableRowByMetric(t, table, tt.metric)
+		if row["run1"].String() != tt.run1 || row["run2"].String() != tt.run2 {
+			t.Fatalf("%s row = %q / %q, want %q / %q", tt.metric, row["run1"].String(), row["run2"].String(), tt.run1, tt.run2)
+		}
 	}
 }
 
@@ -224,6 +256,17 @@ func firstPrettyTable(t *testing.T, text clickyapi.Text) clickyapi.TextTable {
 	}
 	t.Fatalf("no table child in %#v", text.Children)
 	return clickyapi.TextTable{}
+}
+
+func tableRowByMetric(t *testing.T, table clickyapi.TextTable, metric string) clickyapi.TableRow {
+	t.Helper()
+	for _, row := range table.Rows {
+		if row["metric"].String() == metric {
+			return row
+		}
+	}
+	t.Fatalf("no %q metric row in %#v", metric, table.Rows)
+	return nil
 }
 
 func testRenderedPrompt(model api.Model) PromptRenderResult {

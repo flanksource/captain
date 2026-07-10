@@ -629,7 +629,8 @@ func overlayRuntimeSpec(req *ai.Request, cfg *ai.Config, spec api.Spec) {
 }
 
 func applyPromptDefaults(req *ai.Request, cfg *ai.Config) {
-	saved := loadSavedAI()
+	savedCfg := loadSavedConfig()
+	saved := savedCfg.AI
 	if req.Name == "" {
 		req.Name = firstNonEmpty(cfg.Model.Name, saved.Model)
 	}
@@ -650,6 +651,9 @@ func applyPromptDefaults(req *ai.Request, cfg *ai.Config) {
 	cfg.Model = req.Model
 	cfg.Budget = req.Budget
 	cfg.NoCache = req.NoCache
+	if isZeroSchemaRepair(cfg.SchemaRepair) {
+		cfg.SchemaRepair = schemaRepairConfig(savedCfg.Prompts.SchemaRepair)
+	}
 }
 
 func mergeStringMaps(base, overlay map[string]string) map[string]string {

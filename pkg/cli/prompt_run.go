@@ -73,40 +73,54 @@ func (r PromptRunResult) Pretty() clickyapi.Text {
 	t := clickyapi.Text{}.
 		Append(fmt.Sprintf("Status: %s  Total: %d  Succeeded: %d  Failed: %d  Duration: %s",
 			r.Status, r.Total, r.Succeeded, r.Failed, r.Duration), "font-medium")
+
+	return t.NewLine().Add(promptRunComparisonTable(r.Runs))
+}
+
+func promptRunComparisonTable(runs []PromptRunItem) clickyapi.TextTable {
 	table := clickyapi.TextTable{
-		Headers: clickyapi.TextList{
-			textCell("Selector"),
-			textCell("Status"),
-			textCell("Backend"),
-			textCell("Model"),
-			textCell("Dir"),
-			textCell("Session"),
-			textCell("History"),
-			textCell("Tokens"),
-			textCell("Cost"),
-			textCell("Duration"),
-			textCell("Response"),
-			textCell("Error"),
-		},
-		FieldNames: []string{"selector", "status", "backend", "model", "dir", "session", "history", "tokens", "cost", "duration", "response", "error"},
+		Headers:    clickyapi.TextList{textCell("Metric")},
+		FieldNames: []string{"metric"},
 	}
-	for _, run := range r.Runs {
-		table.Rows = append(table.Rows, clickyapi.TableRow{
-			"selector": cell(run.Selector),
-			"status":   cell(run.Status),
-			"backend":  cell(run.Backend),
-			"model":    cell(run.Model),
-			"dir":      cell(truncatePathCell(run.Dir, 56)),
-			"session":  cell(shortSessionCell(run.SessionID)),
-			"history":  cell(truncatePathCell(run.HistoryFile, 72)),
-			"tokens":   cell(tokenCell(run.InputTokens, run.OutputTokens)),
-			"cost":     cell(costCell(run.CostUSD)),
-			"duration": cell(run.Duration),
-			"response": cell(truncateCell(run.Text, 120)),
-			"error":    cell(truncateCell(run.Error, 160)),
-		})
+	for i, run := range runs {
+		field := runColumnField(i)
+		table.FieldNames = append(table.FieldNames, field)
+		table.Headers = append(table.Headers, textCell(runColumnHeader(run)))
 	}
-	return t.NewLine().Add(table)
+
+	add := func(metric string, values func(PromptRunItem) string) {
+		row := clickyapi.TableRow{"metric": cell(metric)}
+		for i, run := range runs {
+			row[runColumnField(i)] = cell(values(run))
+		}
+		table.Rows = append(table.Rows, row)
+	}
+	add("Status", func(run PromptRunItem) string { return run.Status })
+	add("Backend", func(run PromptRunItem) string { return run.Backend })
+	add("Model", func(run PromptRunItem) string { return run.Model })
+	add("Response", func(run PromptRunItem) string { return truncateCell(run.Text, 120) })
+	add("Error", func(run PromptRunItem) string { return truncateCell(run.Error, 160) })
+	add("Duration", func(run PromptRunItem) string { return run.Duration })
+	add("Tokens", func(run PromptRunItem) string { return tokenCell(run.InputTokens, run.OutputTokens) })
+	add("Cost", func(run PromptRunItem) string { return costCell(run.CostUSD) })
+	add("Session", func(run PromptRunItem) string { return shortSessionCell(run.SessionID) })
+	add("History", func(run PromptRunItem) string { return truncatePathCell(run.HistoryFile, 72) })
+	add("Dir", func(run PromptRunItem) string { return truncatePathCell(run.Dir, 56) })
+	return table
+}
+
+func runColumnField(index int) string {
+	return fmt.Sprintf("run%d", index+1)
+}
+
+func runColumnHeader(run PromptRunItem) string {
+	if strings.TrimSpace(run.Selector) != "" {
+		return run.Selector
+	}
+	if run.Backend != "" && run.Model != "" {
+		return run.Backend + ":" + run.Model
+	}
+	return firstNonEmpty(run.Model, run.Backend, "run")
 }
 
 func textCell(s string) clickyapi.Textable {

@@ -165,27 +165,27 @@ func (e Effort) Validate() error {
 }
 
 // SchemaStrictness governs what captain does when a structured-output response
-// fails validation against the request's JSON schema. "" disables post-response
-// validation (the default — the schema is still sent to the model, just never
-// checked on the way back).
+// fails validation against the request's JSON schema. "" uses the backend
+// default, while "none" explicitly disables post-response validation.
 type SchemaStrictness string
 
 const (
-	SchemaStrictnessNone    SchemaStrictness = ""
-	SchemaStrictnessWarning SchemaStrictness = "warning"
-	SchemaStrictnessError   SchemaStrictness = "error"
-	SchemaStrictnessRetry   SchemaStrictness = "retry"
+	SchemaStrictnessNone     SchemaStrictness = ""
+	SchemaStrictnessDisabled SchemaStrictness = "none"
+	SchemaStrictnessWarning  SchemaStrictness = "warning"
+	SchemaStrictnessError    SchemaStrictness = "error"
+	SchemaStrictnessRetry    SchemaStrictness = "retry"
 )
 
 // AllSchemaStrictness lists the non-empty strictness modes.
 func AllSchemaStrictness() []SchemaStrictness {
-	return []SchemaStrictness{SchemaStrictnessWarning, SchemaStrictnessError, SchemaStrictnessRetry}
+	return []SchemaStrictness{SchemaStrictnessDisabled, SchemaStrictnessWarning, SchemaStrictnessError, SchemaStrictnessRetry}
 }
 
 // Valid reports whether s is a recognised strictness mode (including none/"").
 func (s SchemaStrictness) Valid() bool {
 	switch s {
-	case SchemaStrictnessNone, SchemaStrictnessWarning, SchemaStrictnessError, SchemaStrictnessRetry:
+	case SchemaStrictnessNone, SchemaStrictnessDisabled, SchemaStrictnessWarning, SchemaStrictnessError, SchemaStrictnessRetry:
 		return true
 	default:
 		return false
@@ -197,7 +197,7 @@ func (s SchemaStrictness) Validate() error {
 	if s.Valid() {
 		return nil
 	}
-	return fmt.Errorf("invalid schemaStrictness %q; want one of: warning, error, retry", s)
+	return fmt.Errorf("invalid schemaStrictness %q; want one of: none, warning, error, retry", s)
 }
 
 // VerifyScope narrows a workflow's verification to the changed files vs the

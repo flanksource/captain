@@ -25,12 +25,16 @@ import (
 // surfaced as zero-valued defaults rather than failing the command — a missing
 // or unreadable config should never block `captain ai prompt`.
 func loadSavedAI() captainconfig.AIDefaults {
+	return loadSavedConfig().AI
+}
+
+func loadSavedConfig() captainconfig.Config {
 	cfg, _, err := captainconfig.Load()
 	if err != nil {
 		log.Warnf("captainconfig load: %v (continuing with zero defaults)", err)
-		return captainconfig.AIDefaults{}
+		return captainconfig.Config{}
 	}
-	return cfg.AI
+	return cfg
 }
 
 type AIProviderOptions struct {
@@ -56,7 +60,8 @@ func parseFloatFlag(name, val string) (float64, error) {
 }
 
 func (o AIProviderOptions) ToConfig() (ai.Config, error) {
-	saved := loadSavedAI()
+	savedCfg := loadSavedConfig()
+	saved := savedCfg.AI
 	budget, err := parseFloatFlag("budget", o.Budget)
 	if err != nil {
 		return ai.Config{}, err
@@ -86,11 +91,30 @@ func (o AIProviderOptions) ToConfig() (ai.Config, error) {
 		return ai.Config{}, err
 	}
 	return ai.Config{
-		Model:   m,
-		Budget:  api.Budget{Cost: budget},
-		APIKey:  o.APIKey,
-		NoCache: o.NoCache || saved.NoCache,
+		Model:        m,
+		Budget:       api.Budget{Cost: budget},
+		APIKey:       o.APIKey,
+		NoCache:      o.NoCache || saved.NoCache,
+		SchemaRepair: schemaRepairConfig(savedCfg.Prompts.SchemaRepair),
 	}, nil
+}
+
+func schemaRepairConfig(saved captainconfig.SchemaRepairDefaults) api.SchemaRepairConfig {
+	return api.SchemaRepairConfig{
+		Model:  api.Model{Name: saved.Model, Backend: api.Backend(saved.Backend)},
+		Prompt: strings.TrimSpace(saved.Prompt),
+	}
+}
+
+func isZeroSchemaRepair(c api.SchemaRepairConfig) bool {
+	return strings.TrimSpace(c.Prompt) == "" &&
+		c.Model.Name == "" &&
+		c.Model.ID == "" &&
+		c.Model.Backend == "" &&
+		c.Model.Temperature == nil &&
+		c.Model.Effort == "" &&
+		!c.Model.NoCache &&
+		len(c.Model.Fallbacks) == 0
 }
 
 // AIRuntimeOptions binds the per-invocation knobs every AI command shares —
@@ -311,7 +335,7 @@ func executePromptRequest(parent context.Context, req ai.Request, cfg ai.Config,
 	}
 	defer cleanup()
 
-	if streamer, ok := p.(ai.StreamingProvider); ok && !noStream {
+	if streamer, ok := p.(ai.StreamingProvider); ok && !noStream && !req.Prompt.HasSchema() {
 		return runStreaming(ctx, streamer, req)
 	}
 	return runBuffered(ctx, p, req)
@@ -433,7 +457,7 @@ func buildProvider(ctx context.Context, req *ai.Request, cfg ai.Config) (ai.Prov
 		cleanup()
 		return nil, func() {}, err
 	}
-	if p, err = middleware.Wrap(p, middleware.WithLogging(), middleware.WithSchemaValidation()); err != nil {
+	if p, err = middleware.Wrap(p, middleware.WithLogging(), middleware.WithSchemaValidation(cfg)); err != nil {
 		cleanup()
 		return nil, func() {}, err
 	}

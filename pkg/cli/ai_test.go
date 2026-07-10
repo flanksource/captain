@@ -224,6 +224,29 @@ func TestAIProviderOptions_ToConfig_ValidationErrors(t *testing.T) {
 	}
 }
 
+func TestAIProviderOptions_ToConfig_LoadsSchemaRepairDefaults(t *testing.T) {
+	seedSavedAI(t, `
+ai:
+  model: claude-sonnet-5
+  backend: anthropic
+prompts:
+  schemaRepair:
+    model: gpt-5
+    backend: openai
+    prompt: /repo/prompts/json-repair.prompt
+`)
+	cfg, err := (AIProviderOptions{}).ToConfig()
+	if err != nil {
+		t.Fatalf("ToConfig: %v", err)
+	}
+	if cfg.SchemaRepair.Model.Name != "gpt-5" || cfg.SchemaRepair.Model.Backend != api.BackendOpenAI {
+		t.Fatalf("schema repair model = %#v", cfg.SchemaRepair.Model)
+	}
+	if cfg.SchemaRepair.Prompt != "/repo/prompts/json-repair.prompt" {
+		t.Fatalf("schema repair prompt = %q", cfg.SchemaRepair.Prompt)
+	}
+}
+
 // TestAIRuntimeOptions_ToRequest_MaxTokensPrecedence pins the flag > saved >
 // built-in order, replacing the old magic-4096 sentinel.
 func TestAIRuntimeOptions_ToRequest_MaxTokensPrecedence(t *testing.T) {
