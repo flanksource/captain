@@ -49,7 +49,7 @@ export function agentModelFor(values: CommandValues) {
     model.includes("codex") ||
     model.includes("gpt-5-codex")
   ) {
-    return "gpt-5.5";
+    return "gpt-5.6-sol";
   }
   if (model.includes("opus")) return "claude-opus-4-8";
   if (model.includes("haiku")) return "claude-haiku-4-5";

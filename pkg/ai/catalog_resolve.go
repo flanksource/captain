@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/flanksource/captain/pkg/ai/pricing"
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/commons/logger"
 )
 
@@ -240,7 +241,15 @@ func AgentCatalogModels(b Backend) []ModelDef {
 		if label == "" {
 			label = id
 		}
-		out = append(out, ModelDef{ID: id, Name: label, Backend: b, ReleaseDate: m.ReleaseDate})
+		out = append(out, ModelDef{
+			ID:               id,
+			Name:             label,
+			Backend:          b,
+			ReleaseDate:      m.ReleaseDate,
+			SupportedEfforts: append([]api.Effort(nil), m.SupportedEfforts...),
+			DefaultEffort:    m.DefaultEffort,
+			Priority:         m.Priority,
+		})
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out

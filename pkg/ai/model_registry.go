@@ -17,17 +17,21 @@ type ModelIdentity struct {
 }
 
 type registryModel struct {
-	ID               string `json:"id"`
-	Provider         string `json:"provider"`
-	Family           string `json:"family"`
-	Version          string `json:"version"`
-	Label            string `json:"label"`
-	ReleaseDate      string `json:"releaseDate,omitempty"`
-	Reasoning        bool   `json:"reasoning,omitempty"`
-	Temperature      bool   `json:"temperature,omitempty"`
-	ContextWindow    int    `json:"contextWindow,omitempty"`
-	Preferred        bool   `json:"preferred,omitempty"`
-	AdaptiveThinking bool   `json:"adaptiveThinking,omitempty"`
+	ID               string       `json:"id"`
+	Provider         string       `json:"provider"`
+	Family           string       `json:"family"`
+	Version          string       `json:"version"`
+	Label            string       `json:"label"`
+	ReleaseDate      string       `json:"releaseDate,omitempty"`
+	Reasoning        bool         `json:"reasoning,omitempty"`
+	Temperature      bool         `json:"temperature,omitempty"`
+	ContextWindow    int          `json:"contextWindow,omitempty"`
+	Preferred        bool         `json:"preferred,omitempty"`
+	AdaptiveThinking bool         `json:"adaptiveThinking,omitempty"`
+	Availability     []string     `json:"availability,omitempty"`
+	SupportedEfforts []api.Effort `json:"supportedEfforts,omitempty"`
+	DefaultEffort    api.Effort   `json:"defaultEffort,omitempty"`
+	Priority         int          `json:"priority,omitempty"`
 }
 
 const (
@@ -76,6 +80,56 @@ func registryProviderPrefix(provider string) string {
 	}
 }
 
+func registryModelAvailableForBackend(model registryModel, backend Backend) bool {
+	if len(model.Availability) == 0 {
+		return true
+	}
+	target := "api"
+	if backend == BackendCodexAgent || backend == BackendCodexCLI || backend == BackendCodexCmux {
+		target = "codex"
+	}
+	for _, available := range model.Availability {
+		if strings.EqualFold(strings.TrimSpace(available), target) {
+			return true
+		}
+	}
+	return false
+}
+
+func registryModelDef(model registryModel, backend Backend) ModelDef {
+	return ModelDef{
+		ID:               model.ID,
+		Name:             model.Label,
+		Backend:          backend,
+		ReleaseDate:      model.ReleaseDate,
+		SupportedEfforts: append([]api.Effort(nil), model.SupportedEfforts...),
+		DefaultEffort:    model.DefaultEffort,
+		Priority:         model.Priority,
+	}
+}
+
+// RegistryModelDef returns the registry metadata for an exact model on a
+// backend. The boolean is false when the model is known but unavailable there.
+func RegistryModelDef(backend Backend, model string) (ModelDef, bool) {
+	provider := registryProviderForBackend(backend)
+	entry, ok := lookupRegistryExact(provider, normalizeCodexVariantAlias(model))
+	if !ok || !registryModelAvailableForBackend(entry, backend) {
+		return ModelDef{}, false
+	}
+	return registryModelDef(entry, backend), true
+}
+
+// RegistryModelAvailability distinguishes an unknown model from a registry
+// model that is intentionally unavailable on the requested backend.
+func RegistryModelAvailability(backend Backend, model string) (known, available bool) {
+	provider := registryProviderForBackend(backend)
+	entry, ok := lookupRegistryExact(provider, normalizeCodexVariantAlias(model))
+	if !ok {
+		return false, false
+	}
+	return true, registryModelAvailableForBackend(entry, backend)
+}
+
 func registryCatalogModels() []Model {
 	out := make([]Model, 0, len(exactModelRegistry)+5)
 	for _, m := range exactModelRegistry {
@@ -83,7 +137,7 @@ func registryCatalogModels() []Model {
 			continue
 		}
 		backend := registryBackendForProvider(m.Provider)
-		if backend == "" {
+		if backend == "" || !registryModelAvailableForBackend(m, backend) {
 			continue
 		}
 		out = append(out, Model{
@@ -95,6 +149,9 @@ func registryCatalogModels() []Model {
 			AdaptiveThinking: m.AdaptiveThinking,
 			ContextWindow:    m.ContextWindow,
 			ReleaseDate:      m.ReleaseDate,
+			SupportedEfforts: append([]api.Effort(nil), m.SupportedEfforts...),
+			DefaultEffort:    m.DefaultEffort,
+			Priority:         m.Priority,
 			Default:          m.Provider == modelProviderAnthropic && m.ID == "claude-sonnet-5",
 		})
 	}
@@ -104,7 +161,7 @@ func registryCatalogModels() []Model {
 		}
 		switch m.Provider {
 		case modelProviderAnthropic:
-			if m.Family == "fable" {
+			if m.Family == "fable" || !registryModelAvailableForBackend(m, BackendClaudeAgent) {
 				continue
 			}
 			out = append(out, Model{
@@ -116,16 +173,25 @@ func registryCatalogModels() []Model {
 				AdaptiveThinking: m.AdaptiveThinking,
 				ContextWindow:    m.ContextWindow,
 				ReleaseDate:      m.ReleaseDate,
+				SupportedEfforts: append([]api.Effort(nil), m.SupportedEfforts...),
+				DefaultEffort:    m.DefaultEffort,
+				Priority:         m.Priority,
 			})
 		case modelProviderOpenAI:
+			if !registryModelAvailableForBackend(m, BackendCodexAgent) {
+				continue
+			}
 			out = append(out, Model{
-				ID:            m.ID,
-				Backend:       BackendCodexAgent,
-				Label:         "Codex Agent · " + m.Label,
-				Reasoning:     m.Reasoning,
-				Temperature:   m.Temperature,
-				ContextWindow: m.ContextWindow,
-				ReleaseDate:   m.ReleaseDate,
+				ID:               m.ID,
+				Backend:          BackendCodexAgent,
+				Label:            "Codex Agent · " + m.Label,
+				Reasoning:        m.Reasoning,
+				Temperature:      m.Temperature,
+				ContextWindow:    m.ContextWindow,
+				ReleaseDate:      m.ReleaseDate,
+				SupportedEfforts: append([]api.Effort(nil), m.SupportedEfforts...),
+				DefaultEffort:    m.DefaultEffort,
+				Priority:         m.Priority,
 			})
 		}
 	}
@@ -141,10 +207,10 @@ func RegistryModelDefs(backend Backend) []ModelDef {
 	}
 	out := make([]ModelDef, 0, len(exactModelRegistry))
 	for _, m := range exactModelRegistry {
-		if m.Provider != provider || !m.Preferred {
+		if m.Provider != provider || !m.Preferred || !registryModelAvailableForBackend(m, backend) {
 			continue
 		}
-		out = append(out, ModelDef{ID: m.ID, Name: m.Label, Backend: backend, ReleaseDate: m.ReleaseDate})
+		out = append(out, registryModelDef(m, backend))
 	}
 	SortModelsByReleaseDateDesc(out)
 	return out
@@ -159,17 +225,18 @@ func ResolveExactModelForBackend(backend Backend, model string) (string, bool) {
 		return "", false
 	}
 	if strings.EqualFold(model, backendAgentSentinel(backend)) {
-		if m, ok := latestRegistryModel(registryProviderForBackend(backend), ""); ok {
+		if m, ok := latestRegistryModel(backend, registryProviderForBackend(backend), ""); ok {
 			return m.ID, true
 		}
 		return model, false
 	}
+	model = normalizeCodexVariantAlias(model)
 	provider := registryProviderForBackend(backend)
 	if provider == "" {
 		return stripModelProviderPrefix(model), false
 	}
 	if m, ok := lookupRegistryExact(provider, model); ok {
-		if !isSupersededRegistryExact(m.ID) {
+		if registryModelAvailableForBackend(m, backend) && !isSupersededRegistryExact(m.ID) {
 			return m.ID, true
 		}
 	}
@@ -181,20 +248,30 @@ func ResolveExactModelForBackend(backend Backend, model string) (string, bool) {
 		return stripModelProviderPrefix(model), false
 	}
 	if shouldResolveLatestVersionLine(identity.Version) {
-		if m, ok := latestRegistryModelForVersionLine(identity); ok {
+		if m, ok := latestRegistryModelForVersionLine(backend, identity); ok {
 			return m.ID, true
 		}
 	}
-	if m, ok := resolveRegistryIdentity(identity); ok {
+	if m, ok := resolveRegistryIdentity(backend, identity); ok {
 		return m.ID, true
 	}
 	if identity.Version != "" {
 		return stripModelProviderPrefix(model), false
 	}
-	if m, ok := latestRegistryModel(identity.Provider, identity.Family); ok {
+	if m, ok := latestRegistryModel(backend, identity.Provider, identity.Family); ok {
 		return m.ID, true
 	}
 	return stripModelProviderPrefix(model), false
+}
+
+func normalizeCodexVariantAlias(model string) string {
+	model = strings.TrimSpace(model)
+	switch strings.ToLower(model) {
+	case "sol", "terra", "luna":
+		return "gpt-5.6-" + strings.ToLower(model)
+	default:
+		return model
+	}
 }
 
 // ModelUsesAdaptiveThinking reports whether an Anthropic model uses adaptive
@@ -222,7 +299,7 @@ func backendAgentSentinel(backend Backend) string {
 }
 
 func lookupRegistryExact(provider, model string) (registryModel, bool) {
-	needle := canonicalModelToken(model)
+	needle := canonicalModelToken(stripModelProviderPrefix(model))
 	for _, m := range exactModelRegistry {
 		if m.Provider != provider {
 			continue
@@ -298,11 +375,11 @@ func splitKnownFamily(token string, families []string) (family, version string, 
 	return "", "", false
 }
 
-func resolveRegistryIdentity(identity ModelIdentity) (registryModel, bool) {
+func resolveRegistryIdentity(backend Backend, identity ModelIdentity) (registryModel, bool) {
 	candidates := make([]registryModel, 0)
 	fallback := make([]registryModel, 0)
 	for _, m := range exactModelRegistry {
-		if m.Provider != identity.Provider || m.Family != identity.Family {
+		if m.Provider != identity.Provider || m.Family != identity.Family || !registryModelAvailableForBackend(m, backend) {
 			continue
 		}
 		if identity.Version == "" || modelVersionMatches(m.Version, identity.Version) {
@@ -323,10 +400,10 @@ func resolveRegistryIdentity(identity ModelIdentity) (registryModel, bool) {
 	return candidates[0], true
 }
 
-func latestRegistryModel(provider, family string) (registryModel, bool) {
+func latestRegistryModel(backend Backend, provider, family string) (registryModel, bool) {
 	candidates := make([]registryModel, 0)
 	for _, m := range exactModelRegistry {
-		if !m.Preferred || m.Provider != provider {
+		if !m.Preferred || m.Provider != provider || !registryModelAvailableForBackend(m, backend) {
 			continue
 		}
 		if family != "" && m.Family != family {
@@ -341,7 +418,7 @@ func latestRegistryModel(provider, family string) (registryModel, bool) {
 	return candidates[0], true
 }
 
-func latestRegistryModelForVersionLine(identity ModelIdentity) (registryModel, bool) {
+func latestRegistryModelForVersionLine(backend Backend, identity ModelIdentity) (registryModel, bool) {
 	if identity.Version == "" {
 		return registryModel{}, false
 	}
@@ -351,7 +428,7 @@ func latestRegistryModelForVersionLine(identity ModelIdentity) (registryModel, b
 	}
 	candidates := make([]registryModel, 0)
 	for _, m := range exactModelRegistry {
-		if m.Provider != identity.Provider || m.Family != identity.Family {
+		if m.Provider != identity.Provider || m.Family != identity.Family || !registryModelAvailableForBackend(m, backend) {
 			continue
 		}
 		if modelVersionMatches(m.Version, major) {
@@ -381,6 +458,15 @@ func shouldResolveLatestVersionLine(version string) bool {
 func sortRegistryModels(models []registryModel) {
 	sort.SliceStable(models, func(i, j int) bool {
 		left, right := models[i], models[j]
+		if left.Priority != right.Priority && (left.Priority > 0 || right.Priority > 0) {
+			if left.Priority == 0 {
+				return false
+			}
+			if right.Priority == 0 {
+				return true
+			}
+			return left.Priority < right.Priority
+		}
 		if left.ReleaseDate == right.ReleaseDate {
 			return compareModelVersions(left.ID, right.ID) > 0
 		}
@@ -391,6 +477,15 @@ func sortRegistryModels(models []registryModel) {
 func sortRegistryModelsForResolution(models []registryModel) {
 	sort.SliceStable(models, func(i, j int) bool {
 		left, right := models[i], models[j]
+		if left.Priority != right.Priority && (left.Priority > 0 || right.Priority > 0) {
+			if left.Priority == 0 {
+				return false
+			}
+			if right.Priority == 0 {
+				return true
+			}
+			return left.Priority < right.Priority
+		}
 		if left.ReleaseDate == right.ReleaseDate && left.Preferred != right.Preferred {
 			return left.Preferred
 		}

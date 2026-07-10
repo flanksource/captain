@@ -10,11 +10,12 @@ import (
 	"sync"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/api"
 )
 
 type WhoamiOptions struct {
 	Backend string `flag:"backend" help:"Show only this backend: anthropic|openai|gemini|deepseek|claude-cli|claude-agent|claude-cmux|codex-cli|codex-agent|codex-cmux|gemini-cli" short:"b"`
-	Models  bool   `flag:"models" help:"Probe each provider's models endpoint via a live API call" default:"true" short:"m"`
+	Models  bool   `flag:"models" help:"List models from provider APIs or installed CLI catalogs" default:"true" short:"m"`
 	Limit   int    `flag:"limit" help:"Max sample model IDs to show per adapter in pretty output after per-prefix filtering (0 = all)" default:"0" short:"l"`
 }
 
@@ -33,7 +34,7 @@ type AdapterStatus struct {
 	Models        []string `json:"models,omitempty"`
 	ModelError    string   `json:"modelError,omitempty"`
 
-	ModelDetails []ai.ModelDef `json:"-"`
+	ModelDetails []ai.ModelDef `json:"modelDetails,omitempty"`
 }
 
 // Ready reports whether the adapter can actually run: authenticated, and (for
@@ -59,17 +60,19 @@ type WhoamiResult struct {
 // authProbe abstracts the host environment (env vars, PATH, credential files)
 // so resolveAdapter stays pure and testable.
 type authProbe struct {
-	getenv     func(string) string
-	lookPath   func(string) (string, error)
-	fileExists func(string) bool
-	home       string
+	getenv      func(string) string
+	lookPath    func(string) (string, error)
+	fileExists  func(string) bool
+	codexModels func(context.Context, string) ([]ai.ModelDef, error)
+	home        string
 }
 
 func osAuthProbe() authProbe {
 	home, _ := os.UserHomeDir()
 	return authProbe{
-		getenv:   os.Getenv,
-		lookPath: exec.LookPath,
+		getenv:      os.Getenv,
+		lookPath:    exec.LookPath,
+		codexModels: ai.FetchCodexDebugModels,
 		fileExists: func(p string) bool {
 			_, err := os.Stat(p)
 			return err == nil
@@ -207,15 +210,17 @@ func ProbeAdapters(opts WhoamiOptions, probe authProbe) ([]AdapterStatus, error)
 	}
 
 	var models map[ai.Backend]modelFetch
+	var codexModels modelFetch
 	if opts.Models {
 		models = fetchAPIModels(backends, probe.getenv)
+		codexModels = fetchCodexModels(backends, probe)
 	}
 
 	adapters := make([]AdapterStatus, 0, len(backends))
 	for _, b := range backends {
 		st := resolveAdapter(b, probe)
 		if opts.Models {
-			applyModels(&st, b, models, probe.getenv)
+			applyModels(&st, b, models, codexModels, probe.getenv)
 		}
 		adapters = append(adapters, st)
 	}
@@ -263,6 +268,37 @@ func fetchAPIModels(backends []ai.Backend, getenv func(string) string) map[ai.Ba
 	return out
 }
 
+func fetchCodexModels(backends []ai.Backend, probe authProbe) modelFetch {
+	if probe.codexModels == nil || firstEnv(ai.AuthEnvVars(ai.BackendOpenAI), probe.getenv) != "" {
+		return modelFetch{}
+	}
+	wanted := false
+	for _, backend := range backends {
+		if isCodexBackend(backend) {
+			wanted = true
+			break
+		}
+	}
+	if !wanted {
+		return modelFetch{}
+	}
+	binary, err := probe.lookPath("codex")
+	if err != nil || strings.TrimSpace(binary) == "" {
+		return modelFetch{err: fmt.Errorf("codex not in PATH")}
+	}
+	models, err := probe.codexModels(context.Background(), binary)
+	return modelFetch{models: models, err: err}
+}
+
+func isCodexBackend(backend ai.Backend) bool {
+	switch backend {
+	case ai.BackendCodexAgent, ai.BackendCodexCLI, ai.BackendCodexCmux:
+		return true
+	default:
+		return false
+	}
+}
+
 func liveModelDefs(rows []ai.ResolvedModel, backend ai.Backend) []ai.ModelDef {
 	out := make([]ai.ModelDef, 0, len(rows))
 	for _, row := range rows {
@@ -277,7 +313,15 @@ func liveModelDefs(rows []ai.ResolvedModel, backend ai.Backend) []ai.ModelDef {
 		if name == "" {
 			name = id
 		}
-		out = append(out, ai.ModelDef{ID: id, Name: name, Backend: backend, ReleaseDate: row.ReleaseDate})
+		out = append(out, ai.ModelDef{
+			ID:               id,
+			Name:             name,
+			Backend:          backend,
+			ReleaseDate:      row.ReleaseDate,
+			SupportedEfforts: append([]api.Effort(nil), row.SupportedEfforts...),
+			DefaultEffort:    row.DefaultEffort,
+			Priority:         row.Priority,
+		})
 	}
 	return out
 }
@@ -286,7 +330,7 @@ func liveModelDefs(rows []ai.ResolvedModel, backend ai.Backend) []ai.ModelDef {
 // a single adapter. All backends use live provider model rows from Captain's
 // cached resolver; CLI/agent backends map those provider rows into the runtime
 // model slugs their local binaries accept.
-func applyModels(st *AdapterStatus, b ai.Backend, cache map[ai.Backend]modelFetch, getenv func(string) string) {
+func applyModels(st *AdapterStatus, b ai.Backend, cache map[ai.Backend]modelFetch, codex modelFetch, getenv func(string) string) {
 	source := modelSourceBackend(b)
 	if source == "" {
 		st.ModelError = fmt.Sprintf("backend %s has no model listing", b)
@@ -295,8 +339,17 @@ func applyModels(st *AdapterStatus, b ai.Backend, cache map[ai.Backend]modelFetc
 
 	envVars := ai.AuthEnvVars(source)
 	if firstEnv(envVars, getenv) == "" {
+		if isCodexBackend(b) && codex.err == nil && len(codex.models) > 0 {
+			models := make([]ai.ModelDef, len(codex.models))
+			for i, model := range codex.models {
+				model.Backend = b
+				models[i] = model
+			}
+			setModels(st, models, true)
+			return
+		}
 		if b.Kind() == "cli" {
-			setModels(st, ai.RegistryModelDefs(b))
+			setModels(st, ai.RegistryModelDefs(b), true)
 			return
 		}
 		st.ModelError = "set " + strings.Join(envVars, " or ") + " to list models"
@@ -311,7 +364,7 @@ func applyModels(st *AdapterStatus, b ai.Backend, cache map[ai.Backend]modelFetc
 		st.ModelError = fetch.err.Error()
 		return
 	}
-	setModels(st, modelsForAdapterBackend(b, fetch.models))
+	setModels(st, modelsForAdapterBackend(b, fetch.models), false)
 }
 
 func modelSourceBackend(backend ai.Backend) ai.Backend {
@@ -333,8 +386,15 @@ func modelsForAdapterBackend(backend ai.Backend, models []ai.ModelDef) []ai.Mode
 	out := make([]ai.ModelDef, 0, len(models))
 	positions := map[string]int{}
 	for _, model := range models {
-		if model.Backend == ai.BackendOpenAI && ai.IsIgnoredOpenAIModelID(model.ID) {
-			continue
+		if model.Backend == ai.BackendOpenAI {
+			if known, available := ai.RegistryModelAvailability(backend, bareProviderModelID(model.ID)); known && !available {
+				continue
+			}
+			if ai.IsIgnoredOpenAIModelID(model.ID) {
+				if _, ok := ai.RegistryModelDef(backend, bareProviderModelID(model.ID)); !ok {
+					continue
+				}
+			}
 		}
 		id := modelIDForAdapterBackend(backend, model.ID)
 		if id == "" {
@@ -344,7 +404,15 @@ func modelsForAdapterBackend(backend ai.Backend, models []ai.ModelDef) []ai.Mode
 		if name == "" {
 			name = id
 		}
-		next := ai.ModelDef{ID: id, Name: name, Backend: backend, ReleaseDate: model.ReleaseDate}
+		next := ai.ModelDef{
+			ID:               id,
+			Name:             name,
+			Backend:          backend,
+			ReleaseDate:      model.ReleaseDate,
+			SupportedEfforts: append([]api.Effort(nil), model.SupportedEfforts...),
+			DefaultEffort:    model.DefaultEffort,
+			Priority:         model.Priority,
+		}
 		if idx, ok := positions[id]; ok {
 			if modelDefNewer(next, out[idx]) {
 				out[idx] = next
@@ -362,6 +430,15 @@ func modelIDForAdapterBackend(backend ai.Backend, id string) string {
 }
 
 func modelDefNewer(left, right ai.ModelDef) bool {
+	if left.Priority != right.Priority && (left.Priority > 0 || right.Priority > 0) {
+		if left.Priority == 0 {
+			return false
+		}
+		if right.Priority == 0 {
+			return true
+		}
+		return left.Priority < right.Priority
+	}
 	if left.ReleaseDate == "" {
 		return false
 	}
@@ -382,8 +459,12 @@ func bareProviderModelID(id string) string {
 // setModels filters legacy entries and copies the sorted model list onto the
 // adapter status as a count plus id list. The richer details are retained only
 // for pretty output; JSON stays as the historical []string model list.
-func setModels(st *AdapterStatus, models []ai.ModelDef) {
-	models = ai.CurrentModelsByReleaseDate(models)
+func setModels(st *AdapterStatus, models []ai.ModelDef, curated bool) {
+	if curated {
+		models = ai.CurrentCuratedModelsByReleaseDate(models)
+	} else {
+		models = ai.CurrentModelsByReleaseDate(models)
+	}
 	st.ModelCount = len(models)
 	ids := make([]string, 0, len(models))
 	for _, m := range models {

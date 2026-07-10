@@ -75,8 +75,8 @@ func IsLegacyModelID(id string) bool {
 // IsIgnoredOpenAIModelID reports whether an OpenAI model-list id should be
 // hidden from ordinary model pickers. OpenAI exposes many non-primary surfaces
 // (realtime, audio, image, Sora, code/chat aliases, dated and size variants);
-// Captain's picker keeps the stable primary GPT text ids such as gpt-5 and
-// gpt-5.5. Use this before remapping live OpenAI ids onto Codex CLI/cmux
+// Captain's picker keeps stable primary GPT text ids and explicitly registered
+// Codex runtime variants. Use this before remapping live OpenAI ids onto Codex
 // backends.
 func IsIgnoredOpenAIModelID(id string) bool {
 	idLower := strings.ToLower(bareModelID(strings.TrimPrefix(strings.TrimSpace(id), "models/")))
@@ -122,6 +122,11 @@ func isPrimaryGPTModelID(id string) bool {
 // agent backends receive exact provider IDs too, so code/chat/realtime/audio
 // variants are hidden there just as they are for direct API backends.
 func IsLegacyModelIDForBackend(id string, backend Backend) bool {
+	if backend == BackendCodexAgent || backend == BackendCodexCLI || backend == BackendCodexCmux {
+		if _, ok := RegistryModelDef(backend, id); ok {
+			return false
+		}
+	}
 	return IsLegacyModelID(id)
 }
 
@@ -129,9 +134,20 @@ func IsLegacyModelIDForBackend(id string, backend Backend) bool {
 // retaining the newest few models per family prefix. Known catalog release
 // dates fill gaps left by provider list endpoints.
 func CurrentModelsByReleaseDate(models []ModelDef) []ModelDef {
+	return currentModelsByReleaseDate(models, true)
+}
+
+// CurrentCuratedModelsByReleaseDate sorts and limits a trusted runtime catalog
+// whose own visibility field has already removed hidden models. It deliberately
+// skips the generic OpenAI variant blacklist used for raw provider listings.
+func CurrentCuratedModelsByReleaseDate(models []ModelDef) []ModelDef {
+	return currentModelsByReleaseDate(models, false)
+}
+
+func currentModelsByReleaseDate(models []ModelDef, filterLegacy bool) []ModelDef {
 	out := make([]ModelDef, 0, len(models))
 	for _, m := range models {
-		if IsLegacyModelIDForBackend(m.ID, m.Backend) {
+		if filterLegacy && IsLegacyModelIDForBackend(m.ID, m.Backend) {
 			continue
 		}
 		if m.ReleaseDate == "" {
@@ -147,6 +163,15 @@ func CurrentModelsByReleaseDate(models []ModelDef) []ModelDef {
 // unknown dates last and id descending as the stable deterministic tie-breaker.
 func SortModelsByReleaseDateDesc(models []ModelDef) {
 	sort.SliceStable(models, func(i, j int) bool {
+		if models[i].Priority != models[j].Priority && (models[i].Priority > 0 || models[j].Priority > 0) {
+			if models[i].Priority == 0 {
+				return false
+			}
+			if models[j].Priority == 0 {
+				return true
+			}
+			return models[i].Priority < models[j].Priority
+		}
 		if ModelFamilyPrefix(models[i].ID) == ModelFamilyPrefix(models[j].ID) {
 			if cmp := compareModelVersions(models[i].ID, models[j].ID); cmp != 0 {
 				return cmp > 0

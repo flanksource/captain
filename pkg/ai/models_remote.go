@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/flanksource/captain/pkg/api"
 )
 
 // ModelDef is the in-memory shape used by the configure wizard and `captain
@@ -15,10 +17,13 @@ import (
 // and context data live in pkg/ai/pricing (sourced from OpenRouter) and are
 // looked up by id at render time.
 type ModelDef struct {
-	ID          string
-	Name        string
-	Backend     Backend
-	ReleaseDate string `json:"-"`
+	ID               string       `json:"id"`
+	Name             string       `json:"label,omitempty"`
+	Backend          Backend      `json:"backend,omitempty"`
+	ReleaseDate      string       `json:"releaseDate,omitempty"`
+	SupportedEfforts []api.Effort `json:"supportedEfforts,omitempty"`
+	DefaultEffort    api.Effort   `json:"defaultEffort,omitempty"`
+	Priority         int          `json:"priority,omitempty"`
 }
 
 // remoteModelsTimeout caps each /v1/models call. The configure wizard is an
@@ -150,7 +155,13 @@ func doModelsRequest(req *http.Request, backend Backend) ([]ModelDef, error) {
 		if releaseDate == "" {
 			releaseDate = CatalogReleaseDate(backend, id)
 		}
-		out = append(out, ModelDef{ID: id, Name: name, Backend: backend, ReleaseDate: releaseDate})
+		def := ModelDef{ID: id, Name: name, Backend: backend, ReleaseDate: releaseDate}
+		if registry, ok := RegistryModelDef(backend, id); ok {
+			def.SupportedEfforts = registry.SupportedEfforts
+			def.DefaultEffort = registry.DefaultEffort
+			def.Priority = registry.Priority
+		}
+		out = append(out, def)
 	}
 	return out, nil
 }

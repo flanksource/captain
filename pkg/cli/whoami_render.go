@@ -119,6 +119,13 @@ func (a AdapterStatus) appendModels(t api.Text, limit int) api.Text {
 		if model.ReleaseDate != "" {
 			label += " (" + model.ReleaseDate + ")"
 		}
+		if len(model.SupportedEfforts) > 0 {
+			efforts := make([]string, 0, len(model.SupportedEfforts))
+			for _, effort := range model.SupportedEfforts {
+				efforts = append(efforts, string(effort))
+			}
+			label += " [effort: " + strings.Join(efforts, "|") + "]"
+		}
 		t = t.NewLine().Append("      - ", "").Append(label, "text-gray-500")
 	}
 	if len(sample) < a.ModelCount {

@@ -86,3 +86,35 @@ func TestApplyPatchesNewEntryMissingFieldsErrors(t *testing.T) {
 		t.Fatal("expected error for new entry missing provider/family/label, got nil")
 	}
 }
+
+func TestDeriveSupportedEffortsDropsNone(t *testing.T) {
+	got := deriveSupportedEfforts("openai", modelsDevModel{ReasoningOptions: []modelsDevReasoningOption{{
+		Type:   "effort",
+		Values: []string{"none", "minimal", "low", "medium", "max", "max"},
+	}}})
+	want := []string{"low", "medium", "max"}
+	if len(got) != len(want) {
+		t.Fatalf("efforts = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("efforts = %v, want %v", got, want)
+		}
+	}
+}
+
+func TestDeriveSupportedEffortsKeepsOnlyExecutableProviderLevels(t *testing.T) {
+	effort := modelsDevReasoningOption{Type: "effort", Values: []string{"minimal", "low", "medium", "high", "xhigh", "max"}}
+	adaptiveAnthropic := modelsDevModel{Reasoning: true, ReasoningOptions: []modelsDevReasoningOption{effort}}
+	legacyAnthropic := modelsDevModel{Reasoning: true, ReasoningOptions: []modelsDevReasoningOption{{Type: "budget_tokens"}, effort}}
+
+	if got := deriveSupportedEfforts("anthropic", adaptiveAnthropic); len(got) != 5 || got[4] != "max" {
+		t.Errorf("adaptive Anthropic efforts = %v, want low through max", got)
+	}
+	if got := deriveSupportedEfforts("anthropic", legacyAnthropic); got != nil {
+		t.Errorf("legacy Anthropic efforts = %v, want nil", got)
+	}
+	if got := deriveSupportedEfforts("deepseek", modelsDevModel{ReasoningOptions: []modelsDevReasoningOption{effort}}); got != nil {
+		t.Errorf("DeepSeek efforts = %v, want nil", got)
+	}
+}

@@ -56,7 +56,7 @@ func (r PSRow) Row() map[string]any {
 }
 
 // psAgentCell merges source, model, and sub-agent count into one cell:
-// "codex gpt-5.5 +1".
+// "codex gpt-5.6-sol +1".
 func psAgentCell(r PSRow) api.Text {
 	t := psSourceText(r.Source)
 	if r.Model != "" {

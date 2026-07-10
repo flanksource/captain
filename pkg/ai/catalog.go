@@ -5,6 +5,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/flanksource/captain/pkg/api"
 )
 
 // Model describes one entry in the chat model menu. captain owns the catalog
@@ -24,6 +26,9 @@ type Model struct {
 	AdaptiveThinking bool
 	ContextWindow    int    // max context tokens, for a usage gauge's denominator
 	ReleaseDate      string // YYYY-MM-DD release date, when known
+	SupportedEfforts []api.Effort
+	DefaultEffort    api.Effort
+	Priority         int
 	// AgentModel is retained for backward compatibility with older registered
 	// models. New catalog entries should use exact runtime IDs directly in ID and
 	// leave AgentModel empty.

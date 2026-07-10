@@ -37,7 +37,8 @@ type modelsDevModel struct {
 // type ("effort", "budget_tokens", "toggle", …) is needed to classify how the
 // model controls thinking.
 type modelsDevReasoningOption struct {
-	Type string `json:"type"`
+	Type   string   `json:"type"`
+	Values []string `json:"values"`
 }
 
 type modelsDevModalities struct {
@@ -51,17 +52,21 @@ type modelsDevLimit struct {
 // generatedModel mirrors pkg/ai.registryModel field-for-field (and its JSON
 // tags), so the emitted JSON round-trips into the registry on load.
 type generatedModel struct {
-	ID               string `json:"id"`
-	Provider         string `json:"provider"`
-	Family           string `json:"family"`
-	Version          string `json:"version"`
-	Label            string `json:"label"`
-	ReleaseDate      string `json:"releaseDate,omitempty"`
-	Reasoning        bool   `json:"reasoning,omitempty"`
-	Temperature      bool   `json:"temperature,omitempty"`
-	ContextWindow    int    `json:"contextWindow,omitempty"`
-	Preferred        bool   `json:"preferred,omitempty"`
-	AdaptiveThinking bool   `json:"adaptiveThinking,omitempty"`
+	ID               string   `json:"id"`
+	Provider         string   `json:"provider"`
+	Family           string   `json:"family"`
+	Version          string   `json:"version"`
+	Label            string   `json:"label"`
+	ReleaseDate      string   `json:"releaseDate,omitempty"`
+	Reasoning        bool     `json:"reasoning,omitempty"`
+	Temperature      bool     `json:"temperature,omitempty"`
+	ContextWindow    int      `json:"contextWindow,omitempty"`
+	Preferred        bool     `json:"preferred,omitempty"`
+	AdaptiveThinking bool     `json:"adaptiveThinking,omitempty"`
+	Availability     []string `json:"availability,omitempty"`
+	SupportedEfforts []string `json:"supportedEfforts,omitempty"`
+	DefaultEffort    string   `json:"defaultEffort,omitempty"`
+	Priority         int      `json:"priority,omitempty"`
 }
 
 func main() {
@@ -193,7 +198,8 @@ func generateModels(data []byte, patches map[string]json.RawMessage) ([]generate
 			if model.ID != "" {
 				id = model.ID
 			}
-			row, ok := generatedModelFromModelsDev(mapping.provider, id, model)
+			_, explicitlyPatched := patches[id]
+			row, ok := generatedModelFromModelsDev(mapping.provider, id, model, explicitlyPatched)
 			if ok {
 				out[row.ID] = row
 			}
@@ -219,9 +225,9 @@ func generateModels(data []byte, patches map[string]json.RawMessage) ([]generate
 	return models, nil
 }
 
-func generatedModelFromModelsDev(provider, id string, model modelsDevModel) (generatedModel, bool) {
+func generatedModelFromModelsDev(provider, id string, model modelsDevModel, explicitlyPatched bool) (generatedModel, bool) {
 	id = strings.TrimSpace(id)
-	if id == "" || !supportsTextOutput(model) || hiddenModel(provider, id) {
+	if id == "" || !supportsTextOutput(model) || (!explicitlyPatched && hiddenModel(provider, id)) {
 		return generatedModel{}, false
 	}
 	identity, ok := captainai.ParseModelIdentity(provider, id)
@@ -248,7 +254,36 @@ func generatedModelFromModelsDev(provider, id string, model modelsDevModel) (gen
 		Temperature:      model.Temperature,
 		ContextWindow:    model.Limit.Context,
 		AdaptiveThinking: deriveAdaptiveThinking(provider, model),
+		SupportedEfforts: deriveSupportedEfforts(provider, model),
 	}, true
+}
+
+func deriveSupportedEfforts(provider string, model modelsDevModel) []string {
+	// Only retain source levels that Captain can submit through the selected
+	// backend. DeepSeek selects reasoning by model ID, while Anthropic's legacy
+	// budget-token models do not accept an effort value. Gemini's "minimal"
+	// level is intentionally dropped by the shared Effort validation below until
+	// Captain has a faithful token-budget mapping for it.
+	if provider == "deepseek" || (provider == "anthropic" && !deriveAdaptiveThinking(provider, model)) {
+		return nil
+	}
+	for _, opt := range model.ReasoningOptions {
+		if opt.Type != "effort" {
+			continue
+		}
+		out := make([]string, 0, len(opt.Values))
+		seen := map[string]bool{}
+		for _, value := range opt.Values {
+			value = strings.ToLower(strings.TrimSpace(value))
+			if value == "" || value == "none" || seen[value] || captainai.ValidateEffort(captainai.Effort(value)) != nil {
+				continue
+			}
+			seen[value] = true
+			out = append(out, value)
+		}
+		return out
+	}
+	return nil
 }
 
 // deriveAdaptiveThinking reports whether an Anthropic model uses the adaptive

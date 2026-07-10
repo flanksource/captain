@@ -2,12 +2,14 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/api"
 )
 
 func TestMaskKey(t *testing.T) {
@@ -254,6 +256,74 @@ func TestWhoamiPrettyKeylessCmuxDoesNotRequestAPIKey(t *testing.T) {
 	}
 }
 
+func TestProbeAdaptersUsesCodexDebugModelsOnceWithoutAPIKey(t *testing.T) {
+	probe := fakeProbe(nil, map[string]string{"codex": "/usr/local/bin/codex"}, nil, "/home/u")
+	calls := 0
+	probe.codexModels = func(_ context.Context, binary string) ([]ai.ModelDef, error) {
+		calls++
+		if binary != "/usr/local/bin/codex" {
+			t.Fatalf("binary = %q", binary)
+		}
+		return []ai.ModelDef{
+			{ID: "gpt-5.6-sol", Name: "GPT-5.6-Sol", Priority: 1, DefaultEffort: api.EffortLow, SupportedEfforts: []api.Effort{api.EffortLow, api.EffortHigh, api.EffortUltra}},
+			{ID: "gpt-5.6-luna", Name: "GPT-5.6-Luna", Priority: 3, DefaultEffort: api.EffortMedium, SupportedEfforts: []api.Effort{api.EffortLow, api.EffortHigh, api.EffortMax}},
+		}, nil
+	}
+	adapters, err := ProbeAdapters(WhoamiOptions{Models: true}, probe)
+	if err != nil {
+		t.Fatalf("ProbeAdapters: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("codex debug calls = %d, want 1", calls)
+	}
+	for _, backend := range []ai.Backend{ai.BackendCodexCLI, ai.BackendCodexAgent, ai.BackendCodexCmux} {
+		adapter := findAdapter(t, adapters, backend)
+		if len(adapter.Models) != 2 || adapter.Models[0] != "gpt-5.6-sol" {
+			t.Fatalf("%s models = %v", backend, adapter.Models)
+		}
+		if adapter.ModelDetails[0].DefaultEffort != api.EffortLow {
+			t.Fatalf("%s details = %+v", backend, adapter.ModelDetails[0])
+		}
+	}
+}
+
+func TestFetchCodexModelsSkipsDebugWithAPIKey(t *testing.T) {
+	probe := fakeProbe(map[string]string{"OPENAI_API_KEY": "sk-test"}, map[string]string{"codex": "/usr/local/bin/codex"}, nil, "/home/u")
+	probe.codexModels = func(context.Context, string) ([]ai.ModelDef, error) {
+		t.Fatal("codex debug should not run when OPENAI_API_KEY is set")
+		return nil, nil
+	}
+	got := fetchCodexModels([]ai.Backend{ai.BackendCodexAgent}, probe)
+	if got.err != nil || len(got.models) != 0 {
+		t.Fatalf("fetch = %+v, want empty", got)
+	}
+}
+
+func TestProbeAdaptersFallsBackToRegistryWhenCodexDebugFails(t *testing.T) {
+	probe := fakeProbe(nil, map[string]string{"codex": "/usr/local/bin/codex"}, nil, "/home/u")
+	probe.codexModels = func(context.Context, string) ([]ai.ModelDef, error) {
+		return nil, errors.New("old codex")
+	}
+	adapters, err := ProbeAdapters(WhoamiOptions{Backend: string(ai.BackendCodexCLI), Models: true}, probe)
+	if err != nil {
+		t.Fatalf("ProbeAdapters: %v", err)
+	}
+	if len(adapters) != 1 || !stringSliceContains(adapters[0].Models, "gpt-5.6-sol") {
+		t.Fatalf("registry fallback models = %+v", adapters)
+	}
+}
+
+func findAdapter(t *testing.T, adapters []AdapterStatus, backend ai.Backend) AdapterStatus {
+	t.Helper()
+	for _, adapter := range adapters {
+		if adapter.Backend == string(backend) {
+			return adapter
+		}
+	}
+	t.Fatalf("adapter %s not found", backend)
+	return AdapterStatus{}
+}
+
 // TestRunWhoami_NoModelsCoversEveryBackend asserts the command lists exactly one
 // adapter per backend without making any network calls when --models=false.
 func TestRunWhoami_NoModelsCoversEveryBackend(t *testing.T) {
@@ -290,7 +360,7 @@ func TestSetModelsFiltersAndSortsByReleaseDate(t *testing.T) {
 		{ID: "claude-sonnet-4-4", Backend: ai.BackendAnthropic, ReleaseDate: "2026-03-01"},
 		{ID: "claude-haiku-4-5", Backend: ai.BackendAnthropic, ReleaseDate: "2025-10-15"},
 		{ID: "claude-3-5-sonnet-20241022", Backend: ai.BackendAnthropic, ReleaseDate: "2024-10-22"},
-	})
+	}, false)
 
 	want := []string{"claude-sonnet-5", "claude-sonnet-4-6", "claude-sonnet-4-5", "claude-haiku-4-5"}
 	if st.ModelCount != len(want) {
@@ -310,7 +380,7 @@ func TestSetModelsKeepsGeminiProFamily(t *testing.T) {
 		{ID: "gemini-3.0-pro", Backend: ai.BackendGemini},
 		{ID: "gemini-2.5-pro", Backend: ai.BackendGemini, ReleaseDate: "2025-06-17"},
 		{ID: "gemini-2.0-flash", Backend: ai.BackendGemini, ReleaseDate: "2025-02-05"},
-	})
+	}, false)
 
 	want := []string{"gemini-3.5-flash", "gemini-3.0-pro", "gemini-2.5-pro"}
 	if st.ModelCount != len(want) {
@@ -327,7 +397,7 @@ func TestSetModelsHidesCodexCodeVariantsForCLI(t *testing.T) {
 	st := AdapterStatus{Backend: string(ai.BackendCodexCLI)}
 	setModels(&st, []ai.ModelDef{
 		{ID: "gpt-5-codex", Backend: ai.BackendCodexCLI, ReleaseDate: "2025-08-07"},
-	})
+	}, false)
 
 	if st.ModelCount != 0 || len(st.Models) != 0 {
 		t.Fatalf("codex code variant should be hidden for CLI: %+v", st)
