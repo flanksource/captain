@@ -721,7 +721,7 @@ func chatCategoryAliases(tool string) []string {
 		return []string{"chat", "event"}
 	}
 	switch strings.ToLower(tool) {
-	case "assistant", "reasoning":
+	case "system", "assistant", "reasoning":
 		return []string{"chat", "message"}
 	case "user":
 		return []string{"chat", "message"}
@@ -922,7 +922,7 @@ func isChatHistoryTool(tool string) bool {
 		return true
 	}
 	switch tool {
-	case "User", "Assistant", "Reasoning", "Event":
+	case "System", "User", "Assistant", "Reasoning", "Event":
 		return true
 	default:
 		return false

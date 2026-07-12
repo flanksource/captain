@@ -156,6 +156,82 @@ func TestExtractCodexToolUses_RolloutChatAndEvents(t *testing.T) {
 	}
 }
 
+func TestExtractCodexToolUses_SplitsTaggedAssistantMessageAndDedupesSchemas(t *testing.T) {
+	message := `<proposed_plan>
+# Parser plan
+
+- Split wrappers
+</proposed_plan>
+
+Source used: https://example.com/change
+
+<oai-mem-citation>
+<citation_entries>
+MEMORY.md:10-12|note=[parser seam]
+</citation_entries>
+<rollout_ids>
+019f3754-ecfa-7323-a76b-a0205ea30bbe
+</rollout_ids>
+</oai-mem-citation>`
+	quoted := strings.ReplaceAll(strings.ReplaceAll(message, `\`, `\\`), `"`, `\"`)
+	quoted = strings.ReplaceAll(quoted, "\n", `\n`)
+	stream := strings.Join([]string{
+		`{"timestamp":"2026-07-10T10:00:00Z","type":"session_meta","payload":{"id":"sess-plan","cwd":"/repo"}}`,
+		`{"timestamp":"2026-07-10T10:00:01Z","type":"event_msg","payload":{"type":"agent_message","message":"` + quoted + `"}}`,
+		`{"timestamp":"2026-07-10T10:00:01Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"` + quoted + `"}]}}`,
+	}, "\n")
+
+	uses, err := ExtractCodexToolUsesFromReader(strings.NewReader(stream))
+	if err != nil {
+		t.Fatalf("ExtractCodexToolUsesFromReader: %v", err)
+	}
+	if len(uses) != 3 {
+		t.Fatalf("uses = %+v, want Plan, Assistant, MemoryCitation", uses)
+	}
+	if uses[0].Tool != "Plan" || uses[0].Input["content"] != "# Parser plan\n\n- Split wrappers" {
+		t.Fatalf("plan = %+v", uses[0])
+	}
+	if uses[1].Tool != "Assistant" || uses[1].Input["text"] != "Source used: https://example.com/change" {
+		t.Fatalf("assistant = %+v", uses[1])
+	}
+	if uses[2].Tool != "MemoryCitation" || uses[2].Input["event"] != "memory_citation" {
+		t.Fatalf("citation = %+v", uses[2])
+	}
+	if got, ok := uses[2].Input["rollout_ids"].([]string); !ok || len(got) != 1 || got[0] != "019f3754-ecfa-7323-a76b-a0205ea30bbe" {
+		t.Fatalf("rollout ids = %#v", uses[2].Input["rollout_ids"])
+	}
+}
+
+func TestExtractCodexToolUses_ClassifiesAgentsInstructionsAsSystem(t *testing.T) {
+	stream := strings.Join([]string{
+		`{"timestamp":"2026-07-10T09:49:37.000Z","type":"session_meta","payload":{"id":"sess-system","cwd":"/repo"}}`,
+		`{"timestamp":"2026-07-10T09:49:37.100Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"  # AGENTS.md instructions for /repo\n\nAlways test."}]}}`,
+		`{"timestamp":"2026-07-10T09:49:37.100Z","type":"event_msg","payload":{"type":"user_message","message":"# AGENTS.md instructions for /repo\n\nAlways test."}}`,
+		`{"timestamp":"2026-07-10T09:49:37.200Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Fix the parser"}]}}`,
+		`{"timestamp":"2026-07-10T09:49:37.200Z","type":"event_msg","payload":{"type":"user_message","message":"Fix the parser"}}`,
+	}, "\n")
+
+	uses, err := ExtractCodexToolUsesFromReader(strings.NewReader(stream))
+	if err != nil {
+		t.Fatalf("ExtractCodexToolUsesFromReader: %v", err)
+	}
+	if len(uses) != 2 {
+		t.Fatalf("uses = %+v, want one System and one User", uses)
+	}
+	if uses[0].Tool != "System" || uses[1].Tool != "User" {
+		t.Fatalf("tools = %q, %q, want System, User", uses[0].Tool, uses[1].Tool)
+	}
+}
+
+func TestCodexUserMessageTool_ClassifiesRecommendedPluginsAgentsEnvelopeAsSystem(t *testing.T) {
+	text := "<recommended_plugins>system recommendations</recommended_plugins>" +
+		"# AGENTS.md instructions for /repo\n<INSTRUCTIONS>Always test.</INSTRUCTIONS>"
+	tool, ok := codexUserMessageTool(text)
+	if !ok || tool != "System" {
+		t.Fatalf("codexUserMessageTool = %q, %v, want System, true", tool, ok)
+	}
+}
+
 func TestReadCodexSessionInfo_ModelAndEffort(t *testing.T) {
 	stream := strings.Join([]string{
 		`{"timestamp":"2026-05-07T18:44:49.553Z","type":"session_meta","payload":{"id":"sess-1","cwd":"/p","cli_version":"0.128","model_provider":"openai","originator":"codex_exec","git":{"branch":"main","commit_hash":"abc"}}}`,

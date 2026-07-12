@@ -127,6 +127,41 @@ func TestFilterToolUses(t *testing.T) {
 	}
 }
 
+func TestExtractToolUses_SplitsTaggedAssistantText(t *testing.T) {
+	entry := HistoryEntry{
+		UUID:      "assistant-1",
+		SessionID: "claude-tagged",
+		Timestamp: "2026-07-10T10:00:00Z",
+		Message: Message{
+			Role: MessageRoleAssistant,
+			Content: []ContentBlock{{Type: ContentTypeText, Text: `<proposed_plan># Claude fallback</proposed_plan>
+After the plan.
+<oai-mem-citation>
+<citation_entries>
+MEMORY.md:1-2|note=[shared parser]
+</citation_entries>
+<rollout_ids>
+019f3754-ecfa-7323-a76b-a0205ea30bbe
+</rollout_ids>
+</oai-mem-citation>`}},
+		},
+	}
+
+	uses := ExtractToolUses([]HistoryEntry{entry})
+	if len(uses) != 3 {
+		t.Fatalf("uses = %+v, want Plan, Assistant, MemoryCitation", uses)
+	}
+	if uses[0].Tool != "Plan" || uses[0].Input["content"] != "# Claude fallback" {
+		t.Fatalf("plan = %+v", uses[0])
+	}
+	if uses[1].Tool != "Assistant" || uses[1].Input["text"] != "After the plan." {
+		t.Fatalf("assistant = %+v", uses[1])
+	}
+	if uses[2].Tool != "MemoryCitation" || uses[2].Input["event"] != "memory_citation" {
+		t.Fatalf("citation = %+v", uses[2])
+	}
+}
+
 func TestExtractToolUses_DetectsDenials(t *testing.T) {
 	denialContent, _ := json.Marshal("The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). To tell you how to proceed, the user said:\nkeep commons/logger")
 

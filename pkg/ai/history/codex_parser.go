@@ -2,13 +2,16 @@ package history
 
 import (
 	"bufio"
-	"github.com/flanksource/captain/pkg/claude/tools"
-	"github.com/segmentio/encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/flanksource/captain/pkg/ai/assistanttags"
+	"github.com/flanksource/captain/pkg/claude/tools"
+	"github.com/segmentio/encoding/json"
 )
 
 func ParseCodexLine(line string) (CodexEvent, error) {
@@ -307,12 +310,12 @@ func extractResponseItem(event CodexEvent, pendingCall map[string]CodexEvent, cw
 		var text string
 		switch event.Payload.Role {
 		case "assistant":
-			tool = "Assistant"
 			text = codexContentText(event.Payload.Content, "output_text", "text")
+			return extractCodexAssistantText(text, event, cwd, sessionID, "response_item.message")
 		case "user":
-			tool = "User"
 			text = codexContentText(event.Payload.Content, "input_text", "text")
-			if isCodexInternalUserText(text) {
+			var ok bool
+			if tool, ok = codexUserMessageTool(text); !ok {
 				return nil
 			}
 		default:
@@ -352,16 +355,7 @@ func extractLiveItemCompleted(event CodexEvent, cwd, sessionID string) []ToolUse
 	if text == "" {
 		return nil
 	}
-	return []ToolUse{{
-		Tool:       "Assistant",
-		Input:      map[string]any{"text": text},
-		Timestamp:  event.Time(),
-		CWD:        cwd,
-		SessionID:  sessionID,
-		TurnID:     codexEventTurnID(event),
-		Source:     "codex",
-		RecordType: "item.completed",
-	}}
+	return extractCodexAssistantText(text, event, cwd, sessionID, "item.completed")
 }
 
 // extractLiveError surfaces a `turn.failed` or top-level `error` event as an
@@ -433,27 +427,22 @@ func extractEventMsg(event CodexEvent, cwd, sessionID string) []ToolUse {
 		if event.Payload.Message == "" {
 			return nil
 		}
-		return []ToolUse{{
-			Tool:       "Assistant",
-			Input:      map[string]any{"text": event.Payload.Message},
-			Timestamp:  event.Time(),
-			CWD:        cwd,
-			SessionID:  sessionID,
-			TurnID:     codexEventTurnID(event),
-			Source:     "codex",
-			RecordType: "event_msg.agent_message",
-		}}
+		return extractCodexAssistantText(event.Payload.Message, event, cwd, sessionID, "event_msg.agent_message")
 
 	case "user_message":
 		text := event.Payload.Message
 		if text == "" {
 			text = event.Payload.Text
 		}
-		if text == "" || isCodexInternalUserText(text) {
+		if text == "" {
+			return nil
+		}
+		tool, ok := codexUserMessageTool(text)
+		if !ok {
 			return nil
 		}
 		return []ToolUse{{
-			Tool:       "User",
+			Tool:       tool,
 			Input:      map[string]any{"text": text},
 			Timestamp:  event.Time(),
 			CWD:        cwd,
@@ -467,6 +456,44 @@ func extractEventMsg(event CodexEvent, cwd, sessionID string) []ToolUse {
 		return nil
 	}
 	return []ToolUse{buildCodexEventUse(event, cwd, sessionID)}
+}
+
+func extractCodexAssistantText(text string, event CodexEvent, cwd, sessionID, recordType string) []ToolUse {
+	segments := assistanttags.Parse(text)
+	uses := make([]ToolUse, 0, len(segments))
+	for _, segment := range segments {
+		use := ToolUse{
+			Timestamp:  event.Time(),
+			CWD:        cwd,
+			SessionID:  sessionID,
+			TurnID:     codexEventTurnID(event),
+			Source:     "codex",
+			RecordType: recordType,
+		}
+		switch segment.Kind {
+		case assistanttags.SegmentPlan:
+			use.Tool = "Plan"
+			use.Input = map[string]any{"content": segment.Text, "tag": "proposed_plan"}
+		case assistanttags.SegmentMemoryCitation:
+			if segment.Citation == nil {
+				continue
+			}
+			use.Tool = "MemoryCitation"
+			use.Input = map[string]any{
+				"event":            "memory_citation",
+				"source":           "codex",
+				"citation_entries": segment.Citation.CitationEntries,
+				"rollout_ids":      segment.Citation.RolloutIDs,
+			}
+		case assistanttags.SegmentText:
+			use.Tool = "Assistant"
+			use.Input = map[string]any{"text": segment.Text}
+		default:
+			continue
+		}
+		uses = append(uses, use)
+	}
+	return uses
 }
 
 func buildToolSearchUses(callEvent, outputEvent CodexEvent, cwd, sessionID string) []ToolUse {
@@ -536,8 +563,24 @@ func isCodexInternalUserText(text string) bool {
 	text = strings.TrimSpace(text)
 	return strings.HasPrefix(text, "<environment_context>") ||
 		strings.HasPrefix(text, "<developer_context>") ||
+		strings.HasPrefix(text, "<recommended_plugins>") ||
 		strings.HasPrefix(text, "<plugins_instructions>") ||
 		strings.HasPrefix(text, "<skills_instructions>")
+}
+
+func codexUserMessageTool(text string) (string, bool) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return "", false
+	}
+	if strings.HasPrefix(text, "# AGENTS.md") ||
+		(strings.HasPrefix(text, "<recommended_plugins>") && strings.Contains(text, "# AGENTS.md instructions")) {
+		return "System", true
+	}
+	if isCodexInternalUserText(text) {
+		return "", false
+	}
+	return "User", true
 }
 
 func codexEventTurnID(event CodexEvent) string {
@@ -699,15 +742,14 @@ func dedupeCodexToolUses(uses []ToolUse) []ToolUse {
 
 func codexChatDedupeKey(use ToolUse) (string, bool) {
 	switch use.Tool {
-	case "User", "Assistant", "Reasoning":
+	case "System", "User", "Assistant", "Reasoning", "Plan", "MemoryCitation":
 	default:
 		return "", false
 	}
 	if use.Timestamp == nil {
 		return "", false
 	}
-	text, _ := use.Input["text"].(string)
-	text = strings.TrimSpace(text)
+	text := codexDedupeText(use)
 	if text == "" {
 		return "", false
 	}
@@ -717,6 +759,19 @@ func codexChatDedupeKey(use ToolUse) (string, bool) {
 		use.Timestamp.UTC().Format(time.RFC3339Nano),
 		text,
 	}, "\x00"), true
+}
+
+func codexDedupeText(use ToolUse) string {
+	if text, ok := use.Input["text"].(string); ok {
+		return strings.TrimSpace(text)
+	}
+	if content, ok := use.Input["content"].(string); ok {
+		return strings.TrimSpace(content)
+	}
+	if use.Tool == "MemoryCitation" {
+		return fmt.Sprint(use.Input["citation_entries"], "\x00", use.Input["rollout_ids"])
+	}
+	return ""
 }
 
 func codexRecordPriority(recordType string) int {

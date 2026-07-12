@@ -58,6 +58,8 @@ func EventToolName(eventType string) string {
 		return "DeferredToolsDelta"
 	case "agent_listing_delta":
 		return "AgentListingDelta"
+	case "memory_citation":
+		return "MemoryCitation"
 	case "skill_listing":
 		return "SkillListing"
 	case "budget_usd":
@@ -82,7 +84,7 @@ func IsEventToolName(name string) bool {
 		"WebSearchEvent", "ViewImage", "GuardianAssessment", "ReviewMode",
 		"CollabAgentSpawn", "CollabAgentInteraction", "CollabWaiting",
 		"CollabClose", "QueueOperation", "DeferredToolsDelta",
-		"AgentListingDelta", "SkillListing", "Budget", "PrLink",
+		"AgentListingDelta", "MemoryCitation", "SkillListing", "Budget", "PrLink",
 		"CompactBoundary", "LocalCommand", "ScheduledTaskFire",
 		"Informational", "WorktreeState", "Relocated", "Started":
 		return true

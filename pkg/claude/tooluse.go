@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flanksource/captain/pkg/ai/assistanttags"
 	"github.com/flanksource/captain/pkg/bash"
 	"github.com/flanksource/captain/pkg/claude/tools"
 	captainCollections "github.com/flanksource/captain/pkg/collections"
@@ -123,6 +124,10 @@ func ExtractToolUses(entries []HistoryEntry) []ToolUse {
 		for _, content := range entry.Message.Content {
 			switch content.Type {
 			case ContentTypeText:
+				if entry.Message.Role == MessageRoleAssistant {
+					toolUses = append(toolUses, taggedAssistantToolUses(entry, content.Text, timestamp)...)
+					continue
+				}
 				tool := messageTool(entry.Message.Role)
 				if tool == "" || content.Text == "" {
 					continue
@@ -193,6 +198,44 @@ func ExtractToolUses(entries []HistoryEntry) []ToolUse {
 	}
 
 	return expandUserRows(toolUses)
+}
+
+func taggedAssistantToolUses(entry HistoryEntry, text string, timestamp *time.Time) []ToolUse {
+	segments := assistanttags.Parse(text)
+	uses := make([]ToolUse, 0, len(segments))
+	for _, segment := range segments {
+		use := ToolUse{
+			Timestamp:   timestamp,
+			CWD:         entry.CWD,
+			SessionID:   entry.SessionID,
+			IsSidechain: entry.IsSidechain,
+			AgentID:     entry.AgentID,
+			RawEntry:    entry.RawLine,
+		}
+		switch segment.Kind {
+		case assistanttags.SegmentPlan:
+			use.Tool = "Plan"
+			use.Input = map[string]any{"content": segment.Text, "tag": "proposed_plan"}
+		case assistanttags.SegmentMemoryCitation:
+			if segment.Citation == nil {
+				continue
+			}
+			use.Tool = "MemoryCitation"
+			use.Input = map[string]any{
+				"event":            "memory_citation",
+				"source":           "claude",
+				"citation_entries": segment.Citation.CitationEntries,
+				"rollout_ids":      segment.Citation.RolloutIDs,
+			}
+		case assistanttags.SegmentText:
+			use.Tool = "Assistant"
+			use.Input = map[string]any{"text": segment.Text}
+		default:
+			continue
+		}
+		uses = append(uses, use)
+	}
+	return uses
 }
 
 func isVisibleTranscriptEvent(event *TranscriptEvent) bool {

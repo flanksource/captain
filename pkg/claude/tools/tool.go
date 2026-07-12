@@ -235,6 +235,8 @@ func NewTool(base BaseTool) Tool {
 		return &AskTool{BaseTool: base}
 	case "ExitPlanMode":
 		return &ExitPlanTool{BaseTool: base}
+	case "Plan":
+		return &PlanTool{BaseTool: base}
 	case "User":
 		return &UserTool{BaseTool: base}
 	case "Assistant":
@@ -251,6 +253,8 @@ func NewTool(base BaseTool) Tool {
 		return &TaskCompleteTool{BaseTool: base}
 	case "TurnAborted", "ContextCompacted", "ThreadRolledBack", "ItemCompleted":
 		return &LifecycleEventTool{BaseTool: base}
+	case "MemoryCitation":
+		return &EventTool{BaseTool: base}
 	case "CodexExecCommand":
 		return &CodexExecCommandTool{BaseTool: base}
 	case "CodexPatchApply":
