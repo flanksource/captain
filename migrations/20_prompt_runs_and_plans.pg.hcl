@@ -137,7 +137,7 @@ table "captain_prompt_runs" {
     columns     = [column.input_plan_id]
     ref_columns = [table.captain_plans.column.id]
     on_update   = NO_ACTION
-    on_delete   = SET_NULL
+    on_delete   = NO_ACTION
   }
   foreign_key "captain_prompt_runs_input_plan_revision_id_fkey" {
     columns = [
@@ -374,7 +374,7 @@ table "captain_plans" {
     columns     = [column.source_prompt_run_id]
     ref_columns = [table.captain_prompt_runs.column.id]
     on_update   = NO_ACTION
-    on_delete   = SET_NULL
+    on_delete   = NO_ACTION
   }
   foreign_key "captain_plans_source_iteration_id_fkey" {
     columns = [

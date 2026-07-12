@@ -255,7 +255,7 @@ table "captain_model_calls" {
     columns     = [column.prompt_run_id]
     ref_columns = [table.captain_prompt_runs.column.id]
     on_update   = NO_ACTION
-    on_delete   = SET_NULL
+    on_delete   = NO_ACTION
   }
   foreign_key "captain_model_calls_iteration_id_fkey" {
     columns = [
@@ -512,7 +512,7 @@ table "captain_events" {
     columns     = [column.prompt_run_id]
     ref_columns = [table.captain_prompt_runs.column.id]
     on_update   = NO_ACTION
-    on_delete   = SET_NULL
+    on_delete   = NO_ACTION
   }
   foreign_key "captain_events_iteration_id_fkey" {
     columns = [

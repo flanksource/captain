@@ -28,3 +28,4 @@ pkg/cli/webapp/dist/*
 hack/
 dist/
 .ok/
+.okignore
