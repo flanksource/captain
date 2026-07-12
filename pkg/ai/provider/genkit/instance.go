@@ -40,7 +40,7 @@ var instances sync.Map // instanceKey -> *instanceEntry
 // it on first use. A missing API key is a loud error.
 func getInstance(ctx context.Context, backend ai.Backend, apiKey string) (*gk.Genkit, error) {
 	if apiKey == "" {
-		return nil, fmt.Errorf("genkit provider: missing API key for backend %q", backend)
+		return nil, fmt.Errorf("%w: genkit provider is missing an API key for backend %q", ai.ErrNoAPIKey, backend)
 	}
 
 	v, _ := instances.LoadOrStore(instanceKey{backend: backend, apiKey: apiKey}, &instanceEntry{})

@@ -14,7 +14,7 @@ import (
 var fallbackLog = logger.GetLogger("ai")
 
 // fallbackProvider tries an ordered list of candidate models, advancing to the
-// next when the current one fails with a retryable error or its provider cannot be
+// next when the current one fails with a fallback-eligible error or its provider cannot be
 // constructed. Providers are built lazily and cached. GetModel/GetBackend report
 // the active (last-selected) candidate. It implements StreamingProvider; a
 // streaming candidate is abandoned in favour of the next only while it has not yet
@@ -60,7 +60,7 @@ func (f *fallbackProvider) providerAt(i int) (Provider, error) {
 	}
 	p, err := f.build(f.cfgFor(i))
 	if err != nil {
-		return nil, err
+		return nil, suggestModelName(err, f.candidates[i].Name)
 	}
 	f.built[i] = p
 	return p, nil
@@ -89,11 +89,12 @@ func (f *fallbackProvider) GetBackend() Backend {
 	return b
 }
 
-// Execute runs the primary and, on a retryable failure or a construction error,
+// Execute runs the primary and, on a fallback-eligible failure or a construction error,
 // each fallback in turn. A non-retryable runtime error stops immediately (another
 // model will not fix a malformed request). When nothing succeeds the primary's
 // error is returned, as the most actionable one.
 func (f *fallbackProvider) Execute(ctx context.Context, req Request) (*Response, error) {
+	log := LoggerFromContext(ctx, fallbackLog)
 	var firstErr error
 	record := func(err error) {
 		if firstErr == nil {
@@ -103,7 +104,7 @@ func (f *fallbackProvider) Execute(ctx context.Context, req Request) (*Response,
 	for i := range f.candidates {
 		p, err := f.providerAt(i)
 		if err != nil {
-			fallbackLog.Warnf("fallback: model %s unavailable (%v)", f.candidates[i].Name, err)
+			logFallbackTransition(log, f.candidates, i, err)
 			record(err)
 			continue
 		}
@@ -115,11 +116,11 @@ func (f *fallbackProvider) Execute(ctx context.Context, req Request) (*Response,
 			return resp, nil
 		}
 		record(err)
-		if !IsRetryable(err) {
+		if !IsFallbackEligible(err) {
 			return resp, err
 		}
 		if i < len(f.candidates)-1 {
-			fallbackLog.Warnf("fallback: model %s failed (%v); trying %s",
+			log.Warnf("fallback: model %s failed (%v); trying %s",
 				f.candidates[i].Name, err, f.candidates[i+1].Name)
 		}
 	}
@@ -135,6 +136,7 @@ func (f *fallbackProvider) ExecuteStream(ctx context.Context, req Request) (<-ch
 	out := make(chan Event)
 	go func() {
 		defer close(out)
+		log := LoggerFromContext(ctx, fallbackLog)
 		var firstErr error
 		record := func(err error) {
 			if firstErr == nil {
@@ -148,7 +150,7 @@ func (f *fallbackProvider) ExecuteStream(ctx context.Context, req Request) (<-ch
 
 			p, err := f.providerAt(i)
 			if err != nil {
-				fallbackLog.Warnf("fallback: model %s unavailable (%v)", f.candidates[i].Name, err)
+				logFallbackTransition(log, f.candidates, i, err)
 				record(err)
 				continue
 			}
@@ -164,10 +166,14 @@ func (f *fallbackProvider) ExecuteStream(ctx context.Context, req Request) (<-ch
 			ch, err := sp.ExecuteStream(ctx, candidateReq)
 			if err != nil {
 				record(err)
-				if IsRetryable(err) && !last {
-					fallbackLog.Warnf("fallback: model %s failed (%v); trying %s",
+				eligible := IsFallbackEligible(err)
+				if eligible && !last {
+					log.Warnf("fallback: model %s failed (%v); trying %s",
 						f.candidates[i].Name, err, f.candidates[i+1].Name)
 					continue
+				}
+				if eligible && firstErr != nil {
+					err = firstErr
 				}
 				emit(err)
 				return
@@ -181,10 +187,14 @@ func (f *fallbackProvider) ExecuteStream(ctx context.Context, req Request) (<-ch
 				streamErr = fmt.Errorf("model %s produced no output", f.candidates[i].Name)
 			}
 			record(streamErr)
-			if IsRetryable(streamErr) && !last {
-				fallbackLog.Warnf("fallback: model %s failed pre-output (%v); trying %s",
+			eligible := IsFallbackEligible(streamErr)
+			if eligible && !last {
+				log.Warnf("fallback: model %s failed pre-output (%v); trying %s",
 					f.candidates[i].Name, streamErr, f.candidates[i+1].Name)
 				continue
+			}
+			if eligible && firstErr != nil {
+				streamErr = firstErr
 			}
 			emit(streamErr)
 			return
@@ -194,6 +204,14 @@ func (f *fallbackProvider) ExecuteStream(ctx context.Context, req Request) (<-ch
 		}
 	}()
 	return out, nil
+}
+
+func logFallbackTransition(log logger.Logger, candidates []api.Model, i int, err error) {
+	if i < len(candidates)-1 {
+		log.Warnf("fallback: model %s unavailable (%v); trying %s", candidates[i].Name, err, candidates[i+1].Name)
+		return
+	}
+	log.Warnf("fallback: model %s unavailable (%v)", candidates[i].Name, err)
 }
 
 // pump forwards a candidate's stream to out. Leading non-content events (e.g.

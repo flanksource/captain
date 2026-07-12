@@ -26,7 +26,7 @@ func RegisterProvider(backend Backend, factory ProviderFactory) {
 // name is unrecognized, the error is enriched with the closest known model names
 // ("did you mean …"). When cfg.Model resolves to more than one candidate (a
 // comma-separated Name or a Fallbacks list), a fallback provider is returned that
-// tries each in order on a retryable failure.
+// tries each in order on a fallback-eligible failure.
 func NewProvider(cfg Config) (Provider, error) {
 	resolved, err := ResolveModelSelectors(cfg.Model)
 	if err != nil {
@@ -53,7 +53,7 @@ func newResolvedProvider(cfg Config) (Provider, error) {
 	if err != nil {
 		return nil, err
 	}
-	return withEffortValidation(p, cfg.Model.Effort), nil
+	return withModelErrorRecommendations(withEffortValidation(p, cfg.Model.Effort)), nil
 }
 
 func normalizeProviderModel(model api.Model) api.Model {

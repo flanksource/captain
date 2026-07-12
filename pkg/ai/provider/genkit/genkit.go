@@ -61,7 +61,7 @@ func New(cfg ai.Config) (*Provider, error) {
 		apiKey = ai.GetAPIKeyFromEnv(backend)
 	}
 	if apiKey == "" {
-		return nil, fmt.Errorf("genkit provider: no API key for backend %q (set the provider's API key, e.g. ANTHROPIC_API_KEY/OPENAI_API_KEY/GEMINI_API_KEY/DEEPSEEK_API_KEY)", backend)
+		return nil, fmt.Errorf("%w: genkit provider has no API key for backend %q (set the provider's API key, e.g. ANTHROPIC_API_KEY/OPENAI_API_KEY/GEMINI_API_KEY/DEEPSEEK_API_KEY)", ai.ErrNoAPIKey, backend)
 	}
 
 	cfg.Model.Backend = backend

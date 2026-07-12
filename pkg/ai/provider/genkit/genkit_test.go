@@ -93,6 +93,7 @@ func TestNewMissingAPIKey(t *testing.T) {
 			_, err := New(ai.Config{Model: api.Model{Backend: backend, Name: "some-model"}})
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "no API key")
+			assert.ErrorIs(t, err, ai.ErrNoAPIKey)
 		})
 	}
 }
