@@ -180,6 +180,74 @@ func TestOpenAICompatibleSchema_RecursesWithoutMutatingInput(t *testing.T) {
 	}
 }
 
+func TestOpenAICompatibleSchema_RemovesAnnotationsFromReferences(t *testing.T) {
+	raw := json.RawMessage(`{
+		"$schema":"https://json-schema.org/draft/2020-12/schema",
+		"$id":"https://example.com/plan-envelope",
+		"$ref":"#/$defs/PlanEnvelope",
+		"$defs":{
+			"PlanEnvelope":{
+				"type":"object",
+				"properties":{
+					"summary":{"type":"string","description":"What the session did"},
+					"plan":{"$ref":"#/$defs/PlanResult","description":"The plan this session produced"}
+				}
+			},
+			"PlanResult":{
+				"type":"object",
+				"properties":{
+					"status":{"type":"string"},
+					"path":{"type":"string"}
+				}
+			}
+		}
+	}`)
+	original := append(json.RawMessage(nil), raw...)
+
+	got, err := OpenAICompatibleSchema(raw)
+	if err != nil {
+		t.Fatalf("OpenAICompatibleSchema: %v", err)
+	}
+	if string(raw) != string(original) {
+		t.Fatal("OpenAICompatibleSchema mutated its input")
+	}
+
+	root := decodeSchemaObject(t, got)
+	if root["$ref"] != "#/$defs/PlanEnvelope" || root["$schema"] == nil || root["$id"] == nil || root["$defs"] == nil {
+		t.Fatalf("root reference metadata was not preserved: %#v", root)
+	}
+	defs := root["$defs"].(map[string]any)
+	planEnvelope := defs["PlanEnvelope"].(map[string]any)
+	plan := planEnvelope["properties"].(map[string]any)["plan"].(map[string]any)
+	if !reflect.DeepEqual(plan, map[string]any{"$ref": "#/$defs/PlanResult"}) {
+		t.Fatalf("plan reference = %#v, want a standalone $ref", plan)
+	}
+	summary := planEnvelope["properties"].(map[string]any)["summary"].(map[string]any)
+	if summary["description"] != "What the session did" {
+		t.Fatalf("ordinary property description was removed: %#v", summary)
+	}
+	for name, object := range map[string]map[string]any{
+		"PlanEnvelope": planEnvelope,
+		"PlanResult":   defs["PlanResult"].(map[string]any),
+	} {
+		if object["additionalProperties"] != false {
+			t.Errorf("%s additionalProperties = %v, want false", name, object["additionalProperties"])
+		}
+	}
+}
+
+func TestOpenAICompatibleSchema_RejectsSemanticReferenceSiblings(t *testing.T) {
+	raw := json.RawMessage(`{
+		"type":"object",
+		"properties":{"value":{"$ref":"#/$defs/Value","minLength":1}},
+		"$defs":{"Value":{"type":"string"}}
+	}`)
+	_, err := OpenAICompatibleSchema(raw)
+	if err == nil || !strings.Contains(err.Error(), `$.properties.value.$ref has unsupported sibling "minLength"`) {
+		t.Fatalf("error = %v, want path-aware unsupported sibling error", err)
+	}
+}
+
 func TestOpenAICompatibleSchema_RejectsOpenEndedObjects(t *testing.T) {
 	type labels struct {
 		Values map[string]string `json:"values"`

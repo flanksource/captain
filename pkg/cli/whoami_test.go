@@ -153,47 +153,52 @@ func TestResolveAdapter_EnvKeyPreferredOverLogin(t *testing.T) {
 	}
 }
 
-func TestProbeAdaptersUsesLiveProviderModelsForClaudeCmux(t *testing.T) {
+func TestProbeAdaptersUsesRegistryModelsForClaudeCmuxRegardlessOfAPIKey(t *testing.T) {
 	prev := resolveModelRows
 	resolveModelRows = func(_ context.Context, opts ai.ResolveOptions) ([]ai.ResolvedModel, error) {
-		if opts.Backend != ai.BackendAnthropic || !opts.UseTokens {
-			t.Fatalf("resolve opts = %+v, want anthropic live token resolve", opts)
-		}
-		return []ai.ResolvedModel{
-			{Model: ai.Model{ID: "anthropic/claude-sonnet-5", Backend: ai.BackendAnthropic, Label: "Claude Sonnet 5", ReleaseDate: "2026-05-20"}, Live: true},
-			{Model: ai.Model{ID: "claude-sonnet-4-6", Backend: ai.BackendAnthropic, Label: "Claude Sonnet 4.6", ReleaseDate: "2026-05-01"}, Live: true},
-			{Model: ai.Model{ID: "claude-opus-4-8", Backend: ai.BackendAnthropic, Label: "Claude Opus 4.8", ReleaseDate: "2026-04-15"}, Live: true},
-			{Model: ai.Model{ID: "anthropic/claude-sonnet-static", Backend: ai.BackendAnthropic, Label: "Static Sonnet"}, Live: false},
-		}, nil
+		t.Fatalf("local Claude adapter should not resolve provider API models: %+v", opts)
+		return nil, nil
 	}
 	t.Cleanup(func() { resolveModelRows = prev })
 
-	adapters, err := ProbeAdapters(WhoamiOptions{Backend: string(ai.BackendClaudeCmux), Models: true}, fakeProbe(
-		map[string]string{"ANTHROPIC_API_KEY": "sk-ant-test"},
-		map[string]string{"claude": "/usr/local/bin/claude"},
-		nil,
-		"/home/u",
-	))
-	if err != nil {
-		t.Fatalf("ProbeAdapters: %v", err)
-	}
-	if len(adapters) != 1 {
-		t.Fatalf("adapter count = %d, want 1", len(adapters))
-	}
-	got := adapters[0].Models
-	for _, want := range []string{"claude-sonnet-5", "claude-sonnet-4-6", "claude-opus-4-8"} {
-		if !stringSliceContains(got, want) {
-			t.Fatalf("models = %v, want exact runtime model %q from live provider model list", got, want)
+	var withoutKey []string
+	for _, env := range []map[string]string{nil, map[string]string{"ANTHROPIC_API_KEY": "sk-ant-test"}} {
+		adapters, err := ProbeAdapters(WhoamiOptions{Backend: string(ai.BackendClaudeCmux), Models: true}, fakeProbe(
+			env,
+			map[string]string{"claude": "/usr/local/bin/claude"},
+			nil,
+			"/home/u",
+		))
+		if err != nil {
+			t.Fatalf("ProbeAdapters: %v", err)
 		}
-	}
-	for _, rejected := range []string{"sonnet-5", "sonnet-4-6", "opus-4-8", "claude-agent-sonnet", "claude-agent-opus", "claude-sonnet-static"} {
-		if stringSliceContains(got, rejected) {
-			t.Fatalf("models = %v, should not include alias/static id %q after adapter normalization", got, rejected)
+		if len(adapters) != 1 || len(adapters[0].Models) == 0 {
+			t.Fatalf("adapters = %+v, want one adapter with registry models", adapters)
+		}
+		if !stringSliceContains(adapters[0].Models, "claude-fable-5") {
+			t.Fatalf("models = %v, want preferred Fable model", adapters[0].Models)
+		}
+		var fable *ai.ModelDef
+		for i := range adapters[0].ModelDetails {
+			if adapters[0].ModelDetails[i].ID == "claude-fable-5" {
+				fable = &adapters[0].ModelDetails[i]
+				break
+			}
+		}
+		if fable == nil || !fable.CapabilitiesKnown || !fable.Reasoning || fable.Temperature || len(fable.SupportedEfforts) != 5 {
+			t.Fatalf("fable model details = %+v", fable)
+		}
+		if withoutKey == nil {
+			withoutKey = append([]string(nil), adapters[0].Models...)
+			continue
+		}
+		if strings.Join(adapters[0].Models, "\x00") != strings.Join(withoutKey, "\x00") {
+			t.Fatalf("models with key = %v, without key = %v", adapters[0].Models, withoutKey)
 		}
 	}
 }
 
-func TestProbeAdaptersFiltersNoisyOpenAIModelsForCodexCmux(t *testing.T) {
+func TestProbeAdaptersFiltersNoisyOpenAIModelsForDirectAPI(t *testing.T) {
 	prev := resolveModelRows
 	resolveModelRows = func(_ context.Context, opts ai.ResolveOptions) ([]ai.ResolvedModel, error) {
 		if opts.Backend != ai.BackendOpenAI || !opts.UseTokens {
@@ -214,7 +219,7 @@ func TestProbeAdaptersFiltersNoisyOpenAIModelsForCodexCmux(t *testing.T) {
 	}
 	t.Cleanup(func() { resolveModelRows = prev })
 
-	adapters, err := ProbeAdapters(WhoamiOptions{Backend: string(ai.BackendCodexCmux), Models: true}, fakeProbe(
+	adapters, err := ProbeAdapters(WhoamiOptions{Backend: string(ai.BackendOpenAI), Models: true}, fakeProbe(
 		map[string]string{"OPENAI_API_KEY": "sk-test"},
 		map[string]string{"codex": "/usr/local/bin/codex"},
 		nil,
@@ -256,8 +261,8 @@ func TestWhoamiPrettyKeylessCmuxDoesNotRequestAPIKey(t *testing.T) {
 	}
 }
 
-func TestProbeAdaptersUsesCodexDebugModelsOnceWithoutAPIKey(t *testing.T) {
-	probe := fakeProbe(nil, map[string]string{"codex": "/usr/local/bin/codex"}, nil, "/home/u")
+func TestProbeAdaptersUsesCodexDebugModelsOnceRegardlessOfAPIKey(t *testing.T) {
+	probe := fakeProbe(map[string]string{"OPENAI_API_KEY": "sk-test"}, map[string]string{"codex": "/usr/local/bin/codex"}, nil, "/home/u")
 	calls := 0
 	probe.codexModels = func(_ context.Context, binary string) ([]ai.ModelDef, error) {
 		calls++
@@ -287,15 +292,19 @@ func TestProbeAdaptersUsesCodexDebugModelsOnceWithoutAPIKey(t *testing.T) {
 	}
 }
 
-func TestFetchCodexModelsSkipsDebugWithAPIKey(t *testing.T) {
+func TestFetchCodexModelsUsesDebugWithAPIKey(t *testing.T) {
 	probe := fakeProbe(map[string]string{"OPENAI_API_KEY": "sk-test"}, map[string]string{"codex": "/usr/local/bin/codex"}, nil, "/home/u")
-	probe.codexModels = func(context.Context, string) ([]ai.ModelDef, error) {
-		t.Fatal("codex debug should not run when OPENAI_API_KEY is set")
-		return nil, nil
+	calls := 0
+	probe.codexModels = func(_ context.Context, binary string) ([]ai.ModelDef, error) {
+		calls++
+		if binary != "/usr/local/bin/codex" {
+			t.Fatalf("binary = %q", binary)
+		}
+		return []ai.ModelDef{{ID: "gpt-5.6-sol"}}, nil
 	}
 	got := fetchCodexModels([]ai.Backend{ai.BackendCodexAgent}, probe)
-	if got.err != nil || len(got.models) != 0 {
-		t.Fatalf("fetch = %+v, want empty", got)
+	if got.err != nil || len(got.models) != 1 || calls != 1 {
+		t.Fatalf("fetch = %+v calls = %d, want one discovered model", got, calls)
 	}
 }
 

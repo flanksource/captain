@@ -28,6 +28,95 @@ func (s stubProvider) Execute(context.Context, ai.Request) (*ai.Response, error)
 func (s stubProvider) GetModel() string       { return "test-model" }
 func (s stubProvider) GetBackend() ai.Backend { return ai.BackendAnthropic }
 
+type streamingStubProvider struct{ stubProvider }
+
+func (s streamingStubProvider) ExecuteStream(context.Context, ai.Request) (<-chan ai.Event, error) {
+	events := make(chan ai.Event)
+	close(events)
+	return events, nil
+}
+
+func TestRuntimeLogIdentity(t *testing.T) {
+	tests := []struct {
+		name    string
+		backend api.Backend
+		model   string
+		effort  api.Effort
+		want    string
+	}{
+		{"agent without effort", api.BackendCodexAgent, "gpt-5.6-luna", api.EffortNone, "agent:gpt-5.6-luna"},
+		{"agent with effort", api.BackendCodexAgent, "gpt-5.6-sol", api.EffortMax, "agent:gpt-5.6-sol:max"},
+		{"cli", api.BackendClaudeCLI, "claude-sonnet-5", api.EffortHigh, "cli:claude-sonnet-5:high"},
+		{"cmux", api.BackendCodexCmux, "gpt-5.6-terra", api.EffortUltra, "cmux:gpt-5.6-terra:ultra"},
+		{"api", api.BackendOpenAI, "gpt-5.6", api.EffortLow, "api:gpt-5.6:low"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := runtimeLogIdentity(tt.backend, tt.model, tt.effort); got != tt.want {
+				t.Fatalf("runtimeLogIdentity() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoggingProvider_UsesEffortQualifiedRuntimeIdentity(t *testing.T) {
+	prev := logger.GetOutput()
+	t.Cleanup(func() { logger.SetOutput(prev) })
+	var buf bytes.Buffer
+	logger.SetOutput(&buf)
+	logger.GetLogger("ai").SetLogLevel("info")
+
+	p, err := WithLogging()(stubProvider{resp: &ai.Response{Model: "gpt-5.6-sol"}})
+	if err != nil {
+		t.Fatalf("WithLogging: %v", err)
+	}
+	if _, err := p.Execute(context.Background(), ai.Request{
+		Model:  api.Model{Name: "gpt-5.6-sol", Backend: api.BackendCodexAgent, Effort: api.EffortMax},
+		Prompt: api.Prompt{Source: "commit-grouping.prompt"},
+	}); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	got := ansi.ReplaceAllString(buf.String(), "")
+	for _, want := range []string{
+		"✨ agent:gpt-5.6-sol:max [commit-grouping.prompt]",
+		"✓ agent:gpt-5.6-sol:max",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("logging middleware output missing %q\n--- output ---\n%s", want, got)
+		}
+	}
+}
+
+func TestLoggingProvider_StreamOmitsEmptyEffort(t *testing.T) {
+	prev := logger.GetOutput()
+	t.Cleanup(func() { logger.SetOutput(prev) })
+	var buf bytes.Buffer
+	logger.SetOutput(&buf)
+	logger.GetLogger("ai").SetLogLevel("info")
+
+	p, err := WithLogging()(streamingStubProvider{stubProvider{resp: &ai.Response{}}})
+	if err != nil {
+		t.Fatalf("WithLogging: %v", err)
+	}
+	streamer := p.(ai.StreamingProvider)
+	if _, err := streamer.ExecuteStream(context.Background(), ai.Request{
+		Model:  api.Model{Name: "gpt-5.6-luna", Backend: api.BackendCodexAgent},
+		Prompt: api.Prompt{Source: "commit-grouping.prompt"},
+	}); err != nil {
+		t.Fatalf("ExecuteStream: %v", err)
+	}
+
+	got := ansi.ReplaceAllString(buf.String(), "")
+	want := "✨ agent:gpt-5.6-luna (stream) [commit-grouping.prompt]"
+	if !strings.Contains(got, want) {
+		t.Errorf("stream logging output missing %q\n--- output ---\n%s", want, got)
+	}
+	if strings.Contains(got, "luna:") {
+		t.Errorf("stream logging unexpectedly added an effort suffix\n--- output ---\n%s", got)
+	}
+}
+
 func TestSchemaInJSON(t *testing.T) {
 	if got := schemaInJSON(api.Prompt{}); got != "" {
 		t.Fatalf("text-mode (no schema): want empty, got %q", got)

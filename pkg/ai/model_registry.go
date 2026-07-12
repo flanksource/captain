@@ -98,13 +98,16 @@ func registryModelAvailableForBackend(model registryModel, backend Backend) bool
 
 func registryModelDef(model registryModel, backend Backend) ModelDef {
 	return ModelDef{
-		ID:               model.ID,
-		Name:             model.Label,
-		Backend:          backend,
-		ReleaseDate:      model.ReleaseDate,
-		SupportedEfforts: append([]api.Effort(nil), model.SupportedEfforts...),
-		DefaultEffort:    model.DefaultEffort,
-		Priority:         model.Priority,
+		ID:                model.ID,
+		Name:              model.Label,
+		Backend:           backend,
+		ReleaseDate:       model.ReleaseDate,
+		CapabilitiesKnown: true,
+		Reasoning:         model.Reasoning,
+		Temperature:       model.Temperature,
+		SupportedEfforts:  append([]api.Effort(nil), model.SupportedEfforts...),
+		DefaultEffort:     model.DefaultEffort,
+		Priority:          model.Priority,
 	}
 }
 
@@ -161,7 +164,7 @@ func registryCatalogModels() []Model {
 		}
 		switch m.Provider {
 		case modelProviderAnthropic:
-			if m.Family == "fable" || !registryModelAvailableForBackend(m, BackendClaudeAgent) {
+			if !registryModelAvailableForBackend(m, BackendClaudeAgent) {
 				continue
 			}
 			out = append(out, Model{

@@ -242,13 +242,16 @@ func AgentCatalogModels(b Backend) []ModelDef {
 			label = id
 		}
 		out = append(out, ModelDef{
-			ID:               id,
-			Name:             label,
-			Backend:          b,
-			ReleaseDate:      m.ReleaseDate,
-			SupportedEfforts: append([]api.Effort(nil), m.SupportedEfforts...),
-			DefaultEffort:    m.DefaultEffort,
-			Priority:         m.Priority,
+			ID:                id,
+			Name:              label,
+			Backend:           b,
+			ReleaseDate:       m.ReleaseDate,
+			CapabilitiesKnown: true,
+			Reasoning:         m.Reasoning,
+			Temperature:       m.Temperature,
+			SupportedEfforts:  append([]api.Effort(nil), m.SupportedEfforts...),
+			DefaultEffort:     m.DefaultEffort,
+			Priority:          m.Priority,
 		})
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].ID < out[j].ID })

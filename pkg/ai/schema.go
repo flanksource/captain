@@ -221,6 +221,13 @@ func normalizeOpenAISchema(v any, path string) error {
 	if !ok {
 		return nil
 	}
+	refOnly, err := normalizeOpenAIRef(node, path)
+	if err != nil {
+		return err
+	}
+	if refOnly {
+		return nil
+	}
 
 	if isObjectSchema(node) {
 		if additional, exists := node["additionalProperties"]; exists {
@@ -273,6 +280,50 @@ func normalizeOpenAISchema(v any, path string) error {
 		}
 	}
 	return nil
+}
+
+var openAIRefAnnotationKeywords = map[string]bool{
+	"$comment":    true,
+	"default":     true,
+	"deprecated":  true,
+	"description": true,
+	"examples":    true,
+	"readOnly":    true,
+	"title":       true,
+	"writeOnly":   true,
+}
+
+// normalizeOpenAIRef makes referenced nodes conform to OpenAI's strict schema
+// subset. A nested $ref must stand alone; invopop/jsonschema commonly attaches
+// field annotations such as description alongside it, which OpenAI rejects.
+// Root schema metadata and definitions are retained so the reference remains
+// resolvable, while unexpected semantic siblings fail loudly rather than being
+// silently discarded.
+func normalizeOpenAIRef(node map[string]any, path string) (bool, error) {
+	rawRef, hasRef := node["$ref"]
+	if !hasRef {
+		return false, nil
+	}
+	ref, ok := rawRef.(string)
+	if !ok || strings.TrimSpace(ref) == "" {
+		return false, fmt.Errorf("openai schema transform: %s.$ref must be a non-empty string", path)
+	}
+
+	for key := range node {
+		if key == "$ref" {
+			continue
+		}
+		if openAIRefAnnotationKeywords[key] {
+			delete(node, key)
+			continue
+		}
+		if path == "$" && (key == "$schema" || key == "$id" || key == "$defs" || key == "definitions") {
+			continue
+		}
+		return false, fmt.Errorf("openai schema transform: %s.$ref has unsupported sibling %q", path, key)
+	}
+
+	return path != "$", nil
 }
 
 // AnthropicCompatibleSchema returns a copy of schema with constraints that

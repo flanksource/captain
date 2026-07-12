@@ -234,13 +234,18 @@ type modelFetch struct {
 
 var resolveModelRows = ai.ResolveModels
 
-// fetchAPIModels resolves each provider's live /v1/models endpoint once,
-// concurrently. The resolver is Captain's cached model path, so repeated whoami
-// calls reuse a fresh cache instead of hitting providers every time. CLI/agent
-// backends are mapped to their parent API provider before fetching.
+// fetchAPIModels resolves each direct provider backend's live /v1/models
+// endpoint once, concurrently. Local CLI/agent/cmux adapters deliberately do
+// not participate: their model catalogs must describe the runtime they execute,
+// independent of whether the parent provider's API key happens to be present.
+// The resolver is Captain's cached model path, so repeated whoami calls reuse a
+// fresh cache instead of hitting providers every time.
 func fetchAPIModels(backends []ai.Backend, getenv func(string) string) map[ai.Backend]modelFetch {
 	apis := map[ai.Backend]bool{}
 	for _, b := range backends {
+		if b.Kind() != "api" {
+			continue
+		}
 		source := modelSourceBackend(b)
 		if source == "" {
 			continue
@@ -269,7 +274,7 @@ func fetchAPIModels(backends []ai.Backend, getenv func(string) string) map[ai.Ba
 }
 
 func fetchCodexModels(backends []ai.Backend, probe authProbe) modelFetch {
-	if probe.codexModels == nil || firstEnv(ai.AuthEnvVars(ai.BackendOpenAI), probe.getenv) != "" {
+	if probe.codexModels == nil {
 		return modelFetch{}
 	}
 	wanted := false
@@ -314,32 +319,28 @@ func liveModelDefs(rows []ai.ResolvedModel, backend ai.Backend) []ai.ModelDef {
 			name = id
 		}
 		out = append(out, ai.ModelDef{
-			ID:               id,
-			Name:             name,
-			Backend:          backend,
-			ReleaseDate:      row.ReleaseDate,
-			SupportedEfforts: append([]api.Effort(nil), row.SupportedEfforts...),
-			DefaultEffort:    row.DefaultEffort,
-			Priority:         row.Priority,
+			ID:                id,
+			Name:              name,
+			Backend:           backend,
+			ReleaseDate:       row.ReleaseDate,
+			CapabilitiesKnown: true,
+			Reasoning:         row.Reasoning,
+			Temperature:       row.Temperature,
+			SupportedEfforts:  append([]api.Effort(nil), row.SupportedEfforts...),
+			DefaultEffort:     row.DefaultEffort,
+			Priority:          row.Priority,
 		})
 	}
 	return out
 }
 
 // applyModels fills in the model listing (or the reason it is unavailable) for
-// a single adapter. All backends use live provider model rows from Captain's
-// cached resolver; CLI/agent backends map those provider rows into the runtime
-// model slugs their local binaries accept.
+// a single adapter. Direct API backends use live provider rows. Local adapters
+// use the catalog of the runtime they execute: Codex's installed catalog when
+// available, otherwise Captain's backend-specific registry projection.
 func applyModels(st *AdapterStatus, b ai.Backend, cache map[ai.Backend]modelFetch, codex modelFetch, getenv func(string) string) {
-	source := modelSourceBackend(b)
-	if source == "" {
-		st.ModelError = fmt.Sprintf("backend %s has no model listing", b)
-		return
-	}
-
-	envVars := ai.AuthEnvVars(source)
-	if firstEnv(envVars, getenv) == "" {
-		if isCodexBackend(b) && codex.err == nil && len(codex.models) > 0 {
+	if isCodexBackend(b) {
+		if codex.err == nil && len(codex.models) > 0 {
 			models := make([]ai.ModelDef, len(codex.models))
 			for i, model := range codex.models {
 				model.Backend = b
@@ -348,10 +349,22 @@ func applyModels(st *AdapterStatus, b ai.Backend, cache map[ai.Backend]modelFetc
 			setModels(st, models, true)
 			return
 		}
-		if b.Kind() == "cli" {
-			setModels(st, ai.RegistryModelDefs(b), true)
-			return
-		}
+		setRegistryModels(st, b, codex.err)
+		return
+	}
+	if b.Kind() == "cli" {
+		setRegistryModels(st, b, nil)
+		return
+	}
+
+	source := modelSourceBackend(b)
+	if source == "" {
+		st.ModelError = fmt.Sprintf("backend %s has no model listing", b)
+		return
+	}
+
+	envVars := ai.AuthEnvVars(source)
+	if firstEnv(envVars, getenv) == "" {
 		st.ModelError = "set " + strings.Join(envVars, " or ") + " to list models"
 		return
 	}
@@ -365,6 +378,18 @@ func applyModels(st *AdapterStatus, b ai.Backend, cache map[ai.Backend]modelFetc
 		return
 	}
 	setModels(st, modelsForAdapterBackend(b, fetch.models), false)
+}
+
+func setRegistryModels(st *AdapterStatus, backend ai.Backend, discoveryErr error) {
+	setModels(st, ai.RegistryModelDefs(backend), true)
+	if len(st.Models) > 0 {
+		return
+	}
+	if discoveryErr != nil {
+		st.ModelError = fmt.Sprintf("runtime model discovery failed: %v; registry has no models for %s", discoveryErr, backend)
+		return
+	}
+	st.ModelError = fmt.Sprintf("registry has no models for %s", backend)
 }
 
 func modelSourceBackend(backend ai.Backend) ai.Backend {
@@ -405,13 +430,16 @@ func modelsForAdapterBackend(backend ai.Backend, models []ai.ModelDef) []ai.Mode
 			name = id
 		}
 		next := ai.ModelDef{
-			ID:               id,
-			Name:             name,
-			Backend:          backend,
-			ReleaseDate:      model.ReleaseDate,
-			SupportedEfforts: append([]api.Effort(nil), model.SupportedEfforts...),
-			DefaultEffort:    model.DefaultEffort,
-			Priority:         model.Priority,
+			ID:                id,
+			Name:              name,
+			Backend:           backend,
+			ReleaseDate:       model.ReleaseDate,
+			CapabilitiesKnown: model.CapabilitiesKnown,
+			Reasoning:         model.Reasoning,
+			Temperature:       model.Temperature,
+			SupportedEfforts:  append([]api.Effort(nil), model.SupportedEfforts...),
+			DefaultEffort:     model.DefaultEffort,
+			Priority:          model.Priority,
 		}
 		if idx, ok := positions[id]; ok {
 			if modelDefNewer(next, out[idx]) {

@@ -38,7 +38,7 @@ func TestRegistryDerivedCapabilities(t *testing.T) {
 		wantAdaptive  bool
 	}{
 		{"claude-sonnet-5", true, false, true, true},
-		{"claude-fable-5", true, false, false, true},
+		{"claude-fable-5", true, false, true, true},
 		{"claude-opus-4-8", true, false, true, true},
 		{"claude-opus-4-7", true, false, false, true},
 		{"claude-sonnet-4-6", true, true, true, false},
@@ -63,6 +63,28 @@ func TestRegistryDerivedCapabilities(t *testing.T) {
 				t.Errorf("AdaptiveThinking = %v, want %v", m.AdaptiveThinking, tc.wantAdaptive)
 			}
 		})
+	}
+}
+
+func TestRegistryModelDefsIncludeFableCapabilities(t *testing.T) {
+	for _, backend := range []Backend{BackendClaudeAgent, BackendClaudeCLI, BackendClaudeCmux} {
+		defs := RegistryModelDefs(backend)
+		var fable *ModelDef
+		for i := range defs {
+			if defs[i].ID == "claude-fable-5" {
+				fable = &defs[i]
+				break
+			}
+		}
+		if fable == nil {
+			t.Fatalf("%s registry models omit claude-fable-5: %+v", backend, defs)
+		}
+		if !fable.CapabilitiesKnown || !fable.Reasoning || fable.Temperature {
+			t.Fatalf("%s fable capabilities = %+v", backend, *fable)
+		}
+		if len(fable.SupportedEfforts) != 5 || fable.SupportedEfforts[0] != "low" || fable.SupportedEfforts[4] != "max" {
+			t.Fatalf("%s fable efforts = %v", backend, fable.SupportedEfforts)
+		}
 	}
 }
 

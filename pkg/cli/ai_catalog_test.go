@@ -34,18 +34,18 @@ func TestAgentCatalogModels(t *testing.T) {
 	}{
 		{
 			backend: ai.BackendCodexCLI,
-			want:    []ai.ModelDef{{ID: "gpt-5.5", Name: "Codex Agent · GPT-5.5", Backend: ai.BackendCodexCLI}},
+			want:    []ai.ModelDef{{ID: "gpt-5.5", Name: "Codex Agent · GPT-5.5", Backend: ai.BackendCodexCLI, CapabilitiesKnown: true}},
 		},
 		{
 			backend: ai.BackendCodexAgent,
-			want:    []ai.ModelDef{{ID: "gpt-5.5", Name: "Codex Agent · GPT-5.5", Backend: ai.BackendCodexAgent}},
+			want:    []ai.ModelDef{{ID: "gpt-5.5", Name: "Codex Agent · GPT-5.5", Backend: ai.BackendCodexAgent, CapabilitiesKnown: true}},
 		},
 		{
 			// Sorted by ID; genkit (API) anthropic entry excluded.
 			backend: ai.BackendClaudeAgent,
 			want: []ai.ModelDef{
-				{ID: "claude-opus-4-8", Name: "Claude Agent · Opus 4.8", Backend: ai.BackendClaudeAgent},
-				{ID: "claude-sonnet-5", Name: "Claude Agent · Sonnet 5", Backend: ai.BackendClaudeAgent},
+				{ID: "claude-opus-4-8", Name: "Claude Agent · Opus 4.8", Backend: ai.BackendClaudeAgent, CapabilitiesKnown: true},
+				{ID: "claude-sonnet-5", Name: "Claude Agent · Sonnet 5", Backend: ai.BackendClaudeAgent, CapabilitiesKnown: true},
 			},
 		},
 		{
@@ -53,8 +53,8 @@ func TestAgentCatalogModels(t *testing.T) {
 			// its own backend.
 			backend: ai.BackendClaudeCLI,
 			want: []ai.ModelDef{
-				{ID: "claude-opus-4-8", Name: "Claude Agent · Opus 4.8", Backend: ai.BackendClaudeCLI},
-				{ID: "claude-sonnet-5", Name: "Claude Agent · Sonnet 5", Backend: ai.BackendClaudeCLI},
+				{ID: "claude-opus-4-8", Name: "Claude Agent · Opus 4.8", Backend: ai.BackendClaudeCLI, CapabilitiesKnown: true},
+				{ID: "claude-sonnet-5", Name: "Claude Agent · Sonnet 5", Backend: ai.BackendClaudeCLI, CapabilitiesKnown: true},
 			},
 		},
 		{
@@ -62,14 +62,14 @@ func TestAgentCatalogModels(t *testing.T) {
 			// its own backend.
 			backend: ai.BackendClaudeCmux,
 			want: []ai.ModelDef{
-				{ID: "claude-opus-4-8", Name: "Claude Agent · Opus 4.8", Backend: ai.BackendClaudeCmux},
-				{ID: "claude-sonnet-5", Name: "Claude Agent · Sonnet 5", Backend: ai.BackendClaudeCmux},
+				{ID: "claude-opus-4-8", Name: "Claude Agent · Opus 4.8", Backend: ai.BackendClaudeCmux, CapabilitiesKnown: true},
+				{ID: "claude-sonnet-5", Name: "Claude Agent · Sonnet 5", Backend: ai.BackendClaudeCmux, CapabilitiesKnown: true},
 			},
 		},
 		{
 			// codex-cmux shares the codex-agent runtime model slug.
 			backend: ai.BackendCodexCmux,
-			want:    []ai.ModelDef{{ID: "gpt-5.5", Name: "Codex Agent · GPT-5.5", Backend: ai.BackendCodexCmux}},
+			want:    []ai.ModelDef{{ID: "gpt-5.5", Name: "Codex Agent · GPT-5.5", Backend: ai.BackendCodexCmux, CapabilitiesKnown: true}},
 		},
 		{
 			// No catalog entries for gemini-cli: empty, never an error.

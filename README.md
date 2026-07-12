@@ -17,6 +17,46 @@ It provides tools to:
 - run a web UI for launching and chatting with AI agents
 - configure default backend, model, and AI safety toggles
 
+```xml h=185px w=358px preview
+<div style="font-family:system-ui,sans-serif;padding:20px;color:var(--foreground)">
+  <label for="amt" style="font-size:14px;font-weight:600">Monthly budget</label>
+  <div id="out" style="font-size:30px;font-weight:700;color:var(--chart-1);margin:6px 0">$2,500</div>
+  <input id="amt" type="range" min="500" max="10000" step="100" value="2500"
+    style="width:100%;accent-color:var(--primary)" />
+  <p style="font-size:13px;color:var(--muted-foreground)">Drag to adjust — the figure updates live.</p>
+  <script>
+    var amt = document.getElementById('amt');
+    var out = document.getElementById('out');
+    amt.addEventListener('input', function () {
+      out.textContent = '$' + Number(amt.value).toLocaleString();
+    });
+  </script>
+</div>
+```
+
+```html preview
+<div style="font-family:system-ui,sans-serif;padding:20px">
+  <div id="cards" style="display:flex;gap:14px;flex-wrap:wrap"></div>
+  <script>
+    var stats = [
+      ['Active users', '12,480', '+8.2% MoM', 'var(--chart-2)'],
+      ['Revenue', '$48.2k', '+3.1% MoM', 'var(--chart-1)'],
+      ['Churn', '2.4%', '-0.5% MoM', 'var(--chart-5)']
+    ];
+    document.getElementById('cards').innerHTML = stats.map(function (s) {
+      return '<div style="flex:1;min-width:150px;padding:16px;background:var(--card);' +
+        'color:var(--card-foreground);border:1px solid var(--border);' +
+        'border-radius:var(--radius)">' +
+        '<div style="font-size:13px;color:var(--muted-foreground)">' + s[0] + '</div>' +
+        '<div style="font-size:26px;font-weight:700;margin-top:4px">' + s[1] + '</div>' +
+        '<div style="font-size:12px;font-weight:600;margin-top:4px;color:' + s[3] + '">' +
+        s[2] + '</div>' +
+        '</div>';
+    }).join('');
+  </script>
+</div>
+```
+
 ## What it does
 
 From the codebase, Captain is organized around a few core capabilities:
@@ -611,3 +651,4 @@ Start the web UI:
 - The container/sandbox functionality is a major part of the project, not a side feature.
 - Many commands assume the presence of Claude local state under the user’s Claude config/projects directories.
 - Configuration is persisted to `~/.captain.yaml` via `captain configure`.
+

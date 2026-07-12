@@ -66,6 +66,9 @@ func ParseCodexDebugModels(data []byte) ([]ModelDef, error) {
 		}
 		if registry, ok := RegistryModelDef(BackendCodexAgent, def.ID); ok {
 			def.ReleaseDate = registry.ReleaseDate
+			def.CapabilitiesKnown = registry.CapabilitiesKnown
+			def.Reasoning = registry.Reasoning
+			def.Temperature = registry.Temperature
 			// models.dev is the source of truth for known model effort metadata.
 			// Codex debug output remains useful for the locally visible models,
 			// display names, and priority, but cannot override this catalog.
@@ -80,6 +83,8 @@ func ParseCodexDebugModels(data []byte) ([]ModelDef, error) {
 					def.SupportedEfforts = append(def.SupportedEfforts, level.Effort)
 				}
 			}
+			def.CapabilitiesKnown = true
+			def.Reasoning = len(def.SupportedEfforts) > 0
 		}
 		models = append(models, def)
 	}

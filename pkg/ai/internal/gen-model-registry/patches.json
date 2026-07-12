@@ -1,5 +1,6 @@
 {
   "claude-sonnet-5": { "preferred": true },
+  "claude-fable-5": { "preferred": true },
   "claude-opus-4-8": { "preferred": true },
   "claude-sonnet-4-6": { "preferred": true },
   "claude-haiku-4-5": { "preferred": true },
