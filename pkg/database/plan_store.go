@@ -106,6 +106,16 @@ type ApprovePlanRevisionInput struct {
 	Comment    string
 }
 
+// SetPlanReviewStateInput records a non-approval review decision. Approval is
+// intentionally kept on ApprovePlanRevision because it must select an exact
+// immutable revision.
+type SetPlanReviewStateInput struct {
+	PlanID  uuid.UUID
+	State   PlanApprovalState
+	Actor   string
+	Comment string
+}
+
 type planRecord struct {
 	ID                 uuid.UUID         `gorm:"column:id;type:uuid;primaryKey"`
 	SourceSessionID    uuid.UUID         `gorm:"column:source_session_id;type:uuid"`
@@ -365,6 +375,66 @@ func (db *DB) ApprovePlanRevision(ctx context.Context, input ApprovePlanRevision
 		default:
 			return nil, fmt.Errorf("approve Captain plan revision: %w", err)
 		}
+	}
+	return db.GetPlan(ctx, input.PlanID)
+}
+
+// SetPlanReviewState records rejection, revision feedback, or a reset to
+// pending without selecting mutable/path-backed content. Exact retries are
+// mutation-free.
+func (db *DB) SetPlanReviewState(ctx context.Context, input SetPlanReviewStateInput) (*Plan, error) {
+	if err := db.requireGorm(); err != nil {
+		return nil, err
+	}
+	if input.PlanID == uuid.Nil {
+		return nil, fmt.Errorf("%w: plan ID is required", ErrInvalidPlan)
+	}
+	switch input.State {
+	case PlanApprovalPending, PlanApprovalRejected, PlanApprovalRevisionRequested:
+	case PlanApprovalApproved:
+		return nil, fmt.Errorf("%w: approval must select a revision through ApprovePlanRevision", ErrInvalidPlan)
+	default:
+		return nil, fmt.Errorf("%w: unknown approval state %q", ErrInvalidPlan, input.State)
+	}
+
+	actor := nullableTrimmed(input.Actor)
+	comment := nullableTrimmed(input.Comment)
+	err := db.gorm.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var plan planRecord
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&plan, "id = ?", input.PlanID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrPlanNotFound
+			}
+			return err
+		}
+		if plan.ApprovalState == input.State && plan.ApprovedRevisionID == nil &&
+			equalOptionalString(plan.ApprovedBy, actor) && equalOptionalString(plan.ApprovalComment, comment) {
+			return nil
+		}
+		updates := map[string]any{
+			"approval_state":       input.State,
+			"approved_revision_id": nil,
+			"approved_by":          actor,
+			"approval_comment":     comment,
+			"approval_created_at":  nil,
+			"feedback_at":          nil,
+		}
+		switch input.State {
+		case PlanApprovalRejected:
+			// The plan-state trigger only fills this timestamp when the state
+			// changes. A new rejection decision while already rejected must not
+			// clear it merely because only the actor or comment changed.
+			updates["approval_created_at"] = gorm.Expr("clock_timestamp()")
+		case PlanApprovalRevisionRequested:
+			updates["feedback_at"] = gorm.Expr("clock_timestamp()")
+		}
+		return tx.Model(&planRecord{}).Where("id = ?", input.PlanID).Updates(updates).Error
+	})
+	if err != nil {
+		if errors.Is(err, ErrPlanNotFound) {
+			return nil, fmt.Errorf("%w: %s", ErrPlanNotFound, input.PlanID)
+		}
+		return nil, fmt.Errorf("set Captain plan review state: %w", err)
 	}
 	return db.GetPlan(ctx, input.PlanID)
 }
