@@ -93,13 +93,23 @@ func (StoredPrompt) TableName() string { return "captain_session_prompts" }
 // sessionDB wraps the gorm handle; a nil *sessionDB means "no store — uncached".
 type sessionDB struct{ gdb *gorm.DB }
 
-var (
-	storeOnce sync.Once
-	store     *sessionDB
-)
+// sessionStoreState serializes the choice between the legacy summary cache and
+// Captain's authoritative native database. The two schemas both use the
+// captain_sessions name but have intentionally different models, so they must
+// never be active on the same connection.
+type sessionStoreState struct {
+	once sync.Once
+	mu   sync.RWMutex
+
+	legacy *sessionDB
+	native *gorm.DB
+}
+
+var sessionStores sessionStoreState
 
 const (
 	captainSessionEnvDSN = "CAPTAIN_SESSION_DB_URL"
+	gavelDBEnvDSN        = "GAVEL_DB_DSN"
 	gavelCacheEnvDSN     = "GAVEL_GITHUB_CACHE_DSN"
 
 	gavelDBModeDSN      = "dsn"
@@ -110,8 +120,62 @@ const (
 // nil (and logs a single Warn) when the DB is unavailable, so callers degrade to
 // uncached summarization.
 func sessionStore() *sessionDB {
-	storeOnce.Do(func() { store = openSessionStore() })
-	return store
+	return sessionStores.get(openSessionStore)
+}
+
+// ConfigureNativeDatabase records the authoritative Captain connection used by
+// the host application. It must be called before the legacy session cache has
+// opened. Once configured, session summary and realized-prompt callers degrade
+// to their existing uncached paths instead of running the incompatible legacy
+// AutoMigrate or querying native Captain tables.
+//
+// Native session repository wiring is deliberately separate from this guard;
+// callers should use database.Open to migrate/reuse the shared pool, then call
+// ConfigureNativeDatabase with that handle's Gorm connection.
+func ConfigureNativeDatabase(gormDB *gorm.DB) error {
+	return sessionStores.configureNative(gormDB)
+}
+
+func (s *sessionStoreState) configureNative(gormDB *gorm.DB) error {
+	if gormDB == nil {
+		return errors.New("native Captain database GORM pool is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.legacy != nil {
+		return errors.New("legacy Captain session cache is already initialized")
+	}
+	if s.native != nil {
+		if s.native == gormDB {
+			return nil
+		}
+		return errors.New("native Captain database is already configured with a different pool")
+	}
+	s.native = gormDB
+	return nil
+}
+
+func (s *sessionStoreState) nativeDatabase() *gorm.DB {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.native
+}
+
+func (s *sessionStoreState) get(opener func() *sessionDB) *sessionDB {
+	s.once.Do(func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.native == nil {
+			s.legacy = opener()
+		}
+	})
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.native != nil {
+		return nil
+	}
+	return s.legacy
 }
 
 func openSessionStore() *sessionDB {
@@ -139,9 +203,35 @@ func openSessionStore() *sessionDB {
 		source = "captain embedded session DB"
 	}
 	log.Debugf("session store using %s", source)
-	gdb, _, err := commonsdb.SetupDB(dsn, "session-cache")
+	gdb, pool, err := commonsdb.SetupDB(dsn, "session-cache")
 	if err != nil {
 		log.Warnf("session store unavailable: %v; continuing uncached", err)
+		return nil
+	}
+	// SetupDB uses the pgx pool to validate connectivity but GORM owns a separate
+	// database/sql pool. The legacy cache only retains the latter.
+	if pool != nil {
+		pool.Close()
+	}
+	return openOwnedLegacySessionStore(gdb)
+}
+
+func openOwnedLegacySessionStore(gdb *gorm.DB) *sessionDB {
+	store := openLegacySessionStore(gdb)
+	if store != nil {
+		return store
+	}
+	if sqlDB, err := gdb.DB(); err != nil {
+		log.Warnf("access unused legacy session database: %v", err)
+	} else if err := sqlDB.Close(); err != nil {
+		log.Warnf("close unused legacy session database: %v", err)
+	}
+	return nil
+}
+
+func openLegacySessionStore(gdb *gorm.DB) *sessionDB {
+	if hasAuthoritativeSessionSchema(gdb) {
+		log.Warnf("authoritative Captain database detected; legacy session cache disabled")
 		return nil
 	}
 	if err := gdb.AutoMigrate(&StoredSession{}, &StoredPrompt{}); err != nil {
@@ -151,7 +241,24 @@ func openSessionStore() *sessionDB {
 	return &sessionDB{gdb: gdb}
 }
 
+// hasAuthoritativeSessionSchema uses lifecycle columns that never existed in
+// the legacy summary cache as an unambiguous guard. Metadata inspection is safe;
+// no native Captain rows are queried.
+func hasAuthoritativeSessionSchema(gdb *gorm.DB) bool {
+	if gdb == nil {
+		return false
+	}
+	migrator := gdb.Migrator()
+	return migrator.HasColumn("captain_sessions", "lifecycle_status") &&
+		migrator.HasColumn("captain_sessions", "activity_state") &&
+		migrator.HasColumn("captain_sessions", "health_state")
+}
+
 func configuredSessionDSN() (dsn string, source string, disabled bool, err error) {
+	if dsn := strings.TrimSpace(os.Getenv(gavelDBEnvDSN)); dsn != "" {
+		return dsn, gavelDBEnvDSN, false, nil
+	}
+
 	if dsn := strings.TrimSpace(os.Getenv(gavelCacheEnvDSN)); dsn != "" {
 		return dsn, gavelCacheEnvDSN, false, nil
 	}
@@ -182,6 +289,9 @@ type gavelDBConfig struct {
 }
 
 func gavelSessionDSN() (string, string, error) {
+	if dsn := strings.TrimSpace(os.Getenv(gavelDBEnvDSN)); dsn != "" {
+		return dsn, gavelDBEnvDSN, nil
+	}
 	if dsn := strings.TrimSpace(os.Getenv(gavelCacheEnvDSN)); dsn != "" {
 		return dsn, gavelCacheEnvDSN, nil
 	}

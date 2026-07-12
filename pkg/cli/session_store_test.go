@@ -8,7 +8,59 @@ import (
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/session"
 	commonsdb "github.com/flanksource/commons-db/db"
+	"gorm.io/gorm"
 )
+
+func TestNativeDatabaseConfigurationSkipsLegacySessionStore(t *testing.T) {
+	shared := &gorm.DB{}
+	var state sessionStoreState
+	opened := false
+
+	if err := state.configureNative(shared); err != nil {
+		t.Fatalf("configureNative: %v", err)
+	}
+	if got := state.get(func() *sessionDB {
+		opened = true
+		return &sessionDB{gdb: &gorm.DB{}}
+	}); got != nil {
+		t.Fatalf("session store = %+v, want nil with native database configured", got)
+	}
+	if opened {
+		t.Fatal("legacy session store opener ran after native database configuration")
+	}
+}
+
+func TestNativeDatabaseConfigurationRejectsInitializedLegacyStore(t *testing.T) {
+	legacy := &sessionDB{gdb: &gorm.DB{}}
+	var state sessionStoreState
+	if got := state.get(func() *sessionDB { return legacy }); got != legacy {
+		t.Fatalf("session store = %+v, want legacy store", got)
+	}
+	if err := state.configureNative(&gorm.DB{}); err == nil {
+		t.Fatal("configureNative accepted an already initialized legacy store")
+	}
+}
+
+func TestNativeDatabaseConfigurationRejectsNil(t *testing.T) {
+	var state sessionStoreState
+	if err := state.configureNative(nil); err == nil {
+		t.Fatal("configureNative accepted a nil database")
+	}
+}
+
+func TestNativeDatabaseConfigurationRejectsReplacementPool(t *testing.T) {
+	var state sessionStoreState
+	first := &gorm.DB{}
+	if err := state.configureNative(first); err != nil {
+		t.Fatalf("configure first native database: %v", err)
+	}
+	if err := state.configureNative(first); err != nil {
+		t.Fatalf("reconfiguring the same native database should be idempotent: %v", err)
+	}
+	if err := state.configureNative(&gorm.DB{}); err == nil {
+		t.Fatal("configureNative accepted a replacement native pool")
+	}
+}
 
 // TestRecordFromRow_ProjectsRichFields verifies the Row→SessionRecord projection
 // carries git/provider/cost/tokens and derives the context-free percent.
@@ -76,19 +128,51 @@ func TestStoredBase_PersistsInlinePlan(t *testing.T) {
 	}
 }
 
-func TestGavelSessionDSNPrefersEnv(t *testing.T) {
-	t.Setenv(gavelCacheEnvDSN, "postgres://env-dsn")
+func TestGavelSessionDSNPrefersPrimaryEnv(t *testing.T) {
+	t.Setenv(gavelDBEnvDSN, "postgres://primary-dsn")
+	t.Setenv(gavelCacheEnvDSN, "postgres://legacy-dsn")
 
 	dsn, source, err := gavelSessionDSN()
 	if err != nil {
 		t.Fatalf("gavelSessionDSN: %v", err)
 	}
-	if dsn != "postgres://env-dsn" || source != gavelCacheEnvDSN {
+	if dsn != "postgres://primary-dsn" || source != gavelDBEnvDSN {
 		t.Fatalf("dsn/source = %q/%q", dsn, source)
 	}
 }
 
-func TestConfiguredSessionDSNPrefersGavelEnvOverCaptainEnv(t *testing.T) {
+func TestGavelSessionDSNFallsBackToLegacyEnv(t *testing.T) {
+	t.Setenv(gavelDBEnvDSN, "")
+	t.Setenv(gavelCacheEnvDSN, "postgres://legacy-dsn")
+
+	dsn, source, err := gavelSessionDSN()
+	if err != nil {
+		t.Fatalf("gavelSessionDSN: %v", err)
+	}
+	if dsn != "postgres://legacy-dsn" || source != gavelCacheEnvDSN {
+		t.Fatalf("dsn/source = %q/%q", dsn, source)
+	}
+}
+
+func TestConfiguredSessionDSNPrefersPrimaryGavelEnv(t *testing.T) {
+	t.Setenv(gavelDBEnvDSN, "postgres://primary-dsn")
+	t.Setenv(gavelCacheEnvDSN, "postgres://gavel-dsn")
+	t.Setenv(captainSessionEnvDSN, "postgres://captain-dsn")
+
+	dsn, source, disabled, err := configuredSessionDSN()
+	if err != nil {
+		t.Fatalf("configuredSessionDSN: %v", err)
+	}
+	if disabled {
+		t.Fatal("configuredSessionDSN unexpectedly disabled")
+	}
+	if dsn != "postgres://primary-dsn" || source != gavelDBEnvDSN {
+		t.Fatalf("dsn/source = %q/%q", dsn, source)
+	}
+}
+
+func TestConfiguredSessionDSNFallsBackToLegacyGavelEnv(t *testing.T) {
+	t.Setenv(gavelDBEnvDSN, "")
 	t.Setenv(gavelCacheEnvDSN, "postgres://gavel-dsn")
 	t.Setenv(captainSessionEnvDSN, "postgres://captain-dsn")
 
@@ -105,6 +189,7 @@ func TestConfiguredSessionDSNPrefersGavelEnvOverCaptainEnv(t *testing.T) {
 }
 
 func TestConfiguredSessionDSNFallsBackToCaptainEnv(t *testing.T) {
+	t.Setenv(gavelDBEnvDSN, "")
 	t.Setenv(gavelCacheEnvDSN, "")
 	t.Setenv(captainSessionEnvDSN, "postgres://captain-dsn")
 
@@ -123,6 +208,7 @@ func TestConfiguredSessionDSNFallsBackToCaptainEnv(t *testing.T) {
 func TestGavelSessionDSNFromDBConfig(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv(gavelDBEnvDSN, "")
 	t.Setenv(gavelCacheEnvDSN, "")
 	dir := filepath.Join(home, ".config", "gavel")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
