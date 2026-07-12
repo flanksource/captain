@@ -1,0 +1,267 @@
+package migrations
+
+import (
+	"context"
+	"errors"
+	"io/fs"
+	"reflect"
+	"strings"
+	"testing"
+)
+
+func TestSchemaBundleContainsGavelIntegrationContract(t *testing.T) {
+	t.Parallel()
+
+	expectedFiles := []string{
+		"00_types.pg.hcl",
+		"10_sessions.pg.hcl",
+		"20_prompt_runs_and_plans.pg.hcl",
+		"30_execution.pg.hcl",
+		"40_artifacts_and_outbox.pg.hcl",
+		"50_views_and_triggers.sql",
+	}
+	for _, name := range expectedFiles {
+		if _, err := fs.Stat(schemaFS, name); err != nil {
+			t.Errorf("embedded migration %s: %v", name, err)
+		}
+	}
+
+	assertContainsAll(t, "10_sessions.pg.hcl",
+		`table "captain_sessions"`,
+		`column "id"`,
+		`column "lifecycle_status"`,
+		`column "activity_state"`,
+		`column "health_state"`,
+		`column "state_version"`,
+	)
+	assertContainsAll(t, "20_prompt_runs_and_plans.pg.hcl",
+		`table "captain_prompt_runs"`,
+		`column "session_id"`,
+		`column "root_session_id"`,
+		`column "phase"`,
+		`column "state"`,
+		`table "captain_prompt_run_iterations"`,
+		`column "prompt_run_id"`,
+		`table "captain_plans"`,
+		`column "approved_revision_id"`,
+		`table "captain_plan_revisions"`,
+		`column "plan_id"`,
+	)
+	assertContainsAll(t, "30_execution.pg.hcl",
+		`table "captain_turns"`,
+		`column "session_id"`,
+		`table "captain_model_calls"`,
+		`column "turn_id"`,
+		`column "prompt_run_id"`,
+		`column "iteration_id"`,
+		`table "captain_events"`,
+		`table "captain_turn_requests"`,
+		`column "state"`,
+		`column "version"`,
+	)
+	assertContainsAll(t, "50_views_and_triggers.sql",
+		"-- phase: post",
+		"-- runs: always",
+		"CREATE OR REPLACE VIEW public.captain_session_overview",
+		"CREATE OR REPLACE VIEW public.captain_session_turns",
+		"CREATE OR REPLACE VIEW public.captain_session_plans",
+		"CREATE OR REPLACE VIEW public.captain_session_costs",
+		"CREATE OR REPLACE VIEW public.captain_session_events",
+		"CREATE OR REPLACE VIEW public.captain_prompt_run_overview",
+	)
+}
+
+func TestLegacySessionSchemaDetection(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		columns map[string]string
+		legacy  bool
+	}{
+		{name: "fresh database", columns: map[string]string{}},
+		{name: "unrelated table shape", columns: map[string]string{"id": "text"}},
+		{
+			name: "authoritative schema",
+			columns: map[string]string{
+				"id": "uuid", "path": "text", "lifecycle_status": "USER-DEFINED",
+				"activity_state": "USER-DEFINED", "health_state": "USER-DEFINED",
+			},
+		},
+		{
+			name:    "legacy GORM cache",
+			columns: map[string]string{"id": "text", "path": "text", "mod_unix": "bigint"},
+			legacy:  true,
+		},
+		{
+			name:    "partial native conversion",
+			columns: map[string]string{"id": "uuid", "path": "text", "lifecycle_status": "USER-DEFINED"},
+			legacy:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := isLegacySessionSchema(tt.columns); got != tt.legacy {
+				t.Fatalf("isLegacySessionSchema() = %v, want %v", got, tt.legacy)
+			}
+		})
+	}
+}
+
+func TestApplyRejectsEmptyConnectionBeforePreflight(t *testing.T) {
+	t.Parallel()
+	if err := Apply(t.Context(), "  "); err == nil {
+		t.Fatal("Apply unexpectedly accepted an empty connection string")
+	}
+}
+
+func TestApplyHoldsMigrationLockAcrossPreflightAndMigration(t *testing.T) {
+	t.Parallel()
+
+	var events []string
+	err := apply(t.Context(), "postgres://captain", applyDependencies{
+		acquireLock: func(context.Context, string) (migrationLockHandle, error) {
+			events = append(events, "lock")
+			return &recordingMigrationLock{events: &events}, nil
+		},
+		rejectLegacy: func(context.Context, string) error {
+			events = append(events, "preflight")
+			return nil
+		},
+		migrate: func(context.Context, string) error {
+			events = append(events, "migrate")
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	assertEventsEqual(t, events, []string{"lock", "preflight", "migrate", "unlock"})
+}
+
+func TestApplyReleasesMigrationLockOnEveryFailurePath(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		preflight  error
+		migration  error
+		wantEvents []string
+	}{
+		{
+			name:       "legacy preflight",
+			preflight:  ErrLegacySessionSchema,
+			wantEvents: []string{"lock", "preflight", "unlock"},
+		},
+		{
+			name:       "schema migration",
+			migration:  errors.New("atlas failed"),
+			wantEvents: []string{"lock", "preflight", "migrate", "unlock"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var events []string
+			err := apply(t.Context(), "postgres://captain", applyDependencies{
+				acquireLock: func(context.Context, string) (migrationLockHandle, error) {
+					events = append(events, "lock")
+					return &recordingMigrationLock{events: &events}, nil
+				},
+				rejectLegacy: func(context.Context, string) error {
+					events = append(events, "preflight")
+					return tt.preflight
+				},
+				migrate: func(context.Context, string) error {
+					events = append(events, "migrate")
+					return tt.migration
+				},
+			})
+			wantErr := tt.preflight
+			if wantErr == nil {
+				wantErr = tt.migration
+			}
+			if !errors.Is(err, wantErr) {
+				t.Fatalf("apply error = %v, want errors.Is(_, %v)", err, wantErr)
+			}
+			assertEventsEqual(t, events, tt.wantEvents)
+		})
+	}
+}
+
+func TestApplyReportsLockAcquisitionAndReleaseErrors(t *testing.T) {
+	t.Parallel()
+
+	t.Run("acquire", func(t *testing.T) {
+		t.Parallel()
+		wantErr := errors.New("lock unavailable")
+		err := apply(t.Context(), "postgres://captain", applyDependencies{
+			acquireLock: func(context.Context, string) (migrationLockHandle, error) {
+				return nil, wantErr
+			},
+		})
+		if !errors.Is(err, wantErr) || !strings.Contains(err.Error(), "acquire Captain migration lock") {
+			t.Fatalf("apply error = %v, want acquisition error", err)
+		}
+	})
+
+	t.Run("release joined with migration error", func(t *testing.T) {
+		t.Parallel()
+		migrationErr := errors.New("migration failed")
+		releaseErr := errors.New("unlock failed")
+		err := apply(t.Context(), "postgres://captain", applyDependencies{
+			acquireLock: func(context.Context, string) (migrationLockHandle, error) {
+				return &recordingMigrationLock{err: releaseErr}, nil
+			},
+			rejectLegacy: func(context.Context, string) error { return nil },
+			migrate:      func(context.Context, string) error { return migrationErr },
+		})
+		if !errors.Is(err, migrationErr) || !errors.Is(err, releaseErr) {
+			t.Fatalf("apply error = %v, want joined migration and release errors", err)
+		}
+	})
+}
+
+func TestCaptainMigrationLockKeyIsStable(t *testing.T) {
+	t.Parallel()
+	if captainMigrationLockNamespace != 0x43415054 || captainMigrationLockKey != 0x4d494752 {
+		t.Fatalf("Captain migration lock key changed: namespace=%#x key=%#x",
+			captainMigrationLockNamespace, captainMigrationLockKey)
+	}
+}
+
+type recordingMigrationLock struct {
+	events *[]string
+	err    error
+}
+
+func (lock *recordingMigrationLock) Close() error {
+	if lock.events != nil {
+		*lock.events = append(*lock.events, "unlock")
+	}
+	return lock.err
+}
+
+func assertEventsEqual(t *testing.T, got, want []string) {
+	t.Helper()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("events = %v, want %v", got, want)
+	}
+}
+
+func assertContainsAll(t *testing.T, name string, expected ...string) {
+	t.Helper()
+	data, err := fs.ReadFile(schemaFS, name)
+	if err != nil {
+		t.Fatalf("read embedded migration %s: %v", name, err)
+	}
+	content := string(data)
+	for _, value := range expected {
+		if !strings.Contains(content, value) {
+			t.Errorf("%s does not contain %q", name, value)
+		}
+	}
+}
