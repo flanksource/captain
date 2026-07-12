@@ -82,6 +82,47 @@ func TestBuildCodexSession_AttachesLatestInlinePlan(t *testing.T) {
 	}
 }
 
+func TestBuildCodexSession_TaggedPlanPrecedesTodosAndCitationIsMetadata(t *testing.T) {
+	ts := time.Date(2026, 7, 10, 10, 0, 0, 0, time.UTC)
+	uses := []history.ToolUse{
+		{Tool: "TodoWrite", Input: map[string]any{"todos": []any{
+			map[string]any{"step": "short checklist", "status": "in_progress"},
+		}}, Timestamp: &ts, SessionID: "cx-tagged", TurnID: "turn-1", Source: "codex"},
+		{Tool: "Plan", Input: map[string]any{"content": "# Detailed plan\n\nShip it", "tag": "proposed_plan"}, Timestamp: &ts, SessionID: "cx-tagged", TurnID: "turn-1", Source: "codex"},
+		{Tool: "Assistant", Input: map[string]any{"text": "Source used: https://example.com"}, Timestamp: &ts, SessionID: "cx-tagged", TurnID: "turn-1", Source: "codex"},
+		{Tool: "MemoryCitation", Input: map[string]any{
+			"event":            "memory_citation",
+			"source":           "codex",
+			"citation_entries": []string{"MEMORY.md:10-12|note=[parser seam]"},
+			"rollout_ids":      []string{"019f3754-ecfa-7323-a76b-a0205ea30bbe"},
+		}, Timestamp: &ts, SessionID: "cx-tagged", TurnID: "turn-1", Source: "codex"},
+	}
+
+	s := buildCodexSession(uses, &history.CodexSessionInfo{ID: "cx-tagged", CWD: "/repo"})
+	if s.Plan == nil || s.Plan.Content != "# Detailed plan\n\nShip it" || !s.Plan.Explicit {
+		t.Fatalf("plan = %+v", s.Plan)
+	}
+	if len(s.Plan.Events) != 1 || s.Plan.Events[0].Kind != PlanWrite {
+		t.Fatalf("plan events = %+v", s.Plan.Events)
+	}
+	if len(s.Events) != 1 || s.Events[0].Type != "memory_citation" || s.Events[0].Scope != "session" || s.Events[0].TurnID != "turn-1" {
+		t.Fatalf("session events = %+v", s.Events)
+	}
+	if got := s.Events[0].Data["citation_entries"]; len(got.([]string)) != 1 {
+		t.Fatalf("citation entries = %#v", got)
+	}
+	var foundPlan, foundAssistant bool
+	for _, message := range s.Messages {
+		for _, part := range message.Parts {
+			foundPlan = foundPlan || part.ToolName == "Plan"
+			foundAssistant = foundAssistant || part.Text == "Source used: https://example.com"
+		}
+	}
+	if !foundPlan || !foundAssistant {
+		t.Fatalf("messages = %+v", s.Messages)
+	}
+}
+
 func TestBuildCodexSession_MapsUserMessagesAndEvents(t *testing.T) {
 	stream := strings.Join([]string{
 		`{"timestamp":"2026-07-08T11:19:57.028Z","type":"session_meta","payload":{"id":"sess-rollout","cwd":"/repo","cli_version":"0.143.0","model_provider":"openai"}}`,
@@ -117,6 +158,29 @@ func TestBuildCodexSession_MapsUserMessagesAndEvents(t *testing.T) {
 	}
 	if len(s.Turns[0].Events) != 2 || s.Turns[0].Events[0].Type != "task_started" || s.Turns[0].Events[1].Type != "task_complete" {
 		t.Fatalf("turn events = %+v", s.Turns[0].Events)
+	}
+}
+
+func TestBuildCodexSession_DerivesIdentityAfterSystemInstructions(t *testing.T) {
+	stream := strings.Join([]string{
+		`{"timestamp":"2026-07-10T09:49:37.000Z","type":"session_meta","payload":{"id":"sess-identity","cwd":"/repo"}}`,
+		`{"timestamp":"2026-07-10T09:49:37.100Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# AGENTS.md instructions for /repo\n\nAlways test."}]}}`,
+		`{"timestamp":"2026-07-10T09:49:37.200Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Improve   the Codex session parser\nwith a useful title"}]}}`,
+	}, "\n")
+	uses, err := history.ExtractCodexToolUsesFromReader(strings.NewReader(stream))
+	if err != nil {
+		t.Fatalf("ExtractCodexToolUsesFromReader: %v", err)
+	}
+
+	s := buildCodexSession(uses, &history.CodexSessionInfo{ID: "sess-identity", CWD: "/repo"})
+	if len(s.Messages) != 2 || s.Messages[0].Role != "system" || s.Messages[1].Role != "user" {
+		t.Fatalf("message roles = %+v, want system then user", s.Messages)
+	}
+	if got, want := s.InitialPrompt, "Improve   the Codex session parser\nwith a useful title"; got != want {
+		t.Fatalf("initial prompt = %q, want %q", got, want)
+	}
+	if got, want := s.Title, "Improve the Codex session parser with a useful title"; got != want {
+		t.Fatalf("title = %q, want %q", got, want)
 	}
 }
 

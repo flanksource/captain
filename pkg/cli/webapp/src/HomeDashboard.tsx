@@ -1,4 +1,4 @@
-import { useMemo, useState, type ComponentProps, type KeyboardEvent, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Button,
@@ -7,21 +7,15 @@ import {
 } from "@flanksource/clicky-ui/components";
 import {
   Icon,
-  ProgressBars,
   TimeseriesPanel,
   UiActivity,
-  UiArrowDown,
-  UiArrowUp,
-  UiBrain,
   UiChartBar,
   UiChip,
   UiClock,
-  UiCopy,
   UiHistory,
   UiMemoryStick,
   UiRefresh,
   UiRobotAi,
-  UiSparkles,
   UiTerminal,
   type TimeseriesResponse,
   type TimeseriesSeries,
@@ -41,38 +35,40 @@ import {
   sessionSortTime,
   sessionTitle,
   type SessionDashboard,
-  type SessionLive,
   type SessionRecord,
   type SessionThroughputGroup,
   type SessionThroughputResult,
   type ProjectScope,
   type SourceFilter,
 } from "./sessionData";
+import {
+  ContextCell,
+  ProjectGroupHeader,
+  SessionActions,
+  SessionIdentity,
+  SessionTable,
+  UsageBarsCell,
+  compareSessions,
+  defaultSortDirection,
+  effortLabel,
+  formatRelativeTime,
+  groupSessionsByProject,
+  hasLiveProcess,
+  modelIcon,
+  type DashboardSort,
+  type ProjectSessionGroup,
+  type SessionIcon,
+  type SortDirection,
+} from "./SessionTable";
 import { withProjectScope } from "./shellHelpers";
 
 type DashboardView = "list" | "cards";
-type DashboardSort = "model" | "health" | "context" | "cpu" | "memory" | "tokens" | "recent";
-type SortDirection = "asc" | "desc";
 type Navigate = (to: string, opts?: { replace?: boolean }) => void;
-type DashboardIcon = NonNullable<ComponentProps<typeof Icon>["icon"]>;
-type LiveSessionRecord = SessionRecord & { live: SessionLive };
-type ProjectSessionGroup = {
-  key: string;
-  label: string;
-  detail?: string;
-  sessions: LiveSessionRecord[];
-};
+type DashboardIcon = SessionIcon;
 type ThroughputMetric = "outputTokensPerSecond" | "contextTokensPerSecond";
 type ThroughputChartModel = {
   series: TimeseriesSeries[];
   responses: Record<string, TimeseriesResponse>;
-};
-
-const PERCENT_UNIT = {
-  perBar: 25,
-  label: "%",
-  barLabel: "25%",
-  format: (units: number) => `${Math.round(units * 25)}`,
 };
 
 const VIEW_OPTIONS = [
@@ -89,20 +85,6 @@ const SORT_OPTIONS = [
   { id: "tokens", label: "Tokens" },
   { id: "recent", label: "Recent" },
 ] satisfies Array<{ id: DashboardSort; label: string }>;
-
-const SESSION_GRID_CLASS =
-  "grid grid-cols-[minmax(12rem,1.4fr)_5.25rem_6.25rem] sm:grid-cols-[minmax(13rem,1.5fr)_5.25rem_6.25rem_6.25rem] lg:grid-cols-[minmax(15rem,1.6fr)_5.5rem_7rem_7rem_7rem_6rem_7rem_5.5rem]";
-
-const SESSION_COLUMNS = [
-  { label: "Model", sort: "model" },
-  { label: "Status", sort: "health" },
-  { label: "CPU", sort: "cpu" },
-  { label: "Memory", sort: "memory" },
-  { label: "Context", sort: "context" },
-  { label: "Tokens", sort: "tokens" },
-  { label: "Updated", sort: "recent" },
-  { label: "Actions" },
-] satisfies Array<{ label: string; sort?: DashboardSort }>;
 
 const EMPTY_SESSIONS: SessionRecord[] = [];
 const EMPTY_THROUGHPUT_GROUPS: SessionThroughputGroup[] = [];
@@ -571,109 +553,6 @@ function ThroughputTable({ groups }: { groups: SessionThroughputGroup[] }) {
   );
 }
 
-function SessionTable({
-  groups,
-  sort,
-  sortDirection,
-  onSortChange,
-  onOpen,
-}: {
-  groups: ProjectSessionGroup[];
-  sort: DashboardSort;
-  sortDirection: SortDirection;
-  onSortChange: (sort: DashboardSort) => void;
-  onOpen: (session: SessionRecord) => void;
-}) {
-  return (
-    <div className="min-w-0 max-w-[72rem] overflow-hidden rounded border border-border">
-      <div className={`${SESSION_GRID_CLASS} border-b border-border bg-muted/40 px-density-3 py-2 text-[11px] font-medium uppercase text-muted-foreground`}>
-        {SESSION_COLUMNS.map((column) => (
-          <SessionHeaderCell
-            key={column.label}
-            column={column}
-            sort={sort}
-            sortDirection={sortDirection}
-            onSortChange={onSortChange}
-          />
-        ))}
-      </div>
-      <div>
-        {groups.map((group) => (
-          <section key={group.key} className="border-b border-border last:border-b-0">
-            <ProjectGroupHeader group={group} />
-            <div className="divide-y divide-border">
-              {group.sessions.map((session) => (
-                <div
-                  key={session.key}
-                  role={session.detailAvailable === false ? undefined : "button"}
-                  tabIndex={session.detailAvailable === false ? undefined : 0}
-                  onClick={() => activateSession(session, onOpen)}
-                  onKeyDown={(event) => handleSessionKeyDown(event, session, onOpen)}
-                  className={`${SESSION_GRID_CLASS} cursor-pointer items-center gap-density-2 px-density-3 py-density-2 text-sm transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[disabled=true]:cursor-default data-[disabled=true]:hover:bg-transparent`}
-                  data-disabled={session.detailAvailable === false ? "true" : undefined}
-                >
-                  <SessionIdentity session={session} />
-                  <StatusCell session={session} />
-                  <UsageBarsCell
-                    title="CPU"
-                    value={session.live.cpuPercent}
-                    icon={UiChip}
-                    thresholds={[60, 85]}
-                  />
-                  <UsageBarsCell
-                    title="Memory"
-                    value={session.live.memoryPercent}
-                    icon={UiMemoryStick}
-                    thresholds={[70, 90]}
-                  />
-                  <ContextCell session={session} />
-                  <MetricText value={formatCompactNumber(session.tokens?.totalTokens ?? 0)} />
-                  <MetricText value={formatRelativeTime(session.endedAt ?? session.startedAt)} />
-                  <SessionActions session={session} onOpen={onOpen} />
-                </div>
-              ))}
-            </div>
-          </section>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function SessionHeaderCell({
-  column,
-  sort,
-  sortDirection,
-  onSortChange,
-}: {
-  column: (typeof SESSION_COLUMNS)[number];
-  sort: DashboardSort;
-  sortDirection: SortDirection;
-  onSortChange: (sort: DashboardSort) => void;
-}) {
-  if (!column.sort) {
-    return <div className="truncate px-1">{column.label}</div>;
-  }
-
-  const active = sort === column.sort;
-  return (
-    <button
-      type="button"
-      aria-pressed={active}
-      onClick={() => onSortChange(column.sort)}
-      className="inline-flex min-w-0 items-center gap-1 rounded px-1 py-0.5 text-left uppercase transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-    >
-      <span className="truncate">{column.label}</span>
-      {active ? (
-        <Icon
-          icon={sortDirection === "asc" ? UiArrowUp : UiArrowDown}
-          className="size-3 shrink-0"
-        />
-      ) : null}
-    </button>
-  );
-}
-
 function SessionCardGrid({
   groups,
   onOpen,
@@ -692,8 +571,8 @@ function SessionCardGrid({
                 key={session.key}
                 role={session.detailAvailable === false ? undefined : "button"}
                 tabIndex={session.detailAvailable === false ? undefined : 0}
-                onClick={() => activateSession(session, onOpen)}
-                onKeyDown={(event) => handleSessionKeyDown(event, session, onOpen)}
+                onClick={() => session.detailAvailable !== false && onOpen(session)}
+                onKeyDown={(event) => handleCardKeyDown(event, session, onOpen)}
                 className="min-w-0 cursor-pointer rounded border border-border bg-card p-density-3 transition-colors hover:border-muted-foreground/40 hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[disabled=true]:cursor-default data-[disabled=true]:hover:border-border data-[disabled=true]:hover:bg-card"
                 data-disabled={session.detailAvailable === false ? "true" : undefined}
               >
@@ -702,7 +581,7 @@ function SessionCardGrid({
                   <SessionActions session={session} onOpen={onOpen} compact />
                 </div>
                 <div className="mt-density-3 grid grid-cols-2 gap-density-2 text-xs">
-                  <MetricBox label="Status" value={session.live.status ?? "active"} />
+                  <MetricBox label="Status" value={session.live?.status ?? "active"} />
                   <MetricBox
                     label="Tokens"
                     value={formatCompactNumber(session.tokens?.totalTokens ?? 0)}
@@ -712,7 +591,7 @@ function SessionCardGrid({
                     value={
                       <UsageBarsCell
                         title="CPU"
-                        value={session.live.cpuPercent}
+                        value={session.live?.cpuPercent}
                         icon={UiChip}
                         thresholds={[60, 85]}
                       />
@@ -723,7 +602,7 @@ function SessionCardGrid({
                     value={
                       <UsageBarsCell
                         title="Memory"
-                        value={session.live.memoryPercent}
+                        value={session.live?.memoryPercent}
                         icon={UiMemoryStick}
                         thresholds={[70, 90]}
                       />
@@ -735,9 +614,11 @@ function SessionCardGrid({
                 <div className="mt-density-3">
                   <ContextCell session={session} expanded />
                 </div>
-                <div className="mt-density-2 truncate text-[11px] text-muted-foreground">
-                  {commandLabel(session.live.command)}
-                </div>
+                {session.live?.command ? (
+                  <div className="mt-density-2 truncate text-[11px] text-muted-foreground">
+                    {commandLabel(session.live.command)}
+                  </div>
+                ) : null}
               </div>
             ))}
           </div>
@@ -747,168 +628,15 @@ function SessionCardGrid({
   );
 }
 
-function ProjectGroupHeader({ group }: { group: ProjectSessionGroup }) {
-  return (
-    <div className="flex min-w-0 items-center justify-between gap-density-2 bg-muted/20 px-density-3 py-2 text-xs">
-      <div className="min-w-0">
-        <div className="truncate font-semibold">{group.label}</div>
-        {group.detail ? (
-          <div className="mt-0.5 truncate text-[11px] text-muted-foreground">{group.detail}</div>
-        ) : null}
-      </div>
-      <div className="shrink-0 rounded border border-border bg-background px-2 py-0.5 text-[11px] text-muted-foreground">
-        {group.sessions.length}
-      </div>
-    </div>
-  );
-}
-
-function UsageBarsCell({
-  title,
-  value,
-  icon,
-  thresholds,
-}: {
-  title: string;
-  value: number | undefined;
-  icon: DashboardIcon;
-  thresholds: [warning: number, danger: number];
-}) {
-  return (
-    <div className="flex min-w-0 flex-col items-start gap-1">
-      <ProgressBars
-        variant="cell"
-        title={title}
-        icon={icon}
-        usage={value}
-        max={100}
-        unit={PERCENT_UNIT}
-        thresholds={thresholds}
-        showValue={false}
-        orientation="vertical"
-        hoverCard={false}
-        className="max-w-full"
-      />
-      <span className="text-[11px] tabular-nums text-muted-foreground">
-        {formatPercent(value)}
-      </span>
-    </div>
-  );
-}
-
-function SessionIdentity({ session }: { session: SessionRecord }) {
-  const model = modelLabel(session);
-  const effort = effortLabel(session.reasoningEffort);
-  return (
-    <div className="min-w-0">
-      <div className="flex min-w-0 items-center gap-1.5">
-        <span className="grid size-6 shrink-0 place-items-center rounded border border-border bg-muted/50 text-muted-foreground">
-          <Icon icon={modelIcon(session)} className="size-3.5" />
-        </span>
-        <span className="min-w-0 truncate text-sm font-medium">{model}</span>
-        <span className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] uppercase text-muted-foreground">
-          {session.source}
-        </span>
-      </div>
-      <div className="mt-1 flex min-w-0 items-center gap-2 text-[11px] text-muted-foreground">
-        {effort ? (
-          <span className="inline-flex min-w-0 items-center gap-1">
-            <Icon icon={UiBrain} className="size-3 shrink-0" />
-            <span className="truncate">{effort}</span>
-          </span>
-        ) : null}
-        <span className="truncate">{sessionTitle(session)}</span>
-      </div>
-      <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
-        {session.live?.pid ? `pid ${session.live.pid} - ` : ""}
-        {commandLabel(session.live?.command)}
-      </div>
-    </div>
-  );
-}
-
-function StatusCell({ session }: { session: SessionRecord & { live: SessionLive } }) {
-  const signal = session.health?.[0];
-  return (
-    <div className="min-w-0">
-      <div className="flex min-w-0 items-center gap-1.5">
-        <span
-          className={`h-2 w-2 shrink-0 rounded-full ${signal ? healthDotClassName(signal.severity) : "bg-emerald-500"}`}
-        />
-        <span className="truncate text-xs font-medium">{session.live.status ?? "active"}</span>
-      </div>
-    </div>
-  );
-}
-
-function ContextCell({
-  session,
-  expanded = false,
-}: {
-  session: SessionRecord;
-  expanded?: boolean;
-}) {
-  const percent = session.context?.freePercent;
-  if (percent === undefined) {
-    return <MetricText value="--" />;
-  }
-  return (
-    <div className="min-w-0">
-      <div className="flex items-center justify-between gap-2 text-xs">
-        <span className={contextTone(percent)}>{percent}% free</span>
-        {expanded && session.context?.windowTokens ? (
-          <span className="text-muted-foreground">
-            {formatCompactNumber(session.context.windowTokens)}
-          </span>
-        ) : null}
-      </div>
-      <div className="mt-1 h-1.5 overflow-hidden rounded bg-muted">
-        <div
-          className={`h-full rounded ${contextBarTone(percent)}`}
-          style={{ width: `${Math.max(0, Math.min(100, percent))}%` }}
-        />
-      </div>
-    </div>
-  );
-}
-
-function SessionActions({
-  session,
-  onOpen,
-  compact = false,
-}: {
-  session: SessionRecord;
-  onOpen: (session: SessionRecord) => void;
-  compact?: boolean;
-}) {
-  return (
-    <div className="flex shrink-0 items-center gap-1">
-      <Button
-        size="sm"
-        variant="ghost"
-        disabled={session.detailAvailable === false}
-        onClick={(event) => {
-          event.stopPropagation();
-          onOpen(session);
-        }}
-        aria-label="Open session history"
-      >
-        <Icon icon={UiHistory} className="size-4" />
-        {compact ? null : "Open"}
-      </Button>
-      <Button
-        size="sm"
-        variant="ghost"
-        onClick={(event) => {
-          event.stopPropagation();
-          copySessionRef(session);
-        }}
-        aria-label="Copy session reference"
-      >
-        <Icon icon={UiCopy} className="size-4" />
-      </Button>
-    </div>
-  );
+function handleCardKeyDown(
+  event: React.KeyboardEvent<HTMLDivElement>,
+  session: SessionRecord,
+  onOpen: (session: SessionRecord) => void,
+) {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  if (session.detailAvailable === false) return;
+  event.preventDefault();
+  onOpen(session);
 }
 
 function HealthPanel({
@@ -1041,89 +769,6 @@ function MetricBox({ label, value }: { label: string; value: ReactNode }) {
   );
 }
 
-function MetricText({ value }: { value: ReactNode }) {
-  return <div className="truncate text-xs text-muted-foreground">{value}</div>;
-}
-
-function hasLiveProcess(session: SessionRecord): session is LiveSessionRecord {
-  return Boolean(session.live);
-}
-
-function compareSessions(
-  left: LiveSessionRecord,
-  right: LiveSessionRecord,
-  sort: DashboardSort,
-  direction: SortDirection,
-) {
-  if (sort === "model") {
-    return directionalCompare(
-      modelLabel(left).localeCompare(modelLabel(right)) ||
-        sessionSortTime(right) - sessionSortTime(left),
-      direction,
-      "asc",
-    );
-  }
-  if (sort === "context") {
-    return directionalCompare(
-      (left.context?.freePercent ?? 101) - (right.context?.freePercent ?? 101) ||
-        sessionSortTime(right) - sessionSortTime(left),
-      direction,
-      "asc",
-    );
-  }
-  if (sort === "cpu") {
-    return directionalCompare(
-      (right.live.cpuPercent ?? -1) - (left.live.cpuPercent ?? -1) ||
-        sessionSortTime(right) - sessionSortTime(left),
-      direction,
-      "desc",
-    );
-  }
-  if (sort === "memory") {
-    return directionalCompare(
-      (right.live.memoryPercent ?? -1) - (left.live.memoryPercent ?? -1) ||
-        sessionSortTime(right) - sessionSortTime(left),
-      direction,
-      "desc",
-    );
-  }
-  if (sort === "tokens") {
-    return directionalCompare(
-      tokenTotal(right) - tokenTotal(left) ||
-        sessionSortTime(right) - sessionSortTime(left),
-      direction,
-      "desc",
-    );
-  }
-  if (sort === "recent") {
-    return directionalCompare(
-      sessionSortTime(right) - sessionSortTime(left),
-      direction,
-      "desc",
-    );
-  }
-  return directionalCompare(
-    healthRank(right) - healthRank(left) ||
-    (left.context?.freePercent ?? 101) - (right.context?.freePercent ?? 101) ||
-    (right.live.cpuPercent ?? -1) - (left.live.cpuPercent ?? -1) ||
-      sessionSortTime(right) - sessionSortTime(left),
-    direction,
-    "desc",
-  );
-}
-
-function directionalCompare(value: number, direction: SortDirection, natural: SortDirection) {
-  return direction === natural ? value : -value;
-}
-
-function defaultSortDirection(sort: DashboardSort): SortDirection {
-  return sort === "model" || sort === "context" ? "asc" : "desc";
-}
-
-function tokenTotal(session: SessionRecord) {
-  return session.tokens?.totalTokens ?? 0;
-}
-
 function buildThroughputChart(
   groups: SessionThroughputGroup[],
   metric: ThroughputMetric,
@@ -1188,76 +833,6 @@ function hashThroughputGroup(group: SessionThroughputGroup) {
   return hash.toString(36);
 }
 
-function groupSessionsByProject(sessions: LiveSessionRecord[]): ProjectSessionGroup[] {
-  const groups = new Map<string, ProjectSessionGroup>();
-
-  for (const session of sessions) {
-    const cwd = session.live.cwd ?? session.cwd;
-    const key = cwd || "unknown";
-    const label = projectLabel(cwd);
-    const existing = groups.get(key);
-
-    if (existing) {
-      existing.sessions.push(session);
-      continue;
-    }
-
-    groups.set(key, {
-      key,
-      label,
-      detail: cwd && cwd !== label ? cwd : undefined,
-      sessions: [session],
-    });
-  }
-
-  return [...groups.values()];
-}
-
-function activateSession(session: SessionRecord, onOpen: (session: SessionRecord) => void) {
-  if (session.detailAvailable === false) return;
-  onOpen(session);
-}
-
-function handleSessionKeyDown(
-  event: KeyboardEvent<HTMLDivElement>,
-  session: SessionRecord,
-  onOpen: (session: SessionRecord) => void,
-) {
-  if (event.key !== "Enter" && event.key !== " ") return;
-  event.preventDefault();
-  activateSession(session, onOpen);
-}
-
-function modelLabel(session: { model?: string; provider?: string; source?: string }) {
-  return session.model || session.provider || session.source || "";
-}
-
-function modelIcon(session: { model?: string; provider?: string; source?: string }): DashboardIcon {
-  const value = `${session.provider ?? ""} ${session.model ?? ""} ${session.source}`.toLowerCase();
-  if (value.includes("claude") || value.includes("anthropic")) return UiSparkles;
-  if (value.includes("codex") || value.includes("openai") || value.includes("gpt")) return UiRobotAi;
-  return UiTerminal;
-}
-
-function effortLabel(value: string | undefined) {
-  return value ? value.replace(/_/g, " ") : undefined;
-}
-
-function formatPercent(value: number | undefined) {
-  return value === undefined ? "--" : `${value.toFixed(1)}%`;
-}
-
-function formatRelativeTime(value: string | undefined) {
-  if (!value) return "--";
-  const time = new Date(value).getTime();
-  if (Number.isNaN(time)) return value;
-  const delta = Date.now() - time;
-  if (delta < 60_000) return "now";
-  if (delta < 3_600_000) return `${Math.round(delta / 60_000)}m ago`;
-  if (delta < 86_400_000) return `${Math.round(delta / 3_600_000)}h ago`;
-  return `${Math.round(delta / 86_400_000)}d ago`;
-}
-
 function formatRate(value: number) {
   if (!Number.isFinite(value) || value <= 0) return "0/s";
   if (value >= 1000) return `${formatCompactNumber(Math.round(value))}/s`;
@@ -1272,22 +847,4 @@ function formatOptionalRate(value: number | undefined) {
 function formatOptionalPercent(value: number | undefined) {
   if (value === undefined || !Number.isFinite(value) || value <= 0) return "--";
   return `${value.toFixed(value >= 10 ? 0 : 1)}%`;
-}
-
-function contextTone(percent: number) {
-  if (percent <= 10) return "font-medium text-destructive";
-  if (percent <= 25) return "font-medium text-amber-700";
-  return "font-medium text-emerald-700";
-}
-
-function contextBarTone(percent: number) {
-  if (percent <= 10) return "bg-destructive";
-  if (percent <= 25) return "bg-amber-500";
-  return "bg-emerald-500";
-}
-
-function copySessionRef(session: SessionRecord) {
-  if (!navigator.clipboard) return;
-  const value = session.live?.pid ? `${session.source}:${session.live.pid}` : session.key;
-  void navigator.clipboard.writeText(value).catch(() => undefined);
 }

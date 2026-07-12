@@ -53,8 +53,8 @@ func fileSize(path string) int64 {
 }
 
 // sessionTailer follows a Claude session log, streaming each parsed event to a
-// callback until the assistant turn ends, the log goes quiet, or the context is
-// cancelled.
+// callback until the assistant turn ends, pauses for a structured user question,
+// the log goes quiet, or the context is cancelled.
 type sessionTailer struct {
 	path          string
 	pollInterval  time.Duration
@@ -149,7 +149,7 @@ func (st sessionTailer) drain(f *os.File, pending *[]byte, buf []byte, onEvent f
 					// EventTurnEnd is a normal completion; EventError is a terminal
 					// API/network failure. Both end the tail — the caller distinguishes
 					// success from failure from the events it saw.
-					if ev.Kind == history.EventTurnEnd || ev.Kind == history.EventError {
+					if ev.Kind == history.EventTurnEnd || ev.Kind == history.EventError || isUserQuestionEvent(ev) {
 						return progressed, true, nil
 					}
 				}
@@ -162,6 +162,10 @@ func (st sessionTailer) drain(f *os.File, pending *[]byte, buf []byte, onEvent f
 			return progressed, false, rerr
 		}
 	}
+}
+
+func isUserQuestionEvent(ev history.SessionEvent) bool {
+	return ev.Kind == history.EventToolUse && ev.ToolUse.Tool == "AskUserQuestion"
 }
 
 // waitForFile polls until the session log exists or the appear timeout elapses.

@@ -146,6 +146,21 @@ func TestRunSessionListCodexScope(t *testing.T) {
 	}
 }
 
+func TestSessionMatchesQueryIncludesIdentity(t *testing.T) {
+	record := SessionRecord{
+		ID:            "session-1",
+		Source:        "codex",
+		Project:       "captain",
+		Title:         "Improve session identity",
+		InitialPrompt: "Show the initial user request in the listing",
+	}
+	for _, query := range []string{"captain", "identity", "initial user request"} {
+		if !sessionMatchesQuery(record, query) {
+			t.Fatalf("query %q did not match %+v", query, record)
+		}
+	}
+}
+
 func TestRunSessionGetUnknown(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   AppShell,
@@ -13,16 +13,21 @@ import { CAPTAIN_SIDEBAR_COLLAPSE_KEY, withProjectScope } from "./shellHelpers";
 import { TimingBadge } from "./TimingBadge";
 import type { TimingMetric } from "./serverTiming";
 import {
+  SessionTable,
+  compareSessions,
+  defaultSortDirection,
+  groupSessionsByProject,
+  type DashboardSort,
+  type SortDirection,
+} from "./SessionTable";
+import {
   SOURCE_OPTIONS,
   errorMessage,
   fetchLiveSessions,
   fetchSession,
   formatCompactNumber,
   formatCost,
-  formatTime,
-  healthClassName,
   sessionCostTotal,
-  sessionTitle,
   sessionToolCount,
   unifiedSessionTitle,
   type SessionDashboard,
@@ -200,6 +205,26 @@ function SessionList({
   error: unknown;
   onSelect: (session: SessionRecord) => void;
 }) {
+  const [sort, setSort] = useState<DashboardSort>("recent");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
+
+  const groups = useMemo(
+    () =>
+      groupSessionsByProject(
+        [...sessions].sort((left, right) => compareSessions(left, right, sort, sortDirection)),
+      ),
+    [sessions, sort, sortDirection],
+  );
+
+  const toggleSort = (nextSort: DashboardSort) => {
+    if (sort === nextSort) {
+      setSortDirection((direction) => (direction === "asc" ? "desc" : "asc"));
+      return;
+    }
+    setSort(nextSort);
+    setSortDirection(defaultSortDirection(nextSort));
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
       <div className="shrink-0 space-y-density-2 border-b border-border p-density-3">
@@ -225,46 +250,19 @@ function SessionList({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="min-h-0 flex-1 overflow-y-auto p-density-3">
         {error ? (
-          <div className="p-density-3 text-sm text-destructive">{errorMessage(error)}</div>
+          <div className="text-sm text-destructive">{errorMessage(error)}</div>
         ) : sessions.length === 0 && !loading ? (
-          <div className="p-density-3 text-sm text-muted-foreground">No sessions found.</div>
+          <div className="text-sm text-muted-foreground">No sessions found.</div>
         ) : (
-          <div className="mx-auto max-w-4xl divide-y divide-border">
-            {sessions.map((session) => {
-              const detailAvailable = session.detailAvailable !== false;
-              return (
-                <button
-                  key={session.key}
-                  type="button"
-                  onClick={() => detailAvailable && onSelect(session)}
-                  disabled={!detailAvailable}
-                  className={[
-                    "block w-full px-density-3 py-density-2 text-left transition-colors",
-                    detailAvailable ? "hover:bg-muted/60" : "cursor-default opacity-75",
-                  ].join(" ")}
-                >
-                  <div className="flex min-w-0 items-center justify-between gap-density-2">
-                    <span className="min-w-0 truncate text-sm font-medium">
-                      {sessionTitle(session)}
-                    </span>
-                    <span className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[11px] uppercase text-muted-foreground">
-                      {session.source}
-                    </span>
-                  </div>
-                  <SessionBadges session={session} />
-                  <div className="mt-1 truncate text-xs text-muted-foreground">
-                    {formatTime(session.endedAt ?? session.startedAt)}
-                    {session.model ? ` - ${session.model}` : ""}
-                  </div>
-                  <div className="mt-1 truncate text-xs text-muted-foreground">
-                    {session.cwd ?? session.id}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
+          <SessionTable
+            groups={groups}
+            sort={sort}
+            sortDirection={sortDirection}
+            onSortChange={toggleSort}
+            onOpen={onSelect}
+          />
         )}
       </div>
     </div>
@@ -405,33 +403,3 @@ function SessionSummary({
   );
 }
 
-function SessionBadges({ session }: { session: SessionRecord }) {
-  const health = session.health ?? [];
-  const badges = [
-    session.live
-      ? {
-          key: "live",
-          label: session.live.status || "live",
-          className: "border-emerald-500/40 text-emerald-700",
-        }
-      : null,
-    ...health.slice(0, 2).map((signal) => ({
-      key: signal.kind,
-      label: signal.kind.replace(/_/g, " "),
-      className: healthClassName(signal.severity),
-    })),
-  ].filter(Boolean) as Array<{ key: string; label: string; className: string }>;
-  if (badges.length === 0) return null;
-  return (
-    <div className="mt-1 flex min-w-0 flex-wrap gap-1">
-      {badges.map((badge) => (
-        <span
-          key={badge.key}
-          className={`rounded border px-1.5 py-0.5 text-[10px] uppercase ${badge.className}`}
-        >
-          {badge.label}
-        </span>
-      ))}
-    </div>
-  );
-}

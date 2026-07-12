@@ -16,6 +16,9 @@ func TestRecordFromRow_ProjectsRichFields(t *testing.T) {
 	r := session.Row{
 		ID:              "s1",
 		Source:          "claude",
+		Project:         "captain",
+		Title:           "Improve session identity",
+		InitialPrompt:   "Show meaningful session titles",
 		Model:           "claude-opus-4",
 		Git:             session.GitState{Branch: "main"},
 		Provider:        "anthropic",
@@ -31,6 +34,9 @@ func TestRecordFromRow_ProjectsRichFields(t *testing.T) {
 
 	if rec.ID != "s1" || rec.GitBranch != "main" || rec.Provider != "anthropic" || rec.ReasoningEffort != "high" {
 		t.Fatalf("record meta = %+v", rec)
+	}
+	if rec.Project != "captain" || rec.Title != "Improve session identity" || rec.InitialPrompt != "Show meaningful session titles" {
+		t.Fatalf("record identity = %+v", rec)
 	}
 	if rec.Context == nil || rec.Context.FreePercent != 6 || rec.Context.WindowTokens != 1_000_000 {
 		t.Fatalf("context = %+v, want 6%% free of 1M", rec.Context)
@@ -58,6 +64,9 @@ func TestStoredBase_PersistsInlinePlan(t *testing.T) {
 	}
 
 	stored := storedBase(r)
+	if stored.SummaryVersion != sessionSummaryVersion {
+		t.Fatalf("summary version = %d, want %d", stored.SummaryVersion, sessionSummaryVersion)
+	}
 
 	if stored.Plan == nil {
 		t.Fatal("stored plan is nil")

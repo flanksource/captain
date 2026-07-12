@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flanksource/captain/pkg/ai/assistanttags"
 	"github.com/flanksource/captain/pkg/claude"
 )
 
@@ -97,6 +98,30 @@ func buildSessionMetadata(source string, entries []claude.HistoryEntry) sessionM
 		}
 		if entry.Message.Model != "" {
 			turn.Model = entry.Message.Model
+		}
+		if entry.IsAssistantMessage() {
+			for _, block := range entry.Message.Content {
+				if block.Type != claude.ContentTypeText {
+					continue
+				}
+				for _, segment := range assistanttags.Parse(block.Text) {
+					if segment.Kind != assistanttags.SegmentMemoryCitation || segment.Citation == nil {
+						continue
+					}
+					b.events = append(b.events, Event{
+						Type:      "memory_citation",
+						Scope:     "session",
+						TurnID:    turn.ID,
+						Timestamp: cloneTime(ts),
+						UUID:      entry.UUID,
+						Data: map[string]any{
+							"source":           "claude",
+							"citation_entries": segment.Citation.CitationEntries,
+							"rollout_ids":      segment.Citation.RolloutIDs,
+						},
+					})
+				}
+			}
 		}
 		if entry.IsAssistantMessage() && entry.Message.Usage != nil {
 			cost := CostFromUsage(entry.Message.Usage, entry.Message.Model)

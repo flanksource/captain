@@ -95,11 +95,44 @@ func TestChangedFiles_ReadWriteSplit(t *testing.T) {
 	}
 }
 
+func TestBuildSessionIdentityPrefersLatestRootTitle(t *testing.T) {
+	root := claude.ParsedTranscript{
+		Path: "/p/root-sess.jsonl",
+		Entries: []claude.HistoryEntry{{
+			SessionID: "root-sess",
+			Slug:      "fallback-title-slug",
+			Message: claude.Message{
+				Role:    claude.MessageRoleUser,
+				Content: []claude.ContentBlock{{Type: claude.ContentTypeText, Text: "Inspect the session viewer"}},
+			},
+		}},
+		ToolUses: []claude.ToolUse{
+			{Tool: "SessionTitle", Input: map[string]any{"aiTitle": "Initial generated title"}},
+			{Tool: "SessionTitle", Input: map[string]any{"aiTitle": "Updated generated title"}},
+		},
+	}
+
+	s := buildSession(claude.ParsedSession{SessionID: "root-sess", Transcripts: []claude.ParsedTranscript{root}})
+	if s.Title != "Updated generated title" {
+		t.Fatalf("title = %q, want latest root title", s.Title)
+	}
+	if s.InitialPrompt != "Inspect the session viewer" {
+		t.Fatalf("initial prompt = %q", s.InitialPrompt)
+	}
+
+	rows := Rows(claude.ParsedSession{SessionID: "root-sess", Transcripts: []claude.ParsedTranscript{root}})
+	if len(rows) != 1 || rows[0].Title != s.Title || rows[0].InitialPrompt != s.InitialPrompt {
+		t.Fatalf("row identity = %+v, session identity = %+v", rows, s)
+	}
+}
+
 func TestApprovalStats(t *testing.T) {
 	uses := []claude.ToolUse{
 		{Tool: "Write", ToolUseID: "1"},
 		{Tool: "Bash", ToolUseID: "2", Denied: true, DeniedReason: "no rm -rf"},
 		{Tool: "ExitPlanMode", ToolUseID: "3"},
+		{Tool: "Plan", ToolUseID: "4"},
+		{Tool: "MemoryCitation", ToolUseID: "5"},
 	}
 	got := approvalStats(uses)
 	if got.Approved != 1 {
@@ -127,6 +160,7 @@ func TestBuildSession_CostFilesPlanApprovals(t *testing.T) {
 	e := assistantEntry("a1", "", "claude-opus-4",
 		&claude.Usage{InputTokens: 1000, OutputTokens: 500},
 		claude.ContentBlock{Type: claude.ContentTypeText, Text: "hello"},
+		claude.ContentBlock{Type: claude.ContentTypeText, Text: "<proposed_plan>tagged fallback</proposed_plan>"},
 		writeBlock, planBlock,
 	)
 	// stamp ProjectRoot so changed-files relativizes.
@@ -153,7 +187,7 @@ func TestBuildSession_CostFilesPlanApprovals(t *testing.T) {
 	if want := []string{"x.go"}; !equalStrings(s.Files.Written, want) {
 		t.Errorf("written = %v, want %v", s.Files.Written, want)
 	}
-	if s.Plan == nil || !s.Plan.Explicit || s.Plan.Path != "/home/u/.claude/plans/foo.md" {
+	if s.Plan == nil || !s.Plan.Explicit || s.Plan.Path != "/home/u/.claude/plans/foo.md" || s.Plan.Content != "do X" {
 		t.Errorf("plan = %+v, want explicit foo.md", s.Plan)
 	}
 	if len(s.Messages) == 0 || s.Messages[0].Role != "assistant" {
@@ -162,6 +196,47 @@ func TestBuildSession_CostFilesPlanApprovals(t *testing.T) {
 	// Write + ExitPlanMode both counted; ExitPlanMode excluded from approvals.
 	if s.Approvals.Approved != 1 {
 		t.Errorf("approved = %d, want 1 (Write only)", s.Approvals.Approved)
+	}
+}
+
+func TestBuildSession_TaggedPlanFallbackAndMemoryCitation(t *testing.T) {
+	entry := assistantEntry("tagged-1", "", "claude-opus-4", nil,
+		claude.ContentBlock{Type: claude.ContentTypeText, Text: `<proposed_plan>
+# Shared fallback
+</proposed_plan>
+
+After the plan.
+
+<oai-mem-citation>
+<citation_entries>
+MEMORY.md:10-12|note=[shared parser]
+</citation_entries>
+<rollout_ids>
+019f3754-ecfa-7323-a76b-a0205ea30bbe
+</rollout_ids>
+</oai-mem-citation>`},
+	)
+	uses := claude.ExtractToolUses([]claude.HistoryEntry{entry})
+	s := buildSession(claude.ParsedSession{
+		SessionID: "root-sess",
+		Transcripts: []claude.ParsedTranscript{{
+			Path:     "/p/root-sess.jsonl",
+			Entries:  []claude.HistoryEntry{entry},
+			ToolUses: uses,
+		}},
+	})
+
+	if s.Plan == nil || s.Plan.Content != "# Shared fallback" || !s.Plan.Explicit {
+		t.Fatalf("plan = %+v", s.Plan)
+	}
+	if len(s.Events) != 1 || s.Events[0].Type != "memory_citation" || s.Events[0].TurnID == "" {
+		t.Fatalf("events = %+v", s.Events)
+	}
+	if len(s.Messages) != 1 || len(s.Messages[0].Parts) != 2 {
+		t.Fatalf("messages = %+v", s.Messages)
+	}
+	if s.Messages[0].Parts[0].ToolName != "Plan" || s.Messages[0].Parts[1].Text != "After the plan." {
+		t.Fatalf("parts = %+v", s.Messages[0].Parts)
 	}
 }
 

@@ -11,15 +11,17 @@ import (
 // history/sessions commands render, the viewer consumes, and the chat/live
 // surfaces project from.
 type Session struct {
-	ID          string `json:"id"`
-	Source      string `json:"source,omitempty"` // "claude" | "codex"
-	Project     string `json:"project,omitempty"`
-	CWD         string `json:"cwd,omitempty"`
-	Slug        string `json:"slug,omitempty"`
-	Version     string `json:"version,omitempty"`
-	Provider    string `json:"provider,omitempty"`
-	Model       string `json:"model,omitempty"` // primary model
-	HistoryFile string `json:"historyFile,omitempty"`
+	ID            string `json:"id"`
+	Source        string `json:"source,omitempty"` // "claude" | "codex"
+	Project       string `json:"project,omitempty"`
+	CWD           string `json:"cwd,omitempty"`
+	Slug          string `json:"slug,omitempty"`
+	Title         string `json:"title,omitempty"`
+	InitialPrompt string `json:"initialPrompt,omitempty"`
+	Version       string `json:"version,omitempty"`
+	Provider      string `json:"provider,omitempty"`
+	Model         string `json:"model,omitempty"` // primary model
+	HistoryFile   string `json:"historyFile,omitempty"`
 
 	Git       GitState   `json:"git,omitempty"`
 	StartedAt *time.Time `json:"startedAt,omitempty"`

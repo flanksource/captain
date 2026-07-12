@@ -63,7 +63,10 @@ type SessionRecord struct {
 	Key             string              `json:"key"`
 	ID              string              `json:"id"`
 	Source          string              `json:"source"`
+	Project         string              `json:"project,omitempty"`
 	Slug            string              `json:"slug,omitempty"`
+	Title           string              `json:"title,omitempty"`
+	InitialPrompt   string              `json:"initialPrompt,omitempty"`
 	StartedAt       *time.Time          `json:"startedAt,omitempty"`
 	EndedAt         *time.Time          `json:"endedAt,omitempty"`
 	Model           string              `json:"model,omitempty"`
@@ -627,6 +630,9 @@ func sessionMatchesQuery(record SessionRecord, query string) bool {
 		record.Key,
 		record.ID,
 		record.Source,
+		record.Project,
+		record.Title,
+		record.InitialPrompt,
 		record.Model,
 		record.ReasoningEffort,
 		record.Version,

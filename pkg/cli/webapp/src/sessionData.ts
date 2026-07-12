@@ -19,6 +19,10 @@ export type SessionRecord = {
   key: string;
   id: string;
   source: "claude" | "codex";
+  project?: string;
+  slug?: string;
+  title?: string;
+  initialPrompt?: string;
   startedAt?: string;
   endedAt?: string;
   model?: string;
@@ -153,6 +157,8 @@ export type UnifiedSession = {
   project?: string;
   cwd?: string;
   slug?: string;
+  title?: string;
+  initialPrompt?: string;
   version?: string;
   provider?: string;
   model?: string;
@@ -385,6 +391,8 @@ export function sessionToolCount(messages: SessionUIMessage[] | undefined): numb
 }
 
 export function unifiedSessionTitle(session: UnifiedSession): string {
+  if (session.title) return session.title;
+  if (session.slug) return session.slug;
   if (session.git?.branch) return `${session.git.branch} - ${shortID(session.id)}`;
   if (session.model) return `${session.model} - ${shortID(session.id)}`;
   return shortID(session.id);
@@ -394,6 +402,8 @@ export function sessionTitle(session: SessionRecord) {
   if (session.detailAvailable === false && session.live?.pid) {
     return `${session.source} process ${session.live.pid}`;
   }
+  if (session.title) return session.title;
+  if (session.slug) return session.slug;
   if (session.gitBranch) return `${session.gitBranch} - ${shortID(session.id)}`;
   if (session.model) return `${session.model} - ${shortID(session.id)}`;
   return shortID(session.id) || session.key;

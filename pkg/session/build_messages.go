@@ -3,6 +3,7 @@ package session
 import (
 	"sort"
 
+	"github.com/flanksource/captain/pkg/ai/assistanttags"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/claude"
 )
@@ -130,7 +131,22 @@ func partsFromEntry(e claude.HistoryEntry) []Part {
 	for _, b := range e.Message.Content {
 		switch b.Type {
 		case claude.ContentTypeText:
-			if b.Text != "" {
+			if e.IsAssistantMessage() {
+				for _, segment := range assistanttags.Parse(b.Text) {
+					switch segment.Kind {
+					case assistanttags.SegmentText:
+						parts = append(parts, Part{Type: PartText, Text: segment.Text})
+					case assistanttags.SegmentPlan:
+						parts = append(parts, Part{
+							Type:       PartTool,
+							ToolName:   "Plan",
+							ToolCallID: e.UUID + "-plan",
+							State:      ToolStateInputAvailable,
+							Input:      marshalInput(map[string]any{"content": segment.Text, "tag": "proposed_plan"}),
+						})
+					}
+				}
+			} else if b.Text != "" {
 				parts = append(parts, Part{Type: PartText, Text: b.Text})
 			}
 		case claude.ContentTypeThinking, claude.ContentTypeRedactedThinking:

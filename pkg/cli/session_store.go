@@ -32,12 +32,15 @@ type StoredSession struct {
 	AgentType string  `gorm:"column:agent_type"`
 	AgentDesc string  `gorm:"column:agent_desc"`
 
-	ModUnix int64 `gorm:"column:mod_unix"`
-	Size    int64 `gorm:"column:size"`
+	ModUnix        int64 `gorm:"column:mod_unix"`
+	Size           int64 `gorm:"column:size"`
+	SummaryVersion int   `gorm:"column:summary_version"`
 
-	Project string `gorm:"column:project"`
-	CWD     string `gorm:"column:cwd"`
-	Model   string `gorm:"column:model"`
+	Project       string `gorm:"column:project"`
+	CWD           string `gorm:"column:cwd"`
+	Model         string `gorm:"column:model"`
+	Title         string `gorm:"column:title"`
+	InitialPrompt string `gorm:"column:initial_prompt"`
 
 	Git      session.GitState `gorm:"serializer:json;type:jsonb;column:git"`
 	Provider ProviderInfo     `gorm:"serializer:json;type:jsonb;column:provider"`
@@ -63,6 +66,8 @@ type StoredSession struct {
 }
 
 func (StoredSession) TableName() string { return "captain_sessions" }
+
+const sessionSummaryVersion = 4
 
 // ProviderInfo is the provider block stored as jsonb.
 type ProviderInfo struct {
@@ -336,7 +341,7 @@ func (s *sessionDB) lookupFresh(path string, modUnix, size int64) (*StoredSessio
 	if err := s.gdb.Where("path = ?", path).First(&row).Error; err != nil {
 		return nil, false
 	}
-	if row.ModUnix != modUnix || row.Size != size {
+	if row.ModUnix != modUnix || row.Size != size || row.SummaryVersion != sessionSummaryVersion {
 		return nil, false
 	}
 	return &row, true
@@ -386,28 +391,31 @@ func storedBase(r session.Row) StoredSession {
 		parent = &p
 	}
 	row := StoredSession{
-		Path:          r.Path,
-		ID:            r.ID,
-		ParentID:      parent,
-		Source:        r.Source,
-		IsAgent:       r.IsAgent,
-		AgentType:     r.AgentType,
-		AgentDesc:     r.AgentDesc,
-		Project:       r.Project,
-		CWD:           r.CWD,
-		Model:         r.Model,
-		Git:           r.Git,
-		Provider:      ProviderInfo{Name: r.Provider, Version: r.Version, ReasoningEffort: r.ReasoningEffort},
-		StartedAt:     r.StartedAt,
-		EndedAt:       r.EndedAt,
-		Cost:          r.Cost,
-		Usage:         r.Usage,
-		Files:         r.Files,
-		Approvals:     r.Approvals,
-		ToolCalls:     r.ToolCalls,
-		MessageCount:  r.Messages,
-		ContextTokens: r.ContextTokens,
-		Slug:          r.Slug,
+		Path:           r.Path,
+		ID:             r.ID,
+		ParentID:       parent,
+		Source:         r.Source,
+		IsAgent:        r.IsAgent,
+		AgentType:      r.AgentType,
+		AgentDesc:      r.AgentDesc,
+		SummaryVersion: sessionSummaryVersion,
+		Project:        r.Project,
+		CWD:            r.CWD,
+		Model:          r.Model,
+		Title:          r.Title,
+		InitialPrompt:  r.InitialPrompt,
+		Git:            r.Git,
+		Provider:       ProviderInfo{Name: r.Provider, Version: r.Version, ReasoningEffort: r.ReasoningEffort},
+		StartedAt:      r.StartedAt,
+		EndedAt:        r.EndedAt,
+		Cost:           r.Cost,
+		Usage:          r.Usage,
+		Files:          r.Files,
+		Approvals:      r.Approvals,
+		ToolCalls:      r.ToolCalls,
+		MessageCount:   r.Messages,
+		ContextTokens:  r.ContextTokens,
+		Slug:           r.Slug,
 	}
 	if r.Plan != nil {
 		row.PlanPath = r.Plan.Path
@@ -474,7 +482,10 @@ func (row StoredSession) toRecord() SessionRecord {
 		Key:             sessionRecordKey(row.Source, row.Path),
 		ID:              row.ID,
 		Source:          row.Source,
+		Project:         row.Project,
 		Slug:            row.Slug,
+		Title:           row.Title,
+		InitialPrompt:   row.InitialPrompt,
 		Model:           row.Model,
 		ReasoningEffort: row.Provider.ReasoningEffort,
 		Version:         row.Provider.Version,

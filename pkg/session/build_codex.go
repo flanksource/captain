@@ -69,7 +69,10 @@ func buildCodexSession(uses []history.ToolUse, info *history.CodexSessionInfo) *
 		}
 		if tools.IsEventToolName(u.Tool) || u.Tool == "ApiError" {
 			ev := codexUseToEvent(u)
-			if ev.Scope == "turn" {
+			if u.Tool == "MemoryCitation" {
+				ev.Scope = "session"
+				s.Events = append(s.Events, ev)
+			} else if ev.Scope == "turn" {
 				turns.addEvent(u, ev)
 			} else {
 				s.Events = append(s.Events, ev)
@@ -149,6 +152,7 @@ func buildCodexSession(uses []history.ToolUse, info *history.CodexSessionInfo) *
 	s.Capabilities.PendingMCPServers = sortedStrings(s.Capabilities.PendingMCPServers)
 	s.Capabilities.Agents = sortedStrings(s.Capabilities.Agents)
 	s.Capabilities.Skills = sortedStrings(s.Capabilities.Skills)
+	applySessionIdentity(s)
 	return s
 }
 
@@ -158,7 +162,17 @@ func buildCodexSession(uses []history.ToolUse, info *history.CodexSessionInfo) *
 func CodexPlanFromToolUses(uses []history.ToolUse) *Plan {
 	var latest []any
 	var ts *time.Time
+	var taggedContent string
+	var taggedEvents []PlanEvent
 	for _, use := range uses {
+		if use.Tool == "Plan" {
+			content, _ := use.Input["content"].(string)
+			if content = strings.TrimSpace(content); content != "" {
+				taggedContent = content
+				taggedEvents = append(taggedEvents, PlanEvent{Kind: PlanWrite, Timestamp: use.Timestamp})
+			}
+			continue
+		}
 		if use.Tool != "TodoWrite" {
 			continue
 		}
@@ -168,6 +182,13 @@ func CodexPlanFromToolUses(uses []history.ToolUse) *Plan {
 		}
 		latest = todos
 		ts = use.Timestamp
+	}
+	if taggedContent != "" {
+		return &Plan{
+			Content:  taggedContent,
+			Explicit: true,
+			Events:   taggedEvents,
+		}
 	}
 	if len(latest) == 0 {
 		return nil
@@ -238,6 +259,8 @@ func codexUseToMessage(u history.ToolUse) Message {
 		Timestamp:       u.Timestamp,
 	}
 	switch u.Tool {
+	case "System":
+		return Message{ID: id, Role: "system", Parts: []Part{{Type: PartText, Text: codexText(u)}}, TurnID: u.TurnID, Provenance: prov, AgentID: agentID}
 	case "User":
 		return Message{ID: id, Role: "user", Parts: []Part{{Type: PartText, Text: codexText(u)}}, TurnID: u.TurnID, Provenance: prov, AgentID: agentID}
 	case "Assistant":

@@ -375,6 +375,16 @@ func (p *Provider) execute(ctx context.Context, req ai.Request, r *run) (*ai.Usa
 		_, completed, serr := r.awaitWithStallWatchdog(ctx, ref, sessionID, workDir, timeout, resume, acc)
 		acc.Finish()
 		snap := acc.snapshot()
+		pausedForQuestion := snap.State == sessionStateAsk
+		if pausedForQuestion {
+			// Claude's terminal UI remains inside the interactive question picker even
+			// though the structured tool event contains everything the host needs to
+			// render the form. Dismiss that surface once; the host resumes the same
+			// session later with SendFeedback and a structured answers payload.
+			if err := r.client.SendKeySurface(ctx, ref.String(), ref.SurfaceID, "Escape"); err != nil {
+				return nil, 0, fmt.Errorf("dismiss claude question for session %s: %w", sessionID, err)
+			}
+		}
 
 		switch {
 		case errors.Is(serr, errSessionLogNotFound):
@@ -386,7 +396,11 @@ func (p *Provider) execute(ctx context.Context, req ai.Request, r *run) (*ai.Usa
 		case !completed:
 			return nil, 0, fmt.Errorf("claude session %s did not complete within %s", sessionID, timeout)
 		default:
-			log.Infof("cmux: claude session %s completed", sessionID)
+			if pausedForQuestion {
+				log.Infof("cmux: claude session %s paused for user input", sessionID)
+			} else {
+				log.Infof("cmux: claude session %s completed", sessionID)
+			}
 			r.lastSurface = ref
 			r.lastSessionID = sessionID
 			r.lastWorkDir = workDir

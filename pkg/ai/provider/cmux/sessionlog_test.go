@@ -95,6 +95,26 @@ func TestSessionTailerTerminatesOnAPIError(t *testing.T) {
 	}
 }
 
+func TestSessionTailerPausesOnAskUserQuestion(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	writeSessionLog(t, path,
+		`{"type":"assistant","sessionId":"s","message":{"stop_reason":"tool_use","content":[{"type":"tool_use","id":"ask-1","name":"AskUserQuestion","input":{"questions":[{"question":"Which database?"}]}}]}}`,
+	)
+
+	tailer := sessionTailer{path: path, pollInterval: time.Millisecond, appearTimeout: 200 * time.Millisecond}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	var events []history.SessionEvent
+	completed, err := tailer.tail(ctx, func(ev history.SessionEvent) { events = append(events, ev) })
+	if err != nil || !completed {
+		t.Fatalf("tail() = (%v, %v), want paused terminal outcome", completed, err)
+	}
+	if len(events) != 1 || !isUserQuestionEvent(events[0]) || events[0].ToolUse.ToolUseID != "ask-1" {
+		t.Fatalf("events = %+v, want AskUserQuestion ask-1", events)
+	}
+}
+
 func TestSessionTailerCompletesOnQuiescence(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "s.jsonl")
 	// No end_turn — only a mid-turn entry; completion must come from quiescence.
