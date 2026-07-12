@@ -27,6 +27,7 @@
     "releaseDate": "2026-06-07",
     "reasoning": true,
     "contextWindow": 1000000,
+    "preferred": true,
     "adaptiveThinking": true,
     "supportedEfforts": [
       "low",
