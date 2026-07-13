@@ -13,6 +13,7 @@ require (
 	github.com/flanksource/clicky/aichat v1.21.44
 	github.com/flanksource/commons v1.53.1
 	github.com/flanksource/sandbox-runtime v1.0.2
+	github.com/fsnotify/fsnotify v1.9.0
 	github.com/google/dotprompt/go v0.0.0-20260502013637-5cd4a8405ca3
 	github.com/google/uuid v1.6.0
 	github.com/invopop/jsonschema v0.13.0
@@ -143,7 +144,6 @@ require (
 	github.com/flanksource/gomplate/v3 v3.24.84 // indirect
 	github.com/flanksource/is-healthy v1.0.88 // indirect
 	github.com/flanksource/kubectl-neat v1.0.4 // indirect
-	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
 	github.com/geoffgarside/ber v1.1.0 // indirect
 	github.com/ghodss/yaml v1.0.0 // indirect

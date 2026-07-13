@@ -99,6 +99,7 @@ func readJSONL(r io.Reader, fallbackToHistoryEntry bool, opts ReadOptions) ([]Hi
 			if opts.KeepRaw {
 				entry.RawLine = append(json.RawMessage(nil), line...)
 			}
+			entry.Line = lineNo
 			entries = append(entries, entry)
 			continue
 		}
@@ -110,6 +111,7 @@ func readJSONL(r io.Reader, fallbackToHistoryEntry bool, opts ReadOptions) ([]Hi
 			if opts.KeepRaw {
 				entry.RawLine = append(json.RawMessage(nil), line...)
 			}
+			entry.Line = lineNo
 			entries = append(entries, entry)
 		}
 	}

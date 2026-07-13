@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
@@ -100,6 +101,68 @@ func (db *DB) UpsertSessionProcess(ctx context.Context, input SessionProcessInpu
 		return fmt.Errorf("upsert Captain session process pid %d: %w", input.PID, err)
 	}
 	return nil
+}
+
+// FindProcessSessionID resolves the session a process identity was previously
+// bound to, so monitor restarts reuse provisional sessions instead of minting
+// new ones. Returns uuid.Nil when the process has never been recorded.
+func (db *DB) FindProcessSessionID(ctx context.Context, hostID, bootID string, pid int64, startedAt time.Time) (uuid.UUID, error) {
+	if err := db.requireGorm(); err != nil {
+		return uuid.Nil, err
+	}
+	var record sessionProcessRecord
+	err := db.gorm.WithContext(ctx).
+		Where("host_id = ? AND boot_id = ? AND pid = ? AND process_started_at = ?",
+			hostID, bootID, pid, startedAt.UTC()).
+		First(&record).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return uuid.Nil, nil
+		}
+		return uuid.Nil, fmt.Errorf("find Captain session process: %w", err)
+	}
+	return record.SessionID, nil
+}
+
+// EndOtherSessionProcesses closes open process rows for a session except the
+// given PID, satisfying the one-active-process-per-session constraint before a
+// new process binds to the session (e.g. resumed under a new PID).
+func (db *DB) EndOtherSessionProcesses(ctx context.Context, sessionID uuid.UUID, keepPID int64) error {
+	if err := db.requireGorm(); err != nil {
+		return err
+	}
+	err := db.gorm.WithContext(ctx).Model(&sessionProcessRecord{}).
+		Where("session_id = ? AND ended_at IS NULL AND pid <> ?", sessionID, keepPID).
+		Updates(map[string]any{"ended_at": time.Now().UTC(), "status": "exited"}).Error
+	if err != nil {
+		return fmt.Errorf("end superseded Captain session processes: %w", err)
+	}
+	return nil
+}
+
+// FindSessionIDByCWD resolves the most recently active session for a working
+// directory and source — the process-to-session heuristic when the command
+// line carries no session id.
+func (db *DB) FindSessionIDByCWD(ctx context.Context, source, cwd string) (uuid.UUID, error) {
+	if err := db.requireGorm(); err != nil {
+		return uuid.Nil, err
+	}
+	cwd = strings.TrimRight(strings.TrimSpace(cwd), "/")
+	if cwd == "" {
+		return uuid.Nil, nil
+	}
+	var record sessionRecord
+	err := db.gorm.WithContext(ctx).
+		Where("source = ? AND parent_session_id IS NULL AND rtrim(cwd, '/') = ?", source, cwd).
+		Order("COALESCE(last_activity_at, started_at, created_at) DESC").
+		First(&record).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return uuid.Nil, nil
+		}
+		return uuid.Nil, fmt.Errorf("find Captain session by cwd: %w", err)
+	}
+	return record.ID, nil
 }
 
 // EndVanishedProcesses marks every still-open process row on the host whose PID

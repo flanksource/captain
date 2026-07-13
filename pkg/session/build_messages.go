@@ -119,6 +119,7 @@ func entryToMessage(e claude.HistoryEntry, agentID, turnID string) (Message, boo
 		Provenance: provenanceFromEntry(e, agentID),
 		AgentID:    agentID,
 		TurnID:     turnID,
+		SourceLine: int64(e.Line),
 	}
 	if len(e.RawLine) > 0 {
 		m.Raw = e.RawLine

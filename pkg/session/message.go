@@ -86,6 +86,9 @@ type Message struct {
 	TurnID     string          `json:"turnId,omitempty"`
 	Provenance *Provenance     `json:"provenance,omitempty"`
 	Raw        json.RawMessage `json:"raw,omitempty"`
+	// SourceLine is the 1-based JSONL line the message came from (0 when the
+	// source format has no line mapping, e.g. codex tool-use projection).
+	SourceLine int64 `json:"sourceLine,omitempty"`
 
 	AgentID string `json:"-"`
 }

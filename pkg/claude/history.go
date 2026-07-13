@@ -27,6 +27,9 @@ type HistoryEntry struct {
 	PlanFilePath string           `json:"-"`
 	Event        *TranscriptEvent `json:"-"`
 	RawLine      json.RawMessage  `json:"-"`
+	// Line is the 1-based JSONL line number the entry was read from, so
+	// downstream consumers can seek back into the transcript file.
+	Line int `json:"-"`
 }
 
 // TranscriptEvent is a non-message, non-tool transcript line. It lets callers
