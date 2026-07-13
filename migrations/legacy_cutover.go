@@ -97,7 +97,7 @@ type legacyPromptRow struct {
 func ApplyWithLegacySessionCutover(ctx context.Context, connection string) (_ *LegacySessionCutoverReport, resultErr error) {
 	connection = strings.TrimSpace(connection)
 	if connection == "" {
-		return nil, errors.New("Captain migration connection string is empty")
+		return nil, errors.New("captain migration connection string is empty")
 	}
 
 	lock, err := acquireMigrationLock(ctx, connection)
@@ -142,7 +142,7 @@ func ApplyWithLegacySessionCutover(ctx context.Context, connection string) (_ *L
 			return nil, err
 		}
 		if exists {
-			return nil, fmt.Errorf("Captain legacy cutover report exists but rollback table public.%s is missing", archiveSessionsTable)
+			return nil, fmt.Errorf("captain legacy cutover report exists but rollback table public.%s is missing", archiveSessionsTable)
 		}
 		return nil, nil
 	}
@@ -155,7 +155,7 @@ func archiveLegacySessionCache(ctx context.Context, db *sql.DB) (archiveState, e
 	if err != nil {
 		return archiveState{}, fmt.Errorf("begin Captain legacy archive transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	sessionsExists, err := relationExists(ctx, tx, legacySessionsTable)
 	if err != nil {
@@ -263,7 +263,7 @@ func archiveLegacySessionCache(ctx context.Context, db *sql.DB) (archiveState, e
 		return archiveState{}, err
 	}
 	if checksumJSONRows(sessionRaw) != checksumJSONRows(archivedSessionRaw) || len(sessionRaw) != len(archivedSessionRaw) {
-		return archiveState{}, errors.New("Captain legacy session rollback copy failed count/checksum validation")
+		return archiveState{}, errors.New("captain legacy session rollback copy failed count/checksum validation")
 	}
 	if promptsExists {
 		_, archivedPromptRaw, err := loadLegacyPromptsIfPresent(ctx, tx, true, archivePromptsTable)
@@ -271,7 +271,7 @@ func archiveLegacySessionCache(ctx context.Context, db *sql.DB) (archiveState, e
 			return archiveState{}, err
 		}
 		if checksumJSONRows(promptRaw) != checksumJSONRows(archivedPromptRaw) || len(promptRaw) != len(archivedPromptRaw) {
-			return archiveState{}, errors.New("Captain legacy prompt rollback copy failed count/checksum validation")
+			return archiveState{}, errors.New("captain legacy prompt rollback copy failed count/checksum validation")
 		}
 	}
 
@@ -302,7 +302,7 @@ func backfillLegacySessionCache(ctx context.Context, db *sql.DB, state archiveSt
 	if err != nil {
 		return nil, fmt.Errorf("begin Captain legacy backfill transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	sessions, sessionRaw, err := loadLegacySessions(ctx, tx, archiveSessionsTable)
 	if err != nil {
@@ -488,7 +488,7 @@ func backfillLegacySessionCache(ctx context.Context, db *sql.DB, state archiveSt
 	}
 	if exists {
 		if !sameCutoverValidation(existing, report) {
-			return nil, errors.New("Captain legacy cutover validation no longer matches the durable completed report")
+			return nil, errors.New("captain legacy cutover validation no longer matches the durable completed report")
 		}
 		if err := tx.Commit(); err != nil {
 			return nil, fmt.Errorf("commit repeated Captain legacy session validation: %w", err)

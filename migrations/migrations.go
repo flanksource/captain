@@ -75,7 +75,7 @@ func Apply(ctx context.Context, connection string) error {
 
 func apply(ctx context.Context, connection string, deps applyDependencies) (resultErr error) {
 	if strings.TrimSpace(connection) == "" {
-		return errors.New("Captain migration connection string is empty")
+		return errors.New("captain migration connection string is empty")
 	}
 
 	lock, err := deps.acquireLock(ctx, connection)
@@ -137,7 +137,7 @@ func (lock *migrationLock) Close() error {
 				captainMigrationLockNamespace, captainMigrationLockKey).Scan(&unlocked); err != nil {
 				cleanupErrors = append(cleanupErrors, fmt.Errorf("unlock Captain migration scope: %w", err))
 			} else if !unlocked {
-				cleanupErrors = append(cleanupErrors, errors.New("Captain migration advisory lock was not held"))
+				cleanupErrors = append(cleanupErrors, errors.New("captain migration advisory lock was not held"))
 			}
 			cancel()
 			if err := lock.conn.Close(); err != nil {

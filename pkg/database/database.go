@@ -58,7 +58,7 @@ func Open(ctx context.Context, config Config) (*DB, error) {
 func open(ctx context.Context, config Config, deps dependencies) (*DB, error) {
 	dsn := strings.TrimSpace(config.DSN)
 	if config.Gorm == nil && dsn == "" {
-		return nil, errors.New("Captain database requires an injected GORM pool or DSN")
+		return nil, errors.New("captain database requires an injected GORM pool or DSN")
 	}
 
 	if dsn != "" {
@@ -82,7 +82,7 @@ func open(ctx context.Context, config Config, deps dependencies) (*DB, error) {
 // apply its schema before reusing the pool.
 func Use(gormDB *gorm.DB) (*DB, error) {
 	if gormDB == nil {
-		return nil, errors.New("Captain database GORM pool is nil")
+		return nil, errors.New("captain database GORM pool is nil")
 	}
 	return &DB{gorm: gormDB}, nil
 }
@@ -114,10 +114,10 @@ func (db *DB) Gorm() *gorm.DB {
 // hosts can atomically update Captain rows and their own rows in one database.
 func (db *DB) Transaction(ctx context.Context, fn func(*DB) error) error {
 	if db == nil || db.gorm == nil {
-		return errors.New("Captain database is not initialized")
+		return errors.New("captain database is not initialized")
 	}
 	if fn == nil {
-		return errors.New("Captain database transaction callback is nil")
+		return errors.New("captain database transaction callback is nil")
 	}
 	return db.gorm.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		return fn(&DB{gorm: tx})

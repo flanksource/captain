@@ -15,11 +15,11 @@ import (
 
 var (
 	ErrInvalidSession    = errors.New("invalid Captain session")
-	ErrSessionNotFound   = errors.New("Captain session not found")
-	ErrSessionConflict   = errors.New("Captain session conflict")
+	ErrSessionNotFound   = errors.New("captain session not found")
+	ErrSessionConflict   = errors.New("captain session conflict")
 	ErrInvalidPromptRun  = errors.New("invalid Captain prompt run")
-	ErrPromptRunNotFound = errors.New("Captain prompt run not found")
-	ErrPromptRunConflict = errors.New("Captain prompt run conflict")
+	ErrPromptRunNotFound = errors.New("captain prompt run not found")
+	ErrPromptRunConflict = errors.New("captain prompt run conflict")
 )
 
 type SessionLifecycleStatus string

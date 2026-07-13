@@ -16,9 +16,9 @@ import (
 
 var (
 	ErrInvalidPlan          = errors.New("invalid Captain plan")
-	ErrPlanNotFound         = errors.New("Captain plan not found")
-	ErrPlanRevisionNotFound = errors.New("Captain plan revision not found")
-	ErrPlanConflict         = errors.New("Captain plan conflict")
+	ErrPlanNotFound         = errors.New("captain plan not found")
+	ErrPlanRevisionNotFound = errors.New("captain plan revision not found")
+	ErrPlanConflict         = errors.New("captain plan conflict")
 )
 
 // PlanApprovalState is the durable approval state of a plan.
@@ -568,7 +568,7 @@ func (db *DB) hydratePlans(ctx context.Context, records []planRecord) ([]Plan, e
 
 func (db *DB) requireGorm() error {
 	if db == nil || db.gorm == nil {
-		return errors.New("Captain database is not initialized")
+		return errors.New("captain database is not initialized")
 	}
 	return nil
 }
