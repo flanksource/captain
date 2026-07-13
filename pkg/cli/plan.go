@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"sort"
 	"strings"
 
 	"github.com/flanksource/captain/pkg/ai/history"
@@ -15,7 +14,6 @@ import (
 	"github.com/flanksource/clicky"
 	"github.com/flanksource/clicky/api"
 	"github.com/flanksource/clicky/api/icons"
-	"gorm.io/gorm"
 )
 
 type PlanOptions struct {
@@ -43,6 +41,7 @@ type PlanResult struct {
 }
 
 func RunPlan(opts PlanOptions) (PlanResult, error) {
+	ctx := context.Background()
 	source, err := normalizeSessionSource(opts.Source)
 	if err != nil {
 		return PlanResult{}, err
@@ -51,42 +50,28 @@ func RunPlan(opts PlanOptions) (PlanResult, error) {
 	if err != nil {
 		return PlanResult{}, err
 	}
+	db, err := freshenSessionDB(ctx)
+	if err != nil {
+		return PlanResult{}, err
+	}
 
 	id := strings.TrimSpace(opts.SessionID)
 	if id != "" {
-		if native := sessionStores.nativeDatabase(); native != nil {
-			persisted, ok, err := resolveNativePlan(context.Background(), native, id, source)
-			if err != nil {
-				return PlanResult{}, err
-			}
-			if ok {
-				persisted.pathOnly = opts.PathOnly
-				return *persisted, nil
-			}
-		}
-		if candidate, ok, err := findSessionCandidateByID(id, source); err != nil {
-			return PlanResult{}, err
-		} else if ok {
-			plan, err := resolveSessionPlan(candidate)
-			if err != nil {
-				return PlanResult{}, err
-			}
-			if plan == nil {
-				return PlanResult{}, fmt.Errorf("session %q has no plan", id)
-			}
-			plan.pathOnly = opts.PathOnly
-			return *plan, nil
-		}
-
-		// A hashed session key cannot be found from the transcript filename, so
-		// keep the older all-project scan as a fallback for that less-common form.
-		candidates, err := discoverSessionCandidates(context.Background(), "", true, source)
+		persisted, ok, err := resolveNativePlan(ctx, db, id, source)
 		if err != nil {
 			return PlanResult{}, err
 		}
-		candidate, ok := matchPlanCandidate(candidates, id)
-		if !ok {
-			return PlanResult{}, fmt.Errorf("session %q not found", id)
+		if ok {
+			persisted.pathOnly = opts.PathOnly
+			return *persisted, nil
+		}
+		overview, err := db.GetSessionOverviewByIdentity(ctx, id)
+		if err != nil {
+			return PlanResult{}, err
+		}
+		candidate := candidateFromOverview(*overview)
+		if candidate.path == "" {
+			return PlanResult{}, fmt.Errorf("session %q has no transcript recorded on this host", id)
 		}
 		plan, err := resolveSessionPlan(candidate)
 		if err != nil {
@@ -99,14 +84,23 @@ func RunPlan(opts PlanOptions) (PlanResult, error) {
 		return *plan, nil
 	}
 
-	candidates, err := discoverSessionCandidates(context.Background(), cwd, opts.All, source)
+	_, projectRoot, _ := resolveSessionScope(cwd, opts.All, "")
+	filter := captaindb.SessionOverviewFilter{RootsOnly: true}
+	if source != "all" {
+		filter.Source = source
+	}
+	overviews, err := db.ListSessionOverviews(ctx, filter)
 	if err != nil {
 		return PlanResult{}, err
 	}
-	sort.SliceStable(candidates, func(i, j int) bool {
-		return sessionSortTime(candidates[i].record).After(sessionSortTime(candidates[j].record))
-	})
-	for _, candidate := range candidates {
+	for _, overview := range overviews {
+		candidate := candidateFromOverview(overview)
+		if candidate.path == "" {
+			continue
+		}
+		if projectRoot != "" && !sessionRecordMatchesProject(SessionRecord{CWD: stringOr(overview.CWD, "")}, projectRoot) {
+			continue
+		}
 		plan, err := resolveSessionPlan(candidate)
 		if err != nil || plan == nil {
 			continue
@@ -120,11 +114,7 @@ func RunPlan(opts PlanOptions) (PlanResult, error) {
 // resolveNativePlan resolves persisted plan content without consulting the
 // transcript or source plan path. Approved content wins; otherwise the latest
 // immutable revision of the newest plan variant is returned.
-func resolveNativePlan(ctx context.Context, gormDB *gorm.DB, identity, source string) (*PlanResult, bool, error) {
-	db, err := captaindb.Use(gormDB)
-	if err != nil {
-		return nil, false, err
-	}
+func resolveNativePlan(ctx context.Context, db *captaindb.DB, identity, source string) (*PlanResult, bool, error) {
 	sourceFilter := source
 	if sourceFilter == "all" {
 		sourceFilter = ""
@@ -173,17 +163,6 @@ func resolveNativePlan(ctx context.Context, gormDB *gorm.DB, identity, source st
 		Slug:       selected.Slug,
 		Content:    revision.PlanMarkdown,
 	}, true, nil
-}
-
-// matchPlanCandidate finds the candidate whose record key or id matches id
-// exactly, or whose id has id as a prefix (so the short ids printed elsewhere work).
-func matchPlanCandidate(candidates []sessionCandidate, id string) (sessionCandidate, bool) {
-	for _, c := range candidates {
-		if c.record.Key == id || c.record.ID == id || (c.record.ID != "" && strings.HasPrefix(c.record.ID, id)) {
-			return c, true
-		}
-	}
-	return sessionCandidate{}, false
 }
 
 // resolveSessionPlan reads a session transcript and recovers its plan. It returns

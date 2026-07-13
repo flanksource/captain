@@ -78,6 +78,7 @@ func TestAggregateSessionThroughputSkipsIncompleteSessions(t *testing.T) {
 func TestRunSessionThroughputRestrictsExplicitProject(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	withTestCaptainDB(t)
 	project := filepath.Join(home, "work", "project")
 	otherProject := filepath.Join(home, "work", "other")
 	if err := os.MkdirAll(project, 0o755); err != nil {

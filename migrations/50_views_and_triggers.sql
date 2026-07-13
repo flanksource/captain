@@ -660,11 +660,6 @@ SELECT
   process.command,
   process.cwd AS process_cwd,
   process.surface,
-  process.source AS process_source,
-  process.cpu_percent,
-  process.memory_percent,
-  process.memory_rss_bytes,
-  process.sampled_at AS process_sampled_at,
   process.process_started_at,
   process.last_heartbeat_at,
   process.lease_owner,
@@ -711,7 +706,14 @@ SELECT
     + COALESCE(call_stats.output_tokens, 0)
     + COALESCE(call_stats.cache_read_tokens, 0)
     + COALESCE(call_stats.cache_write_tokens, 0) AS total_tokens,
-  COALESCE(call_stats.cost_usd, 0::numeric) AS cost_usd
+  COALESCE(call_stats.cost_usd, 0::numeric) AS cost_usd,
+  -- Appended after initial release: CREATE OR REPLACE VIEW only allows adding
+  -- columns at the end, so later additions must stay below this line.
+  process.source AS process_source,
+  process.cpu_percent,
+  process.memory_percent,
+  process.memory_rss_bytes,
+  process.sampled_at AS process_sampled_at
 FROM public.captain_sessions s
 LEFT JOIN LATERAL (
   SELECT p.*
@@ -834,14 +836,16 @@ SELECT
   m.role,
   m.parts,
   m.raw,
-  m.source_line,
   m.schema_version,
   m.occurred_at,
   m.recorded_at,
   c.model,
   c.backend,
   c.effort,
-  c.status AS model_call_status
+  c.status AS model_call_status,
+  -- Appended after initial release: CREATE OR REPLACE VIEW only allows adding
+  -- columns at the end, so later additions must stay below this line.
+  m.source_line
 FROM public.captain_messages m
 LEFT JOIN public.captain_model_calls c ON c.id = m.model_call_id;
 

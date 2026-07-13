@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/flanksource/captain/pkg/ai/history"
 	"github.com/flanksource/captain/pkg/claude"
+	"github.com/flanksource/captain/pkg/database"
 	"github.com/timberio/go-datemath"
 )
 
@@ -72,44 +73,38 @@ func RunProjectsList(_ ProjectsListOptions) (any, error) {
 	return ProjectsListResult{Total: len(projects), Rows: rows}, nil
 }
 
-func RunProjectOptions() (ProjectOptionsResult, error) {
-	accs := map[string]*projectOptionAccumulator{}
-
-	projects, err := scanProjects()
+func RunProjectOptions(ctx context.Context) (ProjectOptionsResult, error) {
+	db, err := freshenSessionDB(ctx)
 	if err != nil {
 		return ProjectOptionsResult{}, err
 	}
-	for _, project := range projects {
-		addProjectOption(accs, projectOptionPath(project), "claude", project.sessions, project.lastUsed)
+	overviews, err := db.ListSessionOverviews(ctx, database.SessionOverviewFilter{RootsOnly: true})
+	if err != nil {
+		return ProjectOptionsResult{}, err
 	}
+	return projectOptionsFromOverviews(overviews), nil
+}
 
-	if codexFiles, err := history.FindCodexSessionFiles(); err == nil {
-		for _, file := range codexFiles {
-			meta, err := history.ReadCodexSessionMeta(file)
-			if err != nil || meta == nil || strings.TrimSpace(meta.CWD) == "" {
-				continue
-			}
-			lastUsed := time.Time{}
-			if info, err := os.Stat(file); err == nil {
-				lastUsed = info.ModTime()
-			}
-			if meta.StartedAt != nil && meta.StartedAt.After(lastUsed) {
-				lastUsed = *meta.StartedAt
-			}
-			addProjectOption(accs, sessionProjectRoot(meta.CWD), "codex", 1, lastUsed)
+// projectOptionsFromOverviews groups sessions by project root (derived from
+// each session's working directory) into picker options, flagging projects
+// with a live process as source "live".
+func projectOptionsFromOverviews(overviews []database.SessionOverview) ProjectOptionsResult {
+	accs := map[string]*projectOptionAccumulator{}
+	for _, overview := range overviews {
+		cwd := stringOr(overview.CWD, stringOr(overview.ProcessCWD, ""))
+		if strings.TrimSpace(cwd) == "" {
+			continue
 		}
-	}
-
-	if processes, err := discoverSessionProcesses(); err == nil {
-		for _, proc := range processes {
-			if strings.TrimSpace(proc.CWD) == "" {
-				continue
-			}
-			lastUsed := time.Time{}
-			if proc.StartedAt != nil {
-				lastUsed = *proc.StartedAt
-			}
-			addProjectOption(accs, sessionProjectRoot(proc.CWD), "live", 0, lastUsed)
+		lastUsed := time.Time{}
+		if overview.LastActivityAt != nil {
+			lastUsed = *overview.LastActivityAt
+		} else if overview.StartedAt != nil {
+			lastUsed = *overview.StartedAt
+		}
+		root := sessionProjectRoot(cwd)
+		addProjectOption(accs, root, overview.Source, 1, lastUsed)
+		if overview.ProcessActive {
+			addProjectOption(accs, root, "live", 0, lastUsed)
 		}
 	}
 
@@ -149,7 +144,7 @@ func RunProjectOptions() (ProjectOptionsResult, error) {
 		return left.Label < right.Label
 	})
 
-	return ProjectOptionsResult{Total: len(projectsOut), Projects: projectsOut}, nil
+	return ProjectOptionsResult{Total: len(projectsOut), Projects: projectsOut}
 }
 
 func addProjectOption(accs map[string]*projectOptionAccumulator, path, source string, sessions int, lastUsed time.Time) {
@@ -169,30 +164,6 @@ func addProjectOption(accs map[string]*projectOptionAccumulator, path, source st
 	if lastUsed.After(acc.lastUsed) {
 		acc.lastUsed = lastUsed
 	}
-}
-
-func projectOptionPath(project projectDirInfo) string {
-	sessions, _ := filepath.Glob(filepath.Join(project.dirPath, "*.jsonl"))
-	sort.Slice(sessions, func(i, j int) bool {
-		left, leftErr := os.Stat(sessions[i])
-		right, rightErr := os.Stat(sessions[j])
-		if leftErr != nil || rightErr != nil {
-			return sessions[i] < sessions[j]
-		}
-		return left.ModTime().After(right.ModTime())
-	})
-	for _, sessionFile := range sessions {
-		entries, err := claude.ReadHistoryFileWithOptions(sessionFile, claude.ReadOptions{})
-		if err != nil {
-			continue
-		}
-		for _, entry := range entries {
-			if strings.TrimSpace(entry.CWD) != "" {
-				return sessionProjectRoot(entry.CWD)
-			}
-		}
-	}
-	return project.name
 }
 
 func projectOptionLabel(path string) string {

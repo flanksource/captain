@@ -75,24 +75,18 @@ func RunSessionThroughput(ctx context.Context, opts SessionThroughputOptions) (S
 	if limit <= 0 {
 		limit = defaultSessionThroughputLimit
 	}
-	scope, projectRoot, searchAll := resolveSessionScope(cwd, opts.All, opts.Project)
+	scope, projectRoot, _ := resolveSessionScope(cwd, opts.All, opts.Project)
 
-	candidateLimit := limit
-	if searchAll && projectRoot != "" {
-		candidateLimit = 0
-	}
-	candidates, err := discoverLiveSessionCandidates(ctx, cwd, searchAll, source, candidateLimit)
+	db, err := freshenSessionDB(ctx)
 	if err != nil {
 		return SessionThroughputResult{}, err
 	}
-	candidates = filterSessionCandidatesByProject(candidates, projectRoot)
-	records := make([]SessionRecord, 0, len(candidates))
-	for _, candidate := range candidates {
-		if sessionMatchesQuery(candidate.record, opts.Query) {
-			records = append(records, candidate.record)
-		}
+	records, err := dbSessionRecords(ctx, db, sessionRecordQuery{
+		Source: source, ProjectRoot: projectRoot, Query: opts.Query,
+	})
+	if err != nil {
+		return SessionThroughputResult{}, err
 	}
-	sortSessionRecords(records)
 	if limit > 0 && len(records) > limit {
 		records = records[:limit]
 	}

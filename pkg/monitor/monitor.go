@@ -36,6 +36,8 @@ type Config struct {
 	Debounce time.Duration
 	// BackfillInterval is the periodic incremental scan cadence (default 5m).
 	BackfillInterval time.Duration
+	// DiscoverProcesses overrides ps-based agent-process discovery (tests).
+	DiscoverProcesses func() ([]Process, error)
 }
 
 type Monitor struct {
@@ -61,6 +63,9 @@ func New(cfg Config) (*Monitor, error) {
 	}
 	if cfg.BackfillInterval <= 0 {
 		cfg.BackfillInterval = 5 * time.Minute
+	}
+	if cfg.DiscoverProcesses == nil {
+		cfg.DiscoverProcesses = discoverAgentProcesses
 	}
 	return &Monitor{cfg: cfg, db: cfg.DB, tracked: map[string]string{}}, nil
 }
@@ -127,19 +132,18 @@ func (m *Monitor) Run(ctx context.Context) error {
 
 func (m *Monitor) runLocked(ctx context.Context, lock *sql.Conn) error {
 	ingestor := newIngestor(m)
-	if err := ingestor.refreshSourceStates(ctx); err != nil {
-		return err
-	}
 	watcher, err := newTranscriptWatcher(m, ingestor)
 	if err != nil {
 		return err
 	}
 	defer watcher.close()
 
+	// Initial backfill runs before the first process poll so live processes
+	// bind to their ingested sessions instead of provisional stubs.
+	m.backfill(ctx, ingestor)
 	if err := m.pollProcesses(ctx, watcher); err != nil {
 		log.Warnf("process poll: %v", err)
 	}
-	go m.backfill(ctx, ingestor)
 
 	processTicker := time.NewTicker(m.cfg.ProcessInterval)
 	backfillTicker := time.NewTicker(m.cfg.BackfillInterval)

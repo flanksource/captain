@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flanksource/captain/pkg/claude"
+	"github.com/flanksource/captain/pkg/database"
 )
 
 func TestFormatBytes(t *testing.T) {
@@ -51,7 +51,7 @@ func TestUuidStem(t *testing.T) {
 	}
 }
 
-func TestRunProjectOptionsMergesClaudeCodexAndLive(t *testing.T) {
+func TestProjectOptionsFromOverviewsMergesClaudeCodexAndLive(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	claudeProject := filepath.Join(home, "work", "claude-project")
@@ -64,44 +64,21 @@ func TestRunProjectOptionsMergesClaudeCodexAndLive(t *testing.T) {
 		markProjectRoot(t, dir)
 	}
 
-	writeJSONL(t, filepath.Join(home, ".claude", "projects", claude.NormalizePath(claudeProject), "sess-claude.jsonl"),
-		map[string]any{
-			"type":      "assistant",
-			"sessionId": "sess-claude",
-			"timestamp": "2026-06-01T10:00:00Z",
-			"cwd":       claudeProject,
-			"message": map[string]any{
-				"role":    "assistant",
-				"content": []any{map[string]any{"type": "text", "text": "ok"}},
-			},
-		},
-	)
-	writeCodexSession(t, filepath.Join(home, ".codex", "sessions", "2026", "06", "rollout-codex.jsonl"), "codex-project", codexProject)
-
 	started := time.Date(2026, 6, 1, 11, 0, 0, 0, time.UTC)
-	orig := discoverSessionProcesses
-	discoverSessionProcesses = func() ([]agentProcess, error) {
-		return []agentProcess{{
-			Source:    "codex",
-			PID:       101,
-			Active:    true,
-			StartedAt: &started,
-			CWD:       liveProject,
-			Command:   "codex",
-		}}, nil
+	overviews := []database.SessionOverview{
+		{Source: "claude", CWD: &claudeProject, LastActivityAt: &started},
+		{Source: "codex", CWD: &codexProject, StartedAt: &started},
+		{Source: "codex", CWD: &liveProject, StartedAt: &started, ProcessActive: true},
 	}
-	t.Cleanup(func() { discoverSessionProcesses = orig })
 
-	result, err := RunProjectOptions()
-	if err != nil {
-		t.Fatalf("RunProjectOptions: %v", err)
-	}
+	result := projectOptionsFromOverviews(overviews)
 	if result.Total != 3 {
 		t.Fatalf("projects = %+v", result)
 	}
 	assertProjectOption(t, result.Projects, claudeProject, "claude")
 	assertProjectOption(t, result.Projects, codexProject, "codex")
 	assertProjectOption(t, result.Projects, liveProject, "live")
+	assertProjectOption(t, result.Projects, liveProject, "codex")
 }
 
 func assertProjectOption(t *testing.T, projects []ProjectOption, path, source string) {

@@ -23,12 +23,11 @@ func RunOnce(ctx context.Context, cfg Config) error {
 	defer func() { _ = conn.Close() }()
 
 	ingestor := newIngestor(m)
-	if err := ingestor.refreshSourceStates(ctx); err != nil {
-		return err
-	}
+	// Ingest transcripts before polling processes so processes bind to real
+	// sessions instead of provisional stubs.
+	m.backfill(ctx, ingestor)
 	if err := m.pollProcesses(ctx, nil); err != nil {
 		log.Warnf("one-shot process poll: %v", err)
 	}
-	m.backfill(ctx, ingestor)
 	return nil
 }

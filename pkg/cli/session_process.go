@@ -45,6 +45,22 @@ func (p agentProcess) wire() *SessionLiveWire {
 	}
 }
 
+// discoverSessionProcesses is indirected so ps tests can fake process lists.
+var discoverSessionProcesses = discoverAgentProcesses
+
+func filterAgentProcessesByProject(processes []agentProcess, projectRoot string) []agentProcess {
+	if projectRoot == "" {
+		return processes
+	}
+	filtered := make([]agentProcess, 0, len(processes))
+	for _, proc := range processes {
+		if sessionRecordMatchesProject(SessionRecord{CWD: proc.CWD}, projectRoot) {
+			filtered = append(filtered, proc)
+		}
+	}
+	return filtered
+}
+
 // parseClaudeSessionIDFromCommand extracts the session id claude was launched
 // with, from its "--session-id <uuid>" / "--resume <uuid>" argv (either the
 // space-separated or "=<uuid>" form). Returns "" when absent.

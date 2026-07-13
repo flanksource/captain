@@ -353,11 +353,16 @@ export async function fetchProjectOptions(): Promise<ProjectOptionsResult> {
 
 export async function fetchSession(
   id: string,
+  page?: { offset?: number; limit?: number; tail?: number },
 ): Promise<UnifiedSession & { timing?: TimingMetric[] }> {
+  const params: Record<string, string> = { id };
+  if (page?.tail) params.tail = String(page.tail);
+  if (page?.offset) params.offset = String(page.offset);
+  if (page?.limit) params.limit = String(page.limit);
   const response = await apiClient.executeCommand(
     "/api/v1/sessions/{id}",
     "GET",
-    { id },
+    params,
     { Accept: "application/json" },
   );
   if (!response.success) {

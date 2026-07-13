@@ -343,7 +343,7 @@ func handleSessionsThroughput() http.HandlerFunc {
 
 func handleProjects() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		result, err := RunProjectOptions()
+		result, err := RunProjectOptions(r.Context())
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -362,17 +362,28 @@ func handleSessionGet() http.HandlerFunc {
 			http.Error(w, "session id is required", http.StatusBadRequest)
 			return
 		}
-		source := strings.TrimSpace(r.URL.Query().Get("source"))
-		if source == "" {
-			source = "all"
+		query := r.URL.Query()
+		opts := SessionGetOptions{
+			ID:     id,
+			Offset: queryInt(query.Get("offset")),
+			Limit:  queryInt(query.Get("limit")),
+			Tail:   queryInt(query.Get("tail")),
 		}
-		s, err := RunSessionGet(r.Context(), SessionGetOptions{ID: id, Source: source})
+		s, err := RunSessionGet(r.Context(), opts)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
 		}
 		writeServeJSON(w, http.StatusOK, s)
 	}
+}
+
+func queryInt(value string) int {
+	n, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
 }
 
 func handleThreadFromAgent(store aichat.ThreadStore) http.HandlerFunc {

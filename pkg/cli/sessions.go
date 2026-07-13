@@ -14,8 +14,10 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai/history"
 	"github.com/flanksource/captain/pkg/claude"
+	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/session"
 	rpchttp "github.com/flanksource/clicky/rpc/http"
+	"github.com/google/uuid"
 )
 
 type SessionListOptions struct {
@@ -27,8 +29,10 @@ type SessionListOptions struct {
 }
 
 type SessionGetOptions struct {
-	ID     string `flag:"id" args:"true" help:"Session key or session id"`
-	Source string `flag:"source" help:"Restrict source: all, claude, codex" default:"all"`
+	ID     string `flag:"id" args:"true" help:"Session id (full or unambiguous prefix)"`
+	Offset int    `flag:"offset" help:"Skip this many messages from the start"`
+	Limit  int    `flag:"limit" help:"Maximum messages to return; 0 means all" short:"l"`
+	Tail   int    `flag:"tail" help:"Return only the last N messages (overrides offset/limit)"`
 }
 
 func (SessionGetOptions) GetName() string { return "get <id>" }
@@ -250,19 +254,17 @@ func RunSessionList(ctx context.Context, opts SessionListOptions) (SessionListRe
 		return SessionListResult{}, err
 	}
 
-	scope, projectRoot, searchAll := resolveSessionScope(cwd, opts.All, opts.Project)
-	candidates, err := discoverSessionCandidates(ctx, cwd, searchAll, source)
+	scope, projectRoot, _ := resolveSessionScope(cwd, opts.All, opts.Project)
+	db, err := freshenSessionDB(ctx)
 	if err != nil {
 		return SessionListResult{}, err
 	}
-	candidates = filterSessionCandidatesByProject(candidates, projectRoot)
-	records := make([]SessionRecord, 0, len(candidates))
-	for _, candidate := range candidates {
-		if sessionMatchesQuery(candidate.record, opts.Query) {
-			records = append(records, candidate.record)
-		}
+	records, err := dbSessionRecords(ctx, db, sessionRecordQuery{
+		Source: source, ProjectRoot: projectRoot, Query: opts.Query,
+	})
+	if err != nil {
+		return SessionListResult{}, err
 	}
-	sortSessionRecords(records)
 	total := len(records)
 	if opts.Limit > 0 && len(records) > opts.Limit {
 		records = records[:opts.Limit]
@@ -277,54 +279,64 @@ func RunSessionList(ctx context.Context, opts SessionListOptions) (SessionListRe
 	}, nil
 }
 
-// RunSessionGet returns the unified session model for a session id. The viewer
-// consumes this model natively — one shape for both Claude and Codex, carrying
-// the agent hierarchy, cost, changed files, plan events, approvals, and the
-// message stream (with per-message provenance and the raw JSONL line).
+// RunSessionGet returns the unified session model for a session id. Identity
+// resolves against the database (full UUID or unambiguous provider-session-id
+// prefix); the message stream is parsed read-only from the transcript at the
+// DB-recorded path and paged via offset/limit/tail. Each message carries its
+// transcript line (sourceLine) so consumers can seek into the raw file.
 func RunSessionGet(ctx context.Context, opts SessionGetOptions) (*session.Session, error) {
-	source, err := normalizeSessionSource(opts.Source)
-	if err != nil {
-		return nil, err
-	}
 	id := strings.TrimSpace(opts.ID)
 	if id == "" {
 		return nil, fmt.Errorf("id is required")
 	}
-
-	stopFind := rpchttp.Track(ctx, "find")
-	candidate, found, err := findSessionCandidateByID(id, source)
-	stopFind()
-	if err != nil {
-		return nil, err
-	} else if found {
-		return buildUnifiedSession(ctx, candidate)
-	}
-
-	candidates, err := discoverSessionCandidates(ctx, "", true, source)
+	db, err := freshenSessionDB(ctx)
 	if err != nil {
 		return nil, err
 	}
-	for _, candidate := range candidates {
-		if candidate.record.Key != id && candidate.record.ID != id && !strings.HasPrefix(candidate.record.ID, id) {
-			continue
-		}
-		return buildUnifiedSession(ctx, candidate)
+	overview, err := resolveOverviewByAnyID(ctx, db, id)
+	if err != nil {
+		return nil, err
 	}
-	return nil, fmt.Errorf("session %q not found", id)
-}
+	path := stringOr(overview.HistoryFile, stringOr(overview.Path, ""))
+	if path == "" {
+		return nil, fmt.Errorf("session %q has no transcript recorded on this host", id)
+	}
 
-// buildUnifiedSession builds the pkg/session model for a resolved candidate: a
-// Claude session (root + sub-agent transcripts, resolved by id) or a Codex
-// session file.
-func buildUnifiedSession(ctx context.Context, candidate sessionCandidate) (*session.Session, error) {
 	defer rpchttp.Track(ctx, "parse")()
+	candidate := sessionCandidate{
+		record: minimalSessionRecord(overview.Source, path, stringOr(overview.ProviderSessionID, overview.ID.String())),
+		path:   path,
+	}
 	s, err := buildSessionModel(candidate)
 	if err != nil {
 		return nil, err
 	}
-	persistSessionRows(candidate, s)
-	attachStoredPrompt(s)
+	attachPromptRun(ctx, db, overview.ID, s)
+	pageSessionMessages(s, opts)
 	return s, nil
+}
+
+// pageSessionMessages windows the message stream: the last Tail messages, or
+// an Offset/Limit slice from the start.
+func pageSessionMessages(s *session.Session, opts SessionGetOptions) {
+	if opts.Tail > 0 {
+		if len(s.Messages) > opts.Tail {
+			s.Messages = s.Messages[len(s.Messages)-opts.Tail:]
+		}
+		return
+	}
+	if opts.Offset <= 0 && opts.Limit <= 0 {
+		return
+	}
+	offset := max(opts.Offset, 0)
+	if offset >= len(s.Messages) {
+		s.Messages = nil
+		return
+	}
+	s.Messages = s.Messages[offset:]
+	if opts.Limit > 0 && len(s.Messages) > opts.Limit {
+		s.Messages = s.Messages[:opts.Limit]
+	}
 }
 
 func buildSessionModel(candidate sessionCandidate) (*session.Session, error) {
@@ -362,42 +374,15 @@ func buildSessionModel(candidate sessionCandidate) (*session.Session, error) {
 	}
 }
 
-// persistSessionRows upserts the session's rows (root + sub-agents linked by
-// parent) so the store's hierarchy is populated on a detailed read.
-func persistSessionRows(candidate sessionCandidate, s *session.Session) {
-	st := sessionStore()
-	if st == nil {
+// attachPromptRun attaches the realized prompt (for captain-launched sessions)
+// from the native prompt-run store to the session model.
+func attachPromptRun(ctx context.Context, db *database.DB, sessionID uuid.UUID, s *session.Session) {
+	runs, err := db.ListPromptRuns(ctx, database.PromptRunFilter{SessionID: &sessionID})
+	if err != nil || len(runs) == 0 || len(runs[0].RenderedSpec) == 0 {
 		return
 	}
-	switch candidate.record.Source {
-	case "claude":
-		parsed, err := claude.ParseSessions("", true, claude.Filter{SessionIDs: []string{s.ID}, IncludeAgents: true})
-		if err != nil {
-			return
-		}
-		for _, ps := range parsed {
-			if ps.SessionID == s.ID {
-				st.upsertRows(session.Rows(ps))
-			}
-		}
-	case "codex":
-		if r, ok := session.CodexRow(candidate.path); ok {
-			st.upsertRows([]session.Row{r})
-		}
-	}
-}
-
-// attachStoredPrompt attaches the realized prompt (for captain-launched
-// sessions) from the store to the session model.
-func attachStoredPrompt(s *session.Session) {
-	st := sessionStore()
-	if st == nil || s.ID == "" {
-		return
-	}
-	if p, ok := st.prompt(s.ID); ok {
-		if raw, err := json.Marshal(p.Realized); err == nil {
-			s.Prompt = raw
-		}
+	if raw, err := json.Marshal(runs[0].RenderedSpec); err == nil {
+		s.Prompt = raw
 	}
 }
 

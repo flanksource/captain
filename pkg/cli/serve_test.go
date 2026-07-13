@@ -65,6 +65,7 @@ func TestHandleThreadFromAgentRequiresProviderSession(t *testing.T) {
 func TestHandleSessionGetReturnsUnifiedModel(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	withTestCaptainDB(t)
 	project := filepath.Join(home, "work", "project")
 	if err := os.MkdirAll(project, 0o755); err != nil {
 		t.Fatal(err)
@@ -106,6 +107,7 @@ func TestHandleSessionGetReturnsUnifiedModel(t *testing.T) {
 func TestHandleProjectsReturnsOptions(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	withTestCaptainDB(t)
 	project := filepath.Join(home, "work", "project")
 	if err := os.MkdirAll(project, 0o755); err != nil {
 		t.Fatal(err)
@@ -123,10 +125,6 @@ func TestHandleProjectsReturnsOptions(t *testing.T) {
 			},
 		},
 	)
-
-	orig := discoverSessionProcesses
-	discoverSessionProcesses = func() ([]agentProcess, error) { return nil, nil }
-	t.Cleanup(func() { discoverSessionProcesses = orig })
 
 	req := httptest.NewRequest(http.MethodGet, "/api/captain/projects", nil)
 	rec := httptest.NewRecorder()

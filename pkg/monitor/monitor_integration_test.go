@@ -59,16 +59,15 @@ func TestRunOnceIngestsAndIsIncremental(t *testing.T) {
 	path := writeFixtureHome(t)
 
 	processStart := time.Now().Add(-time.Minute).Truncate(time.Second)
-	discoverProcesses = func() ([]agentProcess, error) {
-		return []agentProcess{{
+	fakeDiscover := func() ([]Process, error) {
+		return []Process{{
 			Source: "claude", PID: 4242, Status: "sleeping", CPUPercent: 20.5, MemoryPercent: 1.5,
 			MemoryRSSKB: 1024, StartedAt: &processStart, CWD: fixtureCWD,
 			Command: "claude --resume " + fixtureSessionID,
 		}}, nil
 	}
-	t.Cleanup(func() { discoverProcesses = discoverAgentProcesses })
 
-	require.NoError(t, RunOnce(t.Context(), Config{DB: db, HostID: "test-host"}))
+	require.NoError(t, RunOnce(t.Context(), Config{DB: db, HostID: "test-host", DiscoverProcesses: fakeDiscover}))
 
 	overview, err := db.GetSessionOverviewByIdentity(t.Context(), fixtureSessionID)
 	require.NoError(t, err)
@@ -81,7 +80,7 @@ func TestRunOnceIngestsAndIsIncremental(t *testing.T) {
 	assert.Equal(t, path, *overview.HistoryFile)
 
 	t.Run("unchanged file is skipped, appended file re-ingests", func(t *testing.T) {
-		require.NoError(t, RunOnce(t.Context(), Config{DB: db, HostID: "test-host"}))
+		require.NoError(t, RunOnce(t.Context(), Config{DB: db, HostID: "test-host", DiscoverProcesses: fakeDiscover}))
 		overview, err := db.GetSessionOverviewByIdentity(t.Context(), fixtureSessionID)
 		require.NoError(t, err)
 		assert.EqualValues(t, 2, overview.MessageCount, "unchanged transcript must not re-ingest")
@@ -92,7 +91,7 @@ func TestRunOnceIngestsAndIsIncremental(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, f.Close())
 
-		require.NoError(t, RunOnce(t.Context(), Config{DB: db, HostID: "test-host"}))
+		require.NoError(t, RunOnce(t.Context(), Config{DB: db, HostID: "test-host", DiscoverProcesses: fakeDiscover}))
 		overview, err = db.GetSessionOverviewByIdentity(t.Context(), fixtureSessionID)
 		require.NoError(t, err)
 		assert.EqualValues(t, 3, overview.MessageCount, "appended message must ingest incrementally")
@@ -105,8 +104,8 @@ func TestRunOnceIngestsAndIsIncremental(t *testing.T) {
 	})
 
 	t.Run("process vanish closes the process row", func(t *testing.T) {
-		discoverProcesses = func() ([]agentProcess, error) { return nil, nil }
-		require.NoError(t, RunOnce(t.Context(), Config{DB: db, HostID: "test-host"}))
+		noProcesses := func() ([]Process, error) { return nil, nil }
+		require.NoError(t, RunOnce(t.Context(), Config{DB: db, HostID: "test-host", DiscoverProcesses: noProcesses}))
 		overview, err := db.GetSessionOverviewByIdentity(t.Context(), fixtureSessionID)
 		require.NoError(t, err)
 		assert.False(t, overview.ProcessActive)

@@ -373,14 +373,16 @@ func isPreferredPrimary(candidate, current openTranscript) bool {
 }
 
 // psRecord builds the session record for a live process, augmenting it with the
-// cached/DB summary (tokens, cost, context, model) when its transcript is known,
+// database summary (tokens, cost, context, model) when its session is known,
 // and falling back to a minimal synthetic record otherwise.
 func psRecord(ctx context.Context, proc agentProcess) SessionRecord {
-	if proc.SessionFile != "" {
-		if cands := summarizeSessionRefs(ctx, []sessionFileRef{{source: proc.Source, path: proc.SessionFile}}); len(cands) > 0 {
-			record := cands[0].record
-			applyLiveProcess(&record, proc)
-			return record
+	if proc.SessionID != "" {
+		if db, err := captainDB(ctx); err == nil {
+			if overview, err := db.GetSessionOverviewByIdentity(ctx, proc.SessionID); err == nil {
+				record := recordFromOverview(*overview)
+				applyLiveProcess(&record, proc)
+				return record
+			}
 		}
 	}
 	record := SessionRecord{

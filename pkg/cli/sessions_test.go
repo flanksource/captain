@@ -10,12 +10,13 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/claude"
-	rpchttp "github.com/flanksource/clicky/rpc/http"
+	"github.com/flanksource/captain/pkg/monitor"
 )
 
 func TestRunSessionListAndGetClaude(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	withTestCaptainDB(t)
 	project := filepath.Join(home, "work", "project")
 	if err := os.MkdirAll(project, 0o755); err != nil {
 		t.Fatal(err)
@@ -82,7 +83,7 @@ func TestRunSessionListAndGetClaude(t *testing.T) {
 	if session.ID != "sess-claude" || session.Source != "claude" {
 		t.Fatalf("session summary = %+v", session)
 	}
-	if session.ToolCalls != 1 || session.Messages != 1 {
+	if session.ToolCalls != 1 || session.Messages != 3 {
 		t.Fatalf("ToolCalls/Messages = %d/%d", session.ToolCalls, session.Messages)
 	}
 	if session.Key == "" {
@@ -114,6 +115,7 @@ func TestRunSessionListAndGetClaude(t *testing.T) {
 func TestRunSessionListCodexScope(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	withTestCaptainDB(t)
 	project := filepath.Join(home, "work", "project")
 	if err := os.MkdirAll(project, 0o755); err != nil {
 		t.Fatal(err)
@@ -164,42 +166,17 @@ func TestSessionMatchesQueryIncludesIdentity(t *testing.T) {
 func TestRunSessionGetUnknown(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	withTestCaptainDB(t)
 	_, err := RunSessionGet(context.Background(), SessionGetOptions{ID: "missing"})
 	if err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("err = %v", err)
 	}
 }
 
-func TestFindSessionCandidateByIDClaudeFilename(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	project := filepath.Join(home, "work", "project")
-	sessionFile := filepath.Join(home, ".claude", "projects", claude.NormalizePath(project), "sess-fast.jsonl")
-	if err := os.MkdirAll(filepath.Dir(sessionFile), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(sessionFile, []byte("{not-json"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	candidate, ok, err := findSessionCandidateByID("sess-fast", "all")
-	if err != nil {
-		t.Fatalf("findSessionCandidateByID: %v", err)
-	}
-	if !ok {
-		t.Fatal("expected candidate")
-	}
-	if candidate.path != sessionFile {
-		t.Fatalf("candidate.path = %q, want %q", candidate.path, sessionFile)
-	}
-	if candidate.record.ID != "sess-fast" || candidate.record.Source != "claude" {
-		t.Fatalf("candidate.record = %+v", candidate.record)
-	}
-}
-
 func TestRunSessionLiveEnrichesSummaryWithProcessHealth(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	withTestCaptainDB(t)
 	project := filepath.Join(home, "work", "project")
 	if err := os.MkdirAll(project, 0o755); err != nil {
 		t.Fatal(err)
@@ -237,13 +214,11 @@ func TestRunSessionLiveEnrichesSummaryWithProcessHealth(t *testing.T) {
 	)
 
 	started := time.Date(2026, 6, 1, 9, 59, 0, 0, time.UTC)
-	orig := discoverSessionProcesses
-	discoverSessionProcesses = func() ([]agentProcess, error) {
-		return []agentProcess{{
+	monitorDiscoverProcesses = func() ([]monitor.Process, error) {
+		return []monitor.Process{{
 			Source:        "claude",
 			PID:           12345,
 			Status:        "active",
-			Active:        true,
 			CPUPercent:    2.5,
 			MemoryPercent: 1.25,
 			StartedAt:     &started,
@@ -251,7 +226,6 @@ func TestRunSessionLiveEnrichesSummaryWithProcessHealth(t *testing.T) {
 			Command:       "claude",
 		}}, nil
 	}
-	t.Cleanup(func() { discoverSessionProcesses = orig })
 
 	result, err := RunSessionLive(context.Background(), SessionLiveOptions{Source: "claude", Limit: 10})
 	if err != nil {
@@ -281,6 +255,7 @@ func TestRunSessionLiveEnrichesSummaryWithProcessHealth(t *testing.T) {
 func TestRunSessionLiveScopesUnmatchedProcessesToCurrentProject(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	withTestCaptainDB(t)
 	project := filepath.Join(home, "work", "project")
 	otherProject := filepath.Join(home, "work", "other")
 	if err := os.MkdirAll(project, 0o755); err != nil {
@@ -292,14 +267,12 @@ func TestRunSessionLiveScopesUnmatchedProcessesToCurrentProject(t *testing.T) {
 	t.Chdir(project)
 	markProjectRoot(t, project)
 
-	orig := discoverSessionProcesses
-	discoverSessionProcesses = func() ([]agentProcess, error) {
-		return []agentProcess{
-			{Source: "codex", PID: 100, Status: "sleeping", Active: true, CWD: project, Command: "codex"},
-			{Source: "claude", PID: 200, Status: "sleeping", Active: true, CWD: otherProject, Command: "claude"},
+	monitorDiscoverProcesses = func() ([]monitor.Process, error) {
+		return []monitor.Process{
+			{Source: "codex", PID: 100, Status: "sleeping", CWD: project, Command: "codex"},
+			{Source: "claude", PID: 200, Status: "sleeping", CWD: otherProject, Command: "claude"},
 		}, nil
 	}
-	t.Cleanup(func() { discoverSessionProcesses = orig })
 
 	result, err := RunSessionLive(context.Background(), SessionLiveOptions{Source: "all", Limit: 10})
 	if err != nil {
@@ -324,6 +297,7 @@ func TestRunSessionLiveScopesUnmatchedProcessesToCurrentProject(t *testing.T) {
 func TestRunSessionLiveRestrictsExplicitProject(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	withTestCaptainDB(t)
 	project := filepath.Join(home, "work", "project")
 	otherProject := filepath.Join(home, "work", "other")
 	if err := os.MkdirAll(project, 0o755); err != nil {
@@ -363,10 +337,6 @@ func TestRunSessionLiveRestrictsExplicitProject(t *testing.T) {
 		},
 	)
 
-	orig := discoverSessionProcesses
-	discoverSessionProcesses = func() ([]agentProcess, error) { return nil, nil }
-	t.Cleanup(func() { discoverSessionProcesses = orig })
-
 	result, err := RunSessionLive(context.Background(), SessionLiveOptions{
 		Source:  "claude",
 		All:     true,
@@ -381,45 +351,6 @@ func TestRunSessionLiveRestrictsExplicitProject(t *testing.T) {
 	}
 	if result.Total != 1 || len(result.Sessions) != 1 || result.Sessions[0].ID != "sess-other" {
 		t.Fatalf("project-scoped sessions = %+v", result)
-	}
-}
-
-func TestRunSessionLiveRecordsPhaseTimings(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	project := filepath.Join(home, "work", "project")
-	if err := os.MkdirAll(project, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Chdir(project)
-
-	writeJSONL(t, filepath.Join(home, ".claude", "projects", claude.NormalizePath(project), "sess-timing.jsonl"),
-		map[string]any{
-			"type":      "user",
-			"sessionId": "sess-timing",
-			"timestamp": "2026-06-01T10:00:00Z",
-			"cwd":       project,
-			"message": map[string]any{
-				"role":    "user",
-				"content": []any{map[string]any{"type": "text", "text": "hi"}},
-			},
-		},
-	)
-
-	orig := discoverSessionProcesses
-	discoverSessionProcesses = func() ([]agentProcess, error) { return nil, nil }
-	t.Cleanup(func() { discoverSessionProcesses = orig })
-
-	ctx, timings := rpchttp.WithTimings(context.Background())
-	if _, err := RunSessionLive(ctx, SessionLiveOptions{Source: "claude", Limit: 10}); err != nil {
-		t.Fatalf("RunSessionLive: %v", err)
-	}
-
-	header := timings.Header()
-	for _, phase := range []string{"find", "parse", "enrich"} {
-		if !strings.Contains(header, phase+";dur=") {
-			t.Fatalf("Header() = %q, missing phase %q", header, phase)
-		}
 	}
 }
 

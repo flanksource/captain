@@ -16,9 +16,10 @@ import (
 // database is mandatory: session/plan/prompt surfaces read it exclusively, so
 // failing to open it is a loud error rather than a degraded mode.
 var captainDBState struct {
-	once sync.Once
-	db   *database.DB
-	err  error
+	mu     sync.Mutex
+	opened bool
+	db     *database.DB
+	err    error
 }
 
 // captainDB opens (once) the native Captain database: resolve the configured
@@ -26,10 +27,24 @@ var captainDBState struct {
 // run migrations — including the idempotent legacy session-cache cutover — and
 // wrap the pool.
 func captainDB(ctx context.Context) (*database.DB, error) {
-	captainDBState.once.Do(func() {
+	captainDBState.mu.Lock()
+	defer captainDBState.mu.Unlock()
+	if !captainDBState.opened {
 		captainDBState.db, captainDBState.err = openCaptainDB(ctx)
-	})
+		captainDBState.opened = true
+	}
 	return captainDBState.db, captainDBState.err
+}
+
+// setCaptainDBForTest injects (or, with nil, resets) the process-wide handle
+// so tests run against their own embedded database instead of a configured
+// DSN. Production code never calls this.
+func setCaptainDBForTest(db *database.DB) {
+	captainDBState.mu.Lock()
+	defer captainDBState.mu.Unlock()
+	captainDBState.db = db
+	captainDBState.err = nil
+	captainDBState.opened = db != nil
 }
 
 func openCaptainDB(ctx context.Context) (*database.DB, error) {
@@ -80,6 +95,10 @@ func captainHostID() string {
 	return host
 }
 
+// monitorDiscoverProcesses is indirected so cli tests can fake live-process
+// discovery; nil selects the monitor's real ps-based discovery.
+var monitorDiscoverProcesses func() ([]monitor.Process, error)
+
 // freshenSessionDB runs a one-shot monitor pass (ps poll + incremental
 // transcript scan) before a CLI read when no live monitor holds the writer
 // lock. With serve running it is a fast no-op.
@@ -88,7 +107,8 @@ func freshenSessionDB(ctx context.Context) (*database.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := monitor.RunOnce(ctx, monitor.Config{DB: db, HostID: captainHostID()}); err != nil {
+	config := monitor.Config{DB: db, HostID: captainHostID(), DiscoverProcesses: monitorDiscoverProcesses}
+	if err := monitor.RunOnce(ctx, config); err != nil {
 		return nil, fmt.Errorf("refresh session database: %w", err)
 	}
 	return db, nil

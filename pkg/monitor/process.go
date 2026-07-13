@@ -16,8 +16,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// agentProcess is one live claude/codex OS process observed via ps.
-type agentProcess struct {
+// Process is one live claude/codex OS process observed via ps.
+type Process struct {
 	Source        string
 	PID           int
 	Status        string
@@ -32,11 +32,8 @@ type agentProcess struct {
 // pollProcesses is one monitor tick: sample agent processes, bind each to a
 // session, persist the metrics snapshot, close vanished process rows, and feed
 // the live transcript locations to the watcher (nil in one-shot runs).
-// discoverProcesses is indirected so tests can substitute fake process lists.
-var discoverProcesses = discoverAgentProcesses
-
 func (m *Monitor) pollProcesses(ctx context.Context, watcher *transcriptWatcher) error {
-	processes, err := discoverProcesses()
+	processes, err := m.cfg.DiscoverProcesses()
 	if err != nil {
 		return err
 	}
@@ -68,19 +65,12 @@ func (m *Monitor) pollProcesses(ctx context.Context, watcher *transcriptWatcher)
 	return nil
 }
 
-// resolveProcessSession binds a process to a session: a previously recorded
-// binding first, then the argv session id, then the newest session in the same
-// working directory, finally a provisional session that the transcript ingest
-// later fills in.
-func (m *Monitor) resolveProcessSession(ctx context.Context, proc agentProcess) (uuid.UUID, error) {
-	startedAt := processStartOrNow(proc)
-	existing, err := m.db.FindProcessSessionID(ctx, m.cfg.HostID, bootID(), int64(proc.PID), startedAt)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	if existing != uuid.Nil {
-		return existing, nil
-	}
+// resolveProcessSession binds a process to a session, in precedence order: the
+// authoritative argv session id; the previously recorded binding (unless it
+// still points at a provisional stub); the newest ingested session in the same
+// working directory; finally a provisional session that later transcript
+// ingest fills in.
+func (m *Monitor) resolveProcessSession(ctx context.Context, proc Process) (uuid.UUID, error) {
 	if providerSessionID := parseClaudeSessionIDFromCommand(proc.Command); providerSessionID != "" {
 		session, err := m.db.CreateOrGetSession(ctx, database.CreateSessionInput{
 			ProviderSessionID: providerSessionID, Source: proc.Source, HostID: m.cfg.HostID, CWD: proc.CWD,
@@ -90,10 +80,20 @@ func (m *Monitor) resolveProcessSession(ctx context.Context, proc agentProcess) 
 		}
 		return session.ID, nil
 	}
+	sticky, stickyProvisional, err := m.stickyProcessSession(ctx, proc)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if sticky != uuid.Nil && !stickyProvisional {
+		return sticky, nil
+	}
 	if byCWD, err := m.db.FindSessionIDByCWD(ctx, proc.Source, proc.CWD); err != nil {
 		return uuid.Nil, err
 	} else if byCWD != uuid.Nil {
 		return byCWD, nil
+	}
+	if sticky != uuid.Nil {
+		return sticky, nil // keep the provisional stub until an ingest claims the cwd
 	}
 	session, err := m.db.CreateOrGetSession(ctx, database.CreateSessionInput{
 		Source: proc.Source, HostID: m.cfg.HostID, CWD: proc.CWD,
@@ -105,7 +105,22 @@ func (m *Monitor) resolveProcessSession(ctx context.Context, proc agentProcess) 
 	return session.ID, nil
 }
 
-func (m *Monitor) persistProcess(ctx context.Context, sessionID uuid.UUID, proc agentProcess, sampledAt time.Time) error {
+// stickyProcessSession returns the process's previously recorded session and
+// whether that session is still a provisional stub (no provider identity, no
+// transcript) — stubs stay rebindable so a later ingest can claim the process.
+func (m *Monitor) stickyProcessSession(ctx context.Context, proc Process) (uuid.UUID, bool, error) {
+	existing, err := m.db.FindProcessSessionID(ctx, m.cfg.HostID, bootID(), int64(proc.PID), processStartOrNow(proc))
+	if err != nil || existing == uuid.Nil {
+		return uuid.Nil, false, err
+	}
+	session, err := m.db.GetSession(ctx, existing)
+	if err != nil {
+		return uuid.Nil, false, nil // stale binding to a deleted session: rebind
+	}
+	return existing, session.ProviderSessionID == "" && session.Path == "", nil
+}
+
+func (m *Monitor) persistProcess(ctx context.Context, sessionID uuid.UUID, proc Process, sampledAt time.Time) error {
 	input := database.SessionProcessInput{
 		SessionID: sessionID, HostID: m.cfg.HostID, BootID: bootID(),
 		PID: int64(proc.PID), ProcessStartedAt: processStartOrNow(proc),
@@ -130,7 +145,7 @@ func (m *Monitor) persistProcess(ctx context.Context, sessionID uuid.UUID, proc 
 // watchLiveSession points the watcher at wherever this live session's
 // transcript lives (or will appear): the claude project directory for the
 // process cwd, or codex's per-day rollout directory.
-func (m *Monitor) watchLiveSession(ctx context.Context, watcher *transcriptWatcher, proc agentProcess, sessionID uuid.UUID) {
+func (m *Monitor) watchLiveSession(ctx context.Context, watcher *transcriptWatcher, proc Process, sessionID uuid.UUID) {
 	switch proc.Source {
 	case "claude":
 		if proc.CWD != "" {
@@ -152,7 +167,7 @@ func codexDayDir(now time.Time) string {
 	return filepath.Join(home, ".codex", "sessions", now.Format("2006/01/02"))
 }
 
-func processStartOrNow(proc agentProcess) time.Time {
+func processStartOrNow(proc Process) time.Time {
 	if proc.StartedAt != nil {
 		return proc.StartedAt.UTC()
 	}
@@ -182,7 +197,7 @@ func parseClaudeSessionIDFromCommand(command string) string {
 	return ""
 }
 
-func discoverAgentProcesses() ([]agentProcess, error) {
+func discoverAgentProcesses() ([]Process, error) {
 	if runtime.GOOS == "windows" {
 		return nil, nil
 	}
@@ -191,7 +206,7 @@ func discoverAgentProcesses() ([]agentProcess, error) {
 		return nil, err
 	}
 	lines := bytes.Split(out, []byte{'\n'})
-	processes := make([]agentProcess, 0)
+	processes := make([]Process, 0)
 	for _, raw := range lines {
 		line := strings.TrimSpace(string(raw))
 		if line == "" {
@@ -210,19 +225,19 @@ func discoverAgentProcesses() ([]agentProcess, error) {
 	return processes, nil
 }
 
-func parseAgentProcessLine(line string) (agentProcess, bool) {
+func parseAgentProcessLine(line string) (Process, bool) {
 	fields := strings.Fields(line)
 	if len(fields) < 11 {
-		return agentProcess{}, false
+		return Process{}, false
 	}
 	pid, err := strconv.Atoi(fields[0])
 	if err != nil || pid <= 0 {
-		return agentProcess{}, false
+		return Process{}, false
 	}
 	command := strings.Join(fields[10:], " ")
 	source := processSource(command)
 	if source == "" {
-		return agentProcess{}, false
+		return Process{}, false
 	}
 	cpu, _ := strconv.ParseFloat(fields[1], 64)
 	mem, _ := strconv.ParseFloat(fields[2], 64)
@@ -230,7 +245,7 @@ func parseAgentProcessLine(line string) (agentProcess, bool) {
 	stat := fields[4]
 	start := parseProcessStart(strings.Join(fields[5:10], " "))
 	status, _ := processStatus(stat)
-	return agentProcess{
+	return Process{
 		Source:        source,
 		PID:           pid,
 		Status:        status,
@@ -306,7 +321,7 @@ func parseProcessStart(value string) *time.Time {
 	return &t
 }
 
-func processIDs(processes []agentProcess) []int {
+func processIDs(processes []Process) []int {
 	pids := make([]int, 0, len(processes))
 	for _, proc := range processes {
 		if proc.PID > 0 {

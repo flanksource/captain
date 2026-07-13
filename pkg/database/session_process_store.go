@@ -93,7 +93,7 @@ func (db *DB) UpsertSessionProcess(ctx context.Context, input SessionProcessInpu
 			{Name: "host_id"}, {Name: "boot_id"}, {Name: "pid"}, {Name: "process_started_at"},
 		},
 		DoUpdates: clause.AssignmentColumns([]string{
-			"status", "command", "cwd", "source", "cpu_percent", "memory_percent",
+			"session_id", "status", "command", "cwd", "source", "cpu_percent", "memory_percent",
 			"memory_rss_bytes", "sampled_at", "last_heartbeat_at",
 		}),
 	}).Create(&record).Error
