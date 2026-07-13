@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/flanksource/captain/pkg/monitor"
 	"github.com/flanksource/clicky/aichat"
 	"github.com/flanksource/clicky/rpc"
 	rpchttp "github.com/flanksource/clicky/rpc/http"
@@ -195,6 +196,21 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	db, err := captainDB(ctx)
+	if err != nil {
+		return err
+	}
+	mon, err := monitor.New(monitor.Config{DB: db, HostID: captainHostID()})
+	if err != nil {
+		return err
+	}
+	setServeMonitor(mon)
+	go func() {
+		if err := mon.Run(ctx); err != nil {
+			log.Errorf("session monitor stopped: %v", err)
+		}
+	}()
 
 	go prunePromptRuns(ctx, promptRuns)
 
