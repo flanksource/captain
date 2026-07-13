@@ -95,6 +95,14 @@ func Migrate(ctx context.Context, dsn string) error {
 	return migrations.Apply(ctx, dsn)
 }
 
+// MigrateWithLegacySessionCutover explicitly archives and backfills the
+// path-keyed session summary cache before applying Captain's authoritative HCL
+// schema. Normal Migrate remains fail-closed when it encounters the legacy
+// shape so hosts must opt into the data conversion deliberately.
+func MigrateWithLegacySessionCutover(ctx context.Context, dsn string) (*migrations.LegacySessionCutoverReport, error) {
+	return migrations.ApplyWithLegacySessionCutover(ctx, dsn)
+}
+
 // Gorm returns the application pool supplied to or opened by Captain.
 func (db *DB) Gorm() *gorm.DB {
 	if db == nil {

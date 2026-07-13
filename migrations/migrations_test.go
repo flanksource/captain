@@ -33,6 +33,9 @@ func TestSchemaBundleContainsGavelIntegrationContract(t *testing.T) {
 		`column "activity_state"`,
 		`column "health_state"`,
 		`column "state_version"`,
+		`table "captain_legacy_session_cutovers"`,
+		`column "legacy_sessions_checksum"`,
+		`column "native_sessions_checksum"`,
 	)
 	assertContainsAll(t, "20_prompt_runs_and_plans.pg.hcl",
 		`table "captain_prompt_runs"`,

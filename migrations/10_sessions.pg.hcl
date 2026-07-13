@@ -293,3 +293,89 @@ table "captain_session_processes" {
     expr = "ended_at IS NULL OR ended_at >= process_started_at"
   }
 }
+
+// One durable validation row is retained for the explicit legacy cache
+// cutover. The source tables themselves are copied to versioned archive tables
+// outside the managed HCL realm so they remain a directly usable rollback
+// artifact rather than being reshaped by Atlas.
+table "captain_legacy_session_cutovers" {
+  schema = schema.public
+
+  column "cutover_key" {
+    null = false
+    type = text
+  }
+  column "legacy_sessions_table" {
+    null = false
+    type = text
+  }
+  column "legacy_prompts_table" {
+    null = true
+    type = text
+  }
+  column "legacy_session_rows" {
+    null = false
+    type = bigint
+  }
+  column "legacy_prompt_rows" {
+    null = false
+    type = bigint
+  }
+  column "imported_session_rows" {
+    null = false
+    type = bigint
+  }
+  column "imported_prompt_run_rows" {
+    null = false
+    type = bigint
+  }
+  column "legacy_sessions_checksum" {
+    null = false
+    type = text
+  }
+  column "legacy_prompts_checksum" {
+    null = true
+    type = text
+  }
+  column "native_sessions_checksum" {
+    null = false
+    type = text
+  }
+  column "native_prompt_runs_checksum" {
+    null = true
+    type = text
+  }
+  column "details" {
+    null    = false
+    type    = jsonb
+    default = sql("'{}'::jsonb")
+  }
+  column "started_at" {
+    null    = false
+    type    = timestamptz
+    default = sql("now()")
+  }
+  column "completed_at" {
+    null = false
+    type = timestamptz
+  }
+  column "updated_at" {
+    null    = false
+    type    = timestamptz
+    default = sql("now()")
+  }
+
+  primary_key {
+    columns = [column.cutover_key]
+  }
+
+  check "captain_legacy_session_cutovers_session_count" {
+    expr = "legacy_session_rows = imported_session_rows"
+  }
+  check "captain_legacy_session_cutovers_prompt_count" {
+    expr = "legacy_prompt_rows = imported_prompt_run_rows"
+  }
+  check "captain_legacy_session_cutovers_nonnegative" {
+    expr = "legacy_session_rows >= 0 AND legacy_prompt_rows >= 0"
+  }
+}

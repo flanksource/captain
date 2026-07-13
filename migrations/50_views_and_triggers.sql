@@ -275,6 +275,16 @@ DECLARE
   record_id_value uuid;
   activity_at timestamptz := clock_timestamp();
 BEGIN
+  -- Explicit historical backfills validate and checksum the final rows
+  -- themselves. Suppress activity/outbox projection for those transaction-local
+  -- writes so imported timestamps remain archive-derived and deterministic.
+  IF current_setting('captain.suppress_session_change', true) = 'on' THEN
+    IF TG_OP = 'DELETE' THEN
+      RETURN OLD;
+    END IF;
+    RETURN NEW;
+  END IF;
+
   -- Nested updates are maintenance performed by another trigger. Cascading
   -- deletes are represented by the originating session mutation instead of a
   -- separate outbox row for every child.
