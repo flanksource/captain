@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/flanksource/captain/pkg/ai/history"
 	"github.com/flanksource/captain/pkg/claude"
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/session"
@@ -426,119 +425,6 @@ func projectResultValue(scope, projectRoot string) string {
 	return ""
 }
 
-func filterSessionCandidatesByProject(candidates []sessionCandidate, projectRoot string) []sessionCandidate {
-	if projectRoot == "" {
-		return candidates
-	}
-	filtered := make([]sessionCandidate, 0, len(candidates))
-	for _, candidate := range candidates {
-		if sessionRecordMatchesProject(candidate.record, projectRoot) {
-			filtered = append(filtered, candidate)
-		}
-	}
-	return filtered
-}
-
-func discoverSessionCandidates(ctx context.Context, cwd string, searchAll bool, source string) ([]sessionCandidate, error) {
-	var candidates []sessionCandidate
-	if source == "all" || source == "claude" {
-		claudeSessions, err := discoverClaudeSessions(ctx, cwd, searchAll)
-		if err != nil {
-			return nil, err
-		}
-		candidates = append(candidates, claudeSessions...)
-	}
-	if source == "all" || source == "codex" {
-		codexSessions, err := discoverCodexSessions(ctx, cwd, searchAll)
-		if err != nil {
-			return nil, err
-		}
-		candidates = append(candidates, codexSessions...)
-	}
-	return candidates, nil
-}
-
-func findSessionCandidateByID(id string, source string) (sessionCandidate, bool, error) {
-	id = strings.TrimSpace(id)
-	if id == "" {
-		return sessionCandidate{}, false, nil
-	}
-	if source == "all" || source == "claude" {
-		candidate, ok, err := findClaudeSessionCandidateByID(id)
-		if err != nil || ok {
-			return candidate, ok, err
-		}
-	}
-	if source == "all" || source == "codex" {
-		candidate, ok, err := findCodexSessionCandidateByID(id)
-		if err != nil || ok {
-			return candidate, ok, err
-		}
-	}
-	return sessionCandidate{}, false, nil
-}
-
-func findClaudeSessionCandidateByID(id string) (sessionCandidate, bool, error) {
-	if hasPathOrGlobMeta(id) {
-		return sessionCandidate{}, false, nil
-	}
-	projectsDir := claude.GetProjectsDir()
-	if _, err := os.Stat(projectsDir); os.IsNotExist(err) {
-		return sessionCandidate{}, false, nil
-	} else if err != nil {
-		return sessionCandidate{}, false, err
-	}
-
-	files, err := filepath.Glob(filepath.Join(projectsDir, "*", id+"*.jsonl"))
-	if err != nil {
-		return sessionCandidate{}, false, err
-	}
-	sort.Strings(files)
-	for _, file := range files {
-		sessionID := sessionIDFromFile(file)
-		if sessionID != id && !strings.HasPrefix(sessionID, id) {
-			continue
-		}
-		return sessionCandidate{
-			record: minimalSessionRecord("claude", file, sessionID),
-			path:   file,
-		}, true, nil
-	}
-	return sessionCandidate{}, false, nil
-}
-
-func findCodexSessionCandidateByID(id string) (sessionCandidate, bool, error) {
-	files, err := history.FindCodexSessionFiles()
-	if err != nil {
-		return sessionCandidate{}, false, err
-	}
-	sort.Strings(files)
-	for _, file := range files {
-		key := sessionRecordKey("codex", file)
-		fileID := sessionIDFromFile(file)
-		if key == id || fileID == id || (fileID != "" && strings.HasPrefix(fileID, id)) {
-			return sessionCandidate{
-				record: minimalSessionRecord("codex", file, fileID),
-				path:   file,
-			}, true, nil
-		}
-		meta, err := history.ReadCodexSessionMeta(file)
-		if err != nil || meta == nil || meta.ID == "" {
-			continue
-		}
-		if meta.ID == id || strings.HasPrefix(meta.ID, id) {
-			record := minimalSessionRecord("codex", file, meta.ID)
-			record.CWD = meta.CWD
-			record.Provider = meta.ModelProvider
-			record.Version = meta.CLIVersion
-			record.GitBranch = meta.GitBranch
-			record.StartedAt = meta.StartedAt
-			return sessionCandidate{record: record, path: file}, true, nil
-		}
-	}
-	return sessionCandidate{}, false, nil
-}
-
 func minimalSessionRecord(source, file, id string) SessionRecord {
 	return SessionRecord{
 		Key:             sessionRecordKey(source, file),
@@ -546,59 +432,6 @@ func minimalSessionRecord(source, file, id string) SessionRecord {
 		Source:          source,
 		DetailAvailable: true,
 	}
-}
-
-func hasPathOrGlobMeta(s string) bool {
-	return strings.ContainsAny(s, `/\*?[`)
-}
-
-func discoverClaudeSessions(ctx context.Context, cwd string, searchAll bool) ([]sessionCandidate, error) {
-	stopFind := rpchttp.Track(ctx, "find")
-	files, err := claude.FindSessionFiles(claude.GetProjectsDir(), cwd, searchAll)
-	stopFind()
-	if err != nil {
-		return nil, err
-	}
-	refs := make([]sessionFileRef, len(files))
-	for i, file := range files {
-		refs[i] = sessionFileRef{source: "claude", path: file}
-	}
-	return summarizeSessionRefs(ctx, refs), nil
-}
-
-func discoverCodexSessions(ctx context.Context, cwd string, searchAll bool) ([]sessionCandidate, error) {
-	stopFind := rpchttp.Track(ctx, "find")
-	files, err := history.FindCodexSessionFiles()
-	if err != nil {
-		stopFind()
-		return nil, err
-	}
-	matchRoot := cwd
-	if cwd != "" {
-		projectInfo := claude.FindProjectInfo(cwd)
-		if projectInfo.Root != "" {
-			matchRoot = projectInfo.Root
-		}
-	}
-	refs := make([]sessionFileRef, 0, len(files))
-	for _, file := range files {
-		if !searchAll {
-			meta, err := history.ReadCodexSessionMeta(file)
-			if err != nil || meta == nil || !codexMetaMatchesProject(meta, matchRoot) {
-				continue
-			}
-		}
-		refs = append(refs, sessionFileRef{source: "codex", path: file})
-	}
-	stopFind()
-	return summarizeSessionRefs(ctx, refs), nil
-}
-
-func codexMetaMatchesProject(meta *history.CodexSessionInfo, projectRoot string) bool {
-	if meta == nil {
-		return false
-	}
-	return sessionRecordMatchesProject(SessionRecord{CWD: meta.CWD}, projectRoot)
 }
 
 func sessionRecordKey(source, path string) string {

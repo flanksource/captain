@@ -4,8 +4,6 @@
 // existing GORM pool through Config.Gorm while also supplying the pool's DSN so
 // Captain can apply its own migration bundle first. Standalone consumers can
 // omit Config.Gorm and Captain will open a pool after applying the same bundle.
-// Hosts that also invoke pkg/cli session APIs must pass the resulting Gorm
-// connection to cli.ConfigureNativeDatabase before those APIs initialize.
 package database
 
 import (
