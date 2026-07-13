@@ -353,6 +353,10 @@ table "captain_messages" {
     null = true
     type = jsonb
   }
+  column "source_line" {
+    null = true
+    type = bigint
+  }
   column "schema_version" {
     null    = false
     type    = integer
@@ -415,6 +419,9 @@ table "captain_messages" {
   }
   check "captain_messages_schema_version_positive" {
     expr = "schema_version > 0"
+  }
+  check "captain_messages_source_line_positive" {
+    expr = "source_line IS NULL OR source_line > 0"
   }
 }
 

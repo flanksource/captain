@@ -227,6 +227,29 @@ table "captain_session_processes" {
     type    = jsonb
     default = sql("'{}'::jsonb")
   }
+  column "source" {
+    null    = false
+    type    = text
+    default = ""
+  }
+  column "cpu_percent" {
+    null    = false
+    type    = numeric(6, 2)
+    default = 0
+  }
+  column "memory_percent" {
+    null    = false
+    type    = numeric(6, 2)
+    default = 0
+  }
+  column "memory_rss_bytes" {
+    null = true
+    type = bigint
+  }
+  column "sampled_at" {
+    null = true
+    type = timestamptz
+  }
   column "last_heartbeat_at" {
     null = true
     type = timestamptz
@@ -291,6 +314,9 @@ table "captain_session_processes" {
   }
   check "captain_session_processes_time_order" {
     expr = "ended_at IS NULL OR ended_at >= process_started_at"
+  }
+  check "captain_session_processes_metrics_nonnegative" {
+    expr = "cpu_percent >= 0 AND memory_percent >= 0 AND (memory_rss_bytes IS NULL OR memory_rss_bytes >= 0)"
   }
 }
 
