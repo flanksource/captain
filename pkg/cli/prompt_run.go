@@ -275,16 +275,10 @@ func executeSyncRunSingleDirect(ctx context.Context, rendered PromptRenderResult
 		return PromptRunResult{}, err
 	}
 	r, _ := out.(AIPromptResult)
-	if r.SessionID != "" {
-		if st := sessionStore(); st != nil {
-			st.upsertPrompt(StoredPrompt{
-				SessionID: r.SessionID,
-				Model:     r.Model,
-				Backend:   r.Backend,
-				Realized:  rendered,
-			})
-		}
-	}
+	persistPromptRun(context.WithoutCancel(ctx), promptRunRecordInput{
+		Rendered: rendered, SessionID: r.SessionID, Model: r.Model, Backend: r.Backend,
+		ResultText: r.Text,
+	})
 	return PromptRunResult{
 		Status:       "completed",
 		Model:        r.Model,
@@ -556,20 +550,17 @@ func runPromptStream(t *task.Task, rendered PromptRenderResult, timeout time.Dur
 	if session == "" && loop != nil && len(loop.Iterations) > 0 {
 		session = loop.Iterations[0].SessionID
 	}
-	// Persist the realized prompt for this launched session so `sessions get` can
-	// show what produced it. External (non-captain) sessions have no such record.
-	if session != "" {
-		if st := sessionStore(); st != nil {
-			st.upsertPrompt(StoredPrompt{
-				SessionID: session,
-				RunID:     runID,
-				Model:     acc.model,
-				Backend:   rendered.Backend,
-				Realized:  rendered,
-			})
-		}
-	}
 	passed := verifyPassed(runResult.Verdicts)
+	// Persist the realized prompt run for this launched session so `sessions get`
+	// can show what produced it. External (non-captain) sessions have no record.
+	record := promptRunRecordInput{
+		Rendered: rendered, RunID: runID, SessionID: session,
+		Model: acc.model, Backend: rendered.Backend,
+	}
+	if !passed {
+		record.Error = verifyReason(runResult.Verdicts)
+	}
+	persistPromptRun(context.WithoutCancel(ctx), record)
 	summary := PromptRunSummary{
 		RunID:        runID,
 		SessionID:    session,
