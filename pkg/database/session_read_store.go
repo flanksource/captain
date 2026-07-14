@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
@@ -46,6 +47,10 @@ type SessionOverview struct {
 	ProcessCommand      *string         `gorm:"column:command" json:"processCommand,omitempty"`
 	ProcessCWD          *string         `gorm:"column:process_cwd" json:"processCwd,omitempty"`
 	ProcessStartedAt    *time.Time      `gorm:"column:process_started_at" json:"processStartedAt,omitempty"`
+	ProcessSampledAt    *time.Time      `gorm:"column:process_sampled_at" json:"processSampledAt,omitempty"`
+	LastHeartbeatAt     *time.Time      `gorm:"column:last_heartbeat_at" json:"lastHeartbeatAt,omitempty"`
+	LeaseOwner          *string         `gorm:"column:lease_owner" json:"leaseOwner,omitempty"`
+	LeaseExpiresAt      *time.Time      `gorm:"column:lease_expires_at" json:"leaseExpiresAt,omitempty"`
 	ProcessActive       bool            `gorm:"column:process_active" json:"processActive"`
 	CPUPercent          *float64        `gorm:"column:cpu_percent" json:"cpuPercent,omitempty"`
 	MemoryPercent       *float64        `gorm:"column:memory_percent" json:"memoryPercent,omitempty"`
@@ -73,6 +78,49 @@ type SessionOverview struct {
 
 func (SessionOverview) TableName() string { return "captain_session_overview" }
 
+// SessionIdentityMatch is a lightweight captain_sessions row used for fast
+// UUID/provider-prefix resolution without evaluating the aggregate overview.
+type SessionIdentityMatch struct {
+	ID                uuid.UUID  `gorm:"column:id"`
+	ProviderSessionID string     `gorm:"column:provider_session_id"`
+	Source            string     `gorm:"column:source"`
+	HostID            string     `gorm:"column:host_id"`
+	Path              string     `gorm:"column:path"`
+	Project           string     `gorm:"column:project"`
+	LastActivityAt    *time.Time `gorm:"column:last_activity_at"`
+}
+
+// SessionConflictError identifies every database session matching an
+// ambiguous user-supplied prefix so callers can retry with a Captain UUID.
+type SessionConflictError struct {
+	Identity string
+	Matches  []SessionIdentityMatch
+}
+
+func (e *SessionConflictError) Error() string {
+	var message strings.Builder
+	fmt.Fprintf(&message, "%s: session ID prefix %q matches %d sessions", ErrSessionConflict, e.Identity, len(e.Matches))
+	for _, match := range e.Matches {
+		fmt.Fprintf(&message, "\n  %s  %s", match.ID, match.Source)
+		if match.ProviderSessionID != "" {
+			fmt.Fprintf(&message, "  provider=%s", match.ProviderSessionID)
+		}
+		if match.Project != "" {
+			fmt.Fprintf(&message, "  project=%s", match.Project)
+		}
+		if match.HostID != "" {
+			fmt.Fprintf(&message, "  host=%s", match.HostID)
+		}
+		if match.Path != "" {
+			fmt.Fprintf(&message, "  path=%s", match.Path)
+		}
+	}
+	message.WriteString("\nRetry with a full Captain UUID from the first column.")
+	return message.String()
+}
+
+func (e *SessionConflictError) Unwrap() error { return ErrSessionConflict }
+
 // SessionOverviewFilter narrows ListSessionOverviews. Zero values do not filter.
 type SessionOverviewFilter struct {
 	Source    string
@@ -87,6 +135,7 @@ func (db *DB) ListSessionOverviews(ctx context.Context, filter SessionOverviewFi
 		return nil, err
 	}
 	query := db.gorm.WithContext(ctx).Model(&SessionOverview{}).
+		Where("COALESCE(metadata->>'model', model, '') <> ?", api.CodexAutoReviewModel).
 		Order("COALESCE(last_activity_at, started_at, created_at) DESC, id DESC")
 	if source := strings.TrimSpace(filter.Source); source != "" {
 		query = query.Where("source = ?", source)
@@ -110,10 +159,45 @@ func (db *DB) ListSessionOverviews(ctx context.Context, filter SessionOverviewFi
 	return rows, nil
 }
 
-// GetSessionOverviewByIdentity resolves a session UUID or a provider session ID
-// prefix (the CLI accepts short IDs) to its overview row. Ambiguous prefixes
-// are an error rather than an arbitrary pick.
+// CountLiveRootSessions returns the number of top-level sessions currently
+// associated with an active process. It uses the same overview projection and
+// root/live semantics as the session list surfaces.
+func (db *DB) CountLiveRootSessions(ctx context.Context) (int64, error) {
+	if err := db.requireGorm(); err != nil {
+		return 0, err
+	}
+	var count int64
+	if err := db.gorm.WithContext(ctx).Model(&SessionOverview{}).
+		Where("COALESCE(metadata->>'model', model, '') <> ?", api.CodexAutoReviewModel).
+		Where("parent_session_id IS NULL").
+		Where("process_active").
+		Count(&count).Error; err != nil {
+		return 0, fmt.Errorf("count live Captain sessions: %w", err)
+	}
+	return count, nil
+}
+
+// GetSessionOverviewByIdentity resolves a full Captain UUID or a provider
+// session ID prefix to its overview row. Ambiguous prefixes list every match.
 func (db *DB) GetSessionOverviewByIdentity(ctx context.Context, identity string) (*SessionOverview, error) {
+	rows, err := db.ListSessionOverviewsByIdentity(ctx, identity)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) > 1 {
+		matches, matchErr := db.ListSessionIdentityMatches(ctx, identity)
+		if matchErr != nil {
+			return nil, matchErr
+		}
+		return nil, &SessionConflictError{Identity: strings.TrimSpace(identity), Matches: matches}
+	}
+	return &rows[0], nil
+}
+
+// ListSessionOverviewsByIdentity resolves a full Captain UUID or every session
+// whose provider session ID starts with identity. It narrows the aggregate view
+// by Captain UUIDs discovered from the lightweight base table.
+func (db *DB) ListSessionOverviewsByIdentity(ctx context.Context, identity string) ([]SessionOverview, error) {
 	if err := db.requireGorm(); err != nil {
 		return nil, err
 	}
@@ -122,34 +206,76 @@ func (db *DB) GetSessionOverviewByIdentity(ctx context.Context, identity string)
 		return nil, fmt.Errorf("%w: identity is required", ErrInvalidSession)
 	}
 	if parsed, err := uuid.Parse(identity); err == nil {
-		var row SessionOverview
-		err := db.gorm.WithContext(ctx).First(&row, "id = ?", parsed).Error
-		if err == nil {
-			return &row, nil
+		row, getErr := db.getSessionOverviewByID(ctx, parsed)
+		if getErr == nil {
+			return []SessionOverview{*row}, nil
 		}
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("resolve Captain session overview UUID: %w", err)
+		if !errors.Is(getErr, gorm.ErrRecordNotFound) {
+			return nil, getErr
 		}
 	}
-	var rows []SessionOverview
-	err := db.gorm.WithContext(ctx).
-		Where("provider_session_id LIKE ?", escapeLike(identity)+"%").
-		Limit(3).Find(&rows).Error
+	matches, err := db.ListSessionIdentityMatches(ctx, identity)
 	if err != nil {
-		return nil, fmt.Errorf("resolve Captain session overview identity: %w", err)
+		return nil, err
 	}
-	if len(rows) == 0 {
+	if len(matches) == 0 {
 		return nil, fmt.Errorf("%w: %s", ErrSessionNotFound, identity)
 	}
+	ids := make([]uuid.UUID, len(matches))
+	for i := range matches {
+		ids[i] = matches[i].ID
+	}
+	var rows []SessionOverview
+	if err := db.gorm.WithContext(ctx).Where("id IN ?", ids).Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("list Captain session overviews by identity: %w", err)
+	}
+	byID := make(map[uuid.UUID]SessionOverview, len(rows))
 	for i := range rows {
-		if optionalString(rows[i].ProviderSessionID) == identity {
-			return &rows[i], nil
+		byID[rows[i].ID] = rows[i]
+	}
+	ordered := make([]SessionOverview, 0, len(matches))
+	for _, match := range matches {
+		row, ok := byID[match.ID]
+		if !ok {
+			return nil, fmt.Errorf("%w: overview missing for matched Captain session %s", ErrInvalidSession, match.ID)
 		}
+		ordered = append(ordered, row)
 	}
-	if len(rows) > 1 {
-		return nil, fmt.Errorf("%w: session ID prefix %q is ambiguous", ErrSessionConflict, identity)
+	return ordered, nil
+}
+
+// ListSessionIdentityMatches resolves prefixes against the lightweight base
+// table so ambiguous lookups do not evaluate every overview aggregate.
+func (db *DB) ListSessionIdentityMatches(ctx context.Context, identity string) ([]SessionIdentityMatch, error) {
+	if err := db.requireGorm(); err != nil {
+		return nil, err
 	}
-	return &rows[0], nil
+	identity = strings.TrimSpace(identity)
+	if identity == "" {
+		return nil, fmt.Errorf("%w: identity is required", ErrInvalidSession)
+	}
+	prefix := escapeLike(identity) + "%"
+	var matches []SessionIdentityMatch
+	err := db.gorm.WithContext(ctx).
+		Table("captain_sessions").
+		Where("provider_session_id LIKE ?", prefix).
+		Order("provider_session_id, (path IS NULL), last_activity_at DESC NULLS LAST, id").
+		Find(&matches).Error
+	if err != nil {
+		return nil, fmt.Errorf("list Captain session identity matches: %w", err)
+	}
+	return matches, nil
+}
+
+func (db *DB) getSessionOverviewByID(ctx context.Context, id uuid.UUID) (*SessionOverview, error) {
+	var row SessionOverview
+	if err := db.gorm.WithContext(ctx).First(&row, "id = ?", id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("resolve Captain session overview UUID: %w", err)
+	}
+	return &row, nil
 }
 
 // TranscriptMessage is one row of the captain_session_transcript view.
@@ -229,8 +355,9 @@ func (db *DB) ListProjectAggregates(ctx context.Context) ([]ProjectAggregate, er
 		FROM captain_sessions s
 		LEFT JOIN captain_session_processes p ON p.session_id = s.id AND p.ended_at IS NULL
 		WHERE s.project IS NOT NULL AND s.project <> ''
+		  AND COALESCE(s.metadata->>'model', '') <> ?
 		GROUP BY s.project
-		ORDER BY max(s.last_activity_at) DESC NULLS LAST`).Scan(&rows).Error
+		ORDER BY max(s.last_activity_at) DESC NULLS LAST`, api.CodexAutoReviewModel).Scan(&rows).Error
 	if err != nil {
 		return nil, fmt.Errorf("list Captain project aggregates: %w", err)
 	}

@@ -8,9 +8,19 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/claude"
+	"github.com/flanksource/captain/pkg/database"
 )
 
 const defaultSessionLiveLimit = 25
+
+type SessionDatabaseStatusWire struct {
+	Source              string     `json:"source,omitempty"`
+	DSN                 string     `json:"dsn,omitempty"`
+	ReadAt              time.Time  `json:"readAt"`
+	LatestSampledAt     *time.Time `json:"latestSampledAt,omitempty"`
+	LatestHeartbeatAt   *time.Time `json:"latestHeartbeatAt,omitempty"`
+	EarliestLeaseExpiry *time.Time `json:"earliestLeaseExpiry,omitempty"`
+}
 
 func RunSessionLive(ctx context.Context, opts SessionLiveOptions) (SessionLiveResult, error) {
 	source, err := normalizeSessionSource(opts.Source)
@@ -27,18 +37,20 @@ func RunSessionLive(ctx context.Context, opts SessionLiveOptions) (SessionLiveRe
 	if limit <= 0 && !opts.Full {
 		limit = defaultSessionLiveLimit
 	}
-	db, err := freshenSessionDB(ctx)
+	db, err := captainDB(ctx)
 	if err != nil {
 		return SessionLiveResult{}, err
 	}
 	records, err := dbSessionRecords(ctx, db, sessionRecordQuery{
-		Source: source, ProjectRoot: projectRoot, Query: opts.Query,
+		Source: source, ProjectRoot: projectRoot, Query: opts.Query, LiveOnly: true,
 	})
 	if err != nil {
 		return SessionLiveResult{}, err
 	}
+	enrichLiveSessionSurfaces(records)
 	total := len(records)
 	summary := summarizeSessionDashboard(records)
+	databaseStatus := sessionDatabaseStatus(records, time.Now().UTC())
 	if !opts.Full && limit > 0 && len(records) > limit {
 		records = records[:limit]
 	}
@@ -50,7 +62,62 @@ func RunSessionLive(ctx context.Context, opts SessionLiveOptions) (SessionLiveRe
 		Scope:    scope,
 		Project:  projectResultValue(scope, projectRoot),
 		Summary:  summary,
+		Database: databaseStatus,
 	}, nil
+}
+
+func enrichLiveSessionSurfaces(records []SessionRecord) {
+	detected := false
+	for i := range records {
+		if records[i].Live == nil || records[i].Live.PID <= 0 {
+			continue
+		}
+		if records[i].Live.Surface != nil {
+			detected = true
+		}
+		if surface := discoverProcessSurface(records[i].Live.PID); surface != nil {
+			records[i].Live.Surface = surface
+			detected = true
+		}
+	}
+	if !detected {
+		return
+	}
+	surfaces, err := discoverCmuxSurfaces()
+	if err != nil {
+		return
+	}
+	for i := range records {
+		if records[i].Live == nil {
+			continue
+		}
+		if surface := records[i].Live.Surface; surface != nil && surface.SurfaceID != "" {
+			enrichCmuxSurface(surface, surfaces)
+		}
+	}
+}
+
+func sessionDatabaseStatus(records []SessionRecord, readAt time.Time) SessionDatabaseStatusWire {
+	dsn, source := captainDatabaseIdentity()
+	status := SessionDatabaseStatusWire{Source: source, DSN: database.MaskDSN(dsn), ReadAt: readAt}
+	for _, record := range records {
+		if record.Live == nil {
+			continue
+		}
+		if sampledAt := record.Live.SampledAt; sampledAt != nil &&
+			(status.LatestSampledAt == nil || sampledAt.After(*status.LatestSampledAt)) {
+			status.LatestSampledAt = sampledAt
+		}
+		if heartbeatAt := record.Live.LastHeartbeatAt; heartbeatAt != nil &&
+			(status.LatestHeartbeatAt == nil || heartbeatAt.After(*status.LatestHeartbeatAt)) {
+			status.LatestHeartbeatAt = heartbeatAt
+		}
+		if expiresAt := record.Live.LeaseExpiresAt; expiresAt != nil &&
+			(status.EarliestLeaseExpiry == nil || expiresAt.Before(*status.EarliestLeaseExpiry)) {
+			status.EarliestLeaseExpiry = expiresAt
+		}
+	}
+	return status
 }
 
 func sessionProjectRoot(cwd string) string {

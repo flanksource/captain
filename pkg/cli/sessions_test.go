@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/claude"
+	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/monitor"
 )
 
@@ -94,10 +95,14 @@ func TestRunSessionListAndGetClaude(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunSessionGet: %v", err)
 	}
-	if detail.Source != "claude" || detail.ID != "sess-claude" {
-		t.Fatalf("session detail meta = %+v", detail)
+	if detail.Total != 1 || len(detail.Sessions) != 1 || detail.Sessions[0].Detail == nil {
+		t.Fatalf("session detail result = %+v", detail)
 	}
-	entries := detail.ToReplayEntries()
+	parsed := detail.Sessions[0].Detail
+	if parsed.Source != "claude" || parsed.ID != "sess-claude" {
+		t.Fatalf("session detail meta = %+v", parsed)
+	}
+	entries := parsed.ToReplayEntries()
 	if len(entries) != 2 {
 		t.Fatalf("entries = %+v", entries)
 	}
@@ -173,6 +178,54 @@ func TestRunSessionGetUnknown(t *testing.T) {
 	}
 }
 
+func TestRunSessionGetReturnsAllProviderPrefixMatches(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	db := withTestCaptainDB(t)
+	project := filepath.Join(home, "work", "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(project)
+	providerID := "ad4c854e-cde6-4b99-99f3-667bf74112e3"
+	sessionFile := filepath.Join(home, ".claude", "projects", claude.NormalizePath(project), providerID+".jsonl")
+	writeJSONL(t, sessionFile,
+		map[string]any{
+			"type": "assistant", "sessionId": providerID, "uuid": "a1",
+			"timestamp": "2026-07-14T10:00:00Z", "cwd": project,
+			"message": map[string]any{
+				"role": "assistant", "model": "claude-opus-4",
+				"content": []any{map[string]any{"type": "text", "text": "canonical transcript"}},
+			},
+		},
+	)
+	for _, input := range []database.CreateSessionInput{
+		{ProviderSessionID: providerID, Source: "claude", HostID: "test-host", Path: sessionFile, Project: "flanksource", CWD: project},
+		{ProviderSessionID: providerID, Source: "gavel", Provider: "cmux", HostID: "local", Project: "xero-cli"},
+		{ProviderSessionID: providerID, Source: "claude", Provider: "cmux", HostID: "local", Project: "xero-cli"},
+	} {
+		if _, err := db.CreateOrGetSession(t.Context(), input); err != nil {
+			t.Fatalf("create duplicate session: %v", err)
+		}
+	}
+
+	result, err := RunSessionGet(t.Context(), SessionGetOptions{ID: "ad4c854e"})
+	if err != nil {
+		t.Fatalf("RunSessionGet: %v", err)
+	}
+	if result.Total != 3 || len(result.Sessions) != 3 {
+		t.Fatalf("result = %+v", result)
+	}
+	if !result.Sessions[0].DetailAvailable || result.Sessions[0].Detail == nil {
+		t.Fatalf("first match should contain parsed transcript: %+v", result.Sessions[0])
+	}
+	for _, item := range result.Sessions[1:] {
+		if item.DetailAvailable || item.Detail != nil {
+			t.Fatalf("metadata-only match = %+v", item)
+		}
+	}
+}
+
 func TestRunSessionLiveEnrichesSummaryWithProcessHealth(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -226,6 +279,7 @@ func TestRunSessionLiveEnrichesSummaryWithProcessHealth(t *testing.T) {
 			Command:       "claude",
 		}}, nil
 	}
+	refreshTestSessionDB(t)
 
 	result, err := RunSessionLive(context.Background(), SessionLiveOptions{Source: "claude", Limit: 10})
 	if err != nil {
@@ -252,6 +306,59 @@ func TestRunSessionLiveEnrichesSummaryWithProcessHealth(t *testing.T) {
 	}
 }
 
+func TestRunSessionLiveExcludesEndedSessions(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	db := withTestCaptainDB(t)
+	project := filepath.Join(home, "work", "project")
+	endedCWD := filepath.Join(project, "ended")
+	if err := os.MkdirAll(endedCWD, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(project)
+
+	live, err := db.CreateOrGetSession(t.Context(), database.CreateSessionInput{
+		ProviderSessionID: "sess-live", Source: "claude", CWD: project,
+	})
+	if err != nil {
+		t.Fatalf("create live session: %v", err)
+	}
+	ended, err := db.CreateOrGetSession(t.Context(), database.CreateSessionInput{
+		ProviderSessionID: "sess-ended", Source: "claude", CWD: endedCWD,
+	})
+	if err != nil {
+		t.Fatalf("create ended session: %v", err)
+	}
+
+	started := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
+	hostID := captainHostID()
+	for _, process := range []database.SessionProcessInput{
+		{SessionID: live.ID, HostID: hostID, BootID: "boot", PID: 12345, ProcessStartedAt: started, Status: "active", CWD: project, Source: "claude"},
+		{SessionID: ended.ID, HostID: hostID, BootID: "boot", PID: 54321, ProcessStartedAt: started, Status: "active", CWD: endedCWD, Source: "claude"},
+	} {
+		if err := db.UpsertSessionProcess(t.Context(), process); err != nil {
+			t.Fatalf("upsert process: %v", err)
+		}
+	}
+	if _, err := db.EndVanishedProcesses(t.Context(), hostID, []int64{12345}); err != nil {
+		t.Fatalf("end historical process: %v", err)
+	}
+	monitorDiscoverProcesses = func() ([]monitor.Process, error) {
+		return []monitor.Process{{
+			Source: "claude", PID: 12345, Status: "active", StartedAt: &started,
+			CWD: project, Command: "claude",
+		}}, nil
+	}
+
+	result, err := RunSessionLive(context.Background(), SessionLiveOptions{Source: "all", All: true, Limit: 10})
+	if err != nil {
+		t.Fatalf("RunSessionLive: %v", err)
+	}
+	if result.Total != 1 || len(result.Sessions) != 1 || result.Sessions[0].ID != "sess-live" {
+		t.Fatalf("live sessions = %+v", result)
+	}
+}
+
 func TestRunSessionLiveScopesUnmatchedProcessesToCurrentProject(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -273,6 +380,7 @@ func TestRunSessionLiveScopesUnmatchedProcessesToCurrentProject(t *testing.T) {
 			{Source: "claude", PID: 200, Status: "sleeping", CWD: otherProject, Command: "claude"},
 		}, nil
 	}
+	refreshTestSessionDB(t)
 
 	result, err := RunSessionLive(context.Background(), SessionLiveOptions{Source: "all", Limit: 10})
 	if err != nil {
@@ -336,6 +444,13 @@ func TestRunSessionLiveRestrictsExplicitProject(t *testing.T) {
 			},
 		},
 	)
+	monitorDiscoverProcesses = func() ([]monitor.Process, error) {
+		return []monitor.Process{
+			{Source: "claude", PID: 301, Status: "sleeping", CWD: project, Command: "claude --resume sess-current"},
+			{Source: "claude", PID: 302, Status: "sleeping", CWD: otherProject, Command: "claude --resume sess-other"},
+		}, nil
+	}
+	refreshTestSessionDB(t)
 
 	result, err := RunSessionLive(context.Background(), SessionLiveOptions{
 		Source:  "claude",
@@ -365,15 +480,6 @@ func markProjectRoot(t *testing.T, dir string) {
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module test\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-}
-
-func hasHealth(signals []SessionHealthWire, kind, severity string) bool {
-	for _, signal := range signals {
-		if signal.Kind == kind && signal.Severity == severity {
-			return true
-		}
-	}
-	return false
 }
 
 func writeCodexSession(t *testing.T, path, id, cwd string) {

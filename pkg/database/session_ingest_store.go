@@ -1,6 +1,7 @@
 package database
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -422,17 +423,27 @@ func (db *DB) upsertTurnCall(ctx context.Context, turnID uuid.UUID, call IngestM
 }
 
 // insertMessages appends message rows. Messages are immutable, so replays and
-// overlapping batches are dropped by the (session_id, sequence) key.
+// overlapping batches are dropped by either durable identity key:
+// (session_id, sequence) or (session_id, provider_message_id).
 func (db *DB) insertMessages(ctx context.Context, sessionID uuid.UUID, turnIDs map[int]uuid.UUID, messages []IngestMessage) error {
 	for _, message := range messages {
+		parts := message.PartsJSON
+		if len(parts) == 0 {
+			parts = []byte("[]")
+		}
+		parts, err := sanitizePostgresJSON(parts)
+		if err != nil {
+			return fmt.Errorf("insert Captain message seq %d parts: %w", message.Sequence, err)
+		}
+		raw, err := sanitizePostgresJSON(message.RawJSON)
+		if err != nil {
+			return fmt.Errorf("insert Captain message seq %d raw: %w", message.Sequence, err)
+		}
 		record := messageRecord{
 			ID: uuid.New(), SessionID: sessionID,
 			ProviderMessageID: nullableTrimmed(message.ProviderMessageID),
 			Sequence:          message.Sequence, Role: strings.TrimSpace(message.Role),
-			Parts: message.PartsJSON, Raw: message.RawJSON, OccurredAt: message.OccurredAt,
-		}
-		if len(record.Parts) == 0 {
-			record.Parts = []byte("[]")
+			Parts: parts, Raw: raw, OccurredAt: message.OccurredAt,
 		}
 		if message.SourceLine > 0 {
 			line := message.SourceLine
@@ -443,10 +454,10 @@ func (db *DB) insertMessages(ctx context.Context, sessionID uuid.UUID, turnIDs m
 				record.TurnID = &turnID
 			}
 		}
-		err := db.gorm.WithContext(ctx).Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "session_id"}, {Name: "sequence"}},
-			DoNothing: true,
-		}).Create(&record).Error
+		// Do not name one conflict target: a provider replay can retain the same
+		// message ID while its parser sequence shifts. PostgreSQL must suppress
+		// either unique-key conflict, while check/FK failures still surface.
+		err = db.gorm.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&record).Error
 		if err != nil {
 			return fmt.Errorf("insert Captain message seq %d: %w", message.Sequence, err)
 		}
@@ -459,5 +470,66 @@ func jsonbValue(value map[string]any) any {
 	if err != nil {
 		return "{}"
 	}
+	encoded, err = sanitizePostgresJSON(encoded)
+	if err != nil {
+		return "{}"
+	}
 	return string(encoded)
+}
+
+// sanitizePostgresJSON replaces JSON string escapes for U+0000 with U+FFFD.
+// PostgreSQL jsonb rejects U+0000 because its text representation cannot store
+// a zero byte, even though \u0000 is valid JSON. This scanner only rewrites an
+// active JSON escape: a literal string such as "\\u0000" remains unchanged.
+func sanitizePostgresJSON(data []byte) ([]byte, error) {
+	if len(data) == 0 {
+		return data, nil
+	}
+	if !json.Valid(data) {
+		return nil, fmt.Errorf("invalid JSON")
+	}
+	if !bytes.Contains(data, []byte(`\u0000`)) {
+		return data, nil
+	}
+
+	out := make([]byte, 0, len(data))
+	inString := false
+	escaped := false
+	changed := false
+	for i := 0; i < len(data); i++ {
+		b := data[i]
+		if !inString {
+			out = append(out, b)
+			if b == '"' {
+				inString = true
+			}
+			continue
+		}
+		if escaped {
+			out = append(out, b)
+			escaped = false
+			continue
+		}
+		if b == '"' {
+			out = append(out, b)
+			inString = false
+			continue
+		}
+		if b != '\\' {
+			out = append(out, b)
+			continue
+		}
+		if i+5 < len(data) && data[i+1] == 'u' && bytes.Equal(data[i+2:i+6], []byte("0000")) {
+			out = append(out, []byte(`\ufffd`)...)
+			i += 5
+			changed = true
+			continue
+		}
+		out = append(out, b)
+		escaped = true
+	}
+	if !changed {
+		return data, nil
+	}
+	return out, nil
 }

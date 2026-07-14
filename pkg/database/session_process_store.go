@@ -88,15 +88,32 @@ func (db *DB) UpsertSessionProcess(ctx context.Context, input SessionProcessInpu
 	if record.Status == "" {
 		record.Status = "running"
 	}
-	err := db.gorm.WithContext(ctx).Clauses(clause.OnConflict{
-		Columns: []clause.Column{
-			{Name: "host_id"}, {Name: "boot_id"}, {Name: "pid"}, {Name: "process_started_at"},
-		},
-		DoUpdates: clause.AssignmentColumns([]string{
-			"session_id", "status", "command", "cwd", "source", "cpu_percent", "memory_percent",
-			"memory_rss_bytes", "sampled_at", "last_heartbeat_at",
-		}),
-	}).Create(&record).Error
+	err := db.gorm.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// One host/boot/PID identifies only one live OS process. Close stale
+		// identities before recording the current start time; this also drains
+		// rows created when ps(1)'s local lstart value was interpreted as UTC,
+		// even if transcript reconciliation has since rebound the PID to another
+		// Captain session.
+		if err := tx.Model(&sessionProcessRecord{}).
+			Where("host_id = ? AND boot_id = ? AND pid = ? AND ended_at IS NULL", hostID, bootID, input.PID).
+			Where("process_started_at <> ?", input.ProcessStartedAt.UTC()).
+			Updates(map[string]any{
+				"ended_at": gorm.Expr("GREATEST(process_started_at, ?)", sampledAt),
+				"status":   "exited",
+			}).Error; err != nil {
+			return err
+		}
+
+		return tx.Clauses(clause.OnConflict{
+			Columns: []clause.Column{
+				{Name: "host_id"}, {Name: "boot_id"}, {Name: "pid"}, {Name: "process_started_at"},
+			},
+			DoUpdates: clause.AssignmentColumns([]string{
+				"session_id", "status", "command", "cwd", "source", "cpu_percent", "memory_percent",
+				"memory_rss_bytes", "sampled_at", "last_heartbeat_at", "ended_at",
+			}),
+		}).Create(&record).Error
+	})
 	if err != nil {
 		return fmt.Errorf("upsert Captain session process pid %d: %w", input.PID, err)
 	}
@@ -125,15 +142,29 @@ func (db *DB) FindProcessSessionID(ctx context.Context, hostID, bootID string, p
 }
 
 // EndOtherSessionProcesses closes open process rows for a session except the
-// given PID, satisfying the one-active-process-per-session constraint before a
-// new process binds to the session (e.g. resumed under a new PID).
-func (db *DB) EndOtherSessionProcesses(ctx context.Context, sessionID uuid.UUID, keepPID int64) error {
+// exact process identity being observed, satisfying the one-active-process-per-
+// session constraint before a process binds to the session. The start time is
+// part of the identity: a PID can be reused, and legacy monitor rows may hold
+// the same PID with an incorrectly UTC-interpreted local start time.
+func (db *DB) EndOtherSessionProcesses(
+	ctx context.Context,
+	sessionID uuid.UUID,
+	keepPID int64,
+	keepStartedAt time.Time,
+) error {
 	if err := db.requireGorm(); err != nil {
 		return err
 	}
+	now := time.Now().UTC()
 	err := db.gorm.WithContext(ctx).Model(&sessionProcessRecord{}).
-		Where("session_id = ? AND ended_at IS NULL AND pid <> ?", sessionID, keepPID).
-		Updates(map[string]any{"ended_at": time.Now().UTC(), "status": "exited"}).Error
+		Where("session_id = ? AND ended_at IS NULL", sessionID).
+		Where("NOT (pid = ? AND process_started_at = ?)", keepPID, keepStartedAt.UTC()).
+		Updates(map[string]any{
+			// GREATEST also closes legacy rows whose process_started_at was
+			// misread as UTC from ps(1)'s offset-free local lstart output.
+			"ended_at": gorm.Expr("GREATEST(process_started_at, ?)", now),
+			"status":   "exited",
+		}).Error
 	if err != nil {
 		return fmt.Errorf("end superseded Captain session processes: %w", err)
 	}
@@ -181,7 +212,13 @@ func (db *DB) EndVanishedProcesses(ctx context.Context, hostID string, alivePIDs
 	if len(alivePIDs) > 0 {
 		query = query.Where("pid NOT IN ?", alivePIDs)
 	}
-	result := query.Updates(map[string]any{"ended_at": now, "status": "exited"})
+	result := query.Updates(map[string]any{
+		// Keep the close operation total even for legacy/future-dated rows.
+		// New observations are stored correctly by the monitor's timezone-aware
+		// lstart parser, while this expression safely drains existing bad rows.
+		"ended_at": gorm.Expr("GREATEST(process_started_at, ?)", now),
+		"status":   "exited",
+	})
 	if result.Error != nil {
 		return 0, fmt.Errorf("end vanished Captain session processes: %w", result.Error)
 	}

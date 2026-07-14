@@ -15,7 +15,6 @@ import (
 	"github.com/flanksource/captain/pkg/claude"
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/session"
-	rpchttp "github.com/flanksource/clicky/rpc/http"
 	"github.com/google/uuid"
 )
 
@@ -54,12 +53,13 @@ type SessionLiveOptions struct {
 }
 
 type SessionLiveResult struct {
-	Sessions []SessionRecord      `json:"sessions"`
-	Total    int                  `json:"total"`
-	Source   string               `json:"source"`
-	Scope    string               `json:"scope"`
-	Project  string               `json:"project,omitempty"`
-	Summary  SessionDashboardWire `json:"summary"`
+	Sessions []SessionRecord           `json:"sessions"`
+	Total    int                       `json:"total"`
+	Source   string                    `json:"source"`
+	Scope    string                    `json:"scope"`
+	Project  string                    `json:"project,omitempty"`
+	Summary  SessionDashboardWire      `json:"summary"`
+	Database SessionDatabaseStatusWire `json:"database"`
 }
 
 type SessionRecord struct {
@@ -77,6 +77,7 @@ type SessionRecord struct {
 	Version         string              `json:"version,omitempty"`
 	GitBranch       string              `json:"gitBranch,omitempty"`
 	Provider        string              `json:"provider,omitempty"`
+	Backend         string              `json:"backend,omitempty"`
 	CWD             string              `json:"cwd,omitempty"`
 	ToolCalls       int                 `json:"toolCalls"`
 	Messages        int                 `json:"messages"`
@@ -103,19 +104,23 @@ type SessionContextWire struct {
 }
 
 type SessionLiveWire struct {
-	PID           int          `json:"pid,omitempty"`
-	Status        string       `json:"status,omitempty"`
-	Active        bool         `json:"active"`
-	CPUPercent    float64      `json:"cpuPercent,omitempty"`
-	MemoryPercent float64      `json:"memoryPercent,omitempty"`
-	StartedAt     *time.Time   `json:"startedAt,omitempty"`
-	CWD           string       `json:"cwd,omitempty"`
-	Command       string       `json:"command,omitempty"`
-	SessionID     string       `json:"sessionId,omitempty"`
-	AgentIDs      []string     `json:"agentIds,omitempty"`
-	LastActivity  *time.Time   `json:"lastActivity,omitempty"`
-	SessionFile   string       `json:"sessionFile,omitempty"`
-	Surface       *CmuxSurface `json:"surface,omitempty"`
+	PID             int          `json:"pid,omitempty"`
+	Status          string       `json:"status,omitempty"`
+	Active          bool         `json:"active"`
+	CPUPercent      float64      `json:"cpuPercent,omitempty"`
+	MemoryPercent   float64      `json:"memoryPercent,omitempty"`
+	StartedAt       *time.Time   `json:"startedAt,omitempty"`
+	SampledAt       *time.Time   `json:"sampledAt,omitempty"`
+	LastHeartbeatAt *time.Time   `json:"lastHeartbeatAt,omitempty"`
+	LeaseOwner      string       `json:"leaseOwner,omitempty"`
+	LeaseExpiresAt  *time.Time   `json:"leaseExpiresAt,omitempty"`
+	CWD             string       `json:"cwd,omitempty"`
+	Command         string       `json:"command,omitempty"`
+	SessionID       string       `json:"sessionId,omitempty"`
+	AgentIDs        []string     `json:"agentIds,omitempty"`
+	LastActivity    *time.Time   `json:"lastActivity,omitempty"`
+	SessionFile     string       `json:"sessionFile,omitempty"`
+	Surface         *CmuxSurface `json:"surface,omitempty"`
 }
 
 // CmuxSurface identifies the cmux multiplexer surface hosting an agent process.
@@ -123,6 +128,7 @@ type SessionLiveWire struct {
 // variables; Title/Workspace are the authoritative names joined from cmux itself.
 type CmuxSurface struct {
 	SurfaceID   string `json:"surfaceId,omitempty"`
+	SurfaceRef  string `json:"surfaceRef,omitempty"`
 	WorkspaceID string `json:"workspaceId,omitempty"`
 	TabID       string `json:"tabId,omitempty"`
 	PanelID     string `json:"panelId,omitempty"`
@@ -276,66 +282,6 @@ func RunSessionList(ctx context.Context, opts SessionListOptions) (SessionListRe
 		Scope:    scope,
 		Project:  projectResultValue(scope, projectRoot),
 	}, nil
-}
-
-// RunSessionGet returns the unified session model for a session id. Identity
-// resolves against the database (full UUID or unambiguous provider-session-id
-// prefix); the message stream is parsed read-only from the transcript at the
-// DB-recorded path and paged via offset/limit/tail. Each message carries its
-// transcript line (sourceLine) so consumers can seek into the raw file.
-func RunSessionGet(ctx context.Context, opts SessionGetOptions) (*session.Session, error) {
-	id := strings.TrimSpace(opts.ID)
-	if id == "" {
-		return nil, fmt.Errorf("id is required")
-	}
-	db, err := freshenSessionDB(ctx)
-	if err != nil {
-		return nil, err
-	}
-	overview, err := resolveOverviewByAnyID(ctx, db, id)
-	if err != nil {
-		return nil, err
-	}
-	path := stringOr(overview.HistoryFile, stringOr(overview.Path, ""))
-	if path == "" {
-		return nil, fmt.Errorf("session %q has no transcript recorded on this host", id)
-	}
-
-	defer rpchttp.Track(ctx, "parse")()
-	candidate := sessionCandidate{
-		record: minimalSessionRecord(overview.Source, path, stringOr(overview.ProviderSessionID, overview.ID.String())),
-		path:   path,
-	}
-	s, err := buildSessionModel(candidate)
-	if err != nil {
-		return nil, err
-	}
-	attachPromptRun(ctx, db, overview.ID, s)
-	pageSessionMessages(s, opts)
-	return s, nil
-}
-
-// pageSessionMessages windows the message stream: the last Tail messages, or
-// an Offset/Limit slice from the start.
-func pageSessionMessages(s *session.Session, opts SessionGetOptions) {
-	if opts.Tail > 0 {
-		if len(s.Messages) > opts.Tail {
-			s.Messages = s.Messages[len(s.Messages)-opts.Tail:]
-		}
-		return
-	}
-	if opts.Offset <= 0 && opts.Limit <= 0 {
-		return
-	}
-	offset := max(opts.Offset, 0)
-	if offset >= len(s.Messages) {
-		s.Messages = nil
-		return
-	}
-	s.Messages = s.Messages[offset:]
-	if opts.Limit > 0 && len(s.Messages) > opts.Limit {
-		s.Messages = s.Messages[:opts.Limit]
-	}
 }
 
 func buildSessionModel(candidate sessionCandidate) (*session.Session, error) {

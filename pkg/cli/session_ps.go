@@ -156,10 +156,15 @@ func enrichSurfacesFromCmux(processes []agentProcess) {
 		if s == nil || s.SurfaceID == "" {
 			continue
 		}
-		if info, ok := surfaces[s.SurfaceID]; ok {
-			s.Title = info.Title
-			s.Workspace = info.Workspace
-		}
+		enrichCmuxSurface(s, surfaces)
+	}
+}
+
+func enrichCmuxSurface(surface *CmuxSurface, surfaces map[string]cmux.Surface) {
+	if info, ok := surfaces[surface.SurfaceID]; ok {
+		surface.SurfaceRef = info.Ref
+		surface.Title = info.Title
+		surface.Workspace = info.Workspace
 	}
 }
 

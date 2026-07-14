@@ -75,7 +75,7 @@ func testIngestBatch(modTime time.Time, byteOffset int64) IngestTranscriptInput 
 				Index: 1, ProviderTurnID: "turn-1", Status: TurnStatusEnded,
 				StartedAt: &turn0End, EndedAt: &modTime,
 				Call: &IngestModelCall{
-					Model: "claude-sonnet-5", Backend: "claude", InputTokens: 2000, OutputTokens: 400,
+					Model: "claude-sonnet-5", Backend: "claude", Effort: "high", InputTokens: 2000, OutputTokens: 400,
 					CacheReadTokens: 8000, ContextTokens: 60000, ContextWindowTokens: 200000,
 					InputCost: 0.006, OutputCost: 0.006,
 				},
@@ -85,7 +85,7 @@ func testIngestBatch(modTime time.Time, byteOffset int64) IngestTranscriptInput 
 			{Sequence: 1, ProviderMessageID: "uuid-1", Role: "user", TurnIndex: &turnIdx0,
 				PartsJSON: []byte(`[{"type":"text","text":"hello"}]`), SourceLine: 1, OccurredAt: &started},
 			{Sequence: 3, ProviderMessageID: "uuid-3", Role: "assistant", TurnIndex: &turnIdx0,
-				PartsJSON: []byte(`[{"type":"text","text":"hi"},{"type":"dynamic-tool","toolName":"Read","toolCallId":"t1"}]`),
+				PartsJSON:  []byte(`[{"type":"text","text":"hi"},{"type":"dynamic-tool","toolName":"Read","toolCallId":"t1"}]`),
 				SourceLine: 3, OccurredAt: &turn0End},
 			{Sequence: 5, ProviderMessageID: "uuid-5", Role: "user", TurnIndex: &turnIdx1,
 				PartsJSON: []byte(`[{"type":"text","text":"next"}]`), SourceLine: 5},
@@ -118,6 +118,8 @@ func TestIngestTranscriptAndReadStores(t *testing.T) {
 		assert.Equal(t, 70, *overview.ContextFreePercent, "latest call: 1-60000/200000 = 70%")
 		require.NotNil(t, overview.Model)
 		assert.Equal(t, "claude-sonnet-5", *overview.Model)
+		require.NotNil(t, overview.Effort)
+		assert.Equal(t, "high", *overview.Effort)
 		require.NotNil(t, overview.HistoryFile)
 		assert.Equal(t, testTranscriptPath, *overview.HistoryFile)
 		assert.False(t, overview.ProcessActive)
@@ -136,6 +138,20 @@ func TestIngestTranscriptAndReadStores(t *testing.T) {
 		assert.EqualValues(t, 4, overview.MessageCount, "replay must not duplicate messages")
 		assert.EqualValues(t, 2, overview.TurnCount, "replay must not duplicate turns")
 		assert.EqualValues(t, 3000, overview.InputTokens, "replay must not duplicate model calls")
+	})
+
+	t.Run("provider message replay with shifted sequence is idempotent", func(t *testing.T) {
+		shifted := testIngestBatch(modTime, 4096)
+		shifted.Messages = []IngestMessage{{
+			Sequence: 11, ProviderMessageID: "uuid-1", Role: "user",
+			PartsJSON: []byte(`[{"type":"text","text":"hello"}]`), SourceLine: 11, OccurredAt: &modTime,
+		}}
+		_, err := db.IngestTranscript(t.Context(), shifted)
+		require.NoError(t, err)
+
+		overview, err := db.GetSessionOverviewByIdentity(t.Context(), testProviderSessionID)
+		require.NoError(t, err)
+		assert.EqualValues(t, 4, overview.MessageCount, "provider message replay must not duplicate rows")
 	})
 
 	t.Run("session sources bookkeeping is listed by path", func(t *testing.T) {
@@ -246,6 +262,9 @@ func TestIngestTranscriptAndReadStores(t *testing.T) {
 		live, err := db.ListSessionOverviews(t.Context(), SessionOverviewFilter{LiveOnly: true})
 		require.NoError(t, err)
 		require.Len(t, live, 1)
+		liveCount, err := db.CountLiveRootSessions(t.Context())
+		require.NoError(t, err)
+		assert.EqualValues(t, 1, liveCount)
 
 		closed, err := db.EndVanishedProcesses(t.Context(), "test-host", []int64{9999})
 		require.NoError(t, err)
@@ -253,6 +272,51 @@ func TestIngestTranscriptAndReadStores(t *testing.T) {
 		overview, err = db.GetSessionOverviewByIdentity(t.Context(), testProviderSessionID)
 		require.NoError(t, err)
 		assert.False(t, overview.ProcessActive)
+		liveCount, err = db.CountLiveRootSessions(t.Context())
+		require.NoError(t, err)
+		assert.Zero(t, liveCount)
+	})
+
+	t.Run("future-dated legacy process can be closed", func(t *testing.T) {
+		futureStart := time.Now().UTC().Add(2 * time.Hour).Truncate(time.Second)
+		correctStart := futureStart.Add(-3 * time.Hour)
+		legacySession, err := db.CreateOrGetSession(t.Context(), CreateSessionInput{
+			ProviderSessionID: "future-process-legacy", Source: "codex", CWD: "/home/dev/legacy",
+		})
+		require.NoError(t, err)
+		input := SessionProcessInput{
+			SessionID: legacySession.ID, HostID: "test-host", BootID: "boot-1", PID: 4343,
+			ProcessStartedAt: futureStart, Status: "running", Source: "codex", SampledAt: time.Now().UTC(),
+		}
+		require.NoError(t, db.UpsertSessionProcess(t.Context(), input))
+
+		// A corrected observation can be rebound to another session. Its upsert
+		// must still close the impossible identity for the same OS PID.
+		input.SessionID = session.ID
+		require.NoError(t, db.EndOtherSessionProcesses(t.Context(), session.ID, input.PID, correctStart))
+		input.ProcessStartedAt = correctStart
+		require.NoError(t, db.UpsertSessionProcess(t.Context(), input))
+
+		var records []sessionProcessRecord
+		require.NoError(t, db.gorm.WithContext(t.Context()).Order("process_started_at").Find(&records, "pid = ?", input.PID).Error)
+		require.Len(t, records, 2)
+		require.NotNil(t, records[1].EndedAt, "future-dated identity should be superseded even across sessions")
+		assert.False(t, records[1].EndedAt.Before(records[1].ProcessStartedAt))
+		assert.Nil(t, records[0].EndedAt, "corrected identity should be active")
+
+		closed, err := db.EndVanishedProcesses(t.Context(), "test-host", nil)
+		require.NoError(t, err)
+		assert.EqualValues(t, 1, closed)
+		require.NoError(t, db.UpsertSessionProcess(t.Context(), input))
+
+		var corrected sessionProcessRecord
+		require.NoError(t, db.gorm.WithContext(t.Context()).First(&corrected,
+			"pid = ? AND process_started_at = ?", input.PID, correctStart).Error)
+		assert.Nil(t, corrected.EndedAt, "a newly observed exact identity should reactivate")
+
+		closed, err = db.EndVanishedProcesses(t.Context(), "test-host", nil)
+		require.NoError(t, err)
+		assert.EqualValues(t, 1, closed)
 	})
 
 	t.Run("project aggregates group sessions and live processes", func(t *testing.T) {
@@ -263,5 +327,56 @@ func TestIngestTranscriptAndReadStores(t *testing.T) {
 		assert.EqualValues(t, 1, projects[0].SessionCount)
 		assert.EqualValues(t, 0, projects[0].LiveCount)
 		assert.Equal(t, "claude", projects[0].Sources)
+	})
+
+	t.Run("JSON null characters are sanitized before jsonb persistence", func(t *testing.T) {
+		input := testIngestBatch(modTime, 1024)
+		input.Session.ProviderSessionID = "0195c1de-4ab8-7000-8000-0123456789ac"
+		input.Session.Path = "/home/dev/.codex/sessions/nul-output.jsonl"
+		input.Session.Project = "nul-json"
+		input.Session.Metadata = map[string]any{"output": "before\x00after"}
+		input.Source.Path = input.Session.Path
+		input.Source.SourceIdentity = input.Session.ProviderSessionID
+		input.Turns = nil
+		input.Messages = []IngestMessage{{
+			Sequence: 1, ProviderMessageID: "nul-message", Role: "assistant",
+			PartsJSON: []byte(`[{"type":"text","text":"before\u0000after","literal":"before\\u0000after"}]`),
+			RawJSON:   []byte(`{"text":"raw\u0000value"}`),
+		}}
+
+		persisted, err := db.IngestTranscript(t.Context(), input)
+		require.NoError(t, err)
+
+		var record messageRecord
+		require.NoError(t, db.gorm.WithContext(t.Context()).First(&record, "session_id = ?", persisted.ID).Error)
+		assert.JSONEq(t,
+			`[{"type":"text","text":"before\ufffdafter","literal":"before\\u0000after"}]`,
+			string(record.Parts),
+		)
+		assert.JSONEq(t, `{"text":"raw\ufffdvalue"}`, string(record.Raw))
+	})
+
+	t.Run("ambiguous provider prefixes list every Captain session", func(t *testing.T) {
+		duplicate, err := db.CreateOrGetSession(t.Context(), CreateSessionInput{
+			ProviderSessionID: testProviderSessionID,
+			Source:            "gavel",
+			Provider:          "cmux-claude",
+			HostID:            "local",
+		})
+		require.NoError(t, err)
+		overviews, err := db.ListSessionOverviewsByIdentity(t.Context(), testProviderSessionID[:8])
+		require.NoError(t, err)
+		require.Len(t, overviews, 2)
+		assert.Equal(t, session.ID, overviews[0].ID)
+		assert.Equal(t, duplicate.ID, overviews[1].ID)
+
+		_, err = db.GetSessionOverviewByIdentity(t.Context(), testProviderSessionID)
+		var conflict *SessionConflictError
+		require.ErrorAs(t, err, &conflict)
+		require.Len(t, conflict.Matches, 2)
+		assert.Equal(t, session.ID, conflict.Matches[0].ID)
+		assert.Equal(t, duplicate.ID, conflict.Matches[1].ID)
+		assert.Contains(t, err.Error(), session.ID.String())
+		assert.Contains(t, err.Error(), duplicate.ID.String())
 	})
 }

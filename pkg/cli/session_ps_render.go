@@ -37,7 +37,7 @@ func (r PSRow) Row() map[string]any {
 		"status":  psStatusIcon(r),
 		"agent":   psAgentCell(r),
 		"title":   psTitle(r),
-		"session": shortSessionID(psSessionID(r)),
+		"session": sessionListID(psSessionID(r)),
 		"pid":     psPID(r),
 	}
 	if r.CWD != "" {
@@ -71,21 +71,7 @@ func psAgentCell(r PSRow) api.Text {
 // psUsageCell merges token total and cost into one cell: "27.4M $13.61".
 // Returns nil when the session has neither (a fresh/synthetic process).
 func psUsageCell(r PSRow) api.Textable {
-	total := psTokenTotal(r)
-	if total == 0 && r.CostUSD <= 0 {
-		return nil
-	}
-	t := api.Text{}
-	if total > 0 {
-		t = t.Add(api.HumanNumber(total, "text-muted"))
-	}
-	if r.CostUSD > 0 {
-		if total > 0 {
-			t = t.Space()
-		}
-		t = t.Append(fmt.Sprintf("$%.2f", r.CostUSD), "text-green-600")
-	}
-	return t
+	return sessionUsageCell(r.SessionRecord)
 }
 
 // RowDetail expands the verbose fields that don't belong in the scannable table:
@@ -232,14 +218,4 @@ func psAgentIDs(r PSRow) []string {
 
 func psAgentCount(r PSRow) int {
 	return len(psAgentIDs(r))
-}
-
-func psTokenTotal(r PSRow) int64 {
-	if r.Tokens == nil {
-		return 0
-	}
-	if r.Tokens.TotalTokens > 0 {
-		return int64(r.Tokens.TotalTokens)
-	}
-	return int64(r.Tokens.InputTokens + r.Tokens.OutputTokens + r.Tokens.CacheReadTokens + r.Tokens.CacheCreationTokens)
 }

@@ -3,10 +3,17 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"strings"
 
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/session"
 )
+
+type sessionOverviewStore interface {
+	ListSessionOverviewsByIdentity(context.Context, string) ([]database.SessionOverview, error)
+	ListSessionOverviews(context.Context, database.SessionOverviewFilter) ([]database.SessionOverview, error)
+}
 
 // sessionRecordQuery narrows the DB-backed session record list.
 type sessionRecordQuery struct {
@@ -19,17 +26,31 @@ type sessionRecordQuery struct {
 // dbSessionRecords is the single source for session list/live/throughput
 // records: it reads the captain_session_overview view (populated by the
 // monitor) and projects rows onto the SessionRecord wire shape.
-func dbSessionRecords(ctx context.Context, db *database.DB, q sessionRecordQuery) ([]SessionRecord, error) {
+func dbSessionRecords(ctx context.Context, db sessionOverviewStore, q sessionRecordQuery) ([]SessionRecord, error) {
 	filter := database.SessionOverviewFilter{RootsOnly: true, LiveOnly: q.LiveOnly}
 	if q.Source != "" && q.Source != "all" {
 		filter.Source = q.Source
 	}
-	overviews, err := db.ListSessionOverviews(ctx, filter)
+	var overviews []database.SessionOverview
+	var err error
+	if isSessionIdentityQuery(q.Query) {
+		overviews, err = db.ListSessionOverviewsByIdentity(ctx, q.Query)
+		if errors.Is(err, database.ErrSessionNotFound) {
+			return []SessionRecord{}, nil
+		}
+	} else {
+		overviews, err = db.ListSessionOverviews(ctx, filter)
+	}
 	if err != nil {
 		return nil, err
 	}
 	records := make([]SessionRecord, 0, len(overviews))
 	for _, overview := range overviews {
+		if overview.ParentSessionID != nil ||
+			(filter.LiveOnly && !overview.ProcessActive) ||
+			(filter.Source != "" && overview.Source != filter.Source) {
+			continue
+		}
 		record := recordFromOverview(overview)
 		if q.ProjectRoot != "" && !sessionRecordMatchesProject(record, q.ProjectRoot) {
 			continue
@@ -43,13 +64,28 @@ func dbSessionRecords(ctx context.Context, db *database.DB, q sessionRecordQuery
 	return records, nil
 }
 
-// resolveOverviewByAnyID resolves a session by UUID or provider-session-id
-// prefix, falling back to the path-derived record Key the UI navigates with
-// (source-<sha16>, not stored in the database).
-func resolveOverviewByAnyID(ctx context.Context, db *database.DB, id string) (*database.SessionOverview, error) {
-	overview, err := db.GetSessionOverviewByIdentity(ctx, id)
+func isSessionIdentityQuery(query string) bool {
+	query = strings.TrimSpace(query)
+	if len(query) < 8 || len(query) > 36 {
+		return false
+	}
+	for _, char := range query {
+		if char != '-' && (char < '0' || char > '9') && (char < 'a' || char > 'f') && (char < 'A' || char > 'F') {
+			return false
+		}
+	}
+	return true
+}
+
+// resolveOverviewsByAnyID resolves sessions by UUID or provider-session-id
+// prefix, falling back to the path-derived record Key the UI navigates with.
+func resolveOverviewsByAnyID(ctx context.Context, db sessionOverviewStore, id string) ([]database.SessionOverview, error) {
+	overviews, err := db.ListSessionOverviewsByIdentity(ctx, id)
 	if err == nil {
-		return overview, nil
+		return overviews, nil
+	}
+	if !errors.Is(err, database.ErrSessionNotFound) {
+		return nil, err
 	}
 	overviews, listErr := db.ListSessionOverviews(ctx, database.SessionOverviewFilter{RootsOnly: true})
 	if listErr != nil {
@@ -58,7 +94,7 @@ func resolveOverviewByAnyID(ctx context.Context, db *database.DB, id string) (*d
 	for i := range overviews {
 		path := stringOr(overviews[i].HistoryFile, stringOr(overviews[i].Path, ""))
 		if path != "" && sessionRecordKey(overviews[i].Source, path) == id {
-			return &overviews[i], nil
+			return []database.SessionOverview{overviews[i]}, nil
 		}
 	}
 	return nil, err
@@ -136,6 +172,7 @@ func recordFromOverview(overview database.SessionOverview) SessionRecord {
 		Version:         stringOr(overview.CLIVersion, ""),
 		GitBranch:       overviewGitBranch(overview),
 		Provider:        metadata.Provider,
+		Backend:         stringOr(overview.Backend, ""),
 		CWD:             stringOr(overview.CWD, ""),
 		ToolCalls:       int(overview.ToolCallCount),
 		Messages:        int(overview.MessageCount),
@@ -178,14 +215,18 @@ func liveWireFromOverview(overview database.SessionOverview, id, path string) *S
 	status := stringOr(overview.ProcessStatus, "")
 	_, active := processLiveStatus(status)
 	live := &SessionLiveWire{
-		Status:       status,
-		Active:       active,
-		CWD:          stringOr(overview.ProcessCWD, ""),
-		Command:      stringOr(overview.ProcessCommand, ""),
-		SessionID:    id,
-		SessionFile:  path,
-		StartedAt:    overview.ProcessStartedAt,
-		LastActivity: overview.LastActivityAt,
+		Status:          status,
+		Active:          active,
+		CWD:             stringOr(overview.ProcessCWD, ""),
+		Command:         stringOr(overview.ProcessCommand, ""),
+		SessionID:       id,
+		SessionFile:     path,
+		StartedAt:       overview.ProcessStartedAt,
+		SampledAt:       overview.ProcessSampledAt,
+		LastHeartbeatAt: overview.LastHeartbeatAt,
+		LeaseOwner:      stringOr(overview.LeaseOwner, ""),
+		LeaseExpiresAt:  overview.LeaseExpiresAt,
+		LastActivity:    overview.LastActivityAt,
 	}
 	if overview.PID != nil {
 		live.PID = int(*overview.PID)
