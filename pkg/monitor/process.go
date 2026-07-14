@@ -38,6 +38,9 @@ func (m *Monitor) pollProcesses(ctx context.Context, watcher *transcriptWatcher)
 		return err
 	}
 	sampledAt := time.Now().UTC()
+	if len(processes) > 0 {
+		m.noteActivity(sampledAt)
+	}
 	alive := make([]int64, 0, len(processes))
 	for _, proc := range processes {
 		alive = append(alive, int64(proc.PID))

@@ -1,9 +1,13 @@
 // Package monitor is Captain's live session monitor: the single writer that
-// keeps the native database current. It discovers claude/codex agent processes
-// via ps and samples their CPU/RAM, tails the transcripts of live and
-// captain-launched sessions with fsnotify (debounced), and incrementally
-// backfills older transcripts by mtime/size. Every read surface (dashboard,
-// CLI, API) reads the database this monitor writes.
+// keeps the native database current. Provider hooks (Claude Code lifecycle
+// hooks, codex notify) are the primary real-time signal: they push exact
+// session identity and transcript location the moment a session starts, makes
+// progress, or ends. fsnotify tails live transcripts between hook events
+// (debounced). Polling is demoted to two jobs: an adaptive ps poll that
+// samples CPU/RAM and reaps vanished processes (crashes never emit
+// SessionEnd), and a daily recon that backfills anything hooks missed plus
+// database maintenance. Every read surface (dashboard, CLI, API) reads the
+// database this monitor writes.
 package monitor
 
 import (
@@ -15,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/flanksource/captain/pkg/database"
@@ -34,15 +39,27 @@ const (
 type Config struct {
 	DB     *database.DB
 	HostID string
-	// ProcessInterval is the ps poll cadence (default 5s).
+	// ProcessInterval is the ps poll cadence while sessions are active
+	// (default 5s): agent processes were seen or a hook event arrived within
+	// activityWindow.
 	ProcessInterval time.Duration
+	// IdleProcessInterval is the relaxed ps poll cadence when no session
+	// activity has been observed recently (default 60s) — the poll then only
+	// serves as the stale-process reaper and hookless-session fallback.
+	IdleProcessInterval time.Duration
 	// Debounce delays transcript ingest after an fsnotify event (default 750ms).
 	Debounce time.Duration
-	// BackfillInterval is the periodic incremental scan cadence (default 5m).
+	// BackfillInterval is the recon cadence (default 24h): a full incremental
+	// scan over every known transcript plus database maintenance, catching
+	// whatever hooks and fsnotify missed.
 	BackfillInterval time.Duration
 	// DiscoverProcesses overrides ps-based agent-process discovery (tests).
 	DiscoverProcesses func() ([]Process, error)
 }
+
+// activityWindow is how long after the last observed session activity (agent
+// process seen, hook event received) the process poll stays on the fast cadence.
+const activityWindow = 2 * time.Minute
 
 type Monitor struct {
 	cfg Config
@@ -50,6 +67,13 @@ type Monitor struct {
 
 	mu      sync.Mutex
 	tracked map[string]string // transcript path -> source kind, the live tail set
+
+	hookEvents chan HookEvent
+
+	activityMu   sync.Mutex
+	lastActivity time.Time
+
+	maintenanceDue atomic.Bool
 
 	readyOnce sync.Once
 	ready     chan struct{}
@@ -65,16 +89,51 @@ func New(cfg Config) (*Monitor, error) {
 	if cfg.ProcessInterval <= 0 {
 		cfg.ProcessInterval = 5 * time.Second
 	}
+	if cfg.IdleProcessInterval <= 0 {
+		cfg.IdleProcessInterval = 60 * time.Second
+	}
 	if cfg.Debounce <= 0 {
 		cfg.Debounce = 750 * time.Millisecond
 	}
 	if cfg.BackfillInterval <= 0 {
-		cfg.BackfillInterval = 5 * time.Minute
+		cfg.BackfillInterval = 24 * time.Hour
 	}
 	if cfg.DiscoverProcesses == nil {
 		cfg.DiscoverProcesses = discoverAgentProcesses
 	}
-	return &Monitor{cfg: cfg, db: cfg.DB, tracked: map[string]string{}, ready: make(chan struct{})}, nil
+	return &Monitor{
+		cfg: cfg, db: cfg.DB, tracked: map[string]string{},
+		hookEvents: make(chan HookEvent, 128),
+		ready:      make(chan struct{}),
+	}, nil
+}
+
+// noteActivity records session activity: an agent process observed by the
+// poll or a hook event. It keeps the process poll on the fast cadence.
+func (m *Monitor) noteActivity(at time.Time) {
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	m.activityMu.Lock()
+	if at.After(m.lastActivity) {
+		m.lastActivity = at
+	}
+	m.activityMu.Unlock()
+}
+
+func (m *Monitor) idle() bool {
+	m.activityMu.Lock()
+	defer m.activityMu.Unlock()
+	return time.Since(m.lastActivity) > activityWindow
+}
+
+// nextPollInterval picks the process poll cadence: fast while session
+// activity was observed within activityWindow, relaxed otherwise.
+func (m *Monitor) nextPollInterval() time.Duration {
+	if m.idle() {
+		return m.cfg.IdleProcessInterval
+	}
+	return m.cfg.ProcessInterval
 }
 
 // Ready is closed after the first process reconciliation attempt, or as soon
@@ -181,6 +240,9 @@ func (m *Monitor) runLocked(ctx context.Context, lock *sql.Conn) error {
 				return
 			case <-backfillRequests:
 				m.backfill(runCtx, ingestor)
+				if m.maintenanceDue.CompareAndSwap(true, false) {
+					m.maintain(runCtx)
+				}
 			}
 		}
 	}()
@@ -190,7 +252,7 @@ func (m *Monitor) runLocked(ctx context.Context, lock *sql.Conn) error {
 	}()
 	requestBackfill(backfillRequests)
 
-	processTicker := time.NewTicker(m.cfg.ProcessInterval)
+	processTicker := time.NewTicker(m.nextPollInterval())
 	backfillTicker := time.NewTicker(m.cfg.BackfillInterval)
 	defer processTicker.Stop()
 	defer backfillTicker.Stop()
@@ -203,7 +265,18 @@ func (m *Monitor) runLocked(ctx context.Context, lock *sql.Conn) error {
 			if err := m.pollProcesses(runCtx, watcher); err != nil {
 				log.Warnf("process poll: %v", err)
 			}
+			processTicker.Reset(m.nextPollInterval())
+		case ev := <-m.hookEvents:
+			// A hook after an idle stretch snaps the poll back to the fast
+			// cadence; during sustained activity the ticker is left alone so
+			// frequent events cannot starve the reaper.
+			wasIdle := m.idle()
+			m.handleHookEvent(runCtx, watcher, ingestor, ev)
+			if wasIdle {
+				processTicker.Reset(m.cfg.ProcessInterval)
+			}
 		case <-backfillTicker.C:
+			m.maintenanceDue.Store(true)
 			requestBackfill(backfillRequests)
 		case event, ok := <-watcher.events():
 			if !ok {
