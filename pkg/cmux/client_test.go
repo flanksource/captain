@@ -9,7 +9,7 @@ func TestParseSurfaces(t *testing.T) {
 	      "title": "gavel-claude",
 	      "panes": [{
 	        "surfaces": [
-	          {"id": "CD1AD43E-1", "title": "✳ Review gavel cmux prompt documentation", "tty": "ttys018", "type": "terminal"},
+	          {"id": "CD1AD43E-1", "ref": "surface:41", "title": "✳ Review gavel cmux prompt documentation", "tty": "ttys018", "type": "terminal"},
 	          {"id": "2EDAFDF1-2", "title": "⠐ implement-captain-ps-command", "tty": "ttys017", "type": "terminal"}
 	        ]
 	      }]
@@ -39,6 +39,9 @@ func TestParseSurfaces(t *testing.T) {
 	}
 	if s.Workspace != "gavel-claude" {
 		t.Fatalf("workspace = %q", s.Workspace)
+	}
+	if s.Ref != "surface:41" {
+		t.Fatalf("ref = %q", s.Ref)
 	}
 	if surfaces["2EDAFDF1-2"].Title != "implement-captain-ps-command" {
 		t.Fatalf("braille glyph not stripped: %q", surfaces["2EDAFDF1-2"].Title)

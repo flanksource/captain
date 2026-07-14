@@ -134,6 +134,7 @@ func DefaultSocketPath() string {
 // matches the CMUX_SURFACE_ID env var of the process running inside it).
 type Surface struct {
 	ID        string
+	Ref       string
 	Title     string
 	Workspace string
 	Tty       string
@@ -159,6 +160,7 @@ type cmuxTree struct {
 			Panes []struct {
 				Surfaces []struct {
 					ID    string `json:"id"`
+					Ref   string `json:"ref"`
 					Title string `json:"title"`
 					Tty   string `json:"tty"`
 					Type  string `json:"type"`
@@ -183,6 +185,7 @@ func parseSurfaces(data []byte) (map[string]Surface, error) {
 					}
 					surfaces[s.ID] = Surface{
 						ID:        s.ID,
+						Ref:       s.Ref,
 						Title:     stripStatusGlyph(s.Title),
 						Workspace: stripStatusGlyph(ws.Title),
 						Tty:       s.Tty,

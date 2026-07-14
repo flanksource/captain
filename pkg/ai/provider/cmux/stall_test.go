@@ -312,6 +312,54 @@ func TestStallWatchdogPlanApprovalBrokeredOnce(t *testing.T) {
 	}
 }
 
+func TestStallWatchdogPlanRunNeverApprovesExitPlanMode(t *testing.T) {
+	runner := &stallRunner{}
+	runner.setScreen(planApprovalScreen)
+	r := newTestRun(runConfig{}, runner.run)
+	r.planMode = true
+	var broker atomic.Int32
+	r.canUseTool = func(_ context.Context, _ ai.PermissionRequest) (ai.PermissionDecision, error) {
+		broker.Add(1)
+		return ai.PermissionDecision{Allow: true}, nil
+	}
+	wd := newWatchdog(r, "plan-safe", filepath.Join(t.TempDir(), "s.jsonl"), nil)
+
+	wd.maybeRequestApproval(context.Background(), planApprovalScreen)
+	wd.maybeRequestApproval(context.Background(), planApprovalScreen)
+	r.approvals.Wait()
+
+	if got := broker.Load(); got != 0 {
+		t.Fatalf("plan approval broker called %d times, want 0", got)
+	}
+	if got := runner.enterCount(); got != 0 {
+		t.Fatalf("Enter sent %d times, want 0 for a plan-only run", got)
+	}
+	if got := runner.escapeCount(); got != 1 {
+		t.Fatalf("Escape sent %d times, want exactly 1 for a plan-only run", got)
+	}
+}
+
+func TestCompletedPlanExitDismissesSurfaceWhenWatchdogMissesDialog(t *testing.T) {
+	runner := &stallRunner{}
+	r := newTestRun(runConfig{}, runner.run)
+	r.planMode = true
+	r.planExitSeen = true
+
+	if err := r.dismissCompletedPlan(context.Background(), testSurface, "plan-complete"); err != nil {
+		t.Fatalf("dismissCompletedPlan() error = %v", err)
+	}
+	if err := r.dismissCompletedPlan(context.Background(), testSurface, "plan-complete"); err != nil {
+		t.Fatalf("second dismissCompletedPlan() error = %v", err)
+	}
+
+	if got := runner.enterCount(); got != 0 {
+		t.Fatalf("Enter sent %d times, want 0 for a completed plan-only run", got)
+	}
+	if got := runner.escapeCount(); got != 1 {
+		t.Fatalf("Escape sent %d times, want exactly 1 for a completed plan-only run", got)
+	}
+}
+
 func TestStallWatchdogLogGrowthResetsTimer(t *testing.T) {
 	logPath := filepath.Join(t.TempDir(), "s.jsonl")
 	writeSessionLog(t, logPath, "seed")

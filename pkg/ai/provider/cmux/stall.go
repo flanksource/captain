@@ -225,7 +225,18 @@ func (w *stallWatchdog) markAwaitingHuman() {
 // interactive terminal user to answer (the stall clock is held by awaitingHuman).
 func (w *stallWatchdog) maybeRequestApproval(ctx context.Context, screen string) {
 	req, ok := detectApprovalRequest(w.sessionID, screen)
-	if !ok || w.r.canUseTool == nil {
+	if !ok {
+		return
+	}
+	// A plan-only run must return ExitPlanMode to its caller. Accepting this
+	// dialog would start implementation inside the same agent turn.
+	if w.r.planMode && req.Tool == "ExitPlanMode" {
+		if err := w.r.dismissPlanSurface(ctx, w.ref, w.sessionID); err != nil {
+			log.Warnf("cmux: failed to dismiss plan-only approval: %v", err)
+		}
+		return
+	}
+	if w.r.canUseTool == nil {
 		return
 	}
 	if !w.approving.CompareAndSwap(false, true) {

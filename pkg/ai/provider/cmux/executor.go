@@ -112,11 +112,31 @@ type run struct {
 	// approvals tracks the in-flight approval handlers spawned by the stall
 	// watchdog so the driver can wait for them (and the EventPermission they emit)
 	// before the event channel is closed.
-	approvals sync.WaitGroup
+	approvals       sync.WaitGroup
+	planMode        bool
+	planExitSeen    bool
+	dismissPlanOnce sync.Once
+	dismissPlanErr  error
 
 	lastSurface   WorkspaceRef
 	lastSessionID string
 	lastWorkDir   string
+}
+
+func (r *run) dismissPlanSurface(ctx context.Context, ref WorkspaceRef, sessionID string) error {
+	r.dismissPlanOnce.Do(func() {
+		if err := r.client.SendKeySurface(ctx, ref.String(), ref.SurfaceID, "Escape"); err != nil {
+			r.dismissPlanErr = fmt.Errorf("dismiss claude plan surface for session %s: %w", sessionID, err)
+		}
+	})
+	return r.dismissPlanErr
+}
+
+func (r *run) dismissCompletedPlan(ctx context.Context, ref WorkspaceRef, sessionID string) error {
+	if !r.planMode || !r.planExitSeen {
+		return nil
+	}
+	return r.dismissPlanSurface(ctx, ref, sessionID)
 }
 
 // readScreen returns the normalized surface contents, or "" if the read failed.

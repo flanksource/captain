@@ -2,6 +2,7 @@ package cmux
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -19,12 +20,15 @@ func TestWithSchemaPrompt(t *testing.T) {
 		User:       "review the diff",
 		SchemaJSON: []byte(`{"type":"object","required":["pass"]}`),
 	}}
-	got, err := withSchemaPrompt(req)
+	got, schema, err := withSchemaPrompt(req)
 	if err != nil {
 		t.Fatalf("withSchemaPrompt: %v", err)
 	}
 	if got.Prompt.Schema != nil || got.Prompt.SchemaJSON != nil {
 		t.Errorf("native schema fields must be cleared, got Schema=%v SchemaJSON=%s", got.Prompt.Schema, got.Prompt.SchemaJSON)
+	}
+	if string(schema) != string(req.Prompt.SchemaJSON) {
+		t.Errorf("preserved schema = %s, want %s", schema, req.Prompt.SchemaJSON)
 	}
 	if !strings.Contains(got.Prompt.User, "review the diff") {
 		t.Errorf("original prompt lost: %q", got.Prompt.User)
@@ -35,12 +39,37 @@ func TestWithSchemaPrompt(t *testing.T) {
 
 	// A text-mode request is returned unchanged.
 	plain := ai.Request{Prompt: api.Prompt{User: "hi"}}
-	got, err = withSchemaPrompt(plain)
+	got, schema, err = withSchemaPrompt(plain)
 	if err != nil {
 		t.Fatalf("withSchemaPrompt(text): %v", err)
 	}
 	if got.Prompt.User != "hi" {
 		t.Errorf("text prompt altered: %q", got.Prompt.User)
+	}
+	if len(schema) != 0 {
+		t.Errorf("text prompt preserved unexpected schema: %s", schema)
+	}
+}
+
+func TestValidatedStructuredData(t *testing.T) {
+	schema := json.RawMessage(`{"type":"object","required":["pass"],"properties":{"pass":{"type":"boolean"}}}`)
+
+	got, err := validatedStructuredData(schema, "Result:\n```json\n{\"pass\":true}\n```", nil)
+	if err != nil {
+		t.Fatalf("validatedStructuredData(valid) error = %v", err)
+	}
+	if string(got) != `{"pass":true}` {
+		t.Fatalf("validatedStructuredData(valid) = %s", got)
+	}
+
+	if _, err := validatedStructuredData(schema, `{"pass":"yes"}`, nil); !errors.Is(err, ai.ErrSchemaValidation) {
+		t.Fatalf("validatedStructuredData(invalid) error = %v, want ErrSchemaValidation", err)
+	}
+
+	outcome := &ai.TerminalOutcome{Kind: ai.TerminalOutcomePlan, Plan: &ai.TerminalPlan{Content: "1. Inspect"}}
+	got, err = validatedStructuredData(schema, "not a schema envelope", outcome)
+	if err != nil || got != nil {
+		t.Fatalf("native terminal outcome must bypass schema extraction, got (%s, %v)", got, err)
 	}
 }
 
