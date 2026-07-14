@@ -257,6 +257,8 @@ func NewTool(base BaseTool) Tool {
 		return &EventTool{BaseTool: base}
 	case "CodexExecCommand":
 		return &CodexExecCommandTool{BaseTool: base}
+	case "UserShellCommand":
+		return &UserShellCommandTool{BaseTool: base}
 	case "CodexPatchApply":
 		return &CodexPatchApplyTool{BaseTool: base}
 	case "MCPToolCall":

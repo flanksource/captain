@@ -80,7 +80,7 @@ func TestNewTool_DispatchSyntheticTypes(t *testing.T) {
 		"SessionInit", "HookStart", "HookResponse", "Result",
 		"TokenCount", "TaskStarted", "TaskComplete", "TurnAborted",
 		"ContextCompacted", "ThreadRolledBack", "ItemCompleted",
-		"CodexExecCommand", "CodexPatchApply", "MCPToolCall",
+		"CodexExecCommand", "UserShellCommand", "CodexPatchApply", "MCPToolCall",
 		"WebSearchEvent", "ViewImage", "GuardianAssessment", "ReviewMode",
 		"CollabAgentSpawn", "CollabAgentInteraction", "CollabWaiting",
 		"CollabClose", "QueueOperation", "DeferredToolsDelta",
@@ -90,5 +90,29 @@ func TestNewTool_DispatchSyntheticTypes(t *testing.T) {
 	} {
 		got := NewTool(BaseTool{RawTool: name})
 		assert.Equal(t, name, got.Name(), "expected NewTool to return the right concrete type for %q", name)
+	}
+}
+
+func TestUserShellCommandTool_PrettyAndDetail(t *testing.T) {
+	tool := NewTool(BaseTool{
+		RawTool: "UserShellCommand",
+		Input: map[string]any{
+			"command":     "gavel proc restart",
+			"exit_code":   1,
+			"duration_ms": 2990.9,
+			"stdout":      "Kill sent but port 8088 is still bound",
+		},
+	})
+	if _, ok := tool.(*UserShellCommandTool); !ok {
+		t.Fatalf("NewTool returned %T, want *UserShellCommandTool", tool)
+	}
+	pretty := tool.Pretty().String()
+	assert.Contains(t, pretty, "local command")
+	assert.Contains(t, pretty, "gavel proc restart")
+	assert.Contains(t, pretty, "exit=1")
+	assert.Contains(t, pretty, "3.0s")
+	detail := tool.Detail()
+	if assert.NotNil(t, detail) {
+		assert.Contains(t, detail.String(), "Kill sent but port 8088 is still bound")
 	}
 }

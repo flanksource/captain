@@ -18,7 +18,7 @@ func (t *AssistantTool) Pretty() api.Text {
 	icon := icons.Icon{Unicode: "🤖", Iconify: "mdi:robot", Style: "muted"}
 	text := t.header(icon, "assistant", "text-blue-500 font-medium")
 	if body := t.Str("text"); body != "" {
-		text = text.Append(" "+body, "text-gray-700 max-w-[tw-20ch]")
+		text = text.Append(" "+body, "text-muted max-w-[tw-20ch]")
 	}
 	return text
 }
@@ -38,7 +38,7 @@ func (t *ReasoningTool) Pretty() api.Text {
 	icon := icons.Icon{Unicode: "💭", Iconify: "mdi:thought-bubble", Style: "muted"}
 	text := t.header(icon, "reasoning", "text-purple-500 font-medium")
 	if body := t.Str("text"); body != "" {
-		text = text.Append(" "+body, "text-gray-500 italic max-w-[tw-20ch]")
+		text = text.Append(" "+body, "text-muted italic max-w-[tw-20ch]")
 	}
 	return text
 }

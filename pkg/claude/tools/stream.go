@@ -22,7 +22,7 @@ func (t *SystemInitTool) Pretty() api.Text {
 		Add(icons.Icon{Unicode: "🚀", Iconify: "mdi:rocket-launch", Style: "muted"}).
 		Append(" init", "text-purple-500 font-medium")
 	if model := t.Str("model"); model != "" {
-		text = text.Append(" "+model, "text-gray-700")
+		text = text.Append(" "+model, "text-muted")
 	}
 	if cwd := t.Str("cwd"); cwd != "" {
 		text = text.Append(" cwd="+ShortenPath(cwd), "text-gray-500")
@@ -86,7 +86,7 @@ func (t *HookResponseTool) Detail() api.Textable {
 	}
 	text := clicky.Text("")
 	if stdout != "" {
-		text = text.Append("stdout: ", "font-bold text-gray-600").Append(stdout, "")
+		text = text.Append("stdout: ", "font-bold text-muted").Append(stdout, "")
 	}
 	if stderr != "" {
 		if stdout != "" {
@@ -215,7 +215,7 @@ func (t *ParseErrorTool) Detail() api.Textable {
 	if raw == "" {
 		return t.BaseTool.Detail()
 	}
-	text := clicky.Text("").Append("raw: ", "font-bold text-gray-600").Append(raw, "")
+	text := clicky.Text("").Append("raw: ", "font-bold text-muted").Append(raw, "")
 	return &text
 }
 
@@ -261,7 +261,7 @@ func (t *TurnDurationTool) Category() string { return "system" }
 func (t *TurnDurationTool) Pretty() api.Text {
 	text := clicky.Text("").
 		Add(icons.Icon{Unicode: "⏱", Iconify: "mdi:timer-outline", Style: "muted"}).
-		Append(" turn", "text-gray-700 font-medium")
+		Append(" turn", "text-muted font-medium")
 	if ms := t.Float("durationMs"); ms > 0 {
 		text = text.Append(" "+formatDurationMS(ms), "text-gray-500")
 	}
@@ -281,7 +281,7 @@ func (t *AwaySummaryTool) Category() string { return "system" }
 func (t *AwaySummaryTool) Pretty() api.Text {
 	text := clicky.Text("").
 		Add(icons.Icon{Unicode: "💤", Iconify: "mdi:sleep", Style: "muted"}).
-		Append(" away-summary", "text-gray-700 font-medium")
+		Append(" away-summary", "text-muted font-medium")
 	if content := strings.TrimSpace(t.Str("content")); content != "" {
 		preview := content
 		if len(preview) > 80 {
@@ -313,7 +313,7 @@ func (t *SessionTitleTool) Pretty() api.Text {
 		Add(icons.Icon{Unicode: "🏷", Iconify: "mdi:tag", Style: "muted"}).
 		Append(" title", "text-purple-500 font-medium")
 	if title := t.Str("aiTitle"); title != "" {
-		text = text.Append(" "+title, "text-gray-700")
+		text = text.Append(" "+title, "text-muted")
 	}
 	return text
 }
