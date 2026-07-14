@@ -43,6 +43,7 @@ require (
 	cloud.google.com/go/cloudsqlconn v1.22.1 // indirect
 	github.com/exaring/otelpgx v0.9.3 // indirect
 	github.com/fergusstrange/embedded-postgres v1.34.0 // indirect
+	github.com/pelletier/go-toml/v2 v2.4.3 // indirect
 	github.com/xi2/xz v0.0.0-20171230120015-48954b6210f8 // indirect
 	go.opencensus.io v0.24.0 // indirect
 	gorm.io/driver/postgres v1.6.0 // indirect
