@@ -7,7 +7,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
@@ -18,18 +17,18 @@ import (
 // binaries present. This keeps the probe hermetic: fetchAPIModels makes no
 // network call without an API key, API backends stay key-gated, and CLI-style
 // backends project exact IDs from Captain's internal registry.
-func fakeSchemaProbe() authProbe {
-	return authProbe{
-		getenv:     func(string) string { return "" },
-		lookPath:   func(bin string) (string, error) { return "/usr/local/bin/" + bin, nil },
-		fileExists: func(string) bool { return false },
-		home:       "/home/test",
+func fakeSchemaProbe() ai.AuthProbe {
+	return ai.AuthProbe{
+		Getenv:     func(string) string { return "" },
+		LookPath:   func(bin string) (string, error) { return "/usr/local/bin/" + bin, nil },
+		FileExists: func(string) bool { return false },
+		Home:       "/home/test",
 	}
 }
 
 func stubbedSchemaAdapters(t *testing.T) []AdapterStatus {
 	t.Helper()
-	adapters, err := ProbeAdapters(WhoamiOptions{Models: true}, fakeSchemaProbe())
+	adapters, err := ai.ProbeAdapters(ai.WhoamiOptions{Models: true}, fakeSchemaProbe())
 	if err != nil {
 		t.Fatalf("ProbeAdapters: %v", err)
 	}
@@ -259,50 +258,11 @@ func TestPromptSchemaExampleIsPortable(t *testing.T) {
 	}
 }
 
-func TestCachedSchemaAdaptersReusesWithinTTL(t *testing.T) {
-	prevProbe := probeSchemaAdapters
-	prevCache, prevAt := schemaAdapterCache, schemaAdapterAt
-	t.Cleanup(func() {
-		probeSchemaAdapters = prevProbe
-		schemaAdapterCache, schemaAdapterAt = prevCache, prevAt
-	})
-
-	stub := stubbedSchemaAdapters(t)
-	calls := 0
-	probeSchemaAdapters = func() ([]AdapterStatus, error) {
-		calls++
-		return stub, nil
-	}
-	schemaAdapterCache, schemaAdapterAt = nil, time.Time{}
-
-	base := time.Unix(1_000_000, 0)
-	if _, err := cachedSchemaAdapters(base); err != nil {
-		t.Fatalf("cachedSchemaAdapters: %v", err)
-	}
-	if _, err := cachedSchemaAdapters(base.Add(10 * time.Second)); err != nil {
-		t.Fatalf("cachedSchemaAdapters: %v", err)
-	}
-	if calls != 1 {
-		t.Errorf("probe called %d times within TTL, want 1", calls)
-	}
-	if _, err := cachedSchemaAdapters(base.Add(2 * schemaAdapterCacheTTL)); err != nil {
-		t.Fatalf("cachedSchemaAdapters: %v", err)
-	}
-	if calls != 2 {
-		t.Errorf("probe called %d times after TTL expiry, want 2", calls)
-	}
-}
-
 func TestWritePromptSchemaEmitsValidJSON(t *testing.T) {
-	prevProbe := probeSchemaAdapters
-	prevCache, prevAt := schemaAdapterCache, schemaAdapterAt
-	t.Cleanup(func() {
-		probeSchemaAdapters = prevProbe
-		schemaAdapterCache, schemaAdapterAt = prevCache, prevAt
-	})
+	prev := schemaAdapters
+	t.Cleanup(func() { schemaAdapters = prev })
 	stub := stubbedSchemaAdapters(t)
-	probeSchemaAdapters = func() ([]AdapterStatus, error) { return stub, nil }
-	schemaAdapterCache, schemaAdapterAt = nil, time.Time{}
+	schemaAdapters = func() ([]AdapterStatus, error) { return stub, nil }
 
 	var buf bytes.Buffer
 	if err := WritePromptSchema(&buf); err != nil {

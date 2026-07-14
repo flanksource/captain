@@ -66,46 +66,21 @@ func WritePromptSchema(w io.Writer) error {
 // PromptSchemaDocument assembles the prompt/spec editor schema document from the
 // live runtime: the cmux "extra args" reflected from Go structs (cached, since
 // they never change within a process) and the available backends/models probed
-// from the environment via whoami (cached with a short TTL so a long-running
-// serve process reflects key/model changes without re-probing per request).
+// from the environment (ai.CachedAdapters owns the short-TTL cache so a
+// long-running serve process reflects key/model changes without re-probing per
+// request).
 func PromptSchemaDocument() (map[string]any, error) {
-	adapters, err := cachedSchemaAdapters(time.Now())
+	adapters, err := schemaAdapters()
 	if err != nil {
 		return nil, err
 	}
 	return buildPromptSchemaDocument(adapters)
 }
 
-// probeSchemaAdapters is the live probe used to source backends and models. It is
-// a package var so tests can substitute a deterministic, network-free stub.
-var probeSchemaAdapters = func() ([]AdapterStatus, error) {
-	return ProbeAdapters(WhoamiOptions{Models: true}, osAuthProbe())
-}
-
-const schemaAdapterCacheTTL = 60 * time.Second
-
-var (
-	schemaAdapterMu    sync.Mutex
-	schemaAdapterCache []AdapterStatus
-	schemaAdapterAt    time.Time
-)
-
-// cachedSchemaAdapters returns the probed adapters, reusing a cached probe within
-// the TTL. A probe error is never cached: the next call retries so a transient
-// failure does not permanently empty the schema.
-func cachedSchemaAdapters(now time.Time) ([]AdapterStatus, error) {
-	schemaAdapterMu.Lock()
-	defer schemaAdapterMu.Unlock()
-	if schemaAdapterCache != nil && now.Sub(schemaAdapterAt) < schemaAdapterCacheTTL {
-		return schemaAdapterCache, nil
-	}
-	adapters, err := probeSchemaAdapters()
-	if err != nil {
-		return nil, err
-	}
-	schemaAdapterCache = adapters
-	schemaAdapterAt = now
-	return adapters, nil
+// schemaAdapters sources the probed adapters through pkg/ai's cache. It is a
+// package var so tests can substitute a deterministic, network-free stub.
+var schemaAdapters = func() ([]AdapterStatus, error) {
+	return ai.CachedAdapters(time.Now())
 }
 
 // reflectedSchemaBytes holds the JSON of the reflection-derived schemas. They are

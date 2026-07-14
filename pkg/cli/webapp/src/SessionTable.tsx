@@ -1,5 +1,6 @@
 import type { ComponentProps, KeyboardEvent, ReactNode } from "react";
 import { Button } from "@flanksource/clicky-ui/components";
+import { providerIcon } from "@flanksource/clicky-ui/chat";
 import {
   CopyBadge,
   Icon,
@@ -10,11 +11,6 @@ import {
   UiChip,
   UiCopy,
   UiHistory,
-  UiLogoClaude,
-  UiLogoDeepseek,
-  UiLogoGemini,
-  UiLogoMistral,
-  UiLogoOpenai,
   UiMemoryStick,
   UiTerminal,
 } from "@flanksource/clicky-ui/data";
@@ -59,7 +55,7 @@ const SESSION_GRID_CLASS =
   "grid grid-cols-[minmax(14rem,1.6fr)_5.25rem_6.25rem] sm:grid-cols-[minmax(16rem,1.7fr)_5.25rem_6.25rem_6.25rem] lg:grid-cols-[minmax(20rem,2fr)_5.5rem_7rem_7rem_7rem_6rem_7rem_5.5rem]";
 
 const SESSION_COLUMNS = [
-  { label: "Model", sort: "model" },
+  { label: "Session", sort: "model" },
   { label: "Status", sort: "health" },
   { label: "CPU", sort: "cpu" },
   { label: "Memory", sort: "memory" },
@@ -219,7 +215,16 @@ export function UsageBarsCell({
   );
 }
 
+// identityTitle prefers the human prompt (collapsed to one line) so the session
+// list reads by what was asked, falling back to the derived title for live or
+// prompt-less rows.
+export function identityTitle(session: SessionRecord): string {
+  const prompt = session.initialPrompt?.replace(/\s+/g, " ").trim();
+  return prompt || sessionTitle(session);
+}
+
 export function SessionIdentity({ session }: { session: SessionRecord }) {
+  const title = identityTitle(session);
   const model = modelLabel(session);
   const effort = effortLabel(session.reasoningEffort);
   const id = shortID(session.id) || session.key;
@@ -229,31 +234,31 @@ export function SessionIdentity({ session }: { session: SessionRecord }) {
         <span className="grid size-6 shrink-0 place-items-center rounded border border-border bg-muted/50 text-muted-foreground">
           <Icon icon={modelIcon(session)} className="size-3.5" />
         </span>
-        <span className="min-w-0 truncate text-sm font-medium">{model}</span>
+        <span className="min-w-0 truncate text-sm font-medium" title={title}>
+          {title}
+        </span>
       </div>
-      <div className="mt-1 flex min-w-0 items-center gap-2 text-[11px] text-muted-foreground">
+      <div className="mt-1 flex min-w-0 items-center gap-2 overflow-hidden text-[11px] text-muted-foreground">
+        {model ? <span className="shrink-0 truncate">{model}</span> : null}
         {effort ? (
-          <span className="inline-flex min-w-0 items-center gap-1">
+          <span className="inline-flex shrink-0 items-center gap-1">
             <Icon icon={UiBrain} className="size-3 shrink-0" />
             <span className="truncate">{effort}</span>
           </span>
         ) : null}
-        <span className="truncate">{sessionTitle(session)}</span>
-      </div>
-      <div
-        className="mt-1 flex min-w-0 flex-wrap items-center gap-1"
-        onClick={(event) => event.stopPropagation()}
-      >
-        {id ? <CopyBadge label="id" value={id} /> : null}
-        {session.live?.pid ? (
-          <CopyBadge label="pid" value={String(session.live.pid)} />
+        <span
+          className="inline-flex shrink-0 items-center gap-1"
+          onClick={(event) => event.stopPropagation()}
+        >
+          {id ? <CopyBadge label="id" value={id} /> : null}
+          {session.live?.pid ? (
+            <CopyBadge label="pid" value={String(session.live.pid)} />
+          ) : null}
+        </span>
+        {session.live?.command ? (
+          <span className="min-w-0 truncate">{commandLabel(session.live.command)}</span>
         ) : null}
       </div>
-      {session.live?.command ? (
-        <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
-          {commandLabel(session.live.command)}
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -488,15 +493,24 @@ export function modelIcon(session: {
   provider?: string;
   source?: string;
 }): SessionIcon {
-  const value = `${session.provider ?? ""} ${session.model ?? ""} ${session.source ?? ""}`.toLowerCase();
-  if (value.includes("claude") || value.includes("anthropic")) return UiLogoClaude;
-  if (value.includes("codex") || value.includes("openai") || value.includes("gpt")) {
-    return UiLogoOpenai;
-  }
-  if (value.includes("gemini") || value.includes("google")) return UiLogoGemini;
-  if (value.includes("deepseek")) return UiLogoDeepseek;
-  if (value.includes("mistral")) return UiLogoMistral;
-  return UiTerminal;
+  return (
+    providerIcon(session.provider) ??
+    providerIcon(session.source) ??
+    providerIcon(providerFromModel(session.model)) ??
+    UiTerminal
+  );
+}
+
+// providerFromModel maps a model-id fragment to a provider key that providerIcon
+// understands, for sessions that carry a model but no explicit provider/source.
+function providerFromModel(model?: string): string | undefined {
+  const value = (model ?? "").toLowerCase();
+  if (value.includes("claude") || value.includes("anthropic")) return "anthropic";
+  if (value.includes("codex") || value.includes("gpt") || /\bo\d/.test(value)) return "openai";
+  if (value.includes("gemini") || value.includes("google")) return "google";
+  if (value.includes("deepseek")) return "deepseek";
+  if (value.includes("mistral")) return "mistral";
+  return undefined;
 }
 
 export function effortLabel(value: string | undefined) {

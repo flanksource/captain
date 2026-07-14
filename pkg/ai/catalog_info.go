@@ -37,13 +37,18 @@ func BackendToProvider(b Backend) string {
 	}
 }
 
-// CatalogInfo returns the model menu annotated with selectability. API models
-// are configured when their provider is among configuredProviders (the keys the
-// caller resolved); agent/CLI models are configured when their local backend
-// binary is installed. Order mirrors the catalog so the client renders a stable,
-// grouped menu.
+// CatalogInfo returns the static model menu annotated with selectability. API
+// models are configured when their provider is among configuredProviders (the
+// keys the caller resolved); agent/CLI models are configured when their local
+// backend binary is installed. Order mirrors the catalog so the client renders a
+// stable, grouped menu.
 func CatalogInfo(configuredProviders []string) []ModelInfo {
-	models := Catalog()
+	return catalogInfoFrom(Catalog(), configuredProviders)
+}
+
+// catalogInfoFrom annotates an arbitrary model list with selectability, shared
+// by CatalogInfo (static catalog) and LiveCatalogInfo (whoami-probed catalog).
+func catalogInfoFrom(models []Model, configuredProviders []string) []ModelInfo {
 	out := make([]ModelInfo, len(models))
 	for i, m := range models {
 		configured := false

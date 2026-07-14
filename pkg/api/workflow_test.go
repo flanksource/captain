@@ -17,7 +17,8 @@ func TestWorkflowSpecRoundTrip(t *testing.T) {
 				Scope:         VerifyScopeChanged,
 				MaxIterations: 3,
 			},
-			PostRun: &PostRun{Commit: true, CommitMessage: "apply"},
+			PostRun:                  &PostRun{Commit: true, CommitMessage: "apply"},
+			AutoVerifyWithoutFixture: true,
 		},
 	}
 
@@ -42,6 +43,9 @@ func TestWorkflowSpecRoundTrip(t *testing.T) {
 	if got.Workflow.PostRun == nil || !got.Workflow.PostRun.Commit {
 		t.Errorf("postRun not preserved: %+v", got.Workflow.PostRun)
 	}
+	if !got.Workflow.AutoVerifyWithoutFixture {
+		t.Errorf("autoVerifyWithoutFixture not preserved: %+v", got.Workflow)
+	}
 }
 
 func TestWorkflowOmittedWhenNil(t *testing.T) {
@@ -59,7 +63,7 @@ func TestSpecSchemaIncludesWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("schema: %v", err)
 	}
-	for _, want := range []string{"workflow", "Workflow", "Verify", "commands", "maxIterations"} {
+	for _, want := range []string{"workflow", "Workflow", "Verify", "commands", "maxIterations", "autoVerifyWithoutFixture"} {
 		if !strings.Contains(string(data), want) {
 			t.Errorf("reflected spec schema missing %q", want)
 		}

@@ -14,6 +14,12 @@ import "fmt"
 type Workflow struct {
 	Verify  *Verify  `json:"verify,omitempty" yaml:"verify,omitempty"`
 	PostRun *PostRun `json:"postRun,omitempty" yaml:"postRun,omitempty"`
+
+	// AutoVerifyWithoutFixture is the explicit policy opt-in for hosts that
+	// project a successful generate-only run into a durable verified state. A
+	// false value keeps the durable work item open when no verification fixture
+	// ran; success by itself is not treated as proof of correctness.
+	AutoVerifyWithoutFixture bool `json:"autoVerifyWithoutFixture,omitempty" yaml:"autoVerifyWithoutFixture,omitempty"`
 }
 
 // Verify is the loop's definition-of-done: it runs after each generation and
