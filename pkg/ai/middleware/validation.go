@@ -9,7 +9,6 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
-	"github.com/xeipuuv/gojsonschema"
 )
 
 // maxSchemaRetries bounds the number of fix-up re-asks the retry strictness makes
@@ -228,20 +227,5 @@ func responseJSON(resp *ai.Response) string {
 // returns a human-readable joined error string (empty when the response conforms),
 // plus a hard error only when the schema or document could not be loaded/parsed.
 func validateResponse(schema json.RawMessage, resp *ai.Response) (string, error) {
-	doc := responseJSON(resp)
-	if strings.TrimSpace(doc) == "" {
-		return "response carried no JSON to validate", nil
-	}
-	result, err := gojsonschema.Validate(gojsonschema.NewBytesLoader(schema), gojsonschema.NewStringLoader(doc))
-	if err != nil {
-		return "", fmt.Errorf("%w: validation could not run: %v", ai.ErrSchemaValidation, err)
-	}
-	if result.Valid() {
-		return "", nil
-	}
-	msgs := make([]string, 0, len(result.Errors()))
-	for _, e := range result.Errors() {
-		msgs = append(msgs, e.String())
-	}
-	return strings.Join(msgs, "; "), nil
+	return ai.ValidateStructuredJSON(schema, responseJSON(resp))
 }

@@ -242,7 +242,7 @@ func (r *Runner[T]) runLoop(ctx context.Context, hc *HookContext, result *Result
 		maxIter = 1
 	}
 	req := r.Request
-	var verifyErr error
+	var responseErr, verifyErr error
 
 	loop, loopErr := ai.RunUntil(ctx, ai.LoopOptions{
 		Provider:      r.Provider,
@@ -255,7 +255,10 @@ func (r *Runner[T]) runLoop(ctx context.Context, hc *HookContext, result *Result
 		},
 		BuildRequest: func(iter int, prev *ai.LoopIteration) (ai.Request, bool) {
 			if prev != nil {
-				r.updateResponse(hc, prev)
+				if err := r.updateResponse(hc, prev); err != nil {
+					responseErr = err
+					return ai.Request{}, false
+				}
 				verdicts, retry, allValid, err := r.verify(hc)
 				if err != nil {
 					verifyErr = err
@@ -280,6 +283,9 @@ func (r *Runner[T]) runLoop(ctx context.Context, hc *HookContext, result *Result
 	result.Loop = loop
 	if loopErr != nil {
 		return loopErr
+	}
+	if responseErr != nil {
+		return responseErr
 	}
 	return verifyErr
 }
@@ -321,13 +327,20 @@ func (r *Runner[T]) verify(hc *HookContext) (verdicts []VerifyResult, retry *ai.
 
 // updateResponse folds one completed iteration into the accumulating response:
 // its assembled text, structured data, usage, and session id.
-func (r *Runner[T]) updateResponse(hc *HookContext, prev *ai.LoopIteration) {
+func (r *Runner[T]) updateResponse(hc *HookContext, prev *ai.LoopIteration) error {
 	ws := hc.Workspace()
 	if prev.SessionID != "" {
 		ws.SessionID = prev.SessionID
 	}
 	var text strings.Builder
 	for _, ev := range prev.Events {
+		outcome, err := ai.TerminalOutcomeFromEvent(ev)
+		if err != nil {
+			return fmt.Errorf("agent: invalid terminal outcome: %w", err)
+		}
+		if outcome != nil {
+			hc.Response.TerminalOutcome = outcome
+		}
 		switch ev.Kind {
 		case ai.EventText:
 			text.WriteString(ev.Text)
@@ -339,6 +352,7 @@ func (r *Runner[T]) updateResponse(hc *HookContext, prev *ai.LoopIteration) {
 	}
 	hc.Response.Text = text.String()
 	hc.Response.Usage = prev.Usage
+	return nil
 }
 
 // recordEvent updates the workspace from one streamed event: session id and the

@@ -17,6 +17,7 @@ type mockProvider struct {
 	err     error
 	closed  bool
 	lastReq Request
+	outcome *TerminalOutcome
 }
 
 func (m *mockProvider) GetModel() string    { return m.model }
@@ -28,11 +29,21 @@ func (m *mockProvider) Execute(_ context.Context, req Request) (*Response, error
 		return nil, m.err
 	}
 	return &Response{
-		Text:    m.text + ":" + req.Prompt.User,
-		Model:   m.model,
-		Backend: BackendAnthropic,
-		Usage:   Usage{InputTokens: 10, OutputTokens: 5},
+		Text:            m.text + ":" + req.Prompt.User,
+		Model:           m.model,
+		Backend:         BackendAnthropic,
+		Usage:           Usage{InputTokens: 10, OutputTokens: 5},
+		TerminalOutcome: m.outcome,
 	}, nil
+}
+
+func TestAgent_ExecutePromptCarriesTerminalOutcome(t *testing.T) {
+	outcome := &TerminalOutcome{Kind: TerminalOutcomePlan, Plan: &TerminalPlan{Content: "1. Inspect"}}
+	a := NewAgentWithProvider(&mockProvider{model: "m", outcome: outcome}, Config{Model: api.Model{Name: "m"}})
+
+	resp, err := a.ExecutePrompt(context.Background(), PromptRequest{Name: "plan", Prompt: "plan this"})
+	require.NoError(t, err)
+	assert.Same(t, outcome, resp.TerminalOutcome)
 }
 
 func TestAgent_ExecutePromptAccruesCost(t *testing.T) {

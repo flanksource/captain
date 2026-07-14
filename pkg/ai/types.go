@@ -18,13 +18,22 @@ type Request = api.Spec
 // contract). They are re-exported here as aliases so existing call sites and
 // clicky/aichat's captainai.* keep compiling unchanged.
 type (
-	PermissionFunc     = api.PermissionFunc
-	PermissionRequest  = api.PermissionRequest
-	PermissionDecision = api.PermissionDecision
-	Response           = api.Response
-	EventKind          = api.EventKind
-	Event              = api.Event
-	Config             = api.Config
+	PermissionFunc      = api.PermissionFunc
+	PermissionRequest   = api.PermissionRequest
+	PermissionDecision  = api.PermissionDecision
+	Response            = api.Response
+	TerminalOutcome     = api.TerminalOutcome
+	TerminalOutcomeKind = api.TerminalOutcomeKind
+	TerminalPlan        = api.TerminalPlan
+	TerminalQuestion    = api.TerminalQuestion
+	EventKind           = api.EventKind
+	Event               = api.Event
+	Config              = api.Config
+)
+
+const (
+	TerminalOutcomePlan      = api.TerminalOutcomePlan
+	TerminalOutcomeQuestions = api.TerminalOutcomeQuestions
 )
 
 const (

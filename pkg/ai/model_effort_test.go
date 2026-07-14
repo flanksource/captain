@@ -49,7 +49,7 @@ func TestRegistryGPT56Availability(t *testing.T) {
 	if _, ok := RegistryModelDef(BackendCodexAgent, "sol"); !ok {
 		t.Fatal("Sol should be available to Codex")
 	}
-	if _, ok := RegistryModelDef(BackendOpenAI, "sol"); ok {
-		t.Fatal("Sol should not be available to OpenAI")
+	if _, ok := RegistryModelDef(BackendOpenAI, "sol"); !ok {
+		t.Fatal("Sol should be available to OpenAI")
 	}
 }

@@ -213,8 +213,11 @@ func TestOpenAICompatibleSchema_RemovesAnnotationsFromReferences(t *testing.T) {
 	}
 
 	root := decodeSchemaObject(t, got)
-	if root["$ref"] != "#/$defs/PlanEnvelope" || root["$schema"] == nil || root["$id"] == nil || root["$defs"] == nil {
+	if root["$ref"] != "#/$defs/PlanEnvelope" || root["$schema"] == nil || root["$defs"] == nil {
 		t.Fatalf("root reference metadata was not preserved: %#v", root)
+	}
+	if _, exists := root["$id"]; exists {
+		t.Fatalf("root reference retained unsupported $id sibling: %#v", root)
 	}
 	defs := root["$defs"].(map[string]any)
 	planEnvelope := defs["PlanEnvelope"].(map[string]any)

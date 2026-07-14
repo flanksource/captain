@@ -58,6 +58,47 @@ func TestRunner_CapturesSessionAndChangedFiles(t *testing.T) {
 	assert.Equal(t, 1, prov.calls, "no verify hooks ⇒ exactly one iteration")
 }
 
+func TestRunner_CapturesNativePlanOutcome(t *testing.T) {
+	prov := &fakeProvider{events: func(int) []ai.Event {
+		return []ai.Event{
+			{Kind: ai.EventToolUse, Tool: "ExitPlanMode", Input: map[string]any{
+				"plan":         "1. Inspect\n2. Implement",
+				"planFilePath": "/repo/.claude/plans/example.md",
+			}},
+			{Kind: ai.EventResult, Success: true},
+		}
+	}}
+
+	result, err := (&Runner[string]{
+		Provider: prov,
+		Request:  ai.Request{Prompt: api.Prompt{User: "plan"}},
+	}).Run(context.Background())
+
+	require.NoError(t, err)
+	require.NotNil(t, result.Response.TerminalOutcome)
+	assert.Equal(t, ai.TerminalOutcomePlan, result.Response.TerminalOutcome.Kind)
+	require.NotNil(t, result.Response.TerminalOutcome.Plan)
+	assert.Equal(t, "1. Inspect\n2. Implement", result.Response.TerminalOutcome.Plan.Content)
+	assert.Equal(t, "/repo/.claude/plans/example.md", result.Response.TerminalOutcome.Plan.Path)
+}
+
+func TestRunner_FailsOnMalformedNativePlanOutcome(t *testing.T) {
+	prov := &fakeProvider{events: func(int) []ai.Event {
+		return []ai.Event{
+			{Kind: ai.EventToolUse, Tool: "ExitPlanMode", Input: map[string]any{"planFilePath": "/repo/plan.md"}},
+			{Kind: ai.EventResult, Success: true},
+		}
+	}}
+
+	_, err := (&Runner[string]{
+		Provider: prov,
+		Request:  ai.Request{Prompt: api.Prompt{User: "plan"}},
+	}).Run(context.Background())
+
+	require.ErrorContains(t, err, "ExitPlanMode")
+	require.ErrorContains(t, err, "plan is required")
+}
+
 func TestRunner_VerifyDrivesRerunThenStops(t *testing.T) {
 	prov := &fakeProvider{events: func(int) []ai.Event {
 		return []ai.Event{{Kind: ai.EventResult, Success: true}}

@@ -196,6 +196,7 @@
     "contextWindow": 1050000,
     "preferred": true,
     "availability": [
+      "api",
       "codex"
     ],
     "supportedEfforts": [
@@ -218,6 +219,7 @@
     "contextWindow": 1050000,
     "preferred": true,
     "availability": [
+      "api",
       "codex"
     ],
     "supportedEfforts": [
@@ -241,6 +243,7 @@
     "contextWindow": 1050000,
     "preferred": true,
     "availability": [
+      "api",
       "codex"
     ],
     "supportedEfforts": [

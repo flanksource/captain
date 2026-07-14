@@ -283,6 +283,7 @@ func normalizeOpenAISchema(v any, path string) error {
 }
 
 var openAIRefAnnotationKeywords = map[string]bool{
+	"$id":         true,
 	"$comment":    true,
 	"default":     true,
 	"deprecated":  true,
@@ -296,9 +297,10 @@ var openAIRefAnnotationKeywords = map[string]bool{
 // normalizeOpenAIRef makes referenced nodes conform to OpenAI's strict schema
 // subset. A nested $ref must stand alone; invopop/jsonschema commonly attaches
 // field annotations such as description alongside it, which OpenAI rejects.
-// Root schema metadata and definitions are retained so the reference remains
-// resolvable, while unexpected semantic siblings fail loudly rather than being
-// silently discarded.
+// Root schema dialect metadata and definitions are retained so the reference
+// remains resolvable. $id is stripped even at the root because OpenAI rejects
+// it as a $ref sibling. Unexpected semantic siblings fail loudly rather than
+// being silently discarded.
 func normalizeOpenAIRef(node map[string]any, path string) (bool, error) {
 	rawRef, hasRef := node["$ref"]
 	if !hasRef {
@@ -317,7 +319,7 @@ func normalizeOpenAIRef(node map[string]any, path string) (bool, error) {
 			delete(node, key)
 			continue
 		}
-		if path == "$" && (key == "$schema" || key == "$id" || key == "$defs" || key == "definitions") {
+		if path == "$" && (key == "$schema" || key == "$defs" || key == "definitions") {
 			continue
 		}
 		return false, fmt.Errorf("openai schema transform: %s.$ref has unsupported sibling %q", path, key)

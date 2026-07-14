@@ -230,7 +230,7 @@ func TestResolveRuntimeSelectors_WildcardRespectsAvailability(t *testing.T) {
 			t.Fatalf("unexpected model: %+v", model)
 		}
 	}
-	want := []api.Backend{api.BackendCodexAgent, api.BackendCodexCLI, api.BackendCodexCmux}
+	want := []api.Backend{api.BackendOpenAI, api.BackendCodexAgent, api.BackendCodexCLI, api.BackendCodexCmux}
 	if !reflect.DeepEqual(backends, want) {
 		t.Fatalf("backends = %v, want %v", backends, want)
 	}
@@ -240,7 +240,22 @@ func TestResolveModelSelectors_EffortErrors(t *testing.T) {
 	if _, err := ResolveModelSelectors(api.Model{Name: "agent:sol:extreme"}); err == nil {
 		t.Fatal("expected invalid effort suffix error")
 	}
-	if _, err := ResolveModelSelectors(api.Model{Name: "openai:sol:high"}); err == nil {
-		t.Fatal("expected Codex-only Sol to be rejected by OpenAI backend")
+}
+
+func TestResolveModelSelectors_OpenAI56VariantsAvailableViaAPI(t *testing.T) {
+	for alias, want := range map[string]string{
+		"luna":  "gpt-5.6-luna",
+		"sol":   "gpt-5.6-sol",
+		"terra": "gpt-5.6-terra",
+	} {
+		t.Run(alias, func(t *testing.T) {
+			got, err := ResolveModelSelectors(api.Model{Name: "api:" + alias})
+			if err != nil {
+				t.Fatalf("ResolveModelSelectors(api:%s): %v", alias, err)
+			}
+			if got.Backend != api.BackendOpenAI || got.Name != want {
+				t.Fatalf("got %s/%s, want openai/%s", got.Backend, got.Name, want)
+			}
+		})
 	}
 }

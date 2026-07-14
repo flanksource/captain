@@ -49,14 +49,15 @@ type PromptRequest struct {
 
 // PromptResponse is the result of one PromptRequest.
 type PromptResponse struct {
-	Request        PromptRequest `json:"request,omitempty"`
-	Result         string        `json:"result"`
-	StructuredData any           `json:"structured_data,omitempty"`
-	Costs          Costs         `json:"costs,omitempty"`
-	Model          string        `json:"model,omitempty"`
-	Error          string        `json:"error,omitempty"`
-	Duration       time.Duration `json:"duration,omitempty"`
-	CacheHit       bool          `json:"cache_hit,omitempty"`
+	Request         PromptRequest    `json:"request,omitempty"`
+	Result          string           `json:"result"`
+	StructuredData  any              `json:"structured_data,omitempty"`
+	TerminalOutcome *TerminalOutcome `json:"terminal_outcome,omitempty"`
+	Costs           Costs            `json:"costs,omitempty"`
+	Model           string           `json:"model,omitempty"`
+	Error           string           `json:"error,omitempty"`
+	Duration        time.Duration    `json:"duration,omitempty"`
+	CacheHit        bool             `json:"cache_hit,omitempty"`
 }
 
 // IsOK reports whether the prompt succeeded.
@@ -100,13 +101,14 @@ func (a *Agent) ExecutePrompt(ctx context.Context, req PromptRequest) (*PromptRe
 
 	cost := a.accrue(resp)
 	return &PromptResponse{
-		Request:        req,
-		Result:         resp.Text,
-		StructuredData: resp.StructuredData,
-		Costs:          Costs{cost},
-		Model:          resp.Model,
-		Duration:       time.Since(start),
-		CacheHit:       resp.CacheHit,
+		Request:         req,
+		Result:          resp.Text,
+		StructuredData:  resp.StructuredData,
+		TerminalOutcome: resp.TerminalOutcome,
+		Costs:           Costs{cost},
+		Model:           resp.Model,
+		Duration:        time.Since(start),
+		CacheHit:        resp.CacheHit,
 	}, nil
 }
 
