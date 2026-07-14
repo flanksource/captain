@@ -331,7 +331,9 @@ func TestIngestTranscriptAndReadStores(t *testing.T) {
 
 	t.Run("JSON null characters are sanitized before jsonb persistence", func(t *testing.T) {
 		input := testIngestBatch(modTime, 1024)
-		input.Session.ProviderSessionID = "0195c1de-4ab8-7000-8000-0123456789ac"
+		// Distinct prefix: the "ambiguous provider prefixes" subtest below counts
+		// exact matches for testProviderSessionID's first 8 characters.
+		input.Session.ProviderSessionID = "0195c2de-4ab8-7000-8000-0123456789ac"
 		input.Session.Path = "/home/dev/.codex/sessions/nul-output.jsonl"
 		input.Session.Project = "nul-json"
 		input.Session.Metadata = map[string]any{"output": "before\x00after"}

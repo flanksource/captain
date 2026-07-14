@@ -423,7 +423,18 @@ func (p *Provider) initializeParams(req ai.Request) initializeParams {
 		Resume:             resume,
 		ApprovalMode:       approvalMode,
 		OutputSchema:       p.sessionSchema,
+		MonitorURL:         monitorHooksURL(req),
 	}
+}
+
+// monitorHooksURL resolves the captain serve URL the SDK's session-monitoring
+// hooks deliver lifecycle events to; empty disables injection (bare runs,
+// CAPTAIN_MONITOR_HOOKS=off).
+func monitorHooksURL(req ai.Request) string {
+	if !api.MonitorHooksEnabled(req) {
+		return ""
+	}
+	return api.ServeBaseURL()
 }
 
 type initializeParams struct {
@@ -438,6 +449,7 @@ type initializeParams struct {
 	Resume             string          `json:"resume,omitempty"`
 	ApprovalMode       string          `json:"approvalMode,omitempty"`
 	OutputSchema       json.RawMessage `json:"outputSchema,omitempty"`
+	MonitorURL         string          `json:"monitorUrl,omitempty"`
 }
 
 func (p *Provider) setInitResult(err error) {

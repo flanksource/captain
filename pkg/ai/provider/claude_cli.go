@@ -54,7 +54,7 @@ func (c *ClaudeCLI) Execute(ctx context.Context, req ai.Request) (*ai.Response, 
 }
 
 func (c *ClaudeCLI) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai.Event, error) {
-	args, err := buildClaudeCLIArgs(c.model, req)
+	args, cleanup, err := buildClaudeCLIArgs(c.model, req)
 	if err != nil {
 		return nil, err
 	}
@@ -64,11 +64,13 @@ func (c *ClaudeCLI) ExecuteStream(ctx context.Context, req ai.Request) (<-chan a
 	}
 	cmd, stdout, stderrBuf, err := startCLIStream(ctx, claudeCLICommand, args, []byte(composePrompt(req)), req.Cwd(), env)
 	if err != nil {
+		cleanup()
 		return nil, err
 	}
 	out := make(chan ai.Event, 16)
 	go func() {
 		defer close(out)
+		defer cleanup()
 		defer func() { _ = stdout.Close() }()
 		iterator := claude.NewStreamJSONIterator(stdout)
 		for iterator.Next() {
@@ -86,8 +88,9 @@ func (c *ClaudeCLI) ExecuteStream(ctx context.Context, req ai.Request) (<-chan a
 	return out, nil
 }
 
-func buildClaudeCLIArgs(model string, req ai.Request) ([]string, error) {
+func buildClaudeCLIArgs(model string, req ai.Request) ([]string, func(), error) {
 	args := []string{"-p", "--verbose", "--output-format", "stream-json"}
+	cleanup := func() {}
 	if m := claudeCLIModel(model); m != "" {
 		args = append(args, "--model", m)
 	}
@@ -129,14 +132,22 @@ func buildClaudeCLIArgs(model string, req ai.Request) ([]string, error) {
 	if req.Permissions.MCP.Disabled {
 		args = append(args, "--mcp-config", `{"mcpServers":{}}`, "--strict-mcp-config")
 	}
+	if binary, ok := captainBinary(); ok && api.MonitorHooksEnabled(req) {
+		settingsPath, remove, err := writeClaudeMonitorSettings(binary)
+		if err != nil {
+			return nil, cleanup, err
+		}
+		cleanup = remove
+		args = append(args, "--settings", settingsPath)
+	}
 	schema, err := ai.SchemaJSONForBackend(ai.BackendClaudeCLI, req.Prompt)
 	if err != nil {
-		return nil, fmt.Errorf("claude-cli: cannot derive structured-output schema: %w", err)
+		return nil, cleanup, fmt.Errorf("claude-cli: cannot derive structured-output schema: %w", err)
 	}
 	if len(schema) > 0 {
 		args = append(args, "--json-schema", string(schema))
 	}
-	return args, nil
+	return args, cleanup, nil
 }
 
 func claudeCLIModel(model string) string {

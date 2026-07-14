@@ -119,6 +119,13 @@ func buildCodexCLIArgs(model string, req ai.Request) ([]string, func(), error) {
 	if req.Memory.SkipProject || req.Memory.SkipHooks {
 		args = append(args, "--ignore-rules")
 	}
+	if binary, ok := captainBinary(); ok && api.MonitorHooksEnabled(req) {
+		notify, err := codexNotifyOverride(binary)
+		if err != nil {
+			return nil, cleanup, err
+		}
+		args = append(args, "-c", notify)
+	}
 	schema, err := ai.SchemaJSONForBackend(ai.BackendCodexCLI, req.Prompt)
 	if err != nil {
 		return nil, cleanup, fmt.Errorf("codex-cli: cannot derive structured-output schema: %w", err)

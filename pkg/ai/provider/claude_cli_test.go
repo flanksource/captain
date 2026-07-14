@@ -36,10 +36,11 @@ func TestBuildClaudeCLIArgs(t *testing.T) {
 		},
 	}
 
-	args, err := buildClaudeCLIArgs("claude-sonnet-5", req)
+	args, cleanup, err := buildClaudeCLIArgs("claude-sonnet-5", req)
 	if err != nil {
 		t.Fatalf("buildClaudeCLIArgs: %v", err)
 	}
+	defer cleanup()
 	wantPrefix := []string{"-p", "--verbose", "--output-format", "stream-json"}
 	if !reflect.DeepEqual(args[:len(wantPrefix)], wantPrefix) {
 		t.Fatalf("args prefix = %v, want %v", args[:len(wantPrefix)], wantPrefix)

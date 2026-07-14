@@ -62,6 +62,9 @@ interface InitializeParams {
   // structured-output target. Present => the SDK is asked for validated JSON
   // (options.outputFormat) and every turn's result carries structured_output.
   outputSchema?: Record<string, unknown>;
+  // monitorUrl is the captain serve base URL session-monitoring lifecycle
+  // hooks POST to. Empty/absent disables monitoring hook injection.
+  monitorUrl?: string;
 }
 
 type JsonRpcId = number | string | null;
@@ -227,6 +230,44 @@ function buildOptions(params: InitializeParams): Options {
       ],
     },
   };
+
+  // Session-monitoring lifecycle hooks: fire-and-forget POSTs to captain
+  // serve so the session appears in the database in real time. A monitoring
+  // failure (serve down, slow) must never block or slow the agent turn.
+  if (params.monitorUrl) {
+    const monitorUrl = params.monitorUrl.replace(/\/+$/, "");
+    const monitorEvents = [
+      "SessionStart",
+      "UserPromptSubmit",
+      "Stop",
+      "SubagentStop",
+      "SessionEnd",
+    ] as const;
+    const hooks = options.hooks as unknown as Record<string, unknown[]>;
+    for (const event of monitorEvents) {
+      hooks[event] = [
+        {
+          hooks: [
+            async (input: Record<string, unknown>) => {
+              fetch(`${monitorUrl}/api/captain/hooks/claude`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  event,
+                  sessionId: input.session_id,
+                  transcriptPath: input.transcript_path,
+                  cwd: input.cwd,
+                  detail: input.source ?? input.reason ?? undefined,
+                }),
+                signal: AbortSignal.timeout(1000),
+              }).catch(() => {});
+              return {};
+            },
+          ],
+        },
+      ];
+    }
+  }
 
   // appendSystemPrompt is not a top-level Options field; it must ride on the
   // claude_code preset. A custom systemPrompt string replaces the default.
