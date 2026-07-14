@@ -121,9 +121,10 @@ func (m *Monitor) stickyProcessSession(ctx context.Context, proc Process) (uuid.
 }
 
 func (m *Monitor) persistProcess(ctx context.Context, sessionID uuid.UUID, proc Process, sampledAt time.Time) error {
+	startedAt := processStartOrNow(proc)
 	input := database.SessionProcessInput{
 		SessionID: sessionID, HostID: m.cfg.HostID, BootID: bootID(),
-		PID: int64(proc.PID), ProcessStartedAt: processStartOrNow(proc),
+		PID: int64(proc.PID), ProcessStartedAt: startedAt,
 		Status: proc.Status, Command: proc.Command, CWD: proc.CWD, Source: proc.Source,
 		CPUPercent: proc.CPUPercent, MemoryPercent: proc.MemoryPercent, SampledAt: sampledAt,
 	}
@@ -131,15 +132,14 @@ func (m *Monitor) persistProcess(ctx context.Context, sessionID uuid.UUID, proc 
 		rss := proc.MemoryRSSKB * 1024
 		input.MemoryRSSBytes = &rss
 	}
-	err := m.db.UpsertSessionProcess(ctx, input)
-	if err != nil && strings.Contains(err.Error(), "captain_session_processes_active_session_key") {
-		// The session was resumed under a new PID; close the superseded row and retry.
-		if endErr := m.db.EndOtherSessionProcesses(ctx, sessionID, int64(proc.PID)); endErr != nil {
-			return endErr
-		}
-		err = m.db.UpsertSessionProcess(ctx, input)
+	// Close a superseded process identity before inserting the observation. This
+	// avoids using a predictable unique-key violation as control flow (and the
+	// corresponding ERROR log), and also drains legacy rows whose timezone bug
+	// left the same PID open under a different start timestamp.
+	if err := m.db.EndOtherSessionProcesses(ctx, sessionID, int64(proc.PID), startedAt); err != nil {
+		return err
 	}
-	return err
+	return m.db.UpsertSessionProcess(ctx, input)
 }
 
 // watchLiveSession points the watcher at wherever this live session's
@@ -311,14 +311,26 @@ func processStatus(stat string) (string, bool) {
 }
 
 func parseProcessStart(value string) *time.Time {
+	return parseProcessStartInLocation(value, time.Local)
+}
+
+func parseProcessStartInLocation(value string, location *time.Location) *time.Time {
 	if value == "" {
 		return nil
 	}
-	t, err := time.Parse("Mon Jan 2 15:04:05 2006", value)
+	if location == nil {
+		location = time.Local
+	}
+	// ps(1) renders lstart in the host's local timezone, but the value carries
+	// no offset. time.Parse would interpret it as UTC and, on positive-offset
+	// hosts, persist a process start several hours in the future. Closing that
+	// row then violates ended_at >= process_started_at.
+	t, err := time.ParseInLocation("Mon Jan 2 15:04:05 2006", value, location)
 	if err != nil {
 		return nil
 	}
-	return &t
+	utc := t.UTC()
+	return &utc
 }
 
 func processIDs(processes []Process) []int {

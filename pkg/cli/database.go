@@ -10,7 +10,19 @@ import (
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/monitor"
 	commonsdb "github.com/flanksource/commons-db/db"
+	"github.com/spf13/pflag"
+	"gorm.io/gorm"
 )
+
+const databaseURLFlag = "db-url"
+
+var databaseURL string
+
+// BindDatabaseURLFlag exposes the process database as a root persistent flag.
+// The explicit CLI value wins over environment variables and config files.
+func BindDatabaseURLFlag(flags *pflag.FlagSet) {
+	flags.StringVar(&databaseURL, databaseURLFlag, "", "PostgreSQL database URL (overrides environment and db.json)")
+}
 
 // captainDBState memoizes the process-wide native database handle. The
 // database is mandatory: session/plan/prompt surfaces read it exclusively, so
@@ -19,6 +31,8 @@ var captainDBState struct {
 	mu     sync.Mutex
 	opened bool
 	db     *database.DB
+	dsn    string
+	source string
 	err    error
 }
 
@@ -30,10 +44,37 @@ func captainDB(ctx context.Context) (*database.DB, error) {
 	captainDBState.mu.Lock()
 	defer captainDBState.mu.Unlock()
 	if !captainDBState.opened {
-		captainDBState.db, captainDBState.err = openCaptainDB(ctx)
+		captainDBState.db, captainDBState.dsn, captainDBState.source, captainDBState.err = openCaptainDB(ctx)
 		captainDBState.opened = true
 	}
 	return captainDBState.db, captainDBState.err
+}
+
+// ConfigureNativeDatabase injects a host-owned GORM pool before Captain's CLI
+// database is first used. Hosts such as Gavel use this to keep Captain session,
+// prompt, and plan APIs on the same process-owned database. Reconfiguring the
+// same pool is idempotent; replacing an initialized pool is rejected because
+// callers may already hold handles backed by it.
+func ConfigureNativeDatabase(gormDB *gorm.DB) error {
+	db, err := database.Use(gormDB)
+	if err != nil {
+		return err
+	}
+
+	captainDBState.mu.Lock()
+	defer captainDBState.mu.Unlock()
+	if captainDBState.opened {
+		if captainDBState.err == nil && captainDBState.db != nil && captainDBState.db.Gorm() == gormDB {
+			return nil
+		}
+		return fmt.Errorf("native Captain database is already configured with a different pool")
+	}
+	captainDBState.db = db
+	captainDBState.dsn = ""
+	captainDBState.source = "host-provided database"
+	captainDBState.err = nil
+	captainDBState.opened = true
+	return nil
 }
 
 // setCaptainDBForTest injects (or, with nil, resets) the process-wide handle
@@ -43,19 +84,21 @@ func setCaptainDBForTest(db *database.DB) {
 	captainDBState.mu.Lock()
 	defer captainDBState.mu.Unlock()
 	captainDBState.db = db
+	captainDBState.dsn = ""
+	captainDBState.source = ""
 	captainDBState.err = nil
 	captainDBState.opened = db != nil
 }
 
-func openCaptainDB(ctx context.Context) (*database.DB, error) {
+func openCaptainDB(ctx context.Context) (*database.DB, string, string, error) {
 	dsn, source, err := captainDSN()
 	if err != nil {
-		return nil, err
+		return nil, "", "", err
 	}
 	log.Debugf("captain database using %s", source)
 	report, err := database.MigrateWithLegacySessionCutover(ctx, dsn)
 	if err != nil {
-		return nil, fmt.Errorf("migrate captain database (%s): %w", source, err)
+		return nil, "", "", fmt.Errorf("migrate captain database (%s): %w", source, err)
 	}
 	if report != nil {
 		log.Infof("migrated legacy session cache: %d sessions, %d prompt runs",
@@ -63,9 +106,16 @@ func openCaptainDB(ctx context.Context) (*database.DB, error) {
 	}
 	gormDB, err := commonsdb.NewGorm(dsn, commonsdb.DefaultGormConfig())
 	if err != nil {
-		return nil, fmt.Errorf("open captain database (%s): %w", source, err)
+		return nil, "", "", fmt.Errorf("open captain database (%s): %w", source, err)
 	}
-	return database.Use(gormDB)
+	db, err := database.Use(gormDB)
+	return db, dsn, source, err
+}
+
+func captainDatabaseIdentity() (dsn, source string) {
+	captainDBState.mu.Lock()
+	defer captainDBState.mu.Unlock()
+	return captainDBState.dsn, captainDBState.source
 }
 
 // serveMonitorState holds the serve process's live monitor so prompt-run code
@@ -117,6 +167,9 @@ func freshenSessionDB(ctx context.Context) (*database.DB, error) {
 // captainDSN resolves the database connection: explicit env DSNs first, then a
 // gavel-shared database, finally captain's own shared embedded postgres.
 func captainDSN() (dsn, source string, err error) {
+	if dsn := strings.TrimSpace(databaseURL); dsn != "" {
+		return dsn, "--" + databaseURLFlag, nil
+	}
 	for _, env := range []string{gavelDBEnvDSN, gavelCacheEnvDSN, captainSessionEnvDSN} {
 		if dsn := strings.TrimSpace(os.Getenv(env)); dsn != "" {
 			return dsn, env, nil

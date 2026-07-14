@@ -49,6 +49,28 @@ func (promptResultStreamingProvider) ExecuteStream(_ context.Context, _ ai.Reque
 	return events, nil
 }
 
+type structuredResultStreamingProvider struct {
+	text string
+}
+
+func (structuredResultStreamingProvider) GetModel() string { return "gpt-5-codex" }
+
+func (structuredResultStreamingProvider) GetBackend() ai.Backend { return ai.BackendCodexCLI }
+
+func (structuredResultStreamingProvider) Execute(context.Context, ai.Request) (*ai.Response, error) {
+	return nil, nil
+}
+
+func (p structuredResultStreamingProvider) ExecuteStream(_ context.Context, _ ai.Request) (<-chan ai.Event, error) {
+	events := make(chan ai.Event, 2)
+	if p.text != "" {
+		events <- ai.Event{Kind: ai.EventText, Text: p.text}
+	}
+	events <- ai.Event{Kind: ai.EventResult, StructuredData: json.RawMessage(`{"answer":"42"}`)}
+	close(events)
+	return events, nil
+}
+
 // isolateSavedAI redirects captainconfig.Path() to an empty file inside
 // t.TempDir() so loadSavedAI() returns zero defaults rather than leaking
 // the developer's real ~/.captain.yaml into table-test expectations.
@@ -423,6 +445,30 @@ func TestRunStreaming_JSONIncludesFullInputSpec(t *testing.T) {
 	}
 	if result.InputTokens != 21 || result.Output != 9 || result.CostUSD != 0.02 {
 		t.Fatalf("usage/cost = input %d output %d cost %f", result.InputTokens, result.Output, result.CostUSD)
+	}
+}
+
+func TestRunStreaming_StructuredResultIsReturnedOnce(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		text string
+	}{
+		{name: "result only"},
+		{name: "replaces prior text", text: "discarded narrative"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := runStreaming(context.Background(), structuredResultStreamingProvider{text: tc.text}, ai.Request{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, ok := got.(AIPromptResult)
+			if !ok {
+				t.Fatalf("runStreaming returned %T, want AIPromptResult", got)
+			}
+			if result.Text != `{"answer":"42"}` {
+				t.Fatalf("Text = %q, want authoritative structured JSON once", result.Text)
+			}
+		})
 	}
 }
 

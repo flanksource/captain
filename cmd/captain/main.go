@@ -35,6 +35,7 @@ func main() {
 	}
 
 	clicky.BindAllFlags(rootCmd.PersistentFlags(), "format")
+	cli.BindDatabaseURLFlag(rootCmd.PersistentFlags())
 	// Bind commons' -P/--properties flag so per-subsystem log levels and HTTP
 	// wire logging can be toggled, e.g. -Plog.level.http=trace3.
 	properties.BindFlags(rootCmd.PersistentFlags())

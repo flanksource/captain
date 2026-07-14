@@ -13,11 +13,11 @@ func RunOnce(ctx context.Context, cfg Config) error {
 	if err != nil {
 		return err
 	}
-	conn, acquired, err := m.tryAcquireWriterLock(ctx)
+	conn, _, err := m.tryAcquireWriterLock(ctx)
 	if err != nil {
 		return err
 	}
-	if !acquired {
+	if conn == nil {
 		return nil
 	}
 	defer func() { _ = conn.Close() }()

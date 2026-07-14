@@ -111,18 +111,19 @@ type Event struct {
 // Turn groups user/assistant messages, tool calls, usage, cost, and contextual
 // state for one model turn.
 type Turn struct {
-	ID         string     `json:"id"`
-	Index      int        `json:"index"`
-	StartedAt  *time.Time `json:"startedAt,omitempty"`
-	EndedAt    *time.Time `json:"endedAt,omitempty"`
-	StopReason string     `json:"stopReason,omitempty"`
-	Model      string     `json:"model,omitempty"`
-	MessageIDs []string   `json:"messageIds,omitempty"`
-	Usage      api.Usage  `json:"usage,omitempty"`
-	Cost       api.Cost   `json:"cost,omitempty"`
-	Context    *Context   `json:"context,omitempty"`
-	Budget     *Budget    `json:"budget,omitempty"`
-	Events     []Event    `json:"events,omitempty"`
+	ID              string     `json:"id"`
+	Index           int        `json:"index"`
+	StartedAt       *time.Time `json:"startedAt,omitempty"`
+	EndedAt         *time.Time `json:"endedAt,omitempty"`
+	StopReason      string     `json:"stopReason,omitempty"`
+	Model           string     `json:"model,omitempty"`
+	ReasoningEffort string     `json:"reasoningEffort,omitempty"`
+	MessageIDs      []string   `json:"messageIds,omitempty"`
+	Usage           api.Usage  `json:"usage,omitempty"`
+	Cost            api.Cost   `json:"cost,omitempty"`
+	Context         *Context   `json:"context,omitempty"`
+	Budget          *Budget    `json:"budget,omitempty"`
+	Events          []Event    `json:"events,omitempty"`
 }
 
 // ChangedFiles is the read/write file set aggregated across a session,

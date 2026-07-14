@@ -7,14 +7,15 @@ import (
 
 // Response is the result of a buffered (non-streaming) provider execution.
 type Response struct {
-	Text           string
-	StructuredData any
-	Model          string
-	Backend        Backend
-	Usage          Usage
-	Duration       time.Duration
-	CacheHit       bool
-	Raw            any
+	Text            string
+	StructuredData  any
+	TerminalOutcome *TerminalOutcome
+	Model           string
+	Backend         Backend
+	Usage           Usage
+	Duration        time.Duration
+	CacheHit        bool
+	Raw             any
 
 	// Workspace is the run's working-dir runtime state (cwd, git details, changed
 	// files, commits, plan). Populated by the agent runner + worktree hook.

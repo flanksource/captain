@@ -90,6 +90,10 @@ func (a *promptEventAccumulator) handle(_ int, ev ai.Event) {
 		a.emitError(ev)
 	case ai.EventResult:
 		a.flush()
+		if len(ev.StructuredData) > 0 {
+			a.appendText(string(ev.StructuredData))
+			a.flush()
+		}
 		if ev.Usage != nil {
 			a.usage = *ev.Usage
 		}

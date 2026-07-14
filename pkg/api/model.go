@@ -7,6 +7,10 @@ import (
 	"github.com/flanksource/captain/pkg/collections"
 )
 
+// CodexAutoReviewModel is the internal model used by Codex approval reviewers.
+// Its transcripts are implementation noise rather than user sessions.
+const CodexAutoReviewModel = "codex-auto-review"
+
 // Model identifies which LLM serves a request plus the per-request inference
 // knobs. Maps onto the legacy ai.Config.Model + ai.Request.{Temperature,
 // ReasoningEffort}.

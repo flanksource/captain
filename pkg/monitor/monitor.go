@@ -11,6 +11,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,6 +28,7 @@ var log = logger.GetLogger("monitor")
 const (
 	monitorLockNamespace int32 = 0x43415054
 	monitorLockKey       int32 = 0x4d4f4e49
+	monitorLockAppPrefix       = "captain-monitor:"
 )
 
 type Config struct {
@@ -46,6 +50,9 @@ type Monitor struct {
 
 	mu      sync.Mutex
 	tracked map[string]string // transcript path -> source kind, the live tail set
+
+	readyOnce sync.Once
+	ready     chan struct{}
 }
 
 func New(cfg Config) (*Monitor, error) {
@@ -67,7 +74,20 @@ func New(cfg Config) (*Monitor, error) {
 	if cfg.DiscoverProcesses == nil {
 		cfg.DiscoverProcesses = discoverAgentProcesses
 	}
-	return &Monitor{cfg: cfg, db: cfg.DB, tracked: map[string]string{}}, nil
+	return &Monitor{cfg: cfg, db: cfg.DB, tracked: map[string]string{}, ready: make(chan struct{})}, nil
+}
+
+// Ready is closed after the first process reconciliation attempt, or as soon
+// as Run confirms that another monitor already owns the writer lock. Callers
+// can use it as a lightweight startup barrier without waiting for historical
+// backfill.
+func (m *Monitor) Ready() <-chan struct{} { return m.ready }
+
+func (m *Monitor) markReady() {
+	if m == nil || m.ready == nil {
+		return
+	}
+	m.readyOnce.Do(func() { close(m.ready) })
 }
 
 // TrackTranscript adds a transcript to the live tail set before its session is
@@ -105,12 +125,13 @@ func (m *Monitor) untrackTranscript(path string) {
 // another monitor holds the lock, Run keeps retrying the lock instead of
 // double-writing, so a serve restart takes over cleanly.
 func (m *Monitor) Run(ctx context.Context) error {
+	defer m.markReady()
 	for {
-		conn, acquired, err := m.tryAcquireWriterLock(ctx)
+		conn, holderPID, err := m.tryAcquireWriterLock(ctx)
 		if err != nil {
 			return err
 		}
-		if acquired {
+		if conn != nil {
 			err := m.runLocked(ctx, conn)
 			_ = conn.Close()
 			if ctx.Err() != nil {
@@ -121,7 +142,8 @@ func (m *Monitor) Run(ctx context.Context) error {
 			}
 			continue
 		}
-		log.Infof("another Captain monitor holds the writer lock; standing by")
+		m.markReady()
+		log.Infof("another Captain monitor (PID %d) holds the writer lock; standing by", holderPID)
 		select {
 		case <-ctx.Done():
 			return nil
@@ -131,19 +153,42 @@ func (m *Monitor) Run(ctx context.Context) error {
 }
 
 func (m *Monitor) runLocked(ctx context.Context, lock *sql.Conn) error {
+	runCtx, cancel := context.WithCancel(ctx)
 	ingestor := newIngestor(m)
 	watcher, err := newTranscriptWatcher(m, ingestor)
 	if err != nil {
+		cancel()
 		return err
 	}
 	defer watcher.close()
 
-	// Initial backfill runs before the first process poll so live processes
-	// bind to their ingested sessions instead of provisional stubs.
-	m.backfill(ctx, ingestor)
-	if err := m.pollProcesses(ctx, watcher); err != nil {
+	// Arm live transcript directories before the historical scan. Backfill can
+	// take minutes on a cold database; it must never prevent fsnotify events or
+	// process polling from keeping a newly launched session current.
+	if err := m.pollProcesses(runCtx, watcher); err != nil {
 		log.Warnf("process poll: %v", err)
 	}
+	m.markReady()
+
+	backfillRequests := make(chan struct{}, 1)
+	var backfillWG sync.WaitGroup
+	backfillWG.Add(1)
+	go func() {
+		defer backfillWG.Done()
+		for {
+			select {
+			case <-runCtx.Done():
+				return
+			case <-backfillRequests:
+				m.backfill(runCtx, ingestor)
+			}
+		}
+	}()
+	defer func() {
+		cancel()
+		backfillWG.Wait()
+	}()
+	requestBackfill(backfillRequests)
 
 	processTicker := time.NewTicker(m.cfg.ProcessInterval)
 	backfillTicker := time.NewTicker(m.cfg.BackfillInterval)
@@ -152,19 +197,19 @@ func (m *Monitor) runLocked(ctx context.Context, lock *sql.Conn) error {
 
 	for {
 		select {
-		case <-ctx.Done():
+		case <-runCtx.Done():
 			return nil
 		case <-processTicker.C:
-			if err := m.pollProcesses(ctx, watcher); err != nil {
+			if err := m.pollProcesses(runCtx, watcher); err != nil {
 				log.Warnf("process poll: %v", err)
 			}
 		case <-backfillTicker.C:
-			m.backfill(ctx, ingestor)
+			requestBackfill(backfillRequests)
 		case event, ok := <-watcher.events():
 			if !ok {
 				return errors.New("transcript watcher closed unexpectedly")
 			}
-			watcher.handle(ctx, event)
+			watcher.handle(runCtx, event)
 		case err, ok := <-watcher.errors():
 			if ok && err != nil {
 				log.Warnf("transcript watcher: %v", err)
@@ -173,27 +218,80 @@ func (m *Monitor) runLocked(ctx context.Context, lock *sql.Conn) error {
 	}
 }
 
+// requestBackfill coalesces scan requests while one scan is already running.
+// The worker remains the sole backfill caller, while the monitor event loop is
+// free to service live transcript writes and process polls.
+func requestBackfill(requests chan<- struct{}) {
+	select {
+	case requests <- struct{}{}:
+	default:
+	}
+}
+
 // tryAcquireWriterLock takes the monitor advisory lock on a dedicated
 // connection so it is held for the monitor's lifetime, not a pooled statement.
-func (m *Monitor) tryAcquireWriterLock(ctx context.Context) (*sql.Conn, bool, error) {
+func (m *Monitor) tryAcquireWriterLock(ctx context.Context) (*sql.Conn, int, error) {
 	sqlDB, err := m.db.Gorm().DB()
 	if err != nil {
-		return nil, false, fmt.Errorf("access Captain SQL pool: %w", err)
+		return nil, 0, fmt.Errorf("access Captain SQL pool: %w", err)
 	}
 	conn, err := sqlDB.Conn(ctx)
 	if err != nil {
-		return nil, false, fmt.Errorf("open Captain monitor lock connection: %w", err)
+		return nil, 0, fmt.Errorf("open Captain monitor lock connection: %w", err)
 	}
-	var acquired bool
-	err = conn.QueryRowContext(ctx, "SELECT pg_try_advisory_lock($1, $2)",
-		monitorLockNamespace, monitorLockKey).Scan(&acquired)
+	if _, err := conn.ExecContext(ctx, "SELECT set_config('application_name', $1, false)",
+		fmt.Sprintf("%s%d", monitorLockAppPrefix, os.Getpid())); err != nil {
+		_ = conn.Close()
+		return nil, 0, fmt.Errorf("register Captain monitor lock owner: %w", err)
+	}
+	for {
+		var acquired bool
+		if err := conn.QueryRowContext(ctx, "SELECT pg_try_advisory_lock($1, $2)",
+			monitorLockNamespace, monitorLockKey).Scan(&acquired); err != nil {
+			_ = conn.Close()
+			return nil, 0, fmt.Errorf("acquire Captain monitor lock: %w", err)
+		}
+		if acquired {
+			return conn, 0, nil
+		}
+
+		holderPID, err := queryMonitorLockHolderPID(ctx, conn)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		_ = conn.Close()
+		if err != nil {
+			return nil, 0, err
+		}
+		return nil, holderPID, nil
+	}
+}
+
+func queryMonitorLockHolderPID(ctx context.Context, conn *sql.Conn) (int, error) {
+	var applicationName string
+	err := conn.QueryRowContext(ctx, `
+		SELECT activity.application_name
+		FROM pg_catalog.pg_locks AS lock
+		JOIN pg_catalog.pg_stat_activity AS activity ON activity.pid = lock.pid
+		WHERE lock.locktype = 'advisory'
+		  AND lock.database = (
+			SELECT oid FROM pg_catalog.pg_database WHERE datname = current_database()
+		  )
+		  AND lock.classid = $1::oid
+		  AND lock.objid = $2::oid
+		  AND lock.objsubid = 2
+		  AND lock.granted
+		LIMIT 1`, monitorLockNamespace, monitorLockKey).Scan(&applicationName)
 	if err != nil {
-		_ = conn.Close()
-		return nil, false, fmt.Errorf("acquire Captain monitor lock: %w", err)
+		return 0, fmt.Errorf("identify Captain monitor lock owner: %w", err)
 	}
-	if !acquired {
-		_ = conn.Close()
-		return nil, false, nil
+	value, ok := strings.CutPrefix(applicationName, monitorLockAppPrefix)
+	if !ok {
+		return 0, fmt.Errorf("captain monitor lock owner has unexpected application name %q", applicationName)
 	}
-	return conn, true, nil
+	holderPID, err := strconv.Atoi(value)
+	if err != nil || holderPID <= 0 {
+		return 0, fmt.Errorf("captain monitor lock owner has invalid PID in application name %q", applicationName)
+	}
+	return holderPID, nil
 }

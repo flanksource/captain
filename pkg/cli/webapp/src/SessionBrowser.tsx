@@ -31,6 +31,8 @@ import {
   sessionToolCount,
   unifiedSessionTitle,
   type SessionDashboard,
+  type SessionGetItem,
+  type SessionGetResult,
   type SessionRecord,
   type ProjectScope,
   type SourceFilter,
@@ -102,7 +104,7 @@ function SessionDetailPage({
       actions={actions}
       bodyHeader={
         <SessionHeader
-          session={detailQuery.data}
+          session={detailQuery.data?.sessions.find((item) => item.detail)?.detail}
           timing={detailQuery.data?.timing}
           loading={detailQuery.isLoading}
         />
@@ -120,7 +122,7 @@ function SessionDetailPage({
       contentClassName="p-0 overflow-hidden"
     >
       <SessionDetail
-        session={detailQuery.data}
+        result={detailQuery.data}
         loading={detailQuery.isLoading}
         error={detailQuery.error}
       />
@@ -324,11 +326,11 @@ function SessionHeader({
 }
 
 function SessionDetail({
-  session,
+  result,
   loading,
   error,
 }: {
-  session?: UnifiedSession;
+  result?: SessionGetResult;
   loading: boolean;
   error: unknown;
 }) {
@@ -346,12 +348,43 @@ function SessionDetail({
       </div>
     );
   }
+  if (!result?.sessions.length) {
+    return (
+      <div className="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">
+        No matching sessions.
+      </div>
+    );
+  }
   return (
-    // AppShell's content region is a bounded block (h-full), not a flex parent, so
-    // `h-full` (not `flex-1`) is what gives the viewer a definite height to scroll within.
-    <div className="flex h-full min-h-0 flex-col">
-      <SessionInspector session={session ?? []} transcriptProps={{ defaultExpanded: false }} />
+    <div className="h-full min-h-0 overflow-auto">
+      {result.sessions.map((item) => (
+        <SessionGetItemDetail key={item.captainId} item={item} single={result.sessions.length === 1} />
+      ))}
     </div>
+  );
+}
+
+function SessionGetItemDetail({ item, single }: { item: SessionGetItem; single: boolean }) {
+  return (
+    <section className={single ? "flex h-full min-h-0 flex-col" : "border-b border-border"}>
+      <div className="shrink-0 border-b border-border px-density-4 py-density-3 text-xs">
+        <div className="font-mono font-semibold text-foreground">{item.captainId}</div>
+        <div className="mt-1 flex flex-wrap gap-x-density-3 gap-y-1 text-muted-foreground">
+          <span>{item.summary.source}</span>
+          {item.providerSessionId && <span>provider={item.providerSessionId}</span>}
+          {item.host && <span>host={item.host}</span>}
+          {item.summary.project && <span>project={item.summary.project}</span>}
+          {item.summary.cwd && <span className="max-w-full truncate">{item.summary.cwd}</span>}
+        </div>
+      </div>
+      {item.detail ? (
+        <div className={single ? "min-h-0 flex-1" : "h-[70vh] min-h-[32rem]"}>
+          <SessionInspector session={item.detail} transcriptProps={{ defaultExpanded: false }} />
+        </div>
+      ) : (
+        <div className="p-density-4 text-sm text-muted-foreground">Transcript unavailable.</div>
+      )}
+    </section>
   );
 }
 
@@ -402,4 +435,3 @@ function SessionSummary({
     </div>
   );
 }
-

@@ -152,6 +152,13 @@ table "captain_sessions" {
     columns = [column.source, column.provider, column.host_id, column.provider_session_id]
     where   = "provider_session_id IS NOT NULL"
   }
+  index "captain_sessions_provider_session_id_idx" {
+    on {
+      column = column.provider_session_id
+      ops    = "text_pattern_ops"
+    }
+    where = "provider_session_id IS NOT NULL"
+  }
   index "captain_sessions_parent_session_id_idx" {
     columns = [column.parent_session_id]
   }

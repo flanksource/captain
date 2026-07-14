@@ -41,9 +41,8 @@ export type SessionRecord = {
   health?: SessionHealth[];
 };
 
-// UnifiedSession is captain's canonical session.Session (served by the sessions
-// `get` action at /api/v1/sessions/{id}). The detail view consumes it directly —
-// its `messages` (SessionUIMessage[]) feed the SessionViewer.
+// UnifiedSession is captain's canonical parsed session detail. Session get
+// returns it inside a SessionGetItem when a transcript is available.
 export type UnifiedGit = { branch?: string; commit?: string; worktree?: string; diff?: string };
 
 export type UnifiedUsage = {
@@ -183,6 +182,20 @@ export type UnifiedSession = {
   live?: SessionLive;
   messages?: SessionUIMessage[];
   prompt?: unknown;
+};
+
+export type SessionGetItem = {
+  captainId: string;
+  providerSessionId?: string;
+  host?: string;
+  detailAvailable: boolean;
+  summary: SessionRecord;
+  detail?: UnifiedSession;
+};
+
+export type SessionGetResult = {
+  sessions: SessionGetItem[];
+  total: number;
 };
 
 export type SessionTokens = {
@@ -354,7 +367,7 @@ export async function fetchProjectOptions(): Promise<ProjectOptionsResult> {
 export async function fetchSession(
   id: string,
   page?: { offset?: number; limit?: number; tail?: number },
-): Promise<UnifiedSession & { timing?: TimingMetric[] }> {
+): Promise<SessionGetResult & { timing?: TimingMetric[] }> {
   const params: Record<string, string> = { id };
   if (page?.tail) params.tail = String(page.tail);
   if (page?.offset) params.offset = String(page.offset);
@@ -369,7 +382,7 @@ export async function fetchSession(
     throw new Error(response.error || "Failed to load session.");
   }
   const timing = parseServerTiming(response.responseHeaders?.["server-timing"]);
-  return { ...(response.parsed as UnifiedSession), ...(timing.length ? { timing } : {}) };
+  return { ...(response.parsed as SessionGetResult), ...(timing.length ? { timing } : {}) };
 }
 
 /** Sum a unified session's per-bucket costs into a total USD. */

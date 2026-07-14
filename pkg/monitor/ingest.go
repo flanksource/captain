@@ -9,13 +9,14 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/flanksource/captain/pkg/ai/history"
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/session"
 )
 
 // parserVersion invalidates every ingested transcript when the parsing or
 // mapping logic changes shape.
-const parserVersion = 1
+const parserVersion = 2
 
 // ingestor turns changed transcript files into native database rows, skipping
 // files whose recorded mtime/size/parser version still match the disk state.
@@ -26,8 +27,9 @@ type ingestor struct {
 	// directory; nil outside watched (one-shot) runs.
 	watchSubagents func(rootTranscriptPath string)
 
-	mu      sync.Mutex
-	sources map[string]database.SessionSourceState
+	mu          sync.Mutex
+	sources     map[string]database.SessionSourceState
+	ingestLocks sync.Map // transcript path -> *sync.Mutex
 }
 
 func newIngestor(m *Monitor) *ingestor {
@@ -35,13 +37,13 @@ func newIngestor(m *Monitor) *ingestor {
 }
 
 func (ing *ingestor) refreshSourceStates(ctx context.Context) error {
+	ing.mu.Lock()
+	defer ing.mu.Unlock()
 	sources, err := ing.db.ListSessionSources(ctx)
 	if err != nil {
 		return err
 	}
-	ing.mu.Lock()
 	ing.sources = sources
-	ing.mu.Unlock()
 	return nil
 }
 
@@ -74,6 +76,11 @@ func (ing *ingestor) needsIngest(path string, info os.FileInfo) bool {
 // child sessions of the root transcript's session; root ingests also arm the
 // watcher on the session's subagents directory.
 func (ing *ingestor) ingestFile(ctx context.Context, source, path string) error {
+	lockValue, _ := ing.ingestLocks.LoadOrStore(path, &sync.Mutex{})
+	pathLock := lockValue.(*sync.Mutex)
+	pathLock.Lock()
+	defer pathLock.Unlock()
+
 	info, err := os.Stat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -84,6 +91,15 @@ func (ing *ingestor) ingestFile(ctx context.Context, source, path string) error 
 	}
 	if !ing.needsIngest(path, info) {
 		return nil
+	}
+	if source == "codex" {
+		ignored, ignoreErr := history.IsCodexAutoReviewSession(path)
+		if ignoreErr != nil {
+			return ignoreErr
+		}
+		if ignored {
+			return nil
+		}
 	}
 	var input database.IngestTranscriptInput
 	switch source {
@@ -184,7 +200,7 @@ func unifiedIngestInput(s *session.Session, backend string, sequence func(sessio
 			Index: turn.Index, ProviderTurnID: turn.ID, Status: database.TurnStatusEnded,
 			StopReason: turn.StopReason, StartedAt: turn.StartedAt, EndedAt: turn.EndedAt,
 			Call: &database.IngestModelCall{
-				Model: turn.Model, Backend: backend,
+				Model: turn.Model, Backend: backend, Effort: turn.ReasoningEffort,
 				InputTokens:  int64(turn.Usage.InputTokens),
 				OutputTokens: int64(turn.Usage.OutputTokens), ReasoningTokens: int64(turn.Usage.ReasoningTokens),
 				CacheReadTokens: int64(turn.Usage.CacheReadTokens), CacheWriteTokens: int64(turn.Usage.CacheWriteTokens),

@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/monitor"
 	"github.com/flanksource/clicky/aichat"
 	"github.com/flanksource/clicky/rpc"
@@ -211,6 +212,17 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 			log.Errorf("session monitor stopped: %v", err)
 		}
 	}()
+	select {
+	case <-mon.Ready():
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	liveSessions, err := db.CountLiveRootSessions(ctx)
+	if err != nil {
+		return err
+	}
+	dsn, source := captainDatabaseIdentity()
+	log.Infof("Database Info: source=%q dsn=%q live_sessions=%d", source, database.MaskDSN(dsn), liveSessions)
 
 	go prunePromptRuns(ctx, promptRuns)
 
@@ -352,9 +364,8 @@ func handleProjects() http.HandlerFunc {
 	}
 }
 
-// handleSessionGet serves the unified session model for one session id at
-// GET /api/captain/sessions/{id}, so the web UI can render the same model the
-// CLI `sessions get` returns.
+// handleSessionGet serves every Captain session matching an exact UUID or
+// provider-session-id prefix, using the same result envelope as the CLI.
 func handleSessionGet() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := strings.TrimSpace(r.PathValue("id"))

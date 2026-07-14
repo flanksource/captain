@@ -523,6 +523,9 @@ func runStreaming(ctx context.Context, sp ai.StreamingProvider, req ai.Request) 
 				text += ev.Text
 			}
 			if ev.Kind == ai.EventResult {
+				if len(ev.StructuredData) > 0 {
+					text = string(ev.StructuredData)
+				}
 				if ev.Usage != nil {
 					usage = *ev.Usage
 				}

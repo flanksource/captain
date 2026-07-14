@@ -34,6 +34,18 @@ func TestParseAgentProcessLine(t *testing.T) {
 	}
 }
 
+func TestParseProcessStartUsesHostTimezone(t *testing.T) {
+	location := time.FixedZone("UTC+03", 3*60*60)
+	started := parseProcessStartInLocation("Sun Jul 12 09:00:00 2026", location)
+	if started == nil {
+		t.Fatal("process start should parse")
+	}
+	want := time.Date(2026, time.July, 12, 6, 0, 0, 0, time.UTC)
+	if !started.Equal(want) {
+		t.Fatalf("process start = %s, want %s", started, want)
+	}
+}
+
 func TestParseAgentProcessLine_SkipsNonAgents(t *testing.T) {
 	for _, line := range []string{
 		"77 0.0 0.1 1024 S Sun Jul 12 09:00:00 2026 /usr/bin/captain serve",
@@ -101,5 +113,35 @@ func TestWatcherClassify(t *testing.T) {
 		if ok != c.ok || source != c.source {
 			t.Errorf("classify(%s) = (%q, %v), want (%q, %v)", c.path, source, ok, c.source, c.ok)
 		}
+	}
+}
+
+func TestRequestBackfillCoalescesWhileWorkerIsBusy(t *testing.T) {
+	requests := make(chan struct{}, 1)
+	requestBackfill(requests)
+	requestBackfill(requests)
+	requestBackfill(requests)
+
+	select {
+	case <-requests:
+	case <-time.After(time.Second):
+		t.Fatal("backfill request was not queued")
+	}
+	select {
+	case <-requests:
+		t.Fatal("duplicate backfill requests were not coalesced")
+	default:
+	}
+}
+
+func TestMonitorReadyClosesOnce(t *testing.T) {
+	m := &Monitor{ready: make(chan struct{})}
+	m.markReady()
+	m.markReady()
+
+	select {
+	case <-m.Ready():
+	case <-time.After(time.Second):
+		t.Fatal("monitor readiness was not signalled")
 	}
 }

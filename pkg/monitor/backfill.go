@@ -3,7 +3,9 @@ package monitor
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 
 	"github.com/flanksource/captain/pkg/ai/history"
@@ -33,6 +35,9 @@ func discoverTranscripts() (roots, agents []transcriptRef) {
 	projectsDir := claude.GetProjectsDir()
 	if rootFiles, err := claude.FindSessionFiles(projectsDir, "", true); err == nil {
 		for _, path := range rootFiles {
+			if isEphemeralClaudeTranscript(projectsDir, path) {
+				continue
+			}
 			roots = append(roots, transcriptRef{source: "claude", path: path})
 		}
 	} else {
@@ -40,6 +45,9 @@ func discoverTranscripts() (roots, agents []transcriptRef) {
 	}
 	if codexFiles, err := history.FindCodexSessionFiles(); err == nil {
 		for _, path := range codexFiles {
+			if ignored, _ := history.IsCodexAutoReviewSession(path); ignored {
+				continue
+			}
 			roots = append(roots, transcriptRef{source: "codex", path: path})
 		}
 	} else {
@@ -47,12 +55,34 @@ func discoverTranscripts() (roots, agents []transcriptRef) {
 	}
 	if agentFiles, err := claude.FindAgentTranscripts(projectsDir, "", true); err == nil {
 		for _, path := range agentFiles {
+			if isEphemeralClaudeTranscript(projectsDir, path) {
+				continue
+			}
 			agents = append(agents, transcriptRef{source: "claude", path: path})
 		}
 	} else {
 		log.Warnf("discover claude agent transcripts: %v", err)
 	}
 	return roots, agents
+}
+
+// isEphemeralClaudeTranscript excludes projects created below a system temp
+// root. Go integration tests that launch Claude leave their transcript mirror
+// under ~/.claude/projects even after the temporary working directory is gone;
+// those fixtures are not durable user sessions and should not be backfilled.
+func isEphemeralClaudeTranscript(projectsDir, path string) bool {
+	rel, err := filepath.Rel(projectsDir, path)
+	if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false
+	}
+	projectDir := strings.SplitN(rel, string(filepath.Separator), 2)[0]
+	for _, root := range []string{os.TempDir(), "/tmp", "/private/tmp"} {
+		prefix := strings.TrimSuffix(claude.NormalizePath(filepath.Clean(root)), "-")
+		if prefix != "" && (projectDir == prefix || strings.HasPrefix(projectDir, prefix+"-")) {
+			return true
+		}
+	}
+	return false
 }
 
 func ingestChanged(ctx context.Context, ingestor *ingestor, refs []transcriptRef) {
@@ -90,11 +120,13 @@ func ingestChanged(ctx context.Context, ingestor *ingestor, refs []transcriptRef
 			}
 		}()
 	}
+queueing:
 	for _, ref := range changed {
-		if ctx.Err() != nil {
-			break
+		select {
+		case <-ctx.Done():
+			break queueing
+		case queue <- ref:
 		}
-		queue <- ref
 	}
 	close(queue)
 	wg.Wait()

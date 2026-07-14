@@ -114,16 +114,18 @@ func TestRunOnceIngestsAndIsIncremental(t *testing.T) {
 	t.Run("writer lock excludes a second monitor", func(t *testing.T) {
 		m, err := New(Config{DB: db, HostID: "test-host"})
 		require.NoError(t, err)
-		conn, acquired, err := m.tryAcquireWriterLock(t.Context())
+		conn, holderPID, err := m.tryAcquireWriterLock(t.Context())
 		require.NoError(t, err)
-		require.True(t, acquired)
+		require.NotNil(t, conn)
+		assert.Zero(t, holderPID)
 		defer func() { require.NoError(t, conn.Close()) }()
 
 		second, err := New(Config{DB: db, HostID: "test-host"})
 		require.NoError(t, err)
-		conn2, acquired2, err := second.tryAcquireWriterLock(t.Context())
+		conn2, holderPID, err := second.tryAcquireWriterLock(t.Context())
 		require.NoError(t, err)
-		assert.False(t, acquired2, "second monitor must not acquire the writer lock")
+		assert.Nil(t, conn2, "second monitor must not acquire the writer lock")
+		assert.Equal(t, os.Getpid(), holderPID)
 		if conn2 != nil {
 			_ = conn2.Close()
 		}

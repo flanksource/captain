@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai/history"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestBuildCodexSession_MapsMessagesFilesAndMeta(t *testing.T) {
@@ -224,6 +226,9 @@ func TestBuildCodexSession_RichCodexMetadata(t *testing.T) {
 	if len(s.Turns) != 1 || s.Turns[0].ID != "turn-rich" || s.Turns[0].Usage.TotalTokens() != 1050 {
 		t.Fatalf("turns = %+v", s.Turns)
 	}
+	if s.Turns[0].ReasoningEffort != "xhigh" {
+		t.Fatalf("turn effort = %q, want xhigh", s.Turns[0].ReasoningEffort)
+	}
 	if len(s.Agents) != 2 || s.Agents[1].ID != "agent-1" || s.Agents[1].Type != "worker" || s.Agents[1].Desc != "Fix lint" {
 		t.Fatalf("agents = %+v", s.Agents)
 	}
@@ -271,5 +276,102 @@ func TestBuildCodex_AttachesHistoryFile(t *testing.T) {
 	}
 	if sessions[0].Root == nil || sessions[0].Root.HistoryFile != file {
 		t.Fatalf("root history file = %+v, want %q", sessions[0].Root, file)
+	}
+}
+
+func TestBuildCodex_IgnoresAutoReviewSession(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "review.jsonl")
+	stream := strings.Join([]string{
+		`{"timestamp":"2026-07-13T09:00:00Z","type":"session_meta","payload":{"id":"review-1","cwd":"/repo"}}`,
+		`{"timestamp":"2026-07-13T09:00:01Z","type":"turn_context","payload":{"turn_id":"turn-review","model":"codex-auto-review","effort":"low"}}`,
+		`{"timestamp":"2026-07-13T09:00:02Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"approved"}]}}`,
+	}, "\n")
+	require.NoError(t, os.WriteFile(file, []byte(stream), 0o600))
+
+	assert.Empty(t, BuildCodex([]string{file}))
+}
+
+func TestBuildCodex_RecoversSessionIDFromRolloutFilename(t *testing.T) {
+	const sessionID = "019edeb3-449e-7af3-b300-7123f10944b2"
+	file := filepath.Join(t.TempDir(), "rollout-2026-06-19T10-05-51-"+sessionID+".jsonl")
+	stream := `{"timestamp":"2026-06-19T07:05:52.061Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"check the change"}]}}`
+	require.NoError(t, os.WriteFile(file, []byte(stream), 0o600))
+
+	sessions := BuildCodex([]string{file})
+	require.Len(t, sessions, 1)
+	assert.Equal(t, sessionID, sessions[0].ID)
+	require.NotNil(t, sessions[0].Root)
+	assert.Equal(t, sessionID, sessions[0].Root.ID)
+	require.Len(t, sessions[0].Messages, 1)
+	require.NotNil(t, sessions[0].Messages[0].Provenance)
+	assert.Equal(t, sessionID, sessions[0].Messages[0].Provenance.SessionID)
+}
+
+func TestBuildCodexSession_UserShellCommandIsNonOperationalEvent(t *testing.T) {
+	ts := time.Date(2026, 7, 13, 6, 14, 1, 0, time.UTC)
+	input := map[string]any{
+		"event":            "user_shell_command",
+		"command":          "gavel proc restart",
+		"exit_code":        1,
+		"duration_seconds": 2.9909,
+		"duration_ms":      2990.9,
+		"output":           "Kill sent but port 8088 is still bound",
+		"stdout":           "Kill sent but port 8088 is still bound",
+		"status":           "failed",
+	}
+	uses := []history.ToolUse{{
+		Tool: "UserShellCommand", Input: input, Timestamp: &ts,
+		SessionID: "sess-shell", Source: "codex",
+	}}
+
+	s := buildCodexSession(uses, &history.CodexSessionInfo{ID: "sess-shell", CWD: "/repo"})
+	if len(s.Events) != 1 || s.Events[0].Type != "user_shell_command" {
+		t.Fatalf("events = %+v, want one user_shell_command", s.Events)
+	}
+	if len(s.Messages) != 0 {
+		t.Fatalf("messages = %+v, user shell command must not be an assistant tool call", s.Messages)
+	}
+	if s.Events[0].Data["command"] != "gavel proc restart" || s.Events[0].Data["exit_code"] != 1 || s.Events[0].Data["duration_ms"] != 2990.9 || s.Events[0].Data["output"] != "Kill sent but port 8088 is still bound" {
+		t.Fatalf("event data = %+v", s.Events[0].Data)
+	}
+	if !isNonApprovalActivity("UserShellCommand") || isOperationalToolActivity("UserShellCommand") {
+		t.Fatal("UserShellCommand must be non-operational activity")
+	}
+}
+
+func TestBuildCodexSession_WaitIsConversationalToolWithOutput(t *testing.T) {
+	ts := time.Date(2026, 7, 13, 9, 41, 33, 611000000, time.UTC)
+	uses := []history.ToolUse{{
+		Tool: "Wait",
+		Input: map[string]any{
+			"cell_id":       "214",
+			"yield_time_ms": float64(20000),
+			"max_tokens":    float64(5000),
+		},
+		Response: "evaluation failed\nexit=1", Timestamp: &ts,
+		ToolUseID: "call-wait", TurnID: "turn-wait", SessionID: "sess-wait",
+		Source: "codex", Model: "gpt-5.6-sol", ReasoningEffort: "max",
+	}}
+
+	s := buildCodexSession(uses, &history.CodexSessionInfo{ID: "sess-wait", CWD: "/repo"})
+	if len(s.Events) != 0 {
+		t.Fatalf("events = %+v, Wait must remain transcript activity", s.Events)
+	}
+	if len(s.Messages) != 1 || !IsConversationalMessage(s.Messages[0]) {
+		t.Fatalf("messages = %+v, want one conversational Wait", s.Messages)
+	}
+	message := s.Messages[0]
+	if message.TurnID != "turn-wait" || message.Provenance == nil || message.Provenance.Model != "gpt-5.6-sol" || message.Provenance.ReasoningEffort != "max" {
+		t.Fatalf("metadata = %+v", message)
+	}
+	part := message.Parts[0]
+	if part.ToolName != "Wait" || part.ToolCallID != "call-wait" || part.State != ToolStateOutputAvailable {
+		t.Fatalf("part = %+v", part)
+	}
+	if string(part.Input) != `{"cell_id":"214","max_tokens":5000,"yield_time_ms":20000}` {
+		t.Fatalf("input = %s", part.Input)
+	}
+	if string(part.Output) != `"evaluation failed\nexit=1"` {
+		t.Fatalf("output = %s", part.Output)
 	}
 }

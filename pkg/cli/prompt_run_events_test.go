@@ -49,6 +49,22 @@ func TestPromptRunAccumulator_CoalescesTextDeltas(t *testing.T) {
 	}
 }
 
+func TestPromptRunAccumulator_EmitsStructuredResultAsFreshMessage(t *testing.T) {
+	msgs := collectEntries("m", "b",
+		ai.Event{Kind: ai.EventText, Text: "narrative"},
+		ai.Event{Kind: ai.EventResult, StructuredData: json.RawMessage(`{"answer":"42"}`)},
+	)
+	if len(msgs) != 2 {
+		t.Fatalf("want narrative and one structured result frame, got %d", len(msgs))
+	}
+	if msgs[0].ID == msgs[1].ID {
+		t.Fatalf("structured result must start a fresh message")
+	}
+	if got := msgs[1].Parts[0].Text; got != `{"answer":"42"}` {
+		t.Fatalf("structured result text = %q, want coherent JSON", got)
+	}
+}
+
 func TestPromptRunAccumulator_ThinkingAndTextAreSeparateTurns(t *testing.T) {
 	msgs := collectEntries("m", "b",
 		ai.Event{Kind: ai.EventThinking, Text: "hmm"},

@@ -13,6 +13,7 @@ import (
 	"github.com/flanksource/captain/pkg/claude"
 	"github.com/flanksource/captain/pkg/claude/tools"
 	"github.com/flanksource/commons/logger"
+	"github.com/google/uuid"
 	"github.com/segmentio/encoding/json"
 )
 
@@ -23,6 +24,10 @@ var codexLog = logger.GetLogger("session")
 func BuildCodex(files []string) []*Session {
 	out := make([]*Session, 0, len(files))
 	for _, f := range files {
+		info, _ := history.ReadCodexSessionInfo(f)
+		if info != nil && history.IsCodexAutoReviewModel(info.Model) {
+			continue
+		}
 		uses, err := history.ExtractCodexToolUses(f)
 		if err != nil {
 			codexLog.Warnf("skipping unreadable codex session %s: %v", f, err)
@@ -31,7 +36,24 @@ func BuildCodex(files []string) []*Session {
 		if len(uses) == 0 {
 			continue
 		}
-		info, _ := history.ReadCodexSessionInfo(f)
+		sessionID := ""
+		if info != nil {
+			sessionID = strings.TrimSpace(info.ID)
+		}
+		if sessionID == "" {
+			sessionID = codexSessionIDFromHistoryFile(f)
+		}
+		if sessionID != "" {
+			if info == nil {
+				info = &history.CodexSessionInfo{}
+			}
+			info.ID = sessionID
+			for i := range uses {
+				if strings.TrimSpace(uses[i].SessionID) == "" {
+					uses[i].SessionID = sessionID
+				}
+			}
+		}
 		s := buildCodexSession(uses, info)
 		s.HistoryFile = f
 		if s.Root != nil {
@@ -40,6 +62,24 @@ func BuildCodex(files []string) []*Session {
 		out = append(out, s)
 	}
 	return out
+}
+
+// codexSessionIDFromHistoryFile recovers the UUID Codex writes at the end of
+// rollout filenames. It is a last-resort identity when an otherwise-readable
+// transcript predates session_meta or contains a metadata shape newer than the
+// local parser.
+func codexSessionIDFromHistoryFile(path string) string {
+	name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	const uuidLength = 36
+	if len(name) < uuidLength {
+		return ""
+	}
+	candidate := name[len(name)-uuidLength:]
+	id, err := uuid.Parse(candidate)
+	if err != nil {
+		return ""
+	}
+	return id.String()
 }
 
 // buildCodexSession assembles one Session from a Codex session's tool uses and
@@ -418,9 +458,7 @@ func (b *codexTurnBuilder) addMessage(u history.ToolUse, messageID string) {
 		return
 	}
 	turn.MessageIDs = appendUnique(turn.MessageIDs, messageID)
-	if u.Model != "" {
-		turn.Model = u.Model
-	}
+	observeCodexTurnRuntime(turn, u)
 }
 
 func (b *codexTurnBuilder) addEvent(u history.ToolUse, ev Event) {
@@ -435,9 +473,7 @@ func (b *codexTurnBuilder) addEvent(u history.ToolUse, ev Event) {
 		turn.EndedAt = cloneTime(u.Timestamp)
 	}
 	turn.Events = append(turn.Events, ev)
-	if u.Model != "" {
-		turn.Model = u.Model
-	}
+	observeCodexTurnRuntime(turn, u)
 }
 
 func (b *codexTurnBuilder) addUsage(u history.ToolUse, cost api.Cost) {
@@ -450,8 +486,15 @@ func (b *codexTurnBuilder) addUsage(u history.ToolUse, cost api.Cost) {
 	if ctx := codexContextFromUse(u); ctx != nil {
 		turn.Context = ctx
 	}
+	observeCodexTurnRuntime(turn, u)
+}
+
+func observeCodexTurnRuntime(turn *Turn, u history.ToolUse) {
 	if u.Model != "" {
 		turn.Model = u.Model
+	}
+	if u.ReasoningEffort != "" {
+		turn.ReasoningEffort = u.ReasoningEffort
 	}
 }
 

@@ -26,13 +26,25 @@ type sessionMetadataBuild struct {
 func buildSessionMetadata(source string, entries []claude.HistoryEntry) sessionMetadataBuild {
 	b := sessionMetadataBuild{turnByEntry: map[string]string{}}
 	var current *Turn
+	var latestTurnTime *time.Time
 	var turnSeq int
+	seenEntries := map[string]struct{}{}
+
+	observeTurnTime := func(turn *Turn, ts *time.Time) {
+		if turn == nil || ts == nil {
+			return
+		}
+		if turn.StartedAt == nil || ts.Before(*turn.StartedAt) {
+			turn.StartedAt = cloneTime(ts)
+		}
+		if latestTurnTime == nil || ts.After(*latestTurnTime) {
+			latestTurnTime = cloneTime(ts)
+		}
+	}
 
 	startTurn := func(ts *time.Time) *Turn {
 		if current != nil {
-			if current.StartedAt == nil && ts != nil {
-				current.StartedAt = cloneTime(ts)
-			}
+			observeTurnTime(current, ts)
 			return current
 		}
 		turnSeq++
@@ -40,26 +52,35 @@ func buildSessionMetadata(source string, entries []claude.HistoryEntry) sessionM
 			ID:    fmt.Sprintf("turn-%d", turnSeq),
 			Index: turnSeq,
 		}
-		if ts != nil {
-			current.StartedAt = cloneTime(ts)
-		}
+		observeTurnTime(current, ts)
 		return current
 	}
 	finishTurn := func(ts *time.Time) {
 		if current == nil {
 			return
 		}
+		observeTurnTime(current, ts)
 		if ts != nil {
-			current.EndedAt = cloneTime(ts)
+			current.EndedAt = cloneTime(latestTurnTime)
 		}
 		if current.Context == nil {
 			setTurnContext(current, source)
 		}
 		b.turns = append(b.turns, *current)
 		current = nil
+		latestTurnTime = nil
 	}
 
 	for _, entry := range entries {
+		// Claude can append a previously recorded branch to the same JSONL file.
+		// UUID is the durable entry identity, so replaying it must not create a
+		// second turn boundary or charge the entry to a later turn.
+		if entry.UUID != "" {
+			if _, ok := seenEntries[entry.UUID]; ok {
+				continue
+			}
+			seenEntries[entry.UUID] = struct{}{}
+		}
 		ts := entryTime(entry)
 		if entry.Event != nil {
 			ev := eventFromEntry(entry)
