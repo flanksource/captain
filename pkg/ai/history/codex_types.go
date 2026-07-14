@@ -55,13 +55,17 @@ type CodexPayload struct {
 	Raw  map[string]any `json:"-"`
 
 	// session_meta
-	ID            string        `json:"id,omitempty"`
-	CWD           string        `json:"cwd,omitempty"`
-	CLIVersion    string        `json:"cli_version,omitempty"`
-	Source        string        `json:"source,omitempty"`
-	ModelProvider string        `json:"model_provider,omitempty"`
-	Originator    string        `json:"originator,omitempty"`
-	Git           *CodexGitMeta `json:"git,omitempty"`
+	ID         string `json:"id,omitempty"`
+	CWD        string `json:"cwd,omitempty"`
+	CLIVersion string `json:"cli_version,omitempty"`
+	// Source has appeared as both a scalar (for root sessions) and an object
+	// (for example {"subagent":{"other":"guardian"}}). Keep the provider
+	// shape opaque so a new source variant cannot invalidate the whole
+	// session_meta record and discard its ID.
+	Source        json.RawMessage `json:"source,omitempty"`
+	ModelProvider string          `json:"model_provider,omitempty"`
+	Originator    string          `json:"originator,omitempty"`
+	Git           *CodexGitMeta   `json:"git,omitempty"`
 
 	// response_item: function_call
 	Name      string          `json:"name,omitempty"`
@@ -70,8 +74,9 @@ type CodexPayload struct {
 	CallID    string          `json:"call_id,omitempty"`
 	Metadata  *CodexMetadata  `json:"internal_chat_message_metadata_passthrough,omitempty"`
 
-	// response_item: function_call_output
-	Output string                     `json:"output,omitempty"`
+	// response_item: function_call_output. Codex emits either a JSON string or
+	// an ordered array of text content blocks depending on the tool transport.
+	Output json.RawMessage            `json:"output,omitempty"`
 	Tools  []CodexToolSearchNamespace `json:"tools,omitempty"`
 
 	// response_item: reasoning carries an array of CodexReasoningSummary;

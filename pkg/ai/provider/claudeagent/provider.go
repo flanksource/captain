@@ -161,8 +161,18 @@ func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, e
 		success    = true
 		sawResult  bool
 		lastErr    string
+		outcome    *ai.TerminalOutcome
+		outcomeErr error
 	)
 	for ev := range events {
+		if outcomeErr == nil {
+			parsed, parseErr := ai.TerminalOutcomeFromEvent(ev)
+			if parseErr != nil {
+				outcomeErr = parseErr
+			} else if parsed != nil {
+				outcome = parsed
+			}
+		}
 		switch ev.Kind {
 		case ai.EventText:
 			text.WriteString(ev.Text)
@@ -189,6 +199,9 @@ func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, e
 			lastErr = ev.Error
 		}
 	}
+	if outcomeErr != nil {
+		return nil, fmt.Errorf("claude-agent: invalid terminal outcome: %w", outcomeErr)
+	}
 
 	if !sawResult && lastErr != "" {
 		return nil, fmt.Errorf("%w: %s", ai.ErrCLIExecutionFailed, lastErr)
@@ -198,14 +211,18 @@ func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, e
 	}
 
 	resp := &ai.Response{
-		Text:     text.String(),
-		Model:    p.model,
-		Backend:  ai.BackendClaudeAgent,
-		Usage:    usage,
-		Duration: time.Since(start),
+		Text:            text.String(),
+		Model:           p.model,
+		Backend:         ai.BackendClaudeAgent,
+		Usage:           usage,
+		Duration:        time.Since(start),
+		TerminalOutcome: outcome,
 	}
 	if sessionID != "" {
 		resp.Raw = map[string]any{"session_id": sessionID}
+	}
+	if outcome != nil {
+		return resp, nil
 	}
 	if req.Prompt.Schema != nil {
 		if err := ai.BindStructuredOutput(req.Prompt.Schema, structured); err != nil {

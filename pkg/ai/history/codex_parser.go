@@ -6,10 +6,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai/assistanttags"
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/claude/tools"
 	"github.com/segmentio/encoding/json"
 )
@@ -158,6 +160,21 @@ func ReadCodexSessionInfo(sessionFile string) (*CodexSessionInfo, error) {
 	return info, nil
 }
 
+// IsCodexAutoReviewSession reports whether a rollout belongs to Codex's
+// internal approval reviewer. Match parsed model metadata only: ordinary user
+// prompts and transcripts may legitimately mention the model name.
+func IsCodexAutoReviewSession(sessionFile string) (bool, error) {
+	info, err := ReadCodexSessionInfo(sessionFile)
+	if err != nil || info == nil {
+		return false, err
+	}
+	return IsCodexAutoReviewModel(info.Model), nil
+}
+
+func IsCodexAutoReviewModel(model string) bool {
+	return strings.EqualFold(strings.TrimSpace(model), api.CodexAutoReviewModel)
+}
+
 func ExtractCodexToolUsesFromReader(r io.Reader) ([]ToolUse, error) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
@@ -210,6 +227,9 @@ func ExtractCodexToolUsesFromReader(r io.Reader) ([]ToolUse, error) {
 			}
 			if event.Payload.Model != "" {
 				currentModel = event.Payload.Model
+				if IsCodexAutoReviewModel(currentModel) {
+					return nil, nil
+				}
 			}
 			if event.Payload.Effort != "" {
 				currentEff = event.Payload.Effort
@@ -314,6 +334,9 @@ func extractResponseItem(event CodexEvent, pendingCall map[string]CodexEvent, cw
 			return extractCodexAssistantText(text, event, cwd, sessionID, "response_item.message")
 		case "user":
 			text = codexContentText(event.Payload.Content, "input_text", "text")
+			if shell, ok := parseCodexUserShellCommand(text); ok {
+				return []ToolUse{buildCodexUserShellCommandUse(shell, event, cwd, sessionID, "response_item.message.user_shell_command")}
+			}
 			var ok bool
 			if tool, ok = codexUserMessageTool(text); !ok {
 				return nil
@@ -437,6 +460,9 @@ func extractEventMsg(event CodexEvent, cwd, sessionID string) []ToolUse {
 		if text == "" {
 			return nil
 		}
+		if shell, ok := parseCodexUserShellCommand(text); ok {
+			return []ToolUse{buildCodexUserShellCommandUse(shell, event, cwd, sessionID, "event_msg.user_shell_command")}
+		}
 		tool, ok := codexUserMessageTool(text)
 		if !ok {
 			return nil
@@ -557,6 +583,113 @@ func codexContentText(content []CodexContent, accepted ...string) string {
 		}
 	}
 	return text
+}
+
+type codexUserShellCommand struct {
+	Command         string
+	ExitCode        int
+	DurationSeconds float64
+	Output          string
+}
+
+func parseCodexUserShellCommand(text string) (codexUserShellCommand, bool) {
+	const (
+		wrapperOpen  = "<user_shell_command>"
+		wrapperClose = "</user_shell_command>"
+	)
+
+	text = strings.TrimSpace(text)
+	if !strings.HasPrefix(text, wrapperOpen) || !strings.HasSuffix(text, wrapperClose) {
+		return codexUserShellCommand{}, false
+	}
+	body := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(text, wrapperOpen), wrapperClose))
+	command, ok := codexWrappedSection(body, "command")
+	if !ok || strings.TrimSpace(command) == "" {
+		return codexUserShellCommand{}, false
+	}
+	result, ok := codexWrappedSection(body, "result")
+	if !ok {
+		return codexUserShellCommand{}, false
+	}
+
+	lines := strings.Split(strings.TrimSpace(result), "\n")
+	if len(lines) < 3 {
+		return codexUserShellCommand{}, false
+	}
+	exitText, ok := strings.CutPrefix(strings.TrimSuffix(lines[0], "\r"), "Exit code:")
+	if !ok {
+		return codexUserShellCommand{}, false
+	}
+	exitCode, err := strconv.Atoi(strings.TrimSpace(exitText))
+	if err != nil {
+		return codexUserShellCommand{}, false
+	}
+	durationText, ok := strings.CutPrefix(strings.TrimSuffix(lines[1], "\r"), "Duration:")
+	if !ok {
+		return codexUserShellCommand{}, false
+	}
+	durationText = strings.TrimSpace(durationText)
+	durationText, ok = strings.CutSuffix(durationText, " seconds")
+	if !ok {
+		return codexUserShellCommand{}, false
+	}
+	durationSeconds, err := strconv.ParseFloat(strings.TrimSpace(durationText), 64)
+	if err != nil {
+		return codexUserShellCommand{}, false
+	}
+	if strings.TrimSuffix(lines[2], "\r") != "Output:" {
+		return codexUserShellCommand{}, false
+	}
+
+	return codexUserShellCommand{
+		Command:         strings.TrimSpace(command),
+		ExitCode:        exitCode,
+		DurationSeconds: durationSeconds,
+		Output:          strings.TrimSpace(strings.Join(lines[3:], "\n")),
+	}, true
+}
+
+func codexWrappedSection(text, name string) (string, bool) {
+	open := "<" + name + ">"
+	close := "</" + name + ">"
+	start := strings.Index(text, open)
+	if start < 0 {
+		return "", false
+	}
+	start += len(open)
+	end := strings.Index(text[start:], close)
+	if end < 0 {
+		return "", false
+	}
+	return text[start : start+end], true
+}
+
+func buildCodexUserShellCommandUse(cmd codexUserShellCommand, event CodexEvent, cwd, sessionID, recordType string) ToolUse {
+	status := "success"
+	if cmd.ExitCode != 0 {
+		status = "failed"
+	}
+	input := map[string]any{
+		"event":            "user_shell_command",
+		"command":          cmd.Command,
+		"exit_code":        cmd.ExitCode,
+		"duration_seconds": cmd.DurationSeconds,
+		"duration_ms":      cmd.DurationSeconds * 1000,
+		"output":           cmd.Output,
+		"stdout":           cmd.Output,
+		"status":           status,
+	}
+	return ToolUse{
+		Tool:       "UserShellCommand",
+		Input:      input,
+		Timestamp:  event.Time(),
+		CWD:        cwd,
+		SessionID:  sessionID,
+		TurnID:     codexEventTurnID(event),
+		Source:     "codex",
+		Response:   cmd.Output,
+		RecordType: recordType,
+	}
 }
 
 func isCodexInternalUserText(text string) bool {
@@ -788,10 +921,7 @@ func codexRecordPriority(recordType string) int {
 }
 
 func buildToolUse(callEvent, outputEvent CodexEvent, cwd, sessionID string) ToolUse {
-	var response string
-	if outputEvent.Payload.Output != "" {
-		response = extractCommandOutput(outputEvent.Payload.Output)
-	}
+	response := extractCommandOutput(CodexOutputText(outputEvent.Payload.Output))
 	ts := callEvent.Time()
 	if ts == nil {
 		ts = outputEvent.Time()
@@ -827,6 +957,20 @@ func buildToolUse(callEvent, outputEvent CodexEvent, cwd, sessionID string) Tool
 			Source:    "codex",
 			Response:  response,
 			Namespace: callEvent.Payload.Namespace,
+		}
+	case "wait":
+		return ToolUse{
+			Tool:       "Wait",
+			Input:      extractArgumentsMap(callEvent.Payload.Arguments),
+			Timestamp:  ts,
+			CWD:        cwd,
+			SessionID:  sessionID,
+			TurnID:     firstNonEmpty(codexEventTurnID(callEvent), codexEventTurnID(outputEvent)),
+			ToolUseID:  callEvent.Payload.CallID,
+			Source:     "codex",
+			Response:   response,
+			Namespace:  callEvent.Payload.Namespace,
+			RecordType: "response_item.function_call",
 		}
 	case "spawn_agent":
 		args := extractArgumentsMap(callEvent.Payload.Arguments)
@@ -948,6 +1092,32 @@ func normalizeCodexArguments(argsJSON json.RawMessage) string {
 		return s
 	}
 	return string(argsJSON)
+}
+
+// CodexOutputText normalizes the scalar-string and ordered content-block forms
+// Codex uses for function_call_output records. Provider streaming and history
+// ingestion share it so the same output is rendered in both paths.
+func CodexOutputText(raw json.RawMessage) string {
+	text := strings.TrimSpace(string(raw))
+	if text == "" || text == "null" {
+		return ""
+	}
+
+	var scalar string
+	if json.Unmarshal(raw, &scalar) == nil {
+		return scalar
+	}
+
+	var content []CodexContent
+	if json.Unmarshal(raw, &content) == nil {
+		if combined := codexContentText(content, "input_text", "output_text", "text"); combined != "" {
+			return combined
+		}
+	}
+
+	// Preserve unfamiliar non-null shapes instead of dropping the completion.
+	// RawMessage already contains compact JSON from the transcript.
+	return text
 }
 
 func extractCommandOutput(raw string) string {

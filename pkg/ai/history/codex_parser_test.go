@@ -2,8 +2,12 @@ package history
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestExtractCodexToolUses_LiveDottedSchema(t *testing.T) {
@@ -85,6 +89,141 @@ func TestExtractCodexToolUses_ModelAndEffortStamping(t *testing.T) {
 	}
 	if uses[1].Model != "gpt-5.6" || uses[1].ReasoningEffort != "low" {
 		t.Errorf("uses[1] model/effort = %q/%q, want gpt-5.6/low", uses[1].Model, uses[1].ReasoningEffort)
+	}
+}
+
+func TestExtractCodexToolUses_IgnoresAutoReviewSession(t *testing.T) {
+	stream := strings.Join([]string{
+		`{"timestamp":"2026-07-13T09:00:00Z","type":"session_meta","payload":{"id":"review-1","cwd":"/repo","source":{"subagent":{"other":"guardian"}}}}`,
+		`{"timestamp":"2026-07-13T09:00:01Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"review this command"}]}}`,
+		`{"timestamp":"2026-07-13T09:00:02Z","type":"turn_context","payload":{"turn_id":"turn-review","model":"codex-auto-review","effort":"low"}}`,
+		`{"timestamp":"2026-07-13T09:00:03Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"approved"}]}}`,
+	}, "\n")
+
+	uses, err := ExtractCodexToolUsesFromReader(strings.NewReader(stream))
+	require.NoError(t, err)
+	assert.Empty(t, uses)
+}
+
+func TestExtractCodexToolUses_DoesNotIgnoreMentionOfAutoReview(t *testing.T) {
+	stream := strings.Join([]string{
+		`{"timestamp":"2026-07-13T09:00:00Z","type":"session_meta","payload":{"id":"user-1","cwd":"/repo"}}`,
+		`{"timestamp":"2026-07-13T09:00:01Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Ignore codex-auto-review sessions"}]}}`,
+		`{"timestamp":"2026-07-13T09:00:02Z","type":"turn_context","payload":{"turn_id":"turn-user","model":"gpt-5.6-sol","effort":"high"}}`,
+	}, "\n")
+
+	uses, err := ExtractCodexToolUsesFromReader(strings.NewReader(stream))
+	require.NoError(t, err)
+	require.Len(t, uses, 1)
+	assert.Equal(t, "User", uses[0].Tool)
+}
+
+func TestIsCodexAutoReviewSession(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	stream := strings.Join([]string{
+		`{"timestamp":"2026-07-13T09:00:00Z","type":"session_meta","payload":{"id":"review-1","cwd":"/repo"}}`,
+		`{"timestamp":"2026-07-13T09:00:01Z","type":"turn_context","payload":{"model":"codex-auto-review","effort":"low"}}`,
+	}, "\n")
+	require.NoError(t, os.WriteFile(path, []byte(stream), 0o600))
+
+	ignored, err := IsCodexAutoReviewSession(path)
+	require.NoError(t, err)
+	assert.True(t, ignored)
+}
+
+func TestExtractCodexToolUses_ParsesWaitCallWithContentOutput(t *testing.T) {
+	stream := strings.Join([]string{
+		`{"timestamp":"2026-07-13T09:31:13.359Z","type":"session_meta","payload":{"id":"019f5a68-c638-7fe2-b0d0-c1d8a3c4de55","cwd":"/repo"}}`,
+		`{"timestamp":"2026-07-13T09:31:13.362Z","type":"turn_context","payload":{"turn_id":"019f5ad0-fc23-7b92-8b13-a9f50d903704","model":"gpt-5.6-sol","effort":"max"}}`,
+		`{"timestamp":"2026-07-13T09:41:33.611Z","type":"response_item","payload":{"type":"function_call","name":"wait","arguments":"{\"cell_id\":\"214\",\"yield_time_ms\":20000,\"max_tokens\":5000}","call_id":"call-wait"}}`,
+		`{"timestamp":"2026-07-13T09:41:41.017Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call-wait","output":[{"type":"input_text","text":"Script completed\nWall time 7.4 seconds\nOutput:\n"},{"type":"input_text","text":"evaluation failed\n"},{"type":"input_text","text":"exit=1"}]}}`,
+	}, "\n")
+
+	uses, err := ExtractCodexToolUsesFromReader(strings.NewReader(stream))
+	if err != nil {
+		t.Fatalf("ExtractCodexToolUsesFromReader: %v", err)
+	}
+	if len(uses) != 1 {
+		t.Fatalf("uses = %+v, want one Wait", uses)
+	}
+	use := uses[0]
+	if use.Tool != "Wait" || use.ToolUseID != "call-wait" {
+		t.Fatalf("use = %+v, want first-class Wait", use)
+	}
+	if use.Input["cell_id"] != "214" || use.Input["yield_time_ms"] != float64(20000) || use.Input["max_tokens"] != float64(5000) {
+		t.Fatalf("input = %#v, want structured wait arguments", use.Input)
+	}
+	if use.Response != "evaluation failed\nexit=1" {
+		t.Fatalf("response = %q", use.Response)
+	}
+	if use.TurnID != "019f5ad0-fc23-7b92-8b13-a9f50d903704" || use.Model != "gpt-5.6-sol" || use.ReasoningEffort != "max" {
+		t.Fatalf("metadata = %+v", use)
+	}
+	if use.RecordType != "response_item.function_call" {
+		t.Fatalf("record type = %q", use.RecordType)
+	}
+}
+
+func TestExtractCodexToolUses_ParsesUserShellCommandMessage(t *testing.T) {
+	stream := strings.Join([]string{
+		`{"timestamp":"2026-07-13T06:13:59Z","type":"session_meta","payload":{"id":"sess-shell","cwd":"/repo"}}`,
+		`{"timestamp":"2026-07-13T06:14:00Z","type":"turn_context","payload":{"turn_id":"turn-shell","model":"gpt-5.5-codex","effort":"high"}}`,
+		`{"timestamp":"2026-07-13T06:14:01Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<user_shell_command>\n<command>\ngavel proc restart\n</command>\n<result>\nExit code: 1\nDuration: 2.9909 seconds\nOutput:\n\u001b[36mdev | \u001b[0msignal: killed\n\u001b[36mdev | \u001b[0mKill sent but port 8088 is still bound\n</result>\n</user_shell_command>"}]}}`,
+	}, "\n")
+
+	uses, err := ExtractCodexToolUsesFromReader(strings.NewReader(stream))
+	if err != nil {
+		t.Fatalf("ExtractCodexToolUsesFromReader: %v", err)
+	}
+	if len(uses) != 1 {
+		t.Fatalf("uses = %+v, want exactly one UserShellCommand", uses)
+	}
+	use := uses[0]
+	if use.Tool != "UserShellCommand" || use.Input["event"] != "user_shell_command" {
+		t.Fatalf("use = %+v, want UserShellCommand event", use)
+	}
+	if use.Input["command"] != "gavel proc restart" || use.Input["exit_code"] != 1 || use.Input["status"] != "failed" {
+		t.Fatalf("command result = %+v", use.Input)
+	}
+	if use.Input["duration_seconds"] != 2.9909 || use.Input["duration_ms"] != 2990.9 {
+		t.Fatalf("duration = %v seconds / %v ms", use.Input["duration_seconds"], use.Input["duration_ms"])
+	}
+	output, _ := use.Input["output"].(string)
+	wantOutput := "\x1b[36mdev | \x1b[0msignal: killed\n\x1b[36mdev | \x1b[0mKill sent but port 8088 is still bound"
+	if output != wantOutput {
+		t.Fatalf("output = %q, want exact preserved output %q", output, wantOutput)
+	}
+	if use.Response != output || use.TurnID != "turn-shell" || use.Model != "gpt-5.5-codex" || use.ReasoningEffort != "high" {
+		t.Fatalf("metadata/response = %+v", use)
+	}
+	if use.RecordType != "response_item.message.user_shell_command" {
+		t.Fatalf("record type = %q", use.RecordType)
+	}
+}
+
+func TestExtractCodexToolUses_ParsesUserShellCommandWithEmptyOutput(t *testing.T) {
+	stream := `{"timestamp":"2026-07-13T06:14:01Z","type":"event_msg","payload":{"type":"user_message","message":"<user_shell_command>\n<command>\nopen file.pdf\n</command>\n<result>\nExit code: 0\nDuration: 0.25 seconds\nOutput:\n</result>\n</user_shell_command>"}}`
+	uses, err := ExtractCodexToolUsesFromReader(strings.NewReader(stream))
+	if err != nil {
+		t.Fatalf("ExtractCodexToolUsesFromReader: %v", err)
+	}
+	if len(uses) != 1 || uses[0].Tool != "UserShellCommand" {
+		t.Fatalf("uses = %+v, want one UserShellCommand", uses)
+	}
+	if uses[0].Input["output"] != "" || uses[0].Input["status"] != "success" || uses[0].RecordType != "event_msg.user_shell_command" {
+		t.Fatalf("use = %+v", uses[0])
+	}
+}
+
+func TestParseCodexUserShellCommandRejectsPartialWrapper(t *testing.T) {
+	for _, text := range []string{
+		"please parse <user_shell_command> if you see one",
+		"<user_shell_command><command>echo hi</command></user_shell_command>",
+		"prefix <user_shell_command><command>echo hi</command><result>Exit code: 0\nDuration: 1 seconds\nOutput:\n</result></user_shell_command>",
+	} {
+		if _, ok := parseCodexUserShellCommand(text); ok {
+			t.Fatalf("parseCodexUserShellCommand(%q) unexpectedly succeeded", text)
+		}
 	}
 }
 
@@ -280,6 +419,26 @@ func TestReadCodexSessionInfo_LiveThreadStarted(t *testing.T) {
 	if info.Model != "gpt-5-codex" || info.ReasoningEffort != "high" {
 		t.Errorf("model/effort = %q/%q, want gpt-5-codex/high", info.Model, info.ReasoningEffort)
 	}
+}
+
+func TestCodexSessionMetaAcceptsObjectSource(t *testing.T) {
+	stream := strings.Join([]string{
+		`{"timestamp":"2026-06-19T07:05:51.061Z","type":"session_meta","payload":{"id":"019edeb3-449e-7af3-b300-7123f10944b2","cwd":"/repo","source":{"subagent":{"other":"guardian"}},"model_provider":"openai"}}`,
+		`{"timestamp":"2026-06-19T07:05:52.061Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"check the change"}]}}`,
+	}, "\n")
+
+	uses, err := ExtractCodexToolUsesFromReader(strings.NewReader(stream))
+	require.NoError(t, err)
+	require.Len(t, uses, 1)
+	assert.Equal(t, "019edeb3-449e-7af3-b300-7123f10944b2", uses[0].SessionID)
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "rollout.jsonl")
+	require.NoError(t, os.WriteFile(path, []byte(stream), 0o600))
+	info, err := ReadCodexSessionInfo(path)
+	require.NoError(t, err)
+	require.NotNil(t, info)
+	assert.Equal(t, "019edeb3-449e-7af3-b300-7123f10944b2", info.ID)
 }
 
 func TestReadCodexSessionMetaStopsAtHeader(t *testing.T) {

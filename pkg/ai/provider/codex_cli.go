@@ -336,7 +336,7 @@ func (s *codexCLIState) buildFunctionToolUse(call, output history.CodexEvent) cl
 	}
 	tu := codexToolUse(name, input, s.sessionID, s.model)
 	tu.ToolUseID = call.Payload.CallID
-	tu.Response = output.Payload.Output
+	tu.Response = history.CodexOutputText(output.Payload.Output)
 	return tu
 }
 

@@ -310,12 +310,18 @@ func (c *CodexAppServer) handleNotification(method string, params json.RawMessag
 		if id := parseAppServerNotif(params).ItemID; id != "" {
 			ts.streamed[id] = true
 		}
+		if len(ts.outputSchema) > 0 {
+			return
+		}
 	case "item/completed":
 		// The completed agent message carries the full text (structured runs use it
 		// as the validated JSON result). Capture it, then drop the duplicate so
 		// CoalesceStream / renderers don't double-count already-streamed deltas.
 		if it := parseAppServerNotif(params).Item; it != nil && it.Type == "agentMessage" {
 			ts.lastAgentMessage = it.Text
+			if len(ts.outputSchema) > 0 {
+				return
+			}
 		}
 		if appServerStreamedAgentMessage(params, ts.streamed) {
 			return

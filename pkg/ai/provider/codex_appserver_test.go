@@ -217,7 +217,7 @@ func resultEvent(t *testing.T, evs []ai.Event) ai.Event {
 	return ai.Event{}
 }
 
-// A structured turn attaches the final agentMessage JSON to the terminal result.
+// A structured turn attaches the final agentMessage JSON only to the terminal result.
 func TestHandleNotification_StructuredOutput(t *testing.T) {
 	schema, err := ai.SchemaJSONFor(api.Prompt{Schema: &struct {
 		Answer string `json:"answer"`
@@ -225,16 +225,65 @@ func TestHandleNotification_StructuredOutput(t *testing.T) {
 	require.NoError(t, err)
 
 	c, ts := activeTurn(t, schema)
-	// The final agent message's text IS the validated JSON (codex has no separate
-	// structured field).
+	c.handleNotification("item/agentMessage/delta",
+		json.RawMessage(`{"itemId":"a1","delta":"{\"answer\":"}`))
+	c.handleNotification("item/agentMessage/delta",
+		json.RawMessage(`{"itemId":"a1","delta":"\"42\"}"}`))
 	c.handleNotification("item/completed",
 		json.RawMessage(`{"item":{"id":"a1","type":"agentMessage","text":"{\"answer\":\"42\"}"}}`))
 	c.handleNotification("turn/completed",
 		json.RawMessage(`{"threadId":"t","turn":{"id":"u","status":"completed"}}`))
 
-	result := resultEvent(t, drainEvents(ts))
+	events := drainEvents(ts)
+	var resultCount int
+	for _, ev := range events {
+		assert.NotEqual(t, ai.EventText, ev.Kind, "structured agent messages must not emit text progress")
+		if ev.Kind == ai.EventResult {
+			resultCount++
+		}
+	}
+	assert.Equal(t, 1, resultCount, "structured turn should emit exactly one terminal result")
+	result := resultEvent(t, events)
+	assert.True(t, result.Success)
 	require.NotEmpty(t, result.StructuredData, "structured turn should carry the final JSON on the result")
 	assert.JSONEq(t, `{"answer":"42"}`, string(result.StructuredData))
+}
+
+func TestHandleNotification_StructuredOutputWithoutDeltas(t *testing.T) {
+	schema := json.RawMessage(`{"type":"object"}`)
+	c, ts := activeTurn(t, schema)
+	c.handleNotification("item/completed",
+		json.RawMessage(`{"item":{"id":"a1","type":"agentMessage","text":"{\"answer\":\"42\"}"}}`))
+	c.handleNotification("turn/completed",
+		json.RawMessage(`{"threadId":"t","turn":{"id":"u","status":"completed"}}`))
+
+	events := drainEvents(ts)
+	for _, ev := range events {
+		assert.NotEqual(t, ai.EventText, ev.Kind, "completed structured message must not leak as text progress")
+	}
+	assert.JSONEq(t, `{"answer":"42"}`, string(resultEvent(t, events).StructuredData))
+}
+
+func TestHandleNotification_TextModeStreamsDeltasAndDeduplicatesCompletedMessage(t *testing.T) {
+	c, ts := activeTurn(t, nil)
+	c.handleNotification("item/agentMessage/delta",
+		json.RawMessage(`{"itemId":"a1","delta":"plain "}`))
+	c.handleNotification("item/agentMessage/delta",
+		json.RawMessage(`{"itemId":"a1","delta":"answer"}`))
+	c.handleNotification("item/completed",
+		json.RawMessage(`{"item":{"id":"a1","type":"agentMessage","text":"plain answer"}}`))
+	c.handleNotification("turn/completed",
+		json.RawMessage(`{"threadId":"t","turn":{"id":"u","status":"completed"}}`))
+
+	events := drainEvents(ts)
+	var text []string
+	for _, ev := range events {
+		if ev.Kind == ai.EventText {
+			text = append(text, ev.Text)
+		}
+	}
+	assert.Equal(t, []string{"plain ", "answer"}, text)
+	assert.Empty(t, resultEvent(t, events).StructuredData)
 }
 
 // A text-mode turn (no schema) leaves the result's StructuredData empty.

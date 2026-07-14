@@ -66,6 +66,42 @@ func TestCoalesceStream_CarriesStructuredData(t *testing.T) {
 	}
 }
 
+func TestCoalesceStream_CarriesTerminalOutcome(t *testing.T) {
+	events := []ai.Event{
+		{Kind: ai.EventToolUse, Tool: "ExitPlanMode", Input: map[string]any{
+			"plan":         "1. Inspect\n2. Implement",
+			"planFilePath": "/repo/.claude/plans/example.md",
+		}},
+		{Kind: ai.EventResult, Success: true},
+	}
+
+	resp, err := CoalesceStream(context.Background(), "claude", feedEvents(events), time.Now())
+	if err != nil {
+		t.Fatalf("CoalesceStream err: %v", err)
+	}
+	if resp.TerminalOutcome == nil || resp.TerminalOutcome.Plan == nil {
+		t.Fatalf("TerminalOutcome = %+v, want plan", resp.TerminalOutcome)
+	}
+	if resp.TerminalOutcome.Plan.Content != "1. Inspect\n2. Implement" {
+		t.Errorf("plan content = %q", resp.TerminalOutcome.Plan.Content)
+	}
+}
+
+func TestCoalesceStream_FailsOnMalformedTerminalOutcome(t *testing.T) {
+	events := []ai.Event{
+		{Kind: ai.EventToolUse, Tool: "ExitPlanMode", Input: map[string]any{"planFilePath": "/repo/plan.md"}},
+		{Kind: ai.EventResult, Success: true},
+	}
+
+	resp, err := CoalesceStream(context.Background(), "claude", feedEvents(events), time.Now())
+	if err == nil {
+		t.Fatalf("CoalesceStream error = nil, response = %+v", resp)
+	}
+	if !strings.Contains(err.Error(), "plan is required") {
+		t.Fatalf("CoalesceStream error = %v, want missing plan", err)
+	}
+}
+
 func TestCoalesceStream_UsesResultTextWhenNoTextEvents(t *testing.T) {
 	const model = "claude-sonnet-5"
 	events := []ai.Event{

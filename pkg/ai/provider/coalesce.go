@@ -24,13 +24,30 @@ func CoalesceStreamForBackend(ctx context.Context, backend ai.Backend, model str
 		lastResult *ai.Event
 		errEvents  []ai.Event
 		sessionID  string
+		outcome    *ai.TerminalOutcome
+		outcomeErr error
 	)
 
 	for {
 		select {
 		case ev, ok := <-events:
 			if !ok {
-				return finaliseCoalescedResponse(backend, model, text.String(), usage, lastResult, errEvents, sessionID, start)
+				if outcomeErr != nil {
+					return nil, fmt.Errorf("invalid terminal outcome: %w", outcomeErr)
+				}
+				resp, err := finaliseCoalescedResponse(backend, model, text.String(), usage, lastResult, errEvents, sessionID, start)
+				if resp != nil {
+					resp.TerminalOutcome = outcome
+				}
+				return resp, err
+			}
+			if outcomeErr == nil {
+				parsed, err := ai.TerminalOutcomeFromEvent(ev)
+				if err != nil {
+					outcomeErr = err
+				} else if parsed != nil {
+					outcome = parsed
+				}
 			}
 			switch ev.Kind {
 			case ai.EventText:
