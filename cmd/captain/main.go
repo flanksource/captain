@@ -155,6 +155,28 @@ func main() {
 	hookCmd.AddCommand(dodHookCmd)
 	clicky.AddNamedCommand("install", dodHookCmd, cli.HookInstallOptions{}, cli.RunDodInstall)
 
+	monitorHookCmd := &cobra.Command{Use: "monitor", Short: "Session monitoring hooks (hooks-first session tracking)"}
+	hookCmd.AddCommand(monitorHookCmd)
+	monitorNotifyCmd := &cobra.Command{
+		Use:   "notify",
+		Short: "Forward one provider hook event to captain serve",
+		Long: "Hook receiver for session monitoring: Claude Code lifecycle hooks pipe their JSON payload " +
+			"on stdin, codex notify appends its payload as the final argument. The event is POSTed to the " +
+			"running captain serve instance ($CAPTAIN_SERVER_URL or http://localhost:9020) with a 1s timeout " +
+			"and always exits 0 — when serve is unreachable the event is dropped and the daily recon reconciles it.",
+		Args: cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			provider, _ := cmd.Flags().GetString("provider")
+			url, _ := cmd.Flags().GetString("url")
+			return cli.RunHookMonitorNotify(cli.HookMonitorNotifyOptions{Provider: provider, URL: url}, args)
+		},
+	}
+	monitorNotifyCmd.Flags().String("provider", "claude", "Hook payload provider: claude or codex")
+	monitorNotifyCmd.Flags().String("url", "", "Captain serve base URL (default $CAPTAIN_SERVER_URL or http://localhost:9020)")
+	monitorHookCmd.AddCommand(monitorNotifyCmd)
+	monitorInstallCmd := clicky.AddNamedCommand("install", monitorHookCmd, cli.HookMonitorInstallOptions{}, cli.RunHookMonitorInstall)
+	monitorInstallCmd.Short = "Install session-monitoring hooks into ~/.claude/settings.json and ~/.codex/config.toml"
+
 	projectsCmd := &cobra.Command{Use: "projects", Short: "Manage Claude Code project sessions"}
 	rootCmd.AddCommand(projectsCmd)
 	clicky.AddNamedCommand("list", projectsCmd, cli.ProjectsListOptions{}, cli.RunProjectsList)

@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/monitor"
 	"github.com/flanksource/clicky/aichat"
@@ -166,6 +167,7 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	mux.HandleFunc("GET /api/captain/sessions/live", handleSessionsLive())
 	mux.HandleFunc("GET /api/captain/sessions/throughput", handleSessionsThroughput())
 	mux.HandleFunc("GET /api/captain/sessions/{id}", handleSessionGet())
+	mux.HandleFunc("POST /api/captain/hooks/{provider}", handleMonitorHookEvent())
 	mux.HandleFunc("GET /api/captain/ai/permissions/catalog", handlePermissionCatalog(cwd))
 	mux.HandleFunc("GET /api/captain/ai/prompt/schema", handlePromptSchema())
 	mux.HandleFunc("GET /api/captain/secrets/resources", handleSecretResources())
@@ -187,6 +189,12 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	mux.Handle("/", uiHandler)
 
 	addr := fmt.Sprintf("%s:%d", opts.Host, opts.Port)
+	// Export the serve URL so every captain-launched agent (and the hook
+	// receiver subprocesses its sessions spawn) delivers hook events to this
+	// instance even off the default port.
+	if err := os.Setenv(api.ServeURLEnv, "http://"+addr); err != nil {
+		return err
+	}
 	httpSrv := &http.Server{
 		Addr:        addr,
 		Handler:     rpchttp.TimingMiddleware(PromptDirsMiddleware(mux, opts.PromptDirs)),
