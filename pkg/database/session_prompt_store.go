@@ -423,6 +423,7 @@ type PromptRun struct {
 	ID                   uuid.UUID      `json:"id"`
 	SessionID            uuid.UUID      `json:"sessionId"`
 	RootSessionID        uuid.UUID      `json:"rootSessionId"`
+	ExecutionSessionID   *uuid.UUID     `json:"executionSessionId,omitempty"`
 	BatchID              *uuid.UUID     `json:"batchId,omitempty"`
 	ParentRunID          *uuid.UUID     `json:"parentRunId,omitempty"`
 	InputPlanID          *uuid.UUID     `json:"inputPlanId,omitempty"`
@@ -457,6 +458,7 @@ type CreatePromptRunInput struct {
 	ID                   uuid.UUID
 	SessionID            uuid.UUID
 	RootSessionID        *uuid.UUID
+	ExecutionSessionID   *uuid.UUID
 	BatchID              *uuid.UUID
 	ParentRunID          *uuid.UUID
 	InputPlanID          *uuid.UUID
@@ -470,20 +472,23 @@ type CreatePromptRunInput struct {
 }
 
 type UpdatePromptRunInput struct {
-	ID               uuid.UUID
-	ExpectedVersion  int64
-	Phase            *PromptRunPhase
-	State            *PromptRunState
-	CurrentIteration *int
-	ResultText       *string
-	ResultJSON       *map[string]any
-	Error            *string
+	ID                 uuid.UUID
+	ExpectedVersion    int64
+	Phase              *PromptRunPhase
+	State              *PromptRunState
+	CurrentIteration   *int
+	ExecutionSessionID *uuid.UUID
+	RenderedSpec       *map[string]any
+	ResultText         *string
+	ResultJSON         *map[string]any
+	Error              *string
 }
 
 type promptRunRecord struct {
 	ID                   uuid.UUID      `gorm:"column:id;type:uuid;primaryKey"`
 	SessionID            uuid.UUID      `gorm:"column:session_id;type:uuid"`
 	RootSessionID        uuid.UUID      `gorm:"column:root_session_id;type:uuid"`
+	ExecutionSessionID   *uuid.UUID     `gorm:"column:execution_session_id;type:uuid"`
 	BatchID              *uuid.UUID     `gorm:"column:batch_id;type:uuid"`
 	ParentRunID          *uuid.UUID     `gorm:"column:parent_run_id;type:uuid"`
 	InputPlanID          *uuid.UUID     `gorm:"column:input_plan_id;type:uuid"`
@@ -539,6 +544,11 @@ func (db *DB) CreatePromptRun(ctx context.Context, input CreatePromptRunInput) (
 			return nil, fmt.Errorf("%w: root session %s does not match session aggregate root %s", ErrInvalidPromptRun, *input.RootSessionID, rootID)
 		}
 	}
+	if input.ExecutionSessionID != nil {
+		if err := db.validateExecutionSession(ctx, session, *input.ExecutionSessionID); err != nil {
+			return nil, err
+		}
+	}
 	if input.ParentRunID != nil {
 		if *input.ParentRunID == uuid.Nil || *input.ParentRunID == input.ID {
 			return nil, fmt.Errorf("%w: parent run cannot be empty or self", ErrInvalidPromptRun)
@@ -553,7 +563,7 @@ func (db *DB) CreatePromptRun(ctx context.Context, input CreatePromptRunInput) (
 	}
 	now := time.Now().UTC()
 	record := promptRunRecord{
-		ID: input.ID, SessionID: input.SessionID, RootSessionID: rootID, BatchID: input.BatchID,
+		ID: input.ID, SessionID: input.SessionID, RootSessionID: rootID, ExecutionSessionID: input.ExecutionSessionID, BatchID: input.BatchID,
 		ParentRunID: input.ParentRunID, InputPlanID: input.InputPlanID, InputPlanRevisionID: input.InputPlanRevisionID,
 		Origin: nullableTrimmed(input.Origin), SpecProfile: nullableTrimmed(input.SpecProfile),
 		AdmissionKey: nullableTrimmed(input.AdmissionKey), RenderedSpec: input.RenderedSpec,
@@ -673,6 +683,37 @@ func (db *DB) UpdatePromptRun(ctx context.Context, input UpdatePromptRunInput) (
 		distinctPredicates = append(distinctPredicates, "current_iteration IS DISTINCT FROM ?")
 		distinctArgs = append(distinctArgs, *input.CurrentIteration)
 	}
+	if input.ExecutionSessionID != nil {
+		var record promptRunRecord
+		if err := db.gorm.WithContext(ctx).First(&record, "id = ?", input.ID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, fmt.Errorf("%w: %s", ErrPromptRunNotFound, input.ID)
+			}
+			return nil, fmt.Errorf("read Captain prompt run execution binding: %w", err)
+		}
+		admission, err := db.GetSession(ctx, record.SessionID)
+		if err != nil {
+			return nil, err
+		}
+		if err := db.validateExecutionSession(ctx, admission, *input.ExecutionSessionID); err != nil {
+			return nil, err
+		}
+		updates["execution_session_id"] = *input.ExecutionSessionID
+		distinctPredicates = append(distinctPredicates, "execution_session_id IS DISTINCT FROM ?")
+		distinctArgs = append(distinctArgs, *input.ExecutionSessionID)
+	}
+	if input.RenderedSpec != nil {
+		if *input.RenderedSpec == nil {
+			return nil, fmt.Errorf("%w: rendered spec cannot be null", ErrInvalidPromptRun)
+		}
+		encoded, err := json.Marshal(*input.RenderedSpec)
+		if err != nil {
+			return nil, fmt.Errorf("%w: encode rendered spec: %v", ErrInvalidPromptRun, err)
+		}
+		updates["rendered_spec"] = *input.RenderedSpec
+		distinctPredicates = append(distinctPredicates, "rendered_spec IS DISTINCT FROM CAST(? AS jsonb)")
+		distinctArgs = append(distinctArgs, string(encoded))
+	}
 	if input.ResultText != nil {
 		updates["result_text"] = *input.ResultText
 		distinctPredicates = append(distinctPredicates, "result_text IS DISTINCT FROM ?")
@@ -700,9 +741,13 @@ func (db *DB) UpdatePromptRun(ctx context.Context, input UpdatePromptRunInput) (
 	if len(updates) == 0 {
 		return nil, fmt.Errorf("%w: no update fields supplied", ErrInvalidPromptRun)
 	}
-	result := db.gorm.WithContext(ctx).Model(&promptRunRecord{}).
+	query := db.gorm.WithContext(ctx).Model(&promptRunRecord{}).
 		Where("id = ? AND version = ?", input.ID, input.ExpectedVersion).
-		Where("("+strings.Join(distinctPredicates, " OR ")+")", distinctArgs...).Updates(updates)
+		Where("("+strings.Join(distinctPredicates, " OR ")+")", distinctArgs...)
+	if input.ExecutionSessionID != nil {
+		query = query.Where("(execution_session_id IS NULL OR execution_session_id = ?)", *input.ExecutionSessionID)
+	}
+	result := query.Updates(updates)
 	if result.Error != nil {
 		return nil, fmt.Errorf("update Captain prompt run: %w", result.Error)
 	}
@@ -716,6 +761,9 @@ func (db *DB) UpdatePromptRun(ctx context.Context, input UpdatePromptRunInput) (
 		}
 		if current.Version != input.ExpectedVersion {
 			return nil, fmt.Errorf("%w: prompt run %s is no longer at version %d", ErrPromptRunConflict, input.ID, input.ExpectedVersion)
+		}
+		if input.ExecutionSessionID != nil && current.ExecutionSessionID != nil && *current.ExecutionSessionID != *input.ExecutionSessionID {
+			return nil, fmt.Errorf("%w: prompt run %s is already bound to execution session %s", ErrPromptRunConflict, input.ID, *current.ExecutionSessionID)
 		}
 		out := promptRunFromRecord(current)
 		return &out, nil
@@ -768,7 +816,7 @@ func validSessionHealth(value SessionHealthState) bool {
 
 func promptRunFromRecord(record promptRunRecord) PromptRun {
 	return PromptRun{
-		ID: record.ID, SessionID: record.SessionID, RootSessionID: record.RootSessionID, BatchID: record.BatchID,
+		ID: record.ID, SessionID: record.SessionID, RootSessionID: record.RootSessionID, ExecutionSessionID: record.ExecutionSessionID, BatchID: record.BatchID,
 		ParentRunID: record.ParentRunID, InputPlanID: record.InputPlanID, InputPlanRevisionID: record.InputPlanRevisionID,
 		Origin: optionalString(record.Origin), SpecProfile: optionalString(record.SpecProfile), AdmissionKey: optionalString(record.AdmissionKey),
 		RenderedSpec: record.RenderedSpec, PromptMarkdown: optionalString(record.PromptMarkdown),
@@ -777,6 +825,26 @@ func promptRunFromRecord(record promptRunRecord) PromptRun {
 		Error: optionalString(record.Error), Version: record.Version, QueuedAt: record.QueuedAt, StartedAt: record.StartedAt,
 		FinishedAt: record.FinishedAt, CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt,
 	}
+}
+
+func (db *DB) validateExecutionSession(ctx context.Context, admission *Session, executionID uuid.UUID) error {
+	if admission == nil || executionID == uuid.Nil {
+		return fmt.Errorf("%w: execution session ID is required", ErrInvalidPromptRun)
+	}
+	execution, err := db.GetSession(ctx, executionID)
+	if err != nil {
+		return err
+	}
+	if execution.ParentSessionID != nil || execution.RootSessionID != nil {
+		return fmt.Errorf("%w: execution session %s is not a root provider thread", ErrPromptRunConflict, execution.ID)
+	}
+	if execution.Source != "claude" && execution.Source != "codex" {
+		return fmt.Errorf("%w: execution session %s has unsupported source %q", ErrPromptRunConflict, execution.ID, execution.Source)
+	}
+	if strings.TrimSpace(admission.ProviderSessionID) == "" || admission.ProviderSessionID != execution.ProviderSessionID {
+		return fmt.Errorf("%w: execution session %s provider identity does not match admission session %s", ErrPromptRunConflict, execution.ID, admission.ID)
+	}
+	return nil
 }
 
 func validPromptRunPhase(value PromptRunPhase) bool {

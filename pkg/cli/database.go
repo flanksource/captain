@@ -138,11 +138,7 @@ func serveMonitor() *monitor.Monitor {
 }
 
 func captainHostID() string {
-	host, err := os.Hostname()
-	if err != nil || host == "" {
-		return "local"
-	}
-	return host
+	return database.LocalHostID()
 }
 
 // monitorDiscoverProcesses is indirected so cli tests can fake live-process

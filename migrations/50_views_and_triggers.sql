@@ -103,6 +103,8 @@ BEGIN
       NEW.phase,
       NEW.state,
       NEW.current_iteration,
+      NEW.execution_session_id,
+      NEW.rendered_spec,
       NEW.result_text,
       NEW.result_json,
       NEW.error
@@ -110,6 +112,8 @@ BEGIN
       OLD.phase,
       OLD.state,
       OLD.current_iteration,
+      OLD.execution_session_id,
+      OLD.rendered_spec,
       OLD.result_text,
       OLD.result_json,
       OLD.error
@@ -1249,7 +1253,8 @@ SELECT
   COALESCE(plan_stats.plan_count, 0) AS plan_count,
   plan_stats.latest_plan_id,
   plan_stats.latest_plan_approval_state,
-  plan_stats.latest_plan_revision
+  plan_stats.latest_plan_revision,
+  r.execution_session_id
 FROM public.captain_prompt_runs r
 LEFT JOIN LATERAL (
   SELECT

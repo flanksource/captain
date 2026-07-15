@@ -75,4 +75,36 @@ func TestListPromptRunsFiltersAndOrdersDeterministically(t *testing.T) {
 	emptySessionID := uuid.Nil
 	_, err = db.ListPromptRuns(t.Context(), PromptRunFilter{SessionID: &emptySessionID})
 	assert.ErrorIs(t, err, ErrInvalidPromptRun)
+
+	admission, err := db.CreateOrGetSession(t.Context(), CreateSessionInput{
+		ProviderSessionID: "provider-thread-1", Source: "gavel", Provider: "headless-claude", HostID: "test-host",
+	})
+	require.NoError(t, err)
+	execution, err := db.CreateOrGetSession(t.Context(), CreateSessionInput{
+		ProviderSessionID: "provider-thread-1", Source: "claude", Provider: "anthropic", HostID: "test-host",
+	})
+	require.NoError(t, err)
+	linked, err := db.CreatePromptRun(t.Context(), CreatePromptRunInput{SessionID: admission.ID})
+	require.NoError(t, err)
+	linked, err = db.UpdatePromptRun(t.Context(), UpdatePromptRunInput{
+		ID: linked.ID, ExpectedVersion: linked.Version, ExecutionSessionID: &execution.ID,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, linked.ExecutionSessionID)
+	assert.Equal(t, execution.ID, *linked.ExecutionSessionID)
+	version := linked.Version
+	linked, err = db.UpdatePromptRun(t.Context(), UpdatePromptRunInput{
+		ID: linked.ID, ExpectedVersion: linked.Version, ExecutionSessionID: &execution.ID,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, version, linked.Version, "an exact execution-session replay must be idempotent")
+
+	otherExecution, err := db.CreateOrGetSession(t.Context(), CreateSessionInput{
+		ProviderSessionID: "provider-thread-1", Source: "claude", Provider: "anthropic", HostID: "other-host",
+	})
+	require.NoError(t, err)
+	_, err = db.UpdatePromptRun(t.Context(), UpdatePromptRunInput{
+		ID: linked.ID, ExpectedVersion: linked.Version, ExecutionSessionID: &otherExecution.ID,
+	})
+	assert.ErrorIs(t, err, ErrPromptRunConflict)
 }

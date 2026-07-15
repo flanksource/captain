@@ -14,6 +14,10 @@ table "captain_prompt_runs" {
     null = false
     type = uuid
   }
+  column "execution_session_id" {
+    null = true
+    type = uuid
+  }
   column "batch_id" {
     null = true
     type = uuid
@@ -127,6 +131,12 @@ table "captain_prompt_runs" {
     on_update   = NO_ACTION
     on_delete   = CASCADE
   }
+  foreign_key "captain_prompt_runs_execution_session_id_fkey" {
+    columns     = [column.execution_session_id]
+    ref_columns = [table.captain_sessions.column.id]
+    on_update   = NO_ACTION
+    on_delete   = SET_NULL
+  }
   foreign_key "captain_prompt_runs_parent_run_id_fkey" {
     columns     = [column.parent_run_id]
     ref_columns = [table.captain_prompt_runs.column.id]
@@ -164,6 +174,9 @@ table "captain_prompt_runs" {
   }
   index "captain_prompt_runs_batch_id_idx" {
     columns = [column.batch_id]
+  }
+  index "captain_prompt_runs_execution_session_id_idx" {
+    columns = [column.execution_session_id]
   }
   index "captain_prompt_runs_parent_run_id_idx" {
     columns = [column.parent_run_id]

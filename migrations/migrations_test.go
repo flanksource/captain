@@ -40,6 +40,7 @@ func TestSchemaBundleContainsGavelIntegrationContract(t *testing.T) {
 	assertContainsAll(t, "20_prompt_runs_and_plans.pg.hcl",
 		`table "captain_prompt_runs"`,
 		`column "session_id"`,
+		`column "execution_session_id"`,
 		`column "root_session_id"`,
 		`column "phase"`,
 		`column "state"`,
