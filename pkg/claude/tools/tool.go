@@ -287,6 +287,10 @@ func NewTool(base BaseTool) Tool {
 		return &PrLinkTool{BaseTool: base}
 	case "CompactBoundary", "LocalCommand", "ScheduledTaskFire", "Informational":
 		return &ContentEventTool{BaseTool: base}
+	case "ClaudeCommand":
+		return &ClaudeCommandTool{BaseTool: base}
+	case "GoalStatus":
+		return &GoalStatusTool{BaseTool: base}
 	case "WorktreeState":
 		return &WorktreeStateTool{BaseTool: base}
 	case "Relocated":

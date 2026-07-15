@@ -86,6 +86,15 @@ var _ = Describe("semantic muted pretty styles", func() {
 		Entry("command stdout label", func() api.Textable {
 			return (&CodexExecCommandTool{BaseTool: BaseTool{Input: map[string]any{"stdout": "command output"}}}).Detail()
 		}, "stdout: "),
+		Entry("claude command arguments", func() api.Textable {
+			return (&ClaudeCommandTool{BaseTool: BaseTool{Input: map[string]any{"event": "claude_command", "command_args": "argument preview"}}}).Pretty()
+		}, " argument preview"),
+		Entry("claude command output", func() api.Textable {
+			return (&ClaudeCommandTool{BaseTool: BaseTool{Input: map[string]any{"event": "claude_command_output", "stream": "stdout", "content": "output preview"}}}).Pretty()
+		}, " output preview"),
+		Entry("goal condition", func() api.Textable {
+			return (&GoalStatusTool{BaseTool: BaseTool{Input: map[string]any{"condition": "goal condition"}}}).Pretty()
+		}, " goal condition"),
 	)
 })
 

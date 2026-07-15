@@ -365,3 +365,97 @@ func (t *StartedTool) Detail() api.Textable { return t.BaseTool.Detail() }
 func (t *StartedTool) Pretty() api.Text {
 	return eventText(icons.Play, "started", "text-green-600 font-medium")
 }
+
+// ClaudeCommandTool renders a Claude slash-command invocation (claude_command)
+// or its captured output (claude_command_output) as a concise, non-operational
+// event row. The wrapper tags are stripped by the reader; this only formats the
+// preserved fields.
+type ClaudeCommandTool struct{ BaseTool }
+
+func (t *ClaudeCommandTool) Name() string        { return "ClaudeCommand" }
+func (t *ClaudeCommandTool) Category() string    { return "chat" }
+func (t *ClaudeCommandTool) FilePath() string    { return "" }
+func (t *ClaudeCommandTool) ExtractPath() string { return "" }
+
+func (t *ClaudeCommandTool) isOutput() bool {
+	return t.Str("event") == "claude_command_output" || t.Str("stream") != ""
+}
+
+func (t *ClaudeCommandTool) Pretty() api.Text {
+	if t.isOutput() {
+		stream := firstNonEmptyEvent(t.Str("stream"), "stdout")
+		color := "text-slate-500 font-medium"
+		if stream == "stderr" {
+			color = "text-red-500 font-medium"
+		}
+		text := eventText(icons.Terminal, stream, color)
+		if content := t.Str("content"); content != "" {
+			text = text.Append(" "+eventPreview(content, 100), "text-muted")
+		}
+		return text
+	}
+	name := firstNonEmptyEvent(t.Str("command_name"), "command")
+	text := eventText(icons.Terminal, name, "text-indigo-500 font-medium")
+	if args := t.Str("command_args"); args != "" {
+		text = text.Append(" "+eventPreview(args, 100), "text-muted")
+	}
+	return text
+}
+
+func (t *ClaudeCommandTool) Detail() api.Textable {
+	if d := t.BaseTool.Detail(); d != nil {
+		return d
+	}
+	body := t.Str("command_args")
+	if t.isOutput() {
+		body = t.Str("content")
+	}
+	if strings.TrimSpace(body) == "" {
+		return nil
+	}
+	text := clicky.Text("").Append(body, "")
+	return &text
+}
+
+// GoalStatusTool renders a session-scoped Claude goal directive as a concise,
+// non-operational event row.
+type GoalStatusTool struct{ BaseTool }
+
+func (t *GoalStatusTool) Name() string        { return "GoalStatus" }
+func (t *GoalStatusTool) Category() string    { return "chat" }
+func (t *GoalStatusTool) FilePath() string    { return "" }
+func (t *GoalStatusTool) ExtractPath() string { return "" }
+
+func (t *GoalStatusTool) Pretty() api.Text {
+	label, color := "goal active", "text-amber-600 font-medium"
+	if met, _ := t.Input["met"].(bool); met {
+		label, color = "goal met", "text-green-600 font-medium"
+	}
+	text := eventText(icons.Target, label, color)
+	if condition := t.Str("condition"); condition != "" {
+		text = text.Append(" "+eventPreview(condition, 100), "text-muted")
+	}
+	return text
+}
+
+func (t *GoalStatusTool) Detail() api.Textable {
+	if d := t.BaseTool.Detail(); d != nil {
+		return d
+	}
+	condition := strings.TrimSpace(t.Str("condition"))
+	reason := strings.TrimSpace(t.Str("reason"))
+	if condition == "" && reason == "" {
+		return nil
+	}
+	text := clicky.Text("")
+	if condition != "" {
+		text = text.Append("condition: ", "font-bold text-muted").Append(condition, "")
+	}
+	if reason != "" {
+		if condition != "" {
+			text = text.NewLine()
+		}
+		text = text.Append("reason: ", "font-bold text-muted").Append(reason, "")
+	}
+	return &text
+}

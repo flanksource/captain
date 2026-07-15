@@ -69,6 +69,10 @@ func EventToolName(eventType string) string {
 		return "Relocated"
 	case "started":
 		return "Started"
+	case "claude_command", "claude_command_output":
+		return "ClaudeCommand"
+	case "goal_status":
+		return "GoalStatus"
 	default:
 		return "Event"
 	}
@@ -85,7 +89,8 @@ func IsEventToolName(name string) bool {
 		"CollabClose", "QueueOperation", "DeferredToolsDelta",
 		"AgentListingDelta", "MemoryCitation", "SkillListing", "Budget", "PrLink",
 		"CompactBoundary", "LocalCommand", "ScheduledTaskFire",
-		"Informational", "WorktreeState", "Relocated", "Started", "UserShellCommand":
+		"Informational", "WorktreeState", "Relocated", "Started", "UserShellCommand",
+		"ClaudeCommand", "GoalStatus":
 		return true
 	default:
 		return false

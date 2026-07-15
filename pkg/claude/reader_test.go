@@ -321,8 +321,11 @@ func TestReadStreamJSON_PrLinkSurfaced(t *testing.T) {
 // dropped as unhandled.
 func TestReadStreamJSON_ContentSystemSubtypes(t *testing.T) {
 	ResetUnhandledStreamTypes()
+	// A local_command whose content is a recognized command/output wrapper now
+	// surfaces as a structured claude_command(_output) event; only untagged
+	// content falls through to the generic LocalCommand row exercised here.
 	input := `{"type":"system","subtype":"compact_boundary","content":"Conversation compacted","uuid":"c"}
-{"type":"system","subtype":"local_command","content":"<local-command-stdout>ok</local-command-stdout>","uuid":"l"}
+{"type":"system","subtype":"local_command","content":"cleared pending input","uuid":"l"}
 {"type":"system","subtype":"scheduled_task_fire","content":"resuming /loop","uuid":"s"}
 {"type":"system","subtype":"informational","content":"Remote Control disconnected","uuid":"i"}`
 
@@ -332,7 +335,7 @@ func TestReadStreamJSON_ContentSystemSubtypes(t *testing.T) {
 	}
 	wantRows := map[string]string{
 		"CompactBoundary":   "Conversation compacted",
-		"LocalCommand":      "<local-command-stdout>ok</local-command-stdout>",
+		"LocalCommand":      "cleared pending input",
 		"ScheduledTaskFire": "resuming /loop",
 		"Informational":     "Remote Control disconnected",
 	}

@@ -87,6 +87,7 @@ func TestNewTool_DispatchSyntheticTypes(t *testing.T) {
 		"AgentListingDelta", "SkillListing", "Budget", "PrLink",
 		"CompactBoundary", "LocalCommand", "ScheduledTaskFire",
 		"Informational", "WorktreeState", "Relocated", "Started",
+		"ClaudeCommand", "GoalStatus",
 	} {
 		got := NewTool(BaseTool{RawTool: name})
 		assert.Equal(t, name, got.Name(), "expected NewTool to return the right concrete type for %q", name)
