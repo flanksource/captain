@@ -513,7 +513,11 @@ func extractCodexAssistantText(text string, event CodexEvent, cwd, sessionID, re
 			}
 		case assistanttags.SegmentText:
 			use.Tool = "Assistant"
-			use.Input = map[string]any{"text": segment.Text}
+			body := segment.Text
+			if summary, ok := assistanttags.EnvelopeSummary(body); ok {
+				body = summary
+			}
+			use.Input = map[string]any{"text": body}
 		default:
 			continue
 		}

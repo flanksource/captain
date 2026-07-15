@@ -162,6 +162,23 @@ MEMORY.md:1-2|note=[shared parser]
 	}
 }
 
+func TestExtractToolUses_EnvelopeRendersSummary(t *testing.T) {
+	entry := HistoryEntry{
+		Timestamp: "2026-07-08T11:20:00Z",
+		Message: Message{
+			Role:    MessageRoleAssistant,
+			Content: []ContentBlock{{Type: ContentTypeText, Text: `{"endStatus":"completed","plan":{"content":"","path":"/Users/moshe/.codex/plans/x.md","status":"new"},"questions":[],"summary":"Authored the review-banner plan."}`}},
+		},
+	}
+	uses := ExtractToolUses([]HistoryEntry{entry})
+	if len(uses) != 1 || uses[0].Tool != "Assistant" {
+		t.Fatalf("uses = %+v, want single Assistant", uses)
+	}
+	if uses[0].Input["text"] != "Authored the review-banner plan." {
+		t.Fatalf("text = %q, want the plain summary", uses[0].Input["text"])
+	}
+}
+
 func TestExtractToolUses_DetectsDenials(t *testing.T) {
 	denialContent, _ := json.Marshal("The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). To tell you how to proceed, the user said:\nkeep commons/logger")
 

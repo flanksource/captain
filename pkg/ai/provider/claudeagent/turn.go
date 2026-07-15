@@ -8,6 +8,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/provider/jsonrpc"
+	"github.com/flanksource/captain/pkg/api"
 )
 
 // turnState carries the channels a single in-flight turn uses to receive mapped
@@ -25,6 +26,9 @@ type turnState struct {
 
 	ctx        context.Context
 	canUseTool ai.PermissionFunc
+	// planMode marks a plan-only turn: ExitPlanMode is then the terminal signal
+	// and its can_use_tool is answered by the shared policy, never the broker.
+	planMode bool
 }
 
 type promptParams struct {
@@ -50,6 +54,7 @@ func (p *Provider) runTurn(ctx context.Context, req ai.Request, events chan ai.E
 		quit:       make(chan struct{}),
 		ctx:        ctx,
 		canUseTool: p.cfg.CanUseTool,
+		planMode:   req.Permissions.Mode == api.PermissionPlan,
 	}
 	p.setActive(ts)
 	defer func() {
@@ -154,13 +159,26 @@ func (p *Provider) handleCanUseTool(params json.RawMessage) (any, *jsonrpc.RPCEr
 	p.activeMu.Lock()
 	ts := p.active
 	p.activeMu.Unlock()
-	if ts == nil || ts.canUseTool == nil {
+	if ts == nil {
 		return canUseToolResult{Allow: true, UpdatedInput: in.Input}, nil
 	}
 
 	p.sessMu.Lock()
 	sessionID := p.sessionID
 	p.sessMu.Unlock()
+
+	// The plan-mode terminal signal is answered here, never brokered: nothing is
+	// awaiting a human, so no EventPermission is surfaced either. The tool_use
+	// already streamed, so the turn still ends in a plan terminal outcome.
+	if decision, handled := ai.PlanTerminalPermission(ts.planMode, ai.PermissionRequest{
+		Tool: in.Tool, Input: in.Input, ToolUseID: in.ToolUseID, SessionID: sessionID,
+	}); handled {
+		return canUseToolResult{Allow: decision.Allow, Message: decision.Message}, nil
+	}
+
+	if ts.canUseTool == nil {
+		return canUseToolResult{Allow: true, UpdatedInput: in.Input}, nil
+	}
 
 	p.deliver(ts, ai.Event{
 		Kind:       ai.EventPermission,

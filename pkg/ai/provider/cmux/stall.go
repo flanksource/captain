@@ -228,9 +228,11 @@ func (w *stallWatchdog) maybeRequestApproval(ctx context.Context, screen string)
 	if !ok {
 		return
 	}
-	// A plan-only run must return ExitPlanMode to its caller. Accepting this
-	// dialog would start implementation inside the same agent turn.
-	if w.r.planMode && req.Tool == "ExitPlanMode" {
+	// The shared plan-mode policy: a plan-only run must return ExitPlanMode to
+	// its caller — accepting this dialog would start implementation inside the
+	// same agent turn. On this transport the deny is applied by dismissing the
+	// plan surface.
+	if _, handled := ai.PlanTerminalPermission(w.r.planMode, req); handled {
 		if err := w.r.dismissPlanSurface(ctx, w.ref, w.sessionID); err != nil {
 			log.Warnf("cmux: failed to dismiss plan-only approval: %v", err)
 		}

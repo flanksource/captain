@@ -85,3 +85,16 @@ func TestTerminalOutcomeFromEventIgnoresOrdinaryTools(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, outcome)
 }
+
+func TestPlanTerminalPermission(t *testing.T) {
+	decision, handled := PlanTerminalPermission(true, PermissionRequest{Tool: "ExitPlanMode", Input: map[string]any{"plan": "1. do it"}})
+	require.True(t, handled, "ExitPlanMode in plan mode is the terminal signal, not a brokered approval")
+	assert.False(t, decision.Allow)
+	assert.NotEmpty(t, decision.Message)
+
+	_, handled = PlanTerminalPermission(false, PermissionRequest{Tool: "ExitPlanMode"})
+	assert.False(t, handled, "outside plan mode ExitPlanMode brokers normally")
+
+	_, handled = PlanTerminalPermission(true, PermissionRequest{Tool: "AskUserQuestion"})
+	assert.False(t, handled, "AskUserQuestion keeps its interactive broker round-trip")
+}

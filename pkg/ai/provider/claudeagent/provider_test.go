@@ -107,6 +107,18 @@ func runFakeServer() {
 				enc(map[string]any{"jsonrpc": "2.0", "id": "perm-1", "method": "can_use_tool", "params": map[string]any{
 					"tool": "Bash", "input": map[string]any{"command": "ls"}, "tool_use_id": "tu1",
 				}})
+			case "plan-approval":
+				// A plan-mode turn ending in ExitPlanMode: the tool_use streams first
+				// (the SDK yields the assistant message before executing the tool),
+				// then the permission check; the turn completes when the host replies.
+				enc(map[string]any{"jsonrpc": "2.0", "method": "message/tool_use", "params": map[string]any{
+					"tool": "ExitPlanMode", "id": "tu-plan",
+					"input": map[string]any{"plan": "1. change the seam", "planFilePath": "/repo/.claude/plans/x.md"},
+				}})
+				enc(map[string]any{"jsonrpc": "2.0", "id": "perm-plan", "method": "can_use_tool", "params": map[string]any{
+					"tool": "ExitPlanMode", "tool_use_id": "tu-plan",
+					"input": map[string]any{"plan": "1. change the seam", "planFilePath": "/repo/.claude/plans/x.md"},
+				}})
 			case "hang":
 				// Emit nothing more; wait for the interrupt control request.
 			case "structured":
@@ -383,6 +395,62 @@ func TestProvider_CanUseTool(t *testing.T) {
 	resultText, _ := result.Input["result"].(string)
 	assert.Contains(t, resultText, `"allow":true`)
 	assert.Contains(t, resultText, "ls -la")
+}
+
+// TestProvider_PlanModeExitPlanModeAutoDenied verifies the shared plan-mode
+// terminal policy: in a plan-only run the ExitPlanMode can_use_tool is answered
+// by the provider itself (deny + guidance) — the host broker is never invoked,
+// no EventPermission is surfaced, and the already-streamed tool_use still
+// yields the plan terminal outcome.
+func TestProvider_PlanModeExitPlanModeAutoDenied(t *testing.T) {
+	withFakeAgentProcessEnv(t, map[string]string{fakeServerEnv: "1", fakeModeEnv: "plan-approval"})
+
+	canUseTool := func(_ context.Context, r ai.PermissionRequest) (ai.PermissionDecision, error) {
+		t.Errorf("CanUseTool must not be invoked for ExitPlanMode in plan mode, got %s", r.Tool)
+		return ai.PermissionDecision{Allow: true}, nil
+	}
+
+	p, err := New(ai.Config{Model: api.Model{Name: "claude-sonnet-5"}, CanUseTool: canUseTool})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = p.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	events, err := p.ExecuteStream(ctx, ai.Request{
+		Prompt:      api.Prompt{User: "plan it"},
+		Permissions: api.Permissions{Mode: api.PermissionPlan},
+	})
+	require.NoError(t, err)
+
+	var outcome *ai.TerminalOutcome
+	var result *ai.Event
+	for ev := range events {
+		switch ev.Kind {
+		case ai.EventPermission:
+			t.Errorf("plan-terminal ExitPlanMode must not surface an EventPermission, got %s", ev.Tool)
+		case ai.EventToolUse:
+			parsed, perr := ai.TerminalOutcomeFromEvent(ev)
+			require.NoError(t, perr)
+			if parsed != nil {
+				outcome = parsed
+			}
+		case ai.EventResult:
+			cp := ev
+			result = &cp
+		}
+	}
+
+	// The streamed tool_use still derives the plan terminal outcome.
+	require.NotNil(t, outcome, "expected the ExitPlanMode tool_use to stream")
+	assert.Equal(t, ai.TerminalOutcomePlan, outcome.Kind)
+	assert.Equal(t, "/repo/.claude/plans/x.md", outcome.Plan.Path)
+
+	// The provider answered the can_use_tool itself with the deny + guidance.
+	require.NotNil(t, result, "expected a terminal result event")
+	resultText, _ := result.Input["result"].(string)
+	assert.Contains(t, resultText, `"allow":false`)
+	assert.Contains(t, resultText, "Plan captured for human review")
 }
 
 // TestProvider_InterruptNoKill verifies a cancelled turn is ended by the
