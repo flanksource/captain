@@ -18,6 +18,28 @@ func TestSessionGetMulti(t *testing.T) {
 }
 
 var _ = Describe("session get multi-result output", func() {
+	It("projects overview runtime data into the unified session detail", func() {
+		detail := &session.Session{Turns: []session.Turn{{ID: "turn-1", Index: 1}}}
+		summary := SessionRecord{
+			Backend:         "codex-cmux",
+			ReasoningEffort: "high",
+			Live: &SessionLiveWire{
+				PID: 4821, Status: "running", Active: true, CWD: "/repo", Command: "codex",
+			},
+		}
+
+		enrichSessionDetail(detail, summary)
+
+		Expect(detail.Backend).To(Equal("codex-cmux"))
+		Expect(detail.ReasoningEffort).To(Equal("high"))
+		Expect(detail.Live).To(Equal(&session.LiveProcess{
+			PID: 4821, Status: "running", Active: true, CWD: "/repo", Command: "codex",
+		}))
+		Expect(detail.Turns).To(Equal([]session.Turn{{
+			ID: "turn-1", Index: 1, Backend: "codex-cmux", ReasoningEffort: "high",
+		}}))
+	})
+
 	It("uses targeted identity lookup for UUID-prefix list searches", func() {
 		providerID := "ad4c854e-cde6-4b99-99f3-667bf74112e3"
 		store := &sessionGetOverviewStore{

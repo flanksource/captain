@@ -1,4 +1,8 @@
-import type { SessionUIMessage } from "@flanksource/clicky-ui/ai";
+import type {
+  SessionCost,
+  SessionUIMessage,
+  UnifiedSessionInput,
+} from "@flanksource/clicky-ui/ai";
 import { apiClient } from "./api";
 import { parseServerTiming, type TimingMetric } from "./serverTiming";
 
@@ -30,6 +34,7 @@ export type SessionRecord = {
   version?: string;
   gitBranch?: string;
   provider?: string;
+  backend?: string;
   cwd?: string;
   toolCalls: number;
   messages: number;
@@ -41,147 +46,12 @@ export type SessionRecord = {
   health?: SessionHealth[];
 };
 
-// UnifiedSession is captain's canonical parsed session detail. Session get
-// returns it inside a SessionGetItem when a transcript is available.
-export type UnifiedGit = { branch?: string; commit?: string; worktree?: string; diff?: string };
-
-export type UnifiedUsage = {
-  inputTokens?: number;
-  outputTokens?: number;
-  reasoningTokens?: number;
-  cacheReadTokens?: number;
-  cacheWriteTokens?: number;
-  totalTokens?: number;
-};
-
-export type UnifiedCost = {
-  model?: string;
-  inputTokens?: number;
-  outputTokens?: number;
-  reasoningTokens?: number;
-  cacheReadTokens?: number;
-  cacheWriteTokens?: number;
-  totalTokens?: number;
-  inputCost?: number;
-  outputCost?: number;
-  reasoningCost?: number;
-  cacheReadCost?: number;
-  cacheWriteCost?: number;
-};
-
-export type UnifiedAgent = {
-  id?: string;
-  parentId?: string;
-  type?: string;
-  desc?: string;
-  isRoot?: boolean;
-  historyFile?: string;
-  children?: UnifiedAgent[];
-  usage?: UnifiedUsage;
-  cost?: UnifiedCost;
-};
-
-export type UnifiedChangedFiles = {
-  read?: string[];
-  written?: string[];
-};
-
-export type UnifiedPlanEvent = {
-  kind: string;
-  timestamp?: string;
-  reason?: string;
-};
-
-export type UnifiedPlan = {
-  path?: string;
-  slug?: string;
-  content?: string;
-  explicit?: boolean;
-  events?: UnifiedPlanEvent[];
-};
-
-export type UnifiedDenial = {
-  toolUseId?: string;
-  tool?: string;
-  reason?: string;
-};
-
-export type UnifiedApprovalStats = {
-  approved?: number;
-  denied?: number;
-  denials?: UnifiedDenial[];
-};
-
-export type UnifiedBudget = {
-  used?: number;
-  total?: number;
-  remaining?: number;
-  updatedAt?: string;
-};
-
-export type UnifiedCapabilities = {
-  tools?: string[];
-  pendingMcpServers?: string[];
-  agents?: string[];
-  skills?: string[];
-};
-
-export type UnifiedMetadataEvent = {
-  type: string;
-  scope?: string;
-  turnId?: string;
-  timestamp?: string;
-  uuid?: string;
-  data?: Record<string, unknown>;
-};
-
-export type UnifiedTurn = {
-  id: string;
-  index: number;
-  startedAt?: string;
-  endedAt?: string;
-  stopReason?: string;
-  model?: string;
-  messageIds?: string[];
-  usage?: Record<string, unknown>;
-  cost?: Record<string, unknown>;
-  context?: SessionContext;
-  budget?: UnifiedBudget;
-  events?: UnifiedMetadataEvent[];
-};
-
-export type UnifiedSession = {
+export type UnifiedCost = SessionCost;
+export type UnifiedSession = UnifiedSessionInput & {
   id: string;
   source: "claude" | "codex";
-  project?: string;
-  cwd?: string;
-  slug?: string;
   title?: string;
   initialPrompt?: string;
-  version?: string;
-  provider?: string;
-  model?: string;
-  historyFile?: string;
-  git?: UnifiedGit;
-  startedAt?: string;
-  endedAt?: string;
-  usage?: UnifiedUsage;
-  cost?: UnifiedCost;
-  toolCosts?: UnifiedCost[];
-  context?: SessionContext;
-  budget?: UnifiedBudget;
-  capabilities?: UnifiedCapabilities;
-  events?: UnifiedMetadataEvent[];
-  turns?: UnifiedTurn[];
-  root?: UnifiedAgent;
-  agents?: UnifiedAgent[];
-  files?: UnifiedChangedFiles;
-  plan?: UnifiedPlan;
-  approvals?: UnifiedApprovalStats;
-  health?: SessionHealth[];
-  live?: SessionLive;
-  messages?: SessionUIMessage[];
-  prompt?: unknown;
 };
 
 export type SessionGetItem = {

@@ -27,16 +27,12 @@ import {
   fetchSession,
   formatCompactNumber,
   formatCost,
-  sessionCostTotal,
-  sessionToolCount,
-  unifiedSessionTitle,
   type SessionDashboard,
   type SessionGetItem,
   type SessionGetResult,
   type SessionRecord,
   type ProjectScope,
   type SourceFilter,
-  type UnifiedSession,
 } from "./sessionData";
 
 type Navigate = (to: string, opts?: { replace?: boolean }) => void;
@@ -104,7 +100,6 @@ function SessionDetailPage({
       actions={actions}
       bodyHeader={
         <SessionHeader
-          session={detailQuery.data?.sessions.find((item) => item.detail)?.detail}
           timing={detailQuery.data?.timing}
           loading={detailQuery.isLoading}
         />
@@ -272,55 +267,19 @@ function SessionList({
 }
 
 function SessionHeader({
-  session,
   timing,
   loading,
 }: {
-  session?: UnifiedSession;
   timing?: TimingMetric[];
   loading: boolean;
 }) {
-  if (loading && !session) {
+  if (loading) {
     return <div className="text-sm text-muted-foreground">Loading session...</div>;
   }
-  if (!session) {
-    return (
-      <div>
-        <div className="text-sm font-semibold">Session Browser</div>
-        <div className="text-xs text-muted-foreground">Select a session to inspect activity.</div>
-      </div>
-    );
-  }
   return (
-    <div className="min-w-0">
-      <div className="flex min-w-0 flex-wrap items-center gap-density-2">
-        <div className="truncate text-sm font-semibold">{unifiedSessionTitle(session)}</div>
-        <span className="rounded border border-border px-1.5 py-0.5 text-[11px] uppercase text-muted-foreground">
-          {session.source}
-        </span>
-        {session.live && (
-          <span className="rounded border border-border px-1.5 py-0.5 text-[11px] uppercase text-muted-foreground">
-            {session.live.status || "live"}
-          </span>
-        )}
-        <TimingBadge metrics={timing} />
-      </div>
-      <div className="mt-1 flex min-w-0 flex-wrap gap-x-density-3 gap-y-1 text-xs text-muted-foreground">
-        {session.model && <span>{session.model}</span>}
-        <span>{sessionToolCount(session.messages)} actions</span>
-        <span>{session.messages?.length ?? 0} messages</span>
-        {session.turns?.length ? <span>{session.turns.length} turns</span> : null}
-        {session.agents?.length ? <span>{session.agents.length} agents</span> : null}
-        {session.files ? <span>{fileCountLabel(session.files)}</span> : null}
-        {session.approvals ? <span>{approvalCountLabel(session.approvals)}</span> : null}
-        {sessionCostTotal(session.cost) ? <span>{formatCost(sessionCostTotal(session.cost))}</span> : null}
-        {session.provider && <span>{session.provider}</span>}
-        {session.version && <span>{session.version}</span>}
-        {session.git?.branch && <span>{session.git.branch}</span>}
-        {session.live?.pid && <span>pid={session.live.pid}</span>}
-        {session.historyFile && <span className="max-w-full truncate">{session.historyFile}</span>}
-        {session.cwd && <span className="max-w-full truncate">{session.cwd}</span>}
-      </div>
+    <div className="flex items-center gap-density-2">
+      <div className="text-sm font-semibold">Session</div>
+      <TimingBadge metrics={timing} />
     </div>
   );
 }
@@ -367,16 +326,18 @@ function SessionDetail({
 function SessionGetItemDetail({ item, single }: { item: SessionGetItem; single: boolean }) {
   return (
     <section className={single ? "flex h-full min-h-0 flex-col" : "border-b border-border"}>
-      <div className="shrink-0 border-b border-border px-density-4 py-density-3 text-xs">
-        <div className="font-mono font-semibold text-foreground">{item.captainId}</div>
-        <div className="mt-1 flex flex-wrap gap-x-density-3 gap-y-1 text-muted-foreground">
-          <span>{item.summary.source}</span>
-          {item.providerSessionId && <span>provider={item.providerSessionId}</span>}
-          {item.host && <span>host={item.host}</span>}
-          {item.summary.project && <span>project={item.summary.project}</span>}
-          {item.summary.cwd && <span className="max-w-full truncate">{item.summary.cwd}</span>}
+      {!single ? (
+        <div className="shrink-0 border-b border-border px-density-4 py-density-3 text-xs">
+          <div className="font-mono font-semibold text-foreground">{item.captainId}</div>
+          <div className="mt-1 flex flex-wrap gap-x-density-3 gap-y-1 text-muted-foreground">
+            <span>{item.summary.source}</span>
+            {item.providerSessionId && <span>provider={item.providerSessionId}</span>}
+            {item.host && <span>host={item.host}</span>}
+            {item.summary.project && <span>project={item.summary.project}</span>}
+            {item.summary.cwd && <span className="max-w-full truncate">{item.summary.cwd}</span>}
+          </div>
         </div>
-      </div>
+      ) : null}
       {item.detail ? (
         <div className={single ? "min-h-0 flex-1" : "h-[70vh] min-h-[32rem]"}>
           <SessionInspector session={item.detail} transcriptProps={{ defaultExpanded: false }} />
@@ -386,24 +347,6 @@ function SessionGetItemDetail({ item, single }: { item: SessionGetItem; single: 
       )}
     </section>
   );
-}
-
-function fileCountLabel(files: NonNullable<UnifiedSession["files"]>) {
-  const read = files.read?.length ?? 0;
-  const written = files.written?.length ?? 0;
-  if (read && written) return `${read} read / ${written} written`;
-  if (read) return `${read} read`;
-  if (written) return `${written} written`;
-  return "0 files";
-}
-
-function approvalCountLabel(approvals: NonNullable<UnifiedSession["approvals"]>) {
-  const approved = approvals.approved ?? 0;
-  const denied = approvals.denied ?? 0;
-  if (approved && denied) return `${approved} approved / ${denied} denied`;
-  if (approved) return `${approved} approved`;
-  if (denied) return `${denied} denied`;
-  return "0 approvals";
 }
 
 function SessionSummary({

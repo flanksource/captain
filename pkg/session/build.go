@@ -34,7 +34,7 @@ func buildSession(ps claude.ParsedSession) *Session {
 		allEntries = append(allEntries, t.Entries...)
 		allToolUses = append(allToolUses, t.ToolUses...)
 	}
-	meta := buildSessionMetadata("claude", allEntries)
+	meta := buildTranscriptMetadata(ps)
 	h := buildHierarchy(ps, meta.turnByEntry)
 
 	s := &Session{

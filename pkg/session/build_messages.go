@@ -136,7 +136,11 @@ func partsFromEntry(e claude.HistoryEntry) []Part {
 				for _, segment := range assistanttags.Parse(b.Text) {
 					switch segment.Kind {
 					case assistanttags.SegmentText:
-						parts = append(parts, Part{Type: PartText, Text: segment.Text})
+						body := segment.Text
+						if summary, ok := assistanttags.EnvelopeSummary(body); ok {
+							body = summary
+						}
+						parts = append(parts, Part{Type: PartText, Text: body})
 					case assistanttags.SegmentPlan:
 						parts = append(parts, Part{
 							Type:       PartTool,

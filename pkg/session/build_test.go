@@ -240,6 +240,29 @@ MEMORY.md:10-12|note=[shared parser]
 	}
 }
 
+func TestBuildSession_EnvelopeRendersSummary(t *testing.T) {
+	entry := assistantEntry("env-1", "", "claude-opus-4", nil,
+		claude.ContentBlock{Type: claude.ContentTypeText, Text: `{"endStatus":"completed","plan":{"content":"","path":"/Users/moshe/.codex/plans/x.md","status":"new"},"questions":[],"summary":"Authored the review-banner plan."}`},
+	)
+	uses := claude.ExtractToolUses([]claude.HistoryEntry{entry})
+	s := buildSession(claude.ParsedSession{
+		SessionID: "root-sess",
+		Transcripts: []claude.ParsedTranscript{{
+			Path:     "/p/root-sess.jsonl",
+			Entries:  []claude.HistoryEntry{entry},
+			ToolUses: uses,
+		}},
+	})
+
+	if len(s.Messages) != 1 || len(s.Messages[0].Parts) != 1 {
+		t.Fatalf("messages = %+v", s.Messages)
+	}
+	part := s.Messages[0].Parts[0]
+	if part.Type != PartText || part.Text != "Authored the review-banner plan." {
+		t.Fatalf("part = %+v, want plain summary text", part)
+	}
+}
+
 func TestBuildSession_MetadataTurnsCapabilitiesBudget(t *testing.T) {
 	entries := []claude.HistoryEntry{
 		{
@@ -381,6 +404,41 @@ func TestBuildSession_MetadataTurnsCapabilitiesBudget(t *testing.T) {
 				t.Errorf("message %s turnId = %q, want %q", msg.ID, msg.TurnID, turn.ID)
 			}
 		}
+	}
+}
+
+func TestBuildSessionKeepsConcurrentAgentTurnsSeparate(t *testing.T) {
+	rootEntries := []claude.HistoryEntry{
+		claudeTurnEntry("root-user", "2026-07-14T12:00:00Z", claude.MessageRoleUser, ""),
+		claudeTurnEntry("root-assistant", "2026-07-14T12:00:05Z", claude.MessageRoleAssistant, claude.StopReasonEndTurn),
+	}
+	agentEntries := []claude.HistoryEntry{
+		claudeTurnEntry("agent-user", "2026-07-14T12:00:01Z", claude.MessageRoleUser, ""),
+		claudeTurnEntry("agent-assistant", "2026-07-14T12:00:04Z", claude.MessageRoleAssistant, claude.StopReasonEndTurn),
+	}
+	s := buildSession(claude.ParsedSession{
+		SessionID: "root-sess",
+		Transcripts: []claude.ParsedTranscript{
+			{Path: "/p/root-sess.jsonl", Entries: rootEntries},
+			{Path: "/p/root-sess/subagents/agent-child.jsonl", IsAgent: true, AgentID: "child", Entries: agentEntries},
+		},
+	})
+
+	if len(s.Turns) != 2 {
+		t.Fatalf("turns = %+v, want independent root and child turns", s.Turns)
+	}
+	if s.Turns[0].AgentID != "root-sess" || s.Turns[0].ID != "root-sess/turn-1" {
+		t.Fatalf("first turn = %+v, want namespaced root turn", s.Turns[0])
+	}
+	if s.Turns[1].AgentID != "child" || s.Turns[1].ID != "child/turn-1" {
+		t.Fatalf("second turn = %+v, want namespaced child turn", s.Turns[1])
+	}
+	turnByMessage := map[string]string{}
+	for _, message := range s.Messages {
+		turnByMessage[message.ID] = message.TurnID
+	}
+	if turnByMessage["root-assistant"] != "root-sess/turn-1" || turnByMessage["agent-assistant"] != "child/turn-1" {
+		t.Fatalf("message turns = %+v", turnByMessage)
 	}
 }
 

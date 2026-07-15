@@ -60,12 +60,43 @@ func RunSessionGet(ctx context.Context, opts SessionGetOptions) (SessionGetResul
 				return SessionGetResult{}, fmt.Errorf("parse Captain session %s: %w", overview.ID, buildErr)
 			}
 			attachPromptRun(ctx, db, overview.ID, detail)
+			enrichSessionDetail(detail, item.Summary)
 			pageSessionMessages(detail, opts)
 			item.Detail = detail
 		}
 		items = append(items, item)
 	}
 	return SessionGetResult{Sessions: items, Total: len(items)}, nil
+}
+
+func enrichSessionDetail(detail *session.Session, summary SessionRecord) {
+	if detail.Provider == "" {
+		detail.Provider = summary.Provider
+	}
+	if detail.Model == "" {
+		detail.Model = summary.Model
+	}
+	if detail.Backend == "" {
+		detail.Backend = summary.Backend
+	}
+	if detail.ReasoningEffort == "" {
+		detail.ReasoningEffort = summary.ReasoningEffort
+	}
+	if summary.Live != nil {
+		detail.Live = &session.LiveProcess{
+			PID: summary.Live.PID, Status: summary.Live.Status, Active: summary.Live.Active,
+			CPUPercent: summary.Live.CPUPercent, MemoryPercent: summary.Live.MemoryPercent,
+			StartedAt: summary.Live.StartedAt, CWD: summary.Live.CWD, Command: summary.Live.Command,
+		}
+	}
+	for i := range detail.Turns {
+		if detail.Turns[i].Backend == "" {
+			detail.Turns[i].Backend = summary.Backend
+		}
+		if detail.Turns[i].ReasoningEffort == "" {
+			detail.Turns[i].ReasoningEffort = summary.ReasoningEffort
+		}
+	}
 }
 
 func (r SessionGetResult) Pretty() clickyapi.Text {

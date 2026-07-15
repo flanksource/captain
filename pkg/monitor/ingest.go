@@ -16,7 +16,7 @@ import (
 
 // parserVersion invalidates every ingested transcript when the parsing or
 // mapping logic changes shape.
-const parserVersion = 2
+const parserVersion = 3
 
 // ingestor turns changed transcript files into native database rows, skipping
 // files whose recorded mtime/size/parser version still match the disk state.
@@ -155,7 +155,6 @@ func (ing *ingestor) claudeIngestInput(ctx context.Context, path string) (databa
 		input.Session.AgentType = info.AgentType
 		input.Session.Description = info.AgentDesc
 		input.Session.Path = path
-		input.Turns = nil // turns belong to the root session
 	} else {
 		input.Session.ProviderSessionID = info.RootSessionID
 	}

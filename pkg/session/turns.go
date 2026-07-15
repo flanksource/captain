@@ -23,6 +23,83 @@ type sessionMetadataBuild struct {
 	turnByEntry  map[string]string
 }
 
+func buildTranscriptMetadata(parsed claude.ParsedSession) sessionMetadataBuild {
+	combined := sessionMetadataBuild{turnByEntry: map[string]string{}}
+	for _, transcript := range parsed.Transcripts {
+		agentID := parsed.SessionID
+		if transcript.IsAgent {
+			agentID = transcript.AgentID
+		}
+		current := buildSessionMetadata("claude", transcript.Entries)
+		namespaceTurns(&current, agentID)
+		combined.events = append(combined.events, current.events...)
+		combined.turns = append(combined.turns, current.turns...)
+		for entryID, turnID := range current.turnByEntry {
+			combined.turnByEntry[entryID] = turnID
+		}
+		combined.capabilities.Tools = append(combined.capabilities.Tools, current.capabilities.Tools...)
+		combined.capabilities.PendingMCPServers = append(combined.capabilities.PendingMCPServers, current.capabilities.PendingMCPServers...)
+		combined.capabilities.Agents = append(combined.capabilities.Agents, current.capabilities.Agents...)
+		combined.capabilities.Skills = append(combined.capabilities.Skills, current.capabilities.Skills...)
+		if current.budget != nil && (combined.budget == nil || budgetIsLater(current.budget, combined.budget)) {
+			combined.budget = current.budget
+		}
+	}
+	sort.SliceStable(combined.turns, func(i, j int) bool {
+		left, right := combined.turns[i], combined.turns[j]
+		if left.StartedAt != nil && right.StartedAt != nil && !left.StartedAt.Equal(*right.StartedAt) {
+			return left.StartedAt.Before(*right.StartedAt)
+		}
+		if left.StartedAt != nil && right.StartedAt == nil {
+			return true
+		}
+		if left.StartedAt == nil && right.StartedAt != nil {
+			return false
+		}
+		if left.AgentID != right.AgentID {
+			return left.AgentID < right.AgentID
+		}
+		return left.Index < right.Index
+	})
+	combined.capabilities.Tools = sortedStrings(combined.capabilities.Tools)
+	combined.capabilities.PendingMCPServers = sortedStrings(combined.capabilities.PendingMCPServers)
+	combined.capabilities.Agents = sortedStrings(combined.capabilities.Agents)
+	combined.capabilities.Skills = sortedStrings(combined.capabilities.Skills)
+	return combined
+}
+
+func namespaceTurns(metadata *sessionMetadataBuild, agentID string) {
+	if metadata == nil {
+		return
+	}
+	namespaced := map[string]string{}
+	for index := range metadata.turns {
+		turn := &metadata.turns[index]
+		previous := turn.ID
+		turn.AgentID = agentID
+		turn.ID = agentID + "/" + previous
+		namespaced[previous] = turn.ID
+		for eventIndex := range turn.Events {
+			turn.Events[eventIndex].TurnID = turn.ID
+		}
+	}
+	for index := range metadata.events {
+		if turnID, ok := namespaced[metadata.events[index].TurnID]; ok {
+			metadata.events[index].TurnID = turnID
+		}
+	}
+	for entryID, turnID := range metadata.turnByEntry {
+		metadata.turnByEntry[entryID] = namespaced[turnID]
+	}
+}
+
+func budgetIsLater(candidate, current *Budget) bool {
+	if candidate == nil || candidate.UpdatedAt == nil {
+		return false
+	}
+	return current == nil || current.UpdatedAt == nil || candidate.UpdatedAt.After(*current.UpdatedAt)
+}
+
 func buildSessionMetadata(source string, entries []claude.HistoryEntry) sessionMetadataBuild {
 	b := sessionMetadataBuild{turnByEntry: map[string]string{}}
 	var current *Turn
