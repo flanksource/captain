@@ -6,9 +6,9 @@ import (
 	"testing"
 
 	"github.com/flanksource/captain/pkg/claude/tools"
-	"github.com/segmentio/encoding/json"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/segmentio/encoding/json"
 )
 
 func TestClaudeCommandParsing(t *testing.T) {
