@@ -3,7 +3,6 @@ package database
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/google/uuid"
 )
@@ -59,32 +58,16 @@ func (db *DB) CreateSessionTree(ctx context.Context, input CreateSessionTreeInpu
 }
 
 func (db *DB) UpdateSessionLifecycle(ctx context.Context, id uuid.UUID, lifecycle SessionLifecycleStatus, reason string) (*Session, error) {
-	if lifecycle != SessionLifecyclePartial && !validSessionLifecycle(lifecycle) {
+	if !validSessionLifecycle(lifecycle) {
 		return nil, fmt.Errorf("%w: unknown lifecycle status %q", ErrInvalidSession, lifecycle)
 	}
 	session, err := db.GetSession(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	if lifecycle != SessionLifecyclePartial {
-		activity := SessionActivityIdle
-		return db.UpdateSessionState(ctx, UpdateSessionStateInput{
-			ID: id, ExpectedVersion: session.StateVersion, LifecycleStatus: &lifecycle,
-			ActivityState: &activity, StateReason: &reason,
-		})
-	}
-	updates := map[string]any{
-		"lifecycle_status": lifecycle,
-		"activity_state":   SessionActivityIdle,
-		"state_reason":     nullableTrimmed(strings.TrimSpace(reason)),
-	}
-	result := db.gorm.WithContext(ctx).Model(&sessionRecord{}).
-		Where("id = ? AND state_version = ?", id, session.StateVersion).Updates(updates)
-	if result.Error != nil {
-		return nil, fmt.Errorf("update Captain batch lifecycle: %w", result.Error)
-	}
-	if result.RowsAffected != 1 {
-		return nil, fmt.Errorf("%w: session %s lifecycle changed concurrently", ErrSessionConflict, id)
-	}
-	return db.GetSession(ctx, id)
+	activity := SessionActivityIdle
+	return db.UpdateSessionState(ctx, UpdateSessionStateInput{
+		ID: id, ExpectedVersion: session.StateVersion, LifecycleStatus: &lifecycle,
+		ActivityState: &activity, StateReason: &reason,
+	})
 }

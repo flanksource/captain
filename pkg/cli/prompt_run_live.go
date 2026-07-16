@@ -12,7 +12,7 @@ import (
 	"github.com/flanksource/clicky/task"
 )
 
-func runPromptStream(t *task.Task, rendered PromptRenderResult, timeout time.Duration, runID string, stream *runStream) (PromptRunSummary, error) {
+func runPromptStream(t *task.Task, rendered PromptRenderResult, timeout time.Duration, runID string, stream *runStream, binding *promptSessionBinding) (PromptRunSummary, error) {
 	ctx, cancel := runContext(t.Context(), rendered.Input, timeout)
 	stream.setCancel(cancel)
 	defer cancel()
@@ -67,16 +67,20 @@ func runPromptStream(t *task.Task, rendered PromptRenderResult, timeout time.Dur
 	}
 	passed := verifyPassed(runResult.Verdicts)
 	record := promptRunRecordInput{
-		Rendered: rendered, RunID: runID, SessionID: session,
+		Rendered: rendered, RunID: runID, Binding: binding, SessionID: session,
 		Model: acc.model, Backend: rendered.Backend,
 	}
 	if !passed {
 		record.Error = verifyReason(runResult.Verdicts)
 	}
 	persistPromptRun(context.WithoutCancel(ctx), record)
+	summarySessionID := session
+	if binding != nil {
+		summarySessionID = binding.SessionID.String()
+	}
 	summary := PromptRunSummary{
 		RunID:        runID,
-		SessionID:    session,
+		SessionID:    summarySessionID,
 		Model:        acc.model,
 		Backend:      rendered.Backend,
 		InputTokens:  acc.usage.InputTokens,

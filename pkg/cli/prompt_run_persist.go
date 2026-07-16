@@ -15,6 +15,7 @@ import (
 type promptRunRecordInput struct {
 	Rendered   PromptRenderResult
 	RunID      string
+	Binding    *promptSessionBinding
 	SessionID  string
 	Model      string
 	Backend    string
@@ -27,7 +28,7 @@ type promptRunRecordInput struct {
 // native store and registers the transcript for live tailing. Persistence
 // failures are reported loudly but never fail the completed run itself.
 func persistPromptRun(ctx context.Context, input promptRunRecordInput) {
-	if strings.TrimSpace(input.SessionID) == "" {
+	if input.Binding == nil && strings.TrimSpace(input.SessionID) == "" {
 		return
 	}
 	source := backendSource(api.Backend(input.Backend))
@@ -39,51 +40,82 @@ func persistPromptRun(ctx context.Context, input promptRunRecordInput) {
 		log.Errorf("persist prompt run for session %s: %v", input.SessionID, err)
 		return
 	}
-	session, err := db.CreateOrGetSession(ctx, database.CreateSessionInput{
-		ProviderSessionID: input.SessionID, Source: source, HostID: captainHostID(),
-		Provider: ai.BackendToProvider(api.Backend(input.Backend)), CWD: input.Rendered.Input.Cwd(),
-	})
+	var session *database.Session
+	if input.Binding != nil {
+		session, err = db.GetSession(ctx, input.Binding.SessionID)
+		if err == nil && strings.TrimSpace(input.SessionID) != "" {
+			providerSessionID := strings.TrimSpace(input.SessionID)
+			session, err = db.UpdateSessionState(ctx, database.UpdateSessionStateInput{
+				ID: session.ID, ExpectedVersion: session.StateVersion, ProviderSessionID: &providerSessionID,
+			})
+		}
+	} else {
+		session, err = db.CreateOrGetSession(ctx, database.CreateSessionInput{
+			ProviderSessionID: input.SessionID, Source: source, HostID: captainHostID(),
+			Provider: ai.BackendToProvider(api.Backend(input.Backend)), CWD: input.Rendered.Input.Cwd(),
+		})
+	}
 	if err != nil {
-		log.Errorf("persist prompt run for session %s: %v", input.SessionID, err)
+		log.Errorf("persist prompt run for session %s: %v", firstNonEmpty(input.SessionID, bindingSessionID(input.Binding)), err)
 		return
 	}
-	run, err := db.CreatePromptRun(ctx, database.CreatePromptRunInput{
-		SessionID:    session.ID,
-		BatchID:      input.BatchID,
-		Origin:       "captain",
-		AdmissionKey: input.RunID,
-		RenderedSpec: renderedSpecMap(input.Rendered),
-		Runtime: database.PromptRunRuntime{
-			Mode: "run",
-			Resolved: database.PromptRunRuntimeSelection{
-				Provider: ai.BackendToProvider(api.Backend(input.Backend)), Backend: input.Backend,
-				Model: input.Model, Effort: string(input.Rendered.Config.Model.Effort),
+	batchID := input.BatchID
+	if input.Binding != nil {
+		batchID = &input.Binding.BatchID
+	}
+	err = db.Transaction(ctx, func(tx *database.DB) error {
+		run, createErr := tx.CreatePromptRun(ctx, database.CreatePromptRunInput{
+			SessionID:    session.ID,
+			BatchID:      batchID,
+			Origin:       "captain",
+			AdmissionKey: input.RunID,
+			RenderedSpec: renderedSpecMap(input.Rendered),
+			Runtime: database.PromptRunRuntime{
+				Mode: "run",
+				Resolved: database.PromptRunRuntimeSelection{
+					Provider: ai.BackendToProvider(api.Backend(input.Backend)), Backend: input.Backend,
+					Model: input.Model, Effort: string(input.Rendered.Config.Model.Effort),
+				},
 			},
-		},
-		PromptMarkdown: input.Rendered.Input.Prompt.User,
+			PromptMarkdown: input.Rendered.Input.Prompt.User,
+		})
+		if createErr != nil {
+			return createErr
+		}
+		finished := database.PromptRunPhaseFinished
+		state := database.PromptRunStateSucceeded
+		if input.Error != "" {
+			state = database.PromptRunStateFailed
+		}
+		update := database.UpdatePromptRunInput{
+			ID: run.ID, ExpectedVersion: run.Version, Phase: &finished, State: &state,
+		}
+		if input.ResultText != "" {
+			update.ResultText = &input.ResultText
+		}
+		if input.Error != "" {
+			update.Error = &input.Error
+		}
+		_, updateErr := tx.UpdatePromptRun(ctx, update)
+		return updateErr
 	})
 	if err != nil {
-		log.Errorf("persist prompt run for session %s: %v", input.SessionID, err)
+		log.Errorf("persist prompt run for session %s: %v", firstNonEmpty(input.SessionID, bindingSessionID(input.Binding)), err)
 		return
 	}
-	finished := database.PromptRunPhaseFinished
-	state := database.PromptRunStateSucceeded
+	lifecycle := database.SessionLifecycleSucceeded
 	if input.Error != "" {
-		state = database.PromptRunStateFailed
+		lifecycle = database.SessionLifecycleFailed
 	}
-	update := database.UpdatePromptRunInput{
-		ID: run.ID, ExpectedVersion: run.Version, Phase: &finished, State: &state,
-	}
-	if input.ResultText != "" {
-		update.ResultText = &input.ResultText
-	}
-	if input.Error != "" {
-		update.Error = &input.Error
-	}
-	if _, err := db.UpdatePromptRun(ctx, update); err != nil {
-		log.Errorf("finalize prompt run %s: %v", run.ID, err)
-	}
+	updatePromptSessionLifecycle(ctx, session.ID, lifecycle, input.Error)
 	trackLaunchedTranscript(input, source)
+}
+
+func bindingSessionID(binding *promptSessionBinding) string {
+	if binding == nil {
+		return ""
+	}
+	return binding.SessionID.String()
 }
 
 // trackLaunchedTranscript arms the serve monitor's fsnotify tail on the

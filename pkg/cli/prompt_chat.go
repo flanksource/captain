@@ -39,12 +39,13 @@ type chatSession struct {
 	interruptedTurn int
 	terminal        bool
 	startedAt       time.Time
+	binding         *promptSessionBinding
 }
 
-func newChatSession(runID string, rendered PromptRenderResult, timeout time.Duration, stream *runStream) *chatSession {
+func newChatSession(runID string, rendered PromptRenderResult, timeout time.Duration, stream *runStream, binding *promptSessionBinding) *chatSession {
 	capabilities := chatCapabilitiesForBackend(rendered.Backend)
 	chat := &chatSession{
-		runID: runID, rendered: rendered, timeout: timeout, stream: stream,
+		runID: runID, rendered: rendered, timeout: timeout, stream: stream, binding: binding,
 		wake: make(chan struct{}, 1), startedAt: time.Now(),
 		state: ChatStateFrame{
 			RunID: runID, Status: "starting", Capabilities: capabilities,
@@ -385,7 +386,7 @@ func (c *chatSession) persistTurn(req ai.Request, summary PromptRunSummary) {
 	rendered.Input = req
 	persistPromptRun(context.Background(), promptRunRecordInput{
 		Rendered: rendered, RunID: runID, SessionID: summary.SessionID,
-		Model: summary.Model, Backend: summary.Backend,
+		Binding: c.binding, Model: summary.Model, Backend: summary.Backend,
 	})
 }
 
@@ -405,6 +406,12 @@ func (c *chatSession) fail(t *task.Task, err error) (PromptRunSummary, error) {
 	c.terminal = true
 	c.mu.Unlock()
 	promptChats.finish(c)
+	if c.binding != nil {
+		persistPromptRun(context.Background(), promptRunRecordInput{
+			Rendered: c.rendered, RunID: c.runID, Binding: c.binding,
+			Model: c.rendered.Model, Backend: c.rendered.Backend, Error: err.Error(),
+		})
+	}
 	c.stream.fail(err.Error())
 	_, _ = t.FailedWithError(err)
 	return PromptRunSummary{RunID: c.runID, Error: err.Error()}, err

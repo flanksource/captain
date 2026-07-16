@@ -185,6 +185,7 @@ func recordFromOverview(overview database.SessionOverview) SessionRecord {
 		GitBranch:       overviewGitBranch(overview),
 		Provider:        metadata.Provider,
 		Backend:         stringOr(overview.Backend, ""),
+		LifecycleStatus: string(overview.LifecycleStatus),
 		CWD:             stringOr(overview.CWD, ""),
 		ToolCalls:       int(overview.ToolCallCount),
 		Messages:        int(overview.MessageCount),

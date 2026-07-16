@@ -9,6 +9,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/database"
 	clickyapi "github.com/flanksource/clicky/api"
 	clickyrpc "github.com/flanksource/clicky/rpc"
 	"github.com/flanksource/clicky/task"
@@ -22,6 +23,7 @@ import (
 // synchronous result (Text + tokens/cost). One type serves both transports.
 type PromptRunResult struct {
 	RunID        string           `json:"runId,omitempty"`
+	BatchID      string           `json:"batchId,omitempty"`
 	Status       string           `json:"status,omitempty" pretty:"label=Status"`
 	Model        string           `json:"model,omitempty" pretty:"label=Model"`
 	Backend      string           `json:"backend,omitempty" pretty:"label=Backend"`
@@ -44,19 +46,23 @@ type PromptRunResult struct {
 }
 
 type PromptRunItem struct {
-	Selector     string  `json:"selector,omitempty" pretty:"label=Selector"`
-	Status       string  `json:"status,omitempty" pretty:"label=Status"`
-	Model        string  `json:"model,omitempty" pretty:"label=Model"`
-	Backend      string  `json:"backend,omitempty" pretty:"label=Backend"`
-	Text         string  `json:"text,omitempty" pretty:"label=Response"`
-	SessionID    string  `json:"sessionId,omitempty" pretty:"label=Session"`
-	Dir          string  `json:"dir,omitempty" pretty:"label=Dir"`
-	HistoryFile  string  `json:"historyFile,omitempty" pretty:"label=History"`
-	InputTokens  int     `json:"inputTokens,omitempty" pretty:"label=Input Tokens"`
-	OutputTokens int     `json:"outputTokens,omitempty" pretty:"label=Output Tokens"`
-	CostUSD      float64 `json:"costUSD,omitempty" pretty:"label=Cost USD"`
-	Duration     string  `json:"duration,omitempty" pretty:"label=Duration"`
-	Error        string  `json:"error,omitempty" pretty:"label=Error"`
+	RunID        string           `json:"runId,omitempty" pretty:"label=Run"`
+	Selector     string           `json:"selector,omitempty" pretty:"label=Selector"`
+	Status       string           `json:"status,omitempty" pretty:"label=Status"`
+	Model        string           `json:"model,omitempty" pretty:"label=Model"`
+	Backend      string           `json:"backend,omitempty" pretty:"label=Backend"`
+	Effort       string           `json:"effort,omitempty" pretty:"label=Effort"`
+	Chat         bool             `json:"chat,omitempty"`
+	Capabilities ChatCapabilities `json:"capabilities,omitempty"`
+	Text         string           `json:"text,omitempty" pretty:"label=Response"`
+	SessionID    string           `json:"sessionId,omitempty" pretty:"label=Session"`
+	Dir          string           `json:"dir,omitempty" pretty:"label=Dir"`
+	HistoryFile  string           `json:"historyFile,omitempty" pretty:"label=History"`
+	InputTokens  int              `json:"inputTokens,omitempty" pretty:"label=Input Tokens"`
+	OutputTokens int              `json:"outputTokens,omitempty" pretty:"label=Output Tokens"`
+	CostUSD      float64          `json:"costUSD,omitempty" pretty:"label=Cost USD"`
+	Duration     string           `json:"duration,omitempty" pretty:"label=Duration"`
+	Error        string           `json:"error,omitempty" pretty:"label=Error"`
 }
 
 func (r PromptRunResult) Pretty() clickyapi.Text {
@@ -202,15 +208,14 @@ func runPromptAction(ctx context.Context, id string, flags map[string]string) (P
 
 	var rendered PromptRenderResult
 	var opts AIPromptOptions
+	var httpReq PromptRenderRequest
 	var chatRequested bool
 	if isHTTP {
-		if strings.TrimSpace(flags["multi-models"]) != "" {
-			return PromptRunResult{}, errors.New("--multi-models is only supported on the CLI prompt run path")
-		}
 		req, err := readRenderRequest(ctx, flags)
 		if err != nil {
 			return PromptRunResult{}, err
 		}
+		httpReq = req
 		if rendered, err = renderPrompt(ctx, id, req); err != nil {
 			return PromptRunResult{}, err
 		}
@@ -237,6 +242,9 @@ func runPromptAction(ctx context.Context, id string, flags map[string]string) (P
 	}
 
 	if isHTTP {
+		if len(httpReq.Runtimes) > 0 {
+			return launchAsyncBatch(ctx, id, rendered, httpReq.Runtimes, chatRequested)
+		}
 		return launchAsyncRun(id, rendered, chatRequested), nil
 	}
 	return executeSyncRun(ctx, rendered, opts)
@@ -263,14 +271,14 @@ func launchAsyncRun(id string, rendered PromptRenderResult, chat bool) PromptRun
 		task.WithLabels(promptTaskLabelsWithID(rendered, id, "")),
 	)
 	if chat {
-		chatSession := newChatSession(runID, rendered, timeout, stream)
+		chatSession := newChatSession(runID, rendered, timeout, stream, nil)
 		promptChats.register(chatSession)
 		group.Add("execute", func(_ flanksourceContext.Context, t *task.Task) (PromptRunSummary, error) {
 			return chatSession.run(t)
 		})
 	} else {
 		group.Add("execute", func(_ flanksourceContext.Context, t *task.Task) (PromptRunSummary, error) {
-			return runPromptStream(t, rendered, timeout, runID, stream)
+			return runPromptStream(t, rendered, timeout, runID, stream, nil)
 		})
 	}
 	return PromptRunResult{
@@ -305,7 +313,7 @@ func executeSyncRunSingle(ctx context.Context, rendered PromptRenderResult, opts
 	return run.GetResult()
 }
 
-func executeSyncRunSingleDirect(ctx context.Context, rendered PromptRenderResult, opts AIPromptOptions, batchID *uuid.UUID) (PromptRunResult, error) {
+func executeSyncRunSingleDirect(ctx context.Context, rendered PromptRenderResult, opts AIPromptOptions, binding *promptSessionBinding) (PromptRunResult, error) {
 	out, err := executePromptRequestFunc(ctx, rendered.Input, rendered.Config, runtimeTimeout(rendered.Input.Budget.Timeout), opts.NoStream)
 	if err != nil {
 		return PromptRunResult{}, err
@@ -313,7 +321,7 @@ func executeSyncRunSingleDirect(ctx context.Context, rendered PromptRenderResult
 	r, _ := out.(AIPromptResult)
 	persistPromptRun(context.WithoutCancel(ctx), promptRunRecordInput{
 		Rendered: rendered, SessionID: r.SessionID, Model: r.Model, Backend: r.Backend,
-		BatchID: batchID, ResultText: r.Text,
+		Binding: binding, ResultText: r.Text,
 	})
 	return PromptRunResult{
 		Status:       "completed",
@@ -338,6 +346,25 @@ func executeSyncBatch(ctx context.Context, rendered PromptRenderResult, opts AIP
 	if len(models) == 0 {
 		return executeSyncRunSingle(ctx, rendered, opts)
 	}
+	if len(models) == 1 {
+		variant := renderVariant(rendered, models[0], fallbackModelsFromFlags(opts.Fallback))
+		opts.MultiModels = nil
+		start := time.Now()
+		single, runErr := executeSyncRunSingle(ctx, variant, opts)
+		item := PromptRunItem{
+			Selector: runtimeSelector(models[0]), Model: firstNonEmpty(single.Model, models[0].Name),
+			Backend: firstNonEmpty(single.Backend, string(models[0].Backend)), Effort: string(models[0].Effort),
+			Text: single.Text, SessionID: single.SessionID, Dir: single.Dir, HistoryFile: single.HistoryFile,
+			InputTokens: single.InputTokens, OutputTokens: single.OutputTokens, CostUSD: single.CostUSD, Duration: single.Duration,
+		}
+		result := PromptRunResult{Total: 1, Runs: []PromptRunItem{item}, Duration: time.Since(start).Round(time.Millisecond).String()}
+		if runErr != nil {
+			result.Status, result.Failed, result.Runs[0].Status, result.Runs[0].Error = "failed", 1, "failed", runErr.Error()
+			return result, runErr
+		}
+		result.Status, result.Succeeded, result.Runs[0].Status = "completed", 1, single.Status
+		return result, nil
+	}
 	prepared := rendered.Input
 	if err := resolvePromptAttachments(ctx, &prepared); err != nil {
 		return PromptRunResult{}, err
@@ -355,7 +382,11 @@ func executeSyncBatch(ctx context.Context, rendered PromptRenderResult, opts AIP
 	}
 
 	start := time.Now()
-	batchID := uuid.New()
+	batch, err := createPromptBatchSessions(ctx, rendered, models)
+	if err != nil {
+		return PromptRunResult{}, err
+	}
+	updatePromptSessionLifecycle(ctx, batch.ID, database.SessionLifecycleRunning, "")
 	runs := make([]PromptRunItem, len(models))
 	group := task.StartGroup[PromptRunItem](
 		"prompt "+rendered.Name,
@@ -375,8 +406,11 @@ func executeSyncBatch(ctx context.Context, rendered PromptRenderResult, opts AIP
 			variantOpts := opts
 			variantOpts.MultiModels = nil
 			taskCtx := ai.ContextWithLogger(t.Context(), t)
-			result, err := executeSyncRunSingleDirect(taskCtx, variant, variantOpts, &batchID)
+			binding := promptBinding(batch, i)
+			updatePromptSessionLifecycle(context.WithoutCancel(taskCtx), binding.SessionID, database.SessionLifecycleRunning, "")
+			result, err := executeSyncRunSingleDirect(taskCtx, variant, variantOpts, binding)
 			item := PromptRunItem{
+				RunID:    binding.SessionID.String(),
 				Selector: selector,
 				Model:    model.Name,
 				Backend:  string(model.Backend),
@@ -386,15 +420,20 @@ func executeSyncBatch(ctx context.Context, rendered PromptRenderResult, opts AIP
 				item.Status = "failed"
 				item.HistoryFile = historyFileForRun(model.Backend, item.SessionID, item.Dir)
 				item.Error = err.Error()
+				persistPromptRun(context.WithoutCancel(taskCtx), promptRunRecordInput{
+					Rendered: variant, RunID: binding.SessionID.String(), Binding: binding,
+					Model: model.Name, Backend: string(model.Backend), Error: err.Error(),
+				})
 				return item, err
 			}
 			item.Status = result.Status
 			item.Model = firstNonEmpty(result.Model, item.Model)
 			item.Backend = firstNonEmpty(result.Backend, item.Backend)
 			item.Text = result.Text
-			item.SessionID = result.SessionID
+			providerSessionID := result.SessionID
+			item.SessionID = binding.SessionID.String()
 			item.Dir = firstNonEmpty(result.Dir, item.Dir)
-			item.HistoryFile = firstNonEmpty(result.HistoryFile, historyFileForRun(api.Backend(item.Backend), item.SessionID, item.Dir))
+			item.HistoryFile = firstNonEmpty(result.HistoryFile, historyFileForRun(api.Backend(item.Backend), providerSessionID, item.Dir))
 			item.InputTokens = result.InputTokens
 			item.OutputTokens = result.OutputTokens
 			item.CostUSD = result.CostUSD
@@ -412,6 +451,7 @@ func executeSyncBatch(ctx context.Context, rendered PromptRenderResult, opts AIP
 	}
 
 	result := PromptRunResult{
+		BatchID:  batch.ID.String(),
 		Status:   "completed",
 		Total:    len(runs),
 		Runs:     runs,
@@ -435,6 +475,9 @@ func executeSyncBatch(ctx context.Context, rendered PromptRenderResult, opts AIP
 	default:
 		result.Status = "partial"
 	}
+	updatePromptSessionLifecycle(context.WithoutCancel(ctx), batch.ID,
+		batchLifecycle(result.Succeeded, result.Failed),
+		fmt.Sprintf("%d succeeded, %d failed", result.Succeeded, result.Failed))
 	if result.Succeeded == 0 && result.Failed > 0 {
 		return result, fmt.Errorf("all %d prompt variants failed", result.Failed)
 	}

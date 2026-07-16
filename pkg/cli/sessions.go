@@ -78,6 +78,7 @@ type SessionRecord struct {
 	GitBranch       string              `json:"gitBranch,omitempty"`
 	Provider        string              `json:"provider,omitempty"`
 	Backend         string              `json:"backend,omitempty"`
+	LifecycleStatus string              `json:"lifecycleStatus,omitempty"`
 	CWD             string              `json:"cwd,omitempty"`
 	ToolCalls       int                 `json:"toolCalls"`
 	Messages        int                 `json:"messages"`

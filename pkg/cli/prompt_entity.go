@@ -105,6 +105,7 @@ type PromptWriteRequest struct {
 type PromptRenderRequest struct {
 	Variables map[string]any `json:"variables,omitempty"`
 	Spec      *api.Spec      `json:"spec,omitempty"`
+	Runtimes  []api.Model    `json:"runtimes,omitempty"`
 	Chat      bool           `json:"chat,omitempty"`
 }
 

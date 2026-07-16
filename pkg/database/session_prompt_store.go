@@ -801,7 +801,8 @@ func sessionFromRecord(record sessionRecord) Session {
 func validSessionLifecycle(value SessionLifecycleStatus) bool {
 	switch value {
 	case SessionLifecycleCreated, SessionLifecycleRunning, SessionLifecycleSucceeded,
-		SessionLifecycleFailed, SessionLifecycleCancelled, SessionLifecycleInterrupted:
+		SessionLifecycleFailed, SessionLifecycleCancelled, SessionLifecycleInterrupted,
+		SessionLifecyclePartial:
 		return true
 	default:
 		return false

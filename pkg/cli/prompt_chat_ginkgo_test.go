@@ -26,7 +26,7 @@ func (p *interruptProviderStub) Interrupt(context.Context) error {
 var _ = Describe("prompt chat lifecycle", func() {
 	It("queues an idle follow-up and publishes its exact message id", func() {
 		stream := newRunStream()
-		chat := newChatSession("run-1", PromptRenderResult{Backend: string(api.BackendCodexAgent)}, 0, stream)
+		chat := newChatSession("run-1", PromptRenderResult{Backend: string(api.BackendCodexAgent)}, 0, stream, nil)
 		chat.state.Status = "idle"
 
 		response, err := chat.send(context.Background(), ChatMessageRequest{Text: "next", MessageID: "message-1"})
@@ -43,7 +43,7 @@ var _ = Describe("prompt chat lifecycle", func() {
 	It("interrupts the active turn and discards queued messages", func() {
 		stream := newRunStream()
 		provider := &interruptProviderStub{}
-		chat := newChatSession("run-1", PromptRenderResult{Backend: string(api.BackendCodexAgent)}, 0, stream)
+		chat := newChatSession("run-1", PromptRenderResult{Backend: string(api.BackendCodexAgent)}, 0, stream, nil)
 		chat.provider = provider
 		chat.state.Status = "running"
 		chat.state.Turn = 2
