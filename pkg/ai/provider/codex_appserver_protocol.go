@@ -340,7 +340,7 @@ func buildTurnStartParams(model string, req ai.Request, threadID string, outputS
 	if err := ai.ValidateAttachmentCompatibility([]api.Model{{Name: model, Backend: api.BackendCodexAgent}}, req.Prompt.Attachments); err != nil {
 		return nil, err
 	}
-	input := make([]map[string]any, 0, len(req.Prompt.Attachments)+1)
+	input := make([]map[string]any, 0, len(req.Prompt.Attachments))
 	if text := composePrompt(req); text != "" {
 		input = append(input, map[string]any{"type": "text", "text": text})
 	}

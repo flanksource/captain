@@ -63,12 +63,15 @@ func (m *Monitor) handleHookEvent(ctx context.Context, watcher *transcriptWatche
 		}
 	}
 	if path != "" {
-		clean, err := validateHookTranscript(ev.Provider, path)
-		if err != nil {
-			log.Warnf("hook %s/%s: %v", ev.Provider, ev.Event, err)
+		// Hook events arrive over an unauthenticated localhost endpoint, so the
+		// transcript path must be contained within the provider's session root
+		// before any filesystem use. Clean and reject traversal inline so the
+		// sanitized value is the one that flows to os.Stat.
+		path = filepath.Clean(path)
+		if strings.Contains(path, "..") || !withinHookRoot(ev.Provider, path) {
+			log.Warnf("hook %s/%s: transcript %s is outside the %s session root", ev.Provider, ev.Event, path, ev.Provider)
 			return
 		}
-		path = clean
 	}
 
 	switch ev.Event {
@@ -127,23 +130,16 @@ func (m *Monitor) endHookSessionProcesses(ctx context.Context, ev HookEvent) {
 	}
 }
 
-// validateHookTranscript rejects transcript paths outside the provider's known
-// session roots and returns the cleaned, contained path. Hook events arrive over
-// an unauthenticated localhost endpoint; the monitor must never ingest arbitrary
-// files, so callers must use the returned value rather than the raw input.
-func validateHookTranscript(provider, path string) (string, error) {
+// withinHookRoot reports whether cleanPath (already filepath.Clean'd) lives
+// under the known session root for provider. Callers reject the path when this
+// returns false so an untrusted hook can never point ingestion at an arbitrary
+// file.
+func withinHookRoot(provider, cleanPath string) bool {
 	root, err := hookTranscriptRoot(provider)
-	if err != nil {
-		return "", err
+	if err != nil || root == "" {
+		return false
 	}
-	if root == "" {
-		return "", fmt.Errorf("no session root for provider %q", provider)
-	}
-	clean := filepath.Clean(path)
-	if !strings.HasPrefix(clean, root+string(filepath.Separator)) {
-		return "", fmt.Errorf("transcript %s is outside %s", path, root)
-	}
-	return clean, nil
+	return strings.HasPrefix(cleanPath, root+string(filepath.Separator))
 }
 
 func hookTranscriptRoot(provider string) (string, error) {

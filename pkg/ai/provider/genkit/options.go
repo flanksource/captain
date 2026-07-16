@@ -103,7 +103,7 @@ func generateOptions(p *Provider, req ai.Request, stream gkai.ModelStreamCallbac
 }
 
 func promptParts(req ai.Request) ([]*gkai.Part, error) {
-	parts := make([]*gkai.Part, 0, len(req.Prompt.Attachments)+1)
+	parts := make([]*gkai.Part, 0, len(req.Prompt.Attachments))
 	if req.Prompt.User != "" {
 		parts = append(parts, gkai.NewTextPart(req.Prompt.User))
 	}

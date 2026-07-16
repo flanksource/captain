@@ -33,34 +33,21 @@ func TestNotifyHookEventNeverBlocks(t *testing.T) {
 	assert.Len(t, m.hookEvents, 2, "overflow events must be dropped, not block")
 }
 
-func TestValidateHookTranscript(t *testing.T) {
+func TestWithinHookRoot(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	claudePath := filepath.Join(home, ".claude", "projects", "-repo", "s.jsonl")
-	codexPath := filepath.Join(home, ".codex", "sessions", "2026", "07", "14", "rollout-x.jsonl")
+	claudePath := filepath.Clean(filepath.Join(home, ".claude", "projects", "-repo", "s.jsonl"))
+	codexPath := filepath.Clean(filepath.Join(home, ".codex", "sessions", "2026", "07", "14", "rollout-x.jsonl"))
+	traversal := filepath.Clean(filepath.Join(home, ".claude", "projects", "..", "..", "secret.jsonl"))
 
-	assertValid := func(provider, path string) {
-		t.Helper()
-		got, err := validateHookTranscript(provider, path)
-		assert.NoError(t, err)
-		assert.Equal(t, filepath.Clean(path), got, "must return the cleaned, contained path")
-	}
-	assertRejected := func(provider, path, msg string) {
-		t.Helper()
-		got, err := validateHookTranscript(provider, path)
-		assert.Error(t, err, msg)
-		assert.Empty(t, got, "rejected paths must not be returned")
-	}
+	assert.True(t, withinHookRoot("claude", claudePath), "claude transcript under the projects root is accepted")
+	assert.True(t, withinHookRoot("codex", codexPath), "codex rollout under the sessions root is accepted")
 
-	assertValid("claude", claudePath)
-	assertValid("codex", codexPath)
-
-	assertRejected("claude", "/etc/passwd", "absolute outside path must be rejected")
-	assertRejected("claude", codexPath, "codex path must not pass as claude")
-	assertRejected("claude",
-		filepath.Join(home, ".claude", "projects", "..", "..", "secret.jsonl"), "traversal must be rejected")
-	assertRejected("gemini", claudePath, "unknown provider must be rejected")
+	assert.False(t, withinHookRoot("claude", "/etc/passwd"), "absolute outside path is rejected")
+	assert.False(t, withinHookRoot("claude", codexPath), "codex path must not pass as claude")
+	assert.False(t, withinHookRoot("claude", traversal), "traversal that escapes the root is rejected")
+	assert.False(t, withinHookRoot("gemini", claudePath), "unknown provider is rejected")
 }
 
 func TestResolveCodexTranscript(t *testing.T) {
