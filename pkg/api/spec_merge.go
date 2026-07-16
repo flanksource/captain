@@ -14,7 +14,7 @@ package api
 // those tools. Boolean toggles (NoCache, Skip*) follow zero=unset: an override
 // can turn a flag on but not off, since false is indistinguishable from absent.
 func (s Spec) Merge(override Spec) Spec {
-	s.Model = s.Model.merge(override.Model)
+	s.Model = s.merge(override.Model)
 	s.Prompt = s.Prompt.merge(override.Prompt)
 	s.Budget = s.Budget.merge(override.Budget)
 	s.Memory = s.Memory.merge(override.Memory)

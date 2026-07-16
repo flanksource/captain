@@ -40,8 +40,9 @@ type Model struct {
 	// transient/unavailable error or its provider cannot be constructed. Each is a
 	// full Model (own backend/effort/temperature); a fallback's own nested Fallbacks
 	// are ignored. Populate it directly, via a comma-separated Name (see ExpandCSV),
-	// or via the --fallback flag / fallbacks: frontmatter.
-	Fallbacks []Model `json:"fallbacks,omitempty" yaml:"fallbacks,omitempty" pretty:"label=Fallbacks"`
+	// or via the --fallback flag / fallbacks: frontmatter. Each entry may be a
+	// compact string ("agent:opus:high") or the object form (see ModelList).
+	Fallbacks ModelList `json:"fallbacks,omitempty" yaml:"fallbacks,omitempty" pretty:"label=Fallbacks"`
 }
 
 // ResolveBackend returns Backend when set, otherwise infers it from Name.
@@ -109,7 +110,7 @@ func (m Model) ExpandCSV() Model {
 	if len(names) == 1 {
 		return m
 	}
-	tail := make([]Model, 0, len(names)-1)
+	tail := make(ModelList, 0, len(names)-1)
 	for _, n := range names[1:] {
 		tail = append(tail, Model{Name: n})
 	}
