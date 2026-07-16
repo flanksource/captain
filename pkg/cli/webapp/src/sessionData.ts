@@ -5,6 +5,10 @@ import type {
 } from "@flanksource/clicky-ui/ai";
 import { apiClient } from "./api";
 import { parseServerTiming, type TimingMetric } from "./serverTiming";
+import type {
+  ChatCapabilities,
+  ChatStateFrame,
+} from "./hooks/usePromptRunStream";
 
 export type SourceFilter = "all" | "claude" | "codex";
 export const ALL_PROJECTS_SCOPE = "all";
@@ -61,6 +65,9 @@ export type SessionGetItem = {
   detailAvailable: boolean;
   summary: SessionRecord;
   detail?: UnifiedSession;
+  activeRunId?: string;
+  chat?: ChatCapabilities;
+  chatState?: ChatStateFrame;
 };
 
 export type SessionGetResult = {
@@ -194,7 +201,10 @@ export async function fetchLiveSessions(params: {
     throw new Error(response.error || "Failed to load sessions.");
   }
   const timing = parseServerTiming(response.responseHeaders?.["server-timing"]);
-  return { ...(response.parsed as SessionListResult), ...(timing.length ? { timing } : {}) };
+  return {
+    ...(response.parsed as SessionListResult),
+    ...(timing.length ? { timing } : {}),
+  };
 }
 
 export async function fetchSessionThroughput(params: {
@@ -218,7 +228,10 @@ export async function fetchSessionThroughput(params: {
     throw new Error(response.error || "Failed to load session throughput.");
   }
   const timing = parseServerTiming(response.responseHeaders?.["server-timing"]);
-  return { ...(response.parsed as SessionThroughputResult), ...(timing.length ? { timing } : {}) };
+  return {
+    ...(response.parsed as SessionThroughputResult),
+    ...(timing.length ? { timing } : {}),
+  };
 }
 
 export async function fetchProjectOptions(): Promise<ProjectOptionsResult> {
@@ -252,7 +265,10 @@ export async function fetchSession(
     throw new Error(response.error || "Failed to load session.");
   }
   const timing = parseServerTiming(response.responseHeaders?.["server-timing"]);
-  return { ...(response.parsed as SessionGetResult), ...(timing.length ? { timing } : {}) };
+  return {
+    ...(response.parsed as SessionGetResult),
+    ...(timing.length ? { timing } : {}),
+  };
 }
 
 /** Sum a unified session's per-bucket costs into a total USD. */
@@ -268,11 +284,14 @@ export function sessionCostTotal(cost: UnifiedCost | undefined): number {
 }
 
 /** Count tool-call parts across a unified session's messages. */
-export function sessionToolCount(messages: SessionUIMessage[] | undefined): number {
+export function sessionToolCount(
+  messages: SessionUIMessage[] | undefined,
+): number {
   let count = 0;
   for (const message of messages ?? []) {
     for (const part of message.parts) {
-      if (part.type === "dynamic-tool" || part.type.startsWith("tool-")) count += 1;
+      if (part.type === "dynamic-tool" || part.type.startsWith("tool-"))
+        count += 1;
     }
   }
   return count;
@@ -281,7 +300,8 @@ export function sessionToolCount(messages: SessionUIMessage[] | undefined): numb
 export function unifiedSessionTitle(session: UnifiedSession): string {
   if (session.title) return session.title;
   if (session.slug) return session.slug;
-  if (session.git?.branch) return `${session.git.branch} - ${shortID(session.id)}`;
+  if (session.git?.branch)
+    return `${session.git.branch} - ${shortID(session.id)}`;
   if (session.model) return `${session.model} - ${shortID(session.id)}`;
   return shortID(session.id);
 }
@@ -326,7 +346,9 @@ export function projectLabel(path: string | undefined) {
   return parts.slice(-2).join("/") || path;
 }
 
-export function projectScopeQuery(project: ProjectScope): Record<string, string> {
+export function projectScopeQuery(
+  project: ProjectScope,
+): Record<string, string> {
   if (!project || project === ALL_PROJECTS_SCOPE) {
     return { all: "true" };
   }
@@ -347,7 +369,10 @@ export function sessionSortTime(session: SessionRecord) {
 }
 
 export function healthRank(session: SessionRecord) {
-  return Math.max(0, ...(session.health ?? []).map((signal) => severityRank(signal.severity)));
+  return Math.max(
+    0,
+    ...(session.health ?? []).map((signal) => severityRank(signal.severity)),
+  );
 }
 
 export function severityRank(severity: string | undefined) {

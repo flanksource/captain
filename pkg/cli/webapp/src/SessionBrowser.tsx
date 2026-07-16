@@ -8,7 +8,10 @@ import {
   type AppShellProps,
   type AppShellNavSection,
 } from "@flanksource/clicky-ui/components";
-import { SessionInspector } from "@flanksource/clicky-ui/ai";
+import {
+  SessionChatComposer,
+  SessionInspector,
+} from "@flanksource/clicky-ui/ai";
 import { CAPTAIN_SIDEBAR_COLLAPSE_KEY, withProjectScope } from "./shellHelpers";
 import { TimingBadge } from "./TimingBadge";
 import type { TimingMetric } from "./serverTiming";
@@ -34,6 +37,7 @@ import {
   type ProjectScope,
   type SourceFilter,
 } from "./sessionData";
+import { mergeSessionMessages, useSessionChat } from "./hooks/useSessionChat";
 
 type Navigate = (to: string, opts?: { replace?: boolean }) => void;
 
@@ -106,10 +110,20 @@ function SessionDetailPage({
       }
       bodyActions={
         <div className="flex items-center gap-density-2">
-          <Button size="sm" variant="ghost" onClick={() => onNavigate(withProjectScope("/sessions", projectScope))}>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() =>
+              onNavigate(withProjectScope("/sessions", projectScope))
+            }
+          >
             ← Sessions
           </Button>
-          <Button size="sm" variant="outline" onClick={() => void detailQuery.refetch()}>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void detailQuery.refetch()}
+          >
             Refresh
           </Button>
         </div>
@@ -120,6 +134,7 @@ function SessionDetailPage({
         result={detailQuery.data}
         loading={detailQuery.isLoading}
         error={detailQuery.error}
+        onRefresh={() => detailQuery.refetch()}
       />
     </AppShell>
   );
@@ -154,7 +169,11 @@ function SessionListPage({
       actions={actions}
       bodyHeader={<div className="text-sm font-semibold">Sessions</div>}
       bodyActions={
-        <Button size="sm" variant="outline" onClick={() => void listQuery.refetch()}>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => void listQuery.refetch()}
+        >
           Refresh
         </Button>
       }
@@ -171,7 +190,14 @@ function SessionListPage({
         total={listQuery.data?.total ?? 0}
         loading={listQuery.isLoading}
         error={listQuery.error}
-        onSelect={(session) => onNavigate(withProjectScope(`/sessions/${encodeURIComponent(session.key)}`, projectScope))}
+        onSelect={(session) =>
+          onNavigate(
+            withProjectScope(
+              `/sessions/${encodeURIComponent(session.key)}`,
+              projectScope,
+            ),
+          )
+        }
       />
     </AppShell>
   );
@@ -208,7 +234,9 @@ function SessionList({
   const groups = useMemo(
     () =>
       groupSessionsByProject(
-        [...sessions].sort((left, right) => compareSessions(left, right, sort, sortDirection)),
+        [...sessions].sort((left, right) =>
+          compareSessions(left, right, sort, sortDirection),
+        ),
       ),
     [sessions, sort, sortDirection],
   );
@@ -242,7 +270,11 @@ function SessionList({
         </div>
         <SessionSummary summary={summary} loading={loading} />
         <div className="flex items-center justify-between gap-density-2 text-xs text-muted-foreground">
-          <span>{loading ? "Loading..." : `${sessions.length} shown / ${total} total`}</span>
+          <span>
+            {loading
+              ? "Loading..."
+              : `${sessions.length} shown / ${total} total`}
+          </span>
           <TimingBadge metrics={timing} align="right" />
         </div>
       </div>
@@ -251,7 +283,9 @@ function SessionList({
         {error ? (
           <div className="text-sm text-destructive">{errorMessage(error)}</div>
         ) : sessions.length === 0 && !loading ? (
-          <div className="text-sm text-muted-foreground">No sessions found.</div>
+          <div className="text-sm text-muted-foreground">
+            No sessions found.
+          </div>
         ) : (
           <SessionTable
             groups={groups}
@@ -274,7 +308,9 @@ function SessionHeader({
   loading: boolean;
 }) {
   if (loading) {
-    return <div className="text-sm text-muted-foreground">Loading session...</div>;
+    return (
+      <div className="text-sm text-muted-foreground">Loading session...</div>
+    );
   }
   return (
     <div className="flex items-center gap-density-2">
@@ -288,10 +324,12 @@ function SessionDetail({
   result,
   loading,
   error,
+  onRefresh,
 }: {
   result?: SessionGetResult;
   loading: boolean;
   error: unknown;
+  onRefresh: () => Promise<unknown>;
 }) {
   if (loading) {
     return (
@@ -317,33 +355,96 @@ function SessionDetail({
   return (
     <div className="h-full min-h-0 overflow-auto">
       {result.sessions.map((item) => (
-        <SessionGetItemDetail key={item.captainId} item={item} single={result.sessions.length === 1} />
+        <SessionGetItemDetail
+          key={item.captainId}
+          item={item}
+          single={result.sessions.length === 1}
+          onRefresh={onRefresh}
+        />
       ))}
     </div>
   );
 }
 
-function SessionGetItemDetail({ item, single }: { item: SessionGetItem; single: boolean }) {
+function SessionGetItemDetail({
+  item,
+  single,
+  onRefresh,
+}: {
+  item: SessionGetItem;
+  single: boolean;
+  onRefresh: () => Promise<unknown>;
+}) {
+  const chat = useSessionChat({
+    initialRunID: item.activeRunId,
+    sessionID: item.captainId,
+    initialCapabilities: item.chat,
+    initialState: item.chatState,
+    clearOnTerminal: true,
+    onTerminal: onRefresh,
+  });
+  const detail = useMemo(
+    () =>
+      item.detail
+        ? {
+            ...item.detail,
+            messages: mergeSessionMessages(
+              item.detail.messages ?? [],
+              chat.messages,
+            ),
+          }
+        : undefined,
+    [chat.messages, item.detail],
+  );
+  const composer =
+    item.chat?.resume || item.activeRunId ? (
+      <SessionChatComposer
+        status={chat.chatState.status}
+        capabilities={chat.capabilities}
+        queued={chat.chatState.queued}
+        error={chat.actionError}
+        onSubmit={chat.send}
+        onInterrupt={chat.interrupt}
+      />
+    ) : undefined;
   return (
-    <section className={single ? "flex h-full min-h-0 flex-col" : "border-b border-border"}>
+    <section
+      className={
+        single ? "flex h-full min-h-0 flex-col" : "border-b border-border"
+      }
+    >
       {!single ? (
         <div className="shrink-0 border-b border-border px-density-4 py-density-3 text-xs">
-          <div className="font-mono font-semibold text-foreground">{item.captainId}</div>
+          <div className="font-mono font-semibold text-foreground">
+            {item.captainId}
+          </div>
           <div className="mt-1 flex flex-wrap gap-x-density-3 gap-y-1 text-muted-foreground">
             <span>{item.summary.source}</span>
-            {item.providerSessionId && <span>provider={item.providerSessionId}</span>}
+            {item.providerSessionId && (
+              <span>provider={item.providerSessionId}</span>
+            )}
             {item.host && <span>host={item.host}</span>}
-            {item.summary.project && <span>project={item.summary.project}</span>}
-            {item.summary.cwd && <span className="max-w-full truncate">{item.summary.cwd}</span>}
+            {item.summary.project && (
+              <span>project={item.summary.project}</span>
+            )}
+            {item.summary.cwd && (
+              <span className="max-w-full truncate">{item.summary.cwd}</span>
+            )}
           </div>
         </div>
       ) : null}
-      {item.detail ? (
+      {detail ? (
         <div className={single ? "min-h-0 flex-1" : "h-[70vh] min-h-[32rem]"}>
-          <SessionInspector session={item.detail} transcriptProps={{ defaultExpanded: false }} />
+          <SessionInspector
+            session={detail}
+            transcriptProps={{ defaultExpanded: false }}
+            {...(composer ? { composer } : {})}
+          />
         </div>
       ) : (
-        <div className="p-density-4 text-sm text-muted-foreground">Transcript unavailable.</div>
+        <div className="p-density-4 text-sm text-muted-foreground">
+          Transcript unavailable.
+        </div>
       )}
     </section>
   );
@@ -360,18 +461,31 @@ function SessionSummary({
     return null;
   }
   const values = [
-    ["Live", summary ? `${summary.liveSessions}/${summary.totalSessions}` : "--"],
+    [
+      "Live",
+      summary ? `${summary.liveSessions}/${summary.totalSessions}` : "--",
+    ],
     ["Active", summary?.activeSessions ?? 0],
     ["Alerts", summary?.alertSessions ?? 0],
     ["Tokens", formatCompactNumber(summary?.totalTokens ?? 0)],
     ["Cost", formatCost(summary?.costUsd ?? 0)],
-    ["Context", summary?.lowestContextFree !== undefined ? `${summary.lowestContextFree}%` : "--"],
+    [
+      "Context",
+      summary?.lowestContextFree !== undefined
+        ? `${summary.lowestContextFree}%`
+        : "--",
+    ],
   ];
   return (
     <div className="grid grid-cols-3 gap-1.5 md:grid-cols-6">
       {values.map(([label, value]) => (
-        <div key={label} className="min-w-0 rounded border border-border px-2 py-1">
-          <div className="truncate text-[10px] uppercase text-muted-foreground">{label}</div>
+        <div
+          key={label}
+          className="min-w-0 rounded border border-border px-2 py-1"
+        >
+          <div className="truncate text-[10px] uppercase text-muted-foreground">
+            {label}
+          </div>
           <div className="truncate text-xs font-medium">{value}</div>
         </div>
       ))}

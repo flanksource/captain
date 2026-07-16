@@ -1,5 +1,10 @@
-import { SessionViewer } from "@flanksource/clicky-ui/ai";
-import { usePromptRunStream, type PromptRunStreamStatus, type PromptRunSummary } from "./hooks/usePromptRunStream";
+import { SessionChatComposer, SessionViewer } from "@flanksource/clicky-ui/ai";
+import { Button } from "@flanksource/clicky-ui/components";
+import {
+  type PromptRunStreamStatus,
+  type PromptRunSummary,
+} from "./hooks/usePromptRunStream";
+import { useSessionChat } from "./hooks/useSessionChat";
 
 /**
  * PromptRunStream renders a prompt run's session history live: it subscribes to
@@ -7,13 +12,19 @@ import { usePromptRunStream, type PromptRunStreamStatus, type PromptRunSummary }
  * with a status pill and a completion summary footer.
  */
 export function PromptRunStream({ runID }: { runID: string }) {
-  const { messages, summary, status, error } = usePromptRunStream(runID);
+  const chat = useSessionChat({ initialRunID: runID });
+  const { messages, summary, status, error, run, chatState } = chat;
   const empty = messages.length === 0;
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-density-3">
-      <div className="flex items-center gap-density-2 text-xs text-muted-foreground">
+      <div className="flex items-center justify-between gap-density-2 text-xs text-muted-foreground">
         <StatusPill status={status} />
+        {status !== "done" && status !== "error" ? (
+          <Button size="sm" variant="outline" onClick={chat.stop}>
+            Stop run
+          </Button>
+        ) : null}
       </div>
       {error && (
         <div className="rounded-md border border-destructive/40 bg-destructive/10 p-density-3 text-sm text-destructive">
@@ -31,6 +42,16 @@ export function PromptRunStream({ runID }: { runID: string }) {
           </div>
         )}
       </div>
+      {run?.chat && chatState ? (
+        <SessionChatComposer
+          status={chatState.status}
+          capabilities={chat.capabilities}
+          queued={chatState.queued}
+          error={chat.actionError}
+          onSubmit={chat.send}
+          onInterrupt={chat.interrupt}
+        />
+      ) : null}
       {summary && <RunSummaryFooter summary={summary} />}
     </div>
   );
@@ -66,10 +87,14 @@ function RunSummaryFooter({ summary }: { summary: PromptRunSummary }) {
   if (summary.model) parts.push({ id: "model", label: summary.model });
   if (summary.backend) parts.push({ id: "backend", label: summary.backend });
   if (summary.duration) parts.push({ id: "duration", label: summary.duration });
-  if (summary.inputTokens != null) parts.push({ id: "input-tokens", label: `${summary.inputTokens} in` });
-  if (summary.outputTokens != null) parts.push({ id: "output-tokens", label: `${summary.outputTokens} out` });
-  if (summary.costUSD != null) parts.push({ id: "cost", label: `$${summary.costUSD.toFixed(4)}` });
-  if (summary.sessionId) parts.push({ id: "session", label: `session ${summary.sessionId}` });
+  if (summary.inputTokens != null)
+    parts.push({ id: "input-tokens", label: `${summary.inputTokens} in` });
+  if (summary.outputTokens != null)
+    parts.push({ id: "output-tokens", label: `${summary.outputTokens} out` });
+  if (summary.costUSD != null)
+    parts.push({ id: "cost", label: `$${summary.costUSD.toFixed(4)}` });
+  if (summary.sessionId)
+    parts.push({ id: "session", label: `session ${summary.sessionId}` });
   return (
     <div className="flex flex-wrap gap-density-2 border-t border-border pt-density-2 text-xs text-muted-foreground">
       {parts.map((part) => (

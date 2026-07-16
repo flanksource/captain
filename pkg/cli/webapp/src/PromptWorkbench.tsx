@@ -476,6 +476,7 @@ export function PromptWorkbench({
         {
           variables: selectedDetailState.variables,
           ...runtimePayload(selectedDetailState.runtime, models),
+          chat: promptChatEligible(detail, selectedDetailState.runtime),
         },
       );
       dispatchDetailState({ type: "preview-result", detail, value: undefined });
@@ -639,6 +640,14 @@ export function PromptWorkbench({
         }}
       />
     </AppShell>
+  );
+}
+
+function promptChatEligible(detail: PromptDetail, runtime: AISpecRuntimeValue) {
+  return (
+    !detail.outputSchema &&
+    !runtime.workflow?.verify &&
+    !runtime.workflow?.postRun
   );
 }
 
