@@ -68,6 +68,9 @@ func overlayCLI(base ai.Request, baseCfg ai.Config, o AIPromptOptions) (ai.Reque
 	if bm.Name == "" {
 		bm.Name = baseCfg.Model.Name
 	}
+	if bm.ID == "" {
+		bm.ID = baseCfg.Model.ID
+	}
 	if bm.Backend == "" {
 		bm.Backend = baseCfg.Model.Backend
 	}
@@ -77,13 +80,13 @@ func overlayCLI(base ai.Request, baseCfg ai.Config, o AIPromptOptions) (ai.Reque
 	if bm.Effort == "" {
 		bm.Effort = baseCfg.Model.Effort
 	}
+	identity := selectModelIdentity(
+		api.Model{Name: saved.Model, Backend: api.Backend(saved.Backend)},
+		api.Model{Name: bm.Name, ID: bm.ID, Backend: bm.Backend},
+		api.Model{Name: o.Model, Backend: api.Backend(o.Backend)},
+	)
 	m := bm
-	m.Name = firstNonEmpty(o.Model, bm.Name, saved.Model)
-	backend := firstNonEmpty(o.Backend, string(bm.Backend), saved.Backend)
-	if o.Backend == "" && ai.ContainsRuntimeSelector(m.Name) {
-		backend = ""
-	}
-	m.Backend = api.Backend(backend)
+	m.Name, m.ID, m.Backend = identity.Name, identity.ID, identity.Backend
 	if temperature != 0 {
 		t := temperature
 		m.Temperature = &t
@@ -210,6 +213,28 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+// selectModelIdentity applies precedence from lowest to highest while keeping a
+// model name and backend coupled. A higher-priority name clears a lower-priority
+// backend unless that same layer explicitly supplies one.
+func selectModelIdentity(layers ...api.Model) api.Model {
+	var selected api.Model
+	for _, layer := range layers {
+		if layer.Name != "" {
+			selected.Name = layer.Name
+			selected.ID = layer.ID
+			selected.Backend = layer.Backend
+			continue
+		}
+		if layer.ID != "" {
+			selected.ID = layer.ID
+		}
+		if layer.Backend != "" {
+			selected.Backend = layer.Backend
+		}
+	}
+	return selected
 }
 
 // firstPositive returns the first value > 0, or 0 when none qualify.

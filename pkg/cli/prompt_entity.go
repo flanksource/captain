@@ -508,14 +508,19 @@ func overlayRuntimeSpec(req *ai.Request, cfg *ai.Config, spec api.Spec) {
 	if spec.Name != "" {
 		req.Name = spec.Name
 		cfg.Model.Name = spec.Name
-	}
-	if spec.ID != "" {
 		req.ID = spec.ID
 		cfg.Model.ID = spec.ID
-	}
-	if spec.Backend != "" {
 		req.Backend = spec.Backend
 		cfg.Model.Backend = spec.Backend
+	} else {
+		if spec.ID != "" {
+			req.ID = spec.ID
+			cfg.Model.ID = spec.ID
+		}
+		if spec.Backend != "" {
+			req.Backend = spec.Backend
+			cfg.Model.Backend = spec.Backend
+		}
 	}
 	if spec.Temperature != nil {
 		req.Temperature = spec.Temperature
@@ -633,12 +638,21 @@ func overlayRuntimeSpec(req *ai.Request, cfg *ai.Config, spec api.Spec) {
 func applyPromptDefaults(req *ai.Request, cfg *ai.Config) {
 	savedCfg := loadSavedConfig()
 	saved := savedCfg.AI
-	if req.Name == "" {
-		req.Name = firstNonEmpty(cfg.Model.Name, saved.Model)
+	promptModel := req.Model
+	if promptModel.Name == "" {
+		promptModel.Name = cfg.Model.Name
 	}
-	if req.Backend == "" {
-		req.Backend = api.Backend(firstNonEmpty(string(cfg.Model.Backend), saved.Backend))
+	if promptModel.ID == "" {
+		promptModel.ID = cfg.Model.ID
 	}
+	if promptModel.Backend == "" {
+		promptModel.Backend = cfg.Model.Backend
+	}
+	identity := selectModelIdentity(
+		api.Model{Name: saved.Model, Backend: api.Backend(saved.Backend)},
+		api.Model{Name: promptModel.Name, ID: promptModel.ID, Backend: promptModel.Backend},
+	)
+	req.Name, req.ID, req.Backend = identity.Name, identity.ID, identity.Backend
 	if cfg.Model.Effort != api.EffortNone {
 		// An effort-qualified model selector (for example agent:sol:high)
 		// is model-local and intentionally overrides the request-wide flag/default.

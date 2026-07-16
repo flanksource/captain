@@ -10,13 +10,13 @@ import (
 
 func extractResponseItem(event CodexEvent, pendingCall map[string]CodexEvent, cwd, sessionID string) []ToolUse {
 	switch event.Payload.Type {
-	case "function_call":
+	case "function_call", "custom_tool_call":
 		pendingCall[event.Payload.CallID] = event
 		return nil
 	case "tool_search_call":
 		pendingCall[event.Payload.CallID] = event
 		return nil
-	case "function_call_output":
+	case "function_call_output", "custom_tool_call_output":
 		callEvent, ok := pendingCall[event.Payload.CallID]
 		if !ok {
 			return nil

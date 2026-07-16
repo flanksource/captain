@@ -66,25 +66,18 @@ func (o AIProviderOptions) ToConfig() (ai.Config, error) {
 		return ai.Config{}, err
 	}
 
-	model := o.Model
-	if model == "" {
-		model = saved.Model
-	}
-	backend := o.Backend
-	if backend == "" {
-		backend = saved.Backend
-	}
-	if o.Backend == "" && ai.ContainsRuntimeSelector(model) {
-		backend = ""
-	}
-	if backend != "" && !ai.Backend(backend).Valid() {
-		return ai.Config{}, fmt.Errorf("invalid --backend %q (valid: %s)", backend, ai.BackendList())
+	m := selectModelIdentity(
+		api.Model{Name: saved.Model, Backend: api.Backend(saved.Backend)},
+		api.Model{Name: o.Model, Backend: api.Backend(o.Backend)},
+	)
+	if m.Backend != "" && !m.Backend.Valid() {
+		return ai.Config{}, fmt.Errorf("invalid --backend %q (valid: %s)", m.Backend, ai.BackendList())
 	}
 	if budget == 0 {
 		budget = saved.BudgetUSD
 	}
 
-	m := api.Model{Name: model, Backend: ai.Backend(backend), Fallbacks: fallbackModelsFromFlags(o.Fallback)}
+	m.Fallbacks = fallbackModelsFromFlags(o.Fallback)
 	m, err = ai.ResolveModelSelectors(m)
 	if err != nil {
 		return ai.Config{}, err

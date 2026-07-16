@@ -55,6 +55,15 @@ func AnalyzeToolUse(t tools.Tool) ToolAnalysis {
 		}
 	case "Bash":
 		a.analyzeBash(base.Input, rel)
+		command, _ := base.Input["command"].(string)
+		for _, path := range extractApplyPatchPaths(command) {
+			a.WritePaths = appendUnique(a.WritePaths, rel(path))
+		}
+	case "exec":
+		input, _ := base.Input["input"].(string)
+		for _, path := range extractApplyPatchPaths(input) {
+			a.WritePaths = appendUnique(a.WritePaths, rel(path))
+		}
 	case "WebFetch":
 		if urlStr, ok := base.Input["url"].(string); ok {
 			if u, err := url.Parse(urlStr); err == nil && u.Host != "" {

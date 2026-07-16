@@ -442,12 +442,13 @@ func executeSyncBatch(ctx context.Context, rendered PromptRenderResult, opts AIP
 }
 
 func promptTaskLabels(rendered PromptRenderResult, mode string) map[string]string {
-	labels := map[string]string{
-		"model":   rendered.Model,
-		"backend": rendered.Backend,
-	}
+	labels := map[string]string{}
 	if mode != "" {
 		labels["mode"] = mode
+	}
+	if mode != "multi" {
+		labels["model"] = rendered.Model
+		labels["backend"] = rendered.Backend
 	}
 	if rendered.Name != "" {
 		labels["prompt"] = rendered.Name

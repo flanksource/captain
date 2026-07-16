@@ -114,17 +114,22 @@ func buildToolUse(callEvent, outputEvent CodexEvent, cwd, sessionID string) Tool
 	if timestamp == nil {
 		timestamp = outputEvent.Time()
 	}
+	var input map[string]any
+	if callEvent.Payload.Input != "" {
+		input = map[string]any{"input": callEvent.Payload.Input}
+	}
 	return NormalizeCodexToolCall(CodexToolCall{
 		Name:       callEvent.Payload.Name,
 		Namespace:  callEvent.Payload.Namespace,
 		Arguments:  callEvent.Payload.Arguments,
+		Input:      input,
 		Timestamp:  timestamp,
 		CWD:        cwd,
 		SessionID:  sessionID,
 		TurnID:     firstNonEmpty(codexEventTurnID(callEvent), codexEventTurnID(outputEvent)),
 		ID:         callEvent.Payload.CallID,
 		Response:   extractCommandOutput(CodexOutputText(outputEvent.Payload.Output)),
-		RecordType: "response_item.function_call",
+		RecordType: "response_item." + callEvent.Payload.Type,
 	})
 }
 

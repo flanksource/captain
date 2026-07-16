@@ -241,13 +241,13 @@ func TestOverlayCLI_FallbackFlagOverridesFrontmatter(t *testing.T) {
 	base := baseFileReq()
 	base.Model.Fallbacks = []api.Model{{Name: "frontmatter-fallback"}}
 	opts := AIPromptOptions{}
-	opts.Fallback = []string{"cli-fallback-a", "cli-fallback-b,cli-fallback-c"} // repeatable + comma-split
+	opts.Fallback = []string{"gemini-3.5-flash", "gpt-5.5,claude-sonnet-5"} // repeatable + comma-split
 
 	req, _, err := overlayCLI(base, ai.Config{}, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"cli-fallback-a", "cli-fallback-b", "cli-fallback-c"}
+	want := []string{"gemini-3.5-flash", "gpt-5.5", "claude-sonnet-5"}
 	if got := fallbackNames(req.Model.Fallbacks); !reflect.DeepEqual(got, want) {
 		t.Errorf("fallbacks = %v, want CLI flags %v (override frontmatter)", got, want)
 	}

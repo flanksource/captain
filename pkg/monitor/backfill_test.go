@@ -22,6 +22,15 @@ func TestIsEphemeralClaudeTranscript(t *testing.T) {
 		filepath.Join(projectsDir, claude.NormalizePath("/Users/dev/src/project"), "session.jsonl")))
 	assert.False(t, isEphemeralClaudeTranscript(projectsDir,
 		filepath.Join(t.TempDir(), "outside-projects", "session.jsonl")))
+
+	// A temp-rooted project whose working directory still exists is a live
+	// session (e.g. an integration test that is currently running), not a stale
+	// fixture, and must be kept.
+	liveProject := filepath.Join(t.TempDir(), "work", "project")
+	require.NoError(t, os.MkdirAll(liveProject, 0o755))
+	assert.False(t, isEphemeralClaudeTranscript(projectsDir,
+		filepath.Join(projectsDir, claude.NormalizePath(liveProject), "session.jsonl")),
+		"a temp project whose working directory still exists must be backfilled")
 }
 
 func TestDiscoverTranscriptsSkipsSystemTempClaudeProjects(t *testing.T) {

@@ -32,8 +32,9 @@ func ContainsRuntimeSelector(s string) bool {
 	return false
 }
 
-// ResolveModelSelectors normalizes selector-prefixed model names on a single
-// api.Model, preserving the model's fallback semantics.
+// ResolveModelSelectors turns every recognizable model name into a concrete
+// model/backend pair while preserving fallback semantics. Unknown model names
+// require an explicit backend.
 func ResolveModelSelectors(model api.Model) (api.Model, error) {
 	model = model.ExpandCSV()
 	resolved, err := resolveSelectorModel(model, "", false)
@@ -113,7 +114,11 @@ func resolveSelectorPart(raw, baseName string, forced api.Backend, allowWildcard
 			prefix = strings.ToLower(raw)
 			modelName = strings.TrimSpace(baseName)
 		} else {
-			return []api.Model{{Name: raw, Backend: forced}}, nil
+			model, err := resolveBareModel(raw, forced)
+			if err != nil {
+				return nil, err
+			}
+			return []api.Model{model}, nil
 		}
 	} else {
 		var err error
@@ -172,6 +177,42 @@ func resolveSelectorPart(raw, baseName string, forced api.Backend, allowWildcard
 		return nil, fmt.Errorf("runtime selector %q: %w", raw, err)
 	}
 	return []api.Model{{Name: resolved, Backend: backend, Effort: selectorEffort}}, nil
+}
+
+func resolveBareModel(model string, forced api.Backend) (api.Model, error) {
+	backend := forced
+	inferred, inferErr := inferModelBackend(model)
+	if backend == "" {
+		if inferErr != nil {
+			return api.Model{}, inferErr
+		}
+		backend = inferred
+	} else {
+		if !backend.Valid() {
+			return api.Model{}, fmt.Errorf("invalid backend %q (valid: %s)", backend, api.BackendList())
+		}
+		if inferErr == nil && inferred.Family() != backend.Family() {
+			return api.Model{}, fmt.Errorf("model %q belongs to the %s family and cannot use backend %q (%s family)",
+				model, inferred.Family(), backend, backend.Family())
+		}
+	}
+
+	resolved, err := normalizeSelectorModel(backend, model)
+	if err != nil {
+		return api.Model{}, err
+	}
+	return api.Model{Name: resolved, Backend: backend}, nil
+}
+
+func inferModelBackend(model string) (api.Backend, error) {
+	backend, err := api.InferBackend(model)
+	if err == nil {
+		return backend, nil
+	}
+	if i := strings.LastIndex(model, "/"); i >= 0 {
+		return api.InferBackend(model[i+1:])
+	}
+	return "", err
 }
 
 func splitSelectorEffort(raw, model string) (string, api.Effort, error) {

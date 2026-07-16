@@ -72,6 +72,7 @@ type CodexPayload struct {
 	Namespace string          `json:"namespace,omitempty"`
 	Arguments json.RawMessage `json:"arguments,omitempty"`
 	CallID    string          `json:"call_id,omitempty"`
+	Input     string          `json:"input,omitempty"`
 	Metadata  *CodexMetadata  `json:"internal_chat_message_metadata_passthrough,omitempty"`
 
 	// response_item: function_call_output. Codex emits either a JSON string or

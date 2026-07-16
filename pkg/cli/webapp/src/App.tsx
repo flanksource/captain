@@ -15,6 +15,7 @@ import { HomeDashboard } from "./HomeDashboard";
 import { PromptWorkbench } from "./PromptWorkbench";
 import { SessionBrowser } from "./SessionBrowser";
 import { ShellActions } from "./shell";
+import { WhoamiPage } from "./WhoamiPage";
 import {
   captainNavSections,
   CAPTAIN_SIDEBAR_COLLAPSE_KEY,
@@ -77,6 +78,8 @@ export function App() {
             >
               {route.kind === "dashboard" ? (
                 <HomeDashboard onNavigate={router.navigate} projectScope={projectScope} />
+              ) : route.kind === "whoami" ? (
+                <WhoamiPage />
               ) : route.kind === "operations" ? (
                 <EntityExplorerApp
                   client={apiClient}
@@ -153,12 +156,14 @@ type Route =
   | { kind: "agent" }
   | { kind: "sessions"; sessionId?: string }
   | { kind: "prompts"; promptId?: string }
+  | { kind: "whoami" }
   | { kind: "operations" }
   | { kind: "chat"; threadId: string; model?: string };
 
 function primaryRoute(route: Route): PrimaryRoute {
   if (route.kind === "dashboard") return "dashboard";
   if (route.kind === "operations") return "operations";
+  if (route.kind === "whoami") return "whoami";
   if (route.kind === "prompts") return "prompts";
   if (route.kind === "sessions") return "sessions";
   return "agent";
@@ -166,6 +171,7 @@ function primaryRoute(route: Route): PrimaryRoute {
 
 function parseRoute(pathname: string, search: string): Route {
   if (pathname.startsWith("/operations")) return { kind: "operations" };
+  if (pathname.startsWith("/whoami")) return { kind: "whoami" };
   if (pathname.startsWith("/prompts")) {
     const raw = pathname.slice("/prompts".length).replace(/^\/+/, "");
     const promptId = raw ? decodeURIComponent(raw.split("/")[0] ?? "") : undefined;

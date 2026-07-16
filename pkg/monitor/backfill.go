@@ -67,22 +67,35 @@ func discoverTranscripts() (roots, agents []transcriptRef) {
 }
 
 // isEphemeralClaudeTranscript excludes projects created below a system temp
-// root. Go integration tests that launch Claude leave their transcript mirror
-// under ~/.claude/projects even after the temporary working directory is gone;
-// those fixtures are not durable user sessions and should not be backfilled.
+// root whose working directory is already gone. Go integration tests that
+// launch Claude leave their transcript mirror under ~/.claude/projects even
+// after the temporary working directory is removed; those stale fixtures are
+// not durable user sessions and should not be backfilled. A transcript whose
+// temp working directory still exists (e.g. a test that is currently running)
+// is a real, listable session and must be kept.
 func isEphemeralClaudeTranscript(projectsDir, path string) bool {
 	rel, err := filepath.Rel(projectsDir, path)
 	if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return false
 	}
 	projectDir := strings.SplitN(rel, string(filepath.Separator), 2)[0]
+	underTemp := false
 	for _, root := range []string{os.TempDir(), "/tmp", "/private/tmp"} {
 		prefix := strings.TrimSuffix(claude.NormalizePath(filepath.Clean(root)), "-")
 		if prefix != "" && (projectDir == prefix || strings.HasPrefix(projectDir, prefix+"-")) {
-			return true
+			underTemp = true
+			break
 		}
 	}
-	return false
+	if !underTemp {
+		return false
+	}
+	original := claude.DenormalizePath(projectDir)
+	if original == "" {
+		return true
+	}
+	_, statErr := os.Stat(original)
+	return statErr != nil
 }
 
 func ingestChanged(ctx context.Context, ingestor *ingestor, refs []transcriptRef) {

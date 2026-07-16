@@ -5,6 +5,7 @@ import type {
 import {
   UiActivity,
   UiFileText,
+  UiFingerprint,
   UiHistory,
   UiRobotAi,
   UiServer,
@@ -16,7 +17,13 @@ import {
   type ProjectScope,
 } from "./sessionData";
 
-export type PrimaryRoute = "dashboard" | "agent" | "sessions" | "prompts" | "operations";
+export type PrimaryRoute =
+  | "dashboard"
+  | "agent"
+  | "sessions"
+  | "prompts"
+  | "whoami"
+  | "operations";
 
 export const CAPTAIN_SIDEBAR_COLLAPSE_KEY = "captain:sidebar:collapsed";
 
@@ -39,6 +46,13 @@ export function captainNavSections(
           active: active === "dashboard",
         },
         { key: "agent", label: "Agent", to: "/agent", icon: UiRobotAi, active: active === "agent" },
+        {
+          key: "whoami",
+          label: "Whoami",
+          to: "/whoami",
+          icon: UiFingerprint,
+          active: active === "whoami",
+        },
         {
           key: "sessions",
           label: "Sessions",
