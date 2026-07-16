@@ -2,15 +2,22 @@ package cli
 
 import (
 	"net/url"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/flanksource/captain/pkg/bash"
 	"github.com/flanksource/captain/pkg/claude"
 	"github.com/flanksource/captain/pkg/claude/tools"
 )
 
+// ToolAnalysis is the file/network footprint of one tool use. ReadPaths and
+// WritePaths are ABSOLUTE: they are data, shared across sessions and processes
+// (gavel stages from them), so they are anchored to the cwd of the tool use that
+// produced them rather than relativised against whatever base that call had.
+// Relativise with DisplayPath at the point of display.
 type ToolAnalysis struct {
 	ReadPaths  []string `json:"readPaths,omitempty"`
 	WritePaths []string `json:"writePaths,omitempty"`
@@ -21,8 +28,11 @@ type ToolAnalysis struct {
 // AnalyzeToolUseLegacy is the old API for callers still using claude.ToolUse.
 func AnalyzeToolUseLegacy(tu claude.ToolUse, projectRoot string) ToolAnalysis {
 	base := tools.BaseTool{
-		RawTool:     tu.Tool,
-		Input:       tu.Input,
+		RawTool: tu.Tool,
+		Input:   tu.Input,
+		// CWD anchors the tool's relative paths; without it a bash `cat pkg/x.go`
+		// could only be guessed at from the project root.
+		CWD:         tu.CWD,
 		ProjectRoot: projectRoot,
 	}
 	return AnalyzeToolUse(tools.NewTool(base))
@@ -32,37 +42,37 @@ func AnalyzeToolUse(t tools.Tool) ToolAnalysis {
 	var a ToolAnalysis
 	base := t.Base()
 
-	rel := func(path string) string {
-		return claude.RelativePath(path, base.ProjectRoot)
+	abs := func(path string) string {
+		return claude.AbsolutePath(path, base.CWD, base.ProjectRoot)
 	}
 
 	switch base.RawTool {
 	case "Read":
 		if path := t.FilePath(); path != "" {
-			a.ReadPaths = append(a.ReadPaths, rel(path))
+			a.ReadPaths = append(a.ReadPaths, abs(path))
 		}
 	case "Grep":
 		if path, ok := base.Input["path"].(string); ok && path != "" {
-			a.ReadPaths = append(a.ReadPaths, rel(path))
+			a.ReadPaths = append(a.ReadPaths, abs(path))
 		}
 	case "Glob":
 		if path, ok := base.Input["path"].(string); ok && path != "" {
-			a.ReadPaths = append(a.ReadPaths, rel(path))
+			a.ReadPaths = append(a.ReadPaths, abs(path))
 		}
 	case "Write", "Edit":
 		if path := t.FilePath(); path != "" {
-			a.WritePaths = append(a.WritePaths, rel(path))
+			a.WritePaths = append(a.WritePaths, abs(path))
 		}
 	case "Bash":
-		a.analyzeBash(base.Input, rel)
+		a.analyzeBash(base.Input, abs)
 		command, _ := base.Input["command"].(string)
 		for _, path := range extractApplyPatchPaths(command) {
-			a.WritePaths = appendUnique(a.WritePaths, rel(path))
+			a.WritePaths = appendUnique(a.WritePaths, abs(path))
 		}
 	case "exec":
 		input, _ := base.Input["input"].(string)
 		for _, path := range extractApplyPatchPaths(input) {
-			a.WritePaths = appendUnique(a.WritePaths, rel(path))
+			a.WritePaths = appendUnique(a.WritePaths, abs(path))
 		}
 	case "WebFetch":
 		if urlStr, ok := base.Input["url"].(string); ok {
@@ -91,7 +101,7 @@ func AnalyzeToolUse(t tools.Tool) ToolAnalysis {
 	return a
 }
 
-func (a *ToolAnalysis) analyzeBash(input map[string]any, rel func(string) string) {
+func (a *ToolAnalysis) analyzeBash(input map[string]any, abs func(string) string) {
 	cmd, _ := input["command"].(string)
 	if cmd == "" {
 		return
@@ -104,13 +114,13 @@ func (a *ToolAnalysis) analyzeBash(input map[string]any, rel func(string) string
 	_ = err
 
 	for _, op := range result.Operations {
-		a.WritePaths = appendUnique(a.WritePaths, rel(op.Path))
+		a.WritePaths = appendUnique(a.WritePaths, abs(op.Path))
 	}
 	for _, path := range result.ReferencedPaths {
-		a.ReadPaths = appendUnique(a.ReadPaths, rel(path))
+		a.ReadPaths = appendUnique(a.ReadPaths, abs(path))
 	}
 	for _, path := range extractWritePathsFromBash(cmd) {
-		a.WritePaths = appendUnique(a.WritePaths, rel(path))
+		a.WritePaths = appendUnique(a.WritePaths, abs(path))
 	}
 
 	binaries := make(map[string]bool)
@@ -165,11 +175,55 @@ func appendUnique(slice []string, val string) []string {
 	return append(slice, val)
 }
 
+// displayBase is the working directory display paths render against, resolved
+// once per process.
+var displayBase = sync.OnceValue(func() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	return cwd
+})
+
+// DisplayPath renders a canonical (absolute) path for humans: relative to the
+// working directory when it sits inside it, otherwise the absolute path — a long
+// ../../.. chain reads worse than the full path, and a file from another project
+// is genuinely elsewhere.
+//
+// Display only. Never feed the result back into anything that resolves paths:
+// that round trip is what made session paths ambiguous in the first place.
+func DisplayPath(path string) string {
+	if path == "" || !filepath.IsAbs(path) {
+		return path
+	}
+	base := displayBase()
+	if base == "" {
+		return path
+	}
+	rel, err := filepath.Rel(base, path)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return path
+	}
+	return rel
+}
+
+// DisplayPaths maps DisplayPath over a slice, for rendering a path list.
+func DisplayPaths(paths []string) []string {
+	if len(paths) == 0 {
+		return paths
+	}
+	out := make([]string, len(paths))
+	for i, p := range paths {
+		out[i] = DisplayPath(p)
+	}
+	return out
+}
+
 func FormatPathsWithIcons(readPaths, writePaths []string) string {
 	var parts []string
 	seen := make(map[string]bool)
 	for _, p := range readPaths {
-		dir := pathToDir(p)
+		dir := pathToDir(DisplayPath(p))
 		key := "r:" + dir
 		if !seen[key] {
 			seen[key] = true
@@ -177,7 +231,7 @@ func FormatPathsWithIcons(readPaths, writePaths []string) string {
 		}
 	}
 	for _, p := range writePaths {
-		dir := pathToDir(p)
+		dir := pathToDir(DisplayPath(p))
 		key := "w:" + dir
 		if !seen[key] {
 			seen[key] = true

@@ -13,10 +13,34 @@ func TestAnalyzeToolUse_Read(t *testing.T) {
 		Input: map[string]any{"file_path": "/home/user/project/src/main.go"},
 	}, "/home/user/project")
 
-	assert.Equal(t, []string{"src/main.go"}, a.ReadPaths)
+	assert.Equal(t, []string{"/home/user/project/src/main.go"}, a.ReadPaths)
 	assert.Empty(t, a.WritePaths)
 	assert.Empty(t, a.Binaries)
 	assert.Empty(t, a.Domains)
+}
+
+// TestAnalyzeToolUse_AnchorsRelativePathsToCWD is the case that made session
+// paths unusable: a bash command's relative path means nothing without the
+// directory that command ran in, and an agent's cwd moves during a session.
+func TestAnalyzeToolUse_AnchorsRelativePathsToCWD(t *testing.T) {
+	a := AnalyzeToolUseLegacy(claude.ToolUse{
+		Tool:  "Bash",
+		Input: map[string]any{"command": "touch out.txt"},
+		CWD:   "/home/user/project/pkg/cli",
+	}, "/home/user/project")
+
+	assert.Equal(t, []string{"/home/user/project/pkg/cli/out.txt"}, a.WritePaths)
+}
+
+// A tool use with no cwd recorded falls back to the project root rather than
+// leaving the path dangling.
+func TestAnalyzeToolUse_FallsBackToProjectRootWithoutCWD(t *testing.T) {
+	a := AnalyzeToolUseLegacy(claude.ToolUse{
+		Tool:  "Bash",
+		Input: map[string]any{"command": "touch out.txt"},
+	}, "/home/user/project")
+
+	assert.Equal(t, []string{"/home/user/project/out.txt"}, a.WritePaths)
 }
 
 func TestAnalyzeToolUse_Grep(t *testing.T) {
@@ -25,7 +49,7 @@ func TestAnalyzeToolUse_Grep(t *testing.T) {
 		Input: map[string]any{"pattern": "TODO", "path": "/home/user/project/pkg/"},
 	}, "/home/user/project")
 
-	assert.Equal(t, []string{"pkg/"}, a.ReadPaths)
+	assert.Equal(t, []string{"/home/user/project/pkg/"}, a.ReadPaths)
 	assert.Empty(t, a.WritePaths)
 }
 
@@ -35,7 +59,7 @@ func TestAnalyzeToolUse_Glob(t *testing.T) {
 		Input: map[string]any{"pattern": "**/*.go", "path": "/home/user/project/pkg"},
 	}, "/home/user/project")
 
-	assert.Equal(t, []string{"pkg"}, a.ReadPaths)
+	assert.Equal(t, []string{"/home/user/project/pkg"}, a.ReadPaths)
 	assert.Empty(t, a.WritePaths)
 }
 
@@ -46,7 +70,7 @@ func TestAnalyzeToolUse_Write(t *testing.T) {
 	}, "/home/user/project")
 
 	assert.Empty(t, a.ReadPaths)
-	assert.Equal(t, []string{"pkg/cli/new.go"}, a.WritePaths)
+	assert.Equal(t, []string{"/home/user/project/pkg/cli/new.go"}, a.WritePaths)
 }
 
 func TestAnalyzeToolUse_Edit(t *testing.T) {
@@ -56,7 +80,7 @@ func TestAnalyzeToolUse_Edit(t *testing.T) {
 	}, "/home/user/project")
 
 	assert.Empty(t, a.ReadPaths)
-	assert.Equal(t, []string{"cmd/main.go"}, a.WritePaths)
+	assert.Equal(t, []string{"/home/user/project/cmd/main.go"}, a.WritePaths)
 }
 
 func TestAnalyzeToolUse_Bash(t *testing.T) {
@@ -77,8 +101,8 @@ func TestAnalyzeToolUse_Bash(t *testing.T) {
 		{
 			name:       "touch creates file",
 			cmd:        "touch /home/user/project/output.txt",
-			readPaths:  []string{"output.txt"},
-			writePaths: []string{"output.txt"},
+			readPaths:  []string{"/home/user/project/output.txt"},
+			writePaths: []string{"/home/user/project/output.txt"},
 			binaries:   []string{"touch"},
 			domains:    []string{},
 		},
@@ -116,7 +140,7 @@ func TestAnalyzeToolUse_Bash(t *testing.T) {
 		{
 			name:       "redirect creates write path",
 			cmd:        "echo data > /home/user/project/out.txt",
-			writePaths: []string{"out.txt"},
+			writePaths: []string{"/home/user/project/out.txt"},
 			binaries:   []string{},
 			domains:    []string{},
 		},

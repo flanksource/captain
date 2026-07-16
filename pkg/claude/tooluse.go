@@ -679,6 +679,47 @@ func suggestFilters(filterName string, filters []string, available map[string]st
 	}
 }
 
+// AbsolutePath anchors a tool-use path to an absolute, cleaned path.
+//
+// Tool inputs mix absolute paths (Read/Write/Edit carry them) with paths
+// relative to the directory the tool ran in (a bash `cat pkg/x.go`), and an
+// agent's working directory moves during a session — so a path is only
+// unambiguous once anchored to the cwd that produced it. Anchoring prefers that
+// cwd and falls back to the project root.
+//
+// This is the canonical form every consumer should hold: relativising per tool
+// use bakes in whichever base that call happened to have, which silently differs
+// across one session and leaves the path meaningless to anyone else. Render with
+// RelativePath at the point of display instead.
+//
+// A path that cannot be anchored — no base, or a fragment the shell never
+// expanded, e.g. "$DIR/x" — is returned cleaned but otherwise unchanged rather
+// than guessed at.
+func AbsolutePath(path, cwd, projectRoot string) string {
+	if path == "" {
+		return path
+	}
+	anchored := func() string {
+		if filepath.IsAbs(path) {
+			return filepath.Clean(path)
+		}
+		base := cwd
+		if base == "" {
+			base = projectRoot
+		}
+		if base == "" {
+			return filepath.Clean(path)
+		}
+		return filepath.Join(base, path)
+	}()
+	// Clean and Join drop a trailing separator, but that separator is how a
+	// directory argument (Grep/Glob `pkg/`) is told apart from a file, so keep it.
+	if strings.HasSuffix(path, "/") && !strings.HasSuffix(anchored, "/") {
+		anchored += "/"
+	}
+	return anchored
+}
+
 // RelativePath makes an absolute path relative to projectRoot if possible.
 // For paths outside the project (more than 1 parent level away), returns absolute path.
 func RelativePath(path, projectRoot string) string {

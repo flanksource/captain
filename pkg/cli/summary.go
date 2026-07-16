@@ -82,13 +82,17 @@ func BuildSummary(toolUses []claude.ToolUse, classifier *bash.CategoryClassifier
 		categoryTokens[category] += tuTokens
 
 		analysis := AnalyzeToolUseLegacy(tu, tu.ProjectRoot)
+		// Analysis paths are absolute; this table is read by a human, so aggregate
+		// under the display form.
 		for _, p := range analysis.ReadPaths {
-			paths[p]++
-			pathTokens[p] += tuTokens
+			d := DisplayPath(p)
+			paths[d]++
+			pathTokens[d] += tuTokens
 		}
 		for _, p := range analysis.WritePaths {
-			paths[p]++
-			pathTokens[p] += tuTokens
+			d := DisplayPath(p)
+			paths[d]++
+			pathTokens[d] += tuTokens
 		}
 		for _, d := range analysis.Domains {
 			domains[d]++
