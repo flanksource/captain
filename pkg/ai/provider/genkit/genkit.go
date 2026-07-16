@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
@@ -29,10 +30,11 @@ var log = logger.GetLogger("ai")
 
 // Provider is a genkit-backed ai.StreamingProvider for one API backend.
 type Provider struct {
-	cfg      ai.Config
-	backend  ai.Backend
-	g        *gk.Genkit
-	modelRef string
+	cfg         ai.Config
+	backend     ai.Backend
+	g           *gk.Genkit
+	modelRef    string
+	toolCallSeq atomic.Uint64 // correlates caller-tool EventToolUse↔EventToolResult
 }
 
 var _ ai.StreamingProvider = (*Provider)(nil)
@@ -87,7 +89,7 @@ func (p *Provider) GetBackend() ai.Backend { return p.backend }
 func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, error) {
 	start := time.Now()
 
-	opts, err := generateOptions(p, req, nil)
+	opts, err := generateOptions(p, req, nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -158,8 +160,16 @@ func (p *Provider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai
 		}
 		return nil
 	}
+	// emit lets in-process caller-tool execution publish tool_use/permission/
+	// tool_result events onto the same stream as the model's text chunks.
+	emit := func(ev ai.Event) {
+		select {
+		case ch <- ev:
+		case <-ctx.Done():
+		}
+	}
 
-	opts, err := generateOptions(p, req, cb)
+	opts, err := generateOptions(p, req, cb, emit)
 	if err != nil {
 		return nil, err
 	}

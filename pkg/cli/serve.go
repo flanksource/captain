@@ -355,7 +355,7 @@ func handleThreadFromAgent(store aichat.ThreadStore) http.HandlerFunc {
 }
 
 func captainChatToolEnabled(tool aichat.ToolInfo) bool {
-	raw := strings.ToLower(strings.TrimSpace(tool.OperationName))
+	raw := strings.ToLower(strings.TrimSpace(tool.Annotation("clicky/operation")))
 	if raw == "" {
 		raw = strings.ToLower(strings.TrimSpace(tool.Name))
 	}
@@ -375,14 +375,19 @@ func captainChatToolEnabled(tool aichat.ToolInfo) bool {
 }
 
 func captainChatRequiresApproval(tool aichat.ToolInfo, _ any) bool {
-	switch strings.ToUpper(tool.Method) {
+	switch strings.ToUpper(tool.Annotation("clicky/method")) {
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
 		return false
 	}
-	if isReadOnlyCaptainTool(tool.ClickyVerb) ||
+	// clicky already derives list/get→On; honor that, then fall back to the raw
+	// verb/name/operation/path for captain's wider read-verb set.
+	if tool.DefaultPermission == aichat.ToolModeOn {
+		return false
+	}
+	if isReadOnlyCaptainTool(tool.Annotation("clicky/verb")) ||
 		isReadOnlyCaptainTool(tool.Name) ||
-		isReadOnlyCaptainTool(tool.OperationName) ||
-		isReadOnlyCaptainTool(tool.Path) {
+		isReadOnlyCaptainTool(tool.Annotation("clicky/operation")) ||
+		isReadOnlyCaptainTool(tool.Annotation("clicky/path")) {
 		return false
 	}
 	return true

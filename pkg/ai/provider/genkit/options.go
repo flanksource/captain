@@ -49,8 +49,9 @@ func modelRef(backend ai.Backend, model string) (string, error) {
 // system prompt, user prompt, effort config, and (when streaming) the callback.
 // WithOutputType is added only for the non-streaming structured-output path;
 // ExecuteStream rejects structured output before calling this.
-func generateOptions(p *Provider, req ai.Request, stream gkai.ModelStreamCallback) ([]gkai.GenerateOption, error) {
+func generateOptions(p *Provider, req ai.Request, stream gkai.ModelStreamCallback, emit func(ai.Event)) ([]gkai.GenerateOption, error) {
 	opts := []gkai.GenerateOption{gkai.WithModelName(p.modelRef)}
+	opts = append(opts, p.toolOptions(emit)...)
 	if p.cfg.Model.Name != "" {
 		req.Name = p.cfg.Model.Name
 	}
