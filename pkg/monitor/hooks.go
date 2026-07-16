@@ -68,7 +68,13 @@ func (m *Monitor) handleHookEvent(ctx context.Context, watcher *transcriptWatche
 		// before any filesystem use. Clean and reject traversal inline so the
 		// sanitized value is the one that flows to os.Stat.
 		path = filepath.Clean(path)
-		if strings.Contains(path, "..") || !withinHookRoot(ev.Provider, path) {
+		// Reject traversal as a standalone guard (recognized by CodeQL's
+		// TaintedPath DotDotCheck) before enforcing root containment.
+		if strings.Contains(path, "..") {
+			log.Warnf("hook %s/%s: transcript %s contains path traversal", ev.Provider, ev.Event, path)
+			return
+		}
+		if !withinHookRoot(ev.Provider, path) {
 			log.Warnf("hook %s/%s: transcript %s is outside the %s session root", ev.Provider, ev.Event, path, ev.Provider)
 			return
 		}
