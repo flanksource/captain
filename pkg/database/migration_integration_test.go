@@ -68,6 +68,26 @@ func TestCaptainMigrationsAreIdempotentAndShareOnePool(t *testing.T) {
 	} {
 		require.True(t, shared.Migrator().HasTable(table), "%s should exist", table)
 	}
+	require.False(t, shared.Migrator().HasTable("captain_outbox"),
+		"the retired outbox must not remain after migration")
+
+	var retiredObjectCount int64
+	require.NoError(t, shared.Raw(`SELECT count(*)
+		FROM pg_catalog.pg_proc
+		WHERE pronamespace = 'public'::regnamespace
+		  AND proname IN ('captain_emit_session_change', 'captain_notify_outbox')`).Scan(&retiredObjectCount).Error)
+	require.Zero(t, retiredObjectCount, "retired outbox functions must be removed")
+	require.NoError(t, shared.Raw(`SELECT count(*)
+		FROM pg_catalog.pg_trigger
+		WHERE NOT tgisinternal
+		  AND (tgname LIKE 'captain_%_emit_after' OR tgname = 'captain_outbox_notify_after')`).Scan(&retiredObjectCount).Error)
+	require.Zero(t, retiredObjectCount, "retired outbox triggers must be removed")
+
+	var activityTriggerCount int64
+	require.NoError(t, shared.Raw(`SELECT count(*)
+		FROM pg_catalog.pg_trigger
+		WHERE NOT tgisinternal AND tgname = 'captain_messages_activity_after'`).Scan(&activityTriggerCount).Error)
+	require.EqualValues(t, 1, activityTriggerCount, "session activity projection must remain installed")
 
 	for table, columns := range map[string][]string{
 		"captain_sessions":              {"id", "lifecycle_status", "activity_state", "health_state", "state_version"},

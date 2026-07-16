@@ -14,14 +14,15 @@ func TestSchemaBundleContainsGavelIntegrationContract(t *testing.T) {
 
 	expectedFiles := []string{
 		"00_types.pg.hcl",
+		"01_session_lifecycle_partial.sql",
 		"10_sessions.pg.hcl",
 		"20_prompt_runs_and_plans.pg.hcl",
 		"21_plans.pg.hcl",
 		"30_execution.pg.hcl",
-		"40_artifacts_and_outbox.pg.hcl",
+		"40_artifacts.pg.hcl",
 		"50_constraints.sql",
 		"51_state_triggers.sql",
-		"52_outbox_triggers.sql",
+		"52_session_activity_triggers.sql",
 		"60_view_session_overview.sql",
 		"61_view_session_transcript.sql",
 		"62_view_session_turns.sql",
@@ -39,7 +40,13 @@ func TestSchemaBundleContainsGavelIntegrationContract(t *testing.T) {
 			t.Errorf("embedded migration %s: %v", name, err)
 		}
 	}
-	assertContainsAll(t, "00_types.pg.hcl", `"partial"`)
+	assertContainsAll(t, "00_types.pg.hcl",
+		`values = ["created", "running", "succeeded", "partial", "failed", "cancelled", "interrupted"]`,
+	)
+	assertContainsAll(t, "01_session_lifecycle_partial.sql",
+		"-- phase: pre",
+		"ADD VALUE IF NOT EXISTS 'partial' BEFORE 'failed'",
+	)
 
 	assertContainsAll(t, "10_sessions.pg.hcl",
 		`table "captain_sessions"`,
@@ -90,13 +97,30 @@ func TestSchemaBundleContainsGavelIntegrationContract(t *testing.T) {
 		"CREATE TRIGGER captain_sessions_updated_at_before",
 		"REVOKE ALL ON FUNCTION public.captain_sync_prompt_run_iteration() FROM PUBLIC;",
 	)
-	assertContainsAll(t, "52_outbox_triggers.sql",
+	assertContainsAll(t, "52_session_activity_triggers.sql",
 		"-- phase: post",
-		"CREATE OR REPLACE FUNCTION public.captain_emit_session_change()",
-		"CREATE TRIGGER captain_sessions_emit_after",
-		"CREATE TRIGGER captain_outbox_notify_after",
-		"REVOKE ALL ON FUNCTION public.captain_notify_outbox() FROM PUBLIC;",
+		"DROP TABLE IF EXISTS public.captain_outbox;",
+		"DROP FUNCTION IF EXISTS public.captain_emit_session_change();",
+		"DROP FUNCTION IF EXISTS public.captain_notify_outbox();",
+		"CREATE OR REPLACE FUNCTION public.captain_touch_session_activity()",
+		"CREATE TRIGGER captain_messages_activity_after",
+		"REVOKE ALL ON FUNCTION public.captain_touch_session_activity() FROM PUBLIC;",
+		// last_activity_at is agent-work only, and the write is monotonic. An
+		// allowlist keeps a table that lacks an activity column (whose activity_at
+		// falls through to updated_at = now) from permanently poisoning it.
+		"SET last_activity_at = GREATEST(last_activity_at, agent_activity_at)",
+		"AND (last_activity_at IS NULL OR last_activity_at < agent_activity_at)",
+		"IF agent_activity_at IS NOT NULL AND TG_OP <> 'DELETE' AND TG_TABLE_NAME IN (",
 	)
+	for _, name := range expectedFiles {
+		assertContainsNone(t, name,
+			`table "captain_outbox"`,
+			"INSERT INTO public.captain_outbox",
+			"CREATE OR REPLACE FUNCTION public.captain_notify_outbox()",
+			"CREATE TRIGGER captain_outbox_notify_after",
+			"pg_notify('captain_outbox'",
+		)
+	}
 	for file, view := range map[string]string{
 		"60_view_session_overview.sql":    "captain_session_overview",
 		"61_view_session_transcript.sql":  "captain_session_transcript",
@@ -264,6 +288,20 @@ func assertContainsAll(t *testing.T, name string, expected ...string) {
 	for _, value := range expected {
 		if !strings.Contains(content, value) {
 			t.Errorf("%s does not contain %q", name, value)
+		}
+	}
+}
+
+func assertContainsNone(t *testing.T, name string, unexpected ...string) {
+	t.Helper()
+	data, err := fs.ReadFile(schemaFS, name)
+	if err != nil {
+		t.Fatalf("read embedded migration %s: %v", name, err)
+	}
+	content := string(data)
+	for _, value := range unexpected {
+		if strings.Contains(content, value) {
+			t.Errorf("%s unexpectedly contains %q", name, value)
 		}
 	}
 }

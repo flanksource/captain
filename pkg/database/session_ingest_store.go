@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
@@ -294,7 +295,8 @@ func validateIngest(input IngestTranscriptInput) error {
 
 // projectSessionColumns overwrites the monitor-owned projection columns with
 // the freshly parsed values. Identity, hierarchy, and state-machine columns are
-// never touched here.
+// never touched here. last_activity_at is the exception to the overwrite: it
+// only ever advances (see below).
 func (db *DB) projectSessionColumns(ctx context.Context, id uuid.UUID, input IngestSessionInput) error {
 	updates := map[string]any{}
 	for column, value := range map[string]string{
@@ -310,7 +312,13 @@ func (db *DB) projectSessionColumns(ctx context.Context, id uuid.UUID, input Ing
 		updates["started_at"] = *input.StartedAt
 	}
 	if input.LastActivityAt != nil {
-		updates["last_activity_at"] = *input.LastActivityAt
+		// The transcript max is real evidence: entries the child rows never
+		// receive (non-conversational lines, events) push it past anything the
+		// activity trigger can derive. But it is only ever evidence of activity,
+		// never of its absence -- a re-ingest re-derives a single file and must
+		// not erase prompt-run, turn, or event activity that file never
+		// contained. Monotonic here, exactly as in captain_touch_session_activity.
+		updates["last_activity_at"] = gorm.Expr("GREATEST(last_activity_at, ?)", input.LastActivityAt.UTC())
 	}
 	if input.Git != nil {
 		updates["git"] = jsonbValue(input.Git)

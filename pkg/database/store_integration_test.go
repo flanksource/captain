@@ -97,8 +97,6 @@ func TestDurableSessionPromptRunAndPlanStores(t *testing.T) {
 	var sessionActivityBeforeReplay sql.NullTime
 	require.NoError(t, db.Gorm().Raw(`SELECT last_activity_at FROM captain_sessions WHERE id = ?`, session.ID).
 		Scan(&sessionActivityBeforeReplay).Error)
-	var sessionOutboxBeforeReplay int64
-	require.NoError(t, db.Gorm().Table("captain_outbox").Count(&sessionOutboxBeforeReplay).Error)
 	updatedSession, err = db.UpdateSessionState(t.Context(), UpdateSessionStateInput{
 		ID: updatedSession.ID, ExpectedVersion: updatedSession.StateVersion,
 		ProviderSessionID: &updatedProviderID, LifecycleStatus: &running, ActivityState: &working,
@@ -112,9 +110,6 @@ func TestDurableSessionPromptRunAndPlanStores(t *testing.T) {
 	require.NoError(t, db.Gorm().Raw(`SELECT last_activity_at FROM captain_sessions WHERE id = ?`, session.ID).
 		Scan(&sessionActivityAfterReplay).Error)
 	assert.Equal(t, sessionActivityBeforeReplay, sessionActivityAfterReplay)
-	var sessionOutboxAfterReplay int64
-	require.NoError(t, db.Gorm().Table("captain_outbox").Count(&sessionOutboxAfterReplay).Error)
-	assert.Equal(t, sessionOutboxBeforeReplay, sessionOutboxAfterReplay, "exact session replay must not emit an outbox event")
 	replacementProviderID := "provider-session-1-replacement"
 	_, err = db.UpdateSessionState(t.Context(), UpdateSessionStateInput{
 		ID: updatedSession.ID, ExpectedVersion: updatedSession.StateVersion,
@@ -303,8 +298,6 @@ func TestDurableSessionPromptRunAndPlanStores(t *testing.T) {
 	var runSessionActivityBeforeReplay sql.NullTime
 	require.NoError(t, db.Gorm().Raw(`SELECT last_activity_at FROM captain_sessions WHERE id = ?`, session.ID).
 		Scan(&runSessionActivityBeforeReplay).Error)
-	var runOutboxBeforeReplay int64
-	require.NoError(t, db.Gorm().Table("captain_outbox").Count(&runOutboxBeforeReplay).Error)
 	replayedRunState, err := db.UpdatePromptRun(t.Context(), UpdatePromptRunInput{
 		ID: run.ID, ExpectedVersion: run.Version, Phase: &generate, State: &runState, ResultJSON: &resultJSON,
 	})
@@ -315,9 +308,6 @@ func TestDurableSessionPromptRunAndPlanStores(t *testing.T) {
 	require.NoError(t, db.Gorm().Raw(`SELECT last_activity_at FROM captain_sessions WHERE id = ?`, session.ID).
 		Scan(&runSessionActivityAfterReplay).Error)
 	assert.Equal(t, runSessionActivityBeforeReplay, runSessionActivityAfterReplay)
-	var runOutboxAfterReplay int64
-	require.NoError(t, db.Gorm().Table("captain_outbox").Count(&runOutboxAfterReplay).Error)
-	assert.Equal(t, runOutboxBeforeReplay, runOutboxAfterReplay, "exact prompt-run replay must not emit an outbox event")
 	_, err = db.UpdatePromptRun(t.Context(), UpdatePromptRunInput{
 		ID: run.ID, ExpectedVersion: 0, State: &runState,
 	})

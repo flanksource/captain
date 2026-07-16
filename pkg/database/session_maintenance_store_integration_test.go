@@ -125,4 +125,19 @@ func TestSessionMaintenanceStore(t *testing.T) {
 	t.Run("VacuumAnalyze succeeds", func(t *testing.T) {
 		require.NoError(t, db.VacuumAnalyze(t.Context()))
 	})
+
+	t.Run("SessionStorageStats measures live tuple page occupancy", func(t *testing.T) {
+		seedMaintenanceSession(t, db, "0195c1de-4ab8-7000-8000-00000000e0d5")
+		var expectedLiveRows int64
+		require.NoError(t, db.gorm.WithContext(t.Context()).Table("captain_sessions").Count(&expectedLiveRows).Error)
+
+		stats, err := db.SessionStorageStats(t.Context())
+		require.NoError(t, err)
+		assert.Equal(t, expectedLiveRows, stats.LiveRows)
+		assert.Positive(t, stats.HeapBytes)
+		assert.Positive(t, stats.HeapPages)
+		assert.Positive(t, stats.PagesWithLiveRows)
+		assert.LessOrEqual(t, stats.PagesWithLiveRows, stats.HeapPages)
+		assert.Positive(t, stats.LiveTupleBytes)
+	})
 }
