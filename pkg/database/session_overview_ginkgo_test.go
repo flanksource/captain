@@ -1,0 +1,193 @@
+package database
+
+import (
+	"os"
+	"path/filepath"
+
+	commonsdb "github.com/flanksource/commons-db/db"
+	"github.com/google/uuid"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+)
+
+var _ = Describe("Session overview aggregates", func() {
+	It("preserves every detail metric within its session security boundary", func(ctx SpecContext) {
+		if os.Getenv("CAPTAIN_DB_EMBEDDED_TEST") == "" {
+			Skip("set CAPTAIN_DB_EMBEDDED_TEST=1 to run embedded-postgres store tests")
+		}
+
+		dsn, stop, err := commonsdb.StartEmbedded(commonsdb.EmbeddedConfig{
+			DataDir:  filepath.Join(GinkgoT().TempDir(), "postgres"),
+			Database: "captain_session_overview",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { Expect(stop()).To(Succeed()) })
+
+		db, err := Open(ctx, WithDSN(dsn), WithMigrations())
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { Expect(db.Close()).To(Succeed()) })
+
+		rootID := uuid.MustParse("00000000-0000-0000-0000-000000000101")
+		childID := uuid.MustParse("00000000-0000-0000-0000-000000000102")
+		otherID := uuid.MustParse("00000000-0000-0000-0000-000000000201")
+		for _, session := range []struct {
+			id     uuid.UUID
+			rootID *uuid.UUID
+		}{
+			{id: rootID},
+			{id: childID, rootID: &rootID},
+			{id: otherID},
+		} {
+			_, err = db.CreateOrGetSession(ctx, CreateSessionInput{
+				ID: session.id, RootSessionID: session.rootID, Source: "codex",
+				Provider: "openai", HostID: "overview-test",
+			})
+			Expect(err).NotTo(HaveOccurred())
+		}
+
+		turnOne := uuid.MustParse("00000000-0000-0000-0000-000000001101")
+		turnTwo := uuid.MustParse("00000000-0000-0000-0000-000000001102")
+		otherTurn := uuid.MustParse("00000000-0000-0000-0000-000000002101")
+		Expect(db.Gorm().Exec(`
+			INSERT INTO captain_turns (id, session_id, turn_index, status)
+			VALUES (?, ?, 0, 'ended'), (?, ?, 1, 'ended'), (?, ?, 0, 'ended')`,
+			turnOne, rootID, turnTwo, rootID, otherTurn, otherID,
+		).Error).NotTo(HaveOccurred())
+		Expect(db.Gorm().Exec(`
+			INSERT INTO captain_model_calls
+			  (turn_id, call_index, model, backend, effort, input_tokens, output_tokens,
+			   reasoning_tokens, cache_read_tokens, cache_write_tokens, context_tokens,
+			   context_window_tokens, input_cost, output_cost, reasoning_cost,
+			   cache_read_cost, cache_write_cost, currency, started_at, ended_at)
+			VALUES
+			  (?, 0, 'model-old', 'codex', 'low', 10, 4, 2, 3, 1, 20, 100,
+			   0.10, 0.04, 0.02, 0.03, 0.01, 'USD', '2026-07-16 10:00:00+00', '2026-07-16 10:01:00+00'),
+			  (?, 0, 'model-latest', 'codex', 'high', 20, 8, 4, 6, 2, 75, 100,
+			   0.20, 0.08, 0.04, 0.06, 0.02, 'USD', '2026-07-16 11:00:00+00', '2026-07-16 11:01:00+00'),
+			  (?, 1, 'model-eur', 'codex', NULL, 100, 50, 25, 10, 5, 50, 100,
+			   9, 9, 9, 9, 9, 'EUR', '2026-07-16 09:00:00+00', '2026-07-16 09:01:00+00')`,
+			turnOne, turnTwo, turnTwo,
+		).Error).NotTo(HaveOccurred())
+
+		Expect(db.Gorm().Exec(`
+			INSERT INTO captain_messages (session_id, sequence, role, parts)
+			VALUES
+			  (?, 0, 'assistant', ?::jsonb),
+			  (?, 1, 'assistant', ?::jsonb),
+			  (?, 0, 'assistant', ?::jsonb)`,
+			rootID, `[{"type":"dynamic-tool","toolName":"shell"},{"type":"tool-read","toolName":"read"},{"type":"tool-empty"},{"type":"text"}]`,
+			rootID, `{"type":"dynamic-tool","toolName":"ignored-non-array"}`,
+			otherID, `[{"type":"tool-write","toolName":"write"}]`,
+		).Error).NotTo(HaveOccurred())
+		Expect(db.Gorm().Exec(`
+			INSERT INTO captain_events (session_id, kind)
+			VALUES (?, 'assistant.delta'), (?, 'tool.completed'), (?, 'other-session')`,
+			rootID, rootID, otherID,
+		).Error).NotTo(HaveOccurred())
+		Expect(db.Gorm().Exec(`
+			INSERT INTO captain_prompt_runs (session_id, root_session_id, state, phase)
+			VALUES (?, ?, 'succeeded', 'finished'), (?, ?, 'failed', 'finished'), (?, ?, 'succeeded', 'finished')`,
+			rootID, rootID, rootID, rootID, otherID, otherID,
+		).Error).NotTo(HaveOccurred())
+		Expect(db.Gorm().Exec(`
+			INSERT INTO captain_plans (source_session_id, title)
+			VALUES (?, 'first'), (?, 'second'), (?, 'other')`,
+			rootID, rootID, otherID,
+		).Error).NotTo(HaveOccurred())
+		Expect(db.Gorm().Exec(`
+			INSERT INTO captain_turn_requests (session_id, kind, state, resolved_at)
+			VALUES
+			  (?, 'question', 'pending', NULL),
+			  (?, 'question', 'approved', now()),
+			  (?, 'question', 'answered', now()),
+			  (?, 'question', 'denied', now()),
+			  (?, 'question', 'cancelled', now()),
+			  (?, 'question', 'pending', NULL)`,
+			rootID, rootID, rootID, rootID, rootID, otherID,
+		).Error).NotTo(HaveOccurred())
+		Expect(db.Gorm().Exec(`
+			INSERT INTO captain_artifacts (session_id, kind)
+			VALUES
+			  (?, 'file.read'), (?, 'file.write'), (?, 'file.edit'), (?, 'file.delete'),
+			  (?, 'terminal.output'), (?, 'file.read')`,
+			rootID, rootID, rootID, rootID, rootID, otherID,
+		).Error).NotTo(HaveOccurred())
+
+		var overview struct {
+			MessageCount         int64
+			ToolCallCount        int64
+			EventCount           int64
+			TurnCount            int64
+			ModelCallCount       int64
+			AgentCount           int64
+			PromptRunCount       int64
+			PlanCount            int64
+			PendingRequestCount  int64
+			ApprovedRequestCount int64
+			DeniedRequestCount   int64
+			FileReadCount        int64
+			FileWrittenCount     int64
+			Model                string
+			Backend              string
+			Effort               string
+			ContextTokens        int64
+			ContextWindowTokens  int64
+			ContextFreePercent   int
+			InputTokens          int64
+			OutputTokens         int64
+			ReasoningTokens      int64
+			CacheReadTokens      int64
+			CacheWriteTokens     int64
+			TotalTokens          int64
+			CostUSD              float64
+		}
+		Expect(db.Gorm().Raw(
+			"SELECT * FROM captain_session_overview WHERE id = ?", rootID,
+		).Scan(&overview).Error).NotTo(HaveOccurred())
+		Expect(overview).To(Equal(struct {
+			MessageCount         int64
+			ToolCallCount        int64
+			EventCount           int64
+			TurnCount            int64
+			ModelCallCount       int64
+			AgentCount           int64
+			PromptRunCount       int64
+			PlanCount            int64
+			PendingRequestCount  int64
+			ApprovedRequestCount int64
+			DeniedRequestCount   int64
+			FileReadCount        int64
+			FileWrittenCount     int64
+			Model                string
+			Backend              string
+			Effort               string
+			ContextTokens        int64
+			ContextWindowTokens  int64
+			ContextFreePercent   int
+			InputTokens          int64
+			OutputTokens         int64
+			ReasoningTokens      int64
+			CacheReadTokens      int64
+			CacheWriteTokens     int64
+			TotalTokens          int64
+			CostUSD              float64
+		}{
+			MessageCount: 2, ToolCallCount: 2, EventCount: 2,
+			TurnCount: 2, ModelCallCount: 3, AgentCount: 2,
+			PromptRunCount: 2, PlanCount: 2,
+			PendingRequestCount: 1, ApprovedRequestCount: 2, DeniedRequestCount: 1,
+			FileReadCount: 1, FileWrittenCount: 3,
+			Model: "model-latest", Backend: "codex", Effort: "high",
+			ContextTokens: 75, ContextWindowTokens: 100, ContextFreePercent: 25,
+			InputTokens: 130, OutputTokens: 62, ReasoningTokens: 31,
+			CacheReadTokens: 19, CacheWriteTokens: 8, TotalTokens: 219,
+			CostUSD: 0.60,
+		}))
+
+		var securityBarrier bool
+		Expect(db.Gorm().Raw(`SELECT 'security_barrier=true' = ANY(COALESCE(reloptions, '{}')) FROM pg_class
+			WHERE oid = 'public.captain_session_overview'::regclass`,
+		).Scan(&securityBarrier).Error).NotTo(HaveOccurred())
+		Expect(securityBarrier).To(BeTrue())
+	})
+})

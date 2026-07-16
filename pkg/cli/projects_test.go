@@ -51,7 +51,7 @@ func TestUuidStem(t *testing.T) {
 	}
 }
 
-func TestProjectOptionsFromOverviewsMergesClaudeCodexAndLive(t *testing.T) {
+func TestProjectOptionsFromAggregatesMergesClaudeCodexAndLive(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	claudeProject := filepath.Join(home, "work", "claude-project")
@@ -65,13 +65,13 @@ func TestProjectOptionsFromOverviewsMergesClaudeCodexAndLive(t *testing.T) {
 	}
 
 	started := time.Date(2026, 6, 1, 11, 0, 0, 0, time.UTC)
-	overviews := []database.SessionOverview{
-		{Source: "claude", CWD: &claudeProject, LastActivityAt: &started},
-		{Source: "codex", CWD: &codexProject, StartedAt: &started},
-		{Source: "codex", CWD: &liveProject, StartedAt: &started, ProcessActive: true},
+	aggregates := []database.ProjectSessionAggregate{
+		{Source: "claude", CWD: claudeProject, SessionCount: 1, LastActivityAt: &started},
+		{Source: "codex", CWD: codexProject, SessionCount: 1, LastActivityAt: &started},
+		{Source: "codex", CWD: liveProject, SessionCount: 1, LastActivityAt: &started, ProcessActive: true},
 	}
 
-	result := projectOptionsFromOverviews(overviews)
+	result := projectOptionsFromAggregates(aggregates)
 	if result.Total != 3 {
 		t.Fatalf("projects = %+v", result)
 	}

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -8,11 +9,15 @@ import (
 )
 
 func handleSessionsLive() http.HandlerFunc {
+	return handleSessionsLiveWithRunner(RunSessionLive)
+}
+
+func handleSessionsLiveWithRunner(run func(context.Context, SessionLiveOptions) (SessionLiveResult, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query()
 		opts := SessionLiveOptions{
 			Source: strings.TrimSpace(query.Get("source")), Project: strings.TrimSpace(query.Get("project")),
-			Query: strings.TrimSpace(query.Get("q")), Limit: 100,
+			Query: strings.TrimSpace(query.Get("q")), Limit: 100, Cursor: strings.TrimSpace(query.Get("cursor")),
 		}
 		if opts.Source == "" {
 			opts.Source = "all"
@@ -33,7 +38,7 @@ func handleSessionsLive() http.HandlerFunc {
 			}
 			opts.Limit = limit
 		}
-		result, err := RunSessionLive(r.Context(), opts)
+		result, err := run(r.Context(), opts)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return

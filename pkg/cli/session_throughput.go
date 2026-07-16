@@ -81,25 +81,30 @@ func RunSessionThroughput(ctx context.Context, opts SessionThroughputOptions) (S
 	if err != nil {
 		return SessionThroughputResult{}, err
 	}
-	records, err := dbSessionRecords(ctx, db, sessionRecordQuery{
-		Source: source, ProjectRoot: projectRoot, Query: opts.Query,
+	page, err := dbSessionRecords(ctx, db, sessionRecordQuery{
+		Source: source, ProjectRoot: projectRoot, Query: opts.Query, Limit: limit,
 	})
 	if err != nil {
 		return SessionThroughputResult{}, err
 	}
-	if limit > 0 && len(records) > limit {
-		records = records[:limit]
-	}
+	return buildSessionThroughputResult(sessionThroughputResultOptions{
+		Page: page, Source: source, Scope: scope, Project: projectResultValue(scope, projectRoot),
+	}), nil
+}
 
-	groups, skipped := aggregateSessionThroughput(records)
+type sessionThroughputResultOptions struct {
+	Page    sessionRecordPage
+	Source  string
+	Scope   string
+	Project string
+}
+
+func buildSessionThroughputResult(options sessionThroughputResultOptions) SessionThroughputResult {
+	groups, skipped := aggregateSessionThroughput(options.Page.Records)
 	return SessionThroughputResult{
-		Groups:  groups,
-		Total:   len(records),
-		Skipped: skipped,
-		Source:  source,
-		Scope:   scope,
-		Project: projectResultValue(scope, projectRoot),
-	}, nil
+		Groups: groups, Total: len(options.Page.Records), Skipped: skipped,
+		Source: options.Source, Scope: options.Scope, Project: options.Project,
+	}
 }
 
 func aggregateSessionThroughput(records []SessionRecord) ([]SessionThroughputGroup, int) {

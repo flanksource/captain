@@ -3,7 +3,10 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/session"
@@ -11,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	. "github.com/onsi/gomega/gstruct"
 )
 
 func TestSessionGetMulti(t *testing.T) {
@@ -19,6 +23,27 @@ func TestSessionGetMulti(t *testing.T) {
 }
 
 var _ = Describe("session get multi-result output", func() {
+	It("threads an opaque cursor through the live-session HTTP collection", func() {
+		var received SessionLiveOptions
+		handler := handleSessionsLiveWithRunner(func(_ context.Context, opts SessionLiveOptions) (SessionLiveResult, error) {
+			received = opts
+			return SessionLiveResult{Total: 3, NextCursor: "cursor-next"}, nil
+		})
+		request := httptest.NewRequest(http.MethodGet, "/api/captain/sessions/live?source=codex&all=true&limit=2&cursor=cursor-current", nil)
+		response := httptest.NewRecorder()
+
+		handler.ServeHTTP(response, request)
+
+		Expect(response.Code).To(Equal(http.StatusOK))
+		Expect(received).To(MatchFields(IgnoreExtras, Fields{
+			"Source": Equal("codex"), "All": BeTrue(), "Limit": Equal(2), "Cursor": Equal("cursor-current"),
+		}))
+		var result SessionLiveResult
+		Expect(json.Unmarshal(response.Body.Bytes(), &result)).To(Succeed())
+		Expect(result.Total).To(Equal(3))
+		Expect(result.NextCursor).To(Equal("cursor-next"))
+	})
+
 	It("projects overview runtime data into the unified session detail", func() {
 		detail := &session.Session{Turns: []session.Turn{{ID: "turn-1", Index: 1}}}
 		summary := SessionRecord{
@@ -41,22 +66,81 @@ var _ = Describe("session get multi-result output", func() {
 		}}))
 	})
 
-	It("uses targeted identity lookup for UUID-prefix list searches", func() {
+	It("passes UUID-prefix searches through the bounded list filter", func() {
 		providerID := "ad4c854e-cde6-4b99-99f3-667bf74112e3"
 		store := &sessionGetOverviewStore{
-			identity: []database.SessionOverview{
-				{ProviderSessionID: &providerID, Source: "claude"},
-				{ProviderSessionID: &providerID, Source: "gavel"},
+			list: []database.SessionListSummary{
+				{ID: uuid.New(), ProviderSessionID: &providerID, Source: "claude"},
+				{ID: uuid.New(), ProviderSessionID: &providerID, Source: "gavel"},
 			},
 		}
 
-		records, err := dbSessionRecords(context.Background(), store, sessionRecordQuery{
+		page, err := dbSessionRecords(context.Background(), store, sessionRecordQuery{
 			Source: "all", Query: "ad4c854e",
 		})
 		Expect(err).NotTo(HaveOccurred())
-		Expect(records).To(HaveLen(2))
-		Expect(store.identities).To(Equal([]string{"ad4c854e"}))
-		Expect(store.listCalls).To(BeZero())
+		Expect(page.Records).To(HaveLen(2))
+		Expect(store.listFilter.Query).To(Equal("ad4c854e"))
+		Expect(store.listFilter.RootsOnly).To(BeTrue())
+	})
+
+	It("loads every bounded page when full live output is explicit", func(ctx SpecContext) {
+		store := &sessionGetOverviewStore{listPages: map[string]database.SessionListPage{
+			"": {
+				Rows:  []database.SessionListSummary{{ID: uuid.New()}, {ID: uuid.New()}},
+				Total: 3, NextCursor: "cursor-2",
+			},
+			"cursor-2": {Rows: []database.SessionListSummary{{ID: uuid.New()}}, Total: 3},
+		}}
+
+		page, err := dbAllSessionRecords(ctx, store, sessionRecordQuery{Limit: 2})
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(page.Records).To(HaveLen(3))
+		Expect(page.Total).To(Equal(3))
+		Expect(store.listFilters).To(HaveLen(2))
+		Expect(store.listFilters[0].Limit).To(Equal(2))
+		Expect(store.listFilters[0].Cursor).To(BeEmpty())
+		Expect(store.listFilters[1].Limit).To(Equal(2))
+		Expect(store.listFilters[1].Cursor).To(Equal("cursor-2"))
+	})
+
+	It("keeps live summaries and database coverage scoped to the returned page", func() {
+		free := 30
+		page := sessionRecordPage{
+			Records: []SessionRecord{
+				{Tokens: &SessionTokensWire{InputTokens: 10, TotalTokens: 10}, Context: &SessionContextWire{FreePercent: free}, CostUSD: 0.25},
+				{Tokens: &SessionTokensWire{OutputTokens: 5, TotalTokens: 5}},
+			},
+			Total: 9,
+		}
+
+		result := buildSessionLiveResult(sessionLiveResultOptions{
+			Page: page, Source: "all", Scope: "all", ReadAt: time.Date(2026, time.July, 16, 16, 0, 0, 0, time.UTC),
+		})
+
+		Expect(result.Total).To(Equal(9))
+		Expect(result.Summary.TotalSessions).To(Equal(2))
+		Expect(result.Summary.TotalTokens).To(Equal(15))
+		Expect(result.Summary.LowestContextFree).To(PointTo(Equal(free)))
+		Expect(result.Database.Coverage).To(Equal("page"))
+	})
+
+	It("reports only records analyzed by a bounded throughput page", func() {
+		startedAt := time.Date(2026, time.July, 16, 16, 0, 0, 0, time.UTC)
+		endedAt := startedAt.Add(10 * time.Second)
+		page := sessionRecordPage{
+			Records: []SessionRecord{{
+				ID: "analyzed", Source: "codex", Model: "gpt-5", StartedAt: &startedAt, EndedAt: &endedAt,
+				Tokens: &SessionTokensWire{OutputTokens: 5, TotalTokens: 5},
+			}},
+			Total: 9,
+		}
+
+		result := buildSessionThroughputResult(sessionThroughputResultOptions{Page: page, Source: "all", Scope: "all"})
+
+		Expect(result.Total).To(Equal(1))
+		Expect(result.Groups).To(HaveLen(1))
 	})
 
 	It("expands an exact root session ID into its complete thread", func() {
@@ -146,9 +230,22 @@ var _ = Describe("session get multi-result output", func() {
 type sessionGetOverviewStore struct {
 	identity    []database.SessionOverview
 	thread      []database.SessionOverview
+	list        []database.SessionListSummary
+	listFilter  database.SessionListFilter
+	listFilters []database.SessionListFilter
+	listPages   map[string]database.SessionListPage
 	identities  []string
 	threadRoots []uuid.UUID
 	listCalls   int
+}
+
+func (s *sessionGetOverviewStore) ListSessionSummaries(_ context.Context, filter database.SessionListFilter) (database.SessionListPage, error) {
+	s.listFilter = filter
+	s.listFilters = append(s.listFilters, filter)
+	if s.listPages != nil {
+		return s.listPages[filter.Cursor], nil
+	}
+	return database.SessionListPage{Rows: s.list, Total: int64(len(s.list))}, nil
 }
 
 func (s *sessionGetOverviewStore) ListSessionOverviewsByIdentity(_ context.Context, identity string) ([]database.SessionOverview, error) {

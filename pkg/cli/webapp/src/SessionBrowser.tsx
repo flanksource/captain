@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import {
   AppShell,
   Button,
@@ -30,6 +30,7 @@ import {
   fetchSession,
   formatCompactNumber,
   formatCost,
+  mergeSessionListPages,
   type SessionDashboard,
   type SessionGetItem,
   type SessionGetResult,
@@ -155,11 +156,20 @@ function SessionListPage({
   const [source, setSource] = useState<SourceFilter>("all");
   const [query, setQuery] = useState("");
 
-  const listQuery = useQuery({
+  const listQuery = useInfiniteQuery({
     queryKey: ["sessions", source, projectScope, query],
-    queryFn: () => fetchLiveSessions({ source, project: projectScope, query }),
+    queryFn: ({ pageParam }) =>
+      fetchLiveSessions({
+        source,
+        project: projectScope,
+        query,
+        cursor: pageParam || undefined,
+      }),
+    initialPageParam: "",
+    getNextPageParam: (lastPage) => lastPage.nextCursor,
   });
-  const sessions = listQuery.data?.sessions ?? [];
+  const result = mergeSessionListPages(listQuery.data?.pages ?? []);
+  const sessions = result?.sessions ?? [];
 
   return (
     <AppShell
@@ -186,10 +196,13 @@ function SessionListPage({
         query={query}
         onQueryChange={setQuery}
         sessions={sessions}
-        summary={listQuery.data?.summary}
-        timing={listQuery.data?.timing}
-        total={listQuery.data?.total ?? 0}
+        summary={result?.summary}
+        timing={result?.timing}
+        total={result?.total ?? 0}
         loading={listQuery.isLoading}
+        loadingMore={listQuery.isFetchingNextPage}
+        hasMore={listQuery.hasNextPage}
+        onLoadMore={() => listQuery.fetchNextPage()}
         error={listQuery.error}
         onSelect={(session) =>
           onNavigate(
@@ -214,6 +227,9 @@ function SessionList({
   timing,
   total,
   loading,
+  loadingMore,
+  hasMore,
+  onLoadMore,
   error,
   onSelect,
 }: {
@@ -226,6 +242,9 @@ function SessionList({
   timing?: TimingMetric[];
   total: number;
   loading: boolean;
+  loadingMore: boolean;
+  hasMore: boolean;
+  onLoadMore: () => Promise<unknown>;
   error: unknown;
   onSelect: (session: SessionRecord) => void;
 }) {
@@ -288,13 +307,27 @@ function SessionList({
             No sessions found.
           </div>
         ) : (
-          <SessionTable
-            groups={groups}
-            sort={sort}
-            sortDirection={sortDirection}
-            onSortChange={toggleSort}
-            onOpen={onSelect}
-          />
+          <div className="space-y-density-3">
+            <SessionTable
+              groups={groups}
+              sort={sort}
+              sortDirection={sortDirection}
+              onSortChange={toggleSort}
+              onOpen={onSelect}
+            />
+            {hasMore ? (
+              <div className="flex justify-center">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={loadingMore}
+                  onClick={() => void onLoadMore()}
+                >
+                  {loadingMore ? "Loading..." : "Load more"}
+                </Button>
+              </div>
+            ) : null}
+          </div>
         )}
       </div>
     </div>

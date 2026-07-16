@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"strings"
+	"fmt"
 
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/session"
@@ -17,66 +17,74 @@ type sessionOverviewStore interface {
 	ListThreadSessionOverviews(context.Context, uuid.UUID) ([]database.SessionOverview, error)
 }
 
+type sessionListStore interface {
+	ListSessionSummaries(context.Context, database.SessionListFilter) (database.SessionListPage, error)
+}
+
 // sessionRecordQuery narrows the DB-backed session record list.
 type sessionRecordQuery struct {
 	Source      string // "all", "claude", or "codex"
 	ProjectRoot string
 	Query       string
 	LiveOnly    bool
+	Limit       int
+	Cursor      string
 }
 
-// dbSessionRecords is the single source for session list/live/throughput
-// records: it reads the captain_session_overview view (populated by the
-// monitor) and projects rows onto the SessionRecord wire shape.
-func dbSessionRecords(ctx context.Context, db sessionOverviewStore, q sessionRecordQuery) ([]SessionRecord, error) {
-	filter := database.SessionOverviewFilter{RootsOnly: true, LiveOnly: q.LiveOnly}
+type sessionRecordPage struct {
+	Records    []SessionRecord
+	Total      int
+	NextCursor string
+}
+
+// dbSessionRecords projects the bounded list-specific database shape onto the
+// SessionRecord wire type. Transcript/detail metrics remain on the overview
+// path used by session get.
+func dbSessionRecords(ctx context.Context, db sessionListStore, q sessionRecordQuery) (sessionRecordPage, error) {
+	filter := database.SessionListFilter{
+		ProjectRoot: q.ProjectRoot,
+		Query:       q.Query,
+		RootsOnly:   true,
+		LiveOnly:    q.LiveOnly,
+		Limit:       q.Limit,
+		Cursor:      q.Cursor,
+	}
 	if q.Source != "" && q.Source != "all" {
 		filter.Source = q.Source
 	}
-	var overviews []database.SessionOverview
-	var err error
-	if isSessionIdentityQuery(q.Query) {
-		overviews, err = db.ListSessionOverviewsByIdentity(ctx, q.Query)
-		if errors.Is(err, database.ErrSessionNotFound) {
-			return []SessionRecord{}, nil
-		}
-	} else {
-		overviews, err = db.ListSessionOverviews(ctx, filter)
-	}
+	page, err := db.ListSessionSummaries(ctx, filter)
 	if err != nil {
-		return nil, err
+		return sessionRecordPage{}, err
 	}
-	records := make([]SessionRecord, 0, len(overviews))
-	for _, overview := range overviews {
-		if overview.ParentSessionID != nil ||
-			(filter.LiveOnly && !overview.ProcessActive) ||
-			(filter.Source != "" && overview.Source != filter.Source) {
-			continue
-		}
-		record := recordFromOverview(overview)
-		if q.ProjectRoot != "" && !sessionRecordMatchesProject(record, q.ProjectRoot) {
-			continue
-		}
-		if !sessionMatchesQuery(record, q.Query) {
-			continue
-		}
-		records = append(records, record)
+	records := make([]SessionRecord, len(page.Rows))
+	for i := range page.Rows {
+		records[i] = recordFromOverview(overviewFromSummary(page.Rows[i]))
 	}
-	sortSessionRecords(records)
-	return records, nil
+	return sessionRecordPage{Records: records, Total: int(page.Total), NextCursor: page.NextCursor}, nil
 }
 
-func isSessionIdentityQuery(query string) bool {
-	query = strings.TrimSpace(query)
-	if len(query) < 8 || len(query) > 36 {
-		return false
-	}
-	for _, char := range query {
-		if char != '-' && (char < '0' || char > '9') && (char < 'a' || char > 'f') && (char < 'A' || char > 'F') {
-			return false
+func dbAllSessionRecords(ctx context.Context, db sessionListStore, query sessionRecordQuery) (sessionRecordPage, error) {
+	query.Cursor = ""
+	result := sessionRecordPage{}
+	seen := map[string]struct{}{}
+	for {
+		page, err := dbSessionRecords(ctx, db, query)
+		if err != nil {
+			return sessionRecordPage{}, err
 		}
+		if result.Total == 0 {
+			result.Total = page.Total
+		}
+		result.Records = append(result.Records, page.Records...)
+		if page.NextCursor == "" {
+			return result, nil
+		}
+		if _, ok := seen[page.NextCursor]; ok {
+			return sessionRecordPage{}, fmt.Errorf("captain session pagination repeated cursor %q", page.NextCursor)
+		}
+		seen[page.NextCursor] = struct{}{}
+		query.Cursor = page.NextCursor
 	}
-	return true
 }
 
 // resolveOverviewsByAnyID resolves sessions by UUID or provider-session-id
@@ -156,6 +164,28 @@ func stringOr(value *string, fallback string) string {
 		return *value
 	}
 	return fallback
+}
+
+func overviewFromSummary(summary database.SessionListSummary) database.SessionOverview {
+	return database.SessionOverview{
+		ID: summary.ID, ProviderSessionID: summary.ProviderSessionID, Source: summary.Source,
+		Provider: summary.Provider, HostID: summary.HostID, ParentSessionID: summary.ParentSessionID,
+		RootSessionID: summary.RootSessionID, Path: summary.Path, HistoryFile: summary.HistoryFile,
+		Project: summary.Project, CWD: summary.CWD, Title: summary.Title, InitialPrompt: summary.InitialPrompt,
+		Slug: summary.Slug, CLIVersion: summary.CLIVersion, LifecycleStatus: summary.LifecycleStatus,
+		Git: summary.Git, Metadata: summary.Metadata, StartedAt: summary.StartedAt, EndedAt: summary.EndedAt,
+		LastActivityAt: summary.LastActivityAt, PID: summary.PID, ProcessStatus: summary.ProcessStatus,
+		ProcessCommand: summary.ProcessCommand, ProcessCWD: summary.ProcessCWD,
+		ProcessStartedAt: summary.ProcessStartedAt, ProcessSampledAt: summary.ProcessSampledAt,
+		LastHeartbeatAt: summary.LastHeartbeatAt, LeaseOwner: summary.LeaseOwner,
+		LeaseExpiresAt: summary.LeaseExpiresAt, ProcessActive: summary.ProcessActive,
+		CPUPercent: summary.CPUPercent, MemoryPercent: summary.MemoryPercent, Model: summary.Model,
+		Backend: summary.Backend, Effort: summary.Effort, ContextTokens: summary.ContextTokens,
+		ContextWindowTokens: summary.ContextWindowTokens, ContextFreePercent: summary.ContextFreePercent,
+		InputTokens: summary.InputTokens, OutputTokens: summary.OutputTokens,
+		CacheReadTokens: summary.CacheReadTokens, CacheWriteTokens: summary.CacheWriteTokens,
+		TotalTokens: summary.TotalTokens, CostUSD: summary.CostUSD,
+	}
 }
 
 // recordFromOverview projects one overview row to the SessionRecord wire

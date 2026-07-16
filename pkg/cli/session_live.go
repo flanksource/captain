@@ -16,6 +16,7 @@ const defaultSessionLiveLimit = 25
 type SessionDatabaseStatusWire struct {
 	Source              string     `json:"source,omitempty"`
 	DSN                 string     `json:"dsn,omitempty"`
+	Coverage            string     `json:"coverage"`
 	ReadAt              time.Time  `json:"readAt"`
 	LatestSampledAt     *time.Time `json:"latestSampledAt,omitempty"`
 	LatestHeartbeatAt   *time.Time `json:"latestHeartbeatAt,omitempty"`
@@ -41,29 +42,52 @@ func RunSessionLive(ctx context.Context, opts SessionLiveOptions) (SessionLiveRe
 	if err != nil {
 		return SessionLiveResult{}, err
 	}
-	records, err := dbSessionRecords(ctx, db, sessionRecordQuery{
+	query := sessionRecordQuery{
 		Source: source, ProjectRoot: projectRoot, Query: opts.Query, LiveOnly: true,
-	})
+		Limit: limit, Cursor: opts.Cursor,
+	}
+	var page sessionRecordPage
+	if opts.Full {
+		page, err = dbAllSessionRecords(ctx, db, query)
+	} else {
+		page, err = dbSessionRecords(ctx, db, query)
+	}
 	if err != nil {
 		return SessionLiveResult{}, err
 	}
-	enrichLiveSessionSurfaces(records)
-	total := len(records)
-	summary := summarizeSessionDashboard(records)
-	databaseStatus := sessionDatabaseStatus(records, time.Now().UTC())
-	if !opts.Full && limit > 0 && len(records) > limit {
-		records = records[:limit]
+	enrichLiveSessionSurfaces(page.Records)
+	coverage := "page"
+	if opts.Full {
+		coverage = "all"
 	}
+	return buildSessionLiveResult(sessionLiveResultOptions{
+		Page: page, Source: source, Scope: scope, Project: projectResultValue(scope, projectRoot),
+		ReadAt: time.Now().UTC(), DatabaseCoverage: coverage,
+	}), nil
+}
 
+type sessionLiveResultOptions struct {
+	Page             sessionRecordPage
+	Source           string
+	Scope            string
+	Project          string
+	ReadAt           time.Time
+	DatabaseCoverage string
+}
+
+func buildSessionLiveResult(options sessionLiveResultOptions) SessionLiveResult {
+	coverage := options.DatabaseCoverage
+	if coverage == "" {
+		coverage = "page"
+	}
+	databaseStatus := sessionDatabaseStatus(options.Page.Records, options.ReadAt)
+	databaseStatus.Coverage = coverage
 	return SessionLiveResult{
-		Sessions: records,
-		Total:    total,
-		Source:   source,
-		Scope:    scope,
-		Project:  projectResultValue(scope, projectRoot),
-		Summary:  summary,
-		Database: databaseStatus,
-	}, nil
+		Sessions: options.Page.Records, Total: options.Page.Total, Source: options.Source,
+		Scope: options.Scope, Project: options.Project,
+		Summary: summarizeSessionDashboard(options.Page.Records), Database: databaseStatus,
+		NextCursor: options.Page.NextCursor,
+	}
 }
 
 func enrichLiveSessionSurfaces(records []SessionRecord) {

@@ -78,32 +78,26 @@ func RunProjectOptions(ctx context.Context) (ProjectOptionsResult, error) {
 	if err != nil {
 		return ProjectOptionsResult{}, err
 	}
-	overviews, err := db.ListSessionOverviews(ctx, database.SessionOverviewFilter{RootsOnly: true})
+	aggregates, err := db.ListProjectSessionAggregates(ctx)
 	if err != nil {
 		return ProjectOptionsResult{}, err
 	}
-	return projectOptionsFromOverviews(overviews), nil
+	return projectOptionsFromAggregates(aggregates), nil
 }
 
-// projectOptionsFromOverviews groups sessions by project root (derived from
-// each session's working directory) into picker options, flagging projects
-// with a live process as source "live".
-func projectOptionsFromOverviews(overviews []database.SessionOverview) ProjectOptionsResult {
+func projectOptionsFromAggregates(aggregates []database.ProjectSessionAggregate) ProjectOptionsResult {
 	accs := map[string]*projectOptionAccumulator{}
-	for _, overview := range overviews {
-		cwd := stringOr(overview.CWD, stringOr(overview.ProcessCWD, ""))
-		if strings.TrimSpace(cwd) == "" {
+	for _, aggregate := range aggregates {
+		if strings.TrimSpace(aggregate.CWD) == "" {
 			continue
 		}
 		lastUsed := time.Time{}
-		if overview.LastActivityAt != nil {
-			lastUsed = *overview.LastActivityAt
-		} else if overview.StartedAt != nil {
-			lastUsed = *overview.StartedAt
+		if aggregate.LastActivityAt != nil {
+			lastUsed = *aggregate.LastActivityAt
 		}
-		root := sessionProjectRoot(cwd)
-		addProjectOption(accs, root, overview.Source, 1, lastUsed)
-		if overview.ProcessActive {
+		root := sessionProjectRoot(aggregate.CWD)
+		addProjectOption(accs, root, aggregate.Source, aggregate.SessionCount, lastUsed)
+		if aggregate.ProcessActive {
 			addProjectOption(accs, root, "live", 0, lastUsed)
 		}
 	}

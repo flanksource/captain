@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -23,7 +22,8 @@ type SessionListOptions struct {
 	All     bool   `flag:"all" help:"Include sessions from all projects" short:"a"`
 	Project string `flag:"project" help:"Restrict sessions to an explicit project path"`
 	Query   string `flag:"q" help:"Search session id, model, cwd, branch, or provider"`
-	Limit   int    `flag:"limit" help:"Maximum sessions to return; 0 means no limit" default:"100" short:"l"`
+	Limit   int    `flag:"limit" help:"Maximum sessions to return" default:"100" short:"l"`
+	Cursor  string `flag:"cursor" help:"Continue after an opaque session-list cursor"`
 }
 
 type SessionGetOptions struct {
@@ -36,11 +36,12 @@ type SessionGetOptions struct {
 func (SessionGetOptions) GetName() string { return "get <id>" }
 
 type SessionListResult struct {
-	Sessions []SessionRecord `json:"sessions"`
-	Total    int             `json:"total"`
-	Source   string          `json:"source"`
-	Scope    string          `json:"scope"`
-	Project  string          `json:"project,omitempty"`
+	Sessions   []SessionRecord `json:"sessions"`
+	Total      int             `json:"total"`
+	Source     string          `json:"source"`
+	Scope      string          `json:"scope"`
+	Project    string          `json:"project,omitempty"`
+	NextCursor string          `json:"nextCursor,omitempty"`
 }
 
 type SessionLiveOptions struct {
@@ -50,16 +51,18 @@ type SessionLiveOptions struct {
 	Query   string `flag:"q" help:"Search session id, model, cwd, branch, provider, pid, or health"`
 	Limit   int    `flag:"limit" help:"Maximum sessions to return" default:"25" short:"l"`
 	Full    bool   `flag:"full" help:"Parse all matching history exactly; ignores --limit"`
+	Cursor  string `flag:"cursor" help:"Continue after an opaque session-list cursor"`
 }
 
 type SessionLiveResult struct {
-	Sessions []SessionRecord           `json:"sessions"`
-	Total    int                       `json:"total"`
-	Source   string                    `json:"source"`
-	Scope    string                    `json:"scope"`
-	Project  string                    `json:"project,omitempty"`
-	Summary  SessionDashboardWire      `json:"summary"`
-	Database SessionDatabaseStatusWire `json:"database"`
+	Sessions   []SessionRecord           `json:"sessions"`
+	Total      int                       `json:"total"`
+	Source     string                    `json:"source"`
+	Scope      string                    `json:"scope"`
+	Project    string                    `json:"project,omitempty"`
+	Summary    SessionDashboardWire      `json:"summary"`
+	Database   SessionDatabaseStatusWire `json:"database"`
+	NextCursor string                    `json:"nextCursor,omitempty"`
 }
 
 type SessionRecord struct {
@@ -265,23 +268,19 @@ func RunSessionList(ctx context.Context, opts SessionListOptions) (SessionListRe
 	if err != nil {
 		return SessionListResult{}, err
 	}
-	records, err := dbSessionRecords(ctx, db, sessionRecordQuery{
-		Source: source, ProjectRoot: projectRoot, Query: opts.Query,
+	page, err := dbSessionRecords(ctx, db, sessionRecordQuery{
+		Source: source, ProjectRoot: projectRoot, Query: opts.Query, Limit: opts.Limit, Cursor: opts.Cursor,
 	})
 	if err != nil {
 		return SessionListResult{}, err
 	}
-	total := len(records)
-	if opts.Limit > 0 && len(records) > opts.Limit {
-		records = records[:opts.Limit]
-	}
-
 	return SessionListResult{
-		Sessions: records,
-		Total:    total,
-		Source:   source,
-		Scope:    scope,
-		Project:  projectResultValue(scope, projectRoot),
+		Sessions:   page.Records,
+		Total:      page.Total,
+		Source:     source,
+		Scope:      scope,
+		Project:    projectResultValue(scope, projectRoot),
+		NextCursor: page.NextCursor,
 	}, nil
 }
 
@@ -415,12 +414,6 @@ func sessionMatchesQuery(record SessionRecord, query string) bool {
 		return true
 	}
 	return false
-}
-
-func sortSessionRecords(records []SessionRecord) {
-	sort.Slice(records, func(i, j int) bool {
-		return sessionSortTime(records[i]).After(sessionSortTime(records[j]))
-	})
 }
 
 func sessionSortTime(record SessionRecord) time.Time {

@@ -17,6 +17,7 @@ export type ProjectScope = typeof ALL_PROJECTS_SCOPE | string;
 export type SessionListResult = {
   sessions: SessionRecord[];
   total: number;
+  nextCursor?: string;
   source: SourceFilter;
   scope: "current" | "all" | "project";
   project?: string;
@@ -189,6 +190,7 @@ export async function fetchLiveSessions(params: {
   project: ProjectScope;
   query?: string;
   limit?: number;
+  cursor?: string;
 }): Promise<SessionListResult & { timing?: TimingMetric[] }> {
   const response = await apiClient.executeCommand(
     "/api/captain/sessions/live",
@@ -198,6 +200,7 @@ export async function fetchLiveSessions(params: {
       ...projectScopeQuery(params.project),
       q: params.query ?? "",
       limit: String(params.limit ?? 100),
+      ...(params.cursor ? { cursor: params.cursor } : {}),
     },
     { Accept: "application/json" },
   );
@@ -209,6 +212,60 @@ export async function fetchLiveSessions(params: {
     ...(response.parsed as SessionListResult),
     ...(timing.length ? { timing } : {}),
   };
+}
+
+export function mergeSessionListPages(
+  pages: Array<SessionListResult & { timing?: TimingMetric[] }>,
+): (SessionListResult & { timing?: TimingMetric[] }) | undefined {
+  if (pages.length === 0) return undefined;
+  const last = pages[pages.length - 1]!;
+  return {
+    ...last,
+    sessions: pages.flatMap((page) => page.sessions),
+    total: pages[0]!.total,
+    summary: mergeSessionDashboards(
+      pages.flatMap((page) => (page.summary ? [page.summary] : [])),
+    ),
+  };
+}
+
+function mergeSessionDashboards(
+  summaries: SessionDashboard[],
+): SessionDashboard | undefined {
+  if (summaries.length === 0) return undefined;
+  const merged: SessionDashboard = {
+    totalSessions: 0,
+    liveSessions: 0,
+    activeSessions: 0,
+    stoppedSessions: 0,
+    alertSessions: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+    totalTokens: 0,
+    costUsd: 0,
+  };
+  for (const summary of summaries) {
+    merged.totalSessions += summary.totalSessions;
+    merged.liveSessions += summary.liveSessions;
+    merged.activeSessions += summary.activeSessions;
+    merged.stoppedSessions += summary.stoppedSessions;
+    merged.alertSessions += summary.alertSessions;
+    merged.inputTokens! += summary.inputTokens ?? 0;
+    merged.outputTokens! += summary.outputTokens ?? 0;
+    merged.cacheReadTokens! += summary.cacheReadTokens ?? 0;
+    merged.cacheCreationTokens! += summary.cacheCreationTokens ?? 0;
+    merged.totalTokens! += summary.totalTokens ?? 0;
+    merged.costUsd! += summary.costUsd ?? 0;
+    if (summary.lowestContextFree !== undefined) {
+      merged.lowestContextFree = Math.min(
+        merged.lowestContextFree ?? summary.lowestContextFree,
+        summary.lowestContextFree,
+      );
+    }
+  }
+  return merged;
 }
 
 export async function fetchSessionThroughput(params: {

@@ -85,30 +85,64 @@ func RunPlan(opts PlanOptions) (PlanResult, error) {
 	}
 
 	_, projectRoot, _ := resolveSessionScope(cwd, opts.All, "")
-	filter := captaindb.SessionOverviewFilter{RootsOnly: true}
-	if source != "all" {
-		filter.Source = source
-	}
-	overviews, err := db.ListSessionOverviews(ctx, filter)
+	plan, err := resolveLatestTranscriptPlan(ctx, db, latestTranscriptPlanQuery{
+		Source: source, ProjectRoot: projectRoot,
+	})
 	if err != nil {
 		return PlanResult{}, err
 	}
-	for _, overview := range overviews {
-		candidate := candidateFromOverview(overview)
-		if candidate.path == "" {
-			continue
-		}
-		if projectRoot != "" && !sessionRecordMatchesProject(SessionRecord{CWD: stringOr(overview.CWD, "")}, projectRoot) {
-			continue
-		}
-		plan, err := resolveSessionPlan(candidate)
-		if err != nil || plan == nil {
-			continue
-		}
-		plan.pathOnly = opts.PathOnly
-		return *plan, nil
+	if plan == nil {
+		return PlanResult{}, fmt.Errorf("no session with a plan found in %s", scopeLabel(cwd, opts.All))
 	}
-	return PlanResult{}, fmt.Errorf("no session with a plan found in %s", scopeLabel(cwd, opts.All))
+	plan.pathOnly = opts.PathOnly
+	return *plan, nil
+}
+
+type latestTranscriptPlanQuery struct {
+	Source      string
+	ProjectRoot string
+}
+
+const latestTranscriptPlanPageLimit = 100
+
+func resolveLatestTranscriptPlan(
+	ctx context.Context,
+	db sessionListStore,
+	query latestTranscriptPlanQuery,
+) (*PlanResult, error) {
+	filter := captaindb.SessionListFilter{
+		ProjectRoot: query.ProjectRoot,
+		RootsOnly:   true,
+		Limit:       latestTranscriptPlanPageLimit,
+	}
+	if query.Source != "all" {
+		filter.Source = query.Source
+	}
+	seen := map[string]struct{}{}
+	for {
+		page, err := db.ListSessionSummaries(ctx, filter)
+		if err != nil {
+			return nil, fmt.Errorf("list Captain sessions while resolving latest plan: %w", err)
+		}
+		for i := range page.Rows {
+			candidate := candidateFromOverview(overviewFromSummary(page.Rows[i]))
+			if candidate.path == "" {
+				continue
+			}
+			plan, err := resolveSessionPlan(candidate)
+			if err == nil && plan != nil {
+				return plan, nil
+			}
+		}
+		if page.NextCursor == "" {
+			return nil, nil
+		}
+		if _, ok := seen[page.NextCursor]; ok {
+			return nil, fmt.Errorf("captain plan search pagination repeated cursor %q", page.NextCursor)
+		}
+		seen[page.NextCursor] = struct{}{}
+		filter.Cursor = page.NextCursor
+	}
 }
 
 // resolveNativePlan resolves persisted plan content without consulting the
