@@ -29,3 +29,4 @@ hack/
 dist/
 .ok/
 .okignore
+.ginkgo/
