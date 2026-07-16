@@ -16,6 +16,7 @@ func TestSchemaBundleContainsGavelIntegrationContract(t *testing.T) {
 		"00_types.pg.hcl",
 		"10_sessions.pg.hcl",
 		"20_prompt_runs_and_plans.pg.hcl",
+		"21_plans.pg.hcl",
 		"30_execution.pg.hcl",
 		"40_artifacts_and_outbox.pg.hcl",
 		"50_constraints.sql",
@@ -31,6 +32,7 @@ func TestSchemaBundleContainsGavelIntegrationContract(t *testing.T) {
 		"67_view_session_costs.sql",
 		"68_view_session_events.sql",
 		"69_view_prompt_run_overview.sql",
+		"70_prompt_run_runtime.sql",
 	}
 	for _, name := range expectedFiles {
 		if _, err := fs.Stat(schemaFS, name); err != nil {
@@ -56,8 +58,11 @@ func TestSchemaBundleContainsGavelIntegrationContract(t *testing.T) {
 		`column "root_session_id"`,
 		`column "phase"`,
 		`column "state"`,
+		`column "runtime"`,
 		`table "captain_prompt_run_iterations"`,
 		`column "prompt_run_id"`,
+	)
+	assertContainsAll(t, "21_plans.pg.hcl",
 		`table "captain_plans"`,
 		`column "approved_revision_id"`,
 		`table "captain_plan_revisions"`,
@@ -112,6 +117,12 @@ func TestSchemaBundleContainsGavelIntegrationContract(t *testing.T) {
 			"COMMENT ON VIEW public."+view,
 		)
 	}
+	assertContainsAll(t, "70_prompt_run_runtime.sql",
+		"-- phase: post",
+		"UPDATE public.captain_prompt_runs",
+		"NEW.runtime",
+		"REVOKE ALL ON FUNCTION public.captain_set_prompt_run_state() FROM PUBLIC;",
+	)
 }
 
 // Hash-gated run-once scripts keep steady-state applies free of DDL; views are

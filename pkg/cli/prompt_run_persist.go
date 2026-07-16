@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/database"
+	"github.com/google/uuid"
 )
 
 // promptRunRecordInput is a completed captain-launched prompt run to persist.
@@ -16,6 +18,7 @@ type promptRunRecordInput struct {
 	SessionID  string
 	Model      string
 	Backend    string
+	BatchID    *uuid.UUID
 	ResultText string
 	Error      string
 }
@@ -38,17 +41,25 @@ func persistPromptRun(ctx context.Context, input promptRunRecordInput) {
 	}
 	session, err := db.CreateOrGetSession(ctx, database.CreateSessionInput{
 		ProviderSessionID: input.SessionID, Source: source, HostID: captainHostID(),
-		CWD: input.Rendered.Input.Cwd(),
+		Provider: ai.BackendToProvider(api.Backend(input.Backend)), CWD: input.Rendered.Input.Cwd(),
 	})
 	if err != nil {
 		log.Errorf("persist prompt run for session %s: %v", input.SessionID, err)
 		return
 	}
 	run, err := db.CreatePromptRun(ctx, database.CreatePromptRunInput{
-		SessionID:      session.ID,
-		Origin:         "captain",
-		AdmissionKey:   input.RunID,
-		RenderedSpec:   renderedSpecMap(input.Rendered),
+		SessionID:    session.ID,
+		BatchID:      input.BatchID,
+		Origin:       "captain",
+		AdmissionKey: input.RunID,
+		RenderedSpec: renderedSpecMap(input.Rendered),
+		Runtime: database.PromptRunRuntime{
+			Mode: "run",
+			Resolved: database.PromptRunRuntimeSelection{
+				Provider: ai.BackendToProvider(api.Backend(input.Backend)), Backend: input.Backend,
+				Model: input.Model, Effort: string(input.Rendered.Config.Model.Effort),
+			},
+		},
 		PromptMarkdown: input.Rendered.Input.Prompt.User,
 	})
 	if err != nil {

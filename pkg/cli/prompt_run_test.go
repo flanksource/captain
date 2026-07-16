@@ -190,7 +190,8 @@ func TestPromptRunResultPrettyRendersRunsAsColumns(t *testing.T) {
 		},
 	}
 
-	table := firstPrettyTable(t, result.Pretty())
+	pretty := result.Pretty()
+	table := firstPrettyTable(t, pretty)
 	wantFields := []string{"metric", "run1", "run2"}
 	if strings.Join(table.FieldNames, ",") != strings.Join(wantFields, ",") {
 		t.Fatalf("field names = %v, want %v", table.FieldNames, wantFields)
@@ -213,7 +214,6 @@ func TestPromptRunResultPrettyRendersRunsAsColumns(t *testing.T) {
 		{"Status", "completed", "failed"},
 		{"Backend", "anthropic", "claude-cmux"},
 		{"Model", "claude-sonnet-5", "claude-opus-4-8"},
-		{"Response", "api ok", ""},
 		{"Error", "", "cmux unavailable"},
 		{"Duration", "1s", "2s"},
 		{"Tokens", "8/14", ""},
@@ -227,6 +227,9 @@ func TestPromptRunResultPrettyRendersRunsAsColumns(t *testing.T) {
 		if row["run1"].String() != tt.run1 || row["run2"].String() != tt.run2 {
 			t.Fatalf("%s row = %q / %q, want %q / %q", tt.metric, row["run1"].String(), row["run2"].String(), tt.run1, tt.run2)
 		}
+	}
+	if output := pretty.String(); !strings.Contains(output, "Response — api:sonnet-5\napi ok") {
+		t.Fatalf("response block missing after metadata table: %q", output)
 	}
 }
 

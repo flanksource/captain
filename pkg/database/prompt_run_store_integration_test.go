@@ -84,7 +84,16 @@ func TestListPromptRunsFiltersAndOrdersDeterministically(t *testing.T) {
 		ProviderSessionID: "provider-thread-1", Source: "claude", Provider: "anthropic", HostID: "test-host",
 	})
 	require.NoError(t, err)
-	linked, err := db.CreatePromptRun(t.Context(), CreatePromptRunInput{SessionID: admission.ID})
+	linked, err := db.CreatePromptRun(t.Context(), CreatePromptRunInput{
+		SessionID: admission.ID,
+		Runtime: PromptRunRuntime{
+			Mode: "plan",
+			Requested: PromptRunRuntimeSelection{
+				Provider: "openai", Backend: "responses", Effort: "high",
+			},
+			Resolved: PromptRunRuntimeSelection{Model: "gpt-resolved"},
+		},
+	})
 	require.NoError(t, err)
 	linked, err = db.UpdatePromptRun(t.Context(), UpdatePromptRunInput{
 		ID: linked.ID, ExpectedVersion: linked.Version, ExecutionSessionID: &execution.ID,
@@ -92,6 +101,20 @@ func TestListPromptRunsFiltersAndOrdersDeterministically(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, linked.ExecutionSessionID)
 	assert.Equal(t, execution.ID, *linked.ExecutionSessionID)
+	require.NoError(t, db.UpsertSessionProcess(t.Context(), SessionProcessInput{
+		SessionID: execution.ID, HostID: "test-host", BootID: "boot-1", PID: 4242,
+		ProcessStartedAt: time.Now().UTC().Add(-time.Minute), Source: "claude", SampledAt: time.Now().UTC(),
+	}))
+	overview, err := db.GetPromptRunOverview(t.Context(), linked.ID)
+	require.NoError(t, err)
+	assert.Equal(t, PromptRunStatusPlanning, overview.Status)
+	assert.Equal(t, "openai", overview.Provider)
+	assert.Equal(t, "responses", overview.Backend)
+	assert.Equal(t, "gpt-resolved", overview.Model)
+	assert.Equal(t, "high", overview.Effort)
+	require.NotNil(t, overview.PID)
+	assert.EqualValues(t, 4242, *overview.PID)
+	assert.True(t, overview.ProcessActive)
 	version := linked.Version
 	linked, err = db.UpdatePromptRun(t.Context(), UpdatePromptRunInput{
 		ID: linked.ID, ExpectedVersion: linked.Version, ExecutionSessionID: &execution.ID,

@@ -420,32 +420,33 @@ const (
 )
 
 type PromptRun struct {
-	ID                   uuid.UUID      `json:"id"`
-	SessionID            uuid.UUID      `json:"sessionId"`
-	RootSessionID        uuid.UUID      `json:"rootSessionId"`
-	ExecutionSessionID   *uuid.UUID     `json:"executionSessionId,omitempty"`
-	BatchID              *uuid.UUID     `json:"batchId,omitempty"`
-	ParentRunID          *uuid.UUID     `json:"parentRunId,omitempty"`
-	InputPlanID          *uuid.UUID     `json:"inputPlanId,omitempty"`
-	InputPlanRevisionID  *uuid.UUID     `json:"inputPlanRevisionId,omitempty"`
-	Origin               string         `json:"origin,omitempty"`
-	SpecProfile          string         `json:"specProfile,omitempty"`
-	AdmissionKey         string         `json:"admissionKey,omitempty"`
-	RenderedSpec         map[string]any `json:"renderedSpec,omitempty"`
-	PromptMarkdown       string         `json:"promptMarkdown,omitempty"`
-	VerificationMarkdown string         `json:"verificationMarkdown,omitempty"`
-	Phase                PromptRunPhase `json:"phase"`
-	State                PromptRunState `json:"state"`
-	CurrentIteration     int            `json:"currentIteration"`
-	ResultText           string         `json:"resultText,omitempty"`
-	ResultJSON           map[string]any `json:"resultJson,omitempty"`
-	Error                string         `json:"error,omitempty"`
-	Version              int64          `json:"version"`
-	QueuedAt             time.Time      `json:"queuedAt"`
-	StartedAt            *time.Time     `json:"startedAt,omitempty"`
-	FinishedAt           *time.Time     `json:"finishedAt,omitempty"`
-	CreatedAt            time.Time      `json:"createdAt"`
-	UpdatedAt            time.Time      `json:"updatedAt"`
+	ID                   uuid.UUID        `json:"id"`
+	SessionID            uuid.UUID        `json:"sessionId"`
+	RootSessionID        uuid.UUID        `json:"rootSessionId"`
+	ExecutionSessionID   *uuid.UUID       `json:"executionSessionId,omitempty"`
+	BatchID              *uuid.UUID       `json:"batchId,omitempty"`
+	ParentRunID          *uuid.UUID       `json:"parentRunId,omitempty"`
+	InputPlanID          *uuid.UUID       `json:"inputPlanId,omitempty"`
+	InputPlanRevisionID  *uuid.UUID       `json:"inputPlanRevisionId,omitempty"`
+	Origin               string           `json:"origin,omitempty"`
+	SpecProfile          string           `json:"specProfile,omitempty"`
+	AdmissionKey         string           `json:"admissionKey,omitempty"`
+	RenderedSpec         map[string]any   `json:"renderedSpec,omitempty"`
+	Runtime              PromptRunRuntime `json:"runtime,omitempty"`
+	PromptMarkdown       string           `json:"promptMarkdown,omitempty"`
+	VerificationMarkdown string           `json:"verificationMarkdown,omitempty"`
+	Phase                PromptRunPhase   `json:"phase"`
+	State                PromptRunState   `json:"state"`
+	CurrentIteration     int              `json:"currentIteration"`
+	ResultText           string           `json:"resultText,omitempty"`
+	ResultJSON           map[string]any   `json:"resultJson,omitempty"`
+	Error                string           `json:"error,omitempty"`
+	Version              int64            `json:"version"`
+	QueuedAt             time.Time        `json:"queuedAt"`
+	StartedAt            *time.Time       `json:"startedAt,omitempty"`
+	FinishedAt           *time.Time       `json:"finishedAt,omitempty"`
+	CreatedAt            time.Time        `json:"createdAt"`
+	UpdatedAt            time.Time        `json:"updatedAt"`
 }
 
 // PromptRunFilter limits ListPromptRuns. Nil fields are not filtered.
@@ -467,6 +468,7 @@ type CreatePromptRunInput struct {
 	SpecProfile          string
 	AdmissionKey         string
 	RenderedSpec         map[string]any
+	Runtime              PromptRunRuntime
 	PromptMarkdown       string
 	VerificationMarkdown string
 }
@@ -479,38 +481,40 @@ type UpdatePromptRunInput struct {
 	CurrentIteration   *int
 	ExecutionSessionID *uuid.UUID
 	RenderedSpec       *map[string]any
+	Runtime            *PromptRunRuntime
 	ResultText         *string
 	ResultJSON         *map[string]any
 	Error              *string
 }
 
 type promptRunRecord struct {
-	ID                   uuid.UUID      `gorm:"column:id;type:uuid;primaryKey"`
-	SessionID            uuid.UUID      `gorm:"column:session_id;type:uuid"`
-	RootSessionID        uuid.UUID      `gorm:"column:root_session_id;type:uuid"`
-	ExecutionSessionID   *uuid.UUID     `gorm:"column:execution_session_id;type:uuid"`
-	BatchID              *uuid.UUID     `gorm:"column:batch_id;type:uuid"`
-	ParentRunID          *uuid.UUID     `gorm:"column:parent_run_id;type:uuid"`
-	InputPlanID          *uuid.UUID     `gorm:"column:input_plan_id;type:uuid"`
-	InputPlanRevisionID  *uuid.UUID     `gorm:"column:input_plan_revision_id;type:uuid"`
-	Origin               *string        `gorm:"column:origin"`
-	SpecProfile          *string        `gorm:"column:spec_profile"`
-	AdmissionKey         *string        `gorm:"column:admission_key"`
-	RenderedSpec         map[string]any `gorm:"column:rendered_spec;serializer:json;type:jsonb"`
-	PromptMarkdown       *string        `gorm:"column:prompt_markdown"`
-	VerificationMarkdown *string        `gorm:"column:verification_markdown"`
-	Phase                PromptRunPhase `gorm:"column:phase"`
-	State                PromptRunState `gorm:"column:state"`
-	CurrentIteration     int            `gorm:"column:current_iteration"`
-	ResultText           *string        `gorm:"column:result_text"`
-	ResultJSON           map[string]any `gorm:"column:result_json;serializer:json;type:jsonb"`
-	Error                *string        `gorm:"column:error"`
-	Version              int64          `gorm:"column:version"`
-	QueuedAt             time.Time      `gorm:"column:queued_at"`
-	StartedAt            *time.Time     `gorm:"column:started_at"`
-	FinishedAt           *time.Time     `gorm:"column:finished_at"`
-	CreatedAt            time.Time      `gorm:"column:created_at"`
-	UpdatedAt            time.Time      `gorm:"column:updated_at"`
+	ID                   uuid.UUID        `gorm:"column:id;type:uuid;primaryKey"`
+	SessionID            uuid.UUID        `gorm:"column:session_id;type:uuid"`
+	RootSessionID        uuid.UUID        `gorm:"column:root_session_id;type:uuid"`
+	ExecutionSessionID   *uuid.UUID       `gorm:"column:execution_session_id;type:uuid"`
+	BatchID              *uuid.UUID       `gorm:"column:batch_id;type:uuid"`
+	ParentRunID          *uuid.UUID       `gorm:"column:parent_run_id;type:uuid"`
+	InputPlanID          *uuid.UUID       `gorm:"column:input_plan_id;type:uuid"`
+	InputPlanRevisionID  *uuid.UUID       `gorm:"column:input_plan_revision_id;type:uuid"`
+	Origin               *string          `gorm:"column:origin"`
+	SpecProfile          *string          `gorm:"column:spec_profile"`
+	AdmissionKey         *string          `gorm:"column:admission_key"`
+	RenderedSpec         map[string]any   `gorm:"column:rendered_spec;serializer:json;type:jsonb"`
+	Runtime              PromptRunRuntime `gorm:"column:runtime;serializer:json;type:jsonb"`
+	PromptMarkdown       *string          `gorm:"column:prompt_markdown"`
+	VerificationMarkdown *string          `gorm:"column:verification_markdown"`
+	Phase                PromptRunPhase   `gorm:"column:phase"`
+	State                PromptRunState   `gorm:"column:state"`
+	CurrentIteration     int              `gorm:"column:current_iteration"`
+	ResultText           *string          `gorm:"column:result_text"`
+	ResultJSON           map[string]any   `gorm:"column:result_json;serializer:json;type:jsonb"`
+	Error                *string          `gorm:"column:error"`
+	Version              int64            `gorm:"column:version"`
+	QueuedAt             time.Time        `gorm:"column:queued_at"`
+	StartedAt            *time.Time       `gorm:"column:started_at"`
+	FinishedAt           *time.Time       `gorm:"column:finished_at"`
+	CreatedAt            time.Time        `gorm:"column:created_at"`
+	UpdatedAt            time.Time        `gorm:"column:updated_at"`
 }
 
 func (promptRunRecord) TableName() string { return "captain_prompt_runs" }
@@ -566,7 +570,7 @@ func (db *DB) CreatePromptRun(ctx context.Context, input CreatePromptRunInput) (
 		ID: input.ID, SessionID: input.SessionID, RootSessionID: rootID, ExecutionSessionID: input.ExecutionSessionID, BatchID: input.BatchID,
 		ParentRunID: input.ParentRunID, InputPlanID: input.InputPlanID, InputPlanRevisionID: input.InputPlanRevisionID,
 		Origin: nullableTrimmed(input.Origin), SpecProfile: nullableTrimmed(input.SpecProfile),
-		AdmissionKey: nullableTrimmed(input.AdmissionKey), RenderedSpec: input.RenderedSpec,
+		AdmissionKey: nullableTrimmed(input.AdmissionKey), RenderedSpec: input.RenderedSpec, Runtime: input.Runtime,
 		PromptMarkdown: nullableTrimmed(input.PromptMarkdown), VerificationMarkdown: nullableTrimmed(input.VerificationMarkdown),
 		Phase: PromptRunPhaseQueued, State: PromptRunStatePending, QueuedAt: now,
 	}
@@ -714,6 +718,15 @@ func (db *DB) UpdatePromptRun(ctx context.Context, input UpdatePromptRunInput) (
 		distinctPredicates = append(distinctPredicates, "rendered_spec IS DISTINCT FROM CAST(? AS jsonb)")
 		distinctArgs = append(distinctArgs, string(encoded))
 	}
+	if input.Runtime != nil {
+		encoded, err := json.Marshal(*input.Runtime)
+		if err != nil {
+			return nil, fmt.Errorf("%w: encode runtime: %v", ErrInvalidPromptRun, err)
+		}
+		updates["runtime"] = *input.Runtime
+		distinctPredicates = append(distinctPredicates, "runtime IS DISTINCT FROM ?::jsonb")
+		distinctArgs = append(distinctArgs, string(encoded))
+	}
 	if input.ResultText != nil {
 		updates["result_text"] = *input.ResultText
 		distinctPredicates = append(distinctPredicates, "result_text IS DISTINCT FROM ?")
@@ -819,7 +832,7 @@ func promptRunFromRecord(record promptRunRecord) PromptRun {
 		ID: record.ID, SessionID: record.SessionID, RootSessionID: record.RootSessionID, ExecutionSessionID: record.ExecutionSessionID, BatchID: record.BatchID,
 		ParentRunID: record.ParentRunID, InputPlanID: record.InputPlanID, InputPlanRevisionID: record.InputPlanRevisionID,
 		Origin: optionalString(record.Origin), SpecProfile: optionalString(record.SpecProfile), AdmissionKey: optionalString(record.AdmissionKey),
-		RenderedSpec: record.RenderedSpec, PromptMarkdown: optionalString(record.PromptMarkdown),
+		RenderedSpec: record.RenderedSpec, Runtime: record.Runtime, PromptMarkdown: optionalString(record.PromptMarkdown),
 		VerificationMarkdown: optionalString(record.VerificationMarkdown), Phase: record.Phase, State: record.State,
 		CurrentIteration: record.CurrentIteration, ResultText: optionalString(record.ResultText), ResultJSON: record.ResultJSON,
 		Error: optionalString(record.Error), Version: record.Version, QueuedAt: record.QueuedAt, StartedAt: record.StartedAt,
