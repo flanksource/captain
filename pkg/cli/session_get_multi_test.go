@@ -8,6 +8,7 @@ import (
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/session"
 	"github.com/flanksource/clicky"
+	"github.com/google/uuid"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -56,6 +57,23 @@ var _ = Describe("session get multi-result output", func() {
 		Expect(records).To(HaveLen(2))
 		Expect(store.identities).To(Equal([]string{"ad4c854e"}))
 		Expect(store.listCalls).To(BeZero())
+	})
+
+	It("expands an exact root session ID into its complete thread", func() {
+		rootID := uuid.MustParse("055781c7-360a-4eb2-80be-452b3937fcfe")
+		childID := uuid.MustParse("7ca78c55-e280-50ff-a19a-9f355a6fc55e")
+		store := &sessionGetOverviewStore{
+			identity: []database.SessionOverview{{ID: rootID, Source: "captain"}},
+			thread: []database.SessionOverview{
+				{ID: rootID, Source: "captain"},
+				{ID: childID, ParentSessionID: &rootID, RootSessionID: &rootID, Source: "codex"},
+			},
+		}
+
+		overviews, err := resolveOverviewsByAnyID(context.Background(), store, rootID.String())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(overviews).To(Equal(store.thread))
+		Expect(store.threadRoots).To(Equal([]uuid.UUID{rootID}))
 	})
 
 	It("renders every match sequentially and preserves metadata-only sessions", func() {
@@ -126,9 +144,11 @@ var _ = Describe("session get multi-result output", func() {
 })
 
 type sessionGetOverviewStore struct {
-	identity   []database.SessionOverview
-	identities []string
-	listCalls  int
+	identity    []database.SessionOverview
+	thread      []database.SessionOverview
+	identities  []string
+	threadRoots []uuid.UUID
+	listCalls   int
 }
 
 func (s *sessionGetOverviewStore) ListSessionOverviewsByIdentity(_ context.Context, identity string) ([]database.SessionOverview, error) {
@@ -139,4 +159,9 @@ func (s *sessionGetOverviewStore) ListSessionOverviewsByIdentity(_ context.Conte
 func (s *sessionGetOverviewStore) ListSessionOverviews(context.Context, database.SessionOverviewFilter) ([]database.SessionOverview, error) {
 	s.listCalls++
 	return nil, nil
+}
+
+func (s *sessionGetOverviewStore) ListThreadSessionOverviews(_ context.Context, rootID uuid.UUID) ([]database.SessionOverview, error) {
+	s.threadRoots = append(s.threadRoots, rootID)
+	return s.thread, nil
 }

@@ -12,12 +12,15 @@ import (
 )
 
 type SessionGetResult struct {
-	Sessions []SessionGetItem `json:"sessions"`
-	Total    int              `json:"total"`
+	RootSessionID string           `json:"rootSessionId,omitempty"`
+	Sessions      []SessionGetItem `json:"sessions"`
+	Total         int              `json:"total"`
 }
 
 type SessionGetItem struct {
 	CaptainID         string            `json:"captainId"`
+	ParentSessionID   string            `json:"parentSessionId,omitempty"`
+	RootSessionID     string            `json:"rootSessionId,omitempty"`
 	ProviderSessionID string            `json:"providerSessionId,omitempty"`
 	Host              string            `json:"host,omitempty"`
 	DetailAvailable   bool              `json:"detailAvailable"`
@@ -57,9 +60,19 @@ func RunSessionGet(ctx context.Context, opts SessionGetOptions) (SessionGetResul
 			DetailAvailable:   path != "",
 			Summary:           recordFromOverview(overview),
 		}
+		if overview.ParentSessionID != nil {
+			item.ParentSessionID = overview.ParentSessionID.String()
+		}
+		if overview.RootSessionID != nil {
+			item.RootSessionID = overview.RootSessionID.String()
+		}
 		capabilities := sessionChatCapabilities(item.Summary)
 		item.Chat = &capabilities
-		if active, ok := promptChats.getSession(item.ProviderSessionID); ok {
+		active, ok := promptChats.getRun(item.CaptainID)
+		if !ok && item.ProviderSessionID != "" {
+			active, ok = promptChats.getSession(item.ProviderSessionID)
+		}
+		if ok {
 			var activeCapabilities ChatCapabilities
 			item.ActiveRunID, activeCapabilities, item.ChatState = active.projection()
 			item.Chat = &activeCapabilities
@@ -76,7 +89,11 @@ func RunSessionGet(ctx context.Context, opts SessionGetOptions) (SessionGetResul
 		}
 		items = append(items, item)
 	}
-	return SessionGetResult{Sessions: items, Total: len(items)}, nil
+	rootID := ""
+	if len(items) > 1 && items[0].ParentSessionID == "" {
+		rootID = items[0].CaptainID
+	}
+	return SessionGetResult{RootSessionID: rootID, Sessions: items, Total: len(items)}, nil
 }
 
 func sessionChatCapabilities(summary SessionRecord) ChatCapabilities {
@@ -125,6 +142,34 @@ func (r SessionGetResult) Pretty() clickyapi.Text {
 		list.Items = append(list.Items, sessionGetListItem{text: r.Sessions[i].Pretty()})
 	}
 	return clickyapi.Text{}.Add(list)
+}
+
+func (r SessionGetResult) Tree() clickyapi.TreeNode {
+	byParent := map[string][]SessionGetItem{}
+	for i := range r.Sessions {
+		byParent[r.Sessions[i].ParentSessionID] = append(byParent[r.Sessions[i].ParentSessionID], r.Sessions[i])
+	}
+	children := make([]clickyapi.TreeNode, 0, len(byParent[""]))
+	for _, item := range byParent[""] {
+		children = append(children, sessionGetTreeNode{item: item, byParent: byParent})
+	}
+	return &clickyapi.ConcreteBranchNode{Children: children}
+}
+
+type sessionGetTreeNode struct {
+	item     SessionGetItem
+	byParent map[string][]SessionGetItem
+}
+
+func (n sessionGetTreeNode) Pretty() clickyapi.Text { return n.item.Pretty() }
+
+func (n sessionGetTreeNode) GetChildren() []clickyapi.TreeNode {
+	items := n.byParent[n.item.CaptainID]
+	children := make([]clickyapi.TreeNode, len(items))
+	for i := range items {
+		children[i] = sessionGetTreeNode{item: items[i], byParent: n.byParent}
+	}
+	return children
 }
 
 func (i SessionGetItem) Pretty() clickyapi.Text {

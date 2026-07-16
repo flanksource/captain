@@ -42,7 +42,7 @@ BEGIN
   IF NEW.lifecycle_status = 'running' THEN
     NEW.started_at := COALESCE(NEW.started_at, NEW.created_at, observed_at);
     NEW.ended_at := NULL;
-  ELSIF NEW.lifecycle_status IN ('succeeded', 'failed', 'cancelled', 'interrupted') THEN
+  ELSIF NEW.lifecycle_status IN ('succeeded', 'partial', 'failed', 'cancelled', 'interrupted') THEN
     NEW.started_at := COALESCE(NEW.started_at, NEW.ended_at, NEW.created_at, observed_at);
     NEW.ended_at := COALESCE(NEW.ended_at, observed_at);
   END IF;

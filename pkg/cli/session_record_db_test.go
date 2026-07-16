@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/flanksource/captain/pkg/database"
+	"github.com/google/uuid"
 )
 
 type sessionOverviewStoreStub struct {
@@ -19,6 +20,10 @@ func (s *sessionOverviewStoreStub) ListSessionOverviewsByIdentity(context.Contex
 
 func (s *sessionOverviewStoreStub) ListSessionOverviews(context.Context, database.SessionOverviewFilter) ([]database.SessionOverview, error) {
 	s.listCalled = true
+	return nil, nil
+}
+
+func (s *sessionOverviewStoreStub) ListThreadSessionOverviews(context.Context, uuid.UUID) ([]database.SessionOverview, error) {
 	return nil, nil
 }
 

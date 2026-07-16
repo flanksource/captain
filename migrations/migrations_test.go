@@ -39,6 +39,7 @@ func TestSchemaBundleContainsGavelIntegrationContract(t *testing.T) {
 			t.Errorf("embedded migration %s: %v", name, err)
 		}
 	}
+	assertContainsAll(t, "00_types.pg.hcl", `"partial"`)
 
 	assertContainsAll(t, "10_sessions.pg.hcl",
 		`table "captain_sessions"`,

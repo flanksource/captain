@@ -8,11 +8,13 @@ import (
 
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/session"
+	"github.com/google/uuid"
 )
 
 type sessionOverviewStore interface {
 	ListSessionOverviewsByIdentity(context.Context, string) ([]database.SessionOverview, error)
 	ListSessionOverviews(context.Context, database.SessionOverviewFilter) ([]database.SessionOverview, error)
+	ListThreadSessionOverviews(context.Context, uuid.UUID) ([]database.SessionOverview, error)
 }
 
 // sessionRecordQuery narrows the DB-backed session record list.
@@ -82,6 +84,16 @@ func isSessionIdentityQuery(query string) bool {
 func resolveOverviewsByAnyID(ctx context.Context, db sessionOverviewStore, id string) ([]database.SessionOverview, error) {
 	overviews, err := db.ListSessionOverviewsByIdentity(ctx, id)
 	if err == nil {
+		if parsed, parseErr := uuid.Parse(id); parseErr == nil && len(overviews) == 1 &&
+			overviews[0].ID == parsed && overviews[0].ParentSessionID == nil && overviews[0].RootSessionID == nil {
+			thread, threadErr := db.ListThreadSessionOverviews(ctx, parsed)
+			if threadErr != nil {
+				return nil, threadErr
+			}
+			if len(thread) > 1 {
+				return thread, nil
+			}
+		}
 		return overviews, nil
 	}
 	if !errors.Is(err, database.ErrSessionNotFound) {

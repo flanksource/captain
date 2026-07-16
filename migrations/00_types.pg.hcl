@@ -2,7 +2,7 @@ schema "public" {}
 
 enum "captain_session_lifecycle_status" {
   schema = schema.public
-  values = ["created", "running", "succeeded", "failed", "cancelled", "interrupted"]
+  values = ["created", "running", "succeeded", "partial", "failed", "cancelled", "interrupted"]
 }
 
 enum "captain_session_activity_state" {
