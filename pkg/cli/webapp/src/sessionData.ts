@@ -26,7 +26,7 @@ export type SessionListResult = {
 export type SessionRecord = {
   key: string;
   id: string;
-  source: "claude" | "codex";
+  source: string;
   project?: string;
   slug?: string;
   title?: string;
@@ -39,6 +39,7 @@ export type SessionRecord = {
   gitBranch?: string;
   provider?: string;
   backend?: string;
+  lifecycleStatus?: string;
   cwd?: string;
   toolCalls: number;
   messages: number;
@@ -53,13 +54,15 @@ export type SessionRecord = {
 export type UnifiedCost = SessionCost;
 export type UnifiedSession = UnifiedSessionInput & {
   id: string;
-  source: "claude" | "codex";
+  source: string;
   title?: string;
   initialPrompt?: string;
 };
 
 export type SessionGetItem = {
   captainId: string;
+  parentSessionId?: string;
+  rootSessionId?: string;
   providerSessionId?: string;
   host?: string;
   detailAvailable: boolean;
@@ -71,6 +74,7 @@ export type SessionGetItem = {
 };
 
 export type SessionGetResult = {
+  rootSessionId?: string;
   sessions: SessionGetItem[];
   total: number;
 };

@@ -18,6 +18,34 @@ export interface PromptRunHandle {
   capabilities?: ChatCapabilities;
 }
 
+export interface PromptBatchRunHandle {
+  runId: string;
+  sessionId: string;
+  selector?: string;
+  status: string;
+  model?: string;
+  backend?: string;
+  effort?: string;
+  chat?: boolean;
+  capabilities?: ChatCapabilities;
+}
+
+export interface PromptBatchHandle {
+  batchId: string;
+  status: string;
+  chat?: boolean;
+  total: number;
+  runs: PromptBatchRunHandle[];
+}
+
+export type PromptExecutionHandle = PromptRunHandle | PromptBatchHandle;
+
+export function isPromptBatchHandle(
+  handle: PromptExecutionHandle,
+): handle is PromptBatchHandle {
+  return "batchId" in handle && Array.isArray(handle.runs);
+}
+
 export interface ChatCapabilities {
   interrupt: boolean;
   steer: boolean;

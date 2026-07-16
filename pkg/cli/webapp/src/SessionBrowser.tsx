@@ -38,6 +38,7 @@ import {
   type SourceFilter,
 } from "./sessionData";
 import { mergeSessionMessages, useSessionChat } from "./hooks/useSessionChat";
+import { sessionResultCollection } from "./sessionCollection";
 
 type Navigate = (to: string, opts?: { replace?: boolean }) => void;
 
@@ -349,6 +350,17 @@ function SessionDetail({
     return (
       <div className="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">
         No matching sessions.
+      </div>
+    );
+  }
+  const collection = sessionResultCollection(result);
+  if (collection) {
+    return (
+      <div className="h-full min-h-0 p-density-4">
+        <SessionInspector
+          session={collection}
+          transcriptProps={{ defaultExpanded: false }}
+        />
       </div>
     );
   }

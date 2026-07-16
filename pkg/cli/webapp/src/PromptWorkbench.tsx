@@ -45,8 +45,14 @@ import {
 } from "@flanksource/clicky-ui/rpc";
 import { apiClient } from "./api";
 import { PromptRunStream } from "./PromptRunStream";
+import { PromptBatchInspector } from "./PromptBatchInspector";
+import { PromptRuntimeRows, validateRuntimeRows } from "./PromptRuntimeRows";
 import { RunningPromptsBadge, RunningPromptsRunsTab } from "./RunningPrompts";
-import type { PromptRunHandle } from "./hooks/usePromptRunStream";
+import {
+  isPromptBatchHandle,
+  type PromptBatchHandle,
+  type PromptExecutionHandle,
+} from "./hooks/usePromptRunStream";
 import { CAPTAIN_SIDEBAR_COLLAPSE_KEY } from "./shellHelpers";
 
 type Navigate = (to: string, opts?: { replace?: boolean }) => void;
@@ -234,8 +240,10 @@ type PromptDetailState = {
   variables: Record<string, unknown>;
   variablesValid: boolean;
   runtime: AISpecRuntimeValue;
+  additionalRuntimes: AISpecRuntimeValue[];
   previewResult?: PromptPreviewResult;
   activeRunID?: string;
+  activeBatch?: PromptBatchHandle;
   actionError?: string;
   actionLoading?: "save" | "preview" | "run" | "delete";
 };
@@ -246,11 +254,17 @@ type PromptDetailStateAction =
   | { type: "variables-validity"; detail?: PromptDetail; value: boolean }
   | { type: "runtime"; detail?: PromptDetail; value: AISpecRuntimeValue }
   | {
+      type: "runtime-rows";
+      detail?: PromptDetail;
+      value: AISpecRuntimeValue[];
+    }
+  | {
       type: "preview-result";
       detail?: PromptDetail;
       value?: PromptPreviewResult;
     }
   | { type: "active-run"; detail?: PromptDetail; value?: string }
+  | { type: "active-batch"; detail?: PromptDetail; value?: PromptBatchHandle }
   | { type: "action-error"; detail?: PromptDetail; value?: string }
   | {
       type: "action-loading";
@@ -273,10 +287,18 @@ function promptDetailReducer(
       return { ...current, variablesValid: action.value };
     case "runtime":
       return { ...current, runtime: action.value };
+    case "runtime-rows":
+      return {
+        ...current,
+        runtime: action.value[0] ?? {},
+        additionalRuntimes: action.value.slice(1),
+      };
     case "preview-result":
       return { ...current, previewResult: action.value };
     case "active-run":
       return { ...current, activeRunID: action.value };
+    case "active-batch":
+      return { ...current, activeBatch: action.value };
     case "action-error":
       return { ...current, actionError: action.value };
     case "action-loading":
@@ -295,8 +317,10 @@ function initialPromptDetailState(detail?: PromptDetail): PromptDetailState {
     runtime: detail
       ? { ...EMPTY_RUNTIME, ...runtimeSelectionFromPrompt(detail) }
       : { ...EMPTY_RUNTIME },
+    additionalRuntimes: [],
     previewResult: undefined,
     activeRunID: undefined,
+    activeBatch: undefined,
     actionError: undefined,
     actionLoading: undefined,
   };
@@ -388,6 +412,10 @@ export function PromptWorkbench({
   const detail = activePromptId ? detailQuery.data : SCRATCH_PROMPT;
   const selected = detail ?? selectedSummary;
   const selectedDetailState = promptDetailStateFor(detailState, detail);
+  const runtimeRows = [
+    selectedDetailState.runtime,
+    ...selectedDetailState.additionalRuntimes,
+  ];
   const scratch = isScratchPrompt(detail);
   const writableSources = useMemo(
     () => uniqueWritableSources(prompts),
@@ -454,6 +482,7 @@ export function PromptWorkbench({
       );
       dispatchDetailState({ type: "preview-result", detail, value: preview });
       dispatchDetailState({ type: "active-run", detail, value: undefined });
+      dispatchDetailState({ type: "active-batch", detail, value: undefined });
     } catch (error) {
       dispatchDetailState({
         type: "action-error",
@@ -470,17 +499,30 @@ export function PromptWorkbench({
     dispatchDetailState({ type: "action-error", detail, value: undefined });
     dispatchDetailState({ type: "action-loading", detail, value: "run" });
     try {
-      const handle = await submitPromptOperation<PromptRunHandle>(
+      const handle = await submitPromptOperation<PromptExecutionHandle>(
         promptOps.run,
         promptActionParams(detail),
         {
           variables: selectedDetailState.variables,
           ...runtimePayload(selectedDetailState.runtime, models),
+          ...(runtimeRows.length > 1
+            ? { runtimes: runtimeModelsPayload(runtimeRows, models) }
+            : {}),
           chat: promptChatEligible(detail, selectedDetailState.runtime),
         },
       );
       dispatchDetailState({ type: "preview-result", detail, value: undefined });
-      dispatchDetailState({ type: "active-run", detail, value: handle.runId });
+      if (isPromptBatchHandle(handle)) {
+        dispatchDetailState({ type: "active-run", detail, value: undefined });
+        dispatchDetailState({ type: "active-batch", detail, value: handle });
+      } else {
+        dispatchDetailState({ type: "active-batch", detail, value: undefined });
+        dispatchDetailState({
+          type: "active-run",
+          detail,
+          value: handle.runId,
+        });
+      }
       setTab("runner");
     } catch (error) {
       dispatchDetailState({
@@ -547,6 +589,11 @@ export function PromptWorkbench({
         <div className="flex items-center gap-density-2">
           <RunningPromptsBadge
             onSelectRun={(id) => {
+              dispatchDetailState({
+                type: "active-batch",
+                detail,
+                value: undefined,
+              });
               dispatchDetailState({ type: "active-run", detail, value: id });
               setTab("runner");
             }}
@@ -610,13 +657,30 @@ export function PromptWorkbench({
         onRuntimeChange={(value) =>
           dispatchDetailState({ type: "runtime", detail, value })
         }
+        runtimeRows={runtimeRows}
+        onRuntimeRowsChange={(value) =>
+          dispatchDetailState({ type: "runtime-rows", detail, value })
+        }
         models={models}
         promptSchema={promptSchemaQuery.data}
         tools={AGENT_TOOLS}
         permissionCatalog={permissionCatalogQuery.data}
         previewResult={selectedDetailState.previewResult}
         activeRunID={selectedDetailState.activeRunID}
+        activeBatch={selectedDetailState.activeBatch}
+        onEditBatch={() =>
+          dispatchDetailState({
+            type: "active-batch",
+            detail,
+            value: undefined,
+          })
+        }
         onSelectRun={(id) => {
+          dispatchDetailState({
+            type: "active-batch",
+            detail,
+            value: undefined,
+          });
           dispatchDetailState({ type: "active-run", detail, value: id });
           if (id) setTab("runner");
         }}
@@ -852,12 +916,16 @@ function PromptDetailPane({
   onVariablesValidityChange,
   runtime,
   onRuntimeChange,
+  runtimeRows,
+  onRuntimeRowsChange,
   models,
   promptSchema,
   tools,
   permissionCatalog,
   previewResult,
   activeRunID,
+  activeBatch,
+  onEditBatch,
   onSelectRun,
   onPreview,
   onRun,
@@ -880,12 +948,16 @@ function PromptDetailPane({
   onVariablesValidityChange: (valid: boolean) => void;
   runtime: AISpecRuntimeValue;
   onRuntimeChange: (value: AISpecRuntimeValue) => void;
+  runtimeRows: AISpecRuntimeValue[];
+  onRuntimeRowsChange: (value: AISpecRuntimeValue[]) => void;
   models: ChatModel[];
   promptSchema?: PromptSchemaDoc;
   tools: ToolMeta[];
   permissionCatalog?: AISpecRuntimePermissionCatalog;
   previewResult?: PromptPreviewResult;
   activeRunID?: string;
+  activeBatch?: PromptBatchHandle;
+  onEditBatch: () => void;
   onSelectRun: (id: string | undefined) => void;
   onPreview: () => void;
   onRun: () => void;
@@ -940,6 +1012,7 @@ function PromptDetailPane({
     !scratch ||
     Boolean(runtime.prompt?.user?.trim()) ||
     Boolean(runtime.prompt?.attachments?.length);
+  const runtimeRowsError = validateRuntimeRows(runtimeRows);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -952,7 +1025,9 @@ function PromptDetailPane({
             {errorMessage(error)}
           </div>
         )}
-        {activeTab === "source" ? (
+        {activeTab === "runner" && activeBatch ? (
+          <PromptBatchInspector handle={activeBatch} onEdit={onEditBatch} />
+        ) : activeTab === "source" ? (
           <SourceEditor
             detail={detail}
             draft={draft}
@@ -975,6 +1050,13 @@ function PromptDetailPane({
                 key={detail.id}
                 value={runtime}
                 onChange={onRuntimeChange}
+                runtimeControls={
+                  <PromptRuntimeRows
+                    rows={runtimeRows}
+                    models={promptSelectableModels(models)}
+                    onChange={onRuntimeRowsChange}
+                  />
+                }
                 models={promptSelectableModels(models)}
                 tools={tools}
                 secretSelector={CAPTAIN_SECRET_SELECTOR}
@@ -1014,7 +1096,10 @@ function PromptDetailPane({
                   size="sm"
                   loading={runLoading}
                   disabled={
-                    !runEnabled || !promptReady || (!schema && !variablesValid)
+                    !runEnabled ||
+                    !promptReady ||
+                    Boolean(runtimeRowsError) ||
+                    (!schema && !variablesValid)
                   }
                   onClick={onRun}
                 >
@@ -1604,6 +1689,24 @@ function runtimePayload(runtime: AISpecRuntimeValue, models: ChatModel[]) {
   );
 }
 
+export function runtimeModelsPayload(
+  runtimes: AISpecRuntimeValue[],
+  models: ChatModel[],
+) {
+  return runtimes.map((runtime) => {
+    const selected = normalizeRuntimeModel(
+      runtime.model || "",
+      models,
+      runtime.backend,
+    );
+    return {
+      model: selected.model,
+      backend: selected.backend || runtime.backend,
+      ...(runtime.effort ? { effort: runtime.effort } : {}),
+    };
+  });
+}
+
 function normalizeSpecRuntimePayload(
   payload: Record<string, unknown>,
   models: ChatModel[],
@@ -1634,12 +1737,15 @@ function normalizeSpecRuntimePayload(
   return { ...payload, spec: specRecord };
 }
 
-// Seeds the runtime spec's backend from the prompt (explicit, else inferred from
-// the model). The PromptRunEditor derives the family/mode picker from spec.backend.
+// Seeds the first runtime row from the prompt so adding a comparison preserves
+// the prompt's existing model as an explicit participant.
 function runtimeSelectionFromPrompt(prompt: PromptSummary): AISpecRuntimeValue {
   const backend =
     prompt.backend?.trim() || inferBackendFromModel(prompt.model || "");
-  return backend ? { backend } : {};
+  return {
+    ...(backend ? { backend } : {}),
+    ...(prompt.model?.trim() ? { model: prompt.model.trim() } : {}),
+  };
 }
 
 function inferBackendFromModel(model: string) {
