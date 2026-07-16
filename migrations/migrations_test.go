@@ -47,9 +47,6 @@ func TestSchemaBundleContainsGavelIntegrationContract(t *testing.T) {
 		`column "activity_state"`,
 		`column "health_state"`,
 		`column "state_version"`,
-		`table "captain_legacy_session_cutovers"`,
-		`column "legacy_sessions_checksum"`,
-		`column "native_sessions_checksum"`,
 	)
 	assertContainsAll(t, "20_prompt_runs_and_plans.pg.hcl",
 		`table "captain_prompt_runs"`,
@@ -149,53 +146,14 @@ func TestSchemaBundleHasNoAlwaysRunScripts(t *testing.T) {
 	}
 }
 
-func TestLegacySessionSchemaDetection(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name    string
-		columns map[string]string
-		legacy  bool
-	}{
-		{name: "fresh database", columns: map[string]string{}},
-		{name: "unrelated table shape", columns: map[string]string{"id": "text"}},
-		{
-			name: "authoritative schema",
-			columns: map[string]string{
-				"id": "uuid", "path": "text", "lifecycle_status": "USER-DEFINED",
-				"activity_state": "USER-DEFINED", "health_state": "USER-DEFINED",
-			},
-		},
-		{
-			name:    "legacy GORM cache",
-			columns: map[string]string{"id": "text", "path": "text", "mod_unix": "bigint"},
-			legacy:  true,
-		},
-		{
-			name:    "partial native conversion",
-			columns: map[string]string{"id": "uuid", "path": "text", "lifecycle_status": "USER-DEFINED"},
-			legacy:  true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			if got := isLegacySessionSchema(tt.columns); got != tt.legacy {
-				t.Fatalf("isLegacySessionSchema() = %v, want %v", got, tt.legacy)
-			}
-		})
-	}
-}
-
-func TestApplyRejectsEmptyConnectionBeforePreflight(t *testing.T) {
+func TestApplyRejectsEmptyConnection(t *testing.T) {
 	t.Parallel()
 	if err := Apply(t.Context(), "  "); err == nil {
 		t.Fatal("Apply unexpectedly accepted an empty connection string")
 	}
 }
 
-func TestApplyHoldsMigrationLockAcrossPreflightAndMigration(t *testing.T) {
+func TestApplyHoldsMigrationLockAcrossMigration(t *testing.T) {
 	t.Parallel()
 
 	var events []string
@@ -203,10 +161,6 @@ func TestApplyHoldsMigrationLockAcrossPreflightAndMigration(t *testing.T) {
 		acquireLock: func(context.Context, string) (migrationLockHandle, error) {
 			events = append(events, "lock")
 			return &recordingMigrationLock{events: &events}, nil
-		},
-		rejectLegacy: func(context.Context, string) error {
-			events = append(events, "preflight")
-			return nil
 		},
 		migrate: func(context.Context, string) error {
 			events = append(events, "migrate")
@@ -216,58 +170,28 @@ func TestApplyHoldsMigrationLockAcrossPreflightAndMigration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
-	assertEventsEqual(t, events, []string{"lock", "preflight", "migrate", "unlock"})
+	assertEventsEqual(t, events, []string{"lock", "migrate", "unlock"})
 }
 
-func TestApplyReleasesMigrationLockOnEveryFailurePath(t *testing.T) {
+func TestApplyReleasesMigrationLockOnMigrationFailure(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name       string
-		preflight  error
-		migration  error
-		wantEvents []string
-	}{
-		{
-			name:       "legacy preflight",
-			preflight:  ErrLegacySessionSchema,
-			wantEvents: []string{"lock", "preflight", "unlock"},
+	var events []string
+	migrationErr := errors.New("atlas failed")
+	err := apply(t.Context(), "postgres://captain", applyDependencies{
+		acquireLock: func(context.Context, string) (migrationLockHandle, error) {
+			events = append(events, "lock")
+			return &recordingMigrationLock{events: &events}, nil
 		},
-		{
-			name:       "schema migration",
-			migration:  errors.New("atlas failed"),
-			wantEvents: []string{"lock", "preflight", "migrate", "unlock"},
+		migrate: func(context.Context, string) error {
+			events = append(events, "migrate")
+			return migrationErr
 		},
+	})
+	if !errors.Is(err, migrationErr) {
+		t.Fatalf("apply error = %v, want errors.Is(_, %v)", err, migrationErr)
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			var events []string
-			err := apply(t.Context(), "postgres://captain", applyDependencies{
-				acquireLock: func(context.Context, string) (migrationLockHandle, error) {
-					events = append(events, "lock")
-					return &recordingMigrationLock{events: &events}, nil
-				},
-				rejectLegacy: func(context.Context, string) error {
-					events = append(events, "preflight")
-					return tt.preflight
-				},
-				migrate: func(context.Context, string) error {
-					events = append(events, "migrate")
-					return tt.migration
-				},
-			})
-			wantErr := tt.preflight
-			if wantErr == nil {
-				wantErr = tt.migration
-			}
-			if !errors.Is(err, wantErr) {
-				t.Fatalf("apply error = %v, want errors.Is(_, %v)", err, wantErr)
-			}
-			assertEventsEqual(t, events, tt.wantEvents)
-		})
-	}
+	assertEventsEqual(t, events, []string{"lock", "migrate", "unlock"})
 }
 
 func TestApplyReportsLockAcquisitionAndReleaseErrors(t *testing.T) {
@@ -294,8 +218,7 @@ func TestApplyReportsLockAcquisitionAndReleaseErrors(t *testing.T) {
 			acquireLock: func(context.Context, string) (migrationLockHandle, error) {
 				return &recordingMigrationLock{err: releaseErr}, nil
 			},
-			rejectLegacy: func(context.Context, string) error { return nil },
-			migrate:      func(context.Context, string) error { return migrationErr },
+			migrate: func(context.Context, string) error { return migrationErr },
 		})
 		if !errors.Is(err, migrationErr) || !errors.Is(err, releaseErr) {
 			t.Fatalf("apply error = %v, want joined migration and release errors", err)

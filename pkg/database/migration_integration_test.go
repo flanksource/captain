@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/flanksource/captain/migrations"
 	commonsdb "github.com/flanksource/commons-db/db"
 	"github.com/stretchr/testify/require"
 )
@@ -100,68 +99,4 @@ func TestCaptainMigrationsAreIdempotentAndShareOnePool(t *testing.T) {
 		)`, view).Scan(&exists).Error)
 		require.True(t, exists, "%s should exist", view)
 	}
-}
-
-func TestCaptainMigrationsRejectLegacySessionCacheWithoutMutation(t *testing.T) {
-	if os.Getenv("CAPTAIN_DB_EMBEDDED_TEST") == "" {
-		t.Skip("set CAPTAIN_DB_EMBEDDED_TEST=1 to run embedded-postgres migration tests")
-	}
-
-	dsn, stop, err := commonsdb.StartEmbedded(commonsdb.EmbeddedConfig{
-		DataDir:  filepath.Join(t.TempDir(), "postgres"),
-		Database: "captain_legacy_preflight",
-	})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, stop()) })
-
-	legacy, err := commonsdb.NewGorm(dsn, commonsdb.DefaultGormConfig())
-	require.NoError(t, err)
-	legacySQL, err := legacy.DB()
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, legacySQL.Close()) })
-
-	require.NoError(t, legacy.Exec(`CREATE TABLE public.captain_sessions (
-		path text PRIMARY KEY,
-		id text,
-		source text,
-		mod_unix bigint,
-		title text
-	)`).Error)
-	require.NoError(t, legacy.Exec(`INSERT INTO public.captain_sessions
-		(path, id, source, mod_unix, title)
-		VALUES ('/tmp/session.jsonl', 'legacy-session', 'codex', 42, 'preserve me')`).Error)
-
-	_, err = Open(t.Context(), Config{DSN: dsn})
-	require.ErrorIs(t, err, migrations.ErrLegacySessionSchema)
-	require.ErrorContains(t, err, "explicit legacy session backfill/cutover")
-
-	var preserved struct {
-		Path    string
-		ID      string
-		Source  string
-		ModUnix int64
-		Title   string
-	}
-	require.NoError(t, legacy.Raw(`SELECT path, id, source, mod_unix, title
-		FROM public.captain_sessions WHERE path = '/tmp/session.jsonl'`).Scan(&preserved).Error)
-	require.Equal(t, "/tmp/session.jsonl", preserved.Path)
-	require.Equal(t, "legacy-session", preserved.ID)
-	require.Equal(t, "codex", preserved.Source)
-	require.EqualValues(t, 42, preserved.ModUnix)
-	require.Equal(t, "preserve me", preserved.Title)
-	require.False(t, legacy.Migrator().HasColumn("captain_sessions", "lifecycle_status"))
-	require.False(t, legacy.Migrator().HasTable("captain_prompt_runs"))
-
-	var idType string
-	require.NoError(t, legacy.Raw(`SELECT data_type
-		FROM information_schema.columns
-		WHERE table_schema = 'public'
-		  AND table_name = 'captain_sessions'
-		  AND column_name = 'id'`).Scan(&idType).Error)
-	require.Equal(t, "text", idType)
-
-	var migrationMetadataExists bool
-	require.NoError(t, legacy.Raw(`SELECT to_regclass('public.schema_migration_scripts') IS NOT NULL`).Scan(&migrationMetadataExists).Error)
-	require.False(t, migrationMetadataExists, "preflight must fail before commons-db/migrate creates metadata")
-
 }

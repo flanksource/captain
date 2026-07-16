@@ -30,12 +30,6 @@ const (
 	migrationUnlockTimeout = 5 * time.Second
 )
 
-// ErrLegacySessionSchema is returned before reconciliation when the database
-// still contains the GORM-managed session summary cache that predates Captain's
-// native schema. Callers can use errors.Is to direct users to an explicit
-// backfill/cutover instead of allowing Atlas to reshape the table implicitly.
-var ErrLegacySessionSchema = errors.New("legacy Captain session cache schema detected")
-
 // schemaFS contains the complete Captain-owned schema. SQL files are colocated
 // with the HCL so commons-db/migrate applies their declared pre/post phases in
 // the same migration scope.
@@ -48,14 +42,12 @@ type migrationLockHandle interface {
 }
 
 type applyDependencies struct {
-	acquireLock  func(context.Context, string) (migrationLockHandle, error)
-	rejectLegacy func(context.Context, string) error
-	migrate      func(context.Context, string) error
+	acquireLock func(context.Context, string) (migrationLockHandle, error)
+	migrate     func(context.Context, string) error
 }
 
 var defaultApplyDependencies = applyDependencies{
-	acquireLock:  acquireMigrationLock,
-	rejectLegacy: rejectLegacySessionSchema,
+	acquireLock: acquireMigrationLock,
 	migrate: func(ctx context.Context, connection string) error {
 		return commonsmigrate.Apply(ctx, connection, schemaFS,
 			commonsmigrate.WithName(Scope),
@@ -65,10 +57,10 @@ var defaultApplyDependencies = applyDependencies{
 }
 
 // Apply reconciles the checked-in HCL schema, then applies the colocated SQL
-// migrations. A Captain-specific session advisory lock serializes the legacy
-// preflight and the complete migration bundle across processes. It is safe to
-// call repeatedly and uses a stable scope so Captain can share a database with
-// other independently migrated applications.
+// migrations. A Captain-specific session advisory lock serializes the complete
+// migration bundle across processes. It is safe to call repeatedly and uses a
+// stable scope so Captain can share a database with other independently
+// migrated applications.
 func Apply(ctx context.Context, connection string) error {
 	return apply(ctx, connection, defaultApplyDependencies)
 }
@@ -88,9 +80,6 @@ func apply(ctx context.Context, connection string, deps applyDependencies) (resu
 		}
 	}()
 
-	if err := deps.rejectLegacy(ctx, connection); err != nil {
-		return err
-	}
 	if err := deps.migrate(ctx, connection); err != nil {
 		return fmt.Errorf("migrate Captain database: %w", err)
 	}
@@ -152,46 +141,4 @@ func (lock *migrationLock) Close() error {
 		lock.err = errors.Join(cleanupErrors...)
 	})
 	return lock.err
-}
-
-func rejectLegacySessionSchema(ctx context.Context, connection string) error {
-	db, err := commonsdb.NewDB(connection)
-	if err != nil {
-		return fmt.Errorf("open Captain migration preflight database: %w", err)
-	}
-	defer db.Close()
-
-	rows, err := db.QueryContext(ctx, `SELECT column_name, data_type
-		FROM information_schema.columns
-		WHERE table_schema = 'public' AND table_name = 'captain_sessions'`)
-	if err != nil {
-		return fmt.Errorf("inspect Captain session schema: %w", err)
-	}
-	defer rows.Close()
-
-	columns := map[string]string{}
-	for rows.Next() {
-		var name, dataType string
-		if err := rows.Scan(&name, &dataType); err != nil {
-			return fmt.Errorf("read Captain session schema: %w", err)
-		}
-		columns[name] = dataType
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("read Captain session schema: %w", err)
-	}
-	if isLegacySessionSchema(columns) {
-		return fmt.Errorf("%w: public.captain_sessions still uses the legacy path-keyed summary shape; run the explicit legacy session backfill/cutover before applying Captain HCL", ErrLegacySessionSchema)
-	}
-	return nil
-}
-
-func isLegacySessionSchema(columns map[string]string) bool {
-	if _, hasPath := columns["path"]; !hasPath {
-		return false
-	}
-	_, hasLifecycle := columns["lifecycle_status"]
-	_, hasActivity := columns["activity_state"]
-	_, hasHealth := columns["health_state"]
-	return columns["id"] != "uuid" || !hasLifecycle || !hasActivity || !hasHealth
 }

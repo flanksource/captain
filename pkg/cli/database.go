@@ -38,8 +38,7 @@ var captainDBState struct {
 
 // captainDB opens (once) the native Captain database: resolve the configured
 // DSN (gavel-shared or explicit env) or start the shared embedded postgres,
-// run migrations — including the idempotent legacy session-cache cutover — and
-// wrap the pool.
+// run migrations, and wrap the pool.
 func captainDB(ctx context.Context) (*database.DB, error) {
 	captainDBState.mu.Lock()
 	defer captainDBState.mu.Unlock()
@@ -96,13 +95,8 @@ func openCaptainDB(ctx context.Context) (*database.DB, string, string, error) {
 		return nil, "", "", err
 	}
 	log.Debugf("captain database using %s", source)
-	report, err := database.MigrateWithLegacySessionCutover(ctx, dsn)
-	if err != nil {
+	if err := database.Migrate(ctx, dsn); err != nil {
 		return nil, "", "", fmt.Errorf("migrate captain database (%s): %w", source, err)
-	}
-	if report != nil {
-		log.Infof("migrated legacy session cache: %d sessions, %d prompt runs",
-			report.ImportedSessionRows, report.ImportedPromptRunRows)
 	}
 	gormDB, err := commonsdb.NewGorm(dsn, commonsdb.DefaultGormConfig())
 	if err != nil {
