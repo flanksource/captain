@@ -26,6 +26,7 @@ type registryModel struct {
 	Reasoning        bool         `json:"reasoning,omitempty"`
 	Temperature      bool         `json:"temperature,omitempty"`
 	ContextWindow    int          `json:"contextWindow,omitempty"`
+	InputMediaTypes  []string     `json:"inputMediaTypes,omitempty"`
 	Preferred        bool         `json:"preferred,omitempty"`
 	AdaptiveThinking bool         `json:"adaptiveThinking,omitempty"`
 	Availability     []string     `json:"availability,omitempty"`
@@ -105,6 +106,7 @@ func registryModelDef(model registryModel, backend Backend) ModelDef {
 		CapabilitiesKnown: true,
 		Reasoning:         model.Reasoning,
 		Temperature:       model.Temperature,
+		InputMediaTypes:   clampInputMediaTypes(backend, model.InputMediaTypes),
 		SupportedEfforts:  append([]api.Effort(nil), model.SupportedEfforts...),
 		DefaultEffort:     model.DefaultEffort,
 		Priority:          model.Priority,
@@ -152,6 +154,7 @@ func registryCatalogModels() []Model {
 			AdaptiveThinking: m.AdaptiveThinking,
 			ContextWindow:    m.ContextWindow,
 			ReleaseDate:      m.ReleaseDate,
+			InputMediaTypes:  clampInputMediaTypes(backend, m.InputMediaTypes),
 			SupportedEfforts: append([]api.Effort(nil), m.SupportedEfforts...),
 			DefaultEffort:    m.DefaultEffort,
 			Priority:         m.Priority,
@@ -176,6 +179,7 @@ func registryCatalogModels() []Model {
 				AdaptiveThinking: m.AdaptiveThinking,
 				ContextWindow:    m.ContextWindow,
 				ReleaseDate:      m.ReleaseDate,
+				InputMediaTypes:  clampInputMediaTypes(BackendClaudeAgent, m.InputMediaTypes),
 				SupportedEfforts: append([]api.Effort(nil), m.SupportedEfforts...),
 				DefaultEffort:    m.DefaultEffort,
 				Priority:         m.Priority,
@@ -192,6 +196,7 @@ func registryCatalogModels() []Model {
 				Temperature:      m.Temperature,
 				ContextWindow:    m.ContextWindow,
 				ReleaseDate:      m.ReleaseDate,
+				InputMediaTypes:  clampInputMediaTypes(BackendCodexAgent, m.InputMediaTypes),
 				SupportedEfforts: append([]api.Effort(nil), m.SupportedEfforts...),
 				DefaultEffort:    m.DefaultEffort,
 				Priority:         m.Priority,
