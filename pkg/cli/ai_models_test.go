@@ -220,6 +220,9 @@ func TestRunAIModels_HidesLegacyByDefault(t *testing.T) {
 				"data": []map[string]any{
 					{"id": "gpt-5"},
 					{"id": "gpt-5.1"},
+					{"id": "gpt-5.6-sol"},
+					{"id": "gpt-5.6-terra"},
+					{"id": "gpt-5.6-luna"},
 					{"id": "gpt-5-mini"},
 					{"id": "gpt-5-codex"},
 					{"id": "gpt-5.5-pro"},
@@ -249,7 +252,7 @@ func TestRunAIModels_HidesLegacyByDefault(t *testing.T) {
 	}
 	res := got.(AIModelsResult)
 
-	want := []string{"gpt-5", "gpt-5.1"}
+	want := []string{"gpt-5", "gpt-5.1", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"}
 	if len(res.Rows) != len(want) {
 		t.Fatalf("rows = %d, want %d (%v)", len(res.Rows), len(want), res.Rows)
 	}

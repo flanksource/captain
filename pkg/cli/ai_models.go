@@ -96,7 +96,7 @@ func runLiveModels(opts AIModelsOptions) (any, error) {
 			// Hide legacy/non-chat IDs unless the user asked for them by
 			// name via --filter. Filtering by user intent overrides the
 			// blacklist so "ai models -f gpt-3.5" still works.
-			if opts.Filter == "" && ai.IsLegacyModelID(m.ID) {
+			if opts.Filter == "" && ai.IsLegacyModelIDForBackend(m.ID, r.backend) {
 				continue
 			}
 

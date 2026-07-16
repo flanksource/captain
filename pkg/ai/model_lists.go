@@ -118,16 +118,19 @@ func isPrimaryGPTModelID(id string) bool {
 	return sawDigit
 }
 
-// IsLegacyModelIDForBackend keeps model menus clean for every backend. CLI and
-// agent backends receive exact provider IDs too, so code/chat/realtime/audio
-// variants are hidden there just as they are for direct API backends.
+// IsLegacyModelIDForBackend keeps model menus clean while retaining preferred
+// registry models explicitly available to the selected backend.
 func IsLegacyModelIDForBackend(id string, backend Backend) bool {
-	if backend == BackendCodexAgent || backend == BackendCodexCLI || backend == BackendCodexCmux {
-		if _, ok := RegistryModelDef(backend, id); ok {
-			return false
-		}
+	if isPreferredRegistryModelForBackend(backend, id) {
+		return false
 	}
 	return IsLegacyModelID(id)
+}
+
+func isPreferredRegistryModelForBackend(backend Backend, model string) bool {
+	provider := registryProviderForBackend(backend)
+	entry, ok := lookupRegistryExact(provider, normalizeCodexVariantAlias(model))
+	return ok && entry.Preferred && registryModelAvailableForBackend(entry, backend)
 }
 
 // CurrentModelsByReleaseDate returns a filtered copy sorted newest first,

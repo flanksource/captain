@@ -129,6 +129,35 @@ func TestResolveModels_LegacyHiddenUnlessFiltered(t *testing.T) {
 	}
 }
 
+func TestResolveModels_PreferredOpenAIVariantsRemainVisible(t *testing.T) {
+	stubLiveFetcher(t, func(b Backend) ([]ModelDef, error) {
+		if b != BackendOpenAI {
+			return nil, nil
+		}
+		return []ModelDef{
+			{ID: "gpt-5.6-sol", Backend: BackendOpenAI},
+			{ID: "gpt-5.6-terra", Backend: BackendOpenAI},
+			{ID: "gpt-5.6-luna", Backend: BackendOpenAI},
+			{ID: "gpt-5.5-pro", Backend: BackendOpenAI},
+		}, nil
+	})
+	t.Setenv("OPENAI_API_KEY", "k")
+
+	rows, err := ResolveModels(context.Background(), ResolveOptions{Backend: BackendOpenAI, UseTokens: true})
+	if err != nil {
+		t.Fatalf("ResolveModels: %v", err)
+	}
+	for _, id := range []string{"openai/gpt-5.6-sol", "openai/gpt-5.6-terra", "openai/gpt-5.6-luna"} {
+		row, ok := hasModelID(rows, id)
+		if !ok || !row.Live {
+			t.Errorf("preferred API model %q = %+v, present=%v", id, row, ok)
+		}
+	}
+	if _, ok := hasModelID(rows, "gpt-5.5-pro"); ok {
+		t.Fatal("non-preferred API variant should remain hidden")
+	}
+}
+
 func TestResolveModels_CacheWrittenAndReused(t *testing.T) {
 	calls := 0
 	stubLiveFetcher(t, func(b Backend) ([]ModelDef, error) {
