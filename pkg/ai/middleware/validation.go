@@ -29,6 +29,7 @@ type validatingProvider struct {
 
 func (v *validatingProvider) GetModel() string       { return v.provider.GetModel() }
 func (v *validatingProvider) GetBackend() ai.Backend { return v.provider.GetBackend() }
+func (v *validatingProvider) Unwrap() ai.Provider    { return v.provider }
 
 // WithSchemaValidation validates structured responses against the request schema
 // and enforces api.Prompt.SchemaStrictness.

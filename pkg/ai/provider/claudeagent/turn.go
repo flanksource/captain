@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
@@ -31,6 +32,10 @@ type turnState struct {
 	// planMode marks a plan-only turn: ExitPlanMode is then the terminal signal
 	// and its can_use_tool is answered by the shared policy, never the broker.
 	planMode bool
+
+	promptMu sync.Mutex
+	pending  int
+	ended    bool
 }
 
 type promptParams struct {
@@ -88,6 +93,7 @@ func (p *Provider) runTurn(ctx context.Context, req ai.Request, events chan ai.E
 		ctx:        ctx,
 		canUseTool: p.cfg.CanUseTool,
 		planMode:   req.Permissions.Mode == api.PermissionPlan,
+		pending:    1,
 	}
 	p.setActive(ts)
 	defer func() {
@@ -156,11 +162,7 @@ func (p *Provider) onNotification(method string, params json.RawMessage) {
 		}
 	}
 	if method == notifyTurnDone || method == notifyTurnError {
-		select {
-		case <-ts.term:
-		default:
-			close(ts.term)
-		}
+		ts.completePrompt()
 	}
 }
 
@@ -257,13 +259,39 @@ func (p *Provider) deliver(ts *turnState, ev ai.Event) {
 	}
 }
 
-func (p *Provider) interrupt() {
-	if p.rpc == nil {
-		return
+func (p *Provider) Steer(ctx context.Context, req api.Spec) error {
+	p.activeMu.Lock()
+	ts := p.active
+	p.activeMu.Unlock()
+	if ts == nil || !ts.addPrompt() {
+		return fmt.Errorf("claude-agent: no active turn to steer")
 	}
+	params, err := buildPromptParams(req)
+	if err != nil {
+		ts.completePrompt()
+		return err
+	}
+	if _, err := p.rpc.Call(ctx, methodPrompt, params); err != nil {
+		ts.completePrompt()
+		return fmt.Errorf("claude-agent steer failed: %w", err)
+	}
+	return nil
+}
+
+func (p *Provider) Interrupt(ctx context.Context) error {
+	if p.rpc == nil {
+		return fmt.Errorf("claude-agent: provider not started")
+	}
+	if _, err := p.rpc.Call(ctx, methodInterrupt, nil); err != nil {
+		return fmt.Errorf("claude-agent interrupt failed: %w", err)
+	}
+	return nil
+}
+
+func (p *Provider) interrupt() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_, _ = p.rpc.Call(ctx, methodInterrupt, nil)
+	_ = p.Interrupt(ctx)
 }
 
 func (p *Provider) setActive(ts *turnState) {
@@ -282,6 +310,30 @@ func (p *Provider) rememberSession(id string) {
 	p.sessMu.Lock()
 	p.sessionID = id
 	p.sessMu.Unlock()
+}
+
+func (ts *turnState) addPrompt() bool {
+	ts.promptMu.Lock()
+	defer ts.promptMu.Unlock()
+	if ts.ended {
+		return false
+	}
+	ts.pending++
+	return true
+}
+
+func (ts *turnState) completePrompt() {
+	ts.promptMu.Lock()
+	defer ts.promptMu.Unlock()
+	if ts.ended {
+		return
+	}
+	ts.pending--
+	if ts.pending > 0 {
+		return
+	}
+	ts.ended = true
+	close(ts.term)
 }
 
 // emit sends ev on events, honouring ctx cancellation. Returns false if ctx was

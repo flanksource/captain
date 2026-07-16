@@ -6,7 +6,10 @@ import (
 	"strings"
 
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/commons/logger"
 )
+
+var modelEffortLog = logger.GetLogger("ai")
 
 // ModelEfforts returns model-specific effort metadata when the embedded
 // registry knows the exact backend/model combination.
@@ -55,9 +58,18 @@ type effortValidatingProvider struct {
 
 func (p *effortValidatingProvider) GetModel() string    { return p.provider.GetModel() }
 func (p *effortValidatingProvider) GetBackend() Backend { return p.provider.GetBackend() }
-func (p *effortValidatingProvider) request(req Request) (Request, error) {
+func (p *effortValidatingProvider) Unwrap() Provider    { return p.provider }
+func (p *effortValidatingProvider) request(ctx context.Context, req Request) (Request, error) {
 	if req.Effort == api.EffortNone {
 		req.Effort = p.configuredEffort
+	}
+	if supported, _, known := ModelEfforts(p.GetBackend(), p.GetModel()); known && len(supported) == 0 && req.Effort != api.EffortNone {
+		LoggerFromContext(ctx, modelEffortLog).Warnf(
+			"model %q on %s does not support reasoning effort %q; continuing without effort",
+			p.GetModel(), p.GetBackend(), req.Effort,
+		)
+		req.Effort = api.EffortNone
+		return req, nil
 	}
 	if err := ValidateModelEffort(p.GetBackend(), p.GetModel(), req.Effort); err != nil {
 		return Request{}, err
@@ -66,7 +78,7 @@ func (p *effortValidatingProvider) request(req Request) (Request, error) {
 }
 
 func (p *effortValidatingProvider) Execute(ctx context.Context, req Request) (*Response, error) {
-	req, err := p.request(req)
+	req, err := p.request(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -79,7 +91,7 @@ type effortValidatingStreamingProvider struct {
 }
 
 func (p *effortValidatingStreamingProvider) ExecuteStream(ctx context.Context, req Request) (<-chan Event, error) {
-	req, err := p.request(req)
+	req, err := p.request(ctx, req)
 	if err != nil {
 		return nil, err
 	}

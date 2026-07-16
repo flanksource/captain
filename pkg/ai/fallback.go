@@ -89,6 +89,25 @@ func (f *fallbackProvider) GetBackend() Backend {
 	return b
 }
 
+func (f *fallbackProvider) Unwrap() Provider {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.built[f.active]
+}
+
+func (f *fallbackProvider) Close() error {
+	f.mu.Lock()
+	built := append([]Provider(nil), f.built...)
+	f.mu.Unlock()
+	var errs []error
+	for _, provider := range built {
+		if closer, ok := api.ProviderAs[api.CloseableProvider](provider); ok {
+			errs = append(errs, closer.Close())
+		}
+	}
+	return errors.Join(errs...)
+}
+
 // Execute runs the primary and, on a fallback-eligible failure or a construction error,
 // each fallback in turn. A non-retryable runtime error stops immediately (another
 // model will not fix a malformed request). When nothing succeeds the primary's

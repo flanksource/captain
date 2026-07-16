@@ -68,6 +68,7 @@ func runFakeServer() {
 	// initHadSchema records whether the host sent an outputSchema on initialize,
 	// so the "structured" turn can prove the Go→TS schema wiring end to end.
 	initHadSchema := false
+	promptCount := 0
 
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
@@ -98,9 +99,15 @@ func runFakeServer() {
 				"session_id": "fake-sess", "model": "claude-sonnet-4-5", "tools": []string{"Read", "Bash"},
 			}})
 		case "prompt":
+			promptCount++
 			enc(map[string]any{"jsonrpc": "2.0", "id": id(frame.ID), "result": map[string]any{"accepted": true}})
 			enc(map[string]any{"jsonrpc": "2.0", "method": "message/text", "params": map[string]any{"text": "hi from fake"}})
 			switch mode {
+			case "steer":
+				if promptCount == 2 {
+					completed("first prompt complete")
+					completed("steered prompt complete")
+				}
 			case "approval":
 				// Ask the host to vet a Bash tool use; the turn completes when the
 				// host replies (handled above).
@@ -489,4 +496,32 @@ func TestProvider_InterruptNoKill(t *testing.T) {
 	// interrupt() completes before the error is emitted, so by now the fake has
 	// written the marker — proof the graceful interrupt reached it.
 	require.FileExists(t, marker)
+}
+
+func TestProvider_SteerKeepsTurnOpenForEveryAcceptedPrompt(t *testing.T) {
+	withFakeAgentProcessEnv(t, map[string]string{
+		fakeServerEnv: "1",
+		fakeModeEnv:   "steer",
+	})
+
+	p, err := New(ai.Config{Model: api.Model{Name: "claude-sonnet-5"}})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = p.Close() })
+
+	events, err := p.ExecuteStream(context.Background(), ai.Request{Prompt: api.Prompt{User: "first"}})
+	require.NoError(t, err)
+	for event := range events {
+		if event.Kind == ai.EventText {
+			break
+		}
+	}
+	require.NoError(t, p.Steer(context.Background(), ai.Request{Prompt: api.Prompt{User: "btw"}}))
+
+	results := 0
+	for event := range events {
+		if event.Kind == ai.EventResult {
+			results++
+		}
+	}
+	assert.Equal(t, 2, results)
 }

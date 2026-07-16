@@ -2,6 +2,7 @@ package provider
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/flanksource/captain/pkg/ai"
@@ -21,6 +22,11 @@ func TestNewCodexAppServer_Defaults(t *testing.T) {
 	c2, err := NewCodexAppServer("gpt-5.4")
 	require.NoError(t, err)
 	assert.Equal(t, "gpt-5.4", c2.GetModel())
+}
+
+func TestAppServerProcessErrorIncludesStderr(t *testing.T) {
+	err := appServerProcessError(errors.New("jsonrpc: client closed"), " state runtime unavailable \n")
+	assert.EqualError(t, err, "jsonrpc: client closed: state runtime unavailable")
 }
 
 func TestMapAppServerNotification_Kinds(t *testing.T) {

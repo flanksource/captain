@@ -1,8 +1,10 @@
 package provider
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
@@ -71,6 +73,22 @@ var _ = Describe("Codex app-server tool lifecycle", func() {
 		Expect(events[1].Kind).To(Equal(ai.EventToolResult))
 		Expect(events[1].Success).To(BeFalse())
 		Expect(events[1].Text).To(Equal("failed\n"))
+	})
+})
+
+var _ = Describe("Codex app-server turn control", func() {
+	It("waits for thread and turn identifiers before interrupting", func() {
+		turn := &turnState{terminal: make(chan struct{}), started: make(chan struct{})}
+		go func() {
+			time.Sleep(10 * time.Millisecond)
+			turn.setIDs("thread-1", "turn-1")
+		}()
+
+		threadID, turnID, err := turn.waitIDs(context.Background())
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(threadID).To(Equal("thread-1"))
+		Expect(turnID).To(Equal("turn-1"))
 	})
 })
 

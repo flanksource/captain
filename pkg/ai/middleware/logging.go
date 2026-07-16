@@ -23,6 +23,7 @@ type loggingProvider struct {
 
 func (l *loggingProvider) GetModel() string       { return l.provider.GetModel() }
 func (l *loggingProvider) GetBackend() ai.Backend { return l.provider.GetBackend() }
+func (l *loggingProvider) Unwrap() ai.Provider    { return l.provider }
 
 func (l *loggingProvider) Execute(ctx context.Context, req ai.Request) (*ai.Response, error) {
 	start := time.Now()

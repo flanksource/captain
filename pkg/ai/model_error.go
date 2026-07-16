@@ -100,6 +100,7 @@ type modelErrorProvider struct {
 
 func (p *modelErrorProvider) GetModel() string    { return p.provider.GetModel() }
 func (p *modelErrorProvider) GetBackend() Backend { return p.provider.GetBackend() }
+func (p *modelErrorProvider) Unwrap() Provider    { return p.provider }
 
 func (p *modelErrorProvider) recommend(ctx context.Context, err error) error {
 	if !IsModelUnavailable(err) || strings.Contains(strings.ToLower(err.Error()), "available models for") {
