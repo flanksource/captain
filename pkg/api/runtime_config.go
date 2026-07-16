@@ -61,4 +61,10 @@ type Config struct {
 	// others ignore it. A nil callback keeps the auto-approve (bypass) behaviour.
 	// It is never serialized (the agent process never sees the Go closure).
 	CanUseTool PermissionFunc `json:"-"`
+
+	// Tools are caller-supplied tools exposed to the model and executed
+	// in-process. Only tool-capable providers (see ToolCapableProvider — today
+	// the genkit API backends) honour them; other providers, which bring their
+	// own tool ecosystems, ignore the field. Never serialized (Go closures).
+	Tools []ToolDefinition `json:"-"`
 }

@@ -32,6 +32,14 @@ type CloseableProvider interface {
 	Close() error
 }
 
+// ToolCapableProvider is implemented by providers that can expose and execute
+// the caller-supplied Config.Tools (rather than only the backend's built-in
+// tools). Resolve it with ProviderAs[ToolCapableProvider] to check support
+// before relying on Config.Tools being honoured.
+type ToolCapableProvider interface {
+	SupportsCallerTools() bool
+}
+
 func ProviderAs[T any](provider Provider) (T, bool) {
 	for provider != nil {
 		if capability, ok := any(provider).(T); ok {
