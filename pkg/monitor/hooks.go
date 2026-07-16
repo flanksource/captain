@@ -63,10 +63,12 @@ func (m *Monitor) handleHookEvent(ctx context.Context, watcher *transcriptWatche
 		}
 	}
 	if path != "" {
-		if err := validateHookTranscript(ev.Provider, path); err != nil {
+		clean, err := validateHookTranscript(ev.Provider, path)
+		if err != nil {
 			log.Warnf("hook %s/%s: %v", ev.Provider, ev.Event, err)
 			return
 		}
+		path = clean
 	}
 
 	switch ev.Event {
@@ -126,20 +128,22 @@ func (m *Monitor) endHookSessionProcesses(ctx context.Context, ev HookEvent) {
 }
 
 // validateHookTranscript rejects transcript paths outside the provider's known
-// session roots. Hook events arrive over an unauthenticated localhost endpoint;
-// the monitor must never ingest arbitrary files.
-func validateHookTranscript(provider, path string) error {
+// session roots and returns the cleaned, contained path. Hook events arrive over
+// an unauthenticated localhost endpoint; the monitor must never ingest arbitrary
+// files, so callers must use the returned value rather than the raw input.
+func validateHookTranscript(provider, path string) (string, error) {
 	root, err := hookTranscriptRoot(provider)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if root == "" {
-		return fmt.Errorf("no session root for provider %q", provider)
+		return "", fmt.Errorf("no session root for provider %q", provider)
 	}
-	if !strings.HasPrefix(filepath.Clean(path), root+string(filepath.Separator)) {
-		return fmt.Errorf("transcript %s is outside %s", path, root)
+	clean := filepath.Clean(path)
+	if !strings.HasPrefix(clean, root+string(filepath.Separator)) {
+		return "", fmt.Errorf("transcript %s is outside %s", path, root)
 	}
-	return nil
+	return clean, nil
 }
 
 func hookTranscriptRoot(provider string) (string, error) {

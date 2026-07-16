@@ -40,14 +40,27 @@ func TestValidateHookTranscript(t *testing.T) {
 	claudePath := filepath.Join(home, ".claude", "projects", "-repo", "s.jsonl")
 	codexPath := filepath.Join(home, ".codex", "sessions", "2026", "07", "14", "rollout-x.jsonl")
 
-	assert.NoError(t, validateHookTranscript("claude", claudePath))
-	assert.NoError(t, validateHookTranscript("codex", codexPath))
+	assertValid := func(provider, path string) {
+		t.Helper()
+		got, err := validateHookTranscript(provider, path)
+		assert.NoError(t, err)
+		assert.Equal(t, filepath.Clean(path), got, "must return the cleaned, contained path")
+	}
+	assertRejected := func(provider, path, msg string) {
+		t.Helper()
+		got, err := validateHookTranscript(provider, path)
+		assert.Error(t, err, msg)
+		assert.Empty(t, got, "rejected paths must not be returned")
+	}
 
-	assert.Error(t, validateHookTranscript("claude", "/etc/passwd"))
-	assert.Error(t, validateHookTranscript("claude", codexPath), "codex path must not pass as claude")
-	assert.Error(t, validateHookTranscript("claude",
-		filepath.Join(home, ".claude", "projects", "..", "..", "secret.jsonl")), "traversal must be rejected")
-	assert.Error(t, validateHookTranscript("gemini", claudePath), "unknown provider must be rejected")
+	assertValid("claude", claudePath)
+	assertValid("codex", codexPath)
+
+	assertRejected("claude", "/etc/passwd", "absolute outside path must be rejected")
+	assertRejected("claude", codexPath, "codex path must not pass as claude")
+	assertRejected("claude",
+		filepath.Join(home, ".claude", "projects", "..", "..", "secret.jsonl"), "traversal must be rejected")
+	assertRejected("gemini", claudePath, "unknown provider must be rejected")
 }
 
 func TestResolveCodexTranscript(t *testing.T) {
