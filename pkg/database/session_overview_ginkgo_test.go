@@ -23,7 +23,7 @@ var _ = Describe("Session overview aggregates", func() {
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(func() { Expect(stop()).To(Succeed()) })
 
-		db, err := Open(ctx, Config{DSN: dsn})
+		db, err := Open(ctx, WithDSN(dsn), WithMigrations())
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(func() { Expect(db.Close()).To(Succeed()) })
 

@@ -128,7 +128,7 @@ func withTestCaptainDB(t *testing.T, processes ...monitor.Process) *database.DB 
 		Database: "captain_cli",
 	})
 	require.NoError(t, err)
-	db, err := database.Open(t.Context(), database.Config{DSN: dsn})
+	db, err := database.Open(t.Context(), database.WithDSN(dsn), database.WithMigrations())
 	require.NoError(t, err)
 
 	setCaptainDBForTest(db)

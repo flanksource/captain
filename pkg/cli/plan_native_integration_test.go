@@ -22,7 +22,7 @@ func TestResolveNativePlanUsesPersistedApprovedContentWithoutSourceFile(t *testi
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, stop()) })
-	db, err := captaindb.Open(t.Context(), captaindb.Config{DSN: dsn})
+	db, err := captaindb.Open(t.Context(), captaindb.WithDSN(dsn), captaindb.WithMigrations())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 

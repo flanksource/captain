@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -28,24 +29,43 @@ func BindDatabaseURLFlag(flags *pflag.FlagSet) {
 // database is mandatory: session/plan/prompt surfaces read it exclusively, so
 // failing to open it is a loud error rather than a degraded mode.
 var captainDBState struct {
-	mu     sync.Mutex
-	opened bool
-	db     *database.DB
-	dsn    string
-	source string
-	err    error
+	mu       sync.Mutex
+	opened   bool
+	migrated bool
+	db       *database.DB
+	dsn      string
+	source   string
+	err      error
 }
 
-// captainDB opens (once) the native Captain database: resolve the configured
-// DSN (gavel-shared or explicit env) or start the shared embedded postgres,
-// run migrations, and wrap the pool.
+type captainDatabaseMode uint8
+
+const (
+	captainDatabaseNoMigrations captainDatabaseMode = iota
+	captainDatabaseWithMigrations
+)
+
+// captainDB opens the native Captain database without running migrations.
 func captainDB(ctx context.Context) (*database.DB, error) {
+	return captainDBForMode(ctx, captainDatabaseNoMigrations)
+}
+
+func captainServeDB(ctx context.Context) (*database.DB, error) {
+	return captainDBForMode(ctx, captainDatabaseWithMigrations)
+}
+
+func captainDBForMode(ctx context.Context, mode captainDatabaseMode) (*database.DB, error) {
 	captainDBState.mu.Lock()
 	defer captainDBState.mu.Unlock()
-	if !captainDBState.opened {
-		captainDBState.db, captainDBState.dsn, captainDBState.source, captainDBState.err = openCaptainDB(ctx)
-		captainDBState.opened = true
+	if captainDBState.opened {
+		if mode == captainDatabaseWithMigrations && !captainDBState.migrated {
+			return nil, errors.New("captain serve cannot migrate after the process database was opened without migrations")
+		}
+		return captainDBState.db, captainDBState.err
 	}
+	captainDBState.db, captainDBState.dsn, captainDBState.source, captainDBState.err = openCaptainDB(ctx, mode)
+	captainDBState.opened = true
+	captainDBState.migrated = captainDBState.err == nil && mode == captainDatabaseWithMigrations
 	return captainDBState.db, captainDBState.err
 }
 
@@ -73,6 +93,7 @@ func ConfigureNativeDatabase(gormDB *gorm.DB) error {
 	captainDBState.source = "host-provided database"
 	captainDBState.err = nil
 	captainDBState.opened = true
+	captainDBState.migrated = true
 	return nil
 }
 
@@ -87,23 +108,24 @@ func setCaptainDBForTest(db *database.DB) {
 	captainDBState.source = ""
 	captainDBState.err = nil
 	captainDBState.opened = db != nil
+	captainDBState.migrated = db != nil
 }
 
-func openCaptainDB(ctx context.Context) (*database.DB, string, string, error) {
+func openCaptainDB(ctx context.Context, mode captainDatabaseMode) (*database.DB, string, string, error) {
 	dsn, source, err := captainDSN()
 	if err != nil {
 		return nil, "", "", err
 	}
 	log.Debugf("captain database using %s", source)
-	if err := database.Migrate(ctx, dsn); err != nil {
-		return nil, "", "", fmt.Errorf("migrate captain database (%s): %w", source, err)
+	options := []database.Option{database.WithDSN(dsn)}
+	if mode == captainDatabaseWithMigrations {
+		options = append(options, database.WithMigrations())
 	}
-	gormDB, err := commonsdb.NewGorm(dsn, commonsdb.DefaultGormConfig())
+	db, err := database.Open(ctx, options...)
 	if err != nil {
 		return nil, "", "", fmt.Errorf("open captain database (%s): %w", source, err)
 	}
-	db, err := database.Use(gormDB)
-	return db, dsn, source, err
+	return db, dsn, source, nil
 }
 
 func captainDatabaseIdentity() (dsn, source string) {

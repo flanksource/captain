@@ -27,7 +27,7 @@ func TestCaptainMigrationsAreIdempotentAndShareOnePool(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, sharedSQL.Close()) })
 
-	first, err := Open(t.Context(), Config{Gorm: shared, DSN: dsn})
+	first, err := Open(t.Context(), WithGorm(shared), WithDSN(dsn), WithMigrations())
 	require.NoError(t, err)
 	require.Same(t, shared, first.Gorm())
 	require.NoError(t, first.Close(), "closing an injected handle must not close the shared pool")
@@ -49,7 +49,7 @@ func TestCaptainMigrationsAreIdempotentAndShareOnePool(t *testing.T) {
 	firstRuns := scriptRuns()
 	require.NotEmpty(t, firstRuns)
 
-	second, err := Open(t.Context(), Config{Gorm: shared, DSN: dsn})
+	second, err := Open(t.Context(), WithGorm(shared), WithDSN(dsn), WithMigrations())
 	require.NoError(t, err, "applying the Captain bundle twice must be idempotent")
 	require.Same(t, shared, second.Gorm())
 	require.Equal(t, firstRuns, scriptRuns(),

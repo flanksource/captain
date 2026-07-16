@@ -22,7 +22,7 @@ var _ = Describe("prompt batch sessions", func() {
 		})
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(func() { Expect(stop()).To(Succeed()) })
-		db, err := database.Open(GinkgoT().Context(), database.Config{DSN: dsn})
+		db, err := database.Open(GinkgoT().Context(), database.WithDSN(dsn), database.WithMigrations())
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(func() {
 			setCaptainDBForTest(nil)

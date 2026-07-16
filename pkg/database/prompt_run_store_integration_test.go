@@ -24,7 +24,7 @@ func TestListPromptRunsFiltersAndOrdersDeterministically(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, stop()) })
 
-	db, err := Open(t.Context(), Config{DSN: dsn})
+	db, err := Open(t.Context(), WithDSN(dsn), WithMigrations())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 

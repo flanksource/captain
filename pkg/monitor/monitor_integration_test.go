@@ -35,7 +35,7 @@ func openMonitorTestDB(t *testing.T) *database.DB {
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, stop()) })
-	db, err := database.Open(t.Context(), database.Config{DSN: dsn})
+	db, err := database.Open(t.Context(), database.WithDSN(dsn), database.WithMigrations())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	return db

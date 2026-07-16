@@ -1,9 +1,7 @@
 // Package database provides Captain's public database integration seam.
 //
-// Captain owns its migrations and schema. A host such as Gavel may provide its
-// existing GORM pool through Config.Gorm while also supplying the pool's DSN so
-// Captain can apply its own migration bundle first. Standalone consumers can
-// omit Config.Gorm and Captain will open a pool after applying the same bundle.
+// Captain owns its migrations and schema. Opens are non-migrating by default;
+// controlled application startup must opt in with WithMigrations.
 package database
 
 import (
@@ -17,14 +15,32 @@ import (
 	"gorm.io/gorm"
 )
 
-// Config selects an injected or Captain-opened database connection.
-type Config struct {
-	// Gorm is an optional shared application pool. Captain never closes an
-	// injected pool.
-	Gorm *gorm.DB
-	// DSN is required when Captain should apply its migrations. It is also used
-	// to open a standalone pool when Gorm is nil.
-	DSN string
+// Option configures a Captain database open.
+type Option func(*openOptions)
+
+type openOptions struct {
+	dsn     string
+	gorm    *gorm.DB
+	gormSet bool
+	migrate bool
+}
+
+// WithDSN selects the PostgreSQL connection string.
+func WithDSN(dsn string) Option {
+	return func(options *openOptions) { options.dsn = dsn }
+}
+
+// WithGorm selects a host-owned application pool. Captain never closes it.
+func WithGorm(gormDB *gorm.DB) Option {
+	return func(options *openOptions) {
+		options.gorm = gormDB
+		options.gormSet = true
+	}
+}
+
+// WithMigrations applies Captain's schema before returning the database.
+func WithMigrations() Option {
+	return func(options *openOptions) { options.migrate = true }
 }
 
 // DB is a Captain database handle. It records pool ownership so a host can
@@ -44,30 +60,36 @@ var defaultDependencies = dependencies{
 	open:    commonsdb.NewGorm,
 }
 
-// Open applies Captain's migrations when a DSN is supplied, then reuses the
-// injected GORM pool or opens a Captain-owned pool. Migration always precedes
-// opening a standalone pool, making the ordering explicit for hosts that apply
-// several independently owned schemas to one database.
-//
-// An injected pool may be used without a DSN when the host has already called
-// Migrate. Supplying neither a pool nor a DSN is an error.
-func Open(ctx context.Context, config Config) (*DB, error) {
-	return open(ctx, config, defaultDependencies)
+// Open reuses an injected pool or opens a Captain-owned pool. It does not
+// migrate unless WithMigrations is supplied.
+func Open(ctx context.Context, options ...Option) (*DB, error) {
+	return open(ctx, defaultDependencies, options...)
 }
 
-func open(ctx context.Context, config Config, deps dependencies) (*DB, error) {
-	dsn := strings.TrimSpace(config.DSN)
-	if config.Gorm == nil && dsn == "" {
+func open(ctx context.Context, deps dependencies, optionFns ...Option) (*DB, error) {
+	var options openOptions
+	for _, option := range optionFns {
+		if option != nil {
+			option(&options)
+		}
+	}
+	dsn := strings.TrimSpace(options.dsn)
+	if options.gormSet && options.gorm == nil {
+		return nil, errors.New("captain database GORM pool is nil")
+	}
+	if options.gorm == nil && dsn == "" {
 		return nil, errors.New("captain database requires an injected GORM pool or DSN")
 	}
-
-	if dsn != "" {
+	if options.migrate && dsn == "" {
+		return nil, errors.New("captain database migrations require a DSN")
+	}
+	if options.migrate {
 		if err := deps.migrate(ctx, dsn); err != nil {
 			return nil, err
 		}
 	}
-	if config.Gorm != nil {
-		return &DB{gorm: config.Gorm}, nil
+	if options.gorm != nil {
+		return &DB{gorm: options.gorm}, nil
 	}
 
 	gormDB, err := deps.open(dsn, commonsdb.DefaultGormConfig())
@@ -78,8 +100,7 @@ func open(ctx context.Context, config Config, deps dependencies) (*DB, error) {
 }
 
 // Use wraps an already migrated shared GORM pool. The returned handle does not
-// own or close the pool. Use Open with both Gorm and DSN when Captain should
-// apply its schema before reusing the pool.
+// own or close the pool.
 func Use(gormDB *gorm.DB) (*DB, error) {
 	if gormDB == nil {
 		return nil, errors.New("captain database GORM pool is nil")
