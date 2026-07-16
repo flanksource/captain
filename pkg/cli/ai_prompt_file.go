@@ -24,8 +24,10 @@ func resolvePromptTemplate(opts AIPromptOptions, stdin string) (tmpl *prompt.Tem
 		return prompt.Load(opts.Prompt), false, nil
 	case strings.TrimSpace(stdin) != "":
 		return prompt.Load(stdin), true, nil
+	case len(opts.Attach) > 0:
+		return prompt.Load(""), false, nil
 	default:
-		return nil, false, fmt.Errorf("prompt required: pass a .prompt file, --prompt/-p text, or pipe via stdin")
+		return nil, false, fmt.Errorf("prompt or attachment required: pass a .prompt file, --prompt/-p text, --attach/-A, or pipe via stdin")
 	}
 }
 
@@ -104,6 +106,13 @@ func overlayCLI(base ai.Request, baseCfg ai.Config, o AIPromptOptions) (ai.Reque
 	}
 	if o.AppendSystem != "" {
 		req.Prompt.AppendSystem = o.AppendSystem
+	}
+	if len(o.Attach) > 0 {
+		attachments, err := attachmentRefsFromFlags(o.Attach)
+		if err != nil {
+			return base, baseCfg, err
+		}
+		req.Prompt.Attachments = append(req.Prompt.Attachments, attachments...)
 	}
 
 	if o.PermissionMode != "" {

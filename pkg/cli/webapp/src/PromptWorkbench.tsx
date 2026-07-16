@@ -245,10 +245,18 @@ type PromptDetailStateAction =
   | { type: "variables"; detail?: PromptDetail; value: Record<string, unknown> }
   | { type: "variables-validity"; detail?: PromptDetail; value: boolean }
   | { type: "runtime"; detail?: PromptDetail; value: AISpecRuntimeValue }
-  | { type: "preview-result"; detail?: PromptDetail; value?: PromptPreviewResult }
+  | {
+      type: "preview-result";
+      detail?: PromptDetail;
+      value?: PromptPreviewResult;
+    }
   | { type: "active-run"; detail?: PromptDetail; value?: string }
   | { type: "action-error"; detail?: PromptDetail; value?: string }
-  | { type: "action-loading"; detail?: PromptDetail; value?: PromptDetailState["actionLoading"] }
+  | {
+      type: "action-loading";
+      detail?: PromptDetail;
+      value?: PromptDetailState["actionLoading"];
+    }
   | { type: "saved"; detail?: PromptDetail; content: string };
 
 function promptDetailReducer(
@@ -284,7 +292,9 @@ function initialPromptDetailState(detail?: PromptDetail): PromptDetailState {
     draft: detail?.content ?? "",
     variables: detail?.inputDefault ?? {},
     variablesValid: true,
-    runtime: detail ? { ...EMPTY_RUNTIME, ...runtimeSelectionFromPrompt(detail) } : { ...EMPTY_RUNTIME },
+    runtime: detail
+      ? { ...EMPTY_RUNTIME, ...runtimeSelectionFromPrompt(detail) }
+      : { ...EMPTY_RUNTIME },
     previewResult: undefined,
     activeRunID: undefined,
     actionError: undefined,
@@ -419,7 +429,11 @@ export function PromptWorkbench({
         onNavigate(`/prompts/${encodeURIComponent(saved.id)}`);
       }
     } catch (error) {
-      dispatchDetailState({ type: "action-error", detail, value: errorMessage(error) });
+      dispatchDetailState({
+        type: "action-error",
+        detail,
+        value: errorMessage(error),
+      });
     } finally {
       dispatchDetailState({ type: "action-loading", detail, value: undefined });
     }
@@ -433,12 +447,19 @@ export function PromptWorkbench({
       const preview = await submitPromptOperation<PromptPreviewResult>(
         promptOps.preview,
         promptActionParams(detail),
-        { variables: selectedDetailState.variables, ...runtimePayload(selectedDetailState.runtime, models) },
+        {
+          variables: selectedDetailState.variables,
+          ...runtimePayload(selectedDetailState.runtime, models),
+        },
       );
       dispatchDetailState({ type: "preview-result", detail, value: preview });
       dispatchDetailState({ type: "active-run", detail, value: undefined });
     } catch (error) {
-      dispatchDetailState({ type: "action-error", detail, value: errorMessage(error) });
+      dispatchDetailState({
+        type: "action-error",
+        detail,
+        value: errorMessage(error),
+      });
     } finally {
       dispatchDetailState({ type: "action-loading", detail, value: undefined });
     }
@@ -452,13 +473,20 @@ export function PromptWorkbench({
       const handle = await submitPromptOperation<PromptRunHandle>(
         promptOps.run,
         promptActionParams(detail),
-        { variables: selectedDetailState.variables, ...runtimePayload(selectedDetailState.runtime, models) },
+        {
+          variables: selectedDetailState.variables,
+          ...runtimePayload(selectedDetailState.runtime, models),
+        },
       );
       dispatchDetailState({ type: "preview-result", detail, value: undefined });
       dispatchDetailState({ type: "active-run", detail, value: handle.runId });
       setTab("runner");
     } catch (error) {
-      dispatchDetailState({ type: "action-error", detail, value: errorMessage(error) });
+      dispatchDetailState({
+        type: "action-error",
+        detail,
+        value: errorMessage(error),
+      });
     } finally {
       dispatchDetailState({ type: "action-loading", detail, value: undefined });
     }
@@ -473,7 +501,11 @@ export function PromptWorkbench({
       onNavigate("/prompts", { replace: true });
       await listQuery.refetch();
     } catch (error) {
-      dispatchDetailState({ type: "action-error", detail, value: errorMessage(error) });
+      dispatchDetailState({
+        type: "action-error",
+        detail,
+        value: errorMessage(error),
+      });
     } finally {
       dispatchDetailState({ type: "action-loading", detail, value: undefined });
     }
@@ -554,19 +586,29 @@ export function PromptWorkbench({
         detail={detail}
         hasSelection={hasSelection}
         loading={Boolean(activePromptId && detailQuery.isLoading)}
-        error={detailQuery.error ?? promptSchemaQuery.error ?? selectedDetailState.actionError}
+        error={
+          detailQuery.error ??
+          promptSchemaQuery.error ??
+          selectedDetailState.actionError
+        }
         tab={tab}
         onTabChange={(next) => setTab(next as DetailTab)}
         draft={selectedDetailState.draft}
-        onDraftChange={(value) => dispatchDetailState({ type: "draft", detail, value })}
+        onDraftChange={(value) =>
+          dispatchDetailState({ type: "draft", detail, value })
+        }
         variables={selectedDetailState.variables}
         variablesValid={selectedDetailState.variablesValid}
-        onVariablesChange={(value) => dispatchDetailState({ type: "variables", detail, value })}
+        onVariablesChange={(value) =>
+          dispatchDetailState({ type: "variables", detail, value })
+        }
         onVariablesValidityChange={(value) =>
           dispatchDetailState({ type: "variables-validity", detail, value })
         }
         runtime={selectedDetailState.runtime}
-        onRuntimeChange={(value) => dispatchDetailState({ type: "runtime", detail, value })}
+        onRuntimeChange={(value) =>
+          dispatchDetailState({ type: "runtime", detail, value })
+        }
         models={models}
         promptSchema={promptSchemaQuery.data}
         tools={AGENT_TOOLS}
@@ -866,7 +908,8 @@ function PromptDetailPane({
   }
 
   const scratch = isScratchPrompt(detail);
-  const activeTab = scratch && (tab === "source" || tab === "schema") ? "runner" : tab;
+  const activeTab =
+    scratch && (tab === "source" || tab === "schema") ? "runner" : tab;
   const tabs = scratch
     ? [
         { id: "runner", label: "Run", icon: UiPlay },
@@ -878,20 +921,21 @@ function PromptDetailPane({
         { id: "source", label: "Source", icon: UiCode2 },
         { id: "runs", label: "Runs", icon: UiTerminal },
       ];
-  const schema = scratch ? undefined : normalizeObjectSchema(detail.inputSchema);
+  const schema = scratch
+    ? undefined
+    : normalizeObjectSchema(detail.inputSchema);
   const backendCliArgs = promptSchema?.backends?.find(
     (backend) => backend.backend === runtime.backend,
   )?.args;
-  const promptReady = !scratch || Boolean(runtime.prompt?.user?.trim());
+  const promptReady =
+    !scratch ||
+    Boolean(runtime.prompt?.user?.trim()) ||
+    Boolean(runtime.prompt?.attachments?.length);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="shrink-0 border-b border-border px-density-4 pt-density-3">
-        <Tabs
-          value={activeTab}
-          onChange={onTabChange}
-          tabs={tabs}
-        />
+        <Tabs value={activeTab} onChange={onTabChange} tabs={tabs} />
       </div>
       <div className="min-h-0 flex-1 overflow-auto p-density-4">
         {Boolean(error) && (
@@ -928,6 +972,7 @@ function PromptDetailPane({
                 variables={variables}
                 onVariablesChange={onVariablesChange}
                 onVariablesValidityChange={onVariablesValidityChange}
+                enableAttachments
                 {...(permissionCatalog ? { permissionCatalog } : {})}
                 {...(schema ? { variablesSchema: schema } : {})}
                 {...(backendCliArgs
@@ -946,7 +991,11 @@ function PromptDetailPane({
                   size="sm"
                   variant="outline"
                   loading={previewLoading}
-                  disabled={!previewEnabled || !promptReady || (!schema && !variablesValid)}
+                  disabled={
+                    !previewEnabled ||
+                    !promptReady ||
+                    (!schema && !variablesValid)
+                  }
                   onClick={onPreview}
                 >
                   <Icon icon={UiCode2} className="size-4" />
@@ -955,7 +1004,9 @@ function PromptDetailPane({
                 <Button
                   size="sm"
                   loading={runLoading}
-                  disabled={!runEnabled || !promptReady || (!schema && !variablesValid)}
+                  disabled={
+                    !runEnabled || !promptReady || (!schema && !variablesValid)
+                  }
                   onClick={onRun}
                 >
                   <Icon icon={UiPlay} className="size-4" />
@@ -1624,8 +1675,9 @@ function normalizeRuntimeModel(
   if (!id) return { model: "", backend: "" };
 
   const selected =
-    models.find((entry) => entry.id === id && modelSupportsBackend(entry, backend)) ??
-    models.find((entry) => entry.id === id);
+    models.find(
+      (entry) => entry.id === id && modelSupportsBackend(entry, backend),
+    ) ?? models.find((entry) => entry.id === id);
   if (!selected) return { model: id, backend: "" };
 
   const selectedBackend = backendForModel(selected, backend);

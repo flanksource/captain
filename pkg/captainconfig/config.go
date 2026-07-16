@@ -16,8 +16,36 @@ import (
 )
 
 type Config struct {
-	AI      AIDefaults     `yaml:"ai"`
-	Prompts PromptDefaults `yaml:"prompts"`
+	AI          AIDefaults         `yaml:"ai"`
+	Prompts     PromptDefaults     `yaml:"prompts"`
+	Attachments AttachmentDefaults `yaml:"attachments"`
+}
+
+type AttachmentDefaults struct {
+	Directory       string `yaml:"directory,omitempty"`
+	MaxFileBytes    int64  `yaml:"maxFileBytes,omitempty"`
+	MaxRequestBytes int64  `yaml:"maxRequestBytes,omitempty"`
+	MaxFiles        int    `yaml:"maxFiles,omitempty"`
+	Retention       string `yaml:"retention,omitempty"`
+}
+
+func (a AttachmentDefaults) WithDefaults() AttachmentDefaults {
+	if a.Directory == "" {
+		a.Directory = ".captain/attachments"
+	}
+	if a.MaxFileBytes == 0 {
+		a.MaxFileBytes = 20 << 20
+	}
+	if a.MaxRequestBytes == 0 {
+		a.MaxRequestBytes = 50 << 20
+	}
+	if a.MaxFiles == 0 {
+		a.MaxFiles = 10
+	}
+	if a.Retention == "" {
+		a.Retention = "30d"
+	}
+	return a
 }
 
 type AIDefaults struct {

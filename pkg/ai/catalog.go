@@ -26,6 +26,7 @@ type Model struct {
 	AdaptiveThinking bool
 	ContextWindow    int    // max context tokens, for a usage gauge's denominator
 	ReleaseDate      string // YYYY-MM-DD release date, when known
+	InputMediaTypes  []string
 	SupportedEfforts []api.Effort
 	DefaultEffort    api.Effort
 	Priority         int
@@ -168,6 +169,7 @@ func normalizeModel(model Model) (Model, error) {
 	if model.Label == "" {
 		model.Label = model.ID
 	}
+	model.InputMediaTypes = clampInputMediaTypes(model.Backend, model.InputMediaTypes)
 	if model.ReleaseDate != "" {
 		normalized := normalizeReleaseDate(model.ReleaseDate)
 		if normalized == "" {

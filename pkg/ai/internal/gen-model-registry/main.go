@@ -42,6 +42,7 @@ type modelsDevReasoningOption struct {
 }
 
 type modelsDevModalities struct {
+	Input  []string `json:"input"`
 	Output []string `json:"output"`
 }
 
@@ -61,6 +62,7 @@ type generatedModel struct {
 	Reasoning        bool     `json:"reasoning,omitempty"`
 	Temperature      bool     `json:"temperature,omitempty"`
 	ContextWindow    int      `json:"contextWindow,omitempty"`
+	InputMediaTypes  []string `json:"inputMediaTypes,omitempty"`
 	Preferred        bool     `json:"preferred,omitempty"`
 	AdaptiveThinking bool     `json:"adaptiveThinking,omitempty"`
 	Availability     []string `json:"availability,omitempty"`
@@ -253,9 +255,27 @@ func generatedModelFromModelsDev(provider, id string, model modelsDevModel, expl
 		Reasoning:        model.Reasoning,
 		Temperature:      model.Temperature,
 		ContextWindow:    model.Limit.Context,
+		InputMediaTypes:  deriveInputMediaTypes(model.Modalities.Input),
 		AdaptiveThinking: deriveAdaptiveThinking(provider, model),
 		SupportedEfforts: deriveSupportedEfforts(provider, model),
 	}, true
+}
+
+func deriveInputMediaTypes(modalities []string) []string {
+	out := make([]string, 0, len(modalities))
+	for _, modality := range modalities {
+		switch strings.ToLower(strings.TrimSpace(modality)) {
+		case "image":
+			out = append(out, "image/*")
+		case "audio":
+			out = append(out, "audio/*")
+		case "video":
+			out = append(out, "video/*")
+		case "pdf":
+			out = append(out, "application/pdf")
+		}
+	}
+	return out
 }
 
 func deriveSupportedEfforts(provider string, model modelsDevModel) []string {

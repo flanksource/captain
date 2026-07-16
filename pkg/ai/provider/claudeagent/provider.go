@@ -411,6 +411,14 @@ func (p *Provider) initializeParams(req ai.Request) initializeParams {
 		resume = p.cfg.SessionID
 	}
 
+	// Prefer the per-request budget (like claude-cli, which reads req.Budget.Cost)
+	// and fall back to the config default, so both Claude backends resolve the
+	// ceiling from the same source (finding A4).
+	maxBudget := req.Budget.Cost
+	if maxBudget == 0 {
+		maxBudget = p.cfg.Budget.Cost
+	}
+
 	return initializeParams{
 		Cwd:                req.Cwd(),
 		Model:              aliasModel(p.model),
@@ -418,7 +426,7 @@ func (p *Provider) initializeParams(req ai.Request) initializeParams {
 		AppendSystemPrompt: req.Prompt.AppendSystem,
 		AllowedTools:       allowed,
 		MaxTurns:           req.Budget.MaxTurns,
-		MaxBudgetUsd:       p.cfg.Budget.Cost,
+		MaxBudgetUsd:       maxBudget,
 		PermissionMode:     mode,
 		Resume:             resume,
 		ApprovalMode:       approvalMode,

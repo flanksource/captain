@@ -1,11 +1,14 @@
 package genkit
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/api"
 
 	gkai "github.com/firebase/genkit/go/ai"
 )
@@ -58,7 +61,18 @@ func generateOptions(p *Provider, req ai.Request, stream gkai.ModelStreamCallbac
 	if req.Prompt.System != "" {
 		opts = append(opts, gkai.WithSystem(req.Prompt.System))
 	}
-	opts = append(opts, gkai.WithPrompt(req.Prompt.User))
+	if len(req.Prompt.Attachments) == 0 {
+		opts = append(opts, gkai.WithPrompt(req.Prompt.User))
+	} else {
+		if err := ai.ValidateAttachmentCompatibility([]api.Model{req.Model}, req.Prompt.Attachments); err != nil {
+			return nil, err
+		}
+		parts, err := promptParts(req)
+		if err != nil {
+			return nil, err
+		}
+		opts = append(opts, gkai.WithMessages(gkai.NewUserMessage(parts...)))
+	}
 
 	modelToken := req.Name
 	if modelToken == "" {
@@ -86,6 +100,30 @@ func generateOptions(p *Provider, req ai.Request, stream gkai.ModelStreamCallbac
 		}
 	}
 	return opts, nil
+}
+
+func promptParts(req ai.Request) ([]*gkai.Part, error) {
+	parts := make([]*gkai.Part, 0, len(req.Prompt.Attachments)+1)
+	if req.Prompt.User != "" {
+		parts = append(parts, gkai.NewTextPart(req.Prompt.User))
+	}
+	for i, attachment := range req.Prompt.Attachments {
+		content, ok := attachment.PreparedContent()
+		if !ok {
+			return nil, fmt.Errorf("attachment %d (%s) is not prepared", i+1, attachment.ID)
+		}
+		data := content.Bytes
+		if data == nil && content.Path != "" {
+			var err error
+			data, err = os.ReadFile(content.Path)
+			if err != nil {
+				return nil, fmt.Errorf("read prepared attachment %s: %w", attachment.ID, err)
+			}
+		}
+		uri := "data:" + attachment.MediaType + ";base64," + base64.StdEncoding.EncodeToString(data)
+		parts = append(parts, gkai.NewMediaPart(attachment.MediaType, uri))
+	}
+	return parts, nil
 }
 
 // backendOutputSchema resolves schemas for native providers whose supported

@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // Prompt is the instruction payload: the user prompt plus optional system
@@ -37,16 +38,37 @@ type Prompt struct {
 	SchemaStrictness SchemaStrictness `json:"schemaStrictness,omitempty" yaml:"schemaStrictness,omitempty" pretty:"-"`
 	// Metadata is arbitrary caller metadata. (ai.Request.Metadata)
 	Metadata map[string]string `json:"metadata,omitempty" yaml:"metadata,omitempty" pretty:"label=Metadata"`
+	// Attachments are ordered multimodal inputs sent with the user prompt.
+	Attachments []AttachmentRef `json:"attachments,omitempty" yaml:"attachments,omitempty" pretty:"label=Attachments"`
+}
+
+func (p Prompt) CacheIdentity() string {
+	var identity strings.Builder
+	identity.WriteString(p.User)
+	for _, attachment := range p.Attachments {
+		identity.WriteByte('\n')
+		identity.WriteString(attachment.ID)
+		identity.WriteByte('|')
+		identity.WriteString(attachment.MediaType)
+		identity.WriteByte('|')
+		identity.WriteString(attachment.SHA256)
+	}
+	return identity.String()
 }
 
 // HasSchema reports whether the prompt requests structured output by either
 // mechanism (a reflected Go struct or a pre-built JSON schema).
 func (p Prompt) HasSchema() bool { return p.Schema != nil || len(p.SchemaJSON) > 0 }
 
-// Validate requires a non-empty user prompt.
+// Validate requires prompt text or at least one attachment.
 func (p Prompt) Validate() error {
-	if p.User == "" {
-		return fmt.Errorf("prompt text is required")
+	if p.User == "" && len(p.Attachments) == 0 {
+		return fmt.Errorf("prompt text is required when no attachment is supplied")
+	}
+	for i, attachment := range p.Attachments {
+		if err := attachment.Validate(); err != nil {
+			return fmt.Errorf("attachment %d: %w", i+1, err)
+		}
 	}
 	if err := p.SchemaStrictness.Validate(); err != nil {
 		return err

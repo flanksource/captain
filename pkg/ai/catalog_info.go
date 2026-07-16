@@ -9,13 +9,14 @@ import (
 // selector can be data-driven. Configured reports whether the model is
 // selectable (its API provider has a key, or its agent backend is installed).
 type ModelInfo struct {
-	ID            string `json:"id"`
-	Provider      string `json:"provider"`
-	Label         string `json:"label"`
-	Reasoning     bool   `json:"reasoning"`
-	Temperature   bool   `json:"temperature"`
-	Configured    bool   `json:"configured"`
-	ContextWindow int    `json:"contextWindow"`
+	ID              string   `json:"id"`
+	Provider        string   `json:"provider"`
+	Label           string   `json:"label"`
+	Reasoning       bool     `json:"reasoning"`
+	Temperature     bool     `json:"temperature"`
+	Configured      bool     `json:"configured"`
+	ContextWindow   int      `json:"contextWindow"`
+	InputMediaTypes []string `json:"inputMediaTypes"`
 }
 
 // BackendToProvider maps a backend to the provider string used in API model ids
@@ -58,13 +59,14 @@ func catalogInfoFrom(models []Model, configuredProviders []string) []ModelInfo {
 			configured = slices.Contains(configuredProviders, BackendToProvider(m.Backend))
 		}
 		out[i] = ModelInfo{
-			ID:            m.ID,
-			Provider:      BackendToProvider(m.Backend),
-			Label:         m.Label,
-			Reasoning:     m.Reasoning,
-			Temperature:   m.Temperature,
-			Configured:    configured,
-			ContextWindow: m.ContextWindow,
+			ID:              m.ID,
+			Provider:        BackendToProvider(m.Backend),
+			Label:           m.Label,
+			Reasoning:       m.Reasoning,
+			Temperature:     m.Temperature,
+			Configured:      configured,
+			ContextWindow:   m.ContextWindow,
+			InputMediaTypes: append([]string(nil), m.InputMediaTypes...),
 		}
 	}
 	return out

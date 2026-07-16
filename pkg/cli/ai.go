@@ -175,6 +175,7 @@ type AIPromptOptions struct {
 	System       string   `flag:"system" help:"System prompt" short:"s"`
 	AppendSystem string   `flag:"append-system" help:"Append text to the default system prompt"`
 	Var          []string `flag:"var" help:"Template variable key=value (repeatable)" short:"V"`
+	Attach       []string `flag:"attach" help:"Attach a local path or URL (repeatable; RFC 4180 comma-separated values allowed)" short:"A"`
 	MultiModels  []string `flag:"multi-models" help:"Run prompt once per runtime selector in parallel, e.g. cli:sonnet-5,cmux:opus (repeatable; comma-separated allowed)" short:"M"`
 	Timeout      string   `flag:"timeout" help:"Request timeout" default:"120s"`
 	NoStream     bool     `flag:"no-stream" help:"Disable streaming; print only the final text to stdout"`
@@ -232,6 +233,17 @@ func (o AIRuntimeOptions) ToRequest(systemPrompt, appendSystemPrompt, userPrompt
 		maxTokens = 4096
 	}
 
+	// Resolve the USD budget onto the request (flag > saved) so backends that read
+	// req.Budget.Cost — claude-cli, claude-agent — enforce it without relying on a
+	// later config-side reconciliation that not every path performs (finding A4).
+	budget, err := parseFloatFlag("budget", o.Budget)
+	if err != nil {
+		return ai.Request{}, err
+	}
+	if budget == 0 {
+		budget = saved.BudgetUSD
+	}
+
 	effort := o.Effort
 	if effort == "" {
 		effort = saved.ReasoningEffort
@@ -261,7 +273,7 @@ func (o AIRuntimeOptions) ToRequest(systemPrompt, appendSystemPrompt, userPrompt
 	return ai.Request{
 		Prompt: api.Prompt{System: systemPrompt, AppendSystem: appendSystemPrompt, User: userPrompt},
 		Model:  api.Model{Temperature: temperaturePtr, Effort: api.Effort(effort), NoCache: o.NoCache || saved.NoCache},
-		Budget: api.Budget{MaxTokens: maxTokens, MaxTurns: o.MaxTurns},
+		Budget: api.Budget{Cost: budget, MaxTokens: maxTokens, MaxTurns: o.MaxTurns},
 		Memory: api.Memory{
 			Skills:      o.SkillDirs,
 			SkipHooks:   o.NoHooks || saved.NoHooks,
@@ -279,7 +291,12 @@ func (o AIRuntimeOptions) ToRequest(systemPrompt, appendSystemPrompt, userPrompt
 // ToRequest delegates to AIRuntimeOptions.ToRequest, lifting the prompt
 // fields the prompt-shaped command owns onto the typed request.
 func (o AIPromptOptions) ToRequest() (ai.Request, error) {
-	return o.AIRuntimeOptions.ToRequest(o.System, o.AppendSystem, o.Prompt)
+	req, err := o.AIRuntimeOptions.ToRequest(o.System, o.AppendSystem, o.Prompt)
+	if err != nil {
+		return ai.Request{}, err
+	}
+	req.Prompt.Attachments, err = attachmentRefsFromFlags(o.Attach)
+	return req, err
 }
 
 // RunAIPrompt is a deprecated alias for `captain prompt run`. It routes through
@@ -303,8 +320,8 @@ func RunAIPrompt(opts AIPromptOptions) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if req.Prompt.User == "" {
-		return nil, fmt.Errorf("prompt text required (use --prompt/-p, a file arg, or pipe via stdin)")
+	if req.Prompt.User == "" && len(req.Prompt.Attachments) == 0 {
+		return nil, fmt.Errorf("prompt text or attachment required (use --prompt/-p, --attach/-A, a file arg, or pipe via stdin)")
 	}
 	if cfg.Model.Name == "" {
 		return nil, fmt.Errorf("no model: pass --model or run 'captain configure' to set a default")
@@ -328,6 +345,9 @@ func RunAIPrompt(opts AIPromptOptions) (any, error) {
 func executePromptRequest(parent context.Context, req ai.Request, cfg ai.Config, timeout time.Duration, noStream bool) (any, error) {
 	ctx, cancel := runContext(parent, req, timeout)
 	defer cancel()
+	if err := preparePromptAttachments(ctx, &req, cfg); err != nil {
+		return nil, err
+	}
 
 	p, cleanup, err := buildProvider(ctx, &req, cfg)
 	if err != nil {
@@ -505,6 +525,7 @@ func runStreaming(ctx context.Context, sp ai.StreamingProvider, req ai.Request) 
 	loop, err := ai.RunUntil(ctx, ai.LoopOptions{
 		Provider:      sp,
 		MaxIterations: 1,
+		MaxCostUSD:    req.Budget.Cost, // enforce the USD budget
 		BuildRequest: func(iter int, prev *ai.LoopIteration) (ai.Request, bool) {
 			if iter > 0 {
 				return ai.Request{}, false
@@ -538,6 +559,9 @@ func runStreaming(ctx context.Context, sp ai.StreamingProvider, req ai.Request) 
 	}
 	if loop.StopReason == "error" {
 		return nil, fmt.Errorf("streaming loop stopped: %s", loop.StopReason)
+	}
+	if loop.StopReason == "max-cost" {
+		return nil, fmt.Errorf("%w: spent $%.4f of $%.4f budget", ai.ErrBudgetExceeded, loop.TotalCost, req.Budget.Cost)
 	}
 	if session == "" && len(loop.Iterations) > 0 {
 		session = loop.Iterations[0].SessionID

@@ -94,6 +94,9 @@ func (f *fallbackProvider) GetBackend() Backend {
 // model will not fix a malformed request). When nothing succeeds the primary's
 // error is returned, as the most actionable one.
 func (f *fallbackProvider) Execute(ctx context.Context, req Request) (*Response, error) {
+	if err := ValidateAttachmentCompatibility(f.candidates, req.Prompt.Attachments); err != nil {
+		return nil, err
+	}
 	log := LoggerFromContext(ctx, fallbackLog)
 	var firstErr error
 	record := func(err error) {
@@ -133,6 +136,9 @@ func (f *fallbackProvider) Execute(ctx context.Context, req Request) (*Response,
 // once content has been forwarded the stream is committed and any later error is
 // surfaced to the caller.
 func (f *fallbackProvider) ExecuteStream(ctx context.Context, req Request) (<-chan Event, error) {
+	if err := ValidateAttachmentCompatibility(f.candidates, req.Prompt.Attachments); err != nil {
+		return nil, err
+	}
 	out := make(chan Event)
 	go func() {
 		defer close(out)

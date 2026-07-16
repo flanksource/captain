@@ -123,6 +123,10 @@ func main() {
 
 	rootCmd.AddCommand(cli.NewServeCommand(version))
 
+	attachmentsCmd := &cobra.Command{Use: "attachments", Short: "Manage durable prompt attachments"}
+	rootCmd.AddCommand(attachmentsCmd)
+	clicky.AddNamedCommand("gc", attachmentsCmd, cli.AttachmentsGCOptions{}, cli.RunAttachmentsGC).Short = "Remove old unreferenced attachments"
+
 	dodCmd := &cobra.Command{
 		Use:   "dod",
 		Short: "Definition of Done checks",

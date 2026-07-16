@@ -22,7 +22,8 @@ func (c *cachingProvider) Execute(ctx context.Context, req ai.Request) (*ai.Resp
 		return c.provider.Execute(ctx, req)
 	}
 
-	entry, err := c.cache.Get(req.Prompt.User, c.provider.GetModel())
+	cacheIdentity := req.Prompt.CacheIdentity()
+	entry, err := c.cache.Get(cacheIdentity, c.provider.GetModel())
 	if err == nil && entry != nil && entry.Error == "" {
 		log.Debugf("[%s/%s] cache hit", c.provider.GetBackend(), c.provider.GetModel())
 		return &ai.Response{
@@ -50,7 +51,7 @@ func (c *cachingProvider) Execute(ctx context.Context, req ai.Request) (*ai.Resp
 
 	cacheEntry := &cache.Entry{
 		Model:      c.provider.GetModel(),
-		Prompt:     req.Prompt.User,
+		Prompt:     cacheIdentity,
 		DurationMS: duration.Milliseconds(),
 		Provider:   string(c.provider.GetBackend()),
 	}

@@ -2,8 +2,10 @@ package claudeagent
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
@@ -32,11 +34,42 @@ type turnState struct {
 }
 
 type promptParams struct {
-	Text string `json:"text"`
+	Text        string             `json:"text"`
+	Attachments []promptAttachment `json:"attachments,omitempty"`
+}
+
+type promptAttachment struct {
+	MediaType string `json:"mediaType"`
+	Data      string `json:"data"`
+	Filename  string `json:"filename,omitempty"`
 }
 
 func composePrompt(req ai.Request) string {
 	return req.Prompt.User
+}
+
+func buildPromptParams(req ai.Request) (promptParams, error) {
+	params := promptParams{Text: composePrompt(req), Attachments: make([]promptAttachment, 0, len(req.Prompt.Attachments))}
+	for i, attachment := range req.Prompt.Attachments {
+		content, ok := attachment.PreparedContent()
+		if !ok {
+			return promptParams{}, fmt.Errorf("attachment %d (%s) is not prepared", i+1, attachment.ID)
+		}
+		data := content.Bytes
+		if data == nil && content.Path != "" {
+			var err error
+			data, err = os.ReadFile(content.Path)
+			if err != nil {
+				return promptParams{}, fmt.Errorf("read prepared attachment %s: %w", attachment.ID, err)
+			}
+		}
+		params.Attachments = append(params.Attachments, promptAttachment{
+			MediaType: attachment.MediaType,
+			Data:      base64.StdEncoding.EncodeToString(data),
+			Filename:  attachment.Filename,
+		})
+	}
+	return params, nil
 }
 
 // runTurn owns one turn's event channel: it sends the prompt, forwards mapped
@@ -62,7 +95,16 @@ func (p *Provider) runTurn(ctx context.Context, req ai.Request, events chan ai.E
 		p.clearActive()
 	}()
 
-	if _, err := p.rpc.Call(ctx, methodPrompt, promptParams{Text: composePrompt(req)}); err != nil {
+	if err := ai.ValidateAttachmentCompatibility([]api.Model{{Name: p.model, Backend: api.BackendClaudeAgent}}, req.Prompt.Attachments); err != nil {
+		emit(ctx, events, ai.Event{Kind: ai.EventError, Error: err.Error(), Model: p.model})
+		return
+	}
+	params, err := buildPromptParams(req)
+	if err != nil {
+		emit(ctx, events, ai.Event{Kind: ai.EventError, Error: err.Error(), Model: p.model})
+		return
+	}
+	if _, err := p.rpc.Call(ctx, methodPrompt, params); err != nil {
 		emit(ctx, events, ai.Event{Kind: ai.EventError, Error: fmt.Sprintf("claude-agent prompt failed: %v", err), Model: p.model})
 		return
 	}

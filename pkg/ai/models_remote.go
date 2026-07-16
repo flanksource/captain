@@ -24,6 +24,7 @@ type ModelDef struct {
 	CapabilitiesKnown bool         `json:"capabilitiesKnown,omitempty"`
 	Reasoning         bool         `json:"reasoning,omitempty"`
 	Temperature       bool         `json:"temperature"`
+	InputMediaTypes   []string     `json:"inputMediaTypes,omitempty"`
 	SupportedEfforts  []api.Effort `json:"supportedEfforts,omitempty"`
 	DefaultEffort     api.Effort   `json:"defaultEffort,omitempty"`
 	Priority          int          `json:"priority,omitempty"`

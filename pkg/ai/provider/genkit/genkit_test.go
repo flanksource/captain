@@ -13,22 +13,54 @@ import (
 )
 
 func TestMapUsage(t *testing.T) {
-	got := mapUsage(&gkai.GenerationUsage{
+	// genkit reports overlapping buckets differently per backend; mapUsage must
+	// normalize to captain's disjoint contract (Input excludes cache, Output
+	// excludes reasoning).
+	raw := &gkai.GenerationUsage{
 		InputTokens:         120,
 		OutputTokens:        45,
 		ThoughtsTokens:      30,
 		CachedContentTokens: 17,
 		TotalTokens:         212,
-	})
+	}
 
+	// Anthropic: input_tokens already excludes cache and there is no reasoning
+	// fold, so both buckets pass through unchanged.
 	assert.Equal(t, ai.Usage{
 		InputTokens:     120,
 		OutputTokens:    45,
-		ReasoningTokens: 30, // ThoughtsTokens -> ReasoningTokens
-		CacheReadTokens: 17, // CachedContentTokens -> CacheReadTokens
-	}, got)
+		ReasoningTokens: 30,
+		CacheReadTokens: 17,
+	}, mapUsage(raw, ai.BackendAnthropic))
 
-	assert.Equal(t, ai.Usage{}, mapUsage(nil))
+	// Gemini: PromptTokenCount folds in cache → net input; CandidatesTokenCount
+	// excludes thoughts → output passes through.
+	assert.Equal(t, ai.Usage{
+		InputTokens:     103, // 120 - 17
+		OutputTokens:    45,
+		ReasoningTokens: 30,
+		CacheReadTokens: 17,
+	}, mapUsage(raw, ai.BackendGemini))
+
+	// OpenAI/DeepSeek (compat_oai): prompt_tokens folds in cache AND
+	// completion_tokens folds in reasoning → net both.
+	openaiWant := ai.Usage{
+		InputTokens:     103, // 120 - 17
+		OutputTokens:    15,  // 45 - 30
+		ReasoningTokens: 30,
+		CacheReadTokens: 17,
+	}
+	assert.Equal(t, openaiWant, mapUsage(raw, ai.BackendOpenAI))
+	assert.Equal(t, openaiWant, mapUsage(raw, ai.BackendDeepSeek))
+
+	// Disjoint invariant: for cache-folding backends InputTokens no longer
+	// overlaps CacheReadTokens, so pricing cannot bill the cached prefix twice.
+	for _, backend := range []ai.Backend{ai.BackendGemini, ai.BackendOpenAI, ai.BackendDeepSeek} {
+		got := mapUsage(raw, backend)
+		assert.Equal(t, raw.InputTokens, got.InputTokens+got.CacheReadTokens, "backend %s input+cache", backend)
+	}
+
+	assert.Equal(t, ai.Usage{}, mapUsage(nil, ai.BackendAnthropic))
 }
 
 func TestModelRef(t *testing.T) {

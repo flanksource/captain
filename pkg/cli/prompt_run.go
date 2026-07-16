@@ -302,6 +302,22 @@ func executeSyncBatch(ctx context.Context, rendered PromptRenderResult, opts AIP
 	if len(models) == 0 {
 		return executeSyncRunSingle(ctx, rendered, opts)
 	}
+	prepared := rendered.Input
+	prepared.Model = models[0]
+	preparedCfg := rendered.Config
+	preparedCfg.Model = models[0]
+	if err := preparePromptAttachments(ctx, &prepared, preparedCfg); err != nil {
+		return PromptRunResult{}, err
+	}
+	rendered.Input.Prompt.Attachments = prepared.Prompt.Attachments
+	allModels := make([]api.Model, 0, len(models))
+	for _, model := range models {
+		allModels = append(allModels, model)
+		allModels = append(allModels, model.Fallbacks...)
+	}
+	if err := ai.ValidateAttachmentCompatibility(allModels, rendered.Input.Prompt.Attachments); err != nil {
+		return PromptRunResult{}, err
+	}
 	if rendered.Input.SessionID != "" && len(models) > 1 {
 		return PromptRunResult{}, errors.New("--resume cannot be used with multiple --multi-models variants")
 	}
@@ -509,6 +525,9 @@ func runPromptStream(t *task.Task, rendered PromptRenderResult, timeout time.Dur
 
 	req := rendered.Input
 	cfg := rendered.Config
+	if err := preparePromptAttachments(ctx, &req, cfg); err != nil {
+		return failRun(t, stream, err)
+	}
 	p, cleanup, err := buildProvider(ctx, &req, cfg)
 	if err != nil {
 		return failRun(t, stream, err)

@@ -66,7 +66,7 @@ func (s Spec) Validate() error {
 // verification — a verify-only run that skips generation and verifies the
 // current state (e.g. scoring already-committed work).
 func (s Spec) IsVerifyOnly() bool {
-	return s.Prompt.User == "" && s.Workflow != nil && s.Workflow.Verify != nil
+	return s.Prompt.User == "" && len(s.Prompt.Attachments) == 0 && s.Workflow != nil && s.Workflow.Verify != nil
 }
 
 func (s Spec) Cwd() string {

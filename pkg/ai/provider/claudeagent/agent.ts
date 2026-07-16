@@ -8,7 +8,7 @@
 //                 maxTurns, maxBudgetUsd, permissionMode, resume, approvalMode,
 //                 outputSchema}
 //                 -> reply {ok:true}
-//     prompt {text}      -> reply {accepted:true}
+//     prompt {text, attachments?} -> reply {accepted:true}
 //     interrupt          -> reply {}
 //     shutdown           -> reply {} then exit
 //   server -> client notifications:
@@ -146,10 +146,43 @@ class TurnQueue implements AsyncIterable<SDKUserMessage> {
   private waiters: ((r: IteratorResult<SDKUserMessage>) => void)[] = [];
   private ended = false;
 
-  push(text: string) {
+  push(params: PromptParams) {
+    const content: Exclude<SDKUserMessage["message"]["content"], string> = [];
+    if (params.text) {
+      content.push({ type: "text", text: params.text });
+    }
+    for (const attachment of params.attachments ?? []) {
+      if (attachment.mediaType === "application/pdf") {
+        content.push({
+          type: "document",
+          source: {
+            type: "base64",
+            media_type: "application/pdf",
+            data: attachment.data,
+          },
+          title: attachment.filename || undefined,
+        });
+      } else if (isClaudeImageMediaType(attachment.mediaType)) {
+        content.push({
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: attachment.mediaType,
+            data: attachment.data,
+          },
+        });
+      } else {
+        throw new Error(
+          `unsupported attachment media type: ${attachment.mediaType}`,
+        );
+      }
+    }
     const msg: SDKUserMessage = {
       type: "user",
-      message: { role: "user", content: text },
+      message: {
+        role: "user",
+        content,
+      },
       parent_tool_use_id: null,
       session_id: "",
     };
@@ -190,6 +223,31 @@ class TurnQueue implements AsyncIterable<SDKUserMessage> {
 
 let turns: TurnQueue | null = null;
 let activeQuery: Query | null = null;
+
+interface PromptAttachment {
+  mediaType: string;
+  data: string;
+  filename?: string;
+}
+
+type ClaudeImageMediaType =
+  | "image/png"
+  | "image/jpeg"
+  | "image/gif"
+  | "image/webp";
+
+function isClaudeImageMediaType(
+  mediaType: string,
+): mediaType is ClaudeImageMediaType {
+  return ["image/png", "image/jpeg", "image/gif", "image/webp"].includes(
+    mediaType,
+  );
+}
+
+interface PromptParams {
+  text?: string;
+  attachments?: PromptAttachment[];
+}
 
 function buildOptions(params: InitializeParams): Options {
   // brokered: the host vets each tool over the can_use_tool round-trip, so the
@@ -348,13 +406,17 @@ function handleInitialize(id: JsonRpcId, params: InitializeParams) {
   }
 }
 
-function handlePrompt(id: JsonRpcId, params: { text?: string }) {
+function handlePrompt(id: JsonRpcId, params: PromptParams) {
   if (!turns) {
     replyError(id, -32002, "not initialized");
     return;
   }
-  turns.push(params.text || "");
-  reply(id, { accepted: true });
+  try {
+    turns.push(params);
+    reply(id, { accepted: true });
+  } catch (err) {
+    replyError(id, -32602, `invalid prompt: ${(err as Error)?.message || err}`);
+  }
 }
 
 async function handleInterrupt(id: JsonRpcId) {
@@ -495,7 +557,7 @@ rl.on("line", (line) => {
       handleInitialize(id, (req.params as InitializeParams) || {});
       break;
     case "prompt":
-      handlePrompt(id, (req.params as { text?: string }) || {});
+      handlePrompt(id, (req.params as PromptParams) || {});
       break;
     case "interrupt":
       handleInterrupt(id);

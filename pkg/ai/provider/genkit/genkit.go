@@ -123,6 +123,7 @@ func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, e
 	}
 
 	if cost := p.costUSD(out.Usage); cost > 0 {
+		out.CostUSD = cost
 		log.Debugf("genkit %s cost: $%.6f (model=%s)", p.backend, cost, p.cfg.Model.Name)
 	}
 
@@ -169,7 +170,7 @@ func (p *Provider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai
 			ch <- ai.Event{Kind: ai.EventError, Error: err.Error(), Model: p.cfg.Model.Name}
 			return
 		}
-		usage := mapUsage(resp.Usage)
+		usage := mapUsage(resp.Usage, p.backend)
 		ch <- ai.Event{
 			Kind:    ai.EventResult,
 			Success: true,

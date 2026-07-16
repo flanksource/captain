@@ -56,16 +56,30 @@ func toInputMap(v any) map[string]any {
 	return m
 }
 
-// mapUsage maps genkit's GenerationUsage onto captain's Usage. Genkit reports
-// reasoning via ThoughtsTokens and cache reads via CachedContentTokens; it does
-// not expose cache writes.
-func mapUsage(u *gkai.GenerationUsage) ai.Usage {
+// mapUsage maps genkit's GenerationUsage onto captain's disjoint-bucket Usage.
+// genkit folds cache reads into InputTokens for Gemini and the OpenAI-compatible
+// backends (OpenAI/DeepSeek), and folds reasoning into OutputTokens for the
+// OpenAI-compatible backends; Anthropic reports InputTokens already net of cache,
+// and both Anthropic and Gemini report OutputTokens without reasoning. Normalize
+// to the disjoint contract so the pricing registry and TotalTokens do not
+// double-count. genkit's GenerationUsage has no cache-write field, so
+// CacheWriteTokens is always zero here — cache-write spend on the API path is
+// invisible upstream (finding C4).
+func mapUsage(u *gkai.GenerationUsage, backend ai.Backend) ai.Usage {
 	if u == nil {
 		return ai.Usage{}
 	}
+	input := u.InputTokens
+	if backend != ai.BackendAnthropic {
+		input = ai.NetInputTokens(u.InputTokens, u.CachedContentTokens)
+	}
+	output := u.OutputTokens
+	if backend == ai.BackendOpenAI || backend == ai.BackendDeepSeek {
+		output = ai.NetOutputTokens(u.OutputTokens, u.ThoughtsTokens)
+	}
 	return ai.Usage{
-		InputTokens:     u.InputTokens,
-		OutputTokens:    u.OutputTokens,
+		InputTokens:     input,
+		OutputTokens:    output,
 		ReasoningTokens: u.ThoughtsTokens,
 		CacheReadTokens: u.CachedContentTokens,
 	}
@@ -78,7 +92,7 @@ func responseToResponse(resp *gkai.ModelResponse, backend ai.Backend, model stri
 		Text:     resp.Text(),
 		Model:    model,
 		Backend:  backend,
-		Usage:    mapUsage(resp.Usage),
+		Usage:    mapUsage(resp.Usage, backend),
 		Duration: time.Since(start),
 		Raw:      resp,
 	}

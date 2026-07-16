@@ -122,6 +122,10 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 		return err
 	}
 	threadStore := newFileThreadStore(opts.ThreadsFile)
+	attachmentStore, err := newAttachmentStore(cwd)
+	if err != nil {
+		return err
+	}
 	openAPIConfig := &rpc.OpenAPIConfig{
 		Title:       "Captain",
 		Description: "Captain command and agent launcher API.",
@@ -151,6 +155,7 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 		Agent: aichat.AgentOptions{
 			Cwd: cwd,
 		},
+		AttachmentResolver: chatAttachmentResolver{store: attachmentStore},
 	})
 	defer chat.Close()
 
@@ -172,6 +177,8 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	mux.HandleFunc("GET /api/captain/ai/prompt/schema", handlePromptSchema())
 	mux.HandleFunc("GET /api/captain/secrets/resources", handleSecretResources())
 	mux.HandleFunc("GET /api/captain/secrets/preview", handleSecretPreview())
+	mux.HandleFunc("POST /api/attachments", handleAttachmentUpload(attachmentStore))
+	mux.HandleFunc("GET /api/attachments/{id}", handleAttachmentGet(attachmentStore))
 	// Task tracking: /api/captain/tasks, /tasks/stream, /tasks/{id}; plus the
 	// run-list SSE the clicky-ui useTaskRuns hook subscribes to.
 	task.RegisterHandlers(mux, "/api/captain")
