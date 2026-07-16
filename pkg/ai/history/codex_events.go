@@ -3,7 +3,6 @@ package history
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/flanksource/captain/pkg/claude/tools"
 )
@@ -143,29 +142,85 @@ func codexNonCachedInputTokens(usage CodexTokenUsage) int {
 	return input
 }
 
-func dedupeCodexToolUses(uses []ToolUse) []ToolUse {
+// codexChatSlot is an emitted chat row that a twin may still merge into.
+// families is the set of record families already folded in: Codex logs each
+// logical message at most once per family, so a family arriving twice means a
+// genuine repeat rather than a twin. Tracking the accumulated set rather than
+// just the previous family is what keeps an (event_msg, response_item) pair
+// repeated across N turns -- the same assistant verdict re-sent verbatim --
+// as N rows instead of collapsing it to one.
+type codexChatSlot struct {
+	index    int
+	priority int
+	families map[string]struct{}
+}
+
+// dedupeCodexToolUses folds each message's twin records into a single row.
+// Codex logs the same logical message twice, once as an event_msg and once as
+// a response_item, milliseconds to hours apart -- so the twins cannot be
+// matched on timestamp, only on content plus adjacency.
+//
+// records holds one entry per source record in emission order. Only the
+// immediately preceding record is a merge candidate, so any intervening chat
+// content keeps two identical messages apart.
+func dedupeCodexToolUses(records [][]ToolUse) []ToolUse {
 	var output []ToolUse
-	seen := map[string]int{}
-	priorities := map[string]int{}
-	for _, use := range uses {
-		key, ok := codexChatDedupeKey(use)
-		if !ok {
-			output = append(output, use)
-			continue
-		}
-		priority := codexRecordPriority(use.RecordType)
-		if index, exists := seen[key]; exists {
-			if priority > priorities[key] {
-				output[index] = use
-				priorities[key] = priority
+	var previous map[string]*codexChatSlot
+	for _, record := range records {
+		current := make(map[string]*codexChatSlot, len(record))
+		for _, use := range record {
+			key, ok := codexChatDedupeKey(use)
+			if !ok {
+				output = append(output, use)
+				continue
 			}
-			continue
+			if slot := mergeCodexTwin(output, previous[key], use); slot != nil {
+				current[key] = slot
+				continue
+			}
+			output = append(output, use)
+			current[key] = &codexChatSlot{
+				index:    len(output) - 1,
+				priority: codexRecordPriority(use.RecordType),
+				families: map[string]struct{}{codexRecordFamily(use.RecordType): {}},
+			}
 		}
-		seen[key] = len(output)
-		priorities[key] = priority
-		output = append(output, use)
+		previous = current
 	}
 	return output
+}
+
+// mergeCodexTwin folds use into slot when slot holds the same message logged by
+// a different record family, returning the slot merged into (nil when it did
+// not). The higher-priority record wins the row, so response_item content and
+// the model stamped on it survive whichever twin arrived first.
+func mergeCodexTwin(output []ToolUse, slot *codexChatSlot, use ToolUse) *codexChatSlot {
+	if slot == nil {
+		return nil
+	}
+	family := codexRecordFamily(use.RecordType)
+	if _, exists := slot.families[family]; exists {
+		return nil
+	}
+	if priority := codexRecordPriority(use.RecordType); priority > slot.priority {
+		output[slot.index] = use
+		slot.priority = priority
+	}
+	slot.families[family] = struct{}{}
+	return slot
+}
+
+// codexRecordFamily reduces a RecordType to the stream that logged it.
+func codexRecordFamily(recordType string) string {
+	switch {
+	case strings.HasPrefix(recordType, "response_item."):
+		return "response_item"
+	case strings.HasPrefix(recordType, "item.completed"):
+		return "item.completed"
+	case strings.HasPrefix(recordType, "event_msg."):
+		return "event_msg"
+	}
+	return recordType
 }
 
 func codexChatDedupeKey(use ToolUse) (string, bool) {
@@ -174,14 +229,14 @@ func codexChatDedupeKey(use ToolUse) (string, bool) {
 	default:
 		return "", false
 	}
-	if use.Timestamp == nil {
-		return "", false
-	}
 	text := codexDedupeText(use)
 	if text == "" {
 		return "", false
 	}
-	return strings.Join([]string{use.SessionID, use.Tool, use.Timestamp.UTC().Format(time.RFC3339Nano), text}, "\x00"), true
+	// No timestamp: twins are written anywhere from the same millisecond to
+	// hours apart (a resumed session re-logs its user message), so the only
+	// reliable discriminators are content, adjacency, and record family.
+	return strings.Join([]string{use.SessionID, use.Tool, text}, "\x00"), true
 }
 
 func codexDedupeText(use ToolUse) string {
@@ -197,13 +252,15 @@ func codexDedupeText(use ToolUse) string {
 	return ""
 }
 
+// codexRecordPriority ranks the families by authority: response_item carries
+// the canonical content, so it wins the row over its event_msg twin.
 func codexRecordPriority(recordType string) int {
-	switch {
-	case strings.HasPrefix(recordType, "response_item."):
+	switch codexRecordFamily(recordType) {
+	case "response_item":
 		return 3
-	case strings.HasPrefix(recordType, "item.completed"):
+	case "item.completed":
 		return 2
-	case strings.HasPrefix(recordType, "event_msg."):
+	case "event_msg":
 		return 1
 	default:
 		return 0

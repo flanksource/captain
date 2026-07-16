@@ -163,9 +163,14 @@ func ExtractCodexToolUsesFromReader(reader io.Reader) ([]ToolUse, error) {
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
 
-	var toolUses []ToolUse
+	// records holds the uses of one source record per entry, in emission order.
+	// Dedupe needs those boundaries to merge a message's twin records: the
+	// boundary cannot be recovered afterwards, because distinct adjacent records
+	// routinely share a RecordType and a millisecond.
+	var records [][]ToolUse
 	var sessionCWD, sessionID, currentTurn, currentModel, currentEffort string
 	pendingCall := make(map[string]CodexEvent)
+	var reasoning codexReasoningCollapser
 	stamp := func(uses []ToolUse) []ToolUse {
 		for index := range uses {
 			if uses[index].TurnID == "" {
@@ -179,6 +184,15 @@ func ExtractCodexToolUsesFromReader(reader io.Reader) ([]ToolUse, error) {
 			}
 		}
 		return uses
+	}
+	// A record that emits nothing -- an accumulating reasoning record, an
+	// unpaired function_call half, filtered internal user text -- must not count
+	// as intervening content, or it would break a twin pair apart.
+	add := func(uses []ToolUse) {
+		if len(uses) == 0 {
+			return
+		}
+		records = append(records, stamp(uses))
 	}
 
 	for scanner.Scan() {
@@ -196,6 +210,12 @@ func ExtractCodexToolUsesFromReader(reader io.Reader) ([]ToolUse, error) {
 			sessionCWD = event.Payload.CWD
 			sessionID = event.Payload.ID
 		case "turn_context":
+			// Flush before the turn's model/effort roll over so the closing
+			// span is stamped with the turn it belongs to. turn_context is the
+			// only reliable turn boundary: older rollouts carry no turn_id at
+			// all, so keying the span on turn_id alone would fold a whole
+			// multi-turn session into one bogus span.
+			add(reasoning.flush())
 			currentTurn = firstNonEmpty(event.Payload.TurnID, currentTurn)
 			currentModel = firstNonEmpty(event.Payload.Model, currentModel)
 			if IsCodexAutoReviewModel(currentModel) {
@@ -203,27 +223,32 @@ func ExtractCodexToolUsesFromReader(reader io.Reader) ([]ToolUse, error) {
 			}
 			currentEffort = firstNonEmpty(event.Payload.Effort, currentEffort)
 		case "response_item":
-			toolUses = append(toolUses, stamp(extractResponseItem(event, pendingCall, sessionCWD, sessionID))...)
+			if event.Payload.Type == "reasoning" {
+				add(reasoning.observe(event, currentTurn, sessionCWD, sessionID))
+				continue
+			}
+			add(extractResponseItem(event, pendingCall, sessionCWD, sessionID))
 		case "event_msg":
 			currentTurn = firstNonEmpty(event.Payload.TurnID, currentTurn)
-			toolUses = append(toolUses, stamp(extractEventMsg(event, sessionCWD, sessionID))...)
+			add(extractEventMsg(event, sessionCWD, sessionID))
 		case "world_state":
-			toolUses = append(toolUses, stamp([]ToolUse{buildCodexTopLevelEventUse(event, "world_state", sessionCWD, sessionID)})...)
+			add([]ToolUse{buildCodexTopLevelEventUse(event, "world_state", sessionCWD, sessionID)})
 		case "thread.started":
 			sessionID = firstNonEmpty(event.ThreadID, sessionID)
 		case "item.completed":
-			toolUses = append(toolUses, stamp(extractLiveItemCompleted(event, sessionCWD, sessionID))...)
+			add(extractLiveItemCompleted(event, sessionCWD, sessionID))
 		case "turn.failed", "error":
-			toolUses = append(toolUses, stamp(extractLiveError(event, sessionCWD, sessionID))...)
+			add(extractLiveError(event, sessionCWD, sessionID))
 		}
 	}
+	add(reasoning.flush())
 	for _, callEvent := range pendingCall {
-		toolUses = append(toolUses, stamp([]ToolUse{buildToolUse(callEvent, CodexEvent{}, sessionCWD, sessionID)})...)
+		add([]ToolUse{buildToolUse(callEvent, CodexEvent{}, sessionCWD, sessionID)})
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
-	return dedupeCodexToolUses(toolUses), nil
+	return dedupeCodexToolUses(records), nil
 }
 
 func FindCodexSessionFiles() ([]string, error) {

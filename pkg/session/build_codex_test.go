@@ -375,3 +375,39 @@ func TestBuildCodexSession_WaitIsConversationalToolWithOutput(t *testing.T) {
 		t.Fatalf("output = %s", part.Output)
 	}
 }
+
+// A collapsed reasoning span must extend the session's end time: contentless
+// reasoning is the only evidence the session was alive during a thinking burst,
+// and last_activity_at is derived from s.EndedAt.
+func TestBuildCodexSession_ReasoningSpanExtendsEndedAtButNotStartedAt(t *testing.T) {
+	metaStart := time.Date(2026, 7, 16, 11, 14, 45, 0, time.UTC)
+	spanLast := time.Date(2026, 7, 16, 11, 32, 58, 744000000, time.UTC)
+	uses := []history.ToolUse{
+		{
+			Tool: "Reasoning",
+			Input: map[string]any{
+				"text":     "81 encrypted reasoning records over 17m54s",
+				"first_at": "2026-07-16T11:15:04.024Z",
+				"last_at":  "2026-07-16T11:32:58.744Z",
+				"count":    81,
+			},
+			Timestamp: &spanLast,
+			SessionID: "cx-span",
+			Source:    "codex",
+		},
+	}
+	info := &history.CodexSessionInfo{ID: "cx-span", CWD: "/repo", StartedAt: &metaStart}
+
+	s := buildCodexSession(uses, info)
+
+	require.NotNil(t, s.EndedAt)
+	assert.True(t, s.EndedAt.Equal(spanLast), "EndedAt = %v, want span last %v", s.EndedAt, spanLast)
+	require.NotNil(t, s.StartedAt)
+	assert.True(t, s.StartedAt.Equal(metaStart), "StartedAt = %v, want session_meta %v", s.StartedAt, metaStart)
+
+	require.Len(t, s.Messages, 1)
+	require.Len(t, s.Messages[0].Parts, 1)
+	part := s.Messages[0].Parts[0]
+	assert.Equal(t, PartReasoning, part.Type)
+	assert.Contains(t, part.Text, "81 encrypted reasoning records")
+}

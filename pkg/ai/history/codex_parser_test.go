@@ -260,10 +260,14 @@ func TestExtractCodexToolUses_RolloutChatAndEvents(t *testing.T) {
 		`{"timestamp":"2026-07-08T11:19:57.028Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1","started_at":"2026-07-08T11:19:57.028Z","model_context_window":258400}}`,
 		`{"timestamp":"2026-07-08T11:19:58.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>\n  <cwd>/repo</cwd>\n</environment_context>"}]}}`,
 		`{"timestamp":"2026-07-08T11:19:58.758Z","type":"turn_context","payload":{"model":"gpt-5.5","effort":"high"}}`,
+		// Twins are skewed, as Codex actually writes them: the user pair arrives
+		// response_item-first and the assistant pair event_msg-first. An earlier
+		// fixture gave both twins the same timestamp -- a shape Codex never
+		// emits -- which is exactly what hid the duplicate-row bug.
 		`{"timestamp":"2026-07-08T11:19:58.760Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}}`,
-		`{"timestamp":"2026-07-08T11:19:58.760Z","type":"event_msg","payload":{"type":"user_message","message":"hi"}}`,
+		`{"timestamp":"2026-07-08T11:19:58.761Z","type":"event_msg","payload":{"type":"user_message","message":"hi"}}`,
 		`{"timestamp":"2026-07-08T11:20:00.403Z","type":"event_msg","payload":{"type":"agent_message","message":"Hi. What do you want to work on in ` + "`captain`" + `?"}}`,
-		`{"timestamp":"2026-07-08T11:20:00.403Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Hi. What do you want to work on in ` + "`captain`" + `?"}]}}`,
+		`{"timestamp":"2026-07-08T11:20:00.404Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Hi. What do you want to work on in ` + "`captain`" + `?"}]}}`,
 		`{"timestamp":"2026-07-08T11:20:00.432Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":10,"cached_input_tokens":5,"output_tokens":2,"total_tokens":12},"model_context_window":258400}}}`,
 		`{"timestamp":"2026-07-08T11:20:00.435Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-1","duration_ms":3519,"time_to_first_token_ms":3123}}`,
 	}, "\n")
@@ -316,8 +320,11 @@ MEMORY.md:10-12|note=[parser seam]
 	quoted = strings.ReplaceAll(quoted, "\n", `\n`)
 	stream := strings.Join([]string{
 		`{"timestamp":"2026-07-10T10:00:00Z","type":"session_meta","payload":{"id":"sess-plan","cwd":"/repo"}}`,
-		`{"timestamp":"2026-07-10T10:00:01Z","type":"event_msg","payload":{"type":"agent_message","message":"` + quoted + `"}}`,
-		`{"timestamp":"2026-07-10T10:00:01Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"` + quoted + `"}]}}`,
+		// 3ms skew, as Codex writes twins. The segments land 3 rows apart but
+		// only 1 source record apart, which is why the merge keys on the
+		// preceding record rather than a row-distance window.
+		`{"timestamp":"2026-07-10T10:00:01.000Z","type":"event_msg","payload":{"type":"agent_message","message":"` + quoted + `"}}`,
+		`{"timestamp":"2026-07-10T10:00:01.003Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"` + quoted + `"}]}}`,
 	}, "\n")
 
 	uses, err := ExtractCodexToolUsesFromReader(strings.NewReader(stream))
@@ -345,9 +352,9 @@ func TestExtractCodexToolUses_ClassifiesAgentsInstructionsAsSystem(t *testing.T)
 	stream := strings.Join([]string{
 		`{"timestamp":"2026-07-10T09:49:37.000Z","type":"session_meta","payload":{"id":"sess-system","cwd":"/repo"}}`,
 		`{"timestamp":"2026-07-10T09:49:37.100Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"  # AGENTS.md instructions for /repo\n\nAlways test."}]}}`,
-		`{"timestamp":"2026-07-10T09:49:37.100Z","type":"event_msg","payload":{"type":"user_message","message":"# AGENTS.md instructions for /repo\n\nAlways test."}}`,
+		`{"timestamp":"2026-07-10T09:49:37.101Z","type":"event_msg","payload":{"type":"user_message","message":"# AGENTS.md instructions for /repo\n\nAlways test."}}`,
 		`{"timestamp":"2026-07-10T09:49:37.200Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Fix the parser"}]}}`,
-		`{"timestamp":"2026-07-10T09:49:37.200Z","type":"event_msg","payload":{"type":"user_message","message":"Fix the parser"}}`,
+		`{"timestamp":"2026-07-10T09:49:37.201Z","type":"event_msg","payload":{"type":"user_message","message":"Fix the parser"}}`,
 	}, "\n")
 
 	uses, err := ExtractCodexToolUsesFromReader(strings.NewReader(stream))

@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/flanksource/captain/pkg/ai/assistanttags"
-	"github.com/segmentio/encoding/json"
 )
 
 func extractResponseItem(event CodexEvent, pendingCall map[string]CodexEvent, cwd, sessionID string) []ToolUse {
@@ -29,30 +28,6 @@ func extractResponseItem(event CodexEvent, pendingCall map[string]CodexEvent, cw
 			delete(pendingCall, event.Payload.CallID)
 		}
 		return buildToolSearchUses(callEvent, event, cwd, sessionID)
-	case "reasoning":
-		var summaries []CodexReasoningSummary
-		if len(event.Payload.Summary) > 0 {
-			_ = json.Unmarshal(event.Payload.Summary, &summaries)
-		}
-		var text string
-		for _, summary := range summaries {
-			if summary.Text != "" {
-				text = summary.Text
-			}
-		}
-		if text == "" {
-			return nil
-		}
-		return []ToolUse{{
-			Tool:       "Reasoning",
-			Input:      map[string]any{"text": text},
-			Timestamp:  event.Time(),
-			CWD:        cwd,
-			SessionID:  sessionID,
-			TurnID:     codexEventTurnID(event),
-			Source:     "codex",
-			RecordType: "response_item.reasoning",
-		}}
 	case "message":
 		var tool string
 		var text string
