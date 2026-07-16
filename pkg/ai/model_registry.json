@@ -8,6 +8,10 @@
     "releaseDate": "2026-06-29",
     "reasoning": true,
     "contextWindow": 1000000,
+    "inputMediaTypes": [
+      "image/*",
+      "application/pdf"
+    ],
     "preferred": true,
     "adaptiveThinking": true,
     "supportedEfforts": [
@@ -27,6 +31,10 @@
     "releaseDate": "2026-06-07",
     "reasoning": true,
     "contextWindow": 1000000,
+    "inputMediaTypes": [
+      "image/*",
+      "application/pdf"
+    ],
     "preferred": true,
     "adaptiveThinking": true,
     "supportedEfforts": [
@@ -46,6 +54,10 @@
     "releaseDate": "2026-05-28",
     "reasoning": true,
     "contextWindow": 1000000,
+    "inputMediaTypes": [
+      "image/*",
+      "application/pdf"
+    ],
     "preferred": true,
     "adaptiveThinking": true,
     "supportedEfforts": [
@@ -65,6 +77,10 @@
     "releaseDate": "2026-04-14",
     "reasoning": true,
     "contextWindow": 1000000,
+    "inputMediaTypes": [
+      "image/*",
+      "application/pdf"
+    ],
     "adaptiveThinking": true,
     "supportedEfforts": [
       "low",
@@ -84,6 +100,10 @@
     "reasoning": true,
     "temperature": true,
     "contextWindow": 1000000,
+    "inputMediaTypes": [
+      "image/*",
+      "application/pdf"
+    ],
     "preferred": true
   },
   {
@@ -95,7 +115,11 @@
     "releaseDate": "2026-02-04",
     "reasoning": true,
     "temperature": true,
-    "contextWindow": 1000000
+    "contextWindow": 1000000,
+    "inputMediaTypes": [
+      "image/*",
+      "application/pdf"
+    ]
   },
   {
     "id": "claude-opus-4-5",
@@ -106,7 +130,11 @@
     "releaseDate": "2025-11-24",
     "reasoning": true,
     "temperature": true,
-    "contextWindow": 200000
+    "contextWindow": 200000,
+    "inputMediaTypes": [
+      "image/*",
+      "application/pdf"
+    ]
   },
   {
     "id": "claude-opus-4-5-20251101",
@@ -117,7 +145,11 @@
     "releaseDate": "2025-11-24",
     "reasoning": true,
     "temperature": true,
-    "contextWindow": 200000
+    "contextWindow": 200000,
+    "inputMediaTypes": [
+      "image/*",
+      "application/pdf"
+    ]
   },
   {
     "id": "claude-haiku-4-5",
@@ -129,6 +161,10 @@
     "reasoning": true,
     "temperature": true,
     "contextWindow": 200000,
+    "inputMediaTypes": [
+      "image/*",
+      "application/pdf"
+    ],
     "preferred": true
   },
   {
@@ -140,7 +176,11 @@
     "releaseDate": "2025-10-15",
     "reasoning": true,
     "temperature": true,
-    "contextWindow": 200000
+    "contextWindow": 200000,
+    "inputMediaTypes": [
+      "image/*",
+      "application/pdf"
+    ]
   },
   {
     "id": "claude-sonnet-4-5",
@@ -151,7 +191,11 @@
     "releaseDate": "2025-09-29",
     "reasoning": true,
     "temperature": true,
-    "contextWindow": 1000000
+    "contextWindow": 1000000,
+    "inputMediaTypes": [
+      "image/*",
+      "application/pdf"
+    ]
   },
   {
     "id": "claude-sonnet-4-5-20250929",
@@ -162,7 +206,11 @@
     "releaseDate": "2025-09-29",
     "reasoning": true,
     "temperature": true,
-    "contextWindow": 1000000
+    "contextWindow": 1000000,
+    "inputMediaTypes": [
+      "image/*",
+      "application/pdf"
+    ]
   },
   {
     "id": "gpt-5.6",
@@ -173,6 +221,10 @@
     "releaseDate": "2026-07-09",
     "reasoning": true,
     "contextWindow": 1050000,
+    "inputMediaTypes": [
+      "image/*",
+      "application/pdf"
+    ],
     "preferred": true,
     "availability": [
       "api"
@@ -194,6 +246,10 @@
     "releaseDate": "2026-07-09",
     "reasoning": true,
     "contextWindow": 1050000,
+    "inputMediaTypes": [
+      "image/*",
+      "application/pdf"
+    ],
     "preferred": true,
     "availability": [
       "api",
@@ -217,6 +273,10 @@
     "releaseDate": "2026-07-09",
     "reasoning": true,
     "contextWindow": 1050000,
+    "inputMediaTypes": [
+      "image/*",
+      "application/pdf"
+    ],
     "preferred": true,
     "availability": [
       "api",
@@ -241,6 +301,10 @@
     "releaseDate": "2026-07-09",
     "reasoning": true,
     "contextWindow": 1050000,
+    "inputMediaTypes": [
+      "image/*",
+      "application/pdf"
+    ],
     "preferred": true,
     "availability": [
       "api",
@@ -265,6 +329,10 @@
     "releaseDate": "2026-04-23",
     "reasoning": true,
     "contextWindow": 1050000,
+    "inputMediaTypes": [
+      "image/*",
+      "application/pdf"
+    ],
     "preferred": true,
     "supportedEfforts": [
       "low",
@@ -282,6 +350,10 @@
     "releaseDate": "2026-03-05",
     "reasoning": true,
     "contextWindow": 1050000,
+    "inputMediaTypes": [
+      "image/*",
+      "application/pdf"
+    ],
     "supportedEfforts": [
       "low",
       "medium",
@@ -298,6 +370,9 @@
     "releaseDate": "2025-12-11",
     "reasoning": true,
     "contextWindow": 400000,
+    "inputMediaTypes": [
+      "image/*"
+    ],
     "supportedEfforts": [
       "low",
       "medium",
@@ -314,6 +389,9 @@
     "releaseDate": "2025-11-13",
     "reasoning": true,
     "contextWindow": 400000,
+    "inputMediaTypes": [
+      "image/*"
+    ],
     "supportedEfforts": [
       "low",
       "medium",
@@ -329,6 +407,9 @@
     "releaseDate": "2025-08-07",
     "reasoning": true,
     "contextWindow": 400000,
+    "inputMediaTypes": [
+      "image/*"
+    ],
     "supportedEfforts": [
       "low",
       "medium",
@@ -345,6 +426,12 @@
     "reasoning": true,
     "temperature": true,
     "contextWindow": 1048576,
+    "inputMediaTypes": [
+      "image/*",
+      "video/*",
+      "audio/*",
+      "application/pdf"
+    ],
     "preferred": true,
     "supportedEfforts": [
       "low",
@@ -362,6 +449,12 @@
     "reasoning": true,
     "temperature": true,
     "contextWindow": 1048576,
+    "inputMediaTypes": [
+      "image/*",
+      "video/*",
+      "audio/*",
+      "application/pdf"
+    ],
     "supportedEfforts": [
       "low",
       "medium",
@@ -378,6 +471,12 @@
     "reasoning": true,
     "temperature": true,
     "contextWindow": 1048576,
+    "inputMediaTypes": [
+      "image/*",
+      "video/*",
+      "audio/*",
+      "application/pdf"
+    ],
     "supportedEfforts": [
       "low",
       "medium",
@@ -394,6 +493,12 @@
     "reasoning": true,
     "temperature": true,
     "contextWindow": 1048576,
+    "inputMediaTypes": [
+      "image/*",
+      "video/*",
+      "audio/*",
+      "application/pdf"
+    ],
     "supportedEfforts": [
       "low",
       "medium",
@@ -410,6 +515,12 @@
     "reasoning": true,
     "temperature": true,
     "contextWindow": 1048576,
+    "inputMediaTypes": [
+      "image/*",
+      "video/*",
+      "audio/*",
+      "application/pdf"
+    ],
     "supportedEfforts": [
       "low",
       "medium",
@@ -426,6 +537,12 @@
     "reasoning": true,
     "temperature": true,
     "contextWindow": 1048576,
+    "inputMediaTypes": [
+      "image/*",
+      "video/*",
+      "audio/*",
+      "application/pdf"
+    ],
     "supportedEfforts": [
       "low",
       "medium",
@@ -442,6 +559,12 @@
     "reasoning": true,
     "temperature": true,
     "contextWindow": 1048576,
+    "inputMediaTypes": [
+      "image/*",
+      "video/*",
+      "audio/*",
+      "application/pdf"
+    ],
     "supportedEfforts": [
       "low",
       "high"
@@ -456,7 +579,13 @@
     "releaseDate": "2025-09-25",
     "reasoning": true,
     "temperature": true,
-    "contextWindow": 1048576
+    "contextWindow": 1048576,
+    "inputMediaTypes": [
+      "image/*",
+      "video/*",
+      "audio/*",
+      "application/pdf"
+    ]
   },
   {
     "id": "gemini-flash-lite-latest",
@@ -467,7 +596,13 @@
     "releaseDate": "2025-09-25",
     "reasoning": true,
     "temperature": true,
-    "contextWindow": 1048576
+    "contextWindow": 1048576,
+    "inputMediaTypes": [
+      "image/*",
+      "video/*",
+      "audio/*",
+      "application/pdf"
+    ]
   },
   {
     "id": "gemini-2.5-flash",
@@ -479,6 +614,12 @@
     "reasoning": true,
     "temperature": true,
     "contextWindow": 1048576,
+    "inputMediaTypes": [
+      "image/*",
+      "audio/*",
+      "video/*",
+      "application/pdf"
+    ],
     "preferred": true
   },
   {
@@ -490,7 +631,13 @@
     "releaseDate": "2025-06-17",
     "reasoning": true,
     "temperature": true,
-    "contextWindow": 1048576
+    "contextWindow": 1048576,
+    "inputMediaTypes": [
+      "image/*",
+      "audio/*",
+      "video/*",
+      "application/pdf"
+    ]
   },
   {
     "id": "gemini-2.5-pro",
@@ -502,6 +649,12 @@
     "reasoning": true,
     "temperature": true,
     "contextWindow": 1048576,
+    "inputMediaTypes": [
+      "image/*",
+      "audio/*",
+      "video/*",
+      "application/pdf"
+    ],
     "preferred": true
   },
   {
@@ -512,7 +665,13 @@
     "label": "Gemini 2.0 Flash",
     "releaseDate": "2024-12-11",
     "temperature": true,
-    "contextWindow": 1048576
+    "contextWindow": 1048576,
+    "inputMediaTypes": [
+      "image/*",
+      "audio/*",
+      "video/*",
+      "application/pdf"
+    ]
   },
   {
     "id": "gemini-2.0-flash-lite",
@@ -522,7 +681,13 @@
     "label": "Gemini 2.0 Flash-Lite",
     "releaseDate": "2024-12-11",
     "temperature": true,
-    "contextWindow": 1048576
+    "contextWindow": 1048576,
+    "inputMediaTypes": [
+      "image/*",
+      "audio/*",
+      "video/*",
+      "application/pdf"
+    ]
   },
   {
     "id": "deepseek-v4-flash",
