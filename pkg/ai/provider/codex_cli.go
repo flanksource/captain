@@ -97,6 +97,16 @@ func (c *CodexCLI) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai
 func buildCodexCLIArgs(model string, req ai.Request) ([]string, func(), error) {
 	args := []string{"exec", "--json"}
 	cleanup := func() {}
+	if err := ai.ValidateAttachmentCompatibility([]api.Model{{Name: model, Backend: api.BackendCodexCLI}}, req.Prompt.Attachments); err != nil {
+		return nil, cleanup, err
+	}
+	for i, attachment := range req.Prompt.Attachments {
+		content, ok := attachment.PreparedContent()
+		if !ok || content.Path == "" {
+			return nil, cleanup, fmt.Errorf("attachment %d (%s) has no prepared local path", i+1, attachment.ID)
+		}
+		args = append(args, "--image", content.Path)
+	}
 	if req.Effort != api.EffortNone {
 		args = append(args, "-c", fmt.Sprintf("model_reasoning_effort=%q", req.Effort))
 	}
@@ -168,6 +178,10 @@ type codexCLIState struct {
 	sessionID string
 	pending   map[string]history.CodexEvent
 	usage     ai.Usage
+	// sawTokenCount records whether a token_count event supplied the authoritative
+	// (cache/reasoning-aware) usage, so turn.completed's coarser per-turn counts
+	// are used only as a fallback.
+	sawTokenCount bool
 }
 
 func (s *codexCLIState) mapLine(line []byte) []ai.Event {
@@ -192,10 +206,15 @@ func (s *codexCLIState) mapLine(line []byte) []ai.Event {
 	case "turn.failed", "error":
 		msg := extractCodexErrorText(codexErrorMessage(event))
 		ev := ai.Event{Kind: ai.EventError, Error: msg, Model: s.model}
-		ev.Raw = codexToolUse("ApiError", map[string]any{"error": msg}, s.sessionID, s.model)
+		ev.Raw = codexToolUse(history.NormalizeCodexToolCall(history.CodexToolCall{
+			Name: "ApiError", Input: map[string]any{"error": msg}, SessionID: s.sessionID,
+		}), s.model)
 		return []ai.Event{ev}
 	case "turn.completed":
-		if event.Usage != nil {
+		// turn.completed's per-turn usage lacks cache/reasoning detail; prefer the
+		// token_count totals when we have them and fall back to these coarse counts
+		// only otherwise (they cannot overlap cache, so no netting is needed).
+		if event.Usage != nil && !s.sawTokenCount {
 			s.usage.InputTokens = event.Usage.InputTokens
 			s.usage.OutputTokens = event.Usage.OutputTokens
 		}
@@ -237,9 +256,15 @@ func (s *codexCLIState) mapResponseItem(event history.CodexEvent) []ai.Event {
 
 func (s *codexCLIState) mapEventMsg(event history.CodexEvent) []ai.Event {
 	if event.Payload.Type == "token_count" && event.Payload.Info != nil {
-		s.usage.InputTokens = event.Payload.Info.TotalTokenUsage.InputTokens
-		s.usage.OutputTokens = event.Payload.Info.TotalTokenUsage.OutputTokens
-		s.usage.CacheReadTokens = event.Payload.Info.TotalTokenUsage.CachedInputTokens
+		// Codex reports cumulative totals with inputTokens inclusive of the cached
+		// prefix and outputTokens inclusive of reasoning; net both to captain's
+		// disjoint buckets so pricing does not double-count (findings B1/B2).
+		tu := event.Payload.Info.TotalTokenUsage
+		s.usage.InputTokens = ai.NetInputTokens(tu.InputTokens, tu.CachedInputTokens)
+		s.usage.OutputTokens = ai.NetOutputTokens(tu.OutputTokens, tu.ReasoningOutputTokens)
+		s.usage.CacheReadTokens = tu.CachedInputTokens
+		s.usage.ReasoningTokens = tu.ReasoningOutputTokens
+		s.sawTokenCount = true
 		return nil
 	}
 	switch event.Payload.Type {
@@ -274,9 +299,9 @@ func (s *codexCLIState) mapItemCompleted(event history.CodexEvent) []ai.Event {
 	if name == "" {
 		return nil
 	}
-	input := map[string]any{}
-	tu := codexToolUse(name, input, s.sessionID, s.model)
-	tu.ToolUseID = event.Item.Name
+	tu := codexToolUse(history.NormalizeCodexToolCall(history.CodexToolCall{
+		Name: name, ID: event.Item.Name, SessionID: s.sessionID,
+	}), s.model)
 	return s.codexToolEvents([]claude.ToolUse{tu})
 }
 
@@ -324,60 +349,15 @@ func codexErrorMessage(event history.CodexEvent) string {
 }
 
 func (s *codexCLIState) buildFunctionToolUse(call, output history.CodexEvent) claude.ToolUse {
-	name := call.Payload.Name
-	input := codexArgumentsMap(call.Payload.Arguments)
-	if name == "update_plan" {
-		name = "TodoWrite"
-		if plan, ok := input["plan"]; ok {
-			input["todos"] = plan
-		}
-	}
-	if name == "request_user_input" {
-		name = "AskUserQuestion"
-	}
-	if name == "" {
-		name = "Bash"
-		if command := codexCommand(call.Payload.Arguments); command != "" {
-			input = map[string]any{"command": command}
-		}
-	}
-	tu := codexToolUse(name, input, s.sessionID, s.model)
-	tu.ToolUseID = call.Payload.CallID
-	tu.Response = history.CodexOutputText(output.Payload.Output)
-	return tu
-}
-
-func codexArgumentsMap(argsJSON json.RawMessage) map[string]any {
-	raw := normalizeCodexArguments(argsJSON)
-	var args map[string]any
-	if raw != "" {
-		_ = json.Unmarshal([]byte(raw), &args)
-	}
-	if args == nil {
-		args = map[string]any{}
-	}
-	return args
-}
-
-func codexCommand(argsJSON json.RawMessage) string {
-	args := codexArgumentsMap(argsJSON)
-	for _, key := range []string{"command", "cmd"} {
-		if value, _ := args[key].(string); value != "" {
-			return value
-		}
-	}
-	return normalizeCodexArguments(argsJSON)
-}
-
-func normalizeCodexArguments(argsJSON json.RawMessage) string {
-	if len(argsJSON) == 0 || string(argsJSON) == "null" {
-		return ""
-	}
-	var s string
-	if json.Unmarshal(argsJSON, &s) == nil {
-		return s
-	}
-	return string(argsJSON)
+	return codexToolUse(history.NormalizeCodexToolCall(history.CodexToolCall{
+		Name:       call.Payload.Name,
+		Namespace:  call.Payload.Namespace,
+		Arguments:  call.Payload.Arguments,
+		ID:         call.Payload.CallID,
+		SessionID:  s.sessionID,
+		Response:   history.CodexOutputText(output.Payload.Output),
+		RecordType: "response_item.function_call",
+	}), s.model)
 }
 
 func codexReasoningText(event history.CodexEvent) string {

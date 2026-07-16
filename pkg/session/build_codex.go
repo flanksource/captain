@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai/history"
+	"github.com/flanksource/captain/pkg/ai/pricing"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/bash"
 	"github.com/flanksource/captain/pkg/claude"
@@ -522,21 +523,30 @@ func codexCostFromUse(u history.ToolUse) api.Cost {
 	if u.TotalTokens == 0 && u.InputTokens == 0 && u.OutputTokens == 0 && u.CacheReadTokens == 0 {
 		return api.Cost{Model: u.Model}
 	}
-	p := claude.PricingFor(u.Model)
 	total := u.TotalTokens
 	if total == 0 {
 		total = u.InputTokens + u.OutputTokens + u.CacheReadTokens
 	}
-	return api.Cost{
+	cost := api.Cost{
 		Model:           u.Model,
 		InputTokens:     u.InputTokens,
 		OutputTokens:    u.OutputTokens,
 		CacheReadTokens: u.CacheReadTokens,
 		TotalTokens:     total,
-		InputCost:       float64(u.InputTokens) * p.InputPerMTok / 1e6,
-		OutputCost:      float64(u.OutputTokens) * p.OutputPerMTok / 1e6,
-		CacheReadCost:   float64(u.CacheReadTokens) * p.CacheReadPerMTok / 1e6,
 	}
+	// Codex runs OpenAI models: price via the registry under the openai/ key.
+	// The old claude.PricingFor path mispriced every gpt-*/o* model at Claude
+	// Sonnet rates (finding C1). A registry miss leaves the bucket costs zero
+	// rather than inventing a wrong number.
+	for _, id := range []string{"openai/" + u.Model, u.Model} {
+		if res, err := pricing.CalculateCost(id, u.InputTokens, u.OutputTokens, 0, u.CacheReadTokens, 0); err == nil {
+			cost.InputCost = res.InputCost
+			cost.OutputCost = res.OutputCost
+			cost.CacheReadCost = res.CacheReadCost
+			break
+		}
+	}
+	return cost
 }
 
 func codexContextFromUse(u history.ToolUse) *Context {

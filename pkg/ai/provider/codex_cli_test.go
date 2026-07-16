@@ -89,7 +89,7 @@ func TestCodexCLIStateMapsJSONLEvents(t *testing.T) {
 		t.Fatalf("function_call events = %+v, want none until output", events)
 	}
 	events = state.mapLine([]byte(`{"type":"response_item","payload":{"type":"function_call_output","call_id":"call-1","output":"ok"}}`))
-	if len(events) != 1 || events[0].Kind != ai.EventToolUse || events[0].Tool != "shell" {
+	if len(events) != 1 || events[0].Kind != ai.EventToolUse || events[0].Tool != "Bash" {
 		t.Fatalf("function_call_output events = %+v", events)
 	}
 	if got, _ := events[0].Input["command"].(string); got != "pwd" {
@@ -102,5 +102,30 @@ func TestCodexCLIStateMapsJSONLEvents(t *testing.T) {
 	}
 	if events[0].Usage == nil || events[0].Usage.InputTokens != 3 || events[0].Usage.OutputTokens != 2 {
 		t.Fatalf("usage = %+v", events[0].Usage)
+	}
+}
+
+// A token_count event supplies cache/reasoning-aware totals; codex reports
+// input_tokens inclusive of cache and output_tokens inclusive of reasoning, so
+// the emitted usage must be netted to disjoint buckets (findings B1/B2) and the
+// coarser turn.completed per-turn counts must not clobber it.
+func TestCodexCLIStateNetsTokenCountUsage(t *testing.T) {
+	state := codexCLIState{model: "gpt-5.5", pending: map[string]history.CodexEvent{}}
+
+	events := state.mapLine([]byte(`{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":120,"cached_input_tokens":12,"output_tokens":40,"reasoning_output_tokens":7}}}}`))
+	if len(events) != 0 {
+		t.Fatalf("token_count should emit no events, got %+v", events)
+	}
+
+	events = state.mapLine([]byte(`{"type":"turn.completed","usage":{"input_tokens":999,"output_tokens":999}}`))
+	if len(events) != 1 || events[0].Usage == nil {
+		t.Fatalf("turn.completed events = %+v", events)
+	}
+	u := events[0].Usage
+	if u.InputTokens != 108 || u.OutputTokens != 33 || u.CacheReadTokens != 12 || u.ReasoningTokens != 7 {
+		t.Fatalf("usage = %+v, want input=108 output=33 cache=12 reasoning=7 (netted, not clobbered by turn.completed)", u)
+	}
+	if u.InputTokens+u.CacheReadTokens != 120 || u.OutputTokens+u.ReasoningTokens != 40 {
+		t.Fatalf("disjoint buckets must recover raw totals: %+v", u)
 	}
 }

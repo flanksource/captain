@@ -465,37 +465,3 @@ func TestReadCodexSessionMetaStopsAtHeader(t *testing.T) {
 		t.Errorf("meta reader should not scan turn_context, got model/effort %q/%q", info.Model, info.ReasoningEffort)
 	}
 }
-
-func TestUnwrapCodexErrorMessage(t *testing.T) {
-	tests := []struct {
-		name string
-		in   string
-		want string
-	}{
-		{"plain", "boom", "boom"},
-		{"empty", "", ""},
-		{
-			"nested error.message",
-			`{"type":"error","status":400,"error":{"type":"invalid_request_error","message":"bad model"}}`,
-			"bad model",
-		},
-		{
-			"top-level message",
-			`{"message":"top"}`,
-			"top",
-		},
-		{
-			"non-json passthrough",
-			"not { json",
-			"not { json",
-		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := unwrapCodexErrorMessage(tc.in)
-			if got != tc.want {
-				t.Errorf("unwrapCodexErrorMessage(%q) = %q, want %q", tc.in, got, tc.want)
-			}
-		})
-	}
-}

@@ -119,6 +119,7 @@ func (c *CodexAppServer) ExecuteStream(ctx context.Context, req ai.Request) (<-c
 		usage:        &ai.Usage{},
 		model:        c.model,
 		streamed:     map[string]bool{},
+		toolOutput:   map[string]string{},
 		terminal:     make(chan struct{}),
 		outputSchema: schema,
 	}
@@ -275,7 +276,11 @@ func (c *CodexAppServer) startTurn(ctx context.Context, req ai.Request, threadID
 	if rpc == nil {
 		return "", fmt.Errorf("codex app-server: not started")
 	}
-	raw, err := rpc.Call(ctx, "turn/start", buildTurnStartParams(c.model, req, threadID, outputSchema))
+	params, err := buildTurnStartParams(c.model, req, threadID, outputSchema)
+	if err != nil {
+		return "", err
+	}
+	raw, err := rpc.Call(ctx, "turn/start", params)
 	if err != nil {
 		return "", err
 	}
@@ -305,6 +310,7 @@ func (c *CodexAppServer) handleNotification(method string, params json.RawMessag
 	if ts == nil {
 		return
 	}
+	ctx := appServerEventContext{Model: ts.model, Usage: ts.usage}
 	switch method {
 	case "item/agentMessage/delta":
 		if id := parseAppServerNotif(params).ItemID; id != "" {
@@ -313,6 +319,12 @@ func (c *CodexAppServer) handleNotification(method string, params json.RawMessag
 		if len(ts.outputSchema) > 0 {
 			return
 		}
+	case "item/commandExecution/outputDelta":
+		n := parseAppServerNotif(params)
+		if n.ItemID != "" && n.Delta != "" {
+			ts.toolOutput[n.ItemID] += n.Delta
+		}
+		return
 	case "item/completed":
 		// The completed agent message carries the full text (structured runs use it
 		// as the validated JSON result). Capture it, then drop the duplicate so
@@ -326,8 +338,12 @@ func (c *CodexAppServer) handleNotification(method string, params json.RawMessag
 		if appServerStreamedAgentMessage(params, ts.streamed) {
 			return
 		}
+		if it := parseAppServerNotif(params).Item; it != nil {
+			ctx.ToolOutput = ts.toolOutput[it.ID]
+			delete(ts.toolOutput, it.ID)
+		}
 	}
-	if ev, ok := mapAppServerNotification(method, params, ts.model, ts.usage); ok {
+	if ev, ok := mapAppServerNotification(method, params, ctx); ok {
 		if ev.Kind == ai.EventResult && len(ts.outputSchema) > 0 {
 			ev.StructuredData = json.RawMessage(ts.lastAgentMessage)
 		}
@@ -361,10 +377,11 @@ func (c *CodexAppServer) handleApproval(method string, _ json.RawMessage) (any, 
 // finish are guarded so a late notification can never send on a closed channel;
 // terminal doubles as the "stop sending" signal that unblocks a blocked send.
 type turnState struct {
-	ch       chan ai.Event
-	usage    *ai.Usage
-	model    string
-	streamed map[string]bool // agent-message item IDs already streamed via deltas
+	ch         chan ai.Event
+	usage      *ai.Usage
+	model      string
+	streamed   map[string]bool   // agent-message item IDs already streamed via deltas
+	toolOutput map[string]string // command output accumulated by item ID
 
 	// outputSchema is non-nil when the turn requested structured output; it drives
 	// the turn/start outputSchema and gates capturing lastAgentMessage as the
