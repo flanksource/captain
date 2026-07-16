@@ -23,7 +23,7 @@ var _ = Describe("project session aggregates", func() {
 		})
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(stop)
-		db, err := Open(ctx, WithDSN(dsn), WithMigrations())
+		db, err := Open(ctx, Config{DSN: dsn})
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(db.Close)
 

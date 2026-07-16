@@ -25,7 +25,7 @@ var _ = Describe("Session list pages", func() {
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(func() { Expect(stop()).To(Succeed()) })
 
-		db, err := Open(ctx, WithDSN(dsn), WithMigrations())
+		db, err := Open(ctx, Config{DSN: dsn})
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(func() { Expect(db.Close()).To(Succeed()) })
 
