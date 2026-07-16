@@ -34,9 +34,27 @@ func TestCaptainMigrationsAreIdempotentAndShareOnePool(t *testing.T) {
 	require.NoError(t, first.Close(), "closing an injected handle must not close the shared pool")
 	require.NoError(t, sharedSQL.PingContext(t.Context()))
 
+	scriptRuns := func() map[string]string {
+		var rows []struct {
+			Path      string
+			UpdatedAt string
+		}
+		require.NoError(t, shared.Raw(`SELECT path, updated_at::text AS updated_at
+			FROM schema_migration_scripts WHERE scope = 'captain'`).Scan(&rows).Error)
+		runs := map[string]string{}
+		for _, row := range rows {
+			runs[row.Path] = row.UpdatedAt
+		}
+		return runs
+	}
+	firstRuns := scriptRuns()
+	require.NotEmpty(t, firstRuns)
+
 	second, err := Open(t.Context(), Config{Gorm: shared, DSN: dsn})
 	require.NoError(t, err, "applying the Captain bundle twice must be idempotent")
 	require.Same(t, shared, second.Gorm())
+	require.Equal(t, firstRuns, scriptRuns(),
+		"a no-op apply must not re-run any hash-gated script (steady state performs zero DDL)")
 
 	for _, table := range []string{
 		"captain_sessions",

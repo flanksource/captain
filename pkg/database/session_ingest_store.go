@@ -230,37 +230,43 @@ func (db *DB) IngestTranscript(ctx context.Context, input IngestTranscriptInput)
 		return nil, err
 	}
 	var session *Session
-	err := db.Transaction(ctx, func(tx *DB) error {
-		var err error
-		session, err = tx.CreateOrGetSession(ctx, CreateSessionInput{
-			ProviderSessionID: input.Session.ProviderSessionID,
-			Source:            input.Session.Source,
-			HostID:            input.Session.HostID,
-			ParentSessionID:   input.Session.ParentSessionID,
-			Path:              input.Session.Path,
-			Project:           input.Session.Project,
-			CWD:               input.Session.CWD,
-			Title:             input.Session.Title,
-			InitialPrompt:     input.Session.InitialPrompt,
-			Slug:              input.Session.Slug,
-			AgentType:         input.Session.AgentType,
-			Description:       input.Session.Description,
-			CLIVersion:        input.Session.CLIVersion,
+	// The ingest transaction is idempotent (ON CONFLICT upserts plus column
+	// projection), so a deadlock against a concurrent migration's exclusive
+	// locks is retried rather than dropping the batch.
+	err := retryTransientTx(ctx, "ingest Captain transcript", func() error {
+		session = nil
+		return db.Transaction(ctx, func(tx *DB) error {
+			var err error
+			session, err = tx.CreateOrGetSession(ctx, CreateSessionInput{
+				ProviderSessionID: input.Session.ProviderSessionID,
+				Source:            input.Session.Source,
+				HostID:            input.Session.HostID,
+				ParentSessionID:   input.Session.ParentSessionID,
+				Path:              input.Session.Path,
+				Project:           input.Session.Project,
+				CWD:               input.Session.CWD,
+				Title:             input.Session.Title,
+				InitialPrompt:     input.Session.InitialPrompt,
+				Slug:              input.Session.Slug,
+				AgentType:         input.Session.AgentType,
+				Description:       input.Session.Description,
+				CLIVersion:        input.Session.CLIVersion,
+			})
+			if err != nil {
+				return err
+			}
+			if err := tx.projectSessionColumns(ctx, session.ID, input.Session); err != nil {
+				return err
+			}
+			if err := tx.upsertSessionSource(ctx, session.ID, input.Source); err != nil {
+				return err
+			}
+			turnIDs, err := tx.upsertTurns(ctx, session.ID, input.Turns)
+			if err != nil {
+				return err
+			}
+			return tx.insertMessages(ctx, session.ID, turnIDs, input.Messages)
 		})
-		if err != nil {
-			return err
-		}
-		if err := tx.projectSessionColumns(ctx, session.ID, input.Session); err != nil {
-			return err
-		}
-		if err := tx.upsertSessionSource(ctx, session.ID, input.Source); err != nil {
-			return err
-		}
-		turnIDs, err := tx.upsertTurns(ctx, session.ID, input.Turns)
-		if err != nil {
-			return err
-		}
-		return tx.insertMessages(ctx, session.ID, turnIDs, input.Messages)
 	})
 	if err != nil {
 		return nil, err

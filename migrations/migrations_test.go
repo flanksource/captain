@@ -18,7 +18,19 @@ func TestSchemaBundleContainsGavelIntegrationContract(t *testing.T) {
 		"20_prompt_runs_and_plans.pg.hcl",
 		"30_execution.pg.hcl",
 		"40_artifacts_and_outbox.pg.hcl",
-		"50_views_and_triggers.sql",
+		"50_constraints.sql",
+		"51_state_triggers.sql",
+		"52_outbox_triggers.sql",
+		"60_view_session_overview.sql",
+		"61_view_session_transcript.sql",
+		"62_view_session_turns.sql",
+		"63_view_session_agents.sql",
+		"64_view_session_files.sql",
+		"65_view_session_plans.sql",
+		"66_view_session_approvals.sql",
+		"67_view_session_costs.sql",
+		"68_view_session_events.sql",
+		"69_view_prompt_run_overview.sql",
 	}
 	for _, name := range expectedFiles {
 		if _, err := fs.Stat(schemaFS, name); err != nil {
@@ -63,16 +75,67 @@ func TestSchemaBundleContainsGavelIntegrationContract(t *testing.T) {
 		`column "state"`,
 		`column "version"`,
 	)
-	assertContainsAll(t, "50_views_and_triggers.sql",
+	assertContainsAll(t, "50_constraints.sql",
 		"-- phase: post",
-		"-- runs: always",
-		"CREATE OR REPLACE VIEW public.captain_session_overview",
-		"CREATE OR REPLACE VIEW public.captain_session_turns",
-		"CREATE OR REPLACE VIEW public.captain_session_plans",
-		"CREATE OR REPLACE VIEW public.captain_session_costs",
-		"CREATE OR REPLACE VIEW public.captain_session_events",
-		"CREATE OR REPLACE VIEW public.captain_prompt_run_overview",
+		"ALTER CONSTRAINT captain_prompt_runs_input_plan_id_fkey",
+		"DEFERRABLE INITIALLY DEFERRED",
 	)
+	assertContainsAll(t, "51_state_triggers.sql",
+		"-- phase: post",
+		"CREATE OR REPLACE FUNCTION public.captain_set_session_state()",
+		"CREATE TRIGGER captain_sessions_state_before",
+		"CREATE TRIGGER captain_sessions_updated_at_before",
+		"REVOKE ALL ON FUNCTION public.captain_sync_prompt_run_iteration() FROM PUBLIC;",
+	)
+	assertContainsAll(t, "52_outbox_triggers.sql",
+		"-- phase: post",
+		"CREATE OR REPLACE FUNCTION public.captain_emit_session_change()",
+		"CREATE TRIGGER captain_sessions_emit_after",
+		"CREATE TRIGGER captain_outbox_notify_after",
+		"REVOKE ALL ON FUNCTION public.captain_notify_outbox() FROM PUBLIC;",
+	)
+	for file, view := range map[string]string{
+		"60_view_session_overview.sql":    "captain_session_overview",
+		"61_view_session_transcript.sql":  "captain_session_transcript",
+		"62_view_session_turns.sql":       "captain_session_turns",
+		"63_view_session_agents.sql":      "captain_session_agents",
+		"64_view_session_files.sql":       "captain_session_files",
+		"65_view_session_plans.sql":       "captain_session_plans",
+		"66_view_session_approvals.sql":   "captain_session_approvals",
+		"67_view_session_costs.sql":       "captain_session_costs",
+		"68_view_session_events.sql":      "captain_session_events",
+		"69_view_prompt_run_overview.sql": "captain_prompt_run_overview",
+	} {
+		assertContainsAll(t, file,
+			"-- phase: post",
+			"CREATE OR REPLACE VIEW public."+view,
+			"COMMENT ON VIEW public."+view,
+		)
+	}
+}
+
+// Hash-gated run-once scripts keep steady-state applies free of DDL; views are
+// restored via commons-db view-dependency invalidation, so no script may opt
+// back into re-running on every apply.
+func TestSchemaBundleHasNoAlwaysRunScripts(t *testing.T) {
+	t.Parallel()
+
+	entries, err := fs.Glob(schemaFS, "*.sql")
+	if err != nil {
+		t.Fatalf("glob embedded migrations: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("no embedded SQL migrations found")
+	}
+	for _, name := range entries {
+		data, err := fs.ReadFile(schemaFS, name)
+		if err != nil {
+			t.Fatalf("read embedded migration %s: %v", name, err)
+		}
+		if strings.Contains(string(data), "-- runs: always") {
+			t.Errorf("%s declares '-- runs: always'; scripts must be hash-gated run-once", name)
+		}
+	}
 }
 
 func TestLegacySessionSchemaDetection(t *testing.T) {

@@ -37,14 +37,27 @@ require (
 	sigs.k8s.io/yaml v1.6.0
 )
 
-require github.com/flanksource/commons-db v0.1.21
+require (
+	github.com/flanksource/commons-db v0.1.21
+	github.com/pelletier/go-toml/v2 v2.4.3
+)
 
 require (
+	ariga.io/atlas v0.38.0 // indirect
 	cloud.google.com/go/cloudsqlconn v1.22.1 // indirect
+	github.com/agext/levenshtein v1.2.1 // indirect
+	github.com/apparentlymart/go-textseg/v13 v13.0.0 // indirect
+	github.com/apparentlymart/go-textseg/v15 v15.0.0 // indirect
+	github.com/bmatcuk/doublestar v1.3.4 // indirect
 	github.com/exaring/otelpgx v0.9.3 // indirect
 	github.com/fergusstrange/embedded-postgres v1.34.0 // indirect
-	github.com/pelletier/go-toml/v2 v2.4.3 // indirect
+	github.com/go-openapi/inflect v0.19.0 // indirect
+	github.com/hashicorp/hcl/v2 v2.13.0 // indirect
+	github.com/mitchellh/go-wordwrap v0.0.0-20150314170334-ad45545899c7 // indirect
+	github.com/pgplex/pgparser v0.2.0 // indirect
 	github.com/xi2/xz v0.0.0-20171230120015-48954b6210f8 // indirect
+	github.com/zclconf/go-cty v1.14.4 // indirect
+	github.com/zclconf/go-cty-yaml v1.1.0 // indirect
 	go.opencensus.io v0.24.0 // indirect
 	gorm.io/driver/postgres v1.6.0 // indirect
 )
@@ -279,7 +292,7 @@ require (
 	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/skeema/knownhosts v1.3.1 // indirect
 	github.com/spf13/cast v1.7.1 // indirect
-	github.com/spf13/pflag v1.0.10 // indirect
+	github.com/spf13/pflag v1.0.10
 	github.com/spiffe/go-spiffe/v2 v2.6.0 // indirect
 	github.com/tidwall/gjson v1.18.0 // indirect
 	github.com/tidwall/match v1.2.0 // indirect
