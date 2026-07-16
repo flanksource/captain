@@ -36,6 +36,13 @@ const (
 	BackendCodexCmux  Backend = "codex-cmux"
 )
 
+const (
+	AnthropicProvider = BackendAnthropic
+	OpenAIProvider    = BackendOpenAI
+	GeminiProvider    = BackendGemini
+	DeepSeekProvider  = BackendDeepSeek
+)
+
 // AllBackends lists every supported backend in canonical order — the single
 // source of truth behind Valid, BackendList, and the help/error strings.
 func AllBackends() []Backend {
@@ -64,6 +71,39 @@ func (b Backend) Kind() string {
 		return "api"
 	default:
 		return "cli"
+	}
+}
+
+// Provider returns the direct API provider family that owns a runtime adapter.
+// An invalid backend returns the empty value.
+func (b Backend) Provider() Backend {
+	switch b {
+	case BackendAnthropic, BackendClaudeCLI, BackendClaudeAgent, BackendClaudeCmux:
+		return AnthropicProvider
+	case BackendOpenAI, BackendCodexCLI, BackendCodexAgent, BackendCodexCmux:
+		return OpenAIProvider
+	case BackendGemini, BackendGeminiCLI:
+		return GeminiProvider
+	case BackendDeepSeek:
+		return DeepSeekProvider
+	default:
+		return ""
+	}
+}
+
+// AgentsForProvider lists the runtime adapters that can serve a provider family.
+func AgentsForProvider(provider Backend) []Backend {
+	switch provider {
+	case AnthropicProvider:
+		return []Backend{BackendAnthropic, BackendClaudeCLI, BackendClaudeAgent, BackendClaudeCmux}
+	case OpenAIProvider:
+		return []Backend{BackendOpenAI, BackendCodexCLI, BackendCodexAgent, BackendCodexCmux}
+	case GeminiProvider:
+		return []Backend{BackendGemini, BackendGeminiCLI}
+	case DeepSeekProvider:
+		return []Backend{BackendDeepSeek}
+	default:
+		return nil
 	}
 }
 

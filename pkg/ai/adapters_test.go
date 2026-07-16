@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/credentials"
 )
 
 func TestMaskKey(t *testing.T) {
@@ -65,6 +66,32 @@ func TestResolveAdapter_APINotConfigured(t *testing.T) {
 	st := resolveAdapter(BackendOpenAI, fakeProbe(nil, nil, nil, "/home/u"))
 	if st.Authenticated || st.Ready() {
 		t.Errorf("expected unauthenticated, got %+v", st)
+	}
+}
+
+func TestOSAuthProbeUsesVaultCredential(t *testing.T) {
+	credentials.SetPathForTesting(filepath.Join(t.TempDir(), "vault"))
+	t.Cleanup(func() { credentials.SetPathForTesting("") })
+	for _, name := range api.AuthEnvVars(BackendOpenAI) {
+		t.Setenv(name, "")
+	}
+	vault, err := credentials.DefaultVault()
+	if err != nil {
+		t.Fatalf("DefaultVault: %v", err)
+	}
+	if err := vault.Set("openai", "vault-openai-secret"); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	adapters, err := ProbeAdapters(WhoamiOptions{Backend: "openai"}, OSAuthProbe())
+	if err != nil {
+		t.Fatalf("ProbeAdapters: %v", err)
+	}
+	if len(adapters) != 1 {
+		t.Fatalf("adapters = %+v", adapters)
+	}
+	if got := adapters[0]; !got.Authenticated || got.AuthMethod != "Captain vault" || got.AuthDetail != "vaul…cret" {
+		t.Fatalf("adapter = %+v, want masked Captain vault credential", got)
 	}
 }
 

@@ -2,10 +2,12 @@ package genkit
 
 import (
 	"fmt"
+	"path/filepath"
 	"testing"
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/credentials"
 
 	gkai "github.com/firebase/genkit/go/ai"
 	"github.com/stretchr/testify/assert"
@@ -115,6 +117,8 @@ func TestPricingModelID(t *testing.T) {
 }
 
 func TestNewMissingAPIKey(t *testing.T) {
+	credentials.SetPathForTesting(filepath.Join(t.TempDir(), "vault"))
+	t.Cleanup(func() { credentials.SetPathForTesting("") })
 	// Ensure no provider key leaks in from the environment.
 	for _, env := range []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "DEEPSEEK_API_KEY"} {
 		t.Setenv(env, "")

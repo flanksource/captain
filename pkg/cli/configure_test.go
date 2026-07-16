@@ -1,14 +1,183 @@
 package cli
 
 import (
+	"context"
+	"errors"
+	"net/http/httptest"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
 	"testing"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/captainconfig"
+	"github.com/flanksource/captain/pkg/credentials"
+	clickyrpc "github.com/flanksource/clicky/rpc"
+	"github.com/flanksource/clicky/text"
 )
+
+func TestRunConfigureRejectsGeneratedRPCInvocation(t *testing.T) {
+	ctx := clickyrpc.ContextWithRequest(context.Background(), httptest.NewRequest("POST", "/api/v1/configure", nil))
+	if _, err := RunConfigure(ctx, ConfigureOptions{Provider: "openai", Test: true}); err == nil {
+		t.Fatal("generated configure RPC must direct callers to the guarded provider-token endpoints")
+	}
+}
+
+func TestRunProviderConfigureTestsBeforeSaving(t *testing.T) {
+	credentials.SetPathForTesting(filepath.Join(t.TempDir(), "vault"))
+	t.Cleanup(func() { credentials.SetPathForTesting("") })
+	previous := configureTokenModels
+	configureTokenModels = func(_ context.Context, backend ai.Backend, token string) ([]ai.ModelDef, error) {
+		if backend != ai.BackendOpenAI || token != "candidate-secret" {
+			t.Fatalf("validation got backend=%s token=%q", backend, token)
+		}
+		return []ai.ModelDef{{ID: "gpt-example"}}, nil
+	}
+	t.Cleanup(func() { configureTokenModels = previous })
+
+	result, err := runProviderTokenConfigure(context.Background(), ai.BackendOpenAI, ConfigureOptions{
+		Token: text.SensitiveString("candidate-secret"),
+	})
+	if err != nil {
+		t.Fatalf("runProviderConfigure: %v", err)
+	}
+	if result.Provider != "openai" || result.ModelCount != 1 || !result.Saved || result.MaskedToken != "cand…cret" {
+		t.Fatalf("result = %+v", result)
+	}
+	vault, _ := credentials.DefaultVault()
+	values, err := vault.Load()
+	if err != nil || values["openai"] != "candidate-secret" {
+		t.Fatalf("vault = %v, err=%v", values, err)
+	}
+}
+
+func TestRunProviderConfigureFailedValidationPreservesToken(t *testing.T) {
+	credentials.SetPathForTesting(filepath.Join(t.TempDir(), "vault"))
+	t.Cleanup(func() { credentials.SetPathForTesting("") })
+	vault, _ := credentials.DefaultVault()
+	if err := vault.Set("anthropic", "existing-secret"); err != nil {
+		t.Fatalf("seed vault: %v", err)
+	}
+	previous := configureTokenModels
+	configureTokenModels = func(context.Context, ai.Backend, string) ([]ai.ModelDef, error) {
+		return nil, errors.New("credential rejected")
+	}
+	t.Cleanup(func() { configureTokenModels = previous })
+
+	_, err := runProviderTokenConfigure(context.Background(), ai.BackendAnthropic, ConfigureOptions{
+		Token: text.SensitiveString("invalid-secret"),
+	})
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	values, loadErr := vault.Load()
+	if loadErr != nil || values["anthropic"] != "existing-secret" {
+		t.Fatalf("vault = %v, err=%v", values, loadErr)
+	}
+}
+
+func TestRunProviderConfigureTestCurrentDoesNotWrite(t *testing.T) {
+	credentials.SetPathForTesting(filepath.Join(t.TempDir(), "vault"))
+	t.Cleanup(func() { credentials.SetPathForTesting("") })
+	t.Setenv("DEEPSEEK_API_KEY", "environment-secret")
+	previous := configureTokenModels
+	configureTokenModels = func(_ context.Context, backend ai.Backend, token string) ([]ai.ModelDef, error) {
+		if backend != ai.BackendDeepSeek || token != "environment-secret" {
+			t.Fatalf("validation got backend=%s token=%q", backend, token)
+		}
+		return []ai.ModelDef{{ID: "deepseek-example"}}, nil
+	}
+	t.Cleanup(func() { configureTokenModels = previous })
+
+	result, err := runProviderTokenConfigure(context.Background(), ai.BackendDeepSeek, ConfigureOptions{Test: true})
+	if err != nil {
+		t.Fatalf("runProviderConfigure: %v", err)
+	}
+	if result.Saved || result.Source != credentials.SourceEnvironment {
+		t.Fatalf("result = %+v", result)
+	}
+	vault, _ := credentials.DefaultVault()
+	values, err := vault.Load()
+	if err != nil || len(values) != 0 {
+		t.Fatalf("test-only run wrote vault: %v, err=%v", values, err)
+	}
+}
+
+func TestRunProviderDefaultsConfigureSavesPartialDefaultsAndActiveProvider(t *testing.T) {
+	captainconfig.SetPathForTesting(filepath.Join(t.TempDir(), ".captain.yaml"))
+	t.Cleanup(func() { captainconfig.SetPathForTesting("") })
+	if err := captainconfig.Save(captainconfig.Config{AI: captainconfig.AIDefaults{
+		DefaultProvider: "anthropic",
+		Providers: map[string]captainconfig.ProviderDefaults{
+			"anthropic": {Agent: "claude-agent", Model: "claude-existing", ReasoningEffort: "low"},
+			"openai":    {Agent: "openai", Model: "gpt-existing", ReasoningEffort: "medium"},
+		},
+	}}); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+	previous := configureDefaultsModels
+	configureDefaultsModels = func(_ context.Context, agent api.Backend) ([]ai.ModelDef, error) {
+		if agent != api.BackendCodexAgent {
+			t.Fatalf("agent = %s", agent)
+		}
+		return []ai.ModelDef{{ID: "gpt-5.6-sol"}}, nil
+	}
+	t.Cleanup(func() { configureDefaultsModels = previous })
+
+	result, err := runProviderDefaultsConfigure(context.Background(), api.OpenAIProvider, ConfigureOptions{
+		Agent: "codex-agent", Active: true,
+	})
+	if err != nil {
+		t.Fatalf("runProviderDefaultsConfigure: %v", err)
+	}
+	if result.Agent != "codex-agent" || result.Model != "gpt-5.6-sol" || !result.Active {
+		t.Fatalf("result = %+v", result)
+	}
+	got, _, err := captainconfig.Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if got.AI.DefaultProvider != "openai" || got.AI.Providers["openai"].Agent != "codex-agent" || got.AI.Providers["anthropic"].Model != "claude-existing" {
+		t.Fatalf("saved config = %+v", got.AI)
+	}
+}
+
+func TestRunProviderDefaultsConfigureDefaultEffortClearsSavedEffort(t *testing.T) {
+	captainconfig.SetPathForTesting(filepath.Join(t.TempDir(), ".captain.yaml"))
+	t.Cleanup(func() { captainconfig.SetPathForTesting("") })
+	if err := captainconfig.Save(captainconfig.Config{AI: captainconfig.AIDefaults{
+		Providers: map[string]captainconfig.ProviderDefaults{
+			"openai": {Agent: "codex-agent", Model: "gpt-5.6-sol", ReasoningEffort: "high"},
+		},
+	}}); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+	previous := configureDefaultsModels
+	configureDefaultsModels = func(context.Context, api.Backend) ([]ai.ModelDef, error) {
+		return []ai.ModelDef{{ID: "gpt-5.6-sol"}}, nil
+	}
+	t.Cleanup(func() { configureDefaultsModels = previous })
+
+	result, err := runProviderDefaultsConfigure(context.Background(), api.OpenAIProvider, ConfigureOptions{Effort: "default"})
+	if err != nil {
+		t.Fatalf("runProviderDefaultsConfigure: %v", err)
+	}
+	got, _, loadErr := captainconfig.Load()
+	if loadErr != nil || result.Effort != "" || got.AI.Providers["openai"].ReasoningEffort != "" {
+		t.Fatalf("result=%+v config=%+v err=%v", result, got.AI, loadErr)
+	}
+}
+
+func TestRunProviderConfigureRejectsCredentialAndDefaultFlagsTogether(t *testing.T) {
+	_, err := runProviderConfigure(context.Background(), ConfigureOptions{
+		Provider: "openai", Model: "gpt-5.6", Token: text.SensitiveString("candidate-secret"),
+	})
+	if err == nil || !strings.Contains(err.Error(), "cannot be combined") {
+		t.Fatalf("error = %v", err)
+	}
+}
 
 func TestBuildConfigFromForm_TogglesInvert(t *testing.T) {
 	in := formInputs{
@@ -23,19 +192,20 @@ func TestBuildConfigFromForm_TogglesInvert(t *testing.T) {
 	got := buildConfigFromForm(in)
 	want := captainconfig.Config{
 		AI: captainconfig.AIDefaults{
-			Backend:         "anthropic",
-			Model:           "claude-sonnet-4-6",
-			ReasoningEffort: "medium",
-			BudgetUSD:       1.5,
-			MaxTokens:       8192,
-			Timeout:         "180s",
-			NoCache:         false,
-			NoMCP:           false,
-			NoHooks:         false,
-			NoSkills:        true,
-			NoUser:          true,
-			NoProject:       true,
-			NoMemory:        true,
+			DefaultProvider: "anthropic",
+			Providers: map[string]captainconfig.ProviderDefaults{
+				"anthropic": {Agent: "anthropic", Model: "claude-sonnet-4-6", ReasoningEffort: "medium"},
+			},
+			BudgetUSD: 1.5,
+			MaxTokens: 8192,
+			Timeout:   "180s",
+			NoCache:   false,
+			NoMCP:     false,
+			NoHooks:   false,
+			NoSkills:  true,
+			NoUser:    true,
+			NoProject: true,
+			NoMemory:  true,
 		},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -104,6 +274,8 @@ func TestModelOptionsFor_NoKeyShowsErrorRow(t *testing.T) {
 	// sentinel option carrying the error so the user can fix their environment
 	// without leaving the wizard. CLI/agent backends are covered separately —
 	// they list from the catalog and never require a key.
+	credentials.SetPathForTesting(filepath.Join(t.TempDir(), "vault"))
+	t.Cleanup(func() { credentials.SetPathForTesting("") })
 	t.Setenv("OPENAI_API_KEY", "")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("GEMINI_API_KEY", "")

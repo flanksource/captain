@@ -69,15 +69,17 @@ session.
 With --dev, Captain also starts the Vite dev server from pkg/cli/webapp and
 proxies /api back to this Go process.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := opts.validate(); err != nil {
+			runOpts := opts
+			runOpts.Port = effectiveServePort(runOpts.Dev, cmd.Flags().Changed("port"), runOpts.Port)
+			if err := runOpts.validate(); err != nil {
 				return err
 			}
-			return RunServe(cmd.Context(), cmd.Root(), opts, version, cmd.OutOrStdout(), cmd.ErrOrStderr())
+			return RunServe(cmd.Context(), cmd.Root(), runOpts, version, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 
 	cmd.Flags().StringVar(&opts.Host, "host", opts.Host, "Host to bind the API server to")
-	cmd.Flags().IntVarP(&opts.Port, "port", "p", opts.Port, "Port to bind the API server to")
+	cmd.Flags().IntVarP(&opts.Port, "port", "p", opts.Port, "Port to bind the API server to (random when --dev is set)")
 	cmd.Flags().BoolVar(&opts.Dev, "dev", false, "Launch the Vite dev server with /api proxied to Captain")
 	cmd.Flags().IntVar(&opts.UIPort, "ui-port", opts.UIPort, "Port for the Vite dev server when --dev is set")
 	cmd.Flags().BoolVar(&opts.Open, "open", false, "Open the web UI in the default browser")
@@ -85,25 +87,6 @@ proxies /api back to this Go process.`,
 	cmd.Flags().StringArrayVar(&opts.PromptDirs, "prompt-dir", nil, "Additional local directory containing .prompt files (repeatable)")
 
 	return cmd
-}
-
-func (o ServeOptions) validate() error {
-	if strings.TrimSpace(o.Host) == "" {
-		return fmt.Errorf("host cannot be empty")
-	}
-	if o.Port < 1 || o.Port > 65535 {
-		return fmt.Errorf("invalid --port %d", o.Port)
-	}
-	if o.Dev && (o.UIPort < 1 || o.UIPort > 65535) {
-		return fmt.Errorf("invalid --ui-port %d", o.UIPort)
-	}
-	if strings.TrimSpace(o.ThreadsFile) == "" {
-		return fmt.Errorf("threads file cannot be empty")
-	}
-	if err := ValidatePromptDirs(o.PromptDirs); err != nil {
-		return err
-	}
-	return nil
 }
 
 func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, version string, stdout, stderr io.Writer) error {
@@ -126,6 +109,11 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	if err != nil {
 		return err
 	}
+	listener, addr, servePort, err := listenCaptainServer(opts.Host, opts.Port)
+	if err != nil {
+		return err
+	}
+	defer listener.Close()
 	openAPIConfig := &rpc.OpenAPIConfig{
 		Title:       "Captain",
 		Description: "Captain command and agent launcher API.",
@@ -133,7 +121,7 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	}
 	serveConfig := &rpc.ServeConfig{
 		Host:        opts.Host,
-		Port:        opts.Port,
+		Port:        servePort,
 		Title:       openAPIConfig.Title,
 		Description: openAPIConfig.Description,
 		Version:     openAPIConfig.Version,
@@ -150,6 +138,8 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 		return err
 	}
 	addCaptainPromptRunPaths(openAPISpec)
+	addCaptainProviderTokenPaths(openAPISpec)
+	addCaptainProviderDefaultsPaths(openAPISpec)
 	chat := aichat.NewServer(aichat.Options{
 		RootCmd: rootCmd,
 		System: "You are Captain's coding-agent launcher assistant. Use Captain and Clicky tools when useful, " +
@@ -184,6 +174,8 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	mux.HandleFunc("POST /api/captain/hooks/{provider}", handleMonitorHookEvent())
 	mux.HandleFunc("GET /api/captain/ai/permissions/catalog", handlePermissionCatalog(cwd))
 	mux.HandleFunc("GET /api/captain/ai/prompt/schema", handlePromptSchema())
+	registerProviderTokenHandlers(mux)
+	registerProviderDefaultsHandlers(mux)
 	mux.HandleFunc("GET /api/captain/secrets/resources", handleSecretResources())
 	mux.HandleFunc("GET /api/captain/secrets/preview", handleSecretPreview())
 	mux.HandleFunc("POST /api/attachments", handleAttachmentUpload(attachmentStore))
@@ -208,7 +200,6 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	}
 	mux.Handle("/", uiHandler)
 
-	addr := fmt.Sprintf("%s:%d", opts.Host, opts.Port)
 	// Export the serve URL so every captain-launched agent (and the hook
 	// receiver subprocesses its sessions spawn) delivers hook events to this
 	// instance even off the default port.
@@ -226,7 +217,7 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	db, err := captainDB(ctx)
+	db, err := captainServeDB(ctx)
 	if err != nil {
 		return err
 	}
@@ -261,14 +252,14 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 		fmt.Fprintf(stdout, "  UI:           http://%s/\n", addr)
 		fmt.Fprintf(stdout, "  OpenAPI JSON: http://%s/api/openapi.json\n", addr)
 		fmt.Fprintf(stdout, "  AI Chat:      http://%s/api/chat\n", addr)
-		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := httpSrv.Serve(listener); err != nil && err != http.ErrServerClosed {
 			errCh <- err
 		}
 	}()
 
 	var vite *exec.Cmd
 	if opts.Dev {
-		vite, err = startCaptainViteDevServer(ctx, opts.Host, opts.Port, opts.UIPort, stdout, stderr)
+		vite, err = startCaptainViteDevServer(ctx, opts.Host, servePort, opts.UIPort, stdout, stderr)
 		if err != nil {
 			_ = httpSrv.Close()
 			return err

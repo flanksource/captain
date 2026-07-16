@@ -55,18 +55,21 @@ export function useSessionChat(options: UseSessionChatOptions) {
     () => mergeSessionMessages(stream.messages, optimistic),
     [optimistic, stream.messages],
   );
+  const resolvedChatState = resolveChatState(
+    stream.chatState,
+    options.initialState,
+  );
   const capabilities =
-    stream.chatState?.capabilities ??
+    resolvedChatState?.capabilities ??
     stream.run?.capabilities ??
     options.initialCapabilities ??
     EMPTY_CAPABILITIES;
-  const liveChatState = stream.chatState ??
-    options.initialState ?? {
-      runId: activeRunID ?? "",
-      status: activeRunID ? "starting" : "idle",
-      turn: 0,
-      capabilities,
-    };
+  const liveChatState = resolvedChatState ?? {
+    runId: activeRunID ?? "",
+    status: activeRunID ? "starting" : "idle",
+    turn: 0,
+    capabilities,
+  };
   const chatState =
     stream.status === "done" || stream.status === "error"
       ? { ...liveChatState, status: "idle" as const, queued: [] }
@@ -162,6 +165,25 @@ export function useSessionChat(options: UseSessionChatOptions) {
     interrupt,
     stop,
   };
+}
+
+export function resolveChatState(
+  streamState: ChatStateFrame | undefined,
+  polledState: ChatStateFrame | undefined,
+) {
+  if (!streamState) return polledState;
+  if (!polledState) return streamState;
+  if (streamState.runId !== polledState.runId) return streamState;
+  if (streamState.turn !== polledState.turn) {
+    return streamState.turn > polledState.turn ? streamState : polledState;
+  }
+  if (
+    polledState.status === "idle" &&
+    (streamState.status === "starting" || streamState.status === "running")
+  ) {
+    return polledState;
+  }
+  return streamState;
 }
 
 export function mergeSessionMessages(

@@ -6,9 +6,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/flanksource/captain/pkg/credentials"
 )
 
 // withTestServer redirects http.DefaultClient.Do to the given test server by
@@ -27,8 +30,7 @@ type rewriteTransport struct {
 }
 
 func (r rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	// Strip scheme+host but preserve path AND query so the Gemini fetcher's
-	// `?key=…` survives the rewrite.
+	// Strip scheme+host while preserving request metadata for provider checks.
 	target := r.base + req.URL.Path
 	if req.URL.RawQuery != "" {
 		target += "?" + req.URL.RawQuery
@@ -183,6 +185,8 @@ func TestFetchDeepSeekModels_EmptyKey(t *testing.T) {
 }
 
 func TestListModels_ErrorsOnMissingKey(t *testing.T) {
+	credentials.SetPathForTesting(filepath.Join(t.TempDir(), "vault"))
+	t.Cleanup(func() { credentials.SetPathForTesting("") })
 	t.Setenv("OPENAI_API_KEY", "")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("GEMINI_API_KEY", "")
@@ -255,9 +259,11 @@ func TestListModels_SortsAlphabetically(t *testing.T) {
 
 func TestFetchGeminiModels_StripsModelsPrefix(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Gemini sends the key as a query param, not a header.
-		if got := r.URL.Query().Get("key"); got != "g-test" {
-			t.Errorf("key= = %q", got)
+		if got := r.Header.Get("x-goog-api-key"); got != "g-test" {
+			t.Errorf("x-goog-api-key = %q", got)
+		}
+		if r.URL.RawQuery != "" {
+			t.Errorf("API key must not be present in URL query: %q", r.URL.RawQuery)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"models": []map[string]any{

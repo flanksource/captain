@@ -133,7 +133,7 @@ Supported backends are inferred from code and dependencies, including:
 ### 6. Adapter status and configuration
 
 - `whoami` — lists every AI adapter (API providers and CLI agents), how each is authenticated, whether its binary is installed, and the models it exposes
-- `configure` — interactive wizard to set default backend, model, reasoning effort, budget, timeout, and feature toggles (caching, MCP, hooks, skills, user/project settings, memory) saved to `~/.captain.yaml`
+- `configure` — configure per-provider agent, model, and effort defaults in `~/.captain.yaml`, or validate and save direct-provider API tokens in `~/.config/captain/vault`
 
 ### 7. Web UI and MCP server
 
@@ -499,9 +499,18 @@ Lists every AI adapter (API providers and CLI agents: `anthropic`, `openai`, `ge
 
 ```bash
 captain configure
+captain configure openai
+captain configure openai --test
+captain configure openai --agent codex-agent --model gpt-5.6-sol --effort high --active
 ```
 
-Interactive wizard that writes `~/.captain.yaml` with defaults for backend, model, reasoning effort, budget, timeout, and feature toggles (caching, MCP, hooks, skills, user/project settings, memory). These defaults apply to `captain ai prompt`, `captain ai agent`, `captain ai test`, and other AI commands.
+The providerless interactive wizard writes `~/.captain.yaml` with defaults for backend, model, reasoning effort, budget, timeout, and feature toggles (caching, MCP, hooks, skills, user/project settings, memory).
+
+With a provider and any of `--agent`, `--model`, `--effort`, or `--active`, `configure` saves provider-specific runtime defaults in `~/.captain.yaml`. `--effort default` clears an explicit effort so the selected model chooses its own default. The active provider supplies the agent and model for completely flagless runs. Explicit command flags still win, and each fallback model independently inherits defaults from its own provider.
+
+Passing `anthropic`, `openai`, `gemini`, or `deepseek` securely prompts for an API token, validates it with the provider's model-list endpoint, and saves it to `~/.config/captain/vault` only when validation succeeds. `--test` validates the currently effective token without writing. Automation may use `--token`, but interactive input is preferred because command-line arguments can be retained in shell history or process listings. Explicit runtime keys take precedence over the vault, and the vault takes precedence over environment variables.
+
+The `/whoami` page in `captain serve` exposes the same token operations plus agent, model, effort, and active-provider controls. Stored tokens are never displayed; only a masked identifier and credential source are returned.
 
 ### Serve
 
@@ -514,7 +523,7 @@ task www:dev
 task www:build
 ```
 
-Starts an HTTP API and embedded web UI. The UI launches `captain ai agent` operations and opens follow-up chat windows that resume the returned session. `--dev` starts the Vite dev server from `pkg/cli/webapp` and proxies `/api` back to the Go process. Use `task www:dev` for the local Go-backed Vite proxy with the browser opened, and `task www:build` to rebuild the embedded web UI assets.
+Starts an HTTP API and embedded web UI. The UI launches `captain ai agent` operations and opens follow-up chat windows that resume the returned session. `--dev` starts the Vite dev server from `pkg/cli/webapp`, binds the Go API to a random free port, and proxies `/api` to it. Pass `--port` to use a specific API port in development. Use `task www:dev` for the local Go-backed Vite proxy with the browser opened, and `task www:build` to rebuild the embedded web UI assets.
 
 ### MCP server
 
@@ -650,5 +659,4 @@ Start the web UI:
 - It is both an analysis tool and an execution/control tool.
 - The container/sandbox functionality is a major part of the project, not a side feature.
 - Many commands assume the presence of Claude local state under the user’s Claude config/projects directories.
-- Configuration is persisted to `~/.captain.yaml` via `captain configure`.
-
+- Runtime defaults are persisted to `~/.captain.yaml`; validated provider tokens are persisted separately to the private `~/.config/captain/vault` file.

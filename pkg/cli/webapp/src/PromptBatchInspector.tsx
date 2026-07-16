@@ -14,7 +14,11 @@ import {
 } from "./hooks/usePromptRunStream";
 import { useSessionChat, mergeSessionMessages } from "./hooks/useSessionChat";
 import { fetchSession } from "./sessionData";
-import { batchChatTargets, batchSessionCollection } from "./sessionCollection";
+import {
+  batchChatTargetState,
+  batchChatTargets,
+  batchSessionCollection,
+} from "./sessionCollection";
 
 export function PromptBatchInspector({
   handle,
@@ -67,10 +71,12 @@ export function PromptBatchInspector({
   const [targetID, setTargetID] = useState(targets[0]?.sessionId);
   const target =
     targets.find((candidate) => candidate.sessionId === targetID) ?? targets[0];
+  const targetState = batchChatTargetState(query.data, target);
   const chat = useSessionChat({
     initialRunID: target?.runId,
     sessionID: target?.sessionId,
-    initialCapabilities: target?.capabilities,
+    initialCapabilities: targetState?.capabilities ?? target?.capabilities,
+    initialState: targetState,
     onTerminal: async () => {
       await query.refetch();
     },
@@ -125,22 +131,19 @@ export function PromptBatchInspector({
                   error={chat.actionError}
                   onSubmit={chat.send}
                   onInterrupt={chat.interrupt}
-                  toolbar={
-                    <label className="flex items-center gap-density-2 text-xs text-muted-foreground">
-                      <span className="shrink-0">Chat target</span>
+                  inputAccessory={
+                    <div className="w-40 shrink-0" title="Chat target">
                       <Select
                         aria-label="Chat target"
                         value={target.sessionId}
                         options={targets.map((candidate) => ({
                           value: candidate.sessionId,
-                          label:
-                            candidate.selector ||
-                            candidate.model ||
-                            candidate.sessionId,
+                          label: chatTargetLabel(candidate),
                         }))}
+                        className="h-8 truncate text-xs"
                         onChange={(event) => setTargetID(event.target.value)}
                       />
-                    </label>
+                    </div>
                   }
                 />
               ),
@@ -149,6 +152,11 @@ export function PromptBatchInspector({
       />
     </div>
   );
+}
+
+function chatTargetLabel(target: PromptBatchRunHandle) {
+  const model = target.model || target.selector || target.sessionId;
+  return target.effort ? `${model}:${target.effort}` : model;
 }
 
 const BatchRunSubscription = memo(function BatchRunSubscription({

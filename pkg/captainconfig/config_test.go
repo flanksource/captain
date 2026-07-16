@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -34,17 +35,18 @@ func TestSaveLoad_RoundTrip(t *testing.T) {
 	path := withTempPath(t)
 	want := Config{
 		AI: AIDefaults{
-			Backend:         "anthropic",
-			Model:           "claude-sonnet-4-6",
-			ReasoningEffort: "medium",
-			BudgetUSD:       2.5,
-			MaxTokens:       8192,
-			Temperature:     0.2,
-			Timeout:         "180s",
-			NoCache:         true,
-			NoMCP:           true,
-			NoHooks:         false,
-			NoMemory:        true,
+			DefaultProvider: "anthropic",
+			Providers: map[string]ProviderDefaults{
+				"anthropic": {Agent: "claude-agent", Model: "claude-sonnet-4-6", ReasoningEffort: "medium"},
+			},
+			BudgetUSD:   2.5,
+			MaxTokens:   8192,
+			Temperature: 0.2,
+			Timeout:     "180s",
+			NoCache:     true,
+			NoMCP:       true,
+			NoHooks:     false,
+			NoMemory:    true,
 		},
 		Prompts: PromptDefaults{
 			Dirs: []string{"/repo/prompts"},
@@ -79,6 +81,81 @@ func TestSaveLoad_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestLegacyDefaultsProjectIntoActiveProviderAndMigrateOnSave(t *testing.T) {
+	path := withTempPath(t)
+	legacy := []byte("ai:\n  backend: codex-agent\n  model: gpt-5.6-sol\n  reasoningEffort: high\n  maxTokens: 4096\n")
+	if err := os.WriteFile(path, legacy, 0o644); err != nil {
+		t.Fatalf("seed legacy config: %v", err)
+	}
+	cfg, _, err := Load()
+	if err != nil {
+		t.Fatalf("Load() legacy config: %v", err)
+	}
+	if got := cfg.AI.ActiveProvider(); got != "openai" {
+		t.Fatalf("ActiveProvider() = %q, want openai", got)
+	}
+	if got := cfg.AI.Provider("openai"); !reflect.DeepEqual(got, ProviderDefaults{
+		Agent: "codex-agent", Model: "gpt-5.6-sol", ReasoningEffort: "high",
+	}) {
+		t.Fatalf("Provider(openai) = %+v", got)
+	}
+	if err := Save(cfg); err != nil {
+		t.Fatalf("Save() migrated config: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read migrated config: %v", err)
+	}
+	text := string(data)
+	if strings.Contains(text, "backend:") || strings.Contains(text, "\n  model:") || !strings.Contains(text, "defaultProvider: openai") {
+		t.Fatalf("legacy fields were not migrated:\n%s", text)
+	}
+}
+
+func TestLegacyDefaultsStayWithTheirProviderWhenDefaultProviderChanges(t *testing.T) {
+	cfg := Config{AI: AIDefaults{
+		DefaultProvider: "gemini",
+		Backend:         "codex-agent",
+		Model:           "gpt-5.6-sol",
+		ReasoningEffort: "high",
+	}}
+
+	normalized := normalize(cfg)
+	if got := normalized.AI.Providers["openai"]; got.Agent != "codex-agent" || got.Model != "gpt-5.6-sol" || got.ReasoningEffort != "high" {
+		t.Fatalf("openai legacy defaults = %+v", got)
+	}
+	if got := normalized.AI.Providers["gemini"]; got != (ProviderDefaults{}) {
+		t.Fatalf("gemini inherited openai legacy defaults: %+v", got)
+	}
+	if normalized.AI.DefaultProvider != "gemini" {
+		t.Fatalf("default provider = %q", normalized.AI.DefaultProvider)
+	}
+}
+
+func TestUpdatePreservesUnrelatedConfiguration(t *testing.T) {
+	withTempPath(t)
+	wantPrompt := PromptDefaults{Dirs: []string{"/repo/prompts"}}
+	if err := Save(Config{Prompts: wantPrompt}); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+	if err := Update(func(cfg *Config) error {
+		cfg.AI.DefaultProvider = "gemini"
+		cfg.AI.Providers = map[string]ProviderDefaults{
+			"gemini": {Agent: "gemini-cli", Model: "gemini-3.5-flash"},
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("Update(): %v", err)
+	}
+	got, _, err := Load()
+	if err != nil {
+		t.Fatalf("Load(): %v", err)
+	}
+	if !reflect.DeepEqual(got.Prompts, wantPrompt) || got.AI.DefaultProvider != "gemini" {
+		t.Fatalf("updated config = %+v", got)
+	}
+}
+
 func TestLoad_MalformedYAMLReturnsError(t *testing.T) {
 	path := withTempPath(t)
 	if err := os.WriteFile(path, []byte("ai: [not, a, mapping"), 0o644); err != nil {
@@ -101,7 +178,7 @@ func TestSave_AtomicLeavesNoTempFile(t *testing.T) {
 	}
 	for _, e := range entries {
 		name := e.Name()
-		if name == ".captain.yaml" {
+		if name == ".captain.yaml" || name == ".captain.yaml.lock" {
 			continue
 		}
 		t.Errorf("found stray file alongside config: %s", name)

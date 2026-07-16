@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { PromptBatchHandle } from "./hooks/usePromptRunStream";
-import { batchChatTargets, batchSessionCollection } from "./sessionCollection";
+import {
+  batchChatTargetState,
+  batchChatTargets,
+  batchSessionCollection,
+} from "./sessionCollection";
 
 const HANDLE: PromptBatchHandle = {
   batchId: "batch-1",
@@ -49,5 +53,43 @@ describe("batch session collection", () => {
     expect(batchChatTargets(HANDLE).map((run) => run.sessionId)).toEqual([
       "session-1",
     ]);
+  });
+
+  it("hydrates a chat target from its polled child session state", () => {
+    const state = {
+      runId: "run-1",
+      status: "idle" as const,
+      turn: 1,
+      capabilities: {
+        interrupt: true,
+        steer: false,
+        followUp: true,
+        resume: true,
+      },
+    };
+
+    expect(
+      batchChatTargetState(
+        {
+          rootSessionId: "batch-1",
+          total: 2,
+          sessions: [
+            {
+              captainId: "session-1",
+              detailAvailable: false,
+              summary: {
+                key: "session-1",
+                id: "provider-session-1",
+                source: "codex",
+                toolCalls: 0,
+                messages: 0,
+              },
+              chatState: state,
+            },
+          ],
+        },
+        HANDLE.runs[0]!,
+      ),
+    ).toEqual(state);
   });
 });

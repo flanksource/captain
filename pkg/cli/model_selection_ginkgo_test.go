@@ -55,7 +55,7 @@ var _ = Describe("CLI model selection", func() {
 		cfg := ai.Config{Model: req.Model}
 
 		overlayRuntimeSpec(&req, &cfg, api.Spec{Model: api.Model{Name: "gemini-3.5-flash"}})
-		applyPromptDefaults(&req, &cfg)
+		Expect(applyPromptDefaults(&req, &cfg)).To(Succeed())
 		resolved, err := ai.ResolveModelSelectors(cfg.Model)
 
 		Expect(err).NotTo(HaveOccurred())

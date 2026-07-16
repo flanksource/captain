@@ -24,7 +24,7 @@ var resolveModelRows = ResolveModels
 // independent of whether the parent provider's API key happens to be present.
 // The resolver is Captain's cached model path, so repeated probes reuse a fresh
 // cache instead of hitting providers every time.
-func fetchAPIModels(backends []Backend, getenv func(string) string) map[Backend]modelFetch {
+func fetchAPIModels(backends []Backend, probe AuthProbe) map[Backend]modelFetch {
 	apis := map[Backend]bool{}
 	for _, b := range backends {
 		if b.Kind() != "api" {
@@ -34,7 +34,7 @@ func fetchAPIModels(backends []Backend, getenv func(string) string) map[Backend]
 		if source == "" {
 			continue
 		}
-		if firstEnv(AuthEnvVars(source), getenv) != "" {
+		if effectiveAPIKey(source, probe) != "" {
 			apis[source] = true
 		}
 	}
@@ -113,7 +113,7 @@ func liveModelDefs(rows []ResolvedModel, backend Backend) []ModelDef {
 // a single adapter. Direct API backends use live provider rows. Local adapters
 // use the catalog of the runtime they execute: Codex's installed catalog when
 // available, otherwise Captain's backend-specific registry projection.
-func applyModels(st *AdapterStatus, b Backend, cache map[Backend]modelFetch, codex modelFetch, getenv func(string) string) {
+func applyModels(st *AdapterStatus, b Backend, cache map[Backend]modelFetch, codex modelFetch, probe AuthProbe) {
 	if isCodexBackend(b) {
 		if codex.err == nil && len(codex.models) > 0 {
 			models := make([]ModelDef, len(codex.models))
@@ -139,8 +139,8 @@ func applyModels(st *AdapterStatus, b Backend, cache map[Backend]modelFetch, cod
 	}
 
 	envVars := AuthEnvVars(source)
-	if firstEnv(envVars, getenv) == "" {
-		st.ModelError = "set " + strings.Join(envVars, " or ") + " to list models"
+	if effectiveAPIKey(source, probe) == "" {
+		st.ModelError = "configure a Captain vault token or set " + strings.Join(envVars, " or ") + " to list models"
 		return
 	}
 
@@ -153,6 +153,13 @@ func applyModels(st *AdapterStatus, b Backend, cache map[Backend]modelFetch, cod
 		return
 	}
 	setModels(st, modelsForAdapterBackend(b, fetch.models), false)
+}
+
+func effectiveAPIKey(backend Backend, probe AuthProbe) string {
+	if probe.APICredentials != nil {
+		return probe.APICredentials[backend].Token
+	}
+	return firstEnv(AuthEnvVars(backend), probe.Getenv)
 }
 
 func setRegistryModels(st *AdapterStatus, backend Backend, discoveryErr error) {

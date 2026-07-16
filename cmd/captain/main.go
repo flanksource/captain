@@ -120,11 +120,12 @@ func main() {
 
 	whoamiCmd := clicky.AddNamedCommand("whoami", rootCmd, cli.WhoamiOptions{}, cli.RunWhoami)
 	whoamiCmd.Short = "List agent adapters, auth methods, and available models"
-	whoamiCmd.Long = "Show every AI agent adapter (API providers and CLI agents), how each is authenticated (API-key env var or CLI login), whether its CLI binary is installed, and the models each provider exposes via a live API call. Pass --models=false to skip the network probes, or --backend to inspect a single adapter."
+	whoamiCmd.Long = "Show every AI agent adapter (API providers and CLI agents), how each is authenticated (Captain vault, API-key env var, or CLI login), whether its CLI binary is installed, and the models each provider exposes via a live API call. Pass --models=false to skip the network probes, or --backend to inspect a single adapter."
 
-	configureCmd := clicky.AddNamedCommand("configure", rootCmd, cli.ConfigureOptions{}, cli.RunConfigure)
-	configureCmd.Short = "Interactive wizard to set default model, backend, budget, and safety toggles"
-	configureCmd.Long = "Run an interactive form to configure ~/.captain.yaml. These defaults are applied to `captain prompt run`, `captain ai test`, and other AI commands when corresponding flags are not passed."
+	configureCmd := clicky.AddNamedCommandWithContext("configure", rootCmd, cli.ConfigureOptions{}, cli.RunConfigure)
+	configureCmd.Use = "configure [provider]"
+	configureCmd.Short = "Configure provider defaults or validate and save an API token"
+	configureCmd.Long = "Run without a provider for the interactive ~/.captain.yaml wizard. Run `captain configure <provider>` to securely prompt for, validate, and save an API token in ~/.config/captain/vault, or pass --agent, --model, --effort, and --active to save provider-specific runtime defaults. Token flags and runtime-default flags cannot be combined. Automation may pass the hidden --token flag, but command-line arguments can be retained in shell history or process listings. Use --test to validate the effective token without saving."
 
 	rootCmd.AddCommand(cli.NewServeCommand(version))
 

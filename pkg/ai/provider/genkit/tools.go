@@ -35,14 +35,14 @@ func (p *Provider) toolOptions(emit func(ai.Event)) []gkai.GenerateOption {
 }
 
 // genkitTool wraps one api.ToolDefinition as an ephemeral genkit tool. Ephemeral
-// (NewToolWithInputSchema, passed via WithTools) rather than genkit.DefineTool:
+// (NewTool, passed via WithTools) rather than genkit.DefineTool:
 // the genkit instance is cached and shared per (backend, apiKey), so registering
 // tools globally would leak them across unrelated requests.
 func (p *Provider) genkitTool(def api.ToolDefinition, emit func(ai.Event)) gkai.ToolRef {
 	handler := func(tc *gkai.ToolContext, input any) (any, error) {
 		return p.runTool(tc.Context, def, input, emit)
 	}
-	return gkai.NewToolWithInputSchema[any](def.Name, def.Description, def.InputSchema, handler)
+	return gkai.NewTool(def.Name, def.Description, handler, gkai.WithInputSchema(def.InputSchema))
 }
 
 // runTool gates a caller tool through Config.CanUseTool (when it needs approval),

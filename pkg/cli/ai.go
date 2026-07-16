@@ -66,10 +66,7 @@ func (o AIProviderOptions) ToConfig() (ai.Config, error) {
 		return ai.Config{}, err
 	}
 
-	m := selectModelIdentity(
-		api.Model{Name: saved.Model, Backend: api.Backend(saved.Backend)},
-		api.Model{Name: o.Model, Backend: api.Backend(o.Backend)},
-	)
+	m := api.Model{Name: o.Model, Backend: api.Backend(o.Backend)}
 	if m.Backend != "" && !m.Backend.Valid() {
 		return ai.Config{}, fmt.Errorf("invalid --backend %q (valid: %s)", m.Backend, ai.BackendList())
 	}
@@ -78,6 +75,10 @@ func (o AIProviderOptions) ToConfig() (ai.Config, error) {
 	}
 
 	m.Fallbacks = fallbackModelsFromFlags(o.Fallback)
+	m, err = applyProviderDefaults(m, saved)
+	if err != nil {
+		return ai.Config{}, err
+	}
 	m, err = ai.ResolveModelSelectors(m)
 	if err != nil {
 		return ai.Config{}, err
@@ -237,9 +238,6 @@ func (o AIRuntimeOptions) ToRequest(systemPrompt, appendSystemPrompt, userPrompt
 	}
 
 	effort := o.Effort
-	if effort == "" {
-		effort = saved.ReasoningEffort
-	}
 	if err := api.Effort(effort).Validate(); err != nil {
 		return ai.Request{}, fmt.Errorf("invalid --effort %q: %w", effort, err)
 	}

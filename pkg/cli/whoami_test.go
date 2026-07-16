@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/captainconfig"
 )
 
 // The adapter probe and its logic tests live in pkg/ai (pkg/ai/adapters_test.go).
@@ -93,5 +95,26 @@ func TestRunWhoami_NoModelsCoversEveryBackend(t *testing.T) {
 func TestRunWhoami_RejectsUnknownBackend(t *testing.T) {
 	if _, err := RunWhoami(WhoamiOptions{Backend: "bogus", Models: false}); err == nil {
 		t.Fatal("expected error for unknown --backend")
+	}
+}
+
+func TestRunWhoamiIncludesProviderDefaults(t *testing.T) {
+	captainconfig.SetPathForTesting(filepath.Join(t.TempDir(), ".captain.yaml"))
+	t.Cleanup(func() { captainconfig.SetPathForTesting("") })
+	if err := captainconfig.Save(captainconfig.Config{AI: captainconfig.AIDefaults{
+		DefaultProvider: "openai",
+		Providers: map[string]captainconfig.ProviderDefaults{
+			"openai": {Agent: "codex-agent", Model: "gpt-5.6-sol", ReasoningEffort: "high"},
+		},
+	}}); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+	result, err := RunWhoami(WhoamiOptions{Models: false})
+	if err != nil {
+		t.Fatalf("RunWhoami: %v", err)
+	}
+	got := result.(WhoamiResult)
+	if got.DefaultProvider != "openai" || got.ProviderDefaults["openai"].Agent != "codex-agent" {
+		t.Fatalf("whoami defaults = %+v", got)
 	}
 }

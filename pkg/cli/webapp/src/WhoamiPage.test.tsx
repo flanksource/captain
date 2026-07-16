@@ -1,9 +1,18 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WhoamiPage } from "./WhoamiPage";
 
 const WHOAMI_RESULT = {
+  defaultProvider: "gemini",
+  providerDefaults: {
+    gemini: {
+      agent: "gemini-cli",
+      model: "gemini-3.5-flash",
+      effort: "high",
+      configured: true,
+    },
+  },
   adapters: [
     {
       backend: "gemini",
@@ -45,6 +54,7 @@ const WHOAMI_RESULT = {
 };
 
 afterEach(() => {
+  cleanup();
   vi.unstubAllGlobals();
 });
 
@@ -63,6 +73,10 @@ describe("WhoamiPage", () => {
     expect(screen.getByRole("heading", { name: "AI adapters" })).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "API providers" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "CLI agents" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Configure API token" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Provider defaults" })).toBeInTheDocument();
+    expect(screen.getByText("Active default")).toBeInTheDocument();
+    expect(screen.getAllByLabelText(/API token$/)).toHaveLength(1);
     expect(screen.getByText("gemini", { selector: "h3" })).toBeInTheDocument();
     expect(screen.getByText("Needs setup")).toBeInTheDocument();
     expect(
@@ -71,11 +85,11 @@ describe("WhoamiPage", () => {
     expect(screen.getByText("gemini login")).toBeInTheDocument();
     expect(screen.getByText("/home/example/.gemini/oauth_creds.json")).toBeInTheDocument();
     expect(screen.getByText("/usr/local/bin/gemini")).toBeInTheDocument();
-    expect(screen.getByText("Gemini 3.5 Flash")).toBeInTheDocument();
+    expect(screen.getByText("Gemini 3.5 Flash", { selector: "div" })).toBeInTheDocument();
     expect(screen.getByText("gemini-3.5-flash")).toBeInTheDocument();
     expect(screen.getByText("2026-05-19")).toBeInTheDocument();
     expect(screen.getByText("low / medium / high")).toBeInTheDocument();
-    expect(screen.getByText("Gemini 2.5 Pro")).toBeInTheDocument();
+    expect(screen.getByText("Gemini 2.5 Pro", { selector: "div" })).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/v1/whoami?models=true&limit=0",
       expect.objectContaining({ method: "POST", body: "{}" }),
@@ -92,7 +106,136 @@ describe("WhoamiPage", () => {
 
     expect(await screen.findByText("probe failed")).toBeInTheDocument();
   });
+
+  it("validates and saves an API token, clears it, and refreshes whoami", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(WHOAMI_RESULT))
+      .mockResolvedValueOnce(jsonResponse({
+        provider: "gemini",
+        valid: true,
+        saved: true,
+        source: "captain-vault",
+        maskedToken: "gemi…cret",
+        modelCount: 1,
+      }))
+      .mockResolvedValueOnce(jsonResponse(WHOAMI_RESULT));
+    vi.stubGlobal("fetch", fetchMock);
+    renderWhoamiPage();
+
+    const input = await screen.findByLabelText("gemini API token");
+    fireEvent.change(input, { target: { value: "gemini-provider-secret" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save & test gemini token" }));
+
+    expect(await screen.findByText("Token saved and validated against 1 model.")).toBeInTheDocument();
+    expect(input).toHaveValue("");
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/captain/ai/providers/gemini/token",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({ token: "gemini-provider-secret" }),
+      }),
+    );
+  });
+
+  it("retains a rejected token and shows the provider error", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(WHOAMI_RESULT))
+      .mockResolvedValueOnce(new Response("validate gemini credential: HTTP 401", { status: 422 }));
+    vi.stubGlobal("fetch", fetchMock);
+    renderWhoamiPage();
+
+    const input = await screen.findByLabelText("gemini API token");
+    fireEvent.change(input, { target: { value: "rejected-provider-secret" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save & test gemini token" }));
+
+    expect(await screen.findByText("validate gemini credential: HTTP 401")).toBeInTheDocument();
+    expect(input).toHaveValue("rejected-provider-secret");
+  });
+
+  it("tests the current API credential without sending a token", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(WHOAMI_RESULT))
+      .mockResolvedValueOnce(jsonResponse({
+        provider: "gemini",
+        valid: true,
+        saved: false,
+        source: "environment",
+        maskedToken: "gemi…cret",
+        modelCount: 2,
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    renderWhoamiPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Test current gemini token" }));
+
+    expect(await screen.findByText("Current token is valid for 2 models.")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/captain/ai/providers/gemini/token/test",
+      expect.objectContaining({ method: "POST", body: "{}" }),
+    );
+  });
+
+  it("saves model, effort, and agent defaults for the provider", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(WHOAMI_RESULT))
+      .mockResolvedValueOnce(jsonResponse({
+        provider: "gemini",
+        agent: "gemini-cli",
+        model: "gemini-2.5-pro",
+        effort: "",
+        active: true,
+      }))
+      .mockResolvedValueOnce(jsonResponse(WHOAMI_RESULT));
+    vi.stubGlobal("fetch", fetchMock);
+    renderWhoamiPage();
+
+    fireEvent.change(await screen.findByLabelText("gemini default model"), {
+      target: { value: "gemini-2.5-pro" },
+    });
+    fireEvent.change(screen.getByLabelText("gemini default effort"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save defaults" }));
+
+    expect(await screen.findByText("Provider defaults saved.")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/captain/ai/providers/gemini/defaults",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({ agent: "gemini-cli", model: "gemini-2.5-pro", effort: "" }),
+      }),
+    );
+  });
+
+  it("sets a provider as the active default", async () => {
+    const inactive = { ...WHOAMI_RESULT, defaultProvider: "anthropic" };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(inactive))
+      .mockResolvedValueOnce(jsonResponse({ provider: "gemini" }))
+      .mockResolvedValueOnce(jsonResponse(WHOAMI_RESULT));
+    vi.stubGlobal("fetch", fetchMock);
+    renderWhoamiPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Set as default" }));
+
+    expect(await screen.findByText("Active default")).toBeInTheDocument();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/captain/ai/default-provider",
+      expect.objectContaining({ method: "PUT", body: JSON.stringify({ provider: "gemini" }) }),
+    );
+  });
 });
+
+function jsonResponse(value: unknown) {
+  return new Response(JSON.stringify(value), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+}
 
 function renderWhoamiPage() {
   const queryClient = new QueryClient({

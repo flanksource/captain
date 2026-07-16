@@ -11,7 +11,10 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/flanksource/captain/pkg/api"
+	"golang.org/x/sys/unix"
 	"gopkg.in/yaml.v3"
 )
 
@@ -49,6 +52,11 @@ func (a AttachmentDefaults) WithDefaults() AttachmentDefaults {
 }
 
 type AIDefaults struct {
+	DefaultProvider string                      `yaml:"defaultProvider,omitempty"`
+	Providers       map[string]ProviderDefaults `yaml:"providers,omitempty"`
+
+	// Legacy global selection fields are read so existing configurations can be
+	// projected into the provider map. Save omits them after migration.
 	Backend         string  `yaml:"backend,omitempty"`
 	Model           string  `yaml:"model,omitempty"`
 	ReasoningEffort string  `yaml:"reasoningEffort,omitempty"`
@@ -63,6 +71,54 @@ type AIDefaults struct {
 	NoUser          bool    `yaml:"noUser,omitempty"`
 	NoProject       bool    `yaml:"noProject,omitempty"`
 	NoMemory        bool    `yaml:"noMemory,omitempty"`
+}
+
+type ProviderDefaults struct {
+	Agent           string `yaml:"agent,omitempty" json:"agent"`
+	Model           string `yaml:"model,omitempty" json:"model"`
+	ReasoningEffort string `yaml:"reasoningEffort,omitempty" json:"effort"`
+}
+
+func (a AIDefaults) ActiveProvider() string {
+	if provider := api.Backend(strings.TrimSpace(a.DefaultProvider)); provider != "" && provider.Provider() == provider {
+		return string(provider)
+	}
+	if provider := api.Backend(strings.TrimSpace(a.Backend)).Provider(); provider != "" {
+		return string(provider)
+	}
+	if backend, err := api.InferBackend(strings.TrimSpace(a.Model)); err == nil {
+		return string(backend.Provider())
+	}
+	return string(api.AnthropicProvider)
+}
+
+func (a AIDefaults) legacyProvider() string {
+	if provider := api.Backend(strings.TrimSpace(a.Backend)).Provider(); provider != "" {
+		return string(provider)
+	}
+	if backend, err := api.InferBackend(strings.TrimSpace(a.Model)); err == nil {
+		return string(backend.Provider())
+	}
+	return strings.TrimSpace(a.DefaultProvider)
+}
+
+func (a AIDefaults) Provider(provider string) ProviderDefaults {
+	provider = strings.TrimSpace(provider)
+	defaults := a.Providers[provider]
+	if provider != a.legacyProvider() {
+		return defaults
+	}
+	legacyAgent := api.Backend(strings.TrimSpace(a.Backend))
+	if defaults.Agent == "" && legacyAgent.Provider() == api.Backend(provider) {
+		defaults.Agent = string(legacyAgent)
+	}
+	if defaults.Model == "" {
+		defaults.Model = strings.TrimSpace(a.Model)
+	}
+	if defaults.ReasoningEffort == "" {
+		defaults.ReasoningEffort = strings.TrimSpace(a.ReasoningEffort)
+	}
+	return defaults
 }
 
 type PromptDefaults struct {
@@ -106,6 +162,10 @@ func Load() (Config, bool, error) {
 	if err != nil {
 		return Config{}, false, err
 	}
+	return load(path)
+}
+
+func load(path string) (Config, bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -128,6 +188,69 @@ func Save(cfg Config) error {
 	if err != nil {
 		return err
 	}
+	return withLock(path, func() error { return write(path, normalize(cfg)) })
+}
+
+// Update serializes a read-modify-write operation so concurrent CLI and web
+// configuration changes cannot overwrite unrelated settings.
+func Update(update func(*Config) error) error {
+	if update == nil {
+		return fmt.Errorf("config update function is required")
+	}
+	path, err := Path()
+	if err != nil {
+		return err
+	}
+	return withLock(path, func() error {
+		cfg, _, err := load(path)
+		if err != nil {
+			return err
+		}
+		if err := update(&cfg); err != nil {
+			return err
+		}
+		return write(path, normalize(cfg))
+	})
+}
+
+func normalize(cfg Config) Config {
+	a := &cfg.AI
+	hasLegacy := a.Backend != "" || a.Model != "" || a.ReasoningEffort != ""
+	if hasLegacy {
+		provider := a.legacyProvider()
+		if provider == "" {
+			provider = a.ActiveProvider()
+		}
+		if a.Providers == nil {
+			a.Providers = map[string]ProviderDefaults{}
+		}
+		a.Providers[provider] = a.Provider(provider)
+		if a.DefaultProvider == "" {
+			a.DefaultProvider = provider
+		}
+	}
+	a.Backend, a.Model, a.ReasoningEffort = "", "", ""
+	return cfg
+}
+
+func withLock(path string, action func() error) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("ensure %s: %w", dir, err)
+	}
+	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return fmt.Errorf("open config lock: %w", err)
+	}
+	defer func() { _ = lock.Close() }()
+	if err := unix.Flock(int(lock.Fd()), unix.LOCK_EX); err != nil {
+		return fmt.Errorf("lock config: %w", err)
+	}
+	defer func() { _ = unix.Flock(int(lock.Fd()), unix.LOCK_UN) }()
+	return action()
+}
+
+func write(path string, cfg Config) error {
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)

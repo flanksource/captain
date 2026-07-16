@@ -7,6 +7,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/credentials"
 )
 
 // WhoamiOptions selects which adapters to probe and whether to list their
@@ -53,17 +56,19 @@ func (a AdapterStatus) Ready() bool {
 // so resolveAdapter stays pure and testable. Fields are exported so callers in
 // other packages (and their tests) can construct a hermetic probe.
 type AuthProbe struct {
-	Getenv      func(string) string
-	LookPath    func(string) (string, error)
-	FileExists  func(string) bool
-	CodexModels func(context.Context, string) ([]ModelDef, error)
-	Home        string
+	Getenv         func(string) string
+	LookPath       func(string) (string, error)
+	FileExists     func(string) bool
+	CodexModels    func(context.Context, string) ([]ModelDef, error)
+	APICredentials map[Backend]api.ResolvedAPIKey
+	ProbeError     error
+	Home           string
 }
 
 // OSAuthProbe wires AuthProbe to the real host environment.
 func OSAuthProbe() AuthProbe {
 	home, _ := os.UserHomeDir()
-	return AuthProbe{
+	probe := AuthProbe{
 		Getenv:      os.Getenv,
 		LookPath:    exec.LookPath,
 		CodexModels: FetchCodexDebugModels,
@@ -73,6 +78,16 @@ func OSAuthProbe() AuthProbe {
 		},
 		Home: home,
 	}
+	probe.APICredentials = make(map[Backend]api.ResolvedAPIKey, len(apiBackends))
+	for _, backend := range apiBackends {
+		resolved, err := ResolveAPIKey(backend)
+		if err != nil {
+			probe.ProbeError = err
+			break
+		}
+		probe.APICredentials[backend] = resolved
+	}
+	return probe
 }
 
 // loginFile is a credential file whose presence indicates a CLI has been logged
@@ -130,12 +145,24 @@ func cliAdapters() map[Backend]cliAdapter {
 func resolveAdapter(backend Backend, p AuthProbe) AdapterStatus {
 	st := AdapterStatus{Backend: string(backend), Type: backend.Kind()}
 
-	for _, v := range AuthEnvVars(backend) {
-		if val := p.Getenv(v); strings.TrimSpace(val) != "" {
+	if backend.Kind() == "api" && p.APICredentials != nil {
+		if resolved := p.APICredentials[backend]; resolved.Token != "" {
 			st.Authenticated = true
-			st.AuthMethod = v + " (env)"
-			st.AuthDetail = MaskKey(val)
-			break
+			st.AuthDetail = MaskKey(resolved.Token)
+			if resolved.Source == credentials.SourceVault {
+				st.AuthMethod = "Captain vault"
+			} else {
+				st.AuthMethod = resolved.Detail + " (env)"
+			}
+		}
+	} else {
+		for _, v := range AuthEnvVars(backend) {
+			if val := p.Getenv(v); strings.TrimSpace(val) != "" {
+				st.Authenticated = true
+				st.AuthMethod = v + " (env)"
+				st.AuthDetail = MaskKey(val)
+				break
+			}
 		}
 	}
 
@@ -186,6 +213,9 @@ func firstEnv(vars []string, getenv func(string) string) string {
 // aichat server model menu, so passing a stub AuthProbe keeps callers hermetic
 // (no live API calls when the probe reports no API keys).
 func ProbeAdapters(opts WhoamiOptions, probe AuthProbe) ([]AdapterStatus, error) {
+	if probe.ProbeError != nil {
+		return nil, probe.ProbeError
+	}
 	backends := AllBackends()
 	if opts.Backend != "" {
 		b := Backend(opts.Backend)
@@ -198,7 +228,7 @@ func ProbeAdapters(opts WhoamiOptions, probe AuthProbe) ([]AdapterStatus, error)
 	var models map[Backend]modelFetch
 	var codexModels modelFetch
 	if opts.Models {
-		models = fetchAPIModels(backends, probe.Getenv)
+		models = fetchAPIModels(backends, probe)
 		codexModels = fetchCodexModels(backends, probe)
 	}
 
@@ -206,7 +236,7 @@ func ProbeAdapters(opts WhoamiOptions, probe AuthProbe) ([]AdapterStatus, error)
 	for _, b := range backends {
 		st := resolveAdapter(b, probe)
 		if opts.Models {
-			applyModels(&st, b, models, codexModels, probe.Getenv)
+			applyModels(&st, b, models, codexModels, probe)
 		}
 		adapters = append(adapters, st)
 	}

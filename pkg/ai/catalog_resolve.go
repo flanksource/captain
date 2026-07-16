@@ -2,6 +2,8 @@ package ai
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"sort"
 	"strings"
@@ -66,7 +68,10 @@ var apiBackends = []Backend{BackendAnthropic, BackendOpenAI, BackendGemini, Back
 // merged OpenRouter/static pricing and persisted to ~/.config/captain/models.json.
 // A fresh, fingerprint-matching cache is reused (unless opts.Refresh).
 func ResolveModels(ctx context.Context, opts ResolveOptions) ([]ResolvedModel, error) {
-	fp := resolveFingerprint(opts)
+	fp, err := resolveFingerprint(opts)
+	if err != nil {
+		return nil, err
+	}
 
 	rows, ok := cachedRows(opts, fp)
 	if !ok {
@@ -156,7 +161,11 @@ func unionLive(ctx context.Context, backend Backend, rows *[]ResolvedModel, inde
 		if backend != "" && b != backend {
 			continue
 		}
-		if GetAPIKeyFromEnv(b) == "" {
+		resolved, err := ResolveAPIKey(b)
+		if err != nil {
+			return err
+		}
+		if resolved.Token == "" {
 			continue
 		}
 		live, err := liveModelFetcher(ctx, b)
@@ -197,15 +206,20 @@ func filterResolved(rows []ResolvedModel, filter string) []ResolvedModel {
 	return out
 }
 
-func resolveFingerprint(opts ResolveOptions) string {
+func resolveFingerprint(opts ResolveOptions) (string, error) {
 	var present []string
 	for _, b := range apiBackends {
-		if GetAPIKeyFromEnv(b) != "" {
-			present = append(present, string(b))
+		resolved, err := ResolveAPIKey(b)
+		if err != nil {
+			return "", err
+		}
+		if resolved.Token != "" {
+			sum := sha256.Sum256([]byte(resolved.Token))
+			present = append(present, string(b)+":"+hex.EncodeToString(sum[:8]))
 		}
 	}
 	sort.Strings(present)
-	return fmt.Sprintf("b=%s|tok=%v|keys=%s", opts.Backend, opts.UseTokens, strings.Join(present, ","))
+	return fmt.Sprintf("b=%s|tok=%v|keys=%s", opts.Backend, opts.UseTokens, strings.Join(present, ",")), nil
 }
 
 func bareModelID(id string) string {

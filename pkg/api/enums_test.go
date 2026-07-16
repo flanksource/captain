@@ -71,6 +71,32 @@ func TestBackendKindAndAuth(t *testing.T) {
 	}
 }
 
+func TestBackendProviderAndAgents(t *testing.T) {
+	tests := map[Backend]Backend{
+		BackendAnthropic:   AnthropicProvider,
+		BackendClaudeCLI:   AnthropicProvider,
+		BackendClaudeAgent: AnthropicProvider,
+		BackendClaudeCmux:  AnthropicProvider,
+		BackendOpenAI:      OpenAIProvider,
+		BackendCodexCLI:    OpenAIProvider,
+		BackendCodexAgent:  OpenAIProvider,
+		BackendCodexCmux:   OpenAIProvider,
+		BackendGemini:      GeminiProvider,
+		BackendGeminiCLI:   GeminiProvider,
+		BackendDeepSeek:    DeepSeekProvider,
+	}
+	for backend, want := range tests {
+		if got := backend.Provider(); got != want {
+			t.Errorf("%s.Provider() = %q, want %q", backend, got, want)
+		}
+	}
+	if got := AgentsForProvider(OpenAIProvider); !reflect.DeepEqual(got, []Backend{
+		BackendOpenAI, BackendCodexCLI, BackendCodexAgent, BackendCodexCmux,
+	}) {
+		t.Fatalf("AgentsForProvider(openai) = %v", got)
+	}
+}
+
 func TestPermissionModeValid(t *testing.T) {
 	if !PermissionMode("").Valid() || !PermissionAcceptEdits.Valid() || PermissionMode("yolo").Valid() {
 		t.Error("PermissionMode.Valid() wrong")

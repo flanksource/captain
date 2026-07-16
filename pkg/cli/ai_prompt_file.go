@@ -81,7 +81,6 @@ func overlayCLI(base ai.Request, baseCfg ai.Config, o AIPromptOptions) (ai.Reque
 		bm.Effort = baseCfg.Model.Effort
 	}
 	identity := selectModelIdentity(
-		api.Model{Name: saved.Model, Backend: api.Backend(saved.Backend)},
 		api.Model{Name: bm.Name, ID: bm.ID, Backend: bm.Backend},
 		api.Model{Name: o.Model, Backend: api.Backend(o.Backend)},
 	)
@@ -91,9 +90,13 @@ func overlayCLI(base ai.Request, baseCfg ai.Config, o AIPromptOptions) (ai.Reque
 		t := temperature
 		m.Temperature = &t
 	}
-	m.Effort = api.Effort(firstNonEmpty(o.Effort, string(bm.Effort), saved.ReasoningEffort))
+	m.Effort = api.Effort(firstNonEmpty(o.Effort, string(bm.Effort)))
 	m.NoCache = o.NoCache || bm.NoCache || saved.NoCache
 	m.Fallbacks = firstFallbacks(o.Fallback, bm.Fallbacks)
+	m, err = applyProviderDefaults(m, saved)
+	if err != nil {
+		return base, baseCfg, err
+	}
 	req.Model, err = ai.ResolveModelSelectors(m)
 	if err != nil {
 		return base, baseCfg, err

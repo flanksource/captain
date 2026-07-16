@@ -3,8 +3,42 @@ package ai
 import (
 	"context"
 	"errors"
+	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/flanksource/captain/pkg/credentials"
 )
+
+func TestResolveFingerprintChangesWhenVaultTokenRotates(t *testing.T) {
+	credentials.SetPathForTesting(filepath.Join(t.TempDir(), "vault"))
+	t.Cleanup(func() { credentials.SetPathForTesting("") })
+	t.Setenv("OPENAI_API_KEY", "")
+	vault, err := credentials.DefaultVault()
+	if err != nil {
+		t.Fatalf("DefaultVault: %v", err)
+	}
+	if err := vault.Set("openai", "first-secret-token"); err != nil {
+		t.Fatalf("Set first token: %v", err)
+	}
+	first, err := resolveFingerprint(ResolveOptions{Backend: BackendOpenAI, UseTokens: true})
+	if err != nil {
+		t.Fatalf("first fingerprint: %v", err)
+	}
+	if err := vault.Set("openai", "second-secret-token"); err != nil {
+		t.Fatalf("Set second token: %v", err)
+	}
+	second, err := resolveFingerprint(ResolveOptions{Backend: BackendOpenAI, UseTokens: true})
+	if err != nil {
+		t.Fatalf("second fingerprint: %v", err)
+	}
+	if first == second {
+		t.Fatal("token rotation must invalidate the model cache fingerprint")
+	}
+	if strings.Contains(first+second, "secret-token") {
+		t.Fatalf("fingerprints expose token material: %q %q", first, second)
+	}
+}
 
 // stubLiveFetcher installs a fake live-model fetcher for the test and restores
 // the real one on cleanup. It also isolates API-key env so only the backends

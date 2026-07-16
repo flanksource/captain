@@ -3,7 +3,10 @@ import type {
   SessionCollectionItem,
   UnifiedSessionInput,
 } from "@flanksource/clicky-ui/ai";
-import type { PromptBatchHandle } from "./hooks/usePromptRunStream";
+import type {
+  PromptBatchHandle,
+  PromptBatchRunHandle,
+} from "./hooks/usePromptRunStream";
 import type { SessionGetItem, SessionGetResult } from "./sessionData";
 
 export function sessionResultCollection(
@@ -86,6 +89,15 @@ export function batchChatTargets(handle: PromptBatchHandle) {
         run.capabilities?.resume,
       ),
   );
+}
+
+export function batchChatTargetState(
+  result: SessionGetResult | undefined,
+  target: PromptBatchRunHandle | undefined,
+) {
+  if (!target) return undefined;
+  return result?.sessions.find((item) => item.captainId === target.sessionId)
+    ?.chatState;
 }
 
 function sessionCollectionItem(item: SessionGetItem): SessionCollectionItem {

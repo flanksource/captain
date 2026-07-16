@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@flanksource/clicky-ui/components";
 import {
@@ -11,9 +11,14 @@ import {
   UiTerminal,
   UiWarningTriangle,
 } from "@flanksource/clicky-ui/data";
+import {
+  ProviderDefaultsControls,
+  type ProviderAdapter,
+  type ProviderDefault,
+  type ProviderModel,
+} from "./ProviderDefaultsControls";
 
-type WhoamiModel = {
-  id: string;
+type WhoamiModel = ProviderModel & {
   label?: string;
   releaseDate?: string;
   reasoning?: boolean;
@@ -24,22 +29,28 @@ type WhoamiModel = {
   priority?: number;
 };
 
-type WhoamiAdapter = {
-  backend: string;
-  type: "api" | "cli";
-  authenticated: boolean;
+type WhoamiAdapter = ProviderAdapter & {
   authMethod?: string;
   authDetail?: string;
   binary?: string;
   binaryMissing?: string;
-  modelCount: number;
-  models?: string[];
   modelError?: string;
   modelDetails?: WhoamiModel[];
 };
 
 type WhoamiResult = {
   adapters: WhoamiAdapter[];
+  defaultProvider: string;
+  providerDefaults: Record<string, ProviderDefault>;
+};
+
+type ProviderTokenResult = {
+  provider: string;
+  valid: boolean;
+  saved: boolean;
+  source: string;
+  maskedToken: string;
+  modelCount: number;
 };
 
 export function WhoamiPage() {
@@ -77,14 +88,18 @@ export function WhoamiPage() {
         ) : query.error ? (
           <StateMessage tone="error">{errorMessage(query.error)}</StateMessage>
         ) : (
-          <WhoamiContent adapters={query.data?.adapters ?? []} />
+          <WhoamiContent
+            result={query.data ?? { adapters: [], defaultProvider: "anthropic", providerDefaults: {} }}
+            onRefresh={async () => { await query.refetch(); }}
+          />
         )}
       </div>
     </div>
   );
 }
 
-function WhoamiContent({ adapters }: { adapters: WhoamiAdapter[] }) {
+function WhoamiContent({ result, onRefresh }: { result: WhoamiResult; onRefresh: () => Promise<void> }) {
+  const { adapters, defaultProvider = "anthropic", providerDefaults = {} } = result;
   if (adapters.length === 0) return <StateMessage>No adapters were reported.</StateMessage>;
 
   const readyCount = adapters.filter(adapterReady).length;
@@ -98,15 +113,21 @@ function WhoamiContent({ adapters }: { adapters: WhoamiAdapter[] }) {
       </div>
       <AdapterGroup
         title="API providers"
-        description="Direct provider APIs authenticated with environment keys."
+        description="Direct provider APIs authenticated with Captain vault tokens or environment keys."
         type="api"
         adapters={adapters}
+        defaultProvider={defaultProvider}
+        providerDefaults={providerDefaults}
+        onRefresh={onRefresh}
       />
       <AdapterGroup
         title="CLI agents"
         description="Installed local runtimes authenticated through their own login state."
         type="cli"
         adapters={adapters}
+        defaultProvider={defaultProvider}
+        providerDefaults={providerDefaults}
+        onRefresh={onRefresh}
       />
     </>
   );
@@ -117,11 +138,17 @@ function AdapterGroup({
   description,
   type,
   adapters,
+  defaultProvider,
+  providerDefaults,
+  onRefresh,
 }: {
   title: string;
   description: string;
   type: WhoamiAdapter["type"];
   adapters: WhoamiAdapter[];
+  defaultProvider: string;
+  providerDefaults: Record<string, ProviderDefault>;
+  onRefresh: () => Promise<void>;
 }) {
   const rows = adapters.filter((adapter) => adapter.type === type);
   if (rows.length === 0) return null;
@@ -137,13 +164,34 @@ function AdapterGroup({
         </div>
       </div>
       <div className="grid items-start gap-density-3 xl:grid-cols-2">
-        {rows.map((adapter) => <AdapterCard key={adapter.backend} adapter={adapter} />)}
+        {rows.map((adapter) => (
+          <AdapterCard
+            key={adapter.backend}
+            adapter={adapter}
+            adapters={adapters}
+            defaults={providerDefaults[adapter.backend]}
+            active={defaultProvider === adapter.backend}
+            onRefresh={onRefresh}
+          />
+        ))}
       </div>
     </section>
   );
 }
 
-function AdapterCard({ adapter }: { adapter: WhoamiAdapter }) {
+function AdapterCard({
+  adapter,
+  adapters,
+  defaults,
+  active,
+  onRefresh,
+}: {
+  adapter: WhoamiAdapter;
+  adapters: WhoamiAdapter[];
+  defaults?: ProviderDefault;
+  active: boolean;
+  onRefresh: () => Promise<void>;
+}) {
   const ready = adapterReady(adapter);
   const models = adapterModels(adapter);
   return (
@@ -165,6 +213,17 @@ function AdapterCard({ adapter }: { adapter: WhoamiAdapter }) {
 
       <div className="grid gap-density-3 p-density-3">
         <AdapterDetails adapter={adapter} />
+        {adapter.type === "api" && <ProviderTokenControls adapter={adapter} onRefresh={onRefresh} />}
+        {adapter.type === "api" && defaults && (
+          <ProviderDefaultsControls
+            key={`${defaults.agent}:${defaults.model}:${defaults.effort}:${active}`}
+            provider={adapter.backend}
+            defaults={defaults}
+            adapters={adapters}
+            active={active}
+            onRefresh={onRefresh}
+          />
+        )}
         {adapter.modelError && (
           <div className="rounded-md border border-amber-300/60 bg-amber-50/60 px-density-3 py-density-2 text-xs text-amber-900 dark:bg-amber-950/20 dark:text-amber-200">
             {adapter.modelError}
@@ -188,6 +247,103 @@ function AdapterCard({ adapter }: { adapter: WhoamiAdapter }) {
       </div>
     </article>
   );
+}
+
+function ProviderTokenControls({ adapter, onRefresh }: { adapter: WhoamiAdapter; onRefresh: () => Promise<void> }) {
+  const [token, setToken] = useState("");
+  const [pending, setPending] = useState<"save" | "test" | null>(null);
+  const [status, setStatus] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+
+  async function submit(action: "save" | "test") {
+    setPending(action);
+    setStatus(null);
+    try {
+      const result = await updateProviderToken(adapter.backend, action, token);
+      if (action === "save") {
+        setToken("");
+        setStatus({ tone: "success", text: `Token saved and validated against ${result.modelCount} ${pluralModels(result.modelCount)}.` });
+        await onRefresh();
+      } else {
+        setStatus({ tone: "success", text: `Current token is valid for ${result.modelCount} ${pluralModels(result.modelCount)}.` });
+      }
+    } catch (error) {
+      setStatus({ tone: "error", text: errorMessage(error) });
+    } finally {
+      setPending(null);
+    }
+  }
+
+  return (
+    <div className="grid gap-density-2 rounded-md border border-border bg-muted/20 p-density-3">
+      <div>
+        <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Configure API token
+        </h4>
+        <p className="mt-density-1 text-xs text-muted-foreground">
+          New tokens are tested before replacing the current credential.
+        </p>
+      </div>
+      <label className="grid gap-density-1 text-xs font-medium" htmlFor={`provider-token-${adapter.backend}`}>
+        API token
+        <input
+          id={`provider-token-${adapter.backend}`}
+          aria-label={`${adapter.backend} API token`}
+          type="password"
+          autoComplete="new-password"
+          value={token}
+          disabled={pending !== null}
+          onChange={(event) => setToken(event.target.value)}
+          placeholder="Enter a replacement token"
+          className="h-9 rounded-md border border-input bg-background px-density-3 font-mono text-sm outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
+        />
+      </label>
+      <div className="flex flex-wrap gap-density-2">
+        <Button
+          size="sm"
+          disabled={pending !== null || token.trim() === ""}
+          aria-label={`Save & test ${adapter.backend} token`}
+          onClick={() => void submit("save")}
+        >
+          {pending === "save" ? "Testing..." : "Save & test"}
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={pending !== null}
+          aria-label={`Test current ${adapter.backend} token`}
+          onClick={() => void submit("test")}
+        >
+          {pending === "test" ? "Testing..." : "Test current"}
+        </Button>
+      </div>
+      {status && (
+        <div className={status.tone === "error" ? "text-xs text-destructive" : "text-xs text-green-700 dark:text-green-400"}>
+          {status.text}
+        </div>
+      )}
+    </div>
+  );
+}
+
+async function updateProviderToken(backend: string, action: "save" | "test", token: string): Promise<ProviderTokenResult> {
+  const test = action === "test";
+  const response = await fetch(
+    `/api/captain/ai/providers/${encodeURIComponent(backend)}/token${test ? "/test" : ""}`,
+    {
+      method: test ? "POST" : "PUT",
+      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      body: test ? "{}" : JSON.stringify({ token }),
+    },
+  );
+  if (!response.ok) {
+    const message = (await response.text()).trim();
+    throw new Error(message || `Token validation failed with ${response.status}`);
+  }
+  return (await response.json()) as ProviderTokenResult;
+}
+
+function pluralModels(count: number) {
+  return count === 1 ? "model" : "models";
 }
 
 function AdapterDetails({ adapter }: { adapter: WhoamiAdapter }) {

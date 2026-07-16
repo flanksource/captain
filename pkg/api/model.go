@@ -119,10 +119,10 @@ func (m Model) ExpandCSV() Model {
 }
 
 // Candidates returns the ordered models to try: the ExpandCSV primary first, then
-// each fallback. Fallbacks inherit the primary's Temperature/Effort/NoCache when
-// unset, keep their own Name/Backend (an empty Backend is inferred at construction
-// from the fallback's own Name), clear ID, and have nested Fallbacks dropped. A
-// length of 1 means "no fallback".
+// each fallback. Fallbacks inherit the primary's Temperature/NoCache when unset,
+// and Effort only when they belong to the same provider family. They keep their
+// own Name/Backend (an empty Backend is inferred at construction from the fallback's
+// own Name), clear ID, and have nested Fallbacks dropped. A length of 1 means "no fallback".
 func (m Model) Candidates() []Model {
 	m = m.ExpandCSV()
 	primary := m
@@ -135,7 +135,7 @@ func (m Model) Candidates() []Model {
 		if fb.Temperature == nil {
 			fb.Temperature = m.Temperature
 		}
-		if fb.Effort == "" {
+		if fb.Effort == "" && modelProvider(fb) == modelProvider(m) {
 			fb.Effort = m.Effort
 		}
 		if !fb.NoCache {
@@ -144,6 +144,17 @@ func (m Model) Candidates() []Model {
 		out = append(out, fb)
 	}
 	return out
+}
+
+func modelProvider(model Model) Backend {
+	if provider := model.Backend.Provider(); provider != "" {
+		return provider
+	}
+	backend, err := InferBackend(model.Name)
+	if err != nil {
+		return ""
+	}
+	return backend.Provider()
 }
 
 // splitCSV splits a comma-separated string into trimmed, non-empty parts.

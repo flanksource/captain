@@ -3,7 +3,15 @@ package api
 import (
 	"fmt"
 	"os"
+
+	"github.com/flanksource/captain/pkg/credentials"
 )
+
+type ResolvedAPIKey struct {
+	Token  string
+	Source string
+	Detail string
+}
 
 // ProviderFactory constructs a Provider for a backend from a Config.
 type ProviderFactory func(cfg Config) (Provider, error)
@@ -44,10 +52,36 @@ func NewProvider(cfg Config) (Provider, error) {
 	}
 
 	if cfg.APIKey == "" {
-		cfg.APIKey = GetAPIKeyFromEnv(backend)
+		resolved, err := ResolveAPIKey(backend)
+		if err != nil {
+			return nil, err
+		}
+		cfg.APIKey = resolved.Token
 	}
 
 	return factory(cfg)
+}
+
+// ResolveAPIKey resolves a direct provider credential from Captain's vault,
+// then from the provider's supported environment variables.
+func ResolveAPIKey(backend Backend) (ResolvedAPIKey, error) {
+	if backend.Kind() != "api" {
+		for _, envVar := range AuthEnvVars(backend) {
+			if token := os.Getenv(envVar); token != "" {
+				return ResolvedAPIKey{Token: token, Source: credentials.SourceEnvironment, Detail: envVar}, nil
+			}
+		}
+		return ResolvedAPIKey{}, nil
+	}
+	vault, err := credentials.DefaultVault()
+	if err != nil {
+		return ResolvedAPIKey{}, err
+	}
+	resolved, err := vault.Resolve(string(backend), AuthEnvVars(backend), os.Getenv)
+	if err != nil {
+		return ResolvedAPIKey{}, err
+	}
+	return ResolvedAPIKey(resolved), nil
 }
 
 // GetAPIKeyFromEnv returns the first non-empty value among a backend's auth

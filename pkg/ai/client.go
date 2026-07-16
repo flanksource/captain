@@ -103,3 +103,7 @@ func suggestModelName(err error, model string) error {
 func GetAPIKeyFromEnv(backend Backend) string {
 	return api.GetAPIKeyFromEnv(backend)
 }
+
+func ResolveAPIKey(backend Backend) (api.ResolvedAPIKey, error) {
+	return api.ResolveAPIKey(backend)
+}

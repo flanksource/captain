@@ -486,7 +486,9 @@ func TestApplyPromptDefaultsSelectorEffortWins(t *testing.T) {
 		Backend: api.BackendCodexAgent,
 		Effort:  api.EffortHigh,
 	}}
-	applyPromptDefaults(&req, &cfg)
+	if err := applyPromptDefaults(&req, &cfg); err != nil {
+		t.Fatalf("applyPromptDefaults: %v", err)
+	}
 	if req.Name != "gpt-5.6-sol" || req.Backend != api.BackendCodexAgent || req.Effort != api.EffortHigh {
 		t.Fatalf("request = %+v, want selector model/effort", req.Model)
 	}

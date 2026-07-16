@@ -47,6 +47,97 @@ func addCaptainPromptRunPaths(spec *rpc.OpenAPISpec) {
 	}
 }
 
+func addCaptainProviderTokenPaths(spec *rpc.OpenAPISpec) {
+	if spec.Paths == nil {
+		spec.Paths = map[string]rpc.OpenAPIPath{}
+	}
+	provider := rpc.OpenAPIParameter{
+		Name: "provider", In: "path", Required: true,
+		Schema: &rpc.OpenAPISchema{Type: "string", Enum: []any{"anthropic", "openai", "gemini", "deepseek"}},
+	}
+	tokenSchema := &rpc.OpenAPISchema{Type: "string", Format: "password", Extensions: map[string]any{"writeOnly": true}}
+	request := func(required bool) *rpc.OpenAPIRequestBody {
+		schema := &rpc.OpenAPISchema{Type: "object", Properties: map[string]*rpc.OpenAPISchema{"token": tokenSchema}}
+		if required {
+			schema.Required = []string{"token"}
+		}
+		return &rpc.OpenAPIRequestBody{Required: true, Content: map[string]rpc.OpenAPIMediaType{
+			"application/json": {Schema: schema},
+		}}
+	}
+	operation := func(id, summary string, body *rpc.OpenAPIRequestBody) rpc.OpenAPIOperation {
+		return rpc.OpenAPIOperation{
+			Tags: []string{"Provider credentials"}, Summary: summary, OperationID: id,
+			Parameters: []rpc.OpenAPIParameter{provider}, RequestBody: body,
+			Responses: map[string]rpc.OpenAPIResponse{
+				"200": jsonResponse(providerTokenResponseSchema()),
+				"400": {Description: "Invalid request"}, "403": {Description: "Local same-origin access required"},
+				"422": {Description: "Credential rejected"}, "500": {Description: "Vault persistence failed"},
+				"502": {Description: "Provider request failed"},
+			},
+		}
+	}
+	spec.Paths["/api/captain/ai/providers/{provider}/token"] = rpc.OpenAPIPath{
+		"put": operation("saveProviderToken", "Validate and save a provider token", request(true)),
+	}
+	spec.Paths["/api/captain/ai/providers/{provider}/token/test"] = rpc.OpenAPIPath{
+		"post": operation("testProviderToken", "Test a candidate or configured provider token", request(false)),
+	}
+}
+
+func providerTokenResponseSchema() *rpc.OpenAPISchema {
+	return &rpc.OpenAPISchema{Type: "object", Required: []string{"provider", "valid", "saved", "source", "maskedToken", "modelCount"}, Properties: map[string]*rpc.OpenAPISchema{
+		"provider": {Type: "string"}, "valid": {Type: "boolean"}, "saved": {Type: "boolean"},
+		"source": {Type: "string"}, "maskedToken": {Type: "string"}, "modelCount": {Type: "integer"},
+	}}
+}
+
+func addCaptainProviderDefaultsPaths(spec *rpc.OpenAPISpec) {
+	if spec.Paths == nil {
+		spec.Paths = map[string]rpc.OpenAPIPath{}
+	}
+	provider := rpc.OpenAPIParameter{
+		Name: "provider", In: "path", Required: true,
+		Schema: &rpc.OpenAPISchema{Type: "string", Enum: []any{"anthropic", "openai", "gemini", "deepseek"}},
+	}
+	stringField := func() *rpc.OpenAPISchema { return &rpc.OpenAPISchema{Type: "string"} }
+	defaultsRequest := &rpc.OpenAPIRequestBody{Required: true, Content: map[string]rpc.OpenAPIMediaType{
+		"application/json": {Schema: &rpc.OpenAPISchema{
+			Type: "object", Required: []string{"agent", "model", "effort"},
+			Properties: map[string]*rpc.OpenAPISchema{"agent": stringField(), "model": stringField(), "effort": stringField()},
+		}},
+	}}
+	defaultsResponse := &rpc.OpenAPISchema{
+		Type: "object", Required: []string{"provider", "agent", "model", "effort", "active"},
+		Properties: map[string]*rpc.OpenAPISchema{
+			"provider": stringField(), "agent": stringField(), "model": stringField(),
+			"effort": stringField(), "active": {Type: "boolean"},
+		},
+	}
+	spec.Paths["/api/captain/ai/providers/{provider}/defaults"] = rpc.OpenAPIPath{"put": {
+		Tags: []string{"Provider configuration"}, Summary: "Save provider runtime defaults", OperationID: "saveProviderDefaults",
+		Parameters: []rpc.OpenAPIParameter{provider}, RequestBody: defaultsRequest,
+		Responses: map[string]rpc.OpenAPIResponse{
+			"200": jsonResponse(defaultsResponse), "400": {Description: "Invalid request"},
+			"403": {Description: "Local same-origin access required"}, "422": {Description: "Defaults rejected"},
+			"500": {Description: "Configuration persistence failed"},
+		},
+	}}
+	activeRequest := &rpc.OpenAPIRequestBody{Required: true, Content: map[string]rpc.OpenAPIMediaType{
+		"application/json": {Schema: &rpc.OpenAPISchema{
+			Type: "object", Required: []string{"provider"}, Properties: map[string]*rpc.OpenAPISchema{"provider": stringField()},
+		}},
+	}}
+	spec.Paths["/api/captain/ai/default-provider"] = rpc.OpenAPIPath{"put": {
+		Tags: []string{"Provider configuration"}, Summary: "Select the provider for flagless runs", OperationID: "saveDefaultProvider",
+		RequestBody: activeRequest, Responses: map[string]rpc.OpenAPIResponse{
+			"200": jsonResponse(&rpc.OpenAPISchema{Type: "object", Required: []string{"provider"}, Properties: map[string]*rpc.OpenAPISchema{"provider": stringField()}}),
+			"400": {Description: "Invalid request"}, "403": {Description: "Local same-origin access required"},
+			"500": {Description: "Configuration persistence failed"},
+		},
+	}}
+}
+
 func promptRunOperation(
 	id, summary string,
 	parameter rpc.OpenAPIParameter,

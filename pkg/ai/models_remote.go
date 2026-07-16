@@ -52,6 +52,15 @@ type modelEntry struct {
 	CreatedAt   string `json:"created_at"`
 }
 
+type ModelHTTPError struct {
+	Backend    Backend
+	StatusCode int
+}
+
+func (e ModelHTTPError) Error() string {
+	return fmt.Sprintf("%s models: HTTP %d", e.Backend, e.StatusCode)
+}
+
 // FetchOpenAIModels calls https://api.openai.com/v1/models and returns the
 // available model IDs as ModelDefs scoped to BackendOpenAI. apiKey is sent
 // as a Bearer token. An empty apiKey returns an error without making a
@@ -87,17 +96,17 @@ func FetchAnthropicModels(ctx context.Context, apiKey string) ([]ModelDef, error
 
 // FetchGeminiModels calls Google's Generative Language ListModels endpoint
 // and returns the IDs scoped to BackendGemini. The endpoint authenticates via
-// a `key=` query parameter (no header). The returned `name` field is shaped
+// the x-goog-api-key header. The returned `name` field is shaped
 // "models/gemini-2.5-flash"; we strip the prefix so callers see the bare id.
 func FetchGeminiModels(ctx context.Context, apiKey string) ([]ModelDef, error) {
 	if strings.TrimSpace(apiKey) == "" {
 		return nil, fmt.Errorf("GEMINI_API_KEY is not set")
 	}
-	url := "https://generativelanguage.googleapis.com/v1beta/models?key=" + apiKey
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://generativelanguage.googleapis.com/v1beta/models", nil)
 	if err != nil {
 		return nil, err
 	}
+	req.Header.Set("x-goog-api-key", apiKey)
 	return doModelsRequest(req, BackendGemini)
 }
 
@@ -129,7 +138,7 @@ func doModelsRequest(req *http.Request, backend Backend) ([]ModelDef, error) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%s models: HTTP %d", backend, resp.StatusCode)
+		return nil, ModelHTTPError{Backend: backend, StatusCode: resp.StatusCode}
 	}
 
 	var body modelsListResponse
@@ -187,7 +196,17 @@ func (m modelEntry) releaseDate() string {
 // models from the static catalog in pkg/cli (agentCatalogModels), so passing
 // one returns an error.
 func ListModels(ctx context.Context, backend Backend) ([]ModelDef, error) {
-	fetch, apiKey := remoteFetcherFor(backend)
+	resolved, err := ResolveAPIKey(backend)
+	if err != nil {
+		return nil, err
+	}
+	return ListModelsWithAPIKey(ctx, backend, resolved.Token)
+}
+
+// ListModelsWithAPIKey validates a candidate credential directly against the
+// provider model endpoint without reading or writing Captain's credential vault.
+func ListModelsWithAPIKey(ctx context.Context, backend Backend, apiKey string) ([]ModelDef, error) {
+	fetch := remoteFetcherFor(backend)
 	if fetch == nil {
 		return nil, fmt.Errorf("backend %s has no live model listing", backend)
 	}
@@ -204,20 +223,20 @@ func ListModels(ctx context.Context, backend Backend) ([]ModelDef, error) {
 	return models, nil
 }
 
-// remoteFetcherFor returns the live-list function and API key for an API
-// backend. Returns (nil, "") for any backend without a live listing endpoint
+// remoteFetcherFor returns the live-list function for an API backend. It
+// returns nil for any backend without a live listing endpoint
 // (every CLI/agent backend, which lists from the static catalog instead).
-func remoteFetcherFor(backend Backend) (fetch func(context.Context, string) ([]ModelDef, error), apiKey string) {
+func remoteFetcherFor(backend Backend) func(context.Context, string) ([]ModelDef, error) {
 	switch backend {
 	case BackendOpenAI:
-		return FetchOpenAIModels, GetAPIKeyFromEnv(backend)
+		return FetchOpenAIModels
 	case BackendAnthropic:
-		return FetchAnthropicModels, GetAPIKeyFromEnv(backend)
+		return FetchAnthropicModels
 	case BackendGemini:
-		return FetchGeminiModels, GetAPIKeyFromEnv(backend)
+		return FetchGeminiModels
 	case BackendDeepSeek:
-		return FetchDeepSeekModels, GetAPIKeyFromEnv(backend)
+		return FetchDeepSeekModels
 	default:
-		return nil, ""
+		return nil
 	}
 }

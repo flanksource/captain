@@ -390,7 +390,9 @@ func renderPrompt(ctx context.Context, id string, renderReq PromptRenderRequest)
 	if renderReq.Spec != nil {
 		overlayRuntimeSpec(&req, &cfg, *renderReq.Spec)
 	}
-	applyPromptDefaults(&req, &cfg)
+	if err := applyPromptDefaults(&req, &cfg); err != nil {
+		return PromptRenderResult{}, err
+	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return PromptRenderResult{}, fmt.Errorf("get working directory: %w", err)
@@ -417,7 +419,9 @@ func renderEphemeralPrompt(renderReq PromptRenderRequest) (PromptRenderResult, e
 	if req.Prompt.Source == "" {
 		req.Prompt.Source = "<ephemeral>"
 	}
-	applyPromptDefaults(&req, &cfg)
+	if err := applyPromptDefaults(&req, &cfg); err != nil {
+		return PromptRenderResult{}, err
+	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return PromptRenderResult{}, fmt.Errorf("get working directory: %w", err)
@@ -636,7 +640,7 @@ func overlayRuntimeSpec(req *ai.Request, cfg *ai.Config, spec api.Spec) {
 	}
 }
 
-func applyPromptDefaults(req *ai.Request, cfg *ai.Config) {
+func applyPromptDefaults(req *ai.Request, cfg *ai.Config) error {
 	savedCfg := loadSavedConfig()
 	saved := savedCfg.AI
 	promptModel := req.Model
@@ -650,7 +654,6 @@ func applyPromptDefaults(req *ai.Request, cfg *ai.Config) {
 		promptModel.Backend = cfg.Model.Backend
 	}
 	identity := selectModelIdentity(
-		api.Model{Name: saved.Model, Backend: api.Backend(saved.Backend)},
 		api.Model{Name: promptModel.Name, ID: promptModel.ID, Backend: promptModel.Backend},
 	)
 	req.Name, req.ID, req.Backend = identity.Name, identity.ID, identity.Backend
@@ -659,8 +662,13 @@ func applyPromptDefaults(req *ai.Request, cfg *ai.Config) {
 		// is model-local and intentionally overrides the request-wide flag/default.
 		req.Effort = cfg.Model.Effort
 	} else if req.Effort == "" {
-		req.Effort = api.Effort(firstNonEmpty(string(cfg.Model.Effort), saved.ReasoningEffort))
+		req.Effort = cfg.Model.Effort
 	}
+	resolved, err := applyProviderDefaults(req.Model, saved)
+	if err != nil {
+		return err
+	}
+	req.Model = resolved
 	req.NoCache = req.NoCache || saved.NoCache
 	if req.Budget.MaxTokens == 0 {
 		req.Budget.MaxTokens = firstPositive(cfg.Budget.MaxTokens, saved.MaxTokens, 4096)
@@ -675,6 +683,7 @@ func applyPromptDefaults(req *ai.Request, cfg *ai.Config) {
 	if isZeroSchemaRepair(cfg.SchemaRepair) {
 		cfg.SchemaRepair = schemaRepairConfig(savedCfg.Prompts.SchemaRepair)
 	}
+	return nil
 }
 
 func mergeStringMaps(base, overlay map[string]string) map[string]string {
