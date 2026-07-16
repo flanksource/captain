@@ -247,6 +247,7 @@ func (r *Runner[T]) runLoop(ctx context.Context, hc *HookContext, result *Result
 	loop, loopErr := ai.RunUntil(ctx, ai.LoopOptions{
 		Provider:      r.Provider,
 		MaxIterations: maxIter,
+		MaxCostUSD:    r.Request.Budget.Cost, // enforce the USD budget across iterations
 		OnEvent: func(iter int, ev ai.Event) {
 			r.recordEvent(hc, ev)
 			if r.OnEvent != nil {
@@ -283,6 +284,9 @@ func (r *Runner[T]) runLoop(ctx context.Context, hc *HookContext, result *Result
 	result.Loop = loop
 	if loopErr != nil {
 		return loopErr
+	}
+	if loop != nil && loop.StopReason == "max-cost" {
+		return fmt.Errorf("%w: spent $%.4f of $%.4f budget", ai.ErrBudgetExceeded, loop.TotalCost, r.Request.Budget.Cost)
 	}
 	if responseErr != nil {
 		return responseErr

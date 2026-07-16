@@ -13,9 +13,15 @@ type Response struct {
 	Model           string
 	Backend         Backend
 	Usage           Usage
-	Duration        time.Duration
-	CacheHit        bool
-	Raw             any
+	// CostUSD is the response's reported cost: the provider's authoritative value
+	// when it supplies one (claude-cli total_cost_usd, claude-agent cost_usd),
+	// otherwise the provider's list-price estimate. 0 means no cost was reported
+	// (the buffered path used to drop it — see finding D4). Consumers should
+	// prefer this over recomputing from tokens.
+	CostUSD  float64
+	Duration time.Duration
+	CacheHit bool
+	Raw      any
 
 	// Workspace is the run's working-dir runtime state (cwd, git details, changed
 	// files, commits, plan). Populated by the agent runner + worktree hook.

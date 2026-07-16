@@ -14,6 +14,8 @@ import (
 type mockProvider struct {
 	model   string
 	text    string
+	cost    float64
+	calls   int
 	err     error
 	closed  bool
 	lastReq Request
@@ -25,6 +27,7 @@ func (m *mockProvider) GetBackend() Backend { return BackendAnthropic }
 func (m *mockProvider) Close() error        { m.closed = true; return nil }
 func (m *mockProvider) Execute(_ context.Context, req Request) (*Response, error) {
 	m.lastReq = req
+	m.calls++
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -33,6 +36,7 @@ func (m *mockProvider) Execute(_ context.Context, req Request) (*Response, error
 		Model:           m.model,
 		Backend:         BackendAnthropic,
 		Usage:           Usage{InputTokens: 10, OutputTokens: 5},
+		CostUSD:         m.cost,
 		TerminalOutcome: m.outcome,
 	}, nil
 }
@@ -60,6 +64,29 @@ func TestAgent_ExecutePromptAccruesCost(t *testing.T) {
 	costs := a.GetCosts()
 	require.Len(t, costs, 1)
 	assert.Equal(t, "test-model", costs[0].Model)
+}
+
+func TestAgent_ExecutePromptEnforcesBudget(t *testing.T) {
+	mp := &mockProvider{model: "test-model", text: "out", cost: 0.08}
+	a := NewAgentWithProvider(mp, Config{
+		Model:  api.Model{Name: "test-model"},
+		Budget: api.Budget{Cost: 0.10},
+	})
+
+	// First two calls fit under the $0.10 budget (spend 0 → 0.08 → 0.16).
+	_, err := a.ExecutePrompt(context.Background(), PromptRequest{Name: "p1", Prompt: "a"})
+	require.NoError(t, err)
+	_, err = a.ExecutePrompt(context.Background(), PromptRequest{Name: "p2", Prompt: "b"})
+	require.NoError(t, err, "second call still under budget at pre-flight (spent 0.08)")
+
+	// Third call trips the pre-flight (spent 0.16 ≥ 0.10) and must not execute.
+	callsBefore := mp.calls
+	resp, err := a.ExecutePrompt(context.Background(), PromptRequest{Name: "p3", Prompt: "c"})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrBudgetExceeded)
+	assert.Equal(t, callsBefore, mp.calls, "provider must not be invoked once budget is exceeded")
+	assert.Equal(t, err.Error(), resp.Error)
+	assert.InDelta(t, 0.16, a.TotalCost(), 1e-9, "TotalCost prefers provider-reported cost")
 }
 
 func TestAgent_ExecutePromptForwardsSchemaJSON(t *testing.T) {

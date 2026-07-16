@@ -95,6 +95,10 @@ func finaliseCoalescedResponse(backend ai.Backend, model, text string, usage ai.
 	}
 	if lastResult != nil {
 		resp.Raw = lastResult.Input
+		// Carry the provider-reported cost (e.g. claude-cli total_cost_usd) so the
+		// buffered Execute path does not lose it — buffered callers otherwise fall
+		// back to a list-price recompute (finding D4).
+		resp.CostUSD = lastResult.CostUSD
 		// Carry any validated structured output (raw JSON) the terminal result
 		// event holds; the caller's Execute binds it into its schema target.
 		if len(lastResult.StructuredData) > 0 {

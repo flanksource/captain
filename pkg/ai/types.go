@@ -50,6 +50,14 @@ const (
 // Usage is an alias for the canonical api.Usage (per-call token breakdown).
 type Usage = api.Usage
 
+// NetInputTokens / NetOutputTokens re-export the disjoint-bucket normalizers so
+// provider packages (which import ai, not api) can enforce the Usage invariant
+// at their parse boundary.
+var (
+	NetInputTokens  = api.NetInputTokens
+	NetOutputTokens = api.NetOutputTokens
+)
+
 // Cost and Costs are aliases for the canonical api types (token + money
 // accounting). The methods (Total/Add/Sum/ByModel) live on the api types.
 type Cost = api.Cost
