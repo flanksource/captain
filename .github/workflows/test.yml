@@ -27,6 +27,22 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26.x"
+      # Persist the embedded-postgres binary so most runs skip the download
+      # entirely. The version is pinned by the embedded-postgres library (V16).
+      - name: Cache embedded-postgres binary
+        uses: actions/cache@v4
+        with:
+          path: ~/.embedded-postgres-go
+          key: embedded-postgres-${{ runner.os }}-16.9.0
+      # Warm the shared binary cache with a single serialized download before the
+      # parallel suite. Without this the ~dozen DB integration tests each start
+      # embedded postgres concurrently on a cold cache and race the Maven
+      # download, which throttles to a non-200 and fails with
+      # "no version found matching 16.9.0".
+      - name: Warm embedded-postgres binary cache
+        run: go test -count=1 -p 1 -parallel 1 -run '^TestCaptainMigrationsAreIdempotentAndShareOnePool$' ./pkg/database/
+        env:
+          CAPTAIN_DB_EMBEDDED_TEST: "1"
       - run: go test ./...
         env:
           CAPTAIN_DB_EMBEDDED_TEST: "1"
