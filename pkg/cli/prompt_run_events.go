@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/session"
@@ -26,6 +27,7 @@ type taskSink interface {
 // into a single message keyed by a stable id so the viewer replaces-in-place,
 // and correlates each tool call with its later result via ToolCallID.
 type promptEventAccumulator struct {
+	mu   sync.Mutex
 	emit func(session.Message)
 	task taskSink
 
@@ -33,6 +35,7 @@ type promptEventAccumulator struct {
 	model     string
 	backend   string
 	cwd       string
+	idPrefix  string
 
 	toolByID map[string]*session.Message
 
@@ -60,6 +63,8 @@ func newPromptEventAccumulator(emit func(session.Message), t taskSink, model, ba
 // handle maps a single ai.Event. It matches the ai.LoopOptions.OnEvent
 // signature; the iteration index is unused (prompt runs are single-iteration).
 func (a *promptEventAccumulator) handle(_ int, ev ai.Event) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	if ev.Model != "" {
 		a.model = ev.Model
 	}
@@ -216,7 +221,16 @@ func (a *promptEventAccumulator) emitError(ev ai.Event) {
 
 func (a *promptEventAccumulator) nextID(kind string) string {
 	a.seq++
-	return fmt.Sprintf("%s-%d", kind, a.seq)
+	if a.idPrefix == "" {
+		return fmt.Sprintf("%s-%d", kind, a.seq)
+	}
+	return fmt.Sprintf("%s-%s-%d", a.idPrefix, kind, a.seq)
+}
+
+func (a *promptEventAccumulator) snapshot() (string, string, ai.Usage, float64) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.sessionID, a.model, a.usage, a.cost
 }
 
 // toolID keys a tool message by its ToolCallID so the call and its later result

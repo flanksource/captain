@@ -145,6 +145,11 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	}
 
 	rpcServer := rpc.NewSwaggerServer(serveConfig, rootCmd, openAPIConfig)
+	openAPISpec, err := rpc.NewOpenAPIGenerator(openAPIConfig).GenerateFromCobraWithConfig(rootCmd, rpcServer.ConverterConfig())
+	if err != nil {
+		return err
+	}
+	addCaptainPromptRunPaths(openAPISpec)
 	chat := aichat.NewServer(aichat.Options{
 		RootCmd: rootCmd,
 		System: "You are Captain's coding-agent launcher assistant. Use Captain and Clicky tools when useful, " +
@@ -166,7 +171,11 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	task.SetNoRender(true)
 
 	mux := http.NewServeMux()
-	rpcServer.RegisterRoutes(mux)
+	mux.Handle("GET /api/openapi.json", handleCaptainOpenAPI(openAPISpec, false))
+	mux.Handle("GET /api/openapi.yaml", handleCaptainOpenAPI(openAPISpec, true))
+	mux.HandleFunc("GET /api/entities", rpcServer.HandleEntities)
+	mux.HandleFunc("GET /health", rpcServer.HandleHealth)
+	rpcServer.RegisterExecutionRoutes(mux)
 	mux.HandleFunc("POST /api/captain/chat/threads/from-agent", handleThreadFromAgent(threadStore))
 	mux.HandleFunc("GET /api/captain/projects", handleProjects())
 	mux.HandleFunc("GET /api/captain/sessions/live", handleSessionsLive())
@@ -186,6 +195,10 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	// Live session history for a prompt run.
 	mux.Handle("GET /api/captain/prompt/runs/{runId}/stream", handlePromptRunStream(promptRuns))
 	mux.Handle("GET /api/captain/prompt/runs/{runId}", handlePromptRunSnapshot(promptRuns))
+	mux.Handle("POST /api/captain/prompt/runs/{runId}/message", handlePromptRunMessage(promptChats))
+	mux.Handle("POST /api/captain/prompt/runs/{runId}/interrupt", handlePromptRunInterrupt(promptChats))
+	mux.Handle("POST /api/captain/prompt/runs/{runId}/stop", handlePromptRunStop(promptRuns, promptChats))
+	mux.Handle("POST /api/captain/sessions/{id}/message", handleSessionMessage(promptChats))
 	mux.Handle("/api/chat", chat.Handler())
 	mux.Handle("/api/chat/", chat.Handler())
 
@@ -240,6 +253,7 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	log.Infof("Database Info: source=%q dsn=%q live_sessions=%d", source, database.MaskDSN(dsn), liveSessions)
 
 	go prunePromptRuns(ctx, promptRuns)
+	defer promptChats.stopAll()
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -288,128 +302,6 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	case err := <-errCh:
 		return err
 	}
-}
-
-func handleSessionsLive() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		query := r.URL.Query()
-		opts := SessionLiveOptions{
-			Source:  strings.TrimSpace(query.Get("source")),
-			Project: strings.TrimSpace(query.Get("project")),
-			Query:   strings.TrimSpace(query.Get("q")),
-			Limit:   100,
-		}
-		if opts.Source == "" {
-			opts.Source = "all"
-		}
-		if raw := strings.TrimSpace(query.Get("all")); raw != "" {
-			opts.All, _ = strconv.ParseBool(raw)
-		}
-		if strings.EqualFold(opts.Project, "all") {
-			opts.Project = ""
-			opts.All = true
-		} else if opts.Project != "" {
-			opts.All = false
-		}
-		if raw := strings.TrimSpace(query.Get("limit")); raw != "" {
-			limit, err := strconv.Atoi(raw)
-			if err != nil {
-				http.Error(w, fmt.Sprintf("invalid limit %q", raw), http.StatusBadRequest)
-				return
-			}
-			opts.Limit = limit
-		}
-
-		result, err := RunSessionLive(r.Context(), opts)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		writeServeJSON(w, http.StatusOK, result)
-	}
-}
-
-func handleSessionsThroughput() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		query := r.URL.Query()
-		opts := SessionThroughputOptions{
-			Source:  strings.TrimSpace(query.Get("source")),
-			Project: strings.TrimSpace(query.Get("project")),
-			Query:   strings.TrimSpace(query.Get("q")),
-			Limit:   defaultSessionThroughputLimit,
-		}
-		if opts.Source == "" {
-			opts.Source = "all"
-		}
-		if raw := strings.TrimSpace(query.Get("all")); raw != "" {
-			opts.All, _ = strconv.ParseBool(raw)
-		}
-		if strings.EqualFold(opts.Project, "all") {
-			opts.Project = ""
-			opts.All = true
-		} else if opts.Project != "" {
-			opts.All = false
-		}
-		if raw := strings.TrimSpace(query.Get("limit")); raw != "" {
-			limit, err := strconv.Atoi(raw)
-			if err != nil {
-				http.Error(w, fmt.Sprintf("invalid limit %q", raw), http.StatusBadRequest)
-				return
-			}
-			opts.Limit = limit
-		}
-
-		result, err := RunSessionThroughput(r.Context(), opts)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		writeServeJSON(w, http.StatusOK, result)
-	}
-}
-
-func handleProjects() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		result, err := RunProjectOptions(r.Context())
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		writeServeJSON(w, http.StatusOK, result)
-	}
-}
-
-// handleSessionGet serves every Captain session matching an exact UUID or
-// provider-session-id prefix, using the same result envelope as the CLI.
-func handleSessionGet() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		id := strings.TrimSpace(r.PathValue("id"))
-		if id == "" {
-			http.Error(w, "session id is required", http.StatusBadRequest)
-			return
-		}
-		query := r.URL.Query()
-		opts := SessionGetOptions{
-			ID:     id,
-			Offset: queryInt(query.Get("offset")),
-			Limit:  queryInt(query.Get("limit")),
-			Tail:   queryInt(query.Get("tail")),
-		}
-		s, err := RunSessionGet(r.Context(), opts)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
-			return
-		}
-		writeServeJSON(w, http.StatusOK, s)
-	}
-}
-
-func queryInt(value string) int {
-	n, err := strconv.Atoi(strings.TrimSpace(value))
-	if err != nil || n < 0 {
-		return 0
-	}
-	return n
 }
 
 func handleThreadFromAgent(store aichat.ThreadStore) http.HandlerFunc {

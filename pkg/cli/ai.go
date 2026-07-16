@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -297,49 +296,6 @@ func (o AIPromptOptions) ToRequest() (ai.Request, error) {
 	}
 	req.Prompt.Attachments, err = attachmentRefsFromFlags(o.Attach)
 	return req, err
-}
-
-// RunAIPrompt is a deprecated alias for `captain prompt run`. It routes through
-// the same shared render + execute core (renderPromptSource + executePromptRequest)
-// so there is one implementation; the positional `.prompt` file, --prompt/-p, and
-// stdin all still work.
-func RunAIPrompt(opts AIPromptOptions) (any, error) {
-	log.Warnf("`captain ai prompt` is deprecated; use `captain prompt run` (it accepts a .prompt file, id, --prompt/-p, or stdin)")
-
-	var stdin string
-	if claude.IsStdinPiped() {
-		b, err := io.ReadAll(os.Stdin)
-		if err != nil {
-			return nil, fmt.Errorf("read stdin: %w", err)
-		}
-		stdin = string(b)
-	}
-
-	ctx := context.Background()
-	req, cfg, err := renderPromptSource(ctx, opts.File, opts, "", stdin)
-	if err != nil {
-		return nil, err
-	}
-	if req.Prompt.User == "" && len(req.Prompt.Attachments) == 0 {
-		return nil, fmt.Errorf("prompt text or attachment required (use --prompt/-p, --attach/-A, a file arg, or pipe via stdin)")
-	}
-	if cfg.Model.Name == "" {
-		return nil, fmt.Errorf("no model: pass --model or run 'captain configure' to set a default")
-	}
-	if err := req.Validate(); err != nil {
-		return nil, err
-	}
-	if len(opts.MultiModels) > 0 {
-		rendered := PromptRenderResult{
-			Name:    "prompt",
-			Model:   cfg.Model.Name,
-			Backend: string(cfg.Model.Backend),
-			Input:   req,
-			Config:  cfg,
-		}
-		return executeSyncRun(ctx, rendered, opts)
-	}
-	return executePromptRequest(ctx, req, cfg, runtimeTimeout(req.Budget.Timeout), opts.NoStream)
 }
 
 func executePromptRequest(parent context.Context, req ai.Request, cfg ai.Config, timeout time.Duration, noStream bool) (any, error) {

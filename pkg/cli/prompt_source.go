@@ -58,8 +58,10 @@ func loadPromptContent(ctx context.Context, id string, opts AIPromptOptions, std
 	case strings.TrimSpace(stdin) != "":
 		log.Debugf("prompt source: stdin (%d chars)", len(stdin))
 		return stdin, "<stdin>", true, promptRecord{Rel: "stdin.prompt"}, nil
+	case len(opts.Attach) > 0:
+		return ephemeralPromptContent(), "<attachment>", false, promptRecord{Rel: "attachment.prompt"}, nil
 	default:
-		return "", "", false, promptRecord{}, fmt.Errorf("prompt required: pass a .prompt file/id, --prompt/-p text, or pipe via stdin")
+		return "", "", false, promptRecord{}, fmt.Errorf("prompt or attachment required: pass a .prompt file/id, --prompt/-p text, --attach/-A, or pipe via stdin")
 	}
 }
 
@@ -107,20 +109,6 @@ func renderLoadedContent(content, source string, vars map[string]any, opts AIPro
 	return req, cfg, nil
 }
 
-// renderPromptSource is the single render pipeline shared by run and the
-// deprecated ai-prompt alias: load content → render → overlay → normalize.
-func renderPromptSource(ctx context.Context, id string, opts AIPromptOptions, varsJSON, stdin string) (ai.Request, ai.Config, error) {
-	content, source, usedStdin, _, err := loadPromptContent(ctx, id, opts, stdin)
-	if err != nil {
-		return ai.Request{}, ai.Config{}, err
-	}
-	vars, err := promptVars(opts, varsJSON, stdin, usedStdin)
-	if err != nil {
-		return ai.Request{}, ai.Config{}, err
-	}
-	return renderLoadedContent(content, source, vars, opts)
-}
-
 // actionFlagsToOptions reconstructs the typed AIPromptOptions from the entity
 // action's stringly-typed flag map (clicky CSV-encodes []string and "true"/"false"
 // for bool), so the render/run core can reuse overlayCLI.
@@ -161,6 +149,9 @@ func actionFlagsToOptions(f map[string]string) (AIPromptOptions, error) {
 	o.System = f["system"]
 	o.AppendSystem = f["append-system"]
 	o.Var = flagSlice(f["var"])
+	if attach := strings.TrimSpace(f["attach"]); attach != "" {
+		o.Attach = []string{attach}
+	}
 	o.MultiModels = flagSlice(f["multi-models"])
 	o.Timeout = f["timeout"]
 	o.NoStream = flagBool(f["no-stream"])

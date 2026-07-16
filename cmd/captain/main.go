@@ -107,7 +107,12 @@ func main() {
 			"also include request/response bodies.",
 	}
 	rootCmd.AddCommand(aiCmd)
-	clicky.AddNamedCommand("prompt", aiCmd, cli.AIPromptOptions{}, cli.RunAIPrompt)
+	aiCmd.AddCommand(cli.NewCommandAlias(cli.CommandAliasOptions{
+		Name:   "prompt",
+		Short:  "Alias for captain prompt run",
+		Root:   rootCmd,
+		Target: []string{"prompt", "run"},
+	}))
 	clicky.AddNamedCommand("agent", aiCmd, cli.AIAgentOptions{}, cli.RunAIAgent).Short = "Run an iterative agent with verifiers, worktree, and commit"
 	clicky.AddNamedCommand("models", aiCmd, cli.AIModelsOptions{}, cli.RunAIModels)
 	clicky.AddNamedCommand("test", aiCmd, cli.AITestOptions{}, cli.RunAITest)
@@ -119,7 +124,7 @@ func main() {
 
 	configureCmd := clicky.AddNamedCommand("configure", rootCmd, cli.ConfigureOptions{}, cli.RunConfigure)
 	configureCmd.Short = "Interactive wizard to set default model, backend, budget, and safety toggles"
-	configureCmd.Long = "Run an interactive form to configure ~/.captain.yaml. These defaults are applied to `captain ai prompt`, `captain ai test`, and other AI commands when corresponding flags are not passed."
+	configureCmd.Long = "Run an interactive form to configure ~/.captain.yaml. These defaults are applied to `captain prompt run`, `captain ai test`, and other AI commands when corresponding flags are not passed."
 
 	rootCmd.AddCommand(cli.NewServeCommand(version))
 

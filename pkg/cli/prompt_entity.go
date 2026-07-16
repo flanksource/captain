@@ -105,6 +105,7 @@ type PromptWriteRequest struct {
 type PromptRenderRequest struct {
 	Variables map[string]any `json:"variables,omitempty"`
 	Spec      *api.Spec      `json:"spec,omitempty"`
+	Chat      bool           `json:"chat,omitempty"`
 }
 
 type PromptRenderResult struct {
@@ -133,6 +134,7 @@ type PromptActionFlags struct {
 	System       string   `flag:"system" help:"System prompt" short:"s"`
 	AppendSystem string   `flag:"append-system" help:"Append text to the default system prompt"`
 	Var          []string `flag:"var" help:"Template variable key=value (repeatable)" short:"V"`
+	Attach       []string `flag:"attach" help:"Attach a local path or URL (repeatable; RFC 4180 comma-separated values allowed)" short:"A"`
 	Vars         string   `flag:"vars" help:"JSON object of template variables (HTTP callers)"`
 	MultiModels  []string `flag:"multi-models" help:"Run prompt once per runtime selector in parallel, e.g. cli:sonnet-5,cmux:opus (repeatable; comma-separated allowed)" short:"M"`
 	Timeout      string   `flag:"timeout" help:"Request timeout" default:"120s"`
@@ -490,8 +492,8 @@ func finalizeRenderResult(record promptRecord, content string, req ai.Request, c
 		OutputSchema: detail.OutputSchema,
 	}
 	switch {
-	case req.Prompt.User == "" && !req.IsVerifyOnly():
-		result.ValidationError = "prompt text required"
+	case req.Prompt.User == "" && len(req.Prompt.Attachments) == 0 && !req.IsVerifyOnly():
+		result.ValidationError = "prompt text or attachment required"
 	case cfg.Model.Name == "":
 		result.ValidationError = "no model: set prompt frontmatter, pass a model override, or run 'captain configure'"
 	default:

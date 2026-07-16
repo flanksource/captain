@@ -17,12 +17,15 @@ type SessionGetResult struct {
 }
 
 type SessionGetItem struct {
-	CaptainID         string           `json:"captainId"`
-	ProviderSessionID string           `json:"providerSessionId,omitempty"`
-	Host              string           `json:"host,omitempty"`
-	DetailAvailable   bool             `json:"detailAvailable"`
-	Summary           SessionRecord    `json:"summary"`
-	Detail            *session.Session `json:"detail,omitempty"`
+	CaptainID         string            `json:"captainId"`
+	ProviderSessionID string            `json:"providerSessionId,omitempty"`
+	Host              string            `json:"host,omitempty"`
+	DetailAvailable   bool              `json:"detailAvailable"`
+	Summary           SessionRecord     `json:"summary"`
+	Detail            *session.Session  `json:"detail,omitempty"`
+	ActiveRunID       string            `json:"activeRunId,omitempty"`
+	Chat              *ChatCapabilities `json:"chat,omitempty"`
+	ChatState         *ChatStateFrame   `json:"chatState,omitempty"`
 }
 
 // RunSessionGet returns every Captain session matching an exact Captain UUID
@@ -54,6 +57,13 @@ func RunSessionGet(ctx context.Context, opts SessionGetOptions) (SessionGetResul
 			DetailAvailable:   path != "",
 			Summary:           recordFromOverview(overview),
 		}
+		capabilities := sessionChatCapabilities(item.Summary)
+		item.Chat = &capabilities
+		if active, ok := promptChats.getSession(item.ProviderSessionID); ok {
+			var activeCapabilities ChatCapabilities
+			item.ActiveRunID, activeCapabilities, item.ChatState = active.projection()
+			item.Chat = &activeCapabilities
+		}
 		if path != "" {
 			detail, buildErr := buildSessionModel(candidateFromOverview(overview))
 			if buildErr != nil {
@@ -67,6 +77,14 @@ func RunSessionGet(ctx context.Context, opts SessionGetOptions) (SessionGetResul
 		items = append(items, item)
 	}
 	return SessionGetResult{Sessions: items, Total: len(items)}, nil
+}
+
+func sessionChatCapabilities(summary SessionRecord) ChatCapabilities {
+	capabilities := chatCapabilitiesForBackend(summary.Backend)
+	if summary.Source == "claude" || summary.Source == "codex" {
+		capabilities.Resume = true
+	}
+	return capabilities
 }
 
 func enrichSessionDetail(detail *session.Session, summary SessionRecord) {

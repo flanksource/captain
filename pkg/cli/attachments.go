@@ -27,6 +27,9 @@ func attachmentRefsFromFlags(values []string) ([]api.AttachmentRef, error) {
 		}
 		for _, field := range fields {
 			field = strings.TrimSpace(field)
+			if len(field) >= 2 && field[0] == '\'' && field[len(field)-1] == '\'' {
+				field = strings.TrimSpace(field[1 : len(field)-1])
+			}
 			if field == "" {
 				return nil, fmt.Errorf("empty attachment in --attach value %q", value)
 			}
@@ -109,6 +112,21 @@ func parseLegacyDataURL(value string) (mediaType, encoded string, ok bool) {
 }
 
 func preparePromptAttachments(ctx context.Context, req *ai.Request, cfg ai.Config) error {
+	if err := resolvePromptAttachments(ctx, req); err != nil {
+		return err
+	}
+	if len(req.Prompt.Attachments) == 0 {
+		return nil
+	}
+	model := req.Model
+	if model.Name == "" {
+		model = cfg.Model
+	}
+	models := append([]api.Model{model}, model.Fallbacks...)
+	return ai.ValidateAttachmentCompatibility(models, req.Prompt.Attachments)
+}
+
+func resolvePromptAttachments(ctx context.Context, req *ai.Request) error {
 	if len(req.Prompt.Attachments) == 0 {
 		return nil
 	}
@@ -135,12 +153,7 @@ func preparePromptAttachments(ctx context.Context, req *ai.Request, cfg ai.Confi
 		}
 		req.Prompt.Attachments = resolved
 	}
-	model := req.Model
-	if model.Name == "" {
-		model = cfg.Model
-	}
-	models := append([]api.Model{model}, model.Fallbacks...)
-	return ai.ValidateAttachmentCompatibility(models, req.Prompt.Attachments)
+	return nil
 }
 
 func newAttachmentStore(baseDir string) (*attachments.Store, error) {
