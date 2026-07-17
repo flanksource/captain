@@ -11,9 +11,9 @@ import (
 	"strings"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/aichat"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/attachments"
-	"github.com/flanksource/clicky/aichat"
 )
 
 func attachmentRefsFromFlags(values []string) ([]api.AttachmentRef, error) {

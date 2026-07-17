@@ -8,7 +8,6 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -19,10 +18,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/flanksource/captain/pkg/aichat"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/monitor"
-	"github.com/flanksource/clicky/aichat"
 	"github.com/flanksource/clicky/rpc"
 	rpchttp "github.com/flanksource/clicky/rpc/http"
 	"github.com/flanksource/clicky/task"
@@ -46,6 +45,7 @@ type ServeOptions struct {
 	Open        bool
 	ThreadsFile string
 	PromptDirs  []string
+	MCPServers  []aichat.MCPServer
 }
 
 func NewServeCommand(version string) *cobra.Command {
@@ -140,19 +140,15 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	addCaptainPromptRunPaths(openAPISpec)
 	addCaptainProviderTokenPaths(openAPISpec)
 	addCaptainProviderDefaultsPaths(openAPISpec)
-	chat := aichat.NewServer(aichat.Options{
-		RootCmd: rootCmd,
-		System: "You are Captain's coding-agent launcher assistant. Use Captain and Clicky tools when useful, " +
-			"prefer read-only inspection unless the user explicitly asks for edits, and keep follow-up guidance concise.",
-		Threads:            threadStore,
-		ToolFilter:         captainChatToolEnabled,
-		ToolApprovalPolicy: captainChatRequiresApproval,
-		Agent: aichat.AgentOptions{
-			Cwd: cwd,
-		},
-		AttachmentResolver: chatAttachmentResolver{store: attachmentStore},
-	})
-	defer chat.Close()
+	chat, mcpTools, err := newCaptainChatService(ctx, rootCmd, opts, cwd, threadStore, attachmentStore)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := mcpTools.Close(); err != nil {
+			log.Errorf("close Captain MCP tools: %v", err)
+		}
+	}()
 
 	// Prompt runs are tracked as clicky task groups. Disable terminal rendering:
 	// serve runs on a TTY, so otherwise the task manager draws progress bars over
@@ -293,107 +289,6 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	case err := <-errCh:
 		return err
 	}
-}
-
-func handleThreadFromAgent(store aichat.ThreadStore) http.HandlerFunc {
-	type request struct {
-		Title             string `json:"title"`
-		ProviderSessionID string `json:"providerSessionId"`
-		Model             string `json:"model"`
-	}
-	type response struct {
-		*aichat.Thread
-		LaunchURL string `json:"launchUrl"`
-	}
-
-	return func(w http.ResponseWriter, r *http.Request) {
-		var body request
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, fmt.Sprintf("invalid request body: %v", err), http.StatusBadRequest)
-			return
-		}
-		body.ProviderSessionID = strings.TrimSpace(body.ProviderSessionID)
-		if body.ProviderSessionID == "" {
-			http.Error(w, "providerSessionId is required", http.StatusBadRequest)
-			return
-		}
-		if strings.TrimSpace(body.Title) == "" {
-			body.Title = "Captain agent " + body.ProviderSessionID
-		}
-		thread, err := store.Create(r.Context(), body.Title)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if err := store.SetProviderSession(r.Context(), thread.ID, body.ProviderSessionID); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		thread, err = store.Get(r.Context(), thread.ID)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		launchURL := "/chat/" + url.PathEscape(thread.ID)
-		if model := strings.TrimSpace(body.Model); model != "" {
-			launchURL += "?model=" + url.QueryEscape(model)
-		}
-		writeServeJSON(w, http.StatusCreated, response{
-			Thread:    thread,
-			LaunchURL: launchURL,
-		})
-	}
-}
-
-func captainChatToolEnabled(tool aichat.ToolInfo) bool {
-	raw := strings.ToLower(strings.TrimSpace(tool.Annotation("clicky/operation")))
-	if raw == "" {
-		raw = strings.ToLower(strings.TrimSpace(tool.Name))
-	}
-	raw = strings.ReplaceAll(raw, "/", " ")
-	fields := strings.FieldsFunc(raw, func(r rune) bool {
-		return r == ' ' || r == '_' || r == '-'
-	})
-	if len(fields) == 0 {
-		return true
-	}
-	switch fields[0] {
-	case "serve", "mcp", "hook", "container", "sandbox", "port", "configure", "ai":
-		return false
-	default:
-		return true
-	}
-}
-
-func captainChatRequiresApproval(tool aichat.ToolInfo, _ any) bool {
-	switch strings.ToUpper(tool.Annotation("clicky/method")) {
-	case http.MethodGet, http.MethodHead, http.MethodOptions:
-		return false
-	}
-	// clicky already derives list/get→On; honor that, then fall back to the raw
-	// verb/name/operation/path for captain's wider read-verb set.
-	if tool.DefaultPermission == aichat.ToolModeOn {
-		return false
-	}
-	if isReadOnlyCaptainTool(tool.Annotation("clicky/verb")) ||
-		isReadOnlyCaptainTool(tool.Name) ||
-		isReadOnlyCaptainTool(tool.Annotation("clicky/operation")) ||
-		isReadOnlyCaptainTool(tool.Annotation("clicky/path")) {
-		return false
-	}
-	return true
-}
-
-func isReadOnlyCaptainTool(value string) bool {
-	for _, part := range strings.FieldsFunc(strings.ToLower(value), func(r rune) bool {
-		return r == '_' || r == '-' || r == '/' || r == '.' || r == ' '
-	}) {
-		switch part {
-		case "list", "get", "read", "show", "lookup", "search", "history", "info", "cost", "changes", "models", "status", "check":
-			return true
-		}
-	}
-	return false
 }
 
 func startCaptainViteDevServer(ctx context.Context, apiHost string, apiPort, uiPort int, stdout, stderr io.Writer) (*exec.Cmd, error) {

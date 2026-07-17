@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/flanksource/clicky/aichat"
+	"github.com/flanksource/captain/pkg/aichat"
 )
 
 func TestFileThreadStorePersistsThreads(t *testing.T) {
@@ -57,8 +57,8 @@ func TestFileThreadStorePersistsThreads(t *testing.T) {
 	if len(got.Messages) != 1 || got.Messages[0].Parts[0].Text != "continue" {
 		t.Errorf("Messages = %+v", got.Messages)
 	}
-	if got.TotalInputTokens != 10 || got.TotalOutputTokens != 5 || got.TotalCostUsd != 0.25 {
-		t.Errorf("usage totals = input %d output %d cost %f", got.TotalInputTokens, got.TotalOutputTokens, got.TotalCostUsd)
+	if got.TotalInputTokens != 10 || got.TotalOutputTokens != 5 || got.TotalCostUSD != 0.25 {
+		t.Errorf("usage totals = input %d output %d cost %f", got.TotalInputTokens, got.TotalOutputTokens, got.TotalCostUSD)
 	}
 
 	list, err := reloaded.List(ctx)

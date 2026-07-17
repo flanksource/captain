@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/flanksource/clicky/aichat"
+	"github.com/flanksource/captain/pkg/aichat"
 )
 
 type fileThreadStore struct {
@@ -152,7 +152,10 @@ func (s *fileThreadStore) AddUsage(_ context.Context, id string, usage aichat.Tu
 	}
 	thread.TotalInputTokens += usage.InputTokens
 	thread.TotalOutputTokens += usage.OutputTokens
-	thread.TotalCostUsd += usage.CostUSD
+	thread.TotalReasoningTokens += usage.ReasoningTokens
+	thread.TotalCacheReadTokens += usage.CacheReadTokens
+	thread.TotalCacheWriteTokens += usage.CacheWriteTokens
+	thread.TotalCostUSD += usage.CostUSD
 	thread.LastContextTokens = usage.InputTokens
 	thread.UpdatedAt = time.Now()
 	if err := s.saveLocked(state); err != nil {

@@ -24,7 +24,6 @@ export function ChatLayer() {
           modelsApi: "/api/chat/models",
           defaultModel: "claude-sonnet-5",
           enableAttachments: true,
-          toolApproval: "manual",
           suggestions: [
             "Summarize this run",
             "Show recent changed files",
