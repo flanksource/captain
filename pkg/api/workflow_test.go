@@ -68,9 +68,25 @@ func TestSpecSchemaIncludesWorkflow(t *testing.T) {
 			t.Errorf("reflected spec schema missing %q", want)
 		}
 	}
-	for _, gone := range []string{"\"output\"", "\"Output\""} {
-		if strings.Contains(string(data), gone) {
-			t.Errorf("reflected spec schema still contains removed workflow field %s", gone)
+	var reflected map[string]any
+	if err := json.Unmarshal(data, &reflected); err != nil {
+		t.Fatalf("decode schema: %v", err)
+	}
+	definitions, ok := reflected["$defs"].(map[string]any)
+	if !ok {
+		t.Fatalf("reflected spec schema has no $defs object")
+	}
+	workflow, ok := definitions["Workflow"].(map[string]any)
+	if !ok {
+		t.Fatalf("reflected spec schema has no Workflow definition")
+	}
+	properties, ok := workflow["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("reflected Workflow schema has no properties object")
+	}
+	for _, gone := range []string{"output", "Output"} {
+		if _, exists := properties[gone]; exists {
+			t.Errorf("reflected Workflow schema still contains removed field %q", gone)
 		}
 	}
 }

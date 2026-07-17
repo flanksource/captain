@@ -6,6 +6,8 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
+
+	gkai "github.com/firebase/genkit/go/ai"
 )
 
 func newToolProvider(canUse api.PermissionFunc) *Provider {
@@ -24,14 +26,14 @@ func TestRunToolAutoRunsAndEmitsCorrelatedEvents(t *testing.T) {
 	var gotInput map[string]any
 	def := api.ToolDefinition{
 		Name:              "echo",
-		DefaultPermission: api.ToolModeEnabled,
+		DefaultPermission: api.ToolModeOn,
 		Handler: func(_ context.Context, in map[string]any) (any, error) {
 			gotInput = in
 			return map[string]any{"ok": true}, nil
 		},
 	}
 
-	out, err := p.runTool(context.Background(), def, map[string]any{"x": 1}, emit)
+	out, err := runCorrelatedTool(p, def, map[string]any{"x": 1}, emit)
 	if err != nil {
 		t.Fatalf("runTool: %v", err)
 	}
@@ -71,7 +73,7 @@ func TestRunToolApprovalDeniedSkipsHandler(t *testing.T) {
 		Handler:           func(context.Context, map[string]any) (any, error) { ran = true; return "ran", nil },
 	}
 
-	out, err := p.runTool(context.Background(), def, map[string]any{}, emit)
+	out, err := runCorrelatedTool(p, def, map[string]any{}, emit)
 	if err != nil {
 		t.Fatalf("runTool: %v", err)
 	}
@@ -104,7 +106,7 @@ func TestRunToolApprovalAllowsAndSubstitutesInput(t *testing.T) {
 		Handler:           func(_ context.Context, in map[string]any) (any, error) { seen = in; return "done", nil },
 	}
 
-	if _, err := p.runTool(context.Background(), def, map[string]any{"amount": 1}, emit); err != nil {
+	if _, err := runCorrelatedTool(p, def, map[string]any{"amount": 1}, emit); err != nil {
 		t.Fatalf("runTool: %v", err)
 	}
 	if seen["amount"] != 5 {
@@ -117,10 +119,10 @@ func TestRunToolHandlerErrorFedBack(t *testing.T) {
 	emit, events := collectEvents()
 	def := api.ToolDefinition{
 		Name:              "boom",
-		DefaultPermission: api.ToolModeEnabled,
+		DefaultPermission: api.ToolModeOn,
 		Handler:           func(context.Context, map[string]any) (any, error) { return nil, context.Canceled },
 	}
-	out, err := p.runTool(context.Background(), def, map[string]any{}, emit)
+	out, err := runCorrelatedTool(p, def, map[string]any{}, emit)
 	if err != nil {
 		t.Fatalf("runTool should not surface handler error, got %v", err)
 	}
@@ -135,7 +137,7 @@ func TestRunToolHandlerErrorFedBack(t *testing.T) {
 
 func TestToolOptionsEmptyWhenNoTools(t *testing.T) {
 	p := newToolProvider(nil)
-	if opts := p.toolOptions(nil); opts != nil {
+	if opts, err := p.toolOptions(nil, nil); err != nil || opts != nil {
 		t.Errorf("toolOptions with no tools = %v, want nil", opts)
 	}
 	if !p.SupportsCallerTools() {
@@ -149,4 +151,10 @@ func eventKinds(events []ai.Event) []ai.EventKind {
 		kinds[i] = e.Kind
 	}
 	return kinds
+}
+
+func runCorrelatedTool(p *Provider, def api.ToolDefinition, input any, emit func(ai.Event)) (any, error) {
+	correlation := newToolEventCorrelation()
+	correlation.observeRequest(&gkai.ToolRequest{Name: def.Name, Ref: "provider-call-1", Input: input})
+	return p.runTool(context.Background(), def, input, emit, correlation)
 }

@@ -10,6 +10,7 @@ type Response struct {
 	Text            string
 	StructuredData  any
 	TerminalOutcome *TerminalOutcome
+	ToolApproval    *ToolApprovalState
 	Model           string
 	Backend         Backend
 	Usage           Usage
@@ -71,6 +72,7 @@ type Event struct {
 	// is raw JSON because the streaming contract does not know the caller's Go
 	// type — the buffered Execute path unmarshals it into Request.Prompt.Schema.
 	StructuredData json.RawMessage
+	ToolApproval   *ToolApprovalState
 
 	// Raw carries the backend-native event (e.g. claude.HistoryEntry for the
 	// claude_cli stream) so renderers can use the rich pretty-printers in

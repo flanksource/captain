@@ -10,38 +10,24 @@ package tools
 import (
 	"context"
 	"sort"
-	"strings"
+
+	"github.com/flanksource/captain/pkg/api"
 )
 
 // ToolMode controls how a tool is exposed for one request.
-type ToolMode string
+type ToolMode = api.ToolMode
 
 const (
-	ToolModeOn   ToolMode = "on"
-	ToolModeAsk  ToolMode = "ask"
-	ToolModeOff  ToolMode = "off"
-	ToolModeAuto ToolMode = "auto"
-
-	// Backward-compatible aliases for the labels older clients send.
-	ToolModeEnabled  ToolMode = ToolModeOn
-	ToolModeDisabled ToolMode = ToolModeOff
+	ToolModeOn   = api.ToolModeOn
+	ToolModeAsk  = api.ToolModeAsk
+	ToolModeOff  = api.ToolModeOff
+	ToolModeAuto = api.ToolModeAuto
 )
 
-// NormalizeToolMode canonicalizes a mode string, accepting the older
-// "enabled"/"disabled" labels. The bool is false for an unrecognized value.
+// NormalizeToolMode canonicalizes a mode string. The bool is false for an
+// unrecognized value.
 func NormalizeToolMode(mode ToolMode) (ToolMode, bool) {
-	switch ToolMode(strings.ToLower(strings.TrimSpace(string(mode)))) {
-	case ToolModeOn, "enabled":
-		return ToolModeOn, true
-	case ToolModeAsk:
-		return ToolModeAsk, true
-	case ToolModeOff, "disabled":
-		return ToolModeOff, true
-	case ToolModeAuto:
-		return ToolModeAuto, true
-	default:
-		return "", false
-	}
+	return api.NormalizeToolMode(mode)
 }
 
 // DefaultPermissionMode resolves a mode to its canonical value, defaulting an
@@ -71,9 +57,8 @@ func ApprovalDecisionForMode(mode ToolMode) (require bool, handled bool) {
 }
 
 // ToolPreferences carries the clicky-ui tool preference payload. The UI sends
-// "on", "ask", "off", or "auto"; "enabled"/"disabled" are accepted for older
-// callers.
-type ToolPreferences map[string]ToolMode
+// "on", "ask", "off", or "auto".
+type ToolPreferences = api.ToolPreferences
 
 // ToolInfo is the concrete tool being considered for approval and preference
 // resolution. Clicky-RPC specifics (verb/method/path/operation) live in
