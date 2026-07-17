@@ -71,16 +71,20 @@ func (s *Service) resolveAttachments(ctx context.Context, messages []UIMessage) 
 func requestSpec(request ChatRequest, settings RuntimeSettings, attachments map[partLocation]api.AttachmentRef) (api.Spec, error) {
 	model := strings.TrimSpace(request.Model)
 	if model == "" {
-		model = strings.TrimSpace(settings.DefaultModel)
-	}
-	if model == "" {
 		model = strings.TrimSpace(settings.Spec.Name)
 	}
 	if model == "" {
 		return api.Spec{}, fmt.Errorf("chat model is required")
 	}
+	// Expand before merging: a compact selector ("agent:sol") carries its own
+	// backend, and merging it unexpanded would keep settings.Spec's backend and run
+	// a different runtime than the caller asked for.
+	override, err := api.Model{Name: model, Effort: request.ReasoningEffort, Temperature: request.Temperature}.Expand()
+	if err != nil {
+		return api.Spec{}, fmt.Errorf("invalid chat model %q: %w", model, err)
+	}
 	spec := settings.Spec.Merge(api.Spec{
-		Model:           api.Model{Name: model, Effort: request.ReasoningEffort, Temperature: request.Temperature},
+		Model:           override,
 		Budget:          request.Budget,
 		ToolPreferences: request.ToolPreferences,
 		ToolApproval:    request.ToolApproval,

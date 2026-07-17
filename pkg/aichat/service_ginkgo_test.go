@@ -130,7 +130,7 @@ var _ = Describe("Captain aichat service", func() {
 		service := aichat.NewService(aichat.ServiceOptions{
 			Resolver: resolver, ProviderConfig: source,
 			Settings: aichat.RuntimeSettingsProviderFunc(func(context.Context) (aichat.RuntimeSettings, error) {
-				return aichat.RuntimeSettings{DefaultModel: "api:gpt-5.4"}, nil
+				return aichat.RuntimeSettings{Spec: api.Spec{Model: api.Model{Name: "api:gpt-5.4"}}}, nil
 			}),
 		})
 
@@ -157,7 +157,7 @@ var _ = Describe("Captain aichat service", func() {
 		service := aichat.NewService(aichat.ServiceOptions{
 			Resolver: resolver, ProviderConfig: source,
 			Settings: aichat.RuntimeSettingsProviderFunc(func(context.Context) (aichat.RuntimeSettings, error) {
-				return aichat.RuntimeSettings{DefaultModel: "api:gpt-5.4"}, nil
+				return aichat.RuntimeSettings{Spec: api.Spec{Model: api.Model{Name: "api:gpt-5.4"}}}, nil
 			}),
 		})
 
@@ -179,7 +179,8 @@ var _ = Describe("Captain aichat service", func() {
 		service := aichat.NewService(aichat.ServiceOptions{
 			Resolver: resolver,
 			Settings: aichat.RuntimeSettingsProviderFunc(func(context.Context) (aichat.RuntimeSettings, error) {
-				return aichat.RuntimeSettings{DefaultModel: "openai/test-model", Spec: api.Spec{
+				return aichat.RuntimeSettings{Spec: api.Spec{
+					Model:  api.Model{Name: "openai/test-model"},
 					Budget: api.Budget{Cost: 5, MaxTokens: 2_000, MaxTurns: 3},
 				}}, nil
 			}),
@@ -201,7 +202,8 @@ var _ = Describe("Captain aichat service", func() {
 			Resolver: resolver,
 			Settings: aichat.RuntimeSettingsProviderFunc(func(context.Context) (aichat.RuntimeSettings, error) {
 				return aichat.RuntimeSettings{
-					DefaultModel: "openai/test-model", MonthlyBudgetUSD: 10, CurrentMonthCostUSD: 10,
+					Spec:             api.Spec{Model: api.Model{Name: "openai/test-model"}},
+					MonthlyBudgetUSD: 10, CurrentMonthCostUSD: 10,
 				}, nil
 			}),
 		})
@@ -262,7 +264,8 @@ var _ = Describe("Captain aichat service", func() {
 			Resolver: resolver,
 			Settings: aichat.RuntimeSettingsProviderFunc(func(context.Context) (aichat.RuntimeSettings, error) {
 				return aichat.RuntimeSettings{
-					DefaultModel: "openai/test-model", System: "Use application tools.",
+					Spec:           api.Spec{Model: api.Model{Name: "openai/test-model"}},
+					System:         "Use application tools.",
 					ProviderConfig: api.Config{APIURL: "https://example.com/ai", ProjectName: "tenant-x"},
 				}, nil
 			}),

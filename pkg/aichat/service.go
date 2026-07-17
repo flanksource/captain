@@ -16,8 +16,14 @@ var serviceLog = logger.GetLogger("aichat")
 
 // RuntimeSettings are application-owned defaults and provider construction
 // settings evaluated for each request.
+// RuntimeSettings is the request-scoped application configuration for a chat.
+//
+// The default model lives in Spec.Model — there is deliberately no DefaultModel
+// string beside it. A bare name next to a structured Spec is the lossy pattern:
+// it cannot carry a backend/mode/effort, so whatever it named got re-inferred, and
+// when both were set they could silently disagree. Spec.Model can say
+// {Name: "sol", Mode: ModeAgent} and mean it.
 type RuntimeSettings struct {
-	DefaultModel        string
 	System              string
 	Spec                api.Spec
 	ProviderConfig      api.Config

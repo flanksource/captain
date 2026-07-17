@@ -11,6 +11,7 @@ import (
 	"github.com/flanksource/captain/pkg/ai/tools"
 	"github.com/flanksource/captain/pkg/aichat"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/api/registry"
 	"github.com/flanksource/captain/pkg/attachments"
 	clickyaichat "github.com/flanksource/clicky/aichat"
 	"github.com/flanksource/commons-db/shell"
@@ -38,10 +39,12 @@ func newCaptainChatService(
 	chat := aichat.NewService(aichat.ServiceOptions{
 		Settings: aichat.RuntimeSettingsProviderFunc(func(context.Context) (aichat.RuntimeSettings, error) {
 			return aichat.RuntimeSettings{
-				DefaultModel: "agent:sol",
 				System: "You are Captain's coding-agent launcher assistant. Use Captain and Clicky tools when useful, " +
 					"prefer read-only inspection unless the user explicitly asks for edits, and keep follow-up guidance concise.",
-				Spec: api.Spec{Setup: &shell.Setup{Cwd: cwd}},
+				Spec: api.Spec{
+					Model: api.Model{Name: "sol", Mode: registry.ModeAgent},
+					Setup: &shell.Setup{Cwd: cwd},
+				},
 			}, nil
 		}),
 		Tools: chatTools, MCP: mcpTools, Threads: threadStore,
