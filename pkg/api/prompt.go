@@ -12,7 +12,7 @@ import (
 // Source,StructuredOutput,Metadata}.
 type Prompt struct {
 	// User is the user prompt. (ai.Request.Prompt)
-	User string `json:"user" yaml:"user" jsonschema:"required" pretty:"label=Prompt"`
+	User string `json:"user,omitempty" yaml:"user,omitempty" jsonschema:"required" pretty:"label=Prompt"`
 	// System is the system prompt. (ai.Request.SystemPrompt)
 	System string `json:"system,omitempty" yaml:"system,omitempty" pretty:"label=System"`
 	// AppendSystem is appended to the default system prompt. (ai.Request.AppendSystemPrompt)

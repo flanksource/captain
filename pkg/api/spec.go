@@ -1,7 +1,9 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/flanksource/commons-db/shell"
@@ -39,6 +41,106 @@ type Spec struct {
 	// keyed by their json field names — interactive CLI flags with no dedicated
 	// Spec field. Ignored by non-cmux providers.
 	CLIArgs map[string]any `json:"cliArgs,omitempty" yaml:"cliArgs,omitempty"`
+}
+
+type specMarshal struct {
+	Model       `json:",inline" yaml:",inline"`
+	Prompt      *Prompt             `json:"prompt,omitempty" yaml:"prompt,omitempty"`
+	Messages    []Message           `json:"messages,omitempty" yaml:"messages,omitempty"`
+	Budget      *Budget             `json:"budget,omitempty" yaml:"budget,omitempty"`
+	Memory      *Memory             `json:"memory,omitempty" yaml:"memory,omitempty"`
+	Permissions *Permissions        `json:"permissions,omitempty" yaml:"permissions,omitempty"`
+	Preferences *ToolPreferences    `json:"toolPreferences,omitempty" yaml:"toolPreferences,omitempty"`
+	Approval    *ToolApprovalResume `json:"toolApproval,omitempty" yaml:"toolApproval,omitempty"`
+	Setup       *shell.Setup        `json:"setup,omitempty" yaml:"setup,omitempty"`
+	Workflow    *Workflow           `json:"workflow,omitempty" yaml:"workflow,omitempty"`
+	SessionID   string              `json:"sessionId,omitempty" yaml:"sessionId,omitempty"`
+	CLIArgs     map[string]any      `json:"cliArgs,omitempty" yaml:"cliArgs,omitempty"`
+}
+
+func isEmpty(value reflect.Value) bool {
+	if !value.IsValid() {
+		return true
+	}
+	for value.Kind() == reflect.Interface || value.Kind() == reflect.Pointer {
+		if value.IsNil() {
+			return true
+		}
+		value = value.Elem()
+	}
+	if value.CanInterface() {
+		switch typed := value.Interface().(type) {
+		case Tools:
+			return len(typed.Policies()) == 0
+		case MCP:
+			return !typed.Disabled && len(typed.Servers) == 0 && len(typed.Modes) == 0
+		}
+	}
+	switch value.Kind() {
+	case reflect.Array:
+		for i := range value.Len() {
+			if !isEmpty(value.Index(i)) {
+				return false
+			}
+		}
+		return true
+	case reflect.Map, reflect.Slice, reflect.String:
+		return value.Len() == 0
+	case reflect.Struct:
+		exported := 0
+		for i := range value.NumField() {
+			field := value.Type().Field(i)
+			if !field.IsExported() || field.Tag.Get("json") == "-" || field.Tag.Get("yaml") == "-" {
+				continue
+			}
+			exported++
+			if !isEmpty(value.Field(i)) {
+				return false
+			}
+		}
+		return exported > 0 || value.IsZero()
+	default:
+		return value.IsZero()
+	}
+}
+
+func omitEmptyValue[T any](value T) *T {
+	if isEmpty(reflect.ValueOf(value)) {
+		return nil
+	}
+	return &value
+}
+
+func omitEmptyPointer[T any](value *T) *T {
+	if isEmpty(reflect.ValueOf(value)) {
+		return nil
+	}
+	return value
+}
+
+func (s Spec) marshalValue() specMarshal {
+	return specMarshal{
+		Model:       s.Model,
+		Prompt:      omitEmptyValue(s.Prompt),
+		Messages:    s.Messages,
+		Budget:      omitEmptyValue(s.Budget),
+		Memory:      omitEmptyValue(s.Memory),
+		Permissions: omitEmptyValue(s.Permissions),
+		Preferences: omitEmptyValue(s.ToolPreferences),
+		Approval:    omitEmptyPointer(s.ToolApproval),
+		Setup:       omitEmptyPointer(s.Setup),
+		Workflow:    omitEmptyPointer(s.Workflow),
+		SessionID:   s.SessionID,
+		CLIArgs:     s.CLIArgs,
+	}
+}
+
+func (s Spec) MarshalJSON() ([]byte, error) {
+	return json.Marshal(s.marshalValue())
+}
+
+func (s Spec) MarshalYAML() (any, error) {
+	return s.marshalValue(), nil
 }
 
 // Validate runs each component's validation, failing loud on the first error.

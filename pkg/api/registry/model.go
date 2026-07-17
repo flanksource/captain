@@ -17,7 +17,7 @@ const CodexAutoReviewModel = "codex-auto-review"
 type Model struct {
 	// Name is the catalog model slug, e.g. "claude-sonnet-4-6"; it drives backend
 	// inference and pricing lookup.
-	Name string `json:"model" yaml:"model" jsonschema:"required" pretty:"label=Model"`
+	Name string `json:"model,omitempty" yaml:"model,omitempty" jsonschema:"required" pretty:"label=Model"`
 
 	// ID is the fully-qualified provider id when it differs from Name, e.g. the
 	// genkit "anthropic/claude-sonnet-4-6" or a codex slug. Empty means use Name.
