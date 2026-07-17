@@ -32,7 +32,7 @@ var (
 		identityTrim:  []string{"claude-agent-", "claude-code-", "claude-"},
 		families:      []string{"fable", "opus", "sonnet", "haiku"},
 		emptyTokens:   []string{""},
-		emptyFamily:   "sonnet",
+		emptyFamily:   "opus",
 		genConfig:     anthropicGenerationConfig,
 	}
 
@@ -54,13 +54,12 @@ var (
 		modeTokens: sortModeTokens([]modeToken{
 			{prefix: "codex-agent", mode: ModeAgent},
 			{prefix: "codex", mode: ModeCLI},
-			{prefix: "grok-", mode: ModeCLI},
 		}),
 		claimPrefixes: []string{"gpt-", "o1", "o3", "o4"},
 		identityTrim:  []string{"codex-agent-", "codex-"},
 		families:      []string{"gpt"},
 		emptyTokens:   []string{"", "codex"},
-		emptyFamily:   "gpt",
+		emptyFamily:   "gpt-5.6-sol",
 		genConfig:     openaiGenerationConfig,
 	}
 

@@ -20,7 +20,7 @@ type ClaudeCLI struct {
 
 func NewClaudeCLI(model string) *ClaudeCLI {
 	if strings.TrimSpace(model) == "" {
-		model = "claude-sonnet-5"
+		model = "opus"
 	}
 	model = ai.NormalizeModelForBackend(ai.BackendClaudeCLI, model)
 	return &ClaudeCLI{model: model}
