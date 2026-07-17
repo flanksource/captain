@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"github.com/flanksource/captain/pkg/aiflags"
 	"os"
 	"path/filepath"
 	"time"
@@ -35,7 +36,7 @@ var _ = Describe("CLI model selection", func() {
 	})
 
 	It("uses the same precedence for provider options", func() {
-		cfg, err := (AIProviderOptions{Model: "gemini-3.5-flash"}).ToConfig()
+		cfg, err := (AIProviderOptions{ModelFlags: aiflags.ModelFlags{Model: "gemini-3.5-flash"}}).ToConfig()
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(cfg.Model.Name).To(Equal("gemini-3.5-flash"))

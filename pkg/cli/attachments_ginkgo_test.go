@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/flanksource/captain/pkg/aiflags"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -58,7 +59,7 @@ var _ = Describe("attachment flags", func() {
 
 	It("renders an attachment-only canonical prompt", func() {
 		rendered, err := renderPromptCLI(context.Background(), "", AIPromptOptions{
-			AIRuntimeOptions: AIRuntimeOptions{AIProviderOptions: AIProviderOptions{Model: "gemini-2.5-pro"}},
+			AIRuntimeOptions: AIRuntimeOptions{AIProviderOptions: AIProviderOptions{ModelFlags: aiflags.ModelFlags{Model: "gemini-2.5-pro"}}},
 			Attach:           []string{"diagram.png"},
 		}, "", "")
 		Expect(err).NotTo(HaveOccurred())

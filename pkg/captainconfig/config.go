@@ -13,7 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/api/registry"
 	"golang.org/x/sys/unix"
 	"gopkg.in/yaml.v3"
 )
@@ -80,23 +80,23 @@ type ProviderDefaults struct {
 }
 
 func (a AIDefaults) ActiveProvider() string {
-	if provider := api.Backend(strings.TrimSpace(a.DefaultProvider)); provider != "" && provider.Provider() == provider {
+	if provider := registry.Backend(strings.TrimSpace(a.DefaultProvider)); provider != "" && provider.Provider() == provider {
 		return string(provider)
 	}
-	if provider := api.Backend(strings.TrimSpace(a.Backend)).Provider(); provider != "" {
+	if provider := registry.Backend(strings.TrimSpace(a.Backend)).Provider(); provider != "" {
 		return string(provider)
 	}
-	if backend, err := api.InferBackend(strings.TrimSpace(a.Model)); err == nil {
+	if backend, err := registry.InferBackend(strings.TrimSpace(a.Model)); err == nil {
 		return string(backend.Provider())
 	}
-	return string(api.AnthropicProvider)
+	return string(registry.AnthropicProvider)
 }
 
 func (a AIDefaults) legacyProvider() string {
-	if provider := api.Backend(strings.TrimSpace(a.Backend)).Provider(); provider != "" {
+	if provider := registry.Backend(strings.TrimSpace(a.Backend)).Provider(); provider != "" {
 		return string(provider)
 	}
-	if backend, err := api.InferBackend(strings.TrimSpace(a.Model)); err == nil {
+	if backend, err := registry.InferBackend(strings.TrimSpace(a.Model)); err == nil {
 		return string(backend.Provider())
 	}
 	return strings.TrimSpace(a.DefaultProvider)
@@ -108,8 +108,8 @@ func (a AIDefaults) Provider(provider string) ProviderDefaults {
 	if provider != a.legacyProvider() {
 		return defaults
 	}
-	legacyAgent := api.Backend(strings.TrimSpace(a.Backend))
-	if defaults.Agent == "" && legacyAgent.Provider() == api.Backend(provider) {
+	legacyAgent := registry.Backend(strings.TrimSpace(a.Backend))
+	if defaults.Agent == "" && legacyAgent.Provider() == registry.Backend(provider) {
 		defaults.Agent = string(legacyAgent)
 	}
 	if defaults.Model == "" {

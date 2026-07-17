@@ -11,6 +11,7 @@ import (
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/middleware"
 	"github.com/flanksource/captain/pkg/ai/pricing"
+	"github.com/flanksource/captain/pkg/aiflags"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/captainconfig"
 	"github.com/flanksource/captain/pkg/claude"
@@ -36,13 +37,23 @@ func loadSavedConfig() captainconfig.Config {
 	return cfg
 }
 
+// AIProviderOptions binds model selection plus the two knobs that belong to the
+// request rather than the model: the API key and the spend budget.
+//
+// The model flags themselves live in pkg/aiflags — a leaf any clicky CLI can embed
+// without inheriting pkg/cli's ~1000 transitive packages. Embedding it here keeps
+// captain's flag surface unchanged (clicky promotes embedded flags at any depth)
+// while giving downstream repos the same parsing captain uses.
 type AIProviderOptions struct {
-	Model    string   `flag:"model" help:"Model name(s), e.g. claude-sonnet-5 or a comma-separated primary,fallback list like claude-sonnet-5,gpt-4o (defaults to the value saved by 'captain configure')" short:"m"`
-	Fallback []string `flag:"fallback" help:"Model to try if the primary is unavailable (repeatable; comma-separated allowed)"`
-	Backend  string   `flag:"backend" help:"Force backend: anthropic|gemini|openai|deepseek|claude-cli|claude-agent|claude-cmux|codex-cli|codex-agent|codex-cmux|gemini-cli (default: inferred from model or saved by 'captain configure')" short:"b"`
-	APIKey   string   `flag:"api-key" help:"API key (env: ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, GOOGLE_API_KEY, DEEPSEEK_API_KEY)"`
-	NoCache  bool     `flag:"no-cache" help:"Disable response caching"`
-	Budget   string   `flag:"budget" help:"Max spend in USD, 0=unlimited" default:"0"`
+	aiflags.ModelFlags
+
+	APIKey string `flag:"api-key" help:"API key (env: ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, GOOGLE_API_KEY, DEEPSEEK_API_KEY)"`
+	Budget string `flag:"budget" help:"Max spend in USD, 0=unlimited" default:"0"`
+}
+
+// BudgetUSD parses --budget, failing loud on malformed input.
+func (o AIProviderOptions) BudgetUSD() (float64, error) {
+	return parseFloatFlag("budget", o.Budget)
 }
 
 // parseFloatFlag parses a numeric string flag, returning a descriptive error
@@ -61,25 +72,18 @@ func parseFloatFlag(name, val string) (float64, error) {
 func (o AIProviderOptions) ToConfig() (ai.Config, error) {
 	savedCfg := loadSavedConfig()
 	saved := savedCfg.AI
-	budget, err := parseFloatFlag("budget", o.Budget)
+	budget, err := o.BudgetUSD()
 	if err != nil {
 		return ai.Config{}, err
-	}
-
-	m := api.Model{Name: o.Model, Backend: api.Backend(o.Backend)}
-	if m.Backend != "" && !m.Backend.Valid() {
-		return ai.Config{}, fmt.Errorf("invalid --backend %q (valid: %s)", m.Backend, ai.BackendList())
 	}
 	if budget == 0 {
 		budget = saved.BudgetUSD
 	}
 
-	m.Fallbacks = fallbackModelsFromFlags(o.Fallback)
-	m, err = applyProviderDefaults(m, saved)
-	if err != nil {
-		return ai.Config{}, err
-	}
-	m, err = ai.ResolveModelSelectors(m)
+	// One resolve: flags → Model → saved per-provider defaults → catalog. The
+	// warn-and-continue policy for a broken config stays here (loadSavedConfig), so
+	// aiflags can hand the error back instead of swallowing it.
+	m, err := o.ResolveWith(saved)
 	if err != nil {
 		return ai.Config{}, err
 	}
@@ -123,11 +127,12 @@ func isZeroSchemaRepair(c api.SchemaRepairConfig) bool {
 type AIRuntimeOptions struct {
 	AIProviderOptions
 
-	MaxTokens   int    `flag:"max-tokens" help:"Maximum output tokens (0 = saved default or 4096)"`
-	Temperature string `flag:"temperature" help:"Sampling temperature (0.0-2.0)" default:"0"`
-	Effort      string `flag:"effort" help:"Reasoning effort: low|medium|high|xhigh|max|ultra (model-dependent)"`
-	MaxTurns    int    `flag:"max-turns" help:"Max agent turns 0-100, 0 = provider default (claude-agent)"`
-	Resume      string `flag:"resume" help:"Resume an existing session by id (claude-agent, codex)"`
+	// Effort and Temperature are NOT here: they describe the model and so live on
+	// the embedded aiflags.ModelFlags, promoted through AIProviderOptions.
+	// Redeclaring them would bind --effort twice and panic cobra at init.
+	MaxTokens int    `flag:"max-tokens" help:"Maximum output tokens (0 = saved default or 4096)"`
+	MaxTurns  int    `flag:"max-turns" help:"Max agent turns 0-100, 0 = provider default (claude-agent)"`
+	Resume    string `flag:"resume" help:"Resume an existing session by id (claude-agent, codex)"`
 
 	Edit            bool     `flag:"edit" help:"Safe defaults: acceptEdits + Read/Edit/Write/Glob/Grep allowlist"`
 	AllowedTools    []string `flag:"allowed-tools" help:"Override --edit's built-in allowlist (claude only)"`

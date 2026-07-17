@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"github.com/flanksource/captain/pkg/aiflags"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -238,10 +239,10 @@ func TestAIRuntimeOptions_ToRequest_ValidationErrors(t *testing.T) {
 
 func TestAIProviderOptions_ToConfig_ValidationErrors(t *testing.T) {
 	isolateSavedAI(t)
-	if _, err := (AIProviderOptions{Model: "claude-x", Backend: "nope"}).ToConfig(); err == nil || !strings.Contains(err.Error(), "backend") {
+	if _, err := (AIProviderOptions{ModelFlags: aiflags.ModelFlags{Model: "claude-x", Backend: "nope"}}).ToConfig(); err == nil || !strings.Contains(err.Error(), "backend") {
 		t.Fatalf("expected invalid backend error, got %v", err)
 	}
-	if _, err := (AIProviderOptions{Model: "claude-x", Budget: "free"}).ToConfig(); err == nil || !strings.Contains(err.Error(), "budget") {
+	if _, err := (AIProviderOptions{ModelFlags: aiflags.ModelFlags{Model: "claude-x"}, Budget: "free"}).ToConfig(); err == nil || !strings.Contains(err.Error(), "budget") {
 		t.Fatalf("expected invalid budget error, got %v", err)
 	}
 }
@@ -311,7 +312,7 @@ func TestAIRuntimeOptions_ToRequest_MaxTokensPrecedence(t *testing.T) {
 func TestAIRuntimeOptions_ToRequest_OverlaysSaved(t *testing.T) {
 	seedSavedAI(t, "ai:\n  noMCP: true\n  noHooks: true\n  noSkills: true\n  noUser: true\n  noProject: true\n  noMemory: true\n  maxTokens: 16000\n  reasoningEffort: low\n")
 
-	opts := AIRuntimeOptions{Effort: "high"} // flag overrides saved low
+	opts := AIRuntimeOptions{AIProviderOptions: AIProviderOptions{ModelFlags: aiflags.ModelFlags{Effort: "high"}}} // flag overrides saved low
 	req, err := opts.ToRequest("sys", "", "user")
 	if err != nil {
 		t.Fatalf("ToRequest: %v", err)
@@ -475,10 +476,8 @@ func TestRunStreaming_StructuredResultIsReturnedOnce(t *testing.T) {
 func defaultPromptOptions(t *testing.T) AIPromptOptions {
 	t.Helper()
 	return AIPromptOptions{
-		AIRuntimeOptions: AIRuntimeOptions{
-			Temperature: "0",
-		},
-		Timeout: "120s",
-		Prompt:  "hello",
+		AIRuntimeOptions: AIRuntimeOptions{AIProviderOptions: AIProviderOptions{ModelFlags: aiflags.ModelFlags{Temperature: "0"}}},
+		Timeout:          "120s",
+		Prompt:           "hello",
 	}
 }
