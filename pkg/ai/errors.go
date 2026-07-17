@@ -3,6 +3,8 @@ package ai
 import (
 	"errors"
 	"strings"
+
+	"github.com/flanksource/captain/pkg/api/registry"
 )
 
 var (
@@ -16,11 +18,23 @@ var (
 	ErrNoAPIKey           = errors.New("API key not found")
 )
 
+// ClassifyError normalizes a provider failure into an ErrorClass. Structured
+// signals (wrapped sentinels, net.Error, HTTP status) are read before prose.
+func ClassifyError(err error) registry.ErrorClass {
+	return registry.ClassifyError(err)
+}
+
 // IsRetryable reports whether err is a transient/overload failure worth retrying
 // on the same model (see middleware.WithRetry) or falling back to another model
-// (see the fallback provider). Provider errors are unstructured strings, so it
-// pattern-matches the well-known overload/rate-limit signals; ErrTimeout is
-// matched by identity as well.
+// (see the fallback provider).
+//
+// Classification is shared (registry.ClassifyError) so every caller agrees on
+// what "transient" means. It reads structure — wrapped sentinels, net.Error, an
+// HTTP status — before falling back to bounded text matching. The previous
+// implementation matched `strings.Contains(msg, "429")` against raw prose, so
+// "1429 tokens" or "id=4290" read as a rate limit and triggered a pointless
+// retry. Note a context-length failure is deliberately NOT retryable: the same
+// request fails the same way, so retrying only burns tokens.
 func IsRetryable(err error) bool {
 	if err == nil {
 		return false
@@ -28,12 +42,7 @@ func IsRetryable(err error) bool {
 	if errors.Is(err, ErrTimeout) {
 		return true
 	}
-	msg := err.Error()
-	return strings.Contains(msg, "rate limit") ||
-		strings.Contains(msg, "429") ||
-		strings.Contains(msg, "503") ||
-		strings.Contains(msg, "overloaded") ||
-		strings.Contains(msg, "timeout")
+	return registry.ClassifyError(err).Retryable()
 }
 
 // IsModelUnavailable reports provider-confirmed model selection failures. It is
@@ -84,6 +93,9 @@ func IsModelUnavailable(err error) bool {
 // IsMissingAPIKey reports missing credentials without treating rejected or
 // invalid credentials as recoverable. Cross-backend fallbacks can therefore
 // skip an unconfigured API provider without hiding a bad key.
+//
+// It stays narrower than ErrorAuth on purpose: a rejected key is an auth failure
+// but is not "unconfigured", and skipping past it would hide a real problem.
 func IsMissingAPIKey(err error) bool {
 	if err == nil {
 		return false
@@ -103,6 +115,13 @@ func IsMissingAPIKey(err error) bool {
 		}
 	}
 	return false
+}
+
+// IsContextLengthExceeded reports a request that overflowed the model's context
+// window. It is intentionally excluded from IsRetryable and IsFallbackEligible's
+// transient set: retrying an oversized request reproduces the failure exactly.
+func IsContextLengthExceeded(err error) bool {
+	return registry.ClassifyError(err) == registry.ErrorContextLength
 }
 
 // IsFallbackEligible reports failures for which trying a different explicitly

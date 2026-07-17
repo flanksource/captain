@@ -13,11 +13,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/pricing"
+	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/api/registry"
 	"github.com/flanksource/commons/logger"
 
 	gkai "github.com/firebase/genkit/go/ai"
@@ -30,11 +32,12 @@ var log = logger.GetLogger("ai")
 
 // Provider is a genkit-backed ai.StreamingProvider for one API backend.
 type Provider struct {
-	cfg         ai.Config
-	backend     ai.Backend
-	g           *gk.Genkit
-	modelRef    string
-	toolCallSeq atomic.Uint64 // correlates caller-tool EventToolUse↔EventToolResult
+	cfg             ai.Config
+	backend         ai.Backend
+	g               *gk.Genkit
+	modelRef        string
+	toolOptionsMu   sync.Mutex
+	toolCorrelation *toolEventCorrelation
 }
 
 var _ ai.StreamingProvider = (*Provider)(nil)
@@ -93,7 +96,7 @@ func (p *Provider) GetBackend() ai.Backend { return p.backend }
 func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, error) {
 	start := time.Now()
 
-	opts, err := generateOptions(p, req, nil, nil)
+	opts, err := p.correlatedGenerateOptions(req, nil, nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +116,16 @@ func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, e
 	}
 
 	out := responseToResponse(resp, p.backend, p.cfg.Model.Name, start)
+	if resp.FinishReason == gkai.FinishReasonInterrupted {
+		out.ToolApproval, err = toolApprovalState(req, resp)
+		if err != nil {
+			return nil, err
+		}
+	}
 
+	if out.ToolApproval != nil {
+		return out, nil
+	}
 	if req.Prompt.Schema != nil {
 		if err := resp.Output(req.Prompt.Schema); err != nil {
 			return nil, fmt.Errorf("%w: %v", ai.ErrSchemaValidation, err)
@@ -154,8 +166,13 @@ func (p *Provider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai
 	}
 
 	ch := make(chan ai.Event, 16)
+	correlation := newToolEventCorrelation()
 	cb := func(_ context.Context, chunk *gkai.ModelResponseChunk) error {
-		for _, ev := range chunkToEvents(chunk, p.cfg.Model.Name) {
+		events, err := chunkToEvents(chunk, p.cfg.Model.Name, correlation)
+		if err != nil {
+			return err
+		}
+		for _, ev := range events {
 			select {
 			case ch <- ev:
 			case <-ctx.Done():
@@ -173,7 +190,7 @@ func (p *Provider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai
 		}
 	}
 
-	opts, err := generateOptions(p, req, cb, emit)
+	opts, err := p.correlatedGenerateOptions(req, cb, emit, correlation)
 	if err != nil {
 		return nil, err
 	}
@@ -185,34 +202,54 @@ func (p *Provider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai
 			return
 		}
 		usage := mapUsage(resp.Usage, p.backend)
+		var approval *api.ToolApprovalState
+		if resp.FinishReason == gkai.FinishReasonInterrupted {
+			approval, err = toolApprovalState(req, resp)
+			if err != nil {
+				ch <- ai.Event{Kind: ai.EventError, Error: err.Error(), Model: p.cfg.Model.Name}
+				return
+			}
+		}
 		ch <- ai.Event{
-			Kind:    ai.EventResult,
-			Success: true,
-			Usage:   &usage,
-			CostUSD: p.costUSD(usage),
-			Model:   p.cfg.Model.Name,
+			Kind:         ai.EventResult,
+			Success:      true,
+			Usage:        &usage,
+			CostUSD:      p.costUSD(usage),
+			Model:        p.cfg.Model.Name,
+			ToolApproval: approval,
 		}
 	}()
 
 	return ch, nil
 }
 
+func (p *Provider) correlatedGenerateOptions(
+	req ai.Request,
+	stream gkai.ModelStreamCallback,
+	emit func(ai.Event),
+	correlation *toolEventCorrelation,
+) ([]gkai.GenerateOption, error) {
+	p.toolOptionsMu.Lock()
+	defer p.toolOptionsMu.Unlock()
+	p.toolCorrelation = correlation
+	defer func() { p.toolCorrelation = nil }()
+	if err := seedToolApprovalCorrelation(req.ToolApproval, correlation); err != nil {
+		return nil, err
+	}
+	return generateOptions(p, req, stream, emit)
+}
+
 // pricingModelID maps a backend+model onto the OpenRouter-style id the pricing
 // registry is keyed on (note: Gemini is google/<model>, not googleai/<model>).
+// pricingModelID is the OpenRouter pricing key for a backend+model. It uses the
+// provider's PricingPrefix — "google" for Gemini, whose catalog namespace is
+// "googleai" (see modelRef). The two must not be derived from one another.
 func pricingModelID(backend ai.Backend, model string) string {
-	bare := bareModel(model)
-	switch backend {
-	case ai.BackendAnthropic:
-		return "anthropic/" + bare
-	case ai.BackendOpenAI:
-		return "openai/" + bare
-	case ai.BackendGemini:
-		return "google/" + bare
-	case ai.BackendDeepSeek:
-		return "deepseek/" + bare
-	default:
+	p, _, ok := registry.ProviderFor(backend)
+	if !ok {
 		return model
 	}
+	return p.PricingIDs(model)[0]
 }
 
 // costUSD prices a generation. Genkit usage carries no cost, so it is computed

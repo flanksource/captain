@@ -1,4 +1,4 @@
-package api
+package registry
 
 import (
 	"bytes"
@@ -25,113 +25,51 @@ import (
 // element is disambiguated by content: a known effort tail is model:effort, a
 // known mode head is mode:model.
 
-// mechanismModes are the compact `mode:` keywords, mapped (with the model family)
-// to a concrete backend by backendForMode.
-func isMode(s string) bool {
-	switch s {
-	case "api", "cli", "agent", "sdk", "cmux":
-		return true
-	}
-	return false
-}
-
-func isEffort(s string) bool {
-	switch Effort(s) {
-	case EffortLow, EffortMedium, EffortHigh, EffortXHigh, EffortMax, EffortUltra:
-		return true
-	}
-	return false
-}
-
-// Family returns the model family a backend serves (claude | codex | gemini |
-// deepseek), or "" for an unrecognised backend.
-func (b Backend) Family() string {
-	switch b {
-	case BackendAnthropic, BackendClaudeCLI, BackendClaudeAgent, BackendClaudeCmux:
-		return "claude"
-	case BackendOpenAI, BackendCodexCLI, BackendCodexAgent, BackendCodexCmux:
-		return "codex"
-	case BackendGemini, BackendGeminiCLI:
-		return "gemini"
-	case BackendDeepSeek:
-		return "deepseek"
-	}
-	return ""
-}
-
-// backendForMode resolves a compact `mode` keyword plus a model name to a concrete
-// backend: the model's family (inferred from its name) combined with the mechanism.
-func backendForMode(mode, modelName string) (Backend, error) {
-	if mode == "sdk" {
-		mode = "agent"
-	}
-	inferred, err := InferBackend(modelName)
-	if err != nil {
-		return "", fmt.Errorf("mode %q: %w", mode, err)
-	}
-	family := inferred.Family()
-	table := map[string]map[string]Backend{
-		"api":   {"claude": BackendAnthropic, "codex": BackendOpenAI, "gemini": BackendGemini, "deepseek": BackendDeepSeek},
-		"cli":   {"claude": BackendClaudeCLI, "codex": BackendCodexCLI, "gemini": BackendGeminiCLI},
-		"agent": {"claude": BackendClaudeAgent, "codex": BackendCodexAgent},
-		"cmux":  {"claude": BackendClaudeCmux, "codex": BackendCodexCmux},
-	}
-	byFamily := table[mode]
-	if byFamily == nil {
-		return "", fmt.Errorf("unknown mode %q (valid: api, cli, agent, cmux)", mode)
-	}
-	backend, ok := byFamily[family]
+// backendForPrefix resolves an element's prefix plus its model name to a concrete
+// backend: the provider that claims the model, combined with the mechanism the
+// prefix names.
+func backendForPrefix(prefix, modelName string) (Backend, error) {
+	p, _, _, ok := ProviderForToken(modelName)
 	if !ok {
-		return "", fmt.Errorf("mode %q is not supported for %s models (%q)", mode, family, modelName)
+		return "", fmt.Errorf("mode %q: %w: %s (pass an explicit backend: %s)", prefix, ErrUnknownModel, modelName, BackendList())
 	}
-	return backend, nil
+	mode, err := resolveMode(prefix, ModeAPI, p, modelName)
+	if err != nil {
+		return "", err
+	}
+	return p.BackendFor(mode)
 }
 
-// parseCompactElement parses one `[mode:]model[:effort]` element.
+// parseCompactElement parses one `[prefix:]model[:effort]` element.
+//
+// It resolves the BACKEND but deliberately leaves Name as written: a decoded
+// spec keeps the model the user asked for ("opus"), and only the later resolve
+// step (ResolveModel) maps it onto an exact catalog id. The spec is a request,
+// not a resolution, so decoding must not bake today's catalog snapshot into it.
 func parseCompactElement(s string) (Model, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return Model{}, fmt.Errorf("empty model")
 	}
-	tokens := strings.Split(s, ":")
-	for i := range tokens {
-		tokens[i] = strings.TrimSpace(tokens[i])
+	prefix, name, effort, err := splitElement(s, "")
+	if err != nil {
+		return Model{}, err
 	}
-	var m Model
-	switch len(tokens) {
-	case 1:
-		m.Name = tokens[0]
-	case 2:
-		switch {
-		case isEffort(tokens[1]):
-			m.Name, m.Effort = tokens[0], Effort(tokens[1])
-		case isMode(tokens[0]):
-			backend, err := backendForMode(tokens[0], tokens[1])
-			if err != nil {
-				return Model{}, err
-			}
-			m.Name, m.Backend = tokens[1], backend
-		default:
-			return Model{}, fmt.Errorf("ambiguous compact model %q (expected model:effort or mode:model)", s)
-		}
-	case 3:
-		if !isMode(tokens[0]) {
-			return Model{}, fmt.Errorf("invalid mode %q in %q (valid: api, cli, agent, cmux)", tokens[0], s)
-		}
-		if !isEffort(tokens[2]) {
-			return Model{}, fmt.Errorf("invalid effort %q in %q", tokens[2], s)
-		}
-		backend, err := backendForMode(tokens[0], tokens[1])
-		if err != nil {
-			return Model{}, err
-		}
-		m.Name, m.Effort, m.Backend = tokens[1], Effort(tokens[2]), backend
-	default:
-		return Model{}, fmt.Errorf("invalid compact model %q (too many ':' segments)", s)
-	}
-	if m.Name == "" {
+	if name == "" {
 		return Model{}, fmt.Errorf("model name required in %q", s)
 	}
+	m := Model{Name: name, Effort: effort}
+	if prefix == "" {
+		return m, nil
+	}
+	if prefix == "*" {
+		return Model{}, fmt.Errorf("wildcard selector %q is only valid for --multi-models", s)
+	}
+	backend, err := backendForPrefix(prefix, name)
+	if err != nil {
+		return Model{}, err
+	}
+	m.Backend = backend
 	return m, nil
 }
 

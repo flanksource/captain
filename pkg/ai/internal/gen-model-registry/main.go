@@ -69,6 +69,12 @@ type generatedModel struct {
 	SupportedEfforts []string `json:"supportedEfforts,omitempty"`
 	DefaultEffort    string   `json:"defaultEffort,omitempty"`
 	Priority         int      `json:"priority,omitempty"`
+
+	// Aliases and SupersededBy are patch-only: models.dev has no concept of
+	// either. They carry the codename and retired-id knowledge that used to be
+	// hardcoded in pkg/ai, where the spec decoder could not see it.
+	Aliases      []string `json:"aliases,omitempty"`
+	SupersededBy string   `json:"supersededBy,omitempty"`
 }
 
 func main() {
@@ -82,7 +88,7 @@ func run() error {
 	var output string
 	var source string
 	var patchPath string
-	flag.StringVar(&output, "output", "", "Path to write pkg/ai/model_registry.json")
+	flag.StringVar(&output, "output", "", "Path to write pkg/api/registry/models.json")
 	flag.StringVar(&source, "source", modelsDevAPIURL, "models.dev API URL, local file path, or - for stdin")
 	flag.StringVar(&patchPath, "patches", "", "Path to the per-model JSON merge-patch file")
 	flag.Parse()

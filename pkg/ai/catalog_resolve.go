@@ -206,6 +206,17 @@ func filterResolved(rows []ResolvedModel, filter string) []ResolvedModel {
 	return out
 }
 
+// resolveSchemaVersion invalidates the on-disk model cache when the meaning of a
+// cached row changes rather than its inputs. The fingerprint otherwise covers
+// only options and API keys, so a resolution change would keep serving rows
+// resolved by the old rules until the TTL expired.
+//
+// Bump this when catalog ids, capability fields, or pricing resolution change.
+//   - v2: model identity unified on the provider descriptors; catalog pricing now
+//     resolves through the same prefixed-first path as billing, so cached Claude
+//     prices from the static fallback table are stale.
+const resolveSchemaVersion = "v2"
+
 func resolveFingerprint(opts ResolveOptions) (string, error) {
 	var present []string
 	for _, b := range apiBackends {
@@ -219,7 +230,7 @@ func resolveFingerprint(opts ResolveOptions) (string, error) {
 		}
 	}
 	sort.Strings(present)
-	return fmt.Sprintf("b=%s|tok=%v|keys=%s", opts.Backend, opts.UseTokens, strings.Join(present, ",")), nil
+	return fmt.Sprintf("v=%s|b=%s|tok=%v|keys=%s", resolveSchemaVersion, opts.Backend, opts.UseTokens, strings.Join(present, ",")), nil
 }
 
 func bareModelID(id string) string {
@@ -273,34 +284,20 @@ func AgentCatalogModels(b Backend) []ModelDef {
 }
 
 // lookupPricing tries the bare model id first, then the OpenRouter
-// "provider/model" key the registry uses for the major API providers.
+// "provider/model" key the registry uses.
+//
+// The prefix comes from the provider descriptor's PricingPrefix, which is
+// separate from CatalogPrefix for exactly one reason: Gemini's catalog namespace
+// is "googleai" while OpenRouter keys it under "google". Deriving one from the
+// other makes every Gemini price silently resolve to nothing. This used to be
+// three hand-written maps (PricingIDs, orPrefix, pricingModelID) that disagreed
+// about whether CLI/agent backends get a prefix at all — they do; a codex-run
+// model costs what the model costs.
 func lookupPricing(backend Backend, id string) (pricing.ModelInfo, bool) {
-	if info, ok := pricing.GetModelInfo(id); ok {
-		return info, true
-	}
-	prefix := orPrefix(backend)
-	if prefix == "" {
-		return pricing.ModelInfo{}, false
-	}
-	if info, ok := pricing.GetModelInfo(prefix + "/" + id); ok {
-		return info, true
+	for _, candidate := range PricingIDs(backend, id) {
+		if info, ok := pricing.GetModelInfo(candidate); ok {
+			return info, true
+		}
 	}
 	return pricing.ModelInfo{}, false
-}
-
-// orPrefix is the OpenRouter id prefix for a backend. Gemini's catalog prefix is
-// "googleai" but OpenRouter keys it under "google" — get this right or pricing
-// silently misses.
-func orPrefix(backend Backend) string {
-	switch backend {
-	case BackendOpenAI:
-		return "openai"
-	case BackendAnthropic:
-		return "anthropic"
-	case BackendGemini:
-		return "google"
-	case BackendDeepSeek:
-		return "deepseek"
-	}
-	return ""
 }

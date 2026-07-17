@@ -1,4 +1,4 @@
-package api
+package registry
 
 import (
 	"fmt"
@@ -43,6 +43,58 @@ type Model struct {
 	// or via the --fallback flag / fallbacks: frontmatter. Each entry may be a
 	// compact string ("agent:opus:high") or the object form (see ModelList).
 	Fallbacks ModelList `json:"fallbacks,omitempty" yaml:"fallbacks,omitempty" pretty:"label=Fallbacks"`
+
+	// Mode is the runtime mechanism: api | cli | agent | cmux. It is both an input
+	// and a derived value — `{model: sonnet, mode: agent}` is the object form of
+	// the compact "agent:sonnet" — and Backend is exactly (provider, Mode). A Mode
+	// that contradicts an explicit Backend fails Validate rather than being
+	// silently reconciled.
+	Mode RuntimeMode `json:"mode,omitempty" yaml:"mode,omitempty" jsonschema:"enum=api,enum=cli,enum=agent,enum=cmux" pretty:"label=Mode"`
+
+	// The fields below are capabilities of the resolved provider×mode, filled in
+	// by Resolve. They are outputs: writing them in a spec does not change what
+	// the adapter can do, so Validate rejects any value that contradicts the
+	// resolved truth rather than letting a spec claim a capability it lacks.
+	// The runtime interface assertions remain authoritative at execution time.
+
+	// Streaming reports that the adapter streams incremental events.
+	Streaming bool `json:"streaming,omitempty" yaml:"streaming,omitempty" jsonschema:"readOnly" pretty:"label=Streaming"`
+	// MediaTypes are the attachment types this model accepts on this adapter —
+	// the model's own declared types clamped by the adapter's ceiling.
+	MediaTypes []string `json:"mediaTypes,omitempty" yaml:"mediaTypes,omitempty" jsonschema:"readOnly" pretty:"label=Media Types"`
+	// Resume reports that a prior session can be continued by id.
+	Resume bool `json:"resume,omitempty" yaml:"resume,omitempty" jsonschema:"readOnly" pretty:"label=Resume"`
+	// Interrupt reports that a running turn can be interrupted.
+	Interrupt bool `json:"interrupt,omitempty" yaml:"interrupt,omitempty" jsonschema:"readOnly" pretty:"label=Interrupt"`
+	// Steer reports that a running turn accepts mid-flight steering.
+	Steer bool `json:"steer,omitempty" yaml:"steer,omitempty" jsonschema:"readOnly" pretty:"label=Steer"`
+
+	// Provider is the descriptor that owns this model. Never serialized: it holds
+	// the whole catalog, so emitting it would inline the registry into every spec.
+	// Reach it from a decoded Model with Backend.ModelProvider().
+	Provider *Provider `json:"-" yaml:"-"`
+}
+
+// Capabilities fills in Mode, Provider, and the capability flags from the
+// resolved backend. Resolve applies it; callers that build a Model by hand can
+// call it to get the same enrichment.
+func (m Model) Capabilities() Model {
+	p, mode, ok := ProviderFor(m.Backend)
+	if !ok {
+		return m
+	}
+	caps, ok := p.Caps(mode)
+	if !ok {
+		return m
+	}
+	m.Provider = p
+	m.Mode = mode
+	m.Streaming = caps.Streaming
+	m.Resume = caps.Resume
+	m.Interrupt = caps.Interrupt
+	m.Steer = caps.Steer
+	m.MediaTypes = p.MediaTypesFor(mode, m.Name)
+	return m
 }
 
 // ResolveBackend returns Backend when set, otherwise infers it from Name.
@@ -86,15 +138,69 @@ func (m Model) Validate() error {
 }
 
 // validateKnobs range-checks the per-request inference knobs shared by a primary
-// model and each fallback (backend/temperature/effort), independent of Name.
+// model and each fallback (backend/mode/temperature/effort), independent of Name.
 func (m Model) validateKnobs() error {
 	if m.Backend != "" && !m.Backend.Valid() {
 		return fmt.Errorf("invalid backend %q (valid: %s)", m.Backend, BackendList())
+	}
+	if err := m.validateMode(); err != nil {
+		return err
 	}
 	if m.Temperature != nil && (*m.Temperature < 0 || *m.Temperature > 2) {
 		return fmt.Errorf("invalid temperature %v (valid: 0.0-2.0)", *m.Temperature)
 	}
 	return m.Effort.Validate()
+}
+
+// validateMode rejects a mode that is unknown, or that contradicts an explicit
+// backend. Backend is exactly (provider, mode), so `backend: anthropic` with
+// `mode: agent` names two different runtimes — reconciling it silently would
+// pick one of them behind the user's back.
+func (m Model) validateMode() error {
+	if m.Mode == "" {
+		return nil
+	}
+	if _, ok := ParseRuntimeMode(string(m.Mode)); !ok {
+		return fmt.Errorf("invalid mode %q (valid: %s)", m.Mode, RuntimeModeList())
+	}
+	if m.Backend == "" {
+		return nil
+	}
+	if actual := m.Backend.Mode(); actual != m.Mode {
+		return fmt.Errorf("mode %q contradicts backend %q, which is mode %q; set one or the other",
+			m.Mode, m.Backend, actual)
+	}
+	return nil
+}
+
+// Merge overlays o's set fields onto m, returning the result. It backs Spec
+// merging in pkg/api, where a later layer overrides an earlier one field by field.
+func (m Model) Merge(o Model) Model {
+	if o.Name != "" {
+		m.Name = o.Name
+	}
+	if o.ID != "" {
+		m.ID = o.ID
+	}
+	if o.Backend != "" {
+		m.Backend = o.Backend
+	}
+	if o.Temperature != nil {
+		m.Temperature = o.Temperature
+	}
+	if o.Effort != "" {
+		m.Effort = o.Effort
+	}
+	if o.Mode != "" {
+		m.Mode = o.Mode
+	}
+	if o.NoCache {
+		m.NoCache = true
+	}
+	if len(o.Fallbacks) > 0 {
+		m.Fallbacks = o.Fallbacks
+	}
+	return m
 }
 
 // ExpandCSV moves any comma-separated tail of Name into name-only Fallbacks

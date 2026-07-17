@@ -2,9 +2,11 @@ package ai
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/api/registry"
 )
 
 func TestResolveModelSelectors(t *testing.T) {
@@ -90,15 +92,15 @@ func TestParseModelIdentity(t *testing.T) {
 		model string
 		want  ModelIdentity
 	}{
-		{"opus-4-8", ModelIdentity{Provider: modelProviderAnthropic, Family: "opus", Version: "4.8"}},
-		{"claude-opus-4-8-3003", ModelIdentity{Provider: modelProviderAnthropic, Family: "opus", Version: "4.8-3003"}},
-		{"claude-agent-sonnet", ModelIdentity{Provider: modelProviderAnthropic, Family: "sonnet"}},
-		{"openai/gpt-5.5", ModelIdentity{Provider: modelProviderOpenAI, Family: "gpt", Version: "5.5"}},
-		{"codex-gpt-5.4", ModelIdentity{Provider: modelProviderOpenAI, Family: "gpt", Version: "5.4"}},
-		{"gpt-5.4-mini", ModelIdentity{Provider: modelProviderOpenAI, Family: "gpt", Version: "5.4-mini"}},
+		{"opus-4-8", ModelIdentity{Provider: registry.Anthropic.Name, Family: "opus", Version: "4.8"}},
+		{"claude-opus-4-8-3003", ModelIdentity{Provider: registry.Anthropic.Name, Family: "opus", Version: "4.8-3003"}},
+		{"claude-agent-sonnet", ModelIdentity{Provider: registry.Anthropic.Name, Family: "sonnet"}},
+		{"openai/gpt-5.5", ModelIdentity{Provider: registry.OpenAI.Name, Family: "gpt", Version: "5.5"}},
+		{"codex-gpt-5.4", ModelIdentity{Provider: registry.OpenAI.Name, Family: "gpt", Version: "5.4"}},
+		{"gpt-5.4-mini", ModelIdentity{Provider: registry.OpenAI.Name, Family: "gpt", Version: "5.4-mini"}},
 	}
 	for _, tc := range cases {
-		got, ok := ParseModelIdentity(modelProviderAnthropic, tc.model)
+		got, ok := ParseModelIdentity(registry.Anthropic.Name, tc.model)
 		if !ok {
 			t.Fatalf("ParseModelIdentity(%q) did not parse", tc.model)
 		}
@@ -208,13 +210,97 @@ func TestResolveRuntimeSelectors_PerSelectorEffortAndDedup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveRuntimeSelectors: %v", err)
 	}
-	want := []api.Model{
-		{Name: "gpt-5.6-sol", Backend: api.BackendCodexAgent, Effort: api.EffortHigh},
-		{Name: "gpt-5.6-sol", Backend: api.BackendCodexAgent, Effort: api.EffortXHigh},
-		{Name: "gpt-5.6-terra", Backend: api.BackendCodexCmux, Effort: api.EffortMax},
+	// Compare the identity triple: this pins per-selector effort and dedup. The
+	// derived capability fields are covered by TestResolvedModelCarriesCapabilities.
+	type runtime struct {
+		name    string
+		backend api.Backend
+		effort  api.Effort
 	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("got %#v, want %#v", got, want)
+	want := []runtime{
+		{"gpt-5.6-sol", api.BackendCodexAgent, api.EffortHigh},
+		{"gpt-5.6-sol", api.BackendCodexAgent, api.EffortXHigh},
+		{"gpt-5.6-terra", api.BackendCodexCmux, api.EffortMax},
+	}
+	gotRuntimes := make([]runtime, 0, len(got))
+	for _, m := range got {
+		gotRuntimes = append(gotRuntimes, runtime{m.Name, m.Backend, m.Effort})
+	}
+	if !reflect.DeepEqual(gotRuntimes, want) {
+		t.Fatalf("got %+v, want %+v", gotRuntimes, want)
+	}
+}
+
+// TestResolvedModelCarriesCapabilities pins that resolution answers what the
+// chosen adapter can do, not just which model it is. The values are asserted
+// against the known adapters: only the claude agent SDK steers, both agent SDKs
+// interrupt, and the claude CLI carries no attachments.
+func TestResolvedModelCarriesCapabilities(t *testing.T) {
+	cases := []struct {
+		selector   string
+		wantMode   registry.RuntimeMode
+		wantResume bool
+		wantIntr   bool
+		wantSteer  bool
+		wantMedia  []string
+	}{
+		{"agent:sonnet", registry.ModeAgent, true, true, true, []string{"image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf"}},
+		{"cli:sonnet", registry.ModeCLI, true, false, false, []string{}},
+		{"api:sonnet", registry.ModeAPI, false, false, false, []string{"image/*"}},
+		{"agent:sol", registry.ModeAgent, true, true, false, []string{"image/*"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.selector, func(t *testing.T) {
+			got, err := ResolveModelSelectors(api.Model{Name: tc.selector})
+			if err != nil {
+				t.Fatalf("ResolveModelSelectors(%q): %v", tc.selector, err)
+			}
+			if got.Mode != tc.wantMode {
+				t.Errorf("Mode = %q, want %q", got.Mode, tc.wantMode)
+			}
+			if !got.Streaming {
+				t.Error("Streaming = false; every adapter streams")
+			}
+			if got.Resume != tc.wantResume || got.Interrupt != tc.wantIntr || got.Steer != tc.wantSteer {
+				t.Errorf("resume/interrupt/steer = %v/%v/%v, want %v/%v/%v",
+					got.Resume, got.Interrupt, got.Steer, tc.wantResume, tc.wantIntr, tc.wantSteer)
+			}
+			if !reflect.DeepEqual(got.MediaTypes, tc.wantMedia) {
+				t.Errorf("MediaTypes = %v, want %v", got.MediaTypes, tc.wantMedia)
+			}
+			if got.Provider == nil {
+				t.Fatal("Provider is nil; a resolved model must know its family")
+			}
+		})
+	}
+}
+
+// TestModeContradictingBackendFailsLoud: Backend is exactly (provider, mode), so
+// a spec naming both must not name two different runtimes.
+func TestModeContradictingBackendFailsLoud(t *testing.T) {
+	_, err := ResolveModelSelectors(api.Model{Name: "sonnet", Backend: api.BackendAnthropic, Mode: registry.ModeAgent})
+	if err == nil {
+		t.Fatal("mode agent + backend anthropic should fail loud, not silently pick one")
+	}
+	if !strings.Contains(err.Error(), "contradicts") {
+		t.Errorf("err = %v, want it to name the contradiction", err)
+	}
+}
+
+// TestModeSelectsBackend: {model, mode} is the object form of the compact
+// "mode:model" string and must resolve identically.
+func TestModeSelectsBackend(t *testing.T) {
+	byMode, err := ResolveModelSelectors(api.Model{Name: "sonnet", Mode: registry.ModeAgent})
+	if err != nil {
+		t.Fatalf("mode form: %v", err)
+	}
+	byPrefix, err := ResolveModelSelectors(api.Model{Name: "agent:sonnet"})
+	if err != nil {
+		t.Fatalf("compact form: %v", err)
+	}
+	if byMode.Backend != byPrefix.Backend || byMode.Name != byPrefix.Name {
+		t.Errorf("mode form = %s/%s, compact form = %s/%s; the two spellings must agree",
+			byMode.Backend, byMode.Name, byPrefix.Backend, byPrefix.Name)
 	}
 }
 

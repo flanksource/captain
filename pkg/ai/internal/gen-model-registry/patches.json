@@ -1,36 +1,98 @@
 {
-  "claude-sonnet-5": { "preferred": true },
-  "claude-fable-5": { "preferred": true },
-  "claude-opus-4-8": { "preferred": true },
-  "claude-sonnet-4-6": { "preferred": true },
-  "claude-haiku-4-5": { "preferred": true },
+  "claude-sonnet-5": {
+    "preferred": true
+  },
+  "claude-fable-5": {
+    "preferred": true
+  },
+  "claude-opus-4-8": {
+    "preferred": true
+  },
+  "claude-sonnet-4-6": {
+    "preferred": false
+  },
+  "claude-haiku-4-5": {
+    "preferred": true
+  },
   "gpt-5.6": {
     "preferred": true,
-    "availability": ["api"]
+    "availability": [
+      "api"
+    ]
   },
   "gpt-5.6-sol": {
     "preferred": true,
-    "availability": ["api", "codex"],
-    "supportedEfforts": ["low", "medium", "high", "xhigh", "max", "ultra"],
-    "priority": 1
+    "availability": [
+      "api",
+      "codex"
+    ],
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      "ultra"
+    ],
+    "priority": 1,
+    "aliases": [
+      "sol"
+    ]
   },
   "gpt-5.6-terra": {
     "preferred": true,
-    "availability": ["api", "codex"],
-    "supportedEfforts": ["low", "medium", "high", "xhigh", "max", "ultra"],
-    "priority": 2
+    "availability": [
+      "api",
+      "codex"
+    ],
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      "ultra"
+    ],
+    "priority": 2,
+    "aliases": [
+      "terra"
+    ]
   },
   "gpt-5.6-luna": {
     "preferred": true,
-    "availability": ["api", "codex"],
-    "priority": 3
+    "availability": [
+      "api",
+      "codex"
+    ],
+    "priority": 3,
+    "aliases": [
+      "luna"
+    ]
   },
-  "gpt-5.5": { "preferred": true },
-  "gemini-3.5-flash": { "preferred": true },
-  "gemini-2.5-pro": { "preferred": true },
-  "gemini-2.5-flash": { "preferred": true },
-  "deepseek-v4-pro": { "preferred": true },
-  "deepseek-v4-flash": { "preferred": true },
+  "gpt-5.5": {
+    "preferred": false
+  },
+  "gemini-3.5-flash": {
+    "preferred": true
+  },
+  "gemini-2.5-pro": {
+    "preferred": false
+  },
+  "gemini-2.5-flash": {
+    "preferred": false
+  },
+  "deepseek-v4-pro": {
+    "preferred": true
+  },
+  "deepseek-v4-flash": {
+    "preferred": true
+  },
   "deepseek-reasoner": null,
-  "deepseek-chat": null
+  "deepseek-chat": null,
+  "claude-sonnet-4-5": {
+    "supersededBy": "claude-sonnet-4-6"
+  },
+  "claude-sonnet-4-5-20250929": {
+    "supersededBy": "claude-sonnet-4-6"
+  }
 }

@@ -23,10 +23,11 @@ var _ = Describe("runtime model selection", func() {
 		)
 
 		Expect(err).NotTo(HaveOccurred())
-		Expect(models).To(Equal([]api.Model{
-			{Name: "gemini-3.5-flash", Backend: api.BackendGemini},
-			{Name: "gpt-5.5", Backend: api.BackendOpenAI},
-		}))
+		Expect(models).To(HaveLen(2))
+		Expect(models[0].Name).To(Equal("gemini-3.5-flash"))
+		Expect(models[0].Backend).To(Equal(api.BackendGemini))
+		Expect(models[1].Name).To(Equal("gpt-5.5"))
+		Expect(models[1].Backend).To(Equal(api.BackendOpenAI))
 	})
 
 	It("rejects a known model forced through another family", func() {

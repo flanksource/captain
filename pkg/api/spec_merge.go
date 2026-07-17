@@ -14,11 +14,20 @@ package api
 // those tools. Boolean toggles (NoCache, Skip*) follow zero=unset: an override
 // can turn a flag on but not off, since false is indistinguishable from absent.
 func (s Spec) Merge(override Spec) Spec {
-	s.Model = s.merge(override.Model)
+	s.Model = s.Model.Merge(override.Model)
 	s.Prompt = s.Prompt.merge(override.Prompt)
+	if len(override.Messages) > 0 {
+		s.Messages = override.Messages
+	}
 	s.Budget = s.Budget.merge(override.Budget)
 	s.Memory = s.Memory.merge(override.Memory)
 	s.Permissions = s.Permissions.merge(override.Permissions)
+	if len(override.ToolPreferences) > 0 {
+		s.ToolPreferences = override.ToolPreferences
+	}
+	if override.ToolApproval != nil {
+		s.ToolApproval = override.ToolApproval
+	}
 	if override.Setup != nil {
 		s.Setup = override.Setup
 	}
@@ -32,31 +41,6 @@ func (s Spec) Merge(override Spec) Spec {
 		s.CLIArgs = override.CLIArgs
 	}
 	return s
-}
-
-func (m Model) merge(o Model) Model {
-	if o.Name != "" {
-		m.Name = o.Name
-	}
-	if o.ID != "" {
-		m.ID = o.ID
-	}
-	if o.Backend != "" {
-		m.Backend = o.Backend
-	}
-	if o.Temperature != nil {
-		m.Temperature = o.Temperature
-	}
-	if o.Effort != "" {
-		m.Effort = o.Effort
-	}
-	if o.NoCache {
-		m.NoCache = true
-	}
-	if len(o.Fallbacks) > 0 {
-		m.Fallbacks = o.Fallbacks
-	}
-	return m
 }
 
 func (p Prompt) merge(o Prompt) Prompt {

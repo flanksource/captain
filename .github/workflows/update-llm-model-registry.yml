@@ -37,10 +37,10 @@ jobs:
       - name: Check for registry changes
         id: changes
         run: |
-          if git diff --quiet -- pkg/ai/model_registry.json; then
+          if git diff --quiet -- pkg/api/registry/models.json; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
-            git diff --stat -- pkg/ai/model_registry.json
+            git diff --stat -- pkg/api/registry/models.json
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
@@ -50,7 +50,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -B "$PR_BRANCH"
-          git add pkg/ai/model_registry.json
+          git add pkg/api/registry/models.json
           git commit -m "chore: update llm model registry"
           git push --force-with-lease origin "$PR_BRANCH"
 

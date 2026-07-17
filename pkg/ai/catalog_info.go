@@ -3,6 +3,8 @@ package ai
 import (
 	"os/exec"
 	"slices"
+
+	"github.com/flanksource/captain/pkg/api/registry"
 )
 
 // ModelInfo is the JSON shape served at GET /api/chat/models so a client model
@@ -23,19 +25,18 @@ type ModelInfo struct {
 // and the web menu's "provider" field. API backends use the genkit provider
 // namespace (anthropic/openai/googleai); agent/CLI backends use their backend
 // string verbatim.
+// BackendToProvider is the provider key the webapp and the session store use.
+//
+// Its output is a frozen wire format: it is persisted to sessions.provider and
+// prompt_runs.runtime.resolved.provider, and /api/chat/models matches on it. The
+// API backends map to their catalog namespace ("googleai" for Gemini, not
+// "google"); every other backend is its own key verbatim.
 func BackendToProvider(b Backend) string {
-	switch b {
-	case BackendAnthropic:
-		return "anthropic"
-	case BackendOpenAI:
-		return "openai"
-	case BackendGemini:
-		return "googleai"
-	case BackendDeepSeek:
-		return "deepseek"
-	default:
+	p, mode, ok := registry.ProviderFor(b)
+	if !ok || mode != registry.ModeAPI {
 		return string(b)
 	}
+	return p.CatalogPrefix
 }
 
 // CatalogInfo returns the static model menu annotated with selectability. API

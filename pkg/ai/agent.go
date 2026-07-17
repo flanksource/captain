@@ -10,6 +10,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai/pricing"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/api/registry"
 )
 
 // Agent is a convenience wrapper over a Provider that offers the named-prompt /
@@ -238,23 +239,11 @@ func PriceResponse(backend Backend, model string, resp *Response) Cost {
 // are still OpenAI/Anthropic/Google under the hood); the bare model is included
 // as a fallback.
 func PricingIDs(backend Backend, model string) []string {
-	prefix := map[Backend]string{
-		BackendAnthropic:   "anthropic/",
-		BackendClaudeCLI:   "anthropic/",
-		BackendClaudeAgent: "anthropic/",
-		BackendClaudeCmux:  "anthropic/",
-		BackendOpenAI:      "openai/",
-		BackendCodexCLI:    "openai/",
-		BackendCodexAgent:  "openai/",
-		BackendCodexCmux:   "openai/",
-		BackendGemini:      "google/",
-		BackendGeminiCLI:   "google/",
-		BackendDeepSeek:    "deepseek/",
-	}[backend]
-	if prefix != "" {
-		return []string{prefix + model, model}
+	p, _, ok := registry.ProviderFor(backend)
+	if !ok {
+		return []string{model}
 	}
-	return []string{model}
+	return p.PricingIDs(model)
 }
 
 func (r *PromptResponse) errorValue() error {

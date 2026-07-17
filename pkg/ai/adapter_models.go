@@ -174,19 +174,10 @@ func setRegistryModels(st *AdapterStatus, backend Backend, discoveryErr error) {
 	st.ModelError = fmt.Sprintf("registry has no models for %s", backend)
 }
 
+// modelSourceBackend maps any backend onto the API backend whose model list it
+// draws from: a CLI/agent/cmux adapter serves its provider family's models.
 func modelSourceBackend(backend Backend) Backend {
-	switch backend {
-	case BackendAnthropic, BackendClaudeAgent, BackendClaudeCLI, BackendClaudeCmux:
-		return BackendAnthropic
-	case BackendOpenAI, BackendCodexAgent, BackendCodexCLI, BackendCodexCmux:
-		return BackendOpenAI
-	case BackendGemini, BackendGeminiCLI:
-		return BackendGemini
-	case BackendDeepSeek:
-		return BackendDeepSeek
-	default:
-		return ""
-	}
+	return backend.Provider()
 }
 
 func modelsForAdapterBackend(backend Backend, models []ModelDef) []ModelDef {

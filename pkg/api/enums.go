@@ -3,208 +3,17 @@
 // Setup, Prompt) and the Spec that composes them. It never imports pkg/ai;
 // pkg/ai re-exports the enum/value types here via aliases, so this package is
 // the single source of truth for Backend/Effort/Cost.
+//
+// Model identity itself (Backend, Effort, Model, the compact grammar, the model
+// catalog) lives one level down in pkg/api/registry and is re-exported here by
+// alias — see aliases.go. Spec decoding parses model strings, so the parser has
+// to sit below this package.
 package api
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 )
-
-// ErrInferBackend marks the "can't infer a backend from this model name" failure
-// so callers can enrich it (e.g. with "did you mean" model suggestions).
-var ErrInferBackend = errors.New("unable to infer backend from model name")
-
-// Backend is the provider/runtime that serves a request. This is the canonical
-// definition; pkg/ai re-exports it via `type Backend = api.Backend`.
-type Backend string
-
-const (
-	BackendAnthropic   Backend = "anthropic"
-	BackendGemini      Backend = "gemini"
-	BackendOpenAI      Backend = "openai"
-	BackendDeepSeek    Backend = "deepseek"
-	BackendClaudeCLI   Backend = "claude-cli"
-	BackendCodexCLI    Backend = "codex-cli"
-	BackendGeminiCLI   Backend = "gemini-cli"
-	BackendClaudeAgent Backend = "claude-agent"
-	BackendCodexAgent  Backend = "codex-agent"
-	// BackendClaudeCmux / BackendCodexCmux drive an interactive claude/codex TUI
-	// inside a tmux/cmux surface (the cmux provider), tailing the session JSONL.
-	// They are selected explicitly, not inferred from a model name.
-	BackendClaudeCmux Backend = "claude-cmux"
-	BackendCodexCmux  Backend = "codex-cmux"
-)
-
-const (
-	AnthropicProvider = BackendAnthropic
-	OpenAIProvider    = BackendOpenAI
-	GeminiProvider    = BackendGemini
-	DeepSeekProvider  = BackendDeepSeek
-)
-
-// AllBackends lists every supported backend in canonical order — the single
-// source of truth behind Valid, BackendList, and the help/error strings.
-func AllBackends() []Backend {
-	return []Backend{
-		BackendAnthropic, BackendGemini, BackendOpenAI, BackendDeepSeek,
-		BackendClaudeCLI, BackendClaudeAgent, BackendClaudeCmux,
-		BackendCodexCLI, BackendCodexAgent, BackendCodexCmux, BackendGeminiCLI,
-	}
-}
-
-// Valid reports whether b is one of the supported backends.
-func (b Backend) Valid() bool {
-	for _, x := range AllBackends() {
-		if b == x {
-			return true
-		}
-	}
-	return false
-}
-
-// Kind classifies a backend as "api" (called directly over HTTP with an API key)
-// or "cli" (delegated to an installed coding-agent binary with its own auth).
-func (b Backend) Kind() string {
-	switch b {
-	case BackendAnthropic, BackendGemini, BackendOpenAI, BackendDeepSeek:
-		return "api"
-	default:
-		return "cli"
-	}
-}
-
-// Provider returns the direct API provider family that owns a runtime adapter.
-// An invalid backend returns the empty value.
-func (b Backend) Provider() Backend {
-	switch b {
-	case BackendAnthropic, BackendClaudeCLI, BackendClaudeAgent, BackendClaudeCmux:
-		return AnthropicProvider
-	case BackendOpenAI, BackendCodexCLI, BackendCodexAgent, BackendCodexCmux:
-		return OpenAIProvider
-	case BackendGemini, BackendGeminiCLI:
-		return GeminiProvider
-	case BackendDeepSeek:
-		return DeepSeekProvider
-	default:
-		return ""
-	}
-}
-
-// AgentsForProvider lists the runtime adapters that can serve a provider family.
-func AgentsForProvider(provider Backend) []Backend {
-	switch provider {
-	case AnthropicProvider:
-		return []Backend{BackendAnthropic, BackendClaudeCLI, BackendClaudeAgent, BackendClaudeCmux}
-	case OpenAIProvider:
-		return []Backend{BackendOpenAI, BackendCodexCLI, BackendCodexAgent, BackendCodexCmux}
-	case GeminiProvider:
-		return []Backend{BackendGemini, BackendGeminiCLI}
-	case DeepSeekProvider:
-		return []Backend{BackendDeepSeek}
-	default:
-		return nil
-	}
-}
-
-// AuthEnvVars returns the environment variables consulted for a backend's API
-// key, in priority order. Some CLI backends can use a parent provider key, while
-// cmux backends are keyless and rely on the local CLI login.
-func AuthEnvVars(b Backend) []string {
-	switch b {
-	case BackendAnthropic, BackendClaudeCLI, BackendClaudeAgent:
-		return []string{"ANTHROPIC_API_KEY"}
-	case BackendOpenAI, BackendCodexCLI, BackendCodexAgent:
-		return []string{"OPENAI_API_KEY"}
-	case BackendDeepSeek:
-		return []string{"DEEPSEEK_API_KEY"}
-	case BackendGemini, BackendGeminiCLI:
-		return []string{"GEMINI_API_KEY", "GOOGLE_API_KEY"}
-	default:
-		return nil
-	}
-}
-
-// BackendList renders AllBackends as a comma-separated string for help/error text.
-func BackendList() string {
-	parts := make([]string, len(AllBackends()))
-	for i, b := range AllBackends() {
-		parts[i] = string(b)
-	}
-	return strings.Join(parts, ", ")
-}
-
-// InferBackend resolves the backend from a model name prefix, failing loud when
-// the name matches nothing (the caller must then pass an explicit backend).
-func InferBackend(model string) (Backend, error) {
-	m := strings.ToLower(model)
-
-	// CLI backends (check before API backends to avoid prefix conflicts).
-	switch {
-	case strings.HasPrefix(m, "claude-agent-"):
-		return BackendClaudeAgent, nil
-	case strings.HasPrefix(m, "claude-code-"):
-		return BackendClaudeCLI, nil
-	case strings.HasPrefix(m, "codex-agent-"):
-		return BackendCodexAgent, nil
-	case strings.HasPrefix(m, "codex"):
-		return BackendCodexCLI, nil
-	case strings.HasPrefix(m, "gemini-cli-"):
-		return BackendGeminiCLI, nil
-	}
-
-	switch {
-	case strings.HasPrefix(m, "claude-"), strings.HasPrefix(m, "opus"), strings.HasPrefix(m, "sonnet"), strings.HasPrefix(m, "haiku"), strings.HasPrefix(m, "fable"):
-		return BackendAnthropic, nil
-	case strings.HasPrefix(m, "gemini-"), strings.HasPrefix(m, "models/gemini-"):
-		return BackendGemini, nil
-	case strings.HasPrefix(m, "grok-"):
-		return BackendCodexCLI, nil
-	case strings.HasPrefix(m, "gpt-"), strings.HasPrefix(m, "o1"), strings.HasPrefix(m, "o3"), strings.HasPrefix(m, "o4"):
-		return BackendOpenAI, nil
-	case strings.HasPrefix(m, "deepseek"):
-		return BackendDeepSeek, nil
-	}
-
-	return "", fmt.Errorf("%w: %s (pass an explicit backend: %s)", ErrInferBackend, model, BackendList())
-}
-
-// Effort is the per-request reasoning effort. captain owns this enum (including
-// Codex's xhigh/max/ultra tiers); "" means backend default.
-type Effort string
-
-const (
-	EffortNone   Effort = ""
-	EffortLow    Effort = "low"
-	EffortMedium Effort = "medium"
-	EffortHigh   Effort = "high"
-	EffortXHigh  Effort = "xhigh"
-	EffortMax    Effort = "max"
-	EffortUltra  Effort = "ultra"
-)
-
-// AllEfforts lists the non-empty effort tiers in ascending order.
-func AllEfforts() []Effort {
-	return []Effort{EffortLow, EffortMedium, EffortHigh, EffortXHigh, EffortMax, EffortUltra}
-}
-
-// Valid reports whether e is a recognised effort tier (including none/"").
-func (e Effort) Valid() bool {
-	switch e {
-	case EffortNone, EffortLow, EffortMedium, EffortHigh, EffortXHigh, EffortMax, EffortUltra:
-		return true
-	default:
-		return false
-	}
-}
-
-// Validate fails loud on an unknown effort tier, naming the valid set.
-func (e Effort) Validate() error {
-	if e.Valid() {
-		return nil
-	}
-	return fmt.Errorf("invalid reasoning effort %q; want one of: low, medium, high, xhigh, max, ultra", e)
-}
 
 // SchemaStrictness governs what captain does when a structured-output response
 // fails validation against the request's JSON schema. "" uses the backend
@@ -278,19 +87,32 @@ func (s VerifyScope) Validate() error {
 type ToolMode string
 
 const (
-	ToolModeEnabled  ToolMode = "enabled"
-	ToolModeAsk      ToolMode = "ask"
-	ToolModeDisabled ToolMode = "disabled"
+	ToolModeOn   ToolMode = "on"
+	ToolModeAsk  ToolMode = "ask"
+	ToolModeOff  ToolMode = "off"
+	ToolModeAuto ToolMode = "auto"
 )
+
+// NormalizeToolMode canonicalizes a mode.
+func NormalizeToolMode(m ToolMode) (ToolMode, bool) {
+	switch ToolMode(strings.ToLower(strings.TrimSpace(string(m)))) {
+	case ToolModeOn:
+		return ToolModeOn, true
+	case ToolModeAsk:
+		return ToolModeAsk, true
+	case ToolModeOff:
+		return ToolModeOff, true
+	case ToolModeAuto:
+		return ToolModeAuto, true
+	default:
+		return "", false
+	}
+}
 
 // Valid reports whether m is a recognised tool mode.
 func (m ToolMode) Valid() bool {
-	switch m {
-	case ToolModeEnabled, ToolModeAsk, ToolModeDisabled:
-		return true
-	default:
-		return false
-	}
+	_, ok := NormalizeToolMode(m)
+	return ok
 }
 
 // ToolPolicy is the runtime-spec policy map value for one tool. It keeps the

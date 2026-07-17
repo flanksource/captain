@@ -1,4 +1,4 @@
-package api
+package registry
 
 import (
 	"encoding/json"
@@ -8,6 +8,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
+
+func floatPtr(f float64) *float64 { return &f }
 
 func modelNames(models []Model) []string {
 	if len(models) == 0 {

@@ -158,3 +158,28 @@ func TestSpec_Validate(t *testing.T) {
 		})
 	}
 }
+
+// TestSpec_FallbacksCompact pins the end-to-end config shape: a Spec whose model
+// has compact-string fallbacks, plus the primary parsed via Expand. The grammar
+// itself is covered in pkg/api/registry; this pins that Spec decoding reaches it.
+func TestSpec_FallbacksCompact(t *testing.T) {
+	var spec Spec
+	src := "model: opus\neffort: high\nfallbacks:\n  - agent:sonnet:medium\n  - api:gpt-5.5\n"
+	if err := yaml.Unmarshal([]byte(src), &spec); err != nil {
+		t.Fatal(err)
+	}
+	if spec.Model.Name != "opus" || spec.Model.Effort != EffortHigh {
+		t.Fatalf("primary = %+v", spec.Model)
+	}
+	if len(spec.Model.Fallbacks) != 2 {
+		t.Fatalf("fallbacks = %+v", spec.Model.Fallbacks)
+	}
+	if spec.Model.Fallbacks[0].Name != "sonnet" || spec.Model.Fallbacks[0].Backend != BackendClaudeAgent {
+		t.Errorf("fb0 = %+v", spec.Model.Fallbacks[0])
+	}
+	// Candidates flattens primary + fallbacks in order.
+	cands := spec.Model.Candidates()
+	if len(cands) != 3 || cands[0].Name != "opus" || cands[1].Name != "sonnet" || cands[2].Name != "gpt-5.5" {
+		t.Errorf("candidates = %+v", cands)
+	}
+}

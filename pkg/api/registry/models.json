@@ -195,7 +195,8 @@
     "inputMediaTypes": [
       "image/*",
       "application/pdf"
-    ]
+    ],
+    "supersededBy": "claude-sonnet-4-6"
   },
   {
     "id": "claude-sonnet-4-5-20250929",
@@ -210,7 +211,8 @@
     "inputMediaTypes": [
       "image/*",
       "application/pdf"
-    ]
+    ],
+    "supersededBy": "claude-sonnet-4-6"
   },
   {
     "id": "gpt-5.6",
@@ -262,7 +264,10 @@
       "xhigh",
       "max"
     ],
-    "priority": 3
+    "priority": 3,
+    "aliases": [
+      "luna"
+    ]
   },
   {
     "id": "gpt-5.6-sol",
@@ -290,7 +295,10 @@
       "max",
       "ultra"
     ],
-    "priority": 1
+    "priority": 1,
+    "aliases": [
+      "sol"
+    ]
   },
   {
     "id": "gpt-5.6-terra",
@@ -318,7 +326,10 @@
       "max",
       "ultra"
     ],
-    "priority": 2
+    "priority": 2,
+    "aliases": [
+      "terra"
+    ]
   },
   {
     "id": "gpt-5.5",

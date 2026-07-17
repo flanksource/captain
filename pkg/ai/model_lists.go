@@ -4,6 +4,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/flanksource/captain/pkg/api/registry"
 )
 
 const currentModelsPerFamily = 3
@@ -128,9 +130,16 @@ func IsLegacyModelIDForBackend(id string, backend Backend) bool {
 }
 
 func isPreferredRegistryModelForBackend(backend Backend, model string) bool {
-	provider := registryProviderForBackend(backend)
-	entry, ok := lookupRegistryExact(provider, normalizeCodexVariantAlias(model))
-	return ok && entry.Preferred && registryModelAvailableForBackend(entry, backend)
+	p, mode, ok := registry.ProviderFor(backend)
+	if !ok {
+		return false
+	}
+	entry, found := p.Lookup(model)
+	if !found {
+		return false
+	}
+	_, available := p.Availability(mode, entry.ID)
+	return entry.Preferred && available
 }
 
 // CurrentModelsByReleaseDate returns a filtered copy sorted newest first,

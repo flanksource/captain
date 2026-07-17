@@ -85,7 +85,7 @@ tasks:
   models:update:
     desc: Regenerate the embedded LLM model registry from models.dev + local patches
     cmds:
-      - go run ./pkg/ai/internal/gen-model-registry --patches pkg/ai/internal/gen-model-registry/patches.json --output pkg/ai/model_registry.json
+      - go run ./pkg/ai/internal/gen-model-registry --patches pkg/ai/internal/gen-model-registry/patches.json --output pkg/api/registry/models.json
 
   clean:
     desc: Remove build artifacts
