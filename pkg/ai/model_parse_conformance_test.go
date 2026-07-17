@@ -88,9 +88,13 @@ var agreedCases = []parseCase{
 	{in: "codex", want: model("gpt-5.6-sol", api.BackendCodexCLI, "")},
 	{in: "claude", want: model("claude", api.BackendAnthropic, "")},
 
-	// grok is served through the codex CLI and passes through verbatim.
-	{in: "grok-2", want: model("grok-2", api.BackendCodexCLI, "")},
-	{in: "grok-code-fast-1", want: model("grok-code-fast-1", api.BackendCodexCLI, "")},
+	// A sentinel with an explicit mode resolves too. This does NOT go through the
+	// agent-sentinel shortcut (that one only fires off the API mode), so it lands
+	// on the provider's emptyFamily — which must be a family name. An id there
+	// matched no catalog row and left "api:codex" as the literal "codex".
+	{in: "api:codex", want: model("gpt-5.6-sol", api.BackendOpenAI, "")},
+	{in: "cli:codex", want: model("gpt-5.6-sol", api.BackendCodexCLI, "")},
+
 
 	// A multi-slash id resolves off its LAST segment and keeps its name verbatim,
 	// so OpenRouter-style proxied names survive. (api.InferBackend alone cannot do
@@ -109,6 +113,12 @@ var agreedCases = []parseCase{
 	// it fails loud rather than resolving to something unusable.
 	{in: "sora", wantErr: "pass an explicit backend"},
 	{in: "sora-2", wantErr: "pass an explicit backend"},
+
+	// grok mode was removed from the codex CLI, so no provider claims it. Pinned
+	// as failing rather than deleted: silently re-claiming grok would route models
+	// to a backend captain no longer drives.
+	{in: "grok-2", wantErr: "pass an explicit backend"},
+	{in: "grok-code-fast-1", wantErr: "pass an explicit backend"},
 }
 
 func expectModel(got api.Model, want api.Model) {

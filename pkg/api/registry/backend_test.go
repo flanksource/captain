@@ -17,7 +17,6 @@ func TestInferBackend(t *testing.T) {
 		"gemini-2.5-pro":    BackendGemini,
 		"gemini-cli-pro":    BackendGeminiCLI,
 		"codex-gpt-5-codex": BackendCodexCLI,
-		"grok-2":            BackendCodexCLI,
 		"deepseek-chat":     BackendDeepSeek,
 	}
 	for model, want := range cases {
@@ -28,6 +27,12 @@ func TestInferBackend(t *testing.T) {
 	}
 	if _, err := InferBackend("totally-unknown"); err == nil {
 		t.Error("InferBackend(unknown) should fail loud")
+	}
+	// grok is no longer claimed by any provider (the codex CLI's grok mode was
+	// removed). Pin the removal: a silent return of grok claiming would otherwise
+	// resurrect a backend captain no longer routes.
+	if _, err := InferBackend("grok-2"); err == nil {
+		t.Error("InferBackend(grok-2) should fail loud: grok mode was removed")
 	}
 }
 

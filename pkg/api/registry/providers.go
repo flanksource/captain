@@ -59,8 +59,13 @@ var (
 		identityTrim:  []string{"codex-agent-", "codex-"},
 		families:      []string{"gpt"},
 		emptyTokens:   []string{"", "codex"},
-		emptyFamily:   "gpt-5.6-sol",
-		genConfig:     openaiGenerationConfig,
+		// A family name, not a model id: emptyFamily is matched against
+		// KnownModel.Family, so an id here matches no row and the token falls
+		// through unresolved ("api:codex" stayed the literal "codex"). Which gpt
+		// model a bare "codex" lands on is decided by priority in the catalog —
+		// gpt-5.6-sol carries priority 1 — not by naming it here.
+		emptyFamily: "gpt",
+		genConfig:   openaiGenerationConfig,
 	}
 
 	Google = &Provider{
