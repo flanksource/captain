@@ -48,17 +48,22 @@ import (
 // validated in Resolve instead.
 //
 // Flag names are global to a command — clicky does not prefix embedded structs —
-// so this struct owns --model/-m, --fallback, --backend/-b, --mode, --effort,
+// so this struct owns --model, --fallback, --backend, --mode, --effort,
 // --temperature and --no-cache outright. An embedder that redeclares any of them
 // panics cobra at init.
+//
+// It deliberately claims NO single-letter shorthands. Shorthands are per-command
+// UX and the letters are scarce: -m here meant `gavel commit` could not embed this
+// at all, because -m is its --message (the git convention). A struct meant to be
+// embedded everywhere cannot squat them.
 //
 // No field carries a `default:` tag: defaults only materialize through cobra
 // binding, so a directly-constructed ModelFlags would disagree with a bound one.
 // Zero means unset, everywhere.
 type ModelFlags struct {
-	Model       string   `flag:"model" short:"m" help:"Model name(s), e.g. claude-sonnet-5, a compact selector like agent:opus:high, or a comma-separated primary,fallback list (defaults to the value saved by 'captain configure')"`
+	Model       string   `flag:"model" help:"Model name(s), e.g. claude-sonnet-5, a compact selector like agent:opus:high, or a comma-separated primary,fallback list (defaults to the value saved by 'captain configure')"`
 	Fallback    []string `flag:"fallback" help:"Model to try if the primary is unavailable (repeatable; comma-separated allowed)"`
-	Backend     string   `flag:"backend" short:"b" help:"Force backend: anthropic|gemini|openai|deepseek|claude-cli|claude-agent|claude-cmux|codex-cli|codex-agent|codex-cmux|gemini-cli (default: inferred from model or saved by 'captain configure')"`
+	Backend     string   `flag:"backend" help:"Force backend: anthropic|gemini|openai|deepseek|claude-cli|claude-agent|claude-cmux|codex-cli|codex-agent|codex-cmux|gemini-cli (default: inferred from model or saved by 'captain configure')"`
 	Mode        string   `flag:"mode" help:"Runtime mechanism: api|cli|agent|cmux (sdk aliases agent). Combined with the model's family to pick a backend; contradicting --backend or a mode prefix on --model fails loud"`
 	Effort      string   `flag:"effort" help:"Reasoning effort: low|medium|high|xhigh|max|ultra (model-dependent)"`
 	Temperature string   `flag:"temperature" help:"Sampling temperature (0.0-2.0)"`
