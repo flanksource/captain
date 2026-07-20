@@ -31,6 +31,21 @@ func (promptResultProvider) Execute(context.Context, ai.Request) (*ai.Response, 
 	}, nil
 }
 
+type structuredPromptResultProvider struct{}
+
+func (structuredPromptResultProvider) GetModel() string { return "claude-sonnet-4-6" }
+
+func (structuredPromptResultProvider) GetBackend() ai.Backend { return ai.BackendAnthropic }
+
+func (structuredPromptResultProvider) Execute(context.Context, ai.Request) (*ai.Response, error) {
+	return &ai.Response{
+		Text:           `{"answer":"42"}`,
+		StructuredData: json.RawMessage(`{"answer":"42"}`),
+		Model:          "claude-sonnet-4-6",
+		Backend:        ai.BackendAnthropic,
+	}, nil
+}
+
 type promptResultStreamingProvider struct{}
 
 func (promptResultStreamingProvider) GetModel() string { return "gpt-5-codex" }
@@ -422,6 +437,23 @@ func TestRunBuffered_JSONIncludesFullInputSpec(t *testing.T) {
 	}
 }
 
+func TestRunBuffered_PreservesStructuredOutput(t *testing.T) {
+	got, err := runBuffered(context.Background(), structuredPromptResultProvider{}, ai.Request{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, ok := got.(AIPromptResult)
+	if !ok {
+		t.Fatalf("runBuffered returned %T, want AIPromptResult", got)
+	}
+	if result.Text != `{"answer":"42"}` {
+		t.Fatalf("Text = %q, want JSON transcript text", result.Text)
+	}
+	if result.StructuredOutput["answer"] != "42" {
+		t.Fatalf("StructuredOutput = %#v, want decoded answer", result.StructuredOutput)
+	}
+}
+
 func TestRunStreaming_JSONIncludesFullInputSpec(t *testing.T) {
 	req := ai.Request{
 		Model:       api.Model{Name: "gpt-5-codex", Backend: api.BackendCodexCLI, Effort: api.EffortHigh},
@@ -468,6 +500,9 @@ func TestRunStreaming_StructuredResultIsReturnedOnce(t *testing.T) {
 			}
 			if result.Text != `{"answer":"42"}` {
 				t.Fatalf("Text = %q, want authoritative structured JSON once", result.Text)
+			}
+			if result.StructuredOutput["answer"] != "42" {
+				t.Fatalf("StructuredOutput = %#v, want decoded answer", result.StructuredOutput)
 			}
 		})
 	}

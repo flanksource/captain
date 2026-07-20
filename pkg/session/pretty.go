@@ -3,10 +3,12 @@ package session
 import (
 	"encoding/json"
 	"fmt"
+	"path"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/claude/tools"
 	"github.com/flanksource/clicky"
 	clickyapi "github.com/flanksource/clicky/api"
@@ -38,8 +40,12 @@ func (s *Session) Pretty() clickyapi.Text {
 	}
 
 	if rows := sessionHistoryFileRows(s); len(rows) > 0 {
-		t = t.NewLine().NewLine().Append("History Files", "font-bold").
-			NewLine().Add(historyFilesTable(rows))
+		shared, rows := shareHistoryFileDir(rows)
+		t = t.NewLine().NewLine().Append("History Files", "font-bold")
+		if shared != "" {
+			t = t.Append("  "+shared+"/", "text-muted")
+		}
+		t = t.NewLine().Add(historyFilesTable(rows))
 	}
 
 	if items := sessionTranscriptItems(s); len(items) > 0 {
@@ -76,12 +82,8 @@ func sessionSummaryRows(s *Session) []prettyKVRow {
 	add("Started", prettyTime(s.StartedAt))
 	add("Ended", prettyTime(s.EndedAt))
 	add("Duration", prettyDuration(s.StartedAt, s.EndedAt))
-	add("Counts", fmt.Sprintf("%d messages, %d events, %d agents, %d tool calls",
-		len(s.Messages), len(s.Events), len(s.Agents), countSessionToolParts(s.Messages)))
-	if tokens := s.Usage.TotalTokens(); tokens > 0 {
-		add("Tokens", fmt.Sprintf("%s total (%s input, %s output)",
-			FormatTokens(tokens), FormatTokens(s.Usage.InputTokens), FormatTokens(s.Usage.OutputTokens)))
-	}
+	add("Counts", prettyCounts(s))
+	add("Tokens", prettyTokens(s.Usage))
 	if cost := s.Cost.Total(); cost > 0 {
 		add("Cost", FormatCost(cost))
 	}
@@ -97,10 +99,53 @@ func sessionSummaryRows(s *Session) []prettyKVRow {
 	return rows
 }
 
+// prettyKV renders one summary row. The label is muted and the value takes the
+// terminal's default foreground: styling both the same way (as an earlier
+// revision did) collapsed the block into an unscannable wall of one gray.
 func prettyKV(label, value string) clickyapi.Text {
 	return clickyapi.Text{}.
-		Append("  "+label+": ", "text-gray-500").
-		Append(value, "text-muted")
+		Append("  "+label+": ", "text-muted").
+		Append(value, "")
+}
+
+// prettyCounts reports the session's real totals. When the transcript has been
+// windowed the retained count is called out separately, so a bounded view never
+// reads as the whole session.
+func prettyCounts(s *Session) string {
+	messages, events, toolCalls := len(s.Messages), len(s.Events), CountToolParts(s.Messages)
+	shown := ""
+	if w := s.Window; w != nil {
+		shown = fmt.Sprintf(" (%d shown)", messages)
+		messages, events, toolCalls = w.Messages, w.Events, w.ToolCalls
+	}
+	return fmt.Sprintf("%d messages%s, %d events, %d agents, %d tool calls",
+		messages, shown, events, len(s.Agents), toolCalls)
+}
+
+// prettyTokens breaks the total down across every non-zero bucket, largest
+// first. Cache traffic is usually the bulk of a session, so a breakdown that
+// omits it cannot account for the total it reports.
+func prettyTokens(u api.Usage) string {
+	total := u.TotalTokens()
+	if total == 0 {
+		return ""
+	}
+	buckets := make([]string, 0, 5)
+	for _, bucket := range []struct {
+		label string
+		count int
+	}{
+		{"cache read", u.CacheReadTokens},
+		{"cache write", u.CacheWriteTokens},
+		{"output", u.OutputTokens},
+		{"reasoning", u.ReasoningTokens},
+		{"input", u.InputTokens},
+	} {
+		if bucket.count > 0 {
+			buckets = append(buckets, FormatTokens(bucket.count)+" "+bucket.label)
+		}
+	}
+	return fmt.Sprintf("%s total (%s)", FormatTokens(total), strings.Join(buckets, ", "))
 }
 
 type historyFileRow struct {
@@ -125,6 +170,42 @@ func sessionHistoryFileRows(s *Session) []historyFileRow {
 		rows = append(rows, historyFileRow{scope: "agent", agent: prettyAgentName(a), file: a.HistoryFile})
 	}
 	return rows
+}
+
+// shareHistoryFileDir lifts the directory every transcript shares out of the
+// rows so the File column carries the distinguishing basename. Agent
+// transcripts normally all live in one project directory, which otherwise
+// truncated every row to the same unusable prefix. Returns an empty prefix and
+// the rows untouched when the paths span directories.
+func shareHistoryFileDir(rows []historyFileRow) (string, []historyFileRow) {
+	if len(rows) == 0 {
+		return "", rows
+	}
+	shared := path.Dir(rows[0].file)
+	for _, row := range rows[1:] {
+		shared = commonDirPrefix(shared, path.Dir(row.file))
+	}
+	if shared == "" || shared == "." || shared == "/" {
+		return "", rows
+	}
+	trimmed := make([]historyFileRow, len(rows))
+	for i, row := range rows {
+		row.file = strings.TrimPrefix(row.file, shared+"/")
+		trimmed[i] = row
+	}
+	return shared, trimmed
+}
+
+// commonDirPrefix returns the deepest directory a and b share, or "" when they
+// only meet at the filesystem root. Agent transcripts nest under the root
+// session's own directory, so an exact-match check would find nothing to lift.
+func commonDirPrefix(a, b string) string {
+	aParts, bParts := strings.Split(a, "/"), strings.Split(b, "/")
+	shared := 0
+	for shared < min(len(aParts), len(bParts)) && aParts[shared] == bParts[shared] {
+		shared++
+	}
+	return strings.Join(aParts[:shared], "/")
 }
 
 func historyFilesTable(rows []historyFileRow) clickyapi.TextTable {
@@ -176,6 +257,9 @@ func sessionTranscriptItems(s *Session) []transcriptRow {
 		}
 	}
 	for _, e := range s.Events {
+		if redundantTranscriptEvents[e.Type] {
+			continue
+		}
 		tool := eventTool(e)
 		if tool == nil {
 			continue
@@ -203,17 +287,49 @@ func sessionTranscriptItems(s *Session) []transcriptRow {
 	return rows
 }
 
+// redundantTranscriptEvents are session-state checkpoints the provider rewrites
+// on every turn. Their payload already appears verbatim as a message row, so
+// rendering them costs one line per turn and carries no information. They stay
+// in the model — JSON and YAML callers still receive them.
+var redundantTranscriptEvents = map[string]bool{
+	"last-prompt": true,
+}
+
+// transcriptList renders one row per entry, collapsing consecutive identical
+// rows into a single row tagged with its repeat count. Providers rewrite
+// state rows (titles, skill listings) on every turn, which otherwise produced
+// dozens of byte-identical lines for a handful of distinct values.
 func transcriptList(rows []transcriptRow) clickyapi.List {
 	list := clicky.List()
 	list.Unstyled = true
 	list.MaxInline = 1
-	for _, row := range rows {
-		if row.tool == nil {
+	for i := 0; i < len(rows); {
+		if rows[i].tool == nil {
+			i++
 			continue
 		}
-		list.Items = append(list.Items, transcriptListItem{text: row.tool.Pretty()})
+		text := rows[i].tool.Pretty()
+		repeats := countRepeatedRows(rows, i, text.String())
+		if repeats > 1 {
+			text = text.Append(fmt.Sprintf("  ×%d", repeats), "text-muted")
+		}
+		list.Items = append(list.Items, transcriptListItem{text: text})
+		i += repeats
 	}
 	return list
+}
+
+// countRepeatedRows returns how many rows starting at start render identically
+// to rendered, always at least 1.
+func countRepeatedRows(rows []transcriptRow, start int, rendered string) int {
+	count := 1
+	for next := start + 1; next < len(rows); next++ {
+		if rows[next].tool == nil || rows[next].tool.Pretty().String() != rendered {
+			break
+		}
+		count++
+	}
+	return count
 }
 
 type transcriptListItem struct {

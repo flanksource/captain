@@ -47,6 +47,7 @@ type PromptSummary struct {
 	Writable    bool             `json:"writable"`
 	Model       string           `json:"model,omitempty"`
 	Backend     string           `json:"backend,omitempty"`
+	Runtimes    []api.Model      `json:"runtimes,omitempty"`
 	Variables   []PromptVariable `json:"variables,omitempty"`
 	ParseError  string           `json:"parseError,omitempty"`
 	UpdatedAt   string           `json:"updatedAt,omitempty"`
@@ -110,13 +111,15 @@ type PromptRenderResult struct {
 	InputSchema     map[string]any `json:"inputSchema,omitempty"`
 	InputDefault    map[string]any `json:"inputDefault,omitempty"`
 	OutputSchema    map[string]any `json:"outputSchema,omitempty"`
+	Runtimes        []api.Model    `json:"runtimes,omitempty"`
 	ValidationError string         `json:"validationError,omitempty"`
 }
 
 // PromptActionFlags is the full flag surface for `captain prompt run|render` —
 // the same knobs as `captain ai prompt` (AIRuntimeOptions) plus the prompt-body
-// fields — so the two commands are one. The positional (a .prompt filepath or a
-// registry id) is the prompt source; --prompt/-p and stdin are alternatives.
+// fields — so the two commands are one. The positional (a discovered name,
+// .prompt filepath, or registry id) is the prompt source; --prompt/-p and stdin
+// are alternatives.
 type PromptActionFlags struct {
 	AIRuntimeOptions
 
@@ -162,6 +165,7 @@ type promptInspection struct {
 	InputSchema  map[string]any
 	InputDefault map[string]any
 	OutputSchema map[string]any
+	Runtimes     []api.Model
 	Variables    []PromptVariable
 }
 
@@ -176,10 +180,10 @@ func RegisterPromptEntity() {
 			UpdateWithContext(updatePrompt).
 			DeleteWithContext(deletePrompt).
 			WithAction(clicky.ActionWithFlagsAndContext("render", PromptActionFlags{}, renderPromptAction).
-				WithShort("Render a prompt (id, .prompt file, --prompt/-p, or stdin) without calling a model").
+				WithShort("Render a prompt (id, name, .prompt file, --prompt/-p, or stdin) without calling a model").
 				WithOptionalID()).
 			WithAction(clicky.ActionWithFlagsAndContext("run", PromptActionFlags{}, runPromptAction).
-				WithShort("Run a prompt (id, .prompt file, --prompt/-p, or stdin)").
+				WithShort("Run a prompt (id, name, .prompt file, --prompt/-p, or stdin)").
 				WithOptionalID()).
 			Register()
 	})

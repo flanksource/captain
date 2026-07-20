@@ -36,16 +36,17 @@ func TestExecuteSyncRunMultiModelsParallel(t *testing.T) {
 			return nil, errors.New("executor was not called concurrently")
 		}
 		return AIPromptResult{
-			Text:        cfg.Model.Name,
-			Model:       cfg.Model.Name,
-			Backend:     string(cfg.Model.Backend),
-			Dir:         req.Cwd(),
-			SessionID:   "session-" + cfg.Model.Name,
-			HistoryFile: filepath.Join(req.Cwd(), ".history", cfg.Model.Name+".jsonl"),
-			InputTokens: 1,
-			Output:      2,
-			CostUSD:     0.01,
-			Duration:    "1ms",
+			Text:             cfg.Model.Name,
+			StructuredOutput: map[string]any{"model": cfg.Model.Name},
+			Model:            cfg.Model.Name,
+			Backend:          string(cfg.Model.Backend),
+			Dir:              req.Cwd(),
+			SessionID:        "session-" + cfg.Model.Name,
+			HistoryFile:      filepath.Join(req.Cwd(), ".history", cfg.Model.Name+".jsonl"),
+			InputTokens:      1,
+			Output:           2,
+			CostUSD:          0.01,
+			Duration:         "1ms",
 		}, nil
 	}
 
@@ -80,6 +81,9 @@ func TestExecuteSyncRunMultiModelsParallel(t *testing.T) {
 	}
 	if got.Runs[0].CostUSD != 0.01 || got.Runs[0].InputTokens != 1 || got.Runs[0].OutputTokens != 2 {
 		t.Fatalf("run usage/cost missing: %+v", got.Runs[0])
+	}
+	if got.Runs[0].StructuredOutput["model"] != got.Runs[0].Model {
+		t.Fatalf("run structured output missing: %+v", got.Runs[0])
 	}
 }
 
@@ -150,9 +154,8 @@ func TestExecuteSyncRunMultiModelsRejectsResume(t *testing.T) {
 }
 
 func TestVariantModelUsesSelectorEffort(t *testing.T) {
-	base := api.Model{Name: "gpt-5.6-sol", Backend: api.BackendCodexAgent, Effort: api.EffortLow}
 	selector := api.Model{Name: "gpt-5.6-terra", Backend: api.BackendCodexCmux, Effort: api.EffortUltra}
-	got := variantModel(base, selector, nil)
+	got := variantModel(selector, nil)
 	if got.Name != selector.Name || got.Backend != selector.Backend || got.Effort != api.EffortUltra {
 		t.Fatalf("variant = %+v, want selector model/backend/effort", got)
 	}

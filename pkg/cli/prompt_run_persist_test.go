@@ -18,6 +18,7 @@ func TestPersistPromptRunRecordsNativeRun(t *testing.T) {
 	persistPromptRun(t.Context(), promptRunRecordInput{
 		Rendered: rendered, RunID: "run-1", SessionID: "0195c1de-4ab8-7000-8000-00000000abcd",
 		Model: "claude-sonnet-5", Backend: "claude-agent", BatchID: &batchID, ResultText: "done",
+		ResultJSON: map[string]any{"answer": "42"},
 	})
 
 	session, err := db.GetSessionByIdentity(t.Context(), "0195c1de-4ab8-7000-8000-00000000abcd", "claude", "", "")
@@ -28,6 +29,7 @@ func TestPersistPromptRunRecordsNativeRun(t *testing.T) {
 	assert.Equal(t, database.PromptRunStateSucceeded, runs[0].State)
 	assert.Equal(t, database.PromptRunPhaseFinished, runs[0].Phase)
 	assert.Equal(t, "done", runs[0].ResultText)
+	assert.Equal(t, map[string]any{"answer": "42"}, runs[0].ResultJSON)
 	assert.Equal(t, "captain", runs[0].Origin)
 	assert.Equal(t, "run-1", runs[0].AdmissionKey)
 	assert.Equal(t, "fix the failing test", runs[0].PromptMarkdown)

@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,9 +11,7 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/claude"
-	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/session"
-	"github.com/google/uuid"
 )
 
 type SessionListOptions struct {
@@ -28,9 +25,9 @@ type SessionListOptions struct {
 
 type SessionGetOptions struct {
 	ID     string `flag:"id" args:"true" help:"Session id (full or unambiguous prefix)"`
-	Offset int    `flag:"offset" help:"Skip this many messages from the start"`
-	Limit  int    `flag:"limit" help:"Maximum messages to return; 0 means all" short:"l"`
-	Tail   int    `flag:"tail" help:"Return only the last N messages (overrides offset/limit)"`
+	Offset int    `flag:"offset" help:"Skip this many transcript rows from the start"`
+	Limit  int    `flag:"limit" help:"Maximum transcript rows to return; 0 means all" default:"200" short:"l"`
+	Tail   int    `flag:"tail" help:"Return only the last N transcript rows (overrides offset/limit)"`
 }
 
 func (SessionGetOptions) GetName() string { return "get <id>" }
@@ -316,18 +313,6 @@ func buildSessionModel(candidate sessionCandidate) (*session.Session, error) {
 		return sessions[0], nil
 	default:
 		return nil, fmt.Errorf("unknown session source %q", candidate.record.Source)
-	}
-}
-
-// attachPromptRun attaches the realized prompt (for captain-launched sessions)
-// from the native prompt-run store to the session model.
-func attachPromptRun(ctx context.Context, db *database.DB, sessionID uuid.UUID, s *session.Session) {
-	runs, err := db.ListPromptRuns(ctx, database.PromptRunFilter{SessionID: &sessionID})
-	if err != nil || len(runs) == 0 || len(runs[0].RenderedSpec) == 0 {
-		return
-	}
-	if raw, err := json.Marshal(runs[0].RenderedSpec); err == nil {
-		s.Prompt = raw
 	}
 }
 

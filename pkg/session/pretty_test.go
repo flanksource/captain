@@ -45,10 +45,12 @@ func TestSessionPretty_RendersSummaryHistoryFilesAndTranscript(t *testing.T) {
 	got := s.Pretty().String()
 	for _, want := range []string{
 		"Summary",
-		"History Files",
+		// The shared transcript directory is lifted into the section header and
+		// the File column keeps only the distinguishing basename.
+		"History Files  /tmp/",
+		"root.jsonl",
+		"agent.jsonl",
 		"Transcript",
-		"/tmp/root.jsonl",
-		"/tmp/agent.jsonl",
 		"show history",
 		"task started",
 		"inspect sessions",

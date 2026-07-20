@@ -21,6 +21,7 @@ type promptRunRecordInput struct {
 	Backend    string
 	BatchID    *uuid.UUID
 	ResultText string
+	ResultJSON map[string]any
 	Error      string
 }
 
@@ -92,6 +93,9 @@ func persistPromptRun(ctx context.Context, input promptRunRecordInput) {
 		}
 		if input.ResultText != "" {
 			update.ResultText = &input.ResultText
+		}
+		if input.ResultJSON != nil {
+			update.ResultJSON = &input.ResultJSON
 		}
 		if input.Error != "" {
 			update.Error = &input.Error

@@ -67,6 +67,23 @@ var _ = Describe("attachment flags", func() {
 		Expect(rendered.Input.Prompt.Attachments).To(Equal([]api.AttachmentRef{{Path: "diagram.png"}}))
 	})
 
+	It("carries prompt workbench attachments into the rendered backend request", func() {
+		attachment := api.AttachmentRef{
+			ID:        api.AttachmentIDPrefix + strings.Repeat("a", 64),
+			Filename:  "diagram.png",
+			MediaType: "image/png",
+			Size:      512,
+		}
+		rendered, err := renderPrompt(context.Background(), "", PromptRenderRequest{Spec: &api.Spec{
+			Model:  api.Model{Name: "gemini-2.5-pro", Backend: api.BackendGemini},
+			Prompt: api.Prompt{Attachments: []api.AttachmentRef{attachment}},
+		}})
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(rendered.ValidationError).To(BeEmpty())
+		Expect(rendered.Input.Prompt.Attachments).To(Equal([]api.AttachmentRef{attachment}))
+	})
+
 	It("reports an unsupported batch attachment as one failed model", func() {
 		dir := GinkgoT().TempDir()
 		path := filepath.Join(dir, "diagram.png")

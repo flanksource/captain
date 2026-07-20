@@ -3,6 +3,7 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   plugins: [react()],
+  resolve: { dedupe: ["react", "react-dom", "monaco-editor"] },
   test: {
     environment: "jsdom",
     setupFiles: ["./src/test-setup.ts"],

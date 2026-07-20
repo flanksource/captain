@@ -213,13 +213,13 @@ func recordFromOverview(overview database.SessionOverview) SessionRecord {
 		ReasoningEffort: stringOr(overview.Effort, ""),
 		Version:         stringOr(overview.CLIVersion, ""),
 		GitBranch:       overviewGitBranch(overview),
-		Provider:        metadata.Provider,
+		Provider:        firstNonEmpty(overview.Provider, metadata.Provider),
 		Backend:         stringOr(overview.Backend, ""),
 		LifecycleStatus: string(overview.LifecycleStatus),
 		CWD:             stringOr(overview.CWD, ""),
 		ToolCalls:       int(overview.ToolCallCount),
 		Messages:        int(overview.MessageCount),
-		DetailAvailable: path != "",
+		DetailAvailable: path != "" || overview.PromptRunCount > 0,
 		CostUSD:         overview.CostUSD,
 	}
 	if record.EndedAt == nil {

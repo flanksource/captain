@@ -47,7 +47,7 @@ func renderPrompt(ctx context.Context, id string, renderReq PromptRenderRequest)
 	if err := normalizePromptContextDir(&req, cwd); err != nil {
 		return PromptRenderResult{}, err
 	}
-	return finalizeRenderResult(record, content, req, cfg)
+	return finalizeRenderResult(record, content, req, cfg, renderReq.Runtimes)
 }
 
 func renderEphemeralPrompt(renderReq PromptRenderRequest) (PromptRenderResult, error) {
@@ -76,7 +76,7 @@ func renderEphemeralPrompt(renderReq PromptRenderRequest) (PromptRenderResult, e
 	if err := normalizePromptContextDir(&req, cwd); err != nil {
 		return PromptRenderResult{}, err
 	}
-	return finalizeRenderResult(record, content, req, cfg)
+	return finalizeRenderResult(record, content, req, cfg, renderReq.Runtimes)
 }
 
 func ephemeralPromptContent() string {
@@ -88,8 +88,8 @@ description: Ephemeral prompt
 `
 }
 
-// renderPromptCLI is the CLI render path: load from id | .prompt filepath | -p |
-// stdin and overlay the flat CLI flags (overlayCLI).
+// renderPromptCLI is the CLI render path: load from id | discovered name |
+// .prompt filepath | -p | stdin and overlay the flat CLI flags (overlayCLI).
 func renderPromptCLI(ctx context.Context, id string, opts AIPromptOptions, varsJSON, stdin string) (PromptRenderResult, error) {
 	content, source, usedStdin, record, err := loadPromptContent(ctx, id, opts, stdin)
 	if err != nil {
@@ -103,12 +103,22 @@ func renderPromptCLI(ctx context.Context, id string, opts AIPromptOptions, varsJ
 	if err != nil {
 		return PromptRenderResult{}, err
 	}
-	return finalizeRenderResult(record, content, req, cfg)
+	result, err := finalizeRenderResult(record, content, req, cfg, nil)
+	if err != nil {
+		return PromptRenderResult{}, err
+	}
+	if len(opts.MultiModels) > 0 {
+		result.Runtimes, err = ai.ResolveRuntimeSelectors(opts.MultiModels, result.Config.Model)
+		if err != nil {
+			return PromptRenderResult{}, err
+		}
+	}
+	return result, nil
 }
 
 // finalizeRenderResult packages the rendered request/config + prompt detail into
 // a PromptRenderResult and sets the validation error (shared by both paths).
-func finalizeRenderResult(record promptRecord, content string, req ai.Request, cfg ai.Config) (PromptRenderResult, error) {
+func finalizeRenderResult(record promptRecord, content string, req ai.Request, cfg ai.Config, runtimeOverride []api.Model) (PromptRenderResult, error) {
 	// Normalize a comma-separated model into a clean primary + fallbacks so the
 	// displayed Model is a single name, then catch a mistyped model (primary or any
 	// fallback) at render time, not just on run.
@@ -130,6 +140,14 @@ func finalizeRenderResult(record promptRecord, content string, req ai.Request, c
 	if err != nil {
 		return PromptRenderResult{}, err
 	}
+	runtimes := detail.Runtimes
+	if len(runtimeOverride) > 0 {
+		runtimes = runtimeOverride
+	}
+	runtimes, err = resolvePromptRuntimes(runtimes, cfg.Model)
+	if err != nil {
+		return PromptRenderResult{}, err
+	}
 	result := PromptRenderResult{
 		ID:           detail.ID,
 		Name:         detail.Name,
@@ -142,11 +160,12 @@ func finalizeRenderResult(record promptRecord, content string, req ai.Request, c
 		InputSchema:  detail.InputSchema,
 		InputDefault: detail.InputDefault,
 		OutputSchema: detail.OutputSchema,
+		Runtimes:     runtimes,
 	}
 	switch {
 	case req.Prompt.User == "" && len(req.Prompt.Attachments) == 0 && !req.IsVerifyOnly():
 		result.ValidationError = "prompt text or attachment required"
-	case cfg.Model.Name == "":
+	case cfg.Model.Name == "" && len(result.Runtimes) == 0:
 		result.ValidationError = "no model: set prompt frontmatter, pass a model override, or run 'captain configure'"
 	default:
 		if err := req.Validate(); err != nil {
@@ -154,6 +173,31 @@ func finalizeRenderResult(record promptRecord, content string, req ai.Request, c
 		}
 	}
 	return result, nil
+}
+
+func resolvePromptRuntimes(runtimes []api.Model, base api.Model) ([]api.Model, error) {
+	if len(runtimes) == 0 {
+		return nil, nil
+	}
+	resolved := make([]api.Model, len(runtimes))
+	for i, runtime := range runtimes {
+		if runtime.Temperature == nil {
+			runtime.Temperature = base.Temperature
+		}
+		if runtime.Effort == api.EffortNone {
+			runtime.Effort = base.Effort
+		}
+		runtime.NoCache = runtime.NoCache || base.NoCache
+		var err error
+		resolved[i], err = ai.ResolveModelSelectors(runtime)
+		if err != nil {
+			return nil, fmt.Errorf("runtime %d: %w", i+1, err)
+		}
+	}
+	if err := validatePromptRuntimes(resolved); err != nil {
+		return nil, err
+	}
+	return resolved, nil
 }
 
 func overlayRuntimeSpec(req *ai.Request, cfg *ai.Config, spec api.Spec) {
@@ -217,6 +261,7 @@ func overlayRuntimeSpec(req *ai.Request, cfg *ai.Config, spec api.Spec) {
 	if spec.Prompt.Source != "" {
 		req.Prompt.Source = spec.Prompt.Source
 	}
+	req.Prompt.Attachments = append(req.Prompt.Attachments, spec.Prompt.Attachments...)
 	req.Prompt.Metadata = mergeStringMaps(req.Prompt.Metadata, spec.Prompt.Metadata)
 	if len(spec.Prompt.SchemaJSON) > 0 {
 		req.Prompt.SchemaJSON = spec.Prompt.SchemaJSON

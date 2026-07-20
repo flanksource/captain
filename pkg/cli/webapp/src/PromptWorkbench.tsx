@@ -3,12 +3,13 @@ import { useQuery } from "@tanstack/react-query";
 import {
   AppShell,
   Button,
+  Combobox,
   Modal,
-  SearchInput,
   SegmentedControl,
   Tabs,
   type AppShellProps,
   type AppShellNavSection,
+  type ComboboxOption,
   type KeyPreview,
   type JsonSchemaObject,
   type SecretKind,
@@ -17,10 +18,8 @@ import {
 import {
   CodeBlock,
   Icon,
-  SchemaViewer,
   UiAdd,
   UiCode2,
-  UiFileSearch,
   UiListTree,
   UiPlay,
   UiRefresh,
@@ -40,12 +39,12 @@ import {
 import { type ChatModel } from "@flanksource/clicky-ui/chat";
 import {
   useOperations,
-  type ExecutionResponse,
   type ResolvedOperation,
 } from "@flanksource/clicky-ui/rpc";
 import { apiClient } from "./api";
 import { PromptRunStream } from "./PromptRunStream";
 import { PromptBatchInspector } from "./PromptBatchInspector";
+import { PromptSchemaEditor } from "./PromptSchemaEditor";
 import { PromptRuntimeRows, validateRuntimeRows } from "./PromptRuntimeRows";
 import { RunningPromptsBadge, RunningPromptsRunsTab } from "./RunningPrompts";
 import {
@@ -54,35 +53,20 @@ import {
   type PromptExecutionHandle,
 } from "./hooks/usePromptRunStream";
 import { CAPTAIN_SIDEBAR_COLLAPSE_KEY } from "./shellHelpers";
+import {
+  fetchPromptList,
+  requiredOperation,
+  resolvePromptOps,
+  unwrapResponse,
+  type PromptSourceFilter,
+  type PromptSummary,
+} from "./promptData";
+import type { PromptSchemaKind } from "./promptSchemaSource";
 
 type Navigate = (to: string, opts?: { replace?: boolean }) => void;
 
-type SourceFilter = "all" | "embedded" | "local";
+type SourceFilter = PromptSourceFilter;
 type DetailTab = "source" | "runner" | "schema" | "runs";
-
-type PromptVariable = {
-  name: string;
-  type?: string;
-  description?: string;
-  required?: boolean;
-};
-
-type PromptSummary = {
-  id: string;
-  name: string;
-  description?: string;
-  sourceKind: "embedded" | "local" | string;
-  sourceId: string;
-  source: string;
-  path: string;
-  relPath: string;
-  writable: boolean;
-  model?: string;
-  backend?: string;
-  variables?: PromptVariable[];
-  parseError?: string;
-  updatedAt?: string;
-};
 
 type PromptDetail = PromptSummary & {
   content: string;
@@ -107,21 +91,12 @@ type PromptPreviewResult = {
   validationError?: string;
 };
 
-type PromptOps = {
-  list?: ResolvedOperation;
-  get?: ResolvedOperation;
-  create?: ResolvedOperation;
-  update?: ResolvedOperation;
-  delete?: ResolvedOperation;
-  preview?: ResolvedOperation;
-  run?: ResolvedOperation;
-};
-
 type PromptWorkbenchProps = {
   selectedId?: string;
   onNavigate: Navigate;
   navSections: AppShellNavSection[];
   actions: AppShellProps["actions"];
+  search: AppShellProps["search"];
 };
 
 const SOURCE_OPTIONS = [
@@ -129,6 +104,39 @@ const SOURCE_OPTIONS = [
   { id: "embedded", label: "Embedded" },
   { id: "local", label: "Local" },
 ] satisfies Array<{ id: SourceFilter; label: string }>;
+
+// Combobox headers group by *contiguous* `group`, so emit embedded before local
+// rather than relying on the server's ordering.
+const SOURCE_GROUP_ORDER = ["embedded", "local"];
+
+function promptGroupRank(sourceKind: string) {
+  const rank = SOURCE_GROUP_ORDER.indexOf(sourceKind);
+  return rank === -1 ? SOURCE_GROUP_ORDER.length : rank;
+}
+
+export function promptOptions(
+  prompts: PromptSummary[],
+  selected?: PromptSummary,
+): ComboboxOption[] {
+  // The list is server-filtered by the search query, so a selected prompt that
+  // no longer matches would otherwise render as a blank input.
+  const all =
+    selected && !prompts.some((prompt) => prompt.id === selected.id)
+      ? [...prompts, selected]
+      : prompts;
+  return [...all]
+    .sort(
+      (a, b) =>
+        promptGroupRank(a.sourceKind) - promptGroupRank(b.sourceKind) ||
+        a.name.localeCompare(b.name),
+    )
+    .map((prompt) => ({
+      value: prompt.id,
+      label: prompt.name,
+      group: prompt.sourceKind,
+      title: prompt.description || prompt.relPath,
+    }));
+}
 
 const EMPTY_RUNTIME: AISpecRuntimeValue = { budget: { timeout: "2h" } };
 const EMPTY_PROMPTS: PromptSummary[] = [];
@@ -239,6 +247,7 @@ type PromptDetailState = {
   draft: string;
   variables: Record<string, unknown>;
   variablesValid: boolean;
+  schemaValidity: Record<PromptSchemaKind, boolean>;
   runtime: AISpecRuntimeValue;
   additionalRuntimes: AISpecRuntimeValue[];
   previewResult?: PromptPreviewResult;
@@ -252,6 +261,12 @@ type PromptDetailStateAction =
   | { type: "draft"; detail?: PromptDetail; value: string }
   | { type: "variables"; detail?: PromptDetail; value: Record<string, unknown> }
   | { type: "variables-validity"; detail?: PromptDetail; value: boolean }
+  | {
+      type: "schema-validity";
+      detail?: PromptDetail;
+      kind: PromptSchemaKind;
+      value: boolean;
+    }
   | { type: "runtime"; detail?: PromptDetail; value: AISpecRuntimeValue }
   | {
       type: "runtime-rows";
@@ -285,6 +300,14 @@ function promptDetailReducer(
       return { ...current, variables: action.value };
     case "variables-validity":
       return { ...current, variablesValid: action.value };
+    case "schema-validity":
+      return {
+        ...current,
+        schemaValidity: {
+          ...current.schemaValidity,
+          [action.kind]: action.value,
+        },
+      };
     case "runtime":
       return { ...current, runtime: action.value };
     case "runtime-rows":
@@ -309,15 +332,15 @@ function promptDetailReducer(
 }
 
 function initialPromptDetailState(detail?: PromptDetail): PromptDetailState {
+  const runtimeRows = detail ? runtimeRowsFromPrompt(detail) : [];
   return {
     detailId: detail?.id,
     draft: detail?.content ?? "",
     variables: detail?.inputDefault ?? {},
     variablesValid: true,
-    runtime: detail
-      ? { ...EMPTY_RUNTIME, ...runtimeSelectionFromPrompt(detail) }
-      : { ...EMPTY_RUNTIME },
-    additionalRuntimes: [],
+    schemaValidity: { input: true, output: true },
+    runtime: { ...EMPTY_RUNTIME, ...runtimeRows[0] },
+    additionalRuntimes: runtimeRows.slice(1),
     previewResult: undefined,
     activeRunID: undefined,
     activeBatch: undefined,
@@ -341,6 +364,7 @@ export function PromptWorkbench({
   onNavigate,
   navSections,
   actions,
+  search,
 }: PromptWorkbenchProps) {
   const {
     operations,
@@ -425,6 +449,8 @@ export function PromptWorkbench({
     detail &&
     !scratch &&
     promptOps.update &&
+    selectedDetailState.schemaValidity.input &&
+    selectedDetailState.schemaValidity.output &&
     (detail.writable ? selectedDetailState.draft !== detail.content : true),
   );
   const hasSelection = Boolean(detail || activePromptId);
@@ -561,19 +587,17 @@ export function PromptWorkbench({
       navSections={navSections}
       collapsedStorageKey={CAPTAIN_SIDEBAR_COLLAPSE_KEY}
       actions={actions}
+      search={search}
       bodySidebar={
         <PromptSidebar
           source={source}
           onSourceChange={setSource}
-          query={query}
           onQueryChange={setQuery}
           prompts={prompts}
-          selectedId={activePromptId}
+          selected={selected}
           loading={listQuery.isLoading || operationsLoading}
           error={listQuery.error ?? operationsError}
-          onSelect={(prompt) =>
-            onNavigate(`/prompts/${encodeURIComponent(prompt.id)}`)
-          }
+          onSelect={(id) => onNavigate(`/prompts/${encodeURIComponent(id)}`)}
           onRefresh={() => void refreshAll()}
           onCreate={() => setCreateOpen(true)}
         />
@@ -644,6 +668,14 @@ export function PromptWorkbench({
         draft={selectedDetailState.draft}
         onDraftChange={(value) =>
           dispatchDetailState({ type: "draft", detail, value })
+        }
+        onSchemaValidityChange={(kind, value) =>
+          dispatchDetailState({
+            type: "schema-validity",
+            detail,
+            kind,
+            value,
+          })
         }
         variables={selectedDetailState.variables}
         variablesValid={selectedDetailState.variablesValid}
@@ -718,10 +750,9 @@ function promptChatEligible(detail: PromptDetail, runtime: AISpecRuntimeValue) {
 function PromptSidebar({
   source,
   onSourceChange,
-  query,
   onQueryChange,
   prompts,
-  selectedId,
+  selected,
   loading,
   error,
   onSelect,
@@ -730,16 +761,19 @@ function PromptSidebar({
 }: {
   source: SourceFilter;
   onSourceChange: (source: SourceFilter) => void;
-  query: string;
   onQueryChange: (query: string) => void;
   prompts: PromptSummary[];
-  selectedId?: string;
+  selected?: PromptSummary;
   loading: boolean;
   error: unknown;
-  onSelect: (prompt: PromptSummary) => void;
+  onSelect: (id: string) => void;
   onRefresh: () => void;
   onCreate: () => void;
 }) {
+  const options = useMemo(
+    () => promptOptions(prompts, selected),
+    [prompts, selected],
+  );
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
       <div className="shrink-0 space-y-density-2 border-b border-border p-density-3">
@@ -764,11 +798,17 @@ function PromptSidebar({
             </Button>
           </div>
         </div>
-        <SearchInput
-          value={query}
-          onChange={onQueryChange}
-          placeholder="Search prompts"
-          shortcut={null}
+        <Combobox
+          value={selected?.id ?? ""}
+          onChange={onSelect}
+          options={options}
+          onSearch={onQueryChange}
+          loading={loading}
+          allowCustomValue={false}
+          placeholder="Select a prompt"
+          ariaLabel="Prompt"
+          size="sm"
+          className="w-full"
         />
         <SegmentedControl
           value={source}
@@ -788,56 +828,39 @@ function PromptSidebar({
           <div className="p-density-3 text-sm text-destructive">
             {errorMessage(error)}
           </div>
-        ) : prompts.length === 0 && !loading ? (
+        ) : !selected ? (
           <div className="p-density-3 text-sm text-muted-foreground">
-            No prompts found.
+            No prompt selected.
           </div>
         ) : (
-          <div className="divide-y divide-border">
-            {prompts.map((prompt) => {
-              const active = prompt.id === selectedId;
-              return (
-                <button
-                  key={prompt.id}
-                  type="button"
-                  onClick={() => onSelect(prompt)}
-                  className={[
-                    "block w-full px-density-3 py-density-2 text-left transition-colors",
-                    active
-                      ? "bg-accent text-accent-foreground"
-                      : "hover:bg-muted/60",
-                  ].join(" ")}
-                >
-                  <div className="flex min-w-0 items-center justify-between gap-density-2">
-                    <span className="min-w-0 truncate text-sm font-medium">
-                      {prompt.name}
-                    </span>
-                    <span className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[11px] uppercase text-muted-foreground">
-                      {prompt.sourceKind}
-                    </span>
-                  </div>
-                  <div className="mt-1 truncate text-xs text-muted-foreground">
-                    {prompt.model || prompt.backend || "no model"}
-                    {prompt.variables?.length
-                      ? ` - ${prompt.variables.length} vars`
-                      : ""}
-                  </div>
-                  <div className="mt-1 truncate text-xs text-muted-foreground">
-                    {prompt.relPath}
-                  </div>
-                  {prompt.description && (
-                    <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">
-                      {prompt.description}
-                    </div>
-                  )}
-                  {prompt.parseError && (
-                    <div className="mt-1 truncate text-xs text-destructive">
-                      {prompt.parseError}
-                    </div>
-                  )}
-                </button>
-              );
-            })}
+          <div className="space-y-density-2 p-density-3">
+            <div className="flex min-w-0 items-center justify-between gap-density-2">
+              <span className="min-w-0 truncate text-sm font-medium">
+                {selected.name}
+              </span>
+              <span className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[11px] uppercase text-muted-foreground">
+                {selected.sourceKind}
+              </span>
+            </div>
+            <div className="truncate text-xs text-muted-foreground">
+              {selected.model || selected.backend || "no model"}
+              {selected.variables?.length
+                ? ` - ${selected.variables.length} vars`
+                : ""}
+            </div>
+            <div className="truncate text-xs text-muted-foreground">
+              {selected.relPath}
+            </div>
+            {selected.description && (
+              <div className="text-xs text-muted-foreground">
+                {selected.description}
+              </div>
+            )}
+            {selected.parseError && (
+              <div className="text-xs text-destructive">
+                {selected.parseError}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -910,6 +933,7 @@ function PromptDetailPane({
   onTabChange,
   draft,
   onDraftChange,
+  onSchemaValidityChange,
   variables,
   variablesValid,
   onVariablesChange,
@@ -942,6 +966,7 @@ function PromptDetailPane({
   onTabChange: (tab: string) => void;
   draft: string;
   onDraftChange: (value: string) => void;
+  onSchemaValidityChange: (kind: PromptSchemaKind, valid: boolean) => void;
   variables: Record<string, unknown>;
   variablesValid: boolean;
   onVariablesChange: (value: Record<string, unknown>) => void;
@@ -1039,9 +1064,12 @@ function PromptDetailPane({
             onSelectRun={onSelectRun}
           />
         ) : activeTab === "schema" ? (
-          <SchemaPreview
-            inputSchema={schema}
-            outputSchema={normalizeObjectSchema(detail.outputSchema)}
+          <PromptSchemaEditor
+            key={`${detail.id}:${detail.content}`}
+            promptId={detail.id}
+            source={draft}
+            onSourceChange={onDraftChange}
+            onValidityChange={onSchemaValidityChange}
           />
         ) : (
           <div className="grid min-h-full gap-density-4 xl:grid-cols-[minmax(340px,0.9fr)_minmax(0,1.1fr)]">
@@ -1237,68 +1265,6 @@ function RunnerOutput({
   );
 }
 
-// SchemaPreview browses the prompt's input and output JSON schemas read-only,
-// via clicky-ui's SchemaViewer. Absent schemas (most prompts declare no
-// output.schema) degrade to an empty state rather than an error.
-function SchemaPreview({
-  inputSchema,
-  outputSchema,
-}: {
-  inputSchema?: JsonSchemaObject;
-  outputSchema?: JsonSchemaObject;
-}) {
-  return (
-    <div className="grid min-h-full gap-density-4 xl:grid-cols-2">
-      <SchemaPanel
-        title="Input schema"
-        icon={
-          <Icon icon={UiFileSearch} className="size-4 text-muted-foreground" />
-        }
-        schema={inputSchema}
-        emptyLabel="This prompt declares no input schema."
-      />
-      <SchemaPanel
-        title="Output schema"
-        icon={
-          <Icon icon={UiListTree} className="size-4 text-muted-foreground" />
-        }
-        schema={outputSchema}
-        emptyLabel="This prompt declares no output schema."
-      />
-    </div>
-  );
-}
-
-function SchemaPanel({
-  title,
-  icon,
-  schema,
-  emptyLabel,
-}: {
-  title: string;
-  icon: ReactNode;
-  schema?: JsonSchemaObject;
-  emptyLabel: string;
-}) {
-  return (
-    <section className="space-y-density-2">
-      <div className="flex items-center gap-density-2 text-sm font-semibold">
-        {icon}
-        {title}
-      </div>
-      {schema ? (
-        <div className="rounded-md border border-border p-density-3">
-          <SchemaViewer schema={schema} showControls defaultOpenDepth={1} />
-        </div>
-      ) : (
-        <div className="flex min-h-[120px] items-center justify-center rounded-md border border-dashed border-border p-density-4 text-sm text-muted-foreground">
-          {emptyLabel}
-        </div>
-      )}
-    </section>
-  );
-}
-
 function CreatePromptModal({
   open,
   ...props
@@ -1443,58 +1409,6 @@ function createPromptModalKey({
   return `${sources[0]?.id ?? ""}:${seedContent ?? ""}`;
 }
 
-function resolvePromptOps(operations: ResolvedOperation[]): PromptOps {
-  return {
-    list: findPromptOperation(operations, "list"),
-    get: findPromptOperation(operations, "get"),
-    create: findPromptOperation(operations, "create"),
-    update: findPromptOperation(operations, "update"),
-    delete: findPromptOperation(operations, "delete"),
-    preview: findPromptOperation(operations, "action", "render"),
-    run: findPromptOperation(operations, "action", "run"),
-  };
-}
-
-function findPromptOperation(
-  operations: ResolvedOperation[],
-  verb: NonNullable<ResolvedOperation["operation"]["x-clicky"]>["verb"],
-  actionName?: string,
-) {
-  return operations.find((op) => {
-    const meta = op.operation["x-clicky"];
-    if (!meta || meta.verb !== verb) return false;
-    if (actionName && meta.actionName !== actionName) return false;
-    const surface = (meta.surface || "").toLowerCase();
-    const command = (meta.command || "").toLowerCase();
-    const path = op.path.toLowerCase();
-    return (
-      surface === "prompt" ||
-      surface === "prompts" ||
-      command === "prompt" ||
-      command.startsWith("prompt ") ||
-      path.includes("/prompt")
-    );
-  });
-}
-
-function requiredOperation(op: ResolvedOperation | undefined, name: string) {
-  if (!op) throw new Error(`Prompt ${name} operation is not available.`);
-  return op;
-}
-
-async function fetchPromptList(
-  op: ResolvedOperation,
-  params: { source: SourceFilter; query: string },
-) {
-  const response = await apiClient.executeCommand(
-    op.path,
-    op.method,
-    { source: params.source, query: params.query },
-    { Accept: "application/json" },
-  );
-  return unwrapResponse<PromptSummary[]>(response);
-}
-
 async function fetchPermissionCatalog() {
   const response = await fetch("/api/captain/ai/permissions/catalog", {
     headers: { Accept: "application/json" },
@@ -1608,13 +1522,6 @@ async function executePromptOperation(
   return unwrapResponse<unknown>(response);
 }
 
-function unwrapResponse<T>(response: ExecutionResponse): T {
-  if (!response.success) {
-    throw new Error(response.error || response.output || "Operation failed.");
-  }
-  return response.parsed as T;
-}
-
 function resolveOperationPath(path: string, params: Record<string, string>) {
   let next = path;
   for (const [key, value] of Object.entries(params)) {
@@ -1702,7 +1609,13 @@ export function runtimeModelsPayload(
     return {
       model: selected.model,
       backend: selected.backend || runtime.backend,
+      ...(runtime.id ? { id: runtime.id } : {}),
       ...(runtime.effort ? { effort: runtime.effort } : {}),
+      ...(runtime.temperature !== undefined
+        ? { temperature: runtime.temperature }
+        : {}),
+      ...(runtime.noCache ? { noCache: true } : {}),
+      ...(runtime.fallbacks?.length ? { fallbacks: runtime.fallbacks } : {}),
     };
   });
 }
@@ -1746,6 +1659,25 @@ function runtimeSelectionFromPrompt(prompt: PromptSummary): AISpecRuntimeValue {
     ...(backend ? { backend } : {}),
     ...(prompt.model?.trim() ? { model: prompt.model.trim() } : {}),
   };
+}
+
+export function runtimeRowsFromPrompt(
+  prompt: PromptSummary,
+): AISpecRuntimeValue[] {
+  if (prompt.runtimes?.length) {
+    return prompt.runtimes.map(
+      ({ model, id, backend, temperature, effort, noCache, fallbacks }) => ({
+        model,
+        id,
+        backend,
+        temperature,
+        effort,
+        noCache,
+        fallbacks,
+      }),
+    );
+  }
+  return [runtimeSelectionFromPrompt(prompt)];
 }
 
 function inferBackendFromModel(model: string) {

@@ -32,20 +32,21 @@ func readStdinIfCLI(ctx context.Context) string {
 }
 
 // loadPromptContent resolves the prompt source for the unified prompt commands.
-// Precedence: the positional (a .prompt filepath or a registry id) > --prompt/-p
-// text > piped stdin. usedStdin reports whether stdin became the prompt body (so
-// the caller does not also expose it as the {{input}} variable).
+// Precedence: the positional (a discovered name, .prompt filepath, or registry
+// id) > --prompt/-p text > piped stdin. usedStdin reports whether stdin became
+// the prompt body (so the caller does not also expose it as the {{input}}
+// variable).
 func loadPromptContent(ctx context.Context, id string, opts AIPromptOptions, stdin string) (content, source string, usedStdin bool, record promptRecord, err error) {
 	switch {
 	case strings.TrimSpace(id) != "":
-		record, err := resolvePromptRecord(ctx, id) // .prompt filepath or registry id
+		record, err := resolvePromptRecord(ctx, id)
 		if err != nil {
 			return "", "", false, promptRecord{}, err
 		}
 		if record.Source.Kind == "file" {
 			log.Debugf("prompt source: file %s (positional %q)", record.Path, id)
 		} else {
-			log.Debugf("prompt source: registry id %q → %s/%s", id, record.Source.Kind, record.Rel)
+			log.Debugf("prompt source: resolved %q → %s/%s", id, record.Source.Kind, record.Rel)
 		}
 		c, err := readPromptContent(record)
 		if err != nil {
@@ -61,7 +62,7 @@ func loadPromptContent(ctx context.Context, id string, opts AIPromptOptions, std
 	case len(opts.Attach) > 0:
 		return ephemeralPromptContent(), "<attachment>", false, promptRecord{Rel: "attachment.prompt"}, nil
 	default:
-		return "", "", false, promptRecord{}, fmt.Errorf("prompt or attachment required: pass a .prompt file/id, --prompt/-p text, --attach/-A, or pipe via stdin")
+		return "", "", false, promptRecord{}, fmt.Errorf("prompt or attachment required: pass a prompt name, .prompt file, id, --prompt/-p text, --attach/-A, or pipe via stdin")
 	}
 }
 

@@ -13,6 +13,7 @@ pkg/cli/webapp/node_modules/
 pkg/cli/webapp/*.tsbuildinfo
 # goreleaser output at repo root.
 /dist/
+dist/
 # The built webapp under pkg/cli/webapp/dist is gitignored — it's a large
 # minified bundle whose vite build needs a local clicky-ui link: dependency
 # that isn't available in CI. A global `dist/` ignore excludes the directory,
@@ -23,10 +24,8 @@ pkg/cli/webapp/*.tsbuildinfo
 !pkg/cli/webapp/dist/
 pkg/cli/webapp/dist/*
 !pkg/cli/webapp/dist/.gitkeep
-!pkg/cli/webapp/dist/index.html
 .grite/
 hack/
-dist/
 .ok/
 .okignore
 .ginkgo/

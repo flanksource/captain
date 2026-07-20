@@ -8,10 +8,13 @@ import (
 	"github.com/flanksource/clicky/api"
 )
 
-const (
-	sessionIDDisplayWidth     = 12
-	sessionInitialPromptWidth = 100
-)
+const sessionIDDisplayWidth = 12
+
+// sessionInitialPromptStyle collapses the prompt to a single line but sets no
+// width cap: the column runs to whatever the terminal leaves it and the renderer
+// truncates there, rather than at a width picked here that the terminal knows
+// nothing about.
+const sessionInitialPromptStyle = "max-lines-[1] truncate-suffix"
 
 var _ api.TableProvider = SessionRecord{}
 
@@ -24,7 +27,7 @@ func (SessionRecord) Columns() []api.ColumnDef {
 		api.Column("project").Label("Project").MaxWidth(20).Build(),
 		api.Column("session").Label("Session").MaxWidth(sessionIDDisplayWidth).Build(),
 		api.Column("model").Label("Model").MaxWidth(24).Build(),
-		api.Column("initial_prompt").Label("Initial Prompt").Style("max-lines-[1] truncate-suffix").MaxWidth(sessionInitialPromptWidth).Build(),
+		api.Column("initial_prompt").Label("Initial Prompt").Style(sessionInitialPromptStyle).Build(),
 		api.Column("tokens").Label("Tokens").Build(),
 	}
 }
@@ -56,8 +59,7 @@ func sessionListID(id string) string {
 }
 
 func sessionInitialPromptCell(prompt string) api.Textable {
-	style := fmt.Sprintf("max-lines-[1] max-w-[%dch] truncate-suffix", sessionInitialPromptWidth)
-	return api.Text{}.Append(prompt, style)
+	return api.Text{}.Append(prompt, sessionInitialPromptStyle)
 }
 
 func sessionProjectName(r SessionRecord) string {

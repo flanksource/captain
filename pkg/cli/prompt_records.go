@@ -99,28 +99,68 @@ func listPromptRecordsFromSource(source promptSource) ([]promptRecord, error) {
 }
 
 func resolvePromptRecord(ctx context.Context, id string) (promptRecord, error) {
+	id = strings.TrimSpace(id)
 	if looksLikePromptPath(id) {
-		return filePromptRecord(id)
-	}
-	ref, err := decodePromptID(id)
-	if err != nil {
-		return promptRecord{}, err
+		record, err := filePromptRecord(id)
+		if err == nil {
+			return record, nil
+		}
+		if !isBarePromptFilename(id) || !errors.Is(err, fs.ErrNotExist) {
+			return promptRecord{}, err
+		}
 	}
 	sources, err := buildPromptSources(ctx)
 	if err != nil {
 		return promptRecord{}, err
 	}
-	for _, source := range sources {
-		if source.Kind != ref.Kind || source.ID != ref.SourceID {
-			continue
+	ref, decodeErr := decodePromptID(id)
+	if decodeErr == nil {
+		for _, source := range sources {
+			if source.Kind != ref.Kind || source.ID != ref.SourceID {
+				continue
+			}
+			path := ref.RelPath
+			if source.Root != "" {
+				path = filepath.Join(source.Root, filepath.FromSlash(ref.RelPath))
+			}
+			return promptRecord{Source: source, ID: id, Path: path, Rel: ref.RelPath}, nil
 		}
-		path := ref.RelPath
-		if source.Root != "" {
-			path = filepath.Join(source.Root, filepath.FromSlash(ref.RelPath))
-		}
-		return promptRecord{Source: source, ID: id, Path: path, Rel: ref.RelPath}, nil
+		return promptRecord{}, fmt.Errorf("prompt source %q not found", ref.SourceID)
 	}
-	return promptRecord{}, fmt.Errorf("prompt source %q not found", ref.SourceID)
+	return resolvePromptRecordByName(sources, id)
+}
+
+func resolvePromptRecordByName(sources []promptSource, name string) (promptRecord, error) {
+	bareName := strings.TrimSuffix(name, ".prompt")
+	var matches []promptRecord
+	for _, source := range sources {
+		records, err := listPromptRecordsFromSource(source)
+		if err != nil {
+			return promptRecord{}, err
+		}
+		for _, record := range records {
+			recordName := strings.TrimSuffix(filepath.Base(record.Rel), ".prompt")
+			if recordName == bareName {
+				matches = append(matches, record)
+			}
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return promptRecord{}, fmt.Errorf("prompt %q not found", name)
+	case 1:
+		return matches[0], nil
+	default:
+		paths := make([]string, len(matches))
+		for i, match := range matches {
+			paths[i] = match.Source.Label + ":" + match.Rel
+		}
+		return promptRecord{}, fmt.Errorf("prompt name %q is ambiguous (%s); use a prompt id or path", name, strings.Join(paths, ", "))
+	}
+}
+
+func isBarePromptFilename(id string) bool {
+	return filepath.Base(id) == id && !strings.HasPrefix(id, ".")
 }
 
 // looksLikePromptPath reports whether id is a filesystem path rather than a
@@ -217,6 +257,10 @@ func promptSummaryFromContent(record promptRecord, content string) (PromptSummar
 	}
 	summary.Model = firstNonEmpty(cfg.Model.Name, req.Name)
 	summary.Backend = firstNonEmpty(string(cfg.Model.Backend), string(req.Backend))
+	summary.Runtimes, err = resolvePromptRuntimes(inspection.Runtimes, cfg.Model)
+	if err != nil {
+		return PromptSummary{}, err
+	}
 	summary.Variables = inspection.Variables
 	return summary, nil
 }
@@ -269,6 +313,10 @@ func inspectPrompt(content string, data map[string]any) (promptInspection, error
 	if err != nil {
 		return promptInspection{}, err
 	}
+	doc, err := promptlib.Parse(content)
+	if err != nil {
+		return promptInspection{}, err
+	}
 	metadata := map[string]any{}
 	if rendered.Raw != nil {
 		for k, v := range rendered.Raw {
@@ -294,6 +342,7 @@ func inspectPrompt(content string, data map[string]any) (promptInspection, error
 		InputSchema:  inputSchema,
 		InputDefault: inputDefault,
 		OutputSchema: anyToMap(rendered.Output.Schema),
+		Runtimes:     doc.Runtimes,
 		Variables:    variablesFromSchema(inputSchema),
 	}, nil
 }

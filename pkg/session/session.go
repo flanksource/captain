@@ -43,6 +43,7 @@ type Session struct {
 	Agents []*Agent `json:"agents,omitempty"` // flat index (root first)
 
 	Messages  []Message     `json:"messages,omitempty"`
+	Window    *TranscriptWindow `json:"window,omitempty"`
 	Files     ChangedFiles  `json:"files,omitempty"`
 	Plan      *Plan         `json:"plan,omitempty"`
 	Approvals ApprovalStats `json:"approvals,omitempty"`
@@ -53,6 +54,19 @@ type Session struct {
 	// the render result), attached from the persistent store for captain-launched
 	// sessions; nil for external sessions.
 	Prompt json.RawMessage `json:"prompt,omitempty"`
+
+	// StructuredOutput is the decoded object returned by a schema-constrained
+	// prompt run. Messages retain the JSON text for transcript compatibility.
+	StructuredOutput map[string]any `json:"structuredOutput,omitempty"`
+}
+
+// TranscriptWindow records the session's real transcript size when Messages
+// and Events hold only a slice of it (see --offset/--limit/--tail). Without it
+// a bounded view would report the window's size as the session's own totals.
+type TranscriptWindow struct {
+	Messages  int `json:"messages"`
+	Events    int `json:"events"`
+	ToolCalls int `json:"toolCalls"`
 }
 
 // GitState is the git/workflow state captured for a session.

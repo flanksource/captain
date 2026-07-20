@@ -66,9 +66,17 @@ func runPromptStream(t *task.Task, rendered PromptRenderResult, timeout time.Dur
 		session = loop.Iterations[0].SessionID
 	}
 	passed := verifyPassed(runResult.Verdicts)
+	structuredOutput, err := structuredOutputMap(runResult.Response.StructuredData)
+	if err != nil {
+		return failRun(t, stream, err)
+	}
+	resultText, err := structuredOutputText(runResult.Response.Text, structuredOutput)
+	if err != nil {
+		return failRun(t, stream, err)
+	}
 	record := promptRunRecordInput{
 		Rendered: rendered, RunID: runID, Binding: binding, SessionID: session,
-		Model: acc.model, Backend: rendered.Backend,
+		Model: acc.model, Backend: rendered.Backend, ResultText: resultText, ResultJSON: structuredOutput,
 	}
 	if !passed {
 		record.Error = verifyReason(runResult.Verdicts)

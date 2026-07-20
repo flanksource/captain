@@ -58,6 +58,7 @@ export type UnifiedSession = UnifiedSessionInput & {
   source: string;
   title?: string;
   initialPrompt?: string;
+  structuredOutput?: Record<string, unknown>;
 };
 
 export type SessionGetItem = {
@@ -212,6 +213,34 @@ export async function fetchLiveSessions(params: {
     ...(response.parsed as SessionListResult),
     ...(timing.length ? { timing } : {}),
   };
+}
+
+/**
+ * Global session search for the ⌘K palette. Unlike {@link fetchLiveSessions} —
+ * which is backed by `RunSessionLive` and hardcodes `LiveOnly: true` — this hits
+ * `captain sessions list` (`RunSessionList`), so finished sessions are included,
+ * and always passes `all=true` so the palette finds a session regardless of the
+ * project scope selected in the app bar.
+ */
+export async function fetchSessionSearch(params: {
+  query: string;
+  limit?: number;
+}): Promise<SessionListResult> {
+  const response = await apiClient.executeCommand(
+    "/api/v1/sessions",
+    "GET",
+    {
+      source: "all",
+      all: "true",
+      q: params.query,
+      limit: String(params.limit ?? 20),
+    },
+    { Accept: "application/json" },
+  );
+  if (!response.success) {
+    throw new Error(response.error || "Failed to search sessions.");
+  }
+  return response.parsed as SessionListResult;
 }
 
 export function mergeSessionListPages(

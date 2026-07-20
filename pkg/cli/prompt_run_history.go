@@ -58,12 +58,9 @@ func codexHistoryFile(sessionID string) string {
 	return ""
 }
 
-func variantModel(base api.Model, model api.Model, fallbacks []api.Model) api.Model {
-	out := base
-	out.Name = model.Name
-	out.ID = model.ID
-	out.Backend = model.Backend
-	out.Effort = model.Effort
-	out.Fallbacks = fallbacks
-	return out
+func variantModel(model api.Model, fallbacks []api.Model) api.Model {
+	if len(fallbacks) > 0 {
+		model.Fallbacks = fallbacks
+	}
+	return model
 }

@@ -160,6 +160,102 @@ var _ = Describe("session get multi-result output", func() {
 		Expect(store.threadRoots).To(Equal([]uuid.UUID{rootID}))
 	})
 
+	It("hydrates transcript-less API sessions from persisted prompt runs", func(ctx SpecContext) {
+		rootID := uuid.MustParse("055781c7-360a-4eb2-80be-452b3937fcfe")
+		childID := uuid.MustParse("7ca78c55-e280-50ff-a19a-9f355a6fc55e")
+		runID := uuid.MustParse("293b06b4-f6b7-4f69-a531-7499bd5a473a")
+		agentType := "batch"
+		startedAt := time.Date(2026, time.July, 19, 9, 30, 0, 0, time.UTC)
+		finishedAt := startedAt.Add(8 * time.Second)
+		store := &sessionGetOverviewStore{
+			identity: []database.SessionOverview{{ID: rootID, Source: "captain", AgentType: &agentType}},
+			thread: []database.SessionOverview{
+				{ID: rootID, Source: "captain", AgentType: &agentType},
+				{
+					ID: childID, ParentSessionID: &rootID, RootSessionID: &rootID, Source: "captain",
+					Provider: "google", PromptRunCount: 1,
+				},
+			},
+			promptRuns: map[uuid.UUID][]database.PromptRun{
+				childID: {{
+					ID: runID, SessionID: childID, RootSessionID: rootID,
+					RenderedSpec: map[string]any{
+						"name":         "structured-ui-review",
+						"outputSchema": map[string]any{"type": "object"},
+					},
+					PromptMarkdown: "Review the attached form screenshot.",
+					ResultText:     `{"summary":"Use a single-column form layout."}`,
+					Runtime: database.PromptRunRuntime{Resolved: database.PromptRunRuntimeSelection{
+						Provider: "google", Backend: "gemini-api", Model: "gemini-2.5-pro", Effort: "high",
+					}},
+					State: database.PromptRunStateSucceeded, Phase: database.PromptRunPhaseFinished,
+					StartedAt: &startedAt, FinishedAt: &finishedAt,
+				}},
+			},
+		}
+
+		result, err := runSessionGet(ctx, store, SessionGetOptions{ID: rootID.String()})
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.Sessions).To(HaveLen(2))
+		Expect(result.Sessions[0].Aggregate).To(BeTrue())
+		Expect(result.Pretty().String()).To(ContainSubstring("Aggregate session; child results are shown below"))
+		Expect(result.Pretty().String()).NotTo(ContainSubstring("Transcript: unavailable"))
+		child := result.Sessions[1]
+		Expect(child.DetailAvailable).To(BeTrue())
+		Expect(child.Summary.DetailAvailable).To(BeTrue())
+		Expect(child.Summary.Messages).To(Equal(2))
+		Expect(child.Summary.Model).To(Equal("gemini-2.5-pro"))
+		Expect(child.Summary.Backend).To(Equal("gemini-api"))
+		Expect(child.Summary.Provider).To(Equal("google"))
+		Expect(child.Detail).NotTo(BeNil())
+		Expect(child.Detail.Messages).To(Equal([]session.Message{
+			{
+				ID: runID.String() + "-user", Role: "user",
+				Parts: []session.Part{{Type: session.PartText, Text: "Review the attached form screenshot."}},
+			},
+			{
+				ID: runID.String() + "-assistant", Role: "assistant",
+				Parts: []session.Part{{Type: session.PartText, Text: `{"summary":"Use a single-column form layout."}`}},
+			},
+		}))
+		Expect(child.Detail.Model).To(Equal("gemini-2.5-pro"))
+		Expect(child.Detail.Backend).To(Equal("gemini-api"))
+		Expect(child.Detail.Provider).To(Equal("google"))
+		Expect(child.Detail.StartedAt).To(PointTo(Equal(startedAt)))
+		Expect(child.Detail.EndedAt).To(PointTo(Equal(finishedAt)))
+		Expect(child.Detail.Prompt).To(MatchJSON(`{
+			"name":"structured-ui-review",
+			"outputSchema":{"type":"object"}
+		}`))
+		Expect(child.Detail.StructuredOutput).To(Equal(map[string]any{
+			"summary": "Use a single-column form layout.",
+		}))
+	})
+
+	It("prefers persisted structured output and ignores non-schema JSON text", func() {
+		runID := uuid.MustParse("293b06b4-f6b7-4f69-a531-7499bd5a473a")
+		overview := database.SessionOverview{ID: uuid.New(), Source: "captain"}
+		detail, err := sessionFromPromptRun(overview, database.PromptRun{
+			ID: runID,
+			RenderedSpec: map[string]any{
+				"outputSchema": map[string]any{"type": "object"},
+			},
+			ResultText: `{"source":"text"}`,
+			ResultJSON: map[string]any{"source": "stored"},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(detail.StructuredOutput).To(Equal(map[string]any{"source": "stored"}))
+		Expect(detail.Messages).To(HaveLen(1))
+		Expect(detail.Messages[0].Parts[0].Text).To(Equal(`{"source":"text"}`))
+
+		detail, err = sessionFromPromptRun(overview, database.PromptRun{
+			ID: runID, ResultText: `{"source":"plain-text-prompt"}`,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(detail.StructuredOutput).To(BeNil())
+	})
+
 	It("renders every match sequentially and preserves metadata-only sessions", func() {
 		result := SessionGetResult{
 			Sessions: []SessionGetItem{
@@ -237,6 +333,7 @@ type sessionGetOverviewStore struct {
 	identities  []string
 	threadRoots []uuid.UUID
 	listCalls   int
+	promptRuns  map[uuid.UUID][]database.PromptRun
 }
 
 func (s *sessionGetOverviewStore) ListSessionSummaries(_ context.Context, filter database.SessionListFilter) (database.SessionListPage, error) {
@@ -261,4 +358,11 @@ func (s *sessionGetOverviewStore) ListSessionOverviews(context.Context, database
 func (s *sessionGetOverviewStore) ListThreadSessionOverviews(_ context.Context, rootID uuid.UUID) ([]database.SessionOverview, error) {
 	s.threadRoots = append(s.threadRoots, rootID)
 	return s.thread, nil
+}
+
+func (s *sessionGetOverviewStore) ListPromptRuns(_ context.Context, filter database.PromptRunFilter) ([]database.PromptRun, error) {
+	if filter.SessionID == nil {
+		return nil, nil
+	}
+	return s.promptRuns[*filter.SessionID], nil
 }

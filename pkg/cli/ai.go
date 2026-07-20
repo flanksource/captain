@@ -180,17 +180,18 @@ type AIPromptOptions struct {
 }
 
 type AIPromptResult struct {
-	Text        string     `json:"text" pretty:"label=Response"`
-	Model       string     `json:"model" pretty:"label=Model"`
-	Backend     string     `json:"backend" pretty:"label=Backend"`
-	Dir         string     `json:"dir,omitempty" pretty:"label=Dir"`
-	SessionID   string     `json:"sessionId,omitempty" pretty:"label=Session"`
-	HistoryFile string     `json:"historyFile,omitempty" pretty:"label=History"`
-	Input       ai.Request `json:"input" pretty:"-"`
-	InputTokens int        `json:"inputTokens" pretty:"label=Input Tokens"`
-	Output      int        `json:"outputTokens" pretty:"label=Output Tokens"`
-	CostUSD     float64    `json:"costUSD,omitempty" pretty:"label=Cost USD"`
-	Duration    string     `json:"duration" pretty:"label=Duration"`
+	Text             string         `json:"text" pretty:"label=Response"`
+	StructuredOutput map[string]any `json:"structuredOutput,omitempty" pretty:"-"`
+	Model            string         `json:"model" pretty:"label=Model"`
+	Backend          string         `json:"backend" pretty:"label=Backend"`
+	Dir              string         `json:"dir,omitempty" pretty:"label=Dir"`
+	SessionID        string         `json:"sessionId,omitempty" pretty:"label=Session"`
+	HistoryFile      string         `json:"historyFile,omitempty" pretty:"label=History"`
+	Input            ai.Request     `json:"input" pretty:"-"`
+	InputTokens      int            `json:"inputTokens" pretty:"label=Input Tokens"`
+	Output           int            `json:"outputTokens" pretty:"label=Output Tokens"`
+	CostUSD          float64        `json:"costUSD,omitempty" pretty:"label=Cost USD"`
+	Duration         string         `json:"duration" pretty:"label=Duration"`
 }
 
 // ToRequest translates the runtime knobs into the typed ai.Request, overlaying
@@ -446,17 +447,26 @@ func runBuffered(ctx context.Context, p ai.Provider, req ai.Request) (any, error
 	backend := firstNonEmpty(string(resp.Backend), string(p.GetBackend()), string(req.Backend))
 	input := resolvedPromptInput(req, model, backend, req.SessionID)
 	dir := actualRunDir(input)
+	structuredOutput, err := structuredOutputMap(resp.StructuredData)
+	if err != nil {
+		return nil, err
+	}
+	text, err := structuredOutputText(resp.Text, structuredOutput)
+	if err != nil {
+		return nil, err
+	}
 	return AIPromptResult{
-		Text:        resp.Text,
-		Model:       model,
-		Backend:     backend,
-		Dir:         dir,
-		SessionID:   input.SessionID,
-		HistoryFile: historyFileForRun(api.Backend(backend), input.SessionID, dir),
-		Input:       input,
-		InputTokens: resp.Usage.InputTokens,
-		Output:      resp.Usage.OutputTokens,
-		Duration:    time.Since(start).Round(time.Millisecond).String(),
+		Text:             text,
+		StructuredOutput: structuredOutput,
+		Model:            model,
+		Backend:          backend,
+		Dir:              dir,
+		SessionID:        input.SessionID,
+		HistoryFile:      historyFileForRun(api.Backend(backend), input.SessionID, dir),
+		Input:            input,
+		InputTokens:      resp.Usage.InputTokens,
+		Output:           resp.Usage.OutputTokens,
+		Duration:         time.Since(start).Round(time.Millisecond).String(),
 	}, nil
 }
 
@@ -466,12 +476,14 @@ func runBuffered(ctx context.Context, p ai.Provider, req ai.Request) (any, error
 func runStreaming(ctx context.Context, sp ai.StreamingProvider, req ai.Request) (any, error) {
 	start := time.Now()
 	var (
-		text    string
-		usage   ai.Usage
-		cost    float64
-		backend = string(sp.GetBackend())
-		model   = sp.GetModel()
-		session = req.SessionID
+		text             string
+		usage            ai.Usage
+		cost             float64
+		backend          = string(sp.GetBackend())
+		model            = sp.GetModel()
+		session          = req.SessionID
+		structuredOutput map[string]any
+		structuredErr    error
 	)
 	renderer := newLineRenderer(os.Stderr, 8)
 	loop, err := ai.RunUntil(ctx, ai.LoopOptions{
@@ -498,6 +510,7 @@ func runStreaming(ctx context.Context, sp ai.StreamingProvider, req ai.Request) 
 			if ev.Kind == ai.EventResult {
 				if len(ev.StructuredData) > 0 {
 					text = string(ev.StructuredData)
+					structuredOutput, structuredErr = structuredOutputMap(ev.StructuredData)
 				}
 				if ev.Usage != nil {
 					usage = *ev.Usage
@@ -508,6 +521,9 @@ func runStreaming(ctx context.Context, sp ai.StreamingProvider, req ai.Request) 
 	})
 	if err != nil {
 		return nil, err
+	}
+	if structuredErr != nil {
+		return nil, structuredErr
 	}
 	if loop.StopReason == "error" {
 		return nil, fmt.Errorf("streaming loop stopped: %s", loop.StopReason)
@@ -521,17 +537,18 @@ func runStreaming(ctx context.Context, sp ai.StreamingProvider, req ai.Request) 
 	input := resolvedPromptInput(req, model, backend, session)
 	dir := actualRunDir(input)
 	return AIPromptResult{
-		Text:        text,
-		Model:       model,
-		Backend:     backend,
-		Dir:         dir,
-		SessionID:   input.SessionID,
-		HistoryFile: historyFileForRun(api.Backend(backend), input.SessionID, dir),
-		Input:       input,
-		InputTokens: usage.InputTokens,
-		Output:      usage.OutputTokens,
-		CostUSD:     cost,
-		Duration:    time.Since(start).Round(time.Millisecond).String(),
+		Text:             text,
+		StructuredOutput: structuredOutput,
+		Model:            model,
+		Backend:          backend,
+		Dir:              dir,
+		SessionID:        input.SessionID,
+		HistoryFile:      historyFileForRun(api.Backend(backend), input.SessionID, dir),
+		Input:            input,
+		InputTokens:      usage.InputTokens,
+		Output:           usage.OutputTokens,
+		CostUSD:          cost,
+		Duration:         time.Since(start).Round(time.Millisecond).String(),
 	}, nil
 }
 

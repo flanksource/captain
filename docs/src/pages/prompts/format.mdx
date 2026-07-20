@@ -42,6 +42,11 @@ A `.prompt` file has YAML frontmatter followed by a Handlebars body. dotprompt o
       <td>Captain spec</td>
       <td>Decoded into `api.Spec` with strict field validation.</td>
     </tr>
+    <tr>
+      <td><code>runtimes</code></td>
+      <td>Captain execution metadata</td>
+      <td>Declares the default parallel runtime matrix without becoming part of the request sent to each model.</td>
+    </tr>
   </tbody>
 </table>
 
@@ -99,4 +104,3 @@ Refactor:
 ## Structured output
 
 Captain does not turn a bare dotprompt `output` schema into a provider schema target. Structured output is attached by Go callers that pass a concrete output type to `Render`; providers derive the JSON schema from that Go type.
-

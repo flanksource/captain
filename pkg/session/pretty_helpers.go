@@ -30,7 +30,9 @@ func agentHistoryFile(a *Agent) string {
 	return a.HistoryFile
 }
 
-func countSessionToolParts(messages []Message) int {
+// CountToolParts counts tool invocations across messages. Exported so callers
+// windowing a transcript can record the full tool count before slicing.
+func CountToolParts(messages []Message) int {
 	total := 0
 	for _, m := range messages {
 		for _, p := range m.Parts {

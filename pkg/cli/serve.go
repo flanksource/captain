@@ -28,11 +28,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// The built webapp is committed under webapp/dist (see .gitignore) because the
-// vite build depends on a local clicky-ui link: dependency that is unavailable
-// in CI and in the goreleaser release job, so the binary embeds the checked-in
-// dist rather than building it. all: ensures dotfiles are embedded too. When
-// index.html is absent, serve.go reports it at runtime.
+// The built webapp under webapp/dist is generated locally and ignored. The
+// tracked .gitkeep lets the embed pattern compile before `task www:build`
+// generates the Vite assets. all: ensures the placeholder is embedded too.
+// When index.html is absent, serve.go reports it at runtime.
 //
 //go:embed all:webapp/dist
 var captainWebappFS embed.FS

@@ -1,4 +1,4 @@
-import { useMemo, useSyncExternalStore } from "react";
+import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AppShell, type AppShellProps } from "@flanksource/clicky-ui/components";
 import {
@@ -10,6 +10,11 @@ import { EntityExplorerApp } from "@flanksource/clicky-ui/rpc";
 import { apiClient } from "./api";
 import { AgentLauncher } from "./AgentLauncher";
 import { ChatLayer } from "./ChatLayer";
+import {
+  CommandPalette,
+  SearchTrigger,
+  useCommandPaletteShortcut,
+} from "./CommandPalette";
 import { ChatRoute } from "./ChatRoute";
 import { HomeDashboard } from "./HomeDashboard";
 import { PromptWorkbench } from "./PromptWorkbench";
@@ -50,6 +55,12 @@ export function App() {
     <ShellActions projectScope={projectScope} onProjectScopeChange={setProjectScope} />
   );
 
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  useCommandPaletteShortcut(
+    useCallback(() => setPaletteOpen((prev) => !prev), []),
+  );
+  const shellSearch = <SearchTrigger onOpen={() => setPaletteOpen(true)} />;
+
   return (
     <QueryClientProvider client={queryClient}>
       <RouterProvider adapter={router}>
@@ -60,6 +71,7 @@ export function App() {
               onNavigate={router.navigate}
               navSections={captainNavSections("sessions", projectScope)}
               actions={shellActions}
+              search={shellSearch}
               projectScope={projectScope}
             />
           ) : route.kind === "prompts" ? (
@@ -68,6 +80,7 @@ export function App() {
               onNavigate={router.navigate}
               navSections={captainNavSections("prompts", projectScope)}
               actions={shellActions}
+              search={shellSearch}
             />
           ) : (
             <CaptainShell
@@ -75,6 +88,7 @@ export function App() {
               onNavigate={router.navigate}
               projectScope={projectScope}
               actions={shellActions}
+              search={shellSearch}
             >
               {route.kind === "dashboard" ? (
                 <HomeDashboard onNavigate={router.navigate} projectScope={projectScope} />
@@ -100,6 +114,11 @@ export function App() {
             </CaptainShell>
           )}
           <ChatLayer />
+          <CommandPalette
+            open={paletteOpen}
+            onClose={() => setPaletteOpen(false)}
+            onNavigate={router.navigate}
+          />
         </ChatWindowManagerProvider>
       </RouterProvider>
     </QueryClientProvider>
@@ -111,12 +130,14 @@ function CaptainShell({
   onNavigate,
   projectScope,
   actions,
+  search,
   children,
 }: {
   active: PrimaryRoute;
   onNavigate: (to: string, opts?: { replace?: boolean }) => void;
   projectScope: ProjectScope;
   actions: AppShellProps["actions"];
+  search: AppShellProps["search"];
   children: AppShellProps["children"];
 }) {
   return (
@@ -126,6 +147,7 @@ function CaptainShell({
       navSections={captainNavSections(active, projectScope)}
       collapsedStorageKey={CAPTAIN_SIDEBAR_COLLAPSE_KEY}
       actions={actions}
+      search={search}
       contentClassName="p-0 overflow-hidden"
     >
       {children}

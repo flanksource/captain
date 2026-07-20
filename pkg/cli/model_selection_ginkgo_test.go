@@ -2,17 +2,16 @@ package cli
 
 import (
 	"context"
-	"github.com/flanksource/captain/pkg/aiflags"
 	"os"
 	"path/filepath"
 	"time"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/aiflags"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/captainconfig"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 var _ = Describe("CLI model selection", func() {
@@ -94,5 +93,27 @@ var _ = Describe("CLI model selection", func() {
 		Expect(executed.Model.Backend).To(Equal(api.BackendGemini))
 		Expect(result.Runs).To(HaveLen(1))
 		Expect(result.Runs[0].Selector).To(Equal("gemini:gemini-3.5-flash"))
+	})
+
+	It("replaces the configured runtime identity for a multi-model variant", func() {
+		configured := api.Model{Name: "gpt-5.6-luna", Backend: api.BackendCodexCLI}.Capabilities()
+		selected := api.Model{Name: "gemini-3.5-flash", Backend: api.BackendGemini, Effort: api.EffortHigh}.Capabilities()
+
+		variant := renderVariant(testRenderedPrompt(configured), selected, nil).Config.Model
+
+		Expect(variant.Validate()).To(Succeed())
+		Expect(variant).To(Equal(selected))
+	})
+
+	It("preserves runtime fallbacks when no CLI fallback override is set", func() {
+		selected := api.Model{
+			Name:      "gemini-3.5-flash",
+			Backend:   api.BackendGemini,
+			Fallbacks: api.ModelList{{Name: "gemini-3-flash", Backend: api.BackendGemini}},
+		}
+
+		variant := renderVariant(testRenderedPrompt(api.Model{}), selected, nil).Config.Model
+
+		Expect(variant.Fallbacks).To(Equal(selected.Fallbacks))
 	})
 })

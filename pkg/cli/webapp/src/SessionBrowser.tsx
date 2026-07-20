@@ -10,7 +10,9 @@ import {
 } from "@flanksource/clicky-ui/components";
 import {
   SessionChatComposer,
+  SessionContextMeter,
   SessionInspector,
+  getSessionMetadata,
 } from "@flanksource/clicky-ui/ai";
 import { CAPTAIN_SIDEBAR_COLLAPSE_KEY, withProjectScope } from "./shellHelpers";
 import { TimingBadge } from "./TimingBadge";
@@ -48,6 +50,7 @@ type SessionBrowserProps = {
   onNavigate: Navigate;
   navSections: AppShellNavSection[];
   actions: AppShellProps["actions"];
+  search: AppShellProps["search"];
   projectScope: ProjectScope;
 };
 
@@ -56,6 +59,7 @@ export function SessionBrowser({
   onNavigate,
   navSections,
   actions,
+  search,
   projectScope,
 }: SessionBrowserProps) {
   return selectedId ? (
@@ -64,6 +68,7 @@ export function SessionBrowser({
       onNavigate={onNavigate}
       navSections={navSections}
       actions={actions}
+      search={search}
       projectScope={projectScope}
     />
   ) : (
@@ -71,6 +76,7 @@ export function SessionBrowser({
       onNavigate={onNavigate}
       navSections={navSections}
       actions={actions}
+      search={search}
       projectScope={projectScope}
     />
   );
@@ -84,12 +90,14 @@ function SessionDetailPage({
   onNavigate,
   navSections,
   actions,
+  search,
   projectScope,
 }: {
   selectedId: string;
   onNavigate: Navigate;
   navSections: AppShellNavSection[];
   actions: AppShellProps["actions"];
+  search: AppShellProps["search"];
   projectScope: ProjectScope;
 }) {
   const detailQuery = useQuery({
@@ -104,6 +112,7 @@ function SessionDetailPage({
       navSections={navSections}
       collapsedStorageKey={CAPTAIN_SIDEBAR_COLLAPSE_KEY}
       actions={actions}
+      search={search}
       bodyHeader={
         <SessionHeader
           timing={detailQuery.data?.timing}
@@ -146,11 +155,13 @@ function SessionListPage({
   onNavigate,
   navSections,
   actions,
+  search,
   projectScope,
 }: {
   onNavigate: Navigate;
   navSections: AppShellNavSection[];
   actions: AppShellProps["actions"];
+  search: AppShellProps["search"];
   projectScope: ProjectScope;
 }) {
   const [source, setSource] = useState<SourceFilter>("all");
@@ -178,6 +189,7 @@ function SessionListPage({
       navSections={navSections}
       collapsedStorageKey={CAPTAIN_SIDEBAR_COLLAPSE_KEY}
       actions={actions}
+      search={search}
       bodyHeader={<div className="text-sm font-semibold">Sessions</div>}
       bodyActions={
         <Button
@@ -441,6 +453,19 @@ function SessionGetItemDetail({
         : undefined,
     [chat.messages, item.detail],
   );
+  // Mirrors Chat.tsx: the meter sits in PromptInput's footer toolbar, pushed
+  // right by a spacer. getSessionMetadata returns undefined for inputs that
+  // aren't unified sessions, and the meter itself renders null without context.
+  const composerToolbar = useMemo(() => {
+    const metadata = detail ? getSessionMetadata(detail) : undefined;
+    if (!metadata?.context) return undefined;
+    return (
+      <div className="flex flex-1 items-center gap-2">
+        <div className="flex-1" />
+        <SessionContextMeter metadata={metadata} mode="gauge" />
+      </div>
+    );
+  }, [detail]);
   const composer =
     item.chat?.resume || item.activeRunId ? (
       <SessionChatComposer
@@ -450,6 +475,7 @@ function SessionGetItemDetail({
         error={chat.actionError}
         onSubmit={chat.send}
         onInterrupt={chat.interrupt}
+        {...(composerToolbar ? { toolbar: composerToolbar } : {})}
       />
     ) : undefined;
   return (

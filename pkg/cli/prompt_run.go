@@ -10,179 +10,11 @@ import (
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/database"
-	clickyapi "github.com/flanksource/clicky/api"
 	clickyrpc "github.com/flanksource/clicky/rpc"
 	"github.com/flanksource/clicky/task"
 	flanksourceContext "github.com/flanksource/commons/context"
 	"github.com/google/uuid"
 )
-
-// PromptRunResult is the unified result of the "run" action. Over HTTP (serve)
-// it carries the async handle (RunID + Status "running") — the web UI then
-// streams from /api/captain/prompt/runs/{runId}/stream. On the CLI it carries the
-// synchronous result (Text + tokens/cost). One type serves both transports.
-type PromptRunResult struct {
-	RunID        string           `json:"runId,omitempty"`
-	BatchID      string           `json:"batchId,omitempty"`
-	Status       string           `json:"status,omitempty" pretty:"label=Status"`
-	Model        string           `json:"model,omitempty" pretty:"label=Model"`
-	Backend      string           `json:"backend,omitempty" pretty:"label=Backend"`
-	Chat         bool             `json:"chat,omitempty"`
-	Capabilities ChatCapabilities `json:"capabilities,omitempty"`
-
-	Text         string  `json:"text,omitempty" pretty:"label=Response"`
-	SessionID    string  `json:"sessionId,omitempty" pretty:"label=Session"`
-	Dir          string  `json:"dir,omitempty" pretty:"label=Dir"`
-	HistoryFile  string  `json:"historyFile,omitempty" pretty:"label=History"`
-	InputTokens  int     `json:"inputTokens,omitempty" pretty:"label=Input Tokens"`
-	OutputTokens int     `json:"outputTokens,omitempty" pretty:"label=Output Tokens"`
-	CostUSD      float64 `json:"costUSD,omitempty" pretty:"label=Cost USD"`
-	Duration     string  `json:"duration,omitempty" pretty:"label=Duration"`
-
-	Total     int             `json:"total,omitempty" pretty:"label=Total"`
-	Succeeded int             `json:"succeeded,omitempty" pretty:"label=Succeeded"`
-	Failed    int             `json:"failed,omitempty" pretty:"label=Failed"`
-	Runs      []PromptRunItem `json:"runs,omitempty" pretty:"label=Runs"`
-}
-
-type PromptRunItem struct {
-	RunID        string           `json:"runId,omitempty" pretty:"label=Run"`
-	Selector     string           `json:"selector,omitempty" pretty:"label=Selector"`
-	Status       string           `json:"status,omitempty" pretty:"label=Status"`
-	Model        string           `json:"model,omitempty" pretty:"label=Model"`
-	Backend      string           `json:"backend,omitempty" pretty:"label=Backend"`
-	Effort       string           `json:"effort,omitempty" pretty:"label=Effort"`
-	Chat         bool             `json:"chat,omitempty"`
-	Capabilities ChatCapabilities `json:"capabilities,omitempty"`
-	Text         string           `json:"text,omitempty" pretty:"label=Response"`
-	SessionID    string           `json:"sessionId,omitempty" pretty:"label=Session"`
-	Dir          string           `json:"dir,omitempty" pretty:"label=Dir"`
-	HistoryFile  string           `json:"historyFile,omitempty" pretty:"label=History"`
-	InputTokens  int              `json:"inputTokens,omitempty" pretty:"label=Input Tokens"`
-	OutputTokens int              `json:"outputTokens,omitempty" pretty:"label=Output Tokens"`
-	CostUSD      float64          `json:"costUSD,omitempty" pretty:"label=Cost USD"`
-	Duration     string           `json:"duration,omitempty" pretty:"label=Duration"`
-	Error        string           `json:"error,omitempty" pretty:"label=Error"`
-}
-
-func (r PromptRunResult) Pretty() clickyapi.Text {
-	if len(r.Runs) == 0 {
-		if r.Text != "" {
-			return clickyapi.Text{Content: r.Text}
-		}
-		return clickyapi.Text{Content: r.Status}
-	}
-	t := clickyapi.Text{}.
-		Append(fmt.Sprintf("Status: %s  Total: %d  Succeeded: %d  Failed: %d  Duration: %s",
-			r.Status, r.Total, r.Succeeded, r.Failed, r.Duration), "font-medium")
-
-	t = t.NewLine().Add(promptRunComparisonTable(r.Runs))
-	for _, run := range r.Runs {
-		if strings.TrimSpace(run.Text) == "" {
-			continue
-		}
-		t = t.NewLine().NewLine().
-			Append("Response — ", "text-gray-500").
-			Append(runColumnHeader(run), "font-bold").
-			NewLine().
-			Append(run.Text)
-	}
-	return t
-}
-
-func promptRunComparisonTable(runs []PromptRunItem) clickyapi.TextTable {
-	table := clickyapi.TextTable{
-		Headers:    clickyapi.TextList{textCell("Metric")},
-		FieldNames: []string{"metric"},
-	}
-	for i, run := range runs {
-		field := runColumnField(i)
-		table.FieldNames = append(table.FieldNames, field)
-		table.Headers = append(table.Headers, textCell(runColumnHeader(run)))
-	}
-
-	add := func(metric string, values func(PromptRunItem) string) {
-		row := clickyapi.TableRow{"metric": cell(metric)}
-		for i, run := range runs {
-			row[runColumnField(i)] = cell(values(run))
-		}
-		table.Rows = append(table.Rows, row)
-	}
-	add("Status", func(run PromptRunItem) string { return run.Status })
-	add("Backend", func(run PromptRunItem) string { return run.Backend })
-	add("Model", func(run PromptRunItem) string { return run.Model })
-	add("Error", func(run PromptRunItem) string { return truncateCell(run.Error, 160) })
-	add("Duration", func(run PromptRunItem) string { return run.Duration })
-	add("Tokens", func(run PromptRunItem) string { return tokenCell(run.InputTokens, run.OutputTokens) })
-	add("Cost", func(run PromptRunItem) string { return costCell(run.CostUSD) })
-	add("Session", func(run PromptRunItem) string { return shortSessionCell(run.SessionID) })
-	add("History", func(run PromptRunItem) string { return truncatePathCell(run.HistoryFile, 72) })
-	add("Dir", func(run PromptRunItem) string { return truncatePathCell(run.Dir, 56) })
-	return table
-}
-
-func runColumnField(index int) string {
-	return fmt.Sprintf("run%d", index+1)
-}
-
-func runColumnHeader(run PromptRunItem) string {
-	if strings.TrimSpace(run.Selector) != "" {
-		return run.Selector
-	}
-	if run.Backend != "" && run.Model != "" {
-		return run.Backend + ":" + run.Model
-	}
-	return firstNonEmpty(run.Model, run.Backend, "run")
-}
-
-func textCell(s string) clickyapi.Textable {
-	return clickyapi.Text{Content: s}
-}
-
-func cell(s string) clickyapi.TypedValue {
-	return clickyapi.TypedValue{Textable: clickyapi.Text{Content: s}}
-}
-
-func truncateCell(s string, max int) string {
-	s = strings.TrimSpace(s)
-	if len(s) <= max {
-		return s
-	}
-	return s[:max] + "..."
-}
-
-func truncatePathCell(s string, max int) string {
-	s = strings.TrimSpace(s)
-	if len(s) <= max {
-		return s
-	}
-	if max <= 3 {
-		return s[:max]
-	}
-	return "..." + s[len(s)-max+3:]
-}
-
-func shortSessionCell(s string) string {
-	s = strings.TrimSpace(s)
-	if len(s) <= 12 {
-		return s
-	}
-	return s[:12]
-}
-
-func tokenCell(input, output int) string {
-	if input == 0 && output == 0 {
-		return ""
-	}
-	return fmt.Sprintf("%d/%d", input, output)
-}
-
-func costCell(cost float64) string {
-	if cost <= 0 {
-		return ""
-	}
-	return fmt.Sprintf("$%.4f", cost)
-}
 
 // PromptRunSummary is the terminal payload of a run: the SSE stream ends with it
 // and the task's typed result carries it.
@@ -199,23 +31,22 @@ type PromptRunSummary struct {
 	Error        string  `json:"error,omitempty"`
 }
 
-// runPromptAction renders the prompt (from an id | .prompt filepath | --prompt |
-// stdin), then executes it — synchronously on the CLI (returns the text + cost)
-// or asynchronously over HTTP (returns a run handle to stream from). This is the
-// single prompt-run implementation; `captain ai prompt` is a deprecated alias.
+// runPromptAction renders the prompt (from an id | discovered name | .prompt
+// filepath | --prompt | stdin), then executes it — synchronously on the CLI
+// (returns the text + cost) or asynchronously over HTTP (returns a run handle to
+// stream from). This is the single prompt-run implementation; `captain ai
+// prompt` is a deprecated alias.
 func runPromptAction(ctx context.Context, id string, flags map[string]string) (PromptRunResult, error) {
 	_, isHTTP := clickyrpc.RequestFromContext(ctx)
 
 	var rendered PromptRenderResult
 	var opts AIPromptOptions
-	var httpReq PromptRenderRequest
 	var chatRequested bool
 	if isHTTP {
 		req, err := readRenderRequest(ctx, flags)
 		if err != nil {
 			return PromptRunResult{}, err
 		}
-		httpReq = req
 		if rendered, err = renderPrompt(ctx, id, req); err != nil {
 			return PromptRunResult{}, err
 		}
@@ -242,8 +73,8 @@ func runPromptAction(ctx context.Context, id string, flags map[string]string) (P
 	}
 
 	if isHTTP {
-		if len(httpReq.Runtimes) > 0 {
-			return launchAsyncBatch(ctx, id, rendered, httpReq.Runtimes, chatRequested)
+		if len(rendered.Runtimes) > 0 {
+			return launchAsyncBatch(ctx, id, rendered, rendered.Runtimes, chatRequested)
 		}
 		return launchAsyncRun(id, rendered, chatRequested), nil
 	}
@@ -294,7 +125,7 @@ func workflowConfigured(workflow *api.Workflow) bool {
 // executeSyncRun runs the prompt in-process (CLI) — live output to stderr, final
 // result returned — and persists the realized prompt for the launched session.
 func executeSyncRun(ctx context.Context, rendered PromptRenderResult, opts AIPromptOptions) (PromptRunResult, error) {
-	if len(opts.MultiModels) > 0 {
+	if len(rendered.Runtimes) > 0 || len(opts.MultiModels) > 0 {
 		return executeSyncBatch(ctx, rendered, opts)
 	}
 	return executeSyncRunSingle(ctx, rendered, opts)
@@ -321,27 +152,32 @@ func executeSyncRunSingleDirect(ctx context.Context, rendered PromptRenderResult
 	r, _ := out.(AIPromptResult)
 	persistPromptRun(context.WithoutCancel(ctx), promptRunRecordInput{
 		Rendered: rendered, SessionID: r.SessionID, Model: r.Model, Backend: r.Backend,
-		Binding: binding, ResultText: r.Text,
+		Binding: binding, ResultText: r.Text, ResultJSON: r.StructuredOutput,
 	})
 	return PromptRunResult{
-		Status:       "completed",
-		Model:        r.Model,
-		Backend:      r.Backend,
-		Text:         r.Text,
-		SessionID:    r.SessionID,
-		Dir:          r.Dir,
-		HistoryFile:  r.HistoryFile,
-		InputTokens:  r.InputTokens,
-		OutputTokens: r.Output,
-		CostUSD:      r.CostUSD,
-		Duration:     r.Duration,
+		Status:           "completed",
+		Model:            r.Model,
+		Backend:          r.Backend,
+		Text:             r.Text,
+		StructuredOutput: r.StructuredOutput,
+		SessionID:        r.SessionID,
+		Dir:              r.Dir,
+		HistoryFile:      r.HistoryFile,
+		InputTokens:      r.InputTokens,
+		OutputTokens:     r.Output,
+		CostUSD:          r.CostUSD,
+		Duration:         r.Duration,
 	}, nil
 }
 
 func executeSyncBatch(ctx context.Context, rendered PromptRenderResult, opts AIPromptOptions) (PromptRunResult, error) {
-	models, err := ai.ResolveRuntimeSelectors(opts.MultiModels, rendered.Config.Model)
-	if err != nil {
-		return PromptRunResult{}, err
+	models := rendered.Runtimes
+	if len(models) == 0 {
+		var err error
+		models, err = ai.ResolveRuntimeSelectors(opts.MultiModels, rendered.Config.Model)
+		if err != nil {
+			return PromptRunResult{}, err
+		}
 	}
 	if len(models) == 0 {
 		return executeSyncRunSingle(ctx, rendered, opts)
@@ -430,6 +266,7 @@ func executeSyncBatch(ctx context.Context, rendered PromptRenderResult, opts AIP
 			item.Model = firstNonEmpty(result.Model, item.Model)
 			item.Backend = firstNonEmpty(result.Backend, item.Backend)
 			item.Text = result.Text
+			item.StructuredOutput = result.StructuredOutput
 			providerSessionID := result.SessionID
 			item.SessionID = binding.SessionID.String()
 			item.Dir = firstNonEmpty(result.Dir, item.Dir)
@@ -517,8 +354,8 @@ func renderVariant(rendered PromptRenderResult, model api.Model, fallbacks []api
 	out := rendered
 	req := rendered.Input
 	cfg := rendered.Config
-	req.Model = variantModel(req.Model, model, fallbacks)
-	cfg.Model = variantModel(cfg.Model, model, fallbacks)
+	req.Model = variantModel(model, fallbacks)
+	cfg.Model = variantModel(model, fallbacks)
 	out.Input = req
 	out.Config = cfg
 	out.Model = cfg.Model.Name
