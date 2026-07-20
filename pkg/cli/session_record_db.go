@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 
 	"github.com/flanksource/captain/pkg/database"
@@ -13,7 +12,6 @@ import (
 
 type sessionOverviewStore interface {
 	ListSessionOverviewsByIdentity(context.Context, string) ([]database.SessionOverview, error)
-	ListSessionOverviews(context.Context, database.SessionOverviewFilter) ([]database.SessionOverview, error)
 	ListThreadSessionOverviews(context.Context, uuid.UUID) ([]database.SessionOverview, error)
 }
 
@@ -87,37 +85,24 @@ func dbAllSessionRecords(ctx context.Context, db sessionListStore, query session
 	}
 }
 
-// resolveOverviewsByAnyID resolves sessions by UUID or provider-session-id
-// prefix, falling back to the path-derived record Key the UI navigates with.
-func resolveOverviewsByAnyID(ctx context.Context, db sessionOverviewStore, id string) ([]database.SessionOverview, error) {
+// resolveOverviewsByIdentity resolves sessions by Captain UUID or
+// provider-session-id prefix.
+func resolveOverviewsByIdentity(ctx context.Context, db sessionOverviewStore, id string) ([]database.SessionOverview, error) {
 	overviews, err := db.ListSessionOverviewsByIdentity(ctx, id)
-	if err == nil {
-		if parsed, parseErr := uuid.Parse(id); parseErr == nil && len(overviews) == 1 &&
-			overviews[0].ID == parsed && overviews[0].ParentSessionID == nil && overviews[0].RootSessionID == nil {
-			thread, threadErr := db.ListThreadSessionOverviews(ctx, parsed)
-			if threadErr != nil {
-				return nil, threadErr
-			}
-			if len(thread) > 1 {
-				return thread, nil
-			}
-		}
-		return overviews, nil
-	}
-	if !errors.Is(err, database.ErrSessionNotFound) {
+	if err != nil {
 		return nil, err
 	}
-	overviews, listErr := db.ListSessionOverviews(ctx, database.SessionOverviewFilter{RootsOnly: true})
-	if listErr != nil {
-		return nil, err
-	}
-	for i := range overviews {
-		path := stringOr(overviews[i].HistoryFile, stringOr(overviews[i].Path, ""))
-		if path != "" && sessionRecordKey(overviews[i].Source, path) == id {
-			return []database.SessionOverview{overviews[i]}, nil
+	if parsed, parseErr := uuid.Parse(id); parseErr == nil && len(overviews) == 1 &&
+		overviews[0].ID == parsed && overviews[0].ParentSessionID == nil && overviews[0].RootSessionID == nil {
+		thread, threadErr := db.ListThreadSessionOverviews(ctx, parsed)
+		if threadErr != nil {
+			return nil, threadErr
+		}
+		if len(thread) > 1 {
+			return thread, nil
 		}
 	}
-	return nil, err
+	return overviews, nil
 }
 
 // candidateFromOverview adapts a DB overview row to the transcript-parsing
@@ -125,8 +110,10 @@ func resolveOverviewsByAnyID(ctx context.Context, db sessionOverviewStore, id st
 func candidateFromOverview(overview database.SessionOverview) sessionCandidate {
 	path := stringOr(overview.HistoryFile, stringOr(overview.Path, ""))
 	return sessionCandidate{
-		record: minimalSessionRecord(overview.Source, path, stringOr(overview.ProviderSessionID, overview.ID.String())),
-		path:   path,
+		record: SessionRecord{
+			ID: stringOr(overview.ProviderSessionID, overview.ID.String()), Source: overview.Source, DetailAvailable: true,
+		},
+		path: path,
 	}
 }
 
@@ -188,19 +175,13 @@ func overviewFromSummary(summary database.SessionListSummary) database.SessionOv
 	}
 }
 
-// recordFromOverview projects one overview row to the SessionRecord wire
-// shape, keeping the path-derived Key stable with the previous file-scan
-// implementation so UI list keys survive the storage switch.
+// recordFromOverview projects one overview row to the SessionRecord wire shape.
 func recordFromOverview(overview database.SessionOverview) SessionRecord {
 	metadata := overviewMetadata(overview)
 	path := stringOr(overview.HistoryFile, stringOr(overview.Path, ""))
 	id := stringOr(overview.ProviderSessionID, overview.ID.String())
-	key := overview.ID.String()
-	if path != "" {
-		key = sessionRecordKey(overview.Source, path)
-	}
 	record := SessionRecord{
-		Key:             key,
+		Key:             overview.ID.String(),
 		ID:              id,
 		Source:          overview.Source,
 		Project:         stringOr(overview.Project, ""),

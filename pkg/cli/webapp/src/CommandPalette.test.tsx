@@ -37,8 +37,8 @@ vi.mock("@flanksource/clicky-ui/rpc", async (importOriginal) => ({
 
 // Fixtures use values distinct from anything the component derives, so an
 // assertion can only pass if the component actually plumbed them through.
-const SESSION_KEY = "claude-a1b2c3d4e5f60718";
-const SESSION_ID = "11111111-2222-3333-4444-555555555555";
+const SESSION_KEY = "055781c7-360a-4eb2-80be-452b3937fcfe";
+const SESSION_ID = "019f7c25-9adf-7901-add9-8c46693472fb";
 const PROMPT_ID = "local:review-diff";
 
 function session(overrides: Partial<SessionRecord> = {}): SessionRecord {
@@ -97,8 +97,8 @@ afterEach(cleanup);
 
 describe("directSessionId", () => {
   it("accepts a token long enough to be an unambiguous id prefix", () => {
-    // resolveOverviewsByAnyID takes UUIDs, provider-id prefixes and record
-    // keys, so this must not be gated on a UUID shape.
+    // Identity resolution takes Captain UUIDs and provider-id prefixes, so
+    // this must not be gated on a UUID shape.
     expect(directSessionId(SESSION_ID)).toBe(SESSION_ID);
     expect(directSessionId("a1b2c3d4")).toBe("a1b2c3d4");
     expect(directSessionId(`  ${SESSION_KEY}  `)).toBe(SESSION_KEY);
@@ -154,7 +154,7 @@ describe("CommandPalette", () => {
     );
   });
 
-  it("opens the highlighted session on Enter using its record key", async () => {
+  it("opens the highlighted session on Enter using its Captain UUID key", async () => {
     fetchSessionSearch.mockResolvedValue({ sessions: [session()], total: 1 });
     const { onNavigate, onClose } = renderPalette();
     const input = await type("billing");

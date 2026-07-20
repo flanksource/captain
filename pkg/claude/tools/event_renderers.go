@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/flanksource/captain/pkg/bash"
 	"github.com/flanksource/clicky"
 	"github.com/flanksource/clicky/api"
 	"github.com/flanksource/clicky/api/icons"
@@ -62,8 +63,13 @@ func (t *UserShellCommandTool) Pretty() api.Text {
 
 type CodexPatchApplyTool struct{ BaseTool }
 
-func (t *CodexPatchApplyTool) Name() string         { return "CodexPatchApply" }
-func (t *CodexPatchApplyTool) Category() string     { return "chat" }
+func (t *CodexPatchApplyTool) Name() string { return "CodexPatchApply" }
+
+// Category is edit, not chat: this row is Codex applying a patch, i.e. a file
+// mutation. The other event renderers here are genuinely conversational, but
+// grouping a write with them hides Codex file changes from `--category edit`
+// and from anything sourcing file modifications off the category.
+func (t *CodexPatchApplyTool) Category() string     { return string(bash.CategoryEdit) }
 func (t *CodexPatchApplyTool) FilePath() string     { return "" }
 func (t *CodexPatchApplyTool) ExtractPath() string  { return "" }
 func (t *CodexPatchApplyTool) Detail() api.Textable { return commandOutputDetail(t.BaseTool) }

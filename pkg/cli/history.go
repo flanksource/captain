@@ -789,14 +789,30 @@ func matchesHistoryTextFilter(t tools.Tool, category, filter string) bool {
 	return false
 }
 
+// shellCommand returns the raw command line for tools that execute a shell.
+// Claude's Bash carries it as "command"; Codex's exec carries it as "input"
+// (matching AnalyzeToolUse). Without the exec arm every Codex shell call
+// classifies as `other` regardless of what it ran.
+func shellCommand(base *tools.BaseTool) (string, bool) {
+	switch base.RawTool {
+	case "Bash":
+		cmd, ok := base.Input["command"].(string)
+		return cmd, ok
+	case "exec":
+		cmd, ok := base.Input["input"].(string)
+		return cmd, ok
+	}
+	return "", false
+}
+
 func classifyTool(t tools.Tool, classifier *bash.CategoryClassifier) string {
 	if cat := t.Category(); cat != "" {
 		return cat
 	}
 	base := t.Base()
 	cat := classifier.ClassifyToolWithPath(base.RawTool, t.FilePath())
-	if cat == bash.CategoryOther && base.RawTool == "Bash" {
-		if rawCmd, ok := base.Input["command"].(string); ok {
+	if cat == bash.CategoryOther {
+		if rawCmd, ok := shellCommand(base); ok {
 			cat = classifier.ClassifyBash(rawCmd)
 		}
 	}

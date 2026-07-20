@@ -154,7 +154,7 @@ var _ = Describe("session get multi-result output", func() {
 			},
 		}
 
-		overviews, err := resolveOverviewsByAnyID(context.Background(), store, rootID.String())
+		overviews, err := resolveOverviewsByIdentity(context.Background(), store, rootID.String())
 		Expect(err).NotTo(HaveOccurred())
 		Expect(overviews).To(Equal(store.thread))
 		Expect(store.threadRoots).To(Equal([]uuid.UUID{rootID}))

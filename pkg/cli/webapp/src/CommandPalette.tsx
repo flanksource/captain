@@ -36,7 +36,7 @@ import {
 //
 // Session results deliberately ignore the app-bar project scope so a session is
 // findable from anywhere, and the direct-open row hands the raw text to
-// /sessions/{id}, whose RunSessionGet → resolveOverviewsByAnyID resolution is
+// /sessions/{id}, whose RunSessionGet identity resolution is
 // the same code path as `captain sessions get`.
 
 const isMac =
@@ -49,9 +49,9 @@ export const paletteShortcutLabel = isMac ? "⌘K" : "Ctrl K";
 const GROUP_CAP = 8;
 const DEBOUNCE_MS = 200;
 
-// resolveOverviewsByAnyID accepts a full Captain UUID, a provider-session-id
-// prefix, or a path-derived record key — so the direct-open row cannot gate on
-// a UUID regex. Anything token-shaped and long enough to be unambiguous counts.
+// Session identity resolution accepts a full Captain UUID or a
+// provider-session-id prefix, so the direct-open row cannot gate on a UUID
+// shape. Anything token-shaped and long enough to be unambiguous counts.
 const MIN_DIRECT_ID_LENGTH = 8;
 
 /**

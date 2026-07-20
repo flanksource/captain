@@ -48,7 +48,9 @@ func RunSessionGet(ctx context.Context, opts SessionGetOptions) (SessionGetResul
 	if strings.TrimSpace(opts.ID) == "" {
 		return SessionGetResult{}, fmt.Errorf("id is required")
 	}
+	stopDatabase := rpchttp.Track(ctx, "database")
 	db, err := captainDB(ctx)
+	stopDatabase()
 	if err != nil {
 		return SessionGetResult{}, err
 	}
@@ -60,15 +62,18 @@ func runSessionGet(ctx context.Context, db sessionGetStore, opts SessionGetOptio
 	if id == "" {
 		return SessionGetResult{}, fmt.Errorf("id is required")
 	}
-	overviews, err := resolveOverviewsByAnyID(ctx, db, id)
+	stopLookup := rpchttp.Track(ctx, "lookup")
+	overviews, err := resolveOverviewsByIdentity(ctx, db, id)
+	stopLookup()
 	if err != nil {
 		return SessionGetResult{}, err
 	}
 
-	defer rpchttp.Track(ctx, "parse")()
 	items := make([]SessionGetItem, 0, len(overviews))
 	for i := range overviews {
+		stopHydrate := rpchttp.Track(ctx, "hydrate")
 		item, itemErr := buildSessionGetItem(ctx, db, overviews[i], opts)
+		stopHydrate()
 		if itemErr != nil {
 			return SessionGetResult{}, itemErr
 		}
@@ -128,13 +133,17 @@ func loadSessionDetail(ctx context.Context, db sessionGetStore, overview databas
 	path := stringOr(overview.HistoryFile, stringOr(overview.Path, ""))
 	var detail *session.Session
 	if path != "" {
+		stopParse := rpchttp.Track(ctx, "parse")
 		parsed, err := buildSessionModel(candidateFromOverview(overview))
+		stopParse()
 		if err != nil {
 			return nil, fmt.Errorf("parse Captain session %s: %w", overview.ID, err)
 		}
 		detail = parsed
 	}
+	stopPromptRuns := rpchttp.Track(ctx, "prompt_runs")
 	runs, err := db.ListPromptRuns(ctx, database.PromptRunFilter{SessionID: &overview.ID})
+	stopPromptRuns()
 	if err != nil {
 		return nil, fmt.Errorf("list prompt runs for Captain session %s: %w", overview.ID, err)
 	}

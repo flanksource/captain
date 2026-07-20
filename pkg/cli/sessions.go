@@ -2,8 +2,6 @@ package cli
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -354,20 +352,6 @@ func projectResultValue(scope, projectRoot string) string {
 		return projectRoot
 	}
 	return ""
-}
-
-func minimalSessionRecord(source, file, id string) SessionRecord {
-	return SessionRecord{
-		Key:             sessionRecordKey(source, file),
-		ID:              id,
-		Source:          source,
-		DetailAvailable: true,
-	}
-}
-
-func sessionRecordKey(source, path string) string {
-	sum := sha256.Sum256([]byte(source + "\x00" + path))
-	return source + "-" + hex.EncodeToString(sum[:])[:16]
 }
 
 func sessionMatchesQuery(record SessionRecord, query string) bool {

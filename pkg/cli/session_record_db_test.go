@@ -3,10 +3,11 @@ package cli
 import (
 	"context"
 	"errors"
-	"testing"
 
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/google/uuid"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 type sessionOverviewStoreStub struct {
@@ -27,13 +28,35 @@ func (s *sessionOverviewStoreStub) ListThreadSessionOverviews(context.Context, u
 	return nil, nil
 }
 
-func TestResolveOverviewsByAnyIDDoesNotScanOnResolutionFailure(t *testing.T) {
-	store := &sessionOverviewStoreStub{getErr: &database.SessionConflictError{Identity: "ad4c854e"}}
-	_, err := resolveOverviewsByAnyID(t.Context(), store, "ad4c854e")
-	if !errors.Is(err, database.ErrSessionConflict) {
-		t.Fatalf("error = %v, want session conflict", err)
-	}
-	if store.listCalled {
-		t.Fatal("conflict triggered full overview fallback scan")
-	}
-}
+var _ = Describe("session route identity", func() {
+	It("never scans all overviews when an identity is not found", func(ctx SpecContext) {
+		store := &sessionOverviewStoreStub{getErr: database.ErrSessionNotFound}
+
+		_, err := resolveOverviewsByIdentity(ctx, store, "codex-22ea4efed82ed44e")
+
+		Expect(errors.Is(err, database.ErrSessionNotFound)).To(BeTrue())
+		Expect(store.listCalled).To(BeFalse())
+	})
+
+	It("never scans all overviews when an identity is ambiguous", func(ctx SpecContext) {
+		store := &sessionOverviewStoreStub{getErr: &database.SessionConflictError{Identity: "ad4c854e"}}
+
+		_, err := resolveOverviewsByIdentity(ctx, store, "ad4c854e")
+
+		Expect(errors.Is(err, database.ErrSessionConflict)).To(BeTrue())
+		Expect(store.listCalled).To(BeFalse())
+	})
+
+	It("uses the Captain UUID as the list and route key", func() {
+		captainID := uuid.MustParse("055781c7-360a-4eb2-80be-452b3937fcfe")
+		providerID := "019f7c25-9adf-7901-add9-8c46693472fb"
+		path := "/home/acme/.codex/sessions/rollout.jsonl"
+
+		record := recordFromOverview(database.SessionOverview{
+			ID: captainID, ProviderSessionID: &providerID, Source: "codex", Path: &path,
+		})
+
+		Expect(record.Key).To(Equal(captainID.String()))
+		Expect(record.ID).To(Equal(providerID))
+	})
+})
