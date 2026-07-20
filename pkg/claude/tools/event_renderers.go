@@ -246,9 +246,11 @@ func (t *SkillListingTool) ExtractPath() string  { return "" }
 func (t *SkillListingTool) Detail() api.Textable { return t.BaseTool.Detail() }
 func (t *SkillListingTool) Pretty() api.Text {
 	text := eventText(icons.Info, "skills", "text-teal-500 font-medium")
-	appendListCount(&text, "count", t.Input["names"])
+	if n := listLen(t.Input["names"]); n > 0 {
+		return text.Append(fmt.Sprintf(" count=%d", n), "text-gray-500")
+	}
 	if count := eventInt(t.Input["skillCount"]); count > 0 {
-		text = text.Append(fmt.Sprintf(" count=%d", count), "text-gray-500")
+		return text.Append(fmt.Sprintf(" count=%d", count), "text-gray-500")
 	}
 	return text
 }
