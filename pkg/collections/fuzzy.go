@@ -39,9 +39,9 @@ func Levenshtein(s1, s2 string) int {
 		return len(s1)
 	}
 
-	matrix := make([][]int, len(s1)+1)
+	matrix := make([][]int, SafeAdd(len(s1), 1))
 	for i := range matrix {
-		matrix[i] = make([]int, len(s2)+1)
+		matrix[i] = make([]int, SafeAdd(len(s2), 1))
 		matrix[i][0] = i
 	}
 	for j := range len(s2) + 1 {

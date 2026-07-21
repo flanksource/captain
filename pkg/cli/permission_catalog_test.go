@@ -46,6 +46,35 @@ func TestBuildPermissionCatalog(t *testing.T) {
 	}
 }
 
+func TestResolveCatalogDir(t *testing.T) {
+	base := t.TempDir()
+	nested := filepath.Join(base, "sub", "child")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatalf("mkdir nested: %v", err)
+	}
+
+	// Empty dir resolves to the workspace root.
+	if got, err := resolveCatalogDir(base, ""); err != nil || got != filepath.Clean(base) {
+		t.Fatalf("empty dir: got %q err %v, want %q", got, err, filepath.Clean(base))
+	}
+
+	// Relative paths that stay inside the workspace are allowed.
+	if got, err := resolveCatalogDir(base, filepath.Join("sub", "child")); err != nil || got != nested {
+		t.Fatalf("relative dir: got %q err %v, want %q", got, err, nested)
+	}
+
+	// Traversal attempts must be rejected.
+	for _, dir := range []string{
+		"../../etc",
+		filepath.Join("sub", "..", "..", "etc"),
+		"/etc",
+	} {
+		if got, err := resolveCatalogDir(base, dir); err == nil {
+			t.Fatalf("expected %q to be rejected, got %q", dir, got)
+		}
+	}
+}
+
 func mustWrite(t *testing.T, path, data string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
