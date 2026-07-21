@@ -244,6 +244,27 @@ func (db *DB) ListSessionOverviewsByIdentity(ctx context.Context, identity strin
 	return ordered, nil
 }
 
+// ListSessionOverviewsByProviderSessionID returns every Captain session bound
+// to the complete provider session ID. Provider identities may legitimately be
+// shared across sources, providers, and hosts, so this lookup is plural.
+func (db *DB) ListSessionOverviewsByProviderSessionID(ctx context.Context, providerSessionID string) ([]SessionOverview, error) {
+	if err := db.requireGorm(); err != nil {
+		return nil, err
+	}
+	providerSessionID = strings.TrimSpace(providerSessionID)
+	if providerSessionID == "" {
+		return nil, fmt.Errorf("%w: provider session ID is required", ErrInvalidSession)
+	}
+	var rows []SessionOverview
+	if err := db.gorm.WithContext(ctx).
+		Where("provider_session_id = ?", providerSessionID).
+		Order("COALESCE(last_activity_at, started_at, created_at) DESC, id").
+		Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("list Captain sessions by provider session ID: %w", err)
+	}
+	return rows, nil
+}
+
 // ListSessionIdentityMatches resolves prefixes against the lightweight base
 // table so ambiguous lookups do not evaluate every overview aggregate.
 func (db *DB) ListSessionIdentityMatches(ctx context.Context, identity string) ([]SessionIdentityMatch, error) {

@@ -59,9 +59,9 @@ func main() {
 	}
 	rootCmd.AddCommand(historyAlias)
 
-	infoCmd := clicky.AddNamedCommand("info", rootCmd, cli.InfoOptions{}, cli.RunInfo)
-	infoCmd.Short = "Show current Claude Code session and project info"
-	infoCmd.Long = "Display metadata about the current Claude Code session including project root, active session ID, and configuration."
+	infoCmd := clicky.AddNamedCommandWithContext("info", rootCmd, cli.InfoOptions{}, cli.RunInfo)
+	infoCmd.Short = "Show the current agent session or discovered project sessions"
+	infoCmd.Long = "Detect the current Codex, Claude, Gemini, or Captain session from its environment, including matching Captain database sessions. Explicit discovery flags show project session history instead."
 
 	costCmd := clicky.AddNamedCommand("cost", rootCmd, cli.CostOptions{}, cli.RunCost)
 	costCmd.Short = "Show token usage and estimated costs"

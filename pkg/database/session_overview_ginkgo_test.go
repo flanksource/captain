@@ -8,9 +8,46 @@ import (
 	"github.com/google/uuid"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	. "github.com/onsi/gomega/gstruct"
 )
 
 var _ = Describe("Session overview aggregates", func() {
+	It("matches complete provider session IDs without including longer prefixes", func(ctx SpecContext) {
+		if os.Getenv("CAPTAIN_DB_EMBEDDED_TEST") == "" {
+			Skip("set CAPTAIN_DB_EMBEDDED_TEST=1 to run embedded-postgres store tests")
+		}
+
+		dsn, stop, err := commonsdb.StartEmbedded(commonsdb.EmbeddedConfig{
+			DataDir:  filepath.Join(GinkgoT().TempDir(), "postgres"),
+			Database: "captain_provider_session_match",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { Expect(stop()).To(Succeed()) })
+
+		db, err := Open(ctx, WithDSN(dsn), WithMigrations())
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { Expect(db.Close()).To(Succeed()) })
+
+		providerID := "019f7c25-9adf-7901-add9-8c46693472fb"
+		for _, input := range []CreateSessionInput{
+			{ID: uuid.New(), ProviderSessionID: providerID, Source: "codex", Provider: "openai", HostID: "host-a"},
+			{ID: uuid.New(), ProviderSessionID: providerID, Source: "captain", Provider: "openai", HostID: "host-b"},
+			{ID: uuid.New(), ProviderSessionID: providerID + "-child", Source: "codex", Provider: "openai", HostID: "host-a"},
+		} {
+			_, err = db.CreateOrGetSession(ctx, input)
+			Expect(err).NotTo(HaveOccurred())
+		}
+
+		matches, err := db.ListSessionOverviewsByProviderSessionID(ctx, providerID)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(matches).To(HaveLen(2))
+		Expect(matches).To(ConsistOf(
+			MatchFields(IgnoreExtras, Fields{"Source": Equal("codex"), "HostID": Equal("host-a")}),
+			MatchFields(IgnoreExtras, Fields{"Source": Equal("captain"), "HostID": Equal("host-b")}),
+		))
+	})
+
 	It("preserves every detail metric within its session security boundary", func(ctx SpecContext) {
 		if os.Getenv("CAPTAIN_DB_EMBEDDED_TEST") == "" {
 			Skip("set CAPTAIN_DB_EMBEDDED_TEST=1 to run embedded-postgres store tests")
