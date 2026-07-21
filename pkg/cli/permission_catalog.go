@@ -46,6 +46,12 @@ func resolveCatalogDir(baseCwd, dir string) (string, error) {
 		return base, nil
 	}
 
+	// Reject traversal sequences in the raw input before any path is built;
+	// the prefix check below is defense in depth.
+	if strings.Contains(dir, "..") {
+		return "", fmt.Errorf("dir %q contains a path traversal sequence", dir)
+	}
+
 	target := dir
 	if !filepath.IsAbs(target) {
 		target = filepath.Join(base, target)
