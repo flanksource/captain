@@ -183,6 +183,9 @@ func buildCodexSession(uses []history.ToolUse, info *history.CodexSessionInfo) *
 		Read:    sortedUnique(relativizeAll(read, s.CWD)),
 		Written: sortedUnique(relativizeAll(written, s.CWD)),
 	}
+	s.Todos = latestTodos(uses, func(tu history.ToolUse) (string, map[string]any) {
+		return tu.Tool, tu.Input
+	})
 	s.Plan = CodexPlanFromToolUses(uses)
 	s.Cost = costs.Sum()
 	s.Usage = usageFromCost(s.Cost)

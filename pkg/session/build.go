@@ -71,6 +71,9 @@ func buildSession(ps claude.ParsedSession) *Session {
 	s.ToolCosts = collapseByModel(costs)
 
 	s.Files = changedFiles(allToolUses)
+	s.Todos = latestTodos(allToolUses, func(tu claude.ToolUse) (string, map[string]any) {
+		return tu.Tool, tu.Input
+	})
 	s.Plan = buildPlan(allEntries, allToolUses)
 	s.Approvals = approvalStats(allToolUses)
 	return s

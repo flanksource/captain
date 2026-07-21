@@ -274,6 +274,9 @@ func sessionMetadata(s *session.Session) map[string]any {
 	if len(s.Files.Read) > 0 || len(s.Files.Written) > 0 {
 		metadata["files"] = s.Files
 	}
+	if len(s.Todos) > 0 {
+		metadata["todos"] = s.Todos
+	}
 	if s.Approvals.Approved > 0 || s.Approvals.Denied > 0 {
 		metadata["approvals"] = s.Approvals
 	}

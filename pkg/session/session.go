@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/claude/tools"
 	"github.com/segmentio/encoding/json"
 )
 
@@ -42,13 +43,14 @@ type Session struct {
 	Root   *Agent   `json:"root,omitempty"`   // agent hierarchy tree
 	Agents []*Agent `json:"agents,omitempty"` // flat index (root first)
 
-	Messages  []Message     `json:"messages,omitempty"`
+	Messages  []Message         `json:"messages,omitempty"`
 	Window    *TranscriptWindow `json:"window,omitempty"`
-	Files     ChangedFiles  `json:"files,omitempty"`
-	Plan      *Plan         `json:"plan,omitempty"`
-	Approvals ApprovalStats `json:"approvals,omitempty"`
-	Health    []Health      `json:"health,omitempty"`
-	Live      *LiveProcess  `json:"live,omitempty"`
+	Files     ChangedFiles      `json:"files,omitempty"`
+	Todos     []tools.TodoItem  `json:"todos,omitempty"`
+	Plan      *Plan             `json:"plan,omitempty"`
+	Approvals ApprovalStats     `json:"approvals,omitempty"`
+	Health    []Health          `json:"health,omitempty"`
+	Live      *LiveProcess      `json:"live,omitempty"`
 
 	// Prompt is the realized prompt that launched this session (opaque JSON of
 	// the render result), attached from the persistent store for captain-launched
