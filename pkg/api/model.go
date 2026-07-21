@@ -3,6 +3,8 @@ package api
 import (
 	"fmt"
 	"strings"
+
+	"github.com/flanksource/captain/pkg/collections"
 )
 
 // Model identifies which LLM serves a request plus the per-request inference
@@ -120,7 +122,7 @@ func (m Model) Candidates() []Model {
 	m = m.ExpandCSV()
 	primary := m
 	primary.Fallbacks = nil
-	out := make([]Model, 0, 1+len(m.Fallbacks))
+	out := make([]Model, 0, collections.SafeAdd(1, len(m.Fallbacks)))
 	out = append(out, primary)
 	for _, fb := range m.Fallbacks {
 		fb.Fallbacks = nil

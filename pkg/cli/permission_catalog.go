@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -17,17 +18,44 @@ func handlePermissionCatalog(baseCwd string) http.HandlerFunc {
 		if dir == "" {
 			dir = strings.TrimSpace(r.URL.Query().Get("cwd"))
 		}
-		if dir == "" {
-			dir = baseCwd
-		}
-		if !filepath.IsAbs(dir) {
-			dir = filepath.Join(baseCwd, dir)
+		resolved, err := resolveCatalogDir(baseCwd, dir)
+		if err != nil {
+			http.Error(w, "invalid dir", http.StatusBadRequest)
+			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(buildPermissionCatalog(dir)); err != nil {
+		if err := json.NewEncoder(w).Encode(buildPermissionCatalog(resolved)); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	}
+}
+
+// resolveCatalogDir resolves the caller-supplied directory against baseCwd and
+// guarantees the result stays within baseCwd. The dir value comes straight from
+// an untrusted query parameter, so it must be confined to the workspace root to
+// prevent path traversal (e.g. "../../etc") into arbitrary parts of the
+// filesystem.
+func resolveCatalogDir(baseCwd, dir string) (string, error) {
+	base, err := filepath.Abs(baseCwd)
+	if err != nil {
+		return "", err
+	}
+	base = filepath.Clean(base)
+
+	if dir == "" {
+		return base, nil
+	}
+
+	target := dir
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(base, target)
+	}
+	target = filepath.Clean(target)
+
+	if target != base && !strings.HasPrefix(target, base+string(os.PathSeparator)) {
+		return "", fmt.Errorf("dir %q escapes workspace root", dir)
+	}
+	return target, nil
 }
 
 func buildPermissionCatalog(dir string) api.PermissionCatalog {

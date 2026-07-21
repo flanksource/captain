@@ -1,5 +1,5 @@
 import path from "node:path";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
@@ -103,10 +103,10 @@ function clickySourceAliases(enabled: boolean) {
 function clickyVersionDefines() {
   const version = readClickyPackageVersion();
   return {
-    __CLICKY_COMMIT__: JSON.stringify(git("rev-parse --short HEAD", "")),
+    __CLICKY_COMMIT__: JSON.stringify(git(["rev-parse", "--short", "HEAD"], "")),
     __CLICKY_TAG__: JSON.stringify(`clicky-ui@${version}`),
     __CLICKY_DATE__: JSON.stringify(new Date().toISOString()),
-    __CLICKY_DIRTY__: JSON.stringify(git("status --porcelain", "").length > 0),
+    __CLICKY_DIRTY__: JSON.stringify(git(["status", "--porcelain"], "").length > 0),
   };
 }
 
@@ -120,9 +120,11 @@ function readClickyPackageVersion() {
   }
 }
 
-function git(args: string, fallback: string) {
+function git(args: string[], fallback: string) {
   try {
-    return execSync(`git -C ${JSON.stringify(clickyPackageRoot)} ${args}`, {
+    // Pass arguments as an argv array via execFileSync so no shell is spawned,
+    // avoiding shell interpretation of the (filesystem-derived) repo path.
+    return execFileSync("git", ["-C", clickyPackageRoot, ...args], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();

@@ -23,6 +23,7 @@ import (
 	promptlib "github.com/flanksource/captain/pkg/ai/prompt"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/captainconfig"
+	"github.com/flanksource/captain/pkg/collections"
 	"github.com/flanksource/clicky"
 	clickyapi "github.com/flanksource/clicky/api"
 	clickyrpc "github.com/flanksource/clicky/rpc"
@@ -606,7 +607,7 @@ func mergeStringMaps(base, overlay map[string]string) map[string]string {
 	if len(overlay) == 0 {
 		return base
 	}
-	out := make(map[string]string, len(base)+len(overlay))
+	out := make(map[string]string, collections.SafeAdd(len(base), len(overlay)))
 	for k, v := range base {
 		out[k] = v
 	}
@@ -620,7 +621,7 @@ func mergeToolModes(base, overlay map[string]api.ToolMode) map[string]api.ToolMo
 	if len(overlay) == 0 {
 		return base
 	}
-	out := make(map[string]api.ToolMode, len(base)+len(overlay))
+	out := make(map[string]api.ToolMode, collections.SafeAdd(len(base), len(overlay)))
 	for k, v := range base {
 		out[k] = v
 	}
@@ -634,8 +635,8 @@ func mergePresets(base, overlay []api.Preset) []api.Preset {
 	if len(overlay) == 0 {
 		return base
 	}
-	seen := make(map[api.Preset]bool, len(base)+len(overlay))
-	out := make([]api.Preset, 0, len(base)+len(overlay))
+	seen := make(map[api.Preset]bool, collections.SafeAdd(len(base), len(overlay)))
+	out := make([]api.Preset, 0, collections.SafeAdd(len(base), len(overlay)))
 	for _, preset := range base {
 		if seen[preset] {
 			continue
