@@ -171,9 +171,9 @@ func (b *runBroker) prune(maxAge time.Duration) {
 
 type promptRunSnapshotBody struct {
 	Entries []session.Message `json:"entries"`
-	Done    bool               `json:"done"`
-	Summary *PromptRunSummary  `json:"summary,omitempty"`
-	Error   string             `json:"error,omitempty"`
+	Done    bool              `json:"done"`
+	Summary *PromptRunSummary `json:"summary,omitempty"`
+	Error   string            `json:"error,omitempty"`
 }
 
 // handlePromptRunStream streams a run's session.Message frames as SSE:

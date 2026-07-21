@@ -63,10 +63,12 @@ func TestResolveCatalogDir(t *testing.T) {
 		t.Fatalf("relative dir: got %q err %v, want %q", got, err, nested)
 	}
 
-	// Traversal attempts must be rejected.
+	// Traversal attempts must be rejected, including ".." segments that would
+	// still resolve inside the workspace.
 	for _, dir := range []string{
 		"../../etc",
 		filepath.Join("sub", "..", "..", "etc"),
+		"sub/../sub/child",
 		"/etc",
 	} {
 		if got, err := resolveCatalogDir(base, dir); err == nil {
