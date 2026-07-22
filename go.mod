@@ -9,7 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.42.0
 	github.com/charmbracelet/huh v1.0.0
 	github.com/firebase/genkit/go v1.8.0
-	github.com/flanksource/clicky v1.21.37-0.20260707073215-39f9301d5c01
+	github.com/flanksource/clicky v1.21.37-0.20260715094201-d847a9108f43
 	github.com/flanksource/clicky/aichat v1.21.37-0.20260707073215-39f9301d5c01
 	github.com/flanksource/commons v1.53.1
 	github.com/flanksource/sandbox-runtime v1.0.2
@@ -17,7 +17,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/invopop/jsonschema v0.13.0
 	github.com/mattn/go-sqlite3 v1.14.38
-	github.com/onsi/ginkgo/v2 v2.28.0
+	github.com/onsi/ginkgo/v2 v2.28.1
 	github.com/onsi/gomega v1.39.1
 	github.com/samber/lo v1.53.0
 	github.com/segmentio/encoding v0.5.4
@@ -25,7 +25,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
 	github.com/timberio/go-datemath v0.1.0
-	github.com/yuin/goldmark v1.7.16
+	github.com/yuin/goldmark v1.7.17
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/term v0.44.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -36,7 +36,7 @@ require (
 	sigs.k8s.io/yaml v1.6.0
 )
 
-require github.com/flanksource/commons-db v0.1.14
+require github.com/flanksource/commons-db v0.1.19
 
 require (
 	cloud.google.com/go/cloudsqlconn v1.22.1 // indirect
@@ -178,7 +178,7 @@ require (
 	github.com/google/cel-go v0.27.0 // indirect
 	github.com/google/gnostic-models v0.7.1 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
-	github.com/google/pprof v0.0.0-20260115054156-294ebfa9ad83 // indirect
+	github.com/google/pprof v0.0.0-20260402051712-545e8a4df936 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.17 // indirect
 	github.com/googleapis/gax-go/v2 v2.22.0 // indirect
