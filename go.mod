@@ -8,9 +8,9 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.15
 	github.com/aws/aws-sdk-go-v2/service/sts v1.42.0
 	github.com/charmbracelet/huh v1.0.0
-	github.com/firebase/genkit/go v1.8.0
-	github.com/flanksource/clicky v1.21.37-0.20260707073215-39f9301d5c01
-	github.com/flanksource/clicky/aichat v1.21.37-0.20260707073215-39f9301d5c01
+	github.com/firebase/genkit/go v1.10.0
+	github.com/flanksource/clicky v1.21.40
+	github.com/flanksource/clicky/aichat v1.21.40
 	github.com/flanksource/commons v1.53.1
 	github.com/flanksource/sandbox-runtime v1.0.2
 	github.com/google/dotprompt/go v0.0.0-20260502013637-5cd4a8405ca3
