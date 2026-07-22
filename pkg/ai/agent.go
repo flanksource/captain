@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"sync"
 	"time"
 
@@ -181,8 +180,8 @@ func (a *Agent) TotalCost() float64 {
 
 // Close releases the underlying provider's resources, if any.
 func (a *Agent) Close() error {
-	if c, ok := a.provider.(io.Closer); ok {
-		return c.Close()
+	if closer, ok := api.ProviderAs[api.CloseableProvider](a.provider); ok {
+		return closer.Close()
 	}
 	return nil
 }
