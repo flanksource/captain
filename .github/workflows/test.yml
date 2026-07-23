@@ -44,6 +44,16 @@ jobs:
         env:
           CAPTAIN_DB_EMBEDDED_TEST: "1"
 
+  mcp-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test -tags=e2e -count=1 -v -timeout=3m ./tests/e2e/mcp2cli
+
   build:
     runs-on: ubuntu-latest
     steps:
