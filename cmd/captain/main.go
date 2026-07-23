@@ -231,9 +231,7 @@ func main() {
 			},
 		},
 	}
-	mcpCmd := mcp.NewCommandWithClientOptions(mcpConfig, mcp.ClientOptions{
-		ResolvePrompt: cli.ResolveMCPPromptRestrictions,
-	})
+	mcpCmd := mcp.NewCommandWithConfig(mcpConfig)
 	// Clear the -v shorthand only if the mcp command registers a verbose flag;
 	// newer clicky versions don't, and an unconditional Lookup(...).Shorthand
 	// dereferences nil.
