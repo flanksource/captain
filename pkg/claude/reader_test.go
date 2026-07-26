@@ -316,6 +316,25 @@ func TestReadStreamJSON_PrLinkSurfaced(t *testing.T) {
 	}
 }
 
+// TestReadStreamJSON_FileHistoryDeltaIgnored verifies file-history-delta — the
+// incremental sibling of file-history-snapshot — is explicitly ignored rather
+// than counted as an unhandled stream type (which surfaced as a spurious
+// "unhandled stream types: file-history-delta=15" warning on real sessions).
+func TestReadStreamJSON_FileHistoryDeltaIgnored(t *testing.T) {
+	ResetUnhandledStreamTypes()
+	input := `{"type":"file-history-delta","messageId":"m1","snapshotMessageId":"s1","trackingPath":"/Users/x/.claude/plans/p.md","backup":{"backupFileName":null,"version":1,"backupTime":"2026-07-23T17:18:00Z","realParentDir":"/Users/x/.claude/plans"},"timestamp":"2026-07-23T17:18:00Z"}`
+	entries, err := ReadStreamJSON(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("ReadStreamJSON failed: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("file-history-delta should emit no entries, got %d: %+v", len(entries), entries)
+	}
+	if got := SnapshotUnhandledStreamTypes(); got["file-history-delta"] != 0 {
+		t.Errorf("file-history-delta should be a known storage type, not counted unhandled: %v", got)
+	}
+}
+
 // TestReadStreamJSON_ContentSystemSubtypes verifies the content-bearing system
 // subtypes surface as synthetic rows (carrying their content) rather than being
 // dropped as unhandled.

@@ -143,6 +143,8 @@ func RunHistory(opts HistoryOptions) (any, error) {
 		tl = filterToolsByPath(tl, newPathFilter(opts.Plans, opts.Ignored))
 	}
 
+	tl = collapseRepeatedTitles(tl)
+
 	if opts.Last {
 		tl = lastSessionTools(tl)
 		// --last means "the whole most-recent session" — don't let the row
@@ -179,6 +181,31 @@ func lastSessionTools(tl []tools.Tool) []tools.Tool {
 		start--
 	}
 	return tl[start:]
+}
+
+// collapseRepeatedTitles drops SessionTitle rows that repeat the title already
+// shown for their session. Claude Code rewrites the ai-title record on nearly
+// every turn, so a long session otherwise renders dozens of identical
+// "🏷 title …" rows (65 of them, for 3 distinct titles, on a real session). A
+// title that genuinely changes still gets its own row — including a change back
+// to a title used earlier in the session.
+func collapseRepeatedTitles(tl []tools.Tool) []tools.Tool {
+	shown := map[sessionKey]string{}
+	out := make([]tools.Tool, 0, len(tl))
+	for _, t := range tl {
+		title, ok := t.(*tools.SessionTitleTool)
+		if !ok {
+			out = append(out, t)
+			continue
+		}
+		key := keyForTool(t)
+		if prev, seen := shown[key]; seen && prev == title.Str("aiTitle") {
+			continue
+		}
+		shown[key] = title.Str("aiTitle")
+		out = append(out, t)
+	}
+	return out
 }
 
 // gatherToolUses collects Claude and Codex tool uses for the working directory,

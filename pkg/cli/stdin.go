@@ -146,7 +146,7 @@ func runHistoryFromReader(data []byte, opts HistoryOptions) (any, error) {
 		return runHistorySummary(toolUses, opts, classifier, nil)
 	}
 
-	tl := claude.ToolUsesToTools(toolUses)
+	tl := collapseRepeatedTitles(claude.ToolUsesToTools(toolUses))
 	return runHistorySingle(tl, opts, classifier, nil)
 }
 

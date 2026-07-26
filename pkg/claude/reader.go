@@ -177,6 +177,7 @@ func (sj streamJSONLine) contentString() string {
 // Listed explicitly so they don't pollute the unhandled-types diagnostic.
 var knownSessionStorageTypes = map[string]bool{
 	"file-history-snapshot": true,
+	"file-history-delta":    true, // incremental checkpoint bookkeeping for the snapshot above
 	"permission-mode":       true,
 	"agent-name":            true,
 	// Operational/streaming state with no unique row-level content — the real
