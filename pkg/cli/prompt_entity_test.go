@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -35,8 +36,34 @@ func TestPromptEntityListsEmbeddedExamples(t *testing.T) {
 	if commit.Model != "claude-sonnet-4-6" {
 		t.Fatalf("embedded prompt model = %q, want claude-sonnet-4-6", commit.Model)
 	}
-	if len(commit.Variables) != 1 || commit.Variables[0].Name != "diff" {
-		t.Fatalf("embedded prompt variables = %+v, want diff", commit.Variables)
+	wantVariables := []PromptVariable{
+		{Name: "maxBodyLines", Type: "integer", Description: "Maximum commit-message body lines; zero omits the cap", Required: true},
+		{Name: "patch", Type: "string", Description: "Git patch to summarize", Required: true},
+	}
+	if !reflect.DeepEqual(commit.Variables, wantVariables) {
+		t.Fatalf("embedded prompt variables = %+v, want %+v", commit.Variables, wantVariables)
+	}
+	detail, err := getPrompt(context.Background(), commit.ID)
+	if err != nil {
+		t.Fatalf("getPrompt(commit) err = %v", err)
+	}
+	wantInputSchema := map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"required":             []any{"patch", "maxBodyLines"},
+		"properties": map[string]any{
+			"patch": map[string]any{
+				"type":        "string",
+				"description": "Git patch to summarize",
+			},
+			"maxBodyLines": map[string]any{
+				"type":        "integer",
+				"description": "Maximum commit-message body lines; zero omits the cap",
+			},
+		},
+	}
+	if !reflect.DeepEqual(detail.InputSchema, wantInputSchema) {
+		t.Fatalf("embedded prompt input schema = %#v, want %#v", detail.InputSchema, wantInputSchema)
 	}
 }
 

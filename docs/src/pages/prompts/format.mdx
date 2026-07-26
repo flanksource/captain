@@ -38,6 +38,11 @@ A `.prompt` file has YAML frontmatter followed by a Handlebars body. dotprompt o
       <td>Used by the workbench to discover variables and defaults.</td>
     </tr>
     <tr>
+      <td><code>output.schema</code></td>
+      <td>dotprompt and Captain providers</td>
+      <td>Exposed as prompt metadata and attached to the rendered request as <code>Prompt.SchemaJSON</code>.</td>
+    </tr>
+    <tr>
       <td><code>permissions</code>, <code>memory</code>, <code>budget</code>, <code>setup</code></td>
       <td>Captain spec</td>
       <td>Decoded into `api.Spec` with strict field validation.</td>
@@ -103,4 +108,4 @@ Refactor:
 
 ## Structured output
 
-Captain does not turn a bare dotprompt `output` schema into a provider schema target. Structured output is attached by Go callers that pass a concrete output type to `Render`; providers derive the JSON schema from that Go type.
+When no Go output target is passed to `Render`, Captain marshals a dotprompt `output.schema` into `Prompt.SchemaJSON` and sends it to the provider unchanged. A concrete Go output target takes precedence and is attached as `Prompt.Schema` for provider-side schema generation.
