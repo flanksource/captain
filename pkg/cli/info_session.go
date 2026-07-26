@@ -10,6 +10,7 @@ import (
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/clicky/api"
 	"github.com/flanksource/clicky/api/icons"
+	clickyrpc "github.com/flanksource/clicky/rpc"
 	"github.com/google/uuid"
 )
 
@@ -44,6 +45,16 @@ func RunInfo(ctx context.Context, opts InfoOptions) (InfoResult, error) {
 }
 
 func runInfo(ctx context.Context, opts InfoOptions, runtime infoRuntime) (InfoResult, error) {
+	if _, ok := clickyrpc.RequestFromContext(ctx); ok && opts.Path != "" {
+		workspace, err := runtime.getwd()
+		if err != nil {
+			return InfoResult{}, fmt.Errorf("resolve info workspace: %w", err)
+		}
+		opts.Path, err = resolveCatalogDir(workspace, opts.Path)
+		if err != nil {
+			return InfoResult{}, fmt.Errorf("resolve info path: %w", err)
+		}
+	}
 	if !infoUsesEnvironment(opts) {
 		return runInfoDiscovery(opts)
 	}

@@ -3,8 +3,12 @@ package cli
 import (
 	"context"
 	"errors"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 
 	"github.com/flanksource/captain/pkg/database"
+	clickyrpc "github.com/flanksource/clicky/rpc"
 	"github.com/google/uuid"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -102,6 +106,36 @@ var _ = Describe("captain info environment session", func() {
 
 	It("uses the environment fast path for a bare invocation", func() {
 		Expect(infoUsesEnvironment(InfoOptions{})).To(BeTrue())
+	})
+
+	It("confines generated RPC discovery to the server workspace", func(ctx SpecContext) {
+		workspace := GinkgoT().TempDir()
+		outside := GinkgoT().TempDir()
+		request := httptest.NewRequest("POST", "/api/v1/info", nil)
+		requestContext := clickyrpc.ContextWithRequest(ctx, request)
+
+		_, err := runInfo(requestContext, InfoOptions{Path: outside}, infoRuntime{
+			getenv: func(string) string { return "" },
+			getwd:  func() (string, error) { return workspace, nil },
+		})
+
+		Expect(err).To(MatchError(ContainSubstring("escapes workspace root")))
+	})
+
+	It("rejects generated RPC discovery through a workspace symlink", func(ctx SpecContext) {
+		workspace := GinkgoT().TempDir()
+		outside := GinkgoT().TempDir()
+		link := filepath.Join(workspace, "outside")
+		Expect(os.Symlink(outside, link)).To(Succeed())
+		request := httptest.NewRequest("POST", "/api/v1/info", nil)
+		requestContext := clickyrpc.ContextWithRequest(ctx, request)
+
+		_, err := runInfo(requestContext, InfoOptions{Path: link}, infoRuntime{
+			getenv: func(string) string { return "" },
+			getwd:  func() (string, error) { return workspace, nil },
+		})
+
+		Expect(err).To(MatchError(ContainSubstring("escapes workspace root")))
 	})
 
 	It("returns a provider-only session without opening the database", func(ctx SpecContext) {
