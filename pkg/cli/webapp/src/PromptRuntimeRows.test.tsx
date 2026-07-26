@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { addRuntimeRow, validateRuntimeRows } from "./PromptRuntimeRows";
+import {
+  addRuntimeRow,
+  validateRuntimeRows,
+} from "./promptRuntimeRowsHelpers";
 
 describe("PromptRuntimeRows", () => {
   it("adds a runtime with the primary backend and an intentionally blank model", () => {

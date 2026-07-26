@@ -9,7 +9,6 @@ import {
   Tabs,
   type AppShellProps,
   type AppShellNavSection,
-  type ComboboxOption,
   type KeyPreview,
   type JsonSchemaObject,
   type SecretKind,
@@ -45,7 +44,8 @@ import { apiClient } from "./api";
 import { PromptRunStream } from "./PromptRunStream";
 import { PromptBatchInspector } from "./PromptBatchInspector";
 import { PromptSchemaEditor } from "./PromptSchemaEditor";
-import { PromptRuntimeRows, validateRuntimeRows } from "./PromptRuntimeRows";
+import { PromptRuntimeRows } from "./PromptRuntimeRows";
+import { validateRuntimeRows } from "./promptRuntimeRowsHelpers";
 import { RunningPromptsBadge, RunningPromptsRunsTab } from "./RunningPrompts";
 import {
   isPromptBatchHandle,
@@ -62,6 +62,12 @@ import {
   type PromptSummary,
 } from "./promptData";
 import type { PromptSchemaKind } from "./promptSchemaSource";
+import {
+  normalizeRuntimeModel,
+  promptOptions,
+  runtimeModelsPayload,
+  runtimeRowsFromPrompt,
+} from "./promptWorkbenchHelpers";
 
 type Navigate = (to: string, opts?: { replace?: boolean }) => void;
 
@@ -104,39 +110,6 @@ const SOURCE_OPTIONS = [
   { id: "embedded", label: "Embedded" },
   { id: "local", label: "Local" },
 ] satisfies Array<{ id: SourceFilter; label: string }>;
-
-// Combobox headers group by *contiguous* `group`, so emit embedded before local
-// rather than relying on the server's ordering.
-const SOURCE_GROUP_ORDER = ["embedded", "local"];
-
-function promptGroupRank(sourceKind: string) {
-  const rank = SOURCE_GROUP_ORDER.indexOf(sourceKind);
-  return rank === -1 ? SOURCE_GROUP_ORDER.length : rank;
-}
-
-export function promptOptions(
-  prompts: PromptSummary[],
-  selected?: PromptSummary,
-): ComboboxOption[] {
-  // The list is server-filtered by the search query, so a selected prompt that
-  // no longer matches would otherwise render as a blank input.
-  const all =
-    selected && !prompts.some((prompt) => prompt.id === selected.id)
-      ? [...prompts, selected]
-      : prompts;
-  return [...all]
-    .sort(
-      (a, b) =>
-        promptGroupRank(a.sourceKind) - promptGroupRank(b.sourceKind) ||
-        a.name.localeCompare(b.name),
-    )
-    .map((prompt) => ({
-      value: prompt.id,
-      label: prompt.name,
-      group: prompt.sourceKind,
-      title: prompt.description || prompt.relPath,
-    }));
-}
 
 const EMPTY_RUNTIME: AISpecRuntimeValue = { budget: { timeout: "2h" } };
 const EMPTY_PROMPTS: PromptSummary[] = [];
@@ -359,7 +332,11 @@ function promptDetailStateFor(
   return state;
 }
 
-export function PromptWorkbench({
+export function PromptWorkbench(props: PromptWorkbenchProps) {
+  return usePromptWorkbenchView(props);
+}
+
+function usePromptWorkbenchView({
   selectedId,
   onNavigate,
   navSections,
@@ -1225,10 +1202,10 @@ function PromptSourceMarkdownEditor({
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="block space-y-1 text-xs text-muted-foreground">
+    <label className="block space-y-1 text-xs text-muted-foreground">
       <span>{label}</span>
       {children}
-    </div>
+    </label>
   );
 }
 
@@ -1364,6 +1341,7 @@ function CreatePromptModalForm({
           </Field>
           <Field label="Path">
             <input
+              aria-label="Path"
               value={relPath}
               onChange={(event) => setRelPath(event.target.value)}
               className="h-control-h w-full rounded-md border border-border bg-background px-density-3 text-sm outline-none focus:ring-2 focus:ring-ring"
@@ -1596,30 +1574,6 @@ function runtimePayload(runtime: AISpecRuntimeValue, models: ChatModel[]) {
   );
 }
 
-export function runtimeModelsPayload(
-  runtimes: AISpecRuntimeValue[],
-  models: ChatModel[],
-) {
-  return runtimes.map((runtime) => {
-    const selected = normalizeRuntimeModel(
-      runtime.model || "",
-      models,
-      runtime.backend,
-    );
-    return {
-      model: selected.model,
-      backend: selected.backend || runtime.backend,
-      ...(runtime.id ? { id: runtime.id } : {}),
-      ...(runtime.effort ? { effort: runtime.effort } : {}),
-      ...(runtime.temperature !== undefined
-        ? { temperature: runtime.temperature }
-        : {}),
-      ...(runtime.noCache ? { noCache: true } : {}),
-      ...(runtime.fallbacks?.length ? { fallbacks: runtime.fallbacks } : {}),
-    };
-  });
-}
-
 function normalizeSpecRuntimePayload(
   payload: Record<string, unknown>,
   models: ChatModel[],
@@ -1650,138 +1604,10 @@ function normalizeSpecRuntimePayload(
   return { ...payload, spec: specRecord };
 }
 
-// Seeds the first runtime row from the prompt so adding a comparison preserves
-// the prompt's existing model as an explicit participant.
-function runtimeSelectionFromPrompt(prompt: PromptSummary): AISpecRuntimeValue {
-  const backend =
-    prompt.backend?.trim() || inferBackendFromModel(prompt.model || "");
-  return {
-    ...(backend ? { backend } : {}),
-    ...(prompt.model?.trim() ? { model: prompt.model.trim() } : {}),
-  };
-}
-
-export function runtimeRowsFromPrompt(
-  prompt: PromptSummary,
-): AISpecRuntimeValue[] {
-  if (prompt.runtimes?.length) {
-    return prompt.runtimes.map(
-      ({ model, id, backend, temperature, effort, noCache, fallbacks }) => ({
-        model,
-        id,
-        backend,
-        temperature,
-        effort,
-        noCache,
-        fallbacks,
-      }),
-    );
-  }
-  return [runtimeSelectionFromPrompt(prompt)];
-}
-
-function inferBackendFromModel(model: string) {
-  const value = model.trim().toLowerCase();
-  if (!value) return "";
-  if (value.startsWith("anthropic/")) return "anthropic";
-  if (value.startsWith("openai/")) return "openai";
-  if (value.startsWith("googleai/")) return "gemini";
-  if (value.startsWith("deepseek/") || value.startsWith("deepseek-"))
-    return "deepseek";
-  if (value.startsWith("claude-agent-")) return "claude-agent";
-  if (value.startsWith("claude-code-")) return "claude-cli";
-  if (value.startsWith("codex-agent-") || value.startsWith("codex"))
-    return "codex-agent";
-  if (value.startsWith("gemini-cli-")) return "gemini-cli";
-  if (value.startsWith("claude-")) return "anthropic";
-  if (value.startsWith("gemini-") || value.startsWith("models/gemini-"))
-    return "gemini";
-  if (
-    value.startsWith("gpt-") ||
-    value.startsWith("o1") ||
-    value.startsWith("o3") ||
-    value.startsWith("o4")
-  ) {
-    return "openai";
-  }
-  return "";
-}
-
 function promptSelectableModels(models: ChatModel[]) {
   return models.map((model) =>
     model.configured === false ? { ...model, configured: true } : model,
   );
-}
-
-function normalizeRuntimeModel(
-  model: string,
-  models: ChatModel[],
-  backend?: string,
-) {
-  const id = model.trim();
-  if (!id) return { model: "", backend: "" };
-
-  const selected =
-    models.find(
-      (entry) => entry.id === id && modelSupportsBackend(entry, backend),
-    ) ?? models.find((entry) => entry.id === id);
-  if (!selected) return { model: id, backend: "" };
-
-  const selectedBackend = backendForModel(selected, backend);
-  if (
-    selected.provider === "anthropic" ||
-    selected.provider === "openai" ||
-    selected.provider === "googleai" ||
-    selected.provider === "deepseek"
-  ) {
-    return { model: stripProviderPrefix(id), backend: selectedBackend };
-  }
-  if (
-    (selected.provider === "codex-cli" ||
-      selected.provider === "codex-agent") &&
-    id.startsWith("codex-")
-  ) {
-    return { model: id.slice("codex-".length), backend: selectedBackend };
-  }
-  return { model: id, backend: selectedBackend };
-}
-
-function backendForModel(model: ChatModel, preferredBackend?: string) {
-  if (preferredBackend && modelSupportsBackend(model, preferredBackend)) {
-    return preferredBackend;
-  }
-  const backend = model.backends?.find((candidate) => candidate.trim());
-  return backend ?? providerToBackend(model.provider);
-}
-
-function modelSupportsBackend(model: ChatModel, backend?: string) {
-  if (!backend) return true;
-  const backends = model.backends?.filter(Boolean);
-  if (!backends || backends.length === 0) return true;
-  return backends.includes(backend);
-}
-
-function providerToBackend(provider: string) {
-  switch (provider) {
-    case "googleai":
-      return "gemini";
-    case "anthropic":
-    case "openai":
-    case "deepseek":
-    case "claude-agent":
-    case "claude-cli":
-    case "codex-cli":
-    case "codex-agent":
-    case "gemini-cli":
-      return provider;
-    default:
-      return "";
-  }
-}
-
-function stripProviderPrefix(model: string) {
-  const slash = model.indexOf("/");
-  return slash >= 0 ? model.slice(slash + 1) : model;
 }
 
 function defaultPromptContent(name: string) {

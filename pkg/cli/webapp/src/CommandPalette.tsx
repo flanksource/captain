@@ -28,6 +28,10 @@ import {
   resolvePromptOps,
   type PromptSummary,
 } from "./promptData";
+import {
+  directSessionId,
+  paletteShortcutLabel,
+} from "./commandPaletteHelpers";
 
 // The ⌘K palette is captain's single global search: it spans sessions and
 // prompts regardless of the active route and jumps to the chosen item rather
@@ -39,11 +43,6 @@ import {
 // /sessions/{id}, whose RunSessionGet identity resolution is
 // the same code path as `captain sessions get`.
 
-const isMac =
-  typeof navigator !== "undefined" &&
-  /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || "");
-export const paletteShortcutLabel = isMac ? "⌘K" : "Ctrl K";
-
 // GROUP_CAP keeps each section short so the list stays scannable; overflow is
 // surfaced as a "+N more" hint rather than silently dropped.
 const GROUP_CAP = 8;
@@ -52,8 +51,6 @@ const DEBOUNCE_MS = 200;
 // Session identity resolution accepts a full Captain UUID or a
 // provider-session-id prefix, so the direct-open row cannot gate on a UUID
 // shape. Anything token-shaped and long enough to be unambiguous counts.
-const MIN_DIRECT_ID_LENGTH = 8;
-
 /**
  * Binds ⌘K / Ctrl+K to `toggle` for the lifetime of the caller. Works even while
  * a field is focused — it isn't a text-editing shortcut. `SearchInput`'s own
@@ -75,13 +72,6 @@ export function useCommandPaletteShortcut(toggle: () => void) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [toggle]);
-}
-
-export function directSessionId(value: string): string | null {
-  const trimmed = value.trim();
-  if (trimmed.length < MIN_DIRECT_ID_LENGTH) return null;
-  if (/\s/.test(trimmed)) return null;
-  return trimmed;
 }
 
 interface Row {
@@ -117,7 +107,7 @@ export function SearchTrigger({ onOpen }: { onOpen: () => void }) {
   );
 }
 
-export function CommandPalette({
+function CommandPaletteContent({
   open,
   onClose,
   onNavigate,
@@ -132,17 +122,13 @@ export function CommandPalette({
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
-  // Reset to a clean slate every time the palette opens, then move focus to the
-  // input so the user can type immediately. The Modal focuses its own panel in a
+  // Move focus to the input when this freshly keyed palette mounts. The Modal focuses its own panel in a
   // passive effect whose flush time varies (opening cascades state updates), so a
   // single deferred focus keeps losing the race. Instead retry briefly until the
   // input holds focus, then stop — there is no focus trap, so once it lands it
   // stays. This self-corrects regardless of when the Modal grabs focus.
   useEffect(() => {
     if (!open) return;
-    setQuery("");
-    setDebounced("");
-    setActive(0);
     let tries = 0;
     const timer = setInterval(() => {
       const el = inputRef.current;
@@ -345,6 +331,14 @@ export function CommandPalette({
       </div>
     </Modal>
   );
+}
+
+export function CommandPalette(props: {
+  open: boolean;
+  onClose: () => void;
+  onNavigate: (to: string, opts?: { replace?: boolean }) => void;
+}) {
+  return <CommandPaletteContent key={String(props.open)} {...props} />;
 }
 
 function Group({

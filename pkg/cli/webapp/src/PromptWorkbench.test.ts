@@ -3,7 +3,7 @@ import {
   promptOptions,
   runtimeModelsPayload,
   runtimeRowsFromPrompt,
-} from "./PromptWorkbench";
+} from "./promptWorkbenchHelpers";
 
 function prompt(
   name: string,

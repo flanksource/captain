@@ -44,12 +44,13 @@ export function PromptBatchInspector({
   );
   const liveSessions = useMemo(() => {
     const sessions = new Map<string, UnifiedSessionInput>();
+    const savedSessions = new Map(
+      query.data?.sessions.map((item) => [item.captainId, item.detail]) ?? [],
+    );
     for (const run of handle.runs) {
       const stream = streams[run.runId];
       if (!stream) continue;
-      const saved = query.data?.sessions.find(
-        (item) => item.captainId === run.sessionId,
-      )?.detail;
+      const saved = savedSessions.get(run.sessionId);
       sessions.set(run.sessionId, {
         ...saved,
         id: run.sessionId,
@@ -166,8 +167,7 @@ const BatchRunSubscription = memo(function BatchRunSubscription({
   run: PromptBatchRunHandle;
   onChange: (runID: string, state: PromptRunStreamState) => void;
 }) {
-  const state = usePromptRunStream(run.runId);
-  useEffect(() => onChange(run.runId, state), [onChange, run.runId, state]);
+  usePromptRunStream(run.runId, undefined, onChange);
   return null;
 });
 

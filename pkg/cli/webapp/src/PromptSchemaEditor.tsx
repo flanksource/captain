@@ -36,14 +36,6 @@ export function PromptSchemaEditor({
       };
     }
   }, [source]);
-  const validityChangeRef = useRef(onValidityChange);
-  validityChangeRef.current = onValidityChange;
-  useEffect(() => {
-    const valid = !parsed.error;
-    validityChangeRef.current("input", valid);
-    validityChangeRef.current("output", valid);
-  }, [parsed.error]);
-
   if (parsed.error) {
     return (
       <div className="text-sm text-destructive" role="alert">

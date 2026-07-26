@@ -19,12 +19,14 @@ import { TimingBadge } from "./TimingBadge";
 import type { TimingMetric } from "./serverTiming";
 import {
   SessionTable,
-  compareSessions,
-  defaultSortDirection,
-  groupSessionsByProject,
   type DashboardSort,
   type SortDirection,
 } from "./SessionTable";
+import {
+  compareSessions,
+  defaultSortDirection,
+  groupSessionsByProject,
+} from "./sessionTableHelpers";
 import {
   SOURCE_OPTIONS,
   errorMessage,

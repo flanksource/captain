@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useReducer, useState } from "react";
 import { Button } from "@flanksource/clicky-ui/components";
 
 export type ProviderModel = {
@@ -35,6 +35,25 @@ const PROVIDER_AGENTS: Record<string, string[]> = {
 const ALL_EFFORTS = ["low", "medium", "high", "xhigh", "max", "ultra"];
 
 export function ProviderDefaultsControls({
+  defaults,
+  ...props
+}: {
+  provider: string;
+  defaults: ProviderDefault;
+  adapters: ProviderAdapter[];
+  active: boolean;
+  onRefresh: () => Promise<void>;
+}) {
+  return (
+    <ProviderDefaultsForm
+      key={`${defaults.agent}:${defaults.model}:${defaults.effort}`}
+      defaults={defaults}
+      {...props}
+    />
+  );
+}
+
+function ProviderDefaultsForm({
   provider,
   defaults,
   adapters,
@@ -47,9 +66,14 @@ export function ProviderDefaultsControls({
   active: boolean;
   onRefresh: () => Promise<void>;
 }) {
-  const [agent, setAgent] = useState(defaults.agent);
-  const [model, setModel] = useState(defaults.model);
-  const [effort, setEffort] = useState(defaults.effort);
+  const [selection, updateSelection] = useReducer(
+    (
+      current: Pick<ProviderDefault, "agent" | "model" | "effort">,
+      next: Partial<Pick<ProviderDefault, "agent" | "model" | "effort">>,
+    ) => ({ ...current, ...next }),
+    defaults,
+  );
+  const { agent, model, effort } = selection;
   const [pending, setPending] = useState<"defaults" | "active" | null>(null);
   const [status, setStatus] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const agentOptions = PROVIDER_AGENTS[provider] ?? [provider];
@@ -59,16 +83,20 @@ export function ProviderDefaultsControls({
   const modelAvailable = models.some((candidate) => candidate.id === model && candidate.available);
 
   function changeAgent(nextAgent: string) {
-    setAgent(nextAgent);
     const nextModel = modelsForAgent(adapters, nextAgent, "").find((candidate) => candidate.available);
-    setModel(nextModel?.id ?? "");
-    setEffort(nextModel?.defaultEffort ?? "");
+    updateSelection({
+      agent: nextAgent,
+      model: nextModel?.id ?? "",
+      effort: nextModel?.defaultEffort ?? "",
+    });
     setStatus(null);
   }
 
   function changeModel(nextModel: string) {
-    setModel(nextModel);
-    setEffort(models.find((candidate) => candidate.id === nextModel)?.defaultEffort ?? "");
+    updateSelection({
+      model: nextModel,
+      effort: models.find((candidate) => candidate.id === nextModel)?.defaultEffort ?? "",
+    });
     setStatus(null);
   }
 
@@ -149,7 +177,7 @@ export function ProviderDefaultsControls({
           aria-label={`${provider} default effort`}
           value={effort}
           disabled={pending !== null}
-          onChange={(event) => { setEffort(event.target.value); setStatus(null); }}
+          onChange={(event) => { updateSelection({ effort: event.target.value }); setStatus(null); }}
           className="h-9 rounded-md border border-input bg-background px-density-2 text-sm"
         >
           <option value="">Model/provider default</option>

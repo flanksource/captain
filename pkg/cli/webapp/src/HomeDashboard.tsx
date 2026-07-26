@@ -48,6 +48,12 @@ import {
   SessionIdentity,
   SessionTable,
   UsageBarsCell,
+  type DashboardSort,
+  type ProjectSessionGroup,
+  type SessionIcon,
+  type SortDirection,
+} from "./SessionTable";
+import {
   compareSessions,
   defaultSortDirection,
   effortLabel,
@@ -55,11 +61,7 @@ import {
   groupSessionsByProject,
   hasLiveProcess,
   modelIcon,
-  type DashboardSort,
-  type ProjectSessionGroup,
-  type SessionIcon,
-  type SortDirection,
-} from "./SessionTable";
+} from "./sessionTableHelpers";
 import { withProjectScope } from "./shellHelpers";
 
 type DashboardView = "list" | "cards";

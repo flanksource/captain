@@ -130,9 +130,11 @@ function sessionCollectionItem(item: SessionGetItem): SessionCollectionItem {
 }
 
 function directChildIDs(sessions: SessionCollectionItem[], rootID: string) {
-  return sessions
-    .filter((item) => item.parentId === rootID)
-    .map((item) => item.id);
+  const ids: string[] = [];
+  for (const item of sessions) {
+    if (item.parentId === rootID) ids.push(item.id);
+  }
+  return ids;
 }
 
 function emptySession(id: string, source: string, title?: string) {

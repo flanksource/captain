@@ -1,6 +1,5 @@
 import type { ComponentProps, KeyboardEvent, ReactNode } from "react";
 import { Button } from "@flanksource/clicky-ui/components";
-import { providerIcon } from "@flanksource/clicky-ui/chat";
 import {
   CopyBadge,
   Icon,
@@ -12,19 +11,21 @@ import {
   UiCopy,
   UiHistory,
   UiMemoryStick,
-  UiTerminal,
 } from "@flanksource/clicky-ui/data";
 import {
   commandLabel,
   formatCompactNumber,
   healthDotClassName,
-  projectLabel,
-  sessionSortTime,
   sessionTitle,
   shortID,
-  type SessionLive,
   type SessionRecord,
 } from "./sessionData";
+import {
+  effortLabel,
+  formatRelativeTime,
+  modelIcon,
+  modelLabel,
+} from "./sessionTableHelpers";
 
 export type DashboardSort =
   | "model"
@@ -36,7 +37,6 @@ export type DashboardSort =
   | "recent";
 export type SortDirection = "asc" | "desc";
 export type SessionIcon = NonNullable<ComponentProps<typeof Icon>["icon"]>;
-export type LiveSessionRecord = SessionRecord & { live: SessionLive };
 export type ProjectSessionGroup = {
   key: string;
   label: string;
@@ -218,7 +218,7 @@ export function UsageBarsCell({
 // identityTitle prefers the human prompt (collapsed to one line) so the session
 // list reads by what was asked, falling back to the derived title for live or
 // prompt-less rows.
-export function identityTitle(session: SessionRecord): string {
+function identityTitle(session: SessionRecord): string {
   const prompt = session.initialPrompt?.replace(/\s+/g, " ").trim();
   return prompt || sessionTitle(session);
 }
@@ -351,122 +351,8 @@ export function SessionActions({
   );
 }
 
-export function MetricText({ value }: { value: ReactNode }) {
+function MetricText({ value }: { value: ReactNode }) {
   return <div className="truncate text-xs text-muted-foreground">{value}</div>;
-}
-
-export function hasLiveProcess(session: SessionRecord): session is LiveSessionRecord {
-  return Boolean(session.live);
-}
-
-export function compareSessions(
-  left: SessionRecord,
-  right: SessionRecord,
-  sort: DashboardSort,
-  direction: SortDirection,
-) {
-  if (sort === "model") {
-    return directionalCompare(
-      modelLabel(left).localeCompare(modelLabel(right)) ||
-        sessionSortTime(right) - sessionSortTime(left),
-      direction,
-      "asc",
-    );
-  }
-  if (sort === "context") {
-    return directionalCompare(
-      (left.context?.freePercent ?? 101) - (right.context?.freePercent ?? 101) ||
-        sessionSortTime(right) - sessionSortTime(left),
-      direction,
-      "asc",
-    );
-  }
-  if (sort === "cpu") {
-    return directionalCompare(
-      (right.live?.cpuPercent ?? -1) - (left.live?.cpuPercent ?? -1) ||
-        sessionSortTime(right) - sessionSortTime(left),
-      direction,
-      "desc",
-    );
-  }
-  if (sort === "memory") {
-    return directionalCompare(
-      (right.live?.memoryPercent ?? -1) - (left.live?.memoryPercent ?? -1) ||
-        sessionSortTime(right) - sessionSortTime(left),
-      direction,
-      "desc",
-    );
-  }
-  if (sort === "tokens") {
-    return directionalCompare(
-      tokenTotal(right) - tokenTotal(left) || sessionSortTime(right) - sessionSortTime(left),
-      direction,
-      "desc",
-    );
-  }
-  if (sort === "recent") {
-    return directionalCompare(
-      sessionSortTime(right) - sessionSortTime(left),
-      direction,
-      "desc",
-    );
-  }
-  return directionalCompare(
-    healthRank(right) - healthRank(left) ||
-      (left.context?.freePercent ?? 101) - (right.context?.freePercent ?? 101) ||
-      (right.live?.cpuPercent ?? -1) - (left.live?.cpuPercent ?? -1) ||
-      sessionSortTime(right) - sessionSortTime(left),
-    direction,
-    "desc",
-  );
-}
-
-function healthRank(session: SessionRecord) {
-  return Math.max(0, ...(session.health ?? []).map((signal) => severityRank(signal.severity)));
-}
-
-function severityRank(severity: string | undefined) {
-  if (severity === "critical") return 3;
-  if (severity === "warning") return 2;
-  if (severity === "info") return 1;
-  return 0;
-}
-
-function directionalCompare(value: number, direction: SortDirection, natural: SortDirection) {
-  return direction === natural ? value : -value;
-}
-
-export function defaultSortDirection(sort: DashboardSort): SortDirection {
-  return sort === "model" || sort === "context" ? "asc" : "desc";
-}
-
-function tokenTotal(session: SessionRecord) {
-  return session.tokens?.totalTokens ?? 0;
-}
-
-export function groupSessionsByProject(sessions: SessionRecord[]): ProjectSessionGroup[] {
-  const groups = new Map<string, ProjectSessionGroup>();
-
-  for (const session of sessions) {
-    const cwd = session.live?.cwd ?? session.cwd;
-    const key = cwd || "unknown";
-    const label = projectLabel(cwd);
-    const existing = groups.get(key);
-
-    if (existing) {
-      existing.sessions.push(session);
-      continue;
-    }
-
-    groups.set(key, {
-      key,
-      label,
-      detail: cwd && cwd !== label ? cwd : undefined,
-      sessions: [session],
-    });
-  }
-
-  return [...groups.values()];
 }
 
 function activateSession(session: SessionRecord, onOpen: (session: SessionRecord) => void) {
@@ -484,52 +370,8 @@ function handleSessionKeyDown(
   activateSession(session, onOpen);
 }
 
-export function modelLabel(session: { model?: string; provider?: string; source?: string }) {
-  return session.model || session.provider || session.source || "";
-}
-
-export function modelIcon(session: {
-  model?: string;
-  provider?: string;
-  source?: string;
-}): SessionIcon {
-  return (
-    providerIcon(session.provider) ??
-    providerIcon(session.source) ??
-    providerIcon(providerFromModel(session.model)) ??
-    UiTerminal
-  );
-}
-
-// providerFromModel maps a model-id fragment to a provider key that providerIcon
-// understands, for sessions that carry a model but no explicit provider/source.
-function providerFromModel(model?: string): string | undefined {
-  const value = (model ?? "").toLowerCase();
-  if (value.includes("claude") || value.includes("anthropic")) return "anthropic";
-  if (value.includes("codex") || value.includes("gpt") || /\bo\d/.test(value)) return "openai";
-  if (value.includes("gemini") || value.includes("google")) return "google";
-  if (value.includes("deepseek")) return "deepseek";
-  if (value.includes("mistral")) return "mistral";
-  return undefined;
-}
-
-export function effortLabel(value: string | undefined) {
-  return value ? value.replace(/_/g, " ") : undefined;
-}
-
 function formatPercent(value: number | undefined) {
   return value === undefined ? "--" : `${value.toFixed(1)}%`;
-}
-
-export function formatRelativeTime(value: string | undefined) {
-  if (!value) return "--";
-  const time = new Date(value).getTime();
-  if (Number.isNaN(time)) return value;
-  const delta = Date.now() - time;
-  if (delta < 60_000) return "now";
-  if (delta < 3_600_000) return `${Math.round(delta / 60_000)}m ago`;
-  if (delta < 86_400_000) return `${Math.round(delta / 3_600_000)}h ago`;
-  return `${Math.round(delta / 86_400_000)}d ago`;
 }
 
 function contextTone(percent: number) {

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import {
   cleanup,
   fireEvent,
@@ -10,9 +10,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CommandPalette,
-  directSessionId,
   useCommandPaletteShortcut,
 } from "./CommandPalette";
+import { directSessionId } from "./commandPaletteHelpers";
 import type { SessionRecord } from "./sessionData";
 import type { PromptSummary } from "./promptData";
 
@@ -114,7 +114,8 @@ describe("directSessionId", () => {
 describe("useCommandPaletteShortcut", () => {
   function Harness() {
     const [count, setCount] = useState(0);
-    useCommandPaletteShortcut(() => setCount((c) => c + 1));
+    const toggle = useCallback(() => setCount((c) => c + 1), []);
+    useCommandPaletteShortcut(toggle);
     return <span data-testid="count">{count}</span>;
   }
 

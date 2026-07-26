@@ -206,23 +206,37 @@ function initialStreamState(): PromptRunStreamReducerState {
 export function usePromptRunStream(
   runID: string | undefined,
   basePath = PROMPT_RUN_BASE,
+  onChange?: (runID: string, state: PromptRunStreamState) => void,
 ): PromptRunStreamState {
   const [state, dispatch] = useReducer(
     streamReducer,
     undefined,
     initialStreamState,
   );
+  const stateRef = useRef(state);
   const messageIndex = useRef<MessageIndex | null>(null);
 
   useEffect(() => {
     messageIndex.current = null;
+    const next = streamReducer(stateRef.current, { type: "reset", runID });
+    stateRef.current = next;
     dispatch({ type: "reset", runID });
   }, [runID]);
+
+  const update = useCallback(
+    (action: PromptRunStreamAction) => {
+      const next = streamReducer(stateRef.current, action);
+      stateRef.current = next;
+      dispatch(action);
+      if (runID) onChange?.(runID, next);
+    },
+    [onChange, runID],
+  );
 
   const onEvent = useCallback((event: string, data: string) => {
     if (event === "run") {
       const run = parse<PromptRunFrame>(data);
-      if (run) dispatch({ type: "run", run });
+      if (run) update({ type: "run", run });
       return;
     }
     if (event === "state") {
@@ -230,7 +244,7 @@ export function usePromptRunStream(
       if (!chatState) return;
       const index = getMessageIndex(messageIndex);
       index.discarded = new Set(chatState.discardedMessageIds ?? []);
-      dispatch({
+      update({
         type: "chat-state",
         chatState,
         messages: indexedMessages(index),
@@ -239,11 +253,11 @@ export function usePromptRunStream(
     }
     if (event === "done") {
       const sum = parse<PromptRunSummary>(data);
-      dispatch({ type: "done", summary: sum });
+      update({ type: "done", summary: sum });
       return;
     }
     if (event === "error") {
-      dispatch({
+      update({
         type: "error",
         error: parse<{ error?: string }>(data)?.error ?? "run failed",
       });
@@ -256,8 +270,8 @@ export function usePromptRunStream(
     const key = message.id ?? `auto-${index.autoSeq++}`;
     if (!index.byId.has(key)) index.order.push(key);
     index.byId.set(key, message);
-    dispatch({ type: "message", messages: indexedMessages(index) });
-  }, []);
+    update({ type: "message", messages: indexedMessages(index) });
+  }, [update]);
 
   const url = runID
     ? `${basePath}/${encodeURIComponent(runID)}/stream`
@@ -293,9 +307,11 @@ function getMessageIndex(
 }
 
 function indexedMessages(index: MessageIndex): SessionUIMessage[] {
-  return index.order
-    .filter((key) => !index.discarded.has(key))
-    .map((key) => index.byId.get(key)!);
+  const messages: SessionUIMessage[] = [];
+  for (const key of index.order) {
+    if (!index.discarded.has(key)) messages.push(index.byId.get(key)!);
+  }
+  return messages;
 }
 
 function parse<T>(data: string): T | undefined {
