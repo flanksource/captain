@@ -9,6 +9,20 @@ import (
 )
 
 var _ = Describe("worktree metadata", func() {
+	It("rejects parent traversal in project discovery", func() {
+		root := GinkgoT().TempDir()
+		project := filepath.Join(root, "project")
+		outside := filepath.Join(root, "outside")
+		Expect(os.MkdirAll(project, 0o755)).To(Succeed())
+		Expect(os.MkdirAll(outside, 0o755)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(outside, "go.mod"), []byte("module example.com/outside\n"), 0o600)).To(Succeed())
+
+		info := FindProjectInfo(project + string(os.PathSeparator) + ".." + string(os.PathSeparator) + "outside")
+
+		Expect(info.MarkerFile).To(BeEmpty())
+		Expect(info.Root).To(BeEmpty())
+	})
+
 	It("does not treat a marker symlink outside the project as a match", func() {
 		root := GinkgoT().TempDir()
 		project := filepath.Join(root, "project")

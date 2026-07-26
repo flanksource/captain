@@ -64,7 +64,7 @@ func FindProjectRoot(dir string) string {
 // For git worktrees (where .git is a file), Root is the worktree directory (for correct
 // relative paths) and MainRoot is the main repository root (for project naming).
 func FindProjectInfo(dir string) ProjectInfo {
-	if dir == "" {
+	if dir == "" || strings.Contains(dir, "..") {
 		return ProjectInfo{}
 	}
 	current := dir
