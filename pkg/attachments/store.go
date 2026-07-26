@@ -93,7 +93,13 @@ func (s *Store) Open(id string) (*os.File, error) {
 	if err := ref.Validate(); err != nil {
 		return nil, err
 	}
-	file, err := os.Open(s.Path(id))
+	root, err := os.OpenRoot(s.directory)
+	if err != nil {
+		return nil, fmt.Errorf("open attachment store: %w", err)
+	}
+	defer root.Close()
+	digest := strings.TrimPrefix(id, api.AttachmentIDPrefix)
+	file, err := root.Open(filepath.Join("sha256", digest[:2], digest))
 	if err != nil {
 		return nil, fmt.Errorf("open attachment %s: %w", id, err)
 	}

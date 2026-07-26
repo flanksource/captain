@@ -84,6 +84,19 @@ Review {{diff}}.
     expect(updated.match(/^---$/gm)).toHaveLength(2);
   });
 
+  it("preserves carriage-return-delimited comments around frontmatter", () => {
+    const source =
+      "# prompt metadata\r---\rmodel: claude-sonnet-4-6\r---\rReview {{diff}}.\r";
+    const updated = updatePromptSchemaSource(source, "input", {
+      type: "object",
+      properties: { diff: { type: "string" } },
+    });
+
+    expect(updated).toMatch(/^# prompt metadata\r---\n/);
+    expect(updated).toContain("model: claude-sonnet-4-6");
+    expect(updated).toContain("Review {{diff}}.\r");
+  });
+
   it("removes the selected schema without removing sibling frontmatter", () => {
     const updated = updatePromptSchemaSource(SOURCE, "output", undefined);
 

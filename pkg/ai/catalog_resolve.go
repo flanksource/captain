@@ -2,7 +2,8 @@ package ai
 
 import (
 	"context"
-	"crypto/sha256"
+	"crypto/pbkdf2"
+	"crypto/sha512"
 	"encoding/hex"
 	"fmt"
 	"sort"
@@ -216,6 +217,7 @@ func filterResolved(rows []ResolvedModel, filter string) []ResolvedModel {
 //     resolves through the same prefixed-first path as billing, so cached Claude
 //     prices from the static fallback table are stale.
 const resolveSchemaVersion = "v2"
+const resolveFingerprintSalt = "captain/model-cache/api-key"
 
 func resolveFingerprint(opts ResolveOptions) (string, error) {
 	var present []string
@@ -225,8 +227,11 @@ func resolveFingerprint(opts ResolveOptions) (string, error) {
 			return "", err
 		}
 		if resolved.Token != "" {
-			sum := sha256.Sum256([]byte(resolved.Token))
-			present = append(present, string(b)+":"+hex.EncodeToString(sum[:8]))
+			fingerprint, err := pbkdf2.Key(sha512.New, resolved.Token, []byte(resolveFingerprintSalt), 4096, 8)
+			if err != nil {
+				return "", fmt.Errorf("fingerprint %s API key: %w", b, err)
+			}
+			present = append(present, string(b)+":"+hex.EncodeToString(fingerprint))
 		}
 	}
 	sort.Strings(present)

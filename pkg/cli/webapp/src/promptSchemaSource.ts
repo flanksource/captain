@@ -2,11 +2,6 @@ import { isMap, parseDocument } from "yaml";
 
 export type PromptSchemaKind = "input" | "output";
 
-const FRONTMATTER =
-  /^((?:(?:#[^\n]*|[ \t]*)\r?\n)*)---[ \t]*(?:\r\n|\r|\n)([\s\S]*?)(?:\r\n|\r|\n)---[ \t]*(?:\r\n|\r|\n)([\s\S]*)$/;
-const EMPTY_FRONTMATTER =
-  /^((?:(?:#[^\n]*|[ \t]*)\r?\n)*)---[ \t]*(?:\r\n|\r|\n)---[ \t]*(?:\r\n|\r|\n)([\s\S]*)$/;
-
 type PromptSourceParts = {
   prefix: string;
   frontmatter: string;
@@ -53,13 +48,73 @@ export function readPromptSchemas(source: string) {
 }
 
 function splitPromptSource(source: string): PromptSourceParts {
-  const match = FRONTMATTER.exec(source);
-  const emptyMatch = match ? null : EMPTY_FRONTMATTER.exec(source);
+  let cursor = 0;
+  while (cursor < source.length) {
+    const line = readPromptLine(source, cursor);
+    if (!line.terminated || !isPromptPrefixLine(line.value)) break;
+    cursor = line.next;
+  }
+
+  const prefixEnd = cursor;
+  const opening = readPromptLine(source, cursor);
+  if (!opening.terminated || !isFrontmatterDelimiter(opening.value)) {
+    return { prefix: "", frontmatter: "{}\n", body: source };
+  }
+
+  const frontmatterStart = opening.next;
+  cursor = frontmatterStart;
+  while (cursor < source.length) {
+    const lineStart = cursor;
+    const line = readPromptLine(source, cursor);
+    if (!line.terminated) break;
+    if (isFrontmatterDelimiter(line.value)) {
+      const frontmatter = source
+        .slice(frontmatterStart, lineStart)
+        .split("\r\n")
+        .join("\n")
+        .split("\r")
+        .join("\n");
+      return {
+        prefix: source.slice(0, prefixEnd),
+        frontmatter: frontmatter.trim() ? frontmatter : "{}\n",
+        body: source.slice(line.next),
+      };
+    }
+    cursor = line.next;
+  }
+
+  return { prefix: "", frontmatter: "{}\n", body: source };
+}
+
+function readPromptLine(source: string, start: number) {
+  let end = start;
+  while (end < source.length && source[end] !== "\r" && source[end] !== "\n") {
+    end++;
+  }
+  let next = end;
+  if (source[next] === "\r") next++;
+  if (source[next] === "\n") next++;
   return {
-    prefix: match?.[1] ?? emptyMatch?.[1] ?? "",
-    frontmatter: match?.[2]?.trim() ? match[2] : "{}\n",
-    body: match?.[3] ?? emptyMatch?.[2] ?? source,
+    value: source.slice(start, end),
+    next,
+    terminated: next > end,
   };
+}
+
+function isPromptPrefixLine(line: string) {
+  if (line.startsWith("#")) return true;
+  for (const character of line) {
+    if (character !== " " && character !== "\t") return false;
+  }
+  return true;
+}
+
+function isFrontmatterDelimiter(line: string) {
+  if (!line.startsWith("---")) return false;
+  for (const character of line.slice(3)) {
+    if (character !== " " && character !== "\t") return false;
+  }
+  return true;
 }
 
 function parsePromptFrontmatter(frontmatter: string) {

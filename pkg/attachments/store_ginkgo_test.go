@@ -76,6 +76,25 @@ var _ = Describe("Store", func() {
 		Expect(err).To(MatchError(ContainSubstring("exceeds 1 file limit")))
 	})
 
+	It("does not follow attachment symlinks outside the store", func() {
+		root := GinkgoT().TempDir()
+		store, err := attachments.NewStore(attachments.StoreOptions{Directory: filepath.Join(root, "store")})
+		Expect(err).NotTo(HaveOccurred())
+
+		outside := filepath.Join(root, "outside.txt")
+		Expect(os.WriteFile(outside, []byte("secret"), 0o600)).To(Succeed())
+		id := api.AttachmentIDPrefix + strings.Repeat("a", sha256.Size*2)
+		path := store.Path(id)
+		Expect(os.MkdirAll(filepath.Dir(path), 0o700)).To(Succeed())
+		Expect(os.Symlink(outside, path)).To(Succeed())
+
+		file, err := store.Open(id)
+		if file != nil {
+			DeferCleanup(file.Close)
+		}
+		Expect(err).To(HaveOccurred())
+	})
+
 	It("garbage-collects only old unreferenced blobs and supports dry-run", func() {
 		root := GinkgoT().TempDir()
 		store, err := attachments.NewStore(attachments.StoreOptions{Directory: filepath.Join(root, "store")})
