@@ -85,6 +85,8 @@ var _ = Describe("attachment flags", func() {
 	})
 
 	It("reports an unsupported batch attachment as one failed model", func() {
+		withGinkgoCaptainDB()
+
 		dir := GinkgoT().TempDir()
 		path := filepath.Join(dir, "diagram.png")
 		content := append([]byte("\x89PNG\r\n\x1a\n"), make([]byte, 512)...)

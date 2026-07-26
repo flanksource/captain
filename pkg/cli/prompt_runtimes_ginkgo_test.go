@@ -120,6 +120,8 @@ Review the screenshot.
 
 	DescribeTable("executes name-resolved runtimes without CLI selectors",
 		func(id string) {
+			withGinkgoCaptainDB()
+
 			originalExecute := executePromptRequestFunc
 			DeferCleanup(func() { executePromptRequestFunc = originalExecute })
 			var mu sync.Mutex

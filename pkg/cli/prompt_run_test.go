@@ -16,6 +16,8 @@ import (
 )
 
 func TestExecuteSyncRunMultiModelsParallel(t *testing.T) {
+	withTestCaptainDB(t)
+
 	old := executePromptRequestFunc
 	t.Cleanup(func() { executePromptRequestFunc = old })
 
@@ -114,6 +116,8 @@ func TestExecuteSyncRunMultiModelsHonorsNoStream(t *testing.T) {
 }
 
 func TestExecuteSyncRunMultiModelsPartialFailure(t *testing.T) {
+	withTestCaptainDB(t)
+
 	old := executePromptRequestFunc
 	t.Cleanup(func() { executePromptRequestFunc = old })
 
