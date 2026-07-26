@@ -1,4 +1,7 @@
 {
+  "claude-opus-5": {
+    "preferred": true
+  },
   "claude-sonnet-5": {
     "preferred": true
   },
@@ -71,6 +74,9 @@
   },
   "gpt-5.5": {
     "preferred": false
+  },
+  "gemini-3.6-flash": {
+    "preferred": true
   },
   "gemini-3.5-flash": {
     "preferred": true

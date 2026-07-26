@@ -28,4 +28,4 @@ all:
 	@task all
 
 models-update:
-	go run ./pkg/ai/internal/gen-model-registry --patches pkg/ai/internal/gen-model-registry/patches.json --output pkg/ai/model_registry.json
+	@task models:update

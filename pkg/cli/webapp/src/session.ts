@@ -51,7 +51,7 @@ export function agentModelFor(values: CommandValues) {
   ) {
     return "gpt-5.6-sol";
   }
-  if (model.includes("opus")) return "claude-opus-4-8";
+  if (model.includes("opus")) return "claude-opus-5";
   if (model.includes("haiku")) return "claude-haiku-4-5";
   if (model.startsWith("claude-agent-")) return model.replace(/^claude-agent-/, "claude-");
   return DEFAULT_AGENT_MODEL;

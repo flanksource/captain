@@ -216,13 +216,13 @@ func TestDecodeUsage(t *testing.T) {
 func TestAliasModel(t *testing.T) {
 	cases := map[string]string{
 		"claude-agent-sonnet":   "claude-sonnet-5",
-		"claude-agent-opus":     "claude-opus-4-8",
+		"claude-agent-opus":     "claude-opus-5",
 		"claude-code-haiku":     "claude-haiku-4-5",
 		"claude-sonnet-4-5":     "claude-sonnet-4-6",
 		// A bare family-less token resolves through the provider's emptyFamily,
 		// which is opus (see registry/providers.go). The "" case is short-circuited
 		// by aliasModel itself and so still answers sonnet.
-		"claude-agent-": "claude-opus-4-8",
+		"claude-agent-": "claude-opus-5",
 		"":              "claude-sonnet-5",
 		"claude-agent-opus-4-1": "claude-opus-4-8",
 	}

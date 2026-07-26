@@ -12,7 +12,7 @@ import (
 // the standalone result part, and that metadata carries the session cost.
 func TestToUIMessages_MergesToolResultIntoCall(t *testing.T) {
 	readInput := rawInput(t, map[string]any{"file_path": "/repo/x.go"})
-	e := assistantEntry("a1", "", "claude-opus-4",
+	e := assistantEntry("a1", "", "claude-opus-4-5",
 		&claude.Usage{InputTokens: 1000, OutputTokens: 500},
 		claude.ContentBlock{Type: claude.ContentTypeText, Text: "reading"},
 		toolUseBlock("tu-1", "Read", readInput),
@@ -65,7 +65,7 @@ func TestToUIMessages_MergesToolResultIntoCall(t *testing.T) {
 // result as Response — the shape the session viewer / clicky-ui consume.
 func TestToReplayEntries_MessageAndToolRows(t *testing.T) {
 	readInput := rawInput(t, map[string]any{"file_path": "/repo/x.go"})
-	e := assistantEntry("a1", "", "claude-opus-4", nil,
+	e := assistantEntry("a1", "", "claude-opus-4-5", nil,
 		claude.ContentBlock{Type: claude.ContentTypeText, Text: "reading the file"},
 		toolUseBlock("tu-1", "Read", readInput),
 	)

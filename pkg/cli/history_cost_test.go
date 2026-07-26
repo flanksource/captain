@@ -32,7 +32,7 @@ func TestRunHistory_CostWithoutClaudeFlag(t *testing.T) {
 		"cwd":       project,
 		"message": map[string]any{
 			"role":  "assistant",
-			"model": "claude-opus-4",
+			"model": "claude-opus-4-5",
 			"usage": map[string]any{"input_tokens": 1000, "output_tokens": 500},
 			"content": []any{map[string]any{
 				"type":  "tool_use",

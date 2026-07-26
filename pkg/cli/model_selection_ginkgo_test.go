@@ -46,7 +46,7 @@ var _ = Describe("CLI model selection", func() {
 		cfg, err := (AIProviderOptions{}).ToConfig()
 
 		Expect(err).NotTo(HaveOccurred())
-		Expect(cfg.Model.Name).To(Equal("claude-opus-4-8"))
+		Expect(cfg.Model.Name).To(Equal("claude-opus-5"))
 		Expect(cfg.Model.Backend).To(Equal(api.BackendClaudeAgent))
 	})
 

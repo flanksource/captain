@@ -32,6 +32,9 @@ type KnownModel struct {
 	Temperature      bool     `json:"temperature,omitempty"`
 	ContextWindow    int      `json:"contextWindow,omitempty"`
 	InputMediaTypes  []string `json:"inputMediaTypes,omitempty"`
+	// Cost is the model's published list price. Nil means the catalog snapshot
+	// carries no price for this id — a miss, never a free model.
+	Cost *ModelCost `json:"cost,omitempty"`
 	Preferred        bool     `json:"preferred,omitempty"`
 	AdaptiveThinking bool     `json:"adaptiveThinking,omitempty"`
 	Availability     []string `json:"availability,omitempty"`

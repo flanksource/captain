@@ -79,7 +79,7 @@ func TestHandleSessionGetReturnsAllMatches(t *testing.T) {
 			"type": "assistant", "sessionId": "sess-web", "uuid": "a1",
 			"timestamp": "2026-07-06T10:00:00Z", "cwd": project,
 			"message": map[string]any{
-				"role": "assistant", "model": "claude-opus-4",
+				"role": "assistant", "model": "claude-opus-4-5",
 				"content": []any{map[string]any{"type": "text", "text": "hello from the model"}},
 			},
 		},

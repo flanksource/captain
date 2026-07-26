@@ -31,6 +31,18 @@ type modelsDevModel struct {
 	ReleaseDate      string                     `json:"release_date"`
 	Modalities       modelsDevModalities        `json:"modalities"`
 	Limit            modelsDevLimit             `json:"limit"`
+	Cost             modelsDevCost              `json:"cost"`
+}
+
+// modelsDevCost is a model's published list price in USD per million tokens.
+// The upstream block also carries tiered pricing (e.g. OpenAI's >200k-context
+// rates) and per-modality audio rates; captain prices a single flat tier, so
+// only the base four are read.
+type modelsDevCost struct {
+	Input      float64 `json:"input"`
+	Output     float64 `json:"output"`
+	CacheRead  float64 `json:"cache_read"`
+	CacheWrite float64 `json:"cache_write"`
 }
 
 // modelsDevReasoningOption is one entry of a model's reasoning_options; only its
@@ -62,6 +74,7 @@ type generatedModel struct {
 	Reasoning        bool     `json:"reasoning,omitempty"`
 	Temperature      bool     `json:"temperature,omitempty"`
 	ContextWindow    int      `json:"contextWindow,omitempty"`
+	Cost             *cost    `json:"cost,omitempty"`
 	InputMediaTypes  []string `json:"inputMediaTypes,omitempty"`
 	Preferred        bool     `json:"preferred,omitempty"`
 	AdaptiveThinking bool     `json:"adaptiveThinking,omitempty"`
@@ -75,6 +88,30 @@ type generatedModel struct {
 	// hardcoded in pkg/ai, where the spec decoder could not see it.
 	Aliases      []string `json:"aliases,omitempty"`
 	SupersededBy string   `json:"supersededBy,omitempty"`
+}
+
+// cost mirrors pkg/api/registry.ModelCost: USD per million tokens. It is a
+// pointer on generatedModel so a model models.dev prices at nothing at all
+// (and a patch-only entry that names no cost) omits the block entirely rather
+// than claiming a free model.
+type cost struct {
+	Input      float64 `json:"input,omitempty"`
+	Output     float64 `json:"output,omitempty"`
+	CacheRead  float64 `json:"cacheRead,omitempty"`
+	CacheWrite float64 `json:"cacheWrite,omitempty"`
+}
+
+// deriveCost carries models.dev's list price into the catalog so pricing has a
+// per-model, per-version source of truth. Captain used to price Claude from a
+// hand-written family table (any "opus" id → $15/$75), which silently drifted
+// three-fold once Opus 4.5 cut prices; sourcing it here means `task
+// models:update` corrects prices along with everything else.
+func deriveCost(model modelsDevModel) *cost {
+	c := model.Cost
+	if c.Input == 0 && c.Output == 0 {
+		return nil
+	}
+	return &cost{Input: c.Input, Output: c.Output, CacheRead: c.CacheRead, CacheWrite: c.CacheWrite}
 }
 
 func main() {
@@ -235,7 +272,7 @@ func generateModels(data []byte, patches map[string]json.RawMessage) ([]generate
 
 func generatedModelFromModelsDev(provider, id string, model modelsDevModel, explicitlyPatched bool) (generatedModel, bool) {
 	id = strings.TrimSpace(id)
-	if id == "" || !supportsTextOutput(model) || (!explicitlyPatched && hiddenModel(provider, id)) {
+	if id == "" || !supportsTextIO(model) || (!explicitlyPatched && hiddenModel(provider, id)) {
 		return generatedModel{}, false
 	}
 	identity, ok := captainai.ParseModelIdentity(provider, id)
@@ -261,6 +298,7 @@ func generatedModelFromModelsDev(provider, id string, model modelsDevModel, expl
 		Reasoning:        model.Reasoning,
 		Temperature:      model.Temperature,
 		ContextWindow:    model.Limit.Context,
+		Cost:             deriveCost(model),
 		InputMediaTypes:  deriveInputMediaTypes(model.Modalities.Input),
 		AdaptiveThinking: deriveAdaptiveThinking(provider, model),
 		SupportedEfforts: deriveSupportedEfforts(provider, model),
@@ -333,12 +371,23 @@ func deriveAdaptiveThinking(provider string, model modelsDevModel) bool {
 	return hasEffort && !hasBudget
 }
 
-func supportsTextOutput(model modelsDevModel) bool {
-	if len(model.Modalities.Output) == 0 {
+// supportsTextIO keeps only models Captain can actually prompt: it must accept a
+// text prompt and return text. Audio-only Live API entries (e.g.
+// gemini-3.5-live-translate-preview) declare no text input and would otherwise
+// land in the catalog as models no prompt can be sent to.
+func supportsTextIO(model modelsDevModel) bool {
+	return declaresText(model.Modalities.Input) && declaresText(model.Modalities.Output)
+}
+
+// declaresText reports whether a modality list names text. An empty list means
+// models.dev did not record modalities, which predates the field and is treated
+// as plain text.
+func declaresText(modalities []string) bool {
+	if len(modalities) == 0 {
 		return true
 	}
-	for _, output := range model.Modalities.Output {
-		if output == "text" {
+	for _, modality := range modalities {
+		if strings.EqualFold(strings.TrimSpace(modality), "text") {
 			return true
 		}
 	}

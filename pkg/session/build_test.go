@@ -144,9 +144,9 @@ func TestApprovalStats(t *testing.T) {
 }
 
 func TestCostFromUsage_OpusPricing(t *testing.T) {
-	c := CostFromUsage(&claude.Usage{InputTokens: 1000, OutputTokens: 500}, "claude-opus-4")
-	// opus: input 15/Mtok, output 75/Mtok → 0.015 + 0.0375
-	if want := 0.0525; math.Abs(c.Total()-want) > 1e-9 {
+	c := CostFromUsage(&claude.Usage{InputTokens: 1000, OutputTokens: 500}, "claude-opus-4-5")
+	// opus 4.5: input 5/Mtok, output 25/Mtok → 0.005 + 0.0125
+	if want := 0.0175; math.Abs(c.Total()-want) > 1e-9 {
 		t.Errorf("total = %v, want %v", c.Total(), want)
 	}
 	if c.InputTokens != 1000 || c.OutputTokens != 500 {
@@ -154,10 +154,23 @@ func TestCostFromUsage_OpusPricing(t *testing.T) {
 	}
 }
 
+// TestCostFromUsage_UnpricedModel pins that a model the catalog does not price
+// keeps its token counts and reports no cost, rather than being billed at some
+// other model's rate.
+func TestCostFromUsage_UnpricedModel(t *testing.T) {
+	c := CostFromUsage(&claude.Usage{InputTokens: 1000, OutputTokens: 500}, "some-retired-model")
+	if c.Total() != 0 {
+		t.Errorf("total = %v, want 0 for an unpriced model", c.Total())
+	}
+	if c.InputTokens != 1000 || c.OutputTokens != 500 {
+		t.Errorf("tokens = %d/%d, want 1000/500 preserved", c.InputTokens, c.OutputTokens)
+	}
+}
+
 func TestBuildSession_CostFilesPlanApprovals(t *testing.T) {
 	writeBlock := toolUseBlock("w1", "Write", rawInput(t, map[string]any{"file_path": "/repo/x.go", "content": "package x"}))
 	planBlock := toolUseBlock("p1", "ExitPlanMode", rawInput(t, map[string]any{"planFilePath": "/home/u/.claude/plans/foo.md", "plan": "do X"}))
-	e := assistantEntry("a1", "", "claude-opus-4",
+	e := assistantEntry("a1", "", "claude-opus-4-5",
 		&claude.Usage{InputTokens: 1000, OutputTokens: 500},
 		claude.ContentBlock{Type: claude.ContentTypeText, Text: "hello"},
 		claude.ContentBlock{Type: claude.ContentTypeText, Text: "<proposed_plan>tagged fallback</proposed_plan>"},
@@ -178,7 +191,7 @@ func TestBuildSession_CostFilesPlanApprovals(t *testing.T) {
 	if got := s.HistoryFile; got != "/p/root-sess.jsonl" {
 		t.Errorf("history file = %q, want /p/root-sess.jsonl", got)
 	}
-	if want := 0.0525; math.Abs(s.Cost.Total()-want) > 1e-9 {
+	if want := 0.0175; math.Abs(s.Cost.Total()-want) > 1e-9 {
 		t.Errorf("session cost = %v, want %v", s.Cost.Total(), want)
 	}
 	if s.Usage.InputTokens != 1000 {
@@ -200,7 +213,7 @@ func TestBuildSession_CostFilesPlanApprovals(t *testing.T) {
 }
 
 func TestBuildSession_TaggedPlanFallbackAndMemoryCitation(t *testing.T) {
-	entry := assistantEntry("tagged-1", "", "claude-opus-4", nil,
+	entry := assistantEntry("tagged-1", "", "claude-opus-4-5", nil,
 		claude.ContentBlock{Type: claude.ContentTypeText, Text: `<proposed_plan>
 # Shared fallback
 </proposed_plan>
@@ -241,7 +254,7 @@ MEMORY.md:10-12|note=[shared parser]
 }
 
 func TestBuildSession_EnvelopeRendersSummary(t *testing.T) {
-	entry := assistantEntry("env-1", "", "claude-opus-4", nil,
+	entry := assistantEntry("env-1", "", "claude-opus-4-5", nil,
 		claude.ContentBlock{Type: claude.ContentTypeText, Text: `{"endStatus":"completed","plan":{"content":"","path":"/Users/moshe/.codex/plans/x.md","status":"new"},"questions":[],"summary":"Authored the review-banner plan."}`},
 	)
 	uses := claude.ExtractToolUses([]claude.HistoryEntry{entry})
@@ -333,7 +346,7 @@ func TestBuildSession_MetadataTurnsCapabilitiesBudget(t *testing.T) {
 			Timestamp: "2026-07-05T10:00:06Z",
 			Message: claude.Message{
 				Role:       claude.MessageRoleAssistant,
-				Model:      "claude-opus-4",
+				Model:      "claude-opus-4-5",
 				StopReason: claude.StopReasonEndTurn,
 				Usage: &claude.Usage{
 					InputTokens:              1000,
@@ -392,7 +405,7 @@ func TestBuildSession_MetadataTurnsCapabilitiesBudget(t *testing.T) {
 	if len(turn.Events) != 2 || turn.Events[0].Type != "queue-operation" || turn.Events[1].Type != "budget_usd" {
 		t.Errorf("turn events = %+v, want queue-operation and budget_usd", turn.Events)
 	}
-	if turn.Model != "claude-opus-4" || turn.StopReason != string(claude.StopReasonEndTurn) {
+	if turn.Model != "claude-opus-4-5" || turn.StopReason != string(claude.StopReasonEndTurn) {
 		t.Errorf("turn model/stop = %q/%q", turn.Model, turn.StopReason)
 	}
 	if !equalStrings(turn.MessageIDs, []string{"user-1", "assistant-1"}) {

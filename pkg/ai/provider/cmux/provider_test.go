@@ -82,7 +82,7 @@ func TestNewDerivesAgentAndBackend(t *testing.T) {
 		wantAgent   string
 		wantBackend api.Backend
 	}{
-		{"claude cmux", api.BackendClaudeCmux, "opus", "claude-opus-4-8", "claude", api.BackendClaudeCmux},
+		{"claude cmux", api.BackendClaudeCmux, "opus", "claude-opus-5", "claude", api.BackendClaudeCmux},
 		{"codex cmux", api.BackendCodexCmux, "gpt-5", "gpt-5", "codex", api.BackendCodexCmux},
 	}
 	for _, tc := range cases {

@@ -87,6 +87,28 @@ func TestApplyPatchesNewEntryMissingFieldsErrors(t *testing.T) {
 	}
 }
 
+func TestSupportsTextIORejectsNonPromptableModalities(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		input  []string
+		output []string
+		want   bool
+	}{
+		{"text only", []string{"text"}, []string{"text"}, true},
+		{"multimodal input", []string{"text", "image", "audio"}, []string{"text"}, true},
+		{"unrecorded modalities", nil, nil, true},
+		{"audio-only input", []string{"audio"}, []string{"text"}, false},
+		{"image-only output", []string{"text"}, []string{"image"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			model := modelsDevModel{Modalities: modelsDevModalities{Input: tc.input, Output: tc.output}}
+			if got := supportsTextIO(model); got != tc.want {
+				t.Errorf("supportsTextIO(in=%v out=%v) = %v, want %v", tc.input, tc.output, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestDeriveSupportedEffortsDropsNone(t *testing.T) {
 	got := deriveSupportedEfforts("openai", modelsDevModel{ReasoningOptions: []modelsDevReasoningOption{{
 		Type:   "effort",

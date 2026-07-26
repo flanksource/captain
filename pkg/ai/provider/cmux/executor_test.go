@@ -124,8 +124,8 @@ func TestModelFlag(t *testing.T) {
 	}{
 		{"claude", "claude", ""},
 		{"claude", "", ""},
-		{"claude", "opus", "claude-opus-4-8"},
-		{"claude", "claude-agent-opus", "claude-opus-4-8"},
+		{"claude", "opus", "claude-opus-5"},
+		{"claude", "claude-agent-opus", "claude-opus-5"},
 		{"claude", "claude-code-sonnet", "claude-sonnet-5"},
 		{"codex", "codex", ""},
 		{"codex", "gpt-5", "gpt-5"},

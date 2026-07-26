@@ -265,10 +265,12 @@ func TestFetchGeminiModels_StripsModelsPrefix(t *testing.T) {
 		if r.URL.RawQuery != "" {
 			t.Errorf("API key must not be present in URL query: %q", r.URL.RawQuery)
 		}
+		// Both ids must be preferred registry models: the release-date fallback
+		// reads Catalog(), which only carries preferred entries.
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"models": []map[string]any{
-				{"name": "models/gemini-2.5-flash", "display_name": "Gemini 2.5 Flash"},
-				{"name": "models/gemini-2.5-pro", "display_name": "Gemini 2.5 Pro"},
+				{"name": "models/gemini-3.6-flash", "display_name": "Gemini 3.6 Flash"},
+				{"name": "models/gemini-3.5-flash", "display_name": "Gemini 3.5 Flash"},
 			},
 		})
 	}))
@@ -279,10 +281,10 @@ func TestFetchGeminiModels_StripsModelsPrefix(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FetchGeminiModels: %v", err)
 	}
-	if len(got) != 2 || got[0].ID != "gemini-2.5-flash" || got[0].Name != "Gemini 2.5 Flash" {
+	if len(got) != 2 || got[0].ID != "gemini-3.6-flash" || got[0].Name != "Gemini 3.6 Flash" {
 		t.Errorf("unexpected: %+v", got)
 	}
-	if got[1].ID != "gemini-2.5-pro" || got[1].ReleaseDate == "" {
+	if got[1].ID != "gemini-3.5-flash" || got[1].ReleaseDate == "" {
 		t.Errorf("expected Gemini catalog release-date fallback, got %+v", got)
 	}
 	for _, m := range got {

@@ -12,9 +12,12 @@ import (
 // not prefix bugs: the id resolves to no entry whether or not it is namespaced.
 // Listed explicitly so the hole is visible and shrinks when upstream catches up,
 // rather than being hidden by a permissive assertion.
-var knownPricingGaps = map[string]string{
-	"gpt-5.6": "OpenRouter lists the gpt-5.6-{sol,terra,luna} variants but not the api-only base id",
-}
+//
+// Empty since the generated catalog carries its own list prices: a model captain
+// knows about now prices even when OpenRouter never lists it — the api-only
+// "gpt-5.6" base id (OpenRouter has only the {sol,terra,luna} variants) was the
+// last hole. Keep the mechanism for the next upstream gap.
+var knownPricingGaps = map[string]string{}
 
 // TestPricingIDsCoverEveryCatalogModel guards the failure mode that motivated
 // unifying the pricing prefixes: a wrong namespace does not error, it just
@@ -69,9 +72,9 @@ func TestPricingPrefixIsNotCatalogPrefix(t *testing.T) {
 
 // TestPricingAgreesAcrossCatalogAndBilling: the catalog and the cost path must
 // price a model identically. They used to run different lookups — the catalog
-// tried the bare id first (which the classify-on-miss static table always
-// answers for Claude) while billing tried the prefixed key first — so the price
-// shown could differ from the price charged.
+// tried the bare id first (which the classify-on-miss Claude family table always
+// answered, at the wrong rate) while billing tried the prefixed key first — so
+// the price shown could differ from the price charged.
 func TestPricingAgreesAcrossCatalogAndBilling(t *testing.T) {
 	pricing.EnsureLoaded()
 

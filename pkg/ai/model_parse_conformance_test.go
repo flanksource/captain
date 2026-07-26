@@ -53,7 +53,7 @@ func model(name string, backend api.Backend, effort api.Effort) api.Model {
 var agreedCases = []parseCase{
 	// Family aliases resolve to the exact current registry model.
 	{in: "sonnet", want: model("claude-sonnet-5", api.BackendAnthropic, "")},
-	{in: "opus", want: model("claude-opus-4-8", api.BackendAnthropic, "")},
+	{in: "opus", want: model("claude-opus-5", api.BackendAnthropic, "")},
 	{in: "fable", want: model("claude-fable-5", api.BackendAnthropic, "")},
 
 	// A superseded exact id is rewritten to its successor.
@@ -160,7 +160,7 @@ var _ = Describe("model parse conformance", func() {
 			Expect(err).NotTo(HaveOccurred())
 			expectModel(got, model("claude-sonnet-5", api.BackendAnthropic, ""))
 			Expect(got.Fallbacks).To(HaveLen(1))
-			expectModel(got.Fallbacks[0], model("claude-opus-4-8", api.BackendClaudeCLI, api.EffortHigh))
+			expectModel(got.Fallbacks[0], model("claude-opus-5", api.BackendClaudeCLI, api.EffortHigh))
 		})
 	})
 

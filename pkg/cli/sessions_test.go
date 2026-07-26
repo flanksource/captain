@@ -194,7 +194,7 @@ func TestRunSessionGetReturnsAllProviderPrefixMatches(t *testing.T) {
 			"type": "assistant", "sessionId": providerID, "uuid": "a1",
 			"timestamp": "2026-07-14T10:00:00Z", "cwd": project,
 			"message": map[string]any{
-				"role": "assistant", "model": "claude-opus-4",
+				"role": "assistant", "model": "claude-opus-4-5",
 				"content": []any{map[string]any{"type": "text", "text": "canonical transcript"}},
 			},
 		},

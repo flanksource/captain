@@ -66,7 +66,7 @@ func TestExecuteSyncRunMultiModelsParallel(t *testing.T) {
 		model   string
 	}{
 		{api.BackendClaudeCLI, "claude-sonnet-5"},
-		{api.BackendClaudeCmux, "claude-opus-4-8"},
+		{api.BackendClaudeCmux, "claude-opus-5"},
 	}
 	for i, w := range want {
 		if got.Runs[i].Backend != string(w.backend) || got.Runs[i].Model != w.model {

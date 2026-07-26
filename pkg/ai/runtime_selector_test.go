@@ -31,7 +31,7 @@ func TestResolveModelSelectors(t *testing.T) {
 		{
 			name:        "agent claude shorthand",
 			in:          api.Model{Name: "agent:opus"},
-			wantName:    "claude-opus-4-8",
+			wantName:    "claude-opus-5",
 			wantBackend: api.BackendClaudeAgent,
 		},
 		{
@@ -43,7 +43,7 @@ func TestResolveModelSelectors(t *testing.T) {
 		{
 			name:        "exact backend",
 			in:          api.Model{Name: "claude-cmux:opus"},
-			wantName:    "claude-opus-4-8",
+			wantName:    "claude-opus-5",
 			wantBackend: api.BackendClaudeCmux,
 		},
 	}
@@ -70,7 +70,7 @@ func TestNormalizeModelForBackend(t *testing.T) {
 		{api.BackendClaudeCmux, "claude-opus-4-8", "claude-opus-4-8"},
 		{api.BackendClaudeCLI, "fable-5", "claude-fable-5"},
 		{api.BackendAnthropic, "opus-4-8", "claude-opus-4-8"},
-		{api.BackendClaudeAgent, "claude-agent-opus", "claude-opus-4-8"},
+		{api.BackendClaudeAgent, "claude-agent-opus", "claude-opus-5"},
 		{api.BackendClaudeAgent, "sonnet", "claude-sonnet-5"},
 		{api.BackendClaudeAgent, "sonnet-4", "claude-sonnet-4-6"},
 		{api.BackendClaudeAgent, "claude-sonnet-4-5", "claude-sonnet-4-6"},
@@ -121,8 +121,8 @@ func TestResolveModelSelectors_FallbackSelectors(t *testing.T) {
 	if len(got.Fallbacks) != 1 {
 		t.Fatalf("fallback count = %d, want 1", len(got.Fallbacks))
 	}
-	if fb := got.Fallbacks[0]; fb.Name != "claude-opus-4-8" || fb.Backend != api.BackendClaudeCmux {
-		t.Fatalf("fallback = %s/%s, want %s/%s", fb.Backend, fb.Name, api.BackendClaudeCmux, "claude-opus-4-8")
+	if fb := got.Fallbacks[0]; fb.Name != "claude-opus-5" || fb.Backend != api.BackendClaudeCmux {
+		t.Fatalf("fallback = %s/%s, want %s/%s", fb.Backend, fb.Name, api.BackendClaudeCmux, "claude-opus-5")
 	}
 }
 
@@ -140,7 +140,7 @@ func TestResolveRuntimeSelectors(t *testing.T) {
 	}
 	want := []string{
 		"claude-cli:claude-sonnet-5",
-		"claude-cmux:claude-opus-4-8",
+		"claude-cmux:claude-opus-5",
 		"openai:gpt-5.5",
 		"codex-agent:gpt-5.5",
 		"codex-cli:gpt-5.5",
