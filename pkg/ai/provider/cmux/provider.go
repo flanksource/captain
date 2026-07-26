@@ -171,7 +171,7 @@ func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, e
 // ExecuteStream drives one cmux run in a goroutine and streams ai.Events on a
 // buffered channel, closing it when done (always after exactly one EventResult).
 func (p *Provider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai.Event, error) {
-	req, schema, err := withSchemaPrompt(req)
+	req, schema, err := ai.WithSchemaPrompt(req)
 	if err != nil {
 		return nil, err
 	}
@@ -181,23 +181,6 @@ func (p *Provider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai
 	events := make(chan ai.Event, 32)
 	go p.drive(ctx, req, schema, events)
 	return events, nil
-}
-
-// withSchemaPrompt makes a structured-output request runnable on cmux (which
-// cannot enforce a schema natively) by appending a JSON-only schema instruction
-// to the user prompt and clearing the native schema fields so the run is a plain
-// text turn. The reply's JSON is validated and attached to EventResult in drive.
-func withSchemaPrompt(req ai.Request) (ai.Request, json.RawMessage, error) {
-	schema, err := ai.SchemaJSONFor(req.Prompt)
-	if err != nil {
-		return req, nil, err
-	}
-	if len(schema) > 0 {
-		req.Prompt.User = strings.TrimRight(req.Prompt.User, "\n") + "\n\n" + ai.SchemaInstruction(string(schema))
-	}
-	req.Prompt.Schema = nil
-	req.Prompt.SchemaJSON = nil
-	return req, schema, nil
 }
 
 // drive runs the session and translates its outcome into the single terminal
@@ -238,7 +221,7 @@ func (p *Provider) drive(ctx context.Context, req ai.Request, schema json.RawMes
 	}
 	var structured json.RawMessage
 	if err == nil {
-		structured, err = validatedStructuredData(schema, text.String(), outcome)
+		structured, err = ai.ValidatedStructuredData(schema, text.String(), outcome)
 	}
 	if err != nil {
 		emit(ctx, events, ai.Event{Kind: ai.EventError, Error: err.Error(), Model: p.model})
@@ -246,24 +229,6 @@ func (p *Provider) drive(ctx context.Context, req ai.Request, schema json.RawMes
 		return
 	}
 	emit(ctx, events, ai.Event{Kind: ai.EventResult, Success: true, Usage: usage, CostUSD: cost, Model: p.model, StructuredData: structured})
-}
-
-func validatedStructuredData(schema json.RawMessage, text string, outcome *ai.TerminalOutcome) (json.RawMessage, error) {
-	if len(schema) == 0 || outcome != nil {
-		return nil, nil
-	}
-	object, ok := ai.ExtractJSONObject(text)
-	if !ok {
-		return nil, fmt.Errorf("%w: response carried no JSON object", ai.ErrSchemaValidation)
-	}
-	violations, err := ai.ValidateStructuredJSON(schema, object)
-	if err != nil {
-		return nil, err
-	}
-	if violations != "" {
-		return nil, fmt.Errorf("%w: %s", ai.ErrSchemaValidation, violations)
-	}
-	return json.RawMessage(object), nil
 }
 
 // cmuxExtraArgs decodes req.CLIArgs into the backend's typed "extra cmux args"

@@ -28,6 +28,5 @@ func init() {
 	ai.RegisterProvider(ai.BackendClaudeCmux, func(cfg ai.Config) (ai.Provider, error) { return cmux.New(cfg) })
 	ai.RegisterProvider(ai.BackendCodexCmux, func(cfg ai.Config) (ai.Provider, error) { return cmux.New(cfg) })
 
-	// Gemini CLI is unchanged.
 	ai.RegisterProvider(ai.BackendGeminiCLI, func(cfg ai.Config) (ai.Provider, error) { return NewGeminiCLI(cfg.Model.Name), nil })
 }
