@@ -34,6 +34,8 @@ func TestSchemaBundleContainsGavelIntegrationContract(t *testing.T) {
 		"68_view_session_events.sql",
 		"69_view_prompt_run_overview.sql",
 		"70_prompt_run_runtime.sql",
+		"71_session_storage_params.sql",
+		"72_ingest_storage_params.sql",
 	}
 	for _, name := range expectedFiles {
 		if _, err := fs.Stat(schemaFS, name); err != nil {
@@ -112,6 +114,34 @@ func TestSchemaBundleContainsGavelIntegrationContract(t *testing.T) {
 		"AND (last_activity_at IS NULL OR last_activity_at < agent_activity_at)",
 		"IF agent_activity_at IS NOT NULL AND TG_OP <> 'DELETE' AND TG_TABLE_NAME IN (",
 	)
+	// captain_sessions is heartbeat-updated, so it needs in-page room for HOT
+	// updates and a far tighter autovacuum trigger than the defaults. Atlas OSS
+	// cannot express storage parameters, so post-phase SQL owns them and the
+	// HCL table definition must stay free of them.
+	assertContainsAll(t, "71_session_storage_params.sql",
+		"-- phase: post",
+		"ALTER TABLE public.captain_sessions SET (",
+		"fillfactor = 70",
+		"autovacuum_vacuum_scale_factor = 0.02",
+	)
+	assertContainsNone(t, "10_sessions.pg.hcl", "fillfactor", "autovacuum_")
+	// captain_messages is append-only (ON CONFLICT DO NOTHING), so it keeps the
+	// dense default fillfactor and only tightens the insert-driven vacuum that
+	// keeps its visibility map -- and therefore its index-only scans -- intact.
+	// captain_turns and captain_model_calls are re-upserted on every re-ingest
+	// pass, so they need in-page room for HOT updates as well.
+	assertContainsAll(t, "72_ingest_storage_params.sql",
+		"-- phase: post",
+		"ALTER TABLE public.captain_messages SET (",
+		"ALTER TABLE public.captain_turns SET (",
+		"ALTER TABLE public.captain_model_calls SET (",
+		"autovacuum_vacuum_insert_scale_factor = 0.02",
+	)
+	assertContainsNone(t, "72_ingest_storage_params.sql",
+		// An append-only table gains nothing from reserved in-page space.
+		"ALTER TABLE public.captain_messages SET (\n  fillfactor",
+	)
+	assertContainsNone(t, "30_execution.pg.hcl", "fillfactor", "autovacuum_")
 	for _, name := range expectedFiles {
 		assertContainsNone(t, name,
 			`table "captain_outbox"`,
