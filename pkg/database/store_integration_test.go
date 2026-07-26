@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func TestDurableSessionPromptRunAndPlanStores(t *testing.T) {
@@ -33,6 +34,21 @@ func TestDurableSessionPromptRunAndPlanStores(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 
+	// Re-getting a known session is the steady-state path — monitors call it on
+	// every transcript append. An unconditional insert takes a speculative
+	// conflict there and blocks behind whichever backend is currently writing
+	// the row, so the create must only be reached when the read misses.
+	sessionInserts := 0
+	require.NoError(t, db.gorm.Callback().Create().Before("gorm:create").
+		Register("test:count_session_inserts", func(tx *gorm.DB) {
+			if tx.Statement.Table == "captain_sessions" {
+				sessionInserts++
+			}
+		}))
+	t.Cleanup(func() {
+		require.NoError(t, db.gorm.Callback().Create().Remove("test:count_session_inserts"))
+	})
+
 	session, err := db.CreateOrGetSession(t.Context(), CreateSessionInput{
 		ProviderSessionID: "provider-session-1",
 		Source:            "codex",
@@ -42,6 +58,7 @@ func TestDurableSessionPromptRunAndPlanStores(t *testing.T) {
 		Title:             "Durable plan",
 	})
 	require.NoError(t, err)
+	require.Equal(t, 1, sessionInserts, "creating an unknown session must insert exactly once")
 	require.NotEqual(t, uuid.Nil, session.ID)
 	require.False(t, session.StateObservedAt.IsZero())
 	assert.WithinDuration(t, time.Now().UTC(), session.StateObservedAt, 5*time.Second)
@@ -59,6 +76,7 @@ func TestDurableSessionPromptRunAndPlanStores(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, session.ID, replayedSession.ID)
 	assert.Equal(t, "Durable plan", replayedSession.Title)
+	assert.Equal(t, 1, sessionInserts, "re-getting an existing session must not attempt another insert")
 	_, err = db.CreateOrGetSession(t.Context(), CreateSessionInput{
 		ID: uuid.New(), ProviderSessionID: "provider-session-1",
 		Source: "codex", Provider: "openai", HostID: "test-host",

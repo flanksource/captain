@@ -75,6 +75,10 @@ type Monitor struct {
 
 	maintenanceDue atomic.Bool
 
+	// Monitor-lifetime, not ingestor-lifetime: an ingestor is built per run and
+	// per hook batch, and the counters have to outlive all of them.
+	ingest ingestMetrics
+
 	readyOnce sync.Once
 	ready     chan struct{}
 }

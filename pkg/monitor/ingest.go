@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/flanksource/captain/pkg/ai/history"
 	"github.com/flanksource/captain/pkg/database"
@@ -60,6 +62,55 @@ func (ing *ingestor) recordSourceState(state database.SessionSourceState) {
 	ing.mu.Unlock()
 }
 
+// resumeAfter returns the highest message sequence a previous pass already
+// persisted for a transcript. Transcripts are append-only, so one appended line
+// would otherwise re-submit every message in the file — millions of insert
+// round-trips to write a handful of rows.
+//
+// The mark is void whenever the stored rows cannot be trusted to match what the
+// current parser would produce: a parser-version bump changes the mapping, and
+// a file that shrank was rewritten rather than appended to. Both fall back to a
+// full replay, which is idempotent.
+func (ing *ingestor) resumeAfter(path string, info os.FileInfo) int64 {
+	state, ok := ing.sourceState(path)
+	if !ok || state.ParserVersion != parserVersion || info.Size() < state.ObservedSize {
+		return 0
+	}
+	mark, err := strconv.ParseInt(state.LastEventKey, 10, 64)
+	if err != nil || mark < 0 {
+		return 0
+	}
+	return mark
+}
+
+// highWaterMark drops the messages a previous pass already wrote and returns the
+// mark to record for the next one. Turns are deliberately left whole: they carry
+// running aggregates over the entire file, so the newest turn's totals change on
+// every append and there are few enough of them to re-upsert in one batch.
+func highWaterMark(input *database.IngestTranscriptInput, previous int64) int64 {
+	mark := previous
+	fresh := input.Messages[:0]
+	for _, message := range input.Messages {
+		if message.Sequence > mark {
+			mark = message.Sequence
+		}
+		if message.Sequence > previous {
+			fresh = append(fresh, message)
+		}
+	}
+	input.Messages = fresh
+	return mark
+}
+
+// observedModTime is a file's mtime at the precision the bookkeeping column can
+// actually hold. APFS reports nanoseconds, timestamptz stores microseconds, so
+// comparing a raw stat against a value that has been through the database is a
+// comparison that can never succeed: needsIngest returned true for every file
+// on every pass, and the whole skip mechanism was inert.
+func observedModTime(info os.FileInfo) time.Time {
+	return info.ModTime().UTC().Truncate(time.Microsecond)
+}
+
 // needsIngest compares the on-disk stat with the recorded bookkeeping.
 func (ing *ingestor) needsIngest(path string, info os.FileInfo) bool {
 	state, ok := ing.sourceState(path)
@@ -69,7 +120,7 @@ func (ing *ingestor) needsIngest(path string, info os.FileInfo) bool {
 	return state.ParserVersion != parserVersion ||
 		state.ObservedSize != info.Size() ||
 		state.ObservedModTime == nil ||
-		!state.ObservedModTime.Equal(info.ModTime().UTC())
+		!state.ObservedModTime.Equal(observedModTime(info))
 }
 
 // ingestFile parses one transcript and persists it. Claude sub-agent files are
@@ -119,9 +170,19 @@ func (ing *ingestor) ingestFile(ctx context.Context, source, path string) error 
 	input.Source.ParserVersion = parserVersion
 	input.Source.ObservedSize = info.Size()
 	input.Source.ByteOffset = info.Size()
-	input.Source.ObservedModTime = info.ModTime().UTC()
+	input.Source.ObservedModTime = observedModTime(info)
 
+	// Parsed against offered is the standing regression test for the high-water
+	// mark: the parse is always whole-file, the write should not be.
+	metrics := &ing.monitor.ingest
+	metrics.messagesParsed.Add(int64(len(input.Messages)))
+	input.Source.LastEventKey = strconv.FormatInt(highWaterMark(&input, ing.resumeAfter(path, info)), 10)
+	metrics.messagesOffered.Add(int64(len(input.Messages)))
+	metrics.filesIngested.Add(1)
+
+	writeStart := time.Now()
 	persisted, err := ing.db.IngestTranscript(ctx, input)
+	metrics.writeNanos.Add(int64(time.Since(writeStart)))
 	if err != nil {
 		return err
 	}
@@ -132,6 +193,7 @@ func (ing *ingestor) ingestFile(ctx context.Context, source, path string) error 
 	ing.recordSourceState(database.SessionSourceState{
 		SessionID: persisted.ID, SourceKind: source, Path: path, ParserVersion: parserVersion,
 		ByteOffset: input.Source.ByteOffset, ObservedSize: input.Source.ObservedSize, ObservedModTime: &modTime,
+		LastEventKey: input.Source.LastEventKey,
 	})
 	return nil
 }

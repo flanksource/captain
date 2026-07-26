@@ -3,6 +3,7 @@ package monitor
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	commonsdb "github.com/flanksource/commons-db/db"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 const (
@@ -85,6 +87,22 @@ func TestRunOnceIngestsAndIsIncremental(t *testing.T) {
 		require.NoError(t, err)
 		assert.EqualValues(t, 2, overview.MessageCount, "unchanged transcript must not re-ingest")
 
+		// Transcripts are append-only and a live session is appended to
+		// constantly, so what matters is not just the row count afterwards but
+		// how many rows the pass offered the database. Without a high-water
+		// mark every append re-submits the whole file and the conflict work
+		// grows with transcript length rather than with what was written.
+		attempted := 0
+		require.NoError(t, db.Gorm().Callback().Create().Before("gorm:create").
+			Register("test:count_message_writes", func(tx *gorm.DB) {
+				if tx.Statement.Table == "captain_messages" && tx.Statement.ReflectValue.Kind() == reflect.Slice {
+					attempted += tx.Statement.ReflectValue.Len()
+				}
+			}))
+		t.Cleanup(func() {
+			require.NoError(t, db.Gorm().Callback().Create().Remove("test:count_message_writes"))
+		})
+
 		f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
 		require.NoError(t, err)
 		_, err = f.WriteString(fixtureAppendLine)
@@ -95,6 +113,7 @@ func TestRunOnceIngestsAndIsIncremental(t *testing.T) {
 		overview, err = db.GetSessionOverviewByIdentity(t.Context(), fixtureSessionID)
 		require.NoError(t, err)
 		assert.EqualValues(t, 3, overview.MessageCount, "appended message must ingest incrementally")
+		assert.Equal(t, 1, attempted, "only the appended line may be offered to the database")
 
 		messages, err := db.ListTranscriptMessages(t.Context(), database.TranscriptPage{SessionID: overview.ID, Tail: 1})
 		require.NoError(t, err)

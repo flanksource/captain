@@ -219,10 +219,30 @@ func (db *DB) ListSessionSources(ctx context.Context) (map[string]SessionSourceS
 	return out, nil
 }
 
-// IngestTranscript transactionally persists one parsed transcript batch: the
-// owning session row, the file's bookkeeping row, and idempotent turn, model
-// call, and message rows. Re-running the same batch changes nothing; an
-// extended batch only adds or converges rows.
+// ingestBatchSize bounds one INSERT statement. Large enough that the first
+// ingest of a long transcript is a handful of round trips, small enough that
+// even the widest of these rows stays far inside the bind-parameter limit.
+const ingestBatchSize = 500
+
+// IngestTranscript persists one parsed transcript batch in three phases:
+//
+//  1. the session row, its projected columns, and the turn and model-call
+//     aggregates, in one short transaction;
+//  2. the message rows, outside that transaction;
+//  3. the file's bookkeeping row, committed last.
+//
+// Phase 1 holds a write lock on the session row and phase 2 is by far the
+// longest, so running them together kept that lock held for the whole message
+// stream and blocked every other writer of the same session. Messages are
+// immutable and idempotent under (session_id, sequence) and
+// (session_id, provider_message_id), so they need not be atomic with the
+// session row.
+//
+// Phase 3 commits last on purpose: a crash mid-ingest must leave the
+// bookkeeping stale so the file is re-ingested — harmlessly, since every write
+// here is idempotent — and never mark a file done for rows that were not
+// written. Re-running the same batch changes nothing; an extended batch only
+// adds or converges rows.
 func (db *DB) IngestTranscript(ctx context.Context, input IngestTranscriptInput) (*Session, error) {
 	if err := db.requireGorm(); err != nil {
 		return nil, err
@@ -231,11 +251,12 @@ func (db *DB) IngestTranscript(ctx context.Context, input IngestTranscriptInput)
 		return nil, err
 	}
 	var session *Session
-	// The ingest transaction is idempotent (ON CONFLICT upserts plus column
-	// projection), so a deadlock against a concurrent migration's exclusive
-	// locks is retried rather than dropping the batch.
+	var turnIDs map[int]uuid.UUID
+	// Every write is idempotent (ON CONFLICT upserts plus column projection), so
+	// a deadlock against a concurrent migration's exclusive locks is retried
+	// rather than dropping the batch.
 	err := retryTransientTx(ctx, "ingest Captain transcript", func() error {
-		session = nil
+		session, turnIDs = nil, nil
 		return db.Transaction(ctx, func(tx *DB) error {
 			var err error
 			session, err = tx.CreateOrGetSession(ctx, CreateSessionInput{
@@ -259,15 +280,20 @@ func (db *DB) IngestTranscript(ctx context.Context, input IngestTranscriptInput)
 			if err := tx.projectSessionColumns(ctx, session.ID, input.Session); err != nil {
 				return err
 			}
-			if err := tx.upsertSessionSource(ctx, session.ID, input.Source); err != nil {
-				return err
-			}
-			turnIDs, err := tx.upsertTurns(ctx, session.ID, input.Turns)
-			if err != nil {
-				return err
-			}
-			return tx.insertMessages(ctx, session.ID, turnIDs, input.Messages)
+			turnIDs, err = tx.upsertTurns(ctx, session.ID, input.Turns)
+			return err
 		})
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if err := db.insertMessages(ctx, session.ID, turnIDs, input.Messages); err != nil {
+		return nil, err
+	}
+
+	err = retryTransientTx(ctx, "record Captain transcript source", func() error {
+		return db.upsertSessionSource(ctx, session.ID, input.Source)
 	})
 	if err != nil {
 		return nil, err
@@ -300,7 +326,7 @@ func validateIngest(input IngestTranscriptInput) error {
 func (db *DB) projectSessionColumns(ctx context.Context, id uuid.UUID, input IngestSessionInput) error {
 	updates := map[string]any{}
 	for column, value := range map[string]string{
-		"path": input.Path, "project": input.Project, "cwd": input.CWD, "title": input.Title,
+		"path": input.Path, "project": input.Project, "cwd": normalizeCWD(input.CWD), "title": input.Title,
 		"initial_prompt": input.InitialPrompt, "slug": input.Slug, "agent_type": input.AgentType,
 		"description": input.Description, "cli_version": input.CLIVersion,
 	} {
@@ -361,8 +387,57 @@ func (db *DB) upsertSessionSource(ctx context.Context, sessionID uuid.UUID, inpu
 
 // upsertTurns converges turn and per-turn aggregate model-call rows and returns
 // the turn UUID for each ingested turn index so messages can reference turns.
+//
+// Both writes are batched. A transcript append re-offers every historical turn,
+// and the previous shape — upsert, read back, upsert the call — cost three
+// round trips per turn on every append.
 func (db *DB) upsertTurns(ctx context.Context, sessionID uuid.UUID, turns []IngestTurn) (map[int]uuid.UUID, error) {
 	ids := make(map[int]uuid.UUID, len(turns))
+	records, err := turnRecords(sessionID, turns)
+	if err != nil || len(records) == 0 {
+		return ids, err
+	}
+	// RETURNING carries turn_index back beside the ID, so the map is keyed from
+	// each row's own index rather than from the order PostgreSQL returns them.
+	err = db.gorm.WithContext(ctx).Clauses(
+		clause.OnConflict{
+			Columns: []clause.Column{{Name: "session_id"}, {Name: "turn_index"}},
+			DoUpdates: clause.AssignmentColumns([]string{
+				"provider_turn_id", "description", "status", "stop_reason", "started_at", "ended_at",
+			}),
+		},
+		clause.Returning{Columns: []clause.Column{{Name: "id"}, {Name: "turn_index"}}},
+	).CreateInBatches(&records, ingestBatchSize).Error
+	if err != nil {
+		return nil, fmt.Errorf("upsert %d Captain turns: %w", len(records), err)
+	}
+	for _, record := range records {
+		ids[record.TurnIndex] = record.ID
+	}
+
+	calls := make([]modelCallRecord, 0, len(turns))
+	for _, turn := range turns {
+		if turn.Call == nil {
+			continue
+		}
+		turnID, ok := ids[turn.Index]
+		if !ok {
+			return nil, fmt.Errorf("upsert Captain model call: turn %d was not persisted", turn.Index)
+		}
+		calls = append(calls, turnCallRecord(turnID, *turn.Call))
+	}
+	if err := db.upsertTurnCalls(ctx, calls); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// turnRecords maps the batch to rows, keeping the last entry for a repeated
+// index: a single INSERT cannot apply DO UPDATE to the same row twice, and
+// last-wins is what the previous row-at-a-time upsert produced.
+func turnRecords(sessionID uuid.UUID, turns []IngestTurn) ([]turnRecord, error) {
+	position := make(map[int]int, len(turns))
+	records := make([]turnRecord, 0, len(turns))
 	for _, turn := range turns {
 		if turn.Index < 0 {
 			return nil, fmt.Errorf("%w: turn index %d is negative", ErrInvalidIngest, turn.Index)
@@ -377,31 +452,17 @@ func (db *DB) upsertTurns(ctx context.Context, sessionID uuid.UUID, turns []Inge
 			Status: status, StopReason: nullableTrimmed(turn.StopReason),
 			StartedAt: turn.StartedAt, EndedAt: turn.EndedAt,
 		}
-		err := db.gorm.WithContext(ctx).Clauses(clause.OnConflict{
-			Columns: []clause.Column{{Name: "session_id"}, {Name: "turn_index"}},
-			DoUpdates: clause.AssignmentColumns([]string{
-				"provider_turn_id", "description", "status", "stop_reason", "started_at", "ended_at",
-			}),
-		}).Create(&record).Error
-		if err != nil {
-			return nil, fmt.Errorf("upsert Captain turn %d: %w", turn.Index, err)
+		if at, ok := position[turn.Index]; ok {
+			records[at] = record
+			continue
 		}
-		var persisted turnRecord
-		if err := db.gorm.WithContext(ctx).
-			First(&persisted, "session_id = ? AND turn_index = ?", sessionID, turn.Index).Error; err != nil {
-			return nil, fmt.Errorf("read Captain turn %d: %w", turn.Index, err)
-		}
-		ids[turn.Index] = persisted.ID
-		if turn.Call != nil {
-			if err := db.upsertTurnCall(ctx, persisted.ID, *turn.Call); err != nil {
-				return nil, err
-			}
-		}
+		position[turn.Index] = len(records)
+		records = append(records, record)
 	}
-	return ids, nil
+	return records, nil
 }
 
-func (db *DB) upsertTurnCall(ctx context.Context, turnID uuid.UUID, call IngestModelCall) error {
+func turnCallRecord(turnID uuid.UUID, call IngestModelCall) modelCallRecord {
 	model := strings.TrimSpace(call.Model)
 	if model == "" {
 		model = "unknown"
@@ -410,7 +471,7 @@ func (db *DB) upsertTurnCall(ctx context.Context, turnID uuid.UUID, call IngestM
 	if backend == "" {
 		backend = "unknown"
 	}
-	record := modelCallRecord{
+	return modelCallRecord{
 		ID: uuid.New(), TurnID: turnID, CallIndex: 0, Model: model, Backend: backend,
 		Effort: nullableTrimmed(call.Effort), Status: "succeeded", StopReason: nullableTrimmed(call.StopReason),
 		InputTokens: call.InputTokens, OutputTokens: call.OutputTokens, ReasoningTokens: call.ReasoningTokens,
@@ -419,6 +480,12 @@ func (db *DB) upsertTurnCall(ctx context.Context, turnID uuid.UUID, call IngestM
 		InputCost: call.InputCost, OutputCost: call.OutputCost,
 		CacheReadCost: call.CacheReadCost, CacheWriteCost: call.CacheWriteCost,
 		StartedAt: call.StartedAt, EndedAt: call.EndedAt,
+	}
+}
+
+func (db *DB) upsertTurnCalls(ctx context.Context, calls []modelCallRecord) error {
+	if len(calls) == 0 {
+		return nil
 	}
 	err := db.gorm.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "turn_id"}, {Name: "call_index"}},
@@ -429,9 +496,9 @@ func (db *DB) upsertTurnCall(ctx context.Context, turnID uuid.UUID, call IngestM
 			"input_cost", "output_cost", "cache_read_cost", "cache_write_cost",
 			"started_at", "ended_at",
 		}),
-	}).Create(&record).Error
+	}).CreateInBatches(&calls, ingestBatchSize).Error
 	if err != nil {
-		return fmt.Errorf("upsert Captain model call for turn %s: %w", turnID, err)
+		return fmt.Errorf("upsert %d Captain model calls: %w", len(calls), err)
 	}
 	return nil
 }
@@ -440,6 +507,7 @@ func (db *DB) upsertTurnCall(ctx context.Context, turnID uuid.UUID, call IngestM
 // overlapping batches are dropped by either durable identity key:
 // (session_id, sequence) or (session_id, provider_message_id).
 func (db *DB) insertMessages(ctx context.Context, sessionID uuid.UUID, turnIDs map[int]uuid.UUID, messages []IngestMessage) error {
+	records := make([]messageRecord, 0, len(messages))
 	for _, message := range messages {
 		parts := message.PartsJSON
 		if len(parts) == 0 {
@@ -468,13 +536,20 @@ func (db *DB) insertMessages(ctx context.Context, sessionID uuid.UUID, turnIDs m
 				record.TurnID = &turnID
 			}
 		}
-		// Do not name one conflict target: a provider replay can retain the same
-		// message ID while its parser sequence shifts. PostgreSQL must suppress
-		// either unique-key conflict, while check/FK failures still surface.
-		err = db.gorm.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&record).Error
-		if err != nil {
-			return fmt.Errorf("insert Captain message seq %d: %w", message.Sequence, err)
-		}
+		records = append(records, record)
+	}
+	if len(records) == 0 {
+		return nil
+	}
+	// Do not name one conflict target: a provider replay can retain the same
+	// message ID while its parser sequence shifts. PostgreSQL must suppress
+	// either unique-key conflict, while check/FK failures still surface.
+	// DO NOTHING also tolerates a duplicate inside a single batch, which
+	// DO UPDATE would reject.
+	err := db.gorm.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).
+		CreateInBatches(&records, ingestBatchSize).Error
+	if err != nil {
+		return fmt.Errorf("insert %d Captain messages: %w", len(records), err)
 	}
 	return nil
 }

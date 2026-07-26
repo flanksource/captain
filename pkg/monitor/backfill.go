@@ -105,6 +105,10 @@ func ingestChanged(ctx context.Context, ingestor *ingestor, refs []transcriptRef
 		if err != nil {
 			continue
 		}
+		// This is where a scan decides to do nothing, so it is the only place
+		// the skip rate can be observed: considered against ingested says
+		// whether the bookkeeping is holding transcripts back at all.
+		ingestor.monitor.ingest.filesConsidered.Add(1)
 		if ingestor.needsIngest(ref.path, info) {
 			changed = append(changed, ref)
 		}

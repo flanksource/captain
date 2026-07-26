@@ -131,6 +131,27 @@ type sessionRecord struct {
 
 func (sessionRecord) TableName() string { return "captain_sessions" }
 
+// findSessionByIdentity resolves the row a create would collide with — the
+// provider identity when one is supplied, otherwise the ID itself — and returns
+// nil when no such row exists.
+func (db *DB) findSessionByIdentity(ctx context.Context, record sessionRecord) (*sessionRecord, error) {
+	query := db.gorm.WithContext(ctx)
+	if record.ProviderSessionID != nil {
+		query = query.Where("source = ? AND provider = ? AND host_id = ? AND provider_session_id = ?",
+			record.Source, record.Provider, record.HostID, *record.ProviderSessionID)
+	} else {
+		query = query.Where("id = ?", record.ID)
+	}
+	var existing sessionRecord
+	if err := query.First(&existing).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read existing Captain session: %w", err)
+	}
+	return &existing, nil
+}
+
 func (db *DB) CreateOrGetSession(ctx context.Context, input CreateSessionInput) (*Session, error) {
 	if err := db.requireGorm(); err != nil {
 		return nil, err
@@ -187,32 +208,41 @@ func (db *DB) CreateOrGetSession(ctx context.Context, input CreateSessionInput) 
 		ID: input.ID, ProviderSessionID: nullableTrimmed(input.ProviderSessionID), Source: input.Source,
 		Provider: input.Provider, HostID: input.HostID, ParentSessionID: input.ParentSessionID,
 		RootSessionID: input.RootSessionID, Path: nullableTrimmed(input.Path), Project: nullableTrimmed(input.Project),
-		CWD: nullableTrimmed(input.CWD), Title: nullableTrimmed(input.Title), InitialPrompt: nullableTrimmed(input.InitialPrompt),
+		CWD: nullableTrimmed(normalizeCWD(input.CWD)), Title: nullableTrimmed(input.Title), InitialPrompt: nullableTrimmed(input.InitialPrompt),
 		Slug: nullableTrimmed(input.Slug), AgentType: nullableTrimmed(input.AgentType), Description: nullableTrimmed(input.Description),
 		CLIVersion: nullableTrimmed(input.CLIVersion), LifecycleStatus: SessionLifecycleCreated,
 		ActivityState: SessionActivityIdle, HealthState: SessionHealthHealthy, StateObservedAt: now,
 	}
-	result := db.gorm.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&record)
-	if result.Error != nil {
-		return nil, fmt.Errorf("create Captain session: %w", result.Error)
+	// Read before write. Callers re-get far more often than they create — a
+	// monitor asks for the same session on every transcript append — and an
+	// unconditional insert makes each of those a speculative-insertion conflict
+	// that waits on whichever backend currently holds the row. The create below
+	// stays as the race-safe fallback, it is just no longer the common path.
+	var existing *sessionRecord
+	// A generated ID with no provider identity cannot match an existing row.
+	if callerSuppliedID || record.ProviderSessionID != nil {
+		found, err := db.findSessionByIdentity(ctx, record)
+		if err != nil {
+			return nil, err
+		}
+		existing = found
 	}
-	if result.RowsAffected == 1 {
-		return db.GetSession(ctx, record.ID)
-	}
-
-	var existing sessionRecord
-	query := db.gorm.WithContext(ctx)
-	if record.ProviderSessionID != nil {
-		query = query.Where("source = ? AND provider = ? AND host_id = ? AND provider_session_id = ?",
-			record.Source, record.Provider, record.HostID, *record.ProviderSessionID)
-	} else {
-		query = query.Where("id = ?", record.ID)
-	}
-	if err := query.First(&existing).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	if existing == nil {
+		result := db.gorm.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&record)
+		if result.Error != nil {
+			return nil, fmt.Errorf("create Captain session: %w", result.Error)
+		}
+		if result.RowsAffected == 1 {
+			return db.GetSession(ctx, record.ID)
+		}
+		found, err := db.findSessionByIdentity(ctx, record)
+		if err != nil {
+			return nil, err
+		}
+		if found == nil {
 			return nil, fmt.Errorf("%w: create was rejected by a conflicting identity", ErrSessionConflict)
 		}
-		return nil, fmt.Errorf("read existing Captain session: %w", err)
+		existing = found
 	}
 	if existing.Source != record.Source || existing.Provider != record.Provider || existing.HostID != record.HostID {
 		return nil, fmt.Errorf("%w: existing session has a different provider identity", ErrSessionConflict)

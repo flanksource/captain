@@ -382,3 +382,44 @@ func TestIngestTranscriptAndReadStores(t *testing.T) {
 		assert.Contains(t, err.Error(), duplicate.ID.String())
 	})
 }
+
+// Ingest runs as three phases so the session row is not write-locked for the
+// whole message stream. That split is only safe while the file's bookkeeping
+// commits last: a failure after the messages phase must leave the file looking
+// un-ingested so the next pass replays it, rather than recording a high-water
+// mark for rows that were never written.
+func TestIngestRecordsSourceBookkeepingLast(t *testing.T) {
+	db := openIngestTestDB(t)
+	modTime := time.Now().UTC().Truncate(time.Second)
+
+	interrupted := testIngestBatch(modTime, 2048)
+	// Fails while building the message rows: after the session and turns have
+	// committed, before any message reaches the database.
+	interrupted.Messages[2].RawJSON = []byte(`{"unterminated":`)
+	_, err := db.IngestTranscript(t.Context(), interrupted)
+	require.Error(t, err)
+
+	sources, err := db.ListSessionSources(t.Context())
+	require.NoError(t, err)
+	assert.NotContains(t, sources, testTranscriptPath,
+		"a transcript whose messages failed must not be recorded as ingested")
+
+	session, err := db.GetSessionByIdentity(t.Context(), testProviderSessionID, "claude", "", "test-host")
+	require.NoError(t, err, "the session row from the first phase is expected to have committed")
+
+	// The replay writes the rows the interrupted pass never got to, and only
+	// then records the file.
+	persisted, err := db.IngestTranscript(t.Context(), testIngestBatch(modTime, 2048))
+	require.NoError(t, err)
+	assert.Equal(t, session.ID, persisted.ID)
+
+	sources, err = db.ListSessionSources(t.Context())
+	require.NoError(t, err)
+	require.Contains(t, sources, testTranscriptPath)
+	assert.Equal(t, "uuid-7", sources[testTranscriptPath].LastEventKey)
+
+	messages, err := db.ListTranscriptMessages(t.Context(), TranscriptPage{SessionID: session.ID})
+	require.NoError(t, err)
+	assert.Len(t, messages, len(testIngestBatch(modTime, 2048).Messages),
+		"every message must be present after the replay, and none duplicated")
+}
