@@ -12,14 +12,14 @@ import (
 
 // ChatRequest is the body posted by the AI SDK DefaultChatTransport.
 type ChatRequest struct {
-	ID               string                  `json:"id,omitempty"`
-	Messages         []UIMessage             `json:"messages"`
-	Model            string                  `json:"model,omitempty"`
-	ReasoningEffort  api.Effort              `json:"reasoningEffort,omitempty"`
-	Temperature      *float64                `json:"temperature,omitempty"`
-	Budget           api.Budget              `json:"budget,omitempty"`
-	ToolPreferences  api.ToolPreferences     `json:"toolPreferences,omitempty"`
-	PermissionMode   api.PermissionMode      `json:"permissionMode,omitempty"`
+	ID              string                  `json:"id,omitempty"`
+	Messages        []UIMessage             `json:"messages"`
+	Model           string                  `json:"model,omitempty"`
+	ReasoningEffort api.Effort              `json:"reasoningEffort,omitempty"`
+	Temperature     *float64                `json:"temperature,omitempty"`
+	Budget          api.Budget              `json:"budget,omitempty"`
+	ToolPreferences api.ToolPreferences     `json:"toolPreferences,omitempty"`
+	PermissionMode  api.PermissionMode      `json:"permissionMode,omitempty"`
 	ToolApproval    *api.ToolApprovalResume `json:"toolApproval,omitempty"`
 
 	Context      string            `json:"context,omitempty"`

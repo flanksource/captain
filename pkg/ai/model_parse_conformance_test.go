@@ -95,7 +95,6 @@ var agreedCases = []parseCase{
 	{in: "api:codex", want: model("gpt-5.6-sol", api.BackendOpenAI, "")},
 	{in: "cli:codex", want: model("gpt-5.6-sol", api.BackendCodexCLI, "")},
 
-
 	// A multi-slash id resolves off its LAST segment and keeps its name verbatim,
 	// so OpenRouter-style proxied names survive. (api.InferBackend alone cannot do
 	// this; inferModelBackend's last-slash retry is what makes it work.)

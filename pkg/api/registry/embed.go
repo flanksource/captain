@@ -22,25 +22,25 @@ var modelsJSON []byte
 // errored while the same value in prompt frontmatter ran. Keeping them here is
 // what lets a single parser serve both entry points.
 type KnownModel struct {
-	ID               string   `json:"id"`
-	Provider         string   `json:"provider"`
-	Family           string   `json:"family"`
-	Version          string   `json:"version"`
-	Label            string   `json:"label"`
-	ReleaseDate      string   `json:"releaseDate,omitempty"`
-	Reasoning        bool     `json:"reasoning,omitempty"`
-	Temperature      bool     `json:"temperature,omitempty"`
-	ContextWindow    int      `json:"contextWindow,omitempty"`
-	InputMediaTypes  []string `json:"inputMediaTypes,omitempty"`
+	ID              string   `json:"id"`
+	Provider        string   `json:"provider"`
+	Family          string   `json:"family"`
+	Version         string   `json:"version"`
+	Label           string   `json:"label"`
+	ReleaseDate     string   `json:"releaseDate,omitempty"`
+	Reasoning       bool     `json:"reasoning,omitempty"`
+	Temperature     bool     `json:"temperature,omitempty"`
+	ContextWindow   int      `json:"contextWindow,omitempty"`
+	InputMediaTypes []string `json:"inputMediaTypes,omitempty"`
 	// Cost is the model's published list price. Nil means the catalog snapshot
 	// carries no price for this id — a miss, never a free model.
-	Cost *ModelCost `json:"cost,omitempty"`
-	Preferred        bool     `json:"preferred,omitempty"`
-	AdaptiveThinking bool     `json:"adaptiveThinking,omitempty"`
-	Availability     []string `json:"availability,omitempty"`
-	SupportedEfforts []Effort `json:"supportedEfforts,omitempty"`
-	DefaultEffort    Effort   `json:"defaultEffort,omitempty"`
-	Priority         int      `json:"priority,omitempty"`
+	Cost             *ModelCost `json:"cost,omitempty"`
+	Preferred        bool       `json:"preferred,omitempty"`
+	AdaptiveThinking bool       `json:"adaptiveThinking,omitempty"`
+	Availability     []string   `json:"availability,omitempty"`
+	SupportedEfforts []Effort   `json:"supportedEfforts,omitempty"`
+	DefaultEffort    Effort     `json:"defaultEffort,omitempty"`
+	Priority         int        `json:"priority,omitempty"`
 
 	// Aliases are extra input tokens that resolve to this model — the codenames
 	// "sol"/"terra"/"luna" on the gpt-5.6-* line. Input conveniences only: an

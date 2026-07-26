@@ -128,4 +128,3 @@ func TestModelList_Unmarshal(t *testing.T) {
 		}
 	})
 }
-
