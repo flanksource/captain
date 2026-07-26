@@ -1,13 +1,14 @@
 package claude
 
 import (
-	"github.com/segmentio/encoding/json"
+	"bufio"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/flanksource/captain/pkg/claude/tools"
+	"github.com/segmentio/encoding/json"
 )
 
 // GetClaudeHome returns the path to the Claude Code home directory (~/.claude)
@@ -68,17 +69,23 @@ func FindProjectInfo(dir string) ProjectInfo {
 	}
 	current := dir
 	for {
-		for _, marker := range projectMarkers {
-			markerPath := filepath.Join(current, marker)
-			info, err := os.Stat(markerPath)
-			if err != nil {
-				continue
+		entries, err := os.ReadDir(current)
+		if err == nil {
+			entriesByName := make(map[string]os.DirEntry)
+			for _, entry := range entries {
+				entriesByName[entry.Name()] = entry
 			}
-			pi := ProjectInfo{Root: current, MarkerFile: marker}
-			if marker == ".git" && !info.IsDir() {
-				pi.MainRoot = resolveWorktreeRoot(markerPath)
+			for _, marker := range projectMarkers {
+				entry, ok := entriesByName[marker]
+				if !ok || entry.Type()&os.ModeSymlink != 0 {
+					continue
+				}
+				pi := ProjectInfo{Root: current, MarkerFile: marker}
+				if marker == ".git" && !entry.IsDir() {
+					pi.MainRoot = resolveWorktreeRoot(filepath.Join(current, marker))
+				}
+				return pi
 			}
-			return pi
 		}
 		parent := filepath.Dir(current)
 		if parent == current {
@@ -95,11 +102,28 @@ func FindProjectInfo(dir string) ProjectInfo {
 //
 // This function extracts the main repo root from that path.
 func resolveWorktreeRoot(gitFilePath string) string {
-	data, err := os.ReadFile(gitFilePath)
+	if filepath.Base(gitFilePath) != ".git" {
+		return ""
+	}
+	root, err := os.OpenRoot(filepath.Dir(gitFilePath))
 	if err != nil {
 		return ""
 	}
-	line := strings.TrimSpace(string(data))
+	defer func() { _ = root.Close() }()
+	file, err := root.Open(".git")
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = file.Close() }()
+
+	scanner := bufio.NewScanner(file)
+	if !scanner.Scan() {
+		return ""
+	}
+	line := strings.TrimSpace(scanner.Text())
+	if scanner.Scan() || scanner.Err() != nil {
+		return ""
+	}
 	if !strings.HasPrefix(line, "gitdir: ") {
 		return ""
 	}
