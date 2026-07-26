@@ -178,13 +178,16 @@ func (db *DB) FindSessionIDByCWD(ctx context.Context, source, cwd string) (uuid.
 	if err := db.requireGorm(); err != nil {
 		return uuid.Nil, err
 	}
-	cwd = strings.TrimRight(strings.TrimSpace(cwd), "/")
+	// Both sides are normalized on the way in (see normalizeCWD), so this is an
+	// index lookup. It used to be rtrim(cwd, '/') = ?, which no index can serve:
+	// it seq-scanned the whole session table on every unidentified process.
+	cwd = normalizeCWD(cwd)
 	if cwd == "" {
 		return uuid.Nil, nil
 	}
 	var record sessionRecord
 	err := db.gorm.WithContext(ctx).
-		Where("source = ? AND parent_session_id IS NULL AND rtrim(cwd, '/') = ?", source, cwd).
+		Where("source = ? AND parent_session_id IS NULL AND cwd = ?", source, cwd).
 		Order("COALESCE(last_activity_at, started_at, created_at) DESC").
 		First(&record).Error
 	if err != nil {

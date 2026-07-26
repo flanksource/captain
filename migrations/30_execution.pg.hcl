@@ -279,18 +279,21 @@ table "captain_model_calls" {
     columns = [column.turn_id, column.provider_call_id]
     where   = "provider_call_id IS NOT NULL"
   }
+  # Kept despite never being scanned by a query: it is the referencing side of
+  # both captain_model_calls_prompt_run_id_fkey and the composite
+  # captain_model_calls_iteration_id_fkey, so without it every prompt-run or
+  # iteration delete becomes a sequential scan of this table. The composite FK
+  # is served by this index's leading column, which is why there is no separate
+  # iteration_id index -- that one was dead in both senses and is gone.
   index "captain_model_calls_prompt_run_id_idx" {
     columns = [column.prompt_run_id]
   }
-  index "captain_model_calls_iteration_id_idx" {
-    columns = [column.iteration_id]
-  }
-  index "captain_model_calls_model_idx" {
-    columns = [column.model, column.backend]
-  }
-  index "captain_model_calls_started_at_idx" {
-    columns = [column.started_at]
-  }
+
+  # captain_model_calls_started_at_idx, captain_model_calls_model_idx and
+  # captain_model_calls_iteration_id_idx were removed. This table served 18.5M
+  # index scans in one measurement window and not one of them touched these
+  # three; a second, independent window agreed. No foreign key depends on them
+  # either -- see the note above for why the composite iteration FK does not.
 
   check "captain_model_calls_index_nonnegative" {
     expr = "call_index >= 0"
@@ -407,8 +410,16 @@ table "captain_messages" {
   index "captain_messages_turn_id_idx" {
     columns = [column.turn_id]
   }
+  # Partial on purpose. captain_messages_model_call_id_fkey is ON DELETE SET
+  # NULL, so deleting a model call must find its referencing messages -- without
+  # an index that is a sequential scan of the largest table in the schema. But
+  # the ingest path never sets model_call_id, so a full index on the column was
+  # 8.4 MB of nothing but NULLs, maintained on every message insert. Excluding
+  # the NULLs costs the FK check nothing (model_call_id = <id> can never match a
+  # NULL row) and takes the index, and its insert-time upkeep, to zero.
   index "captain_messages_model_call_id_idx" {
     columns = [column.model_call_id]
+    where   = "model_call_id IS NOT NULL"
   }
 
   check "captain_messages_sequence_nonnegative" {

@@ -620,6 +620,18 @@ func optionalString(value *string) string {
 	return *value
 }
 
+// normalizeCWD gives a working directory exactly one spelling on the way into
+// the database, so looking a session up by directory is a plain equality test
+// on an indexed column instead of an rtrim() expression no index can serve.
+// Root keeps its slash: it is the one path stripping would erase entirely.
+func normalizeCWD(value string) string {
+	trimmed := strings.TrimRight(strings.TrimSpace(value), "/")
+	if trimmed == "" && strings.Contains(value, "/") {
+		return "/"
+	}
+	return trimmed
+}
+
 func equalOptionalString(left, right *string) bool {
 	return optionalString(left) == optionalString(right)
 }

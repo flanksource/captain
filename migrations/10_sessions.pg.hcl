@@ -165,8 +165,12 @@ table "captain_sessions" {
   index "captain_sessions_root_session_id_idx" {
     columns = [column.root_session_id]
   }
-  index "captain_sessions_project_idx" {
-    columns = [column.project]
+  # Backs FindSessionIDByCWD, the process-to-session heuristic run for every
+  # discovered agent process whose command line carries no session id. Partial
+  # on the root sessions because that is the only side the lookup considers.
+  index "captain_sessions_source_cwd_idx" {
+    columns = [column.source, column.cwd]
+    where   = "parent_session_id IS NULL"
   }
   index "captain_sessions_state_idx" {
     columns = [column.lifecycle_status, column.activity_state, column.health_state]
@@ -174,6 +178,14 @@ table "captain_sessions" {
   index "captain_sessions_last_activity_at_idx" {
     columns = [column.last_activity_at]
   }
+
+  # captain_sessions_project_idx was removed. ListSessionOverviews can filter on
+  # project, but it does so through captain_session_overview and alongside a
+  # metadata predicate and a COALESCE sort, so the planner has never chosen the
+  # index -- 0 scans across two independent measurement windows totalling five
+  # hours and 2.1M index scans of this table. It is not free to keep: this is
+  # the heartbeat table, every non-HOT update rewrites every index entry, and
+  # 71_session_storage_params.sql exists precisely to keep those updates HOT.
 
   check "captain_sessions_parent_not_self" {
     expr = "parent_session_id IS NULL OR parent_session_id <> id"
