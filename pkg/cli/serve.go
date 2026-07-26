@@ -175,10 +175,9 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	mux.HandleFunc("GET /api/captain/secrets/preview", handleSecretPreview())
 	mux.HandleFunc("POST /api/attachments", handleAttachmentUpload(attachmentStore))
 	mux.HandleFunc("GET /api/attachments/{id}", handleAttachmentGet(attachmentStore))
-	// Task tracking: /api/captain/tasks, /tasks/stream, /tasks/{id}; plus the
-	// run-list SSE the clicky-ui useTaskRuns hook subscribes to.
+	// Task tracking: /api/captain/tasks, /tasks/stream, /tasks/{id}, and the
+	// /tasks/runs/stream run-list SSE the clicky-ui useTaskRuns hook subscribes to.
 	task.RegisterHandlers(mux, "/api/captain")
-	mux.Handle("GET /api/captain/tasks/runs/stream", task.RunsSSEHandler(nil))
 	// Live session history for a prompt run.
 	mux.Handle("GET /api/captain/prompt/runs/{runId}/stream", handlePromptRunStream(promptRuns))
 	mux.Handle("GET /api/captain/prompt/runs/{runId}", handlePromptRunSnapshot(promptRuns))
