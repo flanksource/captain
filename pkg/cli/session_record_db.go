@@ -172,6 +172,7 @@ func overviewFromSummary(summary database.SessionListSummary) database.SessionOv
 		InputTokens: summary.InputTokens, OutputTokens: summary.OutputTokens,
 		CacheReadTokens: summary.CacheReadTokens, CacheWriteTokens: summary.CacheWriteTokens,
 		TotalTokens: summary.TotalTokens, CostUSD: summary.CostUSD,
+		MessageCount: summary.MessageCount, ToolCallCount: summary.ToolCallCount,
 	}
 }
 

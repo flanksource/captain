@@ -74,6 +74,8 @@ var _ = Describe("Session list pages", func() {
 			"InputTokens":        Equal(int64(10)),
 			"OutputTokens":       Equal(int64(5)),
 			"ContextFreePercent": PointTo(Equal(75)),
+			"MessageCount":       Equal(int64(1)),
+			"ToolCallCount":      Equal(int64(1)),
 		}))
 
 		last, err := db.ListSessionSummaries(ctx, SessionListFilter{
@@ -86,10 +88,9 @@ var _ = Describe("Session list pages", func() {
 		Expect(last.NextCursor).To(BeEmpty())
 	})
 
-	It("keeps the list query independent of the aggregate overview", func() {
+	It("keeps detail aggregates bounded to paged sessions", func() {
 		Expect(sessionListQuery).NotTo(ContainSubstring("captain_session_overview"))
-		Expect(sessionListQuery).NotTo(ContainSubstring("captain_messages"))
-		Expect(sessionListQuery).NotTo(ContainSubstring("jsonb_array_elements"))
+		Expect(sessionListQuery).To(ContainSubstring("JOIN paged p ON p.id = m.session_id"))
 		Expect(sessionListQuery).NotTo(ContainSubstring("captain_events"))
 		Expect(sessionListQuery).NotTo(ContainSubstring("captain_plans"))
 		Expect(sessionListQuery).NotTo(ContainSubstring("captain_turn_requests"))

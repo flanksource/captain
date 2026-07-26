@@ -18,9 +18,9 @@ const (
 	maxSessionListLimit     = 500
 )
 
-// SessionListSummary is the bounded list projection. Detail-only transcript,
-// tool, event, plan, request, agent, and artifact aggregates intentionally do
-// not belong to this type.
+// SessionListSummary is the bounded list projection. Message and tool counts
+// are aggregated only after pagination; other detail-only aggregates remain on
+// the overview path.
 type SessionListSummary struct {
 	ID                  uuid.UUID       `gorm:"column:id" json:"id"`
 	ProviderSessionID   *string         `gorm:"column:provider_session_id" json:"providerSessionId,omitempty"`
@@ -68,6 +68,8 @@ type SessionListSummary struct {
 	CacheWriteTokens    int64           `gorm:"column:cache_write_tokens" json:"cacheWriteTokens"`
 	TotalTokens         int64           `gorm:"column:total_tokens" json:"totalTokens"`
 	CostUSD             float64         `gorm:"column:cost_usd" json:"costUsd"`
+	MessageCount        int64           `gorm:"column:message_count" json:"messageCount"`
+	ToolCallCount       int64           `gorm:"column:tool_call_count" json:"toolCallCount"`
 	TotalCount          int64           `gorm:"column:total_count" json:"-"`
 }
 
@@ -255,6 +257,27 @@ WITH latest_call AS MATERIALIZED (
   JOIN paged p ON p.id = t.session_id
   JOIN captain_model_calls c ON c.turn_id = t.id
   GROUP BY t.session_id
+), message_stats AS (
+  SELECT
+    m.session_id,
+    count(*)::bigint AS message_count,
+    COALESCE(sum((
+      SELECT count(*)
+      FROM jsonb_array_elements(
+        CASE
+          WHEN jsonb_typeof(m.parts) = 'array' THEN m.parts
+          ELSE '[]'::jsonb
+        END
+      ) part
+      WHERE (
+        part ->> 'type' = 'dynamic-tool'
+        OR part ->> 'type' LIKE 'tool-%'
+      )
+        AND COALESCE(part ->> 'toolName', '') <> ''
+    )), 0)::bigint AS tool_call_count
+  FROM captain_messages m
+  JOIN paged p ON p.id = m.session_id
+  GROUP BY m.session_id
 )
 SELECT
   p.id, p.provider_session_id, p.source, p.provider, p.host_id, p.parent_session_id,
@@ -273,8 +296,11 @@ SELECT
   COALESCE(cs.cache_write_tokens, 0) AS cache_write_tokens,
   COALESCE(cs.total_tokens, 0) AS total_tokens,
   COALESCE(cs.cost_usd, 0::numeric) AS cost_usd,
+  COALESCE(ms.message_count, 0) AS message_count,
+  COALESCE(ms.tool_call_count, 0) AS tool_call_count,
   p.total_count
 FROM paged p
 LEFT JOIN latest_source src ON src.session_id = p.id
 LEFT JOIN call_stats cs ON cs.session_id = p.id
+LEFT JOIN message_stats ms ON ms.session_id = p.id
 ORDER BY p.activity_at DESC, p.id DESC`
