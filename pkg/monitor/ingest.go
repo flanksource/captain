@@ -142,13 +142,22 @@ func (ing *ingestor) ingestFile(ctx context.Context, source, path string) error 
 	if !strings.HasPrefix(path, root+string(filepath.Separator)) {
 		return fmt.Errorf("transcript path %s is outside the %s session root", path, source)
 	}
+	rootFS, err := os.OpenRoot(root)
+	if err != nil {
+		return fmt.Errorf("open %s transcript root: %w", source, err)
+	}
+	defer rootFS.Close()
+	relativePath, err := filepath.Rel(root, path)
+	if err != nil {
+		return fmt.Errorf("resolve %s transcript relative path: %w", source, err)
+	}
 
 	lockValue, _ := ing.ingestLocks.LoadOrStore(path, &sync.Mutex{})
 	pathLock := lockValue.(*sync.Mutex)
 	pathLock.Lock()
 	defer pathLock.Unlock()
 
-	info, err := os.Stat(path)
+	info, err := rootFS.Stat(relativePath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			ing.monitor.untrackTranscript(path)
