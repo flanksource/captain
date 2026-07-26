@@ -89,13 +89,15 @@ function SchemaPanelEditor({
   const [present, setPresent] = useState(Boolean(schema));
   const [error, setError] = useState("");
   const modelRef = useRef<{ dispose: () => void } | null>(null);
-  useEffect(
-    () => () => {
+  const validityCallbackRef = useRef(onValidityChange);
+  validityCallbackRef.current = onValidityChange;
+  useEffect(() => {
+    validityCallbackRef.current(kind, true);
+    return () => {
       modelRef.current?.dispose();
       modelRef.current = null;
-    },
-    [],
-  );
+    };
+  }, [kind]);
 
   function change(next: string) {
     setValue(next);
