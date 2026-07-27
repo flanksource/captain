@@ -88,6 +88,66 @@ var _ = Describe("Session list pages", func() {
 		Expect(last.NextCursor).To(BeEmpty())
 	})
 
+	It("combines inclusive activity bounds with live-only filtering", func(ctx SpecContext) {
+		if os.Getenv("CAPTAIN_DB_EMBEDDED_TEST") == "" {
+			Skip("set CAPTAIN_DB_EMBEDDED_TEST=1 to run embedded-postgres store tests")
+		}
+
+		dsn, stop, err := commonsdb.StartEmbedded(commonsdb.EmbeddedConfig{
+			DataDir:  filepath.Join(GinkgoT().TempDir(), "postgres"),
+			Database: "captain_session_range",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { Expect(stop()).To(Succeed()) })
+
+		db, err := Open(ctx, WithDSN(dsn), WithMigrations())
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { Expect(db.Close()).To(Succeed()) })
+
+		from := time.Date(2026, time.July, 26, 10, 0, 0, 0, time.UTC)
+		before := from.Add(2 * time.Hour)
+		activityTimes := []time.Time{
+			from.Add(-time.Hour),
+			from,
+			from.Add(time.Hour),
+			before,
+		}
+		ids := make([]uuid.UUID, 0, len(activityTimes))
+		for index, activityAt := range activityTimes {
+			record, err := db.CreateOrGetSession(ctx, CreateSessionInput{
+				ID: uuid.New(), ProviderSessionID: activityAt.Format(time.RFC3339), Source: "codex",
+				Provider: "openai", HostID: "range-test", Project: "captain", CWD: "/work/captain",
+			})
+			Expect(err).NotTo(HaveOccurred())
+			ids = append(ids, record.ID)
+			Expect(db.Gorm().Exec(
+				"UPDATE captain_sessions SET started_at = ?, last_activity_at = ? WHERE id = ?",
+				activityAt, activityAt, record.ID,
+			).Error).NotTo(HaveOccurred())
+			if index == 1 {
+				Expect(db.UpsertSessionProcess(ctx, SessionProcessInput{
+					SessionID: record.ID, HostID: "range-test", BootID: "boot", PID: 4821,
+					ProcessStartedAt: activityAt, Status: "active", CWD: "/work/captain", Source: "codex",
+				})).To(Succeed())
+			}
+		}
+
+		bounded, err := db.ListSessionSummaries(ctx, SessionListFilter{
+			RootsOnly: true, ActivityFrom: &from, ActivityBefore: &before,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(bounded.Total).To(Equal(int64(2)))
+		Expect([]uuid.UUID{bounded.Rows[0].ID, bounded.Rows[1].ID}).To(Equal([]uuid.UUID{ids[2], ids[1]}))
+
+		live, err := db.ListSessionSummaries(ctx, SessionListFilter{
+			RootsOnly: true, LiveOnly: true, ActivityFrom: &from, ActivityBefore: &before,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(live.Total).To(Equal(int64(1)))
+		Expect(live.Rows).To(HaveLen(1))
+		Expect(live.Rows[0].ID).To(Equal(ids[1]))
+	})
+
 	It("keeps detail aggregates bounded to paged sessions", func() {
 		Expect(sessionListQuery).NotTo(ContainSubstring("captain_session_overview"))
 		Expect(sessionListQuery).To(ContainSubstring("JOIN paged p ON p.id = m.session_id"))

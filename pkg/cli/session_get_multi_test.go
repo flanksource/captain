@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -29,7 +30,11 @@ var _ = Describe("session get multi-result output", func() {
 			received = opts
 			return SessionLiveResult{Total: 3, NextCursor: "cursor-next"}, nil
 		})
-		request := httptest.NewRequest(http.MethodGet, "/api/captain/sessions/live?source=codex&all=true&limit=2&cursor=cursor-current", nil)
+		request := httptest.NewRequest(
+			http.MethodGet,
+			"/api/captain/sessions/live?source=codex&all=true&limit=2&cursor=cursor-current&from=2026-07-26T21%3A00%3A00Z&before=2026-07-28T21%3A00%3A00Z",
+			nil,
+		)
 		response := httptest.NewRecorder()
 
 		handler.ServeHTTP(response, request)
@@ -37,11 +42,51 @@ var _ = Describe("session get multi-result output", func() {
 		Expect(response.Code).To(Equal(http.StatusOK))
 		Expect(received).To(MatchFields(IgnoreExtras, Fields{
 			"Source": Equal("codex"), "All": BeTrue(), "Limit": Equal(2), "Cursor": Equal("cursor-current"),
+			"From":   Equal(time.Date(2026, time.July, 26, 21, 0, 0, 0, time.UTC)),
+			"Before": Equal(time.Date(2026, time.July, 28, 21, 0, 0, 0, time.UTC)),
 		}))
 		var result SessionLiveResult
 		Expect(json.Unmarshal(response.Body.Bytes(), &result)).To(Succeed())
 		Expect(result.Total).To(Equal(3))
 		Expect(result.NextCursor).To(Equal("cursor-next"))
+	})
+
+	DescribeTable("rejects an invalid live-session activity timestamp before running the query", func(value string) {
+		called := false
+		handler := handleSessionsLiveWithRunner(func(_ context.Context, _ SessionLiveOptions) (SessionLiveResult, error) {
+			called = true
+			return SessionLiveResult{}, nil
+		})
+		request := httptest.NewRequest(http.MethodGet, "/api/captain/sessions/live?from="+value, nil)
+		response := httptest.NewRecorder()
+
+		handler.ServeHTTP(response, request)
+
+		Expect(response.Code).To(Equal(http.StatusBadRequest))
+		Expect(called).To(BeFalse())
+		Expect(response.Body.String()).To(ContainSubstring(fmt.Sprintf(`invalid from timestamp %q`, value)))
+	},
+		Entry("plain text", "not-a-time"),
+		Entry("unknown datemath unit", "now-7q"),
+	)
+
+	It("resolves live-session datemath bounds from one reference time", func() {
+		var received SessionLiveOptions
+		handler := handleSessionsLiveWithRunner(func(_ context.Context, opts SessionLiveOptions) (SessionLiveResult, error) {
+			received = opts
+			return SessionLiveResult{}, nil
+		})
+		request := httptest.NewRequest(
+			http.MethodGet,
+			"/api/captain/sessions/live?from=now-7d&before=now",
+			nil,
+		)
+		response := httptest.NewRecorder()
+
+		handler.ServeHTTP(response, request)
+
+		Expect(response.Code).To(Equal(http.StatusOK))
+		Expect(received.From).To(Equal(received.Before.AddDate(0, 0, -7)))
 	})
 
 	It("projects overview runtime data into the unified session detail", func() {
@@ -75,13 +120,30 @@ var _ = Describe("session get multi-result output", func() {
 			},
 		}
 
+		from := time.Date(2026, time.July, 26, 21, 0, 0, 0, time.UTC)
+		before := from.Add(48 * time.Hour)
 		page, err := dbSessionRecords(context.Background(), store, sessionRecordQuery{
-			Source: "all", Query: "ad4c854e",
+			Source: "all", Query: "ad4c854e", ActivityFrom: &from, ActivityBefore: &before,
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(page.Records).To(HaveLen(2))
-		Expect(store.listFilter.Query).To(Equal("ad4c854e"))
-		Expect(store.listFilter.RootsOnly).To(BeTrue())
+		Expect(store.listFilter).To(MatchFields(IgnoreExtras, Fields{
+			"Query":          Equal("ad4c854e"),
+			"RootsOnly":      BeTrue(),
+			"ActivityFrom":   PointTo(Equal(from)),
+			"ActivityBefore": PointTo(Equal(before)),
+		}))
+	})
+
+	It("requires an activity range to increase", func() {
+		from := time.Date(2026, time.July, 28, 21, 0, 0, 0, time.UTC)
+		before := from.Add(-time.Second)
+
+		activityFrom, activityBefore, err := sessionActivityRange(from, before)
+
+		Expect(err).To(MatchError("session activity from must be earlier than before"))
+		Expect(activityFrom).To(BeNil())
+		Expect(activityBefore).To(BeNil())
 	})
 
 	It("loads every bounded page when full live output is explicit", func(ctx SpecContext) {

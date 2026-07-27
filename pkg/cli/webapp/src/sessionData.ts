@@ -190,6 +190,8 @@ export async function fetchLiveSessions(params: {
   source: SourceFilter;
   project: ProjectScope;
   query?: string;
+  from?: string;
+  before?: string;
   limit?: number;
   cursor?: string;
 }): Promise<SessionListResult & { timing?: TimingMetric[] }> {
@@ -201,6 +203,8 @@ export async function fetchLiveSessions(params: {
       ...projectScopeQuery(params.project),
       q: params.query ?? "",
       limit: String(params.limit ?? 100),
+      ...(params.from ? { from: params.from } : {}),
+      ...(params.before ? { before: params.before } : {}),
       ...(params.cursor ? { cursor: params.cursor } : {}),
     },
     { Accept: "application/json" },

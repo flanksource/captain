@@ -4,8 +4,17 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/timberio/go-datemath"
+)
+
+var (
+	sessionRelativeDateMathPattern = regexp.MustCompile(`^now(?:[+-]\d*[yMwdhHms]|/[yMwdhHms])*$`)
+	sessionAbsoluteDateMathPattern = regexp.MustCompile(`^[0-9][0-9T:Z.+-]*(?:\|\|(?:[+-]\d*[yMwdhHms]|/[yMwdhHms])*)?$`)
 )
 
 func handleSessionsLive() http.HandlerFunc {
@@ -38,6 +47,24 @@ func handleSessionsLiveWithRunner(run func(context.Context, SessionLiveOptions) 
 			}
 			opts.Limit = limit
 		}
+		var err error
+		now := time.Now()
+		if opts.From, err = parseSessionQueryTime(sessionQueryTimeOptions{
+			Name: "from", Value: query.Get("from"), Now: now,
+		}); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if opts.Before, err = parseSessionQueryTime(sessionQueryTimeOptions{
+			Name: "before", Value: query.Get("before"), Now: now,
+		}); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if _, _, err := sessionActivityRange(opts.From, opts.Before); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		result, err := run(r.Context(), opts)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -45,6 +72,32 @@ func handleSessionsLiveWithRunner(run func(context.Context, SessionLiveOptions) 
 		}
 		writeServeJSON(w, http.StatusOK, result)
 	}
+}
+
+type sessionQueryTimeOptions struct {
+	Name  string
+	Value string
+	Now   time.Time
+}
+
+func parseSessionQueryTime(opts sessionQueryTimeOptions) (time.Time, error) {
+	value := strings.TrimSpace(opts.Value)
+	if value == "" {
+		return time.Time{}, nil
+	}
+
+	if parsed, err := time.Parse(time.RFC3339, value); err == nil {
+		return parsed, nil
+	}
+	if !sessionRelativeDateMathPattern.MatchString(value) && !sessionAbsoluteDateMathPattern.MatchString(value) {
+		return time.Time{}, fmt.Errorf("invalid %s timestamp %q", opts.Name, value)
+	}
+
+	expression, err := datemath.Parse(value)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("invalid %s timestamp %q: %w", opts.Name, value, err)
+	}
+	return expression.Time(datemath.WithNow(opts.Now)), nil
 }
 
 func handleSessionsThroughput() http.HandlerFunc {
