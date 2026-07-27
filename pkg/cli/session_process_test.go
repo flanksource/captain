@@ -26,6 +26,20 @@ func TestParseAgentProcessLineIgnoresCaptain(t *testing.T) {
 	}
 }
 
+func TestParseClaudeSessionIDFromCommand(t *testing.T) {
+	cases := map[string]string{
+		"/Users/moshe/.local/bin/claude --session-id e4352f60-b395-4b43-996d-0bfc92a92ee0 --settings {}": "e4352f60-b395-4b43-996d-0bfc92a92ee0",
+		"claude --resume 50a80579-0108-464b-a555-a3620542f3f9":                                           "50a80579-0108-464b-a555-a3620542f3f9",
+		"claude --session-id=abc123 -p":                                                                  "abc123",
+		"node /path/codex.js mcp-server":                                                                 "",
+	}
+	for command, want := range cases {
+		if got := parseClaudeSessionIDFromCommand(command); got != want {
+			t.Fatalf("parseClaudeSessionIDFromCommand(%q) = %q, want %q", command, got, want)
+		}
+	}
+}
+
 func TestParseLsofCWDs(t *testing.T) {
 	out := []byte("p123\nn/Users/moshe/project-a\np456\nn/Users/moshe/project-b\n")
 	cwds := parseLsofCWDs(out)

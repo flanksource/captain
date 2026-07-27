@@ -42,6 +42,55 @@ func TestParseFromReader_CodexJSONL(t *testing.T) {
 	assert.Equal(t, "codex", result.ToolUses[0].Source)
 }
 
+func TestParseFromReader_CodexWaitWithContentOutput(t *testing.T) {
+	data := []byte(`{"timestamp":"2026-07-13T09:31:13.359Z","type":"session_meta","payload":{"id":"019f5a68-c638-7fe2-b0d0-c1d8a3c4de55","cwd":"/repo"}}
+{"timestamp":"2026-07-13T09:31:13.362Z","type":"turn_context","payload":{"turn_id":"019f5ad0-fc23-7b92-8b13-a9f50d903704","model":"gpt-5.6-sol","effort":"max"}}
+{"timestamp":"2026-07-13T09:41:33.611Z","type":"response_item","payload":{"type":"function_call","name":"wait","arguments":"{\"cell_id\":\"214\",\"yield_time_ms\":20000,\"max_tokens\":5000}","call_id":"call-wait"}}
+{"timestamp":"2026-07-13T09:41:41.017Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call-wait","output":[{"type":"input_text","text":"Script completed\nWall time 7.4 seconds\nOutput:\n"},{"type":"input_text","text":"evaluation failed\n"},{"type":"input_text","text":"exit=1"}]}}
+`)
+
+	result, err := parseFromReader(data)
+	require.NoError(t, err)
+	assert.Equal(t, claude.FormatCodexJSONL, result.Format)
+	require.Len(t, result.ToolUses, 1)
+	use := result.ToolUses[0]
+	assert.Equal(t, "Wait", use.Tool)
+	assert.Equal(t, "214", use.Input["cell_id"])
+	assert.Equal(t, float64(20000), use.Input["yield_time_ms"])
+	assert.Equal(t, float64(5000), use.Input["max_tokens"])
+	assert.Equal(t, "evaluation failed\nexit=1", use.Response)
+	assert.Equal(t, "call-wait", use.ToolUseID)
+
+	historyResult, err := runHistoryFromReader(data, HistoryOptions{})
+	require.NoError(t, err)
+	rows := historyResult.(session.HistoryResult)
+	require.Len(t, rows.Results, 1)
+	assert.Equal(t, "Wait", rows.Results[0].Tool)
+}
+
+func TestParseFromReader_CodexUserShellCommand(t *testing.T) {
+	data := []byte(`{"timestamp":"2026-07-13T06:13:59Z","type":"session_meta","payload":{"id":"sess-shell","cwd":"/repo"}}
+{"timestamp":"2026-07-13T06:14:01Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<user_shell_command>\n<command>\ngavel proc restart\n</command>\n<result>\nExit code: 1\nDuration: 2.9909 seconds\nOutput:\nsignal: killed\nKill sent but port 8088 is still bound\n</result>\n</user_shell_command>"}]}}
+`)
+
+	result, err := parseFromReader(data)
+	require.NoError(t, err)
+	assert.Equal(t, claude.FormatCodexJSONL, result.Format)
+	require.Len(t, result.ToolUses, 1)
+	use := result.ToolUses[0]
+	assert.Equal(t, "UserShellCommand", use.Tool)
+	assert.Equal(t, "gavel proc restart", use.Input["command"])
+	assert.Equal(t, 1, use.Input["exit_code"])
+	assert.Contains(t, use.Input["output"], "Kill sent but port 8088 is still bound")
+	assert.Contains(t, use.Response, "signal: killed")
+
+	historyResult, err := runHistoryFromReader(data, HistoryOptions{})
+	require.NoError(t, err)
+	rows := historyResult.(session.HistoryResult)
+	require.Len(t, rows.Results, 1)
+	assert.Equal(t, "UserShellCommand", rows.Results[0].Tool)
+}
+
 func TestParseFromReader_ClaudeStreamJSON(t *testing.T) {
 	data := []byte(`{"type":"system","subtype":"init","cwd":"/tmp","session_id":"sess-1","model":"claude-sonnet-4-20250514","tools":["Bash","Read"]}
 {"type":"user","message":{"role":"user","content":[{"type":"text","text":"list files"}]},"session_id":"sess-1","uuid":"msg-1"}
@@ -53,18 +102,19 @@ func TestParseFromReader_ClaudeStreamJSON(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, claude.FormatClaudeStreamJSON, result.Format)
 	assert.Nil(t, result.CLIOut)
-	// Stream-json now surfaces system/init and result/* as synthetic tools
-	// alongside real tool_use blocks.
-	require.Len(t, result.ToolUses, 4)
+	// Stream-json now surfaces chat, system/init, and result/* rows alongside
+	// real tool_use blocks.
+	require.Len(t, result.ToolUses, 5)
 	names := []string{
 		result.ToolUses[0].Tool,
 		result.ToolUses[1].Tool,
 		result.ToolUses[2].Tool,
 		result.ToolUses[3].Tool,
+		result.ToolUses[4].Tool,
 	}
-	assert.Equal(t, []string{"SessionInit", "Bash", "Read", "Result"}, names)
-	assert.Equal(t, "ls -la", result.ToolUses[1].Input["command"])
-	assert.Equal(t, "/tmp/foo.go", result.ToolUses[2].Input["file_path"])
+	assert.Equal(t, []string{"SessionInit", "User", "Bash", "Read", "Result"}, names)
+	assert.Equal(t, "ls -la", result.ToolUses[2].Input["command"])
+	assert.Equal(t, "/tmp/foo.go", result.ToolUses[3].Input["file_path"])
 }
 
 func TestParseFromReader_ClaudeCLI(t *testing.T) {
@@ -270,4 +320,69 @@ func TestRunHistoryFromReader_CategoryAliases(t *testing.T) {
 	assert.Equal(t, "Task", histResult.Results[0].Tool)
 	assert.Equal(t, "plan", histResult.Results[0].Category)
 	assert.NotContains(t, histResult.Results[0].Summary, `{"plan"`)
+}
+
+func TestRunHistoryFromReader_CodexChatRowsAndChatCategoryFilter(t *testing.T) {
+	data := []byte(`{"timestamp":"2026-07-08T11:19:57.028Z","type":"session_meta","payload":{"id":"sess-rollout","cwd":"/repo","cli_version":"0.143.0","model_provider":"openai"}}
+{"timestamp":"2026-07-08T11:19:57.028Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"}}
+{"timestamp":"2026-07-08T11:19:58.758Z","type":"turn_context","payload":{"model":"gpt-5.5","effort":"high"}}
+{"timestamp":"2026-07-08T11:19:58.760Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}}
+{"timestamp":"2026-07-08T11:19:58.761Z","type":"event_msg","payload":{"type":"user_message","message":"hi"}}
+{"timestamp":"2026-07-08T11:20:00.403Z","type":"event_msg","payload":{"type":"agent_message","message":"hello"}}
+{"timestamp":"2026-07-08T11:20:00.404Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hello"}]}}
+{"timestamp":"2026-07-08T11:20:00.430Z","type":"event_msg","payload":{"type":"token_count","turn_id":"turn-1","info":{"last_token_usage":{"input_tokens":10,"cached_input_tokens":4,"output_tokens":2,"total_tokens":12},"total_token_usage":{"input_tokens":10,"cached_input_tokens":4,"output_tokens":2,"total_tokens":12},"model_context_window":100}}}
+{"timestamp":"2026-07-08T11:20:00.435Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-1","duration_ms":3519}}
+`)
+
+	result, err := runHistoryFromReader(data, HistoryOptions{})
+	require.NoError(t, err)
+	histResult := result.(session.HistoryResult)
+	require.Len(t, histResult.Results, 4)
+	assert.Equal(t, []string{"TaskStarted", "User", "Assistant", "TaskComplete"}, []string{
+		histResult.Results[0].Tool,
+		histResult.Results[1].Tool,
+		histResult.Results[2].Tool,
+		histResult.Results[3].Tool,
+	})
+	for _, row := range histResult.Results {
+		assert.Equal(t, "chat", row.Category)
+	}
+
+	filtered, err := runHistoryFromReader(data, HistoryOptions{Categories: []string{"!chat"}})
+	require.NoError(t, err)
+	assert.Empty(t, filtered.(session.HistoryResult).Results)
+
+	tokens, err := runHistoryFromReader(data, HistoryOptions{Tools: []string{"TokenCount"}})
+	require.NoError(t, err)
+	tokenResult := tokens.(session.HistoryResult)
+	require.Len(t, tokenResult.Results, 1)
+	assert.Equal(t, "TokenCount", tokenResult.Results[0].Tool)
+}
+
+func TestRunHistoryFromReader_CodexEnvelopeRendersSummary(t *testing.T) {
+	data := []byte(`{"timestamp":"2026-07-08T11:19:57.028Z","type":"session_meta","payload":{"id":"sess-env","cwd":"/repo","cli_version":"0.143.0","model_provider":"openai"}}
+{"timestamp":"2026-07-08T11:20:00.403Z","type":"event_msg","payload":{"type":"agent_message","message":"{\"endStatus\":\"completed\",\"plan\":{\"content\":\"\",\"path\":\"/Users/moshe/.codex/plans/x.md\",\"status\":\"new\"},\"questions\":[],\"summary\":\"Authored the review-banner plan.\"}"}}
+`)
+
+	result, err := runHistoryFromReader(data, HistoryOptions{})
+	require.NoError(t, err)
+	histResult := result.(session.HistoryResult)
+	require.Len(t, histResult.Results, 1)
+	assert.Equal(t, "Assistant", histResult.Results[0].Tool)
+	assert.Contains(t, histResult.Results[0].Summary, "Authored the review-banner plan.")
+	assert.NotContains(t, histResult.Results[0].Summary, "endStatus")
+	assert.NotContains(t, histResult.Results[0].Summary, `{"plan"`)
+}
+
+func TestRunHistoryFromReader_HidesCodexTokenCountBeforeLimit(t *testing.T) {
+	data := []byte(`{"timestamp":"2026-07-08T11:19:57.028Z","type":"session_meta","payload":{"id":"sess-rollout","cwd":"/repo","cli_version":"0.143.0","model_provider":"openai"}}
+{"timestamp":"2026-07-08T11:20:00.430Z","type":"event_msg","payload":{"type":"token_count","turn_id":"turn-1","info":{"last_token_usage":{"input_tokens":10,"cached_input_tokens":4,"output_tokens":2,"total_tokens":12},"total_token_usage":{"input_tokens":10,"cached_input_tokens":4,"output_tokens":2,"total_tokens":12},"model_context_window":100}}}
+{"timestamp":"2026-07-08T11:20:00.435Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"}}
+`)
+
+	result, err := runHistoryFromReader(data, HistoryOptions{Limit: 1})
+	require.NoError(t, err)
+	histResult := result.(session.HistoryResult)
+	require.Len(t, histResult.Results, 1)
+	assert.Equal(t, "TaskStarted", histResult.Results[0].Tool)
 }

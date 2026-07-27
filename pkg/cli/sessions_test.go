@@ -10,12 +10,14 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/claude"
-	rpchttp "github.com/flanksource/clicky/rpc/http"
+	"github.com/flanksource/captain/pkg/database"
+	"github.com/flanksource/captain/pkg/monitor"
 )
 
 func TestRunSessionListAndGetClaude(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	withTestCaptainDB(t)
 	project := filepath.Join(home, "work", "project")
 	if err := os.MkdirAll(project, 0o755); err != nil {
 		t.Fatal(err)
@@ -82,7 +84,7 @@ func TestRunSessionListAndGetClaude(t *testing.T) {
 	if session.ID != "sess-claude" || session.Source != "claude" {
 		t.Fatalf("session summary = %+v", session)
 	}
-	if session.ToolCalls != 1 || session.Messages != 1 {
+	if session.ToolCalls != 1 || session.Messages != 3 {
 		t.Fatalf("ToolCalls/Messages = %d/%d", session.ToolCalls, session.Messages)
 	}
 	if session.Key == "" {
@@ -93,10 +95,14 @@ func TestRunSessionListAndGetClaude(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunSessionGet: %v", err)
 	}
-	if detail.Source != "claude" || detail.ID != "sess-claude" {
-		t.Fatalf("session detail meta = %+v", detail)
+	if detail.Total != 1 || len(detail.Sessions) != 1 || detail.Sessions[0].Detail == nil {
+		t.Fatalf("session detail result = %+v", detail)
 	}
-	entries := detail.ToReplayEntries()
+	parsed := detail.Sessions[0].Detail
+	if parsed.Source != "claude" || parsed.ID != "sess-claude" {
+		t.Fatalf("session detail meta = %+v", parsed)
+	}
+	entries := parsed.ToReplayEntries()
 	if len(entries) != 2 {
 		t.Fatalf("entries = %+v", entries)
 	}
@@ -114,6 +120,7 @@ func TestRunSessionListAndGetClaude(t *testing.T) {
 func TestRunSessionListCodexScope(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	withTestCaptainDB(t)
 	project := filepath.Join(home, "work", "project")
 	if err := os.MkdirAll(project, 0o755); err != nil {
 		t.Fatal(err)
@@ -146,45 +153,83 @@ func TestRunSessionListCodexScope(t *testing.T) {
 	}
 }
 
+func TestSessionMatchesQueryIncludesIdentity(t *testing.T) {
+	record := SessionRecord{
+		ID:            "session-1",
+		Source:        "codex",
+		Project:       "captain",
+		Title:         "Improve session identity",
+		InitialPrompt: "Show the initial user request in the listing",
+	}
+	for _, query := range []string{"captain", "identity", "initial user request"} {
+		if !sessionMatchesQuery(record, query) {
+			t.Fatalf("query %q did not match %+v", query, record)
+		}
+	}
+}
+
 func TestRunSessionGetUnknown(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	withTestCaptainDB(t)
 	_, err := RunSessionGet(context.Background(), SessionGetOptions{ID: "missing"})
 	if err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("err = %v", err)
 	}
 }
 
-func TestFindSessionCandidateByIDClaudeFilename(t *testing.T) {
+func TestRunSessionGetReturnsAllProviderPrefixMatches(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	db := withTestCaptainDB(t)
 	project := filepath.Join(home, "work", "project")
-	sessionFile := filepath.Join(home, ".claude", "projects", claude.NormalizePath(project), "sess-fast.jsonl")
-	if err := os.MkdirAll(filepath.Dir(sessionFile), 0o755); err != nil {
+	if err := os.MkdirAll(project, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(sessionFile, []byte("{not-json"), 0o644); err != nil {
-		t.Fatal(err)
+	t.Chdir(project)
+	providerID := "ad4c854e-cde6-4b99-99f3-667bf74112e3"
+	sessionFile := filepath.Join(home, ".claude", "projects", claude.NormalizePath(project), providerID+".jsonl")
+	writeJSONL(t, sessionFile,
+		map[string]any{
+			"type": "assistant", "sessionId": providerID, "uuid": "a1",
+			"timestamp": "2026-07-14T10:00:00Z", "cwd": project,
+			"message": map[string]any{
+				"role": "assistant", "model": "claude-opus-4-5",
+				"content": []any{map[string]any{"type": "text", "text": "canonical transcript"}},
+			},
+		},
+	)
+	for _, input := range []database.CreateSessionInput{
+		{ProviderSessionID: providerID, Source: "claude", HostID: "test-host", Path: sessionFile, Project: "flanksource", CWD: project},
+		{ProviderSessionID: providerID, Source: "gavel", Provider: "cmux", HostID: "local", Project: "xero-cli"},
+		{ProviderSessionID: providerID, Source: "claude", Provider: "cmux", HostID: "local", Project: "xero-cli"},
+	} {
+		if _, err := db.CreateOrGetSession(t.Context(), input); err != nil {
+			t.Fatalf("create duplicate session: %v", err)
+		}
 	}
 
-	candidate, ok, err := findSessionCandidateByID("sess-fast", "all")
+	result, err := RunSessionGet(t.Context(), SessionGetOptions{ID: "ad4c854e"})
 	if err != nil {
-		t.Fatalf("findSessionCandidateByID: %v", err)
+		t.Fatalf("RunSessionGet: %v", err)
 	}
-	if !ok {
-		t.Fatal("expected candidate")
+	if result.Total != 3 || len(result.Sessions) != 3 {
+		t.Fatalf("result = %+v", result)
 	}
-	if candidate.path != sessionFile {
-		t.Fatalf("candidate.path = %q, want %q", candidate.path, sessionFile)
+	if !result.Sessions[0].DetailAvailable || result.Sessions[0].Detail == nil {
+		t.Fatalf("first match should contain parsed transcript: %+v", result.Sessions[0])
 	}
-	if candidate.record.ID != "sess-fast" || candidate.record.Source != "claude" {
-		t.Fatalf("candidate.record = %+v", candidate.record)
+	for _, item := range result.Sessions[1:] {
+		if item.DetailAvailable || item.Detail != nil {
+			t.Fatalf("metadata-only match = %+v", item)
+		}
 	}
 }
 
 func TestRunSessionLiveEnrichesSummaryWithProcessHealth(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	withTestCaptainDB(t)
 	project := filepath.Join(home, "work", "project")
 	if err := os.MkdirAll(project, 0o755); err != nil {
 		t.Fatal(err)
@@ -222,13 +267,11 @@ func TestRunSessionLiveEnrichesSummaryWithProcessHealth(t *testing.T) {
 	)
 
 	started := time.Date(2026, 6, 1, 9, 59, 0, 0, time.UTC)
-	orig := discoverSessionProcesses
-	discoverSessionProcesses = func() ([]agentProcess, error) {
-		return []agentProcess{{
+	monitorDiscoverProcesses = func() ([]monitor.Process, error) {
+		return []monitor.Process{{
 			Source:        "claude",
 			PID:           12345,
 			Status:        "active",
-			Active:        true,
 			CPUPercent:    2.5,
 			MemoryPercent: 1.25,
 			StartedAt:     &started,
@@ -236,7 +279,7 @@ func TestRunSessionLiveEnrichesSummaryWithProcessHealth(t *testing.T) {
 			Command:       "claude",
 		}}, nil
 	}
-	t.Cleanup(func() { discoverSessionProcesses = orig })
+	refreshTestSessionDB(t)
 
 	result, err := RunSessionLive(context.Background(), SessionLiveOptions{Source: "claude", Limit: 10})
 	if err != nil {
@@ -263,9 +306,63 @@ func TestRunSessionLiveEnrichesSummaryWithProcessHealth(t *testing.T) {
 	}
 }
 
+func TestRunSessionLiveExcludesEndedSessions(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	db := withTestCaptainDB(t)
+	project := filepath.Join(home, "work", "project")
+	endedCWD := filepath.Join(project, "ended")
+	if err := os.MkdirAll(endedCWD, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(project)
+
+	live, err := db.CreateOrGetSession(t.Context(), database.CreateSessionInput{
+		ProviderSessionID: "sess-live", Source: "claude", CWD: project,
+	})
+	if err != nil {
+		t.Fatalf("create live session: %v", err)
+	}
+	ended, err := db.CreateOrGetSession(t.Context(), database.CreateSessionInput{
+		ProviderSessionID: "sess-ended", Source: "claude", CWD: endedCWD,
+	})
+	if err != nil {
+		t.Fatalf("create ended session: %v", err)
+	}
+
+	started := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
+	hostID := captainHostID()
+	for _, process := range []database.SessionProcessInput{
+		{SessionID: live.ID, HostID: hostID, BootID: "boot", PID: 12345, ProcessStartedAt: started, Status: "active", CWD: project, Source: "claude"},
+		{SessionID: ended.ID, HostID: hostID, BootID: "boot", PID: 54321, ProcessStartedAt: started, Status: "active", CWD: endedCWD, Source: "claude"},
+	} {
+		if err := db.UpsertSessionProcess(t.Context(), process); err != nil {
+			t.Fatalf("upsert process: %v", err)
+		}
+	}
+	if _, err := db.EndVanishedProcesses(t.Context(), hostID, []int64{12345}); err != nil {
+		t.Fatalf("end historical process: %v", err)
+	}
+	monitorDiscoverProcesses = func() ([]monitor.Process, error) {
+		return []monitor.Process{{
+			Source: "claude", PID: 12345, Status: "active", StartedAt: &started,
+			CWD: project, Command: "claude",
+		}}, nil
+	}
+
+	result, err := RunSessionLive(context.Background(), SessionLiveOptions{Source: "all", All: true, Limit: 10})
+	if err != nil {
+		t.Fatalf("RunSessionLive: %v", err)
+	}
+	if result.Total != 1 || len(result.Sessions) != 1 || result.Sessions[0].ID != "sess-live" {
+		t.Fatalf("live sessions = %+v", result)
+	}
+}
+
 func TestRunSessionLiveScopesUnmatchedProcessesToCurrentProject(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	withTestCaptainDB(t)
 	project := filepath.Join(home, "work", "project")
 	otherProject := filepath.Join(home, "work", "other")
 	if err := os.MkdirAll(project, 0o755); err != nil {
@@ -277,14 +374,13 @@ func TestRunSessionLiveScopesUnmatchedProcessesToCurrentProject(t *testing.T) {
 	t.Chdir(project)
 	markProjectRoot(t, project)
 
-	orig := discoverSessionProcesses
-	discoverSessionProcesses = func() ([]agentProcess, error) {
-		return []agentProcess{
-			{Source: "codex", PID: 100, Status: "sleeping", Active: true, CWD: project, Command: "codex"},
-			{Source: "claude", PID: 200, Status: "sleeping", Active: true, CWD: otherProject, Command: "claude"},
+	monitorDiscoverProcesses = func() ([]monitor.Process, error) {
+		return []monitor.Process{
+			{Source: "codex", PID: 100, Status: "sleeping", CWD: project, Command: "codex"},
+			{Source: "claude", PID: 200, Status: "sleeping", CWD: otherProject, Command: "claude"},
 		}, nil
 	}
-	t.Cleanup(func() { discoverSessionProcesses = orig })
+	refreshTestSessionDB(t)
 
 	result, err := RunSessionLive(context.Background(), SessionLiveOptions{Source: "all", Limit: 10})
 	if err != nil {
@@ -306,42 +402,70 @@ func TestRunSessionLiveScopesUnmatchedProcessesToCurrentProject(t *testing.T) {
 	}
 }
 
-func TestRunSessionLiveRecordsPhaseTimings(t *testing.T) {
+func TestRunSessionLiveRestrictsExplicitProject(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	withTestCaptainDB(t)
 	project := filepath.Join(home, "work", "project")
+	otherProject := filepath.Join(home, "work", "other")
 	if err := os.MkdirAll(project, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(otherProject, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	t.Chdir(project)
+	markProjectRoot(t, project)
+	markProjectRoot(t, otherProject)
 
-	writeJSONL(t, filepath.Join(home, ".claude", "projects", claude.NormalizePath(project), "sess-timing.jsonl"),
+	writeJSONL(t, filepath.Join(home, ".claude", "projects", claude.NormalizePath(project), "sess-current.jsonl"),
 		map[string]any{
-			"type":      "user",
-			"sessionId": "sess-timing",
+			"type":      "assistant",
+			"sessionId": "sess-current",
 			"timestamp": "2026-06-01T10:00:00Z",
 			"cwd":       project,
 			"message": map[string]any{
-				"role":    "user",
-				"content": []any{map[string]any{"type": "text", "text": "hi"}},
+				"role":    "assistant",
+				"model":   "claude-sonnet-4",
+				"content": []any{map[string]any{"type": "text", "text": "current"}},
 			},
 		},
 	)
+	writeJSONL(t, filepath.Join(home, ".claude", "projects", claude.NormalizePath(otherProject), "sess-other.jsonl"),
+		map[string]any{
+			"type":      "assistant",
+			"sessionId": "sess-other",
+			"timestamp": "2026-06-01T10:00:01Z",
+			"cwd":       otherProject,
+			"message": map[string]any{
+				"role":    "assistant",
+				"model":   "claude-sonnet-4",
+				"content": []any{map[string]any{"type": "text", "text": "other"}},
+			},
+		},
+	)
+	monitorDiscoverProcesses = func() ([]monitor.Process, error) {
+		return []monitor.Process{
+			{Source: "claude", PID: 301, Status: "sleeping", CWD: project, Command: "claude --resume sess-current"},
+			{Source: "claude", PID: 302, Status: "sleeping", CWD: otherProject, Command: "claude --resume sess-other"},
+		}, nil
+	}
+	refreshTestSessionDB(t)
 
-	orig := discoverSessionProcesses
-	discoverSessionProcesses = func() ([]agentProcess, error) { return nil, nil }
-	t.Cleanup(func() { discoverSessionProcesses = orig })
-
-	ctx, timings := rpchttp.WithTimings(context.Background())
-	if _, err := RunSessionLive(ctx, SessionLiveOptions{Source: "claude", Limit: 10}); err != nil {
+	result, err := RunSessionLive(context.Background(), SessionLiveOptions{
+		Source:  "claude",
+		All:     true,
+		Project: otherProject,
+		Limit:   10,
+	})
+	if err != nil {
 		t.Fatalf("RunSessionLive: %v", err)
 	}
-
-	header := timings.Header()
-	for _, phase := range []string{"find", "parse", "enrich"} {
-		if !strings.Contains(header, phase+";dur=") {
-			t.Fatalf("Header() = %q, missing phase %q", header, phase)
-		}
+	if result.Scope != "project" || result.Project != otherProject {
+		t.Fatalf("scope/project = %q/%q, want project/%q", result.Scope, result.Project, otherProject)
+	}
+	if result.Total != 1 || len(result.Sessions) != 1 || result.Sessions[0].ID != "sess-other" {
+		t.Fatalf("project-scoped sessions = %+v", result)
 	}
 }
 
@@ -356,15 +480,6 @@ func markProjectRoot(t *testing.T, dir string) {
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module test\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-}
-
-func hasHealth(signals []SessionHealthWire, kind, severity string) bool {
-	for _, signal := range signals {
-		if signal.Kind == kind && signal.Severity == severity {
-			return true
-		}
-	}
-	return false
 }
 
 func writeCodexSession(t *testing.T, path, id, cwd string) {

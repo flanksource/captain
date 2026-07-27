@@ -272,7 +272,7 @@ func RunSRTGenerate(opts SRTGenerateOptions) (any, error) {
 		}
 		analysis := AnalyzeToolUseLegacy(tu, projectRoot)
 		for _, p := range analysis.WritePaths {
-			addDir(writeDirs, p, "")
+			addDir(writeDirs, DisplayPath(p), "")
 		}
 		for _, d := range analysis.Domains {
 			domains[d] = true

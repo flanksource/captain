@@ -6,6 +6,8 @@ import (
 	"sort"
 	"time"
 
+	"github.com/flanksource/clicky/api"
+
 	"github.com/flanksource/captain/pkg/claude"
 )
 
@@ -20,13 +22,25 @@ type ChangesOptions struct {
 	Ignored   bool      `flag:"ignored" help:"Include gitignored / out-of-repo files; --ignored=true to show them"`
 }
 
+// SessionPath is an absolute path to a file a session touched. It serialises
+// absolute — consumers resolve it from another process and another working
+// directory (gavel stages from these) — and renders relative to the working
+// directory, which is all a human reading the table wants to see.
+type SessionPath string
+
+func (p SessionPath) Pretty() api.Text {
+	return api.Text{Content: DisplayPath(string(p))}
+}
+
+func (p SessionPath) String() string { return string(p) }
+
 // ChangedFile describes a single file modified during a session.
 type ChangedFile struct {
-	Path  string `json:"path" pretty:"label=File,table"`
-	Edits int    `json:"edits" pretty:"label=Edits,table"`
-	Tools string `json:"tools" pretty:"label=Tools,table"`
-	Agent string `json:"agent,omitempty" pretty:"label=Agent,table"`
-	Last  string `json:"last,omitempty" pretty:"label=Last Modified,table"`
+	Path  SessionPath `json:"path" pretty:"label=File,table"`
+	Edits int         `json:"edits" pretty:"label=Edits,table"`
+	Tools string      `json:"tools" pretty:"label=Tools,table"`
+	Agent string      `json:"agent,omitempty" pretty:"label=Agent,table"`
+	Last  string      `json:"last,omitempty" pretty:"label=Last Modified,table"`
 }
 
 // ChangesResult lists the files modified by a single session.
@@ -156,7 +170,7 @@ func buildChangesResult(sessionID string, uses []claude.ToolUse) ChangesResult {
 		Files:     make([]ChangedFile, 0, len(files)),
 	}
 	for path, a := range files {
-		row := ChangedFile{Path: path, Edits: a.edits, Tools: joinSorted(a.tools), Agent: joinSorted(a.agents)}
+		row := ChangedFile{Path: SessionPath(path), Edits: a.edits, Tools: joinSorted(a.tools), Agent: joinSorted(a.agents)}
 		if a.last != nil {
 			row.Last = a.last.Format("2006-01-02 15:04")
 		}
@@ -184,7 +198,7 @@ func agentLabel(tu claude.ToolUse) string {
 func (r *ChangesResult) filter(pf *pathFilter) {
 	kept := r.Files[:0]
 	for _, f := range r.Files {
-		if pf.keep(f.Path) {
+		if pf.keep(string(f.Path)) {
 			kept = append(kept, f)
 		}
 	}
