@@ -2,10 +2,12 @@ package session
 
 import (
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/claude"
+	"github.com/flanksource/captain/pkg/claude/tools"
 )
 
 // Build discovers the in-scope sessions and returns the unified model for each,
@@ -25,16 +27,6 @@ func Build(currentDir string, searchAll bool, filter claude.Filter) ([]*Session,
 
 // buildSession assembles one Session from a parsed root+sub-agent group.
 func buildSession(ps claude.ParsedSession) *Session {
-	h := buildHierarchy(ps)
-
-	s := &Session{
-		ID:       ps.SessionID,
-		Source:   "claude",
-		Root:     h.root,
-		Agents:   h.agents,
-		Messages: h.messages,
-	}
-
 	var allEntries []claude.HistoryEntry
 	var allToolUses []claude.ToolUse
 	costs := api.Costs{}
@@ -42,8 +34,33 @@ func buildSession(ps claude.ParsedSession) *Session {
 		allEntries = append(allEntries, t.Entries...)
 		allToolUses = append(allToolUses, t.ToolUses...)
 	}
+	meta := buildTranscriptMetadata(ps)
+	h := buildHierarchy(ps, meta.turnByEntry)
+
+	s := &Session{
+		ID:           ps.SessionID,
+		Source:       "claude",
+		HistoryFile:  h.root.HistoryFile,
+		Context:      latestContext(meta.turns),
+		Budget:       meta.budget,
+		Capabilities: meta.capabilities,
+		Events:       meta.events,
+		Turns:        meta.turns,
+		Root:         h.root,
+		Agents:       h.agents,
+		Messages:     h.messages,
+	}
 
 	applyMetadata(s, ps, allEntries)
+	if len(ps.Transcripts) > 0 {
+		root := ps.Transcripts[0]
+		s.Title = latestClaudeSessionTitle(root.ToolUses)
+		s.InitialPrompt = firstClaudeUserPrompt(root.Entries)
+	}
+	if s.Title == "" {
+		s.Title = s.Slug
+	}
+	applySessionIdentity(s)
 	for _, e := range allEntries {
 		if e.IsAssistantMessage() && e.Message.Usage != nil {
 			costs = append(costs, CostFromUsage(e.Message.Usage, e.Message.Model))
@@ -54,6 +71,9 @@ func buildSession(ps claude.ParsedSession) *Session {
 	s.ToolCosts = collapseByModel(costs)
 
 	s.Files = changedFiles(allToolUses)
+	s.Todos = latestTodos(allToolUses, func(tu claude.ToolUse) (string, map[string]any) {
+		return tu.Tool, tu.Input
+	})
 	s.Plan = buildPlan(allEntries, allToolUses)
 	s.Approvals = approvalStats(allToolUses)
 	return s
@@ -143,9 +163,10 @@ func relPath(tu claude.ToolUse, path string) string {
 
 // buildPlan recovers the session plan and its lifecycle events.
 func buildPlan(entries []claude.HistoryEntry, uses []claude.ToolUse) *Plan {
+	tagged := taggedClaudePlan(uses)
 	sp := claude.PlanFromEntries(entries)
 	if sp == nil {
-		return nil
+		return tagged
 	}
 	plan := &Plan{Path: sp.Path, Slug: sp.Slug, Content: sp.Content, Explicit: sp.Explicit}
 	for _, tu := range uses {
@@ -160,7 +181,34 @@ func buildPlan(entries []claude.HistoryEntry, uses []claude.ToolUse) *Plan {
 		}
 		plan.Events = append(plan.Events, PlanEvent{Kind: kind, Timestamp: tu.Timestamp, Reason: reason})
 	}
+	if tagged != nil {
+		plan.Events = append(plan.Events, tagged.Events...)
+		if !sp.Explicit && strings.TrimSpace(sp.Content) == "" {
+			plan.Content = tagged.Content
+			plan.Explicit = true
+		}
+	}
 	return plan
+}
+
+func taggedClaudePlan(uses []claude.ToolUse) *Plan {
+	var content string
+	var events []PlanEvent
+	for _, use := range uses {
+		if use.Tool != "Plan" {
+			continue
+		}
+		value, _ := use.Input["content"].(string)
+		if value = strings.TrimSpace(value); value == "" {
+			continue
+		}
+		content = value
+		events = append(events, PlanEvent{Kind: PlanWrite, Timestamp: use.Timestamp})
+	}
+	if content == "" {
+		return nil
+	}
+	return &Plan{Content: content, Explicit: true, Events: events}
 }
 
 // approvalStats counts approvals/denials across the session's tool uses.
@@ -175,11 +223,39 @@ func approvalStats(uses []claude.ToolUse) ApprovalStats {
 				Tool:      tu.Tool,
 				Reason:    tu.DeniedReason,
 			})
-		case tu.Tool == "ExitPlanMode" || tu.Tool == "User":
+		case isNonApprovalActivity(tu.Tool):
 			// plan/synthetic rows are not approvals
 		default:
 			stats.Approved++
 		}
 	}
 	return stats
+}
+
+func isNonApprovalActivity(tool string) bool {
+	if tools.IsEventToolName(tool) {
+		return true
+	}
+	switch tool {
+	case "ExitPlanMode", "Plan", "System", "User", "Assistant", "Reasoning", "Event",
+		"ApiError", "ParseError", "Result", "SessionInit", "HookStart",
+		"HookResponse", "StopHookSummary", "TurnDuration", "AwaySummary",
+		"SessionTitle":
+		return true
+	default:
+		return false
+	}
+}
+
+func isChatActivity(tool string) bool {
+	switch tool {
+	case "System", "User", "Assistant", "Reasoning":
+		return true
+	default:
+		return false
+	}
+}
+
+func isOperationalToolActivity(tool string) bool {
+	return !isNonApprovalActivity(tool) && tool != ""
 }
