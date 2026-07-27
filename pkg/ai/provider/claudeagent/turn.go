@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -132,7 +133,7 @@ func (p *Provider) runTurn(ctx context.Context, req ai.Request, events chan ai.E
 			emit(context.Background(), events, ai.Event{Kind: ai.EventError, Error: "claude-agent: provider closed", Model: p.model})
 			return
 		case <-p.procExited:
-			emit(context.Background(), events, ai.Event{Kind: ai.EventError, Error: "claude-agent: process exited mid-turn", Model: p.model})
+			emit(context.Background(), events, ai.Event{Kind: ai.EventError, Error: p.withProcessOutput("claude-agent: process exited mid-turn"), Model: p.model})
 			return
 		}
 	}
@@ -143,6 +144,9 @@ func (p *Provider) runTurn(ctx context.Context, req ai.Request, events chan ai.E
 // on the turn's quit and the provider's base context.
 func (p *Provider) onNotification(method string, params json.RawMessage) {
 	ev, ok := mapNotification(method, params, p.model)
+	if ok && ev.Kind == ai.EventError {
+		ev.Error = p.withProcessOutput(ev.Error)
+	}
 	if ok && ev.SessionID != "" {
 		p.rememberSession(ev.SessionID)
 	}
@@ -164,6 +168,41 @@ func (p *Provider) onNotification(method string, params json.RawMessage) {
 	if method == notifyTurnDone || method == notifyTurnError {
 		ts.completePrompt()
 	}
+}
+
+func (p *Provider) withProcessOutput(message string) string {
+	p.procMu.RLock()
+	proc := p.proc
+	p.procMu.RUnlock()
+	if proc == nil {
+		return message
+	}
+
+	stdout := outputTail(proc.GetStdout())
+	stderr := outputTail(proc.GetStderr())
+	if stdout == "" && stderr == "" {
+		return message
+	}
+
+	var detail strings.Builder
+	detail.WriteString(message)
+	if stdout != "" {
+		detail.WriteString("\nstdout (JSON-RPC):\n")
+		detail.WriteString(stdout)
+	}
+	if stderr != "" {
+		detail.WriteString("\nstderr:\n")
+		detail.WriteString(stderr)
+	}
+	return detail.String()
+}
+
+func outputTail(output string) string {
+	output = strings.TrimSpace(output)
+	if len(output) <= errorOutputLimit {
+		return output
+	}
+	return "[truncated to last 16 KiB]\n" + output[len(output)-errorOutputLimit:]
 }
 
 // onRequest answers a server→client request from agent.ts. It runs on its own

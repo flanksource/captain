@@ -47,7 +47,8 @@ const (
 const methodCanUseTool = "can_use_tool"
 
 const (
-	defaultModel = "claude-sonnet-5"
+	defaultModel     = "claude-sonnet-5"
+	errorOutputLimit = 16 * 1024
 	// initTimeout bounds the initialize handshake (after provisioning). The npm
 	// install / tsx cold start happen synchronously before this window.
 	initTimeout = 2 * time.Minute
@@ -101,8 +102,10 @@ type Provider struct {
 	procExited     chan struct{}
 	procExitedOnce sync.Once
 
-	sup *exec.SupervisedProcess
-	rpc *jsonrpc.Client
+	procMu sync.RWMutex
+	proc   *exec.Process
+	sup    *exec.SupervisedProcess
+	rpc    *jsonrpc.Client
 
 	turnMu sync.Mutex // serializes turns (single SDK session)
 
@@ -334,13 +337,16 @@ func (p *Provider) provisionAndSupervise(req ai.Request) error {
 	sup := proc.Supervise(exec.SuperviseOptions{
 		RestartPolicy: exec.RestartNo,
 		OnStarted: func(child *exec.Process) {
+			p.procMu.Lock()
+			p.proc = child
+			p.procMu.Unlock()
 			go p.onChildStarted(child, req)
 		},
 		OnExit: func() {
 			p.procExitedOnce.Do(func() { close(p.procExited) })
 			// If the process exited before the handshake completed, surface a
 			// loud error instead of letting ensureStarted wait out its timeout.
-			p.setInitResult(fmt.Errorf("claude-agent: process exited before initialize completed"))
+			p.setInitResult(fmt.Errorf("%s", p.withProcessOutput("claude-agent: process exited before initialize completed")))
 		},
 	})
 	p.sup = sup

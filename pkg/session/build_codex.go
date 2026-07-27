@@ -87,6 +87,9 @@ func codexSessionIDFromHistoryFile(path string) string {
 // metadata sidecar.
 func buildCodexSession(uses []history.ToolUse, info *history.CodexSessionInfo) *Session {
 	s := &Session{Source: "codex"}
+	if info != nil {
+		s.CWD = info.CWD
+	}
 	root := &Agent{IsRoot: true}
 
 	var read, written []string
@@ -401,7 +404,9 @@ func collectCodexPaths(u history.ToolUse, read, written *[]string) {
 		if cmd == "" {
 			return
 		}
-		*written = append(*written, tools.ExtractApplyPatchPaths(cmd)...)
+		for _, path := range tools.ExtractApplyPatchPaths(cmd) {
+			*written = append(*written, claude.AbsolutePath(path, u.CWD, ""))
+		}
 		result, err := bash.Analyze(cmd)
 		if err != nil {
 			return
@@ -411,17 +416,19 @@ func collectCodexPaths(u history.ToolUse, read, written *[]string) {
 			if op.Path == "" {
 				continue
 			}
-			*written = append(*written, op.Path)
-			writePaths[op.Path] = struct{}{}
+			path := claude.AbsolutePath(op.Path, u.CWD, "")
+			*written = append(*written, path)
+			writePaths[path] = struct{}{}
 		}
 		for _, p := range result.ReferencedPaths {
 			if p == "" {
 				continue
 			}
-			if _, ok := writePaths[p]; ok {
+			path := claude.AbsolutePath(p, u.CWD, "")
+			if _, ok := writePaths[path]; ok {
 				continue
 			}
-			*read = append(*read, p)
+			*read = append(*read, path)
 		}
 	case "exec", "apply_patch":
 		input, _ := u.Input["input"].(string)
