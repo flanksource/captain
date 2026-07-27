@@ -235,12 +235,68 @@ func NewTool(base BaseTool) Tool {
 		return &AskTool{BaseTool: base}
 	case "ExitPlanMode":
 		return &ExitPlanTool{BaseTool: base}
+	case "Plan":
+		return &PlanTool{BaseTool: base}
 	case "User":
 		return &UserTool{BaseTool: base}
 	case "Assistant":
 		return &AssistantTool{BaseTool: base}
 	case "Reasoning":
 		return &ReasoningTool{BaseTool: base}
+	case "Event":
+		return &EventTool{BaseTool: base}
+	case "TokenCount":
+		return &TokenCountTool{BaseTool: base}
+	case "TaskStarted":
+		return &TaskStartedTool{BaseTool: base}
+	case "TaskComplete":
+		return &TaskCompleteTool{BaseTool: base}
+	case "TurnAborted", "ContextCompacted", "ThreadRolledBack", "ItemCompleted":
+		return &LifecycleEventTool{BaseTool: base}
+	case "MemoryCitation":
+		return &EventTool{BaseTool: base}
+	case "CodexExecCommand":
+		return &CodexExecCommandTool{BaseTool: base}
+	case "UserShellCommand":
+		return &UserShellCommandTool{BaseTool: base}
+	case "CodexPatchApply":
+		return &CodexPatchApplyTool{BaseTool: base}
+	case "MCPToolCall":
+		return &MCPToolCallTool{BaseTool: base}
+	case "WebSearchEvent":
+		return &WebSearchEventTool{BaseTool: base}
+	case "ViewImage":
+		return &ViewImageTool{BaseTool: base}
+	case "GuardianAssessment":
+		return &GuardianAssessmentTool{BaseTool: base}
+	case "ReviewMode":
+		return &ReviewModeTool{BaseTool: base}
+	case "CollabAgentSpawn", "CollabAgentInteraction", "CollabWaiting", "CollabClose":
+		return &CollabEventTool{BaseTool: base}
+	case "QueueOperation":
+		return &QueueOperationTool{BaseTool: base}
+	case "DeferredToolsDelta":
+		return &DeferredToolsDeltaTool{BaseTool: base}
+	case "AgentListingDelta":
+		return &AgentListingDeltaTool{BaseTool: base}
+	case "SkillListing":
+		return &SkillListingTool{BaseTool: base}
+	case "Budget":
+		return &BudgetTool{BaseTool: base}
+	case "PrLink":
+		return &PrLinkTool{BaseTool: base}
+	case "CompactBoundary", "LocalCommand", "ScheduledTaskFire", "Informational":
+		return &ContentEventTool{BaseTool: base}
+	case "ClaudeCommand":
+		return &ClaudeCommandTool{BaseTool: base}
+	case "GoalStatus":
+		return &GoalStatusTool{BaseTool: base}
+	case "WorktreeState":
+		return &WorktreeStateTool{BaseTool: base}
+	case "Relocated":
+		return &RelocatedTool{BaseTool: base}
+	case "Started":
+		return &StartedTool{BaseTool: base}
 	case "Skill":
 		return &SkillTool{BaseTool: base}
 	case "SessionInit":

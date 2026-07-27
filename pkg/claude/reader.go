@@ -99,6 +99,7 @@ func readJSONL(r io.Reader, fallbackToHistoryEntry bool, opts ReadOptions) ([]Hi
 			if opts.KeepRaw {
 				entry.RawLine = append(json.RawMessage(nil), line...)
 			}
+			entry.Line = lineNo
 			entries = append(entries, entry)
 			continue
 		}
@@ -110,6 +111,7 @@ func readJSONL(r io.Reader, fallbackToHistoryEntry bool, opts ReadOptions) ([]Hi
 			if opts.KeepRaw {
 				entry.RawLine = append(json.RawMessage(nil), line...)
 			}
+			entry.Line = lineNo
 			entries = append(entries, entry)
 		}
 	}
@@ -125,6 +127,11 @@ type streamJSONLine struct {
 	Subtype string          `json:"subtype,omitempty"`
 	Message json.RawMessage `json:"message,omitempty"`
 
+	// Content is the top-level content on system/local_command lines. Kept raw
+	// because other line types (e.g. queue-operation) carry a non-string content
+	// object; contentString decodes it only when it is a JSON string.
+	Content json.RawMessage `json:"content,omitempty"`
+
 	// Stream-json fields
 	SessionIDSnake string `json:"session_id,omitempty"`
 	TimestampSnake string `json:"timestamp,omitempty"`
@@ -136,7 +143,7 @@ type streamJSONLine struct {
 	CWD            string          `json:"cwd,omitempty"`
 	GitBranch      string          `json:"gitBranch,omitempty"`
 	Slug           string          `json:"slug,omitempty"`
-	Error          string          `json:"error,omitempty"`
+	Error          json.RawMessage `json:"error,omitempty"`
 	Attachment     json.RawMessage `json:"attachment,omitempty"`
 }
 
@@ -151,21 +158,34 @@ func (sj streamJSONLine) timestamp() string {
 	return sj.TimestampSnake
 }
 
+// contentString returns the top-level content when it is a JSON string, and ""
+// when it is absent or a non-string object. Only system/local_command lines
+// carry a string content wrapper this reader needs to inspect.
+func (sj streamJSONLine) contentString() string {
+	if len(sj.Content) == 0 || sj.Content[0] != '"' {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(sj.Content, &s); err != nil {
+		return ""
+	}
+	return s
+}
+
 // knownSessionStorageTypes are line types that appear in on-disk session
 // files for state tracking but carry no useful row-level information.
 // Listed explicitly so they don't pollute the unhandled-types diagnostic.
 var knownSessionStorageTypes = map[string]bool{
 	"file-history-snapshot": true,
-	"last-prompt":           true,
+	"file-history-delta":    true, // incremental checkpoint bookkeeping for the snapshot above
 	"permission-mode":       true,
 	"agent-name":            true,
 	// Operational/streaming state with no unique row-level content — the real
 	// content surfaces via the actual user/assistant messages. Listed so they
 	// don't pollute the unhandled-types diagnostic.
-	"mode":            true, // active mode marker (e.g. {"mode":"normal"})
-	"bridge-session":  true, // cloud bridge-session linkage
-	"progress":        true, // intermediate streaming progress, superseded by the final message
-	"queue-operation": true, // message-queue bookkeeping; dequeued content appears as a real message
+	"mode":           true, // active mode marker (e.g. {"mode":"normal"})
+	"bridge-session": true, // cloud bridge-session linkage
+	"progress":       true, // intermediate streaming progress, superseded by the final message
 }
 
 // planAttachment is the plan-mode attachment Claude Code writes when entering
@@ -200,6 +220,187 @@ func attachmentEntry(sj streamJSONLine) []HistoryEntry {
 	})
 }
 
+func metadataEventEntry(sj streamJSONLine, eventType, scope string, data map[string]any) []HistoryEntry {
+	if eventType == "" {
+		return nil
+	}
+	return single(HistoryEntry{
+		SessionID: sj.sessionID(),
+		UUID:      sj.UUID,
+		Timestamp: sj.timestamp(),
+		CWD:       sj.CWD,
+		GitBranch: sj.GitBranch,
+		Slug:      sj.Slug,
+		Event: &TranscriptEvent{
+			Type:  eventType,
+			Scope: scope,
+			Data:  data,
+		},
+	})
+}
+
+func rawObject(raw []byte) map[string]any {
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil
+	}
+	delete(out, "message")
+	return out
+}
+
+func attachmentEventEntry(sj streamJSONLine, raw []byte) []HistoryEntry {
+	var attachment map[string]any
+	if err := json.Unmarshal(sj.Attachment, &attachment); err != nil {
+		return nil
+	}
+	typ, _ := attachment["type"].(string)
+	switch typ {
+	case "deferred_tools_delta", "agent_listing_delta", "skill_listing":
+		return metadataEventEntry(sj, typ, "session", attachment)
+	case "budget_usd":
+		return metadataEventEntry(sj, typ, "turn", attachment)
+	case "goal_status":
+		// Session-scoped goal directive. Kept as a map so future goal fields
+		// (beyond condition/met/sentinel/reason) round-trip without parser churn.
+		return metadataEventEntry(sj, "goal_status", "session", attachment)
+	default:
+		return attachmentEntry(sj)
+	}
+}
+
+// claudeCommandRecord is the parsed form of a Claude slash-command wrapper
+// (<command-name>/<command-message>/<command-args>). Claude writes it as a
+// text-only user message (modern) or a system/local_command line (older).
+type claudeCommandRecord struct {
+	Name    string
+	Message string
+	Args    string
+}
+
+// claudeCommandOutputRecord is the parsed form of a <local-command-stdout> or
+// <local-command-stderr> wrapper carrying a slash command's captured output.
+type claudeCommandOutputRecord struct {
+	Stream  string
+	Content string
+}
+
+// cutWrapperTag extracts the inner content of the <tag>…</tag> section that s
+// must begin with, returning the content and the remainder after the closing
+// tag. last selects strings.LastIndex for the closing tag so a trailing
+// free-form section (args/output) may itself contain the literal closing tag.
+func cutWrapperTag(s, tag string, last bool) (inner, rest string, err error) {
+	open, closeTag := "<"+tag+">", "</"+tag+">"
+	if !strings.HasPrefix(s, open) {
+		return "", "", fmt.Errorf("expected <%s>", tag)
+	}
+	body := s[len(open):]
+	idx := strings.Index(body, closeTag)
+	if last {
+		idx = strings.LastIndex(body, closeTag)
+	}
+	if idx < 0 {
+		return "", "", fmt.Errorf("unterminated <%s>", tag)
+	}
+	return body[:idx], body[idx+len(closeTag):], nil
+}
+
+// parseClaudeCommandRecord recognizes a complete slash-command wrapper. It
+// returns matched=false for text that does not open with <command-name> (so
+// ordinary prose is left as chat) and matched=true with an error for a
+// recognized-but-malformed wrapper (surfaced as a ParseError row). Empty
+// command arguments are valid.
+func parseClaudeCommandRecord(text string) (claudeCommandRecord, bool, error) {
+	trimmed := strings.TrimSpace(text)
+	if !strings.HasPrefix(trimmed, "<command-name>") {
+		return claudeCommandRecord{}, false, nil
+	}
+	name, rest, err := cutWrapperTag(trimmed, "command-name", false)
+	if err != nil {
+		return claudeCommandRecord{}, true, err
+	}
+	message, rest, err := cutWrapperTag(strings.TrimSpace(rest), "command-message", false)
+	if err != nil {
+		return claudeCommandRecord{}, true, err
+	}
+	args, rest, err := cutWrapperTag(strings.TrimSpace(rest), "command-args", true)
+	if err != nil {
+		return claudeCommandRecord{}, true, err
+	}
+	if strings.TrimSpace(rest) != "" {
+		return claudeCommandRecord{}, true, fmt.Errorf("unexpected content after </command-args>")
+	}
+	return claudeCommandRecord{Name: name, Message: message, Args: args}, true, nil
+}
+
+// parseClaudeCommandOutputRecord recognizes a complete local-command output
+// wrapper. Its matched/error contract mirrors parseClaudeCommandRecord. Empty
+// output is valid.
+func parseClaudeCommandOutputRecord(text string) (claudeCommandOutputRecord, bool, error) {
+	trimmed := strings.TrimSpace(text)
+	for _, s := range []struct{ tag, stream string }{
+		{"local-command-stdout", "stdout"},
+		{"local-command-stderr", "stderr"},
+	} {
+		if !strings.HasPrefix(trimmed, "<"+s.tag+">") {
+			continue
+		}
+		content, rest, err := cutWrapperTag(trimmed, s.tag, true)
+		if err != nil {
+			return claudeCommandOutputRecord{}, true, err
+		}
+		if strings.TrimSpace(rest) != "" {
+			return claudeCommandOutputRecord{}, true, fmt.Errorf("unexpected content after </%s>", s.tag)
+		}
+		return claudeCommandOutputRecord{Stream: s.stream, Content: content}, true, nil
+	}
+	return claudeCommandOutputRecord{}, false, nil
+}
+
+func claudeCommandEntry(sj streamJSONLine, command claudeCommandRecord) HistoryEntry {
+	return metadataEventEntry(sj, "claude_command", "turn", map[string]any{
+		"command_name":    command.Name,
+		"command_message": command.Message,
+		"command_args":    command.Args,
+	})[0]
+}
+
+func claudeCommandOutputEntry(sj streamJSONLine, output claudeCommandOutputRecord) HistoryEntry {
+	return metadataEventEntry(sj, "claude_command_output", "turn", map[string]any{
+		"stream":  output.Stream,
+		"content": output.Content,
+	})[0]
+}
+
+// classifyClaudeCommandText converts a command wrapper or its output into
+// structured event rows. It returns ok=false when text is not a recognized
+// wrapper so the caller keeps its normal handling. A recognized-but-malformed
+// wrapper yields a ParseError row (ok=true) rather than reverting to raw text.
+func classifyClaudeCommandText(sj streamJSONLine, text string, raw []byte, lineNo int) ([]HistoryEntry, bool) {
+	if command, matched, err := parseClaudeCommandRecord(text); matched {
+		if err != nil {
+			return []HistoryEntry{parseErrorEntry(lineNo, raw, err, sj.timestamp())}, true
+		}
+		return single(claudeCommandEntry(sj, command)), true
+	}
+	if output, matched, err := parseClaudeCommandOutputRecord(text); matched {
+		if err != nil {
+			return []HistoryEntry{parseErrorEntry(lineNo, raw, err, sj.timestamp())}, true
+		}
+		return single(claudeCommandOutputEntry(sj, output)), true
+	}
+	return nil, false
+}
+
+// singleTextContent returns the text of a message that is exactly one text
+// block, so command-wrapper classification only fires on text-only user turns
+// and never on mixed tool_use/tool_result content.
+func singleTextContent(msg Message) (string, bool) {
+	if len(msg.Content) != 1 || msg.Content[0].Type != ContentTypeText {
+		return "", false
+	}
+	return msg.Content[0].Text, true
+}
+
 // dispatchEvent routes a typed line to zero, one, or more HistoryEntry rows.
 // A single line can emit multiple entries — e.g. an assistant message with a
 // top-level "error" field yields both the regular assistant entry and an
@@ -215,6 +416,13 @@ func dispatchEvent(sj streamJSONLine, raw []byte, lineNo int) []HistoryEntry {
 		if err := json.Unmarshal(sj.Message, &msg); err != nil {
 			return []HistoryEntry{parseErrorEntry(lineNo, raw, err, sj.timestamp())}
 		}
+		if sj.Type == "user" {
+			if text, ok := singleTextContent(msg); ok {
+				if entries, ok := classifyClaudeCommandText(sj, text, raw, lineNo); ok {
+					return entries
+				}
+			}
+		}
 		out := []HistoryEntry{{
 			SessionID: sj.sessionID(),
 			UUID:      sj.UUID,
@@ -229,6 +437,9 @@ func dispatchEvent(sj streamJSONLine, raw []byte, lineNo int) []HistoryEntry {
 			out = append(out, errEntry)
 		}
 		return out
+
+	case "queue-operation":
+		return metadataEventEntry(sj, "queue-operation", "turn", rawObject(raw))
 
 	case "system":
 		switch sj.Subtype {
@@ -263,11 +474,19 @@ func dispatchEvent(sj streamJSONLine, raw []byte, lineNo int) []HistoryEntry {
 				"content", "compactMetadata", "level",
 			}))
 		case "local_command":
-			return single(syntheticEntry(sj, "LocalCommand", raw, []string{"content", "level"}))
+			if entries, ok := classifyClaudeCommandText(sj, sj.contentString(), raw, lineNo); ok {
+				return entries
+			}
+			return single(syntheticEntry(sj, "LocalCommand", raw, []string{"content", "level", "cwd"}))
 		case "scheduled_task_fire":
 			return single(syntheticEntry(sj, "ScheduledTaskFire", raw, []string{"content"}))
 		case "informational":
 			return single(syntheticEntry(sj, "Informational", raw, []string{"content", "level"}))
+		case "api_error":
+			return single(syntheticEntry(sj, "ApiError", raw, []string{
+				"error", "level", "retryInMs", "retryAttempt", "maxRetries",
+				"api_error_status",
+			}))
 		}
 
 	case "result":
@@ -287,8 +506,20 @@ func dispatchEvent(sj streamJSONLine, raw []byte, lineNo int) []HistoryEntry {
 			"prNumber", "prUrl", "prRepository",
 		}))
 
+	case "worktree-state":
+		return single(syntheticEntry(sj, "WorktreeState", raw, []string{"worktreeSession"}))
+
+	case "relocated":
+		return single(syntheticEntry(sj, "Relocated", raw, []string{"relocatedCwd"}))
+
+	case "started":
+		return single(syntheticEntry(sj, "Started", raw, []string{"cwd"}))
+
 	case "attachment":
-		return attachmentEntry(sj)
+		return attachmentEventEntry(sj, raw)
+
+	case "last-prompt":
+		return metadataEventEntry(sj, "last-prompt", "session", rawObject(raw))
 	}
 
 	if knownSessionStorageTypes[sj.Type] {
@@ -310,7 +541,7 @@ func single(e HistoryEntry) []HistoryEntry { return []HistoryEntry{e} }
 // carries a top-level "error" field (e.g. invalid_request, 4xx/5xx from the
 // model API). The error would otherwise be invisible in history output.
 func apiErrorFromAssistantLine(sj streamJSONLine, raw []byte) (HistoryEntry, bool) {
-	if sj.Error == "" {
+	if len(sj.Error) == 0 || string(sj.Error) == "null" {
 		return HistoryEntry{}, false
 	}
 	return syntheticEntry(sj, "ApiError", raw, []string{

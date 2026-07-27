@@ -34,16 +34,6 @@ type Option struct {
 	Label       string `json:"label"`
 }
 
-type TodoWrite struct {
-	Todos []Todo `json:"todos"`
-}
-
-type Todo struct {
-	ActiveForm string `json:"activeForm,omitempty"`
-	Content    string `json:"content,omitempty"`
-	Status     string `json:"status,omitempty"`
-}
-
 // --- Typed tool structs ---
 // Each delegates to ToolUse.Pretty() for unified rendering.
 

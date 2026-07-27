@@ -30,6 +30,13 @@ type HookInput struct {
 	TranscriptPath string          `json:"transcript_path,omitempty"`
 	StopHookReason string          `json:"stop_hook_reason,omitempty"`
 	Prompt         string          `json:"prompt,omitempty"`
+	CWD            string          `json:"cwd,omitempty"`
+	HookEventName  string          `json:"hook_event_name,omitempty"`
+	// Source is set on SessionStart: startup|resume|clear|compact.
+	Source string `json:"source,omitempty"`
+	// Reason is set on SessionEnd: clear|resume|logout|prompt_input_exit|other.
+	Reason               string `json:"reason,omitempty"`
+	LastAssistantMessage string `json:"last_assistant_message,omitempty"`
 }
 
 // HookOutput is the JSON returned by hooks

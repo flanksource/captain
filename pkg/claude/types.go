@@ -10,6 +10,8 @@ const (
 	HookEventStop             HookEventType = "Stop"
 	HookEventSubagentStop     HookEventType = "SubagentStop"
 	HookEventUserPromptSubmit HookEventType = "UserPromptSubmit"
+	HookEventSessionStart     HookEventType = "SessionStart"
+	HookEventSessionEnd       HookEventType = "SessionEnd"
 )
 
 // PermissionMode represents Claude's current permission mode
