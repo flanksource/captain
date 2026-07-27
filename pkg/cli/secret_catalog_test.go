@@ -3,6 +3,7 @@ package cli
 import (
 	"testing"
 
+	"github.com/flanksource/captain/pkg/ai"
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -18,7 +19,7 @@ func TestPreviewsForByteDataMasksTextAndBinary(t *testing.T) {
 	if previews[0].Key != "binary" || previews[0].Value != "3 bytes" {
 		t.Fatalf("binary preview = %+v", previews[0])
 	}
-	if previews[1].Key != "token" || previews[1].Value != maskKey("sk-ant-api03-ABCDEFGH") {
+	if previews[1].Key != "token" || previews[1].Value != ai.MaskKey("sk-ant-api03-ABCDEFGH") {
 		t.Fatalf("token preview = %+v", previews[1])
 	}
 }
@@ -38,7 +39,7 @@ func TestConfigMapKeysIncludeBinaryData(t *testing.T) {
 	if previews[0].Key != "cert" || previews[0].Value != "2 bytes" {
 		t.Fatalf("cert preview = %+v", previews[0])
 	}
-	if previews[1].Key != "workspace" || previews[1].Value != maskKey("/repo/workspace") {
+	if previews[1].Key != "workspace" || previews[1].Value != ai.MaskKey("/repo/workspace") {
 		t.Fatalf("workspace preview = %+v", previews[1])
 	}
 }

@@ -35,6 +35,7 @@ func main() {
 	}
 
 	clicky.BindAllFlags(rootCmd.PersistentFlags(), "format")
+	cli.BindDatabaseURLFlag(rootCmd.PersistentFlags())
 	// Bind commons' -P/--properties flag so per-subsystem log levels and HTTP
 	// wire logging can be toggled, e.g. -Plog.level.http=trace3.
 	properties.BindFlags(rootCmd.PersistentFlags())
@@ -58,9 +59,9 @@ func main() {
 	}
 	rootCmd.AddCommand(historyAlias)
 
-	infoCmd := clicky.AddNamedCommand("info", rootCmd, cli.InfoOptions{}, cli.RunInfo)
-	infoCmd.Short = "Show current Claude Code session and project info"
-	infoCmd.Long = "Display metadata about the current Claude Code session including project root, active session ID, and configuration."
+	infoCmd := clicky.AddNamedCommandWithContext("info", rootCmd, cli.InfoOptions{}, cli.RunInfo)
+	infoCmd.Short = "Show the current agent session or discovered project sessions"
+	infoCmd.Long = "Detect the current Codex, Claude, Gemini, or Captain session from its environment, including matching Captain database sessions. Explicit discovery flags show project session history instead."
 
 	costCmd := clicky.AddNamedCommand("cost", rootCmd, cli.CostOptions{}, cli.RunCost)
 	costCmd.Short = "Show token usage and estimated costs"
@@ -79,6 +80,11 @@ func main() {
 	clicky.AddNamedCommandWithContext("list", sessionsCmd, cli.SessionListOptions{}, cli.RunSessionList).Short = "List discovered sessions"
 	clicky.AddNamedCommandWithContext("live", sessionsCmd, cli.SessionLiveOptions{}, cli.RunSessionLive).Short = "List sessions with live process health"
 	clicky.AddNamedCommandWithContext("get", sessionsCmd, cli.SessionGetOptions{}, cli.RunSessionGet).Short = "Show a session transcript"
+
+	psCmd := clicky.AddNamedCommandWithContext("ps", rootCmd, cli.PSOptions{}, cli.RunPS)
+	psCmd.Short = "List live agent sessions (claude/codex) with session id, agents, and cmux surface"
+	psCmd.Long = "Detect running claude/codex agent processes (via ps + lsof), resolve each one's session id, sub-agent ids, cmux surface (from CMUX_* env vars), and last activity, then augment with cached token/cost/context data. Only currently-active sessions are listed."
+	clicky.AddNamedCommandWithContext("ps", sessionsCmd, cli.PSOptions{}, cli.RunPS).Short = psCmd.Short
 
 	sandboxCmd := &cobra.Command{
 		Use:   "sandbox",
@@ -101,21 +107,32 @@ func main() {
 			"also include request/response bodies.",
 	}
 	rootCmd.AddCommand(aiCmd)
-	clicky.AddNamedCommand("prompt", aiCmd, cli.AIPromptOptions{}, cli.RunAIPrompt)
+	aiCmd.AddCommand(cli.NewCommandAlias(cli.CommandAliasOptions{
+		Name:   "prompt",
+		Short:  "Alias for captain prompt run",
+		Root:   rootCmd,
+		Target: []string{"prompt", "run"},
+	}))
 	clicky.AddNamedCommand("agent", aiCmd, cli.AIAgentOptions{}, cli.RunAIAgent).Short = "Run an iterative agent with verifiers, worktree, and commit"
 	clicky.AddNamedCommand("models", aiCmd, cli.AIModelsOptions{}, cli.RunAIModels)
 	clicky.AddNamedCommand("test", aiCmd, cli.AITestOptions{}, cli.RunAITest)
 	clicky.AddNamedCommand("fixture", aiCmd, cli.AIFixtureOptions{}, cli.RunAIFixture).Short = "Run a YAML fixture across multiple Claude configurations"
+	clicky.AddNamedCommandWithContext("mock", aiCmd, cli.AIMockOptions{}, cli.RunAIMock).Short = "Serve scripted OpenAI/Anthropic replies so agent runs spend no tokens"
 
 	whoamiCmd := clicky.AddNamedCommand("whoami", rootCmd, cli.WhoamiOptions{}, cli.RunWhoami)
 	whoamiCmd.Short = "List agent adapters, auth methods, and available models"
-	whoamiCmd.Long = "Show every AI agent adapter (API providers and CLI agents), how each is authenticated (API-key env var or CLI login), whether its CLI binary is installed, and the models each provider exposes via a live API call. Pass --models=false to skip the network probes, or --backend to inspect a single adapter."
+	whoamiCmd.Long = "Show every AI agent adapter (API providers and CLI agents), how each is authenticated (Captain vault, API-key env var, or CLI login), whether its CLI binary is installed, and the models each provider exposes via a live API call. Pass --models=false to skip the network probes, or --backend to inspect a single adapter."
 
-	configureCmd := clicky.AddNamedCommand("configure", rootCmd, cli.ConfigureOptions{}, cli.RunConfigure)
-	configureCmd.Short = "Interactive wizard to set default model, backend, budget, and safety toggles"
-	configureCmd.Long = "Run an interactive form to configure ~/.captain.yaml. These defaults are applied to `captain ai prompt`, `captain ai test`, and other AI commands when corresponding flags are not passed."
+	configureCmd := clicky.AddNamedCommandWithContext("configure", rootCmd, cli.ConfigureOptions{}, cli.RunConfigure)
+	configureCmd.Use = "configure [provider]"
+	configureCmd.Short = "Configure provider defaults or validate and save an API token"
+	configureCmd.Long = "Run without a provider for the interactive ~/.captain.yaml wizard. Run `captain configure <provider>` to securely prompt for, validate, and save an API token in ~/.config/captain/vault, or pass --agent, --model, --effort, and --active to save provider-specific runtime defaults. Token flags and runtime-default flags cannot be combined. Automation may pass the hidden --token flag, but command-line arguments can be retained in shell history or process listings. Use --test to validate the effective token without saving."
 
 	rootCmd.AddCommand(cli.NewServeCommand(version))
+
+	attachmentsCmd := &cobra.Command{Use: "attachments", Short: "Manage durable prompt attachments"}
+	rootCmd.AddCommand(attachmentsCmd)
+	clicky.AddNamedCommand("gc", attachmentsCmd, cli.AttachmentsGCOptions{}, cli.RunAttachmentsGC).Short = "Remove old unreferenced attachments"
 
 	dodCmd := &cobra.Command{
 		Use:   "dod",
@@ -148,6 +165,28 @@ func main() {
 	dodHookCmd := &cobra.Command{Use: "dod", Short: "Definition of Done hook"}
 	hookCmd.AddCommand(dodHookCmd)
 	clicky.AddNamedCommand("install", dodHookCmd, cli.HookInstallOptions{}, cli.RunDodInstall)
+
+	monitorHookCmd := &cobra.Command{Use: "monitor", Short: "Session monitoring hooks (hooks-first session tracking)"}
+	hookCmd.AddCommand(monitorHookCmd)
+	monitorNotifyCmd := &cobra.Command{
+		Use:   "notify",
+		Short: "Forward one provider hook event to captain serve",
+		Long: "Hook receiver for session monitoring: Claude Code lifecycle hooks pipe their JSON payload " +
+			"on stdin, codex notify appends its payload as the final argument. The event is POSTed to the " +
+			"running captain serve instance ($CAPTAIN_SERVER_URL or http://localhost:9020) with a 1s timeout " +
+			"and always exits 0 — when serve is unreachable the event is dropped and the daily recon reconciles it.",
+		Args: cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			provider, _ := cmd.Flags().GetString("provider")
+			url, _ := cmd.Flags().GetString("url")
+			return cli.RunHookMonitorNotify(cli.HookMonitorNotifyOptions{Provider: provider, URL: url}, args)
+		},
+	}
+	monitorNotifyCmd.Flags().String("provider", "claude", "Hook payload provider: claude or codex")
+	monitorNotifyCmd.Flags().String("url", "", "Captain serve base URL (default $CAPTAIN_SERVER_URL or http://localhost:9020)")
+	monitorHookCmd.AddCommand(monitorNotifyCmd)
+	monitorInstallCmd := clicky.AddNamedCommand("install", monitorHookCmd, cli.HookMonitorInstallOptions{}, cli.RunHookMonitorInstall)
+	monitorInstallCmd.Short = "Install session-monitoring hooks into ~/.claude/settings.json and ~/.codex/config.toml"
 
 	projectsCmd := &cobra.Command{Use: "projects", Short: "Manage Claude Code project sessions"}
 	rootCmd.AddCommand(projectsCmd)

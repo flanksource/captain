@@ -238,6 +238,19 @@ func TestClassifyTool(t *testing.T) {
 		{"WebFetch", CategoryExplore},
 		{"WebSearch", CategoryExplore},
 		{"UnknownTool", CategoryOther},
+
+		// File mutations that previously fell through to `other`, so curated
+		// transcript storage would have dropped them along with the tool noise.
+		{"MultiEdit", CategoryEdit},
+		{"apply_patch", CategoryEdit},
+		{"CodexPatchApply", CategoryEdit},
+
+		// Agent task state. TodoWrite was already covered; the Task* family was
+		// not, so task transitions classified as `other`.
+		{"TaskCreate", CategoryPlan},
+		{"TaskUpdate", CategoryPlan},
+		{"TaskGet", CategoryPlan},
+		{"TaskList", CategoryPlan},
 	}
 
 	for _, tt := range tests {
@@ -245,6 +258,36 @@ func TestClassifyTool(t *testing.T) {
 			got := classifier.ClassifyTool(tt.tool)
 			if got != tt.expected {
 				t.Errorf("ClassifyTool(%q) = %q, want %q", tt.tool, got, tt.expected)
+			}
+		})
+	}
+}
+
+// Shell-level file mutations must stay distinct from read-only inspection of the
+// same binary: `sed -i` edits, bare `sed` explores.
+func TestClassifyBashFileMutations(t *testing.T) {
+	classifier := NewCategoryClassifier(DefaultCategoryConfig())
+
+	tests := []struct {
+		command  string
+		expected Category
+	}{
+		{"sed -i 's/a/b/' file.go", CategoryEdit},
+		{"sed -n '1,5p' file.go", CategoryExplore},
+		{"perl -pi -e 's/a/b/' file.go", CategoryEdit},
+		{"mv old.go new.go", CategoryEdit},
+		{"cp src.go dst.go", CategoryEdit},
+		{"touch new.go", CategoryEdit},
+		{"mkdir -p pkg/foo", CategoryEdit},
+		{"cat file.go", CategoryExplore},
+		{"rg pattern .", CategoryExplore},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			got := classifier.ClassifyBash(tt.command)
+			if got != tt.expected {
+				t.Errorf("ClassifyBash(%q) = %q, want %q", tt.command, got, tt.expected)
 			}
 		})
 	}

@@ -8,28 +8,28 @@ const tools: ToolMeta[] = [
     name: "Read",
     label: "Read",
     group: "Files",
-    defaultMode: "ask",
+    defaultPermission: "ask",
     description: "Read files from the workspace.",
   },
   {
     name: "Edit",
     label: "Edit",
     group: "Files",
-    defaultMode: "ask",
+    defaultPermission: "ask",
     description: "Apply targeted edits.",
   },
   {
     name: "Bash",
     label: "Bash",
     group: "Shell",
-    defaultMode: "ask",
+    defaultPermission: "ask",
     description: "Run shell commands.",
   },
   {
     name: "WebSearch",
     label: "Web search",
     group: "Web",
-    defaultMode: "disabled",
+    defaultPermission: "off",
     description: "Search external documentation.",
   },
 ];
@@ -48,7 +48,6 @@ const initialValue: AISpecRuntimeValue = {
   prompt: {
     system: "You are a careful refactoring assistant.",
     user: "Refactor: {{target}}",
-    source: "options.prompt",
   },
   permissions: {
     mode: "acceptEdits",
@@ -96,4 +95,3 @@ export default function RuntimeSpecDemo() {
     </ClickyProviders>
   );
 }
-

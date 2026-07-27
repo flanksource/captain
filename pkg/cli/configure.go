@@ -9,10 +9,21 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/captainconfig"
+	clickyrpc "github.com/flanksource/clicky/rpc"
+	"github.com/flanksource/clicky/text"
 )
 
-type ConfigureOptions struct{}
+type ConfigureOptions struct {
+	Provider string               `flag:"provider" args:"true" help:"API provider to configure: anthropic|openai|gemini|deepseek"`
+	Token    text.SensitiveString `flag:"token" hidden:"true" help:"Provider API token (prefer the secure interactive prompt)"`
+	Test     bool                 `flag:"test" help:"Test the current or supplied token without saving it"`
+	Agent    string               `flag:"agent" help:"Default runtime agent for this provider"`
+	Model    string               `flag:"model" help:"Default model for this provider"`
+	Effort   string               `flag:"effort" help:"Default reasoning effort, or default to use the model default"`
+	Active   bool                 `flag:"active" help:"Use this provider for completely flagless runs"`
+}
 
 type ConfigureResult struct {
 	Path            string `json:"path" pretty:"label=Saved To"`
@@ -39,15 +50,33 @@ const (
 // the form predictable and the test below straightforward.
 var allToggles = []string{toggleCaching, toggleMCP, toggleHooks, toggleSkills, toggleUser, toggleProject, toggleMemory}
 
-func RunConfigure(opts ConfigureOptions) (any, error) {
+func RunConfigure(ctx context.Context, opts ConfigureOptions) (any, error) {
+	if _, ok := clickyrpc.RequestFromContext(ctx); ok {
+		return nil, fmt.Errorf("configure is unavailable over generated RPC; use the guarded provider configuration APIs")
+	}
+	if strings.TrimSpace(opts.Provider) != "" {
+		return runProviderConfigure(ctx, opts)
+	}
+	if !opts.Token.IsEmpty() || opts.Test || opts.Agent != "" || opts.Model != "" || opts.Effort != "" || opts.Active {
+		return nil, fmt.Errorf("provider is required when using token or provider-default flags")
+	}
+	return runConfigureWizard()
+}
+
+func runConfigureWizard() (any, error) {
 	current, _, err := captainconfig.Load()
 	if err != nil {
 		return nil, err
 	}
 
-	backend := defaultString(current.AI.Backend, string(ai.BackendAnthropic))
-	model := defaultString(current.AI.Model, defaultModelFor(ai.Backend(backend)))
-	effort := defaultString(current.AI.ReasoningEffort, "high")
+	activeProvider := api.Backend(current.AI.ActiveProvider())
+	currentDefaults, err := effectiveProviderDefaults(current.AI, activeProvider)
+	if err != nil {
+		return nil, err
+	}
+	backend := currentDefaults.Agent
+	model := currentDefaults.Model
+	effort := defaultString(currentDefaults.Effort, "high")
 	budget := floatToInput(current.AI.BudgetUSD)
 	maxTokens := intToInput(current.AI.MaxTokens)
 	timeout := defaultString(current.AI.Timeout, "120s")
@@ -71,12 +100,10 @@ func RunConfigure(opts ConfigureOptions) (any, error) {
 				Value(&model),
 			huh.NewSelect[string]().
 				Title("Reasoning effort").
-				Description("Honoured by codex-cli and the API backends (thinking budget); CLI wrappers may ignore.").
-				Options(
-					huh.NewOption("low", "low"),
-					huh.NewOption("medium", "medium"),
-					huh.NewOption("high", "high"),
-				).
+				Description("Honoured by codex-agent and the API backends (thinking budget); CLI wrappers may ignore.").
+				OptionsFunc(func() []huh.Option[string] {
+					return effortHuhOptionsFor(ai.Backend(backend), model)
+				}, []any{&backend, &model}).
 				Value(&effort),
 			huh.NewInput().
 				Title("Budget (USD)").
@@ -116,6 +143,13 @@ func RunConfigure(opts ConfigureOptions) (any, error) {
 		Timeout:         timeout,
 		Enabled:         enabled,
 	})
+	for provider, defaults := range current.AI.Providers {
+		if _, exists := cfg.AI.Providers[provider]; !exists {
+			cfg.AI.Providers[provider] = defaults
+		}
+	}
+	cfg.Prompts = current.Prompts
+	cfg.Attachments = current.Attachments
 	if err := captainconfig.Save(cfg); err != nil {
 		return nil, err
 	}
@@ -123,9 +157,9 @@ func RunConfigure(opts ConfigureOptions) (any, error) {
 	path, _ := captainconfig.Path()
 	return ConfigureResult{
 		Path:            path,
-		Backend:         cfg.AI.Backend,
-		Model:           cfg.AI.Model,
-		ReasoningEffort: cfg.AI.ReasoningEffort,
+		Backend:         backend,
+		Model:           model,
+		ReasoningEffort: effort,
 		BudgetUSD:       budget,
 		MaxTokens:       maxTokens,
 		Timeout:         cfg.AI.Timeout,
@@ -155,21 +189,23 @@ func buildConfigFromForm(in formInputs) captainconfig.Config {
 		enabled[e] = true
 	}
 
+	provider := api.Backend(in.Backend).Provider()
 	return captainconfig.Config{
 		AI: captainconfig.AIDefaults{
-			Backend:         in.Backend,
-			Model:           in.Model,
-			ReasoningEffort: in.ReasoningEffort,
-			BudgetUSD:       budget,
-			MaxTokens:       maxTokens,
-			Timeout:         strings.TrimSpace(in.Timeout),
-			NoCache:         !enabled[toggleCaching],
-			NoMCP:           !enabled[toggleMCP],
-			NoHooks:         !enabled[toggleHooks],
-			NoSkills:        !enabled[toggleSkills],
-			NoUser:          !enabled[toggleUser],
-			NoProject:       !enabled[toggleProject],
-			NoMemory:        !enabled[toggleMemory],
+			DefaultProvider: string(provider),
+			Providers: map[string]captainconfig.ProviderDefaults{
+				string(provider): {Agent: in.Backend, Model: in.Model, ReasoningEffort: in.ReasoningEffort},
+			},
+			BudgetUSD: budget,
+			MaxTokens: maxTokens,
+			Timeout:   strings.TrimSpace(in.Timeout),
+			NoCache:   !enabled[toggleCaching],
+			NoMCP:     !enabled[toggleMCP],
+			NoHooks:   !enabled[toggleHooks],
+			NoSkills:  !enabled[toggleSkills],
+			NoUser:    !enabled[toggleUser],
+			NoProject: !enabled[toggleProject],
+			NoMemory:  !enabled[toggleMemory],
 		},
 	}
 }
@@ -211,6 +247,7 @@ func backendOptions() []huh.Option[string] {
 		huh.NewOption("Claude Agent (SDK)", string(ai.BackendClaudeAgent)),
 		huh.NewOption("Claude cmux", string(ai.BackendClaudeCmux)),
 		huh.NewOption("Codex CLI", string(ai.BackendCodexCLI)),
+		huh.NewOption("Codex Agent (app-server)", string(ai.BackendCodexAgent)),
 		huh.NewOption("Codex cmux", string(ai.BackendCodexCmux)),
 		huh.NewOption("Gemini CLI", string(ai.BackendGeminiCLI)),
 	}
@@ -265,26 +302,48 @@ func modelHuhOptions(models []ai.ModelDef) []huh.Option[string] {
 }
 
 // defaultModelFor returns a hard-coded picker default per backend that seeds the
-// form. CLI/agent backends use the catalog slug their picker actually lists
-// (agentCatalogModels) so the seeded default is a selectable option. API
+// form. CLI/agent backends use exact provider model IDs from the catalog so the
+// seeded default is a selectable option. API
 // backends have no "default" flag on /v1/models, so we use the most-current id
 // we expect each provider to keep stable; the user can pick anything else.
 func defaultModelFor(b ai.Backend) string {
 	switch b {
 	case ai.BackendAnthropic:
 		return "claude-sonnet-5"
-	case ai.BackendClaudeCLI, ai.BackendClaudeAgent:
-		return "claude-agent-sonnet"
+	case ai.BackendClaudeCLI, ai.BackendClaudeAgent, ai.BackendClaudeCmux:
+		return "claude-sonnet-5"
 	case ai.BackendOpenAI:
-		return "gpt-5.5"
+		return "gpt-5.6"
 	case ai.BackendDeepSeek:
 		return "deepseek-reasoner"
-	case ai.BackendCodexCLI:
-		return "gpt-5-codex"
+	case ai.BackendCodexCLI, ai.BackendCodexAgent, ai.BackendCodexCmux:
+		return "gpt-5.6-sol"
 	case ai.BackendGemini, ai.BackendGeminiCLI:
 		return "gemini-3.5-flash"
 	}
 	return ""
+}
+
+func effortHuhOptions() []huh.Option[string] {
+	return effortOptions(api.AllEfforts())
+}
+
+func effortHuhOptionsFor(backend ai.Backend, model string) []huh.Option[string] {
+	if supported, _, ok := ai.ModelEfforts(backend, model); ok {
+		if len(supported) == 0 {
+			return []huh.Option[string]{huh.NewOption("Backend default", "")}
+		}
+		return effortOptions(supported)
+	}
+	return effortHuhOptions()
+}
+
+func effortOptions(efforts []api.Effort) []huh.Option[string] {
+	out := make([]huh.Option[string], 0, len(efforts))
+	for _, effort := range efforts {
+		out = append(out, huh.NewOption(string(effort), string(effort)))
+	}
+	return out
 }
 
 func defaultString(v, fallback string) string {

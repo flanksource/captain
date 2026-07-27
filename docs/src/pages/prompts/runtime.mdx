@@ -74,3 +74,21 @@ The prompt file provides the base request, but it is not the last word. Captain 
 
 The prompt workbench keeps runtime selection catalog-backed. The UI groups by provider family first, then mode/backend, then the model list filtered to that backend. Prompt files can still name `model` and `backend` directly when the runtime should be pinned.
 
+## Parallel runtimes
+
+A prompt can declare its default comparison matrix at the root. Running the file without `-M` dispatches all declared runtimes concurrently, and the workbench opens them as editable runtime rows. Each entry accepts the compact model selector or object form, and a matrix must contain at least two distinct runtimes.
+
+<CodeExample client:load language="yaml" title="Prompt-owned runtime matrix" source={`
+---
+name: Compare screenshot audits
+runtimes:
+  - api:gemini-3.5-flash:high
+  - model: claude-sonnet-5
+    backend: anthropic
+    effort: medium
+---
+{{role "user"}}
+Review the attached screenshot.
+`} />
+
+The matrix supplies defaults rather than locking the prompt. Explicit CLI `-M` selectors or HTTP/workbench `runtimes` replace the declared list for that run. A singular `model` is optional when the prompt declares a runtime matrix.
