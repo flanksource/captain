@@ -1,0 +1,46 @@
+name: bash-tool
+description: >
+  A two-turn agent loop: the model asks to run a shell command, then answers from
+  the result. Rule order is the script — the first request consumes rule 1, and
+  the second, carrying the tool result, consumes rule 2.
+
+anthropic:
+  - match:
+      prompt_contains: "list the files"
+    respond:
+      thinking: "The user wants a directory listing, so I should run ls."
+      tool_use:
+        name: Bash
+        id: toolu_mock_bash
+        input:
+          command: "ls -1"
+          description: "List files in the working directory"
+      stop_reason: tool_use
+      usage: {input: 120, output: 45}
+
+  - match:
+      tool_result_for: Bash
+    respond:
+      text: "The directory contains README.md and main.go."
+      stop_reason: end_turn
+      usage: {input: 200, output: 12}
+
+openai:
+  - match:
+      prompt_contains: "list the files"
+    respond:
+      reasoning: "The user wants a directory listing, so I should run ls."
+      function_call:
+        name: shell
+        call_id: call_mock_shell
+        arguments:
+          command: ["bash", "-lc", "ls -1"]
+      finish_reason: tool_calls
+      usage: {input: 120, output: 45, reasoning: 30}
+
+  - match:
+      tool_result_for: shell
+    respond:
+      text: "The directory contains README.md and main.go."
+      finish_reason: stop
+      usage: {input: 200, output: 12}
