@@ -8,7 +8,7 @@ export type CommandValues = Parameters<
   NonNullable<OperationCommandPageProps["onResult"]>
 >[2];
 
-const DEFAULT_AGENT_MODEL = "claude-agent-sonnet";
+const DEFAULT_AGENT_MODEL = "claude-sonnet-5";
 
 export function isAgentOperation(op: ResolvedOperation) {
   const operationId = normalizeCommandName(op.operation.operationId);
@@ -49,11 +49,11 @@ export function agentModelFor(values: CommandValues) {
     model.includes("codex") ||
     model.includes("gpt-5-codex")
   ) {
-    return "codex-gpt-5-codex";
+    return "gpt-5.6-sol";
   }
-  if (model.includes("opus")) return "claude-agent-opus";
-  if (model.includes("haiku")) return "claude-agent-haiku";
-  if (model.startsWith("claude-agent-")) return model;
+  if (model.includes("opus")) return "claude-opus-5";
+  if (model.includes("haiku")) return "claude-haiku-4-5";
+  if (model.startsWith("claude-agent-")) return model.replace(/^claude-agent-/, "claude-");
   return DEFAULT_AGENT_MODEL;
 }
 
@@ -178,4 +178,3 @@ function normalizeCommandName(value: unknown) {
 function stringValue(value: unknown) {
   return typeof value === "string" ? value : "";
 }
-

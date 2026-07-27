@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useReducer,
+  useRef,
+  type MutableRefObject,
+} from "react";
 import type { SessionUIMessage } from "@flanksource/clicky-ui/ai";
 import { useEventSource } from "./useEventSource";
 
@@ -8,6 +14,70 @@ export interface PromptRunHandle {
   status: string;
   model?: string;
   backend?: string;
+  chat?: boolean;
+  capabilities?: ChatCapabilities;
+}
+
+export interface PromptBatchRunHandle {
+  runId: string;
+  sessionId: string;
+  selector?: string;
+  status: string;
+  model?: string;
+  backend?: string;
+  effort?: string;
+  chat?: boolean;
+  capabilities?: ChatCapabilities;
+}
+
+export interface PromptBatchHandle {
+  batchId: string;
+  status: string;
+  chat?: boolean;
+  total: number;
+  runs: PromptBatchRunHandle[];
+}
+
+export type PromptExecutionHandle = PromptRunHandle | PromptBatchHandle;
+
+export function isPromptBatchHandle(
+  handle: PromptExecutionHandle,
+): handle is PromptBatchHandle {
+  return "batchId" in handle && Array.isArray(handle.runs);
+}
+
+export interface ChatCapabilities {
+  interrupt: boolean;
+  steer: boolean;
+  followUp: boolean;
+  resume: boolean;
+}
+
+export interface ChatQueuedMessage {
+  messageId: string;
+  text: string;
+}
+
+export interface ChatMessageResponse {
+  runId: string;
+  messageId: string;
+  status: "steered" | "queued" | "started";
+  capabilities: ChatCapabilities;
+}
+
+export interface ChatStateFrame {
+  runId: string;
+  sessionId?: string;
+  status: "starting" | "running" | "interrupting" | "idle" | "stopping";
+  turn: number;
+  capabilities: ChatCapabilities;
+  queued?: ChatQueuedMessage[];
+  discardedMessageIds?: string[];
+  summary?: PromptRunSummary;
+}
+
+export interface PromptRunFrame extends PromptRunHandle {
+  sessionId?: string;
 }
 
 /** Terminal payload delivered on the SSE `done` event. */
@@ -24,16 +94,108 @@ export interface PromptRunSummary {
   error?: string;
 }
 
-export type PromptRunStreamStatus = "idle" | "connecting" | "streaming" | "done" | "error";
+export type PromptRunStreamStatus =
+  | "idle"
+  | "connecting"
+  | "streaming"
+  | "done"
+  | "error";
 
 export interface PromptRunStreamState {
   messages: SessionUIMessage[];
   summary?: PromptRunSummary;
   status: PromptRunStreamStatus;
   error?: string;
+  run?: PromptRunFrame;
+  chatState?: ChatStateFrame;
 }
 
 const PROMPT_RUN_BASE = "/api/captain/prompt/runs";
+
+type PromptRunStreamReducerState = PromptRunStreamState & {
+  done: boolean;
+};
+
+type PromptRunStreamAction =
+  | { type: "reset"; runID?: string }
+  | { type: "message"; messages: SessionUIMessage[] }
+  | { type: "run"; run: PromptRunFrame }
+  | {
+      type: "chat-state";
+      chatState: ChatStateFrame;
+      messages: SessionUIMessage[];
+    }
+  | { type: "done"; summary?: PromptRunSummary }
+  | { type: "error"; error: string };
+
+type MessageIndex = {
+  byId: Map<string, SessionUIMessage>;
+  order: string[];
+  autoSeq: number;
+  discarded: Set<string>;
+};
+
+function streamReducer(
+  state: PromptRunStreamReducerState,
+  action: PromptRunStreamAction,
+): PromptRunStreamReducerState {
+  switch (action.type) {
+    case "reset":
+      return {
+        messages: [],
+        summary: undefined,
+        status: action.runID ? "connecting" : "idle",
+        error: undefined,
+        done: !action.runID,
+        run: undefined,
+        chatState: undefined,
+      };
+    case "run":
+      return { ...state, run: action.run };
+    case "chat-state":
+      return {
+        ...state,
+        chatState: action.chatState,
+        messages: action.messages,
+      };
+    case "message":
+      return {
+        ...state,
+        messages: action.messages,
+        status:
+          state.status === "done" || state.status === "error"
+            ? state.status
+            : "streaming",
+      };
+    case "done":
+      return {
+        ...state,
+        summary: action.summary ?? state.summary,
+        status: action.summary?.error ? "error" : "done",
+        error: action.summary?.error ?? state.error,
+        done: true,
+      };
+    case "error":
+      return {
+        ...state,
+        status: "error",
+        error: action.error,
+        done: true,
+      };
+  }
+}
+
+function initialStreamState(): PromptRunStreamReducerState {
+  return {
+    messages: [],
+    summary: undefined,
+    status: "idle",
+    error: undefined,
+    done: true,
+    run: undefined,
+    chatState: undefined,
+  };
+}
 
 /**
  * usePromptRunStream subscribes to a run's unified session.Message SSE stream and
@@ -41,60 +203,115 @@ const PROMPT_RUN_BASE = "/api/captain/prompt/runs";
  * are deduped by message id so the buffered replay a run sends on (re)connect is
  * idempotent, and the terminal `done`/`error` events stop the connection.
  */
-export function usePromptRunStream(runID: string | undefined, basePath = PROMPT_RUN_BASE): PromptRunStreamState {
-  const [messages, setMessages] = useState<SessionUIMessage[]>([]);
-  const [summary, setSummary] = useState<PromptRunSummary | undefined>();
-  const [status, setStatus] = useState<PromptRunStreamStatus>("idle");
-  const [error, setError] = useState<string | undefined>();
-  const [done, setDone] = useState(false);
-
-  const byId = useRef(new Map<string, SessionUIMessage>());
-  const order = useRef<string[]>([]);
-  const autoSeq = useRef(0);
+export function usePromptRunStream(
+  runID: string | undefined,
+  basePath = PROMPT_RUN_BASE,
+  onChange?: (runID: string, state: PromptRunStreamState) => void,
+): PromptRunStreamState {
+  const [state, dispatch] = useReducer(
+    streamReducer,
+    undefined,
+    initialStreamState,
+  );
+  const stateRef = useRef(state);
+  const messageIndex = useRef<MessageIndex | null>(null);
 
   useEffect(() => {
-    byId.current = new Map();
-    order.current = [];
-    autoSeq.current = 0;
-    setMessages([]);
-    setSummary(undefined);
-    setError(undefined);
-    setDone(false);
-    setStatus(runID ? "connecting" : "idle");
+    messageIndex.current = null;
+    const next = streamReducer(stateRef.current, { type: "reset", runID });
+    stateRef.current = next;
+    dispatch({ type: "reset", runID });
   }, [runID]);
 
+  const update = useCallback(
+    (action: PromptRunStreamAction) => {
+      const next = streamReducer(stateRef.current, action);
+      stateRef.current = next;
+      dispatch(action);
+      if (runID) onChange?.(runID, next);
+    },
+    [onChange, runID],
+  );
+
   const onEvent = useCallback((event: string, data: string) => {
+    if (event === "run") {
+      const run = parse<PromptRunFrame>(data);
+      if (run) update({ type: "run", run });
+      return;
+    }
+    if (event === "state") {
+      const chatState = parse<ChatStateFrame>(data);
+      if (!chatState) return;
+      const index = getMessageIndex(messageIndex);
+      index.discarded = new Set(chatState.discardedMessageIds ?? []);
+      update({
+        type: "chat-state",
+        chatState,
+        messages: indexedMessages(index),
+      });
+      return;
+    }
     if (event === "done") {
       const sum = parse<PromptRunSummary>(data);
-      if (sum) setSummary(sum);
-      if (sum?.error) {
-        setError(sum.error);
-        setStatus("error");
-      } else {
-        setStatus("done");
-      }
-      setDone(true);
+      update({ type: "done", summary: sum });
       return;
     }
     if (event === "error") {
-      setError(parse<{ error?: string }>(data)?.error ?? "run failed");
-      setStatus("error");
-      setDone(true);
+      update({
+        type: "error",
+        error: parse<{ error?: string }>(data)?.error ?? "run failed",
+      });
       return;
     }
+    if (event !== "entry") return;
     const message = parse<SessionUIMessage>(data);
     if (!message) return;
-    const key = message.id ?? `auto-${autoSeq.current++}`;
-    if (!byId.current.has(key)) order.current.push(key);
-    byId.current.set(key, message);
-    setMessages(order.current.map((k) => byId.current.get(k)!));
-    setStatus((s) => (s === "done" || s === "error" ? s : "streaming"));
-  }, []);
+    const index = getMessageIndex(messageIndex);
+    const key = message.id ?? `auto-${index.autoSeq++}`;
+    if (!index.byId.has(key)) index.order.push(key);
+    index.byId.set(key, message);
+    update({ type: "message", messages: indexedMessages(index) });
+  }, [update]);
 
-  const url = runID ? `${basePath}/${encodeURIComponent(runID)}/stream` : undefined;
-  useEventSource(url, { enabled: Boolean(url) && !done, events: ["entry", "done", "error"], onEvent });
+  const url = runID
+    ? `${basePath}/${encodeURIComponent(runID)}/stream`
+    : undefined;
+  useEventSource(url, {
+    enabled: Boolean(url) && !state.done,
+    events: ["run", "entry", "state", "done", "error"],
+    onEvent,
+  });
 
-  return { messages, summary, status, error };
+  return {
+    messages: state.messages,
+    summary: state.summary,
+    status: state.status,
+    error: state.error,
+    run: state.run,
+    chatState: state.chatState,
+  };
+}
+
+function getMessageIndex(
+  ref: MutableRefObject<MessageIndex | null>,
+): MessageIndex {
+  if (!ref.current) {
+    ref.current = {
+      byId: new Map<string, SessionUIMessage>(),
+      order: [],
+      autoSeq: 0,
+      discarded: new Set<string>(),
+    };
+  }
+  return ref.current;
+}
+
+function indexedMessages(index: MessageIndex): SessionUIMessage[] {
+  const messages: SessionUIMessage[] = [];
+  for (const key of index.order) {
+    if (!index.discarded.has(key)) messages.push(index.byId.get(key)!);
+  }
+  return messages;
 }
 
 function parse<T>(data: string): T | undefined {

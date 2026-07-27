@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type MutableRefObject } from "react";
 
 export type SSEStatus = "idle" | "connecting" | "open" | "reconnecting" | "closed";
 
@@ -21,38 +21,56 @@ export function useEventSource(url: string | undefined, options: UseEventSourceO
   const { enabled = true, events = [], onEvent, onStatus } = options;
   const onEventRef = useRef(onEvent);
   const onStatusRef = useRef(onStatus);
-  onEventRef.current = onEvent;
-  onStatusRef.current = onStatus;
+  useEffect(() => {
+    onEventRef.current = onEvent;
+    onStatusRef.current = onStatus;
+  }, [onEvent, onStatus]);
 
   // Stable dependency: only re-bind when the set of named events actually changes.
   const eventsKey = events.join(",");
 
   useEffect(() => {
     if (!url || !enabled) return;
-    const setStatus = (s: SSEStatus) => onStatusRef.current?.(s);
-    setStatus("connecting");
-
-    const es = new EventSource(url);
-    let closedByUs = false;
-
-    es.onopen = () => setStatus("open");
-    es.onmessage = (e) => onEventRef.current("message", e.data);
-    es.onerror = () => {
-      if (!closedByUs) setStatus("reconnecting");
-    };
-
-    const named = eventsKey ? eventsKey.split(",") : [];
-    const bound = named.map((name) => {
-      const handler = (e: MessageEvent) => onEventRef.current(name, e.data);
-      es.addEventListener(name, handler as EventListener);
-      return { name, handler };
-    });
-
-    return () => {
-      closedByUs = true;
-      for (const { name, handler } of bound) es.removeEventListener(name, handler as EventListener);
-      es.close();
-      setStatus("closed");
-    };
+    return subscribeToEventSource(
+      url,
+      eventsKey,
+      onEventRef,
+      onStatusRef,
+    );
   }, [url, enabled, eventsKey]);
+}
+
+function subscribeToEventSource(
+  url: string,
+  eventsKey: string,
+  onEventRef: MutableRefObject<UseEventSourceOptions["onEvent"]>,
+  onStatusRef: MutableRefObject<UseEventSourceOptions["onStatus"]>,
+) {
+  const setStatus = (status: SSEStatus) => onStatusRef.current?.(status);
+  setStatus("connecting");
+  const eventSource = new EventSource(url);
+  let closed = false;
+
+  eventSource.onopen = () => setStatus("open");
+  eventSource.onmessage = (event) =>
+    onEventRef.current("message", event.data);
+  eventSource.onerror = () => {
+    if (!closed) setStatus("reconnecting");
+  };
+
+  const listeners = (eventsKey ? eventsKey.split(",") : []).map((name) => {
+    const handler = (event: MessageEvent) =>
+      onEventRef.current(name, event.data);
+    eventSource.addEventListener(name, handler as EventListener);
+    return { name, handler };
+  });
+
+  return () => {
+    closed = true;
+    for (const { name, handler } of listeners) {
+      eventSource.removeEventListener(name, handler as EventListener);
+    }
+    eventSource.close();
+    setStatus("closed");
+  };
 }

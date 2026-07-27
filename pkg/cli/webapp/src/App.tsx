@@ -1,6 +1,6 @@
-import { useMemo, type ReactNode } from "react";
+import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { AppShell } from "@flanksource/clicky-ui/components";
+import { AppShell, type AppShellProps } from "@flanksource/clicky-ui/components";
 import {
   RouterProvider,
   useBrowserRouter,
@@ -10,16 +10,27 @@ import { EntityExplorerApp } from "@flanksource/clicky-ui/rpc";
 import { apiClient } from "./api";
 import { AgentLauncher } from "./AgentLauncher";
 import { ChatLayer } from "./ChatLayer";
+import {
+  CommandPalette,
+  SearchTrigger,
+  useCommandPaletteShortcut,
+} from "./CommandPalette";
 import { ChatRoute } from "./ChatRoute";
 import { HomeDashboard } from "./HomeDashboard";
 import { PromptWorkbench } from "./PromptWorkbench";
 import { SessionBrowser } from "./SessionBrowser";
+import { ShellActions } from "./shell";
+import { WhoamiPage } from "./WhoamiPage";
 import {
-  CAPTAIN_SIDEBAR_COLLAPSE_KEY,
-  ShellActions,
   captainNavSections,
+  CAPTAIN_SIDEBAR_COLLAPSE_KEY,
+  getProjectScopeSnapshot,
+  setProjectScopeInLocation,
+  subscribeProjectScope,
+  withProjectScope,
   type PrimaryRoute,
-} from "./shell";
+} from "./shellHelpers";
+import type { ProjectScope } from "./sessionData";
 
 export function App() {
   const queryClient = useMemo(
@@ -31,6 +42,24 @@ export function App() {
   );
   const router = useBrowserRouter();
   const route = parseRoute(router.pathname, window.location.search);
+  const projectScope = useSyncExternalStore(
+    subscribeProjectScope,
+    getProjectScopeSnapshot,
+    getProjectScopeSnapshot,
+  );
+
+  const setProjectScope = (scope: ProjectScope) => {
+    setProjectScopeInLocation(scope, router.navigate, router.pathname, window.location.search);
+  };
+  const shellActions = (
+    <ShellActions projectScope={projectScope} onProjectScopeChange={setProjectScope} />
+  );
+
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  useCommandPaletteShortcut(
+    useCallback(() => setPaletteOpen((prev) => !prev), []),
+  );
+  const shellSearch = <SearchTrigger onOpen={() => setPaletteOpen(true)} />;
 
   return (
     <QueryClientProvider client={queryClient}>
@@ -40,20 +69,31 @@ export function App() {
             <SessionBrowser
               selectedId={route.sessionId}
               onNavigate={router.navigate}
-              navSections={captainNavSections("sessions")}
-              actions={<ShellActions />}
+              navSections={captainNavSections("sessions", projectScope)}
+              actions={shellActions}
+              search={shellSearch}
+              projectScope={projectScope}
             />
           ) : route.kind === "prompts" ? (
             <PromptWorkbench
               selectedId={route.promptId}
               onNavigate={router.navigate}
-              navSections={captainNavSections("prompts")}
-              actions={<ShellActions />}
+              navSections={captainNavSections("prompts", projectScope)}
+              actions={shellActions}
+              search={shellSearch}
             />
           ) : (
-            <CaptainShell active={primaryRoute(route)} onNavigate={router.navigate}>
+            <CaptainShell
+              active={primaryRoute(route)}
+              onNavigate={router.navigate}
+              projectScope={projectScope}
+              actions={shellActions}
+              search={shellSearch}
+            >
               {route.kind === "dashboard" ? (
-                <HomeDashboard onNavigate={router.navigate} />
+                <HomeDashboard onNavigate={router.navigate} projectScope={projectScope} />
+              ) : route.kind === "whoami" ? (
+                <WhoamiPage />
               ) : route.kind === "operations" ? (
                 <EntityExplorerApp
                   client={apiClient}
@@ -74,6 +114,11 @@ export function App() {
             </CaptainShell>
           )}
           <ChatLayer />
+          <CommandPalette
+            open={paletteOpen}
+            onClose={() => setPaletteOpen(false)}
+            onNavigate={router.navigate}
+          />
         </ChatWindowManagerProvider>
       </RouterProvider>
     </QueryClientProvider>
@@ -83,19 +128,26 @@ export function App() {
 function CaptainShell({
   active,
   onNavigate,
+  projectScope,
+  actions,
+  search,
   children,
 }: {
   active: PrimaryRoute;
   onNavigate: (to: string, opts?: { replace?: boolean }) => void;
-  children: ReactNode;
+  projectScope: ProjectScope;
+  actions: AppShellProps["actions"];
+  search: AppShellProps["search"];
+  children: AppShellProps["children"];
 }) {
   return (
     <AppShell
       className="h-screen"
-      brand={<ShellBrand onNavigate={onNavigate} />}
-      navSections={captainNavSections(active)}
+      brand={<ShellBrand onNavigate={onNavigate} projectScope={projectScope} />}
+      navSections={captainNavSections(active, projectScope)}
       collapsedStorageKey={CAPTAIN_SIDEBAR_COLLAPSE_KEY}
-      actions={<ShellActions />}
+      actions={actions}
+      search={search}
       contentClassName="p-0 overflow-hidden"
     >
       {children}
@@ -105,14 +157,16 @@ function CaptainShell({
 
 function ShellBrand({
   onNavigate,
+  projectScope,
 }: {
   onNavigate: (to: string, opts?: { replace?: boolean }) => void;
+  projectScope: ProjectScope;
 }) {
   return (
     <button
       type="button"
       className="text-sm font-semibold"
-      onClick={() => onNavigate("/")}
+      onClick={() => onNavigate(withProjectScope("/", projectScope))}
     >
       Captain
     </button>
@@ -124,12 +178,14 @@ type Route =
   | { kind: "agent" }
   | { kind: "sessions"; sessionId?: string }
   | { kind: "prompts"; promptId?: string }
+  | { kind: "whoami" }
   | { kind: "operations" }
   | { kind: "chat"; threadId: string; model?: string };
 
 function primaryRoute(route: Route): PrimaryRoute {
   if (route.kind === "dashboard") return "dashboard";
   if (route.kind === "operations") return "operations";
+  if (route.kind === "whoami") return "whoami";
   if (route.kind === "prompts") return "prompts";
   if (route.kind === "sessions") return "sessions";
   return "agent";
@@ -137,6 +193,7 @@ function primaryRoute(route: Route): PrimaryRoute {
 
 function parseRoute(pathname: string, search: string): Route {
   if (pathname.startsWith("/operations")) return { kind: "operations" };
+  if (pathname.startsWith("/whoami")) return { kind: "whoami" };
   if (pathname.startsWith("/prompts")) {
     const raw = pathname.slice("/prompts".length).replace(/^\/+/, "");
     const promptId = raw ? decodeURIComponent(raw.split("/")[0] ?? "") : undefined;
