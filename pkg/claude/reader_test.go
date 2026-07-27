@@ -237,11 +237,54 @@ func TestReadStreamJSON_UnhandledTypes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadStreamJSON(state) failed: %v", err)
 	}
-	if len(stateEntries) != 0 {
-		t.Errorf("operational state types should produce no rows, got %d", len(stateEntries))
+	if len(stateEntries) != 1 {
+		t.Fatalf("queue-operation should produce one turn metadata event, got %d", len(stateEntries))
+	}
+	if stateEntries[0].Event == nil || stateEntries[0].Event.Type != "queue-operation" || stateEntries[0].Event.Scope != "turn" {
+		t.Fatalf("queue-operation event = %+v, want turn metadata event", stateEntries[0].Event)
 	}
 	if got := SnapshotUnhandledStreamTypes(); len(got) != 0 {
 		t.Errorf("operational state types should not be reported as unhandled, got %v", got)
+	}
+}
+
+func TestReadHistory_MetadataEvents(t *testing.T) {
+	jsonl := `{"type":"attachment","sessionId":"s","uuid":"tools","timestamp":"2026-07-05T10:00:00Z","attachment":{"type":"deferred_tools_delta","addedNames":["Read","Bash"],"pendingMcpServers":["github"]}}
+{"type":"attachment","sessionId":"s","uuid":"agents","timestamp":"2026-07-05T10:00:01Z","attachment":{"type":"agent_listing_delta","addedTypes":["general-purpose"]}}
+{"type":"attachment","sessionId":"s","uuid":"skills","timestamp":"2026-07-05T10:00:02Z","attachment":{"type":"skill_listing","names":["gavel-runner"]}}
+{"type":"queue-operation","sessionId":"s","uuid":"queue","timestamp":"2026-07-05T10:00:03Z","operation":"enqueue","content":{"type":"message"}}
+{"type":"attachment","sessionId":"s","uuid":"budget","timestamp":"2026-07-05T10:00:04Z","attachment":{"type":"budget_usd","used":1.25,"total":5,"remaining":3.75}}
+{"type":"last-prompt","sessionId":"s","uuid":"prompt","timestamp":"2026-07-05T10:00:05Z","content":"fix it"}`
+
+	entries, err := ReadHistory(strings.NewReader(jsonl))
+	if err != nil {
+		t.Fatalf("ReadHistory failed: %v", err)
+	}
+	if len(entries) != 6 {
+		t.Fatalf("entries = %d, want 6", len(entries))
+	}
+	want := []struct {
+		typ   string
+		scope string
+		uuid  string
+	}{
+		{"deferred_tools_delta", "session", "tools"},
+		{"agent_listing_delta", "session", "agents"},
+		{"skill_listing", "session", "skills"},
+		{"queue-operation", "turn", "queue"},
+		{"budget_usd", "turn", "budget"},
+		{"last-prompt", "session", "prompt"},
+	}
+	for i, w := range want {
+		if entries[i].Event == nil {
+			t.Fatalf("entry[%d] missing event", i)
+		}
+		if entries[i].Event.Type != w.typ || entries[i].Event.Scope != w.scope || entries[i].UUID != w.uuid {
+			t.Errorf("entry[%d] event = %+v uuid=%q, want %s/%s/%s", i, entries[i].Event, entries[i].UUID, w.typ, w.scope, w.uuid)
+		}
+		if len(entries[i].Message.Content) != 0 {
+			t.Errorf("entry[%d] metadata event should not create message content: %+v", i, entries[i].Message.Content)
+		}
 	}
 }
 
@@ -273,13 +316,35 @@ func TestReadStreamJSON_PrLinkSurfaced(t *testing.T) {
 	}
 }
 
+// TestReadStreamJSON_FileHistoryDeltaIgnored verifies file-history-delta — the
+// incremental sibling of file-history-snapshot — is explicitly ignored rather
+// than counted as an unhandled stream type (which surfaced as a spurious
+// "unhandled stream types: file-history-delta=15" warning on real sessions).
+func TestReadStreamJSON_FileHistoryDeltaIgnored(t *testing.T) {
+	ResetUnhandledStreamTypes()
+	input := `{"type":"file-history-delta","messageId":"m1","snapshotMessageId":"s1","trackingPath":"/Users/x/.claude/plans/p.md","backup":{"backupFileName":null,"version":1,"backupTime":"2026-07-23T17:18:00Z","realParentDir":"/Users/x/.claude/plans"},"timestamp":"2026-07-23T17:18:00Z"}`
+	entries, err := ReadStreamJSON(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("ReadStreamJSON failed: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("file-history-delta should emit no entries, got %d: %+v", len(entries), entries)
+	}
+	if got := SnapshotUnhandledStreamTypes(); got["file-history-delta"] != 0 {
+		t.Errorf("file-history-delta should be a known storage type, not counted unhandled: %v", got)
+	}
+}
+
 // TestReadStreamJSON_ContentSystemSubtypes verifies the content-bearing system
 // subtypes surface as synthetic rows (carrying their content) rather than being
 // dropped as unhandled.
 func TestReadStreamJSON_ContentSystemSubtypes(t *testing.T) {
 	ResetUnhandledStreamTypes()
+	// A local_command whose content is a recognized command/output wrapper now
+	// surfaces as a structured claude_command(_output) event; only untagged
+	// content falls through to the generic LocalCommand row exercised here.
 	input := `{"type":"system","subtype":"compact_boundary","content":"Conversation compacted","uuid":"c"}
-{"type":"system","subtype":"local_command","content":"<local-command-stdout>ok</local-command-stdout>","uuid":"l"}
+{"type":"system","subtype":"local_command","content":"cleared pending input","uuid":"l"}
 {"type":"system","subtype":"scheduled_task_fire","content":"resuming /loop","uuid":"s"}
 {"type":"system","subtype":"informational","content":"Remote Control disconnected","uuid":"i"}`
 
@@ -289,7 +354,7 @@ func TestReadStreamJSON_ContentSystemSubtypes(t *testing.T) {
 	}
 	wantRows := map[string]string{
 		"CompactBoundary":   "Conversation compacted",
-		"LocalCommand":      "<local-command-stdout>ok</local-command-stdout>",
+		"LocalCommand":      "cleared pending input",
 		"ScheduledTaskFire": "resuming /loop",
 		"Informational":     "Remote Control disconnected",
 	}
@@ -316,6 +381,58 @@ func TestReadStreamJSON_ContentSystemSubtypes(t *testing.T) {
 	}
 	if got := SnapshotUnhandledStreamTypes(); len(got) != 0 {
 		t.Errorf("content system subtypes should be handled, got unhandled: %v", got)
+	}
+}
+
+func TestReadStreamJSON_SystemApiErrorSurfaced(t *testing.T) {
+	ResetUnhandledStreamTypes()
+	input := `{"type":"system","subtype":"api_error","error":{"message":"rate limited","status":429},"retryInMs":1000,"retryAttempt":1,"maxRetries":3,"uuid":"api"}`
+
+	entries, err := ReadStreamJSON(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("ReadStreamJSON failed: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 ApiError entry, got %d", len(entries))
+	}
+	uses := entries[0].Message.GetToolUses()
+	if len(uses) != 1 || uses[0].Name != "ApiError" {
+		t.Fatalf("expected ApiError synthetic tool, got %+v", uses)
+	}
+	var in map[string]any
+	if err := json.Unmarshal(uses[0].Input, &in); err != nil {
+		t.Fatalf("unmarshal ApiError input: %v", err)
+	}
+	if in["retryAttempt"] != float64(1) || in["maxRetries"] != float64(3) {
+		t.Errorf("ApiError input missing retry fields: %v", in)
+	}
+	if got := SnapshotUnhandledStreamTypes(); len(got) != 0 {
+		t.Errorf("system/api_error should be handled, got unhandled: %v", got)
+	}
+}
+
+func TestReadStreamJSON_WorktreeLifecycleEvents(t *testing.T) {
+	ResetUnhandledStreamTypes()
+	input := `{"type":"worktree-state","worktreeSession":{"worktreeName":"feature","worktreePath":"/repo","worktreeBranch":"feature/x"},"uuid":"w"}
+{"type":"relocated","relocatedCwd":"/repo/subdir","uuid":"r"}
+{"type":"started","cwd":"/repo","uuid":"s"}`
+
+	entries, err := ReadStreamJSON(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("ReadStreamJSON failed: %v", err)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("expected 3 lifecycle entries, got %d", len(entries))
+	}
+	want := []string{"WorktreeState", "Relocated", "Started"}
+	for i, name := range want {
+		uses := entries[i].Message.GetToolUses()
+		if len(uses) != 1 || uses[0].Name != name {
+			t.Fatalf("entry[%d] expected %s, got %+v", i, name, uses)
+		}
+	}
+	if got := SnapshotUnhandledStreamTypes(); len(got) != 0 {
+		t.Errorf("worktree lifecycle events should be handled, got unhandled: %v", got)
 	}
 }
 

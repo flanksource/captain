@@ -59,18 +59,6 @@ type WebSearch struct {
 	Query string `json:"query"`
 }
 
-// TodoWrite represents a TodoWrite tool invocation
-type TodoWrite struct {
-	Todos []Todo `json:"todos"`
-}
-
-// Todo represents a single todo item
-type Todo struct {
-	ActiveForm string `json:"activeForm,omitempty"`
-	Content    string `json:"content,omitempty"`
-	Status     string `json:"status,omitempty"`
-}
-
 // AskUserQuestion represents question data
 type Questions struct {
 	Questions []Question `json:"questions"`

@@ -2,12 +2,14 @@ package history
 
 import (
 	"bufio"
-	"github.com/segmentio/encoding/json"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/flanksource/captain/pkg/api"
+	"github.com/segmentio/encoding/json"
 )
 
 func ParseCodexLine(line string) (CodexEvent, error) {
@@ -25,8 +27,7 @@ func ExtractCodexToolUses(sessionFile string) ([]ToolUse, error) {
 	return ExtractCodexToolUsesFromReader(file)
 }
 
-// CodexSessionInfo is the first-line summary of a codex rollout file:
-// session id, cwd, cli version, model provider, git branch, etc.
+// CodexSessionInfo is the first-line summary of a codex rollout file.
 type CodexSessionInfo struct {
 	ID              string
 	CWD             string
@@ -36,13 +37,12 @@ type CodexSessionInfo struct {
 	GitBranch       string
 	GitCommit       string
 	StartedAt       *time.Time
-	Model           string // from the first turn_context payload
-	ReasoningEffort string // "low", "medium", "high" — per turn_context
+	Model           string
+	ReasoningEffort string
 }
 
-// ReadCodexSessionMeta parses only the leading session metadata needed for
-// cheap history candidate filtering. It intentionally stops before scanning
-// turns or response items.
+// ReadCodexSessionMeta parses only the leading metadata needed for cheap
+// history candidate filtering.
 func ReadCodexSessionMeta(sessionFile string) (*CodexSessionInfo, error) {
 	file, err := os.Open(sessionFile)
 	if err != nil {
@@ -63,19 +63,8 @@ func ReadCodexSessionMeta(sessionFile string) (*CodexSessionInfo, error) {
 		}
 		switch event.Type {
 		case "session_meta":
-			info := &CodexSessionInfo{
-				ID:            event.Payload.ID,
-				CWD:           event.Payload.CWD,
-				CLIVersion:    event.Payload.CLIVersion,
-				ModelProvider: event.Payload.ModelProvider,
-				Originator:    event.Payload.Originator,
-				StartedAt:     event.Time(),
-			}
-			if event.Payload.Git != nil {
-				info.GitBranch = event.Payload.Git.Branch
-				info.GitCommit = event.Payload.Git.CommitHash
-			}
-			return info, nil
+			info := codexSessionInfo(event)
+			return &info, nil
 		case "thread.started":
 			return &CodexSessionInfo{ID: event.ThreadID, StartedAt: event.Time()}, nil
 		case "turn_context", "response_item", "event_msg", "item.completed", "turn.failed", "error":
@@ -88,8 +77,7 @@ func ReadCodexSessionMeta(sessionFile string) (*CodexSessionInfo, error) {
 	return nil, nil
 }
 
-// ReadCodexSessionInfo parses just the leading `session_meta` event from a
-// codex rollout file. Returns nil if the file has no session_meta header.
+// ReadCodexSessionInfo parses the leading metadata and first turn context.
 func ReadCodexSessionInfo(sessionFile string) (*CodexSessionInfo, error) {
 	file, err := os.Open(sessionFile)
 	if err != nil {
@@ -111,20 +99,9 @@ func ReadCodexSessionInfo(sessionFile string) (*CodexSessionInfo, error) {
 		}
 		switch event.Type {
 		case "session_meta":
-			if info != nil {
-				continue
-			}
-			info = &CodexSessionInfo{
-				ID:            event.Payload.ID,
-				CWD:           event.Payload.CWD,
-				CLIVersion:    event.Payload.CLIVersion,
-				ModelProvider: event.Payload.ModelProvider,
-				Originator:    event.Payload.Originator,
-				StartedAt:     event.Time(),
-			}
-			if event.Payload.Git != nil {
-				info.GitBranch = event.Payload.Git.Branch
-				info.GitCommit = event.Payload.Git.CommitHash
+			if info == nil {
+				value := codexSessionInfo(event)
+				info = &value
 			}
 		case "thread.started":
 			if info == nil {
@@ -137,10 +114,10 @@ func ReadCodexSessionInfo(sessionFile string) (*CodexSessionInfo, error) {
 			if info == nil {
 				info = &CodexSessionInfo{StartedAt: event.Time()}
 			}
-			if info.Model == "" && event.Payload.Model != "" {
+			if info.Model == "" {
 				info.Model = event.Payload.Model
 			}
-			if info.ReasoningEffort == "" && event.Payload.Effort != "" {
+			if info.ReasoningEffort == "" {
 				info.ReasoningEffort = event.Payload.Effort
 			}
 			if info.Model != "" && info.ReasoningEffort != "" {
@@ -154,29 +131,68 @@ func ReadCodexSessionInfo(sessionFile string) (*CodexSessionInfo, error) {
 	return info, nil
 }
 
-func ExtractCodexToolUsesFromReader(r io.Reader) ([]ToolUse, error) {
-	scanner := bufio.NewScanner(r)
+func codexSessionInfo(event CodexEvent) CodexSessionInfo {
+	info := CodexSessionInfo{
+		ID:            event.Payload.ID,
+		CWD:           event.Payload.CWD,
+		CLIVersion:    event.Payload.CLIVersion,
+		ModelProvider: event.Payload.ModelProvider,
+		Originator:    event.Payload.Originator,
+		StartedAt:     event.Time(),
+	}
+	if event.Payload.Git != nil {
+		info.GitBranch = event.Payload.Git.Branch
+		info.GitCommit = event.Payload.Git.CommitHash
+	}
+	return info
+}
+
+func IsCodexAutoReviewSession(sessionFile string) (bool, error) {
+	info, err := ReadCodexSessionInfo(sessionFile)
+	if err != nil || info == nil {
+		return false, err
+	}
+	return IsCodexAutoReviewModel(info.Model), nil
+}
+
+func IsCodexAutoReviewModel(model string) bool {
+	return strings.EqualFold(strings.TrimSpace(model), api.CodexAutoReviewModel)
+}
+
+func ExtractCodexToolUsesFromReader(reader io.Reader) ([]ToolUse, error) {
+	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
 
-	var (
-		toolUses     []ToolUse
-		sessionCWD   string
-		sessionID    string
-		currentModel string
-		currentEff   string
-		pendingCall  = make(map[string]CodexEvent)
-	)
-
+	// records holds the uses of one source record per entry, in emission order.
+	// Dedupe needs those boundaries to merge a message's twin records: the
+	// boundary cannot be recovered afterwards, because distinct adjacent records
+	// routinely share a RecordType and a millisecond.
+	var records [][]ToolUse
+	var sessionCWD, sessionID, currentTurn, currentModel, currentEffort string
+	pendingCall := make(map[string]CodexEvent)
+	var reasoning codexReasoningCollapser
 	stamp := func(uses []ToolUse) []ToolUse {
-		for i := range uses {
-			if uses[i].Model == "" {
-				uses[i].Model = currentModel
+		for index := range uses {
+			if uses[index].TurnID == "" {
+				uses[index].TurnID = currentTurn
 			}
-			if uses[i].ReasoningEffort == "" {
-				uses[i].ReasoningEffort = currentEff
+			if uses[index].Model == "" {
+				uses[index].Model = currentModel
+			}
+			if uses[index].ReasoningEffort == "" {
+				uses[index].ReasoningEffort = currentEffort
 			}
 		}
 		return uses
+	}
+	// A record that emits nothing -- an accumulating reasoning record, an
+	// unpaired function_call half, filtered internal user text -- must not count
+	// as intervening content, or it would break a twin pair apart.
+	add := func(uses []ToolUse) {
+		if len(uses) == 0 {
+			return
+		}
+		records = append(records, stamp(uses))
 	}
 
 	for scanner.Scan() {
@@ -184,308 +200,55 @@ func ExtractCodexToolUsesFromReader(r io.Reader) ([]ToolUse, error) {
 		if line == "" {
 			continue
 		}
-
 		event, err := ParseCodexLine(line)
 		if err != nil {
 			log.Debugf("Error parsing codex line: %v", err)
 			continue
 		}
-
 		switch event.Type {
 		case "session_meta":
 			sessionCWD = event.Payload.CWD
 			sessionID = event.Payload.ID
-
 		case "turn_context":
-			if event.Payload.Model != "" {
-				currentModel = event.Payload.Model
+			// Flush before the turn's model/effort roll over so the closing
+			// span is stamped with the turn it belongs to. turn_context is the
+			// only reliable turn boundary: older rollouts carry no turn_id at
+			// all, so keying the span on turn_id alone would fold a whole
+			// multi-turn session into one bogus span.
+			add(reasoning.flush())
+			currentTurn = firstNonEmpty(event.Payload.TurnID, currentTurn)
+			currentModel = firstNonEmpty(event.Payload.Model, currentModel)
+			if IsCodexAutoReviewModel(currentModel) {
+				return nil, nil
 			}
-			if event.Payload.Effort != "" {
-				currentEff = event.Payload.Effort
-			}
-
+			currentEffort = firstNonEmpty(event.Payload.Effort, currentEffort)
 		case "response_item":
-			toolUses = append(toolUses, stamp(extractResponseItem(event, pendingCall, sessionCWD, sessionID))...)
-
-		case "event_msg":
-			toolUses = append(toolUses, stamp(extractEventMsg(event, sessionCWD, sessionID))...)
-
-		// --- Newer dotted-name `codex exec --json` schema ---
-		case "thread.started":
-			if event.ThreadID != "" {
-				sessionID = event.ThreadID
+			if event.Payload.Type == "reasoning" {
+				add(reasoning.observe(event, currentTurn, sessionCWD, sessionID))
+				continue
 			}
-
+			add(extractResponseItem(event, pendingCall, sessionCWD, sessionID))
+		case "event_msg":
+			currentTurn = firstNonEmpty(event.Payload.TurnID, currentTurn)
+			add(extractEventMsg(event, sessionCWD, sessionID))
+		case "world_state":
+			add([]ToolUse{buildCodexTopLevelEventUse(event, "world_state", sessionCWD, sessionID)})
+		case "thread.started":
+			sessionID = firstNonEmpty(event.ThreadID, sessionID)
 		case "item.completed":
-			toolUses = append(toolUses, stamp(extractLiveItemCompleted(event, sessionCWD, sessionID))...)
-
+			add(extractLiveItemCompleted(event, sessionCWD, sessionID))
 		case "turn.failed", "error":
-			toolUses = append(toolUses, stamp(extractLiveError(event, sessionCWD, sessionID))...)
-
-			// turn.started, turn.completed, item.started, item.delta carry
-			// no tool-use information for our history view; intentionally
-			// dropped to keep parity with the legacy schema.
+			add(extractLiveError(event, sessionCWD, sessionID))
 		}
 	}
-
+	add(reasoning.flush())
 	for _, callEvent := range pendingCall {
-		toolUses = append(toolUses, stamp([]ToolUse{buildToolUse(callEvent, CodexEvent{}, sessionCWD, sessionID)})...)
+		add([]ToolUse{buildToolUse(callEvent, CodexEvent{}, sessionCWD, sessionID)})
 	}
-
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
-	return toolUses, nil
-}
-
-func extractResponseItem(event CodexEvent, pendingCall map[string]CodexEvent, cwd, sessionID string) []ToolUse {
-	switch event.Payload.Type {
-	case "function_call":
-		pendingCall[event.Payload.CallID] = event
-		return nil
-
-	case "function_call_output":
-		callEvent, ok := pendingCall[event.Payload.CallID]
-		if !ok {
-			return nil
-		}
-		delete(pendingCall, event.Payload.CallID)
-		return []ToolUse{buildToolUse(callEvent, event, cwd, sessionID)}
-
-	case "reasoning":
-		var summaries []CodexReasoningSummary
-		if len(event.Payload.Summary) > 0 {
-			_ = json.Unmarshal(event.Payload.Summary, &summaries)
-		}
-		var text string
-		for _, s := range summaries {
-			if s.Text != "" {
-				text = s.Text
-			}
-		}
-		if text == "" {
-			return nil
-		}
-		return []ToolUse{{
-			Tool:      "Reasoning",
-			Input:     map[string]any{"text": text},
-			Timestamp: event.Time(),
-			CWD:       cwd,
-			SessionID: sessionID,
-			Source:    "codex",
-		}}
-
-	case "message":
-		if event.Payload.Role != "assistant" {
-			return nil
-		}
-		var text string
-		for _, c := range event.Payload.Content {
-			if c.Type == "output_text" && c.Text != "" {
-				text += c.Text
-			}
-		}
-		if text == "" {
-			return nil
-		}
-		return []ToolUse{{
-			Tool:      "Assistant",
-			Input:     map[string]any{"text": text},
-			Timestamp: event.Time(),
-			CWD:       cwd,
-			SessionID: sessionID,
-			Source:    "codex",
-		}}
-	}
-	return nil
-}
-
-// extractLiveItemCompleted handles `item.completed` events from the newer
-// `codex exec --json` schema. The item carries either a top-level Text field
-// or a Content array shaped like response_item.message.
-func extractLiveItemCompleted(event CodexEvent, cwd, sessionID string) []ToolUse {
-	if event.Item == nil {
-		return nil
-	}
-	text := event.Item.Text
-	if text == "" {
-		for _, c := range event.Item.Content {
-			if c.Type == "output_text" && c.Text != "" {
-				text += c.Text
-			}
-		}
-	}
-	if text == "" {
-		return nil
-	}
-	return []ToolUse{{
-		Tool:      "Assistant",
-		Input:     map[string]any{"text": text},
-		Timestamp: event.Time(),
-		CWD:       cwd,
-		SessionID: sessionID,
-		Source:    "codex",
-	}}
-}
-
-// extractLiveError surfaces a `turn.failed` or top-level `error` event as an
-// ApiError tool use, peeling one layer of stringified-JSON nesting that
-// codex sometimes uses when relaying provider errors back to the user.
-func extractLiveError(event CodexEvent, cwd, sessionID string) []ToolUse {
-	var msg string
-	if event.Error != nil {
-		msg = event.Error.Message
-	}
-	if msg == "" {
-		msg = event.Message
-	}
-	msg = unwrapCodexErrorMessage(msg)
-	if msg == "" {
-		return nil
-	}
-	return []ToolUse{{
-		Tool:      "ApiError",
-		Input:     map[string]any{"error": msg},
-		Timestamp: event.Time(),
-		CWD:       cwd,
-		SessionID: sessionID,
-		Source:    "codex",
-	}}
-}
-
-func unwrapCodexErrorMessage(raw string) string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" || !strings.HasPrefix(raw, "{") {
-		return raw
-	}
-	var inner CodexErrorBlock
-	wrapper := struct {
-		Error   *CodexErrorBlock `json:"error"`
-		Message string           `json:"message"`
-	}{Error: &inner}
-	if err := json.Unmarshal([]byte(raw), &wrapper); err != nil {
-		return raw
-	}
-	if wrapper.Error != nil && wrapper.Error.Message != "" {
-		return wrapper.Error.Message
-	}
-	if wrapper.Message != "" {
-		return wrapper.Message
-	}
-	return raw
-}
-
-func extractEventMsg(event CodexEvent, cwd, sessionID string) []ToolUse {
-	switch event.Payload.Type {
-	case "agent_reasoning":
-		if event.Payload.Text == "" {
-			return nil
-		}
-		return []ToolUse{{
-			Tool:      "Reasoning",
-			Input:     map[string]any{"text": event.Payload.Text},
-			Timestamp: event.Time(),
-			CWD:       cwd,
-			SessionID: sessionID,
-			Source:    "codex",
-		}}
-
-	case "agent_message":
-		if event.Payload.Message == "" {
-			return nil
-		}
-		return []ToolUse{{
-			Tool:      "Assistant",
-			Input:     map[string]any{"text": event.Payload.Message},
-			Timestamp: event.Time(),
-			CWD:       cwd,
-			SessionID: sessionID,
-			Source:    "codex",
-		}}
-	}
-	return nil
-}
-
-func buildToolUse(callEvent, outputEvent CodexEvent, cwd, sessionID string) ToolUse {
-	var response string
-	if outputEvent.Payload.Output != "" {
-		response = extractCommandOutput(outputEvent.Payload.Output)
-	}
-	ts := callEvent.Time()
-	if ts == nil {
-		ts = outputEvent.Time()
-	}
-
-	switch callEvent.Payload.Name {
-	case "update_plan":
-		args := extractArgumentsMap(callEvent.Payload.Arguments)
-		if plan, ok := args["plan"]; ok {
-			args["todos"] = plan
-		}
-		return ToolUse{
-			Tool:      "TodoWrite",
-			Input:     args,
-			Timestamp: ts,
-			CWD:       cwd,
-			SessionID: sessionID,
-			ToolUseID: callEvent.Payload.CallID,
-			Source:    "codex",
-			Response:  response,
-		}
-	case "request_user_input":
-		return ToolUse{
-			Tool:      "AskUserQuestion",
-			Input:     extractArgumentsMap(callEvent.Payload.Arguments),
-			Timestamp: ts,
-			CWD:       cwd,
-			SessionID: sessionID,
-			ToolUseID: callEvent.Payload.CallID,
-			Source:    "codex",
-			Response:  response,
-		}
-	}
-
-	input := map[string]any{
-		"command": extractCommand(callEvent.Payload.Arguments),
-	}
-	return ToolUse{
-		Tool:      "Bash",
-		Input:     input,
-		Timestamp: ts,
-		CWD:       cwd,
-		SessionID: sessionID,
-		ToolUseID: callEvent.Payload.CallID,
-		Source:    "codex",
-		Response:  response,
-	}
-}
-
-func extractArgumentsMap(argsJSON string) map[string]any {
-	var args map[string]any
-	if argsJSON == "" || json.Unmarshal([]byte(argsJSON), &args) != nil {
-		return map[string]any{}
-	}
-	return args
-}
-
-func extractCommand(argsJSON string) string {
-	if argsJSON == "" {
-		return ""
-	}
-	var args struct {
-		Cmd string `json:"cmd"`
-	}
-	if json.Unmarshal([]byte(argsJSON), &args) == nil && args.Cmd != "" {
-		return args.Cmd
-	}
-	return argsJSON
-}
-
-func extractCommandOutput(raw string) string {
-	if _, after, ok := strings.Cut(raw, "Output:\n"); ok {
-		return after
-	}
-	return raw
+	return dedupeCodexToolUses(records), nil
 }
 
 func FindCodexSessionFiles() ([]string, error) {
@@ -493,18 +256,13 @@ func FindCodexSessionFiles() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	sessionsDir := filepath.Join(home, ".codex", "sessions")
 	if _, err := os.Stat(sessionsDir); os.IsNotExist(err) {
 		return nil, nil
 	}
-
 	var files []string
 	err = filepath.Walk(sessionsDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil
-		}
-		if !info.IsDir() && strings.HasSuffix(path, ".jsonl") {
+		if err == nil && !info.IsDir() && strings.HasSuffix(path, ".jsonl") {
 			files = append(files, path)
 		}
 		return nil

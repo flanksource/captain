@@ -2,8 +2,12 @@ package history
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestExtractCodexToolUses_LiveDottedSchema(t *testing.T) {
@@ -88,6 +92,141 @@ func TestExtractCodexToolUses_ModelAndEffortStamping(t *testing.T) {
 	}
 }
 
+func TestExtractCodexToolUses_IgnoresAutoReviewSession(t *testing.T) {
+	stream := strings.Join([]string{
+		`{"timestamp":"2026-07-13T09:00:00Z","type":"session_meta","payload":{"id":"review-1","cwd":"/repo","source":{"subagent":{"other":"guardian"}}}}`,
+		`{"timestamp":"2026-07-13T09:00:01Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"review this command"}]}}`,
+		`{"timestamp":"2026-07-13T09:00:02Z","type":"turn_context","payload":{"turn_id":"turn-review","model":"codex-auto-review","effort":"low"}}`,
+		`{"timestamp":"2026-07-13T09:00:03Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"approved"}]}}`,
+	}, "\n")
+
+	uses, err := ExtractCodexToolUsesFromReader(strings.NewReader(stream))
+	require.NoError(t, err)
+	assert.Empty(t, uses)
+}
+
+func TestExtractCodexToolUses_DoesNotIgnoreMentionOfAutoReview(t *testing.T) {
+	stream := strings.Join([]string{
+		`{"timestamp":"2026-07-13T09:00:00Z","type":"session_meta","payload":{"id":"user-1","cwd":"/repo"}}`,
+		`{"timestamp":"2026-07-13T09:00:01Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Ignore codex-auto-review sessions"}]}}`,
+		`{"timestamp":"2026-07-13T09:00:02Z","type":"turn_context","payload":{"turn_id":"turn-user","model":"gpt-5.6-sol","effort":"high"}}`,
+	}, "\n")
+
+	uses, err := ExtractCodexToolUsesFromReader(strings.NewReader(stream))
+	require.NoError(t, err)
+	require.Len(t, uses, 1)
+	assert.Equal(t, "User", uses[0].Tool)
+}
+
+func TestIsCodexAutoReviewSession(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	stream := strings.Join([]string{
+		`{"timestamp":"2026-07-13T09:00:00Z","type":"session_meta","payload":{"id":"review-1","cwd":"/repo"}}`,
+		`{"timestamp":"2026-07-13T09:00:01Z","type":"turn_context","payload":{"model":"codex-auto-review","effort":"low"}}`,
+	}, "\n")
+	require.NoError(t, os.WriteFile(path, []byte(stream), 0o600))
+
+	ignored, err := IsCodexAutoReviewSession(path)
+	require.NoError(t, err)
+	assert.True(t, ignored)
+}
+
+func TestExtractCodexToolUses_ParsesWaitCallWithContentOutput(t *testing.T) {
+	stream := strings.Join([]string{
+		`{"timestamp":"2026-07-13T09:31:13.359Z","type":"session_meta","payload":{"id":"019f5a68-c638-7fe2-b0d0-c1d8a3c4de55","cwd":"/repo"}}`,
+		`{"timestamp":"2026-07-13T09:31:13.362Z","type":"turn_context","payload":{"turn_id":"019f5ad0-fc23-7b92-8b13-a9f50d903704","model":"gpt-5.6-sol","effort":"max"}}`,
+		`{"timestamp":"2026-07-13T09:41:33.611Z","type":"response_item","payload":{"type":"function_call","name":"wait","arguments":"{\"cell_id\":\"214\",\"yield_time_ms\":20000,\"max_tokens\":5000}","call_id":"call-wait"}}`,
+		`{"timestamp":"2026-07-13T09:41:41.017Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call-wait","output":[{"type":"input_text","text":"Script completed\nWall time 7.4 seconds\nOutput:\n"},{"type":"input_text","text":"evaluation failed\n"},{"type":"input_text","text":"exit=1"}]}}`,
+	}, "\n")
+
+	uses, err := ExtractCodexToolUsesFromReader(strings.NewReader(stream))
+	if err != nil {
+		t.Fatalf("ExtractCodexToolUsesFromReader: %v", err)
+	}
+	if len(uses) != 1 {
+		t.Fatalf("uses = %+v, want one Wait", uses)
+	}
+	use := uses[0]
+	if use.Tool != "Wait" || use.ToolUseID != "call-wait" {
+		t.Fatalf("use = %+v, want first-class Wait", use)
+	}
+	if use.Input["cell_id"] != "214" || use.Input["yield_time_ms"] != float64(20000) || use.Input["max_tokens"] != float64(5000) {
+		t.Fatalf("input = %#v, want structured wait arguments", use.Input)
+	}
+	if use.Response != "evaluation failed\nexit=1" {
+		t.Fatalf("response = %q", use.Response)
+	}
+	if use.TurnID != "019f5ad0-fc23-7b92-8b13-a9f50d903704" || use.Model != "gpt-5.6-sol" || use.ReasoningEffort != "max" {
+		t.Fatalf("metadata = %+v", use)
+	}
+	if use.RecordType != "response_item.function_call" {
+		t.Fatalf("record type = %q", use.RecordType)
+	}
+}
+
+func TestExtractCodexToolUses_ParsesUserShellCommandMessage(t *testing.T) {
+	stream := strings.Join([]string{
+		`{"timestamp":"2026-07-13T06:13:59Z","type":"session_meta","payload":{"id":"sess-shell","cwd":"/repo"}}`,
+		`{"timestamp":"2026-07-13T06:14:00Z","type":"turn_context","payload":{"turn_id":"turn-shell","model":"gpt-5.5-codex","effort":"high"}}`,
+		`{"timestamp":"2026-07-13T06:14:01Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<user_shell_command>\n<command>\ngavel proc restart\n</command>\n<result>\nExit code: 1\nDuration: 2.9909 seconds\nOutput:\n\u001b[36mdev | \u001b[0msignal: killed\n\u001b[36mdev | \u001b[0mKill sent but port 8088 is still bound\n</result>\n</user_shell_command>"}]}}`,
+	}, "\n")
+
+	uses, err := ExtractCodexToolUsesFromReader(strings.NewReader(stream))
+	if err != nil {
+		t.Fatalf("ExtractCodexToolUsesFromReader: %v", err)
+	}
+	if len(uses) != 1 {
+		t.Fatalf("uses = %+v, want exactly one UserShellCommand", uses)
+	}
+	use := uses[0]
+	if use.Tool != "UserShellCommand" || use.Input["event"] != "user_shell_command" {
+		t.Fatalf("use = %+v, want UserShellCommand event", use)
+	}
+	if use.Input["command"] != "gavel proc restart" || use.Input["exit_code"] != 1 || use.Input["status"] != "failed" {
+		t.Fatalf("command result = %+v", use.Input)
+	}
+	if use.Input["duration_seconds"] != 2.9909 || use.Input["duration_ms"] != 2990.9 {
+		t.Fatalf("duration = %v seconds / %v ms", use.Input["duration_seconds"], use.Input["duration_ms"])
+	}
+	output, _ := use.Input["output"].(string)
+	wantOutput := "\x1b[36mdev | \x1b[0msignal: killed\n\x1b[36mdev | \x1b[0mKill sent but port 8088 is still bound"
+	if output != wantOutput {
+		t.Fatalf("output = %q, want exact preserved output %q", output, wantOutput)
+	}
+	if use.Response != output || use.TurnID != "turn-shell" || use.Model != "gpt-5.5-codex" || use.ReasoningEffort != "high" {
+		t.Fatalf("metadata/response = %+v", use)
+	}
+	if use.RecordType != "response_item.message.user_shell_command" {
+		t.Fatalf("record type = %q", use.RecordType)
+	}
+}
+
+func TestExtractCodexToolUses_ParsesUserShellCommandWithEmptyOutput(t *testing.T) {
+	stream := `{"timestamp":"2026-07-13T06:14:01Z","type":"event_msg","payload":{"type":"user_message","message":"<user_shell_command>\n<command>\nopen file.pdf\n</command>\n<result>\nExit code: 0\nDuration: 0.25 seconds\nOutput:\n</result>\n</user_shell_command>"}}`
+	uses, err := ExtractCodexToolUsesFromReader(strings.NewReader(stream))
+	if err != nil {
+		t.Fatalf("ExtractCodexToolUsesFromReader: %v", err)
+	}
+	if len(uses) != 1 || uses[0].Tool != "UserShellCommand" {
+		t.Fatalf("uses = %+v, want one UserShellCommand", uses)
+	}
+	if uses[0].Input["output"] != "" || uses[0].Input["status"] != "success" || uses[0].RecordType != "event_msg.user_shell_command" {
+		t.Fatalf("use = %+v", uses[0])
+	}
+}
+
+func TestParseCodexUserShellCommandRejectsPartialWrapper(t *testing.T) {
+	for _, text := range []string{
+		"please parse <user_shell_command> if you see one",
+		"<user_shell_command><command>echo hi</command></user_shell_command>",
+		"prefix <user_shell_command><command>echo hi</command><result>Exit code: 0\nDuration: 1 seconds\nOutput:\n</result></user_shell_command>",
+	} {
+		if _, ok := parseCodexUserShellCommand(text); ok {
+			t.Fatalf("parseCodexUserShellCommand(%q) unexpectedly succeeded", text)
+		}
+	}
+}
+
 func TestExtractCodexToolUses_MapsCodexControlCalls(t *testing.T) {
 	stream := strings.Join([]string{
 		`{"timestamp":"2026-06-01T10:00:00Z","type":"session_meta","payload":{"id":"sess-1","cwd":"/p"}}`,
@@ -112,6 +251,130 @@ func TestExtractCodexToolUses_MapsCodexControlCalls(t *testing.T) {
 	}
 	if uses[1].Tool != "AskUserQuestion" {
 		t.Fatalf("request_user_input tool = %q, want AskUserQuestion", uses[1].Tool)
+	}
+}
+
+func TestExtractCodexToolUses_RolloutChatAndEvents(t *testing.T) {
+	stream := strings.Join([]string{
+		`{"timestamp":"2026-07-08T11:19:57.028Z","type":"session_meta","payload":{"id":"sess-rollout","cwd":"/repo","cli_version":"0.143.0","model_provider":"openai"}}`,
+		`{"timestamp":"2026-07-08T11:19:57.028Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1","started_at":"2026-07-08T11:19:57.028Z","model_context_window":258400}}`,
+		`{"timestamp":"2026-07-08T11:19:58.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>\n  <cwd>/repo</cwd>\n</environment_context>"}]}}`,
+		`{"timestamp":"2026-07-08T11:19:58.758Z","type":"turn_context","payload":{"model":"gpt-5.5","effort":"high"}}`,
+		// Twins are skewed, as Codex actually writes them: the user pair arrives
+		// response_item-first and the assistant pair event_msg-first. An earlier
+		// fixture gave both twins the same timestamp -- a shape Codex never
+		// emits -- which is exactly what hid the duplicate-row bug.
+		`{"timestamp":"2026-07-08T11:19:58.760Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}}`,
+		`{"timestamp":"2026-07-08T11:19:58.761Z","type":"event_msg","payload":{"type":"user_message","message":"hi"}}`,
+		`{"timestamp":"2026-07-08T11:20:00.403Z","type":"event_msg","payload":{"type":"agent_message","message":"Hi. What do you want to work on in ` + "`captain`" + `?"}}`,
+		`{"timestamp":"2026-07-08T11:20:00.404Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Hi. What do you want to work on in ` + "`captain`" + `?"}]}}`,
+		`{"timestamp":"2026-07-08T11:20:00.432Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":10,"cached_input_tokens":5,"output_tokens":2,"total_tokens":12},"model_context_window":258400}}}`,
+		`{"timestamp":"2026-07-08T11:20:00.435Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-1","duration_ms":3519,"time_to_first_token_ms":3123}}`,
+	}, "\n")
+
+	uses, err := ExtractCodexToolUsesFromReader(strings.NewReader(stream))
+	if err != nil {
+		t.Fatalf("ExtractCodexToolUsesFromReader: %v", err)
+	}
+
+	var got []string
+	var texts []string
+	for _, use := range uses {
+		got = append(got, use.Tool)
+		if text, _ := use.Input["text"].(string); text != "" {
+			texts = append(texts, text)
+		}
+	}
+	want := []string{"TaskStarted", "User", "Assistant", "TokenCount", "TaskComplete"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("tools = %v, want %v; uses=%+v", got, want, uses)
+	}
+	if len(texts) != 2 || texts[0] != "hi" || texts[1] != "Hi. What do you want to work on in `captain`?" {
+		t.Fatalf("texts = %v", texts)
+	}
+	for _, use := range uses {
+		if use.Model != "" && use.Model != "gpt-5.5" {
+			t.Fatalf("unexpected model on %s: %q", use.Tool, use.Model)
+		}
+	}
+}
+
+func TestExtractCodexToolUses_SplitsTaggedAssistantMessageAndDedupesSchemas(t *testing.T) {
+	message := `<proposed_plan>
+# Parser plan
+
+- Split wrappers
+</proposed_plan>
+
+Source used: https://example.com/change
+
+<oai-mem-citation>
+<citation_entries>
+MEMORY.md:10-12|note=[parser seam]
+</citation_entries>
+<rollout_ids>
+019f3754-ecfa-7323-a76b-a0205ea30bbe
+</rollout_ids>
+</oai-mem-citation>`
+	quoted := strings.ReplaceAll(strings.ReplaceAll(message, `\`, `\\`), `"`, `\"`)
+	quoted = strings.ReplaceAll(quoted, "\n", `\n`)
+	stream := strings.Join([]string{
+		`{"timestamp":"2026-07-10T10:00:00Z","type":"session_meta","payload":{"id":"sess-plan","cwd":"/repo"}}`,
+		// 3ms skew, as Codex writes twins. The segments land 3 rows apart but
+		// only 1 source record apart, which is why the merge keys on the
+		// preceding record rather than a row-distance window.
+		`{"timestamp":"2026-07-10T10:00:01.000Z","type":"event_msg","payload":{"type":"agent_message","message":"` + quoted + `"}}`,
+		`{"timestamp":"2026-07-10T10:00:01.003Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"` + quoted + `"}]}}`,
+	}, "\n")
+
+	uses, err := ExtractCodexToolUsesFromReader(strings.NewReader(stream))
+	if err != nil {
+		t.Fatalf("ExtractCodexToolUsesFromReader: %v", err)
+	}
+	if len(uses) != 3 {
+		t.Fatalf("uses = %+v, want Plan, Assistant, MemoryCitation", uses)
+	}
+	if uses[0].Tool != "Plan" || uses[0].Input["content"] != "# Parser plan\n\n- Split wrappers" {
+		t.Fatalf("plan = %+v", uses[0])
+	}
+	if uses[1].Tool != "Assistant" || uses[1].Input["text"] != "Source used: https://example.com/change" {
+		t.Fatalf("assistant = %+v", uses[1])
+	}
+	if uses[2].Tool != "MemoryCitation" || uses[2].Input["event"] != "memory_citation" {
+		t.Fatalf("citation = %+v", uses[2])
+	}
+	if got, ok := uses[2].Input["rollout_ids"].([]string); !ok || len(got) != 1 || got[0] != "019f3754-ecfa-7323-a76b-a0205ea30bbe" {
+		t.Fatalf("rollout ids = %#v", uses[2].Input["rollout_ids"])
+	}
+}
+
+func TestExtractCodexToolUses_ClassifiesAgentsInstructionsAsSystem(t *testing.T) {
+	stream := strings.Join([]string{
+		`{"timestamp":"2026-07-10T09:49:37.000Z","type":"session_meta","payload":{"id":"sess-system","cwd":"/repo"}}`,
+		`{"timestamp":"2026-07-10T09:49:37.100Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"  # AGENTS.md instructions for /repo\n\nAlways test."}]}}`,
+		`{"timestamp":"2026-07-10T09:49:37.101Z","type":"event_msg","payload":{"type":"user_message","message":"# AGENTS.md instructions for /repo\n\nAlways test."}}`,
+		`{"timestamp":"2026-07-10T09:49:37.200Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Fix the parser"}]}}`,
+		`{"timestamp":"2026-07-10T09:49:37.201Z","type":"event_msg","payload":{"type":"user_message","message":"Fix the parser"}}`,
+	}, "\n")
+
+	uses, err := ExtractCodexToolUsesFromReader(strings.NewReader(stream))
+	if err != nil {
+		t.Fatalf("ExtractCodexToolUsesFromReader: %v", err)
+	}
+	if len(uses) != 2 {
+		t.Fatalf("uses = %+v, want one System and one User", uses)
+	}
+	if uses[0].Tool != "System" || uses[1].Tool != "User" {
+		t.Fatalf("tools = %q, %q, want System, User", uses[0].Tool, uses[1].Tool)
+	}
+}
+
+func TestCodexUserMessageTool_ClassifiesRecommendedPluginsAgentsEnvelopeAsSystem(t *testing.T) {
+	text := "<recommended_plugins>system recommendations</recommended_plugins>" +
+		"# AGENTS.md instructions for /repo\n<INSTRUCTIONS>Always test.</INSTRUCTIONS>"
+	tool, ok := codexUserMessageTool(text)
+	if !ok || tool != "System" {
+		t.Fatalf("codexUserMessageTool = %q, %v, want System, true", tool, ok)
 	}
 }
 
@@ -165,6 +428,26 @@ func TestReadCodexSessionInfo_LiveThreadStarted(t *testing.T) {
 	}
 }
 
+func TestCodexSessionMetaAcceptsObjectSource(t *testing.T) {
+	stream := strings.Join([]string{
+		`{"timestamp":"2026-06-19T07:05:51.061Z","type":"session_meta","payload":{"id":"019edeb3-449e-7af3-b300-7123f10944b2","cwd":"/repo","source":{"subagent":{"other":"guardian"}},"model_provider":"openai"}}`,
+		`{"timestamp":"2026-06-19T07:05:52.061Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"check the change"}]}}`,
+	}, "\n")
+
+	uses, err := ExtractCodexToolUsesFromReader(strings.NewReader(stream))
+	require.NoError(t, err)
+	require.Len(t, uses, 1)
+	assert.Equal(t, "019edeb3-449e-7af3-b300-7123f10944b2", uses[0].SessionID)
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "rollout.jsonl")
+	require.NoError(t, os.WriteFile(path, []byte(stream), 0o600))
+	info, err := ReadCodexSessionInfo(path)
+	require.NoError(t, err)
+	require.NotNil(t, info)
+	assert.Equal(t, "019edeb3-449e-7af3-b300-7123f10944b2", info.ID)
+}
+
 func TestReadCodexSessionMetaStopsAtHeader(t *testing.T) {
 	stream := strings.Join([]string{
 		`{"timestamp":"2026-05-07T18:44:49.553Z","type":"session_meta","payload":{"id":"sess-1","cwd":"/p","cli_version":"0.128","model_provider":"openai"}}`,
@@ -187,39 +470,5 @@ func TestReadCodexSessionMetaStopsAtHeader(t *testing.T) {
 	}
 	if info.Model != "" || info.ReasoningEffort != "" {
 		t.Errorf("meta reader should not scan turn_context, got model/effort %q/%q", info.Model, info.ReasoningEffort)
-	}
-}
-
-func TestUnwrapCodexErrorMessage(t *testing.T) {
-	tests := []struct {
-		name string
-		in   string
-		want string
-	}{
-		{"plain", "boom", "boom"},
-		{"empty", "", ""},
-		{
-			"nested error.message",
-			`{"type":"error","status":400,"error":{"type":"invalid_request_error","message":"bad model"}}`,
-			"bad model",
-		},
-		{
-			"top-level message",
-			`{"message":"top"}`,
-			"top",
-		},
-		{
-			"non-json passthrough",
-			"not { json",
-			"not { json",
-		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := unwrapCodexErrorMessage(tc.in)
-			if got != tc.want {
-				t.Errorf("unwrapCodexErrorMessage(%q) = %q, want %q", tc.in, got, tc.want)
-			}
-		})
 	}
 }

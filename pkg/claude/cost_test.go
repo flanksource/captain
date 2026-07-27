@@ -7,23 +7,29 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestClassifyModel(t *testing.T) {
+// TestPricingFor covers the catalog lookup that replaced the opus/sonnet/haiku
+// family table. Rates are the vendors' published per-MTok list prices; the Opus
+// case is the regression guard, since the old table billed every "opus" id at
+// the retired 4.1 rate of $15/$75.
+func TestPricingFor(t *testing.T) {
 	tests := []struct {
-		model    string
-		expected ModelFamily
+		model  string
+		want   ModelPricing
+		priced bool
 	}{
-		{"claude-opus-4-6", ModelFamilyOpus4},
-		{"claude-opus-4-5-20251101", ModelFamilyOpus4},
-		{"claude-sonnet-4-6", ModelFamilySonnet4},
-		{"claude-sonnet-4-5-20241022", ModelFamilySonnet4},
-		{"claude-haiku-4-5-20251001", ModelFamilyHaiku4},
-		{"", ModelFamilyUnknown},
-		{"gpt-4o", ModelFamilyUnknown},
+		{"claude-opus-4-6", ModelPricing{5, 25, 6.25, 0.5}, true},
+		{"claude-opus-4-5-20251101", ModelPricing{5, 25, 6.25, 0.5}, true},
+		{"claude-sonnet-4-6", ModelPricing{3, 15, 3.75, 0.3}, true},
+		{"claude-haiku-4-5-20251001", ModelPricing{1, 5, 1.25, 0.1}, true},
+		{"", ModelPricing{}, false},
+		{"gpt-4o", ModelPricing{}, false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.model, func(t *testing.T) {
-			assert.Equal(t, tt.expected, ClassifyModel(tt.model))
+			got, ok := PricingFor(tt.model)
+			assert.Equal(t, tt.priced, ok)
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
@@ -48,7 +54,7 @@ func TestCalculateCost(t *testing.T) {
 				OutputTokens: 1_000_000,
 			},
 			model:    "claude-opus-4-6",
-			expected: 15.0 + 75.0, // $90
+			expected: 5.0 + 25.0, // $30 at the Opus 4.5+ rate, not the retired $90
 		},
 		{
 			name: "sonnet with cache",
@@ -69,16 +75,16 @@ func TestCalculateCost(t *testing.T) {
 				OutputTokens: 50_000,
 			},
 			model:    "claude-haiku-4-5-20251001",
-			expected: 0.08 + 0.20, // $0.28
+			expected: 0.10 + 0.25, // $0.35 at $1/$5
 		},
 		{
-			name: "unknown model falls back to sonnet pricing",
+			name: "unpriced model reports no cost rather than a guess",
 			usage: &Usage{
 				InputTokens:  1_000_000,
 				OutputTokens: 1_000_000,
 			},
 			model:    "unknown-model",
-			expected: 3.0 + 15.0, // $18
+			expected: 0,
 		},
 	}
 

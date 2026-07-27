@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flanksource/captain/pkg/ai/assistanttags"
 	"github.com/flanksource/captain/pkg/bash"
 	"github.com/flanksource/captain/pkg/claude/tools"
 	captainCollections "github.com/flanksource/captain/pkg/collections"
@@ -96,47 +97,90 @@ const denialCommentSeparator = "the user said:\n"
 const boilerplatePrefix = "\n\nNote: The user"
 const askAnswerPrefix = "User has answered your question."
 
-// ExtractToolUses extracts ToolUse records from history entries
+// ExtractToolUses extracts history activity rows from transcript entries:
+// user/assistant text, reasoning, metadata events, and real tool calls.
 func ExtractToolUses(entries []HistoryEntry) []ToolUse {
 	var toolUses []ToolUse
 
-	// Pass 1: extract tool_use blocks
 	for _, entry := range entries {
 		ts, _ := entry.ParseTimestamp()
+		var timestamp *time.Time
+		if !ts.IsZero() {
+			timestamp = &ts
+		}
+
+		if isVisibleTranscriptEvent(entry.Event) {
+			toolUses = append(toolUses, ToolUse{
+				Tool:      tools.EventToolName(entry.Event.Type),
+				Input:     eventInput(entry.Event),
+				Timestamp: timestamp,
+				CWD:       entry.CWD,
+				SessionID: entry.SessionID,
+				ToolUseID: entry.UUID,
+				RawEntry:  entry.RawLine,
+			})
+		}
 
 		for _, content := range entry.Message.Content {
-			if content.Type != ContentTypeToolUse {
-				continue
-			}
-
-			var inputMap map[string]any
-			if content.Input != nil {
-				_ = json.Unmarshal(content.Input, &inputMap)
-			}
-
-			var timestamp *time.Time
-			if !ts.IsZero() {
-				timestamp = &ts
-			}
-
-			var cwd string
-			if inputMap != nil {
-				if v, ok := inputMap["cwd"].(string); ok {
-					cwd = v
+			switch content.Type {
+			case ContentTypeText:
+				if entry.Message.Role == MessageRoleAssistant {
+					toolUses = append(toolUses, taggedAssistantToolUses(entry, content.Text, timestamp)...)
+					continue
 				}
-			}
+				tool := messageTool(entry.Message.Role)
+				if tool == "" || content.Text == "" {
+					continue
+				}
+				toolUses = append(toolUses, ToolUse{
+					Tool:        tool,
+					Input:       map[string]any{"text": content.Text},
+					Timestamp:   timestamp,
+					CWD:         entry.CWD,
+					SessionID:   entry.SessionID,
+					IsSidechain: entry.IsSidechain,
+					AgentID:     entry.AgentID,
+					RawEntry:    entry.RawLine,
+				})
+			case ContentTypeThinking, ContentTypeRedactedThinking:
+				if content.Thinking == "" {
+					continue
+				}
+				toolUses = append(toolUses, ToolUse{
+					Tool:        "Reasoning",
+					Input:       map[string]any{"text": content.Thinking},
+					Timestamp:   timestamp,
+					CWD:         entry.CWD,
+					SessionID:   entry.SessionID,
+					IsSidechain: entry.IsSidechain,
+					AgentID:     entry.AgentID,
+					RawEntry:    entry.RawLine,
+				})
+			case ContentTypeToolUse:
+				var inputMap map[string]any
+				if content.Input != nil {
+					_ = json.Unmarshal(content.Input, &inputMap)
+				}
 
-			toolUses = append(toolUses, ToolUse{
-				Tool:        content.Name,
-				Input:       inputMap,
-				Timestamp:   timestamp,
-				CWD:         cwd,
-				SessionID:   entry.SessionID,
-				ToolUseID:   content.ID,
-				IsSidechain: entry.IsSidechain,
-				AgentID:     entry.AgentID,
-				RawEntry:    entry.RawLine,
-			})
+				var cwd string
+				if inputMap != nil {
+					if v, ok := inputMap["cwd"].(string); ok {
+						cwd = v
+					}
+				}
+
+				toolUses = append(toolUses, ToolUse{
+					Tool:        content.Name,
+					Input:       inputMap,
+					Timestamp:   timestamp,
+					CWD:         cwd,
+					SessionID:   entry.SessionID,
+					ToolUseID:   content.ID,
+					IsSidechain: entry.IsSidechain,
+					AgentID:     entry.AgentID,
+					RawEntry:    entry.RawLine,
+				})
+			}
 		}
 	}
 
@@ -154,6 +198,85 @@ func ExtractToolUses(entries []HistoryEntry) []ToolUse {
 	}
 
 	return expandUserRows(toolUses)
+}
+
+func taggedAssistantToolUses(entry HistoryEntry, text string, timestamp *time.Time) []ToolUse {
+	segments := assistanttags.Parse(text)
+	uses := make([]ToolUse, 0, len(segments))
+	for _, segment := range segments {
+		use := ToolUse{
+			Timestamp:   timestamp,
+			CWD:         entry.CWD,
+			SessionID:   entry.SessionID,
+			IsSidechain: entry.IsSidechain,
+			AgentID:     entry.AgentID,
+			RawEntry:    entry.RawLine,
+		}
+		switch segment.Kind {
+		case assistanttags.SegmentPlan:
+			use.Tool = "Plan"
+			use.Input = map[string]any{"content": segment.Text, "tag": "proposed_plan"}
+		case assistanttags.SegmentMemoryCitation:
+			if segment.Citation == nil {
+				continue
+			}
+			use.Tool = "MemoryCitation"
+			use.Input = map[string]any{
+				"event":            "memory_citation",
+				"source":           "claude",
+				"citation_entries": segment.Citation.CitationEntries,
+				"rollout_ids":      segment.Citation.RolloutIDs,
+			}
+		case assistanttags.SegmentText:
+			use.Tool = "Assistant"
+			body := segment.Text
+			if summary, ok := assistanttags.EnvelopeSummary(body); ok {
+				body = summary
+			}
+			use.Input = map[string]any{"text": body}
+		default:
+			continue
+		}
+		uses = append(uses, use)
+	}
+	return uses
+}
+
+func isVisibleTranscriptEvent(event *TranscriptEvent) bool {
+	if event == nil {
+		return false
+	}
+	switch event.Type {
+	case "file-history-snapshot", "last-prompt", "permission-mode", "agent-name":
+		return false
+	default:
+		return true
+	}
+}
+
+func messageTool(role MessageRole) string {
+	switch role {
+	case MessageRoleUser:
+		return "User"
+	case MessageRoleAssistant:
+		return "Assistant"
+	default:
+		return ""
+	}
+}
+
+func eventInput(event *TranscriptEvent) map[string]any {
+	input := map[string]any{"event": event.Type}
+	if event.Scope != "" {
+		input["scope"] = event.Scope
+	}
+	if event.Subtype != "" {
+		input["subtype"] = event.Subtype
+	}
+	for k, v := range event.Data {
+		input[k] = v
+	}
+	return input
 }
 
 // toolResult holds matched result data for a tool call.
@@ -554,6 +677,47 @@ func suggestFilters(filterName string, filters []string, available map[string]st
 			fmt.Fprintf(os.Stderr, "%s filter %q matched nothing. Did you mean: %s?\n", filterName, f, strings.Join(similar, ", "))
 		}
 	}
+}
+
+// AbsolutePath anchors a tool-use path to an absolute, cleaned path.
+//
+// Tool inputs mix absolute paths (Read/Write/Edit carry them) with paths
+// relative to the directory the tool ran in (a bash `cat pkg/x.go`), and an
+// agent's working directory moves during a session — so a path is only
+// unambiguous once anchored to the cwd that produced it. Anchoring prefers that
+// cwd and falls back to the project root.
+//
+// This is the canonical form every consumer should hold: relativising per tool
+// use bakes in whichever base that call happened to have, which silently differs
+// across one session and leaves the path meaningless to anyone else. Render with
+// RelativePath at the point of display instead.
+//
+// A path that cannot be anchored — no base, or a fragment the shell never
+// expanded, e.g. "$DIR/x" — is returned cleaned but otherwise unchanged rather
+// than guessed at.
+func AbsolutePath(path, cwd, projectRoot string) string {
+	if path == "" {
+		return path
+	}
+	anchored := func() string {
+		if filepath.IsAbs(path) {
+			return filepath.Clean(path)
+		}
+		base := cwd
+		if base == "" {
+			base = projectRoot
+		}
+		if base == "" {
+			return filepath.Clean(path)
+		}
+		return filepath.Join(base, path)
+	}()
+	// Clean and Join drop a trailing separator, but that separator is how a
+	// directory argument (Grep/Glob `pkg/`) is told apart from a file, so keep it.
+	if strings.HasSuffix(path, "/") && !strings.HasSuffix(anchored, "/") {
+		anchored += "/"
+	}
+	return anchored
 }
 
 // RelativePath makes an absolute path relative to projectRoot if possible.

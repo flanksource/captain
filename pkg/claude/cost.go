@@ -1,20 +1,14 @@
 package claude
 
 import (
-	"github.com/segmentio/encoding/json"
 	"sort"
-	"strings"
+
+	"github.com/segmentio/encoding/json"
+
+	"github.com/flanksource/captain/pkg/api/registry"
 )
 
-type ModelFamily string
-
-const (
-	ModelFamilyOpus4   ModelFamily = "opus-4"
-	ModelFamilySonnet4 ModelFamily = "sonnet-4"
-	ModelFamilyHaiku4  ModelFamily = "haiku-4"
-	ModelFamilyUnknown ModelFamily = "unknown"
-)
-
+// ModelPricing is a model's list price in USD per million tokens.
 type ModelPricing struct {
 	InputPerMTok      float64
 	OutputPerMTok     float64
@@ -22,57 +16,35 @@ type ModelPricing struct {
 	CacheReadPerMTok  float64
 }
 
-// PricingTable maps model families to their per-million-token pricing in USD.
-// Source: https://docs.anthropic.com/en/docs/about-claude/models
-var PricingTable = map[ModelFamily]ModelPricing{
-	ModelFamilyOpus4: {
-		InputPerMTok:      15.0,
-		OutputPerMTok:     75.0,
-		CacheWritePerMTok: 18.75,
-		CacheReadPerMTok:  1.50,
-	},
-	ModelFamilySonnet4: {
-		InputPerMTok:      3.0,
-		OutputPerMTok:     15.0,
-		CacheWritePerMTok: 3.75,
-		CacheReadPerMTok:  0.30,
-	},
-	ModelFamilyHaiku4: {
-		InputPerMTok:      0.80,
-		OutputPerMTok:     4.0,
-		CacheWritePerMTok: 1.0,
-		CacheReadPerMTok:  0.08,
-	},
-}
-
-func ClassifyModel(model string) ModelFamily {
-	m := strings.ToLower(model)
-	switch {
-	case strings.Contains(m, "opus"):
-		return ModelFamilyOpus4
-	case strings.Contains(m, "sonnet"):
-		return ModelFamilySonnet4
-	case strings.Contains(m, "haiku"):
-		return ModelFamilyHaiku4
-	default:
-		return ModelFamilyUnknown
+// PricingFor reads a model's list price from the generated catalog, which
+// carries models.dev's per-model rates. ok is false when the catalog snapshot
+// prices no such model; callers must render that as "unknown", never as another
+// model's rate. This replaced a hand-written opus/sonnet/haiku family table that
+// classified on substring alone and so kept billing Opus 4.5 and newer at the
+// retired 4.1 rate of $15/$75 rather than $5/$25.
+func PricingFor(model string) (ModelPricing, bool) {
+	cost, ok := registry.CostFor(model)
+	if !ok {
+		return ModelPricing{}, false
 	}
+	return ModelPricing{
+		InputPerMTok:      cost.Input,
+		OutputPerMTok:     cost.Output,
+		CacheWritePerMTok: cost.CacheWrite,
+		CacheReadPerMTok:  cost.CacheRead,
+	}, true
 }
 
-// PricingFor returns the per-million-token pricing for a model, falling back to
-// Sonnet rates for unrecognized model families (matching CalculateCost).
-func PricingFor(model string) ModelPricing {
-	if pricing, ok := PricingTable[ClassifyModel(model)]; ok {
-		return pricing
-	}
-	return PricingTable[ModelFamilySonnet4]
-}
-
+// CalculateCost totals a usage record in USD, returning 0 for a model the
+// catalog does not price.
 func CalculateCost(usage *Usage, model string) float64 {
 	if usage == nil {
 		return 0
 	}
-	pricing := PricingFor(model)
+	pricing, ok := PricingFor(model)
+	if !ok {
+		return 0
+	}
 	return float64(usage.InputTokens)*pricing.InputPerMTok/1e6 +
 		float64(usage.OutputTokens)*pricing.OutputPerMTok/1e6 +
 		float64(usage.CacheCreationInputTokens)*pricing.CacheWritePerMTok/1e6 +

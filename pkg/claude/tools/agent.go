@@ -75,10 +75,10 @@ func (t *TodoWriteTool) Detail() api.Textable {
 	text := clicky.Text("").Append("Plan", "font-bold")
 	for _, item := range items {
 		text = text.NewLine().Append("- ", "text-gray-500")
-		if item.status != "" {
-			text = text.Append(item.status+": ", "text-gray-500")
+		if item.Status != "" {
+			text = text.Append(item.Status+": ", "text-gray-500")
 		}
-		text = text.Append(item.text, "")
+		text = text.Append(item.Text, "")
 	}
 	return &text
 }
@@ -93,21 +93,28 @@ func (t *TodoWriteTool) Pretty() api.Text {
 	return text
 }
 
-type todoWriteItem struct {
-	text   string
-	status string
+// TodoItem is one entry of an agent task list, normalized across the shapes the
+// providers emit: Claude's TodoWrite uses content/activeForm, Codex's
+// update_plan uses step. Persisted into captain_sessions.metadata["todos"], so
+// the JSON tags are a storage contract.
+type TodoItem struct {
+	Text   string `json:"text"`
+	Status string `json:"status,omitempty"`
 }
 
-func (t *TodoWriteTool) todoItems() []todoWriteItem {
+func (t *TodoWriteTool) todoItems() []TodoItem {
 	raw := t.Input["todos"]
 	if raw == nil {
 		raw = t.Input["plan"]
 	}
-	return todoItems(raw)
+	return TodoItems(raw)
 }
 
-func todoItems(raw any) []todoWriteItem {
-	var out []todoWriteItem
+// TodoItems normalizes a raw TodoWrite/update_plan payload into task items. It
+// tolerates both []any and []map[string]any, and both provider key vocabularies.
+// Entries without usable text are skipped rather than yielding empty items.
+func TodoItems(raw any) []TodoItem {
+	var out []TodoItem
 	switch todos := raw.(type) {
 	case []any:
 		for _, todo := range todos {
@@ -125,20 +132,20 @@ func todoItems(raw any) []todoWriteItem {
 	return out
 }
 
-func todoItem(raw any) (todoWriteItem, bool) {
+func todoItem(raw any) (TodoItem, bool) {
 	m, ok := raw.(map[string]any)
 	if !ok {
-		return todoWriteItem{}, false
+		return TodoItem{}, false
 	}
 
 	text := firstString(m, "step", "content", "activeForm", "title", "description")
 	text = compactText(text)
 	if text == "" {
-		return todoWriteItem{}, false
+		return TodoItem{}, false
 	}
-	return todoWriteItem{
-		text:   truncateText(text, 160),
-		status: compactText(firstString(m, "status")),
+	return TodoItem{
+		Text:   truncateText(text, 160),
+		Status: compactText(firstString(m, "status")),
 	}, true
 }
 
@@ -151,16 +158,16 @@ func firstString(m map[string]any, keys ...string) string {
 	return ""
 }
 
-func todoPreview(items []todoWriteItem, max int) string {
+func todoPreview(items []TodoItem, max int) string {
 	if len(items) == 0 || max <= 0 {
 		return ""
 	}
 	parts := make([]string, 0, max)
 	for _, item := range items {
-		if item.text == "" {
+		if item.Text == "" {
 			continue
 		}
-		parts = append(parts, truncateText(item.text, 60))
+		parts = append(parts, truncateText(item.Text, 60))
 		if len(parts) == max {
 			break
 		}

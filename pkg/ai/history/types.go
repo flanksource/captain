@@ -8,11 +8,22 @@ type ToolUse struct {
 	Timestamp       *time.Time     `json:"timestamp,omitempty"`
 	CWD             string         `json:"cwd,omitempty"`
 	SessionID       string         `json:"session_id,omitempty"`
+	TurnID          string         `json:"turn_id,omitempty"`
 	ToolUseID       string         `json:"tool_use_id,omitempty"`
 	Source          string         `json:"source,omitempty"` // "claude" or "codex"
 	Model           string         `json:"model,omitempty"`
 	ReasoningEffort string         `json:"reasoning_effort,omitempty"`
+	Namespace       string         `json:"namespace,omitempty"`
+	InputTokens     int            `json:"input_tokens,omitempty"`
+	OutputTokens    int            `json:"output_tokens,omitempty"`
+	CacheReadTokens int            `json:"cache_read_tokens,omitempty"`
+	TotalTokens     int            `json:"total_tokens,omitempty"`
+	ContextWindow   int            `json:"context_window,omitempty"`
+	AgentID         string         `json:"agent_id,omitempty"`
+	AgentType       string         `json:"agent_type,omitempty"`
+	AgentDesc       string         `json:"agent_desc,omitempty"`
 	Response        string         `json:"response,omitempty"`
+	RecordType      string         `json:"-"`
 }
 
 type Filter struct {
