@@ -8,12 +8,20 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/claude"
-	rpchttp "github.com/flanksource/clicky/rpc/http"
+	"github.com/flanksource/captain/pkg/database"
 )
 
-var discoverSessionProcesses = discoverAgentProcesses
-
 const defaultSessionLiveLimit = 25
+
+type SessionDatabaseStatusWire struct {
+	Source              string     `json:"source,omitempty"`
+	DSN                 string     `json:"dsn,omitempty"`
+	Coverage            string     `json:"coverage"`
+	ReadAt              time.Time  `json:"readAt"`
+	LatestSampledAt     *time.Time `json:"latestSampledAt,omitempty"`
+	LatestHeartbeatAt   *time.Time `json:"latestHeartbeatAt,omitempty"`
+	EarliestLeaseExpiry *time.Time `json:"earliestLeaseExpiry,omitempty"`
+}
 
 func RunSessionLive(ctx context.Context, opts SessionLiveOptions) (SessionLiveResult, error) {
 	source, err := normalizeSessionSource(opts.Source)
@@ -25,72 +33,115 @@ func RunSessionLive(ctx context.Context, opts SessionLiveOptions) (SessionLiveRe
 		return SessionLiveResult{}, err
 	}
 
-	scope := "current"
-	if opts.All {
-		scope = "all"
-	}
+	scope, projectRoot, _ := resolveSessionScope(cwd, opts.All, opts.Project)
 	limit := opts.Limit
 	if limit <= 0 && !opts.Full {
 		limit = defaultSessionLiveLimit
 	}
-	records, err := discoverLiveSessionRecords(ctx, cwd, opts.All, source, limit, opts.Full)
+	db, err := captainDB(ctx)
 	if err != nil {
 		return SessionLiveResult{}, err
 	}
-
-	stopEnrich := rpchttp.Track(ctx, "enrich")
-	processes, _ := discoverSessionProcesses()
-	if !opts.All {
-		processes = filterAgentProcessesByProject(processes, sessionProjectRoot(cwd))
+	query := sessionRecordQuery{
+		Source: source, ProjectRoot: projectRoot, Query: opts.Query, LiveOnly: true,
+		Limit: limit, Cursor: opts.Cursor,
 	}
-	records = enrichSessionsWithLive(records, processes)
-	filtered := make([]SessionRecord, 0, len(records))
-	for _, record := range records {
-		if sessionMatchesQuery(record, opts.Query) {
-			filtered = append(filtered, record)
-		}
+	var page sessionRecordPage
+	if opts.Full {
+		page, err = dbAllSessionRecords(ctx, db, query)
+	} else {
+		page, err = dbSessionRecords(ctx, db, query)
 	}
-	sortSessionRecords(filtered)
-	total := len(filtered)
-	summary := summarizeSessionDashboard(filtered)
-	stopEnrich()
-	if !opts.Full && limit > 0 && len(filtered) > limit {
-		filtered = filtered[:limit]
+	if err != nil {
+		return SessionLiveResult{}, err
 	}
-
-	return SessionLiveResult{
-		Sessions: filtered,
-		Total:    total,
-		Source:   source,
-		Scope:    scope,
-		Summary:  summary,
-	}, nil
+	enrichLiveSessionSurfaces(page.Records)
+	coverage := "page"
+	if opts.Full {
+		coverage = "all"
+	}
+	return buildSessionLiveResult(sessionLiveResultOptions{
+		Page: page, Source: source, Scope: scope, Project: projectResultValue(scope, projectRoot),
+		ReadAt: time.Now().UTC(), DatabaseCoverage: coverage,
+	}), nil
 }
 
-func discoverLiveSessionRecords(ctx context.Context, cwd string, searchAll bool, source string, limit int, full bool) ([]SessionRecord, error) {
-	if full {
-		list, err := RunSessionList(ctx, SessionListOptions{
-			Source: source,
-			All:    searchAll,
-			Query:  "",
-			Limit:  0,
-		})
-		if err != nil {
-			return nil, err
-		}
-		return list.Sessions, nil
-	}
+type sessionLiveResultOptions struct {
+	Page             sessionRecordPage
+	Source           string
+	Scope            string
+	Project          string
+	ReadAt           time.Time
+	DatabaseCoverage string
+}
 
-	candidates, err := discoverLiveSessionCandidates(ctx, cwd, searchAll, source, limit)
+func buildSessionLiveResult(options sessionLiveResultOptions) SessionLiveResult {
+	coverage := options.DatabaseCoverage
+	if coverage == "" {
+		coverage = "page"
+	}
+	databaseStatus := sessionDatabaseStatus(options.Page.Records, options.ReadAt)
+	databaseStatus.Coverage = coverage
+	return SessionLiveResult{
+		Sessions: options.Page.Records, Total: options.Page.Total, Source: options.Source,
+		Scope: options.Scope, Project: options.Project,
+		Summary: summarizeSessionDashboard(options.Page.Records), Database: databaseStatus,
+		NextCursor: options.Page.NextCursor,
+	}
+}
+
+func enrichLiveSessionSurfaces(records []SessionRecord) {
+	detected := false
+	for i := range records {
+		if records[i].Live == nil || records[i].Live.PID <= 0 {
+			continue
+		}
+		if records[i].Live.Surface != nil {
+			detected = true
+		}
+		if surface := discoverProcessSurface(records[i].Live.PID); surface != nil {
+			records[i].Live.Surface = surface
+			detected = true
+		}
+	}
+	if !detected {
+		return
+	}
+	surfaces, err := discoverCmuxSurfaces()
 	if err != nil {
-		return nil, err
+		return
 	}
-	records := make([]SessionRecord, 0, len(candidates))
-	for _, candidate := range candidates {
-		records = append(records, candidate.record)
+	for i := range records {
+		if records[i].Live == nil {
+			continue
+		}
+		if surface := records[i].Live.Surface; surface != nil && surface.SurfaceID != "" {
+			enrichCmuxSurface(surface, surfaces)
+		}
 	}
-	sortSessionRecords(records)
-	return records, nil
+}
+
+func sessionDatabaseStatus(records []SessionRecord, readAt time.Time) SessionDatabaseStatusWire {
+	dsn, source := captainDatabaseIdentity()
+	status := SessionDatabaseStatusWire{Source: source, DSN: database.MaskDSN(dsn), ReadAt: readAt}
+	for _, record := range records {
+		if record.Live == nil {
+			continue
+		}
+		if sampledAt := record.Live.SampledAt; sampledAt != nil &&
+			(status.LatestSampledAt == nil || sampledAt.After(*status.LatestSampledAt)) {
+			status.LatestSampledAt = sampledAt
+		}
+		if heartbeatAt := record.Live.LastHeartbeatAt; heartbeatAt != nil &&
+			(status.LatestHeartbeatAt == nil || heartbeatAt.After(*status.LatestHeartbeatAt)) {
+			status.LatestHeartbeatAt = heartbeatAt
+		}
+		if expiresAt := record.Live.LeaseExpiresAt; expiresAt != nil &&
+			(status.EarliestLeaseExpiry == nil || expiresAt.Before(*status.EarliestLeaseExpiry)) {
+			status.EarliestLeaseExpiry = expiresAt
+		}
+	}
+	return status
 }
 
 func sessionProjectRoot(cwd string) string {
@@ -102,82 +153,6 @@ func sessionProjectRoot(cwd string) string {
 		return projectInfo.Root
 	}
 	return cwd
-}
-
-func filterAgentProcessesByProject(processes []agentProcess, projectRoot string) []agentProcess {
-	if projectRoot == "" {
-		return processes
-	}
-	filtered := make([]agentProcess, 0, len(processes))
-	for _, proc := range processes {
-		if sessionRecordMatchesProject(SessionRecord{CWD: proc.CWD}, projectRoot) {
-			filtered = append(filtered, proc)
-		}
-	}
-	return filtered
-}
-
-func enrichSessionsWithLive(records []SessionRecord, processes []agentProcess) []SessionRecord {
-	out := make([]SessionRecord, len(records))
-	copy(out, records)
-	matched := make(map[int]bool)
-	for i := range out {
-		idx := bestLiveMatch(out[i], processes, matched)
-		if idx < 0 {
-			out[i].Health = deriveSessionHealth(out[i])
-			continue
-		}
-		matched[idx] = true
-		out[i].Live = processes[idx].wire()
-		if out[i].CWD == "" {
-			out[i].CWD = processes[idx].CWD
-		}
-		if out[i].StartedAt == nil && processes[idx].StartedAt != nil {
-			out[i].StartedAt = processes[idx].StartedAt
-		}
-		out[i].Health = deriveSessionHealth(out[i])
-	}
-	for i, proc := range processes {
-		if matched[i] {
-			continue
-		}
-		record := SessionRecord{
-			Key:             fmt.Sprintf("live-%s-%d", proc.Source, proc.PID),
-			ID:              fmt.Sprintf("pid:%d", proc.PID),
-			Source:          proc.Source,
-			CWD:             proc.CWD,
-			StartedAt:       proc.StartedAt,
-			DetailAvailable: false,
-			Live:            proc.wire(),
-		}
-		record.Health = deriveSessionHealth(record)
-		out = append(out, record)
-	}
-	sortSessionRecords(out)
-	return out
-}
-
-func bestLiveMatch(record SessionRecord, processes []agentProcess, matched map[int]bool) int {
-	if record.Source == "" {
-		return -1
-	}
-	best := -1
-	for i, proc := range processes {
-		if matched[i] || proc.Source != record.Source {
-			continue
-		}
-		if record.CWD != "" && proc.CWD != "" && samePath(record.CWD, proc.CWD) {
-			return i
-		}
-		if best < 0 && record.CWD == "" {
-			best = i
-		}
-	}
-	return best
-}
-
-func samePath(a, b string) bool {
-	return strings.TrimRight(a, "/") == strings.TrimRight(b, "/")
 }
 
 func deriveSessionHealth(record SessionRecord) []SessionHealthWire {
@@ -298,6 +273,11 @@ func liveMatchesQuery(live *SessionLiveWire, query string) bool {
 		live.Status,
 		live.CWD,
 		live.Command,
+		live.SessionID,
+	}
+	values = append(values, live.AgentIDs...)
+	if live.Surface != nil {
+		values = append(values, live.Surface.SurfaceID, live.Surface.TabID, live.Surface.WorkspaceID, live.Surface.AgentKind)
 	}
 	for _, value := range values {
 		if strings.Contains(strings.ToLower(value), query) {

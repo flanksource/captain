@@ -137,7 +137,7 @@ func runHistoryFromReader(data []byte, opts HistoryOptions) (any, error) {
 	if !opts.Since.IsZero() {
 		filter.Since = &opts.Since
 	}
-	if len(opts.Categories) == 0 && opts.TextFilter == "" {
+	if len(opts.Categories) == 0 && opts.TextFilter == "" && !usesDefaultHiddenHistoryTools(opts) {
 		filter.Limit = opts.Limit
 	}
 	toolUses := claude.FilterToolUses(parsed.ToolUses, filter)
@@ -146,7 +146,7 @@ func runHistoryFromReader(data []byte, opts HistoryOptions) (any, error) {
 		return runHistorySummary(toolUses, opts, classifier, nil)
 	}
 
-	tl := claude.ToolUsesToTools(toolUses)
+	tl := collapseRepeatedTitles(claude.ToolUsesToTools(toolUses))
 	return runHistorySingle(tl, opts, classifier, nil)
 }
 
@@ -188,6 +188,11 @@ func codexToClaudeToolUses(uses []history.ToolUse) []claude.ToolUse {
 			Source:          source,
 			Model:           cu.Model,
 			ReasoningEffort: cu.ReasoningEffort,
+			InputTokens:     cu.InputTokens + cu.CacheReadTokens,
+			OutputTokens:    cu.OutputTokens,
+			AgentID:         cu.AgentID,
+			AgentType:       cu.AgentType,
+			AgentDesc:       cu.AgentDesc,
 			Response:        cu.Response,
 		}
 	}

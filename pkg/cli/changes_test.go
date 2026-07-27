@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -45,12 +47,30 @@ func TestBuildChangesResult_AggregatesWritePaths(t *testing.T) {
 	// Only main.go (Write+Edit) and util.go (Write) count; readme.md was only Read.
 	assert.Equal(t, 2, result.FileCount)
 
+	// Paths are absolute: consumers (gavel staging) resolve them from another
+	// process whose working directory is unrelated to the session's.
 	// main.go has the most edits, so it sorts first.
-	assert.Equal(t, "main.go", result.Files[0].Path)
+	assert.Equal(t, SessionPath(root+"/main.go"), result.Files[0].Path)
 	assert.Equal(t, 2, result.Files[0].Edits)
 	assert.Equal(t, "Edit, Write", result.Files[0].Tools)
 	assert.Equal(t, now.Format("2006-01-02 15:04"), result.Files[0].Last)
 
-	assert.Equal(t, "util.go", result.Files[1].Path)
+	assert.Equal(t, SessionPath(root+"/util.go"), result.Files[1].Path)
 	assert.Equal(t, 1, result.Files[1].Edits)
+}
+
+// TestSessionPathRendersRelativeToWorkingDir pins the display half of the
+// contract: the value stays absolute, only its rendering is relative.
+func TestSessionPathRendersRelativeToWorkingDir(t *testing.T) {
+	cwd, err := os.Getwd()
+	assert.NoError(t, err)
+
+	inside := SessionPath(filepath.Join(cwd, "pkg", "cli", "changes.go"))
+	assert.Equal(t, "pkg/cli/changes.go", inside.Pretty().Content)
+	assert.Equal(t, filepath.Join(cwd, "pkg", "cli", "changes.go"), inside.String(), "the value itself stays absolute")
+
+	// A file outside the working directory reads better absolute than as a
+	// ../../.. chain.
+	outside := SessionPath("/tmp/elsewhere/x.go")
+	assert.Equal(t, "/tmp/elsewhere/x.go", outside.Pretty().Content)
 }

@@ -33,18 +33,14 @@ func (f *pathFilter) keep(path string) bool {
 	if path == "" {
 		return true
 	}
-	// changes/transcript paths are relativized to the project root; absolutize
-	// (against the working dir) so plan-path and gitignore checks are reliable.
-	abs := path
-	if !filepath.IsAbs(abs) {
-		if a, err := filepath.Abs(abs); err == nil {
-			abs = a
-		}
-	}
-	if !f.includePlans && strings.Contains(filepath.ToSlash(abs), "/.claude/plans/") {
+	// Paths arrive absolute (ToolAnalysis anchors them to the tool use's cwd), so
+	// the plan-path and gitignore checks can use them directly. They previously
+	// had to be re-absolutized against this process's working directory, which
+	// silently mis-resolved any path relativised against a different base.
+	if !f.includePlans && strings.Contains(filepath.ToSlash(path), "/.claude/plans/") {
 		return false
 	}
-	if !f.includeIgnored && f.isIgnored(abs) {
+	if !f.includeIgnored && f.isIgnored(path) {
 		return false
 	}
 	return true

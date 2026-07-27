@@ -91,7 +91,7 @@ func RunHistory(opts HistoryOptions) (any, error) {
 		IncludeAgents: opts.Agents,
 	}
 
-	if len(opts.Categories) == 0 && opts.TextFilter == "" && !opts.Last {
+	if len(opts.Categories) == 0 && opts.TextFilter == "" && !opts.Last && !usesDefaultHiddenHistoryTools(opts) {
 		filter.Limit = opts.Limit
 	}
 
@@ -143,6 +143,8 @@ func RunHistory(opts HistoryOptions) (any, error) {
 		tl = filterToolsByPath(tl, newPathFilter(opts.Plans, opts.Ignored))
 	}
 
+	tl = collapseRepeatedTitles(tl)
+
 	if opts.Last {
 		tl = lastSessionTools(tl)
 		// --last means "the whole most-recent session" — don't let the row
@@ -179,6 +181,31 @@ func lastSessionTools(tl []tools.Tool) []tools.Tool {
 		start--
 	}
 	return tl[start:]
+}
+
+// collapseRepeatedTitles drops SessionTitle rows that repeat the title already
+// shown for their session. Claude Code rewrites the ai-title record on nearly
+// every turn, so a long session otherwise renders dozens of identical
+// "🏷 title …" rows (65 of them, for 3 distinct titles, on a real session). A
+// title that genuinely changes still gets its own row — including a change back
+// to a title used earlier in the session.
+func collapseRepeatedTitles(tl []tools.Tool) []tools.Tool {
+	shown := map[sessionKey]string{}
+	out := make([]tools.Tool, 0, len(tl))
+	for _, t := range tl {
+		title, ok := t.(*tools.SessionTitleTool)
+		if !ok {
+			out = append(out, t)
+			continue
+		}
+		key := keyForTool(t)
+		if prev, seen := shown[key]; seen && prev == title.Str("aiTitle") {
+			continue
+		}
+		shown[key] = title.Str("aiTitle")
+		out = append(out, t)
+	}
+	return out
 }
 
 // gatherToolUses collects Claude and Codex tool uses for the working directory,
@@ -568,6 +595,9 @@ func filterTools(tl []tools.Tool, opts HistoryOptions, classifier *bash.Category
 		cat := classifyTool(t, classifier)
 		categorySet[cat] = struct{}{}
 
+		if hideDefaultHistoryTool(t, opts) {
+			continue
+		}
 		if len(opts.Categories) > 0 && !matchCategoryFilters(categoryFilterCandidates(t, cat), opts.Categories) {
 			continue
 		}
@@ -590,6 +620,9 @@ func filterTools(tl []tools.Tool, opts HistoryOptions, classifier *bash.Category
 			categories = append(categories, c)
 		}
 		for _, filter := range opts.Categories {
+			if strings.HasPrefix(strings.TrimSpace(filter), "!") {
+				continue
+			}
 			if similar := captainCollections.FindSimilar(filter, categories, 3); len(similar) > 0 {
 				fmt.Fprintf(os.Stderr, "category %q matched nothing. Did you mean: %s?\n", filter, strings.Join(similar, ", "))
 			}
@@ -597,6 +630,48 @@ func filterTools(tl []tools.Tool, opts HistoryOptions, classifier *bash.Category
 	}
 
 	return result
+}
+
+func hideDefaultHistoryTool(t tools.Tool, opts HistoryOptions) bool {
+	base := t.Base()
+	switch {
+	case t.Name() == "TokenCount", base.RawTool == "TokenCount":
+		return usesDefaultHiddenHistoryTools(opts)
+	default:
+		return false
+	}
+}
+
+func usesDefaultHiddenHistoryTools(opts HistoryOptions) bool {
+	return !hasExplicitToolFilter(opts.Tools, "TokenCount") && toolFiltersMayInclude(opts.Tools, "TokenCount")
+}
+
+func hasExplicitToolFilter(filters []string, tool string) bool {
+	for _, filter := range filters {
+		for _, part := range strings.Split(filter, ",") {
+			part = strings.TrimSpace(part)
+			if part == "" || strings.HasPrefix(part, "!") {
+				continue
+			}
+			if collections.MatchItems(tool, part) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func toolFiltersMayInclude(filters []string, tool string) bool {
+	var parts []string
+	for _, filter := range filters {
+		for _, part := range strings.Split(filter, ",") {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				parts = append(parts, part)
+			}
+		}
+	}
+	return collections.MatchItems(tool, parts...)
 }
 
 func matchCategoryFilters(candidates []string, filters []string) bool {
@@ -647,29 +722,40 @@ func matchesAnyCategoryCandidate(candidates []string, pattern string) bool {
 
 func categoryFilterCandidates(t tools.Tool, category string) []string {
 	base := t.Base()
-	return uniqueNonEmpty(
+	values := []string{
 		category,
 		t.Name(),
 		base.RawTool,
-		messageAlias(t.Name()),
-	)
+	}
+	values = append(values, chatCategoryAliases(t.Name())...)
+	values = append(values, chatCategoryAliases(base.RawTool)...)
+	return uniqueNonEmpty(values...)
 }
 
 func toolUseCategoryFilterCandidates(tu claude.ToolUse, category string) []string {
-	return uniqueNonEmpty(
+	values := []string{
 		category,
 		tu.Tool,
 		tu.DisplayTool(),
-		messageAlias(tu.DisplayTool()),
-	)
+	}
+	values = append(values, chatCategoryAliases(tu.Tool)...)
+	values = append(values, chatCategoryAliases(tu.DisplayTool())...)
+	return uniqueNonEmpty(values...)
 }
 
-func messageAlias(tool string) string {
+func chatCategoryAliases(tool string) []string {
+	if tools.IsEventToolName(tool) {
+		return []string{"chat", "event"}
+	}
 	switch strings.ToLower(tool) {
-	case "assistant", "reasoning":
-		return "message"
+	case "system", "assistant", "reasoning":
+		return []string{"chat", "message"}
+	case "user":
+		return []string{"chat", "message"}
+	case "event":
+		return []string{"chat", "event"}
 	default:
-		return ""
+		return nil
 	}
 }
 
@@ -730,14 +816,30 @@ func matchesHistoryTextFilter(t tools.Tool, category, filter string) bool {
 	return false
 }
 
+// shellCommand returns the raw command line for tools that execute a shell.
+// Claude's Bash carries it as "command"; Codex's exec carries it as "input"
+// (matching AnalyzeToolUse). Without the exec arm every Codex shell call
+// classifies as `other` regardless of what it ran.
+func shellCommand(base *tools.BaseTool) (string, bool) {
+	switch base.RawTool {
+	case "Bash":
+		cmd, ok := base.Input["command"].(string)
+		return cmd, ok
+	case "exec":
+		cmd, ok := base.Input["input"].(string)
+		return cmd, ok
+	}
+	return "", false
+}
+
 func classifyTool(t tools.Tool, classifier *bash.CategoryClassifier) string {
 	if cat := t.Category(); cat != "" {
 		return cat
 	}
 	base := t.Base()
 	cat := classifier.ClassifyToolWithPath(base.RawTool, t.FilePath())
-	if cat == bash.CategoryOther && base.RawTool == "Bash" {
-		if rawCmd, ok := base.Input["command"].(string); ok {
+	if cat == bash.CategoryOther {
+		if rawCmd, ok := shellCommand(base); ok {
 			cat = classifier.ClassifyBash(rawCmd)
 		}
 	}
@@ -747,7 +849,7 @@ func classifyTool(t tools.Tool, classifier *bash.CategoryClassifier) string {
 func approvedStatus(t tools.Tool) string {
 	base := t.Base()
 	name := t.Name()
-	if base.RawTool == "ExitPlanMode" || base.RawTool == "User" || name == "Plan" {
+	if base.RawTool == "ExitPlanMode" || isChatHistoryTool(base.RawTool) || name == "Plan" {
 		return ""
 	}
 	if base.Denied {
@@ -846,6 +948,9 @@ func runHistorySummary(toolUses []claude.ToolUse, opts HistoryOptions, classifie
 }
 
 func classifyToolUse(tu claude.ToolUse, classifier *bash.CategoryClassifier) string {
+	if isChatHistoryTool(tu.Tool) {
+		return "chat"
+	}
 	category := classifier.ClassifyToolWithPath(tu.Tool, tu.FilePath())
 	if category == bash.CategoryOther && tu.Tool == "Bash" {
 		if rawCmd, ok := tu.Input["command"].(string); ok {
@@ -853,6 +958,18 @@ func classifyToolUse(tu claude.ToolUse, classifier *bash.CategoryClassifier) str
 		}
 	}
 	return string(category)
+}
+
+func isChatHistoryTool(tool string) bool {
+	if tools.IsEventToolName(tool) {
+		return true
+	}
+	switch tool {
+	case "System", "User", "Assistant", "Reasoning", "Event":
+		return true
+	default:
+		return false
+	}
 }
 
 func matchesToolUseTextFilter(tu claude.ToolUse, category, filter string) bool {
