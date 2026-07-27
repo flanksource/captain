@@ -12,15 +12,16 @@ type Workspace struct {
 	Branch    string         `json:"branch,omitempty" yaml:"branch,omitempty"`       // worktree branch
 	Base      string         `json:"base,omitempty" yaml:"base,omitempty"`           // worktree base ref
 	Changed   []string       `json:"changed,omitempty" yaml:"changed,omitempty"`     // agent-changed files (repo-relative)
-	Commits   []Commit       `json:"commits,omitempty" yaml:"commits,omitempty"`     // commits made during the run
+	Commits   []CommitRecord `json:"commits,omitempty" yaml:"commits,omitempty"`     // commits made during the run
 	Diff      string         `json:"diff,omitempty" yaml:"diff,omitempty"`           // working diff
 	Plan      string         `json:"plan,omitempty" yaml:"plan,omitempty"`           // plan the agent produced (path or content)
 	SessionID string         `json:"sessionId,omitempty" yaml:"sessionId,omitempty"` // agent session
 	Metadata  map[string]any `json:"metadata,omitempty" yaml:"metadata,omitempty"`
 }
 
-// Commit is one git commit made during a run.
-type Commit struct {
+// CommitRecord is one git commit made during a run — the result, as opposed to
+// the Commit policy that decided to make it.
+type CommitRecord struct {
 	SHA     string `json:"sha,omitempty" yaml:"sha,omitempty"`
 	Message string `json:"message,omitempty" yaml:"message,omitempty"`
 }
@@ -30,5 +31,5 @@ func (w *Workspace) AddCommit(sha, message string) {
 	if w == nil {
 		return
 	}
-	w.Commits = append(w.Commits, Commit{SHA: sha, Message: message})
+	w.Commits = append(w.Commits, CommitRecord{SHA: sha, Message: message})
 }

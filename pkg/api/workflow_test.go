@@ -17,7 +17,7 @@ func TestWorkflowSpecRoundTrip(t *testing.T) {
 				Scope:         VerifyScopeChanged,
 				MaxIterations: 3,
 			},
-			PostRun:                  &PostRun{Commit: true, CommitMessage: "apply"},
+			Commits:                  []Commit{{On: CommitOnTurn, Message: "apply"}},
 			AutoVerifyWithoutFixture: true,
 		},
 	}
@@ -40,8 +40,8 @@ func TestWorkflowSpecRoundTrip(t *testing.T) {
 	if got.Workflow.Verify.Fixture != spec.Workflow.Verify.Fixture || len(got.Workflow.Verify.Commands) != 2 {
 		t.Errorf("verify commands/fixture not preserved: %+v", got.Workflow.Verify)
 	}
-	if got.Workflow.PostRun == nil || !got.Workflow.PostRun.Commit {
-		t.Errorf("postRun not preserved: %+v", got.Workflow.PostRun)
+	if len(got.Workflow.Commits) != 1 || got.Workflow.Commits[0].On != CommitOnTurn || got.Workflow.Commits[0].Message != "apply" {
+		t.Errorf("commits not preserved: %+v", got.Workflow.Commits)
 	}
 	if !got.Workflow.AutoVerifyWithoutFixture {
 		t.Errorf("autoVerifyWithoutFixture not preserved: %+v", got.Workflow)

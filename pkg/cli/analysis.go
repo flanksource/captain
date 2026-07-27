@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/flanksource/captain/pkg/ai/history"
 	"github.com/flanksource/captain/pkg/bash"
 	"github.com/flanksource/captain/pkg/claude"
 	"github.com/flanksource/captain/pkg/claude/tools"
@@ -46,6 +47,15 @@ func AnalyzeToolUse(t tools.Tool) ToolAnalysis {
 		return claude.AbsolutePath(path, base.CWD, base.ProjectRoot)
 	}
 
+	// File-writing tools are resolved through history's canonical tool→input-key
+	// table rather than a second list here, so the write set reported to callers
+	// that stage from it cannot drift from the one the agent runner records.
+	// It is also the only place that knows NotebookEdit names its file
+	// notebook_path, which a plain FilePath() lookup misses entirely.
+	for _, path := range history.ModifiedFiles([]history.ToolUse{{Tool: base.RawTool, Input: base.Input}}) {
+		a.WritePaths = appendUnique(a.WritePaths, abs(path))
+	}
+
 	switch base.RawTool {
 	case "Read":
 		if path := t.FilePath(); path != "" {
@@ -58,10 +68,6 @@ func AnalyzeToolUse(t tools.Tool) ToolAnalysis {
 	case "Glob":
 		if path, ok := base.Input["path"].(string); ok && path != "" {
 			a.ReadPaths = append(a.ReadPaths, abs(path))
-		}
-	case "Write", "Edit":
-		if path := t.FilePath(); path != "" {
-			a.WritePaths = append(a.WritePaths, abs(path))
 		}
 	case "Bash":
 		a.analyzeBash(base.Input, abs)

@@ -1,6 +1,10 @@
 package worktree
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/flanksource/captain/pkg/ai/agent"
+)
 
 func TestWorktreeMerge_Validate(t *testing.T) {
 	for _, ok := range AllWorktreeMerges() {
@@ -75,12 +79,22 @@ func TestWorktreeCleanup_ShouldCleanup(t *testing.T) {
 	}
 }
 
-// TestPlugin_PostRunNoopWithoutPreRun checks the PostRun-called-without-PreRun
-// guard, which must not invoke `wt` at all (so it passes even when `wt` isn't
+// TestPlugin_PostNoopWithoutPreRun checks the Post-called-without-PreRun guard,
+// which must not invoke `wt` at all (so it passes even when `wt` isn't
 // installed).
-func TestPlugin_PostRunNoopWithoutPreRun(t *testing.T) {
+func TestPlugin_PostNoopWithoutPreRun(t *testing.T) {
 	p := &Plugin{Branch: "unused"}
-	if err := p.PostRun(nil); err != nil {
-		t.Errorf("PostRun without a PreRun'd worktree should be a no-op, got: %v", err)
+	if err := p.Post(nil, agent.PhaseRun); err != nil {
+		t.Errorf("Post without a PreRun'd worktree should be a no-op, got: %v", err)
+	}
+}
+
+// TestPlugin_TearsDownAtRunPhase pins the teardown to the last phase: a hook
+// that commits the isolated worktree runs at PhaseAgent and must still find the
+// tree there.
+func TestPlugin_TearsDownAtRunPhase(t *testing.T) {
+	got := (&Plugin{Branch: "unused"}).Phases()
+	if len(got) != 1 || got[0] != agent.PhaseRun {
+		t.Errorf("worktree teardown must be run-phase only, got %v", got)
 	}
 }

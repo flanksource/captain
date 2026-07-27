@@ -63,24 +63,60 @@ func TestAnalyzeToolUse_Glob(t *testing.T) {
 	assert.Empty(t, a.WritePaths)
 }
 
-func TestAnalyzeToolUse_Write(t *testing.T) {
-	a := AnalyzeToolUseLegacy(claude.ToolUse{
-		Tool:  "Write",
-		Input: map[string]any{"file_path": "/home/user/project/pkg/cli/new.go", "content": "package cli"},
-	}, "/home/user/project")
+// TestAnalyzeToolUse_FileWritingTools covers every tool that writes a file.
+// MultiEdit and NotebookEdit used to be dropped, which made the write set least
+// accurate exactly where it is used — to stage a commit. NotebookEdit is also
+// why the path cannot just be read off file_path: it names its file
+// notebook_path.
+func TestAnalyzeToolUse_FileWritingTools(t *testing.T) {
+	cases := []struct {
+		tool  string
+		input map[string]any
+		cwd   string
+		want  string
+	}{
+		{
+			tool:  "Write",
+			input: map[string]any{"file_path": "/home/user/project/pkg/cli/new.go", "content": "package cli"},
+			want:  "/home/user/project/pkg/cli/new.go",
+		},
+		{
+			tool:  "Edit",
+			input: map[string]any{"file_path": "/home/user/project/cmd/main.go"},
+			want:  "/home/user/project/cmd/main.go",
+		},
+		{
+			tool:  "MultiEdit",
+			input: map[string]any{"file_path": "/home/user/project/pkg/api/spec.go"},
+			want:  "/home/user/project/pkg/api/spec.go",
+		},
+		{
+			tool:  "NotebookEdit",
+			input: map[string]any{"notebook_path": "/home/user/project/analysis.ipynb"},
+			want:  "/home/user/project/analysis.ipynb",
+		},
+		{
+			// The write set is absolute data shared across processes, so a
+			// relative path is still anchored to the tool use's own cwd.
+			tool:  "MultiEdit",
+			input: map[string]any{"file_path": "spec.go"},
+			cwd:   "/home/user/project/pkg/api",
+			want:  "/home/user/project/pkg/api/spec.go",
+		},
+	}
 
-	assert.Empty(t, a.ReadPaths)
-	assert.Equal(t, []string{"/home/user/project/pkg/cli/new.go"}, a.WritePaths)
-}
+	for _, tc := range cases {
+		t.Run(tc.tool+" "+tc.want, func(t *testing.T) {
+			a := AnalyzeToolUseLegacy(claude.ToolUse{
+				Tool:  tc.tool,
+				Input: tc.input,
+				CWD:   tc.cwd,
+			}, "/home/user/project")
 
-func TestAnalyzeToolUse_Edit(t *testing.T) {
-	a := AnalyzeToolUseLegacy(claude.ToolUse{
-		Tool:  "Edit",
-		Input: map[string]any{"file_path": "/home/user/project/cmd/main.go"},
-	}, "/home/user/project")
-
-	assert.Empty(t, a.ReadPaths)
-	assert.Equal(t, []string{"/home/user/project/cmd/main.go"}, a.WritePaths)
+			assert.Equal(t, []string{tc.want}, a.WritePaths)
+			assert.Empty(t, a.ReadPaths)
+		})
+	}
 }
 
 func TestAnalyzeToolUse_Bash(t *testing.T) {

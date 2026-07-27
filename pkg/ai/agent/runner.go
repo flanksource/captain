@@ -2,15 +2,18 @@
 //
 // A Runner[T] drives an iterative AI run: PreRun hooks (e.g. a git worktree) run
 // once before the loop; Verify hooks vote after every iteration and, when a run
-// fails, return the exact next request to re-run; PostRun hooks (e.g. commit +
-// worktree teardown) run once after; an optional Output hook produces the typed
-// final result T. Every hook receives a HookContext carrying the rendered
-// request and the accumulating api.Response — whose Workspace holds the run's
-// cwd/git/changed/commits/plan state.
+// fails, return the exact next request to re-run; Post hooks (e.g. commit +
+// worktree teardown) run at the lifecycle phases they declare; an optional
+// Output hook produces the typed final result T. Every hook receives a
+// HookContext carrying the rendered request and the accumulating api.Response —
+// whose Workspace holds the run's cwd/git/changed/commits/plan state.
+//
+//	PreRun → loop{ generate → [turn] → verify } → [agent] → [run] → Output
 package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -76,9 +79,17 @@ type HookContext struct {
 	Iteration int
 	Scope     Scope
 
-	// Verified and Failed describe the run's outcome so PostRun hooks (e.g. the
-	// worktree merge/cleanup gate) can act on it. Runner.Run sets both right
-	// before invoking PostRun hooks; they are meaningless beforehand.
+	// Phase is the boundary currently being dispatched; it is only meaningful
+	// inside a Post hook, which also receives it as an argument.
+	Phase Phase
+	// Turn is the loop iteration that just completed. Set only during PhaseTurn;
+	// nil everywhere else.
+	Turn *ai.LoopIteration
+
+	// Verified and Failed describe the run's outcome so PhaseAgent/PhaseRun
+	// hooks (e.g. the worktree merge/cleanup gate) can act on it. Runner.Run
+	// sets both right after the loop ends; they are meaningless beforehand, and
+	// in particular are not yet settled during PhaseTurn.
 	//
 	// Verified mirrors VerifyPassed(result.Verdicts) — true when the last verify
 	// verdict passed, or trivially true when no Verify hooks ran at all.
@@ -118,10 +129,14 @@ type Verify interface {
 	Verify(*HookContext) (VerifyResult, error)
 }
 
-// PostRun runs once after the loop, always (commit + teardown).
-type PostRun interface {
+// Post runs after a lifecycle phase completes (commit, teardown, checkpointing).
+// A hook declares which phases it handles via Phases(); the runner dispatches
+// only those, and always — including on the failure path, so a hook can make
+// work durable or tear down after an error.
+type Post interface {
 	Name() string
-	PostRun(*HookContext) error
+	Phases() []Phase
+	Post(*HookContext, Phase) error
 }
 
 // Output produces the workflow's typed final result. Optional; when absent the
@@ -133,7 +148,7 @@ type Output[T any] interface {
 
 // Runner drives a generate→verify loop composed of hooks, producing a typed
 // result T. Hooks is a heterogeneous list; each element may implement any of
-// PreRun/Verify/PostRun/Output[T].
+// PreRun/Verify/Post/Output[T].
 type Runner[T any] struct {
 	Provider      ai.StreamingProvider
 	Request       ai.Request // the initial rendered request
@@ -153,9 +168,11 @@ type Result[T any] struct {
 	Loop     *ai.LoopResult
 }
 
-// Run executes the pipeline: PreRun → loop(generate + verify) | verify-only →
-// PostRun (always) → Output. An empty prompt body runs verify-only (no
-// generation); no Verify hooks runs generate-only.
+// Run executes the pipeline: PreRun → loop(generate + [turn] + verify) |
+// verify-only → [agent] → [run] → Output, where each [phase] dispatches to the
+// Post hooks declaring it and always runs, including on the failure path. An
+// empty prompt body runs verify-only (no generation, and so no turn phase); no
+// Verify hooks runs generate-only.
 func (r *Runner[T]) Run(ctx context.Context) (Result[T], error) {
 	var zero Result[T]
 	scope := r.Scope
@@ -170,7 +187,9 @@ func (r *Runner[T]) Run(ctx context.Context) (Result[T], error) {
 		if pr, ok := h.(PreRun); ok {
 			if err := pr.PreRun(hc); err != nil {
 				hc.Failed = true
-				_ = r.runPostRun(hc) // best-effort teardown
+				// The loop never started, so there is no agent phase to close —
+				// only teardown.
+				_ = r.post(hc, PhaseRun)
 				return zero, fmt.Errorf("agent: preRun %q: %w", pr.Name(), err)
 			}
 		}
@@ -188,12 +207,13 @@ func (r *Runner[T]) Run(ctx context.Context) (Result[T], error) {
 
 	hc.Failed = runErr != nil
 	hc.Verified = verifyPassed(result.Verdicts)
-	postErr := r.runPostRun(hc)
-	if runErr != nil {
-		return result, runErr
-	}
-	if postErr != nil {
-		return result, postErr
+	// PhaseAgent closes out the loop while the working tree is still live (the
+	// last point a hook can commit an isolated worktree); PhaseRun then tears it
+	// down. Both run even when the loop failed — that is what makes a failed
+	// run's work durable.
+	postErr := errors.Join(r.post(hc, PhaseAgent), r.post(hc, PhaseRun))
+	if err := errors.Join(runErr, postErr); err != nil {
+		return result, err
 	}
 
 	for _, h := range r.Hooks {
@@ -209,17 +229,33 @@ func (r *Runner[T]) Run(ctx context.Context) (Result[T], error) {
 	return result, nil
 }
 
-// runPostRun runs every PostRun hook, always; returns the first error.
-func (r *Runner[T]) runPostRun(hc *HookContext) error {
+// post dispatches one phase to every Post hook that declares it, always, in
+// hook order; returns the first error but never short-circuits, so a failing
+// commit hook cannot skip the worktree teardown that follows it.
+func (r *Runner[T]) post(hc *HookContext, phase Phase) error {
 	var firstErr error
+	prevPhase, prevTurn := hc.Phase, hc.Turn
+	hc.Phase = phase
+	defer func() { hc.Phase, hc.Turn = prevPhase, prevTurn }()
 	for _, h := range r.Hooks {
-		if pr, ok := h.(PostRun); ok {
-			if err := pr.PostRun(hc); err != nil && firstErr == nil {
-				firstErr = fmt.Errorf("agent: postRun %q: %w", pr.Name(), err)
-			}
+		ph, ok := h.(Post)
+		if !ok || !handlesPhase(ph, phase) {
+			continue
+		}
+		if err := ph.Post(hc, phase); err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("agent: %s hook %q: %w", phase, ph.Name(), err)
 		}
 	}
 	return firstErr
+}
+
+func handlesPhase(h Post, phase Phase) bool {
+	for _, p := range h.Phases() {
+		if p == phase {
+			return true
+		}
+	}
+	return false
 }
 
 // runVerifyOnce runs the Verify hooks a single time against the current state
@@ -242,7 +278,7 @@ func (r *Runner[T]) runLoop(ctx context.Context, hc *HookContext, result *Result
 		maxIter = 1
 	}
 	req := r.Request
-	var responseErr, verifyErr error
+	var responseErr, verifyErr, turnErr error
 
 	loop, loopErr := ai.RunUntil(ctx, ai.LoopOptions{
 		Provider:      r.Provider,
@@ -260,6 +296,20 @@ func (r *Runner[T]) runLoop(ctx context.Context, hc *HookContext, result *Result
 					responseErr = err
 					return ai.Request{}, false
 				}
+				// PhaseTurn fires here — after the turn is folded into the
+				// response, before its verifiers vote, and before every early
+				// return below. RunUntil calls BuildRequest once more after the
+				// final executed turn (including the call that stops the loop),
+				// so this placement covers every turn including the last.
+				// Dispatching after verify() would skip turns whose verify
+				// errors and would lose the property that a turn's work is
+				// durable even when verification then fails.
+				hc.Turn = prev
+				if err := r.post(hc, PhaseTurn); err != nil {
+					turnErr = err
+					return ai.Request{}, false
+				}
+				hc.Turn = nil
 				verdicts, retry, allValid, err := r.verify(hc)
 				if err != nil {
 					verifyErr = err
@@ -291,12 +341,15 @@ func (r *Runner[T]) runLoop(ctx context.Context, hc *HookContext, result *Result
 	if responseErr != nil {
 		return responseErr
 	}
+	if turnErr != nil {
+		return turnErr
+	}
 	return verifyErr
 }
 
 // verifyPassed reports whether the run's last verify verdict passed, or
 // trivially true when no Verify hooks ran at all. Runner.Run uses it to set
-// HookContext.Verified for PostRun hooks; mirrors pkg/cli's own verifyPassed,
+// HookContext.Verified for Post hooks; mirrors pkg/cli's own verifyPassed,
 // which summarizes the same Result.Verdicts for CLI output.
 func verifyPassed(verdicts []VerifyResult) bool {
 	if len(verdicts) == 0 {

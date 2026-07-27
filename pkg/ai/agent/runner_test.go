@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/flanksource/captain/pkg/ai"
@@ -133,7 +134,7 @@ func TestRunner_VerifyDrivesRerunThenStops(t *testing.T) {
 	assert.True(t, res.Verdicts[1].Valid)
 }
 
-func TestRunner_PreRunPostRunOrder(t *testing.T) {
+func TestRunner_PhaseOrder(t *testing.T) {
 	prov := &fakeProvider{events: func(int) []ai.Event {
 		return []ai.Event{{Kind: ai.EventResult, Success: true}}
 	}}
@@ -146,11 +147,179 @@ func TestRunner_PreRunPostRunOrder(t *testing.T) {
 	}
 	_, err := r.Run(context.Background())
 	require.NoError(t, err)
-	// PreRun before the loop; PostRun after.
-	assert.Equal(t, []string{"preRun", "postRun"}, log)
+	// PreRun before the loop, then one turn, then agent and run teardown. The
+	// single turn still emits a turn phase: RunUntil calls BuildRequest once
+	// more after the last executed iteration.
+	assert.Equal(t, []string{"preRun", "turn", "agent", "run"}, log)
 }
 
-func TestRunner_PostRunSeesVerifiedAndFailed(t *testing.T) {
+func TestRunner_TurnPhaseFiresPerTurnBeforeVerifiers(t *testing.T) {
+	prov := &fakeProvider{events: func(int) []ai.Event {
+		return []ai.Event{{Kind: ai.EventResult, Success: true}}
+	}}
+
+	var log []string
+	var turns []int
+	var verifyCalls int
+	r := &Runner[string]{
+		Provider:      prov,
+		MaxIterations: 3,
+		Request:       ai.Request{Prompt: api.Prompt{User: "go"}},
+		Hooks: []any{
+			&lifecycleHook{log: &log, onTurn: func(hc *HookContext) {
+				require.NotNil(t, hc.Turn, "a turn dispatch carries the iteration that just completed")
+				turns = append(turns, hc.Turn.Iteration)
+				assert.Equal(t, hc.Turn.Iteration, hc.Iteration, "the context still describes the completed turn, not the next one")
+			}},
+			verifyHook{name: "lint", fn: func(hc *HookContext) (VerifyResult, error) {
+				log = append(log, "verify")
+				verifyCalls++
+				assert.Nil(t, hc.Turn, "Turn is scoped to the turn phase")
+				if verifyCalls < 3 {
+					next := *hc.Request
+					return VerifyResult{Valid: false, Retry: &next}, nil
+				}
+				return VerifyResult{Valid: true}, nil
+			}},
+		},
+	}
+
+	_, err := r.Run(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 3, prov.calls)
+	// The last turn is the one that matters: RunUntil asks for a fourth request
+	// only to be told to stop, and the turn phase has to fire on that call or the
+	// run's final piece of work is never made durable.
+	assert.Equal(t, []int{0, 1, 2}, turns, "every turn including the terminal one")
+	// A turn commits before its verdict is in, so work survives a failing verify.
+	assert.Equal(t, []string{"preRun", "turn", "verify", "turn", "verify", "turn", "verify", "agent", "run"}, log)
+}
+
+func TestRunner_VerifyOnlyEmitsNoTurnPhase(t *testing.T) {
+	var log []string
+	// Empty prompt body ⇒ verify-only: nothing generated, so no turn boundary.
+	r := &Runner[string]{
+		Hooks: []any{
+			&lifecycleHook{log: &log},
+			verifyHook{name: "score", fn: func(*HookContext) (VerifyResult, error) {
+				return VerifyResult{Valid: true}, nil
+			}},
+		},
+	}
+
+	_, err := r.Run(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"preRun", "agent", "run"}, log)
+}
+
+func TestRunner_AgentPhaseFiresOnceAfterATurnErrors(t *testing.T) {
+	prov := &fakeProvider{events: func(iter int) []ai.Event {
+		if iter == 1 {
+			return []ai.Event{{Kind: ai.EventError, Error: "provider exploded"}}
+		}
+		return []ai.Event{{Kind: ai.EventResult, Success: true}}
+	}}
+
+	var log []string
+	r := &Runner[string]{
+		Provider:      prov,
+		MaxIterations: 3,
+		Request:       ai.Request{Prompt: api.Prompt{User: "go"}},
+		Hooks: []any{
+			&lifecycleHook{log: &log},
+			verifyHook{name: "lint", fn: func(hc *HookContext) (VerifyResult, error) {
+				next := *hc.Request
+				return VerifyResult{Valid: false, Retry: &next}, nil
+			}},
+		},
+	}
+
+	_, err := r.Run(context.Background())
+	require.ErrorContains(t, err, "provider exploded")
+	// The second turn died inside RunUntil, which returns without asking for
+	// another request — so it never reaches a turn boundary. The agent phase is
+	// what sweeps that remainder, and it still fires exactly once.
+	assert.Equal(t, []string{"preRun", "turn", "agent", "run"}, log)
+}
+
+func TestRunner_PhasesDispatchInHookOrder(t *testing.T) {
+	prov := &fakeProvider{events: func(int) []ai.Event {
+		return []ai.Event{{Kind: ai.EventResult, Success: true}}
+	}}
+
+	var log []string
+	r := &Runner[string]{
+		Provider: prov,
+		Request:  ai.Request{Prompt: api.Prompt{User: "go"}},
+		Hooks: []any{
+			&lifecycleHook{name: "commit", log: &log},
+			&lifecycleHook{name: "worktree", log: &log},
+		},
+	}
+
+	_, err := r.Run(context.Background())
+	require.NoError(t, err)
+	// Registration order decides who acts first within a phase, which is what
+	// lets a commit hook squash its chain before a worktree hook merges the
+	// branch away.
+	assert.Equal(t, []string{
+		"commit:preRun", "worktree:preRun",
+		"commit:turn", "worktree:turn",
+		"commit:agent", "worktree:agent",
+		"commit:run", "worktree:run",
+	}, log)
+}
+
+func TestRunner_FailingPostHookSurfacesWithoutSkippingTeardown(t *testing.T) {
+	var log []string
+	r := &Runner[string]{
+		Provider: nil, // ⇒ the run itself fails
+		Request:  ai.Request{Prompt: api.Prompt{User: "go"}},
+		Hooks: []any{
+			&lifecycleHook{name: "commit", log: &log, fail: map[Phase]error{PhaseAgent: errors.New("nothing staged")}},
+			&lifecycleHook{name: "worktree", log: &log},
+		},
+	}
+
+	_, err := r.Run(context.Background())
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "Provider is required", "the run error survives a failing hook")
+	assert.ErrorContains(t, err, "nothing staged", "a failing commit hook is not swallowed by the run error")
+	assert.Equal(t, []string{
+		"commit:preRun", "worktree:preRun",
+		"commit:agent", "worktree:agent",
+		"commit:run", "worktree:run",
+	}, log, "a failing hook stops neither its own phase nor the teardown after it")
+}
+
+func TestRunner_FailingTurnHookStopsTheLoop(t *testing.T) {
+	prov := &fakeProvider{events: func(int) []ai.Event {
+		return []ai.Event{{Kind: ai.EventResult, Success: true}}
+	}}
+
+	var log []string
+	var verifyCalls int
+	r := &Runner[string]{
+		Provider:      prov,
+		MaxIterations: 3,
+		Request:       ai.Request{Prompt: api.Prompt{User: "go"}},
+		Hooks: []any{
+			&lifecycleHook{name: "commit", log: &log, fail: map[Phase]error{PhaseTurn: errors.New("dirty index")}},
+			verifyHook{name: "lint", fn: func(*HookContext) (VerifyResult, error) {
+				verifyCalls++
+				return VerifyResult{Valid: true}, nil
+			}},
+		},
+	}
+
+	_, err := r.Run(context.Background())
+	require.ErrorContains(t, err, "dirty index")
+	assert.Equal(t, 1, prov.calls, "no further generation on top of a turn that could not be committed")
+	assert.Equal(t, 0, verifyCalls, "the turn phase short-circuits before its verifiers vote")
+	assert.Equal(t, []string{"commit:preRun", "commit:turn", "commit:agent", "commit:run"}, log)
+}
+
+func TestRunner_RunPhaseSeesVerifiedAndFailed(t *testing.T) {
 	cases := []struct {
 		name         string
 		provider     ai.StreamingProvider
@@ -190,7 +359,7 @@ func TestRunner_PostRunSeesVerifiedAndFailed(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var sawVerified, sawFailed bool
-			outcome := &outcomeHook{onPostRun: func(hc *HookContext) {
+			outcome := &outcomeHook{onRun: func(hc *HookContext) {
 				sawVerified = hc.Verified
 				sawFailed = hc.Failed
 			}}
@@ -237,15 +406,47 @@ type verifyHook struct {
 func (v verifyHook) Name() string                                 { return v.name }
 func (v verifyHook) Verify(hc *HookContext) (VerifyResult, error) { return v.fn(hc) }
 
-// outcomeHook records the HookContext.Verified/Failed values PostRun observes,
-// e.g. what a worktree.Plugin reads to gate merge/cleanup.
-type outcomeHook struct{ onPostRun func(*HookContext) }
+// outcomeHook records the HookContext.Verified/Failed values a run-phase hook
+// observes, e.g. what a worktree.Plugin reads to gate merge/cleanup.
+type outcomeHook struct{ onRun func(*HookContext) }
 
-func (o *outcomeHook) Name() string                  { return "outcome" }
-func (o *outcomeHook) PostRun(hc *HookContext) error { o.onPostRun(hc); return nil }
+func (o *outcomeHook) Name() string      { return "outcome" }
+func (o *outcomeHook) Phases() []Phase   { return []Phase{PhaseRun} }
+func (o *outcomeHook) Post(hc *HookContext, _ Phase) error {
+	o.onRun(hc)
+	return nil
+}
 
-type lifecycleHook struct{ log *[]string }
+// lifecycleHook appends every boundary it is dispatched to a shared log, as
+// "<phase>" or, when the hook is named, "<name>:<phase>" — so several hooks can
+// share one log and the test can read dispatch order off it. fail makes a chosen
+// phase error; onTurn inspects the context the runner hands a turn dispatch.
+type lifecycleHook struct {
+	name   string
+	log    *[]string
+	fail   map[Phase]error
+	onTurn func(*HookContext)
+}
 
-func (l *lifecycleHook) Name() string               { return "lifecycle" }
-func (l *lifecycleHook) PreRun(*HookContext) error  { *l.log = append(*l.log, "preRun"); return nil }
-func (l *lifecycleHook) PostRun(*HookContext) error { *l.log = append(*l.log, "postRun"); return nil }
+func (l *lifecycleHook) Name() string    { return l.name }
+func (l *lifecycleHook) Phases() []Phase { return AllPhases() }
+
+func (l *lifecycleHook) PreRun(*HookContext) error {
+	l.record("preRun")
+	return nil
+}
+
+func (l *lifecycleHook) Post(hc *HookContext, p Phase) error {
+	l.record(string(p))
+	if p == PhaseTurn && l.onTurn != nil {
+		l.onTurn(hc)
+	}
+	return l.fail[p]
+}
+
+func (l *lifecycleHook) record(event string) {
+	if l.name != "" {
+		event = l.name + ":" + event
+	}
+	*l.log = append(*l.log, event)
+}

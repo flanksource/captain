@@ -4,16 +4,19 @@ import "fmt"
 
 // Workflow declares the generate→verify loop around a run as hook
 // declarations: an optional verification stage (commands run after each
-// generation, whose failure feedback drives a re-run), and an optional postRun
-// stage (commit the result). It is the serializable form of pkg/ai/agent's
-// Verify/PostRun hooks, and mirrors clicky-ui's AISpecRuntimeLocalWorkflow so
-// the SpecRuntimeEditor "Verify" section round-trips.
+// generation, whose failure feedback drives a re-run), and zero or more commit
+// policies naming the lifecycle phase they fire at. It is the serializable form
+// of pkg/ai/agent's Verify/Post hooks, and mirrors clicky-ui's
+// AISpecRuntimeLocalWorkflow so the SpecRuntimeEditor "Verify" section
+// round-trips.
 //
 // A spec with a Verify but an empty Prompt.User runs verify-only (generation is
 // skipped); a spec with no Verify runs generate-only (today's behaviour).
 type Workflow struct {
-	Verify  *Verify  `json:"verify,omitempty" yaml:"verify,omitempty"`
-	PostRun *PostRun `json:"postRun,omitempty" yaml:"postRun,omitempty"`
+	Verify *Verify `json:"verify,omitempty" yaml:"verify,omitempty"`
+	// Commits declares when and how the run's work is committed. Empty commits
+	// nothing.
+	Commits []Commit `json:"commits,omitempty" yaml:"commits,omitempty"`
 
 	// AutoVerifyWithoutFixture is the explicit policy opt-in for hosts that
 	// project a successful generate-only run into a durable verified state. A
@@ -42,17 +45,17 @@ type Verify struct {
 	MaxIterations int `json:"maxIterations,omitempty" yaml:"maxIterations,omitempty" jsonschema:"minimum=0"`
 }
 
-// PostRun runs once after the loop ends cleanly (e.g. commit the agent's work).
-type PostRun struct {
-	Commit        bool   `json:"commit,omitempty" yaml:"commit,omitempty"`
-	CommitMessage string `json:"commitMessage,omitempty" yaml:"commitMessage,omitempty"`
-	DryRun        bool   `json:"dryRun,omitempty" yaml:"dryRun,omitempty"`
-	KeepWorktree  bool   `json:"keepWorktree,omitempty" yaml:"keepWorktree,omitempty"`
-}
-
 // Validate checks the workflow's enum-typed fields.
 func (w *Workflow) Validate() error {
-	if w == nil || w.Verify == nil {
+	if w == nil {
+		return nil
+	}
+	for i, c := range w.Commits {
+		if err := c.Validate(); err != nil {
+			return fmt.Errorf("workflow.commits[%d]: %w", i, err)
+		}
+	}
+	if w.Verify == nil {
 		return nil
 	}
 	if err := w.Verify.Scope.Validate(); err != nil {

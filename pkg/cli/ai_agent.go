@@ -9,10 +9,12 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/agent"
+	"github.com/flanksource/captain/pkg/ai/agent/commit"
 	"github.com/flanksource/captain/pkg/ai/agent/verify"
 	"github.com/flanksource/captain/pkg/ai/agent/worktree"
 	"github.com/flanksource/captain/pkg/ai/middleware"
 	"github.com/flanksource/captain/pkg/ai/prompt"
+	"github.com/flanksource/captain/pkg/api"
 )
 
 // AIAgentOptions runs the plugin-based agent loop (pkg/ai/agent) from the CLI:
@@ -33,6 +35,9 @@ type AIAgentOptions struct {
 	Worktree      bool     `flag:"worktree" help:"Run inside a throwaway git worktree/branch"`
 	Branch        string   `flag:"branch" help:"Worktree branch name (with --worktree; default: captain/agent-<ts>)"`
 	Commit        bool     `flag:"commit" help:"Commit changes on the worktree branch (requires --worktree)"`
+	CommitOn      string   `flag:"commit-on" help:"When --commit fires: turn|agent|run" default:"turn"`
+	Squash        bool     `flag:"squash" help:"Autosquash the per-turn fixup chain into one commit; --squash=false keeps the chain" default:"true"`
+	CommitMessage string   `flag:"commit-message" help:"Subject of the run's commit (default: derived from the prompt)"`
 	Judge         string   `flag:"judge" help:"LLM-judge rubric; fails a turn when the judge rejects the result"`
 }
 
@@ -63,15 +68,39 @@ func scopeFromFlag(s string) (agent.Scope, error) {
 	return agent.ParseScope(s)
 }
 
-// buildAgentPlugins assembles the verify/worktree/judge plugins from the flags.
-// The worktree plugin owns the commit (it commits the branch on teardown), so
-// --commit requires --worktree.
+// buildAgentPlugins assembles the commit/verify/worktree/judge plugins from the
+// flags. --commit still requires --worktree: committing into the caller's own
+// checkout is a decision the CLI does not make on their behalf, even though the
+// commit hook itself can do it safely (API callers reach that via api.Commit).
+//
+// Hook order is load-bearing at PhaseRun: the commit hook is registered ahead of
+// the worktree plugin so the chain is squashed into one commit *before* the
+// merge, leaving `wt merge` real commits to take rather than a dirty tree it
+// would have to invent an LLM message for.
 func buildAgentPlugins(opts AIAgentOptions, p ai.Provider) ([]any, *worktree.Plugin, error) {
 	if opts.Commit && !opts.Worktree {
 		return nil, nil, fmt.Errorf("--commit requires --worktree (captain commits the isolated branch, not your working tree)")
 	}
 
 	var hooks []any
+	if opts.Commit {
+		spec := api.Commit{
+			On:      api.CommitPhase(opts.CommitOn),
+			Message: opts.CommitMessage,
+		}
+		// Only the off switch is forwarded: a plain bool cannot distinguish
+		// `--squash=true` from the flag's default, and passing true through would
+		// make `--commit-on=run` (which commits rather than fixes up, so has no
+		// chain to squash) fail validation on a value the user never typed.
+		if !opts.Squash {
+			spec.Squash = &opts.Squash
+		}
+		if err := spec.Validate(); err != nil {
+			return nil, nil, err
+		}
+		hooks = append(hooks, commit.New(spec))
+	}
+
 	var wt *worktree.Plugin
 	if opts.Worktree {
 		branch := opts.Branch
@@ -81,7 +110,9 @@ func buildAgentPlugins(opts AIAgentOptions, p ai.Provider) ([]any, *worktree.Plu
 		wt = &worktree.Plugin{Branch: branch}
 		if opts.Commit {
 			// --commit: merge the isolated branch into trunk once the run
-			// succeeds, then remove the worktree.
+			// succeeds, then remove the worktree. A run that fails keeps both —
+			// which only became a useful outcome now that the turns it did
+			// complete are committed on the branch rather than left dirty.
 			wt.Merge = worktree.WorktreeMergeOnSuccess
 			wt.Cleanup = worktree.WorktreeCleanupOnMerge
 		} else {
