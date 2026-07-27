@@ -22,10 +22,12 @@ type SessionListOptions struct {
 }
 
 type SessionGetOptions struct {
-	ID     string `flag:"id" args:"true" help:"Session id (full or unambiguous prefix)"`
-	Offset int    `flag:"offset" help:"Skip this many transcript rows from the start"`
-	Limit  int    `flag:"limit" help:"Maximum transcript rows to return; 0 means all" default:"200" short:"l"`
-	Tail   int    `flag:"tail" help:"Return only the last N transcript rows (overrides offset/limit)"`
+	ID         string   `flag:"id" args:"true" help:"Session id (full or unambiguous prefix)"`
+	Tools      []string `flag:"tool" help:"Filter transcript by tool patterns" short:"t"`
+	Categories []string `flag:"category" help:"Filter transcript by category patterns" short:"c"`
+	Offset     int      `flag:"offset" help:"Skip this many transcript rows from the start"`
+	Limit      int      `flag:"limit" help:"Maximum transcript rows to return; 0 means all" default:"200" short:"l"`
+	Tail       int      `flag:"tail" help:"Return only the last N transcript rows (overrides offset/limit)"`
 }
 
 func (SessionGetOptions) GetName() string { return "get <id>" }
