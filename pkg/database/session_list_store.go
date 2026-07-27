@@ -74,14 +74,16 @@ type SessionListSummary struct {
 }
 
 type SessionListFilter struct {
-	Source      string
-	Project     string
-	ProjectRoot string
-	Query       string
-	RootsOnly   bool
-	LiveOnly    bool
-	Limit       int
-	Cursor      string
+	Source         string
+	Project        string
+	ProjectRoot    string
+	Query          string
+	RootsOnly      bool
+	LiveOnly       bool
+	ActivityFrom   *time.Time
+	ActivityBefore *time.Time
+	Limit          int
+	Cursor         string
 }
 
 type SessionListPage struct {
@@ -118,6 +120,8 @@ func (db *DB) ListSessionSummaries(ctx context.Context, filter SessionListFilter
 		sql.Named("query", strings.TrimSpace(filter.Query)),
 		sql.Named("roots_only", filter.RootsOnly),
 		sql.Named("live_only", filter.LiveOnly),
+		sql.Named("activity_from", filter.ActivityFrom),
+		sql.Named("activity_before", filter.ActivityBefore),
 		sql.Named("cursor_activity", cursorActivity(cursor)),
 		sql.Named("cursor_id", cursorID(cursor)),
 		sql.Named("fetch_limit", limit+1),
@@ -225,6 +229,10 @@ WITH latest_call AS MATERIALIZED (
     AND (@project_root = '' OR s.cwd = @project_root OR s.cwd LIKE @project_prefix ESCAPE '\')
     AND (NOT @roots_only OR s.parent_session_id IS NULL)
     AND (NOT @live_only OR ap.session_id IS NOT NULL)
+    AND (CAST(@activity_from AS timestamptz) IS NULL OR
+      COALESCE(s.last_activity_at, s.started_at, s.created_at) >= CAST(@activity_from AS timestamptz))
+    AND (CAST(@activity_before AS timestamptz) IS NULL OR
+      COALESCE(s.last_activity_at, s.started_at, s.created_at) < CAST(@activity_before AS timestamptz))
     AND (
       @query = '' OR concat_ws(' ', s.id::text, s.provider_session_id, s.source, s.provider,
         s.project, s.cwd, s.title, s.initial_prompt, s.slug, s.cli_version,

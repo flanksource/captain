@@ -28,6 +28,10 @@ func RunSessionLive(ctx context.Context, opts SessionLiveOptions) (SessionLiveRe
 	if err != nil {
 		return SessionLiveResult{}, err
 	}
+	activityFrom, activityBefore, err := sessionActivityRange(opts.From, opts.Before)
+	if err != nil {
+		return SessionLiveResult{}, err
+	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return SessionLiveResult{}, err
@@ -44,7 +48,7 @@ func RunSessionLive(ctx context.Context, opts SessionLiveOptions) (SessionLiveRe
 	}
 	query := sessionRecordQuery{
 		Source: source, ProjectRoot: projectRoot, Query: opts.Query, LiveOnly: true,
-		Limit: limit, Cursor: opts.Cursor,
+		Limit: limit, Cursor: opts.Cursor, ActivityFrom: activityFrom, ActivityBefore: activityBefore,
 	}
 	var page sessionRecordPage
 	if opts.Full {

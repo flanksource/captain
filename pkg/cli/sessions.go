@@ -13,12 +13,14 @@ import (
 )
 
 type SessionListOptions struct {
-	Source  string `flag:"source" help:"Filter source: all, claude, codex" default:"all"`
-	All     bool   `flag:"all" help:"Include sessions from all projects" short:"a"`
-	Project string `flag:"project" help:"Restrict sessions to an explicit project path"`
-	Query   string `flag:"q" help:"Search session id, model, cwd, branch, or provider"`
-	Limit   int    `flag:"limit" help:"Maximum sessions to return" default:"100" short:"l"`
-	Cursor  string `flag:"cursor" help:"Continue after an opaque session-list cursor"`
+	Source  string    `flag:"source" help:"Filter source: all, claude, codex" default:"all"`
+	All     bool      `flag:"all" help:"Include sessions from all projects" short:"a"`
+	Project string    `flag:"project" help:"Restrict sessions to an explicit project path"`
+	Query   string    `flag:"q" help:"Search session id, model, cwd, branch, or provider"`
+	From    time.Time `flag:"from" help:"Only include sessions updated at or after this timestamp"`
+	Before  time.Time `flag:"before" help:"Only include sessions updated before this timestamp"`
+	Limit   int       `flag:"limit" help:"Maximum sessions to return" default:"100" short:"l"`
+	Cursor  string    `flag:"cursor" help:"Continue after an opaque session-list cursor"`
 }
 
 type SessionGetOptions struct {
@@ -42,13 +44,15 @@ type SessionListResult struct {
 }
 
 type SessionLiveOptions struct {
-	Source  string `flag:"source" help:"Filter source: all, claude, codex" default:"all"`
-	All     bool   `flag:"all" help:"Include sessions from all projects" short:"a"`
-	Project string `flag:"project" help:"Restrict sessions to an explicit project path"`
-	Query   string `flag:"q" help:"Search session id, model, cwd, branch, provider, pid, or health"`
-	Limit   int    `flag:"limit" help:"Maximum sessions to return" default:"25" short:"l"`
-	Full    bool   `flag:"full" help:"Parse all matching history exactly; ignores --limit"`
-	Cursor  string `flag:"cursor" help:"Continue after an opaque session-list cursor"`
+	Source  string    `flag:"source" help:"Filter source: all, claude, codex" default:"all"`
+	All     bool      `flag:"all" help:"Include sessions from all projects" short:"a"`
+	Project string    `flag:"project" help:"Restrict sessions to an explicit project path"`
+	Query   string    `flag:"q" help:"Search session id, model, cwd, branch, provider, pid, or health"`
+	From    time.Time `flag:"from" help:"Only include sessions updated at or after this timestamp"`
+	Before  time.Time `flag:"before" help:"Only include sessions updated before this timestamp"`
+	Limit   int       `flag:"limit" help:"Maximum sessions to return" default:"25" short:"l"`
+	Full    bool      `flag:"full" help:"Parse all matching history exactly; ignores --limit"`
+	Cursor  string    `flag:"cursor" help:"Continue after an opaque session-list cursor"`
 }
 
 type SessionLiveResult struct {
@@ -255,6 +259,10 @@ func RunSessionList(ctx context.Context, opts SessionListOptions) (SessionListRe
 	if err != nil {
 		return SessionListResult{}, err
 	}
+	activityFrom, activityBefore, err := sessionActivityRange(opts.From, opts.Before)
+	if err != nil {
+		return SessionListResult{}, err
+	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return SessionListResult{}, err
@@ -267,6 +275,7 @@ func RunSessionList(ctx context.Context, opts SessionListOptions) (SessionListRe
 	}
 	page, err := dbSessionRecords(ctx, db, sessionRecordQuery{
 		Source: source, ProjectRoot: projectRoot, Query: opts.Query, Limit: opts.Limit, Cursor: opts.Cursor,
+		ActivityFrom: activityFrom, ActivityBefore: activityBefore,
 	})
 	if err != nil {
 		return SessionListResult{}, err
@@ -279,6 +288,20 @@ func RunSessionList(ctx context.Context, opts SessionListOptions) (SessionListRe
 		Project:    projectResultValue(scope, projectRoot),
 		NextCursor: page.NextCursor,
 	}, nil
+}
+
+func sessionActivityRange(from, before time.Time) (*time.Time, *time.Time, error) {
+	if !from.IsZero() && !before.IsZero() && !from.Before(before) {
+		return nil, nil, fmt.Errorf("session activity from must be earlier than before")
+	}
+	var activityFrom, activityBefore *time.Time
+	if !from.IsZero() {
+		activityFrom = &from
+	}
+	if !before.IsZero() {
+		activityBefore = &before
+	}
+	return activityFrom, activityBefore, nil
 }
 
 func buildSessionModel(candidate sessionCandidate) (*session.Session, error) {

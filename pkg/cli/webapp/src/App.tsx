@@ -19,6 +19,11 @@ import { ChatRoute } from "./ChatRoute";
 import { HomeDashboard } from "./HomeDashboard";
 import { PromptWorkbench } from "./PromptWorkbench";
 import { SessionBrowser } from "./SessionBrowser";
+import {
+  getSessionListSearchSnapshot,
+  parseSessionListFilters,
+  subscribeSessionListSearch,
+} from "./sessionListFilters";
 import { ShellActions } from "./shell";
 import { WhoamiPage } from "./WhoamiPage";
 import {
@@ -41,7 +46,12 @@ export function App() {
     [],
   );
   const router = useBrowserRouter();
-  const route = parseRoute(router.pathname, window.location.search);
+  const locationSearch = useSyncExternalStore(
+    subscribeSessionListSearch,
+    getSessionListSearchSnapshot,
+    getSessionListSearchSnapshot,
+  );
+  const route = parseRoute(router.pathname, locationSearch);
   const projectScope = useSyncExternalStore(
     subscribeProjectScope,
     getProjectScopeSnapshot,
@@ -49,7 +59,7 @@ export function App() {
   );
 
   const setProjectScope = (scope: ProjectScope) => {
-    setProjectScopeInLocation(scope, router.navigate, router.pathname, window.location.search);
+    setProjectScopeInLocation(scope, router.navigate, router.pathname, locationSearch);
   };
   const shellActions = (
     <ShellActions projectScope={projectScope} onProjectScopeChange={setProjectScope} />
@@ -73,6 +83,7 @@ export function App() {
               actions={shellActions}
               search={shellSearch}
               projectScope={projectScope}
+              filters={parseSessionListFilters(locationSearch)}
             />
           ) : route.kind === "prompts" ? (
             <PromptWorkbench

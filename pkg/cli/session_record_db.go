@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/session"
@@ -21,12 +22,14 @@ type sessionListStore interface {
 
 // sessionRecordQuery narrows the DB-backed session record list.
 type sessionRecordQuery struct {
-	Source      string // "all", "claude", or "codex"
-	ProjectRoot string
-	Query       string
-	LiveOnly    bool
-	Limit       int
-	Cursor      string
+	Source         string // "all", "claude", or "codex"
+	ProjectRoot    string
+	Query          string
+	LiveOnly       bool
+	ActivityFrom   *time.Time
+	ActivityBefore *time.Time
+	Limit          int
+	Cursor         string
 }
 
 type sessionRecordPage struct {
@@ -40,12 +43,14 @@ type sessionRecordPage struct {
 // path used by session get.
 func dbSessionRecords(ctx context.Context, db sessionListStore, q sessionRecordQuery) (sessionRecordPage, error) {
 	filter := database.SessionListFilter{
-		ProjectRoot: q.ProjectRoot,
-		Query:       q.Query,
-		RootsOnly:   true,
-		LiveOnly:    q.LiveOnly,
-		Limit:       q.Limit,
-		Cursor:      q.Cursor,
+		ProjectRoot:    q.ProjectRoot,
+		Query:          q.Query,
+		RootsOnly:      true,
+		LiveOnly:       q.LiveOnly,
+		ActivityFrom:   q.ActivityFrom,
+		ActivityBefore: q.ActivityBefore,
+		Limit:          q.Limit,
+		Cursor:         q.Cursor,
 	}
 	if q.Source != "" && q.Source != "all" {
 		filter.Source = q.Source

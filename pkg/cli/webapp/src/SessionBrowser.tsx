@@ -3,20 +3,14 @@ import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import {
   AppShell,
   Button,
-  SearchInput,
-  SegmentedControl,
   type AppShellProps,
   type AppShellNavSection,
 } from "@flanksource/clicky-ui/components";
-import {
-  SessionChatComposer,
-  SessionContextMeter,
-  SessionInspector,
-  getSessionMetadata,
-} from "@flanksource/clicky-ui/ai";
-import { CAPTAIN_SIDEBAR_COLLAPSE_KEY, withProjectScope } from "./shellHelpers";
+import { CAPTAIN_SIDEBAR_COLLAPSE_KEY } from "./shellHelpers";
+import { SessionDetail } from "./SessionDetail";
 import { TimingBadge } from "./TimingBadge";
 import type { TimingMetric } from "./serverTiming";
+import { SessionListToolbar } from "./SessionListToolbar";
 import {
   SessionTable,
   type DashboardSort,
@@ -28,22 +22,19 @@ import {
   groupSessionsByProject,
 } from "./sessionTableHelpers";
 import {
-  SOURCE_OPTIONS,
   errorMessage,
-  fetchLiveSessions,
   fetchSession,
-  formatCompactNumber,
-  formatCost,
   mergeSessionListPages,
   type SessionDashboard,
-  type SessionGetItem,
-  type SessionGetResult,
   type SessionRecord,
   type ProjectScope,
-  type SourceFilter,
 } from "./sessionData";
-import { mergeSessionMessages, useSessionChat } from "./hooks/useSessionChat";
-import { sessionResultCollection } from "./sessionCollection";
+import { fetchSessionListPage } from "./sessionListData";
+import {
+  sessionActivityBounds,
+  sessionListPath,
+  type SessionListFilters,
+} from "./sessionListFilters";
 
 type Navigate = (to: string, opts?: { replace?: boolean }) => void;
 
@@ -54,6 +45,7 @@ type SessionBrowserProps = {
   actions: AppShellProps["actions"];
   search: AppShellProps["search"];
   projectScope: ProjectScope;
+  filters: SessionListFilters;
 };
 
 export function SessionBrowser({
@@ -63,6 +55,7 @@ export function SessionBrowser({
   actions,
   search,
   projectScope,
+  filters,
 }: SessionBrowserProps) {
   return selectedId ? (
     <SessionDetailPage
@@ -72,6 +65,7 @@ export function SessionBrowser({
       actions={actions}
       search={search}
       projectScope={projectScope}
+      filters={filters}
     />
   ) : (
     <SessionListPage
@@ -80,6 +74,7 @@ export function SessionBrowser({
       actions={actions}
       search={search}
       projectScope={projectScope}
+      filters={filters}
     />
   );
 }
@@ -94,6 +89,7 @@ function SessionDetailPage({
   actions,
   search,
   projectScope,
+  filters,
 }: {
   selectedId: string;
   onNavigate: Navigate;
@@ -101,6 +97,7 @@ function SessionDetailPage({
   actions: AppShellProps["actions"];
   search: AppShellProps["search"];
   projectScope: ProjectScope;
+  filters: SessionListFilters;
 }) {
   const detailQuery = useQuery({
     queryKey: ["session", selectedId],
@@ -127,7 +124,7 @@ function SessionDetailPage({
             size="sm"
             variant="ghost"
             onClick={() =>
-              onNavigate(withProjectScope("/sessions", projectScope))
+              onNavigate(sessionListPath("/sessions", projectScope, filters))
             }
           >
             ← Sessions
@@ -159,27 +156,45 @@ function SessionListPage({
   actions,
   search,
   projectScope,
+  filters,
 }: {
   onNavigate: Navigate;
   navSections: AppShellNavSection[];
   actions: AppShellProps["actions"];
   search: AppShellProps["search"];
   projectScope: ProjectScope;
+  filters: SessionListFilters;
 }) {
-  const [source, setSource] = useState<SourceFilter>("all");
-  const [query, setQuery] = useState("");
+  const activityRange = useMemo(() => {
+    try {
+      return { bounds: sessionActivityBounds(filters.from, filters.to) };
+    } catch (error) {
+      return { error };
+    }
+  }, [filters.from, filters.to]);
 
   const listQuery = useInfiniteQuery({
-    queryKey: ["sessions", source, projectScope, query],
+    queryKey: [
+      "sessions",
+      filters.mode,
+      filters.source,
+      projectScope,
+      filters.query,
+      filters.from,
+      filters.to,
+    ],
     queryFn: ({ pageParam }) =>
-      fetchLiveSessions({
-        source,
+      fetchSessionListPage({
+        mode: filters.mode,
+        source: filters.source,
         project: projectScope,
-        query,
+        query: filters.query,
+        ...(activityRange.bounds ?? {}),
         cursor: pageParam || undefined,
       }),
     initialPageParam: "",
     getNextPageParam: (lastPage) => lastPage.nextCursor,
+    enabled: !activityRange.error,
   });
   const result = mergeSessionListPages(listQuery.data?.pages ?? []);
   const sessions = result?.sessions ?? [];
@@ -205,10 +220,13 @@ function SessionListPage({
       contentClassName="p-0 overflow-hidden"
     >
       <SessionList
-        source={source}
-        onSourceChange={setSource}
-        query={query}
-        onQueryChange={setQuery}
+        filters={filters}
+        onFiltersChange={(nextFilters) =>
+          onNavigate(
+            sessionListPath("/sessions", projectScope, nextFilters),
+            { replace: true },
+          )
+        }
         sessions={sessions}
         summary={result?.summary}
         timing={result?.timing}
@@ -217,12 +235,13 @@ function SessionListPage({
         loadingMore={listQuery.isFetchingNextPage}
         hasMore={listQuery.hasNextPage}
         onLoadMore={() => listQuery.fetchNextPage()}
-        error={listQuery.error}
+        error={activityRange.error ?? listQuery.error}
         onSelect={(session) =>
           onNavigate(
-            withProjectScope(
+            sessionListPath(
               `/sessions/${encodeURIComponent(session.key)}`,
               projectScope,
+              filters,
             ),
           )
         }
@@ -232,10 +251,8 @@ function SessionListPage({
 }
 
 function SessionList({
-  source,
-  onSourceChange,
-  query,
-  onQueryChange,
+  filters,
+  onFiltersChange,
   sessions,
   summary,
   timing,
@@ -247,10 +264,8 @@ function SessionList({
   error,
   onSelect,
 }: {
-  source: SourceFilter;
-  onSourceChange: (source: SourceFilter) => void;
-  query: string;
-  onQueryChange: (query: string) => void;
+  filters: SessionListFilters;
+  onFiltersChange: (filters: SessionListFilters) => void;
   sessions: SessionRecord[];
   summary?: SessionDashboard;
   timing?: TimingMetric[];
@@ -286,32 +301,15 @@ function SessionList({
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
-      <div className="shrink-0 space-y-density-2 border-b border-border p-density-3">
-        <div className="grid gap-density-2 md:grid-cols-[minmax(14rem,1fr)_auto]">
-          <SearchInput
-            value={query}
-            onChange={onQueryChange}
-            placeholder="Search sessions"
-            shortcut={null}
-          />
-          <SegmentedControl
-            value={source}
-            options={SOURCE_OPTIONS}
-            onChange={onSourceChange}
-            size="sm"
-            aria-label="Session source"
-          />
-        </div>
-        <SessionSummary summary={summary} loading={loading} />
-        <div className="flex items-center justify-between gap-density-2 text-xs text-muted-foreground">
-          <span>
-            {loading
-              ? "Loading..."
-              : `${sessions.length} shown / ${total} total`}
-          </span>
-          <TimingBadge metrics={timing} align="right" />
-        </div>
-      </div>
+      <SessionListToolbar
+        filters={filters}
+        onFiltersChange={onFiltersChange}
+        summary={summary}
+        timing={timing}
+        shown={sessions.length}
+        total={total}
+        loading={loading}
+      />
 
       <div className="min-h-0 flex-1 overflow-y-auto p-density-3">
         {error ? (
@@ -364,204 +362,6 @@ function SessionHeader({
     <div className="flex items-center gap-density-2">
       <div className="text-sm font-semibold">Session</div>
       <TimingBadge metrics={timing} />
-    </div>
-  );
-}
-
-function SessionDetail({
-  result,
-  loading,
-  error,
-  onRefresh,
-}: {
-  result?: SessionGetResult;
-  loading: boolean;
-  error: unknown;
-  onRefresh: () => Promise<unknown>;
-}) {
-  if (loading) {
-    return (
-      <div className="flex min-h-0 flex-1 items-center justify-center p-6 text-sm text-muted-foreground">
-        Loading session...
-      </div>
-    );
-  }
-  if (error) {
-    return (
-      <div className="min-h-0 flex-1 overflow-auto p-6 text-sm text-destructive">
-        {errorMessage(error)}
-      </div>
-    );
-  }
-  if (!result?.sessions.length) {
-    return (
-      <div className="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">
-        No matching sessions.
-      </div>
-    );
-  }
-  const collection = sessionResultCollection(result);
-  if (collection) {
-    return (
-      <div className="h-full min-h-0 p-density-4">
-        <SessionInspector
-          session={collection}
-          transcriptProps={{ defaultExpanded: false }}
-        />
-      </div>
-    );
-  }
-  return (
-    <div className="h-full min-h-0 overflow-auto">
-      {result.sessions.map((item) => (
-        <SessionGetItemDetail
-          key={item.captainId}
-          item={item}
-          single={result.sessions.length === 1}
-          onRefresh={onRefresh}
-        />
-      ))}
-    </div>
-  );
-}
-
-function SessionGetItemDetail({
-  item,
-  single,
-  onRefresh,
-}: {
-  item: SessionGetItem;
-  single: boolean;
-  onRefresh: () => Promise<unknown>;
-}) {
-  const chat = useSessionChat({
-    initialRunID: item.activeRunId,
-    sessionID: item.captainId,
-    initialCapabilities: item.chat,
-    initialState: item.chatState,
-    clearOnTerminal: true,
-    onTerminal: onRefresh,
-  });
-  const detail = useMemo(
-    () =>
-      item.detail
-        ? {
-            ...item.detail,
-            messages: mergeSessionMessages(
-              item.detail.messages ?? [],
-              chat.messages,
-            ),
-          }
-        : undefined,
-    [chat.messages, item.detail],
-  );
-  // Mirrors Chat.tsx: the meter sits in PromptInput's footer toolbar, pushed
-  // right by a spacer. getSessionMetadata returns undefined for inputs that
-  // aren't unified sessions, and the meter itself renders null without context.
-  const composerToolbar = useMemo(() => {
-    const metadata = detail ? getSessionMetadata(detail) : undefined;
-    if (!metadata?.context) return undefined;
-    return (
-      <div className="flex flex-1 items-center gap-2">
-        <div className="flex-1" />
-        <SessionContextMeter metadata={metadata} mode="gauge" />
-      </div>
-    );
-  }, [detail]);
-  const composer =
-    item.chat?.resume || item.activeRunId ? (
-      <SessionChatComposer
-        status={chat.chatState.status}
-        capabilities={chat.capabilities}
-        queued={chat.chatState.queued}
-        error={chat.actionError}
-        onSubmit={chat.send}
-        onInterrupt={chat.interrupt}
-        {...(composerToolbar ? { toolbar: composerToolbar } : {})}
-      />
-    ) : undefined;
-  return (
-    <section
-      className={
-        single ? "flex h-full min-h-0 flex-col" : "border-b border-border"
-      }
-    >
-      {!single ? (
-        <div className="shrink-0 border-b border-border px-density-4 py-density-3 text-xs">
-          <div className="font-mono font-semibold text-foreground">
-            {item.captainId}
-          </div>
-          <div className="mt-1 flex flex-wrap gap-x-density-3 gap-y-1 text-muted-foreground">
-            <span>{item.summary.source}</span>
-            {item.providerSessionId && (
-              <span>provider={item.providerSessionId}</span>
-            )}
-            {item.host && <span>host={item.host}</span>}
-            {item.summary.project && (
-              <span>project={item.summary.project}</span>
-            )}
-            {item.summary.cwd && (
-              <span className="max-w-full truncate">{item.summary.cwd}</span>
-            )}
-          </div>
-        </div>
-      ) : null}
-      {detail ? (
-        <div className={single ? "min-h-0 flex-1" : "h-[70vh] min-h-[32rem]"}>
-          <SessionInspector
-            session={detail}
-            transcriptProps={{ defaultExpanded: false }}
-            {...(composer ? { composer } : {})}
-          />
-        </div>
-      ) : (
-        <div className="p-density-4 text-sm text-muted-foreground">
-          Transcript unavailable.
-        </div>
-      )}
-    </section>
-  );
-}
-
-function SessionSummary({
-  summary,
-  loading,
-}: {
-  summary?: SessionDashboard;
-  loading: boolean;
-}) {
-  if (!summary && loading) {
-    return null;
-  }
-  const values = [
-    [
-      "Live",
-      summary ? `${summary.liveSessions}/${summary.totalSessions}` : "--",
-    ],
-    ["Active", summary?.activeSessions ?? 0],
-    ["Alerts", summary?.alertSessions ?? 0],
-    ["Tokens", formatCompactNumber(summary?.totalTokens ?? 0)],
-    ["Cost", formatCost(summary?.costUsd ?? 0)],
-    [
-      "Context",
-      summary?.lowestContextFree !== undefined
-        ? `${summary.lowestContextFree}%`
-        : "--",
-    ],
-  ];
-  return (
-    <div className="grid grid-cols-3 gap-1.5 md:grid-cols-6">
-      {values.map(([label, value]) => (
-        <div
-          key={label}
-          className="min-w-0 rounded border border-border px-2 py-1"
-        >
-          <div className="truncate text-[10px] uppercase text-muted-foreground">
-            {label}
-          </div>
-          <div className="truncate text-xs font-medium">{value}</div>
-        </div>
-      ))}
     </div>
   );
 }
