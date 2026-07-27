@@ -6,9 +6,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/flanksource/captain/pkg/credentials"
 )
 
 // withTestServer redirects http.DefaultClient.Do to the given test server by
@@ -27,8 +30,7 @@ type rewriteTransport struct {
 }
 
 func (r rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	// Strip scheme+host but preserve path AND query so the Gemini fetcher's
-	// `?key=…` survives the rewrite.
+	// Strip scheme+host while preserving request metadata for provider checks.
 	target := r.base + req.URL.Path
 	if req.URL.RawQuery != "" {
 		target += "?" + req.URL.RawQuery
@@ -183,6 +185,8 @@ func TestFetchDeepSeekModels_EmptyKey(t *testing.T) {
 }
 
 func TestListModels_ErrorsOnMissingKey(t *testing.T) {
+	credentials.SetPathForTesting(filepath.Join(t.TempDir(), "vault"))
+	t.Cleanup(func() { credentials.SetPathForTesting("") })
 	t.Setenv("OPENAI_API_KEY", "")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("GEMINI_API_KEY", "")
@@ -255,14 +259,18 @@ func TestListModels_SortsAlphabetically(t *testing.T) {
 
 func TestFetchGeminiModels_StripsModelsPrefix(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Gemini sends the key as a query param, not a header.
-		if got := r.URL.Query().Get("key"); got != "g-test" {
-			t.Errorf("key= = %q", got)
+		if got := r.Header.Get("x-goog-api-key"); got != "g-test" {
+			t.Errorf("x-goog-api-key = %q", got)
 		}
+		if r.URL.RawQuery != "" {
+			t.Errorf("API key must not be present in URL query: %q", r.URL.RawQuery)
+		}
+		// Both ids must be preferred registry models: the release-date fallback
+		// reads Catalog(), which only carries preferred entries.
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"models": []map[string]any{
-				{"name": "models/gemini-2.5-flash", "display_name": "Gemini 2.5 Flash"},
-				{"name": "models/gemini-2.5-pro", "display_name": "Gemini 2.5 Pro"},
+				{"name": "models/gemini-3.6-flash", "display_name": "Gemini 3.6 Flash"},
+				{"name": "models/gemini-3.5-flash", "display_name": "Gemini 3.5 Flash"},
 			},
 		})
 	}))
@@ -273,10 +281,10 @@ func TestFetchGeminiModels_StripsModelsPrefix(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FetchGeminiModels: %v", err)
 	}
-	if len(got) != 2 || got[0].ID != "gemini-2.5-flash" || got[0].Name != "Gemini 2.5 Flash" {
+	if len(got) != 2 || got[0].ID != "gemini-3.6-flash" || got[0].Name != "Gemini 3.6 Flash" {
 		t.Errorf("unexpected: %+v", got)
 	}
-	if got[1].ID != "gemini-2.5-pro" || got[1].ReleaseDate == "" {
+	if got[1].ID != "gemini-3.5-flash" || got[1].ReleaseDate == "" {
 		t.Errorf("expected Gemini catalog release-date fallback, got %+v", got)
 	}
 	for _, m := range got {

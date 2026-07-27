@@ -4,12 +4,14 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/flanksource/captain/pkg/api/registry"
 )
 
 const currentModelsPerFamily = 3
 
 // legacyModelPrefixes hides model IDs that are either superseded by a newer
-// generation or aren't chat completions (image/audio/embedding/moderation).
+// generation or aren't primary text models.
 var legacyModelPrefixes = []string{
 	// OpenAI legacy
 	"gpt-3",
@@ -17,9 +19,16 @@ var legacyModelPrefixes = []string{
 	"gpt-5-", // API variants like mini/nano/codex/pro; CLI Codex is exempt by backend
 	"o1",
 	"o3",
+	"o4",
 	"codex-mini",
-	// OpenAI non-chat endpoints
+	// OpenAI non-primary endpoints and aliases
+	"gpt-realtime",
+	"gpt-image",
+	"gpt-audio",
+	"sora",
 	"dall-",
+	"image-",
+	"audio-",
 	"whisper",
 	"tts-",
 	"text-embedding",
@@ -27,6 +36,7 @@ var legacyModelPrefixes = []string{
 	"omni-moderation",
 	"babbage",
 	"davinci",
+	"chat-latest",
 	"chatgpt-",
 	"computer-use-preview",
 	// Claude legacy
@@ -37,6 +47,10 @@ var legacyModelPrefixes = []string{
 	"claude-sonnet-4-2",
 	"claude-opus-4-0",
 	"claude-opus-4-1",
+	"fable-",
+	"opus-",
+	"sonnet-",
+	"haiku-",
 	// Gemini legacy
 	"gemini-1",
 	"gemini-2.0",
@@ -49,6 +63,9 @@ var legacyModelPrefixes = []string{
 // model id. Call IsLegacyModelIDForBackend when backend context is available.
 func IsLegacyModelID(id string) bool {
 	idLower := strings.ToLower(bareModelID(strings.TrimPrefix(strings.TrimSpace(id), "models/")))
+	if IsIgnoredOpenAIModelID(idLower) {
+		return true
+	}
 	for _, p := range legacyModelPrefixes {
 		if strings.HasPrefix(idLower, p) {
 			return true
@@ -57,23 +74,92 @@ func IsLegacyModelID(id string) bool {
 	return false
 }
 
-// IsLegacyModelIDForBackend keeps API model menus clean while preserving local
-// agent model slugs such as gpt-5-codex, which are current for Codex CLI even
-// though the same id would be noisy in an OpenAI API model listing.
+// IsIgnoredOpenAIModelID reports whether an OpenAI model-list id should be
+// hidden from ordinary model pickers. OpenAI exposes many non-primary surfaces
+// (realtime, audio, image, Sora, code/chat aliases, dated and size variants);
+// Captain's picker keeps stable primary GPT text ids and explicitly registered
+// Codex runtime variants. Use this before remapping live OpenAI ids onto Codex
+// backends.
+func IsIgnoredOpenAIModelID(id string) bool {
+	idLower := strings.ToLower(bareModelID(strings.TrimPrefix(strings.TrimSpace(id), "models/")))
+	if idLower == "" {
+		return false
+	}
+	for _, p := range legacyModelPrefixes {
+		if strings.HasPrefix(idLower, p) {
+			return true
+		}
+	}
+	if strings.HasPrefix(idLower, "gpt-") {
+		return !isPrimaryGPTModelID(idLower)
+	}
+	for _, needle := range []string{"realtime", "image", "audio", "whisper", "tts", "sora", "codex", "code", "chat-latest", "chatgpt", "computer-use"} {
+		if strings.Contains(idLower, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func isPrimaryGPTModelID(id string) bool {
+	version := strings.TrimPrefix(id, "gpt-")
+	if version == "" || version == id {
+		return false
+	}
+	sawDigit := false
+	for _, r := range version {
+		switch {
+		case r >= '0' && r <= '9':
+			sawDigit = true
+		case r == '.':
+			continue
+		default:
+			return false
+		}
+	}
+	return sawDigit
+}
+
+// IsLegacyModelIDForBackend keeps model menus clean while retaining preferred
+// registry models explicitly available to the selected backend.
 func IsLegacyModelIDForBackend(id string, backend Backend) bool {
-	if backend.Kind() == "cli" {
+	if isPreferredRegistryModelForBackend(backend, id) {
 		return false
 	}
 	return IsLegacyModelID(id)
+}
+
+func isPreferredRegistryModelForBackend(backend Backend, model string) bool {
+	p, mode, ok := registry.ProviderFor(backend)
+	if !ok {
+		return false
+	}
+	entry, found := p.Lookup(model)
+	if !found {
+		return false
+	}
+	_, available := p.Availability(mode, entry.ID)
+	return entry.Preferred && available
 }
 
 // CurrentModelsByReleaseDate returns a filtered copy sorted newest first,
 // retaining the newest few models per family prefix. Known catalog release
 // dates fill gaps left by provider list endpoints.
 func CurrentModelsByReleaseDate(models []ModelDef) []ModelDef {
+	return currentModelsByReleaseDate(models, true)
+}
+
+// CurrentCuratedModelsByReleaseDate sorts and limits a trusted runtime catalog
+// whose own visibility field has already removed hidden models. It deliberately
+// skips the generic OpenAI variant blacklist used for raw provider listings.
+func CurrentCuratedModelsByReleaseDate(models []ModelDef) []ModelDef {
+	return currentModelsByReleaseDate(models, false)
+}
+
+func currentModelsByReleaseDate(models []ModelDef, filterLegacy bool) []ModelDef {
 	out := make([]ModelDef, 0, len(models))
 	for _, m := range models {
-		if IsLegacyModelIDForBackend(m.ID, m.Backend) {
+		if filterLegacy && IsLegacyModelIDForBackend(m.ID, m.Backend) {
 			continue
 		}
 		if m.ReleaseDate == "" {
@@ -89,6 +175,15 @@ func CurrentModelsByReleaseDate(models []ModelDef) []ModelDef {
 // unknown dates last and id descending as the stable deterministic tie-breaker.
 func SortModelsByReleaseDateDesc(models []ModelDef) {
 	sort.SliceStable(models, func(i, j int) bool {
+		if models[i].Priority != models[j].Priority && (models[i].Priority > 0 || models[j].Priority > 0) {
+			if models[i].Priority == 0 {
+				return false
+			}
+			if models[j].Priority == 0 {
+				return true
+			}
+			return models[i].Priority < models[j].Priority
+		}
 		if ModelFamilyPrefix(models[i].ID) == ModelFamilyPrefix(models[j].ID) {
 			if cmp := compareModelVersions(models[i].ID, models[j].ID); cmp != 0 {
 				return cmp > 0
@@ -151,6 +246,8 @@ func ModelFamilyPrefix(id string) string {
 			return strings.Join(parts[:3], "-")
 		}
 		return "claude-" + parts[1]
+	case "fable", "opus", "sonnet", "haiku":
+		return parts[0]
 	case "gemini":
 		for i := 1; i < len(parts); i++ {
 			if isModelVersionToken(parts[i]) {

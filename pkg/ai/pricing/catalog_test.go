@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/flanksource/captain/pkg/claude"
+	catalog "github.com/flanksource/captain/pkg/api/registry"
 )
 
 // errTestShortCircuit makes EnsureLoaded return immediately so lookups in these
@@ -73,60 +73,75 @@ func TestMergeModelOverlayReplaces(t *testing.T) {
 	}
 }
 
-func TestClaudeStaticInfo(t *testing.T) {
-	sonnet := claude.PricingTable[claude.ModelFamilySonnet4]
-	got, ok := claudeStaticInfo("claude-sonnet-4-6")
-	if !ok {
-		t.Fatal("expected sonnet id to classify")
+func TestCatalogInfo(t *testing.T) {
+	for _, id := range []string{"claude-sonnet-4-6", "gemini-3.5-flash", "gpt-5.6"} {
+		want, ok := catalog.CostFor(id)
+		if !ok {
+			t.Fatalf("catalog must price %q", id)
+		}
+		got, ok := catalogInfo(id)
+		if !ok {
+			t.Fatalf("catalogInfo(%q) found no price", id)
+		}
+		if got.InputPrice != want.Input || got.OutputPrice != want.Output ||
+			got.CacheReadsPrice != want.CacheRead || got.CacheWritesPrice != want.CacheWrite {
+			t.Errorf("catalogInfo(%q) = %+v, want catalog rate %+v", id, got, want)
+		}
 	}
-	if got.InputPrice != sonnet.InputPerMTok || got.OutputPrice != sonnet.OutputPerMTok ||
-		got.CacheReadsPrice != sonnet.CacheReadPerMTok || got.CacheWritesPrice != sonnet.CacheWritePerMTok {
-		t.Fatalf("static sonnet price mismatch: %+v", got)
-	}
-	if _, ok := claudeStaticInfo("gpt-4o"); ok {
-		t.Fatal("non-claude id must not classify")
+	if _, ok := catalogInfo("totally-unknown-model-zzz"); ok {
+		t.Fatal("an id the catalog does not price must not synthesize one")
 	}
 }
 
-func TestApplyStaticClaudeFillsMissingKeepsOpenRouter(t *testing.T) {
-	// OpenRouter gave a non-zero input price but no output price for this claude
-	// row; a non-claude row must be left entirely untouched.
+func TestApplyCatalogPricesFillsMissingKeepsOpenRouter(t *testing.T) {
+	// OpenRouter gave a non-zero input price but no output price for this row;
+	// a row the catalog does not price must be left entirely untouched.
 	withIsolatedRegistry(t, map[string]ModelInfo{
-		"anthropic/claude-sonnet-4": {ModelID: "anthropic/claude-sonnet-4", InputPrice: 2.5},
-		"openai/gpt-4o":             {ModelID: "openai/gpt-4o", InputPrice: 5},
+		"anthropic/claude-sonnet-4-6": {ModelID: "anthropic/claude-sonnet-4-6", InputPrice: 2.5},
+		"openai/gpt-4o":               {ModelID: "openai/gpt-4o", InputPrice: 5},
 	})
 
-	applyStaticClaude()
+	applyCatalogPrices()
 
-	claudeRow, _ := GetModelInfo("anthropic/claude-sonnet-4")
+	sonnet, _ := catalog.CostFor("claude-sonnet-4-6")
+	claudeRow, _ := GetModelInfo("anthropic/claude-sonnet-4-6")
 	if claudeRow.InputPrice != 2.5 {
 		t.Fatalf("OpenRouter input price overwritten: %+v", claudeRow)
 	}
-	if claudeRow.OutputPrice != claude.PricingTable[claude.ModelFamilySonnet4].OutputPerMTok {
-		t.Fatalf("static output price not filled: %+v", claudeRow)
+	if claudeRow.OutputPrice != sonnet.Output {
+		t.Fatalf("catalog output price not filled: %+v", claudeRow)
 	}
 
 	openaiRow, _ := GetModelInfo("openai/gpt-4o")
 	if openaiRow.InputPrice != 5 || openaiRow.OutputPrice != 0 {
-		t.Fatalf("non-claude row mutated: %+v", openaiRow)
+		t.Fatalf("unpriced row mutated: %+v", openaiRow)
 	}
 }
 
-func TestGetModelInfoClassifyOnMiss(t *testing.T) {
-	// Registry intentionally empty: a Claude id absent from OpenRouter must
-	// still resolve via the static table.
+// TestGetModelInfoLookupOnMiss pins that catalog models OpenRouter never lists
+// still price — and that the fallback is per-model, not per-family: Opus must
+// not come back at the retired $15/$75 that the old static table applied to
+// every id containing "opus".
+func TestGetModelInfoLookupOnMiss(t *testing.T) {
 	withIsolatedRegistry(t, nil)
 
-	haiku := claude.PricingTable[claude.ModelFamilyHaiku4]
-	got, ok := GetModelInfo("claude-haiku-4-5")
-	if !ok {
-		t.Fatal("expected classify-on-miss to price a known claude family")
+	for _, id := range []string{"claude-haiku-4-5", "claude-opus-5", "gemini-3.5-flash"} {
+		want, _ := catalog.CostFor(id)
+		got, ok := GetModelInfo(id)
+		if !ok {
+			t.Fatalf("lookup-on-miss did not price catalog model %q", id)
+		}
+		if got.InputPrice != want.Input || got.OutputPrice != want.Output {
+			t.Errorf("GetModelInfo(%q) = %.2f/%.2f, want %.2f/%.2f",
+				id, got.InputPrice, got.OutputPrice, want.Input, want.Output)
+		}
 	}
-	if got.InputPrice != haiku.InputPerMTok || got.OutputPrice != haiku.OutputPerMTok {
-		t.Fatalf("classify-on-miss price mismatch: %+v", got)
+
+	if opus, _ := GetModelInfo("claude-opus-5"); opus.InputPrice == 15 || opus.OutputPrice == 75 {
+		t.Errorf("claude-opus-5 priced at the retired Opus 4.1 rate: %+v", opus)
 	}
 
 	if _, ok := GetModelInfo("totally-unknown-model-zzz"); ok {
-		t.Fatal("unknown non-claude id must remain a miss")
+		t.Fatal("unknown id must remain a miss")
 	}
 }

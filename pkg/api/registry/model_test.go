@@ -1,4 +1,4 @@
-package api
+package registry
 
 import (
 	"encoding/json"
@@ -8,6 +8,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
+
+func floatPtr(f float64) *float64 { return &f }
 
 func modelNames(models []Model) []string {
 	if len(models) == 0 {
@@ -61,21 +63,23 @@ func TestModel_Candidates(t *testing.T) {
 		Temperature: floatPtr(0.3),
 		NoCache:     true,
 		Fallbacks: []Model{
-			{Name: "gpt-4o"}, // inherits primary effort/temp/noCache
+			{Name: "gpt-4o"},
+			{Name: "claude-haiku-4-5"},
 			{Name: "gemini-2.0-flash", Effort: EffortLow, ID: "drop-me", Fallbacks: []Model{{Name: "nested"}}},
 		},
 	}
 	got := primary.Candidates()
 
-	if names := modelNames(got); !reflect.DeepEqual(names, []string{"claude-sonnet-5", "gpt-4o", "gemini-2.0-flash"}) {
+	if names := modelNames(got); !reflect.DeepEqual(names, []string{"claude-sonnet-5", "gpt-4o", "claude-haiku-4-5", "gemini-2.0-flash"}) {
 		t.Fatalf("candidate order = %v", names)
 	}
 	if got[0].Fallbacks != nil {
 		t.Errorf("primary candidate should not carry Fallbacks, got %v", got[0].Fallbacks)
 	}
-	// gpt-4o inherits the primary's effort/temperature/noCache.
-	if got[1].Effort != EffortHigh {
-		t.Errorf("fallback effort = %q, want inherited %q", got[1].Effort, EffortHigh)
+	// A cross-provider fallback keeps an empty effort so its provider default can
+	// apply independently, while transport-neutral knobs still inherit.
+	if got[1].Effort != EffortNone {
+		t.Errorf("cross-provider fallback effort = %q, want provider default", got[1].Effort)
 	}
 	if got[1].Temperature == nil || *got[1].Temperature != 0.3 {
 		t.Errorf("fallback temperature = %v, want inherited 0.3", got[1].Temperature)
@@ -83,15 +87,18 @@ func TestModel_Candidates(t *testing.T) {
 	if !got[1].NoCache {
 		t.Errorf("fallback NoCache = false, want inherited true")
 	}
+	if got[2].Effort != EffortHigh {
+		t.Errorf("same-provider fallback effort = %q, want inherited %q", got[2].Effort, EffortHigh)
+	}
 	// gemini keeps its own effort, drops ID and nested fallbacks.
-	if got[2].Effort != EffortLow {
-		t.Errorf("fallback own effort = %q, want %q", got[2].Effort, EffortLow)
+	if got[3].Effort != EffortLow {
+		t.Errorf("fallback own effort = %q, want %q", got[3].Effort, EffortLow)
 	}
-	if got[2].ID != "" {
-		t.Errorf("fallback ID = %q, want cleared", got[2].ID)
+	if got[3].ID != "" {
+		t.Errorf("fallback ID = %q, want cleared", got[3].ID)
 	}
-	if got[2].Fallbacks != nil {
-		t.Errorf("nested fallbacks should be dropped, got %v", got[2].Fallbacks)
+	if got[3].Fallbacks != nil {
+		t.Errorf("nested fallbacks should be dropped, got %v", got[3].Fallbacks)
 	}
 }
 
