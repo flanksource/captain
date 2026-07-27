@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"github.com/flanksource/captain/pkg/aiflags"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -30,6 +31,21 @@ func (promptResultProvider) Execute(context.Context, ai.Request) (*ai.Response, 
 	}, nil
 }
 
+type structuredPromptResultProvider struct{}
+
+func (structuredPromptResultProvider) GetModel() string { return "claude-sonnet-4-6" }
+
+func (structuredPromptResultProvider) GetBackend() ai.Backend { return ai.BackendAnthropic }
+
+func (structuredPromptResultProvider) Execute(context.Context, ai.Request) (*ai.Response, error) {
+	return &ai.Response{
+		Text:           `{"answer":"42"}`,
+		StructuredData: json.RawMessage(`{"answer":"42"}`),
+		Model:          "claude-sonnet-4-6",
+		Backend:        ai.BackendAnthropic,
+	}, nil
+}
+
 type promptResultStreamingProvider struct{}
 
 func (promptResultStreamingProvider) GetModel() string { return "gpt-5-codex" }
@@ -45,6 +61,28 @@ func (promptResultStreamingProvider) ExecuteStream(_ context.Context, _ ai.Reque
 	events <- ai.Event{Kind: ai.EventSystem, SessionID: "stream-session-1", Model: "gpt-5-codex"}
 	events <- ai.Event{Kind: ai.EventText, Text: "streamed", Model: "gpt-5-codex"}
 	events <- ai.Event{Kind: ai.EventResult, Model: "gpt-5-codex", Usage: &ai.Usage{InputTokens: 21, OutputTokens: 9}, CostUSD: 0.02}
+	close(events)
+	return events, nil
+}
+
+type structuredResultStreamingProvider struct {
+	text string
+}
+
+func (structuredResultStreamingProvider) GetModel() string { return "gpt-5-codex" }
+
+func (structuredResultStreamingProvider) GetBackend() ai.Backend { return ai.BackendCodexCLI }
+
+func (structuredResultStreamingProvider) Execute(context.Context, ai.Request) (*ai.Response, error) {
+	return nil, nil
+}
+
+func (p structuredResultStreamingProvider) ExecuteStream(_ context.Context, _ ai.Request) (<-chan ai.Event, error) {
+	events := make(chan ai.Event, 2)
+	if p.text != "" {
+		events <- ai.Event{Kind: ai.EventText, Text: p.text}
+	}
+	events <- ai.Event{Kind: ai.EventResult, StructuredData: json.RawMessage(`{"answer":"42"}`)}
 	close(events)
 	return events, nil
 }
@@ -199,7 +237,7 @@ func TestAIRuntimeOptions_ToRequest_ValidationErrors(t *testing.T) {
 		{"temperature above max", func(o *AIPromptOptions) { o.Temperature = "3" }, "0.0-2.0"},
 		{"temperature below min", func(o *AIPromptOptions) { o.Temperature = "-1" }, "0.0-2.0"},
 		{"bad permission-mode", func(o *AIPromptOptions) { o.PermissionMode = "yolo" }, "permission-mode"},
-		{"bad effort", func(o *AIPromptOptions) { o.Effort = "max" }, "effort"},
+		{"bad effort", func(o *AIPromptOptions) { o.Effort = "extreme" }, "effort"},
 		{"max-turns above max", func(o *AIPromptOptions) { o.MaxTurns = 200 }, "max-turns"},
 		{"max-turns below min", func(o *AIPromptOptions) { o.MaxTurns = -1 }, "max-turns"},
 	}
@@ -216,11 +254,52 @@ func TestAIRuntimeOptions_ToRequest_ValidationErrors(t *testing.T) {
 
 func TestAIProviderOptions_ToConfig_ValidationErrors(t *testing.T) {
 	isolateSavedAI(t)
-	if _, err := (AIProviderOptions{Model: "claude-x", Backend: "nope"}).ToConfig(); err == nil || !strings.Contains(err.Error(), "backend") {
+	if _, err := (AIProviderOptions{ModelFlags: aiflags.ModelFlags{Model: "claude-x", Backend: "nope"}}).ToConfig(); err == nil || !strings.Contains(err.Error(), "backend") {
 		t.Fatalf("expected invalid backend error, got %v", err)
 	}
-	if _, err := (AIProviderOptions{Model: "claude-x", Budget: "free"}).ToConfig(); err == nil || !strings.Contains(err.Error(), "budget") {
+	if _, err := (AIProviderOptions{ModelFlags: aiflags.ModelFlags{Model: "claude-x"}, Budget: "free"}).ToConfig(); err == nil || !strings.Contains(err.Error(), "budget") {
 		t.Fatalf("expected invalid budget error, got %v", err)
+	}
+}
+
+// --api-url is the only way to point a captain run at a `captain ai mock`
+// endpoint for the backends that read Config.APIURL — the genkit ones, and
+// codex-cli, which ignores OPENAI_BASE_URL when a ChatGPT credential is stored.
+func TestAIProviderOptions_ToConfig_CarriesAPIURL(t *testing.T) {
+	isolateSavedAI(t)
+	const endpoint = "http://127.0.0.1:18095"
+	cfg, err := (AIProviderOptions{
+		ModelFlags: aiflags.ModelFlags{Model: "claude-sonnet-5", Backend: "anthropic"},
+		APIURL:     "  " + endpoint + "  ",
+	}).ToConfig()
+	if err != nil {
+		t.Fatalf("ToConfig: %v", err)
+	}
+	if cfg.APIURL != endpoint {
+		t.Fatalf("APIURL = %q, want %q", cfg.APIURL, endpoint)
+	}
+}
+
+func TestAIProviderOptions_ToConfig_LoadsSchemaRepairDefaults(t *testing.T) {
+	seedSavedAI(t, `
+ai:
+  model: claude-sonnet-5
+  backend: anthropic
+prompts:
+  schemaRepair:
+    model: gpt-5
+    backend: openai
+    prompt: /repo/prompts/json-repair.prompt
+`)
+	cfg, err := (AIProviderOptions{}).ToConfig()
+	if err != nil {
+		t.Fatalf("ToConfig: %v", err)
+	}
+	if cfg.SchemaRepair.Model.Name != "gpt-5" || cfg.SchemaRepair.Model.Backend != api.BackendOpenAI {
+		t.Fatalf("schema repair model = %#v", cfg.SchemaRepair.Model)
+	}
+	if cfg.SchemaRepair.Prompt != "/repo/prompts/json-repair.prompt" {
+		t.Fatalf("schema repair prompt = %q", cfg.SchemaRepair.Prompt)
 	}
 }
 
@@ -266,7 +345,7 @@ func TestAIRuntimeOptions_ToRequest_MaxTokensPrecedence(t *testing.T) {
 func TestAIRuntimeOptions_ToRequest_OverlaysSaved(t *testing.T) {
 	seedSavedAI(t, "ai:\n  noMCP: true\n  noHooks: true\n  noSkills: true\n  noUser: true\n  noProject: true\n  noMemory: true\n  maxTokens: 16000\n  reasoningEffort: low\n")
 
-	opts := AIRuntimeOptions{Effort: "high"} // flag overrides saved low
+	opts := AIRuntimeOptions{AIProviderOptions: AIProviderOptions{ModelFlags: aiflags.ModelFlags{Effort: "high"}}} // flag overrides saved low
 	req, err := opts.ToRequest("sys", "", "user")
 	if err != nil {
 		t.Fatalf("ToRequest: %v", err)
@@ -376,6 +455,23 @@ func TestRunBuffered_JSONIncludesFullInputSpec(t *testing.T) {
 	}
 }
 
+func TestRunBuffered_PreservesStructuredOutput(t *testing.T) {
+	got, err := runBuffered(context.Background(), structuredPromptResultProvider{}, ai.Request{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, ok := got.(AIPromptResult)
+	if !ok {
+		t.Fatalf("runBuffered returned %T, want AIPromptResult", got)
+	}
+	if result.Text != `{"answer":"42"}` {
+		t.Fatalf("Text = %q, want JSON transcript text", result.Text)
+	}
+	if result.StructuredOutput["answer"] != "42" {
+		t.Fatalf("StructuredOutput = %#v, want decoded answer", result.StructuredOutput)
+	}
+}
+
 func TestRunStreaming_JSONIncludesFullInputSpec(t *testing.T) {
 	req := ai.Request{
 		Model:       api.Model{Name: "gpt-5-codex", Backend: api.BackendCodexCLI, Effort: api.EffortHigh},
@@ -403,13 +499,38 @@ func TestRunStreaming_JSONIncludesFullInputSpec(t *testing.T) {
 	}
 }
 
+func TestRunStreaming_StructuredResultIsReturnedOnce(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		text string
+	}{
+		{name: "result only"},
+		{name: "replaces prior text", text: "discarded narrative"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := runStreaming(context.Background(), structuredResultStreamingProvider{text: tc.text}, ai.Request{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, ok := got.(AIPromptResult)
+			if !ok {
+				t.Fatalf("runStreaming returned %T, want AIPromptResult", got)
+			}
+			if result.Text != `{"answer":"42"}` {
+				t.Fatalf("Text = %q, want authoritative structured JSON once", result.Text)
+			}
+			if result.StructuredOutput["answer"] != "42" {
+				t.Fatalf("StructuredOutput = %#v, want decoded answer", result.StructuredOutput)
+			}
+		})
+	}
+}
+
 func defaultPromptOptions(t *testing.T) AIPromptOptions {
 	t.Helper()
 	return AIPromptOptions{
-		AIRuntimeOptions: AIRuntimeOptions{
-			Temperature: "0",
-		},
-		Timeout: "120s",
-		Prompt:  "hello",
+		AIRuntimeOptions: AIRuntimeOptions{AIProviderOptions: AIProviderOptions{ModelFlags: aiflags.ModelFlags{Temperature: "0"}}},
+		Timeout:          "120s",
+		Prompt:           "hello",
 	}
 }

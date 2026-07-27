@@ -17,9 +17,9 @@ func installTestCatalog(t *testing.T) {
 
 	if err := ai.SetModelCatalog([]ai.Model{
 		{ID: "anthropic/claude-sonnet-4-5", Backend: ai.BackendAnthropic, Label: "Claude Sonnet 4.5"},
-		{ID: "claude-agent-opus", Backend: ai.BackendClaudeAgent, Label: "Claude Agent · Opus"},
-		{ID: "claude-agent-sonnet", Backend: ai.BackendClaudeAgent, Label: "Claude Agent · Sonnet"},
-		{ID: "codex-gpt-5-codex", Backend: ai.BackendCodexCLI, AgentModel: "gpt-5-codex", Label: "Codex · GPT-5"},
+		{ID: "claude-opus-4-8", Backend: ai.BackendClaudeAgent, Label: "Claude Agent · Opus 4.8"},
+		{ID: "claude-sonnet-5", Backend: ai.BackendClaudeAgent, Label: "Claude Agent · Sonnet 5"},
+		{ID: "gpt-5.5", Backend: ai.BackendCodexAgent, Label: "Codex Agent · GPT-5.5"},
 	}); err != nil {
 		t.Fatalf("SetModelCatalog: %v", err)
 	}
@@ -33,18 +33,19 @@ func TestAgentCatalogModels(t *testing.T) {
 		want    []ai.ModelDef
 	}{
 		{
-			// AgentModel slug wins over the catalog ID: codex receives the
-			// model string verbatim, so it must be "gpt-5-codex" not
-			// "codex-gpt-5-codex".
 			backend: ai.BackendCodexCLI,
-			want:    []ai.ModelDef{{ID: "gpt-5-codex", Name: "Codex · GPT-5", Backend: ai.BackendCodexCLI}},
+			want:    []ai.ModelDef{{ID: "gpt-5.5", Name: "Codex Agent · GPT-5.5", Backend: ai.BackendCodexCLI, CapabilitiesKnown: true}},
+		},
+		{
+			backend: ai.BackendCodexAgent,
+			want:    []ai.ModelDef{{ID: "gpt-5.5", Name: "Codex Agent · GPT-5.5", Backend: ai.BackendCodexAgent, CapabilitiesKnown: true}},
 		},
 		{
 			// Sorted by ID; genkit (API) anthropic entry excluded.
 			backend: ai.BackendClaudeAgent,
 			want: []ai.ModelDef{
-				{ID: "claude-agent-opus", Name: "Claude Agent · Opus", Backend: ai.BackendClaudeAgent},
-				{ID: "claude-agent-sonnet", Name: "Claude Agent · Sonnet", Backend: ai.BackendClaudeAgent},
+				{ID: "claude-opus-4-8", Name: "Claude Agent · Opus 4.8", Backend: ai.BackendClaudeAgent, CapabilitiesKnown: true},
+				{ID: "claude-sonnet-5", Name: "Claude Agent · Sonnet 5", Backend: ai.BackendClaudeAgent, CapabilitiesKnown: true},
 			},
 		},
 		{
@@ -52,9 +53,23 @@ func TestAgentCatalogModels(t *testing.T) {
 			// its own backend.
 			backend: ai.BackendClaudeCLI,
 			want: []ai.ModelDef{
-				{ID: "claude-agent-opus", Name: "Claude Agent · Opus", Backend: ai.BackendClaudeCLI},
-				{ID: "claude-agent-sonnet", Name: "Claude Agent · Sonnet", Backend: ai.BackendClaudeCLI},
+				{ID: "claude-opus-4-8", Name: "Claude Agent · Opus 4.8", Backend: ai.BackendClaudeCLI, CapabilitiesKnown: true},
+				{ID: "claude-sonnet-5", Name: "Claude Agent · Sonnet 5", Backend: ai.BackendClaudeCLI, CapabilitiesKnown: true},
 			},
+		},
+		{
+			// claude-cmux uses the same local Claude catalog and is re-tagged with
+			// its own backend.
+			backend: ai.BackendClaudeCmux,
+			want: []ai.ModelDef{
+				{ID: "claude-opus-4-8", Name: "Claude Agent · Opus 4.8", Backend: ai.BackendClaudeCmux, CapabilitiesKnown: true},
+				{ID: "claude-sonnet-5", Name: "Claude Agent · Sonnet 5", Backend: ai.BackendClaudeCmux, CapabilitiesKnown: true},
+			},
+		},
+		{
+			// codex-cmux shares the codex-agent runtime model slug.
+			backend: ai.BackendCodexCmux,
+			want:    []ai.ModelDef{{ID: "gpt-5.5", Name: "Codex Agent · GPT-5.5", Backend: ai.BackendCodexCmux, CapabilitiesKnown: true}},
 		},
 		{
 			// No catalog entries for gemini-cli: empty, never an error.

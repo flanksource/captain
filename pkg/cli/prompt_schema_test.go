@@ -4,30 +4,31 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"reflect"
 	"strings"
 	"testing"
-	"time"
 
+	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/spf13/cobra"
 )
 
-// fakeSchemaProbe reports no API keys and no CLI login files but all CLI binaries
-// present. This keeps the probe hermetic (fetchAPIModels makes no network call
-// without an API key) while CLI/agent backends still list their static catalog
-// models, giving a deterministic adapter set.
-func fakeSchemaProbe() authProbe {
-	return authProbe{
-		getenv:     func(string) string { return "" },
-		lookPath:   func(bin string) (string, error) { return "/usr/local/bin/" + bin, nil },
-		fileExists: func(string) bool { return false },
-		home:       "/home/test",
+// fakeSchemaProbe reports no API keys and no CLI login files but all CLI
+// binaries present. This keeps the probe hermetic: fetchAPIModels makes no
+// network call without an API key, API backends stay key-gated, and CLI-style
+// backends project exact IDs from Captain's internal registry.
+func fakeSchemaProbe() ai.AuthProbe {
+	return ai.AuthProbe{
+		Getenv:     func(string) string { return "" },
+		LookPath:   func(bin string) (string, error) { return "/usr/local/bin/" + bin, nil },
+		FileExists: func(string) bool { return false },
+		Home:       "/home/test",
 	}
 }
 
 func stubbedSchemaAdapters(t *testing.T) []AdapterStatus {
 	t.Helper()
-	adapters, err := ProbeAdapters(WhoamiOptions{Models: true}, fakeSchemaProbe())
+	adapters, err := ai.ProbeAdapters(ai.WhoamiOptions{Models: true}, fakeSchemaProbe())
 	if err != nil {
 		t.Fatalf("ProbeAdapters: %v", err)
 	}
@@ -63,22 +64,41 @@ func TestPromptSchemaDocumentBackendsAndConditionals(t *testing.T) {
 		}
 	}
 
-	// codex-cli's models come from the static catalog (one entry, AgentModel
-	// "gpt-5-codex") - an independent baseline unaffected by API keys.
-	codexModels := byName[string(api.BackendCodexCLI)]["models"].([]string)
-	if !contains(codexModels, "gpt-5-codex") {
-		t.Errorf("codex-cli models = %v, want to contain gpt-5-codex", codexModels)
+	codexCLIModels, hasModels := byName[string(api.BackendCodexCLI)]["models"].([]string)
+	if !hasModels || len(codexCLIModels) == 0 {
+		t.Fatalf("codex-cli should expose exact registry models without API provider data: %+v", byName[string(api.BackendCodexCLI)])
 	}
+	if got := codexCLIModels[0]; got != "gpt-5.6-sol" {
+		t.Errorf("codex-cli first model = %q, want gpt-5.6-sol", got)
+	}
+	flat := doc["models"].([]map[string]any)
+	codexModel := schemaModelForBackend(t, flat, "gpt-5.6-sol", string(api.BackendCodexCLI))
+	if got := codexModel["provider"]; got != "codex-cli" {
+		t.Errorf("flat model provider = %v, want codex-cli", got)
+	}
+	if got, ok := codexModel["label"].(string); !ok || got == "" {
+		t.Errorf("flat model label = %#v, want non-empty string", codexModel["label"])
+	}
+	if _, ok := codexModel["reasoning"].(bool); !ok {
+		t.Errorf("flat model reasoning = %#v, want bool", codexModel["reasoning"])
+	}
+	if efforts, ok := codexModel["supportedEfforts"].([]string); !ok || !containsString(efforts, "max") || !containsString(efforts, "ultra") {
+		t.Errorf("flat model supportedEfforts = %#v, want patched Codex ultra", codexModel["supportedEfforts"])
+	}
+	if _, ok := codexModel["defaultEffort"]; ok {
+		t.Errorf("flat model should not have a locally patched default effort: %#v", codexModel["defaultEffort"])
+	}
+	if got, ok := codexModel["configured"].(bool); !ok || got {
+		t.Errorf("flat model configured = %#v, want false for fake unauthenticated CLI", codexModel["configured"])
+	}
+	assertSchemaModelBackends(t, codexModel, string(api.BackendCodexCLI), string(api.BackendCodexAgent), string(api.BackendCodexCmux))
 
-	// anthropic is unauthenticated in the fake probe, so its models fall back to
-	// the catalog and the "set your key" hint is cleared.
 	anthropic := byName[string(api.BackendAnthropic)]
-	anthropicModels, _ := anthropic["models"].([]string)
-	if !contains(anthropicModels, "claude-sonnet-5") {
-		t.Errorf("unauthenticated anthropic models = %v, want catalog fallback incl claude-sonnet-5", anthropicModels)
+	if _, hasModels := anthropic["models"]; hasModels {
+		t.Errorf("anthropic should not synthesize models without live provider data: %+v", anthropic)
 	}
-	if _, hasErr := anthropic["modelError"]; hasErr {
-		t.Errorf("anthropic should carry no modelError once the catalog answers")
+	if errText, _ := anthropic["modelError"].(string); !strings.Contains(errText, "ANTHROPIC_API_KEY") {
+		t.Errorf("anthropic modelError = %q, want missing-key hint", errText)
 	}
 
 	spec := doc["spec"].(map[string]any)
@@ -134,6 +154,64 @@ func TestPromptSchemaDocumentBackendsAndConditionals(t *testing.T) {
 	}
 }
 
+func TestInjectSpecConditionalsUsesOnlyModelBackedEfforts(t *testing.T) {
+	spec := map[string]any{}
+	adapters := []AdapterStatus{{
+		Backend: string(api.BackendCodexAgent),
+		ModelDetails: []ai.ModelDef{
+			{ID: "gpt-5.6-sol", SupportedEfforts: []api.Effort{api.EffortLow, api.EffortMax}},
+			{ID: "no-effort-model"},
+		},
+	}}
+	if err := injectSpecConditionals(spec, adapters, nil); err != nil {
+		t.Fatalf("injectSpecConditionals: %v", err)
+	}
+	rules := spec["allOf"].([]any)[0].(map[string]any)["then"].(map[string]any)["allOf"].([]any)
+	got := map[string][]any{}
+	for _, raw := range rules {
+		rule := raw.(map[string]any)
+		model := rule["if"].(map[string]any)["properties"].(map[string]any)["model"].(map[string]any)["const"].(string)
+		got[model] = rule["then"].(map[string]any)["properties"].(map[string]any)["effort"].(map[string]any)["enum"].([]any)
+	}
+	if want := []any{"", "low", "max"}; !reflect.DeepEqual(got["gpt-5.6-sol"], want) {
+		t.Errorf("Sol effort enum = %v, want %v", got["gpt-5.6-sol"], want)
+	}
+	if want := []any{""}; !reflect.DeepEqual(got["no-effort-model"], want) {
+		t.Errorf("no-effort model enum = %v, want %v", got["no-effort-model"], want)
+	}
+}
+
+func schemaModelForBackend(t *testing.T, models []map[string]any, id, backend string) map[string]any {
+	t.Helper()
+	for _, model := range models {
+		if model["id"] != id {
+			continue
+		}
+		backends, ok := model["backends"].([]string)
+		if !ok {
+			t.Fatalf("model %s backends = %T, want []string", id, model["backends"])
+		}
+		if containsString(backends, backend) {
+			return model
+		}
+	}
+	t.Fatalf("models[] missing id %q with backend %q: %+v", id, backend, models)
+	return nil
+}
+
+func assertSchemaModelBackends(t *testing.T, model map[string]any, want ...string) {
+	t.Helper()
+	backends, ok := model["backends"].([]string)
+	if !ok {
+		t.Fatalf("model backends = %T, want []string", model["backends"])
+	}
+	for _, backend := range want {
+		if !containsString(backends, backend) {
+			t.Errorf("model backends = %v, missing %s", backends, backend)
+		}
+	}
+}
+
 func TestPromptSchemaExampleIsPortable(t *testing.T) {
 	ex := promptSchemaExampleSpec()
 
@@ -152,6 +230,19 @@ func TestPromptSchemaExampleIsPortable(t *testing.T) {
 	if _, err := api.InferBackend(model); err != nil {
 		t.Errorf("example model %q does not resolve to a backend: %v", model, err)
 	}
+	prompt := ex["prompt"].(map[string]any)
+	for _, excluded := range []string{"source", "metadata"} {
+		if _, ok := prompt[excluded]; ok {
+			t.Errorf("example prompt includes editor-excluded %q", excluded)
+		}
+	}
+	setup := ex["setup"].(map[string]any)
+	if _, ok := setup["env"]; ok {
+		t.Errorf("example setup uses stale env key: %+v", setup)
+	}
+	if _, ok := setup["envVars"]; !ok {
+		t.Errorf("example setup missing envVars: %+v", setup)
+	}
 
 	// The example selects claude-cmux, so its cliArgs must validate as
 	// ClaudeCmuxOptions — matching the schema's per-backend conditional.
@@ -167,50 +258,11 @@ func TestPromptSchemaExampleIsPortable(t *testing.T) {
 	}
 }
 
-func TestCachedSchemaAdaptersReusesWithinTTL(t *testing.T) {
-	prevProbe := probeSchemaAdapters
-	prevCache, prevAt := schemaAdapterCache, schemaAdapterAt
-	t.Cleanup(func() {
-		probeSchemaAdapters = prevProbe
-		schemaAdapterCache, schemaAdapterAt = prevCache, prevAt
-	})
-
-	stub := stubbedSchemaAdapters(t)
-	calls := 0
-	probeSchemaAdapters = func() ([]AdapterStatus, error) {
-		calls++
-		return stub, nil
-	}
-	schemaAdapterCache, schemaAdapterAt = nil, time.Time{}
-
-	base := time.Unix(1_000_000, 0)
-	if _, err := cachedSchemaAdapters(base); err != nil {
-		t.Fatalf("cachedSchemaAdapters: %v", err)
-	}
-	if _, err := cachedSchemaAdapters(base.Add(10 * time.Second)); err != nil {
-		t.Fatalf("cachedSchemaAdapters: %v", err)
-	}
-	if calls != 1 {
-		t.Errorf("probe called %d times within TTL, want 1", calls)
-	}
-	if _, err := cachedSchemaAdapters(base.Add(2 * schemaAdapterCacheTTL)); err != nil {
-		t.Fatalf("cachedSchemaAdapters: %v", err)
-	}
-	if calls != 2 {
-		t.Errorf("probe called %d times after TTL expiry, want 2", calls)
-	}
-}
-
 func TestWritePromptSchemaEmitsValidJSON(t *testing.T) {
-	prevProbe := probeSchemaAdapters
-	prevCache, prevAt := schemaAdapterCache, schemaAdapterAt
-	t.Cleanup(func() {
-		probeSchemaAdapters = prevProbe
-		schemaAdapterCache, schemaAdapterAt = prevCache, prevAt
-	})
+	prev := schemaAdapters
+	t.Cleanup(func() { schemaAdapters = prev })
 	stub := stubbedSchemaAdapters(t)
-	probeSchemaAdapters = func() ([]AdapterStatus, error) { return stub, nil }
-	schemaAdapterCache, schemaAdapterAt = nil, time.Time{}
+	schemaAdapters = func() ([]AdapterStatus, error) { return stub, nil }
 
 	var buf bytes.Buffer
 	if err := WritePromptSchema(&buf); err != nil {

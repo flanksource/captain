@@ -19,17 +19,30 @@ const runSubBuffer = 64
 // frames. Every frame is buffered for replay to late/reconnecting subscribers
 // and fanned out to current subscribers.
 type runStream struct {
-	mu      sync.Mutex
-	entries []session.Message
-	subs    map[chan session.Message]struct{}
-	done    bool
-	summary *PromptRunSummary
-	errMsg  string
-	endedAt time.Time
+	mu            sync.Mutex
+	entries       []session.Message
+	subs          map[chan session.Message]struct{}
+	eventSubs     map[chan runStreamEvent]struct{}
+	run           PromptRunFrame
+	chatState     *ChatStateFrame
+	cancel        context.CancelFunc
+	stopRequested bool
+	done          bool
+	summary       *PromptRunSummary
+	errMsg        string
+	endedAt       time.Time
 }
 
 func newRunStream() *runStream {
-	return &runStream{subs: map[chan session.Message]struct{}{}}
+	return &runStream{
+		subs:      map[chan session.Message]struct{}{},
+		eventSubs: map[chan runStreamEvent]struct{}{},
+	}
+}
+
+type runStreamEvent struct {
+	name string
+	data any
 }
 
 // publish appends a frame and fans it out. A subscriber whose buffer is full is
@@ -46,6 +59,68 @@ func (s *runStream) publish(e session.Message) {
 		case ch <- e:
 		default:
 			delete(s.subs, ch)
+			close(ch)
+		}
+	}
+	s.publishEventLocked(runStreamEvent{name: "entry", data: e})
+}
+
+func (s *runStream) setRun(frame PromptRunFrame) {
+	s.mu.Lock()
+	s.run = frame
+	s.publishEventLocked(runStreamEvent{name: "run", data: frame})
+	s.mu.Unlock()
+}
+
+func (s *runStream) setChatState(frame ChatStateFrame) {
+	s.mu.Lock()
+	copy := frame
+	copy.Queued = append([]ChatQueuedMessage(nil), frame.Queued...)
+	copy.DiscardedMessageIDs = append([]string(nil), frame.DiscardedMessageIDs...)
+	s.chatState = &copy
+	s.run.SessionID = frame.SessionID
+	s.run.Capabilities = frame.Capabilities
+	s.publishEventLocked(runStreamEvent{name: "state", data: copy})
+	s.mu.Unlock()
+}
+
+func (s *runStream) setCancel(cancel context.CancelFunc) {
+	s.mu.Lock()
+	s.cancel = cancel
+	requested := s.stopRequested
+	s.mu.Unlock()
+	if requested {
+		cancel()
+	}
+}
+
+func (s *runStream) requestStop() bool {
+	s.mu.Lock()
+	if s.done {
+		s.mu.Unlock()
+		return false
+	}
+	s.stopRequested = true
+	cancel := s.cancel
+	s.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	return true
+}
+
+func (s *runStream) wasStopped() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stopRequested
+}
+
+func (s *runStream) publishEventLocked(event runStreamEvent) {
+	for ch := range s.eventSubs {
+		select {
+		case ch <- event:
+		default:
+			delete(s.eventSubs, ch)
 			close(ch)
 		}
 	}
@@ -67,8 +142,20 @@ func (s *runStream) finish(sum *PromptRunSummary, errMsg string) {
 	s.summary = sum
 	s.errMsg = errMsg
 	s.endedAt = time.Now()
+	if errMsg != "" {
+		s.run.Status = "error"
+	} else {
+		s.run.Status = "done"
+	}
+	if sum != nil && sum.SessionID != "" {
+		s.run.SessionID = sum.SessionID
+	}
 	for ch := range s.subs {
 		delete(s.subs, ch)
+		close(ch)
+	}
+	for ch := range s.eventSubs {
+		delete(s.eventSubs, ch)
 		close(ch)
 	}
 }
@@ -88,14 +175,27 @@ func (s *runStream) subscribe() (replay []session.Message, ch chan session.Messa
 	return replay, ch, false, nil, ""
 }
 
-func (s *runStream) unsubscribe(ch chan session.Message) {
+func (s *runStream) subscribeEvents() (PromptRunFrame, []session.Message, *ChatStateFrame, chan runStreamEvent, bool, *PromptRunSummary, string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	replay := append([]session.Message(nil), s.entries...)
+	state := cloneChatState(s.chatState)
+	if s.done {
+		return s.run, replay, state, nil, true, s.summary, s.errMsg
+	}
+	ch := make(chan runStreamEvent, runSubBuffer)
+	s.eventSubs[ch] = struct{}{}
+	return s.run, replay, state, ch, false, nil, ""
+}
+
+func (s *runStream) unsubscribeEvents(ch chan runStreamEvent) {
 	if ch == nil {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.subs[ch]; ok {
-		delete(s.subs, ch)
+	if _, ok := s.eventSubs[ch]; ok {
+		delete(s.eventSubs, ch)
 		close(ch)
 	}
 }
@@ -170,7 +270,9 @@ func (b *runBroker) prune(maxAge time.Duration) {
 }
 
 type promptRunSnapshotBody struct {
+	Run     PromptRunFrame    `json:"run"`
 	Entries []session.Message `json:"entries"`
+	State   *ChatStateFrame   `json:"state,omitempty"`
 	Done    bool              `json:"done"`
 	Summary *PromptRunSummary `json:"summary,omitempty"`
 	Error   string            `json:"error,omitempty"`
@@ -195,10 +297,14 @@ func handlePromptRunStream(b *runBroker) http.HandlerFunc {
 		}
 		setSSEHeaders(w)
 
-		replay, ch, done, summary, errMsg := stream.subscribe()
-		defer stream.unsubscribe(ch)
+		run, replay, state, ch, done, summary, errMsg := stream.subscribeEvents()
+		defer stream.unsubscribeEvents(ch)
+		writeSSE(w, "run", run)
 		for _, e := range replay {
 			writeSSE(w, "entry", e)
+		}
+		if state != nil {
+			writeSSE(w, "state", state)
 		}
 		if done {
 			writeTerminal(w, summary, errMsg)
@@ -213,7 +319,7 @@ func handlePromptRunStream(b *runBroker) http.HandlerFunc {
 			select {
 			case <-r.Context().Done():
 				return
-			case e, open := <-ch:
+			case event, open := <-ch:
 				if !open {
 					if d, sum, em := stream.state(); d {
 						writeTerminal(w, sum, em)
@@ -221,7 +327,7 @@ func handlePromptRunStream(b *runBroker) http.HandlerFunc {
 					}
 					return
 				}
-				writeSSE(w, "entry", e)
+				writeSSE(w, event.name, event.data)
 				flusher.Flush()
 			case <-heartbeat.C:
 				fmt.Fprint(w, ": ping\n\n")
@@ -240,10 +346,21 @@ func handlePromptRunSnapshot(b *runBroker) http.HandlerFunc {
 			http.Error(w, "unknown run", http.StatusNotFound)
 			return
 		}
-		entries, done, summary, errMsg := stream.snapshot()
+		run, entries, state, ch, done, summary, errMsg := stream.subscribeEvents()
+		stream.unsubscribeEvents(ch)
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(promptRunSnapshotBody{Entries: entries, Done: done, Summary: summary, Error: errMsg})
+		_ = json.NewEncoder(w).Encode(promptRunSnapshotBody{Run: run, Entries: entries, State: state, Done: done, Summary: summary, Error: errMsg})
 	}
+}
+
+func cloneChatState(state *ChatStateFrame) *ChatStateFrame {
+	if state == nil {
+		return nil
+	}
+	copy := *state
+	copy.Queued = append([]ChatQueuedMessage(nil), state.Queued...)
+	copy.DiscardedMessageIDs = append([]string(nil), state.DiscardedMessageIDs...)
+	return &copy
 }
 
 func setSSEHeaders(w http.ResponseWriter) {

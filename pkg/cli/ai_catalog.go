@@ -8,11 +8,8 @@ import "github.com/flanksource/captain/pkg/ai"
 // (subscription/OAuth via the installed binary), so enumerating their models
 // must never require the parent provider's API key.
 //
-// The returned ID is the slug the captain provider expects at run time:
-// AgentModel when the catalog sets one (e.g. codex's "gpt-5-codex", which the
-// app-server sends verbatim) otherwise the catalog ID (e.g. "claude-agent-sonnet",
-// which the claude-agent provider de-prefixes itself). claude-cli shares the
-// claude-agent provider, so it shares its catalog entries.
+// The returned ID is the exact provider model ID Captain sends at runtime.
+// CLI/cmux modes share the corresponding agent catalog entries.
 func agentCatalogModels(b ai.Backend) []ai.ModelDef {
 	return ai.AgentCatalogModels(b)
 }

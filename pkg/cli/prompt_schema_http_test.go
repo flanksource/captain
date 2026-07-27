@@ -5,19 +5,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 )
 
 func TestHandlePromptSchemaServesDocument(t *testing.T) {
-	prevProbe := probeSchemaAdapters
-	prevCache, prevAt := schemaAdapterCache, schemaAdapterAt
-	t.Cleanup(func() {
-		probeSchemaAdapters = prevProbe
-		schemaAdapterCache, schemaAdapterAt = prevCache, prevAt
-	})
+	prev := schemaAdapters
+	t.Cleanup(func() { schemaAdapters = prev })
 	stub := stubbedSchemaAdapters(t)
-	probeSchemaAdapters = func() ([]AdapterStatus, error) { return stub, nil }
-	schemaAdapterCache, schemaAdapterAt = nil, time.Time{}
+	schemaAdapters = func() ([]AdapterStatus, error) { return stub, nil }
 
 	req := httptest.NewRequest(http.MethodGet, "/api/captain/ai/prompt/schema", nil)
 	rec := httptest.NewRecorder()

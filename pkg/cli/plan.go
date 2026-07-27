@@ -2,13 +2,14 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
-	"sort"
 	"strings"
 
 	"github.com/flanksource/captain/pkg/ai/history"
 	"github.com/flanksource/captain/pkg/claude"
+	captaindb "github.com/flanksource/captain/pkg/database"
 	captainsession "github.com/flanksource/captain/pkg/session"
 	"github.com/flanksource/clicky"
 	"github.com/flanksource/clicky/api"
@@ -26,17 +27,21 @@ func (PlanOptions) GetName() string { return "plan [session-id]" }
 
 // PlanResult is the exit-plan-mode plan for a single session.
 type PlanResult struct {
-	SessionID string `json:"sessionId" pretty:"label=Session"`
-	Source    string `json:"source,omitempty" pretty:"label=Source"`
-	Path      string `json:"path,omitempty" pretty:"label=Plan"`
-	OnDisk    bool   `json:"onDisk" pretty:"label=On Disk"`
-	Slug      string `json:"slug,omitempty" pretty:"label=Slug"`
-	Content   string `json:"content,omitempty"`
+	SessionID  string `json:"sessionId" pretty:"label=Session"`
+	PlanID     string `json:"planId,omitempty" pretty:"label=Plan ID"`
+	RevisionID string `json:"revisionId,omitempty"`
+	Revision   int    `json:"revision,omitempty"`
+	Source     string `json:"source,omitempty" pretty:"label=Source"`
+	Path       string `json:"path,omitempty" pretty:"label=Plan"`
+	OnDisk     bool   `json:"onDisk" pretty:"label=On Disk"`
+	Slug       string `json:"slug,omitempty" pretty:"label=Slug"`
+	Content    string `json:"content,omitempty"`
 
 	pathOnly bool
 }
 
 func RunPlan(opts PlanOptions) (PlanResult, error) {
+	ctx := context.Background()
 	source, err := normalizeSessionSource(opts.Source)
 	if err != nil {
 		return PlanResult{}, err
@@ -45,32 +50,28 @@ func RunPlan(opts PlanOptions) (PlanResult, error) {
 	if err != nil {
 		return PlanResult{}, err
 	}
+	db, err := freshenSessionDB(ctx)
+	if err != nil {
+		return PlanResult{}, err
+	}
 
 	id := strings.TrimSpace(opts.SessionID)
 	if id != "" {
-		if candidate, ok, err := findSessionCandidateByID(id, source); err != nil {
-			return PlanResult{}, err
-		} else if ok {
-			plan, err := resolveSessionPlan(candidate)
-			if err != nil {
-				return PlanResult{}, err
-			}
-			if plan == nil {
-				return PlanResult{}, fmt.Errorf("session %q has no plan", id)
-			}
-			plan.pathOnly = opts.PathOnly
-			return *plan, nil
-		}
-
-		// A hashed session key cannot be found from the transcript filename, so
-		// keep the older all-project scan as a fallback for that less-common form.
-		candidates, err := discoverSessionCandidates(context.Background(), "", true, source)
+		persisted, ok, err := resolveNativePlan(ctx, db, id, source)
 		if err != nil {
 			return PlanResult{}, err
 		}
-		candidate, ok := matchPlanCandidate(candidates, id)
-		if !ok {
-			return PlanResult{}, fmt.Errorf("session %q not found", id)
+		if ok {
+			persisted.pathOnly = opts.PathOnly
+			return *persisted, nil
+		}
+		overview, err := db.GetSessionOverviewByIdentity(ctx, id)
+		if err != nil {
+			return PlanResult{}, err
+		}
+		candidate := candidateFromOverview(*overview)
+		if candidate.path == "" {
+			return PlanResult{}, fmt.Errorf("session %q has no transcript recorded on this host", id)
 		}
 		plan, err := resolveSessionPlan(candidate)
 		if err != nil {
@@ -83,33 +84,119 @@ func RunPlan(opts PlanOptions) (PlanResult, error) {
 		return *plan, nil
 	}
 
-	candidates, err := discoverSessionCandidates(context.Background(), cwd, opts.All, source)
+	_, projectRoot, _ := resolveSessionScope(cwd, opts.All, "")
+	plan, err := resolveLatestTranscriptPlan(ctx, db, latestTranscriptPlanQuery{
+		Source: source, ProjectRoot: projectRoot,
+	})
 	if err != nil {
 		return PlanResult{}, err
 	}
-	sort.SliceStable(candidates, func(i, j int) bool {
-		return sessionSortTime(candidates[i].record).After(sessionSortTime(candidates[j].record))
-	})
-	for _, candidate := range candidates {
-		plan, err := resolveSessionPlan(candidate)
-		if err != nil || plan == nil {
-			continue
-		}
-		plan.pathOnly = opts.PathOnly
-		return *plan, nil
+	if plan == nil {
+		return PlanResult{}, fmt.Errorf("no session with a plan found in %s", scopeLabel(cwd, opts.All))
 	}
-	return PlanResult{}, fmt.Errorf("no session with a plan found in %s", scopeLabel(cwd, opts.All))
+	plan.pathOnly = opts.PathOnly
+	return *plan, nil
 }
 
-// matchPlanCandidate finds the candidate whose record key or id matches id
-// exactly, or whose id has id as a prefix (so the short ids printed elsewhere work).
-func matchPlanCandidate(candidates []sessionCandidate, id string) (sessionCandidate, bool) {
-	for _, c := range candidates {
-		if c.record.Key == id || c.record.ID == id || (c.record.ID != "" && strings.HasPrefix(c.record.ID, id)) {
-			return c, true
+type latestTranscriptPlanQuery struct {
+	Source      string
+	ProjectRoot string
+}
+
+const latestTranscriptPlanPageLimit = 100
+
+func resolveLatestTranscriptPlan(
+	ctx context.Context,
+	db sessionListStore,
+	query latestTranscriptPlanQuery,
+) (*PlanResult, error) {
+	filter := captaindb.SessionListFilter{
+		ProjectRoot: query.ProjectRoot,
+		RootsOnly:   true,
+		Limit:       latestTranscriptPlanPageLimit,
+	}
+	if query.Source != "all" {
+		filter.Source = query.Source
+	}
+	seen := map[string]struct{}{}
+	for {
+		page, err := db.ListSessionSummaries(ctx, filter)
+		if err != nil {
+			return nil, fmt.Errorf("list Captain sessions while resolving latest plan: %w", err)
+		}
+		for i := range page.Rows {
+			candidate := candidateFromOverview(overviewFromSummary(page.Rows[i]))
+			if candidate.path == "" {
+				continue
+			}
+			plan, err := resolveSessionPlan(candidate)
+			if err == nil && plan != nil {
+				return plan, nil
+			}
+		}
+		if page.NextCursor == "" {
+			return nil, nil
+		}
+		if _, ok := seen[page.NextCursor]; ok {
+			return nil, fmt.Errorf("captain plan search pagination repeated cursor %q", page.NextCursor)
+		}
+		seen[page.NextCursor] = struct{}{}
+		filter.Cursor = page.NextCursor
+	}
+}
+
+// resolveNativePlan resolves persisted plan content without consulting the
+// transcript or source plan path. Approved content wins; otherwise the latest
+// immutable revision of the newest plan variant is returned.
+func resolveNativePlan(ctx context.Context, db *captaindb.DB, identity, source string) (*PlanResult, bool, error) {
+	sourceFilter := source
+	if sourceFilter == "all" {
+		sourceFilter = ""
+	}
+	session, err := db.GetSessionByIdentity(ctx, identity, sourceFilter, "", "")
+	if err != nil {
+		if errors.Is(err, captaindb.ErrSessionNotFound) {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("resolve persisted Captain session %q: %w", identity, err)
+	}
+	plans, err := db.ListPlans(ctx, captaindb.PlanFilter{SourceSessionID: &session.ID})
+	if err != nil {
+		return nil, false, fmt.Errorf("list persisted plans for session %s: %w", session.ID, err)
+	}
+	var selected *captaindb.Plan
+	for i := range plans {
+		if plans[i].ApprovedRevision != nil {
+			selected = &plans[i]
+			break
+		}
+		if selected == nil && plans[i].LatestRevision != nil {
+			selected = &plans[i]
 		}
 	}
-	return sessionCandidate{}, false
+	if selected == nil {
+		return nil, false, nil
+	}
+	revision := selected.ApprovedRevision
+	if revision == nil {
+		revision = selected.LatestRevision
+	}
+	onDisk := false
+	if selected.Path != "" {
+		_, err := os.Stat(selected.Path)
+		onDisk = err == nil
+	}
+	return &PlanResult{
+		SessionID:  session.ID.String(),
+		PlanID:     selected.ID.String(),
+		RevisionID: revision.ID.String(),
+		Revision:   revision.Revision,
+		Source:     session.Source,
+		Path:       selected.Path,
+		OnDisk:     onDisk,
+		Slug:       selected.Slug,
+		Content:    revision.PlanMarkdown,
+	}, true, nil
 }
 
 // resolveSessionPlan reads a session transcript and recovers its plan. It returns

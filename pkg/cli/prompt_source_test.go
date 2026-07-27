@@ -17,6 +17,7 @@ func TestActionFlagsToOptions_DecodesSlicesBoolsInts(t *testing.T) {
 		"skill-dir":       "/a,/b",
 		"max-tokens":      "1234",
 		"var":             "a=1,b=2",
+		"multi-models":    "cli:sonnet-5,cmux:opus",
 		"prompt":          "hi",
 		"permission-mode": "plan",
 	}
@@ -41,6 +42,9 @@ func TestActionFlagsToOptions_DecodesSlicesBoolsInts(t *testing.T) {
 	}
 	if len(o.Var) != 2 || o.Var[0] != "a=1" {
 		t.Errorf("var = %v", o.Var)
+	}
+	if len(o.MultiModels) != 2 || o.MultiModels[0] != "cli:sonnet-5" || o.MultiModels[1] != "cmux:opus" {
+		t.Errorf("multi-models = %v", o.MultiModels)
 	}
 	if _, err := actionFlagsToOptions(map[string]string{"max-tokens": "nope"}); err == nil {
 		t.Error("expected error on non-numeric max-tokens")
