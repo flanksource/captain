@@ -1,0 +1,38 @@
+name: error-overloaded
+description: >
+  An overload error followed by a success, for the retry and error-mapping paths.
+  529 and 429 are the two statuses both agent CLIs retry, so a client that
+  handles them correctly consumes rule 1 then rule 2 and ends up with the reply.
+
+anthropic:
+  - match:
+      prompt_contains: "retry me"
+    respond:
+      error:
+        status: 529
+        type: overloaded_error
+        message: "Overloaded"
+
+  - match:
+      prompt_contains: "retry me"
+    respond:
+      text: "Recovered after the overload."
+      stop_reason: end_turn
+      usage: {input: 30, output: 6}
+
+openai:
+  - match:
+      prompt_contains: "retry me"
+    respond:
+      error:
+        status: 429
+        type: rate_limit_error
+        code: rate_limit_exceeded
+        message: "Rate limit reached"
+
+  - match:
+      prompt_contains: "retry me"
+    respond:
+      text: "Recovered after the rate limit."
+      finish_reason: stop
+      usage: {input: 30, output: 6}

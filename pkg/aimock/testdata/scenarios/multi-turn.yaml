@@ -1,0 +1,51 @@
+name: multi-turn
+description: >
+  Three turns against the same matcher, proving replies are consumed in order
+  rather than re-matched. Every rule here matches the same prompt; only
+  consumption distinguishes them. The trailing unmatched rule with repeat -1 is
+  the section default: an empty matcher matches everything and an unlimited rule
+  never exhausts.
+
+anthropic:
+  - match:
+      prompt_contains: "count"
+    respond:
+      text: "one"
+      usage: {input: 10, output: 1}
+  - match:
+      prompt_contains: "count"
+    respond:
+      text: "two"
+      usage: {input: 12, output: 1}
+  - match:
+      prompt_contains: "count"
+    respond:
+      text: "three"
+      usage: {input: 14, output: 1}
+  - repeat: -1
+    respond:
+      text: "done counting"
+      stop_reason: end_turn
+      usage: {input: 16, output: 2}
+
+openai:
+  - match:
+      prompt_contains: "count"
+    respond:
+      text: "one"
+      usage: {input: 10, output: 1}
+  - match:
+      prompt_contains: "count"
+    respond:
+      text: "two"
+      usage: {input: 12, output: 1}
+  - match:
+      prompt_contains: "count"
+    respond:
+      text: "three"
+      usage: {input: 14, output: 1}
+  - repeat: -1
+    respond:
+      text: "done counting"
+      finish_reason: stop
+      usage: {input: 16, output: 2}

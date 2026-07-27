@@ -1,0 +1,24 @@
+name: structured-output
+description: >
+  A reply whose text is a JSON document, for the schema-shaped prompt paths.
+  The mock does not validate against the caller's schema — it returns exactly
+  what the scenario says, so a test can assert on captain's own parsing and on
+  what it does when the document does not fit.
+
+anthropic:
+  - match:
+      prompt_contains: "release notes"
+    respond:
+      text: |
+        {"title":"v1.4.0","highlights":["Faster ingest","Fewer retries"],"breaking":false}
+      stop_reason: end_turn
+      usage: {input: 220, output: 40}
+
+openai:
+  - match:
+      prompt_contains: "release notes"
+    respond:
+      text: |
+        {"title":"v1.4.0","highlights":["Faster ingest","Fewer retries"],"breaking":false}
+      finish_reason: stop
+      usage: {input: 220, output: 40}
