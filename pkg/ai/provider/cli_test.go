@@ -33,33 +33,6 @@ func TestParseStderr(t *testing.T) {
 	}
 }
 
-func TestRunCLIUsesContextDir(t *testing.T) {
-	cwd := filepath.Join(t.TempDir(), "workspace")
-	if err := os.MkdirAll(cwd, 0o755); err != nil {
-		t.Fatalf("mkdir workspace: %v", err)
-	}
-	bin := filepath.Join(t.TempDir(), "fake-cli")
-	if err := os.WriteFile(bin, []byte("#!/bin/sh\npwd\ncat >/dev/null\n"), 0o755); err != nil {
-		t.Fatalf("write fake cli: %v", err)
-	}
-
-	stdout, _, err := runCLI(context.Background(), bin, []byte("input"), cwd)
-	if err != nil {
-		t.Fatalf("runCLI: %v", err)
-	}
-	got, err := filepath.EvalSymlinks(filepath.Clean(strings.TrimSpace(string(stdout))))
-	if err != nil {
-		t.Fatalf("eval pwd: %v", err)
-	}
-	want, err := filepath.EvalSymlinks(cwd)
-	if err != nil {
-		t.Fatalf("eval cwd: %v", err)
-	}
-	if got != want {
-		t.Errorf("pwd = %q, want %q", got, want)
-	}
-}
-
 func TestGeminiCLIUsesContextDir(t *testing.T) {
 	cwd := filepath.Join(t.TempDir(), "workspace")
 	if err := os.MkdirAll(cwd, 0o755); err != nil {
@@ -67,7 +40,12 @@ func TestGeminiCLIUsesContextDir(t *testing.T) {
 	}
 	binDir := t.TempDir()
 	gemini := filepath.Join(binDir, "gemini")
-	script := "#!/bin/sh\nprintf '{\"text\":\"%s\",\"usage\":{\"input_tokens\":1,\"output_tokens\":2}}\\n' \"$(pwd)\"\ncat >/dev/null\n"
+	// A fake gemini speaking --output-format stream-json: it reports its own cwd
+	// as the assistant reply, then closes the run with a terminal result.
+	script := "#!/bin/sh\ncat >/dev/null\n" +
+		"printf '{\"type\":\"init\",\"session_id\":\"sess-1\",\"model\":\"gemini-3.5-flash\"}\\n'\n" +
+		"printf '{\"type\":\"message\",\"role\":\"assistant\",\"content\":\"%s\",\"delta\":true}\\n' \"$(pwd)\"\n" +
+		"printf '{\"type\":\"result\",\"status\":\"success\",\"stats\":{\"input_tokens\":3,\"output_tokens\":2,\"cached\":2}}\\n'\n"
 	if err := os.WriteFile(gemini, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake gemini: %v", err)
 	}
@@ -80,7 +58,7 @@ func TestGeminiCLIUsesContextDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	got, err := filepath.EvalSymlinks(filepath.Clean(resp.Text))
+	got, err := filepath.EvalSymlinks(filepath.Clean(strings.TrimSpace(resp.Text)))
 	if err != nil {
 		t.Fatalf("eval response text: %v", err)
 	}
@@ -91,7 +69,7 @@ func TestGeminiCLIUsesContextDir(t *testing.T) {
 	if got != want {
 		t.Errorf("response text = %q, want %q", got, want)
 	}
-	if resp.Usage.InputTokens != 1 || resp.Usage.OutputTokens != 2 {
-		t.Errorf("usage = %+v, want input=1 output=2", resp.Usage)
+	if resp.Usage.InputTokens != 1 || resp.Usage.CacheReadTokens != 2 || resp.Usage.OutputTokens != 2 {
+		t.Errorf("usage = %+v, want input=1 cacheRead=2 output=2", resp.Usage)
 	}
 }

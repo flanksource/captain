@@ -15,8 +15,14 @@ import (
 )
 
 const (
-	defaultSessionLogPollInterval  = 500 * time.Millisecond
-	defaultSessionLogAppearTimeout = 30 * time.Second
+	defaultSessionLogPollInterval = 500 * time.Millisecond
+	// defaultSessionLogAppearTimeout bounds how long we wait for claude to create
+	// its session log after launch. A cold first invocation (auth check, MCP
+	// server startup, model-registry fetch) routinely takes longer than 30s to
+	// write the first log line, so a short window mis-reports a slow-but-healthy
+	// start as a failed launch. 2 minutes covers cold starts while still failing
+	// loudly if the session never begins.
+	defaultSessionLogAppearTimeout = 2 * time.Minute
 )
 
 // errSessionLogNotFound is returned by the tailer when Claude never created the
@@ -53,8 +59,8 @@ func fileSize(path string) int64 {
 }
 
 // sessionTailer follows a Claude session log, streaming each parsed event to a
-// callback until the assistant turn ends, the log goes quiet, or the context is
-// cancelled.
+// callback until the assistant turn ends, pauses for a structured user question,
+// the log goes quiet, or the context is cancelled.
 type sessionTailer struct {
 	path          string
 	pollInterval  time.Duration
@@ -69,6 +75,9 @@ type sessionTailer struct {
 	// into events. It feeds the session-stats accumulator so token/cost totals
 	// stay live during a run. The slice is only valid for the call's duration.
 	onLine func([]byte)
+	// terminal overrides the normal end-turn predicate for modes whose native
+	// terminal signal is a tool outcome rather than every assistant end_turn.
+	terminal func(history.SessionEvent) bool
 }
 
 func (st sessionTailer) poll() time.Duration {
@@ -109,7 +118,7 @@ func (st sessionTailer) tail(ctx context.Context, onEvent func(history.SessionEv
 		}
 		if progressed {
 			lastActivity = time.Now()
-		} else if sawActivity && st.quiescePeriod > 0 && time.Since(lastActivity) >= st.quiescePeriod {
+		} else if sawActivity && st.terminal == nil && st.quiescePeriod > 0 && time.Since(lastActivity) >= st.quiescePeriod {
 			return true, nil
 		}
 		sawActivity = sawActivity || progressed
@@ -149,7 +158,7 @@ func (st sessionTailer) drain(f *os.File, pending *[]byte, buf []byte, onEvent f
 					// EventTurnEnd is a normal completion; EventError is a terminal
 					// API/network failure. Both end the tail — the caller distinguishes
 					// success from failure from the events it saw.
-					if ev.Kind == history.EventTurnEnd || ev.Kind == history.EventError {
+					if st.isTerminal(ev) {
 						return progressed, true, nil
 					}
 				}
@@ -162,6 +171,24 @@ func (st sessionTailer) drain(f *os.File, pending *[]byte, buf []byte, onEvent f
 			return progressed, false, rerr
 		}
 	}
+}
+
+func (st sessionTailer) isTerminal(ev history.SessionEvent) bool {
+	if st.terminal != nil {
+		return st.terminal(ev)
+	}
+	return ev.Kind == history.EventTurnEnd || ev.Kind == history.EventError || isUserQuestionEvent(ev)
+}
+
+func planModeTerminalEvent(ev history.SessionEvent) bool {
+	if ev.Kind == history.EventError || isUserQuestionEvent(ev) {
+		return true
+	}
+	return ev.Kind == history.EventToolUse && ev.ToolUse.Tool == "ExitPlanMode"
+}
+
+func isUserQuestionEvent(ev history.SessionEvent) bool {
+	return ev.Kind == history.EventToolUse && ev.ToolUse.Tool == "AskUserQuestion"
 }
 
 // waitForFile polls until the session log exists or the appear timeout elapses.
@@ -206,6 +233,9 @@ func (r *run) awaitSessionCompletion(ctx context.Context, sessionID, workDir str
 		appearTimeout: r.sessionLogAppearTimeout(timeout),
 		quiescePeriod: r.sessionLogQuiescePeriod(),
 		seekToEnd:     resume,
+	}
+	if r.planMode {
+		tailer.terminal = planModeTerminalEvent
 	}
 	if acc != nil {
 		tailer.onLine = acc.AddLine

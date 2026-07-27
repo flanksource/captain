@@ -14,19 +14,40 @@ import (
 // the live event stream call this on a tee'd channel; for one-shot use, prefer
 // Provider.Execute.
 func CoalesceStream(ctx context.Context, model string, events <-chan ai.Event, start time.Time) (*ai.Response, error) {
+	return CoalesceStreamForBackend(ctx, ai.BackendClaudeCLI, model, events, start)
+}
+
+func CoalesceStreamForBackend(ctx context.Context, backend ai.Backend, model string, events <-chan ai.Event, start time.Time) (*ai.Response, error) {
 	var (
 		text       strings.Builder
 		usage      ai.Usage
 		lastResult *ai.Event
 		errEvents  []ai.Event
 		sessionID  string
+		outcome    *ai.TerminalOutcome
+		outcomeErr error
 	)
 
 	for {
 		select {
 		case ev, ok := <-events:
 			if !ok {
-				return finaliseCoalescedResponse(model, text.String(), usage, lastResult, errEvents, sessionID, start)
+				if outcomeErr != nil {
+					return nil, fmt.Errorf("invalid terminal outcome: %w", outcomeErr)
+				}
+				resp, err := finaliseCoalescedResponse(backend, model, text.String(), usage, lastResult, errEvents, sessionID, start)
+				if resp != nil {
+					resp.TerminalOutcome = outcome
+				}
+				return resp, err
+			}
+			if outcomeErr == nil {
+				parsed, err := ai.TerminalOutcomeFromEvent(ev)
+				if err != nil {
+					outcomeErr = err
+				} else if parsed != nil {
+					outcome = parsed
+				}
 			}
 			switch ev.Kind {
 			case ai.EventText:
@@ -34,6 +55,9 @@ func CoalesceStream(ctx context.Context, model string, events <-chan ai.Event, s
 			case ai.EventResult:
 				cp := ev
 				lastResult = &cp
+				if ev.Text != "" && text.Len() == 0 {
+					text.WriteString(ev.Text)
+				}
 				if ev.Usage != nil {
 					usage = *ev.Usage
 				}
@@ -50,7 +74,7 @@ func CoalesceStream(ctx context.Context, model string, events <-chan ai.Event, s
 	}
 }
 
-func finaliseCoalescedResponse(model, text string, usage ai.Usage, lastResult *ai.Event, errEvents []ai.Event, sessionID string, start time.Time) (*ai.Response, error) {
+func finaliseCoalescedResponse(backend ai.Backend, model, text string, usage ai.Usage, lastResult *ai.Event, errEvents []ai.Event, sessionID string, start time.Time) (*ai.Response, error) {
 	if lastResult != nil && !lastResult.Success {
 		msg := lastResult.Error
 		if msg == "" {
@@ -65,12 +89,16 @@ func finaliseCoalescedResponse(model, text string, usage ai.Usage, lastResult *a
 	resp := &ai.Response{
 		Text:     text,
 		Model:    model,
-		Backend:  ai.BackendClaudeCLI,
+		Backend:  backend,
 		Usage:    usage,
 		Duration: time.Since(start),
 	}
 	if lastResult != nil {
 		resp.Raw = lastResult.Input
+		// Carry the provider-reported cost (e.g. claude-cli total_cost_usd) so the
+		// buffered Execute path does not lose it — buffered callers otherwise fall
+		// back to a list-price recompute (finding D4).
+		resp.CostUSD = lastResult.CostUSD
 		// Carry any validated structured output (raw JSON) the terminal result
 		// event holds; the caller's Execute binds it into its schema target.
 		if len(lastResult.StructuredData) > 0 {

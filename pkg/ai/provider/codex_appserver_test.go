@@ -2,6 +2,7 @@ package provider
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/flanksource/captain/pkg/ai"
@@ -16,11 +17,16 @@ func TestNewCodexAppServer_Defaults(t *testing.T) {
 	c, err := NewCodexAppServer("")
 	require.NoError(t, err)
 	assert.Equal(t, CodexCLIDefaultModel, c.GetModel())
-	assert.Equal(t, ai.BackendCodexCLI, c.GetBackend())
+	assert.Equal(t, ai.BackendCodexAgent, c.GetBackend())
 
-	c2, err := NewCodexAppServer("gpt-5-codex")
+	c2, err := NewCodexAppServer("gpt-5.4")
 	require.NoError(t, err)
-	assert.Equal(t, "gpt-5-codex", c2.GetModel())
+	assert.Equal(t, "gpt-5.4", c2.GetModel())
+}
+
+func TestAppServerProcessErrorIncludesStderr(t *testing.T) {
+	err := appServerProcessError(errors.New("jsonrpc: client closed"), " state runtime unavailable \n")
+	assert.EqualError(t, err, "jsonrpc: client closed: state runtime unavailable")
 }
 
 func TestMapAppServerNotification_Kinds(t *testing.T) {
@@ -76,16 +82,10 @@ func TestMapAppServerNotification_Kinds(t *testing.T) {
 			check:  func(t *testing.T, ev ai.Event) { assert.Equal(t, "because", ev.Text) },
 		},
 		{
-			name:   "command output delta becomes tool use",
+			name:   "command output delta is buffered by the turn",
 			method: "item/commandExecution/outputDelta",
 			params: `{"delta":"line1\n","itemId":"cmd-1"}`,
-			want:   ai.EventToolUse,
-			check: func(t *testing.T, ev ai.Event) {
-				assert.Equal(t, "line1\n", ev.Input["delta"])
-				tu, ok := ev.Raw.(claude.ToolUse)
-				require.True(t, ok)
-				assert.Equal(t, "cmd-1", tu.SessionID)
-			},
+			drop:   true,
 		},
 		{
 			name:   "agent message item completed becomes text",
@@ -95,29 +95,32 @@ func TestMapAppServerNotification_Kinds(t *testing.T) {
 			check:  func(t *testing.T, ev ai.Event) { assert.Equal(t, "final answer", ev.Text) },
 		},
 		{
-			name:   "command execution item completed becomes tool use",
+			name:   "command execution item completed becomes tool result",
 			method: "item/completed",
-			params: `{"item":{"id":"c1","type":"commandExecution","command":"ls -la"}}`,
-			want:   ai.EventToolUse,
+			params: `{"threadId":"thread-1","item":{"id":"c1","type":"commandExecution","command":"ls -la","status":"completed","exitCode":0}}`,
+			want:   ai.EventToolResult,
 			check: func(t *testing.T, ev ai.Event) {
-				assert.Equal(t, "ls -la", ev.Tool)
-				assert.Equal(t, "ls -la", ev.Input["command"])
+				assert.Equal(t, "c1", ev.ToolCallID)
+				assert.True(t, ev.Success)
 				tu, ok := ev.Raw.(claude.ToolUse)
 				require.True(t, ok)
-				assert.Equal(t, "codex", tu.Source)
+				assert.Equal(t, "c1", tu.ToolUseID)
 			},
 		},
 		{
 			name:   "command execution item started becomes tool use",
 			method: "item/started",
-			params: `{"item":{"id":"c1","type":"commandExecution","command":"pwd"}}`,
+			params: `{"threadId":"thread-1","item":{"id":"c1","type":"commandExecution","command":"pwd","status":"inProgress"}}`,
 			want:   ai.EventToolUse,
-			check:  func(t *testing.T, ev ai.Event) { assert.Equal(t, "pwd", ev.Tool) },
+			check: func(t *testing.T, ev ai.Event) {
+				assert.Equal(t, "Bash", ev.Tool)
+				assert.Equal(t, "pwd", ev.Input["command"])
+			},
 		},
 		{
 			name:   "mcp tool call item uses tool name",
-			method: "item/completed",
-			params: `{"item":{"id":"m1","type":"mcpToolCall","tool":"search"}}`,
+			method: "item/started",
+			params: `{"threadId":"thread-1","item":{"id":"m1","type":"mcpToolCall","tool":"search","arguments":{"query":"captain"},"status":"inProgress"}}`,
 			want:   ai.EventToolUse,
 			check:  func(t *testing.T, ev ai.Event) { assert.Equal(t, "search", ev.Tool) },
 		},
@@ -160,7 +163,9 @@ func TestMapAppServerNotification_Kinds(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			ev, ok := mapAppServerNotification(tc.method, json.RawMessage(tc.params), "gpt-5", &ai.Usage{})
+			ev, ok := mapAppServerNotification(tc.method, json.RawMessage(tc.params), appServerEventContext{
+				Model: "gpt-5", Usage: &ai.Usage{},
+			})
 			if tc.drop {
 				assert.False(t, ok, "expected notification to be dropped, got %+v", ev)
 				return
@@ -199,6 +204,7 @@ func activeTurn(t *testing.T, schema json.RawMessage) (*CodexAppServer, *turnSta
 		usage:        &ai.Usage{},
 		model:        "gpt-5",
 		streamed:     map[string]bool{},
+		toolOutput:   map[string]string{},
 		terminal:     make(chan struct{}),
 		outputSchema: schema,
 	}
@@ -217,7 +223,7 @@ func resultEvent(t *testing.T, evs []ai.Event) ai.Event {
 	return ai.Event{}
 }
 
-// A structured turn attaches the final agentMessage JSON to the terminal result.
+// A structured turn attaches the final agentMessage JSON only to the terminal result.
 func TestHandleNotification_StructuredOutput(t *testing.T) {
 	schema, err := ai.SchemaJSONFor(api.Prompt{Schema: &struct {
 		Answer string `json:"answer"`
@@ -225,16 +231,65 @@ func TestHandleNotification_StructuredOutput(t *testing.T) {
 	require.NoError(t, err)
 
 	c, ts := activeTurn(t, schema)
-	// The final agent message's text IS the validated JSON (codex has no separate
-	// structured field).
+	c.handleNotification("item/agentMessage/delta",
+		json.RawMessage(`{"itemId":"a1","delta":"{\"answer\":"}`))
+	c.handleNotification("item/agentMessage/delta",
+		json.RawMessage(`{"itemId":"a1","delta":"\"42\"}"}`))
 	c.handleNotification("item/completed",
 		json.RawMessage(`{"item":{"id":"a1","type":"agentMessage","text":"{\"answer\":\"42\"}"}}`))
 	c.handleNotification("turn/completed",
 		json.RawMessage(`{"threadId":"t","turn":{"id":"u","status":"completed"}}`))
 
-	result := resultEvent(t, drainEvents(ts))
+	events := drainEvents(ts)
+	var resultCount int
+	for _, ev := range events {
+		assert.NotEqual(t, ai.EventText, ev.Kind, "structured agent messages must not emit text progress")
+		if ev.Kind == ai.EventResult {
+			resultCount++
+		}
+	}
+	assert.Equal(t, 1, resultCount, "structured turn should emit exactly one terminal result")
+	result := resultEvent(t, events)
+	assert.True(t, result.Success)
 	require.NotEmpty(t, result.StructuredData, "structured turn should carry the final JSON on the result")
 	assert.JSONEq(t, `{"answer":"42"}`, string(result.StructuredData))
+}
+
+func TestHandleNotification_StructuredOutputWithoutDeltas(t *testing.T) {
+	schema := json.RawMessage(`{"type":"object"}`)
+	c, ts := activeTurn(t, schema)
+	c.handleNotification("item/completed",
+		json.RawMessage(`{"item":{"id":"a1","type":"agentMessage","text":"{\"answer\":\"42\"}"}}`))
+	c.handleNotification("turn/completed",
+		json.RawMessage(`{"threadId":"t","turn":{"id":"u","status":"completed"}}`))
+
+	events := drainEvents(ts)
+	for _, ev := range events {
+		assert.NotEqual(t, ai.EventText, ev.Kind, "completed structured message must not leak as text progress")
+	}
+	assert.JSONEq(t, `{"answer":"42"}`, string(resultEvent(t, events).StructuredData))
+}
+
+func TestHandleNotification_TextModeStreamsDeltasAndDeduplicatesCompletedMessage(t *testing.T) {
+	c, ts := activeTurn(t, nil)
+	c.handleNotification("item/agentMessage/delta",
+		json.RawMessage(`{"itemId":"a1","delta":"plain "}`))
+	c.handleNotification("item/agentMessage/delta",
+		json.RawMessage(`{"itemId":"a1","delta":"answer"}`))
+	c.handleNotification("item/completed",
+		json.RawMessage(`{"item":{"id":"a1","type":"agentMessage","text":"plain answer"}}`))
+	c.handleNotification("turn/completed",
+		json.RawMessage(`{"threadId":"t","turn":{"id":"u","status":"completed"}}`))
+
+	events := drainEvents(ts)
+	var text []string
+	for _, ev := range events {
+		if ev.Kind == ai.EventText {
+			text = append(text, ev.Text)
+		}
+	}
+	assert.Equal(t, []string{"plain ", "answer"}, text)
+	assert.Empty(t, resultEvent(t, events).StructuredData)
 }
 
 // A text-mode turn (no schema) leaves the result's StructuredData empty.
@@ -253,41 +308,49 @@ func TestMapAppServerNotification_ErrorUnwrapping(t *testing.T) {
 	nested := `The 'gpt-5.5-codex' model is not supported when using Codex with a ChatGPT account.`
 	params := `{"threadId":"t","turnId":"u","willRetry":false,"error":{"message":"{\"type\":\"error\",\"status\":400,\"error\":{\"type\":\"invalid_request_error\",\"message\":\"` + nested + `\"}}"}}`
 
-	ev, ok := mapAppServerNotification("error", json.RawMessage(params), "gpt-5", &ai.Usage{})
+	ev, ok := mapAppServerNotification("error", json.RawMessage(params), appServerEventContext{Model: "gpt-5", Usage: &ai.Usage{}})
 	require.True(t, ok)
 	assert.Equal(t, ai.EventError, ev.Kind)
 	assert.Equal(t, nested, ev.Error, "stringified upstream error payload should be unwrapped one level")
 }
 
 func TestMapAppServerNotification_TurnFailed(t *testing.T) {
-	ev, ok := mapAppServerNotification("turn/failed", json.RawMessage(`{"error":{"message":"boom"}}`), "m", &ai.Usage{})
+	ev, ok := mapAppServerNotification("turn/failed", json.RawMessage(`{"error":{"message":"boom"}}`), appServerEventContext{Model: "m", Usage: &ai.Usage{}})
 	require.True(t, ok)
 	assert.Equal(t, ai.EventError, ev.Kind)
 	assert.Equal(t, "boom", ev.Error)
 }
 
 // Token usage folded from thread/tokenUsage/updated must surface on the
-// subsequent turn/completed result event.
+// subsequent turn/completed result event, normalized to captain's disjoint
+// buckets: codex reports inputTokens inclusive of cachedInputTokens and
+// outputTokens inclusive of reasoningOutputTokens, so foldUsage nets both out to
+// avoid the cache/reasoning double-count (findings B1/B2).
 func TestMapAppServerNotification_UsageFolding(t *testing.T) {
 	usage := &ai.Usage{}
 
+	ctx := appServerEventContext{Model: "m", Usage: usage}
 	_, ok := mapAppServerNotification(
 		"thread/tokenUsage/updated",
 		json.RawMessage(`{"tokenUsage":{"total":{"inputTokens":120,"outputTokens":40,"cachedInputTokens":12,"reasoningOutputTokens":7}}}`),
-		"m", usage)
+		ctx)
 	assert.False(t, ok, "token usage update emits no event")
-	assert.Equal(t, 120, usage.InputTokens)
-	assert.Equal(t, 40, usage.OutputTokens)
+	assert.Equal(t, 108, usage.InputTokens, "input net of cache (120-12)")
+	assert.Equal(t, 33, usage.OutputTokens, "output net of reasoning (40-7)")
 	assert.Equal(t, 12, usage.CacheReadTokens)
 	assert.Equal(t, 7, usage.ReasoningTokens)
 
-	ev, ok := mapAppServerNotification("turn/completed", json.RawMessage(`{"threadId":"t","turn":{"id":"u"}}`), "m", usage)
+	ev, ok := mapAppServerNotification("turn/completed", json.RawMessage(`{"threadId":"t","turn":{"id":"u"}}`), ctx)
 	require.True(t, ok)
 	require.NotNil(t, ev.Usage, "turn/completed should carry the folded usage")
-	assert.Equal(t, 120, ev.Usage.InputTokens)
-	assert.Equal(t, 40, ev.Usage.OutputTokens)
+	assert.Equal(t, 108, ev.Usage.InputTokens)
+	assert.Equal(t, 33, ev.Usage.OutputTokens)
 	assert.Equal(t, 12, ev.Usage.CacheReadTokens)
 	assert.Equal(t, 7, ev.Usage.ReasoningTokens)
+	// Disjoint buckets: netted input+cache and output+reasoning recover the raw
+	// codex totals, so pricing cannot bill the overlap twice.
+	assert.Equal(t, 120, ev.Usage.InputTokens+ev.Usage.CacheReadTokens)
+	assert.Equal(t, 40, ev.Usage.OutputTokens+ev.Usage.ReasoningTokens)
 }
 
 func TestAppServerErrorIsFatal(t *testing.T) {
@@ -349,13 +412,14 @@ func req(p api.Prompt) ai.Request {
 }
 
 func TestBuildTurnStartParams(t *testing.T) {
-	p := buildTurnStartParams("gpt-5", ai.Request{
+	p, err := buildTurnStartParams("gpt-5", ai.Request{
 		Prompt: api.Prompt{User: "hi"},
-		Model:  api.Model{Effort: api.EffortHigh},
+		Model:  api.Model{Effort: api.EffortUltra},
 	}, "thread-1", nil)
+	require.NoError(t, err)
 	assert.Equal(t, "thread-1", p["threadId"])
 	assert.Equal(t, "gpt-5", p["model"])
-	assert.Equal(t, "high", p["effort"])
+	assert.Equal(t, "ultra", p["effort"])
 
 	input, ok := p["input"].([]map[string]any)
 	require.True(t, ok, "input must be a slice of text elements")
@@ -364,7 +428,8 @@ func TestBuildTurnStartParams(t *testing.T) {
 	assert.Equal(t, "hi", input[0]["text"])
 
 	// No reasoning effort / empty model / nil schema should be omitted entirely.
-	bare := buildTurnStartParams("", req(api.Prompt{User: "hi"}), "t", nil)
+	bare, err := buildTurnStartParams("", req(api.Prompt{User: "hi"}), "t", nil)
+	require.NoError(t, err)
 	_, hasModel := bare["model"]
 	_, hasEffort := bare["effort"]
 	_, hasSchema := bare["outputSchema"]
@@ -376,11 +441,14 @@ func TestBuildTurnStartParams(t *testing.T) {
 func TestBuildTurnStartParams_OutputSchema(t *testing.T) {
 	type answer struct {
 		Answer string `json:"answer"`
+		Detail string `json:"detail,omitempty"`
 	}
-	schema, err := ai.SchemaJSONFor(api.Prompt{Schema: &answer{}})
+	request := req(api.Prompt{User: "solve", Schema: &answer{}})
+	schema, err := codexOutputSchema(request)
 	require.NoError(t, err)
 
-	p := buildTurnStartParams("gpt-5", req(api.Prompt{User: "solve"}), "t", schema)
+	p, err := buildTurnStartParams("gpt-5", request, "t", schema)
+	require.NoError(t, err)
 	require.Contains(t, p, "outputSchema", "a derived schema must be sent as outputSchema")
 
 	// It must serialize to a JSON Schema object describing the target struct.
@@ -392,6 +460,9 @@ func TestBuildTurnStartParams_OutputSchema(t *testing.T) {
 	props, ok := decoded["properties"].(map[string]any)
 	require.True(t, ok)
 	assert.Contains(t, props, "answer")
+	assert.Contains(t, props, "detail")
+	assert.Equal(t, []any{"answer", "detail"}, decoded["required"])
+	assert.Equal(t, false, decoded["additionalProperties"])
 }
 
 func TestBuildThreadStartParams_Safety(t *testing.T) {

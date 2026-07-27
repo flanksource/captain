@@ -47,7 +47,7 @@ const (
 const methodCanUseTool = "can_use_tool"
 
 const (
-	defaultModel = "claude-agent-sonnet"
+	defaultModel = "claude-sonnet-5"
 	// initTimeout bounds the initialize handshake (after provisioning). The npm
 	// install / tsx cold start happen synchronously before this window.
 	initTimeout = 2 * time.Minute
@@ -126,6 +126,7 @@ func New(cfg ai.Config) (*Provider, error) {
 	if model == "" {
 		model = defaultModel
 	}
+	model = ai.NormalizeModelForBackend(ai.BackendClaudeAgent, model)
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Provider{
 		model:      model,
@@ -160,8 +161,18 @@ func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, e
 		success    = true
 		sawResult  bool
 		lastErr    string
+		outcome    *ai.TerminalOutcome
+		outcomeErr error
 	)
 	for ev := range events {
+		if outcomeErr == nil {
+			parsed, parseErr := ai.TerminalOutcomeFromEvent(ev)
+			if parseErr != nil {
+				outcomeErr = parseErr
+			} else if parsed != nil {
+				outcome = parsed
+			}
+		}
 		switch ev.Kind {
 		case ai.EventText:
 			text.WriteString(ev.Text)
@@ -188,6 +199,9 @@ func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, e
 			lastErr = ev.Error
 		}
 	}
+	if outcomeErr != nil {
+		return nil, fmt.Errorf("claude-agent: invalid terminal outcome: %w", outcomeErr)
+	}
 
 	if !sawResult && lastErr != "" {
 		return nil, fmt.Errorf("%w: %s", ai.ErrCLIExecutionFailed, lastErr)
@@ -197,14 +211,18 @@ func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, e
 	}
 
 	resp := &ai.Response{
-		Text:     text.String(),
-		Model:    p.model,
-		Backend:  ai.BackendClaudeAgent,
-		Usage:    usage,
-		Duration: time.Since(start),
+		Text:            text.String(),
+		Model:           p.model,
+		Backend:         ai.BackendClaudeAgent,
+		Usage:           usage,
+		Duration:        time.Since(start),
+		TerminalOutcome: outcome,
 	}
 	if sessionID != "" {
 		resp.Raw = map[string]any{"session_id": sessionID}
+	}
+	if outcome != nil {
+		return resp, nil
 	}
 	if req.Prompt.Schema != nil {
 		if err := ai.BindStructuredOutput(req.Prompt.Schema, structured); err != nil {
@@ -265,7 +283,7 @@ func (p *Provider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai
 // Prompt.SchemaJSON), or nil for a text-mode request. A non-struct target fails
 // loudly rather than silently dropping the schema.
 func requestSchemaJSON(req ai.Request) (json.RawMessage, error) {
-	schema, err := ai.SchemaJSONFor(req.Prompt)
+	schema, err := ai.SchemaJSONForBackend(ai.BackendClaudeAgent, req.Prompt)
 	if err != nil {
 		return nil, fmt.Errorf("claude-agent: cannot derive structured-output schema: %w", err)
 	}
@@ -393,6 +411,14 @@ func (p *Provider) initializeParams(req ai.Request) initializeParams {
 		resume = p.cfg.SessionID
 	}
 
+	// Prefer the per-request budget (like claude-cli, which reads req.Budget.Cost)
+	// and fall back to the config default, so both Claude backends resolve the
+	// ceiling from the same source (finding A4).
+	maxBudget := req.Budget.Cost
+	if maxBudget == 0 {
+		maxBudget = p.cfg.Budget.Cost
+	}
+
 	return initializeParams{
 		Cwd:                req.Cwd(),
 		Model:              aliasModel(p.model),
@@ -400,12 +426,23 @@ func (p *Provider) initializeParams(req ai.Request) initializeParams {
 		AppendSystemPrompt: req.Prompt.AppendSystem,
 		AllowedTools:       allowed,
 		MaxTurns:           req.Budget.MaxTurns,
-		MaxBudgetUsd:       p.cfg.Budget.Cost,
+		MaxBudgetUsd:       maxBudget,
 		PermissionMode:     mode,
 		Resume:             resume,
 		ApprovalMode:       approvalMode,
 		OutputSchema:       p.sessionSchema,
+		MonitorURL:         monitorHooksURL(req),
 	}
+}
+
+// monitorHooksURL resolves the captain serve URL the SDK's session-monitoring
+// hooks deliver lifecycle events to; empty disables injection (bare runs,
+// CAPTAIN_MONITOR_HOOKS=off).
+func monitorHooksURL(req ai.Request) string {
+	if !api.MonitorHooksEnabled(req) {
+		return ""
+	}
+	return api.ServeBaseURL()
 }
 
 type initializeParams struct {
@@ -420,6 +457,7 @@ type initializeParams struct {
 	Resume             string          `json:"resume,omitempty"`
 	ApprovalMode       string          `json:"approvalMode,omitempty"`
 	OutputSchema       json.RawMessage `json:"outputSchema,omitempty"`
+	MonitorURL         string          `json:"monitorUrl,omitempty"`
 }
 
 func (p *Provider) setInitResult(err error) {

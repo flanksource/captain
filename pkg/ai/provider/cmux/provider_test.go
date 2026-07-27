@@ -3,7 +3,6 @@ package cmux
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 	"time"
 
@@ -12,48 +11,17 @@ import (
 	"github.com/flanksource/commons-db/shell"
 )
 
-func TestWithSchemaPrompt(t *testing.T) {
-	// A raw JSON schema is appended to the prompt and the native fields cleared,
-	// so the cmux run is a plain text turn that still asks for JSON.
-	req := ai.Request{Prompt: api.Prompt{
-		User:       "review the diff",
-		SchemaJSON: []byte(`{"type":"object","required":["pass"]}`),
-	}}
-	got, err := withSchemaPrompt(req)
-	if err != nil {
-		t.Fatalf("withSchemaPrompt: %v", err)
-	}
-	if got.Prompt.Schema != nil || got.Prompt.SchemaJSON != nil {
-		t.Errorf("native schema fields must be cleared, got Schema=%v SchemaJSON=%s", got.Prompt.Schema, got.Prompt.SchemaJSON)
-	}
-	if !strings.Contains(got.Prompt.User, "review the diff") {
-		t.Errorf("original prompt lost: %q", got.Prompt.User)
-	}
-	if !strings.Contains(got.Prompt.User, `"required":["pass"]`) {
-		t.Errorf("schema not appended to prompt: %q", got.Prompt.User)
-	}
-
-	// A text-mode request is returned unchanged.
-	plain := ai.Request{Prompt: api.Prompt{User: "hi"}}
-	got, err = withSchemaPrompt(plain)
-	if err != nil {
-		t.Fatalf("withSchemaPrompt(text): %v", err)
-	}
-	if got.Prompt.User != "hi" {
-		t.Errorf("text prompt altered: %q", got.Prompt.User)
-	}
-}
-
 func TestNewDerivesAgentAndBackend(t *testing.T) {
 	cases := []struct {
 		name        string
 		backend     api.Backend
 		model       string
+		wantModel   string
 		wantAgent   string
 		wantBackend api.Backend
 	}{
-		{"claude cmux", api.BackendClaudeCmux, "opus", "claude", api.BackendClaudeCmux},
-		{"codex cmux", api.BackendCodexCmux, "gpt-5", "codex", api.BackendCodexCmux},
+		{"claude cmux", api.BackendClaudeCmux, "opus", "claude-opus-5", "claude", api.BackendClaudeCmux},
+		{"codex cmux", api.BackendCodexCmux, "gpt-5", "gpt-5", "codex", api.BackendCodexCmux},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -64,8 +32,8 @@ func TestNewDerivesAgentAndBackend(t *testing.T) {
 			if p.agent != tc.wantAgent {
 				t.Fatalf("agent = %q, want %q", p.agent, tc.wantAgent)
 			}
-			if p.GetModel() != tc.model {
-				t.Fatalf("GetModel() = %q, want %q", p.GetModel(), tc.model)
+			if p.GetModel() != tc.wantModel {
+				t.Fatalf("GetModel() = %q, want %q", p.GetModel(), tc.wantModel)
 			}
 			if p.GetBackend() != tc.wantBackend {
 				t.Fatalf("GetBackend() = %q, want %q", p.GetBackend(), tc.wantBackend)

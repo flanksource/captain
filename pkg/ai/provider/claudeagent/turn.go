@@ -2,12 +2,16 @@ package claudeagent
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"os"
+	"sync"
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/provider/jsonrpc"
+	"github.com/flanksource/captain/pkg/api"
 )
 
 // turnState carries the channels a single in-flight turn uses to receive mapped
@@ -25,14 +29,52 @@ type turnState struct {
 
 	ctx        context.Context
 	canUseTool ai.PermissionFunc
+	// planMode marks a plan-only turn: ExitPlanMode is then the terminal signal
+	// and its can_use_tool is answered by the shared policy, never the broker.
+	planMode bool
+
+	promptMu sync.Mutex
+	pending  int
+	ended    bool
 }
 
 type promptParams struct {
-	Text string `json:"text"`
+	Text        string             `json:"text"`
+	Attachments []promptAttachment `json:"attachments,omitempty"`
+}
+
+type promptAttachment struct {
+	MediaType string `json:"mediaType"`
+	Data      string `json:"data"`
+	Filename  string `json:"filename,omitempty"`
 }
 
 func composePrompt(req ai.Request) string {
 	return req.Prompt.User
+}
+
+func buildPromptParams(req ai.Request) (promptParams, error) {
+	params := promptParams{Text: composePrompt(req), Attachments: make([]promptAttachment, 0, len(req.Prompt.Attachments))}
+	for i, attachment := range req.Prompt.Attachments {
+		content, ok := attachment.PreparedContent()
+		if !ok {
+			return promptParams{}, fmt.Errorf("attachment %d (%s) is not prepared", i+1, attachment.ID)
+		}
+		data := content.Bytes
+		if data == nil && content.Path != "" {
+			var err error
+			data, err = os.ReadFile(content.Path)
+			if err != nil {
+				return promptParams{}, fmt.Errorf("read prepared attachment %s: %w", attachment.ID, err)
+			}
+		}
+		params.Attachments = append(params.Attachments, promptAttachment{
+			MediaType: attachment.MediaType,
+			Data:      base64.StdEncoding.EncodeToString(data),
+			Filename:  attachment.Filename,
+		})
+	}
+	return params, nil
 }
 
 // runTurn owns one turn's event channel: it sends the prompt, forwards mapped
@@ -50,6 +92,8 @@ func (p *Provider) runTurn(ctx context.Context, req ai.Request, events chan ai.E
 		quit:       make(chan struct{}),
 		ctx:        ctx,
 		canUseTool: p.cfg.CanUseTool,
+		planMode:   req.Permissions.Mode == api.PermissionPlan,
+		pending:    1,
 	}
 	p.setActive(ts)
 	defer func() {
@@ -57,7 +101,16 @@ func (p *Provider) runTurn(ctx context.Context, req ai.Request, events chan ai.E
 		p.clearActive()
 	}()
 
-	if _, err := p.rpc.Call(ctx, methodPrompt, promptParams{Text: composePrompt(req)}); err != nil {
+	if err := ai.ValidateAttachmentCompatibility([]api.Model{{Name: p.model, Backend: api.BackendClaudeAgent}}, req.Prompt.Attachments); err != nil {
+		emit(ctx, events, ai.Event{Kind: ai.EventError, Error: err.Error(), Model: p.model})
+		return
+	}
+	params, err := buildPromptParams(req)
+	if err != nil {
+		emit(ctx, events, ai.Event{Kind: ai.EventError, Error: err.Error(), Model: p.model})
+		return
+	}
+	if _, err := p.rpc.Call(ctx, methodPrompt, params); err != nil {
 		emit(ctx, events, ai.Event{Kind: ai.EventError, Error: fmt.Sprintf("claude-agent prompt failed: %v", err), Model: p.model})
 		return
 	}
@@ -109,11 +162,7 @@ func (p *Provider) onNotification(method string, params json.RawMessage) {
 		}
 	}
 	if method == notifyTurnDone || method == notifyTurnError {
-		select {
-		case <-ts.term:
-		default:
-			close(ts.term)
-		}
+		ts.completePrompt()
 	}
 }
 
@@ -154,13 +203,26 @@ func (p *Provider) handleCanUseTool(params json.RawMessage) (any, *jsonrpc.RPCEr
 	p.activeMu.Lock()
 	ts := p.active
 	p.activeMu.Unlock()
-	if ts == nil || ts.canUseTool == nil {
+	if ts == nil {
 		return canUseToolResult{Allow: true, UpdatedInput: in.Input}, nil
 	}
 
 	p.sessMu.Lock()
 	sessionID := p.sessionID
 	p.sessMu.Unlock()
+
+	// The plan-mode terminal signal is answered here, never brokered: nothing is
+	// awaiting a human, so no EventPermission is surfaced either. The tool_use
+	// already streamed, so the turn still ends in a plan terminal outcome.
+	if decision, handled := ai.PlanTerminalPermission(ts.planMode, ai.PermissionRequest{
+		Tool: in.Tool, Input: in.Input, ToolUseID: in.ToolUseID, SessionID: sessionID,
+	}); handled {
+		return canUseToolResult{Allow: decision.Allow, Message: decision.Message}, nil
+	}
+
+	if ts.canUseTool == nil {
+		return canUseToolResult{Allow: true, UpdatedInput: in.Input}, nil
+	}
 
 	p.deliver(ts, ai.Event{
 		Kind:       ai.EventPermission,
@@ -197,13 +259,39 @@ func (p *Provider) deliver(ts *turnState, ev ai.Event) {
 	}
 }
 
-func (p *Provider) interrupt() {
-	if p.rpc == nil {
-		return
+func (p *Provider) Steer(ctx context.Context, req api.Spec) error {
+	p.activeMu.Lock()
+	ts := p.active
+	p.activeMu.Unlock()
+	if ts == nil || !ts.addPrompt() {
+		return fmt.Errorf("claude-agent: no active turn to steer")
 	}
+	params, err := buildPromptParams(req)
+	if err != nil {
+		ts.completePrompt()
+		return err
+	}
+	if _, err := p.rpc.Call(ctx, methodPrompt, params); err != nil {
+		ts.completePrompt()
+		return fmt.Errorf("claude-agent steer failed: %w", err)
+	}
+	return nil
+}
+
+func (p *Provider) Interrupt(ctx context.Context) error {
+	if p.rpc == nil {
+		return fmt.Errorf("claude-agent: provider not started")
+	}
+	if _, err := p.rpc.Call(ctx, methodInterrupt, nil); err != nil {
+		return fmt.Errorf("claude-agent interrupt failed: %w", err)
+	}
+	return nil
+}
+
+func (p *Provider) interrupt() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_, _ = p.rpc.Call(ctx, methodInterrupt, nil)
+	_ = p.Interrupt(ctx)
 }
 
 func (p *Provider) setActive(ts *turnState) {
@@ -222,6 +310,30 @@ func (p *Provider) rememberSession(id string) {
 	p.sessMu.Lock()
 	p.sessionID = id
 	p.sessMu.Unlock()
+}
+
+func (ts *turnState) addPrompt() bool {
+	ts.promptMu.Lock()
+	defer ts.promptMu.Unlock()
+	if ts.ended {
+		return false
+	}
+	ts.pending++
+	return true
+}
+
+func (ts *turnState) completePrompt() {
+	ts.promptMu.Lock()
+	defer ts.promptMu.Unlock()
+	if ts.ended {
+		return
+	}
+	ts.pending--
+	if ts.pending > 0 {
+		return
+	}
+	ts.ended = true
+	close(ts.term)
 }
 
 // emit sends ev on events, honouring ctx cancellation. Returns false if ctx was

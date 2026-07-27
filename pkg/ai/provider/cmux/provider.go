@@ -48,8 +48,9 @@ func New(cfg ai.Config) (*Provider, error) {
 	if err != nil {
 		return nil, err
 	}
+	model := ai.NormalizeModelForBackend(cfg.Model.Backend, cfg.Model.Name)
 	return &Provider{
-		model: cfg.Model.Name,
+		model: model,
 		agent: agent,
 		cfg:   cfg,
 	}, nil
@@ -77,10 +78,9 @@ func (p *Provider) GetBackend() ai.Backend {
 
 // Execute drains its own ExecuteStream into a buffered ai.Response. cmux cannot
 // constrain output natively, so a structured-output request is served by
-// appending a schema instruction to the prompt (see ExecuteStream) and
-// extracting the JSON object from the reply here.
+// appending a schema instruction to the prompt (see ExecuteStream); the stream
+// carries the validated JSON on its terminal EventResult.
 func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, error) {
-	schemaRequested := req.Prompt.HasSchema()
 	start := time.Now()
 	events, err := p.ExecuteStream(ctx, req)
 	if err != nil {
@@ -88,14 +88,25 @@ func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, e
 	}
 
 	var (
-		text      strings.Builder
-		usage     ai.Usage
-		sessionID string
-		success   = true
-		sawResult bool
-		lastErr   string
+		text       strings.Builder
+		usage      ai.Usage
+		sessionID  string
+		success    = true
+		sawResult  bool
+		lastErr    string
+		structured json.RawMessage
+		outcome    *ai.TerminalOutcome
+		outcomeErr error
 	)
 	for ev := range events {
+		if outcomeErr == nil {
+			parsed, parseErr := ai.TerminalOutcomeFromEvent(ev)
+			if parseErr != nil {
+				outcomeErr = parseErr
+			} else if parsed != nil {
+				outcome = parsed
+			}
+		}
 		switch ev.Kind {
 		case ai.EventText:
 			text.WriteString(ev.Text)
@@ -106,6 +117,9 @@ func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, e
 		case ai.EventResult:
 			sawResult = true
 			success = ev.Success
+			if len(ev.StructuredData) > 0 {
+				structured = ev.StructuredData
+			}
 			if ev.Usage != nil {
 				usage = *ev.Usage
 			}
@@ -115,6 +129,9 @@ func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, e
 		case ai.EventError:
 			lastErr = ev.Error
 		}
+	}
+	if outcomeErr != nil {
+		return nil, fmt.Errorf("cmux: invalid terminal outcome: %w", outcomeErr)
 	}
 
 	if !sawResult && lastErr != "" {
@@ -129,19 +146,24 @@ func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, e
 	}
 
 	resp := &ai.Response{
-		Text:     text.String(),
-		Model:    p.model,
-		Backend:  p.GetBackend(),
-		Usage:    usage,
-		Duration: time.Since(start),
+		Text:            text.String(),
+		Model:           p.model,
+		Backend:         p.GetBackend(),
+		Usage:           usage,
+		Duration:        time.Since(start),
+		TerminalOutcome: outcome,
 	}
 	if sessionID != "" {
 		resp.Raw = map[string]any{"session_id": sessionID}
 	}
-	if schemaRequested {
-		if obj, ok := ai.ExtractJSONObject(resp.Text); ok {
-			resp.StructuredData = json.RawMessage(obj)
+	if len(structured) > 0 && req.Prompt.Schema != nil {
+		if err := ai.BindStructuredOutput(req.Prompt.Schema, structured); err != nil {
+			return nil, err
 		}
+		resp.StructuredData = req.Prompt.Schema
+		resp.Text = ""
+	} else if len(structured) > 0 {
+		resp.StructuredData = structured
 	}
 	return resp, nil
 }
@@ -149,7 +171,7 @@ func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, e
 // ExecuteStream drives one cmux run in a goroutine and streams ai.Events on a
 // buffered channel, closing it when done (always after exactly one EventResult).
 func (p *Provider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai.Event, error) {
-	req, err := withSchemaPrompt(req)
+	req, schema, err := ai.WithSchemaPrompt(req)
 	if err != nil {
 		return nil, err
 	}
@@ -157,45 +179,56 @@ func (p *Provider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai
 		return nil, fmt.Errorf("cmux provider: prompt is required")
 	}
 	events := make(chan ai.Event, 32)
-	go p.drive(ctx, req, events)
+	go p.drive(ctx, req, schema, events)
 	return events, nil
-}
-
-// withSchemaPrompt makes a structured-output request runnable on cmux (which
-// cannot enforce a schema natively) by appending a JSON-only schema instruction
-// to the user prompt and clearing the native schema fields so the run is a plain
-// text turn. The reply's JSON is recovered in Execute.
-func withSchemaPrompt(req ai.Request) (ai.Request, error) {
-	schema, err := ai.SchemaJSONFor(req.Prompt)
-	if err != nil {
-		return req, err
-	}
-	if len(schema) > 0 {
-		req.Prompt.User = strings.TrimRight(req.Prompt.User, "\n") + "\n\n" + ai.SchemaInstruction(string(schema))
-	}
-	req.Prompt.Schema = nil
-	req.Prompt.SchemaJSON = nil
-	return req, nil
 }
 
 // drive runs the session and translates its outcome into the single terminal
 // EventResult (preceded by an EventError on failure) before closing the channel.
-func (p *Provider) drive(ctx context.Context, req ai.Request, events chan ai.Event) {
+func (p *Provider) drive(ctx context.Context, req ai.Request, schema json.RawMessage, events chan ai.Event) {
 	defer close(events)
 
+	var text strings.Builder
+	var outcome *ai.TerminalOutcome
+	var outcomeErr error
 	r := &run{
 		client:     NewClient(""),
-		emit:       func(ev ai.Event) { emit(ctx, events, ev) },
 		canUseTool: p.cfg.CanUseTool,
+	}
+	r.emit = func(ev ai.Event) {
+		switch ev.Kind {
+		case ai.EventText:
+			text.WriteString(ev.Text)
+		case ai.EventToolUse:
+			if ev.Tool == "ExitPlanMode" {
+				r.planExitSeen = true
+			}
+			if outcomeErr == nil {
+				parsed, err := ai.TerminalOutcomeFromEvent(ev)
+				if err != nil {
+					outcomeErr = err
+				} else if parsed != nil {
+					outcome = parsed
+				}
+			}
+		}
+		emit(ctx, events, ev)
 	}
 
 	usage, cost, err := p.execute(ctx, req, r)
+	if err == nil && outcomeErr != nil {
+		err = fmt.Errorf("cmux: invalid terminal outcome: %w", outcomeErr)
+	}
+	var structured json.RawMessage
+	if err == nil {
+		structured, err = ai.ValidatedStructuredData(schema, text.String(), outcome)
+	}
 	if err != nil {
 		emit(ctx, events, ai.Event{Kind: ai.EventError, Error: err.Error(), Model: p.model})
 		emit(ctx, events, ai.Event{Kind: ai.EventResult, Success: false, Error: err.Error(), Model: p.model})
 		return
 	}
-	emit(ctx, events, ai.Event{Kind: ai.EventResult, Success: true, Usage: usage, CostUSD: cost, Model: p.model})
+	emit(ctx, events, ai.Event{Kind: ai.EventResult, Success: true, Usage: usage, CostUSD: cost, Model: p.model, StructuredData: structured})
 }
 
 // cmuxExtraArgs decodes req.CLIArgs into the backend's typed "extra cmux args"
@@ -246,6 +279,7 @@ func decodeCLIArgs(args map[string]any, out any) error {
 func (p *Provider) execute(ctx context.Context, req ai.Request, r *run) (*ai.Usage, float64, error) {
 	start := time.Now()
 	agent := p.agent
+	r.planMode = req.Permissions.Mode == api.PermissionPlan
 	model := modelFlag(agent, p.model)
 	workDir := groupWorkDir(req.Cwd())
 
@@ -374,6 +408,23 @@ func (p *Provider) execute(ctx context.Context, req ai.Request, r *run) (*ai.Usa
 		_, completed, serr := r.awaitWithStallWatchdog(ctx, ref, sessionID, workDir, timeout, resume, acc)
 		acc.Finish()
 		snap := acc.snapshot()
+		pausedForQuestion := snap.State == sessionStateAsk
+		if err := r.dismissCompletedPlan(ctx, ref, sessionID); err != nil {
+			return nil, 0, err
+		}
+		if pausedForQuestion {
+			// Claude's terminal UI remains inside the interactive question picker even
+			// though the structured tool event contains everything the host needs to
+			// render the form. Dismiss that surface once; the host resumes the same
+			// session later with SendFeedback and a structured answers payload.
+			if r.planMode {
+				if err := r.dismissPlanSurface(ctx, ref, sessionID); err != nil {
+					return nil, 0, err
+				}
+			} else if err := r.client.SendKeySurface(ctx, ref.String(), ref.SurfaceID, "Escape"); err != nil {
+				return nil, 0, fmt.Errorf("dismiss claude question for session %s: %w", sessionID, err)
+			}
+		}
 
 		switch {
 		case errors.Is(serr, errSessionLogNotFound):
@@ -385,7 +436,11 @@ func (p *Provider) execute(ctx context.Context, req ai.Request, r *run) (*ai.Usa
 		case !completed:
 			return nil, 0, fmt.Errorf("claude session %s did not complete within %s", sessionID, timeout)
 		default:
-			log.Infof("cmux: claude session %s completed", sessionID)
+			if pausedForQuestion {
+				log.Infof("cmux: claude session %s paused for user input", sessionID)
+			} else {
+				log.Infof("cmux: claude session %s completed", sessionID)
+			}
 			r.lastSurface = ref
 			r.lastSessionID = sessionID
 			r.lastWorkDir = workDir

@@ -2,8 +2,10 @@ package provider
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/ai/history"
 	"github.com/flanksource/captain/pkg/api"
 )
 
@@ -38,11 +40,22 @@ type appServerThread struct {
 }
 
 type appServerItemBody struct {
-	ID      string `json:"id"`
-	Type    string `json:"type"`
-	Text    string `json:"text"`
-	Command string `json:"command"`
-	Tool    string `json:"tool"`
+	ID               string              `json:"id"`
+	Type             string              `json:"type"`
+	Text             string              `json:"text"`
+	Command          string              `json:"command"`
+	Tool             string              `json:"tool"`
+	Server           string              `json:"server"`
+	CWD              string              `json:"cwd"`
+	Status           string              `json:"status"`
+	Arguments        json.RawMessage     `json:"arguments"`
+	AggregatedOutput *string             `json:"aggregatedOutput"`
+	ExitCode         *int                `json:"exitCode"`
+	Success          *bool               `json:"success"`
+	Result           json.RawMessage     `json:"result"`
+	ContentItems     json.RawMessage     `json:"contentItems"`
+	Changes          json.RawMessage     `json:"changes"`
+	Error            *appServerErrorBody `json:"error"`
 }
 
 type appServerErrorBody struct {
@@ -93,9 +106,12 @@ func (n appServerNotif) foldUsage(usage *ai.Usage) {
 	if usage == nil || n.TokenUsage == nil {
 		return
 	}
+	// Codex uses OpenAI accounting: inputTokens folds in the cached prefix and
+	// outputTokens folds in reasoning. Net both so pricing/totals do not
+	// double-count against cachedInputTokens/reasoningOutputTokens.
 	t := n.TokenUsage.Total
-	usage.InputTokens = t.InputTokens
-	usage.OutputTokens = t.OutputTokens
+	usage.InputTokens = ai.NetInputTokens(t.InputTokens, t.CachedInputTokens)
+	usage.OutputTokens = ai.NetOutputTokens(t.OutputTokens, t.ReasoningOutputTokens)
 	usage.CacheReadTokens = t.CachedInputTokens
 	usage.ReasoningTokens = t.ReasoningOutputTokens
 }
@@ -105,86 +121,149 @@ func (n appServerNotif) foldUsage(usage *ai.Usage) {
 // mapAppServerNotification maps one notification into an ai.Event. Pure: it
 // folds thread/tokenUsage/updated into usage (ok=false) and reads the folded
 // usage back out on turn/completed.
-func mapAppServerNotification(method string, params json.RawMessage, model string, usage *ai.Usage) (ai.Event, bool) {
+type appServerEventContext struct {
+	Model      string
+	Usage      *ai.Usage
+	ToolOutput string
+}
+
+func mapAppServerNotification(method string, params json.RawMessage, ctx appServerEventContext) (ai.Event, bool) {
 	n := parseAppServerNotif(params)
 	switch method {
 	case "thread/started":
 		sid := n.threadID()
-		out := ai.Event{Kind: ai.EventSystem, Tool: "SessionInit", SessionID: sid, Model: model}
-		out.Raw = codexSessionToolUse(sid, model)
+		out := ai.Event{Kind: ai.EventSystem, Tool: "SessionInit", SessionID: sid, Model: ctx.Model}
+		out.Raw = codexSessionToolUse(sid, ctx.Model)
 		return out, true
 
 	case "item/agentMessage/delta":
 		if n.Delta == "" {
 			return ai.Event{}, false
 		}
-		return ai.Event{Kind: ai.EventText, Text: n.Delta, Model: model}, true
+		return ai.Event{Kind: ai.EventText, Text: n.Delta, SessionID: n.threadID(), Model: ctx.Model}, true
 
 	case "item/reasoning/textDelta", "item/reasoning/summaryTextDelta":
 		if n.Delta == "" {
 			return ai.Event{}, false
 		}
-		return ai.Event{Kind: ai.EventThinking, Text: n.Delta, Model: model}, true
+		return ai.Event{Kind: ai.EventThinking, Text: n.Delta, SessionID: n.threadID(), Model: ctx.Model}, true
 
 	case "item/commandExecution/outputDelta":
-		if n.Delta == "" {
-			return ai.Event{}, false
-		}
-		input := map[string]any{"delta": n.Delta}
-		out := ai.Event{Kind: ai.EventToolUse, Tool: "command", Input: input, Model: model}
-		out.Raw = codexToolUse("command", input, n.ItemID, model)
-		return out, true
+		return ai.Event{}, false
 
 	case "item/started", "item/completed":
-		return mapAppServerItem(n.Item, model)
+		return mapAppServerItem(method, n.Item, n.threadID(), ctx)
 
 	case "thread/tokenUsage/updated":
-		n.foldUsage(usage)
+		n.foldUsage(ctx.Usage)
 		return ai.Event{}, false
 
 	case "turn/completed":
-		out := ai.Event{Kind: ai.EventResult, Tool: "Result", Model: model, Success: true}
-		if usage != nil && usage.TotalTokens() > 0 {
-			u := *usage
+		out := ai.Event{Kind: ai.EventResult, Tool: "Result", SessionID: n.threadID(), Model: ctx.Model, Success: true}
+		if ctx.Usage != nil && ctx.Usage.TotalTokens() > 0 {
+			u := *ctx.Usage
 			out.Usage = &u
 		}
 		out.Raw = codexResultToolUse(out, n.ThreadID)
 		return out, true
 
 	case "turn/failed", "error":
-		return ai.Event{Kind: ai.EventError, Error: extractCodexErrorText(n.errorText()), Model: model}, true
+		return ai.Event{Kind: ai.EventError, Error: extractCodexErrorText(n.errorText()), SessionID: n.threadID(), Model: ctx.Model}, true
 	}
 	return ai.Event{}, false
 }
 
 // mapAppServerItem dispatches item/started and item/completed on the item type:
-// agent messages become text, command/tool/file items become tool-use events,
-// and reasoning/user/hook items are dropped (reasoning text arrives via deltas).
-func mapAppServerItem(it *appServerItemBody, model string) (ai.Event, bool) {
+// agent messages become text, command/tool/file items become correlated use and
+// result events, and reasoning/user/hook items are dropped.
+func mapAppServerItem(method string, it *appServerItemBody, sessionID string, ctx appServerEventContext) (ai.Event, bool) {
 	if it == nil {
 		return ai.Event{}, false
 	}
 	switch it.Type {
 	case "agentMessage", "plan":
-		if it.Text == "" {
+		if method != "item/completed" || it.Text == "" {
 			return ai.Event{}, false
 		}
-		return ai.Event{Kind: ai.EventText, Text: it.Text, Model: model}, true
+		return ai.Event{Kind: ai.EventText, Text: it.Text, SessionID: sessionID, Model: ctx.Model}, true
 	case "reasoning", "userMessage", "hookPrompt", "":
 		return ai.Event{}, false
-	default:
-		name := firstNonEmpty(it.Tool, it.Command, it.Type)
-		input := map[string]any{}
-		if it.Command != "" {
-			input["command"] = it.Command
+	}
+	use := history.NormalizeCodexToolCall(appServerToolCall(it, sessionID, ctx.Model))
+	if method == "item/started" {
+		out := ai.Event{
+			Kind: ai.EventToolUse, Tool: use.Tool, Input: use.Input,
+			ToolCallID: use.ToolUseID, SessionID: sessionID, Model: ctx.Model,
 		}
-		if it.Text != "" {
-			input["text"] = it.Text
-		}
-		out := ai.Event{Kind: ai.EventToolUse, Tool: name, Input: input, Model: model}
-		out.Raw = codexToolUse(name, input, it.ID, model)
+		out.Raw = codexToolUse(use, ctx.Model)
 		return out, true
 	}
+	if method != "item/completed" {
+		return ai.Event{}, false
+	}
+	text := appServerToolResultText(it, ctx.ToolOutput)
+	success := appServerToolSucceeded(it)
+	use.Response = text
+	raw := codexToolUse(use, ctx.Model)
+	raw.IsError = !success
+	return ai.Event{
+		Kind: ai.EventToolResult, Text: text, ToolCallID: use.ToolUseID,
+		Success: success, SessionID: sessionID, Model: ctx.Model, Raw: raw,
+	}, true
+}
+
+func appServerToolCall(it *appServerItemBody, sessionID, model string) history.CodexToolCall {
+	name := it.Tool
+	input := map[string]any{}
+	switch it.Type {
+	case "commandExecution":
+		name = ""
+	case "fileChange":
+		name = "CodexPatchApply"
+		if len(it.Changes) > 0 {
+			var changes any
+			_ = json.Unmarshal(it.Changes, &changes)
+			input["changes"] = changes
+		}
+	default:
+		name = firstNonEmpty(name, it.Type)
+	}
+	return history.CodexToolCall{
+		Name: name, Namespace: it.Server, Arguments: it.Arguments,
+		Command: it.Command, Input: input, CWD: it.CWD,
+		SessionID: sessionID, ID: it.ID, Model: model,
+	}
+}
+
+func appServerToolResultText(it *appServerItemBody, buffered string) string {
+	if it.AggregatedOutput != nil && *it.AggregatedOutput != "" {
+		return *it.AggregatedOutput
+	}
+	if buffered != "" {
+		return buffered
+	}
+	if it.AggregatedOutput != nil {
+		return *it.AggregatedOutput
+	}
+	if it.Error != nil {
+		return firstNonEmpty(it.Error.Message, it.Error.AdditionalDetails)
+	}
+	for _, raw := range []json.RawMessage{it.Result, it.ContentItems, it.Changes} {
+		if len(raw) > 0 && string(raw) != "null" {
+			return string(raw)
+		}
+	}
+	return it.Text
+}
+
+func appServerToolSucceeded(it *appServerItemBody) bool {
+	if it.Success != nil {
+		return *it.Success
+	}
+	if it.ExitCode != nil && *it.ExitCode != 0 {
+		return false
+	}
+	return it.Status == "completed"
 }
 
 // appServerErrorIsFatal reports whether an error/turn-failure notification ends
@@ -256,10 +335,25 @@ func codexSafety(req ai.Request) (sandbox, approval string) {
 // non-empty, is sent as the turn-scoped `outputSchema` that constrains the final
 // assistant message to validated JSON (structured output); the raw JSON Schema
 // bytes are embedded inline verbatim.
-func buildTurnStartParams(model string, req ai.Request, threadID string, outputSchema json.RawMessage) map[string]any {
+
+func buildTurnStartParams(model string, req ai.Request, threadID string, outputSchema json.RawMessage) (map[string]any, error) {
+	if err := ai.ValidateAttachmentCompatibility([]api.Model{{Name: model, Backend: api.BackendCodexAgent}}, req.Prompt.Attachments); err != nil {
+		return nil, err
+	}
+	input := make([]map[string]any, 0, len(req.Prompt.Attachments))
+	if text := composePrompt(req); text != "" {
+		input = append(input, map[string]any{"type": "text", "text": text})
+	}
+	for i, attachment := range req.Prompt.Attachments {
+		content, ok := attachment.PreparedContent()
+		if !ok || content.Path == "" {
+			return nil, fmt.Errorf("attachment %d (%s) has no prepared local path", i+1, attachment.ID)
+		}
+		input = append(input, map[string]any{"type": "localImage", "path": content.Path})
+	}
 	p := map[string]any{
 		"threadId": threadID,
-		"input":    []map[string]any{{"type": "text", "text": composePrompt(req)}},
+		"input":    input,
 	}
 	if model != "" {
 		p["model"] = model
@@ -270,7 +364,7 @@ func buildTurnStartParams(model string, req ai.Request, threadID string, outputS
 	if len(outputSchema) > 0 {
 		p["outputSchema"] = outputSchema
 	}
-	return p
+	return p, nil
 }
 
 func buildResumeParams(req ai.Request) map[string]any {

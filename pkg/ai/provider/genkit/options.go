@@ -1,147 +1,125 @@
 package genkit
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"strings"
+	"os"
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/api/registry"
 
 	gkai "github.com/firebase/genkit/go/ai"
 )
 
-// defaultMaxOutputTokens is the visible-answer budget Anthropic requires on every
-// request; it is added on top of any extended-thinking budget.
-const defaultMaxOutputTokens = 4096
-
 // bareModel strips a leading provider prefix so a model id can be re-prefixed for
-// either a genkit ref (anthropic/openai/googleai) or an OpenRouter pricing key.
+// either a genkit ref or an OpenRouter pricing key.
 func bareModel(model string) string {
-	for _, prefix := range []string{"anthropic/", "openai/", "googleai/", "google/", "deepseek/", "models/"} {
-		if strings.HasPrefix(model, prefix) {
-			return strings.TrimPrefix(model, prefix)
-		}
-	}
-	return model
+	return registry.StripProviderPrefix(model)
 }
 
 // modelRef produces the genkit model reference for a backend+model
 // (anthropic/<model>, openai/<model>, googleai/<model>).
+//
+// The namespace is the provider's CatalogPrefix — googleai for Gemini — which is
+// deliberately not the same field pricing uses (google). Keeping them as one
+// hand-written switch each is how the two drifted apart.
 func modelRef(backend ai.Backend, model string) (string, error) {
 	if model == "" {
 		return "", fmt.Errorf("genkit provider: model cannot be empty")
 	}
-	bare := bareModel(model)
-	switch backend {
-	case ai.BackendAnthropic:
-		return "anthropic/" + bare, nil
-	case ai.BackendOpenAI:
-		return "openai/" + bare, nil
-	case ai.BackendGemini:
-		return "googleai/" + bare, nil
-	case ai.BackendDeepSeek:
-		return "deepseek/" + bare, nil
-	default:
+	// genkit serves the API modes only; the CLI/agent/cmux backends are driven by
+	// their own providers.
+	p, mode, ok := registry.ProviderFor(backend)
+	if !ok || mode != registry.ModeAPI {
 		return "", fmt.Errorf("genkit provider: unsupported backend %q", backend)
 	}
-}
-
-// thinkingBudget maps a reasoning effort to an extended-thinking token budget
-// (shared by Anthropic and Gemini). xhigh is captain's top tier.
-func thinkingBudget(e api.Effort) int {
-	switch e {
-	case api.EffortLow:
-		return 2048
-	case api.EffortMedium:
-		return 8192
-	case api.EffortHigh:
-		return 24576
-	case api.EffortXHigh:
-		return 32768
-	default:
-		return 0
-	}
-}
-
-// openaiReasoningEffort maps captain's effort onto OpenAI's reasoning_effort
-// values; OpenAI tops out at "high", so xhigh clamps to it.
-func openaiReasoningEffort(e api.Effort) string {
-	if e == api.EffortXHigh {
-		return string(api.EffortHigh)
-	}
-	return string(e)
-}
-
-// anthropicMaxTokens returns max_tokens for an Anthropic request. The thinking
-// budget is counted inside max_tokens, so leave room for the visible answer on
-// top of it; honour an explicit budget MaxTokens as the visible-answer base.
-func anthropicMaxTokens(req ai.Request, e api.Effort) int {
-	base := req.Budget.MaxTokens
-	if base <= 0 {
-		base = defaultMaxOutputTokens
-	}
-	budget := thinkingBudget(e)
-	if budget == 0 {
-		return base
-	}
-	return budget + base
-}
-
-// effortConfig builds the provider-specific generation config translating the
-// request's reasoning effort into each backend's native control. Anthropic also
-// requires max_tokens on every request, so it always returns a config.
-func effortConfig(backend ai.Backend, req ai.Request) map[string]any {
-	e := req.Effort
-	switch backend {
-	case ai.BackendOpenAI:
-		if e == api.EffortNone {
-			return nil
-		}
-		return map[string]any{"reasoning_effort": openaiReasoningEffort(e)}
-	case ai.BackendGemini:
-		if e == api.EffortNone {
-			return nil
-		}
-		return map[string]any{"thinkingConfig": map[string]any{"thinkingBudget": thinkingBudget(e)}}
-	case ai.BackendDeepSeek:
-		// DeepSeek selects reasoning by model (deepseek-reasoner vs deepseek-chat),
-		// not a per-request effort knob, so there is no effort config to send.
-		return nil
-	case ai.BackendAnthropic:
-		cfg := map[string]any{"max_tokens": anthropicMaxTokens(req, e)}
-		if e != api.EffortNone {
-			cfg["thinking"] = map[string]any{
-				"type":          "enabled",
-				"budget_tokens": thinkingBudget(e),
-			}
-		}
-		return cfg
-	default:
-		return nil
-	}
+	return p.CatalogPrefix + "/" + bareModel(model), nil
 }
 
 // generateOptions assembles the genkit Generate options for one turn: model,
 // system prompt, user prompt, effort config, and (when streaming) the callback.
 // WithOutputType is added only for the non-streaming structured-output path;
 // ExecuteStream rejects structured output before calling this.
-func generateOptions(p *Provider, req ai.Request, stream gkai.ModelStreamCallback) ([]gkai.GenerateOption, error) {
-	opts := []gkai.GenerateOption{gkai.WithModelName(p.modelRef)}
-
-	if req.Prompt.System != "" {
-		opts = append(opts, gkai.WithSystem(req.Prompt.System))
+func generateOptions(p *Provider, req ai.Request, stream gkai.ModelStreamCallback, emit func(ai.Event)) ([]gkai.GenerateOption, error) {
+	if err := req.ValidateRequestMode(); err != nil {
+		return nil, err
 	}
-	opts = append(opts, gkai.WithPrompt(req.Prompt.User))
+	opts := []gkai.GenerateOption{gkai.WithModelName(p.modelRef)}
+	toolOptions, err := p.toolOptions(req.ToolPreferences, emit)
+	if err != nil {
+		return nil, err
+	}
+	opts = append(opts, toolOptions...)
+	if p.cfg.Model.Name != "" {
+		req.Name = p.cfg.Model.Name
+	}
+	if p.cfg.Model.ID != "" && req.ID == "" {
+		req.ID = p.cfg.Model.ID
+	}
 
-	if cfg := effortConfig(p.backend, req); cfg != nil {
+	if req.ToolApproval != nil {
+		if err := ai.ValidateAttachmentCompatibility([]api.Model{req.Model}, messageAttachments(req.ToolApproval.State.Messages)); err != nil {
+			return nil, err
+		}
+		messages, restarts, responses, err := prepareToolApprovalResume(req.ToolApproval)
+		if err != nil {
+			return nil, fmt.Errorf("genkit tool approval resume: %w", err)
+		}
+		opts = append(opts, gkai.WithMessages(messages...))
+		if len(restarts) > 0 {
+			opts = append(opts, gkai.WithToolRestarts(restarts...))
+		}
+		if len(responses) > 0 {
+			opts = append(opts, gkai.WithToolResponses(responses...))
+		}
+	} else if len(req.Messages) > 0 {
+		if err := req.ValidateRequestMode(); err != nil {
+			return nil, err
+		}
+		if err := ai.ValidateAttachmentCompatibility([]api.Model{req.Model}, messageAttachments(req.Messages)); err != nil {
+			return nil, err
+		}
+		messages, err := conversationMessages(req.Messages)
+		if err != nil {
+			return nil, err
+		}
+		opts = append(opts, gkai.WithMessages(messages...))
+	} else {
+		if req.Prompt.System != "" {
+			opts = append(opts, gkai.WithSystem(req.Prompt.System))
+		}
+		if len(req.Prompt.Attachments) == 0 {
+			opts = append(opts, gkai.WithPrompt(req.Prompt.User))
+		} else {
+			if err := ai.ValidateAttachmentCompatibility([]api.Model{req.Model}, req.Prompt.Attachments); err != nil {
+				return nil, err
+			}
+			parts, err := promptParts(req)
+			if err != nil {
+				return nil, err
+			}
+			opts = append(opts, gkai.WithMessages(gkai.NewUserMessage(parts...)))
+		}
+	}
+
+	modelToken := req.Name
+	if modelToken == "" {
+		modelToken = req.ID
+	}
+	if cfg := ai.EffortConfig(p.backend, modelToken, req.Effort, req.Budget.MaxTokens, req.Temperature); cfg != nil {
 		opts = append(opts, gkai.WithConfig(cfg))
 	}
 	if stream != nil {
 		opts = append(opts, gkai.WithStreaming(stream))
 	}
 	if stream == nil {
-		if len(req.Prompt.SchemaJSON) > 0 {
+		if schema, handled, err := backendOutputSchema(p.backend, req); err != nil {
+			return nil, err
+		} else if handled {
+			opts = append(opts, gkai.WithOutputSchema(schema))
+		} else if len(req.Prompt.SchemaJSON) > 0 {
 			var schema map[string]any
 			if err := json.Unmarshal(req.Prompt.SchemaJSON, &schema); err != nil {
 				return nil, fmt.Errorf("genkit %s: invalid Prompt.SchemaJSON: %w", p.backend, err)
@@ -152,4 +130,136 @@ func generateOptions(p *Provider, req ai.Request, stream gkai.ModelStreamCallbac
 		}
 	}
 	return opts, nil
+}
+
+func promptParts(req ai.Request) ([]*gkai.Part, error) {
+	parts := make([]*gkai.Part, 0, len(req.Prompt.Attachments))
+	if req.Prompt.User != "" {
+		parts = append(parts, gkai.NewTextPart(req.Prompt.User))
+	}
+	for i, attachment := range req.Prompt.Attachments {
+		part, err := preparedAttachmentPart(attachment, fmt.Sprintf("attachment %d", i+1))
+		if err != nil {
+			return nil, err
+		}
+		parts = append(parts, part)
+	}
+	return parts, nil
+}
+
+func conversationMessages(messages []api.Message) ([]*gkai.Message, error) {
+	if err := api.ValidateMessages(messages); err != nil {
+		return nil, fmt.Errorf("canonical messages: %w", err)
+	}
+	toolNames := map[string]string{}
+	out := make([]*gkai.Message, 0, len(messages))
+	for i, message := range messages {
+		parts := make([]*gkai.Part, 0, len(message.Parts))
+		for j, part := range message.Parts {
+			switch part.Type {
+			case api.PartText:
+				parts = append(parts, gkai.NewTextPart(part.Text))
+			case api.PartReasoning:
+				parts = append(parts, gkai.NewReasoningPart(part.Text, nil))
+			case api.PartAttachment:
+				media, err := preparedAttachmentPart(*part.Attachment, fmt.Sprintf("message %d part %d attachment", i+1, j+1))
+				if err != nil {
+					return nil, err
+				}
+				parts = append(parts, media)
+			case api.PartToolRequest:
+				input, err := decodePartJSON(part.ToolRequest.Input)
+				if err != nil {
+					return nil, fmt.Errorf("message %d part %d tool request input: %w", i+1, j+1, err)
+				}
+				toolNames[part.ToolRequest.ToolCallID] = part.ToolRequest.Name
+				parts = append(parts, gkai.NewToolRequestPart(&gkai.ToolRequest{Ref: part.ToolRequest.ToolCallID, Name: part.ToolRequest.Name, Input: input}))
+			case api.PartToolResult:
+				output, err := decodePartJSON(part.ToolResult.Output)
+				if err != nil {
+					return nil, fmt.Errorf("message %d part %d tool result output: %w", i+1, j+1, err)
+				}
+				if part.ToolResult.Error != "" {
+					output = map[string]any{"error": part.ToolResult.Error}
+				}
+				parts = append(parts, gkai.NewToolResponsePart(&gkai.ToolResponse{Ref: part.ToolResult.ToolCallID, Name: toolNames[part.ToolResult.ToolCallID], Output: output}))
+			}
+		}
+		out = append(out, gkai.NewMessage(genkitRole(message.Role), nil, parts...))
+	}
+	return out, nil
+}
+
+func genkitRole(role api.MessageRole) gkai.Role {
+	switch role {
+	case api.RoleSystem:
+		return gkai.RoleSystem
+	case api.RoleUser:
+		return gkai.RoleUser
+	case api.RoleAssistant:
+		return gkai.RoleModel
+	case api.RoleTool:
+		return gkai.RoleTool
+	default:
+		return ""
+	}
+}
+
+func decodePartJSON(raw json.RawMessage) (any, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil, err
+	}
+	return value, nil
+}
+
+func messageAttachments(messages []api.Message) []api.AttachmentRef {
+	var attachments []api.AttachmentRef
+	for _, message := range messages {
+		for _, part := range message.Parts {
+			if part.Type == api.PartAttachment && part.Attachment != nil {
+				attachments = append(attachments, *part.Attachment)
+			}
+		}
+	}
+	return attachments
+}
+
+func preparedAttachmentPart(attachment api.AttachmentRef, label string) (*gkai.Part, error) {
+	content, ok := attachment.PreparedContent()
+	if !ok {
+		return nil, fmt.Errorf("%s (%s) is not prepared", label, attachment.ID)
+	}
+	data := content.Bytes
+	if data == nil && content.Path != "" {
+		var err error
+		data, err = os.ReadFile(content.Path)
+		if err != nil {
+			return nil, fmt.Errorf("read prepared attachment %s: %w", attachment.ID, err)
+		}
+	}
+	uri := "data:" + attachment.MediaType + ";base64," + base64.StdEncoding.EncodeToString(data)
+	return gkai.NewMediaPart(attachment.MediaType, uri), nil
+}
+
+// backendOutputSchema resolves schemas for native providers whose supported
+// JSON Schema subset differs from Captain's caller-facing schema. The bool is
+// false for backends that should retain Genkit's existing WithOutputType or raw
+// SchemaJSON behavior.
+func backendOutputSchema(backend ai.Backend, req ai.Request) (map[string]any, bool, error) {
+	if !req.Prompt.HasSchema() || (!ai.UsesAnthropicSchemaSubset(backend) && !ai.UsesOpenAISchemaSubset(backend)) {
+		return nil, false, nil
+	}
+	raw, err := ai.SchemaJSONForBackend(backend, req.Prompt)
+	if err != nil {
+		return nil, true, fmt.Errorf("genkit %s: cannot derive Prompt schema: %w", backend, err)
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		return nil, true, fmt.Errorf("genkit %s: invalid Prompt schema: %w", backend, err)
+	}
+	return schema, true, nil
 }

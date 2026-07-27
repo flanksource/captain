@@ -68,6 +68,7 @@ func runFakeServer() {
 	// initHadSchema records whether the host sent an outputSchema on initialize,
 	// so the "structured" turn can prove the Go→TS schema wiring end to end.
 	initHadSchema := false
+	promptCount := 0
 
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
@@ -98,14 +99,32 @@ func runFakeServer() {
 				"session_id": "fake-sess", "model": "claude-sonnet-4-5", "tools": []string{"Read", "Bash"},
 			}})
 		case "prompt":
+			promptCount++
 			enc(map[string]any{"jsonrpc": "2.0", "id": id(frame.ID), "result": map[string]any{"accepted": true}})
 			enc(map[string]any{"jsonrpc": "2.0", "method": "message/text", "params": map[string]any{"text": "hi from fake"}})
 			switch mode {
+			case "steer":
+				if promptCount == 2 {
+					completed("first prompt complete")
+					completed("steered prompt complete")
+				}
 			case "approval":
 				// Ask the host to vet a Bash tool use; the turn completes when the
 				// host replies (handled above).
 				enc(map[string]any{"jsonrpc": "2.0", "id": "perm-1", "method": "can_use_tool", "params": map[string]any{
 					"tool": "Bash", "input": map[string]any{"command": "ls"}, "tool_use_id": "tu1",
+				}})
+			case "plan-approval":
+				// A plan-mode turn ending in ExitPlanMode: the tool_use streams first
+				// (the SDK yields the assistant message before executing the tool),
+				// then the permission check; the turn completes when the host replies.
+				enc(map[string]any{"jsonrpc": "2.0", "method": "message/tool_use", "params": map[string]any{
+					"tool": "ExitPlanMode", "id": "tu-plan",
+					"input": map[string]any{"plan": "1. change the seam", "planFilePath": "/repo/.claude/plans/x.md"},
+				}})
+				enc(map[string]any{"jsonrpc": "2.0", "id": "perm-plan", "method": "can_use_tool", "params": map[string]any{
+					"tool": "ExitPlanMode", "tool_use_id": "tu-plan",
+					"input": map[string]any{"plan": "1. change the seam", "planFilePath": "/repo/.claude/plans/x.md"},
 				}})
 			case "hang":
 				// Emit nothing more; wait for the interrupt control request.
@@ -161,12 +180,12 @@ func withFakeAgentProcessEnv(t *testing.T, env map[string]string) {
 func TestProvider_StreamLifecycle(t *testing.T) {
 	withFakeAgentProcess(t)
 
-	p, err := New(ai.Config{Model: api.Model{Name: "claude-agent-sonnet"}})
+	p, err := New(ai.Config{Model: api.Model{Name: "claude-sonnet-5"}})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = p.Close() })
 
 	assert.Equal(t, ai.BackendClaudeAgent, p.GetBackend())
-	assert.Equal(t, "claude-agent-sonnet", p.GetModel())
+	assert.Equal(t, "claude-sonnet-5", p.GetModel())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -197,7 +216,7 @@ func TestProvider_StreamLifecycle(t *testing.T) {
 func TestProvider_ExecuteCoalesce(t *testing.T) {
 	withFakeAgentProcess(t)
 
-	p, err := New(ai.Config{Model: api.Model{Name: "claude-agent-sonnet"}})
+	p, err := New(ai.Config{Model: api.Model{Name: "claude-sonnet-5"}})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = p.Close() })
 
@@ -225,7 +244,7 @@ type companyInfo struct {
 func TestProvider_StructuredOutput(t *testing.T) {
 	withFakeAgentProcessEnv(t, map[string]string{fakeServerEnv: "1", fakeModeEnv: "structured"})
 
-	p, err := New(ai.Config{Model: api.Model{Name: "claude-agent-sonnet"}})
+	p, err := New(ai.Config{Model: api.Model{Name: "claude-sonnet-5"}})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = p.Close() })
 
@@ -263,7 +282,7 @@ func TestRequestSchemaJSON(t *testing.T) {
 		require.NoError(t, err)
 		require.NotEmpty(t, raw)
 
-		p := &Provider{model: "claude-agent-sonnet", sessionSchema: raw}
+		p := &Provider{model: "claude-sonnet-5", sessionSchema: raw}
 		ip := p.initializeParams(ai.Request{Prompt: api.Prompt{User: "x", Schema: &plan{}}})
 		require.NotEmpty(t, ip.OutputSchema, "outputSchema should be set from the session schema")
 
@@ -276,6 +295,20 @@ func TestRequestSchemaJSON(t *testing.T) {
 		assert.Contains(t, props, "steps")
 	})
 
+	t.Run("raw schema is sanitized for anthropic structured output", func(t *testing.T) {
+		raw, err := requestSchemaJSON(ai.Request{Prompt: api.Prompt{
+			SchemaJSON: json.RawMessage(`{"type":"object","properties":{"answer":{"type":"string","maxLength":12}}}`),
+		}})
+		require.NoError(t, err)
+		var decoded map[string]any
+		require.NoError(t, json.Unmarshal(raw, &decoded))
+		answer := decoded["properties"].(map[string]any)["answer"].(map[string]any)
+		if _, ok := answer["maxLength"]; ok {
+			t.Fatalf("request schema should strip maxLength key, got %s", raw)
+		}
+		assert.NotEmpty(t, answer["description"])
+	})
+
 	t.Run("non-struct target fails loudly", func(t *testing.T) {
 		_, err := requestSchemaJSON(ai.Request{Prompt: api.Prompt{Schema: "not a struct"}})
 		require.Error(t, err)
@@ -285,7 +318,7 @@ func TestRequestSchemaJSON(t *testing.T) {
 func TestProvider_MultiTurnSerialized(t *testing.T) {
 	withFakeAgentProcess(t)
 
-	p, err := New(ai.Config{Model: api.Model{Name: "claude-agent-sonnet"}})
+	p, err := New(ai.Config{Model: api.Model{Name: "claude-sonnet-5"}})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = p.Close() })
 
@@ -323,7 +356,7 @@ func TestProvider_CanUseTool(t *testing.T) {
 	}
 
 	// CanUseTool is a runtime concern, set on the provider's Config (not the request).
-	p, err := New(ai.Config{Model: api.Model{Name: "claude-agent-sonnet"}, CanUseTool: canUseTool})
+	p, err := New(ai.Config{Model: api.Model{Name: "claude-sonnet-5"}, CanUseTool: canUseTool})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = p.Close() })
 
@@ -371,6 +404,62 @@ func TestProvider_CanUseTool(t *testing.T) {
 	assert.Contains(t, resultText, "ls -la")
 }
 
+// TestProvider_PlanModeExitPlanModeAutoDenied verifies the shared plan-mode
+// terminal policy: in a plan-only run the ExitPlanMode can_use_tool is answered
+// by the provider itself (deny + guidance) — the host broker is never invoked,
+// no EventPermission is surfaced, and the already-streamed tool_use still
+// yields the plan terminal outcome.
+func TestProvider_PlanModeExitPlanModeAutoDenied(t *testing.T) {
+	withFakeAgentProcessEnv(t, map[string]string{fakeServerEnv: "1", fakeModeEnv: "plan-approval"})
+
+	canUseTool := func(_ context.Context, r ai.PermissionRequest) (ai.PermissionDecision, error) {
+		t.Errorf("CanUseTool must not be invoked for ExitPlanMode in plan mode, got %s", r.Tool)
+		return ai.PermissionDecision{Allow: true}, nil
+	}
+
+	p, err := New(ai.Config{Model: api.Model{Name: "claude-sonnet-5"}, CanUseTool: canUseTool})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = p.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	events, err := p.ExecuteStream(ctx, ai.Request{
+		Prompt:      api.Prompt{User: "plan it"},
+		Permissions: api.Permissions{Mode: api.PermissionPlan},
+	})
+	require.NoError(t, err)
+
+	var outcome *ai.TerminalOutcome
+	var result *ai.Event
+	for ev := range events {
+		switch ev.Kind {
+		case ai.EventPermission:
+			t.Errorf("plan-terminal ExitPlanMode must not surface an EventPermission, got %s", ev.Tool)
+		case ai.EventToolUse:
+			parsed, perr := ai.TerminalOutcomeFromEvent(ev)
+			require.NoError(t, perr)
+			if parsed != nil {
+				outcome = parsed
+			}
+		case ai.EventResult:
+			cp := ev
+			result = &cp
+		}
+	}
+
+	// The streamed tool_use still derives the plan terminal outcome.
+	require.NotNil(t, outcome, "expected the ExitPlanMode tool_use to stream")
+	assert.Equal(t, ai.TerminalOutcomePlan, outcome.Kind)
+	assert.Equal(t, "/repo/.claude/plans/x.md", outcome.Plan.Path)
+
+	// The provider answered the can_use_tool itself with the deny + guidance.
+	require.NotNil(t, result, "expected a terminal result event")
+	resultText, _ := result.Input["result"].(string)
+	assert.Contains(t, resultText, `"allow":false`)
+	assert.Contains(t, resultText, "Plan captured for human review")
+}
+
 // TestProvider_InterruptNoKill verifies a cancelled turn is ended by the
 // interrupt control request — the fake records receiving it — rather than by
 // killing the process.
@@ -382,7 +471,7 @@ func TestProvider_InterruptNoKill(t *testing.T) {
 		fakeMarkerEnv: marker,
 	})
 
-	p, err := New(ai.Config{Model: api.Model{Name: "claude-agent-sonnet"}})
+	p, err := New(ai.Config{Model: api.Model{Name: "claude-sonnet-5"}})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = p.Close() })
 
@@ -407,4 +496,32 @@ func TestProvider_InterruptNoKill(t *testing.T) {
 	// interrupt() completes before the error is emitted, so by now the fake has
 	// written the marker — proof the graceful interrupt reached it.
 	require.FileExists(t, marker)
+}
+
+func TestProvider_SteerKeepsTurnOpenForEveryAcceptedPrompt(t *testing.T) {
+	withFakeAgentProcessEnv(t, map[string]string{
+		fakeServerEnv: "1",
+		fakeModeEnv:   "steer",
+	})
+
+	p, err := New(ai.Config{Model: api.Model{Name: "claude-sonnet-5"}})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = p.Close() })
+
+	events, err := p.ExecuteStream(context.Background(), ai.Request{Prompt: api.Prompt{User: "first"}})
+	require.NoError(t, err)
+	for event := range events {
+		if event.Kind == ai.EventText {
+			break
+		}
+	}
+	require.NoError(t, p.Steer(context.Background(), ai.Request{Prompt: api.Prompt{User: "btw"}}))
+
+	results := 0
+	for event := range events {
+		if event.Kind == ai.EventResult {
+			results++
+		}
+	}
+	assert.Equal(t, 2, results)
 }
