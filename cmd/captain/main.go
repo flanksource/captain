@@ -13,14 +13,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var version = "dev"
-
 func main() {
 	rootCmd := &cobra.Command{
-		Use:     "captain",
-		Short:   "Search and analyze Claude Code tool use history",
-		Long:    "Search Claude Code session history by tool, category, file path, or time range. When stdin is piped, transcripts can be streamed in directly (e.g. 'cat session.jsonl | captain'). All other commands are available as subcommands.",
-		Version: version,
+		Use:   "captain",
+		Short: "Search and analyze Claude Code tool use history",
+		Long:  "Search Claude Code session history by tool, category, file path, or time range. When stdin is piped, transcripts can be streamed in directly (e.g. 'cat session.jsonl | captain'). All other commands are available as subcommands.",
 		// Cobra dumps the full usage block by default whenever any RunE
 		// returns an error. For runtime errors (parse failures, network
 		// errors, etc.) the help text is just noise and buries the real
@@ -33,6 +30,7 @@ func main() {
 			cli.EnableHTTPWireLogging()
 		},
 	}
+	configureVersion(rootCmd, currentBuildInfo())
 
 	clicky.BindAllFlags(rootCmd.PersistentFlags(), "format")
 	cli.BindDatabaseURLFlag(rootCmd.PersistentFlags())
