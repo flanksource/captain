@@ -371,19 +371,6 @@ func collapseToTopDirs(dirs map[string]bool) []string {
 	return result
 }
 
-func extractWritePathsFromBash(cmd string) []string {
-	var paths []string
-	redir := regexp.MustCompile(`>>?\s+(\S+)`)
-	for _, m := range redir.FindAllStringSubmatch(cmd, -1) {
-		paths = append(paths, m[1])
-	}
-	mkdirRe := regexp.MustCompile(`mkdir\s+(?:-p\s+)?(\S+)`)
-	for _, m := range mkdirRe.FindAllStringSubmatch(cmd, -1) {
-		paths = append(paths, m[1])
-	}
-	return paths
-}
-
 // skipBinaries are shell builtins / trivial commands not worth listing
 var skipBinaries = map[string]bool{
 	"echo": true, "printf": true, "cd": true, "export": true,

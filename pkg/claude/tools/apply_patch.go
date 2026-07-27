@@ -1,4 +1,4 @@
-package cli
+package tools
 
 import (
 	"encoding/json"
@@ -12,10 +12,10 @@ var (
 	javascriptStringRE = regexp.MustCompile(`"(?:\\.|[^"\\])*"`)
 )
 
-func extractApplyPatchPaths(input string) []string {
-	payloads := applyPatchPayloads(input)
+// ExtractApplyPatchPaths returns every file header in a native or JavaScript-wrapped Codex patch.
+func ExtractApplyPatchPaths(input string) []string {
 	var paths []string
-	for _, payload := range payloads {
+	for _, payload := range applyPatchPayloads(input) {
 		for _, pattern := range []*regexp.Regexp{applyPatchFileRE, applyPatchMoveRE} {
 			for _, match := range pattern.FindAllStringSubmatch(payload, -1) {
 				if path := strings.TrimSpace(match[1]); path != "" {

@@ -66,12 +66,12 @@ func AnalyzeToolUse(t tools.Tool) ToolAnalysis {
 	case "Bash":
 		a.analyzeBash(base.Input, abs)
 		command, _ := base.Input["command"].(string)
-		for _, path := range extractApplyPatchPaths(command) {
+		for _, path := range tools.ExtractApplyPatchPaths(command) {
 			a.WritePaths = appendUnique(a.WritePaths, abs(path))
 		}
-	case "exec":
+	case "exec", "apply_patch":
 		input, _ := base.Input["input"].(string)
-		for _, path := range extractApplyPatchPaths(input) {
+		for _, path := range tools.ExtractApplyPatchPaths(input) {
 			a.WritePaths = appendUnique(a.WritePaths, abs(path))
 		}
 	case "WebFetch":
@@ -118,9 +118,6 @@ func (a *ToolAnalysis) analyzeBash(input map[string]any, abs func(string) string
 	}
 	for _, path := range result.ReferencedPaths {
 		a.ReadPaths = appendUnique(a.ReadPaths, abs(path))
-	}
-	for _, path := range extractWritePathsFromBash(cmd) {
-		a.WritePaths = appendUnique(a.WritePaths, abs(path))
 	}
 
 	binaries := make(map[string]bool)

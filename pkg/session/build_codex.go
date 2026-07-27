@@ -401,6 +401,7 @@ func collectCodexPaths(u history.ToolUse, read, written *[]string) {
 		if cmd == "" {
 			return
 		}
+		*written = append(*written, tools.ExtractApplyPatchPaths(cmd)...)
 		result, err := bash.Analyze(cmd)
 		if err != nil {
 			return
@@ -422,6 +423,9 @@ func collectCodexPaths(u history.ToolUse, read, written *[]string) {
 			}
 			*read = append(*read, p)
 		}
+	case "exec", "apply_patch":
+		input, _ := u.Input["input"].(string)
+		*written = append(*written, tools.ExtractApplyPatchPaths(input)...)
 	}
 }
 
