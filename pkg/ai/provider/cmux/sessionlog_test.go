@@ -95,6 +95,83 @@ func TestSessionTailerTerminatesOnAPIError(t *testing.T) {
 	}
 }
 
+func TestSessionTailerPausesOnAskUserQuestion(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	writeSessionLog(t, path,
+		`{"type":"assistant","sessionId":"s","message":{"stop_reason":"tool_use","content":[{"type":"tool_use","id":"ask-1","name":"AskUserQuestion","input":{"questions":[{"question":"Which database?"}]}}]}}`,
+	)
+
+	tailer := sessionTailer{path: path, pollInterval: time.Millisecond, appearTimeout: 200 * time.Millisecond}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	var events []history.SessionEvent
+	completed, err := tailer.tail(ctx, func(ev history.SessionEvent) { events = append(events, ev) })
+	if err != nil || !completed {
+		t.Fatalf("tail() = (%v, %v), want paused terminal outcome", completed, err)
+	}
+	if len(events) != 1 || !isUserQuestionEvent(events[0]) || events[0].ToolUse.ToolUseID != "ask-1" {
+		t.Fatalf("events = %+v, want AskUserQuestion ask-1", events)
+	}
+}
+
+func TestSessionTailerPlanModeIgnoresEndTurnUntilExitPlanMode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	writeSessionLog(t, path,
+		`{"type":"assistant","sessionId":"s","message":{"stop_reason":"end_turn","content":[{"type":"text","text":"intermediate"}]}}`,
+		`{"type":"assistant","sessionId":"s","message":{"stop_reason":"tool_use","content":[{"type":"tool_use","id":"plan-1","name":"ExitPlanMode","input":{"plan":"1. Inspect\n2. Implement","planFilePath":"/repo/.claude/plans/example.md"}}]}}`,
+	)
+
+	tailer := sessionTailer{
+		path:          path,
+		pollInterval:  time.Millisecond,
+		appearTimeout: 200 * time.Millisecond,
+		terminal:      planModeTerminalEvent,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	var events []history.SessionEvent
+	completed, err := tailer.tail(ctx, func(ev history.SessionEvent) { events = append(events, ev) })
+
+	if err != nil || !completed {
+		t.Fatalf("tail() = (%v, %v), want terminal plan outcome", completed, err)
+	}
+	if len(events) != 3 {
+		t.Fatalf("events = %+v, want intermediate text + end turn + ExitPlanMode", events)
+	}
+	last := events[len(events)-1]
+	if last.Kind != history.EventToolUse || last.ToolUse.Tool != "ExitPlanMode" {
+		t.Fatalf("last event = %+v, want ExitPlanMode", last)
+	}
+}
+
+func TestSessionTailerPlanModeUsesTimeoutInsteadOfQuiescence(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	writeSessionLog(t, path,
+		`{"type":"assistant","sessionId":"s","message":{"stop_reason":"end_turn","content":[{"type":"text","text":"waiting for background agents"}]}}`,
+	)
+
+	tailer := sessionTailer{
+		path:          path,
+		pollInterval:  time.Millisecond,
+		appearTimeout: 200 * time.Millisecond,
+		quiescePeriod: 5 * time.Millisecond,
+		terminal:      planModeTerminalEvent,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+
+	completed, err := tailer.tail(ctx, func(history.SessionEvent) {})
+
+	if completed {
+		t.Fatal("plan-mode tail completed on quiescence before ExitPlanMode")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("tail() error = %v, want context deadline", err)
+	}
+}
+
 func TestSessionTailerCompletesOnQuiescence(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "s.jsonl")
 	// No end_turn — only a mid-turn entry; completion must come from quiescence.

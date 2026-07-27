@@ -4,11 +4,14 @@ import (
 	"crypto/sha256"
 	_ "embed"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/flanksource/captain/pkg/ai"
 )
 
 //go:embed agent.ts
@@ -61,15 +64,23 @@ func contentHash(data []byte) string {
 	return hex.EncodeToString(h[:])
 }
 
-// ensureDependencies installs node_modules the first time (the SDK package
-// missing is the signal). It fails loudly when npm is unavailable rather than
-// silently degrading — the provider cannot run without the SDK.
+// ensureDependencies installs the pinned SDK when it is missing or its version
+// differs. It fails loudly when npm is unavailable because the provider cannot
+// run without the exact bridge contract declared in package.json.
 func ensureDependencies(agentDir string) error {
-	sdkDir := filepath.Join(agentDir, "node_modules", "@anthropic-ai", "claude-agent-sdk")
-	if _, err := os.Stat(sdkDir); err == nil {
-		return nil
+	requiredVersion, err := requiredSDKVersion()
+	if err != nil {
+		return err
 	}
-
+	sdkPackage := filepath.Join(agentDir, "node_modules", "@anthropic-ai", "claude-agent-sdk", "package.json")
+	if data, err := os.ReadFile(sdkPackage); err == nil {
+		var installed struct {
+			Version string `json:"version"`
+		}
+		if json.Unmarshal(data, &installed) == nil && installed.Version == requiredVersion {
+			return nil
+		}
+	}
 	npmPath, err := exec.LookPath("npm")
 	if err != nil {
 		return fmt.Errorf("npm not found in PATH (required to install the Claude Agent SDK): %w", err)
@@ -83,6 +94,20 @@ func ensureDependencies(agentDir string) error {
 		return fmt.Errorf("npm install in %s failed: %w", agentDir, err)
 	}
 	return nil
+}
+
+func requiredSDKVersion() (string, error) {
+	var manifest struct {
+		Dependencies map[string]string `json:"dependencies"`
+	}
+	if err := json.Unmarshal([]byte(agentPackageJSON), &manifest); err != nil {
+		return "", fmt.Errorf("parse embedded Claude Agent package manifest: %w", err)
+	}
+	version := strings.TrimSpace(manifest.Dependencies["@anthropic-ai/claude-agent-sdk"])
+	if version == "" {
+		return "", fmt.Errorf("embedded Claude Agent package manifest does not pin @anthropic-ai/claude-agent-sdk")
+	}
+	return version, nil
 }
 
 // findTsx resolves the tsx runner, preferring the version installed into the
@@ -115,15 +140,13 @@ func nestingEnvOverrides(environ []string) map[string]string {
 	return overrides
 }
 
-// aliasModel strips the captain backend prefix from a model id and passes the
-// remainder (e.g. "sonnet", "opus", "claude-sonnet-4-5") straight to the SDK,
-// which resolves the short aliases via the Claude Code CLI. Kept local so the
-// claudeagent package never imports pkg/ai/provider (which imports it back).
+// aliasModel is retained as the local model renderer for the agent.ts bridge.
+// It accepts legacy backend-prefixed aliases as input compatibility, but returns
+// the exact Claude model ID the SDK should receive.
 func aliasModel(model string) string {
-	m := strings.TrimPrefix(model, "claude-agent-")
-	m = strings.TrimPrefix(m, "claude-code-")
-	if m == "" {
-		return "sonnet"
+	m := strings.TrimSpace(model)
+	if m == "" || m == "claude" {
+		return "claude-sonnet-5"
 	}
-	return m
+	return ai.NormalizeModelForBackend(ai.BackendClaudeAgent, m)
 }

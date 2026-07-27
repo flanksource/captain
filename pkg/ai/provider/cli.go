@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"os/exec"
 	"strings"
 
@@ -73,53 +75,84 @@ func HandleExitError(exitCode int, stderr string) error {
 	}
 }
 
-func runCLI(ctx context.Context, command string, stdinData []byte, cwd string, env ...[]string) (stdout []byte, stderr string, err error) {
-	cmd := exec.CommandContext(ctx, command)
+func startCLIStream(ctx context.Context, command string, args []string, stdinData []byte, cwd string, env []string) (*exec.Cmd, io.ReadCloser, *bytes.Buffer, error) {
+	cmd := exec.CommandContext(ctx, command, args...)
 	if cwd != "" {
 		cmd.Dir = cwd
 	}
-	if len(env) > 0 && len(env[0]) > 0 {
-		cmd.Env = env[0]
+	if len(env) > 0 {
+		cmd.Env = env
 	}
-
-	// Buffer stdout/stderr instead of using StdoutPipe/StderrPipe: cmd.Wait closes
-	// those pipes when the process exits, so reading them in a goroutine that races
-	// Wait fails with "file already closed" (deterministic on Linux). With buffers,
-	// Wait blocks until the os/exec output copiers finish, making the reads safe.
-	var stdoutBuf, stderrBuf bytes.Buffer
-	cmd.Stdout = &stdoutBuf
-	cmd.Stderr = &stderrBuf
-
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to create stdout pipe: %w", err)
+	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to create stdin pipe: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to create stdin pipe: %w", err)
 	}
-
+	stderrBuf := &bytes.Buffer{}
+	cmd.Stderr = stderrBuf
 	if err := cmd.Start(); err != nil {
 		if IsCommandNotFound(err) {
-			return nil, "", fmt.Errorf("%w: %v", ai.ErrCLINotFound, err)
+			return nil, nil, nil, fmt.Errorf("%w: %v", ai.ErrCLINotFound, err)
 		}
-		return nil, "", fmt.Errorf("failed to start %s: %w", command, err)
+		return nil, nil, nil, fmt.Errorf("failed to start %s: %w", command, err)
 	}
-
-	// Feed stdin in the background so a large prompt cannot deadlock against a
-	// process that only drains stdin after producing its output.
 	go func() {
-		_, _ = stdin.Write(stdinData)
-		_, _ = stdin.Write([]byte("\n"))
+		if len(stdinData) > 0 {
+			_, _ = stdin.Write(stdinData)
+			if stdinData[len(stdinData)-1] != '\n' {
+				_, _ = stdin.Write([]byte("\n"))
+			}
+		}
 		_ = stdin.Close()
 	}()
+	return cmd, stdout, stderrBuf, nil
+}
 
-	// CommandContext kills the process when ctx is cancelled, which unblocks Wait.
+func finishCLIStream(ctx context.Context, cmd *exec.Cmd, stderrBuf *bytes.Buffer) error {
 	waitErr := cmd.Wait()
 	if ctx.Err() != nil {
-		return nil, "", fmt.Errorf("%w: context cancelled", ai.ErrTimeout)
+		return fmt.Errorf("%w: context cancelled", ai.ErrTimeout)
 	}
-
-	stderrData := stderrBuf.String()
-	if waitErr != nil {
-		return nil, stderrData, HandleExitError(GetExitCode(waitErr), ParseStderr(stderrData))
+	if waitErr == nil {
+		return nil
 	}
+	return HandleExitError(GetExitCode(waitErr), ParseStderr(stderrBuf.String()))
+}
 
-	return stdoutBuf.Bytes(), stderrData, nil
+func commandEnv(setupEnv []string) []string {
+	if len(setupEnv) == 0 {
+		return nil
+	}
+	merged := os.Environ()
+	positions := map[string]int{}
+	for i, item := range merged {
+		if key, _, ok := strings.Cut(item, "="); ok {
+			positions[key] = i
+		}
+	}
+	for _, item := range setupEnv {
+		key, _, ok := strings.Cut(item, "=")
+		if !ok || key == "" {
+			continue
+		}
+		if idx, ok := positions[key]; ok {
+			merged[idx] = item
+			continue
+		}
+		positions[key] = len(merged)
+		merged = append(merged, item)
+	}
+	return merged
+}
+
+func emit(ctx context.Context, events chan<- ai.Event, ev ai.Event) bool {
+	select {
+	case events <- ev:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }

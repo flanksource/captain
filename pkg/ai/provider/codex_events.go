@@ -1,10 +1,8 @@
 package provider
 
 import (
-	"encoding/json"
-	"strings"
-
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/ai/history"
 	"github.com/flanksource/captain/pkg/claude"
 )
 
@@ -14,38 +12,8 @@ import (
 // in favour of live `/v1/models` listings.
 const CodexCLIDefaultModel = ""
 
-// codexError is the error envelope codex emits; extractCodexErrorText unwraps a
-// JSON-encoded payload nested in a `message` field into this shape.
-type codexError struct {
-	Type    string `json:"type"`
-	Message string `json:"message"`
-	Status  int    `json:"status"`
-}
-
-// extractCodexErrorText pulls a human-readable message out of codex's error
-// envelopes. Codex sometimes nests JSON-encoded payloads inside the `message`
-// field (e.g. an OpenAI 400 served back as a stringified error envelope), so we
-// best-effort unwrap one level when the message itself parses as JSON.
 func extractCodexErrorText(raw string) string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" || !strings.HasPrefix(raw, "{") {
-		return raw
-	}
-	var nested codexError
-	wrapper := struct {
-		Error   *codexError `json:"error"`
-		Message string      `json:"message"`
-	}{Error: &nested}
-	if err := json.Unmarshal([]byte(raw), &wrapper); err != nil {
-		return raw
-	}
-	if wrapper.Error != nil && wrapper.Error.Message != "" {
-		return wrapper.Error.Message
-	}
-	if wrapper.Message != "" {
-		return wrapper.Message
-	}
-	return raw
+	return history.NormalizeCodexError(raw)
 }
 
 func firstNonEmpty(values ...string) string {
@@ -57,17 +25,25 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-// codexToolUse builds the claude.ToolUse stand-in stashed on ai.Event.Raw so the
-// shared lineRenderer in pkg/cli renders codex live streams identically to
-// `captain history` output. Source is hard-coded to "codex" so
-// sessionKey/sessionHeaderText pick the codex icon and label.
-func codexToolUse(name string, input map[string]any, sessionID, model string) claude.ToolUse {
+// codexToolUse converts the shared normalized history shape into the stand-in
+// used by the live renderer.
+func codexToolUse(use history.ToolUse, fallbackModel string) claude.ToolUse {
 	return claude.ToolUse{
-		Tool:      name,
-		Input:     input,
-		SessionID: sessionID,
-		Source:    "codex",
-		Model:     model,
+		Tool:            use.Tool,
+		Input:           use.Input,
+		Timestamp:       use.Timestamp,
+		CWD:             use.CWD,
+		SessionID:       use.SessionID,
+		ToolUseID:       use.ToolUseID,
+		Source:          "codex",
+		Model:           firstNonEmpty(use.Model, fallbackModel),
+		ReasoningEffort: use.ReasoningEffort,
+		InputTokens:     use.InputTokens + use.CacheReadTokens,
+		OutputTokens:    use.OutputTokens,
+		Response:        use.Response,
+		AgentID:         use.AgentID,
+		AgentType:       use.AgentType,
+		AgentDesc:       use.AgentDesc,
 	}
 }
 

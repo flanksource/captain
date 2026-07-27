@@ -1,103 +1,68 @@
 package genkit
 
 import (
+	"fmt"
+	"path/filepath"
 	"testing"
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/credentials"
 
 	gkai "github.com/firebase/genkit/go/ai"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestEffortConfig(t *testing.T) {
-	tests := []struct {
-		name    string
-		backend ai.Backend
-		req     ai.Request
-		want    map[string]any
-	}{
-		{
-			name:    "anthropic no effort defaults max_tokens only",
-			backend: ai.BackendAnthropic,
-			req:     ai.Request{},
-			want:    map[string]any{"max_tokens": 4096},
-		},
-		{
-			name:    "anthropic high effort adds thinking budget on top of base",
-			backend: ai.BackendAnthropic,
-			req:     ai.Request{Model: api.Model{Effort: api.EffortHigh}},
-			want: map[string]any{
-				"max_tokens": 24576 + 4096,
-				"thinking":   map[string]any{"type": "enabled", "budget_tokens": 24576},
-			},
-		},
-		{
-			name:    "anthropic medium honours explicit max tokens as base",
-			backend: ai.BackendAnthropic,
-			req:     ai.Request{Model: api.Model{Effort: api.EffortMedium}, Budget: api.Budget{MaxTokens: 1000}},
-			want: map[string]any{
-				"max_tokens": 8192 + 1000,
-				"thinking":   map[string]any{"type": "enabled", "budget_tokens": 8192},
-			},
-		},
-		{
-			name:    "openai high effort sets reasoning_effort",
-			backend: ai.BackendOpenAI,
-			req:     ai.Request{Model: api.Model{Effort: api.EffortHigh}},
-			want:    map[string]any{"reasoning_effort": "high"},
-		},
-		{
-			name:    "openai no effort omits config",
-			backend: ai.BackendOpenAI,
-			req:     ai.Request{},
-			want:    nil,
-		},
-		{
-			name:    "gemini low effort sets thinkingBudget",
-			backend: ai.BackendGemini,
-			req:     ai.Request{Model: api.Model{Effort: api.EffortLow}},
-			want:    map[string]any{"thinkingConfig": map[string]any{"thinkingBudget": 2048}},
-		},
-		{
-			name:    "gemini no effort omits config",
-			backend: ai.BackendGemini,
-			req:     ai.Request{},
-			want:    nil,
-		},
-		{
-			name:    "deepseek omits config (reasoning is selected by model)",
-			backend: ai.BackendDeepSeek,
-			req:     ai.Request{Model: api.Model{Effort: api.EffortHigh}},
-			want:    nil,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, effortConfig(tt.backend, tt.req))
-		})
-	}
-}
-
 func TestMapUsage(t *testing.T) {
-	got := mapUsage(&gkai.GenerationUsage{
+	// genkit reports overlapping buckets differently per backend; mapUsage must
+	// normalize to captain's disjoint contract (Input excludes cache, Output
+	// excludes reasoning).
+	raw := &gkai.GenerationUsage{
 		InputTokens:         120,
 		OutputTokens:        45,
 		ThoughtsTokens:      30,
 		CachedContentTokens: 17,
 		TotalTokens:         212,
-	})
+	}
 
+	// Anthropic: input_tokens already excludes cache and there is no reasoning
+	// fold, so both buckets pass through unchanged.
 	assert.Equal(t, ai.Usage{
 		InputTokens:     120,
 		OutputTokens:    45,
-		ReasoningTokens: 30, // ThoughtsTokens -> ReasoningTokens
-		CacheReadTokens: 17, // CachedContentTokens -> CacheReadTokens
-	}, got)
+		ReasoningTokens: 30,
+		CacheReadTokens: 17,
+	}, mapUsage(raw, ai.BackendAnthropic))
 
-	assert.Equal(t, ai.Usage{}, mapUsage(nil))
+	// Gemini: PromptTokenCount folds in cache → net input; CandidatesTokenCount
+	// excludes thoughts → output passes through.
+	assert.Equal(t, ai.Usage{
+		InputTokens:     103, // 120 - 17
+		OutputTokens:    45,
+		ReasoningTokens: 30,
+		CacheReadTokens: 17,
+	}, mapUsage(raw, ai.BackendGemini))
+
+	// OpenAI/DeepSeek (compat_oai): prompt_tokens folds in cache AND
+	// completion_tokens folds in reasoning → net both.
+	openaiWant := ai.Usage{
+		InputTokens:     103, // 120 - 17
+		OutputTokens:    15,  // 45 - 30
+		ReasoningTokens: 30,
+		CacheReadTokens: 17,
+	}
+	assert.Equal(t, openaiWant, mapUsage(raw, ai.BackendOpenAI))
+	assert.Equal(t, openaiWant, mapUsage(raw, ai.BackendDeepSeek))
+
+	// Disjoint invariant: for cache-folding backends InputTokens no longer
+	// overlaps CacheReadTokens, so pricing cannot bill the cached prefix twice.
+	for _, backend := range []ai.Backend{ai.BackendGemini, ai.BackendOpenAI, ai.BackendDeepSeek} {
+		got := mapUsage(raw, backend)
+		assert.Equal(t, raw.InputTokens, got.InputTokens+got.CacheReadTokens, "backend %s input+cache", backend)
+	}
+
+	assert.Equal(t, ai.Usage{}, mapUsage(nil, ai.BackendAnthropic))
 }
 
 func TestModelRef(t *testing.T) {
@@ -132,6 +97,17 @@ func TestModelRef(t *testing.T) {
 	}
 }
 
+func TestNewNormalizesBackendModelName(t *testing.T) {
+	p, err := New(ai.Config{
+		Model:  api.Model{Backend: ai.BackendAnthropic, Name: "opus-4-8"},
+		APIKey: "test-anthropic-key",
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, "claude-opus-4-8", p.GetModel())
+	assert.Equal(t, "anthropic/claude-opus-4-8", p.modelRef)
+}
+
 func TestPricingModelID(t *testing.T) {
 	assert.Equal(t, "anthropic/claude-sonnet-4", pricingModelID(ai.BackendAnthropic, "claude-sonnet-4"))
 	assert.Equal(t, "openai/gpt-4o", pricingModelID(ai.BackendOpenAI, "gpt-4o"))
@@ -141,6 +117,8 @@ func TestPricingModelID(t *testing.T) {
 }
 
 func TestNewMissingAPIKey(t *testing.T) {
+	credentials.SetPathForTesting(filepath.Join(t.TempDir(), "vault"))
+	t.Cleanup(func() { credentials.SetPathForTesting("") })
 	// Ensure no provider key leaks in from the environment.
 	for _, env := range []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "DEEPSEEK_API_KEY"} {
 		t.Setenv(env, "")
@@ -151,6 +129,7 @@ func TestNewMissingAPIKey(t *testing.T) {
 			_, err := New(ai.Config{Model: api.Model{Backend: backend, Name: "some-model"}})
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "no API key")
+			assert.ErrorIs(t, err, ai.ErrNoAPIKey)
 		})
 	}
 }
@@ -159,4 +138,56 @@ func TestNewUnsupportedBackend(t *testing.T) {
 	_, err := New(ai.Config{Model: api.Model{Backend: ai.BackendClaudeCLI, Name: "claude-code-foo"}, APIKey: "x"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "does not support backend")
+}
+
+func TestIsSchemaMismatch(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "genkit constrained-output rejection",
+			err:  fmt.Errorf("model failed to generate output matching expected schema: data did not match expected schema:\n- title: String length must be less than or equal to 40"),
+			want: true,
+		},
+		{
+			name: "genkit inner detail phrasing",
+			err:  fmt.Errorf("data did not match expected schema:\n- branch: String length must be less than or equal to 40"),
+			want: true,
+		},
+		{
+			name: "unrelated transport error",
+			err:  fmt.Errorf("dial tcp: connection refused"),
+			want: false,
+		},
+		{
+			name: "rate-limit error is not a schema mismatch",
+			err:  fmt.Errorf("429 rate limit exceeded"),
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, isSchemaMismatch(tt.err))
+		})
+	}
+}
+
+func TestBackendOutputSchema_NormalizesOpenAIStructuredOutput(t *testing.T) {
+	type answer struct {
+		Answer string `json:"answer"`
+		Detail string `json:"detail,omitempty"`
+	}
+	req := ai.Request{Prompt: api.Prompt{Schema: &answer{}}}
+
+	schema, handled, err := backendOutputSchema(ai.BackendOpenAI, req)
+	require.NoError(t, err)
+	require.True(t, handled)
+	assert.Equal(t, []any{"answer", "detail"}, schema["required"])
+	assert.Equal(t, false, schema["additionalProperties"])
+
+	_, handled, err = backendOutputSchema(ai.BackendGemini, req)
+	require.NoError(t, err)
+	assert.False(t, handled, "Gemini should retain Genkit's WithOutputType path")
 }

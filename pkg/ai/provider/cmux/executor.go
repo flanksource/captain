@@ -112,11 +112,31 @@ type run struct {
 	// approvals tracks the in-flight approval handlers spawned by the stall
 	// watchdog so the driver can wait for them (and the EventPermission they emit)
 	// before the event channel is closed.
-	approvals sync.WaitGroup
+	approvals       sync.WaitGroup
+	planMode        bool
+	planExitSeen    bool
+	dismissPlanOnce sync.Once
+	dismissPlanErr  error
 
 	lastSurface   WorkspaceRef
 	lastSessionID string
 	lastWorkDir   string
+}
+
+func (r *run) dismissPlanSurface(ctx context.Context, ref WorkspaceRef, sessionID string) error {
+	r.dismissPlanOnce.Do(func() {
+		if err := r.client.SendKeySurface(ctx, ref.String(), ref.SurfaceID, "Escape"); err != nil {
+			r.dismissPlanErr = fmt.Errorf("dismiss claude plan surface for session %s: %w", sessionID, err)
+		}
+	})
+	return r.dismissPlanErr
+}
+
+func (r *run) dismissCompletedPlan(ctx context.Context, ref WorkspaceRef, sessionID string) error {
+	if !r.planMode || !r.planExitSeen {
+		return nil
+	}
+	return r.dismissPlanSurface(ctx, ref, sessionID)
 }
 
 // readScreen returns the normalized surface contents, or "" if the read failed.
@@ -237,7 +257,7 @@ type AgentCommandOpts struct {
 	// --disallowedTools. codex ignores them.
 	AllowedTools    []string
 	DisallowedTools []string
-	// Effort maps onto claude --effort (from Spec.Model.Effort). codex ignores it.
+	// Effort maps onto claude --effort or Codex's model_reasoning_effort config.
 	Effort api.Effort
 	// Memory drives claude --bare / --disable-slash-commands / --setting-sources
 	// (from Spec.Memory). codex ignores it.
@@ -273,6 +293,9 @@ func AgentCommand(opts AgentCommandOpts) string {
 		tokens := []string{"codex"}
 		if opts.Model != "" {
 			tokens = append(tokens, "-m", opts.Model)
+		}
+		if opts.Effort != api.EffortNone {
+			tokens = append(tokens, "-c", fmt.Sprintf("model_reasoning_effort=%q", opts.Effort))
 		}
 		if extra, ok := opts.Extra.(*api.CodexCmuxOptions); ok && extra != nil {
 			tokens = append(tokens, flagArgs(*extra)...)
@@ -423,13 +446,19 @@ func shellSingleQuote(v string) string {
 	return "'" + strings.ReplaceAll(v, "'", `'\''`) + "'"
 }
 
-// modelFlag normalizes the configured model into the value claude/codex --model
-// expects: the bare agent names ("claude"/"codex") and an empty string carry no
-// concrete model, so they yield "" (no flag).
+// modelFlag normalizes the configured model into the exact value claude/codex
+// --model expects. The bare agent names ("claude"/"codex") and an empty string
+// carry no concrete model, so they yield "" (no flag).
 func modelFlag(agent, model string) string {
 	lower := strings.ToLower(strings.TrimSpace(model))
 	if lower == "" || lower == agent {
 		return ""
+	}
+	if agent == "claude" {
+		return ai.NormalizeModelForBackend(ai.BackendClaudeCmux, model)
+	}
+	if agent == "codex" {
+		return ai.NormalizeModelForBackend(ai.BackendCodexCmux, model)
 	}
 	return model
 }

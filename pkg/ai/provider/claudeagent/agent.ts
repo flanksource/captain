@@ -8,7 +8,7 @@
 //                 maxTurns, maxBudgetUsd, permissionMode, resume, approvalMode,
 //                 outputSchema}
 //                 -> reply {ok:true}
-//     prompt {text}      -> reply {accepted:true}
+//     prompt {text, attachments?} -> reply {accepted:true}
 //     interrupt          -> reply {}
 //     shutdown           -> reply {} then exit
 //   server -> client notifications:
@@ -62,6 +62,9 @@ interface InitializeParams {
   // structured-output target. Present => the SDK is asked for validated JSON
   // (options.outputFormat) and every turn's result carries structured_output.
   outputSchema?: Record<string, unknown>;
+  // monitorUrl is the captain serve base URL session-monitoring lifecycle
+  // hooks POST to. Empty/absent disables monitoring hook injection.
+  monitorUrl?: string;
 }
 
 type JsonRpcId = number | string | null;
@@ -143,10 +146,43 @@ class TurnQueue implements AsyncIterable<SDKUserMessage> {
   private waiters: ((r: IteratorResult<SDKUserMessage>) => void)[] = [];
   private ended = false;
 
-  push(text: string) {
+  push(params: PromptParams) {
+    const content: Exclude<SDKUserMessage["message"]["content"], string> = [];
+    if (params.text) {
+      content.push({ type: "text", text: params.text });
+    }
+    for (const attachment of params.attachments ?? []) {
+      if (attachment.mediaType === "application/pdf") {
+        content.push({
+          type: "document",
+          source: {
+            type: "base64",
+            media_type: "application/pdf",
+            data: attachment.data,
+          },
+          title: attachment.filename || undefined,
+        });
+      } else if (isClaudeImageMediaType(attachment.mediaType)) {
+        content.push({
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: attachment.mediaType,
+            data: attachment.data,
+          },
+        });
+      } else {
+        throw new Error(
+          `unsupported attachment media type: ${attachment.mediaType}`,
+        );
+      }
+    }
     const msg: SDKUserMessage = {
       type: "user",
-      message: { role: "user", content: text },
+      message: {
+        role: "user",
+        content,
+      },
       parent_tool_use_id: null,
       session_id: "",
     };
@@ -188,6 +224,31 @@ class TurnQueue implements AsyncIterable<SDKUserMessage> {
 let turns: TurnQueue | null = null;
 let activeQuery: Query | null = null;
 
+interface PromptAttachment {
+  mediaType: string;
+  data: string;
+  filename?: string;
+}
+
+type ClaudeImageMediaType =
+  | "image/png"
+  | "image/jpeg"
+  | "image/gif"
+  | "image/webp";
+
+function isClaudeImageMediaType(
+  mediaType: string,
+): mediaType is ClaudeImageMediaType {
+  return ["image/png", "image/jpeg", "image/gif", "image/webp"].includes(
+    mediaType,
+  );
+}
+
+interface PromptParams {
+  text?: string;
+  attachments?: PromptAttachment[];
+}
+
 function buildOptions(params: InitializeParams): Options {
   // brokered: the host vets each tool over the can_use_tool round-trip, so the
   // SDK must consult canUseTool rather than auto-approving. bypassPermissions /
@@ -227,6 +288,44 @@ function buildOptions(params: InitializeParams): Options {
       ],
     },
   };
+
+  // Session-monitoring lifecycle hooks: fire-and-forget POSTs to captain
+  // serve so the session appears in the database in real time. A monitoring
+  // failure (serve down, slow) must never block or slow the agent turn.
+  if (params.monitorUrl) {
+    const monitorUrl = params.monitorUrl.replace(/\/+$/, "");
+    const monitorEvents = [
+      "SessionStart",
+      "UserPromptSubmit",
+      "Stop",
+      "SubagentStop",
+      "SessionEnd",
+    ] as const;
+    const hooks = options.hooks as unknown as Record<string, unknown[]>;
+    for (const event of monitorEvents) {
+      hooks[event] = [
+        {
+          hooks: [
+            async (input: Record<string, unknown>) => {
+              fetch(`${monitorUrl}/api/captain/hooks/claude`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  event,
+                  sessionId: input.session_id,
+                  transcriptPath: input.transcript_path,
+                  cwd: input.cwd,
+                  detail: input.source ?? input.reason ?? undefined,
+                }),
+                signal: AbortSignal.timeout(1000),
+              }).catch(() => {});
+              return {};
+            },
+          ],
+        },
+      ];
+    }
+  }
 
   // appendSystemPrompt is not a top-level Options field; it must ride on the
   // claude_code preset. A custom systemPrompt string replaces the default.
@@ -307,13 +406,17 @@ function handleInitialize(id: JsonRpcId, params: InitializeParams) {
   }
 }
 
-function handlePrompt(id: JsonRpcId, params: { text?: string }) {
+function handlePrompt(id: JsonRpcId, params: PromptParams) {
   if (!turns) {
     replyError(id, -32002, "not initialized");
     return;
   }
-  turns.push(params.text || "");
-  reply(id, { accepted: true });
+  try {
+    turns.push(params);
+    reply(id, { accepted: true });
+  } catch (err) {
+    replyError(id, -32602, `invalid prompt: ${(err as Error)?.message || err}`);
+  }
 }
 
 async function handleInterrupt(id: JsonRpcId) {
@@ -454,7 +557,7 @@ rl.on("line", (line) => {
       handleInitialize(id, (req.params as InitializeParams) || {});
       break;
     case "prompt":
-      handlePrompt(id, (req.params as { text?: string }) || {});
+      handlePrompt(id, (req.params as PromptParams) || {});
       break;
     case "interrupt":
       handleInterrupt(id);

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	osexec "os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,11 +30,12 @@ type CodexAppServer struct {
 
 	turnMu sync.Mutex // serializes turns; held by ExecuteStream, freed by its driver
 
-	mu      sync.Mutex // guards the rpc/supervisor handles + the active turn
-	sup     *exec.SupervisedProcess
-	rpc     *jsonrpc.Client
-	rpcDone chan struct{} // closed by the rpc Run goroutine when the child exits
-	active  *turnState
+	mu       sync.Mutex // guards the rpc/supervisor handles + the active turn
+	sup      *exec.SupervisedProcess
+	rpc      *jsonrpc.Client
+	rpcDone  chan struct{} // closed by the rpc Run goroutine when the child exits
+	active   *turnState
+	threadID string
 }
 
 const (
@@ -47,11 +49,12 @@ func NewCodexAppServer(model string) (*CodexAppServer, error) {
 	if model == "" {
 		model = CodexCLIDefaultModel
 	}
+	model = ai.NormalizeModelForBackend(ai.BackendCodexAgent, model)
 	return &CodexAppServer{model: model}, nil
 }
 
 func (c *CodexAppServer) GetModel() string       { return c.model }
-func (c *CodexAppServer) GetBackend() ai.Backend { return ai.BackendCodexCLI }
+func (c *CodexAppServer) GetBackend() ai.Backend { return ai.BackendCodexAgent }
 
 // Execute drains the streaming output into a buffered ai.Response. When the
 // request carries a structured-output schema, the final agent message's JSON is
@@ -63,7 +66,7 @@ func (c *CodexAppServer) Execute(ctx context.Context, req ai.Request) (*ai.Respo
 	if err != nil {
 		return nil, err
 	}
-	resp, err := CoalesceStream(ctx, c.model, events, start)
+	resp, err := CoalesceStreamForBackend(ctx, ai.BackendCodexAgent, c.model, events, start)
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +92,7 @@ func (c *CodexAppServer) Execute(ctx context.Context, req ai.Request) (*ai.Respo
 // a text-mode request. A non-struct target fails loudly rather than silently
 // dropping the schema.
 func codexOutputSchema(req ai.Request) (json.RawMessage, error) {
-	schema, err := ai.SchemaJSONFor(req.Prompt)
+	schema, err := ai.SchemaJSONForBackend(ai.BackendCodexAgent, req.Prompt)
 	if err != nil {
 		return nil, fmt.Errorf("codex app-server: cannot derive structured-output schema: %w", err)
 	}
@@ -118,7 +121,9 @@ func (c *CodexAppServer) ExecuteStream(ctx context.Context, req ai.Request) (<-c
 		usage:        &ai.Usage{},
 		model:        c.model,
 		streamed:     map[string]bool{},
+		toolOutput:   map[string]string{},
 		terminal:     make(chan struct{}),
+		started:      make(chan struct{}),
 		outputSchema: schema,
 	}
 	c.setActive(ts)
@@ -142,6 +147,7 @@ func (c *CodexAppServer) driveTurn(ctx context.Context, req ai.Request, ts *turn
 		c.failTurn(ts, err)
 		return
 	}
+	ts.setIDs(threadID, turnID)
 
 	select {
 	case <-ts.terminal:
@@ -186,10 +192,12 @@ func (c *CodexAppServer) ensureStarted(ctx context.Context) error {
 	}
 
 	ready := make(chan error, 1)
+	var process *exec.Process
 	sup := exec.NewExec("codex", "app-server").WithStdioPipe().Supervise(exec.SuperviseOptions{
 		// No restart: a crash surfaces as EventError, never a silent retry.
 		RestartPolicy: exec.RestartNo,
 		OnStarted: func(p *exec.Process) {
+			process = p
 			rpc := jsonrpc.New(p.Stdin(), p.StdoutReader(), true, jsonrpc.Handlers{
 				OnNotification: c.handleNotification,
 				OnRequest:      c.handleApproval,
@@ -212,6 +220,9 @@ func (c *CodexAppServer) ensureStarted(ctx context.Context) error {
 	select {
 	case err := <-ready:
 		if err != nil {
+			if process != nil {
+				err = appServerProcessError(err, process.GetStderr())
+			}
 			c.teardown(true)
 			return err
 		}
@@ -223,6 +234,13 @@ func (c *CodexAppServer) ensureStarted(ctx context.Context) error {
 		c.teardown(true)
 		return fmt.Errorf("codex app-server: timed out waiting for initialize handshake")
 	}
+}
+
+func appServerProcessError(err error, stderr string) error {
+	if detail := strings.TrimSpace(stderr); detail != "" {
+		return fmt.Errorf("%w: %s", err, detail)
+	}
+	return err
 }
 
 // handshake performs the required initialize → initialized exchange (any request
@@ -243,7 +261,7 @@ func (c *CodexAppServer) handshake(ctx context.Context, rpc *jsonrpc.Client) err
 func (c *CodexAppServer) teardown(stop bool) {
 	c.mu.Lock()
 	sup := c.sup
-	c.sup, c.rpc, c.rpcDone = nil, nil, nil
+	c.sup, c.rpc, c.rpcDone, c.threadID = nil, nil, nil, ""
 	c.mu.Unlock()
 	if stop && sup != nil {
 		sup.Stop()
@@ -255,18 +273,37 @@ func (c *CodexAppServer) startThread(ctx context.Context, req ai.Request) (strin
 	if rpc == nil {
 		return "", fmt.Errorf("codex app-server: not started")
 	}
+	c.mu.Lock()
+	threadID := c.threadID
+	c.mu.Unlock()
+	if threadID != "" {
+		return threadID, nil
+	}
 	if req.SessionID != "" {
 		raw, err := rpc.Call(ctx, "thread/resume", buildResumeParams(req))
 		if err != nil {
 			return "", err
 		}
-		return firstNonEmpty(parseAppServerNotif(raw).threadID(), req.SessionID), nil
+		threadID = firstNonEmpty(parseAppServerNotif(raw).threadID(), req.SessionID)
+		c.rememberThread(threadID)
+		return threadID, nil
 	}
 	raw, err := rpc.Call(ctx, "thread/start", buildThreadStartParams(c.model, req))
 	if err != nil {
 		return "", err
 	}
-	return parseAppServerNotif(raw).threadID(), nil
+	threadID = parseAppServerNotif(raw).threadID()
+	if threadID == "" {
+		return "", fmt.Errorf("codex app-server: thread/start returned no thread id")
+	}
+	c.rememberThread(threadID)
+	return threadID, nil
+}
+
+func (c *CodexAppServer) rememberThread(threadID string) {
+	c.mu.Lock()
+	c.threadID = threadID
+	c.mu.Unlock()
 }
 
 func (c *CodexAppServer) startTurn(ctx context.Context, req ai.Request, threadID string, outputSchema json.RawMessage) (string, error) {
@@ -274,7 +311,11 @@ func (c *CodexAppServer) startTurn(ctx context.Context, req ai.Request, threadID
 	if rpc == nil {
 		return "", fmt.Errorf("codex app-server: not started")
 	}
-	raw, err := rpc.Call(ctx, "turn/start", buildTurnStartParams(c.model, req, threadID, outputSchema))
+	params, err := buildTurnStartParams(c.model, req, threadID, outputSchema)
+	if err != nil {
+		return "", err
+	}
+	raw, err := rpc.Call(ctx, "turn/start", params)
 	if err != nil {
 		return "", err
 	}
@@ -296,6 +337,30 @@ func (c *CodexAppServer) interrupt(threadID, turnID string) {
 	_, _ = rpc.Call(ctx, "turn/interrupt", map[string]string{"threadId": threadID, "turnId": turnID})
 }
 
+func (c *CodexAppServer) Interrupt(ctx context.Context) error {
+	ts := c.currentTurn()
+	if ts == nil {
+		return fmt.Errorf("codex app-server: no active turn to interrupt")
+	}
+	threadID, turnID, err := ts.waitIDs(ctx)
+	if err != nil {
+		return err
+	}
+	rpc := c.client()
+	if rpc == nil {
+		return fmt.Errorf("codex app-server: not started")
+	}
+	if _, err := rpc.Call(ctx, "turn/interrupt", map[string]string{"threadId": threadID, "turnId": turnID}); err != nil {
+		return fmt.Errorf("codex app-server interrupt failed: %w", err)
+	}
+	return nil
+}
+
+func (c *CodexAppServer) Close() error {
+	c.teardown(true)
+	return nil
+}
+
 // handleNotification routes one notification to the active turn. It runs on the
 // rpc Run goroutine (notifications dispatch sequentially), so the per-turn
 // dedup/usage state needs no extra locking.
@@ -304,23 +369,40 @@ func (c *CodexAppServer) handleNotification(method string, params json.RawMessag
 	if ts == nil {
 		return
 	}
+	ctx := appServerEventContext{Model: ts.model, Usage: ts.usage}
 	switch method {
 	case "item/agentMessage/delta":
 		if id := parseAppServerNotif(params).ItemID; id != "" {
 			ts.streamed[id] = true
 		}
+		if len(ts.outputSchema) > 0 {
+			return
+		}
+	case "item/commandExecution/outputDelta":
+		n := parseAppServerNotif(params)
+		if n.ItemID != "" && n.Delta != "" {
+			ts.toolOutput[n.ItemID] += n.Delta
+		}
+		return
 	case "item/completed":
 		// The completed agent message carries the full text (structured runs use it
 		// as the validated JSON result). Capture it, then drop the duplicate so
 		// CoalesceStream / renderers don't double-count already-streamed deltas.
 		if it := parseAppServerNotif(params).Item; it != nil && it.Type == "agentMessage" {
 			ts.lastAgentMessage = it.Text
+			if len(ts.outputSchema) > 0 {
+				return
+			}
 		}
 		if appServerStreamedAgentMessage(params, ts.streamed) {
 			return
 		}
+		if it := parseAppServerNotif(params).Item; it != nil {
+			ctx.ToolOutput = ts.toolOutput[it.ID]
+			delete(ts.toolOutput, it.ID)
+		}
 	}
-	if ev, ok := mapAppServerNotification(method, params, ts.model, ts.usage); ok {
+	if ev, ok := mapAppServerNotification(method, params, ctx); ok {
 		if ev.Kind == ai.EventResult && len(ts.outputSchema) > 0 {
 			ev.StructuredData = json.RawMessage(ts.lastAgentMessage)
 		}
@@ -353,50 +435,6 @@ func (c *CodexAppServer) handleApproval(method string, _ json.RawMessage) (any, 
 // turnState is the routing target for one turn's server notifications. send and
 // finish are guarded so a late notification can never send on a closed channel;
 // terminal doubles as the "stop sending" signal that unblocks a blocked send.
-type turnState struct {
-	ch       chan ai.Event
-	usage    *ai.Usage
-	model    string
-	streamed map[string]bool // agent-message item IDs already streamed via deltas
-
-	// outputSchema is non-nil when the turn requested structured output; it drives
-	// the turn/start outputSchema and gates capturing lastAgentMessage as the
-	// structured result. lastAgentMessage is the full text of the most recent
-	// completed agentMessage (codex returns structured JSON as that text).
-	outputSchema     json.RawMessage
-	lastAgentMessage string
-
-	terminal chan struct{} // closed when the turn is over (by codex or by finish)
-	termOnce sync.Once
-	sendMu   sync.Mutex
-	closed   bool
-}
-
-func (ts *turnState) signalTerminal() { ts.termOnce.Do(func() { close(ts.terminal) }) }
-
-func (ts *turnState) send(ev ai.Event) {
-	ts.sendMu.Lock()
-	defer ts.sendMu.Unlock()
-	if ts.closed {
-		return
-	}
-	select {
-	case ts.ch <- ev:
-	case <-ts.terminal:
-	}
-}
-
-func (ts *turnState) finish() {
-	ts.signalTerminal() // unblock a blocked send before locking
-	ts.sendMu.Lock()
-	defer ts.sendMu.Unlock()
-	if ts.closed {
-		return
-	}
-	ts.closed = true
-	close(ts.ch)
-}
-
 // compile-time assertion: the provider satisfies the streaming interface.
 // The pure mapping, parse structs, and request-param builders live in the
 // sibling codex_appserver_protocol.go (same package).
