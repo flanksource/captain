@@ -1,14 +1,17 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/flanksource/captain/pkg/claude"
+	"github.com/flanksource/captain/pkg/database"
 	"github.com/timberio/go-datemath"
 )
 
@@ -24,6 +27,27 @@ type ProjectRow struct {
 type ProjectsListResult struct {
 	Total int          `json:"total" pretty:"label=Total Projects"`
 	Rows  []ProjectRow `json:"rows"`
+}
+
+type ProjectOption struct {
+	Value    string     `json:"value"`
+	Label    string     `json:"label"`
+	Path     string     `json:"path"`
+	Sources  []string   `json:"sources,omitempty"`
+	Sessions int        `json:"sessions,omitempty"`
+	LastUsed *time.Time `json:"lastUsed,omitempty"`
+}
+
+type ProjectOptionsResult struct {
+	Total    int             `json:"total"`
+	Projects []ProjectOption `json:"projects"`
+}
+
+type projectOptionAccumulator struct {
+	path     string
+	sources  map[string]bool
+	sessions int
+	lastUsed time.Time
 }
 
 func RunProjectsList(_ ProjectsListOptions) (any, error) {
@@ -47,6 +71,110 @@ func RunProjectsList(_ ProjectsListOptions) (any, error) {
 	}
 
 	return ProjectsListResult{Total: len(projects), Rows: rows}, nil
+}
+
+func RunProjectOptions(ctx context.Context) (ProjectOptionsResult, error) {
+	db, err := freshenSessionDB(ctx)
+	if err != nil {
+		return ProjectOptionsResult{}, err
+	}
+	aggregates, err := db.ListProjectSessionAggregates(ctx)
+	if err != nil {
+		return ProjectOptionsResult{}, err
+	}
+	return projectOptionsFromAggregates(aggregates), nil
+}
+
+func projectOptionsFromAggregates(aggregates []database.ProjectSessionAggregate) ProjectOptionsResult {
+	accs := map[string]*projectOptionAccumulator{}
+	for _, aggregate := range aggregates {
+		if strings.TrimSpace(aggregate.CWD) == "" {
+			continue
+		}
+		lastUsed := time.Time{}
+		if aggregate.LastActivityAt != nil {
+			lastUsed = *aggregate.LastActivityAt
+		}
+		root := sessionProjectRoot(aggregate.CWD)
+		addProjectOption(accs, root, aggregate.Source, aggregate.SessionCount, lastUsed)
+		if aggregate.ProcessActive {
+			addProjectOption(accs, root, "live", 0, lastUsed)
+		}
+	}
+
+	projectsOut := make([]ProjectOption, 0, len(accs))
+	for _, acc := range accs {
+		sources := make([]string, 0, len(acc.sources))
+		for source := range acc.sources {
+			sources = append(sources, source)
+		}
+		sort.Strings(sources)
+		var lastUsed *time.Time
+		if !acc.lastUsed.IsZero() {
+			value := acc.lastUsed
+			lastUsed = &value
+		}
+		projectsOut = append(projectsOut, ProjectOption{
+			Value:    acc.path,
+			Label:    projectOptionLabel(acc.path),
+			Path:     acc.path,
+			Sources:  sources,
+			Sessions: acc.sessions,
+			LastUsed: lastUsed,
+		})
+	}
+
+	sort.Slice(projectsOut, func(i, j int) bool {
+		left, right := projectsOut[i], projectsOut[j]
+		if left.LastUsed != nil && right.LastUsed != nil && !left.LastUsed.Equal(*right.LastUsed) {
+			return left.LastUsed.After(*right.LastUsed)
+		}
+		if left.LastUsed != nil && right.LastUsed == nil {
+			return true
+		}
+		if left.LastUsed == nil && right.LastUsed != nil {
+			return false
+		}
+		return left.Label < right.Label
+	})
+
+	return ProjectOptionsResult{Total: len(projectsOut), Projects: projectsOut}
+}
+
+func addProjectOption(accs map[string]*projectOptionAccumulator, path, source string, sessions int, lastUsed time.Time) {
+	path = normalizeSessionProject(path)
+	if path == "" {
+		return
+	}
+	acc := accs[path]
+	if acc == nil {
+		acc = &projectOptionAccumulator{path: path, sources: map[string]bool{}}
+		accs[path] = acc
+	}
+	if source != "" {
+		acc.sources[source] = true
+	}
+	acc.sessions += sessions
+	if lastUsed.After(acc.lastUsed) {
+		acc.lastUsed = lastUsed
+	}
+}
+
+func projectOptionLabel(path string) string {
+	parts := strings.Split(filepath.ToSlash(path), "/")
+	filtered := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part != "" {
+			filtered = append(filtered, part)
+		}
+	}
+	if len(filtered) >= 2 {
+		return strings.Join(filtered[len(filtered)-2:], "/")
+	}
+	if len(filtered) == 1 {
+		return filtered[0]
+	}
+	return path
 }
 
 type ProjectsCleanOptions struct {
