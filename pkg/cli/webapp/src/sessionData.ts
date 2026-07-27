@@ -1,21 +1,37 @@
-import type { SessionUIMessage } from "@flanksource/clicky-ui/ai";
+import type {
+  SessionCost,
+  SessionUIMessage,
+  UnifiedSessionInput,
+} from "@flanksource/clicky-ui/ai";
 import { apiClient } from "./api";
 import { parseServerTiming, type TimingMetric } from "./serverTiming";
+import type {
+  ChatCapabilities,
+  ChatStateFrame,
+} from "./hooks/usePromptRunStream";
 
 export type SourceFilter = "all" | "claude" | "codex";
+export const ALL_PROJECTS_SCOPE = "all";
+export type ProjectScope = typeof ALL_PROJECTS_SCOPE | string;
 
 export type SessionListResult = {
   sessions: SessionRecord[];
   total: number;
+  nextCursor?: string;
   source: SourceFilter;
-  scope: "current" | "all";
+  scope: "current" | "all" | "project";
+  project?: string;
   summary?: SessionDashboard;
 };
 
 export type SessionRecord = {
   key: string;
   id: string;
-  source: "claude" | "codex";
+  source: string;
+  project?: string;
+  slug?: string;
+  title?: string;
+  initialPrompt?: string;
   startedAt?: string;
   endedAt?: string;
   model?: string;
@@ -23,6 +39,8 @@ export type SessionRecord = {
   version?: string;
   gitBranch?: string;
   provider?: string;
+  backend?: string;
+  lifecycleStatus?: string;
   cwd?: string;
   toolCalls: number;
   messages: number;
@@ -34,43 +52,33 @@ export type SessionRecord = {
   health?: SessionHealth[];
 };
 
-// UnifiedSession is captain's canonical session.Session (served by the sessions
-// `get` action at /api/v1/sessions/{id}). The detail view consumes it directly —
-// its `messages` (SessionUIMessage[]) feed the SessionViewer.
-export type UnifiedGit = { branch?: string; commit?: string; worktree?: string; diff?: string };
-
-export type UnifiedUsage = {
-  inputTokens?: number;
-  outputTokens?: number;
-  reasoningTokens?: number;
-  cacheReadTokens?: number;
-  cacheWriteTokens?: number;
-};
-
-export type UnifiedCost = {
-  inputCost?: number;
-  outputCost?: number;
-  reasoningCost?: number;
-  cacheReadCost?: number;
-  cacheWriteCost?: number;
-};
-
-export type UnifiedSession = {
+export type UnifiedCost = SessionCost;
+export type UnifiedSession = UnifiedSessionInput & {
   id: string;
-  source: "claude" | "codex";
-  project?: string;
-  cwd?: string;
-  slug?: string;
-  version?: string;
-  provider?: string;
-  model?: string;
-  git?: UnifiedGit;
-  startedAt?: string;
-  endedAt?: string;
-  usage?: UnifiedUsage;
-  cost?: UnifiedCost;
-  live?: SessionLive;
-  messages?: SessionUIMessage[];
+  source: string;
+  title?: string;
+  initialPrompt?: string;
+  structuredOutput?: Record<string, unknown>;
+};
+
+export type SessionGetItem = {
+  captainId: string;
+  parentSessionId?: string;
+  rootSessionId?: string;
+  providerSessionId?: string;
+  host?: string;
+  detailAvailable: boolean;
+  summary: SessionRecord;
+  detail?: UnifiedSession;
+  activeRunId?: string;
+  chat?: ChatCapabilities;
+  chatState?: ChatStateFrame;
+};
+
+export type SessionGetResult = {
+  rootSessionId?: string;
+  sessions: SessionGetItem[];
+  total: number;
 };
 
 export type SessionTokens = {
@@ -119,6 +127,59 @@ export type SessionDashboard = {
   lowestContextFree?: number;
 };
 
+export type SessionThroughputPoint = {
+  at: string;
+  sessionId: string;
+  outputTokensPerSecond: number;
+  totalTokensPerSecond: number;
+  contextTokensPerSecond?: number;
+  contextUsedPercent?: number;
+};
+
+export type SessionThroughputGroup = {
+  key: string;
+  source: string;
+  model: string;
+  reasoningEffort: string;
+  sessions: number;
+  durationSeconds: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
+  totalTokens?: number;
+  contextTokens?: number;
+  contextSamples?: number;
+  outputTokensPerSecond: number;
+  totalTokensPerSecond: number;
+  contextTokensPerSecond?: number;
+  avgContextUsedPercent?: number;
+  points?: SessionThroughputPoint[];
+};
+
+export type SessionThroughputResult = {
+  groups: SessionThroughputGroup[];
+  total: number;
+  skipped: number;
+  source: SourceFilter;
+  scope: "current" | "all" | "project";
+  project?: string;
+};
+
+export type ProjectOption = {
+  value: string;
+  label: string;
+  path: string;
+  sources?: string[];
+  sessions?: number;
+  lastUsed?: string;
+};
+
+export type ProjectOptionsResult = {
+  total: number;
+  projects: ProjectOption[];
+};
+
 export const SOURCE_OPTIONS = [
   { id: "all", label: "All" },
   { id: "claude", label: "Claude" },
@@ -127,18 +188,20 @@ export const SOURCE_OPTIONS = [
 
 export async function fetchLiveSessions(params: {
   source: SourceFilter;
-  allProjects: boolean;
+  project: ProjectScope;
   query?: string;
   limit?: number;
+  cursor?: string;
 }): Promise<SessionListResult & { timing?: TimingMetric[] }> {
   const response = await apiClient.executeCommand(
     "/api/captain/sessions/live",
     "GET",
     {
       source: params.source,
-      all: params.allProjects ? "true" : "false",
+      ...projectScopeQuery(params.project),
       q: params.query ?? "",
       limit: String(params.limit ?? 100),
+      ...(params.cursor ? { cursor: params.cursor } : {}),
     },
     { Accept: "application/json" },
   );
@@ -146,23 +209,156 @@ export async function fetchLiveSessions(params: {
     throw new Error(response.error || "Failed to load sessions.");
   }
   const timing = parseServerTiming(response.responseHeaders?.["server-timing"]);
-  return { ...(response.parsed as SessionListResult), ...(timing.length ? { timing } : {}) };
+  return {
+    ...(response.parsed as SessionListResult),
+    ...(timing.length ? { timing } : {}),
+  };
+}
+
+/**
+ * Global session search for the ⌘K palette. Unlike {@link fetchLiveSessions} —
+ * which is backed by `RunSessionLive` and hardcodes `LiveOnly: true` — this hits
+ * `captain sessions list` (`RunSessionList`), so finished sessions are included,
+ * and always passes `all=true` so the palette finds a session regardless of the
+ * project scope selected in the app bar.
+ */
+export async function fetchSessionSearch(params: {
+  query: string;
+  limit?: number;
+}): Promise<SessionListResult> {
+  const response = await apiClient.executeCommand(
+    "/api/v1/sessions",
+    "GET",
+    {
+      source: "all",
+      all: "true",
+      q: params.query,
+      limit: String(params.limit ?? 20),
+    },
+    { Accept: "application/json" },
+  );
+  if (!response.success) {
+    throw new Error(response.error || "Failed to search sessions.");
+  }
+  return response.parsed as SessionListResult;
+}
+
+export function mergeSessionListPages(
+  pages: Array<SessionListResult & { timing?: TimingMetric[] }>,
+): (SessionListResult & { timing?: TimingMetric[] }) | undefined {
+  if (pages.length === 0) return undefined;
+  const last = pages[pages.length - 1]!;
+  return {
+    ...last,
+    sessions: pages.flatMap((page) => page.sessions),
+    total: pages[0]!.total,
+    summary: mergeSessionDashboards(
+      pages.flatMap((page) => (page.summary ? [page.summary] : [])),
+    ),
+  };
+}
+
+function mergeSessionDashboards(
+  summaries: SessionDashboard[],
+): SessionDashboard | undefined {
+  if (summaries.length === 0) return undefined;
+  const merged: SessionDashboard = {
+    totalSessions: 0,
+    liveSessions: 0,
+    activeSessions: 0,
+    stoppedSessions: 0,
+    alertSessions: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+    totalTokens: 0,
+    costUsd: 0,
+  };
+  for (const summary of summaries) {
+    merged.totalSessions += summary.totalSessions;
+    merged.liveSessions += summary.liveSessions;
+    merged.activeSessions += summary.activeSessions;
+    merged.stoppedSessions += summary.stoppedSessions;
+    merged.alertSessions += summary.alertSessions;
+    merged.inputTokens! += summary.inputTokens ?? 0;
+    merged.outputTokens! += summary.outputTokens ?? 0;
+    merged.cacheReadTokens! += summary.cacheReadTokens ?? 0;
+    merged.cacheCreationTokens! += summary.cacheCreationTokens ?? 0;
+    merged.totalTokens! += summary.totalTokens ?? 0;
+    merged.costUsd! += summary.costUsd ?? 0;
+    if (summary.lowestContextFree !== undefined) {
+      merged.lowestContextFree = Math.min(
+        merged.lowestContextFree ?? summary.lowestContextFree,
+        summary.lowestContextFree,
+      );
+    }
+  }
+  return merged;
+}
+
+export async function fetchSessionThroughput(params: {
+  source: SourceFilter;
+  project: ProjectScope;
+  query?: string;
+  limit?: number;
+}): Promise<SessionThroughputResult & { timing?: TimingMetric[] }> {
+  const response = await apiClient.executeCommand(
+    "/api/captain/sessions/throughput",
+    "GET",
+    {
+      source: params.source,
+      ...projectScopeQuery(params.project),
+      q: params.query ?? "",
+      limit: String(params.limit ?? 500),
+    },
+    { Accept: "application/json" },
+  );
+  if (!response.success) {
+    throw new Error(response.error || "Failed to load session throughput.");
+  }
+  const timing = parseServerTiming(response.responseHeaders?.["server-timing"]);
+  return {
+    ...(response.parsed as SessionThroughputResult),
+    ...(timing.length ? { timing } : {}),
+  };
+}
+
+export async function fetchProjectOptions(): Promise<ProjectOptionsResult> {
+  const response = await apiClient.executeCommand(
+    "/api/captain/projects",
+    "GET",
+    {},
+    { Accept: "application/json" },
+  );
+  if (!response.success) {
+    throw new Error(response.error || "Failed to load projects.");
+  }
+  return response.parsed as ProjectOptionsResult;
 }
 
 export async function fetchSession(
   id: string,
-): Promise<UnifiedSession & { timing?: TimingMetric[] }> {
+  page?: { offset?: number; limit?: number; tail?: number },
+): Promise<SessionGetResult & { timing?: TimingMetric[] }> {
+  const params: Record<string, string> = { id };
+  if (page?.tail) params.tail = String(page.tail);
+  if (page?.offset) params.offset = String(page.offset);
+  if (page?.limit) params.limit = String(page.limit);
   const response = await apiClient.executeCommand(
     "/api/v1/sessions/{id}",
     "GET",
-    { id },
+    params,
     { Accept: "application/json" },
   );
   if (!response.success) {
     throw new Error(response.error || "Failed to load session.");
   }
   const timing = parseServerTiming(response.responseHeaders?.["server-timing"]);
-  return { ...(response.parsed as UnifiedSession), ...(timing.length ? { timing } : {}) };
+  return {
+    ...(response.parsed as SessionGetResult),
+    ...(timing.length ? { timing } : {}),
+  };
 }
 
 /** Sum a unified session's per-bucket costs into a total USD. */
@@ -178,18 +374,24 @@ export function sessionCostTotal(cost: UnifiedCost | undefined): number {
 }
 
 /** Count tool-call parts across a unified session's messages. */
-export function sessionToolCount(messages: SessionUIMessage[] | undefined): number {
+export function sessionToolCount(
+  messages: SessionUIMessage[] | undefined,
+): number {
   let count = 0;
   for (const message of messages ?? []) {
     for (const part of message.parts) {
-      if (part.type === "dynamic-tool" || part.type.startsWith("tool-")) count += 1;
+      if (part.type === "dynamic-tool" || part.type.startsWith("tool-"))
+        count += 1;
     }
   }
   return count;
 }
 
 export function unifiedSessionTitle(session: UnifiedSession): string {
-  if (session.git?.branch) return `${session.git.branch} - ${shortID(session.id)}`;
+  if (session.title) return session.title;
+  if (session.slug) return session.slug;
+  if (session.git?.branch)
+    return `${session.git.branch} - ${shortID(session.id)}`;
   if (session.model) return `${session.model} - ${shortID(session.id)}`;
   return shortID(session.id);
 }
@@ -198,6 +400,8 @@ export function sessionTitle(session: SessionRecord) {
   if (session.detailAvailable === false && session.live?.pid) {
     return `${session.source} process ${session.live.pid}`;
   }
+  if (session.title) return session.title;
+  if (session.slug) return session.slug;
   if (session.gitBranch) return `${session.gitBranch} - ${shortID(session.id)}`;
   if (session.model) return `${session.model} - ${shortID(session.id)}`;
   return shortID(session.id) || session.key;
@@ -232,18 +436,19 @@ export function projectLabel(path: string | undefined) {
   return parts.slice(-2).join("/") || path;
 }
 
+export function projectScopeQuery(
+  project: ProjectScope,
+): Record<string, string> {
+  if (!project || project === ALL_PROJECTS_SCOPE) {
+    return { all: "true" };
+  }
+  return { project };
+}
+
 export function commandLabel(command: string | undefined) {
   if (!command) return "No command";
   const first = command.split(/\s+/)[0] ?? command;
   return first.split("/").pop() || first;
-}
-
-export function processUsageLabel(live: SessionLive | undefined) {
-  if (!live) return "";
-  const parts = [];
-  if (live.cpuPercent !== undefined) parts.push(`${live.cpuPercent.toFixed(1)}% CPU`);
-  if (live.memoryPercent !== undefined) parts.push(`${live.memoryPercent.toFixed(1)}% MEM`);
-  return parts.length > 0 ? parts.join(" / ") : live.status ?? "active";
 }
 
 export function sessionSortTime(session: SessionRecord) {
@@ -254,7 +459,10 @@ export function sessionSortTime(session: SessionRecord) {
 }
 
 export function healthRank(session: SessionRecord) {
-  return Math.max(0, ...(session.health ?? []).map((signal) => severityRank(signal.severity)));
+  return Math.max(
+    0,
+    ...(session.health ?? []).map((signal) => severityRank(signal.severity)),
+  );
 }
 
 export function severityRank(severity: string | undefined) {

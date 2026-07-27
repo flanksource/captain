@@ -1,7 +1,6 @@
 // Parsing and formatting for the W3C Server-Timing response header the captain
-// session endpoints set. The server reports per-phase wall times there
-// (find, parse, enrich, total); the browser reads them back to show a timing
-// badge with a breakdown, mirroring xero-cli's render-time badge.
+// session endpoints set. The browser reads the request and session phase wall
+// times back to show a timing badge with a detailed breakdown.
 
 export interface TimingMetric {
   /** Server-Timing metric token, e.g. "find", "total". */
@@ -16,8 +15,14 @@ export interface TimingMetric {
  * phase names fall back to the raw token. */
 const PHASE_LABELS: Record<string, string> = {
   total: "Total",
+  command: "Command",
+  format: "Format response",
+  database: "Database",
+  lookup: "Session lookup",
+  hydrate: "Hydrate sessions",
   find: "Find files",
   parse: "Parse history",
+  prompt_runs: "Prompt runs",
   enrich: "Live processes",
 };
 
@@ -32,10 +37,10 @@ export function parseServerTiming(header: string | null | undefined): TimingMetr
   if (!header) return [];
   const metrics: TimingMetric[] = [];
   for (const entry of header.split(",")) {
-    const tokens = entry
-      .split(";")
-      .map((token) => token.trim())
-      .filter(Boolean);
+    const tokens = entry.split(";").flatMap((token) => {
+      const trimmed = token.trim();
+      return trimmed ? [trimmed] : [];
+    });
     if (tokens.length === 0) continue;
     const metric: TimingMetric = { name: tokens[0], dur: 0 };
     for (const token of tokens.slice(1)) {

@@ -9,7 +9,7 @@ const TASK_BASE = "/api/captain";
  * of kind "prompt". Badge is a compact header indicator; RunsTab is the full
  * cross-run list backed by clicky's TaskManager. Both share the same task API.
  */
-function Badge({ onSelectRun }: { onSelectRun: (id: string) => void }) {
+export function RunningPromptsBadge({ onSelectRun }: { onSelectRun: (id: string) => void }) {
   const { runs } = useTaskRuns({ kind: "prompt", status: "running", basePath: TASK_BASE });
   const [open, setOpen] = useState(false);
 
@@ -47,7 +47,7 @@ function Badge({ onSelectRun }: { onSelectRun: (id: string) => void }) {
   );
 }
 
-function RunsTab({
+export function RunningPromptsRunsTab({
   activeRunID,
   onSelectRun,
 }: {
@@ -65,5 +65,3 @@ function RunsTab({
     </div>
   );
 }
-
-export const RunningPrompts = { Badge, RunsTab };

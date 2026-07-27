@@ -1,34 +1,31 @@
-import { useMemo, useState, type ComponentProps, type KeyboardEvent, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Button,
   SearchInput,
   SegmentedControl,
-  Switch,
 } from "@flanksource/clicky-ui/components";
 import {
   Icon,
-  ProgressBars,
+  TimeseriesPanel,
   UiActivity,
-  UiArrowDown,
-  UiArrowUp,
-  UiBrain,
   UiChartBar,
   UiChip,
   UiClock,
-  UiCopy,
   UiHistory,
   UiMemoryStick,
   UiRefresh,
   UiRobotAi,
-  UiSparkles,
   UiTerminal,
+  type TimeseriesResponse,
+  type TimeseriesSeries,
 } from "@flanksource/clicky-ui/data";
 import {
   SOURCE_OPTIONS,
   commandLabel,
   errorMessage,
   fetchLiveSessions,
+  fetchSessionThroughput,
   formatCompactNumber,
   formatCost,
   formatTime,
@@ -38,29 +35,42 @@ import {
   sessionSortTime,
   sessionTitle,
   type SessionDashboard,
-  type SessionLive,
   type SessionRecord,
+  type SessionThroughputGroup,
+  type SessionThroughputResult,
+  type ProjectScope,
   type SourceFilter,
 } from "./sessionData";
+import {
+  ContextCell,
+  ProjectGroupHeader,
+  SessionActions,
+  SessionIdentity,
+  SessionTable,
+  UsageBarsCell,
+  type DashboardSort,
+  type ProjectSessionGroup,
+  type SessionIcon,
+  type SortDirection,
+} from "./SessionTable";
+import {
+  compareSessions,
+  defaultSortDirection,
+  effortLabel,
+  formatRelativeTime,
+  groupSessionsByProject,
+  hasLiveProcess,
+  modelIcon,
+} from "./sessionTableHelpers";
+import { withProjectScope } from "./shellHelpers";
 
 type DashboardView = "list" | "cards";
-type DashboardSort = "model" | "health" | "context" | "cpu" | "memory" | "tokens" | "recent";
-type SortDirection = "asc" | "desc";
 type Navigate = (to: string, opts?: { replace?: boolean }) => void;
-type DashboardIcon = NonNullable<ComponentProps<typeof Icon>["icon"]>;
-type LiveSessionRecord = SessionRecord & { live: SessionLive };
-type ProjectSessionGroup = {
-  key: string;
-  label: string;
-  detail?: string;
-  sessions: LiveSessionRecord[];
-};
-
-const PERCENT_UNIT = {
-  perBar: 25,
-  label: "%",
-  barLabel: "25%",
-  format: (units: number) => `${Math.round(units * 25)}`,
+type DashboardIcon = SessionIcon;
+type ThroughputMetric = "outputTokensPerSecond" | "contextTokensPerSecond";
+type ThroughputChartModel = {
+  series: TimeseriesSeries[];
+  responses: Record<string, TimeseriesResponse>;
 };
 
 const VIEW_OPTIONS = [
@@ -78,36 +88,35 @@ const SORT_OPTIONS = [
   { id: "recent", label: "Recent" },
 ] satisfies Array<{ id: DashboardSort; label: string }>;
 
-const SESSION_GRID_CLASS =
-  "grid grid-cols-[minmax(12rem,1.4fr)_5.25rem_6.25rem] sm:grid-cols-[minmax(13rem,1.5fr)_5.25rem_6.25rem_6.25rem] lg:grid-cols-[minmax(15rem,1.6fr)_5.5rem_7rem_7rem_7rem_6rem_7rem_5.5rem]";
+const EMPTY_SESSIONS: SessionRecord[] = [];
+const EMPTY_THROUGHPUT_GROUPS: SessionThroughputGroup[] = [];
 
-const SESSION_COLUMNS = [
-  { label: "Model", sort: "model" },
-  { label: "Status", sort: "health" },
-  { label: "CPU", sort: "cpu" },
-  { label: "Memory", sort: "memory" },
-  { label: "Context", sort: "context" },
-  { label: "Tokens", sort: "tokens" },
-  { label: "Updated", sort: "recent" },
-  { label: "Actions" },
-] satisfies Array<{ label: string; sort?: DashboardSort }>;
-
-export function HomeDashboard({ onNavigate }: { onNavigate: Navigate }) {
+export function HomeDashboard({
+  onNavigate,
+  projectScope,
+}: {
+  onNavigate: Navigate;
+  projectScope: ProjectScope;
+}) {
   const [source, setSource] = useState<SourceFilter>("all");
-  const [allProjects, setAllProjects] = useState(false);
   const [query, setQuery] = useState("");
   const [view, setView] = useState<DashboardView>("list");
   const [sort, setSort] = useState<DashboardSort>("health");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
 
   const sessionsQuery = useQuery({
-    queryKey: ["sessions-dashboard", source, allProjects, query],
-    queryFn: () => fetchLiveSessions({ source, allProjects, query, limit: 200 }),
+    queryKey: ["sessions-dashboard", source, projectScope, query],
+    queryFn: () => fetchLiveSessions({ source, project: projectScope, query, limit: 200 }),
     refetchInterval: 5000,
     refetchIntervalInBackground: false,
   });
+  const throughputQuery = useQuery({
+    queryKey: ["sessions-throughput", source, projectScope, query],
+    queryFn: () => fetchSessionThroughput({ source, project: projectScope, query, limit: 500 }),
+    refetchInterval: false,
+  });
 
-  const sessions = sessionsQuery.data?.sessions ?? [];
+  const sessions = sessionsQuery.data?.sessions ?? EMPTY_SESSIONS;
   const liveSessions = useMemo(
     () =>
       sessions
@@ -137,7 +146,7 @@ export function HomeDashboard({ onNavigate }: { onNavigate: Navigate }) {
 
   const openSession = (session: SessionRecord) => {
     if (session.detailAvailable === false) return;
-    onNavigate(`/sessions/${encodeURIComponent(session.key)}`);
+    onNavigate(withProjectScope(`/sessions/${encodeURIComponent(session.key)}`, projectScope));
   };
 
   const selectSort = (nextSort: DashboardSort) => {
@@ -158,16 +167,17 @@ export function HomeDashboard({ onNavigate }: { onNavigate: Navigate }) {
       <DashboardToolbar
         source={source}
         onSourceChange={setSource}
-        allProjects={allProjects}
-        onAllProjectsChange={setAllProjects}
         query={query}
         onQueryChange={setQuery}
         view={view}
         onViewChange={setView}
         sort={sort}
         onSortChange={selectSort}
-        loading={sessionsQuery.isFetching}
-        onRefresh={() => void sessionsQuery.refetch()}
+        loading={sessionsQuery.isFetching || throughputQuery.isFetching}
+        onRefresh={() => {
+          void sessionsQuery.refetch();
+          void throughputQuery.refetch();
+        }}
         onNewAgent={() => onNavigate("/agent")}
       />
 
@@ -182,6 +192,11 @@ export function HomeDashboard({ onNavigate }: { onNavigate: Navigate }) {
           summary={sessionsQuery.data?.summary}
           liveCount={liveSessions.length}
           loading={sessionsQuery.isLoading}
+        />
+        <ThroughputPanel
+          result={throughputQuery.data}
+          loading={throughputQuery.isLoading}
+          error={throughputQuery.error}
         />
 
         <div className="grid min-h-0 gap-density-4 px-density-4 pb-density-4 xl:grid-cols-[minmax(0,1fr)_22rem]">
@@ -223,8 +238,6 @@ export function HomeDashboard({ onNavigate }: { onNavigate: Navigate }) {
 function DashboardToolbar({
   source,
   onSourceChange,
-  allProjects,
-  onAllProjectsChange,
   query,
   onQueryChange,
   view,
@@ -237,8 +250,6 @@ function DashboardToolbar({
 }: {
   source: SourceFilter;
   onSourceChange: (source: SourceFilter) => void;
-  allProjects: boolean;
-  onAllProjectsChange: (enabled: boolean) => void;
   query: string;
   onQueryChange: (query: string) => void;
   view: DashboardView;
@@ -270,7 +281,7 @@ function DashboardToolbar({
         </div>
       </div>
 
-      <div className="mt-density-3 grid gap-density-2 lg:grid-cols-[minmax(14rem,1fr)_auto_auto_auto_auto]">
+      <div className="mt-density-3 grid gap-density-2 lg:grid-cols-[minmax(14rem,1fr)_auto_auto_auto]">
         <SearchInput
           value={query}
           onChange={onQueryChange}
@@ -283,11 +294,6 @@ function DashboardToolbar({
           onChange={onSourceChange}
           size="sm"
           aria-label="Session source"
-        />
-        <Switch
-          checked={allProjects}
-          onChange={onAllProjectsChange}
-          label="All projects"
         />
         <SegmentedControl
           value={view}
@@ -400,106 +406,152 @@ function MetricTile({
   );
 }
 
-function SessionTable({
-  groups,
-  sort,
-  sortDirection,
-  onSortChange,
-  onOpen,
+function ThroughputPanel({
+  result,
+  loading,
+  error,
 }: {
-  groups: ProjectSessionGroup[];
-  sort: DashboardSort;
-  sortDirection: SortDirection;
-  onSortChange: (sort: DashboardSort) => void;
-  onOpen: (session: SessionRecord) => void;
+  result?: SessionThroughputResult;
+  loading: boolean;
+  error: unknown;
 }) {
+  const groups = result?.groups ?? EMPTY_THROUGHPUT_GROUPS;
+  const outputChart = useMemo(
+    () => buildThroughputChart(groups, "outputTokensPerSecond"),
+    [groups],
+  );
+  const contextChart = useMemo(
+    () => buildThroughputChart(groups, "contextTokensPerSecond"),
+    [groups],
+  );
+
   return (
-    <div className="min-w-0 max-w-[72rem] overflow-hidden rounded border border-border">
-      <div className={`${SESSION_GRID_CLASS} border-b border-border bg-muted/40 px-density-3 py-2 text-[11px] font-medium uppercase text-muted-foreground`}>
-        {SESSION_COLUMNS.map((column) => (
-          <SessionHeaderCell
-            key={column.label}
-            column={column}
-            sort={sort}
-            sortDirection={sortDirection}
-            onSortChange={onSortChange}
-          />
-        ))}
+    <section className="px-density-4 pb-density-4">
+      <div className="mb-density-2 flex min-w-0 flex-wrap items-end justify-between gap-density-2">
+        <div className="min-w-0">
+          <div className="text-sm font-semibold">Token Throughput</div>
+          <div className="truncate text-xs text-muted-foreground">
+            {loading ? "Loading completed sessions..." : `${result?.total ?? 0} completed sessions sampled`}
+          </div>
+        </div>
+        {result?.skipped ? (
+          <div className="shrink-0 text-xs text-muted-foreground">{result.skipped} skipped</div>
+        ) : null}
       </div>
-      <div>
-        {groups.map((group) => (
-          <section key={group.key} className="border-b border-border last:border-b-0">
-            <ProjectGroupHeader group={group} />
-            <div className="divide-y divide-border">
-              {group.sessions.map((session) => (
-                <div
-                  key={session.key}
-                  role={session.detailAvailable === false ? undefined : "button"}
-                  tabIndex={session.detailAvailable === false ? undefined : 0}
-                  onClick={() => activateSession(session, onOpen)}
-                  onKeyDown={(event) => handleSessionKeyDown(event, session, onOpen)}
-                  className={`${SESSION_GRID_CLASS} cursor-pointer items-center gap-density-2 px-density-3 py-density-2 text-sm transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[disabled=true]:cursor-default data-[disabled=true]:hover:bg-transparent`}
-                  data-disabled={session.detailAvailable === false ? "true" : undefined}
-                >
-                  <SessionIdentity session={session} />
-                  <StatusCell session={session} />
-                  <UsageBarsCell
-                    title="CPU"
-                    value={session.live.cpuPercent}
-                    icon={UiChip}
-                    thresholds={[60, 85]}
-                  />
-                  <UsageBarsCell
-                    title="Memory"
-                    value={session.live.memoryPercent}
-                    icon={UiMemoryStick}
-                    thresholds={[70, 90]}
-                  />
-                  <ContextCell session={session} />
-                  <MetricText value={formatCompactNumber(session.tokens?.totalTokens ?? 0)} />
-                  <MetricText value={formatRelativeTime(session.endedAt ?? session.startedAt)} />
-                  <SessionActions session={session} onOpen={onOpen} />
-                </div>
-              ))}
-            </div>
-          </section>
-        ))}
-      </div>
-    </div>
+
+      {error ? (
+        <div className="rounded border border-destructive/30 px-density-3 py-density-2 text-sm text-destructive">
+          {errorMessage(error)}
+        </div>
+      ) : loading ? (
+        <div className="rounded border border-border px-density-3 py-density-6 text-center text-xs text-muted-foreground">
+          Loading throughput...
+        </div>
+      ) : groups.length === 0 ? (
+        <div className="rounded border border-dashed border-border px-density-3 py-density-6 text-center text-xs text-muted-foreground">
+          No completed sessions with duration and token usage.
+        </div>
+      ) : (
+        <>
+          <div className="grid gap-density-3 xl:grid-cols-2">
+            <StaticThroughputChart
+              title="Output tokens/sec"
+              icon={UiTerminal}
+              model={outputChart}
+              empty="At least two completed sessions per model are needed."
+            />
+            <StaticThroughputChart
+              title="Context tokens/sec"
+              icon={UiMemoryStick}
+              model={contextChart}
+              empty="No completed sessions have enough context samples."
+            />
+          </div>
+          <ThroughputTable groups={groups.slice(0, 8)} />
+        </>
+      )}
+    </section>
   );
 }
 
-function SessionHeaderCell({
-  column,
-  sort,
-  sortDirection,
-  onSortChange,
+function StaticThroughputChart({
+  title,
+  icon,
+  model,
+  empty,
 }: {
-  column: (typeof SESSION_COLUMNS)[number];
-  sort: DashboardSort;
-  sortDirection: SortDirection;
-  onSortChange: (sort: DashboardSort) => void;
+  title: string;
+  icon: DashboardIcon;
+  model: ThroughputChartModel;
+  empty: string;
 }) {
-  if (!column.sort) {
-    return <div className="truncate px-1">{column.label}</div>;
+  const fetcher = useMemo(
+    () => staticThroughputFetcher(model.responses),
+    [model.responses],
+  );
+  if (model.series.length === 0) {
+    return (
+      <div className="flex min-h-[14rem] items-center justify-center rounded-lg border border-border bg-card px-density-3 py-density-6 text-center text-xs text-muted-foreground">
+        {empty}
+      </div>
+    );
   }
-
-  const active = sort === column.sort;
   return (
-    <button
-      type="button"
-      aria-sort={active ? (sortDirection === "asc" ? "ascending" : "descending") : "none"}
-      onClick={() => onSortChange(column.sort)}
-      className="inline-flex min-w-0 items-center gap-1 rounded px-1 py-0.5 text-left uppercase transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-    >
-      <span className="truncate">{column.label}</span>
-      {active ? (
-        <Icon
-          icon={sortDirection === "asc" ? UiArrowUp : UiArrowDown}
-          className="size-3 shrink-0"
-        />
-      ) : null}
-    </button>
+    <TimeseriesPanel
+      title={title}
+      icon={icon}
+      series={model.series}
+      fetcher={fetcher}
+      refreshMs={0}
+      height={180}
+      variant="line"
+      unit=" tok/s"
+    />
+  );
+}
+
+function ThroughputTable({ groups }: { groups: SessionThroughputGroup[] }) {
+  return (
+    <div className="mt-density-3 overflow-hidden rounded border border-border">
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[48rem] text-left text-sm">
+          <thead className="border-b border-border bg-muted/40 text-[11px] uppercase text-muted-foreground">
+            <tr>
+              <th className="px-density-3 py-2 font-medium">Model</th>
+              <th className="px-density-3 py-2 font-medium">Sessions</th>
+              <th className="px-density-3 py-2 font-medium">Output</th>
+              <th className="px-density-3 py-2 font-medium">Total</th>
+              <th className="px-density-3 py-2 font-medium">Context</th>
+              <th className="px-density-3 py-2 font-medium">Context Used</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {groups.map((group) => (
+              <tr key={group.key}>
+                <td className="min-w-0 px-density-3 py-2">
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <span className="grid size-6 shrink-0 place-items-center rounded border border-border bg-muted/50 text-muted-foreground">
+                      <Icon icon={modelIcon(group)} className="size-3.5" />
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block truncate font-medium">{group.model}</span>
+                      <span className="block truncate text-[11px] text-muted-foreground">
+                        {group.source} / {effortLabel(group.reasoningEffort) ?? "default"}
+                      </span>
+                    </span>
+                  </div>
+                </td>
+                <td className="px-density-3 py-2 tabular-nums text-muted-foreground">{group.sessions}</td>
+                <td className="px-density-3 py-2 tabular-nums">{formatRate(group.outputTokensPerSecond)}</td>
+                <td className="px-density-3 py-2 tabular-nums text-muted-foreground">{formatRate(group.totalTokensPerSecond)}</td>
+                <td className="px-density-3 py-2 tabular-nums text-muted-foreground">{formatOptionalRate(group.contextTokensPerSecond)}</td>
+                <td className="px-density-3 py-2 tabular-nums text-muted-foreground">{formatOptionalPercent(group.avgContextUsedPercent)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 
@@ -521,8 +573,8 @@ function SessionCardGrid({
                 key={session.key}
                 role={session.detailAvailable === false ? undefined : "button"}
                 tabIndex={session.detailAvailable === false ? undefined : 0}
-                onClick={() => activateSession(session, onOpen)}
-                onKeyDown={(event) => handleSessionKeyDown(event, session, onOpen)}
+                onClick={() => session.detailAvailable !== false && onOpen(session)}
+                onKeyDown={(event) => handleCardKeyDown(event, session, onOpen)}
                 className="min-w-0 cursor-pointer rounded border border-border bg-card p-density-3 transition-colors hover:border-muted-foreground/40 hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[disabled=true]:cursor-default data-[disabled=true]:hover:border-border data-[disabled=true]:hover:bg-card"
                 data-disabled={session.detailAvailable === false ? "true" : undefined}
               >
@@ -531,7 +583,7 @@ function SessionCardGrid({
                   <SessionActions session={session} onOpen={onOpen} compact />
                 </div>
                 <div className="mt-density-3 grid grid-cols-2 gap-density-2 text-xs">
-                  <MetricBox label="Status" value={session.live.status ?? "active"} />
+                  <MetricBox label="Status" value={session.live?.status ?? "active"} />
                   <MetricBox
                     label="Tokens"
                     value={formatCompactNumber(session.tokens?.totalTokens ?? 0)}
@@ -541,7 +593,7 @@ function SessionCardGrid({
                     value={
                       <UsageBarsCell
                         title="CPU"
-                        value={session.live.cpuPercent}
+                        value={session.live?.cpuPercent}
                         icon={UiChip}
                         thresholds={[60, 85]}
                       />
@@ -552,7 +604,7 @@ function SessionCardGrid({
                     value={
                       <UsageBarsCell
                         title="Memory"
-                        value={session.live.memoryPercent}
+                        value={session.live?.memoryPercent}
                         icon={UiMemoryStick}
                         thresholds={[70, 90]}
                       />
@@ -564,9 +616,11 @@ function SessionCardGrid({
                 <div className="mt-density-3">
                   <ContextCell session={session} expanded />
                 </div>
-                <div className="mt-density-2 truncate text-[11px] text-muted-foreground">
-                  {commandLabel(session.live.command)}
-                </div>
+                {session.live?.command ? (
+                  <div className="mt-density-2 truncate text-[11px] text-muted-foreground">
+                    {commandLabel(session.live.command)}
+                  </div>
+                ) : null}
               </div>
             ))}
           </div>
@@ -576,168 +630,15 @@ function SessionCardGrid({
   );
 }
 
-function ProjectGroupHeader({ group }: { group: ProjectSessionGroup }) {
-  return (
-    <div className="flex min-w-0 items-center justify-between gap-density-2 bg-muted/20 px-density-3 py-2 text-xs">
-      <div className="min-w-0">
-        <div className="truncate font-semibold">{group.label}</div>
-        {group.detail ? (
-          <div className="mt-0.5 truncate text-[11px] text-muted-foreground">{group.detail}</div>
-        ) : null}
-      </div>
-      <div className="shrink-0 rounded border border-border bg-background px-2 py-0.5 text-[11px] text-muted-foreground">
-        {group.sessions.length}
-      </div>
-    </div>
-  );
-}
-
-function UsageBarsCell({
-  title,
-  value,
-  icon,
-  thresholds,
-}: {
-  title: string;
-  value: number | undefined;
-  icon: DashboardIcon;
-  thresholds: [warning: number, danger: number];
-}) {
-  return (
-    <div className="flex min-w-0 flex-col items-start gap-1">
-      <ProgressBars
-        variant="cell"
-        title={title}
-        icon={icon}
-        usage={value}
-        max={100}
-        unit={PERCENT_UNIT}
-        thresholds={thresholds}
-        showValue={false}
-        orientation="vertical"
-        hoverCard={false}
-        className="max-w-full"
-      />
-      <span className="text-[11px] tabular-nums text-muted-foreground">
-        {formatPercent(value)}
-      </span>
-    </div>
-  );
-}
-
-function SessionIdentity({ session }: { session: SessionRecord }) {
-  const model = modelLabel(session);
-  const effort = effortLabel(session.reasoningEffort);
-  return (
-    <div className="min-w-0">
-      <div className="flex min-w-0 items-center gap-1.5">
-        <span className="grid size-6 shrink-0 place-items-center rounded border border-border bg-muted/50 text-muted-foreground">
-          <Icon icon={modelIcon(session)} className="size-3.5" />
-        </span>
-        <span className="min-w-0 truncate text-sm font-medium">{model}</span>
-        <span className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] uppercase text-muted-foreground">
-          {session.source}
-        </span>
-      </div>
-      <div className="mt-1 flex min-w-0 items-center gap-2 text-[11px] text-muted-foreground">
-        {effort ? (
-          <span className="inline-flex min-w-0 items-center gap-1">
-            <Icon icon={UiBrain} className="size-3 shrink-0" />
-            <span className="truncate">{effort}</span>
-          </span>
-        ) : null}
-        <span className="truncate">{sessionTitle(session)}</span>
-      </div>
-      <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
-        {session.live?.pid ? `pid ${session.live.pid} - ` : ""}
-        {commandLabel(session.live?.command)}
-      </div>
-    </div>
-  );
-}
-
-function StatusCell({ session }: { session: SessionRecord & { live: SessionLive } }) {
-  const signal = session.health?.[0];
-  return (
-    <div className="min-w-0">
-      <div className="flex min-w-0 items-center gap-1.5">
-        <span
-          className={`h-2 w-2 shrink-0 rounded-full ${signal ? healthDotClassName(signal.severity) : "bg-emerald-500"}`}
-        />
-        <span className="truncate text-xs font-medium">{session.live.status ?? "active"}</span>
-      </div>
-    </div>
-  );
-}
-
-function ContextCell({
-  session,
-  expanded = false,
-}: {
-  session: SessionRecord;
-  expanded?: boolean;
-}) {
-  const percent = session.context?.freePercent;
-  if (percent === undefined) {
-    return <MetricText value="--" />;
-  }
-  return (
-    <div className="min-w-0">
-      <div className="flex items-center justify-between gap-2 text-xs">
-        <span className={contextTone(percent)}>{percent}% free</span>
-        {expanded && session.context?.windowTokens ? (
-          <span className="text-muted-foreground">
-            {formatCompactNumber(session.context.windowTokens)}
-          </span>
-        ) : null}
-      </div>
-      <div className="mt-1 h-1.5 overflow-hidden rounded bg-muted">
-        <div
-          className={`h-full rounded ${contextBarTone(percent)}`}
-          style={{ width: `${Math.max(0, Math.min(100, percent))}%` }}
-        />
-      </div>
-    </div>
-  );
-}
-
-function SessionActions({
-  session,
-  onOpen,
-  compact = false,
-}: {
-  session: SessionRecord;
-  onOpen: (session: SessionRecord) => void;
-  compact?: boolean;
-}) {
-  return (
-    <div className="flex shrink-0 items-center gap-1">
-      <Button
-        size="sm"
-        variant="ghost"
-        disabled={session.detailAvailable === false}
-        onClick={(event) => {
-          event.stopPropagation();
-          onOpen(session);
-        }}
-        aria-label="Open session history"
-      >
-        <Icon icon={UiHistory} className="size-4" />
-        {compact ? null : "Open"}
-      </Button>
-      <Button
-        size="sm"
-        variant="ghost"
-        onClick={(event) => {
-          event.stopPropagation();
-          copySessionRef(session);
-        }}
-        aria-label="Copy session reference"
-      >
-        <Icon icon={UiCopy} className="size-4" />
-      </Button>
-    </div>
-  );
+function handleCardKeyDown(
+  event: React.KeyboardEvent<HTMLDivElement>,
+  session: SessionRecord,
+  onOpen: (session: SessionRecord) => void,
+) {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  if (session.detailAvailable === false) return;
+  event.preventDefault();
+  onOpen(session);
 }
 
 function HealthPanel({
@@ -870,173 +771,82 @@ function MetricBox({ label, value }: { label: string; value: ReactNode }) {
   );
 }
 
-function MetricText({ value }: { value: ReactNode }) {
-  return <div className="truncate text-xs text-muted-foreground">{value}</div>;
-}
+function buildThroughputChart(
+  groups: SessionThroughputGroup[],
+  metric: ThroughputMetric,
+): ThroughputChartModel {
+  const responses: Record<string, TimeseriesResponse> = {};
+  const series: TimeseriesSeries[] = [];
+  const ranked = [...groups]
+    .filter((group) => (group.points?.length ?? 0) >= 2 && (group[metric] ?? 0) > 0)
+    .sort((left, right) => (right[metric] ?? 0) - (left[metric] ?? 0))
+    .slice(0, 5);
 
-function hasLiveProcess(session: SessionRecord): session is LiveSessionRecord {
-  return Boolean(session.live);
-}
-
-function compareSessions(
-  left: LiveSessionRecord,
-  right: LiveSessionRecord,
-  sort: DashboardSort,
-  direction: SortDirection,
-) {
-  if (sort === "model") {
-    return directionalCompare(
-      modelLabel(left).localeCompare(modelLabel(right)) ||
-        sessionSortTime(right) - sessionSortTime(left),
-      direction,
-      "asc",
-    );
-  }
-  if (sort === "context") {
-    return directionalCompare(
-      (left.context?.freePercent ?? 101) - (right.context?.freePercent ?? 101) ||
-        sessionSortTime(right) - sessionSortTime(left),
-      direction,
-      "asc",
-    );
-  }
-  if (sort === "cpu") {
-    return directionalCompare(
-      (right.live.cpuPercent ?? -1) - (left.live.cpuPercent ?? -1) ||
-        sessionSortTime(right) - sessionSortTime(left),
-      direction,
-      "desc",
-    );
-  }
-  if (sort === "memory") {
-    return directionalCompare(
-      (right.live.memoryPercent ?? -1) - (left.live.memoryPercent ?? -1) ||
-        sessionSortTime(right) - sessionSortTime(left),
-      direction,
-      "desc",
-    );
-  }
-  if (sort === "tokens") {
-    return directionalCompare(
-      tokenTotal(right) - tokenTotal(left) ||
-        sessionSortTime(right) - sessionSortTime(left),
-      direction,
-      "desc",
-    );
-  }
-  if (sort === "recent") {
-    return directionalCompare(
-      sessionSortTime(right) - sessionSortTime(left),
-      direction,
-      "desc",
-    );
-  }
-  return directionalCompare(
-    healthRank(right) - healthRank(left) ||
-    (left.context?.freePercent ?? 101) - (right.context?.freePercent ?? 101) ||
-    (right.live.cpuPercent ?? -1) - (left.live.cpuPercent ?? -1) ||
-      sessionSortTime(right) - sessionSortTime(left),
-    direction,
-    "desc",
-  );
-}
-
-function directionalCompare(value: number, direction: SortDirection, natural: SortDirection) {
-  return direction === natural ? value : -value;
-}
-
-function defaultSortDirection(sort: DashboardSort): SortDirection {
-  return sort === "model" || sort === "context" ? "asc" : "desc";
-}
-
-function tokenTotal(session: SessionRecord) {
-  return session.tokens?.totalTokens ?? 0;
-}
-
-function groupSessionsByProject(sessions: LiveSessionRecord[]): ProjectSessionGroup[] {
-  const groups = new Map<string, ProjectSessionGroup>();
-
-  for (const session of sessions) {
-    const cwd = session.live.cwd ?? session.cwd;
-    const key = cwd || "unknown";
-    const label = projectLabel(cwd);
-    const existing = groups.get(key);
-
-    if (existing) {
-      existing.sessions.push(session);
-      continue;
+  for (const [index, group] of ranked.entries()) {
+    const id = `${metric}-${index}-${hashThroughputGroup(group)}`;
+    const points = [];
+    for (const point of group.points ?? []) {
+      const value = point[metric] ?? 0;
+      if (!Number.isFinite(value)) continue;
+      points.push({ at: point.at, value });
     }
-
-    groups.set(key, {
-      key,
-      label,
-      detail: cwd && cwd !== label ? cwd : undefined,
-      sessions: [session],
+    if (points.length < 2) continue;
+    series.push({
+      id,
+      label: throughputGroupLabel(group),
+      unit: " tok/s",
     });
+    responses[id] = { id, points };
   }
 
-  return [...groups.values()];
+  return { series, responses };
 }
 
-function activateSession(session: SessionRecord, onOpen: (session: SessionRecord) => void) {
-  if (session.detailAvailable === false) return;
-  onOpen(session);
+function staticThroughputFetcher(responses: Record<string, TimeseriesResponse>) {
+  return async (url: string): Promise<TimeseriesResponse> => {
+    const path = url.split("?")[0] ?? url;
+    const id = decodeURIComponent(path.split("/").filter(Boolean).pop() ?? path);
+    return responses[id] ?? { id, points: [] };
+  };
 }
 
-function handleSessionKeyDown(
-  event: KeyboardEvent<HTMLDivElement>,
-  session: SessionRecord,
-  onOpen: (session: SessionRecord) => void,
-) {
-  if (event.key !== "Enter" && event.key !== " ") return;
-  event.preventDefault();
-  activateSession(session, onOpen);
+function throughputGroupLabel(group: SessionThroughputGroup) {
+  const effort = effortLabel(group.reasoningEffort);
+  return effort && effort !== "default" ? `${group.model} / ${effort}` : group.model;
 }
 
-function modelLabel(session: SessionRecord) {
-  return session.model || session.provider || session.source;
+function hashThroughputGroup(group: SessionThroughputGroup) {
+  const lastPoint = group.points?.[group.points.length - 1];
+  const input = [
+    group.key,
+    group.sessions,
+    group.durationSeconds,
+    group.outputTokens,
+    group.totalTokens,
+    group.contextTokens,
+    lastPoint?.at,
+    lastPoint?.outputTokensPerSecond,
+    lastPoint?.contextTokensPerSecond,
+  ].join("|");
+  let hash = 0;
+  for (let i = 0; i < input.length; i++) {
+    hash = (hash * 31 + input.charCodeAt(i)) >>> 0;
+  }
+  return hash.toString(36);
 }
 
-function modelIcon(session: SessionRecord): DashboardIcon {
-  const value = `${session.provider ?? ""} ${session.model ?? ""} ${session.source}`.toLowerCase();
-  if (value.includes("claude") || value.includes("anthropic")) return UiSparkles;
-  if (value.includes("codex") || value.includes("openai") || value.includes("gpt")) return UiRobotAi;
-  return UiTerminal;
+function formatRate(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return "0/s";
+  if (value >= 1000) return `${formatCompactNumber(Math.round(value))}/s`;
+  if (value >= 10) return `${value.toFixed(0)}/s`;
+  return `${value.toFixed(1)}/s`;
 }
 
-function effortLabel(value: string | undefined) {
-  return value ? value.replace(/_/g, " ") : undefined;
+function formatOptionalRate(value: number | undefined) {
+  return value !== undefined && value > 0 ? formatRate(value) : "--";
 }
 
-function formatPercent(value: number | undefined) {
-  return value === undefined ? "--" : `${value.toFixed(1)}%`;
-}
-
-function formatRelativeTime(value: string | undefined) {
-  if (!value) return "--";
-  const time = new Date(value).getTime();
-  if (Number.isNaN(time)) return value;
-  const delta = Date.now() - time;
-  if (delta < 60_000) return "now";
-  if (delta < 3_600_000) return `${Math.round(delta / 60_000)}m ago`;
-  if (delta < 86_400_000) return `${Math.round(delta / 3_600_000)}h ago`;
-  return `${Math.round(delta / 86_400_000)}d ago`;
-}
-
-function contextTone(percent: number) {
-  if (percent <= 10) return "font-medium text-destructive";
-  if (percent <= 25) return "font-medium text-amber-700";
-  return "font-medium text-emerald-700";
-}
-
-function contextBarTone(percent: number) {
-  if (percent <= 10) return "bg-destructive";
-  if (percent <= 25) return "bg-amber-500";
-  return "bg-emerald-500";
-}
-
-function copySessionRef(session: SessionRecord) {
-  if (!navigator.clipboard) return;
-  const value = session.live?.pid ? `${session.source}:${session.live.pid}` : session.key;
-  void navigator.clipboard.writeText(value).catch(() => undefined);
+function formatOptionalPercent(value: number | undefined) {
+  if (value === undefined || !Number.isFinite(value) || value <= 0) return "--";
+  return `${value.toFixed(value >= 10 ? 0 : 1)}%`;
 }
