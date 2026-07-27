@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -12,6 +11,7 @@ import (
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/middleware"
 	"github.com/flanksource/captain/pkg/ai/pricing"
+	"github.com/flanksource/captain/pkg/aiflags"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/captainconfig"
 	"github.com/flanksource/captain/pkg/claude"
@@ -25,21 +25,36 @@ import (
 // surfaced as zero-valued defaults rather than failing the command — a missing
 // or unreadable config should never block `captain ai prompt`.
 func loadSavedAI() captainconfig.AIDefaults {
+	return loadSavedConfig().AI
+}
+
+func loadSavedConfig() captainconfig.Config {
 	cfg, _, err := captainconfig.Load()
 	if err != nil {
 		log.Warnf("captainconfig load: %v (continuing with zero defaults)", err)
-		return captainconfig.AIDefaults{}
+		return captainconfig.Config{}
 	}
-	return cfg.AI
+	return cfg
 }
 
+// AIProviderOptions binds model selection plus the knobs that belong to the
+// request rather than the model: the endpoint, the API key and the spend budget.
+//
+// The model flags themselves live in pkg/aiflags — a leaf any clicky CLI can embed
+// without inheriting pkg/cli's ~1000 transitive packages. Embedding it here keeps
+// captain's flag surface unchanged (clicky promotes embedded flags at any depth)
+// while giving downstream repos the same parsing captain uses.
 type AIProviderOptions struct {
-	Model    string   `flag:"model" help:"Model name(s), e.g. claude-sonnet-5 or a comma-separated primary,fallback list like claude-sonnet-5,gpt-4o (defaults to the value saved by 'captain configure')" short:"m"`
-	Fallback []string `flag:"fallback" help:"Model to try if the primary is unavailable (repeatable; comma-separated allowed)"`
-	Backend  string   `flag:"backend" help:"Force backend: anthropic|gemini|openai|deepseek|claude-cli|claude-agent|claude-cmux|codex-cli|codex-cmux|gemini-cli (default: inferred from model or saved by 'captain configure')" short:"b"`
-	APIKey   string   `flag:"api-key" help:"API key (env: ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, GOOGLE_API_KEY, DEEPSEEK_API_KEY)"`
-	NoCache  bool     `flag:"no-cache" help:"Disable response caching"`
-	Budget   string   `flag:"budget" help:"Max spend in USD, 0=unlimited" default:"0"`
+	aiflags.ModelFlags
+
+	APIKey string `flag:"api-key" help:"API key (env: ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, GOOGLE_API_KEY, DEEPSEEK_API_KEY)"`
+	APIURL string `flag:"api-url" help:"Override the backend endpoint, e.g. a 'captain ai mock' URL. Required for codex-cli, which ignores OPENAI_BASE_URL when a ChatGPT credential is stored"`
+	Budget string `flag:"budget" help:"Max spend in USD, 0=unlimited" default:"0"`
+}
+
+// BudgetUSD parses --budget, failing loud on malformed input.
+func (o AIProviderOptions) BudgetUSD() (float64, error) {
+	return parseFloatFlag("budget", o.Budget)
 }
 
 // parseFloatFlag parses a numeric string flag, returning a descriptive error
@@ -56,34 +71,49 @@ func parseFloatFlag(name, val string) (float64, error) {
 }
 
 func (o AIProviderOptions) ToConfig() (ai.Config, error) {
-	saved := loadSavedAI()
-	budget, err := parseFloatFlag("budget", o.Budget)
+	savedCfg := loadSavedConfig()
+	saved := savedCfg.AI
+	budget, err := o.BudgetUSD()
 	if err != nil {
 		return ai.Config{}, err
-	}
-
-	model := o.Model
-	if model == "" {
-		model = saved.Model
-	}
-	backend := o.Backend
-	if backend == "" {
-		backend = saved.Backend
-	}
-	if backend != "" && !ai.Backend(backend).Valid() {
-		return ai.Config{}, fmt.Errorf("invalid --backend %q (valid: %s)", backend, ai.BackendList())
 	}
 	if budget == 0 {
 		budget = saved.BudgetUSD
 	}
 
-	m := api.Model{Name: model, Backend: ai.Backend(backend), Fallbacks: fallbackModelsFromFlags(o.Fallback)}
+	// One resolve: flags → Model → saved per-provider defaults → catalog. The
+	// warn-and-continue policy for a broken config stays here (loadSavedConfig), so
+	// aiflags can hand the error back instead of swallowing it.
+	m, err := o.ResolveWith(saved)
+	if err != nil {
+		return ai.Config{}, err
+	}
 	return ai.Config{
-		Model:   m.ExpandCSV(),
-		Budget:  api.Budget{Cost: budget},
-		APIKey:  o.APIKey,
-		NoCache: o.NoCache || saved.NoCache,
+		Model:        m,
+		Budget:       api.Budget{Cost: budget},
+		APIKey:       o.APIKey,
+		APIURL:       strings.TrimSpace(o.APIURL),
+		NoCache:      o.NoCache || saved.NoCache,
+		SchemaRepair: schemaRepairConfig(savedCfg.Prompts.SchemaRepair),
 	}, nil
+}
+
+func schemaRepairConfig(saved captainconfig.SchemaRepairDefaults) api.SchemaRepairConfig {
+	return api.SchemaRepairConfig{
+		Model:  api.Model{Name: saved.Model, Backend: api.Backend(saved.Backend)},
+		Prompt: strings.TrimSpace(saved.Prompt),
+	}
+}
+
+func isZeroSchemaRepair(c api.SchemaRepairConfig) bool {
+	return strings.TrimSpace(c.Prompt) == "" &&
+		c.Model.Name == "" &&
+		c.Model.ID == "" &&
+		c.Model.Backend == "" &&
+		c.Model.Temperature == nil &&
+		c.Model.Effort == "" &&
+		!c.Model.NoCache &&
+		len(c.Model.Fallbacks) == 0
 }
 
 // AIRuntimeOptions binds the per-invocation knobs every AI command shares —
@@ -99,11 +129,12 @@ func (o AIProviderOptions) ToConfig() (ai.Config, error) {
 type AIRuntimeOptions struct {
 	AIProviderOptions
 
-	MaxTokens   int    `flag:"max-tokens" help:"Maximum output tokens (0 = saved default or 4096)"`
-	Temperature string `flag:"temperature" help:"Sampling temperature (0.0-2.0)" default:"0"`
-	Effort      string `flag:"effort" help:"Reasoning effort: low|medium|high|xhigh (codex/genkit; others ignore)"`
-	MaxTurns    int    `flag:"max-turns" help:"Max agent turns 0-100, 0 = provider default (claude-agent)"`
-	Resume      string `flag:"resume" help:"Resume an existing session by id (claude-agent, codex)"`
+	// Effort and Temperature are NOT here: they describe the model and so live on
+	// the embedded aiflags.ModelFlags, promoted through AIProviderOptions.
+	// Redeclaring them would bind --effort twice and panic cobra at init.
+	MaxTokens int    `flag:"max-tokens" help:"Maximum output tokens (0 = saved default or 4096)"`
+	MaxTurns  int    `flag:"max-turns" help:"Max agent turns 0-100, 0 = provider default (claude-agent)"`
+	Resume    string `flag:"resume" help:"Resume an existing session by id (claude-agent, codex)"`
 
 	Edit            bool     `flag:"edit" help:"Safe defaults: acceptEdits + Read/Edit/Write/Glob/Grep allowlist"`
 	AllowedTools    []string `flag:"allowed-tools" help:"Override --edit's built-in allowlist (claude only)"`
@@ -144,21 +175,25 @@ type AIPromptOptions struct {
 	System       string   `flag:"system" help:"System prompt" short:"s"`
 	AppendSystem string   `flag:"append-system" help:"Append text to the default system prompt"`
 	Var          []string `flag:"var" help:"Template variable key=value (repeatable)" short:"V"`
+	Attach       []string `flag:"attach" help:"Attach a local path or URL (repeatable; RFC 4180 comma-separated values allowed)" short:"A"`
+	MultiModels  []string `flag:"multi-models" help:"Run prompt once per runtime selector in parallel, e.g. cli:sonnet-5,cmux:opus (repeatable; comma-separated allowed)" short:"M"`
 	Timeout      string   `flag:"timeout" help:"Request timeout" default:"120s"`
 	NoStream     bool     `flag:"no-stream" help:"Disable streaming; print only the final text to stdout"`
 }
 
 type AIPromptResult struct {
-	Text        string     `json:"text" pretty:"label=Response"`
-	Model       string     `json:"model" pretty:"label=Model"`
-	Backend     string     `json:"backend" pretty:"label=Backend"`
-	Dir         string     `json:"dir,omitempty" pretty:"label=Dir"`
-	SessionID   string     `json:"sessionId,omitempty" pretty:"label=Session"`
-	Input       ai.Request `json:"input" pretty:"-"`
-	InputTokens int        `json:"inputTokens" pretty:"label=Input Tokens"`
-	Output      int        `json:"outputTokens" pretty:"label=Output Tokens"`
-	CostUSD     float64    `json:"costUSD,omitempty" pretty:"label=Cost USD"`
-	Duration    string     `json:"duration" pretty:"label=Duration"`
+	Text             string         `json:"text" pretty:"label=Response"`
+	StructuredOutput map[string]any `json:"structuredOutput,omitempty" pretty:"-"`
+	Model            string         `json:"model" pretty:"label=Model"`
+	Backend          string         `json:"backend" pretty:"label=Backend"`
+	Dir              string         `json:"dir,omitempty" pretty:"label=Dir"`
+	SessionID        string         `json:"sessionId,omitempty" pretty:"label=Session"`
+	HistoryFile      string         `json:"historyFile,omitempty" pretty:"label=History"`
+	Input            ai.Request     `json:"input" pretty:"-"`
+	InputTokens      int            `json:"inputTokens" pretty:"label=Input Tokens"`
+	Output           int            `json:"outputTokens" pretty:"label=Output Tokens"`
+	CostUSD          float64        `json:"costUSD,omitempty" pretty:"label=Cost USD"`
+	Duration         string         `json:"duration" pretty:"label=Duration"`
 }
 
 // ToRequest translates the runtime knobs into the typed ai.Request, overlaying
@@ -199,10 +234,18 @@ func (o AIRuntimeOptions) ToRequest(systemPrompt, appendSystemPrompt, userPrompt
 		maxTokens = 4096
 	}
 
-	effort := o.Effort
-	if effort == "" {
-		effort = saved.ReasoningEffort
+	// Resolve the USD budget onto the request (flag > saved) so backends that read
+	// req.Budget.Cost — claude-cli, claude-agent — enforce it without relying on a
+	// later config-side reconciliation that not every path performs (finding A4).
+	budget, err := parseFloatFlag("budget", o.Budget)
+	if err != nil {
+		return ai.Request{}, err
 	}
+	if budget == 0 {
+		budget = saved.BudgetUSD
+	}
+
+	effort := o.Effort
 	if err := api.Effort(effort).Validate(); err != nil {
 		return ai.Request{}, fmt.Errorf("invalid --effort %q: %w", effort, err)
 	}
@@ -228,7 +271,7 @@ func (o AIRuntimeOptions) ToRequest(systemPrompt, appendSystemPrompt, userPrompt
 	return ai.Request{
 		Prompt: api.Prompt{System: systemPrompt, AppendSystem: appendSystemPrompt, User: userPrompt},
 		Model:  api.Model{Temperature: temperaturePtr, Effort: api.Effort(effort), NoCache: o.NoCache || saved.NoCache},
-		Budget: api.Budget{MaxTokens: maxTokens, MaxTurns: o.MaxTurns},
+		Budget: api.Budget{Cost: budget, MaxTokens: maxTokens, MaxTurns: o.MaxTurns},
 		Memory: api.Memory{
 			Skills:      o.SkillDirs,
 			SkipHooks:   o.NoHooks || saved.NoHooks,
@@ -246,45 +289,20 @@ func (o AIRuntimeOptions) ToRequest(systemPrompt, appendSystemPrompt, userPrompt
 // ToRequest delegates to AIRuntimeOptions.ToRequest, lifting the prompt
 // fields the prompt-shaped command owns onto the typed request.
 func (o AIPromptOptions) ToRequest() (ai.Request, error) {
-	return o.AIRuntimeOptions.ToRequest(o.System, o.AppendSystem, o.Prompt)
-}
-
-// RunAIPrompt is a deprecated alias for `captain prompt run`. It routes through
-// the same shared render + execute core (renderPromptSource + executePromptRequest)
-// so there is one implementation; the positional `.prompt` file, --prompt/-p, and
-// stdin all still work.
-func RunAIPrompt(opts AIPromptOptions) (any, error) {
-	log.Warnf("`captain ai prompt` is deprecated; use `captain prompt run` (it accepts a .prompt file, id, --prompt/-p, or stdin)")
-
-	var stdin string
-	if claude.IsStdinPiped() {
-		b, err := io.ReadAll(os.Stdin)
-		if err != nil {
-			return nil, fmt.Errorf("read stdin: %w", err)
-		}
-		stdin = string(b)
-	}
-
-	ctx := context.Background()
-	req, cfg, err := renderPromptSource(ctx, opts.File, opts, "", stdin)
+	req, err := o.AIRuntimeOptions.ToRequest(o.System, o.AppendSystem, o.Prompt)
 	if err != nil {
-		return nil, err
+		return ai.Request{}, err
 	}
-	if req.Prompt.User == "" {
-		return nil, fmt.Errorf("prompt text required (use --prompt/-p, a file arg, or pipe via stdin)")
-	}
-	if cfg.Model.Name == "" {
-		return nil, fmt.Errorf("no model: pass --model or run 'captain configure' to set a default")
-	}
-	if err := req.Validate(); err != nil {
-		return nil, err
-	}
-	return executePromptRequest(ctx, req, cfg, runtimeTimeout(req.Budget.Timeout), opts.NoStream)
+	req.Prompt.Attachments, err = attachmentRefsFromFlags(o.Attach)
+	return req, err
 }
 
 func executePromptRequest(parent context.Context, req ai.Request, cfg ai.Config, timeout time.Duration, noStream bool) (any, error) {
 	ctx, cancel := runContext(parent, req, timeout)
 	defer cancel()
+	if err := preparePromptAttachments(ctx, &req, cfg); err != nil {
+		return nil, err
+	}
 
 	p, cleanup, err := buildProvider(ctx, &req, cfg)
 	if err != nil {
@@ -292,7 +310,7 @@ func executePromptRequest(parent context.Context, req ai.Request, cfg ai.Config,
 	}
 	defer cleanup()
 
-	if streamer, ok := p.(ai.StreamingProvider); ok && !noStream {
+	if streamer, ok := p.(ai.StreamingProvider); ok && !noStream && !req.Prompt.HasSchema() {
 		return runStreaming(ctx, streamer, req)
 	}
 	return runBuffered(ctx, p, req)
@@ -414,7 +432,7 @@ func buildProvider(ctx context.Context, req *ai.Request, cfg ai.Config) (ai.Prov
 		cleanup()
 		return nil, func() {}, err
 	}
-	if p, err = middleware.Wrap(p, middleware.WithLogging(), middleware.WithSchemaValidation()); err != nil {
+	if p, err = middleware.Wrap(p, middleware.WithLogging(), middleware.WithSchemaValidation(cfg)); err != nil {
 		cleanup()
 		return nil, func() {}, err
 	}
@@ -430,16 +448,27 @@ func runBuffered(ctx context.Context, p ai.Provider, req ai.Request) (any, error
 	model := firstNonEmpty(resp.Model, p.GetModel(), req.Name)
 	backend := firstNonEmpty(string(resp.Backend), string(p.GetBackend()), string(req.Backend))
 	input := resolvedPromptInput(req, model, backend, req.SessionID)
+	dir := actualRunDir(input)
+	structuredOutput, err := structuredOutputMap(resp.StructuredData)
+	if err != nil {
+		return nil, err
+	}
+	text, err := structuredOutputText(resp.Text, structuredOutput)
+	if err != nil {
+		return nil, err
+	}
 	return AIPromptResult{
-		Text:        resp.Text,
-		Model:       model,
-		Backend:     backend,
-		Dir:         input.Cwd(),
-		SessionID:   input.SessionID,
-		Input:       input,
-		InputTokens: resp.Usage.InputTokens,
-		Output:      resp.Usage.OutputTokens,
-		Duration:    time.Since(start).Round(time.Millisecond).String(),
+		Text:             text,
+		StructuredOutput: structuredOutput,
+		Model:            model,
+		Backend:          backend,
+		Dir:              dir,
+		SessionID:        input.SessionID,
+		HistoryFile:      historyFileForRun(api.Backend(backend), input.SessionID, dir),
+		Input:            input,
+		InputTokens:      resp.Usage.InputTokens,
+		Output:           resp.Usage.OutputTokens,
+		Duration:         time.Since(start).Round(time.Millisecond).String(),
 	}, nil
 }
 
@@ -449,17 +478,20 @@ func runBuffered(ctx context.Context, p ai.Provider, req ai.Request) (any, error
 func runStreaming(ctx context.Context, sp ai.StreamingProvider, req ai.Request) (any, error) {
 	start := time.Now()
 	var (
-		text    string
-		usage   ai.Usage
-		cost    float64
-		backend = string(sp.GetBackend())
-		model   = sp.GetModel()
-		session = req.SessionID
+		text             string
+		usage            ai.Usage
+		cost             float64
+		backend          = string(sp.GetBackend())
+		model            = sp.GetModel()
+		session          = req.SessionID
+		structuredOutput map[string]any
+		structuredErr    error
 	)
 	renderer := newLineRenderer(os.Stderr, 8)
 	loop, err := ai.RunUntil(ctx, ai.LoopOptions{
 		Provider:      sp,
 		MaxIterations: 1,
+		MaxCostUSD:    req.Budget.Cost, // enforce the USD budget
 		BuildRequest: func(iter int, prev *ai.LoopIteration) (ai.Request, bool) {
 			if iter > 0 {
 				return ai.Request{}, false
@@ -478,6 +510,10 @@ func runStreaming(ctx context.Context, sp ai.StreamingProvider, req ai.Request) 
 				text += ev.Text
 			}
 			if ev.Kind == ai.EventResult {
+				if len(ev.StructuredData) > 0 {
+					text = string(ev.StructuredData)
+					structuredOutput, structuredErr = structuredOutputMap(ev.StructuredData)
+				}
 				if ev.Usage != nil {
 					usage = *ev.Usage
 				}
@@ -488,24 +524,33 @@ func runStreaming(ctx context.Context, sp ai.StreamingProvider, req ai.Request) 
 	if err != nil {
 		return nil, err
 	}
+	if structuredErr != nil {
+		return nil, structuredErr
+	}
 	if loop.StopReason == "error" {
 		return nil, fmt.Errorf("streaming loop stopped: %s", loop.StopReason)
+	}
+	if loop.StopReason == "max-cost" {
+		return nil, fmt.Errorf("%w: spent $%.4f of $%.4f budget", ai.ErrBudgetExceeded, loop.TotalCost, req.Budget.Cost)
 	}
 	if session == "" && len(loop.Iterations) > 0 {
 		session = loop.Iterations[0].SessionID
 	}
 	input := resolvedPromptInput(req, model, backend, session)
+	dir := actualRunDir(input)
 	return AIPromptResult{
-		Text:        text,
-		Model:       model,
-		Backend:     backend,
-		Dir:         input.Cwd(),
-		SessionID:   input.SessionID,
-		Input:       input,
-		InputTokens: usage.InputTokens,
-		Output:      usage.OutputTokens,
-		CostUSD:     cost,
-		Duration:    time.Since(start).Round(time.Millisecond).String(),
+		Text:             text,
+		StructuredOutput: structuredOutput,
+		Model:            model,
+		Backend:          backend,
+		Dir:              dir,
+		SessionID:        input.SessionID,
+		HistoryFile:      historyFileForRun(api.Backend(backend), input.SessionID, dir),
+		Input:            input,
+		InputTokens:      usage.InputTokens,
+		Output:           usage.OutputTokens,
+		CostUSD:          cost,
+		Duration:         time.Since(start).Round(time.Millisecond).String(),
 	}, nil
 }
 
@@ -521,6 +566,17 @@ func resolvedPromptInput(req ai.Request, model, backend, sessionID string) ai.Re
 		out.SessionID = sessionID
 	}
 	return out
+}
+
+func actualRunDir(req ai.Request) string {
+	if cwd := req.Cwd(); cwd != "" {
+		return cwd
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	return wd
 }
 
 // renderEvent writes a human-readable representation of an ai.Event to w.

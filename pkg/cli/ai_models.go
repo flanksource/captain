@@ -13,7 +13,7 @@ import (
 
 type AIModelsOptions struct {
 	Filter  string `flag:"filter" help:"Filter models by name substring" short:"f"`
-	Backend string `flag:"backend" help:"Filter by backend: anthropic|gemini|openai|deepseek|claude-cli|claude-agent|claude-cmux|codex-cli|codex-cmux|gemini-cli" short:"b"`
+	Backend string `flag:"backend" help:"Filter by backend: anthropic|gemini|openai|deepseek|claude-cli|claude-agent|claude-cmux|codex-cli|codex-agent|codex-cmux|gemini-cli" short:"b"`
 	Limit   int    `flag:"limit" help:"Maximum models to show" default:"50" short:"l"`
 	All     bool   `flag:"all" help:"Include all OpenRouter models" short:"a"`
 }
@@ -96,7 +96,7 @@ func runLiveModels(opts AIModelsOptions) (any, error) {
 			// Hide legacy/non-chat IDs unless the user asked for them by
 			// name via --filter. Filtering by user intent overrides the
 			// blacklist so "ai models -f gpt-3.5" still works.
-			if opts.Filter == "" && ai.IsLegacyModelID(m.ID) {
+			if opts.Filter == "" && ai.IsLegacyModelIDForBackend(m.ID, r.backend) {
 				continue
 			}
 

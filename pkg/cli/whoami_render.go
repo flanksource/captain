@@ -36,30 +36,34 @@ func (r WhoamiResult) renderGroup(t api.Text, kind string, icon api.Textable, ti
 		Add(icon).Space().
 		Append(title, "font-bold text-gray-700")
 	for _, a := range rows {
-		t = t.NewLine().Add(a.prettyLine(r.showModels, r.sampleLimit))
+		t = t.NewLine().Add(adapterPrettyLine(a, r.showModels, r.sampleLimit))
 	}
 	return t
 }
 
-func (a AdapterStatus) prettyLine(showModels bool, limit int) api.Text {
+// AdapterStatus is defined in pkg/ai, so its renderers are free functions here
+// rather than methods (a package may only declare methods on its own types).
+
+func adapterPrettyLine(a AdapterStatus, showModels bool, limit int) api.Text {
 	t := api.Text{}.
 		Append("  ", "").
-		Add(a.statusIcon()).Space().
+		Add(adapterStatusIcon(a)).Space().
 		Append(fmt.Sprintf("%-13s", a.Backend), "font-medium")
 
-	t = a.appendAuth(t)
+	t = adapterAppendAuth(a, t)
 	if a.Type == "cli" {
-		t = a.appendBinary(t)
+		t = adapterAppendBinary(a, t)
 	}
 	if showModels {
-		t = a.appendModels(t, limit)
+		t = adapterAppendModels(a, t, limit)
 	}
 	return t
 }
 
-// statusIcon is a green check when the adapter can run, a yellow warning when it
-// is authenticated but unusable (CLI binary missing), and a red cross otherwise.
-func (a AdapterStatus) statusIcon() api.Textable {
+// adapterStatusIcon is a green check when the adapter can run, a yellow warning
+// when it is authenticated but unusable (CLI binary missing), and a red cross
+// otherwise.
+func adapterStatusIcon(a AdapterStatus) api.Textable {
 	switch {
 	case a.Ready():
 		return icons.Check
@@ -70,7 +74,7 @@ func (a AdapterStatus) statusIcon() api.Textable {
 	}
 }
 
-func (a AdapterStatus) appendAuth(t api.Text) api.Text {
+func adapterAppendAuth(a AdapterStatus, t api.Text) api.Text {
 	if !a.Authenticated {
 		msg := "not configured"
 		if vars := strings.Join(ai.AuthEnvVars(ai.Backend(a.Backend)), " or "); vars != "" {
@@ -85,14 +89,14 @@ func (a AdapterStatus) appendAuth(t api.Text) api.Text {
 	return t
 }
 
-func (a AdapterStatus) appendBinary(t api.Text) api.Text {
+func adapterAppendBinary(a AdapterStatus, t api.Text) api.Text {
 	if a.Binary != "" {
 		return t.Append("  ", "").Append(a.Binary, "text-gray-400 italic")
 	}
 	return t.Append("  ", "").Append(a.BinaryMissing+" not in PATH", "text-amber-600")
 }
 
-func (a AdapterStatus) appendModels(t api.Text, limit int) api.Text {
+func adapterAppendModels(a AdapterStatus, t api.Text, limit int) api.Text {
 	if a.ModelError != "" {
 		return t.NewLine().Append("      ", "").Add(icons.Info).Space().
 			Append(a.ModelError, "text-gray-500 italic")
@@ -104,7 +108,7 @@ func (a AdapterStatus) appendModels(t api.Text, limit int) api.Text {
 	t = t.Append("  ", "").
 		Append(fmt.Sprintf("%d models", a.ModelCount), "text-blue-600 font-medium")
 
-	sample := a.modelDetails
+	sample := a.ModelDetails
 	if len(sample) == 0 && len(a.Models) > 0 {
 		sample = make([]ai.ModelDef, 0, len(a.Models))
 		for _, id := range a.Models {
@@ -118,6 +122,13 @@ func (a AdapterStatus) appendModels(t api.Text, limit int) api.Text {
 		label := model.ID
 		if model.ReleaseDate != "" {
 			label += " (" + model.ReleaseDate + ")"
+		}
+		if len(model.SupportedEfforts) > 0 {
+			efforts := make([]string, 0, len(model.SupportedEfforts))
+			for _, effort := range model.SupportedEfforts {
+				efforts = append(efforts, string(effort))
+			}
+			label += " [effort: " + strings.Join(efforts, "|") + "]"
 		}
 		t = t.NewLine().Append("      - ", "").Append(label, "text-gray-500")
 	}

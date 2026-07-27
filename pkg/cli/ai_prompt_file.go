@@ -24,8 +24,10 @@ func resolvePromptTemplate(opts AIPromptOptions, stdin string) (tmpl *prompt.Tem
 		return prompt.Load(opts.Prompt), false, nil
 	case strings.TrimSpace(stdin) != "":
 		return prompt.Load(stdin), true, nil
+	case len(opts.Attach) > 0:
+		return prompt.Load(""), false, nil
 	default:
-		return nil, false, fmt.Errorf("prompt required: pass a .prompt file, --prompt/-p text, or pipe via stdin")
+		return nil, false, fmt.Errorf("prompt or attachment required: pass a .prompt file, --prompt/-p text, --attach/-A, or pipe via stdin")
 	}
 }
 
@@ -66,6 +68,9 @@ func overlayCLI(base ai.Request, baseCfg ai.Config, o AIPromptOptions) (ai.Reque
 	if bm.Name == "" {
 		bm.Name = baseCfg.Model.Name
 	}
+	if bm.ID == "" {
+		bm.ID = baseCfg.Model.ID
+	}
 	if bm.Backend == "" {
 		bm.Backend = baseCfg.Model.Backend
 	}
@@ -75,17 +80,27 @@ func overlayCLI(base ai.Request, baseCfg ai.Config, o AIPromptOptions) (ai.Reque
 	if bm.Effort == "" {
 		bm.Effort = baseCfg.Model.Effort
 	}
+	identity := selectModelIdentity(
+		api.Model{Name: bm.Name, ID: bm.ID, Backend: bm.Backend},
+		api.Model{Name: o.Model, Backend: api.Backend(o.Backend)},
+	)
 	m := bm
-	m.Name = firstNonEmpty(o.Model, bm.Name, saved.Model)
-	m.Backend = api.Backend(firstNonEmpty(o.Backend, string(bm.Backend), saved.Backend))
+	m.Name, m.ID, m.Backend = identity.Name, identity.ID, identity.Backend
 	if temperature != 0 {
 		t := temperature
 		m.Temperature = &t
 	}
-	m.Effort = api.Effort(firstNonEmpty(o.Effort, string(bm.Effort), saved.ReasoningEffort))
+	m.Effort = api.Effort(firstNonEmpty(o.Effort, string(bm.Effort)))
 	m.NoCache = o.NoCache || bm.NoCache || saved.NoCache
 	m.Fallbacks = firstFallbacks(o.Fallback, bm.Fallbacks)
-	req.Model = m.ExpandCSV()
+	m, err = applyProviderDefaults(m, saved)
+	if err != nil {
+		return base, baseCfg, err
+	}
+	req.Model, err = ai.ResolveModelSelectors(m)
+	if err != nil {
+		return base, baseCfg, err
+	}
 
 	req.Budget.MaxTokens = firstPositive(o.MaxTokens, base.Budget.MaxTokens, baseCfg.Budget.MaxTokens, saved.MaxTokens, 4096)
 	req.Budget.Cost = firstPositiveFloat(budget, base.Budget.Cost, baseCfg.Budget.Cost, saved.BudgetUSD)
@@ -97,6 +112,13 @@ func overlayCLI(base ai.Request, baseCfg ai.Config, o AIPromptOptions) (ai.Reque
 	}
 	if o.AppendSystem != "" {
 		req.Prompt.AppendSystem = o.AppendSystem
+	}
+	if len(o.Attach) > 0 {
+		attachments, err := attachmentRefsFromFlags(o.Attach)
+		if err != nil {
+			return base, baseCfg, err
+		}
+		req.Prompt.Attachments = append(req.Prompt.Attachments, attachments...)
 	}
 
 	if o.PermissionMode != "" {
@@ -132,6 +154,7 @@ func overlayCLI(base ai.Request, baseCfg ai.Config, o AIPromptOptions) (ai.Reque
 	cfg.Model = req.Model
 	cfg.Budget = req.Budget
 	cfg.APIKey = o.APIKey
+	cfg.APIURL = firstNonEmpty(strings.TrimSpace(o.APIURL), baseCfg.APIURL)
 	cfg.NoCache = req.NoCache
 	return req, cfg, nil
 }
@@ -194,6 +217,28 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+// selectModelIdentity applies precedence from lowest to highest while keeping a
+// model name and backend coupled. A higher-priority name clears a lower-priority
+// backend unless that same layer explicitly supplies one.
+func selectModelIdentity(layers ...api.Model) api.Model {
+	var selected api.Model
+	for _, layer := range layers {
+		if layer.Name != "" {
+			selected.Name = layer.Name
+			selected.ID = layer.ID
+			selected.Backend = layer.Backend
+			continue
+		}
+		if layer.ID != "" {
+			selected.ID = layer.ID
+		}
+		if layer.Backend != "" {
+			selected.Backend = layer.Backend
+		}
+	}
+	return selected
 }
 
 // firstPositive returns the first value > 0, or 0 when none qualify.

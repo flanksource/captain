@@ -5,12 +5,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
-	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/captainconfig"
-	"github.com/flanksource/commons-db/shell"
 )
 
 func TestPromptEntityListsEmbeddedExamples(t *testing.T) {
@@ -37,8 +36,34 @@ func TestPromptEntityListsEmbeddedExamples(t *testing.T) {
 	if commit.Model != "claude-sonnet-4-6" {
 		t.Fatalf("embedded prompt model = %q, want claude-sonnet-4-6", commit.Model)
 	}
-	if len(commit.Variables) != 1 || commit.Variables[0].Name != "diff" {
-		t.Fatalf("embedded prompt variables = %+v, want diff", commit.Variables)
+	wantVariables := []PromptVariable{
+		{Name: "maxBodyLines", Type: "integer", Description: "Maximum commit-message body lines; zero omits the cap", Required: true},
+		{Name: "patch", Type: "string", Description: "Git patch to summarize", Required: true},
+	}
+	if !reflect.DeepEqual(commit.Variables, wantVariables) {
+		t.Fatalf("embedded prompt variables = %+v, want %+v", commit.Variables, wantVariables)
+	}
+	detail, err := getPrompt(context.Background(), commit.ID)
+	if err != nil {
+		t.Fatalf("getPrompt(commit) err = %v", err)
+	}
+	wantInputSchema := map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"required":             []any{"patch", "maxBodyLines"},
+		"properties": map[string]any{
+			"patch": map[string]any{
+				"type":        "string",
+				"description": "Git patch to summarize",
+			},
+			"maxBodyLines": map[string]any{
+				"type":        "integer",
+				"description": "Maximum commit-message body lines; zero omits the cap",
+			},
+		},
+	}
+	if !reflect.DeepEqual(detail.InputSchema, wantInputSchema) {
+		t.Fatalf("embedded prompt input schema = %#v, want %#v", detail.InputSchema, wantInputSchema)
 	}
 }
 
@@ -295,147 +320,4 @@ func findEmbeddedPrompt(ctx context.Context, relPath string) (PromptSummary, err
 		}
 	}
 	return PromptSummary{}, fmt.Errorf("embedded prompt %q not found", relPath)
-}
-
-func TestRenderPromptAppliesRuntimeSpec(t *testing.T) {
-	isolateCaptainConfig(t)
-
-	dir := t.TempDir()
-	cwd := t.TempDir()
-	t.Chdir(cwd)
-	ctx := ContextWithPromptDirs(context.Background(), []string{dir})
-	content := `---
-name: Runtime Spec
-model: claude-sonnet-4-6
----
-{{role "user"}}
-Hello {{name}}
-`
-	created, err := createPrompt(ctx, map[string]any{
-		"name":    "Runtime Spec",
-		"content": content,
-	})
-	if err != nil {
-		t.Fatalf("createPrompt() err = %v", err)
-	}
-
-	temp := 0.2
-	rendered, err := renderPrompt(ctx, created.ID, PromptRenderRequest{
-		Variables: map[string]any{"name": "Ada"},
-		Spec: &api.Spec{
-			Model: api.Model{
-				Name:        "gpt-4o",
-				ID:          "openai/gpt-4o",
-				Backend:     api.BackendOpenAI,
-				Temperature: &temp,
-				Effort:      api.EffortLow,
-				NoCache:     true,
-			},
-			Prompt: api.Prompt{
-				System:       "runtime system",
-				AppendSystem: "runtime append",
-				Source:       "runtime-source",
-				Metadata:     map[string]string{"surface": "prompt-ui"},
-			},
-			Budget: api.Budget{Cost: 0.5, MaxTokens: 1234, MaxTurns: 4, Timeout: "90s"},
-			Permissions: api.Permissions{
-				Mode:    api.PermissionAcceptEdits,
-				Presets: []api.Preset{api.PresetEdit},
-				Tools: api.Tools{
-					Allow: []string{"Read"},
-					Deny:  []string{"Bash"},
-					Modes: map[string]api.ToolMode{"Bash": api.ToolModeDisabled},
-				},
-				MCP: api.MCP{
-					Disabled: true,
-					Servers:  []string{"filesystem"},
-					Modes:    api.ResourcePolicies{"gavel": api.ResourceDisabled},
-				},
-				Plugins: api.ResourcePolicies{"/plugins": api.ResourceEnabled},
-				Skills:  api.ResourcePolicies{"/permission-skills": api.ResourceEnabled},
-			},
-			Memory: api.Memory{
-				Skills:     []string{"/skills"},
-				SkipUser:   true,
-				SkipMemory: true,
-				Bare:       true,
-			},
-			Setup: &shell.Setup{
-				Cwd:    "workspace",
-				DotEnv: []string{".env"},
-				Checkout: &shell.Checkout{
-					Mode: shell.CheckoutLocal,
-					Path: "/repo",
-					Ref:  "abc123",
-					Worktree: &shell.Worktree{
-						Mode:   shell.WorktreeNew,
-						Prefix: "runtime-branch",
-						Keep:   true,
-					},
-				},
-			},
-			SessionID: "sess-runtime",
-		},
-	})
-	if err != nil {
-		t.Fatalf("renderPrompt() err = %v", err)
-	}
-	if rendered.ValidationError != "" {
-		t.Fatalf("render validation error = %q", rendered.ValidationError)
-	}
-	if rendered.Model != "gpt-4o" || rendered.Backend != "openai" {
-		t.Fatalf("rendered model/backend = %s/%s, want gpt-4o/openai", rendered.Model, rendered.Backend)
-	}
-	if rendered.Config.Model.ID != "openai/gpt-4o" {
-		t.Fatalf("config model ID = %q, want openai/gpt-4o", rendered.Config.Model.ID)
-	}
-	if rendered.Input.Temperature == nil || *rendered.Input.Temperature != temp {
-		t.Fatalf("temperature = %v, want %v", rendered.Input.Temperature, temp)
-	}
-	if rendered.Input.Budget.Cost != 0.5 || rendered.Input.Budget.MaxTokens != 1234 ||
-		rendered.Input.Budget.MaxTurns != 4 || rendered.Input.Budget.Timeout != "90s" {
-		t.Fatalf("budget = %+v, want cost/maxTokens override", rendered.Input.Budget)
-	}
-	if !rendered.Input.Model.NoCache || !rendered.Config.NoCache {
-		t.Fatalf("noCache = input %v config %v, want true", rendered.Input.Model.NoCache, rendered.Config.NoCache)
-	}
-	if rendered.Input.Prompt.System != "runtime system" || rendered.Input.Prompt.AppendSystem != "runtime append" {
-		t.Fatalf("prompt system fields = %+v, want runtime overrides", rendered.Input.Prompt)
-	}
-	if rendered.Input.Prompt.Source != "runtime-source" || rendered.Input.Prompt.Metadata["surface"] != "prompt-ui" {
-		t.Fatalf("prompt source/metadata = %+v, want runtime overrides", rendered.Input.Prompt)
-	}
-	if rendered.Input.Permissions.Mode != api.PermissionAcceptEdits ||
-		rendered.Input.Permissions.Tools.Modes["Bash"] != api.ToolModeDisabled ||
-		!rendered.Input.Permissions.MCP.Disabled {
-		t.Fatalf("permissions = %+v, want runtime overrides", rendered.Input.Permissions)
-	}
-	if rendered.Input.Permissions.Plugins["/plugins"] != api.ResourceEnabled {
-		t.Fatalf("plugins = %+v, want enabled runtime plugin", rendered.Input.Permissions.Plugins)
-	}
-	if !strings.Contains(strings.Join(rendered.Input.Memory.Skills, ","), "/permission-skills") {
-		t.Fatalf("skills = %+v, want permission skills merged into memory skills", rendered.Input.Memory.Skills)
-	}
-	if !rendered.Input.Memory.SkipUser || !rendered.Input.Memory.SkipMemory || !rendered.Input.Memory.Bare {
-		t.Fatalf("memory = %+v, want runtime overrides", rendered.Input.Memory)
-	}
-	if rendered.Input.Cwd() != filepath.Join(cwd, "workspace") {
-		t.Fatalf("setup cwd = %q, want cwd-relative runtime dir", rendered.Input.Cwd())
-	}
-	if rendered.Input.Setup == nil || rendered.Input.Setup.Checkout == nil || rendered.Input.Setup.Checkout.Ref != "abc123" {
-		t.Fatalf("setup checkout = %+v, want runtime git checkout overlay", rendered.Input.Setup)
-	}
-	if rendered.Input.Setup.Checkout.Worktree == nil || !rendered.Input.Setup.Checkout.Worktree.Keep {
-		t.Fatalf("worktree setup = %+v, want runtime worktree overlay", rendered.Input.Setup.Checkout.Worktree)
-	}
-	if rendered.Input.SessionID != "sess-runtime" {
-		t.Fatalf("runtime session = input=%+v", rendered.Input)
-	}
-}
-
-func isolateCaptainConfig(t *testing.T) {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), ".captain.yaml")
-	captainconfig.SetPathForTesting(path)
-	t.Cleanup(func() { captainconfig.SetPathForTesting("") })
 }

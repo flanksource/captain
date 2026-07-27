@@ -146,6 +146,30 @@ func TestOverlayCLI_CLIOverridesFrontmatter(t *testing.T) {
 	}
 }
 
+// --api-url is what points a run at a `captain ai mock` endpoint, so it has to
+// survive the overlay; a prompt file may pin its own endpoint, and the flag wins.
+func TestOverlayCLI_APIURLFlagBeatsFrontmatter(t *testing.T) {
+	isolateSavedAI(t)
+	opts := AIPromptOptions{}
+	opts.APIURL = "http://127.0.0.1:18096/v1"
+
+	_, cfg, err := overlayCLI(baseFileReq(), ai.Config{APIURL: "https://api.openai.com/v1"}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.APIURL != opts.APIURL {
+		t.Errorf("cfg.APIURL = %q, want CLI value %q", cfg.APIURL, opts.APIURL)
+	}
+
+	_, cfg, err = overlayCLI(baseFileReq(), ai.Config{APIURL: "https://api.openai.com/v1"}, AIPromptOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.APIURL != "https://api.openai.com/v1" {
+		t.Errorf("cfg.APIURL = %q, want the frontmatter value to stand without a flag", cfg.APIURL)
+	}
+}
+
 func TestOverlayCLI_FrontmatterOverridesSaved(t *testing.T) {
 	seedSavedAI(t, "ai:\n  model: claude-saved-4-6\n  maxTokens: 16000\n")
 	req, _, err := overlayCLI(baseFileReq(), ai.Config{}, AIPromptOptions{})
@@ -241,13 +265,13 @@ func TestOverlayCLI_FallbackFlagOverridesFrontmatter(t *testing.T) {
 	base := baseFileReq()
 	base.Model.Fallbacks = []api.Model{{Name: "frontmatter-fallback"}}
 	opts := AIPromptOptions{}
-	opts.Fallback = []string{"cli-fallback-a", "cli-fallback-b,cli-fallback-c"} // repeatable + comma-split
+	opts.Fallback = []string{"gemini-3.5-flash", "gpt-5.5,claude-sonnet-5"} // repeatable + comma-split
 
 	req, _, err := overlayCLI(base, ai.Config{}, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"cli-fallback-a", "cli-fallback-b", "cli-fallback-c"}
+	want := []string{"gemini-3.5-flash", "gpt-5.5", "claude-sonnet-5"}
 	if got := fallbackNames(req.Model.Fallbacks); !reflect.DeepEqual(got, want) {
 		t.Errorf("fallbacks = %v, want CLI flags %v (override frontmatter)", got, want)
 	}

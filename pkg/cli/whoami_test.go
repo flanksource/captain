@@ -1,154 +1,16 @@
 package cli
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/captainconfig"
 )
 
-func TestMaskKey(t *testing.T) {
-	cases := map[string]string{
-		"sk-ant-api03-ABCDEFGH": "sk-a…EFGH",
-		"AIzaSyD-xyz123":        "AIza…z123",
-		"short":                 "****",
-		"":                      "****",
-		"12345678":              "****",
-	}
-	for in, want := range cases {
-		if got := maskKey(in); got != want {
-			t.Errorf("maskKey(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
-// fakeProbe builds an authProbe whose env, PATH, and filesystem are fully
-// controlled so resolveAdapter can be exercised without touching the host.
-func fakeProbe(env map[string]string, binaries map[string]string, files map[string]bool, home string) authProbe {
-	return authProbe{
-		getenv: func(k string) string { return env[k] },
-		lookPath: func(b string) (string, error) {
-			if p, ok := binaries[b]; ok {
-				return p, nil
-			}
-			return "", os.ErrNotExist
-		},
-		fileExists: func(p string) bool { return files[p] },
-		home:       home,
-	}
-}
-
-func TestResolveAdapter_APIKeyFromEnv(t *testing.T) {
-	st := resolveAdapter(ai.BackendAnthropic, fakeProbe(
-		map[string]string{"ANTHROPIC_API_KEY": "sk-ant-api03-SECRETKEY"},
-		nil, nil, "/home/u"))
-
-	if st.Type != "api" {
-		t.Errorf("Type = %q, want api", st.Type)
-	}
-	if !st.Authenticated || !st.Ready() {
-		t.Errorf("expected authenticated+ready, got %+v", st)
-	}
-	if st.AuthMethod != "ANTHROPIC_API_KEY (env)" {
-		t.Errorf("AuthMethod = %q", st.AuthMethod)
-	}
-	if st.AuthDetail != "sk-a…TKEY" {
-		t.Errorf("AuthDetail = %q (key should be masked, never printed in full)", st.AuthDetail)
-	}
-}
-
-func TestResolveAdapter_APINotConfigured(t *testing.T) {
-	st := resolveAdapter(ai.BackendOpenAI, fakeProbe(nil, nil, nil, "/home/u"))
-	if st.Authenticated || st.Ready() {
-		t.Errorf("expected unauthenticated, got %+v", st)
-	}
-}
-
-func TestResolveAdapter_CLILoginFile(t *testing.T) {
-	home := "/home/u"
-	authFile := filepath.Join(home, ".codex", "auth.json")
-	st := resolveAdapter(ai.BackendCodexCLI, fakeProbe(
-		nil,
-		map[string]string{"codex": "/usr/local/bin/codex"},
-		map[string]bool{authFile: true},
-		home))
-
-	if st.Type != "cli" {
-		t.Errorf("Type = %q, want cli", st.Type)
-	}
-	if st.Binary != "/usr/local/bin/codex" {
-		t.Errorf("Binary = %q", st.Binary)
-	}
-	if !st.Authenticated || !st.Ready() {
-		t.Errorf("expected authenticated+ready via login file, got %+v", st)
-	}
-	if st.AuthMethod != "codex login" || st.AuthDetail != authFile {
-		t.Errorf("AuthMethod=%q AuthDetail=%q", st.AuthMethod, st.AuthDetail)
-	}
-}
-
-func TestResolveAdapter_CmuxUsesLocalLoginWithoutAPIKey(t *testing.T) {
-	home := "/home/u"
-	claudeAuth := filepath.Join(home, ".claude.json")
-	codexAuth := filepath.Join(home, ".codex", "auth.json")
-
-	claude := resolveAdapter(ai.BackendClaudeCmux, fakeProbe(
-		nil,
-		map[string]string{"claude": "/usr/local/bin/claude"},
-		map[string]bool{claudeAuth: true},
-		home))
-	if claude.Type != "cli" || !claude.Ready() {
-		t.Fatalf("claude-cmux should be ready through local claude login, got %+v", claude)
-	}
-	if claude.AuthMethod != "claude login" || claude.AuthDetail != claudeAuth {
-		t.Fatalf("claude-cmux auth = %q %q", claude.AuthMethod, claude.AuthDetail)
-	}
-
-	codex := resolveAdapter(ai.BackendCodexCmux, fakeProbe(
-		nil,
-		map[string]string{"codex": "/usr/local/bin/codex"},
-		map[string]bool{codexAuth: true},
-		home))
-	if codex.Type != "cli" || !codex.Ready() {
-		t.Fatalf("codex-cmux should be ready through local codex login, got %+v", codex)
-	}
-	if codex.AuthMethod != "codex login" || codex.AuthDetail != codexAuth {
-		t.Fatalf("codex-cmux auth = %q %q", codex.AuthMethod, codex.AuthDetail)
-	}
-}
-
-func TestResolveAdapter_CLIBinaryMissingNotReady(t *testing.T) {
-	home := "/home/u"
-	st := resolveAdapter(ai.BackendGeminiCLI, fakeProbe(
-		map[string]string{"GEMINI_API_KEY": "AIzaSyD-aaaaaaaa"}, // authenticated...
-		nil, // ...but no gemini binary
-		nil, home))
-
-	if !st.Authenticated {
-		t.Fatalf("expected authenticated via env key, got %+v", st)
-	}
-	if st.Binary != "" || st.BinaryMissing != "gemini" {
-		t.Errorf("expected BinaryMissing=gemini, got Binary=%q BinaryMissing=%q", st.Binary, st.BinaryMissing)
-	}
-	if st.Ready() {
-		t.Error("a CLI adapter with no binary in PATH must not be Ready")
-	}
-}
-
-func TestResolveAdapter_EnvKeyPreferredOverLogin(t *testing.T) {
-	home := "/home/u"
-	st := resolveAdapter(ai.BackendClaudeAgent, fakeProbe(
-		map[string]string{"ANTHROPIC_API_KEY": "sk-ant-PREFERREDKEY"},
-		map[string]string{"claude": "/usr/local/bin/claude"},
-		map[string]bool{filepath.Join(home, ".claude.json"): true},
-		home))
-
-	if st.AuthMethod != "ANTHROPIC_API_KEY (env)" {
-		t.Errorf("env key should win over login file, got AuthMethod=%q", st.AuthMethod)
-	}
-}
+// The adapter probe and its logic tests live in pkg/ai (pkg/ai/adapters_test.go).
+// These cover the CLI-only surface: the whoami command and its Pretty() renderer.
 
 func TestWhoamiPrettyKeylessCmuxDoesNotRequestAPIKey(t *testing.T) {
 	got := (WhoamiResult{
@@ -167,86 +29,6 @@ func TestWhoamiPrettyKeylessCmuxDoesNotRequestAPIKey(t *testing.T) {
 	}
 }
 
-// TestRunWhoami_NoModelsCoversEveryBackend asserts the command lists exactly one
-// adapter per backend without making any network calls when --models=false.
-func TestRunWhoami_NoModelsCoversEveryBackend(t *testing.T) {
-	res, err := RunWhoami(WhoamiOptions{Models: false})
-	if err != nil {
-		t.Fatalf("RunWhoami: %v", err)
-	}
-	r, ok := res.(WhoamiResult)
-	if !ok {
-		t.Fatalf("RunWhoami returned %T, want WhoamiResult", res)
-	}
-	if len(r.Adapters) != len(ai.AllBackends()) {
-		t.Fatalf("got %d adapters, want %d", len(r.Adapters), len(ai.AllBackends()))
-	}
-	for _, a := range r.Adapters {
-		if a.ModelCount != 0 || len(a.Models) != 0 {
-			t.Errorf("adapter %s has models with --models=false: %+v", a.Backend, a)
-		}
-	}
-}
-
-func TestRunWhoami_RejectsUnknownBackend(t *testing.T) {
-	if _, err := RunWhoami(WhoamiOptions{Backend: "bogus", Models: false}); err == nil {
-		t.Fatal("expected error for unknown --backend")
-	}
-}
-
-func TestSetModelsFiltersAndSortsByReleaseDate(t *testing.T) {
-	st := AdapterStatus{Backend: string(ai.BackendAnthropic)}
-	setModels(&st, []ai.ModelDef{
-		{ID: "claude-sonnet-5", Backend: ai.BackendAnthropic, ReleaseDate: "2026-06-01"},
-		{ID: "claude-sonnet-4-6", Backend: ai.BackendAnthropic, ReleaseDate: "2026-05-01"},
-		{ID: "claude-sonnet-4-5", Backend: ai.BackendAnthropic, ReleaseDate: "2026-04-01"},
-		{ID: "claude-sonnet-4-4", Backend: ai.BackendAnthropic, ReleaseDate: "2026-03-01"},
-		{ID: "claude-haiku-4-5", Backend: ai.BackendAnthropic, ReleaseDate: "2025-10-15"},
-		{ID: "claude-3-5-sonnet-20241022", Backend: ai.BackendAnthropic, ReleaseDate: "2024-10-22"},
-	})
-
-	want := []string{"claude-sonnet-5", "claude-sonnet-4-6", "claude-sonnet-4-5", "claude-haiku-4-5"}
-	if st.ModelCount != len(want) {
-		t.Fatalf("ModelCount = %d, want %d (%+v)", st.ModelCount, len(want), st)
-	}
-	for i, w := range want {
-		if st.Models[i] != w {
-			t.Errorf("Models[%d] = %q, want %q", i, st.Models[i], w)
-		}
-	}
-}
-
-func TestSetModelsKeepsGeminiProFamily(t *testing.T) {
-	st := AdapterStatus{Backend: string(ai.BackendGemini)}
-	setModels(&st, []ai.ModelDef{
-		{ID: "gemini-3.5-flash", Backend: ai.BackendGemini, ReleaseDate: "2026-06-10"},
-		{ID: "gemini-3.0-pro", Backend: ai.BackendGemini},
-		{ID: "gemini-2.5-pro", Backend: ai.BackendGemini, ReleaseDate: "2025-06-17"},
-		{ID: "gemini-2.0-flash", Backend: ai.BackendGemini, ReleaseDate: "2025-02-05"},
-	})
-
-	want := []string{"gemini-3.5-flash", "gemini-3.0-pro", "gemini-2.5-pro"}
-	if st.ModelCount != len(want) {
-		t.Fatalf("ModelCount = %d, want %d (%+v)", st.ModelCount, len(want), st)
-	}
-	for i, w := range want {
-		if st.Models[i] != w {
-			t.Errorf("Models[%d] = %q, want %q", i, st.Models[i], w)
-		}
-	}
-}
-
-func TestSetModelsKeepsCurrentCLIModelSlugs(t *testing.T) {
-	st := AdapterStatus{Backend: string(ai.BackendCodexCLI)}
-	setModels(&st, []ai.ModelDef{
-		{ID: "gpt-5-codex", Backend: ai.BackendCodexCLI, ReleaseDate: "2025-08-07"},
-	})
-
-	if st.ModelCount != 1 || len(st.Models) != 1 || st.Models[0] != "gpt-5-codex" {
-		t.Fatalf("codex CLI model should not be blacklisted: %+v", st)
-	}
-}
-
 func TestWhoamiPrettyRendersModelListItems(t *testing.T) {
 	adapter := AdapterStatus{
 		Backend:       string(ai.BackendOpenAI),
@@ -255,7 +37,7 @@ func TestWhoamiPrettyRendersModelListItems(t *testing.T) {
 		AuthMethod:    "OPENAI_API_KEY (env)",
 		ModelCount:    6,
 		Models:        []string{"m6", "m5", "m4", "m3", "m2", "m1"},
-		modelDetails: []ai.ModelDef{
+		ModelDetails: []ai.ModelDef{
 			{ID: "m6", ReleaseDate: "2026-06-01"},
 			{ID: "m5", ReleaseDate: "2026-05-01"},
 			{ID: "m4", ReleaseDate: "2026-04-01"},
@@ -286,5 +68,53 @@ func TestWhoamiPrettyRendersModelListItems(t *testing.T) {
 	}
 	if strings.Contains(got, "- m1") {
 		t.Errorf("Pretty() ignored sample limit: %q", got)
+	}
+}
+
+// TestRunWhoami_NoModelsCoversEveryBackend asserts the command lists exactly one
+// adapter per backend without making any network calls when --models=false.
+func TestRunWhoami_NoModelsCoversEveryBackend(t *testing.T) {
+	res, err := RunWhoami(WhoamiOptions{Models: false})
+	if err != nil {
+		t.Fatalf("RunWhoami: %v", err)
+	}
+	r, ok := res.(WhoamiResult)
+	if !ok {
+		t.Fatalf("RunWhoami returned %T, want WhoamiResult", res)
+	}
+	if len(r.Adapters) != len(ai.AllBackends()) {
+		t.Fatalf("got %d adapters, want %d", len(r.Adapters), len(ai.AllBackends()))
+	}
+	for _, a := range r.Adapters {
+		if a.ModelCount != 0 || len(a.Models) != 0 {
+			t.Errorf("adapter %s has models with --models=false: %+v", a.Backend, a)
+		}
+	}
+}
+
+func TestRunWhoami_RejectsUnknownBackend(t *testing.T) {
+	if _, err := RunWhoami(WhoamiOptions{Backend: "bogus", Models: false}); err == nil {
+		t.Fatal("expected error for unknown --backend")
+	}
+}
+
+func TestRunWhoamiIncludesProviderDefaults(t *testing.T) {
+	captainconfig.SetPathForTesting(filepath.Join(t.TempDir(), ".captain.yaml"))
+	t.Cleanup(func() { captainconfig.SetPathForTesting("") })
+	if err := captainconfig.Save(captainconfig.Config{AI: captainconfig.AIDefaults{
+		DefaultProvider: "openai",
+		Providers: map[string]captainconfig.ProviderDefaults{
+			"openai": {Agent: "codex-agent", Model: "gpt-5.6-sol", ReasoningEffort: "high"},
+		},
+	}}); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+	result, err := RunWhoami(WhoamiOptions{Models: false})
+	if err != nil {
+		t.Fatalf("RunWhoami: %v", err)
+	}
+	got := result.(WhoamiResult)
+	if got.DefaultProvider != "openai" || got.ProviderDefaults["openai"].Agent != "codex-agent" {
+		t.Fatalf("whoami defaults = %+v", got)
 	}
 }

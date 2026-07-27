@@ -48,6 +48,8 @@ func effortFilterOptions() map[string]api.Textable {
 		capapi.EffortMedium: "Medium",
 		capapi.EffortHigh:   "High",
 		capapi.EffortXHigh:  "Extra High",
+		capapi.EffortMax:    "Maximum",
+		capapi.EffortUltra:  "Ultra",
 	}
 	out := make(map[string]api.Textable, len(capapi.AllEfforts()))
 	for _, e := range capapi.AllEfforts() {

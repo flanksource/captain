@@ -4,34 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
-	"github.com/flanksource/captain/pkg/ai/agent"
-	"github.com/flanksource/captain/pkg/ai/agent/verify"
+	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/database"
 	clickyrpc "github.com/flanksource/clicky/rpc"
 	"github.com/flanksource/clicky/task"
 	flanksourceContext "github.com/flanksource/commons/context"
 	"github.com/google/uuid"
 )
-
-// PromptRunResult is the unified result of the "run" action. Over HTTP (serve)
-// it carries the async handle (RunID + Status "running") — the web UI then
-// streams from /api/captain/prompt/runs/{runId}/stream. On the CLI it carries the
-// synchronous result (Text + tokens/cost). One type serves both transports.
-type PromptRunResult struct {
-	RunID   string `json:"runId,omitempty"`
-	Status  string `json:"status,omitempty" pretty:"label=Status"`
-	Model   string `json:"model,omitempty" pretty:"label=Model"`
-	Backend string `json:"backend,omitempty" pretty:"label=Backend"`
-
-	Text         string  `json:"text,omitempty" pretty:"label=Response"`
-	SessionID    string  `json:"sessionId,omitempty" pretty:"label=Session"`
-	InputTokens  int     `json:"inputTokens,omitempty" pretty:"label=Input Tokens"`
-	OutputTokens int     `json:"outputTokens,omitempty" pretty:"label=Output Tokens"`
-	CostUSD      float64 `json:"costUSD,omitempty" pretty:"label=Cost USD"`
-	Duration     string  `json:"duration,omitempty" pretty:"label=Duration"`
-}
 
 // PromptRunSummary is the terminal payload of a run: the SSE stream ends with it
 // and the task's typed result carries it.
@@ -48,15 +31,17 @@ type PromptRunSummary struct {
 	Error        string  `json:"error,omitempty"`
 }
 
-// runPromptAction renders the prompt (from an id | .prompt filepath | --prompt |
-// stdin), then executes it — synchronously on the CLI (returns the text + cost)
-// or asynchronously over HTTP (returns a run handle to stream from). This is the
-// single prompt-run implementation; `captain ai prompt` is a deprecated alias.
+// runPromptAction renders the prompt (from an id | discovered name | .prompt
+// filepath | --prompt | stdin), then executes it — synchronously on the CLI
+// (returns the text + cost) or asynchronously over HTTP (returns a run handle to
+// stream from). This is the single prompt-run implementation; `captain ai
+// prompt` is a deprecated alias.
 func runPromptAction(ctx context.Context, id string, flags map[string]string) (PromptRunResult, error) {
 	_, isHTTP := clickyrpc.RequestFromContext(ctx)
 
 	var rendered PromptRenderResult
 	var opts AIPromptOptions
+	var chatRequested bool
 	if isHTTP {
 		req, err := readRenderRequest(ctx, flags)
 		if err != nil {
@@ -65,6 +50,7 @@ func runPromptAction(ctx context.Context, id string, flags map[string]string) (P
 		if rendered, err = renderPrompt(ctx, id, req); err != nil {
 			return PromptRunResult{}, err
 		}
+		chatRequested = req.Chat
 	} else {
 		var err error
 		if opts, err = actionFlagsToOptions(flags); err != nil {
@@ -77,154 +63,302 @@ func runPromptAction(ctx context.Context, id string, flags map[string]string) (P
 	if rendered.ValidationError != "" {
 		return PromptRunResult{}, errors.New(rendered.ValidationError)
 	}
+	if chatRequested {
+		if rendered.Input.Prompt.HasSchema() {
+			return PromptRunResult{}, errors.New("chat mode does not support structured-output prompts")
+		}
+		if workflowConfigured(rendered.Input.Workflow) {
+			return PromptRunResult{}, errors.New("chat mode does not support workflow-backed prompts")
+		}
+	}
 
 	if isHTTP {
-		return launchAsyncRun(id, rendered), nil
+		if len(rendered.Runtimes) > 0 {
+			return launchAsyncBatch(ctx, id, rendered, rendered.Runtimes, chatRequested)
+		}
+		return launchAsyncRun(id, rendered, chatRequested), nil
 	}
 	return executeSyncRun(ctx, rendered, opts)
 }
 
+var executePromptRequestFunc = executePromptRequest
+
 // launchAsyncRun starts the background clicky task + SSE stream and returns the
 // run handle (the serve/web-UI contract).
-func launchAsyncRun(id string, rendered PromptRenderResult) PromptRunResult {
+func launchAsyncRun(id string, rendered PromptRenderResult, chat bool) PromptRunResult {
 	runID := uuid.NewString()
 	stream := promptRuns.create(runID)
 	timeout := runtimeTimeout(rendered.Input.Budget.Timeout)
+	capabilities := chatCapabilitiesForBackend(rendered.Backend)
+	stream.setRun(PromptRunFrame{
+		RunID: runID, Status: "running", Chat: chat, Model: rendered.Model,
+		Backend: rendered.Backend, Capabilities: capabilities,
+	})
 
 	group := task.StartGroup[PromptRunSummary](
 		"prompt "+rendered.Name,
 		task.WithGroupID(runID),
 		task.WithKind("prompt"),
-		task.WithLabels(map[string]string{
-			"promptId": id,
-			"model":    rendered.Model,
-			"backend":  rendered.Backend,
-		}),
+		task.WithLabels(promptTaskLabelsWithID(rendered, id, "")),
 	)
-	group.Add("execute", func(_ flanksourceContext.Context, t *task.Task) (PromptRunSummary, error) {
-		return runPromptStream(t, rendered, timeout, runID, stream)
-	})
-	return PromptRunResult{RunID: runID, Status: "running", Model: rendered.Model, Backend: rendered.Backend}
+	if chat {
+		chatSession := newChatSession(runID, rendered, timeout, stream, nil)
+		promptChats.register(chatSession)
+		group.Add("execute", func(_ flanksourceContext.Context, t *task.Task) (PromptRunSummary, error) {
+			return chatSession.run(t)
+		})
+	} else {
+		group.Add("execute", func(_ flanksourceContext.Context, t *task.Task) (PromptRunSummary, error) {
+			return runPromptStream(t, rendered, timeout, runID, stream, nil)
+		})
+	}
+	return PromptRunResult{
+		RunID: runID, Status: "running", Model: rendered.Model, Backend: rendered.Backend,
+		Chat: chat, Capabilities: capabilities,
+	}
+}
+
+func workflowConfigured(workflow *api.Workflow) bool {
+	return workflow != nil && (workflow.Verify != nil || workflow.PostRun != nil || workflow.AutoVerifyWithoutFixture)
 }
 
 // executeSyncRun runs the prompt in-process (CLI) — live output to stderr, final
 // result returned — and persists the realized prompt for the launched session.
 func executeSyncRun(ctx context.Context, rendered PromptRenderResult, opts AIPromptOptions) (PromptRunResult, error) {
-	out, err := executePromptRequest(ctx, rendered.Input, rendered.Config, runtimeTimeout(rendered.Input.Budget.Timeout), opts.NoStream)
+	if len(rendered.Runtimes) > 0 || len(opts.MultiModels) > 0 {
+		return executeSyncBatch(ctx, rendered, opts)
+	}
+	return executeSyncRunSingle(ctx, rendered, opts)
+}
+
+func executeSyncRunSingle(ctx context.Context, rendered PromptRenderResult, opts AIPromptOptions) (PromptRunResult, error) {
+	group := task.StartGroup[PromptRunResult](
+		"prompt "+rendered.Name,
+		task.WithKind("prompt"),
+		task.WithLabels(promptTaskLabels(rendered, "")),
+	)
+	run := group.Add("execute "+rendered.Backend+":"+rendered.Model, func(_ flanksourceContext.Context, t *task.Task) (PromptRunResult, error) {
+		taskCtx := ai.ContextWithLogger(t.Context(), t)
+		return executeSyncRunSingleDirect(taskCtx, rendered, opts, nil)
+	}, task.WithModel(rendered.Model), task.WithPrompt(rendered.Input.Prompt.User))
+	return run.GetResult()
+}
+
+func executeSyncRunSingleDirect(ctx context.Context, rendered PromptRenderResult, opts AIPromptOptions, binding *promptSessionBinding) (PromptRunResult, error) {
+	out, err := executePromptRequestFunc(ctx, rendered.Input, rendered.Config, runtimeTimeout(rendered.Input.Budget.Timeout), opts.NoStream)
 	if err != nil {
 		return PromptRunResult{}, err
 	}
 	r, _ := out.(AIPromptResult)
-	if r.SessionID != "" {
-		if st := sessionStore(); st != nil {
-			st.upsertPrompt(StoredPrompt{
-				SessionID: r.SessionID,
-				Model:     r.Model,
-				Backend:   r.Backend,
-				Realized:  rendered,
-			})
-		}
-	}
+	persistPromptRun(context.WithoutCancel(ctx), promptRunRecordInput{
+		Rendered: rendered, SessionID: r.SessionID, Model: r.Model, Backend: r.Backend,
+		Binding: binding, ResultText: r.Text, ResultJSON: r.StructuredOutput,
+	})
 	return PromptRunResult{
-		Status:       "completed",
-		Model:        r.Model,
-		Backend:      r.Backend,
-		Text:         r.Text,
-		SessionID:    r.SessionID,
-		InputTokens:  r.InputTokens,
-		OutputTokens: r.Output,
-		CostUSD:      r.CostUSD,
-		Duration:     r.Duration,
+		Status:           "completed",
+		Model:            r.Model,
+		Backend:          r.Backend,
+		Text:             r.Text,
+		StructuredOutput: r.StructuredOutput,
+		SessionID:        r.SessionID,
+		Dir:              r.Dir,
+		HistoryFile:      r.HistoryFile,
+		InputTokens:      r.InputTokens,
+		OutputTokens:     r.Output,
+		CostUSD:          r.CostUSD,
+		Duration:         r.Duration,
 	}, nil
 }
 
-// runPromptStream drives a single streaming iteration, converting each ai.Event
-// into a SessionEntry frame (published to stream) while driving the task's live
-// status. It runs on clicky's worker goroutine and derives its context from the
-// task (t.Context()), not the HTTP request, so the run outlives the POST.
-func runPromptStream(t *task.Task, rendered PromptRenderResult, timeout time.Duration, runID string, stream *runStream) (PromptRunSummary, error) {
-	ctx, cancel := runContext(t.Context(), rendered.Input, timeout)
-	defer cancel()
-	ctx = ai.ContextWithLogger(ctx, t)
-
-	req := rendered.Input
-	cfg := rendered.Config
-	p, cleanup, err := buildProvider(ctx, &req, cfg)
-	if err != nil {
-		return failRun(t, stream, err)
+func executeSyncBatch(ctx context.Context, rendered PromptRenderResult, opts AIPromptOptions) (PromptRunResult, error) {
+	models := rendered.Runtimes
+	if len(models) == 0 {
+		var err error
+		models, err = ai.ResolveRuntimeSelectors(opts.MultiModels, rendered.Config.Model)
+		if err != nil {
+			return PromptRunResult{}, err
+		}
 	}
-	defer cleanup()
-
-	streamer, ok := p.(ai.StreamingProvider)
-	if !ok && !req.IsVerifyOnly() {
-		return failRun(t, stream, fmt.Errorf("backend %s does not support streaming", rendered.Backend))
+	if len(models) == 0 {
+		return executeSyncRunSingle(ctx, rendered, opts)
+	}
+	if len(models) == 1 {
+		variant := renderVariant(rendered, models[0], fallbackModelsFromFlags(opts.Fallback))
+		opts.MultiModels = nil
+		start := time.Now()
+		single, runErr := executeSyncRunSingle(ctx, variant, opts)
+		item := PromptRunItem{
+			Selector: runtimeSelector(models[0]), Model: firstNonEmpty(single.Model, models[0].Name),
+			Backend: firstNonEmpty(single.Backend, string(models[0].Backend)), Effort: string(models[0].Effort),
+			Text: single.Text, SessionID: single.SessionID, Dir: single.Dir, HistoryFile: single.HistoryFile,
+			InputTokens: single.InputTokens, OutputTokens: single.OutputTokens, CostUSD: single.CostUSD, Duration: single.Duration,
+		}
+		result := PromptRunResult{Total: 1, Runs: []PromptRunItem{item}, Duration: time.Since(start).Round(time.Millisecond).String()}
+		if runErr != nil {
+			result.Status, result.Failed, result.Runs[0].Status, result.Runs[0].Error = "failed", 1, "failed", runErr.Error()
+			return result, runErr
+		}
+		result.Status, result.Succeeded, result.Runs[0].Status = "completed", 1, single.Status
+		return result, nil
+	}
+	prepared := rendered.Input
+	if err := resolvePromptAttachments(ctx, &prepared); err != nil {
+		return PromptRunResult{}, err
+	}
+	rendered.Input.Prompt.Attachments = prepared.Prompt.Attachments
+	if rendered.Input.SessionID != "" && len(models) > 1 {
+		return PromptRunResult{}, errors.New("--resume cannot be used with multiple --multi-models variants")
+	}
+	if forced := api.Backend(strings.TrimSpace(opts.Backend)); forced != "" {
+		for _, model := range models {
+			if model.Backend != forced {
+				return PromptRunResult{}, fmt.Errorf("--multi-models selector %s:%s conflicts with --backend %s", model.Backend, model.Name, forced)
+			}
+		}
 	}
 
 	start := time.Now()
-	acc := newPromptEventAccumulator(stream.publish, t, rendered.Model, rendered.Backend)
-	acc.cwd = req.Cwd()
-
-	// Drive the generate→verify loop declared by spec.Workflow via the hook
-	// runner: no verify ⇒ a single generation; verify commands re-run on failure
-	// (feedback appended) up to maxIterations; a body-less spec verifies only.
-	runner := &agent.Runner[string]{
-		Provider:      streamer,
-		Request:       req,
-		Hooks:         verify.HooksForWorkflow(req.Workflow),
-		MaxIterations: verify.MaxIterationsForWorkflow(req.Workflow),
-		Repo:          req.Cwd(),
-		Cwd:           req.Cwd(),
-		Scope:         verify.ScopeForWorkflow(req.Workflow),
-		OnEvent:       acc.handle,
-	}
-	runResult, err := runner.Run(ctx)
+	batch, err := createPromptBatchSessions(ctx, rendered, models)
 	if err != nil {
-		return failRun(t, stream, err)
+		return PromptRunResult{}, err
 	}
-	loop := runResult.Loop
-
-	session := acc.sessionID
-	if session == "" && runResult.Response.Workspace != nil {
-		session = runResult.Response.Workspace.SessionID
-	}
-	if session == "" && loop != nil && len(loop.Iterations) > 0 {
-		session = loop.Iterations[0].SessionID
-	}
-	// Persist the realized prompt for this launched session so `sessions get` can
-	// show what produced it. External (non-captain) sessions have no such record.
-	if session != "" {
-		if st := sessionStore(); st != nil {
-			st.upsertPrompt(StoredPrompt{
-				SessionID: session,
-				RunID:     runID,
-				Model:     acc.model,
-				Backend:   rendered.Backend,
-				Realized:  rendered,
-			})
+	updatePromptSessionLifecycle(ctx, batch.ID, database.SessionLifecycleRunning, "")
+	runs := make([]PromptRunItem, len(models))
+	group := task.StartGroup[PromptRunItem](
+		"prompt "+rendered.Name,
+		task.WithKind("prompt"),
+		task.WithLabels(promptTaskLabels(rendered, "multi")),
+		task.WithConcurrency(len(models)),
+	)
+	tasks := make([]task.TypedTask[PromptRunItem], len(models))
+	for i, model := range models {
+		i, model := i, model
+		selector := string(model.Backend) + ":" + model.Name
+		if model.Effort != api.EffortNone {
+			selector += ":" + string(model.Effort)
 		}
+		tasks[i] = group.Add(selector, func(_ flanksourceContext.Context, t *task.Task) (PromptRunItem, error) {
+			variant := renderVariant(rendered, model, fallbackModelsFromFlags(opts.Fallback))
+			variantOpts := opts
+			variantOpts.MultiModels = nil
+			taskCtx := ai.ContextWithLogger(t.Context(), t)
+			binding := promptBinding(batch, i)
+			updatePromptSessionLifecycle(context.WithoutCancel(taskCtx), binding.SessionID, database.SessionLifecycleRunning, "")
+			result, err := executeSyncRunSingleDirect(taskCtx, variant, variantOpts, binding)
+			item := PromptRunItem{
+				RunID:    binding.SessionID.String(),
+				Selector: selector,
+				Model:    model.Name,
+				Backend:  string(model.Backend),
+				Dir:      actualRunDir(variant.Input),
+			}
+			if err != nil {
+				item.Status = "failed"
+				item.HistoryFile = historyFileForRun(model.Backend, item.SessionID, item.Dir)
+				item.Error = err.Error()
+				persistPromptRun(context.WithoutCancel(taskCtx), promptRunRecordInput{
+					Rendered: variant, RunID: binding.SessionID.String(), Binding: binding,
+					Model: model.Name, Backend: string(model.Backend), Error: err.Error(),
+				})
+				return item, err
+			}
+			item.Status = result.Status
+			item.Model = firstNonEmpty(result.Model, item.Model)
+			item.Backend = firstNonEmpty(result.Backend, item.Backend)
+			item.Text = result.Text
+			item.StructuredOutput = result.StructuredOutput
+			providerSessionID := result.SessionID
+			item.SessionID = binding.SessionID.String()
+			item.Dir = firstNonEmpty(result.Dir, item.Dir)
+			item.HistoryFile = firstNonEmpty(result.HistoryFile, historyFileForRun(api.Backend(item.Backend), providerSessionID, item.Dir))
+			item.InputTokens = result.InputTokens
+			item.OutputTokens = result.OutputTokens
+			item.CostUSD = result.CostUSD
+			item.Duration = result.Duration
+			return item, nil
+		}, task.WithModel(model.Name), task.WithPrompt(rendered.Input.Prompt.User))
 	}
-	passed := verifyPassed(runResult.Verdicts)
-	summary := PromptRunSummary{
-		RunID:        runID,
-		SessionID:    session,
-		Model:        acc.model,
-		Backend:      rendered.Backend,
-		InputTokens:  acc.usage.InputTokens,
-		OutputTokens: acc.usage.OutputTokens,
-		CostUSD:      acc.cost,
-		Duration:     time.Since(start).Round(time.Millisecond).String(),
-		Success:      passed,
+	for i, task := range tasks {
+		item, err := task.GetResult()
+		if err != nil && item.Error == "" {
+			item.Status = "failed"
+			item.Error = err.Error()
+		}
+		runs[i] = item
 	}
-	if !passed {
-		summary.Error = verifyReason(runResult.Verdicts)
+
+	result := PromptRunResult{
+		BatchID:  batch.ID.String(),
+		Status:   "completed",
+		Total:    len(runs),
+		Runs:     runs,
+		Duration: time.Since(start).Round(time.Millisecond).String(),
 	}
-	stream.complete(summary)
-	t.Success()
-	return summary, nil
+	for _, run := range runs {
+		if run.Error != "" || run.Status == "failed" {
+			result.Failed++
+			continue
+		}
+		result.Succeeded++
+		result.InputTokens += run.InputTokens
+		result.OutputTokens += run.OutputTokens
+		result.CostUSD += run.CostUSD
+	}
+	switch {
+	case result.Failed == 0:
+		result.Status = "completed"
+	case result.Succeeded == 0:
+		result.Status = "failed"
+	default:
+		result.Status = "partial"
+	}
+	updatePromptSessionLifecycle(context.WithoutCancel(ctx), batch.ID,
+		batchLifecycle(result.Succeeded, result.Failed),
+		fmt.Sprintf("%d succeeded, %d failed", result.Succeeded, result.Failed))
+	if result.Succeeded == 0 && result.Failed > 0 {
+		return result, fmt.Errorf("all %d prompt variants failed", result.Failed)
+	}
+	return result, nil
 }
 
-func failRun(t *task.Task, stream *runStream, err error) (PromptRunSummary, error) {
-	stream.fail(err.Error())
-	_, _ = t.FailedWithError(err)
-	return PromptRunSummary{Error: err.Error()}, err
+func promptTaskLabels(rendered PromptRenderResult, mode string) map[string]string {
+	labels := map[string]string{}
+	if mode != "" {
+		labels["mode"] = mode
+	}
+	if mode != "multi" {
+		labels["model"] = rendered.Model
+		labels["backend"] = rendered.Backend
+	}
+	if rendered.Name != "" {
+		labels["prompt"] = rendered.Name
+	}
+	if source := rendered.Input.Prompt.Source; source != "" {
+		labels["source"] = source
+	}
+	if cwd := rendered.Input.Cwd(); cwd != "" {
+		labels["cwd"] = cwd
+	}
+	return labels
+}
+
+func promptTaskLabelsWithID(rendered PromptRenderResult, id, mode string) map[string]string {
+	labels := promptTaskLabels(rendered, mode)
+	if id != "" {
+		labels["promptId"] = id
+	}
+	return labels
+}
+
+func renderVariant(rendered PromptRenderResult, model api.Model, fallbacks []api.Model) PromptRenderResult {
+	out := rendered
+	req := rendered.Input
+	cfg := rendered.Config
+	req.Model = variantModel(model, fallbacks)
+	cfg.Model = variantModel(model, fallbacks)
+	out.Input = req
+	out.Config = cfg
+	out.Model = cfg.Model.Name
+	out.Backend = string(cfg.Model.Backend)
+	return out
 }
