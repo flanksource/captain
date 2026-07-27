@@ -64,6 +64,11 @@ func (p Permissions) Validate() error {
 			return fmt.Errorf("invalid preset %q (valid: edit, bare)", preset)
 		}
 	}
+	for tool, mode := range p.Tools.Modes {
+		if !mode.Valid() {
+			return fmt.Errorf("invalid tool mode %q for tool %q (valid: on, ask, off, auto)", mode, tool)
+		}
+	}
 	for tool, policy := range p.Tools.Policies() {
 		if !policy.Valid() {
 			return fmt.Errorf("invalid tool policy %q for tool %q (valid: auto, ask, allow, deny)", policy, tool)
@@ -105,11 +110,11 @@ func (t Tools) Policies() map[string]ToolPolicy {
 			continue
 		}
 		switch mode {
-		case ToolModeEnabled:
+		case ToolModeOn:
 			out[tool] = ToolPolicyAuto
 		case ToolModeAsk:
 			out[tool] = ToolPolicyAsk
-		case ToolModeDisabled:
+		case ToolModeOff:
 			out[tool] = ToolPolicyDeny
 		}
 	}
@@ -215,7 +220,7 @@ func (t *Tools) applyPolicy(tool string, policy ToolPolicy) {
 		if t.Modes == nil {
 			t.Modes = map[string]ToolMode{}
 		}
-		t.Modes[tool] = ToolModeEnabled
+		t.Modes[tool] = ToolModeOn
 	}
 }
 

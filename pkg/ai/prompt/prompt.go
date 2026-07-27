@@ -178,7 +178,7 @@ func decodeSpecFrontmatter(raw map[string]any, req *ai.Request) error {
 	specRaw := map[string]any{}
 	for key, value := range raw {
 		switch key {
-		case "config", "input", "output", "name", "description":
+		case "config", "input", "output", "name", "description", "runtimes":
 			continue
 		default:
 			specRaw[key] = value

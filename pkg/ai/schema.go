@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 
 	"github.com/flanksource/captain/pkg/api"
@@ -148,6 +149,298 @@ func SchemaJSONFor(p api.Prompt) (json.RawMessage, error) {
 		return nil, err
 	}
 	return json.Marshal(schema)
+}
+
+// SchemaJSONForBackend resolves the schema a provider should send to its
+// backend. Native structured-output backends receive a transformed subset of
+// the caller's original JSON Schema when their API imposes stricter schema
+// rules; every other backend receives the original schema from SchemaJSONFor.
+func SchemaJSONForBackend(backend api.Backend, p api.Prompt) (json.RawMessage, error) {
+	schema, err := SchemaJSONFor(p)
+	if err != nil || len(schema) == 0 {
+		return schema, err
+	}
+	switch {
+	case UsesAnthropicSchemaSubset(backend):
+		return AnthropicCompatibleSchema(schema)
+	case UsesOpenAISchemaSubset(backend):
+		return OpenAICompatibleSchema(schema)
+	default:
+		return schema, nil
+	}
+}
+
+// UsesAnthropicSchemaSubset reports whether a backend sends JSON Schema to
+// Claude's native structured-output machinery and therefore needs Captain to
+// apply Anthropic's supported-subset transformation before dispatch.
+func UsesAnthropicSchemaSubset(backend api.Backend) bool {
+	switch backend {
+	case api.BackendAnthropic, api.BackendClaudeAgent, api.BackendClaudeCLI:
+		return true
+	default:
+		return false
+	}
+}
+
+// UsesOpenAISchemaSubset reports whether a backend sends JSON Schema to
+// OpenAI's native strict structured-output machinery. Prompt-only Codex cmux
+// sessions are deliberately excluded because they do not submit a response
+// format to OpenAI.
+func UsesOpenAISchemaSubset(backend api.Backend) bool {
+	switch backend {
+	case api.BackendOpenAI, api.BackendCodexCLI, api.BackendCodexAgent:
+		return true
+	default:
+		return false
+	}
+}
+
+// OpenAICompatibleSchema returns a provider-facing copy of schema that obeys
+// OpenAI strict structured-output object rules: every declared property is
+// required and every object is closed. Property types and constraints are left
+// unchanged so the original schema remains the source of truth for local
+// validation. Open-ended map schemas cannot be represented by this subset and
+// fail loudly instead of being silently narrowed to an empty object.
+func OpenAICompatibleSchema(schema json.RawMessage) (json.RawMessage, error) {
+	var v any
+	if err := json.Unmarshal(schema, &v); err != nil {
+		return nil, fmt.Errorf("openai schema transform: invalid JSON schema: %w", err)
+	}
+	if err := normalizeOpenAISchema(v, "$"); err != nil {
+		return nil, err
+	}
+	out, err := json.Marshal(v)
+	if err != nil {
+		return nil, fmt.Errorf("openai schema transform: marshal schema: %w", err)
+	}
+	return out, nil
+}
+
+func normalizeOpenAISchema(v any, path string) error {
+	node, ok := v.(map[string]any)
+	if !ok {
+		return nil
+	}
+	refOnly, err := normalizeOpenAIRef(node, path)
+	if err != nil {
+		return err
+	}
+	if refOnly {
+		return nil
+	}
+
+	if isObjectSchema(node) {
+		if additional, exists := node["additionalProperties"]; exists {
+			allowed, isBool := additional.(bool)
+			if !isBool || allowed {
+				return fmt.Errorf("openai schema transform: %s is open-ended; additionalProperties must be false", path)
+			}
+		}
+
+		var required []string
+		if rawProperties, exists := node["properties"]; exists {
+			properties, ok := rawProperties.(map[string]any)
+			if !ok {
+				return fmt.Errorf("openai schema transform: %s.properties must be an object", path)
+			}
+			required = make([]string, 0, len(properties))
+			for name := range properties {
+				required = append(required, name)
+			}
+			sort.Strings(required)
+		}
+		if required == nil {
+			required = []string{}
+		}
+		node["required"] = required
+		node["additionalProperties"] = false
+	}
+
+	for _, key := range []string{"properties", "$defs", "definitions", "patternProperties", "dependentSchemas"} {
+		children, _ := node[key].(map[string]any)
+		for name, child := range children {
+			if err := normalizeOpenAISchema(child, path+"."+key+"."+name); err != nil {
+				return err
+			}
+		}
+	}
+	for _, key := range []string{"items", "contains", "propertyNames", "not", "if", "then", "else"} {
+		if child, ok := node[key].(map[string]any); ok {
+			if err := normalizeOpenAISchema(child, path+"."+key); err != nil {
+				return err
+			}
+		}
+	}
+	for _, key := range []string{"allOf", "anyOf", "oneOf", "prefixItems"} {
+		children, _ := node[key].([]any)
+		for i, child := range children {
+			if err := normalizeOpenAISchema(child, fmt.Sprintf("%s.%s[%d]", path, key, i)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+var openAIRefAnnotationKeywords = map[string]bool{
+	"$id":         true,
+	"$comment":    true,
+	"default":     true,
+	"deprecated":  true,
+	"description": true,
+	"examples":    true,
+	"readOnly":    true,
+	"title":       true,
+	"writeOnly":   true,
+}
+
+// normalizeOpenAIRef makes referenced nodes conform to OpenAI's strict schema
+// subset. A nested $ref must stand alone; invopop/jsonschema commonly attaches
+// field annotations such as description alongside it, which OpenAI rejects.
+// Root schema dialect metadata and definitions are retained so the reference
+// remains resolvable. $id is stripped even at the root because OpenAI rejects
+// it as a $ref sibling. Unexpected semantic siblings fail loudly rather than
+// being silently discarded.
+func normalizeOpenAIRef(node map[string]any, path string) (bool, error) {
+	rawRef, hasRef := node["$ref"]
+	if !hasRef {
+		return false, nil
+	}
+	ref, ok := rawRef.(string)
+	if !ok || strings.TrimSpace(ref) == "" {
+		return false, fmt.Errorf("openai schema transform: %s.$ref must be a non-empty string", path)
+	}
+
+	for key := range node {
+		if key == "$ref" {
+			continue
+		}
+		if openAIRefAnnotationKeywords[key] {
+			delete(node, key)
+			continue
+		}
+		if path == "$" && (key == "$schema" || key == "$defs" || key == "definitions") {
+			continue
+		}
+		return false, fmt.Errorf("openai schema transform: %s.$ref has unsupported sibling %q", path, key)
+	}
+
+	return path != "$", nil
+}
+
+// AnthropicCompatibleSchema returns a copy of schema with constraints that
+// Claude structured outputs do not accept removed from the provider-facing
+// payload. The original schema must still be used for local validation.
+func AnthropicCompatibleSchema(schema json.RawMessage) (json.RawMessage, error) {
+	var v any
+	if err := json.Unmarshal(schema, &v); err != nil {
+		return nil, fmt.Errorf("anthropic schema transform: invalid JSON schema: %w", err)
+	}
+	sanitizeAnthropicSchema(v)
+	out, err := json.Marshal(v)
+	if err != nil {
+		return nil, fmt.Errorf("anthropic schema transform: marshal schema: %w", err)
+	}
+	return out, nil
+}
+
+var anthropicUnsupportedConstraints = map[string]string{
+	"minimum":               "minimum",
+	"maximum":               "maximum",
+	"exclusiveMinimum":      "exclusiveMinimum",
+	"exclusiveMaximum":      "exclusiveMaximum",
+	"multipleOf":            "multipleOf",
+	"minLength":             "minLength",
+	"maxLength":             "maxLength",
+	"pattern":               "pattern",
+	"minItems":              "minItems",
+	"maxItems":              "maxItems",
+	"uniqueItems":           "uniqueItems",
+	"contains":              "contains",
+	"minContains":           "minContains",
+	"maxContains":           "maxContains",
+	"minProperties":         "minProperties",
+	"maxProperties":         "maxProperties",
+	"dependentRequired":     "dependentRequired",
+	"dependentSchemas":      "dependentSchemas",
+	"propertyNames":         "propertyNames",
+	"unevaluatedItems":      "unevaluatedItems",
+	"unevaluatedProperties": "unevaluatedProperties",
+}
+
+var anthropicSupportedFormats = map[string]bool{
+	"date":      true,
+	"date-time": true,
+	"email":     true,
+	"hostname":  true,
+	"ipv4":      true,
+	"ipv6":      true,
+	"uri":       true,
+	"uuid":      true,
+}
+
+func sanitizeAnthropicSchema(v any) {
+	switch node := v.(type) {
+	case map[string]any:
+		var hints []string
+		for key, label := range anthropicUnsupportedConstraints {
+			if value, ok := node[key]; ok {
+				hints = append(hints, label+"="+jsonValue(value))
+				delete(node, key)
+			}
+		}
+		if value, ok := node["format"].(string); ok && !anthropicSupportedFormats[value] {
+			hints = append(hints, "format="+value)
+			delete(node, "format")
+		}
+
+		for _, value := range node {
+			sanitizeAnthropicSchema(value)
+		}
+		if isObjectSchema(node) {
+			if _, ok := node["additionalProperties"]; !ok {
+				node["additionalProperties"] = false
+			}
+		}
+		if len(hints) > 0 {
+			node["description"] = appendConstraintDescription(node["description"], hints)
+		}
+	case []any:
+		for _, value := range node {
+			sanitizeAnthropicSchema(value)
+		}
+	}
+}
+
+func isObjectSchema(node map[string]any) bool {
+	if t, ok := node["type"].(string); ok && t == "object" {
+		return true
+	}
+	if ts, ok := node["type"].([]any); ok {
+		for _, t := range ts {
+			if s, ok := t.(string); ok && s == "object" {
+				return true
+			}
+		}
+	}
+	_, hasProperties := node["properties"]
+	return hasProperties
+}
+
+func appendConstraintDescription(existing any, hints []string) string {
+	prefix := strings.TrimSpace(fmt.Sprint(existing))
+	if prefix == "" || prefix == "<nil>" {
+		return "Constraints preserved for local validation: " + strings.Join(hints, ", ") + "."
+	}
+	return strings.TrimRight(prefix, ".") + ". Constraints preserved for local validation: " + strings.Join(hints, ", ") + "."
+}
+
+func jsonValue(v any) string {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Sprint(v)
+	}
+	return string(data)
 }
 
 // BindStructuredOutput unmarshals a provider's validated structured-output JSON

@@ -20,6 +20,7 @@ const (
 	BackendCodexCLI    = api.BackendCodexCLI
 	BackendGeminiCLI   = api.BackendGeminiCLI
 	BackendClaudeAgent = api.BackendClaudeAgent
+	BackendCodexAgent  = api.BackendCodexAgent
 	BackendClaudeCmux  = api.BackendClaudeCmux
 	BackendCodexCmux   = api.BackendCodexCmux
 )

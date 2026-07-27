@@ -68,6 +68,7 @@ func TestAuthEnvVars(t *testing.T) {
 		BackendClaudeCmux:  nil,
 		BackendOpenAI:      {"OPENAI_API_KEY"},
 		BackendCodexCLI:    {"OPENAI_API_KEY"},
+		BackendCodexAgent:  {"OPENAI_API_KEY"},
 		BackendCodexCmux:   nil,
 		BackendDeepSeek:    {"DEEPSEEK_API_KEY"},
 		BackendGemini:      {"GEMINI_API_KEY", "GOOGLE_API_KEY"},

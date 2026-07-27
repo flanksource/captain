@@ -21,12 +21,48 @@ func TestRender_FrontmatterAndMessages(t *testing.T) {
 	tmpl, err := LoadFS(library, "testdata/commit.prompt")
 	require.NoError(t, err)
 
-	req, cfg, err := tmpl.Render(map[string]any{"diff": "+added a line"}, nil)
+	req, cfg, err := tmpl.Render(map[string]any{
+		"patch":        "+func Login() bool { return a < b && c > d }",
+		"maxBodyLines": 3,
+	}, nil)
 	require.NoError(t, err)
 
-	assert.Contains(t, req.Prompt.System, "Conventional Commit")
-	assert.Contains(t, req.Prompt.User, "+added a line")
-	assert.NotContains(t, req.Prompt.User, "Conventional Commit", "system text must not leak into the user prompt")
+	assert.Contains(t, req.Prompt.System, "commit message generator")
+	assert.Contains(t, req.Prompt.User, "a < b && c > d")
+	assert.NotContains(t, req.Prompt.User, "&lt;", "patch content must not be HTML-escaped")
+	assert.Contains(t, req.Prompt.User, "body: at most 3 line(s)")
+	assert.NotContains(t, req.Prompt.User, "commit message generator", "system text must not leak into the user prompt")
+	assert.JSONEq(t, `{
+		"type": "object",
+		"additionalProperties": false,
+		"required": ["type", "subject"],
+		"properties": {
+			"type": {
+				"type": "string",
+				"description": "Conventional commit type: feat|fix|perf|refactor|test|docs|build|ci|chore|revert"
+			},
+			"scope": {
+				"type": "string",
+				"description": "Optional scope, e.g. db, api, fe, kubernetes"
+			},
+			"subject": {
+				"type": "string",
+				"description": "Imperative subject line, max 100 chars, no trailing period"
+			},
+			"body": {
+				"type": "string",
+				"description": "Optional body explaining why and impact"
+			}
+		}
+	}`, string(req.Prompt.SchemaJSON))
+
+	withoutCap, _, err := tmpl.Render(map[string]any{
+		"patch":        "+trivial change",
+		"maxBodyLines": 0,
+	}, nil)
+	require.NoError(t, err)
+	assert.Contains(t, withoutCap.Prompt.User, "body: omit unless the change is non-trivial")
+	assert.NotContains(t, withoutCap.Prompt.User, "body: at most")
 
 	assert.Equal(t, "claude-sonnet-4-6", cfg.Model.Name)
 	assert.Equal(t, ai.BackendAnthropic, cfg.Model.Backend, "model name should infer the anthropic backend")
@@ -111,7 +147,10 @@ func TestRender_FrontmatterOutputSchema(t *testing.T) {
 
 func TestLibrary_Render(t *testing.T) {
 	lib := NewLibrary(library)
-	req, cfg, err := lib.Render("testdata/commit.prompt", map[string]any{"diff": "x"}, nil)
+	req, cfg, err := lib.Render("testdata/commit.prompt", map[string]any{
+		"patch":        "x",
+		"maxBodyLines": 0,
+	}, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "claude-sonnet-4-6", cfg.Model.Name)
 	assert.Contains(t, req.Prompt.User, "x")
@@ -130,6 +169,7 @@ func TestRender_BackendFixtureExamples(t *testing.T) {
 		"testdata/fixtures/claude-cmux-sonnet.prompt":      {backend: api.BackendClaudeCmux, model: "claude-cmux-sonnet"},
 		"testdata/fixtures/claude-cli-opus.prompt":         {backend: api.BackendClaudeCLI, model: "claude-agent-opus"},
 		"testdata/fixtures/claude-cli-sonnet.prompt":       {backend: api.BackendClaudeCLI, model: "claude-agent-sonnet"},
+		"testdata/fixtures/codex-agent.prompt":             {backend: api.BackendCodexAgent, model: "gpt-5-codex"},
 		"testdata/fixtures/codex-cmux.prompt":              {backend: api.BackendCodexCmux, model: "gpt-5-codex"},
 		"testdata/fixtures/deepseek.prompt":                {backend: api.BackendDeepSeek, model: "deepseek-reasoner"},
 		"testdata/fixtures/codex-cli.prompt":               {backend: api.BackendCodexCLI, model: "gpt-5-codex"},

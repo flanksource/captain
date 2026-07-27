@@ -1,0 +1,19 @@
+---
+model: gpt-5-codex
+backend: codex-agent
+effort: medium
+setup:
+  cwd: .
+permissions:
+  presets:
+    - edit
+  mcp:
+    disabled: true
+memory:
+  bare: true
+---
+{{role "system"}}
+You are a Codex agent running through the app-server SDK. Make scoped edits and verify the result.
+{{role "user"}}
+Code task:
+{{task}}

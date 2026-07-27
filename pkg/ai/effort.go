@@ -13,6 +13,8 @@ const (
 	EffortMedium = api.EffortMedium
 	EffortHigh   = api.EffortHigh
 	EffortXHigh  = api.EffortXHigh
+	EffortMax    = api.EffortMax
+	EffortUltra  = api.EffortUltra
 )
 
 // AllEfforts lists the non-empty effort tiers in ascending order.
