@@ -2,7 +2,7 @@ package worktree
 
 import "fmt"
 
-// WorktreeMerge controls whether PostRun merges the run's branch back into
+// WorktreeMerge controls whether the run phase merges the run's branch back into
 // Trunk via `wt merge`. These reference the run/verify outcome (Failed/
 // Verified), which commons-db's shell.Worktree does not model, so they live in
 // this captain-layer package rather than pkg/api.
@@ -44,7 +44,7 @@ func (m WorktreeMerge) Validate() error {
 	return fmt.Errorf("invalid worktree merge policy %q; want one of: always, never, onSuccess, onVerify", m)
 }
 
-// shouldMerge decides whether PostRun should merge, given the run's outcome.
+// shouldMerge decides whether the run phase should merge, given the run's outcome.
 func (m WorktreeMerge) shouldMerge(failed, verified bool) bool {
 	switch m {
 	case WorktreeMergeAlways:
@@ -58,7 +58,7 @@ func (m WorktreeMerge) shouldMerge(failed, verified bool) bool {
 	}
 }
 
-// WorktreeCleanup controls whether PostRun removes the worktree via `wt
+// WorktreeCleanup controls whether the run phase removes the worktree via `wt
 // remove`.
 type WorktreeCleanup string
 
@@ -98,7 +98,7 @@ func (c WorktreeCleanup) Validate() error {
 	return fmt.Errorf("invalid worktree cleanup policy %q; want one of: always, never, onMerge, onVerify", c)
 }
 
-// shouldCleanup decides whether PostRun should remove the worktree, given
+// shouldCleanup decides whether the run phase should remove the worktree, given
 // whether a merge happened and whether every Verify hook passed.
 func (c WorktreeCleanup) shouldCleanup(merged, verified bool) bool {
 	switch c {

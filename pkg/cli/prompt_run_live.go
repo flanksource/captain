@@ -8,6 +8,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/agent"
+	"github.com/flanksource/captain/pkg/ai/agent/commit"
 	"github.com/flanksource/captain/pkg/ai/agent/verify"
 	"github.com/flanksource/clicky/task"
 )
@@ -42,7 +43,9 @@ func runPromptStream(t *task.Task, rendered PromptRenderResult, timeout time.Dur
 	runner := &agent.Runner[string]{
 		Provider:      streamer,
 		Request:       req,
-		Hooks:         verify.HooksForWorkflow(req.Workflow),
+		// Commit hooks lead so that at PhaseRun they squash before any teardown
+		// hook (a worktree merge) runs and takes the result.
+		Hooks:         append(commit.HooksForWorkflow(req.Workflow), verify.HooksForWorkflow(req.Workflow)...),
 		MaxIterations: verify.MaxIterationsForWorkflow(req.Workflow),
 		Repo:          req.Cwd(),
 		Cwd:           req.Cwd(),

@@ -6,6 +6,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai/agent"
 	"github.com/flanksource/captain/pkg/ai/agent/worktree"
+	"github.com/flanksource/captain/pkg/api"
 )
 
 func pluginNames(hooks []any) []string {
@@ -55,6 +56,8 @@ func TestBuildAgentPlugins_WorktreeBranchAndCommit(t *testing.T) {
 	opts := AIAgentOptions{
 		Worktree: true,
 		Commit:   true,
+		CommitOn: string(api.CommitOnTurn),
+		Squash:   true,
 	}
 	opts.Prompt = "fix the failing lint\nsecond line ignored"
 	plugins, wt, err := buildAgentPlugins(opts, nil)
@@ -73,8 +76,34 @@ func TestBuildAgentPlugins_WorktreeBranchAndCommit(t *testing.T) {
 	if wt.Cleanup != worktree.WorktreeCleanupOnMerge {
 		t.Errorf("Cleanup = %q, want %q", wt.Cleanup, worktree.WorktreeCleanupOnMerge)
 	}
-	if names := pluginNames(plugins); len(names) != 1 || names[0] != "worktree" {
-		t.Errorf("plugins = %v, want [worktree]", names)
+	// Order matters, not just membership: the commit hook has to squash the
+	// chain at PhaseRun before the worktree plugin merges it away.
+	want := []string{"commit:turn", "worktree"}
+	if got := pluginNames(plugins); strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("plugins = %v, want %v", got, want)
+	}
+}
+
+// TestBuildAgentPlugins_CommitPhaseIsValidated: an unknown --commit-on has to
+// fail at flag-parse time, not silently register a hook that never fires.
+func TestBuildAgentPlugins_CommitPhaseIsValidated(t *testing.T) {
+	opts := AIAgentOptions{Worktree: true, Commit: true, CommitOn: "whenever", Squash: true}
+	if _, _, err := buildAgentPlugins(opts, nil); err == nil || !strings.Contains(err.Error(), "whenever") {
+		t.Fatalf("err = %v, want the unknown phase rejected by name", err)
+	}
+}
+
+// TestBuildAgentPlugins_SquashDefaultSurvivesRunPhase: --squash defaults true
+// but only fixups have a chain to squash, so the default must not turn
+// `--commit-on=run` into a validation error the user never asked for.
+func TestBuildAgentPlugins_SquashDefaultSurvivesRunPhase(t *testing.T) {
+	opts := AIAgentOptions{Worktree: true, Commit: true, CommitOn: string(api.CommitOnRun), Squash: true}
+	plugins, _, err := buildAgentPlugins(opts, nil)
+	if err != nil {
+		t.Fatalf("buildAgentPlugins: %v", err)
+	}
+	if got := pluginNames(plugins); got[0] != "commit:run" {
+		t.Errorf("plugins = %v, want commit:run first", got)
 	}
 }
 

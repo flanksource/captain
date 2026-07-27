@@ -720,7 +720,7 @@ function promptChatEligible(detail: PromptDetail, runtime: AISpecRuntimeValue) {
   return (
     !detail.outputSchema &&
     !runtime.workflow?.verify &&
-    !runtime.workflow?.postRun
+    !runtime.workflow?.commits?.length
   );
 }
 

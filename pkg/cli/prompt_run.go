@@ -119,7 +119,7 @@ func launchAsyncRun(id string, rendered PromptRenderResult, chat bool) PromptRun
 }
 
 func workflowConfigured(workflow *api.Workflow) bool {
-	return workflow != nil && (workflow.Verify != nil || workflow.PostRun != nil || workflow.AutoVerifyWithoutFixture)
+	return workflow != nil && (workflow.Verify != nil || len(workflow.Commits) > 0 || workflow.AutoVerifyWithoutFixture)
 }
 
 // executeSyncRun runs the prompt in-process (CLI) — live output to stderr, final
