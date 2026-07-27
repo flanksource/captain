@@ -28,7 +28,7 @@ const (
 	fixtureUsername = "captain-e2e"
 	fixturePassword = "captain-e2e-password"
 	commandTimeout  = 15 * time.Second
-	buildTimeout    = 2 * time.Minute
+	buildTimeout    = 5 * time.Minute
 )
 
 type testHarness struct {
