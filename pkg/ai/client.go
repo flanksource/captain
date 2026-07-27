@@ -26,18 +26,48 @@ func RegisterProvider(backend Backend, factory ProviderFactory) {
 // name is unrecognized, the error is enriched with the closest known model names
 // ("did you mean …"). When cfg.Model resolves to more than one candidate (a
 // comma-separated Name or a Fallbacks list), a fallback provider is returned that
-// tries each in order on a retryable failure.
+// tries each in order on a fallback-eligible failure.
 func NewProvider(cfg Config) (Provider, error) {
+	resolved, err := ResolveModelSelectors(cfg.Model)
+	if err != nil {
+		return nil, err
+	}
+	cfg.Model = normalizeProviderModel(resolved)
 	candidates := cfg.Model.Candidates()
+	for i := range candidates {
+		candidates[i] = normalizeProviderModel(candidates[i])
+	}
 	cfg.Model = candidates[0]
 	if len(candidates) > 1 {
 		return newFallbackProvider(cfg, candidates), nil
 	}
-	p, err := api.NewProvider(cfg)
+	p, err := newResolvedProvider(cfg)
 	if err != nil {
 		return nil, suggestModelName(err, cfg.Model.Name)
 	}
 	return p, nil
+}
+
+func newResolvedProvider(cfg Config) (Provider, error) {
+	p, err := api.NewProvider(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return withModelErrorRecommendations(withEffortValidation(p, cfg.Model.Effort)), nil
+}
+
+func normalizeProviderModel(model api.Model) api.Model {
+	backend := model.Backend
+	if backend == "" {
+		if inferred, err := api.InferBackend(model.Name); err == nil {
+			backend = inferred
+		}
+	}
+	if backend != "" {
+		model.Name = NormalizeModelForBackend(backend, model.Name)
+		model.Backend = backend
+	}
+	return model
 }
 
 // suggestModelName appends the closest catalog model ids to an unresolvable-model
@@ -72,4 +102,8 @@ func suggestModelName(err error, model string) error {
 // GetAPIKeyFromEnv returns the first non-empty value among a backend's auth env vars.
 func GetAPIKeyFromEnv(backend Backend) string {
 	return api.GetAPIKeyFromEnv(backend)
+}
+
+func ResolveAPIKey(backend Backend) (api.ResolvedAPIKey, error) {
+	return api.ResolveAPIKey(backend)
 }

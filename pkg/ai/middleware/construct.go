@@ -11,7 +11,7 @@ import (
 // ai.NewProvider, because middleware imports ai (wrapping ai.Provider) and the
 // reverse import would be a cycle.
 func DefaultOptions(cfg ai.Config) []Option {
-	opts := []Option{WithLogging(), WithSchemaValidation()}
+	opts := []Option{WithLogging(), WithSchemaValidation(cfg)}
 	if !cfg.NoCache && (cfg.CacheTTL > 0 || cfg.CacheDBPath != "") {
 		opts = append(opts, WithCache(cache.Config{
 			DBPath:  cfg.CacheDBPath,

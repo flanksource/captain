@@ -3,12 +3,13 @@ package ai
 import (
 	"context"
 	"encoding/json"
-	"io"
+	"fmt"
 	"sync"
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai/pricing"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/api/registry"
 )
 
 // Agent is a convenience wrapper over a Provider that offers the named-prompt /
@@ -49,14 +50,15 @@ type PromptRequest struct {
 
 // PromptResponse is the result of one PromptRequest.
 type PromptResponse struct {
-	Request        PromptRequest `json:"request,omitempty"`
-	Result         string        `json:"result"`
-	StructuredData any           `json:"structured_data,omitempty"`
-	Costs          Costs         `json:"costs,omitempty"`
-	Model          string        `json:"model,omitempty"`
-	Error          string        `json:"error,omitempty"`
-	Duration       time.Duration `json:"duration,omitempty"`
-	CacheHit       bool          `json:"cache_hit,omitempty"`
+	Request         PromptRequest    `json:"request,omitempty"`
+	Result          string           `json:"result"`
+	StructuredData  any              `json:"structured_data,omitempty"`
+	TerminalOutcome *TerminalOutcome `json:"terminal_outcome,omitempty"`
+	Costs           Costs            `json:"costs,omitempty"`
+	Model           string           `json:"model,omitempty"`
+	Error           string           `json:"error,omitempty"`
+	Duration        time.Duration    `json:"duration,omitempty"`
+	CacheHit        bool             `json:"cache_hit,omitempty"`
 }
 
 // IsOK reports whether the prompt succeeded.
@@ -83,9 +85,17 @@ func (a *Agent) GetModel() string { return a.provider.GetModel() }
 // GetBackend returns the underlying backend.
 func (a *Agent) GetBackend() Backend { return a.provider.GetBackend() }
 
-// ExecutePrompt runs one prompt and accrues its cost onto the agent.
+// ExecutePrompt runs one prompt and accrues its cost onto the agent. It fails
+// with ErrBudgetExceeded before executing once accumulated spend has reached the
+// configured USD budget, so a batch of prompts cannot run unbounded.
 func (a *Agent) ExecutePrompt(ctx context.Context, req PromptRequest) (*PromptResponse, error) {
 	start := time.Now()
+	if budget := a.cfg.Budget.Cost; budget > 0 {
+		if spent := a.TotalCost(); spent >= budget {
+			err := fmt.Errorf("%w: spent $%.4f of $%.4f budget", ErrBudgetExceeded, spent, budget)
+			return &PromptResponse{Request: req, Model: a.cfg.Model.Name, Error: err.Error()}, err
+		}
+	}
 	resp, err := a.provider.Execute(ctx, Request{Prompt: api.Prompt{
 		User:             req.Prompt,
 		System:           req.SystemPrompt,
@@ -100,13 +110,14 @@ func (a *Agent) ExecutePrompt(ctx context.Context, req PromptRequest) (*PromptRe
 
 	cost := a.accrue(resp)
 	return &PromptResponse{
-		Request:        req,
-		Result:         resp.Text,
-		StructuredData: resp.StructuredData,
-		Costs:          Costs{cost},
-		Model:          resp.Model,
-		Duration:       time.Since(start),
-		CacheHit:       resp.CacheHit,
+		Request:         req,
+		Result:          resp.Text,
+		StructuredData:  resp.StructuredData,
+		TerminalOutcome: resp.TerminalOutcome,
+		Costs:           Costs{cost},
+		Model:           resp.Model,
+		Duration:        time.Since(start),
+		CacheHit:        resp.CacheHit,
 	}, nil
 }
 
@@ -159,10 +170,18 @@ func (a *Agent) GetCosts() Costs {
 	return out
 }
 
+// TotalCost returns the accumulated USD spend across every prompt run on this
+// agent, preferring provider-reported cost (via Cost.Total).
+func (a *Agent) TotalCost() float64 {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.costs.Sum().Total()
+}
+
 // Close releases the underlying provider's resources, if any.
 func (a *Agent) Close() error {
-	if c, ok := a.provider.(io.Closer); ok {
-		return c.Close()
+	if closer, ok := api.ProviderAs[api.CloseableProvider](a.provider); ok {
+		return closer.Close()
 	}
 	return nil
 }
@@ -174,6 +193,20 @@ func (a *Agent) accrue(resp *Response) Cost {
 	if model == "" {
 		model = a.cfg.Model.Name
 	}
+	cost := PriceResponse(a.provider.GetBackend(), model, resp)
+
+	a.mu.Lock()
+	a.costs = append(a.costs, cost)
+	a.mu.Unlock()
+	return cost
+}
+
+// PriceResponse builds the Cost for a response: the disjoint token buckets, the
+// provider-reported total (which Cost.Total() prefers), and a best-effort
+// list-price breakdown for display. A pricing miss leaves the bucket costs zero
+// but preserves the token counts and any provider-reported total, so cost is
+// never silently dropped just because a model is absent from the registry.
+func PriceResponse(backend Backend, model string, resp *Response) Cost {
 	cost := Cost{
 		Model:            model,
 		InputTokens:      resp.Usage.InputTokens,
@@ -182,11 +215,12 @@ func (a *Agent) accrue(resp *Response) Cost {
 		CacheReadTokens:  resp.Usage.CacheReadTokens,
 		CacheWriteTokens: resp.Usage.CacheWriteTokens,
 		TotalTokens:      resp.Usage.TotalTokens(),
+		ProviderCostUSD:  resp.CostUSD,
 	}
 	// The pricing registry is keyed on OpenRouter-style ids (provider/model);
 	// try the backend-prefixed id first, then the bare model.
-	for _, id := range pricingIDs(a.provider.GetBackend(), model) {
-		if res, err := pricing.CalculateCost(id, cost.InputTokens, cost.OutputTokens, resp.Usage.ReasoningTokens, resp.Usage.CacheReadTokens, resp.Usage.CacheWriteTokens); err == nil {
+	for _, id := range PricingIDs(backend, model) {
+		if res, err := pricing.CalculateCost(id, cost.InputTokens, cost.OutputTokens, cost.ReasoningTokens, cost.CacheReadTokens, cost.CacheWriteTokens); err == nil {
 			cost.InputCost = res.InputCost
 			cost.OutputCost = res.OutputCost
 			cost.ReasoningCost = res.ReasoningCost
@@ -195,24 +229,20 @@ func (a *Agent) accrue(resp *Response) Cost {
 			break
 		}
 	}
-
-	a.mu.Lock()
-	a.costs = append(a.costs, cost)
-	a.mu.Unlock()
 	return cost
 }
 
-// pricingIDs returns the candidate pricing keys for a model, most specific first.
-func pricingIDs(backend Backend, model string) []string {
-	prefix := map[Backend]string{
-		BackendAnthropic: "anthropic/",
-		BackendOpenAI:    "openai/",
-		BackendGemini:    "google/",
-	}[backend]
-	if prefix != "" {
-		return []string{prefix + model, model}
+// PricingIDs returns the candidate OpenRouter-style pricing keys for a model,
+// most specific first. Every backend maps to its underlying vendor prefix so
+// list-price lookups resolve even for the CLI/agent/cmux backends (whose models
+// are still OpenAI/Anthropic/Google under the hood); the bare model is included
+// as a fallback.
+func PricingIDs(backend Backend, model string) []string {
+	p, _, ok := registry.ProviderFor(backend)
+	if !ok {
+		return []string{model}
 	}
-	return []string{model}
+	return p.PricingIDs(model)
 }
 
 func (r *PromptResponse) errorValue() error {

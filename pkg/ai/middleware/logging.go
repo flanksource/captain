@@ -23,13 +23,16 @@ type loggingProvider struct {
 
 func (l *loggingProvider) GetModel() string       { return l.provider.GetModel() }
 func (l *loggingProvider) GetBackend() ai.Backend { return l.provider.GetBackend() }
+func (l *loggingProvider) Unwrap() ai.Provider    { return l.provider }
 
 func (l *loggingProvider) Execute(ctx context.Context, req ai.Request) (*ai.Response, error) {
 	start := time.Now()
+	backend, model := logRuntime(l.provider, req)
+	identity := runtimeLogIdentity(backend, model, req.Effort)
 
 	dispatch := clicky.Text("").
 		Add(icons.AI).
-		Append(fmt.Sprintf(" %s/%s", l.provider.GetBackend(), l.provider.GetModel()), "text-purple-600 font-medium")
+		Append(" "+identity, "text-purple-600 font-medium")
 	if req.Prompt.Source != "" {
 		dispatch = dispatch.Append(fmt.Sprintf(" [%s]", req.Prompt.Source), "text-gray-500")
 	}
@@ -49,14 +52,14 @@ func (l *loggingProvider) Execute(ctx context.Context, req ai.Request) (*ai.Resp
 	if err != nil {
 		log.Errorf("%v", clicky.Text("").
 			Add(icons.Error).
-			Append(fmt.Sprintf(" %s/%s", l.provider.GetBackend(), l.provider.GetModel()), "text-red-600 font-medium").
+			Append(" "+identity, "text-red-600 font-medium").
 			Append(fmt.Sprintf(" failed after %v: %v", duration.Round(time.Millisecond), err), "text-red-500"))
 		return resp, err
 	}
 
 	log.Infof("%v", clicky.Text("").
 		Add(icons.Check).
-		Append(fmt.Sprintf(" %s/%s", l.provider.GetBackend(), l.provider.GetModel()), "text-green-600 font-medium").
+		Append(" "+identity, "text-green-600 font-medium").
 		Append(fmt.Sprintf(" %v", duration.Round(time.Millisecond)), "text-gray-500").
 		Append(fmt.Sprintf(" (tokens: %d in / %d out)", resp.Usage.InputTokens, resp.Usage.OutputTokens), "text-gray-400"))
 
@@ -85,10 +88,12 @@ func (l *loggingProvider) ExecuteStream(ctx context.Context, req ai.Request) (<-
 	if !ok {
 		return nil, fmt.Errorf("provider %s/%s does not support streaming", l.provider.GetBackend(), l.provider.GetModel())
 	}
+	backend, model := logRuntime(l.provider, req)
+	identity := runtimeLogIdentity(backend, model, req.Effort)
 
 	dispatch := clicky.Text("").
 		Add(icons.AI).
-		Append(fmt.Sprintf(" %s/%s (stream)", l.provider.GetBackend(), l.provider.GetModel()), "text-purple-600 font-medium")
+		Append(" "+identity+" (stream)", "text-purple-600 font-medium")
 	if req.Prompt.Source != "" {
 		dispatch = dispatch.Append(fmt.Sprintf(" [%s]", req.Prompt.Source), "text-gray-500")
 	}
@@ -99,6 +104,40 @@ func (l *loggingProvider) ExecuteStream(ctx context.Context, req ai.Request) (<-
 	}
 
 	return streamer.ExecuteStream(ctx, req)
+}
+
+func logRuntime(provider ai.Provider, req ai.Request) (api.Backend, string) {
+	backend := req.Backend
+	if backend == "" {
+		backend = provider.GetBackend()
+	}
+	model := req.Name
+	if model == "" {
+		model = provider.GetModel()
+	}
+	return backend, model
+}
+
+// runtimeLogIdentity renders the same compact selector notation accepted by
+// Captain's model flags: mode:model[:effort]. The effort suffix is omitted when
+// the request leaves effort at the backend/model default.
+func runtimeLogIdentity(backend api.Backend, model string, effort api.Effort) string {
+	prefix := string(backend)
+	switch backend {
+	case api.BackendClaudeAgent, api.BackendCodexAgent:
+		prefix = "agent"
+	case api.BackendClaudeCLI, api.BackendCodexCLI, api.BackendGeminiCLI:
+		prefix = "cli"
+	case api.BackendClaudeCmux, api.BackendCodexCmux:
+		prefix = "cmux"
+	case api.BackendAnthropic, api.BackendGemini, api.BackendOpenAI, api.BackendDeepSeek:
+		prefix = "api"
+	}
+	identity := prefix + ":" + model
+	if effort != api.EffortNone {
+		identity += ":" + string(effort)
+	}
+	return identity
 }
 
 func WithLogging() Option {

@@ -17,8 +17,8 @@ func TestWorkflowSpecRoundTrip(t *testing.T) {
 				Scope:         VerifyScopeChanged,
 				MaxIterations: 3,
 			},
-			PostRun: &PostRun{Commit: true, CommitMessage: "apply"},
-			Output:  &Output{SchemaJSON: json.RawMessage(`{"type":"object"}`)},
+			PostRun:                  &PostRun{Commit: true, CommitMessage: "apply"},
+			AutoVerifyWithoutFixture: true,
 		},
 	}
 
@@ -43,8 +43,8 @@ func TestWorkflowSpecRoundTrip(t *testing.T) {
 	if got.Workflow.PostRun == nil || !got.Workflow.PostRun.Commit {
 		t.Errorf("postRun not preserved: %+v", got.Workflow.PostRun)
 	}
-	if got.Workflow.Output == nil || string(got.Workflow.Output.SchemaJSON) != string(spec.Workflow.Output.SchemaJSON) {
-		t.Errorf("output schema not preserved: %+v", got.Workflow.Output)
+	if !got.Workflow.AutoVerifyWithoutFixture {
+		t.Errorf("autoVerifyWithoutFixture not preserved: %+v", got.Workflow)
 	}
 }
 
@@ -63,9 +63,30 @@ func TestSpecSchemaIncludesWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("schema: %v", err)
 	}
-	for _, want := range []string{"workflow", "Workflow", "Verify", "commands", "maxIterations"} {
+	for _, want := range []string{"workflow", "Workflow", "Verify", "commands", "maxIterations", "autoVerifyWithoutFixture"} {
 		if !strings.Contains(string(data), want) {
 			t.Errorf("reflected spec schema missing %q", want)
+		}
+	}
+	var reflected map[string]any
+	if err := json.Unmarshal(data, &reflected); err != nil {
+		t.Fatalf("decode schema: %v", err)
+	}
+	definitions, ok := reflected["$defs"].(map[string]any)
+	if !ok {
+		t.Fatalf("reflected spec schema has no $defs object")
+	}
+	workflow, ok := definitions["Workflow"].(map[string]any)
+	if !ok {
+		t.Fatalf("reflected spec schema has no Workflow definition")
+	}
+	properties, ok := workflow["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("reflected Workflow schema has no properties object")
+	}
+	for _, gone := range []string{"output", "Output"} {
+		if _, exists := properties[gone]; exists {
+			t.Errorf("reflected Workflow schema still contains removed field %q", gone)
 		}
 	}
 }

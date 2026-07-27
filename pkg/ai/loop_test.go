@@ -15,10 +15,22 @@ type fakeStreamingProvider struct {
 	scripts  [][]Event
 	requests []Request
 	err      error
+	backend  Backend
+	model    string
 }
 
-func (f *fakeStreamingProvider) GetModel() string    { return "fake" }
-func (f *fakeStreamingProvider) GetBackend() Backend { return Backend("fake") }
+func (f *fakeStreamingProvider) GetModel() string {
+	if f.model != "" {
+		return f.model
+	}
+	return "fake"
+}
+func (f *fakeStreamingProvider) GetBackend() Backend {
+	if f.backend != "" {
+		return f.backend
+	}
+	return Backend("fake")
+}
 func (f *fakeStreamingProvider) Execute(ctx context.Context, req Request) (*Response, error) {
 	return nil, errors.New("not used")
 }
@@ -117,6 +129,35 @@ func TestRunUntil_HitsMaxIterations(t *testing.T) {
 	}
 	if len(res.Iterations) != 2 {
 		t.Errorf("Iterations = %d, want 2", len(res.Iterations))
+	}
+}
+
+// A provider that reports usage but no cost (codex-cli/cmux, gemini-cli) must
+// still accrue a real cost so MaxCostUSD can enforce a budget for it (finding
+// C2). The loop prices the usage from the registry.
+func TestRunUntil_PricesUsageWhenProviderReportsNoCost(t *testing.T) {
+	p := &fakeStreamingProvider{
+		backend: BackendAnthropic,
+		model:   "claude-sonnet-4",
+		scripts: [][]Event{{
+			{Kind: EventResult, Success: true, CostUSD: 0, Usage: &Usage{InputTokens: 1_000_000, OutputTokens: 1_000_000}},
+		}},
+	}
+	res, err := RunUntil(context.Background(), LoopOptions{
+		Provider:      p,
+		MaxIterations: 1,
+		BuildRequest: func(iter int, prev *LoopIteration) (Request, bool) {
+			if iter > 0 {
+				return Request{}, false
+			}
+			return Request{Prompt: api.Prompt{User: "loop"}}, true
+		},
+	})
+	if err != nil {
+		t.Fatalf("RunUntil err: %v", err)
+	}
+	if res.TotalCost <= 0 {
+		t.Fatalf("TotalCost = %v, want > 0 (loop must price usage the provider left uncosted)", res.TotalCost)
 	}
 }
 

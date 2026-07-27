@@ -1,6 +1,7 @@
 package prompt
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 
@@ -23,9 +24,11 @@ type Document struct {
 	// no frontmatter. It is the lossless source of truth for reserialization.
 	Frontmatter map[string]any
 	// Spec is the frontmatter decoded into the typed spec (the dotprompt-only
-	// keys config/input/output/name/description are stripped). Zero when the
-	// source is body-only or declares no spec-native keys.
+	// keys config/input/output/name/description/runtimes are stripped). Zero
+	// when the source is body-only or declares no spec-native keys.
 	Spec api.Spec
+	// Runtimes are the prompt's default parallel execution targets.
+	Runtimes []api.Model
 	// Body is the unrendered Handlebars template body.
 	Body string
 }
@@ -46,10 +49,59 @@ func Parse(source string) (*Document, error) {
 		return nil, fmt.Errorf("parse prompt frontmatter: %w", err)
 	}
 	doc.Frontmatter = raw
+	runtimes, err := decodePromptRuntimes(raw)
+	if err != nil {
+		return nil, fmt.Errorf("decode prompt runtimes: %w", err)
+	}
+	doc.Runtimes = runtimes
 	if err := decodeSpecFrontmatter(raw, &doc.Spec); err != nil {
 		return nil, fmt.Errorf("decode prompt frontmatter into spec: %w", err)
 	}
 	return doc, nil
+}
+
+func decodePromptRuntimes(raw map[string]any) ([]api.Model, error) {
+	value, ok := raw["runtimes"]
+	if !ok {
+		return nil, nil
+	}
+	values, ok := value.([]any)
+	if !ok {
+		return nil, fmt.Errorf("runtimes must be a list")
+	}
+	if len(values) == 0 {
+		return nil, fmt.Errorf("runtimes must contain at least two entries")
+	}
+	runtimes := make([]api.Model, 0, len(values))
+	for i, value := range values {
+		encoded, err := yaml.Marshal(value)
+		if err != nil {
+			return nil, fmt.Errorf("runtime %d: encode: %w", i+1, err)
+		}
+		if _, compact := value.(string); compact {
+			encoded, err = yaml.Marshal([]any{value})
+			if err != nil {
+				return nil, fmt.Errorf("runtime %d: encode compact value: %w", i+1, err)
+			}
+			var list api.ModelList
+			if err := yaml.Unmarshal(encoded, &list); err != nil {
+				return nil, fmt.Errorf("runtime %d: %w", i+1, err)
+			}
+			if len(list) != 1 {
+				return nil, fmt.Errorf("runtime %d: expected one compact model", i+1)
+			}
+			runtimes = append(runtimes, list[0])
+			continue
+		}
+		var runtime api.Model
+		dec := yaml.NewDecoder(bytes.NewReader(encoded))
+		dec.KnownFields(true)
+		if err := dec.Decode(&runtime); err != nil {
+			return nil, fmt.Errorf("runtime %d: %w", i+1, err)
+		}
+		runtimes = append(runtimes, runtime)
+	}
+	return runtimes, nil
 }
 
 // String reserializes the document to .prompt text: "---\n<yaml>\n---\n<body>",

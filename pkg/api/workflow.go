@@ -1,25 +1,25 @@
 package api
 
-import (
-	"encoding/json"
-	"fmt"
-)
+import "fmt"
 
 // Workflow declares the generate→verify loop around a run as hook
 // declarations: an optional verification stage (commands run after each
-// generation, whose failure feedback drives a re-run), an optional postRun
-// stage (commit the result), and an optional typed output schema. It is the
-// serializable form of pkg/ai/agent's Verify/PostRun/Output hooks, and mirrors
-// clicky-ui's AISpecRuntimeLocalWorkflow so the SpecRuntimeEditor "Verify"
-// section round-trips.
+// generation, whose failure feedback drives a re-run), and an optional postRun
+// stage (commit the result). It is the serializable form of pkg/ai/agent's
+// Verify/PostRun hooks, and mirrors clicky-ui's AISpecRuntimeLocalWorkflow so
+// the SpecRuntimeEditor "Verify" section round-trips.
 //
 // A spec with a Verify but an empty Prompt.User runs verify-only (generation is
 // skipped); a spec with no Verify runs generate-only (today's behaviour).
 type Workflow struct {
 	Verify  *Verify  `json:"verify,omitempty" yaml:"verify,omitempty"`
 	PostRun *PostRun `json:"postRun,omitempty" yaml:"postRun,omitempty"`
-	// Output declares the workflow's typed final-result schema.
-	Output *Output `json:"output,omitempty" yaml:"output,omitempty"`
+
+	// AutoVerifyWithoutFixture is the explicit policy opt-in for hosts that
+	// project a successful generate-only run into a durable verified state. A
+	// false value keeps the durable work item open when no verification fixture
+	// ran; success by itself is not treated as proof of correctness.
+	AutoVerifyWithoutFixture bool `json:"autoVerifyWithoutFixture,omitempty" yaml:"autoVerifyWithoutFixture,omitempty"`
 }
 
 // Verify is the loop's definition-of-done: it runs after each generation and
@@ -48,12 +48,6 @@ type PostRun struct {
 	CommitMessage string `json:"commitMessage,omitempty" yaml:"commitMessage,omitempty"`
 	DryRun        bool   `json:"dryRun,omitempty" yaml:"dryRun,omitempty"`
 	KeepWorktree  bool   `json:"keepWorktree,omitempty" yaml:"keepWorktree,omitempty"`
-}
-
-// Output declares the workflow's typed final-result schema (a JSON Schema
-// document) so callers/editors know the shape of the run's structured result.
-type Output struct {
-	SchemaJSON json.RawMessage `json:"schemaJSON,omitempty" yaml:"schemaJSON,omitempty"`
 }
 
 // Validate checks the workflow's enum-typed fields.

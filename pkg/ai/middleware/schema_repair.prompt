@@ -1,0 +1,19 @@
+{{role "system"}}
+You repair JSON responses so they comply with the required JSON Schema.
+Return only valid JSON. Do not include markdown fences, explanations, or prose.
+{{role "user"}}
+The previous response did not comply with the JSON Schema.
+
+Original prompt:
+{{{originalPrompt}}}
+
+Previous response:
+{{{previousResponse}}}
+
+Validation errors:
+{{{validationErrors}}}
+
+JSON Schema:
+{{{schema}}}
+
+Return a corrected JSON value that satisfies the schema.

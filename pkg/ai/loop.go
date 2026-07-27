@@ -131,6 +131,18 @@ func runOneIteration(ctx context.Context, opts LoopOptions, req Request, iter *L
 				if ev.Usage != nil {
 					iter.Usage = *ev.Usage
 				}
+				// Providers that report no cost (codex-cli/cmux, gemini-cli) leave
+				// CostUSD at 0, which would make budget enforcement and rollups treat
+				// the run as free (finding C2). Price the usage from the registry so
+				// MaxCostUSD sees a real number for every backend.
+				if iter.CostUSD == 0 && ev.Usage != nil {
+					backend := opts.Provider.GetBackend()
+					model := ev.Model
+					if model == "" {
+						model = opts.Provider.GetModel()
+					}
+					iter.CostUSD = PriceResponse(backend, model, &Response{Backend: backend, Model: model, Usage: *ev.Usage}).Total()
+				}
 				if ev.Error != "" && iter.Err == nil {
 					iter.Err = fmt.Errorf("claude returned: %s", ev.Error)
 				}

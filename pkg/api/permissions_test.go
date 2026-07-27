@@ -16,7 +16,7 @@ func TestPermissions_JSONPolicyShape(t *testing.T) {
 			Deny:  []string{"Bash"},
 			Modes: map[string]ToolMode{
 				"WebSearch": ToolModeAsk,
-				"Write":     ToolModeEnabled,
+				"Write":     ToolModeOn,
 			},
 		},
 		MCP: MCP{
@@ -56,7 +56,7 @@ func TestPermissions_JSONLegacyInput(t *testing.T) {
 	  "tools": {
 	    "allow": ["Read"],
 	    "deny": ["Bash"],
-	    "modes": {"Edit": "ask", "Write": "enabled"}
+	    "modes": {"Edit": "ask", "Write": "on"}
 	  },
 	  "mcp": {"servers": ["filesystem", "gavel"], "gavel": "disabled"},
 	  "plugins": ["/plugins"],

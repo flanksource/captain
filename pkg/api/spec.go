@@ -1,7 +1,9 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/flanksource/commons-db/shell"
@@ -17,11 +19,16 @@ import (
 // domain object.
 type Spec struct {
 	Model       `json:",inline" yaml:",inline"`
-	Prompt      Prompt       `json:"prompt" yaml:"prompt"`
-	Budget      Budget       `json:"budget,omitempty" yaml:"budget,omitempty"`
-	Memory      Memory       `json:"memory,omitempty" yaml:"memory,omitempty"`
-	Permissions Permissions  `json:"permissions,omitempty" yaml:"permissions,omitempty"`
-	Setup       *shell.Setup `json:"setup,omitempty" yaml:"setup,omitempty"`
+	Prompt      Prompt      `json:"prompt" yaml:"prompt"`
+	Messages    []Message   `json:"messages,omitempty" yaml:"messages,omitempty" pretty:"-"`
+	Budget      Budget      `json:"budget,omitempty" yaml:"budget,omitempty"`
+	Memory      Memory      `json:"memory,omitempty" yaml:"memory,omitempty"`
+	Permissions Permissions `json:"permissions,omitempty" yaml:"permissions,omitempty"`
+	// ToolPreferences is the serializable per-turn tool/group selection policy.
+	// Executable tool handlers remain in Config.Tools.
+	ToolPreferences ToolPreferences     `json:"toolPreferences,omitempty" yaml:"toolPreferences,omitempty" pretty:"-"`
+	ToolApproval    *ToolApprovalResume `json:"toolApproval,omitempty" yaml:"toolApproval,omitempty" pretty:"-"`
+	Setup           *shell.Setup        `json:"setup,omitempty" yaml:"setup,omitempty"`
 
 	// Workflow declares the generate→verify loop (verification + finalize) around
 	// the run. Absent = single generation, no verification.
@@ -36,14 +43,134 @@ type Spec struct {
 	CLIArgs map[string]any `json:"cliArgs,omitempty" yaml:"cliArgs,omitempty"`
 }
 
+type specMarshal struct {
+	Model       `json:",inline" yaml:",inline"`
+	Prompt      *Prompt             `json:"prompt,omitempty" yaml:"prompt,omitempty"`
+	Messages    []Message           `json:"messages,omitempty" yaml:"messages,omitempty"`
+	Budget      *Budget             `json:"budget,omitempty" yaml:"budget,omitempty"`
+	Memory      *Memory             `json:"memory,omitempty" yaml:"memory,omitempty"`
+	Permissions *Permissions        `json:"permissions,omitempty" yaml:"permissions,omitempty"`
+	Preferences *ToolPreferences    `json:"toolPreferences,omitempty" yaml:"toolPreferences,omitempty"`
+	Approval    *ToolApprovalResume `json:"toolApproval,omitempty" yaml:"toolApproval,omitempty"`
+	Setup       *shell.Setup        `json:"setup,omitempty" yaml:"setup,omitempty"`
+	Workflow    *Workflow           `json:"workflow,omitempty" yaml:"workflow,omitempty"`
+	SessionID   string              `json:"sessionId,omitempty" yaml:"sessionId,omitempty"`
+	CLIArgs     map[string]any      `json:"cliArgs,omitempty" yaml:"cliArgs,omitempty"`
+}
+
+func isEmpty(value reflect.Value) bool {
+	if !value.IsValid() {
+		return true
+	}
+	for value.Kind() == reflect.Interface || value.Kind() == reflect.Pointer {
+		if value.IsNil() {
+			return true
+		}
+		value = value.Elem()
+	}
+	if value.CanInterface() {
+		switch typed := value.Interface().(type) {
+		case Tools:
+			return len(typed.Policies()) == 0
+		case MCP:
+			return !typed.Disabled && len(typed.Servers) == 0 && len(typed.Modes) == 0
+		}
+	}
+	switch value.Kind() {
+	case reflect.Array:
+		for i := range value.Len() {
+			if !isEmpty(value.Index(i)) {
+				return false
+			}
+		}
+		return true
+	case reflect.Map, reflect.Slice, reflect.String:
+		return value.Len() == 0
+	case reflect.Struct:
+		exported := 0
+		for i := range value.NumField() {
+			field := value.Type().Field(i)
+			if !field.IsExported() || field.Tag.Get("json") == "-" || field.Tag.Get("yaml") == "-" {
+				continue
+			}
+			exported++
+			if !isEmpty(value.Field(i)) {
+				return false
+			}
+		}
+		return exported > 0 || value.IsZero()
+	default:
+		return value.IsZero()
+	}
+}
+
+func omitEmptyValue[T any](value T) *T {
+	if isEmpty(reflect.ValueOf(value)) {
+		return nil
+	}
+	return &value
+}
+
+func omitEmptyPointer[T any](value *T) *T {
+	if isEmpty(reflect.ValueOf(value)) {
+		return nil
+	}
+	return value
+}
+
+func (s Spec) marshalValue() specMarshal {
+	return specMarshal{
+		Model:       s.Model,
+		Prompt:      omitEmptyValue(s.Prompt),
+		Messages:    s.Messages,
+		Budget:      omitEmptyValue(s.Budget),
+		Memory:      omitEmptyValue(s.Memory),
+		Permissions: omitEmptyValue(s.Permissions),
+		Preferences: omitEmptyValue(s.ToolPreferences),
+		Approval:    omitEmptyPointer(s.ToolApproval),
+		Setup:       omitEmptyPointer(s.Setup),
+		Workflow:    omitEmptyPointer(s.Workflow),
+		SessionID:   s.SessionID,
+		CLIArgs:     s.CLIArgs,
+	}
+}
+
+func (s Spec) MarshalJSON() ([]byte, error) {
+	return json.Marshal(s.marshalValue())
+}
+
+func (s Spec) MarshalYAML() (any, error) {
+	return s.marshalValue(), nil
+}
+
 // Validate runs each component's validation, failing loud on the first error.
 func (s Spec) Validate() error {
 	if err := s.Model.Validate(); err != nil {
 		return fmt.Errorf("model: %w", err)
 	}
-	// A verify-only spec (no body, workflow.verify present) legitimately has an
-	// empty prompt; only its strictness setting is checked.
-	if s.IsVerifyOnly() {
+	if s.ToolApproval != nil {
+		if s.hasPromptBody() || len(s.Messages) > 0 {
+			return fmt.Errorf("tool approval resume state, prompt body, and messages are mutually exclusive request modes")
+		}
+		if err := s.ToolApproval.Validate(); err != nil {
+			return fmt.Errorf("tool approval: %w", err)
+		}
+		if err := s.Prompt.SchemaStrictness.Validate(); err != nil {
+			return fmt.Errorf("prompt: %w", err)
+		}
+	} else if len(s.Messages) > 0 {
+		if err := s.ValidateRequestMode(); err != nil {
+			return err
+		}
+		if err := ValidateMessages(s.Messages); err != nil {
+			return fmt.Errorf("messages: %w", err)
+		}
+		if err := s.Prompt.SchemaStrictness.Validate(); err != nil {
+			return fmt.Errorf("prompt: %w", err)
+		}
+		// A verify-only spec (no body, workflow.verify present) legitimately has an
+		// empty prompt; only its strictness setting is checked.
+	} else if s.IsVerifyOnly() {
 		if err := s.Prompt.SchemaStrictness.Validate(); err != nil {
 			return fmt.Errorf("prompt: %w", err)
 		}
@@ -56,6 +183,9 @@ func (s Spec) Validate() error {
 	if err := s.Permissions.Validate(); err != nil {
 		return fmt.Errorf("permissions: %w", err)
 	}
+	if err := s.ToolPreferences.Validate(); err != nil {
+		return err
+	}
 	if err := s.Workflow.Validate(); err != nil {
 		return fmt.Errorf("workflow: %w", err)
 	}
@@ -66,7 +196,23 @@ func (s Spec) Validate() error {
 // verification — a verify-only run that skips generation and verifies the
 // current state (e.g. scoring already-committed work).
 func (s Spec) IsVerifyOnly() bool {
-	return s.Prompt.User == "" && s.Workflow != nil && s.Workflow.Verify != nil
+	return s.ToolApproval == nil && len(s.Messages) == 0 && s.Prompt.User == "" && len(s.Prompt.Attachments) == 0 && s.Workflow != nil && s.Workflow.Verify != nil
+}
+
+func (s Spec) hasPromptBody() bool {
+	return s.Prompt.User != "" || s.Prompt.System != "" || s.Prompt.AppendSystem != "" || len(s.Prompt.Attachments) > 0
+}
+
+// ValidateRequestMode rejects mixing canonical conversation history with the
+// single-turn prompt body.
+func (s Spec) ValidateRequestMode() error {
+	if s.ToolApproval != nil && (len(s.Messages) > 0 || s.hasPromptBody()) {
+		return fmt.Errorf("tool approval resume state, prompt body, and messages are mutually exclusive request modes")
+	}
+	if len(s.Messages) > 0 && s.hasPromptBody() {
+		return fmt.Errorf("prompt body and messages are mutually exclusive request modes")
+	}
+	return nil
 }
 
 func (s Spec) Cwd() string {
