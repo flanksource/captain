@@ -100,12 +100,19 @@ func (db *DB) ListThreadSessionOverviews(ctx context.Context, rootID uuid.UUID) 
 	return rows, nil
 }
 
+// threadScopePredicate restricts a thread-scoped table or view to one root
+// session plus its subagents. `= ANY (ARRAY(...))` rather than `IN (...)`: the
+// subquery form plans as a semi-join, which Postgres can only apply as a filter
+// above the join, forcing a full scan of captain_messages. The array form is an
+// InitPlan producing a run-time constant, so both OR arms stay index conditions.
+const threadScopePredicate = "session_id = ? OR session_id = ANY (ARRAY(SELECT id FROM captain_sessions WHERE root_session_id = ?))"
+
 func (db *DB) ListThreadTranscriptMessages(ctx context.Context, rootID uuid.UUID) ([]TranscriptMessage, error) {
 	if rootID == uuid.Nil {
 		return nil, fmt.Errorf("%w: thread root ID is required", ErrInvalidSession)
 	}
 	var rows []TranscriptMessage
-	if err := db.gorm.WithContext(ctx).Where("session_id = ? OR session_id IN (SELECT id FROM captain_sessions WHERE root_session_id = ?)", rootID, rootID).
+	if err := db.gorm.WithContext(ctx).Where(threadScopePredicate, rootID, rootID).
 		Order("occurred_at NULLS LAST, session_id, sequence").Find(&rows).Error; err != nil {
 		return nil, fmt.Errorf("list Captain thread transcript: %w", err)
 	}
@@ -141,5 +148,5 @@ func (db *DB) threadQuery(ctx context.Context, rootID uuid.UUID, model any) *gor
 	if rootID == uuid.Nil {
 		return query.Where("1 = 0")
 	}
-	return query.Where("session_id = ? OR session_id IN (SELECT id FROM captain_sessions WHERE root_session_id = ?)", rootID, rootID)
+	return query.Where(threadScopePredicate, rootID, rootID)
 }
