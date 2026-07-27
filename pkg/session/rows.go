@@ -46,6 +46,8 @@ type Row struct {
 	Model           string
 	Provider        string
 	ReasoningEffort string
+	Title           string
+	InitialPrompt   string
 	Git             GitState
 	StartedAt       *time.Time
 	EndedAt         *time.Time
@@ -130,10 +132,20 @@ func rowFromTranscript(sessionID string, t claude.ParsedTranscript, uuidOwner ma
 		}
 	}
 	r.Cost = costs.Sum()
+	if !t.IsAgent {
+		r.Title = latestClaudeSessionTitle(t.ToolUses)
+		r.InitialPrompt = firstClaudeUserPrompt(t.Entries)
+		if r.Title == "" {
+			r.Title = r.Slug
+		}
+		if r.Title == "" {
+			r.Title = deriveSessionTitle(r.InitialPrompt)
+		}
+	}
 	r.Usage = usageFromCost(r.Cost)
 	r.Files = changedFiles(t.ToolUses)
 	r.Approvals = approvalStats(t.ToolUses)
-	r.ToolCalls = len(t.ToolUses)
+	r.ToolCalls = countOperationalToolUses(t.ToolUses)
 	r.Messages = countEntryMessages(t.Entries)
 	if !t.IsAgent {
 		r.Plan = buildPlan(t.Entries, t.ToolUses)
@@ -151,34 +163,46 @@ func CodexRow(path string) (Row, bool) {
 	info, _ := history.ReadCodexSessionInfo(path)
 	s := buildCodexSession(uses, info)
 	r := Row{
-		Path:      path,
-		ID:        s.ID,
-		Source:    "codex",
-		Project:   s.Project,
-		CWD:       s.CWD,
-		Version:   s.Version,
-		Model:     s.Model,
-		Provider:  s.Provider,
-		Git:       s.Git,
-		StartedAt: s.StartedAt,
-		EndedAt:   s.EndedAt,
-		Cost:      s.Cost,
-		Usage:     s.Usage,
-		Files:     s.Files,
-		Slug:      s.Slug,
-		Plan:      s.Plan,
+		Path:          path,
+		ID:            s.ID,
+		Source:        "codex",
+		Project:       s.Project,
+		CWD:           s.CWD,
+		Version:       s.Version,
+		Model:         s.Model,
+		Provider:      s.Provider,
+		Title:         s.Title,
+		InitialPrompt: s.InitialPrompt,
+		Git:           s.Git,
+		StartedAt:     s.StartedAt,
+		EndedAt:       s.EndedAt,
+		Cost:          s.Cost,
+		Usage:         s.Usage,
+		Files:         s.Files,
+		Slug:          s.Slug,
+		Plan:          s.Plan,
 	}
 	if info != nil {
 		r.ReasoningEffort = info.ReasoningEffort
 	}
 	for _, u := range uses {
-		if u.Tool == "Assistant" || u.Tool == "Reasoning" {
+		if isChatActivity(u.Tool) {
 			r.Messages++
-		} else {
+		} else if isOperationalToolActivity(u.Tool) {
 			r.ToolCalls++
 		}
 	}
 	return r, true
+}
+
+func countOperationalToolUses(uses []claude.ToolUse) int {
+	n := 0
+	for _, use := range uses {
+		if isOperationalToolActivity(use.Tool) {
+			n++
+		}
+	}
+	return n
 }
 
 func extendRowRange(r *Row, ts time.Time) {

@@ -13,7 +13,7 @@ func TestRows_RootAndSubAgentLinked(t *testing.T) {
 	rootEntry := claude.HistoryEntry{
 		UUID: "root-1", SessionID: "sess", Timestamp: "2026-07-06T10:00:00Z", CWD: "/repo", GitBranch: "main",
 		Message: claude.Message{
-			Role: claude.MessageRoleAssistant, Model: "claude-opus-4",
+			Role: claude.MessageRoleAssistant, Model: "claude-opus-4-5",
 			Usage:   &claude.Usage{InputTokens: 1000, OutputTokens: 500},
 			Content: []claude.ContentBlock{{Type: claude.ContentTypeText, Text: "spawning"}},
 		},
@@ -21,7 +21,7 @@ func TestRows_RootAndSubAgentLinked(t *testing.T) {
 	childEntry := claude.HistoryEntry{
 		UUID: "child-1", ParentUUID: "root-1", Timestamp: "2026-07-06T10:01:00Z", CWD: "/repo",
 		Message: claude.Message{
-			Role: claude.MessageRoleAssistant, Model: "claude-opus-4",
+			Role: claude.MessageRoleAssistant, Model: "claude-opus-4-5",
 			Content: []claude.ContentBlock{toolUseBlock("t1", "Write", writeInput)},
 		},
 	}
