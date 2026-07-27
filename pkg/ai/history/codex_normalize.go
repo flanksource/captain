@@ -36,6 +36,16 @@ func NormalizeCodexToolCall(call CodexToolCall) ToolUse {
 	}
 
 	command := firstNonEmpty(call.Command, stringValue(input["command"]), stringValue(input["cmd"]))
+	cwd := call.CWD
+	if command == "" && call.Name == "exec" {
+		if script, ok := input["input"].(string); ok && script != "" {
+			var err error
+			command, cwd, err = parseCodexExecScript(script, cwd)
+			if err != nil {
+				input["parse_error"] = err.Error()
+			}
+		}
+	}
 	if command == "" && call.Name == "" {
 		command = codexScalarArgument(call.Arguments)
 		delete(input, "arguments")
@@ -80,7 +90,7 @@ func NormalizeCodexToolCall(call CodexToolCall) ToolUse {
 		Tool:            tool,
 		Input:           input,
 		Timestamp:       call.Timestamp,
-		CWD:             call.CWD,
+		CWD:             cwd,
 		SessionID:       call.SessionID,
 		TurnID:          call.TurnID,
 		ToolUseID:       call.ID,

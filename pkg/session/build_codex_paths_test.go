@@ -28,4 +28,19 @@ var _ = ginkgo.Describe("Codex file changes", func() {
 			"pkg/moved.go",
 		}))
 	})
+
+	ginkgo.It("collects paths from JavaScript-wrapped exec commands", func() {
+		stream := strings.Join([]string{
+			`{"timestamp":"2026-07-26T17:00:00Z","type":"session_meta","payload":{"id":"exec-session","cwd":"/repo"}}`,
+			`{"timestamp":"2026-07-26T17:00:01Z","type":"response_item","payload":{"type":"custom_tool_call","name":"exec","call_id":"exec-1","input":"const r = await tools.exec_command({cmd: \"printf output > generated.txt\", workdir: \"/repo/out\"}); text(r.output);"}}`,
+			`{"timestamp":"2026-07-26T17:00:02Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"exec-1","output":"Success"}}`,
+		}, "\n")
+
+		uses, err := history.ExtractCodexToolUsesFromReader(strings.NewReader(stream))
+		Expect(err).NotTo(HaveOccurred())
+
+		built := buildCodexSession(uses, &history.CodexSessionInfo{ID: "exec-session", CWD: "/repo"})
+
+		Expect(built.Files.Written).To(Equal([]string{"out/generated.txt"}))
+	})
 })

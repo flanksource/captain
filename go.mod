@@ -25,6 +25,7 @@ require (
 	github.com/sergi/go-diff v1.4.0
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
+	github.com/t14raptor/go-fast v0.1.0
 	github.com/timberio/go-datemath v0.1.0
 	github.com/yuin/goldmark v1.7.17
 	golang.org/x/oauth2 v0.36.0
@@ -55,6 +56,8 @@ require (
 	github.com/google/jsonschema-go v0.4.2 // indirect
 	github.com/hashicorp/hcl/v2 v2.13.0 // indirect
 	github.com/mitchellh/go-wordwrap v0.0.0-20150314170334-ad45545899c7 // indirect
+	github.com/nukilabs/ftoa v1.0.0 // indirect
+	github.com/nukilabs/unicodeid v0.1.0 // indirect
 	github.com/pgplex/pgparser v0.2.0 // indirect
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
 	github.com/xi2/xz v0.0.0-20171230120015-48954b6210f8 // indirect

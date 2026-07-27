@@ -23,7 +23,8 @@ const fakeServerEnv = "CLAUDEAGENT_FAKE_SERVER"
 
 // fakeModeEnv selects the fake server's turn behaviour: "" runs the default
 // happy-path turn; "approval" emits a can_use_tool request and finishes only
-// after the host replies; "hang" emits text then waits for an interrupt.
+// after the host replies; "hang" emits text then waits for an interrupt;
+// "error-output" emits both process streams before a terminal error.
 const fakeModeEnv = "CLAUDEAGENT_FAKE_MODE"
 
 // fakeMarkerEnv, when set in "hang" mode, names a file the fake creates when it
@@ -103,6 +104,11 @@ func runFakeServer() {
 			enc(map[string]any{"jsonrpc": "2.0", "id": id(frame.ID), "result": map[string]any{"accepted": true}})
 			enc(map[string]any{"jsonrpc": "2.0", "method": "message/text", "params": map[string]any{"text": "hi from fake"}})
 			switch mode {
+			case "error-output":
+				_, _ = os.Stderr.WriteString("claude subprocess authentication detail\n")
+				enc(map[string]any{"jsonrpc": "2.0", "method": "turn/error", "params": map[string]any{
+					"message": "Claude Code process exited with code 1",
+				}})
 			case "steer":
 				if promptCount == 2 {
 					completed("first prompt complete")
@@ -228,6 +234,30 @@ func TestProvider_ExecuteCoalesce(t *testing.T) {
 	assert.Equal(t, "hi from fake", resp.Text)
 	assert.Equal(t, ai.BackendClaudeAgent, resp.Backend)
 	assert.Equal(t, 10, resp.Usage.InputTokens)
+}
+
+func TestProvider_ErrorIncludesCapturedProcessOutput(t *testing.T) {
+	withFakeAgentProcessEnv(t, map[string]string{
+		fakeServerEnv: "1",
+		fakeModeEnv:   "error-output",
+	})
+
+	p, err := New(ai.Config{Model: api.Model{Name: "claude-sonnet-5"}})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = p.Close() })
+
+	events, err := p.ExecuteStream(t.Context(), ai.Request{Prompt: api.Prompt{User: "fail"}})
+	require.NoError(t, err)
+
+	var eventError string
+	for event := range events {
+		if event.Kind == ai.EventError {
+			eventError = event.Error
+		}
+	}
+	assert.Contains(t, eventError, "Claude Code process exited with code 1")
+	assert.Contains(t, eventError, "stderr:\nclaude subprocess authentication detail")
+	assert.Contains(t, eventError, "stdout (JSON-RPC):")
 }
 
 // companyInfo is the structured-output target for the round-trip test.
