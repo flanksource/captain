@@ -45,6 +45,10 @@ func resolveCatalogDir(baseCwd, dir string) (string, error) {
 	if dir == "" {
 		return base, nil
 	}
+	resolvedBase, err := filepath.EvalSymlinks(base)
+	if err != nil {
+		return "", fmt.Errorf("resolve workspace root: %w", err)
+	}
 
 	// Reject traversal sequences in the raw input before any path is built;
 	// the prefix check below is defense in depth.
@@ -57,8 +61,12 @@ func resolveCatalogDir(baseCwd, dir string) (string, error) {
 		target = filepath.Join(base, target)
 	}
 	target = filepath.Clean(target)
+	resolvedTarget, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		return "", fmt.Errorf("resolve dir %q: %w", dir, err)
+	}
 
-	if target != base && !strings.HasPrefix(target, base+string(os.PathSeparator)) {
+	if resolvedTarget != resolvedBase && !strings.HasPrefix(resolvedTarget, resolvedBase+string(os.PathSeparator)) {
 		return "", fmt.Errorf("dir %q escapes workspace root", dir)
 	}
 	return target, nil

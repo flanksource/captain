@@ -22,7 +22,12 @@ export default defineConfig(({ command }) => {
         ...clickySourceAliases(useClickySource),
         { find: "@", replacement: path.resolve(__dirname, "./src") },
       ],
-      dedupe: ["react", "react-dom", "@tanstack/react-query"],
+      dedupe: [
+        "react",
+        "react-dom",
+        "@tanstack/react-query",
+        "monaco-editor",
+      ],
     },
     server: {
       fs: useClickySource ? { allow: [__dirname, clickyPackageRoot] } : undefined,
@@ -72,6 +77,10 @@ function clickySourceAliases(enabled: boolean) {
     {
       find: "@flanksource/clicky-ui/mdx-editor",
       replacement: path.resolve(clickySourceRoot, "mdx-editor.ts"),
+    },
+    {
+      find: "@flanksource/clicky-ui/monaco",
+      replacement: path.resolve(clickySourceRoot, "monaco.ts"),
     },
     {
       find: "@flanksource/clicky-ui/utils",

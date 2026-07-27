@@ -1,6 +1,37 @@
 import { Badge, CodeBlock, JsonView, KeyValueList, MethodBadge } from "@flanksource/clicky-ui/data";
 import { ClickyProviders } from "./ClickyProviders";
 
+const commitInputSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["patch", "maxBodyLines"],
+  properties: {
+    patch: { type: "string", description: "Git patch to summarize" },
+    maxBodyLines: {
+      type: "integer",
+      description: "Maximum commit-message body lines; zero omits the cap",
+    },
+  },
+};
+
+const commitOutputSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["type", "subject"],
+  properties: {
+    type: {
+      type: "string",
+      description: "Conventional commit type: feat|fix|perf|refactor|test|docs|build|ci|chore|revert",
+    },
+    scope: { type: "string", description: "Optional scope, e.g. db, api, fe, kubernetes" },
+    subject: {
+      type: "string",
+      description: "Imperative subject line, max 100 chars, no trailing period",
+    },
+    body: { type: "string", description: "Optional body explaining why and impact" },
+  },
+};
+
 const promptSummary = {
   id: "embedded\\u0000embedded\\u0000testdata/commit.prompt",
   name: "commit",
@@ -9,7 +40,15 @@ const promptSummary = {
   relPath: "testdata/commit.prompt",
   writable: false,
   model: "claude-sonnet-4-6",
-  variables: [{ name: "diff", type: "string" }],
+  variables: [
+    {
+      name: "maxBodyLines",
+      type: "integer",
+      description: "Maximum commit-message body lines; zero omits the cap",
+      required: true,
+    },
+    { name: "patch", type: "string", description: "Git patch to summarize", required: true },
+  ],
 };
 
 const renderResult = {
@@ -17,17 +56,20 @@ const renderResult = {
   name: "commit",
   model: "claude-sonnet-4-6",
   backend: "anthropic",
-  user: "Diff:\\n...",
-  system: "You write Conventional Commit messages.",
+  user: "DIFF INPUT:\\n\\n...\\n\\nREQUIREMENTS:\\n- type: one of feat|fix|perf|refactor|test|docs|build|ci|chore|revert\\n...",
+  system: "You are a commit message generator. Analyze the diff below and produce a Conventional Commit message.",
   validationError: "",
   input: {
     prompt: {
       source: "commit.prompt",
-      user: "Diff:\\n...",
-      system: "You write Conventional Commit messages.",
+      user: "DIFF INPUT:\\n\\n...\\n\\nREQUIREMENTS:\\n- type: one of feat|fix|perf|refactor|test|docs|build|ci|chore|revert\\n...",
+      system: "You are a commit message generator. Analyze the diff below and produce a Conventional Commit message.",
+      schemaJSON: commitOutputSchema,
     },
     budget: { maxTokens: 1024, timeout: "2h" },
   },
+  inputSchema: commitInputSchema,
+  outputSchema: commitOutputSchema,
 };
 
 export default function PromptApiShapes() {
@@ -65,4 +107,3 @@ export default function PromptApiShapes() {
     </ClickyProviders>
   );
 }
-

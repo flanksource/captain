@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 )
 
 func CmuxBin() string {
@@ -127,4 +128,84 @@ func DefaultSocketPath() string {
 	}
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, "Library", "Application Support", "cmux", "cmux.sock")
+}
+
+// Surface is a cmux terminal surface hosting an agent, keyed by its UUID (which
+// matches the CMUX_SURFACE_ID env var of the process running inside it).
+type Surface struct {
+	ID        string
+	Ref       string
+	Title     string
+	Workspace string
+	Tty       string
+	Type      string
+}
+
+// Surfaces returns the current cmux surfaces keyed by surface UUID, sourced from
+// `cmux --json --id-format both tree --all`. Returns an error when cmux is not
+// running (callers should treat enrichment as best-effort).
+func Surfaces() (map[string]Surface, error) {
+	out, err := run("--json", "--id-format", "both", "tree", "--all")
+	if err != nil {
+		return nil, err
+	}
+	return parseSurfaces([]byte(out))
+}
+
+// cmuxTree mirrors the subset of `cmux --json tree` we consume.
+type cmuxTree struct {
+	Windows []struct {
+		Workspaces []struct {
+			Title string `json:"title"`
+			Panes []struct {
+				Surfaces []struct {
+					ID    string `json:"id"`
+					Ref   string `json:"ref"`
+					Title string `json:"title"`
+					Tty   string `json:"tty"`
+					Type  string `json:"type"`
+				} `json:"surfaces"`
+			} `json:"panes"`
+		} `json:"workspaces"`
+	} `json:"windows"`
+}
+
+func parseSurfaces(data []byte) (map[string]Surface, error) {
+	var tree cmuxTree
+	if err := json.Unmarshal(data, &tree); err != nil {
+		return nil, err
+	}
+	surfaces := make(map[string]Surface)
+	for _, win := range tree.Windows {
+		for _, ws := range win.Workspaces {
+			for _, pane := range ws.Panes {
+				for _, s := range pane.Surfaces {
+					if s.ID == "" {
+						continue
+					}
+					surfaces[s.ID] = Surface{
+						ID:        s.ID,
+						Ref:       s.Ref,
+						Title:     stripStatusGlyph(s.Title),
+						Workspace: stripStatusGlyph(ws.Title),
+						Tty:       s.Tty,
+						Type:      s.Type,
+					}
+				}
+			}
+		}
+	}
+	return surfaces, nil
+}
+
+// stripStatusGlyph removes cmux's leading status/spinner glyph (the "✳" idle
+// marker or a braille spinner rune, U+2800–U+28FF) from a title, keeping the
+// human-readable text. Other leading runes (e.g. "…/path") are preserved.
+func stripStatusGlyph(title string) string {
+	title = strings.TrimSpace(title)
+	r, size := utf8.DecodeRuneInString(title)
+	if r == '✳' || (r >= 0x2800 && r <= 0x28FF) {
+		return strings.TrimSpace(title[size:])
+	}
+	return title
 }

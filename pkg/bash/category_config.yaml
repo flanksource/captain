@@ -306,6 +306,10 @@ categories:
     tools:
       - Task
       - TodoWrite
+      - TaskCreate
+      - TaskUpdate
+      - TaskGet
+      - TaskList
       - EnterPlanMode
     commands:
       - task
@@ -323,11 +327,36 @@ categories:
     tools:
       - Edit
       - Write
+      - MultiEdit
       - NotebookEdit
+      # Codex file mutations. apply_patch is the wire name; CodexPatchApply is
+      # the normalized name history renders. Without these, every Codex file
+      # write classifies as `other`.
+      - apply_patch
+      - CodexPatchApply
     commands:
       - mkdir
+      - mv
+      - cp
+      - touch
+      - install
+      - patch
+      - tee
     patterns:
       - "sed.* -i"
+      # perl bundles its flags, so -i appears as -i, -pi, -ni or -i.bak. Matching
+      # a literal " -i" misses every bundled form.
+      - "^perl\\s+-[a-zA-Z.]*i"
+      - "^mv\\b"
+      - "^cp\\b"
+      - "^touch\\b"
+      - "^patch\\b"
+      - "^tee\\b"
+      # Deliberately no generic `> file` redirect rule. RE2 has no lookahead, so
+      # `> /dev/null` cannot be excluded cleanly, and `edit` also sources
+      # captain_artifacts — a false positive there invents a file-modification
+      # record. Rehydration from the session file recovers anything a miss drops,
+      # so precision beats recall here.
 
   clarify:
     tools:

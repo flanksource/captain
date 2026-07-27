@@ -25,6 +25,8 @@ Captain discovers prompt sources in this order:
 
 Embedded prompts are read-only. Saving an embedded prompt from the workbench writes a local fork, stripping the embedded walk root so `testdata/commit.prompt` becomes `commit.prompt`.
 
+CLI prompt commands accept an opaque prompt ID, an explicit file path, or a bare filename with or without the `.prompt` extension. Bare filenames are resolved across the discovered sources. An existing file in the current directory takes precedence; if more than one discovered source contains the same filename, Captain reports the ambiguity and requires an ID or explicit path.
+
 ## Entity records
 
 <CodeExample client:load language="json" title="PromptSummary" source={`
@@ -72,4 +74,3 @@ Rendering accepts template variables and an optional runtime `spec` overlay. It 
 ## Run stream
 
 The `run` action renders synchronously, creates a prompt run id, then streams session entries through `/api/captain/prompt/runs/{runId}/stream`. A snapshot endpoint at `/api/captain/prompt/runs/{runId}` lets the UI recover entries, completion state, summary, and error text.
-

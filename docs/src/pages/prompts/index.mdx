@@ -35,7 +35,7 @@ Captain prompts are `.prompt` templates rendered through Google dotprompt and fo
   </div>
 </div>
 
-## Minimal prompt
+## Structured prompt
 
 <CodeExample client:load language="yaml" title="pkg/ai/prompt/testdata/commit.prompt" source={`
 ---
@@ -45,13 +45,52 @@ config:
   temperature: 0.2
 input:
   schema:
-    diff: string
+    type: object
+    additionalProperties: false
+    required: [patch, maxBodyLines]
+    properties:
+      patch:
+        type: string
+        description: "Git patch to summarize"
+      maxBodyLines:
+        type: integer
+        description: "Maximum commit-message body lines; zero omits the cap"
+output:
+  schema:
+    type: object
+    additionalProperties: false
+    required: [type, subject]
+    properties:
+      type:
+        type: string
+        description: "Conventional commit type: feat|fix|perf|refactor|test|docs|build|ci|chore|revert"
+      scope:
+        type: string
+        description: "Optional scope, e.g. db, api, fe, kubernetes"
+      subject:
+        type: string
+        description: "Imperative subject line, max 100 chars, no trailing period"
+      body:
+        type: string
+        description: "Optional body explaining why and impact"
 ---
 {{role "system"}}
-You write Conventional Commit messages.
+You are a commit message generator. Analyze the diff below and produce a Conventional Commit message.
 {{role "user"}}
-Diff:
-{{diff}}
+DIFF INPUT:
+
+{{patch}}
+
+REQUIREMENTS:
+- type: one of feat|fix|perf|refactor|test|docs|build|ci|chore|revert
+- scope (optional): the area of the codebase affected, e.g. db|api|fe|crd|chart|docker|kubernetes|terraform|aws
+- subject: imperative mood, no trailing period, <=100 characters
+{{#if maxBodyLines}}
+- body: at most {{maxBodyLines}} line(s); omit entirely for trivial changes. Explain why and impact; include "BREAKING CHANGE: ..." if behavior changes or APIs are removed; reference issues like "Refs #123" or "Fixes #123" if applicable
+{{else}}
+- body: omit unless the change is non-trivial. When present, explain why and impact; include "BREAKING CHANGE: ..." if behavior changes or APIs are removed; reference issues like "Refs #123" or "Fixes #123" if applicable
+{{/if}}
+- Explain intention and effect; do not restate the code.
 `} />
 
 ## Where to go next
@@ -59,4 +98,3 @@ Diff:
 - [Prompt Format](/prompts/format/) covers frontmatter, roles, variables, and config precedence.
 - [Runtime Overlay](/prompts/runtime/) covers `api.Spec`, budgets, permissions, memory, model selection, and setup.
 - [Sources and API](/prompts/sources-api/) covers embedded/local sources and render/run API payloads.
-

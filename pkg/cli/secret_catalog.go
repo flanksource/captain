@@ -9,6 +9,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/flanksource/captain/pkg/ai"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -169,7 +170,7 @@ func previewsForConfigMap(item corev1.ConfigMap) []secretKeyPreview {
 	out := make([]secretKeyPreview, 0, len(keys))
 	for _, key := range keys {
 		if value, ok := item.Data[key]; ok {
-			out = append(out, secretKeyPreview{Key: key, Value: maskKey(value)})
+			out = append(out, secretKeyPreview{Key: key, Value: ai.MaskKey(value)})
 			continue
 		}
 		out = append(out, secretKeyPreview{Key: key, Value: byteCountPreview(item.BinaryData[key])})
@@ -212,7 +213,7 @@ func maskPreviewBytes(value []byte) string {
 	if !utf8.Valid(value) {
 		return byteCountPreview(value)
 	}
-	return maskKey(string(value))
+	return ai.MaskKey(string(value))
 }
 
 func byteCountPreview(value []byte) string {
