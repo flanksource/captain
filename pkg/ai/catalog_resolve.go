@@ -2,11 +2,15 @@ package ai
 
 import (
 	"context"
+	"crypto/pbkdf2"
+	"crypto/sha512"
+	"encoding/hex"
 	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/flanksource/captain/pkg/ai/pricing"
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/commons/logger"
 )
 
@@ -65,7 +69,10 @@ var apiBackends = []Backend{BackendAnthropic, BackendOpenAI, BackendGemini, Back
 // merged OpenRouter/static pricing and persisted to ~/.config/captain/models.json.
 // A fresh, fingerprint-matching cache is reused (unless opts.Refresh).
 func ResolveModels(ctx context.Context, opts ResolveOptions) ([]ResolvedModel, error) {
-	fp := resolveFingerprint(opts)
+	fp, err := resolveFingerprint(opts)
+	if err != nil {
+		return nil, err
+	}
 
 	rows, ok := cachedRows(opts, fp)
 	if !ok {
@@ -134,13 +141,16 @@ func seedCatalog(backend Backend) ([]ResolvedModel, map[modelKey]int) {
 }
 
 // catalogBackendMatch reports whether a catalog model's backend satisfies the
-// requested filter. claude-cli shares the claude-agent catalog entries.
+// requested filter. cli/cmux backends share their agent catalog entries.
 func catalogBackendMatch(want, modelBackend Backend) bool {
 	if want == "" {
 		return true
 	}
-	if want == BackendClaudeCLI {
+	switch want {
+	case BackendClaudeCLI, BackendClaudeCmux:
 		want = BackendClaudeAgent
+	case BackendCodexCLI, BackendCodexCmux:
+		want = BackendCodexAgent
 	}
 	return modelBackend == want
 }
@@ -152,7 +162,11 @@ func unionLive(ctx context.Context, backend Backend, rows *[]ResolvedModel, inde
 		if backend != "" && b != backend {
 			continue
 		}
-		if GetAPIKeyFromEnv(b) == "" {
+		resolved, err := ResolveAPIKey(b)
+		if err != nil {
+			return err
+		}
+		if resolved.Token == "" {
 			continue
 		}
 		live, err := liveModelFetcher(ctx, b)
@@ -193,15 +207,35 @@ func filterResolved(rows []ResolvedModel, filter string) []ResolvedModel {
 	return out
 }
 
-func resolveFingerprint(opts ResolveOptions) string {
+// resolveSchemaVersion invalidates the on-disk model cache when the meaning of a
+// cached row changes rather than its inputs. The fingerprint otherwise covers
+// only options and API keys, so a resolution change would keep serving rows
+// resolved by the old rules until the TTL expired.
+//
+// Bump this when catalog ids, capability fields, or pricing resolution change.
+//   - v2: model identity unified on the provider descriptors; catalog pricing now
+//     resolves through the same prefixed-first path as billing, so cached Claude
+//     prices from the static fallback table are stale.
+const resolveSchemaVersion = "v2"
+const resolveFingerprintSalt = "captain/model-cache/api-key"
+
+func resolveFingerprint(opts ResolveOptions) (string, error) {
 	var present []string
 	for _, b := range apiBackends {
-		if GetAPIKeyFromEnv(b) != "" {
-			present = append(present, string(b))
+		resolved, err := ResolveAPIKey(b)
+		if err != nil {
+			return "", err
+		}
+		if resolved.Token != "" {
+			fingerprint, err := pbkdf2.Key(sha512.New, resolved.Token, []byte(resolveFingerprintSalt), 4096, 8)
+			if err != nil {
+				return "", fmt.Errorf("fingerprint %s API key: %w", b, err)
+			}
+			present = append(present, string(b)+":"+hex.EncodeToString(fingerprint))
 		}
 	}
 	sort.Strings(present)
-	return fmt.Sprintf("b=%s|tok=%v|keys=%s", opts.Backend, opts.UseTokens, strings.Join(present, ","))
+	return fmt.Sprintf("v=%s|b=%s|tok=%v|keys=%s", resolveSchemaVersion, opts.Backend, opts.UseTokens, strings.Join(present, ",")), nil
 }
 
 func bareModelID(id string) string {
@@ -213,13 +247,15 @@ func bareModelID(id string) string {
 
 // AgentCatalogModels returns the model list for a CLI/agent backend from the
 // catalog — the key-free source of truth shared with the chat menu and shell
-// completion. The returned ID is the run-time slug the captain provider expects:
-// AgentModel when set (e.g. codex's "gpt-5-codex"), otherwise the catalog ID
-// (e.g. "claude-agent-sonnet"). claude-cli shares the claude-agent entries.
+// completion. Returned IDs are exact provider model IDs; legacy AgentModel is
+// still honored for externally registered old entries.
 func AgentCatalogModels(b Backend) []ModelDef {
 	want := b
-	if want == BackendClaudeCLI {
+	switch want {
+	case BackendClaudeCLI, BackendClaudeCmux:
 		want = BackendClaudeAgent
+	case BackendCodexCLI, BackendCodexCmux:
+		want = BackendCodexAgent
 	}
 
 	out := []ModelDef{}
@@ -235,41 +271,38 @@ func AgentCatalogModels(b Backend) []ModelDef {
 		if label == "" {
 			label = id
 		}
-		out = append(out, ModelDef{ID: id, Name: label, Backend: b, ReleaseDate: m.ReleaseDate})
+		out = append(out, ModelDef{
+			ID:                id,
+			Name:              label,
+			Backend:           b,
+			ReleaseDate:       m.ReleaseDate,
+			CapabilitiesKnown: true,
+			Reasoning:         m.Reasoning,
+			Temperature:       m.Temperature,
+			SupportedEfforts:  append([]api.Effort(nil), m.SupportedEfforts...),
+			DefaultEffort:     m.DefaultEffort,
+			Priority:          m.Priority,
+		})
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
 }
 
 // lookupPricing tries the bare model id first, then the OpenRouter
-// "provider/model" key the registry uses for the major API providers.
+// "provider/model" key the registry uses.
+//
+// The prefix comes from the provider descriptor's PricingPrefix, which is
+// separate from CatalogPrefix for exactly one reason: Gemini's catalog namespace
+// is "googleai" while OpenRouter keys it under "google". Deriving one from the
+// other makes every Gemini price silently resolve to nothing. This used to be
+// three hand-written maps (PricingIDs, orPrefix, pricingModelID) that disagreed
+// about whether CLI/agent backends get a prefix at all — they do; a codex-run
+// model costs what the model costs.
 func lookupPricing(backend Backend, id string) (pricing.ModelInfo, bool) {
-	if info, ok := pricing.GetModelInfo(id); ok {
-		return info, true
-	}
-	prefix := orPrefix(backend)
-	if prefix == "" {
-		return pricing.ModelInfo{}, false
-	}
-	if info, ok := pricing.GetModelInfo(prefix + "/" + id); ok {
-		return info, true
+	for _, candidate := range PricingIDs(backend, id) {
+		if info, ok := pricing.GetModelInfo(candidate); ok {
+			return info, true
+		}
 	}
 	return pricing.ModelInfo{}, false
-}
-
-// orPrefix is the OpenRouter id prefix for a backend. Gemini's catalog prefix is
-// "googleai" but OpenRouter keys it under "google" — get this right or pricing
-// silently misses.
-func orPrefix(backend Backend) string {
-	switch backend {
-	case BackendOpenAI:
-		return "openai"
-	case BackendAnthropic:
-		return "anthropic"
-	case BackendGemini:
-		return "google"
-	case BackendDeepSeek:
-		return "deepseek"
-	}
-	return ""
 }

@@ -5,24 +5,34 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/flanksource/captain/pkg/api"
 )
 
 // Model describes one entry in the chat model menu. captain owns the catalog
 // (it is keyed on Backend, which is captain data); clicky/aichat consumes it via
-// type aliases. For API backends ID is the full "provider/model" id used by the
-// genkit execution path (e.g. "anthropic/claude-sonnet-4-6"). For agent/CLI
-// backends ID is the menu key (e.g. "claude-agent-sonnet") and AgentModel is the
-// run-time slug when it differs from ID.
+// type aliases. API backends carry a provider-prefixed ID for storage/display
+// stability, while CLI/agent backends carry the exact provider model ID that the
+// local backend receives (never a family alias or synthetic backend prefix).
 type Model struct {
-	ID            string
-	Backend       Backend
-	Label         string // human-friendly menu label
-	Reasoning     bool   // model honours Effort
-	ContextWindow int    // max context tokens, for a usage gauge's denominator
-	ReleaseDate   string // YYYY-MM-DD release date, when known
-	// AgentModel is the model slug passed to the captain backend when it differs
-	// from ID (e.g. menu id "codex-gpt-5-codex" → backend model "gpt-5-codex").
-	// Empty means use ID. Unused for API backends.
+	ID          string
+	Backend     Backend
+	Label       string // human-friendly menu label
+	Reasoning   bool   // model honours Effort
+	Temperature bool   // model honours the temperature sampling control
+	// AdaptiveThinking marks Anthropic models that use the adaptive thinking
+	// schema (thinking:{type:adaptive} + output_config.effort) instead of the
+	// legacy enabled schema.
+	AdaptiveThinking bool
+	ContextWindow    int    // max context tokens, for a usage gauge's denominator
+	ReleaseDate      string // YYYY-MM-DD release date, when known
+	InputMediaTypes  []string
+	SupportedEfforts []api.Effort
+	DefaultEffort    api.Effort
+	Priority         int
+	// AgentModel is retained for backward compatibility with older registered
+	// models. New catalog entries should use exact runtime IDs directly in ID and
+	// leave AgentModel empty.
 	AgentModel string
 	// Default marks the catalog default. Exactly one entry sets it; its ID equals
 	// DefaultModelID.
@@ -51,42 +61,10 @@ func (m Model) BareID() string {
 // The catalog entry with this ID sets Default: true.
 const DefaultModelID = "anthropic/claude-sonnet-5"
 
-// defaultCatalog is the model menu: only the latest generally-available model
-// per tier for each provider — no preview or superseded entries. API entries
-// carry the genkit "provider/model" id (kept byte-identical so the web menu and
-// stored-thread model ids stay stable); agent entries carry the captain backend
-// explicitly so codex slugs (which look like gpt-*) are not misrouted.
-//
-// Provider currency (reviewed 2026-07-02):
-//   - Anthropic: Fable 5 (most capable), Opus 4.8, Sonnet 5, Haiku 4.5. Mythos 5
-//     is Project Glasswing invite-only, so it is intentionally excluded.
-//   - OpenAI: GPT-5.5 (flagship) and GPT-5.4 mini. GPT-5.6 is preview-only.
-//   - Google: keep recent Pro and Flash families visible separately so a newer
-//     Flash model does not hide recent Pro entries.
-var defaultCatalog = []Model{
-	{ID: "anthropic/claude-fable-5", Backend: BackendAnthropic, Label: "Claude Fable 5", Reasoning: true, ContextWindow: 1000000, ReleaseDate: "2026-06-15"},
-	{ID: "anthropic/claude-opus-4-8", Backend: BackendAnthropic, Label: "Claude Opus 4.8", Reasoning: true, ContextWindow: 1000000, ReleaseDate: "2026-04-15"},
-	{ID: "anthropic/claude-sonnet-5", Backend: BackendAnthropic, Label: "Claude Sonnet 5", Reasoning: true, ContextWindow: 1000000, ReleaseDate: "2026-05-20", Default: true},
-	{ID: "anthropic/claude-haiku-4-5", Backend: BackendAnthropic, Label: "Claude Haiku 4.5", Reasoning: true, ContextWindow: 200000, ReleaseDate: "2025-10-15"},
-	{ID: "openai/gpt-5.5", Backend: BackendOpenAI, Label: "GPT-5.5", Reasoning: true, ContextWindow: 1000000, ReleaseDate: "2026-06-01"},
-	{ID: "openai/gpt-5.4-mini", Backend: BackendOpenAI, Label: "GPT-5.4 mini", Reasoning: true, ContextWindow: 400000, ReleaseDate: "2026-05-15"},
-	{ID: "googleai/gemini-2.5-pro", Backend: BackendGemini, Label: "Gemini 2.5 Pro", Reasoning: true, ContextWindow: 1048576, ReleaseDate: "2025-06-17"},
-	{ID: "googleai/gemini-3.0-pro", Backend: BackendGemini, Label: "Gemini 3.0 Pro", Reasoning: true, ContextWindow: 1048576},
-	{ID: "googleai/gemini-3.5-flash", Backend: BackendGemini, Label: "Gemini 3.5 Flash", Reasoning: true, ContextWindow: 1048576, ReleaseDate: "2026-06-10"},
-	// DeepSeek is OpenAI-compatible; deepseek-chat is the non-thinking model and
-	// deepseek-reasoner is the thinking model (reasoning selected by model, not
-	// effort). IDs are stable aliases that always resolve to DeepSeek's latest.
-	{ID: "deepseek/deepseek-chat", Backend: BackendDeepSeek, Label: "DeepSeek Chat", ContextWindow: 131072},
-	{ID: "deepseek/deepseek-reasoner", Backend: BackendDeepSeek, Label: "DeepSeek Reasoner", Reasoning: true, ContextWindow: 131072},
-
-	// Agent-framework models (captain pkg/ai StreamingProvider). These run a
-	// supervised local subprocess that owns its own tools. IDs are tier aliases
-	// (not version-pinned), so they always resolve to the installed CLI's latest.
-	{ID: "claude-agent-sonnet", Backend: BackendClaudeAgent, Label: "Claude Agent · Sonnet", Reasoning: true, ContextWindow: 1000000, ReleaseDate: "2026-05-20"},
-	{ID: "claude-agent-opus", Backend: BackendClaudeAgent, Label: "Claude Agent · Opus", Reasoning: true, ContextWindow: 1000000, ReleaseDate: "2026-04-15"},
-	{ID: "claude-agent-haiku", Backend: BackendClaudeAgent, Label: "Claude Agent · Haiku", Reasoning: true, ContextWindow: 200000, ReleaseDate: "2025-10-15"},
-	{ID: "codex-gpt-5-codex", Backend: BackendCodexCLI, AgentModel: "gpt-5-codex", Label: "Codex · GPT-5", Reasoning: true, ContextWindow: 400000, ReleaseDate: "2025-08-07"},
-}
+// defaultCatalog is projected from the internal exact model registry. The API
+// rows keep provider prefixes for stable storage; CLI/agent rows keep exact
+// backend model IDs without synthetic claude-agent/codex prefixes.
+var defaultCatalog = registryCatalogModels()
 
 var (
 	modelRegistryMu sync.RWMutex
@@ -191,6 +169,7 @@ func normalizeModel(model Model) (Model, error) {
 	if model.Label == "" {
 		model.Label = model.ID
 	}
+	model.InputMediaTypes = clampInputMediaTypes(model.Backend, model.InputMediaTypes)
 	if model.ReleaseDate != "" {
 		normalized := normalizeReleaseDate(model.ReleaseDate)
 		if normalized == "" {

@@ -32,9 +32,10 @@ func GetModelInfo(model string) (ModelInfo, bool) {
 	if ok {
 		return info, true
 	}
-	// Classify-on-miss: arbitrary Claude ids (e.g. catalog "claude-sonnet-4-6")
-	// that OpenRouter never lists are still priced from the static table.
-	return claudeStaticInfo(model)
+	// Lookup-on-miss: catalog ids that OpenRouter never lists (e.g.
+	// "claude-sonnet-4-6", every Gemini id) are still priced from the generated
+	// catalog's own rates.
+	return catalogInfo(model)
 }
 
 // Contains reports whether model is an exact id in the pricing registry. Unlike

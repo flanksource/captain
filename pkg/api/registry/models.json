@@ -1,0 +1,1080 @@
+[
+  {
+    "id": "claude-opus-5",
+    "provider": "anthropic",
+    "family": "opus",
+    "version": "5",
+    "label": "Claude Opus 5",
+    "releaseDate": "2026-07-24",
+    "reasoning": true,
+    "contextWindow": 1000000,
+    "cost": {
+      "input": 5,
+      "output": 25,
+      "cacheRead": 0.5,
+      "cacheWrite": 6.25
+    },
+    "inputMediaTypes": [
+      "image/*",
+      "application/pdf"
+    ],
+    "preferred": true,
+    "adaptiveThinking": true,
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ]
+  },
+  {
+    "id": "claude-sonnet-5",
+    "provider": "anthropic",
+    "family": "sonnet",
+    "version": "5",
+    "label": "Claude Sonnet 5",
+    "releaseDate": "2026-06-29",
+    "reasoning": true,
+    "contextWindow": 1000000,
+    "cost": {
+      "input": 2,
+      "output": 10,
+      "cacheRead": 0.2,
+      "cacheWrite": 2.5
+    },
+    "inputMediaTypes": [
+      "image/*",
+      "application/pdf"
+    ],
+    "preferred": true,
+    "adaptiveThinking": true,
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ]
+  },
+  {
+    "id": "claude-fable-5",
+    "provider": "anthropic",
+    "family": "fable",
+    "version": "5",
+    "label": "Claude Fable 5",
+    "releaseDate": "2026-06-07",
+    "reasoning": true,
+    "contextWindow": 1000000,
+    "cost": {
+      "input": 10,
+      "output": 50,
+      "cacheRead": 1,
+      "cacheWrite": 12.5
+    },
+    "inputMediaTypes": [
+      "image/*",
+      "application/pdf"
+    ],
+    "preferred": true,
+    "adaptiveThinking": true,
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ]
+  },
+  {
+    "id": "claude-opus-4-8",
+    "provider": "anthropic",
+    "family": "opus",
+    "version": "4.8",
+    "label": "Claude Opus 4.8",
+    "releaseDate": "2026-05-28",
+    "reasoning": true,
+    "contextWindow": 1000000,
+    "cost": {
+      "input": 5,
+      "output": 25,
+      "cacheRead": 0.5,
+      "cacheWrite": 6.25
+    },
+    "inputMediaTypes": [
+      "image/*",
+      "application/pdf"
+    ],
+    "preferred": true,
+    "adaptiveThinking": true,
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ]
+  },
+  {
+    "id": "claude-opus-4-7",
+    "provider": "anthropic",
+    "family": "opus",
+    "version": "4.7",
+    "label": "Claude Opus 4.7",
+    "releaseDate": "2026-04-14",
+    "reasoning": true,
+    "contextWindow": 1000000,
+    "cost": {
+      "input": 5,
+      "output": 25,
+      "cacheRead": 0.5,
+      "cacheWrite": 6.25
+    },
+    "inputMediaTypes": [
+      "image/*",
+      "application/pdf"
+    ],
+    "adaptiveThinking": true,
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ]
+  },
+  {
+    "id": "claude-sonnet-4-6",
+    "provider": "anthropic",
+    "family": "sonnet",
+    "version": "4.6",
+    "label": "Claude Sonnet 4.6",
+    "releaseDate": "2026-02-17",
+    "reasoning": true,
+    "temperature": true,
+    "contextWindow": 1000000,
+    "cost": {
+      "input": 3,
+      "output": 15,
+      "cacheRead": 0.3,
+      "cacheWrite": 3.75
+    },
+    "inputMediaTypes": [
+      "image/*",
+      "application/pdf"
+    ]
+  },
+  {
+    "id": "claude-opus-4-6",
+    "provider": "anthropic",
+    "family": "opus",
+    "version": "4.6",
+    "label": "Claude Opus 4.6",
+    "releaseDate": "2026-02-04",
+    "reasoning": true,
+    "temperature": true,
+    "contextWindow": 1000000,
+    "cost": {
+      "input": 5,
+      "output": 25,
+      "cacheRead": 0.5,
+      "cacheWrite": 6.25
+    },
+    "inputMediaTypes": [
+      "image/*",
+      "application/pdf"
+    ]
+  },
+  {
+    "id": "claude-opus-4-5",
+    "provider": "anthropic",
+    "family": "opus",
+    "version": "4.5",
+    "label": "Claude Opus 4.5 (latest)",
+    "releaseDate": "2025-11-24",
+    "reasoning": true,
+    "temperature": true,
+    "contextWindow": 200000,
+    "cost": {
+      "input": 5,
+      "output": 25,
+      "cacheRead": 0.5,
+      "cacheWrite": 6.25
+    },
+    "inputMediaTypes": [
+      "image/*",
+      "application/pdf"
+    ]
+  },
+  {
+    "id": "claude-opus-4-5-20251101",
+    "provider": "anthropic",
+    "family": "opus",
+    "version": "4.5-20251101",
+    "label": "Claude Opus 4.5",
+    "releaseDate": "2025-11-24",
+    "reasoning": true,
+    "temperature": true,
+    "contextWindow": 200000,
+    "cost": {
+      "input": 5,
+      "output": 25,
+      "cacheRead": 0.5,
+      "cacheWrite": 6.25
+    },
+    "inputMediaTypes": [
+      "image/*",
+      "application/pdf"
+    ]
+  },
+  {
+    "id": "claude-haiku-4-5",
+    "provider": "anthropic",
+    "family": "haiku",
+    "version": "4.5",
+    "label": "Claude Haiku 4.5 (latest)",
+    "releaseDate": "2025-10-15",
+    "reasoning": true,
+    "temperature": true,
+    "contextWindow": 200000,
+    "cost": {
+      "input": 1,
+      "output": 5,
+      "cacheRead": 0.1,
+      "cacheWrite": 1.25
+    },
+    "inputMediaTypes": [
+      "image/*",
+      "application/pdf"
+    ],
+    "preferred": true
+  },
+  {
+    "id": "claude-haiku-4-5-20251001",
+    "provider": "anthropic",
+    "family": "haiku",
+    "version": "4.5-20251001",
+    "label": "Claude Haiku 4.5",
+    "releaseDate": "2025-10-15",
+    "reasoning": true,
+    "temperature": true,
+    "contextWindow": 200000,
+    "cost": {
+      "input": 1,
+      "output": 5,
+      "cacheRead": 0.1,
+      "cacheWrite": 1.25
+    },
+    "inputMediaTypes": [
+      "image/*",
+      "application/pdf"
+    ]
+  },
+  {
+    "id": "claude-sonnet-4-5",
+    "provider": "anthropic",
+    "family": "sonnet",
+    "version": "4.5",
+    "label": "Claude Sonnet 4.5 (latest)",
+    "releaseDate": "2025-09-29",
+    "reasoning": true,
+    "temperature": true,
+    "contextWindow": 1000000,
+    "cost": {
+      "input": 3,
+      "output": 15,
+      "cacheRead": 0.3,
+      "cacheWrite": 3.75
+    },
+    "inputMediaTypes": [
+      "image/*",
+      "application/pdf"
+    ],
+    "supersededBy": "claude-sonnet-4-6"
+  },
+  {
+    "id": "claude-sonnet-4-5-20250929",
+    "provider": "anthropic",
+    "family": "sonnet",
+    "version": "4.5-20250929",
+    "label": "Claude Sonnet 4.5",
+    "releaseDate": "2025-09-29",
+    "reasoning": true,
+    "temperature": true,
+    "contextWindow": 1000000,
+    "cost": {
+      "input": 3,
+      "output": 15,
+      "cacheRead": 0.3,
+      "cacheWrite": 3.75
+    },
+    "inputMediaTypes": [
+      "image/*",
+      "application/pdf"
+    ],
+    "supersededBy": "claude-sonnet-4-6"
+  },
+  {
+    "id": "gpt-5.6",
+    "provider": "openai",
+    "family": "gpt",
+    "version": "5.6",
+    "label": "GPT-5.6",
+    "releaseDate": "2026-07-09",
+    "reasoning": true,
+    "contextWindow": 1050000,
+    "cost": {
+      "input": 5,
+      "output": 30,
+      "cacheRead": 0.5,
+      "cacheWrite": 6.25
+    },
+    "inputMediaTypes": [
+      "image/*",
+      "application/pdf"
+    ],
+    "preferred": true,
+    "availability": [
+      "api"
+    ],
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ]
+  },
+  {
+    "id": "gpt-5.6-luna",
+    "provider": "openai",
+    "family": "gpt",
+    "version": "5.6-luna",
+    "label": "GPT-5.6 Luna",
+    "releaseDate": "2026-07-09",
+    "reasoning": true,
+    "contextWindow": 1050000,
+    "cost": {
+      "input": 1,
+      "output": 6,
+      "cacheRead": 0.1,
+      "cacheWrite": 1.25
+    },
+    "inputMediaTypes": [
+      "image/*",
+      "application/pdf"
+    ],
+    "preferred": true,
+    "availability": [
+      "api",
+      "codex"
+    ],
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ],
+    "priority": 3,
+    "aliases": [
+      "luna"
+    ]
+  },
+  {
+    "id": "gpt-5.6-sol",
+    "provider": "openai",
+    "family": "gpt",
+    "version": "5.6-sol",
+    "label": "GPT-5.6 Sol",
+    "releaseDate": "2026-07-09",
+    "reasoning": true,
+    "contextWindow": 1050000,
+    "cost": {
+      "input": 5,
+      "output": 30,
+      "cacheRead": 0.5,
+      "cacheWrite": 6.25
+    },
+    "inputMediaTypes": [
+      "image/*",
+      "application/pdf"
+    ],
+    "preferred": true,
+    "availability": [
+      "api",
+      "codex"
+    ],
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      "ultra"
+    ],
+    "priority": 1,
+    "aliases": [
+      "sol"
+    ]
+  },
+  {
+    "id": "gpt-5.6-terra",
+    "provider": "openai",
+    "family": "gpt",
+    "version": "5.6-terra",
+    "label": "GPT-5.6 Terra",
+    "releaseDate": "2026-07-09",
+    "reasoning": true,
+    "contextWindow": 1050000,
+    "cost": {
+      "input": 2.5,
+      "output": 15,
+      "cacheRead": 0.25,
+      "cacheWrite": 3.125
+    },
+    "inputMediaTypes": [
+      "image/*",
+      "application/pdf"
+    ],
+    "preferred": true,
+    "availability": [
+      "api",
+      "codex"
+    ],
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      "ultra"
+    ],
+    "priority": 2,
+    "aliases": [
+      "terra"
+    ]
+  },
+  {
+    "id": "gpt-5.5",
+    "provider": "openai",
+    "family": "gpt",
+    "version": "5.5",
+    "label": "GPT-5.5",
+    "releaseDate": "2026-04-23",
+    "reasoning": true,
+    "contextWindow": 1050000,
+    "cost": {
+      "input": 5,
+      "output": 30,
+      "cacheRead": 0.5
+    },
+    "inputMediaTypes": [
+      "image/*",
+      "application/pdf"
+    ],
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh"
+    ]
+  },
+  {
+    "id": "gpt-5.4",
+    "provider": "openai",
+    "family": "gpt",
+    "version": "5.4",
+    "label": "GPT-5.4",
+    "releaseDate": "2026-03-05",
+    "reasoning": true,
+    "contextWindow": 1050000,
+    "cost": {
+      "input": 2.5,
+      "output": 15,
+      "cacheRead": 0.25
+    },
+    "inputMediaTypes": [
+      "image/*",
+      "application/pdf"
+    ],
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh"
+    ]
+  },
+  {
+    "id": "gpt-5.2",
+    "provider": "openai",
+    "family": "gpt",
+    "version": "5.2",
+    "label": "GPT-5.2",
+    "releaseDate": "2025-12-11",
+    "reasoning": true,
+    "contextWindow": 400000,
+    "cost": {
+      "input": 1.75,
+      "output": 14,
+      "cacheRead": 0.175
+    },
+    "inputMediaTypes": [
+      "image/*"
+    ],
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh"
+    ]
+  },
+  {
+    "id": "gpt-5.1",
+    "provider": "openai",
+    "family": "gpt",
+    "version": "5.1",
+    "label": "GPT-5.1",
+    "releaseDate": "2025-11-13",
+    "reasoning": true,
+    "contextWindow": 400000,
+    "cost": {
+      "input": 1.25,
+      "output": 10,
+      "cacheRead": 0.125
+    },
+    "inputMediaTypes": [
+      "image/*"
+    ],
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high"
+    ]
+  },
+  {
+    "id": "gpt-5",
+    "provider": "openai",
+    "family": "gpt",
+    "version": "5",
+    "label": "GPT-5",
+    "releaseDate": "2025-08-07",
+    "reasoning": true,
+    "contextWindow": 400000,
+    "cost": {
+      "input": 1.25,
+      "output": 10,
+      "cacheRead": 0.125
+    },
+    "inputMediaTypes": [
+      "image/*"
+    ],
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high"
+    ]
+  },
+  {
+    "id": "gemini-3.5-flash-lite",
+    "provider": "google",
+    "family": "gemini",
+    "version": "3.5-flash-lite",
+    "label": "Gemini 3.5 Flash Lite",
+    "releaseDate": "2026-07-21",
+    "reasoning": true,
+    "temperature": true,
+    "contextWindow": 1048576,
+    "cost": {
+      "input": 0.3,
+      "output": 2.5,
+      "cacheRead": 0.03
+    },
+    "inputMediaTypes": [
+      "image/*",
+      "video/*",
+      "audio/*",
+      "application/pdf"
+    ],
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high"
+    ]
+  },
+  {
+    "id": "gemini-3.6-flash",
+    "provider": "google",
+    "family": "gemini",
+    "version": "3.6-flash",
+    "label": "Gemini 3.6 Flash",
+    "releaseDate": "2026-07-21",
+    "reasoning": true,
+    "temperature": true,
+    "contextWindow": 1048576,
+    "cost": {
+      "input": 1.5,
+      "output": 7.5,
+      "cacheRead": 0.15
+    },
+    "inputMediaTypes": [
+      "image/*",
+      "video/*",
+      "audio/*",
+      "application/pdf"
+    ],
+    "preferred": true,
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high"
+    ]
+  },
+  {
+    "id": "gemini-3.5-flash",
+    "provider": "google",
+    "family": "gemini",
+    "version": "3.5-flash",
+    "label": "Gemini 3.5 Flash",
+    "releaseDate": "2026-05-19",
+    "reasoning": true,
+    "temperature": true,
+    "contextWindow": 1048576,
+    "cost": {
+      "input": 1.5,
+      "output": 9,
+      "cacheRead": 0.15
+    },
+    "inputMediaTypes": [
+      "image/*",
+      "video/*",
+      "audio/*",
+      "application/pdf"
+    ],
+    "preferred": true,
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high"
+    ]
+  },
+  {
+    "id": "gemini-flash-latest",
+    "provider": "google",
+    "family": "gemini",
+    "version": "flash-latest",
+    "label": "Gemini Flash Latest",
+    "releaseDate": "2026-05-19",
+    "reasoning": true,
+    "temperature": true,
+    "contextWindow": 1048576,
+    "cost": {
+      "input": 1.5,
+      "output": 9,
+      "cacheRead": 0.15
+    },
+    "inputMediaTypes": [
+      "image/*",
+      "video/*",
+      "audio/*",
+      "application/pdf"
+    ],
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high"
+    ]
+  },
+  {
+    "id": "gemini-3.1-flash-lite",
+    "provider": "google",
+    "family": "gemini",
+    "version": "3.1-flash-lite",
+    "label": "Gemini 3.1 Flash Lite",
+    "releaseDate": "2026-05-07",
+    "reasoning": true,
+    "temperature": true,
+    "contextWindow": 1048576,
+    "cost": {
+      "input": 0.25,
+      "output": 1.5,
+      "cacheRead": 0.025
+    },
+    "inputMediaTypes": [
+      "image/*",
+      "video/*",
+      "audio/*",
+      "application/pdf"
+    ],
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high"
+    ]
+  },
+  {
+    "id": "gemini-flash-lite-latest",
+    "provider": "google",
+    "family": "gemini",
+    "version": "flash-lite-latest",
+    "label": "Gemini Flash-Lite Latest",
+    "releaseDate": "2026-05-07",
+    "reasoning": true,
+    "temperature": true,
+    "contextWindow": 1048576,
+    "cost": {
+      "input": 0.25,
+      "output": 1.5,
+      "cacheRead": 0.025
+    },
+    "inputMediaTypes": [
+      "image/*",
+      "video/*",
+      "audio/*",
+      "application/pdf"
+    ],
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high"
+    ]
+  },
+  {
+    "id": "gemini-robotics-er-1.6-preview",
+    "provider": "google",
+    "family": "gemini",
+    "version": "robotics-er-1.6-preview",
+    "label": "Gemini Robotics-ER 1.6 Preview",
+    "releaseDate": "2026-04-14",
+    "reasoning": true,
+    "temperature": true,
+    "contextWindow": 131072,
+    "cost": {
+      "input": 1,
+      "output": 5
+    },
+    "inputMediaTypes": [
+      "image/*",
+      "video/*",
+      "audio/*"
+    ]
+  },
+  {
+    "id": "gemini-3.1-flash-live-preview",
+    "provider": "google",
+    "family": "gemini",
+    "version": "3.1-flash-live-preview",
+    "label": "Gemini 3.1 Flash Live Preview",
+    "releaseDate": "2026-03-26",
+    "reasoning": true,
+    "temperature": true,
+    "contextWindow": 131072,
+    "cost": {
+      "input": 0.75,
+      "output": 4.5
+    },
+    "inputMediaTypes": [
+      "image/*",
+      "video/*",
+      "audio/*"
+    ],
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high"
+    ]
+  },
+  {
+    "id": "gemini-3.1-flash-lite-preview",
+    "provider": "google",
+    "family": "gemini",
+    "version": "3.1-flash-lite-preview",
+    "label": "Gemini 3.1 Flash Lite Preview",
+    "releaseDate": "2026-03-03",
+    "reasoning": true,
+    "temperature": true,
+    "contextWindow": 1048576,
+    "cost": {
+      "input": 0.25,
+      "output": 1.5,
+      "cacheRead": 0.025
+    },
+    "inputMediaTypes": [
+      "image/*",
+      "video/*",
+      "audio/*",
+      "application/pdf"
+    ],
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high"
+    ]
+  },
+  {
+    "id": "gemini-3.1-pro-preview",
+    "provider": "google",
+    "family": "gemini",
+    "version": "3.1-pro-preview",
+    "label": "Gemini 3.1 Pro Preview",
+    "releaseDate": "2026-02-19",
+    "reasoning": true,
+    "temperature": true,
+    "contextWindow": 1048576,
+    "cost": {
+      "input": 2,
+      "output": 12,
+      "cacheRead": 0.2
+    },
+    "inputMediaTypes": [
+      "image/*",
+      "video/*",
+      "audio/*",
+      "application/pdf"
+    ],
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high"
+    ]
+  },
+  {
+    "id": "gemini-3.1-pro-preview-customtools",
+    "provider": "google",
+    "family": "gemini",
+    "version": "3.1-pro-preview-customtools",
+    "label": "Gemini 3.1 Pro Preview Custom Tools",
+    "releaseDate": "2026-02-19",
+    "reasoning": true,
+    "temperature": true,
+    "contextWindow": 1048576,
+    "cost": {
+      "input": 2,
+      "output": 12,
+      "cacheRead": 0.2
+    },
+    "inputMediaTypes": [
+      "image/*",
+      "video/*",
+      "audio/*",
+      "application/pdf"
+    ],
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high"
+    ]
+  },
+  {
+    "id": "gemini-3-flash-preview",
+    "provider": "google",
+    "family": "gemini",
+    "version": "3-flash-preview",
+    "label": "Gemini 3 Flash Preview",
+    "releaseDate": "2025-12-17",
+    "reasoning": true,
+    "temperature": true,
+    "contextWindow": 1048576,
+    "cost": {
+      "input": 0.5,
+      "output": 3,
+      "cacheRead": 0.05
+    },
+    "inputMediaTypes": [
+      "image/*",
+      "video/*",
+      "audio/*",
+      "application/pdf"
+    ],
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high"
+    ]
+  },
+  {
+    "id": "gemini-3-pro-preview",
+    "provider": "google",
+    "family": "gemini",
+    "version": "3-pro-preview",
+    "label": "Gemini 3 Pro Preview",
+    "releaseDate": "2025-11-18",
+    "reasoning": true,
+    "temperature": true,
+    "contextWindow": 1048576,
+    "cost": {
+      "input": 2,
+      "output": 12,
+      "cacheRead": 0.2
+    },
+    "inputMediaTypes": [
+      "image/*",
+      "video/*",
+      "audio/*",
+      "application/pdf"
+    ],
+    "supportedEfforts": [
+      "low",
+      "high"
+    ]
+  },
+  {
+    "id": "gemini-2.5-computer-use-preview-10-2025",
+    "provider": "google",
+    "family": "gemini",
+    "version": "2.5-computer-use-preview-10-2025",
+    "label": "Gemini 2.5 Computer Use Preview 10-2025",
+    "releaseDate": "2025-10-07",
+    "reasoning": true,
+    "temperature": true,
+    "contextWindow": 131072,
+    "cost": {
+      "input": 1.25,
+      "output": 10
+    },
+    "inputMediaTypes": [
+      "image/*"
+    ]
+  },
+  {
+    "id": "gemini-2.5-flash",
+    "provider": "google",
+    "family": "gemini",
+    "version": "2.5-flash",
+    "label": "Gemini 2.5 Flash",
+    "releaseDate": "2025-06-17",
+    "reasoning": true,
+    "temperature": true,
+    "contextWindow": 1048576,
+    "cost": {
+      "input": 0.3,
+      "output": 2.5,
+      "cacheRead": 0.03
+    },
+    "inputMediaTypes": [
+      "image/*",
+      "audio/*",
+      "video/*",
+      "application/pdf"
+    ]
+  },
+  {
+    "id": "gemini-2.5-flash-lite",
+    "provider": "google",
+    "family": "gemini",
+    "version": "2.5-flash-lite",
+    "label": "Gemini 2.5 Flash-Lite",
+    "releaseDate": "2025-06-17",
+    "reasoning": true,
+    "temperature": true,
+    "contextWindow": 1048576,
+    "cost": {
+      "input": 0.1,
+      "output": 0.4,
+      "cacheRead": 0.01
+    },
+    "inputMediaTypes": [
+      "image/*",
+      "audio/*",
+      "video/*",
+      "application/pdf"
+    ]
+  },
+  {
+    "id": "gemini-2.5-pro",
+    "provider": "google",
+    "family": "gemini",
+    "version": "2.5-pro",
+    "label": "Gemini 2.5 Pro",
+    "releaseDate": "2025-06-17",
+    "reasoning": true,
+    "temperature": true,
+    "contextWindow": 1048576,
+    "cost": {
+      "input": 1.25,
+      "output": 10,
+      "cacheRead": 0.125
+    },
+    "inputMediaTypes": [
+      "image/*",
+      "audio/*",
+      "video/*",
+      "application/pdf"
+    ]
+  },
+  {
+    "id": "gemini-2.0-flash",
+    "provider": "google",
+    "family": "gemini",
+    "version": "2.0-flash",
+    "label": "Gemini 2.0 Flash",
+    "releaseDate": "2024-12-11",
+    "temperature": true,
+    "contextWindow": 1048576,
+    "cost": {
+      "input": 0.1,
+      "output": 0.4,
+      "cacheRead": 0.025
+    },
+    "inputMediaTypes": [
+      "image/*",
+      "audio/*",
+      "video/*",
+      "application/pdf"
+    ]
+  },
+  {
+    "id": "gemini-2.0-flash-lite",
+    "provider": "google",
+    "family": "gemini",
+    "version": "2.0-flash-lite",
+    "label": "Gemini 2.0 Flash-Lite",
+    "releaseDate": "2024-12-11",
+    "temperature": true,
+    "contextWindow": 1048576,
+    "cost": {
+      "input": 0.075,
+      "output": 0.3
+    },
+    "inputMediaTypes": [
+      "image/*",
+      "audio/*",
+      "video/*",
+      "application/pdf"
+    ]
+  },
+  {
+    "id": "deepseek-v4-flash",
+    "provider": "deepseek",
+    "family": "deepseek",
+    "version": "v4-flash",
+    "label": "DeepSeek V4 Flash",
+    "releaseDate": "2026-04-24",
+    "reasoning": true,
+    "temperature": true,
+    "contextWindow": 1000000,
+    "cost": {
+      "input": 0.14,
+      "output": 0.28,
+      "cacheRead": 0.0028
+    },
+    "preferred": true
+  },
+  {
+    "id": "deepseek-v4-pro",
+    "provider": "deepseek",
+    "family": "deepseek",
+    "version": "v4-pro",
+    "label": "DeepSeek V4 Pro",
+    "releaseDate": "2026-04-24",
+    "reasoning": true,
+    "temperature": true,
+    "contextWindow": 1000000,
+    "cost": {
+      "input": 0.435,
+      "output": 0.87,
+      "cacheRead": 0.003625
+    },
+    "preferred": true
+  }
+]
