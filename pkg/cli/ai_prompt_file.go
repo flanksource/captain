@@ -2,13 +2,13 @@ package cli
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/prompt"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/api/registry"
+	"github.com/flanksource/commons-db/shell"
 )
 
 // resolvePromptTemplate picks the prompt source for `captain ai prompt` and loads
@@ -192,30 +192,21 @@ func overlayCLI(base ai.Request, baseCfg ai.Config, o AIPromptOptions) (ai.Reque
 	return req, cfg, nil
 }
 
-// normalizePromptContextDir makes the prompt command's workspace explicit before
-// providers see the request. Empty means the invocation cwd; relative values are
-// interpreted from that same cwd so SDK child-process directories cannot change
-// the meaning of setup.cwd: .
+// normalizePromptContextDir resolves the complete Setup through its owning
+// commons-db type before providers see the request.
 func normalizePromptContextDir(req *ai.Request, cwd string) error {
 	if cwd == "" {
 		return fmt.Errorf("working directory is required")
 	}
-	if !filepath.IsAbs(cwd) {
-		abs, err := filepath.Abs(cwd)
-		if err != nil {
-			return fmt.Errorf("resolve working directory %q: %w", cwd, err)
-		}
-		cwd = abs
+	setup := shell.Setup{}
+	if req.Setup != nil {
+		setup = *req.Setup
 	}
-	if req.Cwd() == "" {
-		req.SetCwd(filepath.Clean(cwd))
-		return nil
+	resolved, err := setup.Resolve(cwd)
+	if err != nil {
+		return err
 	}
-	if filepath.IsAbs(req.Cwd()) {
-		req.SetCwd(filepath.Clean(req.Cwd()))
-		return nil
-	}
-	req.SetCwd(filepath.Clean(filepath.Join(cwd, req.Cwd())))
+	req.Setup = &resolved
 	return nil
 }
 

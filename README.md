@@ -523,7 +523,7 @@ task www:dev
 task www:build
 ```
 
-Starts an HTTP API and embedded web UI. The UI launches `captain ai agent` operations and opens follow-up chat windows that resume the returned session. `--dev` starts the Vite dev server from `pkg/cli/webapp`, binds the Go API to a random free port, and proxies `/api` to it. Pass `--port` to use a specific API port in development. Use `task www:dev` for the local Go-backed Vite proxy with the browser opened, and `task www:build` to rebuild the embedded web UI assets.
+Starts an HTTP API and embedded web UI. The UI launches `captain ai agent` operations and opens follow-up chat windows that resume the returned session. `--dev` starts the Vite dev server from `pkg/cli/webapp`, binds both the Go API and Vite UI to random free ports, and proxies `/api` to the API. Pass `--port` or `--ui-port` to use a specific development port. Use `task www:dev` for the local Go-backed Vite proxy with the browser opened, and `task www:build` to rebuild the embedded web UI assets.
 
 ### MCP server
 
