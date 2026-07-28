@@ -16,6 +16,10 @@ type ToolUse struct {
 	Namespace       string         `json:"namespace,omitempty"`
 	InputTokens     int            `json:"input_tokens,omitempty"`
 	OutputTokens    int            `json:"output_tokens,omitempty"`
+	// ReasoningTokens is disjoint from OutputTokens, per the api.Usage contract:
+	// OpenAI reports reasoning as a subset of output, so it is netted out at this
+	// parse boundary the way the live providers already net it.
+	ReasoningTokens int            `json:"reasoning_tokens,omitempty"`
 	CacheReadTokens int            `json:"cache_read_tokens,omitempty"`
 	TotalTokens     int            `json:"total_tokens,omitempty"`
 	ContextWindow   int            `json:"context_window,omitempty"`
@@ -24,6 +28,15 @@ type ToolUse struct {
 	AgentDesc       string         `json:"agent_desc,omitempty"`
 	Response        string         `json:"response,omitempty"`
 	RecordType      string         `json:"-"`
+	// SourceLine is the 1-based JSONL line the use was extracted from — the
+	// line of the FIRST record when several collapse into one row. It is the
+	// stable identity of the row across re-parses of a growing transcript;
+	// anything derived from position in the output slice is not.
+	SourceLine int64 `json:"-"`
+	// Provisional marks a row a later pass can still complete: a tool call whose
+	// output has not been written yet, or a reasoning span still open at EOF.
+	// Ingest must not treat such a row as final, or the correction is dropped.
+	Provisional bool `json:"-"`
 }
 
 type Filter struct {

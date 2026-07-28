@@ -309,22 +309,35 @@ func transcriptList(rows []transcriptRow) clickyapi.List {
 			continue
 		}
 		text := rows[i].tool.Pretty()
-		repeats := countRepeatedRows(rows, i, text.String())
+		detail := rows[i].tool.Detail()
+		repeats := countRepeatedRows(rows, i, transcriptRowKey(text, detail))
 		if repeats > 1 {
 			text = text.Append(fmt.Sprintf("  ×%d", repeats), "text-muted")
 		}
-		list.Items = append(list.Items, transcriptListItem{text: text})
+		list.Items = append(list.Items, transcriptListItem{text: text, detail: detail})
 		i += repeats
 	}
 	return list
 }
 
-// countRepeatedRows returns how many rows starting at start render identically
-// to rendered, always at least 1.
-func countRepeatedRows(rows []transcriptRow, start int, rendered string) int {
+// transcriptRowKey identifies a row for repeat collapsing. It has to include the
+// detail: Pretty() is a bounded one-line preview, so two different long messages
+// that happen to share an opening sentence render the same first line and would
+// otherwise collapse into a single row tagged ×2.
+func transcriptRowKey(text clickyapi.Text, detail clickyapi.Textable) string {
+	if detail == nil {
+		return text.String()
+	}
+	return text.String() + "\x00" + detail.String()
+}
+
+// countRepeatedRows returns how many rows starting at start carry the same key,
+// always at least 1.
+func countRepeatedRows(rows []transcriptRow, start int, key string) int {
 	count := 1
 	for next := start + 1; next < len(rows); next++ {
-		if rows[next].tool == nil || rows[next].tool.Pretty().String() != rendered {
+		tool := rows[next].tool
+		if tool == nil || transcriptRowKey(tool.Pretty(), tool.Detail()) != key {
 			break
 		}
 		count++
@@ -333,13 +346,30 @@ func countRepeatedRows(rows []transcriptRow, start int, rendered string) int {
 }
 
 type transcriptListItem struct {
-	text clickyapi.Text
+	text   clickyapi.Text
+	detail clickyapi.Textable
 }
 
-func (i transcriptListItem) String() string   { return i.text.String() + "\n" }
-func (i transcriptListItem) ANSI() string     { return i.text.ANSI() }
-func (i transcriptListItem) HTML() string     { return i.text.HTML() }
-func (i transcriptListItem) Markdown() string { return i.text.Markdown() }
+func (i transcriptListItem) String() string { return i.text.String() + "\n" }
+func (i transcriptListItem) ANSI() string   { return i.text.ANSI() }
+
+// HTML keeps the one-line preview as the visible row and hangs the full body off
+// a native <details>. The preview exists because a terminal row is one line; HTML
+// has no such limit, and cutting the body to a terminal width there is what threw
+// away most of every long assistant message.
+func (i transcriptListItem) HTML() string {
+	if i.detail == nil {
+		return i.text.HTML()
+	}
+	return "<details><summary>" + i.text.HTML() + "</summary>" + i.detail.HTML() + "</details>"
+}
+
+func (i transcriptListItem) Markdown() string {
+	if i.detail == nil {
+		return i.text.Markdown()
+	}
+	return i.text.Markdown() + "\n\n" + i.detail.Markdown()
+}
 
 func partTool(m Message, p Part, agent *Agent) tools.Tool {
 	switch p.Type {

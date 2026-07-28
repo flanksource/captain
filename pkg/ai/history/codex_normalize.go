@@ -1,9 +1,12 @@
 package history
 
 import (
+	"fmt"
+	"maps"
 	"strings"
 	"time"
 
+	"github.com/flanksource/captain/pkg/claude/tools"
 	"github.com/segmentio/encoding/json"
 )
 
@@ -28,24 +31,64 @@ type CodexToolCall struct {
 }
 
 // NormalizeCodexToolCall maps a native Codex call into the canonical history
-// tool shape consumed by both live providers and transcript rendering.
+// tool shape. A freeform `exec` script can describe several operations, so this
+// returns only the first of them; callers that render a transcript want
+// NormalizeCodexToolCalls.
 func NormalizeCodexToolCall(call CodexToolCall) ToolUse {
+	uses := NormalizeCodexToolCalls(call)
+	if len(uses) == 0 {
+		return ToolUse{}
+	}
+	return uses[0]
+}
+
+// NormalizeCodexToolCalls maps a native Codex call into every row it describes.
+// Only the freeform `exec` tool yields more than one: it takes a JavaScript
+// program rather than a command, and one program routinely runs a handful of
+// shell commands and applies a patch.
+func NormalizeCodexToolCalls(call CodexToolCall) []ToolUse {
+	input := codexCallInput(call)
+	script, isScript := codexFreeformScript(call, input)
+	if !isScript {
+		return []ToolUse{normalizeCodexCall(call, input)}
+	}
+	invocations, err := parseCodexExecScript(script)
+	if err != nil {
+		return []ToolUse{codexExecScriptUse(call, script, err)}
+	}
+	if len(invocations) == 0 {
+		// A script that only prints. It ran, so it earns a row; it just has no
+		// operation to name.
+		return []ToolUse{codexExecScriptUse(call, script, nil)}
+	}
+	return codexScriptRows(call, script, invocations)
+}
+
+func codexCallInput(call CodexToolCall) map[string]any {
 	input := codexArgumentsMap(call.Arguments)
 	for key, value := range call.Input {
 		input[key] = value
 	}
+	return input
+}
 
+// codexFreeformScript returns the JavaScript program behind a freeform `exec`
+// call. The same tool name also arrives with a plain command, which is not a
+// script and must not be parsed as one.
+func codexFreeformScript(call CodexToolCall, input map[string]any) (string, bool) {
+	if call.Name != "exec" || call.Command != "" {
+		return "", false
+	}
+	if stringValue(input["command"]) != "" || stringValue(input["cmd"]) != "" {
+		return "", false
+	}
+	script, _ := input["input"].(string)
+	return script, script != ""
+}
+
+func normalizeCodexCall(call CodexToolCall, input map[string]any) ToolUse {
 	command := firstNonEmpty(call.Command, stringValue(input["command"]), stringValue(input["cmd"]))
 	cwd := call.CWD
-	if command == "" && call.Name == "exec" {
-		if script, ok := input["input"].(string); ok && script != "" {
-			var err error
-			command, cwd, err = parseCodexExecScript(script, cwd)
-			if err != nil {
-				input["parse_error"] = err.Error()
-			}
-		}
-	}
 	if command == "" && call.Name == "" {
 		command = codexScalarArgument(call.Arguments)
 		delete(input, "arguments")
@@ -57,6 +100,8 @@ func NormalizeCodexToolCall(call CodexToolCall) ToolUse {
 
 	tool := call.Name
 	switch call.Name {
+	case "apply_patch":
+		tool = codexApplyPatchTool(input)
 	case "update_plan":
 		tool = "TodoWrite"
 		if plan, ok := input["plan"]; ok {
@@ -119,7 +164,145 @@ func NormalizeCodexToolCall(call CodexToolCall) ToolUse {
 	return use
 }
 
-func buildToolUse(callEvent, outputEvent CodexEvent, cwd, sessionID string) ToolUse {
+// codexApplyPatchTool rewrites a patch payload into the file operation it really
+// is and returns the tool that renders it. A single-file patch becomes the same
+// Write or Edit row the Claude side produces -- 82% of them are single-file --
+// so it shows a path and a diff rather than a blob of patch syntax.
+func codexApplyPatchTool(input map[string]any) string {
+	patch := firstNonEmpty(
+		stringValue(input["input"]),
+		stringValue(input["patch"]),
+		stringValue(input["arguments"]),
+	)
+	files := tools.ParseApplyPatch(patch)
+	if len(files) == 0 {
+		return "ApplyPatch"
+	}
+	input["files"] = files
+	if len(files) > 1 {
+		return "ApplyPatch"
+	}
+
+	file := files[0]
+	input["file_path"] = file.Path
+	switch {
+	case file.MoveTo != "":
+		input["operation"] = "move"
+		input["to"] = file.MoveTo
+		return "ApplyPatch"
+	case file.Op == tools.ApplyPatchDelete:
+		input["operation"] = "delete"
+		return "ApplyPatch"
+	case file.Op == tools.ApplyPatchAdd:
+		input["content"] = file.Content
+		return "Write"
+	default:
+		input["old_string"] = file.Old
+		input["new_string"] = file.New
+		return "Edit"
+	}
+}
+
+// codexScriptRows turns a parsed freeform exec script into transcript rows. All
+// of a script's shell commands merge into one Bash row -- they read as one shell
+// block, which is how the model wrote them -- while every other tool it invokes
+// gets the same first-class row its function_call form already produces.
+func codexScriptRows(call CodexToolCall, script string, invocations []codexScriptCall) []ToolUse {
+	commands := make([]codexExecCommand, 0, len(invocations))
+	for _, invocation := range invocations {
+		if invocation.Name != codexExecCommandTool {
+			continue
+		}
+		command, err := codexExecCommandFrom(invocation)
+		if err != nil {
+			return []ToolUse{codexExecScriptUse(call, script, err)}
+		}
+		commands = append(commands, command)
+	}
+	merged, workdir, err := renderCodexExecCommands(commands, call.CWD)
+	if err != nil {
+		return []ToolUse{codexExecScriptUse(call, script, err)}
+	}
+
+	rows := make([]ToolUse, 0, len(invocations))
+	shellRow := -1
+	for _, invocation := range invocations {
+		nested := call
+		nested.Arguments = nil
+		nested.Input = nil
+		nested.Response = ""
+		if invocation.Name == codexExecCommandTool {
+			if shellRow >= 0 {
+				continue
+			}
+			shellRow = len(rows)
+			nested.Name = ""
+			nested.Command = merged
+			nested.CWD = workdir
+			// The script stays on the shell row as provenance: it is what the
+			// model actually wrote, and the merged command is a rendering of it.
+			rows = append(rows, normalizeCodexCall(nested, map[string]any{"input": script}))
+			continue
+		}
+		nested.Name = invocation.Name
+		nested.Command = ""
+		rows = append(rows, normalizeCodexCall(nested, maps.Clone(invocation.Args)))
+	}
+	return codexScriptRowIdentity(rows, call, shellRow)
+}
+
+// codexScriptRowIdentity gives every row after the first its own tool-use id --
+// they all came from one call_id, and a shared id would collapse them downstream
+// -- and attaches the script's output to the row that produced it.
+func codexScriptRowIdentity(rows []ToolUse, call CodexToolCall, shellRow int) []ToolUse {
+	if len(rows) == 0 {
+		return rows
+	}
+	responseRow := shellRow
+	if responseRow < 0 {
+		responseRow = len(rows) - 1
+	}
+	for index := range rows {
+		if index > 0 && call.ID != "" {
+			rows[index].ToolUseID = fmt.Sprintf("%s#%d", call.ID, index)
+		}
+		if index == responseRow {
+			rows[index].Response = call.Response
+		}
+	}
+	return rows
+}
+
+// codexExecScriptUse is the row for a freeform script that resolved to no
+// operation. The script itself is the content -- rendering it as an opaque JSON
+// dump, or worse as a command with `{{js:…}}` mustaches in it, is what made the
+// parser's failures invisible.
+func codexExecScriptUse(call CodexToolCall, script string, err error) ToolUse {
+	input := map[string]any{"script": script}
+	if err != nil {
+		input["parse_error"] = err.Error()
+	}
+	return ToolUse{
+		Tool:            "CodexExecScript",
+		Input:           input,
+		Timestamp:       call.Timestamp,
+		CWD:             call.CWD,
+		SessionID:       call.SessionID,
+		TurnID:          call.TurnID,
+		ToolUseID:       call.ID,
+		Source:          "codex",
+		Model:           call.Model,
+		ReasoningEffort: call.ReasoningEffort,
+		Namespace:       call.Namespace,
+		Response:        call.Response,
+		RecordType:      call.RecordType,
+	}
+}
+
+// buildToolUses maps a call record and its output record into rows. One record
+// pair is usually one row, but a freeform `exec` call is a JavaScript program
+// that can invoke several tools, and each invocation earns its own row.
+func buildToolUses(callEvent, outputEvent CodexEvent, cwd, sessionID string) []ToolUse {
 	timestamp := callEvent.Time()
 	if timestamp == nil {
 		timestamp = outputEvent.Time()
@@ -128,7 +311,7 @@ func buildToolUse(callEvent, outputEvent CodexEvent, cwd, sessionID string) Tool
 	if callEvent.Payload.Input != "" {
 		input = map[string]any{"input": callEvent.Payload.Input}
 	}
-	return NormalizeCodexToolCall(CodexToolCall{
+	return NormalizeCodexToolCalls(CodexToolCall{
 		Name:       callEvent.Payload.Name,
 		Namespace:  callEvent.Payload.Namespace,
 		Arguments:  callEvent.Payload.Arguments,
@@ -141,6 +324,25 @@ func buildToolUse(callEvent, outputEvent CodexEvent, cwd, sessionID string) Tool
 		Response:   extractCommandOutput(CodexOutputText(outputEvent.Payload.Output)),
 		RecordType: "response_item." + callEvent.Payload.Type,
 	})
+}
+
+// withSourceLine stamps rows with the JSONL line that produced them. Rows are
+// keyed on it downstream, so it must be the line of the record that opened the
+// row -- the call, not the output that completes it several lines later.
+func withSourceLine(uses []ToolUse, line int64) []ToolUse {
+	for index := range uses {
+		uses[index].SourceLine = line
+	}
+	return uses
+}
+
+// asProvisional marks rows a later pass can still complete, so ingest keeps
+// offering them instead of sealing a half-written row forever.
+func asProvisional(uses []ToolUse) []ToolUse {
+	for index := range uses {
+		uses[index].Provisional = true
+	}
+	return uses
 }
 
 func codexArgumentsMap(arguments json.RawMessage) map[string]any {

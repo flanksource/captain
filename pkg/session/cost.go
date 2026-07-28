@@ -51,6 +51,7 @@ func usageFromCost(c api.Cost) api.Usage {
 	return api.Usage{
 		InputTokens:      c.InputTokens,
 		OutputTokens:     c.OutputTokens,
+		ReasoningTokens:  c.ReasoningTokens,
 		CacheReadTokens:  c.CacheReadTokens,
 		CacheWriteTokens: c.CacheWriteTokens,
 	}

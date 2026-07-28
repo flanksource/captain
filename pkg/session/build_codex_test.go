@@ -214,11 +214,20 @@ func TestBuildCodexSession_RichCodexMetadata(t *testing.T) {
 	if got, want := s.Usage.CacheReadTokens, 300; got != want {
 		t.Fatalf("cache read tokens = %d, want %d", got, want)
 	}
-	if got, want := s.Usage.OutputTokens, 50; got != want {
+	// The buckets are disjoint: OpenAI reports reasoning as a subset of output, so
+	// output nets down to 50-10 and reasoning carries the 10. Leaving output at 50
+	// would double-count it in TotalTokens.
+	if got, want := s.Usage.OutputTokens, 40; got != want {
 		t.Fatalf("output tokens = %d, want %d", got, want)
+	}
+	if got, want := s.Usage.ReasoningTokens, 10; got != want {
+		t.Fatalf("reasoning tokens = %d, want %d", got, want)
 	}
 	if s.Cost.TotalTokens != 1050 {
 		t.Fatalf("total tokens = %d, want 1050", s.Cost.TotalTokens)
+	}
+	if got, want := s.Usage.TotalTokens(), 1050; got != want {
+		t.Fatalf("summed usage buckets = %d, want %d", got, want)
 	}
 	if s.Context == nil || s.Context.UsedTokens != 1000 || s.Context.WindowTokens != 2000 || s.Context.FreePercent != 50 {
 		t.Fatalf("context = %+v, want 1000/2000/50", s.Context)

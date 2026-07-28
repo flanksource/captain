@@ -87,8 +87,13 @@ type Message struct {
 	Provenance *Provenance     `json:"provenance,omitempty"`
 	Raw        json.RawMessage `json:"raw,omitempty"`
 	// SourceLine is the 1-based JSONL line the message came from (0 when the
-	// source format has no line mapping, e.g. codex tool-use projection).
+	// source format has no line mapping).
 	SourceLine int64 `json:"sourceLine,omitempty"`
 
 	AgentID string `json:"-"`
+	// Provisional marks a message a later parse of a grown transcript can still
+	// complete -- a tool call whose result had not been written yet, or a
+	// reasoning span still open at EOF. Incremental ingest must keep re-offering
+	// it instead of sealing the half-written row behind its high-water mark.
+	Provisional bool `json:"-"`
 }

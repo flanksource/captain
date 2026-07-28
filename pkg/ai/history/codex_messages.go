@@ -7,27 +7,33 @@ import (
 	"github.com/flanksource/captain/pkg/ai/assistanttags"
 )
 
-func extractResponseItem(event CodexEvent, pendingCall map[string]CodexEvent, cwd, sessionID string) []ToolUse {
+// codexPendingCall is a tool call awaiting its output, kept with the line it
+// arrived on so the merged row keeps the CALL's identity. Keying the merged row
+// on the output line instead would give the row a different identity than the
+// unpaired row a previous pass wrote, and the correction would never land.
+type codexPendingCall struct {
+	event CodexEvent
+	line  int64
+}
+
+func extractResponseItem(event CodexEvent, pendingCall map[string]codexPendingCall, cwd, sessionID string, line int64) []ToolUse {
 	switch event.Payload.Type {
-	case "function_call", "custom_tool_call":
-		pendingCall[event.Payload.CallID] = event
-		return nil
-	case "tool_search_call":
-		pendingCall[event.Payload.CallID] = event
+	case "function_call", "custom_tool_call", "tool_search_call":
+		pendingCall[event.Payload.CallID] = codexPendingCall{event: event, line: line}
 		return nil
 	case "function_call_output", "custom_tool_call_output":
-		callEvent, ok := pendingCall[event.Payload.CallID]
+		call, ok := pendingCall[event.Payload.CallID]
 		if !ok {
 			return nil
 		}
 		delete(pendingCall, event.Payload.CallID)
-		return []ToolUse{buildToolUse(callEvent, event, cwd, sessionID)}
+		return withSourceLine(buildToolUses(call.event, event, cwd, sessionID), call.line)
 	case "tool_search_output":
-		callEvent, ok := pendingCall[event.Payload.CallID]
+		call, ok := pendingCall[event.Payload.CallID]
 		if ok {
 			delete(pendingCall, event.Payload.CallID)
 		}
-		return buildToolSearchUses(callEvent, event, cwd, sessionID)
+		return withSourceLine(buildToolSearchUses(call.event, event, cwd, sessionID), call.line)
 	case "message":
 		var tool string
 		var text string
@@ -44,6 +50,15 @@ func extractResponseItem(event CodexEvent, pendingCall map[string]CodexEvent, cw
 			if tool, ok = codexUserMessageTool(text); !ok {
 				return nil
 			}
+		case "developer":
+			// A developer message is briefing, never conversation: the
+			// primary-agent instructions, memory guidance and multi-agent mode
+			// rules the model was actually given. The default case below used to
+			// drop it unconditionally, so none of that context reached the
+			// transcript. It is a System row, and unlike user text it is never
+			// filtered as "internal" — being internal is the whole point of it.
+			text = codexContentText(event.Payload.Content, "input_text", "text")
+			tool = "System"
 		default:
 			return nil
 		}
