@@ -19,11 +19,35 @@ var _ = Describe("serve ports", func() {
 	)
 
 	It("accepts an ephemeral port only in development", func() {
-		options := ServeOptions{Host: "localhost", Port: 0, Dev: true, UIPort: 5183, ThreadsFile: "threads.json"}
+		options := ServeOptions{Host: "localhost", Port: 0, Dev: true, UIPort: 0, ThreadsFile: "threads.json"}
 		Expect(options.validate()).To(Succeed())
 
 		options.Dev = false
 		Expect(options.validate()).To(MatchError("invalid --port 0"))
+	})
+
+	It("defaults the development UI port to automatic selection", func() {
+		flag := NewServeCommand("test").Flags().Lookup("ui-port")
+		Expect(flag).NotTo(BeNil())
+		Expect(flag.DefValue).To(Equal("0"))
+	})
+
+	It("builds Vite arguments with an available port and Vite-owned browser opening", func() {
+		args, err := viteDevServerArgs(0, true)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(args).To(HaveLen(7))
+		Expect(args[:3]).To(Equal([]string{"exec", "vite", "--port"}))
+		port, err := strconv.Atoi(args[3])
+		Expect(err).NotTo(HaveOccurred())
+		Expect(port).To(BeNumerically(">", 0))
+		Expect(args[4:]).To(Equal([]string{"--open", "--host", "localhost"}))
+		Expect(args).NotTo(ContainElement("--strictPort"))
+	})
+
+	It("keeps an explicit Vite port strict", func() {
+		args, err := viteDevServerArgs(62183, false)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(args).To(Equal([]string{"exec", "vite", "--port", "62183", "--strictPort", "--host", "localhost"}))
 	})
 
 	It("keeps the ephemeral API port reserved for the server", func() {

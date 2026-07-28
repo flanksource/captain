@@ -13,7 +13,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -51,7 +50,7 @@ func NewServeCommand(version string) *cobra.Command {
 	opts := ServeOptions{
 		Host:        "localhost",
 		Port:        9020,
-		UIPort:      5183,
+		UIPort:      0,
 		ThreadsFile: ".captain/chat-threads.json",
 	}
 
@@ -80,7 +79,7 @@ proxies /api back to this Go process.`,
 	cmd.Flags().StringVar(&opts.Host, "host", opts.Host, "Host to bind the API server to")
 	cmd.Flags().IntVarP(&opts.Port, "port", "p", opts.Port, "Port to bind the API server to (random when --dev is set)")
 	cmd.Flags().BoolVar(&opts.Dev, "dev", false, "Launch the Vite dev server with /api proxied to Captain")
-	cmd.Flags().IntVar(&opts.UIPort, "ui-port", opts.UIPort, "Port for the Vite dev server when --dev is set")
+	cmd.Flags().IntVar(&opts.UIPort, "ui-port", opts.UIPort, "Port for the Vite dev server when --dev is set (random by default)")
 	cmd.Flags().BoolVar(&opts.Open, "open", false, "Open the web UI in the default browser")
 	cmd.Flags().StringVar(&opts.ThreadsFile, "threads-file", opts.ThreadsFile, "Path to persisted chat thread JSON")
 	cmd.Flags().StringArrayVar(&opts.PromptDirs, "prompt-dir", nil, "Additional local directory containing .prompt files (repeatable)")
@@ -253,7 +252,14 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 
 	var vite *exec.Cmd
 	if opts.Dev {
-		vite, err = startCaptainViteDevServer(ctx, opts.Host, servePort, opts.UIPort, stdout, stderr)
+		vite, err = startCaptainViteDevServer(ctx, viteDevServerOptions{
+			APIHost: opts.Host,
+			APIPort: servePort,
+			UIPort:  opts.UIPort,
+			Open:    opts.Open,
+			Stdout:  stdout,
+			Stderr:  stderr,
+		})
 		if err != nil {
 			_ = httpSrv.Close()
 			return err
@@ -266,11 +272,8 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 		}()
 	}
 
-	if opts.Open {
+	if opts.Open && !opts.Dev {
 		openURL := fmt.Sprintf("http://%s/", addr)
-		if opts.Dev {
-			openURL = fmt.Sprintf("http://localhost:%d/", opts.UIPort)
-		}
 		go func() {
 			time.Sleep(500 * time.Millisecond)
 			if err := rpc.OpenBrowser(openURL); err != nil {
@@ -289,21 +292,34 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	}
 }
 
-func startCaptainViteDevServer(ctx context.Context, apiHost string, apiPort, uiPort int, stdout, stderr io.Writer) (*exec.Cmd, error) {
+type viteDevServerOptions struct {
+	APIHost string
+	APIPort int
+	UIPort  int
+	Open    bool
+	Stdout  io.Writer
+	Stderr  io.Writer
+}
+
+func startCaptainViteDevServer(ctx context.Context, opts viteDevServerOptions) (*exec.Cmd, error) {
 	webappDir, err := captainWebappDevDir()
 	if err != nil {
 		return nil, err
 	}
-	targetHost := apiHost
+	targetHost := opts.APIHost
 	if targetHost == "0.0.0.0" || targetHost == "::" {
 		targetHost = "127.0.0.1"
 	}
-	apiURL := fmt.Sprintf("http://%s:%d", targetHost, apiPort)
-	vite := exec.CommandContext(ctx, "pnpm", "exec", "vite", "--port", strconv.Itoa(uiPort), "--strictPort")
+	apiURL := fmt.Sprintf("http://%s:%d", targetHost, opts.APIPort)
+	args, err := viteDevServerArgs(opts.UIPort, opts.Open)
+	if err != nil {
+		return nil, err
+	}
+	vite := exec.CommandContext(ctx, "pnpm", args...)
 	vite.Dir = webappDir
 	vite.Env = append(os.Environ(), "CAPTAIN_API_URL="+apiURL)
-	vite.Stdout = stdout
-	vite.Stderr = stderr
+	vite.Stdout = opts.Stdout
+	vite.Stderr = opts.Stderr
 	vite.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	vite.Cancel = func() error {
 		if vite.Process == nil {
@@ -315,7 +331,7 @@ func startCaptainViteDevServer(ctx context.Context, apiHost string, apiPort, uiP
 	if err := vite.Start(); err != nil {
 		return nil, fmt.Errorf("start vite dev server in %s: %w", webappDir, err)
 	}
-	fmt.Fprintf(stdout, "  Dev UI:        http://localhost:%d/  (/api -> %s)\n", uiPort, apiURL)
+	fmt.Fprintf(opts.Stdout, "  Dev API proxy: /api -> %s\n", apiURL)
 	return vite, nil
 }
 

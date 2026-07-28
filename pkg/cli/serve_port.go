@@ -14,6 +14,29 @@ func effectiveServePort(dev, portFlagSet bool, configuredPort int) int {
 	return configuredPort
 }
 
+func viteDevServerArgs(configuredPort int, open bool) ([]string, error) {
+	port := configuredPort
+	if port == 0 {
+		listener, _, selectedPort, err := listenCaptainServer("localhost", 0)
+		if err != nil {
+			return nil, fmt.Errorf("select Vite dev port: %w", err)
+		}
+		if err := listener.Close(); err != nil {
+			return nil, fmt.Errorf("release Vite dev port %d: %w", selectedPort, err)
+		}
+		port = selectedPort
+	}
+
+	args := []string{"exec", "vite", "--port", strconv.Itoa(port)}
+	if configuredPort != 0 {
+		args = append(args, "--strictPort")
+	}
+	if open {
+		args = append(args, "--open")
+	}
+	return append(args, "--host", "localhost"), nil
+}
+
 func (o ServeOptions) validate() error {
 	if strings.TrimSpace(o.Host) == "" {
 		return fmt.Errorf("host cannot be empty")
@@ -21,7 +44,7 @@ func (o ServeOptions) validate() error {
 	if o.Port < 0 || o.Port > 65535 || (!o.Dev && o.Port == 0) {
 		return fmt.Errorf("invalid --port %d", o.Port)
 	}
-	if o.Dev && (o.UIPort < 1 || o.UIPort > 65535) {
+	if o.Dev && (o.UIPort < 0 || o.UIPort > 65535) {
 		return fmt.Errorf("invalid --ui-port %d", o.UIPort)
 	}
 	if strings.TrimSpace(o.ThreadsFile) == "" {
