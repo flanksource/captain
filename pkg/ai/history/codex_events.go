@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/claude/tools"
 )
 
@@ -70,7 +71,8 @@ func buildCodexEventUse(event CodexEvent, cwd, sessionID string) ToolUse {
 		TurnID:          codexEventTurnID(event),
 		Source:          "codex",
 		InputTokens:     codexNonCachedInputTokens(usage),
-		OutputTokens:    usage.OutputTokens,
+		OutputTokens:    api.NetOutputTokens(usage.OutputTokens, usage.ReasoningOutputTokens),
+		ReasoningTokens: usage.ReasoningOutputTokens,
 		CacheReadTokens: usage.CachedInputTokens,
 		TotalTokens:     usage.TotalTokens,
 		ContextWindow:   eventContextWindow(event),

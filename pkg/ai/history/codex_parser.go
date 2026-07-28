@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -169,8 +170,9 @@ func ExtractCodexToolUsesFromReader(reader io.Reader) ([]ToolUse, error) {
 	// routinely share a RecordType and a millisecond.
 	var records [][]ToolUse
 	var sessionCWD, sessionID, currentTurn, currentModel, currentEffort string
-	pendingCall := make(map[string]CodexEvent)
+	pendingCall := make(map[string]codexPendingCall)
 	var reasoning codexReasoningCollapser
+	var lineNumber int64
 	stamp := func(uses []ToolUse) []ToolUse {
 		for index := range uses {
 			if uses[index].TurnID == "" {
@@ -181,6 +183,9 @@ func ExtractCodexToolUsesFromReader(reader io.Reader) ([]ToolUse, error) {
 			}
 			if uses[index].ReasoningEffort == "" {
 				uses[index].ReasoningEffort = currentEffort
+			}
+			if uses[index].SourceLine == 0 {
+				uses[index].SourceLine = lineNumber
 			}
 		}
 		return uses
@@ -196,6 +201,7 @@ func ExtractCodexToolUsesFromReader(reader io.Reader) ([]ToolUse, error) {
 	}
 
 	for scanner.Scan() {
+		lineNumber++
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
@@ -205,17 +211,23 @@ func ExtractCodexToolUsesFromReader(reader io.Reader) ([]ToolUse, error) {
 			log.Debugf("Error parsing codex line: %v", err)
 			continue
 		}
+		// Every record that is not a reasoning record closes the pending span.
+		// Flushing only at turn_context/EOF is what made the span grow on each
+		// tailing pass -- a different count, a different dedupe key, a different
+		// row -- and shifted every downstream ordinal with it.
+		if !isCodexReasoningRecord(event) {
+			add(reasoning.flush())
+		}
 		switch event.Type {
 		case "session_meta":
 			sessionCWD = event.Payload.CWD
 			sessionID = event.Payload.ID
 		case "turn_context":
-			// Flush before the turn's model/effort roll over so the closing
-			// span is stamped with the turn it belongs to. turn_context is the
-			// only reliable turn boundary: older rollouts carry no turn_id at
-			// all, so keying the span on turn_id alone would fold a whole
-			// multi-turn session into one bogus span.
-			add(reasoning.flush())
+			// The span was already flushed above, before the turn's model and
+			// effort roll over, so the closing span is stamped with the turn it
+			// belongs to. turn_context is the only reliable turn boundary: older
+			// rollouts carry no turn_id at all, so keying the span on turn_id
+			// alone would fold a whole multi-turn session into one bogus span.
 			currentTurn = firstNonEmpty(event.Payload.TurnID, currentTurn)
 			currentModel = firstNonEmpty(event.Payload.Model, currentModel)
 			if IsCodexAutoReviewModel(currentModel) {
@@ -224,10 +236,10 @@ func ExtractCodexToolUsesFromReader(reader io.Reader) ([]ToolUse, error) {
 			currentEffort = firstNonEmpty(event.Payload.Effort, currentEffort)
 		case "response_item":
 			if event.Payload.Type == "reasoning" {
-				add(reasoning.observe(event, currentTurn, sessionCWD, sessionID))
+				add(reasoning.observe(event, currentTurn, sessionCWD, sessionID, lineNumber))
 				continue
 			}
-			add(extractResponseItem(event, pendingCall, sessionCWD, sessionID))
+			add(extractResponseItem(event, pendingCall, sessionCWD, sessionID, lineNumber))
 		case "event_msg":
 			currentTurn = firstNonEmpty(event.Payload.TurnID, currentTurn)
 			add(extractEventMsg(event, sessionCWD, sessionID))
@@ -241,14 +253,36 @@ func ExtractCodexToolUsesFromReader(reader io.Reader) ([]ToolUse, error) {
 			add(extractLiveError(event, sessionCWD, sessionID))
 		}
 	}
-	add(reasoning.flush())
-	for _, callEvent := range pendingCall {
-		add([]ToolUse{buildToolUse(callEvent, CodexEvent{}, sessionCWD, sessionID)})
+	// Everything flushed past this point is provisional: the transcript is still
+	// being appended to, so the span can grow and the unpaired call will get its
+	// output on a later pass. Ingest must keep re-offering these rows -- sealing
+	// them here is what left 21% of Codex tool parts with no result forever.
+	if reasoning.pending() {
+		add(asProvisional(reasoning.flush()))
+	}
+	for _, call := range sortedCodexPendingCalls(pendingCall) {
+		add(asProvisional(withSourceLine(buildToolUses(call.event, CodexEvent{}, sessionCWD, sessionID), call.line)))
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
 	return dedupeCodexToolUses(records), nil
+}
+
+func isCodexReasoningRecord(event CodexEvent) bool {
+	return event.Type == "response_item" && event.Payload.Type == "reasoning"
+}
+
+// sortedCodexPendingCalls orders the leftover calls by the line they arrived on.
+// Map iteration order would otherwise make the tail of the transcript differ
+// between two parses of the same bytes.
+func sortedCodexPendingCalls(pending map[string]codexPendingCall) []codexPendingCall {
+	calls := make([]codexPendingCall, 0, len(pending))
+	for _, call := range pending {
+		calls = append(calls, call)
+	}
+	sort.Slice(calls, func(i, j int) bool { return calls[i].line < calls[j].line })
+	return calls
 }
 
 func FindCodexSessionFiles() ([]string, error) {

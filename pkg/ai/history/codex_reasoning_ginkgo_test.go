@@ -32,13 +32,11 @@ var _ = Describe("codex reasoning collapse", func() {
 	// Modern Codex ships reasoning as summary:[] + encrypted_content. The text is
 	// unrecoverable, but the record still proves the session was alive at that
 	// instant, so its timestamp must reach extendRange via a collapsed row.
-	It("collapses contentless reasoning in a turn onto the last timestamp", func() {
+	It("collapses a contiguous run of contentless reasoning onto its last timestamp", func() {
 		uses := reasoningUses(
 			reasoningSessionMeta,
 			reasoningTurnContext,
 			`{"timestamp":"2026-07-16T11:15:04.024Z","type":"response_item","payload":{"type":"reasoning","id":"rs_1","summary":[],"encrypted_content":"gAAAA1","internal_chat_message_metadata_passthrough":{"turn_id":"turn-1"}}}`,
-			`{"timestamp":"2026-07-16T11:20:00.000Z","type":"response_item","payload":{"type":"function_call","name":"shell","arguments":"{\"command\":\"ls\"}","call_id":"call-1"}}`,
-			`{"timestamp":"2026-07-16T11:20:01.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call-1","output":"ok"}}`,
 			`{"timestamp":"2026-07-16T11:32:58.744Z","type":"response_item","payload":{"type":"reasoning","id":"rs_2","summary":[],"encrypted_content":"gAAAA2","internal_chat_message_metadata_passthrough":{"turn_id":"turn-1"}}}`,
 		)
 
@@ -56,6 +54,38 @@ var _ = Describe("codex reasoning collapse", func() {
 		Expect(use.CWD).To(Equal("/repo"))
 		Expect(use.Source).To(Equal("codex"))
 		Expect(use.RecordType).To(Equal("response_item.reasoning"))
+		// The span is keyed on the line of its FIRST record, which is what makes a
+		// re-parse of a grown transcript reproduce this row rather than append a
+		// longer one beside it.
+		Expect(use.SourceLine).To(Equal(int64(3)))
+	})
+
+	// A span must be final when emitted, or a tailing re-parse emits a longer span
+	// with a different count and shifts every downstream ordinal. Finality means
+	// "ends at the next non-reasoning record", not "ends at the turn boundary":
+	// the tool call below splits one turn into two spans.
+	It("ends a span at the first non-reasoning record rather than at the turn boundary", func() {
+		uses := reasoningUses(
+			reasoningSessionMeta,
+			reasoningTurnContext,
+			`{"timestamp":"2026-07-16T11:15:04.024Z","type":"response_item","payload":{"type":"reasoning","id":"rs_1","summary":[],"encrypted_content":"gAAAA1","internal_chat_message_metadata_passthrough":{"turn_id":"turn-1"}}}`,
+			`{"timestamp":"2026-07-16T11:20:00.000Z","type":"response_item","payload":{"type":"function_call","name":"shell","arguments":"{\"command\":\"ls\"}","call_id":"call-1"}}`,
+			`{"timestamp":"2026-07-16T11:20:01.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call-1","output":"ok"}}`,
+			`{"timestamp":"2026-07-16T11:32:58.744Z","type":"response_item","payload":{"type":"reasoning","id":"rs_2","summary":[],"encrypted_content":"gAAAA2","internal_chat_message_metadata_passthrough":{"turn_id":"turn-1"}}}`,
+		)
+
+		Expect(uses).To(HaveLen(2))
+		Expect(uses[0].Input["count"]).To(Equal(1))
+		Expect(uses[0].Timestamp.UTC().Format(nanoLayout)).To(Equal("2026-07-16T11:15:04.024Z"))
+		Expect(uses[0].SourceLine).To(Equal(int64(3)))
+		Expect(uses[0].Provisional).To(BeFalse())
+
+		Expect(uses[1].Input["count"]).To(Equal(1))
+		Expect(uses[1].Timestamp.UTC().Format(nanoLayout)).To(Equal("2026-07-16T11:32:58.744Z"))
+		Expect(uses[1].SourceLine).To(Equal(int64(6)))
+		// Only the trailing span is provisional: the next append can extend it, and
+		// the stable line key is what lets that append update this row in place.
+		Expect(uses[1].Provisional).To(BeTrue())
 	})
 
 	// Older rollouts carry real plaintext summaries; those must keep rendering

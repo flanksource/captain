@@ -18,7 +18,7 @@ import (
 
 // parserVersion invalidates every ingested transcript when the parsing or
 // mapping logic changes shape.
-const parserVersion = 3
+const parserVersion = 4
 
 // ingestor turns changed transcript files into native database rows, skipping
 // files whose recorded mtime/size/parser version still match the disk state.
@@ -87,11 +87,23 @@ func (ing *ingestor) resumeAfter(path string, info os.FileInfo) int64 {
 // mark to record for the next one. Turns are deliberately left whole: they carry
 // running aggregates over the entire file, so the newest turn's totals change on
 // every append and there are few enough of them to re-upsert in one batch.
+//
+// The mark never advances past a provisional row. A tool call parsed before its
+// result was written, or a reasoning span still open at EOF, is correct only
+// until the next append; sealing it behind the mark meant the completed row was
+// dropped on the following pass and the truncated one stood forever.
 func highWaterMark(input *database.IngestTranscriptInput, previous int64) int64 {
+	ceiling := int64(-1)
+	for _, message := range input.Messages {
+		if message.Provisional && (ceiling < 0 || message.Sequence < ceiling) {
+			ceiling = message.Sequence
+		}
+	}
+
 	mark := previous
 	fresh := input.Messages[:0]
 	for _, message := range input.Messages {
-		if message.Sequence > mark {
+		if message.Sequence > mark && (ceiling < 0 || message.Sequence < ceiling) {
 			mark = message.Sequence
 		}
 		if message.Sequence > previous {
@@ -228,7 +240,7 @@ func (ing *ingestor) claudeIngestInput(ctx context.Context, path string) (databa
 	if err != nil {
 		return database.IngestTranscriptInput{}, err
 	}
-	input := unifiedIngestInput(s, "claude", claudeSequence)
+	input := unifiedIngestInput(s, "claude", transcriptSequence)
 	input.Source.SourceIdentity = info.RootSessionID
 	if info.IsAgent {
 		root, err := ing.db.CreateOrGetSession(ctx, database.CreateSessionInput{
@@ -254,17 +266,18 @@ func codexIngestInput(path string) (database.IngestTranscriptInput, error) {
 		return database.IngestTranscriptInput{}, fmt.Errorf("codex transcript %s is not parseable", path)
 	}
 	s := sessions[0]
-	input := unifiedIngestInput(s, "codex", func(m session.Message, index int) int64 {
-		return int64(index + 1)
-	})
+	input := unifiedIngestInput(s, "codex", transcriptSequence)
 	input.Session.ProviderSessionID = s.ID
 	input.Source.SourceIdentity = s.ID
 	return input, nil
 }
 
-// claudeSequence keys messages by their transcript line: stable across
-// re-parses and the seek reference the UI uses against the raw file.
-func claudeSequence(m session.Message, _ int) int64 { return m.SourceLine }
+// transcriptSequence keys messages by their transcript line: stable across
+// re-parses and the seek reference the UI uses against the raw file. Codex used
+// to key on the message's ordinal in the freshly parsed slice instead, so a
+// single collapsed reasoning span shifting by one renumbered the rest of the
+// file and the high-water mark discarded every renumbered row.
+func transcriptSequence(m session.Message, _ int) int64 { return m.SourceLine }
 
 // unifiedIngestInput maps the unified session model onto the native ingest
 // batch: turns become turn rows with one aggregate model call each, and
@@ -317,6 +330,7 @@ func unifiedIngestInput(s *session.Session, backend string, sequence func(sessio
 		}
 		message := database.IngestMessage{
 			Sequence: seq, ProviderMessageID: m.ID, Role: m.Role, PartsJSON: parts, SourceLine: m.SourceLine,
+			Provisional: m.Provisional,
 		}
 		if m.Provenance != nil {
 			message.OccurredAt = m.Provenance.Timestamp

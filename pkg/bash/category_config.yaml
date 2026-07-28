@@ -330,10 +330,12 @@ categories:
       - MultiEdit
       - NotebookEdit
       # Codex file mutations. apply_patch is the wire name; CodexPatchApply is
-      # the normalized name history renders. Without these, every Codex file
-      # write classifies as `other`.
+      # the event form and ApplyPatch the multi-file tool-call form history
+      # renders. Without these, every Codex file write classifies as `other`.
+      # A single-file patch normalizes to Write or Edit and is already covered.
       - apply_patch
       - CodexPatchApply
+      - ApplyPatch
     commands:
       - mkdir
       - mv

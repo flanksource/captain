@@ -147,9 +147,15 @@ table "captain_sessions" {
     on_delete   = CASCADE
   }
 
+  # provider is deliberately not part of this key. It is a label -- three
+  # writers describe the same Codex rollout as `openai`, `codex-agent` and ''
+  # -- so including it minted one session row per writer for one transcript,
+  # of which only the monitor's was ever ingested. The rollout id plus the host
+  # identify the session; 02_merge_duplicate_sessions.sql collapses the rows
+  # this key used to allow.
   index "captain_sessions_provider_identity_key" {
     unique  = true
-    columns = [column.source, column.provider, column.host_id, column.provider_session_id]
+    columns = [column.source, column.host_id, column.provider_session_id]
     where   = "provider_session_id IS NOT NULL"
   }
   index "captain_sessions_provider_session_id_idx" {

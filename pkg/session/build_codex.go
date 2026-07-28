@@ -293,7 +293,19 @@ func relativizeAll(paths []string, cwd string) []string {
 // codexUseToMessage maps a Codex tool use to a canonical message: "Assistant"
 // and "Reasoning" become text/reasoning turns, everything else a tool part with
 // the inline response as its output.
+//
+// SourceLine is the row's identity for incremental ingest, so it is carried here
+// rather than left to the caller: keying Codex messages on their ordinal in the
+// parsed slice made every re-parse renumber the file, and the high-water mark
+// then dropped the renumbered rows for good.
 func codexUseToMessage(u history.ToolUse) Message {
+	message := codexUseToMessageBody(u)
+	message.SourceLine = u.SourceLine
+	message.Provisional = u.Provisional
+	return message
+}
+
+func codexUseToMessageBody(u history.ToolUse) Message {
 	id := codexMessageID(u)
 	agentID := u.SessionID
 	prov := &Provenance{
@@ -430,6 +442,18 @@ func collectCodexPaths(u history.ToolUse, read, written *[]string) {
 			}
 			*read = append(*read, path)
 		}
+	case "ApplyPatch":
+		// A multi-file patch keeps its operations parsed on the row, so the paths
+		// come from there rather than from re-scanning the payload.
+		for _, file := range tools.ApplyPatchFiles(u.Input) {
+			*written = append(*written, claude.AbsolutePath(file.Path, u.CWD, ""))
+			if file.MoveTo != "" {
+				*written = append(*written, claude.AbsolutePath(file.MoveTo, u.CWD, ""))
+			}
+		}
+	case "CodexExecScript":
+		script, _ := u.Input["script"].(string)
+		*written = append(*written, tools.ExtractApplyPatchPaths(script)...)
 	case "exec", "apply_patch":
 		input, _ := u.Input["input"].(string)
 		*written = append(*written, tools.ExtractApplyPatchPaths(input)...)
@@ -534,17 +558,18 @@ func (b *codexTurnBuilder) finish() []Turn {
 }
 
 func codexCostFromUse(u history.ToolUse) api.Cost {
-	if u.TotalTokens == 0 && u.InputTokens == 0 && u.OutputTokens == 0 && u.CacheReadTokens == 0 {
+	if u.TotalTokens == 0 && u.InputTokens == 0 && u.OutputTokens == 0 && u.ReasoningTokens == 0 && u.CacheReadTokens == 0 {
 		return api.Cost{Model: u.Model}
 	}
 	total := u.TotalTokens
 	if total == 0 {
-		total = u.InputTokens + u.OutputTokens + u.CacheReadTokens
+		total = u.InputTokens + u.OutputTokens + u.ReasoningTokens + u.CacheReadTokens
 	}
 	cost := api.Cost{
 		Model:           u.Model,
 		InputTokens:     u.InputTokens,
 		OutputTokens:    u.OutputTokens,
+		ReasoningTokens: u.ReasoningTokens,
 		CacheReadTokens: u.CacheReadTokens,
 		TotalTokens:     total,
 	}
@@ -552,8 +577,12 @@ func codexCostFromUse(u history.ToolUse) api.Cost {
 	// The old claude.PricingFor path mispriced every gpt-*/o* model at Claude
 	// Sonnet rates (finding C1). A registry miss leaves the bucket costs zero
 	// rather than inventing a wrong number.
+	//
+	// Reasoning is priced with output: OpenAI bills it at the output rate, and
+	// the two buckets are disjoint here only so the counts do not double-count.
+	billedOutput := u.OutputTokens + u.ReasoningTokens
 	for _, id := range []string{"openai/" + u.Model, u.Model} {
-		if res, err := pricing.CalculateCost(id, u.InputTokens, u.OutputTokens, 0, u.CacheReadTokens, 0); err == nil {
+		if res, err := pricing.CalculateCost(id, u.InputTokens, billedOutput, 0, u.CacheReadTokens, 0); err == nil {
 			cost.InputCost = res.InputCost
 			cost.OutputCost = res.OutputCost
 			cost.CacheReadCost = res.CacheReadCost

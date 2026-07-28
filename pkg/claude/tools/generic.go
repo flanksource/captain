@@ -32,7 +32,7 @@ func (t *GenericTool) Pretty() api.Text {
 	}
 	text := t.header(icon, strings.ToLower(t.RawTool), color)
 	if b, err := json.Marshal(t.Input); err == nil {
-		text = text.Append(" "+string(b), "max-w-[tw-20ch]")
+		text = text.Append(" " + messagePreview(string(b)))
 	}
 	return text
 }
@@ -42,5 +42,11 @@ func (t *GenericTool) Detail() api.Textable {
 		text := clicky.Text("").Append("User: ", "font-bold text-red-500").Append(t.DeniedReason, "")
 		return &text
 	}
-	return nil
+	// The preview is a truncated one-liner; the full input belongs somewhere a
+	// non-terminal format can still reach it.
+	b, err := json.Marshal(t.Input)
+	if err != nil || len(t.Input) == 0 {
+		return nil
+	}
+	return api.NewCode(string(b), "json")
 }

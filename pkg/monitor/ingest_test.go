@@ -51,11 +51,12 @@ func sequencesOf(messages []database.IngestMessage) []int64 {
 
 func TestHighWaterMarkWritesOnlyAppendedMessages(t *testing.T) {
 	for _, test := range []struct {
-		name     string
-		previous int64
-		parsed   []int64
-		want     []int64
-		wantMark int64
+		name        string
+		previous    int64
+		parsed      []int64
+		provisional []int64
+		want        []int64
+		wantMark    int64
 	}{
 		{name: "first ingest writes the whole file", parsed: []int64{1, 3, 5}, want: []int64{1, 3, 5}, wantMark: 5},
 		{name: "an append writes only the appended lines", previous: 3, parsed: []int64{1, 3, 5, 7}, want: []int64{5, 7}, wantMark: 7},
@@ -63,9 +64,39 @@ func TestHighWaterMarkWritesOnlyAppendedMessages(t *testing.T) {
 		// A non-conversational line (a hook record, a summary) grows the file
 		// without producing a message, so the mark must survive an empty pass.
 		{name: "growth with no new messages keeps the mark", previous: 5, wantMark: 5},
+		// A tool call parsed before its output was written, or a reasoning span
+		// still open at EOF, is correct only until the next append. Advancing the
+		// mark past it sealed the truncated row forever: 21% of Codex tool parts
+		// still carry no result because of exactly this.
+		{
+			name: "the mark stops below a provisional row so a later pass can complete it",
+			parsed: []int64{1, 3, 5, 7}, provisional: []int64{7},
+			want: []int64{1, 3, 5, 7}, wantMark: 5,
+		},
+		{
+			name: "a provisional row still gets written on the pass that parsed it",
+			previous: 3, parsed: []int64{1, 3, 5}, provisional: []int64{5},
+			want: []int64{5}, wantMark: 3,
+		},
+		{
+			name: "the lowest provisional row bounds the mark, not the last one",
+			parsed: []int64{1, 3, 5, 7}, provisional: []int64{3, 7},
+			want: []int64{1, 3, 5, 7}, wantMark: 1,
+		},
+		{
+			name:     "a re-parse re-offers the row the previous pass left provisional",
+			previous: 5, parsed: []int64{1, 3, 5, 7}, want: []int64{7}, wantMark: 7,
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			input := database.IngestTranscriptInput{Messages: messagesAt(test.parsed...)}
+			for index := range input.Messages {
+				for _, sequence := range test.provisional {
+					if input.Messages[index].Sequence == sequence {
+						input.Messages[index].Provisional = true
+					}
+				}
+			}
 			mark := highWaterMark(&input, test.previous)
 
 			if mark != test.wantMark {

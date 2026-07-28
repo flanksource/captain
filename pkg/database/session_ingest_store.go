@@ -189,6 +189,10 @@ type IngestMessage struct {
 	RawJSON           []byte
 	SourceLine        int64
 	OccurredAt        *time.Time
+	// Provisional marks a row a later pass of a still-growing transcript can
+	// complete. It is not persisted; it tells incremental ingest not to seal the
+	// row behind its resume mark.
+	Provisional bool
 }
 
 type IngestTranscriptInput struct {
@@ -503,9 +507,11 @@ func (db *DB) upsertTurnCalls(ctx context.Context, calls []modelCallRecord) erro
 	return nil
 }
 
-// insertMessages appends message rows. Messages are immutable, so replays and
-// overlapping batches are dropped by either durable identity key:
-// (session_id, sequence) or (session_id, provider_message_id).
+// insertMessages writes message rows. A message's identity is durable -- either
+// (session_id, sequence) or (session_id, provider_message_id) -- but its content
+// is not: a row parsed from a still-growing transcript can be re-offered later
+// with the tool result or the closing reasoning record it was missing. Identity
+// is established here and content converges in convergeMessages.
 func (db *DB) insertMessages(ctx context.Context, sessionID uuid.UUID, turnIDs map[int]uuid.UUID, messages []IngestMessage) error {
 	records := make([]messageRecord, 0, len(messages))
 	for _, message := range messages {
@@ -551,7 +557,53 @@ func (db *DB) insertMessages(ctx context.Context, sessionID uuid.UUID, turnIDs m
 	if err != nil {
 		return fmt.Errorf("insert %d Captain messages: %w", len(records), err)
 	}
+	return db.convergeMessages(ctx, records)
+}
+
+// convergeMessages rewrites rows an earlier pass stored before the transcript had
+// caught up. Transcripts are append-only, so re-parsing a line never yields less
+// than it did before -- it yields the tool result that had not been written yet,
+// or the reasoning record that closed the span. Without this, the truncated row
+// stood forever: 36 818 of 172 743 Codex tool parts carry no result today.
+//
+// It has to be its own statement because the insert above cannot both suppress
+// two unique-key conflicts and update on one of them. provider_message_id is
+// deliberately never assigned here: leaving identity alone is what makes this
+// update incapable of violating a unique constraint.
+func (db *DB) convergeMessages(ctx context.Context, records []messageRecord) error {
+	const columns = "role, parts, raw, turn_id, source_line, occurred_at"
+	for start := 0; start < len(records); start += ingestBatchSize {
+		batch := records[start:min(start+ingestBatchSize, len(records))]
+		rows := make([]string, 0, len(batch))
+		args := make([]any, 0, len(batch)*8)
+		for _, record := range batch {
+			rows = append(rows, "(?::uuid,?::bigint,?::text,?::jsonb,?::jsonb,?::uuid,?::bigint,?::timestamptz)")
+			args = append(args, record.SessionID, record.Sequence, record.Role,
+				jsonbArg(record.Parts), jsonbArg(record.Raw),
+				record.TurnID, record.SourceLine, record.OccurredAt)
+		}
+		query := `UPDATE captain_messages m SET
+			role = v.role, parts = v.parts, raw = v.raw,
+			turn_id = v.turn_id, source_line = v.source_line, occurred_at = v.occurred_at
+		FROM (VALUES ` + strings.Join(rows, ",") + `)
+			AS v(session_id, sequence, ` + columns + `)
+		WHERE m.session_id = v.session_id AND m.sequence = v.sequence
+		  AND (m.` + strings.ReplaceAll(columns, ", ", ", m.") + `)
+		      IS DISTINCT FROM (v.` + strings.ReplaceAll(columns, ", ", ", v.") + `)`
+		if err := db.gorm.WithContext(ctx).Exec(query, args...).Error; err != nil {
+			return fmt.Errorf("converge %d Captain messages: %w", len(batch), err)
+		}
+	}
 	return nil
+}
+
+// jsonbArg keeps an empty document out of a ::jsonb cast, which rejects "", and
+// keeps a populated one off the bytea path pgx would otherwise choose for bytes.
+func jsonbArg(document []byte) any {
+	if len(document) == 0 {
+		return nil
+	}
+	return string(document)
 }
 
 func jsonbValue(value map[string]any) any {

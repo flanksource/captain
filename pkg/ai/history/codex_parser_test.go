@@ -369,6 +369,39 @@ func TestExtractCodexToolUses_ClassifiesAgentsInstructionsAsSystem(t *testing.T)
 	}
 }
 
+// A developer message carries the briefing the model was actually given -- the
+// primary-agent instructions, the memory guidance, the multi-agent rules. The
+// role switch used to fall to `default: return nil` and drop all of it without a
+// trace, which is why a transcript could show a model acting on instructions
+// that appeared nowhere in it.
+func TestExtractCodexToolUses_KeepsDeveloperBriefingAsSystem(t *testing.T) {
+	stream := strings.Join([]string{
+		`{"timestamp":"2026-07-10T09:49:37.000Z","type":"session_meta","payload":{"id":"sess-dev","cwd":"/repo"}}`,
+		`{"timestamp":"2026-07-10T09:49:37.100Z","type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"You are the /root primary agent."}]}}`,
+		`{"timestamp":"2026-07-10T09:49:37.200Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Fix the parser"}]}}`,
+	}, "\n")
+
+	uses, err := ExtractCodexToolUsesFromReader(strings.NewReader(stream))
+	if err != nil {
+		t.Fatalf("ExtractCodexToolUsesFromReader: %v", err)
+	}
+	if len(uses) != 2 {
+		t.Fatalf("uses = %+v, want one System and one User", uses)
+	}
+	if uses[0].Tool != "System" {
+		t.Fatalf("developer message became %q, want System", uses[0].Tool)
+	}
+	if got, want := uses[0].Input["text"], "You are the /root primary agent."; got != want {
+		t.Fatalf("developer text = %v, want %q", got, want)
+	}
+	if uses[0].SourceLine != 2 {
+		t.Fatalf("developer source line = %d, want 2", uses[0].SourceLine)
+	}
+	if uses[1].Tool != "User" {
+		t.Fatalf("user message became %q, want User", uses[1].Tool)
+	}
+}
+
 func TestCodexUserMessageTool_ClassifiesRecommendedPluginsAgentsEnvelopeAsSystem(t *testing.T) {
 	text := "<recommended_plugins>system recommendations</recommended_plugins>" +
 		"# AGENTS.md instructions for /repo\n<INSTRUCTIONS>Always test.</INSTRUCTIONS>"

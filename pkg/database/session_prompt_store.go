@@ -134,11 +134,17 @@ func (sessionRecord) TableName() string { return "captain_sessions" }
 // findSessionByIdentity resolves the row a create would collide with — the
 // provider identity when one is supplied, otherwise the ID itself — and returns
 // nil when no such row exists.
+//
+// provider is deliberately not part of the lookup, and matches
+// captain_sessions_provider_identity_key. It is a label three writers spell
+// differently for one Codex rollout (`openai`, `codex-agent`, ''), so matching
+// on it meant none of them ever found the others and each inserted its own row
+// for the same transcript.
 func (db *DB) findSessionByIdentity(ctx context.Context, record sessionRecord) (*sessionRecord, error) {
 	query := db.gorm.WithContext(ctx)
 	if record.ProviderSessionID != nil {
-		query = query.Where("source = ? AND provider = ? AND host_id = ? AND provider_session_id = ?",
-			record.Source, record.Provider, record.HostID, *record.ProviderSessionID)
+		query = query.Where("source = ? AND host_id = ? AND provider_session_id = ?",
+			record.Source, record.HostID, *record.ProviderSessionID)
 	} else {
 		query = query.Where("id = ?", record.ID)
 	}
@@ -244,8 +250,18 @@ func (db *DB) CreateOrGetSession(ctx context.Context, input CreateSessionInput) 
 		}
 		existing = found
 	}
-	if existing.Source != record.Source || existing.Provider != record.Provider || existing.HostID != record.HostID {
+	if existing.Source != record.Source || existing.HostID != record.HostID {
 		return nil, fmt.Errorf("%w: existing session has a different provider identity", ErrSessionConflict)
+	}
+	// The label is filled in by whichever writer first knows a concrete one. A
+	// later writer disagreeing about it is not a conflict — it is the same
+	// transcript described from a different vantage point.
+	if existing.Provider == "" && record.Provider != "" {
+		if err := db.gorm.WithContext(ctx).Model(&sessionRecord{}).
+			Where("id = ? AND provider = ''", existing.ID).
+			Update("provider", record.Provider).Error; err != nil {
+			return nil, fmt.Errorf("adopt Captain session provider label: %w", err)
+		}
 	}
 	if callerSuppliedID && existing.ID != input.ID {
 		return nil, fmt.Errorf("%w: provider identity already belongs to session %s, not caller-supplied ID %s", ErrSessionConflict, existing.ID, input.ID)

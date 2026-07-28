@@ -1,6 +1,7 @@
 package database
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -190,6 +191,43 @@ func TestIngestTranscriptAndReadStores(t *testing.T) {
 		sources, err := db.ListSessionSources(t.Context())
 		require.NoError(t, err)
 		assert.EqualValues(t, 8192, sources[testTranscriptPath].ByteOffset)
+	})
+
+	// A Codex tool call parsed before its result was written is stored as
+	// input-available with no output. That row is correct at that instant and
+	// wrong forever after, so the pass that finally sees the output has to update
+	// it in place. Appending instead is what left 36 818 of 172 743 tool parts
+	// permanently resultless.
+	t.Run("re-offering a provisional row completes it instead of appending", func(t *testing.T) {
+		later := modTime.Add(3 * time.Minute)
+		completing := testIngestBatch(later, 12288)
+		turnIdx0 := 0
+		completing.Messages = []IngestMessage{{
+			Sequence: 3, ProviderMessageID: "uuid-3", Role: "assistant", TurnIndex: &turnIdx0,
+			PartsJSON: []byte(`[{"type":"text","text":"hi"},` +
+				`{"type":"dynamic-tool","toolName":"Read","toolCallId":"t1",` +
+				`"state":"output-available","output":"package main"}]`),
+			SourceLine: 3, OccurredAt: &later,
+		}}
+		_, err := db.IngestTranscript(t.Context(), completing)
+		require.NoError(t, err)
+
+		overview, err := db.GetSessionOverviewByIdentity(t.Context(), testProviderSessionID)
+		require.NoError(t, err)
+		assert.EqualValues(t, 5, overview.MessageCount, "completing a row must not add one")
+
+		page, err := db.ListTranscriptMessages(t.Context(), TranscriptPage{SessionID: session.ID, Offset: 1, Limit: 1})
+		require.NoError(t, err)
+		require.Len(t, page, 1)
+		assert.EqualValues(t, 3, page[0].Sequence)
+
+		// jsonb re-renders the document, so assert on the decoded part rather than
+		// on the byte spelling of the one that went in.
+		var parts []map[string]any
+		require.NoError(t, json.Unmarshal(page[0].Parts, &parts))
+		require.Len(t, parts, 2)
+		assert.Equal(t, "output-available", parts[1]["state"])
+		assert.Equal(t, "package main", parts[1]["output"])
 	})
 
 	t.Run("transcript paging by offset, limit, and tail with source lines", func(t *testing.T) {
