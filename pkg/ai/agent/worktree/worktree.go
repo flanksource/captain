@@ -28,11 +28,14 @@ type Plugin struct {
 
 	Merge   WorktreeMerge
 	Cleanup WorktreeCleanup
-
-	path string // resolved worktree path, set in PreRun
 }
 
 func (p *Plugin) Name() string { return "worktree" }
+
+// IsolatesWorkspace is always true: creating the worktree is what this hook is.
+// It lets agent.EnsureSingleIsolator reject a run that also asks Spec.Setup for a
+// checkout or worktree, rather than creating two trees and working in one.
+func (p *Plugin) IsolatesWorkspace(*agent.HookContext) bool { return true }
 
 // switchResult is the shape of `wt switch --format=json`'s stdout.
 type switchResult struct {
@@ -42,8 +45,11 @@ type switchResult struct {
 }
 
 // PreRun creates (or switches to) the worktree and points the run's Workspace
-// at it, via `wt switch --create`.
+// and request at it, via `wt switch --create`.
 func (p *Plugin) PreRun(hc *agent.HookContext) error {
+	if err := hc.EnsureSingleIsolator(); err != nil {
+		return err
+	}
 	ws := hc.Workspace()
 	repo := p.Repo
 	if repo == "" {
@@ -69,11 +75,14 @@ func (p *Plugin) PreRun(hc *agent.HookContext) error {
 		return fmt.Errorf("wt switch --create %s: parse JSON result: %w (stdout=%q)", p.Branch, err, res.Stdout)
 	}
 
-	p.path = sw.Path
 	ws.Repo = repo
 	ws.Cwd = sw.Path
 	ws.Branch = p.Branch
 	ws.Base = sw.BaseBranch
+	// The same transform the setup hook performs: the request said "isolate this
+	// run", the tree now exists, so the spec stops describing the request and
+	// starts describing where the work is. HookContext.Original keeps the former.
+	hc.Request.SetCwd(sw.Path)
 	return nil
 }
 
@@ -89,17 +98,21 @@ func (p *Plugin) Phases() []agent.Phase { return []agent.Phase{agent.PhaseRun} }
 // Post merges the run's branch into Trunk and/or removes the worktree, gated by
 // Merge/Cleanup and the run's outcome (hc.Failed / hc.Verified).
 func (p *Plugin) Post(hc *agent.HookContext, _ agent.Phase) error {
-	if p.path == "" {
-		return nil // PreRun never ran (or failed before creating a worktree)
-	}
 	ws := hc.Workspace()
-	if diff, err := gitDiff(p.path); err == nil {
+	// PreRun records its effect on the workspace and nothing else writes Branch,
+	// so a workspace not standing on p.Branch means no worktree was created —
+	// PreRun never ran, or failed before `wt switch`.
+	if p.Branch == "" || ws.Branch != p.Branch || ws.Cwd == "" {
+		return nil
+	}
+	path := ws.Cwd
+	if diff, err := gitDiff(path); err == nil {
 		ws.Diff = diff
 	}
 
 	merged := false
 	if p.Merge.shouldMerge(hc.Failed, hc.Verified) {
-		target, err := p.merge()
+		target, err := p.merge(path)
 		if err != nil {
 			return err
 		}
@@ -115,12 +128,12 @@ func (p *Plugin) Post(hc *agent.HookContext, _ agent.Phase) error {
 
 // merge runs `wt merge`, always passing --no-remove so Cleanup independently
 // decides whether the worktree is removed. Returns the resolved target branch.
-func (p *Plugin) merge() (string, error) {
+func (p *Plugin) merge(path string) (string, error) {
 	args := []string{"merge", "--no-remove", "--format=json"}
 	if p.Trunk != "" {
 		args = append(args, p.Trunk)
 	}
-	res := exec.NewExec("wt", args...).WithCwd(p.path).Run().Result()
+	res := exec.NewExec("wt", args...).WithCwd(path).Run().Result()
 	if res.Error != nil {
 		return "", fmt.Errorf("wt merge %s: %w: %s", p.Branch, res.Error, strings.TrimSpace(res.Stderr))
 	}
