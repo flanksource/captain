@@ -64,7 +64,7 @@ func EffectiveDefaults(saved captainconfig.AIDefaults, provider registry.Backend
 		model = DefaultModelFor(agent)
 	}
 	effort := registry.Effort(strings.TrimSpace(configured.ReasoningEffort))
-	if err := registry.ValidateEffort(agent, model, effort); err != nil {
+	if err := effort.Validate(); err != nil {
 		return ProviderDefaultView{}, err
 	}
 	return ProviderDefaultView{
@@ -131,9 +131,9 @@ func applyCandidateDefaults(model registry.Model, saved captainconfig.AIDefaults
 	if model.Effort == registry.EffortNone {
 		model.Effort = registry.Effort(defaults.Effort)
 	}
-	// Permissive when the backend is still unset (--mode without --backend): the
-	// authoritative effort check runs against the real backend during resolution.
-	if err := registry.ValidateEffort(model.Backend, model.Name, model.Effort); err != nil {
+	// Preserve valid requested tiers here; execution resolves them against the
+	// exact provider model after configuration and selector overlays are complete.
+	if err := model.Effort.Validate(); err != nil {
 		return registry.Model{}, err
 	}
 	return model, nil

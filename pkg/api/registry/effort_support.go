@@ -2,7 +2,6 @@ package registry
 
 import (
 	"fmt"
-	"strings"
 )
 
 // ModelEfforts returns the effort tiers a backend/model pair accepts, when the
@@ -23,32 +22,36 @@ func ModelEfforts(backend Backend, model string) (supported []Effort, defaultEff
 	return append([]Effort(nil), m.SupportedEfforts...), m.DefaultEffort, true
 }
 
-// ValidateEffort enforces model-aware effort tiers without requiring the catalog
-// to be exhaustive: an unknown model accepts any valid tier, while a known one
-// accepts only the tiers the catalog records for it.
-func ValidateEffort(backend Backend, model string, effort Effort) error {
+// ResolveEffort returns the executable effort for a backend/model pair. Valid
+// tiers unsupported by a known model degrade to its highest supported tier;
+// models without a reasoning knob use the backend default. Unknown models retain
+// the requested tier so a newer provider model is not blocked by a stale catalog.
+func ResolveEffort(backend Backend, model string, effort Effort) (Effort, error) {
 	if err := effort.Validate(); err != nil {
-		return err
+		return EffortNone, err
 	}
 	if effort == EffortNone {
-		return nil
+		return EffortNone, nil
 	}
 	supported, _, known := ModelEfforts(backend, model)
 	if !known {
-		return nil
-	}
-	if len(supported) == 0 {
-		return fmt.Errorf("model %q on %s does not support a reasoning effort", model, backend)
+		return effort, nil
 	}
 	for _, candidate := range supported {
 		if candidate == effort {
-			return nil
+			return effort, nil
 		}
 	}
-	values := make([]string, 0, len(supported))
-	for _, candidate := range supported {
-		values = append(values, string(candidate))
+	ordered := AllEfforts()
+	for i := len(ordered) - 1; i >= 0; i-- {
+		for _, candidate := range supported {
+			if candidate == ordered[i] {
+				return candidate, nil
+			}
+		}
 	}
-	return fmt.Errorf("model %q on %s does not support reasoning effort %q; want one of: %s",
-		model, backend, effort, strings.Join(values, ", "))
+	if len(supported) > 0 {
+		return EffortNone, fmt.Errorf("model %q on %s has no valid supported reasoning efforts", model, backend)
+	}
+	return EffortNone, nil
 }
