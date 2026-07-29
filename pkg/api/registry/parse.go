@@ -137,7 +137,7 @@ func ParseModelElement(raw string, opts ParseOptions) ([]Model, error) {
 	if err != nil {
 		return nil, fmt.Errorf("runtime selector %q: %w", raw, err)
 	}
-	if err := ValidateEffort(backend, resolved, effort); err != nil {
+	if err := effort.Validate(); err != nil {
 		return nil, fmt.Errorf("runtime selector %q: %w", raw, err)
 	}
 	return []Model{Model{Name: resolved, Backend: backend, Effort: effort}.Capabilities()}, nil
@@ -212,9 +212,6 @@ func expandWildcard(raw, name string, effort Effort) ([]Model, error) {
 		}
 		backend, err := p.BackendFor(mode)
 		if err != nil {
-			continue
-		}
-		if err := ValidateEffort(backend, resolved, effort); err != nil {
 			continue
 		}
 		out = append(out, Model{Name: resolved, Backend: backend, Effort: effort}.Capabilities())

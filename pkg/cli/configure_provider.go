@@ -147,7 +147,7 @@ func validateProviderDefaults(ctx context.Context, provider api.Backend, default
 	if !found {
 		return fmt.Errorf("model %q is not available for agent %q", model, agent)
 	}
-	if err := ai.ValidateModelEffort(agent, model, api.Effort(defaults.Effort)); err != nil {
+	if err := api.Effort(defaults.Effort).Validate(); err != nil {
 		return err
 	}
 	return nil

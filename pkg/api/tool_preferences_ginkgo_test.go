@@ -31,7 +31,7 @@ var _ = Describe("Tool preferences", func() {
 		Expect(out.ToolPreferences).To(Equal(in.ToolPreferences))
 	})
 
-	It("replaces base preferences when an override supplies per-turn preferences", func() {
+	It("merges per-turn preferences key-wise, leaving untouched tools alone", func() {
 		base := api.Spec{ToolPreferences: api.ToolPreferences{
 			"billing": api.ToolModeAsk,
 			"search":  api.ToolModeOff,
@@ -40,8 +40,11 @@ var _ = Describe("Tool preferences", func() {
 			"billing": api.ToolModeOn,
 		}}
 
+		// Each key is an independent decision, so an override that speaks about
+		// billing says nothing about search — it must not silently re-enable it.
 		Expect(base.Merge(override).ToolPreferences).To(Equal(api.ToolPreferences{
 			"billing": api.ToolModeOn,
+			"search":  api.ToolModeOff,
 		}))
 		Expect(base.Merge(api.Spec{}).ToolPreferences).To(Equal(base.ToolPreferences))
 	})

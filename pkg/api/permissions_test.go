@@ -120,3 +120,32 @@ skills:
 		t.Fatalf("skills = %#v", out.Skills)
 	}
 }
+
+// TestTools_UnrecognisedPolicyFailsAtDecode pins the decode boundary as the place
+// a mistyped tool policy surfaces. The policy map is the only representation the
+// value ever has: applyPolicy translates it into allow/deny/modes, so a policy it
+// does not recognise leaves no trace for Permissions.Validate to inspect
+// afterwards, and the tool runs under whatever posture it inherited instead.
+func TestTools_UnrecognisedPolicyFailsAtDecode(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		decode func(any) error
+	}{
+		{"yaml", func(v any) error { return yaml.Unmarshal([]byte("tools:\n  Bash: sometimes\n"), v) }},
+		{"json", func(v any) error { return json.Unmarshal([]byte(`{"tools":{"Bash":"sometimes"}}`), v) }},
+		{"json legacy shape", func(v any) error {
+			return json.Unmarshal([]byte(`{"tools":{"allow":["Read"],"Bash":"sometimes"}}`), v)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var out Permissions
+			err := tc.decode(&out)
+			if err == nil {
+				t.Fatalf("decode accepted an unrecognised policy, tools = %#v", out.Tools)
+			}
+			if !strings.Contains(err.Error(), `invalid tool policy "sometimes" for tool "Bash"`) {
+				t.Fatalf("error = %v, want it to name the policy and the tool", err)
+			}
+		})
+	}
+}

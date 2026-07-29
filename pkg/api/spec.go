@@ -58,6 +58,20 @@ type specMarshal struct {
 	CLIArgs     map[string]any      `json:"cliArgs,omitempty" yaml:"cliArgs,omitempty"`
 }
 
+// IsEmpty reports whether v carries no instruction: every exported, serialized
+// field is itself empty, recursively. It is the emptiness test the spec
+// marshallers use, exported so callers layering configuration ask the struct
+// definition rather than maintaining their own list of fields to check — a list
+// that goes stale the moment a field is added.
+//
+// Two domain rules it already knows: a Tools block is empty iff it yields no
+// policies, and an MCP block is empty iff it is not disabled and names no
+// servers or modes. Fields tagged json:"-" or yaml:"-" are runtime state rather
+// than configuration and do not count towards non-emptiness.
+func IsEmpty(v any) bool {
+	return isEmpty(reflect.ValueOf(v))
+}
+
 func isEmpty(value reflect.Value) bool {
 	if !value.IsValid() {
 		return true

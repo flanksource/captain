@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/captainconfig"
 )
@@ -43,7 +42,7 @@ func effectiveProviderDefaults(saved captainconfig.AIDefaults, provider api.Back
 		model = defaultModelFor(agent)
 	}
 	effort := api.Effort(strings.TrimSpace(configured.ReasoningEffort))
-	if err := ai.ValidateModelEffort(agent, model, effort); err != nil {
+	if err := effort.Validate(); err != nil {
 		return ProviderDefaultView{}, err
 	}
 	return ProviderDefaultView{
@@ -106,7 +105,7 @@ func applyCandidateDefaults(model api.Model, saved captainconfig.AIDefaults, all
 	if model.Effort == api.EffortNone {
 		model.Effort = api.Effort(defaults.Effort)
 	}
-	if err := ai.ValidateModelEffort(model.Backend, model.Name, model.Effort); err != nil {
+	if err := model.Effort.Validate(); err != nil {
 		return api.Model{}, err
 	}
 	return model, nil

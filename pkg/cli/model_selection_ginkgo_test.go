@@ -42,6 +42,15 @@ var _ = Describe("CLI model selection", func() {
 		Expect(cfg.Model.Backend).To(Equal(api.BackendGemini))
 	})
 
+	It("passes an unsupported valid effort through for runtime degradation", func() {
+		cfg, err := (AIProviderOptions{ModelFlags: aiflags.ModelFlags{Model: "gemini-3.6-flash:xhigh"}}).ToConfig()
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Model.Name).To(Equal("gemini-3.6-flash"))
+		Expect(cfg.Model.Backend).To(Equal(api.BackendGemini))
+		Expect(cfg.Model.Effort).To(Equal(api.EffortXHigh))
+	})
+
 	It("keeps the saved model and backend paired when there is no override", func() {
 		cfg, err := (AIProviderOptions{}).ToConfig()
 

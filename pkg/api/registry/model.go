@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/flanksource/captain/pkg/collections"
+	"github.com/flanksource/commons/merge"
 )
 
 // CodexAutoReviewModel is the internal model used by Codex approval reviewers.
@@ -215,34 +216,25 @@ func (m Model) validateMode() error {
 	return nil
 }
 
+// MergePolicy is the structural-merge policy for a Model, exported so a
+// container's policy (api.Spec's) can compose it rather than restate it.
+//
+// Temperature is a pointer precisely so an explicit 0.0 is distinguishable from
+// unset; merging *through* the pointer would read the pointed-at 0.0 as empty
+// and drop it, reintroducing the bug the pointer exists to prevent. Provider
+// holds the whole catalog and is shared by identity, so it is referenced rather
+// than walked.
+func MergePolicy() merge.Policy {
+	return merge.Policy{
+		Replace: []any{(*float64)(nil)},
+		Shared:  []any{(*Provider)(nil)},
+	}
+}
+
 // Merge overlays o's set fields onto m, returning the result. It backs Spec
 // merging in pkg/api, where a later layer overrides an earlier one field by field.
 func (m Model) Merge(o Model) Model {
-	if o.Name != "" {
-		m.Name = o.Name
-	}
-	if o.ID != "" {
-		m.ID = o.ID
-	}
-	if o.Backend != "" {
-		m.Backend = o.Backend
-	}
-	if o.Temperature != nil {
-		m.Temperature = o.Temperature
-	}
-	if o.Effort != "" {
-		m.Effort = o.Effort
-	}
-	if o.Mode != "" {
-		m.Mode = o.Mode
-	}
-	if o.NoCache {
-		m.NoCache = true
-	}
-	if len(o.Fallbacks) > 0 {
-		m.Fallbacks = o.Fallbacks
-	}
-	return m
+	return merge.Apply(m, o, MergePolicy())
 }
 
 // ExpandCSV moves any comma-separated tail of Name into name-only Fallbacks

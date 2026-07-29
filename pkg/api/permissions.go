@@ -154,7 +154,9 @@ func (t *Tools) UnmarshalJSON(data []byte) error {
 			if err := json.Unmarshal(value, &policy); err != nil {
 				return err
 			}
-			t.applyPolicy(key, policy)
+			if err := t.applyPolicy(key, policy); err != nil {
+				return err
+			}
 		}
 		return nil
 	}
@@ -162,8 +164,7 @@ func (t *Tools) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &policies); err != nil {
 		return err
 	}
-	t.setPolicies(policies)
-	return nil
+	return t.setPolicies(policies)
 }
 
 func (t Tools) MarshalYAML() (any, error) {
@@ -189,22 +190,29 @@ func (t *Tools) UnmarshalYAML(value *yaml.Node) error {
 	if err := value.Decode(&policies); err != nil {
 		return err
 	}
-	t.setPolicies(policies)
-	return nil
+	return t.setPolicies(policies)
 }
 
-func (t *Tools) setPolicies(policies map[string]ToolPolicy) {
+func (t *Tools) setPolicies(policies map[string]ToolPolicy) error {
 	t.Allow = nil
 	t.Deny = nil
 	t.Modes = nil
 	for _, key := range sortedKeys(policies) {
-		t.applyPolicy(key, policies[key])
+		if err := t.applyPolicy(key, policies[key]); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
-func (t *Tools) applyPolicy(tool string, policy ToolPolicy) {
+// applyPolicy folds one tool's policy into the canonical allow/deny/modes
+// representation. An unrecognised policy is an error rather than a no-op: the
+// policy map is the only place it appears, so dropping it here leaves nothing
+// for Permissions.Validate to catch and the tool silently runs under the
+// inherited default instead of the one that was configured.
+func (t *Tools) applyPolicy(tool string, policy ToolPolicy) error {
 	if tool == "" {
-		return
+		return nil
 	}
 	switch policy {
 	case ToolPolicyAllow:
@@ -221,7 +229,10 @@ func (t *Tools) applyPolicy(tool string, policy ToolPolicy) {
 			t.Modes = map[string]ToolMode{}
 		}
 		t.Modes[tool] = ToolModeOn
+	default:
+		return fmt.Errorf("invalid tool policy %q for tool %q (valid: auto, ask, allow, deny)", policy, tool)
 	}
+	return nil
 }
 
 func (m MCP) MarshalJSON() ([]byte, error) {

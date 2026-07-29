@@ -2,10 +2,9 @@ package ai
 
 import (
 	"context"
-	"fmt"
-	"strings"
 
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/api/registry"
 	"github.com/flanksource/commons/logger"
 )
 
@@ -21,34 +20,9 @@ func ModelEfforts(backend Backend, model string) (supported []api.Effort, defaul
 	return append([]api.Effort(nil), def.SupportedEfforts...), def.DefaultEffort, true
 }
 
-// ValidateModelEffort enforces model-aware effort levels without making the
-// catalog exhaustive. Unknown models retain Captain's historical suggest-only
-// behavior; known registry entries accept only source-backed executable tiers.
-func ValidateModelEffort(backend Backend, model string, effort api.Effort) error {
-	if err := effort.Validate(); err != nil {
-		return err
-	}
-	if effort == api.EffortNone {
-		return nil
-	}
-	supported, _, known := ModelEfforts(backend, model)
-	if !known {
-		return nil
-	}
-	if len(supported) == 0 {
-		return fmt.Errorf("model %q on %s does not support a reasoning effort", model, backend)
-	}
-	for _, candidate := range supported {
-		if candidate == effort {
-			return nil
-		}
-	}
-	values := make([]string, 0, len(supported))
-	for _, candidate := range supported {
-		values = append(values, string(candidate))
-	}
-	return fmt.Errorf("model %q on %s does not support reasoning effort %q; want one of: %s",
-		model, backend, effort, strings.Join(values, ", "))
+// ResolveModelEffort returns the executable effort for a backend/model pair.
+func ResolveModelEffort(backend Backend, model string, effort api.Effort) (api.Effort, error) {
+	return registry.ResolveEffort(backend, model, effort)
 }
 
 type effortValidatingProvider struct {
@@ -63,17 +37,25 @@ func (p *effortValidatingProvider) request(ctx context.Context, req Request) (Re
 	if req.Effort == api.EffortNone {
 		req.Effort = p.configuredEffort
 	}
-	if supported, _, known := ModelEfforts(p.GetBackend(), p.GetModel()); known && len(supported) == 0 && req.Effort != api.EffortNone {
-		LoggerFromContext(ctx, modelEffortLog).Warnf(
-			"model %q on %s does not support reasoning effort %q; continuing without effort",
-			p.GetModel(), p.GetBackend(), req.Effort,
-		)
-		req.Effort = api.EffortNone
-		return req, nil
-	}
-	if err := ValidateModelEffort(p.GetBackend(), p.GetModel(), req.Effort); err != nil {
+	requested := req.Effort
+	effective, err := ResolveModelEffort(p.GetBackend(), p.GetModel(), requested)
+	if err != nil {
 		return Request{}, err
 	}
+	if effective != requested {
+		if effective == api.EffortNone {
+			LoggerFromContext(ctx, modelEffortLog).Debugf(
+				"model %q on %s does not support reasoning effort %q; continuing without effort",
+				p.GetModel(), p.GetBackend(), requested,
+			)
+		} else {
+			LoggerFromContext(ctx, modelEffortLog).Debugf(
+				"model %q on %s does not support reasoning effort %q; using highest supported effort %q",
+				p.GetModel(), p.GetBackend(), requested, effective,
+			)
+		}
+	}
+	req.Effort = effective
 	return req, nil
 }
 
