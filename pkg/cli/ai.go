@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/ai/agent/setup"
 	"github.com/flanksource/captain/pkg/ai/middleware"
 	"github.com/flanksource/captain/pkg/ai/pricing"
 	"github.com/flanksource/captain/pkg/aiflags"
@@ -18,8 +19,6 @@ import (
 	"github.com/flanksource/captain/pkg/claude"
 	"github.com/flanksource/captain/pkg/claude/tools"
 	"github.com/flanksource/captain/pkg/collections"
-	dbcontext "github.com/flanksource/commons-db/context"
-	"github.com/flanksource/commons-db/shell"
 )
 
 // loadSavedAI returns the saved AI defaults from ~/.captain.yaml. Errors are
@@ -348,10 +347,6 @@ func runContext(parent context.Context, req ai.Request, timeout time.Duration) (
 	return context.WithTimeout(parent, timeout)
 }
 
-// buildProvider constructs the logging-wrapped AI provider for req/cfg. When
-// req.Setup is present it runs the shell preparation (mutating req's cwd/env to
-// the prepared sandbox) and returns its cleanup; callers MUST defer the returned
-// cleanup. ctx should already carry the run timeout.
 // warnIfLikelyModelTypo emits a "did you mean" hint when the model name is not a
 // known catalog id but is a close (edit-distance ≤ 2) match to one — catching
 // typos like "claud-sonnet-4" even when an explicit backend is configured (so
@@ -426,6 +421,10 @@ func baseModelName(id string) string {
 	return id
 }
 
+// buildProvider constructs the logging-wrapped AI provider for req/cfg, applying
+// req.Setup first so req describes the prepared workspace rather than asking for
+// one (see pkg/ai/agent/setup). Callers MUST defer the returned cleanup; ctx
+// should already carry the run timeout.
 func buildProvider(ctx context.Context, req *ai.Request, cfg ai.Config) (ai.Provider, func(), error) {
 	for _, c := range cfg.Model.Candidates() {
 		warnIfLikelyModelTypo(c.Name)
@@ -434,14 +433,12 @@ func buildProvider(ctx context.Context, req *ai.Request, cfg ai.Config) (ai.Prov
 	if req.NoCache {
 		cfg.NoCache = true
 	}
-	if req.Setup != nil {
-		setup, err := shell.Prepare(dbcontext.NewContext(ctx), req.Setup)
-		if err != nil {
-			return nil, cleanup, err
-		}
-		cleanup = func() { _ = setup.Cleanup() }
-		req.SetCwd(setup.Cwd)
-		req.Setup.Env = setup.Env
+	prepared, err := setup.Apply(ctx, req, "")
+	if err != nil {
+		return nil, cleanup, err
+	}
+	if prepared != nil && prepared.Cleanup != nil {
+		cleanup = func() { _ = prepared.Cleanup() }
 	}
 	p, err := ai.NewProvider(cfg)
 	if err != nil {

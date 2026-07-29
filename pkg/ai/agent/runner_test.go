@@ -7,6 +7,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/commons-db/shell"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -415,6 +416,63 @@ func (o *outcomeHook) Phases() []Phase { return []Phase{PhaseRun} }
 func (o *outcomeHook) Post(hc *HookContext, _ Phase) error {
 	o.onRun(hc)
 	return nil
+}
+
+// rewriteHook stands in for the setup/worktree hooks: a PreRun that consumes
+// part of the request and replaces it with where the work landed.
+type rewriteHook struct{ cwd string }
+
+func (r *rewriteHook) Name() string { return "rewrite" }
+func (r *rewriteHook) PreRun(hc *HookContext) error {
+	hc.Request.Setup.Checkout = nil
+	hc.Request.SetCwd(r.cwd)
+	return nil
+}
+
+// A Post hook needs both halves: what the run was asked to do, and what it
+// became. Without Original the first is simply gone by teardown time — which is
+// why worktree.Plugin used to keep a private copy of its own effect.
+func TestRunner_OriginalSurvivesAPreRunRewrite(t *testing.T) {
+	var seen *HookContext
+	r := &Runner[string]{
+		Provider: &fakeProvider{events: func(int) []ai.Event {
+			return []ai.Event{{Kind: ai.EventResult, Success: true}}
+		}},
+		Request: ai.Request{
+			Prompt: api.Prompt{User: "go"},
+			Setup:  &shell.Setup{Checkout: &shell.Checkout{Mode: shell.CheckoutRemote, URL: "https://example.com/x.git"}},
+		},
+		Hooks: []any{
+			&rewriteHook{cwd: "/work/checkout"},
+			&outcomeHook{onRun: func(hc *HookContext) { seen = hc }},
+		},
+	}
+
+	_, err := r.Run(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, seen)
+
+	require.NotNil(t, seen.Original.Setup.Checkout, "Original lost the checkout the run was asked to perform")
+	assert.Equal(t, "https://example.com/x.git", seen.Original.Setup.Checkout.URL)
+	assert.Nil(t, seen.Request.Setup.Checkout, "the current request should describe the result, not the request")
+	assert.Equal(t, "/work/checkout", seen.Request.Cwd())
+}
+
+// isolatorHook is a hook that relocates the run, like worktree.Plugin.
+type isolatorHook struct{ name string }
+
+func (i *isolatorHook) Name() string                        { return i.name }
+func (i *isolatorHook) IsolatesWorkspace(*HookContext) bool { return true }
+
+func TestHookContext_EnsureSingleIsolator(t *testing.T) {
+	hc := &HookContext{Hooks: []any{&isolatorHook{name: "setup"}}}
+	assert.NoError(t, hc.EnsureSingleIsolator(), "one isolator is the normal case")
+
+	hc.Hooks = append(hc.Hooks, &isolatorHook{name: "worktree"})
+	err := hc.EnsureSingleIsolator()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "setup")
+	assert.Contains(t, err.Error(), "worktree")
 }
 
 // lifecycleHook appends every boundary it is dispatched to a shared log, as

@@ -22,6 +22,7 @@ import (
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/claude"
 	"github.com/flanksource/commons/logger"
+	"github.com/flanksource/commons/merge"
 )
 
 // fallbackLog is used when ctx carries no task-scoped logger (ai.ContextWithLogger).
@@ -74,10 +75,22 @@ func ParseScope(s string) (Scope, error) {
 // the accumulating response, whose Workspace holds the run's working-dir state.
 type HookContext struct {
 	context.Context
-	Request   *ai.Request
+	// Request is the CURRENT request: PreRun hooks rewrite it (setup replaces the
+	// checkout it performed with where that landed), and the runner replaces it
+	// wholesale with each verify-driven retry.
+	Request *ai.Request
+	// Original is the request the run started from, before any hook rewrote it.
+	// It is the only place a Post hook can read what the run was *asked* to do —
+	// which repo to check out, which branch to isolate on — while Request says
+	// where that ended up. Cloned once by Run, so mutating it affects nothing.
+	Original  ai.Request
 	Response  *ai.Response
 	Iteration int
 	Scope     Scope
+
+	// Hooks is the run's hook list, so a hook can detect an incompatible peer
+	// rather than silently competing with it (see EnsureSingleIsolator).
+	Hooks []any
 
 	// Phase is the boundary currently being dispatched; it is only meaningful
 	// inside a Post hook, which also receives it as an argument.
@@ -106,6 +119,34 @@ func (hc *HookContext) Workspace() *api.Workspace {
 		hc.Response.Workspace = &api.Workspace{}
 	}
 	return hc.Response.Workspace
+}
+
+// WorkspaceIsolator is implemented by a hook that relocates the run into its own
+// working tree — a git worktree from Spec.Setup.Checkout, or the `wt` worktree
+// plugin. Two of them in one run create two trees and use one, so each declares
+// itself here and calls EnsureSingleIsolator before acting.
+type WorkspaceIsolator interface {
+	Name() string
+	// IsolatesWorkspace reports whether this hook will relocate the run given
+	// hc's request; a hook whose isolation is configured on the spec answers
+	// from hc.Request rather than from its own fields.
+	IsolatesWorkspace(*HookContext) bool
+}
+
+// EnsureSingleIsolator fails when more than one registered hook would relocate
+// the run into its own working tree. Silently creating two and working in one is
+// the failure this exists to prevent: the run edits a tree nobody merges.
+func (hc *HookContext) EnsureSingleIsolator() error {
+	var names []string
+	for _, h := range hc.Hooks {
+		if iso, ok := h.(WorkspaceIsolator); ok && iso.IsolatesWorkspace(hc) {
+			names = append(names, iso.Name())
+		}
+	}
+	if len(names) > 1 {
+		return fmt.Errorf("agent: hooks %s each isolate the run in their own working tree; register exactly one", strings.Join(names, " and "))
+	}
+	return nil
 }
 
 // VerifyResult is a Verify hook's judgement on an iteration. When !Valid, Retry
@@ -180,7 +221,16 @@ func (r *Runner[T]) Run(ctx context.Context) (Result[T], error) {
 		scope = ScopeAll
 	}
 	resp := &ai.Response{Workspace: &api.Workspace{Repo: r.Repo, Cwd: r.Cwd}}
-	hc := &HookContext{Context: ctx, Request: &r.Request, Response: resp, Scope: scope}
+	hc := &HookContext{
+		Context: ctx,
+		Request: &r.Request,
+		// Cloned before the PreRun loop, which is the last moment the request
+		// still describes what the run was asked to do.
+		Original: merge.Clone(r.Request, api.MergePolicy()),
+		Response: resp,
+		Scope:    scope,
+		Hooks:    r.Hooks,
+	}
 	result := Result[T]{Response: resp}
 
 	for _, h := range r.Hooks {
@@ -327,7 +377,14 @@ func (r *Runner[T]) runLoop(ctx context.Context, hc *HookContext, result *Result
 			}
 			hc.Iteration = iter
 			hc.Request = &req
-			req.SetCwd(hc.Workspace().Cwd)
+			// A hook that relocated the run recorded where on the workspace;
+			// propagate it, because a verify-driven retry is built fresh and
+			// would otherwise point at the tree the run started in. An empty
+			// workspace cwd means nothing relocated the run, so the spec's own
+			// cwd stands rather than being blanked.
+			if cwd := hc.Workspace().Cwd; cwd != "" {
+				req.SetCwd(cwd)
+			}
 			return req, true
 		},
 	})

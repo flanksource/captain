@@ -3,7 +3,9 @@ package worktree
 import (
 	"testing"
 
+	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/agent"
+	"github.com/flanksource/captain/pkg/api"
 )
 
 func TestWorktreeMerge_Validate(t *testing.T) {
@@ -81,10 +83,12 @@ func TestWorktreeCleanup_ShouldCleanup(t *testing.T) {
 
 // TestPlugin_PostNoopWithoutPreRun checks the Post-called-without-PreRun guard,
 // which must not invoke `wt` at all (so it passes even when `wt` isn't
-// installed).
+// installed). A workspace still standing on the caller's own cwd — not on the
+// plugin's branch — is how Post recognises that no worktree was created.
 func TestPlugin_PostNoopWithoutPreRun(t *testing.T) {
 	p := &Plugin{Branch: "unused"}
-	if err := p.Post(nil, agent.PhaseRun); err != nil {
+	hc := &agent.HookContext{Response: &ai.Response{Workspace: &api.Workspace{Cwd: t.TempDir()}}}
+	if err := p.Post(hc, agent.PhaseRun); err != nil {
 		t.Errorf("Post without a PreRun'd worktree should be a no-op, got: %v", err)
 	}
 }
