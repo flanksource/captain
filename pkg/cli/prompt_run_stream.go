@@ -130,7 +130,11 @@ func (s *runStream) publishEventLocked(event runStreamEvent) {
 func (s *runStream) complete(sum PromptRunSummary) { s.finish(&sum, "") }
 
 // fail marks the run finished with an error and closes all subscribers.
-func (s *runStream) fail(msg string) { s.finish(nil, msg) }
+func (s *runStream) fail(msg string) PromptRunSummary {
+	summary := PromptRunSummary{Error: msg}
+	s.finish(&summary, msg)
+	return summary
+}
 
 func (s *runStream) finish(sum *PromptRunSummary, errMsg string) {
 	s.mu.Lock()
@@ -139,7 +143,6 @@ func (s *runStream) finish(sum *PromptRunSummary, errMsg string) {
 		return
 	}
 	s.done = true
-	s.summary = sum
 	s.errMsg = errMsg
 	s.endedAt = time.Now()
 	if errMsg != "" {
@@ -147,9 +150,24 @@ func (s *runStream) finish(sum *PromptRunSummary, errMsg string) {
 	} else {
 		s.run.Status = "done"
 	}
-	if sum != nil && sum.SessionID != "" {
-		s.run.SessionID = sum.SessionID
+	if sum != nil {
+		if sum.RunID == "" {
+			sum.RunID = s.run.RunID
+		}
+		if sum.SessionID == "" {
+			sum.SessionID = s.run.SessionID
+		}
+		if sum.Model == "" {
+			sum.Model = s.run.Model
+		}
+		if sum.Backend == "" {
+			sum.Backend = s.run.Backend
+		}
+		if sum.SessionID != "" {
+			s.run.SessionID = sum.SessionID
+		}
 	}
+	s.summary = sum
 	for ch := range s.subs {
 		delete(s.subs, ch)
 		close(ch)
@@ -157,6 +175,17 @@ func (s *runStream) finish(sum *PromptRunSummary, errMsg string) {
 	for ch := range s.eventSubs {
 		delete(s.eventSubs, ch)
 		close(ch)
+	}
+}
+
+func (s *runStream) setRunMetadata(sessionID, model string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if sessionID != "" {
+		s.run.SessionID = sessionID
+	}
+	if model != "" {
+		s.run.Model = model
 	}
 }
 
@@ -282,7 +311,7 @@ type promptRunSnapshotBody struct {
 //
 //	event: entry  data: <session.Message>   (one per frame; replayed on connect)
 //	event: done   data: <PromptRunSummary>   (terminal, success)
-//	event: error  data: {"error": "..."}     (terminal, failure)
+//	event: error  data: <PromptRunSummary>   (terminal, failure)
 func handlePromptRunStream(b *runBroker) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		stream, ok := b.get(r.PathValue("runId"))
@@ -383,7 +412,11 @@ func writeSSE(w http.ResponseWriter, event string, v any) {
 func writeTerminal(w http.ResponseWriter, summary *PromptRunSummary, errMsg string) {
 	switch {
 	case errMsg != "":
-		writeSSE(w, "error", map[string]string{"error": errMsg})
+		if summary != nil {
+			writeSSE(w, "error", summary)
+		} else {
+			writeSSE(w, "error", map[string]string{"error": errMsg})
+		}
 	case summary != nil:
 		writeSSE(w, "done", summary)
 	default:

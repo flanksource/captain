@@ -64,7 +64,7 @@ func TestRunStream_Fail(t *testing.T) {
 	s := newRunStream()
 	s.fail("boom")
 	_, _, done, summary, errMsg := s.subscribe()
-	if !done || summary != nil || errMsg != "boom" {
+	if !done || summary == nil || summary.Error != "boom" || errMsg != "boom" {
 		t.Fatalf("fail state: done=%v summary=%v err=%q", done, summary, errMsg)
 	}
 }

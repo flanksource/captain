@@ -53,20 +53,20 @@ func runPromptStream(t *task.Task, rendered PromptRenderResult, timeout time.Dur
 		OnEvent:       acc.handle,
 	}
 	runResult, err := runner.Run(ctx)
-	if err != nil {
-		if stream.wasStopped() {
-			err = errors.New("stopped")
-		}
-		return failRun(t, stream, err)
-	}
+	session, model, usage, cost := acc.snapshot()
 	loop := runResult.Loop
-
-	session := acc.sessionID
 	if session == "" && runResult.Response.Workspace != nil {
 		session = runResult.Response.Workspace.SessionID
 	}
 	if session == "" && loop != nil && len(loop.Iterations) > 0 {
 		session = loop.Iterations[0].SessionID
+	}
+	stream.setRunMetadata(session, model)
+	if err != nil {
+		if stream.wasStopped() {
+			err = errors.New("stopped")
+		}
+		return failRun(t, stream, err)
 	}
 	passed := verifyPassed(runResult.Verdicts)
 	structuredOutput, err := structuredOutputMap(runResult.Response.StructuredData)
@@ -79,7 +79,7 @@ func runPromptStream(t *task.Task, rendered PromptRenderResult, timeout time.Dur
 	}
 	record := promptRunRecordInput{
 		Rendered: rendered, RunID: runID, Binding: binding, SessionID: session,
-		Model: acc.model, Backend: rendered.Backend, ResultText: resultText, ResultJSON: structuredOutput,
+		Model: model, Backend: rendered.Backend, ResultText: resultText, ResultJSON: structuredOutput,
 	}
 	if !passed {
 		record.Error = verifyReason(runResult.Verdicts)
@@ -92,11 +92,11 @@ func runPromptStream(t *task.Task, rendered PromptRenderResult, timeout time.Dur
 	summary := PromptRunSummary{
 		RunID:        runID,
 		SessionID:    summarySessionID,
-		Model:        acc.model,
+		Model:        model,
 		Backend:      rendered.Backend,
-		InputTokens:  acc.usage.InputTokens,
-		OutputTokens: acc.usage.OutputTokens,
-		CostUSD:      acc.cost,
+		InputTokens:  usage.InputTokens,
+		OutputTokens: usage.OutputTokens,
+		CostUSD:      cost,
 		Duration:     time.Since(start).Round(time.Millisecond).String(),
 		Success:      passed,
 	}
@@ -112,7 +112,7 @@ func failRun(t *task.Task, stream *runStream, err error) (PromptRunSummary, erro
 	if stream.wasStopped() {
 		err = errors.New("stopped")
 	}
-	stream.fail(err.Error())
+	summary := stream.fail(err.Error())
 	_, _ = t.FailedWithError(err)
-	return PromptRunSummary{Error: err.Error()}, err
+	return summary, err
 }

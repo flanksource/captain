@@ -8,7 +8,43 @@ export type CommandValues = Parameters<
   NonNullable<OperationCommandPageProps["onResult"]>
 >[2];
 
-const DEFAULT_AGENT_MODEL = "claude-sonnet-5";
+// A field to pull out of an execution response. `keys` are exact record keys;
+// `labels` are the normalized forms that name the field in a rendered node tree;
+// `patterns` are the last-resort plain-text forms.
+type ResponseField = {
+  keys: string[];
+  labels: string[];
+  patterns: RegExp[];
+};
+
+const SESSION_FIELD: ResponseField = {
+  keys: [
+    "sessionId",
+    "sessionID",
+    "session_id",
+    "SessionID",
+    "ProviderSessionID",
+    "providerSessionId",
+  ],
+  labels: [
+    "session",
+    "session/id",
+    "sessionid",
+    "provider/session/id",
+    "providersessionid",
+  ],
+  patterns: [
+    /"sessionId"\s*:\s*"([^"]+)"/i,
+    /"session_id"\s*:\s*"([^"]+)"/i,
+    /\bSession\s+([A-Za-z0-9_.:-]+)/i,
+  ],
+};
+
+const MODEL_FIELD: ResponseField = {
+  keys: ["model", "Model"],
+  labels: ["model"],
+  patterns: [/"model"\s*:\s*"([^"]+)"/i],
+};
 
 export function isAgentOperation(op: ResolvedOperation) {
   const operationId = normalizeCommandName(op.operation.operationId);
@@ -40,21 +76,17 @@ export function isChatToolOperation(op: ResolvedOperation) {
   ].includes(root);
 }
 
-export function agentModelFor(values: CommandValues) {
-  const backend = stringValue(values.backend).toLowerCase();
-  const model = stringValue(values.model).toLowerCase();
-
-  if (
-    backend.includes("codex") ||
-    model.includes("codex") ||
-    model.includes("gpt-5-codex")
-  ) {
-    return "gpt-5.6-sol";
-  }
-  if (model.includes("opus")) return "claude-opus-5";
-  if (model.includes("haiku")) return "claude-haiku-4-5";
-  if (model.startsWith("claude-agent-")) return model.replace(/^claude-agent-/, "claude-");
-  return DEFAULT_AGENT_MODEL;
+// The model the run actually resolved to: `AIAgentResult.model`, which the
+// server fills from the provider's own answer. Never guessed from the submitted
+// form values — an id ladder here would name models the catalog no longer
+// carries, or ones the user disabled. Empty means the response named none, and
+// the chat thread then opens on its own default rather than on a stale literal.
+export function agentModelFor(response: ExecutionResponse) {
+  return (
+    fieldFromValue(response.parsed, MODEL_FIELD) ||
+    fieldFromText(response.stdout, MODEL_FIELD) ||
+    fieldFromText(response.output, MODEL_FIELD)
+  );
 }
 
 export function titleFor(values: CommandValues, sessionId: string) {
@@ -66,9 +98,9 @@ export function titleFor(values: CommandValues, sessionId: string) {
 export function extractSessionId(response: ExecutionResponse) {
   return (
     stringFromHeaders(response.responseHeaders) ||
-    sessionIdFromValue(response.parsed) ||
-    sessionIdFromText(response.stdout) ||
-    sessionIdFromText(response.output)
+    fieldFromValue(response.parsed, SESSION_FIELD) ||
+    fieldFromText(response.stdout, SESSION_FIELD) ||
+    fieldFromText(response.output, SESSION_FIELD)
   );
 }
 
@@ -82,14 +114,18 @@ function stringFromHeaders(headers: Record<string, string> | undefined) {
   );
 }
 
-function sessionIdFromValue(value: unknown, parentKey = ""): string {
+function fieldFromValue(
+  value: unknown,
+  field: ResponseField,
+  parentKey = "",
+): string {
   if (value == null) return "";
   if (typeof value === "string") {
-    return looksLikeSessionKey(parentKey) ? value.trim() : "";
+    return matchesField(field, parentKey) ? value.trim() : "";
   }
   if (Array.isArray(value)) {
     for (const item of value) {
-      const found = sessionIdFromValue(item, parentKey);
+      const found = fieldFromValue(item, field, parentKey);
       if (found) return found;
     }
     return "";
@@ -97,31 +133,24 @@ function sessionIdFromValue(value: unknown, parentKey = ""): string {
   if (typeof value !== "object") return "";
 
   const record = value as Record<string, unknown>;
-  for (const key of [
-    "sessionId",
-    "sessionID",
-    "session_id",
-    "SessionID",
-    "ProviderSessionID",
-    "providerSessionId",
-  ]) {
+  for (const key of field.keys) {
     const direct = stringValue(record[key]).trim();
     if (direct) return direct;
   }
 
   const fieldName = stringValue(record.name) || stringValue(record.label) || parentKey;
-  if (looksLikeSessionKey(fieldName)) {
+  if (matchesField(field, fieldName)) {
     const text = nodeText(record.value) || nodeText(record);
     if (text) return text;
   }
 
   for (const key of ["node", "fields", "rows", "value", "children", "items"]) {
-    const found = sessionIdFromValue(record[key], fieldName);
+    const found = fieldFromValue(record[key], field, fieldName);
     if (found) return found;
   }
 
   for (const [key, nested] of Object.entries(record)) {
-    const found = sessionIdFromValue(nested, key);
+    const found = fieldFromValue(nested, field, key);
     if (found) return found;
   }
   return "";
@@ -139,31 +168,23 @@ function nodeText(value: unknown): string {
   ).trim();
 }
 
-function sessionIdFromText(text: string | undefined) {
+function fieldFromText(text: string | undefined, field: ResponseField) {
   if (!text) return "";
   try {
-    const parsed = JSON.parse(text) as unknown;
-    const found = sessionIdFromValue(parsed);
+    const found = fieldFromValue(JSON.parse(text) as unknown, field);
     if (found) return found;
   } catch {
     // Fall through to the plain-text patterns.
   }
-  const match =
-    text.match(/"sessionId"\s*:\s*"([^"]+)"/i) ||
-    text.match(/"session_id"\s*:\s*"([^"]+)"/i) ||
-    text.match(/\bSession\s+([A-Za-z0-9_.:-]+)/i);
-  return match?.[1]?.trim() ?? "";
+  for (const pattern of field.patterns) {
+    const match = text.match(pattern);
+    if (match?.[1]) return match[1].trim();
+  }
+  return "";
 }
 
-function looksLikeSessionKey(key: string) {
-  const normalized = normalizeCommandName(key);
-  return (
-    normalized === "session" ||
-    normalized === "session/id" ||
-    normalized === "sessionid" ||
-    normalized === "provider/session/id" ||
-    normalized === "providersessionid"
-  );
+function matchesField(field: ResponseField, key: string) {
+  return field.labels.includes(normalizeCommandName(key));
 }
 
 function normalizeCommandName(value: unknown) {

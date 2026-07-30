@@ -161,6 +161,8 @@ func SchemaJSONForBackend(backend api.Backend, p api.Prompt) (json.RawMessage, e
 		return schema, err
 	}
 	switch {
+	case backend == api.BackendClaudeCLI:
+		return ClaudeCLICompatibleSchema(schema)
 	case UsesAnthropicSchemaSubset(backend):
 		return AnthropicCompatibleSchema(schema)
 	case UsesOpenAISchemaSubset(backend):
@@ -340,6 +342,45 @@ func AnthropicCompatibleSchema(schema json.RawMessage) (json.RawMessage, error) 
 	out, err := json.Marshal(v)
 	if err != nil {
 		return nil, fmt.Errorf("anthropic schema transform: marshal schema: %w", err)
+	}
+	return out, nil
+}
+
+// ClaudeCLICompatibleSchema applies Claude's structured-output subset, removes
+// the root dialect declaration that Claude Code tries to resolve externally,
+// and exposes the type behind an invopop root reference. Claude Code turns the
+// schema into a StructuredOutput tool whose input schema requires a root type.
+// Local $defs and $ref values remain intact.
+func ClaudeCLICompatibleSchema(schema json.RawMessage) (json.RawMessage, error) {
+	transformed, err := AnthropicCompatibleSchema(schema)
+	if err != nil {
+		return nil, fmt.Errorf("claude-cli schema transform: %w", err)
+	}
+
+	var v any
+	if err := json.Unmarshal(transformed, &v); err != nil {
+		return nil, fmt.Errorf("claude-cli schema transform: decode anthropic schema: %w", err)
+	}
+	if root, ok := v.(map[string]any); ok {
+		delete(root, "$schema")
+		if _, hasType := root["type"]; !hasType {
+			ref, hasRef := root["$ref"].(string)
+			if !hasRef {
+				return nil, fmt.Errorf("claude-cli schema transform: root schema must declare a type")
+			}
+			defName, localRef := strings.CutPrefix(ref, "#/$defs/")
+			defs, hasDefs := root["$defs"].(map[string]any)
+			definition, resolved := defs[defName].(map[string]any)
+			rootType, hasRootType := definition["type"].(string)
+			if !localRef || !hasDefs || !resolved || !hasRootType || rootType == "" {
+				return nil, fmt.Errorf("claude-cli schema transform: root $ref %q must resolve to a definition with a string type", ref)
+			}
+			root["type"] = rootType
+		}
+	}
+	out, err := json.Marshal(v)
+	if err != nil {
+		return nil, fmt.Errorf("claude-cli schema transform: marshal schema: %w", err)
 	}
 	return out, nil
 }

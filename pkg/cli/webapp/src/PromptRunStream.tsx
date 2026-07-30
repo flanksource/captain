@@ -27,14 +27,22 @@ export function PromptRunStream({ runID }: { runID: string }) {
         ) : null}
       </div>
       {error && (
-        <div className="rounded-md border border-destructive/40 bg-destructive/10 p-density-3 text-sm text-destructive">
-          {error}
-        </div>
+        <RunFailureDetails
+          error={error}
+          runID={summary?.runId ?? run?.runId ?? runID}
+          sessionID={summary?.sessionId ?? run?.sessionId}
+          model={summary?.model ?? run?.model}
+          backend={summary?.backend ?? run?.backend}
+        />
       )}
       <div className="min-h-0 flex-1 overflow-auto rounded-md border border-border">
         {empty ? (
           <div className="flex min-h-[240px] items-center justify-center p-density-6 text-sm text-muted-foreground">
-            {status === "done" ? "No session activity." : "Starting run…"}
+            {status === "done"
+              ? "No session activity."
+              : status === "error"
+                ? "Run failed before session activity."
+                : "Starting run…"}
           </div>
         ) : (
           <div className="p-density-4">
@@ -52,7 +60,48 @@ export function PromptRunStream({ runID }: { runID: string }) {
           onInterrupt={chat.interrupt}
         />
       ) : null}
-      {summary && <RunSummaryFooter summary={summary} />}
+      {summary && status !== "error" && (
+        <RunSummaryFooter summary={summary} />
+      )}
+    </div>
+  );
+}
+
+function RunFailureDetails({
+  error,
+  runID,
+  sessionID,
+  model,
+  backend,
+}: {
+  error: string;
+  runID: string;
+  sessionID?: string;
+  model?: string;
+  backend?: string;
+}) {
+  const details = [
+    { label: "Run UID", value: runID },
+    { label: "Session UID", value: sessionID || "Not assigned" },
+    { label: "Model", value: model || "Unknown" },
+    { label: "Backend", value: backend || "Unknown" },
+  ];
+  return (
+    <div
+      role="alert"
+      className="rounded-md border border-destructive/40 bg-destructive/10 p-density-3"
+    >
+      <div className="text-sm font-medium text-destructive">{error}</div>
+      <dl className="mt-density-3 grid gap-density-2 text-xs sm:grid-cols-2">
+        {details.map((detail) => (
+          <div key={detail.label} className="min-w-0">
+            <dt className="text-muted-foreground">{detail.label}</dt>
+            <dd className="break-all font-mono text-foreground">
+              {detail.value}
+            </dd>
+          </div>
+        ))}
+      </dl>
     </div>
   );
 }

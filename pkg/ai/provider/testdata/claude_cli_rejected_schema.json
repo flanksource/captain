@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$ref": "#/$defs/ResultEnvelope",
+  "$defs": {
+    "AgentQuestion": {
+      "properties": {
+        "text": {
+          "type": "string",
+          "description": "The question that blocks progress"
+        },
+        "context": {
+          "type": "string",
+          "description": "Why the question matters (files, trade-offs)"
+        },
+        "options": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Suggested answers, if any"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "text"
+      ]
+    },
+    "ResultEnvelope": {
+      "properties": {
+        "summary": {
+          "type": "string",
+          "description": "What was done, found, or attempted — a few sentences"
+        },
+        "endStatus": {
+          "type": "string",
+          "enum": [
+            "completed",
+            "failed",
+            "ask"
+          ]
+        },
+        "questions": {
+          "items": {
+            "$ref": "#/$defs/AgentQuestion"
+          },
+          "type": "array",
+          "description": "Required when endStatus is ask"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "summary",
+        "endStatus"
+      ]
+    }
+  }
+}
