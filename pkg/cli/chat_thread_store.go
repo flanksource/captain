@@ -104,6 +104,32 @@ func (s *fileThreadStore) AppendMessage(_ context.Context, id string, msg aichat
 	return s.saveLocked(state)
 }
 
+func (s *fileThreadStore) ReplaceLastMessage(_ context.Context, id string, msg aichat.UIMessage) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	state, err := s.loadLocked()
+	if err != nil {
+		return err
+	}
+	thread := findThread(state, id)
+	if thread == nil {
+		return fmt.Errorf("thread %q not found", id)
+	}
+	if msg.Role != "assistant" {
+		return fmt.Errorf("thread %q replacement message must have assistant role", id)
+	}
+	if len(thread.Messages) == 0 {
+		return fmt.Errorf("thread %q cannot replace a message in an empty thread", id)
+	}
+	if thread.Messages[len(thread.Messages)-1].Role != "assistant" {
+		return fmt.Errorf("thread %q last stored message must have assistant role", id)
+	}
+	thread.Messages[len(thread.Messages)-1] = msg
+	thread.UpdatedAt = time.Now()
+	return s.saveLocked(state)
+}
+
 func (s *fileThreadStore) Delete(_ context.Context, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -28,13 +28,26 @@ type eventStream struct {
 	finished  bool
 }
 
+// EventStreamOptions carries request state needed to finish the resumed UI message.
+type EventStreamOptions struct {
+	ToolApproval *api.ToolApprovalResume
+}
+
 // WriteEventStream translates a Captain event channel into one complete UI Message Stream.
 // Translation errors are written as an error part before the stream is closed and are
 // also returned so malformed provider output cannot pass silently.
-func WriteEventStream(writer *SSEWriter, events <-chan api.Event) error {
+func WriteEventStream(writer *SSEWriter, events <-chan api.Event, options EventStreamOptions) error {
+	if options.ToolApproval != nil {
+		if err := options.ToolApproval.Validate(); err != nil {
+			return fmt.Errorf("validate tool approval stream: %w", err)
+		}
+	}
 	stream := &eventStream{writer: writer, tools: map[string]toolState{}}
 	if err := stream.start(); err != nil {
 		return err
+	}
+	if err := stream.approvalResults(options.ToolApproval); err != nil {
+		return stream.fail(err)
 	}
 	for event := range events {
 		if err := stream.event(event); err != nil {
@@ -43,6 +56,40 @@ func WriteEventStream(writer *SSEWriter, events <-chan api.Event) error {
 	}
 	if err := stream.finish(); err != nil {
 		return stream.fail(err)
+	}
+	return nil
+}
+
+func (s *eventStream) approvalResults(resume *api.ToolApprovalResume) error {
+	if resume == nil {
+		return nil
+	}
+	for _, decision := range resume.Decisions {
+		switch decision.Action {
+		case api.ToolApprovalApprove:
+			continue
+		case api.ToolApprovalDeny:
+			if err := s.writer.WritePart(Part{
+				Type: "tool-output-denied", ToolCallID: decision.ToolCallID,
+			}); err != nil {
+				return err
+			}
+		case api.ToolApprovalRespond:
+			part := Part{Type: "tool-output-available", ToolCallID: decision.ToolCallID}
+			if decision.Result.Error != "" {
+				part.Type = "tool-output-error"
+				part.ErrorText = decision.Result.Error
+			} else {
+				var output any
+				if err := json.Unmarshal(decision.Result.Output, &output); err != nil {
+					return fmt.Errorf("decode tool call %q response: %w", decision.ToolCallID, err)
+				}
+				part.Output = output
+			}
+			if err := s.writer.WritePart(part); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
