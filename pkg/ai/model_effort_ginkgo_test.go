@@ -70,7 +70,11 @@ var _ = Describe("model effort runtime validation", func() {
 		Expect(capture.request.Effort).To(Equal(api.EffortHigh))
 		Expect(logs.GetLogsByLevel(logger.Warn)).To(BeEmpty())
 		Expect(logs.GetLogsByLevel(logger.Debug)).To(ConsistOf(
-			HaveField("Message", ContainSubstring(`using highest supported effort "high"`)),
+			HaveField("Message", SatisfyAll(
+				// The agent is named in selector notation, not "model %q on %s".
+				ContainSubstring("api:gemini-3.6-flash:xhigh"),
+				ContainSubstring(`using highest supported effort "high"`),
+			)),
 		))
 	})
 })

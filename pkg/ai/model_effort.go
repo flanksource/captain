@@ -48,15 +48,19 @@ func (p *effortValidatingProvider) request(ctx context.Context, req Request) (Re
 		return Request{}, err
 	}
 	if effective != requested {
+		// Name the agent in the selector notation the user already reads in
+		// dispatch lines, so a degraded-effort debug line can be matched back to
+		// the run it belongs to.
+		identity := LogIdentity(p.GetBackend(), p.GetModel(), requested)
 		if effective == api.EffortNone {
 			LoggerFromContext(ctx, modelEffortLog).Debugf(
-				"model %q on %s does not support reasoning effort %q; continuing without effort",
-				p.GetModel(), p.GetBackend(), requested,
+				"%s does not support reasoning effort %q; continuing without effort",
+				identity, requested,
 			)
 		} else {
 			LoggerFromContext(ctx, modelEffortLog).Debugf(
-				"model %q on %s does not support reasoning effort %q; using highest supported effort %q",
-				p.GetModel(), p.GetBackend(), requested, effective,
+				"%s does not support reasoning effort %q; using highest supported effort %q",
+				identity, requested, effective,
 			)
 		}
 	}
