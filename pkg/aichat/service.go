@@ -112,6 +112,10 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 		http.Error(w, fmt.Sprintf("invalid chat request: %v", err), http.StatusBadRequest)
 		return
 	}
+	if err := resolveToolApproval(&chat); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	settings, err := s.runtimeSettings(request.Context())
 	if err != nil {
 		http.Error(w, fmt.Sprintf("load chat runtime settings: %v", err), http.StatusInternalServerError)
@@ -125,10 +129,13 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	attachments, err := s.resolveAttachments(request.Context(), chat.Messages)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+	var attachments map[partLocation]api.AttachmentRef
+	if chat.ToolApproval == nil {
+		attachments, err = s.resolveAttachments(request.Context(), chat.Messages)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 	spec, err := requestSpec(chat, settings, attachments)
 	if err != nil {
@@ -178,7 +185,9 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if err := WriteEventStream(writer, s.persistedEvents(streamContext, chat, events)); err != nil {
+	if err := WriteEventStream(writer, s.persistedEvents(streamContext, chat, events), EventStreamOptions{
+		ToolApproval: chat.ToolApproval,
+	}); err != nil {
 		serviceLog.Errorf("stream chat response: %v", err)
 	}
 }

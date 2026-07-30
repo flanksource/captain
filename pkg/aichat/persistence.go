@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/flanksource/captain/pkg/api"
 )
@@ -13,17 +14,66 @@ type assistantMessageBuilder struct {
 	toolParts map[string]int
 	sessionID string
 	model     string
+	replace   bool
 }
 
-func newAssistantMessageBuilder(chatID string) *assistantMessageBuilder {
+type assistantMessageBuilderOptions struct {
+	ChatID string
+	Seed   *UIMessage
+	Resume *api.ToolApprovalResume
+}
+
+func newAssistantMessageBuilder(options assistantMessageBuilderOptions) (*assistantMessageBuilder, error) {
 	id := ""
-	if chatID != "" {
-		id = chatID + "-assistant"
+	if options.ChatID != "" {
+		id = options.ChatID + "-assistant"
 	}
-	return &assistantMessageBuilder{
+	builder := &assistantMessageBuilder{
 		message:   UIMessage{ID: id, Role: string(api.RoleAssistant), Parts: []UIPart{}},
 		toolParts: map[string]int{},
+		replace:   options.Resume != nil,
 	}
+	if options.Resume == nil {
+		return builder, nil
+	}
+	if options.Seed == nil {
+		return nil, fmt.Errorf("approval resume has no suspended assistant message")
+	}
+	if !strings.EqualFold(options.Seed.Role, string(api.RoleAssistant)) {
+		return nil, fmt.Errorf("approval resume seed must have assistant role")
+	}
+	builder.message = *options.Seed
+	builder.message.Parts = append([]UIPart(nil), options.Seed.Parts...)
+	for i, part := range builder.message.Parts {
+		if !part.IsTool() {
+			continue
+		}
+		if part.ToolCallID == "" {
+			return nil, fmt.Errorf("persisted tool part has no call ID")
+		}
+		if _, exists := builder.toolParts[part.ToolCallID]; exists {
+			return nil, fmt.Errorf("persisted duplicate tool call %q", part.ToolCallID)
+		}
+		builder.toolParts[part.ToolCallID] = i
+	}
+	pending := make(map[string]api.ToolApprovalRequest, len(options.Resume.Decisions))
+	for _, request := range options.Resume.State.Pending() {
+		pending[request.ToolCallID] = request
+	}
+	for _, decision := range options.Resume.Decisions {
+		request := pending[decision.ToolCallID]
+		part, err := builder.toolPart(decision.ToolCallID, request.Tool)
+		if err != nil {
+			return nil, err
+		}
+		if !equalPartJSON(part.Input, request.Input) {
+			return nil, fmt.Errorf("persisted tool call %q input does not match approval state", decision.ToolCallID)
+		}
+		if err := applyApprovalDecision(part, decision); err != nil {
+			return nil, err
+		}
+	}
+	return builder, nil
 }
 
 func (s *Service) persistedEvents(ctx context.Context, request ChatRequest, source <-chan api.Event) <-chan api.Event {
@@ -33,7 +83,18 @@ func (s *Service) persistedEvents(ctx context.Context, request ChatRequest, sour
 	out := make(chan api.Event)
 	go func() {
 		defer close(out)
-		builder := newAssistantMessageBuilder(request.ID)
+		seed, err := s.approvalPersistenceSeed(ctx, request)
+		if err != nil {
+			sendEvent(ctx, out, api.Event{Kind: api.EventError, Error: err.Error()})
+			return
+		}
+		builder, err := newAssistantMessageBuilder(assistantMessageBuilderOptions{
+			ChatID: request.ID, Seed: seed, Resume: request.ToolApproval,
+		})
+		if err != nil {
+			sendEvent(ctx, out, api.Event{Kind: api.EventError, Error: err.Error()})
+			return
+		}
 		persisted := false
 		for event := range source {
 			if err := builder.apply(event); err != nil {
@@ -58,12 +119,33 @@ func (s *Service) persistedEvents(ctx context.Context, request ChatRequest, sour
 			}
 		}
 		if !persisted && len(builder.message.Parts) > 0 {
-			if err := s.options.Threads.AppendMessage(ctx, request.ThreadID, builder.message); err != nil {
+			if err := s.persistAssistantMessage(ctx, request.ThreadID, builder); err != nil {
 				sendEvent(ctx, out, api.Event{Kind: api.EventError, Error: fmt.Sprintf("persist assistant message: %v", err)})
 			}
 		}
 	}()
 	return out
+}
+
+func (s *Service) approvalPersistenceSeed(ctx context.Context, request ChatRequest) (*UIMessage, error) {
+	if request.ToolApproval == nil {
+		return nil, nil
+	}
+	if len(request.Messages) > 0 {
+		last := request.Messages[len(request.Messages)-1]
+		if strings.EqualFold(last.Role, string(api.RoleAssistant)) {
+			return &last, nil
+		}
+	}
+	thread, err := s.options.Threads.Get(ctx, request.ThreadID)
+	if err != nil {
+		return nil, fmt.Errorf("load suspended assistant message: %w", err)
+	}
+	if len(thread.Messages) == 0 {
+		return nil, fmt.Errorf("thread %q has no suspended assistant message", request.ThreadID)
+	}
+	last := thread.Messages[len(thread.Messages)-1]
+	return &last, nil
 }
 
 func sendEvent(ctx context.Context, target chan<- api.Event, event api.Event) bool {
@@ -82,10 +164,17 @@ func (s *Service) persistCompletedTurn(ctx context.Context, threadID string, bui
 	if len(builder.message.Parts) == 0 {
 		return fmt.Errorf("completed assistant turn has no message parts")
 	}
-	if err := s.options.Threads.AppendMessage(ctx, threadID, builder.message); err != nil {
+	if err := s.persistAssistantMessage(ctx, threadID, builder); err != nil {
 		return fmt.Errorf("persist assistant message: %w", err)
 	}
 	return nil
+}
+
+func (s *Service) persistAssistantMessage(ctx context.Context, threadID string, builder *assistantMessageBuilder) error {
+	if builder.replace {
+		return s.options.Threads.ReplaceLastMessage(ctx, threadID, builder.message)
+	}
+	return s.options.Threads.AppendMessage(ctx, threadID, builder.message)
 }
 
 func (b *assistantMessageBuilder) apply(event api.Event) error {
@@ -134,12 +223,29 @@ func (b *assistantMessageBuilder) toolUse(event api.Event) error {
 	if event.ToolCallID == "" || event.Tool == "" {
 		return fmt.Errorf("persist tool use requires a tool name and call ID")
 	}
-	if _, exists := b.toolParts[event.ToolCallID]; exists {
-		return fmt.Errorf("persist duplicate tool call %q", event.ToolCallID)
-	}
 	input, err := json.Marshal(event.Input)
 	if err != nil {
 		return fmt.Errorf("marshal tool %q input: %w", event.Tool, err)
+	}
+	if _, exists := b.toolParts[event.ToolCallID]; exists {
+		part, err := b.toolPart(event.ToolCallID, event.Tool)
+		if err != nil {
+			return err
+		}
+		if part.State != "approval-responded" ||
+			part.Approval == nil ||
+			part.Approval.Approved == nil ||
+			!*part.Approval.Approved {
+			return fmt.Errorf("persist duplicate tool call %q", event.ToolCallID)
+		}
+		if !approvalInputMatches(part.Input, event.Input) {
+			return fmt.Errorf("persist resumed tool call %q input does not match approval", event.ToolCallID)
+		}
+		part.State = "input-available"
+		part.Input = input
+		part.Output = nil
+		part.ErrorText = ""
+		return nil
 	}
 	b.toolParts[event.ToolCallID] = len(b.message.Parts)
 	b.message.Parts = append(b.message.Parts, UIPart{
@@ -190,6 +296,9 @@ func (b *assistantMessageBuilder) toolPart(callID, name string) (*UIPart, error)
 }
 
 func (b *assistantMessageBuilder) result(event api.Event) error {
+	if err := b.validateToolStates(event.ToolApproval != nil); err != nil {
+		return err
+	}
 	dataType := "data-result"
 	data := event.StructuredData
 	if event.ToolApproval != nil {
@@ -214,6 +323,52 @@ func (b *assistantMessageBuilder) result(event api.Event) error {
 	if event.Usage != nil {
 		b.message.Metadata.Usage = usageMetadata(*event.Usage)
 		b.message.Metadata.ContextTokens = event.Usage.InputTokens
+	}
+	return nil
+}
+
+func (b *assistantMessageBuilder) validateToolStates(allowApproval bool) error {
+	for _, part := range b.message.Parts {
+		if !part.IsTool() {
+			continue
+		}
+		switch part.State {
+		case "output-available", "output-error", "output-denied":
+		case "approval-requested":
+			if allowApproval {
+				continue
+			}
+			return fmt.Errorf("persist tool call %q ended without an approval result", part.ToolCallID)
+		default:
+			return fmt.Errorf("persist tool call %q ended in non-terminal state %q", part.ToolCallID, part.State)
+		}
+	}
+	return nil
+}
+
+func applyApprovalDecision(part *UIPart, decision api.ToolApprovalDecision) error {
+	switch decision.Action {
+	case api.ToolApprovalApprove:
+		approved := true
+		part.State = "approval-responded"
+		part.Approval = &Approval{ID: decision.ToolCallID, Approved: &approved}
+	case api.ToolApprovalDeny:
+		approved := false
+		part.State = "output-denied"
+		part.Approval = &Approval{
+			ID: decision.ToolCallID, Approved: &approved, Reason: decision.Message,
+		}
+	case api.ToolApprovalRespond:
+		if decision.Result == nil {
+			return fmt.Errorf("tool call %q response has no result", decision.ToolCallID)
+		}
+		if decision.Result.Error != "" {
+			part.State = "output-error"
+			part.ErrorText = decision.Result.Error
+			return nil
+		}
+		part.State = "output-available"
+		part.Output = append(json.RawMessage(nil), decision.Result.Output...)
 	}
 	return nil
 }

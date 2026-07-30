@@ -31,6 +31,17 @@ func TestFileThreadStorePersistsThreads(t *testing.T) {
 	if err := store.AppendMessage(ctx, thread.ID, msg); err != nil {
 		t.Fatalf("AppendMessage: %v", err)
 	}
+	assistant := aichat.UIMessage{
+		Role:  "assistant",
+		Parts: []aichat.UIPart{{Type: "text", Text: "pending"}},
+	}
+	if err := store.AppendMessage(ctx, thread.ID, assistant); err != nil {
+		t.Fatalf("AppendMessage assistant: %v", err)
+	}
+	assistant.Parts[0].Text = "completed"
+	if err := store.ReplaceLastMessage(ctx, thread.ID, assistant); err != nil {
+		t.Fatalf("ReplaceLastMessage: %v", err)
+	}
 	updated, err := store.AddUsage(ctx, thread.ID, aichat.TurnUsage{
 		InputTokens:  10,
 		OutputTokens: 5,
@@ -54,7 +65,9 @@ func TestFileThreadStorePersistsThreads(t *testing.T) {
 	if got.ProviderSessionID != "provider-session-1" {
 		t.Errorf("ProviderSessionID = %q", got.ProviderSessionID)
 	}
-	if len(got.Messages) != 1 || got.Messages[0].Parts[0].Text != "continue" {
+	if len(got.Messages) != 2 ||
+		got.Messages[0].Parts[0].Text != "continue" ||
+		got.Messages[1].Parts[0].Text != "completed" {
 		t.Errorf("Messages = %+v", got.Messages)
 	}
 	if got.TotalInputTokens != 10 || got.TotalOutputTokens != 5 || got.TotalCostUSD != 0.25 {

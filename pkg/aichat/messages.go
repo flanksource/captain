@@ -161,8 +161,8 @@ func canonicalPart(role api.MessageRole, part UIPart, attachment api.AttachmentR
 		request := &api.Part{Type: api.PartToolRequest, ToolRequest: &api.ToolRequest{
 			ToolCallID: part.ToolCallID, Name: part.EffectiveToolName(), Input: part.Input,
 		}}
-		if part.State != "output-available" && part.State != "output-error" {
-			return request, nil, nil
+		if part.State != "output-available" && part.State != "output-error" && part.State != "output-denied" {
+			return nil, nil, fmt.Errorf("tool call %q is not terminal (state %q)", part.ToolCallID, part.State)
 		}
 		result := &api.Part{Type: api.PartToolResult, ToolResult: &api.ToolResult{
 			ToolCallID: part.ToolCallID, Output: part.Output,
@@ -170,6 +170,13 @@ func canonicalPart(role api.MessageRole, part UIPart, attachment api.AttachmentR
 		if part.State == "output-error" {
 			result.ToolResult.Output = nil
 			result.ToolResult.Error = part.ErrorText
+		}
+		if part.State == "output-denied" {
+			result.ToolResult.Output = nil
+			result.ToolResult.Error = "tool execution denied"
+			if part.Approval != nil && part.Approval.Reason != "" {
+				result.ToolResult.Error = part.Approval.Reason
+			}
 		}
 		return request, result, nil
 	case part.Type == "step-start" || strings.HasPrefix(part.Type, "data-") || strings.HasPrefix(part.Type, "source-"):

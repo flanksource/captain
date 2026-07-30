@@ -39,7 +39,7 @@ func recordEvents(events ...api.Event) (*flushRecorder, error) {
 		channel <- event
 	}
 	close(channel)
-	return recorder, aichat.WriteEventStream(writer, channel)
+	return recorder, aichat.WriteEventStream(writer, channel, aichat.EventStreamOptions{})
 }
 
 func decodedDataLines(body string) []map[string]any {

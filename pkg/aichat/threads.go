@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -41,6 +42,7 @@ type ThreadStore interface {
 	List(context.Context) ([]*Thread, error)
 	Get(context.Context, string) (*Thread, error)
 	AppendMessage(context.Context, string, UIMessage) error
+	ReplaceLastMessage(context.Context, string, UIMessage) error
 	Delete(context.Context, string) error
 	SetProviderSession(context.Context, string, string) error
 	AddUsage(context.Context, string, TurnUsage) (*Thread, error)
@@ -99,6 +101,21 @@ func (s *memoryThreadStore) AppendMessage(_ context.Context, id string, message 
 	return nil
 }
 
+func (s *memoryThreadStore) ReplaceLastMessage(_ context.Context, id string, message UIMessage) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	thread, err := s.thread(id)
+	if err != nil {
+		return err
+	}
+	if err := validateLastMessageReplacement(thread.Messages, message); err != nil {
+		return fmt.Errorf("thread %q: %w", id, err)
+	}
+	thread.Messages[len(thread.Messages)-1] = message
+	thread.UpdatedAt = time.Now()
+	return nil
+}
+
 func (s *memoryThreadStore) Delete(_ context.Context, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -151,4 +168,17 @@ func cloneThread(thread *Thread) *Thread {
 	copy := *thread
 	copy.Messages = append([]UIMessage(nil), thread.Messages...)
 	return &copy
+}
+
+func validateLastMessageReplacement(messages []UIMessage, replacement UIMessage) error {
+	if !strings.EqualFold(replacement.Role, "assistant") {
+		return fmt.Errorf("replacement message must have assistant role")
+	}
+	if len(messages) == 0 {
+		return fmt.Errorf("cannot replace a message in an empty thread")
+	}
+	if !strings.EqualFold(messages[len(messages)-1].Role, "assistant") {
+		return fmt.Errorf("last stored message must have assistant role")
+	}
+	return nil
 }
