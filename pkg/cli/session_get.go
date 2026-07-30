@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/session"
 	"github.com/flanksource/clicky"
@@ -283,6 +284,9 @@ func enrichSessionDetail(detail *session.Session, summary SessionRecord) {
 	}
 	if detail.Backend == "" {
 		detail.Backend = summary.Backend
+	}
+	if detail.ExecutionMode == "" {
+		detail.ExecutionMode = api.Backend(detail.Backend).Mode()
 	}
 	if detail.ReasoningEffort == "" {
 		detail.ReasoningEffort = summary.ReasoningEffort

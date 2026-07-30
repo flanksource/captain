@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/session"
 	"github.com/flanksource/clicky"
@@ -102,6 +103,7 @@ var _ = Describe("session get multi-result output", func() {
 		enrichSessionDetail(detail, summary)
 
 		Expect(detail.Backend).To(Equal("codex-cmux"))
+		Expect(detail.ExecutionMode).To(Equal(api.ModeCmux))
 		Expect(detail.ReasoningEffort).To(Equal("high"))
 		Expect(detail.Live).To(Equal(&session.LiveProcess{
 			PID: 4821, Status: "running", Active: true, CWD: "/repo", Command: "codex",
@@ -110,6 +112,20 @@ var _ = Describe("session get multi-result output", func() {
 			ID: "turn-1", Index: 1, Backend: "codex-cmux", ReasoningEffort: "high",
 		}}))
 	})
+
+	DescribeTable("projects each backend runtime mode into session detail",
+		func(backend string, mode api.RuntimeMode) {
+			detail := &session.Session{}
+
+			enrichSessionDetail(detail, SessionRecord{Backend: backend})
+
+			Expect(detail.ExecutionMode).To(Equal(mode))
+		},
+		Entry("api", "anthropic", api.ModeAPI),
+		Entry("cli", "codex-cli", api.ModeCLI),
+		Entry("agent", "claude-agent", api.ModeAgent),
+		Entry("cmux", "codex-cmux", api.ModeCmux),
+	)
 
 	It("passes UUID-prefix searches through the bounded list filter", func() {
 		providerID := "ad4c854e-cde6-4b99-99f3-667bf74112e3"
