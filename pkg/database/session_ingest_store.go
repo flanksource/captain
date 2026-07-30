@@ -354,7 +354,7 @@ func (db *DB) projectSessionColumns(ctx context.Context, id uuid.UUID, input Ing
 		updates["git"] = jsonbValue(input.Git)
 	}
 	if input.Metadata != nil {
-		updates["metadata"] = jsonbValue(input.Metadata)
+		updates["metadata"] = gorm.Expr("metadata || ?::jsonb", jsonbValue(input.Metadata))
 	}
 	if len(updates) == 0 {
 		return nil

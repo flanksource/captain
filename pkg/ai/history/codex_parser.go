@@ -261,12 +261,23 @@ func ExtractCodexToolUsesFromReader(reader io.Reader) ([]ToolUse, error) {
 		add(asProvisional(reasoning.flush()))
 	}
 	for _, call := range sortedCodexPendingCalls(pendingCall) {
-		add(asProvisional(withSourceLine(buildToolUses(call.event, CodexEvent{}, sessionCWD, sessionID), call.line)))
+		add(asProvisional(withSourceLine(buildPendingCallUses(call.event, sessionCWD, sessionID), call.line)))
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
 	return dedupeCodexToolUses(records), nil
+}
+
+// buildPendingCallUses builds the provisional row for a call whose output never
+// arrived, dispatching on the call's own record type the way the paired path
+// dispatches on the output's. Routing every leftover through buildToolUses gave a
+// tool_search_call the wrong shape entirely.
+func buildPendingCallUses(callEvent CodexEvent, cwd, sessionID string) []ToolUse {
+	if callEvent.Payload.Type == "tool_search_call" {
+		return buildPendingToolSearchUse(callEvent, cwd, sessionID)
+	}
+	return buildToolUses(callEvent, CodexEvent{}, cwd, sessionID)
 }
 
 func isCodexReasoningRecord(event CodexEvent) bool {

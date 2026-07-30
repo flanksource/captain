@@ -453,10 +453,20 @@ func collectCodexPaths(u history.ToolUse, read, written *[]string) {
 		}
 	case "CodexExecScript":
 		script, _ := u.Input["script"].(string)
-		*written = append(*written, tools.ExtractApplyPatchPaths(script)...)
+		appendAbsolute(written, tools.ExtractApplyPatchPaths(script), u.CWD)
 	case "exec", "apply_patch":
 		input, _ := u.Input["input"].(string)
-		*written = append(*written, tools.ExtractApplyPatchPaths(input)...)
+		appendAbsolute(written, tools.ExtractApplyPatchPaths(input), u.CWD)
+	}
+}
+
+// appendAbsolute anchors patch-derived paths the same way the parsed ApplyPatch
+// case does. A patch embedded in a script yields the paths verbatim, so without
+// this a relative path would get a different session path identity than the same
+// file named by an already-normalized patch.
+func appendAbsolute(dst *[]string, paths []string, cwd string) {
+	for _, p := range paths {
+		*dst = append(*dst, claude.AbsolutePath(p, cwd, ""))
 	}
 }
 

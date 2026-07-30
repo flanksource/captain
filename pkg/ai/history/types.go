@@ -19,15 +19,15 @@ type ToolUse struct {
 	// ReasoningTokens is disjoint from OutputTokens, per the api.Usage contract:
 	// OpenAI reports reasoning as a subset of output, so it is netted out at this
 	// parse boundary the way the live providers already net it.
-	ReasoningTokens int            `json:"reasoning_tokens,omitempty"`
-	CacheReadTokens int            `json:"cache_read_tokens,omitempty"`
-	TotalTokens     int            `json:"total_tokens,omitempty"`
-	ContextWindow   int            `json:"context_window,omitempty"`
-	AgentID         string         `json:"agent_id,omitempty"`
-	AgentType       string         `json:"agent_type,omitempty"`
-	AgentDesc       string         `json:"agent_desc,omitempty"`
-	Response        string         `json:"response,omitempty"`
-	RecordType      string         `json:"-"`
+	ReasoningTokens int    `json:"reasoning_tokens,omitempty"`
+	CacheReadTokens int    `json:"cache_read_tokens,omitempty"`
+	TotalTokens     int    `json:"total_tokens,omitempty"`
+	ContextWindow   int    `json:"context_window,omitempty"`
+	AgentID         string `json:"agent_id,omitempty"`
+	AgentType       string `json:"agent_type,omitempty"`
+	AgentDesc       string `json:"agent_desc,omitempty"`
+	Response        string `json:"response,omitempty"`
+	RecordType      string `json:"-"`
 	// SourceLine is the 1-based JSONL line the use was extracted from — the
 	// line of the FIRST record when several collapse into one row. It is the
 	// stable identity of the row across re-parses of a growing transcript;

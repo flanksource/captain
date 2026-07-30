@@ -104,6 +104,42 @@ var _ = Describe("incremental Codex re-parse", func() {
 		Expect(completed.Provisional).To(BeFalse())
 	})
 
+	// A tool_search_call is the one call whose payload lives entirely on its
+	// output, so the flush at EOF has nothing to describe it with. It still has to
+	// produce a provisional row under the same tool name as the completed pair --
+	// a row that changes identity when it completes is a row the tail parse
+	// cannot upsert, and no row at all lets the mark seal past the call's line and
+	// discard the completed pair for good.
+	It("keeps a tool_search call's identity when its output arrives in a later append", func() {
+		lines := []string{
+			incrementalFixture[0],
+			incrementalFixture[1],
+			`{"timestamp":"2026-07-16T11:14:47.000Z","type":"response_item","payload":{"type":"tool_search_call","arguments":"{\"query\":\"notebook\"}","call_id":"call-ts"}}`,
+			`{"timestamp":"2026-07-16T11:14:48.000Z","type":"response_item","payload":{"type":"tool_search_output","call_id":"call-ts","tools":[{"tools":[{"name":"NotebookEdit"}]}]}}`,
+		}
+		callLine := int64(3)
+
+		rowAt := func(uses []ToolUse) ToolUse {
+			var found ToolUse
+			for _, use := range uses {
+				if use.SourceLine == callLine {
+					found = use
+				}
+			}
+			return found
+		}
+
+		pending := rowAt(parseIncremental(lines[:3]))
+		Expect(pending.Tool).To(Equal("DeferredToolsDelta"))
+		Expect(pending.Provisional).To(BeTrue(), "an unpaired tool_search call must not be sealed behind the mark")
+		Expect(pending.Input).ToNot(HaveKey("addedNames"), "the resolved tools are not known until the output arrives")
+
+		completed := rowAt(parseIncremental(lines))
+		Expect(completed.Tool).To(Equal(pending.Tool), "the completed row must upsert the provisional one, not appear beside it")
+		Expect(completed.Provisional).To(BeFalse())
+		Expect(completed.Input["addedNames"]).To(Equal([]string{"NotebookEdit"}))
+	})
+
 	// F2: the span that used to grow on every pass. Re-parsing the full file must
 	// yield one settled span of two records at line 3, not a longer span with a
 	// different count and therefore a different dedupe key.

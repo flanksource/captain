@@ -30,9 +30,10 @@ func extractResponseItem(event CodexEvent, pendingCall map[string]codexPendingCa
 		return withSourceLine(buildToolUses(call.event, event, cwd, sessionID), call.line)
 	case "tool_search_output":
 		call, ok := pendingCall[event.Payload.CallID]
-		if ok {
-			delete(pendingCall, event.Payload.CallID)
+		if !ok {
+			return nil
 		}
+		delete(pendingCall, event.Payload.CallID)
 		return withSourceLine(buildToolSearchUses(call.event, event, cwd, sessionID), call.line)
 	case "message":
 		var tool string
@@ -213,21 +214,46 @@ func buildToolSearchUses(callEvent, outputEvent CodexEvent, cwd, sessionID strin
 	if len(names) == 0 {
 		return nil
 	}
-	input := map[string]any{"event": "deferred_tools_delta", "addedNames": names}
+	return []ToolUse{codexToolSearchUse(callEvent, outputEvent, names, cwd, sessionID)}
+}
+
+// buildPendingToolSearchUse is the row for a tool_search_call still waiting for
+// its output at EOF. The tools it resolved to are not known yet, but the row has
+// to exist: it is keyed on the call's line, and ingest's high-water mark stops
+// below the lowest provisional row, which is what lets a later pass overwrite it
+// with the completed pair. It also has to be a DeferredToolsDelta, because a
+// tool_search_call carries no Name and buildToolUses would normalize it into a
+// bogus command row that the completed row then contradicts.
+func buildPendingToolSearchUse(callEvent CodexEvent, cwd, sessionID string) []ToolUse {
+	return []ToolUse{codexToolSearchUse(callEvent, CodexEvent{}, nil, cwd, sessionID)}
+}
+
+// codexToolSearchUse builds the DeferredToolsDelta row shared by the completed
+// pair and the still-pending call, so the provisional row a tail parse writes has
+// the same identity as the row that replaces it.
+func codexToolSearchUse(callEvent, outputEvent CodexEvent, names []string, cwd, sessionID string) ToolUse {
+	input := map[string]any{"event": "deferred_tools_delta"}
+	if len(names) > 0 {
+		input["addedNames"] = names
+	}
 	for key, value := range extractArgumentsMap(callEvent.Payload.Arguments) {
 		input[key] = value
 	}
-	return []ToolUse{{
+	timestamp := outputEvent.Time()
+	if timestamp == nil {
+		timestamp = callEvent.Time()
+	}
+	return ToolUse{
 		Tool:       "DeferredToolsDelta",
 		Input:      input,
-		Timestamp:  outputEvent.Time(),
+		Timestamp:  timestamp,
 		CWD:        cwd,
 		SessionID:  sessionID,
 		TurnID:     firstNonEmpty(codexEventTurnID(outputEvent), codexEventTurnID(callEvent)),
-		ToolUseID:  outputEvent.Payload.CallID,
+		ToolUseID:  firstNonEmpty(outputEvent.Payload.CallID, callEvent.Payload.CallID),
 		Source:     "codex",
-		RecordType: "response_item.tool_search_output",
-	}}
+		RecordType: "response_item." + firstNonEmpty(outputEvent.Payload.Type, callEvent.Payload.Type),
+	}
 }
 
 func codexToolSearchNames(groups []CodexToolSearchNamespace) []string {

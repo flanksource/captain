@@ -69,23 +69,26 @@ func TestHighWaterMarkWritesOnlyAppendedMessages(t *testing.T) {
 		// mark past it sealed the truncated row forever: 21% of Codex tool parts
 		// still carry no result because of exactly this.
 		{
-			name: "the mark stops below a provisional row so a later pass can complete it",
+			name:   "the mark stops below a provisional row so a later pass can complete it",
 			parsed: []int64{1, 3, 5, 7}, provisional: []int64{7},
 			want: []int64{1, 3, 5, 7}, wantMark: 5,
 		},
 		{
-			name: "a provisional row still gets written on the pass that parsed it",
+			name:     "a provisional row still gets written on the pass that parsed it",
 			previous: 3, parsed: []int64{1, 3, 5}, provisional: []int64{5},
 			want: []int64{5}, wantMark: 3,
 		},
 		{
-			name: "the lowest provisional row bounds the mark, not the last one",
+			name:   "the lowest provisional row bounds the mark, not the last one",
 			parsed: []int64{1, 3, 5, 7}, provisional: []int64{3, 7},
 			want: []int64{1, 3, 5, 7}, wantMark: 1,
 		},
+		// The sequel to the case above: that pass left sequence 5 provisional and so
+		// persisted mark=3, not 5. Resuming from 3 must re-offer row 5 so the now
+		// complete row overwrites the truncated one, and only then advance past it.
 		{
 			name:     "a re-parse re-offers the row the previous pass left provisional",
-			previous: 5, parsed: []int64{1, 3, 5, 7}, want: []int64{7}, wantMark: 7,
+			previous: 3, parsed: []int64{1, 3, 5, 7}, want: []int64{5, 7}, wantMark: 7,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {

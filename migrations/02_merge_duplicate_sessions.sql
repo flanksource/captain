@@ -17,9 +17,16 @@
 -- duplicate groups no group had more than one member with messages, so this
 -- picks a winner rather than merging two transcripts; ties fall back to the
 -- oldest row and then to the id, so the choice is deterministic on re-run.
--- Prompt runs pointing at a ghost are re-pointed, the ghosts are deleted, and
--- the winner then absorbs a ghost's provider label -- that label exists nowhere
--- else once the ghost is gone.
+-- Prompt runs and child sessions pointing at a ghost are re-pointed, the ghosts
+-- are deleted, and the winner then absorbs a ghost's provider label -- that label
+-- exists nowhere else once the ghost is gone.
+--
+-- Every reference re-pointed below is one the ghost's ON DELETE CASCADE would
+-- otherwise destroy. The ghost's own transcript rows -- messages, turns, events,
+-- artifacts -- are still cascaded away, which is sound only because the winner is
+-- by definition the member holding the transcript; those rows are (session_id,
+-- sequence)-unique, so moving them onto the winner is not a plain re-point and is
+-- deliberately not attempted here.
 --
 -- Idempotent: once the groups are collapsed every statement matches nothing.
 
@@ -66,6 +73,33 @@ BEGIN
 
   UPDATE captain_prompt_runs r SET execution_session_id = m.winner
   FROM captain_duplicate_session_map m WHERE r.execution_session_id = m.loser;
+
+  -- captain_sessions.parent_session_id and root_session_id are self-referential
+  -- and ON DELETE CASCADE, so a ghost that any subagent row named as its parent
+  -- takes that whole subtree -- sessions, messages, turns, artifacts -- down with
+  -- it. The launcher is both the writer that minted the ghosts and the writer
+  -- that records parent/root links, so this is the likely case rather than the
+  -- pathological one, and re-pointing has to happen before the delete.
+  UPDATE captain_sessions c SET parent_session_id = m.winner
+  FROM captain_duplicate_session_map m
+  WHERE c.parent_session_id = m.loser AND c.id <> m.winner;
+
+  UPDATE captain_sessions c SET root_session_id = m.winner
+  FROM captain_duplicate_session_map m
+  WHERE c.root_session_id = m.loser AND c.id <> m.winner;
+
+  -- The `c.id <> m.winner` guards above leave one case: a winner whose own
+  -- parent or root is a duplicate of itself. Re-pointing it would make the row
+  -- its own parent, so the link is dropped instead -- a NULL parent already means
+  -- "root" to every reader (see COALESCE(root_session_id, id) in
+  -- 63_view_session_agents.sql), and leaving it would cascade the winner away.
+  UPDATE captain_sessions w SET parent_session_id = NULL
+  FROM captain_duplicate_session_map m
+  WHERE w.id = m.winner AND w.parent_session_id = m.loser;
+
+  UPDATE captain_sessions w SET root_session_id = NULL
+  FROM captain_duplicate_session_map m
+  WHERE w.id = m.winner AND w.root_session_id = m.loser;
 
   DELETE FROM captain_sessions s
   USING captain_duplicate_session_map m
