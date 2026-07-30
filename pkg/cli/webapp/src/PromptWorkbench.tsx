@@ -31,8 +31,10 @@ import { MdxEditorField } from "@flanksource/clicky-ui/mdx-editor";
 import {
   PromptRunEditor,
   buildAISpecRuntimePayload,
+  familiesFromRuntimeCatalog,
   type AISpecRuntimePermissionCatalog,
   type AISpecRuntimeValue,
+  type RuntimeCatalogFamily,
   type ToolMeta,
 } from "@flanksource/clicky-ui/ai";
 import { type ChatModel } from "@flanksource/clicky-ui/chat";
@@ -1010,6 +1012,9 @@ function PromptDetailPane({
   const backendCliArgs = promptSchema?.backends?.find(
     (backend) => backend.backend === runtime.backend,
   )?.args;
+  // The picker's families come from the same document as its models, so a
+  // backend the user disabled is absent from both.
+  const runtimeFamilies = familiesFromRuntimeCatalog(promptSchema?.runtimes);
   const promptReady =
     !scratch ||
     Boolean(runtime.prompt?.user?.trim()) ||
@@ -1059,9 +1064,12 @@ function PromptDetailPane({
                   <PromptRuntimeRows
                     rows={runtimeRows}
                     models={promptSelectableModels(models)}
+                    families={runtimeFamilies}
+                    efforts={promptSchema?.efforts}
                     onChange={onRuntimeRowsChange}
                   />
                 }
+                families={runtimeFamilies}
                 models={promptSelectableModels(models)}
                 tools={tools}
                 secretSelector={CAPTAIN_SECRET_SELECTOR}
@@ -1418,6 +1426,14 @@ type PromptSchemaDoc = {
   schemaVersion: number;
   backends?: PromptSchemaBackend[];
   models?: ChatModel[];
+  /**
+   * The provider×mode catalog the runtime picker renders. The server projects it
+   * from its model registry and has already dropped the disabled entries, so the
+   * client never re-derives which backends exist.
+   */
+  runtimes?: RuntimeCatalogFamily[];
+  /** The enabled effort tiers, for models the catalog does not describe. */
+  efforts?: string[];
   spec?: JsonSchemaObject;
 };
 

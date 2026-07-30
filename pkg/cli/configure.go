@@ -237,19 +237,47 @@ func toggleHuhOptions() []huh.Option[string] {
 	return out
 }
 
+// backendOptions renders the runtime descriptor as picker rows, dropping what
+// the user switched off. It used to be eleven hand-written rows that neither
+// tracked a new provider×mode pair nor honoured ai.disabled.
 func backendOptions() []huh.Option[string] {
-	return []huh.Option[string]{
-		huh.NewOption("Anthropic API", string(ai.BackendAnthropic)),
-		huh.NewOption("Google Gemini API", string(ai.BackendGemini)),
-		huh.NewOption("OpenAI API", string(ai.BackendOpenAI)),
-		huh.NewOption("DeepSeek API", string(ai.BackendDeepSeek)),
-		huh.NewOption("Claude CLI", string(ai.BackendClaudeCLI)),
-		huh.NewOption("Claude Agent (SDK)", string(ai.BackendClaudeAgent)),
-		huh.NewOption("Claude cmux", string(ai.BackendClaudeCmux)),
-		huh.NewOption("Codex CLI", string(ai.BackendCodexCLI)),
-		huh.NewOption("Codex Agent (app-server)", string(ai.BackendCodexAgent)),
-		huh.NewOption("Codex cmux", string(ai.BackendCodexCmux)),
-		huh.NewOption("Gemini CLI", string(ai.BackendGeminiCLI)),
+	out := make([]huh.Option[string], 0, len(api.AllBackends()))
+	for _, family := range api.RuntimeCatalog() {
+		for _, mode := range family.Modes {
+			if mode.Disabled {
+				continue
+			}
+			out = append(out, huh.NewOption(runtimeLabel(family.Family, mode.Mode), mode.Backend))
+		}
+	}
+	return out
+}
+
+// runtimeLabel renders "claude"+"api" as "Claude API". The descriptor carries
+// ids only — a label field on the registry would be a second place for
+// presentation to drift — so display text is derived here, at the one point
+// that displays it.
+func runtimeLabel(family, mode string) string {
+	return brandCase(family) + " " + modeCase(mode)
+}
+
+func brandCase(family string) string {
+	// The only family whose brand casing is not plain title case. Claude, Codex
+	// and Gemini all derive correctly.
+	if family == "deepseek" {
+		return "DeepSeek"
+	}
+	return strings.ToUpper(family[:1]) + family[1:]
+}
+
+func modeCase(mode string) string {
+	switch mode {
+	case "api", "cli":
+		return strings.ToUpper(mode)
+	case "cmux":
+		return mode
+	default:
+		return strings.ToUpper(mode[:1]) + mode[1:]
 	}
 }
 
@@ -301,31 +329,15 @@ func modelHuhOptions(models []ai.ModelDef) []huh.Option[string] {
 	return out
 }
 
-// defaultModelFor returns a hard-coded picker default per backend that seeds the
-// form. CLI/agent backends use exact provider model IDs from the catalog so the
-// seeded default is a selectable option. API
-// backends have no "default" flag on /v1/models, so we use the most-current id
-// we expect each provider to keep stable; the user can pick anything else.
+// defaultModelFor seeds the form with the backend provider's current top pick
+// for that backend's mode. It was a hardcoded switch, which named models the
+// catalog had since superseded and could seed one the user had disabled.
 func defaultModelFor(b ai.Backend) string {
-	switch b {
-	case ai.BackendAnthropic:
-		return "claude-sonnet-5"
-	case ai.BackendClaudeCLI, ai.BackendClaudeAgent, ai.BackendClaudeCmux:
-		return "claude-sonnet-5"
-	case ai.BackendOpenAI:
-		return "gpt-5.6"
-	case ai.BackendDeepSeek:
-		return "deepseek-reasoner"
-	case ai.BackendCodexCLI, ai.BackendCodexAgent, ai.BackendCodexCmux:
-		return "gpt-5.6-sol"
-	case ai.BackendGemini, ai.BackendGeminiCLI:
-		return "gemini-3.5-flash"
-	}
-	return ""
+	return api.DefaultModelFor(b)
 }
 
 func effortHuhOptions() []huh.Option[string] {
-	return effortOptions(api.AllEfforts())
+	return effortOptions(api.Disabled().EnabledEfforts())
 }
 
 func effortHuhOptionsFor(backend ai.Backend, model string) []huh.Option[string] {

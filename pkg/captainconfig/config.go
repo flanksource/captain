@@ -54,6 +54,7 @@ func (a AttachmentDefaults) WithDefaults() AttachmentDefaults {
 type AIDefaults struct {
 	DefaultProvider string                      `yaml:"defaultProvider,omitempty"`
 	Providers       map[string]ProviderDefaults `yaml:"providers,omitempty"`
+	Disabled        DisabledSelections          `yaml:"disabled,omitempty"`
 
 	// Legacy global selection fields are read so existing configurations can be
 	// projected into the provider map. Save omits them after migration.
@@ -79,15 +80,51 @@ type ProviderDefaults struct {
 	ReasoningEffort string `yaml:"reasoningEffort,omitempty" json:"effort"`
 }
 
+// DisabledSelections is the opt-out set edited from the whoami page: runtime
+// modes, provider families, backends, models and effort tiers the user never
+// wants captain to reach for. Tokens are matched case-insensitively.
+//
+// Models are keyed by backend rather than by webapp menu id — "gemini/gemini-3.5-flash",
+// not "googleai/gemini-3.5-flash". A bare id with no slash disables that model
+// on every backend that serves it.
+type DisabledSelections struct {
+	Modes     []string `yaml:"modes,omitempty" json:"modes"`
+	Providers []string `yaml:"providers,omitempty" json:"providers"`
+	Backends  []string `yaml:"backends,omitempty" json:"backends"`
+	Models    []string `yaml:"models,omitempty" json:"models"`
+	Efforts   []string `yaml:"efforts,omitempty" json:"efforts"`
+}
+
+// Set converts the config lists into the registry lookup type.
+func (d DisabledSelections) Set() registry.DisabledSet {
+	return registry.NewDisabledSet(d.Modes, d.Providers, d.Backends, d.Models, d.Efforts)
+}
+
+// ApplyToRegistry installs the opt-out set process-wide so the resolution paths
+// in pkg/api/registry honour it. Callers invoke it explicitly after Load and
+// after every Update — loading the file is deliberately side-effect free.
+func (c Config) ApplyToRegistry() {
+	registry.SetDisabled(c.AI.Disabled.Set())
+}
+
 func (a AIDefaults) ActiveProvider() string {
-	if provider := registry.Backend(strings.TrimSpace(a.DefaultProvider)); provider != "" && provider.Provider() == provider {
+	disabled := a.Disabled.Set()
+	if provider := registry.Backend(strings.TrimSpace(a.DefaultProvider)); provider != "" && provider.Provider() == provider && !disabled.Provider(provider) {
 		return string(provider)
 	}
-	if provider := registry.Backend(strings.TrimSpace(a.Backend)).Provider(); provider != "" {
+	if provider := registry.Backend(strings.TrimSpace(a.Backend)).Provider(); provider != "" && !disabled.Provider(provider) {
 		return string(provider)
 	}
-	if backend, err := registry.InferBackend(strings.TrimSpace(a.Model)); err == nil {
+	if backend, err := registry.InferBackend(strings.TrimSpace(a.Model)); err == nil && !disabled.Provider(backend) {
 		return string(backend.Provider())
+	}
+	if !disabled.Provider(registry.AnthropicProvider) {
+		return string(registry.AnthropicProvider)
+	}
+	for _, backend := range registry.AllBackends() {
+		if backend.Mode() == registry.ModeAPI && !disabled.Provider(backend) {
+			return string(backend)
+		}
 	}
 	return string(registry.AnthropicProvider)
 }

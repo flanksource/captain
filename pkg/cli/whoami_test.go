@@ -2,10 +2,12 @@ package cli
 
 import (
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/captainconfig"
 )
 
@@ -116,5 +118,110 @@ func TestRunWhoamiIncludesProviderDefaults(t *testing.T) {
 	got := result.(WhoamiResult)
 	if got.DefaultProvider != "openai" || got.ProviderDefaults["openai"].Agent != "codex-agent" {
 		t.Fatalf("whoami defaults = %+v", got)
+	}
+}
+
+// TestRunWhoamiAnnotatesDisabledAdapters covers the one surface that keeps
+// disabled entries instead of dropping them: hiding a card would leave the user
+// no way to switch it back on.
+func TestRunWhoamiAnnotatesDisabledAdapters(t *testing.T) {
+	captainconfig.SetPathForTesting(filepath.Join(t.TempDir(), ".captain.yaml"))
+	api.SetDisabled(api.DisabledSet{})
+	t.Cleanup(func() {
+		captainconfig.SetPathForTesting("")
+		api.SetDisabled(api.DisabledSet{})
+	})
+	if err := captainconfig.Save(captainconfig.Config{AI: captainconfig.AIDefaults{
+		Disabled: captainconfig.DisabledSelections{Modes: []string{"cmux"}, Efforts: []string{"ultra"}},
+	}}); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+
+	result, err := RunWhoami(WhoamiOptions{Models: false})
+	if err != nil {
+		t.Fatalf("RunWhoami: %v", err)
+	}
+	got := result.(WhoamiResult)
+
+	if len(got.Adapters) != len(ai.AllBackends()) {
+		t.Fatalf("got %d adapters, want all %d annotated rather than filtered", len(got.Adapters), len(ai.AllBackends()))
+	}
+	for _, adapter := range got.Adapters {
+		wantDisabled := ai.Backend(adapter.Backend).Mode() == api.ModeCmux
+		if adapter.Disabled != wantDisabled {
+			t.Errorf("adapter %s disabled = %v, want %v", adapter.Backend, adapter.Disabled, wantDisabled)
+		}
+		if wantDisabled && adapter.DisabledReason != "mode cmux" {
+			t.Errorf("adapter %s reason = %q, want %q", adapter.Backend, adapter.DisabledReason, "mode cmux")
+		}
+		if adapter.Provider == "" || adapter.Mode == "" {
+			t.Errorf("adapter %s is missing its provider/mode axes: %+v", adapter.Backend, adapter)
+		}
+	}
+	if !reflect.DeepEqual(got.Disabled.Modes, []string{"cmux"}) {
+		t.Errorf("whoami disabled set = %+v, want the saved modes", got.Disabled)
+	}
+}
+
+// TestRunWhoamiServesTheRuntimeCatalogAnnotated keeps the page's runtime picker
+// off a second hardcoded family list: it renders from this, and — like the
+// adapter cards — sees disabled entries annotated rather than missing.
+func TestRunWhoamiServesTheRuntimeCatalogAnnotated(t *testing.T) {
+	captainconfig.SetPathForTesting(filepath.Join(t.TempDir(), ".captain.yaml"))
+	api.SetDisabled(api.DisabledSet{})
+	t.Cleanup(func() {
+		captainconfig.SetPathForTesting("")
+		api.SetDisabled(api.DisabledSet{})
+	})
+	if err := captainconfig.Save(captainconfig.Config{AI: captainconfig.AIDefaults{
+		Disabled: captainconfig.DisabledSelections{Modes: []string{"cmux"}},
+	}}); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+
+	result, err := RunWhoami(WhoamiOptions{Models: false})
+	if err != nil {
+		t.Fatalf("RunWhoami: %v", err)
+	}
+	runtimes := result.(WhoamiResult).Runtimes
+
+	seen := map[string]bool{}
+	for _, family := range runtimes {
+		for _, mode := range family.Modes {
+			seen[mode.Backend] = true
+			wantDisabled := mode.Mode == string(api.ModeCmux)
+			if mode.Disabled != wantDisabled {
+				t.Errorf("%s disabled = %v, want %v", mode.Backend, mode.Disabled, wantDisabled)
+			}
+			if wantDisabled && mode.DisabledReason != "mode cmux" {
+				t.Errorf("%s reason = %q, want %q", mode.Backend, mode.DisabledReason, "mode cmux")
+			}
+		}
+	}
+	if len(seen) != len(api.AllBackends()) {
+		t.Errorf("runtimes cover %d backends, want all %d annotated rather than filtered", len(seen), len(api.AllBackends()))
+	}
+}
+
+// TestRunWhoamiServesEveryAxisUniverse keeps the page from hardcoding the enums
+// a second time: the toggles are rendered from what this reports.
+func TestRunWhoamiServesEveryAxisUniverse(t *testing.T) {
+	captainconfig.SetPathForTesting(filepath.Join(t.TempDir(), ".captain.yaml"))
+	t.Cleanup(func() { captainconfig.SetPathForTesting("") })
+
+	result, err := RunWhoami(WhoamiOptions{Models: false})
+	if err != nil {
+		t.Fatalf("RunWhoami: %v", err)
+	}
+	axes := result.(WhoamiResult).Axes
+
+	if len(axes.Modes) != len(api.AllRuntimeModes()) {
+		t.Errorf("axes.Modes = %v, want every runtime mode", axes.Modes)
+	}
+	if len(axes.Efforts) != len(api.AllEfforts()) {
+		t.Errorf("axes.Efforts = %v, want every effort tier", axes.Efforts)
+	}
+	if !reflect.DeepEqual(axes.Providers, []string{"anthropic", "openai", "gemini", "deepseek"}) {
+		t.Errorf("axes.Providers = %v", axes.Providers)
 	}
 }

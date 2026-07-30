@@ -58,8 +58,10 @@ func (m Model) BareID() string {
 }
 
 // DefaultModelID is the chat backend's default (captain's NewAnthropic default).
-// The catalog entry with this ID sets Default: true.
-const DefaultModelID = "anthropic/claude-sonnet-5"
+// The catalog entry with this ID sets Default: true. It is declared once, in the
+// registry, so a picker seeding itself and a run resolving an unnamed model
+// cannot answer differently.
+const DefaultModelID = api.DefaultModelID
 
 // defaultCatalog is projected from the internal exact model registry. The API
 // rows keep provider prefixes for stable storage; CLI/agent rows keep exact
@@ -71,13 +73,24 @@ var (
 	catalog         = append([]Model(nil), defaultCatalog...)
 )
 
-// Catalog returns the registered model menu.
+// Catalog returns the registered model menu with the user's opt-out set applied.
+//
+// The filter runs here, at read time, because the stored slice is projected from
+// the registry at package init — long before captainconfig.Load installs the
+// disabled set — so anything baked in at build time would never see it.
 func Catalog() []Model {
 	modelRegistryMu.RLock()
 	defer modelRegistryMu.RUnlock()
 
-	out := make([]Model, len(catalog))
-	copy(out, catalog)
+	disabled := Disabled()
+	out := make([]Model, 0, len(catalog))
+	for _, m := range catalog {
+		if disabled.Model(m.Backend, bareProviderModelID(m.ID)) {
+			continue
+		}
+		m.SupportedEfforts, m.DefaultEffort = enabledEfforts(m.SupportedEfforts, m.DefaultEffort)
+		out = append(out, m)
+	}
 	return out
 }
 

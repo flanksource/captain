@@ -132,6 +132,19 @@ func validateProviderDefaults(ctx context.Context, provider api.Backend, default
 	if agent.Provider() != provider {
 		return fmt.Errorf("agent %q does not belong to provider %q", agent, provider)
 	}
+	// Saving a default is an explicit choice, so a disabled selection is rejected
+	// rather than silently degraded: the fallback chain exists for runs, not for
+	// writing a preference the user cannot see is being overridden.
+	disabled := ai.Disabled()
+	if reason := disabled.Reason(agent); reason != "" {
+		return fmt.Errorf("agent %q is disabled (%s); re-enable it before making it a default", agent, reason)
+	}
+	if disabled.Model(agent, strings.TrimSpace(defaults.Model)) {
+		return fmt.Errorf("model %q is disabled on agent %q; re-enable it before making it a default", defaults.Model, agent)
+	}
+	if disabled.Effort(api.Effort(strings.TrimSpace(defaults.Effort))) {
+		return fmt.Errorf("reasoning effort %q is disabled; re-enable it before making it a default", defaults.Effort)
+	}
 	models, err := configureDefaultsModels(ctx, agent)
 	if err != nil {
 		return fmt.Errorf("list models for %s: %w", agent, err)

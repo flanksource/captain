@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/flanksource/captain/pkg/api/registry"
 )
 
 func withTempPath(t *testing.T) string {
@@ -153,6 +155,80 @@ func TestUpdatePreservesUnrelatedConfiguration(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got.Prompts, wantPrompt) || got.AI.DefaultProvider != "gemini" {
 		t.Fatalf("updated config = %+v", got)
+	}
+}
+
+func TestDisabledSelections_RoundTrip(t *testing.T) {
+	path := withTempPath(t)
+	want := DisabledSelections{
+		Modes:     []string{"cmux"},
+		Providers: []string{"deepseek"},
+		Backends:  []string{"gemini-cli"},
+		Models:    []string{"gemini/veo-3.1-generate-preview"},
+		Efforts:   []string{"ultra"},
+	}
+	if err := Save(Config{AI: AIDefaults{DefaultProvider: "anthropic", Disabled: want}}); err != nil {
+		t.Fatalf("Save() err = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if !strings.Contains(string(data), "disabled:") {
+		t.Fatalf("saved config has no disabled block:\n%s", data)
+	}
+
+	got, _, err := Load()
+	if err != nil {
+		t.Fatalf("Load() err = %v", err)
+	}
+	if !reflect.DeepEqual(got.AI.Disabled, want) {
+		t.Errorf("disabled round-trip:\n got  = %+v\n want = %+v", got.AI.Disabled, want)
+	}
+}
+
+func TestDisabledSelections_OmittedWhenEmpty(t *testing.T) {
+	path := withTempPath(t)
+	if err := Save(Config{AI: AIDefaults{DefaultProvider: "anthropic"}}); err != nil {
+		t.Fatalf("Save() err = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if strings.Contains(string(data), "disabled:") {
+		t.Errorf("empty opt-out set was written to the file:\n%s", data)
+	}
+}
+
+func TestActiveProvider_SkipsADisabledProvider(t *testing.T) {
+	// Every selection route into anthropic is exercised: the explicit default, the
+	// legacy backend/model projection, and the hardcoded anthropic fallback.
+	for name, cfg := range map[string]AIDefaults{
+		"explicit default": {DefaultProvider: "anthropic"},
+		"legacy backend":   {Backend: "claude-agent"},
+		"legacy model":     {Model: "claude-sonnet-5"},
+		"implicit default": {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg.Disabled = DisabledSelections{Providers: []string{"anthropic"}}
+			got := registry.Backend(cfg.ActiveProvider())
+			if got.Provider() == registry.AnthropicProvider {
+				t.Fatalf("ActiveProvider() = %q, want a provider that is not disabled", got)
+			}
+			if got.Mode() != registry.ModeAPI || got.Provider() != got {
+				t.Fatalf("ActiveProvider() = %q, want an API provider root", got)
+			}
+		})
+	}
+}
+
+func TestApplyToRegistry_InstallsTheSetProcessWide(t *testing.T) {
+	t.Cleanup(func() { registry.SetDisabled(registry.DisabledSet{}) })
+	Config{AI: AIDefaults{Disabled: DisabledSelections{Modes: []string{"cmux"}}}}.ApplyToRegistry()
+
+	if !registry.Disabled().Mode(registry.ModeCmux) {
+		t.Fatal("ApplyToRegistry() did not install the opt-out set")
 	}
 }
 

@@ -311,21 +311,84 @@ func TestModelOptionsFor_CLIBackendsUseCatalogWithoutKey(t *testing.T) {
 	}
 }
 
-func TestDefaultModelFor_HardcodedPerBackend(t *testing.T) {
-	cases := map[ai.Backend]string{
-		ai.BackendAnthropic:   "claude-sonnet-5",
-		ai.BackendClaudeCLI:   "claude-sonnet-5",
-		ai.BackendClaudeAgent: "claude-sonnet-5",
-		ai.BackendOpenAI:      "gpt-5.6",
-		ai.BackendCodexCLI:    "gpt-5.6-sol",
-		ai.BackendCodexAgent:  "gpt-5.6-sol",
-		ai.BackendCodexCmux:   "gpt-5.6-sol",
-		ai.BackendGemini:      "gemini-3.5-flash",
-		ai.BackendGeminiCLI:   "gemini-3.5-flash",
+// TestDefaultModelFor_SeedsARunnableModel pins the derivation rather than a
+// table of ids: the seed is captain's declared default wherever the backend can
+// run it, and the backend provider's own current pick otherwise. The literal
+// table this replaced had gone stale against the catalog it seeded from.
+func TestDefaultModelFor_SeedsARunnableModel(t *testing.T) {
+	declared, err := ai.LookupModel(ai.DefaultModelID)
+	if err != nil {
+		t.Fatalf("catalog does not carry the declared default: %v", err)
 	}
-	for b, want := range cases {
-		if got := defaultModelFor(b); got != want {
-			t.Errorf("defaultModelFor(%s) = %q, want %q", b, got, want)
+	for _, b := range []ai.Backend{ai.BackendAnthropic, ai.BackendClaudeCLI, ai.BackendClaudeAgent, ai.BackendClaudeCmux} {
+		if got := defaultModelFor(b); got != declared.BareID() {
+			t.Errorf("defaultModelFor(%s) = %q, want the declared default %q", b, got, declared.BareID())
+		}
+	}
+
+	// Every other backend seeds a model its own provider offers on that mode —
+	// never a claude id, and never one the catalog cannot run there.
+	for _, b := range ai.AllBackends() {
+		seed := defaultModelFor(b)
+		if seed == "" {
+			t.Errorf("defaultModelFor(%s) seeded nothing", b)
+			continue
+		}
+		if known, available := ai.RegistryModelAvailability(b, seed); !known || !available {
+			t.Errorf("defaultModelFor(%s) = %q, which is not available on that backend", b, seed)
+		}
+	}
+}
+
+// TestDefaultModelFor_SkipsDisabledModels covers the seed a picker would
+// otherwise pre-select after the user switched that exact model off.
+func TestDefaultModelFor_SkipsDisabledModels(t *testing.T) {
+	seed := defaultModelFor(ai.BackendAnthropic)
+	api.SetDisabled(api.NewDisabledSet(nil, nil, nil, []string{seed}, nil))
+	t.Cleanup(func() { api.SetDisabled(api.DisabledSet{}) })
+
+	next := defaultModelFor(ai.BackendAnthropic)
+	if next == seed {
+		t.Fatalf("defaultModelFor(anthropic) still seeds the disabled model %q", seed)
+	}
+	if next == "" {
+		t.Fatal("defaultModelFor(anthropic) fell back to nothing instead of the next available model")
+	}
+}
+
+// TestBackendOptions_DropsDisabledBackends covers the wizard's backend picker,
+// which used to be eleven hardcoded rows that no opt-out could reach.
+func TestBackendOptions_DropsDisabledBackends(t *testing.T) {
+	if got, want := len(backendOptions()), len(ai.AllBackends()); got != want {
+		t.Fatalf("backendOptions() = %d rows, want one per backend (%d)", got, want)
+	}
+
+	api.SetDisabled(api.NewDisabledSet([]string{"cmux"}, nil, nil, nil, nil))
+	t.Cleanup(func() { api.SetDisabled(api.DisabledSet{}) })
+
+	for _, option := range backendOptions() {
+		if strings.HasSuffix(option.Value, "-cmux") {
+			t.Errorf("backendOptions() still offers %q with cmux disabled", option.Value)
+		}
+	}
+	if got, want := len(backendOptions()), len(ai.AllBackends())-2; got != want {
+		t.Fatalf("backendOptions() = %d rows with cmux disabled, want %d", got, want)
+	}
+}
+
+func TestRuntimeLabel_DerivesFromIDs(t *testing.T) {
+	cases := map[string]string{
+		"claude/api":   "Claude API",
+		"claude/cmux":  "Claude cmux",
+		"codex/cli":    "Codex CLI",
+		"codex/agent":  "Codex Agent",
+		"deepseek/api": "DeepSeek API",
+		"gemini/cli":   "Gemini CLI",
+	}
+	for input, want := range cases {
+		family, mode, _ := strings.Cut(input, "/")
+		if got := runtimeLabel(family, mode); got != want {
+			t.Errorf("runtimeLabel(%s) = %q, want %q", input, got, want)
 		}
 	}
 }

@@ -138,6 +138,33 @@ func addCaptainProviderDefaultsPaths(spec *rpc.OpenAPISpec) {
 	}}
 }
 
+func addCaptainDisabledPaths(spec *rpc.OpenAPISpec) {
+	if spec.Paths == nil {
+		spec.Paths = map[string]rpc.OpenAPIPath{}
+	}
+	axes := []string{"modes", "providers", "backends", "models", "efforts"}
+	schema := func() *rpc.OpenAPISchema {
+		properties := make(map[string]*rpc.OpenAPISchema, len(axes))
+		for _, axis := range axes {
+			properties[axis] = &rpc.OpenAPISchema{Type: "array", Items: &rpc.OpenAPISchema{Type: "string"}}
+		}
+		return &rpc.OpenAPISchema{Type: "object", Required: axes, Properties: properties}
+	}
+	spec.Paths["/api/captain/ai/disabled"] = rpc.OpenAPIPath{"put": {
+		Tags: []string{"Provider configuration"}, Summary: "Replace the disabled modes, providers, backends, models and efforts",
+		OperationID: "saveDisabledSelections",
+		RequestBody: &rpc.OpenAPIRequestBody{Required: true, Content: map[string]rpc.OpenAPIMediaType{
+			"application/json": {Schema: schema()},
+		}},
+		Responses: map[string]rpc.OpenAPIResponse{
+			"200": jsonResponse(schema()), "400": {Description: "Invalid request"},
+			"403": {Description: "Local same-origin access required"},
+			"422": {Description: "Selection rejected"},
+			"500": {Description: "Configuration persistence failed"},
+		},
+	}}
+}
+
 func promptRunOperation(
 	id, summary string,
 	parameter rpc.OpenAPIParameter,

@@ -250,13 +250,24 @@ func (p *Provider) resolveIdentity(mode RuntimeMode, identity ModelIdentity) (Kn
 	return candidates[0], true
 }
 
+// latestModel returns this provider's top preferred pick for a mode, optionally
+// narrowed to one family. Models the user disabled are skipped, so resolving
+// "opus" lands on the next best model instead of one taken out of circulation.
 func (p *Provider) latestModel(mode RuntimeMode, family string) (KnownModel, bool) {
+	backend, err := p.BackendFor(mode)
+	if err != nil {
+		return KnownModel{}, false
+	}
+	disabled := Disabled()
 	candidates := make([]KnownModel, 0)
 	for _, m := range knownModels {
 		if !m.Preferred || m.Provider != p.Name || !p.availableFor(m, mode) {
 			continue
 		}
 		if family != "" && m.Family != family {
+			continue
+		}
+		if disabled.Model(backend, m.ID) {
 			continue
 		}
 		candidates = append(candidates, m)

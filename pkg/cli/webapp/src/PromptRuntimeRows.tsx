@@ -9,6 +9,7 @@ import {
   reconcileModelCapabilities,
   selectionForBackend,
   type AISpecRuntimeValue,
+  type SpecRuntimeFamily,
 } from "@flanksource/clicky-ui/ai";
 import {
   EffortSelector,
@@ -19,16 +20,29 @@ import {
   addRuntimeRow,
   validateRuntimeRows,
 } from "./promptRuntimeRowsHelpers";
-
-const REASONING_EFFORTS = ["low", "medium", "high", "xhigh"];
+import { backendForRow } from "./promptWorkbenchHelpers";
 
 export function PromptRuntimeRows({
   rows,
   models,
+  families = SPEC_RUNTIME_FAMILIES,
+  efforts: effortUniverse = [],
   onChange,
 }: {
   rows: AISpecRuntimeValue[];
   models: ChatModel[];
+  /**
+   * The runtime catalog the server projected from its model registry, already
+   * stripped of the backends the user disabled. Falling back to the offline
+   * default would re-offer them, so the schema query is the only source.
+   */
+  families?: SpecRuntimeFamily[];
+  /**
+   * Fallback tiers for a model whose catalog entry carries no supportedEfforts.
+   * The prompt schema serves this and has already dropped disabled tiers, so an
+   * empty list means the server said nothing — not that every tier is off.
+   */
+  efforts?: string[];
   onChange: (rows: AISpecRuntimeValue[]) => void;
 }) {
   const error = validateRuntimeRows(rows);
@@ -38,14 +52,12 @@ export function PromptRuntimeRows({
   return (
     <div className="space-y-density-3">
       {rows.map((row, index) => {
-        const selection = selectionForBackend(
-          SPEC_RUNTIME_FAMILIES,
-          row.backend,
-        );
-        const family = familyById(SPEC_RUNTIME_FAMILIES, selection.family);
-        const availableModels = modelsForFamily(models, family, row.backend);
+        const backend = backendForRow(row, models);
+        const selection = selectionForBackend(families, backend);
+        const family = familyById(families, selection.family);
+        const availableModels = modelsForFamily(models, family, backend);
         const selectedModel = models.find((model) => model.id === row.model);
-        const efforts = effortOptionsForModel(selectedModel, REASONING_EFFORTS);
+        const efforts = effortOptionsForModel(selectedModel, effortUniverse);
         return (
           <section
             key={row.id ?? `${row.backend ?? ""}:${row.model ?? ""}:${row.effort ?? ""}`}
@@ -73,6 +85,7 @@ export function PromptRuntimeRows({
               value={row}
               onChange={(value) => update(index, value)}
               models={models}
+              families={families}
             />
             <div className="grid gap-density-2 sm:grid-cols-2">
               <label className="space-y-1 text-xs text-muted-foreground">
@@ -86,7 +99,7 @@ export function PromptRuntimeRows({
                       reconcileModelCapabilities(
                         { ...row, model },
                         models.find((item) => item.id === model),
-                        REASONING_EFFORTS,
+                        effortUniverse,
                       ),
                     )
                   }

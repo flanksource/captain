@@ -9,10 +9,12 @@ import "github.com/flanksource/captain/pkg/api/registry"
 // downstream (including pkg/ai's own re-exports) has to know registry exists.
 
 type (
-	Backend   = registry.Backend
-	Effort    = registry.Effort
-	Model     = registry.Model
-	ModelList = registry.ModelList
+	Backend     = registry.Backend
+	DisabledSet = registry.DisabledSet
+	Effort      = registry.Effort
+	Model       = registry.Model
+	ModelList   = registry.ModelList
+	RuntimeMode = registry.RuntimeMode
 )
 
 const (
@@ -33,6 +35,11 @@ const (
 	GeminiProvider    = registry.GeminiProvider
 	DeepSeekProvider  = registry.DeepSeekProvider
 
+	ModeAPI   = registry.ModeAPI
+	ModeCLI   = registry.ModeCLI
+	ModeAgent = registry.ModeAgent
+	ModeCmux  = registry.ModeCmux
+
 	EffortNone   = registry.EffortNone
 	EffortLow    = registry.EffortLow
 	EffortMedium = registry.EffortMedium
@@ -42,6 +49,9 @@ const (
 	EffortUltra  = registry.EffortUltra
 
 	CodexAutoReviewModel = registry.CodexAutoReviewModel
+
+	// DefaultModelID is captain's declared default model.
+	DefaultModelID = registry.DefaultModelID
 )
 
 // ErrInferBackend marks the "can't infer a backend from this model name" failure
@@ -64,3 +74,24 @@ func InferBackend(model string) (Backend, error) { return registry.InferBackend(
 
 // AllEfforts lists the non-empty effort tiers in ascending order.
 func AllEfforts() []Effort { return registry.AllEfforts() }
+
+// AllRuntimeModes lists the mechanisms that can serve a model, in wildcard
+// fan-out order.
+func AllRuntimeModes() []RuntimeMode { return registry.AllRuntimeModes() }
+
+// ParseRuntimeMode normalizes a mode token, reporting whether it names a mode.
+func ParseRuntimeMode(s string) (RuntimeMode, bool) { return registry.ParseRuntimeMode(s) }
+
+// RuntimeModeList renders AllRuntimeModes as comma-separated text for errors.
+func RuntimeModeList() string { return registry.RuntimeModeList() }
+
+// NewDisabledSet builds the opt-out lookup from the raw config lists.
+func NewDisabledSet(modes, providers, backends, models, efforts []string) DisabledSet {
+	return registry.NewDisabledSet(modes, providers, backends, models, efforts)
+}
+
+// Disabled returns the process-wide opt-out set installed from ~/.captain.yaml.
+func Disabled() DisabledSet { return registry.Disabled() }
+
+// SetDisabled installs the process-wide opt-out set.
+func SetDisabled(d DisabledSet) { registry.SetDisabled(d) }

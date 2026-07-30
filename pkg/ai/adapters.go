@@ -26,8 +26,13 @@ type WhoamiOptions struct {
 // (backend). Type is "api" for HTTP providers called with a key, "cli" for
 // backends delegated to an installed coding-agent binary.
 type AdapterStatus struct {
-	Backend       string   `json:"backend"`
-	Type          string   `json:"type"`
+	Backend string `json:"backend"`
+	Type    string `json:"type"`
+	// Provider and Mode are the two axes Backend is a pair of. They are carried
+	// on the wire so the whoami page can group and filter cards from registry
+	// truth instead of re-deriving the mapping in TypeScript.
+	Provider      string   `json:"provider"`
+	Mode          string   `json:"mode"`
 	Authenticated bool     `json:"authenticated"`
 	AuthMethod    string   `json:"authMethod,omitempty"`
 	AuthDetail    string   `json:"authDetail,omitempty"`
@@ -38,18 +43,55 @@ type AdapterStatus struct {
 	ModelError    string   `json:"modelError,omitempty"`
 
 	ModelDetails []ModelDef `json:"modelDetails,omitempty"`
+
+	// Disabled and DisabledReason are set by ApplyDisabled. The whoami page is the
+	// one surface that annotates instead of dropping: hiding a disabled card would
+	// leave no way to switch it back on. DisabledReason names the axis that did it
+	// ("mode cmux", "provider openai", "backend claude-cmux") so the page can tell
+	// a directly-toggled card apart from one switched off by its mode or provider.
+	Disabled       bool   `json:"disabled,omitempty"`
+	DisabledReason string `json:"disabledReason,omitempty"`
 }
 
-// Ready reports whether the adapter can actually run: authenticated, and (for
-// CLI backends) with its binary present in PATH.
+// Ready reports whether the adapter can actually run: authenticated, (for CLI
+// backends) with its binary present in PATH, and not disabled by the user.
 func (a AdapterStatus) Ready() bool {
-	if !a.Authenticated {
+	if !a.Authenticated || a.Disabled {
 		return false
 	}
 	if a.Type == "cli" {
 		return a.Binary != ""
 	}
 	return true
+}
+
+// ApplyDisabled annotates a probe result with the user's opt-out set, marking
+// backends and their models rather than removing them. It runs after
+// CachedAdapters so the cache keeps raw probe data and a toggle takes effect on
+// the next read instead of after the TTL expires.
+func ApplyDisabled(adapters []AdapterStatus) []AdapterStatus {
+	disabled := Disabled()
+	if disabled.Empty() {
+		return adapters
+	}
+	out := make([]AdapterStatus, len(adapters))
+	for i, a := range adapters {
+		backend := Backend(a.Backend)
+		a.Disabled = disabled.Backend(backend)
+		a.DisabledReason = disabled.Reason(backend)
+		details := make([]ModelDef, len(a.ModelDetails))
+		for j, md := range a.ModelDetails {
+			md.Disabled = a.Disabled || disabled.Model(backend, md.ID)
+			md.SupportedEfforts = disabled.Efforts(md.SupportedEfforts)
+			if disabled.Effort(md.DefaultEffort) {
+				md.DefaultEffort = api.EffortNone
+			}
+			details[j] = md
+		}
+		a.ModelDetails = details
+		out[i] = a
+	}
+	return out
 }
 
 // AuthProbe abstracts the host environment (env vars, PATH, credential files)
@@ -143,7 +185,10 @@ func cliAdapters() map[Backend]cliAdapter {
 // wins over a CLI login file because that is the path NewProvider/ListModels
 // actually take.
 func resolveAdapter(backend Backend, p AuthProbe) AdapterStatus {
-	st := AdapterStatus{Backend: string(backend), Type: backend.Kind()}
+	st := AdapterStatus{
+		Backend: string(backend), Type: backend.Kind(),
+		Provider: string(backend.Provider()), Mode: string(backend.Mode()),
+	}
 
 	if backend.Kind() == "api" && p.APICredentials != nil {
 		if resolved := p.APICredentials[backend]; resolved.Token != "" {

@@ -3,8 +3,10 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
+	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
 	clickyrpc "github.com/flanksource/clicky/rpc"
 )
@@ -12,6 +14,7 @@ import (
 // buildPromptSchemaDocument is the pure assembler (no I/O), taking a probed
 // adapter set so tests can drive it with a deterministic, network-free stub.
 func buildPromptSchemaDocument(adapters []AdapterStatus) (map[string]any, error) {
+	adapters = enabledAdapters(adapters)
 	reflected, err := reflectedSchemas()
 	if err != nil {
 		return nil, err
@@ -45,11 +48,80 @@ func buildPromptSchemaDocument(adapters []AdapterStatus) (map[string]any, error)
 		"prompt":        promptMap,
 		"promptAction":  actionMap,
 		"backends":      backends,
+		"runtimes":      enabledRuntimes(),
 		"models":        flatModels(adapters),
+		"efforts":       enabledEffortNames(),
 		"examples": map[string]any{
 			"spec": promptSchemaExampleSpec(),
 		},
 	}, nil
+}
+
+// enabledRuntimes is the provider×mode descriptor the workbench's runtime picker
+// renders from. Disabled entries are dropped rather than annotated: whoami is
+// the only surface that shows what is switched off.
+func enabledRuntimes() []api.RuntimeFamily {
+	out := make([]api.RuntimeFamily, 0, len(api.RuntimeCatalog()))
+	for _, family := range api.RuntimeCatalog() {
+		modes := make([]api.RuntimeModeEntry, 0, len(family.Modes))
+		for _, mode := range family.Modes {
+			if !mode.Disabled {
+				modes = append(modes, mode)
+			}
+		}
+		if len(modes) == 0 {
+			continue
+		}
+		family.Modes = modes
+		out = append(out, family)
+	}
+	return out
+}
+
+// enabledEffortNames is the effort universe a picker falls back to for a model
+// the catalog does not describe. Serving it keeps the webapp from carrying its
+// own copy of the tier list, which drifted from the registry and would not
+// honour ai.disabled.efforts.
+func enabledEffortNames() []string {
+	efforts := ai.Disabled().EnabledEfforts()
+	out := make([]string, 0, len(efforts))
+	for _, effort := range efforts {
+		out = append(out, string(effort))
+	}
+	return out
+}
+
+// enabledAdapters removes the backends, models and effort tiers the user
+// disabled. The whoami page is the one surface that keeps disabled entries
+// (annotated, so the toggle has something to switch back on); a schema that
+// still offered them would let a run pick something the user opted out of.
+func enabledAdapters(adapters []AdapterStatus) []AdapterStatus {
+	disabled := ai.Disabled()
+	if disabled.Empty() {
+		return adapters
+	}
+	out := make([]AdapterStatus, 0, len(adapters))
+	for _, a := range adapters {
+		backend := api.Backend(a.Backend)
+		if disabled.Backend(backend) {
+			continue
+		}
+		a.Models = slices.DeleteFunc(slices.Clone(a.Models), func(id string) bool {
+			return disabled.Model(backend, id)
+		})
+		a.ModelDetails = slices.DeleteFunc(slices.Clone(a.ModelDetails), func(md ai.ModelDef) bool {
+			return disabled.Model(backend, md.ID)
+		})
+		for i := range a.ModelDetails {
+			a.ModelDetails[i].SupportedEfforts = disabled.Efforts(a.ModelDetails[i].SupportedEfforts)
+			if disabled.Effort(a.ModelDetails[i].DefaultEffort) {
+				a.ModelDetails[i].DefaultEffort = api.EffortNone
+			}
+		}
+		a.ModelCount = len(a.Models)
+		out = append(out, a)
+	}
+	return out
 }
 
 // backendArgSchemasJSON reflects each backend's cmux "extra args" option struct
@@ -195,7 +267,7 @@ func flatModels(adapters []AdapterStatus) []map[string]any {
 	out := []entry{}
 	positions := map[string]int{}
 	for _, a := range adapters {
-		provider := modelProviderForBackend(api.Backend(a.Backend))
+		provider := api.CatalogPrefixFor(api.Backend(a.Backend))
 		for _, model := range flatModelDetails(a) {
 			id := strings.TrimSpace(model.id)
 			if id == "" {
@@ -276,19 +348,6 @@ func flatModelDetails(adapter AdapterStatus) []flatModelDetail {
 		out = append(out, flatModelDetail{id: id, label: id})
 	}
 	return out
-}
-
-func modelProviderForBackend(backend api.Backend) string {
-	switch backend {
-	case api.BackendClaudeAgent, api.BackendClaudeCLI, api.BackendClaudeCmux:
-		return "claude-agent"
-	case api.BackendCodexAgent, api.BackendCodexCLI, api.BackendCodexCmux:
-		return "codex-cli"
-	case api.BackendGemini, api.BackendGeminiCLI:
-		return "googleai"
-	default:
-		return string(backend)
-	}
 }
 
 func modelSupportsReasoning(id string) bool {

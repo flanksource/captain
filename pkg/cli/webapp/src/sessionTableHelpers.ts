@@ -143,13 +143,19 @@ export function modelIcon(session: {
   );
 }
 
+// Last-resort brand-mark key for a row that carries neither provider nor source
+// — an imported or pre-registry session. Captain's own rows always carry
+// `provider` (BackendToProvider), so this never runs for them, and it maps to
+// the client-side icon table rather than to a backend: nothing here reaches a
+// run. `googleai` is that table's Gemini mark; plain `google` is the Google
+// wordmark, which is not what a Gemini model should show.
 function providerFromModel(model?: string): string | undefined {
   const value = (model ?? "").toLowerCase();
   if (value.includes("claude") || value.includes("anthropic"))
     return "anthropic";
   if (value.includes("codex") || value.includes("gpt") || /\bo\d/.test(value))
     return "openai";
-  if (value.includes("gemini") || value.includes("google")) return "google";
+  if (value.includes("gemini") || value.includes("google")) return "googleai";
   if (value.includes("deepseek")) return "deepseek";
   if (value.includes("mistral")) return "mistral";
   return undefined;

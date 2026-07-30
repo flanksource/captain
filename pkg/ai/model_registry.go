@@ -37,6 +37,7 @@ func ParseModelIdentity(defaultProvider, model string) (ModelIdentity, bool) {
 }
 
 func registryModelDef(m registry.KnownModel, backend Backend) ModelDef {
+	supported, defaultEffort := enabledEfforts(m.SupportedEfforts, m.DefaultEffort)
 	return ModelDef{
 		ID:                m.ID,
 		Name:              m.Label,
@@ -46,10 +47,23 @@ func registryModelDef(m registry.KnownModel, backend Backend) ModelDef {
 		Reasoning:         m.Reasoning,
 		Temperature:       m.Temperature,
 		InputMediaTypes:   clampInputMediaTypes(backend, m.InputMediaTypes),
-		SupportedEfforts:  append([]api.Effort(nil), m.SupportedEfforts...),
-		DefaultEffort:     m.DefaultEffort,
+		SupportedEfforts:  supported,
+		DefaultEffort:     defaultEffort,
 		Priority:          m.Priority,
 	}
+}
+
+// enabledEfforts drops the user-disabled tiers from a supported-effort list and
+// degrades a disabled default, so every projection offers only usable efforts.
+//
+// Every caller applies it at read time. Baking it into a value built at package
+// init would freeze the empty opt-out set that exists before config load.
+func enabledEfforts(supported []api.Effort, defaultEffort api.Effort) ([]api.Effort, api.Effort) {
+	disabled := Disabled()
+	if disabled.Effort(defaultEffort) {
+		defaultEffort = api.EffortNone
+	}
+	return disabled.Efforts(append([]api.Effort(nil), supported...)), defaultEffort
 }
 
 // RegistryModelDef returns the registry metadata for an exact model on a
@@ -91,9 +105,10 @@ func RegistryModelDefs(backend Backend) []ModelDef {
 	if !ok {
 		return nil
 	}
+	disabled := Disabled()
 	out := make([]ModelDef, 0)
 	for _, m := range p.Models() {
-		if !m.Preferred {
+		if !m.Preferred || disabled.Model(backend, m.ID) {
 			continue
 		}
 		if known, available := p.Availability(mode, m.ID); !known || !available {
@@ -105,6 +120,9 @@ func RegistryModelDefs(backend Backend) []ModelDef {
 	return out
 }
 
+// registryCatalogModels projects the registry onto the catalog rows. It runs at
+// package init, so it must not consult the opt-out set — Catalog() applies that
+// at read time.
 func registryCatalogModels() []Model {
 	out := make([]Model, 0, len(registry.KnownModels())+5)
 	for _, p := range registry.Providers() {
@@ -129,7 +147,7 @@ func registryCatalogModels() []Model {
 				ContextWindow:    m.ContextWindow,
 				ReleaseDate:      m.ReleaseDate,
 				InputMediaTypes:  clampInputMediaTypes(apiBackend, m.InputMediaTypes),
-				SupportedEfforts: append([]api.Effort(nil), m.SupportedEfforts...),
+				SupportedEfforts: m.SupportedEfforts,
 				DefaultEffort:    m.DefaultEffort,
 				Priority:         m.Priority,
 				Default:          p == registry.Anthropic && m.ID == defaultCatalogModelID,
@@ -141,7 +159,8 @@ func registryCatalogModels() []Model {
 }
 
 // agentCatalogModels projects the agent-mode rows, which carry the bare exact id
-// (not a catalog-prefixed one) and an agent-flavoured label.
+// (not a catalog-prefixed one) and an agent-flavoured label. Like
+// registryCatalogModels it runs at init and leaves filtering to Catalog().
 func agentCatalogModels() []Model {
 	out := make([]Model, 0)
 	for _, spec := range []struct {
@@ -172,7 +191,7 @@ func agentCatalogModels() []Model {
 				ContextWindow:    m.ContextWindow,
 				ReleaseDate:      m.ReleaseDate,
 				InputMediaTypes:  clampInputMediaTypes(backend, m.InputMediaTypes),
-				SupportedEfforts: append([]api.Effort(nil), m.SupportedEfforts...),
+				SupportedEfforts: m.SupportedEfforts,
 				DefaultEffort:    m.DefaultEffort,
 				Priority:         m.Priority,
 			})

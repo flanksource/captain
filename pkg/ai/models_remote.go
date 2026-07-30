@@ -28,6 +28,12 @@ type ModelDef struct {
 	SupportedEfforts  []api.Effort `json:"supportedEfforts,omitempty"`
 	DefaultEffort     api.Effort   `json:"defaultEffort,omitempty"`
 	Priority          int          `json:"priority,omitempty"`
+
+	// Disabled marks a model the user has taken out of circulation. It is set by
+	// ApplyDisabled on the whoami probe only — the page must still render the row
+	// so the toggle has something to switch back on. Every other consumer drops
+	// disabled models rather than annotating them.
+	Disabled bool `json:"disabled,omitempty"`
 }
 
 // remoteModelsTimeout caps each /v1/models call. The configure wizard is an

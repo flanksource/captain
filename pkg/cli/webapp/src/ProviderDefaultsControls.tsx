@@ -6,16 +6,20 @@ export type ProviderModel = {
   label?: string;
   supportedEfforts?: string[];
   defaultEffort?: string;
+  disabled?: boolean;
 };
 
 export type ProviderAdapter = {
   backend: string;
   type: "api" | "cli";
+  provider?: string;
+  mode?: string;
   authenticated: boolean;
   binary?: string;
   modelCount: number;
   models?: string[];
   modelDetails?: ProviderModel[];
+  disabled?: boolean;
 };
 
 export type ProviderDefault = {
@@ -24,15 +28,6 @@ export type ProviderDefault = {
   effort: string;
   configured: boolean;
 };
-
-const PROVIDER_AGENTS: Record<string, string[]> = {
-  anthropic: ["anthropic", "claude-cli", "claude-agent", "claude-cmux"],
-  openai: ["openai", "codex-cli", "codex-agent", "codex-cmux"],
-  gemini: ["gemini", "gemini-cli"],
-  deepseek: ["deepseek"],
-};
-
-const ALL_EFFORTS = ["low", "medium", "high", "xhigh", "max", "ultra"];
 
 export function ProviderDefaultsControls({
   defaults,
@@ -76,10 +71,12 @@ function ProviderDefaultsForm({
   const { agent, model, effort } = selection;
   const [pending, setPending] = useState<"defaults" | "active" | null>(null);
   const [status, setStatus] = useState<{ tone: "success" | "error"; text: string } | null>(null);
-  const agentOptions = PROVIDER_AGENTS[provider] ?? [provider];
+  // Agents and efforts come from the probe rather than a hardcoded table, so a
+  // backend or effort the user disabled is simply not offered here.
+  const agentOptions = useMemo(() => agentsForProvider(adapters, provider, agent), [adapters, provider, agent]);
   const models = useMemo(() => modelsForAgent(adapters, agent, model), [adapters, agent, model]);
   const selectedModel = models.find((candidate) => candidate.id === model);
-  const effortOptions = selectedModel?.supportedEfforts ?? ALL_EFFORTS;
+  const effortOptions = selectedModel?.supportedEfforts ?? [];
   const modelAvailable = models.some((candidate) => candidate.id === model && candidate.available);
 
   function changeAgent(nextAgent: string) {
@@ -199,11 +196,25 @@ function ProviderDefaultsForm({
 
 type ModelOption = ProviderModel & { available: boolean };
 
+/**
+ * agentsForProvider lists the provider's enabled backends from the probe. The
+ * currently-saved agent is kept even when disabled, so the select still shows
+ * what is configured rather than silently rewriting it.
+ */
+function agentsForProvider(adapters: ProviderAdapter[], provider: string, current: string): string[] {
+  const options = adapters
+    .filter((adapter) => adapter.provider === provider && !adapter.disabled)
+    .map((adapter) => adapter.backend);
+  if (current && !options.includes(current)) options.unshift(current);
+  return options.length > 0 ? options : [provider];
+}
+
 function modelsForAgent(adapters: ProviderAdapter[], agent: string, current: string): ModelOption[] {
   const adapter = adapters.find((candidate) => candidate.backend === agent);
-  const models = adapter?.modelDetails?.length
+  const models = (adapter?.modelDetails?.length
     ? adapter.modelDetails
-    : (adapter?.models ?? []).map((id) => ({ id }));
+    : (adapter?.models ?? []).map((id) => ({ id }) as ProviderModel)
+  ).filter((model) => !model.disabled);
   const options = models.map((model) => ({ ...model, available: true }));
   if (current && !options.some((candidate) => candidate.id === current)) {
     options.unshift({ id: current, available: false });

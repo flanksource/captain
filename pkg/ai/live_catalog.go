@@ -36,6 +36,11 @@ func LiveCatalogInfo(configuredProviders []string) ([]ModelInfo, error) {
 // mergeLiveCatalog upserts each probed model onto the static catalog. Ordering
 // follows the static catalog, with live-only models appended in probe order so
 // the menu stays stable across refreshes.
+//
+// Disabled entries are skipped against both the probed backend and the menu
+// backend it collapses onto: without the menu-backend check, disabling a model
+// on the claude-agent card would still let the claude-cli probe re-add it under
+// the same menu id.
 func mergeLiveCatalog(static []Model, adapters []AdapterStatus) []Model {
 	out := append([]Model(nil), static...)
 	pos := make(map[string]int, len(out))
@@ -43,12 +48,17 @@ func mergeLiveCatalog(static []Model, adapters []AdapterStatus) []Model {
 		pos[m.ID] = i
 	}
 
+	disabled := Disabled()
 	for _, a := range adapters {
-		menuBackend, hasMenu := menuBackendFor(Backend(a.Backend))
-		if !hasMenu {
+		probed := Backend(a.Backend)
+		menuBackend, hasMenu := menuBackendFor(probed)
+		if !hasMenu || disabled.Backend(probed) {
 			continue
 		}
 		for _, md := range a.ModelDetails {
+			if disabled.Model(probed, md.ID) || disabled.Model(menuBackend, md.ID) {
+				continue
+			}
 			live := liveModel(menuBackend, md)
 			if idx, seen := pos[live.ID]; seen {
 				out[idx] = mergeModel(out[idx], live)
@@ -97,6 +107,7 @@ func liveModel(menuBackend Backend, md ModelDef) Model {
 	if label == "" {
 		label = bare
 	}
+	supported, defaultEffort := enabledEfforts(md.SupportedEfforts, md.DefaultEffort)
 	return Model{
 		ID:               id,
 		Backend:          menuBackend,
@@ -104,8 +115,8 @@ func liveModel(menuBackend Backend, md ModelDef) Model {
 		Reasoning:        md.Reasoning,
 		Temperature:      md.Temperature,
 		ReleaseDate:      md.ReleaseDate,
-		SupportedEfforts: append([]api.Effort(nil), md.SupportedEfforts...),
-		DefaultEffort:    md.DefaultEffort,
+		SupportedEfforts: supported,
+		DefaultEffort:    defaultEffort,
 		Priority:         md.Priority,
 	}
 }

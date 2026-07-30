@@ -22,7 +22,8 @@ export function ChatLayer() {
         chat={{
           api: "/api/chat",
           modelsApi: "/api/chat/models",
-          defaultModel: "claude-sonnet-5",
+          // No defaultModel: the served menu marks captain's own default, so a
+          // literal here would only go stale or name a disabled model.
           enableAttachments: true,
           suggestions: [
             "Summarize this run",

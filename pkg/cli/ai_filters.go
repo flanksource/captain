@@ -69,10 +69,17 @@ func scopeFilterOptions() map[string]api.Textable {
 }
 
 // backendOptions sources the backends from ai.AllBackends (the same source
-// Backend.Valid validates against).
+// Backend.Valid validates against), minus the ones the user switched off.
+// AllBackends stays the validation universe — a disabled backend is still a
+// valid name, so an explicit --backend=claude-cmux fails on the opt-out rather
+// than on "unknown backend" — but a picker must not offer it. The set is read
+// here rather than captured, because completion runs long after config load.
 func backendFilterOptions() map[string]api.Textable {
 	out := make(map[string]api.Textable, len(ai.AllBackends()))
 	for _, b := range ai.AllBackends() {
+		if capapi.Disabled().Backend(b) {
+			continue
+		}
 		out[string(b)] = api.Text{Content: string(b)}
 	}
 	return out

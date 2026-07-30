@@ -143,6 +143,40 @@ func (p *Provider) PricingIDs(model string) []string {
 	return []string{p.PricingPrefix + "/" + bare, bare}
 }
 
+// DefaultModelID is captain's declared default: the model a run that names none
+// receives, and the id a picker seeds itself with wherever the chosen backend
+// can run it. Exactly one catalog row projects to it.
+const DefaultModelID = "anthropic/claude-sonnet-5"
+
+// DefaultModel is this provider's current top pick for a mode — the id a picker
+// should seed itself with. It honours the opt-out set, so a disabled model is
+// never offered as a default. ok is false when the provider does not serve the
+// mode, or when every candidate is disabled.
+func (p *Provider) DefaultModel(mode RuntimeMode) (string, bool) {
+	m, ok := p.latestModel(mode, "")
+	return m.ID, ok
+}
+
+// DefaultModelFor is the model a picker should seed for one backend: the
+// declared default wherever that backend can run it, and the backend provider's
+// current top pick otherwise. Both answers skip models the user disabled, so a
+// picker never seeds something switched off. It returns "" for an unknown
+// backend, or when every candidate is disabled.
+//
+// It replaces the per-backend literal tables that named superseded models and
+// disagreed with each other about what "default" meant.
+func DefaultModelFor(b Backend) string {
+	p, mode, ok := ProviderFor(b)
+	if !ok {
+		return ""
+	}
+	if exact, ok := p.ResolveExact(mode, DefaultModelID); ok && !Disabled().Model(b, exact) {
+		return exact
+	}
+	model, _ := p.DefaultModel(mode)
+	return model
+}
+
 // Models returns this provider's catalog rows.
 func (p *Provider) Models() []KnownModel {
 	out := make([]KnownModel, 0, len(knownModels))
