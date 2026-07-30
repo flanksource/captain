@@ -69,6 +69,7 @@ type Session struct {
 	AgentType         string                 `json:"agentType,omitempty"`
 	Description       string                 `json:"description,omitempty"`
 	CLIVersion        string                 `json:"cliVersion,omitempty"`
+	Metadata          map[string]any         `json:"metadata,omitempty"`
 	LifecycleStatus   SessionLifecycleStatus `json:"lifecycleStatus"`
 	ActivityState     SessionActivityState   `json:"activityState"`
 	HealthState       SessionHealthState     `json:"healthState"`
@@ -98,6 +99,7 @@ type CreateSessionInput struct {
 	AgentType         string
 	Description       string
 	CLIVersion        string
+	Metadata          map[string]any
 }
 
 type sessionRecord struct {
@@ -117,6 +119,7 @@ type sessionRecord struct {
 	AgentType         *string                `gorm:"column:agent_type"`
 	Description       *string                `gorm:"column:description"`
 	CLIVersion        *string                `gorm:"column:cli_version"`
+	Metadata          map[string]any         `gorm:"column:metadata;serializer:json;type:jsonb"`
 	LifecycleStatus   SessionLifecycleStatus `gorm:"column:lifecycle_status"`
 	ActivityState     SessionActivityState   `gorm:"column:activity_state"`
 	HealthState       SessionHealthState     `gorm:"column:health_state"`
@@ -137,7 +140,7 @@ func (sessionRecord) TableName() string { return "captain_sessions" }
 //
 // provider is deliberately not part of the lookup, and matches
 // captain_sessions_provider_identity_key. It is a label three writers spell
-// differently for one Codex rollout (`openai`, `codex-agent`, ''), so matching
+// differently for one Codex rollout (`openai`, `codex-agent`, or empty), so matching
 // on it meant none of them ever found the others and each inserted its own row
 // for the same transcript.
 func (db *DB) findSessionByIdentity(ctx context.Context, record sessionRecord) (*sessionRecord, error) {
@@ -216,8 +219,11 @@ func (db *DB) CreateOrGetSession(ctx context.Context, input CreateSessionInput) 
 		RootSessionID: input.RootSessionID, Path: nullableTrimmed(input.Path), Project: nullableTrimmed(input.Project),
 		CWD: nullableTrimmed(normalizeCWD(input.CWD)), Title: nullableTrimmed(input.Title), InitialPrompt: nullableTrimmed(input.InitialPrompt),
 		Slug: nullableTrimmed(input.Slug), AgentType: nullableTrimmed(input.AgentType), Description: nullableTrimmed(input.Description),
-		CLIVersion: nullableTrimmed(input.CLIVersion), LifecycleStatus: SessionLifecycleCreated,
+		CLIVersion: nullableTrimmed(input.CLIVersion), Metadata: input.Metadata, LifecycleStatus: SessionLifecycleCreated,
 		ActivityState: SessionActivityIdle, HealthState: SessionHealthHealthy, StateObservedAt: now,
+	}
+	if record.Metadata == nil {
+		record.Metadata = map[string]any{}
 	}
 	// Read before write. Callers re-get far more often than they create — a
 	// monitor asks for the same session on every transcript append — and an
@@ -266,9 +272,8 @@ func (db *DB) CreateOrGetSession(ctx context.Context, input CreateSessionInput) 
 	if callerSuppliedID && existing.ID != input.ID {
 		return nil, fmt.Errorf("%w: provider identity already belongs to session %s, not caller-supplied ID %s", ErrSessionConflict, existing.ID, input.ID)
 	}
-	if !equalOptionalUUID(existing.ParentSessionID, record.ParentSessionID) ||
-		!equalOptionalUUID(existing.RootSessionID, record.RootSessionID) {
-		return nil, fmt.Errorf("%w: existing session has a different hierarchy", ErrSessionConflict)
+	if err := db.reconcileSessionHierarchy(ctx, existing, record); err != nil {
+		return nil, err
 	}
 	return db.GetSession(ctx, existing.ID)
 }
@@ -837,7 +842,7 @@ func sessionFromRecord(record sessionRecord) Session {
 		RootSessionID: record.RootSessionID, Path: optionalString(record.Path), Project: optionalString(record.Project),
 		CWD: optionalString(record.CWD), Title: optionalString(record.Title), InitialPrompt: optionalString(record.InitialPrompt),
 		Slug: optionalString(record.Slug), AgentType: optionalString(record.AgentType), Description: optionalString(record.Description),
-		CLIVersion: optionalString(record.CLIVersion), LifecycleStatus: record.LifecycleStatus,
+		CLIVersion: optionalString(record.CLIVersion), Metadata: record.Metadata, LifecycleStatus: record.LifecycleStatus,
 		ActivityState: record.ActivityState, HealthState: record.HealthState, StateReason: optionalString(record.StateReason),
 		StateVersion: record.StateVersion, StateObservedAt: record.StateObservedAt, StartedAt: record.StartedAt,
 		EndedAt: record.EndedAt, CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt,
@@ -895,8 +900,10 @@ func (db *DB) validateExecutionSession(ctx context.Context, admission *Session, 
 	if err != nil {
 		return err
 	}
-	if execution.ParentSessionID != nil || execution.RootSessionID != nil {
-		return fmt.Errorf("%w: execution session %s is not a root provider thread", ErrPromptRunConflict, execution.ID)
+	if (execution.ParentSessionID != nil || execution.RootSessionID != nil) &&
+		sessionAggregateRoot(execution) != sessionAggregateRoot(admission) {
+		return fmt.Errorf("%w: execution session %s belongs to root %s, not %s",
+			ErrPromptRunConflict, execution.ID, sessionAggregateRoot(execution), sessionAggregateRoot(admission))
 	}
 	if execution.Source != "claude" && execution.Source != "codex" {
 		return fmt.Errorf("%w: execution session %s has unsupported source %q", ErrPromptRunConflict, execution.ID, execution.Source)
