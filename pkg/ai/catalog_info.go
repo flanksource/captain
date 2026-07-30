@@ -11,12 +11,17 @@ import (
 // selector can be data-driven. Configured reports whether the model is
 // selectable (its API provider has a key, or its agent backend is installed).
 type ModelInfo struct {
-	ID              string   `json:"id"`
-	Provider        string   `json:"provider"`
-	Label           string   `json:"label"`
-	Reasoning       bool     `json:"reasoning"`
-	Temperature     bool     `json:"temperature"`
-	Configured      bool     `json:"configured"`
+	ID          string `json:"id"`
+	Provider    string `json:"provider"`
+	Label       string `json:"label"`
+	Reasoning   bool   `json:"reasoning"`
+	Temperature bool   `json:"temperature"`
+	Configured  bool   `json:"configured"`
+	// Default marks captain's declared default model, so a client seeds its
+	// picker from the menu instead of hardcoding an id that rots on the next
+	// release. At most one row carries it, and none does when that model is
+	// disabled — the client then falls back to the first configured row.
+	Default         bool     `json:"default,omitempty"`
 	ContextWindow   int      `json:"contextWindow"`
 	InputMediaTypes []string `json:"inputMediaTypes"`
 }
@@ -50,25 +55,29 @@ func CatalogInfo(configuredProviders []string) []ModelInfo {
 
 // catalogInfoFrom annotates an arbitrary model list with selectability, shared
 // by CatalogInfo (static catalog) and LiveCatalogInfo (whoami-probed catalog).
+//
+// Both inputs arrive already filtered — Catalog() drops disabled models at read
+// time and mergeLiveCatalog drops disabled probe rows — so this only annotates.
 func catalogInfoFrom(models []Model, configuredProviders []string) []ModelInfo {
-	out := make([]ModelInfo, len(models))
-	for i, m := range models {
+	out := make([]ModelInfo, 0, len(models))
+	for _, m := range models {
 		configured := false
 		if m.IsAgent() {
 			configured = agentBackendAvailable(m.Backend)
 		} else {
 			configured = slices.Contains(configuredProviders, BackendToProvider(m.Backend))
 		}
-		out[i] = ModelInfo{
+		out = append(out, ModelInfo{
 			ID:              m.ID,
 			Provider:        BackendToProvider(m.Backend),
 			Label:           m.Label,
 			Reasoning:       m.Reasoning,
 			Temperature:     m.Temperature,
 			Configured:      configured,
+			Default:         m.ID == registry.DefaultModelID,
 			ContextWindow:   m.ContextWindow,
 			InputMediaTypes: append([]string(nil), m.InputMediaTypes...),
-		}
+		})
 	}
 	return out
 }

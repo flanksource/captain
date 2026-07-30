@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Button } from "@flanksource/clicky-ui/components";
+import { Button, Switch } from "@flanksource/clicky-ui/components";
 import {
   Badge,
   UiCheck,
@@ -17,6 +17,13 @@ import {
   type ProviderDefault,
   type ProviderModel,
 } from "./ProviderDefaultsControls";
+import {
+  DisabledControls,
+  useDisabledSelections,
+  type DisabledAxes,
+  type DisabledController,
+  type DisabledSelections,
+} from "./DisabledControls";
 
 type WhoamiModel = ProviderModel & {
   label?: string;
@@ -27,6 +34,7 @@ type WhoamiModel = ProviderModel & {
   supportedEfforts?: string[];
   defaultEffort?: string;
   priority?: number;
+  disabled?: boolean;
 };
 
 type WhoamiAdapter = ProviderAdapter & {
@@ -36,13 +44,19 @@ type WhoamiAdapter = ProviderAdapter & {
   binaryMissing?: string;
   modelError?: string;
   modelDetails?: WhoamiModel[];
+  disabled?: boolean;
+  disabledReason?: string;
 };
 
 type WhoamiResult = {
   adapters: WhoamiAdapter[];
   defaultProvider: string;
   providerDefaults: Record<string, ProviderDefault>;
+  disabled?: DisabledSelections;
+  axes?: DisabledAxes;
 };
+
+const NO_AXES: DisabledAxes = { modes: [], providers: [], efforts: [] };
 
 type ProviderTokenResult = {
   provider: string;
@@ -89,7 +103,7 @@ export function WhoamiPage() {
           <StateMessage tone="error">{errorMessage(query.error)}</StateMessage>
         ) : (
           <WhoamiContent
-            result={query.data ?? { adapters: [], defaultProvider: "anthropic", providerDefaults: {} }}
+            result={query.data ?? { adapters: [], defaultProvider: "", providerDefaults: {} }}
             onRefresh={async () => { await query.refetch(); }}
           />
         )}
@@ -99,18 +113,24 @@ export function WhoamiPage() {
 }
 
 function WhoamiContent({ result, onRefresh }: { result: WhoamiResult; onRefresh: () => Promise<void> }) {
-  const { adapters, defaultProvider = "anthropic", providerDefaults = {} } = result;
+  // No fallback provider: the active card is whichever backend the server named,
+  // and guessing "anthropic" when it named none marked a card the user never chose.
+  const { adapters, defaultProvider = "", providerDefaults = {}, axes = NO_AXES } = result;
+  const controller = useDisabledSelections(result.disabled, onRefresh);
   if (adapters.length === 0) return <StateMessage>No adapters were reported.</StateMessage>;
 
   const readyCount = adapters.filter(adapterReady).length;
   const modelCount = adapters.reduce((total, adapter) => total + adapter.modelCount, 0);
+  const disabledCount = adapters.filter((adapter) => adapter.disabled).length;
   return (
     <>
       <div className="flex flex-wrap gap-density-2 text-xs text-muted-foreground">
         <Badge variant="outline">{adapters.length} adapters</Badge>
         <Badge variant="outline" tone="success">{readyCount} ready</Badge>
         <Badge variant="outline" tone="info">{modelCount} model entries</Badge>
+        {disabledCount > 0 && <Badge variant="outline" tone="warning">{disabledCount} disabled</Badge>}
       </div>
+      <DisabledControls axes={axes} controller={controller} />
       <AdapterGroup
         title="API providers"
         description="Direct provider APIs authenticated with Captain vault tokens or environment keys."
@@ -118,6 +138,7 @@ function WhoamiContent({ result, onRefresh }: { result: WhoamiResult; onRefresh:
         adapters={adapters}
         defaultProvider={defaultProvider}
         providerDefaults={providerDefaults}
+        controller={controller}
         onRefresh={onRefresh}
       />
       <AdapterGroup
@@ -127,6 +148,7 @@ function WhoamiContent({ result, onRefresh }: { result: WhoamiResult; onRefresh:
         adapters={adapters}
         defaultProvider={defaultProvider}
         providerDefaults={providerDefaults}
+        controller={controller}
         onRefresh={onRefresh}
       />
     </>
@@ -140,6 +162,7 @@ function AdapterGroup({
   adapters,
   defaultProvider,
   providerDefaults,
+  controller,
   onRefresh,
 }: {
   title: string;
@@ -148,6 +171,7 @@ function AdapterGroup({
   adapters: WhoamiAdapter[];
   defaultProvider: string;
   providerDefaults: Record<string, ProviderDefault>;
+  controller: DisabledController;
   onRefresh: () => Promise<void>;
 }) {
   const rows = adapters.filter((adapter) => adapter.type === type);
@@ -171,6 +195,7 @@ function AdapterGroup({
             adapters={adapters}
             defaults={providerDefaults[adapter.backend]}
             active={defaultProvider === adapter.backend}
+            controller={controller}
             onRefresh={onRefresh}
           />
         ))}
@@ -184,18 +209,23 @@ function AdapterCard({
   adapters,
   defaults,
   active,
+  controller,
   onRefresh,
 }: {
   adapter: WhoamiAdapter;
   adapters: WhoamiAdapter[];
   defaults?: ProviderDefault;
   active: boolean;
+  controller: DisabledController;
   onRefresh: () => Promise<void>;
 }) {
   const ready = adapterReady(adapter);
   const models = adapterModels(adapter);
+  // A card switched off by its own mode or provider stays visibly off but is not
+  // interactive: the axis that turned it off is where it turns back on.
+  const inherited = Boolean(adapter.disabled) && !controller.isOff("backends", adapter.backend);
   return (
-    <article className="overflow-hidden rounded-lg border border-border bg-background">
+    <article className={`overflow-hidden rounded-lg border border-border bg-background ${adapter.disabled ? "opacity-60" : ""}`}>
       <div className="flex flex-wrap items-center justify-between gap-density-2 border-b border-border bg-muted/30 px-density-3 py-density-2">
         <div className="flex items-center gap-density-2">
           {ready ? (
@@ -206,9 +236,20 @@ function AdapterCard({
           <h3 className="font-mono text-sm font-semibold">{adapter.backend}</h3>
           <Badge size="xs" variant="outline">{adapter.type.toUpperCase()}</Badge>
         </div>
-        <Badge size="xs" tone={ready ? "success" : "warning"}>
-          {ready ? "Ready" : adapter.authenticated ? "Unavailable" : "Needs setup"}
-        </Badge>
+        <div className="flex items-center gap-density-2">
+          {inherited && adapter.disabledReason && (
+            <span className="text-xs text-muted-foreground">off via {adapter.disabledReason}</span>
+          )}
+          <Switch
+            checked={!adapter.disabled}
+            disabled={inherited || controller.pending !== null}
+            aria-label={`Enable ${adapter.backend}`}
+            onChange={(checked) => void controller.setEnabled("backends", adapter.backend, checked)}
+          />
+          <Badge size="xs" tone={ready ? "success" : "warning"}>
+            {adapter.disabled ? "Disabled" : ready ? "Ready" : adapter.authenticated ? "Unavailable" : "Needs setup"}
+          </Badge>
+        </div>
       </div>
 
       <div className="grid gap-density-3 p-density-3">
@@ -236,7 +277,9 @@ function AdapterCard({
           </div>
           {models.length > 0 ? (
             <ul className="divide-y divide-border rounded-md border border-border">
-              {models.map((model) => <ModelRow key={model.id} model={model} />)}
+              {models.map((model) => (
+                <ModelRow key={model.id} model={model} backend={adapter.backend} controller={controller} />
+              ))}
             </ul>
           ) : (
             <div className="rounded-md border border-dashed border-border px-density-3 py-density-2 text-xs text-muted-foreground">
@@ -382,15 +425,35 @@ function Detail({
   );
 }
 
-function ModelRow({ model }: { model: WhoamiModel }) {
+function ModelRow({
+  model,
+  backend,
+  controller,
+}: {
+  model: WhoamiModel;
+  backend: string;
+  controller: DisabledController;
+}) {
+  // The server marks every model of a disabled backend; only the row's own entry
+  // is switchable here, so an inherited disable renders read-only.
+  const own = controller.isOff("models", `${backend}/${model.id}`) || controller.isOff("models", model.id);
+  const inherited = Boolean(model.disabled) && !own;
   return (
-    <li className="grid gap-density-2 px-density-3 py-density-2 text-xs">
+    <li className={`grid gap-density-2 px-density-3 py-density-2 text-xs ${model.disabled ? "opacity-60" : ""}`}>
       <div className="flex flex-wrap items-start justify-between gap-density-2">
         <div className="min-w-0">
           <div className="font-medium">{model.label || model.id}</div>
           <div className="break-all font-mono text-muted-foreground">{model.id}</div>
         </div>
-        {model.releaseDate && <Badge size="xs" variant="outline">{model.releaseDate}</Badge>}
+        <div className="flex items-center gap-density-2">
+          {model.releaseDate && <Badge size="xs" variant="outline">{model.releaseDate}</Badge>}
+          <Switch
+            checked={!model.disabled}
+            disabled={inherited || controller.pending !== null}
+            aria-label={`Enable ${backend}/${model.id}`}
+            onChange={(checked) => void controller.setModelEnabled(backend, model.id, checked)}
+          />
+        </div>
       </div>
       <div className="flex flex-wrap items-center gap-density-1 text-muted-foreground">
         {model.reasoning && <Badge size="xxs" variant="outline">reasoning</Badge>}

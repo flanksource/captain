@@ -28,6 +28,12 @@ func main() {
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
 			clicky.Flags.UseFlags()
 			cli.EnableHTTPWireLogging()
+			// Every model/effort resolution path reads a process-wide opt-out set;
+			// a malformed config is a hard stop rather than a silent full catalog.
+			if err := cli.InstallDisabledSelections(); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
 		},
 	}
 	configureVersion(rootCmd, currentBuildInfo())

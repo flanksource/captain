@@ -2,6 +2,7 @@ package registry
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/flanksource/captain/pkg/collections"
@@ -263,7 +264,36 @@ func (m Model) ExpandCSV() Model {
 // and Effort only when they belong to the same provider family. They keep their
 // own Name/Backend (an empty Backend is inferred at construction from the fallback's
 // own Name), clear ID, and have nested Fallbacks dropped. A length of 1 means "no fallback".
+//
+// Candidates the user disabled are dropped. If that empties the chain, a
+// substitute on an enabled backend takes its place; if nothing at all is left
+// enabled the unfiltered chain is returned, so the caller's own error path — not
+// a silent empty list — reports the dead end.
 func (m Model) Candidates() []Model {
+	all := m.candidates()
+	disabled := Disabled()
+	if disabled.Empty() {
+		return all
+	}
+	out := make([]Model, 0, len(all))
+	for _, candidate := range all {
+		// A name we cannot map to a backend is kept: dropping it here would turn a
+		// "no such model" error into a silent disappearance.
+		backend, err := candidate.ResolveBackend()
+		if err != nil || !disabled.Model(backend, candidate.Name) {
+			out = append(out, candidate)
+		}
+	}
+	if len(out) > 0 {
+		return out
+	}
+	if substitute, ok := substituteModel(all[0], disabled); ok {
+		return []Model{substitute}
+	}
+	return all
+}
+
+func (m Model) candidates() []Model {
 	m = m.ExpandCSV()
 	primary := m
 	primary.Fallbacks = nil
@@ -284,6 +314,44 @@ func (m Model) Candidates() []Model {
 		out = append(out, fb)
 	}
 	return out
+}
+
+// substituteModel picks a stand-in for a chain the user disabled entirely: the
+// catalog's top preferred model on an enabled backend, favouring the original's
+// own provider family before crossing to another one. The per-request knobs are
+// carried over, with the effort re-resolved against the substitute's own catalog
+// entry so an unsupported tier does not travel with it.
+func substituteModel(m Model, disabled DisabledSet) (Model, bool) {
+	family := modelProvider(m)
+	backends := AllBackends()
+	sort.SliceStable(backends, func(i, j int) bool {
+		return backends[i].Provider() == family && backends[j].Provider() != family
+	})
+	for _, backend := range backends {
+		if disabled.Backend(backend) {
+			continue
+		}
+		p, mode, ok := ProviderFor(backend)
+		if !ok {
+			continue
+		}
+		pick, ok := p.latestModel(mode, "")
+		if !ok {
+			continue
+		}
+		effort, err := ResolveEffort(backend, pick.ID, m.Effort)
+		if err != nil {
+			effort = EffortNone
+		}
+		return Model{
+			Name:        pick.ID,
+			Backend:     backend,
+			Effort:      effort,
+			Temperature: m.Temperature,
+			NoCache:     m.NoCache,
+		}, true
+	}
+	return Model{}, false
 }
 
 func modelProvider(model Model) Backend {

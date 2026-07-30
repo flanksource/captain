@@ -138,6 +138,7 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	addCaptainPromptRunPaths(openAPISpec)
 	addCaptainProviderTokenPaths(openAPISpec)
 	addCaptainProviderDefaultsPaths(openAPISpec)
+	addCaptainDisabledPaths(openAPISpec)
 	chat, mcpTools, err := newCaptainChatService(ctx, rootCmd, opts, cwd, threadStore, attachmentStore)
 	if err != nil {
 		return err
@@ -170,6 +171,7 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	mux.HandleFunc("GET /api/captain/ai/prompt/schema", handlePromptSchema())
 	registerProviderTokenHandlers(mux)
 	registerProviderDefaultsHandlers(mux)
+	registerDisabledHandlers(mux)
 	mux.HandleFunc("GET /api/captain/secrets/resources", handleSecretResources())
 	mux.HandleFunc("GET /api/captain/secrets/preview", handleSecretPreview())
 	mux.HandleFunc("POST /api/attachments", handleAttachmentUpload(attachmentStore))

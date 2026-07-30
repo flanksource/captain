@@ -73,8 +73,10 @@ func TestPromptSchemaDocumentBackendsAndConditionals(t *testing.T) {
 	}
 	flat := doc["models"].([]map[string]any)
 	codexModel := schemaModelForBackend(t, flat, "gpt-5.6-sol", string(api.BackendCodexCLI))
-	if got := codexModel["provider"]; got != "codex-cli" {
-		t.Errorf("flat model provider = %v, want codex-cli", got)
+	// The provider is the catalog namespace, not the backend: every Codex mode
+	// buckets under "openai" so one family filter reaches all of them.
+	if got := codexModel["provider"]; got != "openai" {
+		t.Errorf("flat model provider = %v, want openai", got)
 	}
 	if got, ok := codexModel["label"].(string); !ok || got == "" {
 		t.Errorf("flat model label = %#v, want non-empty string", codexModel["label"])
@@ -151,6 +153,105 @@ func TestPromptSchemaDocumentBackendsAndConditionals(t *testing.T) {
 				t.Errorf("backend %s enum[%d] = %q, want %q", backend, i, enum[i], models[i])
 			}
 		}
+	}
+}
+
+// TestPromptSchemaDocumentDropsDisabledEntries covers the opposite policy to
+// whoami: a schema that still offered a disabled backend, model or tier would
+// let a run pick something the user opted out of.
+func TestPromptSchemaDocumentDropsDisabledEntries(t *testing.T) {
+	api.SetDisabled(api.NewDisabledSet(
+		[]string{"cmux"}, nil, nil, []string{"codex-cli/gpt-5.6-sol"}, []string{"ultra"}))
+	t.Cleanup(func() { api.SetDisabled(api.DisabledSet{}) })
+
+	doc, err := buildPromptSchemaDocument(stubbedSchemaAdapters(t))
+	if err != nil {
+		t.Fatalf("buildPromptSchemaDocument: %v", err)
+	}
+
+	backends := doc["backends"].([]map[string]any)
+	for _, entry := range backends {
+		if backend := api.Backend(entry["backend"].(string)); backend.Mode() == api.ModeCmux {
+			t.Errorf("backends[] still offers disabled %s", backend)
+		}
+		if backend := entry["backend"].(string); backend == string(api.BackendCodexCLI) {
+			if models, _ := entry["models"].([]string); containsString(models, "gpt-5.6-sol") {
+				t.Errorf("codex-cli still offers the disabled model: %v", models)
+			}
+		}
+	}
+	want := 0
+	for _, backend := range api.AllBackends() {
+		if backend.Mode() != api.ModeCmux {
+			want++
+		}
+	}
+	if len(backends) != want {
+		t.Errorf("backends length = %d, want %d with every cmux backend dropped", len(backends), want)
+	}
+
+	for _, family := range doc["runtimes"].([]api.RuntimeFamily) {
+		for _, mode := range family.Modes {
+			if mode.Mode == string(api.ModeCmux) {
+				t.Errorf("runtimes[] still offers the disabled %s mode", mode.Backend)
+			}
+			if mode.Disabled {
+				t.Errorf("runtimes[] served a disabled entry instead of dropping it: %+v", mode)
+			}
+		}
+	}
+
+	for _, model := range doc["models"].([]map[string]any) {
+		if efforts, ok := model["supportedEfforts"].([]string); ok && containsString(efforts, "ultra") {
+			t.Errorf("model %v still offers the disabled ultra tier: %v", model["id"], efforts)
+		}
+	}
+	if efforts := doc["efforts"].([]string); containsString(efforts, "ultra") || len(efforts) != len(api.AllEfforts())-1 {
+		t.Errorf("doc.efforts = %v, want every tier but ultra", efforts)
+	}
+}
+
+// TestPromptSchemaDocumentServesTheRuntimeCatalog covers what lets the workbench
+// runtime picker stop shipping its own family list: the document already carries
+// every provider×mode pair and the model each one seeds with.
+func TestPromptSchemaDocumentServesTheRuntimeCatalog(t *testing.T) {
+	doc, err := buildPromptSchemaDocument(stubbedSchemaAdapters(t))
+	if err != nil {
+		t.Fatalf("buildPromptSchemaDocument: %v", err)
+	}
+
+	seen := map[string]bool{}
+	for _, family := range doc["runtimes"].([]api.RuntimeFamily) {
+		if family.Family == "" || family.Provider == "" || family.CatalogPrefix == "" {
+			t.Errorf("runtime family is missing an identity: %+v", family)
+		}
+		for _, mode := range family.Modes {
+			seen[mode.Backend] = true
+			if mode.DefaultModel == "" {
+				t.Errorf("%s serves no default model, so a picker would have to hardcode one", mode.Backend)
+			}
+			if got := api.Backend(mode.Backend).Mode(); string(got) != mode.Mode {
+				t.Errorf("%s mode = %q, but the backend parses as %q", mode.Backend, mode.Mode, got)
+			}
+		}
+	}
+	if len(seen) != len(api.AllBackends()) {
+		t.Errorf("runtimes cover %d backends, want all %d", len(seen), len(api.AllBackends()))
+	}
+}
+
+func TestPromptSchemaDocumentServesTheEffortUniverse(t *testing.T) {
+	doc, err := buildPromptSchemaDocument(stubbedSchemaAdapters(t))
+	if err != nil {
+		t.Fatalf("buildPromptSchemaDocument: %v", err)
+	}
+	efforts := doc["efforts"].([]string)
+	want := make([]string, 0, len(api.AllEfforts()))
+	for _, effort := range api.AllEfforts() {
+		want = append(want, string(effort))
+	}
+	if !reflect.DeepEqual(efforts, want) {
+		t.Errorf("doc.efforts = %v, want %v", efforts, want)
 	}
 }
 

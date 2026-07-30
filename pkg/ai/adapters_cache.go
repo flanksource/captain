@@ -26,11 +26,14 @@ var (
 // TTL. A probe error is never cached: the next call retries so a transient
 // failure does not permanently empty the catalog. `now` is a parameter so tests
 // can advance time deterministically.
+//
+// The cache stores the raw probe; the user's opt-out set is applied on the way
+// out. Baking it in would make a toggle wait out the TTL.
 func CachedAdapters(now time.Time) ([]AdapterStatus, error) {
 	adapterCacheMu.Lock()
 	defer adapterCacheMu.Unlock()
 	if adapterCache != nil && now.Sub(adapterCacheAt) < adapterCacheTTL {
-		return adapterCache, nil
+		return ApplyDisabled(adapterCache), nil
 	}
 	adapters, err := adapterProbe()
 	if err != nil {
@@ -38,5 +41,5 @@ func CachedAdapters(now time.Time) ([]AdapterStatus, error) {
 	}
 	adapterCache = adapters
 	adapterCacheAt = now
-	return adapters, nil
+	return ApplyDisabled(adapters), nil
 }

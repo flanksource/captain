@@ -11,13 +11,18 @@ import (
 var modelEffortLog = logger.GetLogger("ai")
 
 // ModelEfforts returns model-specific effort metadata when the embedded
-// registry knows the exact backend/model combination.
+// registry knows the exact backend/model combination, minus the tiers the user
+// has disabled.
 func ModelEfforts(backend Backend, model string) (supported []api.Effort, defaultEffort api.Effort, ok bool) {
 	def, ok := RegistryModelDef(backend, model)
 	if !ok {
 		return nil, api.EffortNone, false
 	}
-	return append([]api.Effort(nil), def.SupportedEfforts...), def.DefaultEffort, true
+	disabled := Disabled()
+	if disabled.Effort(def.DefaultEffort) {
+		def.DefaultEffort = api.EffortNone
+	}
+	return disabled.Efforts(append([]api.Effort(nil), def.SupportedEfforts...)), def.DefaultEffort, true
 }
 
 // ResolveModelEffort returns the executable effort for a backend/model pair.

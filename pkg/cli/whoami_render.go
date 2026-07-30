@@ -54,6 +54,9 @@ func adapterPrettyLine(a AdapterStatus, showModels bool, limit int) api.Text {
 	if a.Type == "cli" {
 		t = adapterAppendBinary(a, t)
 	}
+	if a.Disabled {
+		t = t.Append("  ", "").Append("disabled ("+a.DisabledReason+")", "text-gray-400 italic")
+	}
 	if showModels {
 		t = adapterAppendModels(a, t, limit)
 	}
@@ -61,10 +64,12 @@ func adapterPrettyLine(a AdapterStatus, showModels bool, limit int) api.Text {
 }
 
 // adapterStatusIcon is a green check when the adapter can run, a yellow warning
-// when it is authenticated but unusable (CLI binary missing), and a red cross
-// otherwise.
+// when it is authenticated but unusable (CLI binary missing or switched off),
+// and a red cross otherwise.
 func adapterStatusIcon(a AdapterStatus) api.Textable {
 	switch {
+	case a.Disabled:
+		return icons.Warning
 	case a.Ready():
 		return icons.Check
 	case a.Authenticated:
@@ -129,6 +134,9 @@ func adapterAppendModels(a AdapterStatus, t api.Text, limit int) api.Text {
 				efforts = append(efforts, string(effort))
 			}
 			label += " [effort: " + strings.Join(efforts, "|") + "]"
+		}
+		if model.Disabled {
+			label += " [disabled]"
 		}
 		t = t.NewLine().Append("      - ", "").Append(label, "text-gray-500")
 	}

@@ -72,14 +72,31 @@ export function runtimeRowsFromPrompt(
       }),
     );
   }
-  const backend =
-    prompt.backend?.trim() || inferBackendFromModel(prompt.model || "");
+  // A prompt that declares only a model leaves the backend blank rather than
+  // guessing from the id's prefix — that ladder could not name a cmux backend at
+  // all. `backendForRow` fills it in from the served catalog at render time, and
+  // `normalizeRuntimeModel` resolves the one that is actually submitted.
+  const backend = prompt.backend?.trim() ?? "";
+  const model = prompt.model?.trim() ?? "";
   return [
     {
       ...(backend ? { backend } : {}),
-      ...(prompt.model?.trim() ? { model: prompt.model.trim() } : {}),
+      ...(model ? { model } : {}),
     },
   ];
+}
+
+// The backend a runtime row runs on: its own when it declares one, else the
+// first backend the served catalog lists for its model. Empty when neither
+// answers — a picker then falls back to its first family rather than to a guess.
+export function backendForRow(
+  row: { backend?: string | undefined; model?: string | undefined },
+  models: ChatModel[],
+): string {
+  const declared = row.backend?.trim();
+  if (declared) return declared;
+  const model = models.find((entry) => entry.id === row.model);
+  return model?.backends?.find((backend) => backend.trim()) ?? "";
 }
 
 export function normalizeRuntimeModel(
@@ -94,78 +111,28 @@ export function normalizeRuntimeModel(
       (entry) => entry.id === id && modelSupportsBackend(entry, backend),
     ) ?? models.find((entry) => entry.id === id);
   if (!selected) return { model: id, backend: "" };
-  const selectedBackend = backendForModel(selected, backend);
-  if (
-    ["anthropic", "openai", "googleai", "deepseek"].includes(selected.provider)
-  ) {
-    return {
-      model: id.includes("/") ? id.slice(id.indexOf("/") + 1) : id,
-      backend: selectedBackend,
-    };
-  }
-  if (
-    ["codex-cli", "codex-agent"].includes(selected.provider) &&
-    id.startsWith("codex-")
-  ) {
-    return { model: id.slice("codex-".length), backend: selectedBackend };
-  }
-  return { model: id, backend: selectedBackend };
+  return { model: bareModelId(id), backend: backendForModel(selected, backend) };
 }
 
+// API catalog ids are namespaced ("anthropic/claude-sonnet-5") for storage
+// stability; a spec carries the bare id the provider itself answers to. CLI and
+// agent ids are already exact, so they pass through untouched.
+function bareModelId(id: string) {
+  const slash = id.indexOf("/");
+  return slash < 0 ? id : id.slice(slash + 1);
+}
+
+// The row's own backend when the model runs there, else the first backend the
+// served catalog lists for it. Never guessed from the id: an empty answer lets
+// the caller keep whatever the row already had.
 function backendForModel(model: ChatModel, preferredBackend?: string) {
   if (preferredBackend && modelSupportsBackend(model, preferredBackend))
     return preferredBackend;
-  return model.backends?.find((candidate) => candidate.trim()) ??
-    providerToBackend(model.provider);
+  return model.backends?.find((candidate) => candidate.trim()) ?? "";
 }
 
 function modelSupportsBackend(model: ChatModel, backend?: string) {
   if (!backend) return true;
   const backends = model.backends?.filter(Boolean);
   return !backends?.length || backends.includes(backend);
-}
-
-function inferBackendFromModel(model: string) {
-  const value = model.trim().toLowerCase();
-  if (!value) return "";
-  if (value.startsWith("anthropic/")) return "anthropic";
-  if (value.startsWith("claude-agent-")) return "claude-agent";
-  if (value.startsWith("claude-code-")) return "claude-cli";
-  if (value.startsWith("codex-agent-") || value.startsWith("codex"))
-    return "codex-agent";
-  if (value.startsWith("gemini-cli-")) return "gemini-cli";
-  if (value.startsWith("claude-")) return "anthropic";
-  if (
-    value.startsWith("openai/") ||
-    value.startsWith("gpt-") ||
-    /^(o1|o3|o4)/.test(value)
-  )
-    return "openai";
-  if (
-    value.startsWith("googleai/") ||
-    value.startsWith("gemini-") ||
-    value.startsWith("models/gemini-")
-  )
-    return "gemini";
-  if (value.startsWith("deepseek/") || value.startsWith("deepseek-"))
-    return "deepseek";
-  return "";
-}
-
-function providerToBackend(provider: string) {
-  if (provider === "googleai") return "gemini";
-  if (
-    [
-      "anthropic",
-      "openai",
-      "deepseek",
-      "claude-agent",
-      "claude-cli",
-      "codex-cli",
-      "codex-agent",
-      "gemini-cli",
-    ].includes(provider)
-  )
-    return provider;
-  return "";
 }

@@ -3,8 +3,24 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WhoamiPage } from "./WhoamiPage";
 
+const AXES = {
+  modes: ["api", "cli", "agent", "cmux"],
+  providers: ["anthropic", "openai", "gemini", "deepseek"],
+  efforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
+};
+
+const NOTHING_DISABLED = {
+  modes: null,
+  providers: null,
+  backends: null,
+  models: null,
+  efforts: null,
+};
+
 const WHOAMI_RESULT = {
   defaultProvider: "gemini",
+  axes: AXES,
+  disabled: NOTHING_DISABLED,
   providerDefaults: {
     gemini: {
       agent: "gemini-cli",
@@ -17,6 +33,8 @@ const WHOAMI_RESULT = {
     {
       backend: "gemini",
       type: "api",
+      provider: "gemini",
+      mode: "api",
       authenticated: false,
       modelCount: 0,
       modelError: "set GEMINI_API_KEY or GOOGLE_API_KEY to list models",
@@ -24,6 +42,8 @@ const WHOAMI_RESULT = {
     {
       backend: "gemini-cli",
       type: "cli",
+      provider: "gemini",
+      mode: "cli",
       authenticated: true,
       authMethod: "gemini login",
       authDetail: "/home/example/.gemini/oauth_creds.json",
@@ -227,6 +247,100 @@ describe("WhoamiPage", () => {
       "/api/captain/ai/default-provider",
       expect.objectContaining({ method: "PUT", body: JSON.stringify({ provider: "gemini" }) }),
     );
+  });
+
+  it("sends the whole opt-out set when a mode is switched off, then refetches", async () => {
+    const saved = { ...NOTHING_DISABLED, modes: ["cmux"] };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(WHOAMI_RESULT))
+      .mockResolvedValueOnce(jsonResponse(saved))
+      .mockResolvedValueOnce(jsonResponse({ ...WHOAMI_RESULT, disabled: saved }));
+    vi.stubGlobal("fetch", fetchMock);
+    renderWhoamiPage();
+
+    fireEvent.click(await screen.findByRole("switch", { name: "cmux" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/captain/ai/disabled",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({
+          modes: ["cmux"],
+          providers: [],
+          backends: [],
+          models: [],
+          efforts: [],
+        }),
+      }),
+    );
+    expect(screen.getByRole("switch", { name: "cmux" })).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("keeps its own switch on when a write is rejected and shows the reason", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(WHOAMI_RESULT))
+      .mockResolvedValueOnce(new Response("cannot disable every reasoning effort", { status: 422 }));
+    vi.stubGlobal("fetch", fetchMock);
+    renderWhoamiPage();
+
+    fireEvent.click(await screen.findByRole("switch", { name: "ultra" }));
+
+    expect(await screen.findByText("cannot disable every reasoning effort")).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "ultra" })).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("writes a per-model opt-out qualified by its backend", async () => {
+    const saved = { ...NOTHING_DISABLED, models: ["gemini-cli/gemini-2.5-pro"] };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(WHOAMI_RESULT))
+      .mockResolvedValueOnce(jsonResponse(saved))
+      .mockResolvedValueOnce(jsonResponse({ ...WHOAMI_RESULT, disabled: saved }));
+    vi.stubGlobal("fetch", fetchMock);
+    renderWhoamiPage();
+
+    fireEvent.click(await screen.findByRole("switch", { name: "Enable gemini-cli/gemini-2.5-pro" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/captain/ai/disabled",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({
+          modes: [],
+          providers: [],
+          backends: [],
+          models: ["gemini-cli/gemini-2.5-pro"],
+          efforts: [],
+        }),
+      }),
+    );
+  });
+
+  it("shows a card disabled by its provider as read-only, naming the axis that did it", async () => {
+    const disabledByProvider = {
+      ...WHOAMI_RESULT,
+      disabled: { ...NOTHING_DISABLED, providers: ["gemini"] },
+      adapters: WHOAMI_RESULT.adapters.map((adapter) => ({
+        ...adapter,
+        disabled: true,
+        disabledReason: "provider gemini",
+        modelDetails: adapter.modelDetails?.map((model) => ({ ...model, disabled: true })),
+      })),
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(disabledByProvider)));
+    renderWhoamiPage();
+
+    const card = await screen.findByRole("switch", { name: "Enable gemini-cli" });
+    expect(card).toBeDisabled();
+    expect(card).toHaveAttribute("aria-checked", "false");
+    expect(screen.getAllByText("off via provider gemini").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Disabled").length).toBe(2);
+    // The provider switch is the one place the whole family turns back on.
+    expect(screen.getByRole("switch", { name: "gemini" })).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByRole("switch", { name: "gemini" })).not.toBeDisabled();
   });
 });
 
