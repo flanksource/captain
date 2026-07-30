@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -308,11 +310,18 @@ func startCaptainViteDevServer(ctx context.Context, opts viteDevServerOptions) (
 	if err != nil {
 		return nil, err
 	}
+	// A wildcard bind is not a dialable target, so map it to the loopback address
+	// of the same family — mapping :: to 127.0.0.1 would leave Vite unable to
+	// reach an API listening only on IPv6. JoinHostPort brackets IPv6 literals,
+	// which a bare host:port concatenation would produce invalidly.
 	targetHost := opts.APIHost
-	if targetHost == "0.0.0.0" || targetHost == "::" {
+	switch targetHost {
+	case "0.0.0.0", "":
 		targetHost = "127.0.0.1"
+	case "::":
+		targetHost = "::1"
 	}
-	apiURL := fmt.Sprintf("http://%s:%d", targetHost, opts.APIPort)
+	apiURL := "http://" + net.JoinHostPort(targetHost, strconv.Itoa(opts.APIPort))
 	args, err := viteDevServerArgs(opts.UIPort, opts.Open)
 	if err != nil {
 		return nil, err

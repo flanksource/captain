@@ -51,6 +51,12 @@ var _ = Describe("CLI model selection", func() {
 		Expect(cfg.Model.Effort).To(Equal(api.EffortXHigh))
 	})
 
+	It("accepts the whoami catalog model when configuring Gemini CLI defaults", func() {
+		Expect(validateProviderDefaults(context.Background(), api.BackendGemini, ProviderDefaultView{
+			Agent: "gemini-cli", Model: "gemini-3.6-flash", Effort: "high",
+		})).To(Succeed())
+	})
+
 	It("keeps the saved model and backend paired when there is no override", func() {
 		cfg, err := (AIProviderOptions{}).ToConfig()
 

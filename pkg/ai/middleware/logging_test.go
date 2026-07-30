@@ -52,8 +52,8 @@ func TestRuntimeLogIdentity(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := runtimeLogIdentity(tt.backend, tt.model, tt.effort); got != tt.want {
-				t.Fatalf("runtimeLogIdentity() = %q, want %q", got, tt.want)
+			if got := ai.LogIdentity(tt.backend, tt.model, tt.effort); got != tt.want {
+				t.Fatalf("ai.LogIdentity() = %q, want %q", got, tt.want)
 			}
 		})
 	}

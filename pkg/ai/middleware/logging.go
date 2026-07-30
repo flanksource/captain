@@ -28,7 +28,7 @@ func (l *loggingProvider) Unwrap() ai.Provider    { return l.provider }
 func (l *loggingProvider) Execute(ctx context.Context, req ai.Request) (*ai.Response, error) {
 	start := time.Now()
 	backend, model := logRuntime(l.provider, req)
-	identity := runtimeLogIdentity(backend, model, req.Effort)
+	identity := ai.LogIdentity(backend, model, req.Effort)
 
 	dispatch := clicky.Text("").
 		Add(icons.AI).
@@ -89,7 +89,7 @@ func (l *loggingProvider) ExecuteStream(ctx context.Context, req ai.Request) (<-
 		return nil, fmt.Errorf("provider %s/%s does not support streaming", l.provider.GetBackend(), l.provider.GetModel())
 	}
 	backend, model := logRuntime(l.provider, req)
-	identity := runtimeLogIdentity(backend, model, req.Effort)
+	identity := ai.LogIdentity(backend, model, req.Effort)
 
 	dispatch := clicky.Text("").
 		Add(icons.AI).
@@ -116,28 +116,6 @@ func logRuntime(provider ai.Provider, req ai.Request) (api.Backend, string) {
 		model = provider.GetModel()
 	}
 	return backend, model
-}
-
-// runtimeLogIdentity renders the same compact selector notation accepted by
-// Captain's model flags: mode:model[:effort]. The effort suffix is omitted when
-// the request leaves effort at the backend/model default.
-func runtimeLogIdentity(backend api.Backend, model string, effort api.Effort) string {
-	prefix := string(backend)
-	switch backend {
-	case api.BackendClaudeAgent, api.BackendCodexAgent:
-		prefix = "agent"
-	case api.BackendClaudeCLI, api.BackendCodexCLI, api.BackendGeminiCLI:
-		prefix = "cli"
-	case api.BackendClaudeCmux, api.BackendCodexCmux:
-		prefix = "cmux"
-	case api.BackendAnthropic, api.BackendGemini, api.BackendOpenAI, api.BackendDeepSeek:
-		prefix = "api"
-	}
-	identity := prefix + ":" + model
-	if effort != api.EffortNone {
-		identity += ":" + string(effort)
-	}
-	return identity
 }
 
 func WithLogging() Option {

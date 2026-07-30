@@ -170,7 +170,7 @@ func modelsForConfigurableAgent(ctx context.Context, agent api.Backend) ([]ai.Mo
 	if agent.Kind() == "api" {
 		return ai.ListModels(ctx, agent)
 	}
-	return agentCatalogModels(agent), nil
+	return ai.RegistryModelDefs(agent), nil
 }
 
 func runProviderTokenConfigure(ctx context.Context, backend api.Backend, opts ConfigureOptions) (ConfigureTokenResult, error) {
