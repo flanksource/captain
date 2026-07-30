@@ -34,7 +34,7 @@ var _ = Describe("tool write-path analysis", func() {
 		// here is a literal being matched, not a command. Scanning the raw string
 		// for `>` or `mkdir` mistakes both for writes.
 		analysis := AnalyzeToolUseLegacy(claude.ToolUse{
-			Tool: "Bash",
+			Tool:  "Bash",
 			Input: map[string]any{"command": `psql -c "SELECT count(*) FROM t WHERE parent_id <> root_id) AND name <> 'mkdir /etc/passwd'" > out.txt`},
 		}, "/repo")
 

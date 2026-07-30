@@ -41,8 +41,8 @@ func runPromptStream(t *task.Task, rendered PromptRenderResult, timeout time.Dur
 	acc.cwd = req.Cwd()
 	acc.idPrefix = runID
 	runner := &agent.Runner[string]{
-		Provider:      streamer,
-		Request:       req,
+		Provider: streamer,
+		Request:  req,
 		// Commit hooks lead so that at PhaseRun they squash before any teardown
 		// hook (a worktree merge) runs and takes the result.
 		Hooks:         append(commit.HooksForWorkflow(req.Workflow), verify.HooksForWorkflow(req.Workflow)...),

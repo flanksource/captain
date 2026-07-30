@@ -410,8 +410,8 @@ func (v verifyHook) Verify(hc *HookContext) (VerifyResult, error) { return v.fn(
 // observes, e.g. what a worktree.Plugin reads to gate merge/cleanup.
 type outcomeHook struct{ onRun func(*HookContext) }
 
-func (o *outcomeHook) Name() string      { return "outcome" }
-func (o *outcomeHook) Phases() []Phase   { return []Phase{PhaseRun} }
+func (o *outcomeHook) Name() string    { return "outcome" }
+func (o *outcomeHook) Phases() []Phase { return []Phase{PhaseRun} }
 func (o *outcomeHook) Post(hc *HookContext, _ Phase) error {
 	o.onRun(hc)
 	return nil

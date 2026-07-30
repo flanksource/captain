@@ -76,6 +76,11 @@ tasks:
     cmds:
       - go test -v ./...
 
+  test:e2e:mcp:
+    desc: Run the black-box MCP-to-CLI end-to-end test
+    cmds:
+      - go test -tags=e2e -count=1 -v -timeout=8m ./tests/e2e/mcp2cli
+
   test:fixtures:
     desc: Run gavel fixture tests
     deps: [build]
