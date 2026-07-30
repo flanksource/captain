@@ -80,7 +80,7 @@ export interface PromptRunFrame extends PromptRunHandle {
   sessionId?: string;
 }
 
-/** Terminal payload delivered on the SSE `done` event. */
+/** Terminal payload delivered on the SSE `done` or `error` event. */
 export interface PromptRunSummary {
   runId?: string;
   sessionId?: string;
@@ -126,7 +126,7 @@ type PromptRunStreamAction =
       messages: SessionUIMessage[];
     }
   | { type: "done"; summary?: PromptRunSummary }
-  | { type: "error"; error: string };
+  | { type: "error"; summary: PromptRunSummary };
 
 type MessageIndex = {
   byId: Map<string, SessionUIMessage>;
@@ -178,8 +178,9 @@ function streamReducer(
     case "error":
       return {
         ...state,
+        summary: action.summary,
         status: "error",
-        error: action.error,
+        error: action.summary.error || "run failed",
         done: true,
       };
   }
@@ -257,9 +258,10 @@ export function usePromptRunStream(
       return;
     }
     if (event === "error") {
+      const summary = parse<PromptRunSummary>(data);
       update({
         type: "error",
-        error: parse<{ error?: string }>(data)?.error ?? "run failed",
+        summary: summary ?? { error: "run failed", success: false },
       });
       return;
     }

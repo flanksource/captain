@@ -54,7 +54,7 @@ export function AgentLauncher({ onNavigate }: AgentLauncherProps) {
       return;
     }
 
-    const model = agentModelFor(values);
+    const model = agentModelFor(response);
     setLaunching(true);
     try {
       const thread = await createThreadFromAgent({
@@ -62,7 +62,10 @@ export function AgentLauncher({ onNavigate }: AgentLauncherProps) {
         title: titleFor(values, sessionId),
         model,
       });
-      openPanel({ threadId: thread.id, initialModel: model });
+      openPanel({
+        threadId: thread.id,
+        ...(model ? { initialModel: model } : {}),
+      });
       onNavigate(thread.launchUrl || `/chat/${encodeURIComponent(thread.id)}`);
     } catch (err) {
       setLaunchError(err instanceof Error ? err.message : String(err));

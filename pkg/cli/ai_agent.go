@@ -42,9 +42,14 @@ type AIAgentOptions struct {
 }
 
 type AIAgentResult struct {
-	Iterations   int      `json:"iterations" pretty:"label=Iterations"`
-	StopReason   string   `json:"stopReason" pretty:"label=Stop Reason"`
-	Passed       bool     `json:"passed" pretty:"label=Passed"`
+	Iterations int    `json:"iterations" pretty:"label=Iterations"`
+	StopReason string `json:"stopReason" pretty:"label=Stop Reason"`
+	Passed     bool   `json:"passed" pretty:"label=Passed"`
+	// Model and Backend are what the run actually resolved to, not what was
+	// asked for: a caller handing the session to a chat thread needs the model
+	// the provider answered as, and only the server can name it.
+	Model        string   `json:"model,omitempty" pretty:"label=Model"`
+	Backend      string   `json:"backend,omitempty" pretty:"label=Backend"`
 	CostUSD      float64  `json:"costUSD,omitempty" pretty:"label=Cost USD"`
 	SessionID    string   `json:"sessionId,omitempty" pretty:"label=Session"`
 	Branch       string   `json:"branch,omitempty" pretty:"label=Branch"`
@@ -216,6 +221,8 @@ func RunAIAgent(opts AIAgentOptions) (any, error) {
 	res := AIAgentResult{
 		Duration: time.Since(start).Round(time.Millisecond).String(),
 		Passed:   verifyPassed(result.Verdicts),
+		Model:    firstNonEmpty(result.Response.Model, sp.GetModel(), cfg.Model.Name),
+		Backend:  firstNonEmpty(string(result.Response.Backend), string(sp.GetBackend()), string(cfg.Model.Backend)),
 	}
 	if ws != nil {
 		res.ChangedFiles = ws.Changed

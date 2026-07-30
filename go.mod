@@ -8,7 +8,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.15
 	github.com/aws/aws-sdk-go-v2/service/sts v1.42.0
 	github.com/charmbracelet/huh v1.0.0
-	github.com/firebase/genkit/go v1.10.0
+	github.com/firebase/genkit/go v1.11.0
 	github.com/flanksource/clicky v1.21.48
 	github.com/flanksource/clicky/aichat v1.21.48
 	github.com/flanksource/commons v1.54.0
@@ -354,7 +354,7 @@ require (
 	golang.org/x/tools v0.45.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	google.golang.org/api v0.286.0 // indirect
-	google.golang.org/genai v1.51.0 // indirect
+	google.golang.org/genai v1.57.0 // indirect
 	google.golang.org/genproto v0.0.0-20260319201613-d00831a3d3e7 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260622175928-b703f567277d // indirect

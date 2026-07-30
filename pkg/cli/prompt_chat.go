@@ -412,9 +412,9 @@ func (c *chatSession) fail(t *task.Task, err error) (PromptRunSummary, error) {
 			Model: c.rendered.Model, Backend: c.rendered.Backend, Error: err.Error(),
 		})
 	}
-	c.stream.fail(err.Error())
+	summary := c.stream.fail(err.Error())
 	_, _ = t.FailedWithError(err)
-	return PromptRunSummary{RunID: c.runID, Error: err.Error()}, err
+	return summary, err
 }
 
 func (c *chatSession) followUpRequest(base ai.Request, text string) ai.Request {

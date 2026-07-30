@@ -60,6 +60,12 @@ func IsModelUnavailable(err error) bool {
 		return true
 	}
 	msg := strings.ToLower(err.Error())
+	roleIndex := strings.Index(msg, "role")
+	notSupportedIndex := strings.Index(msg, "not supported")
+	modelIndex := strings.Index(msg, "model")
+	if roleIndex >= 0 && notSupportedIndex > roleIndex && (modelIndex < 0 || modelIndex > notSupportedIndex) {
+		return false
+	}
 	for _, signal := range []string{
 		"model is not supported",
 		"model is unsupported",
