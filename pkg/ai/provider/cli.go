@@ -175,9 +175,7 @@ func cliSandboxConfig(command, cwd string) (sandboxruntime.Config, error) {
 		return sandboxruntime.Config{}, fmt.Errorf("resolve sandbox home directory: %w", err)
 	}
 
-	domains := []string{}
-	passthroughEnv := []string{}
-	statePaths := []string{}
+	var domains, passthroughEnv, statePaths []string
 	switch filepath.Base(command) {
 	case "claude":
 		domains = []string{"anthropic.com", "*.anthropic.com", "claude.ai", "*.claude.ai"}

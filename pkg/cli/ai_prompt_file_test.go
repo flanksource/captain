@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/flanksource/captain/pkg/ai"
-	"github.com/flanksource/captain/pkg/aiflags"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/commons-db/shell"
 )
@@ -148,42 +147,31 @@ func TestOverlayCLI_CLIOverridesFrontmatter(t *testing.T) {
 	}
 }
 
-func TestOverlayCLI_SandboxForcesFrontmatterModelToCLI(t *testing.T) {
-	isolateSavedAI(t)
-	base := baseFileReq()
-	base.Model.Backend = api.BackendAnthropic
-	req, cfg, err := overlayCLI(base, ai.Config{}, AIPromptOptions{
-		AIRuntimeOptions: AIRuntimeOptions{
-			AIProviderOptions: AIProviderOptions{Sandbox: true},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if req.Model.Backend != api.BackendClaudeCLI {
-		t.Fatalf("req backend = %q, want %q", req.Model.Backend, api.BackendClaudeCLI)
-	}
-	if req.Model.Name != base.Model.Name {
-		t.Fatalf("req model = %q, want unchanged %q", req.Model.Name, base.Model.Name)
-	}
-	if !cfg.Sandbox {
-		t.Fatal("cfg.Sandbox = false, want true")
-	}
-}
-
-func TestOverlayCLI_SandboxRejectsExplicitAPIMode(t *testing.T) {
-	isolateSavedAI(t)
-	opts := AIPromptOptions{
-		AIRuntimeOptions: AIRuntimeOptions{
-			AIProviderOptions: AIProviderOptions{
-				ModelFlags: aiflags.ModelFlags{Mode: "api"},
-				Sandbox:    true,
-			},
-		},
-	}
-	_, _, err := overlayCLI(baseFileReq(), ai.Config{}, opts)
-	if err == nil || !strings.Contains(err.Error(), "--sandbox requires CLI mode") {
-		t.Fatalf("err = %v, want sandbox/mode contradiction", err)
+func TestOverlayCLI_Sandbox(t *testing.T) {
+	for _, tt := range []struct{ name, mode, wantErr string }{
+		{name: "selects CLI for frontmatter model"},
+		{name: "rejects explicit API mode", mode: "api", wantErr: "--sandbox requires CLI mode"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			isolateSavedAI(t)
+			base := baseFileReq()
+			base.Model.Backend = api.BackendAnthropic
+			opts := AIPromptOptions{AIRuntimeOptions: AIRuntimeOptions{AIProviderOptions: AIProviderOptions{Sandbox: true}}}
+			opts.Mode = tt.mode
+			req, cfg, err := overlayCLI(base, ai.Config{}, opts)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("err = %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if req.Model.Backend != api.BackendClaudeCLI || req.Model.Name != base.Model.Name || !cfg.Sandbox {
+				t.Fatalf("sandbox model = %#v, sandbox=%v", req.Model, cfg.Sandbox)
+			}
+		})
 	}
 }
 
