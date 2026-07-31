@@ -135,7 +135,7 @@ var _ = Describe("catalog opt-out filtering", func() {
 			want := api.Model{
 				Name:    model.BareID(),
 				Backend: model.Backend,
-			}
+			}.Capabilities()
 			if model.ID != want.Name {
 				want.ID = model.ID
 			}
