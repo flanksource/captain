@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type Thread struct {
@@ -50,7 +52,6 @@ type ThreadStore interface {
 
 type memoryThreadStore struct {
 	mu      sync.Mutex
-	seq     int
 	threads map[string]*Thread
 }
 
@@ -61,9 +62,8 @@ func NewMemoryThreadStore() ThreadStore {
 func (s *memoryThreadStore) Create(_ context.Context, title string) (*Thread, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.seq++
 	now := time.Now()
-	thread := &Thread{ID: fmt.Sprintf("thread-%d", s.seq), Title: title, CreatedAt: now, UpdatedAt: now, Messages: []UIMessage{}}
+	thread := &Thread{ID: uuid.NewString(), Title: title, CreatedAt: now, UpdatedAt: now, Messages: []UIMessage{}}
 	s.threads[thread.ID] = thread
 	return cloneThread(thread), nil
 }
@@ -133,6 +133,20 @@ func (s *memoryThreadStore) SetProviderSession(_ context.Context, id, sessionID 
 	if err != nil {
 		return err
 	}
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return fmt.Errorf("provider session ID cannot be empty")
+	}
+	if thread.ProviderSessionID != "" && thread.ProviderSessionID != sessionID {
+		return fmt.Errorf(
+			"provider session is already bound to %q, cannot replace it with %q",
+			thread.ProviderSessionID,
+			sessionID,
+		)
+	}
+	if thread.ProviderSessionID == sessionID {
+		return nil
+	}
 	thread.ProviderSessionID = sessionID
 	thread.UpdatedAt = time.Now()
 	return nil
@@ -179,6 +193,13 @@ func validateLastMessageReplacement(messages []UIMessage, replacement UIMessage)
 	}
 	if !strings.EqualFold(messages[len(messages)-1].Role, "assistant") {
 		return fmt.Errorf("last stored message must have assistant role")
+	}
+	if messages[len(messages)-1].ID != "" && replacement.ID != messages[len(messages)-1].ID {
+		return fmt.Errorf(
+			"replacement message ID %q does not match stored message %q",
+			replacement.ID,
+			messages[len(messages)-1].ID,
+		)
 	}
 	return nil
 }

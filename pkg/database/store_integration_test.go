@@ -44,6 +44,7 @@ func TestDurableSessionPromptRunAndPlanStores(t *testing.T) {
 		HostID:            "test-host",
 		CWD:               "/tmp/project",
 		Title:             "Durable plan",
+		Metadata:          map[string]any{"writer": "launcher", "owner": "original"},
 	})
 	require.NoError(t, err)
 	require.Equal(t, 1, sessionInserts, "creating an unknown session must insert exactly once")
@@ -60,10 +61,14 @@ func TestDurableSessionPromptRunAndPlanStores(t *testing.T) {
 		Provider:          "openai",
 		HostID:            "test-host",
 		Title:             "a retry must not overwrite metadata",
+		Metadata:          map[string]any{"writer": "monitor", "path": "/sessions/provider-session-1"},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, session.ID, replayedSession.ID)
 	assert.Equal(t, "Durable plan", replayedSession.Title)
+	assert.Equal(t, map[string]any{
+		"writer": "monitor", "owner": "original", "path": "/sessions/provider-session-1",
+	}, replayedSession.Metadata)
 	assert.Equal(t, 1, sessionInserts, "re-getting an existing session must not attempt another insert")
 	_, err = db.CreateOrGetSession(t.Context(), CreateSessionInput{
 		ID: uuid.New(), ProviderSessionID: "provider-session-1",

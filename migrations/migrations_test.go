@@ -19,6 +19,8 @@ func TestSchemaBundleContainsGavelIntegrationContract(t *testing.T) {
 		"20_prompt_runs_and_plans.pg.hcl",
 		"21_plans.pg.hcl",
 		"30_execution.pg.hcl",
+		"31_execution_events.pg.hcl",
+		"32_execution_approvals.pg.hcl",
 		"40_artifacts.pg.hcl",
 		"50_constraints.sql",
 		"51_state_triggers.sql",
@@ -82,8 +84,17 @@ func TestSchemaBundleContainsGavelIntegrationContract(t *testing.T) {
 		`column "turn_id"`,
 		`column "prompt_run_id"`,
 		`column "iteration_id"`,
+	)
+	assertContainsAll(t, "31_execution_events.pg.hcl",
+		`table "captain_messages"`,
 		`table "captain_events"`,
+	)
+	assertContainsAll(t, "32_execution_approvals.pg.hcl",
+		`table "captain_session_mcp_credentials"`,
+		`column "secret_hash"`,
+		`column "policy"`,
 		`table "captain_turn_requests"`,
+		`column "credential_id"`,
 		`column "state"`,
 		`column "version"`,
 	)
@@ -142,6 +153,8 @@ func TestSchemaBundleContainsGavelIntegrationContract(t *testing.T) {
 		"ALTER TABLE public.captain_messages SET (\n  fillfactor",
 	)
 	assertContainsNone(t, "30_execution.pg.hcl", "fillfactor", "autovacuum_")
+	assertContainsNone(t, "31_execution_events.pg.hcl", "fillfactor", "autovacuum_")
+	assertContainsNone(t, "32_execution_approvals.pg.hcl", "fillfactor", "autovacuum_")
 	for _, name := range expectedFiles {
 		assertContainsNone(t, name,
 			`table "captain_outbox"`,

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	aitools "github.com/flanksource/captain/pkg/ai/tools"
 	"github.com/flanksource/captain/pkg/api"
@@ -55,6 +56,7 @@ type ServiceOptions struct {
 	MCP            ToolProvider
 	Attachments    AttachmentResolver
 	Threads        ThreadStore
+	Authority      ExecutionAuthority
 }
 
 // Service is Captain's AI SDK-compatible HTTP chat service.
@@ -112,7 +114,7 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 		http.Error(w, fmt.Sprintf("invalid chat request: %v", err), http.StatusBadRequest)
 		return
 	}
-	if err := resolveToolApproval(&chat); err != nil {
+	if err := s.resolveToolApproval(request.Context(), &chat); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -125,7 +127,8 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 		http.Error(w, err.Error(), requestErrorStatus(err))
 		return
 	}
-	if err := s.resolveThreadSession(request.Context(), &chat); err != nil {
+	thread, err := s.resolveThreadSession(request.Context(), &chat)
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -162,7 +165,36 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 	config.SessionID = spec.SessionID
 	config.CaptainSessionID = chat.ThreadID
 	config.Tools = definitions
-	provider, err := s.resolveProvider(request.Context(), config)
+	config, err = s.prepareProviderConfig(request.Context(), config)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	spec.Model = config.Model
+	var execution Execution
+	if s.options.Authority != nil && chat.ThreadID != "" {
+		title := ""
+		if thread != nil {
+			title = thread.Title
+		}
+		execution, err = s.options.Authority.Begin(request.Context(), ExecutionRequest{
+			ThreadID: chat.ThreadID, RequestID: chat.ID, Title: title,
+			Spec: spec, Definitions: definitions,
+		})
+		if err != nil {
+			http.Error(w, fmt.Sprintf("admit chat execution: %v", err), http.StatusInternalServerError)
+			return
+		}
+		defer closeExecution(execution)
+		config.CaptainSessionID = execution.CaptainSessionID()
+		config.CallerTools = execution.CallerTools()
+	}
+	if len(definitions) > 0 && isAgentBackend(config.Model.Backend) &&
+		(execution == nil || config.CallerTools == nil) {
+		http.Error(w, "agent caller tools require an authoritative Captain execution", http.StatusServiceUnavailable)
+		return
+	}
+	provider, err := s.resolver.Provider(request.Context(), config)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
@@ -186,6 +218,8 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
+	events = mergeExecutionEvents(streamContext, events, executionEvents(execution), definitions)
+	events = observeExecutionEvents(streamContext, execution, events)
 	writer, err := NewSSEWriter(w)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -205,21 +239,39 @@ func (s *Service) runtimeSettings(ctx context.Context) (RuntimeSettings, error) 
 	return s.options.Settings.RuntimeSettings(ctx)
 }
 
-func (s *Service) resolveThreadSession(ctx context.Context, request *ChatRequest) error {
+func (s *Service) resolveThreadSession(ctx context.Context, request *ChatRequest) (*Thread, error) {
 	if request.ThreadID == "" {
-		return nil
+		return nil, nil
 	}
 	if s.options.Threads == nil {
-		return fmt.Errorf("thread persistence is not configured")
+		return nil, fmt.Errorf("thread persistence is not configured")
 	}
 	thread, err := s.options.Threads.Get(ctx, request.ThreadID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if request.ProviderSessionID == "" {
 		request.ProviderSessionID = thread.ProviderSessionID
 	}
-	return nil
+	return thread, nil
+}
+
+func executionEvents(execution Execution) <-chan api.Event {
+	if execution == nil {
+		return nil
+	}
+	return execution.Events()
+}
+
+func closeExecution(execution Execution) {
+	if execution == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := execution.Close(ctx); err != nil {
+		serviceLog.Errorf("close authoritative chat execution: %v", err)
+	}
 }
 
 func (s *Service) persistIncoming(ctx context.Context, request ChatRequest) error {

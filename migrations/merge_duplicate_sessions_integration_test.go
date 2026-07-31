@@ -9,10 +9,9 @@ import (
 // 02_merge_duplicate_sessions.sql collapses the session rows the old wide
 // identity key allowed, and it does that with a DELETE. Everything reachable from
 // a deleted row by an ON DELETE CASCADE is therefore at risk, which is why the
-// migration re-points references first. The reference that matters most is
-// captain_sessions.parent_session_id: it is self-referential and CASCADEs, so a
-// ghost that a subagent row named as its parent takes that subagent -- and its
-// transcript -- with it. This pins that the collapse moves those links instead.
+// migration re-points references first. The references that matter most are the
+// self-referential hierarchy and the process row: deleting a ghost otherwise
+// takes both the subagent transcript and the live process identity with it.
 var _ = Describe("Captain duplicate session collapse", func() {
 	It("re-points a subagent at the surviving row instead of cascading it away", func(ctx SpecContext) {
 		handle := dbtest.ForGinkgo(dbtest.Options{Name: "captain_merge_duplicates"})
@@ -36,6 +35,7 @@ var _ = Describe("Captain duplicate session collapse", func() {
 			winnerID   = "11111111-1111-1111-1111-111111111111"
 			ghostID    = "22222222-2222-2222-2222-222222222222"
 			subagentID = "33333333-3333-3333-3333-333333333333"
+			processID  = "44444444-4444-4444-4444-444444444444"
 		)
 
 		// One rollout, two rows: the monitor's (ingested, provider '') and the
@@ -58,6 +58,12 @@ var _ = Describe("Captain duplicate session collapse", func() {
 			VALUES ($1, 'codex', 'host-a', 'rollout-1-sub', $2, $2)`, subagentID, ghostID)
 		Expect(err).NotTo(HaveOccurred())
 
+		_, err = db.ExecContext(ctx, `
+			INSERT INTO captain_session_processes
+				(id, session_id, host_id, boot_id, pid, process_started_at, status)
+			VALUES ($1, $2, 'host-a', 'boot-a', 42, now(), 'running')`, processID, ghostID)
+		Expect(err).NotTo(HaveOccurred())
+
 		Expect(Apply(ctx, dsn)).To(Succeed())
 
 		var surviving int
@@ -74,6 +80,12 @@ var _ = Describe("Captain duplicate session collapse", func() {
 		).Scan(&parent, &root)).To(Succeed(), "the subagent was cascaded away with the ghost")
 		Expect(parent).To(Equal(winnerID))
 		Expect(root).To(Equal(winnerID))
+
+		var processSessionID string
+		Expect(db.QueryRowContext(ctx,
+			`SELECT session_id FROM captain_session_processes WHERE id = $1`, processID,
+		).Scan(&processSessionID)).To(Succeed(), "the process row was cascaded away with the ghost")
+		Expect(processSessionID).To(Equal(winnerID))
 
 		// The winner keeps its transcript and absorbs the label that existed only on
 		// the ghost.

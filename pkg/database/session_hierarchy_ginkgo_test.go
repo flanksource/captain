@@ -81,6 +81,21 @@ var _ = Describe("session hierarchy enrichment", func() {
 		Expect(replayed.ParentSessionID).To(Equal(linked.ParentSessionID))
 		Expect(replayed.RootSessionID).To(Equal(linked.RootSessionID))
 
+		otherAdmission, err := db.CreateOrGetSession(ctx, CreateSessionInput{
+			ID: uuid.New(), Source: "gavel", Provider: "codex", HostID: "hierarchy-test",
+			ParentSessionID: &todoID, AgentType: "run",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		_, err = db.CreateOrGetSession(ctx, CreateSessionInput{
+			ProviderSessionID: providerSessionID,
+			Source:            "codex",
+			Provider:          "openai",
+			HostID:            "hierarchy-test",
+			ParentSessionID:   &otherAdmission.ID,
+		})
+		Expect(err).To(MatchError(ContainSubstring("existing session has a different hierarchy")))
+		Expect(err).To(MatchError(MatchRegexp("session conflict")))
+
 		run, err := db.CreatePromptRun(ctx, CreatePromptRunInput{
 			SessionID: admission.ID, ExecutionSessionID: &linked.ID,
 			AdmissionKey: "gavel-todo-session-hierarchy",

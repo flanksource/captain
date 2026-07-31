@@ -21,9 +21,12 @@ var _ = Describe("Claude Agent prompt parameters", func() {
 	It("materializes the structured attachment bridge source", func() {
 		directory, err := prepareAgentDir()
 		Expect(err).NotTo(HaveOccurred())
-		content, err := os.ReadFile(filepath.Join(directory, "agent.ts"))
+		content, err := os.ReadFile(filepath.Join(directory, "protocol.ts"))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(string(content)).To(ContainSubstring("attachments?: PromptAttachment[]"))
+		agent, err := os.ReadFile(filepath.Join(directory, "agent.ts"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(agent)).To(ContainSubstring(`from "./protocol.js"`))
 	})
 
 	It("encodes prepared image and PDF data as ordered structured inputs", func() {
