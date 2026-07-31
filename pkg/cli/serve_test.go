@@ -64,8 +64,8 @@ func TestHandleThreadFromAgentRequiresProviderSession(t *testing.T) {
 
 func TestHandleSessionGetReturnsAllMatches(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
 	db := withTestCaptainDB(t)
+	t.Setenv("HOME", home)
 	project := filepath.Join(home, "work", "project")
 	if err := os.MkdirAll(project, 0o755); err != nil {
 		t.Fatal(err)
@@ -120,8 +120,8 @@ func TestHandleSessionGetReturnsAllMatches(t *testing.T) {
 
 func TestHandleProjectsReturnsOptions(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
 	withTestCaptainDB(t)
+	t.Setenv("HOME", home)
 	project := filepath.Join(home, "work", "project")
 	if err := os.MkdirAll(project, 0o755); err != nil {
 		t.Fatal(err)

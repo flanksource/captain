@@ -16,8 +16,8 @@ import (
 
 func TestRunSessionListAndGetClaude(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
 	withTestCaptainDB(t)
+	t.Setenv("HOME", home)
 	project := filepath.Join(home, "work", "project")
 	if err := os.MkdirAll(project, 0o755); err != nil {
 		t.Fatal(err)
@@ -119,8 +119,8 @@ func TestRunSessionListAndGetClaude(t *testing.T) {
 
 func TestRunSessionListCodexScope(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
 	withTestCaptainDB(t)
+	t.Setenv("HOME", home)
 	project := filepath.Join(home, "work", "project")
 	if err := os.MkdirAll(project, 0o755); err != nil {
 		t.Fatal(err)
@@ -170,8 +170,8 @@ func TestSessionMatchesQueryIncludesIdentity(t *testing.T) {
 
 func TestRunSessionGetUnknown(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
 	withTestCaptainDB(t)
+	t.Setenv("HOME", home)
 	_, err := RunSessionGet(context.Background(), SessionGetOptions{ID: "missing"})
 	if err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("err = %v", err)
@@ -180,8 +180,8 @@ func TestRunSessionGetUnknown(t *testing.T) {
 
 func TestRunSessionGetReturnsAllProviderPrefixMatches(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
 	db := withTestCaptainDB(t)
+	t.Setenv("HOME", home)
 	project := filepath.Join(home, "work", "project")
 	if err := os.MkdirAll(project, 0o755); err != nil {
 		t.Fatal(err)
@@ -228,8 +228,8 @@ func TestRunSessionGetReturnsAllProviderPrefixMatches(t *testing.T) {
 
 func TestRunSessionLiveEnrichesSummaryWithProcessHealth(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
 	withTestCaptainDB(t)
+	t.Setenv("HOME", home)
 	project := filepath.Join(home, "work", "project")
 	if err := os.MkdirAll(project, 0o755); err != nil {
 		t.Fatal(err)
@@ -308,8 +308,8 @@ func TestRunSessionLiveEnrichesSummaryWithProcessHealth(t *testing.T) {
 
 func TestRunSessionLiveExcludesEndedSessions(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
 	db := withTestCaptainDB(t)
+	t.Setenv("HOME", home)
 	project := filepath.Join(home, "work", "project")
 	endedCWD := filepath.Join(project, "ended")
 	if err := os.MkdirAll(endedCWD, 0o755); err != nil {
@@ -361,8 +361,8 @@ func TestRunSessionLiveExcludesEndedSessions(t *testing.T) {
 
 func TestRunSessionLiveScopesUnmatchedProcessesToCurrentProject(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
 	withTestCaptainDB(t)
+	t.Setenv("HOME", home)
 	project := filepath.Join(home, "work", "project")
 	otherProject := filepath.Join(home, "work", "other")
 	if err := os.MkdirAll(project, 0o755); err != nil {
@@ -404,8 +404,8 @@ func TestRunSessionLiveScopesUnmatchedProcessesToCurrentProject(t *testing.T) {
 
 func TestRunSessionLiveRestrictsExplicitProject(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
 	withTestCaptainDB(t)
+	t.Setenv("HOME", home)
 	project := filepath.Join(home, "work", "project")
 	otherProject := filepath.Join(home, "work", "other")
 	if err := os.MkdirAll(project, 0o755); err != nil {

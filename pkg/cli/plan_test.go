@@ -36,8 +36,8 @@ func claudePlanSession(t *testing.T, home, project, id, slug, planPath, inlineBo
 
 func TestRunPlanClaudePrefersDiskContent(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
 	withTestCaptainDB(t)
+	t.Setenv("HOME", home)
 	project := filepath.Join(home, "work", "proj")
 	require.NoError(t, os.MkdirAll(project, 0o755))
 	t.Chdir(project)
@@ -59,8 +59,8 @@ func TestRunPlanClaudePrefersDiskContent(t *testing.T) {
 
 func TestRunPlanClaudeDefaultSourceUsesDirectSessionLookup(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
 	withTestCaptainDB(t)
+	t.Setenv("HOME", home)
 	project := filepath.Join(home, "work", "proj")
 	require.NoError(t, os.MkdirAll(project, 0o755))
 	t.Chdir(project)
@@ -77,8 +77,8 @@ func TestRunPlanClaudeDefaultSourceUsesDirectSessionLookup(t *testing.T) {
 
 func TestRunPlanClaudeInlineWhenMissingOnDisk(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
 	withTestCaptainDB(t)
+	t.Setenv("HOME", home)
 	project := filepath.Join(home, "work", "proj")
 	require.NoError(t, os.MkdirAll(project, 0o755))
 	t.Chdir(project)
@@ -95,8 +95,8 @@ func TestRunPlanClaudeInlineWhenMissingOnDisk(t *testing.T) {
 
 func TestRunPlanClaudeNoPlanErrors(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
 	withTestCaptainDB(t)
+	t.Setenv("HOME", home)
 	project := filepath.Join(home, "work", "proj")
 	require.NoError(t, os.MkdirAll(project, 0o755))
 	t.Chdir(project)
@@ -121,8 +121,8 @@ func TestRunPlanClaudeNoPlanErrors(t *testing.T) {
 
 func TestRunPlanCodexChecklist(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
 	withTestCaptainDB(t)
+	t.Setenv("HOME", home)
 	project := filepath.Join(home, "work", "proj")
 	require.NoError(t, os.MkdirAll(project, 0o755))
 	t.Chdir(project)

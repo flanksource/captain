@@ -79,23 +79,38 @@ func isEphemeralClaudeTranscript(projectsDir, path string) bool {
 		return false
 	}
 	projectDir := strings.SplitN(rel, string(filepath.Separator), 2)[0]
-	underTemp := false
 	for _, root := range []string{os.TempDir(), "/tmp", "/private/tmp"} {
-		prefix := strings.TrimSuffix(claude.NormalizePath(filepath.Clean(root)), "-")
+		root = filepath.Clean(root)
+		prefix := strings.TrimSuffix(claude.NormalizePath(root), "-")
 		if prefix != "" && (projectDir == prefix || strings.HasPrefix(projectDir, prefix+"-")) {
-			underTemp = true
-			break
+			return !normalizedDirectoryExists(root, projectDir)
 		}
 	}
-	if !underTemp {
-		return false
-	}
-	original := claude.DenormalizePath(projectDir)
-	if original == "" {
+	return false
+}
+
+func normalizedDirectoryExists(root, target string) bool {
+	normalizedRoot := claude.NormalizePath(root)
+	if normalizedRoot == target {
 		return true
 	}
-	_, statErr := os.Stat(original)
-	return statErr != nil
+	if !strings.HasPrefix(target, normalizedRoot+"-") {
+		return false
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		path := filepath.Join(root, entry.Name())
+		if normalizedDirectoryExists(path, target) {
+			return true
+		}
+	}
+	return false
 }
 
 func ingestChanged(ctx context.Context, ingestor *ingestor, refs []transcriptRef) {
