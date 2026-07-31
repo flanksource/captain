@@ -53,9 +53,11 @@ func (f *fakeResolver) Provider(_ context.Context, config api.Config) (api.Strea
 }
 
 type fakeStreamingProvider struct {
-	events  []api.Event
-	specs   []api.Spec
-	execute func(context.Context, api.Spec) (<-chan api.Event, error)
+	events              []api.Event
+	specs               []api.Spec
+	execute             func(context.Context, api.Spec) (<-chan api.Event, error)
+	backend             api.Backend
+	supportsCallerTools *bool
 }
 
 func (f *fakeStreamingProvider) Execute(context.Context, api.Spec) (*api.Response, error) {
@@ -75,9 +77,16 @@ func (f *fakeStreamingProvider) ExecuteStream(ctx context.Context, spec api.Spec
 	return events, nil
 }
 
-func (f *fakeStreamingProvider) GetModel() string          { return "test-model" }
-func (f *fakeStreamingProvider) GetBackend() api.Backend   { return api.BackendOpenAI }
-func (f *fakeStreamingProvider) SupportsCallerTools() bool { return true }
+func (f *fakeStreamingProvider) GetModel() string { return "test-model" }
+func (f *fakeStreamingProvider) GetBackend() api.Backend {
+	if f.backend != "" {
+		return f.backend
+	}
+	return api.BackendOpenAI
+}
+func (f *fakeStreamingProvider) SupportsCallerTools() bool {
+	return f.supportsCallerTools == nil || *f.supportsCallerTools
+}
 
 type fakeAttachmentResolver struct{}
 
@@ -219,6 +228,7 @@ var _ = Describe("Captain aichat service", func() {
 	It("serves models and tools from injected Captain seams", func() {
 		resolver := &fakeResolver{models: aichat.ModelCatalogResponse{{
 			ID: "openai/test-model", Provider: "openai", Label: "Test", Configured: true,
+			Runtime: api.Model{Name: "test-model", Backend: api.BackendOpenAI},
 		}}}
 		service := aichat.NewService(aichat.ServiceOptions{
 			Resolver: resolver,
@@ -240,7 +250,7 @@ var _ = Describe("Captain aichat service", func() {
 		models := httptest.NewRecorder()
 		service.Handler().ServeHTTP(models, httptest.NewRequest(http.MethodGet, "/api/chat/models", nil))
 		Expect(models.Code).To(Equal(http.StatusOK))
-		Expect(models.Body.String()).To(MatchJSON(`[{"id":"openai/test-model","provider":"openai","label":"Test","reasoning":false,"temperature":false,"configured":true,"contextWindow":0,"inputMediaTypes":null}]`))
+		Expect(models.Body.String()).To(MatchJSON(`[{"id":"openai/test-model","provider":"openai","label":"Test","runtime":{"model":"test-model","backend":"openai"},"reasoning":false,"temperature":false,"configured":true,"contextWindow":0,"inputMediaTypes":null}]`))
 
 		tools := httptest.NewRecorder()
 		service.Handler().ServeHTTP(tools, httptest.NewRequest(http.MethodGet, "/api/chat/tools", nil))
@@ -307,6 +317,71 @@ var _ = Describe("Captain aichat service", func() {
 		Expect(resolver.configs[0].Tools).To(HaveLen(1))
 		Expect(resolver.configs[0].APIURL).To(Equal("https://example.com/ai"))
 		Expect(resolver.configs[0].ProjectName).To(Equal("tenant-x"))
+	})
+
+	It("adapts canonical chat messages into an agent prompt", func() {
+		store := aichat.NewMemoryThreadStore()
+		thread, err := store.Create(context.Background(), "Agent chat")
+		Expect(err).NotTo(HaveOccurred())
+		provider := &fakeStreamingProvider{
+			backend: api.BackendClaudeAgent,
+			events:  []api.Event{{Kind: api.EventResult, Success: true}},
+		}
+		resolver := &fakeResolver{provider: provider}
+		service := aichat.NewService(aichat.ServiceOptions{
+			Resolver: resolver, Threads: store,
+			Settings: aichat.RuntimeSettingsProviderFunc(func(context.Context) (aichat.RuntimeSettings, error) {
+				return aichat.RuntimeSettings{System: "Use accounting tools."}, nil
+			}),
+		})
+
+		response := httptest.NewRecorder()
+		service.Handler().ServeHTTP(response, requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{
+			Runtime:           &api.Model{Name: "sonnet", Backend: api.BackendClaudeAgent},
+			ThreadID:          thread.ID,
+			ProviderSessionID: "provider-session-1",
+			Messages: []aichat.UIMessage{{
+				Role: "user", Parts: []aichat.UIPart{{Type: "text", Text: "inspect the invoice"}},
+			}},
+		}))
+
+		Expect(response.Code).To(Equal(http.StatusOK))
+		Expect(provider.specs).To(HaveLen(1))
+		Expect(provider.specs[0].Messages).To(BeNil())
+		Expect(provider.specs[0].Prompt.System).To(Equal("Use accounting tools."))
+		Expect(provider.specs[0].Prompt.User).To(Equal("inspect the invoice"))
+		Expect(resolver.configs[0].Model.Backend).To(Equal(api.BackendClaudeAgent))
+		Expect(resolver.configs[0].CaptainSessionID).To(Equal(thread.ID))
+		Expect(resolver.configs[0].SessionID).To(Equal("provider-session-1"))
+	})
+
+	It("treats an all-off resolved tool set as no caller tools", func() {
+		supported := false
+		provider := &fakeStreamingProvider{
+			events:              []api.Event{{Kind: api.EventResult, Success: true}},
+			supportsCallerTools: &supported,
+		}
+		resolver := &fakeResolver{provider: provider}
+		service := aichat.NewService(aichat.ServiceOptions{
+			Resolver: resolver,
+			Tools: aichat.StaticToolProvider([]api.ToolDefinition{{
+				Name: "invoice_get", DefaultPermission: api.ToolModeOn,
+				Handler: func(context.Context, map[string]any) (any, error) { return nil, nil },
+			}}),
+		})
+
+		response := httptest.NewRecorder()
+		service.Handler().ServeHTTP(response, requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{
+			Model:           "openai/test-model",
+			ToolPreferences: api.ToolPreferences{"invoice_get": api.ToolModeOff},
+			Messages: []aichat.UIMessage{{
+				Role: "user", Parts: []aichat.UIPart{{Type: "text", Text: "hello"}},
+			}},
+		}))
+
+		Expect(response.Code).To(Equal(http.StatusOK))
+		Expect(resolver.configs).To(HaveLen(1))
+		Expect(resolver.configs[0].Tools).To(BeEmpty())
 	})
 
 	It("passes a durable approval resume without rebuilding conversation messages", func() {
