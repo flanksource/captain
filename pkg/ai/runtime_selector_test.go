@@ -242,12 +242,13 @@ func TestResolvedModelCarriesCapabilities(t *testing.T) {
 		wantResume bool
 		wantIntr   bool
 		wantSteer  bool
+		wantTools  bool
 		wantMedia  []string
 	}{
-		{"agent:sonnet", registry.ModeAgent, true, true, true, []string{"image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf"}},
-		{"cli:sonnet", registry.ModeCLI, true, false, false, []string{}},
-		{"api:sonnet", registry.ModeAPI, false, false, false, []string{"image/*"}},
-		{"agent:sol", registry.ModeAgent, true, true, false, []string{"image/*"}},
+		{"agent:sonnet", registry.ModeAgent, true, true, true, true, []string{"image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf"}},
+		{"cli:sonnet", registry.ModeCLI, true, false, false, false, []string{}},
+		{"api:sonnet", registry.ModeAPI, false, false, false, true, []string{"image/*"}},
+		{"agent:sol", registry.ModeAgent, true, true, false, true, []string{"image/*"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.selector, func(t *testing.T) {
@@ -264,6 +265,9 @@ func TestResolvedModelCarriesCapabilities(t *testing.T) {
 			if got.Resume != tc.wantResume || got.Interrupt != tc.wantIntr || got.Steer != tc.wantSteer {
 				t.Errorf("resume/interrupt/steer = %v/%v/%v, want %v/%v/%v",
 					got.Resume, got.Interrupt, got.Steer, tc.wantResume, tc.wantIntr, tc.wantSteer)
+			}
+			if got.CallerTools != tc.wantTools {
+				t.Errorf("CallerTools = %v, want %v", got.CallerTools, tc.wantTools)
 			}
 			if !reflect.DeepEqual(got.MediaTypes, tc.wantMedia) {
 				t.Errorf("MediaTypes = %v, want %v", got.MediaTypes, tc.wantMedia)

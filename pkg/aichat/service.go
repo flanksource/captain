@@ -147,6 +147,11 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	definitions, err := aitools.ResolveDefinitions(set.Definitions, spec.ToolPreferences)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	if err := s.persistIncoming(request.Context(), chat); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -155,7 +160,8 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 	config.Model = spec.Model
 	config.Budget = spec.Budget
 	config.SessionID = spec.SessionID
-	config.Tools = set.Definitions
+	config.CaptainSessionID = chat.ThreadID
+	config.Tools = definitions
 	provider, err := s.resolveProvider(request.Context(), config)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
@@ -166,7 +172,7 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 			serviceLog.Errorf("close chat provider: %v", closeErr)
 		}
 	}()
-	if len(set.Definitions) > 0 {
+	if len(definitions) > 0 {
 		capability, ok := api.ProviderAs[api.ToolCapableProvider](provider)
 		if !ok || !capability.SupportsCallerTools() {
 			http.Error(w, fmt.Sprintf("backend %q does not support caller tools", provider.GetBackend()), http.StatusBadRequest)

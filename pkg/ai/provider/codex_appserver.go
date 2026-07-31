@@ -10,7 +10,10 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/ai/callertools"
 	"github.com/flanksource/captain/pkg/ai/provider/jsonrpc"
+	aitools "github.com/flanksource/captain/pkg/ai/tools"
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/clicky/exec"
 	"github.com/flanksource/commons/logger"
 )
@@ -27,6 +30,7 @@ var log = logger.GetLogger("ai")
 // unit-testable mapAppServerNotification.
 type CodexAppServer struct {
 	model string
+	cfg   ai.Config
 
 	turnMu sync.Mutex // serializes turns; held by ExecuteStream, freed by its driver
 
@@ -36,6 +40,10 @@ type CodexAppServer struct {
 	rpcDone  chan struct{} // closed by the rpc Run goroutine when the child exits
 	active   *turnState
 	threadID string
+
+	callerToolsMu      sync.Mutex
+	callerToolsRuntime *callertools.Runtime
+	callerTools        *api.CallerToolEndpoint
 }
 
 const (
@@ -45,16 +53,26 @@ const (
 
 // NewCodexAppServer builds a codex app-server provider. The supervised process
 // is started lazily on the first ExecuteStream.
-func NewCodexAppServer(model string) (*CodexAppServer, error) {
+func NewCodexAppServer(cfg ai.Config) (*CodexAppServer, error) {
+	model := cfg.Model.Name
 	if model == "" {
 		model = CodexCLIDefaultModel
 	}
 	model = ai.NormalizeModelForBackend(ai.BackendCodexAgent, model)
-	return &CodexAppServer{model: model}, nil
+	provider := &CodexAppServer{model: model, cfg: cfg}
+	if cfg.CallerTools != nil {
+		endpoint := *cfg.CallerTools
+		endpoint.Headers = cloneStringMap(cfg.CallerTools.Headers)
+		provider.callerTools = &endpoint
+	}
+	return provider, nil
 }
 
-func (c *CodexAppServer) GetModel() string       { return c.model }
-func (c *CodexAppServer) GetBackend() ai.Backend { return ai.BackendCodexAgent }
+func (c *CodexAppServer) GetModel() string          { return c.model }
+func (c *CodexAppServer) GetBackend() ai.Backend    { return ai.BackendCodexAgent }
+func (c *CodexAppServer) SupportsCallerTools() bool { return true }
+
+var _ api.ToolCapableProvider = (*CodexAppServer)(nil)
 
 // Execute drains the streaming output into a buffered ai.Response. When the
 // request carries a structured-output schema, the final agent message's JSON is
@@ -107,6 +125,9 @@ func (c *CodexAppServer) ExecuteStream(ctx context.Context, req ai.Request) (<-c
 		return nil, err
 	}
 
+	if err := c.prepareCallerTools(req); err != nil {
+		return nil, err
+	}
 	c.turnMu.Lock()
 	if err := c.ensureStarted(ctx); err != nil {
 		c.turnMu.Unlock()
@@ -280,7 +301,7 @@ func (c *CodexAppServer) startThread(ctx context.Context, req ai.Request) (strin
 		return threadID, nil
 	}
 	if req.SessionID != "" {
-		raw, err := rpc.Call(ctx, "thread/resume", buildResumeParams(req))
+		raw, err := rpc.Call(ctx, "thread/resume", buildResumeParams(req, c.callerTools))
 		if err != nil {
 			return "", err
 		}
@@ -288,7 +309,7 @@ func (c *CodexAppServer) startThread(ctx context.Context, req ai.Request) (strin
 		c.rememberThread(threadID)
 		return threadID, nil
 	}
-	raw, err := rpc.Call(ctx, "thread/start", buildThreadStartParams(c.model, req))
+	raw, err := rpc.Call(ctx, "thread/start", buildThreadStartParams(c.model, req, c.callerTools))
 	if err != nil {
 		return "", err
 	}
@@ -358,7 +379,56 @@ func (c *CodexAppServer) Interrupt(ctx context.Context) error {
 
 func (c *CodexAppServer) Close() error {
 	c.teardown(true)
+	if c.callerToolsRuntime != nil {
+		return c.callerToolsRuntime.Close()
+	}
 	return nil
+}
+
+func (c *CodexAppServer) prepareCallerTools(req ai.Request) error {
+	c.callerToolsMu.Lock()
+	defer c.callerToolsMu.Unlock()
+	if c.callerTools != nil {
+		if req.Permissions.MCP.Disabled {
+			return fmt.Errorf("codex app-server: caller tools require MCP but MCP is disabled")
+		}
+		return c.callerTools.Validate()
+	}
+	if len(c.cfg.Tools) == 0 {
+		return nil
+	}
+	definitions, err := aitools.ResolveDefinitions(c.cfg.Tools, req.ToolPreferences)
+	if err != nil {
+		return fmt.Errorf("codex app-server caller tools: %w", err)
+	}
+	if len(definitions) == 0 {
+		return nil
+	}
+	if req.Permissions.MCP.Disabled {
+		return fmt.Errorf("codex app-server: caller tools require MCP but MCP is disabled")
+	}
+	runtime, err := callertools.New(callertools.Options{
+		Definitions: definitions, CanUseTool: c.cfg.CanUseTool,
+		SessionID: firstNonEmpty(c.cfg.CaptainSessionID, req.SessionID, c.cfg.SessionID),
+	})
+	if err != nil {
+		return fmt.Errorf("start codex app-server caller tools: %w", err)
+	}
+	endpoint := runtime.Endpoint()
+	c.callerToolsRuntime = runtime
+	c.callerTools = &endpoint
+	return nil
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	if values == nil {
+		return nil
+	}
+	cloned := make(map[string]string, len(values))
+	for key, value := range values {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 // handleNotification routes one notification to the active turn. It runs on the

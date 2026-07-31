@@ -2,6 +2,10 @@ package api
 
 import (
 	"context"
+	"fmt"
+	"net"
+	"net/url"
+	"strings"
 	"time"
 )
 
@@ -34,6 +38,59 @@ type PermissionDecision struct {
 type SchemaRepairConfig struct {
 	Model  Model  // optional override; empty means the parent model/backend
 	Prompt string // optional .prompt file path; empty means embedded default
+}
+
+// CallerToolEndpoint is an authenticated, request-scoped MCP endpoint exposing
+// caller-owned tools. Headers are transport credentials and must never be
+// serialized into specs, command arguments, events, or logs.
+type CallerToolEndpoint struct {
+	Name    string
+	URL     string
+	Headers map[string]string
+}
+
+func (endpoint CallerToolEndpoint) Validate() error {
+	if endpoint.Name == "" {
+		return fmt.Errorf("caller-tool endpoint name is required")
+	}
+	for _, value := range endpoint.Name {
+		if !isCallerToolNameRune(value) {
+			return fmt.Errorf("caller-tool endpoint name %q contains unsupported characters", endpoint.Name)
+		}
+	}
+	parsed, err := url.Parse(endpoint.URL)
+	if err != nil || parsed.Hostname() == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return fmt.Errorf("caller-tool endpoint URL must be an absolute HTTP or HTTPS URL")
+	}
+	if parsed.User != nil {
+		return fmt.Errorf("caller-tool endpoint URL must not contain credentials")
+	}
+	if parsed.Scheme == "http" && !isLoopbackHost(parsed.Hostname()) {
+		return fmt.Errorf("caller-tool endpoint requires HTTPS outside loopback")
+	}
+	authorization := ""
+	for name, value := range endpoint.Headers {
+		if strings.EqualFold(name, "Authorization") {
+			authorization = strings.TrimSpace(value)
+			break
+		}
+	}
+	if !strings.HasPrefix(authorization, "Bearer ") || strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer ")) == "" {
+		return fmt.Errorf("caller-tool endpoint requires a bearer credential")
+	}
+	return nil
+}
+
+func isCallerToolNameRune(value rune) bool {
+	return value >= 'a' && value <= 'z' ||
+		value >= 'A' && value <= 'Z' ||
+		value >= '0' && value <= '9' ||
+		value == '-' ||
+		value == '_'
+}
+
+func isLoopbackHost(host string) bool {
+	return strings.EqualFold(host, "localhost") || net.ParseIP(host).IsLoopback()
 }
 
 // Config is the provider construction/runtime config. Model (name/backend/temp/
@@ -76,10 +133,16 @@ type Config struct {
 	CanUseTool PermissionFunc `json:"-"`
 
 	// Tools are caller-supplied tools exposed to the model and executed
-	// in-process. Only tool-capable providers (see ToolCapableProvider — today
-	// the genkit API backends) honour them; other providers, which bring their
-	// own tool ecosystems, ignore the field. Never serialized (Go closures).
+	// in-process. Tool-capable API providers invoke the handlers directly;
+	// out-of-process agent providers expose them through a private Captain MCP
+	// endpoint. Never serialized (Go closures).
 	Tools []ToolDefinition `json:"-"`
+
+	// CallerTools supplies a pre-issued Captain MCP endpoint. When nil, an
+	// out-of-process tool-capable provider creates a private loopback endpoint
+	// from Tools. It is runtime-only because Headers contain a short-lived
+	// credential.
+	CallerTools *CallerToolEndpoint `json:"-"`
 }
 
 // ResolvedSandbox returns the sandbox selection for the run, folding the legacy

@@ -50,44 +50,7 @@ func (p *Provider) toolOptions(preferences api.ToolPreferences, emit func(ai.Eve
 }
 
 func resolveToolDefinitions(definitions []api.ToolDefinition, preferences api.ToolPreferences) ([]api.ToolDefinition, error) {
-	if err := preferences.Validate(); err != nil {
-		return nil, err
-	}
-	selected := make([]api.ToolDefinition, 0, len(definitions))
-	for _, definition := range definitions {
-		if definition.Name == "" {
-			return nil, fmt.Errorf("genkit tool name cannot be empty")
-		}
-		if definition.Handler == nil {
-			return nil, fmt.Errorf("genkit tool %q has no handler", definition.Name)
-		}
-		mode, err := effectiveToolMode(definition, preferences)
-		if err != nil {
-			return nil, err
-		}
-		if mode == api.ToolModeOff {
-			continue
-		}
-		definition.DefaultPermission = mode
-		selected = append(selected, definition)
-	}
-	return selected, nil
-}
-
-func effectiveToolMode(definition api.ToolDefinition, preferences api.ToolPreferences) (api.ToolMode, error) {
-	defaultMode := api.ToolModeAuto
-	if definition.DefaultPermission != "" {
-		var ok bool
-		defaultMode, ok = api.NormalizeToolMode(definition.DefaultPermission)
-		if !ok {
-			return "", fmt.Errorf("genkit tool %q has invalid default permission %q", definition.Name, definition.DefaultPermission)
-		}
-	}
-	info := captools.ToolInfo{Name: definition.Name, Group: definition.Group}
-	if preferred, ok := captools.EffectivePreference(preferences, info); ok && preferred != api.ToolModeAuto {
-		return preferred, nil
-	}
-	return defaultMode, nil
+	return captools.ResolveDefinitions(definitions, preferences)
 }
 
 func anthropicStrictToolDefinitions(definitions []api.ToolDefinition) []api.ToolDefinition {
