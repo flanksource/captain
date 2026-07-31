@@ -50,7 +50,10 @@ type Config struct {
 	// googlegenai plugin exposes no override and silently calling the real API
 	// would be worse. codex-cli honours it by declaring a model_providers entry,
 	// since it ignores OPENAI_BASE_URL once account auth is stored.
-	APIURL        string
+	APIURL string
+	// Sandbox runs local agent CLI processes through sandbox-runtime. Provider
+	// selection must resolve to CLI mode so the flag cannot be silently ignored.
+	Sandbox       bool
 	CacheDBPath   string
 	CacheTTL      time.Duration
 	NoCache       bool

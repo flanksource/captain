@@ -20,12 +20,13 @@ func TestActionFlagsToOptions_DecodesSlicesBoolsInts(t *testing.T) {
 		"multi-models":    "cli:sonnet-5,cmux:opus",
 		"prompt":          "hi",
 		"permission-mode": "plan",
+		"sandbox":         "true",
 	}
 	o, err := actionFlagsToOptions(f)
 	if err != nil {
 		t.Fatalf("actionFlagsToOptions: %v", err)
 	}
-	if o.Model != "gpt-4o" || o.Backend != "openai" || o.Prompt != "hi" || o.PermissionMode != "plan" {
+	if o.Model != "gpt-4o" || o.Backend != "openai" || o.Prompt != "hi" || o.PermissionMode != "plan" || !o.Sandbox {
 		t.Fatalf("scalars = %+v", o)
 	}
 	if !o.NoStream || !o.Edit {

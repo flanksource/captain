@@ -19,8 +19,9 @@ import (
 var codexCLICommand = "codex"
 
 type CodexCLI struct {
-	model  string
-	apiURL string
+	model   string
+	apiURL  string
+	sandbox bool
 }
 
 func NewCodexCLI(cfg ai.Config) *CodexCLI {
@@ -29,8 +30,9 @@ func NewCodexCLI(cfg ai.Config) *CodexCLI {
 		model = CodexCLIDefaultModel
 	}
 	return &CodexCLI{
-		model:  ai.NormalizeModelForBackend(ai.BackendCodexCLI, model),
-		apiURL: strings.TrimSpace(cfg.APIURL),
+		model:   ai.NormalizeModelForBackend(ai.BackendCodexCLI, model),
+		apiURL:  strings.TrimSpace(cfg.APIURL),
+		sandbox: cfg.Sandbox,
 	}
 }
 
@@ -70,7 +72,7 @@ func (c *CodexCLI) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai
 	if req.Setup != nil {
 		env = commandEnv(req.Setup.Env)
 	}
-	cmd, stdout, stderrBuf, err := startCLIStream(ctx, codexCLICommand, args, []byte(composePrompt(req)), req.Cwd(), env)
+	cmd, stdout, stderrBuf, closeSandbox, err := startCLIStream(ctx, codexCLICommand, args, []byte(composePrompt(req)), req.Cwd(), env, c.sandbox)
 	if err != nil {
 		cleanup()
 		return nil, err
@@ -79,6 +81,7 @@ func (c *CodexCLI) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai
 	go func() {
 		defer close(out)
 		defer cleanup()
+		defer closeSandbox()
 		defer func() { _ = stdout.Close() }()
 		scanner := bufio.NewScanner(stdout)
 		scanner.Buffer(make([]byte, 1024*1024), 10*1024*1024)

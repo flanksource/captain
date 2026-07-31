@@ -13,6 +13,7 @@ import (
 	"github.com/flanksource/captain/pkg/ai/pricing"
 	"github.com/flanksource/captain/pkg/aiflags"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/api/registry"
 	"github.com/flanksource/captain/pkg/captainconfig"
 	"github.com/flanksource/captain/pkg/claude"
 	"github.com/flanksource/captain/pkg/claude/tools"
@@ -47,9 +48,10 @@ func loadSavedConfig() captainconfig.Config {
 type AIProviderOptions struct {
 	aiflags.ModelFlags
 
-	APIKey string `flag:"api-key" help:"API key (env: ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, GOOGLE_API_KEY, DEEPSEEK_API_KEY)"`
-	APIURL string `flag:"api-url" help:"Override the backend endpoint, e.g. a 'captain ai mock' URL. Required for codex-cli, which ignores OPENAI_BASE_URL when a ChatGPT credential is stored"`
-	Budget string `flag:"budget" help:"Max spend in USD, 0=unlimited" default:"0"`
+	APIKey  string `flag:"api-key" help:"API key (env: ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, GOOGLE_API_KEY, DEEPSEEK_API_KEY)"`
+	APIURL  string `flag:"api-url" help:"Override the backend endpoint, e.g. a 'captain ai mock' URL. Required for codex-cli, which ignores OPENAI_BASE_URL when a ChatGPT credential is stored"`
+	Budget  string `flag:"budget" help:"Max spend in USD, 0=unlimited" default:"0"`
+	Sandbox bool   `flag:"sandbox" help:"Run the local agent CLI in an OS-level sandbox"`
 }
 
 // BudgetUSD parses --budget, failing loud on malformed input.
@@ -88,14 +90,53 @@ func (o AIProviderOptions) ToConfig() (ai.Config, error) {
 	if err != nil {
 		return ai.Config{}, err
 	}
+	if o.Sandbox {
+		m, err = sandboxCLIModel(m)
+		if err != nil {
+			return ai.Config{}, err
+		}
+	}
 	return ai.Config{
 		Model:        m,
 		Budget:       api.Budget{Cost: budget},
 		APIKey:       o.APIKey,
 		APIURL:       strings.TrimSpace(o.APIURL),
+		Sandbox:      o.Sandbox,
 		NoCache:      o.NoCache || saved.NoCache,
 		SchemaRepair: schemaRepairConfig(savedCfg.Prompts.SchemaRepair),
 	}, nil
+}
+
+func sandboxCLIModel(model api.Model) (api.Model, error) {
+	forceCLI := func(candidate api.Model) (api.Model, error) {
+		provider := candidate.Backend.ModelProvider()
+		if provider == nil {
+			return api.Model{}, fmt.Errorf("cannot sandbox model %q: no model provider found", candidate.Name)
+		}
+		backend, err := provider.BackendFor(registry.ModeCLI)
+		if err != nil {
+			return api.Model{}, fmt.Errorf("cannot sandbox model %q: %w", candidate.Name, err)
+		}
+		candidate.Backend = backend
+		candidate.Mode = registry.ModeCLI
+		return candidate.Capabilities(), nil
+	}
+
+	fallbacks := model.Fallbacks
+	model.Fallbacks = nil
+	resolved, err := forceCLI(model)
+	if err != nil {
+		return api.Model{}, err
+	}
+	for _, fallback := range fallbacks {
+		fallback.Fallbacks = nil
+		fallback, err = forceCLI(fallback)
+		if err != nil {
+			return api.Model{}, err
+		}
+		resolved.Fallbacks = append(resolved.Fallbacks, fallback)
+	}
+	return resolved, nil
 }
 
 func schemaRepairConfig(saved captainconfig.SchemaRepairDefaults) api.SchemaRepairConfig {

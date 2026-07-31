@@ -15,7 +15,8 @@ import (
 var claudeCLICommand = "claude"
 
 type ClaudeCLI struct {
-	model string
+	model   string
+	sandbox bool
 }
 
 func NewClaudeCLI(model string) *ClaudeCLI {
@@ -62,7 +63,7 @@ func (c *ClaudeCLI) ExecuteStream(ctx context.Context, req ai.Request) (<-chan a
 	if req.Setup != nil {
 		env = commandEnv(req.Setup.Env)
 	}
-	cmd, stdout, stderrBuf, err := startCLIStream(ctx, claudeCLICommand, args, []byte(composePrompt(req)), req.Cwd(), env)
+	cmd, stdout, stderrBuf, closeSandbox, err := startCLIStream(ctx, claudeCLICommand, args, []byte(composePrompt(req)), req.Cwd(), env, c.sandbox)
 	if err != nil {
 		cleanup()
 		return nil, err
@@ -71,6 +72,7 @@ func (c *ClaudeCLI) ExecuteStream(ctx context.Context, req ai.Request) (<-chan a
 	go func() {
 		defer close(out)
 		defer cleanup()
+		defer closeSandbox()
 		defer func() { _ = stdout.Close() }()
 		iterator := claude.NewStreamJSONIterator(stdout)
 		for iterator.Next() {

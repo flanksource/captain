@@ -122,6 +122,7 @@ func actionFlagsToOptions(f map[string]string) (AIPromptOptions, error) {
 	o.APIURL = f["api-url"]
 	o.NoCache = flagBool(f["no-cache"])
 	o.Budget = f["budget"]
+	o.Sandbox = flagBool(f["sandbox"])
 	mt, err := flagInt("max-tokens", f["max-tokens"])
 	if err != nil {
 		return o, err

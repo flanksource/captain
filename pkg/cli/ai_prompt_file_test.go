@@ -146,6 +146,24 @@ func TestOverlayCLI_CLIOverridesFrontmatter(t *testing.T) {
 	}
 }
 
+func TestOverlayCLI_SandboxForcesFrontmatterModelToCLI(t *testing.T) {
+	isolateSavedAI(t)
+	req, cfg, err := overlayCLI(baseFileReq(), ai.Config{}, AIPromptOptions{
+		AIRuntimeOptions: AIRuntimeOptions{
+			AIProviderOptions: AIProviderOptions{Sandbox: true},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.Model.Backend != api.BackendClaudeCLI {
+		t.Fatalf("req backend = %q, want %q", req.Model.Backend, api.BackendClaudeCLI)
+	}
+	if !cfg.Sandbox {
+		t.Fatal("cfg.Sandbox = false, want true")
+	}
+}
+
 // --api-url is what points a run at a `captain ai mock` endpoint, so it has to
 // survive the overlay; a prompt file may pin its own endpoint, and the flag wins.
 func TestOverlayCLI_APIURLFlagBeatsFrontmatter(t *testing.T) {
