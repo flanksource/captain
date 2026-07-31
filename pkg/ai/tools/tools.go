@@ -9,6 +9,7 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"sort"
 
 	"github.com/flanksource/captain/pkg/api"
@@ -217,6 +218,74 @@ func NormalizedPreference(prefs ToolPreferences, name string) (ToolMode, bool) {
 		return "", false
 	}
 	return NormalizeToolMode(mode)
+}
+
+// ResolveDefinitions validates caller tools, applies exact/group preferences,
+// omits disabled tools, and writes the effective permission onto a copy of each
+// selected definition. Every provider uses this function so API and agent
+// runtimes cannot disagree about the visible tool set.
+func ResolveDefinitions(definitions []api.ToolDefinition, preferences ToolPreferences) ([]api.ToolDefinition, error) {
+	if err := preferences.Validate(); err != nil {
+		return nil, err
+	}
+	selected := make([]api.ToolDefinition, 0, len(definitions))
+	seen := make(map[string]struct{}, len(definitions))
+	for _, definition := range definitions {
+		if definition.Name == "" {
+			return nil, fmt.Errorf("caller tool name cannot be empty")
+		}
+		if !validCallerToolName(definition.Name) {
+			return nil, fmt.Errorf("caller tool name %q contains unsupported characters", definition.Name)
+		}
+		if _, ok := seen[definition.Name]; ok {
+			return nil, fmt.Errorf("duplicate caller tool %q", definition.Name)
+		}
+		seen[definition.Name] = struct{}{}
+		if definition.Handler == nil {
+			return nil, fmt.Errorf("caller tool %q has no handler", definition.Name)
+		}
+		mode := ToolModeAuto
+		if definition.DefaultPermission != "" {
+			var ok bool
+			mode, ok = NormalizeToolMode(definition.DefaultPermission)
+			if !ok {
+				return nil, fmt.Errorf("tool %q has invalid default permission %q", definition.Name, definition.DefaultPermission)
+			}
+		}
+		if preferred, ok := EffectivePreference(preferences, ToolInfo{
+			Name: definition.Name, Group: definition.Group,
+		}); ok && preferred != ToolModeAuto {
+			mode = preferred
+		}
+		if mode == ToolModeOff {
+			continue
+		}
+		if mode == ToolModeAuto {
+			if definition.ReadOnlyHint != nil && *definition.ReadOnlyHint &&
+				definition.DestructiveHint != nil && !*definition.DestructiveHint {
+				mode = ToolModeOn
+			} else {
+				mode = ToolModeAsk
+			}
+		}
+		definition.DefaultPermission = mode
+		selected = append(selected, definition)
+	}
+	return selected, nil
+}
+
+func validCallerToolName(name string) bool {
+	for _, value := range name {
+		if value >= 'a' && value <= 'z' ||
+			value >= 'A' && value <= 'Z' ||
+			value >= '0' && value <= '9' ||
+			value == '-' ||
+			value == '_' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // ToolEntry is one row in the tool-preferences UI: a single ungrouped tool, or a

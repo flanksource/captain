@@ -69,19 +69,9 @@ func (s *Service) resolveAttachments(ctx context.Context, messages []UIMessage) 
 }
 
 func requestSpec(request ChatRequest, settings RuntimeSettings, attachments map[partLocation]api.AttachmentRef) (api.Spec, error) {
-	model := strings.TrimSpace(request.Model)
-	if model == "" {
-		model = strings.TrimSpace(settings.Spec.Name)
-	}
-	if model == "" {
-		return api.Spec{}, fmt.Errorf("chat model is required")
-	}
-	// Expand before merging: a compact selector ("agent:sol") carries its own
-	// backend, and merging it unexpanded would keep settings.Spec's backend and run
-	// a different runtime than the caller asked for.
-	override, err := api.Model{Name: model, Effort: request.ReasoningEffort, Temperature: request.Temperature}.Expand()
+	override, err := chatModel(request, settings.Spec.Model)
 	if err != nil {
-		return api.Spec{}, fmt.Errorf("invalid chat model %q: %w", model, err)
+		return api.Spec{}, err
 	}
 	spec := settings.Spec.Merge(api.Spec{
 		Model:           override,
@@ -104,10 +94,21 @@ func requestSpec(request ChatRequest, settings RuntimeSettings, attachments map[
 		if err != nil {
 			return api.Spec{}, err
 		}
-		if system != "" {
-			messages = append([]api.Message{{Role: api.RoleSystem, Parts: []api.Part{{Type: api.PartText, Text: system}}}}, messages...)
+		if isAgentBackend(spec.Backend) {
+			user, promptAttachments, err := agentPrompt(messages, request.ProviderSessionID != "")
+			if err != nil {
+				return api.Spec{}, err
+			}
+			spec.Messages = nil
+			spec.Prompt.System = system
+			spec.Prompt.User = user
+			spec.Prompt.Attachments = promptAttachments
+		} else {
+			if system != "" {
+				messages = append([]api.Message{{Role: api.RoleSystem, Parts: []api.Part{{Type: api.PartText, Text: system}}}}, messages...)
+			}
+			spec.Messages = messages
 		}
-		spec.Messages = messages
 	} else {
 		spec.Messages = nil
 	}
@@ -115,6 +116,48 @@ func requestSpec(request ChatRequest, settings RuntimeSettings, attachments map[
 		return api.Spec{}, err
 	}
 	return spec, nil
+}
+
+func chatModel(request ChatRequest, fallback api.Model) (api.Model, error) {
+	selected := fallback
+	if request.Runtime != nil {
+		selected = *request.Runtime
+	} else if model := strings.TrimSpace(request.Model); model != "" {
+		selected = api.Model{Name: model}
+	}
+	if strings.TrimSpace(selected.Name) == "" {
+		return api.Model{}, fmt.Errorf("chat model is required")
+	}
+	if request.ReasoningEffort != "" {
+		if selected.Effort != "" && selected.Effort != request.ReasoningEffort {
+			return api.Model{}, fmt.Errorf("chat runtime effort %q conflicts with reasoning effort %q", selected.Effort, request.ReasoningEffort)
+		}
+		selected.Effort = request.ReasoningEffort
+	}
+	if request.Temperature != nil {
+		if selected.Temperature != nil && *selected.Temperature != *request.Temperature {
+			return api.Model{}, fmt.Errorf("chat runtime temperature conflicts with request temperature")
+		}
+		selected.Temperature = request.Temperature
+	}
+	expanded, err := selected.Expand()
+	if err != nil {
+		return api.Model{}, fmt.Errorf("invalid chat runtime: %w", err)
+	}
+	if request.Runtime != nil && strings.TrimSpace(request.Model) != "" {
+		legacy, err := api.Model{Name: strings.TrimSpace(request.Model)}.Expand()
+		if err != nil {
+			return api.Model{}, fmt.Errorf("invalid chat model %q: %w", request.Model, err)
+		}
+		if legacy.Name != expanded.Name || legacy.Backend != expanded.Backend {
+			return api.Model{}, fmt.Errorf("chat model %q conflicts with structured runtime %s/%s", request.Model, expanded.Backend, expanded.Name)
+		}
+	}
+	return expanded, nil
+}
+
+func isAgentBackend(backend api.Backend) bool {
+	return backend == api.BackendClaudeAgent || backend == api.BackendCodexAgent
 }
 
 func canonicalMessages(messages []UIMessage, attachments map[partLocation]api.AttachmentRef) ([]api.Message, error) {

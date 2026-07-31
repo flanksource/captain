@@ -122,7 +122,7 @@ var _ = Describe("Codex CLI attachments", func() {
 })
 
 func activeGinkgoTurn() (*CodexAppServer, *turnState) {
-	client, err := NewCodexAppServer("gpt-5")
+	client, err := NewCodexAppServer(ai.Config{Model: api.Model{Name: "gpt-5"}})
 	Expect(err).NotTo(HaveOccurred())
 	turn := &turnState{
 		ch:         make(chan ai.Event, 16),

@@ -26,6 +26,9 @@ type ModeCapabilities struct {
 	Interrupt bool
 	// Steer: the adapter implements SteerableProvider.
 	Steer bool
+	// CallerTools reports that the adapter can expose caller-supplied
+	// api.Config.Tools rather than only its built-in tool ecosystem.
+	CallerTools bool
 	// MediaTypes is the adapter's attachment ceiling. A model's own declared
 	// types are clamped against it — the adapter cannot carry what it cannot send.
 	MediaTypes []string
