@@ -70,6 +70,8 @@ type Model struct {
 	Interrupt bool `json:"interrupt,omitempty" yaml:"interrupt,omitempty" jsonschema:"readOnly" pretty:"label=Interrupt"`
 	// Steer reports that a running turn accepts mid-flight steering.
 	Steer bool `json:"steer,omitempty" yaml:"steer,omitempty" jsonschema:"readOnly" pretty:"label=Steer"`
+	// CallerTools reports that the runtime can expose caller-supplied tools.
+	CallerTools bool `json:"callerTools,omitempty" yaml:"callerTools,omitempty" jsonschema:"readOnly" pretty:"label=Caller Tools"`
 
 	// Provider is the descriptor that owns this model. Never serialized: it holds
 	// the whole catalog, so emitting it would inline the registry into every spec.
@@ -95,6 +97,7 @@ func (m Model) Capabilities() Model {
 	m.Resume = caps.Resume
 	m.Interrupt = caps.Interrupt
 	m.Steer = caps.Steer
+	m.CallerTools = caps.CallerTools
 	m.MediaTypes = p.MediaTypesFor(mode, m.Name)
 	return m
 }

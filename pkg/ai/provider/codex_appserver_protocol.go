@@ -303,7 +303,7 @@ func composePrompt(req ai.Request) string {
 // (req.Memory.SkipUser/SkipProject/SkipHooks) have no first-class equivalent in
 // the versioned thread/start schema, so only ephemeral + an empty mcp_servers
 // override (the knobs the protocol exposes) are emitted.
-func buildThreadStartParams(model string, req ai.Request) map[string]any {
+func buildThreadStartParams(model string, req ai.Request, callerTools *api.CallerToolEndpoint) map[string]any {
 	p := map[string]any{}
 	if cwd := req.Cwd(); cwd != "" {
 		p["cwd"] = cwd
@@ -316,8 +316,8 @@ func buildThreadStartParams(model string, req ai.Request) map[string]any {
 	if req.Memory.SkipMemory || req.Memory.Bare {
 		p["ephemeral"] = true
 	}
-	if req.Permissions.MCP.Disabled {
-		p["config"] = map[string]any{"mcp_servers": map[string]any{}}
+	if config := codexThreadConfig(req, callerTools); config != nil {
+		p["config"] = config
 	}
 	return p
 }
@@ -367,10 +367,28 @@ func buildTurnStartParams(model string, req ai.Request, threadID string, outputS
 	return p, nil
 }
 
-func buildResumeParams(req ai.Request) map[string]any {
+func buildResumeParams(req ai.Request, callerTools *api.CallerToolEndpoint) map[string]any {
 	p := map[string]any{"threadId": req.SessionID}
 	if cwd := req.Cwd(); cwd != "" {
 		p["cwd"] = cwd
 	}
+	if config := codexThreadConfig(req, callerTools); config != nil {
+		p["config"] = config
+	}
 	return p
+}
+
+func codexThreadConfig(req ai.Request, callerTools *api.CallerToolEndpoint) map[string]any {
+	if req.Permissions.MCP.Disabled {
+		return map[string]any{"mcp_servers": map[string]any{}}
+	}
+	if callerTools == nil {
+		return nil
+	}
+	return map[string]any{"mcp_servers": map[string]any{
+		callerTools.Name: map[string]any{
+			"url": callerTools.URL, "http_headers": cloneStringMap(callerTools.Headers),
+			"required": true, "enabled": true, "default_tools_approval_mode": "approve",
+		},
+	}}
 }
