@@ -94,7 +94,12 @@ func TestPromptSchemaDocumentBackendsAndConditionals(t *testing.T) {
 	if got, ok := codexModel["configured"].(bool); !ok || got {
 		t.Errorf("flat model configured = %#v, want false for fake unauthenticated CLI", codexModel["configured"])
 	}
-	assertSchemaModelBackends(t, codexModel, string(api.BackendCodexCLI), string(api.BackendCodexAgent), string(api.BackendCodexCmux))
+	if got := codexModel["runtime"]; !reflect.DeepEqual(got, api.Model{
+		Name:    "gpt-5.6-sol",
+		Backend: api.BackendCodexCLI,
+	}) {
+		t.Errorf("flat model runtime = %#v, want exact codex-cli runtime", got)
+	}
 
 	anthropic := byName[string(api.BackendAnthropic)]
 	if _, hasModels := anthropic["models"]; hasModels {
@@ -325,19 +330,6 @@ func schemaModelForBackend(t *testing.T, models []map[string]any, id, backend st
 	}
 	t.Fatalf("models[] missing id %q with backend %q: %+v", id, backend, models)
 	return nil
-}
-
-func assertSchemaModelBackends(t *testing.T, model map[string]any, want ...string) {
-	t.Helper()
-	backends, ok := model["backends"].([]string)
-	if !ok {
-		t.Fatalf("model backends = %T, want []string", model["backends"])
-	}
-	for _, backend := range want {
-		if !containsString(backends, backend) {
-			t.Errorf("model backends = %v, missing %s", backends, backend)
-		}
-	}
 }
 
 func TestPromptSchemaExampleIsPortable(t *testing.T) {

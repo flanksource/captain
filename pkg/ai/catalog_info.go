@@ -4,6 +4,7 @@ import (
 	"os/exec"
 	"slices"
 
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/api/registry"
 )
 
@@ -11,12 +12,13 @@ import (
 // selector can be data-driven. Configured reports whether the model is
 // selectable (its API provider has a key, or its agent backend is installed).
 type ModelInfo struct {
-	ID          string `json:"id"`
-	Provider    string `json:"provider"`
-	Label       string `json:"label"`
-	Reasoning   bool   `json:"reasoning"`
-	Temperature bool   `json:"temperature"`
-	Configured  bool   `json:"configured"`
+	ID          string    `json:"id"`
+	Provider    string    `json:"provider"`
+	Label       string    `json:"label"`
+	Runtime     api.Model `json:"runtime"`
+	Reasoning   bool      `json:"reasoning"`
+	Temperature bool      `json:"temperature"`
+	Configured  bool      `json:"configured"`
 	// Default marks captain's declared default model, so a client seeds its
 	// picker from the menu instead of hardcoding an id that rots on the next
 	// release. At most one row carries it, and none does when that model is
@@ -67,10 +69,18 @@ func catalogInfoFrom(models []Model, configuredProviders []string) []ModelInfo {
 		} else {
 			configured = slices.Contains(configuredProviders, BackendToProvider(m.Backend))
 		}
+		runtime := api.Model{
+			Name:    m.BareID(),
+			Backend: m.Backend,
+		}
+		if m.ID != runtime.Name {
+			runtime.ID = m.ID
+		}
 		out = append(out, ModelInfo{
 			ID:              m.ID,
 			Provider:        BackendToProvider(m.Backend),
 			Label:           m.Label,
+			Runtime:         runtime,
 			Reasoning:       m.Reasoning,
 			Temperature:     m.Temperature,
 			Configured:      configured,
