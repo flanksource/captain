@@ -1,10 +1,7 @@
 package migrations
 
 import (
-	"os"
-	"path/filepath"
-
-	commonsdb "github.com/flanksource/commons-db/db"
+	"github.com/flanksource/commons-db/dbtest"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -16,20 +13,8 @@ import (
 // existing database would keep paying their upkeep forever.
 var _ = Describe("Captain index reconciliation", func() {
 	It("prunes indexes the schema no longer declares and narrows the ones it redeclares", func(ctx SpecContext) {
-		if os.Getenv("CAPTAIN_DB_EMBEDDED_TEST") == "" {
-			Skip("set CAPTAIN_DB_EMBEDDED_TEST=1 to run embedded-postgres migration tests")
-		}
-
-		dsn, stop, err := commonsdb.StartEmbedded(commonsdb.EmbeddedConfig{
-			DataDir:  filepath.Join(GinkgoT().TempDir(), "postgres"),
-			Database: "captain_index_pruning",
-		})
-		Expect(err).NotTo(HaveOccurred())
-		DeferCleanup(stop)
-
-		db, err := commonsdb.NewDB(dsn)
-		Expect(err).NotTo(HaveOccurred())
-		DeferCleanup(db.Close)
+		handle := dbtest.ForGinkgo(dbtest.Options{Name: "captain_index_pruning"})
+		dsn, db := handle.DSN(), handle.SQL()
 
 		Expect(Apply(ctx, dsn)).To(Succeed())
 

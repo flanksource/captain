@@ -2,27 +2,17 @@ package migrations
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
-	commonsdb "github.com/flanksource/commons-db/db"
+	"github.com/flanksource/commons-db/dbtest"
 	"github.com/stretchr/testify/require"
 )
 
 func TestConcurrentApplySerializesCaptainMigrations(t *testing.T) {
-	if os.Getenv("CAPTAIN_DB_EMBEDDED_TEST") == "" {
-		t.Skip("set CAPTAIN_DB_EMBEDDED_TEST=1 to run embedded-postgres migration tests")
-	}
-
-	dsn, stop, err := commonsdb.StartEmbedded(commonsdb.EmbeddedConfig{
-		DataDir:  filepath.Join(t.TempDir(), "postgres"),
-		Database: "captain_concurrent_migrations",
-	})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, stop()) })
+	handle := dbtest.ForT(t, dbtest.Options{Name: "captain_concurrent_migrations"})
+	dsn := handle.DSN()
 
 	// Hold the same session lock before releasing a group of Apply calls. This
 	// proves every caller enters through the advisory-lock boundary rather than
@@ -62,9 +52,7 @@ func TestConcurrentApplySerializesCaptainMigrations(t *testing.T) {
 		}
 	}
 
-	db, err := commonsdb.NewDB(dsn)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	db := handle.SQL()
 	var sessionsTable *string
 	require.NoError(t, db.QueryRowContext(t.Context(),
 		`SELECT to_regclass('public.captain_sessions')::text`).Scan(&sessionsTable))

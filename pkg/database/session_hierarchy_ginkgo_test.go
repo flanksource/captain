@@ -1,10 +1,7 @@
 package database
 
 import (
-	"os"
-	"path/filepath"
-
-	commonsdb "github.com/flanksource/commons-db/db"
+	"github.com/flanksource/commons-db/dbtest"
 	"github.com/google/uuid"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -12,18 +9,8 @@ import (
 
 var _ = Describe("session hierarchy enrichment", func() {
 	It("adopts a monitored provider session into its owning operation tree", func(ctx SpecContext) {
-		if os.Getenv("CAPTAIN_DB_EMBEDDED_TEST") == "" {
-			Skip("set CAPTAIN_DB_EMBEDDED_TEST=1 to run embedded-postgres store tests")
-		}
-
-		dsn, stop, err := commonsdb.StartEmbedded(commonsdb.EmbeddedConfig{
-			DataDir:  filepath.Join(GinkgoT().TempDir(), "postgres"),
-			Database: "captain_session_hierarchy",
-		})
-		Expect(err).NotTo(HaveOccurred())
-		DeferCleanup(func() { Expect(stop()).To(Succeed()) })
-
-		db, err := Open(ctx, WithDSN(dsn), WithMigrations())
+		handle := dbtest.ForGinkgo(dbtest.Options{Name: "captain_session_hierarchy"})
+		db, err := Open(ctx, WithDSN(handle.DSN()), WithMigrations())
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(func() { Expect(db.Close()).To(Succeed()) })
 
@@ -40,16 +27,17 @@ var _ = Describe("session hierarchy enrichment", func() {
 		Expect(root.ID).To(Equal(todoID))
 		Expect(root.Metadata).To(HaveKeyWithValue("links", HaveKeyWithValue("todo", todoID.String())))
 
+		providerSessionID := "provider-session-before-admission"
 		admissionID := uuid.New()
 		admission, err := db.CreateOrGetSession(ctx, CreateSessionInput{
-			ID: admissionID, Source: "gavel", Provider: "codex", HostID: "hierarchy-test",
+			ID: admissionID, ProviderSessionID: providerSessionID,
+			Source: "gavel", Provider: "codex", HostID: "hierarchy-test",
 			ParentSessionID: &todoID, AgentType: "run",
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(admission.RootSessionID).NotTo(BeNil())
 		Expect(*admission.RootSessionID).To(Equal(todoID))
 
-		providerSessionID := "provider-session-before-admission"
 		observed, err := db.CreateOrGetSession(ctx, CreateSessionInput{
 			ProviderSessionID: providerSessionID,
 			Source:            "codex",

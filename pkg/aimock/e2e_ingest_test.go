@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	commonsdb "github.com/flanksource/commons-db/db"
+	"github.com/flanksource/commons-db/dbtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -18,21 +18,10 @@ import (
 	"github.com/flanksource/captain/pkg/monitor"
 )
 
-// openIngestTestDB mirrors the gating the monitor suite uses: these specs need a
-// real migrated schema, and a machine without the embedded-postgres binaries
-// should skip rather than fail.
 func openIngestTestDB(t *testing.T) *database.DB {
 	t.Helper()
-	if os.Getenv("CAPTAIN_DB_EMBEDDED_TEST") == "" {
-		t.Skip("set CAPTAIN_DB_EMBEDDED_TEST=1 to run the embedded-postgres ingest e2e")
-	}
-	dsn, stop, err := commonsdb.StartEmbedded(commonsdb.EmbeddedConfig{
-		DataDir:  filepath.Join(t.TempDir(), "postgres"),
-		Database: "captain_aimock",
-	})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, stop()) })
-	db, err := database.Open(t.Context(), database.WithDSN(dsn), database.WithMigrations())
+	handle := dbtest.ForT(t, dbtest.Options{Name: "captain_aimock"})
+	db, err := database.Open(t.Context(), database.WithDSN(handle.DSN()), database.WithMigrations())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	return db
@@ -46,14 +35,12 @@ func openIngestTestDB(t *testing.T) *database.DB {
 // the transcript itself as messages.
 func TestE2EClaudeCLIIngest(t *testing.T) {
 	requireBinary(t, "claude")
-	// Before HOME moves: the embedded-postgres binaries cache under the real one.
-	db := openIngestTestDB(t)
-
 	// HOME governs both halves of the pipeline — claude writes its transcript
 	// beneath it, and the monitor discovers transcripts beneath the same root —
 	// so pointing it at a temp dir makes this run the only session in the scan.
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	db := openIngestTestDB(t)
 	cwd := filepath.Join(home, "work")
 	require.NoError(t, os.MkdirAll(cwd, 0o755))
 
@@ -78,7 +65,9 @@ func TestE2EClaudeCLIIngest(t *testing.T) {
 	require.NoError(t, err, "the run must have produced a captain_sessions row")
 	assert.Equal(t, "claude", overview.Source)
 	require.NotNil(t, overview.CWD)
-	assert.Equal(t, cwd, *overview.CWD)
+	expectedCWD, err := filepath.EvalSymlinks(cwd)
+	require.NoError(t, err)
+	assert.Equal(t, expectedCWD, *overview.CWD)
 	require.NotNil(t, overview.HistoryFile)
 	assert.FileExists(t, *overview.HistoryFile)
 

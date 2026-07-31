@@ -27,22 +27,16 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26.x"
-      # Persist the embedded-postgres binary so most runs skip the download
-      # entirely. The version is pinned by the embedded-postgres library (V16).
-      - name: Cache embedded-postgres binary
+      - name: Cache embedded PostgreSQL
         uses: actions/cache@v4
         with:
-          path: ~/.embedded-postgres-go
-          key: embedded-postgres-${{ runner.os }}-16.9.0
-      # The DB integration tests each start their own embedded postgres. Run
-      # packages serially (-p 1): concurrent StartEmbedded calls otherwise race
-      # the shared cold-cache Maven download (throttled -> "no version found
-      # matching 16.9.0") and collide on ports (FreePort closes the listener
-      # before postgres binds), which fails StartEmbedded with the server never
-      # becoming ready.
-      - run: go test -p 1 ./...
+          path: ${{ runner.temp }}/commons-db/bin
+          key: embedded-postgres-${{ runner.os }}-${{ runner.arch }}
+      # dbtest shares one embedded PostgreSQL server while isolating each test
+      # with a leased ephemeral database.
+      - run: go test ./...
         env:
-          CAPTAIN_DB_EMBEDDED_TEST: "1"
+          TMPDIR: ${{ runner.temp }}
 
   mcp-e2e:
     runs-on: ubuntu-latest

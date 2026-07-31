@@ -1,10 +1,7 @@
 package migrations
 
 import (
-	"os"
-	"path/filepath"
-
-	commonsdb "github.com/flanksource/commons-db/db"
+	"github.com/flanksource/commons-db/dbtest"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -18,20 +15,8 @@ import (
 // transcript -- with it. This pins that the collapse moves those links instead.
 var _ = Describe("Captain duplicate session collapse", func() {
 	It("re-points a subagent at the surviving row instead of cascading it away", func(ctx SpecContext) {
-		if os.Getenv("CAPTAIN_DB_EMBEDDED_TEST") == "" {
-			Skip("set CAPTAIN_DB_EMBEDDED_TEST=1 to run embedded-postgres migration tests")
-		}
-
-		dsn, stop, err := commonsdb.StartEmbedded(commonsdb.EmbeddedConfig{
-			DataDir:  filepath.Join(GinkgoT().TempDir(), "postgres"),
-			Database: "captain_merge_duplicates",
-		})
-		Expect(err).NotTo(HaveOccurred())
-		DeferCleanup(stop)
-
-		db, err := commonsdb.NewDB(dsn)
-		Expect(err).NotTo(HaveOccurred())
-		DeferCleanup(db.Close)
+		handle := dbtest.ForGinkgo(dbtest.Options{Name: "captain_merge_duplicates"})
+		dsn, db := handle.DSN(), handle.SQL()
 
 		Expect(Apply(ctx, dsn)).To(Succeed())
 
@@ -40,7 +25,7 @@ var _ = Describe("Captain duplicate session collapse", func() {
 		// script is selected by hash, so without clearing the row the collapse is
 		// skipped as already-applied -- on a fresh database it "ran" during the Apply
 		// above, before captain_sessions existed, and did nothing.
-		_, err = db.ExecContext(ctx, `DROP INDEX captain_sessions_provider_identity_key`)
+		_, err := db.ExecContext(ctx, `DROP INDEX captain_sessions_provider_identity_key`)
 		Expect(err).NotTo(HaveOccurred())
 		_, err = db.ExecContext(ctx,
 			`DELETE FROM schema_migration_scripts WHERE scope = $1 AND path = $2`,

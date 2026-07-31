@@ -1,11 +1,9 @@
 package database
 
 import (
-	"os"
-	"path/filepath"
 	"time"
 
-	commonsdb "github.com/flanksource/commons-db/db"
+	"github.com/flanksource/commons-db/dbtest"
 	"github.com/google/uuid"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -14,16 +12,8 @@ import (
 
 var _ = Describe("project session aggregates", func() {
 	It("reads only root session picker fields and falls back to an active process cwd", func(ctx SpecContext) {
-		if os.Getenv("CAPTAIN_DB_EMBEDDED_TEST") == "" {
-			Skip("set CAPTAIN_DB_EMBEDDED_TEST=1 to run embedded-postgres store tests")
-		}
-		dsn, stop, err := commonsdb.StartEmbedded(commonsdb.EmbeddedConfig{
-			DataDir:  filepath.Join(GinkgoT().TempDir(), "postgres"),
-			Database: "captain_project_store",
-		})
-		Expect(err).NotTo(HaveOccurred())
-		DeferCleanup(stop)
-		db, err := Open(ctx, WithDSN(dsn), WithMigrations())
+		handle := dbtest.ForGinkgo(dbtest.Options{Name: "captain_project_store"})
+		db, err := Open(ctx, WithDSN(handle.DSN()), WithMigrations())
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(db.Close)
 

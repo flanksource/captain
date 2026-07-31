@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/database"
-	commonsdb "github.com/flanksource/commons-db/db"
+	"github.com/flanksource/commons-db/dbtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -28,16 +28,8 @@ const fixtureAppendLine = `{"type":"assistant","uuid":"a-2","sessionId":"` + fix
 
 func openMonitorTestDB(t *testing.T) *database.DB {
 	t.Helper()
-	if os.Getenv("CAPTAIN_DB_EMBEDDED_TEST") == "" {
-		t.Skip("set CAPTAIN_DB_EMBEDDED_TEST=1 to run embedded-postgres monitor tests")
-	}
-	dsn, stop, err := commonsdb.StartEmbedded(commonsdb.EmbeddedConfig{
-		DataDir:  filepath.Join(t.TempDir(), "postgres"),
-		Database: "captain_monitor",
-	})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, stop()) })
-	db, err := database.Open(t.Context(), database.WithDSN(dsn), database.WithMigrations())
+	handle := dbtest.ForT(t, dbtest.Options{Name: "captain_monitor"})
+	db, err := database.Open(t.Context(), database.WithDSN(handle.DSN()), database.WithMigrations())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	return db

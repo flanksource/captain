@@ -1,33 +1,19 @@
 package migrations
 
 import (
-	"os"
-	"path/filepath"
-
-	commonsdb "github.com/flanksource/commons-db/db"
+	"github.com/flanksource/commons-db/dbtest"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
 
 var _ = Describe("Captain migration upgrades", func() {
 	It("appends partial to the existing session lifecycle enum", func(ctx SpecContext) {
-		if os.Getenv("CAPTAIN_DB_EMBEDDED_TEST") == "" {
-			Skip("set CAPTAIN_DB_EMBEDDED_TEST=1 to run embedded-postgres migration tests")
-		}
-
-		dsn, stop, err := commonsdb.StartEmbedded(commonsdb.EmbeddedConfig{
-			DataDir:  filepath.Join(GinkgoT().TempDir(), "postgres"),
-			Database: "captain_enum_upgrade",
-		})
-		Expect(err).NotTo(HaveOccurred())
-		DeferCleanup(stop)
-
-		db, err := commonsdb.NewDB(dsn)
-		Expect(err).NotTo(HaveOccurred())
-		DeferCleanup(db.Close)
+		handle := dbtest.ForGinkgo(dbtest.Options{Name: "captain_enum_upgrade"})
+		dsn, db := handle.DSN(), handle.SQL()
+		var err error
 		_, err = db.ExecContext(ctx, `CREATE TYPE public.captain_session_lifecycle_status AS ENUM (
-		'created', 'running', 'succeeded', 'failed', 'cancelled', 'interrupted'
-	)`)
+			'created', 'running', 'succeeded', 'failed', 'cancelled', 'interrupted'
+		)`)
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(Apply(ctx, dsn)).To(Succeed())

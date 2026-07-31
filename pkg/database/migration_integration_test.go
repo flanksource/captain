@@ -1,31 +1,17 @@
 package database
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 
-	commonsdb "github.com/flanksource/commons-db/db"
+	"github.com/flanksource/commons-db/dbtest"
 	"github.com/stretchr/testify/require"
 )
 
 func TestCaptainMigrationsAreIdempotentAndShareOnePool(t *testing.T) {
-	if os.Getenv("CAPTAIN_DB_EMBEDDED_TEST") == "" {
-		t.Skip("set CAPTAIN_DB_EMBEDDED_TEST=1 to run embedded-postgres migration tests")
-	}
-
-	dsn, stop, err := commonsdb.StartEmbedded(commonsdb.EmbeddedConfig{
-		DataDir:  filepath.Join(t.TempDir(), "postgres"),
-		Database: "captain_contract",
-	})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, stop()) })
-
-	shared, err := commonsdb.NewGorm(dsn, commonsdb.DefaultGormConfig())
-	require.NoError(t, err)
+	handle := dbtest.ForT(t, dbtest.Options{Name: "captain_contract"})
+	dsn, shared := handle.DSN(), handle.Gorm()
 	sharedSQL, err := shared.DB()
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, sharedSQL.Close()) })
 
 	first, err := Open(t.Context(), WithGorm(shared), WithDSN(dsn), WithMigrations())
 	require.NoError(t, err)
