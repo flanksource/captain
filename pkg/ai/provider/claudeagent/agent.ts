@@ -34,11 +34,22 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import type {
   Options,
+  PreToolUseHookInput,
   Query,
   SDKMessage,
-  SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import { createInterface } from "readline";
+import {
+  callHost,
+  diag,
+  handleResponse,
+  type JsonRpcId,
+  notify,
+  type PromptParams,
+  reply,
+  replyError,
+  TurnQueue,
+} from "./protocol.js";
 
 // Strip nested-session markers so the SDK does not refuse to run inside captain
 // (which may itself have been launched from a Claude Code session). The Go
@@ -69,70 +80,7 @@ interface InitializeParams {
     string,
     { type: "http"; url: string; headers?: Record<string, string> }
   >;
-}
-
-type JsonRpcId = number | string | null;
-
-function send(obj: Record<string, unknown>) {
-  process.stdout.write(JSON.stringify(obj) + "\n");
-}
-function notify(method: string, params: Record<string, unknown>) {
-  send({ jsonrpc: "2.0", method, params });
-}
-function reply(id: JsonRpcId, result: unknown) {
-  send({ jsonrpc: "2.0", id, result });
-}
-function replyError(id: JsonRpcId, code: number, message: string) {
-  send({ jsonrpc: "2.0", id, error: { code, message } });
-}
-function diag(msg: string) {
-  process.stderr.write(`[claude-agent] ${msg}\n`);
-}
-
-// callHost issues a server->client request to the Go host and resolves when the
-// matching id-bearing response arrives on stdin (routed by handleResponse). Ids
-// are string-prefixed so they never collide with the host's numeric Call ids.
-interface HostResponse {
-  result?: unknown;
-  error?: { code: number; message: string };
-}
-let nextHostId = 1;
-const pendingHostCalls = new Map<string, (resp: HostResponse) => void>();
-
-function callHost(
-  method: string,
-  params: Record<string, unknown>,
-): Promise<unknown> {
-  const id = `agent-${nextHostId++}`;
-  return new Promise((resolve, reject) => {
-    pendingHostCalls.set(id, (resp) => {
-      if (resp.error) {
-        reject(new Error(resp.error.message));
-      } else {
-        resolve(resp.result);
-      }
-    });
-    send({ jsonrpc: "2.0", id, method, params });
-  });
-}
-
-// handleResponse resolves a pending callHost when a host response (id, no method)
-// arrives. Returns true if the frame was a response we were waiting for.
-function handleResponse(frame: {
-  id?: JsonRpcId;
-  result?: unknown;
-  error?: { code: number; message: string };
-}): boolean {
-  if (frame.id == null || typeof frame.id !== "string") {
-    return false;
-  }
-  const waiter = pendingHostCalls.get(frame.id);
-  if (!waiter) {
-    return false;
-  }
-  pendingHostCalls.delete(frame.id);
-  waiter({ result: frame.result, error: frame.error });
-  return true;
+  callerToolUseIDKey?: string;
 }
 
 // HostDecision is the can_use_tool reply shape from the Go host.
@@ -142,115 +90,18 @@ interface HostDecision {
   updatedInput?: Record<string, unknown>;
 }
 
-// TurnQueue is a push async-iterable of SDKUserMessage. Pushing a user message
-// resolves the SDK's pending next() so a single query() session processes turns
-// as they arrive instead of ending after the first.
-class TurnQueue implements AsyncIterable<SDKUserMessage> {
-  private pending: SDKUserMessage[] = [];
-  private waiters: ((r: IteratorResult<SDKUserMessage>) => void)[] = [];
-  private ended = false;
-
-  push(params: PromptParams) {
-    const content: Exclude<SDKUserMessage["message"]["content"], string> = [];
-    if (params.text) {
-      content.push({ type: "text", text: params.text });
-    }
-    for (const attachment of params.attachments ?? []) {
-      if (attachment.mediaType === "application/pdf") {
-        content.push({
-          type: "document",
-          source: {
-            type: "base64",
-            media_type: "application/pdf",
-            data: attachment.data,
-          },
-          title: attachment.filename || undefined,
-        });
-      } else if (isClaudeImageMediaType(attachment.mediaType)) {
-        content.push({
-          type: "image",
-          source: {
-            type: "base64",
-            media_type: attachment.mediaType,
-            data: attachment.data,
-          },
-        });
-      } else {
-        throw new Error(
-          `unsupported attachment media type: ${attachment.mediaType}`,
-        );
-      }
-    }
-    const msg: SDKUserMessage = {
-      type: "user",
-      message: {
-        role: "user",
-        content,
-      },
-      parent_tool_use_id: null,
-      session_id: "",
-    };
-    const waiter = this.waiters.shift();
-    if (waiter) {
-      waiter({ value: msg, done: false });
-    } else {
-      this.pending.push(msg);
-    }
-  }
-
-  end() {
-    this.ended = true;
-    const waiter = this.waiters.shift();
-    if (waiter) {
-      waiter({ value: undefined as unknown as SDKUserMessage, done: true });
-    }
-  }
-
-  [Symbol.asyncIterator](): AsyncIterator<SDKUserMessage> {
-    return {
-      next: (): Promise<IteratorResult<SDKUserMessage>> => {
-        const queued = this.pending.shift();
-        if (queued) {
-          return Promise.resolve({ value: queued, done: false });
-        }
-        if (this.ended) {
-          return Promise.resolve({
-            value: undefined as unknown as SDKUserMessage,
-            done: true,
-          });
-        }
-        return new Promise((resolve) => this.waiters.push(resolve));
-      },
-    };
-  }
-}
-
 let turns: TurnQueue | null = null;
 let activeQuery: Query | null = null;
+let callerToolServers: string[] = [];
 
-interface PromptAttachment {
-  mediaType: string;
-  data: string;
-  filename?: string;
-}
-
-type ClaudeImageMediaType =
-  | "image/png"
-  | "image/jpeg"
-  | "image/gif"
-  | "image/webp";
-
-function isClaudeImageMediaType(
-  mediaType: string,
-): mediaType is ClaudeImageMediaType {
-  return ["image/png", "image/jpeg", "image/gif", "image/webp"].includes(
-    mediaType,
-  );
-}
-
-interface PromptParams {
-  text?: string;
-  attachments?: PromptAttachment[];
+function callerToolName(toolName: string): string | undefined {
+  for (const server of callerToolServers) {
+    const prefix = `mcp__${server}__`;
+    if (toolName.startsWith(prefix) && toolName.length > prefix.length) {
+      return toolName.slice(prefix.length);
+    }
+  }
+  return undefined;
 }
 
 function buildOptions(params: InitializeParams): Options {
@@ -293,6 +144,49 @@ function buildOptions(params: InitializeParams): Options {
       ],
     },
   };
+
+  if (callerToolServers.length > 0) {
+    const callerToolUseIDKey = params.callerToolUseIDKey;
+    if (!callerToolUseIDKey) {
+      throw new Error("caller tools require a provider tool-use ID key");
+    }
+    options.hooks?.PreToolUse?.push({
+      hooks: [
+        async (input, toolUseID) => {
+          const hook = input as PreToolUseHookInput;
+          if (!callerToolName(hook.tool_name)) {
+            return {};
+          }
+          if (!toolUseID && !hook.tool_use_id) {
+            return {
+              decision: "block" as const,
+              reason: "caller tool has no Claude tool-use ID",
+            };
+          }
+          if (
+            typeof hook.tool_input !== "object" ||
+            hook.tool_input === null ||
+            Array.isArray(hook.tool_input)
+          ) {
+            return {
+              decision: "block" as const,
+              reason: "caller tool input must be an object",
+            };
+          }
+          return {
+            hookSpecificOutput: {
+              hookEventName: "PreToolUse" as const,
+              permissionDecision: "allow" as const,
+              updatedInput: {
+                ...(hook.tool_input as Record<string, unknown>),
+                [callerToolUseIDKey]: toolUseID || hook.tool_use_id,
+              },
+            },
+          };
+        },
+      ],
+    });
+  }
 
   // Session-monitoring lifecycle hooks: fire-and-forget POSTs to captain
   // serve so the session appears in the database in real time. A monitoring
@@ -372,14 +266,12 @@ function buildOptions(params: InitializeParams): Options {
       ) {
         return { behavior: "allow", updatedInput: input };
       }
-      const toolUseId =
-        (opts as { toolUseId?: string } | undefined)?.toolUseId ?? "";
       let decision: HostDecision;
       try {
         decision = (await callHost("can_use_tool", {
           tool: toolName,
           input,
-          tool_use_id: toolUseId,
+          tool_use_id: opts.toolUseID,
         })) as HostDecision;
       } catch (err) {
         return {
@@ -405,6 +297,7 @@ function handleInitialize(id: JsonRpcId, params: InitializeParams) {
     return;
   }
   try {
+    callerToolServers = Object.keys(params.mcpServers ?? {});
     turns = new TurnQueue();
     activeQuery = query({ prompt: turns, options: buildOptions(params) });
     reply(id, { ok: true });
@@ -412,6 +305,7 @@ function handleInitialize(id: JsonRpcId, params: InitializeParams) {
       notify("turn/error", { message: err?.message || String(err) });
     });
   } catch (err) {
+    callerToolServers = [];
     turns = null;
     activeQuery = null;
     replyError(id, -32603, `initialize failed: ${(err as Error)?.message || err}`);
@@ -499,7 +393,7 @@ function handleMessage(message: SDKMessage) {
           notify("message/thinking", { text: block.thinking });
         } else if (block.type === "tool_use") {
           notify("message/tool_use", {
-            tool: block.name,
+            tool: callerToolName(String(block.name)) ?? block.name,
             input: block.input,
             id: block.id,
           });

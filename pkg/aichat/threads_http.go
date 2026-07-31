@@ -12,6 +12,7 @@ func (s *Service) registerThreadRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/chat/threads", s.handleListThreads)
 	mux.HandleFunc("GET /api/chat/threads/{id}", s.handleGetThread)
 	mux.HandleFunc("DELETE /api/chat/threads/{id}", s.handleDeleteThread)
+	mux.HandleFunc("POST /api/chat/threads/{id}/approvals/{toolCallID}", s.handleResolveToolApproval)
 }
 
 func (s *Service) threadStore(w http.ResponseWriter) ThreadStore {
