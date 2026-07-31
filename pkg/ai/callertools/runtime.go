@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
@@ -28,6 +29,10 @@ const (
 	endpointPath           = "/mcp"
 	serverName             = "captain"
 	defaultApprovalTimeout = 5 * time.Minute
+	// ToolUseIDInputKey carries an out-of-process provider's tool call ID
+	// through clients that cannot attach MCP request metadata. The runtime
+	// removes it before policy, schema validation, and handler execution.
+	ToolUseIDInputKey = "__captain_tool_use_id"
 )
 
 // Options defines one private caller-tool capability.
@@ -37,6 +42,9 @@ type Options struct {
 	CanUseTool  api.PermissionFunc
 	SessionID   string
 	ExpiresAt   time.Time
+	// ValidateCredential rechecks the persisted lease on every request and
+	// immediately before a tool handler executes.
+	ValidateCredential func(context.Context) error
 
 	ApprovalTimeout time.Duration
 }
@@ -47,8 +55,10 @@ type Runtime struct {
 	definitions map[string]api.ToolDefinition
 	schemas     map[string]*jsonschema.Schema
 	canUseTool  api.PermissionFunc
+	validate    func(context.Context) error
 	sessionID   string
 	token       string
+	tokenHash   [sha256.Size]byte
 	expiresAt   time.Time
 
 	approvalTimeout time.Duration
@@ -95,8 +105,10 @@ func New(options Options) (*Runtime, error) {
 		definitions:     make(map[string]api.ToolDefinition, len(definitions)),
 		schemas:         make(map[string]*jsonschema.Schema, len(definitions)),
 		canUseTool:      options.CanUseTool,
+		validate:        options.ValidateCredential,
 		sessionID:       options.SessionID,
 		token:           token,
+		tokenHash:       sha256.Sum256([]byte(token)),
 		expiresAt:       options.ExpiresAt,
 		approvalTimeout: options.ApprovalTimeout,
 		ctx:             ctx,
@@ -150,6 +162,14 @@ func (r *Runtime) Endpoint() api.CallerToolEndpoint {
 	return endpoint
 }
 
+// CredentialHash returns the SHA-256 bearer hash persisted by an authority.
+// The plaintext capability remains confined to Endpoint headers.
+func (r *Runtime) CredentialHash() []byte {
+	hash := make([]byte, len(r.tokenHash))
+	copy(hash, r.tokenHash[:])
+	return hash
+}
+
 // Close revokes the endpoint and is safe to call more than once.
 func (r *Runtime) Close() error {
 	r.closeOnce.Do(func() {
@@ -191,16 +211,15 @@ func (r *Runtime) handler(definition api.ToolDefinition) server.ToolHandlerFunc 
 		if input == nil {
 			input = map[string]any{}
 		}
+		toolUseID, err := toolUseID(request, input)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		if definition.NeedsApproval() {
 			if r.canUseTool == nil {
 				return mcp.NewToolResultError("tool approval is required but no approval broker is configured"), nil
 			}
 			approvalCtx, approvalCancel := context.WithTimeout(callCtx, r.approvalTimeout)
-			toolUseID, err := toolUseID(request)
-			if err != nil {
-				approvalCancel()
-				return mcp.NewToolResultError(err.Error()), nil
-			}
 			decision, err := r.canUseTool(approvalCtx, api.PermissionRequest{
 				Tool: definition.Name, Input: input, ToolUseID: toolUseID, SessionID: r.sessionID,
 			})
@@ -218,6 +237,9 @@ func (r *Runtime) handler(definition api.ToolDefinition) server.ToolHandlerFunc 
 			if decision.UpdatedInput != nil {
 				input = decision.UpdatedInput
 			}
+		}
+		if err := r.validateActive(callCtx); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
 		}
 		if err := r.validateInput(definition.Name, input); err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
@@ -247,7 +269,8 @@ func (r *Runtime) authorize(next http.Handler) http.Handler {
 		}
 		actual := request.Header.Get("Authorization")
 		expected := "Bearer " + r.token
-		if subtle.ConstantTimeCompare([]byte(actual), []byte(expected)) != 1 || !r.active() {
+		if subtle.ConstantTimeCompare([]byte(actual), []byte(expected)) != 1 ||
+			r.validateActive(request.Context()) != nil {
 			w.Header().Set("WWW-Authenticate", "Bearer")
 			http.Error(w, "invalid caller-tool credential", http.StatusUnauthorized)
 			return
@@ -258,6 +281,18 @@ func (r *Runtime) authorize(next http.Handler) http.Handler {
 
 func (r *Runtime) active() bool {
 	return !r.revoked.Load() && (r.expiresAt.IsZero() || time.Now().Before(r.expiresAt))
+}
+
+func (r *Runtime) validateActive(ctx context.Context) error {
+	if !r.active() {
+		return fmt.Errorf("caller-tool credential is inactive")
+	}
+	if r.validate != nil {
+		if err := r.validate(ctx); err != nil {
+			return fmt.Errorf("validate caller-tool credential: %w", err)
+		}
+	}
+	return nil
 }
 
 func mcpTool(definition api.ToolDefinition) (mcp.Tool, *jsonschema.Schema, error) {
@@ -313,11 +348,30 @@ func capabilityToken(sessionID string) (string, error) {
 	return "cap_" + capabilityIdentity(sessionID) + "." + secret, nil
 }
 
-func toolUseID(request mcp.CallToolRequest) (string, error) {
+func toolUseID(request mcp.CallToolRequest, input map[string]any) (string, error) {
+	inputID := ""
+	if value, exists := input[ToolUseIDInputKey]; exists {
+		delete(input, ToolUseIDInputKey)
+		var ok bool
+		inputID, ok = value.(string)
+		if !ok || strings.TrimSpace(inputID) == "" {
+			return "", fmt.Errorf("caller-tool provider ID must be a non-empty string")
+		}
+	}
+	metadataID := ""
 	if request.Params.Meta != nil {
 		if value, ok := request.Params.Meta.AdditionalFields["toolUseId"].(string); ok && strings.TrimSpace(value) != "" {
-			return value, nil
+			metadataID = value
 		}
+	}
+	if inputID != "" && metadataID != "" && inputID != metadataID {
+		return "", fmt.Errorf("caller-tool provider ID conflicts with MCP metadata")
+	}
+	if metadataID != "" {
+		return metadataID, nil
+	}
+	if inputID != "" {
+		return inputID, nil
 	}
 	id, err := randomID(16)
 	if err != nil {
