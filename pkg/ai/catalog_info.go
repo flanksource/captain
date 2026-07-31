@@ -72,7 +72,7 @@ func catalogInfoFrom(models []Model, configuredProviders []string) []ModelInfo {
 		runtime := api.Model{
 			Name:    m.BareID(),
 			Backend: m.Backend,
-		}
+		}.Capabilities()
 		if m.ID != runtime.Name {
 			runtime.ID = m.ID
 		}
