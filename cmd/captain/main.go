@@ -125,7 +125,7 @@ func main() {
 
 	whoamiCmd := clicky.AddNamedCommand("whoami", rootCmd, cli.WhoamiOptions{}, cli.RunWhoami)
 	whoamiCmd.Short = "List agent adapters, auth methods, and available models"
-	whoamiCmd.Long = "Show every AI agent adapter (API providers and CLI agents), how each is authenticated (Captain vault, API-key env var, or CLI login), whether its CLI binary is installed, and the models each provider exposes via a live API call. Pass --models=false to skip the network probes, or --backend to inspect a single adapter."
+	whoamiCmd.Long = "Show every AI agent adapter (API providers and CLI agents), how each is authenticated (Captain vault, API-key env var, or CLI login), whether its CLI binary is installed, and the models each provider exposes via a live API call. Disabled models are hidden by default; pass --disabled=true to include them. Pass --models=false to skip the network probes, or --backend to inspect a single adapter."
 
 	configureCmd := clicky.AddNamedCommandWithContext("configure", rootCmd, cli.ConfigureOptions{}, cli.RunConfigure)
 	configureCmd.Use = "configure [provider]"

@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  promptOptions,
-  runtimeModelsPayload,
-  runtimeRowsFromPrompt,
-} from "./promptWorkbenchHelpers";
+import { promptOptions } from "./promptWorkbenchHelpers";
 
 function prompt(
   name: string,
@@ -85,66 +81,6 @@ describe("promptOptions", () => {
     expect(options.map((option) => option.title)).toEqual([
       "Reviews Go diffs",
       "nested/beta.prompt",
-    ]);
-  });
-});
-
-describe("runtimeRowsFromPrompt", () => {
-  it("uses prompt-declared runtimes as the initial comparison rows", () => {
-    expect(
-      runtimeRowsFromPrompt({
-        ...prompt("compare", "local"),
-        runtimes: [
-          {
-            model: "gemini-3.5-flash",
-            backend: "gemini",
-            effort: "high",
-          },
-          {
-            model: "claude-sonnet-5",
-            backend: "anthropic",
-            effort: "medium",
-          },
-        ],
-      }),
-    ).toEqual([
-      {
-        model: "gemini-3.5-flash",
-        backend: "gemini",
-        effort: "high",
-      },
-      {
-        model: "claude-sonnet-5",
-        backend: "anthropic",
-        effort: "medium",
-      },
-    ]);
-  });
-
-  it("preserves model options when declared rows become a run override", () => {
-    expect(
-      runtimeModelsPayload(
-        [
-          {
-            model: "gemini-3.5-flash",
-            backend: "gemini",
-            effort: "high",
-            temperature: 0,
-            noCache: true,
-            fallbacks: [{ model: "gemini-3-flash" }],
-          },
-        ],
-        [],
-      ),
-    ).toEqual([
-      {
-        model: "gemini-3.5-flash",
-        backend: "gemini",
-        effort: "high",
-        temperature: 0,
-        noCache: true,
-        fallbacks: [{ model: "gemini-3-flash" }],
-      },
     ]);
   });
 });

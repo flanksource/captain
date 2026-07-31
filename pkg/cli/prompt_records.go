@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	promptlib "github.com/flanksource/captain/pkg/ai/prompt"
+	"github.com/flanksource/captain/pkg/api"
 	dp "github.com/google/dotprompt/go/dotprompt"
 )
 
@@ -228,6 +230,10 @@ func promptDetailFromContent(record promptRecord, content string) (PromptDetail,
 	if err != nil {
 		return PromptDetail{}, err
 	}
+	spec := &api.Spec{Model: api.Model{
+		Name:    summary.Model,
+		Backend: api.Backend(summary.Backend),
+	}}
 	return PromptDetail{
 		PromptSummary: summary,
 		Content:       content,
@@ -235,7 +241,32 @@ func promptDetailFromContent(record promptRecord, content string) (PromptDetail,
 		InputDefault:  inspection.InputDefault,
 		OutputSchema:  inspection.OutputSchema,
 		Metadata:      inspection.Metadata,
+		Run: PromptRenderRequest{
+			Variables: maps.Clone(inspection.InputDefault),
+			Spec:      spec,
+			Runtimes:  promptRunModels(summary.Runtimes),
+			Chat:      len(inspection.OutputSchema) == 0,
+		},
 	}, nil
+}
+
+func promptRunModels(models []api.Model) []api.Model {
+	if len(models) == 0 {
+		return nil
+	}
+	out := make([]api.Model, len(models))
+	for index, model := range models {
+		out[index] = api.Model{
+			Name:        model.Name,
+			ID:          model.ID,
+			Backend:     model.Backend,
+			Temperature: model.Temperature,
+			Effort:      model.Effort,
+			NoCache:     model.NoCache,
+			Fallbacks:   promptRunModels(model.Fallbacks),
+		}
+	}
+	return out
 }
 
 func promptSummaryFromContent(record promptRecord, content string) (PromptSummary, error) {

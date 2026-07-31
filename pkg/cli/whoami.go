@@ -58,6 +58,33 @@ func disabledAxes() DisabledAxes {
 	return axes
 }
 
+func filterWhoamiModels(adapters []AdapterStatus, includeDisabled bool) []AdapterStatus {
+	if includeDisabled {
+		return adapters
+	}
+
+	filtered := make([]AdapterStatus, len(adapters))
+	for i, adapter := range adapters {
+		filtered[i] = adapter
+		if len(adapter.ModelDetails) == 0 {
+			continue
+		}
+
+		filtered[i].ModelCount = 0
+		filtered[i].Models = nil
+		filtered[i].ModelDetails = nil
+		for _, model := range adapter.ModelDetails {
+			if model.Disabled {
+				continue
+			}
+			filtered[i].Models = append(filtered[i].Models, model.ID)
+			filtered[i].ModelDetails = append(filtered[i].ModelDetails, model)
+			filtered[i].ModelCount++
+		}
+	}
+	return filtered
+}
+
 func RunWhoami(opts WhoamiOptions) (any, error) {
 	adapters, err := ai.ProbeAdapters(opts, ai.OSAuthProbe())
 	if err != nil {
@@ -74,8 +101,9 @@ func RunWhoami(opts WhoamiOptions) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	adapters = filterWhoamiModels(ai.ApplyDisabled(adapters), opts.IncludeDisabled)
 	return WhoamiResult{
-		Adapters: ai.ApplyDisabled(adapters), DefaultProvider: config.AI.ActiveProvider(),
+		Adapters: adapters, DefaultProvider: config.AI.ActiveProvider(),
 		ProviderDefaults: defaults, Disabled: config.AI.Disabled, Axes: disabledAxes(),
 		Runtimes:    api.RuntimeCatalog(),
 		sampleLimit: opts.Limit, showModels: opts.Models,
