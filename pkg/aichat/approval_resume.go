@@ -1,6 +1,7 @@
 package aichat
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"reflect"
@@ -8,7 +9,7 @@ import (
 	"github.com/flanksource/captain/pkg/api"
 )
 
-func resolveToolApproval(request *ChatRequest) error {
+func (s *Service) resolveToolApproval(ctx context.Context, request *ChatRequest) error {
 	if request.ToolApproval != nil || len(request.Messages) == 0 {
 		return nil
 	}
@@ -35,6 +36,28 @@ func resolveToolApproval(request *ChatRequest) error {
 	}
 	if len(responded) == 0 {
 		return nil
+	}
+	if request.ThreadID != "" && s.options.Threads != nil {
+		thread, err := s.options.Threads.Get(ctx, request.ThreadID)
+		if err != nil {
+			return fmt.Errorf("load durable tool approval state: %w", err)
+		}
+		if len(thread.Messages) == 0 {
+			return fmt.Errorf("thread %q has no durable tool approval state", request.ThreadID)
+		}
+		stored := thread.Messages[len(thread.Messages)-1]
+		if stored.Role != string(api.RoleAssistant) {
+			return fmt.Errorf("thread %q does not end with a durable assistant approval", request.ThreadID)
+		}
+		if message.ID != "" && stored.ID != "" && message.ID != stored.ID {
+			return fmt.Errorf("approval response message ID %q does not match stored message %q", message.ID, stored.ID)
+		}
+		stateData = nil
+		for _, part := range stored.Parts {
+			if part.Type == "data-tool-approval" {
+				stateData = part.Data
+			}
+		}
 	}
 	if len(stateData) == 0 {
 		return fmt.Errorf("approval response is missing durable tool approval state")

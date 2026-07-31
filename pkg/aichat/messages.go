@@ -218,7 +218,7 @@ func canonicalPart(role api.MessageRole, part UIPart, attachment api.AttachmentR
 			result.ToolResult.Output = nil
 			result.ToolResult.Error = "tool execution denied"
 			if part.Approval != nil && part.Approval.Reason != "" {
-				result.ToolResult.Error = part.Approval.Reason
+				result.ToolResult.Error += ": " + part.Approval.Reason
 			}
 		}
 		return request, result, nil
