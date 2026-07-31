@@ -97,7 +97,7 @@ func applyCandidateDefaults(model api.Model, saved captainconfig.AIDefaults, all
 	if err != nil {
 		return api.Model{}, err
 	}
-	if model.Backend == "" {
+	if model.Backend == "" && model.Mode == "" {
 		model.Backend = api.Backend(defaults.Agent)
 	}
 	if strings.TrimSpace(model.Name) == "" {

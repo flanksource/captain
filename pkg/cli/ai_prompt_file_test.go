@@ -4,9 +4,11 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/aiflags"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/commons-db/shell"
 )
@@ -148,7 +150,9 @@ func TestOverlayCLI_CLIOverridesFrontmatter(t *testing.T) {
 
 func TestOverlayCLI_SandboxForcesFrontmatterModelToCLI(t *testing.T) {
 	isolateSavedAI(t)
-	req, cfg, err := overlayCLI(baseFileReq(), ai.Config{}, AIPromptOptions{
+	base := baseFileReq()
+	base.Model.Backend = api.BackendAnthropic
+	req, cfg, err := overlayCLI(base, ai.Config{}, AIPromptOptions{
 		AIRuntimeOptions: AIRuntimeOptions{
 			AIProviderOptions: AIProviderOptions{Sandbox: true},
 		},
@@ -159,8 +163,27 @@ func TestOverlayCLI_SandboxForcesFrontmatterModelToCLI(t *testing.T) {
 	if req.Model.Backend != api.BackendClaudeCLI {
 		t.Fatalf("req backend = %q, want %q", req.Model.Backend, api.BackendClaudeCLI)
 	}
+	if req.Model.Name != base.Model.Name {
+		t.Fatalf("req model = %q, want unchanged %q", req.Model.Name, base.Model.Name)
+	}
 	if !cfg.Sandbox {
 		t.Fatal("cfg.Sandbox = false, want true")
+	}
+}
+
+func TestOverlayCLI_SandboxRejectsExplicitAPIMode(t *testing.T) {
+	isolateSavedAI(t)
+	opts := AIPromptOptions{
+		AIRuntimeOptions: AIRuntimeOptions{
+			AIProviderOptions: AIProviderOptions{
+				ModelFlags: aiflags.ModelFlags{Mode: "api"},
+				Sandbox:    true,
+			},
+		},
+	}
+	_, _, err := overlayCLI(baseFileReq(), ai.Config{}, opts)
+	if err == nil || !strings.Contains(err.Error(), "--sandbox requires CLI mode") {
+		t.Fatalf("err = %v, want sandbox/mode contradiction", err)
 	}
 }
 
