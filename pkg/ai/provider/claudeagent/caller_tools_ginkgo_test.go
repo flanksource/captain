@@ -2,10 +2,14 @@ package claudeagent
 
 import (
 	"context"
+	"encoding/json"
+	"os"
 	"strings"
+	"sync/atomic"
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/clicky/exec"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -27,6 +31,63 @@ var _ = Describe("Claude Agent caller tools", func() {
 		Expect(params.MCPServers["captain"].Type).To(Equal("http"))
 		Expect(params.MCPServers["captain"].URL).To(Equal("http://127.0.0.1:43210/mcp"))
 		Expect(params.MCPServers["captain"].Headers).To(HaveKeyWithValue("Authorization", "Bearer secret"))
+		raw, err := json.Marshal(params)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(raw)).To(ContainSubstring(`"callerToolUseIDKey":"__captain_tool_use_id"`))
+	})
+
+	It("executes an allowed caller tool through the fake Claude runtime", func(ctx SpecContext) {
+		self, err := os.Executable()
+		Expect(err).NotTo(HaveOccurred())
+		original := newAgentProcess
+		newAgentProcess = func(*Provider) (*exec.Process, error) {
+			return exec.NewExec(self).WithStdioPipe().WithEnv(map[string]string{
+				fakeServerEnv: "1", fakeModeEnv: "caller-tools",
+			}), nil
+		}
+		DeferCleanup(func() { newAgentProcess = original })
+
+		var calls atomic.Int32
+		permissions := make(chan api.PermissionRequest, 1)
+		provider, err := New(ai.Config{
+			Model:            api.Model{Name: "claude-sonnet-5"},
+			CaptainSessionID: "captain-thread-1",
+			CanUseTool: func(_ context.Context, request api.PermissionRequest) (api.PermissionDecision, error) {
+				permissions <- request
+				return api.PermissionDecision{Allow: true}, nil
+			},
+			Tools: []api.ToolDefinition{{
+				Name: "invoice_get", DefaultPermission: api.ToolModeAsk,
+				Handler: func(_ context.Context, input map[string]any) (any, error) {
+					calls.Add(1)
+					return map[string]any{"id": input["id"], "status": "draft"}, nil
+				},
+			}},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(provider.Close)
+
+		events, err := provider.ExecuteStream(ctx, ai.Request{Prompt: api.Prompt{User: "inspect invoice"}})
+		Expect(err).NotTo(HaveOccurred())
+		var toolUse, toolResult api.Event
+		for event := range events {
+			switch event.Kind {
+			case api.EventToolUse:
+				toolUse = event
+			case api.EventToolResult:
+				toolResult = event
+			}
+		}
+		Expect(calls.Load()).To(Equal(int32(1)))
+		Expect(toolUse.Tool).To(Equal("invoice_get"))
+		Expect(toolUse.ToolCallID).To(Equal("claude-tool-use-1"))
+		var permission api.PermissionRequest
+		Eventually(permissions).Should(Receive(&permission))
+		Expect(permission.Tool).To(Equal(toolUse.Tool))
+		Expect(permission.ToolUseID).To(Equal(toolUse.ToolCallID))
+		Expect(permission.Input).To(Equal(map[string]any{"id": "inv-1"}))
+		Expect(toolResult.ToolCallID).To(Equal(toolUse.ToolCallID))
+		Expect(toolResult.Success).To(BeTrue())
 	})
 
 	It("binds the private capability to the Captain session identity", func() {

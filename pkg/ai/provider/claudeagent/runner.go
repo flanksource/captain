@@ -17,6 +17,9 @@ import (
 //go:embed agent.ts
 var agentTS string
 
+//go:embed protocol.ts
+var protocolTS string
+
 //go:embed package.json
 var agentPackageJSON string
 
@@ -36,6 +39,9 @@ func prepareAgentDir() (string, error) {
 	}
 
 	if err := writeIfChanged(filepath.Join(agentDir, "agent.ts"), agentTS); err != nil {
+		return "", err
+	}
+	if err := writeIfChanged(filepath.Join(agentDir, "protocol.ts"), protocolTS); err != nil {
 		return "", err
 	}
 	if err := writeIfChanged(filepath.Join(agentDir, "package.json"), agentPackageJSON); err != nil {
