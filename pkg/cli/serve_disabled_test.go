@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/flanksource/captain/pkg/api"
@@ -64,6 +65,45 @@ func TestDisabledPutPreservesUnrelatedConfiguration(t *testing.T) {
 	config, _, err := captainconfig.Load()
 	if err != nil || config.AI.DefaultProvider != "gemini" || len(config.Prompts.Dirs) != 1 {
 		t.Fatalf("config=%+v err=%v", config, err)
+	}
+}
+
+func TestDisabledPutKeepsPersistedAndRuntimeSelectionsConsistentUnderConcurrency(t *testing.T) {
+	setupDisabledTest(t)
+	bodies := []string{
+		`{"modes":["cmux"],"providers":[],"backends":[],"models":[],"efforts":[]}`,
+		`{"modes":[],"providers":["deepseek"],"backends":[],"models":[],"efforts":[]}`,
+	}
+
+	for range 50 {
+		start := make(chan struct{})
+		responses := make(chan *httptest.ResponseRecorder, len(bodies))
+		var wg sync.WaitGroup
+		for _, body := range bodies {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				responses <- serveDisabledRequest(t, body)
+			}()
+		}
+		close(start)
+		wg.Wait()
+		close(responses)
+		for response := range responses {
+			if response.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+			}
+		}
+
+		config, _, err := captainconfig.Load()
+		if err != nil {
+			t.Fatalf("Load(): %v", err)
+		}
+		if !reflect.DeepEqual(api.Disabled(), config.AI.Disabled.Set()) {
+			t.Fatalf("runtime disabled set does not match persisted config: runtime=%+v persisted=%+v",
+				api.Disabled(), config.AI.Disabled.Set())
+		}
 	}
 }
 
