@@ -1,4 +1,7 @@
-import type { AISpecRuntimeValue } from "@flanksource/clicky-ui/ai";
+import type {
+  AIPromptRunValue,
+  AISpecRuntimeValue,
+} from "@flanksource/clicky-ui/ai";
 import type {
   ExecutionResponse,
   ResolvedOperation,
@@ -30,6 +33,15 @@ export type PromptSummary = {
   variables?: PromptVariable[];
   parseError?: string;
   updatedAt?: string;
+};
+
+export type PromptDetail = PromptSummary & {
+  content: string;
+  inputSchema?: Record<string, unknown>;
+  inputDefault?: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  run: AIPromptRunValue;
 };
 
 export type PromptOps = {

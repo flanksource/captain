@@ -138,7 +138,11 @@ func adapterAppendModels(a AdapterStatus, t api.Text, limit int) api.Text {
 		if model.Disabled {
 			label += " [disabled]"
 		}
-		t = t.NewLine().Append("      - ", "").Append(label, "text-gray-500")
+		styles := "text-gray-500"
+		if model.Disabled {
+			styles += " line-through"
+		}
+		t = t.NewLine().Append("      - ", "").Append(label, styles)
 	}
 	if len(sample) < a.ModelCount {
 		t = t.NewLine().Append("      ", "").Append(fmt.Sprintf("... (+%d more)", a.ModelCount-len(sample)), "text-gray-500")
