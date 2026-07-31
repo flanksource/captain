@@ -33,6 +33,16 @@ func TestIsEphemeralClaudeTranscript(t *testing.T) {
 		"a temp project whose working directory still exists must be backfilled")
 }
 
+func TestNormalizedDirectoryExists(t *testing.T) {
+	tempRoot := filepath.Join(t.TempDir(), "_temp")
+	liveProject := filepath.Join(tempRoot, "TestLiveSession", "001", "work", "project")
+	require.NoError(t, os.MkdirAll(liveProject, 0o755))
+
+	assert.True(t, normalizedDirectoryExists(tempRoot, claude.NormalizePath(liveProject)))
+	assert.False(t, normalizedDirectoryExists(tempRoot,
+		claude.NormalizePath(filepath.Join(tempRoot, "TestStaleSession", "001", "work", "project"))))
+}
+
 func TestDiscoverTranscriptsSkipsSystemTempClaudeProjects(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
