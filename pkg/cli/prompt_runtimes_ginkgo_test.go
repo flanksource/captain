@@ -54,6 +54,35 @@ Review the screenshot.
 		))
 	})
 
+	It("serves the canonical prompt run request with the detail", func() {
+		record, err := filePromptRecord(path)
+		Expect(err).NotTo(HaveOccurred())
+
+		detail, err := promptDetail(record)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(detail.Run).To(Equal(PromptRenderRequest{
+			Variables: map[string]any{},
+			Spec: &api.Spec{Model: api.Model{
+				Name:    "gemini-3.5-flash",
+				Backend: api.BackendGemini,
+			}},
+			Runtimes: []api.Model{
+				{
+					Name:    "gemini-3.5-flash",
+					Backend: api.BackendGemini,
+					Effort:  api.EffortHigh,
+				},
+				{
+					Name:    "claude-sonnet-5",
+					Backend: api.BackendAnthropic,
+					Effort:  api.EffortMedium,
+				},
+			},
+			Chat: true,
+		}))
+	})
+
 	DescribeTable("resolves a discovered prompt by bare filename",
 		func(id string) {
 			ctx := ContextWithPromptDirs(context.Background(), []string{filepath.Dir(path)})
@@ -164,5 +193,36 @@ Review the screenshot.
 		_, err := renderPromptCLI(context.Background(), invalidPath, AIPromptOptions{}, "", "")
 
 		Expect(err).To(MatchError(ContainSubstring("field typo not found")))
+	})
+})
+
+var _ = Describe("prompt schema model catalog", func() {
+	It("keeps one exact runtime row per backend", func() {
+		models := flatModels([]AdapterStatus{
+			{
+				Backend:       string(api.BackendCodexCLI),
+				Type:          "cli",
+				Authenticated: true,
+				Binary:        "/usr/local/bin/codex",
+				Models:        []string{"gpt-5.6-sol"},
+			},
+			{
+				Backend:       string(api.BackendCodexCmux),
+				Type:          "cli",
+				Authenticated: true,
+				Binary:        "/usr/local/bin/codex",
+				Models:        []string{"gpt-5.6-sol"},
+			},
+		})
+
+		Expect(models).To(HaveLen(2))
+		Expect(models[0]["runtime"]).To(Equal(api.Model{
+			Name:    "gpt-5.6-sol",
+			Backend: api.BackendCodexCLI,
+		}))
+		Expect(models[1]["runtime"]).To(Equal(api.Model{
+			Name:    "gpt-5.6-sol",
+			Backend: api.BackendCodexCmux,
+		}))
 	})
 })

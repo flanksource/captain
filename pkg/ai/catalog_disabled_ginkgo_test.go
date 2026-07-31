@@ -125,4 +125,21 @@ var _ = Describe("catalog opt-out filtering", func() {
 
 		Expect(defaults()).To(BeEmpty())
 	})
+
+	It("serves the exact Captain runtime selection for every model row", func() {
+		models := Catalog()
+		info := CatalogInfo(nil)
+
+		Expect(info).To(HaveLen(len(models)))
+		for index, model := range models {
+			want := api.Model{
+				Name:    model.BareID(),
+				Backend: model.Backend,
+			}
+			if model.ID != want.Name {
+				want.ID = model.ID
+			}
+			Expect(info[index].Runtime).To(Equal(want))
+		}
+	})
 })

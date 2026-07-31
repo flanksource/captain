@@ -493,7 +493,7 @@ function adapterModels(adapter: WhoamiAdapter): WhoamiModel[] {
 }
 
 async function fetchWhoami(): Promise<WhoamiResult> {
-  const response = await fetch("/api/v1/whoami?models=true&limit=0", {
+  const response = await fetch("/api/v1/whoami?models=true&limit=0&disabled=true", {
     method: "POST",
     headers: { Accept: "application/json", "Content-Type": "application/json" },
     body: "{}",
