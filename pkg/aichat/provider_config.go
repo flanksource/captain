@@ -44,23 +44,23 @@ func (s *Service) annotateConfiguredModels(ctx context.Context, models ModelCata
 	return nil
 }
 
-func (s *Service) resolveProvider(ctx context.Context, config api.Config) (api.StreamingProvider, error) {
+func (s *Service) prepareProviderConfig(ctx context.Context, config api.Config) (api.Config, error) {
 	if s.options.ProviderConfig != nil {
 		resolved, err := ai.ResolveModelSelectors(config.Model)
 		if err != nil {
-			return nil, fmt.Errorf("resolve chat model: %w", err)
+			return api.Config{}, fmt.Errorf("resolve chat model: %w", err)
 		}
 		config.Model = resolved
 		config, err = s.options.ProviderConfig.ProviderConfig(ctx, ProviderConfigRequest{
 			Model: resolved, Config: config,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("load chat provider config for %s: %w", resolved.Backend, err)
+			return api.Config{}, fmt.Errorf("load chat provider config for %s: %w", resolved.Backend, err)
 		}
 		if !reflect.DeepEqual(config.Model, resolved) {
-			return nil, fmt.Errorf("provider config source changed the resolved chat model from %q (%s) to %q (%s)",
+			return api.Config{}, fmt.Errorf("provider config source changed the resolved chat model from %q (%s) to %q (%s)",
 				resolved.Name, resolved.Backend, config.Model.Name, config.Model.Backend)
 		}
 	}
-	return s.resolver.Provider(ctx, config)
+	return config, nil
 }

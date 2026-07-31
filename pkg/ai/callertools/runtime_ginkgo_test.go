@@ -98,6 +98,43 @@ var _ = Describe("Authenticated caller-tool runtime", func() {
 		Expect(calls.Load()).To(Equal(int32(1)))
 	})
 
+	It("uses the provider tool-use ID without exposing transport input to the handler", func(ctx SpecContext) {
+		var handledInput map[string]any
+		permissionRequests := make(chan api.PermissionRequest, 1)
+		runtime, err := callertools.New(callertools.Options{
+			Definitions: []api.ToolDefinition{{
+				Name: "invoice_update", DefaultPermission: api.ToolModeAsk,
+				Handler: func(_ context.Context, input map[string]any) (any, error) {
+					handledInput = input
+					return input, nil
+				},
+			}},
+			CanUseTool: func(_ context.Context, request api.PermissionRequest) (api.PermissionDecision, error) {
+				permissionRequests <- request
+				return api.PermissionDecision{Allow: true}, nil
+			},
+			SessionID: "provider-correlation-session",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(runtime.Close)
+
+		client := authenticatedClient(ctx, runtime.Endpoint())
+		DeferCleanup(client.Close)
+		request := mcp.CallToolRequest{}
+		request.Params.Name = "invoice_update"
+		request.Params.Arguments = map[string]any{
+			"status": "draft", "__captain_tool_use_id": "claude-tool-use-1",
+		}
+		result, err := client.CallTool(ctx, request)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.IsError).To(BeFalse())
+		var permission api.PermissionRequest
+		Eventually(permissionRequests).Should(Receive(&permission))
+		Expect(permission.ToolUseID).To(Equal("claude-tool-use-1"))
+		Expect(permission.Input).To(Equal(map[string]any{"status": "draft"}))
+		Expect(handledInput).To(Equal(map[string]any{"status": "draft"}))
+	})
+
 	It("rejects wrong-session credentials and browser origins", func() {
 		first := newRuntime("captain-session-1", "first")
 		DeferCleanup(first.Close)
