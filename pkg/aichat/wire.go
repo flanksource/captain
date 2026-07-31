@@ -15,6 +15,7 @@ type ChatRequest struct {
 	ID              string                  `json:"id,omitempty"`
 	Messages        []UIMessage             `json:"messages"`
 	Model           string                  `json:"model,omitempty"`
+	Runtime         *api.Model              `json:"runtime,omitempty"`
 	ReasoningEffort api.Effort              `json:"reasoningEffort,omitempty"`
 	Temperature     *float64                `json:"temperature,omitempty"`
 	Budget          api.Budget              `json:"budget,omitempty"`

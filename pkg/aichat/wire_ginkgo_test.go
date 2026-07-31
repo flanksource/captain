@@ -62,6 +62,19 @@ var _ = Describe("AI SDK v6 wire types", func() {
 		Expect(aichat.UIPart{Type: "text"}.EffectiveToolName()).To(BeEmpty())
 	})
 
+	It("decodes an exact structured runtime", func() {
+		var request aichat.ChatRequest
+		Expect(json.Unmarshal([]byte(`{
+			"runtime":{"model":"sonnet","backend":"claude-agent","effort":"high"},
+			"messages":[{"role":"user","parts":[{"type":"text","text":"hello"}]}]
+		}`), &request)).To(Succeed())
+
+		Expect(request.Runtime).NotTo(BeNil())
+		Expect(*request.Runtime).To(Equal(api.Model{
+			Name: "sonnet", Backend: api.BackendClaudeAgent, Effort: api.EffortHigh,
+		}))
+	})
+
 	It("rejects the removed string tool approval policy", func() {
 		var request aichat.ChatRequest
 		Expect(json.Unmarshal([]byte(`{"messages":[],"toolApproval":"manual"}`), &request)).To(
@@ -75,6 +88,7 @@ var _ = Describe("AI SDK v6 wire types", func() {
 			ID: "openai/gpt", Provider: "openai", Label: "GPT", Reasoning: true,
 			Temperature: true, Configured: true, ContextWindow: 128000,
 			InputMediaTypes: []string{"image/*"},
+			Runtime:         api.Model{Name: "gpt", Backend: api.BackendOpenAI},
 		}}
 		tools := aichat.ToolCatalogResponse{Tools: []aichat.ToolCatalogEntry{{
 			Name: "invoice_get", Source: "custom", Group: "billing",
@@ -85,7 +99,7 @@ var _ = Describe("AI SDK v6 wire types", func() {
 
 		modelJSON, err := json.Marshal(models)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(modelJSON).To(MatchJSON(`[{"id":"openai/gpt","provider":"openai","label":"GPT","reasoning":true,"temperature":true,"configured":true,"contextWindow":128000,"inputMediaTypes":["image/*"]}]`))
+		Expect(modelJSON).To(MatchJSON(`[{"id":"openai/gpt","provider":"openai","label":"GPT","runtime":{"model":"gpt","backend":"openai"},"reasoning":true,"temperature":true,"configured":true,"contextWindow":128000,"inputMediaTypes":["image/*"]}]`))
 		toolJSON, err := json.Marshal(tools)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(toolJSON).To(MatchJSON(`{"tools":[{"name":"invoice_get","source":"custom","group":"billing","preferenceKey":"billing","defaultPermission":"ask","strict":true,"method":"GET","path":"/invoices/{id}","operationName":"invoice get","inputSchema":{"type":"object"}}]}`))

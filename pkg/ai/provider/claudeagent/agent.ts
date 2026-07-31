@@ -6,7 +6,7 @@
 //   client -> server requests:
 //     initialize {cwd, model, systemPrompt, appendSystemPrompt, allowedTools,
 //                 maxTurns, maxBudgetUsd, permissionMode, resume, approvalMode,
-//                 outputSchema}
+//                 outputSchema, mcpServers}
 //                 -> reply {ok:true}
 //     prompt {text, attachments?} -> reply {accepted:true}
 //     interrupt          -> reply {}
@@ -65,6 +65,10 @@ interface InitializeParams {
   // monitorUrl is the captain serve base URL session-monitoring lifecycle
   // hooks POST to. Empty/absent disables monitoring hook injection.
   monitorUrl?: string;
+  mcpServers?: Record<
+    string,
+    { type: "http"; url: string; headers?: Record<string, string> }
+  >;
 }
 
 type JsonRpcId = number | string | null;
@@ -266,6 +270,7 @@ function buildOptions(params: InitializeParams): Options {
       params.allowedTools && params.allowedTools.length
         ? params.allowedTools
         : undefined,
+    mcpServers: params.mcpServers,
     stderr: (data: string) => process.stderr.write(data),
     hooks: {
       PreToolUse: [
@@ -360,6 +365,13 @@ function buildOptions(params: InitializeParams): Options {
   // PreToolUse git add/commit block above still applies first.
   if (brokered) {
     options.canUseTool = async (toolName, input, opts) => {
+      if (
+        Object.keys(params.mcpServers ?? {}).some((server) =>
+          toolName.startsWith(`mcp__${server}__`),
+        )
+      ) {
+        return { behavior: "allow", updatedInput: input };
+      }
       const toolUseId =
         (opts as { toolUseId?: string } | undefined)?.toolUseId ?? "";
       let decision: HostDecision;

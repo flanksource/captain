@@ -14,12 +14,12 @@ import (
 )
 
 func TestNewCodexAppServer_Defaults(t *testing.T) {
-	c, err := NewCodexAppServer("")
+	c, err := NewCodexAppServer(ai.Config{})
 	require.NoError(t, err)
 	assert.Equal(t, CodexCLIDefaultModel, c.GetModel())
 	assert.Equal(t, ai.BackendCodexAgent, c.GetBackend())
 
-	c2, err := NewCodexAppServer("gpt-5.4")
+	c2, err := NewCodexAppServer(ai.Config{Model: api.Model{Name: "gpt-5.4"}})
 	require.NoError(t, err)
 	assert.Equal(t, "gpt-5.4", c2.GetModel())
 }
@@ -197,7 +197,7 @@ func drainEvents(ts *turnState) []ai.Event {
 // route to it, mirroring what ExecuteStream sets up.
 func activeTurn(t *testing.T, schema json.RawMessage) (*CodexAppServer, *turnState) {
 	t.Helper()
-	c, err := NewCodexAppServer("gpt-5")
+	c, err := NewCodexAppServer(ai.Config{Model: api.Model{Name: "gpt-5"}})
 	require.NoError(t, err)
 	ts := &turnState{
 		ch:           make(chan ai.Event, 16),
@@ -540,7 +540,7 @@ func TestBuildThreadStartParams_Safety(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			p := buildThreadStartParams("gpt-5", tc.req)
+			p := buildThreadStartParams("gpt-5", tc.req, nil)
 			assert.Equal(t, tc.wantSandbox, p["sandbox"])
 			assert.Equal(t, tc.wantApproval, p["approvalPolicy"])
 
@@ -560,11 +560,11 @@ func TestBuildThreadStartParams_CwdAndModel(t *testing.T) {
 	p := buildThreadStartParams("gpt-5", ai.Request{
 		Prompt: api.Prompt{User: "p"},
 		Setup:  &shell.Setup{Cwd: "/repo"},
-	})
+	}, nil)
 	assert.Equal(t, "/repo", p["cwd"])
 	assert.Equal(t, "gpt-5", p["model"])
 
-	noModel := buildThreadStartParams("", req(api.Prompt{User: "p"}))
+	noModel := buildThreadStartParams("", req(api.Prompt{User: "p"}), nil)
 	_, hasModel := noModel["model"]
 	assert.False(t, hasModel, "empty model must be omitted")
 }
@@ -573,13 +573,13 @@ func TestBuildResumeParams(t *testing.T) {
 	p := buildResumeParams(ai.Request{
 		SessionID: "thread-9",
 		Setup:     &shell.Setup{Cwd: "/repo"},
-	})
+	}, nil)
 	assert.Equal(t, "thread-9", p["threadId"])
 	assert.Equal(t, "/repo", p["cwd"])
 }
 
 func TestHandleApproval_AutoApproves(t *testing.T) {
-	c, err := NewCodexAppServer("m")
+	c, err := NewCodexAppServer(ai.Config{Model: api.Model{Name: "m"}})
 	require.NoError(t, err)
 
 	tests := []struct {

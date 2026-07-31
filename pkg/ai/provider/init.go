@@ -24,7 +24,7 @@ func init() {
 	})
 
 	ai.RegisterProvider(ai.BackendCodexCLI, func(cfg ai.Config) (ai.Provider, error) { return NewCodexCLI(cfg), nil })
-	ai.RegisterProvider(ai.BackendCodexAgent, func(cfg ai.Config) (ai.Provider, error) { return NewCodexAppServer(cfg.Model.Name) })
+	ai.RegisterProvider(ai.BackendCodexAgent, func(cfg ai.Config) (ai.Provider, error) { return NewCodexAppServer(cfg) })
 
 	// cmux drives an interactive claude/codex TUI inside a tmux/cmux surface,
 	// tailing the session JSONL; the same provider serves both agents (it reads
