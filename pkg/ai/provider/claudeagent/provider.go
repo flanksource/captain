@@ -24,7 +24,9 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/ai/callertools"
 	"github.com/flanksource/captain/pkg/ai/provider/jsonrpc"
+	aitools "github.com/flanksource/captain/pkg/ai/tools"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/clicky/exec"
 	"github.com/flanksource/commons/logger"
@@ -120,6 +122,10 @@ type Provider struct {
 	// so it is pinned from the first turn and every later turn must match it.
 	sessionSchemaOnce sync.Once
 	sessionSchema     json.RawMessage
+
+	callerToolsMu      sync.Mutex
+	callerToolsRuntime *callertools.Runtime
+	callerTools        *api.CallerToolEndpoint
 }
 
 // New builds a claude-agent provider. The supervised process is started lazily
@@ -131,18 +137,27 @@ func New(cfg ai.Config) (*Provider, error) {
 	}
 	model = ai.NormalizeModelForBackend(ai.BackendClaudeAgent, model)
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Provider{
+	provider := &Provider{
 		model:      model,
 		cfg:        cfg,
 		baseCtx:    ctx,
 		baseCancel: cancel,
 		initDone:   make(chan struct{}),
 		procExited: make(chan struct{}),
-	}, nil
+	}
+	if cfg.CallerTools != nil {
+		endpoint := *cfg.CallerTools
+		endpoint.Headers = cloneHeaders(cfg.CallerTools.Headers)
+		provider.callerTools = &endpoint
+	}
+	return provider, nil
 }
 
-func (p *Provider) GetModel() string       { return p.model }
-func (p *Provider) GetBackend() ai.Backend { return ai.BackendClaudeAgent }
+func (p *Provider) GetModel() string          { return p.model }
+func (p *Provider) GetBackend() ai.Backend    { return ai.BackendClaudeAgent }
+func (p *Provider) SupportsCallerTools() bool { return true }
+
+var _ api.ToolCapableProvider = (*Provider)(nil)
 
 // Execute drains its own ExecuteStream into a buffered ai.Response. When the
 // request carries a structured-output schema, the validated JSON the SDK
@@ -269,6 +284,9 @@ func (p *Provider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai
 	// structured session, or a differing schema, cannot be honoured).
 	p.sessionSchemaOnce.Do(func() { p.sessionSchema = schema })
 
+	if err := p.prepareCallerTools(req); err != nil {
+		return nil, err
+	}
 	if err := p.ensureStarted(req); err != nil {
 		return nil, err
 	}
@@ -307,6 +325,44 @@ func (p *Provider) Close() error {
 	if p.baseCancel != nil {
 		p.baseCancel()
 	}
+	if p.callerToolsRuntime != nil {
+		return p.callerToolsRuntime.Close()
+	}
+	return nil
+}
+
+func (p *Provider) prepareCallerTools(req ai.Request) error {
+	p.callerToolsMu.Lock()
+	defer p.callerToolsMu.Unlock()
+	if p.callerTools != nil {
+		if req.Permissions.MCP.Disabled {
+			return fmt.Errorf("claude-agent: caller tools require MCP but MCP is disabled")
+		}
+		return p.callerTools.Validate()
+	}
+	if len(p.cfg.Tools) == 0 {
+		return nil
+	}
+	definitions, err := aitools.ResolveDefinitions(p.cfg.Tools, req.ToolPreferences)
+	if err != nil {
+		return fmt.Errorf("claude-agent caller tools: %w", err)
+	}
+	if len(definitions) == 0 {
+		return nil
+	}
+	if req.Permissions.MCP.Disabled {
+		return fmt.Errorf("claude-agent: caller tools require MCP but MCP is disabled")
+	}
+	runtime, err := callertools.New(callertools.Options{
+		Definitions: definitions, CanUseTool: p.cfg.CanUseTool,
+		SessionID: firstNonEmpty(p.cfg.CaptainSessionID, req.SessionID, p.cfg.SessionID),
+	})
+	if err != nil {
+		return fmt.Errorf("start claude-agent caller tools: %w", err)
+	}
+	endpoint := runtime.Endpoint()
+	p.callerToolsRuntime = runtime
+	p.callerTools = &endpoint
 	return nil
 }
 
@@ -438,6 +494,7 @@ func (p *Provider) initializeParams(req ai.Request) initializeParams {
 		ApprovalMode:       approvalMode,
 		OutputSchema:       p.sessionSchema,
 		MonitorURL:         monitorHooksURL(req),
+		MCPServers:         callerToolServers(p.callerTools),
 	}
 }
 
@@ -452,18 +509,45 @@ func monitorHooksURL(req ai.Request) string {
 }
 
 type initializeParams struct {
-	Cwd                string          `json:"cwd,omitempty"`
-	Model              string          `json:"model,omitempty"`
-	SystemPrompt       string          `json:"systemPrompt,omitempty"`
-	AppendSystemPrompt string          `json:"appendSystemPrompt,omitempty"`
-	AllowedTools       []string        `json:"allowedTools,omitempty"`
-	MaxTurns           int             `json:"maxTurns,omitempty"`
-	MaxBudgetUsd       float64         `json:"maxBudgetUsd,omitempty"`
-	PermissionMode     string          `json:"permissionMode,omitempty"`
-	Resume             string          `json:"resume,omitempty"`
-	ApprovalMode       string          `json:"approvalMode,omitempty"`
-	OutputSchema       json.RawMessage `json:"outputSchema,omitempty"`
-	MonitorURL         string          `json:"monitorUrl,omitempty"`
+	Cwd                string                      `json:"cwd,omitempty"`
+	Model              string                      `json:"model,omitempty"`
+	SystemPrompt       string                      `json:"systemPrompt,omitempty"`
+	AppendSystemPrompt string                      `json:"appendSystemPrompt,omitempty"`
+	AllowedTools       []string                    `json:"allowedTools,omitempty"`
+	MaxTurns           int                         `json:"maxTurns,omitempty"`
+	MaxBudgetUsd       float64                     `json:"maxBudgetUsd,omitempty"`
+	PermissionMode     string                      `json:"permissionMode,omitempty"`
+	Resume             string                      `json:"resume,omitempty"`
+	ApprovalMode       string                      `json:"approvalMode,omitempty"`
+	OutputSchema       json.RawMessage             `json:"outputSchema,omitempty"`
+	MonitorURL         string                      `json:"monitorUrl,omitempty"`
+	MCPServers         map[string]callerToolServer `json:"mcpServers,omitempty"`
+}
+
+type callerToolServer struct {
+	Type    string            `json:"type"`
+	URL     string            `json:"url"`
+	Headers map[string]string `json:"headers,omitempty"`
+}
+
+func callerToolServers(endpoint *api.CallerToolEndpoint) map[string]callerToolServer {
+	if endpoint == nil {
+		return nil
+	}
+	return map[string]callerToolServer{
+		endpoint.Name: {Type: "http", URL: endpoint.URL, Headers: cloneHeaders(endpoint.Headers)},
+	}
+}
+
+func cloneHeaders(headers map[string]string) map[string]string {
+	if headers == nil {
+		return nil
+	}
+	cloned := make(map[string]string, len(headers))
+	for key, value := range headers {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 func (p *Provider) setInitResult(err error) {

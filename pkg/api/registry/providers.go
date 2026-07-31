@@ -19,9 +19,9 @@ var (
 		PricingPrefix: "anthropic",
 		EnvVars:       []string{"ANTHROPIC_API_KEY"},
 		modes: map[RuntimeMode]ModeCapabilities{
-			ModeAPI:   {Backend: BackendAnthropic, Streaming: true, MediaTypes: []string{"image/*"}},
+			ModeAPI:   {Backend: BackendAnthropic, Streaming: true, CallerTools: true, MediaTypes: []string{"image/*"}},
 			ModeCLI:   {Backend: BackendClaudeCLI, Streaming: true, Resume: true},
-			ModeAgent: {Backend: BackendClaudeAgent, Streaming: true, Resume: true, Interrupt: true, Steer: true, MediaTypes: []string{"image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf"}},
+			ModeAgent: {Backend: BackendClaudeAgent, Streaming: true, Resume: true, Interrupt: true, Steer: true, CallerTools: true, MediaTypes: []string{"image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf"}},
 			ModeCmux:  {Backend: BackendClaudeCmux, Streaming: true, Resume: true, Keyless: true},
 		},
 		modeTokens: sortModeTokens([]modeToken{
@@ -43,9 +43,9 @@ var (
 		PricingPrefix: "openai",
 		EnvVars:       []string{"OPENAI_API_KEY"},
 		modes: map[RuntimeMode]ModeCapabilities{
-			ModeAPI:   {Backend: BackendOpenAI, Streaming: true, MediaTypes: []string{"image/*"}},
+			ModeAPI:   {Backend: BackendOpenAI, Streaming: true, CallerTools: true, MediaTypes: []string{"image/*"}},
 			ModeCLI:   {Backend: BackendCodexCLI, Streaming: true, Resume: true, MediaTypes: []string{"image/*"}},
-			ModeAgent: {Backend: BackendCodexAgent, Streaming: true, Resume: true, Interrupt: true, MediaTypes: []string{"image/*"}},
+			ModeAgent: {Backend: BackendCodexAgent, Streaming: true, Resume: true, Interrupt: true, CallerTools: true, MediaTypes: []string{"image/*"}},
 			ModeCmux:  {Backend: BackendCodexCmux, Streaming: true, Resume: true, Keyless: true},
 		},
 		// A bare "codex" is the CLI, not the API — the asymmetry with "claude"
@@ -77,7 +77,7 @@ var (
 		PricingPrefix: "google",
 		EnvVars:       []string{"GEMINI_API_KEY", "GOOGLE_API_KEY"},
 		modes: map[RuntimeMode]ModeCapabilities{
-			ModeAPI: {Backend: BackendGemini, Streaming: true, MediaTypes: []string{"image/*", "audio/*", "video/*", "application/pdf"}},
+			ModeAPI: {Backend: BackendGemini, Streaming: true, CallerTools: true, MediaTypes: []string{"image/*", "audio/*", "video/*", "application/pdf"}},
 			ModeCLI: {Backend: BackendGeminiCLI, Streaming: true},
 		},
 		modeTokens: sortModeTokens([]modeToken{
@@ -98,7 +98,7 @@ var (
 		modes: map[RuntimeMode]ModeCapabilities{
 			// DeepSeek selects reasoning by model id (deepseek-reasoner vs
 			// deepseek-chat) and ships no attachment support.
-			ModeAPI: {Backend: BackendDeepSeek, Streaming: true},
+			ModeAPI: {Backend: BackendDeepSeek, Streaming: true, CallerTools: true},
 		},
 		claimPrefixes: []string{"deepseek"},
 		families:      []string{"deepseek"},
