@@ -256,7 +256,7 @@ func assertSchemaHasProps(t *testing.T, label string, schema map[string]any, key
 	}
 }
 
-func TestUpdateEmbeddedPromptForksToLocal(t *testing.T) {
+func TestUpdateEmbeddedPromptRequiresSaveAs(t *testing.T) {
 	isolateCaptainConfig(t)
 
 	dir := t.TempDir()
@@ -276,24 +276,39 @@ func TestUpdateEmbeddedPromptForksToLocal(t *testing.T) {
 	}
 	newContent := original.Content + "\n{{! local override }}\n"
 
-	forked, err := updatePrompt(ctx, embedded.ID, map[string]any{"content": newContent})
+	if _, err := updatePrompt(ctx, embedded.ID, map[string]any{"content": newContent}); err == nil {
+		t.Fatal("updatePrompt(embedded) succeeded, want read-only error")
+	} else if !strings.Contains(err.Error(), "read-only") || !strings.Contains(err.Error(), "create") {
+		t.Fatalf("updatePrompt(embedded) error = %q, want read-only create guidance", err)
+	}
+	if entries, err := os.ReadDir(dir); err != nil {
+		t.Fatalf("read local prompt directory: %v", err)
+	} else if len(entries) != 0 {
+		t.Fatalf("updatePrompt(embedded) created %d local files, want none", len(entries))
+	}
+
+	savedAs, err := createPrompt(ctx, map[string]any{
+		"name":    "Commit Copy",
+		"relPath": "copies/commit.prompt",
+		"content": newContent,
+	})
 	if err != nil {
-		t.Fatalf("updatePrompt(embedded) err = %v", err)
+		t.Fatalf("createPrompt(save as) err = %v", err)
 	}
-	if !forked.Writable || forked.SourceKind != "local" {
-		t.Fatalf("forked prompt = kind %q writable %v, want local writable", forked.SourceKind, forked.Writable)
+	if !savedAs.Writable || savedAs.SourceKind != "local" {
+		t.Fatalf("saved-as prompt = kind %q writable %v, want local writable", savedAs.SourceKind, savedAs.Writable)
 	}
-	if forked.ID == embedded.ID {
-		t.Fatalf("forked prompt kept embedded id %q", forked.ID)
+	if savedAs.ID == embedded.ID {
+		t.Fatalf("saved-as prompt kept embedded id %q", savedAs.ID)
 	}
-	if forked.RelPath != "commit.prompt" {
-		t.Fatalf("forked relPath = %q, want commit.prompt (testdata/ stripped)", forked.RelPath)
+	if savedAs.RelPath != "copies/commit.prompt" {
+		t.Fatalf("saved-as relPath = %q, want copies/commit.prompt", savedAs.RelPath)
 	}
-	if !strings.Contains(forked.Content, "local override") {
-		t.Fatalf("forked content did not persist edit: %q", forked.Content)
+	if !strings.Contains(savedAs.Content, "local override") {
+		t.Fatalf("saved-as content did not persist edit: %q", savedAs.Content)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "commit.prompt")); err != nil {
-		t.Fatalf("forked prompt file missing: %v", err)
+	if _, err := os.Stat(filepath.Join(dir, "copies", "commit.prompt")); err != nil {
+		t.Fatalf("saved-as prompt file missing: %v", err)
 	}
 
 	stillEmbedded, err := getPrompt(ctx, embedded.ID)
@@ -301,11 +316,7 @@ func TestUpdateEmbeddedPromptForksToLocal(t *testing.T) {
 		t.Fatalf("getPrompt(embedded) after fork err = %v", err)
 	}
 	if strings.Contains(stillEmbedded.Content, "local override") {
-		t.Fatalf("embedded prompt was mutated by fork")
-	}
-
-	if _, err := updatePrompt(ctx, embedded.ID, map[string]any{"content": newContent}); err == nil {
-		t.Fatalf("second fork of same prompt should fail with already-exists")
+		t.Fatal("embedded prompt was mutated by save as")
 	}
 }
 

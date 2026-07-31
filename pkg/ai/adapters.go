@@ -17,9 +17,10 @@ import (
 // probe and its caching can be reused by non-CLI consumers (e.g. the aichat
 // server's model menu) without importing pkg/cli.
 type WhoamiOptions struct {
-	Backend string `flag:"backend" help:"Show only this backend: anthropic|openai|gemini|deepseek|claude-cli|claude-agent|claude-cmux|codex-cli|codex-agent|codex-cmux|gemini-cli" short:"b"`
-	Models  bool   `flag:"models" help:"List models from provider APIs or installed CLI catalogs" default:"true" short:"m"`
-	Limit   int    `flag:"limit" help:"Max sample model IDs to show per adapter in pretty output after per-prefix filtering (0 = all)" default:"0" short:"l"`
+	Backend         string `flag:"backend" help:"Show only this backend: anthropic|openai|gemini|deepseek|claude-cli|claude-agent|claude-cmux|codex-cli|codex-agent|codex-cmux|gemini-cli" short:"b"`
+	Models          bool   `flag:"models" help:"List models from provider APIs or installed CLI catalogs" default:"true" short:"m"`
+	Limit           int    `flag:"limit" help:"Max sample model IDs to show per adapter in pretty output after per-prefix filtering (0 = all)" default:"0" short:"l"`
+	IncludeDisabled bool   `flag:"disabled" help:"Include disabled models" default:"false"`
 }
 
 // AdapterStatus is the resolved auth/availability of a single agent adapter

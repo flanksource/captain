@@ -111,7 +111,7 @@ describe("WhoamiPage", () => {
     expect(screen.getByText("low / medium / high")).toBeInTheDocument();
     expect(screen.getByText("Gemini 2.5 Pro", { selector: "div" })).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/v1/whoami?models=true&limit=0",
+      "/api/v1/whoami?models=true&limit=0&disabled=true",
       expect.objectContaining({ method: "POST", body: "{}" }),
     );
   });
