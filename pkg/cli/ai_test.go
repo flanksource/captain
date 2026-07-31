@@ -266,7 +266,7 @@ func TestAIProviderOptions_ToConfig_ValidationErrors(t *testing.T) {
 func TestAIProviderOptions_ToConfig_SandboxForcesCLI(t *testing.T) {
 	isolateSavedAI(t)
 	cfg, err := (AIProviderOptions{
-		ModelFlags: aiflags.ModelFlags{Model: "claude-sonnet-5", Backend: "anthropic"},
+		ModelFlags: aiflags.ModelFlags{Model: "claude-sonnet-5"},
 		Sandbox:    true,
 	}).ToConfig()
 	if err != nil {
@@ -277,6 +277,65 @@ func TestAIProviderOptions_ToConfig_SandboxForcesCLI(t *testing.T) {
 	}
 	if cfg.Model.Backend != api.BackendClaudeCLI || cfg.Model.Mode != registry.ModeCLI {
 		t.Fatalf("model runtime = %s/%s, want %s/%s", cfg.Model.Backend, cfg.Model.Mode, api.BackendClaudeCLI, registry.ModeCLI)
+	}
+	if cfg.Model.Name != "claude-sonnet-5" {
+		t.Fatalf("model name = %q, want unchanged", cfg.Model.Name)
+	}
+}
+
+func TestAIProviderOptions_ToConfig_SandboxRejectsExplicitAPIBackend(t *testing.T) {
+	isolateSavedAI(t)
+	_, err := (AIProviderOptions{
+		ModelFlags: aiflags.ModelFlags{Model: "claude-sonnet-5", Backend: "anthropic"},
+		Sandbox:    true,
+	}).ToConfig()
+	if err == nil || !strings.Contains(err.Error(), "contradicts backend") {
+		t.Fatalf("err = %v, want CLI/API contradiction", err)
+	}
+}
+
+func TestAIProviderOptions_ToConfig_SandboxRejectsExplicitAPIMode(t *testing.T) {
+	isolateSavedAI(t)
+	_, err := (AIProviderOptions{
+		ModelFlags: aiflags.ModelFlags{Model: "claude-sonnet-5", Mode: "api"},
+		Sandbox:    true,
+	}).ToConfig()
+	if err == nil || !strings.Contains(err.Error(), "contradicts requested mode") {
+		t.Fatalf("err = %v, want CLI/API mode contradiction", err)
+	}
+}
+
+func TestAIProviderOptions_ToConfig_SandboxOverridesSavedRuntime(t *testing.T) {
+	seedSavedAI(t, "ai:\n  model: opus\n  backend: claude-agent\n")
+	cfg, err := (AIProviderOptions{Sandbox: true}).ToConfig()
+	if err != nil {
+		t.Fatalf("ToConfig: %v", err)
+	}
+	if cfg.Model.Backend != api.BackendClaudeCLI {
+		t.Fatalf("backend = %q, want %q", cfg.Model.Backend, api.BackendClaudeCLI)
+	}
+}
+
+func TestAIProviderOptions_ToConfig_SandboxResolvesFallbacksInCLIMode(t *testing.T) {
+	isolateSavedAI(t)
+	cfg, err := (AIProviderOptions{
+		ModelFlags: aiflags.ModelFlags{
+			Model:    "claude-sonnet-5",
+			Fallback: []string{"gpt-5.5", "gemini-3.5-flash"},
+		},
+		Sandbox: true,
+	}).ToConfig()
+	if err != nil {
+		t.Fatalf("ToConfig: %v", err)
+	}
+	want := []api.Backend{api.BackendCodexCLI, api.BackendGeminiCLI}
+	if len(cfg.Model.Fallbacks) != len(want) {
+		t.Fatalf("fallbacks = %v, want %d", cfg.Model.Fallbacks, len(want))
+	}
+	for i, backend := range want {
+		if cfg.Model.Fallbacks[i].Backend != backend {
+			t.Fatalf("fallback[%d] backend = %q, want %q", i, cfg.Model.Fallbacks[i].Backend, backend)
+		}
 	}
 }
 

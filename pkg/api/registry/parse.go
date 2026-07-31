@@ -298,7 +298,7 @@ func ResolveModel(m Model) (Model, error) {
 			out.Fallbacks = append(out.Fallbacks, fb)
 			continue
 		}
-		rfb, err := ParseModelElement(fb.Name, ParseOptions{Backend: fb.Backend})
+		rfb, err := ParseModelElement(fb.Name, ParseOptions{Backend: fb.Backend, Mode: fb.Mode})
 		if err != nil {
 			return Model{}, err
 		}

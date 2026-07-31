@@ -8,6 +8,7 @@ import (
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/prompt"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/api/registry"
 )
 
 // resolvePromptTemplate picks the prompt source for `captain ai prompt` and loads
@@ -93,6 +94,37 @@ func overlayCLI(base ai.Request, baseCfg ai.Config, o AIPromptOptions) (ai.Reque
 	m.Effort = api.Effort(firstNonEmpty(o.Effort, string(bm.Effort)))
 	m.NoCache = o.NoCache || bm.NoCache || saved.NoCache
 	m.Fallbacks = firstFallbacks(o.Fallback, bm.Fallbacks)
+
+	requestedMode := registry.RuntimeMode("")
+	if value := strings.TrimSpace(o.Mode); value != "" {
+		var ok bool
+		requestedMode, ok = registry.ParseRuntimeMode(value)
+		if !ok {
+			return base, baseCfg, fmt.Errorf("invalid --mode %q (valid: %s)", o.Mode, registry.RuntimeModeList())
+		}
+	}
+	if o.Sandbox {
+		if requestedMode != "" && requestedMode != registry.ModeCLI {
+			return base, baseCfg, fmt.Errorf("--sandbox requires CLI mode, but --mode is %q", requestedMode)
+		}
+		requestedMode = registry.ModeCLI
+	}
+	if requestedMode != "" {
+		m.Mode = ""
+		if strings.TrimSpace(o.Backend) == "" && !ai.ContainsRuntimeSelector(o.Model) {
+			m.Backend = ""
+		}
+		if len(o.Fallback) == 0 {
+			for i := range m.Fallbacks {
+				m.Fallbacks[i].Backend = ""
+				m.Fallbacks[i].Mode = ""
+			}
+		}
+		m, err = m.WithMode(requestedMode)
+		if err != nil {
+			return base, baseCfg, err
+		}
+	}
 	m, err = applyProviderDefaults(m, saved)
 	if err != nil {
 		return base, baseCfg, err
@@ -100,12 +132,6 @@ func overlayCLI(base ai.Request, baseCfg ai.Config, o AIPromptOptions) (ai.Reque
 	req.Model, err = ai.ResolveModelSelectors(m)
 	if err != nil {
 		return base, baseCfg, err
-	}
-	if o.Sandbox {
-		req.Model, err = sandboxCLIModel(req.Model)
-		if err != nil {
-			return base, baseCfg, err
-		}
 	}
 
 	req.Budget.MaxTokens = firstPositive(o.MaxTokens, base.Budget.MaxTokens, baseCfg.Budget.MaxTokens, saved.MaxTokens, 4096)

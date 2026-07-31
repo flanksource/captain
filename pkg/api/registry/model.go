@@ -97,6 +97,48 @@ func (m Model) Capabilities() Model {
 	return m
 }
 
+// WithMode applies one runtime mechanism to the primary model and every
+// fallback before backend resolution. Explicit backends that name a different
+// mechanism remain contradictions rather than being silently rewritten.
+func (m Model) WithMode(mode RuntimeMode) (Model, error) {
+	if mode == "" {
+		return m, nil
+	}
+	if _, ok := ParseRuntimeMode(string(mode)); !ok {
+		return Model{}, fmt.Errorf("invalid mode %q (valid: %s)", mode, RuntimeModeList())
+	}
+
+	var err error
+	if m, err = m.Expand(); err != nil {
+		return Model{}, err
+	}
+	apply := func(candidate Model) (Model, error) {
+		expanded, expandErr := candidate.Expand()
+		if expandErr != nil {
+			return Model{}, expandErr
+		}
+		candidate = expanded
+		if candidate.Mode != "" && candidate.Mode != mode {
+			return Model{}, fmt.Errorf("mode %q contradicts requested mode %q", candidate.Mode, mode)
+		}
+		candidate.Mode = mode
+		if err := candidate.validateMode(); err != nil {
+			return Model{}, err
+		}
+		return candidate, nil
+	}
+
+	if m, err = apply(m); err != nil {
+		return Model{}, err
+	}
+	for i := range m.Fallbacks {
+		if m.Fallbacks[i], err = apply(m.Fallbacks[i]); err != nil {
+			return Model{}, fmt.Errorf("fallback[%d]: %w", i, err)
+		}
+	}
+	return m, nil
+}
+
 // ResolveBackend returns Backend when set, otherwise infers it from Name.
 func (m Model) ResolveBackend() (Backend, error) {
 	if m.Backend != "" {

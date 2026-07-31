@@ -86,15 +86,13 @@ func (o AIProviderOptions) ToConfig() (ai.Config, error) {
 	// One resolve: flags → Model → saved per-provider defaults → catalog. The
 	// warn-and-continue policy for a broken config stays here (loadSavedConfig), so
 	// aiflags can hand the error back instead of swallowing it.
-	m, err := o.ResolveWith(saved)
+	mode := registry.RuntimeMode("")
+	if o.Sandbox {
+		mode = registry.ModeCLI
+	}
+	m, err := o.ResolveWithMode(saved, mode)
 	if err != nil {
 		return ai.Config{}, err
-	}
-	if o.Sandbox {
-		m, err = sandboxCLIModel(m)
-		if err != nil {
-			return ai.Config{}, err
-		}
 	}
 	return ai.Config{
 		Model:        m,
@@ -105,38 +103,6 @@ func (o AIProviderOptions) ToConfig() (ai.Config, error) {
 		NoCache:      o.NoCache || saved.NoCache,
 		SchemaRepair: schemaRepairConfig(savedCfg.Prompts.SchemaRepair),
 	}, nil
-}
-
-func sandboxCLIModel(model api.Model) (api.Model, error) {
-	forceCLI := func(candidate api.Model) (api.Model, error) {
-		provider := candidate.Backend.ModelProvider()
-		if provider == nil {
-			return api.Model{}, fmt.Errorf("cannot sandbox model %q: no model provider found", candidate.Name)
-		}
-		backend, err := provider.BackendFor(registry.ModeCLI)
-		if err != nil {
-			return api.Model{}, fmt.Errorf("cannot sandbox model %q: %w", candidate.Name, err)
-		}
-		candidate.Backend = backend
-		candidate.Mode = registry.ModeCLI
-		return candidate.Capabilities(), nil
-	}
-
-	fallbacks := model.Fallbacks
-	model.Fallbacks = nil
-	resolved, err := forceCLI(model)
-	if err != nil {
-		return api.Model{}, err
-	}
-	for _, fallback := range fallbacks {
-		fallback.Fallbacks = nil
-		fallback, err = forceCLI(fallback)
-		if err != nil {
-			return api.Model{}, err
-		}
-		resolved.Fallbacks = append(resolved.Fallbacks, fallback)
-	}
-	return resolved, nil
 }
 
 func schemaRepairConfig(saved captainconfig.SchemaRepairDefaults) api.SchemaRepairConfig {
