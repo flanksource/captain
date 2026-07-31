@@ -128,8 +128,26 @@ func (f ModelFlags) Resolve() (registry.Model, error) {
 // ResolveWith is the pure core: no ambient I/O, no globals. Saved defaults arrive
 // as a parameter so tests and spec-overlaying callers can drive it directly.
 func (f ModelFlags) ResolveWith(saved captainconfig.AIDefaults) (registry.Model, error) {
+	return f.ResolveWithMode(saved, "")
+}
+
+// ResolveWithMode resolves flags and saved defaults while requesting one
+// runtime mechanism for the primary model and all fallbacks.
+func (f ModelFlags) ResolveWithMode(saved captainconfig.AIDefaults, mode registry.RuntimeMode) (registry.Model, error) {
+	if mode != "" && strings.TrimSpace(f.Mode) != "" {
+		explicit, ok := registry.ParseRuntimeMode(f.Mode)
+		if !ok {
+			return registry.Model{}, fmt.Errorf("invalid --mode %q (valid: %s)", f.Mode, registry.RuntimeModeList())
+		}
+		if explicit != mode {
+			return registry.Model{}, fmt.Errorf("mode %q contradicts requested mode %q", explicit, mode)
+		}
+	}
 	m, err := f.ToModel()
 	if err != nil {
+		return registry.Model{}, err
+	}
+	if m, err = m.WithMode(mode); err != nil {
 		return registry.Model{}, err
 	}
 	if !f.NoCache && saved.NoCache {
