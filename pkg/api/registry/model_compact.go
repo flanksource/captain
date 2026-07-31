@@ -114,6 +114,9 @@ func (m Model) Expand() (Model, error) {
 	if parsed.Backend == "" {
 		parsed.Backend = m.Backend
 	}
+	if parsed.Mode == "" {
+		parsed.Mode = m.Mode
+	}
 	parsed.ID = m.ID
 	parsed.Temperature = m.Temperature
 	if !parsed.NoCache {
