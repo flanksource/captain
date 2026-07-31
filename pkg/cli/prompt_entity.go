@@ -78,11 +78,12 @@ func (p PromptSummary) Row() map[string]any {
 
 type PromptDetail struct {
 	PromptSummary
-	Content      string         `json:"content"`
-	InputSchema  map[string]any `json:"inputSchema,omitempty"`
-	InputDefault map[string]any `json:"inputDefault,omitempty"`
-	OutputSchema map[string]any `json:"outputSchema,omitempty"`
-	Metadata     map[string]any `json:"metadata,omitempty"`
+	Content      string              `json:"content"`
+	InputSchema  map[string]any      `json:"inputSchema,omitempty"`
+	InputDefault map[string]any      `json:"inputDefault,omitempty"`
+	OutputSchema map[string]any      `json:"outputSchema,omitempty"`
+	Metadata     map[string]any      `json:"metadata,omitempty"`
+	Run          PromptRenderRequest `json:"run"`
 }
 
 type PromptWriteRequest struct {
@@ -287,18 +288,15 @@ func updatePrompt(ctx context.Context, id string, body map[string]any) (PromptDe
 	if err != nil {
 		return PromptDetail{}, err
 	}
+	if !record.Source.Writable {
+		return PromptDetail{}, fmt.Errorf("prompt source %q is read-only; use create to save a copy", record.Source.Label)
+	}
 	var req PromptWriteRequest
 	if err := decodePromptBody(ctx, body, &req); err != nil {
 		return PromptDetail{}, err
 	}
 	if strings.TrimSpace(req.Content) == "" {
 		return PromptDetail{}, fmt.Errorf("prompt content cannot be empty")
-	}
-	if !record.Source.Writable {
-		if strings.TrimSpace(req.RelPath) == "" {
-			req.RelPath = localForkRelPath(record)
-		}
-		return writeNewLocalPrompt(ctx, req)
 	}
 	full, err := safeLocalPromptPath(record.Source, record.Rel)
 	if err != nil {
@@ -308,17 +306,6 @@ func updatePrompt(ctx context.Context, id string, body map[string]any) (PromptDe
 		return PromptDetail{}, fmt.Errorf("write prompt: %w", err)
 	}
 	return promptDetail(record)
-}
-
-// localForkRelPath derives the destination path for a read-only (embedded)
-// prompt saved into a writable source, stripping the source walk root so an
-// embedded "testdata/commit.prompt" lands as "commit.prompt".
-func localForkRelPath(record promptRecord) string {
-	rel := record.Rel
-	if root := record.Source.WalkRoot; root != "" {
-		rel = strings.TrimPrefix(rel, root+"/")
-	}
-	return rel
 }
 
 func deletePrompt(ctx context.Context, id string) error {

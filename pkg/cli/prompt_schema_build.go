@@ -256,16 +256,11 @@ func injectSpecConditionals(specMap map[string]any, adapters []AdapterStatus, ar
 	return nil
 }
 
-// flatModels is a convenience union of every available model across adapters,
-// shaped like clicky-ui's ChatModel catalog while retaining the legacy backend
-// and ready fields for older consumers.
+// flatModels serves one display row per exact Captain runtime. A model exposed
+// by multiple backends intentionally appears once per backend so selecting it
+// produces a complete api.Model without client-side inference.
 func flatModels(adapters []AdapterStatus) []map[string]any {
-	type entry struct {
-		data     map[string]any
-		backends []string
-	}
-	out := []entry{}
-	positions := map[string]int{}
+	out := []map[string]any{}
 	for _, a := range adapters {
 		provider := api.CatalogPrefixFor(api.Backend(a.Backend))
 		for _, model := range flatModelDetails(a) {
@@ -273,35 +268,20 @@ func flatModels(adapters []AdapterStatus) []map[string]any {
 			if id == "" {
 				continue
 			}
-			key := provider + "\x00" + id
-			if idx, ok := positions[key]; ok {
-				if !containsString(out[idx].backends, a.Backend) {
-					out[idx].backends = append(out[idx].backends, a.Backend)
-					out[idx].data["backends"] = out[idx].backends
-				}
-				if a.Ready() {
-					out[idx].data["configured"] = true
-					out[idx].data["ready"] = true
-				}
-				continue
-			}
 			label := strings.TrimSpace(model.label)
 			if label == "" {
 				label = id
 			}
-			backends := []string{a.Backend}
-			positions[key] = len(out)
-			out = append(out, entry{
-				backends: backends,
-				data: map[string]any{
-					"id":         id,
-					"label":      label,
-					"provider":   provider,
-					"reasoning":  modelSupportsReasoning(id),
-					"configured": a.Ready(),
-					"backends":   backends,
-					"backend":    a.Backend,
-					"ready":      a.Ready(),
+			out = append(out, map[string]any{
+				"id":         id,
+				"label":      label,
+				"provider":   provider,
+				"reasoning":  modelSupportsReasoning(id),
+				"configured": a.Ready(),
+				"backends":   []string{a.Backend},
+				"runtime": api.Model{
+					Name:    id,
+					Backend: api.Backend(a.Backend),
 				},
 			})
 			if len(model.supportedEfforts) > 0 {
@@ -309,18 +289,14 @@ func flatModels(adapters []AdapterStatus) []map[string]any {
 				for _, effort := range model.supportedEfforts {
 					values = append(values, string(effort))
 				}
-				out[len(out)-1].data["supportedEfforts"] = values
+				out[len(out)-1]["supportedEfforts"] = values
 			}
 			if model.defaultEffort != api.EffortNone {
-				out[len(out)-1].data["defaultEffort"] = string(model.defaultEffort)
+				out[len(out)-1]["defaultEffort"] = string(model.defaultEffort)
 			}
 		}
 	}
-	flat := make([]map[string]any, 0, len(out))
-	for _, item := range out {
-		flat = append(flat, item.data)
-	}
-	return flat
+	return out
 }
 
 type flatModelDetail struct {
