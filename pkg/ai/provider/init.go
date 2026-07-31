@@ -17,7 +17,11 @@ func init() {
 	ai.RegisterProvider(ai.BackendDeepSeek, func(cfg ai.Config) (ai.Provider, error) { return genkit.New(cfg) })
 
 	ai.RegisterProvider(ai.BackendClaudeAgent, func(cfg ai.Config) (ai.Provider, error) { return claudeagent.New(cfg) })
-	ai.RegisterProvider(ai.BackendClaudeCLI, func(cfg ai.Config) (ai.Provider, error) { return NewClaudeCLI(cfg.Model.Name), nil })
+	ai.RegisterProvider(ai.BackendClaudeCLI, func(cfg ai.Config) (ai.Provider, error) {
+		provider := NewClaudeCLI(cfg.Model.Name)
+		provider.sandbox = cfg.Sandbox
+		return provider, nil
+	})
 
 	ai.RegisterProvider(ai.BackendCodexCLI, func(cfg ai.Config) (ai.Provider, error) { return NewCodexCLI(cfg), nil })
 	ai.RegisterProvider(ai.BackendCodexAgent, func(cfg ai.Config) (ai.Provider, error) { return NewCodexAppServer(cfg.Model.Name) })
@@ -28,5 +32,9 @@ func init() {
 	ai.RegisterProvider(ai.BackendClaudeCmux, func(cfg ai.Config) (ai.Provider, error) { return cmux.New(cfg) })
 	ai.RegisterProvider(ai.BackendCodexCmux, func(cfg ai.Config) (ai.Provider, error) { return cmux.New(cfg) })
 
-	ai.RegisterProvider(ai.BackendGeminiCLI, func(cfg ai.Config) (ai.Provider, error) { return NewGeminiCLI(cfg.Model.Name), nil })
+	ai.RegisterProvider(ai.BackendGeminiCLI, func(cfg ai.Config) (ai.Provider, error) {
+		provider := NewGeminiCLI(cfg.Model.Name)
+		provider.sandbox = cfg.Sandbox
+		return provider, nil
+	})
 }

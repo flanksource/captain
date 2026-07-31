@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/flanksource/captain/pkg/api/registry"
 	"github.com/flanksource/captain/pkg/credentials"
 )
 
@@ -45,6 +46,9 @@ func NewProvider(cfg Config) (Provider, error) {
 		}
 	}
 	cfg.Model.Backend = backend
+	if cfg.Sandbox && backend.Mode() != registry.ModeCLI {
+		return nil, fmt.Errorf("sandbox-runtime requires a CLI backend, got %s", backend)
+	}
 
 	factory, ok := factories[backend]
 	if !ok {

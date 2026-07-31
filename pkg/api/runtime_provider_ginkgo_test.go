@@ -76,3 +76,13 @@ var _ = Describe("API key resolution", func() {
 		Expect(resolved.Detail).To(Equal("OPENAI_API_KEY"))
 	})
 })
+
+var _ = Describe("Sandbox provider selection", func() {
+	It("rejects non-CLI backends", func() {
+		_, err := api.NewProvider(api.Config{
+			Model:   api.Model{Name: "claude-sonnet-5", Backend: api.BackendAnthropic},
+			Sandbox: true,
+		})
+		Expect(err).To(MatchError(ContainSubstring("requires a CLI backend")))
+	})
+})

@@ -18,7 +18,8 @@ var geminiCLICommand = "gemini"
 const geminiCLIDefaultModel = "gemini-3.5-flash"
 
 type GeminiCLI struct {
-	model string
+	model   string
+	sandbox bool
 }
 
 // registry.Google declares Streaming for ModeCLI, and the logging/validating
@@ -74,13 +75,14 @@ func (g *GeminiCLI) ExecuteStream(ctx context.Context, req ai.Request) (<-chan a
 	}
 	// gemini reads the prompt from stdin and goes headless whenever stdin or
 	// stdout is not a TTY, which piping both guarantees.
-	cmd, stdout, stderrBuf, err := startCLIStream(ctx, geminiCLICommand, args, []byte(composePrompt(req)), req.Cwd(), env)
+	cmd, stdout, stderrBuf, closeSandbox, err := startCLIStream(ctx, geminiCLICommand, args, []byte(composePrompt(req)), req.Cwd(), env, g.sandbox)
 	if err != nil {
 		return nil, err
 	}
 	out := make(chan ai.Event, 16)
 	go func() {
 		defer close(out)
+		defer closeSandbox()
 		defer func() { _ = stdout.Close() }()
 		scanner := bufio.NewScanner(stdout)
 		scanner.Buffer(make([]byte, 1024*1024), 10*1024*1024)

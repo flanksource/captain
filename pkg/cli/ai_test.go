@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"github.com/flanksource/captain/pkg/aiflags"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -11,7 +10,9 @@ import (
 	"testing"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/aiflags"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/api/registry"
 	"github.com/flanksource/captain/pkg/captainconfig"
 	"github.com/flanksource/commons-db/shell"
 )
@@ -259,6 +260,23 @@ func TestAIProviderOptions_ToConfig_ValidationErrors(t *testing.T) {
 	}
 	if _, err := (AIProviderOptions{ModelFlags: aiflags.ModelFlags{Model: "claude-x"}, Budget: "free"}).ToConfig(); err == nil || !strings.Contains(err.Error(), "budget") {
 		t.Fatalf("expected invalid budget error, got %v", err)
+	}
+}
+
+func TestAIProviderOptions_ToConfig_SandboxForcesCLI(t *testing.T) {
+	isolateSavedAI(t)
+	cfg, err := (AIProviderOptions{
+		ModelFlags: aiflags.ModelFlags{Model: "claude-sonnet-5", Backend: "anthropic"},
+		Sandbox:    true,
+	}).ToConfig()
+	if err != nil {
+		t.Fatalf("ToConfig: %v", err)
+	}
+	if !cfg.Sandbox {
+		t.Fatal("Sandbox = false, want true")
+	}
+	if cfg.Model.Backend != api.BackendClaudeCLI || cfg.Model.Mode != registry.ModeCLI {
+		t.Fatalf("model runtime = %s/%s, want %s/%s", cfg.Model.Backend, cfg.Model.Mode, api.BackendClaudeCLI, registry.ModeCLI)
 	}
 }
 

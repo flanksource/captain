@@ -101,6 +101,12 @@ func overlayCLI(base ai.Request, baseCfg ai.Config, o AIPromptOptions) (ai.Reque
 	if err != nil {
 		return base, baseCfg, err
 	}
+	if o.Sandbox {
+		req.Model, err = sandboxCLIModel(req.Model)
+		if err != nil {
+			return base, baseCfg, err
+		}
+	}
 
 	req.Budget.MaxTokens = firstPositive(o.MaxTokens, base.Budget.MaxTokens, baseCfg.Budget.MaxTokens, saved.MaxTokens, 4096)
 	req.Budget.Cost = firstPositiveFloat(budget, base.Budget.Cost, baseCfg.Budget.Cost, saved.BudgetUSD)
@@ -155,6 +161,7 @@ func overlayCLI(base ai.Request, baseCfg ai.Config, o AIPromptOptions) (ai.Reque
 	cfg.Budget = req.Budget
 	cfg.APIKey = o.APIKey
 	cfg.APIURL = firstNonEmpty(strings.TrimSpace(o.APIURL), baseCfg.APIURL)
+	cfg.Sandbox = o.Sandbox || baseCfg.Sandbox
 	cfg.NoCache = req.NoCache
 	return req, cfg, nil
 }

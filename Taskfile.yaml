@@ -3,7 +3,6 @@ version: "3"
 vars:
   BINARY: captain
   BIN_DIR: .bin
-  INSTALL_DIR: /usr/local/bin
 
 tasks:
   default:
@@ -88,10 +87,25 @@ tasks:
       - PATH="$PWD/.bin:$PATH" gavel fixtures pkg/cli/testdata/history_test.md
 
   install:
-    desc: Build and install captain to /usr/local/bin
-    deps: [build]
+    desc: Build and install captain to the default Go bin
+    vars:
+      VERSION:
+        sh: git describe --tags --always
+      COMMIT:
+        sh: git rev-parse --short HEAD
+      DATE:
+        sh: date -u '+%Y-%m-%dT%H:%M:%SZ'
+      DIRTY:
+        sh: |
+          if test -n "$(git status --porcelain)"
+          then
+            echo true
+          else
+            echo false
+          fi
+      LDFLAGS: -s -w -X main.version={{.VERSION}} -X main.commit={{.COMMIT}} -X main.date={{.DATE}} -X main.dirty={{.DIRTY}}
     cmds:
-      - cp {{.BIN_DIR}}/{{.BINARY}} {{.INSTALL_DIR}}/{{.BINARY}}
+      - go install -ldflags "{{.LDFLAGS}}" ./cmd/captain
 
   fmt:
     desc: Format Go code
