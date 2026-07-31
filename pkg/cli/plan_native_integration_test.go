@@ -6,23 +6,14 @@ import (
 	"testing"
 
 	captaindb "github.com/flanksource/captain/pkg/database"
-	commonsdb "github.com/flanksource/commons-db/db"
+	"github.com/flanksource/commons-db/dbtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestResolveNativePlanUsesPersistedApprovedContentWithoutSourceFile(t *testing.T) {
-	if os.Getenv("CAPTAIN_DB_EMBEDDED_TEST") == "" {
-		t.Skip("set CAPTAIN_DB_EMBEDDED_TEST=1 to run embedded-postgres plan lookup tests")
-	}
-
-	dsn, stop, err := commonsdb.StartEmbedded(commonsdb.EmbeddedConfig{
-		DataDir:  filepath.Join(t.TempDir(), "postgres"),
-		Database: "captain_native_plan_lookup",
-	})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, stop()) })
-	db, err := captaindb.Open(t.Context(), captaindb.WithDSN(dsn), captaindb.WithMigrations())
+	handle := dbtest.ForT(t, dbtest.Options{Name: "captain_native_plan_lookup"})
+	db, err := captaindb.Open(t.Context(), captaindb.WithDSN(handle.DSN()), captaindb.WithMigrations())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 

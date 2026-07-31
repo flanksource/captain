@@ -4,14 +4,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"sync"
 	"testing"
 	"time"
 
-	commonsdb "github.com/flanksource/commons-db/db"
+	"github.com/flanksource/commons-db/dbtest"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -19,18 +17,8 @@ import (
 )
 
 func TestDurableSessionPromptRunAndPlanStores(t *testing.T) {
-	if os.Getenv("CAPTAIN_DB_EMBEDDED_TEST") == "" {
-		t.Skip("set CAPTAIN_DB_EMBEDDED_TEST=1 to run embedded-postgres store tests")
-	}
-
-	dsn, stop, err := commonsdb.StartEmbedded(commonsdb.EmbeddedConfig{
-		DataDir:  filepath.Join(t.TempDir(), "postgres"),
-		Database: "captain_durable_stores",
-	})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, stop()) })
-
-	db, err := Open(t.Context(), WithDSN(dsn), WithMigrations())
+	handle := dbtest.ForT(t, dbtest.Options{Name: "captain_durable_stores"})
+	db, err := Open(t.Context(), WithDSN(handle.DSN()), WithMigrations())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 

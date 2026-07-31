@@ -1,10 +1,7 @@
 package database
 
 import (
-	"os"
-	"path/filepath"
-
-	commonsdb "github.com/flanksource/commons-db/db"
+	"github.com/flanksource/commons-db/dbtest"
 	"github.com/google/uuid"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -13,18 +10,8 @@ import (
 
 var _ = Describe("Session overview aggregates", func() {
 	It("matches complete provider session IDs without including longer prefixes", func(ctx SpecContext) {
-		if os.Getenv("CAPTAIN_DB_EMBEDDED_TEST") == "" {
-			Skip("set CAPTAIN_DB_EMBEDDED_TEST=1 to run embedded-postgres store tests")
-		}
-
-		dsn, stop, err := commonsdb.StartEmbedded(commonsdb.EmbeddedConfig{
-			DataDir:  filepath.Join(GinkgoT().TempDir(), "postgres"),
-			Database: "captain_provider_session_match",
-		})
-		Expect(err).NotTo(HaveOccurred())
-		DeferCleanup(func() { Expect(stop()).To(Succeed()) })
-
-		db, err := Open(ctx, WithDSN(dsn), WithMigrations())
+		handle := dbtest.ForGinkgo(dbtest.Options{Name: "captain_provider_session_match"})
+		db, err := Open(ctx, WithDSN(handle.DSN()), WithMigrations())
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(func() { Expect(db.Close()).To(Succeed()) })
 
@@ -49,18 +36,8 @@ var _ = Describe("Session overview aggregates", func() {
 	})
 
 	It("preserves every detail metric within its session security boundary", func(ctx SpecContext) {
-		if os.Getenv("CAPTAIN_DB_EMBEDDED_TEST") == "" {
-			Skip("set CAPTAIN_DB_EMBEDDED_TEST=1 to run embedded-postgres store tests")
-		}
-
-		dsn, stop, err := commonsdb.StartEmbedded(commonsdb.EmbeddedConfig{
-			DataDir:  filepath.Join(GinkgoT().TempDir(), "postgres"),
-			Database: "captain_session_overview",
-		})
-		Expect(err).NotTo(HaveOccurred())
-		DeferCleanup(func() { Expect(stop()).To(Succeed()) })
-
-		db, err := Open(ctx, WithDSN(dsn), WithMigrations())
+		handle := dbtest.ForGinkgo(dbtest.Options{Name: "captain_session_overview"})
+		db, err := Open(ctx, WithDSN(handle.DSN()), WithMigrations())
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(func() { Expect(db.Close()).To(Succeed()) })
 
