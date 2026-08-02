@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/bash"
 	"github.com/flanksource/captain/pkg/session"
 	"github.com/segmentio/encoding/json"
 )
@@ -161,8 +162,19 @@ func (a *promptEventAccumulator) flush() {
 	a.thinkBuf.Reset()
 }
 
+func (a *promptEventAccumulator) resetFrame() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.flush()
+	clear(a.toolByID)
+}
+
 func (a *promptEventAccumulator) emitToolUse(ev ai.Event) {
 	a.tools++
+	input := ev.Input
+	if ev.Tool == "Bash" {
+		input = bash.TransformBashInput(input)
+	}
 	msg := &session.Message{
 		ID:   a.toolID(ev.ToolCallID),
 		Role: "assistant",
@@ -171,7 +183,7 @@ func (a *promptEventAccumulator) emitToolUse(ev ai.Event) {
 			ToolName:   ev.Tool,
 			ToolCallID: ev.ToolCallID,
 			State:      session.ToolStateInputAvailable,
-			Input:      mapToRaw(ev.Input),
+			Input:      mapToRaw(input),
 		}},
 		Provenance: a.provenance(),
 	}
