@@ -161,6 +161,9 @@ func ExtractToolUses(entries []HistoryEntry) []ToolUse {
 				if content.Input != nil {
 					_ = json.Unmarshal(content.Input, &inputMap)
 				}
+				if content.Name == "Bash" {
+					inputMap = bash.TransformBashInput(inputMap)
+				}
 
 				var cwd string
 				if inputMap != nil {
