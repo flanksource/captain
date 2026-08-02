@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flanksource/captain/pkg/bash"
 	"github.com/flanksource/captain/pkg/claude/tools"
 	"github.com/segmentio/encoding/json"
 )
@@ -129,6 +130,9 @@ func normalizeCodexCall(call CodexToolCall, input map[string]any) ToolUse {
 	}
 	if tool == "" {
 		tool = "Bash"
+	}
+	if tool == "Bash" {
+		input = bash.TransformBashInput(input)
 	}
 
 	use := ToolUse{

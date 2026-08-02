@@ -16,6 +16,20 @@ func TestCodexNormalization(t *testing.T) {
 }
 
 var _ = Describe("NormalizeCodexToolCall", func() {
+	It("transforms shell wrappers before returning canonical history input", func() {
+		use := NormalizeCodexToolCall(CodexToolCall{
+			Command: `/bin/zsh -lc 'gavel pr status 50 --logs'`,
+			ID:      "call-shell",
+		})
+
+		Expect(use.Tool).To(Equal("Bash"))
+		Expect(use.Input).To(Equal(map[string]any{
+			"command":    "gavel pr status 50 --logs",
+			"shell":      "zsh",
+			"shellFlags": []string{"-l"},
+		}))
+	})
+
 	It("normalizes command calls from every Codex transport to Bash", func() {
 		uses := []ToolUse{
 			NormalizeCodexToolCall(CodexToolCall{
