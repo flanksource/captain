@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/flanksource/captain/pkg/claude/tools"
+	"github.com/flanksource/captain/pkg/session"
 	"github.com/flanksource/clicky"
 	"golang.org/x/term"
 )
@@ -43,8 +44,8 @@ func termWidth() int {
 
 // lineRenderer prints tool history rows to an io.Writer, emitting a synthetic
 // session-start banner whenever the (source, session, model, effort) key
-// changes. Both `captain history` (batched) and `captain ai prompt`
-// (streaming) drive the same renderer so output stays consistent.
+// changes. Row content comes from session.TranscriptRow; this type only adds
+// history's time, tool-name, usage, and session-boundary columns.
 type lineRenderer struct {
 	w         io.Writer
 	width     int
@@ -72,7 +73,7 @@ func (r *lineRenderer) Render(t tools.Tool, compact bool) {
 		r.prevKey = key
 		r.hasPrev = true
 	}
-	e := toLineEntry(t, compact, r.width, r.toolWidth)
+	e := toLineEntry(session.NewTranscriptRow(t), compact, r.width, r.toolWidth)
 	printLeftTo(r.w, e, r.toolWidth)
 }
 
@@ -161,14 +162,15 @@ func capitalize(s string) string {
 	return strings.ToUpper(s[:1]) + s[1:]
 }
 
-func toLineEntry(t tools.Tool, compact bool, width, toolWidth int) lineEntry {
+func toLineEntry(row session.TranscriptRow, compact bool, width, toolWidth int) lineEntry {
+	t := row.Tool()
 	base := t.Base()
 	name := t.Name()
 	e := lineEntry{
 		Tool:    name,
 		Time:    base.PrettyTimestamp(),
 		Denied:  base.Denied && name != "Plan" && name != "User",
-		Command: t.Pretty().ANSI(),
+		Command: row.Pretty().ANSI(),
 	}
 	if base.IsSidechain {
 		e.Command = sidechainBadge(base) + e.Command

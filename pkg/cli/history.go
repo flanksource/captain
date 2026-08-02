@@ -484,6 +484,7 @@ func runHistoryAll(tl []tools.Tool, opts HistoryOptions, classifier *bash.Catego
 
 	for _, t := range filtered {
 		base := t.Base()
+		transcriptRow := session.NewTranscriptRow(t)
 		result.Total++
 
 		approved := approvedStatus(t)
@@ -500,8 +501,8 @@ func runHistoryAll(tl []tools.Tool, opts HistoryOptions, classifier *bash.Catego
 		row := session.ScanResultRow{
 			Project:         projectName,
 			Tool:            t.Name(),
-			Summary:         firstLine(t.Pretty().String()),
-			Subject:         t.Pretty(),
+			Summary:         firstLine(transcriptRow.Pretty().String()),
+			Subject:         transcriptRow.Pretty(),
 			Detail:          session.BuildRowDetail(t, session.RowOptions{Cost: opts.Cost, Raw: opts.Raw}),
 			Paths:           FormatPathsWithIcons(analysis.ReadPaths, analysis.WritePaths),
 			ReadPaths:       analysis.ReadPaths,
@@ -543,6 +544,7 @@ func runHistorySingle(tl []tools.Tool, opts HistoryOptions, classifier *bash.Cat
 
 	for _, t := range filtered {
 		base := t.Base()
+		transcriptRow := session.NewTranscriptRow(t)
 		if result.Project == "" && base.ProjectRoot != "" {
 			result.Project = filepath.Base(base.ProjectRoot)
 		}
@@ -557,8 +559,8 @@ func runHistorySingle(tl []tools.Tool, opts HistoryOptions, classifier *bash.Cat
 		analysis := AnalyzeToolUse(t)
 		row := session.ScanResultRowSingle{
 			Tool:            t.Name(),
-			Summary:         firstLine(t.Pretty().String()),
-			Subject:         t.Pretty(),
+			Summary:         firstLine(transcriptRow.Pretty().String()),
+			Subject:         transcriptRow.Pretty(),
 			Detail:          session.BuildRowDetail(t, session.RowOptions{Cost: opts.Cost, Raw: opts.Raw}),
 			Paths:           FormatPathsWithIcons(analysis.ReadPaths, analysis.WritePaths),
 			ReadPaths:       analysis.ReadPaths,
