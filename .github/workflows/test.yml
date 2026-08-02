@@ -12,18 +12,36 @@ permissions:
 jobs:
   lint:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26.x"
-      - uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20 # v9.2.0
+      - name: Lint with Gavel
+        uses: flanksource/gavel@25b5e48fb166ba33a47544606aaa3e16644fa4bb # v0.0.53
+        with:
+          args: lint golangci-lint
+          version: v0.0.53
+          artifact-name: gavel-lint-results
+          comment-header: captain-gavel-lint
+          comment: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+          fail-on-error: "true"
       - run: test -z "$(gofmt -l .)"
 
   test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26.x"
@@ -34,7 +52,15 @@ jobs:
           key: embedded-postgres-${{ runner.os }}-${{ runner.arch }}
       # dbtest shares one embedded PostgreSQL server while isolating each test
       # with a leased ephemeral database.
-      - run: go test ./...
+      - name: Test with Gavel
+        uses: flanksource/gavel@25b5e48fb166ba33a47544606aaa3e16644fa4bb # v0.0.53
+        with:
+          args: test --ignore tests/e2e
+          version: v0.0.53
+          artifact-name: gavel-test-results
+          comment-header: captain-gavel-test
+          comment: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+          fail-on-error: "true"
         env:
           TMPDIR: ${{ runner.temp }}
 
