@@ -142,6 +142,7 @@ Supported backends are inferred from code and dependencies, including:
 
 ### 8. Utility commands
 
+- `cmux info <copy-id-lines|pid>` — resolves all processes in a cmux surface, pane, or workspace and reports runtime, CPU, memory, listening TCP ports, and optional Go stacks
 - `cmux screenshot` — captures a screenshot of the active browser surface in cmux and copies the path to the clipboard
 - `port kill <port>` — finds and kills the process listening on a TCP port
 
@@ -184,7 +185,7 @@ captain/
 ├── pkg/claude/            # Claude history, sessions, parsing, formatting
 ├── pkg/cli/               # Cobra/clicky command implementations
 ├── pkg/cli/webapp/        # Embedded React web UI (served by captain serve)
-├── pkg/cmux/              # Terminal multiplexer integration (screenshot)
+├── pkg/cmux/              # Terminal multiplexer integration (processes and screenshots)
 ├── pkg/collections/       # Generic collection utilities
 ├── pkg/container/         # Sandbox discovery, generation, build/run logic
 ├── pkg/dod/               # Definition of Done persistence and execution
@@ -536,6 +537,17 @@ Exposes captain commands as MCP tools. Auto-exposes all commands except `sandbox
 ### Utility commands
 
 ```bash
+# Inspect every process attributed to a copied cmux surface
+captain cmux info \
+  surface_ref=surface:21 \
+  surface_id=65BB4725-B785-48DE-B3FD-31167ECB8300
+
+# Pipe the Copy IDs block directly from the clipboard
+pbpaste | captain cmux info
+
+# Inspect a PID and request a Go goroutine stack through gops
+captain cmux info 33745 --stack
+
 # Screenshot active browser surface in cmux
 captain cmux screenshot
 
