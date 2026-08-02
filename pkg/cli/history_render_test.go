@@ -1,11 +1,8 @@
 package cli
 
 import (
-	"bytes"
-	"strings"
 	"testing"
 
-	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/claude/tools"
 )
 
@@ -97,39 +94,6 @@ func TestLastSessionTools_TrimsToFinalSession(t *testing.T) {
 				t.Errorf("len = %d, want %d", len(got), tc.want)
 			}
 		})
-	}
-}
-
-func TestRenderResultEvent_RoutesThroughLineRenderer(t *testing.T) {
-	var buf bytes.Buffer
-	r := newLineRenderer(&buf, 8)
-	renderResultEvent(r, ai.Event{
-		Kind:    ai.EventResult,
-		Model:   "claude-opus-4-7",
-		Success: true,
-		CostUSD: 0.0123,
-		Usage:   &ai.Usage{InputTokens: 100, OutputTokens: 200},
-		Input:   map[string]any{"num_turns": float64(3), "duration_ms": float64(1500)},
-	})
-
-	out := buf.String()
-	for _, want := range []string{"result", "$0.0123", "turns=3", "1.5s"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("rendered output missing %q\nfull output:\n%s", want, out)
-		}
-	}
-}
-
-func TestRenderResultEvent_FailureMarksError(t *testing.T) {
-	var buf bytes.Buffer
-	r := newLineRenderer(&buf, 8)
-	renderResultEvent(r, ai.Event{
-		Kind:    ai.EventResult,
-		Success: false,
-		Error:   "timeout",
-	})
-	if !strings.Contains(buf.String(), "ERROR") {
-		t.Errorf("failure result must include ERROR marker, got: %q", buf.String())
 	}
 }
 

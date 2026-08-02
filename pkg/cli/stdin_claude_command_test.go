@@ -5,6 +5,7 @@ import (
 	"github.com/flanksource/captain/pkg/session"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/segmentio/encoding/json"
 )
 
 // claudeGoalTranscript is the exact three-record shape Claude writes for a
@@ -13,6 +14,8 @@ import (
 const claudeGoalTranscript = `{"type":"attachment","uuid":"uuid-goal","sessionId":"s1","timestamp":"2026-07-14T12:16:09.113Z","cwd":"/repo","attachment":{"type":"goal_status","met":false,"sentinel":true,"condition":"ship the docker build"}}
 {"type":"user","uuid":"uuid-cmd","sessionId":"s1","timestamp":"2026-07-14T12:16:09.200Z","cwd":"/repo","message":{"role":"user","content":"<command-name>/goal</command-name>\n            <command-message>goal</command-message>\n            <command-args>ship the docker build</command-args>"}}
 {"type":"user","uuid":"uuid-out","sessionId":"s1","timestamp":"2026-07-14T12:16:09.300Z","cwd":"/repo","message":{"role":"user","content":"<local-command-stdout>Goal set: ship the docker build</local-command-stdout>"}}`
+
+const claudeWrappedShellTranscript = `{"type":"assistant","sessionId":"s1","uuid":"uuid-bash","timestamp":"2026-07-14T12:16:09.300Z","cwd":"/repo","message":{"role":"assistant","content":[{"type":"tool_use","id":"tool-1","name":"Bash","input":{"command":"/bin/zsh -lc 'pnpm test'"}}]}}`
 
 func historyToolNames(uses []claude.ToolUse) []string {
 	names := make([]string, 0, len(uses))
@@ -69,5 +72,23 @@ var _ = Describe("Claude /goal transcript history from a reader", func() {
 		Expect(goalSummary).To(ContainSubstring("ship the docker build"))
 		Expect(cmdSummary).To(ContainSubstring("/goal"))
 		Expect(outSummary).To(ContainSubstring("Goal set: ship the docker build"))
+	})
+
+	It("serializes transformed shell input unless raw history was requested", func() {
+		out, err := runHistoryFromReader([]byte(claudeWrappedShellTranscript), HistoryOptions{Limit: 1})
+		Expect(err).NotTo(HaveOccurred())
+		encoded, err := json.Marshal(out)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(encoded)).To(And(
+			ContainSubstring("zsh"),
+			ContainSubstring("pnpm test"),
+			Not(ContainSubstring("/bin/zsh -lc")),
+		))
+
+		rawOut, err := runHistoryFromReader([]byte(claudeWrappedShellTranscript), HistoryOptions{Limit: 1, Raw: true})
+		Expect(err).NotTo(HaveOccurred())
+		rawEncoded, err := json.Marshal(rawOut)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(rawEncoded)).To(ContainSubstring(`/bin/zsh -lc`))
 	})
 })
