@@ -39,7 +39,7 @@ require (
 )
 
 require (
-	github.com/flanksource/commons-db v0.1.24
+	github.com/flanksource/commons-db v0.1.26
 	github.com/pelletier/go-toml/v2 v2.4.3
 )
 
