@@ -76,16 +76,17 @@ type Part struct {
 }
 
 // Message is one message in a session, matching aichat's UIMessage plus an
-// optional provenance extension and the original JSONL line (emitted under
-// --raw). AgentID routes the message to its owning agent in the hierarchy and
-// is not serialized (it is redundant with Provenance.AgentID).
+// optional provenance extension. Raw retains the original JSONL line for
+// internal source-aware processing; explicit raw history output is handled by
+// the history row model. AgentID routes the message to its owning agent in the
+// hierarchy and is not serialized (it is redundant with Provenance.AgentID).
 type Message struct {
 	ID         string          `json:"id,omitempty"`
 	Role       string          `json:"role"`
 	Parts      []Part          `json:"parts"`
 	TurnID     string          `json:"turnId,omitempty"`
 	Provenance *Provenance     `json:"provenance,omitempty"`
-	Raw        json.RawMessage `json:"raw,omitempty"`
+	Raw        json.RawMessage `json:"-"`
 	// SourceLine is the 1-based JSONL line the message came from (0 when the
 	// source format has no line mapping).
 	SourceLine int64 `json:"sourceLine,omitempty"`

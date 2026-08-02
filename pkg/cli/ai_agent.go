@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -195,7 +196,7 @@ func RunAIAgent(opts AIAgentOptions) (any, error) {
 		return nil, err
 	}
 
-	renderer := newLineRenderer(os.Stderr, 8)
+	renderer := NewEventRenderer(os.Stderr)
 	runner := &agent.Runner[string]{
 		Provider:      sp,
 		Request:       baseReq,
@@ -204,7 +205,7 @@ func RunAIAgent(opts AIAgentOptions) (any, error) {
 		Repo:          cwd,
 		Cwd:           cwd,
 		Scope:         scope,
-		OnEvent:       func(_ int, ev ai.Event) { renderEvent(os.Stderr, renderer, ev) },
+		OnEvent:       renderer.Handle,
 	}
 
 	timeout, _ := time.ParseDuration(opts.Timeout)
@@ -216,6 +217,7 @@ func RunAIAgent(opts AIAgentOptions) (any, error) {
 
 	start := time.Now()
 	result, runErr := runner.Run(ctx)
+	renderErr := renderer.Flush()
 	ws := result.Response.Workspace
 
 	res := AIAgentResult{
@@ -237,8 +239,8 @@ func RunAIAgent(opts AIAgentOptions) (any, error) {
 	// A failed loop/verify is surfaced through the result (Passed=false), not as
 	// a command error, so --format output is still rendered. A genuine provider
 	// or plugin error is returned.
-	if runErr != nil && len(result.Verdicts) == 0 {
-		return res, runErr
+	if renderErr != nil || (runErr != nil && len(result.Verdicts) == 0) {
+		return res, errors.Join(runErr, renderErr)
 	}
 	return res, nil
 }
