@@ -26,7 +26,11 @@ func (t *BashTool) Category() string { return "" }
 func (t *BashTool) Pretty() api.Text {
 	cmd := t.command()
 	color := "text-green-400 font-medium"
-	text := t.header(bashIcon, strings.ToLower(t.Name()), color)
+	label := strings.ToLower(t.Name())
+	if shell := t.Str("shell"); shell != "" {
+		label = shell
+	}
+	text := t.header(bashIcon, label, color)
 
 	if timeout := t.Float("timeout"); timeout > 0 {
 		text = text.Append(fmt.Sprintf(" (%ds)", int(timeout/1000)), "text-gray-500")
@@ -87,6 +91,9 @@ func (t *BashTool) command() string {
 }
 
 func (t *BashTool) interpreter() string {
+	if t.Str("shell") != "" {
+		return ""
+	}
 	cmd := t.Str("command")
 	if cmd == "" {
 		return ""
