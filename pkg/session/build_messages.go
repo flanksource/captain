@@ -5,7 +5,9 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai/assistanttags"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/bash"
 	"github.com/flanksource/captain/pkg/claude"
+	"github.com/segmentio/encoding/json"
 )
 
 // hierarchy is the intermediate result of walking a ParsedSession: the ordered
@@ -159,12 +161,19 @@ func partsFromEntry(e claude.HistoryEntry) []Part {
 				parts = append(parts, Part{Type: PartReasoning, Text: b.Thinking})
 			}
 		case claude.ContentTypeToolUse:
+			input := b.Input
+			if b.Name == "Bash" {
+				var decoded map[string]any
+				if json.Unmarshal(b.Input, &decoded) == nil {
+					input = marshalInput(bash.TransformBashInput(decoded))
+				}
+			}
 			parts = append(parts, Part{
 				Type:       PartTool,
 				ToolName:   b.Name,
 				ToolCallID: b.ID,
 				State:      ToolStateInputAvailable,
-				Input:      b.Input,
+				Input:      input,
 			})
 		case claude.ContentTypeToolResult:
 			state := ToolStateOutputAvailable

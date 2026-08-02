@@ -207,7 +207,7 @@ func eventTime(offsetSeconds int) *time.Time {
 
 // transcriptLines renders just the transcript rows of a session, one per line.
 func transcriptLines(s *Session) []string {
-	rendered := strings.TrimSpace(transcriptList(sessionTranscriptItems(s)).String())
+	rendered := strings.TrimSpace(TranscriptList(s.TranscriptRows()).String())
 	if rendered == "" {
 		return nil
 	}
