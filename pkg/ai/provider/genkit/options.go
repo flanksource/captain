@@ -1,6 +1,7 @@
 package genkit
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -46,7 +47,10 @@ func generateOptions(p *Provider, req ai.Request, stream gkai.ModelStreamCallbac
 	if err := req.ValidateRequestMode(); err != nil {
 		return nil, err
 	}
-	opts := []gkai.GenerateOption{gkai.WithModelName(p.modelRef)}
+	opts := []gkai.GenerateOption{
+		gkai.WithModelName(p.modelRef),
+		gkai.WithUse(gkai.MiddlewareFunc(captureGenkitModelRequest)),
+	}
 	toolOptions, err := p.toolOptions(req.ToolPreferences, emit)
 	if err != nil {
 		return nil, err
@@ -130,6 +134,18 @@ func generateOptions(p *Provider, req ai.Request, stream gkai.ModelStreamCallbac
 		}
 	}
 	return opts, nil
+}
+
+func captureGenkitModelRequest(context.Context) (*gkai.Hooks, error) {
+	return &gkai.Hooks{
+		WrapModel: func(ctx context.Context, params *gkai.ModelParams, next gkai.ModelNext) (*gkai.ModelResponse, error) {
+			response, err := next(ctx, params)
+			if response != nil {
+				response.Request = &gkai.ModelRequest{Messages: cloneCheckpointMessages(params.Request.Messages)}
+			}
+			return response, err
+		},
+	}, nil
 }
 
 func promptParts(req ai.Request) ([]*gkai.Part, error) {

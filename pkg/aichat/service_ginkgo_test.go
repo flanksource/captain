@@ -1,7 +1,6 @@
 package aichat_test
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -58,6 +57,7 @@ type fakeStreamingProvider struct {
 	execute             func(context.Context, api.Spec) (<-chan api.Event, error)
 	backend             api.Backend
 	supportsCallerTools *bool
+	interrupt           func(context.Context) error
 }
 
 func (f *fakeStreamingProvider) Execute(context.Context, api.Spec) (*api.Response, error) {
@@ -88,23 +88,11 @@ func (f *fakeStreamingProvider) SupportsCallerTools() bool {
 	return f.supportsCallerTools == nil || *f.supportsCallerTools
 }
 
-type fakeAttachmentResolver struct{}
-
-func (fakeAttachmentResolver) Resolve(_ context.Context, inputs []aichat.AttachmentInput) ([]api.AttachmentRef, error) {
-	refs := make([]api.AttachmentRef, len(inputs))
-	for i, input := range inputs {
-		refs[i] = api.AttachmentRef{
-			ID:       api.AttachmentIDPrefix + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-			Filename: input.Filename, MediaType: input.MediaType,
-		}.WithPreparedContent(api.AttachmentContent{Bytes: []byte("image")})
+func (f *fakeStreamingProvider) Interrupt(ctx context.Context) error {
+	if f.interrupt == nil {
+		return nil
 	}
-	return refs, nil
-}
-
-func requestJSON(method, path string, body any) *http.Request {
-	var payload bytes.Buffer
-	Expect(json.NewEncoder(&payload).Encode(body)).To(Succeed())
-	return httptest.NewRequest(method, path, &payload)
+	return f.interrupt(ctx)
 }
 
 var _ = Describe("Captain aichat service", func() {
@@ -337,11 +325,13 @@ var _ = Describe("Captain aichat service", func() {
 
 		response := httptest.NewRecorder()
 		service.Handler().ServeHTTP(response, requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{
+			ID:                thread.ID,
+			Trigger:           "submit-message",
 			Runtime:           &api.Model{Name: "sonnet", Backend: api.BackendClaudeAgent},
 			ThreadID:          thread.ID,
 			ProviderSessionID: "provider-session-1",
 			Messages: []aichat.UIMessage{{
-				Role: "user", Parts: []aichat.UIPart{{Type: "text", Text: "inspect the invoice"}},
+				ID: "message-agent-user", Role: "user", Parts: []aichat.UIPart{{Type: "text", Text: "inspect the invoice"}},
 			}},
 		}))
 
@@ -384,48 +374,39 @@ var _ = Describe("Captain aichat service", func() {
 		Expect(resolver.configs[0].Tools).To(BeEmpty())
 	})
 
-	It("passes a durable approval resume without rebuilding conversation messages", func() {
-		state := api.ToolApprovalState{
-			Messages: []api.Message{
-				{Role: api.RoleUser, Parts: []api.Part{{Type: api.PartText, Text: "pay"}}},
-				{Role: api.RoleAssistant, Parts: []api.Part{{Type: api.PartToolRequest, ToolRequest: &api.ToolRequest{
-					ToolCallID: "call-1", Name: "invoice_pay", Input: json.RawMessage(`{"id":"inv-1"}`),
-				}}}},
-			},
-			Calls: []api.ToolApprovalCall{{Request: api.ToolApprovalRequest{
-				ToolCallID: "call-1", Tool: "invoice_pay", Input: json.RawMessage(`{"id":"inv-1"}`),
-			}}},
-		}
-		resume := &api.ToolApprovalResume{State: state, Decisions: []api.ToolApprovalDecision{{
-			ToolCallID: "call-1", Tool: "invoice_pay", Action: api.ToolApprovalApprove,
-		}}}
-		provider := &fakeStreamingProvider{events: []api.Event{{Kind: api.EventResult, Success: true}}}
+	It("rejects AI SDK approval continuations outside the Captain session endpoint", func() {
+		provider := &fakeStreamingProvider{}
 		service := aichat.NewService(aichat.ServiceOptions{Resolver: &fakeResolver{provider: provider}})
 		response := httptest.NewRecorder()
 		service.Handler().ServeHTTP(response, requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{
-			Model: "openai/test-model", ToolApproval: resume,
+			ID: "session-1", ThreadID: "session-1", Trigger: "submit-message", MessageID: "assistant-1",
+			Messages: []aichat.UIMessage{{
+				ID: "assistant-1", Role: "assistant", Parts: []aichat.UIPart{{
+					Type: "dynamic-tool", ToolName: "invoice_pay", ToolCallID: "call-1",
+					State: "approval-responded", Approval: &aichat.Approval{ID: "approval-1"},
+				}},
+			}},
 		}))
 
-		Expect(response.Code).To(Equal(http.StatusOK))
-		Expect(provider.specs).To(HaveLen(1))
-		Expect(provider.specs[0].ToolApproval).To(Equal(resume))
-		Expect(provider.specs[0].Messages).To(BeNil())
+		Expect(response.Code).To(Equal(http.StatusBadRequest))
+		Expect(response.Body.String()).To(ContainSubstring("resolve approvals through /api/chat/sessions/{id}/approvals/{approvalID}"))
+		Expect(provider.specs).To(BeEmpty())
 	})
 
 	It("serves thread CRUD through the injected persistence store", func() {
 		service := aichat.NewService(aichat.ServiceOptions{Resolver: &fakeResolver{}, Threads: aichat.NewMemoryThreadStore()})
 		create := httptest.NewRecorder()
-		service.Handler().ServeHTTP(create, requestJSON(http.MethodPost, "/api/chat/threads", map[string]string{"title": "Review"}))
+		service.Handler().ServeHTTP(create, requestJSON(http.MethodPost, "/api/chat/sessions", map[string]string{"title": "Review"}))
 		Expect(create.Code).To(Equal(http.StatusCreated))
 		var thread aichat.Thread
 		Expect(json.Unmarshal(create.Body.Bytes(), &thread)).To(Succeed())
 
 		get := httptest.NewRecorder()
-		service.Handler().ServeHTTP(get, httptest.NewRequest(http.MethodGet, "/api/chat/threads/"+thread.ID, nil))
+		service.Handler().ServeHTTP(get, httptest.NewRequest(http.MethodGet, "/api/chat/sessions/"+thread.ID, nil))
 		Expect(get.Code).To(Equal(http.StatusOK))
 
 		remove := httptest.NewRecorder()
-		service.Handler().ServeHTTP(remove, httptest.NewRequest(http.MethodDelete, "/api/chat/threads/"+thread.ID, nil))
+		service.Handler().ServeHTTP(remove, httptest.NewRequest(http.MethodDelete, "/api/chat/sessions/"+thread.ID, nil))
 		Expect(remove.Code).To(Equal(http.StatusNoContent))
 	})
 
@@ -443,8 +424,8 @@ var _ = Describe("Captain aichat service", func() {
 		service := aichat.NewService(aichat.ServiceOptions{Resolver: &fakeResolver{provider: provider}, Threads: store})
 		response := httptest.NewRecorder()
 		service.Handler().ServeHTTP(response, requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{
-			ID: "chat-1", ThreadID: thread.ID, Model: "openai/test-model",
-			Messages: []aichat.UIMessage{{Role: "user", Parts: []aichat.UIPart{{Type: "text", Text: "inspect"}}}},
+			ID: thread.ID, ThreadID: thread.ID, Trigger: "submit-message", Model: "openai/test-model",
+			Messages: []aichat.UIMessage{{ID: "message-review-user", Role: "user", Parts: []aichat.UIPart{{Type: "text", Text: "inspect"}}}},
 		}))
 		Expect(response.Code).To(Equal(http.StatusOK))
 
@@ -452,6 +433,7 @@ var _ = Describe("Captain aichat service", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(stored.Messages).To(HaveLen(2))
 		assistant := stored.Messages[1]
+		Expect(assistant.ID).To(Equal("message-review-user-assistant"))
 		Expect(assistant.Role).To(Equal("assistant"))
 		Expect(assistant.Parts).To(HaveLen(3))
 		Expect(assistant.Parts[0].Type).To(Equal("text"))
@@ -496,8 +478,8 @@ var _ = Describe("Captain aichat service", func() {
 		service := aichat.NewService(aichat.ServiceOptions{Resolver: &fakeResolver{provider: provider}, Threads: store})
 		response := httptest.NewRecorder()
 		service.Handler().ServeHTTP(response, requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{
-			ThreadID: thread.ID, Model: "openai/test-model",
-			Messages: []aichat.UIMessage{{Role: "user", Parts: []aichat.UIPart{{Type: "text", Text: "inspect"}}}},
+			ID: thread.ID, ThreadID: thread.ID, Trigger: "submit-message", Model: "openai/test-model",
+			Messages: []aichat.UIMessage{{ID: "message-cancel-user", Role: "user", Parts: []aichat.UIPart{{Type: "text", Text: "inspect"}}}},
 		}))
 		Eventually(exited).Should(BeClosed())
 		Expect(response.Body.String()).To(ContainSubstring("persist duplicate tool call"))

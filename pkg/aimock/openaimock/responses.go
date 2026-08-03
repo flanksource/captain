@@ -4,6 +4,7 @@
 package openaimock
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -37,33 +38,38 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 	}
 
 	model := modelOrDefault(wire.Model)
+	responseID := s.nextWireID("resp", model)
 	if wire.Stream {
 		// The 200 and the first frames are already on the wire by the time a
 		// stream can fail, so there is no status left to set — the note goes in
 		// the journal, where a test asserting on Requests() will see it.
 		note := ""
-		if err := streamResponses(w, model, respond); err != nil {
-			note = fmt.Sprintf("stream aborted: %v", err)
-			logger.Errorf("openaimock: %s", note)
+		cancelled := false
+		if err := streamResponses(r.Context(), w, responseID, model, respond); err != nil {
+			cancelled = aimock.IsClientCancellation(r.Context(), err)
+			if !cancelled {
+				note = fmt.Sprintf("stream aborted: %v", err)
+				logger.Errorf("openaimock: %s", note)
+			}
 		}
-		s.record(r, norm, http.StatusOK, note)
+		s.recordOutcome(r, norm, http.StatusOK, note, cancelled)
 		return
 	}
 
 	s.record(r, norm, http.StatusOK, "")
-	writeJSON(w, http.StatusOK, completedResponse(model, respond))
+	writeJSON(w, http.StatusOK, completedResponse(responseID, model, respond))
 }
 
 // completedResponse is the whole reply, used both as the non-streaming body and
 // as the payload of the terminal response.completed frame.
-func completedResponse(model string, respond Respond) map[string]any {
-	items := respond.items()
+func completedResponse(responseID, model string, respond Respond) map[string]any {
+	items := respond.items(responseID)
 	output := make([]map[string]any, 0, len(items))
 	for _, it := range items {
 		output = append(output, it.done())
 	}
 	return map[string]any{
-		"id":         responseID(model),
+		"id":         responseID,
 		"object":     "response",
 		"status":     "completed",
 		"model":      model,
@@ -76,9 +82,9 @@ func completedResponse(model string, respond Respond) map[string]any {
 
 // inProgressResponse is the envelope carried by response.created and
 // response.in_progress: identity only, with no output and no usage yet.
-func inProgressResponse(model string) map[string]any {
+func inProgressResponse(responseID, model string) map[string]any {
 	return map[string]any{
-		"id":         responseID(model),
+		"id":         responseID,
 		"object":     "response",
 		"status":     "in_progress",
 		"model":      model,
@@ -92,13 +98,13 @@ func inProgressResponse(model string) map[string]any {
 // streamResponses renders respond as the documented Responses API event
 // sequence: response.created / .in_progress → per item (output_item.added, the
 // item's own delta and done frames, output_item.done) → response.completed.
-func streamResponses(w http.ResponseWriter, model string, respond Respond) error {
+func streamResponses(ctx context.Context, w http.ResponseWriter, responseID, model string, respond Respond) error {
 	sse, err := aimock.NewSSE(w)
 	if err != nil {
 		return err
 	}
 
-	envelope := inProgressResponse(model)
+	envelope := inProgressResponse(responseID, model)
 	if err := sse.Event("response.created", map[string]any{"type": "response.created", "response": envelope}); err != nil {
 		return err
 	}
@@ -106,15 +112,18 @@ func streamResponses(w http.ResponseWriter, model string, respond Respond) error
 		return err
 	}
 
-	for index, it := range respond.items() {
+	for index, it := range respond.items(responseID) {
 		if err := streamItem(sse, index, it); err != nil {
 			return err
 		}
 	}
+	if err := aimock.WaitForCancellation(ctx, respond.HoldOpenAfterContent); err != nil {
+		return err
+	}
 
 	return sse.Event("response.completed", map[string]any{
 		"type":     "response.completed",
-		"response": completedResponse(model, respond),
+		"response": completedResponse(responseID, model, respond),
 	})
 }
 
@@ -238,8 +247,6 @@ func chunkRunes(raw string, size int) []string {
 	}
 	return chunks
 }
-
-func responseID(model string) string { return fmt.Sprintf("resp_mock_%s", model) }
 
 func modelOrDefault(model string) string {
 	if model == "" {

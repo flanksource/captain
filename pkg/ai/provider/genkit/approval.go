@@ -22,7 +22,13 @@ func toolApprovalState(req ai.Request, response *gkai.ModelResponse) (*api.ToolA
 	if err != nil {
 		return nil, err
 	}
-	state := &api.ToolApprovalState{Messages: append(messages, assistant), Calls: calls}
+	checkpoint, err := encodeToolApprovalCheckpoint(response)
+	if err != nil {
+		return nil, err
+	}
+	state := &api.ToolApprovalState{
+		Messages: append(messages, assistant), Calls: calls, ProviderCheckpoint: checkpoint,
+	}
 	if err := state.Validate(); err != nil {
 		return nil, fmt.Errorf("genkit approval state: %w", err)
 	}
@@ -116,7 +122,7 @@ func prepareToolApprovalResume(resume *api.ToolApprovalResume) ([]*gkai.Message,
 	if err := resume.Validate(); err != nil {
 		return nil, nil, nil, err
 	}
-	messages, err := conversationMessages(resume.State.Messages)
+	messages, err := decodeToolApprovalCheckpoint(resume.State.ProviderCheckpoint)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -152,8 +158,13 @@ func prepareToolApprovalResume(resume *api.ToolApprovalResume) ([]*gkai.Message,
 			if reason == "" {
 				reason = "tool call denied"
 			}
+			output := map[string]any{"denied": true, "reason": reason}
+			if part.Metadata == nil {
+				part.Metadata = map[string]any{}
+			}
+			part.Metadata["pendingOutput"] = output
 			responses = append(responses, gkai.NewToolResponsePart(&gkai.ToolResponse{
-				Name: call.Request.Tool, Ref: call.Request.ToolCallID, Output: map[string]any{"denied": true, "reason": reason},
+				Name: call.Request.Tool, Ref: call.Request.ToolCallID, Output: output,
 			}))
 		case api.ToolApprovalRespond:
 			output, err := approvalResultOutput(decision.Result)

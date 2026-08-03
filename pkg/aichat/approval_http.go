@@ -39,12 +39,37 @@ func (s *Service) handleResolveToolApproval(w http.ResponseWriter, request *http
 		http.Error(w, "denied tool approval cannot replace input", http.StatusBadRequest)
 		return
 	}
-	if err := s.options.Authority.ResolveToolApproval(request.Context(), ToolApprovalResolution{
-		ThreadID: threadID, ToolCallID: request.PathValue("toolCallID"),
+	continuation, err := s.options.Authority.ResolveToolApproval(request.Context(), ToolApprovalResolution{
+		ThreadID: threadID, ApprovalID: request.PathValue("approvalID"),
 		Approved: *body.Approved, UpdatedInput: body.UpdatedInput, Reason: body.Reason,
-	}); err != nil {
+	})
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	if continuation != nil {
+		if err := s.resumeToolApproval(request.Context(), threadID, continuation); err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+	}
+	if sessions, ok := store.(SessionReader); ok {
+		aggregate, err := sessions.GetSession(request.Context(), threadID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err := writeJSON(w, http.StatusOK, aggregate); err != nil {
+			serviceLog.Errorf("write approved chat session %q: %v", threadID, err)
+		}
+		return
+	}
+	thread, err := store.Get(request.Context(), threadID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := writeJSON(w, http.StatusOK, thread); err != nil {
+		serviceLog.Errorf("write approved chat thread %q: %v", threadID, err)
+	}
 }

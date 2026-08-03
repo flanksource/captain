@@ -47,9 +47,6 @@ func (o ServeOptions) validate() error {
 	if o.Dev && (o.UIPort < 0 || o.UIPort > 65535) {
 		return fmt.Errorf("invalid --ui-port %d", o.UIPort)
 	}
-	if strings.TrimSpace(o.ThreadsFile) == "" {
-		return fmt.Errorf("threads file cannot be empty")
-	}
 	return ValidatePromptDirs(o.PromptDirs)
 }
 

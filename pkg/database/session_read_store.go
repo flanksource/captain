@@ -36,11 +36,15 @@ type SessionOverview struct {
 	LifecycleStatus     string          `gorm:"column:lifecycle_status" json:"lifecycleStatus"`
 	ActivityState       string          `gorm:"column:activity_state" json:"activityState"`
 	HealthState         string          `gorm:"column:health_state" json:"healthState"`
+	StateReason         *string         `gorm:"column:state_reason" json:"stateReason,omitempty"`
+	StateVersion        int64           `gorm:"column:state_version" json:"stateVersion"`
 	Git                 json.RawMessage `gorm:"column:git" json:"git,omitempty"`
 	Metadata            json.RawMessage `gorm:"column:metadata" json:"metadata,omitempty"`
 	StartedAt           *time.Time      `gorm:"column:started_at" json:"startedAt,omitempty"`
 	EndedAt             *time.Time      `gorm:"column:ended_at" json:"endedAt,omitempty"`
 	LastActivityAt      *time.Time      `gorm:"column:last_activity_at" json:"lastActivityAt,omitempty"`
+	CreatedAt           time.Time       `gorm:"column:created_at" json:"createdAt"`
+	UpdatedAt           time.Time       `gorm:"column:updated_at" json:"updatedAt"`
 	DurationSeconds     *float64        `gorm:"column:duration_seconds" json:"durationSeconds,omitempty"`
 	PID                 *int64          `gorm:"column:pid" json:"pid,omitempty"`
 	ProcessStatus       *string         `gorm:"column:process_status" json:"processStatus,omitempty"`
@@ -74,6 +78,7 @@ type SessionOverview struct {
 	CacheWriteTokens    int64           `gorm:"column:cache_write_tokens" json:"cacheWriteTokens"`
 	TotalTokens         int64           `gorm:"column:total_tokens" json:"totalTokens"`
 	CostUSD             float64         `gorm:"column:cost_usd" json:"costUsd"`
+	ExecutionMode       string          `gorm:"column:execution_mode" json:"executionMode,omitempty"`
 }
 
 func (SessionOverview) TableName() string { return "captain_session_overview" }
