@@ -44,6 +44,7 @@ type migrationLockHandle interface {
 type applyDependencies struct {
 	acquireLock func(context.Context, string) (migrationLockHandle, error)
 	migrate     func(context.Context, string) error
+	verify      func(context.Context, string) error
 }
 
 var defaultApplyDependencies = applyDependencies{
@@ -54,6 +55,7 @@ var defaultApplyDependencies = applyDependencies{
 			commonsmigrate.WithExclude("todo_*"),
 		)
 	},
+	verify: verifyToolApprovalIdentity,
 }
 
 // Apply reconciles the checked-in HCL schema, then applies the colocated SQL
@@ -82,6 +84,53 @@ func apply(ctx context.Context, connection string, deps applyDependencies) (resu
 
 	if err := deps.migrate(ctx, connection); err != nil {
 		return fmt.Errorf("migrate Captain database: %w", err)
+	}
+	if err := deps.verify(ctx, connection); err != nil {
+		return fmt.Errorf("verify Captain database: %w", err)
+	}
+	return nil
+}
+
+func verifyToolApprovalIdentity(ctx context.Context, connection string) (resultErr error) {
+	db, err := commonsdb.NewDB(connection)
+	if err != nil {
+		return fmt.Errorf("open schema verification database: %w", err)
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("close schema verification database: %w", err))
+		}
+	}()
+
+	var validated bool
+	var definition string
+	err = db.QueryRowContext(ctx, `
+		SELECT c.convalidated, pg_get_constraintdef(c.oid)
+		FROM pg_constraint c
+		JOIN pg_class relation ON relation.oid = c.conrelid
+		JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace
+		WHERE namespace.nspname = 'public'
+		  AND relation.relname = 'captain_turn_requests'
+		  AND c.conname = 'captain_turn_requests_tool_approval_identity'
+		  AND c.contype = 'c'
+	`).Scan(&validated, &definition)
+	if errors.Is(err, sql.ErrNoRows) {
+		return errors.New("captain_turn_requests_tool_approval_identity constraint is missing")
+	}
+	if err != nil {
+		return fmt.Errorf("read captain_turn_requests_tool_approval_identity: %w", err)
+	}
+	normalized := strings.ToLower(strings.Join(strings.Fields(definition), " "))
+	if !validated || strings.Contains(normalized, "credential_id is not null") {
+		return fmt.Errorf("captain_turn_requests_tool_approval_identity is invalid: %s", definition)
+	}
+	for _, required := range []string{
+		"prompt_run_id is not null", "turn_id is not null",
+		"model_call_id is not null", "tool_call_id is not null",
+	} {
+		if !strings.Contains(normalized, required) {
+			return fmt.Errorf("captain_turn_requests_tool_approval_identity omits %q: %s", required, definition)
+		}
 	}
 	return nil
 }
