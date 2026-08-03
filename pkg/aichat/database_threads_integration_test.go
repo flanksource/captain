@@ -12,6 +12,7 @@ import (
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/session"
 	"github.com/flanksource/commons-db/dbtest"
+	"github.com/google/uuid"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -201,5 +202,87 @@ var _ = Describe("Database chat sessions", func() {
 		Expect(aggregate.Requests[0].State).To(Equal("approved"))
 		Expect(aggregate.Turns).To(HaveLen(1))
 		Expect(aggregate.Turns[0].StopReason).To(Equal("stop"))
+	})
+
+	It("terminalizes a tool and preserves an approval persistence failure", func(ctx SpecContext) {
+		testDB := dbtest.ForGinkgo(dbtest.Options{Name: "captain_aichat_approval_failure"})
+		db, err := database.Open(ctx, database.WithDSN(testDB.DSN()), database.WithMigrations())
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(db.Close)
+		Expect(db.Gorm().WithContext(ctx).Exec(`
+			ALTER TABLE captain_turn_requests
+			DROP CONSTRAINT captain_turn_requests_tool_approval_identity
+		`).Error).To(Succeed())
+		Expect(db.Gorm().WithContext(ctx).Exec(`
+			ALTER TABLE captain_turn_requests
+			ADD CONSTRAINT captain_turn_requests_tool_approval_identity
+			CHECK (kind <> 'tool_approval' OR credential_id IS NOT NULL)
+		`).Error).To(Succeed())
+
+		store, err := aichat.NewDatabaseThreadStore(db)
+		Expect(err).NotTo(HaveOccurred())
+		thread, err := store.Create(ctx, "Approval failure")
+		Expect(err).NotTo(HaveOccurred())
+		authority, err := aichat.NewDatabaseExecutionAuthority(db)
+		Expect(err).NotTo(HaveOccurred())
+		provider := &fakeStreamingProvider{backend: api.BackendGemini, events: []api.Event{
+			{Kind: api.EventToolUse, ToolCallID: "call-account-1", Tool: "accounts_edit", Input: map[string]any{"id": "acc-1"}},
+			{Kind: api.EventPermission, ToolCallID: "call-account-1", Tool: "accounts_edit"},
+		}}
+		service := aichat.NewService(aichat.ServiceOptions{
+			Resolver: &fakeResolver{provider: provider}, Threads: store, Authority: authority,
+			Tools: aichat.StaticToolProvider([]api.ToolDefinition{{
+				Name: "accounts_edit", DefaultPermission: api.ToolModeAsk,
+				Handler: func(context.Context, map[string]any) (any, error) {
+					Fail("failed approval must not execute its tool")
+					return nil, nil
+				},
+			}}),
+		})
+
+		response := httptest.NewRecorder()
+		service.Handler().ServeHTTP(response, requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{
+			ID: thread.ID, ThreadID: thread.ID, Trigger: "submit-message",
+			Runtime: &api.Model{Name: "gemini", Backend: api.BackendGemini},
+			Messages: []aichat.UIMessage{{
+				ID: "user-approval-failure", Role: "user",
+				Parts: []aichat.UIPart{{Type: "text", Text: "Edit the account"}},
+			}},
+		}))
+
+		Expect(response.Code).To(Equal(http.StatusOK), response.Body.String())
+		parts := decodedDataLines(response.Body.String())
+		Expect(partTypes(parts)).To(Equal([]string{
+			"start", "start-step", "tool-input-available", "tool-output-error",
+			"error", "finish-step", "finish",
+		}))
+		Expect(parts[3]["errorText"]).To(ContainSubstring("captain_turn_requests_tool_approval_identity"), "wire tool error")
+		Expect(parts[4]["errorText"]).To(ContainSubstring("captain_turn_requests_tool_approval_identity"), "wire stream error")
+
+		aggregate, err := store.GetSession(ctx, thread.ID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(aggregate.LifecycleStatus).To(Equal(string(database.SessionLifecycleFailed)))
+		Expect(aggregate.Messages).To(HaveLen(2))
+		Expect(aggregate.Messages[1].Parts[0].State).To(Equal(session.ToolStateOutputError))
+		Expect(aggregate.Messages[1].Parts[0].ErrorText).To(ContainSubstring("captain_turn_requests_tool_approval_identity"), "persisted tool error")
+		Expect(aggregate.Requests).To(BeEmpty())
+		Expect(aggregate.Turns).To(HaveLen(1))
+		var turnError string
+		Expect(db.Gorm().WithContext(ctx).Table("captain_turns").
+			Select("error").Where("id = ?", aggregate.Turns[0].ID).
+			Row().Scan(&turnError)).To(Succeed())
+		Expect(turnError).To(ContainSubstring("captain_turn_requests_tool_approval_identity"), "turn error")
+
+		sessionID := uuid.MustParse(thread.ID)
+		runs, err := db.ListPromptRuns(ctx, database.PromptRunFilter{SessionID: &sessionID})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(runs).To(HaveLen(1))
+		Expect(runs[0].State).To(Equal(database.PromptRunStateFailed))
+		Expect(runs[0].Error).To(ContainSubstring("captain_turn_requests_tool_approval_identity"), "prompt run error")
+		var modelCallError string
+		Expect(db.Gorm().WithContext(ctx).Table("captain_model_calls").
+			Select("error").Where("prompt_run_id = ?", runs[0].ID).
+			Scan(&modelCallError).Error).To(Succeed())
+		Expect(modelCallError).To(ContainSubstring("captain_turn_requests_tool_approval_identity"), "model call error")
 	})
 })
