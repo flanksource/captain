@@ -64,6 +64,7 @@ func Start(opts Options) (*Server, error) {
 	mux.HandleFunc("POST /v1/messages", srv.handleMessages)
 	mux.HandleFunc("POST /v1/messages/count_tokens", srv.handleCountTokens)
 	mux.HandleFunc("GET /v1/models", srv.handleModels)
+	mux.HandleFunc("HEAD /{$}", srv.handleHealth)
 	mux.HandleFunc("/", srv.handleUnknown)
 
 	if err := srv.Listen(opts.Addr, mux, journal); err != nil {
@@ -145,11 +146,15 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		// stream can fail, so there is no status left to set — the note goes in
 		// the journal, where a test asserting on Requests() will see it.
 		note := ""
-		if err := streamMessage(w, model, respond); err != nil {
-			note = fmt.Sprintf("stream aborted: %v", err)
-			logger.Errorf("anthropicmock: %s", note)
+		cancelled := false
+		if err := streamMessage(r.Context(), w, model, respond); err != nil {
+			cancelled = aimock.IsClientCancellation(r.Context(), err)
+			if !cancelled {
+				note = fmt.Sprintf("stream aborted: %v", err)
+				logger.Errorf("anthropicmock: %s", note)
+			}
 		}
-		s.record(r, norm, http.StatusOK, note)
+		s.recordOutcome(r, norm, http.StatusOK, note, cancelled)
 		return
 	}
 
@@ -201,6 +206,11 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	s.record(r, aimock.Request{}, http.StatusOK, "")
+	w.WriteHeader(http.StatusOK)
+}
+
 // handleUnknown fails loudly on an unrouted path rather than 404-ing quietly,
 // so a client reaching for an endpoint the mock does not implement shows up as
 // a named gap instead of an opaque client-side error.
@@ -216,14 +226,19 @@ func (s *Server) writeError(w http.ResponseWriter, r *http.Request, norm aimock.
 }
 
 func (s *Server) record(r *http.Request, norm aimock.Request, status int, miss string) {
+	s.recordOutcome(r, norm, status, miss, false)
+}
+
+func (s *Server) recordOutcome(r *http.Request, norm aimock.Request, status int, miss string, cancelled bool) {
 	s.Journal().Record(aimock.Recorded{
-		Method:  r.Method,
-		Path:    r.URL.Path,
-		Status:  status,
-		Stream:  norm.Stream,
-		Model:   norm.Model,
-		Request: norm,
-		Miss:    miss,
+		Method:    r.Method,
+		Path:      r.URL.Path,
+		Status:    status,
+		Stream:    norm.Stream,
+		Model:     norm.Model,
+		Request:   norm,
+		Miss:      miss,
+		Cancelled: cancelled,
 	})
 }
 

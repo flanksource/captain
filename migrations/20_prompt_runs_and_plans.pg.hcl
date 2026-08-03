@@ -10,6 +10,10 @@ table "captain_prompt_runs" {
     null = false
     type = uuid
   }
+  column "turn_id" {
+    null = true
+    type = uuid
+  }
   column "root_session_id" {
     null = false
     type = uuid
@@ -87,6 +91,22 @@ table "captain_prompt_runs" {
     null = true
     type = jsonb
   }
+  column "approval_state" {
+    null = true
+    type = jsonb
+  }
+  column "provider_checkpoint_codec" {
+    null = true
+    type = text
+  }
+  column "provider_checkpoint_version" {
+    null = true
+    type = integer
+  }
+  column "provider_checkpoint" {
+    null = true
+    type = bytea
+  }
   column "error" {
     null = true
     type = text
@@ -127,6 +147,12 @@ table "captain_prompt_runs" {
   foreign_key "captain_prompt_runs_session_id_fkey" {
     columns     = [column.session_id]
     ref_columns = [table.captain_sessions.column.id]
+    on_update   = NO_ACTION
+    on_delete   = CASCADE
+  }
+  foreign_key "captain_prompt_runs_turn_id_fkey" {
+    columns     = [column.turn_id]
+    ref_columns = [table.captain_turns.column.id]
     on_update   = NO_ACTION
     on_delete   = CASCADE
   }
@@ -192,6 +218,9 @@ table "captain_prompt_runs" {
   index "captain_prompt_runs_state_idx" {
     columns = [column.state, column.phase, column.updated_at]
   }
+  index "captain_prompt_runs_turn_id_idx" {
+    columns = [column.turn_id]
+  }
 
   check "captain_prompt_runs_iteration_nonnegative" {
     expr = "current_iteration >= 0"
@@ -207,6 +236,9 @@ table "captain_prompt_runs" {
   }
   check "captain_prompt_runs_time_order" {
     expr = "(started_at IS NULL OR started_at >= queued_at) AND (finished_at IS NULL OR (started_at IS NOT NULL AND finished_at >= started_at))"
+  }
+  check "captain_prompt_runs_provider_checkpoint" {
+    expr = "(provider_checkpoint IS NULL AND provider_checkpoint_codec IS NULL AND provider_checkpoint_version IS NULL) OR (provider_checkpoint IS NOT NULL AND length(btrim(provider_checkpoint_codec)) > 0 AND provider_checkpoint_version > 0)"
   }
 }
 

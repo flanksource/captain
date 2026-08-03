@@ -9,12 +9,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/flanksource/captain/pkg/aichat"
 	"github.com/flanksource/captain/pkg/claude"
 	"github.com/flanksource/captain/pkg/database"
 )
 
 func TestHandleThreadFromAgentCreatesThread(t *testing.T) {
-	store := newFileThreadStore(filepath.Join(t.TempDir(), "threads.json"))
+	store := aichat.NewMemoryThreadStore()
 	body := `{"title":"Fix flaky test","providerSessionId":"sess-123","model":"codex-gpt-5-codex"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/captain/chat/threads/from-agent", strings.NewReader(body))
 	rec := httptest.NewRecorder()
@@ -48,7 +49,7 @@ func TestHandleThreadFromAgentCreatesThread(t *testing.T) {
 }
 
 func TestHandleThreadFromAgentRequiresProviderSession(t *testing.T) {
-	store := newFileThreadStore(filepath.Join(t.TempDir(), "threads.json"))
+	store := aichat.NewMemoryThreadStore()
 	req := httptest.NewRequest(http.MethodPost, "/api/captain/chat/threads/from-agent", strings.NewReader(`{"title":"missing"}`))
 	rec := httptest.NewRecorder()
 

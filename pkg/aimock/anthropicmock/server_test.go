@@ -2,16 +2,40 @@ package anthropicmock
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/flanksource/captain/pkg/aimock"
 )
+
+func TestHeldStreamRecordsCancellationWithoutAMiss(t *testing.T) {
+	srv := startServer(t, "hold-open.yaml")
+	raw, err := json.Marshal(map[string]any{
+		"model": "claude-sonnet-5", "stream": true,
+		"messages": []any{userTurn("wait for interruption")},
+	})
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(t.Context())
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, srv.URL()+"/v1/messages", bytes.NewReader(raw))
+	require.NoError(t, err)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := http.DefaultClient.Do(request)
+	require.NoError(t, err)
+	cancel()
+	_, _ = io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	require.Eventually(t, func() bool { return len(srv.Requests()) == 1 }, time.Second, 10*time.Millisecond)
+	assert.True(t, srv.Requests()[0].Cancelled)
+	assert.Empty(t, srv.Requests()[0].Miss)
+}
 
 const scenarioDir = "../testdata/scenarios"
 

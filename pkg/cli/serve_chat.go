@@ -24,6 +24,7 @@ func newCaptainChatService(
 	opts ServeOptions,
 	cwd string,
 	threadStore aichat.ThreadStore,
+	authority aichat.ExecutionAuthority,
 	attachmentStore *attachments.Store,
 ) (*aichat.Service, *aichat.MCPToolProvider, error) {
 	chatTools, err := clickyaichat.NewCobraToolProvider(clickyaichat.CobraToolProviderOptions{
@@ -47,7 +48,7 @@ func newCaptainChatService(
 				},
 			}, nil
 		}),
-		Tools: chatTools, MCP: mcpTools, Threads: threadStore,
+		Tools: chatTools, MCP: mcpTools, Threads: threadStore, Authority: authority,
 		Attachments: chatAttachmentResolver{store: attachmentStore},
 	})
 	return chat, mcpTools, nil

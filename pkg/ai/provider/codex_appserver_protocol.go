@@ -3,6 +3,7 @@ package provider
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/history"
@@ -64,7 +65,9 @@ type appServerErrorBody struct {
 }
 
 type appServerRef struct {
-	ID string `json:"id"`
+	ID     string              `json:"id"`
+	Status string              `json:"status"`
+	Error  *appServerErrorBody `json:"error"`
 }
 
 type appServerTokenUsage struct {
@@ -159,6 +162,18 @@ func mapAppServerNotification(method string, params json.RawMessage, ctx appServ
 		return ai.Event{}, false
 
 	case "turn/completed":
+		if n.Turn != nil {
+			switch n.Turn.Status {
+			case "interrupted":
+				return ai.Event{}, false
+			case "failed":
+				message := "codex turn failed"
+				if n.Turn.Error != nil {
+					message = firstNonEmpty(n.Turn.Error.Message, n.Turn.Error.AdditionalDetails, message)
+				}
+				return ai.Event{Kind: ai.EventError, Error: extractCodexErrorText(message), SessionID: n.threadID(), Model: ctx.Model}, true
+			}
+		}
 		out := ai.Event{Kind: ai.EventResult, Tool: "Result", SessionID: n.threadID(), Model: ctx.Model, Success: true}
 		if ctx.Usage != nil && ctx.Usage.TotalTokens() > 0 {
 			u := *ctx.Usage
@@ -278,11 +293,19 @@ func appServerErrorIsFatal(method string, params json.RawMessage) bool {
 	return !parseAppServerNotif(params).WillRetry
 }
 
-// appServerStreamedAgentMessage reports whether an item/completed notification is
-// an agent message whose text was already streamed via item/agentMessage/delta.
-func appServerStreamedAgentMessage(params json.RawMessage, streamed map[string]bool) bool {
+func appServerAgentMessageRemainder(params json.RawMessage, streamed map[string]string) (string, bool, error) {
 	it := parseAppServerNotif(params).Item
-	return it != nil && it.Type == "agentMessage" && streamed[it.ID]
+	if it == nil || it.Type != "agentMessage" {
+		return "", false, nil
+	}
+	prefix, ok := streamed[it.ID]
+	if !ok {
+		return "", false, nil
+	}
+	if !strings.HasPrefix(it.Text, prefix) {
+		return "", true, fmt.Errorf("codex app-server completed agent message %q does not extend its streamed text", it.ID)
+	}
+	return strings.TrimPrefix(it.Text, prefix), true, nil
 }
 
 // --- request params --------------------------------------------------------
