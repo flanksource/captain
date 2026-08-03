@@ -1,0 +1,18 @@
+name: hold-open
+description: Streams partial content and waits for the caller to interrupt it.
+
+anthropic:
+  - match:
+      prompt_contains: "wait for interruption"
+    respond:
+      text: "Partial response before interruption."
+      hold_open_after_content: true
+      usage: {input: 12, output: 4}
+
+openai:
+  - match:
+      prompt_contains: "wait for interruption"
+    respond:
+      text: "Partial response before interruption."
+      hold_open_after_content: true
+      usage: {input: 12, output: 4}

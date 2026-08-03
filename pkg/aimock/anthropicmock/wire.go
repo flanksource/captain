@@ -17,8 +17,14 @@ type messagesRequest struct {
 	Model     string          `json:"model"`
 	System    json.RawMessage `json:"system,omitempty"`
 	Messages  []wireMessage   `json:"messages"`
+	Tools     []wireTool      `json:"tools,omitempty"`
 	Stream    bool            `json:"stream,omitempty"`
 	MaxTokens int             `json:"max_tokens,omitempty"`
+}
+
+type wireTool struct {
+	Name        string          `json:"name"`
+	InputSchema json.RawMessage `json:"input_schema,omitempty"`
 }
 
 type wireMessage struct {
@@ -51,6 +57,17 @@ func decodeRequest(r *http.Request, body []byte) (messagesRequest, aimock.Reques
 		System:  flattenSystem(wire.System),
 		Stream:  wire.Stream,
 		Headers: headerMap(r),
+	}
+	for _, tool := range wire.Tools {
+		if tool.Name != "" {
+			norm.ToolNames = append(norm.ToolNames, tool.Name)
+			if len(tool.InputSchema) > 0 {
+				if norm.ToolSchemas == nil {
+					norm.ToolSchemas = map[string]json.RawMessage{}
+				}
+				norm.ToolSchemas[tool.Name] = tool.InputSchema
+			}
+		}
 	}
 
 	// tool_use ids seen so far, so a later tool_result can be resolved back to

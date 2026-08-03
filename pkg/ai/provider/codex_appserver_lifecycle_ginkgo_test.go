@@ -77,6 +77,18 @@ var _ = Describe("Codex app-server tool lifecycle", func() {
 })
 
 var _ = Describe("Codex app-server turn control", func() {
+	It("does not emit a successful result for an interrupted turn", func() {
+		client, turn := activeGinkgoTurn()
+
+		client.handleNotification("turn/completed", json.RawMessage(`{
+			"threadId":"thread-1",
+			"turn":{"id":"turn-1","status":"interrupted"}
+		}`))
+
+		Expect(drainEvents(turn)).To(BeEmpty())
+		Eventually(turn.terminal).Should(BeClosed())
+	})
+
 	It("waits for thread and turn identifiers before interrupting", func() {
 		turn := &turnState{terminal: make(chan struct{}), started: make(chan struct{})}
 		go func() {
@@ -128,7 +140,7 @@ func activeGinkgoTurn() (*CodexAppServer, *turnState) {
 		ch:         make(chan ai.Event, 16),
 		usage:      &ai.Usage{},
 		model:      "gpt-5",
-		streamed:   map[string]bool{},
+		streamed:   map[string]string{},
 		toolOutput: map[string]string{},
 		terminal:   make(chan struct{}),
 	}

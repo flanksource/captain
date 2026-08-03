@@ -14,6 +14,8 @@ var _ = Describe("AI SDK v6 wire types", func() {
 	It("decodes the DefaultChatTransport request without losing UI parts", func() {
 		const body = `{
 			"id":"chat-1",
+			"trigger":"regenerate-message",
+			"messageId":"message-1",
 			"messages":[{"id":"message-1","role":"assistant","parts":[
 				{"type":"reasoning","text":"checking"},
 				{"type":"dynamic-tool","toolName":"invoice_get","toolCallId":"call-1","state":"approval-responded","input":{"id":"inv-1"},"approval":{"id":"approval-1","approved":true}},
@@ -34,6 +36,8 @@ var _ = Describe("AI SDK v6 wire types", func() {
 		var request aichat.ChatRequest
 		Expect(json.Unmarshal([]byte(body), &request)).To(Succeed())
 		Expect(request.ID).To(Equal("chat-1"))
+		Expect(request.Trigger).To(Equal("regenerate-message"))
+		Expect(request.MessageID).To(Equal("message-1"))
 		Expect(request.Model).To(Equal("anthropic/claude-sonnet"))
 		Expect(request.ReasoningEffort).To(Equal(api.EffortHigh))
 		Expect(request.Temperature).NotTo(BeNil())
@@ -75,10 +79,10 @@ var _ = Describe("AI SDK v6 wire types", func() {
 		}))
 	})
 
-	It("rejects the removed string tool approval policy", func() {
+	It("rejects client-owned tool approval state", func() {
 		var request aichat.ChatRequest
-		Expect(json.Unmarshal([]byte(`{"messages":[],"toolApproval":"manual"}`), &request)).To(
-			MatchError(ContainSubstring("cannot unmarshal string")),
+		Expect(json.Unmarshal([]byte(`{"messages":[],"toolApproval":{"state":{}}}`), &request)).To(
+			MatchError(ContainSubstring("toolApproval is server-owned")),
 		)
 	})
 

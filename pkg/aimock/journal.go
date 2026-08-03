@@ -26,7 +26,8 @@ type Recorded struct {
 	// Miss is the diagnostic for a request that produced no clean scripted
 	// reply — no rule matched, the route is unimplemented, or the stream aborted
 	// mid-flight. Empty on a normal request.
-	Miss string `json:"miss,omitempty"`
+	Miss      string `json:"miss,omitempty"`
+	Cancelled bool   `json:"cancelled,omitempty"`
 }
 
 // Journal records every served request in memory and, when opened with a path,

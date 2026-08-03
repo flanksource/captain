@@ -386,7 +386,7 @@ var _ = Describe("session get multi-result output", func() {
 					"host": "MacBook-Pro.local",
 					"detailAvailable": true,
 					"summary": {"key":"","id":"ad4c854e-cde6-4b99-99f3-667bf74112e3","source":"claude","project":"flanksource","toolCalls":0,"messages":0,"detailAvailable":false},
-					"detail": {"id":"ad4c854e-cde6-4b99-99f3-667bf74112e3","source":"claude","git":{},"usage":{"inputTokens":0,"outputTokens":0},"cost":{"inputTokens":0,"outputTokens":0,"totalTokens":0,"inputCost":0,"outputCost":0},"capabilities":{},"files":{},"approvals":{"approved":0,"denied":0}}
+					"detail": {"id":"ad4c854e-cde6-4b99-99f3-667bf74112e3","revision":0,"source":"claude","git":{},"usage":{"inputTokens":0,"outputTokens":0},"cost":{"inputTokens":0,"outputTokens":0,"totalTokens":0,"inputCost":0,"outputCost":0},"capabilities":{},"files":{},"approvals":{"approved":0,"denied":0}}
 				},
 				{
 					"captainId": "7ca78c55-e280-50ff-a19a-9f355a6fc55e",

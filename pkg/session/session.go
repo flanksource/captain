@@ -12,20 +12,26 @@ import (
 // history/sessions commands render, the viewer consumes, and the chat/live
 // surfaces project from.
 type Session struct {
-	ID              string          `json:"id"`
-	Source          string          `json:"source,omitempty"` // "claude" | "codex"
-	Project         string          `json:"project,omitempty"`
-	CWD             string          `json:"cwd,omitempty"`
-	Slug            string          `json:"slug,omitempty"`
-	Title           string          `json:"title,omitempty"`
-	InitialPrompt   string          `json:"initialPrompt,omitempty"`
-	Version         string          `json:"version,omitempty"`
-	Provider        string          `json:"provider,omitempty"`
-	Backend         string          `json:"backend,omitempty"`
-	ExecutionMode   api.RuntimeMode `json:"executionMode,omitempty"`
-	Model           string          `json:"model,omitempty"` // primary model
-	ReasoningEffort string          `json:"reasoningEffort,omitempty"`
-	HistoryFile     string          `json:"historyFile,omitempty"`
+	ID                string          `json:"id"`
+	ProviderSessionID string          `json:"providerSessionId,omitempty"`
+	Revision          int64           `json:"revision"`
+	LifecycleStatus   string          `json:"lifecycleStatus,omitempty"`
+	ActivityState     string          `json:"activityState,omitempty"`
+	HealthState       string          `json:"healthState,omitempty"`
+	StateReason       string          `json:"stateReason,omitempty"`
+	Source            string          `json:"source,omitempty"` // "claude" | "codex"
+	Project           string          `json:"project,omitempty"`
+	CWD               string          `json:"cwd,omitempty"`
+	Slug              string          `json:"slug,omitempty"`
+	Title             string          `json:"title,omitempty"`
+	InitialPrompt     string          `json:"initialPrompt,omitempty"`
+	Version           string          `json:"version,omitempty"`
+	Provider          string          `json:"provider,omitempty"`
+	Backend           string          `json:"backend,omitempty"`
+	ExecutionMode     api.RuntimeMode `json:"executionMode,omitempty"`
+	Model             string          `json:"model,omitempty"` // primary model
+	ReasoningEffort   string          `json:"reasoningEffort,omitempty"`
+	HistoryFile       string          `json:"historyFile,omitempty"`
 
 	Git       GitState   `json:"git,omitempty"`
 	StartedAt *time.Time `json:"startedAt,omitempty"`
@@ -45,6 +51,7 @@ type Session struct {
 	Agents []*Agent `json:"agents,omitempty"` // flat index (root first)
 
 	Messages  []Message         `json:"messages,omitempty"`
+	Requests  []Request         `json:"requests,omitempty"`
 	Window    *TranscriptWindow `json:"window,omitempty"`
 	Files     ChangedFiles      `json:"files,omitempty"`
 	Todos     []tools.TodoItem  `json:"todos,omitempty"`
@@ -131,6 +138,7 @@ type Event struct {
 // state for one model turn.
 type Turn struct {
 	ID              string     `json:"id"`
+	Status          string     `json:"status,omitempty"`
 	AgentID         string     `json:"agentId,omitempty"`
 	Index           int        `json:"index"`
 	StartedAt       *time.Time `json:"startedAt,omitempty"`

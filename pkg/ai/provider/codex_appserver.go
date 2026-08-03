@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	osexec "os/exec"
-	"strings"
 	"sync"
 	"time"
 
@@ -141,7 +140,7 @@ func (c *CodexAppServer) ExecuteStream(ctx context.Context, req ai.Request) (<-c
 		ch:           make(chan ai.Event, 16),
 		usage:        &ai.Usage{},
 		model:        c.model,
-		streamed:     map[string]bool{},
+		streamed:     map[string]string{},
 		toolOutput:   map[string]string{},
 		terminal:     make(chan struct{}),
 		started:      make(chan struct{}),
@@ -214,7 +213,7 @@ func (c *CodexAppServer) ensureStarted(ctx context.Context) error {
 
 	ready := make(chan error, 1)
 	var process *exec.Process
-	sup := exec.NewExec("codex", "app-server").WithStdioPipe().Supervise(exec.SuperviseOptions{
+	sup := newCodexAppServerProcess(c.cfg).WithStdioPipe().Supervise(exec.SuperviseOptions{
 		// No restart: a crash surfaces as EventError, never a silent retry.
 		RestartPolicy: exec.RestartNo,
 		OnStarted: func(p *exec.Process) {
@@ -255,13 +254,6 @@ func (c *CodexAppServer) ensureStarted(ctx context.Context) error {
 		c.teardown(true)
 		return fmt.Errorf("codex app-server: timed out waiting for initialize handshake")
 	}
-}
-
-func appServerProcessError(err error, stderr string) error {
-	if detail := strings.TrimSpace(stderr); detail != "" {
-		return fmt.Errorf("%w: %s", err, detail)
-	}
-	return err
 }
 
 // handshake performs the required initialize → initialized exchange (any request
@@ -442,8 +434,9 @@ func (c *CodexAppServer) handleNotification(method string, params json.RawMessag
 	ctx := appServerEventContext{Model: ts.model, Usage: ts.usage}
 	switch method {
 	case "item/agentMessage/delta":
-		if id := parseAppServerNotif(params).ItemID; id != "" {
-			ts.streamed[id] = true
+		notification := parseAppServerNotif(params)
+		if notification.ItemID != "" {
+			ts.streamed[notification.ItemID] += notification.Delta
 		}
 		if len(ts.outputSchema) > 0 {
 			return
@@ -464,7 +457,15 @@ func (c *CodexAppServer) handleNotification(method string, params json.RawMessag
 				return
 			}
 		}
-		if appServerStreamedAgentMessage(params, ts.streamed) {
+		remainder, streamed, err := appServerAgentMessageRemainder(params, ts.streamed)
+		if err != nil {
+			ts.send(ai.Event{Kind: ai.EventError, Error: err.Error(), Model: ts.model})
+			return
+		}
+		if streamed {
+			if remainder != "" {
+				ts.send(ai.Event{Kind: ai.EventText, Text: remainder, Model: ts.model})
+			}
 			return
 		}
 		if it := parseAppServerNotif(params).Item; it != nil {
@@ -481,22 +482,6 @@ func (c *CodexAppServer) handleNotification(method string, params json.RawMessag
 	if method == "turn/completed" || appServerErrorIsFatal(method, params) {
 		c.clearActive(ts)
 		ts.signalTerminal()
-	}
-}
-
-// handleApproval auto-approves server→client approval requests, mirroring the
-// `--dangerously-bypass-approvals` default of the exec path. Decision shapes
-// differ per method (see the *ApprovalResponse schemas).
-func (c *CodexAppServer) handleApproval(method string, _ json.RawMessage) (any, *jsonrpc.RPCError) {
-	switch method {
-	case "item/commandExecution/requestApproval", "item/fileChange/requestApproval":
-		return map[string]string{"decision": "accept"}, nil
-	case "item/permissions/requestApproval":
-		return map[string]any{"permissions": map[string]any{}, "scope": "turn"}, nil
-	case "item/tool/requestUserInput":
-		return map[string]any{}, nil
-	default: // execCommandApproval, applyPatchApproval, unknown
-		return map[string]string{"decision": "approved"}, nil
 	}
 }
 

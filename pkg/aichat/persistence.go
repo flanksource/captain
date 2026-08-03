@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/flanksource/captain/pkg/api"
@@ -18,20 +19,18 @@ type assistantMessageBuilder struct {
 }
 
 type assistantMessageBuilderOptions struct {
-	ChatID string
-	Seed   *UIMessage
-	Resume *api.ToolApprovalResume
+	MessageID string
+	TurnID    string
+	Replace   bool
+	Seed      *UIMessage
+	Resume    *api.ToolApprovalResume
 }
 
 func newAssistantMessageBuilder(options assistantMessageBuilderOptions) (*assistantMessageBuilder, error) {
-	id := ""
-	if options.ChatID != "" {
-		id = options.ChatID + "-assistant"
-	}
 	builder := &assistantMessageBuilder{
-		message:   UIMessage{ID: id, Role: string(api.RoleAssistant), Parts: []UIPart{}},
+		message:   UIMessage{ID: options.MessageID, TurnID: options.TurnID, Role: string(api.RoleAssistant), Parts: []UIPart{}},
 		toolParts: map[string]int{},
-		replace:   options.Resume != nil,
+		replace:   options.Replace || options.Resume != nil,
 	}
 	if options.Resume == nil {
 		return builder, nil
@@ -76,7 +75,7 @@ func newAssistantMessageBuilder(options assistantMessageBuilderOptions) (*assist
 	return builder, nil
 }
 
-func (s *Service) persistedEvents(ctx context.Context, request ChatRequest, source <-chan api.Event) <-chan api.Event {
+func (s *Service) persistedEvents(ctx context.Context, request ChatRequest, turnID string, source <-chan api.Event) <-chan api.Event {
 	if request.ThreadID == "" {
 		return source
 	}
@@ -88,8 +87,10 @@ func (s *Service) persistedEvents(ctx context.Context, request ChatRequest, sour
 			sendEvent(ctx, out, api.Event{Kind: api.EventError, Error: err.Error()})
 			return
 		}
+		messageID := assistantMessageID(request, turnID)
+		replace := request.Trigger == "regenerate-message"
 		builder, err := newAssistantMessageBuilder(assistantMessageBuilderOptions{
-			ChatID: request.ID, Seed: seed, Resume: request.ToolApproval,
+			MessageID: messageID, TurnID: turnID, Replace: replace, Seed: seed, Resume: request.ToolApproval,
 		})
 		if err != nil {
 			sendEvent(ctx, out, api.Event{Kind: api.EventError, Error: err.Error()})
@@ -107,7 +108,7 @@ func (s *Service) persistedEvents(ctx context.Context, request ChatRequest, sour
 					return
 				}
 			}
-			if !persisted && (event.Kind == api.EventResult || event.Kind == api.EventError) {
+			if !persisted && (event.Kind == api.EventResult || event.Kind == api.EventError || event.Kind == api.EventInterrupted) {
 				if err := s.persistCompletedTurn(ctx, request.ThreadID, builder, event); err != nil {
 					sendEvent(ctx, out, api.Event{Kind: api.EventError, Error: err.Error(), Model: event.Model})
 					return
@@ -203,7 +204,22 @@ func (b *assistantMessageBuilder) apply(event api.Event) error {
 			return err
 		}
 		b.message.Parts = append(b.message.Parts, UIPart{Type: "data-error", Data: payload})
+	case api.EventInterrupted:
+		return b.interrupted()
 	case api.EventSystem:
+	}
+	return nil
+}
+
+func (b *assistantMessageBuilder) interrupted() error {
+	data, err := json.Marshal(map[string]bool{"success": false, "interrupted": true})
+	if err != nil {
+		return err
+	}
+	b.message.Parts = append(b.message.Parts, UIPart{Type: "data-result", Data: data})
+	success := false
+	b.message.Metadata = &MessageMetadata{
+		ProviderSessionID: b.sessionID, Model: b.model, Success: &success, Interrupted: true,
 	}
 	return nil
 }
@@ -256,12 +272,15 @@ func (b *assistantMessageBuilder) toolUse(event api.Event) error {
 }
 
 func (b *assistantMessageBuilder) permission(event api.Event) error {
+	if event.ApprovalID == "" {
+		return fmt.Errorf("persist tool approval %q has no durable approval ID", event.ToolCallID)
+	}
 	part, err := b.toolPart(event.ToolCallID, event.Tool)
 	if err != nil {
 		return err
 	}
 	part.State = "approval-requested"
-	part.Approval = &Approval{ID: event.ToolCallID}
+	part.Approval = &Approval{ID: event.ApprovalID}
 	return nil
 }
 
@@ -302,11 +321,10 @@ func (b *assistantMessageBuilder) result(event api.Event) error {
 	dataType := "data-result"
 	data := event.StructuredData
 	if event.ToolApproval != nil {
-		dataType = "data-tool-approval"
 		var err error
-		data, err = json.Marshal(event.ToolApproval)
+		data, err = json.Marshal(map[string]bool{"success": event.Success, "waitingApproval": true})
 		if err != nil {
-			return fmt.Errorf("marshal tool approval state: %w", err)
+			return fmt.Errorf("marshal tool approval result state: %w", err)
 		}
 	} else if len(data) == 0 {
 		var err error
@@ -351,12 +369,15 @@ func applyApprovalDecision(part *UIPart, decision api.ToolApprovalDecision) erro
 	case api.ToolApprovalApprove:
 		approved := true
 		part.State = "approval-responded"
-		part.Approval = &Approval{ID: decision.ToolCallID, Approved: &approved}
+		part.Approval = &Approval{ID: decision.ApprovalID, Approved: &approved}
+		if len(decision.Input) > 0 {
+			part.Input = append(json.RawMessage(nil), decision.Input...)
+		}
 	case api.ToolApprovalDeny:
 		approved := false
 		part.State = "output-denied"
 		part.Approval = &Approval{
-			ID: decision.ToolCallID, Approved: &approved, Reason: decision.Message,
+			ID: decision.ApprovalID, Approved: &approved, Reason: decision.Message,
 		}
 	case api.ToolApprovalRespond:
 		if decision.Result == nil {
@@ -380,4 +401,14 @@ func jsonValue(text string) (json.RawMessage, error) {
 	}
 	payload, err := json.Marshal(text)
 	return payload, err
+}
+
+func equalPartJSON(left, right json.RawMessage) bool {
+	if len(left) == 0 || len(right) == 0 {
+		return len(left) == len(right)
+	}
+	var leftValue, rightValue any
+	return json.Unmarshal(left, &leftValue) == nil &&
+		json.Unmarshal(right, &rightValue) == nil &&
+		reflect.DeepEqual(leftValue, rightValue)
 }

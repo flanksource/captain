@@ -19,7 +19,7 @@ var _ = Describe("serve ports", func() {
 	)
 
 	It("accepts an ephemeral port only in development", func() {
-		options := ServeOptions{Host: "localhost", Port: 0, Dev: true, UIPort: 0, ThreadsFile: "threads.json"}
+		options := ServeOptions{Host: "localhost", Port: 0, Dev: true, UIPort: 0}
 		Expect(options.validate()).To(Succeed())
 
 		options.Dev = false

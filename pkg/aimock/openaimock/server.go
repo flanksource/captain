@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sync/atomic"
 
 	"github.com/flanksource/captain/pkg/aimock"
 )
@@ -29,7 +30,8 @@ type Options struct {
 // Server is a mock OpenAI API serving both wire APIs from one scenario section.
 type Server struct {
 	aimock.Base
-	rules *aimock.Rules[Respond]
+	rules    *aimock.Rules[Respond]
+	sequence atomic.Uint64
 }
 
 var _ aimock.Server = (*Server)(nil)
@@ -100,6 +102,10 @@ func (s *Server) Env() []string { return Env(s.URL()) }
 // a run played the whole scenario.
 func (s *Server) Remaining() []string { return s.rules.Remaining() }
 
+func (s *Server) nextWireID(kind, model string) string {
+	return fmt.Sprintf("%s_mock_%s_%d", kind, model, s.sequence.Add(1))
+}
+
 // resolve picks the scripted reply for a request, writing the miss diagnostic or
 // the scripted error itself and reporting false when there is nothing to serve.
 func (s *Server) resolve(w http.ResponseWriter, r *http.Request, norm aimock.Request) (Respond, bool) {
@@ -157,14 +163,19 @@ func (s *Server) writeError(w http.ResponseWriter, r *http.Request, norm aimock.
 }
 
 func (s *Server) record(r *http.Request, norm aimock.Request, status int, miss string) {
+	s.recordOutcome(r, norm, status, miss, false)
+}
+
+func (s *Server) recordOutcome(r *http.Request, norm aimock.Request, status int, miss string, cancelled bool) {
 	s.Journal().Record(aimock.Recorded{
-		Method:  r.Method,
-		Path:    r.URL.Path,
-		Status:  status,
-		Stream:  norm.Stream,
-		Model:   norm.Model,
-		Request: norm,
-		Miss:    miss,
+		Method:    r.Method,
+		Path:      r.URL.Path,
+		Status:    status,
+		Stream:    norm.Stream,
+		Model:     norm.Model,
+		Request:   norm,
+		Miss:      miss,
+		Cancelled: cancelled,
 	})
 }
 

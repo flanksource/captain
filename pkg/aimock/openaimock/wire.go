@@ -14,10 +14,18 @@ import (
 
 // responsesRequest is the subset of a /v1/responses body worth matching on.
 type responsesRequest struct {
-	Model        string          `json:"model"`
-	Instructions string          `json:"instructions,omitempty"`
-	Input        json.RawMessage `json:"input"`
-	Stream       bool            `json:"stream,omitempty"`
+	Model        string            `json:"model"`
+	Instructions string            `json:"instructions,omitempty"`
+	Input        json.RawMessage   `json:"input"`
+	Tools        []json.RawMessage `json:"tools,omitempty"`
+	Stream       bool              `json:"stream,omitempty"`
+}
+
+type wireTool struct {
+	Type        string          `json:"type,omitempty"`
+	Name        string          `json:"name"`
+	Parameters  json.RawMessage `json:"parameters,omitempty"`
+	InputSchema json.RawMessage `json:"input_schema,omitempty"`
 }
 
 // inputItem covers every entry shape the Responses API accepts in `input`:
@@ -27,6 +35,7 @@ type inputItem struct {
 	Type      string          `json:"type,omitempty"`
 	Role      string          `json:"role,omitempty"`
 	Content   json.RawMessage `json:"content,omitempty"`
+	Namespace string          `json:"namespace,omitempty"`
 	Name      string          `json:"name,omitempty"`
 	CallID    string          `json:"call_id,omitempty"`
 	Arguments string          `json:"arguments,omitempty"`
@@ -53,6 +62,29 @@ func decodeResponses(r *http.Request, body []byte) (responsesRequest, aimock.Req
 		Stream:  wire.Stream,
 		Headers: headerMap(r),
 	}
+	for _, definition := range wire.Tools {
+		var tool wireTool
+		if err := json.Unmarshal(definition, &tool); err != nil {
+			return wire, norm, fmt.Errorf("decode responses tool: %w", err)
+		}
+		if tool.Name != "" {
+			norm.ToolNames = append(norm.ToolNames, tool.Name)
+			if norm.ToolDefinitions == nil {
+				norm.ToolDefinitions = map[string]json.RawMessage{}
+			}
+			norm.ToolDefinitions[tool.Name] = definition
+			schema := tool.Parameters
+			if len(schema) == 0 {
+				schema = tool.InputSchema
+			}
+			if len(schema) > 0 {
+				if norm.ToolSchemas == nil {
+					norm.ToolSchemas = map[string]json.RawMessage{}
+				}
+				norm.ToolSchemas[tool.Name] = schema
+			}
+		}
+	}
 
 	// A bare string input is the single-user-turn shorthand.
 	var text string
@@ -74,6 +106,9 @@ func decodeResponses(r *http.Request, body []byte) (responsesRequest, aimock.Req
 		case "function_call":
 			if in.CallID != "" && in.Name != "" {
 				callNames[in.CallID] = in.Name
+				if in.Namespace != "" {
+					callNames[in.CallID] = in.Namespace + "__" + in.Name
+				}
 			}
 			norm.Messages = append(norm.Messages, aimock.Message{Role: aimock.RoleAssistant, Content: in.Arguments})
 		case "function_call_output":
@@ -102,7 +137,15 @@ func decodeResponses(r *http.Request, body []byte) (responsesRequest, aimock.Req
 type chatRequest struct {
 	Model    string        `json:"model"`
 	Messages []chatMessage `json:"messages"`
+	Tools    []chatTool    `json:"tools,omitempty"`
 	Stream   bool          `json:"stream,omitempty"`
+}
+
+type chatTool struct {
+	Function struct {
+		Name       string          `json:"name"`
+		Parameters json.RawMessage `json:"parameters,omitempty"`
+	} `json:"function"`
 }
 
 type chatMessage struct {
@@ -129,6 +172,17 @@ func decodeChat(r *http.Request, body []byte) (chatRequest, aimock.Request, erro
 	}
 
 	norm := aimock.Request{Model: wire.Model, Stream: wire.Stream, Headers: headerMap(r)}
+	for _, tool := range wire.Tools {
+		if tool.Function.Name != "" {
+			norm.ToolNames = append(norm.ToolNames, tool.Function.Name)
+			if len(tool.Function.Parameters) > 0 {
+				if norm.ToolSchemas == nil {
+					norm.ToolSchemas = map[string]json.RawMessage{}
+				}
+				norm.ToolSchemas[tool.Function.Name] = tool.Function.Parameters
+			}
+		}
+	}
 
 	callNames := map[string]string{}
 	var systems []string

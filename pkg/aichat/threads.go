@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/flanksource/captain/pkg/session"
 	"github.com/google/uuid"
 )
 
@@ -48,6 +49,10 @@ type ThreadStore interface {
 	Delete(context.Context, string) error
 	SetProviderSession(context.Context, string, string) error
 	AddUsage(context.Context, string, TurnUsage) (*Thread, error)
+}
+
+type SessionReader interface {
+	GetSession(context.Context, string) (*session.Session, error)
 }
 
 type memoryThreadStore struct {
