@@ -20,27 +20,34 @@ type ExecutionRequest struct {
 // caller-tool approval.
 type ToolApprovalResolution struct {
 	ThreadID     string
-	ToolCallID   string
+	ApprovalID   string
 	Approved     bool
 	UpdatedInput map[string]any
 	Reason       string
+}
+
+type ApprovalContinuation struct {
+	Execution Execution
+	Spec      api.Spec
 }
 
 // ExecutionAuthority admits turns before provider launch and resolves approval
 // decisions against the same durable identity.
 type ExecutionAuthority interface {
 	Begin(context.Context, ExecutionRequest) (Execution, error)
-	ResolveToolApproval(context.Context, ToolApprovalResolution) error
+	ResolveToolApproval(context.Context, ToolApprovalResolution) (*ApprovalContinuation, error)
 }
 
 // Execution is one admitted provider turn. Its caller-tool endpoint is already
 // bound to the Captain session and prompt run.
 type Execution interface {
 	CaptainSessionID() string
+	TurnID() string
 	PromptRunID() string
 	CallerTools() *api.CallerToolEndpoint
 	Events() <-chan api.Event
-	Observe(context.Context, api.Event) error
+	Observe(context.Context, api.Event) (api.Event, error)
+	Interrupt(context.Context, string) error
 	Close(context.Context) error
 }
 
@@ -80,7 +87,7 @@ func mergeExecutionEvents(
 			deferred = deferred[:0]
 			return true
 		}
-		for provider != nil {
+		for provider != nil || (len(awaiting) > 0 && approvals != nil) {
 			select {
 			case <-ctx.Done():
 				return
@@ -149,11 +156,12 @@ func observeExecutionEvents(
 	go func() {
 		defer close(out)
 		for event := range source {
-			if err := execution.Observe(ctx, event); err != nil {
+			observed, err := execution.Observe(ctx, event)
+			if err != nil {
 				sendEvent(ctx, out, api.Event{Kind: api.EventError, Error: err.Error(), Model: event.Model})
 				return
 			}
-			if !sendEvent(ctx, out, event) {
+			if !sendEvent(ctx, out, observed) {
 				return
 			}
 		}

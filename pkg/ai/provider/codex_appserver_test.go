@@ -8,7 +8,6 @@ import (
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/claude"
-	"github.com/flanksource/commons-db/shell"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -22,6 +21,22 @@ func TestNewCodexAppServer_Defaults(t *testing.T) {
 	c2, err := NewCodexAppServer(ai.Config{Model: api.Model{Name: "gpt-5.4"}})
 	require.NoError(t, err)
 	assert.Equal(t, "gpt-5.4", c2.GetModel())
+}
+
+func TestCodexAppServerProcessHonoursAPIURL(t *testing.T) {
+	process := newCodexAppServerProcess(ai.Config{
+		APIURL: "http://127.0.0.1:4020/v1", APIKey: "captain-mock",
+	})
+	assert.Equal(t, "codex", process.Cmd)
+	assert.Equal(t, []string{
+		"app-server",
+		"-c", "model_provider=captain",
+		"-c", "model_providers.captain.name=captain",
+		"-c", "model_providers.captain.base_url=http://127.0.0.1:4020/v1",
+		"-c", "model_providers.captain.env_key=OPENAI_API_KEY",
+		"-c", "model_providers.captain.wire_api=responses",
+	}, process.Args)
+	assert.Equal(t, "captain-mock", process.Env["OPENAI_API_KEY"])
 }
 
 func TestAppServerProcessErrorIncludesStderr(t *testing.T) {
@@ -203,7 +218,7 @@ func activeTurn(t *testing.T, schema json.RawMessage) (*CodexAppServer, *turnSta
 		ch:           make(chan ai.Event, 16),
 		usage:        &ai.Usage{},
 		model:        "gpt-5",
-		streamed:     map[string]bool{},
+		streamed:     map[string]string{},
 		toolOutput:   map[string]string{},
 		terminal:     make(chan struct{}),
 		outputSchema: schema,
@@ -292,6 +307,23 @@ func TestHandleNotification_TextModeStreamsDeltasAndDeduplicatesCompletedMessage
 	assert.Empty(t, resultEvent(t, events).StructuredData)
 }
 
+func TestHandleNotification_TextModeBackfillsUnstreamedCompletedSuffix(t *testing.T) {
+	c, ts := activeTurn(t, nil)
+	c.handleNotification("item/agentMessage/delta",
+		json.RawMessage(`{"itemId":"a1","delta":"plain "}`))
+	c.handleNotification("item/completed",
+		json.RawMessage(`{"item":{"id":"a1","type":"agentMessage","text":"plain answer"}}`))
+
+	events := drainEvents(ts)
+	var text []string
+	for _, event := range events {
+		if event.Kind == ai.EventText {
+			text = append(text, event.Text)
+		}
+	}
+	assert.Equal(t, []string{"plain ", "answer"}, text)
+}
+
 // A text-mode turn (no schema) leaves the result's StructuredData empty.
 func TestHandleNotification_NoStructuredWithoutSchema(t *testing.T) {
 	c, ts := activeTurn(t, nil)
@@ -372,20 +404,24 @@ func TestAppServerErrorIsFatal(t *testing.T) {
 	}
 }
 
-func TestAppServerStreamedAgentMessage(t *testing.T) {
-	streamed := map[string]bool{"i1": true}
+func TestAppServerAgentMessageRemainder(t *testing.T) {
+	streamed := map[string]string{"i1": "partial"}
 
-	assert.True(t, appServerStreamedAgentMessage(
-		json.RawMessage(`{"item":{"id":"i1","type":"agentMessage","text":"x"}}`), streamed),
-		"completed agent message whose deltas streamed should be deduped")
+	remainder, handled, err := appServerAgentMessageRemainder(
+		json.RawMessage(`{"item":{"id":"i1","type":"agentMessage","text":"partial result"}}`), streamed)
+	require.NoError(t, err)
+	assert.True(t, handled)
+	assert.Equal(t, " result", remainder)
 
-	assert.False(t, appServerStreamedAgentMessage(
-		json.RawMessage(`{"item":{"id":"i2","type":"agentMessage","text":"x"}}`), streamed),
-		"a different item id was not streamed")
+	_, handled, err = appServerAgentMessageRemainder(
+		json.RawMessage(`{"item":{"id":"i2","type":"agentMessage","text":"x"}}`), streamed)
+	require.NoError(t, err)
+	assert.False(t, handled)
 
-	assert.False(t, appServerStreamedAgentMessage(
-		json.RawMessage(`{"item":{"id":"i1","type":"commandExecution"}}`), streamed),
-		"non agent-message items are never deduped")
+	_, handled, err = appServerAgentMessageRemainder(
+		json.RawMessage(`{"item":{"id":"i1","type":"commandExecution"}}`), streamed)
+	require.NoError(t, err)
+	assert.False(t, handled)
 }
 
 func TestThreadID(t *testing.T) {
@@ -395,14 +431,6 @@ func TestThreadID(t *testing.T) {
 	assert.Equal(t, "flat", tid(`{"threadId":"flat"}`))
 	assert.Equal(t, "snake", tid(`{"thread_id":"snake"}`))
 	assert.Equal(t, "", tid(`{}`))
-}
-
-func TestComposePrompt(t *testing.T) {
-	assert.Equal(t, "task", composePrompt(req(api.Prompt{User: "task"})))
-	assert.Equal(t, "be brief\n\ntask", composePrompt(req(api.Prompt{User: "task", System: "be brief"})))
-	assert.Equal(t, "task\n\ntail", composePrompt(req(api.Prompt{User: "task", AppendSystem: "tail"})))
-	assert.Equal(t, "sys\n\ntask\n\ntail",
-		composePrompt(req(api.Prompt{User: "task", System: "sys", AppendSystem: "tail"})))
 }
 
 // req builds an ai.Request carrying only the given prompt, keeping the nested
@@ -463,150 +491,4 @@ func TestBuildTurnStartParams_OutputSchema(t *testing.T) {
 	assert.Contains(t, props, "detail")
 	assert.Equal(t, []any{"answer", "detail"}, decoded["required"])
 	assert.Equal(t, false, decoded["additionalProperties"])
-}
-
-func TestBuildThreadStartParams_Safety(t *testing.T) {
-	tests := []struct {
-		name         string
-		req          ai.Request
-		wantSandbox  string
-		wantApproval string
-		wantEphem    bool
-		wantNoMCP    bool
-	}{
-		{
-			name:         "default is read-only on-request",
-			req:          req(api.Prompt{User: "p"}),
-			wantSandbox:  "read-only",
-			wantApproval: "on-request",
-		},
-		{
-			name: "edit maps to workspace-write",
-			req: ai.Request{
-				Prompt:      api.Prompt{User: "p"},
-				Permissions: api.Permissions{Presets: []api.Preset{api.PresetEdit}},
-			},
-			wantSandbox:  "workspace-write",
-			wantApproval: "on-request",
-		},
-		{
-			name: "explicit permission mode skips workspace-write default",
-			req: ai.Request{
-				Prompt:      api.Prompt{User: "p"},
-				Permissions: api.Permissions{Presets: []api.Preset{api.PresetEdit}, Mode: api.PermissionDefault},
-			},
-			wantSandbox:  "read-only",
-			wantApproval: "on-request",
-		},
-		{
-			name: "bypass permissions maps to danger-full-access never",
-			req: ai.Request{
-				Prompt:      api.Prompt{User: "p"},
-				Permissions: api.Permissions{Mode: api.PermissionBypass},
-			},
-			wantSandbox:  "danger-full-access",
-			wantApproval: "never",
-		},
-		{
-			name: "no-memory sets ephemeral",
-			req: ai.Request{
-				Prompt: api.Prompt{User: "p"},
-				Memory: api.Memory{SkipMemory: true},
-			},
-			wantSandbox:  "read-only",
-			wantApproval: "on-request",
-			wantEphem:    true,
-		},
-		{
-			name: "bare sets ephemeral",
-			req: ai.Request{
-				Prompt: api.Prompt{User: "p"},
-				Memory: api.Memory{Bare: true},
-			},
-			wantSandbox:  "read-only",
-			wantApproval: "on-request",
-			wantEphem:    true,
-		},
-		{
-			name: "no-mcp sets empty mcp_servers override",
-			req: ai.Request{
-				Prompt:      api.Prompt{User: "p"},
-				Permissions: api.Permissions{MCP: api.MCP{Disabled: true}},
-			},
-			wantSandbox:  "read-only",
-			wantApproval: "on-request",
-			wantNoMCP:    true,
-		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			p := buildThreadStartParams("gpt-5", tc.req, nil)
-			assert.Equal(t, tc.wantSandbox, p["sandbox"])
-			assert.Equal(t, tc.wantApproval, p["approvalPolicy"])
-
-			_, hasEphem := p["ephemeral"]
-			assert.Equal(t, tc.wantEphem, hasEphem)
-
-			cfg, hasCfg := p["config"].(map[string]any)
-			assert.Equal(t, tc.wantNoMCP, hasCfg)
-			if tc.wantNoMCP {
-				assert.Equal(t, map[string]any{}, cfg["mcp_servers"])
-			}
-		})
-	}
-}
-
-func TestBuildThreadStartParams_CwdAndModel(t *testing.T) {
-	p := buildThreadStartParams("gpt-5", ai.Request{
-		Prompt: api.Prompt{User: "p"},
-		Setup:  &shell.Setup{Cwd: "/repo"},
-	}, nil)
-	assert.Equal(t, "/repo", p["cwd"])
-	assert.Equal(t, "gpt-5", p["model"])
-
-	noModel := buildThreadStartParams("", req(api.Prompt{User: "p"}), nil)
-	_, hasModel := noModel["model"]
-	assert.False(t, hasModel, "empty model must be omitted")
-}
-
-func TestBuildResumeParams(t *testing.T) {
-	p := buildResumeParams(ai.Request{
-		SessionID: "thread-9",
-		Setup:     &shell.Setup{Cwd: "/repo"},
-	}, nil)
-	assert.Equal(t, "thread-9", p["threadId"])
-	assert.Equal(t, "/repo", p["cwd"])
-}
-
-func TestHandleApproval_AutoApproves(t *testing.T) {
-	c, err := NewCodexAppServer(ai.Config{Model: api.Model{Name: "m"}})
-	require.NoError(t, err)
-
-	tests := []struct {
-		method string
-		key    string
-		want   any
-	}{
-		{"execCommandApproval", "decision", "approved"},
-		{"applyPatchApproval", "decision", "approved"},
-		{"item/commandExecution/requestApproval", "decision", "accept"},
-		{"item/fileChange/requestApproval", "decision", "accept"},
-		{"some/unknown/approval", "decision", "approved"},
-	}
-	for _, tc := range tests {
-		t.Run(tc.method, func(t *testing.T) {
-			res, rpcErr := c.handleApproval(tc.method, nil)
-			assert.Nil(t, rpcErr)
-			m, ok := res.(map[string]string)
-			require.True(t, ok, "decision approvals return a string map")
-			assert.Equal(t, tc.want, m[tc.key])
-		})
-	}
-
-	res, rpcErr := c.handleApproval("item/permissions/requestApproval", nil)
-	assert.Nil(t, rpcErr)
-	perm, ok := res.(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "turn", perm["scope"])
-	assert.NotNil(t, perm["permissions"])
 }

@@ -211,7 +211,7 @@ func (r *Runtime) handler(definition api.ToolDefinition) server.ToolHandlerFunc 
 		if input == nil {
 			input = map[string]any{}
 		}
-		toolUseID, err := toolUseID(request, input)
+		toolUseID, generatedToolUseID, err := toolUseID(request, input)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -221,7 +221,8 @@ func (r *Runtime) handler(definition api.ToolDefinition) server.ToolHandlerFunc 
 			}
 			approvalCtx, approvalCancel := context.WithTimeout(callCtx, r.approvalTimeout)
 			decision, err := r.canUseTool(approvalCtx, api.PermissionRequest{
-				Tool: definition.Name, Input: input, ToolUseID: toolUseID, SessionID: r.sessionID,
+				Tool: definition.Name, Input: input, ToolUseID: toolUseID,
+				ToolUseIDGenerated: generatedToolUseID, SessionID: r.sessionID,
 			})
 			approvalCancel()
 			if err != nil {
@@ -348,14 +349,14 @@ func capabilityToken(sessionID string) (string, error) {
 	return "cap_" + capabilityIdentity(sessionID) + "." + secret, nil
 }
 
-func toolUseID(request mcp.CallToolRequest, input map[string]any) (string, error) {
+func toolUseID(request mcp.CallToolRequest, input map[string]any) (string, bool, error) {
 	inputID := ""
 	if value, exists := input[ToolUseIDInputKey]; exists {
 		delete(input, ToolUseIDInputKey)
 		var ok bool
 		inputID, ok = value.(string)
 		if !ok || strings.TrimSpace(inputID) == "" {
-			return "", fmt.Errorf("caller-tool provider ID must be a non-empty string")
+			return "", false, fmt.Errorf("caller-tool provider ID must be a non-empty string")
 		}
 	}
 	metadataID := ""
@@ -365,19 +366,19 @@ func toolUseID(request mcp.CallToolRequest, input map[string]any) (string, error
 		}
 	}
 	if inputID != "" && metadataID != "" && inputID != metadataID {
-		return "", fmt.Errorf("caller-tool provider ID conflicts with MCP metadata")
+		return "", false, fmt.Errorf("caller-tool provider ID conflicts with MCP metadata")
 	}
 	if metadataID != "" {
-		return metadataID, nil
+		return metadataID, false, nil
 	}
 	if inputID != "" {
-		return inputID, nil
+		return inputID, false, nil
 	}
 	id, err := randomID(16)
 	if err != nil {
-		return "", fmt.Errorf("generate caller-tool call ID: %w", err)
+		return "", false, fmt.Errorf("generate caller-tool call ID: %w", err)
 	}
-	return "mcp_" + id, nil
+	return "mcp_" + id, true, nil
 }
 
 func randomID(size int) (string, error) {

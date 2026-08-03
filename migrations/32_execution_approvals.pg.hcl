@@ -243,6 +243,6 @@ table "captain_turn_requests" {
     expr = "resolved_at IS NULL OR resolved_at >= created_at"
   }
   check "captain_turn_requests_tool_approval_identity" {
-    expr = "kind <> 'tool_approval' OR (credential_id IS NOT NULL AND prompt_run_id IS NOT NULL AND tool_call_id IS NOT NULL)"
+    expr = "kind <> 'tool_approval' OR (prompt_run_id IS NOT NULL AND turn_id IS NOT NULL AND model_call_id IS NOT NULL AND tool_call_id IS NOT NULL)"
   }
 }

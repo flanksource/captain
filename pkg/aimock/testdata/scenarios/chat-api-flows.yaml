@@ -1,0 +1,76 @@
+name: chat-api-flows
+description: Complete API-provider chat lifecycle through request, approval, interruption, and resume.
+
+anthropic:
+  - match: {prompt_contains: "Return the lifecycle greeting"}
+    respond:
+      text: "Lifecycle response complete."
+      usage: {input: 20, output: 5}
+  - match: {prompt_contains: "Approve the account update"}
+    respond:
+      tool_use:
+        name: accounts_edit
+        id: toolu_approve_account
+        input: {id: acc-1, name: Draft Account}
+      usage: {input: 30, output: 8}
+  - match: {tool_result_for: accounts_edit}
+    respond:
+      text: "Approved account update completed."
+      usage: {input: 40, output: 6}
+  - match: {prompt_contains: "Reject the account update"}
+    respond:
+      tool_use:
+        name: accounts_edit
+        id: toolu_reject_account
+        input: {id: acc-2, name: Rejected Account}
+      usage: {input: 30, output: 8}
+  - match: {tool_result_for: accounts_edit}
+    respond:
+      text: "Rejected account update was not applied."
+      usage: {input: 40, output: 7}
+  - match: {prompt_contains: "Wait for the lifecycle interrupt"}
+    respond:
+      text: "Partial lifecycle response."
+      hold_open_after_content: true
+      usage: {input: 15, output: 4}
+  - match: {prompt_contains: "Resume after the lifecycle interrupt"}
+    respond:
+      text: "Lifecycle resume complete."
+      usage: {input: 25, output: 5}
+
+openai:
+  - match: {prompt_contains: "Return the lifecycle greeting"}
+    respond:
+      text: "Lifecycle response complete."
+      usage: {input: 20, output: 5}
+  - match: {prompt_contains: "Approve the account update"}
+    respond:
+      function_call:
+        name: accounts_edit
+        call_id: call_approve_account
+        arguments: {id: acc-1, name: Draft Account}
+      usage: {input: 30, output: 8}
+  - match: {tool_result_for: accounts_edit}
+    respond:
+      text: "Approved account update completed."
+      usage: {input: 40, output: 6}
+  - match: {prompt_contains: "Reject the account update"}
+    respond:
+      function_call:
+        name: accounts_edit
+        call_id: call_reject_account
+        arguments: {id: acc-2, name: Rejected Account}
+      usage: {input: 30, output: 8}
+  - match: {tool_result_for: accounts_edit}
+    respond:
+      text: "Rejected account update was not applied."
+      usage: {input: 40, output: 7}
+  - match: {prompt_contains: "Wait for the lifecycle interrupt"}
+    respond:
+      text: "Partial lifecycle response."
+      hold_open_after_content: true
+      usage: {input: 15, output: 4}
+  - match: {prompt_contains: "Resume after the lifecycle interrupt"}
+    respond:
+      text: "Lifecycle resume complete."
+      usage: {input: 25, output: 5}

@@ -4,6 +4,7 @@
 package anthropicmock
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 
@@ -21,7 +22,7 @@ const toolInputChunk = 24
 //
 // An error here arrives after the 200 and the first frames are already on the
 // wire, so it cannot become a status — the caller journals it instead.
-func streamMessage(w http.ResponseWriter, model string, respond Respond) error {
+func streamMessage(ctx context.Context, w http.ResponseWriter, model string, respond Respond) error {
 	sse, err := aimock.NewSSE(w)
 	if err != nil {
 		return err
@@ -58,6 +59,9 @@ func streamMessage(w http.ResponseWriter, model string, respond Respond) error {
 		if err := streamBlock(sse, index, block); err != nil {
 			return err
 		}
+	}
+	if err := aimock.WaitForCancellation(ctx, respond.HoldOpenAfterContent); err != nil {
+		return err
 	}
 
 	if err := sse.Event("message_delta", messageDeltaFrame{

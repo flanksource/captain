@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
@@ -37,6 +38,8 @@ type turnState struct {
 	promptMu sync.Mutex
 	pending  int
 	ended    bool
+
+	interrupting atomic.Bool
 }
 
 type promptParams struct {
@@ -158,6 +161,9 @@ func (p *Provider) onNotification(method string, params json.RawMessage) {
 		return
 	}
 
+	if ts.interrupting.Load() && (method == notifyTurnDone || method == notifyTurnError) {
+		ok = false
+	}
 	if ok {
 		select {
 		case ts.inbox <- ev:
@@ -321,7 +327,15 @@ func (p *Provider) Interrupt(ctx context.Context) error {
 	if p.rpc == nil {
 		return fmt.Errorf("claude-agent: provider not started")
 	}
+	p.activeMu.Lock()
+	ts := p.active
+	p.activeMu.Unlock()
+	if ts == nil {
+		return fmt.Errorf("claude-agent: no active turn to interrupt")
+	}
+	ts.interrupting.Store(true)
 	if _, err := p.rpc.Call(ctx, methodInterrupt, nil); err != nil {
+		ts.interrupting.Store(false)
 		return fmt.Errorf("claude-agent interrupt failed: %w", err)
 	}
 	return nil

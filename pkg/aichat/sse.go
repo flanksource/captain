@@ -44,6 +44,7 @@ type MessageMetadata struct {
 	Cost              float64        `json:"cost,omitempty"`
 	ContextTokens     int            `json:"contextTokens,omitempty"`
 	Success           *bool          `json:"success,omitempty"`
+	Interrupted       bool           `json:"interrupted,omitempty"`
 }
 
 // SSEWriter writes AI SDK v6 chunks using Server-Sent Events framing.

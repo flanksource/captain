@@ -2,15 +2,12 @@ package aichat
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"reflect"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/callertools"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/database"
@@ -19,114 +16,36 @@ import (
 
 const (
 	callerToolApprovalTimeout = 5 * time.Minute
+	providerApprovalTimeout   = 24 * time.Hour
 	approvalPollInterval      = 100 * time.Millisecond
 )
-
-type DatabaseExecutionAuthority struct {
-	db *database.DB
-}
-
-func NewDatabaseExecutionAuthority(db *database.DB) (*DatabaseExecutionAuthority, error) {
-	if db == nil || db.Gorm() == nil {
-		return nil, fmt.Errorf("captain execution authority requires a database")
-	}
-	return &DatabaseExecutionAuthority{db: db}, nil
-}
-
-func (a *DatabaseExecutionAuthority) Begin(
-	ctx context.Context,
-	request ExecutionRequest,
-) (Execution, error) {
-	sessionID, err := uuid.Parse(request.ThreadID)
-	if err != nil {
-		return nil, fmt.Errorf("chat thread ID %q is not a UUID: %w", request.ThreadID, err)
-	}
-	if request.Spec.Backend == "" {
-		return nil, fmt.Errorf("authoritative chat execution requires a resolved backend")
-	}
-	fingerprint := runtimeFingerprint(request.Spec.Model)
-	session, err := a.db.CreateOrGetSession(ctx, database.CreateSessionInput{
-		ID: sessionID, Source: "aichat", Provider: ai.BackendToProvider(request.Spec.Backend),
-		HostID: "local", Title: request.Title, InitialPrompt: initialUserPrompt(request.Spec),
-		Metadata: map[string]any{"aichatRuntime": fingerprint},
-	})
-	if err != nil {
-		return nil, err
-	}
-	if session.Source != "aichat" || !reflect.DeepEqual(session.Metadata["aichatRuntime"], fingerprint) {
-		return nil, fmt.Errorf("chat thread %s has incompatible immutable runtime identity", request.ThreadID)
-	}
-	renderedSpec, err := renderedSpecMap(request.Spec)
-	if err != nil {
-		return nil, err
-	}
-	run, err := a.db.CreatePromptRun(ctx, database.CreatePromptRunInput{
-		SessionID: session.ID, AdmissionKey: executionAdmissionKey(request),
-		Origin: "aichat", RenderedSpec: renderedSpec,
-		Runtime: database.PromptRunRuntime{
-			Mode: string(request.Spec.Mode), Driver: string(request.Spec.Backend),
-			Requested: runtimeSelection(request.Spec.Model),
-			Resolved:  runtimeSelection(request.Spec.Model),
-		},
-		PromptMarkdown: initialUserPrompt(request.Spec),
-	})
-	if err != nil {
-		return nil, err
-	}
-	if run.State != database.PromptRunStatePending {
-		return nil, fmt.Errorf("chat request %q already has prompt run %s in state %s", request.RequestID, run.ID, run.State)
-	}
-	execution := &databaseExecution{
-		db: a.db, ctx: ctx, session: session, run: run,
-		events: make(chan api.Event, 16), definitions: append([]api.ToolDefinition(nil), request.Definitions...),
-	}
-	if err := execution.markRunning(ctx); err != nil {
-		return nil, err
-	}
-	if len(request.Definitions) > 0 && isAgentBackend(request.Spec.Backend) {
-		if err := execution.startCallerTools(ctx, request.Spec.Backend); err != nil {
-			_ = execution.Close(context.Background())
-			return nil, err
-		}
-	}
-	return execution, nil
-}
-
-func (a *DatabaseExecutionAuthority) ResolveToolApproval(
-	ctx context.Context,
-	resolution ToolApprovalResolution,
-) error {
-	sessionID, err := uuid.Parse(resolution.ThreadID)
-	if err != nil {
-		return fmt.Errorf("chat thread ID %q is not a UUID: %w", resolution.ThreadID, err)
-	}
-	_, err = a.db.ResolveToolApprovalRequest(ctx, database.ResolveToolApprovalRequestInput{
-		SessionID: sessionID, ToolCallID: resolution.ToolCallID,
-		Approved: resolution.Approved, UpdatedInput: resolution.UpdatedInput,
-		ResolvedBy: "chat", Reason: resolution.Reason,
-	})
-	return err
-}
 
 type databaseExecution struct {
 	db          *database.DB
 	ctx         context.Context
 	session     *database.Session
+	turn        *database.ChatTurn
 	run         *database.PromptRun
+	modelCallID uuid.UUID
 	definitions []api.ToolDefinition
 	events      chan api.Event
 
-	mu         sync.Mutex
-	finishMu   sync.Mutex
-	credential *database.CallerToolCredential
-	runtime    *callertools.Runtime
-	endpoint   *api.CallerToolEndpoint
-	terminal   bool
-	closed     bool
-	providerID string
+	mu                   sync.Mutex
+	finishMu             sync.Mutex
+	credential           *database.CallerToolCredential
+	runtime              *callertools.Runtime
+	endpoint             *api.CallerToolEndpoint
+	terminal             bool
+	suspended            bool
+	closed               bool
+	providerID           string
+	approvalIDs          map[string]uuid.UUID
+	providerToolUses     []api.Event
+	providerToolUseReady chan struct{}
 }
 
 func (e *databaseExecution) CaptainSessionID() string { return e.session.ID.String() }
+func (e *databaseExecution) TurnID() string           { return e.turn.ID.String() }
 func (e *databaseExecution) PromptRunID() string      { return e.run.ID.String() }
 func (e *databaseExecution) Events() <-chan api.Event { return e.events }
 
@@ -186,9 +105,17 @@ func (e *databaseExecution) requestApproval(
 	credentialID uuid.UUID,
 	request api.PermissionRequest,
 ) (api.PermissionDecision, error) {
+	if request.ToolUseIDGenerated {
+		toolUseID, err := e.claimProviderToolUse(ctx, request)
+		if err != nil {
+			return api.PermissionDecision{}, err
+		}
+		request.ToolUseID = toolUseID
+	}
 	expiresAt := time.Now().Add(callerToolApprovalTimeout)
 	pending, err := e.db.CreateToolApprovalRequest(ctx, database.CreateToolApprovalRequestInput{
-		CredentialID: credentialID, SessionID: e.session.ID, PromptRunID: e.run.ID,
+		CredentialID: credentialID, SessionID: e.session.ID, TurnID: e.turn.ID, PromptRunID: e.run.ID,
+		ModelCallID: e.modelCallID, RequestedBy: "caller_tool",
 		ToolCallID: request.ToolUseID, Tool: request.Tool, Input: request.Input,
 		ExpiresAt: expiresAt,
 	})
@@ -198,7 +125,7 @@ func (e *databaseExecution) requestApproval(
 	if err := e.markWaiting(ctx); err != nil {
 		return api.PermissionDecision{}, err
 	}
-	if err := e.emitApproval(ctx, request); err != nil {
+	if err := e.emitApproval(ctx, pending.ID, request); err != nil {
 		return api.PermissionDecision{}, err
 	}
 	decision, err := e.waitForApproval(ctx, pending.ID)
@@ -206,10 +133,10 @@ func (e *databaseExecution) requestApproval(
 	return decision, errors.Join(err, restoreErr)
 }
 
-func (e *databaseExecution) emitApproval(ctx context.Context, request api.PermissionRequest) error {
+func (e *databaseExecution) emitApproval(ctx context.Context, approvalID uuid.UUID, request api.PermissionRequest) error {
 	event := api.Event{
 		Kind: api.EventPermission, Tool: request.Tool,
-		ToolCallID: request.ToolUseID, Input: request.Input,
+		ToolCallID: request.ToolUseID, ApprovalID: approvalID.String(), Input: request.Input,
 	}
 	select {
 	case e.events <- event:
@@ -265,20 +192,74 @@ func (e *databaseExecution) waitForApproval(
 	}
 }
 
-func (e *databaseExecution) Observe(ctx context.Context, event api.Event) error {
+func (e *databaseExecution) Observe(ctx context.Context, event api.Event) (api.Event, error) {
 	if event.SessionID != "" {
 		if err := e.bindProviderSession(ctx, event.SessionID); err != nil {
-			return err
+			return event, err
 		}
 	}
 	switch event.Kind {
+	case api.EventToolUse:
+		e.rememberProviderToolUse(event)
+		return event, nil
+	case api.EventPermission:
+		if event.ApprovalID != "" {
+			return event, nil
+		}
+		approval, err := e.createProviderApproval(ctx, event)
+		if err != nil {
+			return event, err
+		}
+		event.ApprovalID = approval.ID.String()
+		return event, nil
 	case api.EventResult:
-		return e.finish(ctx, true, "")
+		if event.ToolApproval != nil {
+			return event, e.suspend(ctx, *event.ToolApproval, event)
+		}
+		return event, e.finish(ctx, true, "", event)
 	case api.EventError:
-		return e.finish(ctx, false, event.Error)
+		return event, e.finish(ctx, false, event.Error, event)
 	default:
-		return nil
+		return event, nil
 	}
+}
+
+func (e *databaseExecution) suspend(ctx context.Context, state api.ToolApprovalState, event api.Event) error {
+	if state.ProviderCheckpoint == nil {
+		return fmt.Errorf("provider tool approval ended without a private checkpoint")
+	}
+	for _, pending := range state.Pending() {
+		e.mu.Lock()
+		_, ok := e.approvalIDs[pending.ToolCallID]
+		e.mu.Unlock()
+		if !ok {
+			return fmt.Errorf("provider tool approval %q has no durable turn request", pending.ToolCallID)
+		}
+	}
+	if err := e.db.FinishChatModelCall(ctx, database.FinishChatModelCallInput{
+		ID: e.modelCallID, Status: database.ModelCallStatusSucceeded,
+		StopReason: "tool_approval", Event: event,
+	}); err != nil {
+		return err
+	}
+	checkpoint := database.PromptRunCheckpoint{
+		Codec: state.ProviderCheckpoint.Codec, Version: state.ProviderCheckpoint.Version,
+		Payload: state.ProviderCheckpoint.Payload,
+	}
+	waiting := database.PromptRunStateWaiting
+	state.ProviderCheckpoint = nil
+	if err := e.updateRun(ctx, runUpdate{
+		State: &waiting, ApprovalState: &state, ProviderCheckpoint: &checkpoint,
+	}); err != nil {
+		return err
+	}
+	if err := e.updateSessionActivity(ctx, database.SessionActivityApproval); err != nil {
+		return err
+	}
+	e.mu.Lock()
+	e.suspended = true
+	e.mu.Unlock()
+	return nil
 }
 
 func (e *databaseExecution) Close(ctx context.Context) error {
@@ -289,13 +270,14 @@ func (e *databaseExecution) Close(ctx context.Context) error {
 	}
 	e.closed = true
 	terminal := e.terminal
+	suspended := e.suspended
 	runtime := e.runtime
 	credential := e.credential
 	e.mu.Unlock()
 
 	var errs []error
-	if !terminal {
-		errs = append(errs, e.finish(ctx, false, "provider stream ended without a terminal event"))
+	if !terminal && !suspended {
+		errs = append(errs, e.finish(ctx, false, "provider stream ended without a terminal event", api.Event{Kind: api.EventError, Error: "provider stream ended without a terminal event"}))
 	}
 	if credential != nil {
 		errs = append(errs, e.db.RevokeCallerToolCredential(ctx, credential.ID, "execution closed"))
@@ -304,6 +286,48 @@ func (e *databaseExecution) Close(ctx context.Context) error {
 		errs = append(errs, runtime.Close())
 	}
 	return errors.Join(errs...)
+}
+
+func (e *databaseExecution) Interrupt(ctx context.Context, reason string) error {
+	e.finishMu.Lock()
+	defer e.finishMu.Unlock()
+	e.mu.Lock()
+	if e.terminal {
+		e.mu.Unlock()
+		return nil
+	}
+	runtime := e.runtime
+	credential := e.credential
+	e.mu.Unlock()
+
+	if runtime != nil {
+		runtime.Revoke()
+	}
+	var errs []error
+	errs = append(errs, e.db.FinishChatModelCall(ctx, database.FinishChatModelCallInput{
+		ID: e.modelCallID, Status: database.ModelCallStatusCancelled, StopReason: "interrupt",
+		Event: api.Event{Kind: api.EventInterrupted, Reason: reason},
+	}))
+	errs = append(errs, e.db.CancelPendingTurnRequests(ctx, e.session.ID, e.run.ID, "execution interrupted"))
+	if credential != nil {
+		errs = append(errs, e.db.RevokeCallerToolCredential(ctx, credential.ID, "execution interrupted"))
+	}
+	phase := database.PromptRunPhaseFinished
+	state := database.PromptRunStateCancelled
+	errs = append(errs, e.updateRun(ctx, runUpdate{
+		Phase: &phase, State: &state, ClearApprovalState: true, ClearProviderCheckpoint: true,
+	}))
+	errs = append(errs, e.db.FinishChatTurn(ctx, e.turn.ID, database.TurnStatusInterrupted, "interrupt"))
+	errs = append(errs, e.updateSessionState(
+		ctx, database.SessionLifecycleInterrupted, database.SessionActivityIdle, reason,
+	))
+	if err := errors.Join(errs...); err != nil {
+		return err
+	}
+	e.mu.Lock()
+	e.terminal = true
+	e.mu.Unlock()
+	return nil
 }
 
 func (e *databaseExecution) bindProviderSession(ctx context.Context, providerID string) error {
@@ -335,7 +359,7 @@ func (e *databaseExecution) markRunning(ctx context.Context) error {
 	phase := database.PromptRunPhaseGenerate
 	state := database.PromptRunStateRunning
 	activity := database.SessionActivityWorking
-	if err := e.updateRun(ctx, &phase, &state, nil); err != nil {
+	if err := e.updateRun(ctx, runUpdate{Phase: &phase, State: &state}); err != nil {
 		return err
 	}
 	return e.updateSessionActivity(ctx, activity)
@@ -344,13 +368,13 @@ func (e *databaseExecution) markRunning(ctx context.Context) error {
 func (e *databaseExecution) markWaiting(ctx context.Context) error {
 	state := database.PromptRunStateWaiting
 	activity := database.SessionActivityApproval
-	if err := e.updateRun(ctx, nil, &state, nil); err != nil {
+	if err := e.updateRun(ctx, runUpdate{State: &state}); err != nil {
 		return err
 	}
 	return e.updateSessionActivity(ctx, activity)
 }
 
-func (e *databaseExecution) finish(ctx context.Context, success bool, message string) error {
+func (e *databaseExecution) finish(ctx context.Context, success bool, message string, event api.Event) error {
 	e.finishMu.Lock()
 	defer e.finishMu.Unlock()
 	e.mu.Lock()
@@ -366,6 +390,15 @@ func (e *databaseExecution) finish(ctx context.Context, success bool, message st
 		runtime.Revoke()
 	}
 	var errs []error
+	callStatus := database.ModelCallStatusFailed
+	stopReason := "error"
+	if success {
+		callStatus = database.ModelCallStatusSucceeded
+		stopReason = "stop"
+	}
+	errs = append(errs, e.db.FinishChatModelCall(ctx, database.FinishChatModelCallInput{
+		ID: e.modelCallID, Status: callStatus, StopReason: stopReason, Event: event,
+	}))
 	if credential != nil {
 		errs = append(errs, e.db.RevokeCallerToolCredential(ctx, credential.ID, "prompt run terminal"))
 	}
@@ -374,8 +407,22 @@ func (e *databaseExecution) finish(ctx context.Context, success bool, message st
 	if success {
 		state = database.PromptRunStateSucceeded
 	}
-	errs = append(errs, e.updateRun(ctx, &phase, &state, &message))
-	errs = append(errs, e.updateSessionActivity(ctx, database.SessionActivityIdle))
+	errs = append(errs, e.updateRun(ctx, runUpdate{
+		Phase: &phase, State: &state, Message: &message,
+		ClearApprovalState: true, ClearProviderCheckpoint: true,
+	}))
+	turnState := database.TurnStatusError
+	turnStopReason := message
+	if success {
+		turnState = database.TurnStatusEnded
+		turnStopReason = "stop"
+	}
+	errs = append(errs, e.db.FinishChatTurn(ctx, e.turn.ID, turnState, turnStopReason))
+	lifecycle := database.SessionLifecycleFailed
+	if success {
+		lifecycle = database.SessionLifecycleSucceeded
+	}
+	errs = append(errs, e.updateSessionState(ctx, lifecycle, database.SessionActivityIdle, message))
 	if err := errors.Join(errs...); err != nil {
 		return err
 	}
@@ -385,20 +432,29 @@ func (e *databaseExecution) finish(ctx context.Context, success bool, message st
 	return nil
 }
 
-func (e *databaseExecution) updateRun(
-	ctx context.Context,
-	phase *database.PromptRunPhase,
-	state *database.PromptRunState,
-	message *string,
-) error {
+type runUpdate struct {
+	Phase                   *database.PromptRunPhase
+	State                   *database.PromptRunState
+	Message                 *string
+	ApprovalState           *api.ToolApprovalState
+	ProviderCheckpoint      *database.PromptRunCheckpoint
+	ClearApprovalState      bool
+	ClearProviderCheckpoint bool
+}
+
+func (e *databaseExecution) updateRun(ctx context.Context, update runUpdate) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	input := database.UpdatePromptRunInput{
-		ID: e.run.ID, ExpectedVersion: e.run.Version, Phase: phase, State: state,
+		ID: e.run.ID, ExpectedVersion: e.run.Version, Phase: update.Phase, State: update.State,
 	}
-	if message != nil && *message != "" {
-		input.Error = message
+	if update.Message != nil && *update.Message != "" {
+		input.Error = update.Message
 	}
+	input.ApprovalState = update.ApprovalState
+	input.ProviderCheckpoint = update.ProviderCheckpoint
+	input.ClearApprovalState = update.ClearApprovalState
+	input.ClearProviderCheckpoint = update.ClearProviderCheckpoint
 	run, err := e.db.UpdatePromptRun(ctx, input)
 	if err != nil {
 		return err
@@ -411,77 +467,28 @@ func (e *databaseExecution) updateSessionActivity(
 	ctx context.Context,
 	activity database.SessionActivityState,
 ) error {
+	return e.updateSessionState(ctx, database.SessionLifecycleRunning, activity, "")
+}
+
+func (e *databaseExecution) updateSessionState(
+	ctx context.Context,
+	lifecycle database.SessionLifecycleStatus,
+	activity database.SessionActivityState,
+	reason string,
+) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	session, err := e.db.GetSession(ctx, e.session.ID)
 	if err != nil {
 		return err
 	}
-	lifecycle := database.SessionLifecycleRunning
 	updated, err := e.db.UpdateSessionState(ctx, database.UpdateSessionStateInput{
 		ID: session.ID, ExpectedVersion: session.StateVersion,
-		LifecycleStatus: &lifecycle, ActivityState: &activity,
+		LifecycleStatus: &lifecycle, ActivityState: &activity, StateReason: &reason,
 	})
 	if err != nil {
 		return err
 	}
 	e.session = updated
 	return nil
-}
-
-func runtimeFingerprint(model api.Model) map[string]any {
-	return map[string]any{
-		"backend": string(model.Backend), "mode": string(model.Mode), "model": model.Name,
-	}
-}
-
-func runtimeSelection(model api.Model) database.PromptRunRuntimeSelection {
-	return database.PromptRunRuntimeSelection{
-		Provider: ai.BackendToProvider(model.Backend), Backend: string(model.Backend),
-		Model: model.Name, Effort: string(model.Effort),
-	}
-}
-
-func renderedSpecMap(spec api.Spec) (map[string]any, error) {
-	raw, err := json.Marshal(spec)
-	if err != nil {
-		return nil, fmt.Errorf("encode authoritative chat spec: %w", err)
-	}
-	var rendered map[string]any
-	if err := json.Unmarshal(raw, &rendered); err != nil {
-		return nil, fmt.Errorf("decode authoritative chat spec: %w", err)
-	}
-	return rendered, nil
-}
-
-func executionAdmissionKey(request ExecutionRequest) string {
-	if strings.TrimSpace(request.RequestID) == "" {
-		return ""
-	}
-	return "aichat:" + request.ThreadID + ":" + request.RequestID
-}
-
-func initialUserPrompt(spec api.Spec) string {
-	if spec.Prompt.User != "" {
-		return spec.Prompt.User
-	}
-	for i := len(spec.Messages) - 1; i >= 0; i-- {
-		if spec.Messages[i].Role != api.RoleUser {
-			continue
-		}
-		for _, part := range spec.Messages[i].Parts {
-			if part.Type == api.PartText && strings.TrimSpace(part.Text) != "" {
-				return part.Text
-			}
-		}
-	}
-	return ""
-}
-
-func cloneStringValues(values map[string]string) map[string]string {
-	cloned := make(map[string]string, len(values))
-	for key, value := range values {
-		cloned[key] = value
-	}
-	return cloned
 }

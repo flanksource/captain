@@ -17,6 +17,7 @@ type toolState struct {
 
 type eventStream struct {
 	writer    *SSEWriter
+	messageID string
 	blockType string
 	blockID   string
 	nextBlock int
@@ -31,6 +32,7 @@ type eventStream struct {
 // EventStreamOptions carries request state needed to finish the resumed UI message.
 type EventStreamOptions struct {
 	ToolApproval *api.ToolApprovalResume
+	MessageID    string
 }
 
 // WriteEventStream translates a Captain event channel into one complete UI Message Stream.
@@ -42,7 +44,7 @@ func WriteEventStream(writer *SSEWriter, events <-chan api.Event, options EventS
 			return fmt.Errorf("validate tool approval stream: %w", err)
 		}
 	}
-	stream := &eventStream{writer: writer, tools: map[string]toolState{}}
+	stream := &eventStream{writer: writer, messageID: options.MessageID, tools: map[string]toolState{}}
 	if err := stream.start(); err != nil {
 		return err
 	}
@@ -95,7 +97,7 @@ func (s *eventStream) approvalResults(resume *api.ToolApprovalResume) error {
 }
 
 func (s *eventStream) start() error {
-	if err := s.writer.WritePart(Part{Type: "start"}); err != nil {
+	if err := s.writer.WritePart(Part{Type: "start", MessageID: s.messageID}); err != nil {
 		return err
 	}
 	return s.writer.WritePart(Part{Type: "start-step"})
@@ -128,9 +130,29 @@ func (s *eventStream) event(event api.Event) error {
 		return s.result(event)
 	case api.EventError:
 		return s.providerError(event)
+	case api.EventInterrupted:
+		return s.interrupted(event)
 	default:
 		return fmt.Errorf("unsupported Captain event kind %q", event.Kind)
 	}
+}
+
+func (s *eventStream) interrupted(event api.Event) error {
+	if err := s.closeBlock(); err != nil {
+		return err
+	}
+	if err := s.writer.WritePart(Part{
+		Type: "data-result", Data: map[string]any{"success": false, "interrupted": true},
+	}); err != nil {
+		return err
+	}
+	success := false
+	s.metadata = &MessageMetadata{
+		ProviderSessionID: s.sessionID, Model: s.model, Success: &success, Interrupted: true,
+	}
+	s.tools = map[string]toolState{}
+	s.terminal = true
+	return nil
 }
 
 func (s *eventStream) delta(kind, delta string) error {
@@ -189,10 +211,13 @@ func (s *eventStream) permission(event api.Event) error {
 	if state.approvalRequested {
 		return fmt.Errorf("duplicate permission for tool call %q", event.ToolCallID)
 	}
+	if event.ApprovalID == "" {
+		return fmt.Errorf("permission for tool call %q has no durable approval ID", event.ToolCallID)
+	}
 	state.approvalRequested = true
 	s.tools[event.ToolCallID] = state
 	return s.writer.WritePart(Part{
-		Type: "tool-approval-request", ApprovalID: event.ToolCallID, ToolCallID: event.ToolCallID,
+		Type: "tool-approval-request", ApprovalID: event.ApprovalID, ToolCallID: event.ToolCallID,
 	})
 }
 
@@ -242,7 +267,9 @@ func (s *eventStream) result(event api.Event) error {
 		if err := s.validateApprovalCorrelation(event.ToolApproval); err != nil {
 			return err
 		}
-		if err := s.writer.WritePart(Part{Type: "data-tool-approval", Data: event.ToolApproval}); err != nil {
+		if err := s.writer.WritePart(Part{
+			Type: "data-result", Data: map[string]any{"success": event.Success, "waitingApproval": true},
+		}); err != nil {
 			return err
 		}
 	} else {

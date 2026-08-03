@@ -4,6 +4,7 @@
 package openaimock
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -32,29 +33,34 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	model := modelOrDefault(wire.Model)
+	completionID := s.nextWireID("chatcmpl", model)
 	if wire.Stream {
 		note := ""
-		if err := streamChat(w, model, respond); err != nil {
-			note = fmt.Sprintf("stream aborted: %v", err)
-			logger.Errorf("openaimock: %s", note)
+		cancelled := false
+		if err := streamChat(r.Context(), w, completionID, model, respond); err != nil {
+			cancelled = aimock.IsClientCancellation(r.Context(), err)
+			if !cancelled {
+				note = fmt.Sprintf("stream aborted: %v", err)
+				logger.Errorf("openaimock: %s", note)
+			}
 		}
-		s.record(r, norm, http.StatusOK, note)
+		s.recordOutcome(r, norm, http.StatusOK, note, cancelled)
 		return
 	}
 
 	s.record(r, norm, http.StatusOK, "")
-	writeJSON(w, http.StatusOK, chatCompletion(model, respond))
+	writeJSON(w, http.StatusOK, chatCompletion(completionID, model, respond))
 }
 
 // chatCompletion renders the reply as a complete non-streaming completion.
 // Reasoning rides on the non-standard `reasoning_content` field, which is what
 // the deepseek-compatible endpoints captain talks to actually emit.
-func chatCompletion(model string, respond Respond) map[string]any {
+func chatCompletion(completionID, model string, respond Respond) map[string]any {
 	message := map[string]any{"role": "assistant", "content": respond.Text}
 	if respond.Reasoning != "" {
 		message["reasoning_content"] = respond.Reasoning
 	}
-	if call := chatToolCallPayload(respond); call != nil {
+	if call := chatToolCallPayload(respond, completionID); call != nil {
 		message["tool_calls"] = []any{call}
 		// A tool-calling choice carries no prose; content is explicitly null
 		// rather than "" so a consumer distinguishing the two sees the right one.
@@ -62,7 +68,7 @@ func chatCompletion(model string, respond Respond) map[string]any {
 	}
 
 	return map[string]any{
-		"id":      completionID(model),
+		"id":      completionID,
 		"object":  "chat.completion",
 		"created": 0,
 		"model":   model,
@@ -77,8 +83,8 @@ func chatCompletion(model string, respond Respond) map[string]any {
 
 // chatToolCallPayload renders the scripted function call in the tool_calls shape,
 // or nil when the reply makes no call.
-func chatToolCallPayload(respond Respond) map[string]any {
-	for _, it := range respond.items() {
+func chatToolCallPayload(respond Respond, completionID string) map[string]any {
+	for _, it := range respond.items(completionID) {
 		if it.Type != "function_call" {
 			continue
 		}
@@ -95,7 +101,7 @@ func chatToolCallPayload(respond Respond) map[string]any {
 // streamChat renders respond as chat.completion.chunk frames: an opening role
 // delta, one delta per content chunk, a terminal finish_reason delta, a
 // usage-only chunk, then the [DONE] sentinel.
-func streamChat(w http.ResponseWriter, model string, respond Respond) error {
+func streamChat(ctx context.Context, w http.ResponseWriter, completionID, model string, respond Respond) error {
 	sse, err := aimock.NewSSE(w)
 	if err != nil {
 		return err
@@ -103,7 +109,7 @@ func streamChat(w http.ResponseWriter, model string, respond Respond) error {
 
 	chunk := func(delta map[string]any, finish any) error {
 		return sse.Data(map[string]any{
-			"id": completionID(model), "object": "chat.completion.chunk", "created": 0, "model": model,
+			"id": completionID, "object": "chat.completion.chunk", "created": 0, "model": model,
 			"choices": []any{map[string]any{"index": 0, "delta": delta, "finish_reason": finish}},
 		})
 	}
@@ -118,7 +124,7 @@ func streamChat(w http.ResponseWriter, model string, respond Respond) error {
 		}
 	}
 
-	if call := chatToolCallPayload(respond); call != nil {
+	if call := chatToolCallPayload(respond, completionID); call != nil {
 		if err := streamChatToolCall(chunk, call); err != nil {
 			return err
 		}
@@ -129,6 +135,9 @@ func streamChat(w http.ResponseWriter, model string, respond Respond) error {
 			return err
 		}
 	}
+	if err := aimock.WaitForCancellation(ctx, respond.HoldOpenAfterContent); err != nil {
+		return err
+	}
 
 	if err := chunk(map[string]any{}, respond.resolvedFinishReason()); err != nil {
 		return err
@@ -137,7 +146,7 @@ func streamChat(w http.ResponseWriter, model string, respond Respond) error {
 	// Usage arrives in its own choice-less chunk, matching what the API sends
 	// under stream_options.include_usage.
 	if err := sse.Data(map[string]any{
-		"id": completionID(model), "object": "chat.completion.chunk", "created": 0, "model": model,
+		"id": completionID, "object": "chat.completion.chunk", "created": 0, "model": model,
 		"choices": []any{}, "usage": respond.Usage.chat(),
 	}); err != nil {
 		return err
@@ -168,5 +177,3 @@ func streamChatToolCall(chunk func(map[string]any, any) error, call map[string]a
 	}
 	return nil
 }
-
-func completionID(model string) string { return fmt.Sprintf("chatcmpl_mock_%s", model) }

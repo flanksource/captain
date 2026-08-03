@@ -13,7 +13,7 @@ type turnState struct {
 	ch         chan ai.Event
 	usage      *ai.Usage
 	model      string
-	streamed   map[string]bool
+	streamed   map[string]string
 	toolOutput map[string]string
 
 	outputSchema     json.RawMessage
