@@ -67,7 +67,7 @@ var _ ai.StreamingProvider = (*Provider)(nil)
 
 // newAgentProcess builds the supervised child command. It is a package var so
 // tests can substitute a fake JSON-RPC server without npm or a claude binary.
-var newAgentProcess = func(*Provider) (*exec.Process, error) {
+var newAgentProcess = func(provider *Provider) (*exec.Process, error) {
 	agentDir, err := prepareAgentDir()
 	if err != nil {
 		return nil, err
@@ -84,7 +84,7 @@ var newAgentProcess = func(*Provider) (*exec.Process, error) {
 	return exec.NewExec(tsxPath, agentTSPath).
 		WithCwd(agentDir).
 		WithStdioPipe().
-		WithEnv(nestingEnvOverrides(os.Environ())), nil
+		WithEnv(agentProcessEnv(provider.cfg, os.Environ())), nil
 }
 
 // Provider drives a supervised Claude Agent SDK process over JSON-RPC.

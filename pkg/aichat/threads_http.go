@@ -8,11 +8,12 @@ import (
 )
 
 func (s *Service) registerThreadRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("POST /api/chat/threads", s.handleCreateThread)
-	mux.HandleFunc("GET /api/chat/threads", s.handleListThreads)
-	mux.HandleFunc("GET /api/chat/threads/{id}", s.handleGetThread)
-	mux.HandleFunc("DELETE /api/chat/threads/{id}", s.handleDeleteThread)
-	mux.HandleFunc("POST /api/chat/threads/{id}/approvals/{toolCallID}", s.handleResolveToolApproval)
+	mux.HandleFunc("POST /api/chat/sessions", s.handleCreateThread)
+	mux.HandleFunc("GET /api/chat/sessions", s.handleListThreads)
+	mux.HandleFunc("GET /api/chat/sessions/{id}", s.handleGetThread)
+	mux.HandleFunc("DELETE /api/chat/sessions/{id}", s.handleDeleteThread)
+	mux.HandleFunc("POST /api/chat/sessions/{id}/approvals/{approvalID}", s.handleResolveToolApproval)
+	mux.HandleFunc("POST /api/chat/sessions/{id}/interrupt", s.handleInterrupt)
 }
 
 func (s *Service) threadStore(w http.ResponseWriter) ThreadStore {
@@ -68,6 +69,17 @@ func (s *Service) handleListThreads(w http.ResponseWriter, request *http.Request
 func (s *Service) handleGetThread(w http.ResponseWriter, request *http.Request) {
 	store := s.threadStore(w)
 	if store == nil {
+		return
+	}
+	if sessions, ok := store.(SessionReader); ok {
+		aggregate, err := sessions.GetSession(request.Context(), request.PathValue("id"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		if err := writeJSON(w, http.StatusOK, aggregate); err != nil {
+			serviceLog.Errorf("write chat session %q: %v", request.PathValue("id"), err)
+		}
 		return
 	}
 	thread, err := store.Get(request.Context(), request.PathValue("id"))

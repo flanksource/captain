@@ -37,22 +37,20 @@ import (
 var captainWebappFS embed.FS
 
 type ServeOptions struct {
-	Host        string
-	Port        int
-	Dev         bool
-	UIPort      int
-	Open        bool
-	ThreadsFile string
-	PromptDirs  []string
-	MCPServers  []aichat.MCPServer
+	Host       string
+	Port       int
+	Dev        bool
+	UIPort     int
+	Open       bool
+	PromptDirs []string
+	MCPServers []aichat.MCPServer
 }
 
 func NewServeCommand(version string) *cobra.Command {
 	opts := ServeOptions{
-		Host:        "localhost",
-		Port:        9020,
-		UIPort:      0,
-		ThreadsFile: ".captain/chat-threads.json",
+		Host:   "localhost",
+		Port:   9020,
+		UIPort: 0,
 	}
 
 	cmd := &cobra.Command{
@@ -82,7 +80,6 @@ proxies /api back to this Go process.`,
 	cmd.Flags().BoolVar(&opts.Dev, "dev", false, "Launch the Vite dev server with /api proxied to Captain")
 	cmd.Flags().IntVar(&opts.UIPort, "ui-port", opts.UIPort, "Port for the Vite dev server when --dev is set (random by default)")
 	cmd.Flags().BoolVar(&opts.Open, "open", false, "Open the web UI in the default browser")
-	cmd.Flags().StringVar(&opts.ThreadsFile, "threads-file", opts.ThreadsFile, "Path to persisted chat thread JSON")
 	cmd.Flags().StringArrayVar(&opts.PromptDirs, "prompt-dir", nil, "Additional local directory containing .prompt files (repeatable)")
 
 	return cmd
@@ -103,7 +100,18 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	if err != nil {
 		return err
 	}
-	threadStore := newFileThreadStore(opts.ThreadsFile)
+	db, err := captainServeDB(ctx)
+	if err != nil {
+		return err
+	}
+	threadStore, err := aichat.NewDatabaseThreadStore(db)
+	if err != nil {
+		return err
+	}
+	authority, err := aichat.NewDatabaseExecutionAuthority(db)
+	if err != nil {
+		return err
+	}
 	attachmentStore, err := newAttachmentStore(cwd)
 	if err != nil {
 		return err
@@ -140,7 +148,7 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	addCaptainProviderTokenPaths(openAPISpec)
 	addCaptainProviderDefaultsPaths(openAPISpec)
 	addCaptainDisabledPaths(openAPISpec)
-	chat, mcpTools, err := newCaptainChatService(ctx, rootCmd, opts, cwd, threadStore, attachmentStore)
+	chat, mcpTools, err := newCaptainChatService(ctx, rootCmd, opts, cwd, threadStore, authority, attachmentStore)
 	if err != nil {
 		return err
 	}
@@ -213,10 +221,6 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	db, err := captainServeDB(ctx)
-	if err != nil {
-		return err
-	}
 	mon, err := monitor.New(monitor.Config{DB: db, HostID: captainHostID()})
 	if err != nil {
 		return err

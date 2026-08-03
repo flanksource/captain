@@ -4,11 +4,32 @@
 package aimock
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
+	"syscall"
 )
+
+func WaitForCancellation(ctx context.Context, hold bool) error {
+	if !hold {
+		return nil
+	}
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func IsClientCancellation(ctx context.Context, err error) bool {
+	return errors.Is(err, context.Canceled) ||
+		errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, net.ErrClosed) ||
+		errors.Is(err, syscall.EPIPE) ||
+		errors.Is(err, syscall.ECONNRESET) ||
+		ctx.Err() != nil
+}
 
 // SSE writes server-sent-event frames to an http.ResponseWriter.
 type SSE struct {

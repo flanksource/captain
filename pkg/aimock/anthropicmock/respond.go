@@ -23,8 +23,9 @@ type Respond struct {
 	Text      string   `json:"text,omitempty" yaml:"text,omitempty"`
 	ToolUse   *ToolUse `json:"tool_use,omitempty" yaml:"tool_use,omitempty"`
 
-	StopReason string `json:"stop_reason,omitempty" yaml:"stop_reason,omitempty"`
-	Usage      Usage  `json:"usage,omitempty" yaml:"usage,omitempty"`
+	StopReason           string `json:"stop_reason,omitempty" yaml:"stop_reason,omitempty"`
+	Usage                Usage  `json:"usage,omitempty" yaml:"usage,omitempty"`
+	HoldOpenAfterContent bool   `json:"hold_open_after_content,omitempty" yaml:"hold_open_after_content,omitempty"`
 
 	// Error, when set, makes this rule return an API error instead of a reply —
 	// for exercising the retry and error-mapping paths.

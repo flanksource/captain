@@ -49,6 +49,18 @@ func TestProvider_StreamLifecycle(t *testing.T) {
 	assert.Equal(t, 5, result.Usage.OutputTokens)
 }
 
+func TestAgentProcessEnvHonoursAPIURL(t *testing.T) {
+	got := agentProcessEnv(ai.Config{
+		APIURL: "http://127.0.0.1:4010", APIKey: "captain-mock",
+	}, []string{"CLAUDECODE=1", "CLAUDE_CODE_ENTRYPOINT=cli"})
+	assert.Equal(t, "http://127.0.0.1:4010", got["ANTHROPIC_BASE_URL"])
+	assert.Equal(t, "captain-mock", got["ANTHROPIC_API_KEY"])
+	assert.Equal(t, "captain-mock", got["ANTHROPIC_AUTH_TOKEN"])
+	assert.Equal(t, "1", got["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"])
+	assert.Empty(t, got["CLAUDECODE"])
+	assert.Empty(t, got["CLAUDE_CODE_ENTRYPOINT"])
+}
+
 func TestProvider_ExecuteCoalesce(t *testing.T) {
 	withFakeAgentProcess(t)
 

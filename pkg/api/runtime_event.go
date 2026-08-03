@@ -33,13 +33,14 @@ type Response struct {
 type EventKind string
 
 const (
-	EventText       EventKind = "text"
-	EventThinking   EventKind = "thinking"
-	EventToolUse    EventKind = "tool_use"
-	EventToolResult EventKind = "tool_result"
-	EventResult     EventKind = "result"
-	EventError      EventKind = "error"
-	EventSystem     EventKind = "system"
+	EventText        EventKind = "text"
+	EventThinking    EventKind = "thinking"
+	EventToolUse     EventKind = "tool_use"
+	EventToolResult  EventKind = "tool_result"
+	EventResult      EventKind = "result"
+	EventError       EventKind = "error"
+	EventInterrupted EventKind = "interrupted"
+	EventSystem      EventKind = "system"
 	// EventPermission surfaces a tool-permission request brokered via CanUseTool
 	// so callers can observe what is awaiting approval. Tool/Input/ToolCallID carry
 	// the requested tool; the decision itself flows back through the CanUseTool
@@ -59,6 +60,9 @@ type Event struct {
 	// (the call) and EventToolResult (its complete output). Backends that stream
 	// output incrementally accumulate it and emit a single EventToolResult.
 	ToolCallID string
+	// ApprovalID is the durable captain_turn_requests UUID associated with an
+	// EventPermission. It is distinct from the provider's tool-call ID.
+	ApprovalID string
 
 	Usage     *Usage  // when Kind == EventResult
 	CostUSD   float64 // when Kind == EventResult
@@ -66,6 +70,7 @@ type Event struct {
 	SessionID string  // when Kind == EventSystem
 	Model     string
 	Error     string // when Kind == EventError
+	Reason    string // when Kind == EventInterrupted
 
 	// StructuredData is the validated structured output (raw JSON) carried on an
 	// EventResult when the request supplied a schema; nil for text-mode runs. It

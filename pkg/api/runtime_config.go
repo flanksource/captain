@@ -17,10 +17,11 @@ type PermissionFunc func(ctx context.Context, req PermissionRequest) (Permission
 // PermissionRequest describes the tool an agent wants to run. SessionID is filled
 // in by the provider from the live session so a caller can key approvals by it.
 type PermissionRequest struct {
-	Tool      string
-	Input     map[string]any
-	ToolUseID string
-	SessionID string
+	Tool               string
+	Input              map[string]any
+	ToolUseID          string
+	ToolUseIDGenerated bool
+	SessionID          string
 }
 
 // PermissionDecision is the answer to a PermissionRequest. On Allow the tool runs
@@ -105,8 +106,9 @@ type Config struct {
 	// APIURL overrides the backend's endpoint (empty = the provider default).
 	// Anthropic/OpenAI/DeepSeek honour it; Gemini rejects it, because genkit's
 	// googlegenai plugin exposes no override and silently calling the real API
-	// would be worse. codex-cli honours it by declaring a model_providers entry,
-	// since it ignores OPENAI_BASE_URL once account auth is stored.
+	// would be worse. Claude Agent passes it through to the SDK child; Codex CLI
+	// and Codex Agent declare a model_providers entry because stored account auth
+	// otherwise takes precedence over OPENAI_BASE_URL.
 	APIURL string
 	// Sandbox runs local agent CLI processes through sandbox-runtime. Provider
 	// selection must resolve to CLI mode so the flag cannot be silently ignored.

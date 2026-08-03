@@ -16,7 +16,7 @@ export function ChatLayer() {
     <>
       <ChatFab />
       <ChatWindowLayer
-        threadsApi="/api/chat/threads"
+        sessionsApi="/api/chat/sessions"
         tools={tools}
         defaultToolMode="auto"
         chat={{

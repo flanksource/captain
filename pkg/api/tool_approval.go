@@ -32,17 +32,28 @@ type ToolApprovalCall struct {
 	Result  *ToolResult         `json:"result,omitempty" yaml:"result,omitempty"`
 }
 
+// ProviderCheckpoint is opaque provider-native conversation state. It is
+// persisted beside the prompt run and is deliberately excluded from every
+// public transcript and session response.
+type ProviderCheckpoint struct {
+	Codec   string
+	Version int
+	Payload []byte
+}
+
 // ToolApprovalState is the durable state returned when a model turn suspends.
 // Messages is the complete provider-neutral conversation ending with the
 // assistant tool requests; Calls records which requests are pending or done.
 type ToolApprovalState struct {
-	Messages []Message          `json:"messages" yaml:"messages"`
-	Calls    []ToolApprovalCall `json:"calls" yaml:"calls"`
+	Messages           []Message           `json:"messages" yaml:"messages"`
+	Calls              []ToolApprovalCall  `json:"calls" yaml:"calls"`
+	ProviderCheckpoint *ProviderCheckpoint `json:"-" yaml:"-"`
 }
 
 // ToolApprovalDecision resolves one pending call. Approve may replace Input;
 // Deny may carry a Message; Respond supplies an already-computed Result.
 type ToolApprovalDecision struct {
+	ApprovalID string             `json:"approvalId,omitempty" yaml:"approvalId,omitempty"`
 	ToolCallID string             `json:"toolCallId" yaml:"toolCallId"`
 	Tool       string             `json:"tool" yaml:"tool"`
 	Action     ToolApprovalAction `json:"action" yaml:"action"`
@@ -86,6 +97,11 @@ func (s ToolApprovalState) Pending() []ToolApprovalRequest {
 }
 
 func (s ToolApprovalState) Validate() error {
+	if s.ProviderCheckpoint != nil {
+		if strings.TrimSpace(s.ProviderCheckpoint.Codec) == "" || s.ProviderCheckpoint.Version <= 0 || len(s.ProviderCheckpoint.Payload) == 0 {
+			return fmt.Errorf("provider checkpoint requires a codec, positive version, and payload")
+		}
+	}
 	if err := ValidateMessages(s.Messages); err != nil {
 		return fmt.Errorf("approval messages: %w", err)
 	}
