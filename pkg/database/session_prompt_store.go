@@ -270,6 +270,13 @@ func (db *DB) CreateOrGetSession(ctx context.Context, input CreateSessionInput) 
 			return nil, fmt.Errorf("adopt Captain session provider label: %w", err)
 		}
 	}
+	if len(record.Metadata) > 0 {
+		if err := db.gorm.WithContext(ctx).Model(&sessionRecord{}).
+			Where("id = ?", existing.ID).
+			Update("metadata", gorm.Expr("COALESCE(metadata, '{}'::jsonb) || ?::jsonb", jsonbValue(record.Metadata))).Error; err != nil {
+			return nil, fmt.Errorf("merge Captain session metadata: %w", err)
+		}
+	}
 	if callerSuppliedID && existing.ID != input.ID {
 		return nil, fmt.Errorf("%w: provider identity already belongs to session %s, not caller-supplied ID %s", ErrSessionConflict, existing.ID, input.ID)
 	}

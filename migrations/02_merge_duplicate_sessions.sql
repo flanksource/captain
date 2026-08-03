@@ -17,9 +17,9 @@
 -- duplicate groups no group had more than one member with messages, so this
 -- picks a winner rather than merging two transcripts; ties fall back to the
 -- oldest row and then to the id, so the choice is deterministic on re-run.
--- Prompt runs and child sessions pointing at a ghost are re-pointed, the ghosts
--- are deleted, and the winner then absorbs a ghost's provider label -- that label
--- exists nowhere else once the ghost is gone.
+-- Prompt runs, child sessions, and processes pointing at a ghost are re-pointed,
+-- the ghosts are deleted, and the winner then absorbs a ghost's provider label --
+-- that label exists nowhere else once the ghost is gone.
 --
 -- Every reference re-pointed below is one the ghost's ON DELETE CASCADE would
 -- otherwise destroy. The ghost's own transcript rows -- messages, turns, events,
@@ -103,6 +103,13 @@ BEGIN
   UPDATE captain_sessions w SET root_session_id = NULL
   FROM captain_duplicate_session_map m
   WHERE w.id = m.winner AND w.root_session_id = m.loser;
+
+  -- A running process is the durable identity of the execution that created the
+  -- ghost. Its session foreign key also cascades, so preserve it on the row that
+  -- actually owns the transcript before removing the duplicate.
+  UPDATE captain_session_processes p SET session_id = m.winner
+  FROM captain_duplicate_session_map m
+  WHERE p.session_id = m.loser;
 
   DELETE FROM captain_sessions s
   USING captain_duplicate_session_map m
