@@ -11,7 +11,8 @@ vi.mock("./useEventSource", () => ({
 describe("usePromptRunStream", () => {
   it("retains the terminal failure summary from the error event", () => {
     const { result } = renderHook(() => usePromptRunStream("run-4a82"));
-    const onEvent = useEventSourceMock.mock.calls.at(-1)?.[1].onEvent;
+    const calls = useEventSourceMock.mock.calls;
+    const onEvent = calls[calls.length - 1]?.[1].onEvent;
 
     act(() => {
       onEvent(
