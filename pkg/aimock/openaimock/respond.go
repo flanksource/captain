@@ -24,8 +24,9 @@ type Respond struct {
 	Text         string        `json:"text,omitempty" yaml:"text,omitempty"`
 	FunctionCall *FunctionCall `json:"function_call,omitempty" yaml:"function_call,omitempty"`
 
-	FinishReason string `json:"finish_reason,omitempty" yaml:"finish_reason,omitempty"`
-	Usage        Usage  `json:"usage,omitempty" yaml:"usage,omitempty"`
+	FinishReason         string `json:"finish_reason,omitempty" yaml:"finish_reason,omitempty"`
+	Usage                Usage  `json:"usage,omitempty" yaml:"usage,omitempty"`
+	HoldOpenAfterContent bool   `json:"hold_open_after_content,omitempty" yaml:"hold_open_after_content,omitempty"`
 
 	// Error, when set, makes this rule return an API error instead of a reply —
 	// for exercising the retry and error-mapping paths.
@@ -35,6 +36,7 @@ type Respond struct {
 // FunctionCall is a scripted tool call. Arguments are written as YAML and
 // marshalled to the JSON string the wire carries.
 type FunctionCall struct {
+	Namespace string         `json:"namespace,omitempty" yaml:"namespace,omitempty"`
 	Name      string         `json:"name" yaml:"name"`
 	CallID    string         `json:"call_id,omitempty" yaml:"call_id,omitempty"`
 	Arguments map[string]any `json:"arguments,omitempty" yaml:"arguments,omitempty"`
@@ -76,6 +78,7 @@ type item struct {
 	Type      string
 	ID        string
 	Text      string
+	Namespace string
 	Name      string
 	CallID    string
 	Arguments string
@@ -84,10 +87,10 @@ type item struct {
 // items renders the reply into ordered output items. A reply with neither text
 // nor a tool call still produces an empty message, because every Responses reply
 // has at least one output item.
-func (r Respond) items() []item {
+func (r Respond) items(responseID string) []item {
 	var out []item
 	if r.Reasoning != "" {
-		out = append(out, item{Type: "reasoning", ID: fmt.Sprintf("rs_mock_%d", len(out)), Text: r.Reasoning})
+		out = append(out, item{Type: "reasoning", ID: fmt.Sprintf("rs_%s_%d", responseID, len(out)), Text: r.Reasoning})
 	}
 	if r.FunctionCall != nil {
 		callID := r.FunctionCall.CallID
@@ -107,14 +110,15 @@ func (r Respond) items() []item {
 		}
 		out = append(out, item{
 			Type:      "function_call",
-			ID:        fmt.Sprintf("fc_mock_%d", len(out)),
+			ID:        fmt.Sprintf("fc_%s_%d", responseID, len(out)),
+			Namespace: r.FunctionCall.Namespace,
 			Name:      r.FunctionCall.Name,
 			CallID:    callID,
 			Arguments: string(raw),
 		})
 	}
 	if r.Text != "" || len(out) == 0 {
-		out = append(out, item{Type: "message", ID: fmt.Sprintf("msg_mock_%d", len(out)), Text: r.Text})
+		out = append(out, item{Type: "message", ID: fmt.Sprintf("msg_%s_%d", responseID, len(out)), Text: r.Text})
 	}
 	return out
 }
@@ -126,7 +130,11 @@ func (i item) added() map[string]any {
 	case "reasoning":
 		return map[string]any{"id": i.ID, "type": "reasoning", "summary": []any{}}
 	case "function_call":
-		return map[string]any{"id": i.ID, "type": "function_call", "status": "in_progress", "name": i.Name, "call_id": i.CallID, "arguments": ""}
+		payload := map[string]any{"id": i.ID, "type": "function_call", "status": "in_progress", "name": i.Name, "call_id": i.CallID, "arguments": ""}
+		if i.Namespace != "" {
+			payload["namespace"] = i.Namespace
+		}
+		return payload
 	default:
 		return map[string]any{"id": i.ID, "type": "message", "status": "in_progress", "role": "assistant", "content": []any{}}
 	}
@@ -142,7 +150,11 @@ func (i item) done() map[string]any {
 			"summary": []any{map[string]any{"type": "summary_text", "text": i.Text}},
 		}
 	case "function_call":
-		return map[string]any{"id": i.ID, "type": "function_call", "status": "completed", "name": i.Name, "call_id": i.CallID, "arguments": i.Arguments}
+		payload := map[string]any{"id": i.ID, "type": "function_call", "status": "completed", "name": i.Name, "call_id": i.CallID, "arguments": i.Arguments}
+		if i.Namespace != "" {
+			payload["namespace"] = i.Namespace
+		}
+		return payload
 	default:
 		return map[string]any{
 			"id": i.ID, "type": "message", "status": "completed", "role": "assistant",

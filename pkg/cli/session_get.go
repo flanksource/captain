@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flanksource/captain/pkg/aichat"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/session"
@@ -136,6 +137,30 @@ func buildSessionGetItem(ctx context.Context, db sessionGetStore, overview datab
 }
 
 func loadSessionDetail(ctx context.Context, db sessionGetStore, overview database.SessionOverview) (*session.Session, error) {
+	if overview.MessageCount > 0 {
+		captainDB, ok := db.(*database.DB)
+		if !ok {
+			return nil, fmt.Errorf("captain session %s has database messages but its store cannot load the canonical aggregate", overview.ID)
+		}
+		store, err := aichat.NewDatabaseThreadStore(captainDB)
+		if err != nil {
+			return nil, err
+		}
+		detail, err := store.GetSession(ctx, overview.ID.String())
+		if err != nil {
+			return nil, fmt.Errorf("load canonical Captain session %s: %w", overview.ID, err)
+		}
+		runs, err := db.ListPromptRuns(ctx, database.PromptRunFilter{SessionID: &overview.ID})
+		if err != nil {
+			return nil, fmt.Errorf("list prompt runs for Captain session %s: %w", overview.ID, err)
+		}
+		if len(runs) > 0 {
+			if err := attachPromptRunData(detail, runs[0]); err != nil {
+				return nil, fmt.Errorf("attach prompt run %s to Captain session %s: %w", runs[0].ID, overview.ID, err)
+			}
+		}
+		return detail, nil
+	}
 	path := stringOr(overview.HistoryFile, stringOr(overview.Path, ""))
 	var detail *session.Session
 	if path != "" {
@@ -146,6 +171,9 @@ func loadSessionDetail(ctx context.Context, db sessionGetStore, overview databas
 			return nil, fmt.Errorf("parse Captain session %s: %w", overview.ID, err)
 		}
 		detail = parsed
+		detail.ID = overview.ID.String()
+		detail.ProviderSessionID = stringOr(overview.ProviderSessionID, "")
+		detail.Revision = overview.StateVersion
 	}
 	stopPromptRuns := rpchttp.Track(ctx, "prompt_runs")
 	runs, err := db.ListPromptRuns(ctx, database.PromptRunFilter{SessionID: &overview.ID})
@@ -169,20 +197,22 @@ func sessionFromPromptRun(overview database.SessionOverview, run database.Prompt
 	resolved := run.Runtime.Resolved
 	requested := run.Runtime.Requested
 	detail := &session.Session{
-		ID:              stringOr(overview.ProviderSessionID, overview.ID.String()),
-		Source:          overview.Source,
-		Project:         stringOr(overview.Project, ""),
-		CWD:             stringOr(overview.CWD, ""),
-		Slug:            stringOr(overview.Slug, ""),
-		Title:           stringOr(overview.Title, ""),
-		InitialPrompt:   stringOr(overview.InitialPrompt, run.PromptMarkdown),
-		Version:         stringOr(overview.CLIVersion, ""),
-		Provider:        firstNonEmpty(overview.Provider, resolved.Provider, requested.Provider),
-		Backend:         firstNonEmpty(stringOr(overview.Backend, ""), resolved.Backend, requested.Backend),
-		Model:           firstNonEmpty(stringOr(overview.Model, ""), resolved.Model, requested.Model),
-		ReasoningEffort: firstNonEmpty(stringOr(overview.Effort, ""), resolved.Effort, requested.Effort),
-		StartedAt:       firstTime(overview.StartedAt, run.StartedAt, &run.QueuedAt),
-		EndedAt:         firstTime(overview.EndedAt, run.FinishedAt),
+		ID:                overview.ID.String(),
+		ProviderSessionID: stringOr(overview.ProviderSessionID, ""),
+		Revision:          overview.StateVersion,
+		Source:            overview.Source,
+		Project:           stringOr(overview.Project, ""),
+		CWD:               stringOr(overview.CWD, ""),
+		Slug:              stringOr(overview.Slug, ""),
+		Title:             stringOr(overview.Title, ""),
+		InitialPrompt:     stringOr(overview.InitialPrompt, run.PromptMarkdown),
+		Version:           stringOr(overview.CLIVersion, ""),
+		Provider:          firstNonEmpty(overview.Provider, resolved.Provider, requested.Provider),
+		Backend:           firstNonEmpty(stringOr(overview.Backend, ""), resolved.Backend, requested.Backend),
+		Model:             firstNonEmpty(stringOr(overview.Model, ""), resolved.Model, requested.Model),
+		ReasoningEffort:   firstNonEmpty(stringOr(overview.Effort, ""), resolved.Effort, requested.Effort),
+		StartedAt:         firstTime(overview.StartedAt, run.StartedAt, &run.QueuedAt),
+		EndedAt:           firstTime(overview.EndedAt, run.FinishedAt),
 	}
 	if run.PromptMarkdown != "" {
 		detail.Messages = append(detail.Messages, promptRunMessage(run, "user", run.PromptMarkdown))

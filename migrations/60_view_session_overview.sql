@@ -100,7 +100,8 @@ SELECT
   process.cpu_percent,
   process.memory_percent,
   process.memory_rss_bytes,
-  process.sampled_at AS process_sampled_at
+  process.sampled_at AS process_sampled_at,
+  latest_run.execution_mode
 FROM public.captain_sessions s
 LEFT JOIN LATERAL (
   SELECT p.*
@@ -205,7 +206,14 @@ LEFT JOIN LATERAL (
   FROM public.captain_artifacts a
   WHERE a.session_id = s.id
     AND a.kind LIKE 'file.%'
-) file_stats ON true;
+) file_stats ON true
+LEFT JOIN LATERAL (
+  SELECT NULLIF(r.runtime ->> 'mode', '') AS execution_mode
+  FROM public.captain_prompt_runs r
+  WHERE r.session_id = s.id
+  ORDER BY COALESCE(r.finished_at, r.started_at, r.created_at) DESC, r.id DESC
+  LIMIT 1
+) latest_run ON true;
 
 COMMENT ON VIEW public.captain_session_overview IS
   'One row per session for PostgREST list, metadata, health, live-process, usage and cost surfaces.';

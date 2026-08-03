@@ -62,9 +62,10 @@ type Part struct {
 	Text string `json:"text,omitempty"`
 
 	// file parts
-	MediaType string `json:"mediaType,omitempty"`
-	URL       string `json:"url,omitempty"`
-	Filename  string `json:"filename,omitempty"`
+	MediaType    string `json:"mediaType,omitempty"`
+	URL          string `json:"url,omitempty"`
+	Filename     string `json:"filename,omitempty"`
+	AttachmentID string `json:"attachmentId,omitempty"`
 
 	// tool parts
 	ToolName   string          `json:"toolName,omitempty"`
@@ -72,6 +73,8 @@ type Part struct {
 	State      string          `json:"state,omitempty"`
 	Input      json.RawMessage `json:"input,omitempty"`
 	Output     json.RawMessage `json:"output,omitempty"`
+	ErrorText  string          `json:"errorText,omitempty"`
+	Data       json.RawMessage `json:"data,omitempty"`
 	Approval   *Approval       `json:"approval,omitempty"`
 }
 

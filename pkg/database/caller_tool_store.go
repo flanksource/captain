@@ -172,14 +172,17 @@ const (
 type TurnRequest struct {
 	ID             uuid.UUID        `json:"id"`
 	SessionID      uuid.UUID        `json:"sessionId"`
+	TurnID         *uuid.UUID       `json:"turnId,omitempty"`
 	PromptRunID    *uuid.UUID       `json:"promptRunId,omitempty"`
-	CredentialID   *uuid.UUID       `json:"credentialId,omitempty"`
+	ModelCallID    *uuid.UUID       `json:"modelCallId,omitempty"`
+	CredentialID   *uuid.UUID       `json:"-"`
 	ToolCallID     string           `json:"toolCallId,omitempty"`
 	Kind           string           `json:"kind"`
 	State          TurnRequestState `json:"state"`
 	Request        map[string]any   `json:"request"`
 	Response       map[string]any   `json:"response,omitempty"`
 	IdempotencyKey string           `json:"idempotencyKey,omitempty"`
+	RequestedBy    string           `json:"requestedBy,omitempty"`
 	ResolvedBy     string           `json:"resolvedBy,omitempty"`
 	Reason         string           `json:"reason,omitempty"`
 	Version        int64            `json:"version"`
@@ -191,7 +194,9 @@ type TurnRequest struct {
 type turnRequestRecord struct {
 	ID             uuid.UUID        `gorm:"column:id;type:uuid;primaryKey"`
 	SessionID      uuid.UUID        `gorm:"column:session_id;type:uuid"`
+	TurnID         *uuid.UUID       `gorm:"column:turn_id;type:uuid"`
 	PromptRunID    *uuid.UUID       `gorm:"column:prompt_run_id;type:uuid"`
+	ModelCallID    *uuid.UUID       `gorm:"column:model_call_id;type:uuid"`
 	CredentialID   *uuid.UUID       `gorm:"column:credential_id;type:uuid"`
 	ToolCallID     *string          `gorm:"column:tool_call_id"`
 	Kind           string           `gorm:"column:kind"`
@@ -199,6 +204,7 @@ type turnRequestRecord struct {
 	Request        map[string]any   `gorm:"column:request;serializer:json;type:jsonb"`
 	Response       map[string]any   `gorm:"column:response;serializer:json;type:jsonb"`
 	IdempotencyKey *string          `gorm:"column:idempotency_key"`
+	RequestedBy    *string          `gorm:"column:requested_by"`
 	ResolvedBy     *string          `gorm:"column:resolved_by"`
 	Reason         *string          `gorm:"column:reason"`
 	Version        int64            `gorm:"column:version"`
@@ -212,10 +218,13 @@ func (turnRequestRecord) TableName() string { return "captain_turn_requests" }
 type CreateToolApprovalRequestInput struct {
 	CredentialID uuid.UUID
 	SessionID    uuid.UUID
+	TurnID       uuid.UUID
 	PromptRunID  uuid.UUID
+	ModelCallID  uuid.UUID
 	ToolCallID   string
 	Tool         string
 	Input        map[string]any
+	RequestedBy  string
 	ExpiresAt    time.Time
 }
 
@@ -223,47 +232,62 @@ func (db *DB) CreateToolApprovalRequest(
 	ctx context.Context,
 	input CreateToolApprovalRequestInput,
 ) (*TurnRequest, error) {
-	if err := db.ValidateCallerToolCredential(ctx, input.CredentialID); err != nil {
-		return nil, err
-	}
-	credential, err := db.GetCallerToolCredential(ctx, input.CredentialID)
-	if err != nil {
-		return nil, err
-	}
-	if credential.SessionID != input.SessionID || credential.PromptRunID != input.PromptRunID {
-		return nil, fmt.Errorf("%w: credential does not belong to the supplied session and run", ErrTurnRequestInvalid)
+	var credential *CallerToolCredential
+	if input.CredentialID != uuid.Nil {
+		if err := db.ValidateCallerToolCredential(ctx, input.CredentialID); err != nil {
+			return nil, err
+		}
+		var err error
+		credential, err = db.GetCallerToolCredential(ctx, input.CredentialID)
+		if err != nil {
+			return nil, err
+		}
+		if credential.SessionID != input.SessionID || credential.PromptRunID != input.PromptRunID {
+			return nil, fmt.Errorf("%w: credential does not belong to the supplied session and run", ErrTurnRequestInvalid)
+		}
 	}
 	input.ToolCallID = strings.TrimSpace(input.ToolCallID)
 	input.Tool = strings.TrimSpace(input.Tool)
-	if input.ToolCallID == "" || input.Tool == "" || !input.ExpiresAt.After(time.Now()) {
-		return nil, fmt.Errorf("%w: tool call ID, tool, and future expiry are required", ErrTurnRequestInvalid)
+	if input.SessionID == uuid.Nil || input.TurnID == uuid.Nil || input.PromptRunID == uuid.Nil || input.ModelCallID == uuid.Nil ||
+		input.ToolCallID == "" || input.Tool == "" || !input.ExpiresAt.After(time.Now()) {
+		return nil, fmt.Errorf("%w: session, turn, prompt run, model call, tool call, tool, and future expiry are required", ErrTurnRequestInvalid)
 	}
-	if credential.Policy[input.Tool] != api.ToolModeAsk {
+	if credential != nil && credential.Policy[input.Tool] != api.ToolModeAsk {
 		return nil, fmt.Errorf("%w: tool %q is not approved by ask policy", ErrTurnRequestInvalid, input.Tool)
 	}
-	if credential.ExpiresAt != nil && input.ExpiresAt.After(*credential.ExpiresAt) {
+	if credential != nil && credential.ExpiresAt != nil && input.ExpiresAt.After(*credential.ExpiresAt) {
 		input.ExpiresAt = *credential.ExpiresAt
 	}
-	idempotencyKey := "mcp:" + input.CredentialID.String() + ":" + input.ToolCallID
+	idempotencyKey := "provider:" + input.PromptRunID.String() + ":" + input.ToolCallID
+	if credential != nil {
+		idempotencyKey = "mcp:" + input.CredentialID.String() + ":" + input.ToolCallID
+	}
 	request := map[string]any{
-		"credentialId": input.CredentialID.String(), "tool": input.Tool, "input": input.Input,
+		"tool": input.Tool, "input": input.Input,
+	}
+	var credentialID *uuid.UUID
+	if credential != nil {
+		credentialID = &input.CredentialID
 	}
 	record := turnRequestRecord{
-		ID: uuid.New(), SessionID: input.SessionID, PromptRunID: &input.PromptRunID,
-		CredentialID: &input.CredentialID, ToolCallID: &input.ToolCallID,
+		ID: uuid.New(), SessionID: input.SessionID, TurnID: &input.TurnID, PromptRunID: &input.PromptRunID,
+		ModelCallID: &input.ModelCallID, CredentialID: credentialID, ToolCallID: &input.ToolCallID,
 		Kind: "tool_approval", State: TurnRequestStatePending, Request: request,
-		IdempotencyKey: &idempotencyKey, ExpiresAt: &input.ExpiresAt,
+		IdempotencyKey: &idempotencyKey, RequestedBy: nullableTrimmed(input.RequestedBy), ExpiresAt: &input.ExpiresAt,
 	}
 	result := db.gorm.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&record)
 	if result.Error != nil {
 		return nil, fmt.Errorf("create tool approval request: %w", result.Error)
 	}
 	if result.RowsAffected == 1 {
+		if err := db.touchChatSession(ctx, input.SessionID); err != nil {
+			return nil, err
+		}
 		return db.GetTurnRequest(ctx, record.ID)
 	}
 	var existing turnRequestRecord
 	if err := db.gorm.WithContext(ctx).
-		Where("credential_id = ? AND tool_call_id = ?", input.CredentialID, input.ToolCallID).
+		Where("session_id = ? AND idempotency_key = ?", input.SessionID, idempotencyKey).
 		First(&existing).Error; err != nil {
 		return nil, fmt.Errorf("read existing tool approval request: %w", err)
 	}
@@ -276,7 +300,7 @@ func (db *DB) CreateToolApprovalRequest(
 
 type ResolveToolApprovalRequestInput struct {
 	SessionID    uuid.UUID
-	ToolCallID   string
+	RequestID    uuid.UUID
 	Approved     bool
 	UpdatedInput map[string]any
 	ResolvedBy   string
@@ -287,8 +311,8 @@ func (db *DB) ResolveToolApprovalRequest(
 	ctx context.Context,
 	input ResolveToolApprovalRequestInput,
 ) (*TurnRequest, error) {
-	if input.SessionID == uuid.Nil || strings.TrimSpace(input.ToolCallID) == "" {
-		return nil, fmt.Errorf("%w: session and tool call IDs are required", ErrTurnRequestInvalid)
+	if input.SessionID == uuid.Nil || input.RequestID == uuid.Nil {
+		return nil, fmt.Errorf("%w: session and approval request IDs are required", ErrTurnRequestInvalid)
 	}
 	state := TurnRequestStateDenied
 	var response map[string]any
@@ -300,18 +324,25 @@ func (db *DB) ResolveToolApprovalRequest(
 	}
 	var pending turnRequestRecord
 	if err := db.gorm.WithContext(ctx).
-		Where("session_id = ? AND tool_call_id = ? AND kind = 'tool_approval' AND state = 'pending'",
-			input.SessionID, strings.TrimSpace(input.ToolCallID)).
-		Order("created_at DESC").First(&pending).Error; err != nil {
+		Where("id = ? AND session_id = ? AND kind = 'tool_approval'", input.RequestID, input.SessionID).
+		First(&pending).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("%w: session %s tool call %s", ErrTurnRequestNotFound, input.SessionID, input.ToolCallID)
+			return nil, fmt.Errorf("%w: session %s approval %s", ErrTurnRequestNotFound, input.SessionID, input.RequestID)
 		}
-		return nil, fmt.Errorf("read pending tool approval request: %w", err)
+		return nil, fmt.Errorf("read tool approval request: %w", err)
+	}
+	if pending.State != TurnRequestStatePending {
+		if pending.State == state && reflect.DeepEqual(pending.Response, response) &&
+			optionalString(pending.Reason) == strings.TrimSpace(input.Reason) {
+			out := turnRequestFromRecord(pending)
+			return &out, nil
+		}
+		return nil, fmt.Errorf("%w: approval %s already has a different %s decision", ErrTurnRequestConflict, pending.ID, pending.State)
 	}
 	now := time.Now().UTC()
 	result := db.gorm.WithContext(ctx).Model(&turnRequestRecord{}).
 		Where("id = ? AND state = 'pending'", pending.ID).
-		Where(`EXISTS (
+		Where(`credential_id IS NULL OR EXISTS (
 			SELECT 1 FROM captain_session_mcp_credentials credential
 			WHERE credential.id = captain_turn_requests.credential_id
 			  AND credential.revoked_at IS NULL
@@ -330,7 +361,10 @@ func (db *DB) ResolveToolApprovalRequest(
 				return nil, err
 			}
 		}
-		return nil, fmt.Errorf("%w: session %s tool call %s", ErrTurnRequestNotFound, input.SessionID, input.ToolCallID)
+		return nil, fmt.Errorf("%w: session %s approval %s", ErrTurnRequestNotFound, input.SessionID, input.RequestID)
+	}
+	if err := db.touchChatSession(ctx, input.SessionID); err != nil {
+		return nil, err
 	}
 	return db.GetTurnRequest(ctx, pending.ID)
 }
@@ -347,6 +381,30 @@ func (db *DB) GetTurnRequest(ctx context.Context, id uuid.UUID) (*TurnRequest, e
 	return &out, nil
 }
 
+type TurnRequestFilter struct {
+	SessionID   uuid.UUID
+	PromptRunID *uuid.UUID
+}
+
+func (db *DB) ListTurnRequests(ctx context.Context, filter TurnRequestFilter) ([]TurnRequest, error) {
+	if filter.SessionID == uuid.Nil {
+		return nil, fmt.Errorf("%w: session ID is required", ErrTurnRequestInvalid)
+	}
+	query := db.gorm.WithContext(ctx).Where("session_id = ?", filter.SessionID).Order("created_at, id")
+	if filter.PromptRunID != nil {
+		query = query.Where("prompt_run_id = ?", *filter.PromptRunID)
+	}
+	var records []turnRequestRecord
+	if err := query.Find(&records).Error; err != nil {
+		return nil, fmt.Errorf("list Captain turn requests: %w", err)
+	}
+	requests := make([]TurnRequest, len(records))
+	for i := range records {
+		requests[i] = turnRequestFromRecord(records[i])
+	}
+	return requests, nil
+}
+
 func (db *DB) ExpireToolApprovalRequest(ctx context.Context, id uuid.UUID, state TurnRequestState, reason string) error {
 	if state != TurnRequestStateExpired && state != TurnRequestStateCancelled {
 		return fmt.Errorf("%w: terminal state %q is invalid", ErrTurnRequestInvalid, state)
@@ -357,6 +415,22 @@ func (db *DB) ExpireToolApprovalRequest(ctx context.Context, id uuid.UUID, state
 		Updates(map[string]any{"state": state, "reason": nullableTrimmed(reason), "resolved_at": now})
 	if result.Error != nil {
 		return fmt.Errorf("expire tool approval request: %w", result.Error)
+	}
+	return nil
+}
+
+func (db *DB) CancelPendingTurnRequests(ctx context.Context, sessionID, promptRunID uuid.UUID, reason string) error {
+	if sessionID == uuid.Nil || promptRunID == uuid.Nil {
+		return fmt.Errorf("%w: session and prompt run IDs are required", ErrTurnRequestInvalid)
+	}
+	now := time.Now().UTC()
+	result := db.gorm.WithContext(ctx).Model(&turnRequestRecord{}).
+		Where("session_id = ? AND prompt_run_id = ? AND state = 'pending'", sessionID, promptRunID).
+		Updates(map[string]any{
+			"state": TurnRequestStateCancelled, "reason": nullableTrimmed(reason), "resolved_at": now,
+		})
+	if result.Error != nil {
+		return fmt.Errorf("cancel pending Captain turn requests: %w", result.Error)
 	}
 	return nil
 }
@@ -373,10 +447,10 @@ func callerToolCredentialFromRecord(record callerToolCredentialRecord) CallerToo
 
 func turnRequestFromRecord(record turnRequestRecord) TurnRequest {
 	return TurnRequest{
-		ID: record.ID, SessionID: record.SessionID, PromptRunID: record.PromptRunID,
+		ID: record.ID, SessionID: record.SessionID, TurnID: record.TurnID, PromptRunID: record.PromptRunID, ModelCallID: record.ModelCallID,
 		CredentialID: record.CredentialID, ToolCallID: optionalString(record.ToolCallID),
 		Kind: record.Kind, State: record.State, Request: record.Request, Response: record.Response,
-		IdempotencyKey: optionalString(record.IdempotencyKey), ResolvedBy: optionalString(record.ResolvedBy),
+		IdempotencyKey: optionalString(record.IdempotencyKey), RequestedBy: optionalString(record.RequestedBy), ResolvedBy: optionalString(record.ResolvedBy),
 		Reason: optionalString(record.Reason), Version: record.Version, ExpiresAt: record.ExpiresAt,
 		CreatedAt: record.CreatedAt, ResolvedAt: record.ResolvedAt,
 	}

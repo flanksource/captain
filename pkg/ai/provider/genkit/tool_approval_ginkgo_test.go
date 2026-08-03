@@ -47,7 +47,10 @@ var _ = Describe("Genkit resumable tool approval", func() {
 		pending.Metadata = map[string]any{"interrupt": map[string]any{"approvalRequired": true}}
 		completed := gkai.NewToolRequestPart(&gkai.ToolRequest{Name: "invoice_get", Ref: "call-read", Input: map[string]any{"id": "inv-1"}})
 		completed.Metadata = map[string]any{"pendingOutput": map[string]any{"amount": 10}}
-		response := &gkai.ModelResponse{Message: gkai.NewModelMessage(pending, completed), FinishReason: gkai.FinishReasonInterrupted}
+		response := &gkai.ModelResponse{
+			Request: &gkai.ModelRequest{Messages: []*gkai.Message{gkai.NewUserTextMessage("Update then inspect.")}},
+			Message: gkai.NewModelMessage(pending, completed), FinishReason: gkai.FinishReasonInterrupted,
+		}
 
 		state, err := toolApprovalState(request, response)
 		Expect(err).NotTo(HaveOccurred())
@@ -58,6 +61,35 @@ var _ = Describe("Genkit resumable tool approval", func() {
 		}}))
 		Expect(state.Calls[1].Result).NotTo(BeNil())
 		Expect(state.Calls[1].Result.Output).To(MatchJSON(`{"amount":10}`))
+	})
+
+	It("round trips Gemini thought signatures through the private approval checkpoint", func() {
+		signature := []byte("gemini-thought-signature")
+		pending := gkai.NewToolRequestPart(&gkai.ToolRequest{
+			Name: "accounts_edit", Ref: "call-signed", Input: map[string]any{"id": "acc-1"},
+		})
+		pending.Metadata = map[string]any{
+			"interrupt": map[string]any{"approvalRequired": true},
+			"signature": signature,
+		}
+		response := &gkai.ModelResponse{
+			Request: &gkai.ModelRequest{Messages: []*gkai.Message{gkai.NewUserTextMessage("Edit the account")}},
+			Message: gkai.NewModelMessage(pending), FinishReason: gkai.FinishReasonInterrupted,
+		}
+
+		state, err := toolApprovalState(api.Spec{Prompt: api.Prompt{User: "Edit the account"}}, response)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(state.ProviderCheckpoint).NotTo(BeNil())
+
+		messages, _, _, err := prepareToolApprovalResume(&api.ToolApprovalResume{
+			State: *state,
+			Decisions: []api.ToolApprovalDecision{{
+				ToolCallID: "call-signed", Tool: "accounts_edit", Action: api.ToolApprovalApprove,
+			}},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		requests := genkitApprovalRequests(messages[len(messages)-1])
+		Expect(requests["call-signed"].Metadata["signature"]).To(Equal(signature))
 	})
 
 	It("restarts an approved call with edited input and never replays completed siblings", func(ctx SpecContext) {
@@ -144,20 +176,20 @@ var _ = Describe("Genkit resumable tool approval", func() {
 	})
 
 	It("maps deny and externally-resolved calls to native responses", func() {
-		state := api.ToolApprovalState{
-			Messages: []api.Message{
-				{Role: api.RoleUser, Parts: []api.Part{{Type: api.PartText, Text: "Change it."}}},
-				{Role: api.RoleAssistant, Parts: []api.Part{
-					{Type: api.PartToolRequest, ToolRequest: &api.ToolRequest{ToolCallID: "call-deny", Name: "invoice_delete", Input: json.RawMessage(`{"id":"inv-1"}`)}},
-					{Type: api.PartToolRequest, ToolRequest: &api.ToolRequest{ToolCallID: "call-respond", Name: "invoice_update", Input: json.RawMessage(`{"amount":10}`)}},
-				}},
-			},
-			Calls: []api.ToolApprovalCall{
-				{Request: api.ToolApprovalRequest{ToolCallID: "call-deny", Tool: "invoice_delete", Input: json.RawMessage(`{"id":"inv-1"}`)}},
-				{Request: api.ToolApprovalRequest{ToolCallID: "call-respond", Tool: "invoice_update", Input: json.RawMessage(`{"amount":10}`)}},
-			},
-		}
-		resume := &api.ToolApprovalResume{State: state, Decisions: []api.ToolApprovalDecision{
+		deny := gkai.NewToolRequestPart(&gkai.ToolRequest{
+			Name: "invoice_delete", Ref: "call-deny", Input: map[string]any{"id": "inv-1"},
+		})
+		deny.Metadata = map[string]any{"interrupt": map[string]any{"approvalRequired": true}}
+		respond := gkai.NewToolRequestPart(&gkai.ToolRequest{
+			Name: "invoice_update", Ref: "call-respond", Input: map[string]any{"amount": 10},
+		})
+		respond.Metadata = map[string]any{"interrupt": map[string]any{"approvalRequired": true}}
+		state, err := toolApprovalState(api.Spec{Prompt: api.Prompt{User: "Change it."}}, &gkai.ModelResponse{
+			Request: &gkai.ModelRequest{Messages: []*gkai.Message{gkai.NewUserTextMessage("Change it.")}},
+			Message: gkai.NewModelMessage(deny, respond), FinishReason: gkai.FinishReasonInterrupted,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		resume := &api.ToolApprovalResume{State: *state, Decisions: []api.ToolApprovalDecision{
 			{ToolCallID: "call-deny", Tool: "invoice_delete", Action: api.ToolApprovalDeny, Message: "keep it"},
 			{ToolCallID: "call-respond", Tool: "invoice_update", Action: api.ToolApprovalRespond, Result: &api.ToolResult{
 				ToolCallID: "call-respond", Output: json.RawMessage(`{"updated":true}`),

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	aitools "github.com/flanksource/captain/pkg/ai/tools"
@@ -63,6 +64,8 @@ type ServiceOptions struct {
 type Service struct {
 	options  ServiceOptions
 	resolver Resolver
+	activeMu sync.Mutex
+	active   map[string]*activeTurn
 }
 
 func NewService(options ServiceOptions) *Service {
@@ -70,7 +73,7 @@ func NewService(options ServiceOptions) *Service {
 	if resolver == nil {
 		resolver = captainResolver{}
 	}
-	return &Service{options: options, resolver: resolver}
+	return &Service{options: options, resolver: resolver, active: map[string]*activeTurn{}}
 }
 
 func (s *Service) Handler() http.Handler {
@@ -114,7 +117,8 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 		http.Error(w, fmt.Sprintf("invalid chat request: %v", err), http.StatusBadRequest)
 		return
 	}
-	if err := s.resolveToolApproval(request.Context(), &chat); err != nil {
+	turnID, err := chatTurnID(chat)
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -129,6 +133,10 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 	}
 	thread, err := s.resolveThreadSession(request.Context(), &chat)
 	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := validateThreadTurn(chat, thread); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -155,10 +163,6 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := s.persistIncoming(request.Context(), chat); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
 	config := settings.ProviderConfig
 	config.Model = spec.Model
 	config.Budget = spec.Budget
@@ -172,13 +176,14 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 	}
 	spec.Model = config.Model
 	var execution Execution
+	var callerToolEvents <-chan api.Event
 	if s.options.Authority != nil && chat.ThreadID != "" {
 		title := ""
 		if thread != nil {
 			title = thread.Title
 		}
 		execution, err = s.options.Authority.Begin(request.Context(), ExecutionRequest{
-			ThreadID: chat.ThreadID, RequestID: chat.ID, Title: title,
+			ThreadID: chat.ThreadID, RequestID: turnID, Title: title,
 			Spec: spec, Definitions: definitions,
 		})
 		if err != nil {
@@ -186,8 +191,15 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 			return
 		}
 		defer closeExecution(execution)
+		turnID = execution.TurnID()
+		if chat.Trigger == "submit-message" && chat.MessageID == "" && len(chat.Messages) > 0 {
+			chat.Messages[len(chat.Messages)-1].TurnID = turnID
+		}
 		config.CaptainSessionID = execution.CaptainSessionID()
 		config.CallerTools = execution.CallerTools()
+		if config.CallerTools != nil {
+			callerToolEvents = execution.Events()
+		}
 	}
 	if len(definitions) > 0 && isAgentBackend(config.Model.Backend) &&
 		(execution == nil || config.CallerTools == nil) {
@@ -211,6 +223,10 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 			return
 		}
 	}
+	if err := s.persistIncoming(request.Context(), chat); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	streamContext, cancel := context.WithCancel(request.Context())
 	defer cancel()
 	events, err := provider.ExecuteStream(streamContext, spec)
@@ -218,18 +234,88 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
-	events = mergeExecutionEvents(streamContext, events, executionEvents(execution), definitions)
+	events = mergeExecutionEvents(streamContext, events, callerToolEvents, definitions)
+	if chat.ThreadID != "" {
+		active := newActiveTurn(streamContext, provider, execution, cancel)
+		if err := s.registerActiveTurn(chat.ThreadID, active); err != nil {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		defer s.unregisterActiveTurn(chat.ThreadID, active)
+		events = active.stream(events)
+	}
 	events = observeExecutionEvents(streamContext, execution, events)
 	writer, err := NewSSEWriter(w)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if err := WriteEventStream(writer, s.persistedEvents(streamContext, chat, events), EventStreamOptions{
+	if err := WriteEventStream(writer, s.persistedEvents(streamContext, chat, turnID, events), EventStreamOptions{
 		ToolApproval: chat.ToolApproval,
+		MessageID:    assistantMessageID(chat, turnID),
 	}); err != nil {
 		serviceLog.Errorf("stream chat response: %v", err)
 	}
+}
+
+func assistantMessageID(request ChatRequest, turnID string) string {
+	if request.MessageID != "" {
+		return request.MessageID
+	}
+	if turnID != "" {
+		return turnID + "-assistant"
+	}
+	return ""
+}
+
+func chatTurnID(request ChatRequest) (string, error) {
+	if request.ThreadID == "" {
+		return "", nil
+	}
+	if request.ID != request.ThreadID {
+		return "", fmt.Errorf("chat id %q must match threadId %q", request.ID, request.ThreadID)
+	}
+	switch request.Trigger {
+	case "submit-message":
+		if request.MessageID != "" {
+			return "", fmt.Errorf(
+				"submit-message cannot include messageId %q; resolve approvals through /api/chat/sessions/{id}/approvals/{approvalID}",
+				request.MessageID,
+			)
+		}
+		if len(request.Messages) == 0 {
+			return "", fmt.Errorf("submit-message requires a final user message")
+		}
+		last := request.Messages[len(request.Messages)-1]
+		if !strings.EqualFold(last.Role, string(api.RoleUser)) {
+			return "", fmt.Errorf("submit-message must end with a user message")
+		}
+		if last.ID == "" {
+			return "", fmt.Errorf("submit-message final user message requires an id")
+		}
+		return last.ID, nil
+	case "regenerate-message":
+		if request.MessageID == "" {
+			return "", fmt.Errorf("regenerate-message requires messageId")
+		}
+		return request.MessageID, nil
+	default:
+		return "", fmt.Errorf("unsupported chat trigger %q", request.Trigger)
+	}
+}
+
+func validateThreadTurn(request ChatRequest, thread *Thread) error {
+	if request.Trigger != "regenerate-message" || thread == nil {
+		return nil
+	}
+	if len(thread.Messages) == 0 {
+		return fmt.Errorf("regenerate-message messageId %q has no persisted assistant message", request.MessageID)
+	}
+	last := thread.Messages[len(thread.Messages)-1]
+	if !strings.EqualFold(last.Role, string(api.RoleAssistant)) || last.ID != request.MessageID {
+		return fmt.Errorf("regenerate-message messageId %q must match the final persisted assistant message", request.MessageID)
+	}
+	return nil
 }
 
 func (s *Service) runtimeSettings(ctx context.Context) (RuntimeSettings, error) {
@@ -256,13 +342,6 @@ func (s *Service) resolveThreadSession(ctx context.Context, request *ChatRequest
 	return thread, nil
 }
 
-func executionEvents(execution Execution) <-chan api.Event {
-	if execution == nil {
-		return nil
-	}
-	return execution.Events()
-}
-
 func closeExecution(execution Execution) {
 	if execution == nil {
 		return
@@ -275,7 +354,7 @@ func closeExecution(execution Execution) {
 }
 
 func (s *Service) persistIncoming(ctx context.Context, request ChatRequest) error {
-	if request.ThreadID == "" || len(request.Messages) == 0 {
+	if request.ThreadID == "" || request.Trigger != "submit-message" || request.MessageID != "" || len(request.Messages) == 0 {
 		return nil
 	}
 	last := request.Messages[len(request.Messages)-1]

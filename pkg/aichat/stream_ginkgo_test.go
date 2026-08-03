@@ -81,6 +81,12 @@ func pendingApprovalState(calls ...api.ToolApprovalRequest) *api.ToolApprovalSta
 	}
 }
 
+func approvalEvent(callID, tool string) api.Event {
+	return api.Event{
+		Kind: api.EventPermission, ToolCallID: callID, Tool: tool, ApprovalID: "approval-" + callID,
+	}
+}
+
 var _ = Describe("AI SDK v6 event stream", func() {
 	It("rejects a response writer that cannot stream", func() {
 		_, err := aichat.NewSSEWriter(&nonFlushWriter{header: http.Header{}})
@@ -107,7 +113,7 @@ var _ = Describe("AI SDK v6 event stream", func() {
 			api.Event{Kind: api.EventThinking, Text: "ing"},
 			api.Event{Kind: api.EventText, Text: "I will inspect."},
 			api.Event{Kind: api.EventToolUse, ToolCallID: "call-1", Tool: "invoice_get", Input: map[string]any{"id": "inv-1"}},
-			api.Event{Kind: api.EventPermission, ToolCallID: "call-1", Tool: "invoice_get"},
+			approvalEvent("call-1", "invoice_get"),
 			api.Event{Kind: api.EventToolResult, ToolCallID: "call-1", Tool: "invoice_get", Text: `{"status":"draft"}`, Success: true},
 			api.Event{Kind: api.EventText, Text: "It is a draft."},
 			api.Event{Kind: api.EventResult, SessionID: "session-1", Model: "claude-sonnet", Usage: usage, CostUSD: 0.0125, Success: true, StructuredData: json.RawMessage(`{"invoiceId":"inv-1"}`)},
@@ -130,7 +136,7 @@ var _ = Describe("AI SDK v6 event stream", func() {
 			HaveKeyWithValue("dynamic", true),
 		))
 		Expect(parts[10]).To(SatisfyAll(
-			HaveKeyWithValue("approvalId", "call-1"),
+			HaveKeyWithValue("approvalId", "approval-call-1"),
 			HaveKeyWithValue("toolCallId", "call-1"),
 		))
 		Expect(parts[11]["output"]).To(Equal(map[string]any{"output": `{"status":"draft"}`}))
@@ -162,10 +168,26 @@ var _ = Describe("AI SDK v6 event stream", func() {
 		Expect(recorder.Body.String()).To(HaveSuffix("data: [DONE]\n\n"))
 	})
 
+	It("finishes an interrupted turn without rendering a provider error", func() {
+		recorder, err := recordEvents(
+			api.Event{Kind: api.EventText, Text: "partial"},
+			api.Event{Kind: api.EventInterrupted, Reason: "user"},
+		)
+		Expect(err).NotTo(HaveOccurred())
+		parts := decodedDataLines(recorder.Body.String())
+		Expect(partTypes(parts)).To(Equal([]string{
+			"start", "start-step", "text-start", "text-delta", "text-end",
+			"data-result", "finish-step", "finish",
+		}))
+		Expect(parts[5]["data"]).To(Equal(map[string]any{"success": false, "interrupted": true}))
+		Expect(parts[7]["messageMetadata"]).To(HaveKeyWithValue("interrupted", true))
+		Expect(recorder.Body.String()).NotTo(ContainSubstring(`"type":"error"`))
+	})
+
 	It("finishes a suspended turn with its approval card still pending", func() {
 		recorder, err := recordEvents(
 			api.Event{Kind: api.EventToolUse, ToolCallID: "call-1", Tool: "invoice_update", Input: map[string]any{"id": "inv-1"}},
-			api.Event{Kind: api.EventPermission, ToolCallID: "call-1", Tool: "invoice_update"},
+			approvalEvent("call-1", "invoice_update"),
 		)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(partTypes(decodedDataLines(recorder.Body.String()))).To(Equal([]string{
@@ -179,23 +201,23 @@ var _ = Describe("AI SDK v6 event stream", func() {
 		})
 		recorder, err := recordEvents(
 			api.Event{Kind: api.EventToolUse, ToolCallID: "call-1", Tool: "invoice_update", Input: map[string]any{"id": "inv-1"}},
-			api.Event{Kind: api.EventPermission, ToolCallID: "call-1", Tool: "invoice_update"},
+			approvalEvent("call-1", "invoice_update"),
 			api.Event{Kind: api.EventResult, Success: true, ToolApproval: approval},
 		)
 		Expect(err).NotTo(HaveOccurred())
 		parts := decodedDataLines(recorder.Body.String())
 		Expect(partTypes(parts)).To(Equal([]string{
 			"start", "start-step", "tool-input-available", "tool-approval-request",
-			"data-tool-approval", "finish-step", "finish",
+			"data-result", "finish-step", "finish",
 		}))
-		Expect(parts[4]["data"]).To(HaveKeyWithValue("calls", HaveLen(1)))
+		Expect(parts[4]["data"]).To(Equal(map[string]any{"success": true, "waitingApproval": true}))
 	})
 
 	DescribeTable("rejects approval state that does not match the streamed pending tools",
 		func(state *api.ToolApprovalState, message string) {
 			recorder, err := recordEvents(
 				api.Event{Kind: api.EventToolUse, ToolCallID: "call-1", Tool: "invoice_update", Input: map[string]any{"id": "inv-1"}},
-				api.Event{Kind: api.EventPermission, ToolCallID: "call-1", Tool: "invoice_update"},
+				approvalEvent("call-1", "invoice_update"),
 				api.Event{Kind: api.EventResult, Success: true, ToolApproval: state},
 			)
 			Expect(err).To(MatchError(message))
@@ -222,9 +244,9 @@ var _ = Describe("AI SDK v6 event stream", func() {
 		})
 		_, err := recordEvents(
 			api.Event{Kind: api.EventToolUse, ToolCallID: "call-1", Tool: "invoice_update", Input: map[string]any{"id": "inv-1"}},
-			api.Event{Kind: api.EventPermission, ToolCallID: "call-1", Tool: "invoice_update"},
+			approvalEvent("call-1", "invoice_update"),
 			api.Event{Kind: api.EventToolUse, ToolCallID: "call-2", Tool: "invoice_delete", Input: map[string]any{"id": "inv-2"}},
-			api.Event{Kind: api.EventPermission, ToolCallID: "call-2", Tool: "invoice_delete"},
+			approvalEvent("call-2", "invoice_delete"),
 			api.Event{Kind: api.EventResult, Success: true, ToolApproval: state},
 		)
 		Expect(err).To(MatchError(`streamed approval request "call-2" is absent from the approval state`))
@@ -244,12 +266,12 @@ var _ = Describe("AI SDK v6 event stream", func() {
 			{Kind: api.EventToolUse, ToolCallID: "call-1", Tool: "invoice_get"},
 			{Kind: api.EventToolUse, ToolCallID: "call-1", Tool: "invoice_get"},
 		}, `duplicate tool call id "call-1"`),
-		Entry("orphan permission", []api.Event{{Kind: api.EventPermission, ToolCallID: "call-1", Tool: "invoice_get"}}, `permission for tool call "call-1" has no matching tool use`),
+		Entry("orphan permission", []api.Event{approvalEvent("call-1", "invoice_get")}, `permission for tool call "call-1" has no matching tool use`),
 		Entry("orphan result", []api.Event{{Kind: api.EventToolResult, ToolCallID: "call-1", Tool: "invoice_get"}}, `result for tool call "call-1" has no matching tool use`),
 		Entry("duplicate permission", []api.Event{
 			{Kind: api.EventToolUse, ToolCallID: "call-1", Tool: "invoice_update"},
-			{Kind: api.EventPermission, ToolCallID: "call-1", Tool: "invoice_update"},
-			{Kind: api.EventPermission, ToolCallID: "call-1", Tool: "invoice_update"},
+			approvalEvent("call-1", "invoice_update"),
+			approvalEvent("call-1", "invoice_update"),
 		}, `duplicate permission for tool call "call-1"`),
 		Entry("mismatched tool name", []api.Event{
 			{Kind: api.EventToolUse, ToolCallID: "call-1", Tool: "invoice_get"},
@@ -257,7 +279,7 @@ var _ = Describe("AI SDK v6 event stream", func() {
 		}, `result for tool call "call-1" names "invoice_delete", want "invoice_get"`),
 		Entry("terminal result while approval is unresolved", []api.Event{
 			{Kind: api.EventToolUse, ToolCallID: "call-1", Tool: "invoice_update"},
-			{Kind: api.EventPermission, ToolCallID: "call-1", Tool: "invoice_update"},
+			approvalEvent("call-1", "invoice_update"),
 			{Kind: api.EventResult, Success: true},
 		}, `tool call "call-1" ended without a result`),
 		Entry("dangling tool", []api.Event{{Kind: api.EventToolUse, ToolCallID: "call-1", Tool: "invoice_get"}}, `tool call "call-1" ended without a result or approval request`),

@@ -18,7 +18,7 @@ func TestCallerToolCredentialAndApprovalLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 
-	session, run := createCallerToolRun(t, db)
+	session, turn, run, modelCallID := createCallerToolRun(t, db)
 	secretHash := sha256.Sum256([]byte("credential-secret"))
 	credential, err := db.CreateCallerToolCredential(t.Context(), CreateCallerToolCredentialInput{
 		SessionID: session.ID, PromptRunID: run.ID, Backend: api.BackendClaudeAgent,
@@ -30,7 +30,8 @@ func TestCallerToolCredentialAndApprovalLifecycle(t *testing.T) {
 	require.NoError(t, db.ValidateCallerToolCredential(t.Context(), credential.ID))
 
 	request, err := db.CreateToolApprovalRequest(t.Context(), CreateToolApprovalRequestInput{
-		CredentialID: credential.ID, SessionID: session.ID, PromptRunID: run.ID,
+		CredentialID: credential.ID, SessionID: session.ID, TurnID: turn.ID, PromptRunID: run.ID,
+		ModelCallID: modelCallID, RequestedBy: "caller_tool",
 		ToolCallID: "call-account-1", Tool: "account_edit",
 		Input: map[string]any{"id": "acc-1"}, ExpiresAt: time.Now().Add(time.Minute),
 	})
@@ -38,7 +39,7 @@ func TestCallerToolCredentialAndApprovalLifecycle(t *testing.T) {
 	assert.Equal(t, TurnRequestStatePending, request.State)
 
 	resolved, err := db.ResolveToolApprovalRequest(t.Context(), ResolveToolApprovalRequestInput{
-		SessionID: session.ID, ToolCallID: "call-account-1", Approved: true,
+		SessionID: session.ID, RequestID: request.ID, Approved: true,
 		UpdatedInput: map[string]any{"id": "acc-1", "name": "Receivables"}, ResolvedBy: "chat",
 	})
 	require.NoError(t, err)
@@ -50,12 +51,13 @@ func TestCallerToolCredentialAndApprovalLifecycle(t *testing.T) {
 	})
 	require.NoError(t, err)
 	_, err = db.ResolveToolApprovalRequest(t.Context(), ResolveToolApprovalRequestInput{
-		SessionID: otherSession.ID, ToolCallID: "call-account-1", Approved: false,
+		SessionID: otherSession.ID, RequestID: request.ID, Approved: false,
 	})
 	assert.ErrorIs(t, err, ErrTurnRequestNotFound)
 
-	_, err = db.CreateToolApprovalRequest(t.Context(), CreateToolApprovalRequestInput{
-		CredentialID: credential.ID, SessionID: session.ID, PromptRunID: run.ID,
+	second, err := db.CreateToolApprovalRequest(t.Context(), CreateToolApprovalRequestInput{
+		CredentialID: credential.ID, SessionID: session.ID, TurnID: turn.ID, PromptRunID: run.ID,
+		ModelCallID: modelCallID, RequestedBy: "caller_tool",
 		ToolCallID: "call-account-2", Tool: "account_edit",
 		Input: map[string]any{"id": "acc-2"}, ExpiresAt: time.Now().Add(time.Minute),
 	})
@@ -63,18 +65,27 @@ func TestCallerToolCredentialAndApprovalLifecycle(t *testing.T) {
 	require.NoError(t, db.RevokeCallerToolCredential(t.Context(), credential.ID, "turn completed"))
 	assert.ErrorIs(t, db.ValidateCallerToolCredential(t.Context(), credential.ID), ErrCallerToolCredentialInactive)
 	_, err = db.ResolveToolApprovalRequest(t.Context(), ResolveToolApprovalRequestInput{
-		SessionID: session.ID, ToolCallID: "call-account-2", Approved: true,
+		SessionID: session.ID, RequestID: second.ID, Approved: true,
 	})
 	assert.ErrorIs(t, err, ErrCallerToolCredentialInactive)
 }
 
-func createCallerToolRun(t *testing.T, db *DB) (*Session, *PromptRun) {
+func createCallerToolRun(t *testing.T, db *DB) (*Session, *ChatTurn, *PromptRun, uuid.UUID) {
 	t.Helper()
 	session, err := db.CreateOrGetSession(t.Context(), CreateSessionInput{
 		ID: uuid.New(), Source: "aichat", Provider: "anthropic",
 	})
 	require.NoError(t, err)
-	run, err := db.CreatePromptRun(t.Context(), CreatePromptRunInput{SessionID: session.ID})
+	turn, created, err := db.CreateChatTurn(t.Context(), CreateChatTurnInput{
+		SessionID: session.ID, ProviderTurnID: "user-message-1",
+	})
 	require.NoError(t, err)
-	return session, run
+	require.True(t, created)
+	run, err := db.CreatePromptRun(t.Context(), CreatePromptRunInput{SessionID: session.ID, TurnID: &turn.ID})
+	require.NoError(t, err)
+	modelCallID, err := db.CreateChatModelCall(t.Context(), CreateChatModelCallInput{
+		TurnID: turn.ID, PromptRunID: run.ID, Model: "sonnet", Backend: string(api.BackendClaudeAgent),
+	})
+	require.NoError(t, err)
+	return session, turn, run, modelCallID
 }

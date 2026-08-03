@@ -3,6 +3,7 @@ package aichat
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/flanksource/captain/pkg/ai"
@@ -13,6 +14,8 @@ import (
 // ChatRequest is the body posted by the AI SDK DefaultChatTransport.
 type ChatRequest struct {
 	ID              string                  `json:"id,omitempty"`
+	Trigger         string                  `json:"trigger,omitempty"`
+	MessageID       string                  `json:"messageId,omitempty"`
 	Messages        []UIMessage             `json:"messages"`
 	Model           string                  `json:"model,omitempty"`
 	Runtime         *api.Model              `json:"runtime,omitempty"`
@@ -21,13 +24,25 @@ type ChatRequest struct {
 	Budget          api.Budget              `json:"budget,omitempty"`
 	ToolPreferences api.ToolPreferences     `json:"toolPreferences,omitempty"`
 	PermissionMode  api.PermissionMode      `json:"permissionMode,omitempty"`
-	ToolApproval    *api.ToolApprovalResume `json:"toolApproval,omitempty"`
+	ToolApproval    *api.ToolApprovalResume `json:"-"`
 
 	Context      string            `json:"context,omitempty"`
 	ContextItems []ChatContextItem `json:"contextItems,omitempty"`
 
 	ThreadID          string `json:"threadId,omitempty"`
 	ProviderSessionID string `json:"providerSessionId,omitempty"`
+}
+
+func (r *ChatRequest) UnmarshalJSON(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	if _, exists := fields["toolApproval"]; exists {
+		return fmt.Errorf("toolApproval is server-owned; resolve approvals through the Captain session approval endpoint")
+	}
+	type wireChatRequest ChatRequest
+	return json.Unmarshal(data, (*wireChatRequest)(r))
 }
 
 // ChatContextItem carries app-owned structured state alongside its readable label.
@@ -44,6 +59,7 @@ type UIMessage struct {
 	ID       string           `json:"id,omitempty"`
 	Role     string           `json:"role"`
 	Parts    []UIPart         `json:"parts"`
+	TurnID   string           `json:"turnId,omitempty"`
 	Metadata *MessageMetadata `json:"metadata,omitempty"`
 }
 

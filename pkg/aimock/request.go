@@ -3,7 +3,10 @@
 
 package aimock
 
-import "strings"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // Role values on a normalized Message. Both wire protocols collapse onto these.
 const (
@@ -25,11 +28,14 @@ type Message struct {
 // the fields worth matching on. Each server builds one of these from its own
 // request type before consulting the rules.
 type Request struct {
-	Model    string            `json:"model,omitempty"`
-	System   string            `json:"system,omitempty"`
-	Messages []Message         `json:"messages,omitempty"`
-	Headers  map[string]string `json:"headers,omitempty"`
-	Stream   bool              `json:"stream,omitempty"`
+	Model           string                     `json:"model,omitempty"`
+	System          string                     `json:"system,omitempty"`
+	Messages        []Message                  `json:"messages,omitempty"`
+	ToolNames       []string                   `json:"toolNames,omitempty"`
+	ToolSchemas     map[string]json.RawMessage `json:"toolSchemas,omitempty"`
+	ToolDefinitions map[string]json.RawMessage `json:"toolDefinitions,omitempty"`
+	Headers         map[string]string          `json:"headers,omitempty"`
+	Stream          bool                       `json:"stream,omitempty"`
 }
 
 // LastUserText is the content of the most recent user turn — the "prompt" that
