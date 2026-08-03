@@ -279,4 +279,3 @@ table "captain_events" {
     expr = "iteration_id IS NULL OR prompt_run_id IS NOT NULL"
   }
 }
-
