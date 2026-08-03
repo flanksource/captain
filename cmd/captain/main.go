@@ -248,6 +248,10 @@ func main() {
 
 	cmuxCmd := &cobra.Command{Use: "cmux", Short: "Cmux terminal multiplexer commands"}
 	rootCmd.AddCommand(cmuxCmd)
+	cmuxInfoCmd := clicky.AddNamedCommandWithContext("info", cmuxCmd, cli.CmuxInfoOptions{}, cli.RunCmuxInfo)
+	cmuxInfoCmd.Use = "info [copy-id-lines|pid]..."
+	cmuxInfoCmd.Short = "Inspect processes running in a cmux target"
+	cmuxInfoCmd.Long = "Resolve copied cmux workspace, pane, or surface IDs (or a PID) and report each process, runtime, CPU, memory, and listening TCP ports. Use --stack to request Go goroutine stacks through gops."
 	screenshotCmd := clicky.AddNamedCommand("screenshot", cmuxCmd, cli.CmuxScreenshotOptions{}, cli.RunCmuxScreenshot)
 	screenshotCmd.Short = "Take a screenshot of the active browser surface"
 	screenshotCmd.Long = "Capture a screenshot of the currently focused browser panel in cmux and copy the file path to the clipboard."
