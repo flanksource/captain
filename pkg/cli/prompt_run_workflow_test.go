@@ -25,6 +25,81 @@ func workflowRendered(verify *api.Verify) PromptRenderResult {
 	}
 }
 
+type bufferedOnlyWorkflowProvider struct {
+	executeCalls int
+}
+
+func (p *bufferedOnlyWorkflowProvider) GetModel() string       { return "buffered-model" }
+func (p *bufferedOnlyWorkflowProvider) GetBackend() ai.Backend { return api.BackendDeepSeek }
+func (p *bufferedOnlyWorkflowProvider) Execute(context.Context, ai.Request) (*ai.Response, error) {
+	p.executeCalls++
+	return &ai.Response{
+		Text:           "done",
+		StructuredData: map[string]any{"status": "ok"},
+		Model:          "buffered-model",
+		Backend:        api.BackendDeepSeek,
+		Usage:          ai.Usage{InputTokens: 2, OutputTokens: 3},
+		CostUSD:        0.01,
+	}, nil
+}
+
+type streamingWorkflowProvider struct {
+	bufferedOnlyWorkflowProvider
+	streamCalls int
+}
+
+func (p *streamingWorkflowProvider) ExecuteStream(context.Context, ai.Request) (<-chan ai.Event, error) {
+	p.streamCalls++
+	events := make(chan ai.Event, 1)
+	events <- ai.Event{Kind: ai.EventResult, Success: true}
+	close(events)
+	return events, nil
+}
+
+func TestWorkflowRunnerProviderHonorsNoStream(t *testing.T) {
+	t.Run("buffered-only provider", func(t *testing.T) {
+		provider := &bufferedOnlyWorkflowProvider{}
+		runner, err := workflowRunnerProvider(provider, true, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		events, err := runner.ExecuteStream(context.Background(), ai.Request{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []ai.Event
+		for event := range events {
+			got = append(got, event)
+		}
+		if provider.executeCalls != 1 {
+			t.Fatalf("Execute calls = %d, want 1", provider.executeCalls)
+		}
+		if len(got) != 2 || got[0].Kind != ai.EventText || got[0].Text != "done" || got[1].Kind != ai.EventResult {
+			t.Fatalf("events = %+v, want final text and result", got)
+		}
+		if string(got[1].StructuredData) != `{"status":"ok"}` || got[1].Usage == nil || got[1].Usage.InputTokens != 2 || got[1].CostUSD != 0.01 {
+			t.Fatalf("result event = %+v", got[1])
+		}
+	})
+
+	t.Run("streaming remains unchanged", func(t *testing.T) {
+		provider := &streamingWorkflowProvider{}
+		runner, err := workflowRunnerProvider(provider, false, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		events, err := runner.ExecuteStream(context.Background(), ai.Request{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for range events {
+		}
+		if provider.streamCalls != 1 || provider.executeCalls != 0 {
+			t.Fatalf("stream calls = %d, execute calls = %d", provider.streamCalls, provider.executeCalls)
+		}
+	})
+}
+
 // The CLI path must execute declared hooks, not skip them: a verify command
 // that fails has to fail the run.
 func TestExecuteSyncRun_CLIRunsVerifyHooks(t *testing.T) {
