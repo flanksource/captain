@@ -36,6 +36,11 @@ func runPromptStream(t *task.Task, rendered PromptRenderResult, timeout time.Dur
 		return failRun(t, stream, fmt.Errorf("backend %s does not support streaming", rendered.Backend))
 	}
 
+	judgeHooks, err := verify.PromptHooksForWorkflow(req.Workflow, p)
+	if err != nil {
+		return failRun(t, stream, err)
+	}
+
 	start := time.Now()
 	acc := newPromptEventAccumulator(stream.publish, t, rendered.Model, rendered.Backend)
 	acc.cwd = req.Cwd()
@@ -45,7 +50,7 @@ func runPromptStream(t *task.Task, rendered PromptRenderResult, timeout time.Dur
 		Request:  req,
 		// Commit hooks lead so that at PhaseRun they squash before any teardown
 		// hook (a worktree merge) runs and takes the result.
-		Hooks:         append(commit.HooksForWorkflow(req.Workflow), verify.HooksForWorkflow(req.Workflow)...),
+		Hooks:         append(append(commit.HooksForWorkflow(req.Workflow), verify.HooksForWorkflow(req.Workflow)...), judgeHooks...),
 		MaxIterations: verify.MaxIterationsForWorkflow(req.Workflow),
 		Repo:          req.Cwd(),
 		Cwd:           req.Cwd(),

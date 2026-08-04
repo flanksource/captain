@@ -1,6 +1,9 @@
 package api
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // Workflow declares the generate→verify loop around a run as hook
 // declarations: an optional verification stage (commands run after each
@@ -39,6 +42,11 @@ type Verify struct {
 	// for the SpecRuntimeEditor, but does not execute it — only gavel runs
 	// fixtures.
 	Fixture string `json:"fixture,omitempty" yaml:"fixture,omitempty"`
+	// Prompts are .prompt template paths run as LLM-judge checks: each renders
+	// against the run's context and must yield {ok, reason, feedback}; a false
+	// verdict's feedback drives the re-run like a failing command's output.
+	// Maps to agent/verify.LLMJudgeVerifier.
+	Prompts []string `json:"prompts,omitempty" yaml:"prompts,omitempty"`
 	// Scope narrows verification to changed files vs the whole tree.
 	Scope VerifyScope `json:"scope,omitempty" yaml:"scope,omitempty" jsonschema:"enum=,enum=all,enum=changed"`
 	// MaxIterations caps the generate→verify loop; 0 means the run default (1).
@@ -63,6 +71,11 @@ func (w *Workflow) Validate() error {
 	}
 	if w.Verify.MaxIterations < 0 {
 		return fmt.Errorf("workflow.verify.maxIterations must be >= 0")
+	}
+	for i, p := range w.Verify.Prompts {
+		if strings.TrimSpace(p) == "" {
+			return fmt.Errorf("workflow.verify.prompts[%d] is empty", i)
+		}
 	}
 	return nil
 }
