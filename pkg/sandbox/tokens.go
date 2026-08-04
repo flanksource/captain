@@ -51,6 +51,26 @@ type TokenResult struct {
 	EnvVars    map[string]string
 	WritePaths []string
 	Expiry     time.Time
+	// Placeholder, when set, is what the sandbox environment carries instead
+	// of the real values: an egress proxy (pkg/gitagent/proxy) substitutes it
+	// at the granted header on the way out, so the credential never enters
+	// the sandbox (issue #39 §6.2, SPEC-git-agent-protocol §9).
+	Placeholder string
+}
+
+// PlaceholderEnv returns EnvVars with every value replaced by the
+// placeholder, for building a sandbox environment that holds no credential.
+// It returns nil when no placeholder is set — the caller must not fall back
+// to real values by accident.
+func (t TokenResult) PlaceholderEnv() map[string]string {
+	if t.Placeholder == "" {
+		return nil
+	}
+	env := make(map[string]string, len(t.EnvVars))
+	for k := range t.EnvVars {
+		env[k] = t.Placeholder
+	}
+	return env
 }
 
 type TokenManager struct {
