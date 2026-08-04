@@ -91,6 +91,7 @@ var _ = Describe("RuntimeCatalog", func() {
 			for _, m := range f.Modes {
 				Expect(m.Disabled).To(BeFalse())
 				Expect(m.DisabledReason).To(BeEmpty())
+				Expect(m.Availability).To(Equal(api.Available()))
 			}
 		}
 	})
@@ -104,6 +105,9 @@ var _ = Describe("RuntimeCatalog", func() {
 		cmux := modeNamed(familyNamed(families, "claude"), "cmux")
 		Expect(cmux.Disabled).To(BeTrue())
 		Expect(cmux.DisabledReason).To(Equal("mode cmux"))
+		Expect(cmux.Availability.State).To(Equal(api.AvailabilityDisabled))
+		Expect(cmux.Availability.Reason).To(ContainSubstring("mode cmux"))
+		Expect(cmux.Availability.Remediation).NotTo(BeEmpty())
 		Expect(modeNamed(familyNamed(families, "claude"), "api").Disabled).To(BeFalse())
 	})
 

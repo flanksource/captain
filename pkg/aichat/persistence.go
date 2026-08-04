@@ -199,19 +199,21 @@ func (b *assistantMessageBuilder) apply(event api.Event) error {
 	case api.EventResult:
 		return b.result(event)
 	case api.EventError:
+		b.terminalizeTools(event.Error)
 		payload, err := json.Marshal(map[string]string{"error": event.Error})
 		if err != nil {
 			return err
 		}
 		b.message.Parts = append(b.message.Parts, UIPart{Type: "data-error", Data: payload})
 	case api.EventInterrupted:
-		return b.interrupted()
+		return b.interrupted(event.Reason)
 	case api.EventSystem:
 	}
 	return nil
 }
 
-func (b *assistantMessageBuilder) interrupted() error {
+func (b *assistantMessageBuilder) interrupted(reason string) error {
+	b.terminalizeTools(reason)
 	data, err := json.Marshal(map[string]bool{"success": false, "interrupted": true})
 	if err != nil {
 		return err
@@ -222,6 +224,26 @@ func (b *assistantMessageBuilder) interrupted() error {
 		ProviderSessionID: b.sessionID, Model: b.model, Success: &success, Interrupted: true,
 	}
 	return nil
+}
+
+func (b *assistantMessageBuilder) terminalizeTools(message string) {
+	if message == "" {
+		message = "tool execution did not complete"
+	}
+	for i := range b.message.Parts {
+		part := &b.message.Parts[i]
+		if !part.IsTool() {
+			continue
+		}
+		switch part.State {
+		case "output-available", "output-error", "output-denied":
+			continue
+		}
+		part.State = "output-error"
+		part.Output = nil
+		part.ErrorText = message
+		part.Approval = nil
+	}
 }
 
 func (b *assistantMessageBuilder) appendText(partType, text string) {

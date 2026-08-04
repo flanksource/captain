@@ -102,7 +102,9 @@ func cachedRows(opts ResolveOptions, fp string) ([]ResolvedModel, bool) {
 }
 
 // resolveFresh seeds the catalog filtered by backend, unions live API models
-// when tokens are present, and joins each row to pricing.
+// when tokens are present, and joins each row to pricing. opts.Refresh reaches
+// the pricing snapshot too: bypassing the model cache while still pricing from a
+// day-old OpenRouter snapshot would only half-honour --no-cache.
 func resolveFresh(ctx context.Context, opts ResolveOptions) ([]ResolvedModel, error) {
 	rows, index := seedCatalog(opts.Backend)
 
@@ -112,7 +114,7 @@ func resolveFresh(ctx context.Context, opts ResolveOptions) ([]ResolvedModel, er
 		}
 	}
 
-	pricing.EnsureLoaded()
+	pricing.EnsureLoaded(pricing.LoadOptions{Refresh: opts.Refresh})
 	for i := range rows {
 		if info, ok := lookupPricing(rows[i].Backend, rows[i].BareID()); ok {
 			rows[i].Price = info

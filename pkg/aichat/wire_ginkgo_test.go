@@ -90,7 +90,7 @@ var _ = Describe("AI SDK v6 wire types", func() {
 		strict := true
 		models := aichat.ModelCatalogResponse{{
 			ID: "openai/gpt", Provider: "openai", Label: "GPT", Reasoning: true,
-			Temperature: true, Configured: true, ContextWindow: 128000,
+			Temperature: true, Configured: true, Availability: api.Available(), ContextWindow: 128000,
 			InputMediaTypes: []string{"image/*"},
 			Runtime:         api.Model{Name: "gpt", Backend: api.BackendOpenAI},
 		}}
@@ -103,7 +103,7 @@ var _ = Describe("AI SDK v6 wire types", func() {
 
 		modelJSON, err := json.Marshal(models)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(modelJSON).To(MatchJSON(`[{"id":"openai/gpt","provider":"openai","label":"GPT","runtime":{"model":"gpt","backend":"openai"},"reasoning":true,"temperature":true,"configured":true,"contextWindow":128000,"inputMediaTypes":["image/*"]}]`))
+		Expect(modelJSON).To(MatchJSON(`[{"id":"openai/gpt","provider":"openai","label":"GPT","runtime":{"model":"gpt","backend":"openai"},"reasoning":true,"temperature":true,"configured":true,"availability":{"state":"available"},"contextWindow":128000,"inputMediaTypes":["image/*"]}]`))
 		toolJSON, err := json.Marshal(tools)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(toolJSON).To(MatchJSON(`{"tools":[{"name":"invoice_get","source":"custom","group":"billing","preferenceKey":"billing","defaultPermission":"ask","strict":true,"method":"GET","path":"/invoices/{id}","operationName":"invoice get","inputSchema":{"type":"object"}}]}`))
