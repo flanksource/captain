@@ -423,3 +423,12 @@ func writeTerminal(w http.ResponseWriter, summary *PromptRunSummary, errMsg stri
 		writeSSE(w, "done", map[string]string{"status": "completed"})
 	}
 }
+
+// remove drops a run's stream from the broker. Synchronous CLI runs that
+// borrow the stream machinery deregister on completion — nothing will ever
+// subscribe, and prune() only runs under `captain serve`.
+func (b *runBroker) remove(runID string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	delete(b.runs, runID)
+}

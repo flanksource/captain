@@ -108,3 +108,13 @@ func TestSandboxDefaults_OmittedWhenEmpty(t *testing.T) {
 		t.Fatalf("empty sandbox block must be omitted from the config file, got:\n%s", encoded)
 	}
 }
+
+func TestSandboxDefaults_MissingKindFailsLoud(t *testing.T) {
+	defaults := SandboxDefaults{Backends: map[string]SandboxBackend{
+		"pool": {Options: map[string]any{"image": "img"}}, // kind forgotten
+	}}
+	_, err := defaults.Resolve("pool")
+	if err == nil || !strings.Contains(err.Error(), `declares no kind`) {
+		t.Fatalf("err = %v, want missing-kind rejection (empty must NOT mean none)", err)
+	}
+}

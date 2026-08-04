@@ -48,6 +48,25 @@ var _ = Describe("SandboxRef", func() {
 		Expect(strings.TrimSpace(string(encoded))).To(Equal("prod-pool"))
 	})
 
+	It("rejects unknown object keys despite the custom unmarshaler", func() {
+		var ref SandboxRef
+		err := yaml.Unmarshal([]byte("backed: container"), &ref)
+		Expect(err).To(MatchError(ContainSubstring(`unknown sandbox key "backed"`)))
+	})
+
+	It("rejects unknown policy keys", func() {
+		var ref SandboxRef
+		err := yaml.Unmarshal([]byte("backend: p\npolicy: {maxAttempt: 3}"), &ref)
+		Expect(err).To(MatchError(ContainSubstring(`unknown sandbox policy key "maxAttempt"`)))
+	})
+
+	It("declares both forms in its JSON schema", func() {
+		schema := SandboxRef{}.JSONSchema()
+		Expect(schema.OneOf).To(HaveLen(2))
+		Expect(schema.OneOf[0].Type).To(Equal("string"))
+		Expect(schema.OneOf[1].Type).To(Equal("object"))
+	})
+
 	It("rejects overrides with no backend", func() {
 		err := SandboxRef{Agent: "worker-01"}.Validate()
 		Expect(err).To(MatchError(ContainSubstring("require a backend")))

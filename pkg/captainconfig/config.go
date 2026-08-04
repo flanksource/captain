@@ -69,6 +69,13 @@ func (s SandboxDefaults) Resolve(selector string) (SandboxSelection, error) {
 		name = strings.TrimSpace(s.Default)
 	}
 	if backend, ok := s.Backends[name]; ok {
+		// An empty kind must not fall through ParseSandboxKind, where empty
+		// deliberately means "none": a backend whose kind is missing or
+		// misspelled would silently disable confinement.
+		if strings.TrimSpace(backend.Kind) == "" {
+			return SandboxSelection{}, fmt.Errorf("sandbox backend %q declares no kind (valid: %s)",
+				name, registry.SandboxKindList())
+		}
 		kind, valid := registry.ParseSandboxKind(backend.Kind)
 		if !valid {
 			return SandboxSelection{}, fmt.Errorf("sandbox backend %q has invalid kind %q (valid: %s)",

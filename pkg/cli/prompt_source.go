@@ -118,6 +118,7 @@ func actionFlagsToOptions(f map[string]string) (AIPromptOptions, error) {
 	o.Model = f["model"]
 	o.Fallback = flagSlice(f["fallback"])
 	o.Backend = f["backend"]
+	o.Mode = f["mode"]
 	o.APIKey = f["api-key"]
 	o.APIURL = f["api-url"]
 	o.NoCache = flagBool(f["no-cache"])

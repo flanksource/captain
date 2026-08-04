@@ -40,9 +40,12 @@ func RegisterSandbox(kind SandboxKind, factory SandboxFactory) {
 }
 
 // NewSandbox constructs the registered adapter for cfg's kind and verifies the
-// instance against its descriptor: a declared capability the instance does not
-// implement is a construction error, so a descriptor can never promise what an
-// adapter fails to deliver.
+// instance against its descriptor: a declared capability whose seam interface
+// lives in this package (wrap-command, remote-exec) and is not implemented is
+// a construction error. Capabilities whose seams live elsewhere
+// (isolate-workspace is pkg/ai/agent's; egress-proxy is provided by the
+// confinement runtime itself) are declarations for THOSE seams to verify —
+// this check deliberately does not pretend to cover them.
 func NewSandbox(cfg SandboxConfig) (Sandbox, error) {
 	kind := cfg.Kind
 	if kind == "" {

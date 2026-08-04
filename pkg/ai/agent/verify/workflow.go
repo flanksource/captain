@@ -56,9 +56,33 @@ func PromptHooksForWorkflow(wf *api.Workflow, provider ai.Provider) ([]any, erro
 		if err != nil {
 			return nil, fmt.Errorf("verify prompt %q: %w", path, err)
 		}
+		if err := rejectJudgeOverrides(path, tmpl, provider); err != nil {
+			return nil, err
+		}
 		hooks = append(hooks, New("judge:"+path, &LLMJudgeVerifier{Provider: provider, Prompt: tmpl}))
 	}
 	return hooks, nil
+}
+
+// rejectJudgeOverrides refuses judge frontmatter the hook cannot honour. A
+// judge executes on the run's provider, so a declared sandbox — relocating or
+// not — and a model different from the provider's would both be silently
+// ignored, which is exactly the downgrade issue #39 forbids (R5.4: a hook
+// prompt declaring a relocating sandbox is a validation error, never a silent
+// fallback).
+func rejectJudgeOverrides(path string, tmpl *prompt.Template, provider ai.Provider) error {
+	probe, _, err := tmpl.Render(map[string]any{"cwd": "", "changed": []string{}}, nil)
+	if err != nil {
+		return fmt.Errorf("verify prompt %q: %w", path, err)
+	}
+	if probe.Sandbox != nil {
+		return fmt.Errorf("verify prompt %q declares a sandbox; judge hooks run on the run's provider and cannot relocate", path)
+	}
+	if declared := strings.TrimSpace(probe.Model.Name); declared != "" && declared != provider.GetModel() {
+		return fmt.Errorf("verify prompt %q declares model %q but judge hooks run on the run's provider (%s); remove the model or match it",
+			path, declared, provider.GetModel())
+	}
+	return nil
 }
 
 // MaxIterationsForWorkflow is the loop cap: the declared maxIterations, else 1

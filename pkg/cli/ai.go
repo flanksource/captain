@@ -54,7 +54,9 @@ type AIProviderOptions struct {
 }
 
 // SandboxSelector normalizes --sandbox. The flag was previously a boolean that
-// toggled sandbox-runtime, so the boolean spellings keep their old meaning.
+// toggled sandbox-runtime; the explicit boolean spellings (--sandbox=true,
+// --sandbox=false) keep their old meaning. A bare valueless --sandbox no
+// longer parses — the flag is a string selector now, so a value is required.
 func (o AIProviderOptions) SandboxSelector() string {
 	value := strings.TrimSpace(o.Sandbox)
 	switch strings.ToLower(value) {

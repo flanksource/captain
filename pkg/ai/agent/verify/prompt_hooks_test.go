@@ -90,6 +90,42 @@ func TestPromptHooksForWorkflow(t *testing.T) {
 		}
 	})
 
+	t.Run("a judge declaring a sandbox is rejected, not silently ignored", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "judge.prompt")
+		body := "---\nsandbox: git-agent\n---\n{{role \"user\"}}\nJudge {{cwd}}."
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_, err := PromptHooksForWorkflow(&api.Workflow{Verify: &api.Verify{Prompts: []string{path}}}, provider)
+		if err == nil || !strings.Contains(err.Error(), "declares a sandbox") {
+			t.Fatalf("err = %v, want sandbox declaration rejected (R5.4)", err)
+		}
+	})
+
+	t.Run("a judge declaring a different model is rejected", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "judge.prompt")
+		body := "---\nmodel: gpt-5.5\n---\n{{role \"user\"}}\nJudge {{cwd}}."
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_, err := PromptHooksForWorkflow(&api.Workflow{Verify: &api.Verify{Prompts: []string{path}}}, provider)
+		if err == nil || !strings.Contains(err.Error(), `declares model "gpt-5.5"`) {
+			t.Fatalf("err = %v, want model mismatch rejected", err)
+		}
+	})
+
+	t.Run("a judge matching the provider's model is accepted", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "judge.prompt")
+		body := "---\nmodel: stub\n---\n{{role \"user\"}}\nJudge {{cwd}}."
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		hooks, err := PromptHooksForWorkflow(&api.Workflow{Verify: &api.Verify{Prompts: []string{path}}}, provider)
+		if err != nil || len(hooks) != 1 {
+			t.Fatalf("hooks = %v, err = %v", hooks, err)
+		}
+	})
+
 	t.Run("declared prompts with no provider fail loud", func(t *testing.T) {
 		path := writeJudgePrompt(t)
 		_, err := PromptHooksForWorkflow(&api.Workflow{Verify: &api.Verify{Prompts: []string{path}}}, nil)

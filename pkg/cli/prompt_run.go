@@ -188,6 +188,10 @@ func executeSyncRunSingleDirect(ctx context.Context, t *task.Task, rendered Prom
 func executeSyncWorkflowRun(t *task.Task, rendered PromptRenderResult, binding *promptSessionBinding) (PromptRunResult, error) {
 	runID := uuid.NewString()
 	stream := promptRuns.create(runID)
+	// Nothing subscribes to a synchronous run's stream, and the broker's prune
+	// loop only runs under `captain serve` — deregister so embedders don't
+	// accumulate finished runs.
+	defer promptRuns.remove(runID)
 	summary, err := runPromptStream(t, rendered, runtimeTimeout(rendered.Input.Budget.Timeout), runID, stream, binding)
 	if err != nil {
 		return PromptRunResult{}, err
