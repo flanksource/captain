@@ -13,6 +13,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/commons-db/shell"
 )
 
 func IsCommandNotFound(err error) bool {
@@ -76,8 +77,15 @@ func HandleExitError(exitCode int, stderr string) error {
 	}
 }
 
-func startCLIStream(ctx context.Context, command string, args []string, stdinData []byte, cwd string, env []string, sandbox *api.SandboxConfig) (*exec.Cmd, io.ReadCloser, *bytes.Buffer, func(), error) {
-	cmd, closeSandbox, err := newCLICommand(ctx, command, args, cwd, sandbox)
+// startCLIStream launches the CLI through the selected sandbox. It takes the
+// request itself because the sandbox seam needs three distinct things from
+// it: the working directory, the request-DECLARED variables (Setup.EnvVars —
+// what must cross a confinement boundary), and the fully RESOLVED environment
+// (Setup.Env — what the child process runs with). Collapsing those early is
+// how a container ends up receiving either none of the declared variables or
+// the entire host environment.
+func startCLIStream(ctx context.Context, command string, args []string, stdinData []byte, req *ai.Request, sandbox *api.SandboxConfig) (*exec.Cmd, io.ReadCloser, *bytes.Buffer, func(), error) {
+	cmd, closeSandbox, err := newCLICommand(ctx, command, args, req, sandbox)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
@@ -87,12 +95,6 @@ func startCLIStream(ctx context.Context, command string, args []string, stdinDat
 			closeSandbox()
 		}
 	}()
-	if cwd != "" {
-		cmd.Dir = cwd
-	}
-	if len(env) > 0 {
-		cmd.Env = env
-	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, nil, nil, nil, fmt.Errorf("failed to create stdout pipe: %w", err)
@@ -124,12 +126,12 @@ func startCLIStream(ctx context.Context, command string, args []string, stdinDat
 
 // newCLICommand builds the CLI process through the selected sandbox adapter.
 // nil means unsandboxed, which resolves the "none" adapter.
-func newCLICommand(ctx context.Context, command string, args []string, cwd string, sandbox *api.SandboxConfig) (*exec.Cmd, func(), error) {
+func newCLICommand(ctx context.Context, command string, args []string, req *ai.Request, sandbox *api.SandboxConfig) (*exec.Cmd, func(), error) {
 	cfg := api.SandboxConfig{Kind: api.SandboxNone}
 	if sandbox != nil {
 		cfg = *sandbox
 	}
-	return newSandboxedCommand(ctx, cfg, command, args, cwd)
+	return newSandboxedCommand(ctx, cfg, command, args, req)
 }
 
 // newSandboxedCommand constructs the selected sandbox adapter and builds the
@@ -138,33 +140,85 @@ func newCLICommand(ctx context.Context, command string, args []string, cwd strin
 // capability falls through to a bare command, which is exactly what the "none"
 // adapter is; an adapter whose wrapping fails aborts the run rather than
 // falling back to an unconfined process.
-func newSandboxedCommand(ctx context.Context, cfg api.SandboxConfig, command string, args []string, cwd string) (*exec.Cmd, func(), error) {
+//
+// The adapter sees the real request via Prepare and only the request-DECLARED
+// variables via Wrap. The command's environment layers, in order: the
+// wrapper's returned env (authoritative when non-empty — a container must
+// supply the docker client's environment wholesale), else the resolved setup
+// environment; then the Prepare session's Env on top, and the session's
+// WorkDir over the request cwd.
+func newSandboxedCommand(ctx context.Context, cfg api.SandboxConfig, command string, args []string, req *ai.Request) (*exec.Cmd, func(), error) {
 	sandbox, err := api.NewSandbox(cfg)
 	if err != nil {
 		return nil, nil, err
 	}
 	closeSandbox := func() { _ = sandbox.Close() }
-	spec := &api.Spec{}
-	if cwd != "" {
-		spec.SetCwd(cwd)
-	}
-	if _, err := sandbox.Prepare(ctx, spec); err != nil {
+	session, err := sandbox.Prepare(ctx, req)
+	if err != nil {
 		closeSandbox()
 		return nil, nil, err
 	}
+
+	var resolvedEnv []string
+	if req.Setup != nil {
+		resolvedEnv = req.Setup.Env
+	}
+	cmd := exec.CommandContext(ctx, command, args...)
 	if wrapper, ok := api.SandboxAs[api.CommandWrapper](sandbox); ok {
-		wrappedCommand, wrappedArgs, wrappedEnv, err := wrapper.Wrap(ctx, command, args, nil)
+		wrappedCommand, wrappedArgs, wrappedEnv, err := wrapper.Wrap(ctx, command, args, declaredSetupEnv(req.Setup))
 		if err != nil {
 			closeSandbox()
 			return nil, nil, err
 		}
-		cmd := exec.CommandContext(ctx, wrappedCommand, wrappedArgs...)
+		cmd = exec.CommandContext(ctx, wrappedCommand, wrappedArgs...)
 		if len(wrappedEnv) > 0 {
 			cmd.Env = wrappedEnv
 		}
-		return cmd, closeSandbox, nil
 	}
-	return exec.CommandContext(ctx, command, args...), closeSandbox, nil
+	if cmd.Env == nil {
+		if merged := commandEnv(resolvedEnv); len(merged) > 0 {
+			cmd.Env = merged
+		}
+	}
+	if session != nil && len(session.Env) > 0 {
+		if cmd.Env == nil {
+			cmd.Env = os.Environ()
+		}
+		cmd.Env = append(cmd.Env, session.Env...)
+	}
+	cmd.Dir = req.Cwd()
+	if session != nil && session.WorkDir != "" {
+		cmd.Dir = session.WorkDir
+	}
+	return cmd, closeSandbox, nil
+}
+
+// declaredSetupEnv projects the request-declared variables (Setup.EnvVars)
+// onto KEY=VALUE pairs using the values Setup.Resolve produced. Setup.Env
+// itself is the FULL resolved environment — host environ included — so it
+// must never be handed to an adapter as "the declared set": that turns
+// "cross the declared variables into the container" into "cross the entire
+// host environment".
+func declaredSetupEnv(setup *shell.Setup) []string {
+	if setup == nil || len(setup.EnvVars) == 0 {
+		return nil
+	}
+	resolved := map[string]string{}
+	for _, item := range setup.Env {
+		if key, value, ok := strings.Cut(item, "="); ok {
+			resolved[key] = value
+		}
+	}
+	var out []string
+	for _, declared := range setup.EnvVars {
+		if declared.Name == "" {
+			continue
+		}
+		if value, ok := resolved[declared.Name]; ok {
+			out = append(out, declared.Name+"="+value)
+		}
+	}
+	return out
 }
 
 func finishCLIStream(ctx context.Context, cmd *exec.Cmd, stderrBuf *bytes.Buffer) error {

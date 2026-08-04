@@ -144,7 +144,8 @@ func TestSandboxCommandFailuresClose(t *testing.T) {
 	srt := &api.SandboxConfig{Kind: api.SandboxSRT}
 	fake := &fakeCommandSandbox{commandErr: errors.New("wrap failed")}
 	adapter.NewSRTRuntime = func(context.Context, sandboxruntime.Config) (adapter.Runtime, error) { return fake, nil }
-	if _, _, err := newCLICommand(context.Background(), "codex", nil, t.TempDir(), srt); err == nil || !strings.Contains(err.Error(), "wrap codex") {
+	req := &ai.Request{Setup: &shell.Setup{Cwd: t.TempDir()}}
+	if _, _, err := newCLICommand(context.Background(), "codex", nil, req, srt); err == nil || !strings.Contains(err.Error(), "wrap codex") {
 		t.Fatalf("err = %v, want sandbox wrapping failure", err)
 	}
 	if !fake.closed {
@@ -153,7 +154,7 @@ func TestSandboxCommandFailuresClose(t *testing.T) {
 
 	fake = &fakeCommandSandbox{executable: "captain-command-that-does-not-exist"}
 	adapter.NewSRTRuntime = func(context.Context, sandboxruntime.Config) (adapter.Runtime, error) { return fake, nil }
-	if _, _, _, _, err := startCLIStream(context.Background(), "codex", nil, nil, t.TempDir(), nil, srt); err == nil {
+	if _, _, _, _, err := startCLIStream(context.Background(), "codex", nil, nil, req, srt); err == nil {
 		t.Fatal("expected process start failure")
 	}
 	if !fake.closed {

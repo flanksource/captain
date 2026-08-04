@@ -69,13 +69,9 @@ func (g *GeminiCLI) ExecuteStream(ctx context.Context, req ai.Request) (<-chan a
 	if err != nil {
 		return nil, err
 	}
-	env := []string(nil)
-	if req.Setup != nil {
-		env = commandEnv(req.Setup.Env)
-	}
 	// gemini reads the prompt from stdin and goes headless whenever stdin or
 	// stdout is not a TTY, which piping both guarantees.
-	cmd, stdout, stderrBuf, closeSandbox, err := startCLIStream(ctx, geminiCLICommand, args, []byte(composePrompt(req)), req.Cwd(), env, g.sandbox)
+	cmd, stdout, stderrBuf, closeSandbox, err := startCLIStream(ctx, geminiCLICommand, args, []byte(composePrompt(req)), &req, g.sandbox)
 	if err != nil {
 		return nil, err
 	}
