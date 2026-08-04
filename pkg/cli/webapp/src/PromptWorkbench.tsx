@@ -58,7 +58,10 @@ import {
   type PromptSummary,
 } from "./promptData";
 import type { PromptSchemaKind } from "./promptSchemaSource";
-import { promptOptions } from "./promptWorkbenchHelpers";
+import {
+  mergePromptModelCatalogs,
+  promptOptions,
+} from "./promptWorkbenchHelpers";
 import {
   PromptSourceMarkdownEditor,
   PromptWriteAction,
@@ -358,13 +361,34 @@ function usePromptWorkbenchView({
     queryKey: ["prompt-schema"],
     queryFn: fetchPromptSchema,
   });
+  const modelCatalogQuery = useQuery({
+    queryKey: ["chat-model-catalog"],
+    queryFn: () => fetchCatalog<ChatModel>("/api/chat/models", "Model catalog"),
+  });
+  const runtimeCatalogQuery = useQuery({
+    queryKey: ["chat-runtime-catalog"],
+    queryFn: () =>
+      fetchCatalog<RuntimeCatalogFamily>(
+        "/api/chat/runtimes",
+        "Runtime catalog",
+      ),
+  });
   const permissionCatalogQuery = useQuery({
     queryKey: ["permission-catalog"],
     queryFn: () => fetchPermissionCatalog(),
   });
 
   const prompts = listQuery.data ?? EMPTY_PROMPTS;
-  const models = promptSchemaQuery.data?.models ?? EMPTY_MODELS;
+  const models = useMemo(
+    () =>
+      mergePromptModelCatalogs(
+        promptSchemaQuery.data?.models ?? EMPTY_MODELS,
+        modelCatalogQuery.data ?? EMPTY_MODELS,
+      ),
+    [modelCatalogQuery.data, promptSchemaQuery.data?.models],
+  );
+  const runtimeCatalog =
+    runtimeCatalogQuery.data ?? promptSchemaQuery.data?.runtimes;
   const activePromptId = selectedId;
 
   const selectedSummary = useMemo(
@@ -632,6 +656,8 @@ function usePromptWorkbenchView({
           error={
             detailQuery.error ??
             promptSchemaQuery.error ??
+            modelCatalogQuery.error ??
+            runtimeCatalogQuery.error ??
             selectedDetailState.actionError
           }
           tab={tab}
@@ -657,6 +683,7 @@ function usePromptWorkbenchView({
             dispatchDetailState({ type: "run-request", detail, value })
           }
           models={models}
+          runtimeCatalog={runtimeCatalog}
           promptSchema={promptSchemaQuery.data}
           tools={AGENT_TOOLS}
           permissionCatalog={permissionCatalogQuery.data}
@@ -898,6 +925,7 @@ function PromptDetailPane({
   runRequest,
   onRunRequestChange,
   models,
+  runtimeCatalog,
   promptSchema,
   tools,
   permissionCatalog,
@@ -927,6 +955,7 @@ function PromptDetailPane({
   runRequest: AIPromptRunValue;
   onRunRequestChange: (value: AIPromptRunValue) => void;
   models: ChatModel[];
+  runtimeCatalog?: RuntimeCatalogFamily[];
   promptSchema?: PromptSchemaDoc;
   tools: ToolMeta[];
   permissionCatalog?: AISpecRuntimePermissionCatalog;
@@ -984,9 +1013,7 @@ function PromptDetailPane({
   const backendCliArgs = promptSchema?.backends?.find(
     (backend) => backend.backend === runRequest.spec?.backend,
   )?.args;
-  // The picker's families come from the same document as its models, so a
-  // backend the user disabled is absent from both.
-  const runtimeFamilies = familiesFromRuntimeCatalog(promptSchema?.runtimes);
+  const runtimeFamilies = familiesFromRuntimeCatalog(runtimeCatalog);
   const promptReady =
     !scratch ||
     Boolean(runRequest.spec?.prompt?.user?.trim()) ||
@@ -1032,7 +1059,7 @@ function PromptDetailPane({
                 value={runRequest}
                 onChange={onRunRequestChange}
                 families={runtimeFamilies}
-                models={promptSelectableModels(models)}
+                models={models}
                 tools={tools}
                 secretSelector={CAPTAIN_SECRET_SELECTOR}
                 onVariablesValidityChange={onVariablesValidityChange}
@@ -1069,9 +1096,7 @@ function PromptDetailPane({
                   size="sm"
                   loading={runLoading}
                   disabled={
-                    !runEnabled ||
-                    !promptReady ||
-                    (!schema && !variablesValid)
+                    !runEnabled || !promptReady || (!schema && !variablesValid)
                   }
                   onClick={onRun}
                 >
@@ -1205,6 +1230,19 @@ async function fetchPromptSchema(): Promise<PromptSchemaDoc> {
   return (await response.json()) as PromptSchemaDoc;
 }
 
+async function fetchCatalog<T>(endpoint: string, label: string): Promise<T[]> {
+  const response = await fetch(endpoint, {
+    headers: { Accept: "application/json" },
+  });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `${label} failed with ${response.status}`);
+  }
+  const data: unknown = await response.json();
+  if (!Array.isArray(data)) throw new Error(`${label} must be an array`);
+  return data as T[];
+}
+
 const CAPTAIN_SECRET_SELECTOR = {
   loadResources: fetchSecretResources,
   loadKeyPreview: fetchSecretKeyPreview,
@@ -1334,12 +1372,6 @@ function normalizeObjectSchema(
     type: "object",
     properties: properties as JsonSchemaObject["properties"],
   } as JsonSchemaObject;
-}
-
-function promptSelectableModels(models: ChatModel[]) {
-  return models.map((model) =>
-    model.configured === false ? { ...model, configured: true } : model,
-  );
 }
 
 function errorMessage(error: unknown) {

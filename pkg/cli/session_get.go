@@ -32,10 +32,10 @@ type SessionGetItem struct {
 	DetailAvailable    bool              `json:"detailAvailable"`
 	Summary            SessionRecord     `json:"summary"`
 	Detail             *session.Session  `json:"detail,omitempty"`
-	ActiveRunID        string            `json:"activeRunId,omitempty"`
-	Chat               *ChatCapabilities `json:"chat,omitempty"`
-	ChatState          *ChatStateFrame   `json:"chatState,omitempty"`
-	transcriptFiltered bool
+	ActiveRunID string            `json:"activeRunId,omitempty"`
+	Chat        *ChatCapabilities `json:"chat,omitempty"`
+	ChatState   *ChatStateFrame   `json:"chatState,omitempty"`
+	notice      transcriptNotice
 }
 
 type sessionGetStore interface {
@@ -93,8 +93,7 @@ func buildSessionGetItem(ctx context.Context, db sessionGetStore, overview datab
 	item := SessionGetItem{
 		CaptainID: overview.ID.String(), ProviderSessionID: stringOr(overview.ProviderSessionID, ""),
 		Host: overview.HostID, Aggregate: stringOr(overview.AgentType, "") == "batch",
-		Summary:            recordFromOverview(overview),
-		transcriptFiltered: len(opts.Tools) > 0 || len(opts.Categories) > 0,
+		Summary: recordFromOverview(overview),
 	}
 	if overview.ParentSessionID != nil {
 		item.ParentSessionID = overview.ParentSessionID.String()
@@ -128,10 +127,11 @@ func buildSessionGetItem(ctx context.Context, db sessionGetStore, overview datab
 	item.Summary.Backend = firstNonEmpty(item.Summary.Backend, detail.Backend)
 	item.Summary.Model = firstNonEmpty(item.Summary.Model, detail.Model)
 	item.Summary.ReasoningEffort = firstNonEmpty(item.Summary.ReasoningEffort, detail.ReasoningEffort)
-	if err := filterSessionTranscript(detail, opts); err != nil {
+	notice, err := applyTranscriptWindow(detail, opts, item.Summary.Messages)
+	if err != nil {
 		return SessionGetItem{}, fmt.Errorf("filter Captain session %s transcript: %w", overview.ID, err)
 	}
-	pageSessionTranscript(detail, opts)
+	item.notice = notice
 	item.Detail = detail
 	return item, nil
 }
@@ -413,25 +413,14 @@ func (i SessionGetItem) Pretty() clickyapi.Text {
 	return text.NewLine().Append("  Transcript: unavailable", "text-amber-600")
 }
 
-// hiddenRowsNotice reports messages dropped by the transcript window so a
-// bounded view never reads as the whole session. Summary.Messages holds the
-// full count; the detail holds only the retained slice.
+// hiddenRowsNotice reports messages dropped between the session's full count
+// and the rendered transcript so a bounded view never reads as the whole
+// session. See transcriptNotice for how the causes are attributed.
 func (i SessionGetItem) hiddenRowsNotice() clickyapi.Text {
 	if i.Detail == nil {
 		return clickyapi.Text{}
 	}
-	hidden := i.Summary.Messages - len(i.Detail.Messages)
-	if hidden <= 0 {
-		return clickyapi.Text{}
-	}
-	if i.transcriptFiltered {
-		return clickyapi.Text{}.NewLine().Append(
-			fmt.Sprintf("  … showing %d of %d messages after transcript filters and windowing",
-				len(i.Detail.Messages), i.Summary.Messages), "text-amber-600")
-	}
-	return clickyapi.Text{}.NewLine().Append(
-		fmt.Sprintf("  … %d of %d messages hidden — use --limit 0 for the full transcript",
-			hidden, i.Summary.Messages), "text-amber-600")
+	return i.notice.text(len(i.Detail.Messages))
 }
 
 type sessionGetListItem struct {

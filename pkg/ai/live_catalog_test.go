@@ -36,7 +36,7 @@ func TestMergeLiveCatalogUpsertsLiveAndPreservesStatic(t *testing.T) {
 		}},
 	}
 
-	merged := mergeLiveCatalog(static, adapters)
+	merged := mergeLiveCatalog(static, adapters, liveCatalogOptions{})
 
 	// A live codex model becomes one codex-agent entry keyed by its exact id.
 	sol := findModel(t, merged, "gpt-5.6-sol")
@@ -106,5 +106,11 @@ func TestLiveCatalogInfoAppliesPerProviderConfigured(t *testing.T) {
 	openai, ok := byID["openai/gpt-5.5"]
 	if !ok || openai.Configured {
 		t.Errorf("openai model should be unconfigured (no key) but still listed: %+v", openai)
+	}
+	if openai.Availability.State != api.AvailabilityMissingCredential || openai.Availability.Remediation == "" {
+		t.Errorf("openai availability = %+v, want missing credentials with remediation", openai.Availability)
+	}
+	if !anthropic.Availability.IsAvailable() {
+		t.Errorf("anthropic availability = %+v, want available", anthropic.Availability)
 	}
 }

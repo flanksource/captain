@@ -39,7 +39,36 @@ func (s *Service) annotateConfiguredModels(ctx context.Context, models ModelCata
 		configured[ai.BackendToProvider(backend)] = true
 	}
 	for i := range models {
-		models[i].Configured = models[i].Configured || configured[models[i].Provider]
+		if configured[models[i].Provider] && models[i].Availability.State == api.AvailabilityMissingCredential {
+			models[i].Configured = true
+			models[i].Availability = api.Available()
+		}
+	}
+	return nil
+}
+
+func (s *Service) annotateConfiguredRuntimes(ctx context.Context, runtimes []api.RuntimeFamily) error {
+	if s.options.ProviderConfig == nil {
+		return nil
+	}
+	backends, err := s.options.ProviderConfig.ConfiguredProviders(ctx)
+	if err != nil {
+		return fmt.Errorf("load configured chat providers: %w", err)
+	}
+	configured := make(map[api.Backend]bool, len(backends))
+	for _, backend := range backends {
+		if backend == "" {
+			return fmt.Errorf("configured chat provider backend is required")
+		}
+		configured[backend] = true
+	}
+	for familyIndex := range runtimes {
+		for modeIndex := range runtimes[familyIndex].Modes {
+			mode := &runtimes[familyIndex].Modes[modeIndex]
+			if configured[api.Backend(mode.Backend)] && mode.Availability.State == api.AvailabilityMissingCredential {
+				mode.Availability = api.Available()
+			}
+		}
 	}
 	return nil
 }

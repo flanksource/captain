@@ -29,6 +29,9 @@ var _ = Describe("semantic muted pretty styles", func() {
 		Entry("reasoning body", func() api.Textable {
 			return (&ReasoningTool{BaseTool: BaseTool{Input: map[string]any{"text": "reasoning payload"}}}).Pretty()
 		}, " reasoning payload"),
+		Entry("system body", func() api.Textable {
+			return (&SystemTool{BaseTool: BaseTool{Input: map[string]any{"text": "system payload"}}}).Pretty()
+		}, " system payload"),
 		Entry("session model", func() api.Textable {
 			return (&SystemInitTool{BaseTool: BaseTool{Input: map[string]any{"model": "model-x"}}}).Pretty()
 		}, " model-x"),

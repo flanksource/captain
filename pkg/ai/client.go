@@ -88,7 +88,7 @@ func suggestModelName(err error, model string) error {
 			candidates = append(candidates, id)
 		}
 	}
-	pricing.EnsureLoaded()
+	pricing.EnsureLoaded(pricing.LoadOptions{})
 	for _, mi := range pricing.ListModels("") {
 		candidates = append(candidates, mi.ModelID)
 	}

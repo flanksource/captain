@@ -25,7 +25,7 @@ var (
 )
 
 func GetModelInfo(model string) (ModelInfo, bool) {
-	EnsureLoaded()
+	EnsureLoaded(LoadOptions{})
 	registryMu.RLock()
 	info, ok := registry[model]
 	registryMu.RUnlock()
@@ -42,7 +42,7 @@ func GetModelInfo(model string) (ModelInfo, bool) {
 // GetModelInfo it has no static-Claude fallback (which prices any claude-ish id,
 // including typos), so use Contains for membership/validation, not for pricing.
 func Contains(model string) bool {
-	EnsureLoaded()
+	EnsureLoaded(LoadOptions{})
 	registryMu.RLock()
 	defer registryMu.RUnlock()
 	_, ok := registry[model]
@@ -116,7 +116,7 @@ func RegistrySize() int {
 }
 
 func ListModels(filter string) []ModelInfo {
-	EnsureLoaded()
+	EnsureLoaded(LoadOptions{})
 	registryMu.RLock()
 	defer registryMu.RUnlock()
 

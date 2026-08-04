@@ -31,6 +31,29 @@ func transcriptFixture(messages, events int) *session.Session {
 	return s
 }
 
+// reasoningTranscriptFixture interleaves plain assistant text with reasoning
+// parts so `--category '!reasoning'` has something to exclude.
+func reasoningTranscriptFixture(kept, reasoning int) *session.Session {
+	s := &session.Session{ID: "d3521f3b-38a2-43b7-b80f-77450a9cb30c", Source: "codex"}
+	for i := 0; i < max(kept, reasoning); i++ {
+		if i < reasoning {
+			s.Messages = append(s.Messages, session.Message{
+				ID:    fmt.Sprintf("r%d", i),
+				Role:  "assistant",
+				Parts: []session.Part{{Type: session.PartReasoning, Text: fmt.Sprintf("thinking %d", i)}},
+			})
+		}
+		if i < kept {
+			s.Messages = append(s.Messages, session.Message{
+				ID:    fmt.Sprintf("m%d", i),
+				Role:  "assistant",
+				Parts: []session.Part{{Type: session.PartText, Text: fmt.Sprintf("message %d", i)}},
+			})
+		}
+	}
+	return s
+}
+
 var _ = Describe("session get transcript paging", func() {
 	It("bounds events alongside messages under --tail", func() {
 		detail := transcriptFixture(50, 40)
@@ -188,42 +211,119 @@ var _ = Describe("session get header", func() {
 	})
 
 	It("reports how many transcript rows the window hid", func() {
+		opts := SessionGetOptions{Tail: 5}
 		detail := transcriptFixture(200, 0)
-		pageSessionTranscript(detail, SessionGetOptions{Tail: 5})
+		notice, err := applyTranscriptWindow(detail, opts, 200)
+		Expect(err).NotTo(HaveOccurred())
 		item := SessionGetItem{
 			CaptainID: "d81f885d-3d60-47c0-8122-a8124f2fbdd1",
 			Summary:   SessionRecord{Messages: 200},
 			Detail:    detail,
+			notice:    notice,
 		}
 
 		rendered := item.Pretty().String()
 
-		Expect(rendered).To(ContainSubstring("195 of 200 messages hidden"))
+		Expect(rendered).To(ContainSubstring("195 of 200 messages hidden by --tail 5"))
 		Expect(rendered).To(ContainSubstring("--limit 0"))
 	})
 
 	It("stays silent when the whole transcript is shown", func() {
+		opts := SessionGetOptions{Limit: 1000}
 		detail := transcriptFixture(4, 0)
+		notice, err := applyTranscriptWindow(detail, opts, 4)
+		Expect(err).NotTo(HaveOccurred())
 		item := SessionGetItem{
 			CaptainID: "d81f885d-3d60-47c0-8122-a8124f2fbdd1",
 			Summary:   SessionRecord{Messages: 4},
 			Detail:    detail,
+			notice:    notice,
 		}
 
 		Expect(item.Pretty().String()).NotTo(ContainSubstring("hidden"))
 	})
 
-	It("does not claim --limit 0 restores rows excluded by filters", func() {
+	// Regression: `sessions get <id> -c '!reasoning' -l 1000` used to report
+	// "after transcript filters and windowing", which reads as if --limit 1000
+	// had truncated the transcript when the category filter alone removed the
+	// rows. The two causes are now attributed separately.
+	It("attributes filter exclusions to the filter, not to the window", func() {
+		opts := SessionGetOptions{Categories: []string{"!reasoning"}, Limit: 1000}
+		detail := reasoningTranscriptFixture(148, 117)
+		notice, err := applyTranscriptWindow(detail, opts, 265)
+		Expect(err).NotTo(HaveOccurred())
 		item := SessionGetItem{
-			CaptainID:          "d81f885d-3d60-47c0-8122-a8124f2fbdd1",
-			Summary:            SessionRecord{Messages: 4},
-			Detail:             transcriptFixture(1, 0),
-			transcriptFiltered: true,
+			CaptainID: "d81f885d-3d60-47c0-8122-a8124f2fbdd1",
+			Summary:   SessionRecord{Messages: 265},
+			Detail:    detail,
+			notice:    notice,
 		}
 
 		rendered := item.Pretty().String()
 
-		Expect(rendered).To(ContainSubstring("showing 1 of 4 messages after transcript filters and windowing"))
-		Expect(rendered).NotTo(ContainSubstring("--limit 0"))
+		Expect(detail.Messages).To(HaveLen(148))
+		Expect(rendered).To(ContainSubstring("117 of 265 messages excluded by --category '!reasoning'"))
+		Expect(rendered).To(ContainSubstring("none hidden by --limit 1000"))
+		Expect(rendered).NotTo(ContainSubstring("--limit 0"),
+			"--limit 0 cannot restore rows the category filter excluded")
 	})
+
+	It("reports filter exclusions and window truncation as separate causes", func() {
+		opts := SessionGetOptions{Categories: []string{"!reasoning"}, Limit: 100}
+		detail := reasoningTranscriptFixture(148, 117)
+		notice, err := applyTranscriptWindow(detail, opts, 265)
+		Expect(err).NotTo(HaveOccurred())
+		item := SessionGetItem{
+			CaptainID: "d81f885d-3d60-47c0-8122-a8124f2fbdd1",
+			Summary:   SessionRecord{Messages: 265},
+			Detail:    detail,
+			notice:    notice,
+		}
+
+		rendered := item.Pretty().String()
+
+		Expect(detail.Messages).To(HaveLen(100))
+		Expect(rendered).To(ContainSubstring("117 of 265 messages excluded by --category '!reasoning'"))
+		Expect(rendered).To(ContainSubstring("48 more hidden by --limit 100"))
+		Expect(rendered).To(ContainSubstring("--limit 0"))
+	})
+
+	It("reports rows the overview counted but the recorded transcript lacks", func() {
+		opts := SessionGetOptions{Limit: 1000}
+		detail := transcriptFixture(4, 0)
+		notice, err := applyTranscriptWindow(detail, opts, 6)
+		Expect(err).NotTo(HaveOccurred())
+		item := SessionGetItem{
+			CaptainID: "d81f885d-3d60-47c0-8122-a8124f2fbdd1",
+			Summary:   SessionRecord{Messages: 6},
+			Detail:    detail,
+			notice:    notice,
+		}
+
+		Expect(item.Pretty().String()).To(ContainSubstring("2 not present in the recorded transcript"))
+	})
+})
+
+var _ = Describe("session get transcript flag descriptions", func() {
+	DescribeTable("renders the flags that bounded the transcript",
+		func(opts SessionGetOptions, filters, window string) {
+			Expect(transcriptFilterFlags(opts)).To(Equal(filters))
+			Expect(transcriptWindowFlags(opts)).To(Equal(window))
+		},
+		Entry("negated category and an explicit limit",
+			SessionGetOptions{Categories: []string{"!reasoning"}, Limit: 1000},
+			"--category '!reasoning'", "--limit 1000"),
+		Entry("bare category needs no quoting",
+			SessionGetOptions{Categories: []string{"test"}, Limit: 200},
+			"--category test", "--limit 200"),
+		Entry("tool globs are quoted and tail wins over offset/limit",
+			SessionGetOptions{Tools: []string{"B*"}, Offset: 10, Limit: 5, Tail: 3},
+			"--tool 'B*'", "--tail 3"),
+		Entry("offset joins the limit",
+			SessionGetOptions{Offset: 10, Limit: 5},
+			"", "--offset 10 --limit 5"),
+		Entry("cleared limit is reported as unbounded",
+			SessionGetOptions{Limit: 0},
+			"", "--limit 0"),
+	)
 })

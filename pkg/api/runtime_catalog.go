@@ -45,20 +45,23 @@ type RuntimeModeEntry struct {
 	// is what lets a client stop shipping its own "claude-sonnet-5" literal,
 	// which went stale on every model release.
 	DefaultModel string `json:"defaultModel,omitempty"`
+	// CatalogProvider is the provider key used by /api/chat/models for this
+	// mode. Local Claude/Codex modes share their agent catalog.
+	CatalogProvider string `json:"catalogProvider,omitempty"`
 	// Disabled reports the user's opt-out. The entry is still served so a UI can
-	// explain the absence instead of silently shrinking; every picker drops it.
+	// explain the absence instead of silently shrinking the picker.
 	Disabled bool `json:"disabled"`
 	// DisabledReason names the switch that turned it off — "mode cmux",
 	// "provider deepseek", "backend claude-agent" — or "" when enabled.
-	DisabledReason string `json:"disabledReason,omitempty"`
+	DisabledReason string       `json:"disabledReason,omitempty"`
+	Availability   Availability `json:"availability"`
 }
 
 // RuntimeCatalog projects the provider registry into the picker descriptor,
 // annotated with the installed opt-out set.
 //
-// Annotated, not filtered: whoami renders the disabled entries as switched-off
-// rows, and every other consumer drops them. Filtering here would take that
-// choice away from the one surface that needs to show them.
+// Annotated, not filtered: whoami and runtime pickers render disabled entries
+// with an explanation. Filtering here would make the missing choice opaque.
 func RuntimeCatalog() []RuntimeFamily {
 	disabled := Disabled()
 	out := make([]RuntimeFamily, 0, len(registry.Providers()))
@@ -74,6 +77,15 @@ func RuntimeCatalog() []RuntimeFamily {
 			if !ok {
 				continue
 			}
+			reason := disabled.Reason(caps.Backend)
+			availability := Available()
+			if reason != "" {
+				availability = Availability{
+					State:       AvailabilityDisabled,
+					Reason:      "Disabled by " + reason + " in Captain configuration.",
+					Remediation: "Enable " + reason + " on the Whoami page, then refresh.",
+				}
+			}
 			family.Modes = append(family.Modes, RuntimeModeEntry{
 				Mode:           string(mode),
 				Backend:        string(caps.Backend),
@@ -81,7 +93,8 @@ func RuntimeCatalog() []RuntimeFamily {
 				Keyless:        caps.Keyless,
 				DefaultModel:   DefaultModelFor(caps.Backend),
 				Disabled:       disabled.Backend(caps.Backend),
-				DisabledReason: disabled.Reason(caps.Backend),
+				DisabledReason: reason,
+				Availability:   availability,
 			})
 		}
 		out = append(out, family)

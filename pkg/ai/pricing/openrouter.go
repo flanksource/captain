@@ -59,28 +59,30 @@ func (c *PricingCache) IsExpired() bool {
 	return time.Since(c.Timestamp) >= cacheExpiryDuration
 }
 
-func EnsureLoaded() {
+// LoadOptions controls how EnsureLoaded resolves the pricing snapshot.
+type LoadOptions struct {
+	// Refresh skips both the in-memory and the on-disk snapshot and re-queries
+	// OpenRouter, so `captain whoami --no-cache` reports live prices. A failed
+	// refresh keeps the snapshot already installed instead of emptying pricing.
+	Refresh bool
+}
+
+// EnsureLoaded installs the OpenRouter pricing snapshot, fetching it only when
+// no usable one is already in memory or on disk (or when opts.Refresh forces it).
+func EnsureLoaded(opts LoadOptions) {
 	pricingCacheLock.Lock()
 	defer pricingCacheLock.Unlock()
 
-	if pricingCacheErr != nil {
-		return
-	}
-	if pricingCache != nil && !pricingCache.IsExpired() {
-		return
-	}
-
-	if pricingCache == nil {
-		if cache, err := loadFromDisk(); err == nil && cache != nil && !cache.IsExpired() {
-			log.Debugf("Loaded OpenRouter pricing from cache (age: %s)", time.Since(cache.Timestamp))
-			pricingCache = cache
-			MergeModels(cache.Models)
-			applyCatalogPrices()
+	if !opts.Refresh {
+		if pricingCacheErr != nil {
+			return
+		}
+		if installedPricingIsFresh() {
 			return
 		}
 	}
 
-	models, err := fetchOpenRouterPricing()
+	models, err := fetchPricing()
 	if err != nil {
 		log.Warnf("Failed to fetch OpenRouter pricing: %v", err)
 		pricingCacheErr = err
@@ -88,9 +90,32 @@ func EnsureLoaded() {
 	}
 
 	pricingCache = &PricingCache{Timestamp: time.Now(), Models: models}
+	pricingCacheErr = nil
 	MergeModels(models)
 	applyCatalogPrices()
 }
+
+// installedPricingIsFresh reports whether an unexpired snapshot is in play,
+// promoting the on-disk one into memory (and into the registry) when it is the
+// only copy. Callers must hold pricingCacheLock.
+func installedPricingIsFresh() bool {
+	if pricingCache != nil {
+		return !pricingCache.IsExpired()
+	}
+	cache, err := loadFromDisk()
+	if err != nil || cache == nil || cache.IsExpired() {
+		return false
+	}
+	log.Debugf("Loaded OpenRouter pricing from cache (age: %s)", time.Since(cache.Timestamp))
+	pricingCache = cache
+	MergeModels(cache.Models)
+	applyCatalogPrices()
+	return true
+}
+
+// fetchPricing is the live OpenRouter query, a package var so tests can
+// substitute deterministic rows without hitting the network.
+var fetchPricing = fetchOpenRouterPricing
 
 func fetchOpenRouterPricing() (map[string]*ModelInfo, error) {
 	resp, err := http.Get(openRouterAPIURL)
