@@ -239,6 +239,8 @@ func NewTool(base BaseTool) Tool {
 		return &PlanTool{BaseTool: base}
 	case "User":
 		return &UserTool{BaseTool: base}
+	case "System":
+		return &SystemTool{BaseTool: base}
 	case "Assistant":
 		return &AssistantTool{BaseTool: base}
 	case "Reasoning":
