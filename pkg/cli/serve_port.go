@@ -7,13 +7,6 @@ import (
 	"strings"
 )
 
-func effectiveServePort(dev, portFlagSet bool, configuredPort int) int {
-	if dev && !portFlagSet {
-		return 0
-	}
-	return configuredPort
-}
-
 func viteDevServerArgs(configuredPort int, open bool) ([]string, error) {
 	port := configuredPort
 	if port == 0 {
@@ -41,7 +34,7 @@ func (o ServeOptions) validate() error {
 	if strings.TrimSpace(o.Host) == "" {
 		return fmt.Errorf("host cannot be empty")
 	}
-	if o.Port < 0 || o.Port > 65535 || (!o.Dev && o.Port == 0) {
+	if o.Port < 1 || o.Port > 65535 {
 		return fmt.Errorf("invalid --port %d", o.Port)
 	}
 	if o.Dev && (o.UIPort < 0 || o.UIPort > 65535) {

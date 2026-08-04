@@ -67,17 +67,15 @@ session.
 With --dev, Captain also starts the Vite dev server from pkg/cli/webapp and
 proxies /api back to this Go process.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			runOpts := opts
-			runOpts.Port = effectiveServePort(runOpts.Dev, cmd.Flags().Changed("port"), runOpts.Port)
-			if err := runOpts.validate(); err != nil {
+			if err := opts.validate(); err != nil {
 				return err
 			}
-			return RunServe(cmd.Context(), cmd.Root(), runOpts, version, cmd.OutOrStdout(), cmd.ErrOrStderr())
+			return RunServe(cmd.Context(), cmd.Root(), opts, version, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 
 	cmd.Flags().StringVar(&opts.Host, "host", opts.Host, "Host to bind the API server to")
-	cmd.Flags().IntVarP(&opts.Port, "port", "p", opts.Port, "Port to bind the API server to (random when --dev is set)")
+	cmd.Flags().IntVarP(&opts.Port, "port", "p", opts.Port, "Port to bind the API server to")
 	cmd.Flags().BoolVar(&opts.Dev, "dev", false, "Launch the Vite dev server with /api proxied to Captain")
 	cmd.Flags().IntVar(&opts.UIPort, "ui-port", opts.UIPort, "Port for the Vite dev server when --dev is set (random by default)")
 	cmd.Flags().BoolVar(&opts.Open, "open", false, "Open the web UI in the default browser")
