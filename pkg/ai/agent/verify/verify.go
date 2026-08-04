@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -45,6 +46,11 @@ type Plugin struct {
 func New(name string, v Verifier) *Plugin { return &Plugin{name: name, v: v} }
 
 func (p *Plugin) Name() string { return p.name }
+
+// Verifier exposes the wrapped Verifier so a caller that runs checks outside
+// an agent loop — the git-agent receive path — can drive it directly with its
+// own cwd and changed set instead of an agent.HookContext.
+func (p *Plugin) Verifier() Verifier { return p.v }
 
 func (p *Plugin) Verify(hc *agent.HookContext) (agent.VerifyResult, error) {
 	ws := hc.Workspace()
@@ -95,9 +101,17 @@ type CmdVerifier struct {
 	Cmd          string
 	Args         []string
 	PerFile      bool
-	FeedbackTail int           // max bytes of output fed back; 0 ⇒ 4096
-	Timeout      time.Duration // wall-clock bound; 0 ⇒ DefaultCmdTimeout
+	FeedbackTail int             // max bytes of output fed back; 0 ⇒ 4096
+	Timeout      time.Duration   // wall-clock bound; 0 ⇒ DefaultCmdTimeout
+	Env          []string        // command environment; nil ⇒ inherit the process's
+	Wrap         CommandWrapFunc // optional confinement seam; see CommandWrapFunc
 }
+
+// CommandWrapFunc rewrites a command for confined execution. It mirrors
+// api.CommandWrapper's Wrap signature so a resolved sandbox adapter plugs in
+// directly — hook inputs are untrusted, so a receive path must never exec
+// them bare on the host (issue #40 R5.2).
+type CommandWrapFunc func(ctx context.Context, cmd string, args, env []string) (string, []string, []string, error)
 
 func (c *CmdVerifier) Verify(ctx context.Context, cwd string, changed []string) (Verdict, error) {
 	args := append([]string(nil), c.Args...)
@@ -120,8 +134,24 @@ func (c *CmdVerifier) Verify(ctx context.Context, cwd string, changed []string) 
 	}
 	output := &tailBuffer{max: tail}
 
-	cmd := exec.CommandContext(runCtx, c.Cmd, args...)
+	command, cmdArgs, env := c.Cmd, args, c.Env
+	if c.Wrap != nil {
+		wrapEnv := env
+		if wrapEnv == nil {
+			wrapEnv = os.Environ()
+		}
+		var err error
+		command, cmdArgs, env, err = c.Wrap(ctx, command, cmdArgs, wrapEnv)
+		if err != nil {
+			return Verdict{}, fmt.Errorf("wrapping %s for sandboxed execution: %w", c.Cmd, err)
+		}
+	}
+
+	cmd := exec.CommandContext(runCtx, command, cmdArgs...)
 	cmd.Dir = cwd
+	if env != nil {
+		cmd.Env = env
+	}
 	cmd.Stdout, cmd.Stderr = output, output
 	// Own process group, and cancellation kills the group: signalling only the
 	// pid leaves a hook's children running after their parent is dead.
