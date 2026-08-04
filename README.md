@@ -492,9 +492,14 @@ Important generate/build flags:
 captain whoami
 captain whoami --backend anthropic
 captain whoami --models=false
+captain whoami --no-cache
 ```
 
 Lists every AI adapter (API providers and CLI agents: `anthropic`, `openai`, `gemini`, `claude-cli`, `claude-agent`, `codex-cli`, `gemini-cli`), their authentication method, binary availability, and a live model listing.
+
+Provider model listings are resolved through the persisted cache in `~/.config/captain/models.json` (24h TTL, invalidated when the set of configured API keys changes), and priced from the OpenRouter snapshot in `~/Library/Caches/flanksource/openrouter-pricing.json` (24h TTL). `--no-cache` skips both, re-queries every provider's model endpoint plus OpenRouter pricing, and rewrites each cache with the fresh result. Add `-v` to see an access line per request, `-vv` for headers and query params, `-vvv` for request bodies, `-vvvv` for response bodies; credentials are redacted at every rung. Failed requests (status >= 400 or a transport error) are logged at the default verbosity. `-Plog.level.http=<level>` raises HTTP logging alone, and `-Phttp.log.base-level=<level>` (or `HTTP_LOG_BASE_LEVEL`) shifts the whole ladder.
+
+To keep the traffic instead of watching it scroll past, `-Phttp.har=<path>` writes every request/response pair — including redirect hops and retries — to a HAR 1.2 archive you can open in browser DevTools. It applies to any command, not just `whoami`, and the file is written even when the command fails. `-Phttp.har.level=metadata` records headers, query strings and timings without bodies; `-Phttp.har.maxBodySize=<bytes>` changes the 64 KB per-body cap (`0` for none). Credentials are masked the same way as in the wire log, which means the archive is safe to attach to a bug report but cannot be replayed — `-Phttp.har.sensitive=true` keeps them verbatim and writes the file `0600`. Use `-Phttp.captain.har=<path>` to capture captain's own traffic when a shared `http.har` is already set.
 
 ### Configure
 
@@ -524,7 +529,7 @@ task www:dev
 task www:build
 ```
 
-Starts an HTTP API and embedded web UI. The UI launches `captain ai agent` operations and opens follow-up chat windows that resume the returned session. `--dev` starts the Vite dev server from `pkg/cli/webapp`, binds both the Go API and Vite UI to random free ports, and proxies `/api` to the API. Pass `--port` or `--ui-port` to use a specific development port. Use `task www:dev` for the local Go-backed Vite proxy with the browser opened, and `task www:build` to rebuild the embedded web UI assets.
+Starts an HTTP API and embedded web UI. The UI launches `captain ai agent` operations and opens follow-up chat windows that resume the returned session. `--dev` keeps the Go API on the configured `--port` (`9020` by default), starts Vite on a random free port, and proxies `/api` to the API. Pass `--ui-port` to use a specific Vite port. Use `task www:dev` for the local Go-backed Vite proxy with the browser opened, and `task www:build` to rebuild the embedded web UI assets.
 
 ### MCP server
 

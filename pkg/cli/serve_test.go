@@ -110,8 +110,9 @@ func TestHandleSessionGetReturnsAllMatches(t *testing.T) {
 	if got.Total != 3 || len(got.Sessions) != 3 {
 		t.Fatalf("result = %+v", got)
 	}
-	detail := got.Sessions[0].Detail
-	if detail == nil || detail.ID != "sess-web" || detail.Source != "claude" {
+	item := got.Sessions[0]
+	detail := item.Detail
+	if detail == nil || detail.ID != item.CaptainID || detail.ProviderSessionID != "sess-web" || detail.Source != "claude" {
 		t.Fatalf("session = %+v", detail)
 	}
 	if len(detail.Messages) == 0 || detail.Messages[0].Parts[0].Text != "hello from the model" {
