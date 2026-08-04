@@ -6,6 +6,7 @@ import (
 	"reflect"
 
 	"github.com/flanksource/captain/pkg/cli"
+	"github.com/flanksource/captain/pkg/gitagent"
 	"github.com/flanksource/clicky"
 	"github.com/flanksource/clicky/flags"
 	"github.com/flanksource/clicky/mcp"
@@ -122,6 +123,26 @@ func main() {
 	rootCmd.AddCommand(sandboxCmd)
 	clicky.AddNamedCommand("generate", sandboxCmd, cli.SRTGenerateOptions{}, cli.RunSRTGenerate).Short = "Generate sandbox-runtime config"
 	clicky.AddNamedCommand("presets", sandboxCmd, cli.SandboxPresetsOptions{}, cli.RunSandboxPresets).Short = "List available sandbox-runtime presets"
+
+	gitAgentCmd := &cobra.Command{
+		Use:   "git-agent",
+		Short: "Enroll and serve remote git-agent sandboxes (SPEC-git-agent-protocol)",
+	}
+	sandboxCmd.AddCommand(gitAgentCmd)
+	clicky.AddNamedCommand("add", gitAgentCmd, cli.GitAgentAddOptions{}, cli.RunGitAgentAdd).Short = "Enroll a new agent: mint a join token and print the join command"
+	clicky.AddNamedCommand("list", gitAgentCmd, cli.GitAgentListOptions{}, cli.RunGitAgentList).Short = "List enrolled agents and pending enrollments"
+	clicky.AddNamedCommand("revoke", gitAgentCmd, cli.GitAgentRevokeOptions{}, cli.RunGitAgentRevoke).Short = "Revoke an enrolled agent's key"
+	clicky.AddNamedCommandWithContext("serve", gitAgentCmd, cli.GitAgentServeOptions{}, cli.RunGitAgentServe).Short = "Run the receive endpoint on this host (agent sidecar or supervisor mailbox)"
+	gitAgentCmd.AddCommand(&cobra.Command{
+		Use:                "ssh",
+		Hidden:             true,
+		Short:              "Internal: GIT_SSH_COMMAND transport for dispatch and relay pushes",
+		DisableFlagParsing: true,
+		RunE: func(_ *cobra.Command, args []string) error {
+			os.Exit(gitagent.SSHClientMain(args))
+			return nil
+		},
+	})
 
 	aiCmd := &cobra.Command{
 		Use:   "ai",

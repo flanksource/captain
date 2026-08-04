@@ -78,6 +78,27 @@ func initReceiver(ctx context.Context, path string) error {
 	return os.MkdirAll(filepath.Join(path, "captain"), 0o755)
 }
 
+// PruneWorktrees runs `git worktree prune` in every bare repo directly under
+// root, reclaiming worktrees orphaned by a crashed hook (R10.3). Failures are
+// deliberately non-fatal: pruning is hygiene, not a serving precondition.
+func PruneWorktrees(ctx context.Context, root string) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return
+	}
+	env := ScrubGitEnv(os.Environ())
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		repo := filepath.Join(root, e.Name())
+		if _, err := os.Stat(filepath.Join(repo, "HEAD")); err != nil {
+			continue
+		}
+		_, _ = runGit(ctx, repo, env, "worktree", "prune")
+	}
+}
+
 // writeFileAtomic writes via a sibling temp file and rename, so a reader
 // never observes a partial file.
 func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
