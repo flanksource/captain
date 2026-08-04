@@ -42,6 +42,9 @@ func legacyMerge(s, override Spec) Spec {
 	if override.Setup != nil {
 		s.Setup = override.Setup
 	}
+	if override.Sandbox != nil {
+		s.Sandbox = override.Sandbox
+	}
 	if override.Workflow != nil {
 		s.Workflow = override.Workflow
 	}
