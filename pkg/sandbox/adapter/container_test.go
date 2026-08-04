@@ -117,6 +117,16 @@ func TestContainerAdapter_UntrustedProjectConfigRejected(t *testing.T) {
 		}
 	})
 
+	t.Run("preset refused", func(t *testing.T) {
+		cwd := t.TempDir()
+		writeProjectConfig(t, cwd, "image: img\npresets: [aws]\n")
+		sandbox := newContainer(t, nil)
+		_, err := sandbox.Prepare(context.Background(), specWithCwd(cwd))
+		if err == nil || !strings.Contains(err.Error(), "declares presets") {
+			t.Fatalf("err = %v, want repository preset refusal", err)
+		}
+	})
+
 	t.Run("out-of-project volume refused", func(t *testing.T) {
 		cwd := t.TempDir()
 		writeProjectConfig(t, cwd, "image: img\nvolumes:\n  - source: /\n    target: /host\n")
@@ -139,17 +149,48 @@ func TestContainerAdapter_UntrustedProjectConfigRejected(t *testing.T) {
 			t.Fatalf("argv %v missing the project-contained mount", args)
 		}
 	})
+
+	t.Run("project-relative volume uses run cwd", func(t *testing.T) {
+		cwd := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(cwd, "data"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeProjectConfig(t, cwd, "image: img\nvolumes:\n  - source: ./data\n    target: /data\n")
+		sandbox := prepareContainer(t, cwd, nil)
+		_, args := wrap(t, sandbox, "claude", nil)
+		if !strings.Contains(strings.Join(args, " "), "-v "+filepath.Join(cwd, "data")+":/data") {
+			t.Fatalf("argv %v missing the project-relative mount", args)
+		}
+	})
+
+	t.Run("missing source below outward symlink refused", func(t *testing.T) {
+		cwd := t.TempDir()
+		outside := t.TempDir()
+		link := filepath.Join(cwd, "outside-link")
+		if err := os.Symlink(outside, link); err != nil {
+			t.Fatal(err)
+		}
+		source := filepath.Join(link, "created-by-docker")
+		writeProjectConfig(t, cwd, "image: img\nvolumes:\n  - source: "+source+"\n    target: /host\n")
+		sandbox := newContainer(t, nil)
+		_, err := sandbox.Prepare(context.Background(), specWithCwd(cwd))
+		if err == nil || !strings.Contains(err.Error(), "outside the project directory") {
+			t.Fatalf("err = %v, want symlink escape refusal", err)
+		}
+	})
 }
 
 // Backend options are the user's own machine config; env, passthrough and
 // volumes declared there are honoured — env still by name only in the argv.
 func TestContainerAdapter_TrustedBackendOptions(t *testing.T) {
 	t.Setenv("MY_TOKEN", "tok")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "review-secret")
 	sandbox := prepareContainer(t, t.TempDir(), map[string]any{
 		"image":          "img",
 		"env":            map[string]any{"API_BASE": "http://mock:1234"},
 		"envPassthrough": []any{"MY_TOKEN"},
 		"volumes":        []any{"/data:/data:ro"},
+		"presets":        []any{"aws"},
 	})
 	wrapper, _ := api.SandboxAs[api.CommandWrapper](sandbox)
 
@@ -173,6 +214,15 @@ func TestContainerAdapter_TrustedBackendOptions(t *testing.T) {
 	}
 	if !strings.Contains(argv, "-v /data:/data:ro") {
 		t.Errorf("argv %v missing the trusted volume", args)
+	}
+	if i := slices.Index(args, "AWS_SECRET_ACCESS_KEY"); i < 1 || args[i-1] != "-e" {
+		t.Errorf("argv %v missing name-only preset credential", args)
+	}
+	if strings.Contains(argv, "review-secret") {
+		t.Error("preset credential value must not appear in the argv")
+	}
+	if !slices.Contains(env, "AWS_SECRET_ACCESS_KEY=review-secret") {
+		t.Error("client env must carry the trusted preset credential value")
 	}
 }
 

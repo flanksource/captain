@@ -74,7 +74,7 @@ func PromptSchemaDocument() (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return buildPromptSchemaDocument(adapters)
+	return buildPromptSchemaDocument(adapters, loadSavedConfig().Sandbox)
 }
 
 // schemaAdapters sources the probed adapters through pkg/ai's cache. It is a

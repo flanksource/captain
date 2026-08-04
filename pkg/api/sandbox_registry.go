@@ -48,12 +48,9 @@ func RegisterSandbox(kind SandboxKind, factory SandboxFactory) {
 }
 
 // NewSandbox constructs the registered adapter for cfg's kind and verifies the
-// instance against its descriptor: a declared capability whose seam interface
-// lives in this package (wrap-command, remote-exec) and is not implemented is
-// a construction error. Capabilities whose seams live elsewhere
-// (isolate-workspace is pkg/ai/agent's; egress-proxy is provided by the
-// confinement runtime itself) are declarations for THOSE seams to verify —
-// this check deliberately does not pretend to cover them.
+// instance against its descriptor. Every declared capability must have a
+// construction-time checker and the instance must satisfy it; a future adapter
+// cannot advertise a capability before its seam and verifier land.
 func NewSandbox(cfg SandboxConfig) (Sandbox, error) {
 	kind := cfg.Kind
 	if kind == "" {
@@ -83,10 +80,10 @@ func NewSandbox(cfg SandboxConfig) (Sandbox, error) {
 	return sandbox, nil
 }
 
-// sandboxCapabilityChecks maps each capability with an api-level interface to
-// its type assertion. Capabilities whose interfaces live above pkg/api
-// (workspace isolation is pkg/ai/agent's; the egress proxy has no interface
-// yet) are declared in the descriptor and verified at their own seam.
+// sandboxCapabilityChecks is the complete construction-time verifier table for
+// capabilities adapters may currently advertise. Adding a descriptor
+// capability and its behavioral seam is one change: NewSandbox fails closed
+// when this table does not know how to prove the declaration.
 var sandboxCapabilityChecks = map[SandboxCapability]func(Sandbox) bool{
 	CapabilityWrapCommand: func(s Sandbox) bool { _, ok := SandboxAs[CommandWrapper](s); return ok },
 	CapabilityRemoteExec:  func(s Sandbox) bool { _, ok := SandboxAs[RemoteExecutor](s); return ok },
@@ -96,7 +93,8 @@ func verifySandboxCapabilities(descriptor *SandboxDescriptor, sandbox Sandbox) e
 	for _, capability := range descriptor.Capabilities {
 		check, ok := sandboxCapabilityChecks[capability]
 		if !ok {
-			continue
+			return fmt.Errorf("sandbox %q declares capability %q but no construction-time verifier is registered",
+				descriptor.Kind, capability)
 		}
 		if !check(sandbox) {
 			return fmt.Errorf("sandbox %q declares capability %q but its adapter does not implement it",

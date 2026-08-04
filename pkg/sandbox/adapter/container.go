@@ -2,6 +2,7 @@ package adapter
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,9 +20,8 @@ import (
 //     config, trusted: image, presets, env, envPassthrough, volumes.
 //   - The project's .container-sandbox.yaml — REPOSITORY content, untrusted:
 //     a cloned repo must not be able to reach the host through it. Its image,
-//     presets and cwd-contained volumes are honoured; env, envPassthrough and
-//     volumes outside the project directory are refused loudly, naming the
-//     trusted place to declare them.
+//     and cwd-contained volumes are honoured; presets, ambient env and outside
+//     volumes are refused loudly, naming the trusted place to declare them.
 type containerSandbox struct {
 	options map[string]any
 
@@ -114,30 +114,61 @@ func rejectUntrustedContainerConfig(cfg container.SandboxConfig, cwd string) err
 	return nil
 }
 
-// pathWithin reports whether path (symlinks resolved) is inside root. A
-// relative path is anchored on root — NOT the process working directory —
-// because root is the project the config came from, and docker would treat a
-// relative source as a named volume anyway (see the normalization in Prepare).
+// pathWithin anchors relative paths on root and resolves every existing
+// symlink component. A missing leaf is allowed because Docker creates bind
+// sources, but its existing parent must still be canonicalized.
 func pathWithin(path, root string) (bool, error) {
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(root, path)
-	}
-	absolute, err := filepath.Abs(path)
+	resolvedRoot, err := filepath.Abs(root)
 	if err != nil {
 		return false, err
 	}
-	if resolved, err := filepath.EvalSymlinks(absolute); err == nil {
-		absolute = resolved
-	}
-	resolvedRoot, err := filepath.EvalSymlinks(root)
+	resolvedRoot, err = filepath.EvalSymlinks(resolvedRoot)
 	if err != nil {
-		resolvedRoot = root
+		return false, fmt.Errorf("resolve project directory: %w", err)
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(resolvedRoot, path)
+	}
+	absolute, err := resolvePathAllowMissing(path)
+	if err != nil {
+		return false, err
 	}
 	relative, err := filepath.Rel(resolvedRoot, absolute)
 	if err != nil {
 		return false, err
 	}
 	return relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)), nil
+}
+
+// resolvePathAllowMissing resolves symlinks in the longest existing prefix and
+// reattaches any missing suffix. This prevents a missing bind source below an
+// outward-pointing symlink from passing a lexical containment check.
+func resolvePathAllowMissing(path string) (string, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	absolute = filepath.Clean(absolute)
+	current := absolute
+	var missing []string
+	for {
+		resolved, err := filepath.EvalSymlinks(current)
+		if err == nil {
+			for i := len(missing) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, missing[i])
+			}
+			return filepath.Clean(resolved), nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", err
+		}
+		missing = append(missing, filepath.Base(current))
+		current = parent
+	}
 }
 
 // loadTrustedOptions decodes the backend's own env/envPassthrough/volumes —
@@ -185,34 +216,11 @@ func (c *containerSandbox) Wrap(_ context.Context, command string, args, declare
 	}
 
 	dockerArgs := []string{"run", "--rm", "-i", "-w", c.cwd, "-v", c.cwd + ":" + c.cwd}
-	clientEnv := os.Environ()
-
-	appendByName := func(name string) {
-		dockerArgs = append(dockerArgs, "-e", name)
-	}
-	for _, name := range append(cliCredentialEnv(command), c.optionPassthrough...) {
-		if os.Getenv(name) != "" {
-			appendByName(name)
-		}
-	}
-	// Request-declared setup variables (KEY=VALUE, resolved by the seam).
-	for _, item := range declaredEnv {
-		if key, _, ok := strings.Cut(item, "="); ok && key != "" {
-			appendByName(key)
-			clientEnv = append(clientEnv, item)
-		}
-	}
-	// Trusted backend-option env.
-	for key, value := range c.optionEnv {
-		appendByName(key)
-		clientEnv = append(clientEnv, key+"="+value)
-	}
 
 	home := container.HostUser{Username: c.cfg.User.Username, UID: c.cfg.User.UID, GID: c.cfg.User.GID}.ContainerHome()
 	presetEnv, presetVolumes := container.ResolveSandboxEnv(c.cfg.Presets, home)
-	for _, item := range presetEnv {
-		dockerArgs = append(dockerArgs, "-e", item)
-	}
+	envArgs, clientEnv := c.dockerEnv(command, declaredEnv, presetEnv)
+	dockerArgs = append(dockerArgs, envArgs...)
 	for _, volume := range append(presetVolumes, container.ResolveDependencyVolumes(c.cfg.Presets, c.cwd, home)...) {
 		dockerArgs = append(dockerArgs, "-v", volume.Source+":"+volume.Target)
 	}
@@ -231,6 +239,57 @@ func (c *containerSandbox) Wrap(_ context.Context, command string, args, declare
 	dockerArgs = append(dockerArgs, command)
 	dockerArgs = append(dockerArgs, args...)
 	return "docker", dockerArgs, clientEnv, nil
+}
+
+// dockerEnv separates the Docker wire format from its client environment:
+// argv receives names only, while resolved values replace entries in Env.
+func (c *containerSandbox) dockerEnv(command string, declaredEnv, presetEnv []string) ([]string, []string) {
+	clientEnv := os.Environ()
+	var args []string
+	passed := map[string]struct{}{}
+	pass := func(name string) {
+		if _, exists := passed[name]; exists {
+			return
+		}
+		passed[name] = struct{}{}
+		args = append(args, "-e", name)
+	}
+	for _, name := range append(cliCredentialEnv(command), c.optionPassthrough...) {
+		if os.Getenv(name) != "" {
+			pass(name)
+		}
+	}
+	for _, item := range declaredEnv {
+		if key, _, ok := strings.Cut(item, "="); ok && key != "" {
+			pass(key)
+			clientEnv = setEnvValue(clientEnv, item)
+		}
+	}
+	for key, value := range c.optionEnv {
+		pass(key)
+		clientEnv = setEnvValue(clientEnv, key+"="+value)
+	}
+	for _, item := range presetEnv {
+		if key, _, ok := strings.Cut(item, "="); ok && key != "" {
+			pass(key)
+			clientEnv = setEnvValue(clientEnv, item)
+		}
+	}
+	return args, clientEnv
+}
+
+func setEnvValue(env []string, item string) []string {
+	key, _, ok := strings.Cut(item, "=")
+	if !ok || key == "" {
+		return env
+	}
+	for i, existing := range env {
+		if existingKey, _, ok := strings.Cut(existing, "="); ok && existingKey == key {
+			env[i] = item
+			return env
+		}
+	}
+	return append(env, item)
 }
 
 func prefixEach(flag string, values []string) []string {

@@ -99,6 +99,21 @@ var _ = Describe("NewSandbox", func() {
 		Expect(err).To(MatchError(ContainSubstring(`declares capability "wrap-command"`)))
 	})
 
+	It("rejects a declared capability with no construction verifier", func() {
+		descriptor, ok := api.SandboxFor(api.SandboxSRT)
+		Expect(ok).To(BeTrue())
+		original := append([]api.SandboxCapability(nil), descriptor.Capabilities...)
+		descriptor.Capabilities = append(descriptor.Capabilities, api.CapabilityEgressProxy)
+		DeferCleanup(func() { descriptor.Capabilities = original })
+		api.RegisterSandbox(api.SandboxSRT, func(cfg api.SandboxConfig) (api.Sandbox, error) {
+			return wrappingSandboxStub{sandboxStub{kind: api.SandboxSRT}}, nil
+		})
+
+		_, err := api.NewSandbox(api.SandboxConfig{Kind: api.SandboxSRT})
+
+		Expect(err).To(MatchError(ContainSubstring(`capability "egress-proxy" but no construction-time verifier`)))
+	})
+
 	It("accepts an adapter that implements its declared capabilities", func() {
 		api.RegisterSandbox(api.SandboxSRT, func(cfg api.SandboxConfig) (api.Sandbox, error) {
 			return wrappingSandboxStub{sandboxStub{kind: api.SandboxSRT}}, nil
