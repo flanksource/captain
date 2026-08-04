@@ -3,41 +3,28 @@ package sandbox
 import (
 	"fmt"
 	"strings"
+
+	sandboxruntime "github.com/flanksource/sandbox-runtime/sandbox"
 )
 
-type MitmProxyConfig struct {
-	SocketPath string   `json:"socketPath" yaml:"socketPath"`
-	Domains    []string `json:"domains" yaml:"domains"`
-}
+// The sub-config types are aliases for sandbox-runtime's public types — one
+// definition, upstream's, following upstream's own convention (its Config is
+// itself an alias for the internal SandboxRuntimeConfig). The previous
+// hand-copied definitions drifted silently from the module actually enforcing
+// them.
+type (
+	MitmProxyConfig  = sandboxruntime.MitmProxyConfig
+	NetworkConfig    = sandboxruntime.NetworkConfig
+	FilesystemConfig = sandboxruntime.FilesystemConfig
+	RipgrepConfig    = sandboxruntime.RipgrepConfig
+	SeccompConfig    = sandboxruntime.SeccompConfig
+)
 
-type NetworkConfig struct {
-	AllowedDomains      []string         `json:"allowedDomains" yaml:"allowedDomains"`
-	DeniedDomains       []string         `json:"deniedDomains" yaml:"deniedDomains"`
-	AllowUnixSockets    []string         `json:"allowUnixSockets,omitempty" yaml:"allowUnixSockets,omitempty"`
-	AllowAllUnixSockets bool             `json:"allowAllUnixSockets,omitempty" yaml:"allowAllUnixSockets,omitempty"`
-	AllowLocalBinding   bool             `json:"allowLocalBinding,omitempty" yaml:"allowLocalBinding,omitempty"`
-	HTTPProxyPort       *int             `json:"httpProxyPort,omitempty" yaml:"httpProxyPort,omitempty"`
-	SocksProxyPort      *int             `json:"socksProxyPort,omitempty" yaml:"socksProxyPort,omitempty"`
-	MitmProxy           *MitmProxyConfig `json:"mitmProxy,omitempty" yaml:"mitmProxy,omitempty"`
-}
-
-type FilesystemConfig struct {
-	DenyRead       []string `json:"denyRead" yaml:"denyRead"`
-	AllowWrite     []string `json:"allowWrite" yaml:"allowWrite"`
-	DenyWrite      []string `json:"denyWrite" yaml:"denyWrite"`
-	AllowGitConfig bool     `json:"allowGitConfig,omitempty" yaml:"allowGitConfig,omitempty"`
-}
-
-type RipgrepConfig struct {
-	Command string   `json:"command" yaml:"command"`
-	Args    []string `json:"args,omitempty" yaml:"args,omitempty"`
-}
-
-type SeccompConfig struct {
-	BPFPath   string `json:"bpfPath,omitempty" yaml:"bpfPath,omitempty"`
-	ApplyPath string `json:"applyPath,omitempty" yaml:"applyPath,omitempty"`
-}
-
+// SandboxRuntimeConfig cannot yet be an alias for sandboxruntime.Config: its
+// Tokens field must be captain's *TokensConfig (the token-acquisition machinery
+// lives here), and upstream keeps its token types in an internal package. Once
+// upstream exports them, this struct collapses into an alias too — that fix
+// belongs upstream, not as a fork here.
 type SandboxRuntimeConfig struct {
 	Network                      NetworkConfig       `json:"network" yaml:"network"`
 	Filesystem                   FilesystemConfig    `json:"filesystem" yaml:"filesystem"`
