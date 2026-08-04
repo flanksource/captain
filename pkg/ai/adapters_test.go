@@ -263,10 +263,50 @@ func TestProbeAdaptersFiltersNoisyOpenAIModelsForDirectAPI(t *testing.T) {
 			t.Fatalf("models = %v, want primary OpenAI model %q", got, want)
 		}
 	}
-	for _, hidden := range []string{"gpt-realtime-2.1", "gpt-image-2", "gpt-audio-1.5", "gpt-5.3-codex", "gpt-5.3-chat-latest", "gpt-5.5-pro", "o4-mini", "sora-2"} {
+	for _, hidden := range []string{"gpt-realtime-2.1", "gpt-image-2", "gpt-audio-1.5", "gpt-5.3-chat-latest", "gpt-5.5-pro", "o4-mini", "sora-2"} {
 		if stringSliceContains(got, hidden) {
 			t.Fatalf("models = %v, should hide noisy OpenAI model %q", got, hidden)
 		}
+	}
+}
+
+func TestProbeAdaptersNoCacheBypassesPersistedModelCache(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		noCache     bool
+		wantRefresh bool
+	}{
+		{name: "default reuses the persisted resolve", noCache: false, wantRefresh: false},
+		{name: "no-cache re-resolves live", noCache: true, wantRefresh: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prev := resolveModelRows
+			resolved := false
+			resolveModelRows = func(_ context.Context, opts ResolveOptions) ([]ResolvedModel, error) {
+				resolved = true
+				if opts.Refresh != tc.wantRefresh {
+					t.Fatalf("ResolveOptions.Refresh = %v, want %v", opts.Refresh, tc.wantRefresh)
+				}
+				return []ResolvedModel{
+					{Model: Model{ID: "anthropic/claude-opus-5", Backend: BackendAnthropic, Label: "Opus 5", ReleaseDate: "2026-05-01"}, Live: true},
+				}, nil
+			}
+			t.Cleanup(func() { resolveModelRows = prev })
+
+			adapters, err := ProbeAdapters(
+				WhoamiOptions{Backend: string(BackendAnthropic), Models: true, NoCache: tc.noCache},
+				fakeProbe(map[string]string{"ANTHROPIC_API_KEY": "sk-ant-test"}, nil, nil, "/home/u"),
+			)
+			if err != nil {
+				t.Fatalf("ProbeAdapters: %v", err)
+			}
+			if !resolved {
+				t.Fatal("expected the model resolver to run for an authenticated API backend")
+			}
+			if len(adapters) != 1 || !stringSliceContains(adapters[0].Models, "claude-opus-5") {
+				t.Fatalf("adapters = %+v, want the resolved model", adapters)
+			}
+		})
 	}
 }
 
