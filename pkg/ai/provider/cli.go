@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/api"
 	sandboxruntime "github.com/flanksource/sandbox-runtime/sandbox"
 )
 
@@ -135,7 +136,11 @@ func startCLIStream(ctx context.Context, command string, args []string, stdinDat
 
 func newCLICommand(ctx context.Context, command string, args []string, cwd string, sandboxed bool) (*exec.Cmd, func(), error) {
 	if !sandboxed {
-		return exec.CommandContext(ctx, command, args...), func() {}, nil
+		// The legacy boolean still routes srt below; everything else goes through
+		// the adapter registry. Today that resolves the "none" adapter; a kind
+		// whose adapter provides a CommandWrapper gets its argv rewritten here —
+		// the single exec seam shared by claude-cli, codex-cli and gemini-cli.
+		return newSandboxedCommand(ctx, api.SandboxConfig{Kind: api.SandboxNone}, command, args)
 	}
 	cfg, err := cliSandboxConfig(command, cwd)
 	if err != nil {
@@ -156,6 +161,27 @@ func newCLICommand(ctx context.Context, command string, args []string, cwd strin
 		return nil, nil, fmt.Errorf("wrap %s with sandbox-runtime: %w", command, err)
 	}
 	return cmd, closeSandbox, nil
+}
+
+// newSandboxedCommand constructs the selected sandbox adapter and builds the
+// command through its CommandWrapper when it provides one. An adapter without
+// the capability falls through to a bare command, which is exactly what the
+// "none" adapter is.
+func newSandboxedCommand(ctx context.Context, cfg api.SandboxConfig, command string, args []string) (*exec.Cmd, func(), error) {
+	sandbox, err := api.NewSandbox(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	closeSandbox := func() { _ = sandbox.Close() }
+	if wrapper, ok := api.SandboxAs[api.CommandWrapper](sandbox); ok {
+		wrappedCommand, wrappedArgs, wrappedEnv := wrapper.Wrap(command, args, nil)
+		cmd := exec.CommandContext(ctx, wrappedCommand, wrappedArgs...)
+		if len(wrappedEnv) > 0 {
+			cmd.Env = wrappedEnv
+		}
+		return cmd, closeSandbox, nil
+	}
+	return exec.CommandContext(ctx, command, args...), closeSandbox, nil
 }
 
 func cliSandboxConfig(command, cwd string) (sandboxruntime.Config, error) {
