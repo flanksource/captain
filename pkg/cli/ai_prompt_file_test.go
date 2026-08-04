@@ -150,13 +150,14 @@ func TestOverlayCLI_CLIOverridesFrontmatter(t *testing.T) {
 func TestOverlayCLI_Sandbox(t *testing.T) {
 	for _, tt := range []struct{ name, mode, wantErr string }{
 		{name: "selects CLI for frontmatter model"},
-		{name: "rejects explicit API mode", mode: "api", wantErr: "--sandbox requires CLI mode"},
+		{name: "rejects explicit API mode", mode: "api", wantErr: "requires CLI mode"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			isolateSavedAI(t)
 			base := baseFileReq()
 			base.Model.Backend = api.BackendAnthropic
-			opts := AIPromptOptions{AIRuntimeOptions: AIRuntimeOptions{AIProviderOptions: AIProviderOptions{Sandbox: true}}}
+			// The legacy boolean spelling must keep meaning srt.
+			opts := AIPromptOptions{AIRuntimeOptions: AIRuntimeOptions{AIProviderOptions: AIProviderOptions{Sandbox: "true"}}}
 			opts.Mode = tt.mode
 			req, cfg, err := overlayCLI(base, ai.Config{}, opts)
 			if tt.wantErr != "" {

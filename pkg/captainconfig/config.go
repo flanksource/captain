@@ -22,6 +22,66 @@ type Config struct {
 	AI          AIDefaults         `yaml:"ai"`
 	Prompts     PromptDefaults     `yaml:"prompts"`
 	Attachments AttachmentDefaults `yaml:"attachments"`
+	Sandbox     SandboxDefaults    `yaml:"sandbox,omitempty"`
+}
+
+// SandboxDefaults is the sandbox block of ~/.captain.yaml: a default selector
+// plus a name→config map, shaped like AIDefaults' DefaultProvider + Providers.
+type SandboxDefaults struct {
+	// Default is the sandbox applied when neither the CLI flag nor the prompt
+	// frontmatter selects one. Empty means none.
+	Default string `yaml:"default,omitempty"`
+	// Backends are the named sandbox configurations, keyed by the name written
+	// in `sandbox:` frontmatter or passed to --sandbox.
+	Backends map[string]SandboxBackend `yaml:"backends,omitempty"`
+}
+
+// IsZero lets yaml omit an empty sandbox block instead of writing `sandbox: {}`.
+func (s SandboxDefaults) IsZero() bool {
+	return s.Default == "" && len(s.Backends) == 0
+}
+
+// SandboxBackend is one named sandbox configuration. Kind selects the adapter;
+// everything else is the adapter's own settings, carried verbatim for it to
+// decode — this package deliberately knows nothing about what they mean.
+type SandboxBackend struct {
+	Kind    string         `yaml:"kind"`
+	Options map[string]any `yaml:",inline"`
+}
+
+// SandboxSelection is a resolved sandbox choice: the adapter kind, the
+// configured backend name it came from (empty when a bare kind was named), and
+// that backend's settings.
+type SandboxSelection struct {
+	Kind    registry.SandboxKind
+	Name    string
+	Options map[string]any
+}
+
+// Resolve maps a selector — a configured backend name, or a bare adapter kind —
+// to its selection. An empty selector falls back to Default, and an empty
+// Default to "none". A selector that names neither a configured backend nor a
+// kind is an error, as is a configured backend whose kind is unknown: silently
+// running unsandboxed is the failure this method exists to prevent.
+func (s SandboxDefaults) Resolve(selector string) (SandboxSelection, error) {
+	name := strings.TrimSpace(selector)
+	if name == "" {
+		name = strings.TrimSpace(s.Default)
+	}
+	if backend, ok := s.Backends[name]; ok {
+		kind, valid := registry.ParseSandboxKind(backend.Kind)
+		if !valid {
+			return SandboxSelection{}, fmt.Errorf("sandbox backend %q has invalid kind %q (valid: %s)",
+				name, backend.Kind, registry.SandboxKindList())
+		}
+		return SandboxSelection{Kind: kind, Name: name, Options: backend.Options}, nil
+	}
+	kind, ok := registry.ParseSandboxKind(name)
+	if !ok {
+		return SandboxSelection{}, fmt.Errorf("unknown sandbox %q: neither a configured backend nor an adapter kind (kinds: %s)",
+			name, registry.SandboxKindList())
+	}
+	return SandboxSelection{Kind: kind}, nil
 }
 
 type AttachmentDefaults struct {

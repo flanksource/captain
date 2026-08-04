@@ -103,9 +103,14 @@ func overlayCLI(base ai.Request, baseCfg ai.Config, o AIPromptOptions) (ai.Reque
 			return base, baseCfg, fmt.Errorf("invalid --mode %q (valid: %s)", o.Mode, registry.RuntimeModeList())
 		}
 	}
-	if o.Sandbox {
+	// Sandbox precedence: --sandbox > frontmatter (base.Sandbox) > global default.
+	sandbox, err := resolveSandboxSelection(o.SandboxSelector(), base.Sandbox, loadSavedConfig().Sandbox)
+	if err != nil {
+		return base, baseCfg, err
+	}
+	if sandbox.Kind == registry.SandboxSRT {
 		if requestedMode != "" && requestedMode != registry.ModeCLI {
-			return base, baseCfg, fmt.Errorf("--sandbox requires CLI mode, but --mode is %q", requestedMode)
+			return base, baseCfg, fmt.Errorf("sandbox %q requires CLI mode, but --mode is %q", sandbox.Kind, requestedMode)
 		}
 		requestedMode = registry.ModeCLI
 	}
@@ -181,13 +186,19 @@ func overlayCLI(base ai.Request, baseCfg ai.Config, o AIPromptOptions) (ai.Reque
 		req.SessionID = o.Resume
 	}
 
+	// Record the winning sandbox on the request when the flag overrode it, so the
+	// serialized spec carries the choice the run was actually made with.
+	if selector := o.SandboxSelector(); selector != "" {
+		req.Sandbox = &api.SandboxRef{Backend: selector}
+	}
+
 	// Config mirrors the resolved model + budget; runtime-only knobs from CLI+saved.
 	cfg := baseCfg
 	cfg.Model = req.Model
 	cfg.Budget = req.Budget
 	cfg.APIKey = o.APIKey
 	cfg.APIURL = firstNonEmpty(strings.TrimSpace(o.APIURL), baseCfg.APIURL)
-	cfg.Sandbox = o.Sandbox || baseCfg.Sandbox
+	cfg.Sandbox = sandbox.Kind == registry.SandboxSRT || baseCfg.Sandbox
 	cfg.NoCache = req.NoCache
 	return req, cfg, nil
 }
