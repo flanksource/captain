@@ -1,0 +1,63 @@
+package verify
+
+import (
+	"context"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestCmdVerifier_TimeoutKillsProcessGroup(t *testing.T) {
+	// `sleep 30 & wait` puts a child in the group holding our output pipe. If
+	// only the shell's pid were signalled, the orphaned sleep would keep the
+	// pipe open and this test would stall on WaitDelay; the group kill brings
+	// the verdict back immediately.
+	v := &CmdVerifier{Cmd: "sh", Args: []string{"-c", "sleep 30 & wait"}, Timeout: 200 * time.Millisecond}
+
+	start := time.Now()
+	verdict, err := v.Verify(context.Background(), t.TempDir(), nil)
+
+	require.NoError(t, err)
+	assert.False(t, verdict.OK)
+	assert.Contains(t, verdict.Reason, "timed out after")
+	assert.Less(t, time.Since(start), 3*time.Second, "group kill must not wait for the orphaned child")
+}
+
+func TestCmdVerifier_ParentCancellationIsAnErrorNotAVerdict(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	v := &CmdVerifier{Cmd: "sleep", Args: []string{"5"}}
+	_, err := v.Verify(ctx, t.TempDir(), nil)
+
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestCmdVerifier_OutputIsTailBoundedWithMarker(t *testing.T) {
+	v := &CmdVerifier{
+		Cmd:          "sh",
+		Args:         []string{"-c", "i=0; while [ $i -lt 2000 ]; do echo line-$i; i=$((i+1)); done; exit 1"},
+		FeedbackTail: 512,
+	}
+
+	verdict, err := v.Verify(context.Background(), t.TempDir(), nil)
+
+	require.NoError(t, err)
+	assert.False(t, verdict.OK)
+	assert.LessOrEqual(t, len(verdict.Feedback), 512+len("[output truncated]\n"))
+	assert.True(t, strings.HasPrefix(verdict.Feedback, "[output truncated]"), "truncation must be marked")
+	assert.Contains(t, verdict.Feedback, "line-1999", "the tail, not the head, must be kept")
+}
+
+func TestCmdVerifier_StartFailureFeedsBackTheError(t *testing.T) {
+	v := &CmdVerifier{Cmd: "captain-no-such-binary"}
+
+	verdict, err := v.Verify(context.Background(), t.TempDir(), nil)
+
+	require.NoError(t, err)
+	assert.False(t, verdict.OK)
+	assert.Contains(t, verdict.Feedback, "captain-no-such-binary")
+}
