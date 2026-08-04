@@ -157,30 +157,38 @@ var _ = Describe("AI SDK v6 event stream", func() {
 	It("turns a Captain error event into a closed, valid UI stream", func() {
 		recorder, err := recordEvents(
 			api.Event{Kind: api.EventText, Text: "partial"},
+			api.Event{Kind: api.EventToolUse, ToolCallID: "call-1", Tool: "accounts_edit"},
 			api.Event{Kind: api.EventError, Error: "provider disconnected"},
 		)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(partTypes(decodedDataLines(recorder.Body.String()))).To(Equal([]string{
 			"start", "start-step", "text-start", "text-delta", "text-end",
-			"error", "finish-step", "finish",
+			"tool-input-available", "tool-output-error", "error", "finish-step", "finish",
 		}))
-		Expect(decodedDataLines(recorder.Body.String())[5]).To(HaveKeyWithValue("errorText", "provider disconnected"))
+		parts := decodedDataLines(recorder.Body.String())
+		Expect(parts[6]).To(SatisfyAll(
+			HaveKeyWithValue("toolCallId", "call-1"),
+			HaveKeyWithValue("errorText", "provider disconnected"),
+		))
+		Expect(parts[7]).To(HaveKeyWithValue("errorText", "provider disconnected"))
 		Expect(recorder.Body.String()).To(HaveSuffix("data: [DONE]\n\n"))
 	})
 
 	It("finishes an interrupted turn without rendering a provider error", func() {
 		recorder, err := recordEvents(
 			api.Event{Kind: api.EventText, Text: "partial"},
+			api.Event{Kind: api.EventToolUse, ToolCallID: "call-1", Tool: "accounts_edit"},
 			api.Event{Kind: api.EventInterrupted, Reason: "user"},
 		)
 		Expect(err).NotTo(HaveOccurred())
 		parts := decodedDataLines(recorder.Body.String())
 		Expect(partTypes(parts)).To(Equal([]string{
 			"start", "start-step", "text-start", "text-delta", "text-end",
-			"data-result", "finish-step", "finish",
+			"tool-input-available", "tool-output-error", "data-result", "finish-step", "finish",
 		}))
-		Expect(parts[5]["data"]).To(Equal(map[string]any{"success": false, "interrupted": true}))
-		Expect(parts[7]["messageMetadata"]).To(HaveKeyWithValue("interrupted", true))
+		Expect(parts[6]).To(HaveKeyWithValue("errorText", "user"))
+		Expect(parts[7]["data"]).To(Equal(map[string]any{"success": false, "interrupted": true}))
+		Expect(parts[9]["messageMetadata"]).To(HaveKeyWithValue("interrupted", true))
 		Expect(recorder.Body.String()).NotTo(ContainSubstring(`"type":"error"`))
 	})
 

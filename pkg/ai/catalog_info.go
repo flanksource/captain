@@ -12,13 +12,14 @@ import (
 // selector can be data-driven. Configured reports whether the model is
 // selectable (its API provider has a key, or its agent backend is installed).
 type ModelInfo struct {
-	ID          string    `json:"id"`
-	Provider    string    `json:"provider"`
-	Label       string    `json:"label"`
-	Runtime     api.Model `json:"runtime"`
-	Reasoning   bool      `json:"reasoning"`
-	Temperature bool      `json:"temperature"`
-	Configured  bool      `json:"configured"`
+	ID           string           `json:"id"`
+	Provider     string           `json:"provider"`
+	Label        string           `json:"label"`
+	Runtime      api.Model        `json:"runtime"`
+	Reasoning    bool             `json:"reasoning"`
+	Temperature  bool             `json:"temperature"`
+	Configured   bool             `json:"configured"`
+	Availability api.Availability `json:"availability"`
 	// Default marks captain's declared default model, so a client seeds its
 	// picker from the menu instead of hardcoding an id that rots on the next
 	// release. At most one row carries it, and none does when that model is
@@ -52,23 +53,23 @@ func BackendToProvider(b Backend) string {
 // backend binary is installed. Order mirrors the catalog so the client renders a
 // stable, grouped menu.
 func CatalogInfo(configuredProviders []string) []ModelInfo {
-	return catalogInfoFrom(Catalog(), configuredProviders)
+	return catalogInfoFrom(Catalog(), catalogInfoOptions{ConfiguredProviders: configuredProviders})
+}
+
+type catalogInfoOptions struct {
+	ConfiguredProviders []string
+	Adapters            []AdapterStatus
 }
 
 // catalogInfoFrom annotates an arbitrary model list with selectability, shared
 // by CatalogInfo (static catalog) and LiveCatalogInfo (whoami-probed catalog).
 //
-// Both inputs arrive already filtered — Catalog() drops disabled models at read
-// time and mergeLiveCatalog drops disabled probe rows — so this only annotates.
-func catalogInfoFrom(models []Model, configuredProviders []string) []ModelInfo {
+// Static execution menus arrive filtered; live descriptive menus may retain
+// disabled rows so this seam also supplies their reason and remediation.
+func catalogInfoFrom(models []Model, options catalogInfoOptions) []ModelInfo {
 	out := make([]ModelInfo, 0, len(models))
 	for _, m := range models {
-		configured := false
-		if m.IsAgent() {
-			configured = agentBackendAvailable(m.Backend)
-		} else {
-			configured = slices.Contains(configuredProviders, BackendToProvider(m.Backend))
-		}
+		availability := modelAvailability(m, options)
 		runtime := api.Model{
 			Name:    m.BareID(),
 			Backend: m.Backend,
@@ -83,13 +84,57 @@ func catalogInfoFrom(models []Model, configuredProviders []string) []ModelInfo {
 			Runtime:         runtime,
 			Reasoning:       m.Reasoning,
 			Temperature:     m.Temperature,
-			Configured:      configured,
-			Default:         m.ID == registry.DefaultModelID,
+			Configured:      availability.IsAvailable(),
+			Availability:    availability,
+			Default:         m.ID == registry.DefaultModelID && availability.State != api.AvailabilityDisabled,
 			ContextWindow:   m.ContextWindow,
 			InputMediaTypes: append([]string(nil), m.InputMediaTypes...),
 		})
 	}
 	return out
+}
+
+func modelAvailability(model Model, options catalogInfoOptions) api.Availability {
+	disabled := Disabled()
+	if disabled.Model(model.Backend, model.BareID()) {
+		reason := disabled.Reason(model.Backend)
+		if reason == "" {
+			reason = "model " + model.ID
+		}
+		return api.Availability{State: api.AvailabilityDisabled,
+			Reason:      "Disabled by " + reason + " in Captain configuration.",
+			Remediation: "Enable " + reason + " on the Whoami page, then refresh."}
+	}
+	if slices.Contains(options.ConfiguredProviders, BackendToProvider(model.Backend)) {
+		return api.Available()
+	}
+	for _, adapter := range options.Adapters {
+		if adapter.Backend == string(model.Backend) {
+			return AvailabilityForAdapter(adapter)
+		}
+	}
+	if model.IsAgent() && agentBackendAvailable(model.Backend) {
+		return api.Available()
+	}
+	if model.IsAgent() {
+		return AvailabilityForAdapter(AdapterStatus{Backend: string(model.Backend), Type: "cli", BinaryMissing: requiredBinary(model.Backend)})
+	}
+	return AvailabilityForAdapter(AdapterStatus{Backend: string(model.Backend), Type: "api"})
+}
+
+func requiredBinary(backend Backend) string {
+	switch backend {
+	case BackendCodexCLI, BackendCodexAgent, BackendCodexCmux:
+		return "codex"
+	case BackendClaudeCLI, BackendClaudeCmux:
+		return "claude"
+	case BackendClaudeAgent:
+		return "tsx"
+	case BackendGeminiCLI:
+		return "gemini"
+	default:
+		return string(backend)
+	}
 }
 
 // agentBackendAvailable reports whether an agent backend's local binary is

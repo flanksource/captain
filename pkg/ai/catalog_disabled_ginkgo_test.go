@@ -1,6 +1,8 @@
 package ai
 
 import (
+	"time"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -103,6 +105,33 @@ var _ = Describe("catalog opt-out filtering", func() {
 
 		for _, info := range CatalogInfo([]string{"deepseek"}) {
 			Expect(info.Provider).NotTo(Equal("deepseek"))
+		}
+	})
+
+	It("retains disabled models with remediation in the live descriptive menu", func() {
+		previousProbe := adapterProbe
+		previousCache, previousAt := adapterCache, adapterCacheAt
+		DeferCleanup(func() {
+			adapterProbe = previousProbe
+			adapterCache, adapterCacheAt = previousCache, previousAt
+		})
+		adapterCache, adapterCacheAt = nil, time.Time{}
+		adapterProbe = func() ([]AdapterStatus, error) { return nil, nil }
+		disable(nil, []string{"deepseek"}, nil, nil, nil)
+
+		infos, err := LiveCatalogInfo(nil)
+		Expect(err).NotTo(HaveOccurred())
+		var deepseek []ModelInfo
+		for _, info := range infos {
+			if info.Provider == "deepseek" {
+				deepseek = append(deepseek, info)
+			}
+		}
+		Expect(deepseek).NotTo(BeEmpty())
+		for _, info := range deepseek {
+			Expect(info.Configured).To(BeFalse())
+			Expect(info.Availability.State).To(Equal(api.AvailabilityDisabled))
+			Expect(info.Availability.Remediation).NotTo(BeEmpty())
 		}
 	})
 

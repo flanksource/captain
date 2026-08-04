@@ -55,6 +55,9 @@ func (s *DatabaseThreadStore) Get(ctx context.Context, id string) (*Thread, erro
 	if err != nil {
 		return nil, err
 	}
+	if overview.Source != "aichat" {
+		return nil, fmt.Errorf("captain chat session %s has source %q", overview.ID, overview.Source)
+	}
 	aggregate, err := s.getSession(ctx, *overview)
 	if err != nil {
 		return nil, err
@@ -79,8 +82,8 @@ func (s *DatabaseThreadStore) getOverview(ctx context.Context, id string) (*data
 	if err != nil {
 		return nil, err
 	}
-	if overview.ID != parsed || overview.Source != "aichat" {
-		return nil, fmt.Errorf("captain chat session %s has source %q", parsed, overview.Source)
+	if overview.ID != parsed {
+		return nil, fmt.Errorf("captain session %s resolved to %s", parsed, overview.ID)
 	}
 	return overview, nil
 }

@@ -2,6 +2,8 @@ package aichat
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
 	"github.com/flanksource/captain/pkg/api"
 )
@@ -158,7 +160,19 @@ func observeExecutionEvents(
 		for event := range source {
 			observed, err := execution.Observe(ctx, event)
 			if err != nil {
-				sendEvent(ctx, out, api.Event{Kind: api.EventError, Error: err.Error(), Model: event.Model})
+				failure := api.Event{
+					Kind: api.EventError, Error: err.Error(), Model: event.Model, SessionID: event.SessionID,
+				}
+				if event.Kind == api.EventError {
+					if event.Error != "" {
+						failure.Error = errors.Join(errors.New(event.Error), err).Error()
+					}
+				} else if terminal, terminalErr := execution.Observe(ctx, failure); terminalErr != nil {
+					failure.Error = errors.Join(err, fmt.Errorf("finish authoritative execution: %w", terminalErr)).Error()
+				} else {
+					failure = terminal
+				}
+				sendEvent(ctx, out, failure)
 				return
 			}
 			if !sendEvent(ctx, out, observed) {
