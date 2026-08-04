@@ -27,7 +27,12 @@ func main() {
 		SilenceUsage: true,
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
 			clicky.Flags.UseFlags()
-			cli.EnableHTTPWireLogging()
+			// A malformed -Phttp.har.level is a hard stop rather than a run
+			// that silently captures nothing.
+			if err := cli.EnableHTTPWireLogging(); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
 			// Every model/effort resolution path reads a process-wide opt-out set;
 			// a malformed config is a hard stop rather than a silent full catalog.
 			if err := cli.InstallDisabledSelections(); err != nil {
@@ -41,8 +46,13 @@ func main() {
 	clicky.BindAllFlags(rootCmd.PersistentFlags(), "format")
 	cli.BindDatabaseURLFlag(rootCmd.PersistentFlags())
 	// Bind commons' -P/--properties flag so per-subsystem log levels and HTTP
-	// wire logging can be toggled, e.g. -Plog.level.http=trace3.
+	// wire logging can be toggled, e.g. -Plog.level.http=trace or
+	// -Phttp.log.base-level=info.
 	properties.BindFlags(rootCmd.PersistentFlags())
+
+	// Document those properties where they are discoverable: appended to the
+	// root --help, after the flags they complement.
+	installRootHelp(rootCmd)
 
 	// Bind HistoryOptions directly on rootCmd so 'captain' IS 'captain history'.
 	// All history flags (--tool, --category, --since, --limit, -f, ...) work
@@ -106,9 +116,11 @@ func main() {
 		Short: "AI provider commands",
 		Long: "AI provider commands.\n\n" +
 			"Logging: increase application verbosity with -v/-vv or --log-level=debug. " +
-			"To log HTTP requests/responses to the provider APIs (with sensitive headers " +
-			"redacted), set -Plog.level.http=trace3 for headers and timing, or trace4 to " +
-			"also include request/response bodies.",
+			"HTTP calls to the provider APIs are logged on the same ladder (with credentials " +
+			"redacted): failed requests are logged by default, -v adds an access line per " +
+			"request, -vv adds headers and query params, -vvv request bodies, -vvvv response " +
+			"bodies. Use -Plog.level.http=<level> to raise only HTTP logging, or " +
+			"-Phttp.har=<path> to write the exchanges to a HAR archive instead.",
 	}
 	rootCmd.AddCommand(aiCmd)
 	aiCmd.AddCommand(cli.NewCommandAlias(cli.CommandAliasOptions{
@@ -125,7 +137,7 @@ func main() {
 
 	whoamiCmd := clicky.AddNamedCommand("whoami", rootCmd, cli.WhoamiOptions{}, cli.RunWhoami)
 	whoamiCmd.Short = "List agent adapters, auth methods, and available models"
-	whoamiCmd.Long = "Show every AI agent adapter (API providers and CLI agents), how each is authenticated (Captain vault, API-key env var, or CLI login), whether its CLI binary is installed, and the models each provider exposes via a live API call. Disabled models are hidden by default; pass --disabled=true to include them. Pass --models=false to skip the network probes, or --backend to inspect a single adapter."
+	whoamiCmd.Long = "Show every AI agent adapter (API providers and CLI agents), how each is authenticated (Captain vault, API-key env var, or CLI login), whether its CLI binary is installed, and the models each provider exposes via a live API call. Disabled models are hidden by default; pass --disabled=true to include them. Pass --models=false to skip the network probes, --backend to inspect a single adapter, or --no-cache to bypass the persisted model and pricing caches and re-query both live."
 
 	configureCmd := clicky.AddNamedCommandWithContext("configure", rootCmd, cli.ConfigureOptions{}, cli.RunConfigure)
 	configureCmd.Use = "configure [provider]"
@@ -262,7 +274,11 @@ func main() {
 	portKillCmd.Short = "Kill the process listening on a TCP port"
 	portKillCmd.Long = "Find the process bound to the specified TCP port using lsof and kill it with SIGKILL. Reports the process name and PID before killing."
 
-	if err := rootCmd.Execute(); err != nil {
+	err := rootCmd.Execute()
+	// Flush before exiting: PersistentPostRun does not run when a command
+	// fails, and a failed run is the one whose HAR you want.
+	cli.FlushHAR()
+	if err != nil {
 		os.Exit(1)
 	}
 }
