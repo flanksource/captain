@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/flanksource/captain/pkg/captainconfig"
 	"github.com/flanksource/captain/pkg/gitagent"
 	"github.com/flanksource/clicky"
 )
@@ -46,6 +47,19 @@ func RunGitAgentServe(ctx context.Context, opts GitAgentServeOptions) (any, erro
 		}
 		clicky.Printf("%s\n", confirmation)
 		clicky.Printf("this agent's key fingerprint: %s\n", fp)
+		// Record where the relay pushes go (A3.4: through the flocked Update).
+		err = captainconfig.Update(func(cfg *captainconfig.Config) error {
+			backend := ensureGitAgentBackend(cfg, opts.Backend)
+			backend.Options["supervisor"] = map[string]any{
+				"url":             opts.Supervisor,
+				"hostFingerprint": opts.HostFingerprint,
+			}
+			cfg.Sandbox.Backends[opts.Backend] = backend
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
 	}
 	root := opts.Root
 	if root == "" {
@@ -56,6 +70,9 @@ func RunGitAgentServe(ctx context.Context, opts GitAgentServeOptions) (any, erro
 	}
 	// Reclaim worktrees orphaned by a crashed hook (R10.3).
 	gitagent.PruneWorktrees(ctx, root)
+	if err := ensureServedRepos(ctx, root, role); err != nil {
+		return nil, err
+	}
 	hostKey, hostFP, err := gitagent.EnsureKeyPair(filepath.Join(keysDir, "host_ed25519"))
 	if err != nil {
 		return nil, err
@@ -79,4 +96,36 @@ func RunGitAgentServe(ctx context.Context, opts GitAgentServeOptions) (any, erro
 		return nil, err
 	}
 	return nil, nil
+}
+
+// ensureServedRepos creates the role's default repository and (re-)installs
+// the hook shims on every repo under root, so an upgraded captain binary
+// repoints the shims at itself.
+func ensureServedRepos(ctx context.Context, root string, role gitagent.ReceiverRole) error {
+	if role == gitagent.RoleSidecar {
+		if err := gitagent.InitSidecar(ctx, filepath.Join(root, "repo.git")); err != nil {
+			return err
+		}
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		repo := filepath.Join(root, e.Name())
+		if _, err := os.Stat(filepath.Join(repo, "HEAD")); err != nil {
+			continue
+		}
+		if err := gitagent.InstallHookShims(repo, exe, role); err != nil {
+			return err
+		}
+	}
+	return nil
 }

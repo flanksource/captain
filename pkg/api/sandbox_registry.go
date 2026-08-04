@@ -19,6 +19,11 @@ type SandboxConfig struct {
 	// Options carries the kind-specific settings verbatim. Each adapter decodes
 	// its own; an unknown key is the adapter's error to raise, not this layer's.
 	Options map[string]any `json:"options,omitempty" yaml:"options,omitempty"`
+	// Agent pins one enrolled agent of a git-agent backend, from
+	// SandboxRef.Agent. Empty lets the adapter choose.
+	Agent string `json:"agent,omitempty" yaml:"agent,omitempty"`
+	// Policy is the per-run override from SandboxRef.Policy.
+	Policy *SandboxPolicy `json:"policy,omitempty" yaml:"policy,omitempty"`
 }
 
 // SandboxFactory constructs a Sandbox from a SandboxConfig.
@@ -87,6 +92,14 @@ func NewSandbox(cfg SandboxConfig) (Sandbox, error) {
 var sandboxCapabilityChecks = map[SandboxCapability]func(Sandbox) bool{
 	CapabilityWrapCommand: func(s Sandbox) bool { _, ok := SandboxAs[CommandWrapper](s); return ok },
 	CapabilityRemoteExec:  func(s Sandbox) bool { _, ok := SandboxAs[RemoteExecutor](s); return ok },
+	CapabilityIsolateWorkspace: func(s Sandbox) bool {
+		iso, ok := SandboxAs[WorkspaceIsolating](s)
+		return ok && iso.IsolatesWorkspace()
+	},
+	CapabilityEgressProxy: func(s Sandbox) bool {
+		proxy, ok := SandboxAs[EgressProxied](s)
+		return ok && proxy.ProvidesEgressProxy()
+	},
 }
 
 func verifySandboxCapabilities(descriptor *SandboxDescriptor, sandbox Sandbox) error {

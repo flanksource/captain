@@ -26,12 +26,12 @@ func resolveSandboxSelection(flagSelector string, ref *api.SandboxRef, defaults 
 		return captainconfig.SandboxSelection{}, err
 	}
 	switch selection.Kind {
-	case registry.SandboxNone, registry.SandboxSRT, registry.SandboxContainer:
+	case registry.SandboxNone, registry.SandboxSRT, registry.SandboxContainer, registry.SandboxGitAgent:
 		return selection, nil
 	default:
 		return captainconfig.SandboxSelection{}, fmt.Errorf(
-			"sandbox kind %q is not wired to execution yet (supported today: %s, %s, %s)",
-			selection.Kind, registry.SandboxNone, registry.SandboxSRT, registry.SandboxContainer)
+			"sandbox kind %q is not wired to execution yet (supported today: %s, %s, %s, %s)",
+			selection.Kind, registry.SandboxNone, registry.SandboxSRT, registry.SandboxContainer, registry.SandboxGitAgent)
 	}
 }
 
@@ -51,10 +51,16 @@ func sandboxForcedMode(kind registry.SandboxKind) registry.RuntimeMode {
 
 // sandboxSelectionConfig projects a resolved selection onto the runtime
 // config. "none" stays nil, so an unsandboxed run carries no selection at all
-// and the exec seam's nil check keeps its meaning.
-func sandboxSelectionConfig(selection captainconfig.SandboxSelection) *api.SandboxConfig {
+// and the exec seam's nil check keeps its meaning. ref, when present, carries
+// the per-prompt agent pin and policy override (git-agent).
+func sandboxSelectionConfig(selection captainconfig.SandboxSelection, ref *api.SandboxRef) *api.SandboxConfig {
 	if selection.Kind == registry.SandboxNone {
 		return nil
 	}
-	return &api.SandboxConfig{Kind: selection.Kind, Name: selection.Name, Options: selection.Options}
+	cfg := &api.SandboxConfig{Kind: selection.Kind, Name: selection.Name, Options: selection.Options}
+	if ref != nil {
+		cfg.Agent = ref.Agent
+		cfg.Policy = ref.Policy
+	}
+	return cfg
 }

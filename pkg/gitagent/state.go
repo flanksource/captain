@@ -24,7 +24,8 @@ type TaskState struct {
 	Agent          string    `json:"agent,omitempty"`
 	Base           string    `json:"base"`
 	DispatchCommit string    `json:"dispatchCommit"`
-	Attempts       int       `json:"attempts"` // highest attempt seen
+	ControlCommit  string    `json:"controlCommit,omitempty"` // the dispatched control payloads
+	Attempts       int       `json:"attempts"`                // highest attempt seen
 	Relay          RelayMode `json:"relay,omitempty"`
 	Policy         Policy    `json:"policy"`
 	UpdatedAt      time.Time `json:"updatedAt"`

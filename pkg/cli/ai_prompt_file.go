@@ -202,7 +202,9 @@ func overlayCLI(base ai.Request, baseCfg ai.Config, o AIPromptOptions) (ai.Reque
 	// so it overwrites rather than ORs with baseCfg: an explicit "none" must be
 	// able to turn an inherited srt selection OFF.
 	cfg.Sandbox = sandbox.Kind == registry.SandboxSRT
-	cfg.SandboxSelection = sandboxSelectionConfig(sandbox)
+	// req.Sandbox is the winning ref (frontmatter, or the flag's override
+	// recorded above), so its agent pin and policy ride along.
+	cfg.SandboxSelection = sandboxSelectionConfig(sandbox, req.Sandbox)
 	cfg.NoCache = req.NoCache
 	return req, cfg, nil
 }

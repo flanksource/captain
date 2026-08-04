@@ -17,12 +17,16 @@ const (
 
 // BuildControlCommit writes payloads as a flat tree and wraps it in a
 // parentless commit. Control refs point at commits, never bare trees — a
-// tree-tipped ref trips gc, bitmap and fsck paths (R3.3).
-func BuildControlCommit(ctx context.Context, repoDir string, payloads map[string][]byte) (string, error) {
+// tree-tipped ref trips gc, bitmap and fsck paths (R3.3). env matters: built
+// with a hook environment the objects land in quarantine and are discarded
+// with a rejected push; nil means the process environment, scrubbed.
+func BuildControlCommit(ctx context.Context, repoDir string, env []string, payloads map[string][]byte) (string, error) {
 	if len(payloads) == 0 {
 		return "", fmt.Errorf("a control commit needs at least one payload")
 	}
-	env := ScrubGitEnv(os.Environ())
+	if env == nil {
+		env = ScrubGitEnv(os.Environ())
+	}
 	names := make([]string, 0, len(payloads))
 	for name := range payloads {
 		if name == "" || strings.ContainsAny(name, "/\x00") {

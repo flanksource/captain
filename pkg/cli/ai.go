@@ -129,7 +129,7 @@ func (o AIProviderOptions) ToConfig() (ai.Config, error) {
 		APIKey:           o.APIKey,
 		APIURL:           strings.TrimSpace(o.APIURL),
 		Sandbox:          sandbox.Kind == registry.SandboxSRT,
-		SandboxSelection: sandboxSelectionConfig(sandbox),
+		SandboxSelection: sandboxSelectionConfig(sandbox, nil),
 		NoCache:          o.NoCache || saved.NoCache,
 		SchemaRepair:     schemaRepairConfig(savedCfg.Prompts.SchemaRepair),
 	}, nil
@@ -454,6 +454,15 @@ func buildProvider(ctx context.Context, req *ai.Request, cfg ai.Config) (ai.Prov
 	cleanup := func() {}
 	if req.NoCache {
 		cfg.NoCache = true
+	}
+	// A remote-executing sandbox replaces provider execution wholesale: the
+	// run happens on another machine, so no local setup checkout, no CLI
+	// process, no streaming. Resolved before setup.Apply because the sandbox
+	// is itself a workspace isolator — a local checkout would double-isolate.
+	if remote, err := remoteExecProviderFor(req, cfg); err != nil {
+		return nil, cleanup, err
+	} else if remote != nil {
+		return remote, cleanup, nil
 	}
 	prepared, err := setup.Apply(ctx, req, "")
 	if err != nil {

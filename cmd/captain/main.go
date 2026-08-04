@@ -133,6 +133,9 @@ func main() {
 	clicky.AddNamedCommand("list", gitAgentCmd, cli.GitAgentListOptions{}, cli.RunGitAgentList).Short = "List enrolled agents and pending enrollments"
 	clicky.AddNamedCommand("revoke", gitAgentCmd, cli.GitAgentRevokeOptions{}, cli.RunGitAgentRevoke).Short = "Revoke an enrolled agent's key"
 	clicky.AddNamedCommandWithContext("serve", gitAgentCmd, cli.GitAgentServeOptions{}, cli.RunGitAgentServe).Short = "Run the receive endpoint on this host (agent sidecar or supervisor mailbox)"
+	hookLeaf := clicky.AddNamedCommandWithContext("hook", gitAgentCmd, cli.GitAgentHookOptions{}, cli.RunGitAgentHook)
+	hookLeaf.Short = "Internal: receive-hook entrypoint invoked by the installed shims"
+	hookLeaf.Hidden = true
 	gitAgentCmd.AddCommand(&cobra.Command{
 		Use:                "ssh",
 		Hidden:             true,

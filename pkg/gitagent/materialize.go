@@ -40,7 +40,11 @@ func Materialize(ctx context.Context, repoDir string, env []string, commitOID, d
 	if _, err := runGit(ctx, repoDir, ienv, "read-tree", commitOID); err != nil {
 		return 0, err
 	}
-	if _, err := runGit(ctx, repoDir, ienv, "checkout-index", "-a", "-f", "--prefix="+dstAbs+string(os.PathSeparator)); err != nil {
+	// The --work-tree + core.bare=false form is the one verified to write a
+	// full tree from a bare receiver during pre-receive (§1.3); --prefix
+	// refuses to run without a work tree there.
+	if _, err := runGit(ctx, repoDir, ienv,
+		"-c", "core.bare=false", "--work-tree="+dstAbs, "checkout-index", "-a", "-f"); err != nil {
 		return 0, err
 	}
 	count, err := countMaterialized(dstAbs)
