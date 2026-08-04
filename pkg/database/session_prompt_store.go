@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -273,6 +274,17 @@ func (db *DB) CreateOrGetSession(ctx context.Context, input CreateSessionInput) 
 	}
 	if err := db.reconcileSessionHierarchy(ctx, existing, record); err != nil {
 		return nil, err
+	}
+	if len(record.Metadata) > 0 {
+		metadata, err := json.Marshal(record.Metadata)
+		if err != nil {
+			return nil, fmt.Errorf("encode Captain session metadata: %w", err)
+		}
+		if err := db.gorm.WithContext(ctx).Model(&sessionRecord{}).
+			Where("id = ?", existing.ID).
+			Update("metadata", gorm.Expr("metadata || CAST(? AS jsonb)", string(metadata))).Error; err != nil {
+			return nil, fmt.Errorf("merge Captain session metadata: %w", err)
+		}
 	}
 	return db.GetSession(ctx, existing.ID)
 }

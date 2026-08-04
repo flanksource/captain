@@ -98,8 +98,9 @@ func TestRunSessionListAndGetClaude(t *testing.T) {
 	if detail.Total != 1 || len(detail.Sessions) != 1 || detail.Sessions[0].Detail == nil {
 		t.Fatalf("session detail result = %+v", detail)
 	}
-	parsed := detail.Sessions[0].Detail
-	if parsed.Source != "claude" || parsed.ID != "sess-claude" {
+	item := detail.Sessions[0]
+	parsed := item.Detail
+	if parsed.Source != "claude" || parsed.ID != item.CaptainID || parsed.ProviderSessionID != "sess-claude" {
 		t.Fatalf("session detail meta = %+v", parsed)
 	}
 	entries := parsed.ToReplayEntries()

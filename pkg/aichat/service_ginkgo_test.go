@@ -16,6 +16,7 @@ import (
 
 type fakeResolver struct {
 	models   aichat.ModelCatalogResponse
+	runtimes []api.RuntimeFamily
 	provider *fakeStreamingProvider
 	configs  []api.Config
 }
@@ -44,6 +45,10 @@ func (f *fakeProviderConfigSource) ProviderConfig(_ context.Context, request aic
 
 func (f *fakeResolver) Models(context.Context) (aichat.ModelCatalogResponse, error) {
 	return f.models, nil
+}
+
+func (f *fakeResolver) Runtimes(context.Context) ([]api.RuntimeFamily, error) {
+	return f.runtimes, nil
 }
 
 func (f *fakeResolver) Provider(_ context.Context, config api.Config) (api.StreamingProvider, error) {
@@ -98,8 +103,8 @@ func (f *fakeStreamingProvider) Interrupt(ctx context.Context) error {
 var _ = Describe("Captain aichat service", func() {
 	It("annotates the model catalog with request-scoped configured providers", func() {
 		resolver := &fakeResolver{models: aichat.ModelCatalogResponse{
-			{ID: "anthropic/claude-sonnet", Provider: "anthropic", Label: "Claude"},
-			{ID: "openai/gpt", Provider: "openai", Label: "GPT"},
+			{ID: "anthropic/claude-sonnet", Provider: "anthropic", Label: "Claude", Availability: api.Availability{State: api.AvailabilityMissingCredential, Reason: "No Claude API credentials.", Remediation: "Configure credentials."}},
+			{ID: "openai/gpt", Provider: "openai", Label: "GPT", Availability: api.Availability{State: api.AvailabilityMissingCredential, Reason: "No OpenAI API credentials.", Remediation: "Configure credentials."}},
 		}}
 		source := &fakeProviderConfigSource{backends: []api.Backend{api.BackendOpenAI}}
 		service := aichat.NewService(aichat.ServiceOptions{Resolver: resolver, ProviderConfig: source})
@@ -112,6 +117,28 @@ var _ = Describe("Captain aichat service", func() {
 		Expect(models).To(HaveLen(2))
 		Expect(models[0].Configured).To(BeFalse())
 		Expect(models[1].Configured).To(BeTrue())
+		Expect(models[0].Availability.State).To(Equal(api.AvailabilityMissingCredential))
+		Expect(models[1].Availability).To(Equal(api.Available()))
+	})
+
+	It("annotates runtime modes with request-scoped configured providers", func() {
+		resolver := &fakeResolver{runtimes: []api.RuntimeFamily{{
+			Family: "codex", Provider: "openai", CatalogPrefix: "openai",
+			Modes: []api.RuntimeModeEntry{{
+				Mode: "api", Backend: string(api.BackendOpenAI), Kind: "api",
+				Availability: api.Availability{State: api.AvailabilityMissingCredential, Reason: "No OpenAI API credentials.", Remediation: "Configure credentials."},
+			}},
+		}}}
+		source := &fakeProviderConfigSource{backends: []api.Backend{api.BackendOpenAI}}
+		service := aichat.NewService(aichat.ServiceOptions{Resolver: resolver, ProviderConfig: source})
+
+		response := httptest.NewRecorder()
+		service.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/chat/runtimes", nil))
+		Expect(response.Code).To(Equal(http.StatusOK))
+		var runtimes []api.RuntimeFamily
+		Expect(json.Unmarshal(response.Body.Bytes(), &runtimes)).To(Succeed())
+		Expect(runtimes).To(HaveLen(1))
+		Expect(runtimes[0].Modes[0].Availability).To(Equal(api.Available()))
 	})
 
 	It("applies request-scoped credentials after canonical model selection", func() {
@@ -216,7 +243,8 @@ var _ = Describe("Captain aichat service", func() {
 	It("serves models and tools from injected Captain seams", func() {
 		resolver := &fakeResolver{models: aichat.ModelCatalogResponse{{
 			ID: "openai/test-model", Provider: "openai", Label: "Test", Configured: true,
-			Runtime: api.Model{Name: "test-model", Backend: api.BackendOpenAI},
+			Availability: api.Available(),
+			Runtime:      api.Model{Name: "test-model", Backend: api.BackendOpenAI},
 		}}}
 		service := aichat.NewService(aichat.ServiceOptions{
 			Resolver: resolver,
@@ -238,7 +266,7 @@ var _ = Describe("Captain aichat service", func() {
 		models := httptest.NewRecorder()
 		service.Handler().ServeHTTP(models, httptest.NewRequest(http.MethodGet, "/api/chat/models", nil))
 		Expect(models.Code).To(Equal(http.StatusOK))
-		Expect(models.Body.String()).To(MatchJSON(`[{"id":"openai/test-model","provider":"openai","label":"Test","runtime":{"model":"test-model","backend":"openai"},"reasoning":false,"temperature":false,"configured":true,"contextWindow":0,"inputMediaTypes":null}]`))
+		Expect(models.Body.String()).To(MatchJSON(`[{"id":"openai/test-model","provider":"openai","label":"Test","runtime":{"model":"test-model","backend":"openai"},"reasoning":false,"temperature":false,"configured":true,"availability":{"state":"available"},"contextWindow":0,"inputMediaTypes":null}]`))
 
 		tools := httptest.NewRecorder()
 		service.Handler().ServeHTTP(tools, httptest.NewRequest(http.MethodGet, "/api/chat/tools", nil))

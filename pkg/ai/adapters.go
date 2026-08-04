@@ -21,6 +21,7 @@ type WhoamiOptions struct {
 	Models          bool   `flag:"models" help:"List models from provider APIs or installed CLI catalogs" default:"true" short:"m"`
 	Limit           int    `flag:"limit" help:"Max sample model IDs to show per adapter in pretty output after per-prefix filtering (0 = all)" default:"0" short:"l"`
 	IncludeDisabled bool   `flag:"disabled" help:"Include disabled models" default:"false"`
+	NoCache         bool   `flag:"no-cache" help:"Bypass the persisted model and OpenRouter pricing caches and re-query both live" default:"false"`
 }
 
 // AdapterStatus is the resolved auth/availability of a single agent adapter
@@ -32,16 +33,19 @@ type AdapterStatus struct {
 	// Provider and Mode are the two axes Backend is a pair of. They are carried
 	// on the wire so the whoami page can group and filter cards from registry
 	// truth instead of re-deriving the mapping in TypeScript.
-	Provider      string   `json:"provider"`
-	Mode          string   `json:"mode"`
-	Authenticated bool     `json:"authenticated"`
-	AuthMethod    string   `json:"authMethod,omitempty"`
-	AuthDetail    string   `json:"authDetail,omitempty"`
-	Binary        string   `json:"binary,omitempty"`
-	BinaryMissing string   `json:"binaryMissing,omitempty"`
-	ModelCount    int      `json:"modelCount"`
-	Models        []string `json:"models,omitempty"`
-	ModelError    string   `json:"modelError,omitempty"`
+	Provider          string   `json:"provider"`
+	Mode              string   `json:"mode"`
+	Authenticated     bool     `json:"authenticated"`
+	AuthMethod        string   `json:"authMethod,omitempty"`
+	AuthDetail        string   `json:"authDetail,omitempty"`
+	Binary            string   `json:"binary,omitempty"`
+	BinaryMissing     string   `json:"binaryMissing,omitempty"`
+	DependencyMissing string   `json:"dependencyMissing,omitempty"`
+	Provisioner       string   `json:"provisioner,omitempty"`
+	RuntimeError      string   `json:"runtimeError,omitempty"`
+	ModelCount        int      `json:"modelCount"`
+	Models            []string `json:"models,omitempty"`
+	ModelError        string   `json:"modelError,omitempty"`
 
 	ModelDetails []ModelDef `json:"modelDetails,omitempty"`
 
@@ -61,7 +65,7 @@ func (a AdapterStatus) Ready() bool {
 		return false
 	}
 	if a.Type == "cli" {
-		return a.Binary != ""
+		return (a.Binary != "" || a.Provisioner != "") && a.DependencyMissing == "" && a.RuntimeError == ""
 	}
 	return true
 }
@@ -213,7 +217,13 @@ func resolveAdapter(backend Backend, p AuthProbe) AdapterStatus {
 	}
 
 	if cli, ok := cliAdapters()[backend]; ok {
-		if path, err := p.LookPath(cli.binary); err == nil {
+		if runtime, custom := probeRuntime(backend); custom {
+			st.Binary = runtime.Binary
+			st.BinaryMissing = runtime.BinaryMissing
+			st.DependencyMissing = runtime.DependencyMissing
+			st.Provisioner = runtime.Provisioner
+			st.RuntimeError = runtime.Error
+		} else if path, err := p.LookPath(cli.binary); err == nil {
 			st.Binary = path
 		} else {
 			st.BinaryMissing = cli.binary
@@ -274,7 +284,7 @@ func ProbeAdapters(opts WhoamiOptions, probe AuthProbe) ([]AdapterStatus, error)
 	var models map[Backend]modelFetch
 	var codexModels modelFetch
 	if opts.Models {
-		models = fetchAPIModels(backends, probe)
+		models = fetchAPIModels(backends, probe, opts.NoCache)
 		codexModels = fetchCodexModels(backends, probe)
 	}
 

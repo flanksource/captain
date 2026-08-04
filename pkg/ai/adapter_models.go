@@ -23,8 +23,9 @@ var resolveModelRows = ResolveModels
 // not participate: their model catalogs must describe the runtime they execute,
 // independent of whether the parent provider's API key happens to be present.
 // The resolver is Captain's cached model path, so repeated probes reuse a fresh
-// cache instead of hitting providers every time.
-func fetchAPIModels(backends []Backend, probe AuthProbe) map[Backend]modelFetch {
+// cache instead of hitting providers every time; refresh bypasses that cache and
+// re-queries every provider listing.
+func fetchAPIModels(backends []Backend, probe AuthProbe, refresh bool) map[Backend]modelFetch {
 	apis := map[Backend]bool{}
 	for _, b := range backends {
 		if b.Kind() != "api" {
@@ -46,7 +47,7 @@ func fetchAPIModels(backends []Backend, probe AuthProbe) map[Backend]modelFetch 
 		wg.Add(1)
 		go func(backend Backend) {
 			defer wg.Done()
-			rows, err := resolveModelRows(context.Background(), ResolveOptions{Backend: backend, UseTokens: true})
+			rows, err := resolveModelRows(context.Background(), ResolveOptions{Backend: backend, UseTokens: true, Refresh: refresh})
 			m := liveModelDefs(rows, backend)
 			mu.Lock()
 			out[backend] = modelFetch{models: m, err: err}

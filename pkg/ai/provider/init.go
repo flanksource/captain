@@ -12,6 +12,7 @@ import (
 )
 
 func init() {
+	ai.RegisterRuntimeProbe(ai.BackendClaudeAgent, claudeagent.ProbeRuntime)
 	// API backends are served by Firebase Genkit (replaces the per-SDK providers).
 	ai.RegisterProvider(ai.BackendAnthropic, func(cfg ai.Config) (ai.Provider, error) { return genkit.New(cfg) })
 	ai.RegisterProvider(ai.BackendOpenAI, func(cfg ai.Config) (ai.Provider, error) { return genkit.New(cfg) })

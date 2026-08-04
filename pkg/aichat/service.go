@@ -80,9 +80,25 @@ func (s *Service) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/chat", s.handleChat)
 	mux.HandleFunc("GET /api/chat/models", s.handleModels)
+	mux.HandleFunc("GET /api/chat/runtimes", s.handleRuntimes)
 	mux.HandleFunc("GET /api/chat/tools", s.handleTools)
 	s.registerThreadRoutes(mux)
 	return mux
+}
+
+func (s *Service) handleRuntimes(w http.ResponseWriter, request *http.Request) {
+	runtimes, err := s.resolver.Runtimes(request.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	if err := s.annotateConfiguredRuntimes(request.Context(), runtimes); err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	if err := writeJSON(w, http.StatusOK, runtimes); err != nil {
+		serviceLog.Errorf("write chat runtimes response: %v", err)
+	}
 }
 
 func (s *Service) handleModels(w http.ResponseWriter, request *http.Request) {

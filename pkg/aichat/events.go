@@ -141,6 +141,9 @@ func (s *eventStream) interrupted(event api.Event) error {
 	if err := s.closeBlock(); err != nil {
 		return err
 	}
+	if err := s.terminalizeTools(event.Reason); err != nil {
+		return err
+	}
 	if err := s.writer.WritePart(Part{
 		Type: "data-result", Data: map[string]any{"success": false, "interrupted": true},
 	}); err != nil {
@@ -150,7 +153,6 @@ func (s *eventStream) interrupted(event api.Event) error {
 	s.metadata = &MessageMetadata{
 		ProviderSessionID: s.sessionID, Model: s.model, Success: &success, Interrupted: true,
 	}
-	s.tools = map[string]toolState{}
 	s.terminal = true
 	return nil
 }
@@ -362,9 +364,31 @@ func (s *eventStream) providerError(event api.Event) error {
 	if event.Error == "" {
 		return fmt.Errorf("captain error event has no error message")
 	}
-	s.tools = map[string]toolState{}
+	if err := s.terminalizeTools(event.Error); err != nil {
+		return err
+	}
 	s.terminal = true
 	return s.writer.WritePart(Part{Type: "error", ErrorText: event.Error})
+}
+
+func (s *eventStream) terminalizeTools(message string) error {
+	if message == "" {
+		message = "tool execution did not complete"
+	}
+	ids := make([]string, 0, len(s.tools))
+	for id := range s.tools {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		if err := s.writer.WritePart(Part{
+			Type: "tool-output-error", ToolCallID: id, ErrorText: message,
+		}); err != nil {
+			return err
+		}
+		delete(s.tools, id)
+	}
+	return nil
 }
 
 func (s *eventStream) closeBlock() error {
@@ -424,11 +448,13 @@ func (s *eventStream) fail(cause error) error {
 	if err := s.closeBlock(); err != nil {
 		return err
 	}
+	if err := s.terminalizeTools(cause.Error()); err != nil {
+		return err
+	}
 	if err := s.writer.WritePart(Part{Type: "error", ErrorText: cause.Error()}); err != nil {
 		return err
 	}
 	s.terminal = true
-	s.tools = map[string]toolState{}
 	if err := s.finish(); err != nil {
 		return err
 	}

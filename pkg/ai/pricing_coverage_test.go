@@ -27,7 +27,7 @@ var knownPricingGaps = map[string]string{}
 // it under "google" — and captain had three hand-written copies of that mapping
 // (PricingIDs, orPrefix, pricingModelID) that could drift apart independently.
 func TestPricingIDsCoverEveryCatalogModel(t *testing.T) {
-	pricing.EnsureLoaded()
+	pricing.EnsureLoaded(pricing.LoadOptions{})
 
 	for _, p := range registry.Providers() {
 		backend, err := p.BackendFor(registry.ModeAPI)
@@ -76,7 +76,7 @@ func TestPricingPrefixIsNotCatalogPrefix(t *testing.T) {
 // answered, at the wrong rate) while billing tried the prefixed key first — so
 // the price shown could differ from the price charged.
 func TestPricingAgreesAcrossCatalogAndBilling(t *testing.T) {
-	pricing.EnsureLoaded()
+	pricing.EnsureLoaded(pricing.LoadOptions{})
 
 	for _, model := range []string{"claude-sonnet-5", "claude-opus-4-8"} {
 		t.Run(model, func(t *testing.T) {

@@ -14,6 +14,7 @@ import (
 // canonical resolver; tests may replace it with a fake provider.
 type Resolver interface {
 	Models(context.Context) (ModelCatalogResponse, error)
+	Runtimes(context.Context) ([]api.RuntimeFamily, error)
 	Provider(context.Context, api.Config) (api.StreamingProvider, error)
 }
 
@@ -33,6 +34,10 @@ func (captainResolver) Models(_ context.Context) (ModelCatalogResponse, error) {
 		}
 	}
 	return ai.LiveCatalogInfo(configured)
+}
+
+func (captainResolver) Runtimes(_ context.Context) ([]api.RuntimeFamily, error) {
+	return ai.LiveRuntimeCatalog()
 }
 
 func (captainResolver) Provider(_ context.Context, config api.Config) (api.StreamingProvider, error) {

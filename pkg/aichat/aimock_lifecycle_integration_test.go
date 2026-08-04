@@ -78,6 +78,10 @@ func (realChatResolver) Models(context.Context) (aichat.ModelCatalogResponse, er
 	return nil, nil
 }
 
+func (realChatResolver) Runtimes(context.Context) ([]api.RuntimeFamily, error) {
+	return api.RuntimeCatalog(), nil
+}
+
 func (realChatResolver) Provider(_ context.Context, config api.Config) (api.StreamingProvider, error) {
 	provider, err := ai.NewProvider(config)
 	if err != nil {

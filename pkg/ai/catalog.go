@@ -79,12 +79,10 @@ var (
 // the registry at package init — long before captainconfig.Load installs the
 // disabled set — so anything baked in at build time would never see it.
 func Catalog() []Model {
-	modelRegistryMu.RLock()
-	defer modelRegistryMu.RUnlock()
-
 	disabled := Disabled()
-	out := make([]Model, 0, len(catalog))
-	for _, m := range catalog {
+	models := catalogSnapshot()
+	out := make([]Model, 0, len(models))
+	for _, m := range models {
 		if disabled.Model(m.Backend, bareProviderModelID(m.ID)) {
 			continue
 		}
@@ -92,6 +90,15 @@ func Catalog() []Model {
 		out = append(out, m)
 	}
 	return out
+}
+
+// catalogSnapshot returns every registered model before user opt-outs are
+// applied. Execution paths use Catalog; descriptive menus use this snapshot so
+// they can retain disabled choices and explain how to re-enable them.
+func catalogSnapshot() []Model {
+	modelRegistryMu.RLock()
+	defer modelRegistryMu.RUnlock()
+	return append([]Model(nil), catalog...)
 }
 
 // RegisterModel adds a model to the global catalog, or replaces the existing

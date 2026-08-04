@@ -18,7 +18,7 @@ func LiveCatalog() ([]Model, error) {
 	if err != nil {
 		return nil, err
 	}
-	return mergeLiveCatalog(Catalog(), adapters), nil
+	return mergeLiveCatalog(Catalog(), adapters, liveCatalogOptions{}), nil
 }
 
 // LiveCatalogInfo annotates the live catalog with per-caller selectability,
@@ -26,11 +26,15 @@ func LiveCatalog() ([]Model, error) {
 // provider key is present (configuredProviders), agent/CLI models when their
 // local backend binary is installed.
 func LiveCatalogInfo(configuredProviders []string) ([]ModelInfo, error) {
-	models, err := LiveCatalog()
+	adapters, err := CachedAdapters(time.Now())
 	if err != nil {
 		return nil, err
 	}
-	return catalogInfoFrom(models, configuredProviders), nil
+	models := mergeLiveCatalog(catalogSnapshot(), adapters, liveCatalogOptions{IncludeDisabled: true})
+	return catalogInfoFrom(models, catalogInfoOptions{
+		ConfiguredProviders: configuredProviders,
+		Adapters:            adapters,
+	}), nil
 }
 
 // mergeLiveCatalog upserts each probed model onto the static catalog. Ordering
@@ -41,7 +45,11 @@ func LiveCatalogInfo(configuredProviders []string) ([]ModelInfo, error) {
 // backend it collapses onto: without the menu-backend check, disabling a model
 // on the claude-agent card would still let the claude-cli probe re-add it under
 // the same menu id.
-func mergeLiveCatalog(static []Model, adapters []AdapterStatus) []Model {
+type liveCatalogOptions struct {
+	IncludeDisabled bool
+}
+
+func mergeLiveCatalog(static []Model, adapters []AdapterStatus, options liveCatalogOptions) []Model {
 	out := append([]Model(nil), static...)
 	pos := make(map[string]int, len(out))
 	for i, m := range out {
@@ -52,11 +60,11 @@ func mergeLiveCatalog(static []Model, adapters []AdapterStatus) []Model {
 	for _, a := range adapters {
 		probed := Backend(a.Backend)
 		menuBackend, hasMenu := menuBackendFor(probed)
-		if !hasMenu || disabled.Backend(probed) {
+		if !hasMenu || (!options.IncludeDisabled && disabled.Backend(probed)) {
 			continue
 		}
 		for _, md := range a.ModelDetails {
-			if disabled.Model(probed, md.ID) || disabled.Model(menuBackend, md.ID) {
+			if !options.IncludeDisabled && (disabled.Model(probed, md.ID) || disabled.Model(menuBackend, md.ID)) {
 				continue
 			}
 			live := liveModel(menuBackend, md)
