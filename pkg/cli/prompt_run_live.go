@@ -95,15 +95,17 @@ func runPromptStream(t *task.Task, rendered PromptRenderResult, timeout time.Dur
 		summarySessionID = binding.SessionID.String()
 	}
 	summary := PromptRunSummary{
-		RunID:        runID,
-		SessionID:    summarySessionID,
-		Model:        model,
-		Backend:      rendered.Backend,
-		InputTokens:  usage.InputTokens,
-		OutputTokens: usage.OutputTokens,
-		CostUSD:      cost,
-		Duration:     time.Since(start).Round(time.Millisecond).String(),
-		Success:      passed,
+		RunID:            runID,
+		SessionID:        summarySessionID,
+		Model:            model,
+		Backend:          rendered.Backend,
+		InputTokens:      usage.InputTokens,
+		OutputTokens:     usage.OutputTokens,
+		CostUSD:          cost,
+		Duration:         time.Since(start).Round(time.Millisecond).String(),
+		Success:          passed,
+		Text:             resultText,
+		StructuredOutput: structuredOutput,
 	}
 	if !passed {
 		summary.Error = verifyReason(runResult.Verdicts)
