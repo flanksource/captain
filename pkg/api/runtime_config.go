@@ -60,12 +60,12 @@ type Config struct {
 	// this and the legacy Sandbox boolean are set, this wins.
 	SandboxSelection *SandboxConfig
 	CacheDBPath      string
-	CacheTTL      time.Duration
-	NoCache       bool
-	MaxConcurrent int
-	SessionID     string
-	ProjectName   string
-	SchemaRepair  SchemaRepairConfig
+	CacheTTL         time.Duration
+	NoCache          bool
+	MaxConcurrent    int
+	SessionID        string
+	ProjectName      string
+	SchemaRepair     SchemaRepairConfig
 
 	// CanUseTool, when set, brokers tool permissions over the stream-json control
 	// protocol: the streaming provider asks this callback before a tool that needs
