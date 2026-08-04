@@ -84,7 +84,7 @@ func Admit(ctx context.Context, req AdmitRequest) error {
 			return fmt.Errorf("ref %s is outside the protocol namespaces this receiver accepts", u.Ref)
 		}
 	}
-	if err := requireAtomicPairs(protocol); err != nil {
+	if err := requireAtomicPairs(ctx, req, protocol); err != nil {
 		return err
 	}
 	for ref, info := range protocol {
@@ -125,7 +125,9 @@ func admitProtocolRef(req AdmitRequest, u RefUpdate) (RefInfo, error) {
 	if !NamespaceContains(TaskNamespace(info.Task), u.Ref) {
 		return RefInfo{}, fmt.Errorf("ref %s escapes its task namespace", u.Ref)
 	}
-	if req.Agent != "" {
+	// Task ownership binds on the mailbox, where results arrive from enrolled
+	// agents; a sidecar's dispatch refs are what CREATE the task there.
+	if req.Role == RoleMailbox && req.Agent != "" {
 		st, ok, err := LoadTaskState(req.Repo, info.Task)
 		if err != nil {
 			return RefInfo{}, err
@@ -173,9 +175,12 @@ func admitAgentBranch(ctx context.Context, req AdmitRequest, u RefUpdate) error 
 	return admitContent(ctx, req, st, st.DispatchCommit, u.New)
 }
 
-// requireAtomicPairs enforces R3.4: a code ref and its control ref travel in
-// one atomic push, or not at all.
-func requireAtomicPairs(protocol map[string]RefInfo) error {
+// requireAtomicPairs enforces R3.4: a code ref is unprocessable without its
+// control ref. The control may travel in the same atomic push or already be
+// present at the receiver — git filters an up-to-date control out of a push,
+// so attempt 1's relay legitimately arrives result-only when the supervisor
+// audit-wrote the identical control commit at dispatch.
+func requireAtomicPairs(ctx context.Context, req AdmitRequest, protocol map[string]RefInfo) error {
 	if len(protocol) == 0 {
 		return nil
 	}
@@ -193,7 +198,7 @@ func requireAtomicPairs(protocol map[string]RefInfo) error {
 	}
 	for k, present := range kinds {
 		code := present[RefDispatch] || present[RefResult]
-		if code && !present[RefControl] {
+		if code && !present[RefControl] && !controlRefExists(ctx, req, k.task, k.attempt) {
 			return fmt.Errorf("task %s attempt %d: a code ref without its control ref is unprocessable (R3.4)", k.task, k.attempt)
 		}
 		if present[RefControl] && !code {
@@ -201,6 +206,15 @@ func requireAtomicPairs(protocol map[string]RefInfo) error {
 		}
 	}
 	return nil
+}
+
+func controlRefExists(ctx context.Context, req AdmitRequest, task string, attempt int) bool {
+	ref, err := ControlRef(task, attempt)
+	if err != nil {
+		return false
+	}
+	code, _, err := gitExitCode(ctx, req.Repo, req.Env, "rev-parse", "--verify", "--quiet", ref)
+	return err == nil && code == 0
 }
 
 // admitCodeContent runs the content checks that need object access: result

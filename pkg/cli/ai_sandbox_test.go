@@ -58,10 +58,13 @@ func TestResolveSandboxSelection_Precedence(t *testing.T) {
 		}
 	})
 
-	t.Run("an unwired kind fails loud instead of running unsandboxed", func(t *testing.T) {
-		_, err := resolveSandboxSelection("git-agent", nil, defaults)
-		if err == nil || !strings.Contains(err.Error(), "not wired to execution yet") {
-			t.Fatalf("err = %v", err)
+	t.Run("git-agent resolves now that remote execution is wired", func(t *testing.T) {
+		got, err := resolveSandboxSelection("git-agent", nil, defaults)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Kind != registry.SandboxGitAgent {
+			t.Fatalf("kind = %q, want git-agent", got.Kind)
 		}
 	})
 

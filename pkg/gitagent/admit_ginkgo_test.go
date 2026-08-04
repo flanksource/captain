@@ -34,7 +34,7 @@ func newAdmitFixture(ctx context.Context) *admitFixture {
 
 	snap, err := gitagent.TakeSnapshot(ctx, super, gitagent.SnapshotPolicy{})
 	Expect(err).NotTo(HaveOccurred())
-	control, err := gitagent.BuildControlCommit(ctx, super, map[string][]byte{
+	control, err := gitagent.BuildControlCommit(ctx, super, nil, map[string][]byte{
 		gitagent.ControlTaskFile:   []byte(`{"prompt":"do the thing"}`),
 		gitagent.ControlHooksFile:  []byte(`{}`),
 		gitagent.ControlPolicyFile: []byte(`{}`),
@@ -120,7 +120,18 @@ var _ = Describe("admission", func() {
 		err = gitagent.Admit(ctx, gitagent.AdmitRequest{Repo: f.sidecar, Role: gitagent.RoleSidecar, Updates: upd, Envelope: f.envelope(), Env: f.env})
 		Expect(err).To(MatchError(ContainSubstring("every protocol ref push is a create")))
 
-		err = gitagent.Admit(ctx, gitagent.AdmitRequest{Repo: f.sidecar, Role: gitagent.RoleSidecar, Updates: f.dispatchUpdates()[:1], Envelope: f.envelope(), Env: f.env})
+		// A code ref alone is unprocessable — unless the receiver already
+		// holds that attempt's control ref, which the fixture's task does.
+		Expect(gitagent.Admit(ctx, gitagent.AdmitRequest{Repo: f.sidecar, Role: gitagent.RoleSidecar, Updates: f.dispatchUpdates()[:1], Envelope: f.envelope(), Env: f.env})).
+			To(Succeed(), "an existing control ref satisfies the pairing")
+
+		fresh := f.envelope()
+		fresh.Task = "t-2"
+		err = gitagent.Admit(ctx, gitagent.AdmitRequest{
+			Repo: f.sidecar, Role: gitagent.RoleSidecar,
+			Updates:  []gitagent.RefUpdate{{Old: zeroOID40, New: f.snap.Commit, Ref: "refs/captain/tasks/t-2/dispatch/1"}},
+			Envelope: fresh, Env: f.env,
+		})
 		Expect(err).To(MatchError(ContainSubstring("R3.4")))
 	})
 

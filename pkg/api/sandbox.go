@@ -90,6 +90,19 @@ type RemoteExecutor interface {
 	Execute(ctx context.Context, spec Spec) (*Response, error)
 }
 
+// WorkspaceIsolating marks an adapter whose run happens in its own working
+// tree, so selecting it must not be combined with another workspace isolator
+// (a --worktree run or a setup checkout).
+type WorkspaceIsolating interface {
+	IsolatesWorkspace() bool
+}
+
+// EgressProxied marks an adapter whose sandbox never holds a real credential:
+// placeholders are substituted outside it by an egress proxy.
+type EgressProxied interface {
+	ProvidesEgressProxy() bool
+}
+
 // SandboxAs resolves a capability from a sandbox, walking SandboxUnwrapper
 // chains so a capability is found behind decorators. Mirrors ProviderAs.
 func SandboxAs[T any](sandbox Sandbox) (T, bool) {

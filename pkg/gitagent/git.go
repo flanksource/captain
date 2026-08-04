@@ -53,13 +53,25 @@ func runGitRaw(ctx context.Context, dir string, env []string, stdin io.Reader, a
 // gitExitCode runs git and returns its exit code, for commands whose non-zero
 // exit is an answer rather than a failure.
 func gitExitCode(ctx context.Context, dir string, env []string, args ...string) (int, string, error) {
+	var stderr bytes.Buffer
+	code, out, err := gitExitCodeStderr(ctx, dir, env, &stderr, args...)
+	if err != nil {
+		return code, out, fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	return code, out, nil
+}
+
+// gitExitCodeStderr is gitExitCode with stderr streamed live to the given
+// writer — the relay uses it to pass the upstream's sideband straight through
+// to the blocked pusher (R6.6).
+func gitExitCodeStderr(ctx context.Context, dir string, env []string, stderr io.Writer, args ...string) (int, string, error) {
 	full := append(append([]string{}, normalizationArgs...), args...)
 	cmd := exec.CommandContext(ctx, "git", full...)
 	cmd.Dir = dir
 	cmd.Env = env
-	var stdout, stderr bytes.Buffer
+	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	cmd.Stderr = stderr
 	err := cmd.Run()
 	if err == nil {
 		return 0, stdout.String(), nil
@@ -68,5 +80,5 @@ func gitExitCode(ctx context.Context, dir string, env []string, args ...string) 
 	if errors.As(err, &exitErr) {
 		return exitErr.ExitCode(), stdout.String(), nil
 	}
-	return -1, "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
+	return -1, "", fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
 }
