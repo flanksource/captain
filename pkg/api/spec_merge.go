@@ -12,7 +12,9 @@ import (
 // zero (a *bool false, a *int 0) counts as set instead of being read as unset.
 // Tool-approval resume state is indivisible: it is a snapshot of one suspended
 // turn, and half of one snapshot layered over half of another describes no turn
-// that ever happened.
+// that ever happened. A sandbox ref is indivisible for the same reason: a
+// per-prompt sandbox replaces the global one wholesale, never key-wise — half
+// of one backend's selection over half of another names no backend at all.
 func MergePolicy() merge.Policy {
 	return registry.MergePolicy().With(merge.Policy{
 		Replace: []any{
@@ -22,6 +24,7 @@ func MergePolicy() merge.Policy {
 			(*uint)(nil),
 			(*string)(nil),
 			(*ToolApprovalResume)(nil),
+			(*SandboxRef)(nil),
 		},
 	})
 }

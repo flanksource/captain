@@ -13,6 +13,7 @@ func TestWorkflowSpecRoundTrip(t *testing.T) {
 		Workflow: &Workflow{
 			Verify: &Verify{
 				Commands:      []string{"go test ./...", "go vet ./..."},
+				Prompts:       []string{"review-diff.prompt"},
 				Fixture:       "- [ ] covers the edge case",
 				Scope:         VerifyScopeChanged,
 				MaxIterations: 3,
@@ -39,6 +40,9 @@ func TestWorkflowSpecRoundTrip(t *testing.T) {
 	}
 	if got.Workflow.Verify.Fixture != spec.Workflow.Verify.Fixture || len(got.Workflow.Verify.Commands) != 2 {
 		t.Errorf("verify commands/fixture not preserved: %+v", got.Workflow.Verify)
+	}
+	if len(got.Workflow.Verify.Prompts) != 1 || got.Workflow.Verify.Prompts[0] != "review-diff.prompt" {
+		t.Errorf("verify prompts not preserved: %+v", got.Workflow.Verify.Prompts)
 	}
 	if len(got.Workflow.Commits) != 1 || got.Workflow.Commits[0].On != CommitOnTurn || got.Workflow.Commits[0].Message != "apply" {
 		t.Errorf("commits not preserved: %+v", got.Workflow.Commits)
@@ -99,5 +103,13 @@ func TestVerifyScopeValidate(t *testing.T) {
 	}
 	if err := VerifyScope("sometimes").Validate(); err == nil {
 		t.Errorf("unknown scope should fail validation")
+	}
+}
+
+func TestWorkflowValidate_RejectsBlankVerifyPrompt(t *testing.T) {
+	wf := &Workflow{Verify: &Verify{Prompts: []string{"review.prompt", "   "}}}
+	err := wf.Validate()
+	if err == nil || !strings.Contains(err.Error(), "prompts[1] is empty") {
+		t.Fatalf("err = %v, want blank prompt rejection", err)
 	}
 }

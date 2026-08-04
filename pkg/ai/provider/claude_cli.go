@@ -16,7 +16,7 @@ var claudeCLICommand = "claude"
 
 type ClaudeCLI struct {
 	model   string
-	sandbox bool
+	sandbox *api.SandboxConfig
 }
 
 func NewClaudeCLI(model string) *ClaudeCLI {
@@ -59,11 +59,7 @@ func (c *ClaudeCLI) ExecuteStream(ctx context.Context, req ai.Request) (<-chan a
 	if err != nil {
 		return nil, err
 	}
-	env := []string(nil)
-	if req.Setup != nil {
-		env = commandEnv(req.Setup.Env)
-	}
-	cmd, stdout, stderrBuf, closeSandbox, err := startCLIStream(ctx, claudeCLICommand, args, []byte(composePrompt(req)), req.Cwd(), env, c.sandbox)
+	cmd, stdout, stderrBuf, closeSandbox, err := startCLIStream(ctx, claudeCLICommand, args, []byte(composePrompt(req)), &req, c.sandbox)
 	if err != nil {
 		cleanup()
 		return nil, err

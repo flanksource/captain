@@ -8,12 +8,14 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/captainconfig"
 	clickyrpc "github.com/flanksource/clicky/rpc"
 )
 
 // buildPromptSchemaDocument is the pure assembler (no I/O), taking a probed
-// adapter set so tests can drive it with a deterministic, network-free stub.
-func buildPromptSchemaDocument(adapters []AdapterStatus) (map[string]any, error) {
+// adapter set and resolved sandbox defaults so tests can drive it with
+// deterministic, network-free inputs.
+func buildPromptSchemaDocument(adapters []AdapterStatus, sandboxes captainconfig.SandboxDefaults) (map[string]any, error) {
 	adapters = enabledAdapters(adapters)
 	reflected, err := reflectedSchemas()
 	if err != nil {
@@ -33,6 +35,9 @@ func buildPromptSchemaDocument(adapters []AdapterStatus) (map[string]any, error)
 		return nil, fmt.Errorf("decode promptAction schema: %w", err)
 	}
 
+	if err := injectSandboxBackendEnum(specMap, sandboxes); err != nil {
+		return nil, err
+	}
 	if err := injectSpecConditionals(specMap, adapters, reflected.args); err != nil {
 		return nil, err
 	}
@@ -55,6 +60,72 @@ func buildPromptSchemaDocument(adapters []AdapterStatus) (map[string]any, error)
 			"spec": promptSchemaExampleSpec(),
 		},
 	}, nil
+}
+
+// injectSandboxBackendEnum constrains both SandboxRef forms to the selectors
+// the runtime can resolve: built-in kinds plus backend names from the user's
+// config. Keeping the two oneOf branches identical prevents the shorthand and
+// object forms from drifting apart in the workbench.
+func injectSandboxBackendEnum(spec map[string]any, defaults captainconfig.SandboxDefaults) error {
+	scalar, backend, err := sandboxBackendSchemaTargets(spec)
+	if err != nil {
+		return err
+	}
+	enum := toAnySlice(sandboxSelectors(defaults))
+	scalar["enum"] = enum
+	backend["enum"] = slices.Clone(enum)
+	return nil
+}
+
+func sandboxBackendSchemaTargets(spec map[string]any) (map[string]any, map[string]any, error) {
+	defs, ok := spec["$defs"].(map[string]any)
+	if !ok {
+		return nil, nil, fmt.Errorf("spec schema has no $defs")
+	}
+	sandboxRef, ok := defs["SandboxRef"].(map[string]any)
+	if !ok {
+		return nil, nil, fmt.Errorf("spec schema has no SandboxRef definition")
+	}
+	oneOf, ok := sandboxRef["oneOf"].([]any)
+	if !ok || len(oneOf) != 2 {
+		return nil, nil, fmt.Errorf("SandboxRef schema has %d forms, want scalar and object", len(oneOf))
+	}
+	scalar, ok := oneOf[0].(map[string]any)
+	if !ok {
+		return nil, nil, fmt.Errorf("SandboxRef scalar schema has unexpected type %T", oneOf[0])
+	}
+	object, ok := oneOf[1].(map[string]any)
+	if !ok {
+		return nil, nil, fmt.Errorf("SandboxRef object schema has unexpected type %T", oneOf[1])
+	}
+	properties, ok := object["properties"].(map[string]any)
+	if !ok {
+		return nil, nil, fmt.Errorf("SandboxRef object schema has no properties")
+	}
+	backend, ok := properties["backend"].(map[string]any)
+	if !ok {
+		return nil, nil, fmt.Errorf("SandboxRef object schema has no backend property")
+	}
+	return scalar, backend, nil
+}
+
+func sandboxSelectors(defaults captainconfig.SandboxDefaults) []string {
+	selectors := make([]string, 0, len(api.AllSandboxes())+len(defaults.Backends))
+	seen := map[string]struct{}{}
+	for _, descriptor := range api.AllSandboxes() {
+		selector := string(descriptor.Kind)
+		selectors = append(selectors, selector)
+		seen[selector] = struct{}{}
+	}
+	configured := make([]string, 0, len(defaults.Backends))
+	for name := range defaults.Backends {
+		if _, exists := seen[name]; !exists {
+			configured = append(configured, name)
+		}
+	}
+	slices.Sort(configured)
+	selectors = append(selectors, configured...)
+	return selectors
 }
 
 // enabledRuntimes is the provider×mode descriptor the workbench's runtime picker

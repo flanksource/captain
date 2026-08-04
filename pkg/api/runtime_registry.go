@@ -46,8 +46,23 @@ func NewProvider(cfg Config) (Provider, error) {
 		}
 	}
 	cfg.Model.Backend = backend
-	if cfg.Sandbox && backend.Mode() != registry.ModeCLI {
+	// The legacy boolean only speaks when no explicit selection was made:
+	// ResolvedSandbox gives SandboxSelection precedence, so a caller selecting
+	// e.g. "none" alongside a stale Sandbox=true must not be rejected as srt.
+	if cfg.SandboxSelection == nil && cfg.Sandbox && backend.Mode() != registry.ModeCLI {
 		return nil, fmt.Errorf("sandbox-runtime requires a CLI backend, got %s", backend)
+	}
+	// An unsupported sandbox × backend pairing is a validation error, not a
+	// silent no-op: the adapter would have no seam to act on, and running
+	// unsandboxed anyway is the failure this check exists to prevent.
+	if cfg.SandboxSelection != nil {
+		descriptor, ok := registry.SandboxFor(cfg.SandboxSelection.Kind)
+		if !ok {
+			return nil, fmt.Errorf("unknown sandbox kind %q; want one of: %s", cfg.SandboxSelection.Kind, registry.SandboxKindList())
+		}
+		if err := descriptor.ValidateMode(backend.Mode()); err != nil {
+			return nil, err
+		}
 	}
 
 	factory, ok := factories[backend]

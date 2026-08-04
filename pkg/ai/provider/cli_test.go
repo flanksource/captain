@@ -6,12 +6,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/sandbox/adapter"
 	"github.com/flanksource/commons-db/shell"
 	sandboxruntime "github.com/flanksource/sandbox-runtime/sandbox"
 )
@@ -59,12 +59,12 @@ func TestParseStderr(t *testing.T) {
 }
 
 func TestGeminiCLIUsesContextDir(t *testing.T) {
-	original := newCommandSandbox
+	original := adapter.NewSRTRuntime
 	fake := &fakeCommandSandbox{}
-	newCommandSandbox = func(context.Context, sandboxruntime.Config) (commandSandbox, error) {
+	adapter.NewSRTRuntime = func(context.Context, sandboxruntime.Config) (adapter.Runtime, error) {
 		return fake, nil
 	}
-	t.Cleanup(func() { newCommandSandbox = original })
+	t.Cleanup(func() { adapter.NewSRTRuntime = original })
 
 	cwd := filepath.Join(t.TempDir(), "workspace")
 	if err := os.MkdirAll(cwd, 0o755); err != nil {
@@ -84,7 +84,7 @@ func TestGeminiCLIUsesContextDir(t *testing.T) {
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	provider := NewGeminiCLI("gemini-cli-pro")
-	provider.sandbox = true
+	provider.sandbox = &api.SandboxConfig{Kind: api.SandboxSRT}
 	resp, err := provider.Execute(context.Background(), ai.Request{
 		Prompt: api.Prompt{User: "hello"},
 		Setup:  &shell.Setup{Cwd: cwd},
@@ -111,59 +111,18 @@ func TestGeminiCLIUsesContextDir(t *testing.T) {
 	}
 }
 
-func TestCLISandboxConfig(t *testing.T) {
-	cwd := t.TempDir()
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatal(err)
-	}
-	denyRead := []string{
-		filepath.Join(home, ".ssh"), filepath.Join(home, ".aws"), filepath.Join(home, ".azure"),
-		filepath.Join(home, ".config", "gcloud"), filepath.Join(home, ".kube"),
-		filepath.Join(home, ".docker", "run", "docker.sock"), "/var/run/docker.sock",
-		"/run/docker.sock", "/run/containerd/containerd.sock", "/run/podman/podman.sock",
-	}
-	tests := []struct {
-		command string
-		domains []string
-		env     []string
-		state   []string
-	}{
-		{"claude", []string{"anthropic.com", "*.anthropic.com", "claude.ai", "*.claude.ai"}, []string{"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"}, []string{filepath.Join(home, ".claude"), filepath.Join(home, ".claude.json")}},
-		{"codex", []string{"openai.com", "*.openai.com", "chatgpt.com", "*.chatgpt.com"}, []string{"OPENAI_API_KEY"}, []string{filepath.Join(home, ".codex")}},
-		{"gemini", []string{"google.com", "*.google.com", "googleapis.com", "*.googleapis.com"}, []string{"GEMINI_API_KEY", "GOOGLE_API_KEY"}, []string{filepath.Join(home, ".gemini")}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.command, func(t *testing.T) {
-			got, err := cliSandboxConfig(tt.command, cwd)
-			if err != nil {
-				t.Fatal(err)
-			}
-			want := sandboxruntime.Config{
-				Network: sandboxruntime.NetworkConfig{AllowedDomains: tt.domains, DeniedDomains: []string{}},
-				Filesystem: sandboxruntime.FilesystemConfig{
-					AllowWrite: append([]string{cwd, "/tmp"}, tt.state...),
-					DenyRead:   denyRead,
-					DenyWrite:  []string{},
-				},
-				PassthroughEnv: tt.env,
-			}
-			if !reflect.DeepEqual(got, want) {
-				t.Errorf("cliSandboxConfig() = %#v, want %#v", got, want)
-			}
-		})
-	}
-}
-
 func TestCLIProviderFactoriesCarrySandbox(t *testing.T) {
+	srtSelected := func(sandbox *api.SandboxConfig) bool {
+		return sandbox != nil && sandbox.Kind == api.SandboxSRT
+	}
 	tests := []struct {
 		backend api.Backend
 		model   string
 		enabled func(api.Provider) bool
 	}{
-		{api.BackendClaudeCLI, "claude-sonnet-5", func(p api.Provider) bool { return p.(*ClaudeCLI).sandbox }},
-		{api.BackendCodexCLI, "gpt-5.5", func(p api.Provider) bool { return p.(*CodexCLI).sandbox }},
-		{api.BackendGeminiCLI, "gemini-3.5-flash", func(p api.Provider) bool { return p.(*GeminiCLI).sandbox }},
+		{api.BackendClaudeCLI, "claude-sonnet-5", func(p api.Provider) bool { return srtSelected(p.(*ClaudeCLI).sandbox) }},
+		{api.BackendCodexCLI, "gpt-5.5", func(p api.Provider) bool { return srtSelected(p.(*CodexCLI).sandbox) }},
+		{api.BackendGeminiCLI, "gemini-3.5-flash", func(p api.Provider) bool { return srtSelected(p.(*GeminiCLI).sandbox) }},
 	}
 	for _, tt := range tests {
 		t.Run(string(tt.backend), func(t *testing.T) {
@@ -179,12 +138,14 @@ func TestCLIProviderFactoriesCarrySandbox(t *testing.T) {
 }
 
 func TestSandboxCommandFailuresClose(t *testing.T) {
-	original := newCommandSandbox
-	t.Cleanup(func() { newCommandSandbox = original })
+	original := adapter.NewSRTRuntime
+	t.Cleanup(func() { adapter.NewSRTRuntime = original })
 
+	srt := &api.SandboxConfig{Kind: api.SandboxSRT}
 	fake := &fakeCommandSandbox{commandErr: errors.New("wrap failed")}
-	newCommandSandbox = func(context.Context, sandboxruntime.Config) (commandSandbox, error) { return fake, nil }
-	if _, _, err := newCLICommand(context.Background(), "codex", nil, t.TempDir(), true); err == nil || !strings.Contains(err.Error(), "wrap codex") {
+	adapter.NewSRTRuntime = func(context.Context, sandboxruntime.Config) (adapter.Runtime, error) { return fake, nil }
+	req := &ai.Request{Setup: &shell.Setup{Cwd: t.TempDir()}}
+	if _, _, err := newCLICommand(context.Background(), "codex", nil, req, srt); err == nil || !strings.Contains(err.Error(), "wrap codex") {
 		t.Fatalf("err = %v, want sandbox wrapping failure", err)
 	}
 	if !fake.closed {
@@ -192,8 +153,8 @@ func TestSandboxCommandFailuresClose(t *testing.T) {
 	}
 
 	fake = &fakeCommandSandbox{executable: "captain-command-that-does-not-exist"}
-	newCommandSandbox = func(context.Context, sandboxruntime.Config) (commandSandbox, error) { return fake, nil }
-	if _, _, _, _, err := startCLIStream(context.Background(), "codex", nil, nil, t.TempDir(), nil, true); err == nil {
+	adapter.NewSRTRuntime = func(context.Context, sandboxruntime.Config) (adapter.Runtime, error) { return fake, nil }
+	if _, _, _, _, err := startCLIStream(context.Background(), "codex", nil, nil, req, srt); err == nil {
 		t.Fatal("expected process start failure")
 	}
 	if !fake.closed {

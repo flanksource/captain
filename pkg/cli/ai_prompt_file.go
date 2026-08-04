@@ -103,11 +103,16 @@ func overlayCLI(base ai.Request, baseCfg ai.Config, o AIPromptOptions) (ai.Reque
 			return base, baseCfg, fmt.Errorf("invalid --mode %q (valid: %s)", o.Mode, registry.RuntimeModeList())
 		}
 	}
-	if o.Sandbox {
-		if requestedMode != "" && requestedMode != registry.ModeCLI {
-			return base, baseCfg, fmt.Errorf("--sandbox requires CLI mode, but --mode is %q", requestedMode)
+	// Sandbox precedence: --sandbox > frontmatter (base.Sandbox) > global default.
+	sandbox, err := resolveSandboxSelection(o.SandboxSelector(), base.Sandbox, loadSavedConfig().Sandbox)
+	if err != nil {
+		return base, baseCfg, err
+	}
+	if forced := sandboxForcedMode(sandbox.Kind); forced != "" {
+		if requestedMode != "" && requestedMode != forced {
+			return base, baseCfg, fmt.Errorf("sandbox %q requires %s mode, but --mode is %q", sandbox.Kind, forced, requestedMode)
 		}
-		requestedMode = registry.ModeCLI
+		requestedMode = forced
 	}
 	if requestedMode != "" {
 		m.Mode = ""
@@ -181,13 +186,23 @@ func overlayCLI(base ai.Request, baseCfg ai.Config, o AIPromptOptions) (ai.Reque
 		req.SessionID = o.Resume
 	}
 
+	// Record the winning sandbox on the request when the flag overrode it, so the
+	// serialized spec carries the choice the run was actually made with.
+	if selector := o.SandboxSelector(); selector != "" {
+		req.Sandbox = &api.SandboxRef{Backend: selector}
+	}
+
 	// Config mirrors the resolved model + budget; runtime-only knobs from CLI+saved.
 	cfg := baseCfg
 	cfg.Model = req.Model
 	cfg.Budget = req.Budget
 	cfg.APIKey = o.APIKey
 	cfg.APIURL = firstNonEmpty(strings.TrimSpace(o.APIURL), baseCfg.APIURL)
-	cfg.Sandbox = o.Sandbox || baseCfg.Sandbox
+	// The overlay's resolution saw every layer (flag > frontmatter > default),
+	// so it overwrites rather than ORs with baseCfg: an explicit "none" must be
+	// able to turn an inherited srt selection OFF.
+	cfg.Sandbox = sandbox.Kind == registry.SandboxSRT
+	cfg.SandboxSelection = sandboxSelectionConfig(sandbox)
 	cfg.NoCache = req.NoCache
 	return req, cfg, nil
 }

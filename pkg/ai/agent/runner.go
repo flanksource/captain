@@ -408,6 +408,12 @@ func (r *Runner[T]) runLoop(ctx context.Context, hc *HookContext, result *Result
 // trivially true when no Verify hooks ran at all. Runner.Run uses it to set
 // HookContext.Verified for Post hooks; mirrors pkg/cli's own verifyPassed,
 // which summarizes the same Result.Verdicts for CLI output.
+//
+// Reading only the last verdict is sound because verify() stops a round at
+// its first failure: within any round a failure is that round's final
+// verdict, so the last entry of the accumulated list is always the final
+// round's outcome. Earlier invalid entries are the history of rounds whose
+// feedback drove a retry, not the run's result.
 func verifyPassed(verdicts []VerifyResult) bool {
 	if len(verdicts) == 0 {
 		return true
@@ -415,10 +421,13 @@ func verifyPassed(verdicts []VerifyResult) bool {
 	return verdicts[len(verdicts)-1].Valid
 }
 
-// verify runs every Verify hook; allValid is true only if all passed. retry is
-// the first failing hook's proposed next request.
+// verify runs the Verify hooks in declaration order and stops at the first
+// failure (issue #40 R5.1). Stopping is not just economy — a cheap failing
+// gate short-circuits the expensive judges behind it — it is what keeps
+// verifyPassed's last-verdict read correct: continuing past a failure lets a
+// later passing hook become the round's final verdict and mask the failure.
+// retry is the failing hook's proposed next request.
 func (r *Runner[T]) verify(hc *HookContext) (verdicts []VerifyResult, retry *ai.Request, allValid bool, err error) {
-	allValid = true
 	for _, h := range r.Hooks {
 		v, ok := h.(Verify)
 		if !ok {
@@ -430,13 +439,10 @@ func (r *Runner[T]) verify(hc *HookContext) (verdicts []VerifyResult, retry *ai.
 		}
 		verdicts = append(verdicts, res)
 		if !res.Valid {
-			allValid = false
-			if retry == nil && res.Retry != nil {
-				retry = res.Retry
-			}
+			return verdicts, res.Retry, false, nil
 		}
 	}
-	return verdicts, retry, allValid, nil
+	return verdicts, nil, true, nil
 }
 
 // updateResponse folds one completed iteration into the accumulating response:

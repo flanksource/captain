@@ -30,6 +30,10 @@ type Spec struct {
 	ToolApproval    *ToolApprovalResume `json:"toolApproval,omitempty" yaml:"toolApproval,omitempty" pretty:"-"`
 	Setup           *shell.Setup        `json:"setup,omitempty" yaml:"setup,omitempty"`
 
+	// Sandbox selects the sandbox backend the run executes under. Absent = the
+	// configured default, ultimately "none".
+	Sandbox *SandboxRef `json:"sandbox,omitempty" yaml:"sandbox,omitempty"`
+
 	// Workflow declares the generate→verify loop (verification + finalize) around
 	// the run. Absent = single generation, no verification.
 	Workflow *Workflow `json:"workflow,omitempty" yaml:"workflow,omitempty"`
@@ -53,6 +57,7 @@ type specMarshal struct {
 	Preferences *ToolPreferences    `json:"toolPreferences,omitempty" yaml:"toolPreferences,omitempty"`
 	Approval    *ToolApprovalResume `json:"toolApproval,omitempty" yaml:"toolApproval,omitempty"`
 	Setup       *shell.Setup        `json:"setup,omitempty" yaml:"setup,omitempty"`
+	Sandbox     *SandboxRef         `json:"sandbox,omitempty" yaml:"sandbox,omitempty"`
 	Workflow    *Workflow           `json:"workflow,omitempty" yaml:"workflow,omitempty"`
 	SessionID   string              `json:"sessionId,omitempty" yaml:"sessionId,omitempty"`
 	CLIArgs     map[string]any      `json:"cliArgs,omitempty" yaml:"cliArgs,omitempty"`
@@ -143,6 +148,7 @@ func (s Spec) marshalValue() specMarshal {
 		Preferences: omitEmptyValue(s.ToolPreferences),
 		Approval:    omitEmptyPointer(s.ToolApproval),
 		Setup:       omitEmptyPointer(s.Setup),
+		Sandbox:     omitEmptyPointer(s.Sandbox),
 		Workflow:    omitEmptyPointer(s.Workflow),
 		SessionID:   s.SessionID,
 		CLIArgs:     s.CLIArgs,
@@ -202,6 +208,11 @@ func (s Spec) Validate() error {
 	}
 	if err := s.Workflow.Validate(); err != nil {
 		return fmt.Errorf("workflow: %w", err)
+	}
+	if s.Sandbox != nil {
+		if err := s.Sandbox.Validate(); err != nil {
+			return fmt.Errorf("sandbox: %w", err)
+		}
 	}
 	return nil
 }

@@ -31,10 +31,10 @@ var secretBaseNames = map[string]bool{
 // secretSuffixes are extensions whose contents are keys by definition.
 var secretSuffixes = []string{".pem", ".key", ".p12", ".pfx", ".keystore"}
 
-// checkGates applies the policy's pre-commit checks to the paths about to be
+// CheckGates applies the policy's pre-commit checks to the paths about to be
 // staged. It rejects rather than filters: dropping a file would produce a commit
 // that silently disagrees with the run's diff.
-func checkGates(dir string, level api.CommitGates, maxSize int64, paths []string) error {
+func CheckGates(dir string, level api.CommitGates, maxSize int64, paths []string) error {
 	if level != api.CommitGatesCheap {
 		return nil
 	}
@@ -43,7 +43,7 @@ func checkGates(dir string, level api.CommitGates, maxSize int64, paths []string
 	}
 	var secrets, oversized []string
 	for _, p := range paths {
-		if looksSecret(p) {
+		if LooksSecret(p) {
 			secrets = append(secrets, p)
 			continue
 		}
@@ -65,9 +65,9 @@ func checkGates(dir string, level api.CommitGates, maxSize int64, paths []string
 	return nil
 }
 
-// looksSecret reports whether a repo-relative path names a credential file, by
+// LooksSecret reports whether a repo-relative path names a credential file, by
 // base name (including the .env.production family) or by extension.
-func looksSecret(path string) bool {
+func LooksSecret(path string) bool {
 	base := strings.ToLower(filepath.Base(path))
 	if secretBaseNames[base] {
 		return true

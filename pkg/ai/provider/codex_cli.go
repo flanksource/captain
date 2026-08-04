@@ -21,7 +21,7 @@ var codexCLICommand = "codex"
 type CodexCLI struct {
 	model   string
 	apiURL  string
-	sandbox bool
+	sandbox *api.SandboxConfig
 }
 
 func NewCodexCLI(cfg ai.Config) *CodexCLI {
@@ -32,7 +32,7 @@ func NewCodexCLI(cfg ai.Config) *CodexCLI {
 	return &CodexCLI{
 		model:   ai.NormalizeModelForBackend(ai.BackendCodexCLI, model),
 		apiURL:  strings.TrimSpace(cfg.APIURL),
-		sandbox: cfg.Sandbox,
+		sandbox: cfg.ResolvedSandbox(),
 	}
 }
 
@@ -68,11 +68,7 @@ func (c *CodexCLI) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai
 	if err != nil {
 		return nil, err
 	}
-	env := []string(nil)
-	if req.Setup != nil {
-		env = commandEnv(req.Setup.Env)
-	}
-	cmd, stdout, stderrBuf, closeSandbox, err := startCLIStream(ctx, codexCLICommand, args, []byte(composePrompt(req)), req.Cwd(), env, c.sandbox)
+	cmd, stdout, stderrBuf, closeSandbox, err := startCLIStream(ctx, codexCLICommand, args, []byte(composePrompt(req)), &req, c.sandbox)
 	if err != nil {
 		cleanup()
 		return nil, err

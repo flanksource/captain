@@ -26,7 +26,7 @@ func TestActionFlagsToOptions_DecodesSlicesBoolsInts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("actionFlagsToOptions: %v", err)
 	}
-	if o.Model != "gpt-4o" || o.Backend != "openai" || o.Prompt != "hi" || o.PermissionMode != "plan" || !o.Sandbox {
+	if o.Model != "gpt-4o" || o.Backend != "openai" || o.Prompt != "hi" || o.PermissionMode != "plan" || o.Sandbox != "true" {
 		t.Fatalf("scalars = %+v", o)
 	}
 	if !o.NoStream || !o.Edit {

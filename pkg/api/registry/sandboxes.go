@@ -19,7 +19,7 @@ var (
 	SRTSandbox = &Sandbox{
 		Kind:         SandboxSRT,
 		Description:  "Confine the agent with sandbox-runtime (filesystem and network policy)",
-		Capabilities: []SandboxCapability{CapabilityWrapCommand, CapabilityEgressProxy},
+		Capabilities: []SandboxCapability{CapabilityWrapCommand},
 		Modes:        []RuntimeMode{ModeCLI},
 	}
 

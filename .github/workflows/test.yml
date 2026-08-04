@@ -52,10 +52,12 @@ jobs:
           key: embedded-postgres-${{ runner.os }}-${{ runner.arch }}
       # dbtest shares one embedded PostgreSQL server while isolating each test
       # with a leased ephemeral database.
+      # pkg/cli/webapp is ignored: its vitest suite needs a sibling clicky-ui
+      # checkout (a link: dependency), which does not exist on CI runners.
       - name: Test with Gavel
         uses: flanksource/gavel@25b5e48fb166ba33a47544606aaa3e16644fa4bb # v0.0.53
         with:
-          args: test --ignore tests/e2e
+          args: test --ignore tests/e2e --ignore pkg/cli/webapp
           version: v0.0.53
           artifact-name: gavel-test-results
           comment-header: captain-gavel-test

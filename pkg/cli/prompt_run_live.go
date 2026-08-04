@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -14,6 +15,14 @@ import (
 )
 
 func runPromptStream(t *task.Task, rendered PromptRenderResult, timeout time.Duration, runID string, stream *runStream, binding *promptSessionBinding) (PromptRunSummary, error) {
+	return runPromptWorkflow(t, rendered, timeout, runID, stream, binding, false)
+}
+
+func runPromptBufferedWorkflow(t *task.Task, rendered PromptRenderResult, timeout time.Duration, runID string, stream *runStream, binding *promptSessionBinding) (PromptRunSummary, error) {
+	return runPromptWorkflow(t, rendered, timeout, runID, stream, binding, true)
+}
+
+func runPromptWorkflow(t *task.Task, rendered PromptRenderResult, timeout time.Duration, runID string, stream *runStream, binding *promptSessionBinding, noStream bool) (PromptRunSummary, error) {
 	ctx, cancel := runContext(t.Context(), rendered.Input, timeout)
 	stream.setCancel(cancel)
 	defer cancel()
@@ -31,9 +40,14 @@ func runPromptStream(t *task.Task, rendered PromptRenderResult, timeout time.Dur
 	defer cleanup()
 	defer closeProvider(p)
 
-	streamer, ok := p.(ai.StreamingProvider)
-	if !ok && !req.IsVerifyOnly() {
-		return failRun(t, stream, fmt.Errorf("backend %s does not support streaming", rendered.Backend))
+	streamer, err := workflowRunnerProvider(p, noStream, req.IsVerifyOnly())
+	if err != nil {
+		return failRun(t, stream, err)
+	}
+
+	judgeHooks, err := verify.PromptHooksForWorkflow(req.Workflow, p)
+	if err != nil {
+		return failRun(t, stream, err)
 	}
 
 	start := time.Now()
@@ -45,7 +59,7 @@ func runPromptStream(t *task.Task, rendered PromptRenderResult, timeout time.Dur
 		Request:  req,
 		// Commit hooks lead so that at PhaseRun they squash before any teardown
 		// hook (a worktree merge) runs and takes the result.
-		Hooks:         append(commit.HooksForWorkflow(req.Workflow), verify.HooksForWorkflow(req.Workflow)...),
+		Hooks:         append(append(commit.HooksForWorkflow(req.Workflow), verify.HooksForWorkflow(req.Workflow)...), judgeHooks...),
 		MaxIterations: verify.MaxIterationsForWorkflow(req.Workflow),
 		Repo:          req.Cwd(),
 		Cwd:           req.Cwd(),
@@ -90,15 +104,17 @@ func runPromptStream(t *task.Task, rendered PromptRenderResult, timeout time.Dur
 		summarySessionID = binding.SessionID.String()
 	}
 	summary := PromptRunSummary{
-		RunID:        runID,
-		SessionID:    summarySessionID,
-		Model:        model,
-		Backend:      rendered.Backend,
-		InputTokens:  usage.InputTokens,
-		OutputTokens: usage.OutputTokens,
-		CostUSD:      cost,
-		Duration:     time.Since(start).Round(time.Millisecond).String(),
-		Success:      passed,
+		RunID:            runID,
+		SessionID:        summarySessionID,
+		Model:            model,
+		Backend:          rendered.Backend,
+		InputTokens:      usage.InputTokens,
+		OutputTokens:     usage.OutputTokens,
+		CostUSD:          cost,
+		Duration:         time.Since(start).Round(time.Millisecond).String(),
+		Success:          passed,
+		Text:             resultText,
+		StructuredOutput: structuredOutput,
 	}
 	if !passed {
 		summary.Error = verifyReason(runResult.Verdicts)
@@ -106,6 +122,70 @@ func runPromptStream(t *task.Task, rendered PromptRenderResult, timeout time.Dur
 	stream.complete(summary)
 	t.Success()
 	return summary, nil
+}
+
+func workflowRunnerProvider(provider ai.Provider, noStream, verifyOnly bool) (ai.StreamingProvider, error) {
+	if noStream {
+		return bufferedWorkflowProvider{Provider: provider}, nil
+	}
+	streamer, ok := provider.(ai.StreamingProvider)
+	if !ok && !verifyOnly {
+		return nil, fmt.Errorf("backend %s does not support streaming", provider.GetBackend())
+	}
+	return streamer, nil
+}
+
+// bufferedWorkflowProvider preserves the agent runner's event contract while
+// forcing generation through Provider.Execute. It emits only completed response
+// events, so --no-stream never invokes an underlying ExecuteStream method.
+type bufferedWorkflowProvider struct {
+	ai.Provider
+}
+
+func (p bufferedWorkflowProvider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai.Event, error) {
+	resp, err := p.Execute(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil {
+		return nil, errors.New("buffered workflow provider returned a nil response")
+	}
+	structured, err := bufferedStructuredData(resp.StructuredData)
+	if err != nil {
+		return nil, err
+	}
+
+	events := make(chan ai.Event, 3)
+	if resp.Workspace != nil && resp.Workspace.SessionID != "" {
+		events <- ai.Event{Kind: ai.EventSystem, SessionID: resp.Workspace.SessionID, Model: resp.Model}
+	}
+	if resp.Text != "" {
+		events <- ai.Event{Kind: ai.EventText, Text: resp.Text, Model: resp.Model}
+	}
+	usage := resp.Usage
+	events <- ai.Event{
+		Kind: ai.EventResult, Success: true, Model: resp.Model, Usage: &usage,
+		CostUSD: resp.CostUSD, StructuredData: structured, ToolApproval: resp.ToolApproval,
+	}
+	close(events)
+	return events, nil
+}
+
+func bufferedStructuredData(value any) (json.RawMessage, error) {
+	if value == nil {
+		return nil, nil
+	}
+	if raw, ok := value.(json.RawMessage); ok {
+		return raw, nil
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("encode buffered workflow structured output: %w", err)
+	}
+	if string(raw) == "null" {
+		return nil, nil
+	}
+	return raw, nil
 }
 
 func failRun(t *task.Task, stream *runStream, err error) (PromptRunSummary, error) {

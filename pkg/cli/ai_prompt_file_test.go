@@ -150,13 +150,14 @@ func TestOverlayCLI_CLIOverridesFrontmatter(t *testing.T) {
 func TestOverlayCLI_Sandbox(t *testing.T) {
 	for _, tt := range []struct{ name, mode, wantErr string }{
 		{name: "selects CLI for frontmatter model"},
-		{name: "rejects explicit API mode", mode: "api", wantErr: "--sandbox requires CLI mode"},
+		{name: "rejects explicit API mode", mode: "api", wantErr: "requires cli mode"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			isolateSavedAI(t)
 			base := baseFileReq()
 			base.Model.Backend = api.BackendAnthropic
-			opts := AIPromptOptions{AIRuntimeOptions: AIRuntimeOptions{AIProviderOptions: AIProviderOptions{Sandbox: true}}}
+			// The legacy boolean spelling must keep meaning srt.
+			opts := AIPromptOptions{AIRuntimeOptions: AIRuntimeOptions{AIProviderOptions: AIProviderOptions{Sandbox: "true"}}}
 			opts.Mode = tt.mode
 			req, cfg, err := overlayCLI(base, ai.Config{}, opts)
 			if tt.wantErr != "" {
@@ -172,6 +173,26 @@ func TestOverlayCLI_Sandbox(t *testing.T) {
 				t.Fatalf("sandbox model = %#v, sandbox=%v", req.Model, cfg.Sandbox)
 			}
 		})
+	}
+}
+
+// An explicit --sandbox=none must turn OFF a sandbox the base config carried:
+// the overlay resolved every layer, so it overwrites instead of ORing.
+func TestOverlayCLI_SandboxNoneClearsInherited(t *testing.T) {
+	isolateSavedAI(t)
+	base := baseFileReq()
+	baseCfg := ai.Config{Sandbox: true, SandboxSelection: &api.SandboxConfig{Kind: api.SandboxSRT}}
+	opts := AIPromptOptions{AIRuntimeOptions: AIRuntimeOptions{AIProviderOptions: AIProviderOptions{Sandbox: "none"}}}
+
+	_, cfg, err := overlayCLI(base, baseCfg, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Sandbox || cfg.SandboxSelection != nil {
+		t.Fatalf("sandbox=%v selection=%v, want both cleared by the explicit none", cfg.Sandbox, cfg.SandboxSelection)
+	}
+	if resolved := cfg.ResolvedSandbox(); resolved != nil {
+		t.Fatalf("ResolvedSandbox = %+v, want nil", resolved)
 	}
 }
 

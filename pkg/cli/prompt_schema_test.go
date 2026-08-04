@@ -10,6 +10,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/captainconfig"
 	"github.com/spf13/cobra"
 )
 
@@ -36,7 +37,7 @@ func stubbedSchemaAdapters(t *testing.T) []AdapterStatus {
 }
 
 func TestPromptSchemaDocumentBackendsAndConditionals(t *testing.T) {
-	doc, err := buildPromptSchemaDocument(stubbedSchemaAdapters(t))
+	doc, err := buildPromptSchemaDocument(stubbedSchemaAdapters(t), captainconfig.SandboxDefaults{})
 	if err != nil {
 		t.Fatalf("buildPromptSchemaDocument: %v", err)
 	}
@@ -156,6 +157,32 @@ func TestPromptSchemaDocumentBackendsAndConditionals(t *testing.T) {
 	}
 }
 
+func TestPromptSchemaDocumentSandboxEnumIncludesConfiguredBackends(t *testing.T) {
+	defaults := captainconfig.SandboxDefaults{Backends: map[string]captainconfig.SandboxBackend{
+		"prod-pool":    {Kind: "git-agent"},
+		"local-docker": {Kind: "container"},
+		"srt":          {Kind: "srt"}, // a configured name must not duplicate a bare kind
+	}}
+	doc, err := buildPromptSchemaDocument(stubbedSchemaAdapters(t), defaults)
+	if err != nil {
+		t.Fatalf("buildPromptSchemaDocument: %v", err)
+	}
+
+	spec := doc["spec"].(map[string]any)
+	ref := spec["$defs"].(map[string]any)["SandboxRef"].(map[string]any)
+	forms := ref["oneOf"].([]any)
+	scalar := forms[0].(map[string]any)
+	object := forms[1].(map[string]any)
+	backend := object["properties"].(map[string]any)["backend"].(map[string]any)
+	want := []any{"none", "srt", "container", "git-agent", "local-docker", "prod-pool"}
+	if !reflect.DeepEqual(scalar["enum"], want) {
+		t.Errorf("scalar sandbox enum = %v, want %v", scalar["enum"], want)
+	}
+	if !reflect.DeepEqual(backend["enum"], want) {
+		t.Errorf("object backend enum = %v, want %v", backend["enum"], want)
+	}
+}
+
 // TestPromptSchemaDocumentDropsDisabledEntries covers the opposite policy to
 // whoami: a schema that still offered a disabled backend, model or tier would
 // let a run pick something the user opted out of.
@@ -164,7 +191,7 @@ func TestPromptSchemaDocumentDropsDisabledEntries(t *testing.T) {
 		[]string{"cmux"}, nil, nil, []string{"codex-cli/gpt-5.6-sol"}, []string{"ultra"}))
 	t.Cleanup(func() { api.SetDisabled(api.DisabledSet{}) })
 
-	doc, err := buildPromptSchemaDocument(stubbedSchemaAdapters(t))
+	doc, err := buildPromptSchemaDocument(stubbedSchemaAdapters(t), captainconfig.SandboxDefaults{})
 	if err != nil {
 		t.Fatalf("buildPromptSchemaDocument: %v", err)
 	}
@@ -215,7 +242,7 @@ func TestPromptSchemaDocumentDropsDisabledEntries(t *testing.T) {
 // runtime picker stop shipping its own family list: the document already carries
 // every provider×mode pair and the model each one seeds with.
 func TestPromptSchemaDocumentServesTheRuntimeCatalog(t *testing.T) {
-	doc, err := buildPromptSchemaDocument(stubbedSchemaAdapters(t))
+	doc, err := buildPromptSchemaDocument(stubbedSchemaAdapters(t), captainconfig.SandboxDefaults{})
 	if err != nil {
 		t.Fatalf("buildPromptSchemaDocument: %v", err)
 	}
@@ -241,7 +268,7 @@ func TestPromptSchemaDocumentServesTheRuntimeCatalog(t *testing.T) {
 }
 
 func TestPromptSchemaDocumentServesTheEffortUniverse(t *testing.T) {
-	doc, err := buildPromptSchemaDocument(stubbedSchemaAdapters(t))
+	doc, err := buildPromptSchemaDocument(stubbedSchemaAdapters(t), captainconfig.SandboxDefaults{})
 	if err != nil {
 		t.Fatalf("buildPromptSchemaDocument: %v", err)
 	}

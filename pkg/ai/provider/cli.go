@@ -9,12 +9,11 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
-	sandboxruntime "github.com/flanksource/sandbox-runtime/sandbox"
+	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/commons-db/shell"
 )
 
 func IsCommandNotFound(err error) bool {
@@ -78,17 +77,15 @@ func HandleExitError(exitCode int, stderr string) error {
 	}
 }
 
-type commandSandbox interface {
-	Command(context.Context, string, ...string) (*exec.Cmd, error)
-	Close(context.Context) error
-}
-
-var newCommandSandbox = func(ctx context.Context, cfg sandboxruntime.Config) (commandSandbox, error) {
-	return sandboxruntime.New(ctx, cfg)
-}
-
-func startCLIStream(ctx context.Context, command string, args []string, stdinData []byte, cwd string, env []string, sandboxed bool) (*exec.Cmd, io.ReadCloser, *bytes.Buffer, func(), error) {
-	cmd, closeSandbox, err := newCLICommand(ctx, command, args, cwd, sandboxed)
+// startCLIStream launches the CLI through the selected sandbox. It takes the
+// request itself because the sandbox seam needs three distinct things from
+// it: the working directory, the request-DECLARED variables (Setup.EnvVars —
+// what must cross a confinement boundary), and the fully RESOLVED environment
+// (Setup.Env — what the child process runs with). Collapsing those early is
+// how a container ends up receiving either none of the declared variables or
+// the entire host environment.
+func startCLIStream(ctx context.Context, command string, args []string, stdinData []byte, req *ai.Request, sandbox *api.SandboxConfig) (*exec.Cmd, io.ReadCloser, *bytes.Buffer, func(), error) {
+	cmd, closeSandbox, err := newCLICommand(ctx, command, args, req, sandbox)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
@@ -98,12 +95,6 @@ func startCLIStream(ctx context.Context, command string, args []string, stdinDat
 			closeSandbox()
 		}
 	}()
-	if cwd != "" {
-		cmd.Dir = cwd
-	}
-	if len(env) > 0 {
-		cmd.Env = env
-	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, nil, nil, nil, fmt.Errorf("failed to create stdout pipe: %w", err)
@@ -133,89 +124,101 @@ func startCLIStream(ctx context.Context, command string, args []string, stdinDat
 	return cmd, stdout, stderrBuf, closeSandbox, nil
 }
 
-func newCLICommand(ctx context.Context, command string, args []string, cwd string, sandboxed bool) (*exec.Cmd, func(), error) {
-	if !sandboxed {
-		return exec.CommandContext(ctx, command, args...), func() {}, nil
+// newCLICommand builds the CLI process through the selected sandbox adapter.
+// nil means unsandboxed, which resolves the "none" adapter.
+func newCLICommand(ctx context.Context, command string, args []string, req *ai.Request, sandbox *api.SandboxConfig) (*exec.Cmd, func(), error) {
+	cfg := api.SandboxConfig{Kind: api.SandboxNone}
+	if sandbox != nil {
+		cfg = *sandbox
 	}
-	cfg, err := cliSandboxConfig(command, cwd)
+	return newSandboxedCommand(ctx, cfg, command, args, req)
+}
+
+// newSandboxedCommand constructs the selected sandbox adapter and builds the
+// command through its CommandWrapper when it provides one — the single exec
+// seam shared by claude-cli, codex-cli and gemini-cli. An adapter without the
+// capability falls through to a bare command, which is exactly what the "none"
+// adapter is; an adapter whose wrapping fails aborts the run rather than
+// falling back to an unconfined process.
+//
+// The adapter sees the real request via Prepare and only the request-DECLARED
+// variables via Wrap. The command's environment layers, in order: the
+// wrapper's returned env (authoritative when non-empty — a container must
+// supply the docker client's environment wholesale), else the resolved setup
+// environment; then the Prepare session's Env on top, and the session's
+// WorkDir over the request cwd.
+func newSandboxedCommand(ctx context.Context, cfg api.SandboxConfig, command string, args []string, req *ai.Request) (*exec.Cmd, func(), error) {
+	sandbox, err := api.NewSandbox(cfg)
 	if err != nil {
 		return nil, nil, err
 	}
-	sb, err := newCommandSandbox(ctx, cfg)
-	if err != nil {
-		return nil, nil, fmt.Errorf("initialize sandbox-runtime: %w", err)
-	}
-	closeSandbox := func() {
-		closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = sb.Close(closeCtx)
-	}
-	cmd, err := sb.Command(ctx, command, args...)
+	closeSandbox := func() { _ = sandbox.Close() }
+	session, err := sandbox.Prepare(ctx, req)
 	if err != nil {
 		closeSandbox()
-		return nil, nil, fmt.Errorf("wrap %s with sandbox-runtime: %w", command, err)
+		return nil, nil, err
+	}
+
+	var resolvedEnv []string
+	if req.Setup != nil {
+		resolvedEnv = req.Setup.Env
+	}
+	cmd := exec.CommandContext(ctx, command, args...)
+	if wrapper, ok := api.SandboxAs[api.CommandWrapper](sandbox); ok {
+		wrappedCommand, wrappedArgs, wrappedEnv, err := wrapper.Wrap(ctx, command, args, declaredSetupEnv(req.Setup))
+		if err != nil {
+			closeSandbox()
+			return nil, nil, err
+		}
+		cmd = exec.CommandContext(ctx, wrappedCommand, wrappedArgs...)
+		if len(wrappedEnv) > 0 {
+			cmd.Env = wrappedEnv
+		}
+	}
+	if cmd.Env == nil {
+		if merged := commandEnv(resolvedEnv); len(merged) > 0 {
+			cmd.Env = merged
+		}
+	}
+	if session != nil && len(session.Env) > 0 {
+		if cmd.Env == nil {
+			cmd.Env = os.Environ()
+		}
+		cmd.Env = append(cmd.Env, session.Env...)
+	}
+	cmd.Dir = req.Cwd()
+	if session != nil && session.WorkDir != "" {
+		cmd.Dir = session.WorkDir
 	}
 	return cmd, closeSandbox, nil
 }
 
-func cliSandboxConfig(command, cwd string) (sandboxruntime.Config, error) {
-	if cwd == "" {
-		var err error
-		cwd, err = os.Getwd()
-		if err != nil {
-			return sandboxruntime.Config{}, fmt.Errorf("resolve sandbox working directory: %w", err)
+// declaredSetupEnv projects the request-declared variables (Setup.EnvVars)
+// onto KEY=VALUE pairs using the values Setup.Resolve produced. Setup.Env
+// itself is the FULL resolved environment — host environ included — so it
+// must never be handed to an adapter as "the declared set": that turns
+// "cross the declared variables into the container" into "cross the entire
+// host environment".
+func declaredSetupEnv(setup *shell.Setup) []string {
+	if setup == nil || len(setup.EnvVars) == 0 {
+		return nil
+	}
+	resolved := map[string]string{}
+	for _, item := range setup.Env {
+		if key, value, ok := strings.Cut(item, "="); ok {
+			resolved[key] = value
 		}
 	}
-	absoluteCwd, err := filepath.Abs(cwd)
-	if err != nil {
-		return sandboxruntime.Config{}, fmt.Errorf("resolve sandbox working directory %q: %w", cwd, err)
+	var out []string
+	for _, declared := range setup.EnvVars {
+		if declared.Name == "" {
+			continue
+		}
+		if value, ok := resolved[declared.Name]; ok {
+			out = append(out, declared.Name+"="+value)
+		}
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return sandboxruntime.Config{}, fmt.Errorf("resolve sandbox home directory: %w", err)
-	}
-
-	var domains, passthroughEnv, statePaths []string
-	switch filepath.Base(command) {
-	case "claude":
-		domains = []string{"anthropic.com", "*.anthropic.com", "claude.ai", "*.claude.ai"}
-		passthroughEnv = []string{"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"}
-		statePaths = []string{filepath.Join(home, ".claude"), filepath.Join(home, ".claude.json")}
-	case "codex":
-		domains = []string{"openai.com", "*.openai.com", "chatgpt.com", "*.chatgpt.com"}
-		passthroughEnv = []string{"OPENAI_API_KEY"}
-		statePaths = []string{filepath.Join(home, ".codex")}
-	case "gemini":
-		domains = []string{"google.com", "*.google.com", "googleapis.com", "*.googleapis.com"}
-		passthroughEnv = []string{"GEMINI_API_KEY", "GOOGLE_API_KEY"}
-		statePaths = []string{filepath.Join(home, ".gemini")}
-	default:
-		return sandboxruntime.Config{}, fmt.Errorf("sandbox-runtime does not support CLI command %q", command)
-	}
-
-	return sandboxruntime.Config{
-		Network: sandboxruntime.NetworkConfig{
-			AllowedDomains: domains,
-			DeniedDomains:  []string{},
-		},
-		Filesystem: sandboxruntime.FilesystemConfig{
-			AllowWrite: append([]string{absoluteCwd, "/tmp"}, statePaths...),
-			DenyRead: []string{
-				filepath.Join(home, ".ssh"),
-				filepath.Join(home, ".aws"),
-				filepath.Join(home, ".azure"),
-				filepath.Join(home, ".config", "gcloud"),
-				filepath.Join(home, ".kube"),
-				filepath.Join(home, ".docker", "run", "docker.sock"),
-				"/var/run/docker.sock",
-				"/run/docker.sock",
-				"/run/containerd/containerd.sock",
-				"/run/podman/podman.sock",
-			},
-			DenyWrite: []string{},
-		},
-		PassthroughEnv: passthroughEnv,
-	}, nil
+	return out
 }
 
 func finishCLIStream(ctx context.Context, cmd *exec.Cmd, stderrBuf *bytes.Buffer) error {

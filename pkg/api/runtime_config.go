@@ -53,14 +53,19 @@ type Config struct {
 	APIURL string
 	// Sandbox runs local agent CLI processes through sandbox-runtime. Provider
 	// selection must resolve to CLI mode so the flag cannot be silently ignored.
-	Sandbox       bool
-	CacheDBPath   string
-	CacheTTL      time.Duration
-	NoCache       bool
-	MaxConcurrent int
-	SessionID     string
-	ProjectName   string
-	SchemaRepair  SchemaRepairConfig
+	// It is the legacy boolean shorthand for SandboxSelection = {kind: srt}.
+	Sandbox bool
+	// SandboxSelection is the resolved sandbox for the run — kind, configured
+	// backend name, and that backend's options. nil means unsandboxed. When both
+	// this and the legacy Sandbox boolean are set, this wins.
+	SandboxSelection *SandboxConfig
+	CacheDBPath      string
+	CacheTTL         time.Duration
+	NoCache          bool
+	MaxConcurrent    int
+	SessionID        string
+	ProjectName      string
+	SchemaRepair     SchemaRepairConfig
 
 	// CanUseTool, when set, brokers tool permissions over the stream-json control
 	// protocol: the streaming provider asks this callback before a tool that needs
@@ -75,4 +80,16 @@ type Config struct {
 	// the genkit API backends) honour them; other providers, which bring their
 	// own tool ecosystems, ignore the field. Never serialized (Go closures).
 	Tools []ToolDefinition `json:"-"`
+}
+
+// ResolvedSandbox returns the sandbox selection for the run, folding the legacy
+// boolean onto the srt kind. nil means run unsandboxed.
+func (c Config) ResolvedSandbox() *SandboxConfig {
+	if c.SandboxSelection != nil {
+		return c.SandboxSelection
+	}
+	if c.Sandbox {
+		return &SandboxConfig{Kind: SandboxSRT}
+	}
+	return nil
 }

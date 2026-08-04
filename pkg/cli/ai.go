@@ -50,7 +50,22 @@ type AIProviderOptions struct {
 	APIKey  string `flag:"api-key" help:"API key (env: ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, GOOGLE_API_KEY, DEEPSEEK_API_KEY)"`
 	APIURL  string `flag:"api-url" help:"Override the backend endpoint, e.g. a 'captain ai mock' URL. Required for codex-cli, which ignores OPENAI_BASE_URL when a ChatGPT credential is stored"`
 	Budget  string `flag:"budget" help:"Max spend in USD, 0=unlimited" default:"0"`
-	Sandbox bool   `flag:"sandbox" help:"Run the local agent CLI in an OS-level sandbox"`
+	Sandbox string `flag:"sandbox" help:"Sandbox for the run: an adapter kind (none|srt|container|git-agent) or a backend configured under sandbox.backends in ~/.captain.yaml"`
+}
+
+// SandboxSelector normalizes --sandbox. The flag was previously a boolean that
+// toggled sandbox-runtime; the explicit boolean spellings (--sandbox=true,
+// --sandbox=false) keep their old meaning. A bare valueless --sandbox no
+// longer parses — the flag is a string selector now, so a value is required.
+func (o AIProviderOptions) SandboxSelector() string {
+	value := strings.TrimSpace(o.Sandbox)
+	switch strings.ToLower(value) {
+	case "true", "1", "yes":
+		return string(registry.SandboxSRT)
+	case "false", "0", "no":
+		return string(registry.SandboxNone)
+	}
+	return value
 }
 
 // BudgetUSD parses --budget, failing loud on malformed input.
@@ -82,34 +97,42 @@ func (o AIProviderOptions) ToConfig() (ai.Config, error) {
 		budget = saved.BudgetUSD
 	}
 
+	// Sandbox precedence here is flag > global default > none: this path has no
+	// prompt file, so there is no frontmatter layer (that one is overlayCLI's).
+	sandbox, err := resolveSandboxSelection(o.SandboxSelector(), nil, savedCfg.Sandbox)
+	if err != nil {
+		return ai.Config{}, err
+	}
+
 	// One resolve: flags → Model → saved per-provider defaults → catalog. The
 	// warn-and-continue policy for a broken config stays here (loadSavedConfig), so
 	// aiflags can hand the error back instead of swallowing it.
 	flags := o.ModelFlags
-	if o.Sandbox {
+	if forced := sandboxForcedMode(sandbox.Kind); forced != "" {
 		if value := strings.TrimSpace(flags.Mode); value != "" {
 			mode, ok := registry.ParseRuntimeMode(value)
 			if !ok {
 				return ai.Config{}, fmt.Errorf("invalid --mode %q (valid: %s)", value, registry.RuntimeModeList())
 			}
-			if mode != registry.ModeCLI {
-				return ai.Config{}, fmt.Errorf("--sandbox requires CLI mode, but --mode is %q", mode)
+			if mode != forced {
+				return ai.Config{}, fmt.Errorf("sandbox %q requires %s mode, but --mode is %q", sandbox.Kind, forced, mode)
 			}
 		}
-		flags.Mode = string(registry.ModeCLI)
+		flags.Mode = string(forced)
 	}
 	m, err := flags.ResolveWith(saved)
 	if err != nil {
 		return ai.Config{}, err
 	}
 	return ai.Config{
-		Model:        m,
-		Budget:       api.Budget{Cost: budget},
-		APIKey:       o.APIKey,
-		APIURL:       strings.TrimSpace(o.APIURL),
-		Sandbox:      o.Sandbox,
-		NoCache:      o.NoCache || saved.NoCache,
-		SchemaRepair: schemaRepairConfig(savedCfg.Prompts.SchemaRepair),
+		Model:            m,
+		Budget:           api.Budget{Cost: budget},
+		APIKey:           o.APIKey,
+		APIURL:           strings.TrimSpace(o.APIURL),
+		Sandbox:          sandbox.Kind == registry.SandboxSRT,
+		SandboxSelection: sandboxSelectionConfig(sandbox),
+		NoCache:          o.NoCache || saved.NoCache,
+		SchemaRepair:     schemaRepairConfig(savedCfg.Prompts.SchemaRepair),
 	}, nil
 }
 

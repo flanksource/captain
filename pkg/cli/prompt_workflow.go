@@ -6,7 +6,9 @@ import (
 )
 
 // verifyPassed reports whether the last verify verdict passed. With no verify
-// hooks, the run passed.
+// hooks, the run passed. The last-verdict read is sound because the runner
+// stops each verification round at its first failure (see agent.verifyPassed),
+// so the list's final entry is always the final round's outcome.
 func verifyPassed(verdicts []agent.VerifyResult) bool {
 	if len(verdicts) == 0 {
 		return true

@@ -29,6 +29,11 @@ type PromptRunSummary struct {
 	Duration     string  `json:"duration,omitempty"`
 	Success      bool    `json:"success"`
 	Error        string  `json:"error,omitempty"`
+	// Text and StructuredOutput carry the final response so a synchronous CLI
+	// run routed through the stream path can return it; stream consumers read
+	// the same values from the frames.
+	Text             string         `json:"text,omitempty"`
+	StructuredOutput map[string]any `json:"structuredOutput,omitempty"`
 }
 
 // runPromptAction renders the prompt (from an id | discovered name | .prompt
@@ -139,12 +144,18 @@ func executeSyncRunSingle(ctx context.Context, rendered PromptRenderResult, opts
 	)
 	run := group.Add("execute "+rendered.Backend+":"+rendered.Model, func(_ flanksourceContext.Context, t *task.Task) (PromptRunResult, error) {
 		taskCtx := ai.ContextWithLogger(t.Context(), t)
-		return executeSyncRunSingleDirect(taskCtx, rendered, opts, nil)
+		return executeSyncRunSingleDirect(taskCtx, t, rendered, opts, nil)
 	}, task.WithModel(rendered.Model), task.WithPrompt(rendered.Input.Prompt.User))
 	return run.GetResult()
 }
 
-func executeSyncRunSingleDirect(ctx context.Context, rendered PromptRenderResult, opts AIPromptOptions, binding *promptSessionBinding) (PromptRunResult, error) {
+func executeSyncRunSingleDirect(ctx context.Context, t *task.Task, rendered PromptRenderResult, opts AIPromptOptions, binding *promptSessionBinding) (PromptRunResult, error) {
+	// A configured workflow must go through the runner-backed path: the direct
+	// provider call below never constructs verify/commit/judge hooks, so taking
+	// it would complete the run with every declared check silently skipped.
+	if workflowConfigured(rendered.Input.Workflow) {
+		return executeSyncWorkflowRun(t, rendered, opts.NoStream, binding)
+	}
 	out, err := executePromptRequestFunc(ctx, rendered.Input, rendered.Config, runtimeTimeout(rendered.Input.Budget.Timeout), opts.NoStream)
 	if err != nil {
 		return PromptRunResult{}, err
@@ -167,6 +178,46 @@ func executeSyncRunSingleDirect(ctx context.Context, rendered PromptRenderResult
 		OutputTokens:     r.Output,
 		CostUSD:          r.CostUSD,
 		Duration:         r.Duration,
+	}, nil
+}
+
+// executeSyncWorkflowRun executes a workflow-bearing CLI run through the same
+// stream/runner machinery the server path uses, so hooks behave identically on
+// both surfaces. A run whose verification fails returns an error: a declared
+// check that does not pass must fail the command, not decorate its output.
+func executeSyncWorkflowRun(t *task.Task, rendered PromptRenderResult, noStream bool, binding *promptSessionBinding) (PromptRunResult, error) {
+	runID := uuid.NewString()
+	stream := promptRuns.create(runID)
+	// Nothing subscribes to a synchronous run's stream, and the broker's prune
+	// loop only runs under `captain serve` — deregister so embedders don't
+	// accumulate finished runs.
+	defer promptRuns.remove(runID)
+	timeout := runtimeTimeout(rendered.Input.Budget.Timeout)
+	var summary PromptRunSummary
+	var err error
+	if noStream {
+		summary, err = runPromptBufferedWorkflow(t, rendered, timeout, runID, stream, binding)
+	} else {
+		summary, err = runPromptStream(t, rendered, timeout, runID, stream, binding)
+	}
+	if err != nil {
+		return PromptRunResult{}, err
+	}
+	if !summary.Success {
+		return PromptRunResult{}, errors.New(firstNonEmpty(summary.Error, "verification failed"))
+	}
+	return PromptRunResult{
+		Status:           "completed",
+		RunID:            summary.RunID,
+		Model:            summary.Model,
+		Backend:          summary.Backend,
+		Text:             summary.Text,
+		StructuredOutput: summary.StructuredOutput,
+		SessionID:        summary.SessionID,
+		InputTokens:      summary.InputTokens,
+		OutputTokens:     summary.OutputTokens,
+		CostUSD:          summary.CostUSD,
+		Duration:         summary.Duration,
 	}, nil
 }
 
@@ -244,7 +295,7 @@ func executeSyncBatch(ctx context.Context, rendered PromptRenderResult, opts AIP
 			taskCtx := ai.ContextWithLogger(t.Context(), t)
 			binding := promptBinding(batch, i)
 			updatePromptSessionLifecycle(context.WithoutCancel(taskCtx), binding.SessionID, database.SessionLifecycleRunning, "")
-			result, err := executeSyncRunSingleDirect(taskCtx, variant, variantOpts, binding)
+			result, err := executeSyncRunSingleDirect(taskCtx, t, variant, variantOpts, binding)
 			item := PromptRunItem{
 				RunID:    binding.SessionID.String(),
 				Selector: selector,

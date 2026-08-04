@@ -152,7 +152,7 @@ func (h *Hook) commit(hc *agent.HookContext, phase agent.Phase) error {
 	if err != nil || len(paths) == 0 {
 		return err
 	}
-	if err := checkGates(dir, h.EffectiveGates(), h.MaxFileSize, paths); err != nil {
+	if err := CheckGates(dir, h.EffectiveGates(), h.MaxFileSize, paths); err != nil {
 		return err
 	}
 
