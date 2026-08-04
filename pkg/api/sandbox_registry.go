@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/flanksource/captain/pkg/api/registry"
 )
@@ -25,8 +26,13 @@ type SandboxFactory func(cfg SandboxConfig) (Sandbox, error)
 
 // sandboxFactories is the process-global adapter registry. Unexported for the
 // same reason the provider factories map is (see runtime_registry.go): mutated
-// only through RegisterSandbox, read only through NewSandbox.
-var sandboxFactories = map[SandboxKind]SandboxFactory{}
+// only through RegisterSandbox, read only through NewSandbox. The mutex exists
+// for tests, which re-register stubs while other tests construct sandboxes;
+// production writes all happen in init().
+var (
+	sandboxFactoriesMu sync.RWMutex
+	sandboxFactories   = map[SandboxKind]SandboxFactory{}
+)
 
 // RegisterSandbox registers a factory for a kind. Adapter packages call it from
 // init(). A kind with no registry descriptor panics: it means the descriptor
@@ -36,6 +42,8 @@ func RegisterSandbox(kind SandboxKind, factory SandboxFactory) {
 	if _, ok := registry.SandboxFor(kind); !ok {
 		panic(fmt.Sprintf("RegisterSandbox: kind %q has no descriptor in pkg/api/registry", kind))
 	}
+	sandboxFactoriesMu.Lock()
+	defer sandboxFactoriesMu.Unlock()
 	sandboxFactories[kind] = factory
 }
 
@@ -55,13 +63,18 @@ func NewSandbox(cfg SandboxConfig) (Sandbox, error) {
 	if !ok {
 		return nil, fmt.Errorf("unknown sandbox kind %q; want one of: %s", kind, SandboxKindList())
 	}
+	sandboxFactoriesMu.RLock()
 	factory, ok := sandboxFactories[kind]
+	sandboxFactoriesMu.RUnlock()
 	if !ok {
 		return nil, fmt.Errorf("no sandbox adapter registered for kind %q", kind)
 	}
 	sandbox, err := factory(cfg)
 	if err != nil {
 		return nil, err
+	}
+	if sandbox == nil {
+		return nil, fmt.Errorf("sandbox adapter for kind %q returned no instance", kind)
 	}
 	if err := verifySandboxCapabilities(descriptor, sandbox); err != nil {
 		_ = sandbox.Close()

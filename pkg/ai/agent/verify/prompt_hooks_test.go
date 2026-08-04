@@ -43,16 +43,24 @@ func TestPromptHooksForWorkflow(t *testing.T) {
 		}
 	})
 
+	t.Run("a blank prompt entry fails instead of dropping the check", func(t *testing.T) {
+		path := writeJudgePrompt(t)
+		_, err := PromptHooksForWorkflow(&api.Workflow{Verify: &api.Verify{Prompts: []string{path, "  "}}}, provider)
+		if err == nil || !strings.Contains(err.Error(), "prompts[1] is empty") {
+			t.Fatalf("err = %v, want blank entry rejected", err)
+		}
+	})
+
 	t.Run("builds a named LLM judge per prompt", func(t *testing.T) {
 		path := writeJudgePrompt(t)
-		wf := &api.Workflow{Verify: &api.Verify{Prompts: []string{path, "  "}}}
+		wf := &api.Workflow{Verify: &api.Verify{Prompts: []string{path}}}
 
 		hooks, err := PromptHooksForWorkflow(wf, provider)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if len(hooks) != 1 {
-			t.Fatalf("want 1 hook (blank skipped), got %d", len(hooks))
+			t.Fatalf("want 1 hook, got %d", len(hooks))
 		}
 		plugin, ok := hooks[0].(*Plugin)
 		if !ok || plugin.Name() != "judge:"+path {

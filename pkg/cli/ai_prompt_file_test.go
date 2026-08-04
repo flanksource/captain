@@ -176,6 +176,26 @@ func TestOverlayCLI_Sandbox(t *testing.T) {
 	}
 }
 
+// An explicit --sandbox=none must turn OFF a sandbox the base config carried:
+// the overlay resolved every layer, so it overwrites instead of ORing.
+func TestOverlayCLI_SandboxNoneClearsInherited(t *testing.T) {
+	isolateSavedAI(t)
+	base := baseFileReq()
+	baseCfg := ai.Config{Sandbox: true, SandboxSelection: &api.SandboxConfig{Kind: api.SandboxSRT}}
+	opts := AIPromptOptions{AIRuntimeOptions: AIRuntimeOptions{AIProviderOptions: AIProviderOptions{Sandbox: "none"}}}
+
+	_, cfg, err := overlayCLI(base, baseCfg, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Sandbox || cfg.SandboxSelection != nil {
+		t.Fatalf("sandbox=%v selection=%v, want both cleared by the explicit none", cfg.Sandbox, cfg.SandboxSelection)
+	}
+	if resolved := cfg.ResolvedSandbox(); resolved != nil {
+		t.Fatalf("ResolvedSandbox = %+v, want nil", resolved)
+	}
+}
+
 // --api-url is what points a run at a `captain ai mock` endpoint, so it has to
 // survive the overlay; a prompt file may pin its own endpoint, and the flag wins.
 func TestOverlayCLI_APIURLFlagBeatsFrontmatter(t *testing.T) {

@@ -48,15 +48,16 @@ func TestSRTAdapter_WrapAndClose(t *testing.T) {
 	if !ok {
 		t.Fatal("srt must provide a CommandWrapper (its descriptor declares it)")
 	}
-	command, args, env, err := wrapper.Wrap(context.Background(), "claude", []string{"-p"}, nil)
+	command, args, env, err := wrapper.Wrap(context.Background(), "claude", []string{"-p"}, []string{"DECLARED=1"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if command != "srt-wrapper" || len(args) != 2 || args[0] != "claude" || args[1] != "-p" {
 		t.Fatalf("wrapped argv = %q %v", command, args)
 	}
-	if len(env) != 1 || env[0] != "SRT=1" {
-		t.Fatalf("wrapped env = %v", env)
+	// Runtime env survives AND the request-declared variables ride along.
+	if len(env) != 2 || env[0] != "SRT=1" || env[1] != "DECLARED=1" {
+		t.Fatalf("wrapped env = %v, want runtime env plus declared vars", env)
 	}
 	if got := fake.gotConfig.Filesystem.AllowWrite[0]; got != cwd {
 		t.Fatalf("confinement cwd = %q, want the Prepare()d spec's %q", got, cwd)
@@ -79,6 +80,9 @@ func TestSRTConfigFor(t *testing.T) {
 	denyRead := []string{
 		filepath.Join(home, ".ssh"), filepath.Join(home, ".aws"), filepath.Join(home, ".azure"),
 		filepath.Join(home, ".config", "gcloud"), filepath.Join(home, ".kube"),
+		filepath.Join(home, ".netrc"), filepath.Join(home, ".git-credentials"),
+		filepath.Join(home, ".config", "gh"), filepath.Join(home, ".docker", "config.json"),
+		filepath.Join(home, ".npmrc"), filepath.Join(home, ".pypirc"),
 		filepath.Join(home, ".docker", "run", "docker.sock"), "/var/run/docker.sock",
 		"/run/docker.sock", "/run/containerd/containerd.sock", "/run/podman/podman.sock",
 	}
@@ -88,8 +92,8 @@ func TestSRTConfigFor(t *testing.T) {
 		env     []string
 		state   []string
 	}{
-		{"claude", []string{"anthropic.com", "*.anthropic.com", "claude.ai", "*.claude.ai"}, []string{"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"}, []string{filepath.Join(home, ".claude"), filepath.Join(home, ".claude.json")}},
-		{"codex", []string{"openai.com", "*.openai.com", "chatgpt.com", "*.chatgpt.com"}, []string{"OPENAI_API_KEY"}, []string{filepath.Join(home, ".codex")}},
+		{"claude", []string{"anthropic.com", "*.anthropic.com", "claude.ai", "*.claude.ai"}, []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN"}, []string{filepath.Join(home, ".claude"), filepath.Join(home, ".claude.json")}},
+		{"codex", []string{"openai.com", "*.openai.com", "chatgpt.com", "*.chatgpt.com"}, []string{"OPENAI_API_KEY", "OPENAI_BASE_URL"}, []string{filepath.Join(home, ".codex")}},
 		{"gemini", []string{"google.com", "*.google.com", "googleapis.com", "*.googleapis.com"}, []string{"GEMINI_API_KEY", "GOOGLE_API_KEY"}, []string{filepath.Join(home, ".gemini")}},
 	}
 	for _, tt := range tests {

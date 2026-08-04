@@ -13,22 +13,21 @@ import (
 
 func prepareContainer(t *testing.T, cwd string, options map[string]any) api.Sandbox {
 	t.Helper()
-	sandbox, err := newContainer(t, options)
-	if _, err2 := sandbox.Prepare(context.Background(), specWithCwd(cwd)); err2 != nil {
-		t.Fatal(err2)
+	sandbox := newContainer(t, options)
+	if _, err := sandbox.Prepare(context.Background(), specWithCwd(cwd)); err != nil {
+		t.Fatal(err)
 	}
-	_ = err
 	return sandbox
 }
 
-func newContainer(t *testing.T, options map[string]any) (api.Sandbox, error) {
+func newContainer(t *testing.T, options map[string]any) api.Sandbox {
 	t.Helper()
 	sandbox, err := api.NewSandbox(api.SandboxConfig{Kind: api.SandboxContainer, Options: options})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = sandbox.Close() })
-	return sandbox, nil
+	return sandbox
 }
 
 func wrap(t *testing.T, sandbox api.Sandbox, command string, args []string) (string, []string) {
@@ -111,7 +110,7 @@ func TestContainerAdapter_UntrustedProjectConfigRejected(t *testing.T) {
 	t.Run("envPassthrough refused", func(t *testing.T) {
 		cwd := t.TempDir()
 		writeProjectConfig(t, cwd, "image: img\nenvPassthrough: [AWS_SECRET_ACCESS_KEY]\n")
-		sandbox, _ := newContainer(t, nil)
+		sandbox := newContainer(t, nil)
 		_, err := sandbox.Prepare(context.Background(), specWithCwd(cwd))
 		if err == nil || !strings.Contains(err.Error(), "~/.captain.yaml") {
 			t.Fatalf("err = %v, want refusal naming the trusted config", err)
@@ -121,7 +120,7 @@ func TestContainerAdapter_UntrustedProjectConfigRejected(t *testing.T) {
 	t.Run("out-of-project volume refused", func(t *testing.T) {
 		cwd := t.TempDir()
 		writeProjectConfig(t, cwd, "image: img\nvolumes:\n  - source: /\n    target: /host\n")
-		sandbox, _ := newContainer(t, nil)
+		sandbox := newContainer(t, nil)
 		_, err := sandbox.Prepare(context.Background(), specWithCwd(cwd))
 		if err == nil || !strings.Contains(err.Error(), "outside the project directory") {
 			t.Fatalf("err = %v, want out-of-project mount refusal", err)

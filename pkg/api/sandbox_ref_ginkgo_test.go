@@ -54,6 +54,23 @@ var _ = Describe("SandboxRef", func() {
 		Expect(err).To(MatchError(ContainSubstring(`unknown sandbox key "backed"`)))
 	})
 
+	It("rejects unknown object keys in JSON too", func() {
+		var ref SandboxRef
+		err := json.Unmarshal([]byte(`{"backed":"container"}`), &ref)
+		Expect(err).To(MatchError(ContainSubstring("unknown field")))
+	})
+
+	It("leaves the receiver unset on explicit JSON null", func() {
+		ref := SandboxRef{Backend: "keep"}
+		Expect(json.Unmarshal([]byte(`null`), &ref)).To(Succeed())
+		Expect(ref.Backend).To(Equal("keep"))
+	})
+
+	It("rejects an empty scalar backend", func() {
+		err := SandboxRef{}.Validate()
+		Expect(err).To(MatchError(ContainSubstring("must name a backend or adapter kind")))
+	})
+
 	It("rejects unknown policy keys", func() {
 		var ref SandboxRef
 		err := yaml.Unmarshal([]byte("backend: p\npolicy: {maxAttempt: 3}"), &ref)

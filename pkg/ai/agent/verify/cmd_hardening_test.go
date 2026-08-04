@@ -61,3 +61,16 @@ func TestCmdVerifier_StartFailureFeedsBackTheError(t *testing.T) {
 	assert.False(t, verdict.OK)
 	assert.Contains(t, verdict.Feedback, "captain-no-such-binary")
 }
+
+// A parent deadline shorter than the verifier's own Timeout is the RUN's
+// cancellation, not the command's: it must come back as an error, never as a
+// verdict blaming the command for "timing out after <Timeout>".
+func TestCmdVerifier_ParentDeadlineIsNotTheCommandsTimeout(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+
+	v := &CmdVerifier{Cmd: "sleep", Args: []string{"30"}, Timeout: time.Hour}
+	_, err := v.Verify(ctx, t.TempDir(), nil)
+
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+}

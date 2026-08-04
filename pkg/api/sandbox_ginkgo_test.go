@@ -121,6 +121,27 @@ var _ = Describe("NewProvider sandbox validation", func() {
 
 		Expect(err).To(MatchError(ContainSubstring("does not support runtime mode")))
 	})
+
+	It("lets an explicit selection override a stale legacy boolean", func() {
+		// Sandbox=true would demand a CLI backend, but the explicit "none"
+		// selection has precedence — the run must get past the sandbox guards
+		// (failing later only because no provider factory is registered here).
+		_, err := api.NewProvider(api.Config{
+			Model:            api.Model{Name: "claude-sonnet-5", Backend: api.BackendClaudeAgent},
+			Sandbox:          true,
+			SandboxSelection: &api.SandboxConfig{Kind: api.SandboxNone},
+		})
+
+		Expect(err).NotTo(MatchError(ContainSubstring("sandbox-runtime requires a CLI backend")))
+	})
+
+	It("rejects a factory returning a nil instance", func() {
+		api.RegisterSandbox(api.SandboxNone, func(api.SandboxConfig) (api.Sandbox, error) { return nil, nil })
+
+		_, err := api.NewSandbox(api.SandboxConfig{Kind: api.SandboxNone})
+
+		Expect(err).To(MatchError(ContainSubstring("returned no instance")))
+	})
 })
 
 var _ = Describe("RegisterSandbox", func() {

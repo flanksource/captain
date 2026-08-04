@@ -108,7 +108,10 @@ func (c *CmdVerifier) Verify(ctx context.Context, cwd string, changed []string) 
 	if timeout <= 0 {
 		timeout = DefaultCmdTimeout
 	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	// The verifier's own timeout lives on a derived context; the parent is
+	// consulted separately below, so a parent deadline shorter than Timeout is
+	// reported as the run's cancellation, not misattributed to the command.
+	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	tail := c.FeedbackTail
@@ -117,7 +120,7 @@ func (c *CmdVerifier) Verify(ctx context.Context, cwd string, changed []string) 
 	}
 	output := &tailBuffer{max: tail}
 
-	cmd := exec.CommandContext(ctx, c.Cmd, args...)
+	cmd := exec.CommandContext(runCtx, c.Cmd, args...)
 	cmd.Dir = cwd
 	cmd.Stdout, cmd.Stderr = output, output
 	// Own process group, and cancellation kills the group: signalling only the
@@ -132,15 +135,16 @@ func (c *CmdVerifier) Verify(ctx context.Context, cwd string, changed []string) 
 	switch {
 	case err == nil:
 		return Verdict{OK: true}, nil
-	case errors.Is(ctx.Err(), context.DeadlineExceeded):
+	case ctx.Err() != nil:
+		// The parent context ended (cancellation or its own, earlier deadline):
+		// the run is being torn down, which is not a verdict on the work.
+		return Verdict{}, ctx.Err()
+	case errors.Is(runCtx.Err(), context.DeadlineExceeded):
 		return Verdict{
 			OK:       false,
 			Reason:   fmt.Sprintf("%s timed out after %s", c.Cmd, timeout),
 			Feedback: output.String(),
 		}, nil
-	case ctx.Err() != nil:
-		// The run itself is being torn down; that is not a verdict on the work.
-		return Verdict{}, ctx.Err()
 	}
 	feedback := output.String()
 	if feedback == "" {

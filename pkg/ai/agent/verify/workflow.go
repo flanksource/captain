@@ -47,10 +47,13 @@ func PromptHooksForWorkflow(wf *api.Workflow, provider ai.Provider) ([]any, erro
 		return nil, fmt.Errorf("verify prompts declared but no provider available to judge them")
 	}
 	var hooks []any
-	for _, path := range wf.Verify.Prompts {
+	for i, path := range wf.Verify.Prompts {
 		path = strings.TrimSpace(path)
 		if path == "" {
-			continue
+			// Same rule as api.Workflow.Validate: a blank entry is a broken
+			// declaration, and skipping it would silently drop a configured check
+			// for callers that never ran Validate.
+			return nil, fmt.Errorf("workflow.verify.prompts[%d] is empty", i)
 		}
 		tmpl, err := prompt.LoadFile(path)
 		if err != nil {

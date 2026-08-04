@@ -9,9 +9,9 @@ import "path/filepath"
 func cliCredentialEnv(command string) []string {
 	switch filepath.Base(command) {
 	case "claude":
-		return []string{"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"}
+		return []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN"}
 	case "codex":
-		return []string{"OPENAI_API_KEY"}
+		return []string{"OPENAI_API_KEY", "OPENAI_BASE_URL"}
 	case "gemini":
 		return []string{"GEMINI_API_KEY", "GOOGLE_API_KEY"}
 	}

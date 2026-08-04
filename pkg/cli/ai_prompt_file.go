@@ -198,10 +198,11 @@ func overlayCLI(base ai.Request, baseCfg ai.Config, o AIPromptOptions) (ai.Reque
 	cfg.Budget = req.Budget
 	cfg.APIKey = o.APIKey
 	cfg.APIURL = firstNonEmpty(strings.TrimSpace(o.APIURL), baseCfg.APIURL)
-	cfg.Sandbox = sandbox.Kind == registry.SandboxSRT || baseCfg.Sandbox
-	if selection := sandboxSelectionConfig(sandbox); selection != nil {
-		cfg.SandboxSelection = selection
-	}
+	// The overlay's resolution saw every layer (flag > frontmatter > default),
+	// so it overwrites rather than ORs with baseCfg: an explicit "none" must be
+	// able to turn an inherited srt selection OFF.
+	cfg.Sandbox = sandbox.Kind == registry.SandboxSRT
+	cfg.SandboxSelection = sandboxSelectionConfig(sandbox)
 	cfg.NoCache = req.NoCache
 	return req, cfg, nil
 }

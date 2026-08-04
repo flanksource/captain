@@ -2,6 +2,7 @@ package adapter
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -65,9 +66,13 @@ func (s *srtSandbox) Wrap(ctx context.Context, command string, args, env []strin
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("wrap %s with sandbox-runtime: %w", command, err)
 	}
+	// When the runtime supplies its own environment, the request-declared
+	// variables are appended so they survive; when it supplies none, nil is
+	// returned and the exec seam falls back to the full resolved environment,
+	// which already contains them.
 	wrappedEnv := cmd.Env
-	if len(wrappedEnv) == 0 {
-		wrappedEnv = env
+	if len(wrappedEnv) > 0 {
+		wrappedEnv = append(wrappedEnv, env...)
 	}
 	return cmd.Args[0], cmd.Args[1:], wrappedEnv, nil
 }
@@ -77,12 +82,15 @@ func (s *srtSandbox) Close() error {
 	runtimes := s.runtimes
 	s.runtimes = nil
 	s.mu.Unlock()
+	var errs []error
 	for _, runtime := range runtimes {
 		closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		_ = runtime.Close(closeCtx)
+		if err := runtime.Close(closeCtx); err != nil {
+			errs = append(errs, err)
+		}
 		cancel()
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // srtConfigFor builds the per-CLI confinement policy: the provider's API
@@ -133,6 +141,12 @@ func srtConfigFor(command, cwd string) (sandboxruntime.Config, error) {
 				filepath.Join(home, ".azure"),
 				filepath.Join(home, ".config", "gcloud"),
 				filepath.Join(home, ".kube"),
+				filepath.Join(home, ".netrc"),
+				filepath.Join(home, ".git-credentials"),
+				filepath.Join(home, ".config", "gh"),
+				filepath.Join(home, ".docker", "config.json"),
+				filepath.Join(home, ".npmrc"),
+				filepath.Join(home, ".pypirc"),
 				filepath.Join(home, ".docker", "run", "docker.sock"),
 				"/var/run/docker.sock",
 				"/run/docker.sock",

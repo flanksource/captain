@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 
@@ -58,13 +59,22 @@ func (r SandboxRef) MarshalJSON() ([]byte, error) {
 }
 
 func (r *SandboxRef) UnmarshalJSON(data []byte) error {
+	// An explicit null leaves the receiver untouched — it is "unset", not an
+	// empty ref that would later resolve to nothing.
+	if string(bytes.TrimSpace(data)) == "null" {
+		return nil
+	}
 	var scalar string
 	if err := json.Unmarshal(data, &scalar); err == nil {
 		*r = SandboxRef{Backend: scalar}
 		return nil
 	}
+	// Strict decode, mirroring the YAML path: a typo'd key ("backed") must not
+	// silently yield an empty ref and a run with no sandbox.
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
 	var alias sandboxRefAlias
-	if err := json.Unmarshal(data, &alias); err != nil {
+	if err := decoder.Decode(&alias); err != nil {
 		return err
 	}
 	*r = SandboxRef(alias)
@@ -166,12 +176,17 @@ func (SandboxRef) JSONSchema() *jsonschema.Schema {
 	}
 }
 
-// Validate rejects references that resolve to nothing: overrides with no
-// backend to apply them to, and a negative attempt bound. Backend-name
-// resolution belongs to the config layer, which knows the configured names.
+// Validate rejects references that resolve to nothing: an empty backend
+// (`sandbox: ""` is present-but-selecting-nothing, almost certainly a
+// mistake), overrides with no backend to apply them to, and a negative
+// attempt bound. Backend-name resolution belongs to the config layer, which
+// knows the configured names.
 func (r SandboxRef) Validate() error {
-	if r.Backend == "" && !r.isScalar() {
-		return fmt.Errorf("sandbox overrides (agent/policy) require a backend")
+	if r.Backend == "" {
+		if !r.isScalar() {
+			return fmt.Errorf("sandbox overrides (agent/policy) require a backend")
+		}
+		return fmt.Errorf("sandbox must name a backend or adapter kind (one of: %s)", SandboxKindList())
 	}
 	if r.Policy != nil && r.Policy.MaxAttempts < 0 {
 		return fmt.Errorf("sandbox policy maxAttempts must be >= 0, got %d", r.Policy.MaxAttempts)

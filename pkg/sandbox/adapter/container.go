@@ -62,6 +62,14 @@ func (c *containerSandbox) Prepare(_ context.Context, spec *api.Spec) (*api.Sand
 		if err := rejectUntrustedContainerConfig(cfg, c.cwd); err != nil {
 			return nil, err
 		}
+		// Normalize relative volume sources onto the project directory: docker
+		// would otherwise treat them as named volumes, mounting something other
+		// than the path the containment check above approved.
+		for i, volume := range cfg.Volumes {
+			if !filepath.IsAbs(volume.Source) {
+				cfg.Volumes[i].Source = filepath.Join(c.cwd, volume.Source)
+			}
+		}
 		c.cfg = cfg
 	}
 	if image, ok := c.options["image"].(string); ok && image != "" {
@@ -82,12 +90,17 @@ func (c *containerSandbox) Prepare(_ context.Context, spec *api.Spec) (*api.Sand
 }
 
 // rejectUntrustedContainerConfig refuses the repository-supplied settings that
-// would reach the host: ambient environment access and out-of-project mounts.
-// Refusing beats filtering — a cloned repo silently granting itself less than
-// it asked for still granted itself something the user never saw.
+// would reach the host: ambient environment access, out-of-project mounts, and
+// presets — whose expansion mounts host cache directories and passes
+// credential env through. Refusing beats filtering — a cloned repo silently
+// granting itself less than it asked for still granted itself something the
+// user never saw.
 func rejectUntrustedContainerConfig(cfg container.SandboxConfig, cwd string) error {
 	if len(cfg.Env) > 0 || len(cfg.EnvPassthrough) > 0 {
 		return fmt.Errorf(".container-sandbox.yaml declares env/envPassthrough, which reads the host environment; declare them on the sandbox backend in ~/.captain.yaml instead")
+	}
+	if len(cfg.Presets) > 0 {
+		return fmt.Errorf(".container-sandbox.yaml declares presets, whose expansion mounts host caches and passes credentials through; declare presets on the sandbox backend in ~/.captain.yaml instead")
 	}
 	for _, volume := range cfg.Volumes {
 		inside, err := pathWithin(volume.Source, cwd)
@@ -101,8 +114,14 @@ func rejectUntrustedContainerConfig(cfg container.SandboxConfig, cwd string) err
 	return nil
 }
 
-// pathWithin reports whether path (symlinks resolved) is inside root.
+// pathWithin reports whether path (symlinks resolved) is inside root. A
+// relative path is anchored on root — NOT the process working directory —
+// because root is the project the config came from, and docker would treat a
+// relative source as a named volume anyway (see the normalization in Prepare).
 func pathWithin(path, root string) (bool, error) {
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(root, path)
+	}
 	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return false, err
