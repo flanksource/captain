@@ -271,7 +271,7 @@ func TestAIProviderOptions_ToConfig_Sandbox(t *testing.T) {
 	}{
 		{name: "selects CLI without changing model", flags: aiflags.ModelFlags{Model: "claude-sonnet-5"}, wantName: "claude-sonnet-5", backends: []api.Backend{api.BackendClaudeCLI}},
 		{name: "rejects explicit API backend", flags: aiflags.ModelFlags{Model: "claude-sonnet-5", Backend: "anthropic"}, wantErr: "contradicts backend"},
-		{name: "rejects explicit API mode", flags: aiflags.ModelFlags{Model: "claude-sonnet-5", Mode: "api"}, wantErr: "requires CLI mode"},
+		{name: "rejects explicit API mode", flags: aiflags.ModelFlags{Model: "claude-sonnet-5", Mode: "api"}, wantErr: "requires cli mode"},
 		{name: "overrides saved runtime", saved: "ai:\n  model: opus\n  backend: claude-agent\n", backends: []api.Backend{api.BackendClaudeCLI}},
 		{name: "resolves fallbacks in CLI mode", flags: aiflags.ModelFlags{Model: "claude-sonnet-5,gpt-5.5", Fallback: []string{"gemini-3.5-flash"}}, backends: []api.Backend{api.BackendClaudeCLI, api.BackendCodexCLI, api.BackendGeminiCLI}},
 	}

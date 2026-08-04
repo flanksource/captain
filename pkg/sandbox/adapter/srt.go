@@ -104,23 +104,21 @@ func srtConfigFor(command, cwd string) (sandboxruntime.Config, error) {
 		return sandboxruntime.Config{}, fmt.Errorf("resolve sandbox home directory: %w", err)
 	}
 
-	var domains, passthroughEnv, statePaths []string
+	var domains, statePaths []string
 	switch filepath.Base(command) {
 	case "claude":
 		domains = []string{"anthropic.com", "*.anthropic.com", "claude.ai", "*.claude.ai"}
-		passthroughEnv = []string{"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"}
 		statePaths = []string{filepath.Join(home, ".claude"), filepath.Join(home, ".claude.json")}
 	case "codex":
 		domains = []string{"openai.com", "*.openai.com", "chatgpt.com", "*.chatgpt.com"}
-		passthroughEnv = []string{"OPENAI_API_KEY"}
 		statePaths = []string{filepath.Join(home, ".codex")}
 	case "gemini":
 		domains = []string{"google.com", "*.google.com", "googleapis.com", "*.googleapis.com"}
-		passthroughEnv = []string{"GEMINI_API_KEY", "GOOGLE_API_KEY"}
 		statePaths = []string{filepath.Join(home, ".gemini")}
 	default:
 		return sandboxruntime.Config{}, fmt.Errorf("sandbox-runtime does not support CLI command %q", command)
 	}
+	passthroughEnv := cliCredentialEnv(command)
 
 	return sandboxruntime.Config{
 		Network: sandboxruntime.NetworkConfig{

@@ -106,17 +106,17 @@ func (o AIProviderOptions) ToConfig() (ai.Config, error) {
 	// warn-and-continue policy for a broken config stays here (loadSavedConfig), so
 	// aiflags can hand the error back instead of swallowing it.
 	flags := o.ModelFlags
-	if sandbox.Kind == registry.SandboxSRT {
+	if forced := sandboxForcedMode(sandbox.Kind); forced != "" {
 		if value := strings.TrimSpace(flags.Mode); value != "" {
 			mode, ok := registry.ParseRuntimeMode(value)
 			if !ok {
 				return ai.Config{}, fmt.Errorf("invalid --mode %q (valid: %s)", value, registry.RuntimeModeList())
 			}
-			if mode != registry.ModeCLI {
-				return ai.Config{}, fmt.Errorf("sandbox %q requires CLI mode, but --mode is %q", sandbox.Kind, mode)
+			if mode != forced {
+				return ai.Config{}, fmt.Errorf("sandbox %q requires %s mode, but --mode is %q", sandbox.Kind, forced, mode)
 			}
 		}
-		flags.Mode = string(registry.ModeCLI)
+		flags.Mode = string(forced)
 	}
 	m, err := flags.ResolveWith(saved)
 	if err != nil {

@@ -150,7 +150,7 @@ func TestOverlayCLI_CLIOverridesFrontmatter(t *testing.T) {
 func TestOverlayCLI_Sandbox(t *testing.T) {
 	for _, tt := range []struct{ name, mode, wantErr string }{
 		{name: "selects CLI for frontmatter model"},
-		{name: "rejects explicit API mode", mode: "api", wantErr: "requires CLI mode"},
+		{name: "rejects explicit API mode", mode: "api", wantErr: "requires cli mode"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			isolateSavedAI(t)

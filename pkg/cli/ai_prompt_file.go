@@ -108,11 +108,11 @@ func overlayCLI(base ai.Request, baseCfg ai.Config, o AIPromptOptions) (ai.Reque
 	if err != nil {
 		return base, baseCfg, err
 	}
-	if sandbox.Kind == registry.SandboxSRT {
-		if requestedMode != "" && requestedMode != registry.ModeCLI {
-			return base, baseCfg, fmt.Errorf("sandbox %q requires CLI mode, but --mode is %q", sandbox.Kind, requestedMode)
+	if forced := sandboxForcedMode(sandbox.Kind); forced != "" {
+		if requestedMode != "" && requestedMode != forced {
+			return base, baseCfg, fmt.Errorf("sandbox %q requires %s mode, but --mode is %q", sandbox.Kind, forced, requestedMode)
 		}
-		requestedMode = registry.ModeCLI
+		requestedMode = forced
 	}
 	if requestedMode != "" {
 		m.Mode = ""
