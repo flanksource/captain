@@ -19,8 +19,8 @@ func (s sandboxStub) Close() error { return nil }
 
 type wrappingSandboxStub struct{ sandboxStub }
 
-func (wrappingSandboxStub) Wrap(cmd string, args, env []string) (string, []string, []string) {
-	return "wrapped-" + cmd, args, env
+func (wrappingSandboxStub) Wrap(_ context.Context, cmd string, args, env []string) (string, []string, []string, error) {
+	return "wrapped-" + cmd, args, env, nil
 }
 
 type sandboxDecorator struct{ inner api.Sandbox }
@@ -39,7 +39,8 @@ var _ = Describe("SandboxAs", func() {
 		wrapper, ok := api.SandboxAs[api.CommandWrapper](sandbox)
 
 		Expect(ok).To(BeTrue())
-		cmd, _, _ := wrapper.Wrap("claude", nil, nil)
+		cmd, _, _, err := wrapper.Wrap(context.Background(), "claude", nil, nil)
+		Expect(err).NotTo(HaveOccurred())
 		Expect(cmd).To(Equal("wrapped-claude"))
 	})
 

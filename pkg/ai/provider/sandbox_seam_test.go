@@ -17,8 +17,8 @@ func (s *wrapperSandboxStub) Prepare(context.Context, *api.Spec) (*api.SandboxSe
 	return &api.SandboxSession{}, nil
 }
 func (s *wrapperSandboxStub) Close() error { s.closed = true; return nil }
-func (s *wrapperSandboxStub) Wrap(cmd string, args, env []string) (string, []string, []string) {
-	return "confine", append([]string{"--", cmd}, args...), append(env, "WRAPPED=1")
+func (s *wrapperSandboxStub) Wrap(_ context.Context, cmd string, args, env []string) (string, []string, []string, error) {
+	return "confine", append([]string{"--", cmd}, args...), append(env, "WRAPPED=1"), nil
 }
 
 func TestNewCLICommand_UnsandboxedStaysBare(t *testing.T) {
@@ -40,7 +40,7 @@ func TestNewSandboxedCommand_RoutesThroughCommandWrapper(t *testing.T) {
 	api.RegisterSandbox(api.SandboxNone, func(api.SandboxConfig) (api.Sandbox, error) { return stub, nil })
 	t.Cleanup(func() { api.RegisterSandbox(api.SandboxNone, adapter.None) })
 
-	cmd, cleanup, err := newSandboxedCommand(context.Background(), api.SandboxConfig{Kind: api.SandboxNone}, "claude", []string{"-p"})
+	cmd, cleanup, err := newSandboxedCommand(context.Background(), api.SandboxConfig{Kind: api.SandboxNone}, "claude", []string{"-p"}, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}

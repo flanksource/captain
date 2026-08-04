@@ -75,9 +75,12 @@ type SandboxUnwrapper interface {
 
 // CommandWrapper is the capability of adapters that confine a local process by
 // rewriting its argv/env before exec (srt, container). The returned values
-// replace the originals wholesale.
+// replace the originals wholesale. It takes a context and returns an error
+// because wrapping may require constructing live confinement state; an adapter
+// that cannot wrap MUST fail here — falling through to an unwrapped command
+// would silently run unsandboxed.
 type CommandWrapper interface {
-	Wrap(cmd string, args, env []string) (string, []string, []string)
+	Wrap(ctx context.Context, cmd string, args, env []string) (string, []string, []string, error)
 }
 
 // RemoteExecutor is the capability of adapters that do not wrap a local exec at
