@@ -25,7 +25,12 @@ dist/
 pkg/cli/webapp/dist/*
 !pkg/cli/webapp/dist/.gitkeep
 .grite/
+# hack/ is local scratch space, except the git-agent substrate harness the
+# protocol tests rerun on every git version (SPEC-git-agent-protocol §1).
 hack/
+!hack/
+hack/*
+!hack/gitagent_empirical.sh
 .ok/
 .okignore
 .ginkgo/
