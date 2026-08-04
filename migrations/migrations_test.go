@@ -38,6 +38,8 @@ func TestSchemaBundleContainsGavelIntegrationContract(t *testing.T) {
 		"70_prompt_run_runtime.sql",
 		"71_session_storage_params.sql",
 		"72_ingest_storage_params.sql",
+		"73_normalize_session_cwd.sql",
+		"74_turn_request_approval_identity.sql",
 	}
 	for _, name := range expectedFiles {
 		if _, err := fs.Stat(schemaFS, name); err != nil {
@@ -155,6 +157,12 @@ func TestSchemaBundleContainsGavelIntegrationContract(t *testing.T) {
 	assertContainsNone(t, "30_execution.pg.hcl", "fillfactor", "autovacuum_")
 	assertContainsNone(t, "31_execution_events.pg.hcl", "fillfactor", "autovacuum_")
 	assertContainsNone(t, "32_execution_approvals.pg.hcl", "fillfactor", "autovacuum_")
+	assertContainsAll(t, "74_turn_request_approval_identity.sql",
+		"-- phase: post",
+		"ambiguous legacy tool approval identity",
+		"DROP CONSTRAINT IF EXISTS captain_turn_requests_tool_approval_identity",
+		"VALIDATE CONSTRAINT captain_turn_requests_tool_approval_identity",
+	)
 	for _, name := range expectedFiles {
 		assertContainsNone(t, name,
 			`table "captain_outbox"`,
@@ -234,11 +242,40 @@ func TestApplyHoldsMigrationLockAcrossMigration(t *testing.T) {
 			events = append(events, "migrate")
 			return nil
 		},
+		verify: func(context.Context, string) error {
+			events = append(events, "verify")
+			return nil
+		},
 	})
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
-	assertEventsEqual(t, events, []string{"lock", "migrate", "unlock"})
+	assertEventsEqual(t, events, []string{"lock", "migrate", "verify", "unlock"})
+}
+
+func TestApplyReleasesMigrationLockOnVerificationFailure(t *testing.T) {
+	t.Parallel()
+
+	var events []string
+	verificationErr := errors.New("constraint drifted")
+	err := apply(t.Context(), "postgres://captain", applyDependencies{
+		acquireLock: func(context.Context, string) (migrationLockHandle, error) {
+			events = append(events, "lock")
+			return &recordingMigrationLock{events: &events}, nil
+		},
+		migrate: func(context.Context, string) error {
+			events = append(events, "migrate")
+			return nil
+		},
+		verify: func(context.Context, string) error {
+			events = append(events, "verify")
+			return verificationErr
+		},
+	})
+	if !errors.Is(err, verificationErr) {
+		t.Fatalf("apply error = %v, want errors.Is(_, %v)", err, verificationErr)
+	}
+	assertEventsEqual(t, events, []string{"lock", "migrate", "verify", "unlock"})
 }
 
 func TestApplyReleasesMigrationLockOnMigrationFailure(t *testing.T) {

@@ -74,6 +74,9 @@ BEGIN
   UPDATE captain_prompt_runs r SET execution_session_id = m.winner
   FROM captain_duplicate_session_map m WHERE r.execution_session_id = m.loser;
 
+  UPDATE captain_session_processes p SET session_id = m.winner
+  FROM captain_duplicate_session_map m WHERE p.session_id = m.loser;
+
   -- captain_sessions.parent_session_id and root_session_id are self-referential
   -- and ON DELETE CASCADE, so a ghost that any subagent row named as its parent
   -- takes that whole subtree -- sessions, messages, turns, artifacts -- down with
