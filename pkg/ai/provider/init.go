@@ -23,7 +23,7 @@ func init() {
 	ai.RegisterProvider(ai.BackendClaudeAgent, func(cfg ai.Config) (ai.Provider, error) { return claudeagent.New(cfg) })
 	ai.RegisterProvider(ai.BackendClaudeCLI, func(cfg ai.Config) (ai.Provider, error) {
 		provider := NewClaudeCLI(cfg.Model.Name)
-		provider.sandbox = cfg.Sandbox
+		provider.sandbox = cfg.ResolvedSandbox()
 		return provider, nil
 	})
 
@@ -38,7 +38,7 @@ func init() {
 
 	ai.RegisterProvider(ai.BackendGeminiCLI, func(cfg ai.Config) (ai.Provider, error) {
 		provider := NewGeminiCLI(cfg.Model.Name)
-		provider.sandbox = cfg.Sandbox
+		provider.sandbox = cfg.ResolvedSandbox()
 		return provider, nil
 	})
 }

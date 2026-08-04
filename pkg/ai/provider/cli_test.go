@@ -84,7 +84,7 @@ func TestGeminiCLIUsesContextDir(t *testing.T) {
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	provider := NewGeminiCLI("gemini-cli-pro")
-	provider.sandbox = true
+	provider.sandbox = &api.SandboxConfig{Kind: api.SandboxSRT}
 	resp, err := provider.Execute(context.Background(), ai.Request{
 		Prompt: api.Prompt{User: "hello"},
 		Setup:  &shell.Setup{Cwd: cwd},
@@ -112,14 +112,17 @@ func TestGeminiCLIUsesContextDir(t *testing.T) {
 }
 
 func TestCLIProviderFactoriesCarrySandbox(t *testing.T) {
+	srtSelected := func(sandbox *api.SandboxConfig) bool {
+		return sandbox != nil && sandbox.Kind == api.SandboxSRT
+	}
 	tests := []struct {
 		backend api.Backend
 		model   string
 		enabled func(api.Provider) bool
 	}{
-		{api.BackendClaudeCLI, "claude-sonnet-5", func(p api.Provider) bool { return p.(*ClaudeCLI).sandbox }},
-		{api.BackendCodexCLI, "gpt-5.5", func(p api.Provider) bool { return p.(*CodexCLI).sandbox }},
-		{api.BackendGeminiCLI, "gemini-3.5-flash", func(p api.Provider) bool { return p.(*GeminiCLI).sandbox }},
+		{api.BackendClaudeCLI, "claude-sonnet-5", func(p api.Provider) bool { return srtSelected(p.(*ClaudeCLI).sandbox) }},
+		{api.BackendCodexCLI, "gpt-5.5", func(p api.Provider) bool { return srtSelected(p.(*CodexCLI).sandbox) }},
+		{api.BackendGeminiCLI, "gemini-3.5-flash", func(p api.Provider) bool { return srtSelected(p.(*GeminiCLI).sandbox) }},
 	}
 	for _, tt := range tests {
 		t.Run(string(tt.backend), func(t *testing.T) {
@@ -138,9 +141,10 @@ func TestSandboxCommandFailuresClose(t *testing.T) {
 	original := adapter.NewSRTRuntime
 	t.Cleanup(func() { adapter.NewSRTRuntime = original })
 
+	srt := &api.SandboxConfig{Kind: api.SandboxSRT}
 	fake := &fakeCommandSandbox{commandErr: errors.New("wrap failed")}
 	adapter.NewSRTRuntime = func(context.Context, sandboxruntime.Config) (adapter.Runtime, error) { return fake, nil }
-	if _, _, err := newCLICommand(context.Background(), "codex", nil, t.TempDir(), true); err == nil || !strings.Contains(err.Error(), "wrap codex") {
+	if _, _, err := newCLICommand(context.Background(), "codex", nil, t.TempDir(), srt); err == nil || !strings.Contains(err.Error(), "wrap codex") {
 		t.Fatalf("err = %v, want sandbox wrapping failure", err)
 	}
 	if !fake.closed {
@@ -149,7 +153,7 @@ func TestSandboxCommandFailuresClose(t *testing.T) {
 
 	fake = &fakeCommandSandbox{executable: "captain-command-that-does-not-exist"}
 	adapter.NewSRTRuntime = func(context.Context, sandboxruntime.Config) (adapter.Runtime, error) { return fake, nil }
-	if _, _, _, _, err := startCLIStream(context.Background(), "codex", nil, nil, t.TempDir(), nil, true); err == nil {
+	if _, _, _, _, err := startCLIStream(context.Background(), "codex", nil, nil, t.TempDir(), nil, srt); err == nil {
 		t.Fatal("expected process start failure")
 	}
 	if !fake.closed {

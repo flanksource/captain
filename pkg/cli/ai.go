@@ -123,13 +123,14 @@ func (o AIProviderOptions) ToConfig() (ai.Config, error) {
 		return ai.Config{}, err
 	}
 	return ai.Config{
-		Model:        m,
-		Budget:       api.Budget{Cost: budget},
-		APIKey:       o.APIKey,
-		APIURL:       strings.TrimSpace(o.APIURL),
-		Sandbox:      sandbox.Kind == registry.SandboxSRT,
-		NoCache:      o.NoCache || saved.NoCache,
-		SchemaRepair: schemaRepairConfig(savedCfg.Prompts.SchemaRepair),
+		Model:            m,
+		Budget:           api.Budget{Cost: budget},
+		APIKey:           o.APIKey,
+		APIURL:           strings.TrimSpace(o.APIURL),
+		Sandbox:          sandbox.Kind == registry.SandboxSRT,
+		SandboxSelection: sandboxSelectionConfig(sandbox),
+		NoCache:          o.NoCache || saved.NoCache,
+		SchemaRepair:     schemaRepairConfig(savedCfg.Prompts.SchemaRepair),
 	}, nil
 }
 

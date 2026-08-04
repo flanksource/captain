@@ -34,3 +34,13 @@ func resolveSandboxSelection(flagSelector string, ref *api.SandboxRef, defaults 
 			selection.Kind, registry.SandboxNone, registry.SandboxSRT)
 	}
 }
+
+// sandboxSelectionConfig projects a resolved selection onto the runtime
+// config. "none" stays nil, so an unsandboxed run carries no selection at all
+// and the exec seam's nil check keeps its meaning.
+func sandboxSelectionConfig(selection captainconfig.SandboxSelection) *api.SandboxConfig {
+	if selection.Kind == registry.SandboxNone {
+		return nil
+	}
+	return &api.SandboxConfig{Kind: selection.Kind, Name: selection.Name, Options: selection.Options}
+}

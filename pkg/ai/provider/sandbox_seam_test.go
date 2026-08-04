@@ -22,7 +22,7 @@ func (s *wrapperSandboxStub) Wrap(_ context.Context, cmd string, args, env []str
 }
 
 func TestNewCLICommand_UnsandboxedStaysBare(t *testing.T) {
-	cmd, cleanup, err := newCLICommand(context.Background(), "echo", []string{"hi"}, t.TempDir(), false)
+	cmd, cleanup, err := newCLICommand(context.Background(), "echo", []string{"hi"}, t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

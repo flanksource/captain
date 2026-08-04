@@ -199,6 +199,9 @@ func overlayCLI(base ai.Request, baseCfg ai.Config, o AIPromptOptions) (ai.Reque
 	cfg.APIKey = o.APIKey
 	cfg.APIURL = firstNonEmpty(strings.TrimSpace(o.APIURL), baseCfg.APIURL)
 	cfg.Sandbox = sandbox.Kind == registry.SandboxSRT || baseCfg.Sandbox
+	if selection := sandboxSelectionConfig(sandbox); selection != nil {
+		cfg.SandboxSelection = selection
+	}
 	cfg.NoCache = req.NoCache
 	return req, cfg, nil
 }

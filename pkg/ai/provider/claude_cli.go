@@ -16,7 +16,7 @@ var claudeCLICommand = "claude"
 
 type ClaudeCLI struct {
 	model   string
-	sandbox bool
+	sandbox *api.SandboxConfig
 }
 
 func NewClaudeCLI(model string) *ClaudeCLI {

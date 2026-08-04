@@ -19,7 +19,7 @@ const geminiCLIDefaultModel = "gemini-3.5-flash"
 
 type GeminiCLI struct {
 	model   string
-	sandbox bool
+	sandbox *api.SandboxConfig
 }
 
 // registry.Google declares Streaming for ModeCLI, and the logging/validating

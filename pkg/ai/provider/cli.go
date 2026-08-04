@@ -76,8 +76,8 @@ func HandleExitError(exitCode int, stderr string) error {
 	}
 }
 
-func startCLIStream(ctx context.Context, command string, args []string, stdinData []byte, cwd string, env []string, sandboxed bool) (*exec.Cmd, io.ReadCloser, *bytes.Buffer, func(), error) {
-	cmd, closeSandbox, err := newCLICommand(ctx, command, args, cwd, sandboxed)
+func startCLIStream(ctx context.Context, command string, args []string, stdinData []byte, cwd string, env []string, sandbox *api.SandboxConfig) (*exec.Cmd, io.ReadCloser, *bytes.Buffer, func(), error) {
+	cmd, closeSandbox, err := newCLICommand(ctx, command, args, cwd, sandbox)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
@@ -123,14 +123,13 @@ func startCLIStream(ctx context.Context, command string, args []string, stdinDat
 }
 
 // newCLICommand builds the CLI process through the selected sandbox adapter.
-// The boolean is the legacy srt toggle carried by api.Config.Sandbox; it maps
-// onto the adapter registry rather than a bespoke code path.
-func newCLICommand(ctx context.Context, command string, args []string, cwd string, sandboxed bool) (*exec.Cmd, func(), error) {
-	kind := api.SandboxNone
-	if sandboxed {
-		kind = api.SandboxSRT
+// nil means unsandboxed, which resolves the "none" adapter.
+func newCLICommand(ctx context.Context, command string, args []string, cwd string, sandbox *api.SandboxConfig) (*exec.Cmd, func(), error) {
+	cfg := api.SandboxConfig{Kind: api.SandboxNone}
+	if sandbox != nil {
+		cfg = *sandbox
 	}
-	return newSandboxedCommand(ctx, api.SandboxConfig{Kind: kind}, command, args, cwd)
+	return newSandboxedCommand(ctx, cfg, command, args, cwd)
 }
 
 // newSandboxedCommand constructs the selected sandbox adapter and builds the

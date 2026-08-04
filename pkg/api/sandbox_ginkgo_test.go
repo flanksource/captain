@@ -112,6 +112,17 @@ var _ = Describe("NewSandbox", func() {
 	})
 })
 
+var _ = Describe("NewProvider sandbox validation", func() {
+	It("rejects an unsupported sandbox × backend pairing before construction", func() {
+		_, err := api.NewProvider(api.Config{
+			Model:            api.Model{Name: "claude-sonnet-5", Backend: api.BackendClaudeAgent},
+			SandboxSelection: &api.SandboxConfig{Kind: api.SandboxSRT},
+		})
+
+		Expect(err).To(MatchError(ContainSubstring("does not support runtime mode")))
+	})
+})
+
 var _ = Describe("RegisterSandbox", func() {
 	It("panics on a kind with no descriptor", func() {
 		Expect(func() {
