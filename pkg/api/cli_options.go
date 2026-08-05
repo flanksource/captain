@@ -111,6 +111,8 @@ func CodexSafety(p Permissions) (CodexSandbox, CodexApprovalPolicy) {
 	switch {
 	case p.Mode == PermissionBypass:
 		return CodexSandboxDangerFull, CodexApprovalNever
+	case p.Mode == PermissionAcceptEdits, p.Mode == PermissionAuto:
+		return CodexSandboxWorkspaceWrite, CodexApprovalOnRequest
 	case p.HasPreset(PresetEdit) && p.Mode == "":
 		return CodexSandboxWorkspaceWrite, CodexApprovalOnRequest
 	default:
