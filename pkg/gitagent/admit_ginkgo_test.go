@@ -242,7 +242,15 @@ var _ = Describe("admission", func() {
 				Updates: resultUpdates, Envelope: f.envelope(), Env: f.env,
 			})).To(Succeed())
 
+			forgedBase := f.envelope()
+			forgedBase.Base = result
 			err := gitagent.Admit(ctx, gitagent.AdmitRequest{
+				Repo: mailbox, Role: gitagent.RoleMailbox, Agent: "worker-1",
+				Updates: resultUpdates, Envelope: forgedBase, Env: f.env,
+			})
+			Expect(err).To(MatchError(ContainSubstring("does not match dispatched base")))
+
+			err = gitagent.Admit(ctx, gitagent.AdmitRequest{
 				Repo: mailbox, Role: gitagent.RoleMailbox, Agent: "worker-2",
 				Updates: resultUpdates, Envelope: f.envelope(), Env: f.env,
 			})

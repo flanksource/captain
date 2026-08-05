@@ -537,6 +537,10 @@ func TestGitAgentHelpDocumentsItsOwnCommands(t *testing.T) {
 		t.Skip("builds the captain binary")
 	}
 	h := newHost(t)
+	parent, _ := h.run("sandbox", "--help")
+	if !strings.Contains(parent, "git-agent") {
+		t.Fatalf("sandbox help does not advertise git-agent:\n%s", parent)
+	}
 	out, _ := h.run("sandbox", "git-agent", "--help")
 	for _, want := range []string{"serve", "add", "list", "revoke"} {
 		if !strings.Contains(out, want) {
