@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/flanksource/captain/pkg/ai"
 	aitools "github.com/flanksource/captain/pkg/ai/tools"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/commons/logger"
@@ -47,6 +48,24 @@ func (f RuntimeSettingsProviderFunc) RuntimeSettings(ctx context.Context) (Runti
 	return f(ctx)
 }
 
+// ThreadStoreProvider supplies the request-scoped thread store. Applications
+// that can serve more than one database resolve it per request; a fixed store
+// is expressed as a provider that ignores the context.
+type ThreadStoreProvider interface {
+	ThreadStore(context.Context) (ThreadStore, error)
+}
+
+type ThreadStoreProviderFunc func(context.Context) (ThreadStore, error)
+
+func (f ThreadStoreProviderFunc) ThreadStore(ctx context.Context) (ThreadStore, error) {
+	return f(ctx)
+}
+
+// FixedThreadStore adapts a single store to the provider interface.
+func FixedThreadStore(store ThreadStore) ThreadStoreProvider {
+	return ThreadStoreProviderFunc(func(context.Context) (ThreadStore, error) { return store, nil })
+}
+
 // ServiceOptions injects every application-owned chat dependency. A nil
 // Resolver uses Captain's canonical model/provider resolver.
 type ServiceOptions struct {
@@ -56,7 +75,7 @@ type ServiceOptions struct {
 	Tools          ToolProvider
 	MCP            ToolProvider
 	Attachments    AttachmentResolver
-	Threads        ThreadStore
+	Threads        ThreadStoreProvider
 	Authority      ExecutionAuthority
 }
 
@@ -266,9 +285,14 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if err := WriteEventStream(writer, s.persistedEvents(streamContext, chat, turnID, events), EventStreamOptions{
+	costs := &TurnCosts{}
+	persisted := s.persistedEvents(streamContext, persistedEventOptions{
+		Request: chat, TurnID: turnID, Model: config.Model, Costs: costs,
+	}, events)
+	if err := WriteEventStream(writer, persisted, EventStreamOptions{
 		ToolApproval: chat.ToolApproval,
 		MessageID:    assistantMessageID(chat, turnID),
+		Costs:        costs,
 	}); err != nil {
 		serviceLog.Errorf("stream chat response: %v", err)
 	}
@@ -345,10 +369,11 @@ func (s *Service) resolveThreadSession(ctx context.Context, request *ChatRequest
 	if request.ThreadID == "" {
 		return nil, nil
 	}
-	if s.options.Threads == nil {
-		return nil, fmt.Errorf("thread persistence is not configured")
+	store, err := s.threads(ctx)
+	if err != nil {
+		return nil, err
 	}
-	thread, err := s.options.Threads.Get(ctx, request.ThreadID)
+	thread, err := store.Get(ctx, request.ThreadID)
 	if err != nil {
 		return nil, err
 	}
@@ -374,22 +399,33 @@ func (s *Service) persistIncoming(ctx context.Context, request ChatRequest) erro
 		return nil
 	}
 	last := request.Messages[len(request.Messages)-1]
-	if strings.EqualFold(last.Role, string(api.RoleUser)) {
-		return s.options.Threads.AppendMessage(ctx, request.ThreadID, last)
+	if !strings.EqualFold(last.Role, string(api.RoleUser)) {
+		return nil
 	}
-	return nil
+	store, err := s.threads(ctx)
+	if err != nil {
+		return err
+	}
+	return store.AppendMessage(ctx, request.ThreadID, last)
 }
 
-func (s *Service) persistEvent(ctx context.Context, threadID string, event api.Event) error {
+// persistEvent accrues a completed turn against its thread. The thread returned
+// by AddUsage carries the conversation's running total, which is recorded on
+// costs so the finish part can report cumulative rather than per-turn spend.
+func (s *Service) persistEvent(ctx context.Context, threadID string, event api.Event, model api.Model, costs *TurnCosts) error {
+	store, err := s.threads(ctx)
+	if err != nil {
+		return err
+	}
 	if event.SessionID != "" {
-		if err := s.options.Threads.SetProviderSession(ctx, threadID, event.SessionID); err != nil {
+		if err := store.SetProviderSession(ctx, threadID, event.SessionID); err != nil {
 			return fmt.Errorf("persist provider session: %w", err)
 		}
 	}
 	if event.Kind != api.EventResult || event.Usage == nil {
 		return nil
 	}
-	_, err := s.options.Threads.AddUsage(ctx, threadID, TurnUsage{
+	thread, err := store.AddUsage(ctx, threadID, TurnUsage{
 		InputTokens: event.Usage.InputTokens, OutputTokens: event.Usage.OutputTokens,
 		ReasoningTokens: event.Usage.ReasoningTokens, CacheReadTokens: event.Usage.CacheReadTokens,
 		CacheWriteTokens: event.Usage.CacheWriteTokens, CostUSD: event.CostUSD,
@@ -397,5 +433,26 @@ func (s *Service) persistEvent(ctx context.Context, threadID string, event api.E
 	if err != nil {
 		return fmt.Errorf("persist thread usage: %w", err)
 	}
+	if costs != nil {
+		costs.Breakdown = costBreakdownMetadata(model, *event.Usage, event.CostUSD)
+		if thread != nil {
+			costs.ThreadCostUSD = thread.TotalCostUSD
+		}
+	}
 	return nil
+}
+
+func costBreakdownMetadata(model api.Model, usage api.Usage, providerCostUSD float64) *CostBreakdownMetadata {
+	cost := ai.PriceUsage(model.Backend, model.Name, usage, providerCostUSD)
+	return &CostBreakdownMetadata{
+		Model:        cost.Model,
+		InputUSD:     cost.InputCost,
+		OutputUSD:    cost.OutputCost,
+		ReasoningUSD: cost.ReasoningCost,
+		CacheReadUSD: cost.CacheReadCost,
+		// genkit reports no cache-write tokens on the API backends, so this
+		// stays zero there rather than being silently omitted.
+		CacheWriteUSD: cost.CacheWriteCost,
+		TotalUSD:      cost.Total(),
+	}
 }

@@ -36,6 +36,42 @@ func sessionDBDir() (string, error) {
 type gavelDBConfig struct {
 	Mode string `json:"mode"`
 	DSN  string `json:"dsn,omitempty"`
+	// Contexts are additional read-only databases captain can be pointed at.
+	// They never participate in the default context's DSN resolution.
+	Contexts map[string]gavelContextConfig `json:"contexts,omitempty"`
+}
+
+type gavelContextConfig struct {
+	DSN   string `json:"dsn"`
+	Label string `json:"label,omitempty"`
+	// ReadOnly defaults to true. Set it false for DSNs behind a pooler that
+	// rejects the read-only session option; captain still never writes to a
+	// non-default context.
+	ReadOnly *bool `json:"readOnly,omitempty"`
+}
+
+// configContextSpecs resolves the named contexts declared in db.json. Missing
+// or legacy config files simply declare none.
+func configContextSpecs() (map[string]databaseContextSpec, error) {
+	cfg, path, err := loadGavelDBConfig()
+	if err != nil {
+		return nil, err
+	}
+	specs := make(map[string]databaseContextSpec, len(cfg.Contexts))
+	for name, entry := range cfg.Contexts {
+		source := path + "#" + name
+		if err := validateContextSpec(name, entry.DSN, path); err != nil {
+			return nil, err
+		}
+		specs[name] = databaseContextSpec{
+			Name:     name,
+			DSN:      strings.TrimSpace(entry.DSN),
+			Label:    entry.Label,
+			Source:   source,
+			ReadOnly: entry.ReadOnly,
+		}
+	}
+	return specs, nil
 }
 
 // gavelConfiguredSessionDSN resolves a gavel-shared database from

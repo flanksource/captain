@@ -94,7 +94,9 @@ func collectAttachmentReferences(root, storeDirectory string) (map[string]struct
 }
 
 func collectDatabaseAttachmentReferences(ctx context.Context) (map[string]struct{}, error) {
-	db, err := captainDB(ctx)
+	// GC deletes attachments captain owns, so it only ever consults the
+	// database captain writes.
+	db, err := captainDefaultDB(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("open attachment reference database: %w", err)
 	}

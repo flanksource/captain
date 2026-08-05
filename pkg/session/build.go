@@ -29,7 +29,7 @@ func Build(currentDir string, searchAll bool, filter claude.Filter) ([]*Session,
 func buildSession(ps claude.ParsedSession) *Session {
 	var allEntries []claude.HistoryEntry
 	var allToolUses []claude.ToolUse
-	costs := api.Costs{}
+	costs := newResponseCosts()
 	for _, t := range ps.Transcripts {
 		allEntries = append(allEntries, t.Entries...)
 		allToolUses = append(allToolUses, t.ToolUses...)
@@ -62,13 +62,11 @@ func buildSession(ps claude.ParsedSession) *Session {
 	}
 	applySessionIdentity(s)
 	for _, e := range allEntries {
-		if e.IsAssistantMessage() && e.Message.Usage != nil {
-			costs = append(costs, CostFromUsage(e.Message.Usage, e.Message.Model))
-		}
+		costs.add(e)
 	}
-	s.Cost = costs.Sum()
+	s.Cost = costs.costs.Sum()
 	s.Usage = usageFromCost(s.Cost)
-	s.ToolCosts = collapseByModel(costs)
+	s.ToolCosts = collapseByModel(costs.costs)
 
 	s.Files = changedFiles(allToolUses)
 	s.Todos = latestTodos(allToolUses, func(tu claude.ToolUse) (string, map[string]any) {

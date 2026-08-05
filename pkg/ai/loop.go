@@ -141,7 +141,7 @@ func runOneIteration(ctx context.Context, opts LoopOptions, req Request, iter *L
 					if model == "" {
 						model = opts.Provider.GetModel()
 					}
-					iter.CostUSD = PriceResponse(backend, model, &Response{Backend: backend, Model: model, Usage: *ev.Usage}).Total()
+					iter.CostUSD = PriceUsage(backend, model, *ev.Usage, 0).Total()
 				}
 				if ev.Error != "" && iter.Err == nil {
 					iter.Err = fmt.Errorf("claude returned: %s", ev.Error)

@@ -37,6 +37,21 @@ func FormatCost(cost float64) string {
 	return fmt.Sprintf("$%.2f", cost)
 }
 
+// FormatCostEstimated renders a cost, marking it when the figure was recomputed
+// from token counts rather than reported by the provider.
+//
+// The two must be visually distinct. A recomputed total is priced from a static
+// registry, so it silently misses whatever the provider billed but never
+// published — 1-hour cache writes, promotional rates, negotiated pricing. On a
+// real session the recomputation came out ~9% under the billed figure, and
+// nothing in the output said so.
+func FormatCostEstimated(cost float64, estimated bool) string {
+	if estimated && cost > 0 {
+		return "~" + FormatCost(cost)
+	}
+	return FormatCost(cost)
+}
+
 // ScanResultRow is a history row for the --all view (includes the Project column).
 type ScanResultRow struct {
 	Project         string          `json:"project"`

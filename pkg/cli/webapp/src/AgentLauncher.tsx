@@ -8,6 +8,7 @@ import {
 } from "@flanksource/clicky-ui/rpc";
 import { useChatWindowManager } from "@flanksource/clicky-ui/ai";
 import { apiClient } from "./api";
+import { isReadOnlyDbContext } from "./dbContext";
 import {
   agentModelFor,
   extractSessionId,
@@ -82,6 +83,21 @@ export function AgentLauncher({ onNavigate }: AgentLauncherProps) {
     return (
       <div className="p-6 text-sm text-destructive">
         {error instanceof Error ? error.message : String(error)}
+      </div>
+    );
+  }
+
+  // Launching an agent creates a chat thread, which a read-only database
+  // context rejects. The form is withheld rather than left to fail: its submit
+  // control lives inside clicky-ui's OperationCommandPage.
+  if (isReadOnlyDbContext()) {
+    return (
+      <div className="p-6">
+        <div className="mb-4 text-sm text-muted-foreground">
+          Launching agents is disabled while a read-only database context is selected.
+          Switch back to the monitored database from the project picker to launch one.
+        </div>
+        <Button onClick={() => onNavigate("/sessions")}>Browse sessions</Button>
       </div>
     );
   }

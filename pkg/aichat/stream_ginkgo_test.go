@@ -29,6 +29,10 @@ func (w *nonFlushWriter) Write([]byte) (int, error)  { return 0, nil }
 func (w *nonFlushWriter) WriteHeader(statusCode int) {}
 
 func recordEvents(events ...api.Event) (*flushRecorder, error) {
+	return recordEventsWithOptions(aichat.EventStreamOptions{}, events...)
+}
+
+func recordEventsWithOptions(options aichat.EventStreamOptions, events ...api.Event) (*flushRecorder, error) {
 	recorder := &flushRecorder{ResponseRecorder: httptest.NewRecorder()}
 	writer, err := aichat.NewSSEWriter(recorder)
 	if err != nil {
@@ -39,7 +43,7 @@ func recordEvents(events ...api.Event) (*flushRecorder, error) {
 		channel <- event
 	}
 	close(channel)
-	return recorder, aichat.WriteEventStream(writer, channel, aichat.EventStreamOptions{})
+	return recorder, aichat.WriteEventStream(writer, channel, options)
 }
 
 func decodedDataLines(body string) []map[string]any {
@@ -148,9 +152,48 @@ var _ = Describe("AI SDK v6 event stream", func() {
 				"inputTokens": 100.0, "outputTokens": 40.0, "reasoningTokens": 10.0,
 				"cacheReadTokens": 5.0, "cacheWriteTokens": 0.0, "totalTokens": 155.0,
 			},
-			"cost":          0.0125,
-			"contextTokens": 100.0,
+			"cost": 0.0125,
+			// Context occupancy is the whole prompt: input plus the cached
+			// prefix, not input alone.
+			"contextTokens": 105.0,
 			"success":       true,
+		}))
+	})
+
+	It("rides the priced breakdown and the thread's cumulative cost on the finish part", func() {
+		// Without these the UI has nothing to render: every per-bucket Cost row
+		// falls back to "-", and "Thread total" silently degrades to this one
+		// turn's cost, which understated a real 9-call thread by 10x.
+		costs := &aichat.TurnCosts{
+			Breakdown: &aichat.CostBreakdownMetadata{
+				Model: "claude-sonnet", InputUSD: 0.0003, OutputUSD: 0.006,
+				ReasoningUSD: 0.0015, CacheReadUSD: 0.0000015, TotalUSD: 0.0125,
+			},
+			ThreadCostUSD: 7.358646,
+		}
+		recorder, err := recordEventsWithOptions(
+			aichat.EventStreamOptions{Costs: costs},
+			api.Event{Kind: api.EventText, Text: "done"},
+			api.Event{
+				Kind: api.EventResult, SessionID: "session-1", Model: "claude-sonnet",
+				Usage: &api.Usage{InputTokens: 100, OutputTokens: 40}, CostUSD: 0.0125, Success: true,
+			},
+		)
+		Expect(err).NotTo(HaveOccurred())
+
+		parts := decodedDataLines(recorder.Body.String())
+		metadata, ok := parts[len(parts)-1]["messageMetadata"].(map[string]any)
+		Expect(ok).To(BeTrue())
+		Expect(metadata).To(HaveKeyWithValue("threadCostUsd", 7.358646))
+		Expect(metadata).To(HaveKeyWithValue("cost", 0.0125),
+			"the per-turn cost stays alongside the cumulative total, not replaced by it")
+		// cacheWriteUsd is emitted as an explicit 0 rather than omitted: on the
+		// API backends genkit carries no cache-write tokens at all, and a
+		// missing key would render as "-" (unknown) instead of "$0".
+		Expect(metadata["costBreakdown"]).To(Equal(map[string]any{
+			"model": "claude-sonnet", "inputUsd": 0.0003, "outputUsd": 0.006,
+			"reasoningUsd": 0.0015, "cacheReadUsd": 0.0000015, "cacheWriteUsd": 0.0,
+			"totalUsd": 0.0125,
 		}))
 	})
 

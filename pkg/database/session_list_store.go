@@ -68,9 +68,13 @@ type SessionListSummary struct {
 	CacheWriteTokens    int64           `gorm:"column:cache_write_tokens" json:"cacheWriteTokens"`
 	TotalTokens         int64           `gorm:"column:total_tokens" json:"totalTokens"`
 	CostUSD             float64         `gorm:"column:cost_usd" json:"costUsd"`
-	MessageCount        int64           `gorm:"column:message_count" json:"messageCount"`
-	ToolCallCount       int64           `gorm:"column:tool_call_count" json:"toolCallCount"`
-	TotalCount          int64           `gorm:"column:total_count" json:"-"`
+	// ProviderCostUSD is how much of CostUSD the providers reported themselves.
+	// CostUSD falls back to list-priced buckets per call, so zero here means the
+	// total is a reconstruction and must be rendered as an estimate.
+	ProviderCostUSD float64 `gorm:"column:provider_cost_usd" json:"providerCostUsd,omitempty"`
+	MessageCount    int64   `gorm:"column:message_count" json:"messageCount"`
+	ToolCallCount   int64   `gorm:"column:tool_call_count" json:"toolCallCount"`
+	TotalCount      int64   `gorm:"column:total_count" json:"-"`
 }
 
 type SessionListFilter struct {
@@ -259,8 +263,11 @@ WITH latest_call AS MATERIALIZED (
     COALESCE(sum(c.cache_read_tokens), 0)::bigint AS cache_read_tokens,
     COALESCE(sum(c.cache_write_tokens), 0)::bigint AS cache_write_tokens,
     COALESCE(sum(c.input_tokens + c.output_tokens + c.cache_read_tokens + c.cache_write_tokens), 0)::bigint AS total_tokens,
-    COALESCE(sum(c.input_cost + c.output_cost + c.reasoning_cost + c.cache_read_cost + c.cache_write_cost)
-      FILTER (WHERE upper(c.currency) = 'USD'), 0::numeric) AS cost_usd
+    COALESCE(sum(CASE WHEN c.provider_cost_usd > 0 THEN c.provider_cost_usd
+      ELSE c.input_cost + c.output_cost + c.reasoning_cost + c.cache_read_cost + c.cache_write_cost END)
+      FILTER (WHERE upper(c.currency) = 'USD'), 0::numeric) AS cost_usd,
+    COALESCE(sum(c.provider_cost_usd)
+      FILTER (WHERE upper(c.currency) = 'USD'), 0::numeric) AS provider_cost_usd
   FROM captain_turns t
   JOIN paged p ON p.id = t.session_id
   JOIN captain_model_calls c ON c.turn_id = t.id
@@ -304,6 +311,7 @@ SELECT
   COALESCE(cs.cache_write_tokens, 0) AS cache_write_tokens,
   COALESCE(cs.total_tokens, 0) AS total_tokens,
   COALESCE(cs.cost_usd, 0::numeric) AS cost_usd,
+  COALESCE(cs.provider_cost_usd, 0::numeric) AS provider_cost_usd,
   COALESCE(ms.message_count, 0) AS message_count,
   COALESCE(ms.tool_call_count, 0) AS tool_call_count,
   p.total_count

@@ -67,6 +67,7 @@ func RunSessionLive(ctx context.Context, opts SessionLiveOptions) (SessionLiveRe
 	return buildSessionLiveResult(sessionLiveResultOptions{
 		Page: page, Source: source, Scope: scope, Project: projectResultValue(scope, projectRoot),
 		ReadAt: time.Now().UTC(), DatabaseCoverage: coverage,
+		DatabaseContext: activeDatabaseContextName(ctx),
 	}), nil
 }
 
@@ -77,6 +78,7 @@ type sessionLiveResultOptions struct {
 	Project          string
 	ReadAt           time.Time
 	DatabaseCoverage string
+	DatabaseContext  string
 }
 
 func buildSessionLiveResult(options sessionLiveResultOptions) SessionLiveResult {
@@ -84,7 +86,7 @@ func buildSessionLiveResult(options sessionLiveResultOptions) SessionLiveResult 
 	if coverage == "" {
 		coverage = "page"
 	}
-	databaseStatus := sessionDatabaseStatus(options.Page.Records, options.ReadAt)
+	databaseStatus := sessionDatabaseStatus(options.DatabaseContext, options.Page.Records, options.ReadAt)
 	databaseStatus.Coverage = coverage
 	return SessionLiveResult{
 		Sessions: options.Page.Records, Total: options.Page.Total, Source: options.Source,
@@ -125,8 +127,13 @@ func enrichLiveSessionSurfaces(records []SessionRecord) {
 	}
 }
 
-func sessionDatabaseStatus(records []SessionRecord, readAt time.Time) SessionDatabaseStatusWire {
-	dsn, source := captainDatabaseIdentity()
+// sessionDatabaseStatus reports the database the records were actually read
+// from, which is the active context rather than the monitored default.
+func sessionDatabaseStatus(contextName string, records []SessionRecord, readAt time.Time) SessionDatabaseStatusWire {
+	if contextName == "" {
+		contextName = defaultDatabaseContextName
+	}
+	dsn, source := contextDatabaseIdentity(contextName)
 	status := SessionDatabaseStatusWire{Source: source, DSN: database.MaskDSN(dsn), ReadAt: readAt}
 	for _, record := range records {
 		if record.Live == nil {

@@ -40,14 +40,14 @@ func TestConfigureNativeDatabaseRejectsNil(t *testing.T) {
 func TestCaptainDSNPrecedence(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	databaseURL = ""
-	t.Cleanup(func() { databaseURL = "" })
+	databaseURLs = nil
+	t.Cleanup(func() { databaseURLs = nil })
 
 	t.Run("db-url flag wins", func(t *testing.T) {
 		flags := pflag.NewFlagSet("captain", pflag.ContinueOnError)
-		BindDatabaseURLFlag(flags)
+		BindDatabaseFlags(flags)
 		require.NoError(t, flags.Parse([]string{"--db-url", "postgres://flag/captain"}))
-		t.Cleanup(func() { databaseURL = "" })
+		t.Cleanup(func() { databaseURLs = nil })
 
 		t.Setenv(gavelDBEnvDSN, "postgres://primary/gavel")
 		t.Setenv(gavelCacheEnvDSN, "postgres://cache/gavel")

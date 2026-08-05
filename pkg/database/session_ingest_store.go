@@ -85,8 +85,10 @@ type modelCallRecord struct {
 	ContextWindowTokens int64      `gorm:"column:context_window_tokens"`
 	InputCost           float64    `gorm:"column:input_cost"`
 	OutputCost          float64    `gorm:"column:output_cost"`
+	ReasoningCost       float64    `gorm:"column:reasoning_cost"`
 	CacheReadCost       float64    `gorm:"column:cache_read_cost"`
 	CacheWriteCost      float64    `gorm:"column:cache_write_cost"`
+	ProviderCostUSD     float64    `gorm:"column:provider_cost_usd"`
 	StartedAt           *time.Time `gorm:"column:started_at"`
 	EndedAt             *time.Time `gorm:"column:ended_at"`
 }

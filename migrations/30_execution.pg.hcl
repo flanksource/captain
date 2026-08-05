@@ -199,6 +199,11 @@ table "captain_model_calls" {
     type    = numeric(20, 8)
     default = 0
   }
+  column "provider_cost_usd" {
+    null    = false
+    type    = numeric(20, 8)
+    default = 0
+  }
   column "currency" {
     null    = false
     type    = text
@@ -301,7 +306,7 @@ table "captain_model_calls" {
     expr = "input_tokens >= 0 AND output_tokens >= 0 AND reasoning_tokens >= 0 AND cache_read_tokens >= 0 AND cache_write_tokens >= 0 AND context_tokens >= 0 AND context_window_tokens >= 0"
   }
   check "captain_model_calls_costs_nonnegative" {
-    expr = "input_cost >= 0 AND output_cost >= 0 AND reasoning_cost >= 0 AND cache_read_cost >= 0 AND cache_write_cost >= 0"
+    expr = "input_cost >= 0 AND output_cost >= 0 AND reasoning_cost >= 0 AND cache_read_cost >= 0 AND cache_write_cost >= 0 AND provider_cost_usd >= 0"
   }
   check "captain_model_calls_currency" {
     expr = "length(currency) = 3"

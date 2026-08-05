@@ -106,6 +106,10 @@ func buildSessionMetadata(source string, entries []claude.HistoryEntry) sessionM
 	var latestTurnTime *time.Time
 	var turnSeq int
 	seenEntries := map[string]struct{}{}
+	// Scoped to the whole build, not per turn: one API response's content-block
+	// lines are contiguous, so a response never spans turns, and a single set
+	// keeps the dedupe identical to the session-level rollup.
+	turnCosts := newResponseCosts()
 
 	observeTurnTime := func(turn *Turn, ts *time.Time) {
 		if turn == nil || ts == nil {
@@ -221,7 +225,7 @@ func buildSessionMetadata(source string, entries []claude.HistoryEntry) sessionM
 				}
 			}
 		}
-		if entry.IsAssistantMessage() && entry.Message.Usage != nil {
+		if turnCosts.firstSighting(entry) {
 			cost := CostFromUsage(entry.Message.Usage, entry.Message.Model)
 			turn.Cost = turn.Cost.Add(cost)
 			turn.Usage = usageFromCost(turn.Cost)

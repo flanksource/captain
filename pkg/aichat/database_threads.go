@@ -101,7 +101,14 @@ func (s *DatabaseThreadStore) getSession(ctx context.Context, overview database.
 	if err != nil {
 		return nil, err
 	}
+	costs, err := s.db.ListThreadCosts(ctx, overview.ID)
+	if err != nil {
+		return nil, err
+	}
 	aggregate := sessionFromOverview(overview)
+	// The overview's own usage/cost is root-scoped; a thread's subagents spend
+	// against the same conversation, so roll the thread-wide figures on top.
+	applyThreadCosts(aggregate, costs)
 	aggregate.Messages, err = projectSessionMessages(messages)
 	if err != nil {
 		return nil, err
@@ -202,11 +209,17 @@ func sessionFromOverview(overview database.SessionOverview) *session.Session {
 			ReasoningTokens: int(overview.ReasoningTokens), CacheReadTokens: int(overview.CacheReadTokens),
 			CacheWriteTokens: int(overview.CacheWriteTokens),
 		},
+		// overview.CostUSD is the resolved total, which already falls back to list
+		// price per call — assigning it to ProviderCostUSD would make every
+		// reconstruction claim to be a billed figure. Carry both readings and let
+		// Cost.Total() resolve them the same way the view does.
 		Cost: api.Cost{
 			Model: stringPointer(overview.Model), InputTokens: int(overview.InputTokens), OutputTokens: int(overview.OutputTokens),
 			ReasoningTokens: int(overview.ReasoningTokens), CacheReadTokens: int(overview.CacheReadTokens),
 			CacheWriteTokens: int(overview.CacheWriteTokens), TotalTokens: int(overview.TotalTokens),
-			ProviderCostUSD: overview.CostUSD,
+			InputCost: overview.InputCost, OutputCost: overview.OutputCost, ReasoningCost: overview.ReasoningCost,
+			CacheReadCost: overview.CacheReadCost, CacheWriteCost: overview.CacheWriteCost,
+			ProviderCostUSD: overview.ProviderCostUSD,
 		},
 	}
 }
@@ -247,7 +260,12 @@ func projectSessionTurns(rows []database.SessionTurn, messages []session.Message
 				ReasoningTokens: int(rows[i].ReasoningTokens), CacheReadTokens: int(rows[i].CacheReadTokens),
 				CacheWriteTokens: int(rows[i].CacheWriteTokens),
 			},
-			Cost: api.Cost{Model: stringPointer(rows[i].Model), TotalTokens: int(rows[i].TotalTokens), ProviderCostUSD: rows[i].CostUSD},
+			Cost: api.Cost{
+				Model: stringPointer(rows[i].Model), TotalTokens: int(rows[i].TotalTokens),
+				InputCost: rows[i].InputCost, OutputCost: rows[i].OutputCost, ReasoningCost: rows[i].ReasoningCost,
+				CacheReadCost: rows[i].CacheReadCost, CacheWriteCost: rows[i].CacheWriteCost,
+				ProviderCostUSD: rows[i].ProviderCostUSD,
+			},
 		}
 	}
 	return turns

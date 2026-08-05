@@ -36,15 +36,43 @@ type UsageMetadata struct {
 	TotalTokens      int `json:"totalTokens"`
 }
 
+// CostBreakdownMetadata is one turn's cost split across the disjoint token
+// buckets, priced by ai.PriceUsage. Field names match the frontend's
+// ChatCostBreakdown so the UI renders per-bucket rows instead of "-".
+type CostBreakdownMetadata struct {
+	Model        string  `json:"model,omitempty"`
+	InputUSD     float64 `json:"inputUsd"`
+	OutputUSD    float64 `json:"outputUsd"`
+	ReasoningUSD float64 `json:"reasoningUsd"`
+	CacheReadUSD float64 `json:"cacheReadUsd"`
+	// CacheWriteUSD is structurally zero on the API backends: genkit's usage
+	// type carries no cache-write field (pkg/ai/provider/genkit/mapping.go).
+	CacheWriteUSD float64 `json:"cacheWriteUsd"`
+	TotalUSD      float64 `json:"totalUsd"`
+}
+
 // MessageMetadata is attached to the assistant UIMessage by the finish part.
 type MessageMetadata struct {
-	ProviderSessionID string         `json:"providerSessionId,omitempty"`
-	Model             string         `json:"model,omitempty"`
-	Usage             *UsageMetadata `json:"usage,omitempty"`
-	Cost              float64        `json:"cost,omitempty"`
-	ContextTokens     int            `json:"contextTokens,omitempty"`
-	Success           *bool          `json:"success,omitempty"`
-	Interrupted       bool           `json:"interrupted,omitempty"`
+	ProviderSessionID string                 `json:"providerSessionId,omitempty"`
+	Model             string                 `json:"model,omitempty"`
+	Usage             *UsageMetadata         `json:"usage,omitempty"`
+	Cost              float64                `json:"cost,omitempty"`
+	CostBreakdown     *CostBreakdownMetadata `json:"costBreakdown,omitempty"`
+	// ThreadCostUSD is the conversation's cumulative spend. Cost above is this
+	// turn alone; a UI showing a running total must read this field, since the
+	// two differ by the number of turns taken.
+	ThreadCostUSD float64 `json:"threadCostUsd,omitempty"`
+	ContextTokens int     `json:"contextTokens,omitempty"`
+	Success       *bool   `json:"success,omitempty"`
+	Interrupted   bool    `json:"interrupted,omitempty"`
+}
+
+// TurnCosts is written by the persistence layer as a turn completes and read by
+// the event stream when it writes the finish part. The event channel between
+// them orders the write before the read.
+type TurnCosts struct {
+	Breakdown     *CostBreakdownMetadata
+	ThreadCostUSD float64
 }
 
 // SSEWriter writes AI SDK v6 chunks using Server-Sent Events framing.

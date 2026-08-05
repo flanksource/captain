@@ -7,7 +7,7 @@ import (
 )
 
 func (s *Service) handleResolveToolApproval(w http.ResponseWriter, request *http.Request) {
-	store := s.threadStore(w)
+	store := s.threadStore(w, request)
 	if store == nil {
 		return
 	}
