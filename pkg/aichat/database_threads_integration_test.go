@@ -164,7 +164,7 @@ var _ = Describe("Database chat sessions", func() {
 			return stream, nil
 		}
 		service := aichat.NewService(aichat.ServiceOptions{
-			Resolver: &fakeResolver{provider: provider}, Threads: store, Authority: authority,
+			Resolver: &fakeResolver{provider: provider}, Threads: aichat.FixedThreadStore(store), Authority: authority,
 			Tools: aichat.StaticToolProvider([]api.ToolDefinition{{
 				Name: "accounts_edit", DefaultPermission: api.ToolModeAsk,
 				Handler: func(context.Context, map[string]any) (any, error) { return nil, nil },
@@ -230,7 +230,7 @@ var _ = Describe("Database chat sessions", func() {
 			{Kind: api.EventPermission, ToolCallID: "call-account-1", Tool: "accounts_edit"},
 		}}
 		service := aichat.NewService(aichat.ServiceOptions{
-			Resolver: &fakeResolver{provider: provider}, Threads: store, Authority: authority,
+			Resolver: &fakeResolver{provider: provider}, Threads: aichat.FixedThreadStore(store), Authority: authority,
 			Tools: aichat.StaticToolProvider([]api.ToolDefinition{{
 				Name: "accounts_edit", DefaultPermission: api.ToolModeAsk,
 				Handler: func(context.Context, map[string]any) (any, error) {
