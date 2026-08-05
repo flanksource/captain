@@ -93,7 +93,7 @@ var executePromptRequestFunc = executePromptRequest
 func launchAsyncRun(id string, rendered PromptRenderResult, chat bool) PromptRunResult {
 	runID := uuid.NewString()
 	stream := promptRuns.create(runID)
-	timeout := runtimeTimeout(rendered.Input.Budget.Timeout)
+	timeout := renderedTimeout(rendered)
 	capabilities := chatCapabilitiesForBackend(rendered.Backend)
 	stream.setRun(PromptRunFrame{
 		RunID: runID, Status: "running", Chat: chat, Model: rendered.Model,
@@ -156,7 +156,7 @@ func executeSyncRunSingleDirect(ctx context.Context, t *task.Task, rendered Prom
 	if workflowConfigured(rendered.Input.Workflow) {
 		return executeSyncWorkflowRun(t, rendered, opts.NoStream, binding)
 	}
-	out, err := executePromptRequestFunc(ctx, rendered.Input, rendered.Config, runtimeTimeout(rendered.Input.Budget.Timeout), opts.NoStream)
+	out, err := executePromptRequestFunc(ctx, rendered.Input, rendered.Config, renderedTimeout(rendered), opts.NoStream)
 	if err != nil {
 		return PromptRunResult{}, err
 	}
@@ -192,7 +192,7 @@ func executeSyncWorkflowRun(t *task.Task, rendered PromptRenderResult, noStream 
 	// loop only runs under `captain serve` — deregister so embedders don't
 	// accumulate finished runs.
 	defer promptRuns.remove(runID)
-	timeout := runtimeTimeout(rendered.Input.Budget.Timeout)
+	timeout := renderedTimeout(rendered)
 	var summary PromptRunSummary
 	var err error
 	if noStream {

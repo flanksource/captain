@@ -131,7 +131,7 @@ type PromptActionFlags struct {
 	Attach       []string `flag:"attach" help:"Attach a local path or URL (repeatable; RFC 4180 comma-separated values allowed)" short:"A"`
 	Vars         string   `flag:"vars" help:"JSON object of template variables (HTTP callers)"`
 	MultiModels  []string `flag:"multi-models" help:"Run prompt once per runtime selector in parallel, e.g. cli:sonnet-5,cmux:opus (repeatable; comma-separated allowed)" short:"M"`
-	Timeout      string   `flag:"timeout" help:"Request timeout" default:"120s"`
+	Timeout      string   `flag:"timeout" help:"Request timeout (default 120s; a relocating sandbox waits for the remote agent instead)"`
 	NoStream     bool     `flag:"no-stream" help:"Disable streaming; print only the final text (CLI)"`
 }
 

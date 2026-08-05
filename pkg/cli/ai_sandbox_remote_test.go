@@ -2,10 +2,12 @@ package cli
 
 import (
 	"testing"
+	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/api/registry"
+	"github.com/flanksource/captain/pkg/sandbox/adapter"
 )
 
 // A remote-executing selection must replace provider execution. Without this
@@ -39,6 +41,50 @@ func TestRemoteExecProviderForRoutesGitAgent(t *testing.T) {
 	if _, isRemote := provider.(*remoteExecProvider); !isRemote {
 		t.Fatalf("provider = %T, want *remoteExecProvider", provider)
 	}
+}
+
+// A relocated run waits on a remote agent doing real work. Inheriting the
+// local request default kills a dispatch that is still progressing and reports
+// it as a failure ("dispatched but not concluded: context deadline exceeded").
+func TestRemoteAwareTimeout(t *testing.T) {
+	remote := ai.Config{SandboxSelection: &api.SandboxConfig{Kind: registry.SandboxGitAgent}}
+	local := ai.Config{SandboxSelection: &api.SandboxConfig{Kind: registry.SandboxSRT}}
+	const requestDefault = 120 * time.Second
+
+	t.Run("a relocated run waits for the agent, not the model", func(t *testing.T) {
+		got := remoteAwareTimeout(ai.Request{}, remote, requestDefault)
+		if got != adapter.DefaultWaitTimeout {
+			t.Fatalf("timeout = %s, want the remote wait budget %s", got, adapter.DefaultWaitTimeout)
+		}
+	})
+
+	t.Run("the backend's waitTimeout is honoured", func(t *testing.T) {
+		scoped := ai.Config{SandboxSelection: &api.SandboxConfig{
+			Kind:    registry.SandboxGitAgent,
+			Options: map[string]any{"waitTimeout": "15m"},
+		}}
+		if got := remoteAwareTimeout(ai.Request{}, scoped, requestDefault); got != 15*time.Minute {
+			t.Fatalf("timeout = %s, want 15m", got)
+		}
+	})
+
+	t.Run("an explicit timeout always wins", func(t *testing.T) {
+		req := ai.Request{}
+		req.Budget.Timeout = "45s"
+		// runContext applies the declared budget itself; the point here is that
+		// the remote default does not override an explicit choice.
+		if got := remoteAwareTimeout(req, remote, requestDefault); got != requestDefault {
+			t.Fatalf("timeout = %s, want the caller's %s left untouched", got, requestDefault)
+		}
+	})
+
+	t.Run("local sandboxes keep the request default", func(t *testing.T) {
+		for name, cfg := range map[string]ai.Config{"srt": local, "none": {}} {
+			if got := remoteAwareTimeout(ai.Request{}, cfg, requestDefault); got != requestDefault {
+				t.Fatalf("%s: timeout = %s, want %s", name, got, requestDefault)
+			}
+		}
+	})
 }
 
 func TestRemoteExecProviderForLeavesLocalSandboxesAlone(t *testing.T) {
