@@ -63,6 +63,8 @@ func TestCodexSafety(t *testing.T) {
 		wantApproval CodexApprovalPolicy
 	}{
 		{"bypass is full access", Permissions{Mode: PermissionBypass}, CodexSandboxDangerFull, CodexApprovalNever},
+		{"accept edits is workspace write", Permissions{Mode: PermissionAcceptEdits}, CodexSandboxWorkspaceWrite, CodexApprovalOnRequest},
+		{"auto is workspace write", Permissions{Mode: PermissionAuto}, CodexSandboxWorkspaceWrite, CodexApprovalOnRequest},
 		{"edit preset is workspace write", Permissions{Presets: []Preset{PresetEdit}}, CodexSandboxWorkspaceWrite, CodexApprovalOnRequest},
 		{"default is read-only", Permissions{}, CodexSandboxReadOnly, CodexApprovalOnRequest},
 		{"edit preset with explicit mode stays read-only", Permissions{Mode: PermissionDefault, Presets: []Preset{PresetEdit}}, CodexSandboxReadOnly, CodexApprovalOnRequest},
