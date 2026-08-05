@@ -45,11 +45,14 @@ LEFT JOIN LATERAL (
     COALESCE(sum(c.cache_read_tokens), 0)::bigint AS cache_read_tokens,
     COALESCE(sum(c.cache_write_tokens), 0)::bigint AS cache_write_tokens,
     COALESCE(sum(
-      c.input_cost
-      + c.output_cost
-      + c.reasoning_cost
-      + c.cache_read_cost
-      + c.cache_write_cost
+      CASE
+        WHEN c.provider_cost_usd > 0 THEN c.provider_cost_usd
+        ELSE c.input_cost
+          + c.output_cost
+          + c.reasoning_cost
+          + c.cache_read_cost
+          + c.cache_write_cost
+      END
     ) FILTER (WHERE upper(c.currency) = 'USD'), 0::numeric) AS cost_usd
   FROM public.captain_turns t
   JOIN public.captain_model_calls c ON c.turn_id = t.id

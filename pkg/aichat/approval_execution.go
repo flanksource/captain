@@ -53,7 +53,11 @@ func (s *Service) resumeToolApproval(ctx context.Context, threadID string, conti
 			return fmt.Errorf("backend %q does not support caller tools", provider.GetBackend())
 		}
 	}
-	thread, err := s.options.Threads.Get(ctx, threadID)
+	store, err := s.threads(ctx)
+	if err != nil {
+		return err
+	}
+	thread, err := store.Get(ctx, threadID)
 	if err != nil {
 		return err
 	}
@@ -81,7 +85,12 @@ func (s *Service) resumeToolApproval(ctx context.Context, threadID string, conti
 	defer s.unregisterActiveTurn(threadID, active)
 	events = active.stream(events)
 	events = observeExecutionEvents(streamContext, execution, events)
-	for event := range s.persistedEvents(streamContext, request, execution.TurnID(), events) {
+	// A resumed approval writes no SSE stream, so no TurnCosts sink is needed;
+	// the thread total is recomputed from the database on the next read.
+	resumed := s.persistedEvents(streamContext, persistedEventOptions{
+		Request: request, TurnID: execution.TurnID(), Model: continuation.Spec.Model,
+	}, events)
+	for event := range resumed {
 		if event.Kind == api.EventError {
 			return fmt.Errorf("resume provider approval: %s", event.Error)
 		}

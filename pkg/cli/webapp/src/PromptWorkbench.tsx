@@ -38,6 +38,7 @@ import {
   type ResolvedOperation,
 } from "@flanksource/clicky-ui/rpc";
 import { apiClient } from "./api";
+import { isReadOnlyDbContext } from "./dbContext";
 import { PromptRunStream } from "./PromptRunStream";
 import { PromptBatchInspector } from "./PromptBatchInspector";
 import { PromptSchemaEditor } from "./PromptSchemaEditor";
@@ -711,7 +712,9 @@ function usePromptWorkbenchView({
           previewLoading={selectedDetailState.actionLoading === "preview"}
           runLoading={selectedDetailState.actionLoading === "run"}
           previewEnabled={Boolean(promptOps.preview && detail)}
-          runEnabled={Boolean(promptOps.run && detail)}
+          // Running a prompt writes its session; a read-only database context
+          // would have the POST rejected, so the control is disabled instead.
+          runEnabled={Boolean(promptOps.run && detail) && !isReadOnlyDbContext()}
         />
       </AppShell>
       <PromptWriteModal

@@ -147,7 +147,7 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	addCaptainProviderTokenPaths(openAPISpec)
 	addCaptainProviderDefaultsPaths(openAPISpec)
 	addCaptainDisabledPaths(openAPISpec)
-	chat, mcpTools, err := newCaptainChatService(ctx, rootCmd, opts, cwd, threadStore, authority, attachmentStore)
+	chat, mcpTools, err := newCaptainChatService(ctx, rootCmd, opts, cwd, authority, attachmentStore)
 	if err != nil {
 		return err
 	}
@@ -170,6 +170,7 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	mux.HandleFunc("GET /health", rpcServer.HandleHealth)
 	rpcServer.RegisterExecutionRoutes(mux)
 	mux.HandleFunc("POST /api/captain/chat/threads/from-agent", handleThreadFromAgent(threadStore))
+	mux.HandleFunc("GET /api/captain/contexts", handleContexts())
 	mux.HandleFunc("GET /api/captain/projects", handleProjects())
 	mux.HandleFunc("GET /api/captain/sessions/live", handleSessionsLive())
 	mux.HandleFunc("GET /api/captain/sessions/throughput", handleSessionsThroughput())
@@ -211,7 +212,8 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	}
 	httpSrv := &http.Server{
 		Addr:        addr,
-		Handler:     rpchttp.TimingMiddleware(PromptDirsMiddleware(mux, opts.PromptDirs)),
+		Handler: rpchttp.TimingMiddleware(
+			DatabaseContextMiddleware(PromptDirsMiddleware(mux, opts.PromptDirs))),
 		ReadTimeout: 30 * time.Second,
 		// /api/chat streams SSE; a fixed write timeout truncates long turns.
 		IdleTimeout: 60 * time.Second,
@@ -239,8 +241,15 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	if err != nil {
 		return err
 	}
-	dsn, source := captainDatabaseIdentity()
+	dsn, source := contextDatabaseIdentity(defaultDatabaseContextName)
 	log.Infof("Database Info: source=%q dsn=%q live_sessions=%d", source, database.MaskDSN(dsn), liveSessions)
+	if contexts, err := databaseContexts(); err != nil {
+		// Reads can select a context per request, so a malformed context
+		// configuration is a startup error rather than a surprise mid-session.
+		return err
+	} else if len(contexts) > 1 {
+		log.Infof("Read-only database contexts: %s", strings.Join(databaseContextNames(contexts[1:]), ", "))
+	}
 
 	go prunePromptRuns(ctx, promptRuns)
 	defer promptChats.stopAll()

@@ -207,15 +207,22 @@ func (a *Agent) accrue(resp *Response) Cost {
 // but preserves the token counts and any provider-reported total, so cost is
 // never silently dropped just because a model is absent from the registry.
 func PriceResponse(backend Backend, model string, resp *Response) Cost {
+	return PriceUsage(backend, model, resp.Usage, resp.CostUSD)
+}
+
+// PriceUsage is PriceResponse for callers that hold a bare Usage plus the
+// provider's reported total (stream events, persisted model calls) rather than
+// a full Response.
+func PriceUsage(backend Backend, model string, usage Usage, providerCostUSD float64) Cost {
 	cost := Cost{
 		Model:            model,
-		InputTokens:      resp.Usage.InputTokens,
-		OutputTokens:     resp.Usage.OutputTokens,
-		ReasoningTokens:  resp.Usage.ReasoningTokens,
-		CacheReadTokens:  resp.Usage.CacheReadTokens,
-		CacheWriteTokens: resp.Usage.CacheWriteTokens,
-		TotalTokens:      resp.Usage.TotalTokens(),
-		ProviderCostUSD:  resp.CostUSD,
+		InputTokens:      usage.InputTokens,
+		OutputTokens:     usage.OutputTokens,
+		ReasoningTokens:  usage.ReasoningTokens,
+		CacheReadTokens:  usage.CacheReadTokens,
+		CacheWriteTokens: usage.CacheWriteTokens,
+		TotalTokens:      usage.TotalTokens(),
+		ProviderCostUSD:  providerCostUSD,
 	}
 	// The pricing registry is keyed on OpenRouter-style ids (provider/model);
 	// try the backend-prefixed id first, then the bare model.
@@ -230,6 +237,18 @@ func PriceResponse(backend Backend, model string, resp *Response) Cost {
 		}
 	}
 	return cost
+}
+
+// ContextWindowFor returns a model's context window from the pricing registry,
+// or 0 when unknown, so persisted model calls can record context occupancy
+// server-side instead of relying on the UI's catalog for the denominator.
+func ContextWindowFor(backend Backend, model string) int {
+	for _, id := range PricingIDs(backend, model) {
+		if info, ok := pricing.GetModelInfo(id); ok && info.ContextWindow > 0 {
+			return info.ContextWindow
+		}
+	}
+	return 0
 }
 
 // PricingIDs returns the candidate OpenRouter-style pricing keys for a model,

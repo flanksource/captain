@@ -105,10 +105,10 @@ func rowFromTranscript(sessionID string, t claude.ParsedTranscript, uuidOwner ma
 		r.ID = sessionID
 	}
 
-	costs := api.Costs{}
+	costs := newResponseCosts()
 	for _, e := range t.Entries {
-		if e.IsAssistantMessage() && e.Message.Usage != nil {
-			costs = append(costs, CostFromUsage(e.Message.Usage, e.Message.Model))
+		if costs.firstSighting(e) {
+			costs.costs = append(costs.costs, CostFromUsage(e.Message.Usage, e.Message.Model))
 			u := e.Message.Usage
 			r.ContextTokens = u.InputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens
 		}
@@ -131,7 +131,7 @@ func rowFromTranscript(sessionID string, t claude.ParsedTranscript, uuidOwner ma
 			extendRowRange(&r, ts)
 		}
 	}
-	r.Cost = costs.Sum()
+	r.Cost = costs.costs.Sum()
 	if !t.IsAgent {
 		r.Title = latestClaudeSessionTitle(t.ToolUses)
 		r.InitialPrompt = firstClaudeUserPrompt(t.Entries)

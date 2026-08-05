@@ -80,7 +80,7 @@ func sessionSummaryRows(s *Session) []prettyKVRow {
 	add("Counts", prettyCounts(s))
 	add("Tokens", prettyTokens(s.Usage))
 	if cost := s.Cost.Total(); cost > 0 {
-		add("Cost", FormatCost(cost))
+		add("Cost", FormatCostEstimated(cost, s.Cost.ProviderCostUSD == 0))
 	}
 	if s.Plan != nil {
 		add("Plan", firstNonEmpty(s.Plan.Path, s.Plan.Slug, "inline"))

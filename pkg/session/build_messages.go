@@ -4,7 +4,6 @@ import (
 	"sort"
 
 	"github.com/flanksource/captain/pkg/ai/assistanttags"
-	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/bash"
 	"github.com/flanksource/captain/pkg/claude"
 	"github.com/segmentio/encoding/json"
@@ -58,16 +57,14 @@ func buildHierarchy(ps claude.ParsedSession, turnByEntry map[string]string) hier
 			}
 		}
 
-		costs := api.Costs{}
+		costs := newResponseCosts()
 		for _, e := range t.Entries {
-			if e.IsAssistantMessage() && e.Message.Usage != nil {
-				costs = append(costs, CostFromUsage(e.Message.Usage, e.Message.Model))
-			}
+			costs.add(e)
 			if m, ok := entryToMessage(e, node.ID, turnByEntry[e.UUID]); ok {
 				messages = append(messages, m)
 			}
 		}
-		node.Cost = costs.Sum()
+		node.Cost = costs.costs.Sum()
 		node.Usage = usageFromCost(node.Cost)
 	}
 

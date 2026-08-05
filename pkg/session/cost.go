@@ -6,6 +6,39 @@ import (
 	"github.com/flanksource/captain/pkg/claude/tools"
 )
 
+// responseCosts accumulates per-API-response costs from transcript entries.
+//
+// This is the no-result fallback: stored claude transcripts carry no result
+// record, so the session total has to be reconstructed from each response's
+// usage. See api.ResponseSet for why that reconstruction needs deduplication,
+// and prefer a reported result wherever one exists.
+type responseCosts struct {
+	responses api.ResponseSet
+	costs     api.Costs
+}
+
+func newResponseCosts() *responseCosts {
+	return &responseCosts{}
+}
+
+// firstSighting reports whether an entry carries usage for a response not yet
+// counted, marking it counted.
+func (r *responseCosts) firstSighting(entry claude.HistoryEntry) bool {
+	if !entry.IsAssistantMessage() || entry.Message.Usage == nil {
+		return false
+	}
+	return r.responses.First(entry.Message.ID)
+}
+
+// add records an assistant entry's usage, ignoring repeated content-block lines
+// of a response already counted.
+func (r *responseCosts) add(entry claude.HistoryEntry) {
+	if !r.firstSighting(entry) {
+		return
+	}
+	r.costs = append(r.costs, CostFromUsage(entry.Message.Usage, entry.Message.Model))
+}
+
 // CostFromUsage converts a raw Claude Usage + model into the canonical api.Cost.
 // This is the single conversion point from the transcript token representation
 // to the runtime-canonical cost type.

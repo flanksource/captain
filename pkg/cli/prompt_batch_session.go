@@ -30,7 +30,7 @@ func createPromptBatchSessions(ctx context.Context, rendered PromptRenderResult,
 	if err := validatePromptRuntimes(runtimes); err != nil {
 		return promptBatchSession{}, err
 	}
-	db, err := captainDB(ctx)
+	db, err := captainDefaultDB(ctx)
 	if err != nil {
 		return promptBatchSession{}, err
 	}
@@ -100,7 +100,7 @@ func promptBinding(batch promptBatchSession, index int) *promptSessionBinding {
 }
 
 func updatePromptSessionLifecycle(ctx context.Context, id uuid.UUID, lifecycle database.SessionLifecycleStatus, reason string) {
-	db, err := captainDB(ctx)
+	db, err := captainDefaultDB(ctx)
 	if err != nil {
 		log.Errorf("open database for session %s lifecycle: %v", id, err)
 		return

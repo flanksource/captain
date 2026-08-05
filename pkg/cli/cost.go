@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -61,7 +62,7 @@ type CategoryCostResult struct {
 	Rows        []CategoryCostRow `json:"rows"`
 }
 
-func RunCost(opts CostOptions) (any, error) {
+func RunCost(ctx context.Context, opts CostOptions) (any, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return nil, err
@@ -77,6 +78,9 @@ func RunCost(opts CostOptions) (any, error) {
 		return nil, err
 	}
 	sessions = filterCostsBySessionID(sessions, sessionIDs)
+	// Transcripts hold no result record, so prefer the figures captain recorded
+	// from the provider's own results for any session it ran.
+	applyResultCosts(ctx, sessions)
 
 	grouped := groupSessions(sessions, opts.GroupBy)
 
@@ -92,6 +96,7 @@ func RunCost(opts CostOptions) (any, error) {
 		total.CacheWriteTokens += s.Tokens.CacheWriteTokens
 		total.CacheReadTokens += s.Tokens.CacheReadTokens
 		total.TotalCost += s.Tokens.TotalCost
+		total.ProviderCostUSD += s.Tokens.ProviderCostUSD
 
 		rows = append(rows, CostRow{
 			Project:    s.Project,
@@ -102,13 +107,13 @@ func RunCost(opts CostOptions) (any, error) {
 			CacheRead:  session.FormatTokens(s.Tokens.CacheReadTokens),
 			CacheWrite: session.FormatTokens(s.Tokens.CacheWriteTokens),
 			Msgs:       s.Messages,
-			APICost:    session.FormatCost(s.Tokens.TotalCost),
+			APICost:    session.FormatCostEstimated(s.Tokens.TotalCost, s.Tokens.Estimated()),
 			Time:       claude.FormatTimeAgo(&s.End),
 		})
 	}
 
 	return CostResult{
-		TotalAPICost: session.FormatCost(total.TotalCost),
+		TotalAPICost: session.FormatCostEstimated(total.TotalCost, total.Estimated()),
 		TotalTokens:  session.FormatTokens(total.TotalTokens()),
 		Rows:         rows,
 	}, nil
@@ -325,6 +330,7 @@ func mergeInto(g *claude.SessionCost, s claude.SessionCost) {
 	g.Tokens.CacheWriteTokens += s.Tokens.CacheWriteTokens
 	g.Tokens.CacheReadTokens += s.Tokens.CacheReadTokens
 	g.Tokens.TotalCost += s.Tokens.TotalCost
+	g.Tokens.ProviderCostUSD += s.Tokens.ProviderCostUSD
 	g.Messages += s.Messages
 	if s.Start.Before(g.Start) {
 		g.Start = s.Start

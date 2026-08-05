@@ -52,7 +52,19 @@ SELECT
   COALESCE(message_stats.message_count, 0) AS message_count,
   COALESCE(message_stats.message_ids, ARRAY[]::uuid[]) AS message_ids,
   COALESCE(event_stats.event_count, 0) AS event_count,
-  COALESCE(event_stats.event_ids, ARRAY[]::uuid[]) AS event_ids
+  COALESCE(event_stats.event_ids, ARRAY[]::uuid[]) AS event_ids,
+  -- Appended after initial release: CREATE OR REPLACE VIEW only allows adding
+  -- columns at the end, so later additions must stay below this line.
+  --
+  -- The portion of cost_usd the providers reported, plus the list-price buckets
+  -- it otherwise falls back to. cost_usd alone cannot tell a billed figure from
+  -- a reconstruction, and callers must not render an estimate as billed cost.
+  COALESCE(call_stats.provider_cost_usd, 0::numeric) AS provider_cost_usd,
+  COALESCE(call_stats.input_cost, 0::numeric) AS input_cost,
+  COALESCE(call_stats.output_cost, 0::numeric) AS output_cost,
+  COALESCE(call_stats.reasoning_cost, 0::numeric) AS reasoning_cost,
+  COALESCE(call_stats.cache_read_cost, 0::numeric) AS cache_read_cost,
+  COALESCE(call_stats.cache_write_cost, 0::numeric) AS cache_write_cost
 FROM public.captain_turns t
 LEFT JOIN LATERAL (
   SELECT
@@ -63,12 +75,22 @@ LEFT JOIN LATERAL (
     COALESCE(sum(c.cache_read_tokens), 0)::bigint AS cache_read_tokens,
     COALESCE(sum(c.cache_write_tokens), 0)::bigint AS cache_write_tokens,
     COALESCE(sum(
-      c.input_cost
-      + c.output_cost
-      + c.reasoning_cost
-      + c.cache_read_cost
-      + c.cache_write_cost
-    ) FILTER (WHERE upper(c.currency) = 'USD'), 0::numeric) AS cost_usd
+      CASE
+        WHEN c.provider_cost_usd > 0 THEN c.provider_cost_usd
+        ELSE c.input_cost
+          + c.output_cost
+          + c.reasoning_cost
+          + c.cache_read_cost
+          + c.cache_write_cost
+      END
+    ) FILTER (WHERE upper(c.currency) = 'USD'), 0::numeric) AS cost_usd,
+    COALESCE(sum(c.provider_cost_usd)
+      FILTER (WHERE upper(c.currency) = 'USD'), 0::numeric) AS provider_cost_usd,
+    COALESCE(sum(c.input_cost) FILTER (WHERE upper(c.currency) = 'USD'), 0::numeric) AS input_cost,
+    COALESCE(sum(c.output_cost) FILTER (WHERE upper(c.currency) = 'USD'), 0::numeric) AS output_cost,
+    COALESCE(sum(c.reasoning_cost) FILTER (WHERE upper(c.currency) = 'USD'), 0::numeric) AS reasoning_cost,
+    COALESCE(sum(c.cache_read_cost) FILTER (WHERE upper(c.currency) = 'USD'), 0::numeric) AS cache_read_cost,
+    COALESCE(sum(c.cache_write_cost) FILTER (WHERE upper(c.currency) = 'USD'), 0::numeric) AS cache_write_cost
   FROM public.captain_model_calls c
   WHERE c.turn_id = t.id
 ) call_stats ON true

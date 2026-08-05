@@ -23,6 +23,7 @@ type eventStream struct {
 	nextBlock int
 	tools     map[string]toolState
 	metadata  *MessageMetadata
+	costs     *TurnCosts
 	sessionID string
 	model     string
 	terminal  bool
@@ -33,6 +34,9 @@ type eventStream struct {
 type EventStreamOptions struct {
 	ToolApproval *api.ToolApprovalResume
 	MessageID    string
+	// Costs, when set, supplies the finish part's priced breakdown and the
+	// thread's cumulative cost. Nil for streams with no thread to accrue against.
+	Costs *TurnCosts
 }
 
 // WriteEventStream translates a Captain event channel into one complete UI Message Stream.
@@ -44,7 +48,10 @@ func WriteEventStream(writer *SSEWriter, events <-chan api.Event, options EventS
 			return fmt.Errorf("validate tool approval stream: %w", err)
 		}
 	}
-	stream := &eventStream{writer: writer, messageID: options.MessageID, tools: map[string]toolState{}}
+	stream := &eventStream{
+		writer: writer, messageID: options.MessageID,
+		tools: map[string]toolState{}, costs: options.Costs,
+	}
 	if err := stream.start(); err != nil {
 		return err
 	}
@@ -294,10 +301,22 @@ func (s *eventStream) result(event api.Event) error {
 	}
 	if event.Usage != nil {
 		s.metadata.Usage = usageMetadata(*event.Usage)
-		s.metadata.ContextTokens = event.Usage.InputTokens
+		s.metadata.ContextTokens = contextTokens(*event.Usage)
+	}
+	if s.costs != nil {
+		s.metadata.CostBreakdown = s.costs.Breakdown
+		s.metadata.ThreadCostUSD = s.costs.ThreadCostUSD
 	}
 	s.terminal = true
 	return nil
+}
+
+// contextTokens is the prompt's occupancy of the context window. The usage
+// buckets are disjoint (pkg/api/cost.go), so the cached prefix counts too:
+// agent backends report near-zero InputTokens against a six-figure cache read,
+// and reporting input alone renders that as a context of single digits.
+func contextTokens(usage api.Usage) int {
+	return usage.InputTokens + usage.CacheReadTokens + usage.CacheWriteTokens
 }
 
 func (s *eventStream) validateApprovalCorrelation(approval *api.ToolApprovalState) error {

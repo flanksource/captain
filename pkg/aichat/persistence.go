@@ -75,7 +75,18 @@ func newAssistantMessageBuilder(options assistantMessageBuilderOptions) (*assist
 	return builder, nil
 }
 
-func (s *Service) persistedEvents(ctx context.Context, request ChatRequest, turnID string, source <-chan api.Event) <-chan api.Event {
+// persistedEventOptions carries the turn identity a persisted stream needs:
+// which thread and turn it belongs to, which model produced it (for pricing),
+// and where to record the resulting costs for the finish part.
+type persistedEventOptions struct {
+	Request ChatRequest
+	TurnID  string
+	Model   api.Model
+	Costs   *TurnCosts
+}
+
+func (s *Service) persistedEvents(ctx context.Context, options persistedEventOptions, source <-chan api.Event) <-chan api.Event {
+	request, turnID := options.Request, options.TurnID
 	if request.ThreadID == "" {
 		return source
 	}
@@ -103,13 +114,13 @@ func (s *Service) persistedEvents(ctx context.Context, request ChatRequest, turn
 				return
 			}
 			if !persisted && event.Kind != api.EventResult && event.Kind != api.EventError && event.SessionID != "" {
-				if err := s.persistEvent(ctx, request.ThreadID, event); err != nil {
+				if err := s.persistEvent(ctx, request.ThreadID, event, options.Model, options.Costs); err != nil {
 					sendEvent(ctx, out, api.Event{Kind: api.EventError, Error: err.Error(), Model: event.Model})
 					return
 				}
 			}
 			if !persisted && (event.Kind == api.EventResult || event.Kind == api.EventError || event.Kind == api.EventInterrupted) {
-				if err := s.persistCompletedTurn(ctx, request.ThreadID, builder, event); err != nil {
+				if err := s.persistCompletedTurn(ctx, request.ThreadID, builder, event, options); err != nil {
 					sendEvent(ctx, out, api.Event{Kind: api.EventError, Error: err.Error(), Model: event.Model})
 					return
 				}
@@ -138,7 +149,11 @@ func (s *Service) approvalPersistenceSeed(ctx context.Context, request ChatReque
 			return &last, nil
 		}
 	}
-	thread, err := s.options.Threads.Get(ctx, request.ThreadID)
+	store, err := s.threads(ctx)
+	if err != nil {
+		return nil, err
+	}
+	thread, err := store.Get(ctx, request.ThreadID)
 	if err != nil {
 		return nil, fmt.Errorf("load suspended assistant message: %w", err)
 	}
@@ -158,8 +173,14 @@ func sendEvent(ctx context.Context, target chan<- api.Event, event api.Event) bo
 	}
 }
 
-func (s *Service) persistCompletedTurn(ctx context.Context, threadID string, builder *assistantMessageBuilder, event api.Event) error {
-	if err := s.persistEvent(ctx, threadID, event); err != nil {
+func (s *Service) persistCompletedTurn(
+	ctx context.Context,
+	threadID string,
+	builder *assistantMessageBuilder,
+	event api.Event,
+	options persistedEventOptions,
+) error {
+	if err := s.persistEvent(ctx, threadID, event, options.Model, options.Costs); err != nil {
 		return err
 	}
 	if len(builder.message.Parts) == 0 {
@@ -172,10 +193,14 @@ func (s *Service) persistCompletedTurn(ctx context.Context, threadID string, bui
 }
 
 func (s *Service) persistAssistantMessage(ctx context.Context, threadID string, builder *assistantMessageBuilder) error {
-	if builder.replace {
-		return s.options.Threads.ReplaceLastMessage(ctx, threadID, builder.message)
+	store, err := s.threads(ctx)
+	if err != nil {
+		return err
 	}
-	return s.options.Threads.AppendMessage(ctx, threadID, builder.message)
+	if builder.replace {
+		return store.ReplaceLastMessage(ctx, threadID, builder.message)
+	}
+	return store.AppendMessage(ctx, threadID, builder.message)
 }
 
 func (b *assistantMessageBuilder) apply(event api.Event) error {
@@ -362,7 +387,7 @@ func (b *assistantMessageBuilder) result(event api.Event) error {
 	}
 	if event.Usage != nil {
 		b.message.Metadata.Usage = usageMetadata(*event.Usage)
-		b.message.Metadata.ContextTokens = event.Usage.InputTokens
+		b.message.Metadata.ContextTokens = contextTokens(*event.Usage)
 	}
 	return nil
 }

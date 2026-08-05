@@ -1,6 +1,10 @@
 package history
 
-import "time"
+import (
+	"time"
+
+	"github.com/flanksource/captain/pkg/api"
+)
 
 type ToolUse struct {
 	Tool            string         `json:"tool,omitempty"`
@@ -19,15 +23,21 @@ type ToolUse struct {
 	// ReasoningTokens is disjoint from OutputTokens, per the api.Usage contract:
 	// OpenAI reports reasoning as a subset of output, so it is netted out at this
 	// parse boundary the way the live providers already net it.
-	ReasoningTokens int    `json:"reasoning_tokens,omitempty"`
-	CacheReadTokens int    `json:"cache_read_tokens,omitempty"`
-	TotalTokens     int    `json:"total_tokens,omitempty"`
-	ContextWindow   int    `json:"context_window,omitempty"`
-	AgentID         string `json:"agent_id,omitempty"`
-	AgentType       string `json:"agent_type,omitempty"`
-	AgentDesc       string `json:"agent_desc,omitempty"`
-	Response        string `json:"response,omitempty"`
-	RecordType      string `json:"-"`
+	ReasoningTokens int `json:"reasoning_tokens,omitempty"`
+	CacheReadTokens int `json:"cache_read_tokens,omitempty"`
+	TotalTokens     int `json:"total_tokens,omitempty"`
+	ContextWindow   int `json:"context_window,omitempty"`
+	// CumulativeUsage is the provider's own running total for the session as of
+	// this record, rather than this record's delta. It is the result figure:
+	// reading the last one is exact, where summing per-record deltas drifts
+	// (a real 238-event codex session sums to 29.47M against a reported 29.24M).
+	// Netted to the disjoint api.Usage contract like the per-record fields.
+	CumulativeUsage *api.Usage `json:"cumulative_usage,omitempty"`
+	AgentID         string     `json:"agent_id,omitempty"`
+	AgentType       string     `json:"agent_type,omitempty"`
+	AgentDesc       string     `json:"agent_desc,omitempty"`
+	Response        string     `json:"response,omitempty"`
+	RecordType      string     `json:"-"`
 	// SourceLine is the 1-based JSONL line the use was extracted from — the
 	// line of the FIRST record when several collapse into one row. It is the
 	// stable identity of the row across re-parses of a growing transcript;
