@@ -131,7 +131,7 @@ var _ = Describe("Mocked Captain chat lifecycle", func() {
 			var inputMu sync.Mutex
 			var approvedInput map[string]any
 			service := aichat.NewService(aichat.ServiceOptions{
-				Resolver: realChatResolver{}, Threads: store, Authority: authority,
+				Resolver: realChatResolver{}, Threads: aichat.FixedThreadStore(store), Authority: authority,
 				Settings: aichat.RuntimeSettingsProviderFunc(func(context.Context) (aichat.RuntimeSettings, error) {
 					return aichat.RuntimeSettings{ProviderConfig: api.Config{
 						APIURL: mock.apiURL, APIKey: aimock.DummyKey,
