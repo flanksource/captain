@@ -154,7 +154,7 @@ func (s *Service) unregisterActiveTurn(threadID string, turn *activeTurn) {
 }
 
 func (s *Service) handleInterrupt(w http.ResponseWriter, request *http.Request) {
-	store := s.threadStore(w)
+	store := s.threadStore(w, request)
 	if store == nil {
 		return
 	}

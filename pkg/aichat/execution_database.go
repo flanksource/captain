@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/callertools"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/database"
@@ -27,6 +28,8 @@ type databaseExecution struct {
 	turn        *database.ChatTurn
 	run         *database.PromptRun
 	modelCallID uuid.UUID
+	model       string
+	backend     api.Backend
 	definitions []api.ToolDefinition
 	events      chan api.Event
 
@@ -42,6 +45,27 @@ type databaseExecution struct {
 	approvalIDs          map[string]uuid.UUID
 	providerToolUses     []api.Event
 	providerToolUseReady chan struct{}
+}
+
+// finishModelCall persists a terminal model call with its priced cost breakdown.
+// Pricing happens here, against the same model identity the call was created
+// with, so the five per-bucket cost columns and the provider-reported total are
+// both stored rather than the whole figure collapsing into output_cost.
+func (e *databaseExecution) finishModelCall(
+	ctx context.Context,
+	status database.ModelCallStatus,
+	stopReason string,
+	event api.Event,
+) error {
+	input := database.FinishChatModelCallInput{
+		ID: e.modelCallID, Status: status, StopReason: stopReason, Event: event,
+		ContextWindowTokens: ai.ContextWindowFor(e.backend, e.model),
+	}
+	if event.Usage != nil {
+		cost := ai.PriceUsage(e.backend, e.model, *event.Usage, event.CostUSD)
+		input.Cost = &cost
+	}
+	return e.db.FinishChatModelCall(ctx, input)
 }
 
 func (e *databaseExecution) CaptainSessionID() string { return e.session.ID.String() }
@@ -236,10 +260,7 @@ func (e *databaseExecution) suspend(ctx context.Context, state api.ToolApprovalS
 			return fmt.Errorf("provider tool approval %q has no durable turn request", pending.ToolCallID)
 		}
 	}
-	if err := e.db.FinishChatModelCall(ctx, database.FinishChatModelCallInput{
-		ID: e.modelCallID, Status: database.ModelCallStatusSucceeded,
-		StopReason: "tool_approval", Event: event,
-	}); err != nil {
+	if err := e.finishModelCall(ctx, database.ModelCallStatusSucceeded, "tool_approval", event); err != nil {
 		return err
 	}
 	checkpoint := database.PromptRunCheckpoint{
@@ -304,10 +325,8 @@ func (e *databaseExecution) Interrupt(ctx context.Context, reason string) error 
 		runtime.Revoke()
 	}
 	var errs []error
-	errs = append(errs, e.db.FinishChatModelCall(ctx, database.FinishChatModelCallInput{
-		ID: e.modelCallID, Status: database.ModelCallStatusCancelled, StopReason: "interrupt",
-		Event: api.Event{Kind: api.EventInterrupted, Reason: reason},
-	}))
+	errs = append(errs, e.finishModelCall(ctx, database.ModelCallStatusCancelled, "interrupt",
+		api.Event{Kind: api.EventInterrupted, Reason: reason}))
 	errs = append(errs, e.db.CancelPendingTurnRequests(ctx, e.session.ID, e.run.ID, "execution interrupted"))
 	if credential != nil {
 		errs = append(errs, e.db.RevokeCallerToolCredential(ctx, credential.ID, "execution interrupted"))
@@ -396,9 +415,7 @@ func (e *databaseExecution) finish(ctx context.Context, success bool, message st
 		callStatus = database.ModelCallStatusSucceeded
 		stopReason = "stop"
 	}
-	errs = append(errs, e.db.FinishChatModelCall(ctx, database.FinishChatModelCallInput{
-		ID: e.modelCallID, Status: callStatus, StopReason: stopReason, Event: event,
-	}))
+	errs = append(errs, e.finishModelCall(ctx, callStatus, stopReason, event))
 	if credential != nil {
 		errs = append(errs, e.db.RevokeCallerToolCredential(ctx, credential.ID, "prompt run terminal"))
 	}

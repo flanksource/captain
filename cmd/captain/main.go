@@ -25,7 +25,7 @@ func main() {
 		// respect it (cobra walks up the tree), so a runtime error from any
 		// command prints just the error.
 		SilenceUsage: true,
-		PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			clicky.Flags.UseFlags()
 			// A malformed -Phttp.har.level is a hard stop rather than a run
 			// that silently captures nothing.
@@ -39,12 +39,20 @@ func main() {
 				fmt.Fprintln(os.Stderr, err)
 				os.Exit(1)
 			}
+			// Bind the database context every command reads from, so an unknown
+			// --context fails before the command runs rather than at first query.
+			name, err := cli.ResolveDatabaseContextName(cmd.Context())
+			if err != nil {
+				return err
+			}
+			cmd.SetContext(cli.ContextWithDatabaseContext(cmd.Context(), name))
+			return nil
 		},
 	}
 	configureVersion(rootCmd, currentBuildInfo())
 
 	clicky.BindAllFlags(rootCmd.PersistentFlags(), "format")
-	cli.BindDatabaseURLFlag(rootCmd.PersistentFlags())
+	cli.BindDatabaseFlags(rootCmd.PersistentFlags())
 	// Bind commons' -P/--properties flag so per-subsystem log levels and HTTP
 	// wire logging can be toggled, e.g. -Plog.level.http=trace or
 	// -Phttp.log.base-level=info.
@@ -77,7 +85,7 @@ func main() {
 	infoCmd.Short = "Show the current agent session or discovered project sessions"
 	infoCmd.Long = "Detect the current Codex, Claude, Gemini, or Captain session from its environment, including matching Captain database sessions. Explicit discovery flags show project session history instead."
 
-	costCmd := clicky.AddNamedCommand("cost", rootCmd, cli.CostOptions{}, cli.RunCost)
+	costCmd := clicky.AddNamedCommandWithContext("cost", rootCmd, cli.CostOptions{}, cli.RunCost)
 	costCmd.Short = "Show token usage and estimated costs"
 	costCmd.Long = "Display token consumption (input, output, cache read/write) and estimated costs across Claude Code sessions."
 
@@ -88,6 +96,10 @@ func main() {
 	planCmd := clicky.AddNamedCommand("plan", rootCmd, cli.PlanOptions{}, cli.RunPlan)
 	planCmd.Short = "Show the exit-plan-mode plan for a session"
 	planCmd.Long = "Determine the plan file path and content for a Claude Code or Codex session. Pass a session ID (exact or prefix) to target a specific session; otherwise the most recent session with a plan in the current directory is used. Claude plans resolve to a ~/.claude/plans/<slug>.md file; Codex plans are inline update_plan checklists. Use --path to print only the plan file path."
+
+	contextsCmd := clicky.AddNamedCommandWithContext("contexts", rootCmd, cli.ContextsOptions{}, cli.RunContexts)
+	contextsCmd.Short = "List the databases captain can read"
+	contextsCmd.Long = "List the configured database contexts. Only the default context is monitored and written to; every other context is read-only and is selected per command with --context or per browser session from the UI's project picker. Pass --check to connect to each one and report whether it is reachable."
 
 	sessionsCmd := &cobra.Command{Use: "sessions", Short: "Browse Claude and Codex sessions"}
 	rootCmd.AddCommand(sessionsCmd)

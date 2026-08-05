@@ -19,10 +19,11 @@ import (
 type Option func(*openOptions)
 
 type openOptions struct {
-	dsn     string
-	gorm    *gorm.DB
-	gormSet bool
-	migrate bool
+	dsn          string
+	gorm         *gorm.DB
+	gormSet      bool
+	migrate      bool
+	maxOpenConns int
 }
 
 // WithDSN selects the PostgreSQL connection string.
@@ -41,6 +42,13 @@ func WithGorm(gormDB *gorm.DB) Option {
 // WithMigrations applies Captain's schema before returning the database.
 func WithMigrations() Option {
 	return func(options *openOptions) { options.migrate = true }
+}
+
+// WithMaxOpenConns caps a Captain-owned pool. Processes that hold several
+// database handles at once use it so the pools do not add up to an unreasonable
+// number of backends. Ignored for injected pools, which the host sizes.
+func WithMaxOpenConns(conns int) Option {
+	return func(options *openOptions) { options.maxOpenConns = conns }
 }
 
 // DB is a Captain database handle. It records pool ownership so a host can
@@ -95,6 +103,14 @@ func open(ctx context.Context, deps dependencies, optionFns ...Option) (*DB, err
 	gormDB, err := deps.open(dsn, commonsdb.DefaultGormConfig())
 	if err != nil {
 		return nil, fmt.Errorf("open Captain database: %w", err)
+	}
+	if options.maxOpenConns > 0 {
+		sqlDB, err := gormDB.DB()
+		if err != nil {
+			return nil, fmt.Errorf("access Captain SQL pool: %w", err)
+		}
+		sqlDB.SetMaxOpenConns(options.maxOpenConns)
+		sqlDB.SetMaxIdleConns(options.maxOpenConns)
 	}
 	return &DB{gorm: gormDB, owned: true}, nil
 }

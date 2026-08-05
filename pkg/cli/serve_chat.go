@@ -23,7 +23,6 @@ func newCaptainChatService(
 	rootCmd *cobra.Command,
 	opts ServeOptions,
 	cwd string,
-	threadStore aichat.ThreadStore,
 	authority aichat.ExecutionAuthority,
 	attachmentStore *attachments.Store,
 ) (*aichat.Service, *aichat.MCPToolProvider, error) {
@@ -48,7 +47,11 @@ func newCaptainChatService(
 				},
 			}, nil
 		}),
-		Tools: chatTools, MCP: mcpTools, Threads: threadStore, Authority: authority,
+		// Thread reads follow the request's database context; writes never reach
+		// a secondary because the context middleware rejects unsafe methods.
+		Tools: chatTools, MCP: mcpTools,
+		Threads:   aichat.ThreadStoreProviderFunc(contextThreadStore),
+		Authority: authority,
 		Attachments: chatAttachmentResolver{store: attachmentStore},
 	})
 	return chat, mcpTools, nil

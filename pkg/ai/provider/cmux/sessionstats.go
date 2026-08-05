@@ -12,6 +12,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai/history"
 	"github.com/flanksource/captain/pkg/ai/pricing"
+	"github.com/flanksource/captain/pkg/api"
 )
 
 // High-level agent states surfaced to the dashboard, derived from the last
@@ -135,6 +136,11 @@ type SessionStats struct {
 	// Error is the API/network failure reason when State == "error" — the synthetic
 	// "API Error: …" message Claude Code records when a request fails after retries.
 	Error string `json:"error,omitempty"`
+
+	// responses deduplicates the per-content-block lines one API response is
+	// written across. A cmux session log carries no result record, so the totals
+	// have to be reconstructed from each response; see api.ResponseSet.
+	responses api.ResponseSet
 }
 
 // sessionLogLine is the subset of a Claude session-log entry needed for stats:
@@ -145,6 +151,9 @@ type sessionLogLine struct {
 	Subtype   string `json:"subtype"`
 	Timestamp string `json:"timestamp"`
 	Message   struct {
+		// ID identifies the API response. Several lines share it when a response
+		// spans multiple content blocks, each repeating the same usage.
+		ID    string `json:"id"`
 		Model string `json:"model"`
 		Usage struct {
 			InputTokens              int `json:"input_tokens"`
@@ -173,7 +182,14 @@ func (l sessionLogLine) isCompaction() bool {
 
 // applyUsage folds one assistant entry's usage into the running totals and snaps
 // the live context window to this turn's prompt size (input + cache).
+//
+// Lines repeating a response already counted are skipped: they carry the same
+// usage object, so folding each one in would multiply the session's tokens (and
+// its cost) by the number of content blocks the response happened to contain.
 func (s *SessionStats) applyUsage(l sessionLogLine) {
+	if !s.responses.First(l.Message.ID) {
+		return
+	}
 	u := l.Message.Usage
 	s.InputTokens += u.InputTokens
 	s.OutputTokens += u.OutputTokens

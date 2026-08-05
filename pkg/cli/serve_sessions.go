@@ -67,7 +67,7 @@ func handleSessionsLiveWithRunner(run func(context.Context, SessionLiveOptions) 
 		}
 		result, err := run(r.Context(), opts)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			http.Error(w, err.Error(), serveRunStatus(err, http.StatusBadRequest))
 			return
 		}
 		writeServeJSON(w, http.StatusOK, result)
@@ -128,7 +128,7 @@ func handleSessionsThroughput() http.HandlerFunc {
 		}
 		result, err := RunSessionThroughput(r.Context(), opts)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			http.Error(w, err.Error(), serveRunStatus(err, http.StatusBadRequest))
 			return
 		}
 		writeServeJSON(w, http.StatusOK, result)
@@ -139,7 +139,7 @@ func handleProjects() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		result, err := RunProjectOptions(r.Context())
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			http.Error(w, err.Error(), serveRunStatus(err, http.StatusBadRequest))
 			return
 		}
 		writeServeJSON(w, http.StatusOK, result)
@@ -158,7 +158,7 @@ func handleSessionGet() http.HandlerFunc {
 			ID: id, Offset: queryInt(query.Get("offset")), Limit: queryInt(query.Get("limit")), Tail: queryInt(query.Get("tail")),
 		})
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			http.Error(w, err.Error(), serveRunStatus(err, http.StatusNotFound))
 			return
 		}
 		writeServeJSON(w, http.StatusOK, s)

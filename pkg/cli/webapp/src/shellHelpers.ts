@@ -10,6 +10,7 @@ import {
   UiRobotAi,
   UiServer,
 } from "@flanksource/clicky-ui/data";
+import { DEFAULT_DB_CONTEXT, type DbContextOption } from "./dbContext";
 import {
   ALL_PROJECTS_SCOPE,
   projectLabel,
@@ -73,9 +74,14 @@ export function captainNavSections(
   ];
 }
 
+/** Prefix distinguishing a database-context entry from a project entry. */
+export const DB_CONTEXT_OPTION_PREFIX = "ctx:";
+
 export function projectOptions(
   projectScope: ProjectScope,
   projects: ProjectOption[],
+  contexts: DbContextOption[] = [],
+  activeContext: string = DEFAULT_DB_CONTEXT,
 ): ComboboxOption[] {
   const options: ComboboxOption[] = [
     { value: ALL_PROJECTS_SCOPE, label: "All projects", group: "Scope" },
@@ -98,7 +104,27 @@ export function projectOptions(
       group: "Selected",
     });
   }
+  // Database contexts are a second, orthogonal axis on the same control: only
+  // one is active at a time, and picking one never clears the project scope.
+  if (contexts.length > 1) {
+    for (const context of contexts) {
+      const active = context.name === activeContext;
+      options.push({
+        value: `${DB_CONTEXT_OPTION_PREFIX}${context.name}`,
+        label: `${active ? "✓ " : ""}${context.label}${context.readOnly ? " (read-only)" : ""}`,
+        title: context.source || context.name,
+        group: "Database",
+      });
+    }
+  }
   return options;
+}
+
+/** Returns the context name a picker entry selects, or null for a project entry. */
+export function parseDbContextOption(value: string): string | null {
+  return value.startsWith(DB_CONTEXT_OPTION_PREFIX)
+    ? value.slice(DB_CONTEXT_OPTION_PREFIX.length)
+    : null;
 }
 
 export function withProjectScope(path: string, projectScope: ProjectScope) {

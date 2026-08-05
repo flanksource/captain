@@ -84,6 +84,7 @@ func (a *DatabaseExecutionAuthority) Begin(
 	}
 	execution := &databaseExecution{
 		db: a.db, ctx: ctx, session: session, turn: turn, run: run, modelCallID: modelCallID,
+		model: request.Spec.Name, backend: request.Spec.Backend,
 		events: make(chan api.Event, 16), definitions: append([]api.ToolDefinition(nil), request.Definitions...),
 		approvalIDs: map[string]uuid.UUID{}, providerToolUseReady: make(chan struct{}, 1),
 	}
@@ -204,6 +205,7 @@ func (a *DatabaseExecutionAuthority) ResolveToolApproval(
 	}
 	execution := &databaseExecution{
 		db: a.db, ctx: ctx, session: sessionRecord, turn: turn, run: resumed, modelCallID: modelCallID,
+		model: spec.Name, backend: spec.Backend,
 		events: make(chan api.Event, 16), approvalIDs: map[string]uuid.UUID{},
 		providerToolUseReady: make(chan struct{}, 1),
 	}

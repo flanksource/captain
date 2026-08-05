@@ -19,6 +19,62 @@ func assistantLine(ts, model string, in, out, cacheRead, cacheCreate int) string
 	)
 }
 
+// assistantLineWithID is assistantLine plus the response id several
+// content-block lines of one API response share.
+func assistantLineWithID(ts, id, model string, in, out, cacheRead, cacheCreate int) string {
+	return fmt.Sprintf(
+		`{"type":"assistant","timestamp":%q,"message":{"id":%q,"model":%q,"usage":{"input_tokens":%d,"output_tokens":%d,"cache_read_input_tokens":%d,"cache_creation_input_tokens":%d},"content":[{"type":"text","text":"hi"}]}}`,
+		ts, id, model, in, out, cacheRead, cacheCreate,
+	)
+}
+
+// One API response spanning thinking, text and tool_use is written as three
+// lines that each repeat the whole usage object. Counting them separately
+// triples the session's tokens and its cost.
+func TestComputeSessionStatsCountsOneResponseOnce(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	writeSessionLog(t, path,
+		assistantLineWithID("2026-06-23T10:00:00Z", "msg_a", "claude-opus-4-8", 100, 20, 5, 50),
+		assistantLineWithID("2026-06-23T10:00:00Z", "msg_a", "claude-opus-4-8", 100, 20, 5, 50),
+		assistantLineWithID("2026-06-23T10:00:00Z", "msg_a", "claude-opus-4-8", 100, 20, 5, 50),
+		assistantLineWithID("2026-06-23T10:00:30Z", "msg_b", "claude-opus-4-8", 200, 40, 7, 0),
+	)
+
+	stats, err := computeSessionStats(path)
+	if err != nil {
+		t.Fatalf("computeSessionStats() error = %v", err)
+	}
+	if stats.InputTokens != 300 || stats.OutputTokens != 60 {
+		t.Fatalf("tokens = in:%d out:%d, want in:300 out:60 for two responses",
+			stats.InputTokens, stats.OutputTokens)
+	}
+	if stats.CacheReadTokens != 12 || stats.CacheCreationTokens != 50 {
+		t.Fatalf("cache tokens = read:%d create:%d, want read:12 create:50",
+			stats.CacheReadTokens, stats.CacheCreationTokens)
+	}
+	if stats.Turns != 2 {
+		t.Fatalf("Turns = %d, want 2 responses rather than 4 lines", stats.Turns)
+	}
+}
+
+// Lines without a response id cannot be correlated, so each must still count —
+// dropping them would under-report every older session log.
+func TestComputeSessionStatsCountsEveryUnidentifiedLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	writeSessionLog(t, path,
+		assistantLine("2026-06-23T10:00:00Z", "claude-opus-4-8", 100, 20, 0, 0),
+		assistantLine("2026-06-23T10:00:30Z", "claude-opus-4-8", 100, 20, 0, 0),
+	)
+
+	stats, err := computeSessionStats(path)
+	if err != nil {
+		t.Fatalf("computeSessionStats() error = %v", err)
+	}
+	if stats.InputTokens != 200 || stats.Turns != 2 {
+		t.Fatalf("tokens = in:%d turns:%d, want in:200 turns:2", stats.InputTokens, stats.Turns)
+	}
+}
+
 func TestComputeSessionStatsAggregatesUsage(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "s.jsonl")
 	// Two assistant turns 30s apart plus a non-assistant line that must be ignored

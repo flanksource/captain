@@ -44,6 +44,11 @@ type TranscriptEvent struct {
 
 // Message represents a conversation message
 type Message struct {
+	// ID is the provider's message id (e.g. "msg_011Cdhc1..."), identifying one
+	// API response. Claude Code writes a separate transcript line per content
+	// block, all sharing this id and repeating the same Usage, so consumers that
+	// aggregate usage must deduplicate on it.
+	ID         string         `json:"id,omitempty"`
 	Model      string         `json:"model,omitempty"`
 	Role       MessageRole    `json:"role"`
 	Content    []ContentBlock `json:"-"`
@@ -54,6 +59,7 @@ type Message struct {
 // UnmarshalJSON handles polymorphic content field (string, array, or null)
 func (m *Message) UnmarshalJSON(data []byte) error {
 	type messageAlias struct {
+		ID         string          `json:"id,omitempty"`
 		Model      string          `json:"model,omitempty"`
 		Role       MessageRole     `json:"role"`
 		Content    json.RawMessage `json:"content"`
@@ -66,6 +72,7 @@ func (m *Message) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
+	m.ID = alias.ID
 	m.Model = alias.Model
 	m.Role = alias.Role
 	m.StopReason = alias.StopReason
