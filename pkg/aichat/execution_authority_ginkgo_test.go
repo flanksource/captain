@@ -107,7 +107,7 @@ var _ = Describe("Authoritative aichat execution", func() {
 		}
 		execution := &fakeExecution{}
 		service := aichat.NewService(aichat.ServiceOptions{
-			Resolver: &fakeResolver{provider: provider}, Threads: store,
+			Resolver: &fakeResolver{provider: provider}, Threads: aichat.FixedThreadStore(store),
 			Authority: &fakeExecutionAuthority{execution: execution},
 		})
 
@@ -170,7 +170,7 @@ var _ = Describe("Authoritative aichat execution", func() {
 			},
 		}
 		service := aichat.NewService(aichat.ServiceOptions{
-			Resolver: &fakeResolver{provider: provider}, Threads: store, Authority: authority,
+			Resolver: &fakeResolver{provider: provider}, Threads: aichat.FixedThreadStore(store), Authority: authority,
 			Tools: aichat.StaticToolProvider([]api.ToolDefinition{{
 				Name: "account_edit", DefaultPermission: api.ToolModeAsk,
 				Handler: func(context.Context, map[string]any) (any, error) { return nil, nil },
@@ -215,7 +215,7 @@ var _ = Describe("Authoritative aichat execution", func() {
 			{Kind: api.EventResult, Success: true, ToolApproval: pendingApprovalState(calls...)},
 		}}
 		service := aichat.NewService(aichat.ServiceOptions{
-			Resolver: &fakeResolver{provider: provider}, Threads: store,
+			Resolver: &fakeResolver{provider: provider}, Threads: aichat.FixedThreadStore(store),
 			Authority: &fakeExecutionAuthority{execution: execution},
 			Tools: aichat.StaticToolProvider([]api.ToolDefinition{{
 				Name: "account_edit", DefaultPermission: api.ToolModeAsk,
@@ -259,7 +259,7 @@ var _ = Describe("Authoritative aichat execution", func() {
 			{Kind: api.EventResult, Success: true},
 		}}
 		service := aichat.NewService(aichat.ServiceOptions{
-			Resolver: &fakeResolver{provider: provider}, Threads: store, Authority: authority,
+			Resolver: &fakeResolver{provider: provider}, Threads: aichat.FixedThreadStore(store), Authority: authority,
 		})
 
 		messages := []aichat.UIMessage{{
@@ -312,7 +312,7 @@ var _ = Describe("Authoritative aichat execution", func() {
 			{Kind: api.EventResult, Success: true},
 		}}
 		service := aichat.NewService(aichat.ServiceOptions{
-			Resolver: &fakeResolver{provider: provider}, Threads: store, Authority: authority,
+			Resolver: &fakeResolver{provider: provider}, Threads: aichat.FixedThreadStore(store), Authority: authority,
 		})
 
 		response := httptest.NewRecorder()
@@ -335,7 +335,7 @@ var _ = Describe("Authoritative aichat execution", func() {
 		store := aichat.NewMemoryThreadStore()
 		thread, err := store.Create(context.Background(), "Accounts")
 		Expect(err).NotTo(HaveOccurred())
-		service := aichat.NewService(aichat.ServiceOptions{Threads: store})
+		service := aichat.NewService(aichat.ServiceOptions{Threads: aichat.FixedThreadStore(store)})
 
 		response := httptest.NewRecorder()
 		service.Handler().ServeHTTP(response, requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{
@@ -353,7 +353,7 @@ var _ = Describe("Authoritative aichat execution", func() {
 		Expect(err).NotTo(HaveOccurred())
 		authority := &fakeExecutionAuthority{beginErr: errors.New("duplicate prompt run")}
 		service := aichat.NewService(aichat.ServiceOptions{
-			Threads: store, Authority: authority,
+			Threads: aichat.FixedThreadStore(store), Authority: authority,
 			Resolver: &fakeResolver{provider: &fakeStreamingProvider{backend: api.BackendGemini}},
 		})
 
@@ -377,7 +377,7 @@ var _ = Describe("Authoritative aichat execution", func() {
 		thread, err := store.Create(context.Background(), "Contacts")
 		Expect(err).NotTo(HaveOccurred())
 		authority := &fakeExecutionAuthority{}
-		service := aichat.NewService(aichat.ServiceOptions{Threads: store, Authority: authority})
+		service := aichat.NewService(aichat.ServiceOptions{Threads: aichat.FixedThreadStore(store), Authority: authority})
 		response := httptest.NewRecorder()
 
 		approvalID := "0e5dc2fe-8b77-44e9-a3de-6a00298c8bde"

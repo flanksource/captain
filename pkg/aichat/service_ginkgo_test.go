@@ -345,7 +345,7 @@ var _ = Describe("Captain aichat service", func() {
 		}
 		resolver := &fakeResolver{provider: provider}
 		service := aichat.NewService(aichat.ServiceOptions{
-			Resolver: resolver, Threads: store,
+			Resolver: resolver, Threads: aichat.FixedThreadStore(store),
 			Settings: aichat.RuntimeSettingsProviderFunc(func(context.Context) (aichat.RuntimeSettings, error) {
 				return aichat.RuntimeSettings{System: "Use accounting tools."}, nil
 			}),
@@ -422,7 +422,7 @@ var _ = Describe("Captain aichat service", func() {
 	})
 
 	It("serves thread CRUD through the injected persistence store", func() {
-		service := aichat.NewService(aichat.ServiceOptions{Resolver: &fakeResolver{}, Threads: aichat.NewMemoryThreadStore()})
+		service := aichat.NewService(aichat.ServiceOptions{Resolver: &fakeResolver{}, Threads: aichat.FixedThreadStore(aichat.NewMemoryThreadStore())})
 		create := httptest.NewRecorder()
 		service.Handler().ServeHTTP(create, requestJSON(http.MethodPost, "/api/chat/sessions", map[string]string{"title": "Review"}))
 		Expect(create.Code).To(Equal(http.StatusCreated))
@@ -449,7 +449,7 @@ var _ = Describe("Captain aichat service", func() {
 			{Kind: api.EventToolResult, Tool: "invoice_get", ToolCallID: "call-1", Text: `{"status":"draft"}`, Success: true},
 			{Kind: api.EventResult, Success: true, SessionID: "session-1", Model: "test-model", Usage: usage, CostUSD: 0.25},
 		}}
-		service := aichat.NewService(aichat.ServiceOptions{Resolver: &fakeResolver{provider: provider}, Threads: store})
+		service := aichat.NewService(aichat.ServiceOptions{Resolver: &fakeResolver{provider: provider}, Threads: aichat.FixedThreadStore(store)})
 		response := httptest.NewRecorder()
 		service.Handler().ServeHTTP(response, requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{
 			ID: thread.ID, ThreadID: thread.ID, Trigger: "submit-message", Model: "openai/test-model",
@@ -503,7 +503,7 @@ var _ = Describe("Captain aichat service", func() {
 			}()
 			return events, nil
 		}
-		service := aichat.NewService(aichat.ServiceOptions{Resolver: &fakeResolver{provider: provider}, Threads: store})
+		service := aichat.NewService(aichat.ServiceOptions{Resolver: &fakeResolver{provider: provider}, Threads: aichat.FixedThreadStore(store)})
 		response := httptest.NewRecorder()
 		service.Handler().ServeHTTP(response, requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{
 			ID: thread.ID, ThreadID: thread.ID, Trigger: "submit-message", Model: "openai/test-model",
