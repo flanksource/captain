@@ -41,17 +41,15 @@ func TestResolveNativePlanUsesPersistedApprovedContentWithoutSourceFile(t *testi
 	require.NoError(t, err)
 	require.NoError(t, os.Remove(deletedPath))
 
-	result, ok, err := resolveNativePlan(t.Context(), db, "provider-plan-session", "all")
+	result, err := resolveIdentityPlan(t.Context(), db, "provider-plan-session", "all")
 	require.NoError(t, err)
-	require.True(t, ok)
 	assert.Equal(t, session.ID.String(), result.SessionID)
 	assert.Equal(t, plan.ID.String(), result.PlanID)
 	assert.Equal(t, first.ID.String(), result.RevisionID)
 	assert.Equal(t, "# Approved durable plan", result.Content)
 	assert.False(t, result.OnDisk)
 
-	byUUID, ok, err := resolveNativePlan(t.Context(), db, session.ID.String(), "codex")
+	byUUID, err := resolveIdentityPlan(t.Context(), db, session.ID.String(), "codex")
 	require.NoError(t, err)
-	require.True(t, ok)
 	assert.Equal(t, result.Content, byUUID.Content)
 }
