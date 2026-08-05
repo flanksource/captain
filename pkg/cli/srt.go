@@ -490,7 +490,9 @@ func mergeStringSlices(a, b []string) []string {
 	return sortedKeys(seen)
 }
 
-func sortedKeys(m map[string]bool) []string {
+// sortedKeys is generic over the value type so set-shaped maps and decoded
+// config maps share one helper.
+func sortedKeys[V any](m map[string]V) []string {
 	result := make([]string, 0, len(m))
 	for k := range m {
 		result = append(result, k)

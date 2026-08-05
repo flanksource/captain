@@ -18,9 +18,10 @@ import (
 
 // memoryDirectory is an in-process AgentDirectory for server tests.
 type memoryDirectory struct {
-	mu      sync.Mutex
-	agents  map[string]string // fingerprint → name
-	pending map[string]string // token hash → name
+	mu          sync.Mutex
+	agents      map[string]string // fingerprint → name
+	pending     map[string]string // token hash → name
+	enrollments map[string]gitagent.AgentEnrollment
 }
 
 func (d *memoryDirectory) AgentByFingerprint(fp string) (string, bool) {
@@ -41,10 +42,14 @@ func (d *memoryDirectory) ConsumeJoinToken(token string) (string, error) {
 	return name, nil
 }
 
-func (d *memoryDirectory) RecordAgentKey(name, fp string) error {
+func (d *memoryDirectory) RecordAgent(e gitagent.AgentEnrollment) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.agents[fp] = name
+	d.agents[e.Fingerprint] = e.Name
+	if d.enrollments == nil {
+		d.enrollments = map[string]gitagent.AgentEnrollment{}
+	}
+	d.enrollments[e.Name] = e
 	return nil
 }
 
@@ -52,11 +57,17 @@ func (d *memoryDirectory) RecordAgentKey(name, fp string) error {
 // host fingerprint.
 func startTestServer(dir *memoryDirectory, root string, role gitagent.ReceiverRole) (addr, hostFP string) {
 	GinkgoHelper()
+	return startTestServerWithOffer(dir, root, role, gitagent.EnrollmentOffer{})
+}
+
+func startTestServerWithOffer(dir *memoryDirectory, root string, role gitagent.ReceiverRole, offer gitagent.EnrollmentOffer) (addr, hostFP string) {
+	GinkgoHelper()
 	keys := GinkgoT().TempDir()
 	hostKey, fp, err := gitagent.EnsureKeyPair(filepath.Join(keys, "host_ed25519"))
 	Expect(err).NotTo(HaveOccurred())
 	server, err := gitagent.NewServer(gitagent.ServerConfig{
 		Root: root, Role: role, HostKey: hostKey, Directory: dir,
+		Offer: offer, AgentRepoPath: "repo.git",
 	})
 	Expect(err).NotTo(HaveOccurred())
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -161,32 +172,46 @@ var _ = Describe("the git-agent SSH endpoint", func() {
 		Expect(out).To(ContainSubstring("not served"))
 	})
 
-	It("enrolls through a single-use join token and refuses replay (R8.2)", func() {
+	It("enrolls both directions through a single-use join token and refuses replay (R8.2)", func() {
 		root := GinkgoT().TempDir()
 		dir := &memoryDirectory{agents: map[string]string{}, pending: map[string]string{}}
 		token, hash, err := gitagent.MintJoinToken()
 		Expect(err).NotTo(HaveOccurred())
 		dir.pending[hash] = "worker-2"
-		addr, hostFP := startTestServer(dir, root, gitagent.RoleMailbox)
+		addr, hostFP := startTestServerWithOffer(dir, root, gitagent.RoleMailbox,
+			gitagent.EnrollmentOffer{DispatchKey: "SHA256:dispatch", MailboxPath: "mailbox.git"})
 
 		signer, fp, _ := newClientKey()
-		confirmation, err := gitagent.Enroll(context.Background(), "ssh://"+addr, token, hostFP, signer)
+		request := gitagent.EnrollRequest{ListenPort: "7502", HostFingerprint: "SHA256:agenthost"}
+		resp, err := gitagent.Enroll(context.Background(), "ssh://"+addr, token, hostFP, signer, request)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(confirmation).To(ContainSubstring("enrolled worker-2"))
-		name, ok := dir.AgentByFingerprint(fp)
+		Expect(resp.Agent).To(Equal("worker-2"))
+		// The reverse direction: what the agent needs to accept a dispatch and
+		// to reach the mailbox.
+		Expect(resp.DispatchKey).To(Equal("SHA256:dispatch"))
+		Expect(resp.MailboxPath).To(Equal("mailbox.git"))
+
+		// The supervisor recorded an endpoint it can actually dispatch to.
+		enrolled, ok := dir.enrollments["worker-2"]
 		Expect(ok).To(BeTrue())
-		Expect(name).To(Equal("worker-2"))
+		Expect(enrolled.Fingerprint).To(Equal(fp))
+		Expect(enrolled.HostFingerprint).To(Equal("SHA256:agenthost"))
+		Expect(enrolled.URL).To(ContainSubstring(":7502/repo.git"))
+
+		mailboxURL, err := gitagent.MailboxURL("ssh://"+addr, resp.MailboxPath)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(mailboxURL).To(HaveSuffix("/mailbox.git"))
 
 		// Replay fails: the token burned.
-		_, err = gitagent.Enroll(context.Background(), "ssh://"+addr, token, hostFP, signer)
+		_, err = gitagent.Enroll(context.Background(), "ssh://"+addr, token, hostFP, signer, request)
 		Expect(err).To(MatchError(ContainSubstring("already used")))
 
 		// A wrong host fingerprint is refused before the token is offered.
-		_, err = gitagent.Enroll(context.Background(), "ssh://"+addr, token, "SHA256:bogus", signer)
+		_, err = gitagent.Enroll(context.Background(), "ssh://"+addr, token, "SHA256:bogus", signer, request)
 		Expect(err).To(HaveOccurred())
 
 		// An empty fingerprint never trusts on first use.
-		_, err = gitagent.Enroll(context.Background(), "ssh://"+addr, token, "", signer)
+		_, err = gitagent.Enroll(context.Background(), "ssh://"+addr, token, "", signer, request)
 		Expect(err).To(MatchError(ContainSubstring("host-key fingerprint")))
 	})
 

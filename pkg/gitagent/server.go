@@ -9,7 +9,10 @@
 package gitagent
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -39,8 +42,9 @@ type AgentDirectory interface {
 	// ConsumeJoinToken validates and burns a single-use join token, returning
 	// the agent name it enrolls.
 	ConsumeJoinToken(token string) (string, error)
-	// RecordAgentKey binds a fingerprint to an enrolled agent.
-	RecordAgentKey(name, fingerprint string) error
+	// RecordAgent binds a key, an endpoint and a host key to an enrolled
+	// agent — everything a dispatch to it needs.
+	RecordAgent(AgentEnrollment) error
 }
 
 // ServerConfig configures one receive endpoint.
@@ -50,6 +54,13 @@ type ServerConfig struct {
 	Role      ReceiverRole
 	HostKey   gossh.Signer
 	Directory AgentDirectory
+	// Offer is what this endpoint hands back to a joining agent so the agent
+	// can complete the reverse direction of trust. A mailbox that leaves it
+	// empty enrolls agents it can dispatch to but that cannot relay back.
+	Offer EnrollmentOffer
+	// AgentRepoPath is the repository path an enrolled agent serves, used to
+	// derive its dispatch URL when the agent advertises none.
+	AgentRepoPath string
 }
 
 // NewServer builds the SSH server. The caller owns ListenAndServe/Serve and
@@ -98,9 +109,18 @@ func handleSession(s ssh.Session, root string, cfg ServerConfig) {
 	}
 }
 
+// handleEnroll completes both directions of the exchange: it records the
+// agent's key and endpoint, and hands back the supervisor's dispatch key and
+// mailbox path so the agent can authorize the reverse push.
 func handleEnroll(s ssh.Session, cfg ServerConfig, fingerprint string, cmd []string) {
-	if len(cmd) != 2 || strings.TrimSpace(cmd[1]) == "" {
-		fmt.Fprintln(s.Stderr(), "captain: usage: captain-enroll <join-token>")
+	if len(cmd) < 2 || strings.TrimSpace(cmd[1]) == "" {
+		fmt.Fprintln(s.Stderr(), "captain: usage: captain-enroll <join-token> [request]")
+		_ = s.Exit(1)
+		return
+	}
+	req, err := decodeEnrollRequest(cmd)
+	if err != nil {
+		fmt.Fprintf(s.Stderr(), "captain: %v\n", err)
 		_ = s.Exit(1)
 		return
 	}
@@ -110,13 +130,65 @@ func handleEnroll(s ssh.Session, cfg ServerConfig, fingerprint string, cmd []str
 		_ = s.Exit(1)
 		return
 	}
-	if err := cfg.Directory.RecordAgentKey(name, fingerprint); err != nil {
+	enrollment := AgentEnrollment{
+		Name:            name,
+		Fingerprint:     fingerprint,
+		URL:             agentDispatchURL(req, s.RemoteAddr(), cfg.AgentRepoPath),
+		HostFingerprint: strings.TrimSpace(req.HostFingerprint),
+	}
+	if err := cfg.Directory.RecordAgent(enrollment); err != nil {
 		fmt.Fprintf(s.Stderr(), "captain: enrollment failed: %v\n", err)
 		_ = s.Exit(1)
 		return
 	}
-	fmt.Fprintf(s, "enrolled %s %s\n", name, fingerprint)
+	resp, err := json.Marshal(EnrollResponse{
+		Agent:       name,
+		DispatchKey: cfg.Offer.DispatchKey,
+		MailboxPath: cfg.Offer.MailboxPath,
+	})
+	if err != nil {
+		fmt.Fprintf(s.Stderr(), "captain: %v\n", err)
+		_ = s.Exit(1)
+		return
+	}
+	fmt.Fprintln(s, string(resp))
 	_ = s.Exit(0)
+}
+
+func decodeEnrollRequest(cmd []string) (EnrollRequest, error) {
+	var req EnrollRequest
+	if len(cmd) < 3 || strings.TrimSpace(cmd[2]) == "" {
+		return req, nil // an older client sent no details; derive what we can
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(cmd[2]))
+	if err != nil {
+		return req, fmt.Errorf("unparseable enrollment request: %w", err)
+	}
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return req, fmt.Errorf("unparseable enrollment request: %w", err)
+	}
+	return req, nil
+}
+
+// agentDispatchURL resolves where the supervisor will dispatch to: the URL the
+// agent advertised, or — on a flat network where the source address is the
+// agent's real address — one derived from the connection plus its listen port.
+func agentDispatchURL(req EnrollRequest, remote net.Addr, repoPath string) string {
+	if url := strings.TrimSpace(req.AdvertiseURL); url != "" {
+		return url
+	}
+	port := strings.TrimSpace(req.ListenPort)
+	if port == "" || remote == nil {
+		return ""
+	}
+	host, _, err := net.SplitHostPort(remote.String())
+	if err != nil {
+		return ""
+	}
+	if repoPath == "" {
+		repoPath = "repo.git"
+	}
+	return "ssh://captain@" + net.JoinHostPort(host, port) + "/" + strings.TrimPrefix(repoPath, "/")
 }
 
 func handleGit(s ssh.Session, root string, cfg ServerConfig, fingerprint string, cmd []string) {

@@ -139,7 +139,10 @@ func (g *gitAgentSandbox) resolveTarget() (*gitAgentTarget, error) {
 	url, _ := entry["url"].(string)
 	hostFP, _ := entry["hostFingerprint"].(string)
 	if url == "" || hostFP == "" {
-		return nil, fmt.Errorf("agent %q needs url and hostFingerprint recorded (its sidecar endpoint and host key)", name)
+		return nil, fmt.Errorf(
+			"agent %q has no endpoint recorded: it enrolled before advertising one. "+
+				"Re-enroll it (captain sandbox git-agent add %s) so its serve reports its URL and host key",
+			name, name)
 	}
 	keysDir, err := gitAgentKeysDir()
 	if err != nil {
@@ -149,10 +152,12 @@ func (g *gitAgentSandbox) resolveTarget() (*gitAgentTarget, error) {
 		agent:           name,
 		url:             url,
 		hostFingerprint: hostFP,
-		keyPath:         stringOption(opts, "key", filepath.Join(keysDir, "supervisor_ed25519")),
-		mailbox:         stringOption(opts, "mailbox", filepath.Join(keysDir, "mailbox.git")),
-		relay:           gitagent.RelayMode(stringOption(opts, "relay", string(gitagent.RelaySync))),
-		waitTimeout:     time.Hour,
+		keyPath:         stringOption(opts, "key", filepath.Join(keysDir, dispatchKeyFile)),
+		// The mailbox must be the path the supervisor's endpoint serves, or a
+		// relayed result lands where nothing reads it.
+		mailbox:     stringOption(opts, "mailbox", filepath.Join(keysDir, servedReposDir, mailboxRepoName)),
+		relay:       gitagent.RelayMode(stringOption(opts, "relay", string(gitagent.RelaySync))),
+		waitTimeout: time.Hour,
 	}
 	if raw, ok := opts["waitTimeout"].(string); ok {
 		if d, err := time.ParseDuration(raw); err == nil {
@@ -171,6 +176,14 @@ func stringOption(opts map[string]any, key, fallback string) string {
 	}
 	return fallback
 }
+
+// The on-disk layout shared with the CLI (pkg/cli/gitagent.go). Duplicated as
+// constants rather than imported because pkg/cli imports this package.
+const (
+	dispatchKeyFile = "supervisor_ed25519"
+	servedReposDir  = "repos"
+	mailboxRepoName = "mailbox.git"
+)
 
 // gitAgentKeysDir anchors key material and the default mailbox beside the
 // captain config file, matching the CLI's layout.

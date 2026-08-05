@@ -90,29 +90,54 @@ func runSSHClient(args []string, stdin io.Reader, stdout, stderr io.Writer) (int
 	return 0, nil
 }
 
+// valueFlags are the ssh(1) options git may pass that consume the following
+// argument. Anything else beginning with - is treated as a standalone switch,
+// so an option we do not model cannot be mistaken for the hostname.
+var valueFlags = map[string]bool{
+	"-o": true, "-p": true, "-i": true, "-l": true, "-F": true, "-c": true,
+	"-m": true, "-b": true, "-e": true, "-w": true, "-J": true, "-S": true,
+	"-D": true, "-L": true, "-R": true, "-W": true, "-Q": true, "-B": true,
+	"-E": true, "-I": true,
+}
+
+// parseSSHArgs implements git's ssh-command contract:
+// `[options] [--] [user@]host command...`. git invokes it with options of its
+// own — notably `-o SendEnv=GIT_PROTOCOL` — so options must be skipped
+// generically rather than by an allowlist of the ones we care about.
 func parseSSHArgs(args []string) (host, port, command string, err error) {
 	port = "22"
 	i := 0
-loop:
 	for i < len(args) {
-		switch args[i] {
-		case "-p":
-			if i+1 >= len(args) {
-				return "", "", "", fmt.Errorf("-p needs a port argument")
-			}
-			port = args[i+1]
-			i += 2
-		case "-4", "-6":
+		arg := args[i]
+		if arg == "--" {
 			i++
-		case "--":
-			i++
-			break loop
-		default:
-			break loop
+			break
 		}
+		if !strings.HasPrefix(arg, "-") || arg == "-" {
+			break
+		}
+		// Joined forms (-p2222, -oFoo=bar) carry their value inline.
+		if len(arg) > 2 && valueFlags[arg[:2]] {
+			if arg[:2] == "-p" {
+				port = arg[2:]
+			}
+			i++
+			continue
+		}
+		if valueFlags[arg] {
+			if i+1 >= len(args) {
+				return "", "", "", fmt.Errorf("%s needs an argument", arg)
+			}
+			if arg == "-p" {
+				port = args[i+1]
+			}
+			i += 2
+			continue
+		}
+		i++ // a standalone switch such as -4, -6, -q, -T
 	}
 	if i >= len(args) {
-		return "", "", "", fmt.Errorf("usage: [-p port] host command...")
+		return "", "", "", fmt.Errorf("usage: [options] [user@]host command...")
 	}
 	host = args[i]
 	command = strings.Join(args[i+1:], " ")

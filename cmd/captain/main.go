@@ -128,6 +128,15 @@ func main() {
 		Use:   "git-agent",
 		Short: "Enroll and serve remote git-agent sandboxes (SPEC-git-agent-protocol)",
 	}
+	// Without its own help func this inherits the parent's, which prints the
+	// sandbox generate/presets help and makes this group undiscoverable.
+	gitAgentCmd.SetHelpFunc(func(c *cobra.Command, _ []string) {
+		if c == gitAgentCmd {
+			fmt.Fprint(os.Stderr, cli.GitAgentHelp().ANSI())
+			return
+		}
+		fmt.Fprint(os.Stderr, c.UsageString())
+	})
 	sandboxCmd.AddCommand(gitAgentCmd)
 	clicky.AddNamedCommand("add", gitAgentCmd, cli.GitAgentAddOptions{}, cli.RunGitAgentAdd).Short = "Enroll a new agent: mint a join token and print the join command"
 	clicky.AddNamedCommand("list", gitAgentCmd, cli.GitAgentListOptions{}, cli.RunGitAgentList).Short = "List enrolled agents and pending enrollments"
