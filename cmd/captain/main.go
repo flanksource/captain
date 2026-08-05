@@ -145,6 +145,9 @@ func main() {
 	hookLeaf := clicky.AddNamedCommandWithContext("hook", gitAgentCmd, cli.GitAgentHookOptions{}, cli.RunGitAgentHook)
 	hookLeaf.Short = "Internal: receive-hook entrypoint invoked by the installed shims"
 	hookLeaf.Hidden = true
+	runTaskLeaf := clicky.AddNamedCommandWithContext("run-task", gitAgentCmd, cli.GitAgentRunTaskOptions{}, cli.RunGitAgentRunTask)
+	runTaskLeaf.Short = "Internal: work a dispatched task in its worktree, then commit and push"
+	runTaskLeaf.Hidden = true
 	gitAgentCmd.AddCommand(&cobra.Command{
 		Use:                "ssh",
 		Hidden:             true,

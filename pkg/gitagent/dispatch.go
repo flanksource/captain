@@ -10,6 +10,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -19,6 +21,35 @@ type TaskPayload struct {
 	Prompt string `json:"prompt"`
 	System string `json:"system,omitempty"`
 	Model  string `json:"model,omitempty"`
+	// Backend records which runtime the supervisor resolved, so the agent runs
+	// the coding agent that was actually selected rather than re-resolving the
+	// model name against its own defaults.
+	Backend string `json:"backend,omitempty"`
+}
+
+// LoadTaskPayload reads a materialized task.json.
+func LoadTaskPayload(path string) (TaskPayload, error) {
+	var payload TaskPayload
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return payload, err
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return payload, fmt.Errorf("task file %s: %w", path, err)
+	}
+	if strings.TrimSpace(payload.Prompt) == "" {
+		return payload, fmt.Errorf("task file %s carries no prompt", path)
+	}
+	return payload, nil
+}
+
+// TaskPaths locates a task's materialized inputs on a sidecar.
+func TaskPaths(sidecarRepo, task string) (worktree, taskFile string, err error) {
+	if err := ValidateTaskID(task); err != nil {
+		return "", "", err
+	}
+	dir := taskStateDir(sidecarRepo, task)
+	return filepath.Join(dir, "worktree"), filepath.Join(dir, ControlTaskFile), nil
 }
 
 // DispatchRequest carries one task hand-off.

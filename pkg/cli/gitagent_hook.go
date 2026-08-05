@@ -38,7 +38,22 @@ func RunGitAgentHook(ctx context.Context, opts GitAgentHookOptions) (any, error)
 		fmt.Fprintf(os.Stderr, "captain: %v\n", err)
 		return nil, err
 	}
-	host := gitagent.HookHost{Runtime: runtime, Wrap: wrap}
+	exe, err := os.Executable()
+	if err != nil {
+		return nil, err
+	}
+	configPath := strings.TrimSpace(opts.Config)
+	host := gitagent.HookHost{
+		Runtime: runtime,
+		Wrap:    wrap,
+		// With no agentCommand configured, the sidecar still launches a real
+		// agent: this binary, working the task in the prepared worktree. The
+		// alternative — launching nothing — leaves the supervisor waiting out
+		// its whole budget on work that never started.
+		DefaultAgentCommand: func(repo, task string) string {
+			return DefaultAgentCommand(exe, repo, task, configPath)
+		},
+	}
 	role := gitagent.ReceiverRole(opts.Role)
 	switch opts.Hook {
 	case "pre-receive":

@@ -77,7 +77,13 @@ func GitAgentHelp() api.Textable {
 		AddText("  3. agent host:  run the printed join command (it enrolls, then serves)", "text-green-400").NewLine().
 		AddText("  4. supervisor:  captain ai prompt ./task.prompt --sandbox git-agent", "text-green-400").NewLine().NewLine().
 		AddText("Step 3 establishes trust in both directions: the supervisor learns the agent's", "text-gray-400").NewLine().
-		AddText("endpoint and host key, and the agent authorizes the supervisor's dispatch key.", "text-gray-400").NewLine()
+		AddText("endpoint and host key, and the agent authorizes the supervisor's dispatch key.", "text-gray-400").NewLine().NewLine().
+		AddText("The agent:", "font-bold text-blue-400").NewLine().
+		AddText("  By default the sidecar runs captain itself on the dispatched prompt, then", "text-gray-400").NewLine().
+		AddText("  commits and pushes. Set sandbox.backends.<name>.agentCommand to run your own", "text-gray-400").NewLine().
+		AddText("  agent instead, or ", "text-gray-400").
+		AddText("agentCommand: none", "text-green-400").
+		AddText(" to prepare the worktree and stop.", "text-gray-400").NewLine()
 }
 
 type GitAgentAddOptions struct {
