@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -57,28 +56,9 @@ func RunPlan(opts PlanOptions) (PlanResult, error) {
 
 	id := strings.TrimSpace(opts.SessionID)
 	if id != "" {
-		persisted, ok, err := resolveNativePlan(ctx, db, id, source)
+		plan, err := resolveIdentityPlan(ctx, db, id, source)
 		if err != nil {
 			return PlanResult{}, err
-		}
-		if ok {
-			persisted.pathOnly = opts.PathOnly
-			return *persisted, nil
-		}
-		overview, err := db.GetSessionOverviewByIdentity(ctx, id)
-		if err != nil {
-			return PlanResult{}, err
-		}
-		candidate := candidateFromOverview(*overview)
-		if candidate.path == "" {
-			return PlanResult{}, fmt.Errorf("session %q has no transcript recorded on this host", id)
-		}
-		plan, err := resolveSessionPlan(candidate)
-		if err != nil {
-			return PlanResult{}, err
-		}
-		if plan == nil {
-			return PlanResult{}, fmt.Errorf("session %q has no plan", id)
 		}
 		plan.pathOnly = opts.PathOnly
 		return *plan, nil
@@ -145,21 +125,70 @@ func resolveLatestTranscriptPlan(
 	}
 }
 
-// resolveNativePlan resolves persisted plan content without consulting the
-// transcript or source plan path. Approved content wins; otherwise the latest
-// immutable revision of the newest plan variant is returned.
-func resolveNativePlan(ctx context.Context, db *captaindb.DB, identity, source string) (*PlanResult, bool, error) {
-	sourceFilter := source
-	if sourceFilter == "all" {
-		sourceFilter = ""
-	}
-	session, err := db.GetSessionByIdentity(ctx, identity, sourceFilter, "", "")
+// planIdentityStore resolves an identity to every matching session overview and
+// reads the plans recorded against a Captain session UUID.
+type planIdentityStore interface {
+	sessionOverviewStore
+	ListPlans(context.Context, captaindb.PlanFilter) ([]captaindb.Plan, error)
+}
+
+// resolveIdentityPlan resolves a Captain UUID or provider session ID to a plan.
+// The identity lookup is plural because the same provider session ID may exist
+// once per source (captain_sessions is unique on source+host+provider id): a
+// gavel orchestration row carries no transcript while the provider row it
+// parents carries the real one. Persisted plans win over transcript recovery,
+// and transcript recovery uses the first match that actually has a transcript.
+func resolveIdentityPlan(ctx context.Context, db planIdentityStore, identity, source string) (*PlanResult, error) {
+	overviews, err := resolveOverviewsByIdentity(ctx, db, identity)
 	if err != nil {
-		if errors.Is(err, captaindb.ErrSessionNotFound) {
-			return nil, false, nil
-		}
-		return nil, false, fmt.Errorf("resolve persisted Captain session %q: %w", identity, err)
+		return nil, err
 	}
+	if source != "all" {
+		filtered := make([]captaindb.SessionOverview, 0, len(overviews))
+		for i := range overviews {
+			if overviews[i].Source == source {
+				filtered = append(filtered, overviews[i])
+			}
+		}
+		overviews = filtered
+	}
+	if len(overviews) == 0 {
+		return nil, fmt.Errorf("%w: %s", captaindb.ErrSessionNotFound, identity)
+	}
+	for i := range overviews {
+		persisted, ok, err := resolveNativePlan(ctx, db, overviews[i])
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			return persisted, nil
+		}
+	}
+	for i := range overviews {
+		candidate := candidateFromOverview(overviews[i])
+		if candidate.path == "" {
+			continue
+		}
+		plan, err := resolveSessionPlan(candidate)
+		if err != nil {
+			return nil, err
+		}
+		if plan != nil {
+			return plan, nil
+		}
+		return nil, fmt.Errorf("session %q has no plan", identity)
+	}
+	return nil, fmt.Errorf("session %q has no transcript recorded on this host", identity)
+}
+
+// resolveNativePlan resolves persisted plan content for one Captain session
+// without consulting the transcript or source plan path. Approved content wins;
+// otherwise the latest immutable revision of the newest plan variant is returned.
+func resolveNativePlan(
+	ctx context.Context,
+	db planIdentityStore,
+	session captaindb.SessionOverview,
+) (*PlanResult, bool, error) {
 	plans, err := db.ListPlans(ctx, captaindb.PlanFilter{SourceSessionID: &session.ID})
 	if err != nil {
 		return nil, false, fmt.Errorf("list persisted plans for session %s: %w", session.ID, err)

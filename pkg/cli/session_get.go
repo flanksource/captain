@@ -352,30 +352,73 @@ func (r SessionGetResult) Pretty() clickyapi.Text {
 	return clickyapi.Text{}.Add(list)
 }
 
+// Tree roots the forest at every session whose parent is absent from the
+// result set, not only at sessions with no parent at all. Resolving a provider
+// session ID that exists under several sources (the schema allows one row per
+// source) returns a mid-thread slice whose parents all live outside the slice,
+// and anchoring roots at "" alone rendered that slice as an empty forest.
 func (r SessionGetResult) Tree() clickyapi.TreeNode {
 	byParent := map[string][]SessionGetItem{}
+	present := make(map[string]struct{}, len(r.Sessions))
 	for i := range r.Sessions {
 		byParent[r.Sessions[i].ParentSessionID] = append(byParent[r.Sessions[i].ParentSessionID], r.Sessions[i])
+		present[r.Sessions[i].CaptainID] = struct{}{}
 	}
-	children := make([]clickyapi.TreeNode, 0, len(byParent[""]))
-	for _, item := range byParent[""] {
-		children = append(children, sessionGetTreeNode{item: item, byParent: byParent})
+	children := make([]clickyapi.TreeNode, 0, len(r.Sessions))
+	rendered := map[string]struct{}{}
+	addRoot := func(item SessionGetItem) {
+		node := sessionGetTreeNode{
+			item: item, byParent: byParent, seen: map[string]struct{}{item.CaptainID: {}},
+		}
+		markRendered(node, rendered)
+		children = append(children, node)
+	}
+	for i := range r.Sessions {
+		if _, parented := present[r.Sessions[i].ParentSessionID]; !parented {
+			addRoot(r.Sessions[i])
+		}
+	}
+	// Every session must appear once. Only a parent cycle can leave one
+	// unreachable from the roots above, so promote whatever is left over rather
+	// than dropping it from the render.
+	for i := range r.Sessions {
+		if _, shown := rendered[r.Sessions[i].CaptainID]; !shown {
+			addRoot(r.Sessions[i])
+		}
 	}
 	return &clickyapi.ConcreteBranchNode{Children: children}
+}
+
+func markRendered(node sessionGetTreeNode, rendered map[string]struct{}) {
+	rendered[node.item.CaptainID] = struct{}{}
+	for _, child := range node.GetChildren() {
+		markRendered(child.(sessionGetTreeNode), rendered)
+	}
 }
 
 type sessionGetTreeNode struct {
 	item     SessionGetItem
 	byParent map[string][]SessionGetItem
+	// seen carries the ancestors already rendered on this branch so a cyclic
+	// parent reference cannot recurse forever now that roots are derived.
+	seen map[string]struct{}
 }
 
 func (n sessionGetTreeNode) Pretty() clickyapi.Text { return n.item.Pretty() }
 
 func (n sessionGetTreeNode) GetChildren() []clickyapi.TreeNode {
 	items := n.byParent[n.item.CaptainID]
-	children := make([]clickyapi.TreeNode, len(items))
+	children := make([]clickyapi.TreeNode, 0, len(items))
 	for i := range items {
-		children[i] = sessionGetTreeNode{item: items[i], byParent: n.byParent}
+		if _, cycle := n.seen[items[i].CaptainID]; cycle {
+			continue
+		}
+		seen := make(map[string]struct{}, len(n.seen)+1)
+		for id := range n.seen {
+			seen[id] = struct{}{}
+		}
+		seen[items[i].CaptainID] = struct{}{}
+		children = append(children, sessionGetTreeNode{item: items[i], byParent: n.byParent, seen: seen})
 	}
 	return children
 }
