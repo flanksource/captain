@@ -34,15 +34,23 @@ SELECT
   sum(c.reasoning_cost) AS reasoning_cost,
   sum(c.cache_read_cost) AS cache_read_cost,
   sum(c.cache_write_cost) AS cache_write_cost,
+  -- Mirrors api.Cost.Total(): the provider's reported figure is authoritative
+  -- per call, with the list-price bucket sum as the fallback. Decided per row,
+  -- not per group, so a mix of priced and provider-reported calls still totals.
   sum(
-    c.input_cost
-    + c.output_cost
-    + c.reasoning_cost
-    + c.cache_read_cost
-    + c.cache_write_cost
+    CASE
+      WHEN c.provider_cost_usd > 0 THEN c.provider_cost_usd
+      ELSE c.input_cost
+        + c.output_cost
+        + c.reasoning_cost
+        + c.cache_read_cost
+        + c.cache_write_cost
+    END
   ) AS total_cost,
   min(c.started_at) AS first_call_at,
-  max(c.ended_at) AS last_call_at
+  max(c.ended_at) AS last_call_at,
+  -- Appended last: CREATE OR REPLACE VIEW can only add columns at the end.
+  sum(c.provider_cost_usd) AS provider_cost_usd
 FROM public.captain_turns t
 JOIN public.captain_model_calls c ON c.turn_id = t.id
 GROUP BY

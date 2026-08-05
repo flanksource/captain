@@ -79,6 +79,15 @@ type SessionOverview struct {
 	TotalTokens         int64           `gorm:"column:total_tokens" json:"totalTokens"`
 	CostUSD             float64         `gorm:"column:cost_usd" json:"costUsd"`
 	ExecutionMode       string          `gorm:"column:execution_mode" json:"executionMode,omitempty"`
+	// ProviderCostUSD is how much of CostUSD the providers reported themselves;
+	// the bucket costs are what CostUSD otherwise falls back to. Zero provider
+	// cost means the total is a reconstruction, not a billed figure.
+	ProviderCostUSD float64 `gorm:"column:provider_cost_usd" json:"providerCostUsd,omitempty"`
+	InputCost       float64 `gorm:"column:input_cost" json:"inputCost,omitempty"`
+	OutputCost      float64 `gorm:"column:output_cost" json:"outputCost,omitempty"`
+	ReasoningCost   float64 `gorm:"column:reasoning_cost" json:"reasoningCost,omitempty"`
+	CacheReadCost   float64 `gorm:"column:cache_read_cost" json:"cacheReadCost,omitempty"`
+	CacheWriteCost  float64 `gorm:"column:cache_write_cost" json:"cacheWriteCost,omitempty"`
 }
 
 func (SessionOverview) TableName() string { return "captain_session_overview" }

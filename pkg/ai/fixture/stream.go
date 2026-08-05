@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"regexp"
 	"strings"
+
+	"github.com/flanksource/captain/pkg/api"
 )
 
 type Summary struct {
@@ -32,22 +34,50 @@ type Summary struct {
 	MCPAPILog       []MCPAPIEntry
 	ToolCallLog     []ToolCallEntry
 	ToolCounts      map[string]int
+
+	// usageFromResult records that the token counts came from the stream's
+	// result line — the provider's own total — rather than being rebuilt from
+	// per-message usage.
+	usageFromResult bool
+	// responses deduplicates the per-content-block lines one response spans,
+	// for streams that report no result usage. See api.ResponseSet.
+	responses api.ResponseSet
+}
+
+// UsageFromResult reports whether the token counts are the provider's reported
+// total rather than a per-message reconstruction.
+func (s *Summary) UsageFromResult() bool { return s.usageFromResult }
+
+func firstNonZeroCost(values ...float64) float64 {
+	for _, value := range values {
+		if value != 0 {
+			return value
+		}
+	}
+	return 0
 }
 
 type streamEvent struct {
-	Type       string          `json:"type,omitempty"`
-	Subtype    string          `json:"subtype,omitempty"`
-	SessionID  string          `json:"session_id,omitempty"`
-	Message    json.RawMessage `json:"message,omitempty"`
-	Result     string          `json:"result,omitempty"`
-	Error      string          `json:"error,omitempty"`
-	IsError    bool            `json:"is_error,omitempty"`
-	CostUSD    float64         `json:"cost_usd,omitempty"`
-	DurationMS float64         `json:"duration_ms,omitempty"`
-	Usage      *streamUsage    `json:"usage,omitempty"`
+	Type      string          `json:"type,omitempty"`
+	Subtype   string          `json:"subtype,omitempty"`
+	SessionID string          `json:"session_id,omitempty"`
+	Message   json.RawMessage `json:"message,omitempty"`
+	Result    string          `json:"result,omitempty"`
+	Error     string          `json:"error,omitempty"`
+	IsError   bool            `json:"is_error,omitempty"`
+	// Two real producers spell the result's cost differently: the claude CLI's
+	// stream-json result line reports total_cost_usd, while the claude-agent
+	// SDK's turn-done notification reports cost_usd. Accept both.
+	CostUSD      float64      `json:"cost_usd,omitempty"`
+	TotalCostUSD float64      `json:"total_cost_usd,omitempty"`
+	DurationMS   float64      `json:"duration_ms,omitempty"`
+	Usage        *streamUsage `json:"usage,omitempty"`
 }
 
 type streamMessage struct {
+	// ID identifies the API response; a response spanning several content
+	// blocks is written as several lines that all repeat the same usage.
+	ID      string          `json:"id,omitempty"`
 	Content []streamContent `json:"content,omitempty"`
 	Usage   *streamUsage    `json:"usage,omitempty"`
 }
@@ -107,6 +137,8 @@ type Event struct {
 	Content []streamContent
 	// Raw usage reported on the message (if any).
 	MessageUsage *streamUsage
+	// MessageID identifies the API response the message belongs to.
+	MessageID string
 
 	// For result events.
 	Result     string
@@ -133,7 +165,7 @@ func ParseLine(line []byte) (Event, bool) {
 		Result:     ev.Result,
 		Error:      ev.Error,
 		DurationMS: ev.DurationMS,
-		CostUSD:    ev.CostUSD,
+		CostUSD:    firstNonZeroCost(ev.TotalCostUSD, ev.CostUSD),
 		Usage:      ev.Usage,
 	}
 	if len(ev.Message) > 0 {
@@ -141,6 +173,7 @@ func ParseLine(line []byte) (Event, bool) {
 		if err := json.Unmarshal(ev.Message, &msg); err == nil {
 			out.Content = msg.Content
 			out.MessageUsage = msg.Usage
+			out.MessageID = msg.ID
 		}
 	}
 	return out, true
@@ -153,7 +186,7 @@ func (s *Summary) Apply(ev Event) {
 	if ev.SessionID != "" {
 		s.SessionID = ev.SessionID
 	}
-	if ev.MessageUsage != nil {
+	if ev.MessageUsage != nil && !s.usageFromResult && s.responses.First(ev.MessageID) {
 		s.Input += ev.MessageUsage.InputTokens
 		s.Output += ev.MessageUsage.OutputTokens
 		s.CacheRead += ev.MessageUsage.CacheReadInputTokens
@@ -175,10 +208,20 @@ func (s *Summary) Apply(ev Event) {
 			}
 		}
 	}
-	// Note: deliberately do not consume ev.Usage on the top-level result event.
-	// That field's semantics (cumulative vs final-turn) are unclear and used to
-	// overwrite the per-message accumulation, dropping earlier turns' tokens.
-	// Per-message usage from streamMessage.Usage above is the source of truth.
+	// The result line's usage is the whole invocation's total, not the final
+	// turn's — pkg/ai/provider/claude_cli.go reads it that way, and its test
+	// pins a verbatim CLI result line proving it. So it replaces the per-message
+	// accumulation rather than adding to it: a reported total is exact, where a
+	// total rebuilt from per-message lines has to be deduplicated and can still
+	// drift. The accumulation above remains the fallback for streams that report
+	// no result usage.
+	if ev.Usage != nil {
+		s.Input = ev.Usage.InputTokens
+		s.Output = ev.Usage.OutputTokens
+		s.CacheRead = ev.Usage.CacheReadInputTokens
+		s.CacheWrite = ev.Usage.CacheCreationInputTokens
+		s.usageFromResult = true
+	}
 	if ev.Type == "result" || ev.Result != "" || ev.Error != "" {
 		if ev.Result != "" {
 			s.Result = ev.Result

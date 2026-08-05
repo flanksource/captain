@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/claude/tools"
 	"github.com/segmentio/encoding/json"
 )
@@ -490,6 +491,20 @@ type SessionCost struct {
 	Files     []string           `json:"files,omitempty"`
 	Context   *ContextBreakdown  `json:"context,omitempty"`
 	ToolCosts []ToolTokenSummary `json:"toolCosts,omitempty"`
+
+	// responses deduplicates the per-content-block lines a single API response
+	// is written across. This is the no-result fallback — claude transcripts
+	// carry no result record to read instead. See api.ResponseSet.
+	responses api.ResponseSet
+}
+
+// addUsage accumulates one assistant line's tokens, skipping repeated
+// content-block lines of a response already counted.
+func (sc *SessionCost) addUsage(entry HistoryEntry) {
+	if !sc.responses.First(entry.Message.ID) {
+		return
+	}
+	sc.Tokens.Add(entry.Message.Usage, entry.Message.Model)
 }
 
 func ParseCosts(currentDir string, searchAll bool, since *time.Time) ([]SessionCost, error) {
@@ -581,7 +596,7 @@ func costsFromEntries(sessionFile string, entries []HistoryEntry, projectRoot st
 			sc.Tier = tier
 		}
 
-		sc.Tokens.Add(entry.Message.Usage, model)
+		sc.addUsage(entry)
 		sc.Messages++
 	}
 
@@ -682,7 +697,7 @@ func ParseCostsDetailedWithFilter(currentDir string, searchAll bool, since *time
 				sc.Tier = tier
 			}
 
-			sc.Tokens.Add(entry.Message.Usage, model)
+			sc.addUsage(entry)
 			sc.Messages++
 		}
 	}

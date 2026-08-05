@@ -16,11 +16,9 @@ var _ = Describe("Captain database migration mode", Serial, func() {
 	It("rejects serve startup after a non-migrating handle was installed", func(ctx SpecContext) {
 		db, err := database.Use(&gorm.DB{})
 		Expect(err).NotTo(HaveOccurred())
-		captainDBState.mu.Lock()
-		captainDBState.db = db
-		captainDBState.opened = true
-		captainDBState.migrated = false
-		captainDBState.mu.Unlock()
+		setCaptainContextDBForTest(testDatabaseHandle{
+			Name: defaultDatabaseContextName, DB: db, Unmigrated: true,
+		})
 
 		_, err = captainServeDB(ctx)
 

@@ -97,6 +97,7 @@ func buildCodexSession(uses []history.ToolUse, info *history.CodexSessionInfo) *
 	turns := newCodexTurnBuilder()
 	agents := map[string]*Agent{}
 	var latestContext *Context
+	var cumulative codexCumulative
 
 	for _, u := range uses {
 		if s.ID == "" && u.SessionID != "" {
@@ -123,7 +124,12 @@ func buildCodexSession(uses []history.ToolUse, info *history.CodexSessionInfo) *
 			}
 			mergeCodexCapabilities(&s.Capabilities, u)
 			if u.Tool == "TokenCount" {
+				// Prefer codex's own running total over the record's
+				// self-reported delta: the deltas do not add up to it.
 				cost := codexCostFromUse(u)
+				if delta, ok := cumulative.delta(u); ok {
+					cost = codexCostFromUsage(u.Model, delta)
+				}
 				if cost.TotalTokens != 0 {
 					costs = append(costs, cost)
 					turns.addUsage(u, cost)
@@ -568,20 +574,33 @@ func (b *codexTurnBuilder) finish() []Turn {
 }
 
 func codexCostFromUse(u history.ToolUse) api.Cost {
-	if u.TotalTokens == 0 && u.InputTokens == 0 && u.OutputTokens == 0 && u.ReasoningTokens == 0 && u.CacheReadTokens == 0 {
-		return api.Cost{Model: u.Model}
-	}
-	total := u.TotalTokens
-	if total == 0 {
-		total = u.InputTokens + u.OutputTokens + u.ReasoningTokens + u.CacheReadTokens
-	}
-	cost := api.Cost{
-		Model:           u.Model,
+	usage := api.Usage{
 		InputTokens:     u.InputTokens,
 		OutputTokens:    u.OutputTokens,
 		ReasoningTokens: u.ReasoningTokens,
 		CacheReadTokens: u.CacheReadTokens,
-		TotalTokens:     total,
+	}
+	cost := codexCostFromUsage(u.Model, usage)
+	// A record that reports only a total keeps it rather than recomputing zero.
+	if cost.TotalTokens == 0 && u.TotalTokens != 0 {
+		cost.TotalTokens = u.TotalTokens
+	}
+	return cost
+}
+
+// codexCostFromUsage prices one codex usage record. Shared by the cumulative
+// (result-derived) path and the per-event fallback so both price identically.
+func codexCostFromUsage(model string, usage api.Usage) api.Cost {
+	if usage == (api.Usage{}) {
+		return api.Cost{Model: model}
+	}
+	cost := api.Cost{
+		Model:           model,
+		InputTokens:     usage.InputTokens,
+		OutputTokens:    usage.OutputTokens,
+		ReasoningTokens: usage.ReasoningTokens,
+		CacheReadTokens: usage.CacheReadTokens,
+		TotalTokens:     usage.TotalTokens(),
 	}
 	// Codex runs OpenAI models: price via the registry under the openai/ key.
 	// The old claude.PricingFor path mispriced every gpt-*/o* model at Claude
@@ -590,9 +609,9 @@ func codexCostFromUse(u history.ToolUse) api.Cost {
 	//
 	// Reasoning is priced with output: OpenAI bills it at the output rate, and
 	// the two buckets are disjoint here only so the counts do not double-count.
-	billedOutput := u.OutputTokens + u.ReasoningTokens
-	for _, id := range []string{"openai/" + u.Model, u.Model} {
-		if res, err := pricing.CalculateCost(id, u.InputTokens, billedOutput, 0, u.CacheReadTokens, 0); err == nil {
+	billedOutput := usage.OutputTokens + usage.ReasoningTokens
+	for _, id := range []string{"openai/" + model, model} {
+		if res, err := pricing.CalculateCost(id, usage.InputTokens, billedOutput, 0, usage.CacheReadTokens, 0); err == nil {
 			cost.InputCost = res.InputCost
 			cost.OutputCost = res.OutputCost
 			cost.CacheReadCost = res.CacheReadCost
@@ -600,6 +619,40 @@ func codexCostFromUse(u history.ToolUse) api.Cost {
 		}
 	}
 	return cost
+}
+
+// codexCumulative turns codex's running session totals into per-record deltas.
+//
+// The cumulative figure is the provider's own result; taking successive
+// differences keeps every per-turn and per-model split summing exactly back to
+// it. Summing each record's self-reported delta instead drifts — a real
+// 238-event session sums to 29,469,753 against a reported 29,236,689.
+type codexCumulative struct {
+	prev api.Usage
+	seen bool
+}
+
+// delta returns this record's share of the session total, and whether a
+// cumulative figure was available at all. A counter that moves backwards means
+// the session restarted its accounting, so the cumulative is taken whole.
+func (c *codexCumulative) delta(u history.ToolUse) (api.Usage, bool) {
+	if u.CumulativeUsage == nil {
+		return api.Usage{}, false
+	}
+	current := *u.CumulativeUsage
+	delta := api.Usage{
+		InputTokens:     current.InputTokens - c.prev.InputTokens,
+		OutputTokens:    current.OutputTokens - c.prev.OutputTokens,
+		ReasoningTokens: current.ReasoningTokens - c.prev.ReasoningTokens,
+		CacheReadTokens: current.CacheReadTokens - c.prev.CacheReadTokens,
+	}
+	if c.seen && (delta.InputTokens < 0 || delta.OutputTokens < 0 ||
+		delta.ReasoningTokens < 0 || delta.CacheReadTokens < 0) {
+		delta = current
+	}
+	c.prev = current
+	c.seen = true
+	return delta, true
 }
 
 func codexContextFromUse(u history.ToolUse) *Context {

@@ -33,6 +33,15 @@ type SessionTurn struct {
 	TotalTokens      int64      `gorm:"column:total_tokens" json:"totalTokens"`
 	CostUSD          float64    `gorm:"column:cost_usd" json:"costUsd"`
 	MessageCount     int64      `gorm:"column:message_count" json:"messageCount"`
+	// ProviderCostUSD is how much of CostUSD the providers reported themselves;
+	// the bucket costs are what CostUSD otherwise falls back to. Zero provider
+	// cost means the total is a reconstruction, not a billed figure.
+	ProviderCostUSD float64 `gorm:"column:provider_cost_usd" json:"providerCostUsd,omitempty"`
+	InputCost       float64 `gorm:"column:input_cost" json:"inputCost,omitempty"`
+	OutputCost      float64 `gorm:"column:output_cost" json:"outputCost,omitempty"`
+	ReasoningCost   float64 `gorm:"column:reasoning_cost" json:"reasoningCost,omitempty"`
+	CacheReadCost   float64 `gorm:"column:cache_read_cost" json:"cacheReadCost,omitempty"`
+	CacheWriteCost  float64 `gorm:"column:cache_write_cost" json:"cacheWriteCost,omitempty"`
 }
 
 func (SessionTurn) TableName() string { return "captain_session_turns" }
@@ -81,7 +90,13 @@ type SessionCost struct {
 	CacheReadTokens  int64      `gorm:"column:cache_read_tokens" json:"cacheReadTokens"`
 	CacheWriteTokens int64      `gorm:"column:cache_write_tokens" json:"cacheWriteTokens"`
 	TotalTokens      int64      `gorm:"column:total_tokens" json:"totalTokens"`
+	InputCost        float64    `gorm:"column:input_cost" json:"inputCost"`
+	OutputCost       float64    `gorm:"column:output_cost" json:"outputCost"`
+	ReasoningCost    float64    `gorm:"column:reasoning_cost" json:"reasoningCost"`
+	CacheReadCost    float64    `gorm:"column:cache_read_cost" json:"cacheReadCost"`
+	CacheWriteCost   float64    `gorm:"column:cache_write_cost" json:"cacheWriteCost"`
 	TotalCost        float64    `gorm:"column:total_cost" json:"totalCost"`
+	ProviderCostUSD  float64    `gorm:"column:provider_cost_usd" json:"providerCostUsd,omitempty"`
 	FirstCallAt      *time.Time `gorm:"column:first_call_at" json:"firstCallAt,omitempty"`
 	LastCallAt       *time.Time `gorm:"column:last_call_at" json:"lastCallAt,omitempty"`
 }

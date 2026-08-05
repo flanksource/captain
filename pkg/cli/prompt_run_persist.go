@@ -36,7 +36,7 @@ func persistPromptRun(ctx context.Context, input promptRunRecordInput) {
 	if source == "" {
 		source = "claude"
 	}
-	db, err := captainDB(ctx)
+	db, err := captainDefaultDB(ctx)
 	if err != nil {
 		log.Errorf("persist prompt run for session %s: %v", input.SessionID, err)
 		return

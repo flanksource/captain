@@ -75,8 +75,29 @@ func buildCodexEventUse(event CodexEvent, cwd, sessionID string) ToolUse {
 		ReasoningTokens: usage.ReasoningOutputTokens,
 		CacheReadTokens: usage.CachedInputTokens,
 		TotalTokens:     usage.TotalTokens,
+		CumulativeUsage: cumulativeEventUsage(event),
 		ContextWindow:   eventContextWindow(event),
 		RecordType:      "event_msg." + event.Payload.Type,
+	}
+}
+
+// cumulativeEventUsage nets the session-to-date totals codex reports alongside
+// each event's own delta. Same netting as the per-event fields so the two are
+// directly comparable: codex reports input inclusive of the cached prefix and
+// output inclusive of reasoning.
+func cumulativeEventUsage(event CodexEvent) *api.Usage {
+	if event.Payload.Info == nil {
+		return nil
+	}
+	total := event.Payload.Info.TotalTokenUsage
+	if total == (CodexTokenUsage{}) {
+		return nil
+	}
+	return &api.Usage{
+		InputTokens:     codexNonCachedInputTokens(total),
+		OutputTokens:    api.NetOutputTokens(total.OutputTokens, total.ReasoningOutputTokens),
+		ReasoningTokens: total.ReasoningOutputTokens,
+		CacheReadTokens: total.CachedInputTokens,
 	}
 }
 

@@ -58,7 +58,16 @@ type TokenSummary struct {
 	CacheWriteTokens int     `json:"cacheWriteTokens" pretty:"label=Cache Write"`
 	CacheReadTokens  int     `json:"cacheReadTokens" pretty:"label=Cache Read"`
 	TotalCost        float64 `json:"totalCost"`
+	// ProviderCostUSD is the model provider's own billed total, when one was
+	// recorded. Zero means TotalCost is a list-price reconstruction from token
+	// counts rather than a figure the provider reported — the two must not be
+	// presented as the same thing.
+	ProviderCostUSD float64 `json:"providerCostUsd,omitempty"`
 }
+
+// Estimated reports whether TotalCost was recomputed from token counts rather
+// than taken from a result the provider reported.
+func (s TokenSummary) Estimated() bool { return s.ProviderCostUSD == 0 }
 
 func (s *TokenSummary) Add(usage *Usage, model string) {
 	if usage == nil {
