@@ -236,13 +236,19 @@ type SchemaRepairDefaults struct {
 	Prompt  string `yaml:"prompt,omitempty"`
 }
 
-// pathOverride lets tests redirect Path() to a temp directory without touching
-// $HOME. Empty string means "use os.UserHomeDir".
+// pathOverride redirects Path() away from $HOME. Empty string means
+// "use os.UserHomeDir".
 var pathOverride string
+
+// SetPath redirects Path() to an explicit config file. It exists for
+// processes that cannot rely on $HOME: a git receive hook runs as a child of
+// whoever pushed, so its ambient home is the pusher's, not the one the
+// receiver was configured under.
+func SetPath(p string) { pathOverride = p }
 
 // SetPathForTesting redirects Path() to the given absolute file path. Tests
 // must call it with t.Cleanup(func() { SetPathForTesting("") }).
-func SetPathForTesting(p string) { pathOverride = p }
+func SetPathForTesting(p string) { SetPath(p) }
 
 // Path returns the absolute path to the captain config file. Currently fixed
 // at ~/.captain.yaml; the location is intentionally not configurable via env

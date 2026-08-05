@@ -3,8 +3,10 @@ package cli
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/flanksource/captain/pkg/captainconfig"
 	"github.com/flanksource/captain/pkg/gitagent"
@@ -15,7 +17,9 @@ type GitAgentServeOptions struct {
 	Backend         string `flag:"backend" help:"Sandbox backend in ~/.captain.yaml" default:"git-agent"`
 	Listen          string `flag:"listen" help:"Address to serve git-receive-pack on" default:":7422"`
 	Root            string `flag:"root" help:"Directory of receivable repos (default <keys-dir>/repos)"`
-	Role            string `flag:"role" help:"Receiver role: sidecar or mailbox" default:"sidecar"`
+	Role            string `flag:"role" help:"Receiver role: sidecar (runs beside a coding agent) or mailbox (the supervisor's receiver)" default:"sidecar"`
+	Repo            string `flag:"repo" help:"mailbox role: the real repository accepted work is integrated into"`
+	Advertise       string `flag:"advertise" help:"sidecar role: ssh://host:port the supervisor should dispatch to (default: the address the supervisor sees)"`
 	Join            string `flag:"join" help:"Single-use join token printed by 'captain sandbox git-agent add'"`
 	Supervisor      string `flag:"supervisor" help:"ssh://host:port of the supervisor to enroll with"`
 	HostFingerprint string `flag:"host-fingerprint" help:"Pinned SHA256 fingerprint of the supervisor's host key"`
@@ -33,61 +37,50 @@ func RunGitAgentServe(ctx context.Context, opts GitAgentServeOptions) (any, erro
 	if err != nil {
 		return nil, err
 	}
-	if opts.Join != "" {
-		if opts.Supervisor == "" {
-			return nil, fmt.Errorf("--join requires --supervisor ssh://host:port")
-		}
-		signer, fp, err := gitagent.EnsureKeyPair(filepath.Join(keysDir, "agent_ed25519"))
-		if err != nil {
-			return nil, err
-		}
-		confirmation, err := gitagent.Enroll(ctx, opts.Supervisor, opts.Join, opts.HostFingerprint, signer)
-		if err != nil {
-			return nil, err
-		}
-		clicky.Printf("%s\n", confirmation)
-		clicky.Printf("this agent's key fingerprint: %s\n", fp)
-		// Record where the relay pushes go (A3.4: through the flocked Update).
-		err = captainconfig.Update(func(cfg *captainconfig.Config) error {
-			backend := ensureGitAgentBackend(cfg, opts.Backend)
-			backend.Options["supervisor"] = map[string]any{
-				"url":             opts.Supervisor,
-				"hostFingerprint": opts.HostFingerprint,
-			}
-			cfg.Sandbox.Backends[opts.Backend] = backend
-			return nil
-		})
-		if err != nil {
+	root := opts.Root
+	if root == "" {
+		if root, err = gitAgentServedRoot(); err != nil {
 			return nil, err
 		}
 	}
-	root := opts.Root
-	if root == "" {
-		root = filepath.Join(keysDir, "repos")
+	if opts.Join != "" {
+		if err := joinSupervisor(ctx, opts, keysDir, root); err != nil {
+			return nil, err
+		}
 	}
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return nil, err
 	}
 	// Reclaim worktrees orphaned by a crashed hook (R10.3).
 	gitagent.PruneWorktrees(ctx, root)
-	if err := ensureServedRepos(ctx, root, role); err != nil {
+	if err := ensureServedRepos(ctx, root, role, opts); err != nil {
 		return nil, err
 	}
-	hostKey, hostFP, err := gitagent.EnsureKeyPair(filepath.Join(keysDir, "host_ed25519"))
+	hostKey, hostFP, err := gitagent.EnsureKeyPair(filepath.Join(keysDir, hostKeyName))
+	if err != nil {
+		return nil, err
+	}
+	offer, err := enrollmentOffer(role, keysDir)
 	if err != nil {
 		return nil, err
 	}
 	server, err := gitagent.NewServer(gitagent.ServerConfig{
-		Listen:    opts.Listen,
-		Root:      root,
-		Role:      role,
-		HostKey:   hostKey,
-		Directory: gitAgentDirectory{backend: opts.Backend},
+		Listen:        opts.Listen,
+		Root:          root,
+		Role:          role,
+		HostKey:       hostKey,
+		Directory:     gitAgentDirectory{backend: opts.Backend},
+		Offer:         offer,
+		AgentRepoPath: SidecarRepoName,
 	})
 	if err != nil {
 		return nil, err
 	}
-	clicky.Printf("captain git-agent %s serving %s on %s (host key %s)\n", role, root, opts.Listen, hostFP)
+	clicky.Printf("captain git-agent %s serving %s on %s\n", role, root, opts.Listen)
+	clicky.Printf("  host key: %s\n", hostFP)
+	if role == gitagent.RoleMailbox {
+		clicky.Printf("  enroll an agent with: captain sandbox git-agent add <name> --endpoint ssh://<this-host>:<port>\n")
+	}
 	go func() {
 		<-ctx.Done()
 		_ = server.Close()
@@ -98,16 +91,132 @@ func RunGitAgentServe(ctx context.Context, opts GitAgentServeOptions) (any, erro
 	return nil, nil
 }
 
-// ensureServedRepos creates the role's default repository and (re-)installs
-// the hook shims on every repo under root, so an upgraded captain binary
-// repoints the shims at itself.
-func ensureServedRepos(ctx context.Context, root string, role gitagent.ReceiverRole) error {
-	if role == gitagent.RoleSidecar {
-		if err := gitagent.InitSidecar(ctx, filepath.Join(root, "repo.git")); err != nil {
+// enrollmentOffer is what this endpoint hands a joining agent. Only a mailbox
+// has anything to offer: its dispatch key, so the agent can authorize the
+// supervisor's push, and its mailbox path, so the agent can relay back.
+func enrollmentOffer(role gitagent.ReceiverRole, keysDir string) (gitagent.EnrollmentOffer, error) {
+	if role != gitagent.RoleMailbox {
+		return gitagent.EnrollmentOffer{}, nil
+	}
+	_, dispatchFP, err := gitagent.EnsureKeyPair(filepath.Join(keysDir, dispatchKeyName))
+	if err != nil {
+		return gitagent.EnrollmentOffer{}, err
+	}
+	return gitagent.EnrollmentOffer{DispatchKey: dispatchFP, MailboxPath: MailboxRepoName}, nil
+}
+
+// joinSupervisor performs the enrollment exchange and records both directions
+// of trust: the supervisor's dispatch key is authorized locally so its push is
+// accepted, and its mailbox URL is recorded so the relay knows where to go.
+func joinSupervisor(ctx context.Context, opts GitAgentServeOptions, keysDir, root string) error {
+	if opts.Supervisor == "" {
+		return fmt.Errorf("--join requires --supervisor ssh://host:port")
+	}
+	signer, fp, err := gitagent.EnsureKeyPair(filepath.Join(keysDir, agentKeyName))
+	if err != nil {
+		return err
+	}
+	// The supervisor must be able to verify this endpoint's host key when it
+	// dispatches, so the key has to exist before we advertise its fingerprint.
+	_, hostFP, err := gitagent.EnsureKeyPair(filepath.Join(keysDir, hostKeyName))
+	if err != nil {
+		return err
+	}
+	_, port, err := net.SplitHostPort(opts.Listen)
+	if err != nil {
+		return fmt.Errorf("--listen %q must be [host]:port: %w", opts.Listen, err)
+	}
+	resp, err := gitagent.Enroll(ctx, opts.Supervisor, opts.Join, opts.HostFingerprint, signer, gitagent.EnrollRequest{
+		AdvertiseURL:    advertiseURL(opts.Advertise),
+		ListenPort:      port,
+		HostFingerprint: hostFP,
+	})
+	if err != nil {
+		return err
+	}
+	mailboxURL, err := gitagent.MailboxURL(opts.Supervisor, resp.MailboxPath)
+	if err != nil {
+		return err
+	}
+	err = captainconfig.Update(func(cfg *captainconfig.Config) error {
+		backend := ensureGitAgentBackend(cfg, opts.Backend)
+		// Where the relay pushes, and the host key to pin when it does.
+		backend.Options["supervisor"] = map[string]any{
+			"url":             mailboxURL,
+			"hostFingerprint": opts.HostFingerprint,
+		}
+		// Authorize the supervisor's dispatch key so its push is accepted
+		// here — the direction a one-way enrollment leaves broken.
+		agents, _ := backend.Options["agents"].(map[string]any)
+		if agents == nil {
+			agents = map[string]any{}
+		}
+		agents[supervisorAgentID] = map[string]any{"fingerprint": resp.DispatchKey}
+		backend.Options["agents"] = agents
+		cfg.Sandbox.Backends[opts.Backend] = backend
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	clicky.Printf("enrolled as %s\n", resp.Agent)
+	clicky.Printf("  this agent's key:   %s\n", fp)
+	clicky.Printf("  this endpoint's host key: %s\n", hostFP)
+	clicky.Printf("  relays to:          %s\n", mailboxURL)
+	clicky.Printf("  authorized supervisor key: %s\n", resp.DispatchKey)
+	return nil
+}
+
+// advertiseURL normalizes an operator-supplied endpoint, appending the sidecar
+// repository path when only a host:port was given.
+func advertiseURL(raw string) string {
+	advertise := strings.TrimSpace(raw)
+	if advertise == "" {
+		return ""
+	}
+	if !strings.Contains(advertise, "://") {
+		advertise = "ssh://" + advertise
+	}
+	if trimmed := strings.TrimSuffix(advertise, "/"); !strings.Contains(strings.TrimPrefix(trimmed, "ssh://"), "/") {
+		advertise = trimmed + "/" + SidecarRepoName
+	}
+	return advertise
+}
+
+// ensureServedRepos creates the role's repository and (re-)installs the hook
+// shims on every repo under root, so an upgraded captain binary repoints the
+// shims at itself.
+func ensureServedRepos(ctx context.Context, root string, role gitagent.ReceiverRole, opts GitAgentServeOptions) error {
+	switch role {
+	case gitagent.RoleSidecar:
+		if err := gitagent.InitSidecar(ctx, filepath.Join(root, SidecarRepoName)); err != nil {
+			return err
+		}
+	case gitagent.RoleMailbox:
+		repo := strings.TrimSpace(opts.Repo)
+		if repo == "" {
+			return fmt.Errorf("--role mailbox requires --repo <path>: the repository accepted work is integrated into")
+		}
+		abs, err := filepath.Abs(repo)
+		if err != nil {
+			return err
+		}
+		// The mailbox must be the same path dispatch writes to, or a relayed
+		// result would land somewhere the supervisor never reads.
+		if err := gitagent.InitMailbox(ctx, filepath.Join(root, MailboxRepoName), abs); err != nil {
+			return err
+		}
+		if err := recordMailboxRepo(opts.Backend, abs); err != nil {
 			return err
 		}
 	}
 	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	// Bake the config path into the shims: a hook inherits the pusher's
+	// environment, and a co-located agent pushes from its own shell.
+	configPath, err := captainconfig.Path()
 	if err != nil {
 		return err
 	}
@@ -123,9 +232,20 @@ func ensureServedRepos(ctx context.Context, root string, role gitagent.ReceiverR
 		if _, err := os.Stat(filepath.Join(repo, "HEAD")); err != nil {
 			continue
 		}
-		if err := gitagent.InstallHookShims(repo, exe, role); err != nil {
+		if err := gitagent.InstallHookShims(repo, exe, configPath, role); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// recordMailboxRepo tells the mailbox's receive hooks which repository to
+// integrate accepted work into.
+func recordMailboxRepo(backendName, repo string) error {
+	return captainconfig.Update(func(cfg *captainconfig.Config) error {
+		backend := ensureGitAgentBackend(cfg, backendName)
+		backend.Options["repo"] = repo
+		cfg.Sandbox.Backends[backendName] = backend
+		return nil
+	})
 }

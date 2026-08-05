@@ -9,6 +9,9 @@ import (
 	"github.com/flanksource/captain/pkg/gitagent"
 )
 
+// gitAgentDirectory satisfies the server's authorization source.
+var _ gitagent.AgentDirectory = gitAgentDirectory{}
+
 // gitAgentDirectory implements gitagent.AgentDirectory over the sandbox
 // backend's options block in ~/.captain.yaml. Every read loads the file fresh
 // so a revocation takes effect for the next connection (R8.5), and every
@@ -80,16 +83,28 @@ func (d gitAgentDirectory) ConsumeJoinToken(token string) (string, error) {
 	return agentName, refusal
 }
 
-func (d gitAgentDirectory) RecordAgentKey(name, fingerprint string) error {
+// RecordAgent stores everything a dispatch to this agent needs: its client
+// key, its endpoint, and the host key to pin when pushing there. Recording
+// only the key would leave an enrollment that looks complete but cannot be
+// dispatched to.
+func (d gitAgentDirectory) RecordAgent(e gitagent.AgentEnrollment) error {
+	if e.URL == "" {
+		return fmt.Errorf("agent %q advertised no endpoint; rerun its serve with --advertise ssh://host:port", e.Name)
+	}
+	if e.HostFingerprint == "" {
+		return fmt.Errorf("agent %q advertised no host key fingerprint; its dispatch could not be verified", e.Name)
+	}
 	return captainconfig.Update(func(cfg *captainconfig.Config) error {
 		backend := ensureGitAgentBackend(cfg, d.backend)
 		agents, _ := backend.Options["agents"].(map[string]any)
 		if agents == nil {
 			agents = map[string]any{}
 		}
-		agents[name] = map[string]any{
-			"fingerprint": fingerprint,
-			"addedAt":     time.Now().UTC().Format(time.RFC3339),
+		agents[e.Name] = map[string]any{
+			"fingerprint":     e.Fingerprint,
+			"url":             e.URL,
+			"hostFingerprint": e.HostFingerprint,
+			"addedAt":         time.Now().UTC().Format(time.RFC3339),
 		}
 		backend.Options["agents"] = agents
 		cfg.Sandbox.Backends[d.backend] = backend

@@ -97,7 +97,10 @@ func TestGitAgentExpiredTokenRefused(t *testing.T) {
 func TestGitAgentEnrollListRevoke(t *testing.T) {
 	isolatedConfig(t)
 	dir := gitAgentDirectory{backend: "git-agent"}
-	if err := dir.RecordAgentKey("worker-1", "SHA256:abc"); err != nil {
+	if err := dir.RecordAgent(gitagent.AgentEnrollment{
+		Name: "worker-1", Fingerprint: "SHA256:abc",
+		URL: "ssh://127.0.0.1:7422/repo.git", HostFingerprint: "SHA256:host",
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if name, ok := dir.AgentByFingerprint("SHA256:abc"); !ok || name != "worker-1" {

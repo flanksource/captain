@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/captainconfig"
@@ -18,11 +19,15 @@ type GitAgentHookOptions struct {
 	Repo    string `flag:"repo" help:"Receiving bare repository"`
 	Role    string `flag:"role" help:"Receiver role: sidecar or mailbox"`
 	Backend string `flag:"backend" help:"Sandbox backend in ~/.captain.yaml" default:"git-agent"`
+	Config  string `flag:"config" help:"Config file to read; hooks cannot rely on $HOME, which belongs to whoever pushed"`
 }
 
 // RunGitAgentHook is the shim entrypoint: admission, hook sets, relay and
 // integration, with the runtime assembled from the backend's config block.
 func RunGitAgentHook(ctx context.Context, opts GitAgentHookOptions) (any, error) {
+	if strings.TrimSpace(opts.Config) != "" {
+		captainconfig.SetPath(opts.Config)
+	}
 	runtime, err := hookRuntimeFromConfig(opts.Backend)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "captain: %v\n", err)

@@ -58,8 +58,8 @@ var _ = Describe("hook shims", func() {
 		repo := filepath.Join(GinkgoT().TempDir(), "repo.git")
 		Expect(gitagent.InitSidecar(ctx, repo)).To(Succeed())
 
-		Expect(gitagent.InstallHookShims(repo, "/usr/local/bin/captain", gitagent.RoleSidecar)).To(Succeed())
-		Expect(gitagent.InstallHookShims(repo, "/usr/local/bin/captain", gitagent.RoleSidecar)).To(Succeed())
+		Expect(gitagent.InstallHookShims(repo, "/usr/local/bin/captain", "/home/agent/.captain.yaml", gitagent.RoleSidecar)).To(Succeed())
+		Expect(gitagent.InstallHookShims(repo, "/usr/local/bin/captain", "/home/agent/.captain.yaml", gitagent.RoleSidecar)).To(Succeed())
 
 		for _, hook := range []string{"pre-receive", "post-receive"} {
 			path := filepath.Join(repo, "hooks", hook)
@@ -70,10 +70,13 @@ var _ = Describe("hook shims", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(content)).To(ContainSubstring("/usr/local/bin/captain"))
 			Expect(string(content)).To(ContainSubstring("--role \"sidecar\""))
+			// A hook runs as a child of whoever pushed, so its config path is
+			// baked in rather than resolved from an ambient $HOME.
+			Expect(string(content)).To(ContainSubstring("--config \"/home/agent/.captain.yaml\""))
 		}
 
 		// A rebinned captain updates the shim in place.
-		Expect(gitagent.InstallHookShims(repo, "/opt/captain", gitagent.RoleSidecar)).To(Succeed())
+		Expect(gitagent.InstallHookShims(repo, "/opt/captain", "/home/agent/.captain.yaml", gitagent.RoleSidecar)).To(Succeed())
 		content, err := os.ReadFile(filepath.Join(repo, "hooks", "pre-receive"))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(string(content)).To(ContainSubstring("/opt/captain"))
@@ -81,7 +84,7 @@ var _ = Describe("hook shims", func() {
 		// A hook captain did not install is never overwritten.
 		foreign := filepath.Join(repo, "hooks", "pre-receive")
 		Expect(os.WriteFile(foreign, []byte("#!/bin/sh\nexit 0\n"), 0o755)).To(Succeed())
-		err = gitagent.InstallHookShims(repo, "/opt/captain", gitagent.RoleSidecar)
+		err = gitagent.InstallHookShims(repo, "/opt/captain", "/home/agent/.captain.yaml", gitagent.RoleSidecar)
 		Expect(err).To(MatchError(ContainSubstring("not installed by captain")))
 	})
 })
