@@ -157,12 +157,7 @@ func (g *gitAgentSandbox) resolveTarget() (*gitAgentTarget, error) {
 		// relayed result lands where nothing reads it.
 		mailbox:     stringOption(opts, "mailbox", filepath.Join(keysDir, servedReposDir, mailboxRepoName)),
 		relay:       gitagent.RelayMode(stringOption(opts, "relay", string(gitagent.RelaySync))),
-		waitTimeout: time.Hour,
-	}
-	if raw, ok := opts["waitTimeout"].(string); ok {
-		if d, err := time.ParseDuration(raw); err == nil {
-			target.waitTimeout = d
-		}
+		waitTimeout: WaitTimeout(opts),
 	}
 	if g.cfg.Policy != nil {
 		target.policy = gitagent.Policy{Paths: g.cfg.Policy.Paths, MaxAttempts: g.cfg.Policy.MaxAttempts}
@@ -184,6 +179,24 @@ const (
 	servedReposDir  = "repos"
 	mailboxRepoName = "mailbox.git"
 )
+
+// DefaultWaitTimeout bounds how long a dispatch waits for its verdict. A
+// relocating sandbox blocks on a remote agent doing real work, so this is
+// sized for that rather than for a model call.
+const DefaultWaitTimeout = time.Hour
+
+// WaitTimeout reads the backend's waitTimeout option, falling back to
+// DefaultWaitTimeout. Exported so the run path can size its own deadline to
+// match: a shorter outer timeout would kill the dispatch mid-flight and report
+// a failure for work that is still running.
+func WaitTimeout(options map[string]any) time.Duration {
+	if raw, ok := options["waitTimeout"].(string); ok {
+		if d, err := time.ParseDuration(raw); err == nil && d > 0 {
+			return d
+		}
+	}
+	return DefaultWaitTimeout
+}
 
 // gitAgentKeysDir anchors key material and the default mailbox beside the
 // captain config file, matching the CLI's layout.

@@ -3,25 +3,52 @@ package cli
 import (
 	"context"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/api/registry"
+	"github.com/flanksource/captain/pkg/sandbox/adapter"
 )
+
+// relocatesRun reports whether the selection replaces provider execution with
+// a run on another machine.
+func relocatesRun(cfg ai.Config) bool {
+	if cfg.SandboxSelection == nil {
+		return false
+	}
+	descriptor, ok := registry.SandboxFor(cfg.SandboxSelection.Kind)
+	return ok && descriptor.Has(registry.CapabilityRemoteExec)
+}
+
+// remoteAwareTimeout sizes the run's deadline for where the work happens. A
+// relocated run blocks on a remote agent for as long as that agent takes, so
+// the local request default — sized for a model call — would kill a dispatch
+// that is still progressing and report it as a failure. An explicitly declared
+// timeout (--timeout or budget.timeout) always wins.
+func remoteAwareTimeout(req ai.Request, cfg ai.Config, timeout time.Duration) time.Duration {
+	if strings.TrimSpace(req.Budget.Timeout) != "" || !relocatesRun(cfg) {
+		return timeout
+	}
+	return adapter.WaitTimeout(cfg.SandboxSelection.Options)
+}
+
+// renderedTimeout is remoteAwareTimeout for an already-rendered prompt, used
+// by the stream and batch paths that size their own deadline.
+func renderedTimeout(rendered PromptRenderResult) time.Duration {
+	return remoteAwareTimeout(rendered.Input, rendered.Config, runtimeTimeout(rendered.Input.Budget.Timeout))
+}
 
 // remoteExecProviderFor returns a provider backed by the resolved sandbox's
 // RemoteExecutor when the selection has that capability, nil otherwise. This
 // is the run-path branch for whole-run relocation (git-agent): it sits above
 // provider construction because the adapter replaces execution, not the argv.
 func remoteExecProviderFor(req *ai.Request, cfg ai.Config) (ai.Provider, error) {
+	if !relocatesRun(cfg) {
+		return nil, nil
+	}
 	selection := cfg.SandboxSelection
-	if selection == nil {
-		return nil, nil
-	}
-	descriptor, ok := registry.SandboxFor(selection.Kind)
-	if !ok || !descriptor.Has(registry.CapabilityRemoteExec) {
-		return nil, nil
-	}
 	sandbox, err := api.NewSandbox(*selection)
 	if err != nil {
 		return nil, err

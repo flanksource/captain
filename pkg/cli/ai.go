@@ -214,7 +214,7 @@ type AIPromptOptions struct {
 	Var          []string `flag:"var" help:"Template variable key=value (repeatable)" short:"V"`
 	Attach       []string `flag:"attach" help:"Attach a local path or URL (repeatable; RFC 4180 comma-separated values allowed)" short:"A"`
 	MultiModels  []string `flag:"multi-models" help:"Run prompt once per runtime selector in parallel, e.g. cli:sonnet-5,cmux:opus (repeatable; comma-separated allowed)" short:"M"`
-	Timeout      string   `flag:"timeout" help:"Request timeout" default:"120s"`
+	Timeout      string   `flag:"timeout" help:"Request timeout (default 120s; a relocating sandbox waits for the remote agent instead)"`
 	NoStream     bool     `flag:"no-stream" help:"Disable streaming; print only the final text to stdout"`
 }
 
@@ -335,7 +335,7 @@ func (o AIPromptOptions) ToRequest() (ai.Request, error) {
 }
 
 func executePromptRequest(parent context.Context, req ai.Request, cfg ai.Config, timeout time.Duration, noStream bool) (any, error) {
-	ctx, cancel := runContext(parent, req, timeout)
+	ctx, cancel := runContext(parent, req, remoteAwareTimeout(req, cfg, timeout))
 	defer cancel()
 	if err := preparePromptAttachments(ctx, &req, cfg); err != nil {
 		return nil, err

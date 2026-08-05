@@ -52,11 +52,11 @@ func launchAsyncBatch(ctx context.Context, id string, rendered PromptRenderResul
 		}
 		handles[i] = group.Add(runtimeSelector(run.Runtime), func(_ flanksourceContext.Context, t *task.Task) (PromptRunSummary, error) {
 			if chat {
-				chatSession := newChatSession(runID, variant, runtimeTimeout(variant.Input.Budget.Timeout), stream, binding)
+				chatSession := newChatSession(runID, variant, renderedTimeout(variant), stream, binding)
 				promptChats.register(chatSession)
 				return chatSession.run(t)
 			}
-			summary, runErr := runPromptStream(t, variant, runtimeTimeout(variant.Input.Budget.Timeout), runID, stream, binding)
+			summary, runErr := runPromptStream(t, variant, renderedTimeout(variant), runID, stream, binding)
 			if runErr != nil {
 				persistPromptRun(context.WithoutCancel(t.Context()), promptRunRecordInput{
 					Rendered: variant, RunID: runID, Binding: binding,
