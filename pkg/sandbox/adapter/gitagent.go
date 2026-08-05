@@ -76,8 +76,14 @@ func (g *gitAgentSandbox) Execute(ctx context.Context, spec api.Spec) (*api.Resp
 		KeyPath:       target.keyPath,
 		Relay:         target.relay,
 		Policy:        target.policy,
-		TaskPayload:   gitagent.TaskPayload{Prompt: prompt, System: system, Model: spec.Name},
-		HooksJSON:     hooksJSON,
+		// The resolved backend travels with the model: the agent must run the
+		// runtime the supervisor selected, not re-resolve the name against its
+		// own defaults and quietly pick a different one.
+		TaskPayload: gitagent.TaskPayload{
+			Prompt: prompt, System: system,
+			Model: spec.Name, Backend: string(spec.Backend),
+		},
+		HooksJSON: hooksJSON,
 	})
 	if err != nil {
 		return nil, err

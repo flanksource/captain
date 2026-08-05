@@ -12,6 +12,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/flanksource/captain/pkg/gitagent"
+	"gopkg.in/yaml.v3"
 )
 
 // lockedBuffer collects a background process's output safely across the
@@ -175,6 +178,35 @@ func (h *host) configBytes() string {
 		h.t.Fatalf("reading %s: %v", filepath.Join(h.home, ".captain.yaml"), err)
 	}
 	return string(data)
+}
+
+// setBackendOption edits one option under sandbox.backends.git-agent in this
+// host's config, the way an operator would.
+func (h *host) setBackendOption(t *testing.T, key, value string) {
+	t.Helper()
+	path := filepath.Join(h.home, ".captain.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	sandbox, _ := cfg["sandbox"].(map[string]any)
+	backends, _ := sandbox["backends"].(map[string]any)
+	backend, _ := backends["git-agent"].(map[string]any)
+	if backend == nil {
+		t.Fatalf("no git-agent backend in %s:\n%s", path, data)
+	}
+	backend[key] = value
+	out, err := yaml.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, out, 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // gitIn runs git in dir with a pinned identity.
@@ -362,16 +394,21 @@ func TestEnrollmentProducesADispatchableTopology(t *testing.T) {
 	}
 }
 
-// TestFullCycleThroughTheCLI is the §12 baseline check at product level: with
-// nothing but the documented commands, a dispatch reaches the agent, the agent
-// completes it with `git commit` and a bare `git push`, the result relays to
-// the supervisor, and accepted work is integrated. Every setup blocker this
-// suite exists for shows up here as a hang or a missing ref.
-func TestFullCycleThroughTheCLI(t *testing.T) {
+// TestFullCycleWithAManualAgent covers the protocol half of the cycle: a
+// dispatch reaches the agent, work pushed with ordinary git relays to the
+// supervisor, and accepted work is integrated.
+//
+// It drives the agent by hand deliberately, which is exactly what it does NOT
+// prove: that a dispatch launches anything. TestDispatchLaunchesAnAgent covers
+// that, and the two must stay separate — a manual push in this test once
+// masked a launch path that never ran.
+func TestFullCycleWithAManualAgent(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds the captain binary and runs two endpoints")
 	}
 	supervisor, agent, repo, _, _ := enrollPair(t)
+	// Opt out of the launcher: this test drives the agent itself.
+	agent.setBackendOption(t, "agentCommand", gitagent.NoAgentCommand)
 
 	// A dirty supervisor worktree must travel with the dispatch.
 	writeAt(t, repo, "task.prompt", "---\nsandbox: git-agent\n---\n{{role \"user\"}}\nAdd a greeting.\n")
@@ -541,4 +578,160 @@ func firstJSONDocument(out string) string {
 		}
 	}
 	return trimmed
+}
+
+// TestDispatchLaunchesAnAgent is the test the manual-push cycle test cannot
+// be: it proves a dispatch starts work that completes on its own, with no
+// human touching the worktree at any point.
+//
+// The agent is a scripted stand-in rather than a real model, so the
+// launch → work → push → relay → integrate chain is exercised without needing
+// credentials. What it does not cover is the UNCONFIGURED default — that is
+// TestUnconfiguredDispatchLaunchesTheDefaultAgent below, plus
+// TestDefaultAgentCommandRunsCaptain for the command itself.
+func TestDispatchLaunchesAnAgent(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds the captain binary and runs two endpoints")
+	}
+	supervisor, agent, repo, _, _ := enrollPair(t)
+
+	// A scripted agent: edit, commit, push — the same three steps run-task
+	// performs after the model call.
+	agent.setBackendOption(t, "agentCommand",
+		`echo 'func Greet() string { return "hi" }' >> pkg/main.go `+
+			`&& git add -A && git commit -q -m "captain: $CAPTAIN_TASK" && git push`)
+
+	writeAt(t, repo, "task.prompt", "---\nsandbox: git-agent\n---\n{{role \"user\"}}\nAdd a greeting.\n")
+	writeAt(t, repo, "pkg/main.go", "package main\n\n// dirty\n")
+
+	// No manual step anywhere below: dispatch, and wait for it to conclude.
+	dispatch := exec.Command(supervisor.bin, "ai", "prompt", "./task.prompt",
+		"--sandbox", "git-agent", "--timeout", "3m")
+	dispatch.Dir = repo
+	dispatch.Env = supervisor.env()
+	out, err := dispatch.CombinedOutput()
+	if err != nil {
+		t.Fatalf("the dispatch did not conclude on its own: %v\n%s\n%s", err, out, agentLogs(t, agent))
+	}
+	if !strings.Contains(string(out), "accepted") {
+		t.Fatalf("dispatch did not report acceptance:\n%s\n%s", out, agentLogs(t, agent))
+	}
+
+	// The agent's work reached the supervisor and was integrated, with no
+	// human touching the worktree.
+	mailbox := filepath.Join(supervisor.home, ".captain", "sandbox", servedReposDir, MailboxRepoName)
+	refs := gitIn(t, mailbox, "for-each-ref", "--format=%(refname)")
+	if !strings.Contains(refs, "/result/1") || !strings.Contains(refs, "/verdict/1") {
+		t.Fatalf("no result/verdict refs; the launched agent never submitted:\n%s", refs)
+	}
+	branch := ""
+	for _, line := range strings.Split(gitIn(t, repo, "branch", "--format=%(refname:short)"), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "captain/") {
+			branch = strings.TrimSpace(line)
+		}
+	}
+	if branch == "" {
+		t.Fatalf("accepted work was not integrated:\n%s", gitIn(t, repo, "branch"))
+	}
+	integrated := gitIn(t, repo, "show", branch+":pkg/main.go")
+	if !strings.Contains(integrated, "func Greet()") || !strings.Contains(integrated, "// dirty") {
+		t.Fatalf("integration lost the agent's work or the dispatched state:\n%s", integrated)
+	}
+}
+
+// agentLogs returns whatever the detached agent wrote, which is the only
+// diagnosis available when a dispatch fails to conclude.
+func agentLogs(t *testing.T, agent *host) string {
+	t.Helper()
+	tasks := filepath.Join(agent.home, ".captain", "sandbox", servedReposDir, SidecarRepoName, "captain", "tasks")
+	entries, err := os.ReadDir(tasks)
+	if err != nil {
+		return "no task directory: " + err.Error()
+	}
+	var b strings.Builder
+	for _, e := range entries {
+		for _, name := range []string{"agent.stdout.log", "agent.stderr.log"} {
+			if data, err := os.ReadFile(filepath.Join(tasks, e.Name(), name)); err == nil {
+				fmt.Fprintf(&b, "--- %s/%s ---\n%s\n", e.Name(), name, data)
+			}
+		}
+	}
+	if b.Len() == 0 {
+		return "the agent wrote no logs (was anything launched?)"
+	}
+	return b.String()
+}
+
+// TestDefaultAgentCommandRunsCaptain pins what an unconfigured sidecar
+// launches: this binary, working the task in place. An empty default is the
+// defect this whole pair of tests exists to prevent.
+func TestDefaultAgentCommandRunsCaptain(t *testing.T) {
+	command := DefaultAgentCommand("/usr/local/bin/captain", "/srv/repo.git", "t-1", "/home/agent/.captain.yaml")
+	for _, want := range []string{
+		`"/usr/local/bin/captain"`, "sandbox git-agent run-task",
+		`--repo "/srv/repo.git"`, `--task "t-1"`, `--config "/home/agent/.captain.yaml"`,
+	} {
+		if !strings.Contains(command, want) {
+			t.Fatalf("default agent command %q lacks %q", command, want)
+		}
+	}
+	if strings.TrimSpace(DefaultAgentCommand("/bin/captain", "/r.git", "t-1", "")) == "" {
+		t.Fatal("the default must never be empty; LaunchAgent would refuse and the dispatch would hang")
+	}
+}
+
+// TestUnconfiguredDispatchLaunchesTheDefaultAgent closes the gap the other
+// tests leave: a backend that configures no agentCommand at all must still
+// launch a real agent. It cannot assert the task completes — captain's default
+// agent calls a model, which needs credentials this suite does not have — so
+// it asserts the launch itself, which is precisely what used to be missing.
+func TestUnconfiguredDispatchLaunchesTheDefaultAgent(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds the captain binary and runs two endpoints")
+	}
+	supervisor, agent, repo, _, _ := enrollPair(t)
+	if strings.Contains(agent.configBytes(), "agentCommand") {
+		t.Fatalf("this test requires an unconfigured backend:\n%s", agent.configBytes())
+	}
+
+	writeAt(t, repo, "task.prompt", "---\nsandbox: git-agent\n---\n{{role \"user\"}}\nAdd a greeting.\n")
+
+	// A short budget: the point is what got launched, not what it produced.
+	dispatch := exec.Command(supervisor.bin, "ai", "prompt", "./task.prompt",
+		"--sandbox", "git-agent", "--timeout", "45s")
+	dispatch.Dir = repo
+	dispatch.Env = supervisor.env()
+	var out lockedBuffer
+	dispatch.Stdout, dispatch.Stderr = &out, &out
+	if err := dispatch.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- dispatch.Wait() }()
+	t.Cleanup(func() {
+		if dispatch.Process != nil {
+			_ = dispatch.Process.Kill()
+		}
+	})
+
+	// An agent log appearing at all is the assertion: the sidecar launched
+	// something rather than preparing a workspace and going quiet.
+	tasks := filepath.Join(agent.home, ".captain", "sandbox", servedReposDir, SidecarRepoName, "captain", "tasks")
+	deadline := time.Now().Add(60 * time.Second)
+	launched := ""
+	for time.Now().Before(deadline) && launched == "" {
+		entries, _ := os.ReadDir(tasks)
+		for _, e := range entries {
+			for _, name := range []string{"agent.stdout.log", "agent.stderr.log"} {
+				if data, err := os.ReadFile(filepath.Join(tasks, e.Name(), name)); err == nil && len(data) > 0 {
+					launched = string(data)
+				}
+			}
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	if launched == "" {
+		t.Fatalf("an unconfigured backend launched nothing; the dispatch would wait out its whole budget in silence\ndispatch output:\n%s", out.String())
+	}
+	t.Logf("default agent produced:\n%s", launched)
 }

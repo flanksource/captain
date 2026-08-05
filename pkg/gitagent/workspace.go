@@ -11,8 +11,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 )
+
+// NoAgentCommand opts a sidecar out of launching anything, leaving the
+// prepared worktree for a human. It is spelled explicitly so that "no agent
+// ran" is always a choice on the record rather than an empty config field.
+const NoAgentCommand = "none"
 
 // SetupAgentWorkspace creates the task branch in the sidecar repo and clones
 // it (object store shared) into <repo>/captain/tasks/<task>/worktree. A clone
@@ -58,13 +64,24 @@ func WriteTaskFile(sidecarRepo, task string, payload []byte) (string, error) {
 // LaunchAgent starts command (a shell line) fully detached: its own session,
 // stdio redirected to files. A child inheriting the hook's stdout keeps the
 // sideband pipe open and receive-pack waits for EOF — the dispatch push would
-// hang for the agent's lifetime (R6.3/H12). An empty command is a no-op: the
-// workspace is ready for a human or an externally-managed agent.
+// hang for the agent's lifetime (R6.3/H12).
+//
+// An empty command is an error, not a no-op. Nothing would run, nothing would
+// push, and the dispatch would wait out its whole budget for work that was
+// never started — a silence indistinguishable from an agent still thinking.
+// Callers that genuinely want a bare workspace pass NoAgentCommand.
 func LaunchAgent(sidecarRepo, task, workdir, taskFile, command string) error {
-	if command == "" {
-		return nil
+	if strings.TrimSpace(command) == "" {
+		return fmt.Errorf("task %s: no agent command configured; nothing would run and the dispatch would wait for work that never started", task)
 	}
 	dir := taskStateDir(sidecarRepo, task)
+	if command == NoAgentCommand {
+		// Explicitly hand the workspace to a human: record why nothing ran so
+		// a waiting dispatch is diagnosable from the task directory.
+		return writeFileAtomic(filepath.Join(dir, "agent.stdout.log"),
+			[]byte("agentCommand is "+NoAgentCommand+": the worktree is prepared but no agent was launched.\n"+
+				"Commit and push from "+workdir+" to complete this task.\n"), 0o644)
+	}
 	stdout, err := os.OpenFile(filepath.Join(dir, "agent.stdout.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return err

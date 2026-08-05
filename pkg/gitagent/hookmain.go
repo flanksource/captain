@@ -39,6 +39,24 @@ type HookHost struct {
 	Judge   ai.Provider
 	Wrap    verify.CommandWrapFunc
 	Timeout time.Duration
+	// DefaultAgentCommand supplies the command to launch when the backend
+	// declares no agentCommand. Without it a dispatch would prepare a
+	// workspace nothing ever works on, and the supervisor would wait out its
+	// whole budget in silence. The task id is only known here, at
+	// post-receive, which is why this is a builder rather than a string.
+	DefaultAgentCommand func(repo, task string) string
+}
+
+// agentCommandFor resolves what to launch for a task: the configured command,
+// else the host's default.
+func (h HookHost) agentCommandFor(repo, task string) string {
+	if command := strings.TrimSpace(h.Runtime.AgentCommand); command != "" {
+		return command
+	}
+	if h.DefaultAgentCommand != nil {
+		return h.DefaultAgentCommand(repo, task)
+	}
+	return ""
 }
 
 // LoadHookRuntime reads a HookRuntime JSON file; an empty path is an empty
@@ -362,7 +380,7 @@ func sidecarPostReceive(ctx context.Context, repo string, host HookHost, updates
 		if err != nil {
 			return err
 		}
-		if err := LaunchAgent(repo, info.Task, workdir, taskFile, host.Runtime.AgentCommand); err != nil {
+		if err := LaunchAgent(repo, info.Task, workdir, taskFile, host.agentCommandFor(repo, info.Task)); err != nil {
 			return err
 		}
 	}
