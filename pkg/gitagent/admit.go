@@ -231,6 +231,13 @@ func admitCodeContent(ctx context.Context, req AdmitRequest, u RefUpdate, info R
 	if !ok {
 		return fmt.Errorf("task %s was never dispatched here", info.Task)
 	}
+	if req.Envelope == nil || req.Envelope.Base != st.Base {
+		got := ""
+		if req.Envelope != nil {
+			got = req.Envelope.Base
+		}
+		return fmt.Errorf("task %s: envelope base %s does not match dispatched base %s", info.Task, got, st.Base)
+	}
 	parents, err := runGit(ctx, req.Repo, req.Env, "rev-list", "--parents", "-n", "1", u.New)
 	if err != nil {
 		return err

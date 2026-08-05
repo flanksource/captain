@@ -369,7 +369,7 @@ func RunPostReceive(ctx context.Context, repo string, role ReceiverRole, host Ho
 	if role == RoleSidecar {
 		return sidecarPostReceive(ctx, repo, host, updates, envelope)
 	}
-	return mailboxPostReceive(ctx, repo, host, updates, envelope)
+	return mailboxPostReceive(ctx, repo, host, updates)
 }
 
 func sidecarPostReceive(ctx context.Context, repo string, host HookHost, updates []RefUpdate, envelope *Envelope) error {
@@ -432,7 +432,7 @@ func loadDispatchPayloads(ctx context.Context, repo string, updates []RefUpdate,
 	return policy, taskPayload, control.New
 }
 
-func mailboxPostReceive(ctx context.Context, repo string, host HookHost, updates []RefUpdate, envelope *Envelope) error {
+func mailboxPostReceive(ctx context.Context, repo string, host HookHost, updates []RefUpdate) error {
 	resultUpdate, info, ok := singleResultUpdate(updates)
 	if !ok {
 		return nil
@@ -441,13 +441,12 @@ func mailboxPostReceive(ctx context.Context, repo string, host HookHost, updates
 	if err != nil || !found {
 		return fmt.Errorf("task state missing for %s", info.Task)
 	}
-	base := st.Base
-	if envelope != nil {
-		base = envelope.Base // R10.1: the base recorded in the envelope
-	}
 	verdict := TierVerdict{V: ProtocolVersion, Task: info.Task, Attempt: info.Attempt, Tier: "supervisor", Status: StatusAccepted}
 	if host.Runtime.RealRepo != "" {
-		integration, err := Integrate(ctx, host.Runtime.RealRepo, repo, info.Task, info.Attempt, base, resultUpdate.New)
+		// Admission already proved that the envelope agrees with this durable
+		// state. Keep the authoritative dispatch record as the sole source for
+		// the three-way merge base (R10.1).
+		integration, err := Integrate(ctx, host.Runtime.RealRepo, repo, info.Task, info.Attempt, st.Base, resultUpdate.New)
 		if err != nil {
 			return err
 		}

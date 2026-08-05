@@ -40,8 +40,28 @@ func Integrate(ctx context.Context, realRepo, mailbox, task string, attempt int,
 	if err != nil {
 		return nil, err
 	}
+	// Older supported Git releases do not have merge-tree's --merge-base
+	// option. Give the current HEAD tree a synthetic parent at the envelope's
+	// recorded base instead: merge-tree then computes that exact base from the
+	// graph while leaving the user's real history and checkout untouched.
+	headTree, err := runGit(ctx, realRepo, env, "rev-parse", "--verify", head+"^{tree}")
+	if err != nil {
+		return nil, err
+	}
+	cenv := envWith(env,
+		"GIT_AUTHOR_NAME=captain",
+		"GIT_AUTHOR_EMAIL=captain@localhost",
+		"GIT_COMMITTER_NAME=captain",
+		"GIT_COMMITTER_EMAIL=captain@localhost",
+	)
+	mergeHead, err := runGitIn(ctx, realRepo, cenv,
+		strings.NewReader("captain: integration merge input\n"),
+		"commit-tree", headTree, "-p", base)
+	if err != nil {
+		return nil, err
+	}
 	code, out, err := gitExitCode(ctx, realRepo, env,
-		"merge-tree", "--write-tree", "--merge-base="+base, head, result)
+		"merge-tree", "--write-tree", mergeHead, result)
 	if err != nil {
 		return nil, err
 	}
@@ -59,12 +79,6 @@ func Integrate(ctx context.Context, realRepo, mailbox, task string, attempt int,
 		return nil, fmt.Errorf("merge-tree failed (exit %d): %s", code, strings.TrimSpace(out))
 	}
 	tree := strings.TrimSpace(lines[0])
-	cenv := envWith(env,
-		"GIT_AUTHOR_NAME=captain",
-		"GIT_AUTHOR_EMAIL=captain@localhost",
-		"GIT_COMMITTER_NAME=captain",
-		"GIT_COMMITTER_EMAIL=captain@localhost",
-	)
 	merge, err := runGitIn(ctx, realRepo, cenv,
 		strings.NewReader(fmt.Sprintf("captain: integrate task %s\n", task)),
 		"commit-tree", tree, "-p", head, "-p", result)

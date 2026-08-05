@@ -19,6 +19,12 @@
 
 set -u
 
+# The harness installs repository-local hooks in disposable repositories.
+# Ignore host-level hook redirection so a user's core.hooksPath cannot make
+# the probes silently skip those hooks and report false substrate failures.
+export GIT_CONFIG_GLOBAL=/dev/null
+export GIT_CONFIG_NOSYSTEM=1
+
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/gitagent-empirical.XXXXXX")"
 trap 'rm -rf "$ROOT"' EXIT
 

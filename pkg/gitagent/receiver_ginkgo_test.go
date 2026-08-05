@@ -29,6 +29,8 @@ var _ = Describe("receiver repositories", func() {
 		} {
 			Expect(gitT(path, "config", key)).To(Equal(want), key)
 		}
+		Expect(gitT(path, "config", "core.hookspath")).To(Equal(filepath.Join(path, "hooks")),
+			"a pusher's global core.hooksPath must not bypass receiver hooks")
 		Expect(gitT(path, "config", "receive.maxinputsize")).NotTo(Equal("0"), "maxInputSize must be finite")
 	})
 

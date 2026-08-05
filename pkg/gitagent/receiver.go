@@ -73,6 +73,16 @@ func initReceiver(ctx context.Context, path string) error {
 	if _, err := runGit(ctx, path, env, "init", "--quiet", "--bare"); err != nil {
 		return err
 	}
+	// A receiver must always run the shims installed in its own hooks
+	// directory. Without a repository-local override, the pusher's global
+	// core.hooksPath can silently bypass admission, vetting, and relay.
+	hooksPath, err := filepath.Abs(filepath.Join(path, "hooks"))
+	if err != nil {
+		return err
+	}
+	if _, err := runGit(ctx, path, env, "config", "core.hooksPath", hooksPath); err != nil {
+		return err
+	}
 	for _, kv := range receiverConfig(DefaultMaxInputSize) {
 		if _, err := runGit(ctx, path, env, "config", kv[0], kv[1]); err != nil {
 			return err
