@@ -1,6 +1,7 @@
 // The control envelope rides on push options (§4): option 0 is the version
 // tag, the remainder are key=value pairs. Envelope values are never read from
 // commit trailers — trailers are heuristically extracted and forgeable (R4.2).
+
 package gitagent
 
 import (
@@ -46,6 +47,10 @@ func ValidateOID(s string) error {
 		return fmt.Errorf("%q is not a full object id", s)
 	}
 	return nil
+}
+
+func isZeroOID(oid string) bool {
+	return (len(oid) == 40 || len(oid) == 64) && strings.Trim(oid, "0") == ""
 }
 
 // Envelope is the §4 control envelope.

@@ -102,6 +102,7 @@ type GitAgentAddResult struct {
 	HostFingerprint string    `json:"hostFingerprint" pretty:"label=Host key"`
 	DispatchKey     string    `json:"dispatchKey" pretty:"label=Dispatch key"`
 	JoinCommand     string    `json:"joinCommand" pretty:"label=Join command"`
+	DryRun          bool      `json:"dryRun,omitempty" pretty:"label=Dry Run"`
 }
 
 func RunGitAgentAdd(opts GitAgentAddOptions) (any, error) {
@@ -124,7 +125,7 @@ func RunGitAgentAdd(opts GitAgentAddOptions) (any, error) {
 		clicky.Printf("[dry-run] would mint a single-use join token (TTL %s) for agent %q\n", gitagent.JoinTokenTTL, opts.Name)
 		clicky.Printf("[dry-run] would record the pending enrollment under sandbox.backends.%s in %s\n", opts.Backend, configPathForDisplay())
 		clicky.Printf("[dry-run] would print the join command for endpoint %s\n", endpoint)
-		return nil, nil
+		return GitAgentAddResult{Backend: opts.Backend, Agent: opts.Name, DryRun: true}, nil
 	}
 	_, hostFP, err := gitagent.EnsureKeyPair(hostKeyPath)
 	if err != nil {
@@ -142,7 +143,10 @@ func RunGitAgentAdd(opts GitAgentAddOptions) (any, error) {
 	}
 	expires := time.Now().UTC().Add(gitagent.JoinTokenTTL)
 	err = captainconfig.Update(func(cfg *captainconfig.Config) error {
-		backend := ensureGitAgentBackend(cfg, opts.Backend)
+		backend, err := ensureGitAgentBackend(cfg, opts.Backend)
+		if err != nil {
+			return err
+		}
 		pending, _ := backend.Options["pending"].(map[string]any)
 		if pending == nil {
 			pending = map[string]any{}
@@ -235,21 +239,25 @@ type GitAgentRevokeResult struct {
 
 func RunGitAgentRevoke(opts GitAgentRevokeOptions) (any, error) {
 	if opts.DryRun {
+		cfg, _, err := captainconfig.Load()
+		if err != nil {
+			return nil, err
+		}
+		if _, err := enrolledAgent(cfg, opts.Backend, opts.Name); err != nil {
+			return nil, err
+		}
 		clicky.Printf("[dry-run] would remove agent %q from sandbox.backends.%s.agents in %s\n",
 			opts.Name, opts.Backend, configPathForDisplay())
 		return GitAgentRevokeResult{Backend: opts.Backend, Agent: opts.Name, DryRun: true}, nil
 	}
 	var fingerprint string
 	err := captainconfig.Update(func(cfg *captainconfig.Config) error {
-		backend, ok := cfg.Sandbox.Backends[opts.Backend]
-		if !ok {
-			return fmt.Errorf("backend %q has no enrolled agents", opts.Backend)
+		entry, err := enrolledAgent(*cfg, opts.Backend, opts.Name)
+		if err != nil {
+			return err
 		}
+		backend := cfg.Sandbox.Backends[opts.Backend]
 		agents, _ := backend.Options["agents"].(map[string]any)
-		entry, ok := agents[opts.Name].(map[string]any)
-		if !ok {
-			return fmt.Errorf("agent %q is not enrolled in backend %q", opts.Name, opts.Backend)
-		}
 		fingerprint, _ = entry["fingerprint"].(string)
 		delete(agents, opts.Name)
 		if len(agents) == 0 {
@@ -269,6 +277,19 @@ func RunGitAgentRevoke(opts GitAgentRevokeOptions) (any, error) {
 		Fingerprint: fingerprint,
 		Revoked:     true,
 	}, nil
+}
+
+func enrolledAgent(cfg captainconfig.Config, backendName, agentName string) (map[string]any, error) {
+	backend, ok := cfg.Sandbox.Backends[backendName]
+	if !ok {
+		return nil, fmt.Errorf("backend %q has no enrolled agents", backendName)
+	}
+	agents, _ := backend.Options["agents"].(map[string]any)
+	entry, ok := agents[agentName].(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("agent %q is not enrolled in backend %q", agentName, backendName)
+	}
+	return entry, nil
 }
 
 func gitAgentBackendEndpoint(backend string) string {

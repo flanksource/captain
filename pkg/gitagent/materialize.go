@@ -7,7 +7,6 @@ package gitagent
 import (
 	"context"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,7 +46,7 @@ func Materialize(ctx context.Context, repoDir string, env []string, commitOID, d
 		"-c", "core.bare=false", "--work-tree="+dstAbs, "checkout-index", "-a", "-f"); err != nil {
 		return 0, err
 	}
-	count, err := countMaterialized(dstAbs)
+	count, err := countMaterialized(dstAbs, names)
 	if err != nil {
 		return 0, err
 	}
@@ -99,16 +98,15 @@ func AssertMaterialized(got, expected int) error {
 	return nil
 }
 
-func countMaterialized(dir string) (int, error) {
-	count := 0
-	err := filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
+func countMaterialized(dir string, expected []string) (int, error) {
+	for _, name := range expected {
+		info, err := os.Lstat(filepath.Join(dir, filepath.FromSlash(name)))
 		if err != nil {
-			return err
+			return 0, fmt.Errorf("materialized path %q: %w", name, err)
 		}
-		if !d.IsDir() {
-			count++
+		if info.IsDir() {
+			return 0, fmt.Errorf("materialized path %q is a directory, not a tree entry", name)
 		}
-		return nil
-	})
-	return count, err
+	}
+	return len(expected), nil
 }

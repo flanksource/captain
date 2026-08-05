@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/ai/middleware"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/captainconfig"
 	"github.com/flanksource/captain/pkg/gitagent"
@@ -38,6 +41,15 @@ func RunGitAgentHook(ctx context.Context, opts GitAgentHookOptions) (any, error)
 		fmt.Fprintf(os.Stderr, "captain: %v\n", err)
 		return nil, err
 	}
+	var judge ai.Provider
+	if opts.Hook == "pre-receive" {
+		judge, err = hookJudgeProvider(runtime)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "captain: %v\n", err)
+			return nil, err
+		}
+	}
+	defer closeProvider(judge)
 	exe, err := os.Executable()
 	if err != nil {
 		return nil, err
@@ -45,6 +57,7 @@ func RunGitAgentHook(ctx context.Context, opts GitAgentHookOptions) (any, error)
 	configPath := strings.TrimSpace(opts.Config)
 	host := gitagent.HookHost{
 		Runtime: runtime,
+		Judge:   judge,
 		Wrap:    wrap,
 		// With no agentCommand configured, the sidecar still launches a real
 		// agent: this binary, working the task in the prepared worktree. The
@@ -63,6 +76,32 @@ func RunGitAgentHook(ctx context.Context, opts GitAgentHookOptions) (any, error)
 	default:
 		return nil, fmt.Errorf("unknown hook %q", opts.Hook)
 	}
+}
+
+// hookJudgeProvider builds the local provider used by receiver-side prompt
+// checks. It pins sandboxing to none because the hook is already executing at
+// the remote receiver; selecting git-agent here would recursively dispatch.
+func hookJudgeProvider(runtime gitagent.HookRuntime) (ai.Provider, error) {
+	if !runtime.RequiresJudge() {
+		return nil, nil
+	}
+	cfg, err := (AIProviderOptions{Sandbox: "none"}).ToConfig()
+	if err != nil {
+		return nil, fmt.Errorf("configure hook judge: %w", err)
+	}
+	if strings.TrimSpace(cfg.Model.Name) == "" {
+		return nil, fmt.Errorf("verify prompts declared but no model is configured for the hook judge")
+	}
+	provider, err := ai.NewProvider(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("create hook judge: %w", err)
+	}
+	wrapped, err := middleware.Wrap(provider, middleware.WithLogging(), middleware.WithSchemaValidation(cfg))
+	if err != nil {
+		closeProvider(provider)
+		return nil, fmt.Errorf("wrap hook judge: %w", err)
+	}
+	return wrapped, nil
 }
 
 // hookRuntimeFromConfig assembles the receiver runtime from the backend's
@@ -104,8 +143,8 @@ func hookRuntimeFromConfig(backendName string) (gitagent.HookRuntime, error) {
 		rt.Relay = gitagent.RelayTarget{
 			URL:             url,
 			HostFingerprint: hostFP,
-			KeyPath:         filepath.Join(keysDir, "agent_ed25519"),
-			SSHCommand:      exe + " sandbox git-agent ssh",
+			KeyPath:         filepath.Join(keysDir, agentKeyName),
+			SSHCommand:      gitagent.SSHTransportCommand(exe),
 		}
 	}
 	return rt, nil
@@ -131,7 +170,9 @@ func decodeWorkflow(v any) (*api.Workflow, error) {
 		return nil, err
 	}
 	var wf api.Workflow
-	if err := json.Unmarshal(data, &wf); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&wf); err != nil {
 		return nil, err
 	}
 	if err := wf.Validate(); err != nil {

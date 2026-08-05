@@ -244,6 +244,9 @@ var pathOverride string
 // processes that cannot rely on $HOME: a git receive hook runs as a child of
 // whoever pushed, so its ambient home is the pusher's, not the one the
 // receiver was configured under.
+//
+// Call SetPath during process startup, before concurrent calls to Path. The
+// override is process-global and intentionally unsynchronized.
 func SetPath(p string) { pathOverride = p }
 
 // SetPathForTesting redirects Path() to the given absolute file path. Tests

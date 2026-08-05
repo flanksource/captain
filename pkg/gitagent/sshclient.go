@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"time"
 
 	gossh "golang.org/x/crypto/ssh"
 )
@@ -67,6 +68,7 @@ func runSSHClient(args []string, stdin io.Reader, stdout, stderr io.Writer) (int
 			}
 			return nil
 		},
+		Timeout: 30 * time.Second,
 	}
 	client, err := gossh.Dial("tcp", net.JoinHostPort(host, port), config)
 	if err != nil {
@@ -137,7 +139,7 @@ func parseSSHArgs(args []string) (host, port, command string, err error) {
 		i++ // a standalone switch such as -4, -6, -q, -T
 	}
 	if i >= len(args) {
-		return "", "", "", fmt.Errorf("usage: [options] [user@]host command...")
+		return "", "", "", fmt.Errorf("usage: [options] [user@]host command")
 	}
 	host = args[i]
 	command = strings.Join(args[i+1:], " ")

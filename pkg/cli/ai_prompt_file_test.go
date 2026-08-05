@@ -196,6 +196,31 @@ func TestOverlayCLI_SandboxNoneClearsInherited(t *testing.T) {
 	}
 }
 
+func TestOverlayCLI_SandboxFlagPreservesFrontmatterAgentAndPolicy(t *testing.T) {
+	isolateSavedAI(t)
+	base := baseFileReq()
+	base.Sandbox = &api.SandboxRef{
+		Backend: "old-pool",
+		Agent:   "worker-01",
+		Policy:  &api.SandboxPolicy{Paths: []string{"pkg/**"}, MaxAttempts: 3},
+	}
+	opts := AIPromptOptions{AIRuntimeOptions: AIRuntimeOptions{AIProviderOptions: AIProviderOptions{Sandbox: "git-agent"}}}
+
+	req, cfg, err := overlayCLI(base, ai.Config{}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.Sandbox == nil || req.Sandbox.Backend != "git-agent" || req.Sandbox.Agent != "worker-01" {
+		t.Fatalf("request sandbox = %#v", req.Sandbox)
+	}
+	if req.Sandbox.Policy == nil || req.Sandbox.Policy.MaxAttempts != 3 {
+		t.Fatalf("request policy = %#v", req.Sandbox.Policy)
+	}
+	if cfg.SandboxSelection == nil || cfg.SandboxSelection.Agent != "worker-01" || cfg.SandboxSelection.Policy != req.Sandbox.Policy {
+		t.Fatalf("config sandbox = %#v", cfg.SandboxSelection)
+	}
+}
+
 // --api-url is what points a run at a `captain ai mock` endpoint, so it has to
 // survive the overlay; a prompt file may pin its own endpoint, and the flag wins.
 func TestOverlayCLI_APIURLFlagBeatsFrontmatter(t *testing.T) {

@@ -3,6 +3,7 @@
 // branch and upstream so a bare `git commit` + `git push` is sufficient
 // (R3.1/H17), task.json lands outside the worktree, and the agent process is
 // launched fully detached so the dispatch push returns promptly (R6.3/H12).
+
 package gitagent
 
 import (

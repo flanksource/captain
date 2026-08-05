@@ -1,6 +1,7 @@
 // Receiver-side task state, kept under <repo>/captain/ — outside the object
 // store, because a rejected push must leave zero new objects and refs while
 // the verdict still has to survive (R6.9).
+
 package gitagent
 
 import (
@@ -40,6 +41,10 @@ func LoadTaskState(repo, task string) (*TaskState, bool, error) {
 	if err := ValidateTaskID(task); err != nil {
 		return nil, false, err
 	}
+	return loadTaskStateUnlocked(repo, task)
+}
+
+func loadTaskStateUnlocked(repo, task string) (*TaskState, bool, error) {
 	data, err := os.ReadFile(filepath.Join(taskStateDir(repo, task), "state.json"))
 	if os.IsNotExist(err) {
 		return nil, false, nil
@@ -63,10 +68,49 @@ func SaveTaskState(repo string, st *TaskState) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
+	return withFileLock(filepath.Join(dir, "state.lock"), 0o600, func() error {
+		return saveTaskStateUnlocked(repo, st)
+	})
+}
+
+// UpdateTaskState holds the task lock across load, mutation, and save. The
+// callback returns false when it inspected state but intentionally made no
+// durable change.
+func UpdateTaskState(repo, task string, update func(*TaskState) (bool, error)) (*TaskState, error) {
+	if err := ValidateTaskID(task); err != nil {
+		return nil, err
+	}
+	dir := taskStateDir(repo, task)
+	if _, err := os.Stat(dir); err != nil {
+		return nil, err
+	}
+	var result *TaskState
+	err := withFileLock(filepath.Join(dir, "state.lock"), 0o600, func() error {
+		st, ok, err := loadTaskStateUnlocked(repo, task)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("task %s state is missing", task)
+		}
+		save, err := update(st)
+		if err != nil {
+			return err
+		}
+		result = st
+		if !save {
+			return nil
+		}
+		return saveTaskStateUnlocked(repo, st)
+	})
+	return result, err
+}
+
+func saveTaskStateUnlocked(repo string, st *TaskState) error {
 	st.UpdatedAt = time.Now().UTC()
 	data, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
 		return err
 	}
-	return writeFileAtomic(filepath.Join(dir, "state.json"), append(data, '\n'), 0o644)
+	return writeFileAtomic(filepath.Join(taskStateDir(repo, st.Task), "state.json"), append(data, '\n'), 0o644)
 }

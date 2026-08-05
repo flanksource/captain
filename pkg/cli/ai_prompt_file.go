@@ -187,9 +187,16 @@ func overlayCLI(base ai.Request, baseCfg ai.Config, o AIPromptOptions) (ai.Reque
 	}
 
 	// Record the winning sandbox on the request when the flag overrode it, so the
-	// serialized spec carries the choice the run was actually made with.
+	// serialized spec carries the choice the run was actually made with. The
+	// selector only replaces the backend; an independently declared agent and
+	// policy remain part of the request.
 	if selector := o.SandboxSelector(); selector != "" {
-		req.Sandbox = &api.SandboxRef{Backend: selector}
+		ref := api.SandboxRef{Backend: selector}
+		if base.Sandbox != nil {
+			ref.Agent = base.Sandbox.Agent
+			ref.Policy = base.Sandbox.Policy
+		}
+		req.Sandbox = &ref
 	}
 
 	// Config mirrors the resolved model + budget; runtime-only knobs from CLI+saved.

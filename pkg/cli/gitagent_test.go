@@ -71,7 +71,10 @@ func TestGitAgentExpiredTokenRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = captainconfig.Update(func(cfg *captainconfig.Config) error {
-		backend := ensureGitAgentBackend(cfg, "git-agent")
+		backend, err := ensureGitAgentBackend(cfg, "git-agent")
+		if err != nil {
+			return err
+		}
 		backend.Options["pending"] = map[string]any{
 			hash: map[string]any{
 				"agent":   "worker-1",
@@ -115,6 +118,9 @@ func TestGitAgentEnrollListRevoke(t *testing.T) {
 	if len(entries) != 1 || entries[0].Name != "worker-1" || entries[0].Status != "enrolled" {
 		t.Fatalf("entries = %+v", entries)
 	}
+	if _, err := RunGitAgentRevoke(GitAgentRevokeOptions{Name: "worker-1", Backend: "git-agent", DryRun: true}); err != nil {
+		t.Fatalf("dry-run existing agent: %v", err)
+	}
 
 	if _, err := RunGitAgentRevoke(GitAgentRevokeOptions{Name: "worker-1", Backend: "git-agent"}); err != nil {
 		t.Fatal(err)
@@ -126,12 +132,19 @@ func TestGitAgentEnrollListRevoke(t *testing.T) {
 	if _, err := RunGitAgentRevoke(GitAgentRevokeOptions{Name: "worker-1", Backend: "git-agent"}); err == nil {
 		t.Fatal("revoking an unknown agent must error")
 	}
+	if _, err := RunGitAgentRevoke(GitAgentRevokeOptions{Name: "worker-1", Backend: "git-agent", DryRun: true}); err == nil {
+		t.Fatal("dry-run revoking an unknown agent must error")
+	}
 }
 
 func TestGitAgentAddDryRunTouchesNothing(t *testing.T) {
 	path := isolatedConfig(t)
-	if _, err := RunGitAgentAdd(GitAgentAddOptions{Name: "worker-1", Backend: "git-agent", DryRun: true}); err != nil {
+	result, err := RunGitAgentAdd(GitAgentAddOptions{Name: "worker-1", Backend: "git-agent", DryRun: true})
+	if err != nil {
 		t.Fatal(err)
+	}
+	if add, ok := result.(GitAgentAddResult); !ok || !add.DryRun {
+		t.Fatalf("dry-run result = %#v", result)
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("dry-run must not write the config, stat err = %v", err)
@@ -139,5 +152,22 @@ func TestGitAgentAddDryRunTouchesNothing(t *testing.T) {
 	keysDir := filepath.Join(filepath.Dir(path), ".captain", "sandbox")
 	if _, err := os.Stat(keysDir); !os.IsNotExist(err) {
 		t.Fatalf("dry-run must not create key material, stat err = %v", err)
+	}
+}
+
+func TestEnsureGitAgentBackendRejectsDifferentKind(t *testing.T) {
+	cfg := captainconfig.Config{}
+	cfg.Sandbox.Backends = map[string]captainconfig.SandboxBackend{
+		"shared": {Kind: "srt"},
+	}
+	if _, err := ensureGitAgentBackend(&cfg, "shared"); err == nil || !strings.Contains(err.Error(), "not git-agent") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestDecodeWorkflowRejectsUnknownFields(t *testing.T) {
+	_, err := decodeWorkflow(map[string]any{"verify": map[string]any{"promtps": []string{"judge.prompt"}}})
+	if err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("error = %v", err)
 	}
 }

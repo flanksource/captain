@@ -444,6 +444,9 @@ func TestFullCycleWithAManualAgent(t *testing.T) {
 				worktree, taskID = candidate, e.Name()
 			}
 		}
+		if worktree != "" {
+			break
+		}
 		select {
 		case err := <-dispatchDone:
 			t.Fatalf("dispatch exited before creating a workspace (%v):\n%s", err, dispatchOut.String())

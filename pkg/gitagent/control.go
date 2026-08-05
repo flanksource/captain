@@ -29,7 +29,7 @@ func BuildControlCommit(ctx context.Context, repoDir string, env []string, paylo
 	}
 	names := make([]string, 0, len(payloads))
 	for name := range payloads {
-		if name == "" || strings.ContainsAny(name, "/\x00") {
+		if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\x00") {
 			return "", fmt.Errorf("control payload name %q must be a bare file name", name)
 		}
 		names = append(names, name)

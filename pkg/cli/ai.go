@@ -346,6 +346,7 @@ func executePromptRequest(parent context.Context, req ai.Request, cfg ai.Config,
 		return nil, err
 	}
 	defer cleanup()
+	defer closeProvider(p)
 
 	if streamer, ok := p.(ai.StreamingProvider); ok && !noStream && !req.Prompt.HasSchema() {
 		return runStreaming(ctx, streamer, req)
@@ -462,7 +463,12 @@ func buildProvider(ctx context.Context, req *ai.Request, cfg ai.Config) (ai.Prov
 	if remote, err := remoteExecProviderFor(req, cfg); err != nil {
 		return nil, cleanup, err
 	} else if remote != nil {
-		return remote, cleanup, nil
+		wrapped, err := middleware.Wrap(remote, middleware.WithLogging(), middleware.WithSchemaValidation(cfg))
+		if err != nil {
+			closeProvider(remote)
+			return nil, cleanup, err
+		}
+		return bufferedOnlyProvider{Provider: wrapped}, cleanup, nil
 	}
 	prepared, err := setup.Apply(ctx, req, "")
 	if err != nil {
