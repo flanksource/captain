@@ -2,6 +2,7 @@
 // sidecar bare repo. Both carry the mandated config (R2.2); the mailbox
 // additionally shares the real repository's object store via alternates so
 // protocol refs never pollute the user's working repo (R2.1/H8).
+
 package gitagent
 
 import (
@@ -10,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+
+	"golang.org/x/sys/unix"
 )
 
 // ReceiverRole distinguishes the two admission tiers.
@@ -107,18 +110,50 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 		return err
 	}
 	name := tmp.Name()
+	committed := false
+	defer func() {
+		if !committed {
+			_ = os.Remove(name)
+		}
+	}()
 	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		os.Remove(name)
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(mode); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
 		return err
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(name)
 		return err
 	}
-	if err := os.Chmod(name, mode); err != nil {
-		os.Remove(name)
+	if err := os.Rename(name, path); err != nil {
 		return err
 	}
-	return os.Rename(name, path)
+	committed = true
+	dir, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	return dir.Sync()
+}
+
+// withFileLock serializes a durable state transition across hook and CLI
+// processes. The caller creates the parent directory before entering.
+func withFileLock(path string, mode os.FileMode, fn func() error) error {
+	lock, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, mode)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	if err := unix.Flock(int(lock.Fd()), unix.LOCK_EX); err != nil {
+		return err
+	}
+	defer func() { _ = unix.Flock(int(lock.Fd()), unix.LOCK_UN) }()
+	return fn()
 }

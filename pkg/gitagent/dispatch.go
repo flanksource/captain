@@ -25,6 +25,9 @@ type TaskPayload struct {
 	// the coding agent that was actually selected rather than re-resolving the
 	// model name against its own defaults.
 	Backend string `json:"backend,omitempty"`
+	// Timeout is the supervisor's effective deadline. The relocated runner
+	// must not fall back to the shorter local model-call default.
+	Timeout string `json:"timeout,omitempty"`
 }
 
 // LoadTaskPayload reads a materialized task.json.
@@ -156,10 +159,9 @@ func recordDispatch(ctx context.Context, req DispatchRequest, task string, snaps
 	if err != nil {
 		return err
 	}
-	if _, err := runGit(ctx, req.MailboxPath, env, "update-ref", dispatchRef, snapshot.Commit); err != nil {
-		return err
-	}
-	if _, err := runGit(ctx, req.MailboxPath, env, "update-ref", controlRef, control); err != nil {
+	updates := fmt.Sprintf("start\ncreate %s %s\ncreate %s %s\nprepare\ncommit\n",
+		dispatchRef, snapshot.Commit, controlRef, control)
+	if _, err := runGitIn(ctx, req.MailboxPath, env, strings.NewReader(updates), "update-ref", "--stdin"); err != nil {
 		return err
 	}
 	return SaveTaskState(req.MailboxPath, &TaskState{
@@ -222,7 +224,7 @@ func transportPairs(sshCommand, keyPath, hostFingerprint string) ([]string, erro
 		if err != nil {
 			return nil, err
 		}
-		sshCommand = exe + " sandbox git-agent ssh"
+		sshCommand = SSHTransportCommand(exe)
 	}
 	return []string{
 		"GIT_SSH_COMMAND=" + sshCommand,
@@ -230,6 +232,12 @@ func transportPairs(sshCommand, keyPath, hostFingerprint string) ([]string, erro
 		EnvSSHKey + "=" + keyPath,
 		EnvSSHHostFingerprint + "=" + hostFingerprint,
 	}, nil
+}
+
+// SSHTransportCommand renders this binary's SSH transport as a shell-safe
+// GIT_SSH_COMMAND value. Git evaluates the value through a shell.
+func SSHTransportCommand(executable string) string {
+	return "'" + strings.ReplaceAll(executable, "'", "'\"'\"'") + "' sandbox git-agent ssh"
 }
 
 // AwaitOutcome polls the mailbox for the task's final verdict: the first

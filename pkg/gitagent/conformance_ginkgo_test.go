@@ -58,9 +58,10 @@ func writeRuntime(dir string, rt gitagent.HookRuntime) string {
 // testSSHCommand is the GIT_SSH_COMMAND for pushes in the conformance world:
 // the test binary with its ssh persona armed and the hook persona disarmed.
 func testSSHCommand() string {
+	GinkgoHelper()
 	exe, err := os.Executable()
 	Expect(err).NotTo(HaveOccurred())
-	return "env CAPTAIN_TEST_SSH_CLIENT=1 CAPTAIN_TEST_HOOK= " + exe
+	return fmt.Sprintf("env CAPTAIN_TEST_SSH_CLIENT=1 CAPTAIN_TEST_HOOK= %q", exe)
 }
 
 // newConformanceWorld wires the full topology. sidecarWF and supervisorWF are

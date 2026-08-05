@@ -33,6 +33,16 @@ type HookRuntime struct {
 	Relay        RelayTarget `json:"relay,omitempty"`    // sidecar: the supervisor mailbox
 }
 
+// RequiresJudge reports whether either receiver tier declares prompt checks.
+func (r HookRuntime) RequiresJudge() bool {
+	for _, workflow := range []*api.Workflow{r.SidecarWorkflow, r.SupervisorWorkflow} {
+		if workflow != nil && workflow.Verify != nil && len(workflow.Verify.Prompts) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // HookHost is a runtime plus the process-local collaborators a hook set needs.
 type HookHost struct {
 	Runtime HookRuntime
@@ -123,6 +133,10 @@ func HookMain(args []string) int {
 		fmt.Fprintf(os.Stderr, "captain: %v\n", err)
 		return 1
 	}
+	if runtime.RequiresJudge() {
+		fmt.Fprintln(os.Stderr, "captain: verify prompts declared but the standalone hook shim has no provider; use `captain sandbox git-agent hook`")
+		return 1
+	}
 	wrap, err := ResolveHookWrap(runtime.HookSandbox)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "captain: %v\n", err)
@@ -186,14 +200,25 @@ func sidecarPreReceive(ctx context.Context, repo string, host HookHost, updates 
 	if !ok {
 		return nil
 	}
-	st, found, err := LoadTaskState(repo, task)
-	if err != nil || !found {
+	var attempt int
+	st, err := UpdateTaskState(repo, task, func(current *TaskState) (bool, error) {
+		attempt = current.Attempts + 1
+		if current.Policy.MaxAttempts > 0 && attempt > current.Policy.MaxAttempts {
+			return false, nil
+		}
+		current.Attempts = attempt
+		return true, nil
+	})
+	if err != nil {
+		fmt.Fprintf(sideband, "captain: %v\n", err)
+		return err
+	}
+	if st == nil {
 		fmt.Fprintf(sideband, "captain: task state missing for %s\n", task)
 		return fmt.Errorf("task state missing for %s", task)
 	}
 	// An attempt is consumed per submit, rejected or not (§6.3): the retry
 	// after a rejection is attempt n+1.
-	attempt := st.Attempts + 1
 	if st.Policy.MaxAttempts > 0 && attempt > st.Policy.MaxAttempts {
 		verdict := TierVerdict{
 			V: ProtocolVersion, Task: task, Attempt: attempt, Tier: string(RoleSidecar), Status: StatusRejected,
@@ -201,11 +226,6 @@ func sidecarPreReceive(ctx context.Context, repo string, host HookHost, updates 
 				Message: fmt.Sprintf("attempt %d exceeds the task's maxAttempts %d", attempt, st.Policy.MaxAttempts)}},
 		}
 		return rejectWithVerdict(repo, verdict, sideband)
-	}
-	st.Attempts = attempt
-	if err := SaveTaskState(repo, st); err != nil {
-		fmt.Fprintf(sideband, "captain: %v\n", err)
-		return err
 	}
 	verdict := vetTree(ctx, repo, vetRequest{
 		host: host, workflow: host.Runtime.SidecarWorkflow, tier: string(RoleSidecar),
@@ -399,7 +419,7 @@ func loadDispatchPayloads(ctx context.Context, repo string, updates []RefUpdate,
 		return policy, taskPayload, ""
 	}
 	control := refUpdateFor(updates, controlRef)
-	if control.New == "" || control.New == zeroOID {
+	if control.New == "" || isZeroOID(control.New) {
 		return policy, taskPayload, ""
 	}
 	env := os.Environ()
@@ -444,8 +464,12 @@ func mailboxPostReceive(ctx context.Context, repo string, host HookHost, updates
 			})
 		}
 	}
-	st.Attempts = info.Attempt
-	if err := SaveTaskState(repo, st); err != nil {
+	if _, err := UpdateTaskState(repo, info.Task, func(current *TaskState) (bool, error) {
+		if info.Attempt > current.Attempts {
+			current.Attempts = info.Attempt
+		}
+		return true, nil
+	}); err != nil {
 		return err
 	}
 	if err := SaveVerdict(repo, verdict); err != nil {

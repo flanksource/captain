@@ -55,6 +55,15 @@ var _ = Describe("materialization", func() {
 		Expect(os.ReadFile(filepath.Join(dst, "src", "dirty.go"))).To(Equal([]byte("package main // dirty\n")))
 	})
 
+	It("ignores unrelated files already present in the destination", func() {
+		f := newAdmitFixture(ctx)
+		dst := GinkgoT().TempDir()
+		Expect(os.WriteFile(filepath.Join(dst, "stale.txt"), []byte("stale"), 0o644)).To(Succeed())
+		count, err := gitagent.Materialize(ctx, f.super, os.Environ(), f.snap.Commit, dst)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(count).To(Equal(2))
+	})
+
 	It("detects an empty or short materialization instead of passing (H18)", func() {
 		Expect(gitagent.AssertMaterialized(0, 3)).To(MatchError(ContainSubstring("H18")))
 		Expect(gitagent.AssertMaterialized(2, 3)).To(MatchError(ContainSubstring("H18")))

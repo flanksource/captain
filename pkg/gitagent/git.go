@@ -78,7 +78,13 @@ func gitExitCodeStderr(ctx context.Context, dir string, env []string, stderr io.
 	}
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
-		return exitErr.ExitCode(), stdout.String(), nil
+		if code := exitErr.ExitCode(); code >= 0 {
+			return code, stdout.String(), nil
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return -1, stdout.String(), ctxErr
+		}
+		return -1, stdout.String(), fmt.Errorf("git %s terminated by signal: %w", strings.Join(args, " "), err)
 	}
 	return -1, "", fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
 }

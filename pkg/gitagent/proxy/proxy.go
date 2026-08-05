@@ -1,12 +1,15 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"path"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -38,6 +41,8 @@ type Proxy struct {
 	// the TLS layer validates the certificate against the granted host name —
 	// never the sandbox-controlled Host header or SNI (R9.1).
 	Dialer *net.Dialer
+	once   sync.Once
+	rt     *http.Transport
 }
 
 func (p *Proxy) audit(d Decision) {
@@ -62,13 +67,26 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !r.URL.IsAbs() {
+		p.audit(Decision{Method: r.Method, Destination: r.Host, Verdict: "rejected", Reason: "not an absolute-form proxy request"})
 		http.Error(w, "captain-proxy: absolute-form proxy requests only", http.StatusBadRequest)
 		return
 	}
-	grant, ok := p.grantFor(r.URL.Hostname(), r.URL.Port(), r.URL.Scheme)
-	if !ok {
+	canonicalPath, canonical := canonicalRequestPath(r.URL.Path)
+	if !canonical {
+		p.audit(Decision{Method: r.Method, Destination: r.URL.Host, Verdict: "rejected", Reason: "request path is not canonical (R9.6)"})
+		http.Error(w, "captain-proxy: request path is not canonical", http.StatusForbidden)
+		return
+	}
+	grants := p.grantsFor(r.URL.Hostname(), r.URL.Port(), r.URL.Scheme)
+	if len(grants) == 0 {
 		p.audit(Decision{Method: r.Method, Destination: r.URL.Host, Verdict: "rejected", Reason: "destination not granted (deny by default)"})
 		http.Error(w, "captain-proxy: destination not granted", http.StatusForbidden)
+		return
+	}
+	grant, ok := scopedGrantFor(grants, r, canonicalPath)
+	if !ok {
+		p.audit(Decision{Method: r.Method, Destination: r.URL.Host, Verdict: "rejected", Reason: "method or path outside the grant's scope (R9.6)"})
+		http.Error(w, "captain-proxy: method or path outside the grant's scope", http.StatusForbidden)
 		return
 	}
 	if reason := p.findMisplacedPlaceholder(r, grant); reason != "" {
@@ -76,11 +94,6 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// is an exfiltration attempt and silently continuing hides it (R9.2).
 		p.audit(Decision{Method: r.Method, Destination: r.URL.Host, Verdict: "rejected", Reason: reason})
 		http.Error(w, "captain-proxy: "+reason, http.StatusForbidden)
-		return
-	}
-	if !grant.AllowsMethod(r.Method) || !grant.AllowsPath(r.URL.Path) {
-		p.audit(Decision{Method: r.Method, Destination: r.URL.Host, Verdict: "rejected", Reason: "method or path outside the grant's scope (R9.6)"})
-		http.Error(w, "captain-proxy: method or path outside the grant's scope", http.StatusForbidden)
 		return
 	}
 	substituted, err := p.substitute(r, grant)
@@ -94,8 +107,9 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p.forward(w, r, grant, substituted)
 }
 
-// grantFor matches a destination against the grant table.
-func (p *Proxy) grantFor(host, port, scheme string) (Grant, bool) {
+// grantsFor returns every grant for a destination. Scope selection happens
+// separately so one destination can carry independent capabilities.
+func (p *Proxy) grantsFor(host, port, scheme string) []Grant {
 	if port == "" {
 		if scheme == "https" {
 			port = "443"
@@ -103,12 +117,44 @@ func (p *Proxy) grantFor(host, port, scheme string) (Grant, bool) {
 			port = "80"
 		}
 	}
+	var matches []Grant
 	for _, g := range p.Grants {
 		if g.host() == net.JoinHostPort(host, port) && g.scheme() == scheme {
-			return g, true
+			matches = append(matches, g)
 		}
 	}
+	return matches
+}
+
+func scopedGrantFor(grants []Grant, r *http.Request, requestPath string) (Grant, bool) {
+	var scoped []Grant
+	for _, grant := range grants {
+		if grant.AllowsMethod(r.Method) && grant.AllowsPath(requestPath) {
+			scoped = append(scoped, grant)
+		}
+	}
+	for _, grant := range scoped {
+		for _, header := range grant.Headers {
+			if r.Header.Get(header.Name) == grant.Placeholder(header.Name) {
+				return grant, true
+			}
+		}
+	}
+	if len(scoped) > 0 {
+		return scoped[0], true
+	}
 	return Grant{}, false
+}
+
+func canonicalRequestPath(requestPath string) (string, bool) {
+	if requestPath == "" {
+		requestPath = "/"
+	}
+	cleaned := path.Clean(requestPath)
+	if strings.HasSuffix(requestPath, "/") && cleaned != "/" {
+		cleaned += "/"
+	}
+	return cleaned, cleaned == requestPath
 }
 
 // findMisplacedPlaceholder scans headers, URL and a bounded body prefix for
@@ -130,12 +176,12 @@ func (p *Proxy) findMisplacedPlaceholder(r *http.Request, grant Grant) string {
 		}
 	}
 	if r.Body != nil {
-		prefix := make([]byte, maxScannedBody)
-		n, _ := io.ReadFull(r.Body, prefix)
-		body := prefix[:n]
+		var scanned bytes.Buffer
+		_, _ = scanned.ReadFrom(io.LimitReader(r.Body, maxScannedBody))
+		body := scanned.Bytes()
 		rest := r.Body
-		r.Body = readCloser{io.MultiReader(strings.NewReader(string(body)), rest), rest}
-		if strings.Contains(string(body), PlaceholderPrefix) {
+		r.Body = readCloser{io.MultiReader(bytes.NewReader(body), rest), rest}
+		if bytes.Contains(body, []byte(PlaceholderPrefix)) {
 			return "credential placeholder in the request body is an exfiltration attempt (R9.2)"
 		}
 	}
@@ -164,33 +210,12 @@ func (p *Proxy) substitute(r *http.Request, grant Grant) ([]string, error) {
 // forward relays the request upstream, resolving DNS itself and letting TLS
 // validate against the granted host name (R9.1).
 func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, grant Grant, substituted []string) {
-	dialer := p.Dialer
-	if dialer == nil {
-		dialer = &net.Dialer{Timeout: 30 * time.Second}
-	}
-	transport := &http.Transport{
-		Proxy: nil, // never chain through environment proxies
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			// addr is the granted host:port (the URL was matched against the
-			// grant). Resolve it ourselves rather than trusting anything the
-			// sandbox controls as identity.
-			host, port, err := net.SplitHostPort(addr)
-			if err != nil {
-				return nil, err
-			}
-			ips, err := net.DefaultResolver.LookupHost(ctx, host)
-			if err != nil || len(ips) == 0 {
-				return nil, fmt.Errorf("resolving %s: %w", host, err)
-			}
-			return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0], port))
-		},
-	}
-	defer transport.CloseIdleConnections()
+	transport := p.transport()
 
 	out := r.Clone(r.Context())
 	out.RequestURI = ""
 	out.URL.Scheme = grant.scheme()
-	out.URL.Host = strings.TrimSuffix(strings.TrimSuffix(grant.host(), ":443"), ":80")
+	out.URL.Host = grant.rawHost()
 	out.Host = out.URL.Host
 
 	resp, err := transport.RoundTrip(out)
@@ -213,6 +238,39 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, grant Grant, sub
 	}
 	w.WriteHeader(resp.StatusCode)
 	_, _ = io.Copy(w, resp.Body)
+}
+
+func (p *Proxy) transport() *http.Transport {
+	p.once.Do(func() {
+		dialer := p.Dialer
+		if dialer == nil {
+			dialer = &net.Dialer{Timeout: 30 * time.Second}
+		}
+		p.rt = &http.Transport{
+			Proxy:                 nil, // never chain through environment proxies
+			TLSHandshakeTimeout:   10 * time.Second,
+			ResponseHeaderTimeout: 60 * time.Second,
+			IdleConnTimeout:       90 * time.Second,
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				// addr is the granted host:port (the URL was matched against the
+				// grant). Resolve it ourselves rather than trusting anything the
+				// sandbox controls as identity.
+				host, port, err := net.SplitHostPort(addr)
+				if err != nil {
+					return nil, err
+				}
+				ips, err := net.DefaultResolver.LookupHost(ctx, host)
+				if err != nil {
+					return nil, fmt.Errorf("resolving %s: %w", host, err)
+				}
+				if len(ips) == 0 {
+					return nil, fmt.Errorf("resolving %s: no addresses", host)
+				}
+				return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0], port))
+			},
+		}
+	})
+	return p.rt
 }
 
 type readCloser struct {

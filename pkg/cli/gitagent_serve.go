@@ -126,6 +126,15 @@ func joinSupervisor(ctx context.Context, opts GitAgentServeOptions, keysDir, roo
 	if err != nil {
 		return fmt.Errorf("--listen %q must be [host]:port: %w", opts.Listen, err)
 	}
+	// Verify the local half can be persisted before consuming the supervisor's
+	// single-use token. The exchange cannot be transactional across hosts, but
+	// this catches path, permission, and backend-kind failures up front.
+	if err := captainconfig.Update(func(cfg *captainconfig.Config) error {
+		_, err := ensureGitAgentBackend(cfg, opts.Backend)
+		return err
+	}); err != nil {
+		return fmt.Errorf("prepare local enrollment config: %w", err)
+	}
 	resp, err := gitagent.Enroll(ctx, opts.Supervisor, opts.Join, opts.HostFingerprint, signer, gitagent.EnrollRequest{
 		AdvertiseURL:    advertiseURL(opts.Advertise),
 		ListenPort:      port,
@@ -139,11 +148,14 @@ func joinSupervisor(ctx context.Context, opts GitAgentServeOptions, keysDir, roo
 		return err
 	}
 	err = captainconfig.Update(func(cfg *captainconfig.Config) error {
-		backend := ensureGitAgentBackend(cfg, opts.Backend)
+		backend, err := ensureGitAgentBackend(cfg, opts.Backend)
+		if err != nil {
+			return err
+		}
 		// Where the relay pushes, and the host key to pin when it does.
 		backend.Options["supervisor"] = map[string]any{
 			"url":             mailboxURL,
-			"hostFingerprint": opts.HostFingerprint,
+			"hostFingerprint": strings.TrimSpace(opts.HostFingerprint),
 		}
 		// Authorize the supervisor's dispatch key so its push is accepted
 		// here — the direction a one-way enrollment leaves broken.
@@ -157,7 +169,7 @@ func joinSupervisor(ctx context.Context, opts GitAgentServeOptions, keysDir, roo
 		return nil
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("supervisor enrolled agent %q, but the local relay config could not be saved; mint a new join token and retry after fixing the config: %w", resp.Agent, err)
 	}
 	clicky.Printf("enrolled as %s\n", resp.Agent)
 	clicky.Printf("  this agent's key:   %s\n", fp)
@@ -243,7 +255,10 @@ func ensureServedRepos(ctx context.Context, root string, role gitagent.ReceiverR
 // integrate accepted work into.
 func recordMailboxRepo(backendName, repo string) error {
 	return captainconfig.Update(func(cfg *captainconfig.Config) error {
-		backend := ensureGitAgentBackend(cfg, backendName)
+		backend, err := ensureGitAgentBackend(cfg, backendName)
+		if err != nil {
+			return err
+		}
 		backend.Options["repo"] = repo
 		cfg.Sandbox.Backends[backendName] = backend
 		return nil

@@ -19,7 +19,29 @@ import (
 func EnsureKeyPair(path string) (gossh.Signer, string, error) {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return generateKeyPair(path)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			return nil, "", err
+		}
+		var signer gossh.Signer
+		var fingerprint string
+		err := withFileLock(path+".lock", 0o600, func() error {
+			data, readErr := os.ReadFile(path)
+			if readErr == nil {
+				var parseErr error
+				signer, parseErr = gossh.ParsePrivateKey(data)
+				if parseErr != nil {
+					return fmt.Errorf("parse key %s: %w", path, parseErr)
+				}
+				fingerprint = gossh.FingerprintSHA256(signer.PublicKey())
+				return nil
+			}
+			if !os.IsNotExist(readErr) {
+				return readErr
+			}
+			signer, fingerprint, readErr = generateKeyPair(path)
+			return readErr
+		})
+		return signer, fingerprint, err
 	}
 	if err != nil {
 		return nil, "", err

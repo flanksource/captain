@@ -93,7 +93,8 @@ func HashJoinToken(token string) string {
 // back. The host key is verified against the fingerprint printed by
 // `git-agent add` — never trusted on first use.
 func Enroll(ctx context.Context, endpoint, token, hostFingerprint string, signer gossh.Signer, req EnrollRequest) (*EnrollResponse, error) {
-	if strings.TrimSpace(hostFingerprint) == "" {
+	hostFingerprint = strings.TrimSpace(hostFingerprint)
+	if hostFingerprint == "" {
 		return nil, fmt.Errorf("enrollment requires the supervisor's host-key fingerprint (printed by `captain sandbox git-agent add`)")
 	}
 	addr, user, err := splitSSHEndpoint(endpoint)
@@ -195,7 +196,8 @@ func splitSSHEndpoint(endpoint string) (addr, user string, err error) {
 		user, target = target[:at], target[at+1:]
 	}
 	if _, _, splitErr := net.SplitHostPort(target); splitErr != nil {
-		target = net.JoinHostPort(target, "22")
+		host := strings.TrimSuffix(strings.TrimPrefix(target, "["), "]")
+		target = net.JoinHostPort(host, "22")
 	}
 	return target, user, nil
 }

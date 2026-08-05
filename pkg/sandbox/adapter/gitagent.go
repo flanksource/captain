@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai/agent/setup"
@@ -21,6 +22,9 @@ import (
 // enrollment map and transport endpoints; nothing here is read from the spec
 // except the work itself.
 func GitAgent(cfg api.SandboxConfig) (api.Sandbox, error) {
+	if _, err := configuredWaitTimeout(cfg.Options); err != nil {
+		return nil, err
+	}
 	return &gitAgentSandbox{cfg: cfg}, nil
 }
 
@@ -67,6 +71,10 @@ func (g *gitAgentSandbox) Execute(ctx context.Context, spec api.Spec) (*api.Resp
 		prompt = spec.Prompt.User
 		system = spec.Prompt.System
 	}
+	timeout := strings.TrimSpace(spec.Budget.Timeout)
+	if timeout == "" {
+		timeout = target.waitTimeout.String()
+	}
 	dispatch, err := gitagent.Dispatch(ctx, gitagent.DispatchRequest{
 		RepoDir:       repoDir,
 		MailboxPath:   target.mailbox,
@@ -81,7 +89,7 @@ func (g *gitAgentSandbox) Execute(ctx context.Context, spec api.Spec) (*api.Resp
 		// own defaults and quietly pick a different one.
 		TaskPayload: gitagent.TaskPayload{
 			Prompt: prompt, System: system,
-			Model: spec.Name, Backend: string(spec.Backend),
+			Model: spec.Name, Backend: string(spec.Backend), Timeout: timeout,
 		},
 		HooksJSON: hooksJSON,
 	})
@@ -196,12 +204,30 @@ const DefaultWaitTimeout = time.Hour
 // match: a shorter outer timeout would kill the dispatch mid-flight and report
 // a failure for work that is still running.
 func WaitTimeout(options map[string]any) time.Duration {
-	if raw, ok := options["waitTimeout"].(string); ok {
-		if d, err := time.ParseDuration(raw); err == nil && d > 0 {
-			return d
-		}
+	timeout, err := configuredWaitTimeout(options)
+	if err != nil {
+		return DefaultWaitTimeout
 	}
-	return DefaultWaitTimeout
+	return timeout
+}
+
+func configuredWaitTimeout(options map[string]any) (time.Duration, error) {
+	value, exists := options["waitTimeout"]
+	if !exists {
+		return DefaultWaitTimeout, nil
+	}
+	raw, ok := value.(string)
+	if !ok {
+		return 0, fmt.Errorf("waitTimeout must be a duration string, got %T", value)
+	}
+	timeout, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("waitTimeout %q: %w", raw, err)
+	}
+	if timeout <= 0 {
+		return 0, fmt.Errorf("waitTimeout must be positive, got %q", raw)
+	}
+	return timeout, nil
 }
 
 // gitAgentKeysDir anchors key material and the default mailbox beside the

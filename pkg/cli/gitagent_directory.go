@@ -95,7 +95,10 @@ func (d gitAgentDirectory) RecordAgent(e gitagent.AgentEnrollment) error {
 		return fmt.Errorf("agent %q advertised no host key fingerprint; its dispatch could not be verified", e.Name)
 	}
 	return captainconfig.Update(func(cfg *captainconfig.Config) error {
-		backend := ensureGitAgentBackend(cfg, d.backend)
+		backend, err := ensureGitAgentBackend(cfg, d.backend)
+		if err != nil {
+			return err
+		}
 		agents, _ := backend.Options["agents"].(map[string]any)
 		if agents == nil {
 			agents = map[string]any{}
@@ -115,17 +118,21 @@ func (d gitAgentDirectory) RecordAgent(e gitagent.AgentEnrollment) error {
 // ensureGitAgentBackend returns the named backend, creating a git-agent one
 // (with an initialized Options map) when absent so `add` works on a fresh
 // config.
-func ensureGitAgentBackend(cfg *captainconfig.Config, name string) captainconfig.SandboxBackend {
+func ensureGitAgentBackend(cfg *captainconfig.Config, name string) (captainconfig.SandboxBackend, error) {
 	if cfg.Sandbox.Backends == nil {
 		cfg.Sandbox.Backends = map[string]captainconfig.SandboxBackend{}
 	}
 	backend, ok := cfg.Sandbox.Backends[name]
 	if !ok {
 		backend = captainconfig.SandboxBackend{Kind: string(registry.SandboxGitAgent)}
+	} else if backend.Kind != "" && backend.Kind != string(registry.SandboxGitAgent) {
+		return backend, fmt.Errorf("backend %q is kind %q, not %s", name, backend.Kind, registry.SandboxGitAgent)
+	} else if backend.Kind == "" {
+		backend.Kind = string(registry.SandboxGitAgent)
 	}
 	if backend.Options == nil {
 		backend.Options = map[string]any{}
 	}
 	cfg.Sandbox.Backends[name] = backend
-	return backend
+	return backend, nil
 }

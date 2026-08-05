@@ -96,6 +96,18 @@ func (w *world) upstreamHeaderValues(name string) []string {
 	return values
 }
 
+func (w *world) auditDecisions() []Decision {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return append([]Decision(nil), w.decisions...)
+}
+
+func (w *world) upstreamRequestCount() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return len(w.requests)
+}
+
 const secret = "ghp_real_secret_value"
 
 func TestSubstitutesOnlyInTheGrantedPosition(t *testing.T) {
@@ -129,7 +141,7 @@ func TestPlaceholderInNonGrantedHeaderIsRejectedNotStripped(t *testing.T) {
 		t.Fatalf("upstream was contacted %d times; a rejected request must never be forwarded", n)
 	}
 	found := false
-	for _, d := range w.decisions {
+	for _, d := range w.auditDecisions() {
 		if d.Verdict == "rejected" && strings.Contains(d.Reason, "R9.2") {
 			found = true
 			if strings.Contains(d.Reason, secret) || strings.Contains(d.Reason, placeholder) {
@@ -154,7 +166,7 @@ func TestPlaceholderInBodyOrURLIsRejected(t *testing.T) {
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("url placeholder: status = %d, want 403", resp.StatusCode)
 	}
-	if len(w.requests) != 0 {
+	if w.upstreamRequestCount() != 0 {
 		t.Fatal("nothing may reach upstream")
 	}
 }
@@ -184,12 +196,19 @@ func TestScopeByMethodAndPath(t *testing.T) {
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("path outside scope: status = %d, want 403 (R9.6/H7)", resp.StatusCode)
 	}
+	req := httptest.NewRequest("POST", w.upstream.URL+"/repos/acme/../gists", nil)
+	recorder := httptest.NewRecorder()
+	(&Proxy{Grants: []Grant{w.grant}}).ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("dot-segment escape: status = %d, want 403", recorder.Code)
+	}
 }
 
 func TestUnresolvableCredentialFailsTheRequest(t *testing.T) {
 	w := newWorld(t, secret)
-	w.grant.Headers[0].Value = types.EnvVar{} // nothing to resolve
-	p := &Proxy{Grants: []Grant{w.grant}}
+	unresolvable := w.grant
+	unresolvable.Headers = []HeaderGrant{{Name: "Authorization"}}
+	p := &Proxy{Grants: []Grant{unresolvable}}
 	broken := httptest.NewServer(p)
 	defer broken.Close()
 	proxyURL, _ := url.Parse(broken.URL)
@@ -209,6 +228,48 @@ func TestUnresolvableCredentialFailsTheRequest(t *testing.T) {
 		if strings.Contains(v, PlaceholderPrefix) {
 			t.Fatal("the placeholder must never be forwarded upstream (R9.4)")
 		}
+	}
+}
+
+func TestLaterGrantForSameDestinationCanAuthorize(t *testing.T) {
+	w := newWorld(t, secret)
+	otherScope := w.grant
+	otherScope.Name = "other"
+	otherScope.Paths = []string{"/other/"}
+	p := &Proxy{Grants: []Grant{otherScope, w.grant}}
+	server := httptest.NewServer(p)
+	defer server.Close()
+	proxyURL, _ := url.Parse(server.URL)
+	client := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)}}
+	req, _ := http.NewRequest("GET", w.upstream.URL+"/repos/acme/captain", nil)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestGrantRawHostPreservesExplicitCrossSchemePort(t *testing.T) {
+	for _, test := range []struct {
+		url  string
+		host string
+	}{
+		{"http://example.com:443", "example.com:443"},
+		{"https://example.com:80", "example.com:80"},
+	} {
+		if got := (Grant{URL: test.url}).rawHost(); got != test.host {
+			t.Fatalf("rawHost(%q) = %q, want %q", test.url, got, test.host)
+		}
+	}
+}
+
+func TestProxyReusesTransport(t *testing.T) {
+	p := &Proxy{}
+	if first, second := p.transport(), p.transport(); first != second {
+		t.Fatal("transport was rebuilt")
 	}
 }
 

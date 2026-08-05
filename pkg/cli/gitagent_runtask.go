@@ -15,13 +15,7 @@ import (
 	"github.com/flanksource/captain/pkg/gitagent"
 )
 
-// The default coding agent a sidecar launches. It is captain driving whichever
-// CLI runtime the supervisor resolved, in the prepared worktree, followed by
-// the two commands the protocol asks of an agent: commit and push.
-//
-// This exists because the alternative — leaving agentCommand empty and telling
-// operators to write their own — makes the advertised `add → join → ai prompt`
-// flow silently wait forever on a task nothing ever started.
+// GitAgentRunTaskOptions configures the detached sidecar task runner.
 type GitAgentRunTaskOptions struct {
 	Repo    string `flag:"repo" help:"The sidecar's bare repository"`
 	Task    string `flag:"task" help:"Task id to work on"`
@@ -70,6 +64,7 @@ func runTaskPrompt(ctx context.Context, worktree string, payload gitagent.TaskPa
 	req.Prompt.User = payload.Prompt
 	req.Prompt.System = payload.System
 	req.Model = cfg.Model
+	req.Budget.Timeout = payload.Timeout
 	req.SetCwd(worktree)
 	// Editing is the point: a coding agent that cannot write files produces an
 	// empty result and an unexplained silence on the supervisor.
@@ -129,8 +124,10 @@ func hasStagedChanges(ctx context.Context, dir string) (bool, error) {
 	return false, fmt.Errorf("git diff --cached: %w", err)
 }
 
-// DefaultAgentCommand is the command a sidecar launches when the backend
-// declares none: this binary, working the task in place.
+// DefaultAgentCommand is the coding agent a sidecar launches when the backend
+// declares none: Captain drives the supervisor-selected CLI runtime in the
+// prepared worktree, then commits and pushes the result. A concrete default
+// keeps an unconfigured sidecar from silently leaving dispatched work idle.
 func DefaultAgentCommand(captainBin, repo, task, configPath string) string {
 	command := fmt.Sprintf("%q sandbox git-agent run-task --repo %q --task %q", captainBin, repo, task)
 	if strings.TrimSpace(configPath) != "" {

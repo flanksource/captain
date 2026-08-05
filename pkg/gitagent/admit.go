@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	"github.com/flanksource/captain/pkg/ai/agent/commit"
@@ -19,10 +20,10 @@ type RefUpdate struct {
 }
 
 // IsCreate reports whether the update creates the ref.
-func (u RefUpdate) IsCreate() bool { return u.Old == zeroOID }
+func (u RefUpdate) IsCreate() bool { return isZeroOID(u.Old) }
 
 // IsDelete reports whether the update deletes the ref.
-func (u RefUpdate) IsDelete() bool { return u.New == zeroOID }
+func (u RefUpdate) IsDelete() bool { return isZeroOID(u.New) }
 
 // ParseRefUpdates reads pre-receive stdin lines.
 func ParseRefUpdates(r io.Reader) ([]RefUpdate, error) {
@@ -300,8 +301,10 @@ func admitBlobCaps(ctx context.Context, req AdmitRequest, st *TaskState, tip str
 	for _, line := range strings.Split(sizes, "\n") {
 		fields := strings.Fields(line)
 		if len(fields) == 3 && fields[0] == "blob" {
-			var size int64
-			fmt.Sscanf(fields[1], "%d", &size)
+			size, err := strconv.ParseInt(fields[1], 10, 64)
+			if err != nil {
+				return fmt.Errorf("gate:blob-size cannot read the size of object %s: %w", fields[2], err)
+			}
 			if size > maxBlob {
 				return fmt.Errorf("gate:blob-size object %s is %d bytes, over the %d-byte cap", fields[2], size, maxBlob)
 			}

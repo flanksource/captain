@@ -27,8 +27,6 @@ const (
 	DefaultSnapshotMaxTotalSize = int64(256 << 20)
 )
 
-const zeroOID = "0000000000000000000000000000000000000000"
-
 // SnapshotPolicy bounds what a dispatch snapshot may carry.
 type SnapshotPolicy struct {
 	// Paths are doublestar globs; a leading ! denies. With any non-negated
@@ -262,7 +260,7 @@ func buildSnapshotTree(ctx context.Context, dir string, env []string, base strin
 	}
 	var info bytes.Buffer
 	for _, p := range paths {
-		line, err := indexEntry(ctx, dir, env, p)
+		line, err := indexEntry(ctx, dir, env, p, len(base))
 		if err != nil {
 			return "", err
 		}
@@ -280,11 +278,14 @@ func buildSnapshotTree(ctx context.Context, dir string, env []string, base strin
 // indexEntry renders one `update-index --index-info` record for the path's
 // on-disk state: mode 0 removes a deleted path, symlinks hash their target,
 // and regular files are hashed with --no-filters so the blob is byte-exact.
-func indexEntry(ctx context.Context, dir string, env []string, path string) (string, error) {
+func indexEntry(ctx context.Context, dir string, env []string, path string, oidLength int) (string, error) {
 	full := filepath.Join(dir, path)
 	fi, err := os.Lstat(full)
 	if errors.Is(err, fs.ErrNotExist) {
-		return "0 " + zeroOID + "\t" + path, nil
+		if oidLength != 40 && oidLength != 64 {
+			return "", fmt.Errorf("snapshot refused: unsupported object id length %d", oidLength)
+		}
+		return "0 " + strings.Repeat("0", oidLength) + "\t" + path, nil
 	}
 	if err != nil {
 		return "", err

@@ -11,6 +11,7 @@ package proxy
 import (
 	"fmt"
 	"net/url"
+	"path"
 	"strings"
 
 	"github.com/flanksource/commons-db/types"
@@ -81,6 +82,14 @@ func (g Grant) host() string {
 	return host
 }
 
+func (g Grant) rawHost() string {
+	u, err := url.Parse(g.URL)
+	if err != nil {
+		return ""
+	}
+	return u.Host
+}
+
 func (g Grant) scheme() string {
 	u, err := url.Parse(g.URL)
 	if err != nil {
@@ -103,11 +112,20 @@ func (g Grant) AllowsMethod(method string) bool {
 // AllowsPath reports whether the path lies under a granted prefix.
 func (g Grant) AllowsPath(path string) bool {
 	for _, p := range g.Paths {
-		if strings.HasPrefix(path, p) {
+		prefix := pathpkgClean(p)
+		request := pathpkgClean(path)
+		if prefix == "/" || request == prefix || strings.HasPrefix(request, prefix+"/") {
 			return true
 		}
 	}
 	return false
+}
+
+func pathpkgClean(value string) string {
+	if !strings.HasPrefix(value, "/") {
+		value = "/" + value
+	}
+	return path.Clean(value)
 }
 
 // grantedHeader returns the header grant for name, if any.

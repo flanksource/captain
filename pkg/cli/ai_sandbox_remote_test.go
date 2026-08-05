@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -9,6 +11,20 @@ import (
 	"github.com/flanksource/captain/pkg/api/registry"
 	"github.com/flanksource/captain/pkg/sandbox/adapter"
 )
+
+type remoteSandboxStub struct{ closes int }
+
+func (s *remoteSandboxStub) Kind() api.SandboxKind { return registry.SandboxGitAgent }
+func (s *remoteSandboxStub) Prepare(context.Context, *api.Spec) (*api.SandboxSession, error) {
+	return &api.SandboxSession{}, nil
+}
+func (s *remoteSandboxStub) Close() error { s.closes++; return nil }
+
+type remoteExecutorStub struct{ err error }
+
+func (s remoteExecutorStub) Execute(context.Context, api.Spec) (*api.Response, error) {
+	return nil, s.err
+}
 
 // A remote-executing selection must replace provider execution. Without this
 // the run silently falls through to the model provider and the sandbox is a
@@ -40,6 +56,23 @@ func TestRemoteExecProviderForRoutesGitAgent(t *testing.T) {
 	}
 	if _, isRemote := provider.(*remoteExecProvider); !isRemote {
 		t.Fatalf("provider = %T, want *remoteExecProvider", provider)
+	}
+}
+
+func TestBuildProviderWrapsRemoteWithoutAdvertisingStreaming(t *testing.T) {
+	req := &ai.Request{}
+	cfg := ai.Config{SandboxSelection: &api.SandboxConfig{Kind: registry.SandboxGitAgent}}
+	provider, cleanup, err := buildProvider(context.Background(), req, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	defer closeProvider(provider)
+	if _, ok := provider.(ai.StreamingProvider); ok {
+		t.Fatalf("wrapped remote provider %T advertises unsupported streaming", provider)
+	}
+	if _, ok := api.ProviderAs[*remoteExecProvider](provider); !ok {
+		t.Fatalf("wrapped provider %T hides the remote provider", provider)
 	}
 }
 
@@ -100,5 +133,22 @@ func TestRemoteExecProviderForLeavesLocalSandboxesAlone(t *testing.T) {
 		if provider != nil {
 			t.Fatalf("selection %v produced %T; only remote-exec kinds replace the provider", selection, provider)
 		}
+	}
+}
+
+func TestRemoteExecProviderCloseIsIdempotentAfterFailure(t *testing.T) {
+	sandbox := &remoteSandboxStub{}
+	provider := &remoteExecProvider{executor: remoteExecutorStub{err: errors.New("failed")}, sandbox: sandbox}
+	if _, err := provider.Execute(context.Background(), ai.Request{}); err == nil {
+		t.Fatal("Execute returned nil error")
+	}
+	if err := provider.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := provider.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if sandbox.closes != 1 {
+		t.Fatalf("sandbox closed %d times, want once", sandbox.closes)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
@@ -73,12 +74,31 @@ type remoteExecProvider struct {
 	sandbox  api.Sandbox
 	model    string
 	backend  api.Backend
+	close    sync.Once
+	closeErr error
 }
 
+// bufferedOnlyProvider preserves a provider's buffered capability after
+// middleware wrapping. Middleware supports streaming when its inner provider
+// does, but its wrapper methods must not advertise streaming for a remote run.
+type bufferedOnlyProvider struct{ ai.Provider }
+
+func (p bufferedOnlyProvider) Unwrap() ai.Provider { return p.Provider }
+
 func (p *remoteExecProvider) Execute(ctx context.Context, req ai.Request) (*ai.Response, error) {
-	defer p.sandbox.Close()
 	return p.executor.Execute(ctx, req)
 }
 
 func (p *remoteExecProvider) GetModel() string        { return p.model }
 func (p *remoteExecProvider) GetBackend() api.Backend { return p.backend }
+
+// Close releases the prepared remote sandbox. It is idempotent because both
+// provider setup failures and execution completion can reach this boundary.
+func (p *remoteExecProvider) Close() error {
+	p.close.Do(func() {
+		if p.sandbox != nil {
+			p.closeErr = p.sandbox.Close()
+		}
+	})
+	return p.closeErr
+}
