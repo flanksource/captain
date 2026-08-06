@@ -37,21 +37,28 @@ func newCaptainChatService(
 		return nil, nil, err
 	}
 	chat := aichat.NewService(aichat.ServiceOptions{
-		Settings: aichat.RuntimeSettingsProviderFunc(func(context.Context) (aichat.RuntimeSettings, error) {
-			return aichat.RuntimeSettings{
-				System: "You are Captain's coding-agent launcher assistant. Use Captain and Clicky tools when useful, " +
-					"prefer read-only inspection unless the user explicitly asks for edits, and keep follow-up guidance concise.",
+		Profile: aichat.RuntimeProfileProviderFunc(func(context.Context) (aichat.RuntimeProfile, error) {
+			resolved, err := api.ResolveSpecLayers(api.SpecLayer{
+				Name: "captain serve", Scope: api.SpecLayerGlobal,
 				Spec: api.Spec{
 					Model: api.Model{Name: "sol", Mode: registry.ModeAgent},
 					Setup: &shell.Setup{Cwd: cwd},
 				},
+			})
+			if err != nil {
+				return aichat.RuntimeProfile{}, err
+			}
+			return aichat.RuntimeProfile{
+				System: "You are Captain's coding-agent launcher assistant. Use Captain and Clicky tools when useful, " +
+					"prefer read-only inspection unless the user explicitly asks for edits, and keep follow-up guidance concise.",
+				Resolved: resolved,
 			}, nil
 		}),
 		// Thread reads follow the request's database context; writes never reach
 		// a secondary because the context middleware rejects unsafe methods.
 		Tools: chatTools, MCP: mcpTools,
-		Threads:   aichat.ThreadStoreProviderFunc(contextThreadStore),
-		Authority: authority,
+		Threads:     aichat.ThreadStoreProviderFunc(contextThreadStore),
+		Authority:   authority,
 		Attachments: chatAttachmentResolver{store: attachmentStore},
 	})
 	return chat, mcpTools, nil

@@ -171,6 +171,12 @@ var _ = Describe("Authoritative aichat execution", func() {
 		}
 		service := aichat.NewService(aichat.ServiceOptions{
 			Resolver: &fakeResolver{provider: provider}, Threads: aichat.FixedThreadStore(store), Authority: authority,
+			Profile: aichat.RuntimeProfileProviderFunc(func(context.Context) (aichat.RuntimeProfile, error) {
+				return mustRuntimeProfile(api.SpecLayer{
+					Name: "accounts", Scope: api.SpecLayerContext,
+					Spec: api.Spec{Prompt: api.Prompt{System: "Use account policy."}},
+				}), nil
+			}),
 			Tools: aichat.StaticToolProvider([]api.ToolDefinition{{
 				Name: "account_edit", DefaultPermission: api.ToolModeAsk,
 				Handler: func(context.Context, map[string]any) (any, error) { return nil, nil },
@@ -191,6 +197,10 @@ var _ = Describe("Authoritative aichat execution", func() {
 		Expect(authority.begins).To(HaveLen(1))
 		Expect(authority.begins[0].ThreadID).To(Equal(thread.ID))
 		Expect(authority.begins[0].RequestID).To(Equal("user-message-1"))
+		Expect(authority.begins[0].Profile.Trace).To(HaveLen(2))
+		Expect(authority.begins[0].Profile.Trace[0].Name).To(Equal("accounts"))
+		Expect(authority.begins[0].Profile.Spec).To(Equal(authority.begins[0].Spec))
+		Expect(authority.begins[0].Profile.Spec.Prompt.System).To(Equal("Use account policy."))
 		Expect(provider.specs).To(HaveLen(1))
 		Expect(execution.observed).To(ContainElement(
 			MatchFields(IgnoreExtras, Fields{"Kind": Equal(api.EventResult)}),

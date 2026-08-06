@@ -15,6 +15,7 @@ type ExecutionRequest struct {
 	RequestID   string
 	Title       string
 	Spec        api.Spec
+	Profile     api.ResolvedSpec
 	Definitions []api.ToolDefinition
 }
 

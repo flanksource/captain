@@ -68,19 +68,31 @@ func (s *Service) resolveAttachments(ctx context.Context, messages []UIMessage) 
 	return resolved, nil
 }
 
-func requestSpec(request ChatRequest, settings RuntimeSettings, attachments map[partLocation]api.AttachmentRef) (api.Spec, error) {
-	override, err := chatModel(request, settings.Spec.Model)
-	if err != nil {
-		return api.Spec{}, err
+func requestSpec(request ChatRequest, profile RuntimeProfile, attachments map[partLocation]api.AttachmentRef) (api.ResolvedSpec, error) {
+	if len(profile.Resolved.Trace) == 0 && (!api.IsEmpty(profile.Resolved.Spec) || !api.IsEmpty(profile.Resolved.Constraints)) {
+		return api.ResolvedSpec{}, fmt.Errorf("chat runtime profile must include its resolution trace")
 	}
-	spec := settings.Spec.Merge(api.Spec{
+	override, err := chatModel(request, profile.Resolved.Spec.Model)
+	if err != nil {
+		return api.ResolvedSpec{}, err
+	}
+	user := api.SpecLayer{Name: "chat request", Scope: api.SpecLayerUser, Spec: api.Spec{
 		Model:           override,
 		Budget:          request.Budget,
 		ToolPreferences: request.ToolPreferences,
 		ToolApproval:    request.ToolApproval,
 		Permissions:     api.Permissions{Mode: request.PermissionMode},
 		SessionID:       request.ProviderSessionID,
-	})
+	}}
+	layers := append([]api.SpecLayer(nil), profile.Resolved.Trace...)
+	resolved, err := api.ResolveSpecLayers(append(layers, user)...)
+	if err != nil {
+		return api.ResolvedSpec{}, fmt.Errorf("resolve chat runtime profile: %w", err)
+	}
+	spec := resolved.Spec
+	baseSystem := strings.TrimSpace(strings.Join([]string{
+		profile.System, spec.Prompt.System, spec.Prompt.AppendSystem,
+	}, "\n\n"))
 	spec.Prompt.User = ""
 	spec.Prompt.System = ""
 	spec.Prompt.AppendSystem = ""
@@ -88,16 +100,16 @@ func requestSpec(request ChatRequest, settings RuntimeSettings, attachments map[
 	if request.ToolApproval == nil {
 		messages, err := canonicalMessages(request.Messages, attachments)
 		if err != nil {
-			return api.Spec{}, err
+			return api.ResolvedSpec{}, err
 		}
-		system, err := requestSystem(settings.System, request)
+		system, err := requestSystem(baseSystem, request)
 		if err != nil {
-			return api.Spec{}, err
+			return api.ResolvedSpec{}, err
 		}
 		if isAgentBackend(spec.Backend) {
 			user, promptAttachments, err := agentPrompt(messages, request.ProviderSessionID != "")
 			if err != nil {
-				return api.Spec{}, err
+				return api.ResolvedSpec{}, err
 			}
 			spec.Messages = nil
 			spec.Prompt.System = system
@@ -113,9 +125,10 @@ func requestSpec(request ChatRequest, settings RuntimeSettings, attachments map[
 		spec.Messages = nil
 	}
 	if err := spec.Validate(); err != nil {
-		return api.Spec{}, err
+		return api.ResolvedSpec{}, err
 	}
-	return spec, nil
+	resolved.Spec = spec
+	return resolved, nil
 }
 
 func chatModel(request ChatRequest, fallback api.Model) (api.Model, error) {
