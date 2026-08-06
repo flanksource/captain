@@ -95,6 +95,10 @@ func Dispatch(ctx context.Context, req DispatchRequest) (*DispatchResult, error)
 	if req.Relay == "" {
 		req.Relay = RelaySync
 	}
+	hooks, err := DecodeHookSets(req.HooksJSON)
+	if err != nil {
+		return nil, err
+	}
 	snapshot, err := TakeSnapshot(ctx, req.RepoDir, SnapshotPolicy{
 		Paths: req.Policy.Paths, MaxFileSize: req.Policy.MaxBlobSize,
 	})
@@ -105,7 +109,7 @@ func Dispatch(ctx context.Context, req DispatchRequest) (*DispatchResult, error)
 	if err != nil {
 		return nil, err
 	}
-	if err := recordDispatch(ctx, req, task, snapshot, control); err != nil {
+	if err := recordDispatch(ctx, req, task, snapshot, control, hooks); err != nil {
 		return nil, err
 	}
 	if err := pushDispatch(ctx, req, task, snapshot, control); err != nil {
@@ -146,7 +150,7 @@ func buildDispatchControl(ctx context.Context, req DispatchRequest, snapshot *Sn
 // recordDispatch writes the audit refs and task state into the local mailbox
 // (R2.1): local update-refs, since the mailbox shares the real repository's
 // objects through alternates.
-func recordDispatch(ctx context.Context, req DispatchRequest, task string, snapshot *Snapshot, control string) error {
+func recordDispatch(ctx context.Context, req DispatchRequest, task string, snapshot *Snapshot, control string, hooks *HookSets) error {
 	if err := InitMailbox(ctx, req.MailboxPath, req.RepoDir); err != nil {
 		return err
 	}
@@ -169,8 +173,10 @@ func recordDispatch(ctx context.Context, req DispatchRequest, task string, snaps
 		Agent:          req.Agent,
 		Base:           snapshot.Base,
 		DispatchCommit: snapshot.Commit,
+		ControlCommit:  control,
 		Relay:          req.Relay,
 		Policy:         req.Policy,
+		Hooks:          hooks,
 	})
 }
 

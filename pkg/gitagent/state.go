@@ -29,6 +29,7 @@ type TaskState struct {
 	Attempts       int       `json:"attempts"`                // highest attempt seen
 	Relay          RelayMode `json:"relay,omitempty"`
 	Policy         Policy    `json:"policy"`
+	Hooks          *HookSets `json:"hooks,omitempty"`
 	UpdatedAt      time.Time `json:"updatedAt"`
 }
 

@@ -239,6 +239,28 @@ var _ = Describe("protocol conformance (§12)", Serial, func() {
 		Expect(gitT(w.mailbox, "rev-parse", "refs/captain/tasks/"+result.Task+"/result/2")).NotTo(BeEmpty())
 	})
 
+	It("enforces the sidecar hooks carried by the dispatch control payload", func() {
+		w := newConformanceWorld(ctx, nil, nil, "")
+		hooks, err := json.Marshal(gitagent.HookSets{
+			Sidecar: &api.Workflow{Verify: &api.Verify{Commands: []string{"false"}}},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		w.dispatch.HooksJSON = hooks
+		result := w.dispatchTask(ctx)
+
+		state, found, err := gitagent.LoadTaskState(w.sidecar, result.Task)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeTrue())
+		Expect(state.Hooks).NotTo(BeNil())
+		Expect(state.Hooks.Sidecar.Verify.Commands).To(Equal([]string{"false"}))
+
+		out, err := w.agentPush(map[string]string{"pkg/result.txt": "must not land\n"})
+		Expect(err).To(HaveOccurred(), "task-carried false hook must reject:\n%s", out)
+		Expect(out).To(ContainSubstring("verify:false"))
+		Expect(out).To(ContainSubstring("captain: REJECTED"))
+		Expect(gitT(w.mailbox, "for-each-ref", "refs/captain/tasks/"+result.Task+"/result")).To(BeEmpty())
+	})
+
 	It("relays tier-2 rejection text down through the sidecar (H16)", func() {
 		w := newConformanceWorld(ctx,
 			nil,
@@ -260,6 +282,27 @@ var _ = Describe("protocol conformance (§12)", Serial, func() {
 		Expect(gitT(w.mailbox, "for-each-ref", "refs/captain/tasks/"+result.Task+"/result")).To(BeEmpty())
 
 		// The agent's local branch stays intact and ahead.
+		Expect(gitT(w.workdir, "rev-list", "--count", "origin/captain/"+result.Task+"..HEAD")).To(Equal("1"))
+	})
+
+	It("rejects a moved-HEAD integration conflict before accepting the agent push (R10.2)", func() {
+		w := newConformanceWorld(ctx, nil, nil, "")
+		result := w.dispatchTask(ctx)
+
+		writeFileT(w.superRepo, "docs/readme.md", "supervisor version\n")
+		gitT(w.superRepo, "commit", "-q", "-am", "move supervisor head")
+
+		out, err := w.agentPush(map[string]string{"docs/readme.md": "agent version\n"})
+		Expect(err).To(HaveOccurred(), "conflicting push must be rejected:\n%s", out)
+		Expect(out).To(ContainSubstring("merge conflict"))
+		Expect(out).To(ContainSubstring("captain: REJECTED"))
+
+		verdict, found, err := gitagent.LoadVerdict(w.mailbox, result.Task, 1)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeTrue())
+		Expect(verdict.Status).To(Equal(gitagent.StatusRejected))
+		Expect(gitT(w.mailbox, "for-each-ref", "refs/captain/tasks/"+result.Task+"/result")).To(BeEmpty())
+		Expect(gitT(w.superRepo, "for-each-ref", "refs/heads/captain/"+result.Task)).To(BeEmpty())
 		Expect(gitT(w.workdir, "rev-list", "--count", "origin/captain/"+result.Task+"..HEAD")).To(Equal("1"))
 	})
 

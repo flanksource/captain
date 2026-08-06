@@ -1,11 +1,16 @@
 package gitagent
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
+
+	"github.com/flanksource/captain/pkg/api"
 )
 
 // Control payload file names (§4).
@@ -14,6 +19,41 @@ const (
 	ControlHooksFile  = "hooks.json"
 	ControlPolicyFile = "policy.json"
 )
+
+// HookSets is the hooks.json wire payload. The supervisor chooses both tiers;
+// receivers persist this value with task state so retries vet the same policy.
+type HookSets struct {
+	Sidecar    *api.Workflow `json:"sidecar,omitempty"`
+	Supervisor *api.Workflow `json:"supervisor,omitempty"`
+}
+
+// DecodeHookSets validates a hooks.json payload before it becomes durable task
+// policy. Unknown fields fail closed instead of silently disabling a tier.
+func DecodeHookSets(data []byte) (*HookSets, error) {
+	if len(bytes.TrimSpace(data)) == 0 {
+		data = []byte("{}")
+	}
+	var hooks HookSets
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&hooks); err != nil {
+		return nil, fmt.Errorf("decode hooks.json: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			err = fmt.Errorf("multiple JSON values")
+		}
+		return nil, fmt.Errorf("decode hooks.json: %w", err)
+	}
+	for tier, workflow := range map[string]*api.Workflow{
+		"sidecar": hooks.Sidecar, "supervisor": hooks.Supervisor,
+	} {
+		if err := workflow.Validate(); err != nil {
+			return nil, fmt.Errorf("hooks.%s: %w", tier, err)
+		}
+	}
+	return &hooks, nil
+}
 
 // BuildControlCommit writes payloads as a flat tree and wraps it in a
 // parentless commit. Control refs point at commits, never bare trees — a
