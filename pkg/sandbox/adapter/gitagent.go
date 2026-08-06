@@ -61,10 +61,10 @@ func (g *gitAgentSandbox) Execute(ctx context.Context, spec api.Spec) (*api.Resp
 		return nil, err
 	}
 	repoDir := spec.Cwd()
-	hooksJSON, _ := json.Marshal(map[string]any{
-		"sidecar":    g.cfg.Options["hooks"],
-		"supervisor": nil,
-	})
+	hooksJSON, err := hookSetsJSON(g.cfg.Options)
+	if err != nil {
+		return nil, err
+	}
 	prompt := ""
 	system := ""
 	if spec.Prompt.User != "" {
@@ -101,6 +101,23 @@ func (g *gitAgentSandbox) Execute(ctx context.Context, spec api.Spec) (*api.Resp
 		return nil, fmt.Errorf("task %s dispatched but not concluded: %w", dispatch.Task, err)
 	}
 	return gitAgentResponse(dispatch.Task, verdict), nil
+}
+
+// hookSetsJSON preserves the sidecar/supervisor split declared by the backend
+// and validates it against the protocol payload before dispatch.
+func hookSetsJSON(options map[string]any) ([]byte, error) {
+	value := any(map[string]any{})
+	if configured, ok := options["hooks"]; ok {
+		value = configured
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("encode git-agent hooks: %w", err)
+	}
+	if _, err := gitagent.DecodeHookSets(data); err != nil {
+		return nil, err
+	}
+	return data, nil
 }
 
 func gitAgentResponse(task string, verdict *gitagent.TierVerdict) *api.Response {

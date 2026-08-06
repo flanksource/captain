@@ -227,8 +227,12 @@ func sidecarPreReceive(ctx context.Context, repo string, host HookHost, updates 
 		}
 		return rejectWithVerdict(repo, verdict, sideband)
 	}
+	workflow := host.Runtime.SidecarWorkflow
+	if st.Hooks != nil && st.Hooks.Sidecar != nil {
+		workflow = st.Hooks.Sidecar
+	}
 	verdict := vetTree(ctx, repo, vetRequest{
-		host: host, workflow: host.Runtime.SidecarWorkflow, tier: string(RoleSidecar),
+		host: host, workflow: workflow, tier: string(RoleSidecar),
 		task: task, attempt: attempt, depth: 0,
 		from: st.DispatchCommit, to: branchUpdate.New,
 	})
@@ -290,13 +294,34 @@ func mailboxPreReceive(ctx context.Context, repo string, host HookHost, updates 
 	if envelope != nil {
 		depth = envelope.Depth
 	}
+	workflow := host.Runtime.SupervisorWorkflow
+	if st.Hooks != nil && st.Hooks.Supervisor != nil {
+		workflow = st.Hooks.Supervisor
+	}
 	verdict := vetTree(ctx, repo, vetRequest{
-		host: host, workflow: host.Runtime.SupervisorWorkflow, tier: "supervisor",
+		host: host, workflow: workflow, tier: "supervisor",
 		task: info.Task, attempt: info.Attempt, depth: depth,
 		from: st.DispatchCommit, to: resultUpdate.New,
 	})
 	if verdict.Rejects() {
 		return rejectWithVerdict(repo, verdict, sideband)
+	}
+	if host.Runtime.RealRepo != "" {
+		conflict, err := checkIntegration(ctx, host.Runtime.RealRepo, repo, st.Base, resultUpdate.New, os.Environ())
+		if err != nil {
+			verdict.Status = StatusError
+			verdict.Findings = append(verdict.Findings, Finding{
+				Hook: "integrate", Kind: "commit", Message: "could not evaluate integration: " + err.Error(),
+			})
+			return rejectWithVerdict(repo, verdict, sideband)
+		}
+		if conflict != "" {
+			verdict.Status = StatusRejected
+			verdict.Findings = append(verdict.Findings, Finding{
+				Hook: "integrate", Kind: "commit", Message: conflict,
+			})
+			return rejectWithVerdict(repo, verdict, sideband)
+		}
 	}
 	return nil
 }
@@ -384,11 +409,14 @@ func sidecarPostReceive(ctx context.Context, repo string, host HookHost, updates
 		if envelope == nil {
 			return fmt.Errorf("dispatch ref %s arrived without an envelope", u.Ref)
 		}
-		policy, taskPayload, controlCommit := loadDispatchPayloads(ctx, repo, updates, info)
+		payloads, err := loadDispatchPayloads(ctx, repo, updates, info)
+		if err != nil {
+			return err
+		}
 		if err := SaveTaskState(repo, &TaskState{
 			Task: info.Task, Agent: envelope.Agent, Base: envelope.Base,
-			DispatchCommit: u.New, ControlCommit: controlCommit,
-			Relay: envelope.Relay, Policy: policy,
+			DispatchCommit: u.New, ControlCommit: payloads.controlCommit,
+			Relay: envelope.Relay, Policy: payloads.policy, Hooks: payloads.hooks,
 		}); err != nil {
 			return err
 		}
@@ -396,7 +424,7 @@ func sidecarPostReceive(ctx context.Context, repo string, host HookHost, updates
 		if err != nil {
 			return err
 		}
-		taskFile, err := WriteTaskFile(repo, info.Task, taskPayload)
+		taskFile, err := WriteTaskFile(repo, info.Task, payloads.task)
 		if err != nil {
 			return err
 		}
@@ -407,29 +435,43 @@ func sidecarPostReceive(ctx context.Context, repo string, host HookHost, updates
 	return nil
 }
 
-// loadDispatchPayloads reads policy.json and task.json from the control
-// commit that travelled with the dispatch. Absent payloads fall back to
-// defaults — the dispatch is still processable (only the envelope is
-// mandatory).
-func loadDispatchPayloads(ctx context.Context, repo string, updates []RefUpdate, dispatch RefInfo) (Policy, []byte, string) {
-	var policy Policy
-	taskPayload := []byte("{}")
+type dispatchPayloads struct {
+	policy        Policy
+	task          []byte
+	hooks         *HookSets
+	controlCommit string
+}
+
+// loadDispatchPayloads reads the task policy carried by the paired control
+// commit. Hooks become durable receiver state; consulting only local receiver
+// config would let the dispatched vetting policy disappear at the sidecar.
+func loadDispatchPayloads(ctx context.Context, repo string, updates []RefUpdate, dispatch RefInfo) (dispatchPayloads, error) {
+	payloads := dispatchPayloads{task: []byte("{}")}
 	controlRef, err := ControlRef(dispatch.Task, dispatch.Attempt)
 	if err != nil {
-		return policy, taskPayload, ""
+		return payloads, err
 	}
 	control := refUpdateFor(updates, controlRef)
 	if control.New == "" || isZeroOID(control.New) {
-		return policy, taskPayload, ""
+		return payloads, fmt.Errorf("dispatch %s has no paired control commit", dispatch.Task)
 	}
+	payloads.controlCommit = control.New
 	env := os.Environ()
 	if raw, err := ReadControlPayload(ctx, repo, env, control.New, ControlPolicyFile); err == nil {
-		_ = json.Unmarshal(raw, &policy)
+		if err := json.Unmarshal(raw, &payloads.policy); err != nil {
+			return payloads, fmt.Errorf("decode %s: %w", ControlPolicyFile, err)
+		}
 	}
 	if raw, err := ReadControlPayload(ctx, repo, env, control.New, ControlTaskFile); err == nil && len(raw) > 0 {
-		taskPayload = raw
+		payloads.task = raw
 	}
-	return policy, taskPayload, control.New
+	if raw, err := ReadControlPayload(ctx, repo, env, control.New, ControlHooksFile); err == nil {
+		payloads.hooks, err = DecodeHookSets(raw)
+		if err != nil {
+			return payloads, err
+		}
+	}
+	return payloads, nil
 }
 
 func mailboxPostReceive(ctx context.Context, repo string, host HookHost, updates []RefUpdate) error {
@@ -451,8 +493,10 @@ func mailboxPostReceive(ctx context.Context, repo string, host HookHost, updates
 			return err
 		}
 		if integration.Conflict != "" {
-			// The work was accepted; only its integration needs a human. The
-			// conflict is reported, never auto-resolved (R10.2).
+			// Pre-receive normally rejects this. If HEAD changed in the narrow
+			// gap before post-receive, fail the verdict closed instead of
+			// claiming that unintegrated work was accepted.
+			verdict.Status = StatusError
 			verdict.Findings = append(verdict.Findings, Finding{
 				Hook: "integrate", Kind: "commit", Message: integration.Conflict,
 			})

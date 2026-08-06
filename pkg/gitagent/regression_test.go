@@ -153,7 +153,7 @@ func TestRecordDispatchCreatesAuditRefsAtomically(t *testing.T) {
 		t.Fatal(err)
 	}
 	req := DispatchRequest{RepoDir: repo, MailboxPath: mailbox, Task: "t-atomic"}
-	if err := recordDispatch(ctx, req, "t-atomic", snapshot, control); err == nil {
+	if err := recordDispatch(ctx, req, "t-atomic", snapshot, control, &HookSets{}); err == nil {
 		t.Fatal("recordDispatch succeeded despite an existing control ref")
 	}
 	dispatchRef, _ := DispatchRef("t-atomic", 1)
