@@ -8,6 +8,7 @@ package gitagent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -19,6 +20,66 @@ type RelayTarget struct {
 	HostFingerprint string `json:"hostFingerprint"`
 	KeyPath         string `json:"keyPath"`
 	SSHCommand      string `json:"sshCommand,omitempty"` // "" ⇒ this binary's transport
+}
+
+// upstreamRejectedError distinguishes a supervisor verdict from a failure to
+// obtain one. The supervisor has already persisted and rendered this verdict;
+// the sidecar only needs the error to reject its own still-blocked push.
+type upstreamRejectedError struct {
+	verdict TierVerdict
+}
+
+func (e *upstreamRejectedError) Error() string {
+	return fmt.Sprintf("supervisor rejected task %s attempt %d (%s)",
+		e.verdict.Task, e.verdict.Attempt, e.verdict.Status)
+}
+
+// relayFeedbackWriter removes the inner git client's "remote: " transport
+// prefix before forwarding through the outer receive-pack. It also retains
+// the structured supervisor verdict so an ordinary rejection is not
+// misclassified as a sidecar transport error.
+type relayFeedbackWriter struct {
+	dst     io.Writer
+	pending string
+	verdict *TierVerdict
+}
+
+func (w *relayFeedbackWriter) Write(p []byte) (int, error) {
+	w.pending += string(p)
+	for {
+		i := strings.IndexByte(w.pending, '\n')
+		if i < 0 {
+			break
+		}
+		line := w.pending[:i+1]
+		w.pending = w.pending[i+1:]
+		if err := w.writeLine(line); err != nil {
+			return 0, err
+		}
+	}
+	return len(p), nil
+}
+
+func (w *relayFeedbackWriter) flush() error {
+	if w.pending == "" {
+		return nil
+	}
+	line := w.pending
+	w.pending = ""
+	return w.writeLine(line)
+}
+
+func (w *relayFeedbackWriter) writeLine(line string) error {
+	line = strings.TrimPrefix(line, "remote: ")
+	candidate := strings.TrimSpace(line)
+	if raw, ok := strings.CutPrefix(candidate, "captain-json: "); ok {
+		var verdict TierVerdict
+		if json.Unmarshal([]byte(raw), &verdict) == nil && verdict.Tier == "supervisor" {
+			w.verdict = &verdict
+		}
+	}
+	_, err := io.WriteString(w.dst, line)
+	return err
 }
 
 // BuildResultCommit squashes the agent's branch tip into the single result
@@ -70,11 +131,18 @@ func Relay(ctx context.Context, repo string, hookEnv []string, target RelayTarge
 	// R1.4: unset only GIT_QUARANTINE_PATH; the object-directory variables
 	// stay so the quarantined objects remain readable for the outbound pack.
 	env := envWith(RelayEnv(hookEnv), pairs...)
-	code, out, err := gitExitCodeStderr(ctx, repo, env, sideband, args...)
+	feedback := &relayFeedbackWriter{dst: sideband}
+	code, out, err := gitExitCodeStderr(ctx, repo, env, feedback, args...)
+	if flushErr := feedback.flush(); err == nil && flushErr != nil {
+		err = flushErr
+	}
 	if err != nil {
 		return err
 	}
 	if code != 0 {
+		if feedback.verdict != nil && feedback.verdict.Rejects() {
+			return &upstreamRejectedError{verdict: *feedback.verdict}
+		}
 		return fmt.Errorf("supervisor rejected attempt %d (exit %d)%s", envelope.Attempt, code, strings.TrimSpace(out))
 	}
 	return nil
