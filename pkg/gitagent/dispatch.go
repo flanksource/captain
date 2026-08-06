@@ -59,6 +59,7 @@ func TaskPaths(sidecarRepo, task string) (worktree, taskFile string, err error) 
 type DispatchRequest struct {
 	RepoDir       string
 	MailboxPath   string
+	MailboxRoute  string // opaque path under the supervisor's served root
 	Task          string // generated when empty
 	Agent         string
 	SidecarURL    string // ssh://host:port/repo.git
@@ -90,6 +91,9 @@ func Dispatch(ctx context.Context, req DispatchRequest) (*DispatchResult, error)
 		}
 	}
 	if err := ValidateTaskID(task); err != nil {
+		return nil, err
+	}
+	if err := ValidateMailboxRoute(req.MailboxRoute); err != nil {
 		return nil, err
 	}
 	if req.Relay == "" {
@@ -154,6 +158,9 @@ func recordDispatch(ctx context.Context, req DispatchRequest, task string, snaps
 	if err := InitMailbox(ctx, req.MailboxPath, req.RepoDir); err != nil {
 		return err
 	}
+	if err := copyDispatchObjects(ctx, req.RepoDir, req.MailboxPath, snapshot, control); err != nil {
+		return err
+	}
 	env := ScrubGitEnv(os.Environ())
 	dispatchRef, err := DispatchRef(task, 1)
 	if err != nil {
@@ -175,9 +182,26 @@ func recordDispatch(ctx context.Context, req DispatchRequest, task string, snaps
 		DispatchCommit: snapshot.Commit,
 		ControlCommit:  control,
 		Relay:          req.Relay,
+		Mailbox:        req.MailboxRoute,
 		Policy:         req.Policy,
 		Hooks:          hooks,
 	})
+}
+
+// copyDispatchObjects gives the mailbox ownership of synthetic objects that
+// have no ref in the real repository. The base history remains borrowed via
+// alternates, while source-repository GC can no longer prune dispatch/control.
+func copyDispatchObjects(ctx context.Context, source, mailbox string, snapshot *Snapshot, control string) error {
+	packDir := filepath.Join(mailbox, "objects", "pack")
+	if err := os.MkdirAll(packDir, 0o755); err != nil {
+		return err
+	}
+	revisions := strings.NewReader(snapshot.Commit + "\n" + control + "\n^" + snapshot.Base + "\n")
+	if _, err := runGitIn(ctx, source, ScrubGitEnv(os.Environ()), revisions,
+		"pack-objects", "--revs", filepath.Join(packDir, "pack")); err != nil {
+		return fmt.Errorf("storing dispatch objects in mailbox: %w", err)
+	}
+	return nil
 }
 
 func pushDispatch(ctx context.Context, req DispatchRequest, task string, snapshot *Snapshot, control string) error {
@@ -197,6 +221,7 @@ func pushDispatch(ctx context.Context, req DispatchRequest, task string, snapsho
 		Depth:   0,
 		Agent:   req.Agent,
 		Relay:   req.Relay,
+		Mailbox: req.MailboxRoute,
 	}
 	opts, err := envelope.Encode()
 	if err != nil {

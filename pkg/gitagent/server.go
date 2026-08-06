@@ -55,8 +55,7 @@ type ServerConfig struct {
 	HostKey   gossh.Signer
 	Directory AgentDirectory
 	// Offer is what this endpoint hands back to a joining agent so the agent
-	// can complete the reverse direction of trust. A mailbox that leaves it
-	// empty enrolls agents it can dispatch to but that cannot relay back.
+	// can complete the reverse direction of trust.
 	Offer EnrollmentOffer
 	// AgentRepoPath is the repository path an enrolled agent serves, used to
 	// derive its dispatch URL when the agent advertises none.
@@ -110,8 +109,8 @@ func handleSession(s ssh.Session, root string, cfg ServerConfig) {
 }
 
 // handleEnroll completes both directions of the exchange: it records the
-// agent's key and endpoint, and hands back the supervisor's dispatch key and
-// mailbox path so the agent can authorize the reverse push.
+// agent's key and endpoint, then returns the supervisor dispatch key needed to
+// authorize later task-specific reverse pushes.
 func handleEnroll(s ssh.Session, cfg ServerConfig, fingerprint string, cmd []string) {
 	if len(cmd) < 2 || strings.TrimSpace(cmd[1]) == "" {
 		fmt.Fprintln(s.Stderr(), "captain: usage: captain-enroll <join-token> [request]")
@@ -144,7 +143,6 @@ func handleEnroll(s ssh.Session, cfg ServerConfig, fingerprint string, cmd []str
 	resp, err := json.Marshal(EnrollResponse{
 		Agent:       name,
 		DispatchKey: cfg.Offer.DispatchKey,
-		MailboxPath: cfg.Offer.MailboxPath,
 	})
 	if err != nil {
 		fmt.Fprintf(s.Stderr(), "captain: %v\n", err)

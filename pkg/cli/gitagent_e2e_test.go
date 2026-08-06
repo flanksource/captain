@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -259,6 +260,16 @@ func newRepo(t *testing.T) string {
 	return repo
 }
 
+func mailboxPathForRepo(t *testing.T, supervisor *host, repo string) string {
+	t.Helper()
+	root := filepath.Join(supervisor.home, ".captain", "sandbox", servedReposDir)
+	mailbox, err := gitagent.MailboxForRepository(context.Background(), root, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return mailbox.Path
+}
+
 // addResult is the JSON `add --format json` emits.
 type addResult struct {
 	Agent           string `json:"agent"`
@@ -275,7 +286,7 @@ func enrollPair(t *testing.T) (supervisor, agent *host, repo, agentPort string, 
 	repo = newRepo(t)
 
 	supPort := freeLocalPort(t)
-	supervisor.serve(supPort, "--role", "mailbox", "--repo", repo)
+	supervisor.serve(supPort, "--role", "mailbox")
 
 	out := supervisor.mustRun("sandbox", "git-agent", "add", "worker-01",
 		"--endpoint", "ssh://127.0.0.1:"+supPort, "--format", "json")
@@ -370,36 +381,22 @@ func TestEnrollmentProducesADispatchableTopology(t *testing.T) {
 	if !strings.Contains(supervisor.configBytes(), "hostFingerprint") {
 		t.Fatalf("the supervisor recorded no host key to pin when dispatching:\n%s", supervisor.configBytes())
 	}
+	if !strings.Contains(supervisor.configBytes(), "mailboxRoot") {
+		t.Fatalf("the supervisor endpoint recorded no root for lazy mailboxes:\n%s", supervisor.configBytes())
+	}
 
-	// The agent must have authorized the supervisor's dispatch key, and
-	// recorded a relay URL carrying a repository path.
+	// The agent authorizes the supervisor once and retains only its stable
+	// endpoint. A mailbox path is selected later for each dispatched repository.
 	agentCfg := agent.configBytes()
 	if !strings.Contains(agentCfg, add.DispatchKey) {
 		t.Fatalf("the agent did not authorize the supervisor's dispatch key %s:\n%s", add.DispatchKey, agentCfg)
 	}
-	if !strings.Contains(agentCfg, MailboxRepoName) {
-		t.Fatalf("the agent's relay URL carries no repository path:\n%s", agentCfg)
+	if !strings.Contains(agentCfg, "ssh://127.0.0.1:") {
+		t.Fatalf("the agent recorded no supervisor endpoint:\n%s", agentCfg)
 	}
-
-	// The supervisor must serve a mailbox, at the path the relay names, with
-	// mailbox-role hooks and objects shared with the real repository.
-	mailbox := filepath.Join(supervisor.home, ".captain", "sandbox", servedReposDir, MailboxRepoName)
-	if _, err := os.Stat(filepath.Join(mailbox, "HEAD")); err != nil {
-		t.Fatalf("no mailbox repository where the relay points: %v", err)
-	}
-	shim, err := os.ReadFile(filepath.Join(mailbox, "hooks", "pre-receive"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(shim), "mailbox") {
-		t.Fatalf("mailbox hooks run with the wrong role:\n%s", shim)
-	}
-	alternates, err := os.ReadFile(filepath.Join(mailbox, "objects", "info", "alternates"))
-	if err != nil {
-		t.Fatalf("the mailbox does not share the repository's objects: %v", err)
-	}
-	if !strings.Contains(string(alternates), repo) {
-		t.Fatalf("mailbox alternates %q do not point at %s", alternates, repo)
+	mailbox := mailboxPathForRepo(t, supervisor, repo)
+	if _, err := os.Stat(mailbox); !os.IsNotExist(err) {
+		t.Fatalf("repository mailbox must be created lazily at dispatch, stat error = %v", err)
 	}
 }
 
@@ -502,7 +499,7 @@ func TestFullCycleWithAManualAgent(t *testing.T) {
 
 	// The supervisor holds the result and verdict refs, and integrated the work
 	// onto a branch without touching the user's checkout.
-	mailbox := filepath.Join(supervisor.home, ".captain", "sandbox", servedReposDir, MailboxRepoName)
+	mailbox := mailboxPathForRepo(t, supervisor, repo)
 	refs := gitIn(t, mailbox, "for-each-ref", "--format=%(refname)")
 	for _, want := range []string{"/result/1", "/verdict/1"} {
 		if !strings.Contains(refs, taskID+want) {
@@ -563,6 +560,9 @@ func TestGitAgentHelpDocumentsItsOwnCommands(t *testing.T) {
 		out, _ := h.run("sandbox", "git-agent", sub, "--help")
 		if strings.Contains(out, "sandbox-runtime presets") {
 			t.Fatalf("git-agent %s --help is the parent's:\n%s", sub, out)
+		}
+		if sub == "serve" && strings.Contains(out, "--repo string") {
+			t.Fatalf("the long-running endpoint must not be repository-bound:\n%s", out)
 		}
 	}
 }
@@ -635,7 +635,7 @@ func TestDispatchLaunchesAnAgent(t *testing.T) {
 
 	// The agent's work reached the supervisor and was integrated, with no
 	// human touching the worktree.
-	mailbox := filepath.Join(supervisor.home, ".captain", "sandbox", servedReposDir, MailboxRepoName)
+	mailbox := mailboxPathForRepo(t, supervisor, repo)
 	refs := gitIn(t, mailbox, "for-each-ref", "--format=%(refname)")
 	if !strings.Contains(refs, "/result/1") || !strings.Contains(refs, "/verdict/1") {
 		t.Fatalf("no result/verdict refs; the launched agent never submitted:\n%s", refs)
@@ -662,6 +662,64 @@ func TestDispatchLaunchesAnAgent(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatalf("agent serve did not report the task lifecycle:\n%s", agent.serveLogs())
+}
+
+// TestOneEndpointRoutesTwoRepositories proves service lifetime is independent
+// of repository lifetime: one enrollment and one listener own isolated
+// mailboxes while the shared sidecar executes both tasks.
+func TestOneEndpointRoutesTwoRepositories(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds the captain binary and runs two endpoints")
+	}
+	supervisor, agent, repoA, _, _ := enrollPair(t)
+	repoB := newRepo(t) // same basename, different canonical path
+	agent.setBackendOption(t, "agentCommand",
+		`echo "// completed $CAPTAIN_TASK" >> pkg/main.go `+
+			`&& git add -A && git commit -q -m "captain: $CAPTAIN_TASK" && git push`)
+
+	run := func(repo string) string {
+		t.Helper()
+		writeAt(t, repo, "task.prompt", "---\nsandbox: git-agent\n---\n{{role \"user\"}}\nComplete this task.\n")
+		cmd := exec.Command(supervisor.bin, "ai", "prompt", "./task.prompt",
+			"--sandbox", "git-agent", "--timeout", "3m")
+		cmd.Dir, cmd.Env = repo, supervisor.env()
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("dispatch from %s failed: %v\n%s\n%s", repo, err, out, agentLogs(t, agent))
+		}
+		branches := strings.Fields(gitIn(t, repo, "for-each-ref", "--format=%(refname:short)", "refs/heads/captain"))
+		if len(branches) != 1 {
+			t.Fatalf("integration branches in %s = %v", repo, branches)
+		}
+		return strings.TrimPrefix(branches[0], "captain/")
+	}
+
+	taskA := run(repoA)
+	taskB := run(repoB)
+	if taskA == taskB {
+		t.Fatalf("two dispatches reused task id %s", taskA)
+	}
+	mailboxA := mailboxPathForRepo(t, supervisor, repoA)
+	mailboxB := mailboxPathForRepo(t, supervisor, repoB)
+	if mailboxA == mailboxB {
+		t.Fatalf("same-named repositories share mailbox %s", mailboxA)
+	}
+	for _, tc := range []struct {
+		mailbox, ownTask, otherTask, repo string
+	}{{mailboxA, taskA, taskB, repoA}, {mailboxB, taskB, taskA, repoB}} {
+		refs := gitIn(t, tc.mailbox, "for-each-ref", "--format=%(refname)")
+		if !strings.Contains(refs, tc.ownTask+"/result/1") || strings.Contains(refs, tc.otherTask) {
+			t.Fatalf("mailbox %s has crossed task namespaces:\n%s", tc.mailbox, refs)
+		}
+		binding, err := gitagent.LoadMailboxBinding(tc.mailbox)
+		if err != nil || binding.Repository != tc.repo {
+			t.Fatalf("mailbox %s binding = %+v, %v; want %s", tc.mailbox, binding, err, tc.repo)
+		}
+		shim, err := os.ReadFile(filepath.Join(tc.mailbox, "hooks", "pre-receive"))
+		if err != nil || !strings.Contains(string(shim), `--role "mailbox"`) {
+			t.Fatalf("mailbox %s has no mailbox hook: %v\n%s", tc.mailbox, err, shim)
+		}
+	}
 }
 
 // agentLogs returns whatever the detached agent wrote, which is the only

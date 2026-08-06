@@ -58,14 +58,15 @@ type Envelope struct {
 	Version int       `json:"v"`
 	Task    string    `json:"task"`
 	Attempt int       `json:"attempt"`
-	Base    string    `json:"base"`            // supervisor HEAD OID at dispatch (R10.1)
-	Depth   int       `json:"depth"`           // hook-recursion depth, 0 at top level
-	Agent   string    `json:"agent,omitempty"` // dispatch only: target agent
-	Relay   RelayMode `json:"relay,omitempty"` // dispatch only
+	Base    string    `json:"base"`              // supervisor HEAD OID at dispatch (R10.1)
+	Depth   int       `json:"depth"`             // hook-recursion depth, 0 at top level
+	Agent   string    `json:"agent,omitempty"`   // dispatch only: target agent
+	Relay   RelayMode `json:"relay,omitempty"`   // dispatch only
+	Mailbox string    `json:"mailbox,omitempty"` // dispatch only: opaque supervisor route
 }
 
-// Validate checks every field an envelope always carries. Agent and Relay are
-// dispatch-only and validated when present.
+// Validate checks every field an envelope always carries. Agent, Relay, and
+// Mailbox are dispatch-only and validated when present.
 func (e Envelope) Validate() error {
 	if e.Version != ProtocolVersion {
 		return fmt.Errorf("unsupported envelope version %d (implementation speaks %d)", e.Version, ProtocolVersion)
@@ -92,6 +93,11 @@ func (e Envelope) Validate() error {
 	default:
 		return fmt.Errorf("relay %q must be %q or %q", e.Relay, RelaySync, RelayAsync)
 	}
+	if e.Mailbox != "" {
+		if err := ValidateMailboxRoute(e.Mailbox); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -117,6 +123,9 @@ func (e Envelope) Encode() ([]string, error) {
 	}
 	if e.Relay != "" {
 		opts = append(opts, "relay="+string(e.Relay))
+	}
+	if e.Mailbox != "" {
+		opts = append(opts, "mailbox="+e.Mailbox)
 	}
 	return opts, nil
 }
@@ -182,6 +191,8 @@ func (e *Envelope) setField(key, value string) error {
 		e.Agent = value
 	case "relay":
 		e.Relay = RelayMode(value)
+	case "mailbox":
+		e.Mailbox = value
 	default:
 		return fmt.Errorf("unknown envelope key %q", key)
 	}

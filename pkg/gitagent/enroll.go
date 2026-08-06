@@ -49,17 +49,12 @@ type EnrollResponse struct {
 	// DispatchKey is the supervisor's client-key fingerprint. The agent
 	// authorizes it locally so the supervisor's dispatch push is accepted.
 	DispatchKey string `json:"dispatchKey"`
-	// MailboxPath is the mailbox repository's path under the supervisor's
-	// served root. The agent joins it onto the endpoint it already dialed, so
-	// the supervisor never has to know its own reachable hostname.
-	MailboxPath string `json:"mailboxPath"`
 }
 
 // EnrollmentOffer is the supervisor-side half of the exchange, supplied to
 // the server by whatever runs it.
 type EnrollmentOffer struct {
 	DispatchKey string
-	MailboxPath string
 }
 
 // AgentEnrollment is one recorded agent: its key, its endpoint, and the host
@@ -165,11 +160,11 @@ func enrollFailureDetail(err error, out []byte) string {
 	return err.Error()
 }
 
-// MailboxURL joins the supervisor endpoint the agent dialed with the mailbox
-// path the supervisor offered.
+// MailboxURL joins the enrolled supervisor endpoint with the opaque route
+// carried by a dispatch.
 func MailboxURL(endpoint, mailboxPath string) (string, error) {
-	if strings.TrimSpace(mailboxPath) == "" {
-		return "", fmt.Errorf("the supervisor offered no mailbox path")
+	if err := ValidateMailboxRoute(mailboxPath); err != nil {
+		return "", err
 	}
 	addr, user, err := splitSSHEndpoint(endpoint)
 	if err != nil {

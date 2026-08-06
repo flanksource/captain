@@ -15,11 +15,10 @@ const hookShimMarker = "# installed by captain sandbox git-agent"
 // an identical shim is left alone, a stale one is rewritten, and a foreign
 // hook is refused rather than silently replaced.
 //
-// configPath is baked in rather than left to $HOME: a hook runs as a child of
-// whoever pushed — for a co-located agent that is the agent's own shell — so
-// an ambient home would silently load the wrong configuration and skip the
-// hook sets and the relay entirely.
-func InstallHookShims(repoPath, captainBin, configPath string, role ReceiverRole) error {
+// configPath and backend are baked in rather than left to process defaults: a
+// hook runs as a child of whoever pushed, whose ambient HOME and selected
+// backend may differ from the receiver that installed it.
+func InstallHookShims(repoPath, captainBin, configPath string, role ReceiverRole, backend string) error {
 	bin, err := filepath.Abs(captainBin)
 	if err != nil {
 		return err
@@ -36,11 +35,15 @@ func InstallHookShims(repoPath, captainBin, configPath string, role ReceiverRole
 		}
 		config = fmt.Sprintf(" --config %q", abs)
 	}
+	backendArg := ""
+	if strings.TrimSpace(backend) != "" {
+		backendArg = fmt.Sprintf(" --backend %q", strings.TrimSpace(backend))
+	}
 	for _, hook := range []string{"pre-receive", "post-receive"} {
 		shim := fmt.Sprintf(`#!/bin/sh
 %s
-exec %q sandbox git-agent hook %s --repo %q --role %q%s
-`, hookShimMarker, bin, hook, repo, string(role), config)
+exec %q sandbox git-agent hook %s --repo %q --role %q%s%s
+`, hookShimMarker, bin, hook, repo, string(role), backendArg, config)
 		target := filepath.Join(repo, "hooks", hook)
 		existing, err := os.ReadFile(target)
 		switch {

@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -61,6 +62,21 @@ func (g *gitAgentSandbox) Execute(ctx context.Context, spec api.Spec) (*api.Resp
 		return nil, err
 	}
 	repoDir := spec.Cwd()
+	mailbox, err := gitagent.EnsureMailbox(ctx, target.mailboxRoot, repoDir)
+	if err != nil {
+		return nil, err
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return nil, err
+	}
+	configPath, err := captainconfig.Path()
+	if err != nil {
+		return nil, err
+	}
+	if err := gitagent.InstallHookShims(mailbox.Path, exe, configPath, gitagent.RoleMailbox, g.cfg.Name); err != nil {
+		return nil, err
+	}
 	hooksJSON, err := hookSetsJSON(g.cfg.Options)
 	if err != nil {
 		return nil, err
@@ -77,7 +93,8 @@ func (g *gitAgentSandbox) Execute(ctx context.Context, spec api.Spec) (*api.Resp
 	}
 	dispatch, err := gitagent.Dispatch(ctx, gitagent.DispatchRequest{
 		RepoDir:       repoDir,
-		MailboxPath:   target.mailbox,
+		MailboxPath:   mailbox.Path,
+		MailboxRoute:  mailbox.Route,
 		Agent:         target.agent,
 		SidecarURL:    target.url,
 		SidecarHostFP: target.hostFingerprint,
@@ -96,7 +113,7 @@ func (g *gitAgentSandbox) Execute(ctx context.Context, spec api.Spec) (*api.Resp
 	if err != nil {
 		return nil, err
 	}
-	verdict, err := gitagent.AwaitOutcome(ctx, target.mailbox, dispatch.Task, target.waitTimeout)
+	verdict, err := gitagent.AwaitOutcome(ctx, mailbox.Path, dispatch.Task, target.waitTimeout)
 	if err != nil {
 		return nil, fmt.Errorf("task %s dispatched but not concluded: %w", dispatch.Task, err)
 	}
@@ -142,7 +159,7 @@ type gitAgentTarget struct {
 	url             string
 	hostFingerprint string
 	keyPath         string
-	mailbox         string
+	mailboxRoot     string
 	relay           gitagent.RelayMode
 	policy          gitagent.Policy
 	waitTimeout     time.Duration
@@ -184,9 +201,9 @@ func (g *gitAgentSandbox) resolveTarget() (*gitAgentTarget, error) {
 		url:             url,
 		hostFingerprint: hostFP,
 		keyPath:         stringOption(opts, "key", filepath.Join(keysDir, dispatchKeyFile)),
-		// The mailbox must be the path the supervisor's endpoint serves, or a
-		// relayed result lands where nothing reads it.
-		mailbox:     stringOption(opts, "mailbox", filepath.Join(keysDir, servedReposDir, mailboxRepoName)),
+		// The long-running endpoint serves this root; each dispatch derives a
+		// repository-specific mailbox beneath it from the request working tree.
+		mailboxRoot: stringOption(opts, "mailboxRoot", filepath.Join(keysDir, servedReposDir)),
 		relay:       gitagent.RelayMode(stringOption(opts, "relay", string(gitagent.RelaySync))),
 		waitTimeout: WaitTimeout(opts),
 	}
@@ -208,7 +225,6 @@ func stringOption(opts map[string]any, key, fallback string) string {
 const (
 	dispatchKeyFile = "supervisor_ed25519"
 	servedReposDir  = "repos"
-	mailboxRepoName = "mailbox.git"
 )
 
 // DefaultWaitTimeout bounds how long a dispatch waits for its verdict. A

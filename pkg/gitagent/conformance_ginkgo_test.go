@@ -23,12 +23,13 @@ import (
 // (sidecar repo + serve), with the test binary standing in for the captain
 // binary in both the shims and the ssh transport.
 type conformanceWorld struct {
-	superRepo  string
-	mailbox    string
-	sidecar    string
-	sidecarURL string
-	dispatch   gitagent.DispatchRequest
-	workdir    string // the agent's clone, present after dispatch
+	superRepo    string
+	mailbox      string
+	mailboxRoute string
+	sidecar      string
+	sidecarURL   string
+	dispatch     gitagent.DispatchRequest
+	workdir      string // the agent's clone, present after dispatch
 }
 
 // testShim writes a hook shim exec'ing the test binary with the hook env
@@ -80,8 +81,9 @@ func newConformanceWorld(ctx context.Context, sidecarWF, supervisorWF *api.Workf
 	gitT(w.superRepo, "add", "-A")
 	gitT(w.superRepo, "commit", "-q", "-m", "base")
 	writeFileT(w.superRepo, "pkg/dirty.go", "package main // dirty\n")
-	w.mailbox = filepath.Join(supRoot, "mailbox.git")
-	Expect(gitagent.InitMailbox(ctx, w.mailbox, w.superRepo)).To(Succeed())
+	mailbox, err := gitagent.EnsureMailbox(ctx, supRoot, w.superRepo)
+	Expect(err).NotTo(HaveOccurred())
+	w.mailbox, w.mailboxRoute = mailbox.Path, mailbox.Route
 
 	// Keys: one per party.
 	supKey := filepath.Join(GinkgoT().TempDir(), "supervisor_ed25519")
@@ -113,7 +115,7 @@ func newConformanceWorld(ctx context.Context, sidecarWF, supervisorWF *api.Workf
 		HookSandbox:     "test-identity",
 		AgentCommand:    agentCommand,
 		Relay: gitagent.RelayTarget{
-			URL:             fmt.Sprintf("ssh://captain@%s:%s/mailbox.git", supHost, supPort),
+			URL:             fmt.Sprintf("ssh://captain@%s:%s", supHost, supPort),
 			HostFingerprint: supHostFP,
 			KeyPath:         agentKey,
 			SSHCommand:      testSSHCommand(),
@@ -130,6 +132,7 @@ func newConformanceWorld(ctx context.Context, sidecarWF, supervisorWF *api.Workf
 	w.dispatch = gitagent.DispatchRequest{
 		RepoDir:       w.superRepo,
 		MailboxPath:   w.mailbox,
+		MailboxRoute:  w.mailboxRoute,
 		Agent:         "worker-1",
 		SidecarURL:    w.sidecarURL,
 		SidecarHostFP: sideHostFP,

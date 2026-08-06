@@ -28,6 +28,7 @@ type TaskState struct {
 	ControlCommit  string    `json:"controlCommit,omitempty"` // the dispatched control payloads
 	Attempts       int       `json:"attempts"`                // highest attempt seen
 	Relay          RelayMode `json:"relay,omitempty"`
+	Mailbox        string    `json:"mailbox,omitempty"` // opaque route chosen by the supervisor
 	Policy         Policy    `json:"policy"`
 	Hooks          *HookSets `json:"hooks,omitempty"`
 	UpdatedAt      time.Time `json:"updatedAt"`

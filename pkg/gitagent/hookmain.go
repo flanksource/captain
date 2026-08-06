@@ -31,8 +31,8 @@ type HookRuntime struct {
 	// test binary and cannot activate in production.
 	HookSandbox  string      `json:"hookSandbox,omitempty"`
 	AgentCommand string      `json:"agentCommand,omitempty"`
-	RealRepo     string      `json:"realRepo,omitempty"` // mailbox: integration target
-	Relay        RelayTarget `json:"relay,omitempty"`    // sidecar: the supervisor mailbox
+	RealRepo     string      `json:"realRepo,omitempty"` // mailbox-local integration target
+	Relay        RelayTarget `json:"relay,omitempty"`    // sidecar: supervisor base endpoint
 }
 
 // RequiresJudge reports whether either receiver tier declares prompt checks.
@@ -319,11 +319,14 @@ func relayUpward(ctx context.Context, repo string, host HookHost, st *TaskState,
 	if control == "" {
 		return fmt.Errorf("task %s has no recorded control commit; cannot relay", st.Task)
 	}
+	if err := ValidateMailboxRoute(st.Mailbox); err != nil {
+		return fmt.Errorf("task %s has no usable mailbox route: %w", st.Task, err)
+	}
 	envelope := Envelope{
 		Version: ProtocolVersion, Task: st.Task, Attempt: attempt,
 		Base: st.Base, Depth: 0, Agent: st.Agent, Relay: st.Relay,
 	}
-	return Relay(ctx, repo, hookEnv, host.Runtime.Relay, envelope, result, control, sideband)
+	return Relay(ctx, repo, hookEnv, host.Runtime.Relay, st.Mailbox, envelope, result, control, sideband)
 }
 
 // mailboxPreReceive runs hook set #2 over an arriving result (§6.2 step 10).
@@ -480,7 +483,8 @@ func sidecarPostReceive(ctx context.Context, repo string, host HookHost, updates
 		if err := SaveTaskState(repo, &TaskState{
 			Task: info.Task, Agent: envelope.Agent, Base: envelope.Base,
 			DispatchCommit: u.New, ControlCommit: payloads.controlCommit,
-			Relay: envelope.Relay, Policy: payloads.policy, Hooks: payloads.hooks,
+			Relay: envelope.Relay, Mailbox: envelope.Mailbox,
+			Policy: payloads.policy, Hooks: payloads.hooks,
 		}); err != nil {
 			return err
 		}

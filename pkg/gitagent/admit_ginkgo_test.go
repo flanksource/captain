@@ -58,6 +58,7 @@ func (f *admitFixture) envelope() *gitagent.Envelope {
 		Depth:   0,
 		Agent:   "worker-1",
 		Relay:   gitagent.RelaySync,
+		Mailbox: "mailboxes/" + strings.Repeat("a", 64) + ".git",
 	}
 }
 
@@ -143,6 +144,11 @@ var _ = Describe("admission", func() {
 
 		err = gitagent.Admit(ctx, gitagent.AdmitRequest{Repo: f.sidecar, Role: gitagent.RoleSidecar, Updates: f.dispatchUpdates(), Env: f.env})
 		Expect(err).To(MatchError(ContainSubstring("require the control envelope")))
+
+		unroutable := f.envelope()
+		unroutable.Mailbox = ""
+		err = gitagent.Admit(ctx, gitagent.AdmitRequest{Repo: f.sidecar, Role: gitagent.RoleSidecar, Updates: f.dispatchUpdates(), Envelope: unroutable, Env: f.env})
+		Expect(err).To(MatchError(ContainSubstring("no mailbox route")))
 
 		wrong := f.envelope()
 		wrong.Attempt = 2
@@ -236,6 +242,12 @@ var _ = Describe("admission", func() {
 				{Old: zeroOID40, New: result, Ref: "refs/captain/tasks/t-1/result/1"},
 				{Old: zeroOID40, New: f.control, Ref: "refs/captain/tasks/t-1/control/1"},
 			}
+
+			// Admission must stay inside this task's dispatch..result range. A
+			// damaged historical namespace cannot reject an unrelated result.
+			broken := filepath.Join(mailbox, "refs", "captain", "tasks", "t-stale", "control", "1")
+			Expect(os.MkdirAll(filepath.Dir(broken), 0o755)).To(Succeed())
+			Expect(os.WriteFile(broken, []byte(strings.Repeat("f", 40)+"\n"), 0o644)).To(Succeed())
 
 			Expect(gitagent.Admit(ctx, gitagent.AdmitRequest{
 				Repo: mailbox, Role: gitagent.RoleMailbox, Agent: "worker-1",
