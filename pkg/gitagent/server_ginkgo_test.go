@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -179,17 +180,16 @@ var _ = Describe("the git-agent SSH endpoint", func() {
 		Expect(err).NotTo(HaveOccurred())
 		dir.pending[hash] = "worker-2"
 		addr, hostFP := startTestServerWithOffer(dir, root, gitagent.RoleMailbox,
-			gitagent.EnrollmentOffer{DispatchKey: "SHA256:dispatch", MailboxPath: "mailbox.git"})
+			gitagent.EnrollmentOffer{DispatchKey: "SHA256:dispatch"})
 
 		signer, fp, _ := newClientKey()
 		request := gitagent.EnrollRequest{ListenPort: "7502", HostFingerprint: "SHA256:agenthost"}
 		resp, err := gitagent.Enroll(context.Background(), "ssh://"+addr, token, hostFP, signer, request)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(resp.Agent).To(Equal("worker-2"))
-		// The reverse direction: what the agent needs to accept a dispatch and
-		// to reach the mailbox.
+		// The reverse direction: what the agent needs to accept a dispatch.
+		// Repository-specific mailbox routing arrives with each task.
 		Expect(resp.DispatchKey).To(Equal("SHA256:dispatch"))
-		Expect(resp.MailboxPath).To(Equal("mailbox.git"))
 
 		// The supervisor recorded an endpoint it can actually dispatch to.
 		enrolled, ok := dir.enrollments["worker-2"]
@@ -198,9 +198,12 @@ var _ = Describe("the git-agent SSH endpoint", func() {
 		Expect(enrolled.HostFingerprint).To(Equal("SHA256:agenthost"))
 		Expect(enrolled.URL).To(ContainSubstring(":7502/repo.git"))
 
-		mailboxURL, err := gitagent.MailboxURL("ssh://"+addr, resp.MailboxPath)
+		route := "mailboxes/" + strings.Repeat("a", 64) + ".git"
+		mailboxURL, err := gitagent.MailboxURL("ssh://"+addr, route)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(mailboxURL).To(HaveSuffix("/mailbox.git"))
+		Expect(mailboxURL).To(HaveSuffix("/" + route))
+		_, err = gitagent.MailboxURL("ssh://"+addr, "../other.git")
+		Expect(err).To(MatchError(ContainSubstring("mailbox route")))
 
 		// Replay fails: the token burned.
 		_, err = gitagent.Enroll(context.Background(), "ssh://"+addr, token, hostFP, signer, request)

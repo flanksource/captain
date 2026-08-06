@@ -7,7 +7,6 @@ package gitagent
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -38,26 +37,27 @@ func receiverConfig(maxInputSize int64) [][2]string {
 	}
 }
 
-// InitMailbox creates (or re-configures — every step is idempotent) the bare
-// mailbox repo at path, sharing objects with the real repository at realRepo
-// via objects/info/alternates.
+// InitMailbox creates a bare mailbox bound to one canonical worktree. Repeated
+// initialization is safe only for that same worktree; rebinding is refused so
+// existing refs never lose the object store that backs them.
 func InitMailbox(ctx context.Context, path, realRepo string) error {
-	if err := initReceiver(ctx, path); err != nil {
-		return err
-	}
-	realGitDir, err := runGit(ctx, realRepo, ScrubGitEnv(os.Environ()), "rev-parse", "--absolute-git-dir")
+	repository, err := canonicalRepository(ctx, realRepo)
 	if err != nil {
-		return fmt.Errorf("mailbox: resolving the real repository: %w", err)
-	}
-	objects := filepath.Join(realGitDir, "objects")
-	if _, err := os.Stat(objects); err != nil {
-		return fmt.Errorf("mailbox: real repository object store %s: %w", objects, err)
-	}
-	alternates := filepath.Join(path, "objects", "info", "alternates")
-	if err := os.MkdirAll(filepath.Dir(alternates), 0o755); err != nil {
 		return err
 	}
-	return writeFileAtomic(alternates, []byte(objects+"\n"), 0o644)
+	objects, err := repositoryObjects(ctx, repository)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Join(path, "captain"), 0o755); err != nil {
+		return err
+	}
+	return withFileLock(filepath.Join(path, "captain", "init.lock"), 0o600, func() error {
+		if err := initReceiver(ctx, path); err != nil {
+			return err
+		}
+		return bindMailbox(path, repository, objects)
+	})
 }
 
 // InitSidecar creates the bare sidecar repo at path.

@@ -14,7 +14,8 @@ import (
 	"strings"
 )
 
-// RelayTarget is where and how the sidecar reaches the supervisor mailbox.
+// RelayTarget is where and how the sidecar reaches the supervisor endpoint.
+// The repository-specific mailbox route comes from trusted dispatch state.
 type RelayTarget struct {
 	URL             string `json:"url"`
 	HostFingerprint string `json:"hostFingerprint"`
@@ -105,7 +106,11 @@ func BuildResultCommit(ctx context.Context, repo string, env []string, tip, disp
 // Relay pushes result+control atomically to the mailbox, streaming the
 // upstream's stderr through sideband. A non-zero upstream exit is the
 // caller's signal to reject the agent's push (R6.7).
-func Relay(ctx context.Context, repo string, hookEnv []string, target RelayTarget, envelope Envelope, result, control string, sideband io.Writer) error {
+func Relay(ctx context.Context, repo string, hookEnv []string, target RelayTarget, mailboxRoute string, envelope Envelope, result, control string, sideband io.Writer) error {
+	mailboxURL, err := MailboxURL(target.URL, mailboxRoute)
+	if err != nil {
+		return err
+	}
 	resultRef, err := ResultRef(envelope.Task, envelope.Attempt)
 	if err != nil {
 		return err
@@ -122,7 +127,7 @@ func Relay(ctx context.Context, repo string, hookEnv []string, target RelayTarge
 	for _, o := range opts {
 		args = append(args, "--push-option="+o)
 	}
-	args = append(args, target.URL, result+":"+resultRef, control+":"+controlRef)
+	args = append(args, mailboxURL, result+":"+resultRef, control+":"+controlRef)
 
 	pairs, err := transportPairs(target.SSHCommand, target.KeyPath, target.HostFingerprint)
 	if err != nil {

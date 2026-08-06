@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -121,6 +122,50 @@ func TestWriteFileAtomicCleansTempAfterRenameFailure(t *testing.T) {
 	}
 	if len(matches) != 0 {
 		t.Fatalf("temporary files remain: %v", matches)
+	}
+}
+
+func TestMailboxOwnsSyntheticDispatchObjects(t *testing.T) {
+	ctx := context.Background()
+	repo := t.TempDir()
+	env := ScrubGitEnv(os.Environ())
+	if _, err := runGit(ctx, repo, env, "init", "--quiet"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runGit(ctx, repo, env,
+		"-c", "user.name=test", "-c", "user.email=test@localhost",
+		"commit", "--allow-empty", "-m", "base"); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := TakeSnapshot(ctx, repo, SnapshotPolicy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	control, err := BuildControlCommit(ctx, repo, nil, map[string][]byte{
+		ControlTaskFile: []byte(`{"prompt":"test"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mailbox := filepath.Join(t.TempDir(), "mailbox.git")
+	req := DispatchRequest{
+		RepoDir: repo, MailboxPath: mailbox,
+		MailboxRoute: "mailboxes/" + strings.Repeat("a", 64) + ".git",
+	}
+	if err := recordDispatch(ctx, req, "t-durable", snapshot, control, &HookSets{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runGit(ctx, repo, env, "prune", "--expire", "now"); err != nil {
+		t.Fatal(err)
+	}
+	for oid, want := range map[string]string{snapshot.Commit: "commit", control: "commit"} {
+		if _, err := runGit(ctx, repo, env, "cat-file", "-e", oid); err == nil {
+			t.Fatalf("synthetic object %s unexpectedly survived source prune", oid)
+		}
+		got, err := runGit(ctx, mailbox, env, "cat-file", "-t", oid)
+		if err != nil || got != want {
+			t.Fatalf("mailbox object %s = %q, %v; want %s", oid, got, err, want)
+		}
 	}
 }
 

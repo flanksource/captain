@@ -32,7 +32,6 @@ const (
 	dispatchKeyName   = "supervisor_ed25519" // the supervisor's client key
 	agentKeyName      = "agent_ed25519"      // the agent's client key
 	servedReposDir    = "repos"              // served root, under the keys dir
-	MailboxRepoName   = "mailbox.git"        // the supervisor's mailbox, under the root
 	SidecarRepoName   = "repo.git"           // the agent's sidecar repo, under the root
 	supervisorAgentID = "supervisor"         // the supervisor's identity on a sidecar
 )
@@ -43,16 +42,6 @@ func gitAgentServedRoot() (string, error) {
 		return "", err
 	}
 	return filepath.Join(keysDir, servedReposDir), nil
-}
-
-// gitAgentMailboxPath is where dispatch writes and the supervisor's endpoint
-// serves. Keeping them the same path is what makes a relay reachable.
-func gitAgentMailboxPath() (string, error) {
-	root, err := gitAgentServedRoot()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(root, MailboxRepoName), nil
 }
 
 // GitAgentHelp documents the group and the two-host setup, because the order
@@ -72,7 +61,7 @@ func GitAgentHelp() api.Textable {
 		AddText("  captain sandbox git-agent revoke", "text-green-400").
 		AddText("  — refuse an agent's key from now on", "text-gray-500").NewLine().NewLine().
 		AddText("Setting up (supervisor first, then the agent host):", "font-bold text-blue-400").NewLine().
-		AddText("  1. supervisor:  captain sandbox git-agent serve --role mailbox --repo /path/to/repo", "text-green-400").NewLine().
+		AddText("  1. supervisor:  captain sandbox git-agent serve --role mailbox", "text-green-400").NewLine().
 		AddText("  2. supervisor:  captain sandbox git-agent add worker-01 --endpoint ssh://<supervisor>:7422", "text-green-400").NewLine().
 		AddText("  3. agent host:  run the printed join command (it enrolls, then serves)", "text-green-400").NewLine().
 		AddText("  4. supervisor:  captain ai prompt ./task.prompt --sandbox git-agent", "text-green-400").NewLine().NewLine().

@@ -34,6 +34,33 @@ var _ = Describe("receiver repositories", func() {
 		Expect(gitT(path, "config", "receive.maxinputsize")).NotTo(Equal("0"), "maxInputSize must be finite")
 	})
 
+	It("namespaces mailboxes by canonical repository and refuses rebinding", func() {
+		servedRoot := GinkgoT().TempDir()
+		makeRepo := func(parent string) string {
+			repo := filepath.Join(parent, "project")
+			Expect(os.MkdirAll(repo, 0o755)).To(Succeed())
+			gitT(repo, "init", "-q")
+			writeFileT(repo, "a.txt", repo+"\n")
+			gitT(repo, "add", "-A")
+			gitT(repo, "commit", "-q", "-m", "base")
+			return repo
+		}
+		repoA := makeRepo(GinkgoT().TempDir())
+		repoB := makeRepo(GinkgoT().TempDir())
+		mailboxA, err := gitagent.EnsureMailbox(ctx, servedRoot, repoA)
+		Expect(err).NotTo(HaveOccurred())
+		mailboxB, err := gitagent.EnsureMailbox(ctx, servedRoot, repoB)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(mailboxA.Route).NotTo(Equal(mailboxB.Route), "same basenames must not collide")
+		Expect(mailboxA.Route).To(HavePrefix(gitagent.MailboxesDir + "/"))
+
+		binding, err := gitagent.LoadMailboxBinding(mailboxA.Path)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(binding.Repository).To(Equal(repoA))
+		Expect(gitagent.InitMailbox(ctx, mailboxA.Path, repoB)).
+			To(MatchError(ContainSubstring("cannot rebind")))
+	})
+
 	It("shares the real repository's objects with the mailbox via alternates", func() {
 		real := GinkgoT().TempDir()
 		gitT(real, "init", "-q")
@@ -60,8 +87,8 @@ var _ = Describe("hook shims", func() {
 		repo := filepath.Join(GinkgoT().TempDir(), "repo.git")
 		Expect(gitagent.InitSidecar(ctx, repo)).To(Succeed())
 
-		Expect(gitagent.InstallHookShims(repo, "/usr/local/bin/captain", "/home/agent/.captain.yaml", gitagent.RoleSidecar)).To(Succeed())
-		Expect(gitagent.InstallHookShims(repo, "/usr/local/bin/captain", "/home/agent/.captain.yaml", gitagent.RoleSidecar)).To(Succeed())
+		Expect(gitagent.InstallHookShims(repo, "/usr/local/bin/captain", "/home/agent/.captain.yaml", gitagent.RoleSidecar, "worker-pool")).To(Succeed())
+		Expect(gitagent.InstallHookShims(repo, "/usr/local/bin/captain", "/home/agent/.captain.yaml", gitagent.RoleSidecar, "worker-pool")).To(Succeed())
 
 		for _, hook := range []string{"pre-receive", "post-receive"} {
 			path := filepath.Join(repo, "hooks", hook)
@@ -72,13 +99,14 @@ var _ = Describe("hook shims", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(content)).To(ContainSubstring("/usr/local/bin/captain"))
 			Expect(string(content)).To(ContainSubstring("--role \"sidecar\""))
+			Expect(string(content)).To(ContainSubstring("--backend \"worker-pool\""))
 			// A hook runs as a child of whoever pushed, so its config path is
 			// baked in rather than resolved from an ambient $HOME.
 			Expect(string(content)).To(ContainSubstring("--config \"/home/agent/.captain.yaml\""))
 		}
 
 		// A rebinned captain updates the shim in place.
-		Expect(gitagent.InstallHookShims(repo, "/opt/captain", "/home/agent/.captain.yaml", gitagent.RoleSidecar)).To(Succeed())
+		Expect(gitagent.InstallHookShims(repo, "/opt/captain", "/home/agent/.captain.yaml", gitagent.RoleSidecar, "worker-pool")).To(Succeed())
 		content, err := os.ReadFile(filepath.Join(repo, "hooks", "pre-receive"))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(string(content)).To(ContainSubstring("/opt/captain"))
@@ -86,7 +114,7 @@ var _ = Describe("hook shims", func() {
 		// A hook captain did not install is never overwritten.
 		foreign := filepath.Join(repo, "hooks", "pre-receive")
 		Expect(os.WriteFile(foreign, []byte("#!/bin/sh\nexit 0\n"), 0o755)).To(Succeed())
-		err = gitagent.InstallHookShims(repo, "/opt/captain", "/home/agent/.captain.yaml", gitagent.RoleSidecar)
+		err = gitagent.InstallHookShims(repo, "/opt/captain", "/home/agent/.captain.yaml", gitagent.RoleSidecar, "worker-pool")
 		Expect(err).To(MatchError(ContainSubstring("not installed by captain")))
 	})
 })

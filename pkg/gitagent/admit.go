@@ -123,6 +123,9 @@ func admitProtocolRef(req AdmitRequest, u RefUpdate) (RefInfo, error) {
 	if err := req.Envelope.MatchesRef(info); err != nil {
 		return RefInfo{}, err
 	}
+	if req.Role == RoleSidecar && info.Kind == RefDispatch && req.Envelope.Mailbox == "" {
+		return RefInfo{}, fmt.Errorf("ref %s: dispatch envelope carries no mailbox route", u.Ref)
+	}
 	if !NamespaceContains(TaskNamespace(info.Task), u.Ref) {
 		return RefInfo{}, fmt.Errorf("ref %s escapes its task namespace", u.Ref)
 	}
@@ -277,16 +280,16 @@ func admitContent(ctx context.Context, req AdmitRequest, st *TaskState, from, to
 			return fmt.Errorf("gate:secret-name %s looks like a credential; the push is rejected (A5.4)", p)
 		}
 	}
-	return admitBlobCaps(ctx, req, st, to)
+	return admitBlobCaps(ctx, req, st, from, to)
 }
 
-func admitBlobCaps(ctx context.Context, req AdmitRequest, st *TaskState, tip string) error {
+func admitBlobCaps(ctx context.Context, req AdmitRequest, st *TaskState, from, tip string) error {
 	maxBlob := st.Policy.MaxBlobSize
 	if maxBlob == 0 {
 		maxBlob = DefaultSnapshotMaxFileSize
 	}
 	objects, err := runGitRaw(ctx, req.Repo, req.Env, nil,
-		"rev-list", "--objects", tip, "--not", "--all", "--alternate-refs")
+		"rev-list", "--objects", tip, "--not", from)
 	if err != nil {
 		return err
 	}

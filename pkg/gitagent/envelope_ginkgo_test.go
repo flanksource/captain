@@ -27,6 +27,7 @@ var _ = Describe("envelope encode/decode", func() {
 		e := validEnvelope()
 		e.Agent = "worker-01"
 		e.Relay = gitagent.RelaySync
+		e.Mailbox = "mailboxes/" + strings.Repeat("a", 64) + ".git"
 		opts, err := e.Encode()
 		Expect(err).NotTo(HaveOccurred())
 		Expect(opts[0]).To(Equal(gitagent.EnvelopeVersionTag))
@@ -95,6 +96,9 @@ var _ = Describe("envelope encode/decode", func() {
 		bad = append(bad, e)
 		e = validEnvelope()
 		e.Relay = "eventually"
+		bad = append(bad, e)
+		e = validEnvelope()
+		e.Mailbox = "../other.git"
 		bad = append(bad, e)
 		for i, envelope := range bad {
 			_, err := envelope.Encode()

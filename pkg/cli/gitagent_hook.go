@@ -31,10 +31,22 @@ func RunGitAgentHook(ctx context.Context, opts GitAgentHookOptions) (any, error)
 	if strings.TrimSpace(opts.Config) != "" {
 		captainconfig.SetPath(opts.Config)
 	}
+	role := gitagent.ReceiverRole(opts.Role)
+	if role != gitagent.RoleSidecar && role != gitagent.RoleMailbox {
+		return nil, fmt.Errorf("unknown receiver role %q", opts.Role)
+	}
 	runtime, err := hookRuntimeFromConfig(opts.Backend)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "captain: %v\n", err)
 		return nil, err
+	}
+	if role == gitagent.RoleMailbox {
+		binding, err := gitagent.LoadMailboxBinding(opts.Repo)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "captain: %v\n", err)
+			return nil, err
+		}
+		runtime.RealRepo = binding.Repository
 	}
 	wrapFor, err := gitagent.ResolveHookWrap(runtime.HookSandbox, opts.Repo)
 	if err != nil {
@@ -67,7 +79,6 @@ func RunGitAgentHook(ctx context.Context, opts GitAgentHookOptions) (any, error)
 			return DefaultAgentCommand(exe, repo, task, configPath)
 		},
 	}
-	role := gitagent.ReceiverRole(opts.Role)
 	switch opts.Hook {
 	case "pre-receive":
 		return nil, gitagent.RunPreReceive(ctx, opts.Repo, role, host, os.Stdin, os.Stderr)
@@ -104,10 +115,9 @@ func hookJudgeProvider(runtime gitagent.HookRuntime) (ai.Provider, error) {
 	return wrapped, nil
 }
 
-// hookRuntimeFromConfig assembles the receiver runtime from the backend's
-// options block: the two hook-set workflows, the confinement sandbox for exec
-// hooks, the agent launch command, the integration target, and the relay
-// endpoint recorded at enrollment.
+// hookRuntimeFromConfig assembles host-wide receiver settings from the
+// backend. Repository integration is mailbox-local and is resolved separately
+// from the binding beside that mailbox's task state.
 func hookRuntimeFromConfig(backendName string) (gitagent.HookRuntime, error) {
 	var rt gitagent.HookRuntime
 	cfg, _, err := captainconfig.Load()
@@ -128,7 +138,6 @@ func hookRuntimeFromConfig(backendName string) (gitagent.HookRuntime, error) {
 	}
 	rt.HookSandbox, _ = backend.Options["hookSandbox"].(string)
 	rt.AgentCommand, _ = backend.Options["agentCommand"].(string)
-	rt.RealRepo, _ = backend.Options["repo"].(string)
 	if supervisor, ok := backend.Options["supervisor"].(map[string]any); ok {
 		url, _ := supervisor["url"].(string)
 		hostFP, _ := supervisor["hostFingerprint"].(string)

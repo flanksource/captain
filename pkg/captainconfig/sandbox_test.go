@@ -80,7 +80,7 @@ backends:
   prod-pool:
     kind: git-agent
     relay: sync
-    mailbox: ~/.captain/sandbox/mailbox.git
+    mailboxRoot: ~/.captain/sandbox/repos
   local-docker:
     kind: container
     presets: [golang, git]
