@@ -8,6 +8,7 @@ package gitagent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -241,6 +242,13 @@ func sidecarPreReceive(ctx context.Context, repo string, host HookHost, updates 
 	}
 	if host.Runtime.Relay.URL != "" {
 		if err := relayUpward(ctx, repo, host, st, attempt, branchUpdate.New, sideband); err != nil {
+			var rejected *upstreamRejectedError
+			if errors.As(err, &rejected) {
+				// The supervisor already persisted and rendered the authoritative
+				// verdict. Return non-zero to reject this push without replacing it
+				// with a second, generic sidecar relay-error verdict.
+				return err
+			}
 			verdict.Status = StatusError
 			verdict.Findings = append(verdict.Findings, Finding{
 				Hook: "relay", Kind: "exec", Message: err.Error(),

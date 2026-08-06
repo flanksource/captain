@@ -271,6 +271,10 @@ var _ = Describe("protocol conformance (§12)", Serial, func() {
 		out, err := w.agentPush(map[string]string{"pkg/ok.txt": "bad\n"})
 		Expect(err).To(HaveOccurred(), "push must be rejected:\n%s", out)
 		Expect(out).To(ContainSubstring("verify:grep -q good pkg/ok.txt"), "the supervisor's feedback travelled the sideband chain")
+		Expect(out).NotTo(ContainSubstring("remote: remote:"), "the relay removes the inner git transport prefix")
+		Expect(strings.Count(out, "captain-json: ")).To(Equal(1), "the supervisor verdict remains the only machine summary")
+		Expect(out).To(ContainSubstring(`"status":"rejected","tier":"supervisor"`))
+		Expect(out).NotTo(ContainSubstring(`"hook":"relay"`), "a supervisor rejection is not a sidecar transport error")
 
 		// The supervisor's rejection persisted at its tier (R6.9); quarantine
 		// left no result ref behind.
