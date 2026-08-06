@@ -104,9 +104,10 @@ func moduleRoot(t *testing.T) string {
 
 // host is one machine in the topology: an isolated HOME and the binary.
 type host struct {
-	t    *testing.T
-	home string
-	bin  string
+	t        *testing.T
+	home     string
+	bin      string
+	serveOut *lockedBuffer
 }
 
 func newHost(t *testing.T) *host {
@@ -144,6 +145,7 @@ func (h *host) serve(port string, args ...string) {
 	cmd := exec.Command(h.bin, full...)
 	cmd.Env = h.env()
 	var out lockedBuffer
+	h.serveOut = &out
 	cmd.Stdout, cmd.Stderr = &out, &out
 	if err := cmd.Start(); err != nil {
 		h.t.Fatal(err)
@@ -169,6 +171,13 @@ func (h *host) serve(port string, args ...string) {
 		}
 	}
 	h.t.Fatalf("serve never began listening:\n%s", out.String())
+}
+
+func (h *host) serveLogs() string {
+	if h.serveOut == nil {
+		return ""
+	}
+	return h.serveOut.String()
 }
 
 func (h *host) configBytes() string {
@@ -644,6 +653,15 @@ func TestDispatchLaunchesAnAgent(t *testing.T) {
 	if !strings.Contains(integrated, "func Greet()") || !strings.Contains(integrated, "// dirty") {
 		t.Fatalf("integration lost the agent's work or the dispatched state:\n%s", integrated)
 	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		logs := agent.serveLogs()
+		if strings.Contains(logs, "git-agent task") && strings.Contains(logs, "received") && strings.Contains(logs, "accepted at sidecar") {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("agent serve did not report the task lifecycle:\n%s", agent.serveLogs())
 }
 
 // agentLogs returns whatever the detached agent wrote, which is the only
@@ -741,4 +759,11 @@ func TestUnconfiguredDispatchLaunchesTheDefaultAgent(t *testing.T) {
 		t.Fatalf("an unconfigured backend launched nothing; the dispatch would wait out its whole budget in silence\ndispatch output:\n%s", out.String())
 	}
 	t.Logf("default agent produced:\n%s", launched)
+	deadline = time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && !strings.Contains(agent.serveLogs(), "starting") {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if logs := agent.serveLogs(); !strings.Contains(logs, "git-agent task") || !strings.Contains(logs, "starting") {
+		t.Fatalf("agent serve did not stream the default Captain run log:\n%s", logs)
+	}
 }

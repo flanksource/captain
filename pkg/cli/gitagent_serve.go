@@ -80,6 +80,12 @@ func RunGitAgentServe(ctx context.Context, opts GitAgentServeOptions) (any, erro
 	clicky.Printf("  host key: %s\n", hostFP)
 	if role == gitagent.RoleMailbox {
 		clicky.Printf("  enroll an agent with: captain sandbox git-agent add <name> --endpoint ssh://<this-host>:<port>\n")
+	} else {
+		monitor := newAgentTaskLogMonitor(filepath.Join(root, SidecarRepoName), os.Stdout, os.Stderr, log.Infof)
+		if err := monitor.prime(); err != nil {
+			log.Warnf("git-agent task log monitor: %v", err)
+		}
+		go monitor.run(ctx)
 	}
 	go func() {
 		<-ctx.Done()
