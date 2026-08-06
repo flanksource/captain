@@ -233,16 +233,16 @@ func TestApplyHoldsMigrationLockAcrossMigration(t *testing.T) {
 	t.Parallel()
 
 	var events []string
-	err := apply(t.Context(), "postgres://captain", applyDependencies{
-		acquireLock: func(context.Context, string) (migrationLockHandle, error) {
+	err := apply(t.Context(), applyRequest{Connection: "postgres://captain", Schema: DefaultSchema}, applyDependencies{
+		acquireLock: func(context.Context, applyRequest) (migrationLockHandle, error) {
 			events = append(events, "lock")
 			return &recordingMigrationLock{events: &events}, nil
 		},
-		migrate: func(context.Context, string) error {
+		migrate: func(context.Context, applyRequest) error {
 			events = append(events, "migrate")
 			return nil
 		},
-		verify: func(context.Context, string) error {
+		verify: func(context.Context, applyRequest) error {
 			events = append(events, "verify")
 			return nil
 		},
@@ -258,16 +258,16 @@ func TestApplyReleasesMigrationLockOnVerificationFailure(t *testing.T) {
 
 	var events []string
 	verificationErr := errors.New("constraint drifted")
-	err := apply(t.Context(), "postgres://captain", applyDependencies{
-		acquireLock: func(context.Context, string) (migrationLockHandle, error) {
+	err := apply(t.Context(), applyRequest{Connection: "postgres://captain", Schema: DefaultSchema}, applyDependencies{
+		acquireLock: func(context.Context, applyRequest) (migrationLockHandle, error) {
 			events = append(events, "lock")
 			return &recordingMigrationLock{events: &events}, nil
 		},
-		migrate: func(context.Context, string) error {
+		migrate: func(context.Context, applyRequest) error {
 			events = append(events, "migrate")
 			return nil
 		},
-		verify: func(context.Context, string) error {
+		verify: func(context.Context, applyRequest) error {
 			events = append(events, "verify")
 			return verificationErr
 		},
@@ -283,12 +283,12 @@ func TestApplyReleasesMigrationLockOnMigrationFailure(t *testing.T) {
 
 	var events []string
 	migrationErr := errors.New("atlas failed")
-	err := apply(t.Context(), "postgres://captain", applyDependencies{
-		acquireLock: func(context.Context, string) (migrationLockHandle, error) {
+	err := apply(t.Context(), applyRequest{Connection: "postgres://captain", Schema: DefaultSchema}, applyDependencies{
+		acquireLock: func(context.Context, applyRequest) (migrationLockHandle, error) {
 			events = append(events, "lock")
 			return &recordingMigrationLock{events: &events}, nil
 		},
-		migrate: func(context.Context, string) error {
+		migrate: func(context.Context, applyRequest) error {
 			events = append(events, "migrate")
 			return migrationErr
 		},
@@ -305,8 +305,8 @@ func TestApplyReportsLockAcquisitionAndReleaseErrors(t *testing.T) {
 	t.Run("acquire", func(t *testing.T) {
 		t.Parallel()
 		wantErr := errors.New("lock unavailable")
-		err := apply(t.Context(), "postgres://captain", applyDependencies{
-			acquireLock: func(context.Context, string) (migrationLockHandle, error) {
+		err := apply(t.Context(), applyRequest{Connection: "postgres://captain", Schema: DefaultSchema}, applyDependencies{
+			acquireLock: func(context.Context, applyRequest) (migrationLockHandle, error) {
 				return nil, wantErr
 			},
 		})
@@ -319,11 +319,11 @@ func TestApplyReportsLockAcquisitionAndReleaseErrors(t *testing.T) {
 		t.Parallel()
 		migrationErr := errors.New("migration failed")
 		releaseErr := errors.New("unlock failed")
-		err := apply(t.Context(), "postgres://captain", applyDependencies{
-			acquireLock: func(context.Context, string) (migrationLockHandle, error) {
+		err := apply(t.Context(), applyRequest{Connection: "postgres://captain", Schema: DefaultSchema}, applyDependencies{
+			acquireLock: func(context.Context, applyRequest) (migrationLockHandle, error) {
 				return &recordingMigrationLock{err: releaseErr}, nil
 			},
-			migrate: func(context.Context, string) error { return migrationErr },
+			migrate: func(context.Context, applyRequest) error { return migrationErr },
 		})
 		if !errors.Is(err, migrationErr) || !errors.Is(err, releaseErr) {
 			t.Fatalf("apply error = %v, want joined migration and release errors", err)
