@@ -2,6 +2,7 @@ package verify
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -60,6 +61,29 @@ func TestCmdVerifier_StartFailureFeedsBackTheError(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, verdict.OK)
 	assert.Contains(t, verdict.Feedback, "captain-no-such-binary")
+}
+
+// A wrapper that returns no environment must leave the pre-wrap boundary in
+// place, not fall through to full process inheritance: the git-agent hook path
+// hands a deliberately reduced Env to Wrap, and inheriting the process
+// environment would silently expose every ambient credential to an
+// agent-authored command (issue #40).
+func TestCmdVerifier_WrapWithNilEnvKeepsTheDeclaredBoundary(t *testing.T) {
+	t.Setenv("CAPTAIN_TEST_AMBIENT_SECRET", "leaked")
+
+	v := &CmdVerifier{
+		Cmd:  "sh",
+		Args: []string{"-c", `test -z "$CAPTAIN_TEST_AMBIENT_SECRET" && test "$MARKER" = ok`},
+		Env:  []string{"PATH=" + os.Getenv("PATH"), "MARKER=ok"},
+		Wrap: func(_ context.Context, cmd string, args, _ []string) (string, []string, []string, error) {
+			return cmd, args, nil, nil // a wrapper that supplies no environment
+		},
+	}
+
+	verdict, err := v.Verify(context.Background(), t.TempDir(), nil)
+
+	require.NoError(t, err)
+	assert.True(t, verdict.OK, "declared env must reach the command and the ambient secret must not: %s", verdict.Feedback)
 }
 
 // A parent deadline shorter than the verifier's own Timeout is the RUN's

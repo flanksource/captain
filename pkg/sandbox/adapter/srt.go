@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/captainconfig"
 	sandboxruntime "github.com/flanksource/sandbox-runtime/sandbox"
 )
 
@@ -27,18 +28,42 @@ var NewSRTRuntime = func(ctx context.Context, cfg sandboxruntime.Config) (Runtim
 	return sandboxruntime.New(ctx, cfg)
 }
 
-// srtSandbox confines the agent CLI with sandbox-runtime (filesystem and
-// network policy). The confinement is constructed per wrapped command, because
-// its policy depends on which CLI is being run.
+// srtSandbox confines a process with sandbox-runtime (filesystem and network
+// policy). It carries one of two policies, chosen at construction: the per-CLI
+// provider policy (which API domains, credentials and state directory that CLI
+// needs), or the generic exec-hook policy (untrusted repository code gets its
+// prepared workspace and nothing else). The confinement is constructed per
+// wrapped command, because its policy depends on what is being run.
 type srtSandbox struct {
 	cwd string
+
+	// hook selects the generic exec-hook profile (api.SandboxProfileHook).
+	// Hook policy is a construction-time choice, never inferred from the
+	// wrapped argv: keying it off the binary name would hand agent-authored
+	// code a provider policy — credentials included — the day a hook invokes
+	// a supported CLI.
+	hook bool
+	// hookDenyRead are extra paths the hook profile must hide (the receiving
+	// repository), from api.SandboxOptionDenyRead.
+	hookDenyRead []string
+	// scratch is the hook run's private writable directory: its TMPDIR and
+	// HOME, created by Prepare and removed by Close. It exists so the policy
+	// need not allow host /tmp wholesale, where concurrent runs' trees live.
+	scratch string
 
 	mu       sync.Mutex
 	runtimes []Runtime
 }
 
 // SRT is the SandboxFactory for the sandbox-runtime adapter.
-func SRT(api.SandboxConfig) (api.Sandbox, error) { return &srtSandbox{}, nil }
+func SRT(cfg api.SandboxConfig) (api.Sandbox, error) {
+	s := &srtSandbox{}
+	if profile, _ := cfg.Options[api.SandboxOptionProfile].(string); profile == api.SandboxProfileHook {
+		s.hook = true
+		s.hookDenyRead = stringSliceOption(cfg.Options, api.SandboxOptionDenyRead)
+	}
+	return s, nil
+}
 
 func init() { api.RegisterSandbox(api.SandboxSRT, SRT) }
 
@@ -46,11 +71,30 @@ func (s *srtSandbox) Kind() api.SandboxKind { return api.SandboxSRT }
 
 func (s *srtSandbox) Prepare(_ context.Context, spec *api.Spec) (*api.SandboxSession, error) {
 	s.cwd = spec.Cwd()
+	if s.hook {
+		// The hook profile confines to an explicit workspace or not at all: a
+		// cwd fallback here would build the policy for whatever directory the
+		// receive hook happens to run in — the bare receiving repository.
+		if s.cwd == "" {
+			return nil, fmt.Errorf("srt hook sandbox requires an explicit workspace; refusing to confine to the process working directory")
+		}
+		scratch, err := os.MkdirTemp("", "captain-hook-scratch-")
+		if err != nil {
+			return nil, fmt.Errorf("create hook scratch directory: %w", err)
+		}
+		s.scratch = scratch
+	}
 	return &api.SandboxSession{}, nil
 }
 
 func (s *srtSandbox) Wrap(ctx context.Context, command string, args, env []string) (string, []string, []string, error) {
-	cfg, err := srtConfigFor(command, s.cwd)
+	var cfg sandboxruntime.Config
+	var err error
+	if s.hook {
+		cfg, err = srtHookConfigFor(s.cwd, s.scratch, s.hookDenyRead)
+	} else {
+		cfg, err = srtConfigFor(command, s.cwd)
+	}
 	if err != nil {
 		return "", nil, nil, err
 	}
@@ -68,11 +112,20 @@ func (s *srtSandbox) Wrap(ctx context.Context, command string, args, env []strin
 	}
 	// When the runtime supplies its own environment, the request-declared
 	// variables are appended so they survive; when it supplies none, nil is
-	// returned and the exec seam falls back to the full resolved environment,
-	// which already contains them.
+	// returned and the exec seam falls back to its own environment boundary.
 	wrappedEnv := cmd.Env
 	if len(wrappedEnv) > 0 {
 		wrappedEnv = append(wrappedEnv, env...)
+	}
+	if s.hook {
+		// The hook environment is explicit, never inherited: the caller's env
+		// is the whole boundary, and the run's TMPDIR and HOME move into the
+		// scratch directory so tools have somewhere writable that is not the
+		// tree under verification and not host /tmp.
+		if wrappedEnv == nil {
+			wrappedEnv = append([]string(nil), env...)
+		}
+		wrappedEnv = append(wrappedEnv, "TMPDIR="+s.scratch, "HOME="+s.scratch)
 	}
 	return cmd.Args[0], cmd.Args[1:], wrappedEnv, nil
 }
@@ -89,6 +142,12 @@ func (s *srtSandbox) Close() error {
 			errs = append(errs, err)
 		}
 		cancel()
+	}
+	if s.scratch != "" {
+		if err := os.RemoveAll(s.scratch); err != nil {
+			errs = append(errs, err)
+		}
+		s.scratch = ""
 	}
 	return errors.Join(errs...)
 }
@@ -135,26 +194,104 @@ func srtConfigFor(command, cwd string) (sandboxruntime.Config, error) {
 		},
 		Filesystem: sandboxruntime.FilesystemConfig{
 			AllowWrite: append([]string{absoluteCwd, "/tmp"}, statePaths...),
-			DenyRead: []string{
-				filepath.Join(home, ".ssh"),
-				filepath.Join(home, ".aws"),
-				filepath.Join(home, ".azure"),
-				filepath.Join(home, ".config", "gcloud"),
-				filepath.Join(home, ".kube"),
-				filepath.Join(home, ".netrc"),
-				filepath.Join(home, ".git-credentials"),
-				filepath.Join(home, ".config", "gh"),
-				filepath.Join(home, ".docker", "config.json"),
-				filepath.Join(home, ".npmrc"),
-				filepath.Join(home, ".pypirc"),
-				filepath.Join(home, ".docker", "run", "docker.sock"),
-				"/var/run/docker.sock",
-				"/run/docker.sock",
-				"/run/containerd/containerd.sock",
-				"/run/podman/podman.sock",
-			},
-			DenyWrite: []string{},
+			DenyRead:   hostCredentialDenyRead(home),
+			DenyWrite:  []string{},
 		},
 		PassthroughEnv: passthroughEnv,
 	}, nil
+}
+
+// srtHookConfigFor builds the generic exec-hook confinement. The wrapped
+// command is agent-authored repository code (issue #40 R5.2), so the policy is
+// the inverse of the CLI ones: write access to the materialized workspace and
+// the run's scratch directory only (not host /tmp, where other runs' trees
+// live), network denied entirely, no credential env passthrough, and reads of
+// provider state, captain's own key material and the receiving repository
+// hidden on top of the host-credential list. Both directories must already
+// exist and be non-empty paths — sandbox-runtime silently skips missing
+// AllowWrite entries, which here would mean an unwritable workspace, so this
+// fails closed instead.
+func srtHookConfigFor(workspace, scratch string, extraDenyRead []string) (sandboxruntime.Config, error) {
+	if workspace == "" || scratch == "" {
+		return sandboxruntime.Config{}, fmt.Errorf("srt hook sandbox has no prepared workspace; Prepare must run with the materialized tree before Wrap")
+	}
+	absoluteWorkspace, err := filepath.Abs(workspace)
+	if err != nil {
+		return sandboxruntime.Config{}, fmt.Errorf("resolve hook workspace %q: %w", workspace, err)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return sandboxruntime.Config{}, fmt.Errorf("resolve sandbox home directory: %w", err)
+	}
+	denyRead := append(hostCredentialDenyRead(home),
+		// Provider state and credentials the CLI policies deliberately allow.
+		filepath.Join(home, ".claude"),
+		filepath.Join(home, ".claude.json"),
+		filepath.Join(home, ".codex"),
+		filepath.Join(home, ".gemini"),
+	)
+	// Captain's own configuration (which may embed provider keys) and its
+	// git-agent key material and served repositories.
+	if configPath, err := captainconfig.Path(); err == nil {
+		denyRead = append(denyRead, configPath, filepath.Join(filepath.Dir(configPath), ".captain"))
+	}
+	for _, path := range extraDenyRead {
+		if abs, err := filepath.Abs(path); err == nil {
+			denyRead = append(denyRead, abs)
+		}
+	}
+
+	return sandboxruntime.Config{
+		Network: sandboxruntime.NetworkConfig{
+			// Non-nil and empty: network isolation is ON and every domain is
+			// denied. nil would mean "no network restriction" instead.
+			AllowedDomains: []string{},
+			DeniedDomains:  []string{},
+		},
+		Filesystem: sandboxruntime.FilesystemConfig{
+			AllowWrite: []string{absoluteWorkspace, scratch},
+			DenyRead:   denyRead,
+			DenyWrite:  []string{},
+		},
+	}, nil
+}
+
+// hostCredentialDenyRead is the host credential material no sandboxed process
+// may read, shared by every SRT policy: SSH, cloud, git, container and
+// package-manager credentials, plus container runtime sockets.
+func hostCredentialDenyRead(home string) []string {
+	return []string{
+		filepath.Join(home, ".ssh"),
+		filepath.Join(home, ".aws"),
+		filepath.Join(home, ".azure"),
+		filepath.Join(home, ".config", "gcloud"),
+		filepath.Join(home, ".kube"),
+		filepath.Join(home, ".netrc"),
+		filepath.Join(home, ".git-credentials"),
+		filepath.Join(home, ".config", "gh"),
+		filepath.Join(home, ".docker", "config.json"),
+		filepath.Join(home, ".npmrc"),
+		filepath.Join(home, ".pypirc"),
+		filepath.Join(home, ".docker", "run", "docker.sock"),
+		"/var/run/docker.sock",
+		"/run/docker.sock",
+		"/run/containerd/containerd.sock",
+		"/run/podman/podman.sock",
+	}
+}
+
+func stringSliceOption(options map[string]any, key string) []string {
+	switch value := options[key].(type) {
+	case []string:
+		return value
+	case []any:
+		var out []string
+		for _, item := range value {
+			if s, ok := item.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return nil
 }

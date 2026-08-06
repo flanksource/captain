@@ -36,7 +36,7 @@ func RunGitAgentHook(ctx context.Context, opts GitAgentHookOptions) (any, error)
 		fmt.Fprintf(os.Stderr, "captain: %v\n", err)
 		return nil, err
 	}
-	wrap, err := gitagent.ResolveHookWrap(runtime.HookSandbox)
+	wrapFor, err := gitagent.ResolveHookWrap(runtime.HookSandbox, opts.Repo)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "captain: %v\n", err)
 		return nil, err
@@ -58,7 +58,7 @@ func RunGitAgentHook(ctx context.Context, opts GitAgentHookOptions) (any, error)
 	host := gitagent.HookHost{
 		Runtime: runtime,
 		Judge:   judge,
-		Wrap:    wrap,
+		WrapFor: wrapFor,
 		// With no agentCommand configured, the sidecar still launches a real
 		// agent: this binary, working the task in the prepared worktree. The
 		// alternative — launching nothing — leaves the supervisor waiting out
