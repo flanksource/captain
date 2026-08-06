@@ -42,6 +42,32 @@ func scrubbedGitVar(name string) bool {
 	return false
 }
 
+// hookExecEnvAllowed are the variables an exec hook may inherit by exact name.
+// PATH so declared commands resolve; HOME and TMPDIR because tools need them
+// (a sandboxing wrapper may re-point both at a private scratch directory); the
+// rest is locale and terminal plumbing. Everything else — provider
+// credentials, host tokens, the receive-pack git context — stays out.
+var hookExecEnvAllowed = map[string]struct{}{
+	"PATH": {}, "HOME": {}, "TMPDIR": {}, "LANG": {}, "TZ": {},
+	"TERM": {}, "USER": {}, "LOGNAME": {}, "SHELL": {},
+}
+
+// HookExecEnv reduces env to the allowlist an exec hook may see. Hooks run
+// agent-authored commands, so their environment is a boundary, not an
+// inheritance: R1.1's git scrub falls out of the allowlist (no GIT_* survives)
+// and no ambient credential — provider API keys included — can reach the hook
+// (issue #40).
+func HookExecEnv(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		if _, ok := hookExecEnvAllowed[name]; ok || strings.HasPrefix(name, "LC_") {
+			out = append(out, kv)
+		}
+	}
+	return out
+}
+
 // RelayEnv returns env with only GIT_QUARANTINE_PATH removed. The relay push
 // from inside pre-receive must keep the inherited object directories so the
 // quarantined objects stay readable, and must not copy them (R1.4, verified

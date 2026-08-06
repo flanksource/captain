@@ -26,6 +26,22 @@ type SandboxConfig struct {
 	Policy *SandboxPolicy `json:"policy,omitempty" yaml:"policy,omitempty"`
 }
 
+// Options keys shared between the git-agent hook resolver and the adapters it
+// constructs. They live here because the resolver (pkg/gitagent) cannot import
+// the adapters (pkg/sandbox/adapter imports pkg/gitagent).
+const (
+	// SandboxOptionProfile selects a policy profile within one adapter kind.
+	SandboxOptionProfile = "profile"
+	// SandboxProfileHook is the generic exec-hook profile: the wrapped command
+	// is untrusted, agent-authored repository code, so it gets its prepared
+	// workspace and nothing else — no network, no provider credentials or
+	// state, no host credentials (issue #40 R5.2).
+	SandboxProfileHook = "hook"
+	// SandboxOptionDenyRead carries extra deny-read paths ([]string) the
+	// profile must hide — for hooks, the receiving repository itself.
+	SandboxOptionDenyRead = "denyRead"
+)
+
 // SandboxFactory constructs a Sandbox from a SandboxConfig.
 type SandboxFactory func(cfg SandboxConfig) (Sandbox, error)
 

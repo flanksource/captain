@@ -38,7 +38,7 @@ type HookSetOptions struct {
 	Depth    int         // envelope depth of the push being vetted (R5.4/H15)
 	Judge    ai.Provider // provider for prompt hooks; nil forbids them
 	Wrap     verify.CommandWrapFunc
-	Env      []string // scrubbed environment for exec hooks (R1.1)
+	Env      []string // allowlisted environment for exec hooks (R1.1, HookExecEnv)
 	Timeout  time.Duration
 }
 

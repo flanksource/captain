@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -48,7 +49,7 @@ func (r HookRuntime) RequiresJudge() bool {
 type HookHost struct {
 	Runtime HookRuntime
 	Judge   ai.Provider
-	Wrap    verify.CommandWrapFunc
+	WrapFor HookWrapFactory
 	Timeout time.Duration
 	// DefaultAgentCommand supplies the command to launch when the backend
 	// declares no agentCommand. Without it a dispatch would prepare a
@@ -87,10 +88,21 @@ func LoadHookRuntime(path string) (HookRuntime, error) {
 	return rt, nil
 }
 
-// ResolveHookWrap maps HookRuntime.HookSandbox onto a confinement func via
-// the sandbox registry. Empty means none — RunHookSet then refuses exec hooks
-// rather than running them bare (R5.2).
-func ResolveHookWrap(name string) (verify.CommandWrapFunc, error) {
+// HookWrapFactory builds a confinement wrapper scoped to one materialized
+// workspace. The sandbox's filesystem policy depends on the tree it confines,
+// and that tree only exists once a push is being vetted — so hooks resolve a
+// factory up front and construct the wrapper per vet, after materialization.
+// The returned close releases the sandbox; callers must invoke it once the
+// hook set has run.
+type HookWrapFactory func(ctx context.Context, dir string) (verify.CommandWrapFunc, func() error, error)
+
+// ResolveHookWrap maps HookRuntime.HookSandbox onto a per-workspace
+// confinement factory via the sandbox registry. Empty means none — RunHookSet
+// then refuses exec hooks rather than running them bare (R5.2). repo is the
+// receiving repository, which the hook policy must hide from the confined
+// command. Unknown kinds and adapters without a command wrapper fail here, at
+// hook startup, not mid-vet.
+func ResolveHookWrap(name, repo string) (HookWrapFactory, error) {
 	switch name {
 	case "":
 		return nil, nil
@@ -98,23 +110,52 @@ func ResolveHookWrap(name string) (verify.CommandWrapFunc, error) {
 		if !testing.Testing() {
 			return nil, fmt.Errorf("hookSandbox test-identity is only available inside a test binary (R5.2)")
 		}
-		return func(_ context.Context, cmd string, args, env []string) (string, []string, []string, error) {
-			return cmd, args, env, nil
+		return func(_ context.Context, _ string) (verify.CommandWrapFunc, func() error, error) {
+			wrap := func(_ context.Context, cmd string, args, env []string) (string, []string, []string, error) {
+				return cmd, args, env, nil
+			}
+			return wrap, func() error { return nil }, nil
 		}, nil
 	}
 	kind, ok := api.ParseSandboxKind(name)
 	if !ok {
 		return nil, fmt.Errorf("unknown hook sandbox kind %q", name)
 	}
-	sandbox, err := api.NewSandbox(api.SandboxConfig{Kind: kind})
+	cfg := api.SandboxConfig{Kind: kind, Options: map[string]any{
+		api.SandboxOptionProfile: api.SandboxProfileHook,
+	}}
+	if abs, err := filepath.Abs(repo); err == nil && repo != "" {
+		cfg.Options[api.SandboxOptionDenyRead] = []string{abs}
+	}
+	// Probe once at resolve time so a kind that cannot confine commands is a
+	// startup error rather than a per-push surprise.
+	probe, err := api.NewSandbox(cfg)
 	if err != nil {
 		return nil, err
 	}
-	wrapper, ok := api.SandboxAs[api.CommandWrapper](sandbox)
-	if !ok {
+	_, canWrap := api.SandboxAs[api.CommandWrapper](probe)
+	_ = probe.Close()
+	if !canWrap {
 		return nil, fmt.Errorf("hook sandbox %q provides no command wrapper; exec hooks cannot run confined (R5.2)", name)
 	}
-	return wrapper.Wrap, nil
+	return func(ctx context.Context, dir string) (verify.CommandWrapFunc, func() error, error) {
+		sandbox, err := api.NewSandbox(cfg)
+		if err != nil {
+			return nil, nil, err
+		}
+		spec := &api.Spec{}
+		spec.SetCwd(dir)
+		if _, err := sandbox.Prepare(ctx, spec); err != nil {
+			_ = sandbox.Close()
+			return nil, nil, err
+		}
+		wrapper, ok := api.SandboxAs[api.CommandWrapper](sandbox)
+		if !ok {
+			_ = sandbox.Close()
+			return nil, nil, fmt.Errorf("hook sandbox %q provides no command wrapper; exec hooks cannot run confined (R5.2)", name)
+		}
+		return wrapper.Wrap, sandbox.Close, nil
+	}, nil
 }
 
 // HookMain is the shim entrypoint: args are
@@ -138,12 +179,12 @@ func HookMain(args []string) int {
 		fmt.Fprintln(os.Stderr, "captain: verify prompts declared but the standalone hook shim has no provider; use `captain sandbox git-agent hook`")
 		return 1
 	}
-	wrap, err := ResolveHookWrap(runtime.HookSandbox)
+	wrapFor, err := ResolveHookWrap(runtime.HookSandbox, repo)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "captain: %v\n", err)
 		return 1
 	}
-	host := HookHost{Runtime: runtime, Wrap: wrap}
+	host := HookHost{Runtime: runtime, WrapFor: wrapFor}
 	ctx := context.Background()
 	switch hook {
 	case "pre-receive":
@@ -364,6 +405,21 @@ func vetTree(ctx context.Context, repo string, req vetRequest) TierVerdict {
 		verdict.Findings = append(verdict.Findings, Finding{Hook: "materialize", Kind: "exec", Message: err.Error()})
 		return verdict
 	}
+	// The confinement wrapper is built here, against the tree it will confine:
+	// only now does the workspace exist, and a sandbox whose filesystem policy
+	// was computed for any other directory would confine the wrong thing. A
+	// factory failure is fail-closed (R5.2): status error, and error rejects.
+	var wrap verify.CommandWrapFunc
+	if req.host.WrapFor != nil && len(verify.HooksForWorkflow(req.workflow)) > 0 {
+		wrapped, closeWrap, err := req.host.WrapFor(ctx, dir)
+		if err != nil {
+			verdict.Findings = append(verdict.Findings, Finding{Hook: "hookset", Kind: "exec",
+				Message: "hook sandbox could not confine the workspace: " + err.Error()})
+			return verdict
+		}
+		defer func() { _ = closeWrap() }()
+		wrap = wrapped
+	}
 	stop := StartProgress(os.Stderr, req.tier+" hooks", 30*time.Second)
 	defer stop()
 	return RunHookSet(ctx, HookWorkspace{Dir: dir, Changed: changed}, HookSetOptions{
@@ -373,8 +429,8 @@ func vetTree(ctx context.Context, repo string, req vetRequest) TierVerdict {
 		Attempt:  req.attempt,
 		Depth:    req.depth,
 		Judge:    req.host.Judge,
-		Wrap:     req.host.Wrap,
-		Env:      ScrubGitEnv(hookEnv),
+		Wrap:     wrap,
+		Env:      HookExecEnv(hookEnv),
 		Timeout:  req.host.Timeout,
 	})
 }

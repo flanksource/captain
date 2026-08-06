@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/gitagent"
 	sandboxruntime "github.com/flanksource/sandbox-runtime/sandbox"
 )
 
@@ -129,4 +130,187 @@ func specWithCwd(cwd string) *api.Spec {
 	spec := &api.Spec{}
 	spec.SetCwd(cwd)
 	return spec
+}
+
+func hookSandboxConfig(denyRead ...string) api.SandboxConfig {
+	options := map[string]any{api.SandboxOptionProfile: api.SandboxProfileHook}
+	if len(denyRead) > 0 {
+		options[api.SandboxOptionDenyRead] = denyRead
+	}
+	return api.SandboxConfig{Kind: api.SandboxSRT, Options: options}
+}
+
+// The hook profile is the boundary for agent-authored commands (issue #40
+// R5.2): writes confined to the prepared workspace plus a private scratch dir,
+// network denied entirely, no credential passthrough, and provider state
+// hidden on top of the host-credential list.
+func TestSRTAdapter_HookProfile(t *testing.T) {
+	original := NewSRTRuntime
+	t.Cleanup(func() { NewSRTRuntime = original })
+	fake := &fakeRuntime{}
+	NewSRTRuntime = func(_ context.Context, cfg sandboxruntime.Config) (Runtime, error) {
+		fake.gotConfig = cfg
+		return fake, nil
+	}
+
+	repo := t.TempDir()
+	sandbox, err := api.NewSandbox(hookSandboxConfig(repo))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	if _, err := sandbox.Prepare(context.Background(), specWithCwd(workspace)); err != nil {
+		t.Fatal(err)
+	}
+	wrapper, _ := api.SandboxAs[api.CommandWrapper](sandbox)
+	command, args, env, err := wrapper.Wrap(context.Background(), "sh", []string{"-c", "make lint"}, []string{"PATH=/usr/bin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if command != "srt-wrapper" || len(args) != 3 || args[0] != "sh" || args[1] != "-c" || args[2] != "make lint" {
+		t.Fatalf("wrapped argv = %q %v", command, args)
+	}
+
+	cfg := fake.gotConfig
+	if cfg.Network.AllowedDomains == nil || len(cfg.Network.AllowedDomains) != 0 {
+		t.Fatalf("allowed domains = %#v, want non-nil empty (network isolation on, everything denied)", cfg.Network.AllowedDomains)
+	}
+	if len(cfg.Filesystem.AllowWrite) != 2 || cfg.Filesystem.AllowWrite[0] != workspace {
+		t.Fatalf("allowWrite = %v, want exactly [workspace, scratch]", cfg.Filesystem.AllowWrite)
+	}
+	scratch := cfg.Filesystem.AllowWrite[1]
+	if !strings.Contains(scratch, "captain-hook-scratch-") {
+		t.Fatalf("second allowWrite = %q, want the run's scratch directory", scratch)
+	}
+	if info, err := os.Stat(scratch); err != nil || !info.IsDir() {
+		t.Fatalf("scratch %q must exist before wrap (missing AllowWrite paths are silently skipped): %v", scratch, err)
+	}
+	for _, path := range cfg.Filesystem.AllowWrite {
+		if path == "/tmp" {
+			t.Fatal("hook policy must not allow host /tmp, where other runs' trees live")
+		}
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		filepath.Join(home, ".ssh"),
+		filepath.Join(home, ".claude"),
+		filepath.Join(home, ".claude.json"),
+		filepath.Join(home, ".codex"),
+		filepath.Join(home, ".gemini"),
+		repo,
+	} {
+		found := false
+		for _, got := range cfg.Filesystem.DenyRead {
+			if got == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("denyRead %v missing %q", cfg.Filesystem.DenyRead, want)
+		}
+	}
+	if len(cfg.PassthroughEnv) != 0 {
+		t.Fatalf("passthroughEnv = %v, want none for hooks", cfg.PassthroughEnv)
+	}
+
+	// The environment is explicit: the runtime's env, the declared env, and
+	// TMPDIR/HOME re-pointed at the scratch directory.
+	want := []string{"SRT=1", "PATH=/usr/bin", "TMPDIR=" + scratch, "HOME=" + scratch}
+	if !reflect.DeepEqual(env, want) {
+		t.Fatalf("wrapped env = %v, want %v", env, want)
+	}
+
+	if err := sandbox.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !fake.closed {
+		t.Fatal("Close must close the live runtime")
+	}
+	if _, err := os.Stat(scratch); !os.IsNotExist(err) {
+		t.Fatalf("Close must remove the scratch directory, stat err = %v", err)
+	}
+}
+
+// Without Prepare there is no workspace to confine to, and falling back to the
+// process working directory would build the policy for the bare receiving
+// repository — the exact directory hooks must never touch.
+func TestSRTAdapter_HookProfileFailsClosedWithoutWorkspace(t *testing.T) {
+	original := NewSRTRuntime
+	t.Cleanup(func() { NewSRTRuntime = original })
+	NewSRTRuntime = func(_ context.Context, _ sandboxruntime.Config) (Runtime, error) {
+		t.Fatal("no runtime may be constructed without a prepared workspace")
+		return nil, nil
+	}
+
+	sandbox, err := api.NewSandbox(hookSandboxConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sandbox.Prepare(context.Background(), &api.Spec{}); err == nil {
+		t.Fatal("Prepare with no cwd must fail closed for the hook profile")
+	}
+
+	wrapper, _ := api.SandboxAs[api.CommandWrapper](sandbox)
+	if _, _, _, err := wrapper.Wrap(context.Background(), "sh", []string{"-c", "true"}, nil); err == nil {
+		t.Fatal("Wrap before a successful Prepare must fail closed")
+	}
+}
+
+// The none adapter is registered here but confines nothing; resolving it for
+// hooks must fail at resolve time rather than let exec hooks run bare (R5.2).
+func TestResolveHookWrap_NoneIsRefused(t *testing.T) {
+	if _, err := gitagent.ResolveHookWrap("none", t.TempDir()); err == nil ||
+		!strings.Contains(err.Error(), "no command wrapper") {
+		t.Fatalf("hookSandbox none must be refused loudly, got err = %v", err)
+	}
+}
+
+// The regression this guards: ResolveHookWrap used to hand out a wrapper with
+// no Prepare call at all, so the SRT policy was computed for the hook
+// process's working directory instead of the materialized tree.
+func TestResolveHookWrap_SRTConfinesTheMaterializedTree(t *testing.T) {
+	original := NewSRTRuntime
+	t.Cleanup(func() { NewSRTRuntime = original })
+	fake := &fakeRuntime{}
+	NewSRTRuntime = func(_ context.Context, cfg sandboxruntime.Config) (Runtime, error) {
+		fake.gotConfig = cfg
+		return fake, nil
+	}
+
+	repo := t.TempDir()
+	factory, err := gitagent.ResolveHookWrap("srt", repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree := t.TempDir()
+	wrap, closeWrap, err := factory(context.Background(), tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := wrap(context.Background(), "sh", []string{"-c", "true"}, []string{"PATH=/usr/bin"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := fake.gotConfig.Filesystem.AllowWrite[0]; got != tree {
+		t.Fatalf("confinement workspace = %q, want the materialized tree %q", got, tree)
+	}
+	found := false
+	for _, path := range fake.gotConfig.Filesystem.DenyRead {
+		if path == repo {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("denyRead %v must hide the receiving repository %q", fake.gotConfig.Filesystem.DenyRead, repo)
+	}
+	if err := closeWrap(); err != nil {
+		t.Fatal(err)
+	}
+	if !fake.closed {
+		t.Fatal("the factory's close must close the live runtime")
+	}
 }

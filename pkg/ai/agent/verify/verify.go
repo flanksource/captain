@@ -145,6 +145,13 @@ func (c *CmdVerifier) Verify(ctx context.Context, cwd string, changed []string) 
 		if err != nil {
 			return Verdict{}, fmt.Errorf("wrapping %s for sandboxed execution: %w", c.Cmd, err)
 		}
+		if env == nil {
+			// A wrapper that supplies no environment keeps the pre-wrap
+			// boundary. Leaving env nil here would hand the wrapped process
+			// the full inherited environment — silently widening a caller's
+			// deliberately reduced Env (the git-agent hook path, issue #40).
+			env = wrapEnv
+		}
 	}
 
 	cmd := exec.CommandContext(runCtx, command, cmdArgs...)
