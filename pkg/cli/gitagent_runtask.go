@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/aiflags"
@@ -27,7 +28,13 @@ type GitAgentRunTaskOptions struct {
 // dispatched prompt, run it in the worktree, then commit and push. Its output
 // is the agent log, so every failure is reported there rather than to a
 // terminal nobody is watching.
-func RunGitAgentRunTask(ctx context.Context, opts GitAgentRunTaskOptions) (any, error) {
+func RunGitAgentRunTask(ctx context.Context, opts GitAgentRunTaskOptions) (_ any, runErr error) {
+	started := time.Now()
+	defer func() {
+		if runErr != nil {
+			log.Errorf("git-agent task %s failed after %s: %v", opts.Task, time.Since(started).Round(time.Millisecond), runErr)
+		}
+	}()
 	if strings.TrimSpace(opts.Config) != "" {
 		captainconfig.SetPath(opts.Config)
 	}
@@ -39,12 +46,15 @@ func RunGitAgentRunTask(ctx context.Context, opts GitAgentRunTaskOptions) (any, 
 	if err != nil {
 		return nil, err
 	}
+	log.Infof("git-agent task %s starting %s:%s in %s", opts.Task, payload.Backend, payload.Model, worktree)
 	if err := runTaskPrompt(ctx, worktree, payload); err != nil {
 		return nil, fmt.Errorf("running the dispatched prompt: %w", err)
 	}
+	log.Infof("git-agent task %s agent finished after %s; preparing submission", opts.Task, time.Since(started).Round(time.Millisecond))
 	if err := submitWork(ctx, worktree, opts.Task); err != nil {
 		return nil, err
 	}
+	log.Infof("git-agent task %s accepted after %s", opts.Task, time.Since(started).Round(time.Millisecond))
 	return nil, nil
 }
 
@@ -80,6 +90,7 @@ func runTaskPrompt(ctx context.Context, worktree string, payload gitagent.TaskPa
 // run produced, commit, and push. A run that changed nothing is reported as
 // such rather than pushed as an empty success.
 func submitWork(ctx context.Context, worktree, task string) error {
+	log.Infof("git-agent task %s staging workspace changes", task)
 	if err := git(ctx, worktree, "add", "-A"); err != nil {
 		return err
 	}
@@ -90,11 +101,13 @@ func submitWork(ctx context.Context, worktree, task string) error {
 	if !staged {
 		return fmt.Errorf("the agent produced no changes for task %s; nothing to submit", task)
 	}
+	log.Infof("git-agent task %s committing workspace changes", task)
 	if err := git(ctx, worktree, "commit", "-m", "captain: "+task); err != nil {
 		return err
 	}
 	// The push carries the work through both hook tiers and blocks until the
 	// verdict, so its output is the agent's most important log line.
+	log.Infof("git-agent task %s pushing for sidecar and supervisor verification", task)
 	return git(ctx, worktree, "push")
 }
 
