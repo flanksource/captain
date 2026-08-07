@@ -245,9 +245,6 @@ func sidecarPreReceive(ctx context.Context, repo string, host HookHost, updates 
 	var attempt int
 	st, err := UpdateTaskState(repo, task, func(current *TaskState) (bool, error) {
 		attempt = current.Attempts + 1
-		if current.Policy.MaxAttempts > 0 && attempt > current.Policy.MaxAttempts {
-			return false, nil
-		}
 		current.Attempts = attempt
 		return true, nil
 	})
@@ -488,7 +485,7 @@ func sidecarPostReceive(ctx context.Context, repo string, host HookHost, updates
 		}); err != nil {
 			return err
 		}
-		workdir, err := SetupAgentWorkspace(ctx, repo, info.Task, u.New)
+		workdir, err := SetupAgentWorkspace(ctx, repo, info.Task, u.New, taskRuntimeIdentity(payloads.task))
 		if err != nil {
 			return err
 		}
@@ -501,6 +498,16 @@ func sidecarPostReceive(ctx context.Context, repo string, host HookHost, updates
 		}
 	}
 	return nil
+}
+
+// taskRuntimeIdentity derives commit provenance from task.json while keeping
+// legacy or human-driven payloads usable with the generic agent name.
+func taskRuntimeIdentity(data []byte) string {
+	var payload TaskPayload
+	if err := json.Unmarshal(data, &payload); err != nil || payload.Backend == "" || payload.Model == "" {
+		return "captain-agent"
+	}
+	return ai.LogIdentity(api.Backend(payload.Backend), payload.Model, payload.Effort)
 }
 
 type dispatchPayloads struct {

@@ -4,7 +4,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -12,12 +11,13 @@ import (
 	"github.com/flanksource/commons-db/types"
 )
 
-// world spins an upstream recording server, a proxy granting it, and a client
-// routed through the proxy.
+// world spins a TLS upstream and a proxy granting it. Requests invoke the
+// handler in absolute form because ordinary HTTP clients tunnel TLS with
+// CONNECT, which this inspectable proxy deliberately refuses.
 type world struct {
 	upstream  *httptest.Server
 	proxy     *httptest.Server
-	client    *http.Client
+	handler   *Proxy
 	grant     Grant
 	mu        sync.Mutex
 	requests  []*http.Request
@@ -28,7 +28,7 @@ type world struct {
 func newWorld(t *testing.T, secret string) *world {
 	t.Helper()
 	w := &world{}
-	w.upstream = httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+	w.upstream = httptest.NewTLSServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		w.mu.Lock()
 		w.requests = append(w.requests, r.Clone(r.Context()))
 		w.headers = append(w.headers, r.Header.Clone())
@@ -57,11 +57,13 @@ func newWorld(t *testing.T, secret string) *world {
 			w.mu.Unlock()
 		},
 	}
+	trusted := w.upstream.Client().Transport.(*http.Transport).Clone()
+	trusted.Proxy = nil
+	p.once.Do(func() { p.rt = trusted })
+	w.handler = p
 	w.proxy = httptest.NewServer(p)
 	t.Cleanup(w.proxy.Close)
-
-	proxyURL, _ := url.Parse(w.proxy.URL)
-	w.client = &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)}}
+	t.Cleanup(trusted.CloseIdleConnections)
 	return w
 }
 
@@ -78,10 +80,9 @@ func (w *world) do(t *testing.T, method, target string, headers map[string]strin
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
-	resp, err := w.client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
+	recorder := httptest.NewRecorder()
+	w.handler.ServeHTTP(recorder, req)
+	resp := recorder.Result()
 	t.Cleanup(func() { resp.Body.Close() })
 	return resp
 }
@@ -125,6 +126,44 @@ func TestSubstitutesOnlyInTheGrantedPosition(t *testing.T) {
 	values := w.upstreamHeaderValues("Authorization")
 	if len(values) != 1 || values[0] != secret {
 		t.Fatalf("upstream saw Authorization = %v, want the real value", values)
+	}
+}
+
+func TestCredentialBearingHTTPGrantIsRejectedBeforeResolution(t *testing.T) {
+	hits := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, _ *http.Request) {
+		hits++
+		rw.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+	grant := Grant{
+		Name: "cleartext", URL: upstream.URL,
+		Methods: []string{"GET"}, Paths: []string{"/repos/"},
+		Headers: []HeaderGrant{{Name: "Authorization", Value: types.EnvVar{ValueStatic: secret}}},
+	}
+	resolved := false
+	var decisions []Decision
+	p := &Proxy{
+		Grants: []Grant{grant},
+		Resolve: func(types.EnvVar) (string, error) {
+			resolved = true
+			return secret, nil
+		},
+		Audit: func(d Decision) { decisions = append(decisions, d) },
+	}
+	req, _ := http.NewRequest("GET", upstream.URL+"/repos/acme", nil)
+	req.Header.Set("Authorization", grant.Placeholder("Authorization"))
+	recorder := httptest.NewRecorder()
+	p.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", recorder.Code)
+	}
+	if hits != 0 || resolved {
+		t.Fatalf("upstream hits = %d, resolved = %v; cleartext credentials must not leave the proxy", hits, resolved)
+	}
+	if len(decisions) != 1 || decisions[0].Verdict != "rejected" || !strings.Contains(decisions[0].Reason, "HTTPS") {
+		t.Fatalf("decisions = %+v", decisions)
 	}
 }
 
@@ -208,19 +247,10 @@ func TestUnresolvableCredentialFailsTheRequest(t *testing.T) {
 	w := newWorld(t, secret)
 	unresolvable := w.grant
 	unresolvable.Headers = []HeaderGrant{{Name: "Authorization"}}
-	p := &Proxy{Grants: []Grant{unresolvable}}
-	broken := httptest.NewServer(p)
-	defer broken.Close()
-	proxyURL, _ := url.Parse(broken.URL)
-	client := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)}}
+	w.handler.Grants = []Grant{unresolvable}
 
-	req, _ := http.NewRequest("GET", w.upstream.URL+"/repos/acme/captain", nil)
-	req.Header.Set("Authorization", w.grant.Placeholder("Authorization"))
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
+	resp := w.do(t, "GET", w.upstream.URL+"/repos/acme/captain",
+		map[string]string{"Authorization": w.grant.Placeholder("Authorization")}, "")
 	if resp.StatusCode != http.StatusBadGateway {
 		t.Fatalf("status = %d, want 502 (R9.4)", resp.StatusCode)
 	}
@@ -236,17 +266,8 @@ func TestLaterGrantForSameDestinationCanAuthorize(t *testing.T) {
 	otherScope := w.grant
 	otherScope.Name = "other"
 	otherScope.Paths = []string{"/other/"}
-	p := &Proxy{Grants: []Grant{otherScope, w.grant}}
-	server := httptest.NewServer(p)
-	defer server.Close()
-	proxyURL, _ := url.Parse(server.URL)
-	client := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)}}
-	req, _ := http.NewRequest("GET", w.upstream.URL+"/repos/acme/captain", nil)
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
+	w.handler.Grants = []Grant{otherScope, w.grant}
+	resp := w.do(t, "GET", w.upstream.URL+"/repos/acme/captain", nil, "")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}

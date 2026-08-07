@@ -7,6 +7,7 @@
 package gitagent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -35,30 +36,73 @@ func (e *upstreamRejectedError) Error() string {
 		e.verdict.Task, e.verdict.Attempt, e.verdict.Status)
 }
 
+const relayFeedbackTruncation = "captain: relay feedback truncated\n"
+
 // relayFeedbackWriter removes the inner git client's "remote: " transport
 // prefix before forwarding through the outer receive-pack. It also retains
 // the structured supervisor verdict so an ordinary rejection is not
 // misclassified as a sidecar transport error.
 type relayFeedbackWriter struct {
-	dst     io.Writer
-	pending string
-	verdict *TierVerdict
+	dst       io.Writer
+	pending   string
+	verdict   *TierVerdict
+	dropping  bool
+	truncated bool
 }
 
 func (w *relayFeedbackWriter) Write(p []byte) (int, error) {
-	w.pending += string(p)
-	for {
-		i := strings.IndexByte(w.pending, '\n')
-		if i < 0 {
-			break
+	n := len(p)
+	for len(p) > 0 {
+		if w.dropping {
+			i := bytes.IndexByte(p, '\n')
+			if i < 0 {
+				return n, nil
+			}
+			p = p[i+1:]
+			w.dropping = false
+			continue
 		}
-		line := w.pending[:i+1]
-		w.pending = w.pending[i+1:]
+
+		i := bytes.IndexByte(p, '\n')
+		if i < 0 {
+			if len(p) > MaxFeedbackBytes-len(w.pending) {
+				w.pending = ""
+				w.dropping = true
+				if err := w.writeTruncation(); err != nil {
+					return 0, err
+				}
+				return n, nil
+			}
+			w.pending += string(p)
+			return n, nil
+		}
+
+		fragment := p[:i+1]
+		p = p[i+1:]
+		if len(fragment) > MaxFeedbackBytes-len(w.pending) {
+			w.pending = ""
+			if err := w.writeTruncation(); err != nil {
+				return 0, err
+			}
+			continue
+		}
+		w.pending += string(fragment)
+		line := w.pending
+		w.pending = ""
 		if err := w.writeLine(line); err != nil {
 			return 0, err
 		}
 	}
-	return len(p), nil
+	return n, nil
+}
+
+func (w *relayFeedbackWriter) writeTruncation() error {
+	if w.truncated {
+		return nil
+	}
+	w.truncated = true
+	_, err := io.WriteString(w.dst, relayFeedbackTruncation)
+	return err
 }
 
 func (w *relayFeedbackWriter) flush() error {

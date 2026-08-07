@@ -46,7 +46,8 @@ func RunGitAgentRunTask(ctx context.Context, opts GitAgentRunTaskOptions) (_ any
 	if err != nil {
 		return nil, err
 	}
-	log.Infof("git-agent task %s starting %s:%s in %s", opts.Task, payload.Backend, payload.Model, worktree)
+	identity := ai.LogIdentity(api.Backend(payload.Backend), payload.Model, payload.Effort)
+	log.Infof("git-agent task %s starting %s in %s", opts.Task, identity, worktree)
 	if err := runTaskPrompt(ctx, worktree, payload); err != nil {
 		return nil, fmt.Errorf("running the dispatched prompt: %w", err)
 	}
@@ -63,7 +64,7 @@ func RunGitAgentRunTask(ctx context.Context, opts GitAgentRunTaskOptions) (_ any
 // sandbox here would dispatch the task to another agent, and so on (H15).
 func runTaskPrompt(ctx context.Context, worktree string, payload gitagent.TaskPayload) error {
 	providerOpts := AIProviderOptions{
-		ModelFlags: aiflags.ModelFlags{Model: payload.Model, Backend: payload.Backend},
+		ModelFlags: aiflags.ModelFlags{Model: payload.Model, Backend: payload.Backend, Effort: string(payload.Effort)},
 		Sandbox:    "none",
 	}
 	cfg, err := providerOpts.ToConfig()
