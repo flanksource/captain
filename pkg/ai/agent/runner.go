@@ -513,26 +513,28 @@ func (r *Runner[T]) recordEvent(hc *HookContext, ev ai.Event) {
 			ws.SessionID = ev.SessionID
 		}
 	case ai.EventToolUse:
-		path, ok := mutatedPath(ev)
-		if !ok {
-			return
+		for _, path := range mutatedPaths(ev) {
+			rel := path
+			if ws.Repo != "" {
+				rel = claude.RelativePath(path, ws.Repo)
+			}
+			ws.Changed = addUnique(ws.Changed, rel)
 		}
-		rel := path
-		if ws.Repo != "" {
-			rel = claude.RelativePath(path, ws.Repo)
-		}
-		ws.Changed = addUnique(ws.Changed, rel)
 	}
 }
 
-// mutatedPath extracts the file an Edit/Write/MultiEdit/NotebookEdit tool_use
-// wrote to, reusing history's canonical tool→input-key table.
-func mutatedPath(ev ai.Event) (string, bool) {
-	files := history.ModifiedFiles([]history.ToolUse{{Tool: ev.Tool, Input: ev.Input}})
-	if len(files) == 0 {
-		return "", false
-	}
-	return files[0], true
+// mutatedPaths extracts every file one tool_use wrote to, reusing history's
+// canonical footprint table (Edit/Write/NotebookEdit name a file; apply_patch
+// carries a whole patch; a Bash command is analysed for redirects, sed -i, mv
+// and rm).
+//
+// All of them, not just the first: a patch is the common shape here and it
+// routinely touches several files at once. Recording one of them left the rest
+// unattributable, and a commit hook staging only what the run is recorded as
+// having changed would then drop them — leaving a turn's work half-committed and
+// the remainder dirty with nothing to explain it.
+func mutatedPaths(ev ai.Event) []string {
+	return history.ModifiedFiles([]history.ToolUse{{Tool: ev.Tool, Input: ev.Input}})
 }
 
 func addUnique(list []string, v string) []string {
