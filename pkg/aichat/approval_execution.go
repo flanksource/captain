@@ -10,6 +10,41 @@ import (
 	"github.com/flanksource/captain/pkg/api"
 )
 
+const (
+	suspendedSeedTimeout  = 15 * time.Second
+	suspendedSeedInterval = 25 * time.Millisecond
+)
+
+// awaitSuspendedSeed returns the assistant message the suspended turn ended on.
+// The durable suspension (prompt run -> waiting) is committed while the same
+// stream's persistence goroutine is still writing that assistant message, so an
+// approval resolved the instant the run becomes resumable can observe the run
+// before its transcript. Wait for that in-flight write instead of rejecting a
+// legitimate approval, and fail loudly when it never lands.
+func awaitSuspendedSeed(ctx context.Context, store ThreadStore, threadID, turnID string) (*UIMessage, error) {
+	deadline := time.Now().Add(suspendedSeedTimeout)
+	for {
+		thread, err := store.Get(ctx, threadID)
+		if err != nil {
+			return nil, err
+		}
+		if len(thread.Messages) > 0 {
+			seed := thread.Messages[len(thread.Messages)-1]
+			if strings.EqualFold(seed.Role, string(api.RoleAssistant)) && seed.TurnID == turnID {
+				return &seed, nil
+			}
+		}
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("captain chat session %s does not end with the suspended turn %s", threadID, turnID)
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(suspendedSeedInterval):
+		}
+	}
+}
+
 func (s *Service) resumeToolApproval(ctx context.Context, threadID string, continuation *ApprovalContinuation) error {
 	if continuation == nil || continuation.Execution == nil || continuation.Spec.ToolApproval == nil {
 		return fmt.Errorf("tool approval continuation is incomplete")
