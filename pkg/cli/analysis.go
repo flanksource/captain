@@ -47,34 +47,21 @@ func AnalyzeToolUse(t tools.Tool) ToolAnalysis {
 		return claude.AbsolutePath(path, base.CWD, base.ProjectRoot)
 	}
 
-	// File-writing tools are resolved through history's canonical tool→input-key
-	// table rather than a second list here, so the write set reported to callers
-	// that stage from it cannot drift from the one the agent runner records.
-	// It is also the only place that knows NotebookEdit names its file
-	// notebook_path (which a plain FilePath() lookup misses entirely) and that a
-	// patch payload has to be parsed for the several files it may touch.
-	for _, path := range history.ModifiedFiles([]history.ToolUse{{Tool: base.RawTool, Input: base.Input}}) {
+	// Which files a tool touched is resolved through history's canonical
+	// footprint rather than a second set of rules here, so the paths reported to
+	// callers that stage from them cannot drift from the ones the session
+	// builders persist and the agent runner records.
+	footprint := history.ToolFootprint(history.ToolUse{Tool: base.RawTool, Input: base.Input, CWD: base.CWD})
+	for _, path := range footprint.Written {
 		a.WritePaths = appendUnique(a.WritePaths, abs(path))
+	}
+	for _, path := range footprint.Read {
+		a.ReadPaths = appendUnique(a.ReadPaths, abs(path))
 	}
 
 	switch base.RawTool {
-	case "Read":
-		if path := t.FilePath(); path != "" {
-			a.ReadPaths = append(a.ReadPaths, abs(path))
-		}
-	case "Grep":
-		if path, ok := base.Input["path"].(string); ok && path != "" {
-			a.ReadPaths = append(a.ReadPaths, abs(path))
-		}
-	case "Glob":
-		if path, ok := base.Input["path"].(string); ok && path != "" {
-			a.ReadPaths = append(a.ReadPaths, abs(path))
-		}
 	case "Bash":
-		// Patches piped through the shell are picked up by ModifiedFiles above,
-		// alongside every other patch shape; this covers the writes only a shell
-		// command can express — redirects, sed -i, mv, rm.
-		a.analyzeBash(base.Input, abs)
+		a.analyzeBash(base.Input)
 	case "WebFetch":
 		if urlStr, ok := base.Input["url"].(string); ok {
 			if u, err := url.Parse(urlStr); err == nil && u.Host != "" {
@@ -102,23 +89,13 @@ func AnalyzeToolUse(t tools.Tool) ToolAnalysis {
 	return a
 }
 
-func (a *ToolAnalysis) analyzeBash(input map[string]any, abs func(string) string) {
+// analyzeBash covers the parts of a shell command that are not a file
+// footprint: which binaries it invokes and which hosts it can reach. The read
+// and write paths come from history.ToolFootprint with every other tool's.
+func (a *ToolAnalysis) analyzeBash(input map[string]any) {
 	cmd, _ := input["command"].(string)
 	if cmd == "" {
 		return
-	}
-
-	result, err := bash.Analyze(cmd)
-	if result == nil {
-		return
-	}
-	_ = err
-
-	for _, op := range result.Operations {
-		a.WritePaths = appendUnique(a.WritePaths, abs(op.Path))
-	}
-	for _, path := range result.ReferencedPaths {
-		a.ReadPaths = appendUnique(a.ReadPaths, abs(path))
 	}
 
 	binaries := make(map[string]bool)

@@ -111,7 +111,15 @@ func (s *DatabaseThreadStore) getSession(ctx context.Context, overview database.
 	if err != nil {
 		return nil, err
 	}
+	agents, err := s.db.ListThreadAgents(ctx, overview.ID)
+	if err != nil {
+		return nil, err
+	}
 	aggregate := sessionFromOverview(overview)
+	aggregate.Root, aggregate.Agents = projectSessionAgents(agents)
+	if err := ApplyOverviewProjection(ctx, s.db, overview, aggregate); err != nil {
+		return nil, err
+	}
 	// The overview's own usage/cost is root-scoped; a thread's subagents spend
 	// against the same conversation, so roll the thread-wide figures on top.
 	applyThreadCosts(aggregate, costs)
@@ -215,7 +223,7 @@ func (s *DatabaseThreadStore) AddUsage(ctx context.Context, id string, _ TurnUsa
 }
 
 func sessionFromOverview(overview database.SessionOverview) *session.Session {
-	return &session.Session{
+	detail := &session.Session{
 		ID: overview.ID.String(), ProviderSessionID: stringPointer(overview.ProviderSessionID), Revision: overview.StateVersion,
 		LifecycleStatus: overview.LifecycleStatus, ActivityState: overview.ActivityState,
 		HealthState: overview.HealthState, StateReason: stringPointer(overview.StateReason),
@@ -243,6 +251,7 @@ func sessionFromOverview(overview database.SessionOverview) *session.Session {
 			ProviderCostUSD: overview.ProviderCostUSD,
 		},
 	}
+	return detail
 }
 
 func projectSessionMessages(rows []database.TranscriptMessage) ([]session.Message, error) {

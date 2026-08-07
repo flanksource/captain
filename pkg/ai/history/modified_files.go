@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-
-	"github.com/flanksource/captain/pkg/claude/tools"
 )
 
 // fileMutatingTools are the Claude Code tools whose tool_use input names a file
@@ -38,10 +36,7 @@ func ModifiedFiles(toolUses []ToolUse) []string {
 	var files []string
 	seen := make(map[string]struct{}, len(toolUses))
 	for _, tu := range toolUses {
-		for _, path := range mutatedPaths(tu) {
-			if path == "" {
-				continue
-			}
+		for _, path := range ToolFootprint(tu).Written {
 			if _, dup := seen[path]; dup {
 				continue
 			}
@@ -50,23 +45,6 @@ func ModifiedFiles(toolUses []ToolUse) []string {
 		}
 	}
 	return files
-}
-
-// mutatedPaths lists the files one tool use wrote to: the single path named in
-// the tool's input key, or every path a patch payload touches — including a
-// rename's destination and a delete's target, both of which git reports as
-// dirty and so both of which a commit has to be able to attribute.
-func mutatedPaths(tu ToolUse) []string {
-	if key, ok := fileMutatingTools[tu.Tool]; ok {
-		path, _ := tu.Input[key].(string)
-		return []string{path}
-	}
-	key, ok := applyPatchInputs[tu.Tool]
-	if !ok {
-		return nil
-	}
-	payload, _ := tu.Input[key].(string)
-	return tools.ExtractApplyPatchPaths(payload)
 }
 
 // SessionModifiedFiles parses a Claude session log and returns the distinct

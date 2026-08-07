@@ -122,24 +122,6 @@ func candidateFromOverview(overview database.SessionOverview) sessionCandidate {
 	}
 }
 
-// sessionOverviewMetadata is the monitor-owned projection stored in
-// captain_sessions.metadata (see pkg/monitor sessionMetadata).
-type sessionOverviewMetadata struct {
-	Model     string                `json:"model,omitempty"`
-	Provider  string                `json:"provider,omitempty"`
-	Files     session.ChangedFiles  `json:"files,omitempty"`
-	Approvals session.ApprovalStats `json:"approvals,omitempty"`
-	Plan      *session.Plan         `json:"plan,omitempty"`
-}
-
-func overviewMetadata(overview database.SessionOverview) sessionOverviewMetadata {
-	var metadata sessionOverviewMetadata
-	if len(overview.Metadata) > 0 {
-		_ = json.Unmarshal(overview.Metadata, &metadata)
-	}
-	return metadata
-}
-
 func overviewGitBranch(overview database.SessionOverview) string {
 	if len(overview.Git) == 0 {
 		return ""
@@ -183,7 +165,7 @@ func overviewFromSummary(summary database.SessionListSummary) database.SessionOv
 
 // recordFromOverview projects one overview row to the SessionRecord wire shape.
 func recordFromOverview(overview database.SessionOverview) SessionRecord {
-	metadata := overviewMetadata(overview)
+	metadata := session.DecodeMetadata(overview.Metadata)
 	path := stringOr(overview.HistoryFile, stringOr(overview.Path, ""))
 	id := stringOr(overview.ProviderSessionID, overview.ID.String())
 	record := SessionRecord{

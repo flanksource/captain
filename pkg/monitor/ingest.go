@@ -365,29 +365,10 @@ func gitMetadata(s *session.Session) map[string]any {
 // derivable from turn/message rows: model/provider labels, changed files,
 // approval stats, and the transcript-recovered plan reference.
 func sessionMetadata(s *session.Session) map[string]any {
-	metadata := map[string]any{}
-	if s.Model != "" {
-		metadata["model"] = s.Model
-	}
-	if s.Provider != "" {
-		metadata["provider"] = s.Provider
-	}
-	if len(s.Files.Read) > 0 || len(s.Files.Written) > 0 {
-		metadata["files"] = s.Files
-	}
-	if len(s.Todos) > 0 {
-		metadata["todos"] = s.Todos
-	}
-	if s.Approvals.Approved > 0 || s.Approvals.Denied > 0 {
-		metadata["approvals"] = s.Approvals
-	}
-	if s.Plan != nil {
-		metadata["plan"] = s.Plan
-	}
-	if len(metadata) == 0 {
-		return nil
-	}
-	return metadata
+	return session.Metadata{
+		Model: s.Model, Provider: s.Provider, Files: s.Files,
+		Todos: s.Todos, Approvals: s.Approvals, Plan: s.Plan,
+	}.Encode()
 }
 
 // subagentsDir is where Claude Code stores a session's sub-agent transcripts.

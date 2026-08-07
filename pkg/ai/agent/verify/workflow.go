@@ -81,7 +81,7 @@ func rejectJudgeOverrides(path string, tmpl *prompt.Template, provider ai.Provid
 	if probe.Sandbox != nil {
 		return fmt.Errorf("verify prompt %q declares a sandbox; judge hooks run on the run's provider and cannot relocate", path)
 	}
-	if declared := strings.TrimSpace(probe.Model.Name); declared != "" && declared != provider.GetModel() {
+	if declared := strings.TrimSpace(probe.Name); declared != "" && declared != provider.GetModel() {
 		return fmt.Errorf("verify prompt %q declares model %q but judge hooks run on the run's provider (%s); remove the model or match it",
 			path, declared, provider.GetModel())
 	}

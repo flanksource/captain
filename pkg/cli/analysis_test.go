@@ -135,9 +135,11 @@ func TestAnalyzeToolUse_Bash(t *testing.T) {
 			domains:  []string{},
 		},
 		{
+			// A file the command creates is a write, not a read. It used to be
+			// reported as both here while the Codex session builder reported it
+			// as a write only; history.ToolFootprint now decides once.
 			name:       "touch creates file",
 			cmd:        "touch /home/user/project/output.txt",
-			readPaths:  []string{"/home/user/project/output.txt"},
 			writePaths: []string{"/home/user/project/output.txt"},
 			binaries:   []string{"touch"},
 			domains:    []string{},

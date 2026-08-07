@@ -119,11 +119,6 @@ func TestBuildSessionIdentityPrefersLatestRootTitle(t *testing.T) {
 	if s.InitialPrompt != "Inspect the session viewer" {
 		t.Fatalf("initial prompt = %q", s.InitialPrompt)
 	}
-
-	rows := Rows(claude.ParsedSession{SessionID: "root-sess", Transcripts: []claude.ParsedTranscript{root}})
-	if len(rows) != 1 || rows[0].Title != s.Title || rows[0].InitialPrompt != s.InitialPrompt {
-		t.Fatalf("row identity = %+v, session identity = %+v", rows, s)
-	}
 }
 
 func TestApprovalStats(t *testing.T) {
@@ -135,8 +130,11 @@ func TestApprovalStats(t *testing.T) {
 		{Tool: "MemoryCitation", ToolUseID: "5"},
 	}
 	got := approvalStats(uses)
-	if got.Approved != 1 {
-		t.Errorf("approved = %d, want 1", got.Approved)
+	// A transcript has no approval signal, only a denial one, so an approval
+	// count derived from it is fabricated. The database projection supplies the
+	// real figure from captain_turn_requests.
+	if got.Approved != 0 {
+		t.Errorf("approved = %d, want 0 (a transcript cannot know)", got.Approved)
 	}
 	if got.Denied != 1 || len(got.Denials) != 1 || got.Denials[0].Reason != "no rm -rf" {
 		t.Errorf("denials = %+v, want one with reason 'no rm -rf'", got.Denials)
@@ -206,9 +204,10 @@ func TestBuildSession_CostFilesPlanApprovals(t *testing.T) {
 	if len(s.Messages) == 0 || s.Messages[0].Role != "assistant" {
 		t.Errorf("messages = %+v, want a leading assistant message", s.Messages)
 	}
-	// Write + ExitPlanMode both counted; ExitPlanMode excluded from approvals.
-	if s.Approvals.Approved != 1 {
-		t.Errorf("approved = %d, want 1 (Write only)", s.Approvals.Approved)
+	// Neither tool was denied, and a transcript records nothing else about
+	// approvals, so the session claims none rather than inventing them.
+	if s.Approvals.Approved != 0 || s.Approvals.Denied != 0 {
+		t.Errorf("approvals = %+v, want none from a transcript with no denials", s.Approvals)
 	}
 }
 
