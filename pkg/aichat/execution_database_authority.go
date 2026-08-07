@@ -46,50 +46,71 @@ func (a *DatabaseExecutionAuthority) Begin(
 	if session.Source != "aichat" {
 		return nil, fmt.Errorf("chat thread %s has incompatible source %q", request.ThreadID, session.Source)
 	}
-	turn, created, err := a.db.CreateChatTurn(ctx, database.CreateChatTurnInput{
-		SessionID: session.ID, ProviderTurnID: request.RequestID,
-	})
-	if err != nil {
-		return nil, err
-	}
-	if !created {
-		return nil, fmt.Errorf("chat turn %q already exists in state %s", request.RequestID, turn.Status)
-	}
 	renderedSpec, err := renderedSpecMap(request.Spec)
 	if err != nil {
 		return nil, err
 	}
-	run, err := a.db.CreatePromptRun(ctx, database.CreatePromptRunInput{
-		SessionID: session.ID, TurnID: &turn.ID, AdmissionKey: executionAdmissionKey(request),
-		Origin: "aichat", RenderedSpec: renderedSpec,
-		Runtime: database.PromptRunRuntime{
-			Mode: string(request.Spec.Mode), Driver: string(request.Spec.Backend),
-			Requested: runtimeSelection(request.Spec.Model),
-			Resolved:  runtimeSelection(request.Spec.Model),
-		},
-		PromptMarkdown: initialUserPrompt(request.Spec),
+	var execution *databaseExecution
+	var recovered *database.ChatTurn
+	resumed := false
+	err = a.db.Transaction(ctx, func(tx *database.DB) error {
+		var createErr error
+		recovered, createErr = tx.RecoverIncompleteChatAdmission(ctx, database.RecoverIncompleteChatAdmissionInput{
+			SessionID: session.ID, ProviderTurnID: request.RequestID,
+		})
+		if createErr != nil {
+			return createErr
+		}
+		turn, created, createErr := tx.CreateChatTurn(ctx, database.CreateChatTurnInput{
+			SessionID: session.ID, ProviderTurnID: request.RequestID,
+		})
+		if createErr != nil {
+			return createErr
+		}
+		if !created && turn.Status != database.TurnStatusOpen {
+			return fmt.Errorf("chat turn %q already exists in state %s", request.RequestID, turn.Status)
+		}
+		resumed = !created
+		run, createErr := tx.CreatePromptRun(ctx, database.CreatePromptRunInput{
+			SessionID: session.ID, TurnID: &turn.ID, AdmissionKey: executionAdmissionKey(request),
+			Origin: "aichat", RenderedSpec: renderedSpec,
+			Runtime: database.PromptRunRuntime{
+				Mode: string(request.Spec.Mode), Driver: string(request.Spec.Backend),
+				Requested: runtimeSelection(request.Spec.Model),
+				Resolved:  runtimeSelection(request.Spec.Model),
+			},
+			PromptMarkdown: initialUserPrompt(request.Spec),
+		})
+		if createErr != nil {
+			return createErr
+		}
+		if run.State != database.PromptRunStatePending {
+			return fmt.Errorf("chat request %q already has prompt run %s in state %s", request.RequestID, run.ID, run.State)
+		}
+		modelCallID, createErr := tx.CreateChatModelCall(ctx, database.CreateChatModelCallInput{
+			TurnID: turn.ID, PromptRunID: run.ID, Model: request.Spec.Name,
+			Backend: string(request.Spec.Backend), Effort: string(request.Spec.Effort),
+		})
+		if createErr != nil {
+			return createErr
+		}
+		execution = &databaseExecution{
+			db: tx, ctx: ctx, session: session, turn: turn, run: run, modelCallID: modelCallID,
+			model: request.Spec.Name, backend: request.Spec.Backend,
+			events: make(chan api.Event, 16), definitions: append([]api.ToolDefinition(nil), request.Definitions...),
+			approvalIDs: map[string]uuid.UUID{}, providerToolUseReady: make(chan struct{}, 1),
+		}
+		return execution.markRunning(ctx)
 	})
 	if err != nil {
 		return nil, err
 	}
-	if run.State != database.PromptRunStatePending {
-		return nil, fmt.Errorf("chat request %q already has prompt run %s in state %s", request.RequestID, run.ID, run.State)
+	execution.db = a.db
+	if recovered != nil {
+		serviceLog.Warnf("recovered incomplete chat admission turn %s for session %s", recovered.ID, session.ID)
 	}
-	modelCallID, err := a.db.CreateChatModelCall(ctx, database.CreateChatModelCallInput{
-		TurnID: turn.ID, PromptRunID: run.ID, Model: request.Spec.Name,
-		Backend: string(request.Spec.Backend), Effort: string(request.Spec.Effort),
-	})
-	if err != nil {
-		return nil, err
-	}
-	execution := &databaseExecution{
-		db: a.db, ctx: ctx, session: session, turn: turn, run: run, modelCallID: modelCallID,
-		model: request.Spec.Name, backend: request.Spec.Backend,
-		events: make(chan api.Event, 16), definitions: append([]api.ToolDefinition(nil), request.Definitions...),
-		approvalIDs: map[string]uuid.UUID{}, providerToolUseReady: make(chan struct{}, 1),
-	}
-	if err := execution.markRunning(ctx); err != nil {
-		return nil, err
+	if resumed {
+		serviceLog.Warnf("resumed incomplete chat admission turn %s for session %s", execution.turn.ID, session.ID)
 	}
 	if len(request.Definitions) > 0 && isAgentBackend(request.Spec.Backend) {
 		if err := execution.startCallerTools(ctx, request.Spec.Backend); err != nil {

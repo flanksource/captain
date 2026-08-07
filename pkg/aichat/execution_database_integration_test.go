@@ -2,6 +2,7 @@ package aichat_test
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"time"
 
@@ -139,6 +140,145 @@ var _ = Describe("Database execution authority", func() {
 			ThreadID: threadID, RequestID: "user-message-1", Title: "Accounts", Spec: spec,
 		})
 		Expect(err).To(MatchError(ContainSubstring("already exists in state ended")))
+	})
+
+	It("rolls back an admission when its model call cannot be created", func(ctx SpecContext) {
+		testDB := dbtest.ForGinkgo(dbtest.Options{Name: "captain_aichat_atomic_admission"})
+		db, err := database.Open(ctx, database.WithDSN(testDB.DSN()), database.WithMigrations())
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(db.Close)
+
+		authority, err := aichat.NewDatabaseExecutionAuthority(db)
+		Expect(err).NotTo(HaveOccurred())
+		threadID := uuid.NewString()
+		_, err = authority.Begin(ctx, aichat.ExecutionRequest{
+			ThreadID: threadID, RequestID: "invalid-model-call", Title: "Atomic admission",
+			Spec: api.Spec{Model: api.Model{Backend: api.BackendOpenAI}.Capabilities()},
+		})
+		Expect(err).To(MatchError(ContainSubstring("model")))
+
+		sessionID := uuid.MustParse(threadID)
+		turns, err := db.ListThreadTurns(ctx, sessionID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(turns).To(BeEmpty())
+		runs, err := db.ListPromptRuns(ctx, database.PromptRunFilter{SessionID: &sessionID})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(runs).To(BeEmpty())
+
+		execution, err := authority.Begin(ctx, aichat.ExecutionRequest{
+			ThreadID: threadID, RequestID: "valid-model-call", Title: "Atomic admission",
+			Spec: api.Spec{Model: api.Model{Name: "gpt", Backend: api.BackendOpenAI}.Capabilities()},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		_, err = execution.Observe(ctx, api.Event{Kind: api.EventResult, Success: true})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(execution.Close(ctx)).To(Succeed())
+	})
+
+	It("terminalizes an incomplete admission before opening the next turn", func(ctx SpecContext) {
+		testDB := dbtest.ForGinkgo(dbtest.Options{Name: "captain_aichat_incomplete_admission"})
+		db, err := database.Open(ctx, database.WithDSN(testDB.DSN()), database.WithMigrations())
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(db.Close)
+
+		session, err := db.CreateOrGetSession(ctx, database.CreateSessionInput{
+			ID: uuid.New(), Source: "aichat", Provider: "openai", HostID: "local",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		incompleteTurn, created, err := db.CreateChatTurn(ctx, database.CreateChatTurnInput{
+			SessionID: session.ID, ProviderTurnID: "incomplete-model-call",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(created).To(BeTrue())
+		incompleteRun, err := db.CreatePromptRun(ctx, database.CreatePromptRunInput{
+			SessionID: session.ID, TurnID: &incompleteTurn.ID,
+			AdmissionKey: "aichat:" + session.ID.String() + ":incomplete-model-call",
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		authority, err := aichat.NewDatabaseExecutionAuthority(db)
+		Expect(err).NotTo(HaveOccurred())
+		execution, err := authority.Begin(ctx, aichat.ExecutionRequest{
+			ThreadID: session.ID.String(), RequestID: "valid-model-call", Title: "Recovered admission",
+			Spec: api.Spec{Model: api.Model{Name: "gpt", Backend: api.BackendOpenAI}.Capabilities()},
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		incompleteTurn, err = db.GetChatTurn(ctx, incompleteTurn.ID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(incompleteTurn.Status).To(Equal(database.TurnStatusError))
+		incompleteRun, err = db.GetPromptRun(ctx, incompleteRun.ID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(incompleteRun.State).To(Equal(database.PromptRunStateFailed))
+		Expect(incompleteRun.Error).To(Equal("chat execution admission did not complete"))
+
+		_, err = execution.Observe(ctx, api.Event{Kind: api.EventResult, Success: true})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(execution.Close(ctx)).To(Succeed())
+	})
+
+	It("resumes an incomplete admission when the same request is retried", func(ctx SpecContext) {
+		testDB := dbtest.ForGinkgo(dbtest.Options{Name: "captain_aichat_incomplete_retry"})
+		db, err := database.Open(ctx, database.WithDSN(testDB.DSN()), database.WithMigrations())
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(db.Close)
+
+		requestID := "retried-model-call"
+		session, err := db.CreateOrGetSession(ctx, database.CreateSessionInput{
+			ID: uuid.New(), Source: "aichat", Provider: "openai", HostID: "local",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		incompleteTurn, created, err := db.CreateChatTurn(ctx, database.CreateChatTurnInput{
+			SessionID: session.ID, ProviderTurnID: requestID,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(created).To(BeTrue())
+		incompleteRun, err := db.CreatePromptRun(ctx, database.CreatePromptRunInput{
+			SessionID: session.ID, TurnID: &incompleteTurn.ID,
+			AdmissionKey: "aichat:" + session.ID.String() + ":" + requestID,
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		authority, err := aichat.NewDatabaseExecutionAuthority(db)
+		Expect(err).NotTo(HaveOccurred())
+		execution, err := authority.Begin(ctx, aichat.ExecutionRequest{
+			ThreadID: session.ID.String(), RequestID: requestID, Title: "Retried admission",
+			Spec: api.Spec{Model: api.Model{Name: "gpt", Backend: api.BackendOpenAI}.Capabilities()},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(execution.TurnID()).To(Equal(incompleteTurn.ID.String()))
+		Expect(execution.PromptRunID()).To(Equal(incompleteRun.ID.String()))
+
+		_, err = execution.Observe(ctx, api.Event{Kind: api.EventResult, Success: true})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(execution.Close(ctx)).To(Succeed())
+		turns, err := db.ListThreadTurns(ctx, session.ID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(turns).To(HaveLen(1))
+		Expect(turns[0].Status).To(Equal(string(database.TurnStatusEnded)))
+	})
+
+	It("rejects a second admission while the first turn is running", func(ctx SpecContext) {
+		testDB := dbtest.ForGinkgo(dbtest.Options{Name: "captain_aichat_active_admission"})
+		db, err := database.Open(ctx, database.WithDSN(testDB.DSN()), database.WithMigrations())
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(db.Close)
+
+		authority, err := aichat.NewDatabaseExecutionAuthority(db)
+		Expect(err).NotTo(HaveOccurred())
+		threadID := uuid.NewString()
+		spec := api.Spec{Model: api.Model{Name: "gpt", Backend: api.BackendOpenAI}.Capabilities()}
+		execution, err := authority.Begin(ctx, aichat.ExecutionRequest{
+			ThreadID: threadID, RequestID: "running-model-call", Title: "Active admission", Spec: spec,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(execution.Close)
+
+		_, err = authority.Begin(ctx, aichat.ExecutionRequest{
+			ThreadID: threadID, RequestID: "second-model-call", Title: "Active admission", Spec: spec,
+		})
+		Expect(errors.Is(err, database.ErrOpenChatTurn)).To(BeTrue())
+		Expect(err.Error()).NotTo(ContainSubstring("duplicate key"))
 	})
 
 	It("records an interruption and admits a later turn on the same Captain session", func(ctx SpecContext) {

@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 )
 
 func (s *Service) registerThreadRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/chat/sessions", s.handleCreateThread)
 	mux.HandleFunc("GET /api/chat/sessions", s.handleListThreads)
 	mux.HandleFunc("GET /api/chat/sessions/{id}", s.handleGetThread)
+	mux.HandleFunc("PATCH /api/chat/sessions/{id}", s.handleRenameThread)
 	mux.HandleFunc("GET /api/chat/sessions/{id}/costs", s.handleThreadCosts)
 	mux.HandleFunc("DELETE /api/chat/sessions/{id}", s.handleDeleteThread)
 	mux.HandleFunc("POST /api/chat/sessions/{id}/approvals/{approvalID}", s.handleResolveToolApproval)
@@ -66,9 +68,8 @@ func (s *Service) handleCreateThread(w http.ResponseWriter, request *http.Reques
 			return
 		}
 	}
-	if body.Title == "" {
-		body.Title = "New conversation"
-	}
+	// An unnamed thread stays unnamed: it is named from its first message, or by
+	// the agent, or by a rename — never with a placeholder that reads like a title.
 	thread, err := store.Create(request.Context(), body.Title)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -117,6 +118,37 @@ func (s *Service) handleGetThread(w http.ResponseWriter, request *http.Request) 
 	}
 	if err := writeJSON(w, http.StatusOK, thread); err != nil {
 		serviceLog.Errorf("write chat thread %q: %v", request.PathValue("id"), err)
+	}
+}
+
+func (s *Service) handleRenameThread(w http.ResponseWriter, request *http.Request) {
+	store := s.threadStore(w, request)
+	if store == nil {
+		return
+	}
+	body := struct {
+		Title string `json:"title"`
+	}{}
+	if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+		http.Error(w, fmt.Sprintf("invalid rename request: %v", err), http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(body.Title) == "" {
+		http.Error(w, "rename requires a title", http.StatusBadRequest)
+		return
+	}
+	id := request.PathValue("id")
+	if err := store.SetTitle(request.Context(), id, TitleUpdate{Title: body.Title, Source: TitleSourceUser}); err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	thread, err := store.Get(request.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	if err := writeJSON(w, http.StatusOK, thread); err != nil {
+		serviceLog.Errorf("write renamed chat thread %q: %v", id, err)
 	}
 }
 
