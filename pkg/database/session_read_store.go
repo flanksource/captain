@@ -338,6 +338,15 @@ type TranscriptPage struct {
 	Tail      int
 }
 
+// ListTranscriptMessages pages one session's messages in sequence order. That is
+// the provider's own ordering — the line number each message occupies in the
+// transcript file — and it is total, which is what makes Offset/Limit stable.
+//
+// Lifecycle notices (PutSessionNotices) sit in the negative half of the sequence
+// space and so surface at the front here, out of chronological place. Reading
+// them in place is the thread query's job: ListThreadTranscriptMessages orders on
+// occurred_at, which is the only key the two halves share, and is the path the
+// dashboard takes.
 func (db *DB) ListTranscriptMessages(ctx context.Context, page TranscriptPage) ([]TranscriptMessage, error) {
 	if err := db.requireGorm(); err != nil {
 		return nil, err

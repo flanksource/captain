@@ -1,0 +1,28 @@
+ai: {}
+checks: {}
+commit:
+  allow:
+  - pkg/cli/webapp/dist/.gitkeep
+  grouping: {}
+  lint: {}
+  message: {}
+  precommit: {}
+  summary: {}
+  tidy: {}
+fixtures: {}
+lint:
+  fix: {}
+pr:
+  content: {}
+  fix: {}
+procfile: {}
+secrets: {}
+ssh: {}
+status:
+  summary: {}
+test:
+  outlineSummary: {}
+todos:
+  plan: {}
+  run: {}
+  verify: {}

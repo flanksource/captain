@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/history"
@@ -110,6 +111,25 @@ type HookContext struct {
 	// Failed is true when the generate/verify run itself returned an error
 	// (a provider failure, not a failing verdict).
 	Failed bool
+
+	// emit publishes an event on the run's stream, so what a hook does between
+	// turns reaches the same renderers as what the model does during them. Set by
+	// Runner.Run; nil in a hand-built context, which Notify tolerates.
+	emit func(ai.Event)
+}
+
+// Notify reports one thing this hook did, in the run's own voice. It reaches the
+// live stream as an ai.EventSystem and is buffered on the workspace with its
+// timestamp, so a caller can persist it into the transcript once the run's
+// session id is known — a hook firing mid-turn cannot know it yet.
+//
+// Purely informational: a hook that failed returns an error, it does not Notify.
+func (hc *HookContext) Notify(format string, args ...any) {
+	text := fmt.Sprintf(format, args...)
+	hc.Workspace().AddNotice(time.Now(), string(hc.Phase), text)
+	if hc.emit != nil {
+		hc.emit(ai.Event{Kind: ai.EventSystem, Text: text})
+	}
 }
 
 // Workspace returns the run's working-dir state, allocating it if needed (so it
@@ -230,6 +250,14 @@ func (r *Runner[T]) Run(ctx context.Context) (Result[T], error) {
 		Response: resp,
 		Scope:    scope,
 		Hooks:    r.Hooks,
+	}
+	// Hook notices join the model's own events on one stream, attributed to the
+	// iteration whose boundary the hook is standing on — hc.Iteration still names
+	// the turn that just completed when PhaseTurn dispatches.
+	hc.emit = func(ev ai.Event) {
+		if r.OnEvent != nil {
+			r.OnEvent(hc.Iteration, ev)
+		}
 	}
 	result := Result[T]{Response: resp}
 
