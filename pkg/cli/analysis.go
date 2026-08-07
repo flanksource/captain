@@ -51,7 +51,8 @@ func AnalyzeToolUse(t tools.Tool) ToolAnalysis {
 	// table rather than a second list here, so the write set reported to callers
 	// that stage from it cannot drift from the one the agent runner records.
 	// It is also the only place that knows NotebookEdit names its file
-	// notebook_path, which a plain FilePath() lookup misses entirely.
+	// notebook_path (which a plain FilePath() lookup misses entirely) and that a
+	// patch payload has to be parsed for the several files it may touch.
 	for _, path := range history.ModifiedFiles([]history.ToolUse{{Tool: base.RawTool, Input: base.Input}}) {
 		a.WritePaths = appendUnique(a.WritePaths, abs(path))
 	}
@@ -70,16 +71,10 @@ func AnalyzeToolUse(t tools.Tool) ToolAnalysis {
 			a.ReadPaths = append(a.ReadPaths, abs(path))
 		}
 	case "Bash":
+		// Patches piped through the shell are picked up by ModifiedFiles above,
+		// alongside every other patch shape; this covers the writes only a shell
+		// command can express — redirects, sed -i, mv, rm.
 		a.analyzeBash(base.Input, abs)
-		command, _ := base.Input["command"].(string)
-		for _, path := range tools.ExtractApplyPatchPaths(command) {
-			a.WritePaths = appendUnique(a.WritePaths, abs(path))
-		}
-	case "exec", "apply_patch":
-		input, _ := base.Input["input"].(string)
-		for _, path := range tools.ExtractApplyPatchPaths(input) {
-			a.WritePaths = appendUnique(a.WritePaths, abs(path))
-		}
 	case "WebFetch":
 		if urlStr, ok := base.Input["url"].(string); ok {
 			if u, err := url.Parse(urlStr); err == nil && u.Host != "" {

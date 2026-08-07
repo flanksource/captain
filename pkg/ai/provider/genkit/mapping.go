@@ -1,9 +1,7 @@
 package genkit
 
 import (
-	"encoding/json"
 	"fmt"
-	"reflect"
 	"sync"
 	"time"
 
@@ -75,51 +73,31 @@ func (c *toolEventCorrelation) observeRequest(request *gkai.ToolRequest) {
 	c.pending = append(c.pending, request)
 }
 
-func (c *toolEventCorrelation) begin(name string, input map[string]any) (string, error) {
+func (c *toolEventCorrelation) begin(request *gkai.ToolRequest) (string, error) {
+	if request == nil || request.Name == "" {
+		return "", fmt.Errorf("genkit tool execution has no provider request name")
+	}
+	if request.Ref == "" {
+		return "", fmt.Errorf("genkit tool %q provider request has no call reference", request.Name)
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	matchingName := make([]int, 0, 1)
-	exact := make([]int, 0, 1)
-	for i, request := range c.pending {
-		if request.Name != name {
+	for i, pending := range c.pending {
+		if pending.Ref != request.Ref {
 			continue
 		}
-		matchingName = append(matchingName, i)
-		if requestInput, ok := toolRequestInput(request.Input); ok && reflect.DeepEqual(requestInput, input) {
-			exact = append(exact, i)
+		if pending.Name != request.Name {
+			return "", fmt.Errorf("genkit tool request %q names %q, expected %q", request.Ref, request.Name, pending.Name)
 		}
+		if _, exists := c.started[request.Ref]; exists {
+			return "", fmt.Errorf("genkit tool request %q started more than once", request.Ref)
+		}
+		c.pending = append(c.pending[:i], c.pending[i+1:]...)
+		c.started[request.Ref] = request.Name
+		return request.Ref, nil
 	}
-
-	index, err := correlatedRequestIndex(name, matchingName, exact)
-	if err != nil {
-		return "", err
-	}
-	request := c.pending[index]
-	if request.Ref == "" {
-		return "", fmt.Errorf("genkit tool %q provider request has no call reference", name)
-	}
-	if _, exists := c.started[request.Ref]; exists {
-		return "", fmt.Errorf("genkit tool request %q started more than once", request.Ref)
-	}
-	c.pending = append(c.pending[:index], c.pending[index+1:]...)
-	c.started[request.Ref] = name
-	return request.Ref, nil
-}
-
-func correlatedRequestIndex(name string, matchingName, exact []int) (int, error) {
-	switch {
-	case len(exact) == 1:
-		return exact[0], nil
-	case len(exact) > 1:
-		return 0, fmt.Errorf("genkit tool %q has multiple provider requests with the same input", name)
-	case len(matchingName) == 1:
-		return matchingName[0], nil
-	case len(matchingName) > 1:
-		return 0, fmt.Errorf("genkit tool %q has multiple provider requests that cannot be correlated by input", name)
-	default:
-		return 0, fmt.Errorf("genkit tool %q execution has no correlated provider request", name)
-	}
+	return "", fmt.Errorf("genkit tool %q execution reference %q has no correlated provider request", request.Name, request.Ref)
 }
 
 func (c *toolEventCorrelation) finish(ref string) error {
@@ -161,38 +139,6 @@ func (c *toolEventCorrelation) observeResponse(response *gkai.ToolResponse) erro
 	delete(c.started, response.Ref)
 	delete(c.finished, response.Ref)
 	return nil
-}
-
-func toolRequestInput(input any) (map[string]any, bool) {
-	if text, ok := input.(string); ok {
-		var decoded map[string]any
-		if err := json.Unmarshal([]byte(text), &decoded); err != nil {
-			return nil, false
-		}
-		return decoded, true
-	}
-	decoded := toInputMap(input)
-	return decoded, decoded != nil
-}
-
-// toInputMap normalizes a genkit tool-request input (typed any) into the
-// map[string]any shape captain's Event.Input expects.
-func toInputMap(v any) map[string]any {
-	if v == nil {
-		return nil
-	}
-	if m, ok := v.(map[string]any); ok {
-		return m
-	}
-	b, err := json.Marshal(v)
-	if err != nil {
-		return nil
-	}
-	var m map[string]any
-	if err := json.Unmarshal(b, &m); err != nil {
-		return nil
-	}
-	return m
 }
 
 // mapUsage maps genkit's GenerationUsage onto captain's disjoint-bucket Usage.

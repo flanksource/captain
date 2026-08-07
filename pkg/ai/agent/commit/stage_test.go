@@ -2,6 +2,8 @@ package commit
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -33,25 +35,105 @@ func TestSharedTreeCommitsOnlyAgentFiles(t *testing.T) {
 	}
 }
 
-// TestSharedTreeRefusesUnattributableWork is the test that protects the user's
-// working tree: when nothing in a dirty shared checkout can be attributed to the
-// run, the only safe move is to fail loudly rather than sweep it all in.
-func TestSharedTreeRefusesUnattributableWork(t *testing.T) {
-	dir := newRepo(t)
-	hc := shared(dir)
-	h := New(api.Commit{On: api.CommitOnAgent, Message: "feat: nothing of mine"})
-
-	write(t, dir, "mine.go", "// the user's own uncommitted work\n")
-
-	err := h.Post(hc, agent.PhaseAgent)
-	if err == nil {
-		t.Fatalf("expected an error; instead the tree was committed as %v", subjects(t, dir))
+// TestSharedTreeCommitsFromSubdirectory: a run launched from a subdirectory of
+// the repo — a monorepo package, say — records its edits relative to that
+// subdirectory, while git reports dirt relative to the repo root whatever the
+// cwd. Attribution has to reconcile the two bases; treating them as one
+// namespace makes every such run refuse to commit work it demonstrably did.
+//
+// Both recorded forms are covered because claude.RelativePath emits either,
+// depending on how far outside the run's directory the edited file sits.
+func TestSharedTreeCommitsFromSubdirectory(t *testing.T) {
+	cases := []struct {
+		name string
+		sub  string
+		// record builds the entry recordEvent would have stored for
+		// <repo>/packages/agent.go, given the repo root.
+		record func(root string) string
+	}{
+		{
+			name:   "one level up, recorded relative",
+			sub:    "apps",
+			record: func(string) string { return "../packages/agent.go" },
+		},
+		{
+			name: "further away, recorded absolute",
+			sub:  filepath.Join("apps", "storybook"),
+			record: func(root string) string {
+				return filepath.Join(root, "packages", "agent.go")
+			},
+		},
 	}
-	if !strings.Contains(err.Error(), "attributable") {
-		t.Errorf("error should explain why it refused, got: %v", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := newRepo(t)
+			if err := os.MkdirAll(filepath.Join(dir, tc.sub), 0o755); err != nil {
+				t.Fatalf("create subdirectory: %v", err)
+			}
+			hc := shared(filepath.Join(dir, tc.sub)) // Repo and Cwd are the subdirectory
+			h := New(api.Commit{On: api.CommitOnAgent, Message: "feat: agent work"})
+
+			write(t, dir, "mine.go", "// the user's own uncommitted work\n")
+			write(t, dir, "packages/agent.go", "package main\n")
+			changed(hc, tc.record(canonicalDir(dir)))
+
+			if err := h.Post(hc, agent.PhaseAgent); err != nil {
+				t.Fatalf("agent phase: %v", err)
+			}
+			if got := filesInHead(t, dir, "HEAD"); fmt.Sprint(got) != fmt.Sprint([]string{"packages/agent.go"}) {
+				t.Errorf("commit touched %v, want only packages/agent.go", got)
+			}
+			if status := mustGit(t, dir, "status", "--porcelain"); !strings.Contains(status, "mine.go") {
+				t.Errorf("the user's file should still be uncommitted, status:\n%s", status)
+			}
+		})
 	}
-	if commitCount(t, dir) != 1 {
-		t.Errorf("nothing should have been committed, subjects: %v", subjects(t, dir))
+}
+
+// TestRefusalReportsWhatWasRecorded is the test that protects the user's
+// working tree: when nothing in a dirty shared checkout can be attributed to
+// the run, the only safe move is to fail loudly rather than sweep it all in.
+// The two ways of coming up empty need different messages, because they call
+// for different fixes. Nothing recorded is that safety refusal working as
+// designed; files recorded but none of them dirty here means the run edited
+// another tree, and reporting that as "0 recorded" sends the reader hunting for
+// a bug in the agent instead.
+func TestRefusalReportsWhatWasRecorded(t *testing.T) {
+	cases := []struct {
+		name    string
+		record  []string
+		wantErr string
+	}{
+		{
+			name:    "the agent recorded nothing",
+			wantErr: "recorded no file edits",
+		},
+		{
+			name:    "the agent edited a different tree",
+			record:  []string{"/somewhere/else/agent.go"},
+			wantErr: "/somewhere/else/agent.go",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := newRepo(t)
+			hc := shared(dir)
+			h := New(api.Commit{On: api.CommitOnAgent, Message: "feat: nothing of mine"})
+
+			write(t, dir, "mine.go", "// the user's own uncommitted work\n")
+			changed(hc, tc.record...)
+
+			err := h.Post(hc, agent.PhaseAgent)
+			if err == nil {
+				t.Fatalf("expected an error; instead the tree was committed as %v", subjects(t, dir))
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("error should mention %q, got: %v", tc.wantErr, err)
+			}
+			if commitCount(t, dir) != 1 {
+				t.Errorf("nothing should have been committed, subjects: %v", subjects(t, dir))
+			}
+		})
 	}
 }
 
@@ -278,8 +360,10 @@ func TestDoCallbackReceivesAResolvedPlan(t *testing.T) {
 		t.Fatalf("agent phase: %v", err)
 	}
 
-	if got.Dir != dir || got.Phase != agent.PhaseAgent || got.Subject != "feat: hosted" {
-		t.Errorf("plan = %+v, want dir/phase/subject resolved", got)
+	// Dir is the resolved working-tree root, not whatever the caller passed:
+	// Plan.Paths are repo-relative, so the host needs the base they hang off.
+	if got.Dir != canonicalDir(dir) || got.Phase != agent.PhaseAgent || got.Subject != "feat: hosted" {
+		t.Errorf("plan = %+v, want dir %s with phase/subject resolved", got, canonicalDir(dir))
 	}
 	if got.Gates != api.CommitGatesFull || got.Stage != api.CommitStageWorktree {
 		t.Errorf("plan policy = %+v, want gates full and worktree staging", got)

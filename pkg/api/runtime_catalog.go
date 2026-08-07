@@ -46,8 +46,11 @@ type RuntimeModeEntry struct {
 	// which went stale on every model release.
 	DefaultModel string `json:"defaultModel,omitempty"`
 	// CatalogProvider is the provider key used by /api/chat/models for this
-	// mode. Local Claude/Codex modes share their agent catalog.
-	CatalogProvider string `json:"catalogProvider,omitempty"`
+	// mode. Local Claude/Codex modes share their agent catalog. It is always
+	// served: a client joining the model list to a mode falls back to the
+	// family's CatalogPrefix when it is absent, which puts every local Claude
+	// mode on "anthropic" and hands the Agent picker the Anthropic API rows.
+	CatalogProvider string `json:"catalogProvider"`
 	// Disabled reports the user's opt-out. The entry is still served so a UI can
 	// explain the absence instead of silently shrinking the picker.
 	Disabled bool `json:"disabled"`
@@ -87,14 +90,15 @@ func RuntimeCatalog() []RuntimeFamily {
 				}
 			}
 			family.Modes = append(family.Modes, RuntimeModeEntry{
-				Mode:           string(mode),
-				Backend:        string(caps.Backend),
-				Kind:           caps.Backend.Kind(),
-				Keyless:        caps.Keyless,
-				DefaultModel:   DefaultModelFor(caps.Backend),
-				Disabled:       disabled.Backend(caps.Backend),
-				DisabledReason: reason,
-				Availability:   availability,
+				Mode:            string(mode),
+				Backend:         string(caps.Backend),
+				Kind:            caps.Backend.Kind(),
+				Keyless:         caps.Keyless,
+				DefaultModel:    DefaultModelFor(caps.Backend),
+				CatalogProvider: CatalogProviderFor(caps.Backend),
+				Disabled:        disabled.Backend(caps.Backend),
+				DisabledReason:  reason,
+				Availability:    availability,
 			})
 		}
 		out = append(out, family)
@@ -104,6 +108,30 @@ func RuntimeCatalog() []RuntimeFamily {
 
 // DefaultModelFor is the model a picker should seed for one backend.
 func DefaultModelFor(b Backend) string { return registry.DefaultModelFor(b) }
+
+// CatalogProviderFor is the `provider` value /api/chat/models stamps on the
+// menu row that serves this backend — the key a picker filters the flat model
+// list by once the user has chosen a family and a mode.
+//
+// It is not CatalogPrefixFor: the menu lists one row per model per *menu*
+// backend, and the local modes of a family collapse onto its agent backend
+// (claude-cli and claude-cmux models are listed as claude-agent rows). A family
+// with no agent mode has nothing to collapse onto — Gemini's CLI models already
+// appear under the googleai API rows — so it keeps the catalog prefix.
+func CatalogProviderFor(b Backend) string {
+	p, mode, ok := registry.ProviderFor(b)
+	if !ok {
+		return ""
+	}
+	if mode == registry.ModeAPI {
+		return p.CatalogPrefix
+	}
+	agent, err := p.BackendFor(registry.ModeAgent)
+	if err != nil {
+		return p.CatalogPrefix
+	}
+	return string(agent)
+}
 
 // CatalogPrefixFor is the namespace a backend's model ids live under:
 // "anthropic" for every Claude mode, "googleai" — not "google" — for Gemini.

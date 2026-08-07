@@ -62,11 +62,6 @@ func LiveRuntimeCatalog() ([]api.RuntimeFamily, error) {
 		for modeIndex := range runtimes[familyIndex].Modes {
 			mode := &runtimes[familyIndex].Modes[modeIndex]
 			backend := Backend(mode.Backend)
-			if menuBackend, ok := menuBackendFor(backend); ok {
-				mode.CatalogProvider = BackendToProvider(menuBackend)
-			} else {
-				mode.CatalogProvider = runtimes[familyIndex].CatalogPrefix
-			}
 			if mode.Disabled {
 				continue
 			}
