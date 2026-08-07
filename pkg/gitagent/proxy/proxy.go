@@ -96,6 +96,12 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "captain-proxy: "+reason, http.StatusForbidden)
 		return
 	}
+	if len(grant.Headers) > 0 && grant.scheme() != "https" {
+		reason := "credential-bearing grants require HTTPS"
+		p.audit(Decision{Method: r.Method, Destination: r.URL.Host, Verdict: "rejected", Reason: reason})
+		http.Error(w, "captain-proxy: "+reason, http.StatusForbidden)
+		return
+	}
 	substituted, err := p.substitute(r, grant)
 	if err != nil {
 		// A credential that fails to resolve fails the request loudly; the

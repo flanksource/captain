@@ -21,6 +21,33 @@ func TestSplitSSHEndpointBracketedIPv6DefaultsPort(t *testing.T) {
 	}
 }
 
+func TestOverLimitSubmissionsAdvanceAttempt(t *testing.T) {
+	repo := t.TempDir()
+	if err := SaveTaskState(repo, &TaskState{
+		Task: "t-limit", Attempts: 1, Policy: Policy{MaxAttempts: 1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	updates := []RefUpdate{{Ref: agentBranchPrefix + "t-limit"}}
+	for want := 2; want <= 3; want++ {
+		var sideband strings.Builder
+		if err := sidecarPreReceive(context.Background(), repo, HookHost{}, updates, &sideband); err == nil {
+			t.Fatalf("attempt %d was accepted", want)
+		}
+		verdict, found, err := LoadVerdict(repo, "t-limit", want)
+		if err != nil || !found || verdict.Attempt != want {
+			t.Fatalf("attempt %d verdict = %+v, found=%v, err=%v", want, verdict, found, err)
+		}
+	}
+	state, found, err := LoadTaskState(repo, "t-limit")
+	if err != nil || !found {
+		t.Fatalf("load state: found=%v err=%v", found, err)
+	}
+	if state.Attempts != 3 {
+		t.Fatalf("attempts = %d, want 3", state.Attempts)
+	}
+}
+
 func TestUpdateTaskStateSerializesConcurrentWriters(t *testing.T) {
 	repo := t.TempDir()
 	if err := SaveTaskState(repo, &TaskState{Task: "t-lock"}); err != nil {

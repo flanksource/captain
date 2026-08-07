@@ -1,11 +1,48 @@
 package gitagent
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestTaskRuntimeIdentityUsesModelAndEffort(t *testing.T) {
+	got := taskRuntimeIdentity([]byte(`{"model":"gpt-5.6-sol","backend":"codex-agent","effort":"high"}`))
+	if got != "agent:gpt-5.6-sol:high" {
+		t.Fatalf("identity = %q", got)
+	}
+	if got := taskRuntimeIdentity([]byte(`{}`)); got != "captain-agent" {
+		t.Fatalf("legacy identity = %q", got)
+	}
+}
+
+func TestSetupAgentWorkspacePinsRuntimeIdentity(t *testing.T) {
+	ctx := context.Background()
+	repo := filepath.Join(t.TempDir(), "sidecar.git")
+	if err := InitSidecar(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	commit, err := BuildControlCommit(ctx, repo, nil, map[string][]byte{"seed.txt": []byte("seed\n")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveTaskState(repo, &TaskState{Task: "t-identity"}); err != nil {
+		t.Fatal(err)
+	}
+	workdir, err := SetupAgentWorkspace(ctx, repo, "t-identity", commit, "agent:gpt-5.6-sol:high")
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := ScrubGitEnv(os.Environ())
+	if got, err := runGit(ctx, workdir, env, "config", "user.name"); err != nil || got != "agent:gpt-5.6-sol:high" {
+		t.Fatalf("user.name = %q, %v", got, err)
+	}
+	if got, err := runGit(ctx, workdir, env, "config", "user.email"); err != nil || got != "agent@captain.local" {
+		t.Fatalf("user.email = %q, %v", got, err)
+	}
+}
 
 // A dispatch that launches nothing leaves the supervisor waiting out its whole
 // budget on work that never started — a silence indistinguishable from an

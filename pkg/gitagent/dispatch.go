@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/flanksource/captain/pkg/api"
 )
 
 // TaskPayload is task.json: what the agent is asked to do. It is materialized
@@ -21,10 +23,10 @@ type TaskPayload struct {
 	Prompt string `json:"prompt"`
 	System string `json:"system,omitempty"`
 	Model  string `json:"model,omitempty"`
-	// Backend records which runtime the supervisor resolved, so the agent runs
-	// the coding agent that was actually selected rather than re-resolving the
-	// model name against its own defaults.
-	Backend string `json:"backend,omitempty"`
+	// Backend and Effort record the runtime the supervisor resolved, so the
+	// agent does not re-resolve the model against its own defaults.
+	Backend string     `json:"backend,omitempty"`
+	Effort  api.Effort `json:"effort,omitempty"`
 	// Timeout is the supervisor's effective deadline. The relocated runner
 	// must not fall back to the shorter local model-call default.
 	Timeout string `json:"timeout,omitempty"`

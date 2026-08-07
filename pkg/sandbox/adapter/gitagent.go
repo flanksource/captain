@@ -106,7 +106,7 @@ func (g *gitAgentSandbox) Execute(ctx context.Context, spec api.Spec) (*api.Resp
 		// own defaults and quietly pick a different one.
 		TaskPayload: gitagent.TaskPayload{
 			Prompt: prompt, System: system,
-			Model: spec.Name, Backend: string(spec.Backend), Timeout: timeout,
+			Model: spec.Name, Backend: string(spec.Backend), Effort: spec.Effort, Timeout: timeout,
 		},
 		HooksJSON: hooksJSON,
 	})

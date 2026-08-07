@@ -28,7 +28,8 @@ const NoAgentCommand = "none"
 // it (object store shared) into <repo>/captain/tasks/<task>/worktree. A clone
 // rather than a linked worktree keeps the agent's unaccepted commits in the
 // agent's own object store: a rejected push leaves the sidecar repo clean.
-func SetupAgentWorkspace(ctx context.Context, sidecarRepo, task, dispatchCommit string) (string, error) {
+// runtimeIdentity becomes the author name on the agent's ordinary commits.
+func SetupAgentWorkspace(ctx context.Context, sidecarRepo, task, dispatchCommit, runtimeIdentity string) (string, error) {
 	branch, err := AgentBranch(task)
 	if err != nil {
 		return "", err
@@ -46,8 +47,9 @@ func SetupAgentWorkspace(ctx context.Context, sidecarRepo, task, dispatchCommit 
 		"clone", "--quiet", "--shared", "--branch", branchName, sidecarRepo, workdir); err != nil {
 		return "", err
 	}
-	// Pin the agent's identity so a bare `git commit` needs no global config.
-	for _, kv := range [][2]string{{"user.name", "captain-agent"}, {"user.email", "agent@captain.local"}} {
+	// Pin the selected runtime so a bare `git commit` needs no global config
+	// and still records which model and effort produced it.
+	for _, kv := range [][2]string{{"user.name", runtimeIdentity}, {"user.email", "agent@captain.local"}} {
 		if _, err := runGit(ctx, workdir, env, "config", kv[0], kv[1]); err != nil {
 			return "", err
 		}
