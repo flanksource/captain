@@ -29,7 +29,7 @@ func withProperty(t *testing.T, key, value string) {
 func withCleanRegistry(t *testing.T) {
 	t.Helper()
 	previous := harRegistry
-	harRegistry = har.NewRegistry()
+	harRegistry = har.NewRegistry(nil)
 	t.Cleanup(func() { harRegistry = previous })
 }
 
