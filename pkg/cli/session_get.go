@@ -181,16 +181,40 @@ func loadSessionDetail(ctx context.Context, db sessionGetStore, overview databas
 	if err != nil {
 		return nil, fmt.Errorf("list prompt runs for Captain session %s: %w", overview.ID, err)
 	}
-	if len(runs) == 0 {
-		return detail, nil
+	if len(runs) > 0 {
+		if detail == nil {
+			if detail, err = sessionFromPromptRun(overview, runs[0]); err != nil {
+				return nil, err
+			}
+		} else if err := attachPromptRunData(detail, runs[0]); err != nil {
+			return nil, fmt.Errorf("attach prompt run %s to Captain session %s: %w", runs[0].ID, overview.ID, err)
+		}
 	}
 	if detail == nil {
-		return sessionFromPromptRun(overview, runs[0])
+		return nil, nil
 	}
-	if err := attachPromptRunData(detail, runs[0]); err != nil {
-		return nil, fmt.Errorf("attach prompt run %s to Captain session %s: %w", runs[0].ID, overview.ID, err)
+	// The transcript and prompt-run branches build the aggregate from the source
+	// that produced the session, so neither carries the stored projection the
+	// database branch gets from GetSession.
+	if err := applyOverviewProjection(ctx, db, overview, detail); err != nil {
+		return nil, fmt.Errorf("project Captain session %s overview: %w", overview.ID, err)
 	}
 	return detail, nil
+}
+
+// applyOverviewProjection adapts the store interface; the projection itself is
+// shared with the database branch.
+func applyOverviewProjection(
+	ctx context.Context,
+	db sessionGetStore,
+	overview database.SessionOverview,
+	detail *session.Session,
+) error {
+	store, ok := db.(aichat.OverviewProjectionStore)
+	if !ok {
+		return nil
+	}
+	return aichat.ApplyOverviewProjection(ctx, store, overview, detail)
 }
 
 func sessionFromPromptRun(overview database.SessionOverview, run database.PromptRun) (*session.Session, error) {

@@ -10,7 +10,6 @@ import (
 	"github.com/flanksource/captain/pkg/ai/history"
 	"github.com/flanksource/captain/pkg/ai/pricing"
 	"github.com/flanksource/captain/pkg/api"
-	"github.com/flanksource/captain/pkg/bash"
 	"github.com/flanksource/captain/pkg/claude"
 	"github.com/flanksource/captain/pkg/claude/tools"
 	"github.com/flanksource/commons/logger"
@@ -403,67 +402,12 @@ func marshalInput(input map[string]any) json.RawMessage {
 }
 
 // collectCodexPaths appends read/write paths for file-touching Codex tools.
+// Which files a tool touched is decided once, in history.ToolFootprint, so a
+// Codex session and a Claude session cannot disagree about the same field.
 func collectCodexPaths(u history.ToolUse, read, written *[]string) {
-	switch u.Tool {
-	case "Read":
-		if p, ok := u.Input["file_path"].(string); ok {
-			*read = append(*read, p)
-		}
-	case "Grep", "Glob":
-		if p, ok := u.Input["path"].(string); ok {
-			*read = append(*read, p)
-		}
-	case "Write", "Edit":
-		if p, ok := u.Input["file_path"].(string); ok {
-			*written = append(*written, p)
-		}
-	case "Bash":
-		cmd, _ := u.Input["command"].(string)
-		if cmd == "" {
-			return
-		}
-		for _, path := range tools.ExtractApplyPatchPaths(cmd) {
-			*written = append(*written, claude.AbsolutePath(path, u.CWD, ""))
-		}
-		result, err := bash.Analyze(cmd)
-		if err != nil {
-			return
-		}
-		writePaths := map[string]struct{}{}
-		for _, op := range append(append(result.Created(), result.Modified()...), result.Deleted()...) {
-			if op.Path == "" {
-				continue
-			}
-			path := claude.AbsolutePath(op.Path, u.CWD, "")
-			*written = append(*written, path)
-			writePaths[path] = struct{}{}
-		}
-		for _, p := range result.ReferencedPaths {
-			if p == "" {
-				continue
-			}
-			path := claude.AbsolutePath(p, u.CWD, "")
-			if _, ok := writePaths[path]; ok {
-				continue
-			}
-			*read = append(*read, path)
-		}
-	case "ApplyPatch":
-		// A multi-file patch keeps its operations parsed on the row, so the paths
-		// come from there rather than from re-scanning the payload.
-		for _, file := range tools.ApplyPatchFiles(u.Input) {
-			*written = append(*written, claude.AbsolutePath(file.Path, u.CWD, ""))
-			if file.MoveTo != "" {
-				*written = append(*written, claude.AbsolutePath(file.MoveTo, u.CWD, ""))
-			}
-		}
-	case "CodexExecScript":
-		script, _ := u.Input["script"].(string)
-		appendAbsolute(written, tools.ExtractApplyPatchPaths(script), u.CWD)
-	case "exec", "apply_patch":
-		input, _ := u.Input["input"].(string)
-		appendAbsolute(written, tools.ExtractApplyPatchPaths(input), u.CWD)
-	}
+	footprint := history.ToolFootprint(u)
+	appendAbsolute(read, footprint.Read, u.CWD)
+	appendAbsolute(written, footprint.Written, u.CWD)
 }
 
 // appendAbsolute anchors patch-derived paths the same way the parsed ApplyPatch

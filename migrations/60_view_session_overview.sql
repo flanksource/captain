@@ -64,6 +64,9 @@ SELECT
   COALESCE(request_stats.pending_request_count, 0) AS pending_request_count,
   COALESCE(request_stats.approved_request_count, 0) AS approved_request_count,
   COALESCE(request_stats.denied_request_count, 0) AS denied_request_count,
+  -- Always 0: nothing writes captain_artifacts. Kept because CREATE OR REPLACE
+  -- VIEW cannot drop a column, and commons-db only drops a view when a *table*
+  -- diff would break it, so removing these here fails every existing database.
   COALESCE(file_stats.file_read_count, 0) AS file_read_count,
   COALESCE(file_stats.file_written_count, 0) AS file_written_count,
   latest_call.model,

@@ -5,9 +5,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flanksource/captain/pkg/ai/history"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/claude"
-	"github.com/flanksource/captain/pkg/claude/tools"
 )
 
 // Build discovers the in-scope sessions and returns the unified model for each,
@@ -134,19 +134,19 @@ func collapseByModel(costs api.Costs) api.Costs {
 }
 
 // changedFiles aggregates read/write paths across a session's tool uses,
-// distinguishing reads from writes.
+// distinguishing reads from writes. Which files a tool touched is decided once,
+// in history.ToolFootprint — this used to switch on five tool names and so
+// missed MultiEdit, NotebookEdit, every patch shape, and every write expressed
+// as a shell command, while `captain changes` reported all of them.
 func changedFiles(uses []claude.ToolUse) ChangedFiles {
 	var read, written []string
 	for _, tu := range uses {
-		switch tu.Tool {
-		case "Read":
-			read = append(read, relPath(tu, tu.FilePath()))
-		case "Grep", "Glob":
-			if p, ok := tu.Input["path"].(string); ok {
-				read = append(read, relPath(tu, p))
-			}
-		case "Write", "Edit":
-			written = append(written, relPath(tu, tu.FilePath()))
+		footprint := history.ToolFootprint(history.ToolUse{Tool: tu.Tool, Input: tu.Input, CWD: tu.CWD})
+		for _, path := range footprint.Read {
+			read = append(read, relPath(tu, claude.AbsolutePath(path, tu.CWD, tu.ProjectRoot)))
+		}
+		for _, path := range footprint.Written {
+			written = append(written, relPath(tu, claude.AbsolutePath(path, tu.CWD, tu.ProjectRoot)))
 		}
 	}
 	return ChangedFiles{Read: sortedUnique(read), Written: sortedUnique(written)}
@@ -210,50 +210,30 @@ func taggedClaudePlan(uses []claude.ToolUse) *Plan {
 }
 
 // approvalStats counts approvals/denials across the session's tool uses.
+// A transcript records a denial but never an approval: nothing distinguishes a
+// tool the user approved from one that never needed asking. Counting every
+// non-denied tool use as approved reported "200 approved" for a session with
+// two real prompts, and disagreed with the database projection, which counts
+// captain_turn_requests rows. Denials are the only figure the transcript can
+// honestly supply; applyRequestState supplies the approvals.
 func approvalStats(uses []claude.ToolUse) ApprovalStats {
 	var stats ApprovalStats
 	for _, tu := range uses {
-		switch {
-		case tu.Denied:
-			stats.Denied++
-			stats.Denials = append(stats.Denials, Denial{
-				ToolUseID: tu.ToolUseID,
-				Tool:      tu.Tool,
-				Reason:    tu.DeniedReason,
-			})
-		case isNonApprovalActivity(tu.Tool):
-			// plan/synthetic rows are not approvals
-		default:
-			stats.Approved++
+		if !tu.Denied {
+			continue
 		}
+		stats.Denied++
+		stats.Denials = append(stats.Denials, Denial{
+			ToolUseID: tu.ToolUseID,
+			Tool:      tu.Tool,
+			Reason:    tu.DeniedReason,
+		})
 	}
 	return stats
 }
 
-func isNonApprovalActivity(tool string) bool {
-	if tools.IsEventToolName(tool) {
-		return true
-	}
-	switch tool {
-	case "ExitPlanMode", "Plan", "System", "User", "Assistant", "Reasoning", "Event",
-		"ApiError", "ParseError", "Result", "SessionInit", "HookStart",
-		"HookResponse", "StopHookSummary", "TurnDuration", "AwaySummary",
-		TitleToolName:
-		return true
-	default:
-		return false
-	}
-}
-
-func isChatActivity(tool string) bool {
-	switch tool {
-	case "System", "User", "Assistant", "Reasoning":
-		return true
-	default:
-		return false
-	}
-}
-
-func isOperationalToolActivity(tool string) bool {
-	return !isNonApprovalActivity(tool) && tool != ""
-}
+// The tool-activity classifiers that lived here — isNonApprovalActivity,
+// isChatActivity, isOperationalToolActivity — existed only to decide which tool
+// uses counted as approvals and to drive the dead rows.go projection. A
+// transcript cannot know about approvals, and rows.go is gone, so nothing needs
+// to classify a tool that way any more.
