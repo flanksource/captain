@@ -50,8 +50,8 @@ func newCaptainChatService(
 		// Thread reads follow the request's database context; writes never reach
 		// a secondary because the context middleware rejects unsafe methods.
 		Tools: chatTools, MCP: mcpTools,
-		Threads:   aichat.ThreadStoreProviderFunc(contextThreadStore),
-		Authority: authority,
+		Threads:     aichat.ThreadStoreProviderFunc(contextThreadStore),
+		Authority:   authority,
 		Attachments: chatAttachmentResolver{store: attachmentStore},
 	})
 	return chat, mcpTools, nil

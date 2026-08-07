@@ -23,19 +23,19 @@ type SessionGetResult struct {
 }
 
 type SessionGetItem struct {
-	CaptainID          string            `json:"captainId"`
-	ParentSessionID    string            `json:"parentSessionId,omitempty"`
-	RootSessionID      string            `json:"rootSessionId,omitempty"`
-	ProviderSessionID  string            `json:"providerSessionId,omitempty"`
-	Host               string            `json:"host,omitempty"`
-	Aggregate          bool              `json:"aggregate,omitempty"`
-	DetailAvailable    bool              `json:"detailAvailable"`
-	Summary            SessionRecord     `json:"summary"`
-	Detail             *session.Session  `json:"detail,omitempty"`
-	ActiveRunID string            `json:"activeRunId,omitempty"`
-	Chat        *ChatCapabilities `json:"chat,omitempty"`
-	ChatState   *ChatStateFrame   `json:"chatState,omitempty"`
-	notice      transcriptNotice
+	CaptainID         string            `json:"captainId"`
+	ParentSessionID   string            `json:"parentSessionId,omitempty"`
+	RootSessionID     string            `json:"rootSessionId,omitempty"`
+	ProviderSessionID string            `json:"providerSessionId,omitempty"`
+	Host              string            `json:"host,omitempty"`
+	Aggregate         bool              `json:"aggregate,omitempty"`
+	DetailAvailable   bool              `json:"detailAvailable"`
+	Summary           SessionRecord     `json:"summary"`
+	Detail            *session.Session  `json:"detail,omitempty"`
+	ActiveRunID       string            `json:"activeRunId,omitempty"`
+	Chat              *ChatCapabilities `json:"chat,omitempty"`
+	ChatState         *ChatStateFrame   `json:"chatState,omitempty"`
+	notice            transcriptNotice
 }
 
 type sessionGetStore interface {

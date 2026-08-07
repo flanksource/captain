@@ -211,7 +211,7 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 		return err
 	}
 	httpSrv := &http.Server{
-		Addr:        addr,
+		Addr: addr,
 		Handler: rpchttp.TimingMiddleware(
 			DatabaseContextMiddleware(PromptDirsMiddleware(mux, opts.PromptDirs))),
 		ReadTimeout: 30 * time.Second,

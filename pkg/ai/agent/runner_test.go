@@ -60,6 +60,41 @@ func TestRunner_CapturesSessionAndChangedFiles(t *testing.T) {
 	assert.Equal(t, 1, prov.calls, "no verify hooks ⇒ exactly one iteration")
 }
 
+// TestRunner_RecordsEveryFileOneToolWrote covers the shapes that touch several
+// files in a single call. Recording only the first left the rest unattributable,
+// and a commit hook staging what the run is recorded as having changed then
+// dropped them: half the turn committed, the remainder dirty and unexplained.
+func TestRunner_RecordsEveryFileOneToolWrote(t *testing.T) {
+	patch := "*** Begin Patch\n" +
+		"*** Update File: /repo/pkg/one.go\n" +
+		"*** Update File: /repo/pkg/two.go\n" +
+		"*** Delete File: /repo/pkg/three.go\n" +
+		"*** End Patch\n"
+	prov := &fakeProvider{events: func(int) []ai.Event {
+		return []ai.Event{
+			{Kind: ai.EventToolUse, Tool: "apply_patch", Input: map[string]any{"input": patch}},
+			// A shell command writing two files is the same problem in the other
+			// tool shape.
+			{Kind: ai.EventToolUse, Tool: "Bash", Input: map[string]any{
+				"command": "echo x > /repo/pkg/four.go && rm /repo/pkg/five.go",
+			}},
+			{Kind: ai.EventResult, Success: true},
+		}
+	}}
+
+	r := &Runner[string]{
+		Provider: prov,
+		Repo:     "/repo",
+		Request:  ai.Request{Prompt: api.Prompt{User: "go"}},
+	}
+	res, err := r.Run(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, res.Response.Workspace)
+	assert.ElementsMatch(t,
+		[]string{"pkg/one.go", "pkg/two.go", "pkg/three.go", "pkg/four.go", "pkg/five.go"},
+		res.Response.Workspace.Changed)
+}
+
 func TestRunner_CapturesNativePlanOutcome(t *testing.T) {
 	prov := &fakeProvider{events: func(int) []ai.Event {
 		return []ai.Event{
