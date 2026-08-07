@@ -188,11 +188,10 @@ captain/
 ├── pkg/cmux/              # Terminal multiplexer integration (processes and screenshots)
 ├── pkg/collections/       # Generic collection utilities
 ├── pkg/container/         # Sandbox discovery, generation, build/run logic
+├── pkg/container/base/    # Embedded agent base image (Dockerfile, deps.yaml, entrypoint.sh)
 ├── pkg/dod/               # Definition of Done persistence and execution
 ├── pkg/git/               # Git worktree helpers
 ├── pkg/sandbox/           # Token/preset/sandbox helpers
-├── Dockerfile             # Container image for captain/Claude tooling
-├── entrypoint.sh          # gosu-based user switching entrypoint
 ├── Makefile               # Thin wrapper around Taskfile
 └── Taskfile.yaml          # Main developer tasks
 ```
@@ -615,17 +614,36 @@ By default this copies the built binary to:
 
 ## Docker image
 
-The included `Dockerfile` builds on `flanksource/base-image` and installs:
+`pkg/container/base/Dockerfile` (embedded into the binary, built as `claude-env:base` by
+`captain container`) builds on `flanksource/base-image` and installs a full agent toolchain:
 
-- Node.js
-- git, gh, jq, vim, nano, zsh, fzf, etc.
-- Claude Code via `@anthropic-ai/claude-code`
+- **Agent CLIs** — one per backend: `claude` (`@anthropic-ai/claude-code`), `codex`
+  (`@openai/codex`), `gemini` (`@google/gemini-cli`), plus `tsx` for the `claude-agent`
+  SDK bridge
+- **Flanksource tools** — `captain`, `gavel`, `repomap` (installed via `deps` from
+  `pkg/container/base/deps.yaml`)
+- **Go** — toolchain, `task`, `ginkgo`, `golangci-lint`
+- **Node** — Node.js 22, `npm`, `pnpm`, `typescript`
+- **Browser automation** — `agent-browser` and Playwright Chromium (shared at
+  `/ms-playwright`)
+- **Shell tooling** — `rg`, `fd`, `bat`, `delta`, `gh`, `jq`, `tree`, `htop`, `lsof`,
+  `sqlite3`, `psql`, `tmux`, `shellcheck`, `vim`, `nano`, `zsh`, `fzf`, git
 
 The image is set up to:
 
 - create a user matching host UID/GID
 - switch execution using `gosu`
 - use `/workspace` as the working directory
+
+Building it requires BuildKit. Set `GITHUB_TOKEN` (or `GH_TOKEN`) before
+`captain container build` to avoid GitHub's unauthenticated API rate limit — captain passes
+it through as a BuildKit secret, so it never lands in image history. To build by hand:
+
+```bash
+DOCKER_BUILDKIT=1 docker build -t claude-env:base \
+  --secret id=GITHUB_TOKEN,env=GITHUB_TOKEN \
+  pkg/container/base
+```
 
 ## Dependencies and stack
 

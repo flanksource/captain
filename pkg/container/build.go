@@ -35,6 +35,7 @@ func Build(input BuildInput) error {
 		"-f", filepath.Join(input.ContextDir, "Dockerfile"),
 		input.ContextDir,
 	)
+	cmd.Env = buildKitEnv(nil)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
