@@ -23,10 +23,10 @@ jobs:
         with:
           go-version: "1.26.x"
       - name: Lint with Gavel
-        uses: flanksource/gavel@25b5e48fb166ba33a47544606aaa3e16644fa4bb # v0.0.53
+        uses: flanksource/gavel@43a9189b99e71ed928f418e01cd34aa797c2c0e0 # v0.0.54
         with:
           args: lint golangci-lint
-          version: v0.0.53
+          version: v0.0.54
           artifact-name: gavel-lint-results
           comment-header: captain-gavel-lint
           comment: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
@@ -55,10 +55,10 @@ jobs:
       # pkg/cli/webapp is ignored: its vitest suite needs a sibling clicky-ui
       # checkout (a link: dependency), which does not exist on CI runners.
       - name: Test with Gavel
-        uses: flanksource/gavel@25b5e48fb166ba33a47544606aaa3e16644fa4bb # v0.0.53
+        uses: flanksource/gavel@43a9189b99e71ed928f418e01cd34aa797c2c0e0 # v0.0.54
         with:
           args: test --ignore tests/e2e --ignore pkg/cli/webapp
-          version: v0.0.53
+          version: v0.0.54
           artifact-name: gavel-test-results
           comment-header: captain-gavel-test
           comment: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
