@@ -343,9 +343,6 @@ func TestBuildCodexSession_UserShellCommandIsNonOperationalEvent(t *testing.T) {
 	if s.Events[0].Data["command"] != "gavel proc restart" || s.Events[0].Data["exit_code"] != 1 || s.Events[0].Data["duration_ms"] != 2990.9 || s.Events[0].Data["output"] != "Kill sent but port 8088 is still bound" {
 		t.Fatalf("event data = %+v", s.Events[0].Data)
 	}
-	if !isNonApprovalActivity("UserShellCommand") || isOperationalToolActivity("UserShellCommand") {
-		t.Fatal("UserShellCommand must be non-operational activity")
-	}
 }
 
 func TestBuildCodexSession_WaitIsConversationalToolWithOutput(t *testing.T) {

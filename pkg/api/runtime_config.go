@@ -123,6 +123,11 @@ type Config struct {
 	NoCache          bool
 	MaxConcurrent    int
 	SessionID        string
+	// CaptainSessionID is Captain's own session/thread UUID, as distinct from
+	// SessionID (the provider's id for the same conversation). Caller-tool MCP
+	// endpoints are scoped by it so an approval brokered for one Captain thread
+	// cannot be replayed against another that happens to share a provider id.
+	CaptainSessionID string
 	ProjectName      string
 	SchemaRepair     SchemaRepairConfig
 
