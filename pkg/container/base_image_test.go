@@ -12,7 +12,7 @@ func TestWriteBaseContext(t *testing.T) {
 		t.Fatalf("writeBaseContext: %v", err)
 	}
 
-	for _, name := range []string{"Dockerfile", "entrypoint.sh"} {
+	for _, name := range []string{"Dockerfile", "entrypoint.sh", "deps.yaml"} {
 		info, err := os.Stat(filepath.Join(dir, name))
 		if err != nil {
 			t.Errorf("%s not written: %v", name, err)
