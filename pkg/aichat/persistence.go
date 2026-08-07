@@ -198,9 +198,17 @@ func (s *Service) persistAssistantMessage(ctx context.Context, threadID string, 
 		return err
 	}
 	if builder.replace {
-		return store.ReplaceLastMessage(ctx, threadID, builder.message)
+		err = store.ReplaceLastMessage(ctx, threadID, builder.message)
+	} else {
+		err = store.AppendMessage(ctx, threadID, builder.message)
 	}
-	return store.AppendMessage(ctx, threadID, builder.message)
+	if err != nil {
+		return err
+	}
+	// Backends that name sessions themselves (Claude's SessionTitle) report it as
+	// a tool call rather than through Captain's own tool handler.
+	s.setThreadTitle(ctx, threadID, TitleUpdate{Title: agentTitle(builder.message), Source: TitleSourceAI})
+	return nil
 }
 
 func (b *assistantMessageBuilder) apply(event api.Event) error {

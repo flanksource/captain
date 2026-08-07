@@ -238,7 +238,7 @@ func isNonApprovalActivity(tool string) bool {
 	case "ExitPlanMode", "Plan", "System", "User", "Assistant", "Reasoning", "Event",
 		"ApiError", "ParseError", "Result", "SessionInit", "HookStart",
 		"HookResponse", "StopHookSummary", "TurnDuration", "AwaySummary",
-		"SessionTitle":
+		TitleToolName:
 		return true
 	default:
 		return false

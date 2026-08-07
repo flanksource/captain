@@ -9,6 +9,10 @@ import (
 
 const derivedSessionTitleMaxRunes = 96
 
+// TitleToolName is the tool an agent calls to name its own conversation, with
+// the title carried on the call's "aiTitle" input.
+const TitleToolName = "SessionTitle"
+
 // applySessionIdentity fills the user-facing session identity from canonical
 // messages after source-specific metadata (for example Claude's title/slug)
 // has been applied.
@@ -20,7 +24,7 @@ func applySessionIdentity(s *Session) {
 		s.InitialPrompt = firstUserPrompt(s.Messages)
 	}
 	if s.Title == "" {
-		s.Title = deriveSessionTitle(s.InitialPrompt)
+		s.Title = DeriveTitle(s.InitialPrompt)
 	}
 }
 
@@ -44,7 +48,7 @@ func firstClaudeUserPrompt(entries []claude.HistoryEntry) string {
 func latestClaudeSessionTitle(uses []claude.ToolUse) string {
 	var title string
 	for _, use := range uses {
-		if use.Tool != "SessionTitle" {
+		if use.Tool != TitleToolName {
 			continue
 		}
 		if value, _ := use.Input["aiTitle"].(string); strings.TrimSpace(value) != "" {
@@ -71,7 +75,9 @@ func firstUserPrompt(messages []Message) string {
 	return ""
 }
 
-func deriveSessionTitle(prompt string) string {
+// DeriveTitle names a conversation after its opening prompt: whitespace
+// collapsed to single spaces, truncated at a word boundary.
+func DeriveTitle(prompt string) string {
 	collapsed := strings.Join(strings.Fields(prompt), " ")
 	if collapsed == "" {
 		return ""

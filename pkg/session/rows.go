@@ -139,7 +139,7 @@ func rowFromTranscript(sessionID string, t claude.ParsedTranscript, uuidOwner ma
 			r.Title = r.Slug
 		}
 		if r.Title == "" {
-			r.Title = deriveSessionTitle(r.InitialPrompt)
+			r.Title = DeriveTitle(r.InitialPrompt)
 		}
 	}
 	r.Usage = usageFromCost(r.Cost)

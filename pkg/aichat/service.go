@@ -198,6 +198,13 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// Bound to this thread and appended after resolution: the conversation's own
+	// name is not a preference the user manages. Chats that carry no caller tools
+	// at all stay that way — they are named from their opening message instead.
+	if chat.ThreadID != "" && len(definitions) > 0 && s.options.Threads != nil {
+		definitions = append(definitions, s.sessionTitleTool(chat.ThreadID))
+		appendSessionTitleInstruction(&spec)
+	}
 	config := settings.ProviderConfig
 	config.Model = spec.Model
 	config.Budget = spec.Budget
@@ -406,7 +413,15 @@ func (s *Service) persistIncoming(ctx context.Context, request ChatRequest) erro
 	if err != nil {
 		return err
 	}
-	return store.AppendMessage(ctx, request.ThreadID, last)
+	if err := store.AppendMessage(ctx, request.ThreadID, last); err != nil {
+		return err
+	}
+	// Names an as-yet-unnamed thread after the message that opened it. The store
+	// keeps this from displacing a title the agent or the user already chose.
+	s.setThreadTitle(ctx, request.ThreadID, TitleUpdate{
+		Title: derivedTitle(request.Messages), Source: TitleSourceDerived,
+	})
+	return nil
 }
 
 // persistEvent accrues a completed turn against its thread. The thread returned

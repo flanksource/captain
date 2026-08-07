@@ -179,6 +179,9 @@ func canonicalMessages(messages []UIMessage, attachments map[partLocation]api.At
 			}
 		}
 		if len(parts) == 0 {
+			if role == api.RoleAssistant {
+				continue
+			}
 			return nil, fmt.Errorf("message %d (%s) has no provider content", messageIndex+1, role)
 		}
 		out = append(out, api.Message{Role: role, Parts: parts})
