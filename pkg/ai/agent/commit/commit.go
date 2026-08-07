@@ -309,11 +309,12 @@ func (h *Hook) resolvePaths(hc *agent.HookContext, dir string) ([]string, api.Co
 	if mode == api.CommitStageWorktree {
 		return dirty, mode, nil
 	}
-	changed := attributable(dir, dirty, hc.Workspace().Changed)
+	recorded := hc.Workspace().Changed
+	changed := attributable(dir, recordBase(hc), dirty, recorded)
 	if len(changed) == 0 {
 		// Staging the tree anyway would sweep the caller's own uncommitted work
 		// into an agent commit. Refusing is the whole point of the changed mode.
-		return nil, mode, fmt.Errorf("commit: %s has uncommitted changes but none are attributable to this run (%d dirty path(s), 0 recorded as agent-modified); refusing to stage a tree that may hold your own work — run with an isolated worktree, or set stage: worktree to commit everything", dir, len(dirty))
+		return nil, mode, unattributableErr(dir, dirty, recorded)
 	}
 	return changed, mode, nil
 }
@@ -331,33 +332,67 @@ func (h *Hook) stageMode(hc *agent.HookContext) api.CommitStage {
 	return api.CommitStageChanged
 }
 
+// unattributableErr explains a refusal. The two ways of arriving here are
+// indistinguishable in the tree but call for different investigations, so they
+// get different messages: an agent that recorded nothing may have written
+// through tools the runner does not track (a shell redirect, an MCP server),
+// while an agent that recorded files none of which are dirty here needs those
+// paths named — reporting them as "none recorded" sends the reader looking for
+// a bug in the agent instead of at where its edits actually landed.
+func unattributableErr(dir string, dirty, recorded []string) error {
+	const advice = "refusing to stage a tree that may hold your own work — run with an isolated worktree, or set stage: worktree to commit everything"
+	if len(recorded) == 0 {
+		return fmt.Errorf("commit: %s has %d uncommitted path(s) but the run recorded no file edits (an agent that writes through the shell or an MCP tool is not tracked); %s", dir, len(dirty), advice)
+	}
+	return fmt.Errorf("commit: %s has %d uncommitted path(s), none of them among the %d file(s) the run recorded editing (%s) — those edits are either in another tree or already committed; %s",
+		dir, len(dirty), len(recorded), strings.Join(elide(recorded, 3), ", "), advice)
+}
+
+// elide renders at most limit entries, summarising the rest by count so a run
+// that touched a hundred files still produces a readable one-line error. The
+// capped slice keeps the append off the caller's backing array.
+func elide(paths []string, limit int) []string {
+	if len(paths) <= limit {
+		return paths
+	}
+	return append(paths[:limit:limit], fmt.Sprintf("and %d more", len(paths)-limit))
+}
+
 // attributable intersects git's dirty set with the paths the agent is recorded
 // as having modified, so a commit can never contain a file the run did not
-// touch. Recorded paths may be absolute (the agent reports what it wrote), so
-// each is normalized against the working dir first.
-func attributable(dir string, dirty, changed []string) []string {
+// touch.
+//
+// The two sides arrive in different namespaces and neither can be converted to
+// the other's by string surgery: dirty paths are relative to root, while
+// recorded paths are relative to recordBase — which is the same directory only
+// when the run was launched from the top of its working tree. Resolving both to
+// absolute paths is what lets a run started in a subdirectory attribute its own
+// edits.
+func attributable(root, base string, dirty, changed []string) []string {
 	recorded := make(map[string]bool, len(changed))
 	for _, c := range changed {
-		recorded[normalizePath(dir, c)] = true
+		recorded[resolveAgainst(base, c)] = true
 	}
 	var out []string
 	for _, p := range dirty {
-		if recorded[filepath.ToSlash(p)] {
+		if recorded[resolveAgainst(root, p)] {
 			out = append(out, p)
 		}
 	}
 	return out
 }
 
-// normalizePath renders path relative to dir, matching git's repo-relative,
-// forward-slashed form.
-func normalizePath(dir, path string) string {
-	if filepath.IsAbs(path) {
-		if rel, err := filepath.Rel(dir, path); err == nil && !strings.HasPrefix(rel, "..") {
-			path = rel
+// resolveAgainst renders path as an absolute, forward-slashed path anchored on
+// base. A path that is already absolute stands on its own; base may be empty,
+// in which case only absolute paths can ever match.
+func resolveAgainst(base, path string) string {
+	if !filepath.IsAbs(path) {
+		if base == "" {
+			return filepath.ToSlash(filepath.Clean(path))
 		}
+		path = filepath.Join(base, path)
 	}
-	return filepath.ToSlash(path)
+	return filepath.ToSlash(filepath.Clean(path))
 }
 
 // resolveAnchor returns the SHA this commit fixes up onto, or "" when it is
@@ -450,15 +485,34 @@ func firstLine(body string) string {
 	return ""
 }
 
-// workDir is the directory commits are cut in: the run's cwd (an isolated
-// worktree when there is one), else the repo root.
+// workDir is the directory commits are cut in: the root of the working tree the
+// run's cwd sits in (an isolated worktree when there is one). It is the root
+// rather than the cwd itself because every path that reaches staging comes from
+// `git status`, which reports repo-relative paths however deep it is invoked —
+// a run started in a monorepo subdirectory would otherwise stage pathspecs
+// against the wrong base.
 func workDir(hc *agent.HookContext) (string, error) {
 	ws := hc.Workspace()
-	if ws.Cwd != "" {
-		return ws.Cwd, nil
+	// Cwd leads: an isolated run keeps Repo pointing at the checkout it branched
+	// from, and committing there rather than in the worktree would defeat the
+	// isolation entirely.
+	dir := ws.Cwd
+	if dir == "" {
+		dir = ws.Repo
 	}
-	if ws.Repo != "" {
-		return ws.Repo, nil
+	if dir == "" {
+		return "", fmt.Errorf("commit: no working directory on the run's workspace (set Runner.Cwd or Runner.Repo)")
 	}
-	return "", fmt.Errorf("commit: no working directory on the run's workspace (set Runner.Cwd or Runner.Repo)")
+	return gitRoot(dir)
+}
+
+// recordBase is the directory the workspace's recorded paths are relative to.
+// Runner.recordEvent relativizes each edit against ws.Repo and leaves it
+// absolute when there is none, so this is ws.Repo and nothing else — resolving
+// against any other directory would silently mis-attribute every path.
+func recordBase(hc *agent.HookContext) string {
+	if repo := hc.Workspace().Repo; repo != "" {
+		return canonicalDir(repo)
+	}
+	return ""
 }

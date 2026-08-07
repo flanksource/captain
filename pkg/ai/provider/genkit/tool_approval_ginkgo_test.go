@@ -22,7 +22,9 @@ var _ = Describe("Genkit resumable tool approval", func() {
 		events := make([]ai.Event, 0, 2)
 		ran := false
 
-		_, err := provider.runTool(context.Background(), api.ToolDefinition{
+		_, err := provider.runTool(context.WithValue(context.Background(), genkitToolRequestContextKey{}, &gkai.ToolRequest{
+			Name: "invoice_update", Ref: "call-update", Input: map[string]any{"amount": 10},
+		}), api.ToolDefinition{
 			Name:              "invoice_update",
 			DefaultPermission: api.ToolModeAsk,
 			Handler: func(context.Context, map[string]any) (any, error) {

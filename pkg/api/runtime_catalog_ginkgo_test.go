@@ -78,6 +78,36 @@ var _ = Describe("RuntimeCatalog", func() {
 		Expect(kinds).To(Equal([]string{"api", "cli", "cli", "cli"}))
 	})
 
+	It("names the model-menu catalog provider of every mode", func() {
+		// The menu serves one row per model per *menu* backend: the three local
+		// Claude modes collapse onto claude-agent, while the API mode keeps the
+		// provider namespace. Leaving these empty made a picker fall back to the
+		// family's CatalogPrefix, so "Claude Agent" listed the Anthropic API rows
+		// and clicking one switched the backend to anthropic behind the user.
+		claude := familyNamed(api.RuntimeCatalog(), "claude")
+		Expect(modeNamed(claude, "api").CatalogProvider).To(Equal("anthropic"))
+		Expect(modeNamed(claude, "agent").CatalogProvider).To(Equal("claude-agent"))
+		Expect(modeNamed(claude, "cli").CatalogProvider).To(Equal("claude-agent"))
+		Expect(modeNamed(claude, "cmux").CatalogProvider).To(Equal("claude-agent"))
+
+		codex := familyNamed(api.RuntimeCatalog(), "codex")
+		Expect(modeNamed(codex, "api").CatalogProvider).To(Equal("openai"))
+		Expect(modeNamed(codex, "agent").CatalogProvider).To(Equal("codex-agent"))
+		Expect(modeNamed(codex, "cli").CatalogProvider).To(Equal("codex-agent"))
+		Expect(modeNamed(codex, "cmux").CatalogProvider).To(Equal("codex-agent"))
+	})
+
+	It("keeps a family with no agent mode on its catalog prefix", func() {
+		// Gemini's CLI models are already listed under the googleai API rows, so
+		// there is no separate agent catalog for them to collapse onto.
+		gemini := familyNamed(api.RuntimeCatalog(), "gemini")
+		Expect(modeNamed(gemini, "api").CatalogProvider).To(Equal("googleai"))
+		Expect(modeNamed(gemini, "cli").CatalogProvider).To(Equal("googleai"))
+
+		deepseek := familyNamed(api.RuntimeCatalog(), "deepseek")
+		Expect(modeNamed(deepseek, "api").CatalogProvider).To(Equal("deepseek"))
+	})
+
 	It("marks only cmux modes keyless", func() {
 		for _, f := range api.RuntimeCatalog() {
 			for _, m := range f.Modes {

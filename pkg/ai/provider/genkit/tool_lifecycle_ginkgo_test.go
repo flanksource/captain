@@ -2,6 +2,8 @@ package genkit
 
 import (
 	"context"
+	"encoding/json"
+	"sync/atomic"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -10,6 +12,7 @@ import (
 	"github.com/flanksource/captain/pkg/api"
 
 	gkai "github.com/firebase/genkit/go/ai"
+	gk "github.com/firebase/genkit/go/genkit"
 )
 
 var _ = Describe("Genkit tool event correlation", func() {
@@ -44,7 +47,7 @@ var _ = Describe("Genkit tool event correlation", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(mapped).To(BeEmpty())
 
-		_, err = provider.runTool(context.Background(), tool, request.Input, emit, correlation)
+		_, err = provider.runTool(context.WithValue(context.Background(), genkitToolRequestContextKey{}, request), tool, request.Input, emit, correlation)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(events).To(HaveLen(2))
 		Expect(events[0].Kind).To(Equal(ai.EventToolUse))
@@ -67,7 +70,7 @@ var _ = Describe("Genkit tool event correlation", func() {
 		_, err = chunkToEvents(toolRequestChunk(delta), provider.GetModel(), correlation)
 		Expect(err).NotTo(HaveOccurred())
 
-		_, err = provider.runTool(context.Background(), tool, map[string]any{"city": "Cape Town"}, emit, correlation)
+		_, err = provider.runTool(context.WithValue(context.Background(), genkitToolRequestContextKey{}, first), tool, map[string]any{"city": "Cape Town"}, emit, correlation)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(events).To(HaveLen(2))
 		Expect(events[0].ToolCallID).To(Equal(first.Ref))
@@ -82,7 +85,7 @@ var _ = Describe("Genkit tool event correlation", func() {
 		Expect(err).NotTo(HaveOccurred())
 		request.Ref = "genkit-assigned-ref"
 
-		_, err = provider.runTool(context.Background(), tool, request.Input, emit, correlation)
+		_, err = provider.runTool(context.WithValue(context.Background(), genkitToolRequestContextKey{}, request), tool, request.Input, emit, correlation)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(events).To(HaveLen(2))
 		Expect(events[0].ToolCallID).To(Equal(request.Ref))
@@ -100,11 +103,63 @@ var _ = Describe("Genkit tool event correlation", func() {
 		_, err := chunkToEvents(toolRequestChunk(request), provider.GetModel(), correlation)
 		Expect(err).NotTo(HaveOccurred())
 
-		_, err = provider.runTool(context.Background(), tool, request.Input, emit, correlation)
+		_, err = provider.runTool(context.WithValue(context.Background(), genkitToolRequestContextKey{}, request), tool, request.Input, emit, correlation)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(events).To(HaveLen(3))
 		Expect(events[1].Kind).To(Equal(ai.EventPermission))
 		Expect(events[1].ToolCallID).To(Equal(request.Ref))
+	})
+
+	It("correlates concurrent same-name calls after schema normalization", func(ctx SpecContext) {
+		var runs atomic.Int32
+		genkit := gk.Init(ctx)
+		modelRef := "test/parallel-journals"
+		gk.DefineModel(genkit, modelRef, &gkai.ModelOptions{Supports: &gkai.ModelSupports{Tools: true, Multiturn: true}},
+			func(_ context.Context, request *gkai.ModelRequest, stream gkai.ModelStreamCallback) (*gkai.ModelResponse, error) {
+				if request.Messages[len(request.Messages)-1].Role == gkai.RoleTool {
+					return &gkai.ModelResponse{Message: gkai.NewModelTextMessage("done"), FinishReason: gkai.FinishReasonStop}, nil
+				}
+				message := gkai.NewModelMessage(
+					gkai.NewToolRequestPart(&gkai.ToolRequest{Name: "journals", Ref: "call-10", Input: json.RawMessage(`{"limit":10}`)}),
+					gkai.NewToolRequestPart(&gkai.ToolRequest{Name: "journals", Ref: "call-20", Input: json.RawMessage(`{"limit":20}`)}),
+				)
+				Expect(stream(ctx, &gkai.ModelResponseChunk{Role: gkai.RoleModel, Content: message.Content})).To(Succeed())
+				return &gkai.ModelResponse{Message: message, FinishReason: gkai.FinishReasonStop}, nil
+			})
+
+		provider := &Provider{
+			cfg: ai.Config{
+				Model: api.Model{Name: "parallel-journals", Backend: api.BackendAnthropic},
+				Tools: []api.ToolDefinition{{
+					Name:              "journals",
+					DefaultPermission: api.ToolModeOn,
+					InputSchema: map[string]any{
+						"type":       "object",
+						"properties": map[string]any{"limit": map[string]any{"type": "integer"}},
+						"required":   []string{"limit"},
+					},
+					Handler: func(_ context.Context, input map[string]any) (any, error) {
+						Expect(input["limit"]).To(BeAssignableToTypeOf(int64(0)))
+						runs.Add(1)
+						return input, nil
+					},
+				}},
+			},
+			backend: api.BackendAnthropic,
+			g:       genkit, modelRef: modelRef,
+		}
+
+		stream, err := provider.ExecuteStream(ctx, api.Spec{Prompt: api.Prompt{User: "Inspect both journal sets."}})
+		Expect(err).NotTo(HaveOccurred())
+		var callIDs []string
+		for event := range stream {
+			Expect(event.Kind).NotTo(Equal(ai.EventError), event.Error)
+			if event.Kind == ai.EventToolUse {
+				callIDs = append(callIDs, event.ToolCallID)
+			}
+		}
+		Expect(runs.Load()).To(Equal(int32(2)))
+		Expect(callIDs).To(ConsistOf("call-10", "call-20"))
 	})
 
 	It("fails loudly when a tool response has no correlated request", func() {
@@ -116,7 +171,7 @@ var _ = Describe("Genkit tool event correlation", func() {
 	It("fails loudly when execution has no provider request", func() {
 		correlation := newToolEventCorrelation()
 		_, err := provider.runTool(context.Background(), tool, map[string]any{"city": "Cape Town"}, emit, correlation)
-		Expect(err).To(MatchError(ContainSubstring(`no correlated provider request`)))
+		Expect(err).To(MatchError(ContainSubstring(`no provider request context`)))
 		Expect(events).To(BeEmpty())
 	})
 })
