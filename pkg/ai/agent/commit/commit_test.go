@@ -175,6 +175,99 @@ func TestAgentPhaseSweepsWorkFromAnErroredTurn(t *testing.T) {
 	}
 }
 
+// TestFailedTurnCommitIsReportedOnce is the counterpart to the sweep above: the
+// turn phase resolved the paths and failed on them, so the sweep has nothing new
+// to try. Letting it run again re-derives the identical error, and the runner
+// joins that copy onto the one already propagating from the turn — the caller
+// then prints the same failure twice, once as `turn hook "commit:turn"` and once
+// as `agent hook "commit:turn"`.
+func TestFailedTurnCommitIsReportedOnce(t *testing.T) {
+	dir := newRepo(t)
+	hc := isolated(dir)
+	h := New(api.Commit{On: api.CommitOnTurn, Message: "fix: attempt"})
+	attempts := 0
+	h.Do = func(*agent.HookContext, Plan) (string, error) {
+		attempts++
+		return "", fmt.Errorf("pre-commit gate rejected the change set")
+	}
+
+	write(t, dir, "fix.go", "package main\n")
+	changed(hc, "fix.go")
+	turnErr := h.Post(hc, agent.PhaseTurn)
+	if turnErr == nil {
+		t.Fatal("turn phase should surface the commit failure")
+	}
+	hc.Failed = true
+
+	if err := h.Post(hc, agent.PhaseAgent); err != nil {
+		t.Errorf("agent sweep repeated the turn's failure: %v", err)
+	}
+	if attempts != 1 {
+		t.Errorf("commit attempted %d times, want 1 — the sweep must not retry a failure", attempts)
+	}
+}
+
+// TestCommitsAreNarratedOnTheWorkspace covers the other half of the silence
+// problem: hooks act between turns, where the provider transcript has nothing to
+// say, so a run's commits used to leave no trace a reader could follow.
+func TestCommitsAreNarratedOnTheWorkspace(t *testing.T) {
+	dir := newRepo(t)
+	hc := isolated(dir)
+	h := New(api.Commit{On: api.CommitOnTurn, Message: "feat: add greeting"})
+
+	turn(t, h, hc, dir, "one.go", "package main\n")
+	turn(t, h, hc, dir, "two.go", "package main\n")
+	if err := finish(t, h, hc); err != nil {
+		t.Fatalf("finish: %v", err)
+	}
+
+	var got []string
+	for _, notice := range hc.Workspace().Notices {
+		got = append(got, notice.Text)
+		if notice.At.IsZero() {
+			t.Errorf("notice %q has no timestamp; it cannot be sorted back among the turns", notice.Text)
+		}
+	}
+	// The anchor turn, its fixup, and the squash that collapses them — the whole
+	// shape of a per-turn policy, readable from the notices alone.
+	want := []string{
+		"[post-turn] committing 1 file(s)",
+		"[post-turn] committed",
+		"[post-turn] committing 1 file(s)",
+		"[post-turn] committed",
+		"[post-run] squashed 1 fixup(s) into ",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("notices = %v, want %d entries shaped like %v", got, len(want), want)
+	}
+	for i, prefix := range want {
+		if !strings.HasPrefix(got[i], prefix) {
+			t.Errorf("notice %d = %q, want prefix %q", i, got[i], prefix)
+		}
+	}
+}
+
+// TestAgentSweepStillRunsAfterAnUnrelatedTurnError guards the narrowing above:
+// only a *commit* failure disarms the sweep. A turn that failed for any other
+// reason never reached the hook, and its work must still be made durable.
+func TestAgentSweepStillRunsAfterAnUnrelatedTurnError(t *testing.T) {
+	dir := newRepo(t)
+	hc := isolated(dir)
+	h := New(api.Commit{On: api.CommitOnTurn, Message: "feat: partial"})
+
+	// The provider errored mid-turn: the file landed, PhaseTurn never dispatched.
+	write(t, dir, "one.go", "package main\n")
+	changed(hc, "one.go")
+	hc.Failed = true
+
+	if err := h.Post(hc, agent.PhaseAgent); err != nil {
+		t.Fatalf("agent sweep: %v", err)
+	}
+	if !isClean(t, dir) {
+		t.Errorf("agent-phase sweep left work uncommitted:\n%s", mustGit(t, dir, "status", "--porcelain"))
+	}
+}
+
 func TestOutcomeGates(t *testing.T) {
 	cases := []struct {
 		name       string
