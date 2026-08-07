@@ -105,9 +105,18 @@ table "captain_messages" {
     where   = "model_call_id IS NOT NULL"
   }
 
-  check "captain_messages_sequence_nonnegative" {
-    expr = "sequence >= 0"
-  }
+  # `sequence >= 0` used to be checked here. The sequence space now has two
+  # halves and the constraint no longer describes it. Non-negative sequences are
+  # the provider's: the ingester keys every message on its line number in the
+  # transcript JSONL and converges on (session_id, sequence), so that half is
+  # reserved for lines the file already has or is about to grow into. Negative
+  # sequences are the harness's own insertions -- lifecycle notices recorded by
+  # hooks acting between turns, which have no line in any transcript. Writing
+  # those at MAX(sequence)+1 would put them in the provider's half, where the
+  # next ingest pass overwrites them with the real line landing on that number.
+  #
+  # Ordering across the two halves is carried by occurred_at, not by sequence.
+
   check "captain_messages_role_nonempty" {
     expr = "length(btrim(role)) > 0"
   }

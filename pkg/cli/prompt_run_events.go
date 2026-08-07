@@ -73,10 +73,15 @@ func (a *promptEventAccumulator) handle(_ int, ev ai.Event) {
 	case ai.EventSystem:
 		if ev.SessionID != "" {
 			a.sessionID = ev.SessionID
-		}
-		a.task.SetDescription("starting")
-		if ev.SessionID != "" {
+			a.task.SetDescription("starting")
 			a.task.Infof("session %s", ev.SessionID)
+		}
+		// A lifecycle hook narrating what it did between turns (see
+		// HookContext.Notify). It stands on its own rather than joining the
+		// in-flight assistant turn, so the buffers are flushed first.
+		if ev.Text != "" {
+			a.flush()
+			a.emitNotice(ev.Text)
 		}
 	case ai.EventThinking:
 		a.appendThinking(ev.Text)
@@ -227,6 +232,20 @@ func (a *promptEventAccumulator) emitError(ev ai.Event) {
 		ID:         a.nextID("error"),
 		Role:       "assistant",
 		Parts:      []session.Part{{Type: session.PartText, Text: ev.Error}},
+		Provenance: a.provenance(),
+	})
+}
+
+// emitNotice renders one lifecycle line as a discrete system message. Discrete
+// rather than appended to a buffer like assistant text: each notice is already
+// whole when it arrives, and giving it its own id keeps a later turn's text from
+// overwriting it in a viewer that dedupes by id.
+func (a *promptEventAccumulator) emitNotice(text string) {
+	a.task.Infof("%s", text)
+	a.emit(session.Message{
+		ID:         a.nextID("notice"),
+		Role:       "system",
+		Parts:      []session.Part{{Type: session.PartText, Text: text}},
 		Provenance: a.provenance(),
 	})
 }

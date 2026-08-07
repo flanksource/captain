@@ -65,6 +65,23 @@ var _ = Describe("Captain event renderer", func() {
 		))
 	})
 
+	It("prints a hook notice on its own line, outside the model's prose", func() {
+		var output bytes.Buffer
+		renderer := newEventRenderer(&output, false)
+
+		renderer.Handle(0, ai.Event{Kind: ai.EventText, Text: "applying the fix"})
+		renderer.Handle(0, ai.Event{Kind: ai.EventSystem, Text: "[post-turn] committed abc1234: fix: the thing"})
+		renderer.Handle(0, ai.Event{Kind: ai.EventResult, Success: true})
+		Expect(renderer.Flush()).To(Succeed())
+
+		text := output.String()
+		Expect(text).To(ContainSubstring("[post-turn] committed abc1234"))
+		// On its own line: a commit landing inside the sentence the model was
+		// mid-way through writing is exactly what the buffering must prevent.
+		Expect(text).NotTo(ContainSubstring("applying the fix[post-turn]"))
+		Expect(strings.Count(text, "[post-turn] committed abc1234")).To(Equal(1))
+	})
+
 	It("reports an unmatched result without dumping its payload", func() {
 		var output bytes.Buffer
 		renderer := newEventRenderer(&output, false)

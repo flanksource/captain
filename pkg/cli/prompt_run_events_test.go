@@ -137,6 +137,34 @@ func TestPromptRunAccumulator_EmitsErrorFrame(t *testing.T) {
 	}
 }
 
+// A hook narrating what it did between turns arrives as an EventSystem carrying
+// text rather than a session id. It has to break out of the assistant's
+// in-flight turn, not be appended to it, or a commit line lands inside the
+// model's prose.
+func TestPromptRunAccumulator_EmitsHookNoticeAsItsOwnSystemFrame(t *testing.T) {
+	msgs := collectEntries("m", "b",
+		ai.Event{Kind: ai.EventText, Text: "done, committing now"},
+		ai.Event{Kind: ai.EventSystem, Text: "[post-turn] committed abc1234: fix: the thing"},
+		ai.Event{Kind: ai.EventText, Text: "next turn"},
+	)
+	if len(msgs) != 3 {
+		t.Fatalf("want assistant/system/assistant frames, got %d: %+v", len(msgs), msgs)
+	}
+	notice := msgs[1]
+	if notice.Role != "system" {
+		t.Errorf("notice role = %q, want system", notice.Role)
+	}
+	if got := notice.Parts[0].Text; got != "[post-turn] committed abc1234: fix: the thing" {
+		t.Errorf("notice text = %q", got)
+	}
+	if msgs[2].ID == msgs[0].ID {
+		t.Error("the turn after a notice reused the earlier text id, so a viewer that dedupes by id would overwrite it")
+	}
+	if msgs[2].Parts[0].Text != "next turn" {
+		t.Errorf("text after a notice = %q, want a fresh buffer", msgs[2].Parts[0].Text)
+	}
+}
+
 func TestPromptRunAccumulator_CapturesSessionAndUsage(t *testing.T) {
 	acc := newPromptEventAccumulator(func(session.Message) {}, fakeTaskSink{}, "m", "b")
 	acc.handle(0, ai.Event{Kind: ai.EventSystem, SessionID: "sess-1"})

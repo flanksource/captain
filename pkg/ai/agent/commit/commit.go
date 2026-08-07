@@ -78,6 +78,7 @@ type Hook struct {
 	anchor  string // SHA the chain fixes up onto, set by the run's first commit
 	subject string // resolved once, shared by every commit in the run
 	fixups  int    // fixup commits cut so far; a chain of 0 needs no squash
+	failed  error  // first commit failure, so the agent-phase sweep does not repeat it
 }
 
 // New builds a Hook for a policy.
@@ -119,6 +120,7 @@ func commitPhase(p api.CommitPhase) agent.Phase {
 func (h *Hook) Post(hc *agent.HookContext, phase agent.Phase) error {
 	if h.commitsAt(phase) {
 		if err := h.commit(hc, phase); err != nil {
+			h.failed = err
 			return err
 		}
 	}
@@ -130,11 +132,18 @@ func (h *Hook) Post(hc *agent.HookContext, phase agent.Phase) error {
 
 // commitsAt reports whether a commit is cut at this phase: the declared one, or
 // the agent-phase sweep that closes out a per-turn policy.
+//
+// The sweep is skipped once a commit has already failed. It exists to catch a
+// turn that errored before the runner could dispatch its turn phase, so it has
+// nothing to add after a turn-phase attempt that resolved the same paths and
+// failed on them — it would only re-derive the identical error, which the runner
+// then joins onto the one already propagating, printing the same failure twice
+// under two different phase names.
 func (h *Hook) commitsAt(phase agent.Phase) bool {
 	if phase == commitPhase(h.Phase()) {
 		return true
 	}
-	return h.Phase() == api.CommitOnTurn && phase == agent.PhaseAgent
+	return h.Phase() == api.CommitOnTurn && phase == agent.PhaseAgent && h.failed == nil
 }
 
 // commit resolves and cuts one commit. Finding nothing to commit is a normal
@@ -184,6 +193,11 @@ func (h *Hook) commit(hc *agent.HookContext, phase agent.Phase) error {
 	if h.Do == nil && h.EffectiveGates() == api.CommitGatesFull {
 		return fmt.Errorf("commit: gates: full runs the host's pre-commit pipeline, which captain does not have — supply Hook.Do or lower gates to cheap")
 	}
+	// Announced before the cut, not only after it: a host pipeline on gates: full
+	// runs lint and pre-commit hooks, which is long enough that silence reads as a
+	// hang. A turn that resolved no paths says nothing at all — silence there
+	// already means "nothing happened", and a line per read-only turn is noise.
+	hc.Notify("[post-%s] committing %d file(s)", phase, len(paths))
 	sha, err := h.cut(hc, plan)
 	return h.record(hc, plan, sha, err)
 }
@@ -233,6 +247,10 @@ func (h *Hook) record(hc *agent.HookContext, plan Plan, sha string, err error) e
 		return err
 	}
 	if sha == "" {
+		// The paths resolved but the pipeline staged nothing (an earlier phase
+		// already took them). Said out loud because the "committing" line above
+		// has already promised a commit.
+		hc.Notify("[post-%s] nothing left to stage", plan.Phase)
 		return nil
 	}
 	message := plan.Subject
@@ -245,7 +263,17 @@ func (h *Hook) record(hc *agent.HookContext, plan Plan, sha string, err error) e
 		h.anchor = sha // amend rewrote the anchor
 	}
 	hc.Workspace().AddCommit(sha, message)
+	hc.Notify("[post-%s] committed %s: %s", plan.Phase, shortSHA(sha), message)
 	return nil
+}
+
+// shortSHA abbreviates to git's conventional display width. A host pipeline may
+// hand back a short hash already, so this truncates rather than assuming 40.
+func shortSHA(sha string) string {
+	if len(sha) <= 7 {
+		return sha
+	}
+	return sha[:7]
 }
 
 // squash collapses the fixup chain back into its anchor. A chain of zero fixups
@@ -255,6 +283,7 @@ func (h *Hook) squash(hc *agent.HookContext) error {
 	if h.fixups == 0 || h.anchor == "" || h.DryRun {
 		return nil
 	}
+	fixups := h.fixups
 	dir, err := workDir(hc)
 	if err != nil {
 		return err
@@ -274,6 +303,7 @@ func (h *Hook) squash(hc *agent.HookContext) error {
 		return err
 	}
 	h.anchor = head
+	hc.Notify("[post-run] squashed %d fixup(s) into %s", fixups, shortSHA(head))
 	return nil
 }
 
