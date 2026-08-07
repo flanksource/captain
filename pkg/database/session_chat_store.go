@@ -15,6 +15,10 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+var ErrOpenChatTurn = errors.New("captain chat session already has an open turn")
+
+const incompleteChatAdmissionReason = "chat execution admission did not complete"
+
 type ChatTurn struct {
 	ID             uuid.UUID
 	SessionID      uuid.UUID
@@ -24,6 +28,11 @@ type ChatTurn struct {
 }
 
 type CreateChatTurnInput struct {
+	SessionID      uuid.UUID
+	ProviderTurnID string
+}
+
+type RecoverIncompleteChatAdmissionInput struct {
 	SessionID      uuid.UUID
 	ProviderTurnID string
 }
@@ -51,6 +60,17 @@ func (db *DB) CreateChatTurn(ctx context.Context, input CreateChatTurnInput) (*C
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return fmt.Errorf("read Captain chat turn: %w", err)
 		}
+		var open turnRecord
+		err = tx.gorm.WithContext(ctx).
+			Where("session_id = ? AND status = ?", input.SessionID, TurnStatusOpen).
+			First(&open).Error
+		if err == nil {
+			return fmt.Errorf("%w: session %s has turn %s for provider turn %q",
+				ErrOpenChatTurn, input.SessionID, open.ID, optionalString(open.ProviderTurnID))
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("read open Captain chat turn: %w", err)
+		}
 		var next int
 		if err := tx.gorm.WithContext(ctx).Model(&turnRecord{}).
 			Where("session_id = ?", input.SessionID).
@@ -70,6 +90,66 @@ func (db *DB) CreateChatTurn(ctx context.Context, input CreateChatTurnInput) (*C
 		return nil
 	})
 	return output, created, err
+}
+
+func (db *DB) RecoverIncompleteChatAdmission(ctx context.Context, input RecoverIncompleteChatAdmissionInput) (*ChatTurn, error) {
+	input.ProviderTurnID = strings.TrimSpace(input.ProviderTurnID)
+	if input.SessionID == uuid.Nil || input.ProviderTurnID == "" {
+		return nil, fmt.Errorf("%w: session and provider turn IDs are required", ErrInvalidIngest)
+	}
+	var recovered *ChatTurn
+	err := db.Transaction(ctx, func(tx *DB) error {
+		if err := tx.gorm.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+			First(&sessionRecord{}, "id = ?", input.SessionID).Error; err != nil {
+			return fmt.Errorf("lock Captain chat session: %w", err)
+		}
+		var turn turnRecord
+		if err := tx.gorm.WithContext(ctx).
+			Where("session_id = ? AND status = ?", input.SessionID, TurnStatusOpen).
+			First(&turn).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil
+			}
+			return fmt.Errorf("read open Captain chat turn: %w", err)
+		}
+		if optionalString(turn.ProviderTurnID) == input.ProviderTurnID {
+			return nil
+		}
+		var runs []promptRunRecord
+		if err := tx.gorm.WithContext(ctx).Where("turn_id = ?", turn.ID).Limit(2).Find(&runs).Error; err != nil {
+			return fmt.Errorf("read open Captain chat turn prompt run: %w", err)
+		}
+		if len(runs) > 1 {
+			return fmt.Errorf("open Captain chat turn %s has %d prompt runs", turn.ID, len(runs))
+		}
+		var modelCalls int64
+		if err := tx.gorm.WithContext(ctx).Model(&modelCallRecord{}).
+			Where("turn_id = ?", turn.ID).Count(&modelCalls).Error; err != nil {
+			return fmt.Errorf("count open Captain chat turn model calls: %w", err)
+		}
+		if modelCalls > 0 || (len(runs) == 1 &&
+			(runs[0].State != PromptRunStatePending || runs[0].Phase != PromptRunPhaseQueued)) {
+			return nil
+		}
+		if len(runs) == 1 {
+			phase := PromptRunPhaseFinished
+			state := PromptRunStateFailed
+			reason := incompleteChatAdmissionReason
+			if _, err := tx.UpdatePromptRun(ctx, UpdatePromptRunInput{
+				ID: runs[0].ID, ExpectedVersion: runs[0].Version,
+				Phase: &phase, State: &state, Error: &reason,
+			}); err != nil {
+				return err
+			}
+		}
+		if err := tx.FinishChatTurn(ctx, turn.ID, TurnStatusError, incompleteChatAdmissionReason); err != nil {
+			return err
+		}
+		recovered = chatTurnFromRecord(turn)
+		recovered.Status = TurnStatusError
+		return nil
+	})
+	return recovered, err
 }
 
 type CreateChatModelCallInput struct {

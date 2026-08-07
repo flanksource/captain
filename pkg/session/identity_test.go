@@ -7,7 +7,7 @@ import (
 
 func TestDeriveSessionTitleCollapsesAndTruncatesAtWordBoundary(t *testing.T) {
 	prompt := "  Improve\n\tthe parser " + strings.Repeat("carefully ", 20)
-	title := deriveSessionTitle(prompt)
+	title := DeriveTitle(prompt)
 	if strings.ContainsAny(title, "\n\t") {
 		t.Fatalf("title contains uncollapsed whitespace: %q", title)
 	}

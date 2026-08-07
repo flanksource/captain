@@ -38,6 +38,22 @@ type TurnUsage struct {
 	CostUSD          float64
 }
 
+// TitleSource records who named a conversation. It decides whether a later
+// writer may rename it: a person's title outranks the agent's, which outranks
+// one inferred from the opening message.
+type TitleSource string
+
+const (
+	TitleSourceDerived TitleSource = "derived"
+	TitleSourceAI      TitleSource = "ai"
+	TitleSourceUser    TitleSource = "user"
+)
+
+type TitleUpdate struct {
+	Title  string
+	Source TitleSource
+}
+
 // ThreadStore is the persistence boundary for chat history, provider session
 // identity, and cumulative usage. Implementations must be concurrency-safe.
 type ThreadStore interface {
@@ -48,6 +64,7 @@ type ThreadStore interface {
 	ReplaceLastMessage(context.Context, string, UIMessage) error
 	Delete(context.Context, string) error
 	SetProviderSession(context.Context, string, string) error
+	SetTitle(context.Context, string, TitleUpdate) error
 	AddUsage(context.Context, string, TurnUsage) (*Thread, error)
 }
 
@@ -56,12 +73,13 @@ type SessionReader interface {
 }
 
 type memoryThreadStore struct {
-	mu      sync.Mutex
-	threads map[string]*Thread
+	mu           sync.Mutex
+	threads      map[string]*Thread
+	titleSources map[string]TitleSource
 }
 
 func NewMemoryThreadStore() ThreadStore {
-	return &memoryThreadStore{threads: map[string]*Thread{}}
+	return &memoryThreadStore{threads: map[string]*Thread{}, titleSources: map[string]TitleSource{}}
 }
 
 func (s *memoryThreadStore) Create(_ context.Context, title string) (*Thread, error) {
@@ -70,6 +88,9 @@ func (s *memoryThreadStore) Create(_ context.Context, title string) (*Thread, er
 	now := time.Now()
 	thread := &Thread{ID: uuid.NewString(), Title: title, CreatedAt: now, UpdatedAt: now, Messages: []UIMessage{}}
 	s.threads[thread.ID] = thread
+	if strings.TrimSpace(title) != "" {
+		s.titleSources[thread.ID] = TitleSourceUser
+	}
 	return cloneThread(thread), nil
 }
 
@@ -153,6 +174,26 @@ func (s *memoryThreadStore) SetProviderSession(_ context.Context, id, sessionID 
 		return nil
 	}
 	thread.ProviderSessionID = sessionID
+	thread.UpdatedAt = time.Now()
+	return nil
+}
+
+func (s *memoryThreadStore) SetTitle(_ context.Context, id string, update TitleUpdate) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	thread, err := s.thread(id)
+	if err != nil {
+		return err
+	}
+	title, err := normalizeTitle(update)
+	if err != nil {
+		return err
+	}
+	if !titleWins(thread.Title, s.titleSources[id], update.Source) {
+		return nil
+	}
+	thread.Title = title
+	s.titleSources[id] = update.Source
 	thread.UpdatedAt = time.Now()
 	return nil
 }

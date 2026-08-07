@@ -24,9 +24,15 @@ func NewDatabaseThreadStore(db *database.DB) (*DatabaseThreadStore, error) {
 }
 
 func (s *DatabaseThreadStore) Create(ctx context.Context, title string) (*Thread, error) {
+	metadata := map[string]any{"aichat": true}
+	// A caller who names a thread up front owns that name, so later automatic
+	// naming leaves it alone.
+	if strings.TrimSpace(title) != "" {
+		metadata[database.SessionTitleSourceKey] = string(database.SessionTitleUser)
+	}
 	record, err := s.db.CreateOrGetSession(ctx, database.CreateSessionInput{
 		ID: uuid.New(), Source: "aichat", Provider: "captain", HostID: "local",
-		Title: strings.TrimSpace(title), Metadata: map[string]any{"aichat": true},
+		Title: strings.TrimSpace(title), Metadata: metadata,
 	})
 	if err != nil {
 		return nil, err
@@ -185,6 +191,21 @@ func (s *DatabaseThreadStore) SetProviderSession(ctx context.Context, id, provid
 	}
 	_, err = s.db.UpdateSessionState(ctx, database.UpdateSessionStateInput{
 		ID: parsed, ExpectedVersion: record.StateVersion, ProviderSessionID: &providerSessionID,
+	})
+	return err
+}
+
+func (s *DatabaseThreadStore) SetTitle(ctx context.Context, id string, update TitleUpdate) error {
+	parsed, err := uuid.Parse(id)
+	if err != nil {
+		return fmt.Errorf("captain chat session ID %q is not a UUID: %w", id, err)
+	}
+	title, err := normalizeTitle(update)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.SetSessionTitle(ctx, database.SetSessionTitleInput{
+		ID: parsed, Title: title, Source: database.SessionTitleSource(update.Source),
 	})
 	return err
 }
