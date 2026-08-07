@@ -57,14 +57,15 @@ func EnableHTTPWireLogging() error {
 const harFeature = "captain"
 
 // harRegistry resolves -Phttp.har* into collectors. It is process-wide because
-// http.DefaultTransport is.
-var harRegistry = har.NewRegistry()
+// http.DefaultTransport is. Its own logger means capture announcements can be
+// silenced or raised with -Plog.level.har.
+var harRegistry = har.NewRegistry(logger.GetLogger("har"))
 
 // FlushHAR writes any archive requested with -Phttp.har=<path>. cmd/captain
 // calls it after Execute returns — including on the error path, which is the
 // run most worth capturing.
 func FlushHAR() {
-	if err := harRegistry.Flush(log); err != nil {
+	if err := harRegistry.Flush(); err != nil {
 		log.Errorf("%v", err)
 	}
 }

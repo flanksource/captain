@@ -49,7 +49,7 @@ func generateOptions(p *Provider, req ai.Request, stream gkai.ModelStreamCallbac
 	}
 	opts := []gkai.GenerateOption{
 		gkai.WithModelName(p.modelRef),
-		gkai.WithUse(gkai.MiddlewareFunc(captureGenkitModelRequest)),
+		gkai.WithUse(gkai.MiddlewareFunc(captureGenkitRequests)),
 	}
 	toolOptions, err := p.toolOptions(req.ToolPreferences, emit)
 	if err != nil {
@@ -136,7 +136,9 @@ func generateOptions(p *Provider, req ai.Request, stream gkai.ModelStreamCallbac
 	return opts, nil
 }
 
-func captureGenkitModelRequest(context.Context) (*gkai.Hooks, error) {
+type genkitToolRequestContextKey struct{}
+
+func captureGenkitRequests(context.Context) (*gkai.Hooks, error) {
 	return &gkai.Hooks{
 		WrapModel: func(ctx context.Context, params *gkai.ModelParams, next gkai.ModelNext) (*gkai.ModelResponse, error) {
 			response, err := next(ctx, params)
@@ -144,6 +146,12 @@ func captureGenkitModelRequest(context.Context) (*gkai.Hooks, error) {
 				response.Request = &gkai.ModelRequest{Messages: cloneCheckpointMessages(params.Request.Messages)}
 			}
 			return response, err
+		},
+		WrapTool: func(ctx context.Context, params *gkai.ToolParams, next gkai.ToolNext) (*gkai.MultipartToolResponse, error) {
+			if params == nil || params.Request == nil {
+				return nil, fmt.Errorf("genkit tool middleware received no provider request")
+			}
+			return next(context.WithValue(ctx, genkitToolRequestContextKey{}, params.Request), params)
 		},
 	}, nil
 }

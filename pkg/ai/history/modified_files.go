@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/flanksource/captain/pkg/claude/tools"
 )
 
 // fileMutatingTools are the Claude Code tools whose tool_use input names a file
@@ -16,29 +18,55 @@ var fileMutatingTools = map[string]string{
 	"NotebookEdit": "notebook_path",
 }
 
+// applyPatchInputs are the tools that carry a whole patch rather than naming a
+// single file. Both the raw codex names and the normalized one are listed
+// because this table is consulted from either side of normalization; a `Bash`
+// command is included because an agent can pipe a patch through the shell.
+//
+// A patch is the only tool shape that can touch several files at once, and the
+// only one that can rename or delete, so it is parsed rather than looked up.
+var applyPatchInputs = map[string]string{
+	"ApplyPatch":  "input",
+	"apply_patch": "input",
+	"exec":        "input",
+	"Bash":        "command",
+}
+
 // ModifiedFiles returns the distinct files an agent wrote to across the given
-// tool uses, in first-seen order. Only Edit/Write/MultiEdit/NotebookEdit count;
-// the path is read from the tool's input key (file_path / notebook_path). Empty
-// or non-string paths are skipped.
+// tool uses, in first-seen order. Empty or non-string paths are skipped.
 func ModifiedFiles(toolUses []ToolUse) []string {
 	var files []string
 	seen := make(map[string]struct{}, len(toolUses))
 	for _, tu := range toolUses {
-		key, ok := fileMutatingTools[tu.Tool]
-		if !ok {
-			continue
+		for _, path := range mutatedPaths(tu) {
+			if path == "" {
+				continue
+			}
+			if _, dup := seen[path]; dup {
+				continue
+			}
+			seen[path] = struct{}{}
+			files = append(files, path)
 		}
-		path, _ := tu.Input[key].(string)
-		if path == "" {
-			continue
-		}
-		if _, dup := seen[path]; dup {
-			continue
-		}
-		seen[path] = struct{}{}
-		files = append(files, path)
 	}
 	return files
+}
+
+// mutatedPaths lists the files one tool use wrote to: the single path named in
+// the tool's input key, or every path a patch payload touches — including a
+// rename's destination and a delete's target, both of which git reports as
+// dirty and so both of which a commit has to be able to attribute.
+func mutatedPaths(tu ToolUse) []string {
+	if key, ok := fileMutatingTools[tu.Tool]; ok {
+		path, _ := tu.Input[key].(string)
+		return []string{path}
+	}
+	key, ok := applyPatchInputs[tu.Tool]
+	if !ok {
+		return nil
+	}
+	payload, _ := tu.Input[key].(string)
+	return tools.ExtractApplyPatchPaths(payload)
 }
 
 // SessionModifiedFiles parses a Claude session log and returns the distinct

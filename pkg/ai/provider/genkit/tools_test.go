@@ -155,6 +155,8 @@ func eventKinds(events []ai.Event) []ai.EventKind {
 
 func runCorrelatedTool(p *Provider, def api.ToolDefinition, input any, emit func(ai.Event)) (any, error) {
 	correlation := newToolEventCorrelation()
-	correlation.observeRequest(&gkai.ToolRequest{Name: def.Name, Ref: "provider-call-1", Input: input})
-	return p.runTool(context.Background(), def, input, emit, correlation)
+	request := &gkai.ToolRequest{Name: def.Name, Ref: "provider-call-1", Input: input}
+	correlation.observeRequest(request)
+	ctx := context.WithValue(context.Background(), genkitToolRequestContextKey{}, request)
+	return p.runTool(ctx, def, input, emit, correlation)
 }

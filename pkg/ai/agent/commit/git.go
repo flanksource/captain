@@ -23,6 +23,34 @@ func git(dir string, args ...string) (string, error) {
 	return strings.TrimSpace(res.Stdout), nil
 }
 
+// gitRoot resolves the working tree dir belongs to. Every path this package
+// handles is relative to that root — `git status` reports repo-relative paths
+// whatever directory it is invoked from — so a run launched inside a
+// subdirectory has to be lifted to the root before its paths mean anything.
+func gitRoot(dir string) (string, error) {
+	root, err := git(dir, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return "", fmt.Errorf("commit: %s is not inside a git working tree: %w", dir, err)
+	}
+	return canonicalDir(root), nil
+}
+
+// canonicalDir renders dir absolute with its symlinks resolved, so two bases
+// arrived at by different routes — git's own output versus the caller's cwd —
+// compare and join equal. On macOS this is what keeps /tmp and /private/tmp
+// from looking like different trees.
+func canonicalDir(dir string) string {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return filepath.Clean(dir)
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return abs
+	}
+	return resolved
+}
+
 // dirtyPaths lists every repo-relative path with uncommitted work in dir, in
 // git's own order. Ignored files are absent — `git status` excludes them — which
 // is what keeps build artifacts out of the chain regardless of gate level.

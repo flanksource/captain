@@ -143,8 +143,15 @@ func (p *Provider) runTool(
 		if correlation == nil {
 			return nil, fmt.Errorf("genkit tool %q execution has no correlation state", def.Name)
 		}
+		request, ok := ctx.Value(genkitToolRequestContextKey{}).(*gkai.ToolRequest)
+		if !ok || request == nil {
+			return nil, fmt.Errorf("genkit tool %q execution has no provider request context", def.Name)
+		}
+		if request.Name != def.Name {
+			return nil, fmt.Errorf("genkit tool execution names %q, expected %q", request.Name, def.Name)
+		}
 		var err error
-		callID, err = correlation.begin(def.Name, args)
+		callID, err = correlation.begin(request)
 		if err != nil {
 			return nil, err
 		}
