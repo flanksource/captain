@@ -122,7 +122,12 @@ type Config struct {
 	CacheTTL         time.Duration
 	NoCache          bool
 	MaxConcurrent    int
-	SessionID        string
+	// SessionID is the provider-native session/thread used for resume.
+	SessionID string
+	// CaptainSessionID is the authoritative Captain chat/run identity used for
+	// caller-tool capabilities and approvals. It must not be inferred from the
+	// provider-native SessionID.
+	CaptainSessionID string
 	ProjectName      string
 	SchemaRepair     SchemaRepairConfig
 
