@@ -54,27 +54,3 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  # The agent sandbox base image (pkg/container/base). Runs after goreleaser
-  # because the image installs `flanksource/captain: latest` via deps — the
-  # release assets for this tag must exist before the image is built, or it
-  # would ship the previous release's captain binary.
-  docker:
-    needs: [tag, goreleaser]
-    if: needs.tag.outputs.created == 'true'
-    permissions:
-      contents: read
-      id-token: write # keyless cosign signatures
-      packages: write # push to ghcr.io
-    uses: flanksource/action-workflows/.github/workflows/publish-multi-platform-docker-image.yml@f8512a65d38c1ea53d5c83a4e30ee2ae56acac6f # v1.2.1
-    with:
-      dockerfile: pkg/container/base/Dockerfile
-      context: pkg/container/base
-      image_tags: |
-        docker.io/flanksource/captain:${{ needs.tag.outputs.tag }}
-        docker.io/flanksource/captain:latest
-        ghcr.io/flanksource/captain:${{ needs.tag.outputs.tag }}
-        ghcr.io/flanksource/captain:latest
-    secrets:
-      docker_username: ${{ secrets.DOCKER_USERNAME }}
-      docker_password: ${{ secrets.DOCKER_PASSWORD }}
