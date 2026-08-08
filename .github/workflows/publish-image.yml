@@ -1,0 +1,87 @@
+name: Publish Image
+
+# Manual only. The agent sandbox base image (pkg/container/base) is large and
+# slow to build, so it is published on demand rather than on every release.
+#
+# Dispatch this from the tag you want to ship — the reusable workflow builds
+# whatever ref you select. Run it *after* the corresponding release exists:
+# the image installs flanksource/captain through deps at 'latest', so without
+# the release assets it would bake in the previous version's binary.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: >-
+          Image tag to publish, e.g. v0.0.27. Defaults to the most recent git
+          tag reachable from the selected ref.
+        required: false
+        type: string
+      latest:
+        description: Also publish the :latest tag.
+        required: false
+        type: boolean
+        default: true
+      platforms:
+        description: Platforms to build.
+        required: false
+        type: string
+        default: linux/amd64,linux/arm64
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    name: Resolve image tags
+    runs-on: ubuntu-latest
+    outputs:
+      image_tags: ${{ steps.tags.outputs.image_tags }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - id: tags
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_LATEST: ${{ inputs.latest }}
+        run: |
+          set -euo pipefail
+
+          version=$INPUT_VERSION
+          if [ -z "$version" ]; then
+            version=$(git describe --tags --abbrev=0)
+            echo "No version supplied; using most recent tag: $version"
+          fi
+          case "$version" in
+            *[,[:space:]]*) echo "version must not contain commas or whitespace: $version" >&2; exit 1 ;;
+          esac
+
+          tags=""
+          for repo in docker.io/flanksource/captain ghcr.io/flanksource/captain; do
+            tags="$tags$repo:$version,"
+            if [ "$INPUT_LATEST" = "true" ]; then
+              tags="$tags$repo:latest,"
+            fi
+          done
+
+          echo "image_tags=${tags%,}" >> "$GITHUB_OUTPUT"
+          echo "Publishing: ${tags%,}"
+
+  docker:
+    name: Build and publish
+    needs: resolve
+    permissions:
+      contents: read
+      id-token: write # keyless cosign signatures
+      packages: write # push to ghcr.io
+    uses: flanksource/action-workflows/.github/workflows/publish-multi-platform-docker-image.yml@f8512a65d38c1ea53d5c83a4e30ee2ae56acac6f # v1.2.1
+    with:
+      dockerfile: pkg/container/base/Dockerfile
+      context: pkg/container/base
+      image_tags: ${{ needs.resolve.outputs.image_tags }}
+      platforms: ${{ inputs.platforms }}
+    secrets:
+      docker_username: ${{ secrets.DOCKER_USERNAME }}
+      docker_password: ${{ secrets.DOCKER_PASSWORD }}

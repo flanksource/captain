@@ -645,6 +645,11 @@ DOCKER_BUILDKIT=1 docker build -t claude-env:base \
   pkg/container/base
 ```
 
+Publishing to `flanksource/captain` on Docker Hub and GHCR (`linux/amd64` +
+`linux/arm64`) is the **Publish Image** workflow. It is manual only — dispatch it from
+the tag you want to ship, and only once that tag's release exists, since the image
+installs `captain` from the latest GitHub release.
+
 ## Dependencies and stack
 
 Primary stack:
