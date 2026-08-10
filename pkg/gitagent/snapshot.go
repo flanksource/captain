@@ -132,40 +132,51 @@ func filterPolicyPaths(paths, patterns []string) ([]string, error) {
 }
 
 // refuseSnapshotHazards aborts on anything that round-trips incorrectly and
-// silently (H5): LFS-filtered paths, required clean/smudge filters, and dirty
-// submodules.
+// silently (H5): LFS-filtered paths, required clean/smudge filters resolved
+// by a snapshot path, and dirty submodules.
 func refuseSnapshotHazards(ctx context.Context, dir string, env []string, paths []string) error {
-	if err := refuseLFS(ctx, dir, env, paths); err != nil {
+	if err := refuseFilters(ctx, dir, env, paths); err != nil {
 		return err
-	}
-	code, out, err := gitExitCode(ctx, dir, env, "config", "--get-regexp", `^filter\..*\.required$`)
-	if err != nil {
-		return err
-	}
-	if code == 0 {
-		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-			if strings.HasSuffix(strings.TrimSpace(line), "true") {
-				return fmt.Errorf("snapshot refused: required clean/smudge filter declared (%s); it cannot round-trip byte-exact", strings.Fields(line)[0])
-			}
-		}
 	}
 	return refuseDirtySubmodules(ctx, dir, env, paths)
 }
 
-// refuseLFS rejects a snapshot when any candidate path resolves the lfs
-// filter, or when any in-repo .gitattributes declares it at all — equivalent
-// to "`git lfs ls-files` is non-empty" without requiring the lfs binary.
-func refuseLFS(ctx context.Context, dir string, env []string, paths []string) error {
+// refuseFilters rejects a snapshot when a candidate path resolves the lfs
+// filter or any filter declared required in config: materializing would
+// smudge the byte-exact blob on the far side. The declaration alone is
+// harmless — git-lfs installs filter.lfs.required=true machine-wide, so a
+// path must actually resolve the filter through an attribute before the
+// hazard exists. In-repo .gitattributes declaring filter=lfs refuses even
+// with no dirty path — equivalent to "`git lfs ls-files` is non-empty"
+// without requiring the lfs binary.
+func refuseFilters(ctx context.Context, dir string, env []string, paths []string) error {
 	if len(paths) > 0 {
 		args := append([]string{"check-attr", "-z", "filter", "--"}, paths...)
 		out, err := runGitRaw(ctx, dir, env, nil, args...)
 		if err != nil {
 			return err
 		}
+		required := map[string]bool{}
 		fields := strings.Split(out, "\x00")
 		for i := 0; i+2 < len(fields); i += 3 {
-			if fields[i+2] == "lfs" {
+			name := fields[i+2]
+			switch name {
+			case "lfs":
 				return fmt.Errorf("snapshot refused: %q is LFS-tracked; LFS pointers do not round-trip (H5)", fields[i])
+			case "unspecified", "unset", "set":
+				continue
+			}
+			must, seen := required[name]
+			if !seen {
+				code, val, err := gitExitCode(ctx, dir, env, "config", "--get", "--type=bool", "filter."+name+".required")
+				if err != nil {
+					return err
+				}
+				must = code == 0 && strings.TrimSpace(val) == "true"
+				required[name] = must
+			}
+			if must {
+				return fmt.Errorf("snapshot refused: %q resolves the required clean/smudge filter %q; it cannot round-trip byte-exact", fields[i], name)
 			}
 		}
 	}

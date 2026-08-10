@@ -193,7 +193,14 @@ var _ = Describe("dispatch snapshot", func() {
 		gitT(reqf, "add", "-A")
 		gitT(reqf, "commit", "-q", "-m", "base")
 		gitT(reqf, "config", "filter.crypt.required", "true")
+		gitT(reqf, "config", "filter.crypt.clean", "cat")
+		gitT(reqf, "config", "filter.crypt.smudge", "cat")
 		writeFileT(reqf, "dirty.txt", "dirty\n")
+		// The bare declaration must not refuse: git-lfs installs one
+		// machine-wide, so refusing on it would refuse every repository.
+		_, err = gitagent.TakeSnapshot(ctx, reqf, gitagent.SnapshotPolicy{})
+		Expect(err).NotTo(HaveOccurred())
+		writeFileT(reqf, ".gitattributes", "*.txt filter=crypt\n")
 		_, err = gitagent.TakeSnapshot(ctx, reqf, gitagent.SnapshotPolicy{})
 		Expect(err).To(MatchError(ContainSubstring("required clean/smudge filter")))
 
@@ -224,7 +231,9 @@ var _ = Describe("dispatch snapshot", func() {
 		gitT(conflict, "checkout", "-q", "main")
 		writeFileT(conflict, "c.txt", "main\n")
 		gitT(conflict, "commit", "-q", "-am", "main")
-		cmd := exec.Command("git", "merge", "side")
+		cmd := exec.Command("git",
+			"-c", "user.name=test", "-c", "user.email=test@localhost",
+			"merge", "side")
 		cmd.Dir = conflict
 		_ = cmd.Run() // expected to conflict
 		_, err = gitagent.TakeSnapshot(ctx, conflict, gitagent.SnapshotPolicy{})
