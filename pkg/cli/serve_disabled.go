@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/captainconfig"
@@ -64,6 +65,11 @@ func handleDisabledSelections(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
+	// The persist+install pair must commit in the same order for every writer:
+	// unlocked, two concurrent PUTs can reach disk in one order and install
+	// process-wide in the other, leaving the runtime set diverged from the file.
+	disabledWriteMu.Lock()
+	defer disabledWriteMu.Unlock()
 	if err := captainconfig.Update(func(cfg *captainconfig.Config) error {
 		cfg.AI.Disabled = selections
 		return nil
@@ -76,6 +82,8 @@ func handleDisabledSelections(w http.ResponseWriter, r *http.Request) {
 	api.SetDisabled(selections.Set())
 	writeConfigurationJSON(w, disabledSelectionsRequest(selections))
 }
+
+var disabledWriteMu sync.Mutex
 
 // normalizeTokens trims, drops blanks and de-duplicates case-insensitively.
 // Enum axes are canonicalized to lower case; model ids keep the case they were
