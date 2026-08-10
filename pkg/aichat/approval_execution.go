@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	aitools "github.com/flanksource/captain/pkg/ai/tools"
 	"github.com/flanksource/captain/pkg/api"
@@ -53,24 +54,13 @@ func (s *Service) resumeToolApproval(ctx context.Context, threadID string, conti
 			return fmt.Errorf("backend %q does not support caller tools", provider.GetBackend())
 		}
 	}
-	store, err := s.threads(ctx)
+	seed, err := s.awaitSuspendedSeed(ctx, threadID, execution.TurnID())
 	if err != nil {
 		return err
-	}
-	thread, err := store.Get(ctx, threadID)
-	if err != nil {
-		return err
-	}
-	if len(thread.Messages) == 0 {
-		return fmt.Errorf("captain chat session %s has no suspended assistant message", threadID)
-	}
-	seed := thread.Messages[len(thread.Messages)-1]
-	if !strings.EqualFold(seed.Role, string(api.RoleAssistant)) || seed.TurnID != execution.TurnID() {
-		return fmt.Errorf("captain chat session %s does not end with the suspended turn %s", threadID, execution.TurnID())
 	}
 	request := ChatRequest{
 		ID: threadID, ThreadID: threadID, Trigger: "submit-message", MessageID: seed.ID,
-		Messages: []UIMessage{seed}, ToolApproval: continuation.Spec.ToolApproval,
+		Messages: []UIMessage{*seed}, ToolApproval: continuation.Spec.ToolApproval,
 	}
 	streamContext, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -96,4 +86,46 @@ func (s *Service) resumeToolApproval(ctx context.Context, threadID string, conti
 		}
 	}
 	return nil
+}
+
+// suspendedSeedWait bounds how long an approval resolution waits for the
+// suspending turn's assistant message to land in the thread store.
+const suspendedSeedWait = 5 * time.Second
+
+// awaitSuspendedSeed returns the thread's trailing assistant message for the
+// suspended turn. The prompt run reaches its waiting state from the event
+// pipeline before the suspending stream persists that message on its final
+// unwind, so an approval resolved from a session poll can arrive while the
+// write is still in flight. The run's durable approval state guarantees the
+// message is committed or imminent — wait it out instead of failing a
+// resolution that has already consumed the approval.
+func (s *Service) awaitSuspendedSeed(ctx context.Context, threadID, turnID string) (*UIMessage, error) {
+	store, err := s.threads(ctx)
+	if err != nil {
+		return nil, err
+	}
+	deadline := time.Now().Add(suspendedSeedWait)
+	for {
+		thread, err := store.Get(ctx, threadID)
+		if err != nil {
+			return nil, err
+		}
+		if count := len(thread.Messages); count > 0 {
+			seed := thread.Messages[count-1]
+			if strings.EqualFold(seed.Role, string(api.RoleAssistant)) && seed.TurnID == turnID {
+				return &seed, nil
+			}
+		}
+		if time.Now().After(deadline) {
+			if len(thread.Messages) == 0 {
+				return nil, fmt.Errorf("captain chat session %s has no suspended assistant message", threadID)
+			}
+			return nil, fmt.Errorf("captain chat session %s does not end with the suspended turn %s", threadID, turnID)
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
 }

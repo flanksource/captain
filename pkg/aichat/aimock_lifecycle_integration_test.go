@@ -330,15 +330,26 @@ func runApprovalFlow(
 			"user-"+strings.ToLower(verb), verb+" the account update")
 	}()
 	var pending session.Session
+	// The chat result is consumed at most once across poll retries: a value
+	// drained inside a failed Eventually iteration would otherwise be lost and
+	// the final receive below would wait on an already-empty channel.
+	var chat httpResult
+	chatReceived := false
 	Eventually(func(g Gomega) {
 		pending = getLifecycleSession(ctx, client, baseURL, thread.ID)
 		if len(pending.Requests) == 0 {
-			select {
-			case chat := <-chatResult:
+			if !chatReceived {
+				select {
+				case chat = <-chatResult:
+					chatReceived = true
+				default:
+				}
+			}
+			if chatReceived {
 				g.Expect(chat.err).NotTo(HaveOccurred())
 				g.Expect(chat.status).To(Equal(http.StatusOK), string(chat.body))
 				g.Expect(pending.Requests).To(HaveLen(1), string(chat.body))
-			default:
+			} else {
 				g.Expect(pending.Requests).To(HaveLen(1), lifecycleRequestsJSON(mockServer.Requests()))
 			}
 			return
@@ -361,8 +372,9 @@ func runApprovalFlow(
 		g.Expect(completed.Turns[0].Status).To(Equal(string(database.TurnStatusEnded)),
 			lifecycleRequestsJSON(mockServer.Requests()))
 	}).WithTimeout(30 * time.Second).Should(Succeed())
-	var chat httpResult
-	Eventually(chatResult).WithTimeout(30 * time.Second).Should(Receive(&chat))
+	if !chatReceived {
+		Eventually(chatResult).WithTimeout(30 * time.Second).Should(Receive(&chat))
+	}
 	Expect(chat.err).NotTo(HaveOccurred())
 	Expect(chat.status).To(Equal(http.StatusOK), string(chat.body))
 	conflict := postLifecycleJSON(ctx, client, http.MethodPost,
