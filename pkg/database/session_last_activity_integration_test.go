@@ -195,6 +195,26 @@ func TestLastActivityAt_ChatMessageIsMonotonic(t *testing.T) {
 	assert.True(t, got.Equal(newer), "chat message moved last_activity_at backwards: got %v, want %v", got, newer)
 }
 
+func TestTouchChatSessionDoesNotAdvanceStateVersion(t *testing.T) {
+	db := openLastActivityTestDB(t)
+	session, err := db.CreateOrGetSession(t.Context(), CreateSessionInput{
+		ID: uuid.New(), Source: "aichat", Provider: "captain", HostID: "local",
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, db.touchChatSession(t.Context(), session.ID))
+	touched, err := db.GetSession(t.Context(), session.ID)
+	require.NoError(t, err)
+	assert.Equal(t, session.StateVersion, touched.StateVersion)
+
+	running := SessionLifecycleRunning
+	updated, err := db.UpdateSessionState(t.Context(), UpdateSessionStateInput{
+		ID: session.ID, ExpectedVersion: session.StateVersion, LifecycleStatus: &running,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, session.StateVersion+1, updated.StateVersion)
+}
+
 func TestLastActivityAt_ChildActivityOnlyRewritesSessionWhenAdvancing(t *testing.T) {
 	db := openLastActivityTestDB(t)
 	now := time.Now().UTC().Truncate(time.Second)
