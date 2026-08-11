@@ -3,6 +3,7 @@ checks: {}
 commit:
   allow:
   - pkg/cli/webapp/dist/.gitkeep
+  - pkg/cli/webapp/dist/index.html
   grouping: {}
   lint: {}
   message: {}
