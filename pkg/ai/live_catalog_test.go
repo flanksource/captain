@@ -69,13 +69,15 @@ func TestMergeLiveCatalogUpsertsLiveAndPreservesStatic(t *testing.T) {
 }
 
 func TestLiveCatalogInfoAppliesPerProviderConfigured(t *testing.T) {
-	prevProbe := adapterProbe
+	prevProbe, prevAuthProbe := adapterProbe, adapterAuthProbe
 	prevCache, prevAt, prevFingerprint := adapterCache, adapterCacheAt, adapterCacheFingerprint
 	t.Cleanup(func() {
-		adapterProbe = prevProbe
+		adapterProbe, adapterAuthProbe = prevProbe, prevAuthProbe
 		adapterCache, adapterCacheAt, adapterCacheFingerprint = prevCache, prevAt, prevFingerprint
 	})
 	adapterCache, adapterCacheAt, adapterCacheFingerprint = nil, time.Time{}, ""
+	home := t.TempDir()
+	adapterAuthProbe = func() AuthProbe { return fakeProbe(nil, nil, nil, home) }
 	adapterProbe = func(AuthProbe) ([]AdapterStatus, error) {
 		return []AdapterStatus{
 			{Backend: string(BackendAnthropic), Type: "api", ModelDetails: []ModelDef{

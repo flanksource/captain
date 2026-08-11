@@ -56,13 +56,15 @@ var _ = Describe("runtime availability", func() {
 	})
 
 	It("uses each adapter's live readiness in the runtime catalog", func() {
-		previousProbe := adapterProbe
+		previousProbe, previousAuthProbe := adapterProbe, adapterAuthProbe
 		previousCache, previousAt, previousFingerprint := adapterCache, adapterCacheAt, adapterCacheFingerprint
 		DeferCleanup(func() {
-			adapterProbe = previousProbe
+			adapterProbe, adapterAuthProbe = previousProbe, previousAuthProbe
 			adapterCache, adapterCacheAt, adapterCacheFingerprint = previousCache, previousAt, previousFingerprint
 		})
 		adapterCache, adapterCacheAt, adapterCacheFingerprint = nil, time.Time{}, ""
+		home := GinkgoT().TempDir()
+		adapterAuthProbe = func() AuthProbe { return fakeProbe(nil, nil, nil, home) }
 		adapterProbe = func(AuthProbe) ([]AdapterStatus, error) {
 			return []AdapterStatus{
 				{Backend: string(BackendOpenAI), Type: "api"},

@@ -48,6 +48,69 @@ func TestCachedAdaptersReusesWithinTTL(t *testing.T) {
 	}
 }
 
+func TestCachedAdaptersUsesMetadataForCacheHits(t *testing.T) {
+	prevProbe, prevAuthProbe := adapterProbe, adapterAuthProbe
+	prevCache, prevAt, prevFingerprint := adapterCache, adapterCacheAt, adapterCacheFingerprint
+	t.Cleanup(func() {
+		adapterProbe, adapterAuthProbe = prevProbe, prevAuthProbe
+		adapterCache, adapterCacheAt, adapterCacheFingerprint = prevCache, prevAt, prevFingerprint
+	})
+	adapterCache, adapterCacheAt, adapterCacheFingerprint = nil, time.Time{}, ""
+
+	home := t.TempDir()
+	authFile := filepath.Join(home, ".codex", "auth.json")
+	metadataIdentity := "mtime-a"
+	contentIdentity := "content-a"
+	hashReads := 0
+	adapterAuthProbe = func() AuthProbe {
+		probe := fakeProbe(nil, nil, map[string]bool{authFile: true}, home)
+		probe.FileMetadataIdentity = func(path string) string {
+			if path == authFile {
+				return metadataIdentity
+			}
+			return ""
+		}
+		probe.FileIdentity = func(path string) string {
+			if path == authFile {
+				hashReads++
+				return contentIdentity
+			}
+			return ""
+		}
+		return probe
+	}
+	calls := 0
+	adapterProbe = func(probe AuthProbe) ([]AdapterStatus, error) {
+		calls++
+		return []AdapterStatus{{Backend: string(BackendCodexCLI), Models: []string{probe.FileIdentity(authFile)}}}, nil
+	}
+
+	base := time.Unix(1_500_000, 0)
+	got, err := CachedAdapters(base)
+	if err != nil || got[0].Models[0] != "content-a" {
+		t.Fatalf("initial adapters = %+v err=%v", got, err)
+	}
+	if hashReads != 2 {
+		t.Fatalf("initial credential hashes = %d, want 2", hashReads)
+	}
+	if _, err := CachedAdapters(base.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if hashReads != 2 || calls != 1 {
+		t.Fatalf("cache hit: credential hashes=%d adapter probes=%d, want 2 and 1", hashReads, calls)
+	}
+
+	metadataIdentity = "mtime-b"
+	contentIdentity = "content-b"
+	got, err = CachedAdapters(base.Add(2 * time.Second))
+	if err != nil || got[0].Models[0] != "content-b" {
+		t.Fatalf("changed credentials adapters = %+v err=%v", got, err)
+	}
+	if hashReads != 4 || calls != 2 {
+		t.Fatalf("invalidated cache: credential hashes=%d adapter probes=%d, want 4 and 2", hashReads, calls)
+	}
+}
+
 func TestCachedAdaptersDoesNotCacheErrors(t *testing.T) {
 	prevProbe := adapterProbe
 	prevAuthProbe := adapterAuthProbe
@@ -228,7 +291,7 @@ func TestCachedAdaptersReturnsDeepCopies(t *testing.T) {
 	}
 }
 
-func TestCachedAdaptersRejectsUnsettledProbeState(t *testing.T) {
+func TestCachedAdaptersReturnsFreshestUnsettledProbeState(t *testing.T) {
 	prevProbe, prevAuthProbe := adapterProbe, adapterAuthProbe
 	prevCache, prevAt, prevFingerprint := adapterCache, adapterCacheAt, adapterCacheFingerprint
 	t.Cleanup(func() {
@@ -247,12 +310,22 @@ func TestCachedAdaptersRejectsUnsettledProbeState(t *testing.T) {
 		}
 		return probe
 	}
-	adapterProbe = func(AuthProbe) ([]AdapterStatus, error) {
-		return []AdapterStatus{{Backend: string(BackendOpenAI)}}, nil
+	adapterProbe = func(probe AuthProbe) ([]AdapterStatus, error) {
+		return []AdapterStatus{{
+			Backend: string(BackendOpenAI),
+			Models:  []string{probe.credentials.APIKey(BackendOpenAI).Token},
+		}}, nil
 	}
 
-	if got, err := CachedAdapters(time.Unix(6_000_000, 0)); err == nil || got != nil {
-		t.Fatalf("unsettled probe returned adapters=%+v err=%v", got, err)
+	got, err := CachedAdapters(time.Unix(6_000_000, 0))
+	if !errors.Is(err, ErrAdapterProbeUnsettled) {
+		t.Fatalf("unsettled probe error = %v, want ErrAdapterProbeUnsettled", err)
+	}
+	if len(got) != 1 || len(got[0].Models) != 1 || got[0].Models[0] != "c" {
+		t.Fatalf("unsettled probe adapters = %+v, want freshest observation", got)
+	}
+	if adapterCache != nil {
+		t.Fatalf("unsettled probe published cache: %+v", adapterCache)
 	}
 }
 

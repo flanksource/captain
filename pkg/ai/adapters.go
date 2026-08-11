@@ -154,17 +154,20 @@ func (s CredentialSnapshot) clone() CredentialSnapshot {
 // so resolveAdapter stays pure and testable. Fields are exported so callers in
 // other packages (and their tests) can construct a hermetic probe.
 type AuthProbe struct {
-	Getenv             func(string) string
-	LookPath           func(string) (string, error)
-	FileExists         func(string) bool
-	FileIdentity       func(string) string
-	ExecutableIdentity func(string) string
-	CodexModels        func(context.Context, string) ([]ModelDef, error)
-	APICredentials     map[Backend]api.ResolvedAPIKey
-	APIURLs            map[Backend]string
-	RuntimeStatuses    map[Backend]RuntimeStatus
-	ProbeError         error
-	Home               string
+	Getenv       func(string) string
+	LookPath     func(string) (string, error)
+	FileExists   func(string) bool
+	FileIdentity func(string) string
+	// FileMetadataIdentity is a cheap change detector for FileIdentity. When it
+	// is absent, cache validation falls back to FileIdentity.
+	FileMetadataIdentity func(string) string
+	ExecutableIdentity   func(string) string
+	CodexModels          func(context.Context, string) ([]ModelDef, error)
+	APICredentials       map[Backend]api.ResolvedAPIKey
+	APIURLs              map[Backend]string
+	RuntimeStatuses      map[Backend]RuntimeStatus
+	ProbeError           error
+	Home                 string
 
 	credentials      CredentialSnapshot
 	stateFingerprint string
@@ -181,9 +184,10 @@ func OSAuthProbe() AuthProbe {
 			_, err := os.Stat(p)
 			return err == nil
 		},
-		FileIdentity:       hostFileIdentity,
-		ExecutableIdentity: hostExecutableIdentity,
-		Home:               home,
+		FileIdentity:         hostFileIdentity,
+		FileMetadataIdentity: hostMetadataIdentity,
+		ExecutableIdentity:   hostMetadataIdentity,
+		Home:                 home,
 	}
 	probe.APICredentials = make(map[Backend]api.ResolvedAPIKey, len(apiBackends))
 	for _, backend := range apiBackends {
@@ -381,7 +385,7 @@ func hostFileIdentity(path string) string {
 	return fmt.Sprintf("sha256:%x", digest)
 }
 
-func hostExecutableIdentity(path string) string {
+func hostMetadataIdentity(path string) string {
 	info, err := os.Stat(path)
 	if err != nil {
 		return "unreadable"

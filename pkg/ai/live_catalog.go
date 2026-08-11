@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"errors"
 	"time"
 
 	"github.com/flanksource/captain/pkg/api"
@@ -15,7 +16,7 @@ import (
 // overrides its static counterpart.
 func LiveCatalog() ([]Model, error) {
 	adapters, err := CachedAdapters(time.Now())
-	if err != nil {
+	if err != nil && !errors.Is(err, ErrAdapterProbeUnsettled) {
 		return nil, err
 	}
 	return mergeLiveCatalog(Catalog(), adapters, liveCatalogOptions{}), nil
@@ -27,7 +28,7 @@ func LiveCatalog() ([]Model, error) {
 // local backend binary is installed.
 func LiveCatalogInfo(configuredProviders []string) ([]ModelInfo, error) {
 	adapters, err := CachedAdapters(time.Now())
-	if err != nil {
+	if err != nil && !errors.Is(err, ErrAdapterProbeUnsettled) {
 		return nil, err
 	}
 	models := mergeLiveCatalog(catalogSnapshot(), adapters, liveCatalogOptions{IncludeDisabled: true})

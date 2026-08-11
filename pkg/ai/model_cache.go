@@ -1,8 +1,10 @@
 package ai
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -84,7 +86,10 @@ func modelCachePath(fingerprint string) (string, error) {
 // lockModelCache serializes one cache identity across goroutines and Captain
 // processes. The lock spans cache re-check, live fetch, and publish so a slow
 // stale fetch cannot overwrite a newer refresh with a fresh timestamp.
-func lockModelCache(fingerprint string) (func(), error) {
+func lockModelCache(ctx context.Context, fingerprint string) (func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	dir, err := modelCacheDir()
 	if err != nil {
 		return nil, err
@@ -97,9 +102,30 @@ func lockModelCache(fingerprint string) (func(), error) {
 		_ = lock.Close()
 		return nil, err
 	}
-	if err := unix.Flock(int(lock.Fd()), unix.LOCK_EX); err != nil {
-		_ = lock.Close()
-		return nil, err
+	for {
+		if err := ctx.Err(); err != nil {
+			_ = lock.Close()
+			return nil, err
+		}
+		err := unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+		if err == nil {
+			if err := ctx.Err(); err != nil {
+				_ = unix.Flock(int(lock.Fd()), unix.LOCK_UN)
+				_ = lock.Close()
+				return nil, err
+			}
+			break
+		}
+		if !errors.Is(err, unix.EWOULDBLOCK) {
+			_ = lock.Close()
+			return nil, err
+		}
+		select {
+		case <-ctx.Done():
+			_ = lock.Close()
+			return nil, ctx.Err()
+		case <-time.After(25 * time.Millisecond):
+		}
 	}
 	return func() {
 		_ = unix.Flock(int(lock.Fd()), unix.LOCK_UN)

@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -50,7 +51,7 @@ func AvailabilityForAdapter(status AdapterStatus) api.Availability {
 // LiveRuntimeCatalog annotates the registry runtime catalog with host readiness.
 func LiveRuntimeCatalog() ([]api.RuntimeFamily, error) {
 	adapters, err := CachedAdapters(time.Now())
-	if err != nil {
+	if err != nil && !errors.Is(err, ErrAdapterProbeUnsettled) {
 		return nil, err
 	}
 	byBackend := make(map[string]AdapterStatus, len(adapters))

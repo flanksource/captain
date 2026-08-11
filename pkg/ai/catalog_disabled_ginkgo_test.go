@@ -109,13 +109,15 @@ var _ = Describe("catalog opt-out filtering", func() {
 	})
 
 	It("retains disabled models with remediation in the live descriptive menu", func() {
-		previousProbe := adapterProbe
+		previousProbe, previousAuthProbe := adapterProbe, adapterAuthProbe
 		previousCache, previousAt, previousFingerprint := adapterCache, adapterCacheAt, adapterCacheFingerprint
 		DeferCleanup(func() {
-			adapterProbe = previousProbe
+			adapterProbe, adapterAuthProbe = previousProbe, previousAuthProbe
 			adapterCache, adapterCacheAt, adapterCacheFingerprint = previousCache, previousAt, previousFingerprint
 		})
 		adapterCache, adapterCacheAt, adapterCacheFingerprint = nil, time.Time{}, ""
+		home := GinkgoT().TempDir()
+		adapterAuthProbe = func() AuthProbe { return fakeProbe(nil, nil, nil, home) }
 		adapterProbe = func(AuthProbe) ([]AdapterStatus, error) { return nil, nil }
 		disable(nil, []string{"deepseek"}, nil, nil, nil)
 

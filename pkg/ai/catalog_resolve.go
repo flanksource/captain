@@ -85,7 +85,7 @@ func ResolveModels(ctx context.Context, opts ResolveOptions) ([]ResolvedModel, e
 		return filterResolved(rows, opts.Filter), err
 	}
 
-	unlock, err := lockModelCache(fp)
+	unlock, err := lockModelCache(ctx, fp)
 	if err != nil {
 		catalogLog.Warnf("model disk cache disabled: failed to lock cache entry: %v", err)
 		rows, resolveErr := resolveFresh(ctx, opts, credentials)

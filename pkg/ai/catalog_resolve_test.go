@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/credentials"
@@ -486,6 +487,26 @@ func TestResolveModelsSerializesSameCredentialCacheEntry(t *testing.T) {
 	defer mu.Unlock()
 	if calls != 1 {
 		t.Fatalf("live fetches = %d, want one for the shared cache identity", calls)
+	}
+}
+
+func TestLockModelCacheHonorsContextWhileContended(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	unlock, err := lockModelCache(context.Background(), "contended")
+	if err != nil {
+		t.Fatalf("first lock: %v", err)
+	}
+	defer unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	unexpectedUnlock, err := lockModelCache(ctx, "contended")
+	if unexpectedUnlock != nil {
+		unexpectedUnlock()
+		t.Fatal("contended lock was acquired")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("contended lock error = %v, want context deadline", err)
 	}
 }
 
