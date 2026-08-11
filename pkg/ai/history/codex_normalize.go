@@ -325,7 +325,7 @@ func buildToolUses(callEvent, outputEvent CodexEvent, cwd, sessionID string) []T
 		SessionID:  sessionID,
 		TurnID:     firstNonEmpty(codexEventTurnID(callEvent), codexEventTurnID(outputEvent)),
 		ID:         callEvent.Payload.CallID,
-		Response:   extractCommandOutput(CodexOutputText(outputEvent.Payload.Output)),
+		Response:   CodexCommandOutputText(CodexOutputText(outputEvent.Payload.Output)),
 		RecordType: "response_item." + callEvent.Payload.Type,
 	})
 }
@@ -449,7 +449,9 @@ func CodexOutputText(raw json.RawMessage) string {
 	return text
 }
 
-func extractCommandOutput(raw string) string {
+// CodexCommandOutputText removes Codex's execution metadata prefix from a raw
+// function_call_output while preserving the complete command stdout/stderr.
+func CodexCommandOutputText(raw string) string {
 	if _, after, ok := strings.Cut(raw, "Output:\n"); ok {
 		return after
 	}
