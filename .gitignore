@@ -34,3 +34,4 @@ hack/*
 .ok/
 .okignore
 .ginkgo/
+!pkg/cli/webapp/dist/index.html
