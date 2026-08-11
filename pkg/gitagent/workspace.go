@@ -12,11 +12,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
-
-	"golang.org/x/sys/unix"
 )
 
 // NoAgentCommand opts a sidecar out of launching anything, leaving the
@@ -117,24 +114,4 @@ func LaunchAgent(sidecarRepo, task, workdir, taskFile, command string) error {
 	// Detach: the hook must not wait. Release drops our handle; the process
 	// reparents to init when the hook exits.
 	return cmd.Process.Release()
-}
-
-// markInheritedDescriptorsCloseOnExec prevents receive-pack's sideband pipes
-// from surviving in the detached agent and keeping the dispatch push open.
-func markInheritedDescriptorsCloseOnExec() error {
-	closeRangeErr := unix.CloseRange(3, ^uint(0), unix.CLOSE_RANGE_CLOEXEC)
-	if closeRangeErr == nil {
-		return nil
-	}
-	entries, readErr := os.ReadDir("/proc/self/fd")
-	if readErr != nil {
-		return fmt.Errorf("marking inherited descriptors close-on-exec: close_range: %v; /proc/self/fd: %w", closeRangeErr, readErr)
-	}
-	for _, entry := range entries {
-		fd, parseErr := strconv.Atoi(entry.Name())
-		if parseErr == nil && fd >= 3 {
-			syscall.CloseOnExec(fd)
-		}
-	}
-	return nil
 }

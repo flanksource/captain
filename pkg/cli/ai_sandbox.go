@@ -48,10 +48,15 @@ func resolveRunSandbox(req *ai.Request, flagSelector string) (captainconfig.Sand
 // ref, so the serialized spec carries the choice the run was actually made with.
 func recordSandboxSelection(req *ai.Request, cfg *ai.Config, selection captainconfig.SandboxSelection, flagSelector string) {
 	if flagSelector != "" {
-		req.Sandbox = &api.SandboxRef{Backend: flagSelector}
+		ref := api.SandboxRef{Backend: flagSelector}
+		if req.Sandbox != nil {
+			ref.Agent = req.Sandbox.Agent
+			ref.Policy = req.Sandbox.Policy
+		}
+		req.Sandbox = &ref
 	}
 	cfg.Sandbox = selection.Kind == registry.SandboxSRT
-	cfg.SandboxSelection = sandboxSelectionConfig(selection)
+	cfg.SandboxSelection = sandboxSelectionConfig(selection, req.Sandbox)
 }
 
 // applyRunSandbox is the transport-neutral seam: resolve, then record. Every
