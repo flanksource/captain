@@ -229,6 +229,12 @@ func (p *Provider) correlatedGenerateOptions(
 	emit func(ai.Event),
 	correlation *toolEventCorrelation,
 ) ([]gkai.GenerateOption, error) {
+	// Caller tools are gated by ToolPreferences and CanUseTool; Permissions.Tools
+	// is a separate policy this backend has no seam for, so it must not be
+	// accepted and ignored.
+	if err := api.RequireToolPolicySupport(p.backend, req.Permissions); err != nil {
+		return nil, err
+	}
 	p.toolOptionsMu.Lock()
 	defer p.toolOptionsMu.Unlock()
 	p.toolCorrelation = correlation

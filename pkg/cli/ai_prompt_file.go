@@ -103,8 +103,10 @@ func overlayCLI(base ai.Request, baseCfg ai.Config, o AIPromptOptions) (ai.Reque
 			return base, baseCfg, fmt.Errorf("invalid --mode %q (valid: %s)", o.Mode, registry.RuntimeModeList())
 		}
 	}
-	// Sandbox precedence: --sandbox > frontmatter (base.Sandbox) > global default.
-	sandbox, err := resolveSandboxSelection(o.SandboxSelector(), base.Sandbox, loadSavedConfig().Sandbox)
+	// Sandbox precedence: --sandbox > frontmatter (req.Sandbox) > global default.
+	// Resolved here rather than at the end because the winning kind can force the
+	// runtime mode below; the selection is recorded onto req/cfg once cfg exists.
+	sandbox, err := resolveRunSandbox(&req, o.SandboxSelector())
 	if err != nil {
 		return base, baseCfg, err
 	}

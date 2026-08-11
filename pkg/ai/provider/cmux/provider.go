@@ -178,6 +178,11 @@ func (p *Provider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai
 	if req.Prompt.User == "" {
 		return nil, fmt.Errorf("cmux provider: prompt is required")
 	}
+	// AgentCommand's codex branch emits no tool flags — codex has no equivalent —
+	// so a policy set here would be dropped rather than applied.
+	if err := api.RequireToolPolicySupport(p.GetBackend(), req.Permissions); err != nil {
+		return nil, err
+	}
 	events := make(chan ai.Event, 32)
 	go p.drive(ctx, req, schema, events)
 	return events, nil

@@ -39,6 +39,10 @@ type CodexAppServer struct {
 	rpcDone  chan struct{} // closed by the rpc Run goroutine when the child exits
 	active   *turnState
 	threadID string
+	// posture is the current run's approval policy. handleApproval runs on the
+	// rpc read loop, not the turn goroutine, so it cannot reach the request; the
+	// posture is recorded here when the turn starts.
+	posture codexPosture
 
 	callerToolsMu      sync.Mutex
 	callerToolsRuntime *callertools.Runtime
@@ -127,6 +131,10 @@ func (c *CodexAppServer) ExecuteStream(ctx context.Context, req ai.Request) (<-c
 	if err := c.prepareCallerTools(req); err != nil {
 		return nil, err
 	}
+	// Record before the process can send an approval request: the rpc read loop
+	// is already live for a resumed provider, and a stale posture would answer
+	// this run's approvals from the last run's policy.
+	c.setPosture(postureFor(req))
 	c.turnMu.Lock()
 	if err := c.ensureStarted(ctx); err != nil {
 		c.turnMu.Unlock()
@@ -190,6 +198,14 @@ func (c *CodexAppServer) failTurn(ts *turnState, err error) {
 }
 
 func (c *CodexAppServer) setActive(ts *turnState) { c.mu.Lock(); c.active = ts; c.mu.Unlock() }
+
+func (c *CodexAppServer) setPosture(p codexPosture) { c.mu.Lock(); c.posture = p; c.mu.Unlock() }
+
+func (c *CodexAppServer) currentPosture() codexPosture {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.posture
+}
 func (c *CodexAppServer) currentTurn() *turnState { c.mu.Lock(); defer c.mu.Unlock(); return c.active }
 func (c *CodexAppServer) client() *jsonrpc.Client { c.mu.Lock(); defer c.mu.Unlock(); return c.rpc }
 

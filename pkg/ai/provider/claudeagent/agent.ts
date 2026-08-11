@@ -64,6 +64,7 @@ interface InitializeParams {
   systemPrompt?: string;
   appendSystemPrompt?: string;
   allowedTools?: string[];
+  disallowedTools?: string[];
   maxTurns?: number;
   maxBudgetUsd?: number;
   permissionMode?: string;
@@ -109,17 +110,27 @@ function buildOptions(params: InitializeParams): Options {
   // SDK must consult canUseTool rather than auto-approving. bypassPermissions /
   // allowDangerouslySkipPermissions would skip canUseTool entirely.
   const brokered = params.approvalMode === "ask";
+  // The host always sends a resolved mode; "default" is the floor when it did
+  // not. Skipping permissions is gated on the caller having ASKED for bypass —
+  // keying it on "no broker attached" turned every unbrokered run, which is
+  // almost all of them, into an unconfined one.
+  const permissionMode = (params.permissionMode as Options["permissionMode"]) ||
+    "default";
   const options: Options = {
     cwd: params.cwd,
     model: params.model,
     maxTurns: params.maxTurns || undefined,
     maxBudgetUsd: params.maxBudgetUsd || undefined,
-    permissionMode: (params.permissionMode as Options["permissionMode"]) ||
-      (brokered ? "default" : "bypassPermissions"),
-    allowDangerouslySkipPermissions: !brokered,
+    permissionMode,
+    allowDangerouslySkipPermissions:
+      !brokered && permissionMode === "bypassPermissions",
     allowedTools:
       params.allowedTools && params.allowedTools.length
         ? params.allowedTools
+        : undefined,
+    disallowedTools:
+      params.disallowedTools && params.disallowedTools.length
+        ? params.disallowedTools
         : undefined,
     mcpServers: params.mcpServers,
     stderr: (data: string) => process.stderr.write(data),

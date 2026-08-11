@@ -112,6 +112,9 @@ func buildGeminiCLIArgs(model string, req ai.Request) ([]string, error) {
 	if err := ai.ValidateAttachmentCompatibility([]api.Model{{Name: model, Backend: api.BackendGeminiCLI}}, req.Prompt.Attachments); err != nil {
 		return nil, err
 	}
+	if err := api.RequireToolPolicySupport(api.BackendGeminiCLI, req.Permissions); err != nil {
+		return nil, err
+	}
 	args := []string{"--output-format", "stream-json"}
 	if m := strings.TrimSpace(model); m != "" {
 		args = append(args, "--model", m)
