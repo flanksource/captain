@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"runtime"
 	"testing"
 
 	"github.com/flanksource/captain/pkg/ai"
@@ -158,6 +159,41 @@ func TestHandleApproval_AnswersFromPosture(t *testing.T) {
 			assert.Empty(t, perm["permissions"])
 		})
 	}
+}
+
+// TestBeginTurn_ConcurrentTurnCannotEscalateTheInFlightPosture pins the lock
+// ordering: a bypass turn queued behind an in-flight restricted turn must not
+// publish its posture until the restricted turn releases turnMu, or the
+// restricted turn's approvals would be answered with the bypass policy.
+func TestBeginTurn_ConcurrentTurnCannotEscalateTheInFlightPosture(t *testing.T) {
+	c, err := NewCodexAppServer(ai.Config{Model: api.Model{Name: "m"}})
+	require.NoError(t, err)
+
+	c.beginTurn(ai.Request{Permissions: api.Permissions{Presets: []api.Preset{api.PresetEdit}}})
+
+	queued := make(chan struct{})
+	go func() {
+		defer close(queued)
+		c.beginTurn(ai.Request{Permissions: api.Permissions{Mode: api.PermissionBypass}})
+		c.turnMu.Unlock()
+	}()
+
+	// The queued turn is blocked on turnMu, so approvals raised by the still
+	// in-flight restricted turn keep declining.
+	for i := 0; i < 50; i++ {
+		res, rpcErr := c.handleApproval("item/commandExecution/requestApproval", nil)
+		assert.Nil(t, rpcErr)
+		require.Equal(t, "decline", res.(map[string]string)["decision"],
+			"the queued bypass turn overwrote the in-flight restricted posture")
+		runtime.Gosched()
+	}
+
+	c.turnMu.Unlock()
+	<-queued
+	res, rpcErr := c.handleApproval("item/commandExecution/requestApproval", nil)
+	assert.Nil(t, rpcErr)
+	assert.Equal(t, "accept", res.(map[string]string)["decision"],
+		"the bypass turn's posture takes effect once it owns the turn")
 }
 
 // TestHandleApproval_PostureDefaultsClosed guards the zero value: a provider

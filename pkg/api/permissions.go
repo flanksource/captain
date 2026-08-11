@@ -56,26 +56,54 @@ func (p Permissions) HasPreset(x Preset) bool {
 	return slices.Contains(p.Presets, x)
 }
 
+// AllowList and DenyList project the canonical policy map onto the two lists
+// every claude transport speaks (--allowedTools / --disallowedTools). They are
+// the only correct source for those flags: Policies() folds an `off` tool mode
+// into a deny, so reading Tools.Deny directly lets `tools: {Bash: off}` past the
+// filter and the tool runs.
+func (t Tools) AllowList() []string { return t.toolsWithPolicy(ToolPolicyAllow) }
+
+// DenyList is AllowList's counterpart; see its documentation.
+func (t Tools) DenyList() []string { return t.toolsWithPolicy(ToolPolicyDeny) }
+
+func (t Tools) toolsWithPolicy(want ToolPolicy) []string {
+	var out []string
+	for tool, policy := range t.Policies() {
+		if policy == want {
+			out = append(out, tool)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // RequireToolPolicySupport refuses a run whose per-tool policy the backend
 // cannot carry.
 //
 // A deny-list exists solely to forbid a tool, so dropping it silently inverts
 // the caller's intent: the agent runs with strictly more authority than the spec
-// granted, and nothing in the output says so. Only the two claude transports
-// reach a --disallowedTools equivalent today, so the rest fail loud here rather
-// than proceeding as if the policy had been applied.
+// granted, and nothing in the output says so. Only the claude transports reach a
+// --disallowedTools equivalent today, so the rest fail loud here rather than
+// proceeding as if the policy had been applied.
 //
 // Allow-lists are checked too: on a backend with no tool filter, an allowlist is
-// equally unenforced.
+// equally unenforced. `ask` is refused everywhere — no transport has a per-tool
+// prompt, so it would resolve to "allowed" on the backends that advertise tool
+// policy support. `auto` constrains nothing, so it needs no backend support.
 func RequireToolPolicySupport(backend Backend, permissions Permissions) error {
-	policies := permissions.Tools.Policies()
-	if len(policies) == 0 || registry.SupportsToolPolicy(backend) {
+	if asked := permissions.Tools.toolsWithPolicy(ToolPolicyAsk); len(asked) > 0 {
+		return fmt.Errorf(
+			"per-tool policy \"ask\" (%s) is not enforceable on any backend: transports carry allow/deny tool lists only, so the tool would run unprompted; use allow or deny",
+			strings.Join(asked, ", "))
+	}
+	enforced := append(permissions.Tools.AllowList(), permissions.Tools.DenyList()...)
+	if len(enforced) == 0 || registry.SupportsToolPolicy(backend) {
 		return nil
 	}
-	tools := sortedKeys(policies)
+	sort.Strings(enforced)
 	return fmt.Errorf(
 		"backend %s cannot enforce a per-tool policy (%s), and running without it would grant more than the spec allows; remove permissions.tools or use one of: %s",
-		backend, strings.Join(tools, ", "), backendListOf(registry.ToolPolicyBackends()))
+		backend, strings.Join(enforced, ", "), backendListOf(registry.ToolPolicyBackends()))
 }
 
 func backendListOf(backends []Backend) string {

@@ -53,7 +53,10 @@ func TestBuildClaudeCLIArgs(t *testing.T) {
 	requireFlagValue(t, args, "--effort", "high")
 	requireFlagValue(t, args, "--max-budget-usd", "1.25")
 	requireFlagValue(t, args, "--permission-mode", "acceptEdits")
-	requireFlagValue(t, args, "--allowedTools", "Read,Grep")
+	// The lists are the canonical policy map projected back out, so they are
+	// sorted rather than in caller order — order is not meaningful to claude, and
+	// a stable order keeps the command line reproducible.
+	requireFlagValue(t, args, "--allowedTools", "Grep,Read")
 	requireFlagValue(t, args, "--disallowedTools", "Bash")
 	requireFlagValue(t, args, "--plugin-dir", "/skills/a")
 	requireFlagValue(t, args, "--mcp-config", `{"mcpServers":{}}`)
