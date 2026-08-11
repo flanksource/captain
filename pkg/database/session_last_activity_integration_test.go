@@ -2,6 +2,7 @@ package database
 
 import (
 	"database/sql"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -168,6 +169,30 @@ func TestLastActivityAt_IngestIsMonotonic(t *testing.T) {
 		require.NotNil(t, got)
 		assert.True(t, got.Equal(advanced), "last_activity_at = %v, want advanced %v", got, advanced)
 	})
+}
+
+func TestLastActivityAt_ChatMessageIsMonotonic(t *testing.T) {
+	db := openLastActivityTestDB(t)
+	session, err := db.CreateOrGetSession(t.Context(), CreateSessionInput{
+		ID: uuid.New(), Source: "aichat", Provider: "captain", HostID: "local",
+	})
+	require.NoError(t, err)
+	turn, created, err := db.CreateChatTurn(t.Context(), CreateChatTurnInput{
+		SessionID: session.ID, ProviderTurnID: "turn-1",
+	})
+	require.NoError(t, err)
+	require.True(t, created)
+
+	newer := time.Now().UTC().Truncate(time.Second).Add(time.Hour)
+	pinLastActivity(t, db, session.ID, newer)
+	require.NoError(t, db.PutChatMessage(t.Context(), PutChatMessageInput{
+		SessionID: session.ID, TurnID: turn.ID, ProviderMessageID: "message-1",
+		Role: "user", Parts: json.RawMessage(`[{"type":"text","text":"hello"}]`),
+	}))
+
+	got := lastActivityAt(t, db, session.ID)
+	require.NotNil(t, got)
+	assert.True(t, got.Equal(newer), "chat message moved last_activity_at backwards: got %v, want %v", got, newer)
 }
 
 func TestLastActivityAt_ChildActivityOnlyRewritesSessionWhenAdvancing(t *testing.T) {
