@@ -46,7 +46,7 @@ func (a *DatabaseExecutionAuthority) Begin(
 	if session.Source != "aichat" {
 		return nil, fmt.Errorf("chat thread %s has incompatible source %q", request.ThreadID, session.Source)
 	}
-	renderedSpec, err := renderedSpecMap(request.Spec)
+	renderedSpec, err := renderedSpecMap(request.Spec, request.Profile)
 	if err != nil {
 		return nil, err
 	}
@@ -278,7 +278,7 @@ func runtimeSelection(model api.Model) database.PromptRunRuntimeSelection {
 	}
 }
 
-func renderedSpecMap(spec api.Spec) (map[string]any, error) {
+func renderedSpecMap(spec api.Spec, profile api.ResolvedSpec) (map[string]any, error) {
 	raw, err := json.Marshal(spec)
 	if err != nil {
 		return nil, fmt.Errorf("encode authoritative chat spec: %w", err)
@@ -286,6 +286,20 @@ func renderedSpecMap(spec api.Spec) (map[string]any, error) {
 	var rendered map[string]any
 	if err := json.Unmarshal(raw, &rendered); err != nil {
 		return nil, fmt.Errorf("decode authoritative chat spec: %w", err)
+	}
+	if len(profile.Trace) > 0 {
+		resolution, err := json.Marshal(struct {
+			Constraints api.RuntimeConstraints `json:"constraints"`
+			Trace       []api.SpecLayer        `json:"trace"`
+		}{Constraints: profile.Constraints, Trace: profile.Trace})
+		if err != nil {
+			return nil, fmt.Errorf("encode authoritative chat profile: %w", err)
+		}
+		var value map[string]any
+		if err := json.Unmarshal(resolution, &value); err != nil {
+			return nil, fmt.Errorf("decode authoritative chat profile: %w", err)
+		}
+		rendered["resolution"] = value
 	}
 	return rendered, nil
 }

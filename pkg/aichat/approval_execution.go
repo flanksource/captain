@@ -51,9 +51,9 @@ func (s *Service) resumeToolApproval(ctx context.Context, threadID string, conti
 	}
 	execution := continuation.Execution
 	defer closeExecution(execution)
-	settings, err := s.runtimeSettings(ctx)
+	profile, err := s.runtimeProfile(ctx)
 	if err != nil {
-		return fmt.Errorf("load chat runtime settings: %w", err)
+		return fmt.Errorf("load chat runtime profile: %w", err)
 	}
 	set, err := s.loadTools(ctx)
 	if err != nil {
@@ -63,7 +63,7 @@ func (s *Service) resumeToolApproval(ctx context.Context, threadID string, conti
 	if err != nil {
 		return err
 	}
-	config := settings.ProviderConfig
+	config := profile.ProviderConfig
 	config.Model = continuation.Spec.Model
 	config.Budget = continuation.Spec.Budget
 	config.SessionID = continuation.Spec.SessionID

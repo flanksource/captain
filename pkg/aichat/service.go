@@ -17,34 +17,23 @@ import (
 
 var serviceLog = logger.GetLogger("aichat")
 
-// RuntimeSettings are application-owned defaults and provider construction
-// settings evaluated for each request.
-// RuntimeSettings is the request-scoped application configuration for a chat.
-//
-// The default model lives in Spec.Model — there is deliberately no DefaultModel
-// string beside it. A bare name next to a structured Spec is the lossy pattern:
-// it cannot carry a backend/mode/effort, so whatever it named got re-inferred, and
-// when both were set they could silently disagree. Spec.Model can say
-// {Name: "sol", Mode: ModeAgent} and mean it.
-type RuntimeSettings struct {
-	System              string
-	Spec                api.Spec
-	ProviderConfig      api.Config
-	MaxInputTokens      int
-	MonthlyTokenBudget  int
-	CurrentMonthTokens  int
-	MonthlyBudgetUSD    float64
-	CurrentMonthCostUSD float64
+// RuntimeProfile is the request-scoped, hierarchically resolved application
+// configuration for a chat. Resolved carries the effective Spec, constraints,
+// and ordered provenance; provider credentials remain runtime-only.
+type RuntimeProfile struct {
+	System         string
+	Resolved       api.ResolvedSpec
+	ProviderConfig api.Config
 }
 
-// RuntimeSettingsProvider supplies request-scoped application settings.
-type RuntimeSettingsProvider interface {
-	RuntimeSettings(context.Context) (RuntimeSettings, error)
+// RuntimeProfileProvider supplies request-scoped application profiles.
+type RuntimeProfileProvider interface {
+	RuntimeProfile(context.Context) (RuntimeProfile, error)
 }
 
-type RuntimeSettingsProviderFunc func(context.Context) (RuntimeSettings, error)
+type RuntimeProfileProviderFunc func(context.Context) (RuntimeProfile, error)
 
-func (f RuntimeSettingsProviderFunc) RuntimeSettings(ctx context.Context) (RuntimeSettings, error) {
+func (f RuntimeProfileProviderFunc) RuntimeProfile(ctx context.Context) (RuntimeProfile, error) {
 	return f(ctx)
 }
 
@@ -71,7 +60,7 @@ func FixedThreadStore(store ThreadStore) ThreadStoreProvider {
 type ServiceOptions struct {
 	Resolver       Resolver
 	ProviderConfig ProviderConfigSource
-	Settings       RuntimeSettingsProvider
+	Profile        RuntimeProfileProvider
 	Tools          ToolProvider
 	MCP            ToolProvider
 	Attachments    AttachmentResolver
@@ -106,6 +95,11 @@ func (s *Service) Handler() http.Handler {
 }
 
 func (s *Service) handleRuntimes(w http.ResponseWriter, request *http.Request) {
+	profile, err := s.runtimeProfile(request.Context())
+	if err != nil {
+		http.Error(w, fmt.Sprintf("load chat runtime profile: %v", err), http.StatusInternalServerError)
+		return
+	}
 	runtimes, err := s.resolver.Runtimes(request.Context())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
@@ -115,12 +109,18 @@ func (s *Service) handleRuntimes(w http.ResponseWriter, request *http.Request) {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
+	annotateProfileRuntimes(profile.Resolved, runtimes)
 	if err := writeJSON(w, http.StatusOK, runtimes); err != nil {
 		serviceLog.Errorf("write chat runtimes response: %v", err)
 	}
 }
 
 func (s *Service) handleModels(w http.ResponseWriter, request *http.Request) {
+	profile, err := s.runtimeProfile(request.Context())
+	if err != nil {
+		http.Error(w, fmt.Sprintf("load chat runtime profile: %v", err), http.StatusInternalServerError)
+		return
+	}
 	models, err := s.resolver.Models(request.Context())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
@@ -130,12 +130,17 @@ func (s *Service) handleModels(w http.ResponseWriter, request *http.Request) {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
+	annotateProfileModels(profile.Resolved, models)
 	if err := writeJSON(w, http.StatusOK, models); err != nil {
 		serviceLog.Errorf("write chat models response: %v", err)
 	}
 }
 
 func (s *Service) handleTools(w http.ResponseWriter, request *http.Request) {
+	if _, err := s.runtimeProfile(request.Context()); err != nil {
+		http.Error(w, fmt.Sprintf("load chat runtime profile: %v", err), http.StatusInternalServerError)
+		return
+	}
 	set, err := s.loadTools(request.Context())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -157,12 +162,12 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	settings, err := s.runtimeSettings(request.Context())
+	profile, err := s.runtimeProfile(request.Context())
 	if err != nil {
-		http.Error(w, fmt.Sprintf("load chat runtime settings: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("load chat runtime profile: %v", err), http.StatusInternalServerError)
 		return
 	}
-	if err := enforceRuntimeSettings(chat, settings); err != nil {
+	if err := enforceRuntimeProfile(chat, profile.Resolved); err != nil {
 		http.Error(w, err.Error(), requestErrorStatus(err))
 		return
 	}
@@ -183,11 +188,12 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 			return
 		}
 	}
-	spec, err := requestSpec(chat, settings, attachments)
+	resolved, err := requestSpec(chat, profile, attachments)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	spec := resolved.Spec
 	set, err := s.loadTools(request.Context())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -205,7 +211,7 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 		definitions = append(definitions, s.sessionTitleTool(chat.ThreadID))
 		appendSessionTitleInstruction(&spec)
 	}
-	config := settings.ProviderConfig
+	config := profile.ProviderConfig
 	config.Model = spec.Model
 	config.Budget = spec.Budget
 	config.SessionID = spec.SessionID
@@ -217,6 +223,7 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 		return
 	}
 	spec.Model = config.Model
+	resolved.Spec = spec
 	var execution Execution
 	var callerToolEvents <-chan api.Event
 	if s.options.Authority != nil && chat.ThreadID != "" {
@@ -226,7 +233,7 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 		}
 		execution, err = s.options.Authority.Begin(request.Context(), ExecutionRequest{
 			ThreadID: chat.ThreadID, RequestID: turnID, Title: title,
-			Spec: spec, Definitions: definitions,
+			Spec: spec, Profile: resolved, Definitions: definitions,
 		})
 		if err != nil {
 			http.Error(w, fmt.Sprintf("admit chat execution: %v", err), http.StatusInternalServerError)
@@ -365,11 +372,11 @@ func validateThreadTurn(request ChatRequest, thread *Thread) error {
 	return nil
 }
 
-func (s *Service) runtimeSettings(ctx context.Context) (RuntimeSettings, error) {
-	if s.options.Settings == nil {
-		return RuntimeSettings{}, nil
+func (s *Service) runtimeProfile(ctx context.Context) (RuntimeProfile, error) {
+	if s.options.Profile == nil {
+		return RuntimeProfile{}, nil
 	}
-	return s.options.Settings.RuntimeSettings(ctx)
+	return s.options.Profile.RuntimeProfile(ctx)
 }
 
 func (s *Service) resolveThreadSession(ctx context.Context, request *ChatRequest) (*Thread, error) {
