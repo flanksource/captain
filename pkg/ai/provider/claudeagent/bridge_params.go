@@ -8,6 +8,7 @@ type initializeParams struct {
 	SystemPrompt       string                      `json:"systemPrompt,omitempty"`
 	AppendSystemPrompt string                      `json:"appendSystemPrompt,omitempty"`
 	AllowedTools       []string                    `json:"allowedTools,omitempty"`
+	DisallowedTools    []string                    `json:"disallowedTools,omitempty"`
 	MaxTurns           int                         `json:"maxTurns,omitempty"`
 	MaxBudgetUsd       float64                     `json:"maxBudgetUsd,omitempty"`
 	PermissionMode     string                      `json:"permissionMode,omitempty"`

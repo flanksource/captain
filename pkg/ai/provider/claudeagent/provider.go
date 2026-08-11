@@ -419,12 +419,14 @@ func (p *Provider) initializeParams(req ai.Request) initializeParams {
 			allowed = safeEditAllowlist
 		}
 	}
+	// An absent permissions block is "the caller declared no policy", never "the
+	// caller granted everything" — so it resolves to the ask/deny default whether
+	// or not a broker is attached. CanUseTool is nil on every path but the chat
+	// server, so the unbrokered branch is the common one: defaulting it to bypass
+	// meant a prompt with no `permissions:` ran unconfined here while the same
+	// prompt on claude-cli got the default posture.
 	if mode == "" {
-		if brokered {
-			mode = "default"
-		} else {
-			mode = "bypassPermissions"
-		}
+		mode = "default"
 	}
 
 	approvalMode := "auto"
@@ -451,6 +453,7 @@ func (p *Provider) initializeParams(req ai.Request) initializeParams {
 		SystemPrompt:       req.Prompt.System,
 		AppendSystemPrompt: req.Prompt.AppendSystem,
 		AllowedTools:       allowed,
+		DisallowedTools:    req.Permissions.Tools.Deny,
 		MaxTurns:           req.Budget.MaxTurns,
 		MaxBudgetUsd:       maxBudget,
 		PermissionMode:     mode,

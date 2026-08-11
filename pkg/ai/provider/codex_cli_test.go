@@ -72,6 +72,58 @@ func TestBuildCodexCLIArgs(t *testing.T) {
 	}
 }
 
+// TestBuildCodexCLIArgsEmitsApprovalPolicy pins the other half of CodexSafety.
+// `codex exec` has no --ask-for-approval flag (verified against codex-cli
+// 0.147.0), so the approval policy the shared helper computes has to ride on
+// -c approval_policy — dropping it left the exec path enforcing only half the
+// posture the app-server path enforced from the same helper.
+func TestBuildCodexCLIArgsEmitsApprovalPolicy(t *testing.T) {
+	tests := []struct {
+		name         string
+		permissions  api.Permissions
+		wantSandbox  string
+		wantApproval string
+	}{
+		{
+			name:         "default is read-only and still asks",
+			wantSandbox:  "read-only",
+			wantApproval: `approval_policy="on-request"`,
+		},
+		{
+			name:         "edit widens the sandbox but keeps asking",
+			permissions:  api.Permissions{Presets: []api.Preset{api.PresetEdit}},
+			wantSandbox:  "workspace-write",
+			wantApproval: `approval_policy="on-request"`,
+		},
+		{
+			name:         "bypass grants full access and stops asking",
+			permissions:  api.Permissions{Mode: api.PermissionBypass},
+			wantSandbox:  "danger-full-access",
+			wantApproval: `approval_policy="never"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args, cleanup, err := buildCodexCLIArgs(
+				codexCLIConfig{Model: "gpt-5.5"},
+				ai.Request{Prompt: api.Prompt{User: "hi"}, Permissions: tt.permissions},
+			)
+			if err != nil {
+				t.Fatalf("buildCodexCLIArgs: %v", err)
+			}
+			defer cleanup()
+			requireFlagValue(t, args, "--sandbox", tt.wantSandbox)
+			requireFlagPair(t, args, "-c", tt.wantApproval)
+			for _, arg := range args {
+				if arg == "--ask-for-approval" {
+					t.Fatalf("emitted --ask-for-approval, which codex exec does not accept: %v", args)
+				}
+			}
+		})
+	}
+}
+
 // codex ignores OPENAI_BASE_URL once an account credential is stored, so the
 // override has to be declared as a model provider on the command line.
 func TestBuildCodexCLIArgsRedirectsViaModelProvider(t *testing.T) {

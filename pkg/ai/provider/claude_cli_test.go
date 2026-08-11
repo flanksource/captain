@@ -166,6 +166,20 @@ func requireFlagValue(t *testing.T, args []string, flag, want string) {
 	}
 }
 
+// requireFlagPair asserts a (flag, value) pair appears anywhere in args. Use it
+// for repeatable flags — codex's -c carries several unrelated overrides, so
+// requireFlagValue's first-match-wins lookup answers about whichever one the
+// builder happened to emit first.
+func requireFlagPair(t *testing.T, args []string, flag, want string) {
+	t.Helper()
+	for i, arg := range args {
+		if arg == flag && i+1 < len(args) && args[i+1] == want {
+			return
+		}
+	}
+	t.Fatalf("args %v do not contain %s %q", args, flag, want)
+}
+
 func flagValue(t *testing.T, args []string, flag string) string {
 	t.Helper()
 	for i, arg := range args {

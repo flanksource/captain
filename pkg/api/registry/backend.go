@@ -128,6 +128,29 @@ func AuthEnvVars(b Backend) []string {
 	return p.SupportedEnvVars()
 }
 
+// SupportsToolPolicy reports whether a backend can carry Permissions.Tools to
+// the agent it drives.
+func SupportsToolPolicy(b Backend) bool {
+	p, mode, ok := ProviderFor(b)
+	if !ok {
+		return false
+	}
+	caps, ok := p.Caps(mode)
+	return ok && caps.ToolPolicy
+}
+
+// ToolPolicyBackends lists the backends that can carry a per-tool policy, in
+// canonical order, for help and error text.
+func ToolPolicyBackends() []Backend {
+	var out []Backend
+	for _, b := range AllBackends() {
+		if SupportsToolPolicy(b) {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
 // BackendList renders AllBackends as a comma-separated string for help/error text.
 func BackendList() string {
 	parts := make([]string, len(AllBackends()))

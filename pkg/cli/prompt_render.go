@@ -37,6 +37,11 @@ func renderPrompt(ctx context.Context, id string, renderReq PromptRenderRequest)
 	if renderReq.Spec != nil {
 		overlayRuntimeSpec(&req, &cfg, *renderReq.Spec)
 	}
+	// There is no --sandbox over HTTP, so the ref carries the whole selection:
+	// the spec override the caller sent, else the prompt's own frontmatter.
+	if err := applyRunSandbox(&req, &cfg, ""); err != nil {
+		return PromptRenderResult{}, err
+	}
 	if err := applyPromptDefaults(&req, &cfg); err != nil {
 		return PromptRenderResult{}, err
 	}
@@ -65,6 +70,9 @@ func renderEphemeralPrompt(renderReq PromptRenderRequest) (PromptRenderResult, e
 	}
 	if req.Prompt.Source == "" {
 		req.Prompt.Source = "<ephemeral>"
+	}
+	if err := applyRunSandbox(&req, &cfg, ""); err != nil {
+		return PromptRenderResult{}, err
 	}
 	if err := applyPromptDefaults(&req, &cfg); err != nil {
 		return PromptRenderResult{}, err
@@ -324,6 +332,9 @@ func overlayRuntimeSpec(req *ai.Request, cfg *ai.Config, spec api.Spec) {
 
 	if spec.Setup != nil {
 		req.Setup = spec.Setup
+	}
+	if spec.Sandbox != nil {
+		req.Sandbox = spec.Sandbox
 	}
 
 	if spec.SessionID != "" {

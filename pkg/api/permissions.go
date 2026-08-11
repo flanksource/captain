@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strings"
 
+	"github.com/flanksource/captain/pkg/api/registry"
 	"gopkg.in/yaml.v3"
 )
 
@@ -52,6 +54,36 @@ type ResourcePolicies map[string]ResourceMode
 // HasPreset reports whether the named preset is enabled.
 func (p Permissions) HasPreset(x Preset) bool {
 	return slices.Contains(p.Presets, x)
+}
+
+// RequireToolPolicySupport refuses a run whose per-tool policy the backend
+// cannot carry.
+//
+// A deny-list exists solely to forbid a tool, so dropping it silently inverts
+// the caller's intent: the agent runs with strictly more authority than the spec
+// granted, and nothing in the output says so. Only the two claude transports
+// reach a --disallowedTools equivalent today, so the rest fail loud here rather
+// than proceeding as if the policy had been applied.
+//
+// Allow-lists are checked too: on a backend with no tool filter, an allowlist is
+// equally unenforced.
+func RequireToolPolicySupport(backend Backend, permissions Permissions) error {
+	policies := permissions.Tools.Policies()
+	if len(policies) == 0 || registry.SupportsToolPolicy(backend) {
+		return nil
+	}
+	tools := sortedKeys(policies)
+	return fmt.Errorf(
+		"backend %s cannot enforce a per-tool policy (%s), and running without it would grant more than the spec allows; remove permissions.tools or use one of: %s",
+		backend, strings.Join(tools, ", "), backendListOf(registry.ToolPolicyBackends()))
+}
+
+func backendListOf(backends []Backend) string {
+	out := make([]string, len(backends))
+	for i, b := range backends {
+		out[i] = string(b)
+	}
+	return strings.Join(out, ", ")
 }
 
 // Validate checks the mode, presets, and tool modes are recognised.

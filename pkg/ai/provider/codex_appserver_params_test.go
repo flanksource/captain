@@ -92,33 +92,80 @@ func TestBuildResumeParams(t *testing.T) {
 	assert.Equal(t, "/repo", p["cwd"])
 }
 
-func TestHandleApproval_AutoApproves(t *testing.T) {
-	c, err := NewCodexAppServer(ai.Config{Model: api.Model{Name: "m"}})
-	require.NoError(t, err)
-	tests := []struct {
-		method string
-		key    string
-		want   any
-	}{
-		{"execCommandApproval", "decision", "approved"},
-		{"applyPatchApproval", "decision", "approved"},
-		{"item/commandExecution/requestApproval", "decision", "accept"},
-		{"item/fileChange/requestApproval", "decision", "accept"},
-		{"some/unknown/approval", "decision", "approved"},
+// TestHandleApproval_AnswersFromPosture pins the approval policy. An approval
+// request is codex asking to exceed the sandbox it was started with, so only a
+// run that declared full access may accept one — otherwise buildThreadStartParams'
+// sandbox and approvalPolicy are advisory and `mode: plan` gates nothing.
+// The decision vocabularies are codex's own, from `codex app-server
+// generate-json-schema`: accept|decline (item/*) and approved|denied (legacy).
+func TestHandleApproval_AnswersFromPosture(t *testing.T) {
+	methods := []struct{ method, accept, decline string }{
+		{"execCommandApproval", "approved", "denied"},
+		{"applyPatchApproval", "approved", "denied"},
+		{"item/commandExecution/requestApproval", "accept", "decline"},
+		{"item/fileChange/requestApproval", "accept", "decline"},
+		{"some/unknown/approval", "approved", "denied"},
 	}
-	for _, tc := range tests {
-		t.Run(tc.method, func(t *testing.T) {
-			res, rpcErr := c.handleApproval(tc.method, nil)
+	postures := []struct {
+		name        string
+		permissions api.Permissions
+		wantAccept  bool
+	}{
+		{
+			name:        "the default read-only posture declines",
+			permissions: api.Permissions{},
+		},
+		{
+			name:        "plan declines",
+			permissions: api.Permissions{Mode: api.PermissionPlan},
+		},
+		{
+			name:        "the edit preset declines escalation beyond its workspace",
+			permissions: api.Permissions{Presets: []api.Preset{api.PresetEdit}},
+		},
+		{
+			name:        "an explicit bypass has already granted it",
+			permissions: api.Permissions{Mode: api.PermissionBypass},
+			wantAccept:  true,
+		},
+	}
+
+	for _, posture := range postures {
+		t.Run(posture.name, func(t *testing.T) {
+			c, err := NewCodexAppServer(ai.Config{Model: api.Model{Name: "m"}})
+			require.NoError(t, err)
+			c.setPosture(postureFor(ai.Request{Permissions: posture.permissions}))
+
+			for _, m := range methods {
+				want := m.decline
+				if posture.wantAccept {
+					want = m.accept
+				}
+				res, rpcErr := c.handleApproval(m.method, nil)
+				assert.Nil(t, rpcErr)
+				decision, ok := res.(map[string]string)
+				require.True(t, ok, "%s returns a string map", m.method)
+				assert.Equal(t, want, decision["decision"], m.method)
+			}
+
+			// Additional permissions are never granted: the thread already carries
+			// everything the run declared.
+			res, rpcErr := c.handleApproval("item/permissions/requestApproval", nil)
 			assert.Nil(t, rpcErr)
-			m, ok := res.(map[string]string)
-			require.True(t, ok, "decision approvals return a string map")
-			assert.Equal(t, tc.want, m[tc.key])
+			perm, ok := res.(map[string]any)
+			require.True(t, ok)
+			assert.Equal(t, "turn", perm["scope"])
+			assert.Empty(t, perm["permissions"])
 		})
 	}
-	res, rpcErr := c.handleApproval("item/permissions/requestApproval", nil)
+}
+
+// TestHandleApproval_PostureDefaultsClosed guards the zero value: a provider
+// that has not started a turn must not answer an approval as though it had.
+func TestHandleApproval_PostureDefaultsClosed(t *testing.T) {
+	c, err := NewCodexAppServer(ai.Config{Model: api.Model{Name: "m"}})
+	require.NoError(t, err)
+	res, rpcErr := c.handleApproval("item/commandExecution/requestApproval", nil)
 	assert.Nil(t, rpcErr)
-	perm, ok := res.(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "turn", perm["scope"])
-	assert.NotNil(t, perm["permissions"])
+	assert.Equal(t, "decline", res.(map[string]string)["decision"])
 }

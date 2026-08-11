@@ -20,9 +20,9 @@ var (
 		EnvVars:       []string{"ANTHROPIC_API_KEY"},
 		modes: map[RuntimeMode]ModeCapabilities{
 			ModeAPI:   {Backend: BackendAnthropic, Streaming: true, CallerTools: true, MediaTypes: []string{"image/*"}},
-			ModeCLI:   {Backend: BackendClaudeCLI, Streaming: true, Resume: true},
-			ModeAgent: {Backend: BackendClaudeAgent, Streaming: true, Resume: true, Interrupt: true, Steer: true, CallerTools: true, MediaTypes: []string{"image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf"}},
-			ModeCmux:  {Backend: BackendClaudeCmux, Streaming: true, Resume: true, Keyless: true},
+			ModeCLI:   {Backend: BackendClaudeCLI, Streaming: true, Resume: true, ToolPolicy: true},
+			ModeAgent: {Backend: BackendClaudeAgent, Streaming: true, Resume: true, Interrupt: true, Steer: true, CallerTools: true, ToolPolicy: true, MediaTypes: []string{"image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf"}},
+			ModeCmux:  {Backend: BackendClaudeCmux, Streaming: true, Resume: true, Keyless: true, ToolPolicy: true},
 		},
 		modeTokens: sortModeTokens([]modeToken{
 			{prefix: "claude-agent", mode: ModeAgent},

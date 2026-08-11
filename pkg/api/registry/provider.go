@@ -29,6 +29,12 @@ type ModeCapabilities struct {
 	// CallerTools reports that the adapter can expose caller-supplied
 	// api.Config.Tools rather than only its built-in tool ecosystem.
 	CallerTools bool
+	// ToolPolicy reports that the adapter can carry Permissions.Tools — the
+	// per-tool allow/deny policy — to the agent. It is declared rather than
+	// inferred because a backend that cannot carry a deny-list must refuse the
+	// run: silently dropping the one field whose whole purpose is to forbid a
+	// tool is the failure this flag exists to prevent.
+	ToolPolicy bool
 	// MediaTypes is the adapter's attachment ceiling. A model's own declared
 	// types are clamped against it — the adapter cannot carry what it cannot send.
 	MediaTypes []string

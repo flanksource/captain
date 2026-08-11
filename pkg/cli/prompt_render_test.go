@@ -8,6 +8,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/api/registry"
 	"github.com/flanksource/captain/pkg/captainconfig"
 	"github.com/flanksource/commons-db/shell"
 )
@@ -189,6 +190,92 @@ func TestRenderPromptEphemeralSpec(t *testing.T) {
 	}
 	if rendered.Input.Cwd() != cwd {
 		t.Fatalf("setup cwd = %q, want %q", rendered.Input.Cwd(), cwd)
+	}
+}
+
+// TestRenderPromptResolvesSandbox pins the sandbox contract of the HTTP/Spec
+// render path. Sandbox resolution used to be reachable only from overlayCLI, so
+// a run submitted over HTTP dropped both the prompt's own `sandbox:` frontmatter
+// and the configured sandbox.default and executed unconfined — silently, because
+// the fail-loud guards only fire once a selection exists.
+func TestRenderPromptResolvesSandbox(t *testing.T) {
+	tests := []struct {
+		name          string
+		frontmatter   string
+		globalDefault string
+		override      *api.SandboxRef
+		want          registry.SandboxKind
+	}{
+		{
+			name:        "frontmatter selects the sandbox",
+			frontmatter: "sandbox: srt\n",
+			want:        registry.SandboxSRT,
+		},
+		{
+			name:          "global default applies when the prompt selects none",
+			globalDefault: "srt",
+			want:          registry.SandboxSRT,
+		},
+		{
+			name:          "frontmatter beats the global default",
+			frontmatter:   "sandbox: none\n",
+			globalDefault: "srt",
+			want:          registry.SandboxNone,
+		},
+		{
+			name:          "request spec beats both",
+			frontmatter:   "sandbox: none\n",
+			globalDefault: "none",
+			override:      &api.SandboxRef{Backend: "srt"},
+			want:          registry.SandboxSRT,
+		},
+		{
+			name: "nothing selects anything",
+			want: registry.SandboxNone,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			isolateCaptainConfig(t)
+			if tt.globalDefault != "" {
+				if err := captainconfig.Save(captainconfig.Config{
+					Sandbox: captainconfig.SandboxDefaults{Default: tt.globalDefault},
+				}); err != nil {
+					t.Fatalf("save captain config: %v", err)
+				}
+			}
+
+			dir := t.TempDir()
+			t.Chdir(t.TempDir())
+			ctx := ContextWithPromptDirs(context.Background(), []string{dir})
+			created, err := createPrompt(ctx, map[string]any{
+				"name": "Sandboxed",
+				"content": "---\nname: Sandboxed\nmodel: claude-code-opus\n" + tt.frontmatter +
+					"---\n{{role \"user\"}}\nHello\n",
+			})
+			if err != nil {
+				t.Fatalf("createPrompt() err = %v", err)
+			}
+
+			rendered, err := renderPrompt(ctx, created.ID, PromptRenderRequest{
+				Spec: &api.Spec{Sandbox: tt.override},
+			})
+			if err != nil {
+				t.Fatalf("renderPrompt() err = %v", err)
+			}
+			if rendered.ValidationError != "" {
+				t.Fatalf("render validation error = %q", rendered.ValidationError)
+			}
+
+			got := registry.SandboxNone
+			if selection := rendered.Config.ResolvedSandbox(); selection != nil {
+				got = selection.Kind
+			}
+			if got != tt.want {
+				t.Fatalf("resolved sandbox = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

@@ -129,6 +129,9 @@ func buildCodexCLIArgs(cfg codexCLIConfig, req ai.Request) ([]string, func(), er
 	if err := ai.ValidateAttachmentCompatibility([]api.Model{{Name: model, Backend: api.BackendCodexCLI}}, req.Prompt.Attachments); err != nil {
 		return nil, cleanup, err
 	}
+	if err := api.RequireToolPolicySupport(api.BackendCodexCLI, req.Permissions); err != nil {
+		return nil, cleanup, err
+	}
 	if cfg.APIURL != "" {
 		args = append(args, codexProviderOverride(cfg.APIURL)...)
 	}
@@ -148,9 +151,16 @@ func buildCodexCLIArgs(cfg codexCLIConfig, req ai.Request) ([]string, func(), er
 	if cwd := req.Cwd(); cwd != "" {
 		args = append(args, "-C", cwd)
 	}
-	sandbox, _ := codexSafety(req)
+	// Both halves of the posture, so the exec path enforces what the app-server
+	// path enforces from the same helper. `codex exec` has no --ask-for-approval
+	// flag, so the approval policy rides on the config override instead; the key
+	// and its accepted values are validated by --strict-config.
+	sandbox, approval := codexSafety(req)
 	if sandbox != "" {
 		args = append(args, "--sandbox", sandbox)
+	}
+	if approval != "" {
+		args = append(args, "-c", fmt.Sprintf("approval_policy=%q", approval))
 	}
 	if req.Memory.SkipMemory || req.Memory.Bare || req.Permissions.HasPreset(api.PresetBare) {
 		args = append(args, "--ephemeral")
