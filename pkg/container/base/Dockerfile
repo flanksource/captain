@@ -1,5 +1,9 @@
 # syntax=docker/dockerfile:1
-FROM flanksource/base-image:latest
+# Pinned by digest, not by tag: republishing the same image tag has to produce
+# the same contents or a rollback lands on something other than what it rolled
+# back to. Bump the digest deliberately (docker buildx imagetools inspect
+# flanksource/base-image:latest) rather than letting the tag drift underneath.
+FROM flanksource/base-image:latest@sha256:f5f0945741678d7702eb13da393102dbdd10a19fb20b6e06a7efe241d5395173
 
 ARG TZ
 ENV TZ="$TZ"
@@ -8,12 +12,29 @@ ARG USERNAME=claude
 ARG USER_UID=501
 ARG USER_GID=20
 
+# Every mutable input is an explicit default here and an override in
+# .github/workflows/publish-image.yml, so a published tag records exactly what
+# went into it. `latest` is deliberately absent: it is what made two builds of
+# one tag differ.
 ARG NODE_MAJOR=22
 ARG GO_VERSION=1.26.1
+# Official checksums from https://go.dev/dl/?mode=json — the archive is verified
+# before extraction, so a compromised or truncated download fails the build
+# instead of being unpacked into /usr/local.
+ARG GO_SHA256_AMD64=031f088e5d955bab8657ede27ad4e3bc5b7c1ba281f05f245bcc304f327c987a
+ARG GO_SHA256_ARM64=a290581cfe4fe28ddd737dde3095f3dbeb7f2e4065cab4eae44dfc53b760c2f7
 ARG GIT_DELTA_VERSION=0.18.2
-ARG CLAUDE_CODE_VERSION=latest
-ARG CODEX_VERSION=latest
-ARG GEMINI_CLI_VERSION=latest
+# Kept in step with go.mod's github.com/onsi/ginkgo/v2 so the container's runner
+# matches the one the suites are compiled against.
+ARG GINKGO_VERSION=v2.28.1
+ARG PLAYWRIGHT_VERSION=1.62.1
+ARG CLAUDE_CODE_VERSION=2.1.227
+ARG CODEX_VERSION=0.147.0
+ARG GEMINI_CLI_VERSION=0.54.4
+ARG TSX_VERSION=4.23.12
+ARG TYPESCRIPT_VERSION=7.0.2
+ARG PNPM_VERSION=11.21.0
+ARG AGENT_BROWSER_VERSION=0.34.0
 
 # Create user/group matching host (default: moshe:501:20)
 RUN if ! getent group ${USER_GID} > /dev/null 2>&1; then groupadd -g ${USER_GID} ${USERNAME}; fi && \
@@ -81,13 +102,24 @@ RUN ARCH=$(dpkg --print-architecture) && \
   sudo dpkg -i "git-delta_${GIT_DELTA_VERSION}_${ARCH}.deb" && \
   rm "git-delta_${GIT_DELTA_VERSION}_${ARCH}.deb"
 
-# Go toolchain — needed to build/test the Go repos agents work in
+# Go toolchain — needed to build/test the Go repos agents work in. Downloaded to
+# a file and checksummed before extraction: piping curl straight into tar unpacks
+# whatever arrives, so a tampered or truncated archive would land in /usr/local
+# with the build still reporting success.
 RUN ARCH=$(dpkg --print-architecture) && \
-  curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" | tar -C /usr/local -xz
+  case "$ARCH" in \
+    amd64) GO_SHA256="${GO_SHA256_AMD64}" ;; \
+    arm64) GO_SHA256="${GO_SHA256_ARM64}" ;; \
+    *) echo "no pinned go${GO_VERSION} checksum for architecture ${ARCH}" >&2; exit 1 ;; \
+  esac && \
+  curl -fsSL -o /tmp/go.tar.gz "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" && \
+  echo "${GO_SHA256}  /tmp/go.tar.gz" | sha256sum -c - && \
+  tar -C /usr/local -xzf /tmp/go.tar.gz && \
+  rm /tmp/go.tar.gz
 ENV GOROOT=/usr/local/go
 ENV GOPATH=/home/${USERNAME}/go
 ENV PATH=$PATH:/usr/local/go/bin:/home/${USERNAME}/go/bin
-RUN GOBIN=/usr/local/bin go install github.com/onsi/ginkgo/v2/ginkgo@latest && \
+RUN GOBIN=/usr/local/bin go install github.com/onsi/ginkgo/v2/ginkgo@${GINKGO_VERSION} && \
   rm -rf /root/.cache/go-build /root/go && \
   mkdir -p ${GOPATH}/bin && chown -R ${USER_UID}:${USER_GID} ${GOPATH}
 
@@ -108,7 +140,7 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 # libraries Chromium links against; `agent-browser install --with-deps` cannot,
 # because it still asks for noble's pre-t64 package names.
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-RUN npx -y playwright install --with-deps chromium && \
+RUN npx -y playwright@${PLAYWRIGHT_VERSION} install --with-deps chromium && \
   chmod -R a+rX /ms-playwright && \
   apt-get clean && rm -rf /var/lib/apt/lists/* /root/.npm
 
@@ -131,10 +163,10 @@ RUN npm install -g \
   @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
   @openai/codex@${CODEX_VERSION} \
   @google/gemini-cli@${GEMINI_CLI_VERSION} \
-  tsx \
-  typescript \
-  pnpm \
-  agent-browser \
+  tsx@${TSX_VERSION} \
+  typescript@${TYPESCRIPT_VERSION} \
+  pnpm@${PNPM_VERSION} \
+  agent-browser@${AGENT_BROWSER_VERSION} \
   && npm cache clean --force
 
 USER root

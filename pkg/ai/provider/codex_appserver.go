@@ -131,11 +131,7 @@ func (c *CodexAppServer) ExecuteStream(ctx context.Context, req ai.Request) (<-c
 	if err := c.prepareCallerTools(req); err != nil {
 		return nil, err
 	}
-	// Record before the process can send an approval request: the rpc read loop
-	// is already live for a resumed provider, and a stale posture would answer
-	// this run's approvals from the last run's policy.
-	c.setPosture(postureFor(req))
-	c.turnMu.Lock()
+	c.beginTurn(req)
 	if err := c.ensureStarted(ctx); err != nil {
 		c.turnMu.Unlock()
 		return nil, err
@@ -195,6 +191,18 @@ func (c *CodexAppServer) failTurn(ts *turnState, err error) {
 	c.clearActive(ts)
 	ts.send(ai.Event{Kind: ai.EventError, Error: extractCodexErrorText(err.Error()), Model: c.model})
 	ts.finish()
+}
+
+// beginTurn takes the turn lock and records this run's approval posture under
+// it. The posture must be recorded before the process can send an approval
+// request — the rpc read loop is already live for a resumed provider, and a
+// stale posture would answer this run's approvals from the last run's policy —
+// but never before the lock: a second, more permissive ExecuteStream queued
+// behind an in-flight turn would otherwise overwrite the posture that turn's
+// approvals are still being judged against. driveTurn releases turnMu.
+func (c *CodexAppServer) beginTurn(req ai.Request) {
+	c.turnMu.Lock()
+	c.setPosture(postureFor(req))
 }
 
 func (c *CodexAppServer) setActive(ts *turnState) { c.mu.Lock(); c.active = ts; c.mu.Unlock() }

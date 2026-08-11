@@ -274,6 +274,11 @@ func (p *Provider) resultError(req ai.Request, subtype, lastErr string) error {
 // events back. Turns are serialized via turnMu so the single SDK session is
 // never driven by two prompts at once.
 func (p *Provider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai.Event, error) {
+	// claude-agent advertises tool-policy support, but only for allow/deny:
+	// initializeParams has no way to express the policies the guard rejects.
+	if err := api.RequireToolPolicySupport(api.BackendClaudeAgent, req.Permissions); err != nil {
+		return nil, err
+	}
 	schema, err := requestSchemaJSON(req)
 	if err != nil {
 		return nil, err
@@ -410,7 +415,10 @@ func (p *Provider) initializeParams(req ai.Request) initializeParams {
 	brokered := p.cfg.CanUseTool != nil
 
 	mode := string(req.Permissions.Mode)
-	allowed := req.Permissions.Tools.Allow
+	// AllowList/DenyList, not the raw Allow/Deny slices: an `off` tool mode is a
+	// deny that only the normalized policy map reports, and forwarding the raw
+	// slice would let `tools: {Bash: off}` run.
+	allowed := req.Permissions.Tools.AllowList()
 	if req.Permissions.HasPreset(api.PresetEdit) {
 		if mode == "" {
 			mode = "acceptEdits"
@@ -453,7 +461,7 @@ func (p *Provider) initializeParams(req ai.Request) initializeParams {
 		SystemPrompt:       req.Prompt.System,
 		AppendSystemPrompt: req.Prompt.AppendSystem,
 		AllowedTools:       allowed,
-		DisallowedTools:    req.Permissions.Tools.Deny,
+		DisallowedTools:    req.Permissions.Tools.DenyList(),
 		MaxTurns:           req.Budget.MaxTurns,
 		MaxBudgetUsd:       maxBudget,
 		PermissionMode:     mode,

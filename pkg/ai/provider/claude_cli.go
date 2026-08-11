@@ -89,6 +89,11 @@ func (c *ClaudeCLI) ExecuteStream(ctx context.Context, req ai.Request) (<-chan a
 func buildClaudeCLIArgs(model string, req ai.Request) ([]string, func(), error) {
 	args := []string{"-p", "--verbose", "--output-format", "stream-json"}
 	cleanup := func() {}
+	// claude-cli advertises tool-policy support, but only for allow/deny: the
+	// guard still has to reject the policies no transport can express.
+	if err := api.RequireToolPolicySupport(api.BackendClaudeCLI, req.Permissions); err != nil {
+		return nil, cleanup, err
+	}
 	if m := claudeCLIModel(model); m != "" {
 		args = append(args, "--model", m)
 	}
@@ -110,11 +115,11 @@ func buildClaudeCLIArgs(model string, req ai.Request) ([]string, func(), error) 
 	if mode := cliClaudePermissionMode(req.Permissions.Mode); mode != "" {
 		args = append(args, "--permission-mode", mode)
 	}
-	if len(req.Permissions.Tools.Allow) > 0 {
-		args = append(args, "--allowedTools", strings.Join(req.Permissions.Tools.Allow, ","))
+	if allow := req.Permissions.Tools.AllowList(); len(allow) > 0 {
+		args = append(args, "--allowedTools", strings.Join(allow, ","))
 	}
-	if len(req.Permissions.Tools.Deny) > 0 {
-		args = append(args, "--disallowedTools", strings.Join(req.Permissions.Tools.Deny, ","))
+	if deny := req.Permissions.Tools.DenyList(); len(deny) > 0 {
+		args = append(args, "--disallowedTools", strings.Join(deny, ","))
 	}
 	for _, dir := range req.Memory.Skills {
 		if strings.TrimSpace(dir) != "" {

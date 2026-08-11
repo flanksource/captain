@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -276,6 +277,59 @@ func TestRenderPromptResolvesSandbox(t *testing.T) {
 				t.Fatalf("resolved sandbox = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestRenderPromptPreservesSandboxMetadata pins the rest of the ref. Resolution
+// only ever consumed SandboxRef.Backend, so a spec that also pinned an agent or
+// a per-run policy could resolve to the right kind while silently dropping the
+// two fields that bound what the dispatched run may touch.
+func TestRenderPromptPreservesSandboxMetadata(t *testing.T) {
+	isolateCaptainConfig(t)
+	dir := t.TempDir()
+	t.Chdir(t.TempDir())
+	ctx := ContextWithPromptDirs(context.Background(), []string{dir})
+	created, err := createPrompt(ctx, map[string]any{
+		"name":    "Sandboxed",
+		"content": "---\nname: Sandboxed\nmodel: claude-code-opus\nsandbox: none\n---\n{{role \"user\"}}\nHello\n",
+	})
+	if err != nil {
+		t.Fatalf("createPrompt() err = %v", err)
+	}
+
+	policy := &api.SandboxPolicy{Paths: []string{"pkg/**"}, MaxAttempts: 3}
+	rendered, err := renderPrompt(ctx, created.ID, PromptRenderRequest{
+		Spec: &api.Spec{Sandbox: &api.SandboxRef{Backend: "srt", Agent: "builder-1", Policy: policy}},
+	})
+	if err != nil {
+		t.Fatalf("renderPrompt() err = %v", err)
+	}
+	if rendered.ValidationError != "" {
+		t.Fatalf("render validation error = %q", rendered.ValidationError)
+	}
+
+	if rendered.Input.Sandbox == nil {
+		t.Fatal("request sandbox ref = nil, want the spec's ref")
+	}
+	if rendered.Input.Sandbox.Agent != "builder-1" {
+		t.Errorf("request sandbox agent = %q, want builder-1", rendered.Input.Sandbox.Agent)
+	}
+	if !reflect.DeepEqual(rendered.Input.Sandbox.Policy, policy) {
+		t.Errorf("request sandbox policy = %+v, want %+v", rendered.Input.Sandbox.Policy, policy)
+	}
+
+	selection := rendered.Config.ResolvedSandbox()
+	if selection == nil {
+		t.Fatal("resolved sandbox = nil, want the srt selection")
+	}
+	if selection.Kind != registry.SandboxSRT {
+		t.Errorf("resolved sandbox kind = %q, want %q", selection.Kind, registry.SandboxSRT)
+	}
+	if selection.Agent != "builder-1" {
+		t.Errorf("resolved sandbox agent = %q, want builder-1", selection.Agent)
+	}
+	if !reflect.DeepEqual(selection.Policy, policy) {
+		t.Errorf("resolved sandbox policy = %+v, want %+v", selection.Policy, policy)
 	}
 }
 

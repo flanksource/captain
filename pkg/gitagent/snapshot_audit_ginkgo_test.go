@@ -11,11 +11,11 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-// A4.3 audit of commons-db's dirty-state mechanism (shell.Checkout.Dirty →
-// applyDirtyState), which issue #39 §4 names as the dispatch-snapshot
+// A4.3 audit of commons-db's dirty-state mechanism (shell.Worktree.Uncommitted
+// → populateWorktree), which issue #39 §4 names as the dispatch-snapshot
 // substrate. The dispatch snapshot does NOT use it — TakeSnapshot builds the
-// commit from git plumbing directly — but Spec.Setup.Checkout.Dirty remains a
-// user-facing surface, so this suite pins what round-trips and what does not.
+// commit from git plumbing directly — but Spec.Setup.Checkout.Worktree remains
+// a user-facing surface, so this suite pins what round-trips and what does not.
 // Failures here after a commons-db upgrade mean upstream behaviour changed:
 // re-audit before trusting it. Known gaps (filed upstream rather than forked,
 // A4.2): skip-worktree edits are silently dropped, CRLF normalization is not
@@ -26,9 +26,12 @@ var _ = Describe("commons-db dirty-state audit (A4.3)", func() {
 		return shell.Prepare(dbcontext.NewContext(context.Background()), &shell.Setup{
 			BaseDir: GinkgoT().TempDir(),
 			Checkout: &shell.Checkout{
-				Path:     src,
-				Dirty:    &shell.Dirty{Stash: shell.StashAll},
-				Worktree: &shell.Worktree{Mode: shell.WorktreeNew, Prefix: "captain-audit"},
+				Path: src,
+				Worktree: &shell.Worktree{
+					Mode:        shell.WorktreeNew,
+					Prefix:      "captain-audit",
+					Uncommitted: shell.CloneClone,
+				},
 			},
 		})
 	}

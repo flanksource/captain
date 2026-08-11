@@ -88,3 +88,38 @@ func TestInitializeParams_EditPresetAllowlist(t *testing.T) {
 	assert.Equal(t, []string{"Read"}, explicit.AllowedTools,
 		"an explicit allowlist must not be replaced by the preset's")
 }
+
+// TestInitializeParams_NormalizesToolModes pins that the SDK child is configured
+// from the canonical policy map, not the raw Allow/Deny slices: `tools: {Bash:
+// off}` lands in Modes only, so forwarding Tools.Deny verbatim would let a tool
+// the spec turned off run.
+func TestInitializeParams_NormalizesToolModes(t *testing.T) {
+	p := &Provider{}
+	params := p.initializeParams(ai.Request{
+		Permissions: api.Permissions{
+			Tools: api.Tools{
+				Deny:  []string{"WebFetch"},
+				Modes: map[string]api.ToolMode{"Bash": api.ToolModeOff, "Read": api.ToolModeOn},
+			},
+		},
+	})
+	assert.Equal(t, []string{"Bash", "WebFetch"}, params.DisallowedTools,
+		"an off tool mode is a deny and must reach disallowedTools")
+	// `on` resolves to auto — the agent's normal behaviour — so it must not
+	// narrow the run into a one-tool allowlist.
+	assert.Empty(t, params.AllowedTools)
+}
+
+// TestExecuteStream_RefusesUnenforceableAskPolicy keeps the advertised
+// tool-policy support honest: claude-agent carries allow/deny lists only, so an
+// `ask` policy must fail loudly rather than resolve to "allowed".
+func TestExecuteStream_RefusesUnenforceableAskPolicy(t *testing.T) {
+	p := &Provider{}
+	_, err := p.ExecuteStream(context.Background(), ai.Request{
+		Permissions: api.Permissions{
+			Tools: api.Tools{Modes: map[string]api.ToolMode{"Bash": api.ToolModeAsk}},
+		},
+	})
+	assert.ErrorContains(t, err, "ask")
+	assert.ErrorContains(t, err, "Bash")
+}

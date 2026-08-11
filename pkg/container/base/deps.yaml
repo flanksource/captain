@@ -54,9 +54,15 @@ registry:
     version_command: --version
     version_regex: 'golangci-lint has version v?(\d+\.\d+\.\d+)'
 
+# Pinned so republishing an image tag reinstalls the same binaries; bump these
+# deliberately when the image is refreshed.
 dependencies:
-  task: latest
-  golangci-lint: latest
-  gavel: latest
-  repomap: latest
+  task: v3.52.0
+  golangci-lint: v2.12.2
+  gavel: v0.0.54
+  repomap: v0.4.0
+  # captain is the one deliberate exception: this image ships the release that
+  # triggered the publish, and the image tag records which one. Pinning it here
+  # would mean editing this file on every release to say what the tag already
+  # says. publish-image.yml refuses to run before that release exists.
   captain: latest
