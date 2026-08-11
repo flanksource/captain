@@ -20,8 +20,8 @@ var _ = Describe("Open options", func() {
 		calls = nil
 		opened = &gorm.DB{}
 		deps = dependencies{
-			migrate: func(_ context.Context, dsn string) error {
-				calls = append(calls, "migrate:"+dsn)
+			migrate: func(_ context.Context, dsn, schemaName string) error {
+				calls = append(calls, "migrate:"+dsn+":"+schemaName)
 				return nil
 			},
 			open: func(dsn string, _ *gorm.Config) (*gorm.DB, error) {
@@ -44,7 +44,36 @@ var _ = Describe("Open options", func() {
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(db.Gorm()).To(BeIdenticalTo(opened))
-		Expect(calls).To(Equal([]string{"migrate:postgres://captain", "open:postgres://captain"}))
+		Expect(calls).To(Equal([]string{"migrate:postgres://captain:public", "open:postgres://captain"}))
+	})
+
+	It("scopes migrations and Captain-owned pools to the selected schema", func(ctx SpecContext) {
+		db, err := open(ctx, deps,
+			WithDSN("postgres://captain/database?sslmode=disable"),
+			WithSchema("agent_namespace_context"),
+			WithMigrations(),
+		)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(db.Schema()).To(Equal("agent_namespace_context"))
+		Expect(calls).To(Equal([]string{
+			"migrate:postgres://captain/database?sslmode=disable:agent_namespace_context",
+			"open:postgres://captain/database?search_path=agent_namespace_context&sslmode=disable",
+		}))
+	})
+
+	It("rejects an invalid explicit schema before migrations or pool creation", func(ctx SpecContext) {
+		_, err := open(ctx, deps, WithDSN("postgres://captain"), WithSchema(""), WithMigrations())
+
+		Expect(err).To(MatchError(ContainSubstring("captain database schema")))
+		Expect(calls).To(BeEmpty())
+	})
+
+	It("rejects a non-public schema on a host-owned pool", func(ctx SpecContext) {
+		_, err := open(ctx, deps, WithGorm(&gorm.DB{}), WithSchema("agent_namespace_context"))
+
+		Expect(err).To(MatchError(ContainSubstring("host-owned GORM pool")))
+		Expect(calls).To(BeEmpty())
 	})
 
 	It("reuses an injected pool without a DSN by default", func(ctx SpecContext) {
@@ -65,7 +94,7 @@ var _ = Describe("Open options", func() {
 
 	It("does not open after an explicit migration fails", func(ctx SpecContext) {
 		migrationErr := errors.New("migration failed")
-		deps.migrate = func(context.Context, string) error { return migrationErr }
+		deps.migrate = func(context.Context, string, string) error { return migrationErr }
 
 		_, err := open(ctx, deps, WithDSN("postgres://captain"), WithMigrations())
 
