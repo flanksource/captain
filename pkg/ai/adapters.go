@@ -2,6 +2,8 @@ package ai
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -75,41 +77,97 @@ func (a AdapterStatus) Ready() bool {
 // CachedAdapters so the cache keeps raw probe data and a toggle takes effect on
 // the next read instead of after the TTL expires.
 func ApplyDisabled(adapters []AdapterStatus) []AdapterStatus {
+	out := cloneAdapterStatuses(adapters)
 	disabled := Disabled()
 	if disabled.Empty() {
-		return adapters
+		return out
 	}
-	out := make([]AdapterStatus, len(adapters))
-	for i, a := range adapters {
+	for i, a := range out {
 		backend := Backend(a.Backend)
 		a.Disabled = disabled.Backend(backend)
 		a.DisabledReason = disabled.Reason(backend)
-		details := make([]ModelDef, len(a.ModelDetails))
 		for j, md := range a.ModelDetails {
 			md.Disabled = a.Disabled || disabled.Model(backend, md.ID)
 			md.SupportedEfforts = disabled.Efforts(md.SupportedEfforts)
 			if disabled.Effort(md.DefaultEffort) {
 				md.DefaultEffort = api.EffortNone
 			}
-			details[j] = md
+			a.ModelDetails[j] = md
 		}
-		a.ModelDetails = details
 		out[i] = a
 	}
 	return out
+}
+
+func cloneAdapterStatuses(adapters []AdapterStatus) []AdapterStatus {
+	out := make([]AdapterStatus, len(adapters))
+	for i, adapter := range adapters {
+		adapter.Models = append([]string(nil), adapter.Models...)
+		adapter.ModelDetails = cloneModelDefs(adapter.ModelDetails)
+		out[i] = adapter
+	}
+	return out
+}
+
+func cloneModelDefs(models []ModelDef) []ModelDef {
+	out := make([]ModelDef, len(models))
+	for i, model := range models {
+		model.InputMediaTypes = append([]string(nil), model.InputMediaTypes...)
+		model.SupportedEfforts = append([]api.Effort(nil), model.SupportedEfforts...)
+		out[i] = model
+	}
+	return out
+}
+
+// CredentialSnapshot is an immutable set of already-resolved API credentials.
+// NewCredentialSnapshot clones its input, including an empty map, so callers can
+// explicitly suppress process-global credential lookup. The zero value means no
+// snapshot was supplied and lets ResolveModels resolve the relevant credentials
+// once at operation start for backwards compatibility.
+type CredentialSnapshot struct {
+	apiKeys  map[Backend]api.ResolvedAPIKey
+	supplied bool
+}
+
+func NewCredentialSnapshot(apiKeys map[Backend]api.ResolvedAPIKey) CredentialSnapshot {
+	cloned := make(map[Backend]api.ResolvedAPIKey, len(apiKeys))
+	for backend, resolved := range apiKeys {
+		cloned[backend] = resolved
+	}
+	return CredentialSnapshot{apiKeys: cloned, supplied: true}
+}
+
+// APIKey returns the resolved credential for backend, or an empty value when
+// that backend was not present in the snapshot.
+func (s CredentialSnapshot) APIKey(backend Backend) api.ResolvedAPIKey {
+	return s.apiKeys[backend]
+}
+
+func (s CredentialSnapshot) clone() CredentialSnapshot {
+	if !s.supplied {
+		return CredentialSnapshot{}
+	}
+	return NewCredentialSnapshot(s.apiKeys)
 }
 
 // AuthProbe abstracts the host environment (env vars, PATH, credential files)
 // so resolveAdapter stays pure and testable. Fields are exported so callers in
 // other packages (and their tests) can construct a hermetic probe.
 type AuthProbe struct {
-	Getenv         func(string) string
-	LookPath       func(string) (string, error)
-	FileExists     func(string) bool
-	CodexModels    func(context.Context, string) ([]ModelDef, error)
-	APICredentials map[Backend]api.ResolvedAPIKey
-	ProbeError     error
-	Home           string
+	Getenv             func(string) string
+	LookPath           func(string) (string, error)
+	FileExists         func(string) bool
+	FileIdentity       func(string) string
+	ExecutableIdentity func(string) string
+	CodexModels        func(context.Context, string) ([]ModelDef, error)
+	APICredentials     map[Backend]api.ResolvedAPIKey
+	APIURLs            map[Backend]string
+	RuntimeStatuses    map[Backend]RuntimeStatus
+	ProbeError         error
+	Home               string
+
+	credentials      CredentialSnapshot
+	stateFingerprint string
 }
 
 // OSAuthProbe wires AuthProbe to the real host environment.
@@ -123,7 +181,9 @@ func OSAuthProbe() AuthProbe {
 			_, err := os.Stat(p)
 			return err == nil
 		},
-		Home: home,
+		FileIdentity:       hostFileIdentity,
+		ExecutableIdentity: hostExecutableIdentity,
+		Home:               home,
 	}
 	probe.APICredentials = make(map[Backend]api.ResolvedAPIKey, len(apiBackends))
 	for _, backend := range apiBackends {
@@ -134,7 +194,199 @@ func OSAuthProbe() AuthProbe {
 		}
 		probe.APICredentials[backend] = resolved
 	}
+	probe.APIURLs = make(map[Backend]string, len(apiBackends))
+	for _, backend := range apiBackends {
+		if apiURL := firstEnv(modelAPIURLEnvVars(backend), os.Getenv); apiURL != "" {
+			probe.APIURLs[backend] = apiURL
+		}
+	}
 	return probe
+}
+
+type frozenPathState struct {
+	Path     string `json:"path,omitempty"`
+	Identity string `json:"identity,omitempty"`
+}
+
+type frozenFileState struct {
+	Exists   bool   `json:"exists"`
+	Identity string `json:"identity,omitempty"`
+}
+
+type frozenCredentialState struct {
+	Token  string `json:"token,omitempty"`
+	Source string `json:"source,omitempty"`
+	Detail string `json:"detail,omitempty"`
+}
+
+type frozenProbeState struct {
+	Home        string                            `json:"home"`
+	Credentials map[Backend]frozenCredentialState `json:"credentials"`
+	Environment map[string]string                 `json:"environment"`
+	APIURLs     map[Backend]string                `json:"apiURLs"`
+	Paths       map[string]frozenPathState        `json:"paths"`
+	Files       map[string]frozenFileState        `json:"files"`
+	Runtimes    map[Backend]RuntimeStatus         `json:"runtimes"`
+}
+
+// freezeAuthProbe eagerly captures every identity-bearing host observation used
+// by adapter probing. Downstream auth reporting, cache identity, binary checks,
+// and model discovery then consume values from one point-in-time snapshot rather
+// than invoking live OS callbacks independently.
+func freezeAuthProbe(probe AuthProbe) AuthProbe {
+	if probe.stateFingerprint != "" {
+		return probe
+	}
+	getenv := probe.Getenv
+	if getenv == nil {
+		getenv = func(string) string { return "" }
+	}
+	environment := map[string]string{}
+	for _, backend := range AllBackends() {
+		if backend.Kind() == "cli" {
+			for _, name := range AuthEnvVars(backend) {
+				environment[name] = getenv(name)
+			}
+		}
+		for _, name := range modelAPIURLEnvVars(backend) {
+			environment[name] = getenv(name)
+		}
+	}
+	probe.Getenv = func(name string) string { return environment[name] }
+
+	if probe.credentials.supplied {
+		probe.credentials = probe.credentials.clone()
+	} else if probe.APICredentials != nil {
+		probe.credentials = NewCredentialSnapshot(probe.APICredentials)
+	} else {
+		resolved := make(map[Backend]api.ResolvedAPIKey, len(apiBackends))
+		for _, backend := range apiBackends {
+			for _, name := range AuthEnvVars(backend) {
+				if token := getenv(name); strings.TrimSpace(token) != "" {
+					resolved[backend] = api.ResolvedAPIKey{Token: token, Source: credentials.SourceEnvironment, Detail: name}
+					break
+				}
+			}
+		}
+		probe.credentials = NewCredentialSnapshot(resolved)
+	}
+	probe.APICredentials = nil
+
+	apiURLsSupplied := probe.APIURLs != nil
+	apiURLs := make(map[Backend]string, len(probe.APIURLs))
+	for backend, apiURL := range probe.APIURLs {
+		apiURLs[backend] = apiURL
+	}
+	if !apiURLsSupplied {
+		for _, backend := range apiBackends {
+			if apiURL := firstEnv(modelAPIURLEnvVars(backend), getenv); apiURL != "" {
+				apiURLs[backend] = apiURL
+			}
+		}
+	}
+	probe.APIURLs = apiURLs
+
+	lookPath := probe.LookPath
+	if lookPath == nil {
+		lookPath = func(string) (string, error) { return "", os.ErrNotExist }
+	}
+	paths := map[string]frozenPathState{}
+	executableIdentities := map[string]string{}
+	for _, adapter := range cliAdapters() {
+		if _, exists := paths[adapter.binary]; exists {
+			continue
+		}
+		path, err := lookPath(adapter.binary)
+		if err != nil || strings.TrimSpace(path) == "" {
+			paths[adapter.binary] = frozenPathState{}
+			continue
+		}
+		identity := ""
+		if probe.ExecutableIdentity != nil {
+			identity = probe.ExecutableIdentity(path)
+		}
+		executableIdentities[path] = identity
+		paths[adapter.binary] = frozenPathState{Path: path, Identity: identity}
+	}
+	probe.LookPath = func(binary string) (string, error) {
+		if state, ok := paths[binary]; ok && state.Path != "" {
+			return state.Path, nil
+		}
+		return "", os.ErrNotExist
+	}
+	probe.ExecutableIdentity = func(path string) string { return executableIdentities[path] }
+
+	fileExists := probe.FileExists
+	if fileExists == nil {
+		fileExists = func(string) bool { return false }
+	}
+	files := map[string]frozenFileState{}
+	for _, adapter := range cliAdapters() {
+		for _, login := range adapter.logins {
+			path := filepath.Join(probe.Home, login.rel)
+			if _, captured := files[path]; captured {
+				continue
+			}
+			exists := fileExists(path)
+			identity := ""
+			if exists && probe.FileIdentity != nil {
+				identity = probe.FileIdentity(path)
+			}
+			files[path] = frozenFileState{Exists: exists, Identity: identity}
+		}
+	}
+	probe.FileExists = func(path string) bool { return files[path].Exists }
+	probe.FileIdentity = func(path string) string { return files[path].Identity }
+
+	runtimesSupplied := probe.RuntimeStatuses != nil
+	runtimes := make(map[Backend]RuntimeStatus, len(probe.RuntimeStatuses))
+	for backend, status := range probe.RuntimeStatuses {
+		runtimes[backend] = status
+	}
+	if !runtimesSupplied {
+		for backend := range cliAdapters() {
+			if status, custom := probeRuntime(backend); custom {
+				runtimes[backend] = status
+			}
+		}
+	}
+	probe.RuntimeStatuses = runtimes
+
+	credentialState := make(map[Backend]frozenCredentialState, len(apiBackends))
+	for _, backend := range apiBackends {
+		resolved := probe.credentials.APIKey(backend)
+		credentialState[backend] = frozenCredentialState{Token: resolved.Token, Source: resolved.Source, Detail: resolved.Detail}
+	}
+	state := frozenProbeState{
+		Home:        probe.Home,
+		Credentials: credentialState,
+		Environment: environment,
+		APIURLs:     apiURLs,
+		Paths:       paths,
+		Files:       files,
+		Runtimes:    runtimes,
+	}
+	encoded, _ := json.Marshal(state)
+	fingerprint := sha256.Sum256(encoded)
+	probe.stateFingerprint = fmt.Sprintf("%x", fingerprint)
+	return probe
+}
+
+func hostFileIdentity(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "unreadable"
+	}
+	digest := sha256.Sum256(data)
+	return fmt.Sprintf("sha256:%x", digest)
+}
+
+func hostExecutableIdentity(path string) string {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "unreadable"
+	}
+	return fmt.Sprintf("size=%d|mode=%d|mtime=%d", info.Size(), info.Mode(), info.ModTime().UnixNano())
 }
 
 // loginFile is a credential file whose presence indicates a CLI has been logged
@@ -190,13 +442,18 @@ func cliAdapters() map[Backend]cliAdapter {
 // wins over a CLI login file because that is the path NewProvider/ListModels
 // actually take.
 func resolveAdapter(backend Backend, p AuthProbe) AdapterStatus {
+	p = freezeAuthProbe(p)
+	return resolveAdapterFrozen(backend, p)
+}
+
+func resolveAdapterFrozen(backend Backend, p AuthProbe) AdapterStatus {
 	st := AdapterStatus{
 		Backend: string(backend), Type: backend.Kind(),
 		Provider: string(backend.Provider()), Mode: string(backend.Mode()),
 	}
 
-	if backend.Kind() == "api" && p.APICredentials != nil {
-		if resolved := p.APICredentials[backend]; resolved.Token != "" {
+	if backend.Kind() == "api" {
+		if resolved := p.credentials.APIKey(backend); strings.TrimSpace(resolved.Token) != "" {
 			st.Authenticated = true
 			st.AuthDetail = MaskKey(resolved.Token)
 			if resolved.Source == credentials.SourceVault {
@@ -217,7 +474,7 @@ func resolveAdapter(backend Backend, p AuthProbe) AdapterStatus {
 	}
 
 	if cli, ok := cliAdapters()[backend]; ok {
-		if runtime, custom := probeRuntime(backend); custom {
+		if runtime, custom := p.RuntimeStatuses[backend]; custom {
 			st.Binary = runtime.Binary
 			st.BinaryMissing = runtime.BinaryMissing
 			st.DependencyMissing = runtime.DependencyMissing
@@ -272,6 +529,7 @@ func ProbeAdapters(opts WhoamiOptions, probe AuthProbe) ([]AdapterStatus, error)
 	if probe.ProbeError != nil {
 		return nil, probe.ProbeError
 	}
+	probe = freezeAuthProbe(probe)
 	backends := AllBackends()
 	if opts.Backend != "" {
 		b := Backend(opts.Backend)
@@ -284,13 +542,13 @@ func ProbeAdapters(opts WhoamiOptions, probe AuthProbe) ([]AdapterStatus, error)
 	var models map[Backend]modelFetch
 	var codexModels modelFetch
 	if opts.Models {
-		models = fetchAPIModels(backends, probe, opts.NoCache)
+		models = fetchAPIModels(backends, probe.credentials, probe.APIURLs, opts.NoCache)
 		codexModels = fetchCodexModels(backends, probe)
 	}
 
 	adapters := make([]AdapterStatus, 0, len(backends))
 	for _, b := range backends {
-		st := resolveAdapter(b, probe)
+		st := resolveAdapterFrozen(b, probe)
 		if opts.Models {
 			applyModels(&st, b, models, codexModels, probe)
 		}

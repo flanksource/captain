@@ -25,7 +25,7 @@ var resolveModelRows = ResolveModels
 // The resolver is Captain's cached model path, so repeated probes reuse a fresh
 // cache instead of hitting providers every time; refresh bypasses that cache and
 // re-queries every provider listing.
-func fetchAPIModels(backends []Backend, probe AuthProbe, refresh bool) map[Backend]modelFetch {
+func fetchAPIModels(backends []Backend, credentials CredentialSnapshot, apiURLs map[Backend]string, refresh bool) map[Backend]modelFetch {
 	apis := map[Backend]bool{}
 	for _, b := range backends {
 		if b.Kind() != "api" {
@@ -35,7 +35,7 @@ func fetchAPIModels(backends []Backend, probe AuthProbe, refresh bool) map[Backe
 		if source == "" {
 			continue
 		}
-		if effectiveAPIKey(source, probe) != "" {
+		if strings.TrimSpace(credentials.APIKey(source).Token) != "" {
 			apis[source] = true
 		}
 	}
@@ -47,7 +47,13 @@ func fetchAPIModels(backends []Backend, probe AuthProbe, refresh bool) map[Backe
 		wg.Add(1)
 		go func(backend Backend) {
 			defer wg.Done()
-			rows, err := resolveModelRows(context.Background(), ResolveOptions{Backend: backend, UseTokens: true, Refresh: refresh})
+			rows, err := resolveModelRows(context.Background(), ResolveOptions{
+				Backend:     backend,
+				UseTokens:   true,
+				Refresh:     refresh,
+				Credentials: credentials,
+				APIURL:      apiURLs[backend],
+			})
 			m := liveModelDefs(rows, backend)
 			mu.Lock()
 			out[backend] = modelFetch{models: m, err: err}
@@ -140,7 +146,7 @@ func applyModels(st *AdapterStatus, b Backend, cache map[Backend]modelFetch, cod
 	}
 
 	envVars := AuthEnvVars(source)
-	if effectiveAPIKey(source, probe) == "" {
+	if strings.TrimSpace(effectiveAPIKey(source, probe)) == "" {
 		st.ModelError = "configure a Captain vault token or set " + strings.Join(envVars, " or ") + " to list models"
 		return
 	}
@@ -157,6 +163,9 @@ func applyModels(st *AdapterStatus, b Backend, cache map[Backend]modelFetch, cod
 }
 
 func effectiveAPIKey(backend Backend, probe AuthProbe) string {
+	if probe.credentials.supplied {
+		return probe.credentials.APIKey(backend).Token
+	}
 	if probe.APICredentials != nil {
 		return probe.APICredentials[backend].Token
 	}

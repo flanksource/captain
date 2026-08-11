@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"errors"
 	"sync"
 	"time"
 )
@@ -10,16 +11,19 @@ import (
 // key/login/model changes surface without a probe per request.
 const adapterCacheTTL = 60 * time.Second
 
-// adapterProbe is the live probe sourcing the cache. It is a package var so
-// tests can substitute a deterministic, network-free stub.
-var adapterProbe = func() ([]AdapterStatus, error) {
-	return ProbeAdapters(WhoamiOptions{Models: true}, OSAuthProbe())
+// adapterAuthProbe captures the current host identity before a cache lookup;
+// adapterProbe resolves adapters from that same frozen snapshot. Both are
+// package vars so tests can substitute deterministic, network-free stubs.
+var adapterAuthProbe = OSAuthProbe
+var adapterProbe = func(probe AuthProbe) ([]AdapterStatus, error) {
+	return ProbeAdapters(WhoamiOptions{Models: true}, probe)
 }
 
 var (
-	adapterCacheMu sync.Mutex
-	adapterCache   []AdapterStatus
-	adapterCacheAt time.Time
+	adapterCacheMu          sync.Mutex
+	adapterCache            []AdapterStatus
+	adapterCacheAt          time.Time
+	adapterCacheFingerprint string
 )
 
 // CachedAdapters returns the probed adapters, reusing a cached probe within the
@@ -32,14 +36,35 @@ var (
 func CachedAdapters(now time.Time) ([]AdapterStatus, error) {
 	adapterCacheMu.Lock()
 	defer adapterCacheMu.Unlock()
-	if adapterCache != nil && now.Sub(adapterCacheAt) < adapterCacheTTL {
+	probe := freezeAuthProbe(adapterAuthProbe())
+	if probe.ProbeError != nil {
+		return nil, probe.ProbeError
+	}
+	if adapterCache != nil && adapterCacheFingerprint == probe.stateFingerprint && now.Sub(adapterCacheAt) < adapterCacheTTL {
 		return ApplyDisabled(adapterCache), nil
 	}
-	adapters, err := adapterProbe()
-	if err != nil {
-		return nil, err
+	for attempt := 0; attempt < 2; attempt++ {
+		adapters, err := adapterProbe(probe)
+		if err != nil {
+			return nil, err
+		}
+		// Codex model discovery runs an external process whose account cannot be
+		// injected. Re-capture cheap host state before publishing its result; one
+		// retry closes a login/binary change that happened during the probe.
+		current := freezeAuthProbe(adapterAuthProbe())
+		if current.ProbeError == nil && current.stateFingerprint == probe.stateFingerprint {
+			adapterCache = cloneAdapterStatuses(adapters)
+			adapterCacheAt = now
+			adapterCacheFingerprint = probe.stateFingerprint
+			return ApplyDisabled(adapterCache), nil
+		}
+		if current.ProbeError != nil {
+			return nil, current.ProbeError
+		}
+		if attempt == 1 {
+			break
+		}
+		probe = current
 	}
-	adapterCache = adapters
-	adapterCacheAt = now
-	return ApplyDisabled(adapters), nil
+	return nil, errors.New("adapter probe did not settle")
 }

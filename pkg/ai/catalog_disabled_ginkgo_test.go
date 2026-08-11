@@ -110,13 +110,13 @@ var _ = Describe("catalog opt-out filtering", func() {
 
 	It("retains disabled models with remediation in the live descriptive menu", func() {
 		previousProbe := adapterProbe
-		previousCache, previousAt := adapterCache, adapterCacheAt
+		previousCache, previousAt, previousFingerprint := adapterCache, adapterCacheAt, adapterCacheFingerprint
 		DeferCleanup(func() {
 			adapterProbe = previousProbe
-			adapterCache, adapterCacheAt = previousCache, previousAt
+			adapterCache, adapterCacheAt, adapterCacheFingerprint = previousCache, previousAt, previousFingerprint
 		})
-		adapterCache, adapterCacheAt = nil, time.Time{}
-		adapterProbe = func() ([]AdapterStatus, error) { return nil, nil }
+		adapterCache, adapterCacheAt, adapterCacheFingerprint = nil, time.Time{}, ""
+		adapterProbe = func(AuthProbe) ([]AdapterStatus, error) { return nil, nil }
 		disable(nil, []string{"deepseek"}, nil, nil, nil)
 
 		infos, err := LiveCatalogInfo(nil)

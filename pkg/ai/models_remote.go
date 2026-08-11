@@ -3,8 +3,10 @@ package ai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -41,6 +43,13 @@ type ModelDef struct {
 // caller surfaces an error to the user instead of blocking the form.
 const remoteModelsTimeout = 5 * time.Second
 
+var defaultModelListEndpoints = map[Backend]string{
+	BackendAnthropic: "https://api.anthropic.com/v1/models",
+	BackendOpenAI:    "https://api.openai.com/v1/models",
+	BackendGemini:    "https://generativelanguage.googleapis.com/v1beta/models",
+	BackendDeepSeek:  "https://api.deepseek.com/models",
+}
+
 // modelsListResponse covers the wire shape used by OpenAI, Anthropic, and
 // Google's Generative Language API (with the field aliases each provider
 // returns). Decoding into this permissive shape lets a single helper handle
@@ -67,20 +76,25 @@ func (e ModelHTTPError) Error() string {
 	return fmt.Sprintf("%s models: HTTP %d", e.Backend, e.StatusCode)
 }
 
+// ModelTransportError keeps custom endpoint details out of user-visible errors
+// while preserving the underlying cause for errors.Is/errors.As callers.
+type ModelTransportError struct {
+	Backend Backend
+	Err     error
+}
+
+func (e ModelTransportError) Error() string {
+	return fmt.Sprintf("%s models: transport request failed", e.Backend)
+}
+
+func (e ModelTransportError) Unwrap() error { return e.Err }
+
 // FetchOpenAIModels calls https://api.openai.com/v1/models and returns the
 // available model IDs as ModelDefs scoped to BackendOpenAI. apiKey is sent
 // as a Bearer token. An empty apiKey returns an error without making a
 // request.
 func FetchOpenAIModels(ctx context.Context, apiKey string) ([]ModelDef, error) {
-	if strings.TrimSpace(apiKey) == "" {
-		return nil, fmt.Errorf("OPENAI_API_KEY is not set")
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.openai.com/v1/models", nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	return doModelsRequest(req, BackendOpenAI)
+	return fetchModelsAtEndpoint(ctx, BackendOpenAI, apiKey, defaultModelListEndpoints[BackendOpenAI])
 }
 
 // FetchAnthropicModels calls https://api.anthropic.com/v1/models and returns
@@ -88,16 +102,7 @@ func FetchOpenAIModels(ctx context.Context, apiKey string) ([]ModelDef, error) {
 // sent via the x-api-key header along with the required anthropic-version
 // header. An empty apiKey returns an error without making a request.
 func FetchAnthropicModels(ctx context.Context, apiKey string) ([]ModelDef, error) {
-	if strings.TrimSpace(apiKey) == "" {
-		return nil, fmt.Errorf("ANTHROPIC_API_KEY is not set")
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.anthropic.com/v1/models", nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("x-api-key", apiKey)
-	req.Header.Set("anthropic-version", "2023-06-01")
-	return doModelsRequest(req, BackendAnthropic)
+	return fetchModelsAtEndpoint(ctx, BackendAnthropic, apiKey, defaultModelListEndpoints[BackendAnthropic])
 }
 
 // FetchGeminiModels calls Google's Generative Language ListModels endpoint
@@ -105,15 +110,7 @@ func FetchAnthropicModels(ctx context.Context, apiKey string) ([]ModelDef, error
 // the x-goog-api-key header. The returned `name` field is shaped
 // "models/gemini-2.5-flash"; we strip the prefix so callers see the bare id.
 func FetchGeminiModels(ctx context.Context, apiKey string) ([]ModelDef, error) {
-	if strings.TrimSpace(apiKey) == "" {
-		return nil, fmt.Errorf("GEMINI_API_KEY is not set")
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://generativelanguage.googleapis.com/v1beta/models", nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("x-goog-api-key", apiKey)
-	return doModelsRequest(req, BackendGemini)
+	return fetchModelsAtEndpoint(ctx, BackendGemini, apiKey, defaultModelListEndpoints[BackendGemini])
 }
 
 // FetchDeepSeekModels calls https://api.deepseek.com/models and returns the
@@ -121,26 +118,108 @@ func FetchGeminiModels(ctx context.Context, apiKey string) ([]ModelDef, error) {
 // OpenAI-compatible, so the endpoint is a Bearer-authenticated, OpenAI-shaped
 // listing. An empty apiKey returns an error without making a request.
 func FetchDeepSeekModels(ctx context.Context, apiKey string) ([]ModelDef, error) {
+	return fetchModelsAtEndpoint(ctx, BackendDeepSeek, apiKey, defaultModelListEndpoints[BackendDeepSeek])
+}
+
+// modelListEndpoint resolves a provider base URL to the exact URL used by the
+// model-list request. APIURL follows Config.APIURL's base-URL convention; a URL
+// already ending in /models is also accepted. Gemini deliberately retains its
+// existing no-custom-endpoint contract.
+func modelListEndpoint(backend Backend, apiURL string) (string, error) {
+	apiURL = strings.TrimSpace(apiURL)
+	if apiURL == "" {
+		endpoint, ok := defaultModelListEndpoints[backend]
+		if !ok {
+			return "", fmt.Errorf("backend %s has no live model listing", backend)
+		}
+		return endpoint, nil
+	}
+	if backend == BackendGemini {
+		return "", fmt.Errorf("backend %s does not support a custom model-list endpoint", backend)
+	}
+	u, err := url.Parse(apiURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return "", fmt.Errorf("invalid model-list endpoint for %s", backend)
+	}
+	u.Fragment = ""
+	path := strings.TrimRight(u.Path, "/")
+	if !strings.HasSuffix(path, "/models") {
+		switch backend {
+		case BackendAnthropic:
+			if strings.HasSuffix(path, "/v1") {
+				path += "/models"
+			} else {
+				path += "/v1/models"
+			}
+		case BackendOpenAI, BackendDeepSeek:
+			path += "/models"
+		default:
+			return "", fmt.Errorf("backend %s has no live model listing", backend)
+		}
+	}
+	u.Path = path
+	return u.String(), nil
+}
+
+func modelAPIURLEnvVars(backend Backend) []string {
+	switch backend {
+	case BackendAnthropic:
+		return []string{"ANTHROPIC_BASE_URL"}
+	case BackendOpenAI:
+		return []string{"OPENAI_BASE_URL"}
+	case BackendDeepSeek:
+		return []string{"DEEPSEEK_BASE_URL"}
+	default:
+		return nil
+	}
+}
+
+func fetchModelsAtEndpoint(ctx context.Context, backend Backend, apiKey, endpoint string) ([]ModelDef, error) {
 	if strings.TrimSpace(apiKey) == "" {
-		return nil, fmt.Errorf("DEEPSEEK_API_KEY is not set")
+		envVars := AuthEnvVars(backend)
+		if len(envVars) == 0 {
+			return nil, fmt.Errorf("backend %s has no live model listing", backend)
+		}
+		return nil, fmt.Errorf("%s is not set", envVars[0])
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.deepseek.com/models", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("build %s models request: %w", backend, err)
 	}
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	return doModelsRequest(req, BackendDeepSeek)
+	switch backend {
+	case BackendAnthropic:
+		req.Header.Set("x-api-key", apiKey)
+		req.Header.Set("anthropic-version", "2023-06-01")
+	case BackendGemini:
+		req.Header.Set("x-goog-api-key", apiKey)
+	case BackendOpenAI, BackendDeepSeek:
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	default:
+		return nil, fmt.Errorf("backend %s has no live model listing", backend)
+	}
+	return doModelsRequest(req, backend)
 }
 
 // doModelsRequest issues req with the default client and decodes the
 // permissive listing shape, projecting each entry into a ModelDef tagged
-// with the supplied backend. Centralising this keeps the three fetchers
+// with the supplied backend. Centralising this keeps the provider fetchers
 // behaviourally identical (same timeouts, same error messages, same name
 // normalisation).
 func doModelsRequest(req *http.Request, backend Backend) ([]ModelDef, error) {
-	resp, err := http.DefaultClient.Do(req)
+	client := *http.DefaultClient
+	client.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("%s models: %w", backend, err)
+		// url.Error includes the full request URL, which may carry tenant or
+		// credential-bearing query data on custom endpoints. Preserve the cause
+		// for programmatic inspection but never render it to the user.
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			err = urlErr.Err
+		}
+		return nil, ModelTransportError{Backend: backend, Err: err}
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
@@ -212,37 +291,29 @@ func ListModels(ctx context.Context, backend Backend) ([]ModelDef, error) {
 // ListModelsWithAPIKey validates a candidate credential directly against the
 // provider model endpoint without reading or writing Captain's credential vault.
 func ListModelsWithAPIKey(ctx context.Context, backend Backend, apiKey string) ([]ModelDef, error) {
-	fetch := remoteFetcherFor(backend)
-	if fetch == nil {
-		return nil, fmt.Errorf("backend %s has no live model listing", backend)
-	}
+	return ListModelsWithAPIKeyAndURL(ctx, backend, apiKey, "")
+}
 
+// ListModelsWithAPIKeyAndURL is ListModelsWithAPIKey with an optional provider
+// base-URL override. The exact resolved request URL is shared with the persisted
+// model-cache identity so endpoint-specific availability cannot cross caches.
+func ListModelsWithAPIKeyAndURL(ctx context.Context, backend Backend, apiKey, apiURL string) ([]ModelDef, error) {
+	endpoint, err := modelListEndpoint(backend, apiURL)
+	if err != nil {
+		return nil, err
+	}
+	return listModelsWithAPIKeyAtEndpoint(ctx, backend, apiKey, endpoint)
+}
+
+func listModelsWithAPIKeyAtEndpoint(ctx context.Context, backend Backend, apiKey, endpoint string) ([]ModelDef, error) {
 	fetchCtx, cancel := context.WithTimeout(ctx, remoteModelsTimeout)
 	defer cancel()
 
-	models, err := fetch(fetchCtx, apiKey)
+	models, err := fetchModelsAtEndpoint(fetchCtx, backend, apiKey, endpoint)
 	if err != nil {
 		return nil, err
 	}
 
 	sort.SliceStable(models, func(i, j int) bool { return models[i].ID < models[j].ID })
 	return models, nil
-}
-
-// remoteFetcherFor returns the live-list function for an API backend. It
-// returns nil for any backend without a live listing endpoint
-// (every CLI/agent backend, which lists from the static catalog instead).
-func remoteFetcherFor(backend Backend) func(context.Context, string) ([]ModelDef, error) {
-	switch backend {
-	case BackendOpenAI:
-		return FetchOpenAIModels
-	case BackendAnthropic:
-		return FetchAnthropicModels
-	case BackendGemini:
-		return FetchGeminiModels
-	case BackendDeepSeek:
-		return FetchDeepSeekModels
-	default:
-		return nil
-	}
 }
