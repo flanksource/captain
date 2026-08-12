@@ -2,9 +2,58 @@ package aichat
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/flanksource/captain/pkg/api"
 )
+
+func TestEnforceApprovalRuntimeProfile(t *testing.T) {
+	tests := []struct {
+		name     string
+		spec     api.Spec
+		resolved api.ResolvedSpec
+		wantErr  string
+	}{
+		{
+			name:     "persisted model is no longer allowed",
+			spec:     api.Spec{Model: api.Model{Name: "gpt-5.6-sol"}},
+			resolved: api.ResolvedSpec{Constraints: api.RuntimeConstraints{Models: []string{"claude-sonnet-5"}}},
+			wantErr:  `model "gpt-5.6-sol" is outside the current effective model catalog`,
+		},
+		{
+			name: "current quota is exhausted",
+			spec: api.Spec{Model: api.Model{Name: "gpt-5.6-sol"}},
+			resolved: api.ResolvedSpec{Constraints: api.RuntimeConstraints{Quotas: []api.RuntimeQuota{{
+				Name: "monthly", Scope: api.SpecLayerUser, Layer: "claims", TokenLimit: 100, TokensUsed: 100,
+			}}}},
+			wantErr: `quota "monthly" from layer "claims" exhausted`,
+		},
+		{
+			name: "changed default does not replace an allowed persisted model",
+			spec: api.Spec{Model: api.Model{Name: "gpt-5.6-sol"}},
+			resolved: api.ResolvedSpec{
+				Spec:        api.Spec{Model: api.Model{Name: "claude-sonnet-5"}},
+				Constraints: api.RuntimeConstraints{Models: []string{"gpt-5.6-sol", "claude-sonnet-5"}},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := enforceApprovalRuntimeProfile(tt.spec, tt.resolved)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("enforceApprovalRuntimeProfile() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("enforceApprovalRuntimeProfile() error = %v, want containing %q", err, tt.wantErr)
+			}
+		})
+	}
+}
 
 func TestAwaitSuspendedSeedWaitsForTheInFlightAssistantMessage(t *testing.T) {
 	store := NewMemoryThreadStore()

@@ -55,6 +55,12 @@ func (s *Service) resumeToolApproval(ctx context.Context, threadID string, conti
 	if err != nil {
 		return fmt.Errorf("load chat runtime profile: %w", err)
 	}
+	if err := enforceApprovalRuntimeProfile(continuation.Spec, profile.Resolved); err != nil {
+		if interruptErr := execution.Interrupt(ctx, err.Error()); interruptErr != nil {
+			return fmt.Errorf("%w (interrupt rejected approval continuation: %v)", err, interruptErr)
+		}
+		return err
+	}
 	set, err := s.loadTools(ctx)
 	if err != nil {
 		return err
@@ -118,6 +124,21 @@ func (s *Service) resumeToolApproval(ctx context.Context, threadID string, conti
 	for event := range resumed {
 		if event.Kind == api.EventError {
 			return fmt.Errorf("resume provider approval: %s", event.Error)
+		}
+	}
+	return nil
+}
+
+func enforceApprovalRuntimeProfile(spec api.Spec, resolved api.ResolvedSpec) error {
+	if err := enforceRuntimeQuotas(resolved); err != nil {
+		return err
+	}
+	if !resolved.AllowsModel(spec.Model) {
+		return fmt.Errorf("approval continuation model %q is outside the current effective model catalog", spec.Model.Name)
+	}
+	for _, fallback := range spec.Model.Fallbacks {
+		if !resolved.AllowsModel(fallback) {
+			return fmt.Errorf("approval continuation fallback model %q is outside the current effective model catalog", fallback.Name)
 		}
 	}
 	return nil

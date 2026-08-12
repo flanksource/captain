@@ -23,19 +23,8 @@ func requestErrorStatus(err error) int {
 }
 
 func enforceRuntimeProfile(request ChatRequest, resolved api.ResolvedSpec) error {
-	for _, quota := range resolved.Constraints.Quotas {
-		if quota.CostLimitUSD > 0 && quota.CostUsedUSD >= quota.CostLimitUSD {
-			return requestError{status: http.StatusPaymentRequired, text: fmt.Sprintf(
-				"chat %s quota %q from layer %q exhausted: $%.4f used of $%.4f",
-				quota.Scope, quota.Name, quota.Layer, quota.CostUsedUSD, quota.CostLimitUSD,
-			)}
-		}
-		if quota.TokenLimit > 0 && quota.TokensUsed >= quota.TokenLimit {
-			return requestError{status: http.StatusPaymentRequired, text: fmt.Sprintf(
-				"chat %s quota %q from layer %q exhausted: %d tokens used of %d",
-				quota.Scope, quota.Name, quota.Layer, quota.TokensUsed, quota.TokenLimit,
-			)}
-		}
+	if err := enforceRuntimeQuotas(resolved); err != nil {
+		return err
 	}
 	maxInputTokens := resolved.Constraints.Limits.MaxInputTokens
 	if maxInputTokens <= 0 {
@@ -55,6 +44,24 @@ func enforceRuntimeProfile(request ChatRequest, resolved api.ResolvedSpec) error
 			"chat input is about %d tokens, exceeding the configured per-turn limit of %d",
 			estimated, maxInputTokens,
 		)}
+	}
+	return nil
+}
+
+func enforceRuntimeQuotas(resolved api.ResolvedSpec) error {
+	for _, quota := range resolved.Constraints.Quotas {
+		if quota.CostLimitUSD > 0 && quota.CostUsedUSD >= quota.CostLimitUSD {
+			return requestError{status: http.StatusPaymentRequired, text: fmt.Sprintf(
+				"chat %s quota %q from layer %q exhausted: $%.4f used of $%.4f",
+				quota.Scope, quota.Name, quota.Layer, quota.CostUsedUSD, quota.CostLimitUSD,
+			)}
+		}
+		if quota.TokenLimit > 0 && quota.TokensUsed >= quota.TokenLimit {
+			return requestError{status: http.StatusPaymentRequired, text: fmt.Sprintf(
+				"chat %s quota %q from layer %q exhausted: %d tokens used of %d",
+				quota.Scope, quota.Name, quota.Layer, quota.TokensUsed, quota.TokenLimit,
+			)}
+		}
 	}
 	return nil
 }
