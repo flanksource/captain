@@ -8,6 +8,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/api/registry"
 )
 
 func annotateProfileModels(resolved api.ResolvedSpec, models ModelCatalogResponse) {
@@ -78,14 +79,33 @@ func runtimeRestrictionLayer(resolved api.ResolvedSpec, backend api.Backend) *ap
 	return nil
 }
 
+// runtimeAllowed checks concrete registry rows so bare names follow the same
+// matching rules as the model catalog instead of requiring a provider prefix.
 func runtimeAllowed(models []string, backend api.Backend) bool {
 	providerPrefix := ai.BackendToProvider(backend) + "/"
 	for _, selector := range models {
-		if strings.HasPrefix(selector, providerPrefix) {
+		if strings.HasPrefix(strings.TrimSpace(selector), providerPrefix) {
 			return true
 		}
-		model, err := (api.Model{Name: selector}).Expand()
-		if err == nil && model.Backend == backend {
+	}
+
+	provider, mode, ok := registry.ProviderFor(backend)
+	if !ok {
+		return false
+	}
+	resolved := api.ResolvedSpec{Constraints: api.RuntimeConstraints{Models: models}}
+	for _, model := range provider.Models() {
+		if !model.Preferred {
+			continue
+		}
+		if known, available := provider.Availability(mode, model.ID); !known || !available {
+			continue
+		}
+		candidate := api.Model{Name: model.ID, Backend: backend}
+		if mode == registry.ModeAPI {
+			candidate.ID = provider.CatalogPrefix + "/" + model.ID
+		}
+		if resolved.AllowsModel(candidate) {
 			return true
 		}
 	}

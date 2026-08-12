@@ -372,11 +372,28 @@ func validateThreadTurn(request ChatRequest, thread *Thread) error {
 	return nil
 }
 
+// runtimeProfile validates the server-owned profile before request fields are
+// layered onto it, so profile defects remain server errors at the HTTP boundary.
 func (s *Service) runtimeProfile(ctx context.Context) (RuntimeProfile, error) {
 	if s.options.Profile == nil {
 		return RuntimeProfile{}, nil
 	}
-	return s.options.Profile.RuntimeProfile(ctx)
+	profile, err := s.options.Profile.RuntimeProfile(ctx)
+	if err != nil {
+		return RuntimeProfile{}, err
+	}
+	if len(profile.Resolved.Trace) == 0 {
+		if !api.IsEmpty(profile.Resolved.Spec) || !api.IsEmpty(profile.Resolved.Constraints) {
+			return RuntimeProfile{}, fmt.Errorf("chat runtime profile must include its resolution trace")
+		}
+		return profile, nil
+	}
+	resolved, err := api.ResolveSpecLayers(profile.Resolved.Trace...)
+	if err != nil {
+		return RuntimeProfile{}, fmt.Errorf("resolve chat runtime profile: %w", err)
+	}
+	profile.Resolved = resolved
+	return profile, nil
 }
 
 func (s *Service) resolveThreadSession(ctx context.Context, request *ChatRequest) (*Thread, error) {

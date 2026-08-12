@@ -25,7 +25,7 @@ func TestEnforceApprovalRuntimeProfile(t *testing.T) {
 		{
 			name: "current quota is exhausted",
 			spec: api.Spec{Model: api.Model{Name: "gpt-5.6-sol"}},
-			resolved: api.ResolvedSpec{Constraints: api.RuntimeConstraints{Quotas: []api.RuntimeQuota{{
+			resolved: api.ResolvedSpec{Constraints: api.RuntimeConstraints{Quotas: []api.UsageQuota{{
 				Name: "monthly", Scope: api.SpecLayerUser, Layer: "claims", TokenLimit: 100, TokensUsed: 100,
 			}}}},
 			wantErr: `quota "monthly" from layer "claims" exhausted`,

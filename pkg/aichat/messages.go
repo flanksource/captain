@@ -69,9 +69,6 @@ func (s *Service) resolveAttachments(ctx context.Context, messages []UIMessage) 
 }
 
 func requestSpec(request ChatRequest, profile RuntimeProfile, attachments map[partLocation]api.AttachmentRef) (api.ResolvedSpec, error) {
-	if len(profile.Resolved.Trace) == 0 && (!api.IsEmpty(profile.Resolved.Spec) || !api.IsEmpty(profile.Resolved.Constraints)) {
-		return api.ResolvedSpec{}, fmt.Errorf("chat runtime profile must include its resolution trace")
-	}
 	override, err := chatModel(request, profile.Resolved.Spec.Model)
 	if err != nil {
 		return api.ResolvedSpec{}, err

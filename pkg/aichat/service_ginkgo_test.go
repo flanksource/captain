@@ -228,7 +228,7 @@ var _ = Describe("Captain aichat service", func() {
 				return mustRuntimeProfile(api.SpecLayer{
 					Name: "application", Scope: api.SpecLayerGlobal,
 					Spec: api.Spec{Model: api.Model{Name: "openai/test-model"}},
-					Constraints: api.RuntimeConstraints{Quotas: []api.RuntimeQuota{{
+					Constraints: api.RuntimeConstraints{Quotas: []api.UsageQuota{{
 						Name: "application-monthly", CostLimitUSD: 10, CostUsedUSD: 10,
 					}}},
 				}), nil

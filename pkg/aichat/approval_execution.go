@@ -134,9 +134,9 @@ func enforceApprovalRuntimeProfile(spec api.Spec, resolved api.ResolvedSpec) err
 		return err
 	}
 	if !resolved.AllowsModel(spec.Model) {
-		return fmt.Errorf("approval continuation model %q is outside the current effective model catalog", spec.Model.Name)
+		return fmt.Errorf("approval continuation model %q is outside the current effective model catalog", spec.Name)
 	}
-	for _, fallback := range spec.Model.Fallbacks {
+	for _, fallback := range spec.Fallbacks {
 		if !resolved.AllowsModel(fallback) {
 			return fmt.Errorf("approval continuation fallback model %q is outside the current effective model catalog", fallback.Name)
 		}

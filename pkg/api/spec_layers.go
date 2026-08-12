@@ -17,14 +17,14 @@ const (
 	SpecLayerUser    SpecLayerScope = "user"
 )
 
-// RuntimeLimits are ceilings applied after structural Spec defaults are layered.
-type RuntimeLimits struct {
+// RunLimits are per-run ceilings applied after structural Spec defaults are layered.
+type RunLimits struct {
 	MaxInputTokens int    `json:"maxInputTokens,omitempty" yaml:"maxInputTokens,omitempty"`
 	Budget         Budget `json:"budget,omitempty" yaml:"budget,omitempty"`
 }
 
-// RuntimeQuota is one independently enforced usage allowance.
-type RuntimeQuota struct {
+// UsageQuota is one independently enforced accumulated usage allowance.
+type UsageQuota struct {
 	Name         string         `json:"name" yaml:"name"`
 	Scope        SpecLayerScope `json:"scope" yaml:"scope"`
 	Layer        string         `json:"layer" yaml:"layer"`
@@ -36,9 +36,9 @@ type RuntimeQuota struct {
 
 // RuntimeConstraints restrict values a later Spec layer may select.
 type RuntimeConstraints struct {
-	Models []string       `json:"models,omitempty" yaml:"models,omitempty"`
-	Limits RuntimeLimits  `json:"limits,omitempty" yaml:"limits,omitempty"`
-	Quotas []RuntimeQuota `json:"quotas,omitempty" yaml:"quotas,omitempty"`
+	Models []string     `json:"models,omitempty" yaml:"models,omitempty"`
+	Limits RunLimits    `json:"limits,omitempty" yaml:"limits,omitempty"`
+	Quotas []UsageQuota `json:"quotas,omitempty" yaml:"quotas,omitempty"`
 }
 
 // SpecLayer is one named source of runtime defaults and constraints.
@@ -80,7 +80,7 @@ func ResolveSpecLayers(input ...SpecLayer) (ResolvedSpec, error) {
 				return ResolvedSpec{}, fmt.Errorf("spec layer %q leaves the effective model catalog empty", layer.Name)
 			}
 		}
-		limits, err := strictRuntimeLimits(resolved.Constraints.Limits, layer.Constraints.Limits)
+		limits, err := strictRunLimits(resolved.Constraints.Limits, layer.Constraints.Limits)
 		if err != nil {
 			return ResolvedSpec{}, fmt.Errorf("spec layer %q limits: %w", layer.Name, err)
 		}
@@ -125,7 +125,7 @@ func validateSpecLayer(layer SpecLayer) error {
 	if scopeRank(layer.Scope) < 0 {
 		return fmt.Errorf("spec layer %q has invalid scope %q", layer.Name, layer.Scope)
 	}
-	if _, err := strictRuntimeLimits(RuntimeLimits{}, layer.Constraints.Limits); err != nil {
+	if _, err := strictRunLimits(RunLimits{}, layer.Constraints.Limits); err != nil {
 		return fmt.Errorf("spec layer %q limits: %w", layer.Name, err)
 	}
 	seenModels := map[string]bool{}
@@ -176,7 +176,11 @@ func scopeRank(scope SpecLayerScope) int {
 
 func intersectModels(current, restrictive []string) []string {
 	if len(current) == 0 {
-		return append([]string(nil), restrictive...)
+		out := make([]string, 0, len(restrictive))
+		for _, model := range restrictive {
+			out = append(out, strings.TrimSpace(model))
+		}
+		return out
 	}
 	allowed := make(map[string]bool, len(restrictive))
 	for _, model := range restrictive {
@@ -184,6 +188,7 @@ func intersectModels(current, restrictive []string) []string {
 	}
 	out := make([]string, 0, len(current))
 	for _, model := range current {
+		model = strings.TrimSpace(model)
 		if allowed[model] {
 			out = append(out, model)
 		}
@@ -191,15 +196,15 @@ func intersectModels(current, restrictive []string) []string {
 	return out
 }
 
-func strictRuntimeLimits(current, next RuntimeLimits) (RuntimeLimits, error) {
+func strictRunLimits(current, next RunLimits) (RunLimits, error) {
 	if current.MaxInputTokens < 0 || next.MaxInputTokens < 0 {
-		return RuntimeLimits{}, fmt.Errorf("maxInputTokens must be non-negative")
+		return RunLimits{}, fmt.Errorf("maxInputTokens must be non-negative")
 	}
 	budget, err := strictBudget(current.Budget, next.Budget)
 	if err != nil {
-		return RuntimeLimits{}, err
+		return RunLimits{}, err
 	}
-	return RuntimeLimits{
+	return RunLimits{
 		MaxInputTokens: strictPositiveInt(current.MaxInputTokens, next.MaxInputTokens),
 		Budget:         budget,
 	}, nil
@@ -294,6 +299,6 @@ func modelSelectorMatches(selector string, model Model) bool {
 func cloneSpecLayer(layer SpecLayer) SpecLayer {
 	layer.Spec = Spec{}.Merge(layer.Spec)
 	layer.Constraints.Models = append([]string(nil), layer.Constraints.Models...)
-	layer.Constraints.Quotas = append([]RuntimeQuota(nil), layer.Constraints.Quotas...)
+	layer.Constraints.Quotas = append([]UsageQuota(nil), layer.Constraints.Quotas...)
 	return layer
 }
