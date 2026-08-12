@@ -16,10 +16,11 @@ import (
 )
 
 type fakeExecutionAuthority struct {
-	execution   *fakeExecution
-	beginErr    error
-	begins      []aichat.ExecutionRequest
-	resolutions []aichat.ToolApprovalResolution
+	execution    *fakeExecution
+	beginErr     error
+	begins       []aichat.ExecutionRequest
+	resolutions  []aichat.ToolApprovalResolution
+	continuation *aichat.ApprovalContinuation
 }
 
 func (f *fakeExecutionAuthority) Begin(_ context.Context, request aichat.ExecutionRequest) (aichat.Execution, error) {
@@ -36,7 +37,7 @@ func (f *fakeExecutionAuthority) ResolveToolApproval(
 	resolution aichat.ToolApprovalResolution,
 ) (*aichat.ApprovalContinuation, error) {
 	f.resolutions = append(f.resolutions, resolution)
-	return nil, nil
+	return f.continuation, nil
 }
 
 type fakeExecution struct {
@@ -171,6 +172,12 @@ var _ = Describe("Authoritative aichat execution", func() {
 		}
 		service := aichat.NewService(aichat.ServiceOptions{
 			Resolver: &fakeResolver{provider: provider}, Threads: aichat.FixedThreadStore(store), Authority: authority,
+			Profile: aichat.RuntimeProfileProviderFunc(func(context.Context) (aichat.RuntimeProfile, error) {
+				return mustRuntimeProfile(api.SpecLayer{
+					Name: "accounts", Scope: api.SpecLayerContext,
+					Spec: api.Spec{Prompt: api.Prompt{System: "Use account policy."}},
+				}), nil
+			}),
 			Tools: aichat.StaticToolProvider([]api.ToolDefinition{{
 				Name: "account_edit", DefaultPermission: api.ToolModeAsk,
 				Handler: func(context.Context, map[string]any) (any, error) { return nil, nil },
@@ -191,6 +198,10 @@ var _ = Describe("Authoritative aichat execution", func() {
 		Expect(authority.begins).To(HaveLen(1))
 		Expect(authority.begins[0].ThreadID).To(Equal(thread.ID))
 		Expect(authority.begins[0].RequestID).To(Equal("user-message-1"))
+		Expect(authority.begins[0].Profile.Trace).To(HaveLen(2))
+		Expect(authority.begins[0].Profile.Trace[0].Name).To(Equal("accounts"))
+		Expect(authority.begins[0].Profile.Spec).To(Equal(authority.begins[0].Spec))
+		Expect(authority.begins[0].Profile.Spec.Prompt.System).To(Equal("Use account policy."))
 		Expect(provider.specs).To(HaveLen(1))
 		Expect(execution.observed).To(ContainElement(
 			MatchFields(IgnoreExtras, Fields{"Kind": Equal(api.EventResult)}),
@@ -401,5 +412,44 @@ var _ = Describe("Authoritative aichat execution", func() {
 		))
 		Expect(missing.Code).To(Equal(http.StatusNotFound))
 		Expect(authority.resolutions).To(HaveLen(1))
+	})
+
+	It("interrupts an approval continuation whose persisted model is no longer allowed", func() {
+		store := aichat.NewMemoryThreadStore()
+		thread, err := store.Create(context.Background(), "Restricted")
+		Expect(err).NotTo(HaveOccurred())
+		execution := &fakeExecution{}
+		authority := &fakeExecutionAuthority{continuation: &aichat.ApprovalContinuation{
+			Execution: execution,
+			Spec: api.Spec{
+				Model:        api.Model{Name: "gpt-5.6-sol"},
+				ToolApproval: &api.ToolApprovalResume{},
+			},
+		}}
+		resolver := &fakeResolver{provider: &fakeStreamingProvider{}}
+		profile := mustRuntimeProfile(api.SpecLayer{
+			Name: "claims", Scope: api.SpecLayerContext,
+			Spec:        api.Spec{Model: api.Model{Name: "claude-sonnet-5"}},
+			Constraints: api.RuntimeConstraints{Models: []string{"claude-sonnet-5"}},
+		})
+		service := aichat.NewService(aichat.ServiceOptions{
+			Threads: aichat.FixedThreadStore(store), Authority: authority, Resolver: resolver,
+			Profile: aichat.RuntimeProfileProviderFunc(func(context.Context) (aichat.RuntimeProfile, error) {
+				return profile, nil
+			}),
+		})
+
+		response := httptest.NewRecorder()
+		service.Handler().ServeHTTP(response, requestJSON(
+			http.MethodPost,
+			"/api/chat/sessions/"+thread.ID+"/approvals/0e5dc2fe-8b77-44e9-a3de-6a00298c8bde",
+			map[string]any{"approved": true},
+		))
+
+		Expect(response.Code).To(Equal(http.StatusBadGateway))
+		Expect(response.Body.String()).To(ContainSubstring(`model "gpt-5.6-sol" is outside the current effective model catalog`))
+		Expect(execution.interrupts).To(ConsistOf(ContainSubstring("outside the current effective model catalog")))
+		Expect(execution.closed).To(BeTrue())
+		Expect(resolver.configs).To(BeEmpty())
 	})
 })
