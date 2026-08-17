@@ -3,6 +3,7 @@ package aichat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/flanksource/captain/pkg/ai"
 	aitools "github.com/flanksource/captain/pkg/ai/tools"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/commons/logger"
 )
 
@@ -74,6 +76,7 @@ type Service struct {
 	resolver Resolver
 	activeMu sync.Mutex
 	active   map[string]*activeTurn
+	pending  map[string]struct{}
 }
 
 func NewService(options ServiceOptions) *Service {
@@ -81,7 +84,10 @@ func NewService(options ServiceOptions) *Service {
 	if resolver == nil {
 		resolver = captainResolver{}
 	}
-	return &Service{options: options, resolver: resolver, active: map[string]*activeTurn{}}
+	return &Service{
+		options: options, resolver: resolver,
+		active: map[string]*activeTurn{}, pending: map[string]struct{}{},
+	}
 }
 
 func (s *Service) Handler() http.Handler {
@@ -167,17 +173,34 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 		http.Error(w, fmt.Sprintf("load chat runtime profile: %v", err), http.StatusInternalServerError)
 		return
 	}
-	if err := enforceRuntimeProfile(chat, profile.Resolved); err != nil {
-		http.Error(w, err.Error(), requestErrorStatus(err))
-		return
+	reserved := false
+	if chat.ThreadID != "" {
+		if err := s.reserveThread(chat.ThreadID); err != nil {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		reserved = true
+		defer func() {
+			if reserved {
+				s.releaseThreadReservation(chat.ThreadID)
+			}
+		}()
 	}
 	thread, err := s.resolveThreadSession(request.Context(), &chat)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		http.Error(w, err.Error(), requestErrorStatus(err))
 		return
 	}
 	if err := validateThreadTurn(chat, thread); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := bindAuthoritativeHistory(&chat, thread); err != nil {
+		http.Error(w, err.Error(), requestErrorStatus(err))
+		return
+	}
+	if err := enforceRuntimeProfile(chat, profile.Resolved); err != nil {
+		http.Error(w, err.Error(), requestErrorStatus(err))
 		return
 	}
 	var attachments map[partLocation]api.AttachmentRef
@@ -224,6 +247,10 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 	}
 	spec.Model = config.Model
 	resolved.Spec = spec
+	if err := enforceThreadRuntime(thread, config.Model); err != nil {
+		http.Error(w, err.Error(), requestErrorStatus(err))
+		return
+	}
 	var execution Execution
 	var callerToolEvents <-chan api.Event
 	if s.options.Authority != nil && chat.ThreadID != "" {
@@ -233,10 +260,16 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 		}
 		execution, err = s.options.Authority.Begin(request.Context(), ExecutionRequest{
 			ThreadID: chat.ThreadID, RequestID: turnID, Title: title,
-			Spec: spec, Profile: resolved, Definitions: definitions,
+			ExpectedThreadUpdatedAt: thread.UpdatedAt,
+			Spec:                    spec, Profile: resolved, Definitions: definitions,
 		})
 		if err != nil {
-			http.Error(w, fmt.Sprintf("admit chat execution: %v", err), http.StatusInternalServerError)
+			status := http.StatusInternalServerError
+			if errors.Is(err, database.ErrOpenChatTurn) || errors.Is(err, database.ErrSessionConflict) ||
+				errors.Is(err, ErrThreadRuntimeConflict) {
+				status = http.StatusConflict
+			}
+			http.Error(w, fmt.Sprintf("admit chat execution: %v", err), status)
 			return
 		}
 		defer closeExecution(execution)
@@ -272,25 +305,29 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 			return
 		}
 	}
-	if err := s.persistIncoming(request.Context(), chat); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
 	streamContext, cancel := context.WithCancel(request.Context())
 	defer cancel()
+	var active *activeTurn
+	if chat.ThreadID != "" {
+		active = newActiveTurn(streamContext, provider, execution, cancel)
+		if err := s.registerActiveTurn(chat.ThreadID, active); err != nil {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		reserved = false
+		defer s.unregisterActiveTurn(chat.ThreadID, active)
+	}
+	if err := s.persistIncoming(request.Context(), chat, config.Model); err != nil {
+		http.Error(w, err.Error(), requestErrorStatus(err))
+		return
+	}
 	events, err := provider.ExecuteStream(streamContext, spec)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
 	events = mergeExecutionEvents(streamContext, events, callerToolEvents, definitions)
-	if chat.ThreadID != "" {
-		active := newActiveTurn(streamContext, provider, execution, cancel)
-		if err := s.registerActiveTurn(chat.ThreadID, active); err != nil {
-			http.Error(w, err.Error(), http.StatusConflict)
-			return
-		}
-		defer s.unregisterActiveTurn(chat.ThreadID, active)
+	if active != nil {
 		events = active.stream(events)
 	}
 	events = observeExecutionEvents(streamContext, execution, events)
@@ -408,10 +445,52 @@ func (s *Service) resolveThreadSession(ctx context.Context, request *ChatRequest
 	if err != nil {
 		return nil, err
 	}
-	if request.ProviderSessionID == "" {
-		request.ProviderSessionID = thread.ProviderSessionID
+	provided := strings.TrimSpace(request.ProviderSessionID)
+	if provided != "" && provided != thread.ProviderSessionID {
+		return nil, requestError{status: http.StatusConflict, text: fmt.Sprintf(
+			"provider session ID %q does not match thread %q binding", provided, thread.ProviderSessionID,
+		)}
 	}
+	request.ProviderSessionID = thread.ProviderSessionID
 	return thread, nil
+}
+
+func bindAuthoritativeHistory(request *ChatRequest, thread *Thread) error {
+	if thread == nil {
+		return nil
+	}
+	switch request.Trigger {
+	case "submit-message":
+		incoming := request.Messages[len(request.Messages)-1]
+		for _, persisted := range thread.Messages {
+			if persisted.ID != "" && persisted.ID == incoming.ID {
+				return requestError{status: http.StatusConflict, text: fmt.Sprintf(
+					"chat message %q is already persisted in thread %s", incoming.ID, thread.ID,
+				)}
+			}
+		}
+		request.Messages = append(append([]UIMessage(nil), thread.Messages...), incoming)
+	case "regenerate-message":
+		request.Messages = append([]UIMessage(nil), thread.Messages[:len(thread.Messages)-1]...)
+	}
+	return nil
+}
+
+func enforceThreadRuntime(thread *Thread, requested api.Model) error {
+	if thread == nil || thread.Runtime == nil {
+		return nil
+	}
+	identity, err := threadRuntimeIdentity(requested)
+	if err != nil {
+		return err
+	}
+	if sameThreadRuntime(*thread.Runtime, identity) {
+		return nil
+	}
+	return requestError{status: http.StatusConflict, text: fmt.Sprintf(
+		"chat session runtime is locked to %s/%s, not %s/%s; fork the session to use a different model or backend",
+		thread.Runtime.Backend, thread.Runtime.Name, identity.Backend, identity.Name,
+	)}
 }
 
 func closeExecution(execution Execution) {
@@ -425,7 +504,7 @@ func closeExecution(execution Execution) {
 	}
 }
 
-func (s *Service) persistIncoming(ctx context.Context, request ChatRequest) error {
+func (s *Service) persistIncoming(ctx context.Context, request ChatRequest, runtime api.Model) error {
 	if request.ThreadID == "" || request.Trigger != "submit-message" || request.MessageID != "" || len(request.Messages) == 0 {
 		return nil
 	}
@@ -435,6 +514,9 @@ func (s *Service) persistIncoming(ctx context.Context, request ChatRequest) erro
 	}
 	store, err := s.threads(ctx)
 	if err != nil {
+		return err
+	}
+	if err := store.SetRuntime(ctx, request.ThreadID, runtime); err != nil {
 		return err
 	}
 	if err := store.AppendMessage(ctx, request.ThreadID, last); err != nil {

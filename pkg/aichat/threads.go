@@ -2,22 +2,37 @@ package aichat
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/session"
 	"github.com/google/uuid"
 )
 
+const maxThreadSummaries = 100
+
+var (
+	ErrThreadNotFound        = errors.New("chat thread not found")
+	ErrThreadRuntimeConflict = errors.New("chat thread runtime conflict")
+	ErrForkSourceEmpty       = errors.New("chat thread has no conversation to fork")
+)
+
 type Thread struct {
-	ID        string      `json:"id"`
-	Title     string      `json:"title"`
-	CreatedAt time.Time   `json:"createdAt"`
-	UpdatedAt time.Time   `json:"updatedAt"`
-	Messages  []UIMessage `json:"messages"`
+	ID         string      `json:"id"`
+	Title      string      `json:"title"`
+	Revision   int64       `json:"revision"`
+	CreatedAt  time.Time   `json:"createdAt"`
+	UpdatedAt  time.Time   `json:"updatedAt"`
+	Messages   []UIMessage `json:"messages,omitempty"`
+	Runtime    *api.Model  `json:"runtime,omitempty"`
+	ForkedFrom string      `json:"forkedFrom,omitempty"`
 
 	TotalInputTokens      int     `json:"totalInputTokens"`
 	TotalOutputTokens     int     `json:"totalOutputTokens"`
@@ -64,6 +79,8 @@ type ThreadStore interface {
 	ReplaceLastMessage(context.Context, string, UIMessage) error
 	Delete(context.Context, string) error
 	SetProviderSession(context.Context, string, string) error
+	SetRuntime(context.Context, string, api.Model) error
+	Fork(context.Context, string) (*Thread, error)
 	SetTitle(context.Context, string, TitleUpdate) error
 	AddUsage(context.Context, string, TurnUsage) (*Thread, error)
 }
@@ -99,9 +116,14 @@ func (s *memoryThreadStore) List(context.Context) ([]*Thread, error) {
 	defer s.mu.Unlock()
 	threads := make([]*Thread, 0, len(s.threads))
 	for _, thread := range s.threads {
-		threads = append(threads, cloneThread(thread))
+		summary := cloneThread(thread)
+		summary.Messages = nil
+		threads = append(threads, summary)
 	}
 	sort.Slice(threads, func(i, j int) bool { return threads[i].UpdatedAt.After(threads[j].UpdatedAt) })
+	if len(threads) > maxThreadSummaries {
+		threads = threads[:maxThreadSummaries]
+	}
 	return threads, nil
 }
 
@@ -110,7 +132,7 @@ func (s *memoryThreadStore) Get(_ context.Context, id string) (*Thread, error) {
 	defer s.mu.Unlock()
 	thread, ok := s.threads[id]
 	if !ok {
-		return nil, fmt.Errorf("thread %q not found", id)
+		return nil, fmt.Errorf("%w: %q", ErrThreadNotFound, id)
 	}
 	return cloneThread(thread), nil
 }
@@ -122,8 +144,16 @@ func (s *memoryThreadStore) AppendMessage(_ context.Context, id string, message 
 	if err != nil {
 		return err
 	}
+	for _, existing := range thread.Messages {
+		if existing.ID != "" && existing.ID == message.ID {
+			if reflect.DeepEqual(existing, message) {
+				return nil
+			}
+			return fmt.Errorf("thread %q message %q was replayed with different content", id, message.ID)
+		}
+	}
 	thread.Messages = append(thread.Messages, message)
-	thread.UpdatedAt = time.Now()
+	touchMemoryThread(thread)
 	return nil
 }
 
@@ -138,7 +168,7 @@ func (s *memoryThreadStore) ReplaceLastMessage(_ context.Context, id string, mes
 		return fmt.Errorf("thread %q: %w", id, err)
 	}
 	thread.Messages[len(thread.Messages)-1] = message
-	thread.UpdatedAt = time.Now()
+	touchMemoryThread(thread)
 	return nil
 }
 
@@ -146,7 +176,7 @@ func (s *memoryThreadStore) Delete(_ context.Context, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.threads[id]; !ok {
-		return fmt.Errorf("thread %q not found", id)
+		return fmt.Errorf("%w: %q", ErrThreadNotFound, id)
 	}
 	delete(s.threads, id)
 	return nil
@@ -174,8 +204,52 @@ func (s *memoryThreadStore) SetProviderSession(_ context.Context, id, sessionID 
 		return nil
 	}
 	thread.ProviderSessionID = sessionID
-	thread.UpdatedAt = time.Now()
+	touchMemoryThread(thread)
 	return nil
+}
+
+func (s *memoryThreadStore) SetRuntime(_ context.Context, id string, runtime api.Model) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	thread, err := s.thread(id)
+	if err != nil {
+		return err
+	}
+	identity, err := threadRuntimeIdentity(runtime)
+	if err != nil {
+		return err
+	}
+	if thread.Runtime != nil {
+		if sameThreadRuntime(*thread.Runtime, identity) {
+			return nil
+		}
+		return fmt.Errorf("%w: runtime is already bound to %s/%s", ErrThreadRuntimeConflict,
+			thread.Runtime.Backend, thread.Runtime.Name)
+	}
+	thread.Runtime = &identity
+	touchMemoryThread(thread)
+	return nil
+}
+
+func (s *memoryThreadStore) Fork(_ context.Context, id string) (*Thread, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	source, err := s.thread(id)
+	if err != nil {
+		return nil, err
+	}
+	title, seed, err := forkSeedMessage(source)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	fork := &Thread{
+		ID: uuid.NewString(), Title: title, CreatedAt: now, UpdatedAt: now,
+		Messages: []UIMessage{seed}, ForkedFrom: source.ID,
+	}
+	s.threads[fork.ID] = fork
+	s.titleSources[fork.ID] = TitleSourceDerived
+	return cloneThread(fork), nil
 }
 
 func (s *memoryThreadStore) SetTitle(_ context.Context, id string, update TitleUpdate) error {
@@ -194,7 +268,7 @@ func (s *memoryThreadStore) SetTitle(_ context.Context, id string, update TitleU
 	}
 	thread.Title = title
 	s.titleSources[id] = update.Source
-	thread.UpdatedAt = time.Now()
+	touchMemoryThread(thread)
 	return nil
 }
 
@@ -212,14 +286,14 @@ func (s *memoryThreadStore) AddUsage(_ context.Context, id string, usage TurnUsa
 	thread.TotalCacheWriteTokens += usage.CacheWriteTokens
 	thread.TotalCostUSD += usage.CostUSD
 	thread.LastContextTokens = usage.InputTokens
-	thread.UpdatedAt = time.Now()
+	touchMemoryThread(thread)
 	return cloneThread(thread), nil
 }
 
 func (s *memoryThreadStore) thread(id string) (*Thread, error) {
 	thread, ok := s.threads[id]
 	if !ok {
-		return nil, fmt.Errorf("thread %q not found", id)
+		return nil, fmt.Errorf("%w: %q", ErrThreadNotFound, id)
 	}
 	return thread, nil
 }
@@ -227,7 +301,32 @@ func (s *memoryThreadStore) thread(id string) (*Thread, error) {
 func cloneThread(thread *Thread) *Thread {
 	copy := *thread
 	copy.Messages = append([]UIMessage(nil), thread.Messages...)
+	if thread.Runtime != nil {
+		runtime := *thread.Runtime
+		copy.Runtime = &runtime
+	}
 	return &copy
+}
+
+func touchMemoryThread(thread *Thread) {
+	thread.Revision++
+	thread.UpdatedAt = time.Now()
+}
+
+func threadRuntimeIdentity(runtime api.Model) (api.Model, error) {
+	resolved, err := ai.ResolveModelSelectors(runtime)
+	if err != nil {
+		return api.Model{}, fmt.Errorf("resolve thread runtime: %w", err)
+	}
+	identity := api.Model{Name: strings.TrimSpace(resolved.Name), Backend: resolved.Backend}
+	if identity.Name == "" || !identity.Backend.Valid() {
+		return api.Model{}, fmt.Errorf("thread runtime requires a model name and valid backend")
+	}
+	return identity, nil
+}
+
+func sameThreadRuntime(left, right api.Model) bool {
+	return left.Name == right.Name && left.Backend == right.Backend
 }
 
 func validateLastMessageReplacement(messages []UIMessage, replacement UIMessage) error {

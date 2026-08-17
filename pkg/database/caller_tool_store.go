@@ -299,12 +299,13 @@ func (db *DB) CreateToolApprovalRequest(
 }
 
 type ResolveToolApprovalRequestInput struct {
-	SessionID    uuid.UUID
-	RequestID    uuid.UUID
-	Approved     bool
-	UpdatedInput map[string]any
-	ResolvedBy   string
-	Reason       string
+	SessionID      uuid.UUID
+	RequestID      uuid.UUID
+	ExpectedTurnID *uuid.UUID
+	Approved       bool
+	UpdatedInput   map[string]any
+	ResolvedBy     string
+	Reason         string
 }
 
 func (db *DB) ResolveToolApprovalRequest(
@@ -338,6 +339,9 @@ func (db *DB) ResolveToolApprovalRequest(
 			return &out, nil
 		}
 		return nil, fmt.Errorf("%w: approval %s already has a different %s decision", ErrTurnRequestConflict, pending.ID, pending.State)
+	}
+	if input.ExpectedTurnID != nil && (pending.TurnID == nil || *pending.TurnID != *input.ExpectedTurnID) {
+		return nil, fmt.Errorf("%w: approval %s does not belong to active turn %s", ErrTurnRequestConflict, pending.ID, *input.ExpectedTurnID)
 	}
 	now := time.Now().UTC()
 	result := db.gorm.WithContext(ctx).Model(&turnRequestRecord{}).

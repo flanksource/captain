@@ -341,6 +341,7 @@ var _ = Describe("Captain aichat service", func() {
 		store := aichat.NewMemoryThreadStore()
 		thread, err := store.Create(context.Background(), "Agent chat")
 		Expect(err).NotTo(HaveOccurred())
+		Expect(store.SetProviderSession(context.Background(), thread.ID, "provider-session-1")).To(Succeed())
 		provider := &fakeStreamingProvider{
 			backend: api.BackendClaudeAgent,
 			events:  []api.Event{{Kind: api.EventResult, Success: true}},

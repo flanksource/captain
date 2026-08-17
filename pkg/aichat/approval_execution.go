@@ -105,15 +105,15 @@ func (s *Service) resumeToolApproval(ctx context.Context, threadID string, conti
 	}
 	streamContext, cancel := context.WithCancel(ctx)
 	defer cancel()
-	events, err := provider.ExecuteStream(streamContext, continuation.Spec)
-	if err != nil {
-		return err
-	}
 	active := newActiveTurn(streamContext, provider, execution, cancel)
 	if err := s.registerActiveTurn(threadID, active); err != nil {
 		return err
 	}
 	defer s.unregisterActiveTurn(threadID, active)
+	events, err := provider.ExecuteStream(streamContext, continuation.Spec)
+	if err != nil {
+		return err
+	}
 	events = active.stream(events)
 	events = observeExecutionEvents(streamContext, execution, events)
 	// A resumed approval writes no SSE stream, so no TurnCosts sink is needed;

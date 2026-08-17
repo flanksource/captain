@@ -34,26 +34,46 @@ func (a *DatabaseExecutionAuthority) Begin(
 	if request.Spec.Backend == "" {
 		return nil, fmt.Errorf("authoritative chat execution requires a resolved backend")
 	}
-	session, err := a.db.CreateOrGetSession(ctx, database.CreateSessionInput{
-		ID: sessionID, Source: "aichat", Provider: ai.BackendToProvider(request.Spec.Backend),
-		HostID: "local", Title: request.Title, InitialPrompt: initialUserPrompt(request.Spec),
-		Metadata: map[string]any{"aichat": true},
-	})
+	runtime, err := threadRuntimeIdentity(request.Spec.Model)
 	if err != nil {
 		return nil, err
-	}
-	if session.Source != "aichat" {
-		return nil, fmt.Errorf("chat thread %s has incompatible source %q", request.ThreadID, session.Source)
 	}
 	renderedSpec, err := renderedSpecMap(request.Spec, request.Profile)
 	if err != nil {
 		return nil, err
 	}
+	var session *database.Session
 	var execution *databaseExecution
 	var recovered *database.ChatTurn
 	resumed := false
 	err = a.db.Transaction(ctx, func(tx *database.DB) error {
+		if !request.ExpectedThreadUpdatedAt.IsZero() {
+			locked, lockErr := tx.LockSessionForUpdate(ctx, sessionID)
+			if lockErr != nil {
+				return lockErr
+			}
+			if !locked.UpdatedAt.Equal(request.ExpectedThreadUpdatedAt) {
+				return fmt.Errorf("%w: chat thread %s changed after its history was read", database.ErrSessionConflict, sessionID)
+			}
+		}
 		var createErr error
+		session, createErr = tx.CreateOrGetSession(ctx, database.CreateSessionInput{
+			ID: sessionID, Source: "aichat", Provider: ai.BackendToProvider(request.Spec.Backend),
+			HostID: "local", Title: request.Title, InitialPrompt: initialUserPrompt(request.Spec),
+			Metadata: map[string]any{"aichat": true},
+		})
+		if createErr != nil {
+			return createErr
+		}
+		if session.Source != "aichat" {
+			return fmt.Errorf("chat thread %s has incompatible source %q", request.ThreadID, session.Source)
+		}
+		if bindErr := tx.SetSessionMetadataOnce(ctx, session.ID, threadRuntimeMetadataKey, runtime); bindErr != nil {
+			if errors.Is(bindErr, database.ErrSessionConflict) {
+				return fmt.Errorf("%w: %v", ErrThreadRuntimeConflict, bindErr)
+			}
+			return bindErr
+		}
 		recovered, createErr = tx.RecoverIncompleteChatAdmission(ctx, database.RecoverIncompleteChatAdmissionInput{
 			SessionID: session.ID, ProviderTurnID: request.RequestID,
 		})
@@ -151,8 +171,16 @@ func (a *DatabaseExecutionAuthority) resolveToolApproval(
 	if err != nil {
 		return nil, fmt.Errorf("tool approval ID %q is not a UUID: %w", resolution.ApprovalID, err)
 	}
+	var expectedTurnID *uuid.UUID
+	if strings.TrimSpace(resolution.ExpectedTurnID) != "" {
+		parsed, parseErr := uuid.Parse(resolution.ExpectedTurnID)
+		if parseErr != nil {
+			return nil, fmt.Errorf("active chat turn ID %q is not a UUID: %w", resolution.ExpectedTurnID, parseErr)
+		}
+		expectedTurnID = &parsed
+	}
 	request, err := a.db.ResolveToolApprovalRequest(ctx, database.ResolveToolApprovalRequestInput{
-		SessionID: sessionID, RequestID: approvalID,
+		SessionID: sessionID, RequestID: approvalID, ExpectedTurnID: expectedTurnID,
 		Approved: resolution.Approved, UpdatedInput: resolution.UpdatedInput,
 		ResolvedBy: "chat", Reason: resolution.Reason,
 	})

@@ -2,6 +2,7 @@ package aichat
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 )
@@ -39,9 +40,16 @@ func (s *Service) handleResolveToolApproval(w http.ResponseWriter, request *http
 		http.Error(w, "denied tool approval cannot replace input", http.StatusBadRequest)
 		return
 	}
+	activeTurnID, err := s.reserveThreadForApproval(threadID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	defer s.releaseThreadReservation(threadID)
 	continuation, err := s.options.Authority.ResolveToolApproval(request.Context(), ToolApprovalResolution{
 		ThreadID: threadID, ApprovalID: request.PathValue("approvalID"),
-		Approved: *body.Approved, UpdatedInput: body.UpdatedInput, Reason: body.Reason,
+		ExpectedTurnID: activeTurnID,
+		Approved:       *body.Approved, UpdatedInput: body.UpdatedInput, Reason: body.Reason,
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
@@ -49,7 +57,11 @@ func (s *Service) handleResolveToolApproval(w http.ResponseWriter, request *http
 	}
 	if continuation != nil {
 		if err := s.resumeToolApproval(request.Context(), threadID, continuation); err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
+			status := http.StatusBadGateway
+			if errors.Is(err, errThreadBusy) {
+				status = http.StatusConflict
+			}
+			http.Error(w, err.Error(), status)
 			return
 		}
 	}

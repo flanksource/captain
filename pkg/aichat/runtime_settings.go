@@ -2,6 +2,7 @@ package aichat
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -16,8 +17,15 @@ type requestError struct {
 func (e requestError) Error() string { return e.text }
 
 func requestErrorStatus(err error) int {
-	if typed, ok := err.(requestError); ok {
+	var typed requestError
+	if errors.As(err, &typed) {
 		return typed.status
+	}
+	if errors.Is(err, ErrThreadRuntimeConflict) {
+		return http.StatusConflict
+	}
+	if errors.Is(err, ErrThreadNotFound) {
+		return http.StatusNotFound
 	}
 	return http.StatusBadRequest
 }

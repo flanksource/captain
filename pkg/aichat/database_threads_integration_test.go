@@ -3,6 +3,7 @@ package aichat_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"time"
@@ -39,6 +40,110 @@ var _ = Describe("Database chat sessions", func() {
 		Expect(store.SetProviderSession(ctx, thread.ID, "provider-session-2")).To(MatchError(ContainSubstring(
 			`provider session ID is already bound to "provider-session-1"`,
 		)))
+	})
+
+	It("rejects stale database history snapshots before turn admission or fork creation", func(ctx SpecContext) {
+		testDB := dbtest.ForGinkgo(dbtest.Options{Name: "captain_aichat_stale_history"})
+		db, err := database.Open(ctx, database.WithDSN(testDB.DSN()), database.WithMigrations())
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(db.Close)
+		store, err := aichat.NewDatabaseThreadStore(db)
+		Expect(err).NotTo(HaveOccurred())
+		thread, err := store.Create(ctx, "History snapshot")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(store.AppendMessage(ctx, thread.ID, aichat.UIMessage{
+			ID: "first-user", Role: "user", Parts: []aichat.UIPart{{Type: "text", Text: "First"}},
+		})).To(Succeed())
+		stale, err := store.Get(ctx, thread.ID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(store.AppendMessage(ctx, thread.ID, aichat.UIMessage{
+			ID: "intervening-assistant", Role: "assistant", Parts: []aichat.UIPart{{Type: "text", Text: "Intervening"}},
+		})).To(Succeed())
+
+		authority, err := aichat.NewDatabaseExecutionAuthority(db)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = authority.Begin(ctx, aichat.ExecutionRequest{
+			ThreadID: thread.ID, RequestID: "stale-turn", Title: stale.Title,
+			ExpectedThreadUpdatedAt: stale.UpdatedAt,
+			Spec:                    api.Spec{Model: api.Model{Name: "test-model", Backend: api.BackendOpenAI}},
+		})
+		Expect(errors.Is(err, database.ErrSessionConflict)).To(BeTrue())
+
+		_, err = db.ForkChatSession(ctx, database.ForkChatSessionInput{
+			SourceSessionID: uuid.MustParse(thread.ID), ExpectedSourceUpdatedAt: stale.UpdatedAt,
+			SessionID: uuid.New(), Title: "Stale fork", ProviderMessageID: "stale-seed",
+			Role: "user", Parts: json.RawMessage(`[{"type":"text","text":"stale"}]`),
+		})
+		Expect(errors.Is(err, database.ErrSessionConflict)).To(BeTrue())
+	})
+
+	It("persists write-once runtime identity and an independent turnless fork seed", func(ctx SpecContext) {
+		testDB := dbtest.ForGinkgo(dbtest.Options{Name: "captain_aichat_runtime_fork"})
+		db, err := database.Open(ctx, database.WithDSN(testDB.DSN()), database.WithMigrations())
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(db.Close)
+		store, err := aichat.NewDatabaseThreadStore(db)
+		Expect(err).NotTo(HaveOccurred())
+		source, err := store.Create(ctx, "Runtime source")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(store.AppendMessage(ctx, source.ID, aichat.UIMessage{
+			ID: "source-user", Role: "user", Parts: []aichat.UIPart{{Type: "text", Text: "Question"}},
+		})).To(Succeed())
+		Expect(store.AppendMessage(ctx, source.ID, aichat.UIMessage{
+			ID: "source-assistant", Role: "assistant", Parts: []aichat.UIPart{{Type: "text", Text: "Answer"}},
+		})).To(Succeed())
+		runtime := api.Model{Name: "test-model", Backend: api.BackendOpenAI}
+		authority, err := aichat.NewDatabaseExecutionAuthority(db)
+		Expect(err).NotTo(HaveOccurred())
+		execution, err := authority.Begin(ctx, aichat.ExecutionRequest{
+			ThreadID: source.ID, RequestID: "runtime-binding-turn", Title: source.Title,
+			Spec: api.Spec{Model: runtime},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(execution.Close(ctx)).To(Succeed())
+		bound, err := store.Get(ctx, source.ID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(bound.Runtime).To(Equal(&runtime))
+		Expect(store.SetRuntime(ctx, source.ID, api.Model{
+			Name: "test-model", Backend: api.BackendOpenAI, Effort: api.EffortHigh,
+		})).To(Succeed())
+		err = store.SetRuntime(ctx, source.ID, api.Model{Name: "other-model", Backend: api.BackendOpenAI})
+		Expect(errors.Is(err, aichat.ErrThreadRuntimeConflict)).To(BeTrue())
+		Expect(store.SetProviderSession(ctx, source.ID, "provider-source")).To(Succeed())
+		_, err = store.AddUsage(ctx, source.ID, aichat.TurnUsage{InputTokens: 11, OutputTokens: 5, CostUSD: 0.3})
+		Expect(err).NotTo(HaveOccurred())
+
+		fork, err := store.Fork(ctx, source.ID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fork.ForkedFrom).To(Equal(source.ID))
+		Expect(fork.ProviderSessionID).To(BeEmpty())
+		Expect(fork.Runtime).To(BeNil())
+		Expect(fork.TotalInputTokens).To(BeZero())
+		Expect(fork.TotalCostUSD).To(BeZero())
+		Expect(fork.Messages).To(HaveLen(1))
+		Expect(fork.Messages[0].TurnID).To(BeEmpty())
+		Expect(fork.Messages[0].Parts).To(ContainElement(HaveField("Type", "data-fork-seed")))
+
+		var parentID *uuid.UUID
+		var providerSessionID *string
+		var metadata string
+		Expect(db.Gorm().WithContext(ctx).Raw(`
+			SELECT parent_session_id, provider_session_id, metadata::text
+			FROM captain_sessions WHERE id = ?
+		`, fork.ID).Row().Scan(&parentID, &providerSessionID, &metadata)).To(Succeed())
+		Expect(parentID).To(BeNil(), "forks remain independent root sessions")
+		Expect(providerSessionID).To(BeNil())
+		Expect(metadata).To(ContainSubstring(`"forkedFrom"`))
+		Expect(metadata).NotTo(ContainSubstring(`"aichatRuntime"`))
+
+		var seedTurnID *uuid.UUID
+		Expect(db.Gorm().WithContext(ctx).Raw(`
+			SELECT turn_id FROM captain_messages WHERE session_id = ?
+		`, fork.ID).Row().Scan(&seedTurnID)).To(Succeed())
+		Expect(seedTurnID).To(BeNil())
+		roots, err := store.List(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(roots).To(HaveLen(2))
 	})
 
 	It("projects messages, turns, usage, and durable approvals from one Captain session", func(ctx SpecContext) {

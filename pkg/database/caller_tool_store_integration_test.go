@@ -37,9 +37,17 @@ func TestCallerToolCredentialAndApprovalLifecycle(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, TurnRequestStatePending, request.State)
+	wrongTurnID := uuid.New()
+	_, err = db.ResolveToolApprovalRequest(t.Context(), ResolveToolApprovalRequestInput{
+		SessionID: session.ID, RequestID: request.ID, ExpectedTurnID: &wrongTurnID, Approved: true,
+	})
+	assert.ErrorIs(t, err, ErrTurnRequestConflict)
+	stillPending, err := db.GetTurnRequest(t.Context(), request.ID)
+	require.NoError(t, err)
+	assert.Equal(t, TurnRequestStatePending, stillPending.State)
 
 	resolved, err := db.ResolveToolApprovalRequest(t.Context(), ResolveToolApprovalRequestInput{
-		SessionID: session.ID, RequestID: request.ID, Approved: true,
+		SessionID: session.ID, RequestID: request.ID, ExpectedTurnID: &turn.ID, Approved: true,
 		UpdatedInput: map[string]any{"id": "acc-1", "name": "Receivables"}, ResolvedBy: "chat",
 	})
 	require.NoError(t, err)

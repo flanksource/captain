@@ -3,6 +3,7 @@ package aichat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -10,6 +11,11 @@ import (
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/session"
 	"github.com/google/uuid"
+)
+
+const (
+	threadRuntimeMetadataKey = "aichatRuntime"
+	forkedFromMetadataKey    = "forkedFrom"
 )
 
 type DatabaseThreadStore struct {
@@ -41,17 +47,18 @@ func (s *DatabaseThreadStore) Create(ctx context.Context, title string) (*Thread
 }
 
 func (s *DatabaseThreadStore) List(ctx context.Context) ([]*Thread, error) {
-	overviews, err := s.db.ListSessionOverviews(ctx, database.SessionOverviewFilter{Source: "aichat", RootsOnly: true})
+	overviews, err := s.db.ListSessionOverviews(ctx, database.SessionOverviewFilter{
+		Source: "aichat", RootsOnly: true, Limit: maxThreadSummaries,
+	})
 	if err != nil {
 		return nil, err
 	}
 	threads := make([]*Thread, len(overviews))
 	for i := range overviews {
-		aggregate, err := s.getSession(ctx, overviews[i])
+		threads[i], err = threadSummaryFromOverview(overviews[i])
 		if err != nil {
 			return nil, err
 		}
-		threads[i] = threadFromSession(aggregate, overviews[i])
 	}
 	return threads, nil
 }
@@ -68,7 +75,7 @@ func (s *DatabaseThreadStore) Get(ctx context.Context, id string) (*Thread, erro
 	if err != nil {
 		return nil, err
 	}
-	return threadFromSession(aggregate, *overview), nil
+	return threadFromSession(aggregate, *overview)
 }
 
 func (s *DatabaseThreadStore) GetSession(ctx context.Context, id string) (*session.Session, error) {
@@ -86,6 +93,9 @@ func (s *DatabaseThreadStore) getOverview(ctx context.Context, id string) (*data
 	}
 	overview, err := s.db.GetSessionOverviewByIdentity(ctx, parsed.String())
 	if err != nil {
+		if errors.Is(err, database.ErrSessionNotFound) {
+			return nil, fmt.Errorf("%w: %s", ErrThreadNotFound, parsed)
+		}
 		return nil, err
 	}
 	if overview.ID != parsed {
@@ -120,6 +130,12 @@ func (s *DatabaseThreadStore) getSession(ctx context.Context, overview database.
 	if err := ApplyOverviewProjection(ctx, s.db, overview, aggregate); err != nil {
 		return nil, err
 	}
+	runtime, forkedFrom, err := threadIdentityMetadata(overview.Metadata)
+	if err != nil {
+		return nil, fmt.Errorf("decode Captain chat session %s metadata: %w", overview.ID, err)
+	}
+	aggregate.Runtime = runtime
+	aggregate.ForkedFrom = forkedFrom
 	// The overview's own usage/cost is root-scoped; a thread's subagents spend
 	// against the same conversation, so roll the thread-wide figures on top.
 	applyThreadCosts(aggregate, costs)
@@ -156,9 +172,12 @@ func (s *DatabaseThreadStore) putMessage(ctx context.Context, id string, message
 	if err != nil {
 		return fmt.Errorf("captain chat session ID %q is not a UUID: %w", id, err)
 	}
-	turnID, err := uuid.Parse(message.TurnID)
-	if err != nil {
-		return fmt.Errorf("captain chat message %q turn ID %q is not a UUID: %w", message.ID, message.TurnID, err)
+	turnID := uuid.Nil
+	if strings.TrimSpace(message.TurnID) != "" {
+		turnID, err = uuid.Parse(message.TurnID)
+		if err != nil {
+			return fmt.Errorf("captain chat message %q turn ID %q is not a UUID: %w", message.ID, message.TurnID, err)
+		}
 	}
 	parts, err := json.Marshal(message.Parts)
 	if err != nil {
@@ -201,6 +220,56 @@ func (s *DatabaseThreadStore) SetProviderSession(ctx context.Context, id, provid
 		ID: parsed, ExpectedVersion: record.StateVersion, ProviderSessionID: &providerSessionID,
 	})
 	return err
+}
+
+func (s *DatabaseThreadStore) SetRuntime(ctx context.Context, id string, runtime api.Model) error {
+	parsed, err := uuid.Parse(id)
+	if err != nil {
+		return fmt.Errorf("captain chat session ID %q is not a UUID: %w", id, err)
+	}
+	identity, err := threadRuntimeIdentity(runtime)
+	if err != nil {
+		return err
+	}
+	if err := s.db.SetSessionMetadataOnce(ctx, parsed, threadRuntimeMetadataKey, identity); err != nil {
+		if errors.Is(err, database.ErrSessionConflict) {
+			return fmt.Errorf("%w: %v", ErrThreadRuntimeConflict, err)
+		}
+		return err
+	}
+	return nil
+}
+
+func (s *DatabaseThreadStore) Fork(ctx context.Context, id string) (*Thread, error) {
+	source, err := s.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	title, seed, err := forkSeedMessage(source)
+	if err != nil {
+		return nil, err
+	}
+	parts, err := json.Marshal(seed.Parts)
+	if err != nil {
+		return nil, fmt.Errorf("encode fork seed: %w", err)
+	}
+	forkID := uuid.New()
+	if _, err := s.db.ForkChatSession(ctx, database.ForkChatSessionInput{
+		SourceSessionID: sourceID(source), ExpectedSourceUpdatedAt: source.UpdatedAt,
+		SessionID: forkID, Title: title,
+		Metadata: map[string]any{
+			"aichat": true, forkedFromMetadataKey: source.ID,
+			database.SessionTitleSourceKey: string(database.SessionTitleDerived),
+		},
+		ProviderMessageID: seed.ID, Role: seed.Role, Parts: parts,
+	}); err != nil {
+		return nil, err
+	}
+	return s.Get(ctx, forkID.String())
+}
+
+func sourceID(thread *Thread) uuid.UUID {
+	return uuid.MustParse(thread.ID)
 }
 
 func (s *DatabaseThreadStore) SetTitle(ctx context.Context, id string, update TitleUpdate) error {
@@ -383,7 +452,7 @@ func applyRequestState(aggregate *session.Session) {
 	}
 }
 
-func threadFromSession(aggregate *session.Session, overview database.SessionOverview) *Thread {
+func threadFromSession(aggregate *session.Session, overview database.SessionOverview) (*Thread, error) {
 	messages := make([]UIMessage, len(aggregate.Messages))
 	for i := range aggregate.Messages {
 		parts := make([]UIPart, len(aggregate.Messages[i].Parts))
@@ -403,13 +472,66 @@ func threadFromSession(aggregate *session.Session, overview database.SessionOver
 			Parts: parts, TurnID: aggregate.Messages[i].TurnID,
 		}
 	}
-	return &Thread{
-		ID: aggregate.ID, Title: aggregate.Title, CreatedAt: overview.CreatedAt, UpdatedAt: overview.UpdatedAt,
-		Messages: messages, TotalInputTokens: aggregate.Usage.InputTokens, TotalOutputTokens: aggregate.Usage.OutputTokens,
-		TotalReasoningTokens: aggregate.Usage.ReasoningTokens, TotalCacheReadTokens: aggregate.Usage.CacheReadTokens,
-		TotalCacheWriteTokens: aggregate.Usage.CacheWriteTokens, TotalCostUSD: aggregate.Cost.Total(),
-		LastContextTokens: intPointer(overview.ContextTokens), ProviderSessionID: aggregate.ProviderSessionID,
+	thread, err := threadSummaryFromOverview(overview)
+	if err != nil {
+		return nil, err
 	}
+	thread.Messages = messages
+	thread.TotalInputTokens = aggregate.Usage.InputTokens
+	thread.TotalOutputTokens = aggregate.Usage.OutputTokens
+	thread.TotalReasoningTokens = aggregate.Usage.ReasoningTokens
+	thread.TotalCacheReadTokens = aggregate.Usage.CacheReadTokens
+	thread.TotalCacheWriteTokens = aggregate.Usage.CacheWriteTokens
+	thread.TotalCostUSD = aggregate.Cost.Total()
+	thread.ProviderSessionID = aggregate.ProviderSessionID
+	return thread, nil
+}
+
+func threadSummaryFromOverview(overview database.SessionOverview) (*Thread, error) {
+	runtime, forkedFrom, err := threadIdentityMetadata(overview.Metadata)
+	if err != nil {
+		return nil, fmt.Errorf("decode Captain chat session %s metadata: %w", overview.ID, err)
+	}
+	// Summaries intentionally carry no transcript. GET /sessions/{id} is the
+	// only hydration path, keeping the picker bounded as threads grow.
+	return &Thread{
+		ID: overview.ID.String(), Title: stringPointer(overview.Title), Revision: overview.StateVersion,
+		CreatedAt: overview.CreatedAt, UpdatedAt: overview.UpdatedAt,
+		Runtime: runtime, ForkedFrom: forkedFrom,
+		Messages: nil, TotalInputTokens: int(overview.InputTokens), TotalOutputTokens: int(overview.OutputTokens),
+		TotalReasoningTokens: int(overview.ReasoningTokens), TotalCacheReadTokens: int(overview.CacheReadTokens),
+		TotalCacheWriteTokens: int(overview.CacheWriteTokens), TotalCostUSD: overview.CostUSD,
+		LastContextTokens: intPointer(overview.ContextTokens), ProviderSessionID: stringPointer(overview.ProviderSessionID),
+	}, nil
+}
+
+func threadIdentityMetadata(raw json.RawMessage) (*api.Model, string, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, "", nil
+	}
+	var metadata map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &metadata); err != nil {
+		return nil, "", err
+	}
+	var runtime *api.Model
+	if value := metadata[threadRuntimeMetadataKey]; len(value) > 0 {
+		var decoded api.Model
+		if err := json.Unmarshal(value, &decoded); err != nil {
+			return nil, "", err
+		}
+		identity, err := threadRuntimeIdentity(decoded)
+		if err != nil {
+			return nil, "", err
+		}
+		runtime = &identity
+	}
+	var forkedFrom string
+	if value := metadata[forkedFromMetadataKey]; len(value) > 0 {
+		if err := json.Unmarshal(value, &forkedFrom); err != nil {
+			return nil, "", err
+		}
+	}
+	return runtime, forkedFrom, nil
 }
 
 func stringPointer(value *string) string {
