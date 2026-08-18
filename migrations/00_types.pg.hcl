@@ -54,3 +54,27 @@ enum "captain_plan_approval_state" {
   schema = schema.public
   values = ["pending", "approved", "rejected", "revision_requested"]
 }
+
+# The lifecycle of one task dispatched to a remote git-agent. Only "dispatched"
+# and "running" come from the protocol; the terminal states are derived by the
+# ingest watcher, because the mailbox never records "this task is over".
+enum "captain_git_agent_task_status" {
+  schema = schema.public
+  values = ["dispatched", "running", "accepted", "rejected", "errored", "timed_out"]
+}
+
+# Mirrors gitagent.VerdictStatus (pkg/gitagent/verdict.go). "error" means the
+# tier could not reach a verdict, which rejects the push.
+enum "captain_git_agent_verdict_status" {
+  schema = schema.public
+  values = ["accepted", "rejected", "error"]
+}
+
+# What an API token may reach. "git" authorizes pushing to a served repository
+# and nothing else, so a token held by a remote coding agent cannot reach the
+# /api/v1 executor — which runs arbitrary captain commands. Mirrors
+# captaintoken.Scope.
+enum "captain_api_token_scope" {
+  schema = schema.public
+  values = ["git", "api"]
+}

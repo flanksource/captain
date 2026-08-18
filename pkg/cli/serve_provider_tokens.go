@@ -94,13 +94,17 @@ func handleProviderToken(testOnly bool) http.Handler {
 }
 
 func validateLocalConfigurationRequest(r *http.Request) error {
+	return validateLocalRequest(r, "configuration changes")
+}
+
+func validateLocalRequest(r *http.Request, action string) error {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		host = r.RemoteAddr
 	}
 	ip := net.ParseIP(host)
 	if ip == nil || !ip.IsLoopback() {
-		return fmt.Errorf("configuration changes are restricted to loopback clients")
+		return fmt.Errorf("%s are restricted to loopback clients", action)
 	}
 	requestHost := r.Host
 	if parsed, _, err := net.SplitHostPort(requestHost); err == nil {
@@ -108,7 +112,7 @@ func validateLocalConfigurationRequest(r *http.Request) error {
 	}
 	requestIP := net.ParseIP(requestHost)
 	if !strings.EqualFold(requestHost, "localhost") && (requestIP == nil || !requestIP.IsLoopback()) {
-		return fmt.Errorf("configuration changes require a loopback request host")
+		return fmt.Errorf("%s require a loopback request host", action)
 	}
 	origin := strings.TrimSpace(r.Header.Get("Origin"))
 	if origin == "" {
@@ -116,7 +120,7 @@ func validateLocalConfigurationRequest(r *http.Request) error {
 	}
 	parsed, err := url.Parse(origin)
 	if err != nil || !strings.EqualFold(parsed.Host, r.Host) {
-		return fmt.Errorf("configuration changes require a same-origin request")
+		return fmt.Errorf("%s require a same-origin request", action)
 	}
 	return nil
 }
