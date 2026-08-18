@@ -21,6 +21,7 @@ func TestSchemaBundleContainsGavelIntegrationContract(t *testing.T) {
 		"30_execution.pg.hcl",
 		"31_execution_events.pg.hcl",
 		"32_execution_approvals.pg.hcl",
+		"35_git_agent.pg.hcl",
 		"40_artifacts.pg.hcl",
 		"50_constraints.sql",
 		"51_state_triggers.sql",
@@ -39,6 +40,9 @@ func TestSchemaBundleContainsGavelIntegrationContract(t *testing.T) {
 		"72_ingest_storage_params.sql",
 		"73_normalize_session_cwd.sql",
 		"74_turn_request_approval_identity.sql",
+		"75_model_call_provider_cost.sql",
+		"76_model_call_cost_backfill.sql",
+		"77_drop_session_files_view.sql",
 	}
 	for _, name := range expectedFiles {
 		if _, err := fs.Stat(schemaFS, name); err != nil {
@@ -47,6 +51,8 @@ func TestSchemaBundleContainsGavelIntegrationContract(t *testing.T) {
 	}
 	assertContainsAll(t, "00_types.pg.hcl",
 		`values = ["created", "running", "succeeded", "partial", "failed", "cancelled", "interrupted"]`,
+		`enum "captain_git_agent_task_status"`,
+		`enum "captain_git_agent_verdict_status"`,
 	)
 	assertContainsAll(t, "01_session_lifecycle_partial.sql",
 		"-- phase: pre",
@@ -98,6 +104,16 @@ func TestSchemaBundleContainsGavelIntegrationContract(t *testing.T) {
 		`column "credential_id"`,
 		`column "state"`,
 		`column "version"`,
+	)
+	assertContainsAll(t, "35_git_agent.pg.hcl",
+		`table "captain_git_agent_tasks"`,
+		`column "mailbox"`,
+		`column "prompt_run_id"`,
+		`column "admission_key"`,
+		`index "captain_git_agent_tasks_mailbox_task_key"`,
+		`table "captain_git_agent_task_attempts"`,
+		`column "tier"`,
+		`index "captain_git_agent_task_attempts_task_attempt_tier_key"`,
 	)
 	assertContainsAll(t, "50_constraints.sql",
 		"-- phase: post",

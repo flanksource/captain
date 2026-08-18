@@ -5,6 +5,7 @@ import (
 	"os"
 	"reflect"
 
+	"github.com/flanksource/captain/cmd/captain/internal/rootcmd"
 	"github.com/flanksource/captain/pkg/cli"
 	"github.com/flanksource/captain/pkg/gitagent"
 	"github.com/flanksource/clicky"
@@ -14,7 +15,27 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var (
+	version = "dev"
+	commit  = "unknown"
+	date    = "unknown"
+	dirty   = "unknown"
+)
+
 func main() {
+	err := newRootCommand().Execute()
+	// Flush before exiting: PersistentPostRun does not run when a command
+	// fails, and a failed run is the one whose HAR you want.
+	cli.FlushHAR()
+	if err != nil {
+		os.Exit(1)
+	}
+}
+
+// newRootCommand assembles the whole CLI. It is separate from main so tests can
+// inspect the real command tree — notably that host-administering commands stay
+// out of the REST executor (see the MarkLocalOnly calls below).
+func newRootCommand() *cobra.Command {
 	rootCmd := &cobra.Command{
 		Use:   "captain",
 		Short: "Search and analyze Claude Code tool use history",
@@ -50,7 +71,12 @@ func main() {
 			return nil
 		},
 	}
-	configureVersion(rootCmd, currentBuildInfo())
+	rootcmd.ConfigureVersion(rootCmd, rootcmd.BuildInfo{
+		Version: version,
+		Commit:  commit,
+		Date:    date,
+		Dirty:   dirty,
+	})
 
 	clicky.BindAllFlags(rootCmd.PersistentFlags(), "format")
 	cli.BindDatabaseFlags(rootCmd.PersistentFlags())
@@ -61,7 +87,7 @@ func main() {
 
 	// Document those properties where they are discoverable: appended to the
 	// root --help, after the flags they complement.
-	installRootHelp(rootCmd)
+	rootcmd.InstallRootHelp(rootCmd)
 
 	// Bind HistoryOptions directly on rootCmd so 'captain' IS 'captain history'.
 	// All history flags (--tool, --category, --since, --limit, -f, ...) work
@@ -124,6 +150,24 @@ func main() {
 	clicky.AddNamedCommand("generate", sandboxCmd, cli.SRTGenerateOptions{}, cli.RunSRTGenerate).Short = "Generate sandbox-runtime config"
 	clicky.AddNamedCommand("presets", sandboxCmd, cli.SandboxPresetsOptions{}, cli.RunSandboxPresets).Short = "List available sandbox-runtime presets"
 
+	credentialsCmd := &cobra.Command{
+		Use:   "credentials",
+		Short: "Mirror the host's agent CLI logins to sandbox destinations",
+	}
+	// Same reason git-agent sets its own: without this it inherits the parent's
+	// help func, which prints the sandbox command list and makes this group
+	// undiscoverable.
+	credentialsCmd.SetHelpFunc(func(c *cobra.Command, _ []string) {
+		fmt.Fprint(os.Stderr, c.UsageString())
+	})
+	sandboxCmd.AddCommand(credentialsCmd)
+	// Local-only for the same reason as the git-agent subtree: `sync` reads this
+	// host's keychain and writes a credential to a directory or a cluster, which
+	// must not be reachable as unauthenticated REST under /api/v1.
+	clicky.MarkLocalOnly(credentialsCmd)
+	clicky.AddNamedCommandWithContext("status", credentialsCmd, cli.CredentialsOptions{}, cli.RunCredentialsStatus).Short = "Report each agent login's expiry and where it publishes"
+	clicky.AddNamedCommandWithContext("sync", credentialsCmd, cli.CredentialsOptions{}, cli.RunCredentialsSync).Short = "Publish the redacted logins to their destinations once"
+
 	gitAgentCmd := &cobra.Command{
 		Use:   "git-agent",
 		Short: "Enroll and serve remote git-agent sandboxes (SPEC-git-agent-protocol)",
@@ -138,9 +182,19 @@ func main() {
 		fmt.Fprint(os.Stderr, c.UsageString())
 	})
 	sandboxCmd.AddCommand(gitAgentCmd)
-	clicky.AddNamedCommand("add", gitAgentCmd, cli.GitAgentAddOptions{}, cli.RunGitAgentAdd).Short = "Enroll a new agent: mint a join token and print the join command"
+	// Every leaf here administers the host rather than serving a resource, and
+	// RegisterExecutionRoutes publishes cobra commands as unauthenticated REST
+	// under /api/v1. Cobra's Hidden flag does NOT exclude them — shouldConvertCommand
+	// only honours this annotation — so without it `serve` blocks the server on an
+	// SSH listener, `hook` runs hook sets against a caller-chosen repo, `run-task`
+	// launches an agent in an arbitrary worktree, `ssh` exits the process, and `add`
+	// mints a join token. IsLocalOnly walks parents, so this covers the subtree.
+	clicky.MarkLocalOnly(gitAgentCmd)
+	clicky.AddNamedCommandWithContext("add", gitAgentCmd, cli.GitAgentAddOptions{}, cli.RunGitAgentAdd).Short = "Enroll a new agent: mint a captain token and print the join command"
 	clicky.AddNamedCommand("list", gitAgentCmd, cli.GitAgentListOptions{}, cli.RunGitAgentList).Short = "List enrolled agents and pending enrollments"
 	clicky.AddNamedCommand("revoke", gitAgentCmd, cli.GitAgentRevokeOptions{}, cli.RunGitAgentRevoke).Short = "Revoke an enrolled agent's key"
+	clicky.AddNamedCommandWithContext("deploy", gitAgentCmd, cli.GitAgentDeployOptions{}, cli.RunGitAgentDeploy).Short = "Enroll an agent and run its sidecar on docker or kubernetes"
+	clicky.AddNamedCommandWithContext("undeploy", gitAgentCmd, cli.GitAgentUndeployOptions{}, cli.RunGitAgentUndeploy).Short = "Tear down a deployed sidecar and revoke its key"
 	clicky.AddNamedCommandWithContext("serve", gitAgentCmd, cli.GitAgentServeOptions{}, cli.RunGitAgentServe).Short = "Run the receive endpoint on this host (agent sidecar or supervisor mailbox)"
 	hookLeaf := clicky.AddNamedCommandWithContext("hook", gitAgentCmd, cli.GitAgentHookOptions{}, cli.RunGitAgentHook)
 	hookLeaf.Short = "Internal: receive-hook entrypoint invoked by the installed shims"
@@ -158,6 +212,26 @@ func main() {
 			return nil
 		},
 	})
+
+	tokenCmd := &cobra.Command{
+		Use:   "token",
+		Short: "Mint, list and revoke the bearer tokens that reach this captain over the network",
+	}
+	tokenCmd.SetHelpFunc(func(c *cobra.Command, _ []string) {
+		if c == tokenCmd {
+			fmt.Fprint(os.Stderr, cli.TokenHelp().ANSI())
+			return
+		}
+		fmt.Fprint(os.Stderr, c.UsageString())
+	})
+	rootCmd.AddCommand(tokenCmd)
+	// Local-only, and this one matters more than most: published as REST under
+	// /api/v1, `create` would let a caller who can already reach the API mint
+	// itself a durable credential — the bootstrap hole these tokens close.
+	clicky.MarkLocalOnly(tokenCmd)
+	clicky.AddNamedCommandWithContext("create", tokenCmd, cli.TokenCreateOptions{}, cli.RunTokenCreate).Short = "Mint a token and reveal its secret once"
+	clicky.AddNamedCommandWithContext("list", tokenCmd, cli.TokenListOptions{}, cli.RunTokenList).Short = "List tokens and what each can reach"
+	clicky.AddNamedCommandWithContext("revoke", tokenCmd, cli.TokenRevokeOptions{}, cli.RunTokenRevoke).Short = "Refuse a token from now on"
 
 	aiCmd := &cobra.Command{
 		Use:   "ai",
@@ -192,7 +266,11 @@ func main() {
 	configureCmd.Short = "Configure provider defaults or validate and save an API token"
 	configureCmd.Long = "Run without a provider for the interactive ~/.captain.yaml wizard. Run `captain configure <provider>` to securely prompt for, validate, and save an API token in ~/.config/captain/vault, or pass --agent, --model, --effort, and --active to save provider-specific runtime defaults. Token flags and runtime-default flags cannot be combined. Automation may pass the hidden --token flag, but command-line arguments can be retained in shell history or process listings. Use --test to validate the effective token without saving."
 
-	rootCmd.AddCommand(cli.NewServeCommand(version))
+	// Local-only for the same reason as the git-agent group: published as REST it
+	// lets a request start a nested server inside the running one.
+	serveCmd := cli.NewServeCommand(version)
+	clicky.MarkLocalOnly(serveCmd)
+	rootCmd.AddCommand(serveCmd)
 
 	attachmentsCmd := &cobra.Command{Use: "attachments", Short: "Manage durable prompt attachments"}
 	rootCmd.AddCommand(attachmentsCmd)
@@ -333,13 +411,7 @@ func main() {
 	portKillCmd.Short = "Kill the process listening on a TCP port"
 	portKillCmd.Long = "Find the process bound to the specified TCP port using lsof and kill it with SIGKILL. Reports the process name and PID before killing."
 
-	err := rootCmd.Execute()
-	// Flush before exiting: PersistentPostRun does not run when a command
-	// fails, and a failed run is the one whose HAR you want.
-	cli.FlushHAR()
-	if err != nil {
-		os.Exit(1)
-	}
+	return rootCmd
 }
 
 // bindHistoryAtRoot binds HistoryOptions directly to the root cobra command,
