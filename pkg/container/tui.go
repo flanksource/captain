@@ -100,29 +100,13 @@ func RunWizard(components []Component, existing *SandboxConfig) (*WizardResult, 
 	}
 
 	var selectedTokens []string
-	if existing != nil && existing.Tokens != nil {
-		if existing.Tokens.AWS != nil {
-			selectedTokens = append(selectedTokens, "aws")
-		}
-		if existing.Tokens.GCP != nil {
-			selectedTokens = append(selectedTokens, "gcp")
-		}
-		if existing.Tokens.Azure != nil {
-			selectedTokens = append(selectedTokens, "azure")
-		}
-		if existing.Tokens.GitHub != nil {
-			selectedTokens = append(selectedTokens, "github")
-		}
-		if existing.Tokens.Kubernetes != nil {
-			selectedTokens = append(selectedTokens, "kubernetes")
-		}
+	if existing != nil {
+		selectedTokens = sandbox.SelectedTokenProviders(existing.Tokens)
 	}
-	tokenOptions := []huh.Option[string]{
-		huh.NewOption("AWS", "aws"),
-		huh.NewOption("GCP", "gcp"),
-		huh.NewOption("Azure", "azure"),
-		huh.NewOption("GitHub", "github"),
-		huh.NewOption("Kubernetes", "kubernetes"),
+	tokenProviders := sandbox.TokenProviders()
+	tokenOptions := make([]huh.Option[string], len(tokenProviders))
+	for i, provider := range tokenProviders {
+		tokenOptions[i] = huh.NewOption(provider.Label, provider.Name)
 	}
 
 	var envKeys []string
@@ -284,7 +268,7 @@ func RunWizard(components []Component, existing *SandboxConfig) (*WizardResult, 
 		Presets:    selectedPresets,
 	}
 
-	result.Tokens = buildTokensConfig(selectedTokens)
+	result.Tokens = sandbox.ApplyTokenSelection(nil, selectedTokens)
 
 	result.Env = make(map[string]string)
 	if existing != nil {
@@ -306,33 +290,6 @@ func RunWizard(components []Component, existing *SandboxConfig) (*WizardResult, 
 func pageTitle(counter *int, name string) string {
 	*counter++
 	return fmt.Sprintf("%d. %s", *counter, name)
-}
-
-func buildTokensConfig(selected []string) *sandbox.TokensConfig {
-	if len(selected) == 0 {
-		return nil
-	}
-	has := make(map[string]bool, len(selected))
-	for _, s := range selected {
-		has[s] = true
-	}
-	tc := &sandbox.TokensConfig{}
-	if has["aws"] {
-		tc.AWS = &sandbox.AWSTokenConfig{}
-	}
-	if has["gcp"] {
-		tc.GCP = &sandbox.GCPTokenConfig{}
-	}
-	if has["azure"] {
-		tc.Azure = &sandbox.AzureTokenConfig{}
-	}
-	if has["github"] {
-		tc.GitHub = &sandbox.GitHubTokenConfig{}
-	}
-	if has["kubernetes"] {
-		tc.Kubernetes = &sandbox.K8sTokenConfig{}
-	}
-	return tc
 }
 
 // SelectComponents is the simple single-page picker (used by non-interactive flows).

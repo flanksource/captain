@@ -38,12 +38,22 @@ type K8sTokenConfig struct {
 	Context string `yaml:"context,omitempty" json:"context,omitempty"`
 }
 
+// ClaudeTokenConfig and CodexTokenConfig select the host's subscription login
+// for the matching agent CLI. They carry no fields: the credential's location
+// is fixed by the CLI, and what captain does to it — strip the refresh token —
+// is not negotiable per-sandbox.
+type ClaudeTokenConfig struct{}
+
+type CodexTokenConfig struct{}
+
 type TokensConfig struct {
 	AWS        *AWSTokenConfig    `yaml:"aws,omitempty" json:"aws,omitempty"`
 	GCP        *GCPTokenConfig    `yaml:"gcp,omitempty" json:"gcp,omitempty"`
 	Azure      *AzureTokenConfig  `yaml:"azure,omitempty" json:"azure,omitempty"`
 	GitHub     *GitHubTokenConfig `yaml:"github,omitempty" json:"github,omitempty"`
 	Kubernetes *K8sTokenConfig    `yaml:"kubernetes,omitempty" json:"kubernetes,omitempty"`
+	Claude     *ClaudeTokenConfig `yaml:"claude,omitempty" json:"claude,omitempty"`
+	Codex      *CodexTokenConfig  `yaml:"codex,omitempty" json:"codex,omitempty"`
 }
 
 type TokenResult struct {
@@ -119,6 +129,14 @@ func (tm *TokenManager) Acquire(ctx context.Context, config *TokensConfig) ([]To
 	if config.Kubernetes != nil {
 		cfg := *config.Kubernetes
 		providers = append(providers, providerEntry{"kubernetes", func() (*TokenResult, error) { return acquireK8sToken(ctx, cfg, tm.credDir) }})
+	}
+	if config.Claude != nil {
+		cfg := *config.Claude
+		providers = append(providers, providerEntry{"claude", func() (*TokenResult, error) { return acquireClaudeToken(ctx, cfg, tm.credDir) }})
+	}
+	if config.Codex != nil {
+		cfg := *config.Codex
+		providers = append(providers, providerEntry{"codex", func() (*TokenResult, error) { return acquireCodexToken(ctx, cfg, tm.credDir) }})
 	}
 
 	for _, p := range providers {
@@ -217,6 +235,12 @@ func MergeTokensConfig(base, other *TokensConfig) *TokensConfig {
 	}
 	if other.Kubernetes != nil {
 		merged.Kubernetes = other.Kubernetes
+	}
+	if other.Claude != nil {
+		merged.Claude = other.Claude
+	}
+	if other.Codex != nil {
+		merged.Codex = other.Codex
 	}
 	return &merged
 }

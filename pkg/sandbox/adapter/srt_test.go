@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -93,13 +94,15 @@ func TestSRTConfigFor(t *testing.T) {
 		env     []string
 		state   []string
 	}{
-		{"claude", []string{"anthropic.com", "*.anthropic.com", "claude.ai", "*.claude.ai"}, []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN"}, []string{filepath.Join(home, ".claude"), filepath.Join(home, ".claude.json")}},
-		{"codex", []string{"openai.com", "*.openai.com", "chatgpt.com", "*.chatgpt.com"}, []string{"OPENAI_API_KEY", "OPENAI_BASE_URL"}, []string{filepath.Join(home, ".codex")}},
+		{"claude", []string{"anthropic.com", "*.anthropic.com", "claude.ai", "*.claude.ai"}, []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CONFIG_DIR"}, []string{filepath.Join(home, ".claude"), filepath.Join(home, ".claude.json")}},
+		{"codex", []string{"openai.com", "*.openai.com", "chatgpt.com", "*.chatgpt.com"}, []string{"OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_HOME"}, []string{filepath.Join(home, ".codex")}},
 		{"gemini", []string{"google.com", "*.google.com", "googleapis.com", "*.googleapis.com"}, []string{"GEMINI_API_KEY", "GOOGLE_API_KEY"}, []string{filepath.Join(home, ".gemini")}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.command, func(t *testing.T) {
-			got, err := srtConfigFor(tt.command, cwd)
+			// No tokens acquired: the baseline policy must be unchanged, so a
+			// sandbox that authenticates from the host login still works.
+			got, err := srtConfigFor(tt.command, cwd, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -119,9 +122,50 @@ func TestSRTConfigFor(t *testing.T) {
 	}
 
 	t.Run("unsupported command fails loud", func(t *testing.T) {
-		_, err := srtConfigFor("bash", cwd)
+		_, err := srtConfigFor("bash", cwd, nil)
 		if err == nil || !strings.Contains(err.Error(), "does not support CLI command") {
 			t.Fatalf("err = %v", err)
+		}
+	})
+
+	// The redacted-credential swap: once a login has been acquired, the private
+	// directory becomes writable and the host's own credential file is hidden.
+	// Both halves matter — hiding without a replacement breaks authentication,
+	// and replacing without hiding leaves the refresh token reachable.
+	t.Run("an acquired login hides the host credential it replaces", func(t *testing.T) {
+		acquired := &sandboxTokens{
+			credDir:   "/tmp/captain-creds-fixture",
+			providers: map[string]bool{"claude": true},
+		}
+		got, err := srtConfigFor("claude", cwd, acquired)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Contains(got.Filesystem.AllowWrite, acquired.credDir) {
+			t.Errorf("credential directory is not writable: %v", got.Filesystem.AllowWrite)
+		}
+		hostCredential := filepath.Join(home, ".claude", ".credentials.json")
+		if !slices.Contains(got.Filesystem.DenyRead, hostCredential) {
+			t.Errorf("host credential %s is still readable: %v", hostCredential, got.Filesystem.DenyRead)
+		}
+		// Only the credential file, not the whole state directory: the CLI still
+		// needs its settings, history and project state.
+		if slices.Contains(got.Filesystem.DenyRead, filepath.Join(home, ".claude")) {
+			t.Error("the whole ~/.claude directory must not be denied")
+		}
+	})
+
+	t.Run("another CLI's login does not hide this one's credential", func(t *testing.T) {
+		codexOnly := &sandboxTokens{
+			credDir:   "/tmp/captain-creds-fixture",
+			providers: map[string]bool{"codex": true},
+		}
+		got, err := srtConfigFor("claude", cwd, codexOnly)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if slices.Contains(got.Filesystem.DenyRead, filepath.Join(home, ".claude", ".credentials.json")) {
+			t.Error("claude's host credential was hidden with no claude replacement acquired")
 		}
 	})
 }

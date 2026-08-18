@@ -12,6 +12,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/captainconfig"
+	"github.com/flanksource/captain/pkg/sandbox"
 	sandboxruntime "github.com/flanksource/sandbox-runtime/sandbox"
 )
 
@@ -37,6 +38,12 @@ var NewSRTRuntime = func(ctx context.Context, cfg sandboxruntime.Config) (Runtim
 type srtSandbox struct {
 	cwd string
 
+	// options are the backend's own settings from ~/.captain.yaml, kept so
+	// Prepare can acquire the credentials the `tokens:` block declares.
+	options map[string]any
+	// tokens are those acquired credentials, nil when none are declared.
+	tokens *sandboxTokens
+
 	// hook selects the generic exec-hook profile (api.SandboxProfileHook).
 	// Hook policy is a construction-time choice, never inferred from the
 	// wrapped argv: keying it off the binary name would hand agent-authored
@@ -57,7 +64,7 @@ type srtSandbox struct {
 
 // SRT is the SandboxFactory for the sandbox-runtime adapter.
 func SRT(cfg api.SandboxConfig) (api.Sandbox, error) {
-	s := &srtSandbox{}
+	s := &srtSandbox{options: cfg.Options}
 	if profile, _ := cfg.Options[api.SandboxOptionProfile].(string); profile == api.SandboxProfileHook {
 		s.hook = true
 		s.hookDenyRead = stringSliceOption(cfg.Options, api.SandboxOptionDenyRead)
@@ -69,7 +76,7 @@ func init() { api.RegisterSandbox(api.SandboxSRT, SRT) }
 
 func (s *srtSandbox) Kind() api.SandboxKind { return api.SandboxSRT }
 
-func (s *srtSandbox) Prepare(_ context.Context, spec *api.Spec) (*api.SandboxSession, error) {
+func (s *srtSandbox) Prepare(ctx context.Context, spec *api.Spec) (*api.SandboxSession, error) {
 	s.cwd = spec.Cwd()
 	if s.hook {
 		// The hook profile confines to an explicit workspace or not at all: a
@@ -83,8 +90,18 @@ func (s *srtSandbox) Prepare(_ context.Context, spec *api.Spec) (*api.SandboxSes
 			return nil, fmt.Errorf("create hook scratch directory: %w", err)
 		}
 		s.scratch = scratch
+		// The hook profile confines agent-authored repository code, which is
+		// exactly what must never hold a credential. Tokens are not acquired
+		// for it at all, rather than acquired and then withheld.
+		return &api.SandboxSession{}, nil
 	}
-	return &api.SandboxSession{}, nil
+
+	tokens, err := acquireSandboxTokens(ctx, s.options)
+	if err != nil {
+		return nil, err
+	}
+	s.tokens = tokens
+	return &api.SandboxSession{Env: tokens.Env()}, nil
 }
 
 func (s *srtSandbox) Wrap(ctx context.Context, command string, args, env []string) (string, []string, []string, error) {
@@ -93,7 +110,7 @@ func (s *srtSandbox) Wrap(ctx context.Context, command string, args, env []strin
 	if s.hook {
 		cfg, err = srtHookConfigFor(s.cwd, s.scratch, s.hookDenyRead)
 	} else {
-		cfg, err = srtConfigFor(command, s.cwd)
+		cfg, err = srtConfigFor(command, s.cwd, s.tokens)
 	}
 	if err != nil {
 		return "", nil, nil, err
@@ -149,12 +166,23 @@ func (s *srtSandbox) Close() error {
 		}
 		s.scratch = ""
 	}
+	// The credential directory holds a live access token, so it goes with the
+	// sandbox rather than outliving it.
+	s.tokens.Cleanup()
+	s.tokens = nil
 	return errors.Join(errs...)
 }
 
 // srtConfigFor builds the per-CLI confinement policy: the provider's API
 // domains, its credential env vars, and its state directory — nothing else.
-func srtConfigFor(command, cwd string) (sandboxruntime.Config, error) {
+//
+// When tokens carry a redacted login for the CLI being wrapped, the policy
+// changes shape: the private credential directory becomes writable and the
+// host's own credential file becomes unreadable. The swap is conditional
+// because it is only safe once a replacement exists — hiding ~/.claude's
+// credentials unconditionally would break every sandbox that authenticates
+// from the host login today.
+func srtConfigFor(command, cwd string, tokens *sandboxTokens) (sandboxruntime.Config, error) {
 	if cwd == "" {
 		var err error
 		cwd, err = os.Getwd()
@@ -172,20 +200,33 @@ func srtConfigFor(command, cwd string) (sandboxruntime.Config, error) {
 	}
 
 	var domains, statePaths []string
+	// tokenProvider names the agent-login token provider that supplies this
+	// CLI's credential, empty when the CLI has none.
+	var tokenProvider string
 	switch filepath.Base(command) {
 	case "claude":
 		domains = []string{"anthropic.com", "*.anthropic.com", "claude.ai", "*.claude.ai"}
 		statePaths = []string{filepath.Join(home, ".claude"), filepath.Join(home, ".claude.json")}
+		tokenProvider = "claude"
 	case "codex":
 		domains = []string{"openai.com", "*.openai.com", "chatgpt.com", "*.chatgpt.com"}
 		statePaths = []string{filepath.Join(home, ".codex")}
+		tokenProvider = "codex"
 	case "gemini":
 		domains = []string{"google.com", "*.google.com", "googleapis.com", "*.googleapis.com"}
 		statePaths = []string{filepath.Join(home, ".gemini")}
 	default:
 		return sandboxruntime.Config{}, fmt.Errorf("sandbox-runtime does not support CLI command %q", command)
 	}
-	passthroughEnv := cliCredentialEnv(command)
+
+	allowWrite := append([]string{absoluteCwd, "/tmp"}, statePaths...)
+	denyRead := hostCredentialDenyRead(home)
+	if dir := tokens.Dir(); dir != "" {
+		allowWrite = append(allowWrite, dir)
+	}
+	if tokenProvider != "" && tokens.Has(tokenProvider) {
+		denyRead = append(denyRead, agentLoginDenyRead(home, tokenProvider)...)
+	}
 
 	return sandboxruntime.Config{
 		Network: sandboxruntime.NetworkConfig{
@@ -193,12 +234,25 @@ func srtConfigFor(command, cwd string) (sandboxruntime.Config, error) {
 			DeniedDomains:  []string{},
 		},
 		Filesystem: sandboxruntime.FilesystemConfig{
-			AllowWrite: append([]string{absoluteCwd, "/tmp"}, statePaths...),
-			DenyRead:   hostCredentialDenyRead(home),
+			AllowWrite: allowWrite,
+			DenyRead:   denyRead,
 			DenyWrite:  []string{},
 		},
-		PassthroughEnv: passthroughEnv,
+		PassthroughEnv: cliCredentialEnv(command),
 	}, nil
+}
+
+// agentLoginDenyRead is the host credential a redacted copy replaces. Only the
+// credential file is hidden, not the whole state directory: the CLI still needs
+// to read its own settings, history and project state from there.
+func agentLoginDenyRead(home, provider string) []string {
+	switch provider {
+	case "claude":
+		return []string{filepath.Join(home, ".claude", ".credentials.json")}
+	case "codex":
+		return []string{filepath.Join(home, ".codex", "auth.json")}
+	}
+	return nil
 }
 
 // srtHookConfigFor builds the generic exec-hook confinement. The wrapped
@@ -260,7 +314,7 @@ func srtHookConfigFor(workspace, scratch string, extraDenyRead []string) (sandbo
 // may read, shared by every SRT policy: SSH, cloud, git, container and
 // package-manager credentials, plus container runtime sockets.
 func hostCredentialDenyRead(home string) []string {
-	return []string{
+	credentials := []string{
 		filepath.Join(home, ".ssh"),
 		filepath.Join(home, ".aws"),
 		filepath.Join(home, ".azure"),
@@ -272,12 +326,9 @@ func hostCredentialDenyRead(home string) []string {
 		filepath.Join(home, ".docker", "config.json"),
 		filepath.Join(home, ".npmrc"),
 		filepath.Join(home, ".pypirc"),
-		filepath.Join(home, ".docker", "run", "docker.sock"),
-		"/var/run/docker.sock",
-		"/run/docker.sock",
-		"/run/containerd/containerd.sock",
-		"/run/podman/podman.sock",
 	}
+	// Shared with git-agent deployment, which refuses to mount the same paths.
+	return append(credentials, sandbox.ContainerRuntimeSockets(home)...)
 }
 
 func stringSliceOption(options map[string]any, key string) []string {

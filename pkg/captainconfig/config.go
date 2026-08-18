@@ -23,6 +23,7 @@ type Config struct {
 	Prompts     PromptDefaults     `yaml:"prompts"`
 	Attachments AttachmentDefaults `yaml:"attachments"`
 	Sandbox     SandboxDefaults    `yaml:"sandbox,omitempty"`
+	Credentials CredentialDefaults `yaml:"credentials,omitempty"`
 }
 
 // SandboxDefaults is the sandbox block of ~/.captain.yaml: a default selector
