@@ -4,6 +4,7 @@ import type {
 } from "@flanksource/clicky-ui/components";
 import {
   UiActivity,
+  UiBox,
   UiFileText,
   UiFingerprint,
   UiHistory,
@@ -24,6 +25,7 @@ export type PrimaryRoute =
   | "sessions"
   | "prompts"
   | "whoami"
+  | "sandboxes"
   | "operations";
 
 export const CAPTAIN_SIDEBAR_COLLAPSE_KEY = "captain:sidebar:collapsed";
@@ -62,6 +64,13 @@ export function captainNavSections(
           active: active === "sessions",
         },
         { key: "prompts", label: "Prompts", to: "/prompts", icon: UiFileText, active: active === "prompts" },
+        {
+          key: "sandboxes",
+          label: "Sandboxes",
+          to: "/sandboxes",
+          icon: UiBox,
+          active: active === "sandboxes",
+        },
         {
           key: "operations",
           label: "Operations",

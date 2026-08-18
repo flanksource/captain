@@ -34,14 +34,18 @@ const EnrollCommand = "captain-enroll"
 
 // AgentDirectory is the server's authorization source. Implementations read
 // live state on every call so revocation takes effect for new connections
-// (R8.5) and a join token can be burned atomically (R8.2).
+// (R8.5).
 type AgentDirectory interface {
 	// AgentByFingerprint maps an SSH public-key SHA256 fingerprint to an
 	// enrolled agent name.
 	AgentByFingerprint(fingerprint string) (string, bool)
-	// ConsumeJoinToken validates and burns a single-use join token, returning
-	// the agent name it enrolls.
-	ConsumeJoinToken(token string) (string, error)
+	// AdmitToken verifies a durable captain token and resolves the agent it
+	// speaks for. requested is the name a returning member persisted from an
+	// earlier enrollment, honoured only when it is already on file.
+	//
+	// The token is not spent: an agent that restarts presents the same one
+	// (R8.2, amended), so this must be safe to call repeatedly.
+	AdmitToken(token, requested string) (string, error)
 	// RecordAgent binds a key, an endpoint and a host key to an enrolled
 	// agent — everything a dispatch to it needs.
 	RecordAgent(AgentEnrollment) error
@@ -113,7 +117,7 @@ func handleSession(s ssh.Session, root string, cfg ServerConfig) {
 // authorize later task-specific reverse pushes.
 func handleEnroll(s ssh.Session, cfg ServerConfig, fingerprint string, cmd []string) {
 	if len(cmd) < 2 || strings.TrimSpace(cmd[1]) == "" {
-		fmt.Fprintln(s.Stderr(), "captain: usage: captain-enroll <join-token> [request]")
+		fmt.Fprintln(s.Stderr(), "captain: usage: captain-enroll <token> [request]")
 		_ = s.Exit(1)
 		return
 	}
@@ -123,7 +127,7 @@ func handleEnroll(s ssh.Session, cfg ServerConfig, fingerprint string, cmd []str
 		_ = s.Exit(1)
 		return
 	}
-	name, err := cfg.Directory.ConsumeJoinToken(strings.TrimSpace(cmd[1]))
+	name, err := cfg.Directory.AdmitToken(strings.TrimSpace(cmd[1]), strings.TrimSpace(req.Agent))
 	if err != nil {
 		fmt.Fprintf(s.Stderr(), "captain: enrollment refused: %v\n", err)
 		_ = s.Exit(1)
@@ -134,16 +138,14 @@ func handleEnroll(s ssh.Session, cfg ServerConfig, fingerprint string, cmd []str
 		Fingerprint:     fingerprint,
 		URL:             agentDispatchURL(req, s.RemoteAddr(), cfg.AgentRepoPath),
 		HostFingerprint: strings.TrimSpace(req.HostFingerprint),
+		DispatchToken:   strings.TrimSpace(req.DispatchToken),
 	}
 	if err := cfg.Directory.RecordAgent(enrollment); err != nil {
 		fmt.Fprintf(s.Stderr(), "captain: enrollment failed: %v\n", err)
 		_ = s.Exit(1)
 		return
 	}
-	resp, err := json.Marshal(EnrollResponse{
-		Agent:       name,
-		DispatchKey: cfg.Offer.DispatchKey,
-	})
+	resp, err := json.Marshal(cfg.Offer.ResponseFor(name))
 	if err != nil {
 		fmt.Fprintf(s.Stderr(), "captain: %v\n", err)
 		_ = s.Exit(1)

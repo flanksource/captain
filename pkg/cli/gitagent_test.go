@@ -5,10 +5,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/flanksource/captain/pkg/captainconfig"
+	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/gitagent"
+	"github.com/flanksource/commons-db/dbtest"
 )
 
 func isolatedConfig(t *testing.T) string {
@@ -19,10 +20,14 @@ func isolatedConfig(t *testing.T) string {
 	return path
 }
 
-func TestGitAgentAddMintsSingleUseToken(t *testing.T) {
+// The hand-off `git-agent add` prints is what an operator copies onto the agent
+// host, so every part of it has to be there and the credential has to work more
+// than once.
+func TestGitAgentAddMintsADurableToken(t *testing.T) {
 	path := isolatedConfig(t)
+	db := gitAgentTokenDB(t)
 
-	res, err := RunGitAgentAdd(GitAgentAddOptions{Name: "worker-1", Backend: "git-agent"})
+	res, err := RunGitAgentAdd(t.Context(), GitAgentAddOptions{Name: "worker-1", Backend: "git-agent"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,71 +35,125 @@ func TestGitAgentAddMintsSingleUseToken(t *testing.T) {
 	if !ok {
 		t.Fatalf("result = %T", res)
 	}
-	if add.HostFingerprint == "" || !strings.Contains(add.JoinCommand, "--join ") {
+	if add.HostFingerprint == "" || !strings.Contains(add.JoinCommand, "--token ") {
 		t.Fatalf("join hand-off incomplete: %+v", add)
 	}
 	if !strings.Contains(add.JoinCommand, "--host-fingerprint "+add.HostFingerprint) {
 		t.Fatalf("join command must pin the host key: %s", add.JoinCommand)
 	}
-	if time.Until(add.Expires) > gitagent.JoinTokenTTL {
-		t.Fatalf("token TTL too long: %s", add.Expires)
+	if add.Expires != nil {
+		t.Fatalf("a token minted with no --expires should not expire, got %s", add.Expires)
 	}
 
-	// The raw token never lands in the config file — only its hash (R8.2).
-	token := strings.Fields(strings.SplitAfter(add.JoinCommand, "--join ")[1])[0]
+	// The credential never lands in the config file: it lives in the database,
+	// hashed, and the config holds only dispatch targeting data (R8.2).
+	token := strings.Fields(strings.SplitAfter(add.JoinCommand, "--token ")[1])[0]
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(raw), token) {
-		t.Fatal("the raw join token must not be persisted")
+		t.Fatal("the raw token must not be persisted to the config file")
 	}
-	if !strings.Contains(string(raw), gitagent.HashJoinToken(token)) {
-		t.Fatal("the token hash must be persisted as pending")
+	if strings.Contains(string(raw), "pending") {
+		t.Fatal("pending enrollments are gone: a durable token needs no redemption record")
 	}
 
-	// Consume: valid once, burned after (R8.2).
-	dir := gitAgentDirectory{backend: "git-agent"}
-	name, err := dir.ConsumeJoinToken(token)
-	if err != nil || name != "worker-1" {
-		t.Fatalf("consume = %q, %v", name, err)
+	// Admitted repeatedly, because a restarting sidecar presents the same one.
+	dir := gitAgentDirectory{backend: "git-agent", ctx: t.Context(), db: db}
+	for attempt := 1; attempt <= 3; attempt++ {
+		name, err := dir.AdmitToken(token, "")
+		if err != nil || name != "worker-1" {
+			t.Fatalf("admission %d = %q, %v", attempt, name, err)
+		}
 	}
-	if _, err := dir.ConsumeJoinToken(token); err == nil || !strings.Contains(err.Error(), "already used") {
-		t.Fatalf("replay must fail, got %v", err)
+
+	if _, err := dir.AdmitToken("cptn_nosuch.secret", ""); err == nil ||
+		!strings.Contains(err.Error(), "not recognized") {
+		t.Fatalf("an unissued token must be refused, got %v", err)
 	}
 }
 
-func TestGitAgentExpiredTokenRefused(t *testing.T) {
+// A revoked token stops working on the very next enrollment, and says so
+// rather than reading as an unknown credential.
+func TestGitAgentRevokedTokenIsRefusedWithItsReason(t *testing.T) {
 	isolatedConfig(t)
-	token, hash, err := gitagent.MintJoinToken()
+	db := gitAgentTokenDB(t)
+
+	res, err := RunGitAgentAdd(t.Context(), GitAgentAddOptions{Name: "worker-1", Backend: "git-agent"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = captainconfig.Update(func(cfg *captainconfig.Config) error {
-		backend, err := ensureGitAgentBackend(cfg, "git-agent")
-		if err != nil {
-			return err
-		}
-		backend.Options["pending"] = map[string]any{
-			hash: map[string]any{
-				"agent":   "worker-1",
-				"expires": time.Now().Add(-time.Minute).UTC().Format(time.RFC3339),
-			},
-		}
-		cfg.Sandbox.Backends["git-agent"] = backend
-		return nil
+	add := res.(GitAgentAddResult)
+	dir := gitAgentDirectory{backend: "git-agent", ctx: t.Context(), db: db}
+	if _, err := dir.AdmitToken(add.Token.Value(), ""); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := db.RevokeAPIToken(t.Context(), add.TokenID, "agent decommissioned"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dir.AdmitToken(add.Token.Value(), ""); err == nil || !strings.Contains(err.Error(), "revoked") {
+		t.Fatalf("a revoked token must be refused as revoked, got %v", err)
+	}
+}
+
+// A pool token names its members as they arrive and caps how many there can be,
+// so one credential can serve a scaled deployment.
+func TestGitAgentPoolTokenNamesItsMembers(t *testing.T) {
+	isolatedConfig(t)
+	db := gitAgentTokenDB(t)
+
+	res, err := RunGitAgentAdd(t.Context(), GitAgentAddOptions{
+		Name: "prod-pool", Backend: "git-agent", Pool: true, MaxAgents: 2,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	dir := gitAgentDirectory{backend: "git-agent"}
-	if _, err := dir.ConsumeJoinToken(token); err == nil || !strings.Contains(err.Error(), "expired") {
-		t.Fatalf("expired token must fail, got %v", err)
+	add := res.(GitAgentAddResult)
+	if !add.Pool {
+		t.Fatal("a --pool mint must report itself as a pool")
 	}
-	// And expiry burns it: a retry is unknown, not expired.
-	if _, err := dir.ConsumeJoinToken(token); err == nil || !strings.Contains(err.Error(), "already used") {
-		t.Fatalf("expired token must burn, got %v", err)
+	dir := gitAgentDirectory{backend: "git-agent", ctx: t.Context(), db: db}
+
+	first, err := dir.AdmitToken(add.Token.Value(), "")
+	if err != nil {
+		t.Fatal(err)
 	}
+	second, err := dir.AdmitToken(add.Token.Value(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatalf("two members must get distinct names, both got %q", first)
+	}
+
+	// A restart re-presents the name the member persisted, and must not consume
+	// a third slot — otherwise a rescheduled pod exhausts the pool.
+	if again, err := dir.AdmitToken(add.Token.Value(), first); err != nil || again != first {
+		t.Fatalf("returning member = %q, %v; want %q", again, err, first)
+	}
+	if _, err := dir.AdmitToken(add.Token.Value(), ""); err == nil || !strings.Contains(err.Error(), "members") {
+		t.Fatalf("a full pool must refuse a new member, got %v", err)
+	}
+}
+
+// gitAgentTokenDB points the default database context at an embedded postgres,
+// which is where tokens live.
+func gitAgentTokenDB(t *testing.T) *database.DB {
+	t.Helper()
+	handle := dbtest.ForT(t, dbtest.Options{Name: "captain_gitagent_tokens"})
+	db, err := database.Open(t.Context(), database.WithDSN(handle.DSN()), database.WithMigrations())
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	setCaptainDBForTest(db)
+	t.Cleanup(func() {
+		setCaptainDBForTest(nil)
+		resetCaptainContextsForTest()
+		_ = db.Close()
+	})
+	return db
 }
 
 func TestGitAgentEnrollListRevoke(t *testing.T) {
@@ -139,7 +198,9 @@ func TestGitAgentEnrollListRevoke(t *testing.T) {
 
 func TestGitAgentAddDryRunTouchesNothing(t *testing.T) {
 	path := isolatedConfig(t)
-	result, err := RunGitAgentAdd(GitAgentAddOptions{Name: "worker-1", Backend: "git-agent", DryRun: true})
+	// No database is wired: a dry run must reach no store either, or it is not
+	// dry.
+	result, err := RunGitAgentAdd(t.Context(), GitAgentAddOptions{Name: "worker-1", Backend: "git-agent", DryRun: true})
 	if err != nil {
 		t.Fatal(err)
 	}

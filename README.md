@@ -650,6 +650,123 @@ Publishing to `flanksource/captain` on Docker Hub and GHCR (`linux/amd64` +
 the tag you want to ship, and only once that tag's release exists, since the image
 installs `captain` from the latest GitHub release.
 
+### Running a git-agent sidecar from it
+
+`captain sandbox git-agent deploy` enrolls an agent and places its sidecar on Docker or
+Kubernetes using this image:
+
+```bash
+captain sandbox git-agent serve --role mailbox --listen :7422 &   # once, on the supervisor
+captain sandbox git-agent deploy worker-01 --target docker --dry-run
+captain sandbox git-agent deploy worker-01 --target docker
+```
+
+It applies by default; `--dry-run` prints every intended mutation first. Before minting
+anything it proves a live mailbox is listening and presenting this host's own key, then
+resolves the two addresses the protocol needs in opposite directions — the one the agent
+reaches the mailbox on, and the one the supervisor dispatches back to. Leaving either to
+be derived produces an agent that enrols, looks healthy in `git-agent list`, and fails at
+the first dispatch, so `deploy` refuses rather than guesses. For `--target kubernetes`
+that means `--supervisor-address` is required unless captain is itself running in the
+cluster: a laptop is not routable from a managed cluster.
+
+The sidecar runs unprivileged (uid 501, all capabilities dropped, no privilege
+escalation, read-only root with scratch on `/tmp`) and never receives a container runtime
+socket — that would be a full host escape, and there is no flag to grant one. Sizing is
+`--cpu-limit` / `--memory-limit` / `--storage`; the image is `--image`. The captain token
+reaches the workload as a mounted file, never in argv, and `undeploy` tears the workload
+down and revokes both the key and the token together.
+
+### Over HTTPS, with no separate mailbox process
+
+The mailbox can be hosted on the ordinary `captain serve` instead of its own SSH
+listener. That is the process holding the database the tokens live in, so one server
+serves the API, the UI and the git endpoint:
+
+```bash
+captain serve --host 0.0.0.0 --tls --tls-host supervisor.internal   # supervisor
+captain sandbox git-agent add worker-01 --endpoint https://supervisor.internal:9020
+# run the printed join command on the agent host
+```
+
+`--tls` generates a self-signed certificate beside the git-agent keys and reuses it;
+`--tls-cert` / `--tls-key` supply a real one instead. The certificate is never silently
+re-issued, because every enrolled agent pins it — a certificate that does not cover an
+address you name with `--tls-host` is an error at startup rather than a push failure
+weeks later. An enrolling agent receives that certificate over the exchange it already
+pinned, and verifies later relays against it.
+
+Requests from `127.0.0.1` need no token, so the local UI, CLI and hooks are unaffected;
+anything off-box needs one. See `captain token` to mint, list and revoke them. Two
+scopes exist: `git` reaches the push endpoint only, and `api` reaches the command API —
+an agent gets `git`, so a leaked agent token cannot run commands on the supervisor.
+
+Tokens are durable rather than single-use, which is what lets a restarting or rescheduled
+sidecar re-present the one it already has. `captain sandbox git-agent add --pool
+--max-agents 5` mints one token that names each member as it arrives, for a scaled
+deployment; members of a pool share a secret, so a token bound to a single agent remains
+the default and stronger choice.
+
+## Sandbox credentials
+
+A sandbox needs a way to reach a model provider. An API key can simply be passed through,
+but a **subscription** login cannot: Claude Code keeps its OAuth credential in the macOS
+Keychain (item `Claude Code-credentials`) or `~/.claude/.credentials.json`, and Codex keeps
+a ChatGPT-plan credential in `~/.codex/auth.json`, which has no env-var form at all.
+
+`captain sandbox credentials` mirrors those logins **with the refresh token stripped**, so a
+sandbox holds an access token it can use but cannot use to mint another. For Claude that
+also drops the entire `mcpOAuth` map, which holds unrelated client secrets for every MCP
+server the user has authorized.
+
+```bash
+captain sandbox credentials status                     # expiry per provider, and where it publishes
+captain sandbox credentials sync --directory ~/.captain/sandbox/credentials
+captain sandbox credentials sync --namespace agents    # into a Kubernetes Secret
+```
+
+Because the copy cannot refresh itself, the supervisor has to. `captain serve` runs a
+republish loop whose schedule comes from the credential's own expiry rather than a fixed
+interval, so what lands in the target is as fresh as the host can make it. An
+already-expired source is refused rather than published — a dead token in a Secret would
+surface as an unexplained `401` inside an agent instead of an error where it was caused.
+The host CLIs refresh their own tokens when used, so the fix is to use them.
+
+```yaml
+# ~/.captain.yaml — publishing is opt-in; with no entries nothing is mirrored
+credentials:
+  refreshMargin: 5m
+  publish:
+    - providers: [claude, codex]
+      directory: ~/.captain/sandbox/credentials      # docker bind-mounts this
+    - providers: [claude, codex]
+      kubernetes: { namespace: agents, secret: captain-agent-credentials }
+```
+
+Local `srt` and `container` sandboxes consume the same credentials through the backend's
+`tokens:` block, which also finally makes the cloud providers beside them take effect:
+
+```yaml
+sandbox:
+  backends:
+    local:
+      kind: srt
+      tokens: { claude: {}, codex: {}, github: {} }
+```
+
+The redacted copy lands in a private directory and the CLI is pointed at it with
+`CLAUDE_CONFIG_DIR` / `CODEX_HOME`. Once that replacement exists the host's own credential
+file is added to the sandbox's deny-read list, so the sandboxed CLI can no longer reach the
+refresh token — only the credential file, not the whole state directory, since the CLI still
+needs its own settings and history.
+
+A deployed sidecar receives the Secret as a read-only **directory** mount at
+`/run/captain/credentials` (`--credentials-secret`, or `--credentials-dir` for docker) and
+copies each credential to the path its CLI reads. The mount is a directory rather than a
+`subPath` deliberately: kubelet never updates a `subPath` volume after the pod starts, which
+would pin the sidecar to the first credential it ever saw. The Secret is shared across every
+agent in the namespace, so `undeploy` leaves it alone.
+
 ## Dependencies and stack
 
 Primary stack:

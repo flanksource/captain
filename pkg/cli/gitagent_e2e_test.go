@@ -262,7 +262,7 @@ func newRepo(t *testing.T) string {
 
 func mailboxPathForRepo(t *testing.T, supervisor *host, repo string) string {
 	t.Helper()
-	root := filepath.Join(supervisor.home, ".captain", "sandbox", servedReposDir)
+	root := filepath.Join(supervisor.home, ".captain", "sandbox", gitagent.ServedReposDirName)
 	mailbox, err := gitagent.MailboxForRepository(context.Background(), root, repo)
 	if err != nil {
 		t.Fatal(err)
@@ -320,7 +320,7 @@ func parseJoin(t *testing.T, join string) []string {
 		t.Fatalf("join command does not invoke serve: %q", join)
 	}
 	args := fields[idx:]
-	for _, required := range []string{"--join", "--supervisor", "--host-fingerprint"} {
+	for _, required := range []string{"--token", "--supervisor", "--host-fingerprint"} {
 		if !containsArg(args, required) {
 			t.Fatalf("join command lacks %s, so an operator cannot complete enrollment: %q", required, join)
 		}
@@ -439,7 +439,7 @@ func TestFullCycleWithAManualAgent(t *testing.T) {
 	})
 
 	// The agent's workspace is an ordinary worktree with a branch and upstream.
-	tasksDir := filepath.Join(agent.home, ".captain", "sandbox", servedReposDir, SidecarRepoName, "captain", "tasks")
+	tasksDir := filepath.Join(agent.home, ".captain", "sandbox", gitagent.ServedReposDirName, SidecarRepoName, "captain", "tasks")
 	var worktree, taskID string
 	deadline := time.Now().Add(90 * time.Second)
 	for time.Now().Before(deadline) && worktree == "" {
@@ -515,23 +515,28 @@ func TestFullCycleWithAManualAgent(t *testing.T) {
 	}
 }
 
-// TestJoinTokenIsSingleUse pins that the bidirectional exchange keeps the
-// single-use property (R8.2).
-func TestJoinTokenIsSingleUse(t *testing.T) {
+// TestCaptainTokenIsDurableAcrossRestarts pins the property that replaced the
+// single-use join token (R8.2): presenting the same token again re-enrolls to
+// the same identity rather than being refused.
+//
+// This is what a restarting or rescheduled sidecar does on every start. Under
+// the old burn-on-use token it crash-looped, and joinOnce existed only to work
+// around that; the workaround is gone, so the behaviour it hid is asserted here.
+func TestCaptainTokenIsDurableAcrossRestarts(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds the captain binary")
 	}
 	_, _, _, _, add := enrollPair(t)
 
 	replay := newHost(t)
-	args := append([]string{"sandbox", "git-agent", "serve", "--listen", "127.0.0.1:" + freeLocalPort(t)},
-		parseJoin(t, add.JoinCommand)...)
-	out, err := replay.run(args...)
-	if err == nil {
-		t.Fatalf("token replay must be refused:\n%s", out)
+	replay.serve(freeLocalPort(t), parseJoin(t, add.JoinCommand)...)
+
+	logs := replay.serveLogs()
+	if !strings.Contains(logs, "enrolled as worker-01") {
+		t.Fatalf("re-presenting a durable token must re-enroll to the same identity:\n%s", logs)
 	}
-	if !strings.Contains(out, "already used") {
-		t.Fatalf("replay refusal must name the cause:\n%s", out)
+	if strings.Contains(logs, "already used") {
+		t.Fatalf("the token was burned on first use; a rescheduled sidecar would crash-loop:\n%s", logs)
 	}
 }
 
@@ -726,7 +731,7 @@ func TestOneEndpointRoutesTwoRepositories(t *testing.T) {
 // diagnosis available when a dispatch fails to conclude.
 func agentLogs(t *testing.T, agent *host) string {
 	t.Helper()
-	tasks := filepath.Join(agent.home, ".captain", "sandbox", servedReposDir, SidecarRepoName, "captain", "tasks")
+	tasks := filepath.Join(agent.home, ".captain", "sandbox", gitagent.ServedReposDirName, SidecarRepoName, "captain", "tasks")
 	entries, err := os.ReadDir(tasks)
 	if err != nil {
 		return "no task directory: " + err.Error()
@@ -799,7 +804,7 @@ func TestUnconfiguredDispatchLaunchesTheDefaultAgent(t *testing.T) {
 
 	// An agent log appearing at all is the assertion: the sidecar launched
 	// something rather than preparing a workspace and going quiet.
-	tasks := filepath.Join(agent.home, ".captain", "sandbox", servedReposDir, SidecarRepoName, "captain", "tasks")
+	tasks := filepath.Join(agent.home, ".captain", "sandbox", gitagent.ServedReposDirName, SidecarRepoName, "captain", "tasks")
 	deadline := time.Now().Add(60 * time.Second)
 	launched := ""
 	for time.Now().Before(deadline) && launched == "" {

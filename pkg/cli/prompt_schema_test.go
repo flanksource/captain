@@ -111,14 +111,25 @@ func TestPromptSchemaDocumentBackendsAndConditionals(t *testing.T) {
 
 	spec := doc["spec"].(map[string]any)
 	allOf := spec["allOf"].([]any)
-	if len(allOf) != len(api.AllBackends()) {
-		t.Fatalf("spec.allOf length = %d, want %d", len(allOf), len(api.AllBackends()))
-	}
+	// allOf carries two independent rule families: one per backend (keyed on
+	// if.properties.backend) and one per sandbox selector (keyed on if.anyOf,
+	// asserted by TestPromptSchemaSandboxModeConditionals). Select the backend
+	// rules rather than assuming every entry is one.
 	thenByBackend := map[string]map[string]any{}
 	for _, c := range allOf {
 		cm := c.(map[string]any)
-		backend := cm["if"].(map[string]any)["properties"].(map[string]any)["backend"].(map[string]any)["const"].(string)
-		thenByBackend[backend] = cm["then"].(map[string]any)["properties"].(map[string]any)
+		props, ok := cm["if"].(map[string]any)["properties"].(map[string]any)
+		if !ok {
+			continue
+		}
+		backend, ok := props["backend"].(map[string]any)
+		if !ok {
+			continue
+		}
+		thenByBackend[backend["const"].(string)] = cm["then"].(map[string]any)["properties"].(map[string]any)
+	}
+	if len(thenByBackend) != len(api.AllBackends()) {
+		t.Fatalf("spec.allOf backend rules = %d, want %d", len(thenByBackend), len(api.AllBackends()))
 	}
 
 	// cmux backends: cliArgs constrained by a $ref into $defs.

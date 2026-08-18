@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/clicky/text"
 )
 
 // TaskPayload is task.json: what the agent is asked to do. It is materialized
@@ -64,14 +65,28 @@ type DispatchRequest struct {
 	MailboxRoute  string // opaque path under the supervisor's served root
 	Task          string // generated when empty
 	Agent         string
-	SidecarURL    string // ssh://host:port/repo.git
+	SidecarURL    string // ssh://host:port/repo.git or https://host:port/git/repo.git
 	SidecarHostFP string
 	KeyPath       string
 	SSHCommand    string // GIT_SSH_COMMAND; "" ⇒ this binary's git-agent ssh transport
-	Relay         RelayMode
-	Policy        Policy
-	TaskPayload   TaskPayload
-	HooksJSON     []byte // pre-serialized hooks.json (may be nil)
+	// Token, CAPath and PinnedPublicKey apply when SidecarURL is https://.
+	Token           text.SensitiveString
+	CAPath          string
+	PinnedPublicKey string
+	Relay           RelayMode
+	Policy          Policy
+	TaskPayload     TaskPayload
+	HooksJSON       []byte // pre-serialized hooks.json (may be nil)
+}
+
+// Transport describes how to reach the sidecar, for whichever scheme its URL
+// names.
+func (r DispatchRequest) Transport() TransportTarget {
+	return TransportTarget{
+		URL: r.SidecarURL, SSHCommand: r.SSHCommand, KeyPath: r.KeyPath,
+		HostFingerprint: r.SidecarHostFP,
+		Token:           r.Token, CAPath: r.CAPath, PinnedPublicKey: r.PinnedPublicKey,
+	}
 }
 
 // DispatchResult reports the pushed hand-off.
@@ -237,35 +252,19 @@ func pushDispatch(ctx context.Context, req DispatchRequest, task string, snapsho
 		snapshot.Commit+":"+dispatchRef,
 		control+":"+controlRef,
 	)
-	pairs, err := transportPairs(req.SSHCommand, req.KeyPath, req.SidecarHostFP)
+	env, err := TransportEnv(ScrubGitEnv(os.Environ()), req.Transport())
 	if err != nil {
 		return err
 	}
-	env := envWith(ScrubGitEnv(os.Environ()), pairs...)
 	if _, err := runGit(ctx, req.RepoDir, env, args...); err != nil {
 		return fmt.Errorf("dispatch push: %w", err)
 	}
 	return nil
 }
 
-// transportPairs builds the env for a push riding captain's GIT_SSH_COMMAND
-// transport: no system ssh, key from a captain-managed path, host key pinned
-// by fingerprint. An empty sshCommand means this binary's own transport.
-func transportPairs(sshCommand, keyPath, hostFingerprint string) ([]string, error) {
-	if sshCommand == "" {
-		exe, err := os.Executable()
-		if err != nil {
-			return nil, err
-		}
-		sshCommand = SSHTransportCommand(exe)
-	}
-	return []string{
-		"GIT_SSH_COMMAND=" + sshCommand,
-		"GIT_SSH_VARIANT=ssh", // an unrecognized command defaults to "simple", which cannot pass -p
-		EnvSSHKey + "=" + keyPath,
-		EnvSSHHostFingerprint + "=" + hostFingerprint,
-	}, nil
-}
+// executablePath is indirected so the SSH transport's default command can be
+// resolved without every caller reaching for os.Executable.
+var executablePath = os.Executable
 
 // SSHTransportCommand renders this binary's SSH transport as a shell-safe
 // GIT_SSH_COMMAND value. Git evaluates the value through a shell.

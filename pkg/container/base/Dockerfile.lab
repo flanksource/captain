@@ -1,0 +1,16 @@
+# syntax=docker/dockerfile:1
+# Lab overlay: the published sandbox image with the working tree's captain
+# binary swapped in. The base image installs flanksource/captain from its latest
+# *release*, so without this overlay a lab push ships whatever was released last
+# rather than the code under test.
+#
+# COPY-only on purpose — with no RUN, buildx assembles a linux/amd64 image on an
+# arm64 host without qemu emulation. `task image:lab` cross-compiles the binary;
+# building it in a stage here is not possible, because captain builds against the
+# sibling checkouts in go.work, which are outside any build context.
+ARG BASE_IMAGE=flanksource/captain:latest
+FROM ${BASE_IMAGE}
+
+# Set by buildx from --platform; image:lab names its binary to match.
+ARG TARGETARCH
+COPY captain-linux-${TARGETARCH} /usr/bin/captain

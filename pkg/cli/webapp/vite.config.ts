@@ -34,6 +34,10 @@ export default defineConfig(({ command }) => {
       proxy: {
         "/api": apiTarget,
         "/health": apiTarget,
+        // The git smart-HTTP transport. Without this, `captain serve --dev`
+        // answers a push with the dev server's index.html and the client
+        // reports a protocol error rather than a missing route.
+        "/git": apiTarget,
       },
     },
     build: {

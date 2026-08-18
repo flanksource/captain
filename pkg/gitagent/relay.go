@@ -22,6 +22,35 @@ type RelayTarget struct {
 	HostFingerprint string `json:"hostFingerprint"`
 	KeyPath         string `json:"keyPath"`
 	SSHCommand      string `json:"sshCommand,omitempty"` // "" ⇒ this binary's transport
+	// TokenPath, CAPath and PinnedPublicKey apply when URL is https://.
+	//
+	// A path rather than the credential itself, exactly as KeyPath is: this
+	// struct is serialized into hooks.json, which travels between hosts and is
+	// readable by every hook process. The sidecar already holds its own token
+	// from enrollment, so there is nothing to send it.
+	TokenPath       string `json:"tokenPath,omitempty"`
+	CAPath          string `json:"caPath,omitempty"`
+	PinnedPublicKey string `json:"pinnedPubkey,omitempty"`
+}
+
+// Transport describes how to reach pushURL, which is the target's endpoint
+// joined with one repository's mailbox route. The token is read at the moment
+// of use so a revoked-and-reissued credential takes effect without a redeploy.
+func (t RelayTarget) Transport(pushURL string) (TransportTarget, error) {
+	target := TransportTarget{
+		URL: pushURL, SSHCommand: t.SSHCommand, KeyPath: t.KeyPath,
+		HostFingerprint: t.HostFingerprint,
+		CAPath:          t.CAPath, PinnedPublicKey: t.PinnedPublicKey,
+	}
+	if EndpointScheme(pushURL) != "https" {
+		return target, nil
+	}
+	token, err := ReadTokenFile(t.TokenPath)
+	if err != nil {
+		return TransportTarget{}, err
+	}
+	target.Token = token
+	return target, nil
 }
 
 // upstreamRejectedError distinguishes a supervisor verdict from a failure to
@@ -173,13 +202,16 @@ func Relay(ctx context.Context, repo string, hookEnv []string, target RelayTarge
 	}
 	args = append(args, mailboxURL, result+":"+resultRef, control+":"+controlRef)
 
-	pairs, err := transportPairs(target.SSHCommand, target.KeyPath, target.HostFingerprint)
+	transport, err := target.Transport(mailboxURL)
 	if err != nil {
 		return err
 	}
 	// R1.4: unset only GIT_QUARANTINE_PATH; the object-directory variables
 	// stay so the quarantined objects remain readable for the outbound pack.
-	env := envWith(RelayEnv(hookEnv), pairs...)
+	env, err := TransportEnv(RelayEnv(hookEnv), transport)
+	if err != nil {
+		return err
+	}
 	feedback := &relayFeedbackWriter{dst: sideband}
 	code, out, err := gitExitCodeStderr(ctx, repo, env, feedback, args...)
 	if flushErr := feedback.flush(); err == nil && flushErr != nil {

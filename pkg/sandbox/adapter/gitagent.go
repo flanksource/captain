@@ -17,6 +17,7 @@ import (
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/captainconfig"
 	"github.com/flanksource/captain/pkg/gitagent"
+	"github.com/flanksource/clicky/text"
 )
 
 // GitAgent constructs the remote-execution adapter. Backend options carry the
@@ -98,6 +99,7 @@ func (g *gitAgentSandbox) Execute(ctx context.Context, spec api.Spec) (*api.Resp
 		Agent:         target.agent,
 		SidecarURL:    target.url,
 		SidecarHostFP: target.hostFingerprint,
+		Token:         target.token,
 		KeyPath:       target.keyPath,
 		Relay:         target.relay,
 		Policy:        target.policy,
@@ -158,11 +160,14 @@ type gitAgentTarget struct {
 	agent           string
 	url             string
 	hostFingerprint string
-	keyPath         string
-	mailboxRoot     string
-	relay           gitagent.RelayMode
-	policy          gitagent.Policy
-	waitTimeout     time.Duration
+	// token authenticates this supervisor to an https agent, and is empty for an
+	// ssh one, which authenticates by key instead.
+	token       text.SensitiveString
+	keyPath     string
+	mailboxRoot string
+	relay       gitagent.RelayMode
+	policy      gitagent.Policy
+	waitTimeout time.Duration
 }
 
 // resolveTarget picks the enrolled agent — pinned by the spec's sandbox.agent,
@@ -185,12 +190,15 @@ func (g *gitAgentSandbox) resolveTarget() (*gitAgentTarget, error) {
 		return nil, fmt.Errorf("agent %q is not enrolled in backend %q", name, g.cfg.Name)
 	}
 	url, _ := entry["url"].(string)
-	hostFP, _ := entry["hostFingerprint"].(string)
-	if url == "" || hostFP == "" {
+	if url == "" {
 		return nil, fmt.Errorf(
 			"agent %q has no endpoint recorded: it enrolled before advertising one. "+
-				"Re-enroll it (captain sandbox git-agent add %s) so its serve reports its URL and host key",
+				"Re-enroll it (captain sandbox git-agent add %s) so its serve reports its URL",
 			name, name)
+	}
+	hostFP, token, err := dispatchCredentials(name, url, entry)
+	if err != nil {
+		return nil, err
 	}
 	keysDir, err := gitAgentKeysDir()
 	if err != nil {
@@ -200,6 +208,7 @@ func (g *gitAgentSandbox) resolveTarget() (*gitAgentTarget, error) {
 		agent:           name,
 		url:             url,
 		hostFingerprint: hostFP,
+		token:           token,
 		keyPath:         stringOption(opts, "key", filepath.Join(keysDir, dispatchKeyFile)),
 		// The long-running endpoint serves this root; each dispatch derives a
 		// repository-specific mailbox beneath it from the request working tree.
@@ -211,6 +220,45 @@ func (g *gitAgentSandbox) resolveTarget() (*gitAgentTarget, error) {
 		target.policy = gitagent.Policy{Paths: g.cfg.Policy.Paths, MaxAttempts: g.cfg.Policy.MaxAttempts}
 	}
 	return target, nil
+}
+
+// dispatchCredentials resolves how this supervisor authenticates to an agent,
+// which the agent's own URL scheme decides.
+//
+// CAPath and PinnedPublicKey are deliberately left empty for https. The agent is
+// fronted by an ingress holding a publicly trusted certificate for its own
+// hostname, so the git client verifies it by name through the system trust
+// store; pinning here would break on every certificate renewal.
+func dispatchCredentials(name, endpoint string, entry map[string]any) (string, text.SensitiveString, error) {
+	switch scheme := gitagent.EndpointScheme(endpoint); scheme {
+	case "ssh":
+		hostFP, _ := entry["hostFingerprint"].(string)
+		if hostFP == "" {
+			return "", "", fmt.Errorf(
+				"agent %q has no host key recorded: it enrolled before advertising one. "+
+					"Re-enroll it (captain sandbox git-agent add %s) so its serve reports its URL and host key",
+				name, name)
+		}
+		return hostFP, "", nil
+	case "https":
+		path, _ := entry["tokenPath"].(string)
+		if path == "" {
+			return "", "", fmt.Errorf(
+				"agent %q is reached over https but issued this supervisor no dispatch token, so there is "+
+					"nothing to authenticate with; re-enroll it (captain sandbox git-agent add %s)", name, name)
+		}
+		// Read at the moment of use, exactly as the relay does, so a re-enrolled
+		// agent's rotated token takes effect without restarting the supervisor.
+		token, err := gitagent.ReadTokenFile(path)
+		if err != nil {
+			return "", "", fmt.Errorf("agent %q: %w", name, err)
+		}
+		return "", token, nil
+	default:
+		return "", "", fmt.Errorf(
+			"agent %q advertised %s, whose scheme %q is not a transport captain speaks; want ssh:// or https://",
+			name, endpoint, scheme)
+	}
 }
 
 func stringOption(opts map[string]any, key, fallback string) string {
