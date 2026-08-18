@@ -15,12 +15,10 @@ func InteractiveRunConfig(cfg *container.SandboxConfig) error {
 	var envInput string
 	var selectedPassthrough []string
 
-	tokenOptions := []huh.Option[string]{
-		huh.NewOption("AWS", "aws"),
-		huh.NewOption("GCP", "gcp"),
-		huh.NewOption("Azure", "azure"),
-		huh.NewOption("GitHub", "github"),
-		huh.NewOption("Kubernetes", "kubernetes"),
+	tokenProviders := sandbox.TokenProviders()
+	tokenOptions := make([]huh.Option[string], len(tokenProviders))
+	for i, provider := range tokenProviders {
+		tokenOptions[i] = huh.NewOption(provider.Label, provider.Name)
 	}
 
 	presetNames := presets.List()
@@ -30,23 +28,7 @@ func InteractiveRunConfig(cfg *container.SandboxConfig) error {
 	}
 
 	// Pre-select already-configured values
-	if cfg.Tokens != nil {
-		if cfg.Tokens.AWS != nil {
-			selectedTokens = append(selectedTokens, "aws")
-		}
-		if cfg.Tokens.GCP != nil {
-			selectedTokens = append(selectedTokens, "gcp")
-		}
-		if cfg.Tokens.Azure != nil {
-			selectedTokens = append(selectedTokens, "azure")
-		}
-		if cfg.Tokens.GitHub != nil {
-			selectedTokens = append(selectedTokens, "github")
-		}
-		if cfg.Tokens.Kubernetes != nil {
-			selectedTokens = append(selectedTokens, "kubernetes")
-		}
-	}
+	selectedTokens = append(selectedTokens, sandbox.SelectedTokenProviders(cfg.Tokens)...)
 	selectedPresets = append(selectedPresets, cfg.Presets...)
 	selectedPassthrough = append(selectedPassthrough, cfg.EnvPassthrough...)
 
@@ -83,7 +65,7 @@ func InteractiveRunConfig(cfg *container.SandboxConfig) error {
 		return err
 	}
 
-	applyTokenSelections(cfg, selectedTokens)
+	cfg.Tokens = sandbox.ApplyTokenSelection(cfg.Tokens, selectedTokens)
 	cfg.Presets = selectedPresets
 
 	for _, line := range strings.Split(envInput, "\n") {
@@ -99,50 +81,4 @@ func InteractiveRunConfig(cfg *container.SandboxConfig) error {
 	cfg.EnvPassthrough = selectedPassthrough
 
 	return nil
-}
-
-func applyTokenSelections(cfg *container.SandboxConfig, selected []string) {
-	if len(selected) == 0 {
-		cfg.Tokens = nil
-		return
-	}
-
-	if cfg.Tokens == nil {
-		cfg.Tokens = &sandbox.TokensConfig{}
-	}
-
-	has := make(map[string]bool, len(selected))
-	for _, s := range selected {
-		has[s] = true
-	}
-
-	if has["aws"] && cfg.Tokens.AWS == nil {
-		cfg.Tokens.AWS = &sandbox.AWSTokenConfig{}
-	} else if !has["aws"] {
-		cfg.Tokens.AWS = nil
-	}
-
-	if has["gcp"] && cfg.Tokens.GCP == nil {
-		cfg.Tokens.GCP = &sandbox.GCPTokenConfig{}
-	} else if !has["gcp"] {
-		cfg.Tokens.GCP = nil
-	}
-
-	if has["azure"] && cfg.Tokens.Azure == nil {
-		cfg.Tokens.Azure = &sandbox.AzureTokenConfig{}
-	} else if !has["azure"] {
-		cfg.Tokens.Azure = nil
-	}
-
-	if has["github"] && cfg.Tokens.GitHub == nil {
-		cfg.Tokens.GitHub = &sandbox.GitHubTokenConfig{}
-	} else if !has["github"] {
-		cfg.Tokens.GitHub = nil
-	}
-
-	if has["kubernetes"] && cfg.Tokens.Kubernetes == nil {
-		cfg.Tokens.Kubernetes = &sandbox.K8sTokenConfig{}
-	} else if !has["kubernetes"] {
-		cfg.Tokens.Kubernetes = nil
-	}
 }

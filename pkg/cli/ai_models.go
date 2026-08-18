@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 
@@ -41,23 +40,20 @@ func RunAIModels(opts AIModelsOptions) (any, error) {
 	return runLiveModels(opts)
 }
 
-// runLiveModels lists what the user's API keys can actually call by hitting
-// OpenAI and Anthropic /v1/models, then augments each row with pricing and
-// context-window data from the OpenRouter registry. There is no static
-// fallback: if a backend has no API key set or the call fails, the user
-// learns about it directly so they can fix their environment instead of
-// being shown a stale hard-coded catalog.
+// runLiveModels lists what the user's API credentials can actually call by
+// hitting provider model endpoints, then augments each row with pricing and
+// context-window data from the OpenRouter registry. There is no static fallback:
+// if a backend has no configured credential or the call fails, the user learns
+// about it directly instead of being shown a stale hard-coded catalog.
 func runLiveModels(opts AIModelsOptions) (any, error) {
 	backendFilter := ai.Backend(strings.TrimSpace(opts.Backend))
+	if backendFilter != "" && !backendFilter.Valid() {
+		return nil, fmt.Errorf("--backend must be one of: %s (got %q)", ai.BackendList(), opts.Backend)
+	}
 	// CLI/agent backends authenticate internally, so their models come from the
 	// static catalog without an API key.
 	if backendFilter != "" && backendFilter.Kind() == "cli" {
 		return catalogModelsResult(opts, backendFilter), nil
-	}
-	switch backendFilter {
-	case "", ai.BackendOpenAI, ai.BackendAnthropic:
-	default:
-		return nil, fmt.Errorf("--backend must be one of: openai, anthropic, or a CLI backend (%s) (got %q)", strings.Join(cliBackendNames(), ", "), opts.Backend)
 	}
 
 	ctx := context.Background()
@@ -68,13 +64,13 @@ func runLiveModels(opts AIModelsOptions) (any, error) {
 	}
 	var results []fetched
 
-	if backendFilter == "" || backendFilter == ai.BackendOpenAI {
-		m, err := ai.FetchOpenAIModels(ctx, openAIAPIKey())
-		results = append(results, fetched{ai.BackendOpenAI, m, err})
+	backends := []ai.Backend{ai.BackendOpenAI, ai.BackendAnthropic}
+	if backendFilter != "" {
+		backends = []ai.Backend{backendFilter}
 	}
-	if backendFilter == "" || backendFilter == ai.BackendAnthropic {
-		m, err := ai.FetchAnthropicModels(ctx, anthropicAPIKey())
-		results = append(results, fetched{ai.BackendAnthropic, m, err})
+	for _, backend := range backends {
+		models, err := ai.ListModels(ctx, backend)
+		results = append(results, fetched{backend, models, err})
 	}
 
 	// Surface the first hard error. With no static fallback, an error means
@@ -163,45 +159,15 @@ func catalogModelsResult(opts AIModelsOptions, backend ai.Backend) AIModelsResul
 	return AIModelsResult{Total: len(rows), Rows: rows}
 }
 
-// cliBackendNames lists the CLI/agent backends, for the --backend error message.
-func cliBackendNames() []string {
-	out := make([]string, 0)
-	for _, b := range ai.AllBackends() {
-		if b.Kind() == "cli" {
-			out = append(out, string(b))
+// lookupPricing uses the provider registry's canonical OpenRouter candidates so
+// API and local-agent backends resolve the same model price.
+func lookupPricing(backend ai.Backend, id string) (pricing.ModelInfo, bool) {
+	for _, candidate := range ai.PricingIDs(backend, id) {
+		if info, ok := pricing.GetModelInfo(candidate); ok {
+			return info, true
 		}
 	}
-	return out
-}
-
-func openAIAPIKey() string    { return strings.TrimSpace(os.Getenv("OPENAI_API_KEY")) }
-func anthropicAPIKey() string { return strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")) }
-
-// lookupPricing tries the model id as-is first, then with the OpenRouter
-// "provider/model" prefix that the registry actually uses for the major
-// providers (OpenAI's `gpt-5` is keyed as `openai/gpt-5` upstream).
-func lookupPricing(backend ai.Backend, id string) (pricing.ModelInfo, bool) {
-	if info, ok := pricing.GetModelInfo(id); ok {
-		return info, true
-	}
-	prefix := openRouterPrefix(backend)
-	if prefix == "" {
-		return pricing.ModelInfo{}, false
-	}
-	if info, ok := pricing.GetModelInfo(prefix + "/" + id); ok {
-		return info, true
-	}
 	return pricing.ModelInfo{}, false
-}
-
-func openRouterPrefix(backend ai.Backend) string {
-	switch backend {
-	case ai.BackendOpenAI:
-		return "openai"
-	case ai.BackendAnthropic:
-		return "anthropic"
-	}
-	return ""
 }
 
 // runAllModels shows every model in the OpenRouter pricing registry. Pricing

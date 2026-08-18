@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/credentials"
 )
 
 type aiModelsRewriteTransport struct {
@@ -50,7 +52,14 @@ func withMockedProviders(t *testing.T, openai http.HandlerFunc, anthropic http.H
 	t.Cleanup(func() { http.DefaultClient.Transport = orig })
 }
 
+func isolateAIModelsVault(t *testing.T) {
+	t.Helper()
+	credentials.SetPathForTesting(filepath.Join(t.TempDir(), "vault"))
+	t.Cleanup(func() { credentials.SetPathForTesting("") })
+}
+
 func TestRunAIModels_LiveOpenAIOnly(t *testing.T) {
+	isolateAIModelsVault(t)
 	t.Setenv("OPENAI_API_KEY", "sk-test")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 
@@ -82,6 +91,7 @@ func TestRunAIModels_LiveOpenAIOnly(t *testing.T) {
 }
 
 func TestRunAIModels_LiveErrorIsSurfaced(t *testing.T) {
+	isolateAIModelsVault(t)
 	t.Setenv("OPENAI_API_KEY", "sk-test")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 
@@ -102,6 +112,7 @@ func TestRunAIModels_LiveErrorIsSurfaced(t *testing.T) {
 }
 
 func TestRunAIModels_NoKeyIsSurfaced(t *testing.T) {
+	isolateAIModelsVault(t)
 	t.Setenv("OPENAI_API_KEY", "")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 
@@ -112,9 +123,12 @@ func TestRunAIModels_NoKeyIsSurfaced(t *testing.T) {
 }
 
 func TestRunAIModels_RejectsUnsupportedBackend(t *testing.T) {
-	_, err := RunAIModels(AIModelsOptions{Backend: "gemini"})
+	_, err := RunAIModels(AIModelsOptions{Backend: "unknown"})
 	if err == nil {
 		t.Fatal("expected error for unsupported backend")
+	}
+	if !strings.Contains(err.Error(), "--backend must be one of") {
+		t.Fatalf("error = %q, want canonical backend validation", err)
 	}
 }
 
@@ -211,6 +225,7 @@ func TestIsLegacyModelID(t *testing.T) {
 }
 
 func TestRunAIModels_HidesLegacyByDefault(t *testing.T) {
+	isolateAIModelsVault(t)
 	t.Setenv("OPENAI_API_KEY", "sk-test")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 
@@ -264,6 +279,7 @@ func TestRunAIModels_HidesLegacyByDefault(t *testing.T) {
 }
 
 func TestRunAIModels_FilterOverridesBlacklist(t *testing.T) {
+	isolateAIModelsVault(t)
 	t.Setenv("OPENAI_API_KEY", "sk-test")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 
@@ -291,6 +307,7 @@ func TestRunAIModels_FilterOverridesBlacklist(t *testing.T) {
 }
 
 func TestRunAIModels_SortsByBackendThenModel(t *testing.T) {
+	isolateAIModelsVault(t)
 	t.Setenv("OPENAI_API_KEY", "sk-test")
 	t.Setenv("ANTHROPIC_API_KEY", "ant-test")
 
@@ -336,6 +353,7 @@ func TestRunAIModels_SortsByBackendThenModel(t *testing.T) {
 }
 
 func TestRunAIModels_LimitTruncatesAfterSort(t *testing.T) {
+	isolateAIModelsVault(t)
 	t.Setenv("OPENAI_API_KEY", "sk-test")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 
@@ -370,6 +388,7 @@ func TestRunAIModels_LimitTruncatesAfterSort(t *testing.T) {
 }
 
 func TestRunAIModels_FilterAppliesToLiveResults(t *testing.T) {
+	isolateAIModelsVault(t)
 	t.Setenv("OPENAI_API_KEY", "sk-test")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 
