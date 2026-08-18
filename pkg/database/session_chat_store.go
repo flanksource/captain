@@ -160,6 +160,13 @@ type CreateChatModelCallInput struct {
 	Effort      string
 }
 
+type UpdateChatModelCallRuntimeInput struct {
+	ID      uuid.UUID
+	Model   string
+	Backend string
+	Effort  string
+}
+
 type ModelCallStatus string
 
 const (
@@ -209,6 +216,28 @@ func (db *DB) CreateChatModelCall(ctx context.Context, input CreateChatModelCall
 		return uuid.Nil, fmt.Errorf("create Captain chat model call: %w", err)
 	}
 	return record.ID, nil
+}
+
+// UpdateChatModelCallRuntime records the candidate a fallback provider actually
+// selected while the model call is still running.
+func (db *DB) UpdateChatModelCallRuntime(ctx context.Context, input UpdateChatModelCallRuntimeInput) error {
+	input.Model = strings.TrimSpace(input.Model)
+	input.Backend = strings.TrimSpace(input.Backend)
+	if input.ID == uuid.Nil || input.Model == "" || input.Backend == "" {
+		return fmt.Errorf("%w: model call ID, model, and backend are required", ErrInvalidIngest)
+	}
+	result := db.gorm.WithContext(ctx).Model(&modelCallRecord{}).
+		Where("id = ? AND status = 'running'", input.ID).
+		Updates(map[string]any{
+			"model": input.Model, "backend": input.Backend, "effort": nullableTrimmed(input.Effort),
+		})
+	if result.Error != nil {
+		return fmt.Errorf("update Captain chat model call runtime: %w", result.Error)
+	}
+	if result.RowsAffected != 1 {
+		return fmt.Errorf("update Captain chat model call runtime %s: expected one running call, updated %d", input.ID, result.RowsAffected)
+	}
+	return nil
 }
 
 func (db *DB) FinishChatModelCall(ctx context.Context, input FinishChatModelCallInput) error {

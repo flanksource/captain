@@ -45,29 +45,31 @@ func awaitSuspendedSeed(ctx context.Context, store ThreadStore, threadID, turnID
 	}
 }
 
-func (s *Service) resumeToolApproval(ctx context.Context, threadID string, continuation *ApprovalContinuation) error {
+// resumeToolApproval reports whether it consumed the caller's pending
+// reservation, even when the activated continuation later fails.
+func (s *Service) resumeToolApproval(ctx context.Context, threadID string, continuation *ApprovalContinuation) (bool, error) {
 	if continuation == nil || continuation.Execution == nil || continuation.Spec.ToolApproval == nil {
-		return fmt.Errorf("tool approval continuation is incomplete")
+		return false, fmt.Errorf("tool approval continuation is incomplete")
 	}
 	execution := continuation.Execution
 	defer closeExecution(execution)
 	profile, err := s.runtimeProfile(ctx)
 	if err != nil {
-		return fmt.Errorf("load chat runtime profile: %w", err)
+		return false, fmt.Errorf("load chat runtime profile: %w", err)
 	}
 	if err := enforceApprovalRuntimeProfile(continuation.Spec, profile.Resolved); err != nil {
 		if interruptErr := execution.Interrupt(ctx, err.Error()); interruptErr != nil {
-			return fmt.Errorf("%w (interrupt rejected approval continuation: %v)", err, interruptErr)
+			return false, fmt.Errorf("%w (interrupt rejected approval continuation: %v)", err, interruptErr)
 		}
-		return err
+		return false, err
 	}
 	set, err := s.loadTools(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	definitions, err := aitools.ResolveDefinitions(set.Definitions, continuation.Spec.ToolPreferences)
 	if err != nil {
-		return err
+		return false, err
 	}
 	config := profile.ProviderConfig
 	config.Model = continuation.Spec.Model
@@ -77,12 +79,12 @@ func (s *Service) resumeToolApproval(ctx context.Context, threadID string, conti
 	config.Tools = definitions
 	config, err = s.prepareProviderConfig(ctx, config)
 	if err != nil {
-		return err
+		return false, err
 	}
 	continuation.Spec.Model = config.Model
 	provider, err := s.resolver.Provider(ctx, config)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer func() {
 		if closeErr := closeProvider(provider); closeErr != nil {
@@ -92,12 +94,12 @@ func (s *Service) resumeToolApproval(ctx context.Context, threadID string, conti
 	if len(definitions) > 0 {
 		capability, ok := api.ProviderAs[api.ToolCapableProvider](provider)
 		if !ok || !capability.SupportsCallerTools() {
-			return fmt.Errorf("backend %q does not support caller tools", provider.GetBackend())
+			return false, fmt.Errorf("backend %q does not support caller tools", provider.GetBackend())
 		}
 	}
 	seed, err := s.awaitSuspendedSeed(ctx, threadID, execution.TurnID())
 	if err != nil {
-		return err
+		return false, err
 	}
 	request := ChatRequest{
 		ID: threadID, ThreadID: threadID, Trigger: "submit-message", MessageID: seed.ID,
@@ -107,26 +109,28 @@ func (s *Service) resumeToolApproval(ctx context.Context, threadID string, conti
 	defer cancel()
 	active := newActiveTurn(streamContext, provider, execution, cancel)
 	if err := s.registerActiveTurn(threadID, active); err != nil {
-		return err
+		return false, err
 	}
 	defer s.unregisterActiveTurn(threadID, active)
 	events, err := provider.ExecuteStream(streamContext, continuation.Spec)
 	if err != nil {
-		return err
+		return true, err
 	}
+	runtime := func() api.Model { return providerRuntime(provider, config.Model) }
+	events = s.bindThreadRuntime(streamContext, threadID, execution, runtime, events)
 	events = active.stream(events)
 	events = observeExecutionEvents(streamContext, execution, events)
 	// A resumed approval writes no SSE stream, so no TurnCosts sink is needed;
 	// the thread total is recomputed from the database on the next read.
 	resumed := s.persistedEvents(streamContext, persistedEventOptions{
-		Request: request, TurnID: execution.TurnID(), Model: continuation.Spec.Model,
+		Request: request, TurnID: execution.TurnID(), Model: continuation.Spec.Model, Runtime: runtime,
 	}, events)
 	for event := range resumed {
 		if event.Kind == api.EventError {
-			return fmt.Errorf("resume provider approval: %s", event.Error)
+			return true, fmt.Errorf("resume provider approval: %s", event.Error)
 		}
 	}
-	return nil
+	return true, nil
 }
 
 func enforceApprovalRuntimeProfile(spec api.Spec, resolved api.ResolvedSpec) error {

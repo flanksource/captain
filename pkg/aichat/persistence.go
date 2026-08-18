@@ -82,7 +82,15 @@ type persistedEventOptions struct {
 	Request ChatRequest
 	TurnID  string
 	Model   api.Model
+	Runtime func() api.Model
 	Costs   *TurnCosts
+}
+
+func (o persistedEventOptions) runtime() api.Model {
+	if o.Runtime != nil {
+		return o.Runtime()
+	}
+	return o.Model
 }
 
 func (s *Service) persistedEvents(ctx context.Context, options persistedEventOptions, source <-chan api.Event) <-chan api.Event {
@@ -114,7 +122,7 @@ func (s *Service) persistedEvents(ctx context.Context, options persistedEventOpt
 				return
 			}
 			if !persisted && event.Kind != api.EventResult && event.Kind != api.EventError && event.SessionID != "" {
-				if err := s.persistEvent(ctx, request.ThreadID, event, options.Model, options.Costs); err != nil {
+				if err := s.persistEvent(ctx, request.ThreadID, event, options.runtime(), options.Costs); err != nil {
 					sendEvent(ctx, out, api.Event{Kind: api.EventError, Error: err.Error(), Model: event.Model})
 					return
 				}
@@ -180,7 +188,7 @@ func (s *Service) persistCompletedTurn(
 	event api.Event,
 	options persistedEventOptions,
 ) error {
-	if err := s.persistEvent(ctx, threadID, event, options.Model, options.Costs); err != nil {
+	if err := s.persistEvent(ctx, threadID, event, options.runtime(), options.Costs); err != nil {
 		return err
 	}
 	if len(builder.message.Parts) == 0 {

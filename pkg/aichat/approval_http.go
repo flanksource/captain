@@ -45,7 +45,12 @@ func (s *Service) handleResolveToolApproval(w http.ResponseWriter, request *http
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}
-	defer s.releaseThreadReservation(threadID)
+	reserved := true
+	defer func() {
+		if reserved {
+			s.releaseThreadReservation(threadID)
+		}
+	}()
 	continuation, err := s.options.Authority.ResolveToolApproval(request.Context(), ToolApprovalResolution{
 		ThreadID: threadID, ApprovalID: request.PathValue("approvalID"),
 		ExpectedTurnID: activeTurnID,
@@ -56,7 +61,11 @@ func (s *Service) handleResolveToolApproval(w http.ResponseWriter, request *http
 		return
 	}
 	if continuation != nil {
-		if err := s.resumeToolApproval(request.Context(), threadID, continuation); err != nil {
+		activated, err := s.resumeToolApproval(request.Context(), threadID, continuation)
+		if activated {
+			reserved = false
+		}
+		if err != nil {
 			status := http.StatusBadGateway
 			if errors.Is(err, errThreadBusy) {
 				status = http.StatusConflict

@@ -15,6 +15,7 @@ import (
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/commons/logger"
+	"github.com/google/uuid"
 )
 
 var serviceLog = logger.GetLogger("aichat")
@@ -326,6 +327,8 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
+	runtime := func() api.Model { return providerRuntime(provider, config.Model) }
+	events = s.bindThreadRuntime(streamContext, chat.ThreadID, execution, runtime, events)
 	events = mergeExecutionEvents(streamContext, events, callerToolEvents, definitions)
 	if active != nil {
 		events = active.stream(events)
@@ -338,7 +341,7 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 	}
 	costs := &TurnCosts{}
 	persisted := s.persistedEvents(streamContext, persistedEventOptions{
-		Request: chat, TurnID: turnID, Model: config.Model, Costs: costs,
+		Request: chat, TurnID: turnID, Model: config.Model, Runtime: runtime, Costs: costs,
 	}, events)
 	if err := WriteEventStream(writer, persisted, EventStreamOptions{
 		ToolApproval: chat.ToolApproval,
@@ -389,7 +392,7 @@ func chatTurnID(request ChatRequest) (string, error) {
 		if request.MessageID == "" {
 			return "", fmt.Errorf("regenerate-message requires messageId")
 		}
-		return request.MessageID, nil
+		return request.MessageID + ":" + uuid.NewString(), nil
 	default:
 		return "", fmt.Errorf("unsupported chat trigger %q", request.Trigger)
 	}
@@ -493,6 +496,66 @@ func enforceThreadRuntime(thread *Thread, requested api.Model) error {
 	)}
 }
 
+func providerRuntime(provider api.Provider, configured api.Model) api.Model {
+	selected := api.Model{Name: strings.TrimSpace(provider.GetModel()), Backend: provider.GetBackend()}
+	for _, candidate := range configured.Candidates() {
+		identity, err := threadRuntimeIdentity(candidate)
+		if err == nil && sameThreadRuntime(identity, selected) {
+			candidate.Name = identity.Name
+			candidate.Backend = identity.Backend
+			return candidate
+		}
+	}
+	return selected
+}
+
+// bindThreadRuntime stores the provider actually selected by fallback before
+// later stages can bind its provider-session ID or account for its usage.
+func (s *Service) bindThreadRuntime(
+	ctx context.Context,
+	threadID string,
+	execution Execution,
+	runtime func() api.Model,
+	source <-chan api.Event,
+) <-chan api.Event {
+	if threadID == "" {
+		return source
+	}
+	out := make(chan api.Event)
+	go func() {
+		defer close(out)
+		bound := false
+		var selected api.Model
+		for event := range source {
+			if !bound && event.Kind != api.EventError {
+				selected = runtime()
+				var err error
+				if binder, ok := execution.(executionRuntimeBinder); ok {
+					err = binder.BindRuntime(ctx, selected)
+				} else {
+					var store ThreadStore
+					store, err = s.threads(ctx)
+					if err == nil {
+						err = store.SetRuntime(ctx, threadID, selected)
+					}
+				}
+				if err != nil {
+					sendEvent(ctx, out, api.Event{Kind: api.EventError, Error: err.Error(), Model: selected.Name})
+					return
+				}
+				bound = true
+			}
+			if bound && event.Model == "" {
+				event.Model = selected.Name
+			}
+			if !sendEvent(ctx, out, event) {
+				return
+			}
+		}
+	}()
+	return out
+}
+
 func closeExecution(execution Execution) {
 	if execution == nil {
 		return
@@ -516,8 +579,10 @@ func (s *Service) persistIncoming(ctx context.Context, request ChatRequest, runt
 	if err != nil {
 		return err
 	}
-	if err := store.SetRuntime(ctx, request.ThreadID, runtime); err != nil {
-		return err
+	if candidates := runtime.Candidates(); len(candidates) == 1 {
+		if err := store.SetRuntime(ctx, request.ThreadID, candidates[0]); err != nil {
+			return err
+		}
 	}
 	if err := store.AppendMessage(ctx, request.ThreadID, last); err != nil {
 		return err

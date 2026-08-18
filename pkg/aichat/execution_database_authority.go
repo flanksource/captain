@@ -34,10 +34,6 @@ func (a *DatabaseExecutionAuthority) Begin(
 	if request.Spec.Backend == "" {
 		return nil, fmt.Errorf("authoritative chat execution requires a resolved backend")
 	}
-	runtime, err := threadRuntimeIdentity(request.Spec.Model)
-	if err != nil {
-		return nil, err
-	}
 	renderedSpec, err := renderedSpecMap(request.Spec, request.Profile)
 	if err != nil {
 		return nil, err
@@ -67,12 +63,6 @@ func (a *DatabaseExecutionAuthority) Begin(
 		}
 		if session.Source != "aichat" {
 			return fmt.Errorf("chat thread %s has incompatible source %q", request.ThreadID, session.Source)
-		}
-		if bindErr := tx.SetSessionMetadataOnce(ctx, session.ID, threadRuntimeMetadataKey, runtime); bindErr != nil {
-			if errors.Is(bindErr, database.ErrSessionConflict) {
-				return fmt.Errorf("%w: %v", ErrThreadRuntimeConflict, bindErr)
-			}
-			return bindErr
 		}
 		recovered, createErr = tx.RecoverIncompleteChatAdmission(ctx, database.RecoverIncompleteChatAdmissionInput{
 			SessionID: session.ID, ProviderTurnID: request.RequestID,

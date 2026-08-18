@@ -57,6 +57,12 @@ type Execution interface {
 	Close(context.Context) error
 }
 
+// executionRuntimeBinder commits the provider runtime selected after fallback
+// resolution, before any provider session identity from that runtime is stored.
+type executionRuntimeBinder interface {
+	BindRuntime(context.Context, api.Model) error
+}
+
 func mergeExecutionEvents(
 	ctx context.Context,
 	provider <-chan api.Event,

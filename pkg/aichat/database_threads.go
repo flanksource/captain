@@ -59,6 +59,13 @@ func (s *DatabaseThreadStore) List(ctx context.Context) ([]*Thread, error) {
 		if err != nil {
 			return nil, err
 		}
+		if overviews[i].AgentCount > 1 {
+			costs, costErr := s.db.ListThreadCosts(ctx, overviews[i].ID)
+			if costErr != nil {
+				return nil, costErr
+			}
+			applyThreadSummaryCosts(threads[i], costs)
+		}
 	}
 	return threads, nil
 }

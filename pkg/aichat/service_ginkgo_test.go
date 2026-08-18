@@ -15,10 +15,11 @@ import (
 )
 
 type fakeResolver struct {
-	models   aichat.ModelCatalogResponse
-	runtimes []api.RuntimeFamily
-	provider *fakeStreamingProvider
-	configs  []api.Config
+	models      aichat.ModelCatalogResponse
+	runtimes    []api.RuntimeFamily
+	provider    api.StreamingProvider
+	providerErr error
+	configs     []api.Config
 }
 
 type fakeProviderConfigSource struct {
@@ -53,6 +54,9 @@ func (f *fakeResolver) Runtimes(context.Context) ([]api.RuntimeFamily, error) {
 
 func (f *fakeResolver) Provider(_ context.Context, config api.Config) (api.StreamingProvider, error) {
 	f.configs = append(f.configs, config)
+	if f.providerErr != nil {
+		return nil, f.providerErr
+	}
 	return f.provider, nil
 }
 
@@ -60,7 +64,10 @@ type fakeStreamingProvider struct {
 	events              []api.Event
 	specs               []api.Spec
 	execute             func(context.Context, api.Spec) (<-chan api.Event, error)
+	model               string
 	backend             api.Backend
+	activeModel         string
+	activeBackend       api.Backend
 	supportsCallerTools *bool
 	interrupt           func(context.Context) error
 }
@@ -71,6 +78,8 @@ func (f *fakeStreamingProvider) Execute(context.Context, api.Spec) (*api.Respons
 
 func (f *fakeStreamingProvider) ExecuteStream(ctx context.Context, spec api.Spec) (<-chan api.Event, error) {
 	f.specs = append(f.specs, spec)
+	f.activeModel = spec.Name
+	f.activeBackend = spec.Backend
 	if f.execute != nil {
 		return f.execute(ctx, spec)
 	}
@@ -82,10 +91,21 @@ func (f *fakeStreamingProvider) ExecuteStream(ctx context.Context, spec api.Spec
 	return events, nil
 }
 
-func (f *fakeStreamingProvider) GetModel() string { return "test-model" }
+func (f *fakeStreamingProvider) GetModel() string {
+	if f.model != "" {
+		return f.model
+	}
+	if f.activeModel != "" {
+		return f.activeModel
+	}
+	return "test-model"
+}
 func (f *fakeStreamingProvider) GetBackend() api.Backend {
 	if f.backend != "" {
 		return f.backend
+	}
+	if f.activeBackend != "" {
+		return f.activeBackend
 	}
 	return api.BackendOpenAI
 }

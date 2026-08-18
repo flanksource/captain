@@ -25,6 +25,38 @@ type blockingForkThreadStore struct {
 	release <-chan struct{}
 }
 
+type blockingGetThreadStore struct {
+	aichat.ThreadStore
+	enabled         atomic.Bool
+	blocked         atomic.Int32
+	approvalStarted chan<- struct{}
+	approvalRelease <-chan struct{}
+	chatStarted     chan<- struct{}
+	chatRelease     <-chan struct{}
+}
+
+func (s *blockingGetThreadStore) Get(ctx context.Context, id string) (*aichat.Thread, error) {
+	if s.enabled.Load() {
+		switch s.blocked.Add(1) {
+		case 1:
+			s.approvalStarted <- struct{}{}
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-s.approvalRelease:
+			}
+		case 2:
+			s.chatStarted <- struct{}{}
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-s.chatRelease:
+			}
+		}
+	}
+	return s.ThreadStore.Get(ctx, id)
+}
+
 func (s blockingForkThreadStore) Fork(ctx context.Context, id string) (*aichat.Thread, error) {
 	s.started <- struct{}{}
 	select {
@@ -211,14 +243,28 @@ var _ = Describe("Authoritative chat thread identity", func() {
 
 		providerStarted := make(chan struct{})
 		releaseProvider := make(chan struct{})
+		approvalGetStarted := make(chan struct{})
+		releaseApprovalGet := make(chan struct{})
+		chatGetStarted := make(chan struct{})
+		releaseChatGet := make(chan struct{})
+		blockingStore := &blockingGetThreadStore{
+			ThreadStore: store, approvalStarted: approvalGetStarted, approvalRelease: releaseApprovalGet,
+			chatStarted: chatGetStarted, chatRelease: releaseChatGet,
+		}
 		var launches atomic.Int32
 		provider := &fakeStreamingProvider{execute: func(context.Context, api.Spec) (<-chan api.Event, error) {
-			if launches.Add(1) == 1 {
+			launch := launches.Add(1)
+			if launch == 1 {
 				close(providerStarted)
 				<-releaseProvider
+				blockingStore.enabled.Store(true)
 			}
 			events := make(chan api.Event, 2)
-			events <- api.Event{Kind: api.EventToolResult, ToolCallID: "call-1", Tool: "accounts_edit", Success: true}
+			if launch == 1 {
+				events <- api.Event{Kind: api.EventToolResult, ToolCallID: "call-1", Tool: "accounts_edit", Success: true}
+			} else {
+				events <- api.Event{Kind: api.EventText, Text: "Next answer"}
+			}
 			events <- api.Event{Kind: api.EventResult, Success: true}
 			close(events)
 			return events, nil
@@ -230,9 +276,9 @@ var _ = Describe("Authoritative chat thread identity", func() {
 				Model:        api.Model{Name: "test-model", Backend: api.BackendOpenAI},
 				ToolApproval: &api.ToolApprovalResume{},
 			},
-		}}
+		}, execution: &fakeExecution{}}
 		service := aichat.NewService(aichat.ServiceOptions{
-			Threads: aichat.FixedThreadStore(store), Authority: authority,
+			Threads: aichat.FixedThreadStore(blockingStore), Authority: authority,
 			Resolver: &fakeResolver{provider: provider},
 		})
 
@@ -264,12 +310,32 @@ var _ = Describe("Authoritative chat thread identity", func() {
 		Expect(launches.Load()).To(Equal(int32(1)), "no second provider may launch while approval continuation is active")
 
 		close(releaseProvider)
+		Eventually(approvalGetStarted).Should(Receive())
+		nextDone := make(chan *httptest.ResponseRecorder, 1)
+		go func() {
+			response := httptest.NewRecorder()
+			service.Handler().ServeHTTP(response, requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{
+				ID: thread.ID, ThreadID: thread.ID, Trigger: "submit-message",
+				Runtime: &api.Model{Name: "test-model", Backend: api.BackendOpenAI},
+				Messages: []aichat.UIMessage{{
+					ID: "next-user", Role: "user", Parts: []aichat.UIPart{{Type: "text", Text: "Continue after approval"}},
+				}},
+			}))
+			nextDone <- response
+		}()
+		Eventually(chatGetStarted).Should(Receive())
+		close(releaseApprovalGet)
 		var approval *httptest.ResponseRecorder
 		Eventually(approvalDone).Should(Receive(&approval))
 		Expect(approval.Code).To(Equal(http.StatusOK), approval.Body.String())
+		close(releaseChatGet)
+		var next *httptest.ResponseRecorder
+		Eventually(nextDone).Should(Receive(&next))
+		Expect(next.Code).To(Equal(http.StatusOK), next.Body.String())
 		stored, err := store.Get(ctx, thread.ID)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(stored.Messages).NotTo(ContainElement(HaveField("ID", "concurrent-user")))
+		Expect(stored.Messages).To(ContainElement(HaveField("ID", "next-user")))
 	})
 
 	It("reserves a fork source against concurrent turn admission", func() {
