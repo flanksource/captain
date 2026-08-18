@@ -3,6 +3,9 @@ version: "3"
 vars:
   BINARY: captain
   BIN_DIR: .bin
+  APP_NAME: captain
+  REGISTRY: '{{.REGISTRY | default "docker.lab"}}'
+  IMAGE: "{{.REGISTRY}}/{{.APP_NAME}}"
 
 tasks:
   default:
@@ -27,9 +30,14 @@ tasks:
             echo false
           fi
       LDFLAGS: -s -w -X main.version={{.VERSION}} -X main.commit={{.COMMIT}} -X main.date={{.DATE}} -X main.dirty={{.DIRTY}}
+      OUTPUT: '{{.OUTPUT | default (printf "%s/%s" .BIN_DIR .BINARY)}}'
     cmds:
-      - mkdir -p {{.BIN_DIR}}
-      - go build -ldflags "{{.LDFLAGS}}" -o {{.BIN_DIR}}/{{.BINARY}} ./cmd/captain
+      - mkdir -p {{dir .OUTPUT}}
+      # GOOS set (image:lab) means cross-compiling: there is no linux cgo
+      # toolchain on a macOS host, so that binary drops the sqlite-backed AI
+      # response cache — opt-in via CacheTTL/CacheDBPath, and it fails loudly
+      # rather than silently when enabled.
+      - '{{if .GOOS}}GOOS={{.GOOS}} GOARCH={{.GOARCH}} CGO_ENABLED=0 {{end}}go build -ldflags "{{.LDFLAGS}}" -o {{.OUTPUT}} ./cmd/captain'
 
   www:build:
     desc: Build the embedded Captain web UI
@@ -59,6 +67,47 @@ tasks:
     cmds:
       - CI=true pnpm install --frozen-lockfile
       - pnpm run dev
+
+  image:base:
+    desc: "Build the agent sandbox base image locally as captain:latest — the FROM of Dockerfile.flanksource and the base image:lab layers onto. Slow (apt, Go, Playwright); rerun only when the Dockerfile's pinned tool versions change."
+    vars:
+      GOARCH: '{{.GOARCH | default "amd64"}}'
+    cmds:
+      # deps pulls release assets from GitHub; GITHUB_TOKEN in the environment
+      # lifts the anonymous rate limit the Dockerfile's secret mount expects.
+      - >-
+        docker buildx build --platform linux/{{.GOARCH}} --load pkg/container/base
+        -f pkg/container/base/Dockerfile
+        {{if .GITHUB_TOKEN}}--secret id=GITHUB_TOKEN,env=GITHUB_TOKEN{{end}}
+        -t {{.APP_NAME}}:latest
+
+  image:lab:
+    desc: "Build and push the sandbox image with the working tree's captain binary to the lab registry. Requires image:base once. Defaults REGISTRY=docker.lab; override with REGISTRY=docker.example.com."
+    # The binary embeds pkg/cli/webapp/dist (serve.go), so the UI is rebuilt
+    # first or the image ships a stale one.
+    deps: [www:build]
+    vars:
+      VERSION:
+        sh: git describe --tags --always --dirty 2>/dev/null || echo dev
+      GOARCH: '{{.GOARCH | default "amd64"}}'
+      # Supplies everything but captain itself. Built by image:base — nothing is
+      # published to a registry, because .github/workflows/publish-image.yml is
+      # manual-only and has never been run.
+      BASE_IMAGE: '{{.BASE_IMAGE | default "captain:latest"}}'
+      LAB_DIR: "{{.BIN_DIR}}/lab"
+    cmds:
+      - task: build
+        vars:
+          GOOS: linux
+          GOARCH: "{{.GOARCH}}"
+          OUTPUT: "{{.LAB_DIR}}/captain-linux-{{.GOARCH}}"
+      # Context is the lab bin dir, not the repo root: the overlay needs one
+      # binary, and a root context would upload every node_modules tree.
+      - >-
+        docker buildx build --platform linux/{{.GOARCH}} --push {{.LAB_DIR}}
+        -f pkg/container/base/Dockerfile.lab
+        --build-arg BASE_IMAGE={{.BASE_IMAGE}}
+        -t {{.IMAGE}}:{{.VERSION}} -t {{.IMAGE}}:latest
 
   lint:
     desc: Run linters

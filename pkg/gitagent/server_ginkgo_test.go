@@ -32,14 +32,20 @@ func (d *memoryDirectory) AgentByFingerprint(fp string) (string, bool) {
 	return name, ok
 }
 
-func (d *memoryDirectory) ConsumeJoinToken(token string) (string, error) {
+// AdmitToken resolves a durable token. It does not spend it: the point of the
+// change from a single-use join token is that a restarting sidecar can present
+// the same one, so the stub has to be repeatable too or the suite would pass
+// while production crash-looped.
+func (d *memoryDirectory) AdmitToken(token, requested string) (string, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	name, ok := d.pending[gitagent.HashJoinToken(token)]
+	name, ok := d.pending[token]
 	if !ok {
-		return "", fmt.Errorf("join token is unknown or already used")
+		return "", fmt.Errorf("captain token is not recognized")
 	}
-	delete(d.pending, gitagent.HashJoinToken(token))
+	if requested != "" && requested != name {
+		return "", fmt.Errorf("token is bound to agent %q and cannot act as %q", name, requested)
+	}
 	return name, nil
 }
 
@@ -173,12 +179,11 @@ var _ = Describe("the git-agent SSH endpoint", func() {
 		Expect(out).To(ContainSubstring("not served"))
 	})
 
-	It("enrolls both directions through a single-use join token and refuses replay (R8.2)", func() {
+	It("enrolls both directions through a durable captain token, and re-enrolls on replay (R8.2)", func() {
 		root := GinkgoT().TempDir()
 		dir := &memoryDirectory{agents: map[string]string{}, pending: map[string]string{}}
-		token, hash, err := gitagent.MintJoinToken()
-		Expect(err).NotTo(HaveOccurred())
-		dir.pending[hash] = "worker-2"
+		const token = "cptn_worker2id.worker2secret"
+		dir.pending[token] = "worker-2"
 		addr, hostFP := startTestServerWithOffer(dir, root, gitagent.RoleMailbox,
 			gitagent.EnrollmentOffer{DispatchKey: "SHA256:dispatch"})
 
@@ -205,9 +210,18 @@ var _ = Describe("the git-agent SSH endpoint", func() {
 		_, err = gitagent.MailboxURL("ssh://"+addr, "../other.git")
 		Expect(err).To(MatchError(ContainSubstring("mailbox route")))
 
-		// Replay fails: the token burned.
-		_, err = gitagent.Enroll(context.Background(), "ssh://"+addr, token, hostFP, signer, request)
-		Expect(err).To(MatchError(ContainSubstring("already used")))
+		// Replay succeeds and converges on the same agent. A long-lived sidecar
+		// restarts — a container with --restart, a Deployment rescheduling — and
+		// re-runs its whole startup path with the same token. Under the burned
+		// token this replaced, that was a permanent crash loop from the second
+		// start onward.
+		again, err := gitagent.Enroll(context.Background(), "ssh://"+addr, token, hostFP, signer, request)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(again.Agent).To(Equal("worker-2"))
+
+		// A token that was never issued is still refused.
+		_, err = gitagent.Enroll(context.Background(), "ssh://"+addr, "cptn_other.secret", hostFP, signer, request)
+		Expect(err).To(MatchError(ContainSubstring("not recognized")))
 
 		// A wrong host fingerprint is refused before the token is offered.
 		_, err = gitagent.Enroll(context.Background(), "ssh://"+addr, token, "SHA256:bogus", signer, request)

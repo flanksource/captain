@@ -29,6 +29,10 @@ func (m *Monitor) backfill(ctx context.Context, ingestor *ingestor) {
 	roots, agents := discoverTranscripts()
 	ingestChanged(ctx, ingestor, roots)
 	ingestChanged(ctx, ingestor, agents)
+	// Remote task history rides the same pass: it is cheap when no mailbox
+	// exists, and live task views read the mailbox directly rather than the
+	// database, so this cadence only bounds how stale *history* can be.
+	m.ingestGitAgentTasks(ctx)
 }
 
 func discoverTranscripts() (roots, agents []transcriptRef) {

@@ -1,6 +1,13 @@
-// Enrollment (§8): a single-use, short-TTL join token authorizes exactly one
-// key registration and is then burned. The private key never leaves the agent
-// host (R8.2).
+// Enrollment (§8): a captain token authorizes a key registration. The private
+// key never leaves the agent host (R8.2).
+//
+// The token is durable rather than single-use (R8.2, amended). A burned token
+// meant a long-lived sidecar — a container with --restart, a Deployment
+// rescheduling — replayed a spent credential on every restart and crash-looped
+// from the second start onward, which had to be worked around wherever
+// enrollment could re-run. Bounding a credential by expiry and revocation
+// instead of by one use removes that whole class of failure, and is what lets
+// one token serve a scaled pool.
 //
 // The exchange is bidirectional because trust is: the supervisor dispatches TO
 // the sidecar and the sidecar relays TO the mailbox, so each side must learn
@@ -10,10 +17,7 @@ package gitagent
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,11 +29,13 @@ import (
 	gossh "golang.org/x/crypto/ssh"
 )
 
-// JoinTokenTTL bounds how long a minted token stays redeemable.
-const JoinTokenTTL = 15 * time.Minute
-
 // EnrollRequest is what a joining agent tells the supervisor about itself.
 type EnrollRequest struct {
+	// Agent is the name a returning member persisted from an earlier
+	// enrollment. It lets a pool member reclaim its slot across a restart
+	// instead of consuming another; the supervisor honours it only when it is
+	// already on file, so a client cannot invent an identity.
+	Agent string `json:"agent,omitempty"`
 	// AdvertiseURL is the sidecar endpoint the supervisor should dispatch to.
 	// When empty the supervisor derives it from the connection's source
 	// address and ListenPort, which is right on a flat network and wrong
@@ -38,8 +44,20 @@ type EnrollRequest struct {
 	// ListenPort is the port the agent's own receive endpoint listens on.
 	ListenPort string `json:"listenPort,omitempty"`
 	// HostFingerprint is the agent endpoint's host key, for the supervisor to
-	// pin when it dispatches.
+	// pin when it dispatches. Set only for an ssh:// AdvertiseURL; an https
+	// endpoint has no host key and carries DispatchToken instead.
 	HostFingerprint string `json:"hostFingerprint"`
+	// DispatchToken is a bearer credential this agent minted for the supervisor
+	// to present on every dispatch push. It is the https sibling of
+	// HostFingerprint: over ssh the supervisor is authenticated by the key
+	// exchange, and over https there is no exchange to authenticate it with.
+	//
+	// A plain string, not text.SensitiveString: that type's MarshalJSON emits
+	// "[REDACTED]" and it has no UnmarshalJSON, so the field would arrive as
+	// that literal and the supervisor would record a credential this agent
+	// rejects. Redaction belongs where the value is held — see
+	// DispatchRequest.Token — not where it is transmitted.
+	DispatchToken string `json:"dispatchToken,omitempty"`
 }
 
 // EnrollResponse is what the supervisor hands back so the agent can complete
@@ -49,45 +67,59 @@ type EnrollResponse struct {
 	// DispatchKey is the supervisor's client-key fingerprint. The agent
 	// authorizes it locally so the supervisor's dispatch push is accepted.
 	DispatchKey string `json:"dispatchKey"`
+	// CACertificate is the supervisor's TLS certificate, PEM-encoded, handed
+	// over the already-authenticated exchange so the agent's relays verify
+	// against the endpoint it joined rather than the system trust store. Empty
+	// for a supervisor that serves no HTTPS.
+	CACertificate string `json:"caCertificate,omitempty"`
+	// PinnedPublicKey is that certificate's sha256// pin, which survives a
+	// re-issue under the same key.
+	PinnedPublicKey string `json:"pinnedPubkey,omitempty"`
 }
 
 // EnrollmentOffer is the supervisor-side half of the exchange, supplied to
 // the server by whatever runs it.
 type EnrollmentOffer struct {
-	DispatchKey string
+	DispatchKey     string
+	CACertificate   string
+	PinnedPublicKey string
+}
+
+// ResponseFor renders the offer for one admitted agent, so both transports
+// hand back the same thing.
+func (o EnrollmentOffer) ResponseFor(agent string) EnrollResponse {
+	return EnrollResponse{
+		Agent: agent, DispatchKey: o.DispatchKey,
+		CACertificate: o.CACertificate, PinnedPublicKey: o.PinnedPublicKey,
+	}
 }
 
 // AgentEnrollment is one recorded agent: its key, its endpoint, and the host
 // key to pin when dispatching there.
 type AgentEnrollment struct {
-	Name            string
-	Fingerprint     string
-	URL             string
+	Name        string
+	Fingerprint string
+	URL         string
+	// HostFingerprint and DispatchToken are the two ways a supervisor proves
+	// itself to this agent, and which one applies is decided by URL's scheme:
+	// an ssh endpoint is pinned by host key, an https one authenticates with the
+	// bearer token the agent minted. Exactly one is ever set.
 	HostFingerprint string
+	DispatchToken   string
 }
 
-// MintJoinToken returns a fresh token and its storage hash. Only the hash is
-// persisted, so a leaked config file does not leak redeemable tokens.
-func MintJoinToken() (token, hash string, err error) {
-	raw := make([]byte, 32)
-	if _, err := rand.Read(raw); err != nil {
-		return "", "", err
-	}
-	token = base64.RawURLEncoding.EncodeToString(raw)
-	return token, HashJoinToken(token), nil
-}
-
-// HashJoinToken maps a presented token onto its storage hash.
-func HashJoinToken(token string) string {
-	sum := sha256.Sum256([]byte(token))
-	return hex.EncodeToString(sum[:])
-}
-
-// Enroll dials the supervisor endpoint, presents the join token along with
-// this agent's endpoint details, and returns what the supervisor offered
-// back. The host key is verified against the fingerprint printed by
-// `git-agent add` — never trusted on first use.
+// Enroll reaches the supervisor endpoint, presents the captain token along
+// with this agent's endpoint details, and returns what the supervisor offered
+// back. The supervisor's identity is verified against the fingerprint printed
+// by `git-agent add` — never trusted on first use — which for ssh:// is its
+// host key and for https:// is its certificate pin.
+//
+// The endpoint's scheme selects the channel. Both carry the same exchange, so
+// everything downstream of the response is identical.
 func Enroll(ctx context.Context, endpoint, token, hostFingerprint string, signer gossh.Signer, req EnrollRequest) (*EnrollResponse, error) {
+	if EndpointScheme(endpoint) == "https" {
+		return enrollHTTPS(ctx, endpoint, token, hostFingerprint, req)
+	}
 	hostFingerprint = strings.TrimSpace(hostFingerprint)
 	if hostFingerprint == "" {
 		return nil, fmt.Errorf("enrollment requires the supervisor's host-key fingerprint (printed by `captain sandbox git-agent add`)")
@@ -165,6 +197,9 @@ func enrollFailureDetail(err error, out []byte) string {
 func MailboxURL(endpoint, mailboxPath string) (string, error) {
 	if err := ValidateMailboxRoute(mailboxPath); err != nil {
 		return "", err
+	}
+	if EndpointScheme(endpoint) == "https" {
+		return HTTPSRepoURL(endpoint, mailboxPath)
 	}
 	addr, user, err := splitSSHEndpoint(endpoint)
 	if err != nil {

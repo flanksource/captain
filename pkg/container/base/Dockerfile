@@ -55,6 +55,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_${NODE_MAJOR}.x | bash - && \
   man-db \
   unzip \
   gnupg2 \
+  file \
   gh \
   iptables \
   ipset \
@@ -123,13 +124,15 @@ RUN GOBIN=/usr/local/bin go install github.com/onsi/ginkgo/v2/ginkgo@${GINKGO_VE
   rm -rf /root/.cache/go-build /root/go && \
   mkdir -p ${GOPATH}/bin && chown -R ${USER_UID}:${USER_GID} ${GOPATH}
 
-# Flanksource + Go tooling via deps (already present in the base image).
-# GITHUB_TOKEN arrives as a BuildKit secret so it never lands in image history.
-COPY deps.yaml /tmp/deps/deps.yaml
+
 RUN --mount=type=secret,id=GITHUB_TOKEN,env=GITHUB_TOKEN,required=false \
-  cd /tmp/deps && \
-  deps --no-progress install -c deps.yaml --bin-dir /usr/bin --app-dir /opt && \
-  rm -rf /tmp/deps /root/.deps
+  deps --no-progress install \
+  flanksource/repomap \
+  flanksource/gavel \
+  go-task/task \
+  flanksource/captain \
+  --bin-dir /usr/bin --app-dir /opt && \
+  rm -rf /root/.deps
 
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
@@ -170,4 +173,5 @@ RUN npm install -g \
   && npm cache clean --force
 
 USER root
+
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
