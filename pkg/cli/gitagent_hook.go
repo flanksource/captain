@@ -141,6 +141,7 @@ func hookRuntimeFromConfig(backendName string) (gitagent.HookRuntime, error) {
 	if supervisor, ok := backend.Options["supervisor"].(map[string]any); ok {
 		url, _ := supervisor["url"].(string)
 		hostFP, _ := supervisor["hostFingerprint"].(string)
+		tokenPath, _ := supervisor["tokenPath"].(string)
 		keysDir, err := gitAgentKeysDir()
 		if err != nil {
 			return rt, err
@@ -149,12 +150,20 @@ func hookRuntimeFromConfig(backendName string) (gitagent.HookRuntime, error) {
 		if err != nil {
 			return rt, err
 		}
+		if tokenPath == "" {
+			tokenPath = filepath.Join(keysDir, gitagent.TokenFileName)
+		}
 		rt.Relay = gitagent.RelayTarget{
 			URL:             url,
 			HostFingerprint: hostFP,
 			KeyPath:         filepath.Join(keysDir, agentKeyName),
 			SSHCommand:      gitagent.SSHTransportCommand(exe),
+			// The path, never the credential: this struct is serialized into
+			// hooks.json, which every hook process can read.
+			TokenPath: tokenPath,
+			CAPath:    supervisorCAPath(supervisor, keysDir),
 		}
+		rt.Relay.PinnedPublicKey, _ = supervisor["pinnedPubkey"].(string)
 	}
 	return rt, nil
 }
@@ -162,6 +171,16 @@ func hookRuntimeFromConfig(backendName string) (gitagent.HookRuntime, error) {
 // decodeWorkflow converts a YAML-decoded options value into an api.Workflow
 // via a JSON round-trip, so the receiver runs the exact schema the local run
 // path declares (A5.1).
+// supervisorCAPath resolves the certificate the relay verifies the supervisor
+// against. The default is where enrollment stores it; an explicit value covers
+// a supervisor serving a real certificate from elsewhere.
+func supervisorCAPath(supervisor map[string]any, keysDir string) string {
+	if path, _ := supervisor["caPath"].(string); strings.TrimSpace(path) != "" {
+		return strings.TrimSpace(path)
+	}
+	return filepath.Join(keysDir, supervisorCAName)
+}
+
 func decodeWorkflow(v any) (*api.Workflow, error) {
 	if v == nil {
 		return nil, nil

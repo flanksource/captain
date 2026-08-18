@@ -30,6 +30,7 @@ import {
   type AIPromptRunValue,
   type AISpecRuntimePermissionCatalog,
   type RuntimeCatalogFamily,
+  type SpecRuntimeSandboxCatalog,
   type ToolMeta,
 } from "@flanksource/clicky-ui/ai";
 import { type ChatModel } from "@flanksource/clicky-ui/chat";
@@ -1072,6 +1073,9 @@ function PromptDetailPane({
                 {...(backendCliArgs
                   ? { cliOptions: { schema: backendCliArgs } }
                   : {})}
+                {...(promptSchema?.sandboxes
+                  ? { sandboxCatalog: promptSchema.sandboxes }
+                  : {})}
                 {...(scratch
                   ? {
                       promptLabel: "Scratch prompt",
@@ -1219,6 +1223,12 @@ type PromptSchemaDoc = {
   runtimes?: RuntimeCatalogFamily[];
   /** The enabled effort tiers, for models the catalog does not describe. */
   efforts?: string[];
+  /**
+   * The sandbox adapter catalog: what confines a run, what each adapter can do,
+   * which runtime modes it serves, and the configured backends (with their
+   * enrolled git-agent rosters) that select it.
+   */
+  sandboxes?: SpecRuntimeSandboxCatalog;
   spec?: JsonSchemaObject;
 };
 

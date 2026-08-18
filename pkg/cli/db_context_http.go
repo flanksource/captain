@@ -34,6 +34,15 @@ type databaseContextError struct {
 // defaulted, and writes are rejected on a read-only context.
 func DatabaseContextMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The git transport has no database context to select: it writes to a
+		// repository on disk, not to captain's tables. Without this exemption a
+		// push (a POST) inherits whatever context a browser cookie last
+		// selected and is rejected with a 409 that a git client renders as an
+		// unexplained protocol failure.
+		if strings.HasPrefix(r.URL.Path, gitPathPrefix) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		name := requestDatabaseContextName(r)
 		dbContext, err := lookupDatabaseContext(name)
 		if errors.Is(err, errUnknownDatabaseContext) {

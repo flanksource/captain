@@ -1,0 +1,4 @@
+FROM captain
+
+RUN  repomap cache-warm go https://github.com/flanksource/commons-db --build
+RUN  repomap cache-warm go https://github.com/flanksource/clicky-ui --build

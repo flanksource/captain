@@ -12,6 +12,7 @@ import (
 	"github.com/flanksource/captain/pkg/ai"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 )
@@ -33,7 +34,7 @@ func handleSecretResources() http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		client, namespace, err := kubernetesClient(r.URL.Query().Get("namespace"))
+		client, namespace, err := kubernetesClient(kubeClientOptions{Namespace: r.URL.Query().Get("namespace")})
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusServiceUnavailable)
 			return
@@ -59,7 +60,7 @@ func handleSecretPreview() http.HandlerFunc {
 			http.Error(w, "name is required", http.StatusBadRequest)
 			return
 		}
-		client, namespace, err := kubernetesClient(r.URL.Query().Get("namespace"))
+		client, namespace, err := kubernetesClient(kubeClientOptions{Namespace: r.URL.Query().Get("namespace")})
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusServiceUnavailable)
 			return
@@ -84,9 +85,27 @@ func secretKindFromRequest(r *http.Request) (string, error) {
 	}
 }
 
-func kubernetesClient(namespaceOverride string) (kubernetes.Interface, string, error) {
+// kubeClientOptions selects which cluster and namespace to act on. Both are
+// optional; empty means "whatever the kubeconfig's current context says".
+type kubeClientOptions struct {
+	// Context names a kubeconfig context. Deploy sets it so an operator can see
+	// and pin which cluster a sidecar lands in.
+	Context string
+	// Namespace overrides the context's own namespace.
+	Namespace string
+}
+
+// kubernetesClient builds a client for the selected cluster, returning the
+// resolved namespace alongside it.
+//
+// This is deliberately not commons-db's kubernetes.NewClient: that helper
+// returns a fake in-memory clientset with a nil error when neither a kubeconfig
+// nor in-cluster config resolves, so a write would silently succeed against
+// nothing. Here an unresolvable cluster is an error.
+func kubernetesClient(opts kubeClientOptions) (kubernetes.Interface, string, error) {
 	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
-	config := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, &clientcmd.ConfigOverrides{})
+	overrides := &clientcmd.ConfigOverrides{CurrentContext: strings.TrimSpace(opts.Context)}
+	config := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, overrides)
 	restConfig, err := config.ClientConfig()
 	if err != nil {
 		return nil, "", fmt.Errorf("loading kubeconfig: %w", err)
@@ -98,7 +117,7 @@ func kubernetesClient(namespaceOverride string) (kubernetes.Interface, string, e
 	if namespace = strings.TrimSpace(namespace); namespace == "" {
 		namespace = "default"
 	}
-	if override := strings.TrimSpace(namespaceOverride); override != "" {
+	if override := strings.TrimSpace(opts.Namespace); override != "" {
 		namespace = override
 	}
 	client, err := kubernetes.NewForConfig(restConfig)
@@ -106,6 +125,27 @@ func kubernetesClient(namespaceOverride string) (kubernetes.Interface, string, e
 		return nil, "", fmt.Errorf("creating kubernetes client: %w", err)
 	}
 	return client, namespace, nil
+}
+
+// kubernetesDynamicClient builds an untyped client for the selected cluster.
+//
+// cert-manager's types are not in client-go, and taking a dependency on its Go
+// module to read one list of names would pull a whole API surface captain never
+// otherwise touches.
+func kubernetesDynamicClient(opts kubeClientOptions) (dynamic.Interface, error) {
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	overrides := &clientcmd.ConfigOverrides{CurrentContext: strings.TrimSpace(opts.Context)}
+	restConfig, err := clientcmd.
+		NewNonInteractiveDeferredLoadingClientConfig(loadingRules, overrides).
+		ClientConfig()
+	if err != nil {
+		return nil, fmt.Errorf("loading kubeconfig: %w", err)
+	}
+	client, err := dynamic.NewForConfig(restConfig)
+	if err != nil {
+		return nil, fmt.Errorf("creating kubernetes client: %w", err)
+	}
+	return client, nil
 }
 
 func listSecretResources(ctx context.Context, client kubernetes.Interface, namespace, kind string) ([]secretResource, error) {

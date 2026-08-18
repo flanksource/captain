@@ -41,11 +41,12 @@ func buildPromptSchemaDocument(adapters []AdapterStatus, sandboxes captainconfig
 	if err := injectSpecConditionals(specMap, adapters, reflected.args); err != nil {
 		return nil, err
 	}
+	// Must follow injectSpecConditionals, which assigns allOf; this appends.
+	injectSandboxModeConditionals(specMap, sandboxes)
 	backends, err := buildBackendsCatalog(adapters, reflected.args)
 	if err != nil {
 		return nil, err
 	}
-
 	return map[string]any{
 		"schemaVersion": 2,
 		"source":        "captain prompt --schema",
@@ -53,6 +54,7 @@ func buildPromptSchemaDocument(adapters []AdapterStatus, sandboxes captainconfig
 		"prompt":        promptMap,
 		"promptAction":  actionMap,
 		"backends":      backends,
+		"sandboxes":     buildSandboxCatalog(sandboxes),
 		"runtimes":      enabledRuntimes(),
 		"models":        flatModels(adapters),
 		"efforts":       enabledEffortNames(),

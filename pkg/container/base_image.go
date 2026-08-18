@@ -16,9 +16,6 @@ var baseDockerfileContent []byte
 //go:embed base/entrypoint.sh
 var baseEntrypointContent []byte
 
-//go:embed base/deps.yaml
-var baseDepsContent []byte
-
 const baseImageTag = "claude-env:base"
 
 func EnsureBaseImage(baseImage string) error {
@@ -30,9 +27,6 @@ func EnsureBaseImage(baseImage string) error {
 
 func writeBaseContext(dir string) error {
 	if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), baseDockerfileContent, 0o644); err != nil {
-		return err
-	}
-	if err := os.WriteFile(filepath.Join(dir, "deps.yaml"), baseDepsContent, 0o644); err != nil {
 		return err
 	}
 	return os.WriteFile(filepath.Join(dir, "entrypoint.sh"), baseEntrypointContent, 0o755)
