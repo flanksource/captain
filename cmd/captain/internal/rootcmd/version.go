@@ -1,4 +1,4 @@
-package main
+package rootcmd
 
 import (
 	"fmt"
@@ -6,36 +6,20 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var (
-	version = "dev"
-	commit  = "unknown"
-	date    = "unknown"
-	dirty   = "unknown"
-)
-
-type buildInfo struct {
+type BuildInfo struct {
 	Version string
 	Commit  string
 	Date    string
 	Dirty   string
 }
 
-func currentBuildInfo() buildInfo {
-	return buildInfo{
-		Version: version,
-		Commit:  commit,
-		Date:    date,
-		Dirty:   dirty,
-	}
-}
-
-func configureVersion(root *cobra.Command, info buildInfo) {
+func ConfigureVersion(root *cobra.Command, info BuildInfo) {
 	root.Version = info.String()
 	root.SetVersionTemplate("{{.Version}}\n")
 	root.AddCommand(newVersionCommand(info))
 }
 
-func newVersionCommand(info buildInfo) *cobra.Command {
+func newVersionCommand(info BuildInfo) *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
 		Short: "Print version information",
@@ -46,7 +30,7 @@ func newVersionCommand(info buildInfo) *cobra.Command {
 	}
 }
 
-func (info buildInfo) String() string {
+func (info BuildInfo) String() string {
 	version := info.Version
 	status := info.Dirty
 	switch info.Dirty {

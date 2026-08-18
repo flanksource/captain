@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 
+	"github.com/flanksource/captain/cmd/captain/internal/rootcmd"
 	"github.com/flanksource/clicky"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -21,7 +22,7 @@ var _ = Describe("root help", func() {
 		root.AddCommand(child)
 		root.SetOut(out)
 		root.SetErr(out)
-		installRootHelp(root)
+		rootcmd.InstallRootHelp(root)
 		return root, child, out
 	}
 

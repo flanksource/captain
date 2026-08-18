@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"testing"
 
+	"github.com/flanksource/captain/cmd/captain/internal/rootcmd"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/spf13/cobra"
@@ -21,9 +22,9 @@ var _ = Describe("version information", func() {
 	)
 
 	It("formats clean, dirty, and unstamped builds", func() {
-		clean := buildInfo{Version: "v1.2.3", Commit: "abc1234", Date: "2026-07-27T12:34:56Z", Dirty: "false"}
-		dirty := buildInfo{Version: "v1.2.3", Commit: "abc1234", Date: "2026-07-27T12:34:56Z", Dirty: "true"}
-		unstamped := buildInfo{Version: "dev", Commit: "unknown", Date: "unknown", Dirty: "unknown"}
+		clean := rootcmd.BuildInfo{Version: "v1.2.3", Commit: "abc1234", Date: "2026-07-27T12:34:56Z", Dirty: "false"}
+		dirty := rootcmd.BuildInfo{Version: "v1.2.3", Commit: "abc1234", Date: "2026-07-27T12:34:56Z", Dirty: "true"}
+		unstamped := rootcmd.BuildInfo{Version: "dev", Commit: "unknown", Date: "unknown", Dirty: "unknown"}
 
 		Expect(clean.String()).To(Equal(cleanVersion))
 		Expect(dirty.String()).To(Equal(dirtyVersion))
@@ -31,7 +32,7 @@ var _ = Describe("version information", func() {
 	})
 
 	It("rejects an invalid Git state", func() {
-		info := buildInfo{Version: "v1.2.3", Commit: "abc1234", Date: "2026-07-27T12:34:56Z", Dirty: "maybe"}
+		info := rootcmd.BuildInfo{Version: "v1.2.3", Commit: "abc1234", Date: "2026-07-27T12:34:56Z", Dirty: "maybe"}
 
 		Expect(func() {
 			info.String()
@@ -39,14 +40,14 @@ var _ = Describe("version information", func() {
 	})
 
 	It("prints identical details for version and --version", func() {
-		info := buildInfo{Version: "v1.2.3", Commit: "abc1234", Date: "2026-07-27T12:34:56Z", Dirty: "false"}
+		info := rootcmd.BuildInfo{Version: "v1.2.3", Commit: "abc1234", Date: "2026-07-27T12:34:56Z", Dirty: "false"}
 
 		for _, args := range [][]string{{"version"}, {"--version"}} {
 			root := &cobra.Command{Use: "captain"}
 			var stdout bytes.Buffer
 			root.SetOut(&stdout)
 			root.SetArgs(args)
-			configureVersion(root, info)
+			rootcmd.ConfigureVersion(root, info)
 
 			Expect(root.Execute()).To(Succeed())
 			Expect(stdout.String()).To(Equal(cleanVersion + "\n"))

@@ -21,7 +21,9 @@ import (
 
 	"github.com/flanksource/captain/pkg/aichat"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/captaintoken"
 	"github.com/flanksource/captain/pkg/database"
+	"github.com/flanksource/captain/pkg/gitagent"
 	"github.com/flanksource/captain/pkg/monitor"
 	"github.com/flanksource/clicky/rpc"
 	rpchttp "github.com/flanksource/clicky/rpc/http"
@@ -45,6 +47,20 @@ type ServeOptions struct {
 	Open       bool
 	PromptDirs []string
 	MCPServers []aichat.MCPServer
+	// TLS serves HTTPS, generating and reusing a self-signed certificate
+	// beside the git-agent keys. It is off by default because the ordinary
+	// case is a loopback UI, and turning every local URL into https would
+	// mean a certificate warning for no gain.
+	TLS bool
+	// TLSCert and TLSKey supply a real certificate instead of the generated
+	// one. Both or neither.
+	TLSCert string
+	TLSKey  string
+	// TLSHosts are the addresses agents will reach this server on. They are
+	// added to a generated certificate's subject names, and checked against a
+	// supplied one — a certificate that omits the address agents dial fails at
+	// the client, and by then every agent is already enrolled against it.
+	TLSHosts []string
 }
 
 func NewServeCommand(version string) *cobra.Command {
@@ -80,6 +96,10 @@ proxies /api back to this Go process.`,
 	cmd.Flags().IntVar(&opts.UIPort, "ui-port", opts.UIPort, "Port for the Vite dev server when --dev is set (random by default)")
 	cmd.Flags().BoolVar(&opts.Open, "open", false, "Open the web UI in the default browser")
 	cmd.Flags().StringArrayVar(&opts.PromptDirs, "prompt-dir", nil, "Additional local directory containing .prompt files (repeatable)")
+	cmd.Flags().BoolVar(&opts.TLS, "tls", false, "Serve HTTPS, generating and reusing a self-signed certificate beside the git-agent keys")
+	cmd.Flags().StringVar(&opts.TLSCert, "tls-cert", "", "PEM certificate to serve instead of the generated one")
+	cmd.Flags().StringVar(&opts.TLSKey, "tls-key", "", "PEM private key for --tls-cert")
+	cmd.Flags().StringArrayVar(&opts.TLSHosts, "tls-host", nil, "Address agents will reach this server on; added to the certificate (repeatable)")
 
 	return cmd
 }
@@ -120,6 +140,13 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 		return err
 	}
 	defer listener.Close()
+	// Resolved once, before anything is registered: the certificate decides both
+	// what this server presents and what a joining agent is told to pin, and
+	// resolving it twice could hand out one that is not the one being served.
+	certificate, err := serveCertificate(opts)
+	if err != nil {
+		return err
+	}
 	openAPIConfig := &rpc.OpenAPIConfig{
 		Title:       "Captain",
 		Description: "Captain command and agent launcher API.",
@@ -176,6 +203,7 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	mux.HandleFunc("POST /api/captain/hooks/{provider}", handleMonitorHookEvent())
 	mux.HandleFunc("GET /api/captain/ai/permissions/catalog", handlePermissionCatalog(cwd))
 	mux.HandleFunc("GET /api/captain/ai/prompt/schema", handlePromptSchema())
+	registerSandboxHandlers(mux)
 	registerProviderTokenHandlers(mux)
 	registerProviderDefaultsHandlers(mux)
 	registerDisabledHandlers(mux)
@@ -197,6 +225,12 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	mux.Handle("/api/chat", chatHandler)
 	mux.Handle("/api/chat/", chatHandler)
 
+	// The supervisor's git-agent mailbox, hosted here rather than in its own
+	// process: this is the process that holds the database the tokens live in.
+	if err := registerGitHandlers(mux, db, addr, certificate); err != nil {
+		return err
+	}
+
 	uiHandler, err := newCaptainWebappHandler()
 	if err != nil {
 		return err
@@ -208,17 +242,33 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	root.Handle("/health", mux)
 	root.Handle("/", uiHandler)
 
+	tlsConfig := serveTLSConfig(certificate)
+	scheme := "http"
+	if tlsConfig != nil {
+		scheme = "https"
+	}
 	// Export the serve URL so every captain-launched agent (and the hook
 	// receiver subprocesses its sessions spawn) delivers hook events to this
 	// instance even off the default port.
-	if err := os.Setenv(api.ServeURLEnv, "http://"+addr); err != nil {
+	if err := os.Setenv(api.ServeURLEnv, scheme+"://"+addr); err != nil {
 		return err
 	}
+	// Auth sits outside the database-context middleware so an unauthenticated
+	// request is refused before it can resolve a context or open a pool.
+	auth := TokenAuthMiddleware(TokenAuthConfig{
+		Verifier: captaintoken.NewVerifier(db.LookupAPIToken),
+		Touch:    db.TouchAPIToken,
+	})
 	httpSrv := &http.Server{
 		Addr: addr,
 		Handler: rpchttp.TimingMiddleware(
-			DatabaseContextMiddleware(PromptDirsMiddleware(root, opts.PromptDirs))),
-		ReadTimeout: 30 * time.Second,
+			auth(DatabaseContextMiddleware(PromptDirsMiddleware(root, opts.PromptDirs)))),
+		TLSConfig: tlsConfig,
+		// Bounded at the headers rather than the whole request: a synchronous
+		// relay runs the supervisor's hook set inside the push, and a prompt
+		// hook can take minutes. A 30s whole-request deadline would kill it
+		// mid-verdict and report it to the agent as a broken connection.
+		ReadHeaderTimeout: 30 * time.Second,
 		// /api/chat streams SSE; a fixed write timeout truncates long turns.
 		IdleTimeout: 60 * time.Second,
 	}
@@ -258,13 +308,24 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	go prunePromptRuns(ctx, promptRuns)
 	defer promptChats.stopAll()
 
+	if err := startCredentialPublisher(ctx, stdout); err != nil {
+		return err
+	}
+
 	errCh := make(chan error, 1)
 	go func() {
-		fmt.Fprintf(stdout, "Captain API listening on http://%s\n", addr)
-		fmt.Fprintf(stdout, "  UI:           http://%s/\n", addr)
-		fmt.Fprintf(stdout, "  OpenAPI JSON: http://%s/api/openapi.json\n", addr)
-		fmt.Fprintf(stdout, "  AI Chat:      http://%s/api/chat\n", addr)
-		if err := httpSrv.Serve(listener); err != nil && err != http.ErrServerClosed {
+		fmt.Fprintf(stdout, "Captain API listening on %s://%s\n", scheme, addr)
+		fmt.Fprintf(stdout, "  UI:           %s://%s/\n", scheme, addr)
+		fmt.Fprintf(stdout, "  OpenAPI JSON: %s://%s/api/openapi.json\n", scheme, addr)
+		fmt.Fprintf(stdout, "  AI Chat:      %s://%s/api/chat\n", scheme, addr)
+		fmt.Fprintf(stdout, "  git-agent:    %s://%s%s\n", scheme, addr, gitagent.GitHTTPPrefix)
+		// ServeTLS with an already-configured TLSConfig: the certificate comes
+		// from serveTLSConfig, which reuses one rather than issuing per start.
+		serve := httpSrv.Serve
+		if tlsConfig != nil {
+			serve = func(l net.Listener) error { return httpSrv.ServeTLS(l, "", "") }
+		}
+		if err := serve(listener); err != nil && err != http.ErrServerClosed {
 			errCh <- err
 		}
 	}()
