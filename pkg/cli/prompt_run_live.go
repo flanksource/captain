@@ -129,10 +129,10 @@ func workflowRunnerProvider(provider ai.Provider, noStream, verifyOnly bool) (ai
 		return bufferedWorkflowProvider{Provider: provider}, nil
 	}
 	streamer, ok := provider.(ai.StreamingProvider)
-	if !ok && !verifyOnly {
-		return nil, fmt.Errorf("backend %s does not support streaming", provider.GetBackend())
+	if ok || verifyOnly {
+		return streamer, nil
 	}
-	return streamer, nil
+	return bufferedWorkflowProvider{Provider: provider}, nil
 }
 
 // bufferedWorkflowProvider preserves the agent runner's event contract while

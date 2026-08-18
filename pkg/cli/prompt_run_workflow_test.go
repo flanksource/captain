@@ -57,6 +57,28 @@ func (p *streamingWorkflowProvider) ExecuteStream(context.Context, ai.Request) (
 }
 
 func TestWorkflowRunnerProviderHonorsNoStream(t *testing.T) {
+	t.Run("buffered-only provider uses completed events", func(t *testing.T) {
+		provider := &bufferedOnlyWorkflowProvider{}
+		runner, err := workflowRunnerProvider(provider, false, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		events, err := runner.ExecuteStream(context.Background(), ai.Request{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []ai.Event
+		for event := range events {
+			got = append(got, event)
+		}
+		if provider.executeCalls != 1 {
+			t.Fatalf("Execute calls = %d, want 1", provider.executeCalls)
+		}
+		if len(got) != 2 || got[0].Kind != ai.EventText || got[0].Text != "done" || got[1].Kind != ai.EventResult {
+			t.Fatalf("events = %+v, want final text and result", got)
+		}
+	})
+
 	t.Run("buffered-only provider", func(t *testing.T) {
 		provider := &bufferedOnlyWorkflowProvider{}
 		runner, err := workflowRunnerProvider(provider, true, false)
