@@ -229,6 +229,10 @@ func buildBackendsCatalog(adapters []AdapterStatus, argsByBackend map[api.Backen
 			"kind":          b.Kind(),
 			"authenticated": a.Authenticated,
 			"ready":         a.Ready(),
+			// Declared, not probed: served on every entry including an unready
+			// one, so the editor can render "this backend cannot enforce a deny"
+			// rather than an empty tree that reads as "no tools here".
+			"permissions": api.PermissionCapabilitiesFor(b),
 		}
 		if env := api.AuthEnvVars(b); len(env) > 0 {
 			entry["authEnvVars"] = env

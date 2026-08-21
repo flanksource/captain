@@ -58,6 +58,14 @@ type RuntimeModeEntry struct {
 	// "provider deepseek", "backend claude-agent" — or "" when enabled.
 	DisabledReason string       `json:"disabledReason,omitempty"`
 	Availability   Availability `json:"availability"`
+	// Permissions is the declared permission surface for this backend: which
+	// postures it honours, which per-tool policies it can enforce and from which
+	// source, and which resources it can switch. It is served here, on the static
+	// catalog, rather than on the probe result, because it is a property of the
+	// adapter rather than of the machine — an unprobed backend still has an
+	// honest answer, and a client that reads it from a TTL'd cache would render
+	// an empty tree as "this backend supports nothing".
+	Permissions PermissionCapabilities `json:"permissions"`
 }
 
 // RuntimeCatalog projects the provider registry into the picker descriptor,
@@ -99,6 +107,7 @@ func RuntimeCatalog() []RuntimeFamily {
 				Disabled:        disabled.Backend(caps.Backend),
 				DisabledReason:  reason,
 				Availability:    availability,
+				Permissions:     PermissionCapabilitiesFor(caps.Backend),
 			})
 		}
 		out = append(out, family)
