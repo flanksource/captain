@@ -444,8 +444,7 @@ func (db *DB) DeleteChatSession(ctx context.Context, id uuid.UUID) error {
 func (db *DB) touchChatSession(ctx context.Context, id uuid.UUID) error {
 	result := db.gorm.WithContext(ctx).Model(&sessionRecord{}).Where("id = ?", id).
 		Updates(map[string]any{
-			"state_version":    gorm.Expr("state_version + 1"),
-			"last_activity_at": time.Now().UTC(),
+			"last_activity_at": gorm.Expr("GREATEST(last_activity_at, ?)", time.Now().UTC()),
 		})
 	if result.Error != nil {
 		return fmt.Errorf("touch Captain chat session: %w", result.Error)
