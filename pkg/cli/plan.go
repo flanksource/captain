@@ -98,6 +98,7 @@ func resolveLatestTranscriptPlan(
 	if query.Source != "all" {
 		filter.Source = query.Source
 	}
+	plans, _ := db.(planStore)
 	seen := map[string]struct{}{}
 	for {
 		page, err := db.ListSessionSummaries(ctx, filter)
@@ -105,7 +106,17 @@ func resolveLatestTranscriptPlan(
 			return nil, fmt.Errorf("list Captain sessions while resolving latest plan: %w", err)
 		}
 		for i := range page.Rows {
-			candidate := candidateFromOverview(overviewFromSummary(page.Rows[i]))
+			overview := overviewFromSummary(page.Rows[i])
+			if plans != nil {
+				plan, ok, err := resolveNativePlan(ctx, plans, overview)
+				if err != nil {
+					return nil, err
+				}
+				if ok {
+					return plan, nil
+				}
+			}
+			candidate := candidateFromOverview(overview)
 			if candidate.path == "" {
 				continue
 			}
@@ -125,11 +136,16 @@ func resolveLatestTranscriptPlan(
 	}
 }
 
+// planStore reads persisted plan revisions independently of transcript storage.
+type planStore interface {
+	ListPlans(context.Context, captaindb.PlanFilter) ([]captaindb.Plan, error)
+}
+
 // planIdentityStore resolves an identity to every matching session overview and
 // reads the plans recorded against a Captain session UUID.
 type planIdentityStore interface {
 	sessionOverviewStore
-	ListPlans(context.Context, captaindb.PlanFilter) ([]captaindb.Plan, error)
+	planStore
 }
 
 // resolveIdentityPlan resolves a Captain UUID or provider session ID to a plan.
@@ -186,7 +202,7 @@ func resolveIdentityPlan(ctx context.Context, db planIdentityStore, identity, so
 // otherwise the latest immutable revision of the newest plan variant is returned.
 func resolveNativePlan(
 	ctx context.Context,
-	db planIdentityStore,
+	db planStore,
 	session captaindb.SessionOverview,
 ) (*PlanResult, bool, error) {
 	plans, err := db.ListPlans(ctx, captaindb.PlanFilter{SourceSessionID: &session.ID})

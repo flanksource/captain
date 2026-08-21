@@ -145,30 +145,3 @@ func handleProjects() http.HandlerFunc {
 		writeServeJSON(w, http.StatusOK, result)
 	}
 }
-
-func handleSessionGet() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		id := strings.TrimSpace(r.PathValue("id"))
-		if id == "" {
-			http.Error(w, "session id is required", http.StatusBadRequest)
-			return
-		}
-		query := r.URL.Query()
-		s, err := RunSessionGet(r.Context(), SessionGetOptions{
-			ID: id, Offset: queryInt(query.Get("offset")), Limit: queryInt(query.Get("limit")), Tail: queryInt(query.Get("tail")),
-		})
-		if err != nil {
-			http.Error(w, err.Error(), serveRunStatus(err, http.StatusNotFound))
-			return
-		}
-		writeServeJSON(w, http.StatusOK, s)
-	}
-}
-
-func queryInt(value string) int {
-	n, err := strconv.Atoi(strings.TrimSpace(value))
-	if err != nil || n < 0 {
-		return 0
-	}
-	return n
-}
