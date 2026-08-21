@@ -310,6 +310,57 @@ func TestProbeAdaptersNoCacheBypassesPersistedModelCache(t *testing.T) {
 	}
 }
 
+func TestProbeAdaptersUsesExactCallerCredentialSnapshot(t *testing.T) {
+	credentials := map[Backend]api.ResolvedAPIKey{
+		BackendOpenAI: {Token: "caller-token-b", Source: "test", Detail: "caller"},
+	}
+	probe := fakeProbe(map[string]string{"OPENAI_API_KEY": "process-token-a"}, nil, nil, "/home/u")
+	probe.APICredentials = credentials
+
+	prev := resolveModelRows
+	resolveModelRows = func(_ context.Context, opts ResolveOptions) ([]ResolvedModel, error) {
+		// Mutating the caller-owned map after ProbeAdapters starts must not alter
+		// the operation snapshot passed to model resolution.
+		credentials[BackendOpenAI] = api.ResolvedAPIKey{Token: "mutated-token-c"}
+		if got := opts.Credentials.APIKey(BackendOpenAI).Token; got != "caller-token-b" {
+			t.Fatalf("model resolver credential = %q, want caller-token-b", got)
+		}
+		return []ResolvedModel{{
+			Model: Model{ID: "openai/private-model-b", Backend: BackendOpenAI},
+			Live:  true,
+		}}, nil
+	}
+	t.Cleanup(func() { resolveModelRows = prev })
+
+	adapters, err := ProbeAdapters(WhoamiOptions{Backend: string(BackendOpenAI), Models: true}, probe)
+	if err != nil {
+		t.Fatalf("ProbeAdapters: %v", err)
+	}
+	if len(adapters) != 1 || adapters[0].AuthDetail != "call…en-b" || !stringSliceContains(adapters[0].Models, "private-model-b") {
+		t.Fatalf("adapter = %+v, want auth and availability from caller-token-b", adapters)
+	}
+}
+
+func TestProbeAdaptersExplicitEmptyCredentialsDoNotFallBackToEnvironment(t *testing.T) {
+	probe := fakeProbe(map[string]string{"OPENAI_API_KEY": "process-token-a"}, nil, nil, "/home/u")
+	probe.APICredentials = map[Backend]api.ResolvedAPIKey{}
+
+	prev := resolveModelRows
+	resolveModelRows = func(context.Context, ResolveOptions) ([]ResolvedModel, error) {
+		t.Fatal("model resolver must not run for an explicitly empty credential snapshot")
+		return nil, nil
+	}
+	t.Cleanup(func() { resolveModelRows = prev })
+
+	adapters, err := ProbeAdapters(WhoamiOptions{Backend: string(BackendOpenAI), Models: true}, probe)
+	if err != nil {
+		t.Fatalf("ProbeAdapters: %v", err)
+	}
+	if len(adapters) != 1 || adapters[0].Authenticated || adapters[0].ModelError == "" {
+		t.Fatalf("adapter = %+v, want no auth or live availability", adapters)
+	}
+}
+
 func TestProbeAdaptersUsesCodexDebugModelsOnceRegardlessOfAPIKey(t *testing.T) {
 	probe := fakeProbe(map[string]string{"OPENAI_API_KEY": "sk-test"}, map[string]string{"codex": "/usr/local/bin/codex"}, nil, "/home/u")
 	calls := 0

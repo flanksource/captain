@@ -69,14 +69,16 @@ func TestMergeLiveCatalogUpsertsLiveAndPreservesStatic(t *testing.T) {
 }
 
 func TestLiveCatalogInfoAppliesPerProviderConfigured(t *testing.T) {
-	prevProbe := adapterProbe
-	prevCache, prevAt := adapterCache, adapterCacheAt
+	prevProbe, prevAuthProbe := adapterProbe, adapterAuthProbe
+	prevCache, prevAt, prevFingerprint := adapterCache, adapterCacheAt, adapterCacheFingerprint
 	t.Cleanup(func() {
-		adapterProbe = prevProbe
-		adapterCache, adapterCacheAt = prevCache, prevAt
+		adapterProbe, adapterAuthProbe = prevProbe, prevAuthProbe
+		adapterCache, adapterCacheAt, adapterCacheFingerprint = prevCache, prevAt, prevFingerprint
 	})
-	adapterCache, adapterCacheAt = nil, time.Time{}
-	adapterProbe = func() ([]AdapterStatus, error) {
+	adapterCache, adapterCacheAt, adapterCacheFingerprint = nil, time.Time{}, ""
+	home := t.TempDir()
+	adapterAuthProbe = func() AuthProbe { return fakeProbe(nil, nil, nil, home) }
+	adapterProbe = func(AuthProbe) ([]AdapterStatus, error) {
 		return []AdapterStatus{
 			{Backend: string(BackendAnthropic), Type: "api", ModelDetails: []ModelDef{
 				{ID: "claude-sonnet-5", Name: "Claude Sonnet 5", Reasoning: true},

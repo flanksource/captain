@@ -3,6 +3,7 @@ package ai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -28,6 +29,10 @@ type rewriteTransport struct {
 	base  string
 	inner http.RoundTripper
 }
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
 
 func (r rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	// Strip scheme+host while preserving request metadata for provider checks.
@@ -254,6 +259,78 @@ func TestListModels_SortsAlphabetically(t *testing.T) {
 		if got[i].ID != w {
 			t.Errorf("got[%d].ID = %q, want %q", i, got[i].ID, w)
 		}
+	}
+}
+
+func TestListModelsWithAPIKeyAndURLUsesExactResolvedEndpointAndCredential(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.RequestURI(); got != "/tenant/v1/models?account=private" {
+			t.Errorf("request URI = %q", got)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer caller-token-b" {
+			t.Errorf("Authorization = %q", got)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{{"id": "private-model-b"}},
+		})
+	}))
+	defer srv.Close()
+
+	models, err := ListModelsWithAPIKeyAndURL(
+		context.Background(), BackendOpenAI, "caller-token-b", srv.URL+"/tenant/v1?account=private",
+	)
+	if err != nil {
+		t.Fatalf("ListModelsWithAPIKeyAndURL: %v", err)
+	}
+	if len(models) != 1 || models[0].ID != "private-model-b" {
+		t.Fatalf("models = %+v", models)
+	}
+}
+
+func TestListModelsWithAPIKeyAndURLRedactsEndpointFromTransportErrors(t *testing.T) {
+	original := http.DefaultClient.Transport
+	transportErr := errors.New("https://tenant.example/v1/models?access_token=query-secret: transport unavailable")
+	http.DefaultClient.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, transportErr
+	})
+	t.Cleanup(func() { http.DefaultClient.Transport = original })
+
+	_, err := ListModelsWithAPIKeyAndURL(
+		context.Background(), BackendOpenAI, "caller-token", "https://tenant.example/v1?access_token=query-secret",
+	)
+	if err == nil {
+		t.Fatal("expected transport error")
+	}
+	if strings.Contains(err.Error(), "query-secret") || strings.Contains(err.Error(), "tenant.example") {
+		t.Fatalf("transport error exposed the custom endpoint: %v", err)
+	}
+	if !errors.Is(err, transportErr) {
+		t.Fatalf("transport error does not preserve its cause: %v", err)
+	}
+}
+
+func TestListModelsWithAPIKeyAndURLDoesNotFollowRedirects(t *testing.T) {
+	redirected := make(chan *http.Request, 1)
+	target := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		redirected <- r.Clone(r.Context())
+	}))
+	defer target.Close()
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/capture", http.StatusTemporaryRedirect)
+	}))
+	defer source.Close()
+
+	_, err := ListModelsWithAPIKeyAndURL(
+		context.Background(), BackendAnthropic, "caller-token", source.URL+"?access_token=query-secret",
+	)
+	var httpErr ModelHTTPError
+	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusTemporaryRedirect {
+		t.Fatalf("redirect error = %v, want HTTP %d", err, http.StatusTemporaryRedirect)
+	}
+	select {
+	case request := <-redirected:
+		t.Fatalf("redirect target received credential-bearing request: %+v", request)
+	case <-time.After(50 * time.Millisecond):
 	}
 }
 

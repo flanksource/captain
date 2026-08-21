@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -80,7 +81,11 @@ func PromptSchemaDocument() (map[string]any, error) {
 // schemaAdapters sources the probed adapters through pkg/ai's cache. It is a
 // package var so tests can substitute a deterministic, network-free stub.
 var schemaAdapters = func() ([]AdapterStatus, error) {
-	return ai.CachedAdapters(time.Now())
+	adapters, err := ai.CachedAdapters(time.Now())
+	if errors.Is(err, ai.ErrAdapterProbeUnsettled) {
+		return adapters, nil
+	}
+	return adapters, err
 }
 
 // reflectedSchemaBytes holds the JSON of the reflection-derived schemas. They are
