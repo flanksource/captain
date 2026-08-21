@@ -7,14 +7,18 @@ import (
 	"sync"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/claude"
 )
 
 type turnState struct {
-	ch         chan ai.Event
-	usage      *ai.Usage
-	model      string
-	streamed   map[string]string
-	toolOutput map[string]string
+	ch                 chan ai.Event
+	usage              *ai.Usage
+	model              string
+	streamed           map[string]string
+	toolOutput         map[string]string
+	pendingToolResults []ai.Event
+	toolResultsMu      sync.Mutex
+	toolResultsClosed  bool
 
 	outputSchema     json.RawMessage
 	lastAgentMessage string
@@ -86,4 +90,47 @@ func (ts *turnState) finish() {
 	}
 	ts.closed = true
 	close(ts.ch)
+}
+
+func (ts *turnState) queueToolResult(event ai.Event) {
+	ts.toolResultsMu.Lock()
+	defer ts.toolResultsMu.Unlock()
+	if ts.toolResultsClosed {
+		return
+	}
+	ts.pendingToolResults = append(ts.pendingToolResults, event)
+}
+
+func (ts *turnState) receiveCompleteToolOutput(toolCallID, output string) {
+	ts.toolResultsMu.Lock()
+	defer ts.toolResultsMu.Unlock()
+	if ts.toolResultsClosed {
+		return
+	}
+	for i, event := range ts.pendingToolResults {
+		if event.ToolCallID != toolCallID {
+			continue
+		}
+		ts.pendingToolResults = append(ts.pendingToolResults[:i], ts.pendingToolResults[i+1:]...)
+		event.Text = output
+		if raw, ok := event.Raw.(claude.ToolUse); ok {
+			raw.Response = output
+			event.Raw = raw
+		}
+		ts.send(event)
+		return
+	}
+}
+
+func (ts *turnState) flushToolResults() {
+	ts.toolResultsMu.Lock()
+	defer ts.toolResultsMu.Unlock()
+	if ts.toolResultsClosed {
+		return
+	}
+	ts.toolResultsClosed = true
+	for _, event := range ts.pendingToolResults {
+		ts.send(event)
+	}
+	ts.pendingToolResults = nil
 }

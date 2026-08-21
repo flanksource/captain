@@ -63,6 +63,7 @@ func TestBuildThreadStartParams_Safety(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			p := buildThreadStartParams("gpt-5", tc.req, nil)
+			assert.Equal(t, true, p["experimentalRawEvents"])
 			assert.Equal(t, tc.wantSandbox, p["sandbox"])
 			assert.Equal(t, tc.wantApproval, p["approvalPolicy"])
 			_, hasEphem := p["ephemeral"]

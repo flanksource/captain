@@ -20,32 +20,39 @@ func TestCodexAppServerLifecycle(t *testing.T) {
 }
 
 var _ = Describe("Codex app-server tool lifecycle", func() {
-	It("emits one command use and one correlated result", func() {
+	It("emits one command use and one complete correlated result", func() {
 		client, turn := activeGinkgoTurn()
 		client.handleNotification("item/started", json.RawMessage(`{
 			"threadId":"thread-1",
-			"item":{"id":"cmd-1","type":"commandExecution","command":"pwd","cwd":"/work","status":"inProgress"}
+			"item":{"id":"cmd-1","type":"commandExecution","command":"printf lines","cwd":"/work","status":"inProgress"}
 		}`))
 		client.handleNotification("item/commandExecution/outputDelta", json.RawMessage(`{
-			"threadId":"thread-1","itemId":"cmd-1","delta":"/work\n"
+			"threadId":"thread-1","itemId":"cmd-1","delta":"line 2\nline 3\n"
 		}`))
 		client.handleNotification("item/completed", json.RawMessage(`{
 			"threadId":"thread-1",
-			"item":{"id":"cmd-1","type":"commandExecution","command":"pwd","cwd":"/work","status":"completed","exitCode":0,"aggregatedOutput":""}
+			"item":{"id":"cmd-1","type":"commandExecution","command":"printf lines","cwd":"/work","status":"completed","exitCode":0,"aggregatedOutput":"line 2\nline 3\n"}
 		}`))
 
-		events := drainEvents(turn)
-		Expect(events).To(HaveLen(2))
-		Expect(events[0]).To(MatchFields(IgnoreExtras, Fields{
+		started := drainEvents(turn)
+		Expect(started).To(HaveLen(1), "the partial item result waits for the raw function output")
+		Expect(started[0]).To(MatchFields(IgnoreExtras, Fields{
 			"Kind":       Equal(ai.EventToolUse),
 			"Tool":       Equal("Bash"),
-			"Input":      Equal(map[string]any{"command": "pwd"}),
+			"Input":      Equal(map[string]any{"command": "printf lines"}),
 			"ToolCallID": Equal("cmd-1"),
 			"SessionID":  Equal("thread-1"),
 		}))
-		Expect(events[1]).To(MatchFields(IgnoreExtras, Fields{
+		client.handleNotification("rawResponseItem/completed", json.RawMessage(`{
+			"threadId":"thread-1",
+			"item":{"type":"function_call_output","call_id":"cmd-1","output":"Chunk ID: abc123\nWall time: 1 second\nProcess exited with code 0\nOutput:\nline 1\nline 2\nline 3\n"}
+		}`))
+
+		events := drainEvents(turn)
+		Expect(events).To(HaveLen(1))
+		Expect(events[0]).To(MatchFields(IgnoreExtras, Fields{
 			"Kind":       Equal(ai.EventToolResult),
-			"Text":       Equal("/work\n"),
+			"Text":       Equal("line 1\nline 2\nline 3\n"),
 			"ToolCallID": Equal("cmd-1"),
 			"SessionID":  Equal("thread-1"),
 			"Success":    BeTrue(),
@@ -55,6 +62,58 @@ var _ = Describe("Codex app-server tool lifecycle", func() {
 		Expect(ok).To(BeTrue())
 		Expect(tool.ToolUseID).To(Equal("cmd-1"))
 		Expect(tool.SessionID).To(Equal("thread-1"))
+		Expect(tool.Response).To(Equal("line 1\nline 2\nline 3\n"))
+	})
+
+	It("falls back to the completed item when raw events are unavailable", func() {
+		client, turn := activeGinkgoTurn()
+		client.handleNotification("item/started", json.RawMessage(`{
+			"threadId":"thread-1",
+			"item":{"id":"cmd-fallback","type":"commandExecution","command":"pwd","status":"inProgress"}
+		}`))
+		client.handleNotification("item/commandExecution/outputDelta", json.RawMessage(`{
+			"threadId":"thread-1","itemId":"cmd-fallback","delta":"/wo"
+		}`))
+		client.handleNotification("item/commandExecution/outputDelta", json.RawMessage(`{
+			"threadId":"thread-1","itemId":"cmd-fallback","delta":"rk\n"
+		}`))
+		client.handleNotification("item/completed", json.RawMessage(`{
+			"threadId":"thread-1",
+			"item":{"id":"cmd-fallback","type":"commandExecution","command":"pwd","status":"completed","exitCode":0}
+		}`))
+		client.handleNotification("turn/completed", json.RawMessage(`{
+			"threadId":"thread-1","turn":{"id":"turn-1","status":"completed"}
+		}`))
+
+		events := drainEvents(turn)
+		Expect(events).To(HaveLen(3))
+		Expect(events[0].Kind).To(Equal(ai.EventToolUse))
+		Expect(events[1]).To(MatchFields(IgnoreExtras, Fields{
+			"Kind": Equal(ai.EventToolResult), "Text": Equal("/work\n"),
+			"ToolCallID": Equal("cmd-fallback"), "Success": BeTrue(),
+		}))
+		Expect(events[2].Kind).To(Equal(ai.EventResult))
+	})
+
+	It("flushes a completed command before a transport terminal error", func() {
+		client, turn := activeGinkgoTurn()
+		client.handleNotification("item/started", json.RawMessage(`{
+			"threadId":"thread-1",
+			"item":{"id":"cmd-exit","type":"commandExecution","command":"pwd","status":"inProgress"}
+		}`))
+		client.handleNotification("item/completed", json.RawMessage(`{
+			"threadId":"thread-1",
+			"item":{"id":"cmd-exit","type":"commandExecution","command":"pwd","status":"completed","exitCode":0,"aggregatedOutput":"/work\n"}
+		}`))
+
+		turn.flushToolResults()
+		turn.send(ai.Event{Kind: ai.EventError, Error: "codex app-server exited unexpectedly"})
+
+		events := drainEvents(turn)
+		Expect(events).To(HaveLen(3))
+		Expect(events[1].Kind).To(Equal(ai.EventToolResult))
+		Expect(events[1].ToolCallID).To(Equal("cmd-exit"))
+		Expect(events[2].Kind).To(Equal(ai.EventError))
 	})
 
 	It("marks nonzero command completion as failed", func() {
@@ -67,9 +126,12 @@ var _ = Describe("Codex app-server tool lifecycle", func() {
 			"threadId":"thread-1",
 			"item":{"id":"cmd-2","type":"commandExecution","command":"false","status":"failed","exitCode":1,"aggregatedOutput":"failed\n"}
 		}`))
+		client.handleNotification("turn/completed", json.RawMessage(`{
+			"threadId":"thread-1","turn":{"id":"turn-1","status":"completed"}
+		}`))
 
 		events := drainEvents(turn)
-		Expect(events).To(HaveLen(2))
+		Expect(events).To(HaveLen(3))
 		Expect(events[1].Kind).To(Equal(ai.EventToolResult))
 		Expect(events[1].Success).To(BeFalse())
 		Expect(events[1].Text).To(Equal("failed\n"))

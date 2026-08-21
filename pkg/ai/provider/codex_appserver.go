@@ -178,9 +178,11 @@ func (c *CodexAppServer) driveTurn(ctx context.Context, req ai.Request, ts *turn
 	case <-ctx.Done():
 		c.interrupt(threadID, turnID)
 		c.teardown(true) // ctx cancel tears the server down (best-effort)
+		ts.flushToolResults()
 		ts.send(ai.Event{Kind: ai.EventError, Error: "codex app-server: turn cancelled", Model: c.model})
 	case <-rpcDone:
 		c.teardown(false) // child crashed; surface, never silently retry
+		ts.flushToolResults()
 		ts.send(ai.Event{Kind: ai.EventError, Error: "codex app-server exited unexpectedly", Model: c.model})
 	}
 	c.clearActive(ts)
@@ -283,7 +285,10 @@ func (c *CodexAppServer) ensureStarted(ctx context.Context) error {
 // handshake performs the required initialize → initialized exchange (any request
 // before it errors "Not initialized" server-side).
 func (c *CodexAppServer) handshake(ctx context.Context, rpc *jsonrpc.Client) error {
-	params := map[string]any{"clientInfo": map[string]string{"name": "captain", "version": "dev"}}
+	params := map[string]any{
+		"clientInfo":   map[string]string{"name": "captain", "version": "dev"},
+		"capabilities": map[string]bool{"experimentalApi": true},
+	}
 	if _, err := rpc.Call(ctx, "initialize", params); err != nil {
 		return fmt.Errorf("codex app-server initialize: %w", err)
 	}
@@ -448,8 +453,8 @@ func cloneStringMap(values map[string]string) map[string]string {
 }
 
 // handleNotification routes one notification to the active turn. It runs on the
-// rpc Run goroutine (notifications dispatch sequentially), so the per-turn
-// dedup/usage state needs no extra locking.
+// rpc Run goroutine (notifications dispatch sequentially). Pending tool results
+// also synchronize with driveTurn's cancellation and process-exit paths.
 func (c *CodexAppServer) handleNotification(method string, params json.RawMessage) {
 	ts := c.currentTurn()
 	if ts == nil {
@@ -465,6 +470,12 @@ func (c *CodexAppServer) handleNotification(method string, params json.RawMessag
 		if len(ts.outputSchema) > 0 {
 			return
 		}
+	case "rawResponseItem/completed":
+		// Codex emits raw command output after item/completed and before turn/completed.
+		if toolCallID, output, ok := appServerRawCommandOutput(params); ok {
+			ts.receiveCompleteToolOutput(toolCallID, output)
+		}
+		return
 	case "item/commandExecution/outputDelta":
 		n := parseAppServerNotif(params)
 		if n.ItemID != "" && n.Delta != "" {
@@ -497,13 +508,24 @@ func (c *CodexAppServer) handleNotification(method string, params json.RawMessag
 			delete(ts.toolOutput, it.ID)
 		}
 	}
+	terminal := method == "turn/completed" || appServerErrorIsFatal(method, params)
+	if terminal {
+		ts.flushToolResults()
+	}
 	if ev, ok := mapAppServerNotification(method, params, ctx); ok {
 		if ev.Kind == ai.EventResult && len(ts.outputSchema) > 0 {
 			ev.StructuredData = json.RawMessage(ts.lastAgentMessage)
 		}
+		if method == "item/completed" && ev.Kind == ai.EventToolResult {
+			it := parseAppServerNotif(params).Item
+			if it != nil && it.Type == "commandExecution" {
+				ts.queueToolResult(ev)
+				return
+			}
+		}
 		ts.send(ev)
 	}
-	if method == "turn/completed" || appServerErrorIsFatal(method, params) {
+	if terminal {
 		c.clearActive(ts)
 		ts.signalTerminal()
 	}

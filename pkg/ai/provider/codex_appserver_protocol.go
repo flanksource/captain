@@ -51,6 +51,8 @@ type appServerItemBody struct {
 	Status           string              `json:"status"`
 	Arguments        json.RawMessage     `json:"arguments"`
 	AggregatedOutput *string             `json:"aggregatedOutput"`
+	CallID           string              `json:"call_id"`
+	Output           json.RawMessage     `json:"output"`
 	ExitCode         *int                `json:"exitCode"`
 	Success          *bool               `json:"success"`
 	Result           json.RawMessage     `json:"result"`
@@ -281,6 +283,15 @@ func appServerToolSucceeded(it *appServerItemBody) bool {
 	return it.Status == "completed"
 }
 
+func appServerRawCommandOutput(params json.RawMessage) (string, string, bool) {
+	it := parseAppServerNotif(params).Item
+	if it == nil || it.Type != "function_call_output" || it.CallID == "" || len(it.Output) == 0 {
+		return "", "", false
+	}
+	text := history.CodexCommandOutputText(history.CodexOutputText(it.Output))
+	return it.CallID, text, true
+}
+
 // appServerErrorIsFatal reports whether an error/turn-failure notification ends
 // the turn. A retryable error (willRetry=true) is surfaced but not terminal.
 func appServerErrorIsFatal(method string, params json.RawMessage) bool {
@@ -324,10 +335,10 @@ func composePrompt(req ai.Request) string {
 // buildThreadStartParams translates the provider-agnostic safety knobs into
 // thread/start params. The CLI-only ignore-user-config / ignore-rules flags
 // (req.Memory.SkipUser/SkipProject/SkipHooks) have no first-class equivalent in
-// the versioned thread/start schema, so only ephemeral + an empty mcp_servers
-// override (the knobs the protocol exposes) are emitted.
+// the versioned thread/start schema. Raw response items provide the authoritative
+// command output when Codex's normal command item misses an early output chunk.
 func buildThreadStartParams(model string, req ai.Request, callerTools *api.CallerToolEndpoint) map[string]any {
-	p := map[string]any{}
+	p := map[string]any{"experimentalRawEvents": true}
 	if cwd := req.Cwd(); cwd != "" {
 		p["cwd"] = cwd
 	}
@@ -394,6 +405,9 @@ func buildTurnStartParams(model string, req ai.Request, threadID string, outputS
 }
 
 func buildResumeParams(req ai.Request, callerTools *api.CallerToolEndpoint) map[string]any {
+	// Unlike thread/start, Codex's versioned thread/resume schema does not expose
+	// experimentalRawEvents. A cold-resumed thread therefore uses the ordinary
+	// command-output fallback until Codex adds that protocol capability.
 	p := map[string]any{"threadId": req.SessionID}
 	if cwd := req.Cwd(); cwd != "" {
 		p["cwd"] = cwd
