@@ -210,7 +210,7 @@ func (db *DB) CreateChatModelCall(ctx context.Context, input CreateChatModelCall
 	record := modelCallRecord{
 		ID: uuid.New(), TurnID: input.TurnID, PromptRunID: &input.PromptRunID,
 		CallIndex: index, Model: strings.TrimSpace(input.Model), Backend: strings.TrimSpace(input.Backend),
-		Effort: nullableTrimmed(input.Effort), Status: "running", StartedAt: &now,
+		Effort: nullableTrimmed(input.Effort), Status: "running", Currency: "USD", StartedAt: &now,
 	}
 	if err := db.gorm.WithContext(ctx).Create(&record).Error; err != nil {
 		return uuid.Nil, fmt.Errorf("create Captain chat model call: %w", err)

@@ -95,5 +95,9 @@ func createCallerToolRun(t *testing.T, db *DB) (*Session, *ChatTurn, *PromptRun,
 		TurnID: turn.ID, PromptRunID: run.ID, Model: "sonnet", Backend: string(api.BackendClaudeAgent),
 	})
 	require.NoError(t, err)
+	var currency string
+	require.NoError(t, db.Gorm().Model(&modelCallRecord{}).
+		Select("currency").Where("id = ?", modelCallID).Scan(&currency).Error)
+	assert.Equal(t, "USD", currency)
 	return session, turn, run, modelCallID
 }

@@ -57,18 +57,20 @@ func testIngestBatch(modTime time.Time, byteOffset int64) IngestTranscriptInput 
 				Index: 0, ProviderTurnID: "turn-0", Status: TurnStatusEnded,
 				StartedAt: &started, EndedAt: &turn0End,
 				Call: &IngestModelCall{
-					Model: "claude-sonnet-5", Backend: "claude", InputTokens: 1000, OutputTokens: 200,
-					CacheReadTokens: 5000, ContextTokens: 40000, ContextWindowTokens: 200000,
-					InputCost: 0.003, OutputCost: 0.003,
+					Model: "claude-sonnet-5", Backend: "claude", InputTokens: 1000, OutputTokens: 200, ReasoningTokens: 100,
+					CacheReadTokens: 5000, CacheWriteTokens: 250, ContextTokens: 40000, ContextWindowTokens: 200000,
+					InputCost: 0.003, OutputCost: 0.003, ReasoningCost: 0.001,
+					CacheReadCost: 0.002, CacheWriteCost: 0.004, Currency: "USD",
 				},
 			},
 			{
 				Index: 1, ProviderTurnID: "turn-1", Status: TurnStatusEnded,
 				StartedAt: &turn0End, EndedAt: &modTime,
 				Call: &IngestModelCall{
-					Model: "claude-sonnet-5", Backend: "claude", Effort: "high", InputTokens: 2000, OutputTokens: 400,
-					CacheReadTokens: 8000, ContextTokens: 60000, ContextWindowTokens: 200000,
-					InputCost: 0.006, OutputCost: 0.006,
+					Model: "claude-sonnet-5", Backend: "claude", Effort: "high", InputTokens: 2000, OutputTokens: 400, ReasoningTokens: 200,
+					CacheReadTokens: 8000, CacheWriteTokens: 500, ContextTokens: 60000, ContextWindowTokens: 200000,
+					InputCost: 0.006, OutputCost: 0.006, ReasoningCost: 0.002,
+					CacheReadCost: 0.004, CacheWriteCost: 0.008, Currency: "USD",
 				},
 			},
 		},
@@ -103,8 +105,10 @@ func TestIngestTranscriptAndReadStores(t *testing.T) {
 		assert.EqualValues(t, 2, overview.TurnCount)
 		assert.EqualValues(t, 3000, overview.InputTokens)
 		assert.EqualValues(t, 600, overview.OutputTokens)
+		assert.EqualValues(t, 300, overview.ReasoningTokens)
 		assert.EqualValues(t, 13000, overview.CacheReadTokens)
-		assert.InDelta(t, 0.018, overview.CostUSD, 1e-9)
+		assert.EqualValues(t, 750, overview.CacheWriteTokens)
+		assert.InDelta(t, 0.039, overview.CostUSD, 1e-9)
 		require.NotNil(t, overview.ContextFreePercent)
 		assert.Equal(t, 70, *overview.ContextFreePercent, "latest call: 1-60000/200000 = 70%")
 		require.NotNil(t, overview.Model)
@@ -121,14 +125,64 @@ func TestIngestTranscriptAndReadStores(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, session.ID, byPrefix.ID)
 
-		replayed, err := db.IngestTranscript(t.Context(), testIngestBatch(modTime, 4096))
+		var firstCall modelCallRecord
+		require.NoError(t, db.gorm.WithContext(t.Context()).
+			Joins("JOIN captain_turns turn ON turn.id = captain_model_calls.turn_id").
+			Where("turn.session_id = ? AND turn.turn_index = 0", session.ID).
+			First(&firstCall).Error)
+		require.NoError(t, db.gorm.WithContext(t.Context()).Model(&modelCallRecord{}).
+			Where("id = ?", firstCall.ID).Update("provider_cost_usd", 0.5).Error)
+
+		replay := testIngestBatch(modTime, 4096)
+		replay.Turns[0].Call.InputCost = 0.011
+		replay.Turns[0].Call.OutputCost = 0.012
+		replay.Turns[0].Call.ReasoningCost = 0.013
+		replay.Turns[0].Call.CacheReadCost = 0.014
+		replay.Turns[0].Call.CacheWriteCost = 0.015
+		replay.Turns[0].Call.Currency = "usd"
+		replay.Turns[1].Call.InputCost = 0.021
+		replay.Turns[1].Call.OutputCost = 0.022
+		replay.Turns[1].Call.ReasoningCost = 0.023
+		replay.Turns[1].Call.CacheReadCost = 0.024
+		replay.Turns[1].Call.CacheWriteCost = 0.025
+		replayed, err := db.IngestTranscript(t.Context(), replay)
 		require.NoError(t, err)
 		assert.Equal(t, session.ID, replayed.ID)
+
+		var calls []modelCallRecord
+		require.NoError(t, db.gorm.WithContext(t.Context()).
+			Select("captain_model_calls.*").
+			Joins("JOIN captain_turns turn ON turn.id = captain_model_calls.turn_id").
+			Where("turn.session_id = ?", session.ID).
+			Order("turn.turn_index").Find(&calls).Error)
+		require.Len(t, calls, 2)
+		assert.Equal(t, "USD", calls[0].Currency)
+		assert.InDelta(t, 0.011, calls[0].InputCost, 1e-9)
+		assert.InDelta(t, 0.012, calls[0].OutputCost, 1e-9)
+		assert.InDelta(t, 0.013, calls[0].ReasoningCost, 1e-9)
+		assert.InDelta(t, 0.014, calls[0].CacheReadCost, 1e-9)
+		assert.InDelta(t, 0.015, calls[0].CacheWriteCost, 1e-9)
+		assert.InDelta(t, 0.5, calls[0].ProviderCostUSD, 1e-9,
+			"transcript replay must not erase provider-reported cost from another writer")
+		assert.Equal(t, "USD", calls[1].Currency)
+		assert.InDelta(t, 0.021, calls[1].InputCost, 1e-9)
+		assert.InDelta(t, 0.022, calls[1].OutputCost, 1e-9)
+		assert.InDelta(t, 0.023, calls[1].ReasoningCost, 1e-9)
+		assert.InDelta(t, 0.024, calls[1].CacheReadCost, 1e-9)
+		assert.InDelta(t, 0.025, calls[1].CacheWriteCost, 1e-9)
+
 		overview, err := db.GetSessionOverviewByIdentity(t.Context(), testProviderSessionID)
 		require.NoError(t, err)
 		assert.EqualValues(t, 4, overview.MessageCount, "replay must not duplicate messages")
 		assert.EqualValues(t, 2, overview.TurnCount, "replay must not duplicate turns")
 		assert.EqualValues(t, 3000, overview.InputTokens, "replay must not duplicate model calls")
+		assert.InDelta(t, 0.615, overview.CostUSD, 1e-9,
+			"resolved total chooses provider-reported cost per call, then list-price buckets")
+
+		require.NoError(t, db.gorm.WithContext(t.Context()).Model(&modelCallRecord{}).
+			Where("id = ?", firstCall.ID).Update("provider_cost_usd", 0).Error)
+		_, err = db.IngestTranscript(t.Context(), testIngestBatch(modTime, 4096))
+		require.NoError(t, err)
 	})
 
 	t.Run("provider message replay with shifted sequence is idempotent", func(t *testing.T) {

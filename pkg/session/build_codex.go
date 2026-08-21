@@ -551,13 +551,13 @@ func codexCostFromUsage(model string, usage api.Usage) api.Cost {
 	// Sonnet rates (finding C1). A registry miss leaves the bucket costs zero
 	// rather than inventing a wrong number.
 	//
-	// Reasoning is priced with output: OpenAI bills it at the output rate, and
-	// the two buckets are disjoint here only so the counts do not double-count.
-	billedOutput := usage.OutputTokens + usage.ReasoningTokens
+	// OpenAI list-prices reasoning at the output rate. Keep the two costs
+	// separate so persistence retains the same bucket split as the token counts.
 	for _, id := range []string{"openai/" + model, model} {
-		if res, err := pricing.CalculateCost(id, usage.InputTokens, billedOutput, 0, usage.CacheReadTokens, 0); err == nil {
+		if res, err := pricing.CalculateCost(id, usage.InputTokens, usage.OutputTokens, usage.ReasoningTokens, usage.CacheReadTokens, 0); err == nil {
 			cost.InputCost = res.InputCost
 			cost.OutputCost = res.OutputCost
+			cost.ReasoningCost = res.ReasoningCost
 			cost.CacheReadCost = res.CacheReadCost
 			break
 		}
