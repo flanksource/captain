@@ -26,6 +26,7 @@ SELECT
   (
     sum(c.input_tokens)
     + sum(c.output_tokens)
+    + sum(c.reasoning_tokens)
     + sum(c.cache_read_tokens)
     + sum(c.cache_write_tokens)
   )::bigint AS total_tokens,
@@ -34,9 +35,9 @@ SELECT
   sum(c.reasoning_cost) AS reasoning_cost,
   sum(c.cache_read_cost) AS cache_read_cost,
   sum(c.cache_write_cost) AS cache_write_cost,
-  -- Mirrors api.Cost.Total(): the provider's reported figure is authoritative
-  -- per call, with the list-price bucket sum as the fallback. Decided per row,
-  -- not per group, so a mix of priced and provider-reported calls still totals.
+  -- Mirrors api.Cost.Total(): prefer provider-reported cost or estimates per
+  -- call, with the list-price bucket sum as the fallback. Decided per row, not
+  -- per group, so a mix of list-priced and provider-reported calls still totals.
   sum(
     CASE
       WHEN c.provider_cost_usd > 0 THEN c.provider_cost_usd
