@@ -203,26 +203,32 @@ var _ = Describe("Session overview aggregates", func() {
 			Model: "model-latest", Backend: "codex", Effort: "high",
 			ContextTokens: 75, ContextWindowTokens: 100, ContextFreePercent: 25,
 			InputTokens: 130, OutputTokens: 62, ReasoningTokens: 31,
-			CacheReadTokens: 19, CacheWriteTokens: 8, TotalTokens: 219,
+			CacheReadTokens: 19, CacheWriteTokens: 8, TotalTokens: 250,
 			CostUSD: 0.65,
 		}))
 
 		turns, err := db.ListThreadTurns(ctx, rootID)
 		Expect(err).NotTo(HaveOccurred())
 		var turnCost float64
+		var turnTokens int64
 		for _, turn := range turns {
 			turnCost += turn.CostUSD
+			turnTokens += turn.TotalTokens
 		}
 		agents, err := db.ListThreadAgents(ctx, rootID)
 		Expect(err).NotTo(HaveOccurred())
 		var agentCost float64
+		var agentTokens int64
 		for _, agent := range agents {
 			agentCost += agent.CostUSD
+			agentTokens += agent.TotalTokens
 		}
 		costs, err := db.ListThreadCosts(ctx, rootID)
 		Expect(err).NotTo(HaveOccurred())
 		var groupedCost float64
+		var groupedTokens int64
 		for _, cost := range costs {
+			groupedTokens += cost.TotalTokens
 			if cost.Currency == "USD" {
 				groupedCost += cost.TotalCost
 			}
@@ -230,19 +236,19 @@ var _ = Describe("Session overview aggregates", func() {
 		page, err := db.ListSessionSummaries(ctx, SessionListFilter{RootsOnly: true, Limit: 10})
 		Expect(err).NotTo(HaveOccurred())
 		var listCost float64
+		var listTokens int64
 		for _, row := range page.Rows {
 			if row.ID == rootID {
 				listCost = row.CostUSD
+				listTokens = row.TotalTokens
 			}
 		}
 
 		var promptOverview struct {
 			TurnID                    uuid.UUID
 			Runtime                   string
-			ApprovalState             string
 			ProviderCheckpointCodec   string
 			ProviderCheckpointVersion int
-			ProviderCheckpoint        []byte
 			TotalTokens               int64
 			CostUSD                   float64
 			ProviderCostUSD           float64
@@ -253,8 +259,8 @@ var _ = Describe("Session overview aggregates", func() {
 			CacheWriteCost            float64
 		}
 		Expect(db.Gorm().Raw(`
-			SELECT turn_id, runtime::text AS runtime, approval_state::text AS approval_state,
-			  provider_checkpoint_codec, provider_checkpoint_version, provider_checkpoint,
+			SELECT turn_id, runtime::text AS runtime,
+			  provider_checkpoint_codec, provider_checkpoint_version,
 			  total_tokens, cost_usd, provider_cost_usd, input_cost, output_cost,
 			  reasoning_cost, cache_read_cost, cache_write_cost
 			FROM captain_prompt_run_overview
@@ -262,10 +268,8 @@ var _ = Describe("Session overview aggregates", func() {
 		).Scan(&promptOverview).Error).NotTo(HaveOccurred())
 		Expect(promptOverview.TurnID).To(Equal(turnOne))
 		Expect(promptOverview.Runtime).To(MatchJSON(`{"mode":"run"}`))
-		Expect(promptOverview.ApprovalState).To(MatchJSON(`{"decision":"allow"}`))
 		Expect(promptOverview.ProviderCheckpointCodec).To(Equal("test-codec"))
 		Expect(promptOverview.ProviderCheckpointVersion).To(Equal(1))
-		Expect(promptOverview.ProviderCheckpoint).To(Equal(checkpoint))
 		Expect(promptOverview.TotalTokens).To(Equal(int64(250)), "reasoning belongs in prompt-run total tokens")
 		Expect(promptOverview.ProviderCostUSD).To(BeNumerically("~", 0.25, 1e-9))
 		Expect(promptOverview.InputCost).To(BeNumerically("~", 0.30, 1e-9))
@@ -273,6 +277,15 @@ var _ = Describe("Session overview aggregates", func() {
 		Expect(promptOverview.ReasoningCost).To(BeNumerically("~", 0.06, 1e-9))
 		Expect(promptOverview.CacheReadCost).To(BeNumerically("~", 0.09, 1e-9))
 		Expect(promptOverview.CacheWriteCost).To(BeNumerically("~", 0.03, 1e-9))
+		var sensitiveColumnCount int64
+		Expect(db.Gorm().Raw(`
+			SELECT count(*)
+			FROM information_schema.columns
+			WHERE table_schema = 'public'
+			  AND table_name = 'captain_prompt_run_overview'
+			  AND column_name IN ('approval_state', 'provider_checkpoint')
+		`).Scan(&sensitiveColumnCount).Error).NotTo(HaveOccurred())
+		Expect(sensitiveColumnCount).To(BeZero(), "private approval/checkpoint state must not be exposed by the view")
 
 		for surface, cost := range map[string]float64{
 			"session overview": overview.CostUSD,
@@ -283,6 +296,16 @@ var _ = Describe("Session overview aggregates", func() {
 			"prompt run":       promptOverview.CostUSD,
 		} {
 			Expect(cost).To(BeNumerically("~", 0.65, 1e-9), surface)
+		}
+		for surface, tokens := range map[string]int64{
+			"session overview": overview.TotalTokens,
+			"session turns":    turnTokens,
+			"session agents":   agentTokens,
+			"session costs":    groupedTokens,
+			"session list":     listTokens,
+			"prompt run":       promptOverview.TotalTokens,
+		} {
+			Expect(tokens).To(Equal(int64(250)), surface)
 		}
 
 		var securityBarrier bool

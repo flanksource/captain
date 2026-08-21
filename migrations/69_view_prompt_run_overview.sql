@@ -65,10 +65,8 @@ SELECT
   -- columns at the end, so later additions must stay below this line.
   r.turn_id,
   r.runtime,
-  r.approval_state,
   r.provider_checkpoint_codec,
   r.provider_checkpoint_version,
-  r.provider_checkpoint,
   -- cost_usd resolves provider-reported cost or estimates against Captain's
   -- list-price reconstruction per call; these components preserve provenance.
   COALESCE(call_stats.provider_cost_usd, 0::numeric) AS provider_cost_usd,

@@ -94,6 +94,7 @@ SELECT
   COALESCE(call_stats.cache_write_tokens, 0) AS cache_write_tokens,
   COALESCE(call_stats.input_tokens, 0)
     + COALESCE(call_stats.output_tokens, 0)
+    + COALESCE(call_stats.reasoning_tokens, 0)
     + COALESCE(call_stats.cache_read_tokens, 0)
     + COALESCE(call_stats.cache_write_tokens, 0) AS total_tokens,
   COALESCE(call_stats.cost_usd, 0::numeric) AS cost_usd,
