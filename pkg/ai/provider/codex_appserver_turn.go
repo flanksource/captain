@@ -16,7 +16,6 @@ type turnState struct {
 	model              string
 	streamed           map[string]string
 	toolOutput         map[string]string
-	completeToolOutput map[string]string
 	pendingToolResults []ai.Event
 	toolResultsMu      sync.Mutex
 	toolResultsClosed  bool
@@ -99,11 +98,6 @@ func (ts *turnState) queueToolResult(event ai.Event) {
 	if ts.toolResultsClosed {
 		return
 	}
-	if output, ok := ts.completeToolOutput[event.ToolCallID]; ok {
-		delete(ts.completeToolOutput, event.ToolCallID)
-		ts.send(withToolResultText(event, output))
-		return
-	}
 	ts.pendingToolResults = append(ts.pendingToolResults, event)
 }
 
@@ -118,13 +112,14 @@ func (ts *turnState) receiveCompleteToolOutput(toolCallID, output string) {
 			continue
 		}
 		ts.pendingToolResults = append(ts.pendingToolResults[:i], ts.pendingToolResults[i+1:]...)
-		ts.send(withToolResultText(event, output))
+		event.Text = output
+		if raw, ok := event.Raw.(claude.ToolUse); ok {
+			raw.Response = output
+			event.Raw = raw
+		}
+		ts.send(event)
 		return
 	}
-	if ts.completeToolOutput == nil {
-		ts.completeToolOutput = map[string]string{}
-	}
-	ts.completeToolOutput[toolCallID] = output
 }
 
 func (ts *turnState) flushToolResults() {
@@ -138,92 +133,4 @@ func (ts *turnState) flushToolResults() {
 		ts.send(event)
 	}
 	ts.pendingToolResults = nil
-	ts.completeToolOutput = nil
-}
-
-func withToolResultText(event ai.Event, text string) ai.Event {
-	event.Text = text
-	if raw, ok := event.Raw.(claude.ToolUse); ok {
-		raw.Response = text
-		event.Raw = raw
-	}
-	return event
-}
-
-// handleNotification routes one notification to the active turn. It runs on the
-// rpc Run goroutine (notifications dispatch sequentially). Pending tool results
-// also synchronize with driveTurn's cancellation and process-exit paths.
-func (c *CodexAppServer) handleNotification(method string, params json.RawMessage) {
-	ts := c.currentTurn()
-	if ts == nil {
-		return
-	}
-	ctx := appServerEventContext{Model: ts.model, Usage: ts.usage}
-	switch method {
-	case "item/agentMessage/delta":
-		notification := parseAppServerNotif(params)
-		if notification.ItemID != "" {
-			ts.streamed[notification.ItemID] += notification.Delta
-		}
-		if len(ts.outputSchema) > 0 {
-			return
-		}
-	case "rawResponseItem/completed":
-		if toolCallID, output, ok := appServerRawCommandOutput(params); ok {
-			ts.receiveCompleteToolOutput(toolCallID, output)
-		}
-		return
-	case "item/commandExecution/outputDelta":
-		n := parseAppServerNotif(params)
-		if n.ItemID != "" && n.Delta != "" {
-			ts.toolOutput[n.ItemID] += n.Delta
-		}
-		return
-	case "item/completed":
-		// The completed agent message carries the full text (structured runs use it
-		// as the validated JSON result). Capture it, then drop the duplicate so
-		// CoalesceStream / renderers don't double-count already-streamed deltas.
-		if it := parseAppServerNotif(params).Item; it != nil && it.Type == "agentMessage" {
-			ts.lastAgentMessage = it.Text
-			if len(ts.outputSchema) > 0 {
-				return
-			}
-		}
-		remainder, streamed, err := appServerAgentMessageRemainder(params, ts.streamed)
-		if err != nil {
-			ts.send(ai.Event{Kind: ai.EventError, Error: err.Error(), Model: ts.model})
-			return
-		}
-		if streamed {
-			if remainder != "" {
-				ts.send(ai.Event{Kind: ai.EventText, Text: remainder, Model: ts.model})
-			}
-			return
-		}
-		if it := parseAppServerNotif(params).Item; it != nil {
-			ctx.ToolOutput = ts.toolOutput[it.ID]
-			delete(ts.toolOutput, it.ID)
-		}
-	}
-	terminal := method == "turn/completed" || appServerErrorIsFatal(method, params)
-	if terminal {
-		ts.flushToolResults()
-	}
-	if ev, ok := mapAppServerNotification(method, params, ctx); ok {
-		if ev.Kind == ai.EventResult && len(ts.outputSchema) > 0 {
-			ev.StructuredData = json.RawMessage(ts.lastAgentMessage)
-		}
-		if method == "item/completed" && ev.Kind == ai.EventToolResult {
-			it := parseAppServerNotif(params).Item
-			if it != nil && it.Type == "commandExecution" {
-				ts.queueToolResult(ev)
-				return
-			}
-		}
-		ts.send(ev)
-	}
-	if terminal {
-		c.clearActive(ts)
-		ts.signalTerminal()
-	}
 }

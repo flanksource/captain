@@ -141,15 +141,14 @@ func (c *CodexAppServer) ExecuteStream(ctx context.Context, req ai.Request) (<-c
 	c.mu.Unlock()
 
 	ts := &turnState{
-		ch:                 make(chan ai.Event, 16),
-		usage:              &ai.Usage{},
-		model:              c.model,
-		streamed:           map[string]string{},
-		toolOutput:         map[string]string{},
-		completeToolOutput: map[string]string{},
-		terminal:           make(chan struct{}),
-		started:            make(chan struct{}),
-		outputSchema:       schema,
+		ch:           make(chan ai.Event, 16),
+		usage:        &ai.Usage{},
+		model:        c.model,
+		streamed:     map[string]string{},
+		toolOutput:   map[string]string{},
+		terminal:     make(chan struct{}),
+		started:      make(chan struct{}),
+		outputSchema: schema,
 	}
 	c.setActive(ts)
 
@@ -287,10 +286,8 @@ func (c *CodexAppServer) ensureStarted(ctx context.Context) error {
 // before it errors "Not initialized" server-side).
 func (c *CodexAppServer) handshake(ctx context.Context, rpc *jsonrpc.Client) error {
 	params := map[string]any{
-		"clientInfo": map[string]string{"name": "captain", "version": "dev"},
-		"capabilities": map[string]any{
-			"experimentalApi": true, "requestAttestation": false,
-		},
+		"clientInfo":   map[string]string{"name": "captain", "version": "dev"},
+		"capabilities": map[string]bool{"experimentalApi": true},
 	}
 	if _, err := rpc.Call(ctx, "initialize", params); err != nil {
 		return fmt.Errorf("codex app-server initialize: %w", err)
@@ -453,6 +450,85 @@ func cloneStringMap(values map[string]string) map[string]string {
 		cloned[key] = value
 	}
 	return cloned
+}
+
+// handleNotification routes one notification to the active turn. It runs on the
+// rpc Run goroutine (notifications dispatch sequentially). Pending tool results
+// also synchronize with driveTurn's cancellation and process-exit paths.
+func (c *CodexAppServer) handleNotification(method string, params json.RawMessage) {
+	ts := c.currentTurn()
+	if ts == nil {
+		return
+	}
+	ctx := appServerEventContext{Model: ts.model, Usage: ts.usage}
+	switch method {
+	case "item/agentMessage/delta":
+		notification := parseAppServerNotif(params)
+		if notification.ItemID != "" {
+			ts.streamed[notification.ItemID] += notification.Delta
+		}
+		if len(ts.outputSchema) > 0 {
+			return
+		}
+	case "rawResponseItem/completed":
+		// Codex emits raw command output after item/completed and before turn/completed.
+		if toolCallID, output, ok := appServerRawCommandOutput(params); ok {
+			ts.receiveCompleteToolOutput(toolCallID, output)
+		}
+		return
+	case "item/commandExecution/outputDelta":
+		n := parseAppServerNotif(params)
+		if n.ItemID != "" && n.Delta != "" {
+			ts.toolOutput[n.ItemID] += n.Delta
+		}
+		return
+	case "item/completed":
+		// The completed agent message carries the full text (structured runs use it
+		// as the validated JSON result). Capture it, then drop the duplicate so
+		// CoalesceStream / renderers don't double-count already-streamed deltas.
+		if it := parseAppServerNotif(params).Item; it != nil && it.Type == "agentMessage" {
+			ts.lastAgentMessage = it.Text
+			if len(ts.outputSchema) > 0 {
+				return
+			}
+		}
+		remainder, streamed, err := appServerAgentMessageRemainder(params, ts.streamed)
+		if err != nil {
+			ts.send(ai.Event{Kind: ai.EventError, Error: err.Error(), Model: ts.model})
+			return
+		}
+		if streamed {
+			if remainder != "" {
+				ts.send(ai.Event{Kind: ai.EventText, Text: remainder, Model: ts.model})
+			}
+			return
+		}
+		if it := parseAppServerNotif(params).Item; it != nil {
+			ctx.ToolOutput = ts.toolOutput[it.ID]
+			delete(ts.toolOutput, it.ID)
+		}
+	}
+	terminal := method == "turn/completed" || appServerErrorIsFatal(method, params)
+	if terminal {
+		ts.flushToolResults()
+	}
+	if ev, ok := mapAppServerNotification(method, params, ctx); ok {
+		if ev.Kind == ai.EventResult && len(ts.outputSchema) > 0 {
+			ev.StructuredData = json.RawMessage(ts.lastAgentMessage)
+		}
+		if method == "item/completed" && ev.Kind == ai.EventToolResult {
+			it := parseAppServerNotif(params).Item
+			if it != nil && it.Type == "commandExecution" {
+				ts.queueToolResult(ev)
+				return
+			}
+		}
+		ts.send(ev)
+	}
+	if terminal {
+		c.clearActive(ts)
+		ts.signalTerminal()
+	}
 }
 
 // --- turn state ------------------------------------------------------------
