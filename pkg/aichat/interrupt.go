@@ -11,6 +11,7 @@ import (
 )
 
 var errNoActiveTurn = errors.New("chat session has no active turn")
+var errThreadBusy = errors.New("chat session is busy")
 
 type activeTurn struct {
 	provider  api.StreamingProvider
@@ -137,11 +138,64 @@ func (t *activeTurn) finish() {
 func (s *Service) registerActiveTurn(threadID string, turn *activeTurn) error {
 	s.activeMu.Lock()
 	defer s.activeMu.Unlock()
-	if _, exists := s.active[threadID]; exists {
-		return fmt.Errorf("chat session %s already has an active turn", threadID)
+	if active, exists := s.active[threadID]; exists {
+		if sameExecutionTurn(active.execution, turn.execution) {
+			delete(s.pending, threadID)
+			s.active[threadID] = turn
+			return nil
+		}
+		return fmt.Errorf("%w: chat session %s already has an active turn", errThreadBusy, threadID)
 	}
+	if _, reserved := s.pending[threadID]; !reserved {
+		return fmt.Errorf("%w: chat session %s has no reserved turn to activate", errThreadBusy, threadID)
+	}
+	delete(s.pending, threadID)
 	s.active[threadID] = turn
 	return nil
+}
+
+func sameExecutionTurn(left, right Execution) bool {
+	return left != nil && right != nil && left.TurnID() != "" && left.TurnID() == right.TurnID()
+}
+
+func (s *Service) reserveThread(threadID string) error {
+	s.activeMu.Lock()
+	defer s.activeMu.Unlock()
+	if _, exists := s.active[threadID]; exists {
+		return fmt.Errorf("%w: chat session %s already has an active turn", errThreadBusy, threadID)
+	}
+	if _, exists := s.pending[threadID]; exists {
+		return fmt.Errorf("%w: chat session %s already has a turn being admitted", errThreadBusy, threadID)
+	}
+	s.pending[threadID] = struct{}{}
+	return nil
+}
+
+// reserveThreadForApproval claims the admission slot before a durable approval
+// is consumed. If the suspending turn is still active, the reservation keeps
+// the slot claimed while ownership is handed to its continuation.
+func (s *Service) reserveThreadForApproval(threadID string) (string, error) {
+	s.activeMu.Lock()
+	defer s.activeMu.Unlock()
+	if _, exists := s.pending[threadID]; exists {
+		return "", fmt.Errorf("%w: chat session %s already has a turn being admitted", errThreadBusy, threadID)
+	}
+	if active, exists := s.active[threadID]; exists {
+		turnID := ""
+		if active.execution != nil {
+			turnID = active.execution.TurnID()
+		}
+		s.pending[threadID] = struct{}{}
+		return turnID, nil
+	}
+	s.pending[threadID] = struct{}{}
+	return "", nil
+}
+
+func (s *Service) releaseThreadReservation(threadID string) {
+	s.activeMu.Lock()
+	delete(s.pending, threadID)
+	s.activeMu.Unlock()
 }
 
 func (s *Service) unregisterActiveTurn(threadID string, turn *activeTurn) {

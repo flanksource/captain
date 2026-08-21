@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"github.com/flanksource/captain/pkg/database"
 )
 
 func (s *Service) registerThreadRoutes(mux *http.ServeMux) {
@@ -15,6 +17,7 @@ func (s *Service) registerThreadRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/chat/sessions", s.handleListThreads)
 	mux.HandleFunc("GET /api/chat/sessions/{id}", s.handleGetThread)
 	mux.HandleFunc("PATCH /api/chat/sessions/{id}", s.handleRenameThread)
+	mux.HandleFunc("POST /api/chat/sessions/{id}/fork", s.handleForkThread)
 	mux.HandleFunc("GET /api/chat/sessions/{id}/costs", s.handleThreadCosts)
 	mux.HandleFunc("DELETE /api/chat/sessions/{id}", s.handleDeleteThread)
 	mux.HandleFunc("POST /api/chat/sessions/{id}/approvals/{approvalID}", s.handleResolveToolApproval)
@@ -118,6 +121,36 @@ func (s *Service) handleGetThread(w http.ResponseWriter, request *http.Request) 
 	}
 	if err := writeJSON(w, http.StatusOK, thread); err != nil {
 		serviceLog.Errorf("write chat thread %q: %v", request.PathValue("id"), err)
+	}
+}
+
+func (s *Service) handleForkThread(w http.ResponseWriter, request *http.Request) {
+	store := s.threadStore(w, request)
+	if store == nil {
+		return
+	}
+	id := request.PathValue("id")
+	if err := s.reserveThread(id); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	defer s.releaseThreadReservation(id)
+	fork, err := store.Fork(request.Context(), id)
+	if err != nil {
+		status := http.StatusInternalServerError
+		switch {
+		case errors.Is(err, ErrForkSourceEmpty):
+			status = http.StatusBadRequest
+		case errors.Is(err, ErrThreadNotFound), errors.Is(err, database.ErrSessionNotFound):
+			status = http.StatusNotFound
+		case errors.Is(err, database.ErrOpenChatTurn), errors.Is(err, database.ErrSessionConflict):
+			status = http.StatusConflict
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+	if err := writeJSON(w, http.StatusCreated, fork); err != nil {
+		serviceLog.Errorf("write forked chat thread %q from %q: %v", fork.ID, id, err)
 	}
 }
 

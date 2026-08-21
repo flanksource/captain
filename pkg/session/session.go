@@ -30,6 +30,8 @@ type Session struct {
 	Backend           string          `json:"backend,omitempty"`
 	ExecutionMode     api.RuntimeMode `json:"executionMode,omitempty"`
 	Model             string          `json:"model,omitempty"` // primary model
+	Runtime           *api.Model      `json:"runtime,omitempty"`
+	ForkedFrom        string          `json:"forkedFrom,omitempty"`
 	ReasoningEffort   string          `json:"reasoningEffort,omitempty"`
 	HistoryFile       string          `json:"historyFile,omitempty"`
 

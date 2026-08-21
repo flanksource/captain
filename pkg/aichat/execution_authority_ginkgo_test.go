@@ -305,7 +305,7 @@ var _ = Describe("Authoritative aichat execution", func() {
 		Expect(persisted.Messages[3].ID).To(Equal("turn-user-message-2-assistant"))
 	})
 
-	It("regenerates the named assistant message without duplicating persisted history", func() {
+	It("repeatedly regenerates the named assistant message without reusing durable turns", func() {
 		store := aichat.NewMemoryThreadStore()
 		thread, err := store.Create(context.Background(), "Accounts")
 		Expect(err).NotTo(HaveOccurred())
@@ -326,15 +326,23 @@ var _ = Describe("Authoritative aichat execution", func() {
 			Resolver: &fakeResolver{provider: provider}, Threads: aichat.FixedThreadStore(store), Authority: authority,
 		})
 
-		response := httptest.NewRecorder()
-		service.Handler().ServeHTTP(response, requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{
-			ID: thread.ID, ThreadID: thread.ID, Trigger: "regenerate-message", MessageID: assistant.ID,
-			Runtime: &api.Model{Name: "gemini", Backend: api.BackendGemini}, Messages: []aichat.UIMessage{user},
-		}))
+		regenerate := func() *httptest.ResponseRecorder {
+			response := httptest.NewRecorder()
+			service.Handler().ServeHTTP(response, requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{
+				ID: thread.ID, ThreadID: thread.ID, Trigger: "regenerate-message", MessageID: assistant.ID,
+				Runtime: &api.Model{Name: "gemini", Backend: api.BackendGemini}, Messages: []aichat.UIMessage{user},
+			}))
+			return response
+		}
 
-		Expect(response.Code).To(Equal(http.StatusOK), response.Body.String())
-		Expect(authority.begins).To(HaveLen(1))
-		Expect(authority.begins[0].RequestID).To(Equal(assistant.ID))
+		first := regenerate()
+		second := regenerate()
+		Expect(first.Code).To(Equal(http.StatusOK), first.Body.String())
+		Expect(second.Code).To(Equal(http.StatusOK), second.Body.String())
+		Expect(authority.begins).To(HaveLen(2))
+		Expect(authority.begins[0].RequestID).To(HavePrefix(assistant.ID + ":"))
+		Expect(authority.begins[1].RequestID).To(HavePrefix(assistant.ID + ":"))
+		Expect(authority.begins[1].RequestID).NotTo(Equal(authority.begins[0].RequestID))
 		persisted, err := store.Get(context.Background(), thread.ID)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(persisted.Messages).To(HaveLen(2))

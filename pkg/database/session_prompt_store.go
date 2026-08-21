@@ -402,6 +402,27 @@ func (db *DB) GetSession(ctx context.Context, id uuid.UUID) (*Session, error) {
 	return &out, nil
 }
 
+// LockSessionForUpdate reads and locks one session row for the lifetime of the
+// caller's transaction.
+func (db *DB) LockSessionForUpdate(ctx context.Context, id uuid.UUID) (*Session, error) {
+	if err := db.requireGorm(); err != nil {
+		return nil, err
+	}
+	if id == uuid.Nil {
+		return nil, fmt.Errorf("%w: session ID is required", ErrInvalidSession)
+	}
+	var record sessionRecord
+	if err := db.gorm.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+		First(&record, "id = ?", id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("%w: %s", ErrSessionNotFound, id)
+		}
+		return nil, fmt.Errorf("lock Captain session: %w", err)
+	}
+	out := sessionFromRecord(record)
+	return &out, nil
+}
+
 // GetSessionByIdentity resolves either an authoritative UUID or a provider
 // session ID. Provider IDs are required to be unambiguous across the supplied
 // optional source/provider/host filters.

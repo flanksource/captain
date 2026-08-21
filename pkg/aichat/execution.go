@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/flanksource/captain/pkg/api"
 )
@@ -11,22 +12,24 @@ import (
 // ExecutionRequest is the authoritative identity and resolved policy for one
 // chat provider turn.
 type ExecutionRequest struct {
-	ThreadID    string
-	RequestID   string
-	Title       string
-	Spec        api.Spec
-	Profile     api.ResolvedSpec
-	Definitions []api.ToolDefinition
+	ThreadID                string
+	RequestID               string
+	Title                   string
+	ExpectedThreadUpdatedAt time.Time
+	Spec                    api.Spec
+	Profile                 api.ResolvedSpec
+	Definitions             []api.ToolDefinition
 }
 
 // ToolApprovalResolution is the authenticated user's answer to one live
 // caller-tool approval.
 type ToolApprovalResolution struct {
-	ThreadID     string
-	ApprovalID   string
-	Approved     bool
-	UpdatedInput map[string]any
-	Reason       string
+	ThreadID       string
+	ApprovalID     string
+	ExpectedTurnID string
+	Approved       bool
+	UpdatedInput   map[string]any
+	Reason         string
 }
 
 type ApprovalContinuation struct {
@@ -52,6 +55,12 @@ type Execution interface {
 	Observe(context.Context, api.Event) (api.Event, error)
 	Interrupt(context.Context, string) error
 	Close(context.Context) error
+}
+
+// executionRuntimeBinder commits the provider runtime selected after fallback
+// resolution, before any provider session identity from that runtime is stored.
+type executionRuntimeBinder interface {
+	BindRuntime(context.Context, api.Model) error
 }
 
 func mergeExecutionEvents(

@@ -112,3 +112,14 @@ func applyThreadCosts(aggregate *session.Session, rows []database.SessionCost) {
 		return aggregate.ToolCosts[i].Model < aggregate.ToolCosts[j].Model
 	})
 }
+
+func applyThreadSummaryCosts(thread *Thread, rows []database.SessionCost) {
+	aggregate := &session.Session{}
+	applyThreadCosts(aggregate, rows)
+	thread.TotalInputTokens = aggregate.Usage.InputTokens
+	thread.TotalOutputTokens = aggregate.Usage.OutputTokens
+	thread.TotalReasoningTokens = aggregate.Usage.ReasoningTokens
+	thread.TotalCacheReadTokens = aggregate.Usage.CacheReadTokens
+	thread.TotalCacheWriteTokens = aggregate.Usage.CacheWriteTokens
+	thread.TotalCostUSD = aggregate.Cost.Total()
+}

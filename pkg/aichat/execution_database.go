@@ -57,12 +57,15 @@ func (e *databaseExecution) finishModelCall(
 	stopReason string,
 	event api.Event,
 ) error {
+	e.mu.Lock()
+	model, backend := e.model, e.backend
+	e.mu.Unlock()
 	input := database.FinishChatModelCallInput{
 		ID: e.modelCallID, Status: status, StopReason: stopReason, Event: event,
-		ContextWindowTokens: ai.ContextWindowFor(e.backend, e.model),
+		ContextWindowTokens: ai.ContextWindowFor(backend, model),
 	}
 	if event.Usage != nil {
-		cost := ai.PriceUsage(e.backend, e.model, *event.Usage, event.CostUSD)
+		cost := ai.PriceUsage(backend, model, *event.Usage, event.CostUSD)
 		input.Cost = &cost
 	}
 	return e.db.FinishChatModelCall(ctx, input)
@@ -72,6 +75,46 @@ func (e *databaseExecution) CaptainSessionID() string { return e.session.ID.Stri
 func (e *databaseExecution) TurnID() string           { return e.turn.ID.String() }
 func (e *databaseExecution) PromptRunID() string      { return e.run.ID.String() }
 func (e *databaseExecution) Events() <-chan api.Event { return e.events }
+
+// BindRuntime atomically records the selected provider candidate on the thread,
+// prompt run, and model call before provider-specific events are observed.
+func (e *databaseExecution) BindRuntime(ctx context.Context, runtime api.Model) error {
+	identity, err := threadRuntimeIdentity(runtime)
+	if err != nil {
+		return err
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	runID, runVersion, runRuntime := e.run.ID, e.run.Version, e.run.Runtime
+	runRuntime.Resolved = runtimeSelection(api.Model{
+		Name: identity.Name, Backend: identity.Backend, Effort: runtime.Effort,
+	})
+	var updatedRun *database.PromptRun
+	err = e.db.Transaction(ctx, func(tx *database.DB) error {
+		if bindErr := tx.SetSessionMetadataOnce(ctx, e.session.ID, threadRuntimeMetadataKey, identity); bindErr != nil {
+			if errors.Is(bindErr, database.ErrSessionConflict) {
+				return fmt.Errorf("%w: %v", ErrThreadRuntimeConflict, bindErr)
+			}
+			return bindErr
+		}
+		if updateErr := tx.UpdateChatModelCallRuntime(ctx, database.UpdateChatModelCallRuntimeInput{
+			ID: e.modelCallID, Model: identity.Name, Backend: string(identity.Backend), Effort: string(runtime.Effort),
+		}); updateErr != nil {
+			return updateErr
+		}
+		updatedRun, err = tx.UpdatePromptRun(ctx, database.UpdatePromptRunInput{
+			ID: runID, ExpectedVersion: runVersion, Runtime: &runRuntime,
+		})
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	e.model = identity.Name
+	e.backend = identity.Backend
+	e.run = updatedRun
+	return nil
+}
 
 func (e *databaseExecution) CallerTools() *api.CallerToolEndpoint {
 	e.mu.Lock()

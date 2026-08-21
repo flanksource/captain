@@ -160,6 +160,13 @@ type CreateChatModelCallInput struct {
 	Effort      string
 }
 
+type UpdateChatModelCallRuntimeInput struct {
+	ID      uuid.UUID
+	Model   string
+	Backend string
+	Effort  string
+}
+
 type ModelCallStatus string
 
 const (
@@ -209,6 +216,28 @@ func (db *DB) CreateChatModelCall(ctx context.Context, input CreateChatModelCall
 		return uuid.Nil, fmt.Errorf("create Captain chat model call: %w", err)
 	}
 	return record.ID, nil
+}
+
+// UpdateChatModelCallRuntime records the candidate a fallback provider actually
+// selected while the model call is still running.
+func (db *DB) UpdateChatModelCallRuntime(ctx context.Context, input UpdateChatModelCallRuntimeInput) error {
+	input.Model = strings.TrimSpace(input.Model)
+	input.Backend = strings.TrimSpace(input.Backend)
+	if input.ID == uuid.Nil || input.Model == "" || input.Backend == "" {
+		return fmt.Errorf("%w: model call ID, model, and backend are required", ErrInvalidIngest)
+	}
+	result := db.gorm.WithContext(ctx).Model(&modelCallRecord{}).
+		Where("id = ? AND status = 'running'", input.ID).
+		Updates(map[string]any{
+			"model": input.Model, "backend": input.Backend, "effort": nullableTrimmed(input.Effort),
+		})
+	if result.Error != nil {
+		return fmt.Errorf("update Captain chat model call runtime: %w", result.Error)
+	}
+	if result.RowsAffected != 1 {
+		return fmt.Errorf("update Captain chat model call runtime %s: expected one running call, updated %d", input.ID, result.RowsAffected)
+	}
+	return nil
 }
 
 func (db *DB) FinishChatModelCall(ctx context.Context, input FinishChatModelCallInput) error {
@@ -283,7 +312,9 @@ func (db *DB) FinishChatTurn(ctx context.Context, id uuid.UUID, status TurnStatu
 }
 
 type PutChatMessageInput struct {
-	SessionID         uuid.UUID
+	SessionID uuid.UUID
+	// TurnID is zero for a persisted conversation seed and nonzero for real
+	// user/assistant turn messages.
 	TurnID            uuid.UUID
 	ProviderMessageID string
 	Role              string
@@ -294,8 +325,12 @@ type PutChatMessageInput struct {
 func (db *DB) PutChatMessage(ctx context.Context, input PutChatMessageInput) error {
 	input.ProviderMessageID = strings.TrimSpace(input.ProviderMessageID)
 	input.Role = strings.TrimSpace(input.Role)
-	if input.SessionID == uuid.Nil || input.TurnID == uuid.Nil || input.ProviderMessageID == "" || input.Role == "" || !json.Valid(input.Parts) {
-		return fmt.Errorf("%w: session, turn, message ID, role, and valid parts are required", ErrInvalidIngest)
+	if input.SessionID == uuid.Nil || input.ProviderMessageID == "" || input.Role == "" || !json.Valid(input.Parts) {
+		return fmt.Errorf("%w: session, message ID, role, and valid parts are required", ErrInvalidIngest)
+	}
+	var turnID *uuid.UUID
+	if input.TurnID != uuid.Nil {
+		turnID = &input.TurnID
 	}
 	var existing messageRecord
 	err := db.gorm.WithContext(ctx).
@@ -309,7 +344,7 @@ func (db *DB) PutChatMessage(ctx context.Context, input PutChatMessageInput) err
 			return nil
 		}
 		if err := db.gorm.WithContext(ctx).Model(&messageRecord{}).Where("id = ?", existing.ID).
-			Updates(map[string]any{"role": input.Role, "parts": append(json.RawMessage(nil), input.Parts...), "turn_id": input.TurnID}).Error; err != nil {
+			Updates(map[string]any{"role": input.Role, "parts": append(json.RawMessage(nil), input.Parts...), "turn_id": turnID}).Error; err != nil {
 			return fmt.Errorf("replace Captain chat message %q: %w", input.ProviderMessageID, err)
 		}
 		return db.touchChatSession(ctx, input.SessionID)
@@ -327,7 +362,7 @@ func (db *DB) PutChatMessage(ctx context.Context, input PutChatMessageInput) err
 	}
 	now := time.Now().UTC()
 	record := messageRecord{
-		ID: uuid.New(), SessionID: input.SessionID, TurnID: &input.TurnID,
+		ID: uuid.New(), SessionID: input.SessionID, TurnID: turnID,
 		ProviderMessageID: &input.ProviderMessageID, Sequence: sequence, Role: input.Role,
 		Parts: append([]byte(nil), input.Parts...), OccurredAt: &now,
 	}
@@ -335,6 +370,61 @@ func (db *DB) PutChatMessage(ctx context.Context, input PutChatMessageInput) err
 		return fmt.Errorf("create Captain chat message: %w", err)
 	}
 	return db.touchChatSession(ctx, input.SessionID)
+}
+
+type ForkChatSessionInput struct {
+	SourceSessionID         uuid.UUID
+	ExpectedSourceUpdatedAt time.Time
+	SessionID               uuid.UUID
+	Title                   string
+	Metadata                map[string]any
+	ProviderMessageID       string
+	Role                    string
+	Parts                   json.RawMessage
+}
+
+// ForkChatSession atomically verifies that the source is idle, creates a new
+// independent aichat root, and persists its turnless transcript seed.
+func (db *DB) ForkChatSession(ctx context.Context, input ForkChatSessionInput) (*Session, error) {
+	if input.SourceSessionID == uuid.Nil || input.SessionID == uuid.Nil || input.SourceSessionID == input.SessionID {
+		return nil, fmt.Errorf("%w: distinct source and fork session IDs are required", ErrInvalidSession)
+	}
+	var fork *Session
+	err := db.Transaction(ctx, func(tx *DB) error {
+		source, err := tx.LockSessionForUpdate(ctx, input.SourceSessionID)
+		if err != nil {
+			return err
+		}
+		if source.Source != "aichat" {
+			return fmt.Errorf("%w: fork source %s has source %q", ErrSessionConflict, source.ID, source.Source)
+		}
+		if !input.ExpectedSourceUpdatedAt.IsZero() && !source.UpdatedAt.Equal(input.ExpectedSourceUpdatedAt) {
+			return fmt.Errorf("%w: fork source %s changed after its transcript was read", ErrSessionConflict, source.ID)
+		}
+		var open turnRecord
+		err = tx.gorm.WithContext(ctx).
+			Where("session_id = ? AND status = ?", source.ID, TurnStatusOpen).
+			First(&open).Error
+		if err == nil {
+			return fmt.Errorf("%w: session %s has active turn %s", ErrOpenChatTurn, source.ID, open.ID)
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("read fork source turn: %w", err)
+		}
+		var createErr error
+		fork, createErr = tx.CreateOrGetSession(ctx, CreateSessionInput{
+			ID: input.SessionID, Source: "aichat", Provider: "captain", HostID: "local",
+			Title: strings.TrimSpace(input.Title), Metadata: input.Metadata,
+		})
+		if createErr != nil {
+			return createErr
+		}
+		return tx.PutChatMessage(ctx, PutChatMessageInput{
+			SessionID: fork.ID, ProviderMessageID: input.ProviderMessageID,
+			Role: input.Role, Parts: input.Parts,
+		})
+	})
+	return fork, err
 }
 
 func (db *DB) DeleteChatSession(ctx context.Context, id uuid.UUID) error {
