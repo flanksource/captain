@@ -139,6 +139,17 @@ func newRootCommand() *cobra.Command {
 	psCmd.Long = "Detect running claude/codex agent processes (via ps + lsof), resolve each one's session id, sub-agent ids, cmux surface (from CMUX_* env vars), and last activity, then augment with cached token/cost/context data. Only currently-active sessions are listed."
 	clicky.AddNamedCommandWithContext("ps", sessionsCmd, cli.PSOptions{}, cli.RunPS).Short = psCmd.Short
 
+	// A separate namespace from `sandbox presets`, which already owns that word
+	// for container presets. Read-only: it prints the declared capability table
+	// and probes nothing.
+	permissionsCmd := &cobra.Command{
+		Use:   "permissions",
+		Short: "Inspect what each backend can do with a permissions block",
+	}
+	rootCmd.AddCommand(permissionsCmd)
+	clicky.AddNamedCommand("matrix", permissionsCmd, cli.PermissionsMatrixOptions{}, cli.RunPermissionsMatrix).Short =
+		"Print the declared permission capability matrix (settings × backends)"
+
 	sandboxCmd := &cobra.Command{
 		Use:   "sandbox",
 		Short: "Sandbox configuration tools",
