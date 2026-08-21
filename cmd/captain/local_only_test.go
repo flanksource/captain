@@ -88,4 +88,28 @@ var _ = Describe("REST executor exposure", func() {
 		Expect(routed(mux, http.MethodGet, "/api/v1/sessions")).To(BeTrue(),
 			"executor registered no routes at all; the exclusion table proves nothing")
 	})
+
+	// `permissions matrix` is deliberately NOT excluded. It reads a compile-time
+	// table, touches no host state, and answers the question a client most needs
+	// answered before it builds a permissions block — so publishing it is the
+	// point, not an oversight. This spec records that as a decision rather than
+	// leaving the absence from the exclusion table ambiguous.
+	It("routes the permission capability matrix", func() {
+		mux := newExecutorMux()
+		var found []string
+		for _, path := range []string{"/api/v1/permissions", "/api/v1/permissions/matrix"} {
+			for _, method := range []string{
+				http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete,
+			} {
+				if routed(mux, method, path) {
+					found = append(found, method+" "+path)
+				}
+			}
+		}
+		// Pinned exactly rather than "at least one": the group must publish one
+		// read and nothing else, so a future `permissions set`-style command
+		// cannot slip a mutating route in beside it unnoticed.
+		Expect(found).To(Equal([]string{"POST /api/v1/permissions/matrix"}),
+			"the declared capability matrix is read-only and is meant to be the only route this group publishes")
+	})
 })
