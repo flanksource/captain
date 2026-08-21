@@ -236,6 +236,19 @@ type Result[T any] struct {
 // Verify hooks runs generate-only.
 func (r *Runner[T]) Run(ctx context.Context) (Result[T], error) {
 	var zero Result[T]
+	// The spec's budget.timeout bounds the whole run, not one model call. Only
+	// pkg/cli applied it before, so every caller driving the Runner directly
+	// (gavel's `pr status --ai-fix`) ran unbounded and a wedged turn could hang
+	// indefinitely with a 45m ceiling declared and silently ignored.
+	timeout, err := r.Request.Budget.ParseTimeout()
+	if err != nil {
+		return zero, fmt.Errorf("agent: %w", err)
+	}
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
 	scope := r.Scope
 	if scope == "" {
 		scope = ScopeAll
