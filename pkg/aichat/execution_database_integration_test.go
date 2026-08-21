@@ -14,6 +14,7 @@ import (
 	mcpclient "github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
+	"gorm.io/gorm"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -331,7 +332,7 @@ var _ = Describe("Database execution authority", func() {
 		Expect(sessionRecord.ActivityState).To(Equal(database.SessionActivityIdle))
 	})
 
-	It("keeps an interrupted API run waiting for its durable approvals", func(ctx SpecContext) {
+	It("keeps an approval pending when its prompt run changes before the claim", func(ctx SpecContext) {
 		testDB := dbtest.ForGinkgo(dbtest.Options{Name: "captain_aichat_waiting_approval"})
 		db, err := database.Open(ctx, database.WithDSN(testDB.DSN()), database.WithMigrations())
 		Expect(err).NotTo(HaveOccurred())
@@ -381,6 +382,58 @@ var _ = Describe("Database execution authority", func() {
 		requests, err := db.ListTurnRequests(ctx, database.TurnRequestFilter{SessionID: run.SessionID, PromptRunID: &run.ID})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(requests).To(HaveLen(1))
+
+		versionRead := make(chan struct{})
+		continueResolution := make(chan struct{})
+		var intercepted atomic.Bool
+		const callback = "test:pause_approval_after_prompt_run_read"
+		Expect(db.Gorm().Callback().Query().After("gorm:query").Register(callback, func(tx *gorm.DB) {
+			if tx.Statement.Table == "captain_prompt_runs" && intercepted.CompareAndSwap(false, true) {
+				close(versionRead)
+				<-continueResolution
+			}
+		})).To(Succeed())
+		DeferCleanup(func() {
+			Expect(db.Gorm().Callback().Query().Remove(callback)).To(Succeed())
+		})
+		DeferCleanup(func() {
+			select {
+			case <-continueResolution:
+			default:
+				close(continueResolution)
+			}
+		})
+		type resolutionResult struct {
+			continuation *aichat.ApprovalContinuation
+			err          error
+		}
+		result := make(chan resolutionResult, 1)
+		go func() {
+			continuation, resolveErr := authority.ResolveToolApproval(ctx, aichat.ToolApprovalResolution{
+				ThreadID: run.SessionID.String(), ApprovalID: requests[0].ID.String(), Approved: true,
+			})
+			result <- resolutionResult{continuation: continuation, err: resolveErr}
+		}()
+		Eventually(versionRead).Should(BeClosed())
+		Expect(db.Transaction(ctx, func(tx *database.DB) error {
+			if setErr := tx.Gorm().Exec("SET LOCAL captain.suppress_session_change = 'on'").Error; setErr != nil {
+				return setErr
+			}
+			return tx.Gorm().Exec(`
+				UPDATE captain_prompt_runs
+				SET current_iteration = current_iteration + 1
+				WHERE id = ?
+			`, run.ID).Error
+		})).To(Succeed())
+		close(continueResolution)
+		var conflict resolutionResult
+		Eventually(result).Should(Receive(&conflict))
+		Expect(errors.Is(conflict.err, database.ErrPromptRunConflict)).To(BeTrue())
+		Expect(conflict.continuation).To(BeNil())
+		pending, err := db.GetTurnRequest(ctx, requests[0].ID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(pending.State).To(Equal(database.TurnRequestStatePending))
+
 		continuation, err := authority.ResolveToolApproval(ctx, aichat.ToolApprovalResolution{
 			ThreadID: run.SessionID.String(), ApprovalID: requests[0].ID.String(), Approved: true,
 		})
