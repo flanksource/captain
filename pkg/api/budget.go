@@ -1,6 +1,9 @@
 package api
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // Budget caps a run's resource consumption. The zero value is unbounded.
 type Budget struct {
@@ -30,5 +33,26 @@ func (b Budget) Validate() error {
 	if b.MaxTurns < 0 || b.MaxTurns > 100 {
 		return fmt.Errorf("invalid maxTurns %d (valid: 0-100, 0=backend default)", b.MaxTurns)
 	}
+	if _, err := b.ParseTimeout(); err != nil {
+		return err
+	}
 	return nil
+}
+
+// ParseTimeout resolves Timeout to a duration. Zero means "no bound declared" —
+// the caller's own default applies. An unparseable or non-positive value is an
+// error rather than a silent fallback: a declared ceiling that quietly does
+// nothing is worse than no ceiling, because it reads as enforced.
+func (b Budget) ParseTimeout() (time.Duration, error) {
+	if b.Timeout == "" {
+		return 0, nil
+	}
+	timeout, err := time.ParseDuration(b.Timeout)
+	if err != nil {
+		return 0, fmt.Errorf("invalid budget timeout %q: %w", b.Timeout, err)
+	}
+	if timeout <= 0 {
+		return 0, fmt.Errorf("invalid budget timeout %q (must be > 0)", b.Timeout)
+	}
+	return timeout, nil
 }

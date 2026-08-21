@@ -242,6 +242,10 @@ func (c *CodexAppServer) ensureStarted(ctx context.Context) error {
 	sup := newCodexAppServerProcess(c.cfg).WithStdioPipe().Supervise(exec.SuperviseOptions{
 		// No restart: a crash surfaces as EventError, never a silent retry.
 		RestartPolicy: exec.RestartNo,
+		// The app-server outlives any wait its caller makes, so it must not be
+		// counted by a global task drain — see the claude-agent provider for the
+		// deadlock this avoids.
+		Task: exec.SupervisedTaskOptions{Background: true},
 		OnStarted: func(p *exec.Process) {
 			process = p
 			rpc := jsonrpc.New(p.Stdin(), p.StdoutReader(), true, jsonrpc.Handlers{

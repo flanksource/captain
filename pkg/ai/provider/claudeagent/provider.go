@@ -361,6 +361,13 @@ func (p *Provider) provisionAndSupervise(req ai.Request) error {
 
 	sup := proc.Supervise(exec.SuperviseOptions{
 		RestartPolicy: exec.RestartNo,
+		// One query() session stays alive for the whole run, so this process
+		// outlives any wait its caller makes. Left as a foreground task it
+		// deadlocks every global task drain issued mid-run — a commit hook
+		// generating an AI message between turns is the reported case: the drain
+		// blocks the work that would send `shutdown`, and the process keeps the
+		// drain from returning. Only Close stops it.
+		Task: exec.SupervisedTaskOptions{Background: true},
 		OnStarted: func(child *exec.Process) {
 			p.procMu.Lock()
 			p.proc = child
