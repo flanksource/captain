@@ -2,7 +2,7 @@ package tools
 
 import "strings"
 
-// ToolCatalog is the GET /api/chat/tools payload.
+// ToolCatalog groups the frontend-facing metadata for available tools.
 type ToolCatalog struct {
 	Tools []ToolCatalogEntry `json:"tools"`
 }

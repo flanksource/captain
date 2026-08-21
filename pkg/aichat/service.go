@@ -96,7 +96,6 @@ func (s *Service) Handler() http.Handler {
 	mux.HandleFunc("POST /api/chat", s.handleChat)
 	mux.HandleFunc("GET /api/chat/models", s.handleModels)
 	mux.HandleFunc("GET /api/chat/runtimes", s.handleRuntimes)
-	mux.HandleFunc("GET /api/chat/tools", s.handleTools)
 	s.registerThreadRoutes(mux)
 	return mux
 }
@@ -140,21 +139,6 @@ func (s *Service) handleModels(w http.ResponseWriter, request *http.Request) {
 	annotateProfileModels(profile.Resolved, models)
 	if err := writeJSON(w, http.StatusOK, models); err != nil {
 		serviceLog.Errorf("write chat models response: %v", err)
-	}
-}
-
-func (s *Service) handleTools(w http.ResponseWriter, request *http.Request) {
-	if _, err := s.runtimeProfile(request.Context()); err != nil {
-		http.Error(w, fmt.Sprintf("load chat runtime profile: %v", err), http.StatusInternalServerError)
-		return
-	}
-	set, err := s.loadTools(request.Context())
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if err := writeJSON(w, http.StatusOK, aitools.ToolCatalog{Tools: set.Catalog}); err != nil {
-		serviceLog.Errorf("write chat tools response: %v", err)
 	}
 }
 

@@ -263,44 +263,18 @@ var _ = Describe("Captain aichat service", func() {
 		Expect(resolver.configs).To(BeEmpty())
 	})
 
-	It("serves models and tools from injected Captain seams", func() {
+	It("serves models from the injected Captain seam", func() {
 		resolver := &fakeResolver{models: aichat.ModelCatalogResponse{{
 			ID: "openai/test-model", Provider: "openai", Label: "Test", Configured: true,
 			Availability: api.Available(),
 			Runtime:      api.Model{Name: "test-model", Backend: api.BackendOpenAI},
 		}}}
-		service := aichat.NewService(aichat.ServiceOptions{
-			Resolver: resolver,
-			Tools: aichat.ToolProviderFunc(func(context.Context) (aichat.ToolSet, error) {
-				return aichat.ToolSet{Definitions: []api.ToolDefinition{{
-					Name: "invoice_get", Group: "billing", Description: "Get invoice",
-					InputSchema: map[string]any{"type": "object"},
-					Handler:     func(context.Context, map[string]any) (any, error) { return nil, nil },
-				}}}, nil
-			}),
-			MCP: aichat.ToolProviderFunc(func(context.Context) (aichat.ToolSet, error) {
-				return aichat.ToolSet{Definitions: []api.ToolDefinition{{
-					Name: "docs_search", Group: "docs", Description: "Search documentation",
-					Handler: func(context.Context, map[string]any) (any, error) { return nil, nil },
-				}}}, nil
-			}),
-		})
+		service := aichat.NewService(aichat.ServiceOptions{Resolver: resolver})
 
 		models := httptest.NewRecorder()
 		service.Handler().ServeHTTP(models, httptest.NewRequest(http.MethodGet, "/api/chat/models", nil))
 		Expect(models.Code).To(Equal(http.StatusOK))
 		Expect(models.Body.String()).To(MatchJSON(`[{"id":"openai/test-model","provider":"openai","label":"Test","runtime":{"model":"test-model","backend":"openai"},"reasoning":false,"temperature":false,"configured":true,"availability":{"state":"available"},"contextWindow":0,"inputMediaTypes":null}]`))
-
-		tools := httptest.NewRecorder()
-		service.Handler().ServeHTTP(tools, httptest.NewRequest(http.MethodGet, "/api/chat/tools", nil))
-		Expect(tools.Code).To(Equal(http.StatusOK))
-		var catalog aichat.ToolCatalogResponse
-		Expect(json.Unmarshal(tools.Body.Bytes(), &catalog)).To(Succeed())
-		Expect(catalog.Tools).To(HaveLen(2))
-		Expect(catalog.Tools[0].Name).To(Equal("invoice_get"))
-		Expect(catalog.Tools[0].Source).To(Equal("custom"))
-		Expect(catalog.Tools[1].Name).To(Equal("docs_search"))
-		Expect(catalog.Tools[1].Source).To(Equal("mcp"))
 	})
 
 	It("maps the HTTP request directly into api.Spec and streams provider events", func() {

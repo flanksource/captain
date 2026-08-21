@@ -166,7 +166,6 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/openapi.json", handleCaptainOpenAPI(openAPISpec, false))
 	mux.Handle("GET /api/openapi.yaml", handleCaptainOpenAPI(openAPISpec, true))
-	mux.HandleFunc("GET /api/entities", rpcServer.HandleEntities)
 	mux.HandleFunc("GET /health", rpcServer.HandleHealth)
 	rpcServer.RegisterExecutionRoutes(mux)
 	mux.HandleFunc("POST /api/captain/chat/threads/from-agent", handleThreadFromAgent(threadStore))
@@ -174,7 +173,6 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	mux.HandleFunc("GET /api/captain/projects", handleProjects())
 	mux.HandleFunc("GET /api/captain/sessions/live", handleSessionsLive())
 	mux.HandleFunc("GET /api/captain/sessions/throughput", handleSessionsThroughput())
-	mux.HandleFunc("GET /api/captain/sessions/{id}", handleSessionGet())
 	mux.HandleFunc("POST /api/captain/hooks/{provider}", handleMonitorHookEvent())
 	mux.HandleFunc("GET /api/captain/ai/permissions/catalog", handlePermissionCatalog(cwd))
 	mux.HandleFunc("GET /api/captain/ai/prompt/schema", handlePromptSchema())
@@ -195,14 +193,20 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	mux.Handle("POST /api/captain/prompt/runs/{runId}/interrupt", handlePromptRunInterrupt(promptChats))
 	mux.Handle("POST /api/captain/prompt/runs/{runId}/stop", handlePromptRunStop(promptRuns, promptChats))
 	mux.Handle("POST /api/captain/sessions/{id}/message", handleSessionMessage(promptChats))
-	mux.Handle("/api/chat", chat.Handler())
-	mux.Handle("/api/chat/", chat.Handler())
+	chatHandler := chat.Handler()
+	mux.Handle("/api/chat", chatHandler)
+	mux.Handle("/api/chat/", chatHandler)
 
 	uiHandler, err := newCaptainWebappHandler()
 	if err != nil {
 		return err
 	}
-	mux.Handle("/", uiHandler)
+	// Keep API matching separate so unknown paths and method mismatches cannot
+	// fall through to the SPA's client-side routing fallback.
+	root := http.NewServeMux()
+	root.Handle("/api/", mux)
+	root.Handle("/health", mux)
+	root.Handle("/", uiHandler)
 
 	// Export the serve URL so every captain-launched agent (and the hook
 	// receiver subprocesses its sessions spawn) delivers hook events to this
@@ -213,7 +217,7 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	httpSrv := &http.Server{
 		Addr: addr,
 		Handler: rpchttp.TimingMiddleware(
-			DatabaseContextMiddleware(PromptDirsMiddleware(mux, opts.PromptDirs))),
+			DatabaseContextMiddleware(PromptDirsMiddleware(root, opts.PromptDirs))),
 		ReadTimeout: 30 * time.Second,
 		// /api/chat streams SSE; a fixed write timeout truncates long turns.
 		IdleTimeout: 60 * time.Second,

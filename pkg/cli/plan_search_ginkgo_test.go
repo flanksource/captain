@@ -81,3 +81,7 @@ func (s *planListStore) ListSessionSummaries(
 	s.filters = append(s.filters, filter)
 	return s.pages[filter.Cursor], nil
 }
+
+func (*planListStore) ListPlans(context.Context, database.PlanFilter) ([]database.Plan, error) {
+	return nil, nil
+}
