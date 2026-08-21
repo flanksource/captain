@@ -3,7 +3,6 @@ package aichat
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -125,6 +124,25 @@ func (a *DatabaseExecutionAuthority) ResolveToolApproval(
 	ctx context.Context,
 	resolution ToolApprovalResolution,
 ) (*ApprovalContinuation, error) {
+	var continuation *ApprovalContinuation
+	err := a.db.Transaction(ctx, func(tx *database.DB) error {
+		var resolveErr error
+		continuation, resolveErr = (&DatabaseExecutionAuthority{db: tx}).resolveToolApproval(ctx, resolution)
+		return resolveErr
+	})
+	if err != nil {
+		return nil, err
+	}
+	if continuation != nil {
+		continuation.Execution.(*databaseExecution).db = a.db
+	}
+	return continuation, nil
+}
+
+func (a *DatabaseExecutionAuthority) resolveToolApproval(
+	ctx context.Context,
+	resolution ToolApprovalResolution,
+) (*ApprovalContinuation, error) {
 	sessionID, err := uuid.Parse(resolution.ThreadID)
 	if err != nil {
 		return nil, fmt.Errorf("chat thread ID %q is not a UUID: %w", resolution.ThreadID, err)
@@ -199,25 +217,18 @@ func (a *DatabaseExecutionAuthority) ResolveToolApproval(
 	phase := database.PromptRunPhaseGenerate
 	var resumed *database.PromptRun
 	var modelCallID uuid.UUID
-	err = a.db.Transaction(ctx, func(tx *database.DB) error {
-		var updateErr error
-		resumed, updateErr = tx.UpdatePromptRun(ctx, database.UpdatePromptRunInput{
-			ID: run.ID, ExpectedVersion: run.Version, State: &running, Phase: &phase,
-			ClearApprovalState: true, ClearProviderCheckpoint: true,
-		})
-		if updateErr != nil {
-			return updateErr
-		}
-		modelCallID, updateErr = tx.CreateChatModelCall(ctx, database.CreateChatModelCallInput{
-			TurnID: turn.ID, PromptRunID: run.ID, Model: spec.Name,
-			Backend: string(spec.Backend), Effort: string(spec.Effort),
-		})
-		return updateErr
+	resumed, err = a.db.UpdatePromptRun(ctx, database.UpdatePromptRunInput{
+		ID: run.ID, ExpectedVersion: run.Version, State: &running, Phase: &phase,
+		ClearApprovalState: true, ClearProviderCheckpoint: true,
 	})
 	if err != nil {
-		if errors.Is(err, database.ErrPromptRunConflict) {
-			return nil, nil
-		}
+		return nil, err
+	}
+	modelCallID, err = a.db.CreateChatModelCall(ctx, database.CreateChatModelCallInput{
+		TurnID: turn.ID, PromptRunID: run.ID, Model: spec.Name,
+		Backend: string(spec.Backend), Effort: string(spec.Effort),
+	})
+	if err != nil {
 		return nil, err
 	}
 	sessionRecord, err := a.db.GetSession(ctx, sessionID)
