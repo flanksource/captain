@@ -21,7 +21,7 @@ func (db *DB) upsertTurnCalls(ctx context.Context, calls []modelCallRecord) erro
 			"model", "backend", "effort", "stop_reason",
 			"input_tokens", "output_tokens", "reasoning_tokens", "cache_read_tokens", "cache_write_tokens",
 			"context_tokens", "context_window_tokens",
-			"input_cost", "output_cost", "cache_read_cost", "cache_write_cost",
+			"input_cost", "output_cost", "reasoning_cost", "cache_read_cost", "cache_write_cost", "currency",
 			"started_at", "ended_at",
 		}),
 	}).CreateInBatches(&calls, ingestBatchSize).Error

@@ -52,6 +52,7 @@ SELECT
   COALESCE(call_stats.cache_write_tokens, 0) AS cache_write_tokens,
   COALESCE(call_stats.input_tokens, 0)
     + COALESCE(call_stats.output_tokens, 0)
+    + COALESCE(call_stats.reasoning_tokens, 0)
     + COALESCE(call_stats.cache_read_tokens, 0)
     + COALESCE(call_stats.cache_write_tokens, 0) AS total_tokens,
   COALESCE(call_stats.cost_usd, 0::numeric) AS cost_usd,
@@ -59,7 +60,23 @@ SELECT
   plan_stats.latest_plan_id,
   plan_stats.latest_plan_approval_state,
   plan_stats.latest_plan_revision,
-  r.execution_session_id
+  r.execution_session_id,
+  -- Appended after initial release: CREATE OR REPLACE VIEW only allows adding
+  -- columns at the end, so later additions must stay below this line.
+  r.turn_id,
+  r.runtime,
+  r.approval_state,
+  r.provider_checkpoint_codec,
+  r.provider_checkpoint_version,
+  r.provider_checkpoint,
+  -- cost_usd resolves provider-reported cost or estimates against Captain's
+  -- list-price reconstruction per call; these components preserve provenance.
+  COALESCE(call_stats.provider_cost_usd, 0::numeric) AS provider_cost_usd,
+  COALESCE(call_stats.input_cost, 0::numeric) AS input_cost,
+  COALESCE(call_stats.output_cost, 0::numeric) AS output_cost,
+  COALESCE(call_stats.reasoning_cost, 0::numeric) AS reasoning_cost,
+  COALESCE(call_stats.cache_read_cost, 0::numeric) AS cache_read_cost,
+  COALESCE(call_stats.cache_write_cost, 0::numeric) AS cache_write_cost
 FROM public.captain_prompt_runs r
 LEFT JOIN LATERAL (
   SELECT
@@ -85,12 +102,22 @@ LEFT JOIN LATERAL (
     COALESCE(sum(c.cache_read_tokens), 0)::bigint AS cache_read_tokens,
     COALESCE(sum(c.cache_write_tokens), 0)::bigint AS cache_write_tokens,
     COALESCE(sum(
-      c.input_cost
-      + c.output_cost
-      + c.reasoning_cost
-      + c.cache_read_cost
-      + c.cache_write_cost
-    ) FILTER (WHERE upper(c.currency) = 'USD'), 0::numeric) AS cost_usd
+      CASE
+        WHEN c.provider_cost_usd > 0 THEN c.provider_cost_usd
+        ELSE c.input_cost
+          + c.output_cost
+          + c.reasoning_cost
+          + c.cache_read_cost
+          + c.cache_write_cost
+      END
+    ) FILTER (WHERE upper(c.currency) = 'USD'), 0::numeric) AS cost_usd,
+    COALESCE(sum(c.provider_cost_usd)
+      FILTER (WHERE upper(c.currency) = 'USD'), 0::numeric) AS provider_cost_usd,
+    COALESCE(sum(c.input_cost) FILTER (WHERE upper(c.currency) = 'USD'), 0::numeric) AS input_cost,
+    COALESCE(sum(c.output_cost) FILTER (WHERE upper(c.currency) = 'USD'), 0::numeric) AS output_cost,
+    COALESCE(sum(c.reasoning_cost) FILTER (WHERE upper(c.currency) = 'USD'), 0::numeric) AS reasoning_cost,
+    COALESCE(sum(c.cache_read_cost) FILTER (WHERE upper(c.currency) = 'USD'), 0::numeric) AS cache_read_cost,
+    COALESCE(sum(c.cache_write_cost) FILTER (WHERE upper(c.currency) = 'USD'), 0::numeric) AS cache_write_cost
   FROM public.captain_model_calls c
   WHERE c.prompt_run_id = r.id
 ) call_stats ON true
@@ -112,4 +139,4 @@ LEFT JOIN LATERAL (
 ) plan_stats ON true;
 
 COMMENT ON VIEW public.captain_prompt_run_overview IS
-  'Prompt-run control-plane state with iteration, plan, usage, cost and verification summaries.';
+  'Prompt-run control-plane state with iteration, plan, usage, provider-reported/list-price cost, and verification summaries.';

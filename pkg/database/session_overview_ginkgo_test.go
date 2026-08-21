@@ -67,20 +67,34 @@ var _ = Describe("Session overview aggregates", func() {
 			VALUES (?, ?, 0, 'ended'), (?, ?, 1, 'ended'), (?, ?, 0, 'ended')`,
 			turnOne, rootID, turnTwo, rootID, otherTurn, otherID,
 		).Error).NotTo(HaveOccurred())
+		promptRunID := uuid.MustParse("00000000-0000-0000-0000-000000003101")
+		checkpoint := []byte("provider-checkpoint-v1")
+		Expect(db.Gorm().Exec(`
+			INSERT INTO captain_prompt_runs
+			  (id, session_id, turn_id, root_session_id, state, phase, runtime, approval_state,
+			   provider_checkpoint_codec, provider_checkpoint_version, provider_checkpoint)
+			VALUES (?, ?, ?, ?, 'succeeded', 'finished', ?::jsonb, ?::jsonb, 'test-codec', 1, ?)`,
+			promptRunID, rootID, turnOne, rootID, `{"mode":"run"}`, `{"decision":"allow"}`, checkpoint,
+		).Error).NotTo(HaveOccurred())
+		Expect(db.Gorm().Exec(`
+			INSERT INTO captain_prompt_runs (session_id, root_session_id, state, phase)
+			VALUES (?, ?, 'failed', 'finished'), (?, ?, 'succeeded', 'finished')`,
+			rootID, rootID, otherID, otherID,
+		).Error).NotTo(HaveOccurred())
 		Expect(db.Gorm().Exec(`
 			INSERT INTO captain_model_calls
-			  (turn_id, call_index, model, backend, effort, input_tokens, output_tokens,
+			  (turn_id, call_index, prompt_run_id, model, backend, effort, input_tokens, output_tokens,
 			   reasoning_tokens, cache_read_tokens, cache_write_tokens, context_tokens,
 			   context_window_tokens, input_cost, output_cost, reasoning_cost,
-			   cache_read_cost, cache_write_cost, currency, started_at, ended_at)
+			   cache_read_cost, cache_write_cost, provider_cost_usd, currency, started_at, ended_at)
 			VALUES
-			  (?, 0, 'model-old', 'codex', 'low', 10, 4, 2, 3, 1, 20, 100,
-			   0.10, 0.04, 0.02, 0.03, 0.01, 'USD', '2026-07-16 10:00:00+00', '2026-07-16 10:01:00+00'),
-			  (?, 0, 'model-latest', 'codex', 'high', 20, 8, 4, 6, 2, 75, 100,
-			   0.20, 0.08, 0.04, 0.06, 0.02, 'USD', '2026-07-16 11:00:00+00', '2026-07-16 11:01:00+00'),
-			  (?, 1, 'model-eur', 'codex', NULL, 100, 50, 25, 10, 5, 50, 100,
-			   9, 9, 9, 9, 9, 'EUR', '2026-07-16 09:00:00+00', '2026-07-16 09:01:00+00')`,
-			turnOne, turnTwo, turnTwo,
+			  (?, 0, ?, 'model-old', 'codex', 'low', 10, 4, 2, 3, 1, 20, 100,
+			   0.10, 0.04, 0.02, 0.03, 0.01, 0.25, 'USD', '2026-07-16 10:00:00+00', '2026-07-16 10:01:00+00'),
+			  (?, 0, ?, 'model-latest', 'codex', 'high', 20, 8, 4, 6, 2, 75, 100,
+			   0.20, 0.08, 0.04, 0.06, 0.02, 0, 'USD', '2026-07-16 11:00:00+00', '2026-07-16 11:01:00+00'),
+			  (?, 1, ?, 'model-eur', 'codex', NULL, 100, 50, 25, 10, 5, 50, 100,
+			   9, 9, 9, 9, 9, 9, 'EUR', '2026-07-16 09:00:00+00', '2026-07-16 09:01:00+00')`,
+			turnOne, promptRunID, turnTwo, promptRunID, turnTwo, promptRunID,
 		).Error).NotTo(HaveOccurred())
 
 		Expect(db.Gorm().Exec(`
@@ -97,11 +111,6 @@ var _ = Describe("Session overview aggregates", func() {
 			INSERT INTO captain_events (session_id, kind)
 			VALUES (?, 'assistant.delta'), (?, 'tool.completed'), (?, 'other-session')`,
 			rootID, rootID, otherID,
-		).Error).NotTo(HaveOccurred())
-		Expect(db.Gorm().Exec(`
-			INSERT INTO captain_prompt_runs (session_id, root_session_id, state, phase)
-			VALUES (?, ?, 'succeeded', 'finished'), (?, ?, 'failed', 'finished'), (?, ?, 'succeeded', 'finished')`,
-			rootID, rootID, rootID, rootID, otherID, otherID,
 		).Error).NotTo(HaveOccurred())
 		Expect(db.Gorm().Exec(`
 			INSERT INTO captain_plans (source_session_id, title)
@@ -195,8 +204,86 @@ var _ = Describe("Session overview aggregates", func() {
 			ContextTokens: 75, ContextWindowTokens: 100, ContextFreePercent: 25,
 			InputTokens: 130, OutputTokens: 62, ReasoningTokens: 31,
 			CacheReadTokens: 19, CacheWriteTokens: 8, TotalTokens: 219,
-			CostUSD: 0.60,
+			CostUSD: 0.65,
 		}))
+
+		turns, err := db.ListThreadTurns(ctx, rootID)
+		Expect(err).NotTo(HaveOccurred())
+		var turnCost float64
+		for _, turn := range turns {
+			turnCost += turn.CostUSD
+		}
+		agents, err := db.ListThreadAgents(ctx, rootID)
+		Expect(err).NotTo(HaveOccurred())
+		var agentCost float64
+		for _, agent := range agents {
+			agentCost += agent.CostUSD
+		}
+		costs, err := db.ListThreadCosts(ctx, rootID)
+		Expect(err).NotTo(HaveOccurred())
+		var groupedCost float64
+		for _, cost := range costs {
+			if cost.Currency == "USD" {
+				groupedCost += cost.TotalCost
+			}
+		}
+		page, err := db.ListSessionSummaries(ctx, SessionListFilter{RootsOnly: true, Limit: 10})
+		Expect(err).NotTo(HaveOccurred())
+		var listCost float64
+		for _, row := range page.Rows {
+			if row.ID == rootID {
+				listCost = row.CostUSD
+			}
+		}
+
+		var promptOverview struct {
+			TurnID                    uuid.UUID
+			Runtime                   string
+			ApprovalState             string
+			ProviderCheckpointCodec   string
+			ProviderCheckpointVersion int
+			ProviderCheckpoint        []byte
+			TotalTokens               int64
+			CostUSD                   float64
+			ProviderCostUSD           float64
+			InputCost                 float64
+			OutputCost                float64
+			ReasoningCost             float64
+			CacheReadCost             float64
+			CacheWriteCost            float64
+		}
+		Expect(db.Gorm().Raw(`
+			SELECT turn_id, runtime::text AS runtime, approval_state::text AS approval_state,
+			  provider_checkpoint_codec, provider_checkpoint_version, provider_checkpoint,
+			  total_tokens, cost_usd, provider_cost_usd, input_cost, output_cost,
+			  reasoning_cost, cache_read_cost, cache_write_cost
+			FROM captain_prompt_run_overview
+			WHERE id = ?`, promptRunID,
+		).Scan(&promptOverview).Error).NotTo(HaveOccurred())
+		Expect(promptOverview.TurnID).To(Equal(turnOne))
+		Expect(promptOverview.Runtime).To(MatchJSON(`{"mode":"run"}`))
+		Expect(promptOverview.ApprovalState).To(MatchJSON(`{"decision":"allow"}`))
+		Expect(promptOverview.ProviderCheckpointCodec).To(Equal("test-codec"))
+		Expect(promptOverview.ProviderCheckpointVersion).To(Equal(1))
+		Expect(promptOverview.ProviderCheckpoint).To(Equal(checkpoint))
+		Expect(promptOverview.TotalTokens).To(Equal(int64(250)), "reasoning belongs in prompt-run total tokens")
+		Expect(promptOverview.ProviderCostUSD).To(BeNumerically("~", 0.25, 1e-9))
+		Expect(promptOverview.InputCost).To(BeNumerically("~", 0.30, 1e-9))
+		Expect(promptOverview.OutputCost).To(BeNumerically("~", 0.12, 1e-9))
+		Expect(promptOverview.ReasoningCost).To(BeNumerically("~", 0.06, 1e-9))
+		Expect(promptOverview.CacheReadCost).To(BeNumerically("~", 0.09, 1e-9))
+		Expect(promptOverview.CacheWriteCost).To(BeNumerically("~", 0.03, 1e-9))
+
+		for surface, cost := range map[string]float64{
+			"session overview": overview.CostUSD,
+			"session turns":    turnCost,
+			"session agents":   agentCost,
+			"session costs":    groupedCost,
+			"session list":     listCost,
+			"prompt run":       promptOverview.CostUSD,
+		} {
+			Expect(cost).To(BeNumerically("~", 0.65, 1e-9), surface)
+		}
 
 		var securityBarrier bool
 		Expect(db.Gorm().Raw(`SELECT 'security_barrier=true' = ANY(COALESCE(reloptions, '{}')) FROM pg_class

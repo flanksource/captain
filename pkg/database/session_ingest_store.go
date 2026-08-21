@@ -89,6 +89,7 @@ type modelCallRecord struct {
 	CacheReadCost       float64    `gorm:"column:cache_read_cost"`
 	CacheWriteCost      float64    `gorm:"column:cache_write_cost"`
 	ProviderCostUSD     float64    `gorm:"column:provider_cost_usd"`
+	Currency            string     `gorm:"column:currency"`
 	StartedAt           *time.Time `gorm:"column:started_at"`
 	EndedAt             *time.Time `gorm:"column:ended_at"`
 }
@@ -159,8 +160,10 @@ type IngestModelCall struct {
 	ContextWindowTokens int64
 	InputCost           float64
 	OutputCost          float64
+	ReasoningCost       float64
 	CacheReadCost       float64
 	CacheWriteCost      float64
+	Currency            string
 	StartedAt           *time.Time
 	EndedAt             *time.Time
 }
@@ -477,14 +480,19 @@ func turnCallRecord(turnID uuid.UUID, call IngestModelCall) modelCallRecord {
 	if backend == "" {
 		backend = "unknown"
 	}
+	currency := strings.ToUpper(strings.TrimSpace(call.Currency))
+	if currency == "" {
+		currency = "USD"
+	}
 	return modelCallRecord{
 		ID: uuid.New(), TurnID: turnID, CallIndex: 0, Model: model, Backend: backend,
 		Effort: nullableTrimmed(call.Effort), Status: "succeeded", StopReason: nullableTrimmed(call.StopReason),
 		InputTokens: call.InputTokens, OutputTokens: call.OutputTokens, ReasoningTokens: call.ReasoningTokens,
 		CacheReadTokens: call.CacheReadTokens, CacheWriteTokens: call.CacheWriteTokens,
 		ContextTokens: call.ContextTokens, ContextWindowTokens: call.ContextWindowTokens,
-		InputCost: call.InputCost, OutputCost: call.OutputCost,
+		InputCost: call.InputCost, OutputCost: call.OutputCost, ReasoningCost: call.ReasoningCost,
 		CacheReadCost: call.CacheReadCost, CacheWriteCost: call.CacheWriteCost,
+		Currency:  currency,
 		StartedAt: call.StartedAt, EndedAt: call.EndedAt,
 	}
 }

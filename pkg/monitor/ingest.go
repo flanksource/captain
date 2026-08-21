@@ -303,8 +303,9 @@ func unifiedIngestInput(s *session.Session, backend string, sequence func(sessio
 				InputTokens:  int64(turn.Usage.InputTokens),
 				OutputTokens: int64(turn.Usage.OutputTokens), ReasoningTokens: int64(turn.Usage.ReasoningTokens),
 				CacheReadTokens: int64(turn.Usage.CacheReadTokens), CacheWriteTokens: int64(turn.Usage.CacheWriteTokens),
-				InputCost: turn.Cost.InputCost, OutputCost: turn.Cost.OutputCost,
+				InputCost: turn.Cost.InputCost, OutputCost: turn.Cost.OutputCost, ReasoningCost: turn.Cost.ReasoningCost,
 				CacheReadCost: turn.Cost.CacheReadCost, CacheWriteCost: turn.Cost.CacheWriteCost,
+				Currency:  "USD",
 				StartedAt: turn.StartedAt, EndedAt: turn.EndedAt,
 			},
 		}
