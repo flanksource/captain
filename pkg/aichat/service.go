@@ -483,17 +483,19 @@ func enforceThreadRuntime(thread *Thread, requested api.Model) error {
 	if thread == nil || thread.Runtime == nil {
 		return nil
 	}
-	identity, err := threadRuntimeIdentity(requested)
-	if err != nil {
-		return err
+	for _, candidate := range requested.Candidates() {
+		identity, err := threadRuntimeIdentity(candidate)
+		if err != nil {
+			return err
+		}
+		if !sameThreadRuntime(*thread.Runtime, identity) {
+			return requestError{status: http.StatusConflict, text: fmt.Sprintf(
+				"chat session runtime is locked to %s/%s, not %s/%s; fork the session to use a different model or backend",
+				thread.Runtime.Backend, thread.Runtime.Name, identity.Backend, identity.Name,
+			)}
+		}
 	}
-	if sameThreadRuntime(*thread.Runtime, identity) {
-		return nil
-	}
-	return requestError{status: http.StatusConflict, text: fmt.Sprintf(
-		"chat session runtime is locked to %s/%s, not %s/%s; fork the session to use a different model or backend",
-		thread.Runtime.Backend, thread.Runtime.Name, identity.Backend, identity.Name,
-	)}
+	return nil
 }
 
 func providerRuntime(provider api.Provider, configured api.Model) api.Model {
