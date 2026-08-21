@@ -134,6 +134,7 @@ tasks:
     deps: [build]
     cmds:
       - PATH="$PWD/.bin:$PATH" gavel fixtures pkg/cli/testdata/history_test.md
+      - PATH="$PWD/.bin:$PATH" gavel fixtures pkg/cli/testdata/permissions_matrix_test.md
 
   install:
     desc: Build and install captain to the default Go bin
