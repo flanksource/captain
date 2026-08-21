@@ -342,6 +342,10 @@ func (db *DB) ResolveToolApprovalRequest(
 	now := time.Now().UTC()
 	result := db.gorm.WithContext(ctx).Model(&turnRequestRecord{}).
 		Where("id = ? AND state = 'pending'", pending.ID).
+		Where(`credential_id IS NOT NULL OR EXISTS (
+			SELECT 1 FROM captain_prompt_runs run
+			WHERE run.id = captain_turn_requests.prompt_run_id AND run.state = 'waiting'
+		)`).
 		Where(`credential_id IS NULL OR EXISTS (
 			SELECT 1 FROM captain_session_mcp_credentials credential
 			WHERE credential.id = captain_turn_requests.credential_id
@@ -356,6 +360,9 @@ func (db *DB) ResolveToolApprovalRequest(
 		return nil, fmt.Errorf("resolve tool approval request: %w", result.Error)
 	}
 	if result.RowsAffected == 0 {
+		if pending.CredentialID == nil {
+			return nil, fmt.Errorf("%w: approval %s cannot be resolved before its prompt run is waiting", ErrTurnRequestConflict, pending.ID)
+		}
 		if pending.CredentialID != nil {
 			if err := db.ValidateCallerToolCredential(ctx, *pending.CredentialID); err != nil {
 				return nil, err
