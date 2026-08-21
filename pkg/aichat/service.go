@@ -312,6 +312,13 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 		return
 	}
 	runtime := func() api.Model { return providerRuntime(provider, config.Model) }
+	terminalMetadata := terminalMetadataContext{
+		CaptainSessionID:  config.CaptainSessionID,
+		ProviderSessionID: config.SessionID,
+		ThreadID:          chat.ThreadID,
+		TurnID:            turnID,
+		Runtime:           runtime,
+	}
 	events = s.bindThreadRuntime(streamContext, chat.ThreadID, execution, runtime, events)
 	events = mergeExecutionEvents(streamContext, events, callerToolEvents, definitions)
 	if active != nil {
@@ -326,11 +333,13 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 	costs := &TurnCosts{}
 	persisted := s.persistedEvents(streamContext, persistedEventOptions{
 		Request: chat, TurnID: turnID, Model: config.Model, Runtime: runtime, Costs: costs,
+		terminalMetadata: terminalMetadata,
 	}, events)
 	if err := WriteEventStream(writer, persisted, EventStreamOptions{
-		ToolApproval: chat.ToolApproval,
-		MessageID:    assistantMessageID(chat, turnID),
-		Costs:        costs,
+		ToolApproval:     chat.ToolApproval,
+		MessageID:        assistantMessageID(chat, turnID),
+		Costs:            costs,
+		terminalMetadata: terminalMetadata,
 	}); err != nil {
 		serviceLog.Errorf("stream chat response: %v", err)
 	}

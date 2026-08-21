@@ -11,26 +11,29 @@ import (
 )
 
 type assistantMessageBuilder struct {
-	message   UIMessage
-	toolParts map[string]int
-	sessionID string
-	model     string
-	replace   bool
+	message          UIMessage
+	toolParts        map[string]int
+	terminalMetadata terminalMetadataContext
+	sessionID        string
+	model            string
+	replace          bool
 }
 
 type assistantMessageBuilderOptions struct {
-	MessageID string
-	TurnID    string
-	Replace   bool
-	Seed      *UIMessage
-	Resume    *api.ToolApprovalResume
+	MessageID        string
+	TurnID           string
+	Replace          bool
+	Seed             *UIMessage
+	Resume           *api.ToolApprovalResume
+	terminalMetadata terminalMetadataContext
 }
 
 func newAssistantMessageBuilder(options assistantMessageBuilderOptions) (*assistantMessageBuilder, error) {
 	builder := &assistantMessageBuilder{
-		message:   UIMessage{ID: options.MessageID, TurnID: options.TurnID, Role: string(api.RoleAssistant), Parts: []UIPart{}},
-		toolParts: map[string]int{},
-		replace:   options.Replace || options.Resume != nil,
+		message:          UIMessage{ID: options.MessageID, TurnID: options.TurnID, Role: string(api.RoleAssistant), Parts: []UIPart{}},
+		toolParts:        map[string]int{},
+		terminalMetadata: options.terminalMetadata,
+		replace:          options.Replace || options.Resume != nil,
 	}
 	if options.Resume == nil {
 		return builder, nil
@@ -79,11 +82,12 @@ func newAssistantMessageBuilder(options assistantMessageBuilderOptions) (*assist
 // which thread and turn it belongs to, which model produced it (for pricing),
 // and where to record the resulting costs for the finish part.
 type persistedEventOptions struct {
-	Request ChatRequest
-	TurnID  string
-	Model   api.Model
-	Runtime func() api.Model
-	Costs   *TurnCosts
+	Request          ChatRequest
+	TurnID           string
+	Model            api.Model
+	Runtime          func() api.Model
+	Costs            *TurnCosts
+	terminalMetadata terminalMetadataContext
 }
 
 func (o persistedEventOptions) runtime() api.Model {
@@ -110,6 +114,7 @@ func (s *Service) persistedEvents(ctx context.Context, options persistedEventOpt
 		replace := request.Trigger == "regenerate-message"
 		builder, err := newAssistantMessageBuilder(assistantMessageBuilderOptions{
 			MessageID: messageID, TurnID: turnID, Replace: replace, Seed: seed, Resume: request.ToolApproval,
+			terminalMetadata: options.terminalMetadata,
 		})
 		if err != nil {
 			sendEvent(ctx, out, api.Event{Kind: api.EventError, Error: err.Error()})
@@ -127,7 +132,8 @@ func (s *Service) persistedEvents(ctx context.Context, options persistedEventOpt
 					return
 				}
 			}
-			if !persisted && (event.Kind == api.EventResult || event.Kind == api.EventError || event.Kind == api.EventInterrupted) {
+			terminal := event.Kind == api.EventResult || event.Kind == api.EventError || event.Kind == api.EventInterrupted
+			if !persisted && terminal {
 				if err := s.persistCompletedTurn(ctx, request.ThreadID, builder, event, options); err != nil {
 					sendEvent(ctx, out, api.Event{Kind: api.EventError, Error: err.Error(), Model: event.Model})
 					return
@@ -135,6 +141,9 @@ func (s *Service) persistedEvents(ctx context.Context, options persistedEventOpt
 				persisted = true
 			}
 			if !sendEvent(ctx, out, event) {
+				return
+			}
+			if terminal {
 				return
 			}
 		}
@@ -191,6 +200,10 @@ func (s *Service) persistCompletedTurn(
 	if err := s.persistEvent(ctx, threadID, event, options.runtime(), options.Costs); err != nil {
 		return err
 	}
+	if builder.message.Metadata != nil && options.Costs != nil {
+		builder.message.Metadata.CostBreakdown = options.Costs.Breakdown
+		builder.message.Metadata.ThreadCostUSD = options.Costs.ThreadCostUSD
+	}
 	if len(builder.message.Parts) == 0 {
 		return fmt.Errorf("completed assistant turn has no message parts")
 	}
@@ -241,6 +254,7 @@ func (b *assistantMessageBuilder) apply(event api.Event) error {
 		return b.result(event)
 	case api.EventError:
 		b.terminalizeTools(event.Error)
+		b.message.Metadata = b.terminalMetadata.message(b.sessionID, b.model, false)
 		payload, err := json.Marshal(map[string]string{"error": event.Error})
 		if err != nil {
 			return err
@@ -260,10 +274,8 @@ func (b *assistantMessageBuilder) interrupted(reason string) error {
 		return err
 	}
 	b.message.Parts = append(b.message.Parts, UIPart{Type: "data-result", Data: data})
-	success := false
-	b.message.Metadata = &MessageMetadata{
-		ProviderSessionID: b.sessionID, Model: b.model, Success: &success, Interrupted: true,
-	}
+	b.message.Metadata = b.terminalMetadata.message(b.sessionID, b.model, false)
+	b.message.Metadata.Interrupted = true
 	return nil
 }
 
@@ -397,10 +409,8 @@ func (b *assistantMessageBuilder) result(event api.Event) error {
 		}
 	}
 	b.message.Parts = append(b.message.Parts, UIPart{Type: dataType, Data: data})
-	success := event.Success
-	b.message.Metadata = &MessageMetadata{
-		ProviderSessionID: b.sessionID, Model: b.model, Cost: event.CostUSD, Success: &success,
-	}
+	b.message.Metadata = b.terminalMetadata.message(b.sessionID, b.model, event.Success)
+	b.message.Metadata.Cost = event.CostUSD
 	if event.Usage != nil {
 		b.message.Metadata.Usage = usageMetadata(*event.Usage)
 		b.message.Metadata.ContextTokens = contextTokens(*event.Usage)
