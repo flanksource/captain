@@ -124,6 +124,13 @@ func (s *Service) resumeToolApproval(ctx context.Context, threadID string, conti
 	// the thread total is recomputed from the database on the next read.
 	resumed := s.persistedEvents(streamContext, persistedEventOptions{
 		Request: request, TurnID: execution.TurnID(), Model: continuation.Spec.Model, Runtime: runtime,
+		terminalMetadata: terminalMetadataContext{
+			CaptainSessionID:  execution.CaptainSessionID(),
+			ProviderSessionID: config.SessionID,
+			ThreadID:          threadID,
+			TurnID:            execution.TurnID(),
+			Runtime:           runtime,
+		},
 	}, events)
 	for event := range resumed {
 		if event.Kind == api.EventError {

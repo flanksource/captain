@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+
+	"github.com/flanksource/captain/pkg/api"
 )
 
 // Part is one AI SDK v6 UI Message Stream chunk.
@@ -53,8 +55,13 @@ type CostBreakdownMetadata struct {
 
 // MessageMetadata is attached to the assistant UIMessage by the finish part.
 type MessageMetadata struct {
-	ProviderSessionID string                 `json:"providerSessionId,omitempty"`
+	Backend           api.Backend            `json:"backend,omitempty"`
+	ExecutionMode     api.RuntimeMode        `json:"executionMode,omitempty"`
 	Model             string                 `json:"model,omitempty"`
+	CaptainSessionID  string                 `json:"captainSessionId,omitempty"`
+	ProviderSessionID string                 `json:"providerSessionId,omitempty"`
+	ThreadID          string                 `json:"threadId,omitempty"`
+	TurnID            string                 `json:"turnId,omitempty"`
 	Usage             *UsageMetadata         `json:"usage,omitempty"`
 	Cost              float64                `json:"cost,omitempty"`
 	CostBreakdown     *CostBreakdownMetadata `json:"costBreakdown,omitempty"`
@@ -65,6 +72,38 @@ type MessageMetadata struct {
 	ContextTokens int     `json:"contextTokens,omitempty"`
 	Success       *bool   `json:"success,omitempty"`
 	Interrupted   bool    `json:"interrupted,omitempty"`
+}
+
+type terminalMetadataContext struct {
+	CaptainSessionID  string
+	ProviderSessionID string
+	ThreadID          string
+	TurnID            string
+	Runtime           func() api.Model
+}
+
+func (c terminalMetadataContext) message(providerSessionID, eventModel string, success bool) *MessageMetadata {
+	if providerSessionID == "" {
+		providerSessionID = c.ProviderSessionID
+	}
+	runtime := api.Model{Name: eventModel}
+	if c.Runtime != nil {
+		selected := c.Runtime()
+		if selected.Name != "" {
+			runtime.Name = selected.Name
+		}
+		runtime.Backend = selected.Backend
+		runtime.Mode = selected.Mode
+	}
+	mode := runtime.Backend.Mode()
+	if mode == "" {
+		mode = runtime.Mode
+	}
+	return &MessageMetadata{
+		Backend: runtime.Backend, ExecutionMode: mode, Model: runtime.Name,
+		CaptainSessionID: c.CaptainSessionID, ProviderSessionID: providerSessionID,
+		ThreadID: c.ThreadID, TurnID: c.TurnID, Success: &success,
+	}
 }
 
 // TurnCosts is written by the persistence layer as a turn completes and read by

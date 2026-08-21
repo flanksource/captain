@@ -143,7 +143,7 @@ var _ = Describe("AI SDK v6 event stream", func() {
 			HaveKeyWithValue("approvalId", "approval-call-1"),
 			HaveKeyWithValue("toolCallId", "call-1"),
 		))
-		Expect(parts[11]["output"]).To(Equal(map[string]any{"output": `{"status":"draft"}`}))
+		Expect(parts[11]["output"]).To(Equal(map[string]any{"status": "draft"}))
 		Expect(parts[15]["data"]).To(Equal(map[string]any{"invoiceId": "inv-1"}))
 		Expect(parts[17]["messageMetadata"]).To(Equal(map[string]any{
 			"providerSessionId": "session-1",

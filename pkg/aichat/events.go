@@ -16,18 +16,19 @@ type toolState struct {
 }
 
 type eventStream struct {
-	writer    *SSEWriter
-	messageID string
-	blockType string
-	blockID   string
-	nextBlock int
-	tools     map[string]toolState
-	metadata  *MessageMetadata
-	costs     *TurnCosts
-	sessionID string
-	model     string
-	terminal  bool
-	finished  bool
+	writer           *SSEWriter
+	messageID        string
+	blockType        string
+	blockID          string
+	nextBlock        int
+	tools            map[string]toolState
+	metadata         *MessageMetadata
+	terminalMetadata terminalMetadataContext
+	costs            *TurnCosts
+	sessionID        string
+	model            string
+	terminal         bool
+	finished         bool
 }
 
 // EventStreamOptions carries request state needed to finish the resumed UI message.
@@ -36,7 +37,8 @@ type EventStreamOptions struct {
 	MessageID    string
 	// Costs, when set, supplies the finish part's priced breakdown and the
 	// thread's cumulative cost. Nil for streams with no thread to accrue against.
-	Costs *TurnCosts
+	Costs            *TurnCosts
+	terminalMetadata terminalMetadataContext
 }
 
 // WriteEventStream translates a Captain event channel into one complete UI Message Stream.
@@ -49,7 +51,7 @@ func WriteEventStream(writer *SSEWriter, events <-chan api.Event, options EventS
 		}
 	}
 	stream := &eventStream{
-		writer: writer, messageID: options.MessageID,
+		writer: writer, messageID: options.MessageID, terminalMetadata: options.terminalMetadata,
 		tools: map[string]toolState{}, costs: options.Costs,
 	}
 	if err := stream.start(); err != nil {
@@ -61,6 +63,9 @@ func WriteEventStream(writer *SSEWriter, events <-chan api.Event, options EventS
 	for event := range events {
 		if err := stream.event(event); err != nil {
 			return stream.fail(err)
+		}
+		if stream.terminal {
+			return stream.finish()
 		}
 	}
 	if err := stream.finish(); err != nil {
@@ -156,10 +161,8 @@ func (s *eventStream) interrupted(event api.Event) error {
 	}); err != nil {
 		return err
 	}
-	success := false
-	s.metadata = &MessageMetadata{
-		ProviderSessionID: s.sessionID, Model: s.model, Success: &success, Interrupted: true,
-	}
+	s.metadata = s.terminalMetadata.message(s.sessionID, s.model, false)
+	s.metadata.Interrupted = true
 	s.terminal = true
 	return nil
 }
@@ -237,11 +240,19 @@ func (s *eventStream) toolResult(event api.Event) error {
 	if _, err := s.correlatedTool("result", event); err != nil {
 		return err
 	}
-	output := map[string]any{"output": event.Text}
-	if !event.Success {
-		output["isError"] = true
+	part := Part{ToolCallID: event.ToolCallID}
+	if event.Success {
+		output, err := jsonValue(event.Text)
+		if err != nil {
+			return fmt.Errorf("decode tool %q output: %w", event.Tool, err)
+		}
+		part.Type = "tool-output-available"
+		part.Output = output
+	} else {
+		part.Type = "tool-output-error"
+		part.ErrorText = event.Text
 	}
-	if err := s.writer.WritePart(Part{Type: "tool-output-available", ToolCallID: event.ToolCallID, Output: output}); err != nil {
+	if err := s.writer.WritePart(part); err != nil {
 		return err
 	}
 	delete(s.tools, event.ToolCallID)
@@ -292,13 +303,8 @@ func (s *eventStream) result(event api.Event) error {
 			return err
 		}
 	}
-	success := event.Success
-	s.metadata = &MessageMetadata{
-		ProviderSessionID: s.sessionID,
-		Model:             s.model,
-		Cost:              event.CostUSD,
-		Success:           &success,
-	}
+	s.metadata = s.terminalMetadata.message(s.sessionID, s.model, event.Success)
+	s.metadata.Cost = event.CostUSD
 	if event.Usage != nil {
 		s.metadata.Usage = usageMetadata(*event.Usage)
 		s.metadata.ContextTokens = contextTokens(*event.Usage)
@@ -386,6 +392,7 @@ func (s *eventStream) providerError(event api.Event) error {
 	if err := s.terminalizeTools(event.Error); err != nil {
 		return err
 	}
+	s.metadata = s.terminalMetadata.message(s.sessionID, s.model, false)
 	s.terminal = true
 	return s.writer.WritePart(Part{Type: "error", ErrorText: event.Error})
 }
@@ -464,6 +471,7 @@ func (s *eventStream) fail(cause error) error {
 	if s.finished {
 		return cause
 	}
+	s.metadata = s.terminalMetadata.message(s.sessionID, s.model, false)
 	if err := s.closeBlock(); err != nil {
 		return err
 	}
