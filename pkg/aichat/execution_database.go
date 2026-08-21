@@ -84,8 +84,8 @@ func (e *databaseExecution) BindRuntime(ctx context.Context, runtime api.Model) 
 		return err
 	}
 	e.mu.Lock()
+	defer e.mu.Unlock()
 	runID, runVersion, runRuntime := e.run.ID, e.run.Version, e.run.Runtime
-	e.mu.Unlock()
 	runRuntime.Resolved = runtimeSelection(api.Model{
 		Name: identity.Name, Backend: identity.Backend, Effort: runtime.Effort,
 	})
@@ -110,11 +110,9 @@ func (e *databaseExecution) BindRuntime(ctx context.Context, runtime api.Model) 
 	if err != nil {
 		return err
 	}
-	e.mu.Lock()
 	e.model = identity.Name
 	e.backend = identity.Backend
 	e.run = updatedRun
-	e.mu.Unlock()
 	return nil
 }
 
