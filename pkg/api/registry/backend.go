@@ -128,15 +128,32 @@ func AuthEnvVars(b Backend) []string {
 	return p.SupportedEnvVars()
 }
 
+// CapsFor returns the whole capability cell for a backend. Provider.Caps is
+// exported but `modes` is not, so a backend-keyed caller had to walk Providers
+// itself — which is why RuntimeCatalog projects a handful of fields and drops
+// the rest. ok is false for an unknown backend.
+func CapsFor(b Backend) (ModeCapabilities, bool) {
+	p, mode, ok := ProviderFor(b)
+	if !ok {
+		return ModeCapabilities{}, false
+	}
+	return p.Caps(mode)
+}
+
 // SupportsToolPolicy reports whether a backend can carry Permissions.Tools to
 // the agent it drives.
 func SupportsToolPolicy(b Backend) bool {
-	p, mode, ok := ProviderFor(b)
-	if !ok {
-		return false
-	}
-	caps, ok := p.Caps(mode)
+	caps, ok := CapsFor(b)
 	return ok && caps.ToolPolicy
+}
+
+// SupportsCallerTools reports whether a backend can expose caller-supplied tools
+// rather than only its own built-in ecosystem. It is the axis that decides
+// whether a per-tool policy is enforceable by omission — captain builds that tool
+// list itself, so it can drop a denied tool without the agent's cooperation.
+func SupportsCallerTools(b Backend) bool {
+	caps, ok := CapsFor(b)
+	return ok && caps.CallerTools
 }
 
 // ToolPolicyBackends lists the backends that can carry a per-tool policy, in

@@ -9,12 +9,13 @@ import "github.com/flanksource/captain/pkg/api/registry"
 // downstream (including pkg/ai's own re-exports) has to know registry exists.
 
 type (
-	Backend     = registry.Backend
-	DisabledSet = registry.DisabledSet
-	Effort      = registry.Effort
-	Model       = registry.Model
-	ModelList   = registry.ModelList
-	RuntimeMode = registry.RuntimeMode
+	Backend          = registry.Backend
+	DisabledSet      = registry.DisabledSet
+	Effort           = registry.Effort
+	Model            = registry.Model
+	ModelList        = registry.ModelList
+	ModeCapabilities = registry.ModeCapabilities
+	RuntimeMode      = registry.RuntimeMode
 )
 
 const (
@@ -67,6 +68,12 @@ func BackendList() string { return registry.BackendList() }
 // AuthEnvVars returns the environment variables consulted for a backend's API
 // key, in priority order.
 func AuthEnvVars(b Backend) []string { return registry.AuthEnvVars(b) }
+
+// CapsFor returns the declared capability cell for a backend.
+func CapsFor(b Backend) (ModeCapabilities, bool) { return registry.CapsFor(b) }
+
+// SupportsCallerTools reports whether a backend can expose caller-supplied tools.
+func SupportsCallerTools(b Backend) bool { return registry.SupportsCallerTools(b) }
 
 // InferBackend resolves the backend from a model name prefix, failing loud when
 // the name matches nothing.
