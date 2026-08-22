@@ -94,6 +94,52 @@ func parseStatusZ(out string) []string {
 	return paths
 }
 
+// ignoredPaths returns the subset of relPaths git ignores in dir, asking git
+// itself rather than reimplementing its pattern language — so .gitignore files at
+// any depth, .git/info/exclude and core.excludesFile are all honoured, and a
+// linked worktree resolves the same way git does.
+//
+// --no-index widens the answer to tracked files that also match an ignore rule,
+// and that is deliberate: `git add` refuses such a path outright ("The following
+// paths are ignored by one of your .gitignore files ... use -f"), tracked or not,
+// so a force-added build bundle the agent rebuilt is dirty in `git status` yet
+// impossible to stage. Without the flag it would be treated as attributable and
+// the whole run would die inside stage() rather than committing what it could.
+//
+// Every path must be inside dir: git fails the whole invocation with exit 128 on
+// an out-of-tree path, so callers filter those out first.
+//
+// The -z --stdin form is used for the same reason as in dirtyPaths — paths with
+// spaces round-trip verbatim instead of arriving quoted and escaped.
+func ignoredPaths(dir string, relPaths []string) (map[string]struct{}, error) {
+	ignored := make(map[string]struct{}, len(relPaths))
+	if len(relPaths) == 0 {
+		return ignored, nil
+	}
+	res := exec.NewExec("git", "check-ignore", "--no-index", "-z", "--stdin").
+		WithCwd(dir).
+		WithStdin(strings.NewReader(strings.Join(relPaths, "\x00"))).
+		Run().Result()
+	// Exit 1 is `git check-ignore` reporting that nothing matched — an answer, not
+	// a failure. Only a higher code (128, fatal) is a real error, and res.Error is
+	// consulted after the code because clicky reports every non-zero exit as one.
+	if res.ExitCode == 1 {
+		return ignored, nil
+	}
+	if res.ExitCode != 0 {
+		return nil, fmt.Errorf("git check-ignore in %s: exit %d: %s", dir, res.ExitCode, strings.TrimSpace(res.Stderr))
+	}
+	if res.Error != nil {
+		return nil, fmt.Errorf("git check-ignore in %s: %w: %s", dir, res.Error, strings.TrimSpace(res.Stderr))
+	}
+	for _, p := range strings.Split(res.Stdout, "\x00") {
+		if p != "" {
+			ignored[p] = struct{}{}
+		}
+	}
+	return ignored, nil
+}
+
 // stage adds exactly the named paths. The pathspecs are what bound the commit —
 // unlike a bare `git add --all` this cannot pick up a file the policy did not
 // select.
