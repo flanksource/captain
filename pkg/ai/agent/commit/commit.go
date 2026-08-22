@@ -340,13 +340,75 @@ func (h *Hook) resolvePaths(hc *agent.HookContext, dir string) ([]string, api.Co
 		return dirty, mode, nil
 	}
 	recorded := hc.Workspace().Changed
-	changed := attributable(dir, recordBase(hc), dirty, recorded)
+	stageable, ignored, err := committable(dir, recordBase(hc), recorded)
+	if err != nil {
+		return nil, mode, err
+	}
+	if len(ignored) > 0 {
+		// Never silent: a dropped edit that goes unmentioned reads as the agent
+		// having done nothing, which is the harder bug to chase of the two.
+		ai.LoggerFromContext(hc, fallbackLog).V(1).Infof(
+			"commit: skipping %d recorded edit(s) git ignores and cannot stage: %s",
+			len(ignored), strings.Join(elide(ignored, 3), ", "))
+	}
+	if len(recorded) > 0 && len(stageable) == 0 {
+		// Every edit the run recorded is a path this repo ignores, so there was
+		// never anything here to commit. The dirty tree is somebody else's work,
+		// not a mystery — refusing would fail a run that did nothing wrong.
+		return nil, mode, nil
+	}
+	changed := attributable(dir, recordBase(hc), dirty, stageable)
 	if len(changed) == 0 {
 		// Staging the tree anyway would sweep the caller's own uncommitted work
 		// into an agent commit. Refusing is the whole point of the changed mode.
-		return nil, mode, unattributableErr(dir, dirty, recorded)
+		return nil, mode, unattributableErr(dir, dirty, stageable)
 	}
 	return changed, mode, nil
+}
+
+// committable splits the recorded set into the paths this tree could commit and
+// the ones git ignores. An ignored path can never appear in `git status` and
+// `git add` refuses it outright, so counting it toward attribution turns "the
+// agent only touched scratch files" into a refusal — which is how a run whose
+// every edit landed in .tmp/ came to fail on the caller's one unrelated dirty
+// file.
+//
+// Paths outside dir are kept rather than dropped: "the run edited another tree"
+// is a real diagnosis the refusal exists to report, and it is only the
+// `git check-ignore` query they have to be held back from, which fails outright
+// on a path it cannot place in the repository.
+//
+// Both returned slices are in the caller's own namespace, not the repo-relative
+// one used for the query, because attributable resolves them against recordBase.
+func committable(dir, base string, recorded []string) (stageable, skipped []string, err error) {
+	if len(recorded) == 0 {
+		return nil, nil, nil
+	}
+	rel := make(map[string]string, len(recorded))
+	inRepo := make([]string, 0, len(recorded))
+	for _, r := range recorded {
+		p, relErr := filepath.Rel(dir, resolveAgainst(base, r))
+		if relErr != nil || p == ".." || strings.HasPrefix(p, ".."+string(filepath.Separator)) {
+			continue
+		}
+		rel[r] = p
+		inRepo = append(inRepo, p)
+	}
+	ignored, err := ignoredPaths(dir, inRepo)
+	if err != nil {
+		return nil, nil, err
+	}
+	stageable = make([]string, 0, len(recorded))
+	for _, r := range recorded {
+		if p, ok := rel[r]; ok {
+			if _, skip := ignored[p]; skip {
+				skipped = append(skipped, r)
+				continue
+			}
+		}
+		stageable = append(stageable, r)
+	}
+	return stageable, skipped, nil
 }
 
 // stageMode resolves the staging policy: an isolated run holds nothing but the

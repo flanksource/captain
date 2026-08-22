@@ -137,6 +137,125 @@ func TestRefusalReportsWhatWasRecorded(t *testing.T) {
 	}
 }
 
+// TestIgnoredRecordedEditsAreNotARefusal: an agent whose every edit landed in a
+// directory the repo ignores has nothing to commit, and that is an outcome, not a
+// refusal. Counting those paths toward attribution used to fail the run over the
+// caller's unrelated dirty file — a scratch-writing agent could not coexist with
+// any uncommitted work at all.
+func TestIgnoredRecordedEditsAreNotARefusal(t *testing.T) {
+	dir := newRepo(t)
+	hc := shared(dir)
+	h := New(api.Commit{On: api.CommitOnAgent, Message: "feat: scratch only"})
+
+	write(t, dir, ".gitignore", ".tmp/\n")
+	mustGit(t, dir, "add", ".gitignore")
+	mustGit(t, dir, "commit", "-m", "chore: ignore scratch")
+	before := commitCount(t, dir)
+
+	write(t, dir, ".tmp/status.json", "{}\n")
+	write(t, dir, "mine.go", "// the caller's own uncommitted work\n")
+	changed(hc, ".tmp/status.json")
+
+	if err := h.Post(hc, agent.PhaseAgent); err != nil {
+		t.Fatalf("a run that only wrote ignored files should be a no-op: %v", err)
+	}
+	if got := commitCount(t, dir); got != before {
+		t.Errorf("cut %d commit(s), want none; subjects: %v", got-before, subjects(t, dir))
+	}
+	if isClean(t, dir) {
+		t.Error("the caller's mine.go was swept into a commit; it must still be dirty")
+	}
+}
+
+// TestRefusalNamesOnlyCommittableRecordedEdits: when the refusal is still right,
+// the paths it names have to be ones the reader can act on. Listing the ignored
+// scratch files alongside them — or instead of them, once elide caps the list —
+// points the investigation at files that were never candidates.
+func TestRefusalNamesOnlyCommittableRecordedEdits(t *testing.T) {
+	dir := newRepo(t)
+	hc := shared(dir)
+	h := New(api.Commit{On: api.CommitOnAgent, Message: "feat: nothing dirty of mine"})
+
+	write(t, dir, ".gitignore", ".tmp/\n")
+	write(t, dir, "src/real.go", "package src\n")
+	mustGit(t, dir, "add", ".gitignore", "src/real.go")
+	mustGit(t, dir, "commit", "-m", "chore: seed src")
+
+	write(t, dir, ".tmp/scratch.json", "{}\n")
+	write(t, dir, "mine.go", "// the caller's own uncommitted work\n")
+	changed(hc, ".tmp/scratch.json", "src/real.go")
+
+	err := h.Post(hc, agent.PhaseAgent)
+	if err == nil {
+		t.Fatalf("expected a refusal; instead the tree was committed as %v", subjects(t, dir))
+	}
+	if !strings.Contains(err.Error(), "src/real.go") {
+		t.Errorf("error should name the committable recorded edit, got: %v", err)
+	}
+	if strings.Contains(err.Error(), ".tmp/scratch.json") {
+		t.Errorf("error should not name an ignored path that was never a candidate, got: %v", err)
+	}
+}
+
+// TestTrackedButIgnoredEditsAreSkippedNotFatal covers the awkward middle case a
+// force-added build bundle creates: it is tracked, so `git status` reports it
+// dirty, but `git add` still refuses it for matching an ignore rule. Attributing
+// it therefore does not produce a commit — it kills the run inside stage(). It is
+// dropped instead, and a sibling edit in the same turn still gets committed.
+func TestTrackedButIgnoredEditsAreSkippedNotFatal(t *testing.T) {
+	dir := newRepo(t)
+	hc := shared(dir)
+	h := New(api.Commit{On: api.CommitOnAgent, Gates: api.CommitGatesNone, Message: "feat: rebuild"})
+
+	write(t, dir, ".gitignore", "dist/\n")
+	write(t, dir, "dist/bundle.js", "// v1\n")
+	write(t, dir, "src/app.go", "package src\n")
+	mustGit(t, dir, "add", ".gitignore", "src/app.go")
+	mustGit(t, dir, "add", "-f", "dist/bundle.js")
+	mustGit(t, dir, "commit", "-m", "chore: seed bundle")
+
+	write(t, dir, "dist/bundle.js", "// v2\n")
+	write(t, dir, "src/app.go", "package src // rebuilt\n")
+	changed(hc, "dist/bundle.js", "src/app.go")
+
+	if err := h.Post(hc, agent.PhaseAgent); err != nil {
+		t.Fatalf("agent phase: %v", err)
+	}
+	head := filesInHead(t, dir, "HEAD")
+	if !contains(head, "src/app.go") {
+		t.Errorf("the stageable edit should have been committed, HEAD holds: %v", head)
+	}
+	if contains(head, "dist/bundle.js") {
+		t.Errorf("git add refuses an ignored path, so it must not be in the commit: %v", head)
+	}
+}
+
+// TestOnlyTrackedIgnoredEditIsANoOp: when the ignored bundle is the *only* thing
+// the turn touched there is nothing left to commit, and that has to be an outcome
+// rather than a `git add` failure that takes the whole run down.
+func TestOnlyTrackedIgnoredEditIsANoOp(t *testing.T) {
+	dir := newRepo(t)
+	hc := shared(dir)
+	h := New(api.Commit{On: api.CommitOnAgent, Gates: api.CommitGatesNone, Message: "chore: rebuild"})
+
+	write(t, dir, ".gitignore", "dist/\n")
+	write(t, dir, "dist/bundle.js", "// v1\n")
+	mustGit(t, dir, "add", ".gitignore")
+	mustGit(t, dir, "add", "-f", "dist/bundle.js")
+	mustGit(t, dir, "commit", "-m", "chore: seed bundle")
+	before := commitCount(t, dir)
+
+	write(t, dir, "dist/bundle.js", "// v2\n")
+	changed(hc, "dist/bundle.js")
+
+	if err := h.Post(hc, agent.PhaseAgent); err != nil {
+		t.Fatalf("a turn that only touched an unstageable path should be a no-op: %v", err)
+	}
+	if got := commitCount(t, dir); got != before {
+		t.Errorf("cut %d commit(s), want none; subjects: %v", got-before, subjects(t, dir))
+	}
+}
+
 // TestIsolatedTreeCommitsEverything: in a worktree the branch is disposable and
 // holds no work but the agent's, including files it changed via a shell command
 // rather than an edit tool — which is why staging there is not restricted to the
