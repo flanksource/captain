@@ -69,6 +69,12 @@ type ServiceOptions struct {
 	Attachments    AttachmentResolver
 	Threads        ThreadStoreProvider
 	Authority      ExecutionAuthority
+	// ToolStrategies is how this deployment reads a tool's own facts when no rule
+	// mentions it, weakest first. Nil takes api.DefaultStrategies (HTTP method,
+	// then safety hints). It is one chain for every tool source rather than one
+	// per provider, so two tools stating the same facts cannot be answered
+	// differently according to which provider loaded them.
+	ToolStrategies []api.PermissionStrategy
 }
 
 // Service is Captain's AI SDK-compatible HTTP chat service.
@@ -207,7 +213,7 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	definitions, err := aitools.ResolveDefinitions(set.Definitions, aitools.ResolveOptions{Preferences: spec.ToolPreferences, Policy: spec.ToolPolicy})
+	definitions, err := aitools.ResolveDefinitions(set.Definitions, aitools.ResolveOptions{Preferences: spec.ToolPreferences, Policy: spec.ToolPolicy, Strategies: s.options.ToolStrategies})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return

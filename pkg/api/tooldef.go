@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	clickyentity "github.com/flanksource/clicky/entity"
 	"gopkg.in/yaml.v3"
 )
 
@@ -99,8 +100,15 @@ type ToolDefinition struct {
 	// DefaultPermission controls exposure: deny omits the tool, ask routes calls
 	// through Config.CanUseTool, allow auto-runs, and auto defers to runtime policy.
 	DefaultPermission ToolPolicy
-	// Annotations carries opaque caller metadata (e.g. the originating CLI
-	// verb/method/path) for policies that want the raw values; providers ignore it.
+	// Operation is the clicky RPC operation this tool projects, when it projects
+	// one. It carries the originating entity, verb, scope, method and path as the
+	// typed model clicky already has, so a permission rule can select on them
+	// without either side maintaining a string copy. Nil for tools that are not
+	// clicky operations; providers ignore it.
+	Operation *clickyentity.RPCOperation `json:"-"`
+	// Annotations carries opaque caller metadata for policies that want raw
+	// values; providers ignore it. A clicky operation's own facts travel in
+	// Operation, not here.
 	Annotations map[string]string `json:",omitempty"`
 }
 

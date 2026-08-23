@@ -1,6 +1,10 @@
 package api
 
-import "strings"
+import (
+	"strings"
+
+	clickyentity "github.com/flanksource/clicky/entity"
+)
 
 // legacyCatalogOn is what "on" means in tool metadata published by an MCP server
 // or a clicky operation catalog. Like spec.toolPreferences and unlike the legacy
@@ -9,8 +13,7 @@ import "strings"
 const legacyCatalogOn = ToolPolicyAllow
 
 // ToolInfo is the concrete tool being considered for approval and preference
-// resolution. Clicky-RPC specifics (verb/method/path/operation) live in
-// Annotations, not as typed fields.
+// resolution.
 type ToolInfo struct {
 	Name string
 	// Group is the tool-group this tool belongs to. When non-empty the
@@ -23,8 +26,14 @@ type ToolInfo struct {
 	ReadOnlyHint      *bool
 	DestructiveHint   *bool
 	IdempotentHint    *bool
-	// Annotations carries opaque caller metadata (e.g. clicky/verb, clicky/method,
-	// clicky/path, clicky/operation) for policies that want the raw values.
+	// Operation is the clicky RPC operation this tool projects, when it projects
+	// one. It is carried whole rather than flattened into strings: clicky already
+	// models entity, verb, scope and method as typed fields, and a string copy of
+	// each has to be kept in step by hand on both sides of the boundary. Nil for
+	// tools that are not clicky operations (MCP servers, app-owned caller tools).
+	Operation *clickyentity.RPCOperation
+	// Annotations carries opaque caller metadata for policies that want raw
+	// values. The clicky operation's own facts travel in Operation, not here.
 	Annotations map[string]string
 }
 
@@ -34,6 +43,66 @@ func (i ToolInfo) Annotation(key string) string {
 		return ""
 	}
 	return i.Annotations[key]
+}
+
+// The accessors below read the operation's identity so no consumer has to
+// dereference Operation or its Clicky metadata itself; each is empty for a tool
+// that projects no clicky operation.
+
+// Method is the HTTP method the operation is served with, upper-cased.
+func (i ToolInfo) Method() string {
+	if i.Operation == nil {
+		return ""
+	}
+	return strings.ToUpper(i.Operation.Method)
+}
+
+// Path is the REST path the operation is served at.
+func (i ToolInfo) Path() string {
+	if i.Operation == nil {
+		return ""
+	}
+	return i.Operation.Path
+}
+
+// OperationName is the operation's registered name.
+func (i ToolInfo) OperationName() string {
+	if i.Operation == nil {
+		return ""
+	}
+	return i.Operation.Name
+}
+
+// Verb is the entity verb (list/get/create/update/delete, or a custom action).
+func (i ToolInfo) Verb() string {
+	if i.Operation == nil || i.Operation.Clicky == nil {
+		return ""
+	}
+	return i.Operation.Clicky.Verb
+}
+
+// Scope reports whether the operation addresses a collection or a single entity.
+func (i ToolInfo) Scope() string {
+	if i.Operation == nil || i.Operation.Clicky == nil {
+		return ""
+	}
+	return i.Operation.Clicky.Scope
+}
+
+// Entity is the entity the operation belongs to.
+func (i ToolInfo) Entity() string {
+	if i.Operation == nil || i.Operation.Clicky == nil {
+		return ""
+	}
+	return i.Operation.Clicky.Entity
+}
+
+// Action is the custom action's name, empty for a standard verb.
+func (i ToolInfo) Action() string {
+	if i.Operation == nil || i.Operation.Clicky == nil {
+		return ""
+	}
+	return i.Operation.Clicky.ActionName
 }
 
 // ToolCatalog groups the frontend-facing metadata for available tools.
@@ -73,8 +142,8 @@ func DefaultToolPolicy(policy ToolPolicy) ToolPolicy {
 }
 
 // CustomCatalogEntry builds the catalog DTO for an app-owned custom tool. The
-// method/path/operationName it surfaces come from the definition's Annotations
-// (clicky/method, clicky/path, clicky/operation) when present.
+// method/path/operationName it surfaces are read from the clicky operation the
+// tool projects, and are empty for a tool that projects none.
 func CustomCatalogEntry(def ToolDefinition, name string, schema map[string]any) ToolCatalogEntry {
 	policy := DefaultToolPolicy(def.DefaultPermission)
 	info := ToolInfo{
@@ -84,6 +153,7 @@ func CustomCatalogEntry(def ToolDefinition, name string, schema map[string]any) 
 		Icon:              def.Icon,
 		DefaultPermission: policy,
 		Strict:            def.Strict,
+		Operation:         def.Operation,
 		Annotations:       def.Annotations,
 	}
 	return ToolCatalogEntry{
@@ -97,8 +167,8 @@ func CustomCatalogEntry(def ToolDefinition, name string, schema map[string]any) 
 		PreferenceKey:     PreferenceKey(info),
 		DefaultPermission: policy,
 		Strict:            def.Strict,
-		Method:            def.Annotations["clicky/method"],
-		Path:              def.Annotations["clicky/path"],
+		Method:            info.Method(),
+		Path:              info.Path(),
 		OperationName:     def.Name,
 		InputSchema:       ObjectSchema(schema),
 	}
