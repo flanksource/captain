@@ -46,12 +46,13 @@ type resultCost struct {
 	ProviderUSD float64
 }
 
-// find returns the result Captain recorded for one Claude transcript session.
+// find returns the result Captain recorded for one Claude transcript.
 //
-// Provider-attributed replacement remains per transcript, but only after a
-// complete-thread check prevents a lower-authority CLI estimate from masking a
-// provider cost on another agent. Reconstructed database buckets are not
-// preferred over a fresh transcript parse.
+// ParseCosts emits root transcripts only, so a root result must include model
+// calls from every child in the thread. A separately supplied child transcript
+// remains scoped to that child to avoid duplicating its cost. Reconstructed
+// database buckets are not preferred over a fresh transcript parse unless the
+// thread also contains a provider-reported cost.
 func (l *resultCostLookup) find(ctx context.Context, identity, historyFile string) (resultCost, bool) {
 	if l == nil || l.db == nil || identity == "" {
 		return resultCost{}, false
@@ -73,21 +74,37 @@ func (l *resultCostLookup) find(ctx context.Context, identity, historyFile strin
 		threadProviderUSD += rows[i].ProviderCostUSD
 	}
 	if threadProviderUSD > 0 {
-		if overview.ProviderCostUSD <= 0 {
-			return resultCost{}, false
+		if overview.RootSessionID != nil {
+			if overview.ProviderCostUSD <= 0 {
+				return resultCost{}, false
+			}
+			out := resultCost{
+				Usage: api.Usage{
+					InputTokens:      int(overview.InputTokens),
+					OutputTokens:     int(overview.OutputTokens),
+					ReasoningTokens:  int(overview.ReasoningTokens),
+					CacheReadTokens:  int(overview.CacheReadTokens),
+					CacheWriteTokens: int(overview.CacheWriteTokens),
+				},
+				TotalUSD: overview.CostUSD, ProviderUSD: overview.ProviderCostUSD,
+			}
+			if overview.Model != nil {
+				out.Model = *overview.Model
+			}
+			return out, true
 		}
-		out := resultCost{
-			Usage: api.Usage{
-				InputTokens:      int(overview.InputTokens),
-				OutputTokens:     int(overview.OutputTokens),
-				ReasoningTokens:  int(overview.ReasoningTokens),
-				CacheReadTokens:  int(overview.CacheReadTokens),
-				CacheWriteTokens: int(overview.CacheWriteTokens),
-			},
-			TotalUSD: overview.CostUSD, ProviderUSD: overview.ProviderCostUSD,
-		}
-		if overview.Model != nil {
-			out.Model = *overview.Model
+		out := resultCost{}
+		for i := range rows {
+			out.Usage.InputTokens += int(rows[i].InputTokens)
+			out.Usage.OutputTokens += int(rows[i].OutputTokens)
+			out.Usage.ReasoningTokens += int(rows[i].ReasoningTokens)
+			out.Usage.CacheReadTokens += int(rows[i].CacheReadTokens)
+			out.Usage.CacheWriteTokens += int(rows[i].CacheWriteTokens)
+			out.TotalUSD += rows[i].TotalCost
+			out.ProviderUSD += rows[i].ProviderCostUSD
+			if out.Model == "" {
+				out.Model = rows[i].Model
+			}
 		}
 		return out, true
 	}

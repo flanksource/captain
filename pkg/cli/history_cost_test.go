@@ -116,26 +116,24 @@ func TestResultCostLookupThreadProviderPriority(t *testing.T) {
 	require.True(t, ok)
 	require.InDelta(t, 0.75, cost.ProviderUSD, 1e-9)
 	require.InDelta(t, 0.75, cost.TotalUSD, 1e-9)
-	for identity, path := range map[string]string{"root-cost": rootPath, "sibling-cost": siblingPath} {
-		_, ok := lookup.find(t.Context(), identity, path)
-		require.False(t, ok, "thread priority must not copy a whole-thread result onto %s", identity)
-	}
+	cost, ok = lookup.find(t.Context(), "root-cost", rootPath)
+	require.True(t, ok, "the root transcript must include provider costs recorded on its children")
+	require.InDelta(t, 0.75, cost.ProviderUSD, 1e-9)
+	require.InDelta(t, 0.75, cost.TotalUSD, 1e-9)
+	_, ok = lookup.find(t.Context(), "sibling-cost", siblingPath)
+	require.False(t, ok, "a separately supplied child transcript must not duplicate a sibling's cost")
 	_, ok = lookup.find(t.Context(), "zero-cost", zeroPath)
 	require.False(t, ok, "a zero CLI sample must not replace a fresh transcript estimate")
 	cost, ok = lookup.find(t.Context(), "estimate-cost", estimatePath)
 	require.True(t, ok, "the Claude transcript row must win over another source with the same provider ID")
 	require.InDelta(t, 0.3, cost.TotalUSD, 1e-9)
 
-	threadSessions := []claude.SessionCost{
-		{SessionID: "root-cost", HistoryFile: rootPath, Tokens: claude.TokenSummary{TotalCost: 0.1}},
-		{SessionID: "provider-child-cost", HistoryFile: providerChildPath, Tokens: claude.TokenSummary{TotalCost: 0.2}},
-		{SessionID: "sibling-cost", HistoryFile: siblingPath, Tokens: claude.TokenSummary{TotalCost: 0.3}},
-	}
+	threadSessions := []claude.SessionCost{{
+		SessionID: "root-cost", HistoryFile: rootPath, Tokens: claude.TokenSummary{TotalCost: 0.1},
+	}}
 	applyResultCosts(t.Context(), threadSessions)
-	require.InDelta(t, 0.1, threadSessions[0].Tokens.TotalCost, 1e-9)
-	require.InDelta(t, 0.75, threadSessions[1].Tokens.TotalCost, 1e-9)
-	require.InDelta(t, 0.3, threadSessions[2].Tokens.TotalCost, 1e-9)
-	require.InDelta(t, 1.15, threadSessions[0].Tokens.TotalCost+threadSessions[1].Tokens.TotalCost+threadSessions[2].Tokens.TotalCost, 1e-9)
+	require.InDelta(t, 0.75, threadSessions[0].Tokens.TotalCost, 1e-9)
+	require.InDelta(t, 0.75, threadSessions[0].Tokens.ProviderCostUSD, 1e-9)
 
 	sessions := []claude.SessionCost{{
 		SessionID:   "estimate-cost",
