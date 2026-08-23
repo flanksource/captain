@@ -30,9 +30,9 @@ type PermissionsMatrixOptions struct {
 // because that is how a client consumes it; the pretty form transposes to
 // settings × backends because that is how a human compares them.
 type PermissionsMatrixResult struct {
-	Provenance string                    `json:"provenance"`
-	Backends   []PermissionsMatrixEntry  `json:"backends"`
-	Notes      []PermissionsMatrixNote   `json:"notes,omitempty"`
+	Provenance string                   `json:"provenance"`
+	Backends   []PermissionsMatrixEntry `json:"backends"`
+	Notes      []PermissionsMatrixNote  `json:"notes,omitempty"`
 	legend     map[api.SupportKind]string
 }
 

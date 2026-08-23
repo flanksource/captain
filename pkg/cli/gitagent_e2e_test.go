@@ -718,8 +718,10 @@ func TestOneEndpointRoutesTwoRepositories(t *testing.T) {
 			t.Fatalf("mailbox %s has crossed task namespaces:\n%s", tc.mailbox, refs)
 		}
 		binding, err := gitagent.LoadMailboxBinding(tc.mailbox)
-		if err != nil || binding.Repository != tc.repo {
-			t.Fatalf("mailbox %s binding = %+v, %v; want %s", tc.mailbox, binding, err, tc.repo)
+		canonicalRepo, canonicalErr := filepath.EvalSymlinks(tc.repo)
+		if err != nil || canonicalErr != nil || binding.Repository != canonicalRepo {
+			t.Fatalf("mailbox %s binding = %+v, %v; canonical repo = %s, %v",
+				tc.mailbox, binding, err, canonicalRepo, canonicalErr)
 		}
 		shim, err := os.ReadFile(filepath.Join(tc.mailbox, "hooks", "pre-receive"))
 		if err != nil || !strings.Contains(string(shim), `--role "mailbox"`) {

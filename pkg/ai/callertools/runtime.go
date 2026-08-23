@@ -40,10 +40,10 @@ type Options struct {
 	Definitions []api.ToolDefinition
 	Preferences api.ToolPreferences
 	// Policy is the ordered, last-match-wins rule list layered after Preferences.
-	Policy      api.PermissionPolicy
-	CanUseTool  api.PermissionFunc
-	SessionID   string
-	ExpiresAt   time.Time
+	Policy     api.PermissionPolicy
+	CanUseTool api.PermissionFunc
+	SessionID  string
+	ExpiresAt  time.Time
 	// ValidateCredential rechecks the persisted lease on every request and
 	// immediately before a tool handler executes.
 	ValidateCredential func(context.Context) error

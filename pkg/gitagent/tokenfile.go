@@ -32,6 +32,9 @@ func WriteTokenFile(path string, token text.SensitiveString) error {
 	if strings.TrimSpace(path) == "" {
 		return fmt.Errorf("a token path is required")
 	}
+	if strings.Contains(path, "..") {
+		return fmt.Errorf("captain token path must not contain '..': %q", path)
+	}
 	if token.IsEmpty() {
 		return fmt.Errorf("refusing to write an empty captain token to %s", path)
 	}

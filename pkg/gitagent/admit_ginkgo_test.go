@@ -80,7 +80,7 @@ func newCommitOn(ctx context.Context, repo, parent string, files map[string]stri
 	for path, content := range files {
 		writeFileT(work, path, content)
 	}
-	gitT(work, "add", "-A")
+	gitT(work, "add", "-f", "-A")
 	gitT(work, "commit", "-q", "-m", "agent work")
 	return gitT(work, "rev-parse", "HEAD")
 }
