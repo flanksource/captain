@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/flanksource/captain/pkg/ai"
+	captools "github.com/flanksource/captain/pkg/ai/tools"
 	"github.com/flanksource/captain/pkg/api"
 
 	gkai "github.com/firebase/genkit/go/ai"
@@ -26,7 +27,7 @@ func TestRunToolAutoRunsAndEmitsCorrelatedEvents(t *testing.T) {
 	var gotInput map[string]any
 	def := api.ToolDefinition{
 		Name:              "echo",
-		DefaultPermission: api.ToolModeOn,
+		DefaultPermission: api.ToolPolicyAllow,
 		Handler: func(_ context.Context, in map[string]any) (any, error) {
 			gotInput = in
 			return map[string]any{"ok": true}, nil
@@ -69,7 +70,7 @@ func TestRunToolApprovalDeniedSkipsHandler(t *testing.T) {
 
 	def := api.ToolDefinition{
 		Name:              "danger",
-		DefaultPermission: api.ToolModeAsk,
+		DefaultPermission: api.ToolPolicyAsk,
 		Handler:           func(context.Context, map[string]any) (any, error) { ran = true; return "ran", nil },
 	}
 
@@ -102,7 +103,7 @@ func TestRunToolApprovalAllowsAndSubstitutesInput(t *testing.T) {
 	var seen map[string]any
 	def := api.ToolDefinition{
 		Name:              "pay",
-		DefaultPermission: api.ToolModeAsk,
+		DefaultPermission: api.ToolPolicyAsk,
 		Handler:           func(_ context.Context, in map[string]any) (any, error) { seen = in; return "done", nil },
 	}
 
@@ -119,7 +120,7 @@ func TestRunToolHandlerErrorFedBack(t *testing.T) {
 	emit, events := collectEvents()
 	def := api.ToolDefinition{
 		Name:              "boom",
-		DefaultPermission: api.ToolModeOn,
+		DefaultPermission: api.ToolPolicyAllow,
 		Handler:           func(context.Context, map[string]any) (any, error) { return nil, context.Canceled },
 	}
 	out, err := runCorrelatedTool(p, def, map[string]any{}, emit)
@@ -137,7 +138,7 @@ func TestRunToolHandlerErrorFedBack(t *testing.T) {
 
 func TestToolOptionsEmptyWhenNoTools(t *testing.T) {
 	p := newToolProvider(nil)
-	if opts, err := p.toolOptions(nil, nil); err != nil || opts != nil {
+	if opts, err := p.toolOptions(captools.ResolveOptions{}, nil); err != nil || opts != nil {
 		t.Errorf("toolOptions with no tools = %v, want nil", opts)
 	}
 	if !p.SupportsCallerTools() {

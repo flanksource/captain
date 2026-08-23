@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -16,7 +17,7 @@ func TestRequireToolPolicySupport(t *testing.T) {
 		BackendClaudeCmux:  true,
 	}
 
-	policy := Permissions{Tools: Tools{Deny: []string{"Bash"}}}
+	policy := Permissions{Tools: Tools{"Bash": ToolPolicyDeny}}
 	for _, backend := range AllBackends() {
 		t.Run(string(backend), func(t *testing.T) {
 			err := RequireToolPolicySupport(backend, policy)
@@ -54,11 +55,22 @@ func TestRequireToolPolicySupport_EmptyPolicyAlwaysPasses(t *testing.T) {
 	}
 }
 
+// legacyTools decodes the deprecated {allow, deny, modes} object, which is the
+// only way "on"/"off" enter the policy map now that Tools is the map itself.
+func legacyTools(t *testing.T, body string) Tools {
+	t.Helper()
+	var tools Tools
+	if err := json.Unmarshal([]byte(body), &tools); err != nil {
+		t.Fatalf("decode legacy tools %s: %v", body, err)
+	}
+	return tools
+}
+
 // TestRequireToolPolicySupport_NormalizesToolModes pins that the guard reads the
-// canonical policy map: `tools: {Bash: off}` is a deny expressed through Modes,
-// so a backend with no tool filter must refuse it exactly like Tools.Deny.
+// canonical policy map: legacy `modes: {Bash: off}` decodes to a deny, so a
+// backend with no tool filter must refuse it exactly like an explicit deny.
 func TestRequireToolPolicySupport_NormalizesToolModes(t *testing.T) {
-	policy := Permissions{Tools: Tools{Modes: map[string]ToolMode{"Bash": ToolModeOff}}}
+	policy := Permissions{Tools: legacyTools(t, `{"modes":{"Bash":"off"}}`)}
 	err := RequireToolPolicySupport(BackendCodexCLI, policy)
 	if err == nil {
 		t.Fatal("codex-cli silently drops an off tool mode; want a loud refusal")
@@ -69,9 +81,12 @@ func TestRequireToolPolicySupport_NormalizesToolModes(t *testing.T) {
 	if err := RequireToolPolicySupport(BackendClaudeCLI, policy); err != nil {
 		t.Fatalf("claude-cli must carry an off tool mode, got %v", err)
 	}
-	// `on` resolves to auto, which constrains nothing and so needs no backend
-	// support.
-	auto := Permissions{Tools: Tools{Modes: map[string]ToolMode{"Read": ToolModeOn}}}
+	// Legacy `on` resolves to auto in this encoding — the allow list already
+	// carries allow — and auto constrains nothing, so it needs no backend support.
+	auto := Permissions{Tools: legacyTools(t, `{"modes":{"Read":"on"}}`)}
+	if auto.Tools["Read"] != ToolPolicyAuto {
+		t.Fatalf(`legacy modes "on" = %q, want auto`, auto.Tools["Read"])
+	}
 	if err := RequireToolPolicySupport(BackendCodexCLI, auto); err != nil {
 		t.Errorf("an auto policy constrains nothing but was refused: %v", err)
 	}
@@ -81,7 +96,7 @@ func TestRequireToolPolicySupport_NormalizesToolModes(t *testing.T) {
 // policy cannot express: no transport has a per-tool prompt, so an `ask` would
 // resolve to "allowed" even on the backends that advertise support.
 func TestRequireToolPolicySupport_AskIsRefusedEverywhere(t *testing.T) {
-	policy := Permissions{Tools: Tools{Modes: map[string]ToolMode{"Bash": ToolModeAsk}}}
+	policy := Permissions{Tools: Tools{"Bash": ToolPolicyAsk}}
 	for _, backend := range AllBackends() {
 		err := RequireToolPolicySupport(backend, policy)
 		if err == nil {
@@ -94,20 +109,20 @@ func TestRequireToolPolicySupport_AskIsRefusedEverywhere(t *testing.T) {
 	}
 }
 
-// TestToolsAllowDenyLists pins the projection every claude transport reads: the
-// raw Allow/Deny slices miss the tool modes, which is how an `off` tool escaped
-// the filter.
+// TestToolsAllowDenyLists pins the projection every claude transport reads,
+// exercised through the legacy shape because that is where the two spellings of
+// a deny meet: an explicit `deny` list and a `modes: off` entry must both land
+// in DenyList, and a `modes: on` entry must land in neither — it means auto here.
 func TestToolsAllowDenyLists(t *testing.T) {
-	tools := Tools{
-		Allow: []string{"Read"},
-		Deny:  []string{"WebFetch"},
-		Modes: map[string]ToolMode{"Bash": ToolModeOff, "Glob": ToolModeOn},
-	}
+	tools := legacyTools(t, `{"allow":["Read"],"deny":["WebFetch"],"modes":{"Bash":"off","Glob":"on"}}`)
 	if got := tools.DenyList(); len(got) != 2 || got[0] != "Bash" || got[1] != "WebFetch" {
 		t.Errorf("DenyList() = %v, want [Bash WebFetch]", got)
 	}
 	if got := tools.AllowList(); len(got) != 1 || got[0] != "Read" {
 		t.Errorf("AllowList() = %v, want [Read]", got)
+	}
+	if tools["Glob"] != ToolPolicyAuto {
+		t.Errorf(`Glob = %q, want auto — legacy "on" is not allow in this encoding`, tools["Glob"])
 	}
 }
 
@@ -115,7 +130,7 @@ func TestToolsAllowDenyLists(t *testing.T) {
 // the same backends: where there is no tool filter, an allowlist is equally
 // unenforced, and silently ignoring it grants more than the spec allowed.
 func TestRequireToolPolicySupport_AllowListToo(t *testing.T) {
-	policy := Permissions{Tools: Tools{Allow: []string{"Read"}}}
+	policy := Permissions{Tools: Tools{"Read": ToolPolicyAllow}}
 	if err := RequireToolPolicySupport(BackendCodexCLI, policy); err == nil {
 		t.Fatal("codex-cli silently drops an allow-list; want a loud refusal")
 	}

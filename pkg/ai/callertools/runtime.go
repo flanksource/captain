@@ -39,6 +39,8 @@ const (
 type Options struct {
 	Definitions []api.ToolDefinition
 	Preferences api.ToolPreferences
+	// Policy is the ordered, last-match-wins rule list layered after Preferences.
+	Policy      api.PermissionPolicy
 	CanUseTool  api.PermissionFunc
 	SessionID   string
 	ExpiresAt   time.Time
@@ -85,7 +87,7 @@ func New(options Options) (*Runtime, error) {
 	if options.ApprovalTimeout == 0 {
 		options.ApprovalTimeout = defaultApprovalTimeout
 	}
-	definitions, err := aitools.ResolveDefinitions(options.Definitions, options.Preferences)
+	definitions, err := aitools.ResolveDefinitions(options.Definitions, aitools.ResolveOptions{Preferences: options.Preferences, Policy: options.Policy})
 	if err != nil {
 		return nil, err
 	}

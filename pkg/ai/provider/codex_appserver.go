@@ -417,7 +417,7 @@ func (c *CodexAppServer) prepareCallerTools(req ai.Request) error {
 	if len(c.cfg.Tools) == 0 {
 		return nil
 	}
-	definitions, err := aitools.ResolveDefinitions(c.cfg.Tools, req.ToolPreferences)
+	definitions, err := aitools.ResolveDefinitions(c.cfg.Tools, aitools.ResolveOptions{Preferences: req.ToolPreferences, Policy: req.ToolPolicy})
 	if err != nil {
 		return fmt.Errorf("codex app-server caller tools: %w", err)
 	}

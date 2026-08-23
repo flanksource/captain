@@ -14,7 +14,7 @@ var _ = Describe("Spec serialization", func() {
 		func(marshal func(any) ([]byte, error), decode func([]byte, any) error) {
 			encoded, err := marshal(Spec{
 				Memory:      Memory{Skills: []string{}},
-				Permissions: Permissions{Tools: Tools{Modes: map[string]ToolMode{}}},
+				Permissions: Permissions{Tools: Tools{}},
 				Setup:       &shell.Setup{},
 				Workflow:    &Workflow{},
 			})

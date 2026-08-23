@@ -102,7 +102,7 @@ func (e *databaseExecution) startCallerTools(ctx context.Context, backend api.Ba
 	if err != nil {
 		return err
 	}
-	policy := make(map[string]api.ToolMode, len(e.definitions))
+	policy := make(map[string]api.ToolPolicy, len(e.definitions))
 	for _, definition := range e.definitions {
 		policy[definition.Name] = definition.DefaultPermission
 	}

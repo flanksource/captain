@@ -12,12 +12,10 @@ import (
 func TestPermissions_JSONPolicyShape(t *testing.T) {
 	in := Permissions{
 		Tools: Tools{
-			Allow: []string{"Read"},
-			Deny:  []string{"Bash"},
-			Modes: map[string]ToolMode{
-				"WebSearch": ToolModeAsk,
-				"Write":     ToolModeOn,
-			},
+			"Read":      ToolPolicyAllow,
+			"Bash":      ToolPolicyDeny,
+			"WebSearch": ToolPolicyAsk,
+			"Write":     ToolPolicyAuto,
 		},
 		MCP: MCP{
 			Servers: []string{"filesystem", "gavel"},
@@ -122,10 +120,10 @@ skills:
 }
 
 // TestTools_UnrecognisedPolicyFailsAtDecode pins the decode boundary as the place
-// a mistyped tool policy surfaces. The policy map is the only representation the
-// value ever has: applyPolicy translates it into allow/deny/modes, so a policy it
-// does not recognise leaves no trace for Permissions.Validate to inspect
-// afterwards, and the tool runs under whatever posture it inherited instead.
+// a mistyped tool policy surfaces. Tools.set is what rejects it; drop the check
+// there and an unrecognised value is simply absent from the map afterwards, with
+// nothing left for Permissions.Validate to inspect and the tool running under
+// whatever posture it inherited instead.
 func TestTools_UnrecognisedPolicyFailsAtDecode(t *testing.T) {
 	for _, tc := range []struct {
 		name   string

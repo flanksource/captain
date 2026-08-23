@@ -27,7 +27,12 @@ type Spec struct {
 	// ToolPreferences is the serializable per-turn tool/group selection policy.
 	// Executable tool handlers remain in Config.Tools.
 	ToolPreferences ToolPreferences     `json:"toolPreferences,omitempty" yaml:"toolPreferences,omitempty" pretty:"-"`
-	ToolApproval    *ToolApprovalResume `json:"toolApproval,omitempty" yaml:"toolApproval,omitempty" pretty:"-"`
+	// ToolPolicy is the ordered, last-match-wins rule list governing tool
+	// authority. It supersedes ToolPreferences' flat exact-name map, but both are
+	// accepted: ResolveDefinitions lowers the map through FromPreferences and
+	// evaluates one list, so the two shapes cannot disagree about a tool.
+	ToolPolicy   PermissionPolicy    `json:"toolPolicy,omitempty" yaml:"toolPolicy,omitempty" pretty:"-"`
+	ToolApproval *ToolApprovalResume `json:"toolApproval,omitempty" yaml:"toolApproval,omitempty" pretty:"-"`
 	Setup           *shell.Setup        `json:"setup,omitempty" yaml:"setup,omitempty"`
 
 	// Sandbox selects the sandbox backend the run executes under. Absent = the
@@ -55,6 +60,7 @@ type specMarshal struct {
 	Memory      *Memory             `json:"memory,omitempty" yaml:"memory,omitempty"`
 	Permissions *Permissions        `json:"permissions,omitempty" yaml:"permissions,omitempty"`
 	Preferences *ToolPreferences    `json:"toolPreferences,omitempty" yaml:"toolPreferences,omitempty"`
+	ToolPolicy  PermissionPolicy    `json:"toolPolicy,omitempty" yaml:"toolPolicy,omitempty"`
 	Approval    *ToolApprovalResume `json:"toolApproval,omitempty" yaml:"toolApproval,omitempty"`
 	Setup       *shell.Setup        `json:"setup,omitempty" yaml:"setup,omitempty"`
 	Sandbox     *SandboxRef         `json:"sandbox,omitempty" yaml:"sandbox,omitempty"`
@@ -146,6 +152,7 @@ func (s Spec) marshalValue() specMarshal {
 		Memory:      omitEmptyValue(s.Memory),
 		Permissions: omitEmptyValue(s.Permissions),
 		Preferences: omitEmptyValue(s.ToolPreferences),
+		ToolPolicy:  s.ToolPolicy,
 		Approval:    omitEmptyPointer(s.ToolApproval),
 		Setup:       omitEmptyPointer(s.Setup),
 		Sandbox:     omitEmptyPointer(s.Sandbox),
@@ -204,6 +211,9 @@ func (s Spec) Validate() error {
 		return fmt.Errorf("permissions: %w", err)
 	}
 	if err := s.ToolPreferences.Validate(); err != nil {
+		return err
+	}
+	if err := s.ToolPolicy.Validate(); err != nil {
 		return err
 	}
 	if err := s.Workflow.Validate(); err != nil {

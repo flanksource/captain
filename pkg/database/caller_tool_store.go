@@ -24,16 +24,16 @@ var (
 )
 
 type CallerToolCredential struct {
-	ID               uuid.UUID               `json:"id"`
-	SessionID        uuid.UUID               `json:"sessionId"`
-	PromptRunID      uuid.UUID               `json:"promptRunId"`
-	Backend          api.Backend             `json:"backend"`
-	SecretHash       []byte                  `json:"-"`
-	Policy           map[string]api.ToolMode `json:"policy"`
-	ExpiresAt        *time.Time              `json:"expiresAt,omitempty"`
-	RevokedAt        *time.Time              `json:"revokedAt,omitempty"`
-	RevocationReason string                  `json:"revocationReason,omitempty"`
-	CreatedAt        time.Time               `json:"createdAt"`
+	ID               uuid.UUID                 `json:"id"`
+	SessionID        uuid.UUID                 `json:"sessionId"`
+	PromptRunID      uuid.UUID                 `json:"promptRunId"`
+	Backend          api.Backend               `json:"backend"`
+	SecretHash       []byte                    `json:"-"`
+	Policy           map[string]api.ToolPolicy `json:"policy"`
+	ExpiresAt        *time.Time                `json:"expiresAt,omitempty"`
+	RevokedAt        *time.Time                `json:"revokedAt,omitempty"`
+	RevocationReason string                    `json:"revocationReason,omitempty"`
+	CreatedAt        time.Time                 `json:"createdAt"`
 }
 
 type CreateCallerToolCredentialInput struct {
@@ -41,21 +41,21 @@ type CreateCallerToolCredentialInput struct {
 	PromptRunID uuid.UUID
 	Backend     api.Backend
 	SecretHash  []byte
-	Policy      map[string]api.ToolMode
+	Policy      map[string]api.ToolPolicy
 	ExpiresAt   *time.Time
 }
 
 type callerToolCredentialRecord struct {
-	ID               uuid.UUID               `gorm:"column:id;type:uuid;primaryKey"`
-	SessionID        uuid.UUID               `gorm:"column:session_id;type:uuid"`
-	PromptRunID      uuid.UUID               `gorm:"column:prompt_run_id;type:uuid"`
-	Backend          api.Backend             `gorm:"column:backend"`
-	SecretHash       []byte                  `gorm:"column:secret_hash"`
-	Policy           map[string]api.ToolMode `gorm:"column:policy;serializer:json;type:jsonb"`
-	ExpiresAt        *time.Time              `gorm:"column:expires_at"`
-	RevokedAt        *time.Time              `gorm:"column:revoked_at"`
-	RevocationReason *string                 `gorm:"column:revocation_reason"`
-	CreatedAt        time.Time               `gorm:"column:created_at"`
+	ID               uuid.UUID                 `gorm:"column:id;type:uuid;primaryKey"`
+	SessionID        uuid.UUID                 `gorm:"column:session_id;type:uuid"`
+	PromptRunID      uuid.UUID                 `gorm:"column:prompt_run_id;type:uuid"`
+	Backend          api.Backend               `gorm:"column:backend"`
+	SecretHash       []byte                    `gorm:"column:secret_hash"`
+	Policy           map[string]api.ToolPolicy `gorm:"column:policy;serializer:json;type:jsonb"`
+	ExpiresAt        *time.Time                `gorm:"column:expires_at"`
+	RevokedAt        *time.Time                `gorm:"column:revoked_at"`
+	RevocationReason *string                   `gorm:"column:revocation_reason"`
+	CreatedAt        time.Time                 `gorm:"column:created_at"`
 }
 
 func (callerToolCredentialRecord) TableName() string {
@@ -103,9 +103,9 @@ func validateCallerToolCredentialInput(input CreateCallerToolCredentialInput) er
 	if len(input.Policy) == 0 {
 		return fmt.Errorf("%w: resolved policy is required", ErrCallerToolCredentialInvalid)
 	}
-	for tool, mode := range input.Policy {
-		if strings.TrimSpace(tool) == "" || (mode != api.ToolModeOn && mode != api.ToolModeAsk) {
-			return fmt.Errorf("%w: tool %q has unresolved mode %q", ErrCallerToolCredentialInvalid, tool, mode)
+	for tool, policy := range input.Policy {
+		if strings.TrimSpace(tool) == "" || (policy != api.ToolPolicyAllow && policy != api.ToolPolicyAsk) {
+			return fmt.Errorf("%w: tool %q has unresolved policy %q", ErrCallerToolCredentialInvalid, tool, policy)
 		}
 	}
 	if input.ExpiresAt != nil && !input.ExpiresAt.After(time.Now()) {
@@ -252,7 +252,7 @@ func (db *DB) CreateToolApprovalRequest(
 		input.ToolCallID == "" || input.Tool == "" || !input.ExpiresAt.After(time.Now()) {
 		return nil, fmt.Errorf("%w: session, turn, prompt run, model call, tool call, tool, and future expiry are required", ErrTurnRequestInvalid)
 	}
-	if credential != nil && credential.Policy[input.Tool] != api.ToolModeAsk {
+	if credential != nil && credential.Policy[input.Tool] != api.ToolPolicyAsk {
 		return nil, fmt.Errorf("%w: tool %q is not approved by ask policy", ErrTurnRequestInvalid, input.Tool)
 	}
 	if credential != nil && credential.ExpiresAt != nil && input.ExpiresAt.After(*credential.ExpiresAt) {
@@ -456,10 +456,27 @@ func turnRequestFromRecord(record turnRequestRecord) TurnRequest {
 	}
 }
 
-func cloneToolPolicy(policy map[string]api.ToolMode) map[string]api.ToolMode {
-	cloned := make(map[string]api.ToolMode, len(policy))
-	for tool, mode := range policy {
-		cloned[tool] = mode
+// cloneToolPolicy copies the policy map, normalizing the legacy spelling rows
+// written before the tool vocabulary was unified.
+//
+// The policy column is untyped jsonb with no check constraint, so rows persisted
+// by the old validator still hold "on" — a value api.ToolPolicy no longer
+// recognises. It is read back with LegacyOn: allow because that is what "on"
+// meant here: this map has no separate allow list, and the old validator
+// accepted only "on" or "ask", so an "on" row is a tool that was cleared to run
+// unprompted. An unrecognised value is left verbatim rather than defaulted, so
+// it fails the caller's own check instead of silently becoming an authority
+// nobody granted.
+func cloneToolPolicy(policy map[string]api.ToolPolicy) map[string]api.ToolPolicy {
+	cloned := make(map[string]api.ToolPolicy, len(policy))
+	for tool, stored := range policy {
+		if normalized, ok := api.ParseToolPolicy(string(stored), api.ParseToolPolicyOptions{
+			LegacyOn: api.ToolPolicyAllow,
+		}); ok {
+			cloned[tool] = normalized
+			continue
+		}
+		cloned[tool] = stored
 	}
 	return cloned
 }

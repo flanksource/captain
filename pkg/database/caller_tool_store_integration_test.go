@@ -22,7 +22,7 @@ func TestCallerToolCredentialAndApprovalLifecycle(t *testing.T) {
 	secretHash := sha256.Sum256([]byte("credential-secret"))
 	credential, err := db.CreateCallerToolCredential(t.Context(), CreateCallerToolCredentialInput{
 		SessionID: session.ID, PromptRunID: run.ID, Backend: api.BackendClaudeAgent,
-		SecretHash: secretHash[:], Policy: map[string]api.ToolMode{"account_edit": api.ToolModeAsk},
+		SecretHash: secretHash[:], Policy: map[string]api.ToolPolicy{"account_edit": api.ToolPolicyAsk},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, session.ID, credential.SessionID)

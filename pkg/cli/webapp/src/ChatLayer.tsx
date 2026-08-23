@@ -27,7 +27,7 @@ export function ChatLayer() {
         sessionsApi="/api/chat/sessions"
         runtimesApi="/api/chat/runtimes"
         tools={tools}
-        defaultToolMode="auto"
+        defaultToolPolicy="auto"
         chat={{
           api: "/api/chat",
           modelsApi: "/api/chat/models",

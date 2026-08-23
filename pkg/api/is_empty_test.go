@@ -27,14 +27,14 @@ func TestIsEmpty(t *testing.T) {
 		{name: "setup only", spec: Spec{Setup: &shell.Setup{Cwd: "/work"}}},
 		{name: "session only", spec: Spec{SessionID: "sess-1"}},
 		{name: "cli args only", spec: Spec{CLIArgs: map[string]any{"verbose": true}}},
-		{name: "tool preferences only", spec: Spec{ToolPreferences: ToolPreferences{"billing": ToolModeAsk}}},
+		{name: "tool preferences only", spec: Spec{ToolPreferences: ToolPreferences{"billing": ToolPolicyAsk}}},
 		{name: "model name only", spec: Spec{Model: Model{Name: "claude-sonnet-4-6"}}},
 		{name: "prompt user only", spec: Spec{Prompt: Prompt{User: "do the thing"}}},
 
 		// Tools and MCP marshal as derived views, so their emptiness is a domain
 		// rule: a Tools block is empty iff it yields no policies, and an MCP block
 		// iff it is not disabled and names nothing.
-		{name: "tools deny only", spec: Spec{Permissions: Permissions{Tools: Tools{Deny: []string{"Bash"}}}}},
+		{name: "tools deny only", spec: Spec{Permissions: Permissions{Tools: Tools{"Bash": ToolPolicyDeny}}}},
 		{name: "mcp disabled", spec: Spec{Permissions: Permissions{MCP: MCP{Disabled: true}}}},
 		{name: "empty tools block", spec: Spec{Permissions: Permissions{Tools: Tools{}}}, want: true},
 		{name: "empty mcp block", spec: Spec{Permissions: Permissions{MCP: MCP{}}}, want: true},

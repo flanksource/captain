@@ -51,19 +51,25 @@ func (s *Service) resumeToolApproval(ctx context.Context, threadID string, conti
 	}
 	execution := continuation.Execution
 	defer closeExecution(execution)
-	settings, err := s.runtimeSettings(ctx)
+	profile, err := s.runtimeProfile(ctx)
 	if err != nil {
-		return fmt.Errorf("load chat runtime settings: %w", err)
+		return fmt.Errorf("load chat runtime profile: %w", err)
+	}
+	if err := enforceApprovalRuntimeProfile(continuation.Spec, profile.Resolved); err != nil {
+		if interruptErr := execution.Interrupt(ctx, err.Error()); interruptErr != nil {
+			return fmt.Errorf("%w (interrupt rejected approval continuation: %v)", err, interruptErr)
+		}
+		return err
 	}
 	set, err := s.loadTools(ctx)
 	if err != nil {
 		return err
 	}
-	definitions, err := aitools.ResolveDefinitions(set.Definitions, continuation.Spec.ToolPreferences)
+	definitions, err := aitools.ResolveDefinitions(set.Definitions, aitools.ResolveOptions{Preferences: continuation.Spec.ToolPreferences, Policy: continuation.Spec.ToolPolicy})
 	if err != nil {
 		return err
 	}
-	config := settings.ProviderConfig
+	config := profile.ProviderConfig
 	config.Model = continuation.Spec.Model
 	config.Budget = continuation.Spec.Budget
 	config.SessionID = continuation.Spec.SessionID
@@ -118,6 +124,21 @@ func (s *Service) resumeToolApproval(ctx context.Context, threadID string, conti
 	for event := range resumed {
 		if event.Kind == api.EventError {
 			return fmt.Errorf("resume provider approval: %s", event.Error)
+		}
+	}
+	return nil
+}
+
+func enforceApprovalRuntimeProfile(spec api.Spec, resolved api.ResolvedSpec) error {
+	if err := enforceRuntimeQuotas(resolved); err != nil {
+		return err
+	}
+	if !resolved.AllowsModel(spec.Model) {
+		return fmt.Errorf("approval continuation model %q is outside the current effective model catalog", spec.Name)
+	}
+	for _, fallback := range spec.Fallbacks {
+		if !resolved.AllowsModel(fallback) {
+			return fmt.Errorf("approval continuation fallback model %q is outside the current effective model catalog", fallback.Name)
 		}
 	}
 	return nil

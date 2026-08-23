@@ -153,8 +153,8 @@ var _ = Describe("Captain aichat service", func() {
 		}
 		service := aichat.NewService(aichat.ServiceOptions{
 			Resolver: resolver, ProviderConfig: source,
-			Settings: aichat.RuntimeSettingsProviderFunc(func(context.Context) (aichat.RuntimeSettings, error) {
-				return aichat.RuntimeSettings{Spec: api.Spec{Model: api.Model{Name: "api:gpt-5.4"}}}, nil
+			Profile: aichat.RuntimeProfileProviderFunc(func(context.Context) (aichat.RuntimeProfile, error) {
+				return mustRuntimeProfile(api.SpecLayer{Name: "application", Scope: api.SpecLayerGlobal, Spec: api.Spec{Model: api.Model{Name: "api:gpt-5.4"}}}), nil
 			}),
 		})
 
@@ -180,8 +180,8 @@ var _ = Describe("Captain aichat service", func() {
 		}}
 		service := aichat.NewService(aichat.ServiceOptions{
 			Resolver: resolver, ProviderConfig: source,
-			Settings: aichat.RuntimeSettingsProviderFunc(func(context.Context) (aichat.RuntimeSettings, error) {
-				return aichat.RuntimeSettings{Spec: api.Spec{Model: api.Model{Name: "api:gpt-5.4"}}}, nil
+			Profile: aichat.RuntimeProfileProviderFunc(func(context.Context) (aichat.RuntimeProfile, error) {
+				return mustRuntimeProfile(api.SpecLayer{Name: "application", Scope: api.SpecLayerGlobal, Spec: api.Spec{Model: api.Model{Name: "api:gpt-5.4"}}}), nil
 			}),
 		})
 
@@ -202,11 +202,11 @@ var _ = Describe("Captain aichat service", func() {
 		resolver := &fakeResolver{provider: provider}
 		service := aichat.NewService(aichat.ServiceOptions{
 			Resolver: resolver,
-			Settings: aichat.RuntimeSettingsProviderFunc(func(context.Context) (aichat.RuntimeSettings, error) {
-				return aichat.RuntimeSettings{Spec: api.Spec{
+			Profile: aichat.RuntimeProfileProviderFunc(func(context.Context) (aichat.RuntimeProfile, error) {
+				return mustRuntimeProfile(api.SpecLayer{Name: "application", Scope: api.SpecLayerGlobal, Spec: api.Spec{
 					Model:  api.Model{Name: "openai/test-model"},
 					Budget: api.Budget{Cost: 5, MaxTokens: 2_000, MaxTurns: 3},
-				}}, nil
+				}}), nil
 			}),
 		})
 
@@ -224,11 +224,14 @@ var _ = Describe("Captain aichat service", func() {
 		resolver := &fakeResolver{provider: &fakeStreamingProvider{}}
 		service := aichat.NewService(aichat.ServiceOptions{
 			Resolver: resolver,
-			Settings: aichat.RuntimeSettingsProviderFunc(func(context.Context) (aichat.RuntimeSettings, error) {
-				return aichat.RuntimeSettings{
-					Spec:             api.Spec{Model: api.Model{Name: "openai/test-model"}},
-					MonthlyBudgetUSD: 10, CurrentMonthCostUSD: 10,
-				}, nil
+			Profile: aichat.RuntimeProfileProviderFunc(func(context.Context) (aichat.RuntimeProfile, error) {
+				return mustRuntimeProfile(api.SpecLayer{
+					Name: "application", Scope: api.SpecLayerGlobal,
+					Spec: api.Spec{Model: api.Model{Name: "openai/test-model"}},
+					Constraints: api.RuntimeConstraints{Quotas: []api.UsageQuota{{
+						Name: "application-monthly", CostLimitUSD: 10, CostUsedUSD: 10,
+					}}},
+				}), nil
 			}),
 		})
 
@@ -288,12 +291,11 @@ var _ = Describe("Captain aichat service", func() {
 		resolver := &fakeResolver{provider: provider}
 		service := aichat.NewService(aichat.ServiceOptions{
 			Resolver: resolver,
-			Settings: aichat.RuntimeSettingsProviderFunc(func(context.Context) (aichat.RuntimeSettings, error) {
-				return aichat.RuntimeSettings{
-					Spec:           api.Spec{Model: api.Model{Name: "openai/test-model"}},
-					System:         "Use application tools.",
-					ProviderConfig: api.Config{APIURL: "https://example.com/ai", ProjectName: "tenant-x"},
-				}, nil
+			Profile: aichat.RuntimeProfileProviderFunc(func(context.Context) (aichat.RuntimeProfile, error) {
+				profile := mustRuntimeProfile(api.SpecLayer{Name: "application", Scope: api.SpecLayerGlobal, Spec: api.Spec{Model: api.Model{Name: "openai/test-model"}}})
+				profile.System = "Use application tools."
+				profile.ProviderConfig = api.Config{APIURL: "https://example.com/ai", ProjectName: "tenant-x"}
+				return profile, nil
 			}),
 			Attachments: fakeAttachmentResolver{},
 			Tools: aichat.ToolProviderFunc(func(context.Context) (aichat.ToolSet, error) {
@@ -307,7 +309,7 @@ var _ = Describe("Captain aichat service", func() {
 				{Type: "text", Text: "inspect"},
 				{Type: "file", URL: "https://example.com/image.png", Filename: "image.png", MediaType: "image/png"},
 			}}},
-			Context: "invoice editor", ToolPreferences: api.ToolPreferences{"billing": api.ToolModeAsk},
+			Context: "invoice editor", ToolPreferences: api.ToolPreferences{"billing": api.ToolPolicyAsk},
 			ReasoningEffort: api.EffortHigh, PermissionMode: api.PermissionAcceptEdits,
 		}
 		response := httptest.NewRecorder()
@@ -320,7 +322,7 @@ var _ = Describe("Captain aichat service", func() {
 		spec := provider.specs[0]
 		Expect(spec.Model.Name).To(Equal("openai/test-model"))
 		Expect(spec.Model.Effort).To(Equal(api.EffortHigh))
-		Expect(spec.ToolPreferences).To(Equal(api.ToolPreferences{"billing": api.ToolModeAsk}))
+		Expect(spec.ToolPreferences).To(Equal(api.ToolPreferences{"billing": api.ToolPolicyAsk}))
 		Expect(spec.Permissions.Mode).To(Equal(api.PermissionAcceptEdits))
 		Expect(spec.Messages).To(HaveLen(2))
 		Expect(spec.Messages[0]).To(Equal(api.Message{Role: api.RoleSystem, Parts: []api.Part{{
@@ -346,8 +348,8 @@ var _ = Describe("Captain aichat service", func() {
 		resolver := &fakeResolver{provider: provider}
 		service := aichat.NewService(aichat.ServiceOptions{
 			Resolver: resolver, Threads: aichat.FixedThreadStore(store),
-			Settings: aichat.RuntimeSettingsProviderFunc(func(context.Context) (aichat.RuntimeSettings, error) {
-				return aichat.RuntimeSettings{System: "Use accounting tools."}, nil
+			Profile: aichat.RuntimeProfileProviderFunc(func(context.Context) (aichat.RuntimeProfile, error) {
+				return aichat.RuntimeProfile{System: "Use accounting tools."}, nil
 			}),
 		})
 
@@ -383,7 +385,7 @@ var _ = Describe("Captain aichat service", func() {
 		service := aichat.NewService(aichat.ServiceOptions{
 			Resolver: resolver,
 			Tools: aichat.StaticToolProvider([]api.ToolDefinition{{
-				Name: "invoice_get", DefaultPermission: api.ToolModeOn,
+				Name: "invoice_get", DefaultPermission: api.ToolPolicyAllow,
 				Handler: func(context.Context, map[string]any) (any, error) { return nil, nil },
 			}}),
 		})
@@ -391,7 +393,7 @@ var _ = Describe("Captain aichat service", func() {
 		response := httptest.NewRecorder()
 		service.Handler().ServeHTTP(response, requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{
 			Model:           "openai/test-model",
-			ToolPreferences: api.ToolPreferences{"invoice_get": api.ToolModeOff},
+			ToolPreferences: api.ToolPreferences{"invoice_get": api.ToolPolicyDeny},
 			Messages: []aichat.UIMessage{{
 				Role: "user", Parts: []aichat.UIPart{{Type: "text", Text: "hello"}},
 			}},

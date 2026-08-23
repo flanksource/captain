@@ -37,14 +37,21 @@ func newCaptainChatService(
 		return nil, nil, err
 	}
 	chat := aichat.NewService(aichat.ServiceOptions{
-		Settings: aichat.RuntimeSettingsProviderFunc(func(context.Context) (aichat.RuntimeSettings, error) {
-			return aichat.RuntimeSettings{
-				System: "You are Captain's coding-agent launcher assistant. Use Captain and Clicky tools when useful, " +
-					"prefer read-only inspection unless the user explicitly asks for edits, and keep follow-up guidance concise.",
+		Profile: aichat.RuntimeProfileProviderFunc(func(context.Context) (aichat.RuntimeProfile, error) {
+			resolved, err := api.ResolveSpecLayers(api.SpecLayer{
+				Name: "captain serve", Scope: api.SpecLayerGlobal,
 				Spec: api.Spec{
 					Model: api.Model{Name: "sol", Mode: registry.ModeAgent},
 					Setup: &shell.Setup{Cwd: cwd},
 				},
+			})
+			if err != nil {
+				return aichat.RuntimeProfile{}, err
+			}
+			return aichat.RuntimeProfile{
+				System: "You are Captain's coding-agent launcher assistant. Use Captain and Clicky tools when useful, " +
+					"prefer read-only inspection unless the user explicitly asks for edits, and keep follow-up guidance concise.",
+				Resolved: resolved,
 			}, nil
 		}),
 		// Thread reads follow the request's database context; writes never reach
@@ -124,21 +131,21 @@ func captainChatToolEnabled(tool tools.ToolInfo) bool {
 	}
 }
 
-func captainChatToolPermission(tool tools.ToolInfo) api.ToolMode {
+func captainChatToolPermission(tool tools.ToolInfo) api.ToolPolicy {
 	switch strings.ToUpper(tool.Annotation("clicky/method")) {
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
-		return api.ToolModeOn
+		return api.ToolPolicyAllow
 	}
-	if tool.DefaultPermission == api.ToolModeOn {
-		return api.ToolModeOn
+	if tool.DefaultPermission == api.ToolPolicyAllow {
+		return api.ToolPolicyAllow
 	}
 	if isReadOnlyCaptainTool(tool.Annotation("clicky/verb")) ||
 		isReadOnlyCaptainTool(tool.Name) ||
 		isReadOnlyCaptainTool(tool.Annotation("clicky/operation")) ||
 		isReadOnlyCaptainTool(tool.Annotation("clicky/path")) {
-		return api.ToolModeOn
+		return api.ToolPolicyAllow
 	}
-	return api.ToolModeAsk
+	return api.ToolPolicyAsk
 }
 
 func isReadOnlyCaptainTool(value string) bool {

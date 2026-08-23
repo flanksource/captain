@@ -2,23 +2,63 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+
+	"gopkg.in/yaml.v3"
 )
 
-// ToolPreferences selects the effective per-turn mode for a tool name or group.
-// An exact tool-name entry takes precedence over its group entry.
-type ToolPreferences map[string]ToolMode
+// ToolPreferences selects the effective per-turn policy for a tool name or
+// group. An exact tool-name entry takes precedence over its group entry.
+//
+// This encoding has no separate allow list, so the legacy "on" spelling is the
+// only way it could say auto-run and decodes to allow — unlike the legacy
+// permissions.tools modes map, where an Allow list already carries allow and
+// "on" means auto. See ParseToolPolicyOptions.LegacyOn.
+type ToolPreferences map[string]ToolPolicy
 
-// Validate rejects unknown modes before a provider request is assembled.
+const legacyPreferenceOn = ToolPolicyAllow
+
+// Validate rejects unknown policies before a provider request is assembled.
 func (p ToolPreferences) Validate() error {
 	if _, exists := p[""]; exists {
 		return fmt.Errorf("tool preference key cannot be empty")
 	}
 	for _, key := range sortedKeys(p) {
-		mode := p[key]
-		if _, ok := NormalizeToolMode(mode); !ok {
-			return fmt.Errorf("invalid tool preference %q for %q (valid: on, ask, off, auto)", mode, key)
+		if policy := p[key]; !policy.Valid() {
+			return fmt.Errorf("invalid tool preference %q for %q (valid: auto, ask, allow, deny)", policy, key)
 		}
+	}
+	return nil
+}
+
+func (p *ToolPreferences) UnmarshalJSON(data []byte) error {
+	var raw map[string]string
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	return p.setAll(raw)
+}
+
+func (p *ToolPreferences) UnmarshalYAML(value *yaml.Node) error {
+	var raw map[string]string
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+	return p.setAll(raw)
+}
+
+func (p *ToolPreferences) setAll(raw map[string]string) error {
+	*p = nil
+	for _, key := range sortedKeys(raw) {
+		policy, ok := ParseToolPolicy(raw[key], ParseToolPolicyOptions{LegacyOn: legacyPreferenceOn})
+		if !ok {
+			return fmt.Errorf("invalid tool preference %q for %q (valid: auto, ask, allow, deny)", raw[key], key)
+		}
+		if *p == nil {
+			*p = ToolPreferences{}
+		}
+		(*p)[key] = policy
 	}
 	return nil
 }
@@ -56,9 +96,9 @@ type ToolDefinition struct {
 	IdempotentHint  *bool
 	// Handler executes the tool in-process. Required.
 	Handler ToolHandler `json:"-"`
-	// DefaultPermission controls exposure: off omits the tool, ask routes calls
-	// through Config.CanUseTool, on auto-runs, and auto defers to runtime policy.
-	DefaultPermission ToolMode
+	// DefaultPermission controls exposure: deny omits the tool, ask routes calls
+	// through Config.CanUseTool, allow auto-runs, and auto defers to runtime policy.
+	DefaultPermission ToolPolicy
 	// Annotations carries opaque caller metadata (e.g. the originating CLI
 	// verb/method/path) for policies that want the raw values; providers ignore it.
 	Annotations map[string]string `json:",omitempty"`
@@ -67,6 +107,6 @@ type ToolDefinition struct {
 // NeedsApproval reports whether a call to this tool must go through
 // Config.CanUseTool before running.
 func (t ToolDefinition) NeedsApproval() bool {
-	mode, ok := NormalizeToolMode(t.DefaultPermission)
-	return ok && mode == ToolModeAsk
+	policy, ok := NormalizeToolPolicy(string(t.DefaultPermission))
+	return ok && policy == ToolPolicyAsk
 }

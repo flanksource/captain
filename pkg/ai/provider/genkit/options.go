@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/flanksource/captain/pkg/ai"
+	captools "github.com/flanksource/captain/pkg/ai/tools"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/api/registry"
 
@@ -51,7 +52,7 @@ func generateOptions(p *Provider, req ai.Request, stream gkai.ModelStreamCallbac
 		gkai.WithModelName(p.modelRef),
 		gkai.WithUse(gkai.MiddlewareFunc(captureGenkitRequests)),
 	}
-	toolOptions, err := p.toolOptions(req.ToolPreferences, emit)
+	toolOptions, err := p.toolOptions(captools.ResolveOptions{Preferences: req.ToolPreferences, Policy: req.ToolPolicy}, emit)
 	if err != nil {
 		return nil, err
 	}

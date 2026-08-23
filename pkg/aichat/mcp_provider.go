@@ -250,7 +250,7 @@ func projectMCPTool(server string, tool mcp.Tool, client mcpClient) (api.ToolDef
 	catalog := aitools.ToolCatalogEntry{
 		Name: name, Title: title, Description: tool.Description,
 		Source: "mcp", Server: server, PreferenceKey: name,
-		DefaultPermission: api.ToolModeAuto, InputSchema: aitools.ObjectSchema(inputSchema),
+		DefaultPermission: api.ToolPolicyAuto, InputSchema: aitools.ObjectSchema(inputSchema),
 		OutputSchema: outputSchema,
 	}
 	// _meta is where an MCP server publishes the grouping, icon and permission
@@ -263,7 +263,7 @@ func projectMCPTool(server string, tool mcp.Tool, client mcpClient) (api.ToolDef
 		Name: name, Description: tool.Description,
 		InputSchema: maps.Clone(catalog.InputSchema), Group: catalog.Group,
 		Parent: catalog.Parent, Icon: catalog.Icon, Strict: catalog.Strict,
-		DefaultPermission: api.ToolMode(catalog.DefaultPermission),
+		DefaultPermission: catalog.DefaultPermission,
 		Handler: func(ctx context.Context, input map[string]any) (any, error) {
 			for _, field := range required {
 				if _, present := input[field]; !present {

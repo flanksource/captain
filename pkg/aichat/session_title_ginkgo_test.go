@@ -76,7 +76,7 @@ var _ = Describe("chat session titles", func() {
 		thread, err := store.Create(context.Background(), "")
 		Expect(err).NotTo(HaveOccurred())
 		service, provider := newService(store, nil, []api.ToolDefinition{{
-			Name: "invoice_get", DefaultPermission: api.ToolModeOn,
+			Name: "invoice_get", DefaultPermission: api.ToolPolicyAllow,
 			Handler: func(context.Context, map[string]any) (any, error) { return nil, nil },
 		}})
 

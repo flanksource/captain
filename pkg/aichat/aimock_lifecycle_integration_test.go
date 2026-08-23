@@ -132,13 +132,13 @@ var _ = Describe("Mocked Captain chat lifecycle", func() {
 			var approvedInput map[string]any
 			service := aichat.NewService(aichat.ServiceOptions{
 				Resolver: realChatResolver{}, Threads: aichat.FixedThreadStore(store), Authority: authority,
-				Settings: aichat.RuntimeSettingsProviderFunc(func(context.Context) (aichat.RuntimeSettings, error) {
-					return aichat.RuntimeSettings{ProviderConfig: api.Config{
+				Profile: aichat.RuntimeProfileProviderFunc(func(context.Context) (aichat.RuntimeProfile, error) {
+					return aichat.RuntimeProfile{ProviderConfig: api.Config{
 						APIURL: mock.apiURL, APIKey: aimock.DummyKey,
 					}}, nil
 				}),
 				Tools: aichat.StaticToolProvider([]api.ToolDefinition{{
-					Name: "accounts_edit", DefaultPermission: api.ToolModeAsk,
+					Name: "accounts_edit", DefaultPermission: api.ToolPolicyAsk,
 					Handler: func(_ context.Context, input map[string]any) (any, error) {
 						toolCalls.Add(1)
 						inputMu.Lock()

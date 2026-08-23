@@ -166,7 +166,7 @@ var _ = Describe("Database chat sessions", func() {
 		service := aichat.NewService(aichat.ServiceOptions{
 			Resolver: &fakeResolver{provider: provider}, Threads: aichat.FixedThreadStore(store), Authority: authority,
 			Tools: aichat.StaticToolProvider([]api.ToolDefinition{{
-				Name: "accounts_edit", DefaultPermission: api.ToolModeAsk,
+				Name: "accounts_edit", DefaultPermission: api.ToolPolicyAsk,
 				Handler: func(context.Context, map[string]any) (any, error) { return nil, nil },
 			}}),
 		})
@@ -232,7 +232,7 @@ var _ = Describe("Database chat sessions", func() {
 		service := aichat.NewService(aichat.ServiceOptions{
 			Resolver: &fakeResolver{provider: provider}, Threads: aichat.FixedThreadStore(store), Authority: authority,
 			Tools: aichat.StaticToolProvider([]api.ToolDefinition{{
-				Name: "accounts_edit", DefaultPermission: api.ToolModeAsk,
+				Name: "accounts_edit", DefaultPermission: api.ToolPolicyAsk,
 				Handler: func(context.Context, map[string]any) (any, error) {
 					Fail("failed approval must not execute its tool")
 					return nil, nil
