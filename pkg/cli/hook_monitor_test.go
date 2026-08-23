@@ -104,4 +104,41 @@ func TestRunHookMonitorInstall(t *testing.T) {
 			require.ErrorContains(t, err, "higher-precedence Claude statusLine")
 		})
 	}
+
+	t.Run("capture cost detects launch-directory shared settings", func(t *testing.T) {
+		root := t.TempDir()
+		require.NoError(t, os.Mkdir(filepath.Join(root, ".git"), 0o755))
+		launchDir := filepath.Join(root, "packages", "app")
+		settingsDir := filepath.Join(launchDir, ".claude")
+		require.NoError(t, os.MkdirAll(settingsDir, 0o755))
+		target := filepath.Join(settingsDir, "settings.json")
+		require.NoError(t, os.WriteFile(target, []byte(`{"statusLine":{"type":"command","command":"jq -r .cwd"}}`), 0o644))
+		t.Chdir(launchDir)
+
+		_, err := RunHookMonitorInstall(HookMonitorInstallOptions{Timeout: 10, CaptureCost: true})
+		require.ErrorContains(t, err, target)
+	})
+
+	t.Run("capture cost updates effective git-root local wrapper", func(t *testing.T) {
+		root := t.TempDir()
+		require.NoError(t, os.Mkdir(filepath.Join(root, ".git"), 0o755))
+		launchDir := filepath.Join(root, "packages", "app")
+		require.NoError(t, os.MkdirAll(launchDir, 0o755))
+		settingsDir := filepath.Join(root, ".claude")
+		require.NoError(t, os.Mkdir(settingsDir, 0o755))
+		target := filepath.Join(settingsDir, "settings.local.json")
+		require.NoError(t, os.WriteFile(target, []byte(`{"statusLine":{"type":"command","command":"'/old/captain' hook monitor statusline --url 'http://localhost:1234' | (jq -r .cwd)"}}`), 0o644))
+		t.Chdir(launchDir)
+
+		_, err := RunHookMonitorInstall(HookMonitorInstallOptions{Timeout: 10, URL: "http://localhost:5678", CaptureCost: true})
+		require.NoError(t, err)
+		data, err := os.ReadFile(target)
+		require.NoError(t, err)
+		var settings map[string]any
+		require.NoError(t, json.Unmarshal(data, &settings))
+		command := settings["statusLine"].(map[string]any)["command"].(string)
+		assert.Contains(t, command, "--url 'http://localhost:5678'")
+		assert.NotContains(t, command, "/old/captain")
+		assert.Contains(t, command, "| (jq -r .cwd)")
+	})
 }

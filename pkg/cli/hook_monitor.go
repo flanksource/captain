@@ -7,12 +7,14 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/claude"
 	"github.com/flanksource/captain/pkg/codexconfig"
+	"github.com/flanksource/captain/pkg/container"
 	"github.com/flanksource/captain/pkg/monitor"
 )
 
@@ -111,6 +113,7 @@ func RunHookMonitorInstall(opts HookMonitorInstallOptions) (any, error) {
 	if err != nil {
 		captainPath = "captain"
 	}
+	statusLineTarget := ""
 	if opts.CaptureCost {
 		projectStatusLine, alreadyInstalled, err := higherPrecedenceClaudeStatusLine()
 		if err != nil {
@@ -119,6 +122,7 @@ func RunHookMonitorInstall(opts HookMonitorInstallOptions) (any, error) {
 		if projectStatusLine != "" && !alreadyInstalled {
 			return nil, fmt.Errorf("%s defines a higher-precedence Claude statusLine; compose cost capture there or remove it before installing user-wide capture", projectStatusLine)
 		}
+		statusLineTarget = projectStatusLine
 	}
 	urlSuffix := ""
 	if opts.URL != "" {
@@ -135,7 +139,10 @@ func RunHookMonitorInstall(opts HookMonitorInstallOptions) (any, error) {
 		if opts.URL != "" {
 			statusLineCommand += " --url " + shellQuote(opts.URL)
 		}
-		statusLineResult, err := installClaudeStatusLine(target, statusLineCommand)
+		if statusLineTarget == "" {
+			statusLineTarget = target
+		}
+		statusLineResult, err := installClaudeStatusLine(statusLineTarget, statusLineCommand)
 		if err != nil {
 			return nil, err
 		}
@@ -167,16 +174,27 @@ func RunHookMonitorInstall(opts HookMonitorInstallOptions) (any, error) {
 	return strings.Join(results, "\n"), nil
 }
 
+// higherPrecedenceClaudeStatusLine returns the effective project status-line
+// file in Claude's precedence order: Git-root local, legacy launch-directory
+// local, then launch-directory shared settings.
 func higherPrecedenceClaudeStatusLine() (string, bool, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return "", false, fmt.Errorf("resolve current project for Claude statusLine: %w", err)
 	}
-	root := claude.FindProjectRoot(cwd)
-	for _, target := range []string{
-		filepath.Join(root, ".claude", "settings.local.json"),
-		filepath.Join(root, ".claude", "settings.json"),
-	} {
+	targets := make([]string, 0, 3)
+	if runtime.GOOS != "windows" {
+		gitRoot := container.FindGitRoot(cwd)
+		home, _ := os.UserHomeDir()
+		if gitRoot != "" && gitRoot != cwd && filepath.Clean(gitRoot) != filepath.Clean(home) {
+			targets = append(targets, filepath.Join(gitRoot, ".claude", "settings.local.json"))
+		}
+	}
+	targets = append(targets,
+		filepath.Join(cwd, ".claude", "settings.local.json"),
+		filepath.Join(cwd, ".claude", "settings.json"),
+	)
+	for _, target := range targets {
 		data, err := os.ReadFile(target)
 		if os.IsNotExist(err) {
 			continue
