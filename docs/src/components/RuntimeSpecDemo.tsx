@@ -29,7 +29,7 @@ const tools: ToolMeta[] = [
     name: "WebSearch",
     label: "Web search",
     group: "Web",
-    defaultPermission: "off",
+    defaultPermission: "deny",
     description: "Search external documentation.",
   },
 ];
