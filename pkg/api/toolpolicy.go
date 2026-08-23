@@ -177,7 +177,7 @@ type PermissionRule struct {
 // the last word on every tool, and an unrecognised policy would otherwise fall
 // back to a default the author did not choose.
 func (r PermissionRule) Validate() error {
-	if r.ToolMatch.Empty() {
+	if r.Empty() {
 		return fmt.Errorf("permission rule must declare at least one match facet (name, group, parent, verb, method, scope, or a hint)")
 	}
 	if !r.Policy.Valid() {
@@ -209,7 +209,7 @@ func (p PermissionPolicy) Validate() error {
 func (p PermissionPolicy) Resolve(info ToolInfo) (ToolPolicy, bool) {
 	policy, matched := ToolPolicyAuto, false
 	for _, rule := range p {
-		if rule.ToolMatch.Matches(info) {
+		if rule.Matches(info) {
 			policy, matched = rule.Policy, true
 		}
 	}
