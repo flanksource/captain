@@ -35,16 +35,19 @@ type HookEvent struct {
 	ReceivedAt       time.Time `json:"-"`
 }
 
-// NotifyHookEvent enqueues a hook event without blocking. Events are dropped
-// (with a debug log) when the buffer is full or no locked run loop is draining
-// it — hook delivery is best-effort by design; the startup/daily recon and the
-// stale-process reaper converge the database over dropped events.
+// NotifyHookEvent enqueues a hook event without blocking. Status-line refreshes
+// use a separate queue so they cannot displace lifecycle events. Events are
+// dropped when their queue is full or no locked run loop is draining it.
 func (m *Monitor) NotifyHookEvent(ev HookEvent) {
 	if ev.ReceivedAt.IsZero() {
 		ev.ReceivedAt = time.Now().UTC()
 	}
+	events := m.hookEvents
+	if ev.Event == ClaudeEventStatusLine {
+		events = m.statusLineEvents
+	}
 	select {
-	case m.hookEvents <- ev:
+	case events <- ev:
 	default:
 		log.Debugf("hook event queue full; dropping %s %s for %s", ev.Provider, ev.Event, ev.SessionID)
 	}
@@ -54,7 +57,6 @@ func (m *Monitor) NotifyHookEvent(ev HookEvent) {
 // the session and arms tailing, activity events trigger a targeted ingest, and
 // SessionEnd finalizes the transcript and closes the session's process rows.
 func (m *Monitor) handleHookEvent(ctx context.Context, watcher *transcriptWatcher, ingestor *ingestor, ev HookEvent) {
-	m.noteActivity(ev.ReceivedAt)
 	path := ev.TranscriptPath
 	if ev.Provider == "codex" && path == "" {
 		path = resolveCodexTranscript(ev.SessionID)
@@ -87,6 +89,7 @@ func (m *Monitor) handleHookEvent(ctx context.Context, watcher *transcriptWatche
 		m.recordClaudeStatusLineCost(ctx, ev, path)
 		return
 	}
+	m.noteActivity(ev.ReceivedAt)
 
 	switch ev.Event {
 	case string(claude.HookEventSessionStart):

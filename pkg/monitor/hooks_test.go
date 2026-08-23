@@ -26,11 +26,25 @@ func TestNextPollInterval(t *testing.T) {
 }
 
 func TestNotifyHookEventNeverBlocks(t *testing.T) {
-	m := &Monitor{cfg: Config{ProcessInterval: 5 * time.Second, IdleProcessInterval: time.Minute}, hookEvents: make(chan HookEvent, 2)}
-	for range 5 {
-		m.NotifyHookEvent(HookEvent{Provider: "claude", Event: "Stop", SessionID: "s"})
+	m := &Monitor{
+		cfg:        Config{ProcessInterval: 5 * time.Second, IdleProcessInterval: time.Minute},
+		hookEvents: make(chan HookEvent, 2), statusLineEvents: make(chan HookEvent, 2),
 	}
-	assert.Len(t, m.hookEvents, 2, "overflow events must be dropped, not block")
+	for range 5 {
+		m.NotifyHookEvent(HookEvent{Provider: "claude", Event: ClaudeEventStatusLine, SessionID: "s"})
+	}
+	m.NotifyHookEvent(HookEvent{Provider: "claude", Event: "Stop", SessionID: "s"})
+	assert.Len(t, m.statusLineEvents, 2, "overflow events must be dropped, not block")
+	assert.Len(t, m.hookEvents, 1, "status-line refreshes must not displace lifecycle events")
+}
+
+func TestStatusLineDoesNotCountAsActivity(t *testing.T) {
+	lastActivity := time.Now().Add(-activityWindow - time.Second)
+	m := &Monitor{lastActivity: lastActivity}
+
+	m.handleHookEvent(t.Context(), nil, nil, HookEvent{Provider: "claude", Event: ClaudeEventStatusLine})
+
+	assert.Equal(t, lastActivity, m.lastActivity)
 }
 
 func TestWithinHookRoot(t *testing.T) {

@@ -75,6 +75,18 @@ func TestRunHookMonitorInstall(t *testing.T) {
 		command := statusLine["command"].(string)
 		assert.Contains(t, command, "hook monitor statusline")
 		assert.Contains(t, command, "| (jq -r .cwd)")
+
+		_, err = RunHookMonitorInstall(HookMonitorInstallOptions{Timeout: 10, URL: "http://localhost:1234", CaptureCost: true})
+		require.NoError(t, err)
+		_, err = RunHookMonitorInstall(HookMonitorInstallOptions{Timeout: 10, URL: "http://localhost:5678", CaptureCost: true})
+		require.NoError(t, err)
+		data, err = os.ReadFile(settingsPath)
+		require.NoError(t, err)
+		require.NoError(t, json.Unmarshal(data, &settings))
+		command = settings["statusLine"].(map[string]any)["command"].(string)
+		assert.Contains(t, command, "--url 'http://localhost:5678'")
+		assert.NotContains(t, command, "http://localhost:1234")
+		assert.Contains(t, command, "| (jq -r .cwd)", "updating Captain must preserve the existing status line")
 	})
 
 	for _, filename := range []string{"settings.json", "settings.local.json"} {

@@ -211,19 +211,34 @@ func installClaudeStatusLine(target, captainCommand string) (string, error) {
 	if err := json.Unmarshal(data, &settings); err != nil {
 		return "", fmt.Errorf("parsing %s: %w", target, err)
 	}
+	action := "installed"
 	if raw, exists := settings["statusLine"]; exists {
 		statusLine, ok := raw.(map[string]any)
 		if !ok {
 			return "", fmt.Errorf("%s statusLine is not a command object; cannot compose session cost capture", target)
 		}
 		command, _ := statusLine["command"].(string)
-		if strings.Contains(command, "hook monitor statusline") {
-			return fmt.Sprintf("StatusLine cost capture: already installed in %s", target), nil
+		if marker := strings.Index(command, "hook monitor statusline"); marker >= 0 {
+			var suffix string
+			if separator := strings.Index(command, " | ("); separator > marker {
+				suffix = command[separator:]
+			} else if strings.HasSuffix(command, " >/dev/null") {
+				suffix = " >/dev/null"
+			} else {
+				return "", fmt.Errorf("%s has an unrecognized Captain statusLine wrapper; cannot update session cost capture", target)
+			}
+			updatedCommand := captainCommand + suffix
+			if command == updatedCommand {
+				return fmt.Sprintf("StatusLine cost capture: already installed in %s", target), nil
+			}
+			statusLine["command"] = updatedCommand
+			action = "updated"
+		} else {
+			if kind, _ := statusLine["type"].(string); kind != "command" || strings.TrimSpace(command) == "" {
+				return "", fmt.Errorf("%s statusLine must have type=command and a command to compose session cost capture", target)
+			}
+			statusLine["command"] = captainCommand + " | (" + command + ")"
 		}
-		if kind, _ := statusLine["type"].(string); kind != "command" || strings.TrimSpace(command) == "" {
-			return "", fmt.Errorf("%s statusLine must have type=command and a command to compose session cost capture", target)
-		}
-		statusLine["command"] = captainCommand + " | (" + command + ")"
 	} else {
 		settings["statusLine"] = map[string]any{
 			"type": "command", "command": captainCommand + " >/dev/null",
@@ -236,7 +251,7 @@ func installClaudeStatusLine(target, captainCommand string) (string, error) {
 	if err := os.WriteFile(target, append(out, '\n'), 0o644); err != nil {
 		return "", fmt.Errorf("writing %s: %w", target, err)
 	}
-	return fmt.Sprintf("StatusLine cost capture: installed in %s", target), nil
+	return fmt.Sprintf("StatusLine cost capture: %s in %s", action, target), nil
 }
 
 // ensureUserClaudeSettings returns the user-level settings.json path, creating
