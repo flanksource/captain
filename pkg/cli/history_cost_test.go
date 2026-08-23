@@ -7,7 +7,10 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/claude"
+	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/session"
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
 )
 
 // TestRunHistory_CostWithoutClaudeFlag is the F5 regression: `history --cost`
@@ -68,5 +71,70 @@ func TestRunHistory_CostWithoutClaudeFlag(t *testing.T) {
 	}
 	if withCost == 0 {
 		t.Errorf("no row carried a cost with --cost and default (both-source) scope; F5 regression")
+	}
+}
+
+func TestResultCostLookupThreadProviderPriority(t *testing.T) {
+	db := withTestCaptainDB(t)
+	rootID, providerChildID, siblingID, estimateID, zeroID := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	for _, input := range []database.CreateSessionInput{
+		{ID: rootID, ProviderSessionID: "root-cost", Source: "claude", HostID: "cost-test"},
+		{ID: providerChildID, Source: "claude", HostID: "cost-test", ParentSessionID: &rootID, RootSessionID: &rootID},
+		{ID: siblingID, ProviderSessionID: "sibling-cost", Source: "claude", HostID: "cost-test", ParentSessionID: &rootID, RootSessionID: &rootID},
+		{ID: estimateID, ProviderSessionID: "estimate-cost", Source: "claude", HostID: "cost-test"},
+		{ID: zeroID, ProviderSessionID: "zero-cost", Source: "claude", HostID: "cost-test"},
+	} {
+		_, err := db.CreateOrGetSession(t.Context(), input)
+		require.NoError(t, err)
+	}
+	require.NoError(t, db.ReportClaudeCLICost(t.Context(), rootID, 0.2, time.Now().UTC()))
+	require.NoError(t, db.ReportClaudeCLICost(t.Context(), estimateID, 0.3, time.Now().UTC()))
+	require.NoError(t, db.ReportClaudeCLICost(t.Context(), zeroID, 0, time.Now().UTC()))
+
+	turnID := uuid.New()
+	require.NoError(t, db.Gorm().Exec(`
+		INSERT INTO captain_turns (id, session_id, turn_index, status)
+		VALUES (?, ?, 0, 'ended')`, turnID, providerChildID).Error)
+	require.NoError(t, db.Gorm().Exec(`
+		INSERT INTO captain_model_calls
+		  (turn_id, call_index, model, backend, status, input_tokens, input_cost, provider_cost_usd, currency)
+		VALUES (?, 0, 'claude-test', 'claude', 'succeeded', 10, 0.1, 0.75, 'USD')`, turnID).Error)
+
+	lookup := resultCostLookup{db: db}
+	for _, identity := range []string{"root-cost", "sibling-cost"} {
+		cost, ok := lookup.find(t.Context(), identity)
+		require.True(t, ok)
+		require.InDelta(t, 0.75, cost.ProviderUSD, 1e-9)
+		require.InDelta(t, 0.75, cost.TotalUSD, 1e-9)
+	}
+	_, ok := lookup.find(t.Context(), "zero-cost")
+	require.False(t, ok, "a zero CLI sample must not replace a fresh transcript estimate")
+
+	sessions := []claude.SessionCost{{
+		SessionID: "estimate-cost",
+		Project:   "project",
+		Files:     []string{"a.go", "b.go"},
+		Tokens:    claude.TokenSummary{TotalCost: 0.1},
+	}}
+	applyResultCosts(t.Context(), sessions)
+	require.InDelta(t, 0.3, sessions[0].Tokens.TotalCost, 1e-9)
+	require.Zero(t, sessions[0].Tokens.ProviderCostUSD)
+	require.Equal(t, costSourceClaudeCLI, sessions[0].CostSource)
+	require.Equal(t, "Claude CLI estimate", costSourceLabel(sessionCostSource(sessions[0])))
+
+	mixed := groupSessions(append(sessions, claude.SessionCost{
+		SessionID: "fresh-cost",
+		Project:   "project",
+		Tokens:    claude.TokenSummary{TotalCost: 0.1},
+	}), "project")
+	require.Len(t, mixed, 1)
+	require.Equal(t, "Mixed cost sources", costSourceLabel(sessionCostSource(mixed[0])))
+	require.True(t, costSourceEstimated(sessionCostSource(mixed[0])))
+
+	allocated := groupSessions(sessions, "file")
+	require.Len(t, allocated, 2)
+	for _, row := range allocated {
+		require.Equal(t, "Allocated session estimate", costSourceLabel(sessionCostSource(row)))
+		require.True(t, costSourceEstimated(sessionCostSource(row)))
 	}
 }

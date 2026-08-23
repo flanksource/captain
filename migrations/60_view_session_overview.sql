@@ -116,7 +116,10 @@ SELECT
   COALESCE(call_stats.output_cost, 0::numeric) AS output_cost,
   COALESCE(call_stats.reasoning_cost, 0::numeric) AS reasoning_cost,
   COALESCE(call_stats.cache_read_cost, 0::numeric) AS cache_read_cost,
-  COALESCE(call_stats.cache_write_cost, 0::numeric) AS cache_write_cost
+  COALESCE(call_stats.cache_write_cost, 0::numeric) AS cache_write_cost,
+  -- Claude's whole-session client estimate has no per-call attribution.
+  s.claude_cli_cost_usd,
+  s.claude_cli_cost_observed_at
 FROM public.captain_sessions s
 LEFT JOIN LATERAL (
   SELECT p.*

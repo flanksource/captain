@@ -119,6 +119,14 @@ table "captain_sessions" {
     null = true
     type = timestamptz
   }
+  column "claude_cli_cost_usd" {
+    null = true
+    type = numeric(20, 8)
+  }
+  column "claude_cli_cost_observed_at" {
+    null = true
+    type = timestamptz
+  }
   column "created_at" {
     null    = false
     type    = timestamptz
@@ -204,6 +212,9 @@ table "captain_sessions" {
   }
   check "captain_sessions_time_order" {
     expr = "ended_at IS NULL OR started_at IS NULL OR ended_at >= started_at"
+  }
+  check "captain_sessions_claude_cli_cost_complete" {
+    expr = "(claude_cli_cost_usd IS NULL AND claude_cli_cost_observed_at IS NULL) OR (claude_cli_cost_usd IS NOT NULL AND claude_cli_cost_usd >= 0 AND claude_cli_cost_observed_at IS NOT NULL)"
   }
 }
 

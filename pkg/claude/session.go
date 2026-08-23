@@ -492,6 +492,7 @@ type SessionCost struct {
 	Context   *ContextBreakdown  `json:"context,omitempty"`
 	ToolCosts []ToolTokenSummary `json:"toolCosts,omitempty"`
 
+	CostSource string `json:"costSource,omitempty"`
 	// responses deduplicates the per-content-block lines a single API response
 	// is written across. This is the no-result fallback — claude transcripts
 	// carry no result record to read instead. See api.ResponseSet.

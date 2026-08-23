@@ -32,10 +32,16 @@ func TestRunHookMonitorInstall(t *testing.T) {
 	_, err := RunHookMonitorInstall(HookMonitorInstallOptions{Timeout: 10})
 	require.NoError(t, err)
 
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
 	hooks := readHookEvents()
 	for _, event := range []string{"SessionStart", "UserPromptSubmit", "Stop", "SubagentStop", "SessionEnd"} {
 		assert.Len(t, hooks[event], 1, "event %s must be installed", event)
 	}
+	data, err := os.ReadFile(settingsPath)
+	require.NoError(t, err)
+	var settings map[string]any
+	require.NoError(t, json.Unmarshal(data, &settings))
+	assert.NotContains(t, settings, "statusLine", "cost capture must be opt-in")
 
 	codexData, err := os.ReadFile(codexPath)
 	require.NoError(t, err)
@@ -48,5 +54,26 @@ func TestRunHookMonitorInstall(t *testing.T) {
 		for _, event := range []string{"SessionStart", "UserPromptSubmit", "Stop", "SubagentStop", "SessionEnd"} {
 			assert.Len(t, hooks[event], 1, "event %s must not be duplicated", event)
 		}
+	})
+
+	t.Run("capture cost composes an existing status line", func(t *testing.T) {
+		data, err := os.ReadFile(settingsPath)
+		require.NoError(t, err)
+		var settings map[string]any
+		require.NoError(t, json.Unmarshal(data, &settings))
+		settings["statusLine"] = map[string]any{"type": "command", "command": "jq -r .cwd"}
+		data, err = json.MarshalIndent(settings, "", "  ")
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(settingsPath, append(data, '\n'), 0o644))
+
+		_, err = RunHookMonitorInstall(HookMonitorInstallOptions{Timeout: 10, CaptureCost: true})
+		require.NoError(t, err)
+		data, err = os.ReadFile(settingsPath)
+		require.NoError(t, err)
+		require.NoError(t, json.Unmarshal(data, &settings))
+		statusLine := settings["statusLine"].(map[string]any)
+		command := statusLine["command"].(string)
+		assert.Contains(t, command, "hook monitor statusline")
+		assert.Contains(t, command, "| (jq -r .cwd)")
 	})
 }

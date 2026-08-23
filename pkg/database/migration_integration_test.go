@@ -76,7 +76,7 @@ func TestCaptainMigrationsAreIdempotentAndShareOnePool(t *testing.T) {
 	require.EqualValues(t, 1, activityTriggerCount, "session activity projection must remain installed")
 
 	for table, columns := range map[string][]string{
-		"captain_sessions":              {"id", "lifecycle_status", "activity_state", "health_state", "state_version"},
+		"captain_sessions":              {"id", "lifecycle_status", "activity_state", "health_state", "state_version", "claude_cli_cost_usd", "claude_cli_cost_observed_at"},
 		"captain_prompt_runs":           {"id", "session_id", "root_session_id", "phase", "state", "version"},
 		"captain_prompt_run_iterations": {"id", "prompt_run_id", "state"},
 		"captain_plans":                 {"id", "source_session_id", "approved_revision_id", "approval_state"},

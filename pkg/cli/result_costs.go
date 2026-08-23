@@ -8,8 +8,8 @@ import (
 	"github.com/flanksource/captain/pkg/database"
 )
 
-// resultCostLookup resolves the result-derived cost captain recorded for the
-// sessions it ran itself.
+// resultCostLookup resolves attributed provider cost or Claude Code's
+// client-estimated session total for a transcript session.
 //
 // A stored claude transcript carries no result record — no invocation summary,
 // no running total — so replaying one can only rebuild the numbers from each
@@ -18,10 +18,8 @@ import (
 // (1-hour cache writes, for one), and on a real session it came out ~9% under
 // the billed figure.
 //
-// Captain does hold the provider's own answer for any session it executed:
-// pkg/aichat writes each EventResult's Usage and CostUSD to captain_model_calls.
-// This looks that up so the replay surfaces report the billed figure rather than
-// their own recomputation.
+// Claude Code's status-line total remains a whole-session CLI estimate rather
+// than being promoted to provider billing or attributed to model calls.
 type resultCostLookup struct {
 	db *database.DB
 }
@@ -50,10 +48,9 @@ type resultCost struct {
 // find returns the result captain recorded for a session identity (a provider
 // session id or captain id).
 //
-// It reports a hit only when the stored rows carry a provider-reported cost.
-// A row without one is not a result — it is another reconstruction, written by
-// transcript ingest from the same per-message usage the caller already has, and
-// possibly staler. Preferring it would trade a fresh estimate for an old one.
+// It reports a hit only for a positive Claude CLI estimate or when the complete
+// thread carries provider-reported cost. Rows containing only Captain's
+// reconstructed buckets are not preferred over a fresh transcript parse.
 func (l *resultCostLookup) find(ctx context.Context, identity string) (resultCost, bool) {
 	if l == nil || l.db == nil || identity == "" {
 		return resultCost{}, false
@@ -64,11 +61,18 @@ func (l *resultCostLookup) find(ctx context.Context, identity string) (resultCos
 	if err != nil || overview == nil {
 		return resultCost{}, false
 	}
-	rows, err := l.db.ListThreadCosts(ctx, overview.ID)
-	if err != nil || len(rows) == 0 {
+	rootID := overview.ID
+	if overview.RootSessionID != nil {
+		rootID = *overview.RootSessionID
+	}
+	rows, err := l.db.ListThreadCosts(ctx, rootID)
+	if err != nil {
 		return resultCost{}, false
 	}
-	out := resultCost{Model: rows[0].Model}
+	var out resultCost
+	if len(rows) > 0 {
+		out.Model = rows[0].Model
+	}
 	for i := range rows {
 		out.Usage.InputTokens += int(rows[i].InputTokens)
 		out.Usage.OutputTokens += int(rows[i].OutputTokens)
@@ -81,13 +85,19 @@ func (l *resultCostLookup) find(ctx context.Context, identity string) (resultCos
 		out.TotalUSD += rows[i].TotalCost
 		out.ProviderUSD += rows[i].ProviderCostUSD
 	}
-	return out, out.ProviderUSD > 0
+	if out.ProviderUSD > 0 {
+		return out, true
+	}
+	if overview.ClaudeCLICostUSD != nil && *overview.ClaudeCLICostUSD > 0 {
+		return resultCost{TotalUSD: *overview.ClaudeCLICostUSD}, true
+	}
+	return resultCost{}, false
 }
 
-// applyResultCosts replaces each session's reconstructed usage and cost with the
-// figures captain recorded from the provider's results, where it has them.
-// Sessions captain never ran keep their reconstruction, which stays marked as an
-// estimate because no provider cost is set on it.
+// applyResultCosts prefers stored provider-attributed calls, then a positive
+// Claude CLI estimate. The estimate replaces only TotalCost, preserving
+// transcript usage and a zero ProviderCostUSD so output remains estimated and
+// carries the Claude CLI label.
 func applyResultCosts(ctx context.Context, sessions []claude.SessionCost) {
 	if len(sessions) == 0 {
 		return
@@ -100,6 +110,15 @@ func applyResultCosts(ctx context.Context, sessions []claude.SessionCost) {
 		cost, ok := lookup.find(ctx, sessions[i].SessionID)
 		if !ok {
 			continue
+		}
+		if cost.ProviderUSD <= 0 {
+			sessions[i].Tokens.TotalCost = cost.TotalUSD
+			sessions[i].CostSource = costSourceClaudeCLI
+			continue
+		}
+		sessions[i].CostSource = costSourceProvider
+		if cost.TotalUSD-cost.ProviderUSD > 1e-9 {
+			sessions[i].CostSource = costSourceMixed
 		}
 		sessions[i].Tokens = claude.TokenSummary{
 			InputTokens:      cost.Usage.InputTokens,
