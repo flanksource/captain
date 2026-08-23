@@ -4,11 +4,12 @@
 -- autovacuum defaults never deliver, and two of the three are update-churned
 -- rather than append-only.
 --
--- captain_messages is written once per row and never updated: insertMessages
--- upserts with ON CONFLICT DO NOTHING. Its default fillfactor of 100 is
--- therefore correct -- there are no updates to keep HOT, and dense pages are
--- what an append-only table wants. What it does need is a far tighter
--- insert-driven vacuum. autovacuum_vacuum_insert_scale_factor defaults to 0.2,
+-- insertMessages first uses ON CONFLICT DO NOTHING, then convergeMessages
+-- updates only rows whose transcript-derived fields actually changed. Those
+-- exceptional updates do not justify reserving space on every heap page, so
+-- captain_messages keeps the dense default fillfactor of 100. It does need a
+-- far tighter insert-driven vacuum. autovacuum_vacuum_insert_scale_factor
+-- defaults to 0.2,
 -- so on a measured 714,045-row table roughly 143,000 new rows must accumulate
 -- before an insert vacuum fires -- about two weeks at the observed ~10,000
 -- messages/day. Across that window the visibility map rots, and because
@@ -21,10 +22,10 @@
 -- restored the map the same plan reported Heap Fetches: 2 and shared hit=2,029
 -- -- 5.7x fewer buffers for an identical result.
 --
--- captain_turns and captain_model_calls are a different shape. upsertTurns and
--- the model-call upsert both use ON CONFLICT DO UPDATE, and a live session is
--- re-ingested each time its transcript grows, so every turn already persisted
--- is rewritten on every pass. That is update churn, not appends, and it showed:
+-- captain_turns and captain_model_calls are a different shape. Their running
+-- aggregates genuinely change while a transcript grows, and before guarded
+-- upserts were introduced every persisted row was also rewritten on replay.
+-- That update churn showed:
 -- captain_turns sat at 26.9% and captain_model_calls at 38.6% all-visible page
 -- coverage. These two get fillfactor to keep the repeated rewrites HOT, the
 -- same reasoning as 71_session_storage_params.sql, plus the tightened insert
