@@ -2,28 +2,33 @@ package api_test
 
 import (
 	"encoding/json"
+	"net/http"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"gopkg.in/yaml.v3"
 
 	"github.com/flanksource/captain/pkg/api"
+	clickyentity "github.com/flanksource/clicky/entity"
 )
 
 func boolPtr(v bool) *bool { return &v }
 
 // xeroListTool is the shape the adversarial review's F1 defect turned on: a live
-// list tool parented by a provider, carrying clicky's verb/method annotations.
+// list tool parented by a provider, projecting a clicky list operation.
 func xeroListTool() api.ToolInfo {
 	return api.ToolInfo{
 		Name:         "xero_invoices_list",
 		Group:        "provider.xero.read",
 		Parent:       "xero",
 		ReadOnlyHint: boolPtr(true),
-		Annotations: map[string]string{
-			api.AnnotationVerb:   "list",
-			api.AnnotationMethod: "GET",
-			api.AnnotationScope:  "accounting",
+		Operation: &clickyentity.RPCOperation{
+			Name:   "invoices list",
+			Method: http.MethodGet,
+			Path:   "/api/v1/invoices",
+			Clicky: &clickyentity.ClickyOperationMeta{
+				Entity: "invoices", Verb: "list", Scope: "accounting",
+			},
 		},
 	}
 }

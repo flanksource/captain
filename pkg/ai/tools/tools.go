@@ -6,10 +6,11 @@
 // catalog DTOs — is owned by pkg/api and aliased here. There is one permission
 // vocabulary and one set of rules for it; this package holds none of them.
 //
-// It is genkit- and clicky-free: the genkit binding (registering these as model
-// tools) and the clicky-RPC→tool mapping live in the consumer (clicky/aichat),
-// which imports this package. Clicky-specific metadata (the originating
-// verb/method/path) rides in the opaque Annotations map, not as typed fields.
+// It is genkit-free: the genkit binding (registering these as model tools) and
+// the clicky-RPC→tool mapping live in the consumer (clicky/aichat), which imports
+// this package. A tool that projects a clicky operation carries that operation
+// itself (api.ToolInfo.Operation), so a rule can select on its entity, verb,
+// scope or method without either side keeping a string copy of them in step.
 package tools
 
 import (
@@ -23,15 +24,18 @@ import (
 // consumer already importing this package does not need both imports; there is
 // exactly one vocabulary and one set of rules behind them.
 type (
-	ToolPolicy       = api.ToolPolicy
-	ToolPreferences  = api.ToolPreferences
-	ToolInfo         = api.ToolInfo
-	ToolDefinition   = api.ToolDefinition
-	ToolCatalog      = api.ToolCatalog
-	ToolCatalogEntry = api.ToolCatalogEntry
-	ToolMatch        = api.ToolMatch
-	PermissionRule   = api.PermissionRule
-	PermissionPolicy = api.PermissionPolicy
+	ToolPolicy         = api.ToolPolicy
+	ToolPreferences    = api.ToolPreferences
+	ToolInfo           = api.ToolInfo
+	ToolDefinition     = api.ToolDefinition
+	ToolCatalog        = api.ToolCatalog
+	ToolCatalogEntry   = api.ToolCatalogEntry
+	ToolMatch          = api.ToolMatch
+	PermissionRule     = api.PermissionRule
+	PermissionPolicy   = api.PermissionPolicy
+	PermissionStrategy = api.PermissionStrategy
+	HTTPVerbStrategy   = api.HTTPVerbStrategy
+	MCPHintStrategy    = api.MCPHintStrategy
 )
 
 const (
@@ -52,6 +56,8 @@ var (
 	DefaultToolPolicy   = api.DefaultToolPolicy
 	NormalizeToolPolicy = api.NormalizeToolPolicy
 	ParseToolPolicy     = api.ParseToolPolicy
+	DefaultStrategies   = api.DefaultStrategies
+	ResolveStrategies   = api.ResolveStrategies
 )
 
 // ApprovalPolicy reports whether a tool call must be approved before it runs.
@@ -164,18 +170,31 @@ func NormalizedPreference(prefs ToolPreferences, name string) (ToolPolicy, bool)
 	return NormalizeToolPolicy(string(policy))
 }
 
-// ResolveOptions carries the two shapes a caller may express tool authority in.
+// ResolveOptions carries the shapes a caller may express tool authority in.
 //
-// Both are accepted and evaluated through ONE ordered list, so a spec that sets
-// each cannot get two different answers for the same tool. Preferences are
-// lowered first and the policy appended after, which makes an explicit rule beat
-// an inherited preference — the layering the whole design turns on.
+// All are evaluated through ONE ordered chain, so a spec that sets several
+// cannot get different answers for the same tool. Preferences are lowered first
+// and the policy appended after, which makes an explicit rule beat an inherited
+// preference — the layering the whole design turns on.
 type ResolveOptions struct {
 	// Preferences is the legacy flat tool→policy map, keyed by tool name or
 	// group. Lowered through api.FromPreferences rather than matched separately.
 	Preferences ToolPreferences
 	// Policy is the ordered, last-match-wins rule list.
 	Policy PermissionPolicy
+	// Strategies derive an answer for the tools no rule mentions, weakest first.
+	// Nil takes DefaultStrategies: the HTTP method, then the safety hints. A
+	// caller states its own ordering here at the point it hands its tools over,
+	// rather than each producer resolving an answer before captain sees it.
+	Strategies []PermissionStrategy
+}
+
+// EffectiveStrategies is the derivation chain these options resolve through.
+func (o ResolveOptions) EffectiveStrategies() []PermissionStrategy {
+	if o.Strategies == nil {
+		return DefaultStrategies()
+	}
+	return o.Strategies
 }
 
 // EffectivePolicy is the single ordered list these options resolve through.
@@ -184,9 +203,9 @@ func (o ResolveOptions) EffectivePolicy() PermissionPolicy {
 }
 
 // toolInfo projects a definition onto the subject a rule matches against. It
-// carries the full identity — parent, hints and the clicky annotations — because
-// a rule may select on any of them; passing only name and group is what limited
-// matching to exact strings before.
+// carries the full identity — parent, hints and the originating operation —
+// because a rule may select on any of them; passing only name and group is what
+// limited matching to exact strings before.
 func toolInfo(definition api.ToolDefinition) ToolInfo {
 	return ToolInfo{
 		Name:              definition.Name,
@@ -198,6 +217,7 @@ func toolInfo(definition api.ToolDefinition) ToolInfo {
 		ReadOnlyHint:      definition.ReadOnlyHint,
 		DestructiveHint:   definition.DestructiveHint,
 		IdempotentHint:    definition.IdempotentHint,
+		Operation:         definition.Operation,
 		Annotations:       definition.Annotations,
 	}
 }
@@ -218,6 +238,7 @@ func ResolveDefinitions(definitions []api.ToolDefinition, opts ResolveOptions) (
 		return nil, err
 	}
 	effective := opts.EffectivePolicy()
+	strategies := opts.EffectiveStrategies()
 	selected := make([]api.ToolDefinition, 0, len(definitions))
 	seen := make(map[string]struct{}, len(definitions))
 	for _, definition := range definitions {
@@ -234,27 +255,31 @@ func ResolveDefinitions(definitions []api.ToolDefinition, opts ResolveOptions) (
 		if definition.Handler == nil {
 			return nil, fmt.Errorf("caller tool %q has no handler", definition.Name)
 		}
-		policy := ToolPolicyAuto
+		// Weakest to strongest: what the tool's own facts imply, then what its
+		// author registered explicitly, then what an operator's rules say.
+		info := toolInfo(definition)
+		policy, _ := ResolveStrategies(strategies, info)
+		// At both layers above, `auto` is not an answer but a refusal to give one:
+		// it hands the tool back to what its own facts imply rather than replacing
+		// that with a blanket default. A registration is still validated even when
+		// it defers, so a typo is caught rather than silently deferring.
 		if definition.DefaultPermission != "" {
-			var ok bool
-			policy, ok = NormalizeToolPolicy(string(definition.DefaultPermission))
+			registered, ok := NormalizeToolPolicy(string(definition.DefaultPermission))
 			if !ok {
 				return nil, fmt.Errorf("tool %q has invalid default permission %q", definition.Name, definition.DefaultPermission)
 			}
+			if registered != ToolPolicyAuto {
+				policy = registered
+			}
 		}
-		if resolved, matched := effective.Resolve(toolInfo(definition)); matched && resolved != ToolPolicyAuto {
+		if resolved, matched := effective.Resolve(info); matched && resolved != ToolPolicyAuto {
 			policy = resolved
 		}
 		if policy == ToolPolicyDeny {
 			continue
 		}
 		if policy == ToolPolicyAuto {
-			if definition.ReadOnlyHint != nil && *definition.ReadOnlyHint &&
-				definition.DestructiveHint != nil && !*definition.DestructiveHint {
-				policy = ToolPolicyAllow
-			} else {
-				policy = ToolPolicyAsk
-			}
+			policy = ToolPolicyAsk
 		}
 		definition.DefaultPermission = policy
 		selected = append(selected, definition)

@@ -67,7 +67,7 @@ func (s *Service) resumeToolApproval(ctx context.Context, threadID string, conti
 	if err != nil {
 		return false, err
 	}
-	definitions, err := aitools.ResolveDefinitions(set.Definitions, aitools.ResolveOptions{Preferences: continuation.Spec.ToolPreferences, Policy: continuation.Spec.ToolPolicy})
+	definitions, err := aitools.ResolveDefinitions(set.Definitions, aitools.ResolveOptions{Preferences: continuation.Spec.ToolPreferences, Policy: continuation.Spec.ToolPolicy, Strategies: s.options.ToolStrategies})
 	if err != nil {
 		return false, err
 	}

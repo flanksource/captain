@@ -26,8 +26,16 @@ func newCaptainChatService(
 	authority aichat.ExecutionAuthority,
 	attachmentStore *attachments.Store,
 ) (*aichat.Service, *aichat.MCPToolProvider, error) {
+	// The ordering is declared here, where captain hands its own commands over:
+	// the method, then anything the operation declared about itself, then this
+	// app's read-only naming convention. It is handed to the provider so it
+	// travels with the command tree, and to the service, which is what resolves it
+	// across every tool source at once.
+	chatStrategies := []api.PermissionStrategy{
+		api.HTTPVerbStrategy{}, api.MCPHintStrategy{}, captainReadOnlyStrategy{},
+	}
 	chatTools, err := clickyaichat.NewCobraToolProvider(clickyaichat.CobraToolProviderOptions{
-		Root: rootCmd, Filter: captainChatToolEnabled, Permission: captainChatToolPermission,
+		Root: rootCmd, Filter: captainChatToolEnabled, Strategies: chatStrategies,
 	})
 	if err != nil {
 		return nil, nil, err
@@ -37,6 +45,7 @@ func newCaptainChatService(
 		return nil, nil, err
 	}
 	chat := aichat.NewService(aichat.ServiceOptions{
+		ToolStrategies: chatTools.Strategies(),
 		Profile: aichat.RuntimeProfileProviderFunc(func(context.Context) (aichat.RuntimeProfile, error) {
 			resolved, err := api.ResolveSpecLayers(api.SpecLayer{
 				Name: "captain serve", Scope: api.SpecLayerGlobal,
@@ -112,7 +121,7 @@ func handleThreadFromAgent(store aichat.ThreadStore) http.HandlerFunc {
 }
 
 func captainChatToolEnabled(tool tools.ToolInfo) bool {
-	raw := strings.ToLower(strings.TrimSpace(tool.Annotation("clicky/operation")))
+	raw := strings.ToLower(strings.TrimSpace(tool.OperationName()))
 	if raw == "" {
 		raw = strings.ToLower(strings.TrimSpace(tool.Name))
 	}
@@ -131,21 +140,29 @@ func captainChatToolEnabled(tool tools.ToolInfo) bool {
 	}
 }
 
-func captainChatToolPermission(tool tools.ToolInfo) api.ToolPolicy {
-	switch strings.ToUpper(tool.Annotation("clicky/method")) {
-	case http.MethodGet, http.MethodHead, http.MethodOptions:
-		return api.ToolPolicyAllow
-	}
-	if tool.DefaultPermission == api.ToolPolicyAllow {
-		return api.ToolPolicyAllow
-	}
-	if isReadOnlyCaptainTool(tool.Annotation("clicky/verb")) ||
+// captainReadOnlyStrategy auto-runs the operations captain's own CLI names as
+// reads. That CLI predates the entity annotations, so many of its commands carry
+// no verb and no safety hint, and a word in the name is the only thing that says
+// what they do.
+//
+// It is a guess, which is why it lives here as this app's own layer rather than
+// among the shared strategies: an HTTP method and a declared hint are facts about
+// an operation, "a command called list-sessions probably lists" is not. It sits
+// last in captain's chain so it can promote a tool the method alone would have
+// asked about — a POST named list-sessions still reads.
+//
+// A strategy rather than a rule list because the match is per word-segment:
+// "checkout" must not count as "check", and glob patterns have no way to say so.
+type captainReadOnlyStrategy struct{}
+
+func (captainReadOnlyStrategy) Resolve(tool tools.ToolInfo) (api.ToolPolicy, bool) {
+	if isReadOnlyCaptainTool(tool.Verb()) ||
 		isReadOnlyCaptainTool(tool.Name) ||
-		isReadOnlyCaptainTool(tool.Annotation("clicky/operation")) ||
-		isReadOnlyCaptainTool(tool.Annotation("clicky/path")) {
-		return api.ToolPolicyAllow
+		isReadOnlyCaptainTool(tool.OperationName()) ||
+		isReadOnlyCaptainTool(tool.Path()) {
+		return api.ToolPolicyAllow, true
 	}
-	return api.ToolPolicyAsk
+	return api.ToolPolicyAuto, false
 }
 
 func isReadOnlyCaptainTool(value string) bool {

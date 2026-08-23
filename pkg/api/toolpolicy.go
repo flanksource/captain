@@ -102,13 +102,16 @@ func compactPatterns(in []string) MatchPatterns {
 // patterns are alternatives (OR). An undeclared facet does not constrain, so a
 // rule says only as much as it means to.
 //
-// Verb, Method and Scope read the clicky annotations a tool carries rather than
-// typed fields, because they are clicky-RPC specifics that only some tools have —
-// see ToolInfo.
+// Entity, Action, Verb, Method and Scope read the clicky operation a tool
+// projects. A tool that projects none (an MCP server tool, an app-owned caller
+// tool) reports them empty, so a rule declaring any of them simply does not
+// select it.
 type ToolMatch struct {
 	Name   MatchPatterns `json:"name,omitempty" yaml:"name,omitempty"`
 	Group  MatchPatterns `json:"group,omitempty" yaml:"group,omitempty"`
 	Parent MatchPatterns `json:"parent,omitempty" yaml:"parent,omitempty"`
+	Entity MatchPatterns `json:"entity,omitempty" yaml:"entity,omitempty"`
+	Action MatchPatterns `json:"action,omitempty" yaml:"action,omitempty"`
 	Verb   MatchPatterns `json:"verb,omitempty" yaml:"verb,omitempty"`
 	Method MatchPatterns `json:"method,omitempty" yaml:"method,omitempty"`
 	Scope  MatchPatterns `json:"scope,omitempty" yaml:"scope,omitempty"`
@@ -124,18 +127,12 @@ type ToolMatch struct {
 	Idempotent  *bool `json:"idempotent,omitempty" yaml:"idempotent,omitempty"`
 }
 
-// Annotation keys the match facets read.
-const (
-	AnnotationVerb   = "clicky/verb"
-	AnnotationMethod = "clicky/method"
-	AnnotationScope  = "clicky/scope"
-)
-
 // Empty reports whether the match declares no facet at all. Such a rule would
 // match every tool and, being last-match-wins, silently become the final word on
 // every one of them.
 func (m ToolMatch) Empty() bool {
 	return len(m.Name) == 0 && len(m.Group) == 0 && len(m.Parent) == 0 &&
+		len(m.Entity) == 0 && len(m.Action) == 0 &&
 		len(m.Verb) == 0 && len(m.Method) == 0 && len(m.Scope) == 0 &&
 		m.ReadOnly == nil && m.Destructive == nil && m.Idempotent == nil
 }
@@ -145,9 +142,11 @@ func (m ToolMatch) Matches(info ToolInfo) bool {
 	return m.Name.Matches(info.Name) &&
 		m.Group.Matches(info.Group) &&
 		m.Parent.Matches(info.Parent) &&
-		m.Verb.Matches(info.Annotation(AnnotationVerb)) &&
-		m.Method.Matches(info.Annotation(AnnotationMethod)) &&
-		m.Scope.Matches(info.Annotation(AnnotationScope)) &&
+		m.Entity.Matches(info.Entity()) &&
+		m.Action.Matches(info.Action()) &&
+		m.Verb.Matches(info.Verb()) &&
+		m.Method.Matches(info.Method()) &&
+		m.Scope.Matches(info.Scope()) &&
 		matchesHint(m.ReadOnly, info.ReadOnlyHint) &&
 		matchesHint(m.Destructive, info.DestructiveHint) &&
 		matchesHint(m.Idempotent, info.IdempotentHint)
