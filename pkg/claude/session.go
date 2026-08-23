@@ -492,7 +492,8 @@ type SessionCost struct {
 	Context   *ContextBreakdown  `json:"context,omitempty"`
 	ToolCosts []ToolTokenSummary `json:"toolCosts,omitempty"`
 
-	CostSource string `json:"costSource,omitempty"`
+	CostSource  string `json:"costSource,omitempty"`
+	HistoryFile string `json:"-"`
 	// responses deduplicates the per-content-block lines a single API response
 	// is written across. This is the no-result fallback — claude transcripts
 	// carry no result record to read instead. See api.ResponseSet.
@@ -573,10 +574,11 @@ func costsFromEntries(sessionFile string, entries []HistoryEntry, projectRoot st
 		sc, ok := costs[key]
 		if !ok {
 			sc = &SessionCost{
-				SessionID: entry.SessionID,
-				Project:   project,
-				Start:     ts,
-				End:       ts,
+				SessionID:   entry.SessionID,
+				Project:     project,
+				Start:       ts,
+				End:         ts,
+				HistoryFile: sessionFile,
 			}
 			costs[key] = sc
 			order = append(order, key)

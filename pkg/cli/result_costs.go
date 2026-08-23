@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"path/filepath"
 
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/claude"
@@ -45,20 +46,18 @@ type resultCost struct {
 	ProviderUSD float64
 }
 
-// find returns the result captain recorded for a session identity (a provider
-// session id or captain id).
+// find returns the result Captain recorded for one Claude transcript session.
 //
-// It reports a hit only for a positive Claude CLI estimate or when the complete
-// thread carries provider-reported cost. Rows containing only Captain's
-// reconstructed buckets are not preferred over a fresh transcript parse.
-func (l *resultCostLookup) find(ctx context.Context, identity string) (resultCost, bool) {
+// Provider-attributed replacement remains per transcript, but only after a
+// complete-thread check prevents a lower-authority CLI estimate from masking a
+// provider cost on another agent. Reconstructed database buckets are not
+// preferred over a fresh transcript parse.
+func (l *resultCostLookup) find(ctx context.Context, identity, historyFile string) (resultCost, bool) {
 	if l == nil || l.db == nil || identity == "" {
 		return resultCost{}, false
 	}
-	overview, err := l.db.GetSessionOverviewByIdentity(ctx, identity)
-	// An ambiguous identity (SessionConflictError) or a plain miss both mean
-	// there is no single authoritative row to prefer.
-	if err != nil || overview == nil {
+	overview, ok := l.findClaudeTranscript(ctx, identity, historyFile)
+	if !ok {
 		return resultCost{}, false
 	}
 	rootID := overview.ID
@@ -69,29 +68,60 @@ func (l *resultCostLookup) find(ctx context.Context, identity string) (resultCos
 	if err != nil {
 		return resultCost{}, false
 	}
-	var out resultCost
-	if len(rows) > 0 {
-		out.Model = rows[0].Model
-	}
+	var threadProviderUSD float64
 	for i := range rows {
-		out.Usage.InputTokens += int(rows[i].InputTokens)
-		out.Usage.OutputTokens += int(rows[i].OutputTokens)
-		out.Usage.ReasoningTokens += int(rows[i].ReasoningTokens)
-		out.Usage.CacheReadTokens += int(rows[i].CacheReadTokens)
-		out.Usage.CacheWriteTokens += int(rows[i].CacheWriteTokens)
-		// total_cost already resolves provider-reported against list-price per
-		// underlying call (see 67_view_session_costs.sql); provider_cost_usd is
-		// how much of it the provider itself reported.
-		out.TotalUSD += rows[i].TotalCost
-		out.ProviderUSD += rows[i].ProviderCostUSD
+		threadProviderUSD += rows[i].ProviderCostUSD
 	}
-	if out.ProviderUSD > 0 {
+	if threadProviderUSD > 0 {
+		if overview.ProviderCostUSD <= 0 {
+			return resultCost{}, false
+		}
+		out := resultCost{
+			Usage: api.Usage{
+				InputTokens:      int(overview.InputTokens),
+				OutputTokens:     int(overview.OutputTokens),
+				ReasoningTokens:  int(overview.ReasoningTokens),
+				CacheReadTokens:  int(overview.CacheReadTokens),
+				CacheWriteTokens: int(overview.CacheWriteTokens),
+			},
+			TotalUSD: overview.CostUSD, ProviderUSD: overview.ProviderCostUSD,
+		}
+		if overview.Model != nil {
+			out.Model = *overview.Model
+		}
 		return out, true
 	}
 	if overview.ClaudeCLICostUSD != nil && *overview.ClaudeCLICostUSD > 0 {
 		return resultCost{TotalUSD: *overview.ClaudeCLICostUSD}, true
 	}
 	return resultCost{}, false
+}
+
+func (l *resultCostLookup) findClaudeTranscript(ctx context.Context, identity, historyFile string) (*database.SessionOverview, bool) {
+	rows, err := l.db.ListSessionOverviewsByProviderSessionID(ctx, identity)
+	if err != nil {
+		return nil, false
+	}
+	var match *database.SessionOverview
+	for i := range rows {
+		if rows[i].Source != "claude" || !overviewMatchesHistoryFile(rows[i], historyFile) {
+			continue
+		}
+		if match != nil {
+			return nil, false
+		}
+		match = &rows[i]
+	}
+	return match, match != nil
+}
+
+func overviewMatchesHistoryFile(overview database.SessionOverview, historyFile string) bool {
+	if historyFile == "" {
+		return true
+	}
+	want := filepath.Clean(historyFile)
+	return (overview.HistoryFile != nil && filepath.Clean(*overview.HistoryFile) == want) ||
+		(overview.Path != nil && filepath.Clean(*overview.Path) == want)
 }
 
 // applyResultCosts prefers stored provider-attributed calls, then a positive
@@ -107,7 +137,7 @@ func applyResultCosts(ctx context.Context, sessions []claude.SessionCost) {
 		return
 	}
 	for i := range sessions {
-		cost, ok := lookup.find(ctx, sessions[i].SessionID)
+		cost, ok := lookup.find(ctx, sessions[i].SessionID, sessions[i].HistoryFile)
 		if !ok {
 			continue
 		}

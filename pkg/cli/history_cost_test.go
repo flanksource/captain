@@ -77,16 +77,27 @@ func TestRunHistory_CostWithoutClaudeFlag(t *testing.T) {
 func TestResultCostLookupThreadProviderPriority(t *testing.T) {
 	db := withTestCaptainDB(t)
 	rootID, providerChildID, siblingID, estimateID, zeroID := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	const (
+		rootPath          = "/tmp/root-cost.jsonl"
+		providerChildPath = "/tmp/provider-child-cost.jsonl"
+		siblingPath       = "/tmp/sibling-cost.jsonl"
+		estimatePath      = "/tmp/estimate-cost.jsonl"
+		zeroPath          = "/tmp/zero-cost.jsonl"
+	)
 	for _, input := range []database.CreateSessionInput{
-		{ID: rootID, ProviderSessionID: "root-cost", Source: "claude", HostID: "cost-test"},
-		{ID: providerChildID, Source: "claude", HostID: "cost-test", ParentSessionID: &rootID, RootSessionID: &rootID},
-		{ID: siblingID, ProviderSessionID: "sibling-cost", Source: "claude", HostID: "cost-test", ParentSessionID: &rootID, RootSessionID: &rootID},
-		{ID: estimateID, ProviderSessionID: "estimate-cost", Source: "claude", HostID: "cost-test"},
-		{ID: zeroID, ProviderSessionID: "zero-cost", Source: "claude", HostID: "cost-test"},
+		{ID: rootID, ProviderSessionID: "root-cost", Source: "claude", HostID: "cost-test", Path: rootPath},
+		{ID: providerChildID, ProviderSessionID: "provider-child-cost", Source: "claude", HostID: "cost-test", Path: providerChildPath, ParentSessionID: &rootID, RootSessionID: &rootID},
+		{ID: siblingID, ProviderSessionID: "sibling-cost", Source: "claude", HostID: "cost-test", Path: siblingPath, ParentSessionID: &rootID, RootSessionID: &rootID},
+		{ID: estimateID, ProviderSessionID: "estimate-cost", Source: "claude", HostID: "cost-test", Path: estimatePath},
+		{ID: zeroID, ProviderSessionID: "zero-cost", Source: "claude", HostID: "cost-test", Path: zeroPath},
 	} {
 		_, err := db.CreateOrGetSession(t.Context(), input)
 		require.NoError(t, err)
 	}
+	_, err := db.CreateOrGetSession(t.Context(), database.CreateSessionInput{
+		ProviderSessionID: "estimate-cost", Source: "gavel", HostID: "cost-test", Path: "/tmp/gavel-estimate-cost.jsonl",
+	})
+	require.NoError(t, err)
 	require.NoError(t, db.ReportClaudeCLICost(t.Context(), rootID, 0.2, time.Now().UTC()))
 	require.NoError(t, db.ReportClaudeCLICost(t.Context(), estimateID, 0.3, time.Now().UTC()))
 	require.NoError(t, db.ReportClaudeCLICost(t.Context(), zeroID, 0, time.Now().UTC()))
@@ -101,20 +112,37 @@ func TestResultCostLookupThreadProviderPriority(t *testing.T) {
 		VALUES (?, 0, 'claude-test', 'claude', 'succeeded', 10, 0.1, 0.75, 'USD')`, turnID).Error)
 
 	lookup := resultCostLookup{db: db}
-	for _, identity := range []string{"root-cost", "sibling-cost"} {
-		cost, ok := lookup.find(t.Context(), identity)
-		require.True(t, ok)
-		require.InDelta(t, 0.75, cost.ProviderUSD, 1e-9)
-		require.InDelta(t, 0.75, cost.TotalUSD, 1e-9)
+	cost, ok := lookup.find(t.Context(), "provider-child-cost", providerChildPath)
+	require.True(t, ok)
+	require.InDelta(t, 0.75, cost.ProviderUSD, 1e-9)
+	require.InDelta(t, 0.75, cost.TotalUSD, 1e-9)
+	for identity, path := range map[string]string{"root-cost": rootPath, "sibling-cost": siblingPath} {
+		_, ok := lookup.find(t.Context(), identity, path)
+		require.False(t, ok, "thread priority must not copy a whole-thread result onto %s", identity)
 	}
-	_, ok := lookup.find(t.Context(), "zero-cost")
+	_, ok = lookup.find(t.Context(), "zero-cost", zeroPath)
 	require.False(t, ok, "a zero CLI sample must not replace a fresh transcript estimate")
+	cost, ok = lookup.find(t.Context(), "estimate-cost", estimatePath)
+	require.True(t, ok, "the Claude transcript row must win over another source with the same provider ID")
+	require.InDelta(t, 0.3, cost.TotalUSD, 1e-9)
+
+	threadSessions := []claude.SessionCost{
+		{SessionID: "root-cost", HistoryFile: rootPath, Tokens: claude.TokenSummary{TotalCost: 0.1}},
+		{SessionID: "provider-child-cost", HistoryFile: providerChildPath, Tokens: claude.TokenSummary{TotalCost: 0.2}},
+		{SessionID: "sibling-cost", HistoryFile: siblingPath, Tokens: claude.TokenSummary{TotalCost: 0.3}},
+	}
+	applyResultCosts(t.Context(), threadSessions)
+	require.InDelta(t, 0.1, threadSessions[0].Tokens.TotalCost, 1e-9)
+	require.InDelta(t, 0.75, threadSessions[1].Tokens.TotalCost, 1e-9)
+	require.InDelta(t, 0.3, threadSessions[2].Tokens.TotalCost, 1e-9)
+	require.InDelta(t, 1.15, threadSessions[0].Tokens.TotalCost+threadSessions[1].Tokens.TotalCost+threadSessions[2].Tokens.TotalCost, 1e-9)
 
 	sessions := []claude.SessionCost{{
-		SessionID: "estimate-cost",
-		Project:   "project",
-		Files:     []string{"a.go", "b.go"},
-		Tokens:    claude.TokenSummary{TotalCost: 0.1},
+		SessionID:   "estimate-cost",
+		Project:     "project",
+		Files:       []string{"a.go", "b.go"},
+		HistoryFile: estimatePath,
+		Tokens:      claude.TokenSummary{TotalCost: 0.1},
 	}}
 	applyResultCosts(t.Context(), sessions)
 	require.InDelta(t, 0.3, sessions[0].Tokens.TotalCost, 1e-9)

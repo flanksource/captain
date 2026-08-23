@@ -111,6 +111,15 @@ func RunHookMonitorInstall(opts HookMonitorInstallOptions) (any, error) {
 	if err != nil {
 		captainPath = "captain"
 	}
+	if opts.CaptureCost {
+		projectStatusLine, alreadyInstalled, err := higherPrecedenceClaudeStatusLine()
+		if err != nil {
+			return nil, err
+		}
+		if projectStatusLine != "" && !alreadyInstalled {
+			return nil, fmt.Errorf("%s defines a higher-precedence Claude statusLine; compose cost capture there or remove it before installing user-wide capture", projectStatusLine)
+		}
+	}
 	urlSuffix := ""
 	if opts.URL != "" {
 		urlSuffix = " --url " + opts.URL
@@ -156,6 +165,38 @@ func RunHookMonitorInstall(opts HookMonitorInstallOptions) (any, error) {
 		results = append(results, "Claude CLI cost estimate capture uses a custom status line; missed delivery retries on Claude's next refresh.")
 	}
 	return strings.Join(results, "\n"), nil
+}
+
+func higherPrecedenceClaudeStatusLine() (string, bool, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", false, fmt.Errorf("resolve current project for Claude statusLine: %w", err)
+	}
+	root := claude.FindProjectRoot(cwd)
+	for _, target := range []string{
+		filepath.Join(root, ".claude", "settings.local.json"),
+		filepath.Join(root, ".claude", "settings.json"),
+	} {
+		data, err := os.ReadFile(target)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return "", false, fmt.Errorf("reading %s: %w", target, err)
+		}
+		var settings map[string]any
+		if err := json.Unmarshal(data, &settings); err != nil {
+			return "", false, fmt.Errorf("parsing %s: %w", target, err)
+		}
+		raw, exists := settings["statusLine"]
+		if !exists {
+			continue
+		}
+		statusLine, _ := raw.(map[string]any)
+		command, _ := statusLine["command"].(string)
+		return target, strings.Contains(command, "hook monitor statusline"), nil
+	}
+	return "", false, nil
 }
 
 // installClaudeStatusLine wraps an existing command as the downstream side of

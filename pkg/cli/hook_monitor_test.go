@@ -76,4 +76,20 @@ func TestRunHookMonitorInstall(t *testing.T) {
 		assert.Contains(t, command, "hook monitor statusline")
 		assert.Contains(t, command, "| (jq -r .cwd)")
 	})
+
+	for _, filename := range []string{"settings.json", "settings.local.json"} {
+		t.Run("capture cost rejects higher precedence "+filename, func(t *testing.T) {
+			project := t.TempDir()
+			t.Chdir(project)
+			require.NoError(t, os.WriteFile(filepath.Join(project, "go.mod"), []byte("module example.com/project\n"), 0o644))
+			settingsDir := filepath.Join(project, ".claude")
+			require.NoError(t, os.MkdirAll(settingsDir, 0o755))
+			target := filepath.Join(settingsDir, filename)
+			require.NoError(t, os.WriteFile(target, []byte(`{"statusLine":{"type":"command","command":"jq -r .cwd"}}`), 0o644))
+
+			_, err := RunHookMonitorInstall(HookMonitorInstallOptions{Timeout: 10, CaptureCost: true})
+			require.ErrorContains(t, err, target)
+			require.ErrorContains(t, err, "higher-precedence Claude statusLine")
+		})
+	}
 }
