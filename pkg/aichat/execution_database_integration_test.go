@@ -37,7 +37,7 @@ var _ = Describe("Database execution authority", func() {
 				Name: "sonnet", Backend: api.BackendClaudeAgent,
 			}.Capabilities()},
 			Definitions: []api.ToolDefinition{{
-				Name: "account_edit", DefaultPermission: api.ToolModeAsk,
+				Name: "account_edit", DefaultPermission: api.ToolPolicyAsk,
 				Handler: func(_ context.Context, input map[string]any) (any, error) {
 					calls.Add(1)
 					return input, nil

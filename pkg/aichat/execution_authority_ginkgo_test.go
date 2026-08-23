@@ -179,7 +179,7 @@ var _ = Describe("Authoritative aichat execution", func() {
 				}), nil
 			}),
 			Tools: aichat.StaticToolProvider([]api.ToolDefinition{{
-				Name: "account_edit", DefaultPermission: api.ToolModeAsk,
+				Name: "account_edit", DefaultPermission: api.ToolPolicyAsk,
 				Handler: func(context.Context, map[string]any) (any, error) { return nil, nil },
 			}}),
 		})
@@ -229,7 +229,7 @@ var _ = Describe("Authoritative aichat execution", func() {
 			Resolver: &fakeResolver{provider: provider}, Threads: aichat.FixedThreadStore(store),
 			Authority: &fakeExecutionAuthority{execution: execution},
 			Tools: aichat.StaticToolProvider([]api.ToolDefinition{{
-				Name: "account_edit", DefaultPermission: api.ToolModeAsk,
+				Name: "account_edit", DefaultPermission: api.ToolPolicyAsk,
 				Handler: func(context.Context, map[string]any) (any, error) { return nil, nil },
 			}}),
 		})

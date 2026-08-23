@@ -167,10 +167,10 @@ func overlayCLI(base ai.Request, baseCfg ai.Config, o AIPromptOptions) (ai.Reque
 		req.Permissions.Presets = append(req.Permissions.Presets, api.PresetEdit)
 	}
 	if o.AllowedTools != nil {
-		req.Permissions.Tools.Allow = o.AllowedTools
+		req.Permissions.Tools.SetList(api.ToolPolicyAllow, o.AllowedTools)
 	}
 	if o.DisallowedTools != nil {
-		req.Permissions.Tools.Deny = o.DisallowedTools
+		req.Permissions.Tools.SetList(api.ToolPolicyDeny, o.DisallowedTools)
 	}
 	req.Permissions.MCP.Disabled = o.NoMCP || base.Permissions.MCP.Disabled || saved.NoMCP
 

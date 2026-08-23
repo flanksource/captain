@@ -141,7 +141,7 @@ func TestDeclaredUnsupportedCodexDontAskIsTheDefault(t *testing.T) {
 // captain already fails loud instead of silently ignoring a permission field, and
 // this pins the table to that behaviour so the two cannot drift apart.
 func TestDeclaredAgentToolPolicyMatchesArgv(t *testing.T) {
-	perms := api.Permissions{Tools: api.Tools{Deny: []string{"Bash"}, Allow: []string{"Read"}}}
+	perms := api.Permissions{Tools: api.Tools{"Bash": api.ToolPolicyDeny, "Read": api.ToolPolicyAllow}}
 	req := ai.Request{Prompt: api.Prompt{User: "hi"}, Permissions: perms}
 	cases := []struct {
 		backend api.Backend

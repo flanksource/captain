@@ -207,7 +207,7 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	definitions, err := aitools.ResolveDefinitions(set.Definitions, spec.ToolPreferences)
+	definitions, err := aitools.ResolveDefinitions(set.Definitions, aitools.ResolveOptions{Preferences: spec.ToolPreferences, Policy: spec.ToolPolicy})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return

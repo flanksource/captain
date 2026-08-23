@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/flanksource/captain/pkg/ai"
+	captools "github.com/flanksource/captain/pkg/ai/tools"
 	"github.com/flanksource/captain/pkg/api"
 
 	gkai "github.com/firebase/genkit/go/ai"
@@ -17,16 +18,16 @@ var _ = Describe("Genkit tool policy", func() {
 
 	It("resolves tool preferences before exposing tools", func() {
 		defs := []api.ToolDefinition{
-			{Name: "invoice_list", Group: "billing", DefaultPermission: api.ToolModeAsk, Handler: noop},
-			{Name: "invoice_delete", Group: "billing", DefaultPermission: api.ToolModeOn, Handler: noop},
-			{Name: "search", DefaultPermission: api.ToolModeOff, Handler: noop},
+			{Name: "invoice_list", Group: "billing", DefaultPermission: api.ToolPolicyAsk, Handler: noop},
+			{Name: "invoice_delete", Group: "billing", DefaultPermission: api.ToolPolicyAllow, Handler: noop},
+			{Name: "search", DefaultPermission: api.ToolPolicyDeny, Handler: noop},
 		}
 
-		selected, err := resolveToolDefinitions(defs, api.ToolPreferences{
-			"billing":      api.ToolModeOff,
-			"invoice_list": api.ToolModeOn,
-			"search":       api.ToolModeAsk,
-		})
+		selected, err := resolveToolDefinitions(defs, captools.ResolveOptions{Preferences: api.ToolPreferences{
+			"billing":      api.ToolPolicyDeny,
+			"invoice_list": api.ToolPolicyAllow,
+			"search":       api.ToolPolicyAsk,
+		}})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(selected).To(HaveLen(2))
 		Expect(selected[0].Name).To(Equal("invoice_list"))
@@ -43,12 +44,12 @@ var _ = Describe("Genkit tool policy", func() {
 			return api.PermissionDecision{Allow: true}, nil
 		})
 		def := api.ToolDefinition{
-			Name: "invoice_delete", Group: "billing", DefaultPermission: api.ToolModeOn, Handler: noop,
+			Name: "invoice_delete", Group: "billing", DefaultPermission: api.ToolPolicyAllow, Handler: noop,
 		}
-		selected, err := resolveToolDefinitions([]api.ToolDefinition{def}, api.ToolPreferences{
-			"billing":        api.ToolModeOn,
-			"invoice_delete": api.ToolModeAsk,
-		})
+		selected, err := resolveToolDefinitions([]api.ToolDefinition{def}, captools.ResolveOptions{Preferences: api.ToolPreferences{
+			"billing":        api.ToolPolicyAllow,
+			"invoice_delete": api.ToolPolicyAsk,
+		}})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(selected).To(HaveLen(1))
 
@@ -58,14 +59,14 @@ var _ = Describe("Genkit tool policy", func() {
 	})
 
 	It("rejects invalid preferences instead of silently using defaults", func() {
-		_, err := resolveToolDefinitions([]api.ToolDefinition{{Name: "search", Handler: noop}}, api.ToolPreferences{"search": "sometimes"})
+		_, err := resolveToolDefinitions([]api.ToolDefinition{{Name: "search", Handler: noop}}, captools.ResolveOptions{Preferences: api.ToolPreferences{"search": "sometimes"}})
 		Expect(err).To(MatchError(ContainSubstring(`invalid tool preference "sometimes" for "search"`)))
 	})
 
 	It("rejects an invalid tool default even when a preference disables the tool", func() {
 		_, err := resolveToolDefinitions([]api.ToolDefinition{
 			{Name: "search", DefaultPermission: "sometimes", Handler: noop},
-		}, api.ToolPreferences{"search": api.ToolModeOff})
+		}, captools.ResolveOptions{Preferences: api.ToolPreferences{"search": api.ToolPolicyDeny}})
 		Expect(err).To(MatchError(ContainSubstring(`tool "search" has invalid default permission "sometimes"`)))
 	})
 

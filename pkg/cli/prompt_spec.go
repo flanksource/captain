@@ -76,20 +76,6 @@ func mergeStringMaps(base, overlay map[string]string) map[string]string {
 	return out
 }
 
-func mergeToolModes(base, overlay map[string]api.ToolMode) map[string]api.ToolMode {
-	if len(overlay) == 0 {
-		return base
-	}
-	out := make(map[string]api.ToolMode, collections.SafeAdd(len(base), len(overlay)))
-	for k, v := range base {
-		out[k] = v
-	}
-	for k, v := range overlay {
-		out[k] = v
-	}
-	return out
-}
-
 func mergePresets(base, overlay []api.Preset) []api.Preset {
 	if len(overlay) == 0 {
 		return base

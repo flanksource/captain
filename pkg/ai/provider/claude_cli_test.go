@@ -30,8 +30,9 @@ func TestBuildClaudeCLIArgs(t *testing.T) {
 		Permissions: api.Permissions{
 			Mode: api.PermissionAcceptEdits,
 			Tools: api.Tools{
-				Allow: []string{"Read", "Grep"},
-				Deny:  []string{"Bash"},
+				"Read": api.ToolPolicyAllow,
+				"Grep": api.ToolPolicyAllow,
+				"Bash": api.ToolPolicyDeny,
 			},
 			MCP: api.MCP{Disabled: true},
 		},

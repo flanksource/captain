@@ -28,8 +28,8 @@ func (p *Provider) SupportsCallerTools() bool { return true }
 // non-nil, receives EventToolUse / EventPermission / EventToolResult as the
 // model calls them. Returns nil when there are no caller tools, so a run with
 // none is byte-for-byte unchanged.
-func (p *Provider) toolOptions(preferences api.ToolPreferences, emit func(ai.Event)) ([]gkai.GenerateOption, error) {
-	definitions, err := resolveToolDefinitions(p.cfg.Tools, preferences)
+func (p *Provider) toolOptions(opts captools.ResolveOptions, emit func(ai.Event)) ([]gkai.GenerateOption, error) {
+	definitions, err := resolveToolDefinitions(p.cfg.Tools, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -49,8 +49,8 @@ func (p *Provider) toolOptions(preferences api.ToolPreferences, emit func(ai.Eve
 	return []gkai.GenerateOption{gkai.WithTools(refs...), gkai.WithMaxTurns(maxToolTurns)}, nil
 }
 
-func resolveToolDefinitions(definitions []api.ToolDefinition, preferences api.ToolPreferences) ([]api.ToolDefinition, error) {
-	return captools.ResolveDefinitions(definitions, preferences)
+func resolveToolDefinitions(definitions []api.ToolDefinition, opts captools.ResolveOptions) ([]api.ToolDefinition, error) {
+	return captools.ResolveDefinitions(definitions, opts)
 }
 
 func anthropicStrictToolDefinitions(definitions []api.ToolDefinition) []api.ToolDefinition {

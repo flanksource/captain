@@ -379,6 +379,10 @@ func newRootCommand() *cobra.Command {
 		fmt.Fprintf(os.Stderr, "failed to attach prompt schema flag: %v\n", err)
 		os.Exit(1)
 	}
+	if err := cli.AttachPromptHelp(rootCmd); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to attach prompt help: %v\n", err)
+		os.Exit(1)
+	}
 
 	mcpConfig := &mcp.Config{
 		Name:    "captain",

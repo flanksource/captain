@@ -303,7 +303,7 @@ var _ = Describe("Captain aichat service", func() {
 				{Type: "text", Text: "inspect"},
 				{Type: "file", URL: "https://example.com/image.png", Filename: "image.png", MediaType: "image/png"},
 			}}},
-			Context: "invoice editor", ToolPreferences: api.ToolPreferences{"billing": api.ToolModeAsk},
+			Context: "invoice editor", ToolPreferences: api.ToolPreferences{"billing": api.ToolPolicyAsk},
 			ReasoningEffort: api.EffortHigh, PermissionMode: api.PermissionAcceptEdits,
 		}
 		response := httptest.NewRecorder()
@@ -316,7 +316,7 @@ var _ = Describe("Captain aichat service", func() {
 		spec := provider.specs[0]
 		Expect(spec.Model.Name).To(Equal("openai/test-model"))
 		Expect(spec.Model.Effort).To(Equal(api.EffortHigh))
-		Expect(spec.ToolPreferences).To(Equal(api.ToolPreferences{"billing": api.ToolModeAsk}))
+		Expect(spec.ToolPreferences).To(Equal(api.ToolPreferences{"billing": api.ToolPolicyAsk}))
 		Expect(spec.Permissions.Mode).To(Equal(api.PermissionAcceptEdits))
 		Expect(spec.Messages).To(HaveLen(2))
 		Expect(spec.Messages[0]).To(Equal(api.Message{Role: api.RoleSystem, Parts: []api.Part{{
@@ -380,7 +380,7 @@ var _ = Describe("Captain aichat service", func() {
 		service := aichat.NewService(aichat.ServiceOptions{
 			Resolver: resolver,
 			Tools: aichat.StaticToolProvider([]api.ToolDefinition{{
-				Name: "invoice_get", DefaultPermission: api.ToolModeOn,
+				Name: "invoice_get", DefaultPermission: api.ToolPolicyAllow,
 				Handler: func(context.Context, map[string]any) (any, error) { return nil, nil },
 			}}),
 		})
@@ -388,7 +388,7 @@ var _ = Describe("Captain aichat service", func() {
 		response := httptest.NewRecorder()
 		service.Handler().ServeHTTP(response, requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{
 			Model:           "openai/test-model",
-			ToolPreferences: api.ToolPreferences{"invoice_get": api.ToolModeOff},
+			ToolPreferences: api.ToolPreferences{"invoice_get": api.ToolPolicyDeny},
 			Messages: []aichat.UIMessage{{
 				Role: "user", Parts: []aichat.UIPart{{Type: "text", Text: "hello"}},
 			}},

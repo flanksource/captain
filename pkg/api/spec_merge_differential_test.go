@@ -23,7 +23,7 @@ import (
 // merges identically or forces an explicit decision here.
 
 // legacyMerge is the hand-written implementation Spec.Merge had before the
-// structural engine. It is kept only as the differential oracle.
+// structural engine. It is kept only as the differential reference.
 func legacyMerge(s, override Spec) Spec {
 	s.Model = legacyMergeModel(s.Model, override.Model)
 	s.Prompt = legacyMergePrompt(s.Prompt, override.Prompt)
@@ -35,6 +35,12 @@ func legacyMerge(s, override Spec) Spec {
 	s.Permissions = legacyMergePermissions(s.Permissions, override.Permissions)
 	if len(override.ToolPreferences) > 0 {
 		s.ToolPreferences = override.ToolPreferences
+	}
+	// An ordered rule list is replaced wholesale, never element-wise: the list's
+	// meaning is its order, so splicing one layer's rules into another's
+	// positions would produce a precedence neither author wrote.
+	if len(override.ToolPolicy) > 0 {
+		s.ToolPolicy = override.ToolPolicy
 	}
 	if override.ToolApproval != nil {
 		s.ToolApproval = override.ToolApproval
@@ -161,7 +167,7 @@ func legacyMergePermissions(p, o Permissions) Permissions {
 	if len(o.Presets) > 0 {
 		p.Presets = o.Presets
 	}
-	if len(o.Tools.Allow) > 0 || len(o.Tools.Deny) > 0 || len(o.Tools.Modes) > 0 {
+	if len(o.Tools) > 0 {
 		p.Tools = o.Tools
 	}
 	if o.MCP.Disabled || len(o.MCP.Servers) > 0 || len(o.MCP.Modes) > 0 {
@@ -220,13 +226,12 @@ func TestSpec_Merge_MatchesLegacy(t *testing.T) {
 
 func TestSpec_Merge_IntentionalPolicyChanges(t *testing.T) {
 	t.Run("a partial tool override composes with the inherited allow-list", func(t *testing.T) {
-		base := Spec{Permissions: Permissions{Tools: Tools{Allow: []string{"Read", "Grep"}}}}
-		got := base.Merge(Spec{Permissions: Permissions{Tools: Tools{Deny: []string{"Bash"}}}})
-		if !reflect.DeepEqual(got.Permissions.Tools.Allow, []string{"Read", "Grep"}) {
-			t.Errorf("Allow = %v, want the inherited allow-list kept", got.Permissions.Tools.Allow)
-		}
-		if !reflect.DeepEqual(got.Permissions.Tools.Deny, []string{"Bash"}) {
-			t.Errorf("Deny = %v, want [Bash]", got.Permissions.Tools.Deny)
+		base := Spec{Permissions: Permissions{Tools: Tools{"Read": ToolPolicyAllow, "Grep": ToolPolicyAllow}}}
+		got := base.Merge(Spec{Permissions: Permissions{Tools: Tools{"Bash": ToolPolicyDeny}}})
+		if !reflect.DeepEqual(got.Permissions.Tools, Tools{
+			"Read": ToolPolicyAllow, "Grep": ToolPolicyAllow, "Bash": ToolPolicyDeny,
+		}) {
+			t.Errorf("Tools = %v, want the inherited allow entries kept alongside the new deny", got.Permissions.Tools)
 		}
 	})
 
@@ -270,16 +275,16 @@ func TestSpec_Merge_IntentionalPolicyChanges(t *testing.T) {
 // never had: a merged spec must not share mutable memory with the layers it came
 // from, so editing it cannot reach back into the config it inherited.
 func TestSpec_Merge_ResultIsIndependent(t *testing.T) {
-	base := Spec{Permissions: Permissions{Tools: Tools{Allow: []string{"Read"}}}}
+	base := Spec{Permissions: Permissions{Tools: Tools{"Read": ToolPolicyAllow}}}
 	override := Spec{Setup: &shell.Setup{Cwd: "/work", DotEnv: []string{".env"}}}
 
 	got := base.Merge(override)
-	got.Permissions.Tools.Allow[0] = "mutated"
+	got.Permissions.Tools["Read"] = ToolPolicyDeny
 	got.Setup.DotEnv[0] = ".env.local"
 	got.Setup.Cwd = "/elsewhere"
 
-	if base.Permissions.Tools.Allow[0] != "Read" {
-		t.Errorf("base allow-list mutated through the merged spec: %v", base.Permissions.Tools.Allow)
+	if base.Permissions.Tools["Read"] != ToolPolicyAllow {
+		t.Errorf("base tool policy mutated through the merged spec: %v", base.Permissions.Tools)
 	}
 	if override.Setup.DotEnv[0] != ".env" || override.Setup.Cwd != "/work" {
 		t.Errorf("override setup mutated through the merged spec: %+v", override.Setup)

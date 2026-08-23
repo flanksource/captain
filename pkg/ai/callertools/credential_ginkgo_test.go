@@ -18,7 +18,7 @@ var _ = Describe("Caller-tool credential lease", func() {
 		var revoked atomic.Bool
 		runtime, err := callertools.New(callertools.Options{
 			Definitions: []api.ToolDefinition{{
-				Name: "account_edit", DefaultPermission: api.ToolModeOn,
+				Name: "account_edit", DefaultPermission: api.ToolPolicyAllow,
 				Handler: func(context.Context, map[string]any) (any, error) {
 					return map[string]any{"updated": true}, nil
 				},

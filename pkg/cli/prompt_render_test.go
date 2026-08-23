@@ -59,9 +59,8 @@ Hello {{name}}
 				Mode:    api.PermissionAcceptEdits,
 				Presets: []api.Preset{api.PresetEdit},
 				Tools: api.Tools{
-					Allow: []string{"Read"},
-					Deny:  []string{"Bash"},
-					Modes: map[string]api.ToolMode{"Bash": api.ToolModeOff},
+					"Read": api.ToolPolicyAllow,
+					"Bash": api.ToolPolicyDeny,
 				},
 				MCP: api.MCP{
 					Disabled: true,
@@ -123,7 +122,7 @@ Hello {{name}}
 		t.Fatalf("prompt source/metadata = %+v, want runtime overrides", rendered.Input.Prompt)
 	}
 	if rendered.Input.Permissions.Mode != api.PermissionAcceptEdits ||
-		rendered.Input.Permissions.Tools.Modes["Bash"] != api.ToolModeOff ||
+		rendered.Input.Permissions.Tools["Bash"] != api.ToolPolicyDeny ||
 		!rendered.Input.Permissions.MCP.Disabled {
 		t.Fatalf("permissions = %+v, want runtime overrides", rendered.Input.Permissions)
 	}

@@ -29,10 +29,10 @@ func (p Permissions) Pretty() clickyapi.Text {
 		mode = "default"
 	}
 	t := clickyapi.Text{}.Append("mode=").Append(mode, "font-medium")
-	if n := len(p.Tools.Allow); n > 0 {
+	if n := len(p.Tools.AllowList()); n > 0 {
 		t = t.Appendf(" · %d allow", n)
 	}
-	if n := len(p.Tools.Deny); n > 0 {
+	if n := len(p.Tools.DenyList()); n > 0 {
 		t = t.Appendf(" · %d deny", n)
 	}
 	if p.MCP.Disabled {

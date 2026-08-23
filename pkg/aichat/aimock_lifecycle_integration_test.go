@@ -138,7 +138,7 @@ var _ = Describe("Mocked Captain chat lifecycle", func() {
 					}}, nil
 				}),
 				Tools: aichat.StaticToolProvider([]api.ToolDefinition{{
-					Name: "accounts_edit", DefaultPermission: api.ToolModeAsk,
+					Name: "accounts_edit", DefaultPermission: api.ToolPolicyAsk,
 					Handler: func(_ context.Context, input map[string]any) (any, error) {
 						toolCalls.Add(1)
 						inputMu.Lock()

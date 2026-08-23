@@ -44,8 +44,8 @@ var _ = Describe("AI SDK v6 wire types", func() {
 		Expect(*request.Temperature).To(Equal(0.0))
 		Expect(request.Budget).To(Equal(api.Budget{Cost: 1.5, MaxTokens: 2048, MaxTurns: 4}))
 		Expect(request.ToolPreferences).To(Equal(api.ToolPreferences{
-			"billing":     api.ToolModeAsk,
-			"invoice_get": api.ToolModeOn,
+			"billing":     api.ToolPolicyAsk,
+			"invoice_get": api.ToolPolicyAllow,
 		}))
 		Expect(request.PermissionMode).To(Equal(api.PermissionAcceptEdits))
 		Expect(request.ToolApproval).To(BeNil())
@@ -96,7 +96,7 @@ var _ = Describe("AI SDK v6 wire types", func() {
 		}}
 		tools := aichat.ToolCatalogResponse{Tools: []aichat.ToolCatalogEntry{{
 			Name: "invoice_get", Source: "custom", Group: "billing",
-			PreferenceKey: "billing", DefaultPermission: api.ToolModeAsk,
+			PreferenceKey: "billing", DefaultPermission: api.ToolPolicyAsk,
 			Strict: &strict, Method: "GET", Path: "/invoices/{id}",
 			OperationName: "invoice get", InputSchema: map[string]any{"type": "object"},
 		}}}
