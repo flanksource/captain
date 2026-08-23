@@ -314,7 +314,11 @@ var _ = Describe("Captain aichat service", func() {
 		Expect(response.Body.String()).To(ContainSubstring(`"delta":"done"`))
 		Expect(provider.specs).To(HaveLen(1))
 		spec := provider.specs[0]
-		Expect(spec.Model.Name).To(Equal("openai/test-model"))
+		// The profile's "openai/test-model" is a provider-prefixed id: it must
+		// reach the provider split into a concrete name + backend, not glued
+		// together with the backend left for a default to claim.
+		Expect(spec.Model.Name).To(Equal("test-model"))
+		Expect(spec.Model.Backend).To(Equal(api.BackendOpenAI))
 		Expect(spec.Model.Effort).To(Equal(api.EffortHigh))
 		Expect(spec.ToolPreferences).To(Equal(api.ToolPreferences{"billing": api.ToolPolicyAsk}))
 		Expect(spec.Permissions.Mode).To(Equal(api.PermissionAcceptEdits))

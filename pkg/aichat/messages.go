@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
 )
 
@@ -150,20 +151,24 @@ func chatModel(request ChatRequest, fallback api.Model) (api.Model, error) {
 		}
 		selected.Temperature = request.Temperature
 	}
-	expanded, err := selected.Expand()
+	// Resolve, not just Expand: the browser sends the chat catalog's id form
+	// ("anthropic/claude-opus-5"), which Expand leaves untouched because it
+	// carries no compact-form ":" separator — keeping the provider glued to the
+	// name and the backend empty for the configured default agent to claim.
+	resolved, err := ai.ResolveModelSelectors(selected)
 	if err != nil {
 		return api.Model{}, fmt.Errorf("invalid chat runtime: %w", err)
 	}
 	if request.Runtime != nil && strings.TrimSpace(request.Model) != "" {
-		legacy, err := api.Model{Name: strings.TrimSpace(request.Model)}.Expand()
+		legacy, err := ai.ResolveModelSelectors(api.Model{Name: strings.TrimSpace(request.Model)})
 		if err != nil {
 			return api.Model{}, fmt.Errorf("invalid chat model %q: %w", request.Model, err)
 		}
-		if legacy.Name != expanded.Name || legacy.Backend != expanded.Backend {
-			return api.Model{}, fmt.Errorf("chat model %q conflicts with structured runtime %s/%s", request.Model, expanded.Backend, expanded.Name)
+		if legacy.Name != resolved.Name || legacy.Backend != resolved.Backend {
+			return api.Model{}, fmt.Errorf("chat model %q conflicts with structured runtime %s/%s", request.Model, resolved.Backend, resolved.Name)
 		}
 	}
-	return expanded, nil
+	return resolved, nil
 }
 
 func isAgentBackend(backend api.Backend) bool {
