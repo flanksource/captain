@@ -1,6 +1,40 @@
-package tools
+package api
 
 import "strings"
+
+// legacyCatalogOn is what "on" means in tool metadata published by an MCP server
+// or a clicky operation catalog. Like spec.toolPreferences and unlike the legacy
+// permissions.tools shape, that encoding has no separate allow list, so "on" is
+// its only way to say auto-run. See ParseToolPolicyOptions.LegacyOn.
+const legacyCatalogOn = ToolPolicyAllow
+
+// ToolInfo is the concrete tool being considered for approval and preference
+// resolution. Clicky-RPC specifics (verb/method/path/operation) live in
+// Annotations, not as typed fields.
+type ToolInfo struct {
+	Name string
+	// Group is the tool-group this tool belongs to. When non-empty the
+	// preferences UI presents the group as one entry governing every member.
+	Group             string
+	Parent            string
+	Icon              string
+	DefaultPermission ToolPolicy
+	Strict            *bool
+	ReadOnlyHint      *bool
+	DestructiveHint   *bool
+	IdempotentHint    *bool
+	// Annotations carries opaque caller metadata (e.g. clicky/verb, clicky/method,
+	// clicky/path, clicky/operation) for policies that want the raw values.
+	Annotations map[string]string
+}
+
+// Annotation returns the named annotation (empty when absent).
+func (i ToolInfo) Annotation(key string) string {
+	if i.Annotations == nil {
+		return ""
+	}
+	return i.Annotations[key]
+}
 
 // ToolCatalog is the GET /api/chat/tools payload.
 type ToolCatalog struct {
@@ -20,7 +54,7 @@ type ToolCatalogEntry struct {
 	Parent            string         `json:"parent,omitempty"`
 	Icon              string         `json:"icon,omitempty"`
 	PreferenceKey     string         `json:"preferenceKey,omitempty"`
-	DefaultPermission ToolMode       `json:"defaultPermission,omitempty"`
+	DefaultPermission ToolPolicy     `json:"defaultPermission,omitempty"`
 	Strict            *bool          `json:"strict,omitempty"`
 	Method            string         `json:"method,omitempty"`
 	Path              string         `json:"path,omitempty"`
@@ -29,16 +63,26 @@ type ToolCatalogEntry struct {
 	OutputSchema      map[string]any `json:"outputSchema,omitempty"`
 }
 
+// DefaultToolPolicy resolves a tool's declared policy, defaulting an unset or
+// unrecognised value to auto so safety hints or the runtime policy decide.
+func DefaultToolPolicy(policy ToolPolicy) ToolPolicy {
+	if normalized, ok := NormalizeToolPolicy(string(policy)); ok {
+		return normalized
+	}
+	return ToolPolicyAuto
+}
+
 // CustomCatalogEntry builds the catalog DTO for an app-owned custom tool. The
 // method/path/operationName it surfaces come from the definition's Annotations
 // (clicky/method, clicky/path, clicky/operation) when present.
 func CustomCatalogEntry(def ToolDefinition, name string, schema map[string]any) ToolCatalogEntry {
+	policy := DefaultToolPolicy(def.DefaultPermission)
 	info := ToolInfo{
 		Name:              name,
 		Group:             def.Group,
 		Parent:            def.Parent,
 		Icon:              def.Icon,
-		DefaultPermission: DefaultPermissionMode(def.DefaultPermission),
+		DefaultPermission: policy,
 		Strict:            def.Strict,
 		Annotations:       def.Annotations,
 	}
@@ -51,7 +95,7 @@ func CustomCatalogEntry(def ToolDefinition, name string, schema map[string]any) 
 		Parent:            def.Parent,
 		Icon:              def.Icon,
 		PreferenceKey:     PreferenceKey(info),
-		DefaultPermission: DefaultPermissionMode(def.DefaultPermission),
+		DefaultPermission: policy,
 		Strict:            def.Strict,
 		Method:            def.Annotations["clicky/method"],
 		Path:              def.Annotations["clicky/path"],
@@ -97,6 +141,13 @@ func StringMetadata(meta map[string]any, keys ...string) (string, bool) {
 
 // ApplyToolMetadata overlays MCP tool metadata (group/parent/icon/permission/
 // strict, incl. the nested com.flanksource.clicky/tool block) onto an entry.
+//
+// The permission is parsed with the legacy on/off spellings accepted, because
+// the publishers on the other side of this wire still emit them —
+// clicky/entity.ToolPermission is on|off|ask|auto, and clicky/mcp/registry
+// copies it verbatim into _meta.defaultPermission. Rejecting them here would
+// silently fall back to auto, and a server that asked for "off" would have its
+// tool exposed rather than omitted.
 func ApplyToolMetadata(entry *ToolCatalogEntry, meta map[string]any) {
 	if entry == nil || len(meta) == 0 {
 		return
@@ -112,7 +163,11 @@ func ApplyToolMetadata(entry *ToolCatalogEntry, meta map[string]any) {
 		entry.Icon = icon
 	}
 	if permission, ok := StringMetadata(meta, "defaultPermission", "permission", "defaultMode"); ok {
-		entry.DefaultPermission = DefaultPermissionMode(ToolMode(permission))
+		policy, parsed := ParseToolPolicy(permission, ParseToolPolicyOptions{LegacyOn: legacyCatalogOn})
+		if !parsed {
+			policy = ToolPolicyAuto
+		}
+		entry.DefaultPermission = policy
 	}
 	if strict, ok := BoolMetadata(meta, "strict"); ok && entry.Strict == nil {
 		entry.Strict = &strict
