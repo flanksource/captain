@@ -37,13 +37,13 @@ vi.mock("@flanksource/clicky-ui/rpc", async (importOriginal) => ({
 
 // Fixtures use values distinct from anything the component derives, so an
 // assertion can only pass if the component actually plumbed them through.
-const SESSION_KEY = "055781c7-360a-4eb2-80be-452b3937fcfe";
+const SESSION_LOOKUP_ID = "055781c7-360a-4eb2-80be-452b3937fcfe";
 const SESSION_ID = "019f7c25-9adf-7901-add9-8c46693472fb";
 const PROMPT_ID = "local:review-diff";
 
 function session(overrides: Partial<SessionRecord> = {}): SessionRecord {
   return {
-    key: SESSION_KEY,
+    key: SESSION_LOOKUP_ID,
     id: SESSION_ID,
     source: "claude",
     title: "Refactor the billing importer",
@@ -101,7 +101,7 @@ describe("directSessionId", () => {
     // this must not be gated on a UUID shape.
     expect(directSessionId(SESSION_ID)).toBe(SESSION_ID);
     expect(directSessionId("a1b2c3d4")).toBe("a1b2c3d4");
-    expect(directSessionId(`  ${SESSION_KEY}  `)).toBe(SESSION_KEY);
+    expect(directSessionId(`  ${SESSION_LOOKUP_ID}  `)).toBe(SESSION_LOOKUP_ID);
   });
 
   it("rejects prose and tokens too short to disambiguate", () => {
@@ -164,7 +164,7 @@ describe("CommandPalette", () => {
     fireEvent.keyDown(input, { key: "Enter" });
 
     expect(onNavigate).toHaveBeenCalledWith(
-      `/sessions/${encodeURIComponent(SESSION_KEY)}`,
+      `/sessions/${encodeURIComponent(SESSION_LOOKUP_ID)}`,
     );
     expect(onClose).toHaveBeenCalled();
   });
@@ -203,7 +203,7 @@ describe("CommandPalette", () => {
     fireEvent.keyDown(input, { key: "ArrowDown" });
     fireEvent.keyDown(input, { key: "Enter" });
     expect(onNavigate).toHaveBeenCalledWith(
-      `/sessions/${encodeURIComponent(SESSION_KEY)}`,
+      `/sessions/${encodeURIComponent(SESSION_LOOKUP_ID)}`,
     );
 
     // ArrowUp wraps in the opposite direction, off the first row to the last.
