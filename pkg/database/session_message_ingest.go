@@ -24,6 +24,22 @@ func (db *DB) upsertTurnCalls(ctx context.Context, calls []modelCallRecord) erro
 			"input_cost", "output_cost", "reasoning_cost", "cache_read_cost", "cache_write_cost", "currency",
 			"started_at", "ended_at",
 		}),
+		Where: clause.Where{Exprs: []clause.Expression{clause.Expr{SQL: `
+			(captain_model_calls.model, captain_model_calls.backend, captain_model_calls.effort,
+			 captain_model_calls.stop_reason, captain_model_calls.input_tokens, captain_model_calls.output_tokens,
+			 captain_model_calls.reasoning_tokens, captain_model_calls.cache_read_tokens,
+			 captain_model_calls.cache_write_tokens, captain_model_calls.context_tokens,
+			 captain_model_calls.context_window_tokens, captain_model_calls.input_cost,
+			 captain_model_calls.output_cost, captain_model_calls.reasoning_cost,
+			 captain_model_calls.cache_read_cost, captain_model_calls.cache_write_cost,
+			 captain_model_calls.currency, captain_model_calls.started_at, captain_model_calls.ended_at)
+			IS DISTINCT FROM
+			(excluded.model, excluded.backend, excluded.effort, excluded.stop_reason,
+			 excluded.input_tokens, excluded.output_tokens, excluded.reasoning_tokens,
+			 excluded.cache_read_tokens, excluded.cache_write_tokens, excluded.context_tokens,
+			 excluded.context_window_tokens, excluded.input_cost, excluded.output_cost,
+			 excluded.reasoning_cost, excluded.cache_read_cost, excluded.cache_write_cost,
+			 excluded.currency, excluded.started_at, excluded.ended_at)`}}},
 	}).CreateInBatches(&calls, ingestBatchSize).Error
 	if err != nil {
 		return fmt.Errorf("upsert %d Captain model calls: %w", len(calls), err)

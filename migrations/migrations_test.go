@@ -137,11 +137,10 @@ func TestSchemaBundleContainsGavelIntegrationContract(t *testing.T) {
 		"autovacuum_vacuum_scale_factor = 0.02",
 	)
 	assertContainsNone(t, "10_sessions.pg.hcl", "fillfactor", "autovacuum_")
-	// captain_messages is append-only (ON CONFLICT DO NOTHING), so it keeps the
-	// dense default fillfactor and only tightens the insert-driven vacuum that
-	// keeps its visibility map -- and therefore its index-only scans -- intact.
-	// captain_turns and captain_model_calls are re-upserted on every re-ingest
-	// pass, so they need in-page room for HOT updates as well.
+	// captain_messages keeps the dense default fillfactor because convergence
+	// updates are exceptional and guarded. Its insert-driven vacuum keeps the
+	// visibility map -- and therefore index-only scans -- intact. Turns and
+	// model calls still need in-page room for genuinely changing aggregates.
 	assertContainsAll(t, "72_ingest_storage_params.sql",
 		"-- phase: post",
 		"ALTER TABLE public.captain_messages SET (",
@@ -150,7 +149,7 @@ func TestSchemaBundleContainsGavelIntegrationContract(t *testing.T) {
 		"autovacuum_vacuum_insert_scale_factor = 0.02",
 	)
 	assertContainsNone(t, "72_ingest_storage_params.sql",
-		// An append-only table gains nothing from reserved in-page space.
+		// Exceptional convergence updates do not justify reserved in-page space.
 		"ALTER TABLE public.captain_messages SET (\n  fillfactor",
 	)
 	assertContainsNone(t, "30_execution.pg.hcl", "fillfactor", "autovacuum_")
