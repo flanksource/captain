@@ -8,8 +8,10 @@ export default defineConfig({
   vite: {
     plugins: [tailwindcss()],
     resolve: {
-      dedupe: ["react", "react-dom", "@tanstack/react-query"],
+      // WORKAROUND(astro-prerender-cookie-resolution): Resolve Astro's generated bare cookie import from this package instead of an unrelated ancestor package.
+      // Correct fix: Astro should preserve its resolved cookie dependency when generating the prerender entry.
+      // Ref: discussed with user 2026-08-23
+      dedupe: ["react", "react-dom", "@tanstack/react-query", "cookie"],
     },
   },
 });
-
