@@ -56,7 +56,9 @@ var _ = Describe("receiver repositories", func() {
 
 		binding, err := gitagent.LoadMailboxBinding(mailboxA.Path)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(binding.Repository).To(Equal(repoA))
+		canonicalRepoA, err := filepath.EvalSymlinks(repoA)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(binding.Repository).To(Equal(canonicalRepoA))
 		Expect(gitagent.InitMailbox(ctx, mailboxA.Path, repoB)).
 			To(MatchError(ContainSubstring("cannot rebind")))
 	})

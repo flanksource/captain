@@ -296,6 +296,9 @@ func applyCredentialMount(plan *deploy.Plan, opts GitAgentDeployOptions, target 
 		return fmt.Errorf("--credentials-dir needs --target docker; use --credentials-secret for kubernetes")
 	}
 	if directory != "" {
+		if strings.Contains(directory, "..") {
+			return fmt.Errorf("--credentials-dir must not contain '..': %q", directory)
+		}
 		absolute, err := filepath.Abs(directory)
 		if err != nil {
 			return fmt.Errorf("resolve --credentials-dir %q: %w", directory, err)

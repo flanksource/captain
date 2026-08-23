@@ -225,8 +225,7 @@ func (p PermissionPolicy) Append(later PermissionPolicy) PermissionPolicy {
 	if len(later) == 0 {
 		return append(PermissionPolicy(nil), p...)
 	}
-	out := make(PermissionPolicy, 0, len(p)+len(later))
-	out = append(out, p...)
+	out := append(PermissionPolicy(nil), p...)
 	return append(out, later...)
 }
 
@@ -256,7 +255,7 @@ func FromPreferences(prefs ToolPreferences) PermissionPolicy {
 	}
 	sort.Strings(keys)
 
-	out := make(PermissionPolicy, 0, len(keys)*2)
+	out := make(PermissionPolicy, 0, len(keys))
 	for _, key := range keys {
 		out = append(out, PermissionRule{
 			ToolMatch: ToolMatch{Group: MatchPatterns{key}},

@@ -26,14 +26,14 @@ type Spec struct {
 	Permissions Permissions `json:"permissions,omitempty" yaml:"permissions,omitempty"`
 	// ToolPreferences is the serializable per-turn tool/group selection policy.
 	// Executable tool handlers remain in Config.Tools.
-	ToolPreferences ToolPreferences     `json:"toolPreferences,omitempty" yaml:"toolPreferences,omitempty" pretty:"-"`
+	ToolPreferences ToolPreferences `json:"toolPreferences,omitempty" yaml:"toolPreferences,omitempty" pretty:"-"`
 	// ToolPolicy is the ordered, last-match-wins rule list governing tool
 	// authority. It supersedes ToolPreferences' flat exact-name map, but both are
 	// accepted: ResolveDefinitions lowers the map through FromPreferences and
 	// evaluates one list, so the two shapes cannot disagree about a tool.
 	ToolPolicy   PermissionPolicy    `json:"toolPolicy,omitempty" yaml:"toolPolicy,omitempty" pretty:"-"`
 	ToolApproval *ToolApprovalResume `json:"toolApproval,omitempty" yaml:"toolApproval,omitempty" pretty:"-"`
-	Setup           *shell.Setup        `json:"setup,omitempty" yaml:"setup,omitempty"`
+	Setup        *shell.Setup        `json:"setup,omitempty" yaml:"setup,omitempty"`
 
 	// Sandbox selects the sandbox backend the run executes under. Absent = the
 	// configured default, ultimately "none".

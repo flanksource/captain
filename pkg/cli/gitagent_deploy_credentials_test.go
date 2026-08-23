@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -71,6 +72,27 @@ func TestCredentialsDirIsResolvedAndMustExist(t *testing.T) {
 	}
 	if !filepath.IsAbs(present.CredentialsDir) {
 		t.Errorf("CredentialsDir = %q, want an absolute path", present.CredentialsDir)
+	}
+}
+
+func TestCredentialsDirRejectsParentTraversal(t *testing.T) {
+	root := t.TempDir()
+	directory := filepath.Join(root, "credentials")
+	if err := os.Mkdir(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	requested := filepath.Join(root, "unused") + string(filepath.Separator) + ".." +
+		string(filepath.Separator) + "credentials"
+
+	var plan deploy.Plan
+	err := applyCredentialMount(&plan,
+		GitAgentDeployOptions{CredentialsDir: requested}, deploy.TargetDocker)
+
+	if err == nil || !strings.Contains(err.Error(), "must not contain '..'") {
+		t.Fatalf("err = %v, want a parent-traversal refusal", err)
+	}
+	if plan.CredentialsDir != "" {
+		t.Fatalf("CredentialsDir = %q after refusal", plan.CredentialsDir)
 	}
 }
 
