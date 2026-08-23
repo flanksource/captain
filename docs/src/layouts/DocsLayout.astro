@@ -40,7 +40,7 @@ const currentPath = Astro.url.pathname;
       </div>
     </DocsAppShell>
     <script>
-      const slugifyHeading = (value) =>
+      const slugifyHeading = (value: string) =>
         value
           .toLowerCase()
           .trim()
@@ -82,7 +82,7 @@ const currentPath = Astro.url.pathname;
           links.set(heading.id, link);
         }
 
-        const setActive = (id) => {
+        const setActive = (id?: string) => {
           for (const [headingID, link] of links) {
             link.classList.toggle("is-active", headingID === id);
           }

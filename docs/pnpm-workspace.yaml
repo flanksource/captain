@@ -3,3 +3,16 @@ packages:
 
 minimumReleaseAge: 10080
 trustPolicy: no-downgrade
+trustPolicyExclude:
+  # @astrojs/check requires this pre-provenance release; pnpm documents it as an exact exclusion.
+  - chokidar@4.0.3
+  # @babel/core requires this pre-provenance release; pnpm/pnpm#10202 documents the warning.
+  - semver@6.3.1
+
+overrides:
+  # 3.34.1 dropped the trusted-publisher provenance present in 3.34.0.
+  cytoscape: 3.34.0
+  js-yaml: ">=4.3.0 <5"
+
+allowBuilds:
+  esbuild: true
