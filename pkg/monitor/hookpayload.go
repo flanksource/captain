@@ -34,6 +34,40 @@ func ParseClaudeHookPayload(data []byte) (HookEvent, error) {
 	}, nil
 }
 
+type claudeStatusLinePayload struct {
+	SessionID      string `json:"session_id"`
+	TranscriptPath string `json:"transcript_path"`
+	CWD            string `json:"cwd"`
+	Cost           struct {
+		TotalCostUSD *float64 `json:"total_cost_usd"`
+	} `json:"cost"`
+}
+
+// ParseClaudeStatusLinePayload maps Claude Code's status-line stdin contract
+// onto a session-level CLI estimate. The status-line payload is the only normal
+// interactive artifact that carries Claude Code's cumulative USD estimate;
+// transcript and lifecycle-hook records do not carry it.
+func ParseClaudeStatusLinePayload(data []byte) (HookEvent, error) {
+	var payload claudeStatusLinePayload
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return HookEvent{}, fmt.Errorf("parse claude status-line payload: %w", err)
+	}
+	if strings.TrimSpace(payload.SessionID) == "" {
+		return HookEvent{}, fmt.Errorf("claude status-line payload has no session_id")
+	}
+	if strings.TrimSpace(payload.TranscriptPath) == "" {
+		return HookEvent{}, fmt.Errorf("claude status-line payload has no transcript_path")
+	}
+	if payload.Cost.TotalCostUSD == nil || *payload.Cost.TotalCostUSD < 0 {
+		return HookEvent{}, fmt.Errorf("claude status-line payload has no nonnegative cost.total_cost_usd")
+	}
+	return HookEvent{
+		Provider: "claude", Event: ClaudeEventStatusLine, SessionID: strings.TrimSpace(payload.SessionID),
+		TranscriptPath: payload.TranscriptPath, CWD: payload.CWD,
+		ClaudeCLICostUSD: payload.Cost.TotalCostUSD,
+	}, nil
+}
+
 // codexNotifyPayload is the JSON codex appends as the final notify argv
 // argument (codex-rs legacy_notify): kebab-case keys, one event type.
 type codexNotifyPayload struct {
@@ -68,8 +102,7 @@ func ParseCodexNotifyPayload(args []string) (HookEvent, error) {
 }
 
 // PostHookEvent delivers one hook event to a captain serve instance. Callers
-// own the context deadline; any failure is their cue to drop the event (the
-// documented degraded mode — recon reconciles missed events).
+// own the context deadline.
 func PostHookEvent(ctx context.Context, baseURL string, ev HookEvent) error {
 	body, err := json.Marshal(ev)
 	if err != nil {

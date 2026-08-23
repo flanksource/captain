@@ -2,14 +2,15 @@ package cli
 
 import (
 	"context"
+	"path/filepath"
 
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/claude"
 	"github.com/flanksource/captain/pkg/database"
 )
 
-// resultCostLookup resolves the result-derived cost captain recorded for the
-// sessions it ran itself.
+// resultCostLookup resolves attributed provider cost or Claude Code's
+// client-estimated session total for a transcript session.
 //
 // A stored claude transcript carries no result record — no invocation summary,
 // no running total — so replaying one can only rebuild the numbers from each
@@ -18,10 +19,8 @@ import (
 // (1-hour cache writes, for one), and on a real session it came out ~9% under
 // the billed figure.
 //
-// Captain does hold the provider's own answer for any session it executed:
-// pkg/aichat writes each EventResult's Usage and CostUSD to captain_model_calls.
-// This looks that up so the replay surfaces report the billed figure rather than
-// their own recomputation.
+// Claude Code's status-line total remains a whole-session CLI estimate rather
+// than being promoted to provider billing or attributed to model calls.
 type resultCostLookup struct {
 	db *database.DB
 }
@@ -47,47 +46,105 @@ type resultCost struct {
 	ProviderUSD float64
 }
 
-// find returns the result captain recorded for a session identity (a provider
-// session id or captain id).
+// find returns the result Captain recorded for one Claude transcript.
 //
-// It reports a hit only when the stored rows carry a provider-reported cost.
-// A row without one is not a result — it is another reconstruction, written by
-// transcript ingest from the same per-message usage the caller already has, and
-// possibly staler. Preferring it would trade a fresh estimate for an old one.
-func (l *resultCostLookup) find(ctx context.Context, identity string) (resultCost, bool) {
+// ParseCosts emits root transcripts only, so a root result must include model
+// calls from every child in the thread. A separately supplied child transcript
+// remains scoped to that child to avoid duplicating its cost. Reconstructed
+// database buckets are not preferred over a fresh transcript parse unless the
+// thread also contains a provider-reported cost.
+func (l *resultCostLookup) find(ctx context.Context, identity, historyFile string) (resultCost, bool) {
 	if l == nil || l.db == nil || identity == "" {
 		return resultCost{}, false
 	}
-	overview, err := l.db.GetSessionOverviewByIdentity(ctx, identity)
-	// An ambiguous identity (SessionConflictError) or a plain miss both mean
-	// there is no single authoritative row to prefer.
-	if err != nil || overview == nil {
+	overview, ok := l.findClaudeTranscript(ctx, identity, historyFile)
+	if !ok {
 		return resultCost{}, false
 	}
-	rows, err := l.db.ListThreadCosts(ctx, overview.ID)
-	if err != nil || len(rows) == 0 {
+	rootID := overview.ID
+	if overview.RootSessionID != nil {
+		rootID = *overview.RootSessionID
+	}
+	rows, err := l.db.ListThreadCosts(ctx, rootID)
+	if err != nil {
 		return resultCost{}, false
 	}
-	out := resultCost{Model: rows[0].Model}
+	var threadProviderUSD float64
 	for i := range rows {
-		out.Usage.InputTokens += int(rows[i].InputTokens)
-		out.Usage.OutputTokens += int(rows[i].OutputTokens)
-		out.Usage.ReasoningTokens += int(rows[i].ReasoningTokens)
-		out.Usage.CacheReadTokens += int(rows[i].CacheReadTokens)
-		out.Usage.CacheWriteTokens += int(rows[i].CacheWriteTokens)
-		// total_cost already resolves provider-reported against list-price per
-		// underlying call (see 67_view_session_costs.sql); provider_cost_usd is
-		// how much of it the provider itself reported.
-		out.TotalUSD += rows[i].TotalCost
-		out.ProviderUSD += rows[i].ProviderCostUSD
+		threadProviderUSD += rows[i].ProviderCostUSD
 	}
-	return out, out.ProviderUSD > 0
+	if threadProviderUSD > 0 {
+		if overview.RootSessionID != nil {
+			if overview.ProviderCostUSD <= 0 {
+				return resultCost{}, false
+			}
+			out := resultCost{
+				Usage: api.Usage{
+					InputTokens:      int(overview.InputTokens),
+					OutputTokens:     int(overview.OutputTokens),
+					ReasoningTokens:  int(overview.ReasoningTokens),
+					CacheReadTokens:  int(overview.CacheReadTokens),
+					CacheWriteTokens: int(overview.CacheWriteTokens),
+				},
+				TotalUSD: overview.CostUSD, ProviderUSD: overview.ProviderCostUSD,
+			}
+			if overview.Model != nil {
+				out.Model = *overview.Model
+			}
+			return out, true
+		}
+		out := resultCost{}
+		for i := range rows {
+			out.Usage.InputTokens += int(rows[i].InputTokens)
+			out.Usage.OutputTokens += int(rows[i].OutputTokens)
+			out.Usage.ReasoningTokens += int(rows[i].ReasoningTokens)
+			out.Usage.CacheReadTokens += int(rows[i].CacheReadTokens)
+			out.Usage.CacheWriteTokens += int(rows[i].CacheWriteTokens)
+			out.TotalUSD += rows[i].TotalCost
+			out.ProviderUSD += rows[i].ProviderCostUSD
+			if out.Model == "" {
+				out.Model = rows[i].Model
+			}
+		}
+		return out, true
+	}
+	if overview.ClaudeCLICostUSD != nil && *overview.ClaudeCLICostUSD > 0 {
+		return resultCost{TotalUSD: *overview.ClaudeCLICostUSD}, true
+	}
+	return resultCost{}, false
 }
 
-// applyResultCosts replaces each session's reconstructed usage and cost with the
-// figures captain recorded from the provider's results, where it has them.
-// Sessions captain never ran keep their reconstruction, which stays marked as an
-// estimate because no provider cost is set on it.
+func (l *resultCostLookup) findClaudeTranscript(ctx context.Context, identity, historyFile string) (*database.SessionOverview, bool) {
+	rows, err := l.db.ListSessionOverviewsByProviderSessionID(ctx, identity)
+	if err != nil {
+		return nil, false
+	}
+	var match *database.SessionOverview
+	for i := range rows {
+		if rows[i].Source != "claude" || !overviewMatchesHistoryFile(rows[i], historyFile) {
+			continue
+		}
+		if match != nil {
+			return nil, false
+		}
+		match = &rows[i]
+	}
+	return match, match != nil
+}
+
+func overviewMatchesHistoryFile(overview database.SessionOverview, historyFile string) bool {
+	if historyFile == "" {
+		return true
+	}
+	want := filepath.Clean(historyFile)
+	return (overview.HistoryFile != nil && filepath.Clean(*overview.HistoryFile) == want) ||
+		(overview.Path != nil && filepath.Clean(*overview.Path) == want)
+}
+
+// applyResultCosts prefers stored provider-attributed calls, then a positive
+// Claude CLI estimate. The estimate replaces only TotalCost, preserving
+// transcript usage and a zero ProviderCostUSD so output remains estimated and
+// carries the Claude CLI label.
 func applyResultCosts(ctx context.Context, sessions []claude.SessionCost) {
 	if len(sessions) == 0 {
 		return
@@ -97,9 +154,18 @@ func applyResultCosts(ctx context.Context, sessions []claude.SessionCost) {
 		return
 	}
 	for i := range sessions {
-		cost, ok := lookup.find(ctx, sessions[i].SessionID)
+		cost, ok := lookup.find(ctx, sessions[i].SessionID, sessions[i].HistoryFile)
 		if !ok {
 			continue
+		}
+		if cost.ProviderUSD <= 0 {
+			sessions[i].Tokens.TotalCost = cost.TotalUSD
+			sessions[i].CostSource = costSourceClaudeCLI
+			continue
+		}
+		sessions[i].CostSource = costSourceProvider
+		if cost.TotalUSD-cost.ProviderUSD > 1e-9 {
+			sessions[i].CostSource = costSourceMixed
 		}
 		sessions[i].Tokens = claude.TokenSummary{
 			InputTokens:      cost.Usage.InputTokens,

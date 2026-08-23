@@ -13,34 +13,41 @@ import (
 	"github.com/flanksource/captain/pkg/database"
 )
 
-// CodexEventTurnComplete is the only event codex's notify mechanism emits.
-const CodexEventTurnComplete = "agent-turn-complete"
+const (
+	// CodexEventTurnComplete is the only event codex's notify mechanism emits.
+	CodexEventTurnComplete = "agent-turn-complete"
+	// ClaudeEventStatusLine carries Claude Code's client-estimated session total.
+	ClaudeEventStatusLine = "StatusLine"
+)
 
-// HookEvent is one normalized real-time signal from a provider hook: a Claude
-// Code lifecycle hook (SessionStart/UserPromptSubmit/Stop/SubagentStop/
-// SessionEnd) or codex's notify agent-turn-complete. Hooks carry exact session
-// identity and transcript location, replacing ps-based discovery for sessions
-// that have them installed.
+// HookEvent is one normalized real-time signal: a Claude Code lifecycle or
+// status-line event, or codex's notify agent-turn-complete. Events carry exact
+// session identity and transcript location, replacing ps-based discovery for
+// sessions that have hooks installed.
 type HookEvent struct {
-	Provider       string    `json:"provider,omitempty"` // claude | codex
-	Event          string    `json:"event"`
-	SessionID      string    `json:"sessionId,omitempty"` // provider session id / codex thread id
-	TranscriptPath string    `json:"transcriptPath,omitempty"`
-	CWD            string    `json:"cwd,omitempty"`
-	Detail         string    `json:"detail,omitempty"` // SessionStart source / SessionEnd reason
-	ReceivedAt     time.Time `json:"-"`
+	Provider         string    `json:"provider,omitempty"` // claude | codex
+	Event            string    `json:"event"`
+	SessionID        string    `json:"sessionId,omitempty"` // provider session id / codex thread id
+	TranscriptPath   string    `json:"transcriptPath,omitempty"`
+	CWD              string    `json:"cwd,omitempty"`
+	Detail           string    `json:"detail,omitempty"` // SessionStart source / SessionEnd reason
+	ClaudeCLICostUSD *float64  `json:"claudeCliCostUsd,omitempty"`
+	ReceivedAt       time.Time `json:"-"`
 }
 
-// NotifyHookEvent enqueues a hook event without blocking. Events are dropped
-// (with a debug log) when the buffer is full or no locked run loop is draining
-// it — hook delivery is best-effort by design; the startup/daily recon and the
-// stale-process reaper converge the database over dropped events.
+// NotifyHookEvent enqueues a hook event without blocking. Status-line refreshes
+// use a separate queue so they cannot displace lifecycle events. Events are
+// dropped when their queue is full or no locked run loop is draining it.
 func (m *Monitor) NotifyHookEvent(ev HookEvent) {
 	if ev.ReceivedAt.IsZero() {
 		ev.ReceivedAt = time.Now().UTC()
 	}
+	events := m.hookEvents
+	if ev.Event == ClaudeEventStatusLine {
+		events = m.statusLineEvents
+	}
 	select {
-	case m.hookEvents <- ev:
+	case events <- ev:
 	default:
 		log.Debugf("hook event queue full; dropping %s %s for %s", ev.Provider, ev.Event, ev.SessionID)
 	}
@@ -50,7 +57,6 @@ func (m *Monitor) NotifyHookEvent(ev HookEvent) {
 // the session and arms tailing, activity events trigger a targeted ingest, and
 // SessionEnd finalizes the transcript and closes the session's process rows.
 func (m *Monitor) handleHookEvent(ctx context.Context, watcher *transcriptWatcher, ingestor *ingestor, ev HookEvent) {
-	m.noteActivity(ev.ReceivedAt)
 	path := ev.TranscriptPath
 	if ev.Provider == "codex" && path == "" {
 		path = resolveCodexTranscript(ev.SessionID)
@@ -79,6 +85,11 @@ func (m *Monitor) handleHookEvent(ctx context.Context, watcher *transcriptWatche
 			return
 		}
 	}
+	if ev.Event == ClaudeEventStatusLine {
+		m.recordClaudeStatusLineCost(ctx, ev, path)
+		return
+	}
+	m.noteActivity(ev.ReceivedAt)
 
 	switch ev.Event {
 	case string(claude.HookEventSessionStart):
@@ -114,6 +125,31 @@ func (m *Monitor) handleHookEvent(ctx context.Context, watcher *transcriptWatche
 				log.Warnf("hook %s/%s: ingest %s: %v", ev.Provider, ev.Event, path, err)
 			}
 		}
+	}
+}
+
+// recordClaudeStatusLineCost persists Claude Code's whole-session client
+// estimate at session scope. The server derives the source and observation time
+// rather than accepting either from the unauthenticated localhost payload.
+func (m *Monitor) recordClaudeStatusLineCost(ctx context.Context, ev HookEvent, path string) {
+	if ev.Provider != "claude" || ev.SessionID == "" || path == "" || ev.ClaudeCLICostUSD == nil {
+		log.Warnf("hook %s/%s: session ID, transcript path, and CLI cost estimate are required", ev.Provider, ev.Event)
+		return
+	}
+	session, err := m.db.CreateOrGetSession(ctx, database.CreateSessionInput{
+		ProviderSessionID: ev.SessionID, Source: ev.Provider, HostID: m.cfg.HostID,
+		CWD: ev.CWD, Path: path,
+	})
+	if err != nil {
+		log.Warnf("hook claude/%s: bind session %s: %v", ev.Event, ev.SessionID, err)
+		return
+	}
+	observedAt := ev.ReceivedAt.UTC()
+	if observedAt.IsZero() {
+		observedAt = time.Now().UTC()
+	}
+	if err := m.db.ReportClaudeCLICost(ctx, session.ID, *ev.ClaudeCLICostUSD, observedAt); err != nil {
+		log.Warnf("hook claude/%s: record session %s CLI cost estimate: %v", ev.Event, ev.SessionID, err)
 	}
 }
 

@@ -685,7 +685,22 @@ If you want to use hooks:
 ```bash
 .bin/captain hook bash-check install --user
 .bin/captain hook dod install --user
+.bin/captain hook monitor install
+# Opt in to Claude CLI estimate capture:
+.bin/captain hook monitor install --capture-cost
 ```
+
+`--capture-cost` is opt-in because it configures a Claude Code custom status
+line, with Claude's normal custom-status-line UI effects. Captain composes with
+an existing status-line command and captures `cost.total_cost_usd` as Claude's
+client-side session estimate. It is never attributed to model calls or written
+as provider-reported billing. If the current project defines a higher-precedence
+`.claude/settings.json` or `.claude/settings.local.json` status line, installation
+fails rather than silently configuring an overridden user command. Without the
+flag, monitor installation changes only the existing lifecycle hooks and Codex
+notify configuration. Ordinary Claude transcripts and Codex's local artifacts
+do not expose a monetary total, so those histories keep Captain's token-based
+list-price estimate.
 
 Start the web UI:
 

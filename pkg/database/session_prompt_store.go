@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -287,6 +288,34 @@ func (db *DB) CreateOrGetSession(ctx context.Context, input CreateSessionInput) 
 		}
 	}
 	return db.GetSession(ctx, existing.ID)
+}
+
+// ReportClaudeCLICost stores Claude Code's cumulative whole-session client
+// estimate without attributing it to model calls. Only a larger amount writes,
+// so unchanged refreshes and delayed lower reports are no-ops.
+func (db *DB) ReportClaudeCLICost(ctx context.Context, sessionID uuid.UUID, costUSD float64, observedAt time.Time) error {
+	if err := db.requireGorm(); err != nil {
+		return err
+	}
+	if sessionID == uuid.Nil {
+		return fmt.Errorf("%w: session ID is required", ErrInvalidSession)
+	}
+	if math.IsNaN(costUSD) || math.IsInf(costUSD, 0) || costUSD < 0 || observedAt.IsZero() {
+		return fmt.Errorf("%w: Claude CLI estimate needs a nonnegative finite amount and observation time", ErrInvalidSession)
+	}
+	observedAt = observedAt.UTC()
+	if err := db.gorm.WithContext(ctx).Model(&sessionRecord{}).
+		Where("id = ?", sessionID).
+		Where("claude_cli_cost_usd IS NULL OR claude_cli_cost_usd < ?", costUSD).
+		Updates(map[string]any{
+			"claude_cli_cost_usd": costUSD,
+			"claude_cli_cost_observed_at": gorm.Expr(
+				"GREATEST(COALESCE(claude_cli_cost_observed_at, ?), ?)", observedAt, observedAt,
+			),
+		}).Error; err != nil {
+		return fmt.Errorf("record Claude CLI session cost estimate: %w", err)
+	}
+	return nil
 }
 
 type UpdateSessionStateInput struct {
