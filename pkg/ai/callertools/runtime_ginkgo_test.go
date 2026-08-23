@@ -25,20 +25,20 @@ var _ = Describe("Authenticated caller-tool runtime", func() {
 				{
 					Name: "invoice_get", Description: "Read an invoice",
 					InputSchema:       map[string]any{"type": "object", "properties": map[string]any{"id": map[string]any{"type": "string"}}},
-					DefaultPermission: api.ToolModeOn,
+					DefaultPermission: api.ToolPolicyAllow,
 					Handler: func(_ context.Context, input map[string]any) (any, error) {
 						return map[string]any{"id": input["id"], "status": "draft"}, nil
 					},
 				},
 				{
-					Name: "invoice_delete", DefaultPermission: api.ToolModeOn,
+					Name: "invoice_delete", DefaultPermission: api.ToolPolicyAllow,
 					Handler: func(context.Context, map[string]any) (any, error) {
 						hiddenCalls.Add(1)
 						return "deleted", nil
 					},
 				},
 			},
-			Preferences: api.ToolPreferences{"invoice_delete": api.ToolModeOff},
+			Preferences: api.ToolPreferences{"invoice_delete": api.ToolPolicyDeny},
 			SessionID:   "captain-session-1",
 		})
 		Expect(err).NotTo(HaveOccurred())
@@ -68,7 +68,7 @@ var _ = Describe("Authenticated caller-tool runtime", func() {
 		var calls atomic.Int32
 		runtime, err := callertools.New(callertools.Options{
 			Definitions: []api.ToolDefinition{{
-				Name: "invoice_update", DefaultPermission: api.ToolModeAsk,
+				Name: "invoice_update", DefaultPermission: api.ToolPolicyAsk,
 				Handler: func(_ context.Context, input map[string]any) (any, error) {
 					calls.Add(1)
 					return input, nil
@@ -103,7 +103,7 @@ var _ = Describe("Authenticated caller-tool runtime", func() {
 		permissionRequests := make(chan api.PermissionRequest, 1)
 		runtime, err := callertools.New(callertools.Options{
 			Definitions: []api.ToolDefinition{{
-				Name: "invoice_update", DefaultPermission: api.ToolModeAsk,
+				Name: "invoice_update", DefaultPermission: api.ToolPolicyAsk,
 				Handler: func(_ context.Context, input map[string]any) (any, error) {
 					handledInput = input
 					return input, nil
@@ -166,7 +166,7 @@ var _ = Describe("Authenticated caller-tool runtime", func() {
 	It("expires and explicitly revokes capabilities", func() {
 		expiring, err := callertools.New(callertools.Options{
 			Definitions: []api.ToolDefinition{{
-				Name: "lookup", DefaultPermission: api.ToolModeOn,
+				Name: "lookup", DefaultPermission: api.ToolPolicyAllow,
 				Handler: func(context.Context, map[string]any) (any, error) { return "ok", nil },
 			}},
 			SessionID: "expiring-session",
@@ -188,7 +188,7 @@ var _ = Describe("Authenticated caller-tool runtime", func() {
 		var calls atomic.Int32
 		runtime, err := callertools.New(callertools.Options{
 			Definitions: []api.ToolDefinition{{
-				Name: "invoice_update", DefaultPermission: api.ToolModeAsk,
+				Name: "invoice_update", DefaultPermission: api.ToolPolicyAsk,
 				Handler: func(context.Context, map[string]any) (any, error) {
 					calls.Add(1)
 					return nil, errors.New("must not execute")
@@ -218,7 +218,7 @@ var _ = Describe("Authenticated caller-tool runtime", func() {
 		var calls atomic.Int32
 		runtime, err := callertools.New(callertools.Options{
 			Definitions: []api.ToolDefinition{{
-				Name: "invoice_get", DefaultPermission: api.ToolModeOn,
+				Name: "invoice_get", DefaultPermission: api.ToolPolicyAllow,
 				Handler: func(context.Context, map[string]any) (any, error) {
 					calls.Add(1)
 					return nil, errors.New("invoice unavailable")
@@ -243,7 +243,7 @@ var _ = Describe("Authenticated caller-tool runtime", func() {
 		var calls atomic.Int32
 		runtime, err := callertools.New(callertools.Options{
 			Definitions: []api.ToolDefinition{{
-				Name: "invoice_update", DefaultPermission: api.ToolModeAsk,
+				Name: "invoice_update", DefaultPermission: api.ToolPolicyAsk,
 				InputSchema: map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -340,7 +340,7 @@ func authenticatedStatus(endpoint api.CallerToolEndpoint) int {
 func newRuntime(sessionID, marker string) *callertools.Runtime {
 	runtime, err := callertools.New(callertools.Options{
 		Definitions: []api.ToolDefinition{{
-			Name: "identity", DefaultPermission: api.ToolModeOn,
+			Name: "identity", DefaultPermission: api.ToolPolicyAllow,
 			Handler: func(context.Context, map[string]any) (any, error) {
 				return map[string]any{"session": marker}, nil
 			},

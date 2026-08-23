@@ -26,7 +26,7 @@ var _ = Describe("Genkit resumable tool approval", func() {
 			Name: "invoice_update", Ref: "call-update", Input: map[string]any{"amount": 10},
 		}), api.ToolDefinition{
 			Name:              "invoice_update",
-			DefaultPermission: api.ToolModeAsk,
+			DefaultPermission: api.ToolPolicyAsk,
 			Handler: func(context.Context, map[string]any) (any, error) {
 				ran = true
 				return "updated", nil
@@ -123,11 +123,11 @@ var _ = Describe("Genkit resumable tool approval", func() {
 			cfg: ai.Config{
 				Model: api.Model{Name: "resumable-approval", Backend: api.BackendOpenAI},
 				Tools: []api.ToolDefinition{
-					{Name: "invoice_get", DefaultPermission: api.ToolModeOn, Handler: func(context.Context, map[string]any) (any, error) {
+					{Name: "invoice_get", DefaultPermission: api.ToolPolicyAllow, Handler: func(context.Context, map[string]any) (any, error) {
 						readRuns.Add(1)
 						return map[string]any{"amount": 10}, nil
 					}},
-					{Name: "invoice_update", DefaultPermission: api.ToolModeAsk, Handler: func(_ context.Context, input map[string]any) (any, error) {
+					{Name: "invoice_update", DefaultPermission: api.ToolPolicyAsk, Handler: func(_ context.Context, input map[string]any) (any, error) {
 						updateRuns.Add(1)
 						updatedAmount.Store(int32(input["amount"].(float64)))
 						return map[string]any{"updated": true}, nil

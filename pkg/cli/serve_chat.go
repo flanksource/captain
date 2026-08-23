@@ -131,21 +131,21 @@ func captainChatToolEnabled(tool tools.ToolInfo) bool {
 	}
 }
 
-func captainChatToolPermission(tool tools.ToolInfo) api.ToolMode {
+func captainChatToolPermission(tool tools.ToolInfo) api.ToolPolicy {
 	switch strings.ToUpper(tool.Annotation("clicky/method")) {
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
-		return api.ToolModeOn
+		return api.ToolPolicyAllow
 	}
-	if tool.DefaultPermission == api.ToolModeOn {
-		return api.ToolModeOn
+	if tool.DefaultPermission == api.ToolPolicyAllow {
+		return api.ToolPolicyAllow
 	}
 	if isReadOnlyCaptainTool(tool.Annotation("clicky/verb")) ||
 		isReadOnlyCaptainTool(tool.Name) ||
 		isReadOnlyCaptainTool(tool.Annotation("clicky/operation")) ||
 		isReadOnlyCaptainTool(tool.Annotation("clicky/path")) {
-		return api.ToolModeOn
+		return api.ToolPolicyAllow
 	}
-	return api.ToolModeAsk
+	return api.ToolPolicyAsk
 }
 
 func isReadOnlyCaptainTool(value string) bool {

@@ -1,114 +1,58 @@
-// Package tools is captain's home for the chat tool registry's data model and
-// approval policy: the tool definition/info types, the per-request tool mode and
-// preferences, the tool catalog DTO, and the approval-decision logic. It is
-// genkit- and clicky-free — the genkit binding (registering these as model tools)
-// and the clicky-RPC→tool mapping live in the consumer (clicky/aichat), which
-// imports this package. Clicky-specific metadata (the originating verb/method/
-// path) rides in the opaque Annotations map rather than as typed fields.
+// Package tools is captain's chat tool registry runtime: the approval gate, the
+// per-request preference resolution, and the definition resolver every provider
+// runs so the API and agent runtimes cannot disagree about the visible tool set.
+//
+// The data model it operates on — ToolPolicy, ToolInfo, ToolDefinition and the
+// catalog DTOs — is owned by pkg/api and aliased here. There is one permission
+// vocabulary and one set of rules for it; this package holds none of them.
+//
+// It is genkit- and clicky-free: the genkit binding (registering these as model
+// tools) and the clicky-RPC→tool mapping live in the consumer (clicky/aichat),
+// which imports this package. Clicky-specific metadata (the originating
+// verb/method/path) rides in the opaque Annotations map, not as typed fields.
 package tools
 
 import (
 	"context"
 	"fmt"
-	"sort"
 
 	"github.com/flanksource/captain/pkg/api"
 )
 
-// ToolMode controls how a tool is exposed for one request.
-type ToolMode = api.ToolMode
-
-const (
-	ToolModeOn   = api.ToolModeOn
-	ToolModeAsk  = api.ToolModeAsk
-	ToolModeOff  = api.ToolModeOff
-	ToolModeAuto = api.ToolModeAuto
+// The tool permission vocabulary is owned by pkg/api. These are aliases so a
+// consumer already importing this package does not need both imports; there is
+// exactly one vocabulary and one set of rules behind them.
+type (
+	ToolPolicy       = api.ToolPolicy
+	ToolPreferences  = api.ToolPreferences
+	ToolInfo         = api.ToolInfo
+	ToolDefinition   = api.ToolDefinition
+	ToolCatalog      = api.ToolCatalog
+	ToolCatalogEntry = api.ToolCatalogEntry
+	ToolMatch        = api.ToolMatch
+	PermissionRule   = api.PermissionRule
+	PermissionPolicy = api.PermissionPolicy
 )
 
-// NormalizeToolMode canonicalizes a mode string. The bool is false for an
-// unrecognized value.
-func NormalizeToolMode(mode ToolMode) (ToolMode, bool) {
-	return api.NormalizeToolMode(mode)
-}
+const (
+	ToolPolicyAuto  = api.ToolPolicyAuto
+	ToolPolicyAsk   = api.ToolPolicyAsk
+	ToolPolicyAllow = api.ToolPolicyAllow
+	ToolPolicyDeny  = api.ToolPolicyDeny
+)
 
-// DefaultPermissionMode resolves a mode to its canonical value, defaulting an
-// unset/unknown value to Auto (defer to the approval policy).
-func DefaultPermissionMode(mode ToolMode) ToolMode {
-	if normalized, ok := NormalizeToolMode(mode); ok {
-		return normalized
-	}
-	return ToolModeAuto
-}
-
-// ApprovalDecisionForMode maps a resolved mode to an approve/auto decision. The
-// second bool is false only for Auto, which defers to the policy.
-func ApprovalDecisionForMode(mode ToolMode) (require bool, handled bool) {
-	switch DefaultPermissionMode(mode) {
-	case ToolModeOn:
-		return false, true
-	case ToolModeAsk:
-		return true, true
-	case ToolModeOff:
-		return false, true
-	case ToolModeAuto:
-		return false, false
-	default:
-		return false, false
-	}
-}
-
-// ToolPreferences carries the clicky-ui tool preference payload. The UI sends
-// "on", "ask", "off", or "auto".
-type ToolPreferences = api.ToolPreferences
-
-// ToolInfo is the concrete tool being considered for approval and preference
-// resolution. Clicky-RPC specifics (verb/method/path/operation) live in
-// Annotations, not as typed fields.
-type ToolInfo struct {
-	Name string
-	// Group is the tool-group this tool belongs to. When non-empty the
-	// preferences UI presents the group as one entry governing every member.
-	Group             string
-	Parent            string
-	Icon              string
-	DefaultPermission ToolMode
-	Strict            *bool
-	ReadOnlyHint      *bool
-	DestructiveHint   *bool
-	IdempotentHint    *bool
-	// Annotations carries opaque caller metadata (e.g. clicky/verb, clicky/method,
-	// clicky/path, clicky/operation) for policies that want the raw values.
-	Annotations map[string]string
-}
-
-// Annotation returns the named annotation (empty when absent).
-func (i ToolInfo) Annotation(key string) string {
-	if i.Annotations == nil {
-		return ""
-	}
-	return i.Annotations[key]
-}
-
-// ToolDefinition describes an app-owned tool registered alongside clicky RPC and
-// MCP tools. Handlers should return JSON-serializable values.
-type ToolDefinition struct {
-	Name              string
-	Description       string
-	InputSchema       map[string]any
-	Parent            string
-	Icon              string
-	DefaultPermission ToolMode
-	Strict            *bool
-	ReadOnlyHint      *bool
-	DestructiveHint   *bool
-	IdempotentHint    *bool
-	// Group places this custom tool in a tool-group so the preferences UI presents
-	// it under the group rather than individually.
-	Group string
-	// Annotations carries opaque caller metadata (see ToolInfo.Annotations).
-	Annotations map[string]string
-	Handler     func(context.Context, any) (any, error)
-}
+// Re-exported so catalog builders can stay on this package's import.
+var (
+	CustomCatalogEntry  = api.CustomCatalogEntry
+	ApplyToolMetadata   = api.ApplyToolMetadata
+	PreferenceKey       = api.PreferenceKey
+	ObjectSchema        = api.ObjectSchema
+	StringMetadata      = api.StringMetadata
+	BoolMetadata        = api.BoolMetadata
+	DefaultToolPolicy   = api.DefaultToolPolicy
+	NormalizeToolPolicy = api.NormalizeToolPolicy
+	ParseToolPolicy     = api.ParseToolPolicy
+)
 
 // ApprovalPolicy reports whether a tool call must be approved before it runs.
 type ApprovalPolicy func(toolName string, input any) bool
@@ -173,12 +117,12 @@ func runtimeConfig(ctx context.Context) (toolRuntimeConfig, bool) {
 func ShouldRequireApproval(ctx context.Context, fallback ApprovalPredicate, tool ToolInfo, input any) bool {
 	if ctx != nil {
 		if cfg, ok := runtimeConfig(ctx); ok {
-			if mode, ok := EffectivePreference(cfg.preferences, tool); ok {
-				if decision, handled := ApprovalDecisionForMode(mode); handled {
+			if preferred, ok := EffectivePreference(cfg.preferences, tool); ok {
+				if decision, handled := preferred.ApprovalDecision(); handled {
 					return decision
 				}
 			}
-			if decision, handled := ApprovalDecisionForMode(DefaultPermissionMode(tool.DefaultPermission)); handled {
+			if decision, handled := tool.DefaultPermission.ApprovalDecision(); handled {
 				return decision
 			}
 			if cfg.defaultApproval != nil {
@@ -186,7 +130,7 @@ func ShouldRequireApproval(ctx context.Context, fallback ApprovalPredicate, tool
 			}
 		}
 	}
-	if decision, handled := ApprovalDecisionForMode(DefaultPermissionMode(tool.DefaultPermission)); handled {
+	if decision, handled := tool.DefaultPermission.ApprovalDecision(); handled {
 		return decision
 	}
 	if fallback == nil {
@@ -195,12 +139,12 @@ func ShouldRequireApproval(ctx context.Context, fallback ApprovalPredicate, tool
 	return fallback(tool, input)
 }
 
-// EffectivePreference resolves the ToolMode for a tool: an exact tool-name
+// EffectivePreference resolves the policy for a tool: an exact tool-name
 // preference wins, else the tool's group preference; ungrouped tools resolve by
 // their own name.
-func EffectivePreference(prefs ToolPreferences, info ToolInfo) (ToolMode, bool) {
-	if mode, ok := NormalizedPreference(prefs, info.Name); ok {
-		return mode, true
+func EffectivePreference(prefs ToolPreferences, info ToolInfo) (ToolPolicy, bool) {
+	if policy, ok := NormalizedPreference(prefs, info.Name); ok {
+		return policy, true
 	}
 	if info.Group != "" {
 		return NormalizedPreference(prefs, info.Group)
@@ -209,25 +153,71 @@ func EffectivePreference(prefs ToolPreferences, info ToolInfo) (ToolMode, bool) 
 }
 
 // NormalizedPreference looks up and normalizes a preference by key.
-func NormalizedPreference(prefs ToolPreferences, name string) (ToolMode, bool) {
+func NormalizedPreference(prefs ToolPreferences, name string) (ToolPolicy, bool) {
 	if len(prefs) == 0 {
 		return "", false
 	}
-	mode, ok := prefs[name]
+	policy, ok := prefs[name]
 	if !ok {
 		return "", false
 	}
-	return NormalizeToolMode(mode)
+	return NormalizeToolPolicy(string(policy))
 }
 
-// ResolveDefinitions validates caller tools, applies exact/group preferences,
-// omits disabled tools, and writes the effective permission onto a copy of each
-// selected definition. Every provider uses this function so API and agent
-// runtimes cannot disagree about the visible tool set.
-func ResolveDefinitions(definitions []api.ToolDefinition, preferences ToolPreferences) ([]api.ToolDefinition, error) {
-	if err := preferences.Validate(); err != nil {
+// ResolveOptions carries the two shapes a caller may express tool authority in.
+//
+// Both are accepted and evaluated through ONE ordered list, so a spec that sets
+// each cannot get two different answers for the same tool. Preferences are
+// lowered first and the policy appended after, which makes an explicit rule beat
+// an inherited preference — the layering the whole design turns on.
+type ResolveOptions struct {
+	// Preferences is the legacy flat tool→policy map, keyed by tool name or
+	// group. Lowered through api.FromPreferences rather than matched separately.
+	Preferences ToolPreferences
+	// Policy is the ordered, last-match-wins rule list.
+	Policy PermissionPolicy
+}
+
+// EffectivePolicy is the single ordered list these options resolve through.
+func (o ResolveOptions) EffectivePolicy() PermissionPolicy {
+	return api.FromPreferences(o.Preferences).Append(o.Policy)
+}
+
+// toolInfo projects a definition onto the subject a rule matches against. It
+// carries the full identity — parent, hints and the clicky annotations — because
+// a rule may select on any of them; passing only name and group is what limited
+// matching to exact strings before.
+func toolInfo(definition api.ToolDefinition) ToolInfo {
+	return ToolInfo{
+		Name:              definition.Name,
+		Group:             definition.Group,
+		Parent:            definition.Parent,
+		Icon:              definition.Icon,
+		DefaultPermission: definition.DefaultPermission,
+		Strict:            definition.Strict,
+		ReadOnlyHint:      definition.ReadOnlyHint,
+		DestructiveHint:   definition.DestructiveHint,
+		IdempotentHint:    definition.IdempotentHint,
+		Annotations:       definition.Annotations,
+	}
+}
+
+// ResolveDefinitions validates caller tools, resolves each against the ordered
+// permission policy, omits denied tools, and writes the effective permission onto
+// a copy of each selected definition. Every provider uses this function so the
+// API and agent runtimes cannot disagree about the visible tool set.
+//
+// A denied tool is dropped rather than marked: for a caller tool captain owns the
+// MCP server, so omission IS the enforcement — which is why a deny is honoured
+// even on backends whose own CLI has no tool filter.
+func ResolveDefinitions(definitions []api.ToolDefinition, opts ResolveOptions) ([]api.ToolDefinition, error) {
+	if err := opts.Preferences.Validate(); err != nil {
 		return nil, err
 	}
+	if err := opts.Policy.Validate(); err != nil {
+		return nil, err
+	}
+	effective := opts.EffectivePolicy()
 	selected := make([]api.ToolDefinition, 0, len(definitions))
 	seen := make(map[string]struct{}, len(definitions))
 	for _, definition := range definitions {
@@ -244,31 +234,29 @@ func ResolveDefinitions(definitions []api.ToolDefinition, preferences ToolPrefer
 		if definition.Handler == nil {
 			return nil, fmt.Errorf("caller tool %q has no handler", definition.Name)
 		}
-		mode := ToolModeAuto
+		policy := ToolPolicyAuto
 		if definition.DefaultPermission != "" {
 			var ok bool
-			mode, ok = NormalizeToolMode(definition.DefaultPermission)
+			policy, ok = NormalizeToolPolicy(string(definition.DefaultPermission))
 			if !ok {
 				return nil, fmt.Errorf("tool %q has invalid default permission %q", definition.Name, definition.DefaultPermission)
 			}
 		}
-		if preferred, ok := EffectivePreference(preferences, ToolInfo{
-			Name: definition.Name, Group: definition.Group,
-		}); ok && preferred != ToolModeAuto {
-			mode = preferred
+		if resolved, matched := effective.Resolve(toolInfo(definition)); matched && resolved != ToolPolicyAuto {
+			policy = resolved
 		}
-		if mode == ToolModeOff {
+		if policy == ToolPolicyDeny {
 			continue
 		}
-		if mode == ToolModeAuto {
+		if policy == ToolPolicyAuto {
 			if definition.ReadOnlyHint != nil && *definition.ReadOnlyHint &&
 				definition.DestructiveHint != nil && !*definition.DestructiveHint {
-				mode = ToolModeOn
+				policy = ToolPolicyAllow
 			} else {
-				mode = ToolModeAsk
+				policy = ToolPolicyAsk
 			}
 		}
-		definition.DefaultPermission = mode
+		definition.DefaultPermission = policy
 		selected = append(selected, definition)
 	}
 	return selected, nil
@@ -286,41 +274,4 @@ func validCallerToolName(name string) bool {
 		return false
 	}
 	return true
-}
-
-// ToolEntry is one row in the tool-preferences UI: a single ungrouped tool, or a
-// collapsed group listing its member names.
-type ToolEntry struct {
-	Key   string   `json:"key"`
-	Group string   `json:"group,omitempty"`
-	Tools []string `json:"tools"`
-	Mode  ToolMode `json:"mode,omitempty"`
-}
-
-// ListToolEntries collapses grouped tools into one entry per group and leaves
-// ungrouped tools individual, sorted by Key. prefs (may be nil) annotates Mode.
-func ListToolEntries(infos []ToolInfo, prefs ToolPreferences) []ToolEntry {
-	groups := map[string][]string{}
-	var entries []ToolEntry
-	for _, info := range infos {
-		if g := info.Group; g != "" {
-			groups[g] = append(groups[g], info.Name)
-			continue
-		}
-		entry := ToolEntry{Key: info.Name, Tools: []string{info.Name}}
-		if mode, ok := NormalizedPreference(prefs, info.Name); ok {
-			entry.Mode = mode
-		}
-		entries = append(entries, entry)
-	}
-	for group, members := range groups {
-		sort.Strings(members)
-		entry := ToolEntry{Key: group, Group: group, Tools: members}
-		if mode, ok := NormalizedPreference(prefs, group); ok {
-			entry.Mode = mode
-		}
-		entries = append(entries, entry)
-	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].Key < entries[j].Key })
-	return entries
 }

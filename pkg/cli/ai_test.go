@@ -196,11 +196,11 @@ func TestAIPromptOptions_ToRequest_PassesScalars(t *testing.T) {
 	if !req.Permissions.HasPreset(api.PresetEdit) {
 		t.Error("Edit preset not propagated")
 	}
-	if !reflect.DeepEqual(req.Permissions.Tools.Allow, []string{"Read", "Bash"}) {
-		t.Errorf("AllowedTools = %v", req.Permissions.Tools.Allow)
+	if !reflect.DeepEqual(req.Permissions.Tools.AllowList(), []string{"Bash", "Read"}) {
+		t.Errorf("AllowedTools = %v", req.Permissions.Tools.AllowList())
 	}
-	if !reflect.DeepEqual(req.Permissions.Tools.Deny, []string{"Write"}) {
-		t.Errorf("DisallowedTools = %v", req.Permissions.Tools.Deny)
+	if !reflect.DeepEqual(req.Permissions.Tools.DenyList(), []string{"Write"}) {
+		t.Errorf("DisallowedTools = %v", req.Permissions.Tools.DenyList())
 	}
 	if !reflect.DeepEqual(req.Memory.Skills, []string{"/skills/a", "/skills/b"}) {
 		t.Errorf("SkillDirs = %v", req.Memory.Skills)
@@ -447,7 +447,7 @@ func TestRunBuffered_JSONIncludesFullInputSpec(t *testing.T) {
 		Setup:  &shell.Setup{Cwd: "/repo"},
 		Permissions: api.Permissions{
 			Presets: []api.Preset{api.PresetEdit},
-			Tools:   api.Tools{Allow: []string{"Read"}},
+			Tools:   api.Tools{"Read": api.ToolPolicyAllow},
 		},
 		SessionID: "resume-1",
 	}

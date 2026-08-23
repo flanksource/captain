@@ -68,15 +68,32 @@ func (Preset) JSONSchema() *jsonschema.Schema {
 	}
 }
 
-// JSONSchema declares the wire form of Tools, which reflection reports as `{}`
-// because Allow, Deny and Modes are all json:"-" behind MarshalJSON. The wire
-// shape has always been a tool→policy map; this is the first time the schema
-// says so.
+// JSONSchema declares the wire form of Tools. Tools is now the tool→policy map
+// itself, so reflection would very nearly get this right — but it keeps a
+// hand-written schema to carry the description and the policy enum.
+//
+// The deprecated {allow, deny, modes} object is still accepted on decode and is
+// deliberately absent here: the schema is what an editor renders a form from,
+// and offering the legacy shape as an alternative would invite new configs into
+// the encoding whose "on" means auto rather than allow. See Tools.setLegacy.
 func (Tools) JSONSchema() *jsonschema.Schema {
 	return &jsonschema.Schema{
 		Type:                 "object",
 		Description:          "Per-tool policy, keyed by tool name. An absent tool inherits the posture.",
 		AdditionalProperties: ToolPolicy("").JSONSchema(),
+	}
+}
+
+// JSONSchema declares the per-turn tool preferences. Reflection would report a
+// bare `{"type":"string"}` for the values, so nothing told a client which words
+// this field takes — the gap that let the UI and the server drift apart.
+func (ToolPreferences) JSONSchema() *jsonschema.Schema {
+	values := ToolPolicy("").JSONSchema()
+	values.Description = "Preference for one tool or group. The legacy on|off spellings are accepted and mean allow|deny."
+	return &jsonschema.Schema{
+		Type:                 "object",
+		Description:          "Per-turn preference keyed by tool name or group. A tool-name entry overrides its group entry.",
+		AdditionalProperties: values,
 	}
 }
 

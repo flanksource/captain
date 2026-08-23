@@ -44,7 +44,7 @@ var _ = Describe("Codex Agent caller tools", func() {
 			CaptainSessionID: "captain-thread-1",
 			SessionID:        "provider-session-1",
 			Tools: []api.ToolDefinition{{
-				Name: "invoice_get", DefaultPermission: api.ToolModeOn,
+				Name: "invoice_get", DefaultPermission: api.ToolPolicyAllow,
 				Handler: func(context.Context, map[string]any) (any, error) { return "ok", nil },
 			}},
 		})
@@ -62,7 +62,7 @@ var _ = Describe("Codex Agent caller tools", func() {
 	It("does not require MCP when request preferences disable every caller tool", func() {
 		provider, err := NewCodexAppServer(ai.Config{
 			Tools: []api.ToolDefinition{{
-				Name: "invoice_get", DefaultPermission: api.ToolModeOn,
+				Name: "invoice_get", DefaultPermission: api.ToolPolicyAllow,
 				Handler: func(context.Context, map[string]any) (any, error) { return "ok", nil },
 			}},
 		})
@@ -70,7 +70,7 @@ var _ = Describe("Codex Agent caller tools", func() {
 		DeferCleanup(provider.Close)
 
 		request := ai.Request{
-			ToolPreferences: api.ToolPreferences{"invoice_get": api.ToolModeOff},
+			ToolPreferences: api.ToolPreferences{"invoice_get": api.ToolPolicyDeny},
 			Permissions:     api.Permissions{MCP: api.MCP{Disabled: true}},
 		}
 		Expect(provider.prepareCallerTools(request)).To(Succeed())

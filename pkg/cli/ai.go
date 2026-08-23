@@ -298,7 +298,7 @@ func (o AIRuntimeOptions) ToRequest(systemPrompt, appendSystemPrompt, userPrompt
 
 	perms := api.Permissions{
 		Mode:  api.PermissionMode(o.PermissionMode),
-		Tools: api.Tools{Allow: o.AllowedTools, Deny: o.DisallowedTools},
+		Tools: api.ToolsFromLists(o.AllowedTools, o.DisallowedTools),
 		MCP:   api.MCP{Disabled: o.NoMCP || saved.NoMCP},
 	}
 	if o.Edit {

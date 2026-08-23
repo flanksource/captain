@@ -2,11 +2,13 @@ package claudeagent
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestInitializeParams_PermissionMode pins the posture the SDK child is started
@@ -82,7 +84,7 @@ func TestInitializeParams_EditPresetAllowlist(t *testing.T) {
 	explicit := p.initializeParams(ai.Request{
 		Permissions: api.Permissions{
 			Presets: []api.Preset{api.PresetEdit},
-			Tools:   api.Tools{Allow: []string{"Read"}},
+			Tools:   api.Tools{"Read": api.ToolPolicyAllow},
 		},
 	})
 	assert.Equal(t, []string{"Read"}, explicit.AllowedTools,
@@ -90,18 +92,16 @@ func TestInitializeParams_EditPresetAllowlist(t *testing.T) {
 }
 
 // TestInitializeParams_NormalizesToolModes pins that the SDK child is configured
-// from the canonical policy map, not the raw Allow/Deny slices: `tools: {Bash:
-// off}` lands in Modes only, so forwarding Tools.Deny verbatim would let a tool
-// the spec turned off run.
+// from AllowList/DenyList rather than by scanning the map for one spelling of a
+// deny: the legacy `modes: {Bash: off}` and an explicit deny are the same policy
+// once decoded, and both must reach disallowedTools.
 func TestInitializeParams_NormalizesToolModes(t *testing.T) {
 	p := &Provider{}
+	var tools api.Tools
+	require.NoError(t, json.Unmarshal(
+		[]byte(`{"deny":["WebFetch"],"modes":{"Bash":"off","Read":"on"}}`), &tools))
 	params := p.initializeParams(ai.Request{
-		Permissions: api.Permissions{
-			Tools: api.Tools{
-				Deny:  []string{"WebFetch"},
-				Modes: map[string]api.ToolMode{"Bash": api.ToolModeOff, "Read": api.ToolModeOn},
-			},
-		},
+		Permissions: api.Permissions{Tools: tools},
 	})
 	assert.Equal(t, []string{"Bash", "WebFetch"}, params.DisallowedTools,
 		"an off tool mode is a deny and must reach disallowedTools")
@@ -117,7 +117,7 @@ func TestExecuteStream_RefusesUnenforceableAskPolicy(t *testing.T) {
 	p := &Provider{}
 	_, err := p.ExecuteStream(context.Background(), ai.Request{
 		Permissions: api.Permissions{
-			Tools: api.Tools{Modes: map[string]api.ToolMode{"Bash": api.ToolModeAsk}},
+			Tools: api.Tools{"Bash": api.ToolPolicyAsk},
 		},
 	})
 	assert.ErrorContains(t, err, "ask")

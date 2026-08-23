@@ -29,7 +29,7 @@ var _ = Describe("Genkit tool event correlation", func() {
 		emit = func(event ai.Event) { events = append(events, event) }
 		tool = api.ToolDefinition{
 			Name:              "lookup",
-			DefaultPermission: api.ToolModeOn,
+			DefaultPermission: api.ToolPolicyAllow,
 			Handler: func(_ context.Context, input map[string]any) (any, error) {
 				return map[string]any{"city": input["city"]}, nil
 			},
@@ -97,7 +97,7 @@ var _ = Describe("Genkit tool event correlation", func() {
 			Expect(request.ToolUseID).To(Equal("toolu_approved"))
 			return api.PermissionDecision{Allow: true}, nil
 		})
-		tool.DefaultPermission = api.ToolModeAsk
+		tool.DefaultPermission = api.ToolPolicyAsk
 		correlation := newToolEventCorrelation()
 		request := &gkai.ToolRequest{Name: tool.Name, Ref: "toolu_approved", Input: map[string]any{"city": "Cape Town"}}
 		_, err := chunkToEvents(toolRequestChunk(request), provider.GetModel(), correlation)
@@ -132,7 +132,7 @@ var _ = Describe("Genkit tool event correlation", func() {
 				Model: api.Model{Name: "parallel-journals", Backend: api.BackendAnthropic},
 				Tools: []api.ToolDefinition{{
 					Name:              "journals",
-					DefaultPermission: api.ToolModeOn,
+					DefaultPermission: api.ToolPolicyAllow,
 					InputSchema: map[string]any{
 						"type":       "object",
 						"properties": map[string]any{"limit": map[string]any{"type": "integer"}},

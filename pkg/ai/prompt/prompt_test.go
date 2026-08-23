@@ -85,10 +85,21 @@ func TestRender_SpecFrontmatter(t *testing.T) {
 	// Spec-native keys from the second parse.
 	assert.Equal(t, api.PermissionAcceptEdits, req.Permissions.Mode)
 	assert.Equal(t, []api.Preset{api.PresetEdit}, req.Permissions.Presets)
-	assert.Equal(t, []string{"Read", "Edit"}, req.Permissions.Tools.Allow)
+	assert.Equal(t, []string{"Edit", "Read"}, req.Permissions.Tools.AllowList())
 	assert.True(t, req.Permissions.MCP.Disabled)
 	assert.True(t, req.Memory.SkipUser)
 	assert.Equal(t, 3, req.Budget.MaxTurns)
+
+	// An ordered toolPolicy: block reaches the spec verbatim, which is what lets
+	// a .prompt govern tools on a non-chat agent run. Order is the contract, so
+	// it is asserted as a sequence rather than a set.
+	require.Len(t, req.ToolPolicy, 2)
+	assert.Equal(t, api.MatchPatterns{"provider.*"}, req.ToolPolicy[0].Group)
+	assert.Equal(t, api.ToolPolicyDeny, req.ToolPolicy[0].Policy)
+	assert.Equal(t, api.MatchPatterns{"Read"}, req.ToolPolicy[1].Name)
+	assert.Equal(t, api.ToolPolicyAllow, req.ToolPolicy[1].Policy)
+	require.NotNil(t, req.ToolPolicy[1].ReadOnly)
+	assert.True(t, *req.ToolPolicy[1].ReadOnly)
 
 	// The dotprompt config: block wins for the knobs it owns: config.maxOutputTokens
 	// (1024) overrides the spec-native budget.maxTokens (5000), and config.temperature

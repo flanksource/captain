@@ -27,7 +27,7 @@ func (p *Provider) prepareCallerTools(req ai.Request) error {
 	if len(p.cfg.Tools) == 0 {
 		return nil
 	}
-	definitions, err := aitools.ResolveDefinitions(p.cfg.Tools, req.ToolPreferences)
+	definitions, err := aitools.ResolveDefinitions(p.cfg.Tools, aitools.ResolveOptions{Preferences: req.ToolPreferences, Policy: req.ToolPolicy})
 	if err != nil {
 		return fmt.Errorf("claude-agent caller tools: %w", err)
 	}

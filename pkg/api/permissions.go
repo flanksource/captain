@@ -29,13 +29,12 @@ type Permissions struct {
 	Skills ResourcePolicies `json:"skills,omitempty" yaml:"skills,omitempty" pretty:"label=Skills"`
 }
 
-// Tools is the per-tool policy. Allow/Deny/Modes are retained for legacy callers;
-// JSON/YAML marshals as map[tool]auto|ask|allow|deny.
-type Tools struct {
-	Allow []string            `json:"-" yaml:"-" pretty:"label=Allow"`
-	Deny  []string            `json:"-" yaml:"-" pretty:"label=Deny"`
-	Modes map[string]ToolMode `json:"-" yaml:"-" pretty:"label=Modes"`
-}
+// Tools is the per-tool policy map, and its own wire shape:
+// map[tool]auto|ask|allow|deny.
+//
+// The legacy {allow: [], deny: [], modes: {}} object is still accepted on
+// decode and folded into this map — see UnmarshalJSON. It is never emitted.
+type Tools map[string]ToolPolicy
 
 // MCP controls Model-Context-Protocol servers.
 type MCP struct {
@@ -56,11 +55,11 @@ func (p Permissions) HasPreset(x Preset) bool {
 	return slices.Contains(p.Presets, x)
 }
 
-// AllowList and DenyList project the canonical policy map onto the two lists
-// every claude transport speaks (--allowedTools / --disallowedTools). They are
-// the only correct source for those flags: Policies() folds an `off` tool mode
-// into a deny, so reading Tools.Deny directly lets `tools: {Bash: off}` past the
-// filter and the tool runs.
+// AllowList and DenyList project the policy map onto the two lists every claude
+// transport speaks (--allowedTools / --disallowedTools). They are the only
+// correct source for those flags: a legacy `tools: {Bash: off}` decodes to deny,
+// so anything that filters on its own notion of "denied" lets it past and the
+// tool runs.
 func (t Tools) AllowList() []string { return t.toolsWithPolicy(ToolPolicyAllow) }
 
 // DenyList is AllowList's counterpart; see its documentation.
@@ -68,7 +67,7 @@ func (t Tools) DenyList() []string { return t.toolsWithPolicy(ToolPolicyDeny) }
 
 func (t Tools) toolsWithPolicy(want ToolPolicy) []string {
 	var out []string
-	for tool, policy := range t.Policies() {
+	for tool, policy := range t {
 		if policy == want {
 			out = append(out, tool)
 		}
@@ -124,13 +123,8 @@ func (p Permissions) Validate() error {
 			return fmt.Errorf("invalid preset %q (valid: edit, bare)", preset)
 		}
 	}
-	for tool, mode := range p.Tools.Modes {
-		if !mode.Valid() {
-			return fmt.Errorf("invalid tool mode %q for tool %q (valid: on, ask, off, auto)", mode, tool)
-		}
-	}
-	for tool, policy := range p.Tools.Policies() {
-		if !policy.Valid() {
+	for _, tool := range sortedKeys(p.Tools) {
+		if policy := p.Tools[tool]; !policy.Valid() {
 			return fmt.Errorf("invalid tool policy %q for tool %q (valid: auto, ask, allow, deny)", policy, tool)
 		}
 	}
@@ -152,41 +146,44 @@ func (p Permissions) Validate() error {
 	return nil
 }
 
-// Policies returns the canonical tool policy map.
-func (t Tools) Policies() map[string]ToolPolicy {
-	out := map[string]ToolPolicy{}
-	for _, tool := range t.Allow {
-		if tool != "" {
-			out[tool] = ToolPolicyAllow
+// Policies returns the tool policy map. Tools is that map, so this is an
+// identity projection kept for callers that read the policy view by name.
+func (t Tools) Policies() map[string]ToolPolicy { return t }
+
+// ToolsFromLists builds a policy map from the two flag-shaped lists the CLI
+// carries (--allowed-tools / --disallowed-tools). A tool named in both is
+// denied: the deny list exists solely to forbid, so honouring allow instead
+// would grant more than the caller asked for.
+func ToolsFromLists(allow, deny []string) Tools {
+	var tools Tools
+	for _, tool := range compactStrings(allow) {
+		tools.put(tool, ToolPolicyAllow)
+	}
+	for _, tool := range compactStrings(deny) {
+		tools.put(tool, ToolPolicyDeny)
+	}
+	return tools
+}
+
+// SetList replaces every tool currently carrying policy with the named tools.
+// It is how a CLI flag overrides an inherited allow/deny list wholesale rather
+// than merging into it.
+func (t *Tools) SetList(policy ToolPolicy, tools []string) {
+	for tool, current := range *t {
+		if current == policy {
+			delete(*t, tool)
 		}
 	}
-	for _, tool := range t.Deny {
-		if tool != "" {
-			out[tool] = ToolPolicyDeny
-		}
+	for _, tool := range compactStrings(tools) {
+		t.put(tool, policy)
 	}
-	for tool, mode := range t.Modes {
-		if tool == "" {
-			continue
-		}
-		switch mode {
-		case ToolModeOn:
-			out[tool] = ToolPolicyAuto
-		case ToolModeAsk:
-			out[tool] = ToolPolicyAsk
-		case ToolModeOff:
-			out[tool] = ToolPolicyDeny
-		}
-	}
-	return out
 }
 
 func (t Tools) MarshalJSON() ([]byte, error) {
-	policies := t.Policies()
-	if len(policies) == 0 {
+	if len(t) == 0 {
 		return []byte("{}"), nil
 	}
-	return json.Marshal(policies)
+	return json.Marshal(map[string]ToolPolicy(t))
 }
 
 func (t *Tools) UnmarshalJSON(data []byte) error {
@@ -196,31 +193,31 @@ func (t *Tools) UnmarshalJSON(data []byte) error {
 	}
 	if hasRawKey(raw, "allow") || hasRawKey(raw, "deny") || hasRawKey(raw, "modes") {
 		var legacy struct {
-			Allow []string            `json:"allow"`
-			Deny  []string            `json:"deny"`
-			Modes map[string]ToolMode `json:"modes"`
+			Allow []string          `json:"allow"`
+			Deny  []string          `json:"deny"`
+			Modes map[string]string `json:"modes"`
 		}
 		if err := json.Unmarshal(data, &legacy); err != nil {
 			return err
 		}
-		t.Allow = compactStrings(legacy.Allow)
-		t.Deny = compactStrings(legacy.Deny)
-		t.Modes = compactToolModes(legacy.Modes)
-		for key, value := range raw {
+		if err := t.setLegacy(legacy.Allow, legacy.Deny, legacy.Modes); err != nil {
+			return err
+		}
+		for _, key := range sortedKeys(raw) {
 			if key == "allow" || key == "deny" || key == "modes" {
 				continue
 			}
-			var policy ToolPolicy
-			if err := json.Unmarshal(value, &policy); err != nil {
+			var policy string
+			if err := json.Unmarshal(raw[key], &policy); err != nil {
 				return err
 			}
-			if err := t.applyPolicy(key, policy); err != nil {
+			if err := t.set(key, policy, ParseToolPolicyOptions{}); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
-	var policies map[string]ToolPolicy
+	var policies map[string]string
 	if err := json.Unmarshal(data, &policies); err != nil {
 		return err
 	}
@@ -228,71 +225,82 @@ func (t *Tools) UnmarshalJSON(data []byte) error {
 }
 
 func (t Tools) MarshalYAML() (any, error) {
-	return t.Policies(), nil
+	return map[string]ToolPolicy(t), nil
 }
 
 func (t *Tools) UnmarshalYAML(value *yaml.Node) error {
 	if mappingHas(value, "allow") || mappingHas(value, "deny") || mappingHas(value, "modes") {
 		var legacy struct {
-			Allow []string            `yaml:"allow"`
-			Deny  []string            `yaml:"deny"`
-			Modes map[string]ToolMode `yaml:"modes"`
+			Allow []string          `yaml:"allow"`
+			Deny  []string          `yaml:"deny"`
+			Modes map[string]string `yaml:"modes"`
 		}
 		if err := value.Decode(&legacy); err != nil {
 			return err
 		}
-		t.Allow = compactStrings(legacy.Allow)
-		t.Deny = compactStrings(legacy.Deny)
-		t.Modes = compactToolModes(legacy.Modes)
-		return nil
+		return t.setLegacy(legacy.Allow, legacy.Deny, legacy.Modes)
 	}
-	var policies map[string]ToolPolicy
+	var policies map[string]string
 	if err := value.Decode(&policies); err != nil {
 		return err
 	}
 	return t.setPolicies(policies)
 }
 
-func (t *Tools) setPolicies(policies map[string]ToolPolicy) error {
-	t.Allow = nil
-	t.Deny = nil
-	t.Modes = nil
-	for _, key := range sortedKeys(policies) {
-		if err := t.applyPolicy(key, policies[key]); err != nil {
+// setLegacy folds the legacy {allow, deny, modes} object into the policy map.
+//
+// modes is parsed with LegacyOn: auto rather than allow, because this encoding
+// carries allow in its own Allow list — leaving "on" to mean "enabled, defer
+// gating". spec.toolPreferences has no such list and so reads "on" as allow.
+// Both preserve what the respective configs meant before the vocabularies were
+// unified; see ParseToolPolicyOptions.LegacyOn.
+func (t *Tools) setLegacy(allow, deny []string, modes map[string]string) error {
+	*t = nil
+	for _, tool := range compactStrings(allow) {
+		t.put(tool, ToolPolicyAllow)
+	}
+	for _, tool := range compactStrings(deny) {
+		t.put(tool, ToolPolicyDeny)
+	}
+	for _, tool := range sortedKeys(modes) {
+		if err := t.set(tool, modes[tool], ParseToolPolicyOptions{LegacyOn: ToolPolicyAuto}); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// applyPolicy folds one tool's policy into the canonical allow/deny/modes
-// representation. An unrecognised policy is an error rather than a no-op: the
-// policy map is the only place it appears, so dropping it here leaves nothing
-// for Permissions.Validate to catch and the tool silently runs under the
-// inherited default instead of the one that was configured.
-func (t *Tools) applyPolicy(tool string, policy ToolPolicy) error {
-	if tool == "" {
-		return nil
-	}
-	switch policy {
-	case ToolPolicyAllow:
-		t.Allow = append(t.Allow, tool)
-	case ToolPolicyDeny:
-		t.Deny = append(t.Deny, tool)
-	case ToolPolicyAsk:
-		if t.Modes == nil {
-			t.Modes = map[string]ToolMode{}
+func (t *Tools) setPolicies(policies map[string]string) error {
+	*t = nil
+	for _, tool := range sortedKeys(policies) {
+		if err := t.set(tool, policies[tool], ParseToolPolicyOptions{}); err != nil {
+			return err
 		}
-		t.Modes[tool] = ToolModeAsk
-	case ToolPolicyAuto:
-		if t.Modes == nil {
-			t.Modes = map[string]ToolMode{}
-		}
-		t.Modes[tool] = ToolModeOn
-	default:
-		return fmt.Errorf("invalid tool policy %q for tool %q (valid: auto, ask, allow, deny)", policy, tool)
 	}
 	return nil
+}
+
+// set parses one tool's policy into the map. An unrecognised value is an error
+// rather than a no-op: the policy map is the only place it appears, so dropping
+// it here leaves nothing for Permissions.Validate to catch and the tool silently
+// runs under the inherited default instead of the one that was configured.
+func (t *Tools) set(tool, value string, opts ParseToolPolicyOptions) error {
+	if strings.TrimSpace(tool) == "" {
+		return nil
+	}
+	policy, ok := ParseToolPolicy(value, opts)
+	if !ok {
+		return fmt.Errorf("invalid tool policy %q for tool %q (valid: auto, ask, allow, deny)", value, tool)
+	}
+	t.put(tool, policy)
+	return nil
+}
+
+func (t *Tools) put(tool string, policy ToolPolicy) {
+	if *t == nil {
+		*t = Tools{}
+	}
+	(*t)[tool] = policy
 }
 
 func (m MCP) MarshalJSON() ([]byte, error) {
@@ -485,19 +493,6 @@ func compactStrings(in []string) []string {
 		}
 		seen[item] = true
 		out = append(out, item)
-	}
-	return out
-}
-
-func compactToolModes(in map[string]ToolMode) map[string]ToolMode {
-	if len(in) == 0 {
-		return nil
-	}
-	out := map[string]ToolMode{}
-	for _, key := range sortedKeys(in) {
-		if key != "" {
-			out[key] = in[key]
-		}
 	}
 	return out
 }

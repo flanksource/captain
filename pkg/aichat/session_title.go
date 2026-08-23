@@ -148,7 +148,7 @@ func (s *Service) sessionTitleTool(threadID string) api.ToolDefinition {
 			"required": []any{sessionTitleInput},
 		},
 		ReadOnlyHint:      &readOnly,
-		DefaultPermission: api.ToolModeOn,
+		DefaultPermission: api.ToolPolicyAllow,
 		Handler: func(ctx context.Context, input map[string]any) (any, error) {
 			title, _ := input[sessionTitleInput].(string)
 			if strings.TrimSpace(title) == "" {

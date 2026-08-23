@@ -83,40 +83,13 @@ func (s VerifyScope) Validate() error {
 	return fmt.Errorf("invalid verify scope %q; want one of: all, changed", s)
 }
 
-// ToolMode is the per-tool exposure for one request.
-type ToolMode string
-
-const (
-	ToolModeOn   ToolMode = "on"
-	ToolModeAsk  ToolMode = "ask"
-	ToolModeOff  ToolMode = "off"
-	ToolModeAuto ToolMode = "auto"
-)
-
-// NormalizeToolMode canonicalizes a mode.
-func NormalizeToolMode(m ToolMode) (ToolMode, bool) {
-	switch ToolMode(strings.ToLower(strings.TrimSpace(string(m)))) {
-	case ToolModeOn:
-		return ToolModeOn, true
-	case ToolModeAsk:
-		return ToolModeAsk, true
-	case ToolModeOff:
-		return ToolModeOff, true
-	case ToolModeAuto:
-		return ToolModeAuto, true
-	default:
-		return "", false
-	}
-}
-
-// Valid reports whether m is a recognised tool mode.
-func (m ToolMode) Valid() bool {
-	_, ok := NormalizeToolMode(m)
-	return ok
-}
-
-// ToolPolicy is the runtime-spec policy map value for one tool. It keeps the
-// wire shape close to coding-agent UX: auto, ask, allow, deny.
+// ToolPolicy is the per-tool exposure for one request, and the only tool
+// permission vocabulary: auto, ask, allow, deny. It keeps the wire shape close
+// to coding-agent UX.
+//
+// The legacy "on"/"off" spellings are accepted on decode via ParseToolPolicy,
+// never stored and never emitted. "on" is deliberately not a global synonym —
+// see ParseToolPolicyOptions.LegacyOn.
 type ToolPolicy string
 
 const (
@@ -126,13 +99,75 @@ const (
 	ToolPolicyDeny  ToolPolicy = "deny"
 )
 
+// Legacy tool-permission spellings, accepted on decode only. They are not
+// ToolPolicy values: "on" resolves differently per encoding (see LegacyOn).
+const (
+	legacyToolOn  = "on"
+	legacyToolOff = "off"
+)
+
+// ParseToolPolicyOptions configures which legacy spellings a decoder accepts.
+type ParseToolPolicyOptions struct {
+	// LegacyOn is what the legacy "on" spelling means in the caller's encoding.
+	// The two encodings differ in arity, not in meaning:
+	//
+	//   - allow, where the encoding has no separate allow slot and "on" is the
+	//     only way to say auto-run (spec.toolPreferences, MCP _meta, stored
+	//     caller-tool credentials).
+	//   - auto, where an Allow list already carries allow, leaving "on" free to
+	//     mean "enabled, defer gating" (the legacy permissions.tools shape).
+	//
+	// The zero value rejects "on" and "off" outright.
+	LegacyOn ToolPolicy
+}
+
+// ParseToolPolicy canonicalizes a tool policy, optionally accepting the legacy
+// "on"/"off" spellings. "off" always means deny — both legacy encodings agree.
+func ParseToolPolicy(value string, opts ParseToolPolicyOptions) (ToolPolicy, bool) {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if opts.LegacyOn != "" {
+		switch normalized {
+		case legacyToolOn:
+			return opts.LegacyOn, true
+		case legacyToolOff:
+			return ToolPolicyDeny, true
+		}
+	}
+	switch ToolPolicy(normalized) {
+	case ToolPolicyAuto:
+		return ToolPolicyAuto, true
+	case ToolPolicyAsk:
+		return ToolPolicyAsk, true
+	case ToolPolicyAllow:
+		return ToolPolicyAllow, true
+	case ToolPolicyDeny:
+		return ToolPolicyDeny, true
+	default:
+		return "", false
+	}
+}
+
+// NormalizeToolPolicy canonicalizes a policy, rejecting the legacy spellings.
+func NormalizeToolPolicy(value string) (ToolPolicy, bool) {
+	return ParseToolPolicy(value, ParseToolPolicyOptions{})
+}
+
 // Valid reports whether p is a recognised runtime tool policy.
 func (p ToolPolicy) Valid() bool {
-	switch p {
-	case ToolPolicyAuto, ToolPolicyAsk, ToolPolicyAllow, ToolPolicyDeny:
-		return true
-	default:
-		return false
+	_, ok := NormalizeToolPolicy(string(p))
+	return ok
+}
+
+// ApprovalDecision maps a policy to an approve/auto decision. handled is false
+// only for auto, which defers to the runtime's default gate.
+func (p ToolPolicy) ApprovalDecision() (require, handled bool) {
+	switch policy, ok := NormalizeToolPolicy(string(p)); {
+	case !ok, policy == ToolPolicyAuto:
+		return false, false
+	case policy == ToolPolicyAsk:
+		return true, true
+	default: // allow, deny — both run without an approval round-trip
+		return false, true
 	}
 }
 

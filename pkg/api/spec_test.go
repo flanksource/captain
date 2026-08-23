@@ -22,7 +22,7 @@ func sampleSpec() Spec {
 		Permissions: Permissions{
 			Mode:    PermissionAcceptEdits,
 			Presets: []Preset{PresetEdit},
-			Tools:   Tools{Allow: []string{"Edit", "Read"}, Modes: map[string]ToolMode{"Bash": ToolModeAsk}},
+			Tools:   Tools{"Edit": ToolPolicyAllow, "Read": ToolPolicyAllow, "Bash": ToolPolicyAsk},
 			MCP:     MCP{Disabled: true},
 			Plugins: ResourcePolicies{"/plugins": ResourceEnabled},
 			Skills:  ResourcePolicies{"/skills/b": ResourceDisabled},

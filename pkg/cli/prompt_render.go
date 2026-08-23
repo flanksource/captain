@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"strings"
 
@@ -285,31 +286,11 @@ func overlayRuntimeSpec(req *ai.Request, cfg *ai.Config, spec api.Spec) {
 		req.Permissions.Mode = spec.Permissions.Mode
 	}
 	req.Permissions.Presets = mergePresets(req.Permissions.Presets, spec.Permissions.Presets)
-	toolPolicies := spec.Permissions.Tools.Policies()
-	if len(toolPolicies) > 0 {
-		req.Permissions.Tools.Allow = nil
-		req.Permissions.Tools.Deny = nil
-		req.Permissions.Tools.Modes = nil
-		for _, tool := range sortedStringKeys(toolPolicies) {
-			switch toolPolicies[tool] {
-			case api.ToolPolicyAllow:
-				req.Permissions.Tools.Allow = append(req.Permissions.Tools.Allow, tool)
-			case api.ToolPolicyDeny:
-				req.Permissions.Tools.Deny = append(req.Permissions.Tools.Deny, tool)
-			case api.ToolPolicyAsk:
-				if req.Permissions.Tools.Modes == nil {
-					req.Permissions.Tools.Modes = map[string]api.ToolMode{}
-				}
-				req.Permissions.Tools.Modes[tool] = api.ToolModeAsk
-			case api.ToolPolicyAuto:
-				if req.Permissions.Tools.Modes == nil {
-					req.Permissions.Tools.Modes = map[string]api.ToolMode{}
-				}
-				req.Permissions.Tools.Modes[tool] = api.ToolModeOn
-			}
-		}
+	// The spec's tool policy replaces the request's wholesale rather than merging
+	// key-wise: a half-applied policy names an authority neither side asked for.
+	if len(spec.Permissions.Tools) > 0 {
+		req.Permissions.Tools = maps.Clone(spec.Permissions.Tools)
 	}
-	req.Permissions.Tools.Modes = mergeToolModes(req.Permissions.Tools.Modes, spec.Permissions.Tools.Modes)
 	req.Permissions.MCP.Disabled = req.Permissions.MCP.Disabled || spec.Permissions.MCP.Disabled
 	if servers := spec.Permissions.MCP.EnabledServers(); len(servers) > 0 {
 		req.Permissions.MCP.Servers = servers
