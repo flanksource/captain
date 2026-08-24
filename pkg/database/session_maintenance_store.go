@@ -117,11 +117,11 @@ func (db *DB) SessionStorageStats(ctx context.Context) (SessionStorageStats, err
 			SELECT count(*)::bigint AS live_rows,
 			       count(DISTINCT split_part(trim(both '()' FROM ctid::text), ',', 1)::bigint)::bigint AS pages_with_live_rows,
 			       COALESCE(sum(pg_column_size(s)), 0)::bigint AS live_tuple_bytes
-			FROM public.captain_sessions AS s
+			FROM captain_sessions AS s
 		), sizes AS (
-			SELECT pg_relation_size('public.captain_sessions'::regclass)::bigint AS heap_bytes,
-			       pg_indexes_size('public.captain_sessions'::regclass)::bigint AS index_bytes,
-			       pg_total_relation_size('public.captain_sessions'::regclass)::bigint AS total_bytes,
+			SELECT pg_relation_size('captain_sessions'::regclass)::bigint AS heap_bytes,
+			       pg_indexes_size('captain_sessions'::regclass)::bigint AS index_bytes,
+			       pg_total_relation_size('captain_sessions'::regclass)::bigint AS total_bytes,
 			       current_setting('block_size')::bigint AS block_size
 		)
 		SELECT statement_timestamp() AS captured_at,
@@ -142,7 +142,7 @@ func (db *DB) SessionStorageStats(ctx context.Context) (SessionStorageStats, err
 		FROM live
 		CROSS JOIN sizes
 		JOIN pg_catalog.pg_stat_user_tables AS table_stats
-		  ON table_stats.relid = 'public.captain_sessions'::regclass`).Scan(&stats).Error
+		  ON table_stats.relid = 'captain_sessions'::regclass`).Scan(&stats).Error
 	if err != nil {
 		return SessionStorageStats{}, fmt.Errorf("measure Captain session storage: %w", err)
 	}

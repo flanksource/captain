@@ -5,8 +5,10 @@ package migrations
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"embed"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"strings"
@@ -18,6 +20,7 @@ import (
 )
 
 const Scope = "captain"
+const DefaultSchema = "public"
 
 const (
 	// captainMigrationLockNamespace and captainMigrationLockKey are stable,
@@ -42,16 +45,38 @@ type migrationLockHandle interface {
 }
 
 type applyDependencies struct {
-	acquireLock func(context.Context, string) (migrationLockHandle, error)
-	migrate     func(context.Context, string) error
-	verify      func(context.Context, string) error
+	acquireLock func(context.Context, applyRequest) (migrationLockHandle, error)
+	migrate     func(context.Context, applyRequest) error
+	verify      func(context.Context, applyRequest) error
+}
+
+type applyRequest struct {
+	Connection string
+	Schema     string
+}
+
+type options struct {
+	schema string
+}
+
+// Option configures Captain's migration bundle.
+type Option func(*options)
+
+// WithSchema selects the schema that owns Captain's migration bundle.
+func WithSchema(name string) Option {
+	return func(options *options) { options.schema = name }
 }
 
 var defaultApplyDependencies = applyDependencies{
 	acquireLock: acquireMigrationLock,
-	migrate: func(ctx context.Context, connection string) error {
-		return commonsmigrate.Apply(ctx, connection, schemaFS,
+	migrate: func(ctx context.Context, request applyRequest) error {
+		filesystem, err := schemaFilesystem(request.Schema)
+		if err != nil {
+			return err
+		}
+		return commonsmigrate.Apply(ctx, request.Connection, filesystem,
 			commonsmigrate.WithName(Scope),
+			commonsmigrate.WithSchema(request.Schema),
 			commonsmigrate.WithExclude("todo_*"),
 		)
 	},
@@ -63,16 +88,25 @@ var defaultApplyDependencies = applyDependencies{
 // migration bundle across processes. It is safe to call repeatedly and uses a
 // stable scope so Captain can share a database with other independently
 // migrated applications.
-func Apply(ctx context.Context, connection string) error {
-	return apply(ctx, connection, defaultApplyDependencies)
+func Apply(ctx context.Context, connection string, optionFns ...Option) error {
+	config := options{schema: DefaultSchema}
+	for _, option := range optionFns {
+		if option != nil {
+			option(&config)
+		}
+	}
+	return apply(ctx, applyRequest{Connection: connection, Schema: config.schema}, defaultApplyDependencies)
 }
 
-func apply(ctx context.Context, connection string, deps applyDependencies) (resultErr error) {
-	if strings.TrimSpace(connection) == "" {
+func apply(ctx context.Context, request applyRequest, deps applyDependencies) (resultErr error) {
+	if strings.TrimSpace(request.Connection) == "" {
 		return errors.New("captain migration connection string is empty")
 	}
+	if err := commonsmigrate.ValidateSchemaName(request.Schema); err != nil {
+		return fmt.Errorf("captain migration schema: %w", err)
+	}
 
-	lock, err := deps.acquireLock(ctx, connection)
+	lock, err := deps.acquireLock(ctx, request)
 	if err != nil {
 		return fmt.Errorf("acquire Captain migration lock: %w", err)
 	}
@@ -82,16 +116,24 @@ func apply(ctx context.Context, connection string, deps applyDependencies) (resu
 		}
 	}()
 
-	if err := deps.migrate(ctx, connection); err != nil {
+	if err := deps.migrate(ctx, request); err != nil {
 		return fmt.Errorf("migrate Captain database: %w", err)
 	}
-	if err := deps.verify(ctx, connection); err != nil {
+	if err := deps.verify(ctx, request); err != nil {
 		return fmt.Errorf("verify Captain database: %w", err)
 	}
 	return nil
 }
 
-func verifyToolApprovalIdentity(ctx context.Context, connection string) (resultErr error) {
+func verifyToolApprovalIdentity(ctx context.Context, request applyRequest) (resultErr error) {
+	connection := request.Connection
+	if request.Schema != DefaultSchema {
+		var err error
+		connection, err = commonsmigrate.ConnectionForSchema(request.Connection, request.Schema)
+		if err != nil {
+			return fmt.Errorf("scope schema verification database: %w", err)
+		}
+	}
 	db, err := commonsdb.NewDB(connection)
 	if err != nil {
 		return fmt.Errorf("open schema verification database: %w", err)
@@ -109,11 +151,11 @@ func verifyToolApprovalIdentity(ctx context.Context, connection string) (resultE
 		FROM pg_constraint c
 		JOIN pg_class relation ON relation.oid = c.conrelid
 		JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace
-		WHERE namespace.nspname = 'public'
+		WHERE namespace.nspname = $1
 		  AND relation.relname = 'captain_turn_requests'
 		  AND c.conname = 'captain_turn_requests_tool_approval_identity'
 		  AND c.contype = 'c'
-	`).Scan(&validated, &definition)
+	`, request.Schema).Scan(&validated, &definition)
 	if errors.Is(err, sql.ErrNoRows) {
 		return errors.New("captain_turn_requests_tool_approval_identity constraint is missing")
 	}
@@ -138,13 +180,14 @@ func verifyToolApprovalIdentity(ctx context.Context, connection string) (resultE
 type migrationLock struct {
 	db   *sql.DB
 	conn *sql.Conn
+	key  int32
 
 	once sync.Once
 	err  error
 }
 
-func acquireMigrationLock(ctx context.Context, connection string) (migrationLockHandle, error) {
-	db, err := commonsdb.NewDB(connection)
+func acquireMigrationLock(ctx context.Context, request applyRequest) (migrationLockHandle, error) {
+	db, err := commonsdb.NewDB(request.Connection)
 	if err != nil {
 		return nil, fmt.Errorf("open advisory-lock database: %w", err)
 	}
@@ -154,12 +197,12 @@ func acquireMigrationLock(ctx context.Context, connection string) (migrationLock
 		return nil, fmt.Errorf("reserve advisory-lock connection: %w", err)
 	}
 	if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_lock($1, $2)`,
-		captainMigrationLockNamespace, captainMigrationLockKey); err != nil {
+		captainMigrationLockNamespace, migrationLockKey(request.Schema)); err != nil {
 		_ = conn.Close()
 		_ = db.Close()
 		return nil, fmt.Errorf("lock Captain migration scope: %w", err)
 	}
-	return &migrationLock{db: db, conn: conn}, nil
+	return &migrationLock{db: db, conn: conn, key: migrationLockKey(request.Schema)}, nil
 }
 
 func (lock *migrationLock) Close() error {
@@ -172,7 +215,7 @@ func (lock *migrationLock) Close() error {
 			ctx, cancel := context.WithTimeout(context.Background(), migrationUnlockTimeout)
 			var unlocked bool
 			if err := lock.conn.QueryRowContext(ctx, `SELECT pg_advisory_unlock($1, $2)`,
-				captainMigrationLockNamespace, captainMigrationLockKey).Scan(&unlocked); err != nil {
+				captainMigrationLockNamespace, lock.key).Scan(&unlocked); err != nil {
 				cleanupErrors = append(cleanupErrors, fmt.Errorf("unlock Captain migration scope: %w", err))
 			} else if !unlocked {
 				cleanupErrors = append(cleanupErrors, errors.New("captain migration advisory lock was not held"))
@@ -190,4 +233,12 @@ func (lock *migrationLock) Close() error {
 		lock.err = errors.Join(cleanupErrors...)
 	})
 	return lock.err
+}
+
+func migrationLockKey(schemaName string) int32 {
+	if schemaName == DefaultSchema {
+		return captainMigrationLockKey
+	}
+	digest := sha256.Sum256([]byte(schemaName))
+	return int32(binary.BigEndian.Uint32(digest[:4]))
 }
