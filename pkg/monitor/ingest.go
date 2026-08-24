@@ -1,9 +1,11 @@
 package monitor
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -18,7 +20,22 @@ import (
 
 // parserVersion invalidates every ingested transcript when the parsing or
 // mapping logic changes shape.
-const parserVersion = 4
+const parserVersion = 5
+
+type codexCheckpoint struct {
+	parser      *history.CodexParser
+	accumulator *session.CodexAccumulator
+	offset      int64
+	observed    os.FileInfo
+	identity    string
+	hasUses     bool
+}
+
+type codexPreparation struct {
+	checkpoint *codexCheckpoint
+	offset     int64
+	resetMark  bool
+}
 
 // ingestor turns changed transcript files into native database rows, skipping
 // files whose recorded mtime/size/parser version still match the disk state.
@@ -28,14 +45,21 @@ type ingestor struct {
 	// watchSubagents arms the watcher on a root transcript's subagents
 	// directory; nil outside watched (one-shot) runs.
 	watchSubagents func(rootTranscriptPath string)
+	// requeue schedules another pass when a descriptor-bounded parse observes
+	// that the path changed again before its database write completed.
+	requeue func(ctx context.Context, source, path string)
 
 	mu          sync.Mutex
 	sources     map[string]database.SessionSourceState
+	codex       map[string]*codexCheckpoint
 	ingestLocks sync.Map // transcript path -> *sync.Mutex
 }
 
 func newIngestor(m *Monitor) *ingestor {
-	return &ingestor{monitor: m, db: m.db, sources: map[string]database.SessionSourceState{}}
+	return &ingestor{
+		monitor: m, db: m.db,
+		sources: map[string]database.SessionSourceState{}, codex: map[string]*codexCheckpoint{},
+	}
 }
 
 func (ing *ingestor) refreshSourceStates(ctx context.Context) error {
@@ -62,6 +86,49 @@ func (ing *ingestor) recordSourceState(state database.SessionSourceState) {
 	ing.mu.Unlock()
 }
 
+func (ing *ingestor) prepareCodexCheckpoint(path string, info os.FileInfo) (*codexCheckpoint, bool) {
+	ing.mu.Lock()
+	defer ing.mu.Unlock()
+	checkpoint := ing.codex[path]
+	if checkpoint == nil {
+		return &codexCheckpoint{
+			parser: history.NewCodexParser(), accumulator: session.NewCodexAccumulator(path),
+		}, false
+	}
+	state, ok := ing.sources[path]
+	valid := checkpoint.parser != nil && checkpoint.accumulator != nil && checkpoint.observed != nil &&
+		ok && state.ParserVersion == parserVersion &&
+		state.ByteOffset == checkpoint.offset && state.ObservedSize == checkpoint.observed.Size() &&
+		state.SourceIdentity == checkpoint.identity && checkpoint.offset >= 0 && checkpoint.offset <= info.Size() &&
+		os.SameFile(checkpoint.observed, info) && info.Size() >= checkpoint.observed.Size()
+	if valid && info.Size() == checkpoint.observed.Size() {
+		valid = observedModTime(info).Equal(observedModTime(checkpoint.observed))
+	}
+	if valid {
+		return checkpoint, false
+	}
+	delete(ing.codex, path)
+	return &codexCheckpoint{
+		parser: history.NewCodexParser(), accumulator: session.NewCodexAccumulator(path),
+	}, true
+}
+
+func (ing *ingestor) commitCodexCheckpoint(path string, preparation *codexPreparation, info os.FileInfo, identity string) {
+	checkpoint := preparation.checkpoint
+	checkpoint.offset = preparation.offset
+	checkpoint.observed = info
+	checkpoint.identity = identity
+	ing.mu.Lock()
+	ing.codex[path] = checkpoint
+	ing.mu.Unlock()
+}
+
+func (ing *ingestor) dropCodexCheckpoint(path string) {
+	ing.mu.Lock()
+	delete(ing.codex, path)
+	ing.mu.Unlock()
+}
+
 // resumeAfter returns the highest message sequence a previous pass already
 // persisted for a transcript. Transcripts are append-only, so one appended line
 // would otherwise re-submit every message in the file — millions of insert
@@ -74,6 +141,10 @@ func (ing *ingestor) recordSourceState(state database.SessionSourceState) {
 func (ing *ingestor) resumeAfter(path string, info os.FileInfo) int64 {
 	state, ok := ing.sourceState(path)
 	if !ok || state.ParserVersion != parserVersion || info.Size() < state.ObservedSize {
+		return 0
+	}
+	if info.Size() == state.ObservedSize && state.ObservedModTime != nil &&
+		!state.ObservedModTime.Equal(observedModTime(info)) {
 		return 0
 	}
 	mark, err := strconv.ParseInt(state.LastEventKey, 10, 64)
@@ -169,9 +240,20 @@ func (ing *ingestor) ingestFile(ctx context.Context, source, path string) error 
 	pathLock.Lock()
 	defer pathLock.Unlock()
 
-	info, err := rootFS.Stat(relativePath)
+	var codexFile *os.File
+	var info os.FileInfo
+	if source == "codex" {
+		codexFile, err = rootFS.Open(relativePath)
+		if err == nil {
+			defer codexFile.Close()
+			info, err = codexFile.Stat()
+		}
+	} else {
+		info, err = rootFS.Stat(relativePath)
+	}
 	if err != nil {
 		if os.IsNotExist(err) {
+			ing.dropCodexCheckpoint(path)
 			ing.monitor.untrackTranscript(path)
 			return nil
 		}
@@ -180,25 +262,25 @@ func (ing *ingestor) ingestFile(ctx context.Context, source, path string) error 
 	if !ing.needsIngest(path, info) {
 		return nil
 	}
-	if source == "codex" {
-		ignored, ignoreErr := history.IsCodexAutoReviewSession(path)
-		if ignoreErr != nil {
-			return ignoreErr
-		}
-		if ignored {
-			return nil
-		}
-	}
 	var input database.IngestTranscriptInput
+	var codex *codexPreparation
 	switch source {
 	case "claude":
 		input, err = ing.claudeIngestInput(ctx, path)
 	case "codex":
-		input, err = codexIngestInput(path)
+		var ignored bool
+		input, codex, ignored, err = ing.incrementalCodexIngestInput(codexFile, path, info)
+		if ignored {
+			ing.dropCodexCheckpoint(path)
+			return nil
+		}
 	default:
 		return fmt.Errorf("unknown transcript source %q for %s", source, path)
 	}
 	if err != nil {
+		if source == "codex" {
+			ing.dropCodexCheckpoint(path)
+		}
 		return err
 	}
 	input.Session.HostID = ing.monitor.cfg.HostID
@@ -207,13 +289,22 @@ func (ing *ingestor) ingestFile(ctx context.Context, source, path string) error 
 	input.Source.ParserVersion = parserVersion
 	input.Source.ObservedSize = info.Size()
 	input.Source.ByteOffset = info.Size()
+	if codex != nil {
+		input.Source.ByteOffset = codex.offset
+	}
 	input.Source.ObservedModTime = observedModTime(info)
 
-	// Parsed against offered is the standing regression test for the high-water
-	// mark: the parse is always whole-file, the write should not be.
 	metrics := &ing.monitor.ingest
 	metrics.messagesParsed.Add(int64(len(input.Messages)))
-	input.Source.LastEventKey = strconv.FormatInt(highWaterMark(&input, ing.resumeAfter(path, info)), 10)
+	previous := ing.resumeAfter(path, info)
+	if codex != nil && codex.resetMark {
+		previous = 0
+	}
+	if state, ok := ing.sourceState(path); ok && state.SourceIdentity != "" &&
+		state.SourceIdentity != input.Source.SourceIdentity {
+		previous = 0
+	}
+	input.Source.LastEventKey = strconv.FormatInt(highWaterMark(&input, previous), 10)
 	metrics.messagesOffered.Add(int64(len(input.Messages)))
 	metrics.filesIngested.Add(1)
 
@@ -221,6 +312,9 @@ func (ing *ingestor) ingestFile(ctx context.Context, source, path string) error 
 	persisted, err := ing.db.IngestTranscript(ctx, input)
 	metrics.writeNanos.Add(int64(time.Since(writeStart)))
 	if err != nil {
+		if codex != nil {
+			ing.dropCodexCheckpoint(path)
+		}
 		return err
 	}
 	if source == "claude" && input.Session.ParentSessionID == nil && ing.watchSubagents != nil {
@@ -228,10 +322,21 @@ func (ing *ingestor) ingestFile(ctx context.Context, source, path string) error 
 	}
 	modTime := input.Source.ObservedModTime
 	ing.recordSourceState(database.SessionSourceState{
-		SessionID: persisted.ID, SourceKind: source, Path: path, ParserVersion: parserVersion,
-		ByteOffset: input.Source.ByteOffset, ObservedSize: input.Source.ObservedSize, ObservedModTime: &modTime,
+		SessionID: persisted.ID, SourceKind: source, Path: path, SourceIdentity: input.Source.SourceIdentity,
+		ParserVersion: parserVersion,
+		ByteOffset:    input.Source.ByteOffset, ObservedSize: input.Source.ObservedSize, ObservedModTime: &modTime,
 		LastEventKey: input.Source.LastEventKey,
 	})
+	if codex != nil {
+		ing.commitCodexCheckpoint(path, codex, info, input.Source.SourceIdentity)
+		if ing.requeue != nil {
+			latest, statErr := rootFS.Stat(relativePath)
+			if statErr == nil && (!os.SameFile(info, latest) || latest.Size() != info.Size() ||
+				!observedModTime(latest).Equal(observedModTime(info))) {
+				ing.requeue(ctx, source, path)
+			}
+		}
+	}
 	return nil
 }
 
@@ -258,6 +363,62 @@ func (ing *ingestor) claudeIngestInput(ctx context.Context, path string) (databa
 		input.Session.ProviderSessionID = info.RootSessionID
 	}
 	return input, nil
+}
+
+func (ing *ingestor) incrementalCodexIngestInput(file *os.File, path string, info os.FileInfo) (
+	database.IngestTranscriptInput, *codexPreparation, bool, error,
+) {
+	checkpoint, resetMark := ing.prepareCodexCheckpoint(path, info)
+	settled, offset, err := consumeCodexSuffix(file, checkpoint.offset, info.Size(), checkpoint.parser)
+	if err != nil {
+		return database.IngestTranscriptInput{}, nil, false, err
+	}
+	preparation := &codexPreparation{checkpoint: checkpoint, offset: offset, resetMark: resetMark}
+	if checkpoint.parser.Ignored() {
+		return database.IngestTranscriptInput{}, preparation, true, nil
+	}
+	provisional := checkpoint.parser.Snapshot()
+	if len(settled) > 0 || len(provisional) > 0 {
+		checkpoint.hasUses = true
+	}
+	if !checkpoint.hasUses {
+		return database.IngestTranscriptInput{}, preparation, false,
+			fmt.Errorf("codex transcript %s is not parseable", path)
+	}
+	checkpoint.accumulator.Add(checkpoint.parser.SessionInfo(), settled)
+	s := checkpoint.accumulator.Project(provisional)
+	if strings.TrimSpace(s.ID) == "" {
+		return database.IngestTranscriptInput{}, preparation, false,
+			fmt.Errorf("codex transcript %s has no session identity", path)
+	}
+	input := unifiedIngestInput(s, "codex", transcriptSequence)
+	input.Session.ProviderSessionID = s.ID
+	input.Source.SourceIdentity = s.ID
+	return input, preparation, false, nil
+}
+
+// consumeCodexSuffix parses only complete newline-terminated records inside the
+// descriptor snapshot [offset, size]. A partial final record leaves the cursor
+// before it so the next append re-reads the complete JSON value.
+func consumeCodexSuffix(file *os.File, offset, size int64, parser *history.CodexParser) ([]history.ToolUse, int64, error) {
+	if file == nil || parser == nil || offset < 0 || offset > size {
+		return nil, offset, fmt.Errorf("invalid Codex parser checkpoint %d for file size %d", offset, size)
+	}
+	reader := bufio.NewReader(io.NewSectionReader(file, offset, size-offset))
+	position := offset
+	var uses []history.ToolUse
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, position, err
+		}
+		position += int64(len(line))
+		uses = append(uses, parser.ConsumeLine(line)...)
+	}
+	return uses, position, nil
 }
 
 func codexIngestInput(path string) (database.IngestTranscriptInput, error) {

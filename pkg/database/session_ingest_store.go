@@ -29,6 +29,7 @@ type SessionSourceState struct {
 	SessionID       uuid.UUID  `json:"sessionId"`
 	SourceKind      string     `json:"sourceKind"`
 	Path            string     `json:"path"`
+	SourceIdentity  string     `json:"sourceIdentity,omitempty"`
 	ParserVersion   int        `json:"parserVersion"`
 	ByteOffset      int64      `json:"byteOffset"`
 	ObservedSize    int64      `json:"observedSize"`
@@ -221,7 +222,8 @@ func (db *DB) ListSessionSources(ctx context.Context) (map[string]SessionSourceS
 	for _, r := range records {
 		out[r.Path] = SessionSourceState{
 			SessionID: r.SessionID, SourceKind: r.SourceKind, Path: r.Path,
-			ParserVersion: r.ParserVersion, ByteOffset: r.ByteOffset, ObservedSize: r.ObservedSize,
+			SourceIdentity: optionalString(r.SourceIdentity),
+			ParserVersion:  r.ParserVersion, ByteOffset: r.ByteOffset, ObservedSize: r.ObservedSize,
 			ObservedModTime: r.ObservedModTime, LastEventKey: optionalString(r.LastEventKey),
 		}
 	}
