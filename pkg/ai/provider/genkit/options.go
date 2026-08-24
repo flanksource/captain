@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/flanksource/captain/pkg/ai"
 	captools "github.com/flanksource/captain/pkg/ai/tools"
@@ -113,7 +114,15 @@ func generateOptions(p *Provider, req ai.Request, stream gkai.ModelStreamCallbac
 	if modelToken == "" {
 		modelToken = req.ID
 	}
-	if cfg := ai.EffortConfig(p.backend, modelToken, req.Effort, req.Budget.MaxTokens, req.Temperature); cfg != nil {
+	cfg := ai.EffortConfig(p.backend, modelToken, req.Effort, req.Budget.MaxTokens, req.Temperature)
+	model := bareModel(modelToken)
+	if p.backend == ai.BackendOpenAI && len(toolOptions) > 0 && (model == "gpt-5.6" || strings.HasPrefix(model, "gpt-5.6-")) {
+		if cfg == nil {
+			cfg = map[string]any{}
+		}
+		cfg["reasoning_effort"] = "none"
+	}
+	if cfg != nil {
 		opts = append(opts, gkai.WithConfig(cfg))
 	}
 	if stream != nil {
