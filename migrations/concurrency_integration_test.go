@@ -17,7 +17,7 @@ func TestConcurrentApplySerializesCaptainMigrations(t *testing.T) {
 	// Hold the same session lock before releasing a group of Apply calls. This
 	// proves every caller enters through the advisory-lock boundary rather than
 	// racing the Atlas inspect/diff/apply window.
-	blocker, err := acquireMigrationLock(t.Context(), dsn)
+	blocker, err := acquireMigrationLock(t.Context(), applyRequest{Connection: dsn, Schema: DefaultSchema})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, blocker.Close()) })
 
@@ -63,7 +63,7 @@ func TestConcurrentApplySerializesCaptainMigrations(t *testing.T) {
 	// Bound the reacquisition to catch a leaked dedicated connection cleanly.
 	reacquireCtx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
-	reacquired, err := acquireMigrationLock(reacquireCtx, dsn)
+	reacquired, err := acquireMigrationLock(reacquireCtx, applyRequest{Connection: dsn, Schema: DefaultSchema})
 	require.NoError(t, err)
 	require.NoError(t, reacquired.Close())
 }
