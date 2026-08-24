@@ -36,29 +36,9 @@ func BuildCodex(files []string) []*Session {
 		if len(uses) == 0 {
 			continue
 		}
-		sessionID := ""
-		if info != nil {
-			sessionID = strings.TrimSpace(info.ID)
-		}
-		if sessionID == "" {
-			sessionID = codexSessionIDFromHistoryFile(f)
-		}
-		if sessionID != "" {
-			if info == nil {
-				info = &history.CodexSessionInfo{}
-			}
-			info.ID = sessionID
-			for i := range uses {
-				if strings.TrimSpace(uses[i].SessionID) == "" {
-					uses[i].SessionID = sessionID
-				}
-			}
-		}
-		s := buildCodexSession(uses, info)
-		s.HistoryFile = f
-		if s.Root != nil {
-			s.Root.HistoryFile = f
-		}
+		accumulator := newCodexAccumulator(f, true)
+		accumulator.Add(info, uses)
+		s := accumulator.fullSession()
 		out = append(out, s)
 	}
 	return out
@@ -82,177 +62,349 @@ func codexSessionIDFromHistoryFile(path string) string {
 	return id.String()
 }
 
-// buildCodexSession assembles one Session from a Codex session's tool uses and
-// metadata sidecar.
-func buildCodexSession(uses []history.ToolUse, info *history.CodexSessionInfo) *Session {
-	s := &Session{Source: "codex"}
-	if info != nil {
-		s.CWD = info.CWD
+// CodexAccumulator keeps the aggregate state needed by the monitor without
+// retaining the transcript's historical messages and events. Add accepts only
+// settled rows; Project overlays the parser's current EOF snapshot without
+// committing provisional data to this checkpoint.
+type CodexAccumulator struct {
+	session       Session
+	collect       bool
+	read          map[string]struct{}
+	written       map[string]struct{}
+	costByModel   map[string]api.Cost
+	turns         *codexTurnBuilder
+	agents        map[string]*Agent
+	cumulative    codexCumulative
+	plan          codexPlanState
+	freshMessages []Message
+}
+
+// NewCodexAccumulator creates the compact accumulator used for live monitor
+// updates. A separate full collector powers BuildCodex through the same core.
+func NewCodexAccumulator(historyFile string) *CodexAccumulator {
+	return newCodexAccumulator(historyFile, false)
+}
+
+func newCodexAccumulator(historyFile string, collect bool) *CodexAccumulator {
+	s := Session{
+		ID:          codexSessionIDFromHistoryFile(historyFile),
+		Source:      "codex",
+		HistoryFile: historyFile,
 	}
-	root := &Agent{IsRoot: true}
+	return &CodexAccumulator{
+		session: s, collect: collect,
+		read: map[string]struct{}{}, written: map[string]struct{}{},
+		costByModel: map[string]api.Cost{},
+		turns:       newCodexTurnBuilder(collect),
+		agents:      map[string]*Agent{},
+	}
+}
 
-	var read, written []string
-	costs := api.Costs{}
-	turns := newCodexTurnBuilder()
-	agents := map[string]*Agent{}
-	var latestContext *Context
-	var cumulative codexCumulative
+// Add advances aggregate state with rows the parser has declared final.
+func (a *CodexAccumulator) Add(info *history.CodexSessionInfo, uses []history.ToolUse) {
+	a.applyInfo(info)
+	for _, use := range uses {
+		if use.SessionID == "" {
+			use.SessionID = a.session.ID
+		}
+		a.observe(use)
+	}
+}
 
-	for _, u := range uses {
-		if s.ID == "" && u.SessionID != "" {
-			s.ID = u.SessionID
-		}
-		if s.CWD == "" {
-			s.CWD = u.CWD
-		}
-		if s.Model == "" {
-			s.Model = u.Model
-		}
-		if u.Timestamp != nil {
-			extendRange(s, *u.Timestamp)
-		}
-		if tools.IsEventToolName(u.Tool) || u.Tool == "ApiError" {
-			ev := codexUseToEvent(u)
-			if u.Tool == "MemoryCitation" {
-				ev.Scope = "session"
-				s.Events = append(s.Events, ev)
-			} else if ev.Scope == "turn" {
-				turns.addEvent(u, ev)
-			} else {
+func (a *CodexAccumulator) applyInfo(info *history.CodexSessionInfo) {
+	if info == nil {
+		return
+	}
+	if id := strings.TrimSpace(info.ID); id != "" {
+		a.session.ID = id
+	}
+	if a.session.CWD == "" {
+		a.session.CWD = info.CWD
+	}
+	a.session.Provider = info.ModelProvider
+	a.session.Version = info.CLIVersion
+	a.session.Git.Branch = info.GitBranch
+	a.session.Git.Commit = info.GitCommit
+	if a.session.Model == "" {
+		a.session.Model = info.Model
+	}
+	if info.StartedAt != nil {
+		extendRange(&a.session, *info.StartedAt)
+	}
+}
+
+func (a *CodexAccumulator) observe(use history.ToolUse) {
+	s := &a.session
+	if s.ID == "" {
+		s.ID = use.SessionID
+	}
+	if s.CWD == "" {
+		s.CWD = use.CWD
+	}
+	if s.Model == "" {
+		s.Model = use.Model
+	}
+	if use.Timestamp != nil {
+		extendRange(s, *use.Timestamp)
+	}
+	a.plan.observe(use)
+	if items := todosFromCodexUse(use); len(items) > 0 {
+		s.Todos = items
+	}
+
+	if tools.IsEventToolName(use.Tool) || use.Tool == "ApiError" {
+		ev := codexUseToEvent(use)
+		if use.Tool == "MemoryCitation" {
+			ev.Scope = "session"
+			if a.collect {
 				s.Events = append(s.Events, ev)
 			}
-			mergeCodexCapabilities(&s.Capabilities, u)
-			if u.Tool == "TokenCount" {
-				// Prefer codex's own running total over the record's
-				// self-reported delta: the deltas do not add up to it.
-				cost := codexCostFromUse(u)
-				if delta, ok := cumulative.delta(u); ok {
-					cost = codexCostFromUsage(u.Model, delta)
-				}
-				if cost.TotalTokens != 0 {
-					costs = append(costs, cost)
-					turns.addUsage(u, cost)
-				}
-				if ctx := codexContextFromUse(u); ctx != nil {
-					latestContext = ctx
-				}
-			}
+		} else if ev.Scope == "turn" {
+			a.turns.addEvent(use, ev)
+		} else if a.collect {
+			s.Events = append(s.Events, ev)
+		}
+		if a.collect {
+			mergeCodexCapabilities(&s.Capabilities, use)
+		}
+		if use.Tool == "TokenCount" {
+			a.observeUsage(use)
+		}
+		return
+	}
+	if a.collect {
+		mergeCodexCapabilities(&s.Capabilities, use)
+		if use.Tool == "Agent" && use.AgentID != "" && a.agents[use.AgentID] == nil {
+			a.agents[use.AgentID] = &Agent{ID: use.AgentID, Type: use.AgentType, Desc: use.AgentDesc}
+		}
+	}
+	a.collectPaths(use)
+	message := codexUseToMessage(use)
+	a.turns.addMessage(use, message.ID)
+	if a.collect {
+		s.Messages = append(s.Messages, message)
+	} else {
+		a.freshMessages = append(a.freshMessages, message)
+	}
+	observeCodexIdentity(s, message)
+}
+
+func (a *CodexAccumulator) observeUsage(use history.ToolUse) {
+	cost := codexCostFromUse(use)
+	if delta, ok := a.cumulative.delta(use); ok {
+		cost = codexCostFromUsage(use.Model, delta)
+	}
+	if cost.TotalTokens != 0 {
+		a.session.Cost = a.session.Cost.Add(cost)
+		modelCost := a.costByModel[cost.Model]
+		modelCost.Model = cost.Model
+		a.costByModel[cost.Model] = modelCost.Add(cost)
+		a.turns.addUsage(use, cost)
+	}
+	if context := codexContextFromUse(use); context != nil {
+		a.session.Context = context
+	}
+}
+
+func (a *CodexAccumulator) collectPaths(use history.ToolUse) {
+	footprint := history.ToolFootprint(use)
+	for _, path := range footprint.Read {
+		a.read[claude.AbsolutePath(path, use.CWD, "")] = struct{}{}
+	}
+	for _, path := range footprint.Written {
+		a.written[claude.AbsolutePath(path, use.CWD, "")] = struct{}{}
+	}
+}
+
+// Project builds the next database projection from committed aggregates plus
+// the parser's non-destructive EOF snapshot. Only messages and turns touched by
+// this pass are returned; session metadata remains the full current projection.
+func (a *CodexAccumulator) Project(provisional []history.ToolUse) *Session {
+	s := a.baseSession()
+	s.Messages = append([]Message(nil), a.freshMessages...)
+	a.freshMessages = nil
+
+	plan := a.plan
+	plan.taggedEvents = append([]PlanEvent(nil), plan.taggedEvents...)
+	var extraRead, extraWritten []string
+	for _, use := range provisional {
+		if use.SessionID == "" {
+			use.SessionID = s.ID
+		}
+		if use.Timestamp != nil {
+			extendRange(&s, *use.Timestamp)
+		}
+		plan.observe(use)
+		if items := todosFromCodexUse(use); len(items) > 0 {
+			s.Todos = items
+		}
+		if tools.IsEventToolName(use.Tool) || use.Tool == "ApiError" {
 			continue
 		}
-		mergeCodexCapabilities(&s.Capabilities, u)
-		if u.Tool == "Agent" && u.AgentID != "" {
-			if agents[u.AgentID] == nil {
-				agents[u.AgentID] = &Agent{
-					ID:   u.AgentID,
-					Type: u.AgentType,
-					Desc: u.AgentDesc,
-				}
-			}
-		}
-		collectCodexPaths(u, &read, &written)
-		msg := codexUseToMessage(u)
-		turns.addMessage(u, msg.ID)
-		s.Messages = append(s.Messages, msg)
+		footprint := history.ToolFootprint(use)
+		appendAbsolute(&extraRead, footprint.Read, use.CWD)
+		appendAbsolute(&extraWritten, footprint.Written, use.CWD)
+		message := codexUseToMessage(use)
+		s.Messages = append(s.Messages, message)
+		observeCodexIdentity(&s, message)
 	}
+	s.Plan = plan.value()
+	s.Files = a.changedFiles(extraRead, extraWritten)
+	s.Turns = a.turns.takeDirty(provisional)
+	return &s
+}
 
-	if info != nil {
-		if s.ID == "" {
-			s.ID = info.ID
-		}
-		if s.CWD == "" {
-			s.CWD = info.CWD
-		}
-		s.Provider = info.ModelProvider
-		s.Version = info.CLIVersion
-		s.Git.Branch = info.GitBranch
-		s.Git.Commit = info.GitCommit
-		if s.Model == "" {
-			s.Model = info.Model
-		}
-		if info.StartedAt != nil {
-			extendRange(s, *info.StartedAt)
-		}
-	}
+func (a *CodexAccumulator) baseSession() Session {
+	s := a.session
 	if s.Project == "" && s.CWD != "" {
 		s.Project = filepath.Base(claude.FindProjectRoot(s.CWD))
 	}
-
-	root.ID = s.ID
-	root.Cost = costs.Sum()
-	root.Usage = usageFromCost(root.Cost)
-	s.Root = root
-	s.Agents = []*Agent{root}
-	for _, agent := range sortedCodexAgents(agents) {
-		agent.ParentID = root.ID
-		root.Children = append(root.Children, agent)
-		s.Agents = append(s.Agents, agent)
-	}
-	s.Files = ChangedFiles{
-		Read:    sortedUnique(relativizeAll(read, s.CWD)),
-		Written: sortedUnique(relativizeAll(written, s.CWD)),
-	}
-	s.Todos = latestTodos(uses, func(tu history.ToolUse) (string, map[string]any) {
-		return tu.Tool, tu.Input
-	})
-	s.Plan = CodexPlanFromToolUses(uses)
-	s.Cost = costs.Sum()
+	s.Files = a.changedFiles(nil, nil)
+	s.Plan = a.plan.value()
 	s.Usage = usageFromCost(s.Cost)
-	s.ToolCosts = collapseByModel(costs)
-	s.Context = latestContext
-	s.Turns = turns.finish()
+	s.ToolCosts = codexCostsByModel(a.costByModel)
+	return s
+}
+
+func (a *CodexAccumulator) changedFiles(extraRead, extraWritten []string) ChangedFiles {
+	read := make([]string, 0, len(a.read)+len(extraRead))
+	written := make([]string, 0, len(a.written)+len(extraWritten))
+	for path := range a.read {
+		read = append(read, path)
+	}
+	for path := range a.written {
+		written = append(written, path)
+	}
+	read = append(read, extraRead...)
+	written = append(written, extraWritten...)
+	return ChangedFiles{
+		Read:    sortedUnique(relativizeAll(read, a.session.CWD)),
+		Written: sortedUnique(relativizeAll(written, a.session.CWD)),
+	}
+}
+
+func (a *CodexAccumulator) fullSession() *Session {
+	s := a.baseSession()
+	s.Turns = a.turns.finish()
 	s.Capabilities.Tools = sortedStrings(s.Capabilities.Tools)
 	s.Capabilities.PendingMCPServers = sortedStrings(s.Capabilities.PendingMCPServers)
 	s.Capabilities.Agents = sortedStrings(s.Capabilities.Agents)
 	s.Capabilities.Skills = sortedStrings(s.Capabilities.Skills)
-	applySessionIdentity(s)
-	return s
+
+	root := &Agent{
+		ID: s.ID, IsRoot: true, HistoryFile: s.HistoryFile,
+		Cost: s.Cost, Usage: s.Usage,
+	}
+	s.Root = root
+	s.Agents = []*Agent{root}
+	for _, agent := range sortedCodexAgents(a.agents) {
+		agent.ParentID = root.ID
+		root.Children = append(root.Children, agent)
+		s.Agents = append(s.Agents, agent)
+	}
+	applySessionIdentity(&s)
+	return &s
+}
+
+func codexCostsByModel(byModel map[string]api.Cost) api.Costs {
+	models := make([]string, 0, len(byModel))
+	for model := range byModel {
+		models = append(models, model)
+	}
+	sort.Strings(models)
+	costs := make(api.Costs, 0, len(models))
+	for _, model := range models {
+		costs = append(costs, byModel[model])
+	}
+	return costs
+}
+
+func todosFromCodexUse(use history.ToolUse) []tools.TodoItem {
+	if _, ok := todoToolNames[use.Tool]; !ok {
+		return nil
+	}
+	return todosFromInput(use.Input)
+}
+
+func observeCodexIdentity(s *Session, message Message) {
+	if s.InitialPrompt != "" || message.Role != "user" {
+		return
+	}
+	for _, part := range message.Parts {
+		if part.Type != PartText || strings.TrimSpace(part.Text) == "" {
+			continue
+		}
+		s.InitialPrompt = strings.TrimSpace(part.Text)
+		s.Title = DeriveTitle(s.InitialPrompt)
+		return
+	}
+}
+
+// buildCodexSession assembles one Session from an already parsed rollout. It is
+// retained as the package seam used by focused normalizer tests.
+func buildCodexSession(uses []history.ToolUse, info *history.CodexSessionInfo) *Session {
+	accumulator := newCodexAccumulator("", true)
+	accumulator.Add(info, uses)
+	return accumulator.fullSession()
 }
 
 // CodexPlanFromToolUses renders the latest Codex update_plan/TodoWrite state as
 // a canonical inline Plan. Codex revises plans in-place rather than writing plan
 // files, so the final TodoWrite payload is the durable plan content.
 func CodexPlanFromToolUses(uses []history.ToolUse) *Plan {
-	var latest []any
-	var ts *time.Time
-	var taggedContent string
-	var taggedEvents []PlanEvent
+	var state codexPlanState
 	for _, use := range uses {
-		if use.Tool == "Plan" {
-			content, _ := use.Input["content"].(string)
-			if content = strings.TrimSpace(content); content != "" {
-				taggedContent = content
-				taggedEvents = append(taggedEvents, PlanEvent{Kind: PlanWrite, Timestamp: use.Timestamp})
-			}
-			continue
-		}
-		if use.Tool != "TodoWrite" {
-			continue
-		}
-		todos, ok := use.Input["todos"].([]any)
-		if !ok || len(todos) == 0 {
-			continue
-		}
-		latest = todos
-		ts = use.Timestamp
+		state.observe(use)
 	}
-	if taggedContent != "" {
+	return state.value()
+}
+
+type codexPlanState struct {
+	latest        []any
+	latestAt      *time.Time
+	taggedContent string
+	taggedEvents  []PlanEvent
+}
+
+func (s *codexPlanState) observe(use history.ToolUse) {
+	if use.Tool == "Plan" {
+		content, _ := use.Input["content"].(string)
+		if content = strings.TrimSpace(content); content != "" {
+			s.taggedContent = content
+			s.taggedEvents = append(s.taggedEvents, PlanEvent{Kind: PlanWrite, Timestamp: use.Timestamp})
+		}
+		return
+	}
+	if use.Tool != "TodoWrite" {
+		return
+	}
+	todos, ok := use.Input["todos"].([]any)
+	if !ok || len(todos) == 0 {
+		return
+	}
+	s.latest = todos
+	s.latestAt = use.Timestamp
+}
+
+func (s codexPlanState) value() *Plan {
+	if s.taggedContent != "" {
 		return &Plan{
-			Content:  taggedContent,
+			Content:  s.taggedContent,
 			Explicit: true,
-			Events:   taggedEvents,
+			Events:   append([]PlanEvent(nil), s.taggedEvents...),
 		}
 	}
-	if len(latest) == 0 {
+	if len(s.latest) == 0 {
 		return nil
 	}
-	content := renderCodexPlan(latest)
+	content := renderCodexPlan(s.latest)
 	if strings.TrimSpace(content) == "" {
 		return nil
 	}
 	return &Plan{
 		Content:  content,
 		Explicit: true,
-		Events:   []PlanEvent{{Kind: PlanWrite, Timestamp: ts}},
+		Events:   []PlanEvent{{Kind: PlanWrite, Timestamp: s.latestAt}},
 	}
 }
 
@@ -421,12 +573,20 @@ func appendAbsolute(dst *[]string, paths []string, cwd string) {
 }
 
 type codexTurnBuilder struct {
-	order []string
-	byID  map[string]*Turn
+	order         []string
+	byID          map[string]*Turn
+	dirty         map[string]struct{}
+	lastEventAt   map[string]*time.Time
+	explicitEnded map[string]bool
+	collect       bool
 }
 
-func newCodexTurnBuilder() *codexTurnBuilder {
-	return &codexTurnBuilder{byID: map[string]*Turn{}}
+func newCodexTurnBuilder(collect bool) *codexTurnBuilder {
+	return &codexTurnBuilder{
+		byID: map[string]*Turn{}, dirty: map[string]struct{}{},
+		lastEventAt: map[string]*time.Time{}, explicitEnded: map[string]bool{},
+		collect: collect,
+	}
 }
 
 func (b *codexTurnBuilder) ensure(id string, ts *time.Time) *Turn {
@@ -436,6 +596,7 @@ func (b *codexTurnBuilder) ensure(id string, ts *time.Time) *Turn {
 	if turn := b.byID[id]; turn != nil {
 		if turn.StartedAt == nil && ts != nil {
 			turn.StartedAt = cloneTime(ts)
+			b.dirty[id] = struct{}{}
 		}
 		return turn
 	}
@@ -448,6 +609,7 @@ func (b *codexTurnBuilder) ensure(id string, ts *time.Time) *Turn {
 	}
 	b.byID[id] = turn
 	b.order = append(b.order, id)
+	b.dirty[id] = struct{}{}
 	return turn
 }
 
@@ -456,8 +618,11 @@ func (b *codexTurnBuilder) addMessage(u history.ToolUse, messageID string) {
 	if turn == nil {
 		return
 	}
-	turn.MessageIDs = appendUnique(turn.MessageIDs, messageID)
+	if b.collect {
+		turn.MessageIDs = appendUnique(turn.MessageIDs, messageID)
+	}
 	observeCodexTurnRuntime(turn, u)
+	b.dirty[turn.ID] = struct{}{}
 }
 
 func (b *codexTurnBuilder) addEvent(u history.ToolUse, ev Event) {
@@ -470,9 +635,16 @@ func (b *codexTurnBuilder) addEvent(u history.ToolUse, ev Event) {
 	}
 	if u.Tool == "TaskComplete" && u.Timestamp != nil {
 		turn.EndedAt = cloneTime(u.Timestamp)
+		b.explicitEnded[turn.ID] = true
 	}
-	turn.Events = append(turn.Events, ev)
+	if u.Timestamp != nil {
+		b.lastEventAt[turn.ID] = cloneTime(u.Timestamp)
+	}
+	if b.collect {
+		turn.Events = append(turn.Events, ev)
+	}
 	observeCodexTurnRuntime(turn, u)
+	b.dirty[turn.ID] = struct{}{}
 }
 
 func (b *codexTurnBuilder) addUsage(u history.ToolUse, cost api.Cost) {
@@ -486,6 +658,7 @@ func (b *codexTurnBuilder) addUsage(u history.ToolUse, cost api.Cost) {
 		turn.Context = ctx
 	}
 	observeCodexTurnRuntime(turn, u)
+	b.dirty[turn.ID] = struct{}{}
 }
 
 func observeCodexTurnRuntime(turn *Turn, u history.ToolUse) {
@@ -500,19 +673,80 @@ func observeCodexTurnRuntime(turn *Turn, u history.ToolUse) {
 func (b *codexTurnBuilder) finish() []Turn {
 	turns := make([]Turn, 0, len(b.order))
 	for _, id := range b.order {
-		turn := b.byID[id]
-		if turn == nil {
+		turn, ok := b.view(id)
+		if !ok {
 			continue
 		}
-		if turn.EndedAt == nil {
-			for i := len(turn.Events) - 1; i >= 0; i-- {
-				if turn.Events[i].Timestamp != nil {
-					turn.EndedAt = cloneTime(turn.Events[i].Timestamp)
-					break
-				}
+		turns = append(turns, turn)
+	}
+	return turns
+}
+
+func (b *codexTurnBuilder) view(id string) (Turn, bool) {
+	stored := b.byID[id]
+	if stored == nil {
+		return Turn{}, false
+	}
+	turn := *stored
+	if !b.explicitEnded[id] && b.lastEventAt[id] != nil {
+		turn.EndedAt = cloneTime(b.lastEventAt[id])
+	}
+	return turn, true
+}
+
+// takeDirty returns committed turns changed by this batch plus transient copies
+// touched by the current EOF snapshot, then clears the committed dirty set.
+func (b *codexTurnBuilder) takeDirty(provisional []history.ToolUse) []Turn {
+	projected := map[string]Turn{}
+	for id := range b.dirty {
+		if turn, ok := b.view(id); ok {
+			projected[id] = turn
+		}
+	}
+	b.dirty = map[string]struct{}{}
+
+	nextIndex := len(b.order) + 1
+	for _, use := range provisional {
+		id := use.TurnID
+		if id == "" {
+			continue
+		}
+		turn, ok := projected[id]
+		if !ok {
+			if committed, exists := b.view(id); exists {
+				turn = committed
+			} else {
+				turn = Turn{ID: id, Index: nextIndex}
+				nextIndex++
 			}
 		}
-		turns = append(turns, *turn)
+		if turn.StartedAt == nil && use.Timestamp != nil {
+			turn.StartedAt = cloneTime(use.Timestamp)
+		}
+		observeCodexTurnRuntime(&turn, use)
+		if (tools.IsEventToolName(use.Tool) || use.Tool == "ApiError") && use.Timestamp != nil &&
+			use.Tool != "MemoryCitation" && !b.explicitEnded[id] {
+			turn.EndedAt = cloneTime(use.Timestamp)
+		}
+		projected[id] = turn
+	}
+
+	turns := make([]Turn, 0, len(projected))
+	for _, id := range b.order {
+		if turn, ok := projected[id]; ok {
+			turns = append(turns, turn)
+			delete(projected, id)
+		}
+	}
+	if len(projected) > 0 {
+		ids := make([]string, 0, len(projected))
+		for id := range projected {
+			ids = append(ids, id)
+		}
+		sort.Slice(ids, func(i, j int) bool { return projected[ids[i]].Index < projected[ids[j]].Index })
+		for _, id := range ids {
+			turns = append(turns, projected[id])
+		}
 	}
 	return turns
 }
