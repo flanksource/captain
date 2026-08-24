@@ -15,8 +15,15 @@ import (
 
 func ParseCodexLine(line string) (CodexEvent, error) {
 	var event CodexEvent
-	err := json.Unmarshal([]byte(line), &event)
+	err := parseCodexLineInto(&event, line)
 	return event, err
+}
+
+// parseCodexLineInto resets caller-owned storage before decoding so fields
+// omitted by the next record cannot leak across lines.
+func parseCodexLineInto(event *CodexEvent, line string) error {
+	*event = CodexEvent{}
+	return json.Unmarshal([]byte(line), event)
 }
 
 func ExtractCodexToolUses(sessionFile string) ([]ToolUse, error) {
@@ -200,14 +207,14 @@ func ExtractCodexToolUsesFromReader(reader io.Reader) ([]ToolUse, error) {
 		records = append(records, stamp(uses))
 	}
 
+	var event CodexEvent
 	for scanner.Scan() {
 		lineNumber++
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
 		}
-		event, err := ParseCodexLine(line)
-		if err != nil {
+		if err := parseCodexLineInto(&event, line); err != nil {
 			log.Debugf("Error parsing codex line: %v", err)
 			continue
 		}
