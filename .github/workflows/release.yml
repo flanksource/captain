@@ -19,7 +19,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: flanksource/deps@v1.0.36
+      - uses: flanksource/deps@v1.0.42
         with:
           tools: |
             svu
