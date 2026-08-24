@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/gitagent"
+	"github.com/flanksource/commons-db/dbtest"
 	"gopkg.in/yaml.v3"
 )
 
@@ -105,10 +106,11 @@ func moduleRoot(t *testing.T) string {
 
 // host is one machine in the topology: an isolated HOME and the binary.
 type host struct {
-	t        *testing.T
-	home     string
-	bin      string
-	serveOut *lockedBuffer
+	t            *testing.T
+	home         string
+	bin          string
+	sessionDBURL string
+	serveOut     *lockedBuffer
 }
 
 func newHost(t *testing.T) *host {
@@ -117,7 +119,11 @@ func newHost(t *testing.T) *host {
 }
 
 func (h *host) env() []string {
-	return append(os.Environ(), "HOME="+h.home, "CAPTAIN_SESSION_DB_URL=off")
+	databaseURL := h.sessionDBURL
+	if databaseURL == "" {
+		databaseURL = "off"
+	}
+	return append(os.Environ(), "HOME="+h.home, "CAPTAIN_SESSION_DB_URL="+databaseURL)
 }
 
 // run executes a captain command to completion.
@@ -151,8 +157,12 @@ func (h *host) serve(port string, args ...string) {
 	if err := cmd.Start(); err != nil {
 		h.t.Fatal(err)
 	}
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
+	var waitErr error
+	done := make(chan struct{})
+	go func() {
+		waitErr = cmd.Wait()
+		close(done)
+	}()
 	h.t.Cleanup(func() {
 		if cmd.Process != nil {
 			_ = cmd.Process.Kill()
@@ -166,8 +176,8 @@ func (h *host) serve(port string, args ...string) {
 			return
 		}
 		select {
-		case err := <-done:
-			h.t.Fatalf("serve exited before listening (%v):\n%s", err, out.String())
+		case <-done:
+			h.t.Fatalf("serve exited before listening (%v):\n%s", waitErr, out.String())
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
@@ -283,6 +293,7 @@ type addResult struct {
 func enrollPair(t *testing.T) (supervisor, agent *host, repo, agentPort string, add addResult) {
 	t.Helper()
 	supervisor, agent = newHost(t), newHost(t)
+	supervisor.sessionDBURL = dbtest.ForT(t, dbtest.Options{Name: "captain_gitagent_e2e"}).DSN()
 	repo = newRepo(t)
 
 	supPort := freeLocalPort(t)
