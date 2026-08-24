@@ -209,11 +209,37 @@ func (a *CodexAccumulator) observeUsage(use history.ToolUse) {
 func (a *CodexAccumulator) collectPaths(use history.ToolUse) {
 	footprint := history.ToolFootprint(use)
 	for _, path := range footprint.Read {
-		a.read[claude.AbsolutePath(path, use.CWD, "")] = struct{}{}
+		a.addPath(a.read, &a.session.Files.Read, path, use.CWD)
 	}
 	for _, path := range footprint.Written {
-		a.written[claude.AbsolutePath(path, use.CWD, "")] = struct{}{}
+		a.addPath(a.written, &a.session.Files.Written, path, use.CWD)
 	}
+}
+
+func (a *CodexAccumulator) addPath(seen map[string]struct{}, files *[]string, path, cwd string) {
+	absolute := claude.AbsolutePath(path, cwd, "")
+	if absolute == "" {
+		return
+	}
+	if _, ok := seen[absolute]; ok {
+		return
+	}
+	seen[absolute] = struct{}{}
+	*files = insertSortedString(*files, claude.RelativePath(absolute, a.session.CWD))
+}
+
+func insertSortedString(values []string, value string) []string {
+	if value == "" {
+		return values
+	}
+	index := sort.SearchStrings(values, value)
+	if index < len(values) && values[index] == value {
+		return values
+	}
+	values = append(values, "")
+	copy(values[index+1:], values[index:])
+	values[index] = value
+	return values
 }
 
 // Project builds the next database projection from committed aggregates plus
@@ -267,20 +293,20 @@ func (a *CodexAccumulator) baseSession() Session {
 }
 
 func (a *CodexAccumulator) changedFiles(extraRead, extraWritten []string) ChangedFiles {
-	read := make([]string, 0, len(a.read)+len(extraRead))
-	written := make([]string, 0, len(a.written)+len(extraWritten))
-	for path := range a.read {
-		read = append(read, path)
+	if len(extraRead) == 0 && len(extraWritten) == 0 {
+		return a.session.Files
 	}
-	for path := range a.written {
-		written = append(written, path)
+	files := ChangedFiles{
+		Read:    append([]string(nil), a.session.Files.Read...),
+		Written: append([]string(nil), a.session.Files.Written...),
 	}
-	read = append(read, extraRead...)
-	written = append(written, extraWritten...)
-	return ChangedFiles{
-		Read:    sortedUnique(relativizeAll(read, a.session.CWD)),
-		Written: sortedUnique(relativizeAll(written, a.session.CWD)),
+	for _, path := range extraRead {
+		files.Read = insertSortedString(files.Read, claude.RelativePath(path, a.session.CWD))
 	}
+	for _, path := range extraWritten {
+		files.Written = insertSortedString(files.Written, claude.RelativePath(path, a.session.CWD))
+	}
+	return files
 }
 
 func (a *CodexAccumulator) fullSession() *Session {
@@ -732,22 +758,10 @@ func (b *codexTurnBuilder) takeDirty(provisional []history.ToolUse) []Turn {
 	}
 
 	turns := make([]Turn, 0, len(projected))
-	for _, id := range b.order {
-		if turn, ok := projected[id]; ok {
-			turns = append(turns, turn)
-			delete(projected, id)
-		}
+	for _, turn := range projected {
+		turns = append(turns, turn)
 	}
-	if len(projected) > 0 {
-		ids := make([]string, 0, len(projected))
-		for id := range projected {
-			ids = append(ids, id)
-		}
-		sort.Slice(ids, func(i, j int) bool { return projected[ids[i]].Index < projected[ids[j]].Index })
-		for _, id := range ids {
-			turns = append(turns, projected[id])
-		}
-	}
+	sort.Slice(turns, func(i, j int) bool { return turns[i].Index < turns[j].Index })
 	return turns
 }
 
