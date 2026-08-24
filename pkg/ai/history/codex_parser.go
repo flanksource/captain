@@ -260,20 +260,22 @@ func ExtractCodexToolUsesFromReader(reader io.Reader) ([]ToolUse, error) {
 			add(extractLiveError(event, sessionCWD, sessionID))
 		}
 	}
-	// Everything flushed past this point is provisional: the transcript is still
-	// being appended to, so the span can grow and the unpaired call will get its
-	// output on a later pass. Ingest must keep re-offering these rows -- sealing
-	// them here is what left 21% of Codex tool parts with no result forever.
+	// EOF snapshots are provisional but are not source records. Feeding them
+	// through dedupe would make a synthetic pending row close the real final chat
+	// boundary, even though no appended transcript record did so.
+	var provisional []ToolUse
 	if reasoning.pending() {
-		add(asProvisional(reasoning.flush()))
+		snapshot := reasoning
+		provisional = append(provisional, stamp(asProvisional(snapshot.flush()))...)
 	}
 	for _, call := range sortedCodexPendingCalls(pendingCall) {
-		add(asProvisional(withSourceLine(buildPendingCallUses(call.event, sessionCWD, sessionID), call.line)))
+		provisional = append(provisional,
+			stamp(asProvisional(withSourceLine(buildPendingCallUses(call.event, sessionCWD, sessionID), call.line)))...)
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
-	return dedupeCodexToolUses(records), nil
+	return append(dedupeCodexToolUses(records), provisional...), nil
 }
 
 // buildPendingCallUses builds the provisional row for a call whose output never

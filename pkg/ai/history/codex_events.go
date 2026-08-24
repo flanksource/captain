@@ -210,6 +210,12 @@ func dedupeCodexToolUses(records [][]ToolUse) []ToolUse {
 		}
 		previous = current
 	}
+	// The final chat record can still be followed by its twin when a live
+	// transcript grows. Keep it below the ingest high-water mark until another
+	// emitting record proves that boundary final.
+	for _, slot := range previous {
+		output[slot.index].Provisional = true
+	}
 	return output
 }
 
@@ -226,7 +232,9 @@ func mergeCodexTwin(output []ToolUse, slot *codexChatSlot, use ToolUse) *codexCh
 		return nil
 	}
 	if priority := codexRecordPriority(use.RecordType); priority > slot.priority {
+		firstLine := output[slot.index].SourceLine
 		output[slot.index] = use
+		output[slot.index].SourceLine = firstLine
 		slot.priority = priority
 	}
 	slot.families[family] = struct{}{}
