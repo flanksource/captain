@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai/history"
+	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/session"
 )
 
@@ -60,6 +61,19 @@ func BenchmarkCodexIngestInputSizeSeries(b *testing.B) {
 		path := prepareCodexBenchmarkFixture(b, name, fixture)
 		b.Run(name, func(b *testing.B) {
 			benchmarkCodexIngestInput(b, path, fixture)
+		})
+	}
+}
+
+// BenchmarkCodexIncrementalAppendSizeSeries measures the warm monitor path for
+// the same nine-line turn appended after progressively larger settled prefixes.
+func BenchmarkCodexIncrementalAppendSizeSeries(b *testing.B) {
+	for _, turns := range []int{111, codexBenchmarkTurns, 2_778} {
+		fixture := syntheticCodexManyTurnTranscript(turns)
+		name := fmt.Sprintf("after_%d_lines_%d_bytes", fixture.lines, len(fixture.data))
+		path := prepareCodexBenchmarkFixture(b, "warm-"+name, fixture)
+		b.Run(name, func(b *testing.B) {
+			benchmarkCodexIncrementalAppend(b, path, fixture)
 		})
 	}
 }
@@ -151,6 +165,102 @@ func benchmarkCodexIngestInput(b *testing.B, path string, fixture codexBenchmark
 	b.ReportMetric(float64(fixture.messages), "messages")
 }
 
+func benchmarkCodexIncrementalAppend(b *testing.B, path string, fixture codexBenchmarkFixture) {
+	b.Helper()
+	ing := seedCodexBenchmarkCheckpoint(b, path)
+	line := fixture.lines
+	turn := fixture.turns
+	firstAppend := syntheticCodexManyTurnAppend(turn, line)
+	b.ReportAllocs()
+	b.SetBytes(int64(len(firstAppend)))
+	b.ResetTimer()
+	for b.Loop() {
+		b.StopTimer()
+		appendData := syntheticCodexManyTurnAppend(turn, line)
+		writer, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if _, err := writer.Write(appendData); err != nil {
+			_ = writer.Close()
+			b.Fatal(err)
+		}
+		if err := writer.Close(); err != nil {
+			b.Fatal(err)
+		}
+
+		b.StartTimer()
+		file, err := os.Open(path)
+		if err != nil {
+			b.Fatal(err)
+		}
+		info, err := file.Stat()
+		if err != nil {
+			_ = file.Close()
+			b.Fatal(err)
+		}
+		input, preparation, ignored, err := ing.incrementalCodexIngestInput(file, path, info)
+		if closeErr := file.Close(); err == nil {
+			err = closeErr
+		}
+		b.StopTimer()
+		if err != nil {
+			b.Fatal(err)
+		}
+		if ignored || len(input.Messages) != 4 || len(input.Turns) != 1 {
+			b.Fatalf("warm append normalized to %d messages and %d turns (ignored=%v), want 4 and 1",
+				len(input.Messages), len(input.Turns), ignored)
+		}
+		recordCodexBenchmarkCheckpoint(ing, path, input, preparation, info)
+		codexBenchmarkMessageCount = len(input.Messages)
+		line += bytes.Count(appendData, []byte{'\n'})
+		turn++
+		b.StartTimer()
+	}
+	b.ReportMetric(9, "append_lines")
+	b.ReportMetric(float64(fixture.lines), "prefix_lines")
+	b.ReportMetric(float64(len(fixture.data)), "prefix_B")
+}
+
+func seedCodexBenchmarkCheckpoint(b *testing.B, path string) *ingestor {
+	b.Helper()
+	ing := &ingestor{
+		sources: map[string]database.SessionSourceState{},
+		codex:   map[string]*codexCheckpoint{},
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		b.Fatal(err)
+	}
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		b.Fatal(err)
+	}
+	input, preparation, ignored, err := ing.incrementalCodexIngestInput(file, path, info)
+	if closeErr := file.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		b.Fatal(err)
+	}
+	if ignored {
+		b.Fatal("benchmark rollout was ignored")
+	}
+	recordCodexBenchmarkCheckpoint(ing, path, input, preparation, info)
+	return ing
+}
+
+func recordCodexBenchmarkCheckpoint(ing *ingestor, path string, input database.IngestTranscriptInput, preparation *codexPreparation, info os.FileInfo) {
+	modTime := observedModTime(info)
+	ing.recordSourceState(database.SessionSourceState{
+		Path: path, SourceKind: "codex", SourceIdentity: input.Source.SourceIdentity,
+		ParserVersion: parserVersion, ByteOffset: preparation.offset,
+		ObservedSize: info.Size(), ObservedModTime: &modTime,
+	})
+	ing.commitCodexCheckpoint(path, preparation, info, input.Source.SourceIdentity)
+}
+
 func prepareCodexBenchmarkFixture(b *testing.B, name string, fixture codexBenchmarkFixture) string {
 	b.Helper()
 	if fixture.lines != bytes.Count(fixture.data, []byte{'\n'}) {
@@ -215,44 +325,55 @@ func syntheticCodexManyTurnTranscript(turnCount int) codexBenchmarkFixture {
 	w := newCodexBenchmarkWriter()
 	w.writeSessionMeta()
 	for turn := range turnCount {
-		turnID := fmt.Sprintf("turn-%04d", turn)
-		callID := fmt.Sprintf("call-%04d", turn)
-		w.write("turn_context", map[string]any{
-			"turn_id": turnID, "model": "gpt-5.6-sol", "effort": "high",
-		})
-		w.write("event_msg", map[string]any{
-			"type": "task_started", "turn_id": turnID,
-		})
-		w.write("response_item", map[string]any{
-			"type": "message", "role": "user",
-			"content": []map[string]any{{"type": "input_text", "text": fmt.Sprintf("Inspect parser behavior for turn %d and report the result.", turn)}},
-		})
-		w.write("response_item", map[string]any{
-			"type":    "reasoning",
-			"summary": []map[string]any{{"type": "summary_text", "text": fmt.Sprintf("Tracing the monitor ingestion path for turn %d.", turn)}},
-		})
-		w.write("response_item", map[string]any{
-			"type": "function_call", "name": "exec_command", "call_id": callID,
-			"arguments": fmt.Sprintf(`{"cmd":"sed -n '1,20p' /repo/pkg/file_%04d.go"}`, turn),
-			"internal_chat_message_metadata_passthrough": map[string]any{"turn_id": turnID},
-		})
-		w.write("response_item", map[string]any{
-			"type": "function_call_output", "call_id": callID,
-			"output": fmt.Sprintf("Chunk ID: %04d\nProcess exited with code 0\nFinal output:\npackage monitor", turn),
-			"internal_chat_message_metadata_passthrough": map[string]any{"turn_id": turnID},
-		})
-		w.write("response_item", map[string]any{
-			"type": "message", "role": "assistant",
-			"content": []map[string]any{{"type": "output_text", "text": fmt.Sprintf("The parser and normalizer completed turn %d.", turn)}},
-		})
-		w.write("event_msg", map[string]any{
-			"type": "token_count", "turn_id": turnID, "info": codexBenchmarkTokenInfo(turn + 1),
-		})
-		w.write("event_msg", map[string]any{
-			"type": "task_complete", "turn_id": turnID, "duration_ms": 850,
-		})
+		w.writeManyTurn(turn)
 	}
 	return w.fixture(turnCount, turnCount*4)
+}
+
+func syntheticCodexManyTurnAppend(turn, line int) []byte {
+	w := newCodexBenchmarkWriter()
+	w.lines = line
+	w.writeManyTurn(turn)
+	return w.transcript.Bytes()
+}
+
+func (w *codexBenchmarkWriter) writeManyTurn(turn int) {
+	turnID := fmt.Sprintf("turn-%04d", turn)
+	callID := fmt.Sprintf("call-%04d", turn)
+	w.write("turn_context", map[string]any{
+		"turn_id": turnID, "model": "gpt-5.6-sol", "effort": "high",
+	})
+	w.write("event_msg", map[string]any{
+		"type": "task_started", "turn_id": turnID,
+	})
+	w.write("response_item", map[string]any{
+		"type": "message", "role": "user",
+		"content": []map[string]any{{"type": "input_text", "text": fmt.Sprintf("Inspect parser behavior for turn %d and report the result.", turn)}},
+	})
+	w.write("response_item", map[string]any{
+		"type":    "reasoning",
+		"summary": []map[string]any{{"type": "summary_text", "text": fmt.Sprintf("Tracing the monitor ingestion path for turn %d.", turn)}},
+	})
+	w.write("response_item", map[string]any{
+		"type": "function_call", "name": "exec_command", "call_id": callID,
+		"arguments": fmt.Sprintf(`{"cmd":"sed -n '1,20p' /repo/pkg/file_%04d.go"}`, turn),
+		"internal_chat_message_metadata_passthrough": map[string]any{"turn_id": turnID},
+	})
+	w.write("response_item", map[string]any{
+		"type": "function_call_output", "call_id": callID,
+		"output": fmt.Sprintf("Chunk ID: %04d\nProcess exited with code 0\nFinal output:\npackage monitor", turn),
+		"internal_chat_message_metadata_passthrough": map[string]any{"turn_id": turnID},
+	})
+	w.write("response_item", map[string]any{
+		"type": "message", "role": "assistant",
+		"content": []map[string]any{{"type": "output_text", "text": fmt.Sprintf("The parser and normalizer completed turn %d.", turn)}},
+	})
+	w.write("event_msg", map[string]any{
+		"type": "token_count", "turn_id": turnID, "info": codexBenchmarkTokenInfo(turn + 1),
+	})
+	w.write("event_msg", map[string]any{
+		"type": "task_complete", "turn_id": turnID, "duration_ms": 850,
+	})
 }
 
 func syntheticCodexEventHeavyTranscript() codexBenchmarkFixture {
