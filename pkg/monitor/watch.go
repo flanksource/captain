@@ -44,6 +44,7 @@ func newTranscriptWatcher(m *Monitor, ingestor *ingestor) (*transcriptWatcher, e
 	ingestor.watchSubagents = func(rootTranscriptPath string) {
 		w.watchDir(subagentsDir(rootTranscriptPath), "claude")
 	}
+	ingestor.requeue = w.schedule
 	return w, nil
 }
 
@@ -106,6 +107,10 @@ func (w *transcriptWatcher) handle(ctx context.Context, event fsnotify.Event) {
 	if !ok {
 		return
 	}
+	w.schedule(ctx, source, path)
+}
+
+func (w *transcriptWatcher) schedule(ctx context.Context, source, path string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if timer, ok := w.timers[path]; ok {
