@@ -128,9 +128,9 @@ func resolveSettingsTarget(userGlobal bool) (string, error) {
 	return target, nil
 }
 
-// installHook idempotently adds a hook command entry to the given event type in the settings file.
+// installHook idempotently ensures a hook command entry exists for the given event type.
 // matcher is used for PreToolUse tool matching (e.g. "Bash"); pass "" for Stop hooks.
-// existingCheck is a substring used to detect if the hook is already installed.
+// existingCheck identifies the command entry Captain owns and may update.
 func installHook(target, eventType, matcher, hookCommand, existingCheck string, timeout int) (string, error) {
 	data, err := os.ReadFile(target)
 	if err != nil {
@@ -149,6 +149,9 @@ func installHook(target, eventType, matcher, hookCommand, existingCheck string, 
 	}
 
 	existingHooks, _ := hooks[eventType].([]any)
+	action := "installed"
+	updated := false
+findExisting:
 	for _, h := range existingHooks {
 		m, ok := h.(map[string]any)
 		if !ok {
@@ -157,22 +160,32 @@ func installHook(target, eventType, matcher, hookCommand, existingCheck string, 
 		for _, ih := range asSlice(m["hooks"]) {
 			hook, _ := ih.(map[string]any)
 			if cmd, _ := hook["command"].(string); strings.Contains(cmd, existingCheck) {
-				return fmt.Sprintf("%s hook: already installed in %s", eventType, target), nil
+				existingTimeout, _ := hook["timeout"].(float64)
+				if cmd == hookCommand && existingTimeout == float64(timeout) {
+					return fmt.Sprintf("%s hook: already installed in %s", eventType, target), nil
+				}
+				hook["command"] = hookCommand
+				hook["timeout"] = timeout
+				action = "updated"
+				updated = true
+				break findExisting
 			}
 		}
 	}
 
-	entry := map[string]any{
-		"type":    "command",
-		"command": hookCommand,
-		"timeout": timeout,
-	}
-	matcherEntry := map[string]any{"hooks": []any{entry}}
-	if matcher != "" {
-		matcherEntry["matcher"] = matcher
-	}
+	if !updated {
+		entry := map[string]any{
+			"type":    "command",
+			"command": hookCommand,
+			"timeout": timeout,
+		}
+		matcherEntry := map[string]any{"hooks": []any{entry}}
+		if matcher != "" {
+			matcherEntry["matcher"] = matcher
+		}
 
-	hooks[eventType] = append(existingHooks, matcherEntry)
+		hooks[eventType] = append(existingHooks, matcherEntry)
+	}
 
 	out, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
@@ -181,7 +194,7 @@ func installHook(target, eventType, matcher, hookCommand, existingCheck string, 
 	if err := os.WriteFile(target, append(out, '\n'), 0644); err != nil {
 		return "", fmt.Errorf("writing %s: %w", target, err)
 	}
-	return fmt.Sprintf("%s hook: installed in %s (%s)", eventType, target, hookCommand), nil
+	return fmt.Sprintf("%s hook: %s in %s (%s)", eventType, action, target, hookCommand), nil
 }
 
 func installSkills() (string, error) {

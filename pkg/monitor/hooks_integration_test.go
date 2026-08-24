@@ -36,24 +36,61 @@ func TestHookEventsDriveIngest(t *testing.T) {
 		assert.Equal(t, "claude", m.trackedPaths()[path])
 	})
 
-	t.Run("Stop ingests the transcript", func(t *testing.T) {
+	t.Run("StatusLine estimate advances without refresh churn and survives re-ingest", func(t *testing.T) {
+		observedAt := time.Now().UTC()
+		payload := []byte(`{"session_id":"` + fixtureSessionID + `","transcript_path":"` + path +
+			`","cwd":"` + fixtureCWD + `","cost":{"total_cost_usd":0.12345678}}`)
+		event, err := ParseClaudeStatusLinePayload(payload)
+		require.NoError(t, err)
+		event.ReceivedAt = observedAt
+		m.handleHookEvent(t.Context(), watcher, ingestor, event)
+		event.ReceivedAt = observedAt.Add(time.Second)
+		m.handleHookEvent(t.Context(), watcher, ingestor, event)
+
+		lower := []byte(`{"session_id":"` + fixtureSessionID + `","transcript_path":"` + path +
+			`","cwd":"` + fixtureCWD + `","cost":{"total_cost_usd":0.1}}`)
+		event, err = ParseClaudeStatusLinePayload(lower)
+		require.NoError(t, err)
+		event.ReceivedAt = observedAt.Add(time.Second)
+		m.handleHookEvent(t.Context(), watcher, ingestor, event)
+
+		m.handleHookEvent(t.Context(), watcher, ingestor, HookEvent{
+			Provider: "claude", Event: "Stop", SessionID: fixtureSessionID,
+			TranscriptPath: path, CWD: fixtureCWD, ReceivedAt: time.Now().UTC(),
+		})
+		f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+		require.NoError(t, err)
+		_, err = f.WriteString(fixtureAppendLine)
+		require.NoError(t, err)
+		require.NoError(t, f.Close())
+
 		m.handleHookEvent(t.Context(), watcher, ingestor, HookEvent{
 			Provider: "claude", Event: "Stop", SessionID: fixtureSessionID,
 			TranscriptPath: path, CWD: fixtureCWD, ReceivedAt: time.Now().UTC(),
 		})
 		overview, err := db.GetSessionOverviewByIdentity(t.Context(), fixtureSessionID)
 		require.NoError(t, err)
-		assert.EqualValues(t, 2, overview.MessageCount)
+		assert.EqualValues(t, 3, overview.MessageCount)
+		require.NotNil(t, overview.ClaudeCLICostUSD)
+		assert.InDelta(t, 0.12345678, *overview.ClaudeCLICostUSD, 1e-9,
+			"unchanged and delayed lower estimates plus transcript re-ingest must not move the session backwards")
+		require.NotNil(t, overview.ClaudeCLICostObservedAt)
+		assert.WithinDuration(t, observedAt, *overview.ClaudeCLICostObservedAt, time.Millisecond,
+			"an unchanged estimate must not churn its observation timestamp")
+		assert.Zero(t, overview.ProviderCostUSD, "a session estimate must not become per-call provider cost")
 	})
 
 	t.Run("transcript outside the provider root is rejected", func(t *testing.T) {
+		outsideCost := 0.9
 		m.handleHookEvent(t.Context(), watcher, ingestor, HookEvent{
-			Provider: "claude", Event: "Stop", SessionID: fixtureSessionID,
-			TranscriptPath: "/etc/passwd", ReceivedAt: time.Now().UTC(),
+			Provider: "claude", Event: ClaudeEventStatusLine, SessionID: fixtureSessionID,
+			TranscriptPath: "/etc/passwd", ClaudeCLICostUSD: &outsideCost, ReceivedAt: time.Now().UTC(),
 		})
 		overview, err := db.GetSessionOverviewByIdentity(t.Context(), fixtureSessionID)
 		require.NoError(t, err)
-		assert.EqualValues(t, 2, overview.MessageCount, "rejected path must not ingest")
+		assert.EqualValues(t, 3, overview.MessageCount, "rejected path must not ingest")
+		require.NotNil(t, overview.ClaudeCLICostUSD)
+		assert.InDelta(t, 0.12345678, *overview.ClaudeCLICostUSD, 1e-9, "rejected path must not update cost")
 	})
 
 	t.Run("SessionEnd closes the session's process rows and untracks", func(t *testing.T) {

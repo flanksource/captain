@@ -406,22 +406,42 @@ func (db *DB) upsertTurns(ctx context.Context, sessionID uuid.UUID, turns []Inge
 	if err != nil || len(records) == 0 {
 		return ids, err
 	}
-	// RETURNING carries turn_index back beside the ID, so the map is keyed from
-	// each row's own index rather than from the order PostgreSQL returns them.
-	err = db.gorm.WithContext(ctx).Clauses(
-		clause.OnConflict{
-			Columns: []clause.Column{{Name: "session_id"}, {Name: "turn_index"}},
-			DoUpdates: clause.AssignmentColumns([]string{
-				"provider_turn_id", "description", "status", "stop_reason", "started_at", "ended_at",
-			}),
-		},
-		clause.Returning{Columns: []clause.Column{{Name: "id"}, {Name: "turn_index"}}},
-	).CreateInBatches(&records, ingestBatchSize).Error
+	err = db.gorm.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "session_id"}, {Name: "turn_index"}},
+		DoUpdates: clause.AssignmentColumns([]string{
+			"provider_turn_id", "description", "status", "stop_reason", "started_at", "ended_at",
+		}),
+		Where: clause.Where{Exprs: []clause.Expression{clause.Expr{SQL: `
+			(captain_turns.provider_turn_id, captain_turns.description, captain_turns.status,
+			 captain_turns.stop_reason, captain_turns.started_at, captain_turns.ended_at)
+			IS DISTINCT FROM
+			(excluded.provider_turn_id, excluded.description, excluded.status,
+			 excluded.stop_reason, excluded.started_at, excluded.ended_at)`}}},
+	}).CreateInBatches(&records, ingestBatchSize).Error
 	if err != nil {
 		return nil, fmt.Errorf("upsert %d Captain turns: %w", len(records), err)
 	}
-	for _, record := range records {
-		ids[record.TurnIndex] = record.ID
+
+	// PostgreSQL does not return conflicts skipped by the no-op guard, so resolve
+	// both inserted and existing IDs after the upsert.
+	for start := 0; start < len(records); start += ingestBatchSize {
+		batch := records[start:min(start+ingestBatchSize, len(records))]
+		indices := make([]int, len(batch))
+		for i, record := range batch {
+			indices[i] = record.TurnIndex
+		}
+		var persisted []turnRecord
+		if err := db.gorm.WithContext(ctx).Select("id", "turn_index").
+			Where("session_id = ? AND turn_index IN ?", sessionID, indices).
+			Find(&persisted).Error; err != nil {
+			return nil, fmt.Errorf("resolve Captain turn IDs: %w", err)
+		}
+		for _, record := range persisted {
+			ids[record.TurnIndex] = record.ID
+		}
+	}
+	if len(ids) != len(records) {
+		return nil, fmt.Errorf("resolve Captain turn IDs: got %d of %d", len(ids), len(records))
 	}
 
 	calls := make([]modelCallRecord, 0, len(turns))

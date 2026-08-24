@@ -153,11 +153,10 @@ func TestSchemaBundleContainsGavelIntegrationContract(t *testing.T) {
 		"autovacuum_vacuum_scale_factor = 0.02",
 	)
 	assertContainsNone(t, "10_sessions.pg.hcl", "fillfactor", "autovacuum_")
-	// captain_messages is append-only (ON CONFLICT DO NOTHING), so it keeps the
-	// dense default fillfactor and only tightens the insert-driven vacuum that
-	// keeps its visibility map -- and therefore its index-only scans -- intact.
-	// captain_turns and captain_model_calls are re-upserted on every re-ingest
-	// pass, so they need in-page room for HOT updates as well.
+	// captain_messages keeps the dense default fillfactor because convergence
+	// updates are exceptional and guarded. Its insert-driven vacuum keeps the
+	// visibility map -- and therefore index-only scans -- intact. Turns and
+	// model calls still need in-page room for genuinely changing aggregates.
 	assertContainsAll(t, "72_ingest_storage_params.sql",
 		"-- phase: post",
 		"ALTER TABLE public.captain_messages SET (",
@@ -166,7 +165,7 @@ func TestSchemaBundleContainsGavelIntegrationContract(t *testing.T) {
 		"autovacuum_vacuum_insert_scale_factor = 0.02",
 	)
 	assertContainsNone(t, "72_ingest_storage_params.sql",
-		// An append-only table gains nothing from reserved in-page space.
+		// Exceptional convergence updates do not justify reserved in-page space.
 		"ALTER TABLE public.captain_messages SET (\n  fillfactor",
 	)
 	assertContainsNone(t, "30_execution.pg.hcl", "fillfactor", "autovacuum_")
@@ -247,16 +246,16 @@ func TestApplyHoldsMigrationLockAcrossMigration(t *testing.T) {
 	t.Parallel()
 
 	var events []string
-	err := apply(t.Context(), "postgres://captain", applyDependencies{
-		acquireLock: func(context.Context, string) (migrationLockHandle, error) {
+	err := apply(t.Context(), applyRequest{Connection: "postgres://captain", Schema: DefaultSchema}, applyDependencies{
+		acquireLock: func(context.Context, applyRequest) (migrationLockHandle, error) {
 			events = append(events, "lock")
 			return &recordingMigrationLock{events: &events}, nil
 		},
-		migrate: func(context.Context, string) error {
+		migrate: func(context.Context, applyRequest) error {
 			events = append(events, "migrate")
 			return nil
 		},
-		verify: func(context.Context, string) error {
+		verify: func(context.Context, applyRequest) error {
 			events = append(events, "verify")
 			return nil
 		},
@@ -272,16 +271,16 @@ func TestApplyReleasesMigrationLockOnVerificationFailure(t *testing.T) {
 
 	var events []string
 	verificationErr := errors.New("constraint drifted")
-	err := apply(t.Context(), "postgres://captain", applyDependencies{
-		acquireLock: func(context.Context, string) (migrationLockHandle, error) {
+	err := apply(t.Context(), applyRequest{Connection: "postgres://captain", Schema: DefaultSchema}, applyDependencies{
+		acquireLock: func(context.Context, applyRequest) (migrationLockHandle, error) {
 			events = append(events, "lock")
 			return &recordingMigrationLock{events: &events}, nil
 		},
-		migrate: func(context.Context, string) error {
+		migrate: func(context.Context, applyRequest) error {
 			events = append(events, "migrate")
 			return nil
 		},
-		verify: func(context.Context, string) error {
+		verify: func(context.Context, applyRequest) error {
 			events = append(events, "verify")
 			return verificationErr
 		},
@@ -297,12 +296,12 @@ func TestApplyReleasesMigrationLockOnMigrationFailure(t *testing.T) {
 
 	var events []string
 	migrationErr := errors.New("atlas failed")
-	err := apply(t.Context(), "postgres://captain", applyDependencies{
-		acquireLock: func(context.Context, string) (migrationLockHandle, error) {
+	err := apply(t.Context(), applyRequest{Connection: "postgres://captain", Schema: DefaultSchema}, applyDependencies{
+		acquireLock: func(context.Context, applyRequest) (migrationLockHandle, error) {
 			events = append(events, "lock")
 			return &recordingMigrationLock{events: &events}, nil
 		},
-		migrate: func(context.Context, string) error {
+		migrate: func(context.Context, applyRequest) error {
 			events = append(events, "migrate")
 			return migrationErr
 		},
@@ -319,8 +318,8 @@ func TestApplyReportsLockAcquisitionAndReleaseErrors(t *testing.T) {
 	t.Run("acquire", func(t *testing.T) {
 		t.Parallel()
 		wantErr := errors.New("lock unavailable")
-		err := apply(t.Context(), "postgres://captain", applyDependencies{
-			acquireLock: func(context.Context, string) (migrationLockHandle, error) {
+		err := apply(t.Context(), applyRequest{Connection: "postgres://captain", Schema: DefaultSchema}, applyDependencies{
+			acquireLock: func(context.Context, applyRequest) (migrationLockHandle, error) {
 				return nil, wantErr
 			},
 		})
@@ -333,11 +332,11 @@ func TestApplyReportsLockAcquisitionAndReleaseErrors(t *testing.T) {
 		t.Parallel()
 		migrationErr := errors.New("migration failed")
 		releaseErr := errors.New("unlock failed")
-		err := apply(t.Context(), "postgres://captain", applyDependencies{
-			acquireLock: func(context.Context, string) (migrationLockHandle, error) {
+		err := apply(t.Context(), applyRequest{Connection: "postgres://captain", Schema: DefaultSchema}, applyDependencies{
+			acquireLock: func(context.Context, applyRequest) (migrationLockHandle, error) {
 				return &recordingMigrationLock{err: releaseErr}, nil
 			},
-			migrate: func(context.Context, string) error { return migrationErr },
+			migrate: func(context.Context, applyRequest) error { return migrationErr },
 		})
 		if !errors.Is(err, migrationErr) || !errors.Is(err, releaseErr) {
 			t.Fatalf("apply error = %v, want joined migration and release errors", err)

@@ -338,6 +338,17 @@ func newRootCommand() *cobra.Command {
 	monitorNotifyCmd.Flags().String("provider", "claude", "Hook payload provider: claude or codex")
 	monitorNotifyCmd.Flags().String("url", "", "Captain serve base URL (default $CAPTAIN_SERVER_URL or http://localhost:9020)")
 	monitorHookCmd.AddCommand(monitorNotifyCmd)
+	monitorStatusLineCmd := &cobra.Command{
+		Use:   "statusline",
+		Short: "Capture Claude Code's session cost estimate and pass stdin through",
+		Long:  "Internal status-line adapter: passes Claude's status-line payload through unchanged and gives local estimate delivery a 10ms best-effort deadline.",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			url, _ := cmd.Flags().GetString("url")
+			return cli.RunHookMonitorStatusline(cli.HookMonitorStatuslineOptions{URL: url})
+		},
+	}
+	monitorStatusLineCmd.Flags().String("url", "", "Captain serve base URL (default $CAPTAIN_SERVER_URL or http://localhost:9020)")
+	monitorHookCmd.AddCommand(monitorStatusLineCmd)
 	monitorInstallCmd := clicky.AddNamedCommand("install", monitorHookCmd, cli.HookMonitorInstallOptions{}, cli.RunHookMonitorInstall)
 	monitorInstallCmd.Short = "Install session-monitoring hooks into ~/.claude/settings.json and ~/.codex/config.toml"
 

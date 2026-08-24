@@ -12,6 +12,14 @@ import (
 	"github.com/flanksource/captain/pkg/session"
 )
 
+const (
+	costSourceCaptain   = "captain_estimate"
+	costSourceClaudeCLI = "claude_cli_estimate"
+	costSourceProvider  = "provider"
+	costSourceMixed     = "mixed"
+	costSourceAllocated = "allocated"
+)
+
 type CostOptions struct {
 	Since     time.Time `flag:"since" help:"Only include sessions after this time" default:"now-7d" short:"s"`
 	All       bool      `flag:"all" help:"Search all projects" short:"a"`
@@ -29,13 +37,15 @@ type CostRow struct {
 	CacheWrite string `json:"cacheWrite" pretty:"label=Cache Write,table"`
 	Msgs       int    `json:"msgs" pretty:"label=Msgs,table"`
 	APICost    string `json:"apiCost" pretty:"label=API Cost,table"`
+	CostBasis  string `json:"costBasis" pretty:"label=Cost Basis,table"`
 	Time       string `json:"time" pretty:"label=Time,table"`
 }
 
 type CostResult struct {
-	TotalAPICost string    `json:"totalApiCost" pretty:"label=Total API Cost (equivalent)"`
-	TotalTokens  string    `json:"totalTokens" pretty:"label=Total Tokens"`
-	Rows         []CostRow `json:"rows"`
+	TotalAPICost   string    `json:"totalApiCost" pretty:"label=Total API Cost (equivalent)"`
+	TotalCostBasis string    `json:"totalCostBasis" pretty:"label=Total Cost Basis"`
+	TotalTokens    string    `json:"totalTokens" pretty:"label=Total Tokens"`
+	Rows           []CostRow `json:"rows"`
 }
 
 type ToolCostRow struct {
@@ -78,8 +88,8 @@ func RunCost(ctx context.Context, opts CostOptions) (any, error) {
 		return nil, err
 	}
 	sessions = filterCostsBySessionID(sessions, sessionIDs)
-	// Transcripts hold no result record, so prefer the figures captain recorded
-	// from the provider's own results for any session it ran.
+	// Transcripts hold no result total, so prefer a complete provider-attributed
+	// thread and then a positive Claude CLI estimate Captain observed.
 	applyResultCosts(ctx, sessions)
 
 	grouped := groupSessions(sessions, opts.GroupBy)
@@ -89,8 +99,11 @@ func RunCost(ctx context.Context, opts CostOptions) (any, error) {
 	})
 
 	var total claude.TokenSummary
+	var totalSource string
 	rows := make([]CostRow, 0, len(grouped))
 	for _, s := range grouped {
+		source := sessionCostSource(s)
+		totalSource = mergeCostSource(totalSource, source)
 		total.InputTokens += s.Tokens.InputTokens
 		total.OutputTokens += s.Tokens.OutputTokens
 		total.CacheWriteTokens += s.Tokens.CacheWriteTokens
@@ -107,15 +120,17 @@ func RunCost(ctx context.Context, opts CostOptions) (any, error) {
 			CacheRead:  session.FormatTokens(s.Tokens.CacheReadTokens),
 			CacheWrite: session.FormatTokens(s.Tokens.CacheWriteTokens),
 			Msgs:       s.Messages,
-			APICost:    session.FormatCostEstimated(s.Tokens.TotalCost, s.Tokens.Estimated()),
+			APICost:    session.FormatCostEstimated(s.Tokens.TotalCost, costSourceEstimated(source)),
+			CostBasis:  costSourceLabel(source),
 			Time:       claude.FormatTimeAgo(&s.End),
 		})
 	}
 
 	return CostResult{
-		TotalAPICost: session.FormatCostEstimated(total.TotalCost, total.Estimated()),
-		TotalTokens:  session.FormatTokens(total.TotalTokens()),
-		Rows:         rows,
+		TotalAPICost:   session.FormatCostEstimated(total.TotalCost, costSourceEstimated(totalSource)),
+		TotalCostBasis: costSourceLabel(totalSource),
+		TotalTokens:    session.FormatTokens(total.TotalTokens()),
+		Rows:           rows,
 	}, nil
 }
 
@@ -275,13 +290,14 @@ func groupByPath(sessions []claude.SessionCost, mode string) []claude.SessionCos
 
 		for _, key := range keys {
 			split := claude.SessionCost{
-				SessionID: s.SessionID,
-				Project:   key,
-				Model:     s.Model,
-				Tier:      s.Tier,
-				Start:     s.Start,
-				End:       s.End,
-				Messages:  s.Messages,
+				SessionID:  s.SessionID,
+				Project:    key,
+				Model:      s.Model,
+				Tier:       s.Tier,
+				Start:      s.Start,
+				End:        s.End,
+				Messages:   s.Messages,
+				CostSource: costSourceAllocated,
 				Tokens: claude.TokenSummary{
 					InputTokens:      int(float64(s.Tokens.InputTokens) * fraction),
 					OutputTokens:     int(float64(s.Tokens.OutputTokens) * fraction),
@@ -325,6 +341,7 @@ func uniquePaths(files []string, mode string) []string {
 }
 
 func mergeInto(g *claude.SessionCost, s claude.SessionCost) {
+	g.CostSource = mergeCostSource(sessionCostSource(*g), sessionCostSource(s))
 	g.Tokens.InputTokens += s.Tokens.InputTokens
 	g.Tokens.OutputTokens += s.Tokens.OutputTokens
 	g.Tokens.CacheWriteTokens += s.Tokens.CacheWriteTokens
@@ -343,5 +360,39 @@ func mergeInto(g *claude.SessionCost, s claude.SessionCost) {
 	}
 	if s.Tier != "" {
 		g.Tier = s.Tier
+	}
+}
+
+func sessionCostSource(cost claude.SessionCost) string {
+	if cost.CostSource != "" {
+		return cost.CostSource
+	}
+	if cost.Tokens.ProviderCostUSD > 0 {
+		return costSourceProvider
+	}
+	return costSourceCaptain
+}
+
+func mergeCostSource(current, next string) string {
+	if current == "" || current == next {
+		return next
+	}
+	return costSourceMixed
+}
+
+func costSourceEstimated(source string) bool { return source != costSourceProvider }
+
+func costSourceLabel(source string) string {
+	switch source {
+	case costSourceClaudeCLI:
+		return "Claude CLI estimate"
+	case costSourceProvider:
+		return "Provider reported"
+	case costSourceMixed:
+		return "Mixed cost sources"
+	case costSourceAllocated:
+		return "Allocated session estimate"
+	default:
+		return "Captain list-price estimate"
 	}
 }

@@ -82,12 +82,14 @@ type SessionOverview struct {
 	// ProviderCostUSD is how much of CostUSD the providers reported themselves;
 	// the bucket costs are what CostUSD otherwise falls back to. Zero provider
 	// cost means the total is a reconstruction, not a billed figure.
-	ProviderCostUSD float64 `gorm:"column:provider_cost_usd" json:"providerCostUsd,omitempty"`
-	InputCost       float64 `gorm:"column:input_cost" json:"inputCost,omitempty"`
-	OutputCost      float64 `gorm:"column:output_cost" json:"outputCost,omitempty"`
-	ReasoningCost   float64 `gorm:"column:reasoning_cost" json:"reasoningCost,omitempty"`
-	CacheReadCost   float64 `gorm:"column:cache_read_cost" json:"cacheReadCost,omitempty"`
-	CacheWriteCost  float64 `gorm:"column:cache_write_cost" json:"cacheWriteCost,omitempty"`
+	ProviderCostUSD         float64    `gorm:"column:provider_cost_usd" json:"providerCostUsd,omitempty"`
+	InputCost               float64    `gorm:"column:input_cost" json:"inputCost,omitempty"`
+	OutputCost              float64    `gorm:"column:output_cost" json:"outputCost,omitempty"`
+	ReasoningCost           float64    `gorm:"column:reasoning_cost" json:"reasoningCost,omitempty"`
+	CacheReadCost           float64    `gorm:"column:cache_read_cost" json:"cacheReadCost,omitempty"`
+	CacheWriteCost          float64    `gorm:"column:cache_write_cost" json:"cacheWriteCost,omitempty"`
+	ClaudeCLICostUSD        *float64   `gorm:"column:claude_cli_cost_usd" json:"claudeCliCostUsd,omitempty"`
+	ClaudeCLICostObservedAt *time.Time `gorm:"column:claude_cli_cost_observed_at" json:"claudeCliCostObservedAt,omitempty"`
 }
 
 func (SessionOverview) TableName() string { return "captain_session_overview" }

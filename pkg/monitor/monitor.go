@@ -58,7 +58,7 @@ type Config struct {
 }
 
 // activityWindow is how long after the last observed session activity (agent
-// process seen, hook event received) the process poll stays on the fast cadence.
+// process seen, lifecycle hook received) the process poll stays on the fast cadence.
 const activityWindow = 2 * time.Minute
 
 type Monitor struct {
@@ -68,7 +68,8 @@ type Monitor struct {
 	mu      sync.Mutex
 	tracked map[string]string // transcript path -> source kind, the live tail set
 
-	hookEvents chan HookEvent
+	hookEvents       chan HookEvent
+	statusLineEvents chan HookEvent
 
 	activityMu   sync.Mutex
 	lastActivity time.Time
@@ -107,13 +108,14 @@ func New(cfg Config) (*Monitor, error) {
 	}
 	return &Monitor{
 		cfg: cfg, db: cfg.DB, tracked: map[string]string{},
-		hookEvents: make(chan HookEvent, 128),
-		ready:      make(chan struct{}),
+		hookEvents:       make(chan HookEvent, 128),
+		statusLineEvents: make(chan HookEvent, 128),
+		ready:            make(chan struct{}),
 	}, nil
 }
 
 // noteActivity records session activity: an agent process observed by the
-// poll or a hook event. It keeps the process poll on the fast cadence.
+// poll or a lifecycle hook. It keeps the process poll on the fast cadence.
 func (m *Monitor) noteActivity(at time.Time) {
 	if at.IsZero() {
 		at = time.Now().UTC()
@@ -279,6 +281,8 @@ func (m *Monitor) runLocked(ctx context.Context, lock *sql.Conn) error {
 			if wasIdle {
 				processTicker.Reset(m.cfg.ProcessInterval)
 			}
+		case ev := <-m.statusLineEvents:
+			m.handleHookEvent(runCtx, watcher, ingestor, ev)
 		case <-backfillTicker.C:
 			m.maintenanceDue.Store(true)
 			requestBackfill(backfillRequests)

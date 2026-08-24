@@ -12,6 +12,7 @@ import (
 
 	"github.com/flanksource/captain/migrations"
 	commonsdb "github.com/flanksource/commons-db/db"
+	commonsmigrate "github.com/flanksource/commons-db/migrate"
 	"gorm.io/gorm"
 )
 
@@ -23,6 +24,7 @@ type openOptions struct {
 	gorm         *gorm.DB
 	gormSet      bool
 	migrate      bool
+	schema       string
 	maxOpenConns int
 }
 
@@ -44,6 +46,11 @@ func WithMigrations() Option {
 	return func(options *openOptions) { options.migrate = true }
 }
 
+// WithSchema selects the validated PostgreSQL schema owned by this Captain handle.
+func WithSchema(name string) Option {
+	return func(options *openOptions) { options.schema = name }
+}
+
 // WithMaxOpenConns caps a Captain-owned pool. Processes that hold several
 // database handles at once use it so the pools do not add up to an unreasonable
 // number of backends. Ignored for injected pools, which the host sizes.
@@ -54,18 +61,21 @@ func WithMaxOpenConns(conns int) Option {
 // DB is a Captain database handle. It records pool ownership so a host can
 // safely share its application pool without Captain closing it.
 type DB struct {
-	gorm  *gorm.DB
-	owned bool
+	gorm   *gorm.DB
+	owned  bool
+	schema string
 }
 
 type dependencies struct {
-	migrate func(context.Context, string) error
+	migrate func(context.Context, string, string) error
 	open    func(string, *gorm.Config) (*gorm.DB, error)
 }
 
 var defaultDependencies = dependencies{
-	migrate: migrations.Apply,
-	open:    commonsdb.NewGorm,
+	migrate: func(ctx context.Context, dsn, schemaName string) error {
+		return migrations.Apply(ctx, dsn, migrations.WithSchema(schemaName))
+	},
+	open: commonsdb.NewGorm,
 }
 
 // Open reuses an injected pool or opens a Captain-owned pool. It does not
@@ -75,13 +85,16 @@ func Open(ctx context.Context, options ...Option) (*DB, error) {
 }
 
 func open(ctx context.Context, deps dependencies, optionFns ...Option) (*DB, error) {
-	var options openOptions
+	options := openOptions{schema: migrations.DefaultSchema}
 	for _, option := range optionFns {
 		if option != nil {
 			option(&options)
 		}
 	}
 	dsn := strings.TrimSpace(options.dsn)
+	if err := commonsmigrate.ValidateSchemaName(options.schema); err != nil {
+		return nil, fmt.Errorf("captain database schema: %w", err)
+	}
 	if options.gormSet && options.gorm == nil {
 		return nil, errors.New("captain database GORM pool is nil")
 	}
@@ -91,16 +104,27 @@ func open(ctx context.Context, deps dependencies, optionFns ...Option) (*DB, err
 	if options.migrate && dsn == "" {
 		return nil, errors.New("captain database migrations require a DSN")
 	}
+	if options.gorm != nil && options.schema != migrations.DefaultSchema {
+		return nil, fmt.Errorf("captain database cannot select schema %q on a host-owned GORM pool", options.schema)
+	}
 	if options.migrate {
-		if err := deps.migrate(ctx, dsn); err != nil {
+		if err := deps.migrate(ctx, dsn, options.schema); err != nil {
 			return nil, err
 		}
 	}
 	if options.gorm != nil {
-		return &DB{gorm: options.gorm}, nil
+		return &DB{gorm: options.gorm, schema: options.schema}, nil
 	}
 
-	gormDB, err := deps.open(dsn, commonsdb.DefaultGormConfig())
+	scopedDSN := dsn
+	if options.schema != migrations.DefaultSchema {
+		var err error
+		scopedDSN, err = commonsmigrate.ConnectionForSchema(dsn, options.schema)
+		if err != nil {
+			return nil, fmt.Errorf("scope Captain database: %w", err)
+		}
+	}
+	gormDB, err := deps.open(scopedDSN, commonsdb.DefaultGormConfig())
 	if err != nil {
 		return nil, fmt.Errorf("open Captain database: %w", err)
 	}
@@ -112,7 +136,7 @@ func open(ctx context.Context, deps dependencies, optionFns ...Option) (*DB, err
 		sqlDB.SetMaxOpenConns(options.maxOpenConns)
 		sqlDB.SetMaxIdleConns(options.maxOpenConns)
 	}
-	return &DB{gorm: gormDB, owned: true}, nil
+	return &DB{gorm: gormDB, owned: true, schema: options.schema}, nil
 }
 
 // Use wraps an already migrated shared GORM pool. The returned handle does not
@@ -121,13 +145,19 @@ func Use(gormDB *gorm.DB) (*DB, error) {
 	if gormDB == nil {
 		return nil, errors.New("captain database GORM pool is nil")
 	}
-	return &DB{gorm: gormDB}, nil
+	return &DB{gorm: gormDB, schema: migrations.DefaultSchema}, nil
 }
 
 // Migrate applies Captain's authoritative HCL and SQL migration bundle without
 // opening another application pool.
-func Migrate(ctx context.Context, dsn string) error {
-	return migrations.Apply(ctx, dsn)
+func Migrate(ctx context.Context, dsn string, options ...Option) error {
+	config := openOptions{schema: migrations.DefaultSchema}
+	for _, option := range options {
+		if option != nil {
+			option(&config)
+		}
+	}
+	return migrations.Apply(ctx, dsn, migrations.WithSchema(config.schema))
 }
 
 // Gorm returns the application pool supplied to or opened by Captain.
@@ -136,6 +166,14 @@ func (db *DB) Gorm() *gorm.DB {
 		return nil
 	}
 	return db.gorm
+}
+
+// Schema returns the PostgreSQL schema owned by the handle.
+func (db *DB) Schema() string {
+	if db == nil {
+		return ""
+	}
+	return db.schema
 }
 
 // Transaction runs fn with a Captain handle backed by the same GORM
@@ -149,7 +187,7 @@ func (db *DB) Transaction(ctx context.Context, fn func(*DB) error) error {
 		return errors.New("captain database transaction callback is nil")
 	}
 	return db.gorm.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return fn(&DB{gorm: tx})
+		return fn(&DB{gorm: tx, schema: db.schema})
 	})
 }
 

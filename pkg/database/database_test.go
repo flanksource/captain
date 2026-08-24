@@ -15,8 +15,8 @@ func TestOpenMigratesThenOpensStandalonePool(t *testing.T) {
 	var calls []string
 	opened := &gorm.DB{}
 	db, err := open(t.Context(), dependencies{
-		migrate: func(_ context.Context, dsn string) error {
-			calls = append(calls, "migrate:"+dsn)
+		migrate: func(_ context.Context, dsn, schemaName string) error {
+			calls = append(calls, "migrate:"+dsn+":"+schemaName)
 			return nil
 		},
 		open: func(dsn string, _ *gorm.Config) (*gorm.DB, error) {
@@ -30,7 +30,7 @@ func TestOpenMigratesThenOpensStandalonePool(t *testing.T) {
 	if db.Gorm() != opened || !db.owned {
 		t.Fatalf("database = %+v, want owned standalone pool", db)
 	}
-	want := []string{"migrate:postgres://captain", "open:postgres://captain"}
+	want := []string{"migrate:postgres://captain:public", "open:postgres://captain"}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("calls = %v, want %v", calls, want)
 	}
@@ -42,8 +42,8 @@ func TestOpenMigratesThenReusesInjectedPool(t *testing.T) {
 	shared := &gorm.DB{}
 	var calls []string
 	db, err := open(t.Context(), dependencies{
-		migrate: func(_ context.Context, dsn string) error {
-			calls = append(calls, "migrate:"+dsn)
+		migrate: func(_ context.Context, dsn, schemaName string) error {
+			calls = append(calls, "migrate:"+dsn+":"+schemaName)
 			return nil
 		},
 		open: func(string, *gorm.Config) (*gorm.DB, error) {
@@ -57,7 +57,7 @@ func TestOpenMigratesThenReusesInjectedPool(t *testing.T) {
 	if db.Gorm() != shared || db.owned {
 		t.Fatalf("database = %+v, want non-owning injected pool", db)
 	}
-	if want := []string{"migrate:postgres://shared"}; !reflect.DeepEqual(calls, want) {
+	if want := []string{"migrate:postgres://shared:public"}; !reflect.DeepEqual(calls, want) {
 		t.Fatalf("calls = %v, want %v", calls, want)
 	}
 	if err := db.Close(); err != nil {
@@ -70,7 +70,7 @@ func TestOpenUsesPreMigratedInjectedPoolWithoutDSN(t *testing.T) {
 
 	shared := &gorm.DB{}
 	db, err := open(t.Context(), dependencies{
-		migrate: func(context.Context, string) error {
+		migrate: func(context.Context, string, string) error {
 			t.Fatal("pre-migrated injected pool must not run migrations")
 			return nil
 		},
@@ -92,7 +92,7 @@ func TestOpenStopsWhenMigrationFails(t *testing.T) {
 
 	wantErr := errors.New("migration failed")
 	_, err := open(t.Context(), dependencies{
-		migrate: func(context.Context, string) error { return wantErr },
+		migrate: func(context.Context, string, string) error { return wantErr },
 		open: func(string, *gorm.Config) (*gorm.DB, error) {
 			t.Fatal("pool must not open after migration failure")
 			return nil, nil
