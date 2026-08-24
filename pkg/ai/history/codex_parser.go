@@ -167,115 +167,178 @@ func IsCodexAutoReviewModel(model string) bool {
 	return strings.EqualFold(strings.TrimSpace(model), api.CodexAutoReviewModel)
 }
 
-func ExtractCodexToolUsesFromReader(reader io.Reader) ([]ToolUse, error) {
-	scanner := bufio.NewScanner(reader)
-	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
+// CodexParser retains the minimum rollout state needed to parse records added
+// after a known file offset. Call Snapshot after each append to project rows
+// that are valid at the current EOF but may still change on the next append.
+type CodexParser struct {
+	sessionCWD    string
+	sessionID     string
+	currentTurn   string
+	currentModel  string
+	currentEffort string
+	pendingCall   map[string]codexPendingCall
+	reasoning     codexReasoningCollapser
+	deduper       codexDeduper
+	info          *CodexSessionInfo
+	event         CodexEvent
+	lineNumber    int64
+	ignored       bool
+}
 
-	// records holds the uses of one source record per entry, in emission order.
-	// Dedupe needs those boundaries to merge a message's twin records: the
-	// boundary cannot be recovered afterwards, because distinct adjacent records
-	// routinely share a RecordType and a millisecond.
-	var records [][]ToolUse
-	var sessionCWD, sessionID, currentTurn, currentModel, currentEffort string
-	pendingCall := make(map[string]codexPendingCall)
-	var reasoning codexReasoningCollapser
-	var lineNumber int64
-	stamp := func(uses []ToolUse) []ToolUse {
-		for index := range uses {
-			if uses[index].TurnID == "" {
-				uses[index].TurnID = currentTurn
-			}
-			if uses[index].Model == "" {
-				uses[index].Model = currentModel
-			}
-			if uses[index].ReasoningEffort == "" {
-				uses[index].ReasoningEffort = currentEffort
-			}
-			if uses[index].SourceLine == 0 {
-				uses[index].SourceLine = lineNumber
-			}
-		}
-		return uses
+func NewCodexParser() *CodexParser {
+	return &CodexParser{pendingCall: make(map[string]codexPendingCall)}
+}
+
+// ConsumeLine advances the parser by one physical JSONL line and returns only
+// rows whose content can no longer change as this rollout grows. Malformed
+// records retain the historical best-effort behavior: they advance line
+// identity but do not poison the rest of the transcript.
+func (p *CodexParser) ConsumeLine(line string) []ToolUse {
+	p.lineNumber++
+	line = strings.TrimSpace(line)
+	if line == "" || p.ignored {
+		return nil
 	}
-	// A record that emits nothing -- an accumulating reasoning record, an
-	// unpaired function_call half, filtered internal user text -- must not count
-	// as intervening content, or it would break a twin pair apart.
+	if err := parseCodexLineInto(&p.event, line); err != nil {
+		log.Debugf("Error parsing codex line: %v", err)
+		return nil
+	}
+
+	var settled []ToolUse
 	add := func(uses []ToolUse) {
 		if len(uses) == 0 {
 			return
 		}
-		records = append(records, stamp(uses))
+		settled = append(settled, p.deduper.push(p.stamp(uses))...)
 	}
 
-	var event CodexEvent
+	// Every non-reasoning record closes the pending span before its own state is
+	// applied, so the span retains the model and turn that produced it.
+	if !isCodexReasoningRecord(p.event) {
+		add(p.reasoning.flush())
+	}
+	switch p.event.Type {
+	case "session_meta":
+		p.sessionCWD = p.event.Payload.CWD
+		p.sessionID = p.event.Payload.ID
+		if p.info == nil {
+			info := codexSessionInfo(p.event)
+			p.info = &info
+		}
+	case "turn_context":
+		p.currentTurn = firstNonEmpty(p.event.Payload.TurnID, p.currentTurn)
+		p.currentModel = firstNonEmpty(p.event.Payload.Model, p.currentModel)
+		p.currentEffort = firstNonEmpty(p.event.Payload.Effort, p.currentEffort)
+		p.observeTurnInfo()
+		if IsCodexAutoReviewModel(p.currentModel) {
+			p.ignored = true
+			return nil
+		}
+	case "response_item":
+		if p.event.Payload.Type == "reasoning" {
+			add(p.reasoning.observe(p.event, p.currentTurn, p.sessionCWD, p.sessionID, p.lineNumber))
+			return settled
+		}
+		add(extractResponseItem(p.event, p.pendingCall, p.sessionCWD, p.sessionID, p.lineNumber))
+	case "event_msg":
+		p.currentTurn = firstNonEmpty(p.event.Payload.TurnID, p.currentTurn)
+		add(extractEventMsg(p.event, p.sessionCWD, p.sessionID))
+	case "world_state":
+		add([]ToolUse{buildCodexTopLevelEventUse(p.event, "world_state", p.sessionCWD, p.sessionID)})
+	case "thread.started":
+		p.sessionID = firstNonEmpty(p.event.ThreadID, p.sessionID)
+		p.observeThreadInfo()
+	case "item.completed":
+		add(extractLiveItemCompleted(p.event, p.sessionCWD, p.sessionID))
+	case "turn.failed", "error":
+		add(extractLiveError(p.event, p.sessionCWD, p.sessionID))
+	}
+	return settled
+}
+
+func (p *CodexParser) stamp(uses []ToolUse) []ToolUse {
+	for index := range uses {
+		if uses[index].TurnID == "" {
+			uses[index].TurnID = p.currentTurn
+		}
+		if uses[index].Model == "" {
+			uses[index].Model = p.currentModel
+		}
+		if uses[index].ReasoningEffort == "" {
+			uses[index].ReasoningEffort = p.currentEffort
+		}
+		if uses[index].SourceLine == 0 {
+			uses[index].SourceLine = p.lineNumber
+		}
+	}
+	return uses
+}
+
+func (p *CodexParser) observeThreadInfo() {
+	if p.info == nil {
+		p.info = &CodexSessionInfo{StartedAt: p.event.Time()}
+	}
+	if p.info.ID == "" {
+		p.info.ID = p.event.ThreadID
+	}
+}
+
+func (p *CodexParser) observeTurnInfo() {
+	if p.info == nil {
+		p.info = &CodexSessionInfo{StartedAt: p.event.Time()}
+	}
+	if p.info.Model == "" {
+		p.info.Model = p.event.Payload.Model
+	}
+	if p.info.ReasoningEffort == "" {
+		p.info.ReasoningEffort = p.event.Payload.Effort
+	}
+}
+
+// Snapshot returns the unresolved tail without advancing parser state. Dedupe
+// candidates, open reasoning spans, and unpaired calls are re-created on every
+// append until a real source record settles them.
+func (p *CodexParser) Snapshot() []ToolUse {
+	uses := p.deduper.snapshot()
+	if p.reasoning.pending() {
+		reasoning := p.reasoning
+		uses = append(uses, p.stamp(asProvisional(reasoning.flush()))...)
+	}
+	for _, call := range sortedCodexPendingCalls(p.pendingCall) {
+		uses = append(uses,
+			p.stamp(asProvisional(withSourceLine(buildPendingCallUses(call.event, p.sessionCWD, p.sessionID), call.line)))...)
+	}
+	return uses
+}
+
+// SessionInfo returns the metadata observed by this parser so incremental
+// callers do not need a second scan of the transcript header.
+func (p *CodexParser) SessionInfo() *CodexSessionInfo {
+	if p.info == nil {
+		return nil
+	}
+	info := *p.info
+	return &info
+}
+
+func (p *CodexParser) LineNumber() int64 { return p.lineNumber }
+func (p *CodexParser) Ignored() bool     { return p.ignored }
+
+func ExtractCodexToolUsesFromReader(reader io.Reader) ([]ToolUse, error) {
+	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
+	parser := NewCodexParser()
+	var uses []ToolUse
 	for scanner.Scan() {
-		lineNumber++
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		if err := parseCodexLineInto(&event, line); err != nil {
-			log.Debugf("Error parsing codex line: %v", err)
-			continue
-		}
-		// Every record that is not a reasoning record closes the pending span.
-		// Flushing only at turn_context/EOF is what made the span grow on each
-		// tailing pass -- a different count, a different dedupe key, a different
-		// row -- and shifted every downstream ordinal with it.
-		if !isCodexReasoningRecord(event) {
-			add(reasoning.flush())
-		}
-		switch event.Type {
-		case "session_meta":
-			sessionCWD = event.Payload.CWD
-			sessionID = event.Payload.ID
-		case "turn_context":
-			// The span was already flushed above, before the turn's model and
-			// effort roll over, so the closing span is stamped with the turn it
-			// belongs to. turn_context is the only reliable turn boundary: older
-			// rollouts carry no turn_id at all, so keying the span on turn_id
-			// alone would fold a whole multi-turn session into one bogus span.
-			currentTurn = firstNonEmpty(event.Payload.TurnID, currentTurn)
-			currentModel = firstNonEmpty(event.Payload.Model, currentModel)
-			if IsCodexAutoReviewModel(currentModel) {
-				return nil, nil
-			}
-			currentEffort = firstNonEmpty(event.Payload.Effort, currentEffort)
-		case "response_item":
-			if event.Payload.Type == "reasoning" {
-				add(reasoning.observe(event, currentTurn, sessionCWD, sessionID, lineNumber))
-				continue
-			}
-			add(extractResponseItem(event, pendingCall, sessionCWD, sessionID, lineNumber))
-		case "event_msg":
-			currentTurn = firstNonEmpty(event.Payload.TurnID, currentTurn)
-			add(extractEventMsg(event, sessionCWD, sessionID))
-		case "world_state":
-			add([]ToolUse{buildCodexTopLevelEventUse(event, "world_state", sessionCWD, sessionID)})
-		case "thread.started":
-			sessionID = firstNonEmpty(event.ThreadID, sessionID)
-		case "item.completed":
-			add(extractLiveItemCompleted(event, sessionCWD, sessionID))
-		case "turn.failed", "error":
-			add(extractLiveError(event, sessionCWD, sessionID))
-		}
-	}
-	// EOF snapshots are provisional but are not source records. Feeding them
-	// through dedupe would make a synthetic pending row close the real final chat
-	// boundary, even though no appended transcript record did so.
-	var provisional []ToolUse
-	if reasoning.pending() {
-		snapshot := reasoning
-		provisional = append(provisional, stamp(asProvisional(snapshot.flush()))...)
-	}
-	for _, call := range sortedCodexPendingCalls(pendingCall) {
-		provisional = append(provisional,
-			stamp(asProvisional(withSourceLine(buildPendingCallUses(call.event, sessionCWD, sessionID), call.line)))...)
+		uses = append(uses, parser.ConsumeLine(scanner.Text())...)
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
-	return append(dedupeCodexToolUses(records), provisional...), nil
+	if parser.Ignored() {
+		return nil, nil
+	}
+	return append(uses, parser.Snapshot()...), nil
 }
 
 // buildPendingCallUses builds the provisional row for a call whose output never

@@ -178,42 +178,67 @@ type codexChatSlot struct {
 	families map[string]struct{}
 }
 
-// dedupeCodexToolUses folds each message's twin records into a single row.
-// Codex logs the same logical message twice, once as an event_msg and once as
-// a response_item, milliseconds to hours apart -- so the twins cannot be
-// matched on timestamp, only on content plus adjacency.
-//
-// records holds one entry per source record in emission order. Only the
-// immediately preceding record is a merge candidate, so any intervening chat
-// content keeps two identical messages apart.
-func dedupeCodexToolUses(records [][]ToolUse) []ToolUse {
-	var output []ToolUse
-	var previous map[string]*codexChatSlot
-	for _, record := range records {
-		current := make(map[string]*codexChatSlot, len(record))
-		for _, use := range record {
-			key, ok := codexChatDedupeKey(use)
-			if !ok {
-				output = append(output, use)
-				continue
-			}
-			if slot := mergeCodexTwin(output, previous[key], use); slot != nil {
-				current[key] = slot
-				continue
-			}
-			output = append(output, use)
-			current[key] = &codexChatSlot{
-				index:    len(output) - 1,
-				priority: codexRecordPriority(use.RecordType),
-				families: map[string]struct{}{codexRecordFamily(use.RecordType): {}},
-			}
-		}
-		previous = current
+// codexDeduper folds each message's twin records into a single row while
+// retaining only the unresolved output suffix. A live parser keeps this value
+// across appends; rows before the earliest slot are final and can be released.
+type codexDeduper struct {
+	pending  []ToolUse
+	previous map[string]*codexChatSlot
+}
+
+// push consumes one emitting source record and returns the prefix that can no
+// longer be changed by a twin in a later record.
+func (d *codexDeduper) push(record []ToolUse) []ToolUse {
+	if len(record) == 0 {
+		return nil
 	}
-	// The final chat record can still be followed by its twin when a live
-	// transcript grows. Keep it below the ingest high-water mark until another
-	// emitting record proves that boundary final.
-	for _, slot := range previous {
+	current := make(map[string]*codexChatSlot, len(record))
+	for _, use := range record {
+		key, ok := codexChatDedupeKey(use)
+		if !ok {
+			d.pending = append(d.pending, use)
+			continue
+		}
+		if slot := mergeCodexTwin(d.pending, d.previous[key], use); slot != nil {
+			current[key] = slot
+			continue
+		}
+		d.pending = append(d.pending, use)
+		current[key] = &codexChatSlot{
+			index:    len(d.pending) - 1,
+			priority: codexRecordPriority(use.RecordType),
+			families: map[string]struct{}{codexRecordFamily(use.RecordType): {}},
+		}
+	}
+	d.previous = current
+
+	frontier := len(d.pending)
+	for _, slot := range d.previous {
+		if slot.index < frontier {
+			frontier = slot.index
+		}
+	}
+	if frontier == 0 {
+		return nil
+	}
+	settled := d.pending[:frontier:frontier]
+	if frontier == len(d.pending) {
+		d.pending = nil
+		return settled
+	}
+	d.pending = d.pending[frontier:]
+	for _, slot := range d.previous {
+		slot.index -= frontier
+	}
+	return settled
+}
+
+// snapshot returns the unresolved suffix as it should look at the current EOF.
+// Only slots from the final emitting record are provisional; unrelated rows can
+// be retained behind one for ordering without pretending their content may grow.
+func (d *codexDeduper) snapshot() []ToolUse {
+	output := append([]ToolUse(nil), d.pending...)
+	for _, slot := range d.previous {
 		output[slot.index].Provisional = true
 	}
 	return output
