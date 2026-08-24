@@ -692,7 +692,8 @@ func TestOneEndpointRoutesTwoRepositories(t *testing.T) {
 	repoB := newRepo(t) // same basename, different canonical path
 	agent.setBackendOption(t, "agentCommand",
 		`echo "// completed $CAPTAIN_TASK" >> pkg/main.go `+
-			`&& git add -A && git commit -q -m "captain: $CAPTAIN_TASK" && git push`)
+			`&& git add -A && git commit -q -m "captain: $CAPTAIN_TASK" && git push; `+
+			`status=$?; touch "$CAPTAIN_TASK_FILE.done"; exit $status`)
 
 	run := func(repo string) string {
 		t.Helper()
@@ -708,7 +709,21 @@ func TestOneEndpointRoutesTwoRepositories(t *testing.T) {
 		if len(branches) != 1 {
 			t.Fatalf("integration branches in %s = %v", repo, branches)
 		}
-		return strings.TrimPrefix(branches[0], "captain/")
+		task := strings.TrimPrefix(branches[0], "captain/")
+		marker := filepath.Join(agent.home, ".captain", "sandbox", gitagent.ServedReposDirName,
+			SidecarRepoName, "captain", "tasks", task, gitagent.ControlTaskFile+".done")
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			if _, err := os.Stat(marker); err == nil {
+				return task
+			} else if !os.IsNotExist(err) {
+				t.Fatalf("stat agent completion marker %s: %v", marker, err)
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("detached agent for %s did not exit:\n%s", task, agentLogs(t, agent))
+			}
+			time.Sleep(25 * time.Millisecond)
+		}
 	}
 
 	taskA := run(repoA)
