@@ -28,9 +28,9 @@ func firstNonEmpty(values ...string) string {
 }
 
 func buildCodexEventUse(event CodexEvent, cwd, sessionID string) ToolUse {
-	input := make(map[string]any, len(event.Payload.Raw)+1)
-	for key, value := range event.Payload.Raw {
-		input[key] = value
+	input := event.Payload.RawMap()
+	if input == nil {
+		input = make(map[string]any, 1)
 	}
 	input["event"] = event.Payload.Type
 	addCodexEventValue(input, "turn_id", event.Payload.TurnID)
@@ -123,9 +123,9 @@ func addCodexEventValue(input map[string]any, key string, value any) {
 }
 
 func buildCodexTopLevelEventUse(event CodexEvent, eventType, cwd, sessionID string) ToolUse {
-	input := make(map[string]any, len(event.Payload.Raw)+1)
-	for key, value := range event.Payload.Raw {
-		input[key] = value
+	input := event.Payload.RawMap()
+	if input == nil {
+		input = make(map[string]any, 1)
 	}
 	input["event"] = eventType
 	return ToolUse{
@@ -172,46 +172,65 @@ func codexNonCachedInputTokens(usage CodexTokenUsage) int {
 // just the previous family is what keeps an (event_msg, response_item) pair
 // repeated across N turns -- the same assistant verdict re-sent verbatim --
 // as N rows instead of collapsing it to one.
+//
+// The set is a bitmask over the four families rather than a map: a map per
+// emitted chat row, plus one per source record, was the single largest
+// allocator left in a transcript parse after the payload decode.
 type codexChatSlot struct {
 	index    int
 	priority int
-	families map[string]struct{}
+	families uint8
 }
 
-// dedupeCodexToolUses folds each message's twin records into a single row.
-// Codex logs the same logical message twice, once as an event_msg and once as
-// a response_item, milliseconds to hours apart -- so the twins cannot be
-// matched on timestamp, only on content plus adjacency.
+// codexDeduper folds each message's twin records into a single row as the
+// records arrive. Codex logs the same logical message twice, once as an
+// event_msg and once as a response_item, milliseconds to hours apart -- so the
+// twins cannot be matched on timestamp, only on content plus adjacency.
 //
-// records holds one entry per source record in emission order. Only the
-// immediately preceding record is a merge candidate, so any intervening chat
-// content keeps two identical messages apart.
-func dedupeCodexToolUses(records [][]ToolUse) []ToolUse {
-	var output []ToolUse
-	var previous map[string]*codexChatSlot
-	for _, record := range records {
-		current := make(map[string]*codexChatSlot, len(record))
-		for _, use := range record {
-			key, ok := codexChatDedupeKey(use)
-			if !ok {
-				output = append(output, use)
-				continue
-			}
-			if slot := mergeCodexTwin(output, previous[key], use); slot != nil {
-				current[key] = slot
-				continue
-			}
-			output = append(output, use)
-			current[key] = &codexChatSlot{
-				index:    len(output) - 1,
-				priority: codexRecordPriority(use.RecordType),
-				families: map[string]struct{}{codexRecordFamily(use.RecordType): {}},
-			}
-		}
-		previous = current
-	}
-	return output
+// Only the immediately preceding record is a merge candidate, so any
+// intervening chat content keeps two identical messages apart. Holding just
+// that one record's slots is why the parser can stream: it never has to buffer
+// the file's records to decide what merges into what.
+type codexDeduper struct {
+	output   []ToolUse
+	previous map[string]*codexChatSlot
+	current  map[string]*codexChatSlot
 }
+
+// push folds one source record's rows into the output, in emission order.
+func (d *codexDeduper) push(record []ToolUse) {
+	d.current = nil
+	for _, use := range record {
+		key, ok := codexChatDedupeKey(use)
+		if !ok {
+			d.output = append(d.output, use)
+			continue
+		}
+		if slot := mergeCodexTwin(d.output, d.previous[key], use); slot != nil {
+			d.remember(key, slot)
+			continue
+		}
+		d.output = append(d.output, use)
+		d.remember(key, &codexChatSlot{
+			index:    len(d.output) - 1,
+			priority: codexRecordPriority(use.RecordType),
+			families: codexRecordFamilyBit(use.RecordType),
+		})
+	}
+	d.previous = d.current
+}
+
+// remember holds a slot open for the next record to merge into. The map is
+// allocated only for a record that carries chat content at all: tool calls,
+// their outputs and token counts carry none, and they are most of a transcript.
+func (d *codexDeduper) remember(key string, slot *codexChatSlot) {
+	if d.current == nil {
+		d.current = make(map[string]*codexChatSlot, 2)
+	}
+	d.current[key] = slot
+}
+
+func (d *codexDeduper) finish() []ToolUse { return d.output }
 
 // mergeCodexTwin folds use into slot when slot holds the same message logged by
 // a different record family, returning the slot merged into (nil when it did
@@ -221,16 +240,36 @@ func mergeCodexTwin(output []ToolUse, slot *codexChatSlot, use ToolUse) *codexCh
 	if slot == nil {
 		return nil
 	}
-	family := codexRecordFamily(use.RecordType)
-	if _, exists := slot.families[family]; exists {
+	family := codexRecordFamilyBit(use.RecordType)
+	if slot.families&family != 0 {
 		return nil
 	}
 	if priority := codexRecordPriority(use.RecordType); priority > slot.priority {
 		output[slot.index] = use
 		slot.priority = priority
 	}
-	slot.families[family] = struct{}{}
+	slot.families |= family
 	return slot
+}
+
+// codexRecordFamilyBit is codexRecordFamily as a one-hot bit, so a slot can
+// carry the set of families it has folded in without a map.
+//
+// Unlike codexRecordFamily, which keys an unrecognized record type by its own
+// name, every such type shares the last bit. That only matters for rows the
+// dedupe key accepts -- System, User, Assistant, Reasoning, Plan and
+// MemoryCitation -- and every path that builds one stamps a RecordType under
+// one of the three named prefixes, so no chat row reaches the shared bit.
+func codexRecordFamilyBit(recordType string) uint8 {
+	switch {
+	case strings.HasPrefix(recordType, "response_item."):
+		return 1 << 0
+	case strings.HasPrefix(recordType, "item.completed"):
+		return 1 << 1
+	case strings.HasPrefix(recordType, "event_msg."):
+		return 1 << 2
+	}
+	return 1 << 3
 }
 
 // codexRecordFamily reduces a RecordType to the stream that logged it.

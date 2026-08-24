@@ -51,8 +51,14 @@ func (e CodexEvent) Time() *time.Time {
 }
 
 type CodexPayload struct {
-	Type string         `json:"type"`
-	Raw  map[string]any `json:"-"`
+	Type string `json:"type"`
+
+	// raw is the payload object verbatim, decoded into a map only by the two
+	// record shapes that pass unknown keys through (event_msg and world_state).
+	// Eagerly decoding every payload into map[string]any cost half of all
+	// allocations in a transcript parse -- 51% of 114 MB for a 10k-line
+	// rollout -- to serve a minority of records.
+	raw json.RawMessage `json:"-"`
 
 	// session_meta
 	ID         string `json:"id,omitempty"`
@@ -115,17 +121,33 @@ type CodexPayload struct {
 }
 
 func (p *CodexPayload) UnmarshalJSON(data []byte) error {
+	// Decode through the alias straight into p. Decoding into a temporary and
+	// copying it back cost a second 544-byte struct per record -- 7% of a
+	// transcript parse's allocations -- for a value that was thrown away.
+	// The explicit zeroing is what the copy used to provide: a payload the
+	// decoder is handed twice must not keep the first record's fields.
 	type alias CodexPayload
-	var a alias
-	if err := json.Unmarshal(data, &a); err != nil {
+	*p = CodexPayload{}
+	if err := json.Unmarshal(data, (*alias)(p)); err != nil {
 		return err
 	}
-	*p = CodexPayload(a)
-	var raw map[string]any
-	if err := json.Unmarshal(data, &raw); err == nil {
-		p.Raw = raw
-	}
+	// Copy rather than alias: the decoder owns data and may reuse the buffer.
+	p.raw = append(json.RawMessage(nil), data...)
 	return nil
+}
+
+// RawMap decodes the payload's unknown keys on demand. It returns nil for a
+// payload that is not a JSON object, matching the eager decode it replaced:
+// callers range over the result and a nil map ranges zero times.
+func (p CodexPayload) RawMap() map[string]any {
+	if len(p.raw) == 0 {
+		return nil
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(p.raw, &raw); err != nil {
+		return nil
+	}
+	return raw
 }
 
 type CodexGitMeta struct {

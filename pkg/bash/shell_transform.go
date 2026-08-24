@@ -4,9 +4,20 @@ import (
 	"maps"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"mvdan.cc/sh/v3/syntax"
 )
+
+// shellParsers reuses the shell parser across calls. A parser holds a sizeable
+// scratch buffer and is not safe for concurrent use, but it is reusable in
+// sequence -- and building a fresh one per command was the largest single
+// allocation in normalizing a transcript's Bash calls.
+//
+// Returning the parser before the caller is done with the AST is safe because
+// Parser.reset drops its node batches on every Parse: each call allocates the
+// nodes it returns, so a later Parse cannot write over an earlier File.
+var shellParsers = sync.Pool{New: func() any { return syntax.NewParser() }}
 
 type ShellCommand struct {
 	Command string
@@ -16,7 +27,9 @@ type ShellCommand struct {
 }
 
 func TransformShellCommand(command string) (ShellCommand, bool) {
-	file, err := syntax.NewParser().Parse(strings.NewReader(command), "")
+	parser := shellParsers.Get().(*syntax.Parser)
+	file, err := parser.Parse(strings.NewReader(command), "")
+	shellParsers.Put(parser)
 	if err != nil || len(file.Stmts) != 1 || len(file.Stmts[0].Redirs) > 0 {
 		return ShellCommand{}, false
 	}

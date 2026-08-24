@@ -15,8 +15,22 @@ import (
 
 func ParseCodexLine(line string) (CodexEvent, error) {
 	var event CodexEvent
-	err := json.Unmarshal([]byte(line), &event)
+	err := parseCodexLineInto(&event, line)
 	return event, err
+}
+
+// parseCodexLineInto decodes one record into a caller-owned event, so a reader
+// walking a whole rollout can reuse the same 632-byte struct instead of heap
+// allocating one per line -- that allocation alone was 8% of a parse.
+//
+// The event is zeroed first: the decoder leaves fields absent from this record
+// untouched, so a reused struct would otherwise carry the previous record's
+// git metadata, token info or content forward. Zeroing also drops the previous
+// record's slice capacity, so the decoder cannot write into a backing array a
+// row emitted earlier still refers to.
+func parseCodexLineInto(event *CodexEvent, line string) error {
+	*event = CodexEvent{}
+	return json.Unmarshal([]byte(line), event)
 }
 
 func ExtractCodexToolUses(sessionFile string) ([]ToolUse, error) {
@@ -164,11 +178,12 @@ func ExtractCodexToolUsesFromReader(reader io.Reader) ([]ToolUse, error) {
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
 
-	// records holds the uses of one source record per entry, in emission order.
-	// Dedupe needs those boundaries to merge a message's twin records: the
-	// boundary cannot be recovered afterwards, because distinct adjacent records
-	// routinely share a RecordType and a millisecond.
-	var records [][]ToolUse
+	// Records are folded into the deduper as they are emitted. Dedupe needs the
+	// record boundaries to merge a message's twin records -- the boundary cannot
+	// be recovered afterwards, because distinct adjacent records routinely share
+	// a RecordType and a millisecond -- but it never needs more than the previous
+	// record, so nothing has to be buffered.
+	var deduper codexDeduper
 	var sessionCWD, sessionID, currentTurn, currentModel, currentEffort string
 	pendingCall := make(map[string]codexPendingCall)
 	var reasoning codexReasoningCollapser
@@ -197,17 +212,20 @@ func ExtractCodexToolUsesFromReader(reader io.Reader) ([]ToolUse, error) {
 		if len(uses) == 0 {
 			return
 		}
-		records = append(records, stamp(uses))
+		deduper.push(stamp(uses))
 	}
 
+	// One event struct serves every line. Nothing retains a pointer to it --
+	// the extractors take it by value, and the pending-call map stores a copy --
+	// so reusing it is invisible downstream and saves an allocation per line.
+	event := &CodexEvent{}
 	for scanner.Scan() {
 		lineNumber++
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
 		}
-		event, err := ParseCodexLine(line)
-		if err != nil {
+		if err := parseCodexLineInto(event, line); err != nil {
 			log.Debugf("Error parsing codex line: %v", err)
 			continue
 		}
@@ -215,7 +233,7 @@ func ExtractCodexToolUsesFromReader(reader io.Reader) ([]ToolUse, error) {
 		// Flushing only at turn_context/EOF is what made the span grow on each
 		// tailing pass -- a different count, a different dedupe key, a different
 		// row -- and shifted every downstream ordinal with it.
-		if !isCodexReasoningRecord(event) {
+		if !isCodexReasoningRecord(*event) {
 			add(reasoning.flush())
 		}
 		switch event.Type {
@@ -236,21 +254,21 @@ func ExtractCodexToolUsesFromReader(reader io.Reader) ([]ToolUse, error) {
 			currentEffort = firstNonEmpty(event.Payload.Effort, currentEffort)
 		case "response_item":
 			if event.Payload.Type == "reasoning" {
-				add(reasoning.observe(event, currentTurn, sessionCWD, sessionID, lineNumber))
+				add(reasoning.observe(*event, currentTurn, sessionCWD, sessionID, lineNumber))
 				continue
 			}
-			add(extractResponseItem(event, pendingCall, sessionCWD, sessionID, lineNumber))
+			add(extractResponseItem(*event, pendingCall, sessionCWD, sessionID, lineNumber))
 		case "event_msg":
 			currentTurn = firstNonEmpty(event.Payload.TurnID, currentTurn)
-			add(extractEventMsg(event, sessionCWD, sessionID))
+			add(extractEventMsg(*event, sessionCWD, sessionID))
 		case "world_state":
-			add([]ToolUse{buildCodexTopLevelEventUse(event, "world_state", sessionCWD, sessionID)})
+			add([]ToolUse{buildCodexTopLevelEventUse(*event, "world_state", sessionCWD, sessionID)})
 		case "thread.started":
 			sessionID = firstNonEmpty(event.ThreadID, sessionID)
 		case "item.completed":
-			add(extractLiveItemCompleted(event, sessionCWD, sessionID))
+			add(extractLiveItemCompleted(*event, sessionCWD, sessionID))
 		case "turn.failed", "error":
-			add(extractLiveError(event, sessionCWD, sessionID))
+			add(extractLiveError(*event, sessionCWD, sessionID))
 		}
 	}
 	// Everything flushed past this point is provisional: the transcript is still
@@ -266,7 +284,7 @@ func ExtractCodexToolUsesFromReader(reader io.Reader) ([]ToolUse, error) {
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
-	return dedupeCodexToolUses(records), nil
+	return deduper.finish(), nil
 }
 
 // buildPendingCallUses builds the provisional row for a call whose output never
