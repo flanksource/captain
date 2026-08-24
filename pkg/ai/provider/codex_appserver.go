@@ -516,7 +516,7 @@ func (c *CodexAppServer) handleNotification(method string, params json.RawMessag
 	if terminal {
 		ts.flushToolResults()
 	}
-	if ev, ok := mapAppServerNotification(method, params, ctx); ok {
+	for _, ev := range mapAppServerNotification(method, params, ctx) {
 		if ev.Kind == ai.EventResult && len(ts.outputSchema) > 0 {
 			ev.StructuredData = json.RawMessage(ts.lastAgentMessage)
 		}
@@ -524,7 +524,7 @@ func (c *CodexAppServer) handleNotification(method string, params json.RawMessag
 			it := parseAppServerNotif(params).Item
 			if it != nil && it.Type == "commandExecution" {
 				ts.queueToolResult(ev)
-				return
+				continue
 			}
 		}
 		ts.send(ev)
