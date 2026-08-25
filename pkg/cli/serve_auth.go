@@ -19,15 +19,10 @@ import (
 	"github.com/flanksource/captain/pkg/gitagent"
 )
 
-const (
-	// gitPathPrefix is the subtree the git smart-HTTP transport is served
-	// under. Taken from the transport rather than restated, so the routing, the
-	// auth scope and the database-context exemption cannot drift apart.
-	gitPathPrefix = gitagent.GitHTTPPrefix
-	// apiPathPrefix is the REST executor's subtree. A request here runs a
-	// captain command, which is why it needs the stronger of the two scopes.
-	apiPathPrefix = "/api/v1"
-)
+// gitPathPrefix is the subtree the git smart-HTTP transport is served
+// under. Taken from the transport rather than restated, so the routing, the
+// auth scope and the database-context exemption cannot drift apart.
+const gitPathPrefix = gitagent.GitHTTPPrefix
 
 // tokenContextKey carries the verified credential to the handler.
 type tokenContextKey struct{}
@@ -102,7 +97,7 @@ func requiredScope(path string) (captaintoken.Scope, bool) {
 	switch {
 	case strings.HasPrefix(path, gitPathPrefix):
 		return captaintoken.ScopeGit, true
-	case path == apiPathPrefix || strings.HasPrefix(path, apiPathPrefix+"/"):
+	case path == "/api" || strings.HasPrefix(path, "/api/"):
 		return captaintoken.ScopeAPI, true
 	default:
 		return "", false
