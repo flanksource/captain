@@ -29,6 +29,7 @@ type Snapshot struct {
 	Permissions     []api.ObservationPermissionEvent
 	Tools           []api.ObservationToolEvent
 	Effort          api.ObservationStringFact
+	Usage           *api.Usage
 	DispatchPartial bool
 	Overflow        bool
 }
@@ -40,6 +41,7 @@ type Recorder struct {
 	permissions []api.ObservationPermissionEvent
 	tools       []api.ObservationToolEvent
 	efforts     []effortSample
+	usage       *api.Usage
 	toolIndex   map[string]int
 	deniedTools map[string]bool
 	overflow    bool
@@ -90,6 +92,25 @@ func RecordReasoningDispatchUnknown(ctx context.Context, boundary, reasonCode st
 	if recorder := FromContext(ctx); recorder != nil {
 		recorder.recordReasoningDispatch(boundary, api.ObservationFactUnknown, "", reasonCode)
 	}
+}
+
+// RecordUsage records the latest provider or terminal-event usage sample. Nil
+// clears an earlier sample; a non-nil all-zero value remains explicitly known.
+func RecordUsage(ctx context.Context, usage *api.Usage) {
+	if recorder := FromContext(ctx); recorder != nil {
+		recorder.recordUsage(usage)
+	}
+}
+
+func (r *Recorder) recordUsage(usage *api.Usage) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if usage == nil {
+		r.usage = nil
+		return
+	}
+	usageCopy := *usage
+	r.usage = &usageCopy
 }
 
 func (r *Recorder) recordReasoningDispatch(boundary string, state api.ObservationFactState, value, reasonCode string) {
@@ -212,6 +233,11 @@ func toolKey(toolCallID, tool string) string {
 func (r *Recorder) Snapshot() Snapshot {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	var usage *api.Usage
+	if r.usage != nil {
+		usageCopy := *r.usage
+		usage = &usageCopy
+	}
 	dispatchPartial := false
 	for _, sample := range r.efforts {
 		if sample.state == api.ObservationFactUnknown {
@@ -224,6 +250,7 @@ func (r *Recorder) Snapshot() Snapshot {
 		Permissions:     append([]api.ObservationPermissionEvent(nil), r.permissions...),
 		Tools:           append([]api.ObservationToolEvent(nil), r.tools...),
 		Effort:          observedEffort(r.efforts, r.overflow),
+		Usage:           usage,
 		DispatchPartial: dispatchPartial,
 		Overflow:        r.overflow,
 	}

@@ -1,11 +1,13 @@
 package genkit
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/ai/observation"
 
 	gkai "github.com/firebase/genkit/go/ai"
 )
@@ -171,9 +173,10 @@ func mapUsage(u *gkai.GenerationUsage, backend ai.Backend) ai.Usage {
 }
 
 // responseToResponse builds the base captain response from a buffered genkit
-// generation. Structured output and cost are applied by the caller.
-func responseToResponse(resp *gkai.ModelResponse, backend ai.Backend, model string, start time.Time) *ai.Response {
-	return &ai.Response{
+// generation and records native usage presence before flattening it to a value.
+// Structured output and cost are applied by the caller.
+func responseToResponse(ctx context.Context, resp *gkai.ModelResponse, backend ai.Backend, model string, start time.Time) *ai.Response {
+	out := &ai.Response{
 		Text:     resp.Text(),
 		Model:    model,
 		Backend:  backend,
@@ -181,4 +184,10 @@ func responseToResponse(resp *gkai.ModelResponse, backend ai.Backend, model stri
 		Duration: time.Since(start),
 		Raw:      resp,
 	}
+	var usage *ai.Usage
+	if resp.Usage != nil {
+		usage = &out.Usage
+	}
+	observation.RecordUsage(ctx, usage)
+	return out
 }

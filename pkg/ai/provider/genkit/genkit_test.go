@@ -1,11 +1,14 @@
 package genkit
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/ai/observation"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/credentials"
 
@@ -63,6 +66,32 @@ func TestMapUsage(t *testing.T) {
 	}
 
 	assert.Equal(t, ai.Usage{}, mapUsage(nil, ai.BackendAnthropic))
+}
+
+func TestResponseToResponseRecordsNativeUsagePresence(t *testing.T) {
+	tests := []struct {
+		name      string
+		usage     *gkai.GenerationUsage
+		wantUsage bool
+	}{
+		{name: "omitted", usage: nil, wantUsage: false},
+		{name: "present zero", usage: &gkai.GenerationUsage{}, wantUsage: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := observation.NewRecorder()
+			ctx := observation.ContextWithRecorder(context.Background(), recorder)
+			responseToResponse(ctx, &gkai.ModelResponse{Usage: test.usage}, ai.BackendOpenAI, "gpt-5", time.Now())
+
+			usage := recorder.Snapshot().Usage
+			if (usage != nil) != test.wantUsage {
+				t.Fatalf("recorded usage = %#v, want present %t", usage, test.wantUsage)
+			}
+			if usage != nil && *usage != (ai.Usage{}) {
+				t.Fatalf("recorded known-zero usage = %#v", usage)
+			}
+		})
+	}
 }
 
 func TestModelRef(t *testing.T) {

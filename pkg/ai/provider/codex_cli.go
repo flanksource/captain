@@ -272,12 +272,18 @@ func (s *codexCLIState) mapLine(line []byte) []ai.Event {
 		// turn.completed's per-turn usage lacks cache/reasoning detail; prefer the
 		// token_count totals when we have them and fall back to these coarse counts
 		// only otherwise (they cannot overlap cache, so no netting is needed).
+		usagePresent := s.sawTokenCount
 		if event.Usage != nil && !s.sawTokenCount {
 			s.usage.InputTokens = event.Usage.InputTokens
 			s.usage.OutputTokens = event.Usage.OutputTokens
+			usagePresent = true
 		}
-		usage := s.usage
-		ev := ai.Event{Kind: ai.EventResult, Tool: "Result", Success: true, SessionID: s.sessionID, Model: s.model, Usage: &usage}
+		var usage *ai.Usage
+		if usagePresent {
+			usageCopy := s.usage
+			usage = &usageCopy
+		}
+		ev := ai.Event{Kind: ai.EventResult, Tool: "Result", Success: true, SessionID: s.sessionID, Model: s.model, Usage: usage}
 		ev.Raw = codexResultToolUse(ev, s.sessionID)
 		return []ai.Event{ev}
 	}

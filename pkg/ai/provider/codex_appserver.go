@@ -467,7 +467,7 @@ func (c *CodexAppServer) handleNotification(method string, params json.RawMessag
 	if ts == nil {
 		return
 	}
-	ctx := appServerEventContext{Model: ts.model, Usage: ts.usage}
+	ctx := appServerEventContext{Model: ts.model, Usage: ts.usage, UsagePresent: &ts.usagePresent}
 	switch method {
 	case "item/agentMessage/delta":
 		notification := parseAppServerNotif(params)

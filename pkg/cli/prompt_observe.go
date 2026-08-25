@@ -262,11 +262,10 @@ func executeObservationProvider(ctx context.Context, provider ai.Provider, req a
 	if !stream {
 		response, err := provider.Execute(ctx, req)
 		result.runtimeErr = err
+		result.usage = recorder.Snapshot().Usage
 		if response == nil {
 			return
 		}
-		usage := response.Usage
-		result.usage = &usage
 		result.costUSD = response.CostUSD
 		result.model = firstNonEmpty(response.Model, result.model)
 		result.terminal = err == nil
@@ -353,22 +352,24 @@ func applyObservationCaptureRequest(result *api.RuntimeObservation, req ai.Reque
 }
 
 func applyObservationMetrics(result *api.RuntimeObservation, backend api.Backend, model string, usage *api.Usage, reportedCost float64) {
-	if usage == nil {
-		return
-	}
-	result.Metrics.Usage = api.ObservationUsageFact{
-		State: api.ObservationFactKnown, Semantics: "disjoint-v1",
-		Buckets: &api.ObservationUsageBuckets{
-			InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens,
-			ReasoningTokens: usage.ReasoningTokens, CacheReadTokens: usage.CacheReadTokens,
-			CacheWriteTokens: usage.CacheWriteTokens,
-		},
+	if usage != nil {
+		result.Metrics.Usage = api.ObservationUsageFact{
+			State: api.ObservationFactKnown, Semantics: "disjoint-v1",
+			Buckets: &api.ObservationUsageBuckets{
+				InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens,
+				ReasoningTokens: usage.ReasoningTokens, CacheReadTokens: usage.CacheReadTokens,
+				CacheWriteTokens: usage.CacheWriteTokens,
+			},
+		}
 	}
 	if reportedCost > 0 && providerReportsCost(backend) {
 		value := reportedCost
 		result.Metrics.CostUSD = api.ObservationCostFact{
 			State: api.ObservationFactKnown, Value: &value, Unit: "USD", Source: "provider",
 		}
+		return
+	}
+	if usage == nil {
 		return
 	}
 	estimate := ai.PriceUsage(backend, model, *usage, 0).Total()
