@@ -38,7 +38,7 @@ func TestE2ECodexCLI(t *testing.T) {
 
 	// Codex and Captain's direct OpenAI backend both speak the Responses API;
 	// this spec exercises the external Codex binary path.
-	servedPromptContaining(t, srv.Requests(), "/v1/responses", capitalPrompt)
+	servedPromptContaining(t, srv.Requests, "/v1/responses", capitalPrompt)
 	assert.Empty(t, srv.Remaining(), "the scenario must be played out")
 }
 

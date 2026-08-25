@@ -70,7 +70,7 @@ func approvalRequestMessages(req ai.Request) ([]api.Message, error) {
 	if req.Prompt.System != "" {
 		messages = append(messages, api.Message{Role: api.RoleSystem, Parts: []api.Part{{Type: api.PartText, Text: req.Prompt.System}}})
 	}
-	parts := make([]api.Part, 0, len(req.Prompt.Attachments)+1)
+	parts := make([]api.Part, 0, len(req.Prompt.Attachments))
 	if req.Prompt.User != "" {
 		parts = append(parts, api.Part{Type: api.PartText, Text: req.Prompt.User})
 	}

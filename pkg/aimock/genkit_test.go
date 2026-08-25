@@ -7,6 +7,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -60,16 +61,23 @@ func drain(t *testing.T, events <-chan api.Event) (text string, result *api.Even
 
 // servedPrompt returns the last user text the mock saw on path, failing when the
 // generation never reached it — i.e. when the client called the real API instead.
-func servedPrompt(t *testing.T, served []aimock.Recorded, path string) string {
+func servedPrompt(t *testing.T, requests func() []aimock.Recorded, path string) string {
 	t.Helper()
-	for i := len(served) - 1; i >= 0; i-- {
-		if served[i].Path == path {
-			require.Empty(t, served[i].Miss, "the mock answered %s with a miss", path)
-			return served[i].Request.LastUserText()
+	deadline := time.Now().Add(time.Second)
+	for {
+		served := requests()
+		for i := len(served) - 1; i >= 0; i-- {
+			if served[i].Path == path {
+				require.Empty(t, served[i].Miss, "the mock answered %s with a miss", path)
+				return served[i].Request.LastUserText()
+			}
 		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no request reached %s; the mock saw %+v", path, served)
+			return ""
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("no request reached %s; the mock saw %+v", path, served)
-	return ""
 }
 
 const capitalPrompt = "What is the capital of France?"
@@ -95,7 +103,7 @@ func TestAnthropicBackendHonoursAPIURL(t *testing.T) {
 
 	// The plugin lists models on init, so the generation is the last request, not
 	// the only one.
-	assert.Equal(t, capitalPrompt, servedPrompt(t, srv.Requests(), "/v1/messages"))
+	assert.Equal(t, capitalPrompt, servedPrompt(t, srv.Requests, "/v1/messages"))
 	assert.Empty(t, srv.Remaining(), "the scenario must be played out")
 }
 
@@ -113,7 +121,7 @@ func TestOpenAIBackendHonoursAPIURL(t *testing.T) {
 	assert.Equal(t, capitalAnswer, text)
 	require.NotNil(t, result, "the stream must end with a result event")
 
-	assert.Equal(t, capitalPrompt, servedPrompt(t, srv.Requests(), "/v1/responses"))
+	assert.Equal(t, capitalPrompt, servedPrompt(t, srv.Requests, "/v1/responses"))
 	assert.Empty(t, srv.Remaining(), "the scenario must be played out")
 }
 

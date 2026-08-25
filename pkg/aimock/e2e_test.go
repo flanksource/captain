@@ -61,9 +61,9 @@ func exportEnv(t *testing.T, env []string) {
 // carries want, and reports the whole served text. An agent CLI wraps the user's
 // question in system reminders and project context, so the served prompt is a
 // superset of what the caller asked for — never an exact match.
-func servedPromptContaining(t *testing.T, served []aimock.Recorded, path, want string) string {
+func servedPromptContaining(t *testing.T, requests func() []aimock.Recorded, path, want string) string {
 	t.Helper()
-	prompt := servedPrompt(t, served, path)
+	prompt := servedPrompt(t, requests, path)
 	require.Contains(t, prompt, want, "the mock must have seen the caller's question")
 	return prompt
 }

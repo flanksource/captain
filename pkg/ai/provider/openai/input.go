@@ -63,9 +63,6 @@ func (p *Provider) prepare(req ai.Request) (*requestState, error) {
 		state.params.Reasoning.Effort = responses.ReasoningEffort(value)
 		state.params.Reasoning.Summary = responses.ReasoningSummaryAuto
 	}
-	if len(definitions) > 0 && (p.model == "gpt-5.6" || strings.HasPrefix(p.model, "gpt-5.6-")) {
-		state.params.Reasoning.Effort = responses.ReasoningEffort("none")
-	}
 	if req.Budget.MaxTokens > 0 {
 		state.params.MaxOutputTokens = openaisdk.Int(int64(req.Budget.MaxTokens))
 	}
@@ -135,7 +132,7 @@ func toolSchema(definition api.ToolDefinition) map[string]any {
 }
 
 func promptContent(prompt api.Prompt) (responses.ResponseInputMessageContentListParam, error) {
-	content := make(responses.ResponseInputMessageContentListParam, 0, len(prompt.Attachments)+1)
+	content := make(responses.ResponseInputMessageContentListParam, 0, len(prompt.Attachments))
 	if prompt.User != "" {
 		content = append(content, responses.ResponseInputContentParamOfInputText(prompt.User))
 	}
