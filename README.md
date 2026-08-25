@@ -565,10 +565,12 @@ This repo uses `task` as the main task runner.
 
 ### Build
 
+Build the web UI before the Go binary so the generated JavaScript and CSS assets
+are included in the embedded filesystem:
+
 ```bash
+task www:build
 task build
-# or
-make build
 ```
 
 Binary output:

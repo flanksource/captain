@@ -2,7 +2,20 @@ packages:
   - .
 
 minimumReleaseAge: 10080
+minimumReleaseAgeExclude:
+  - '@flanksource/clicky-ui'
 trustPolicy: no-downgrade
+trustPolicyExclude:
+  # semver 6.3.1 has no provenance attestation, but earlier-published 7.5.4 does, so pnpm flags a trust downgrade.
+  #
+  # npm lets maintainers update older major lines after newer majors have been
+  # released, and each published version records provenance independently.
+  # semver 6.2.0 (July 2019) had no provenance; 7.5.4 (July 7, 2023) had SLSA
+  # provenance; then the v6 backport 6.3.1 (July 10, 2023) was published without
+  # it. pnpm compares that publication timeline rather than version order, so it
+  # reports 6.3.1 as a downgrade. Babel requires ^6.3.1, so exempt only this
+  # immutable release; integrity and trust checks remain enabled elsewhere.
+  - semver@6.3.1
 
 allowBuilds:
   esbuild: true
