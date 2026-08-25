@@ -1,11 +1,7 @@
-// Package genkit implements captain's API-backed providers (Anthropic, OpenAI,
-// Gemini) on top of Firebase Genkit, replacing the per-SDK providers. One
-// Provider type serves all three backends; the plugin and model ref are chosen
-// from ai.Config.Backend/Model.
-//
-// The exported signatures (New, the four interface methods) are FIXED —
-// pkg/ai/provider/init.go registers genkit.New for the API backends against
-// these signatures.
+// Package genkit implements Captain's Genkit-backed API providers. The runtime
+// registry uses it for Anthropic, Gemini, and DeepSeek; OpenAI compatibility is
+// retained for direct consumers while Captain's OpenAI runtime uses its official
+// SDK and Responses API adapter.
 package genkit
 
 import (

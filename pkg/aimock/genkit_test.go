@@ -113,9 +113,7 @@ func TestOpenAIBackendHonoursAPIURL(t *testing.T) {
 	assert.Equal(t, capitalAnswer, text)
 	require.NotNil(t, result, "the stream must end with a result event")
 
-	// genkit's openai plugin speaks Chat Completions; /v1/responses is codex's
-	// wire API, exercised by the codex-cli e2e instead.
-	assert.Equal(t, capitalPrompt, servedPrompt(t, srv.Requests(), "/v1/chat/completions"))
+	assert.Equal(t, capitalPrompt, servedPrompt(t, srv.Requests(), "/v1/responses"))
 	assert.Empty(t, srv.Remaining(), "the scenario must be played out")
 }
 

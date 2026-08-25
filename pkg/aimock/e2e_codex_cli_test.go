@@ -36,9 +36,8 @@ func TestE2ECodexCLI(t *testing.T) {
 
 	assert.Contains(t, report(events), capitalAnswer)
 
-	// codex speaks the Responses API; genkit's openai plugin speaks Chat
-	// Completions. Both are served from the same scenario section, and this is
-	// the only spec that exercises the former.
+	// Codex and Captain's direct OpenAI backend both speak the Responses API;
+	// this spec exercises the external Codex binary path.
 	servedPromptContaining(t, srv.Requests(), "/v1/responses", capitalPrompt)
 	assert.Empty(t, srv.Remaining(), "the scenario must be played out")
 }

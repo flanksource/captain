@@ -1,4 +1,4 @@
-// ABOUTME: A mock OpenAI API — the endpoint codex and captain's genkit openai/deepseek backends talk to.
+// ABOUTME: A mock OpenAI API — the endpoint codex and Captain's OpenAI-compatible API backends talk to.
 // ABOUTME: Standalone: Start it, export Env(), and a real `codex` binary runs against scripted replies.
 
 package openaimock
