@@ -10,6 +10,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/callertools"
+	"github.com/flanksource/captain/pkg/ai/observation"
 	"github.com/flanksource/captain/pkg/ai/provider/jsonrpc"
 	aitools "github.com/flanksource/captain/pkg/ai/tools"
 	"github.com/flanksource/captain/pkg/api"
@@ -361,6 +362,8 @@ func (c *CodexAppServer) startTurn(ctx context.Context, req ai.Request, threadID
 	if err != nil {
 		return "", err
 	}
+	effort, present := params["effort"].(string)
+	observation.RecordReasoningDispatch(ctx, "codex.turn/start", present, effort)
 	raw, err := rpc.Call(ctx, "turn/start", params)
 	if err != nil {
 		return "", err

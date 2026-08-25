@@ -12,6 +12,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	history "github.com/flanksource/captain/pkg/ai/history"
+	"github.com/flanksource/captain/pkg/ai/observation"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/claude"
 )
@@ -73,6 +74,8 @@ func (c *CodexCLI) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai
 		cleanup()
 		return nil, err
 	}
+	effort, present := codexCLIReasoningEffort(args)
+	observation.RecordReasoningDispatch(ctx, "codex.exec.start", present, effort)
 	out := make(chan ai.Event, 16)
 	go func() {
 		defer close(out)
@@ -194,6 +197,19 @@ func buildCodexCLIArgs(cfg codexCLIConfig, req ai.Request) ([]string, func(), er
 		args = append(args, "resume", req.SessionID)
 	}
 	return args, cleanup, nil
+}
+
+// codexCLIReasoningEffort reads the exact config pair passed in argv after the
+// process starts; it never falls back to the request that produced the argv.
+func codexCLIReasoningEffort(args []string) (string, bool) {
+	const key = "model_reasoning_effort="
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] != "-c" || !strings.HasPrefix(args[i+1], key) {
+			continue
+		}
+		return strings.Trim(strings.TrimPrefix(args[i+1], key), `"`), true
+	}
+	return "", false
 }
 
 func writeTempSchema(schema json.RawMessage) (string, error) {

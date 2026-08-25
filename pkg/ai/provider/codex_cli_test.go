@@ -39,6 +39,9 @@ func TestBuildCodexCLIArgs(t *testing.T) {
 	defer cleanup()
 	requireFlagValue(t, args, "-m", "gpt-5.5")
 	requireFlagValue(t, args, "-c", `model_reasoning_effort="ultra"`)
+	if effort, present := codexCLIReasoningEffort(args); !present || effort != "ultra" {
+		t.Fatalf("native reasoning effort = %q, %t; want ultra, true", effort, present)
+	}
 	requireFlagValue(t, args, "-C", cwd)
 	requireFlagValue(t, args, "--sandbox", "workspace-write")
 	requireHasArg(t, args, "--json")
