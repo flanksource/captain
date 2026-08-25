@@ -42,6 +42,26 @@ func (d *countingOpenAIDoer) Do(req *http.Request) (*http.Response, error) {
 	}, nil
 }
 
+func generateOpenAIThroughCaptainMiddleware(
+	ctx context.Context,
+	client *openaisdk.Client,
+	config map[string]any,
+) (*gkai.ModelResponse, error) {
+	hooks, err := captureGenkitRequests(ctx)
+	if err != nil {
+		return nil, err
+	}
+	params := &gkai.ModelParams{Request: &gkai.ModelRequest{
+		Config: config, Messages: []*gkai.Message{gkai.NewUserTextMessage("hello")},
+	}}
+	return hooks.WrapModel(ctx, params, func(ctx context.Context, params *gkai.ModelParams) (*gkai.ModelResponse, error) {
+		generator := compat_oai.NewModelGenerator(client, "gpt-5.6")
+		generator.WithConfig(params.Request.Config)
+		generator.WithMessages(params.Request.Messages)
+		return generator.Generate(ctx, params.Request, nil)
+	})
+}
+
 func TestOpenAIConversionFailureDoesNotRecordNativeDispatch(t *testing.T) {
 	recorder := observation.NewRecorder()
 	ctx := observation.ContextWithRecorder(context.Background(), recorder)
@@ -53,11 +73,10 @@ func TestOpenAIConversionFailureDoesNotRecordNativeDispatch(t *testing.T) {
 		option.WithMaxRetries(0),
 		option.WithMiddleware(observeOpenAIReasoningDispatch),
 	)
-	generator := compat_oai.NewModelGenerator(&client, "gpt-5.6")
-	generator.WithConfig(map[string]any{"reasoning_effort": "high", "temperature": math.Inf(1)})
-	generator.WithMessages([]*gkai.Message{gkai.NewUserTextMessage("hello")})
 
-	_, err := generator.Generate(ctx, &gkai.ModelRequest{}, nil)
+	_, err := generateOpenAIThroughCaptainMiddleware(ctx, &client, map[string]any{
+		"reasoning_effort": "high", "temperature": math.Inf(1),
+	})
 	if err == nil || !strings.Contains(err.Error(), "failed to convert config") {
 		t.Fatalf("Generate error = %v, want config conversion failure", err)
 	}
@@ -84,11 +103,10 @@ func TestOpenAINativeDispatchRecordsMarshaledReasoningEffort(t *testing.T) {
 		option.WithMaxRetries(0),
 		option.WithMiddleware(observeOpenAIReasoningDispatch),
 	)
-	generator := compat_oai.NewModelGenerator(&client, "gpt-5.6")
-	generator.WithConfig(map[string]any{"reasoning_effort": "high"})
-	generator.WithMessages([]*gkai.Message{gkai.NewUserTextMessage("hello")})
 
-	if _, err := generator.Generate(ctx, &gkai.ModelRequest{}, nil); err != nil {
+	if _, err := generateOpenAIThroughCaptainMiddleware(ctx, &client, map[string]any{
+		"reasoning_effort": "high",
+	}); err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
 	if doer.calls != 1 || doer.effort != "high" {
