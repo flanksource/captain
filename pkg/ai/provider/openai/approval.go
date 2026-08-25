@@ -19,10 +19,18 @@ const (
 )
 
 // approvalCheckpoint is the durable, stateless Responses input needed to resume
-// after Captain persists a tool-approval interruption.
+// after Captain persists a tool-approval interruption. Output items remain raw
+// so the SDK decodes them through its response union rather than its ambiguous
+// request union.
 type approvalCheckpoint struct {
-	Instructions string                       `json:"instructions,omitempty"`
-	Input        responses.ResponseInputParam `json:"input"`
+	Instructions string                   `json:"instructions,omitempty"`
+	Input        []approvalCheckpointItem `json:"input"`
+}
+
+// approvalCheckpointItem records which SDK union must decode each wire item.
+type approvalCheckpointItem struct {
+	Request json.RawMessage `json:"request,omitempty"`
+	Output  json.RawMessage `json:"output,omitempty"`
 }
 
 func approvalState(
@@ -111,10 +119,23 @@ func responseAssistantMessage(items []responses.ResponseOutputItemUnion) api.Mes
 
 // The checkpoint persists the complete native input, including encrypted
 // reasoning items, so an approval can resume without provider-side storage.
+// Response output stays tagged because message request and response variants
+// share type:"message" and cannot safely round-trip through the SDK param union.
 func encodeApprovalCheckpoint(instructions param.Opt[string], input responses.ResponseInputParam) (*api.ProviderCheckpoint, error) {
-	checkpoint := approvalCheckpoint{Input: input}
+	checkpoint := approvalCheckpoint{Input: make([]approvalCheckpointItem, len(input))}
 	if instructions.Valid() {
 		checkpoint.Instructions = instructions.Value
+	}
+	for i, item := range input {
+		payload, err := json.Marshal(item)
+		if err != nil {
+			return nil, fmt.Errorf("encode OpenAI approval checkpoint item %d: %w", i+1, err)
+		}
+		if item.OfOutputMessage != nil || item.OfFunctionCall != nil || item.OfReasoning != nil {
+			checkpoint.Input[i].Output = payload
+		} else {
+			checkpoint.Input[i].Request = payload
+		}
 	}
 	payload, err := json.Marshal(checkpoint)
 	if err != nil {
@@ -145,7 +166,30 @@ func decodeApprovalCheckpoint(resume *api.ToolApprovalResume) (param.Opt[string]
 	if decoded.Instructions != "" {
 		instructions = openaisdk.String(decoded.Instructions)
 	}
-	return instructions, decoded.Input, nil
+	input := make(responses.ResponseInputParam, 0, len(decoded.Input))
+	for i, item := range decoded.Input {
+		switch {
+		case len(item.Request) > 0 && len(item.Output) == 0:
+			var request responses.ResponseInputItemUnionParam
+			if err := json.Unmarshal(item.Request, &request); err != nil {
+				return param.Opt[string]{}, nil, fmt.Errorf("decode OpenAI approval checkpoint request item %d: %w", i+1, err)
+			}
+			input = append(input, request)
+		case len(item.Output) > 0 && len(item.Request) == 0:
+			var output responses.ResponseOutputItemUnion
+			if err := json.Unmarshal(item.Output, &output); err != nil {
+				return param.Opt[string]{}, nil, fmt.Errorf("decode OpenAI approval checkpoint output item %d: %w", i+1, err)
+			}
+			params, err := responseOutputParams([]responses.ResponseOutputItemUnion{output})
+			if err != nil {
+				return param.Opt[string]{}, nil, fmt.Errorf("decode OpenAI approval checkpoint output item %d: %w", i+1, err)
+			}
+			input = append(input, params[0])
+		default:
+			return param.Opt[string]{}, nil, fmt.Errorf("decode OpenAI approval checkpoint item %d: expected exactly one request or output payload", i+1)
+		}
+	}
+	return instructions, input, nil
 }
 
 // resumeCalls converts persisted decisions into function outputs. Only approved
@@ -208,13 +252,23 @@ func (p *Provider) resumeCalls(ctx context.Context, resume *api.ToolApprovalResu
 	return outputs, nil
 }
 
+// checkpointFunctionCalls reads the wire form because SDK response parameters
+// keep their values in override metadata rather than their exported fields.
 func checkpointFunctionCalls(input responses.ResponseInputParam) map[string]functionCall {
 	calls := map[string]functionCall{}
 	for _, item := range input {
-		if item.OfFunctionCall != nil {
-			call := item.OfFunctionCall
-			calls[call.CallID] = functionCall{ID: call.CallID, Name: call.Name, Arguments: call.Arguments}
+		if item.OfFunctionCall == nil {
+			continue
 		}
+		payload, err := json.Marshal(item)
+		if err != nil {
+			continue
+		}
+		var call responses.ResponseFunctionToolCall
+		if err := json.Unmarshal(payload, &call); err != nil || call.CallID == "" {
+			continue
+		}
+		calls[call.CallID] = functionCall{ID: call.CallID, Name: call.Name, Arguments: call.Arguments}
 	}
 	return calls
 }
