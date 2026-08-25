@@ -18,17 +18,19 @@ const maxEvents = 256
 type recorderContextKey struct{}
 
 type effortSample struct {
-	id      string
-	present bool
-	value   string
+	id         string
+	state      api.ObservationFactState
+	value      string
+	reasonCode string
 }
 
 type Snapshot struct {
-	Dispatch    []api.ObservationDispatchEvent
-	Permissions []api.ObservationPermissionEvent
-	Tools       []api.ObservationToolEvent
-	Effort      api.ObservationStringFact
-	Overflow    bool
+	Dispatch        []api.ObservationDispatchEvent
+	Permissions     []api.ObservationPermissionEvent
+	Tools           []api.ObservationToolEvent
+	Effort          api.ObservationStringFact
+	DispatchPartial bool
+	Overflow        bool
 }
 
 type Recorder struct {
@@ -74,11 +76,23 @@ func FromContext(ctx context.Context) *Recorder {
 // deliberately never retained.
 func RecordReasoningDispatch(ctx context.Context, boundary string, present bool, value string) {
 	if recorder := FromContext(ctx); recorder != nil {
-		recorder.recordReasoningDispatch(boundary, present, value)
+		state := api.ObservationFactUnset
+		if present {
+			state = api.ObservationFactKnown
+		}
+		recorder.recordReasoningDispatch(boundary, state, value, "")
 	}
 }
 
-func (r *Recorder) recordReasoningDispatch(boundary string, present bool, value string) {
+// RecordReasoningDispatchUnknown records that a provider-native dispatch
+// occurred but its reasoning control could not be inspected safely.
+func RecordReasoningDispatchUnknown(ctx context.Context, boundary, reasonCode string) {
+	if recorder := FromContext(ctx); recorder != nil {
+		recorder.recordReasoningDispatch(boundary, api.ObservationFactUnknown, "", reasonCode)
+	}
+}
+
+func (r *Recorder) recordReasoningDispatch(boundary string, state api.ObservationFactState, value, reasonCode string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if len(r.dispatch) >= maxEvents {
@@ -89,7 +103,9 @@ func (r *Recorder) recordReasoningDispatch(boundary string, present bool, value 
 	r.dispatch = append(r.dispatch, api.ObservationDispatchEvent{
 		ID: id, Attempt: len(r.dispatch) + 1, Boundary: safeName(boundary),
 	})
-	r.efforts = append(r.efforts, effortSample{id: id, present: present, value: safeName(value)})
+	r.efforts = append(r.efforts, effortSample{
+		id: id, state: state, value: safeName(value), reasonCode: safeName(reasonCode),
+	})
 }
 
 // PermissionBroker wraps the runtime permission authority and records its
@@ -196,12 +212,20 @@ func toolKey(toolCallID, tool string) string {
 func (r *Recorder) Snapshot() Snapshot {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	dispatchPartial := false
+	for _, sample := range r.efforts {
+		if sample.state == api.ObservationFactUnknown {
+			dispatchPartial = true
+			break
+		}
+	}
 	return Snapshot{
-		Dispatch:    append([]api.ObservationDispatchEvent(nil), r.dispatch...),
-		Permissions: append([]api.ObservationPermissionEvent(nil), r.permissions...),
-		Tools:       append([]api.ObservationToolEvent(nil), r.tools...),
-		Effort:      observedEffort(r.efforts, r.overflow),
-		Overflow:    r.overflow,
+		Dispatch:        append([]api.ObservationDispatchEvent(nil), r.dispatch...),
+		Permissions:     append([]api.ObservationPermissionEvent(nil), r.permissions...),
+		Tools:           append([]api.ObservationToolEvent(nil), r.tools...),
+		Effort:          observedEffort(r.efforts, r.overflow),
+		DispatchPartial: dispatchPartial,
+		Overflow:        r.overflow,
 	}
 }
 
@@ -215,16 +239,21 @@ func observedEffort(samples []effortSample, overflow bool) api.ObservationString
 	refs := make([]string, len(samples))
 	for i := range samples {
 		refs[i] = samples[i].id
+		if samples[i].state == api.ObservationFactUnknown {
+			return api.ObservationStringFact{
+				State: api.ObservationFactUnknown, ReasonCode: samples[i].reasonCode, EvidenceRefs: refs[:i+1],
+			}
+		}
 	}
 	first := samples[0]
 	for _, sample := range samples[1:] {
-		if sample.present != first.present || sample.value != first.value {
+		if sample.state != first.state || sample.value != first.value {
 			return api.ObservationStringFact{
 				State: api.ObservationFactUnknown, ReasonCode: "inconsistent_dispatch_values", EvidenceRefs: refs,
 			}
 		}
 	}
-	if !first.present {
+	if first.state == api.ObservationFactUnset {
 		return api.ObservationStringFact{State: api.ObservationFactUnset, EvidenceRefs: refs}
 	}
 	value := first.value

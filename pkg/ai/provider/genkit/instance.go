@@ -2,10 +2,15 @@ package genkit
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/ai/observation"
 
 	"github.com/firebase/genkit/go/core/api"
 	gk "github.com/firebase/genkit/go/genkit"
@@ -19,6 +24,11 @@ import (
 // deepSeekBaseURL is DeepSeek's OpenAI-compatible endpoint. The compat_oai
 // client appends /chat/completions, which DeepSeek serves at this base.
 const deepSeekBaseURL = "https://api.deepseek.com"
+
+const (
+	openAIChatCompletionsBoundary = "openai.chat.completions.create"
+	maxObservedOpenAIRequestBytes = 1 << 20
+)
 
 // instanceKey identifies a cached genkit instance. genkit.Init is heavy and
 // registers a key-scoped plugin, so one instance is reused per
@@ -76,6 +86,7 @@ func pluginFor(backend ai.Backend, apiKey, baseURL string) (api.Plugin, error) {
 			// openai.OpenAI has no BaseURL field; the endpoint is a client option.
 			plugin.Opts = append(plugin.Opts, option.WithBaseURL(baseURL))
 		}
+		plugin.Opts = append(plugin.Opts, option.WithMiddleware(observeOpenAIReasoningDispatch))
 		return plugin, nil
 	case ai.BackendGemini:
 		if baseURL != "" {
@@ -96,4 +107,56 @@ func pluginFor(backend ai.Backend, apiKey, baseURL string) (api.Plugin, error) {
 	default:
 		return nil, fmt.Errorf("genkit provider: unsupported backend %q (supported: anthropic, openai, gemini, deepseek)", backend)
 	}
+}
+
+// observeOpenAIReasoningDispatch records the fully marshaled SDK request at the
+// transport boundary. It never records Genkit's pre-conversion configuration or
+// retains the request body, so failed config conversion cannot become evidence.
+func observeOpenAIReasoningDispatch(req *http.Request, next option.MiddlewareNext) (*http.Response, error) {
+	if observation.FromContext(req.Context()) == nil ||
+		req.Method != http.MethodPost ||
+		!strings.HasSuffix(strings.TrimSuffix(req.URL.Path, "/"), "/chat/completions") {
+		return next(req)
+	}
+	recordOpenAIReasoningDispatch(req)
+	return next(req)
+}
+
+func recordOpenAIReasoningDispatch(req *http.Request) {
+	if req.GetBody == nil {
+		observation.RecordReasoningDispatchUnknown(req.Context(), openAIChatCompletionsBoundary, "native_request_body_unavailable")
+		return
+	}
+	body, err := req.GetBody()
+	if err != nil {
+		observation.RecordReasoningDispatchUnknown(req.Context(), openAIChatCompletionsBoundary, "native_request_body_unreadable")
+		return
+	}
+	defer body.Close()
+
+	data, err := io.ReadAll(io.LimitReader(body, maxObservedOpenAIRequestBytes+1))
+	if err != nil {
+		observation.RecordReasoningDispatchUnknown(req.Context(), openAIChatCompletionsBoundary, "native_request_body_unreadable")
+		return
+	}
+	if len(data) > maxObservedOpenAIRequestBytes {
+		observation.RecordReasoningDispatchUnknown(req.Context(), openAIChatCompletionsBoundary, "native_request_body_too_large")
+		return
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		observation.RecordReasoningDispatchUnknown(req.Context(), openAIChatCompletionsBoundary, "native_request_body_invalid")
+		return
+	}
+	raw, present := fields["reasoning_effort"]
+	if !present {
+		observation.RecordReasoningDispatch(req.Context(), openAIChatCompletionsBoundary, false, "")
+		return
+	}
+	var effort string
+	if err := json.Unmarshal(raw, &effort); err != nil {
+		observation.RecordReasoningDispatchUnknown(req.Context(), openAIChatCompletionsBoundary, "native_reasoning_effort_invalid")
+		return
+	}
+	observation.RecordReasoningDispatch(req.Context(), openAIChatCompletionsBoundary, true, effort)
 }

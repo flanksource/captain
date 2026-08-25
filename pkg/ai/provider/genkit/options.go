@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/flanksource/captain/pkg/ai"
-	"github.com/flanksource/captain/pkg/ai/observation"
 	captools "github.com/flanksource/captain/pkg/ai/tools"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/api/registry"
@@ -52,7 +51,7 @@ func generateOptions(p *Provider, req ai.Request, stream gkai.ModelStreamCallbac
 	}
 	opts := []gkai.GenerateOption{
 		gkai.WithModelName(p.modelRef),
-		gkai.WithUse(gkai.MiddlewareFunc(p.captureGenkitRequests)),
+		gkai.WithUse(gkai.MiddlewareFunc(captureGenkitRequests)),
 	}
 	toolOptions, err := p.toolOptions(captools.ResolveOptions{Preferences: req.ToolPreferences, Policy: req.ToolPolicy}, emit)
 	if err != nil {
@@ -149,14 +148,9 @@ func generateOptions(p *Provider, req ai.Request, stream gkai.ModelStreamCallbac
 
 type genkitToolRequestContextKey struct{}
 
-func (p *Provider) captureGenkitRequests(context.Context) (*gkai.Hooks, error) {
+func captureGenkitRequests(context.Context) (*gkai.Hooks, error) {
 	return &gkai.Hooks{
 		WrapModel: func(ctx context.Context, params *gkai.ModelParams, next gkai.ModelNext) (*gkai.ModelResponse, error) {
-			if p.backend == ai.BackendOpenAI && params != nil && params.Request != nil {
-				config, _ := params.Request.Config.(map[string]any)
-				effort, present := config["reasoning_effort"].(string)
-				observation.RecordReasoningDispatch(ctx, "openai.chat.completions.create", present, effort)
-			}
 			response, err := next(ctx, params)
 			if response != nil {
 				response.Request = &gkai.ModelRequest{Messages: cloneCheckpointMessages(params.Request.Messages)}

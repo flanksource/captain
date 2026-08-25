@@ -325,6 +325,9 @@ func applyObservationSnapshot(result *api.RuntimeObservation, snapshot observati
 		result.Capture.Permissions.Status = partialIfComplete(result.Capture.Permissions.Status)
 		result.Capture.Tools.Status = partialIfComplete(result.Capture.Tools.Status)
 	}
+	if snapshot.DispatchPartial {
+		result.Capture.Dispatch.Status = partialIfComplete(result.Capture.Dispatch.Status)
+	}
 	if len(snapshot.Dispatch) > 0 {
 		result.Controls.ReasoningEffort.Observed = snapshot.Effort
 	} else {

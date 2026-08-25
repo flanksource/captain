@@ -39,13 +39,13 @@ func TestPluginForOpenAICarriesBaseURLAsAnOption(t *testing.T) {
 	require.NoError(t, err)
 	overridden, ok := plugin.(*openai.OpenAI)
 	require.True(t, ok)
-	assert.Len(t, overridden.Opts, 1, "an overridden endpoint adds exactly one request option")
+	assert.Len(t, overridden.Opts, 2, "the endpoint override and observation middleware are both configured")
 
 	plugin, err = pluginFor(ai.BackendOpenAI, "k", "")
 	require.NoError(t, err)
 	plain, ok := plugin.(*openai.OpenAI)
 	require.True(t, ok)
-	assert.Empty(t, plain.Opts, "no override must leave the client untouched")
+	assert.Len(t, plain.Opts, 1, "the observation middleware is configured without an endpoint override")
 }
 
 func TestPluginForDeepSeekOverridesItsHardcodedEndpoint(t *testing.T) {

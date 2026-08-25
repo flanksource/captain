@@ -32,6 +32,20 @@ func TestRecorderCapturesNativeEffortWithoutConfigurationFallback(t *testing.T) 
 	if missing.State != api.ObservationFactUnknown {
 		t.Fatalf("missing instrumentation = %#v, want unknown", missing)
 	}
+
+	unreadable := NewRecorder()
+	RecordReasoningDispatchUnknown(
+		ContextWithRecorder(context.Background(), unreadable),
+		"openai.chat.completions.create",
+		"native_request_body_unreadable",
+	)
+	unreadableSnapshot := unreadable.Snapshot()
+	if got := unreadableSnapshot.Effort; got.State != api.ObservationFactUnknown || got.ReasonCode != "native_request_body_unreadable" {
+		t.Fatalf("unreadable native effort = %#v, want unknown with reason", got)
+	}
+	if !unreadableSnapshot.DispatchPartial {
+		t.Fatal("unreadable native effort did not mark dispatch capture partial")
+	}
 }
 
 func TestRecorderCorrelatesDeniedPermissionWithUnstartedTool(t *testing.T) {
