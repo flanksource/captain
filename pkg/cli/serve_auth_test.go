@@ -228,22 +228,25 @@ func TestAStoreOutageIsNotAnAuthenticationFailure(t *testing.T) {
 }
 
 // The SPA has nowhere to put a bearer token, so the pages a browser loads stay
-// open; only the two subtrees that act on the host are protected.
-func TestOnlyTheCommandAndGitSubtreesAreProtected(t *testing.T) {
+// open; the API and git subtrees that act on the host are protected.
+func TestTheAPIAndGitSubtreesAreProtected(t *testing.T) {
 	fixture := newAuthFixture(t, captaintoken.ScopeAPI)
 
-	for _, path := range []string{"/", "/health", "/assets/index.js", "/api/captain/prompt/runs", "/api/chat"} {
+	for _, path := range []string{"/", "/health", "/assets/index.js"} {
 		recorder := fixture.call(http.MethodGet, path, remoteAddr, nil)
 		assert.Equalf(t, http.StatusOK, recorder.Code, "%s should not require a token", path)
 	}
 
-	for _, path := range []string{"/api/v1", "/api/v1/sessions", "/git/mailboxes/aaa.git/info/refs"} {
+	for _, path := range []string{
+		"/api/openapi.json", "/api/v1/sessions", "/api/captain/prompt/runs", "/api/chat",
+		"/api/attachments/aaa", "/git/mailboxes/aaa.git/info/refs",
+	} {
 		recorder := fixture.call(http.MethodGet, path, remoteAddr, nil)
 		assert.Equalf(t, http.StatusUnauthorized, recorder.Code, "%s must require a token", path)
 	}
 
 	// A path that merely starts with the same letters is not the API subtree.
-	recorder := fixture.call(http.MethodGet, "/api/v1beta/sessions", remoteAddr, nil)
+	recorder := fixture.call(http.MethodGet, "/apiary", remoteAddr, nil)
 	assert.Equal(t, http.StatusOK, recorder.Code)
 }
 
