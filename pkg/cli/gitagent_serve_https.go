@@ -16,6 +16,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -34,6 +35,7 @@ type sidecarHTTPSPlan struct {
 	root      string
 	keysDir   string
 	advertise string
+	backend   string
 	certPath  string
 	keyPath   string
 }
@@ -54,6 +56,10 @@ func serveSidecarHTTPS(ctx context.Context, plan sidecarHTTPSPlan) error {
 			"rerun with --token-file to enroll", err)
 	}
 	identify := sidecarIdentity(dispatch)
+	runtime, err := hookRuntimeFromConfig(plan.backend)
+	if err != nil {
+		return err
+	}
 	handler, err := gitagent.NewHTTPHandler(gitagent.HTTPServerConfig{
 		Root:     plan.root,
 		Role:     gitagent.RoleSidecar,
@@ -69,6 +75,45 @@ func serveSidecarHTTPS(ctx context.Context, plan sidecarHTTPSPlan) error {
 	mux := http.NewServeMux()
 	mux.Handle(gitagent.GitHTTPPrefix, handler)
 	mux.Handle("POST "+gitagent.AgentWhoamiPath, agentWhoamiHandler(identify, RunWhoami))
+	callerTools := unsupportedCallerToolProxy(identify,
+		"delegated caller tools require this sidecar to enroll with an HTTPS supervisor")
+	var callerToolServer *http.Server
+	if gitagent.EndpointScheme(runtime.Relay.URL) == "https" && strings.TrimSpace(runtime.Agent) == "" {
+		callerTools = unsupportedCallerToolProxy(identify,
+			"delegated caller tools require re-enrollment so this sidecar has a bound agent identity")
+	} else if gitagent.EndpointScheme(runtime.Relay.URL) == "https" {
+		// The model reaches its co-located sidecar over loopback HTTP, while the
+		// cross-host proxy leg stays pinned HTTPS. This avoids teaching every MCP
+		// client how to trust the sidecar's default self-signed Git certificate.
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			return fmt.Errorf("listen for delegated caller tools: %w", err)
+		}
+		callerTools, err = gitagent.NewCallerToolProxy(gitagent.CallerToolProxyConfig{
+			Root: filepath.Join(plan.root, SidecarRepoName), EndpointURL: "http://" + listener.Addr().String(),
+			SupervisorURL: runtime.Relay.URL, SupervisorCAPath: runtime.Relay.CAPath,
+			SupervisorPublicKey: runtime.Relay.PinnedPublicKey,
+			Agent:               runtime.Agent,
+			DefaultRunner:       strings.TrimSpace(runtime.AgentCommand) == "",
+			IdentifySupervisor:  identify, Log: log.Infof,
+		})
+		if err != nil {
+			_ = listener.Close()
+			return err
+		}
+		callerToolMux := http.NewServeMux()
+		callerToolMux.Handle(gitagent.CallerToolPath+"/", callerTools)
+		callerToolServer = &http.Server{
+			Handler: callerToolMux, ReadHeaderTimeout: 5 * time.Second,
+		}
+		go func() {
+			if err := callerToolServer.Serve(listener); err != nil && err != http.ErrServerClosed {
+				log.Errorf("delegated caller-tool listener stopped: %v", err)
+			}
+		}()
+	}
+	mux.Handle(gitagent.CallerToolPath, callerTools)
+	mux.Handle(gitagent.CallerToolPath+"/", callerTools)
 
 	server := &http.Server{
 		Addr:      plan.listen,
@@ -87,11 +132,32 @@ func serveSidecarHTTPS(ctx context.Context, plan sidecarHTTPSPlan) error {
 	go func() {
 		<-ctx.Done()
 		_ = server.Close()
+		if callerToolServer != nil {
+			_ = callerToolServer.Close()
+		}
+	}()
+	defer func() {
+		if callerToolServer != nil {
+			_ = callerToolServer.Close()
+		}
 	}()
 	if err := server.ListenAndServeTLS("", ""); err != nil && ctx.Err() == nil {
 		return err
 	}
 	return nil
+}
+
+func unsupportedCallerToolProxy(
+	identify func(*http.Request) (string, error),
+	reason string,
+) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if _, err := identify(request); err != nil {
+			http.Error(w, "caller-tool control requires the enrolled supervisor credential", http.StatusForbidden)
+			return
+		}
+		http.Error(w, reason, http.StatusConflict)
+	})
 }
 
 func sidecarTLSConfig(plan sidecarHTTPSPlan, host string) (*gitagent.TLSCredential, *tls.Config, error) {

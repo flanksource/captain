@@ -231,6 +231,13 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 	config.SessionID = spec.SessionID
 	config.CaptainSessionID = chat.ThreadID
 	config.Tools = definitions
+	if config.SandboxSelection != nil && spec.Sandbox != nil {
+		selection := *config.SandboxSelection
+		selection.Agent = spec.Sandbox.Agent
+		selection.CallerTools = append([]string(nil), spec.Sandbox.CallerTools...)
+		selection.Policy = spec.Sandbox.Policy
+		config.SandboxSelection = &selection
+	}
 	config, err = s.prepareProviderConfig(request.Context(), config)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)

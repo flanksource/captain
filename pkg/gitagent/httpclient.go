@@ -5,12 +5,52 @@
 package gitagent
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"net/http"
 	"net/url"
+	"os"
 	"strings"
 
 	"github.com/flanksource/clicky/text"
 )
+
+// HTTPSClient builds a Go HTTP client with the same optional trust anchor and
+// public-key pin used by Git-agent relay pushes.
+func HTTPSClient(caPath, pinnedPublicKey string) (*http.Client, error) {
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
+	if strings.TrimSpace(caPath) != "" {
+		roots, err := x509.SystemCertPool()
+		if err != nil || roots == nil {
+			roots = x509.NewCertPool()
+		}
+		pem, err := os.ReadFile(caPath)
+		if err != nil {
+			return nil, fmt.Errorf("read HTTPS CA certificate: %w", err)
+		}
+		if !roots.AppendCertsFromPEM(pem) {
+			return nil, fmt.Errorf("HTTPS CA file %s contains no certificates", caPath)
+		}
+		tlsConfig.RootCAs = roots
+	}
+	if pin := strings.TrimSpace(pinnedPublicKey); pin != "" {
+		tlsConfig.VerifyConnection = func(state tls.ConnectionState) error {
+			if len(state.PeerCertificates) == 0 {
+				return fmt.Errorf("HTTPS endpoint presented no certificate")
+			}
+			actual, err := publicKeyPin(state.PeerCertificates[0])
+			if err != nil {
+				return err
+			}
+			if actual != pin {
+				return fmt.Errorf("HTTPS endpoint public key %s does not match pinned %s", actual, pin)
+			}
+			return nil
+		}
+	}
+	return &http.Client{Transport: &http.Transport{TLSClientConfig: tlsConfig}}, nil
+}
 
 // TransportTarget is everything a push needs to reach an endpoint. The URL's
 // scheme selects the transport; the other transport's fields are ignored.

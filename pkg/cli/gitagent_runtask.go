@@ -61,9 +61,19 @@ func RunGitAgentRunTask(ctx context.Context, opts GitAgentRunTaskOptions) (_ any
 	if err != nil {
 		return nil, err
 	}
+	var callerTools *api.CallerToolEndpoint
+	if payload.CallerTools {
+		if !api.SupportsCallerTools(api.Backend(payload.Backend)) {
+			return nil, fmt.Errorf("remote backend %q does not support delegated caller tools", payload.Backend)
+		}
+		callerTools, err = gitagent.LoadCallerToolEndpoint(opts.Repo, opts.Task)
+		if err != nil {
+			return nil, fmt.Errorf("load delegated caller tools: %w", err)
+		}
+	}
 	identity := ai.LogIdentity(api.Backend(payload.Backend), payload.Model, payload.Effort)
 	log.Infof("git-agent task %s starting %s in %s", opts.Task, identity, worktree)
-	if err := runTaskPrompt(ctx, worktree, payload); err != nil {
+	if err := runTaskPrompt(ctx, worktree, payload, callerTools); err != nil {
 		return nil, fmt.Errorf("running the dispatched prompt: %w", err)
 	}
 	log.Infof("git-agent task %s agent finished after %s; preparing submission", opts.Task, time.Since(started).Round(time.Millisecond))
@@ -79,7 +89,16 @@ func RunGitAgentRunTask(ctx context.Context, opts GitAgentRunTaskOptions) (_ any
 // runTaskPrompt executes the dispatched prompt in the worktree. The sandbox is
 // pinned to none: this process IS the relocated run, so resolving a relocating
 // sandbox here would dispatch the task to another agent, and so on (H15).
-func runTaskPrompt(ctx context.Context, worktree string, payload gitagent.TaskPayload) error {
+func runTaskPrompt(
+	ctx context.Context,
+	worktree string,
+	payload gitagent.TaskPayload,
+	callerToolEndpoints ...*api.CallerToolEndpoint,
+) error {
+	var callerTools *api.CallerToolEndpoint
+	if len(callerToolEndpoints) > 0 {
+		callerTools = callerToolEndpoints[0]
+	}
 	providerOpts := AIProviderOptions{
 		ModelFlags: aiflags.ModelFlags{Model: payload.Model, Backend: payload.Backend, Effort: string(payload.Effort)},
 		Sandbox:    "none",
@@ -88,6 +107,7 @@ func runTaskPrompt(ctx context.Context, worktree string, payload gitagent.TaskPa
 	if err != nil {
 		return err
 	}
+	cfg.CallerTools = callerTools
 	var req ai.Request
 	req.Prompt.User = payload.Prompt
 	req.Prompt.System = payload.System

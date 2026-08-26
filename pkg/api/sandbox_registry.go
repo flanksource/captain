@@ -22,8 +22,14 @@ type SandboxConfig struct {
 	// Agent pins one enrolled agent of a git-agent backend, from
 	// SandboxRef.Agent. Empty lets the adapter choose.
 	Agent string `json:"agent,omitempty" yaml:"agent,omitempty"`
+	// CallerTools is the exact per-run remote delegation allowlist copied from
+	// SandboxRef. An empty list preserves the no-delegation behavior.
+	CallerTools []string `json:"callerTools,omitempty" yaml:"callerTools,omitempty"`
 	// Policy is the per-run override from SandboxRef.Policy.
 	Policy *SandboxPolicy `json:"policy,omitempty" yaml:"policy,omitempty"`
+	// CallerToolEndpoint is runtime-only authority handed to a remote executor. It is
+	// excluded from resolved specs because its headers contain a live capability.
+	CallerToolEndpoint *CallerToolEndpoint `json:"-" yaml:"-"`
 }
 
 // Options keys shared between the git-agent hook resolver and the adapters it

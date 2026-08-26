@@ -28,7 +28,7 @@ const gitPathPrefix = gitagent.GitHTTPPrefix
 type tokenContextKey struct{}
 
 // TokenFromContext returns the credential a request authenticated with. ok is
-// false for a loopback request, which carries none — a handler that needs an
+// false for an unauthenticated loopback request — a handler that needs an
 // identity must say so rather than assume one.
 func TokenFromContext(ctx context.Context) (captaintoken.Record, bool) {
 	record, ok := ctx.Value(tokenContextKey{}).(captaintoken.Record)
@@ -47,18 +47,18 @@ type TokenAuthConfig struct {
 // TokenAuthMiddleware requires a captain token for requests that arrive from
 // off this machine.
 //
-// Loopback is exempt, so the local webapp, CLI and hook subprocesses are
-// untouched. That is not just convenience: an EventSource stream cannot set an
-// Authorization header, so requiring one would break the UI for the ordinary
-// local case. The exemption rests entirely on RemoteAddr, which is why a
-// request carrying proxy forwarding headers is treated as remote wherever it
-// connected from — otherwise anything behind a same-host reverse proxy would
-// inherit it.
+// Loopback requests without a credential are exempt, so the local webapp, CLI
+// and hook subprocesses are untouched. A loopback caller that presents a bearer
+// is verified so identity-bearing protocols such as Git-agent enrollment work
+// when both processes share a host. The exemption rests entirely on RemoteAddr,
+// which is why a request carrying proxy forwarding headers is treated as remote
+// wherever it connected from — otherwise anything behind a same-host reverse
+// proxy would inherit it.
 func TokenAuthMiddleware(config TokenAuthConfig) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			scope, protected := requiredScope(r.URL.Path)
-			if !protected || isLoopbackRequest(r) {
+			if !protected || (isLoopbackRequest(r) && strings.TrimSpace(r.Header.Get("Authorization")) == "") {
 				next.ServeHTTP(w, r)
 				return
 			}

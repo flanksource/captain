@@ -196,6 +196,7 @@ func overlayCLI(base ai.Request, baseCfg ai.Config, o AIPromptOptions) (ai.Reque
 		ref := api.SandboxRef{Backend: selector}
 		if base.Sandbox != nil {
 			ref.Agent = base.Sandbox.Agent
+			ref.CallerTools = base.Sandbox.CallerTools
 			ref.Policy = base.Sandbox.Policy
 		}
 		req.Sandbox = &ref
