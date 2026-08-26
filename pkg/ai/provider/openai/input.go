@@ -150,11 +150,16 @@ func conversationInput(messages []api.Message) (responses.ResponseInputParam, er
 	var input responses.ResponseInputParam
 	for i, message := range messages {
 		content := responses.ResponseInputMessageContentListParam{}
+		var assistantText strings.Builder
 		var calls []responses.ResponseInputItemUnionParam
 		for j, part := range message.Parts {
 			switch part.Type {
 			case api.PartText:
-				content = append(content, responses.ResponseInputContentParamOfInputText(part.Text))
+				if message.Role == api.RoleAssistant {
+					assistantText.WriteString(part.Text)
+				} else {
+					content = append(content, responses.ResponseInputContentParamOfInputText(part.Text))
+				}
 			case api.PartReasoning:
 				// Provider summaries cannot be replayed as trusted reasoning without
 				// the Responses API's encrypted reasoning item.
@@ -174,6 +179,9 @@ func conversationInput(messages []api.Message) (responses.ResponseInputParam, er
 				))
 			}
 		}
+		if assistantText.Len() > 0 {
+			input = append(input, messageInput(assistantText.String(), responses.EasyInputMessageRoleAssistant))
+		}
 		if len(content) > 0 {
 			input = append(input, messageInput(content, responseRole(message.Role)))
 		}
@@ -184,7 +192,7 @@ func conversationInput(messages []api.Message) (responses.ResponseInputParam, er
 
 // messageInput writes the otherwise optional type discriminator because the
 // durable approval checkpoint must be able to decode this SDK union later.
-func messageInput(content responses.ResponseInputMessageContentListParam, role responses.EasyInputMessageRole) responses.ResponseInputItemUnionParam {
+func messageInput[T string | responses.ResponseInputMessageContentListParam](content T, role responses.EasyInputMessageRole) responses.ResponseInputItemUnionParam {
 	item := responses.ResponseInputItemParamOfMessage(content, role)
 	item.OfMessage.Type = responses.EasyInputMessageTypeMessage
 	return item
