@@ -20,6 +20,54 @@ func TestCodexAppServerLifecycle(t *testing.T) {
 }
 
 var _ = Describe("Codex app-server tool lifecycle", func() {
+	It("emits every operation from a dynamic exec call before its correlated result", func() {
+		const (
+			sessionID = "thread-dynamic"
+			callID    = "call-dynamic"
+			workdir   = "/repo"
+			filePath  = "pkg/cli/gitagent_e2e_test.go"
+		)
+		script := `await tools.exec_command({cmd: "go test ./...", workdir: "/repo"});
+await tools.apply_patch({input: "*** Begin Patch\n*** Update File: pkg/cli/gitagent_e2e_test.go\n@@\n-old\n+new\n*** End Patch"});`
+		item := map[string]any{
+			"id": callID, "type": "dynamicToolCall", "tool": "exec",
+			"arguments": script, "cwd": workdir, "status": "inProgress",
+		}
+		started, err := json.Marshal(map[string]any{"threadId": sessionID, "item": item})
+		Expect(err).NotTo(HaveOccurred())
+
+		client, turn := activeGinkgoTurn()
+		client.handleNotification("item/started", started)
+		item["status"] = "completed"
+		item["success"] = true
+		completed, err := json.Marshal(map[string]any{"threadId": sessionID, "item": item})
+		Expect(err).NotTo(HaveOccurred())
+		client.handleNotification("item/completed", completed)
+
+		events := drainEvents(turn)
+		Expect(events).To(HaveLen(3))
+		Expect(events[0]).To(MatchFields(IgnoreExtras, Fields{
+			"Kind":       Equal(ai.EventToolUse),
+			"Tool":       Equal("Bash"),
+			"Input":      Equal(map[string]any{"command": "go test ./...", "input": script}),
+			"ToolCallID": Equal(callID),
+			"SessionID":  Equal(sessionID),
+		}))
+		Expect(events[1]).To(MatchFields(IgnoreExtras, Fields{
+			"Kind":       Equal(ai.EventToolUse),
+			"Tool":       Equal("Edit"),
+			"Input":      HaveKeyWithValue("file_path", filePath),
+			"ToolCallID": Equal(callID + "#1"),
+			"SessionID":  Equal(sessionID),
+		}))
+		Expect(events[2]).To(MatchFields(IgnoreExtras, Fields{
+			"Kind":       Equal(ai.EventToolResult),
+			"ToolCallID": Equal(callID),
+			"SessionID":  Equal(sessionID),
+			"Success":    BeTrue(),
+		}))
+	})
+
 	It("emits one command use and one complete correlated result", func() {
 		client, turn := activeGinkgoTurn()
 		client.handleNotification("item/started", json.RawMessage(`{

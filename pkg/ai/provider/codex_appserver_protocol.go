@@ -123,57 +123,57 @@ func (n appServerNotif) foldUsage(usage *ai.Usage) {
 
 // --- notification mapping --------------------------------------------------
 
-// mapAppServerNotification maps one notification into an ai.Event. Pure: it
-// folds thread/tokenUsage/updated into usage (ok=false) and reads the folded
-// usage back out on turn/completed.
+// mapAppServerNotification maps one notification into its ai.Events. Pure: it
+// folds thread/tokenUsage/updated into usage without emitting and reads the
+// folded usage back out on turn/completed.
 type appServerEventContext struct {
 	Model      string
 	Usage      *ai.Usage
 	ToolOutput string
 }
 
-func mapAppServerNotification(method string, params json.RawMessage, ctx appServerEventContext) (ai.Event, bool) {
+func mapAppServerNotification(method string, params json.RawMessage, ctx appServerEventContext) []ai.Event {
 	n := parseAppServerNotif(params)
 	switch method {
 	case "thread/started":
 		sid := n.threadID()
 		out := ai.Event{Kind: ai.EventSystem, Tool: "SessionInit", SessionID: sid, Model: ctx.Model}
 		out.Raw = codexSessionToolUse(sid, ctx.Model)
-		return out, true
+		return []ai.Event{out}
 
 	case "item/agentMessage/delta":
 		if n.Delta == "" {
-			return ai.Event{}, false
+			return nil
 		}
-		return ai.Event{Kind: ai.EventText, Text: n.Delta, SessionID: n.threadID(), Model: ctx.Model}, true
+		return []ai.Event{{Kind: ai.EventText, Text: n.Delta, SessionID: n.threadID(), Model: ctx.Model}}
 
 	case "item/reasoning/textDelta", "item/reasoning/summaryTextDelta":
 		if n.Delta == "" {
-			return ai.Event{}, false
+			return nil
 		}
-		return ai.Event{Kind: ai.EventThinking, Text: n.Delta, SessionID: n.threadID(), Model: ctx.Model}, true
+		return []ai.Event{{Kind: ai.EventThinking, Text: n.Delta, SessionID: n.threadID(), Model: ctx.Model}}
 
 	case "item/commandExecution/outputDelta":
-		return ai.Event{}, false
+		return nil
 
 	case "item/started", "item/completed":
 		return mapAppServerItem(method, n.Item, n.threadID(), ctx)
 
 	case "thread/tokenUsage/updated":
 		n.foldUsage(ctx.Usage)
-		return ai.Event{}, false
+		return nil
 
 	case "turn/completed":
 		if n.Turn != nil {
 			switch n.Turn.Status {
 			case "interrupted":
-				return ai.Event{}, false
+				return nil
 			case "failed":
 				message := "codex turn failed"
 				if n.Turn.Error != nil {
 					message = firstNonEmpty(n.Turn.Error.Message, n.Turn.Error.AdditionalDetails, message)
 				}
-				return ai.Event{Kind: ai.EventError, Error: extractCodexErrorText(message), SessionID: n.threadID(), Model: ctx.Model}, true
+				return []ai.Event{{Kind: ai.EventError, Error: extractCodexErrorText(message), SessionID: n.threadID(), Model: ctx.Model}}
 			}
 		}
 		out := ai.Event{Kind: ai.EventResult, Tool: "Result", SessionID: n.threadID(), Model: ctx.Model, Success: true}
@@ -182,59 +182,72 @@ func mapAppServerNotification(method string, params json.RawMessage, ctx appServ
 			out.Usage = &u
 		}
 		out.Raw = codexResultToolUse(out, n.ThreadID)
-		return out, true
+		return []ai.Event{out}
 
 	case "turn/failed", "error":
-		return ai.Event{Kind: ai.EventError, Error: extractCodexErrorText(n.errorText()), SessionID: n.threadID(), Model: ctx.Model}, true
+		return []ai.Event{{Kind: ai.EventError, Error: extractCodexErrorText(n.errorText()), SessionID: n.threadID(), Model: ctx.Model}}
 	}
-	return ai.Event{}, false
+	return nil
 }
 
 // mapAppServerItem dispatches item/started and item/completed on the item type:
 // agent messages become text, command/tool/file items become correlated use and
 // result events, and reasoning/user/hook items are dropped.
-func mapAppServerItem(method string, it *appServerItemBody, sessionID string, ctx appServerEventContext) (ai.Event, bool) {
+func mapAppServerItem(method string, it *appServerItemBody, sessionID string, ctx appServerEventContext) []ai.Event {
 	if it == nil {
-		return ai.Event{}, false
+		return nil
 	}
 	switch it.Type {
 	case "agentMessage", "plan":
 		if method != "item/completed" || it.Text == "" {
-			return ai.Event{}, false
+			return nil
 		}
-		return ai.Event{Kind: ai.EventText, Text: it.Text, SessionID: sessionID, Model: ctx.Model}, true
+		return []ai.Event{{Kind: ai.EventText, Text: it.Text, SessionID: sessionID, Model: ctx.Model}}
 	case "reasoning", "userMessage", "hookPrompt", "":
-		return ai.Event{}, false
+		return nil
 	}
-	use := history.NormalizeCodexToolCall(appServerToolCall(it, sessionID, ctx.Model))
 	if method == "item/started" {
-		out := ai.Event{
-			Kind: ai.EventToolUse, Tool: use.Tool, Input: use.Input,
-			ToolCallID: use.ToolUseID, SessionID: sessionID, Model: ctx.Model,
+		uses := history.NormalizeCodexToolCalls(appServerToolCall(it, sessionID, ctx.Model))
+		events := make([]ai.Event, 0, len(uses))
+		for _, use := range uses {
+			out := ai.Event{
+				Kind: ai.EventToolUse, Tool: use.Tool, Input: use.Input,
+				ToolCallID: use.ToolUseID, SessionID: sessionID, Model: ctx.Model,
+			}
+			out.Raw = codexToolUse(use, ctx.Model)
+			events = append(events, out)
 		}
-		out.Raw = codexToolUse(use, ctx.Model)
-		return out, true
+		return events
 	}
 	if method != "item/completed" {
-		return ai.Event{}, false
+		return nil
 	}
+	use := history.NormalizeCodexToolCall(appServerToolCall(it, sessionID, ctx.Model))
 	text := appServerToolResultText(it, ctx.ToolOutput)
 	success := appServerToolSucceeded(it)
 	use.Response = text
 	raw := codexToolUse(use, ctx.Model)
 	raw.IsError = !success
-	return ai.Event{
+	return []ai.Event{{
 		Kind: ai.EventToolResult, Text: text, ToolCallID: use.ToolUseID,
 		Success: success, SessionID: sessionID, Model: ctx.Model, Raw: raw,
-	}, true
+	}}
 }
 
 func appServerToolCall(it *appServerItemBody, sessionID, model string) history.CodexToolCall {
 	name := it.Tool
 	input := map[string]any{}
+	arguments := it.Arguments
 	switch it.Type {
 	case "commandExecution":
 		name = ""
+	case "dynamicToolCall":
+		name = firstNonEmpty(name, it.Type)
+		var freeform string
+		if json.Unmarshal(it.Arguments, &freeform) == nil {
+			input["input"] = freeform
+			arguments = nil
+		}
 	case "fileChange":
 		name = "CodexPatchApply"
 		if len(it.Changes) > 0 {
@@ -246,7 +259,7 @@ func appServerToolCall(it *appServerItemBody, sessionID, model string) history.C
 		name = firstNonEmpty(name, it.Type)
 	}
 	return history.CodexToolCall{
-		Name: name, Namespace: it.Server, Arguments: it.Arguments,
+		Name: name, Namespace: it.Server, Arguments: arguments,
 		Command: it.Command, Input: input, CWD: it.CWD,
 		SessionID: sessionID, ID: it.ID, Model: model,
 	}

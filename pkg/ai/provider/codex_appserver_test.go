@@ -178,14 +178,15 @@ func TestMapAppServerNotification_Kinds(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			ev, ok := mapAppServerNotification(tc.method, json.RawMessage(tc.params), appServerEventContext{
+			events := mapAppServerNotification(tc.method, json.RawMessage(tc.params), appServerEventContext{
 				Model: "gpt-5", Usage: &ai.Usage{},
 			})
 			if tc.drop {
-				assert.False(t, ok, "expected notification to be dropped, got %+v", ev)
+				assert.Empty(t, events, "expected notification to be dropped, got %+v", events)
 				return
 			}
-			require.True(t, ok, "expected an event for %s", tc.method)
+			require.Len(t, events, 1, "expected one event for %s", tc.method)
+			ev := events[0]
 			assert.Equal(t, tc.want, ev.Kind)
 			assert.Equal(t, "gpt-5", ev.Model)
 			if tc.check != nil {
@@ -340,15 +341,17 @@ func TestMapAppServerNotification_ErrorUnwrapping(t *testing.T) {
 	nested := `The 'gpt-5.5-codex' model is not supported when using Codex with a ChatGPT account.`
 	params := `{"threadId":"t","turnId":"u","willRetry":false,"error":{"message":"{\"type\":\"error\",\"status\":400,\"error\":{\"type\":\"invalid_request_error\",\"message\":\"` + nested + `\"}}"}}`
 
-	ev, ok := mapAppServerNotification("error", json.RawMessage(params), appServerEventContext{Model: "gpt-5", Usage: &ai.Usage{}})
-	require.True(t, ok)
+	events := mapAppServerNotification("error", json.RawMessage(params), appServerEventContext{Model: "gpt-5", Usage: &ai.Usage{}})
+	require.Len(t, events, 1)
+	ev := events[0]
 	assert.Equal(t, ai.EventError, ev.Kind)
 	assert.Equal(t, nested, ev.Error, "stringified upstream error payload should be unwrapped one level")
 }
 
 func TestMapAppServerNotification_TurnFailed(t *testing.T) {
-	ev, ok := mapAppServerNotification("turn/failed", json.RawMessage(`{"error":{"message":"boom"}}`), appServerEventContext{Model: "m", Usage: &ai.Usage{}})
-	require.True(t, ok)
+	events := mapAppServerNotification("turn/failed", json.RawMessage(`{"error":{"message":"boom"}}`), appServerEventContext{Model: "m", Usage: &ai.Usage{}})
+	require.Len(t, events, 1)
+	ev := events[0]
 	assert.Equal(t, ai.EventError, ev.Kind)
 	assert.Equal(t, "boom", ev.Error)
 }
@@ -362,18 +365,19 @@ func TestMapAppServerNotification_UsageFolding(t *testing.T) {
 	usage := &ai.Usage{}
 
 	ctx := appServerEventContext{Model: "m", Usage: usage}
-	_, ok := mapAppServerNotification(
+	events := mapAppServerNotification(
 		"thread/tokenUsage/updated",
 		json.RawMessage(`{"tokenUsage":{"total":{"inputTokens":120,"outputTokens":40,"cachedInputTokens":12,"reasoningOutputTokens":7}}}`),
 		ctx)
-	assert.False(t, ok, "token usage update emits no event")
+	assert.Empty(t, events, "token usage update emits no event")
 	assert.Equal(t, 108, usage.InputTokens, "input net of cache (120-12)")
 	assert.Equal(t, 33, usage.OutputTokens, "output net of reasoning (40-7)")
 	assert.Equal(t, 12, usage.CacheReadTokens)
 	assert.Equal(t, 7, usage.ReasoningTokens)
 
-	ev, ok := mapAppServerNotification("turn/completed", json.RawMessage(`{"threadId":"t","turn":{"id":"u"}}`), ctx)
-	require.True(t, ok)
+	events = mapAppServerNotification("turn/completed", json.RawMessage(`{"threadId":"t","turn":{"id":"u"}}`), ctx)
+	require.Len(t, events, 1)
+	ev := events[0]
 	require.NotNil(t, ev.Usage, "turn/completed should carry the folded usage")
 	assert.Equal(t, 108, ev.Usage.InputTokens)
 	assert.Equal(t, 33, ev.Usage.OutputTokens)
