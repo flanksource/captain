@@ -79,7 +79,7 @@ func TestE2ESurfacesAgree(t *testing.T) {
 			srv := startAnthropic(t, "text-only.yaml")
 
 			assert.Contains(t, s.run(t, srv), capitalAnswer)
-			servedPromptContaining(t, srv.Requests(), "/v1/messages", capitalPrompt)
+			servedPromptContaining(t, srv.Requests, "/v1/messages", capitalPrompt)
 			assert.Empty(t, srv.Remaining(), "the scenario must be played out")
 		})
 	}

@@ -49,7 +49,7 @@ func TestE2EClaudeCLI(t *testing.T) {
 	assert.Equal(t, 8, result.Usage.OutputTokens)
 	assert.NotEmpty(t, result.SessionID, "a real claude run always reports a session id")
 
-	servedPromptContaining(t, srv.Requests(), "/v1/messages", capitalPrompt)
+	servedPromptContaining(t, srv.Requests, "/v1/messages", capitalPrompt)
 	assert.Empty(t, srv.Remaining(), "the scenario must be played out")
 }
 

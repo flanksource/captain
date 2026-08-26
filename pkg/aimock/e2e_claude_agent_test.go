@@ -34,6 +34,6 @@ func TestE2EClaudeAgent(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Contains(t, report(events), capitalAnswer)
-	servedPromptContaining(t, srv.Requests(), "/v1/messages", capitalPrompt)
+	servedPromptContaining(t, srv.Requests, "/v1/messages", capitalPrompt)
 	assert.Empty(t, srv.Remaining(), "the scenario must be played out")
 }

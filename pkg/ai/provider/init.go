@@ -5,6 +5,7 @@ import (
 	"github.com/flanksource/captain/pkg/ai/provider/claudeagent"
 	"github.com/flanksource/captain/pkg/ai/provider/cmux"
 	"github.com/flanksource/captain/pkg/ai/provider/genkit"
+	"github.com/flanksource/captain/pkg/ai/provider/openai"
 
 	// Register the sandbox adapters so api.NewSandbox can construct them for
 	// the CLI exec seam (newSandboxedCommand).
@@ -13,9 +14,10 @@ import (
 
 func init() {
 	ai.RegisterRuntimeProbe(ai.BackendClaudeAgent, claudeagent.ProbeRuntime)
-	// API backends are served by Firebase Genkit (replaces the per-SDK providers).
+	// Anthropic, Gemini, and DeepSeek remain on Genkit; OpenAI uses its official
+	// SDK directly so Captain can use the Responses API.
 	ai.RegisterProvider(ai.BackendAnthropic, func(cfg ai.Config) (ai.Provider, error) { return genkit.New(cfg) })
-	ai.RegisterProvider(ai.BackendOpenAI, func(cfg ai.Config) (ai.Provider, error) { return genkit.New(cfg) })
+	ai.RegisterProvider(ai.BackendOpenAI, func(cfg ai.Config) (ai.Provider, error) { return openai.New(cfg) })
 	ai.RegisterProvider(ai.BackendGemini, func(cfg ai.Config) (ai.Provider, error) { return genkit.New(cfg) })
 	// DeepSeek exposes an OpenAI-compatible API; genkit serves it via compat_oai
 	// with a custom base URL (see pluginFor).
