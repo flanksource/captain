@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/flanksource/clicky"
 	clickyapi "github.com/flanksource/clicky/api"
+	clickymarkdown "github.com/flanksource/clicky/markdown"
 )
 
 // PromptRunResult is the unified result of the "run" action. Over HTTP (serve)
@@ -58,9 +60,9 @@ type PromptRunItem struct {
 func (r PromptRunResult) Pretty() clickyapi.Text {
 	if len(r.Runs) == 0 {
 		if r.Text != "" {
-			return clickyapi.Text{Content: r.Text}
+			return clickyapi.Text{}.Add(promptResponseMarkdown(r.Text))
 		}
-		return clickyapi.Text{Content: r.Status}
+		return clickyapi.Text{}.Append(r.Status)
 	}
 	t := clickyapi.Text{}.
 		Append(fmt.Sprintf("Status: %s  Total: %d  Succeeded: %d  Failed: %d  Duration: %s",
@@ -75,9 +77,17 @@ func (r PromptRunResult) Pretty() clickyapi.Text {
 			Append("Response — ", "text-gray-500").
 			Append(runColumnHeader(run), "font-bold").
 			NewLine().
-			Append(run.Text)
+			Add(promptResponseMarkdown(run.Text))
 	}
 	return t
+}
+
+func promptResponseMarkdown(source string) clickyapi.Textable {
+	document, err := clicky.ParseMarkdown(source, clickymarkdown.WithFrontmatter(false))
+	if err != nil {
+		panic(fmt.Errorf("parse prompt response markdown: %w", err))
+	}
+	return document
 }
 
 func promptRunComparisonTable(runs []PromptRunItem) clickyapi.TextTable {
