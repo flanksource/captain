@@ -46,11 +46,11 @@ var _ = Describe("Resolved runtime profiles", func() {
 		resolver := &fakeResolver{runtimes: []api.RuntimeFamily{
 			{
 				Family: "codex", Provider: "openai", CatalogPrefix: "openai",
-				Modes: []api.RuntimeModeEntry{{Mode: "api", Backend: string(api.BackendOpenAI), Availability: api.Available()}},
+				Modes: []api.RuntimeModeEntry{{Backend: "api", Adapter: string(api.BackendOpenAI), Availability: api.Available()}},
 			},
 			{
 				Family: "claude", Provider: "anthropic", CatalogPrefix: "anthropic",
-				Modes: []api.RuntimeModeEntry{{Mode: "api", Backend: string(api.BackendAnthropic), Availability: api.Available()}},
+				Modes: []api.RuntimeModeEntry{{Backend: "api", Adapter: string(api.BackendAnthropic), Availability: api.Available()}},
 			},
 		}}
 		profile := mustRuntimeProfile(api.SpecLayer{

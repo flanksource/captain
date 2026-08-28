@@ -14,7 +14,7 @@ import (
 //
 // It is the descriptive sibling of injectSandboxBackendEnum, which constrains
 // the SandboxRef selector to the same set of names — the same split
-// buildBackendsCatalog has against injectSpecConditionals. The enum tells a
+// buildBackendsCatalog has against the reflected Spec schema. The enum tells a
 // validator what is allowed; this tells the editor what the choices mean.
 type SandboxCatalog struct {
 	// Default is the configured sandbox.default selector, empty when unset.
@@ -66,9 +66,7 @@ type SandboxBackendEntry struct {
 // the same matrix expressed where the form can see it — git-agent, for
 // instance, deliberately cannot serve ModeAPI.
 //
-// It must APPEND: injectSpecConditionals ends by assigning specMap["allOf"], so
-// running before it would silently lose these rules and running after it with
-// another assignment would lose the per-backend model/effort rules.
+// It appends to any reflected root constraints rather than replacing them.
 func injectSandboxModeConditionals(specMap map[string]any, defaults captainconfig.SandboxDefaults) {
 	allOf, _ := specMap["allOf"].([]any)
 	kinds := sandboxSelectorKinds(defaults)

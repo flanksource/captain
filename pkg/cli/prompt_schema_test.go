@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"reflect"
@@ -72,33 +73,30 @@ func TestPromptSchemaDocumentBackendsAndConditionals(t *testing.T) {
 	if got := codexCLIModels[0]; got != "gpt-5.6-sol" {
 		t.Errorf("codex-cli first model = %q, want gpt-5.6-sol", got)
 	}
-	flat := doc["models"].([]map[string]any)
-	codexModel := schemaModelForBackend(t, flat, "gpt-5.6-sol", string(api.BackendCodexCLI))
+	flat := doc["models"].([]PromptModelCatalogEntry)
+	codexModel := schemaModelForBackend(t, flat, "gpt-5.6-sol", "cli")
 	// The provider is the catalog namespace, not the backend: every Codex mode
 	// buckets under "openai" so one family filter reaches all of them.
-	if got := codexModel["provider"]; got != "openai" {
+	if got := codexModel.Provider; got != "openai" {
 		t.Errorf("flat model provider = %v, want openai", got)
 	}
-	if got, ok := codexModel["label"].(string); !ok || got == "" {
-		t.Errorf("flat model label = %#v, want non-empty string", codexModel["label"])
+	if codexModel.Label == "" {
+		t.Error("flat model label is empty")
 	}
-	if _, ok := codexModel["reasoning"].(bool); !ok {
-		t.Errorf("flat model reasoning = %#v, want bool", codexModel["reasoning"])
+	if !codexModel.Reasoning {
+		t.Error("flat model reasoning = false, want true")
 	}
-	if efforts, ok := codexModel["supportedEfforts"].([]string); !ok || !containsString(efforts, "max") || !containsString(efforts, "ultra") {
-		t.Errorf("flat model supportedEfforts = %#v, want patched Codex ultra", codexModel["supportedEfforts"])
+	if !containsString(codexModel.SupportedEfforts, "max") || !containsString(codexModel.SupportedEfforts, "ultra") {
+		t.Errorf("flat model supportedEfforts = %#v, want patched Codex ultra", codexModel.SupportedEfforts)
 	}
-	if _, ok := codexModel["defaultEffort"]; ok {
-		t.Errorf("flat model should not have a locally patched default effort: %#v", codexModel["defaultEffort"])
+	if codexModel.DefaultEffort != "" {
+		t.Errorf("flat model should not have a locally patched default effort: %#v", codexModel.DefaultEffort)
 	}
-	if got, ok := codexModel["configured"].(bool); !ok || got {
-		t.Errorf("flat model configured = %#v, want false for fake unauthenticated CLI", codexModel["configured"])
+	if codexModel.Configured {
+		t.Error("flat model configured = true, want false for fake unauthenticated CLI")
 	}
-	if got := codexModel["runtime"]; !reflect.DeepEqual(got, api.Model{
-		Name:    "gpt-5.6-sol",
-		Backend: api.BackendCodexCLI,
-	}) {
-		t.Errorf("flat model runtime = %#v, want exact codex-cli runtime", got)
+	if got := codexModel.Runtime; !reflect.DeepEqual(got, api.Model{Name: "gpt-5.6-sol"}) {
+		t.Errorf("flat model runtime = %#v, want provider-independent model", got)
 	}
 
 	anthropic := byName[string(api.BackendAnthropic)]
@@ -110,64 +108,11 @@ func TestPromptSchemaDocumentBackendsAndConditionals(t *testing.T) {
 	}
 
 	spec := doc["spec"].(map[string]any)
-	allOf := spec["allOf"].([]any)
-	// allOf carries two independent rule families: one per backend (keyed on
-	// if.properties.backend) and one per sandbox selector (keyed on if.anyOf,
-	// asserted by TestPromptSchemaSandboxModeConditionals). Select the backend
-	// rules rather than assuming every entry is one.
-	thenByBackend := map[string]map[string]any{}
-	for _, c := range allOf {
-		cm := c.(map[string]any)
-		props, ok := cm["if"].(map[string]any)["properties"].(map[string]any)
-		if !ok {
-			continue
-		}
-		backend, ok := props["backend"].(map[string]any)
-		if !ok {
-			continue
-		}
-		thenByBackend[backend["const"].(string)] = cm["then"].(map[string]any)["properties"].(map[string]any)
-	}
-	if len(thenByBackend) != len(api.AllBackends()) {
-		t.Fatalf("spec.allOf backend rules = %d, want %d", len(thenByBackend), len(api.AllBackends()))
-	}
-
-	// cmux backends: cliArgs constrained by a $ref into $defs.
-	defs := spec["$defs"].(map[string]any)
-	for _, b := range []api.Backend{api.BackendClaudeCmux, api.BackendCodexCmux} {
-		name := argDefName(b)
-		if _, ok := defs[name]; !ok {
-			t.Errorf("spec.$defs missing %q", name)
-		}
-		ref := thenByBackend[string(b)]["cliArgs"].(map[string]any)["$ref"].(string)
-		if ref != "#/$defs/"+name {
-			t.Errorf("backend %s cliArgs $ref = %q, want #/$defs/%s", b, ref, name)
-		}
-	}
-	// non-cmux backend: cliArgs forbidden.
-	if forbidden := thenByBackend[string(api.BackendAnthropic)]["cliArgs"]; forbidden != false {
-		t.Errorf("anthropic then.cliArgs = %v, want false", forbidden)
-	}
-
-	// Every backend's model enum matches that backend's live model list; backends
-	// with no models carry no model constraint.
-	for _, e := range backends {
-		backend := e["backend"].(string)
-		models, _ := e["models"].([]string)
-		enumWrap, hasEnum := thenByBackend[backend]["model"]
-		if len(models) == 0 {
-			if hasEnum {
-				t.Errorf("backend %s has a model enum but no models", backend)
-			}
-			continue
-		}
-		enum := enumWrap.(map[string]any)["enum"].([]any)
-		if len(enum) != len(models) {
-			t.Fatalf("backend %s enum length %d != models length %d", backend, len(enum), len(models))
-		}
-		for i := range models {
-			if enum[i].(string) != models[i] {
-				t.Errorf("backend %s enum[%d] = %q, want %q", backend, i, enum[i], models[i])
+	for _, raw := range spec["allOf"].([]any) {
+		condition := raw.(map[string]any)["if"].(map[string]any)
+		if props, ok := condition["properties"].(map[string]any); ok {
+			if _, leaked := props["backend"]; leaked {
+				t.Fatal("spec schema must not key runtime rules on exact Captain adapters")
 			}
 		}
 	}
@@ -176,8 +121,8 @@ func TestPromptSchemaDocumentBackendsAndConditionals(t *testing.T) {
 func TestPromptSchemaDocumentSandboxEnumIncludesConfiguredBackends(t *testing.T) {
 	defaults := captainconfig.SandboxDefaults{Backends: map[string]captainconfig.SandboxBackend{
 		"prod-pool":    {Kind: "git-agent"},
-		"local-docker": {Kind: "container"},
-		"srt":          {Kind: "srt"}, // a configured name must not duplicate a bare kind
+		"local-docker": {Kind: "docker"},
+		"native":       {Kind: "native"}, // a configured name must not duplicate a bare kind
 	}}
 	doc, err := buildPromptSchemaDocument(stubbedSchemaAdapters(t), defaults)
 	if err != nil {
@@ -190,7 +135,7 @@ func TestPromptSchemaDocumentSandboxEnumIncludesConfiguredBackends(t *testing.T)
 	scalar := forms[0].(map[string]any)
 	object := forms[1].(map[string]any)
 	backend := object["properties"].(map[string]any)["backend"].(map[string]any)
-	want := []any{"none", "srt", "container", "git-agent", "local-docker", "prod-pool"}
+	want := []any{"off", "native", "docker", "git-agent", "local-docker", "prod-pool"}
 	if !reflect.DeepEqual(scalar["enum"], want) {
 		t.Errorf("scalar sandbox enum = %v, want %v", scalar["enum"], want)
 	}
@@ -235,7 +180,7 @@ func TestPromptSchemaDocumentDropsDisabledEntries(t *testing.T) {
 
 	for _, family := range doc["runtimes"].([]api.RuntimeFamily) {
 		for _, mode := range family.Modes {
-			if mode.Mode == string(api.ModeCmux) {
+			if mode.Backend == string(api.ModeCmux) {
 				t.Errorf("runtimes[] still offers the disabled %s mode", mode.Backend)
 			}
 			if mode.Disabled {
@@ -244,9 +189,9 @@ func TestPromptSchemaDocumentDropsDisabledEntries(t *testing.T) {
 		}
 	}
 
-	for _, model := range doc["models"].([]map[string]any) {
-		if efforts, ok := model["supportedEfforts"].([]string); ok && containsString(efforts, "ultra") {
-			t.Errorf("model %v still offers the disabled ultra tier: %v", model["id"], efforts)
+	for _, model := range doc["models"].([]PromptModelCatalogEntry) {
+		if containsString(model.SupportedEfforts, "ultra") {
+			t.Errorf("model %v still offers the disabled ultra tier: %v", model.ID, model.SupportedEfforts)
 		}
 	}
 	if efforts := doc["efforts"].([]string); containsString(efforts, "ultra") || len(efforts) != len(api.AllEfforts())-1 {
@@ -269,12 +214,12 @@ func TestPromptSchemaDocumentServesTheRuntimeCatalog(t *testing.T) {
 			t.Errorf("runtime family is missing an identity: %+v", family)
 		}
 		for _, mode := range family.Modes {
-			seen[mode.Backend] = true
+			seen[family.Provider+":"+mode.Backend] = true
 			if mode.DefaultModel == "" {
 				t.Errorf("%s serves no default model, so a picker would have to hardcode one", mode.Backend)
 			}
-			if got := api.Backend(mode.Backend).Mode(); string(got) != mode.Mode {
-				t.Errorf("%s mode = %q, but the backend parses as %q", mode.Backend, mode.Mode, got)
+			if _, ok := api.ParseRuntimeMode(mode.Backend); !ok {
+				t.Errorf("runtime backend %q is outside the canonical grammar", mode.Backend)
 			}
 		}
 	}
@@ -298,49 +243,18 @@ func TestPromptSchemaDocumentServesTheEffortUniverse(t *testing.T) {
 	}
 }
 
-func TestInjectSpecConditionalsUsesOnlyModelBackedEfforts(t *testing.T) {
-	spec := map[string]any{}
-	adapters := []AdapterStatus{{
-		Backend: string(api.BackendCodexAgent),
-		ModelDetails: []ai.ModelDef{
-			{ID: "gpt-5.6-sol", SupportedEfforts: []api.Effort{api.EffortLow, api.EffortMax}},
-			{ID: "no-effort-model"},
-		},
-	}}
-	if err := injectSpecConditionals(spec, adapters, nil); err != nil {
-		t.Fatalf("injectSpecConditionals: %v", err)
-	}
-	rules := spec["allOf"].([]any)[0].(map[string]any)["then"].(map[string]any)["allOf"].([]any)
-	got := map[string][]any{}
-	for _, raw := range rules {
-		rule := raw.(map[string]any)
-		model := rule["if"].(map[string]any)["properties"].(map[string]any)["model"].(map[string]any)["const"].(string)
-		got[model] = rule["then"].(map[string]any)["properties"].(map[string]any)["effort"].(map[string]any)["enum"].([]any)
-	}
-	if want := []any{"", "low", "max"}; !reflect.DeepEqual(got["gpt-5.6-sol"], want) {
-		t.Errorf("Sol effort enum = %v, want %v", got["gpt-5.6-sol"], want)
-	}
-	if want := []any{""}; !reflect.DeepEqual(got["no-effort-model"], want) {
-		t.Errorf("no-effort model enum = %v, want %v", got["no-effort-model"], want)
-	}
-}
-
-func schemaModelForBackend(t *testing.T, models []map[string]any, id, backend string) map[string]any {
+func schemaModelForBackend(t *testing.T, models []PromptModelCatalogEntry, id, backend string) PromptModelCatalogEntry {
 	t.Helper()
 	for _, model := range models {
-		if model["id"] != id {
+		if model.ID != id {
 			continue
 		}
-		backends, ok := model["backends"].([]string)
-		if !ok {
-			t.Fatalf("model %s backends = %T, want []string", id, model["backends"])
-		}
-		if containsString(backends, backend) {
+		if containsString(model.Backends, backend) {
 			return model
 		}
 	}
 	t.Fatalf("models[] missing id %q with backend %q: %+v", id, backend, models)
-	return nil
+	return PromptModelCatalogEntry{}
 }
 
 func TestPromptSchemaExampleIsPortable(t *testing.T) {
@@ -390,13 +304,14 @@ func TestPromptSchemaExampleIsPortable(t *testing.T) {
 }
 
 func TestWritePromptSchemaEmitsValidJSON(t *testing.T) {
+	isolateCaptainConfig(t)
 	prev := schemaAdapters
 	t.Cleanup(func() { schemaAdapters = prev })
 	stub := stubbedSchemaAdapters(t)
 	schemaAdapters = func() ([]AdapterStatus, error) { return stub, nil }
 
 	var buf bytes.Buffer
-	if err := WritePromptSchema(&buf); err != nil {
+	if err := WritePromptSchema(context.Background(), &buf); err != nil {
 		t.Fatalf("WritePromptSchema: %v", err)
 	}
 	var decoded map[string]any

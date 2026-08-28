@@ -25,8 +25,9 @@ type Model struct {
 	// genkit "anthropic/claude-sonnet-4-6" or a codex slug. Empty means use Name.
 	ID string `json:"id,omitempty" yaml:"id,omitempty" pretty:"label=ID"`
 
-	// Backend overrides backend inference from Name; empty means InferBackend(Name).
-	Backend Backend `json:"backend,omitempty" yaml:"backend,omitempty" pretty:"label=Backend"`
+	// Backend is the resolved provider adapter. It is execution state, not authored
+	// configuration; the portable wire contract serializes Mode as `backend`.
+	Backend Backend `json:"-" yaml:"-" pretty:"-"`
 
 	// Temperature is the sampling temperature in [0,2]. A pointer so an explicit
 	// 0.0 is distinguishable from "unset" (fail loud, not a silent default).
@@ -46,12 +47,10 @@ type Model struct {
 	// compact string ("agent:opus:high") or the object form (see ModelList).
 	Fallbacks ModelList `json:"fallbacks,omitempty" yaml:"fallbacks,omitempty" pretty:"label=Fallbacks"`
 
-	// Mode is the runtime mechanism: api | cli | agent | cmux. It is both an input
-	// and a derived value — `{model: sonnet, mode: agent}` is the object form of
-	// the compact "agent:sonnet" — and Backend is exactly (provider, Mode). A Mode
-	// that contradicts an explicit Backend fails Validate rather than being
-	// silently reconciled.
-	Mode RuntimeMode `json:"mode,omitempty" yaml:"mode,omitempty" jsonschema:"enum=api,enum=cli,enum=agent,enum=cmux" pretty:"label=Mode"`
+	// Mode is the authored runtime backend: api | agent | cli | cmux. It serializes
+	// as `backend`; provider identity comes from Name, and the compact model prefix
+	// takes precedence over this sibling field.
+	Mode RuntimeMode `json:"backend,omitempty" yaml:"backend,omitempty" jsonschema:"enum=api,enum=agent,enum=cli,enum=cmux" pretty:"label=Backend"`
 
 	// The fields below are capabilities of the resolved provider×mode, filled in
 	// by Resolve. They are outputs: writing them in a spec does not change what
@@ -110,7 +109,7 @@ func (m Model) WithMode(mode RuntimeMode) (Model, error) {
 		return m, nil
 	}
 	if _, ok := ParseRuntimeMode(string(mode)); !ok {
-		return Model{}, fmt.Errorf("invalid mode %q (valid: %s)", mode, RuntimeModeList())
+		return Model{}, invalidModelBackend(mode)
 	}
 
 	var err error
@@ -124,7 +123,7 @@ func (m Model) WithMode(mode RuntimeMode) (Model, error) {
 		}
 		candidate = expanded
 		if candidate.Mode != "" && candidate.Mode != mode {
-			return Model{}, fmt.Errorf("mode %q contradicts requested mode %q", candidate.Mode, mode)
+			return Model{}, fmt.Errorf("invalid model configuration: backend %q contradicts requested backend %q", candidate.Mode, mode)
 		}
 		candidate.Mode = mode
 		if err := candidate.validateMode(); err != nil {
@@ -208,16 +207,20 @@ func (m Model) validateMode() error {
 		return nil
 	}
 	if _, ok := ParseRuntimeMode(string(m.Mode)); !ok {
-		return fmt.Errorf("invalid mode %q (valid: %s)", m.Mode, RuntimeModeList())
+		return invalidModelBackend(m.Mode)
 	}
 	if m.Backend == "" {
 		return nil
 	}
 	if actual := m.Backend.Mode(); actual != m.Mode {
-		return fmt.Errorf("mode %q contradicts backend %q, which is mode %q; set one or the other",
+		return fmt.Errorf("invalid model configuration: backend %q contradicts resolved adapter %q, which uses backend %q",
 			m.Mode, m.Backend, actual)
 	}
 	return nil
+}
+
+func invalidModelBackend(value RuntimeMode) error {
+	return fmt.Errorf("invalid model configuration: backend %q (valid: %s)", value, RuntimeModeList())
 }
 
 // MergePolicy is the structural-merge policy for a Model, exported so a

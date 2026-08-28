@@ -38,10 +38,6 @@ func buildPromptSchemaDocument(adapters []AdapterStatus, sandboxes captainconfig
 	if err := injectSandboxBackendEnum(specMap, sandboxes); err != nil {
 		return nil, err
 	}
-	if err := injectSpecConditionals(specMap, adapters, reflected.args); err != nil {
-		return nil, err
-	}
-	// Must follow injectSpecConditionals, which assigns allOf; this appends.
 	injectSandboxModeConditionals(specMap, sandboxes)
 	backends, err := buildBackendsCatalog(adapters, reflected.args)
 	if err != nil {
@@ -56,7 +52,7 @@ func buildPromptSchemaDocument(adapters []AdapterStatus, sandboxes captainconfig
 		"backends":      backends,
 		"sandboxes":     buildSandboxCatalog(sandboxes),
 		"runtimes":      enabledRuntimes(),
-		"models":        flatModels(adapters),
+		"models":        PromptModelCatalog(adapters),
 		"efforts":       enabledEffortNames(),
 		"examples": map[string]any{
 			"spec": promptSchemaExampleSpec(),
@@ -264,112 +260,72 @@ func buildBackendsCatalog(adapters []AdapterStatus, argsByBackend map[api.Backen
 	return out, nil
 }
 
-// injectSpecConditionals adds one JSON-Schema if/then per backend to the spec so
-// that, once a backend is chosen, `cliArgs` is constrained to that backend's args
-// ($ref into $defs, or forbidden for non-cmux backends) and `model` is restricted
-// to that backend's available models. The allOf sits at the spec root beside the
-// invopop $ref (both apply as in-place applicators under draft 2020-12); cmux arg
-// schemas are added under the root $defs and referenced, so the same schema
-// appears in backends[].args without source duplication.
-func injectSpecConditionals(specMap map[string]any, adapters []AdapterStatus, argsByBackend map[api.Backend][]byte) error {
-	defs, _ := specMap["$defs"].(map[string]any)
-	if defs == nil {
-		defs = map[string]any{}
-		specMap["$defs"] = defs
-	}
-
-	allOf := make([]any, 0, len(adapters))
-	for _, a := range adapters {
-		b := api.Backend(a.Backend)
-		thenProps := map[string]any{}
-
-		if raw, ok := argsByBackend[b]; ok {
-			name := argDefName(b)
-			argsMap, err := unmarshalMap(raw)
-			if err != nil {
-				return fmt.Errorf("decode %s args schema: %w", b, err)
-			}
-			defs[name] = argsMap
-			thenProps["cliArgs"] = map[string]any{"$ref": "#/$defs/" + name}
-		} else {
-			// Non-cmux providers ignore cliArgs; forbid it so a misplaced value
-			// is a validation error rather than silently dropped.
-			thenProps["cliArgs"] = false
-		}
-
-		if len(a.Models) > 0 {
-			thenProps["model"] = map[string]any{"enum": toAnySlice(a.Models)}
-		}
-		thenSchema := map[string]any{"properties": thenProps}
-		var effortRules []any
-		for _, model := range a.ModelDetails {
-			efforts := []any{""}
-			for _, effort := range model.SupportedEfforts {
-				efforts = append(efforts, string(effort))
-			}
-			effortRules = append(effortRules, map[string]any{
-				"if": map[string]any{
-					"required":   []any{"model"},
-					"properties": map[string]any{"model": map[string]any{"const": model.ID}},
-				},
-				"then": map[string]any{
-					"properties": map[string]any{"effort": map[string]any{"enum": efforts}},
-				},
-			})
-		}
-		if len(effortRules) > 0 {
-			thenSchema["allOf"] = effortRules
-		}
-
-		allOf = append(allOf, map[string]any{
-			"if": map[string]any{
-				"required":   []any{"backend"},
-				"properties": map[string]any{"backend": map[string]any{"const": a.Backend}},
-			},
-			"then": thenSchema,
-		})
-	}
-	specMap["allOf"] = allOf
-	return nil
+// PromptModelCatalogEntry is one provider model and the portable runtime modes
+// that can execute it. Exact adapter identities never cross this boundary.
+type PromptModelCatalogEntry struct {
+	ID                string    `json:"id"`
+	Provider          string    `json:"provider"`
+	Label             string    `json:"label"`
+	CapabilitiesKnown bool      `json:"capabilitiesKnown,omitempty"`
+	Reasoning         bool      `json:"reasoning"`
+	Temperature       *bool     `json:"temperature,omitempty"`
+	SupportedEfforts  []string  `json:"supportedEfforts,omitempty"`
+	DefaultEffort     string    `json:"defaultEffort,omitempty"`
+	Configured        bool      `json:"configured"`
+	Backends          []string  `json:"backends"`
+	Runtime           api.Model `json:"runtime"`
 }
 
-// flatModels serves one display row per exact Captain runtime. A model exposed
-// by multiple backends intentionally appears once per backend so selecting it
-// produces a complete api.Model without client-side inference.
-func flatModels(adapters []AdapterStatus) []map[string]any {
-	out := []map[string]any{}
+// PromptModelCatalog serves one display row per provider model. Exact Captain adapters
+// collapse into the portable backend axis so consumers never translate
+// claude-agent, claude-cli, or other implementation ids.
+func PromptModelCatalog(adapters []AdapterStatus) []PromptModelCatalogEntry {
+	out := []PromptModelCatalogEntry{}
+	rows := map[string]int{}
 	for _, a := range adapters {
-		provider := api.CatalogPrefixFor(api.Backend(a.Backend))
+		backend := api.Backend(a.Backend)
+		provider := api.CatalogPrefixFor(backend)
+		mode := string(backend.Mode())
 		for _, model := range flatModelDetails(a) {
 			id := strings.TrimSpace(model.id)
 			if id == "" {
+				continue
+			}
+			key := provider + "\x00" + id
+			if index, exists := rows[key]; exists {
+				if a.Ready() {
+					out[index].Configured = true
+				}
+				if !containsString(out[index].Backends, mode) {
+					out[index].Backends = append(out[index].Backends, mode)
+				}
 				continue
 			}
 			label := strings.TrimSpace(model.label)
 			if label == "" {
 				label = id
 			}
-			out = append(out, map[string]any{
-				"id":         id,
-				"label":      label,
-				"provider":   provider,
-				"reasoning":  modelSupportsReasoning(id),
-				"configured": a.Ready(),
-				"backends":   []string{a.Backend},
-				"runtime": api.Model{
-					Name:    id,
-					Backend: api.Backend(a.Backend),
-				},
+			out = append(out, PromptModelCatalogEntry{
+				ID:                id,
+				Label:             label,
+				Provider:          provider,
+				CapabilitiesKnown: model.capabilitiesKnown,
+				Reasoning:         model.reasoning || modelSupportsReasoning(id),
+				Temperature:       model.temperature,
+				Configured:        a.Ready(),
+				Backends:          []string{mode},
+				Runtime:           api.Model{Name: id},
 			})
+			rows[key] = len(out) - 1
 			if len(model.supportedEfforts) > 0 {
 				values := make([]string, 0, len(model.supportedEfforts))
 				for _, effort := range model.supportedEfforts {
 					values = append(values, string(effort))
 				}
-				out[len(out)-1]["supportedEfforts"] = values
+				out[len(out)-1].SupportedEfforts = values
 			}
 			if model.defaultEffort != api.EffortNone {
-				out[len(out)-1]["defaultEffort"] = string(model.defaultEffort)
+				out[len(out)-1].DefaultEffort = string(model.defaultEffort)
 			}
 		}
 	}
@@ -377,21 +333,31 @@ func flatModels(adapters []AdapterStatus) []map[string]any {
 }
 
 type flatModelDetail struct {
-	id               string
-	label            string
-	supportedEfforts []api.Effort
-	defaultEffort    api.Effort
+	id                string
+	label             string
+	capabilitiesKnown bool
+	reasoning         bool
+	temperature       *bool
+	supportedEfforts  []api.Effort
+	defaultEffort     api.Effort
 }
 
 func flatModelDetails(adapter AdapterStatus) []flatModelDetail {
 	if len(adapter.ModelDetails) > 0 {
 		out := make([]flatModelDetail, 0, len(adapter.ModelDetails))
 		for _, model := range adapter.ModelDetails {
+			var temperature *bool
+			if model.CapabilitiesKnown {
+				temperature = &model.Temperature
+			}
 			out = append(out, flatModelDetail{
-				id:               model.ID,
-				label:            model.Name,
-				supportedEfforts: model.SupportedEfforts,
-				defaultEffort:    model.DefaultEffort,
+				id:                model.ID,
+				label:             model.Name,
+				capabilitiesKnown: model.CapabilitiesKnown,
+				reasoning:         model.Reasoning,
+				temperature:       temperature,
+				supportedEfforts:  model.SupportedEfforts,
+				defaultEffort:     model.DefaultEffort,
 			})
 		}
 		return out
@@ -433,29 +399,6 @@ func containsString(values []string, needle string) bool {
 		}
 	}
 	return false
-}
-
-// argDefName is the $defs key for a backend's args schema, e.g.
-// "claude-cmux" -> "claudeCmuxArgs".
-func argDefName(b api.Backend) string {
-	parts := strings.Split(string(b), "-")
-	var sb strings.Builder
-	for i, p := range parts {
-		if i == 0 {
-			sb.WriteString(p)
-			continue
-		}
-		sb.WriteString(upperFirst(p))
-	}
-	sb.WriteString("Args")
-	return sb.String()
-}
-
-func upperFirst(s string) string {
-	if s == "" {
-		return s
-	}
-	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 func unmarshalMap(raw []byte) (map[string]any, error) {

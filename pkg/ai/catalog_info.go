@@ -29,19 +29,12 @@ type ModelInfo struct {
 	InputMediaTypes []string `json:"inputMediaTypes"`
 }
 
-// BackendToProvider maps a backend to the provider string used in API model ids
-// and the web menu's "provider" field. API backends use the genkit provider
-// namespace (anthropic/openai/googleai); agent/CLI backends use their backend
-// string verbatim.
-// BackendToProvider is the provider key the webapp and the session store use.
-//
-// Its output is a frozen wire format: it is persisted to sessions.provider and
-// prompt_runs.runtime.resolved.provider, and /api/chat/models matches on it. The
-// API backends map to their catalog namespace ("googleai" for Gemini, not
-// "google"); every other backend is its own key verbatim.
+// BackendToProvider returns the provider axis used by model catalogs and
+// persisted runtime metadata. Execution mechanism is serialized separately as
+// api | agent | cli | cmux and never encoded into this value.
 func BackendToProvider(b Backend) string {
-	p, mode, ok := registry.ProviderFor(b)
-	if !ok || mode != registry.ModeAPI {
+	p, _, ok := registry.ProviderFor(b)
+	if !ok {
 		return string(b)
 	}
 	return p.CatalogPrefix

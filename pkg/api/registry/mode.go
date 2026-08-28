@@ -31,15 +31,16 @@ func AllRuntimeModes() []RuntimeMode {
 	return []RuntimeMode{ModeAPI, ModeAgent, ModeCLI, ModeCmux}
 }
 
-// ParseRuntimeMode normalizes a mode token from the compact grammar. "sdk" is
-// accepted as an input alias for agent but is never emitted.
+// ParseRuntimeMode validates the authored backend token used by the compact
+// model grammar and the Model backend field. The accepted values are deliberately
+// exact: old provider names and composite adapter ids are invalid configuration.
 func ParseRuntimeMode(s string) (RuntimeMode, bool) {
 	switch RuntimeMode(strings.ToLower(strings.TrimSpace(s))) {
 	case ModeAPI:
 		return ModeAPI, true
 	case ModeCLI:
 		return ModeCLI, true
-	case ModeAgent, "sdk":
+	case ModeAgent:
 		return ModeAgent, true
 	case ModeCmux:
 		return ModeCmux, true

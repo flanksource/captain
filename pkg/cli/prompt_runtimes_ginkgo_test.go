@@ -92,7 +92,7 @@ Review the screenshot.
 			record, err := resolvePromptRecord(ctx, id)
 
 			Expect(err).NotTo(HaveOccurred())
-			Expect(displayPromptPath(record)).To(Equal(expectedPath))
+			Expect(record.Path).To(Equal(expectedPath))
 			Expect(record.Rel).To(Equal("compare.prompt"))
 		},
 		Entry("without the extension", "compare"),
@@ -197,8 +197,8 @@ Review the screenshot.
 })
 
 var _ = Describe("prompt schema model catalog", func() {
-	It("keeps one exact runtime row per backend", func() {
-		models := flatModels([]AdapterStatus{
+	It("collapses exact adapters into canonical provider and backend axes", func() {
+		models := PromptModelCatalog([]AdapterStatus{
 			{
 				Backend:       string(api.BackendCodexCLI),
 				Type:          "cli",
@@ -215,14 +215,9 @@ var _ = Describe("prompt schema model catalog", func() {
 			},
 		})
 
-		Expect(models).To(HaveLen(2))
-		Expect(models[0]["runtime"]).To(Equal(api.Model{
-			Name:    "gpt-5.6-sol",
-			Backend: api.BackendCodexCLI,
-		}))
-		Expect(models[1]["runtime"]).To(Equal(api.Model{
-			Name:    "gpt-5.6-sol",
-			Backend: api.BackendCodexCmux,
-		}))
+		Expect(models).To(HaveLen(1))
+		Expect(models[0].Provider).To(Equal("openai"))
+		Expect(models[0].Backends).To(Equal([]string{"cli", "cmux"}))
+		Expect(models[0].Runtime).To(Equal(api.Model{Name: "gpt-5.6-sol"}))
 	})
 })
