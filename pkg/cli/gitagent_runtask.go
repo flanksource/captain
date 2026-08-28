@@ -93,12 +93,8 @@ func runTaskPrompt(
 	ctx context.Context,
 	worktree string,
 	payload gitagent.TaskPayload,
-	callerToolEndpoints ...*api.CallerToolEndpoint,
+	callerTools *api.CallerToolEndpoint,
 ) error {
-	var callerTools *api.CallerToolEndpoint
-	if len(callerToolEndpoints) > 0 {
-		callerTools = callerToolEndpoints[0]
-	}
 	providerOpts := AIProviderOptions{
 		ModelFlags: aiflags.ModelFlags{Model: payload.Model, Backend: payload.Backend, Effort: string(payload.Effort)},
 		Sandbox:    "none",

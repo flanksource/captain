@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -200,10 +201,22 @@ func (proxy *callerToolProxy) register(w http.ResponseWriter, request *http.Requ
 		tokenHash: sha256.Sum256([]byte(grant.Credential)), expiresAt: grant.ExpiresAt,
 	}
 	proxy.mu.Lock()
-	if existing := proxy.sessions[grant.Task]; existing != nil && !existing.revoked.Load() {
-		proxy.mu.Unlock()
-		http.Error(w, "caller-tool grant already exists for task", http.StatusConflict)
-		return
+	var expired *callerToolSession
+	if existing := proxy.sessions[grant.Task]; existing != nil {
+		if !existing.revoked.Load() && time.Now().Before(existing.expiresAt) {
+			proxy.mu.Unlock()
+			http.Error(w, "caller-tool grant already exists for task", http.StatusConflict)
+			return
+		}
+		delete(proxy.sessions, grant.Task)
+		if existing.revoked.CompareAndSwap(false, true) {
+			expired = existing
+		}
+		if err := removeCallerToolSecret(proxy.root, grant.Task); err != nil {
+			proxy.mu.Unlock()
+			http.Error(w, "remove expired caller-tool task secret", http.StatusInternalServerError)
+			return
+		}
 	}
 	if err := writeCallerToolSecret(proxy.root, grant.Task, secret); err != nil {
 		proxy.mu.Unlock()
@@ -212,6 +225,9 @@ func (proxy *callerToolProxy) register(w http.ResponseWriter, request *http.Requ
 	}
 	proxy.sessions[grant.Task] = session
 	proxy.mu.Unlock()
+	if expired != nil {
+		proxy.log("git-agent caller-tool grant expired task=%s agent=%s", expired.task, expired.agent)
+	}
 	time.AfterFunc(time.Until(grant.ExpiresAt), func() { proxy.expire(session) })
 	proxy.log("git-agent caller-tool grant issued task=%s agent=%s expires=%s",
 		grant.Task, grant.Agent, grant.ExpiresAt.UTC().Format(time.RFC3339))
@@ -255,23 +271,21 @@ func (proxy *callerToolProxy) forward(w http.ResponseWriter, request *http.Reque
 	upstreamURL := *proxy.supervisorURL
 	upstreamURL.Path = session.route
 	upstreamURL.RawPath, upstreamURL.RawQuery, upstreamURL.Fragment = "", request.URL.RawQuery, ""
-	upstream := request.Clone(request.Context())
-	upstream.URL = &upstreamURL
-	upstream.RequestURI = ""
-	upstream.Host = upstreamURL.Host
-	removeHopByHopHeaders(upstream.Header)
-	upstream.Header.Set(callertools.TaskHeader, session.task)
-	upstream.Header.Set(callertools.AgentHeader, session.agent)
-	response, err := proxy.client.Do(upstream)
-	if err != nil {
-		proxy.log("git-agent caller-tool proxy failed task=%s agent=%s", session.task, session.agent)
-		http.Error(w, "caller-tool supervisor is unavailable", http.StatusBadGateway)
-		return
+	reverseProxy := &httputil.ReverseProxy{
+		Rewrite: func(proxyRequest *httputil.ProxyRequest) {
+			proxyRequest.Out.URL = &upstreamURL
+			proxyRequest.Out.Host = upstreamURL.Host
+			proxyRequest.Out.Header.Set(callertools.TaskHeader, session.task)
+			proxyRequest.Out.Header.Set(callertools.AgentHeader, session.agent)
+		},
+		Transport:     proxy.client.Transport,
+		FlushInterval: -1,
+		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, _ error) {
+			proxy.log("git-agent caller-tool proxy failed task=%s agent=%s", session.task, session.agent)
+			http.Error(w, "caller-tool supervisor is unavailable", http.StatusBadGateway)
+		},
 	}
-	defer response.Body.Close()
-	copyHTTPHeaders(w.Header(), response.Header)
-	w.WriteHeader(response.StatusCode)
-	_, _ = io.Copy(w, response.Body)
+	reverseProxy.ServeHTTP(w, request)
 }
 
 func (proxy *callerToolProxy) revoke(w http.ResponseWriter, request *http.Request, task string) {
@@ -296,13 +310,17 @@ func (proxy *callerToolProxy) revoke(w http.ResponseWriter, request *http.Reques
 
 func (proxy *callerToolProxy) expire(session *callerToolSession) {
 	if session.revoked.CompareAndSwap(false, true) {
+		removed := false
 		proxy.mu.Lock()
 		if proxy.sessions[session.task] == session {
 			delete(proxy.sessions, session.task)
+			removed = true
 		}
 		proxy.mu.Unlock()
 		proxy.log("git-agent caller-tool grant expired task=%s agent=%s", session.task, session.agent)
-		_ = removeCallerToolSecret(proxy.root, session.task)
+		if removed {
+			_ = removeCallerToolSecret(proxy.root, session.task)
+		}
 	}
 }
 
@@ -608,45 +626,6 @@ func parseCallerToolBase(raw string) (*url.URL, error) {
 		return nil, err
 	}
 	return parsed, nil
-}
-
-func copyHTTPHeaders(destination, source http.Header) {
-	connectionHeaders := map[string]bool{}
-	for _, value := range source.Values("Connection") {
-		for _, name := range strings.Split(value, ",") {
-			connectionHeaders[http.CanonicalHeaderKey(strings.TrimSpace(name))] = true
-		}
-	}
-	for name, values := range source {
-		if isHopByHopHeader(name) || connectionHeaders[http.CanonicalHeaderKey(name)] {
-			continue
-		}
-		for _, value := range values {
-			destination.Add(name, value)
-		}
-	}
-}
-
-func removeHopByHopHeaders(headers http.Header) {
-	for _, value := range headers.Values("Connection") {
-		for _, name := range strings.Split(value, ",") {
-			headers.Del(strings.TrimSpace(name))
-		}
-	}
-	for name := range headers {
-		if isHopByHopHeader(name) {
-			headers.Del(name)
-		}
-	}
-}
-
-func isHopByHopHeader(name string) bool {
-	switch http.CanonicalHeaderKey(name) {
-	case "Connection", "Keep-Alive", "Proxy-Authenticate", "Proxy-Authorization", "Te", "Trailer", "Transfer-Encoding", "Upgrade":
-		return true
-	default:
-		return false
-	}
 }
 
 func writeCallerToolRejection(w http.ResponseWriter) {

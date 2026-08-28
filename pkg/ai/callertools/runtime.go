@@ -165,6 +165,8 @@ func New(options Options) (*Runtime, error) {
 		cancel:          cancel,
 		listener:        listener,
 	}
+	// Validation stays in the handler because out-of-process providers add the
+	// synthetic tool-use ID that must be removed before strict schema checks.
 	mcpServer := server.NewMCPServer(
 		"captain-caller-tools",
 		"1.0.0",
@@ -330,7 +332,9 @@ func (r *Runtime) delegate(_ context.Context, binding api.CallerToolBinding) (*a
 	delegation := &api.CallerToolDelegation{
 		Endpoint: api.CallerToolEndpoint{
 			Name: serverName,
-			URL:  "http://127.0.0.1" + RemoteEndpointPrefix + id + endpointPath,
+			// The sidecar extracts this path and replaces the placeholder origin
+			// with the enrolled supervisor URL; this value is never dialed.
+			URL: "http://127.0.0.1" + RemoteEndpointPrefix + id + endpointPath,
 			Headers: map[string]string{
 				"Authorization": "Bearer " + token,
 				TaskHeader:      binding.TaskID,
@@ -412,10 +416,6 @@ func (r *Runtime) handler(definition api.ToolDefinition) server.ToolHandlerFunc 
 			if decision.UpdatedInput != nil {
 				input = decision.UpdatedInput
 			}
-		}
-		if err := r.validateActive(callCtx); err != nil {
-			r.auditCall(ctx, definition.Name, "denied", "capability_inactive")
-			return mcp.NewToolResultError(err.Error()), nil
 		}
 		if err := r.validateInput(definition.Name, input); err != nil {
 			r.auditCall(ctx, definition.Name, "denied", "invalid_input")
