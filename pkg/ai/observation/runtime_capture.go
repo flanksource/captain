@@ -14,14 +14,14 @@ type RuntimeCaptureConfig struct {
 // ContextWithRuntimeCapture attaches process-routing inputs for provider seams
 // that Captain can intercept during an observation run.
 func ContextWithRuntimeCapture(ctx context.Context, config RuntimeCaptureConfig) context.Context {
-	copy := RuntimeCaptureConfig{
+	cloned := RuntimeCaptureConfig{
 		MCPConfigs:  append([]string(nil), config.MCPConfigs...),
 		Environment: make(map[string]string, len(config.Environment)),
 	}
 	for name, value := range config.Environment {
-		copy.Environment[name] = value
+		cloned.Environment[name] = value
 	}
-	return context.WithValue(ctx, runtimeCaptureContextKey{}, copy)
+	return context.WithValue(ctx, runtimeCaptureContextKey{}, cloned)
 }
 
 // RuntimeCaptureFromContext returns a detached copy of observation-only
@@ -31,12 +31,12 @@ func RuntimeCaptureFromContext(ctx context.Context) RuntimeCaptureConfig {
 		return RuntimeCaptureConfig{}
 	}
 	config, _ := ctx.Value(runtimeCaptureContextKey{}).(RuntimeCaptureConfig)
-	copy := RuntimeCaptureConfig{
+	cloned := RuntimeCaptureConfig{
 		MCPConfigs:  append([]string(nil), config.MCPConfigs...),
 		Environment: make(map[string]string, len(config.Environment)),
 	}
 	for name, value := range config.Environment {
-		copy.Environment[name] = value
+		cloned.Environment[name] = value
 	}
-	return copy
+	return cloned
 }

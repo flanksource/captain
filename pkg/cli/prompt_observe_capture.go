@@ -21,7 +21,10 @@ import (
 	"github.com/flanksource/captain/pkg/api"
 )
 
-const maxObservationExternalEvents = 256
+const (
+	maxObservationExternalEvents          = 256
+	kubernetesCaptureUnavailableErrorCode = "kubernetes_capture_unavailable"
+)
 
 type observationCaptureSession struct {
 	mu sync.Mutex
@@ -39,6 +42,37 @@ type observationCaptureSession struct {
 	artifactDir  string
 	artifactBase string
 	blockingCode string
+}
+
+// initialObservationExternalCapture is the pre-start contract shared by early
+// setup returns and live capture startup. Later startup can only refine it with
+// backend reachability or proxy results.
+func initialObservationExternalCapture(req ai.Request, flags map[string]string) (api.ObservationExternalCapture, api.ObservationExternalCapture) {
+	mcp := api.ObservationExternalCapture{
+		Status: api.ObservationCaptureUnavailable, ReasonCode: "capture_not_started",
+		Events: []api.ObservationExternalEvent{},
+	}
+	hasMCPConfig := len(flagSlice(flags["mcp-config"])) > 0
+	switch {
+	case req.Permissions.MCP.Disabled:
+		mcp.Status = api.ObservationCaptureNotRequested
+		mcp.ReasonCode = ""
+	case !hasMCPConfig && (len(req.Permissions.MCP.Servers) > 0 || len(req.Permissions.MCP.Modes) > 0):
+		mcp.ReasonCode = "configured_mcp_not_intercepted"
+	case !hasMCPConfig:
+		mcp.Status = api.ObservationCaptureNotRequested
+		mcp.ReasonCode = ""
+	}
+
+	kubernetes := api.ObservationExternalCapture{
+		Status: api.ObservationCaptureUnavailable, ReasonCode: "capture_not_started",
+		Events: []api.ObservationExternalEvent{},
+	}
+	if !flagBool(flags["capture-kubernetes"]) {
+		kubernetes.Status = api.ObservationCaptureNotRequested
+		kubernetes.ReasonCode = ""
+	}
+	return mcp, kubernetes
 }
 
 func startObservationCapture(
@@ -62,9 +96,10 @@ func startObservationCapture(
 	} else if !filepath.IsAbs(artifactDir) {
 		artifactDir = filepath.Join(baseDir, artifactDir)
 	}
+	mcpCapture, kubeCapture := initialObservationExternalCapture(req, flags)
 	session := &observationCaptureSession{
-		mcpCapture:   api.ObservationExternalCapture{Status: api.ObservationCaptureUnavailable, Events: []api.ObservationExternalEvent{}},
-		kubeCapture:  api.ObservationExternalCapture{Status: api.ObservationCaptureNotRequested, Events: []api.ObservationExternalEvent{}},
+		mcpCapture:   mcpCapture,
+		kubeCapture:  kubeCapture,
 		runtime:      observation.RuntimeCaptureConfig{Environment: map[string]string{}},
 		artifactDir:  artifactDir,
 		artifactBase: baseDir,
@@ -77,22 +112,14 @@ func startObservationCapture(
 	if req.Permissions.MCP.Disabled && len(mcpConfigs) > 0 {
 		return nil, fmt.Errorf("--mcp-config cannot be combined with --no-mcp")
 	}
-	if req.Permissions.MCP.Disabled {
-		session.mcpCapture.Status = api.ObservationCaptureNotRequested
-	} else if len(mcpConfigs) == 0 {
-		if len(req.Permissions.MCP.Servers) == 0 && len(req.Permissions.MCP.Modes) == 0 {
-			session.mcpCapture.Status = api.ObservationCaptureNotRequested
-		} else {
-			session.mcpCapture.ReasonCode = "configured_mcp_not_intercepted"
-		}
-	} else if runtime.Backend != api.BackendClaudeCLI {
+	if len(mcpConfigs) > 0 && runtime.Backend != api.BackendClaudeCLI {
 		session.mcpCapture.Status = api.ObservationCaptureUnsupported
 		session.mcpCapture.ReasonCode = "runtime_mcp_config_unsupported"
 		session.blockingCode = "mcp_config_unsupported"
-	} else if !localProcessCapture(cfg) || relocatesRun(cfg) {
+	} else if len(mcpConfigs) > 0 && (!localProcessCapture(cfg) || relocatesRun(cfg)) {
 		session.mcpCapture.ReasonCode = "runtime_mcp_proxy_unreachable"
 		session.blockingCode = "mcp_capture_unavailable"
-	} else {
+	} else if len(mcpConfigs) > 0 {
 		capture, err := fixture.StartMCPConfigCapture(mcpConfigs, baseDir, session.recordMCP)
 		if err != nil {
 			return nil, err
@@ -128,6 +155,7 @@ func startObservationCapture(
 	if err != nil {
 		session.kubeCapture.Status = api.ObservationCaptureUnavailable
 		session.kubeCapture.ReasonCode = "kubernetes_proxy_start_failed"
+		session.blockingCode = kubernetesCaptureUnavailableErrorCode
 		return session, nil
 	}
 	kubeDir, err := os.MkdirTemp("", "captain-observe-kube-")
@@ -135,6 +163,7 @@ func startObservationCapture(
 		proxy.Close()
 		session.kubeCapture.Status = api.ObservationCaptureUnavailable
 		session.kubeCapture.ReasonCode = "kubernetes_proxy_setup_failed"
+		session.blockingCode = kubernetesCaptureUnavailableErrorCode
 		return session, nil
 	}
 	kubeconfig, err := proxy.WriteKubeconfig(kubeDir)
@@ -143,6 +172,7 @@ func startObservationCapture(
 		_ = os.RemoveAll(kubeDir)
 		session.kubeCapture.Status = api.ObservationCaptureUnavailable
 		session.kubeCapture.ReasonCode = "kubernetes_proxy_setup_failed"
+		session.blockingCode = kubernetesCaptureUnavailableErrorCode
 		return session, nil
 	}
 	proxy.SetObserver(session.recordKubernetes)

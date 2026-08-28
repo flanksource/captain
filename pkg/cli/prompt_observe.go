@@ -66,6 +66,10 @@ func observePromptAction(ctx context.Context, id string, flags map[string]string
 			return api.RuntimeObservation{}, fmt.Errorf("--%s cannot be combined with --runtime in prompt observe v1", name)
 		}
 	}
+	requestedEffort, err := requestedObservationEffort(selector, flags["effort"])
+	if err != nil {
+		return api.RuntimeObservation{}, err
+	}
 	// Seed the renderer so --runtime works without saved defaults.
 	opts.Model = selector
 
@@ -99,25 +103,17 @@ func observePromptAction(ctx context.Context, id string, flags map[string]string
 	}
 	runtime = runtime.Capabilities()
 
-	requestedEffort := requestedObservationEffort(selector, flags["effort"])
 	resolvedEffort, unsupported := resolveObservationEffort(runtime)
 	result := newRuntimeObservation(selector, runtime, requestedEffort, resolvedEffort)
 	applyObservationCaptureRequest(&result, rendered.Input, flags)
 	if unsupported != "" {
-		result.Availability = api.Available()
-		result.Execution = api.ObservationExecution{
-			State: "not_started",
-			Error: &api.ObservationError{Code: unsupported, Message: "the resolved runtime does not support the requested reasoning effort"},
-		}
+		applyObservationPreDispatchFailure(&result, unsupported, "the resolved runtime does not support the requested reasoning effort")
 		result.Controls.ReasoningEffort.Resolved = api.ObservationStringFact{
 			State: api.ObservationFactUnsupported, ReasonCode: unsupported,
 		}
 		result.Controls.ReasoningEffort.Observed = api.ObservationStringFact{
 			State: api.ObservationFactUnsupported, ReasonCode: unsupported,
 		}
-		result.Capture.Dispatch.Status = api.ObservationCaptureComplete
-		result.Capture.Permissions.Status = api.ObservationCaptureComplete
-		result.Capture.Tools.Status = api.ObservationCaptureComplete
 		return checkedObservation(result)
 	}
 	runtime.Effort = resolvedEffort
@@ -134,14 +130,7 @@ func observePromptAction(ctx context.Context, id string, flags map[string]string
 	}
 	defer capture.Close()
 	if capture.blockingCode != "" {
-		result.Availability = api.Available()
-		result.Execution = api.ObservationExecution{
-			State: "not_started",
-			Error: &api.ObservationError{Code: capture.blockingCode, Message: "the resolved runtime cannot apply the requested capture configuration"},
-		}
-		result.Capture.Dispatch.Status = api.ObservationCaptureComplete
-		result.Capture.Permissions.Status = api.ObservationCaptureComplete
-		result.Capture.Tools.Status = api.ObservationCaptureComplete
+		applyObservationPreDispatchFailure(&result, capture.blockingCode, "the resolved runtime cannot apply the requested capture configuration")
 		capture.Apply(&result, nil)
 		return checkedObservation(result)
 	}
@@ -207,19 +196,27 @@ func forceObservationOutput() {
 	logger.SetOutput(io.Discard)
 }
 
-func requestedObservationEffort(selector, flagValue string) api.ObservationStringFact {
-	parts := strings.Split(selector, ":")
-	if len(parts) > 1 {
-		if effort := api.Effort(strings.TrimSpace(parts[len(parts)-1])); effort != api.EffortNone && effort.Valid() {
-			value := string(effort)
-			return api.ObservationStringFact{State: api.ObservationFactKnown, Value: &value}
-		}
+func requestedObservationEffort(selector, flagValue string) (api.ObservationStringFact, error) {
+	expanded, err := (api.Model{Name: selector}).Expand()
+	if err != nil {
+		return api.ObservationStringFact{}, fmt.Errorf("invalid --runtime: %w", err)
 	}
-	if effort := api.Effort(strings.TrimSpace(flagValue)); effort != api.EffortNone && effort.Valid() {
+	selectorEffort := expanded.Effort
+	flagEffort := api.Effort(strings.TrimSpace(flagValue))
+	if selectorEffort != api.EffortNone && flagEffort != api.EffortNone &&
+		selectorEffort.Valid() && flagEffort.Valid() && selectorEffort != flagEffort {
+		return api.ObservationStringFact{}, fmt.Errorf(
+			"--runtime effort %q conflicts with --effort %q", selectorEffort, flagEffort)
+	}
+	effort := selectorEffort
+	if effort == api.EffortNone {
+		effort = flagEffort
+	}
+	if effort != api.EffortNone && effort.Valid() {
 		value := string(effort)
-		return api.ObservationStringFact{State: api.ObservationFactKnown, Value: &value}
+		return api.ObservationStringFact{State: api.ObservationFactKnown, Value: &value}, nil
 	}
-	return api.ObservationStringFact{State: api.ObservationFactUnset}
+	return api.ObservationStringFact{State: api.ObservationFactUnset}, nil
 }
 
 func resolveObservationEffort(runtime api.Model) (api.Effort, string) {
@@ -376,28 +373,22 @@ func applyObservationSnapshot(result *api.RuntimeObservation, snapshot observati
 	}
 }
 
+// applyObservationPreDispatchFailure closes event capture as complete because
+// Captain rejected setup before provider construction. It proves zero events
+// occurred; it does not claim that the selected backend is instrumentable.
+func applyObservationPreDispatchFailure(result *api.RuntimeObservation, code, message string) {
+	result.Availability = api.Available()
+	result.Execution = api.ObservationExecution{
+		State: "not_started",
+		Error: &api.ObservationError{Code: code, Message: message},
+	}
+	result.Capture.Dispatch.Status = api.ObservationCaptureComplete
+	result.Capture.Permissions.Status = api.ObservationCaptureComplete
+	result.Capture.Tools.Status = api.ObservationCaptureComplete
+}
+
 func applyObservationCaptureRequest(result *api.RuntimeObservation, req ai.Request, flags map[string]string) {
-	if req.Permissions.MCP.Disabled {
-		result.Capture.MCP.Status = api.ObservationCaptureNotRequested
-		result.Capture.MCP.ReasonCode = ""
-	} else if strings.TrimSpace(flags["mcp-config"]) == "" &&
-		(len(req.Permissions.MCP.Servers) > 0 || len(req.Permissions.MCP.Modes) > 0) {
-		result.Capture.MCP.Status = api.ObservationCaptureUnavailable
-		result.Capture.MCP.ReasonCode = "configured_mcp_not_intercepted"
-	} else if strings.TrimSpace(flags["mcp-config"]) == "" {
-		result.Capture.MCP.Status = api.ObservationCaptureNotRequested
-		result.Capture.MCP.ReasonCode = ""
-	} else {
-		result.Capture.MCP.Status = api.ObservationCaptureUnavailable
-		result.Capture.MCP.ReasonCode = "capture_not_started"
-	}
-	if !flagBool(flags["capture-kubernetes"]) {
-		result.Capture.Kubernetes.Status = api.ObservationCaptureNotRequested
-		result.Capture.Kubernetes.ReasonCode = ""
-	} else {
-		result.Capture.Kubernetes.Status = api.ObservationCaptureUnavailable
-		result.Capture.Kubernetes.ReasonCode = "capture_not_started"
-	}
+	result.Capture.MCP, result.Capture.Kubernetes = initialObservationExternalCapture(req, flags)
 }
 
 func applyObservationMetrics(result *api.RuntimeObservation, backend api.Backend, model string, usage *api.Usage, reportedCost float64) {

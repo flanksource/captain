@@ -13,6 +13,7 @@ import (
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/fixture/mcpproxy"
 	"github.com/flanksource/captain/pkg/ai/observation"
+	aiprovider "github.com/flanksource/captain/pkg/ai/provider"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/commons-db/shell"
 	"k8s.io/client-go/tools/clientcmd"
@@ -91,6 +92,70 @@ func TestExecuteObservationProviderDistinguishesMissingFromZeroUsage(t *testing.
 				t.Fatalf("known-zero usage buckets = %#v, want all five zero buckets", result.Metrics.Usage.Buckets)
 			}
 		})
+	}
+}
+
+func TestRequestedObservationEffortRejectsConflictingSources(t *testing.T) {
+	tests := []struct {
+		name       string
+		selector   string
+		flag       string
+		wantEffort string
+		wantError  string
+	}{
+		{name: "selector only", selector: "agent:sol:high", wantEffort: "high"},
+		{name: "flag only", selector: "agent:sol", flag: "high", wantEffort: "high"},
+		{name: "equal", selector: "agent:sol:high", flag: "high", wantEffort: "high"},
+		{name: "conflict", selector: "agent:sol:high", flag: "low", wantError: `--runtime effort "high" conflicts with --effort "low"`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fact, err := requestedObservationEffort(test.selector, test.flag)
+			if test.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantError) {
+					t.Fatalf("requestedObservationEffort() error = %v, want %q", err, test.wantError)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("requestedObservationEffort() error = %v", err)
+			}
+			if fact.State != api.ObservationFactKnown || fact.Value == nil || *fact.Value != test.wantEffort {
+				t.Fatalf("requested effort = %#v, want known %q", fact, test.wantEffort)
+			}
+		})
+	}
+}
+
+func TestObservationPreDispatchFailureProvesZeroEvents(t *testing.T) {
+	result := newRuntimeObservation(
+		"api:deepseek-reasoner:high",
+		api.Model{Backend: api.BackendDeepSeek, Name: "deepseek-reasoner"},
+		api.ObservationStringFact{State: api.ObservationFactUnset},
+		api.EffortNone,
+	)
+	if result.Capture.Dispatch.Status != api.ObservationCaptureUnsupported ||
+		result.Capture.Tools.Status != api.ObservationCaptureUnavailable {
+		t.Fatalf("initial capture = %#v, want backend capability statuses", result.Capture)
+	}
+
+	applyObservationPreDispatchFailure(&result, "setup_blocked", "setup was blocked")
+
+	if result.Execution.State != "not_started" || result.Execution.Error == nil || result.Execution.Error.Code != "setup_blocked" {
+		t.Fatalf("execution = %#v", result.Execution)
+	}
+	statuses := []api.ObservationCaptureStatus{
+		result.Capture.Dispatch.Status,
+		result.Capture.Permissions.Status,
+		result.Capture.Tools.Status,
+	}
+	for i, status := range statuses {
+		if status != api.ObservationCaptureComplete {
+			t.Fatalf("pre-dispatch capture status %d = %q, want complete", i, status)
+		}
+	}
+	if len(result.Capture.Dispatch.Events) != 0 || len(result.Capture.Permissions.Events) != 0 || len(result.Capture.Tools.Events) != 0 {
+		t.Fatalf("pre-dispatch events = %#v, want positively observed zero events", result.Capture)
 	}
 }
 
@@ -257,6 +322,152 @@ func TestObservationCaptureRoutesKubernetesTraffic(t *testing.T) {
 	}
 	if len(result.Artifacts) != 1 || result.Artifacts[0].Kind != "kubernetes_capture" {
 		t.Fatalf("artifacts = %#v", result.Artifacts)
+	}
+}
+
+func TestObservationKubernetesCaptureBlocksOnlyFailedLocalCLIInterception(t *testing.T) {
+	tests := []struct {
+		name       string
+		runtime    api.Model
+		config     ai.Config
+		wantStatus api.ObservationCaptureStatus
+		wantReason string
+		wantBlock  string
+	}{
+		{
+			name: "supported local CLI", runtime: api.Model{Backend: api.BackendCodexCLI},
+			config:     ai.Config{Model: api.Model{Backend: api.BackendCodexCLI}},
+			wantStatus: api.ObservationCaptureUnavailable, wantReason: "kubernetes_proxy_start_failed",
+			wantBlock: kubernetesCaptureUnavailableErrorCode,
+		},
+		{
+			name: "unsupported API", runtime: api.Model{Backend: api.BackendOpenAI},
+			config:     ai.Config{Model: api.Model{Backend: api.BackendOpenAI}},
+			wantStatus: api.ObservationCaptureUnsupported, wantReason: "runtime_kubernetes_capture_unsupported",
+		},
+		{
+			name: "sandboxed CLI", runtime: api.Model{Backend: api.BackendCodexCLI},
+			config: ai.Config{
+				Model:            api.Model{Backend: api.BackendCodexCLI},
+				SandboxSelection: &api.SandboxConfig{Kind: api.SandboxSRT},
+			},
+			wantStatus: api.ObservationCaptureUnavailable, wantReason: "runtime_kubernetes_proxy_unreachable",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			session, err := startObservationCapture(
+				map[string]string{"capture-kubernetes": "true", "kubeconfig": filepath.Join(t.TempDir(), "missing")},
+				test.runtime,
+				ai.Request{Setup: &shell.Setup{Cwd: t.TempDir()}},
+				test.config,
+				"observation-1",
+			)
+			if err != nil {
+				t.Fatalf("startObservationCapture: %v", err)
+			}
+			defer session.Close()
+			if session.kubeCapture.Status != test.wantStatus || session.kubeCapture.ReasonCode != test.wantReason || session.blockingCode != test.wantBlock {
+				t.Fatalf("capture session = %#v", session)
+			}
+			if _, inherited := session.runtime.Environment["KUBECONFIG"]; inherited {
+				t.Fatalf("failed capture exposed a KUBECONFIG override: %#v", session.runtime.Environment)
+			}
+		})
+	}
+}
+
+func TestObservationSetupFailuresDoNotConstructProvider(t *testing.T) {
+	isolateSavedAI(t)
+	providerBuilt := false
+	api.RegisterProvider(api.BackendCodexCLI, func(ai.Config) (ai.Provider, error) {
+		providerBuilt = true
+		return observationUsageProvider{}, nil
+	})
+	t.Cleanup(func() {
+		api.RegisterProvider(api.BackendCodexCLI, func(cfg ai.Config) (ai.Provider, error) {
+			return aiprovider.NewCodexCLI(cfg), nil
+		})
+	})
+
+	_, err := observePromptAction(context.Background(), "", map[string]string{
+		"runtime": "codex-cli:gpt-5.5:high",
+		"effort":  "low",
+		"prompt":  "do not run",
+	})
+	if err == nil || !strings.Contains(err.Error(), `--runtime effort "high" conflicts with --effort "low"`) {
+		t.Fatalf("conflicting effort error = %v", err)
+	}
+	if providerBuilt {
+		t.Fatal("provider was constructed after conflicting effort setup")
+	}
+
+	result, err := observePromptAction(context.Background(), "", map[string]string{
+		"runtime":            "codex-cli:gpt-5.5",
+		"prompt":             "do not run",
+		"no-mcp":             "true",
+		"capture-kubernetes": "true",
+		"kubeconfig":         filepath.Join(t.TempDir(), "missing"),
+	})
+	if err != nil {
+		t.Fatalf("observePromptAction: %v", err)
+	}
+	if providerBuilt {
+		t.Fatal("provider was constructed after Kubernetes capture setup failed")
+	}
+	if result.Execution.State != "not_started" || result.Execution.Error == nil ||
+		result.Execution.Error.Code != kubernetesCaptureUnavailableErrorCode {
+		t.Fatalf("execution = %#v", result.Execution)
+	}
+	if result.Capture.Kubernetes.Status != api.ObservationCaptureUnavailable ||
+		result.Capture.Kubernetes.ReasonCode != "kubernetes_proxy_start_failed" {
+		t.Fatalf("Kubernetes capture = %#v", result.Capture.Kubernetes)
+	}
+	if result.Capture.Dispatch.Status != api.ObservationCaptureComplete ||
+		result.Capture.Permissions.Status != api.ObservationCaptureComplete ||
+		result.Capture.Tools.Status != api.ObservationCaptureComplete {
+		t.Fatalf("pre-dispatch capture = %#v", result.Capture)
+	}
+	if len(result.Capture.Dispatch.Events) != 0 || len(result.Capture.Permissions.Events) != 0 || len(result.Capture.Tools.Events) != 0 {
+		t.Fatalf("pre-dispatch events = %#v", result.Capture)
+	}
+}
+
+func TestObservationKubernetesKubeconfigPreparationFailureBlocks(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+	dir := t.TempDir()
+	kubeconfig := filepath.Join(dir, "config")
+	config := "apiVersion: v1\nkind: Config\ncurrent-context: test\nclusters:\n- name: test\n  cluster:\n    server: " + upstream.URL + "\ncontexts:\n- name: test\n  context:\n    cluster: test\n"
+	if err := os.WriteFile(kubeconfig, []byte(config), 0o600); err != nil {
+		t.Fatalf("write kubeconfig: %v", err)
+	}
+	notDirectory := filepath.Join(dir, "not-a-directory")
+	if err := os.WriteFile(notDirectory, []byte("blocked"), 0o600); err != nil {
+		t.Fatalf("write temp blocker: %v", err)
+	}
+	t.Setenv("TMPDIR", notDirectory)
+
+	session, err := startObservationCapture(
+		map[string]string{"capture-kubernetes": "true", "kubeconfig": kubeconfig},
+		api.Model{Backend: api.BackendClaudeCLI},
+		ai.Request{Setup: &shell.Setup{Cwd: dir}},
+		ai.Config{Model: api.Model{Backend: api.BackendClaudeCLI}},
+		"observation-1",
+	)
+	if err != nil {
+		t.Fatalf("startObservationCapture: %v", err)
+	}
+	defer session.Close()
+	if session.blockingCode != kubernetesCaptureUnavailableErrorCode ||
+		session.kubeCapture.Status != api.ObservationCaptureUnavailable ||
+		session.kubeCapture.ReasonCode != "kubernetes_proxy_setup_failed" {
+		t.Fatalf("capture session = %#v", session)
+	}
+	if _, inherited := session.runtime.Environment["KUBECONFIG"]; inherited {
+		t.Fatalf("failed capture exposed a KUBECONFIG override: %#v", session.runtime.Environment)
 	}
 }
 
