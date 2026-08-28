@@ -12,15 +12,15 @@ var ErrUnknownModel = ErrInferBackend
 
 // The model grammar
 //
-//	sonnet                   → {model: claude-sonnet-5, backend: anthropic}
+//	sonnet                   → {model: claude-sonnet-5, backend: api}
 //	sonnet:high              → + effort high
-//	agent:sonnet:high        → + backend claude-agent
-//	claude-cmux:opus         → an explicit backend name works as a prefix too
+//	agent:sonnet:high        → + backend agent
 //	*:fable                  → every backend of the claiming family (multi only)
 //	opus:high, sonnet:medium → primary opus:high with a sonnet:medium fallback
 //
 // One element is `[prefix:]model[:effort]`, where prefix is a runtime mode
-// (api | cli | agent | cmux; sdk aliases agent), a concrete backend name, or "*".
+// (api | agent | cli | cmux) or "*". Provider names, composite adapter ids, and
+// old aliases are rejected rather than translated.
 // A two-segment element is disambiguated by content: a known effort tail is
 // model:effort, a known prefix head is prefix:model.
 //
@@ -31,7 +31,8 @@ var ErrUnknownModel = ErrInferBackend
 
 // ParseOptions tunes one parse.
 type ParseOptions struct {
-	// Backend forces a backend. A prefix that resolves elsewhere is an error.
+	// Backend forces an internal resolved adapter. It is not part of the authored
+	// model contract; callers use Mode for the portable backend field.
 	Backend Backend
 	// Mode forces the runtime mechanism when the element carries no prefix of its
 	// own — the object form of "agent:sonnet". An explicit prefix still wins.
@@ -100,10 +101,14 @@ func ParseModelElement(raw string, opts ParseOptions) ([]Model, error) {
 		p, tokenMode = forced, mode
 	}
 
-	// An explicit prefix wins over Model.Mode, which wins over the mode the model
+	// An explicit prefix wins over the sibling backend field, which wins over the mode the model
 	// name itself implies.
 	if prefix == "" && opts.Mode != "" {
-		tokenMode = opts.Mode
+		parsedMode, valid := ParseRuntimeMode(string(opts.Mode))
+		if !valid {
+			return nil, invalidModelBackend(opts.Mode)
+		}
+		tokenMode = parsedMode
 	}
 	mode, err := resolveMode(prefix, tokenMode, p, name)
 	if err != nil {
@@ -140,7 +145,7 @@ func ParseModelElement(raw string, opts ParseOptions) ([]Model, error) {
 	if err := effort.Validate(); err != nil {
 		return nil, fmt.Errorf("runtime selector %q: %w", raw, err)
 	}
-	return []Model{Model{Name: resolved, Backend: backend, Effort: effort}.Capabilities()}, nil
+	return []Model{Model{Name: resolved, Backend: backend, Mode: mode, Effort: effort}.Capabilities()}, nil
 }
 
 // splitElement pulls the optional prefix and effort suffix off an element.
@@ -157,17 +162,13 @@ func splitElement(raw, baseName string) (prefix, name string, effort Effort, err
 		}
 		return "", tokens[0], EffortNone, nil
 	case 2:
-		switch {
-		case Effort(tokens[1]).Valid() && tokens[1] != "":
-			return "", tokens[0], Effort(tokens[1]), nil
-		case isPrefix(tokens[0]):
-			return strings.ToLower(tokens[0]), tokens[1], EffortNone, nil
-		default:
-			return "", "", EffortNone, fmt.Errorf("ambiguous compact model %q (expected model:effort or mode:model)", raw)
+		if !isPrefix(tokens[0]) {
+			return "", "", EffortNone, fmt.Errorf("invalid model configuration: backend %q in %q (valid: %s)", tokens[0], raw, RuntimeModeList())
 		}
+		return strings.ToLower(tokens[0]), tokens[1], EffortNone, nil
 	case 3:
 		if !isPrefix(tokens[0]) {
-			return "", "", EffortNone, fmt.Errorf("invalid mode %q in %q (valid: %s)", tokens[0], raw, RuntimeModeList())
+			return "", "", EffortNone, fmt.Errorf("invalid model configuration: backend %q in %q (valid: %s)", tokens[0], raw, RuntimeModeList())
 		}
 		if !Effort(tokens[2]).Valid() || tokens[2] == "" {
 			return "", "", EffortNone, fmt.Errorf("invalid effort %q in %q", tokens[2], raw)
@@ -184,17 +185,9 @@ func resolveMode(prefix string, tokenMode RuntimeMode, p *Provider, name string)
 	if prefix == "" {
 		return tokenMode, nil
 	}
-	if b := Backend(prefix); b.Valid() {
-		owner, mode, _ := ProviderFor(b)
-		if owner != p {
-			return "", fmt.Errorf("model %q belongs to the %s family and cannot use backend %q (%s family)",
-				name, p.AgentName, b, owner.AgentName)
-		}
-		return mode, nil
-	}
 	mode, ok := ParseRuntimeMode(prefix)
 	if !ok {
-		return "", fmt.Errorf("unknown runtime selector prefix %q (valid: %s, a backend name, or *)", prefix, RuntimeModeList())
+		return "", invalidModelBackend(RuntimeMode(prefix))
 	}
 	return mode, nil
 }
@@ -214,7 +207,7 @@ func expandWildcard(raw, name string, effort Effort) ([]Model, error) {
 		if err != nil {
 			continue
 		}
-		out = append(out, Model{Name: resolved, Backend: backend, Effort: effort}.Capabilities())
+		out = append(out, Model{Name: resolved, Backend: backend, Mode: mode, Effort: effort}.Capabilities())
 	}
 	if len(out) == 0 {
 		return nil, fmt.Errorf("runtime selector %q is not available on any backend", raw)
@@ -237,7 +230,7 @@ func resolveOn(p *Provider, mode RuntimeMode, name string) (string, error) {
 }
 
 // isPrefix reports whether a token can lead an element: a runtime mode, a
-// concrete backend name, or the wildcard.
+// canonical backend name or the wildcard.
 func isPrefix(s string) bool {
 	s = strings.ToLower(strings.TrimSpace(s))
 	if s == "*" {
@@ -246,7 +239,7 @@ func isPrefix(s string) bool {
 	if _, ok := ParseRuntimeMode(s); ok {
 		return true
 	}
-	return Backend(s).Valid()
+	return false
 }
 
 // ContainsSelector reports whether s carries a prefix selector such as
@@ -278,12 +271,12 @@ func ResolveModel(m Model) (Model, error) {
 	if strings.TrimSpace(m.Name) == "" {
 		return m, nil
 	}
-	if err := m.validateMode(); err != nil {
-		return Model{}, err
-	}
 	resolved, err := ParseModelElement(m.Name, ParseOptions{Backend: m.Backend, Mode: m.Mode})
 	if err != nil {
-		return Model{}, err
+		if strings.Contains(err.Error(), "invalid model configuration") {
+			return Model{}, err
+		}
+		return Model{}, fmt.Errorf("invalid model configuration: %w", err)
 	}
 	if len(resolved) != 1 {
 		return Model{}, fmt.Errorf("wildcard selector %q is only valid for --multi-models", m.Name)
@@ -297,7 +290,10 @@ func ResolveModel(m Model) (Model, error) {
 		}
 		rfb, err := ParseModelElement(fb.Name, ParseOptions{Backend: fb.Backend, Mode: fb.Mode})
 		if err != nil {
-			return Model{}, err
+			if strings.Contains(err.Error(), "invalid model configuration") {
+				return Model{}, err
+			}
+			return Model{}, fmt.Errorf("invalid model configuration: fallback: %w", err)
 		}
 		if len(rfb) != 1 {
 			return Model{}, fmt.Errorf("wildcard selector %q is only valid for --multi-models", fb.Name)
@@ -353,6 +349,9 @@ func mergeResolved(original, resolved Model) Model {
 	}
 	if resolved.Backend != "" {
 		out.Backend = resolved.Backend
+	}
+	if resolved.Mode != "" {
+		out.Mode = resolved.Mode
 	}
 	if resolved.Effort != EffortNone {
 		out.Effort = resolved.Effort

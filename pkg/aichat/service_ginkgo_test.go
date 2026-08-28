@@ -145,7 +145,7 @@ var _ = Describe("Captain aichat service", func() {
 		resolver := &fakeResolver{runtimes: []api.RuntimeFamily{{
 			Family: "codex", Provider: "openai", CatalogPrefix: "openai",
 			Modes: []api.RuntimeModeEntry{{
-				Mode: "api", Backend: string(api.BackendOpenAI), Kind: "api",
+				Backend: "api", Adapter: string(api.BackendOpenAI), Kind: "api",
 				Availability: api.Availability{State: api.AvailabilityMissingCredential, Reason: "No OpenAI API credentials.", Remediation: "Configure credentials."},
 			}},
 		}}}
@@ -159,6 +159,25 @@ var _ = Describe("Captain aichat service", func() {
 		Expect(json.Unmarshal(response.Body.Bytes(), &runtimes)).To(Succeed())
 		Expect(runtimes).To(HaveLen(1))
 		Expect(runtimes[0].Modes[0].Availability).To(Equal(api.Available()))
+	})
+
+	It("serves schema-backed native runtime mappings", func() {
+		schema := api.RuntimeSchemaFor(api.BackendCodexCLI)
+		resolver := &fakeResolver{runtimes: []api.RuntimeFamily{{
+			Family: "codex", Provider: "openai", CatalogPrefix: "openai",
+			Modes: []api.RuntimeModeEntry{{
+				Backend: "cli", Adapter: string(api.BackendCodexCLI), Kind: "cli",
+				Availability: api.Available(), Schema: schema,
+			}},
+		}}}
+		service := aichat.NewService(aichat.ServiceOptions{Resolver: resolver})
+
+		response := httptest.NewRecorder()
+		service.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/chat/runtimes", nil))
+		Expect(response.Code).To(Equal(http.StatusOK))
+		var runtimes []api.RuntimeFamily
+		Expect(json.Unmarshal(response.Body.Bytes(), &runtimes)).To(Succeed())
+		Expect(runtimes[0].Modes[0].Schema).To(Equal(schema))
 	})
 
 	It("applies request-scoped credentials after canonical model selection", func() {
@@ -321,6 +340,9 @@ var _ = Describe("Captain aichat service", func() {
 		Expect(spec.Model.Backend).To(Equal(api.BackendOpenAI))
 		Expect(spec.Model.Effort).To(Equal(api.EffortHigh))
 		Expect(spec.ToolPreferences).To(Equal(api.ToolPreferences{"billing": api.ToolPolicyAsk}))
+		// A requested posture no longer implies an isolation boundary: the two are
+		// independent, so asking for acceptEdits leaves the sandbox unset.
+		Expect(spec.Sandbox).To(BeNil())
 		Expect(spec.Permissions.Mode).To(Equal(api.PermissionAcceptEdits))
 		Expect(spec.Messages).To(HaveLen(2))
 		Expect(spec.Messages[0]).To(Equal(api.Message{Role: api.RoleSystem, Parts: []api.Part{{

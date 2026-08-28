@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -44,7 +45,7 @@ func AttachPromptSchemaFlag(root *cobra.Command) error {
 	}
 	promptCmd.RunE = func(cmd *cobra.Command, args []string) error {
 		if schema {
-			return WritePromptSchema(cmd.OutOrStdout())
+			return WritePromptSchema(cmd.Context(), cmd.OutOrStdout())
 		}
 		if originalRunE != nil {
 			return originalRunE(cmd, args)
@@ -54,8 +55,8 @@ func AttachPromptSchemaFlag(root *cobra.Command) error {
 	return nil
 }
 
-func WritePromptSchema(w io.Writer) error {
-	doc, err := PromptSchemaDocument()
+func WritePromptSchema(ctx context.Context, w io.Writer) error {
+	doc, err := PromptSchemaDocument(ctx)
 	if err != nil {
 		return err
 	}
@@ -69,13 +70,23 @@ func WritePromptSchema(w io.Writer) error {
 // they never change within a process) and the available backends/models probed
 // from the environment (ai.CachedAdapters owns the short-TTL cache so a
 // long-running serve process reflects key/model changes without re-probing per
-// request).
-func PromptSchemaDocument() (map[string]any, error) {
+// request). The discovered prompt sources ride along so the editor's save
+// destination picker sees every writable directory, including empty ones.
+func PromptSchemaDocument(ctx context.Context) (map[string]any, error) {
 	adapters, err := schemaAdapters()
 	if err != nil {
 		return nil, err
 	}
-	return buildPromptSchemaDocument(adapters, loadSavedConfig().Sandbox)
+	doc, err := buildPromptSchemaDocument(adapters, loadSavedConfig().Sandbox)
+	if err != nil {
+		return nil, err
+	}
+	sources, err := promptSourceInfos(ctx)
+	if err != nil {
+		return nil, err
+	}
+	doc["sources"] = sources
+	return doc, nil
 }
 
 // schemaAdapters sources the probed adapters through pkg/ai's cache. It is a
@@ -125,7 +136,7 @@ var reflectedSchemas = sync.OnceValues(func() (reflectedSchemaBytes, error) {
 func promptSchemaExampleSpec() map[string]any {
 	return map[string]any{
 		"model":       exampleModelName(),
-		"backend":     string(api.BackendClaudeCmux),
+		"backend":     string(api.ModeCmux),
 		"effort":      string(api.EffortMedium),
 		"temperature": 0.2,
 		"noCache":     true,

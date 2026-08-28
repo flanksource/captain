@@ -8,8 +8,8 @@ func TestBackendToProvider(t *testing.T) {
 		BackendOpenAI:      "openai",
 		BackendGemini:      "googleai",
 		BackendDeepSeek:    "deepseek",
-		BackendClaudeAgent: "claude-agent",
-		BackendCodexCLI:    "codex-cli",
+		BackendClaudeAgent: "anthropic",
+		BackendCodexCLI:    "openai",
 	}
 	for b, want := range cases {
 		if got := BackendToProvider(b); got != want {

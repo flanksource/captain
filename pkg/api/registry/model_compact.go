@@ -15,34 +15,17 @@ import (
 // is handy for fallback chains and terse config:
 //
 //	opus                     → {model: opus}
-//	opus:high                → {model: opus, effort: high}
-//	agent:opus:high          → {model: opus, effort: high, backend: claude-agent}
-//	opus:high, sonnet:medium → primary opus:high with a sonnet:medium fallback
+//	agent:opus:high          → {model: opus, effort: high, backend: agent}
+//	agent:opus:high, api:sonnet:medium → primary opus with an API fallback
 //
-// The grammar per comma-separated element is `[mode:]model[:effort]`, where mode
-// is a mechanism keyword (api | cli | agent | cmux; sdk is an alias for agent)
-// combined with the model's inferred family to a concrete backend. A two-segment
-// element is disambiguated by content: a known effort tail is model:effort, a
-// known mode head is mode:model.
+// The grammar per comma-separated element is `mode:model[:effort]`, where mode
+// is a backend keyword (api | agent | cli | cmux). A bare model remains valid
+// when the sibling backend field supplies the mode. Provider names, composite
+// adapter ids, old aliases, and the former model:effort shorthand are invalid.
 
-// backendForPrefix resolves an element's prefix plus its model name to a concrete
-// backend: the provider that claims the model, combined with the mechanism the
-// prefix names.
-func backendForPrefix(prefix, modelName string) (Backend, error) {
-	p, _, _, ok := ProviderForToken(modelName)
-	if !ok {
-		return "", fmt.Errorf("mode %q: %w: %s (pass an explicit backend: %s)", prefix, ErrUnknownModel, modelName, BackendList())
-	}
-	mode, err := resolveMode(prefix, ModeAPI, p, modelName)
-	if err != nil {
-		return "", err
-	}
-	return p.BackendFor(mode)
-}
-
-// parseCompactElement parses one `[prefix:]model[:effort]` element.
+// parseCompactElement parses one `mode:model[:effort]` or bare-model element.
 //
-// It resolves the BACKEND but deliberately leaves Name as written: a decoded
+// It records the portable backend but deliberately leaves Name as written: a decoded
 // spec keeps the model the user asked for ("opus"), and only the later resolve
 // step (ResolveModel) maps it onto an exact catalog id. The spec is a request,
 // not a resolution, so decoding must not bake today's catalog snapshot into it.
@@ -65,11 +48,11 @@ func parseCompactElement(s string) (Model, error) {
 	if prefix == "*" {
 		return Model{}, fmt.Errorf("wildcard selector %q is only valid for --multi-models", s)
 	}
-	backend, err := backendForPrefix(prefix, name)
-	if err != nil {
-		return Model{}, err
+	mode, ok := ParseRuntimeMode(prefix)
+	if !ok {
+		return Model{}, invalidModelBackend(RuntimeMode(prefix))
 	}
-	m.Backend = backend
+	m.Mode = mode
 	return m, nil
 }
 
@@ -94,7 +77,7 @@ func parseCompactModel(s string) (Model, error) {
 	return primary, nil
 }
 
-// Expand parses a compact Name (`[mode:]model[:effort]`, optionally with a
+// Expand parses a compact Name (`mode:model[:effort]`, optionally with a
 // comma-separated fallback tail) into concrete Name/Effort/Backend + Fallbacks,
 // preserving any fields already set on the receiver that the compact form does
 // not specify. It is idempotent: a plain model name is returned unchanged.
