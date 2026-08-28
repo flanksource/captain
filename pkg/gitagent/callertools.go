@@ -349,22 +349,27 @@ func RevokeCallerTools(ctx context.Context, target TransportTarget, task string)
 // LoadCallerToolEndpoint consumes the sidecar-delivered secret before the
 // remote model process starts.
 func LoadCallerToolEndpoint(sidecarRepo, task string) (*api.CallerToolEndpoint, error) {
-	if err := ValidateTaskID(task); err != nil {
+	name, err := callerToolSecretName(task)
+	if err != nil {
 		return nil, err
 	}
-	path := callerToolSecretPath(sidecarRepo, task)
-	info, err := os.Stat(path)
+	root, err := os.OpenRoot(sidecarRepo)
+	if err != nil {
+		return nil, fmt.Errorf("open caller-tool secret store: %w", err)
+	}
+	defer root.Close()
+	info, err := root.Stat(name)
 	if err != nil {
 		return nil, fmt.Errorf("caller-tool task secret: %w", err)
 	}
 	if info.Mode().Perm()&0o077 != 0 {
-		return nil, fmt.Errorf("caller-tool task secret %s must not be accessible by group or other users", path)
+		return nil, fmt.Errorf("caller-tool task secret must not be accessible by group or other users")
 	}
-	payload, err := os.ReadFile(path)
+	payload, err := root.ReadFile(name)
 	if err != nil {
 		return nil, err
 	}
-	if err := os.Remove(path); err != nil {
+	if err := root.Remove(name); err != nil {
 		return nil, fmt.Errorf("consume caller-tool task secret: %w", err)
 	}
 	var secret callerToolEndpointSecret
@@ -458,39 +463,108 @@ func doCallerToolControl(client *http.Client, request *http.Request) error {
 	return nil
 }
 
+// writeCallerToolSecret confines the validated task-relative name with
+// os.Root, so a sidecar-state symlink cannot redirect capability material.
 func writeCallerToolSecret(root, task string, endpoint callerToolEndpointSecret) error {
+	name, err := callerToolSecretName(task)
+	if err != nil {
+		return err
+	}
 	payload, err := json.Marshal(endpoint)
 	if err != nil {
 		return err
 	}
-	dir := taskStateDir(root, task)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	store, err := os.OpenRoot(root)
+	if err != nil {
 		return err
 	}
-	return writeFileAtomic(filepath.Join(dir, callerToolSecretFile), payload, 0o600)
+	defer store.Close()
+	if err := store.MkdirAll(filepath.Dir(name), 0o700); err != nil {
+		return err
+	}
+	file, err := store.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	created := true
+	defer func() {
+		if created {
+			_ = store.Remove(name)
+		}
+	}()
+	if _, err := file.Write(payload); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Chmod(0o600); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	dir, err := store.Open(filepath.Dir(name))
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	if err := dir.Sync(); err != nil {
+		return err
+	}
+	created = false
+	return nil
 }
 
 func removeCallerToolSecret(root, task string) error {
-	err := os.Remove(callerToolSecretPath(root, task))
+	name, err := callerToolSecretName(task)
+	if err != nil {
+		return err
+	}
+	store, err := os.OpenRoot(root)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	err = store.Remove(name)
 	if os.IsNotExist(err) {
 		return nil
 	}
 	return err
 }
 
-func callerToolSecretPath(root, task string) string {
-	return filepath.Join(taskStateDir(root, task), callerToolSecretFile)
+func callerToolSecretName(task string) (string, error) {
+	if err := ValidateTaskID(task); err != nil {
+		return "", err
+	}
+	return filepath.Join("captain", "tasks", task, callerToolSecretFile), nil
 }
 
 // removeStaleCallerToolSecrets fails closed after a sidecar restart: in-memory
 // proxy sessions cannot be recovered, so their unconsumed endpoint files must
 // not outlive the process that authenticated them.
 func removeStaleCallerToolSecrets(root string) (int, error) {
-	tasks := filepath.Join(root, "captain", "tasks")
-	entries, err := os.ReadDir(tasks)
+	store, err := os.OpenRoot(root)
+	if err != nil {
+		return 0, fmt.Errorf("open caller-tool secret store: %w", err)
+	}
+	defer store.Close()
+	tasks := filepath.Join("captain", "tasks")
+	dir, err := store.Open(tasks)
 	if os.IsNotExist(err) {
 		return 0, nil
 	}
+	if err != nil {
+		return 0, fmt.Errorf("scan stale caller-tool task secrets: %w", err)
+	}
+	entries, err := dir.ReadDir(-1)
+	_ = dir.Close()
 	if err != nil {
 		return 0, fmt.Errorf("scan stale caller-tool task secrets: %w", err)
 	}
@@ -499,7 +573,7 @@ func removeStaleCallerToolSecrets(root string) (int, error) {
 		if !entry.IsDir() || ValidateTaskID(entry.Name()) != nil {
 			continue
 		}
-		err := os.Remove(filepath.Join(tasks, entry.Name(), callerToolSecretFile))
+		err := store.Remove(filepath.Join(tasks, entry.Name(), callerToolSecretFile))
 		if os.IsNotExist(err) {
 			continue
 		}
