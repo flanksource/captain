@@ -170,7 +170,6 @@ func New(options Options) (*Runtime, error) {
 		"1.0.0",
 		server.WithToolCapabilities(false),
 		server.WithToolFilter(runtime.filterTools),
-		server.WithInputSchemaValidation(),
 	)
 	for _, definition := range definitions {
 		runtime.definitions[definition.Name] = definition
@@ -381,6 +380,10 @@ func (r *Runtime) handler(definition api.ToolDefinition) server.ToolHandlerFunc 
 		toolUseID, generatedToolUseID, err := toolUseID(request, input)
 		if err != nil {
 			r.auditCall(ctx, definition.Name, "denied", "invalid_tool_use_id")
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		if err := r.validateInput(definition.Name, input); err != nil {
+			r.auditCall(ctx, definition.Name, "denied", "invalid_input")
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 		if definition.NeedsApproval() {

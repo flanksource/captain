@@ -69,6 +69,10 @@ type ServiceOptions struct {
 	Attachments    AttachmentResolver
 	Threads        ThreadStoreProvider
 	Authority      ExecutionAuthority
+	// ResolveSandbox turns an untrusted serialized selector into the runtime
+	// adapter configuration owned by the host. Nil rejects request-level sandbox
+	// selection rather than silently running without one.
+	ResolveSandbox func(context.Context, api.SandboxRef) (*api.SandboxConfig, error)
 	// ToolStrategies is how this deployment reads a tool's own facts when no rule
 	// mentions it, weakest first. Nil takes api.DefaultStrategies (HTTP method,
 	// then safety hints). It is one chain for every tool source rather than one
@@ -102,8 +106,20 @@ func (s *Service) Handler() http.Handler {
 	mux.HandleFunc("POST /api/chat", s.handleChat)
 	mux.HandleFunc("GET /api/chat/models", s.handleModels)
 	mux.HandleFunc("GET /api/chat/runtimes", s.handleRuntimes)
+	mux.HandleFunc("GET /api/chat/tools", s.handleTools)
 	s.registerThreadRoutes(mux)
 	return mux
+}
+
+func (s *Service) handleTools(w http.ResponseWriter, request *http.Request) {
+	set, err := s.loadTools(request.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := writeJSON(w, http.StatusOK, ToolCatalogResponse{Tools: set.Catalog}); err != nil {
+		serviceLog.Errorf("write chat tools response: %v", err)
+	}
 }
 
 func (s *Service) handleRuntimes(w http.ResponseWriter, request *http.Request) {
@@ -231,12 +247,10 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 	config.SessionID = spec.SessionID
 	config.CaptainSessionID = chat.ThreadID
 	config.Tools = definitions
-	if config.SandboxSelection != nil && spec.Sandbox != nil {
-		selection := *config.SandboxSelection
-		selection.Agent = spec.Sandbox.Agent
-		selection.CallerTools = append([]string(nil), spec.Sandbox.CallerTools...)
-		selection.Policy = spec.Sandbox.Policy
-		config.SandboxSelection = &selection
+	config, err = s.applySandboxSelection(request.Context(), config, spec.Sandbox)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 	config, err = s.prepareProviderConfig(request.Context(), config)
 	if err != nil {

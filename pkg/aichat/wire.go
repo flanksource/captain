@@ -23,7 +23,9 @@ type ChatRequest struct {
 	Temperature     *float64                `json:"temperature,omitempty"`
 	Budget          api.Budget              `json:"budget,omitempty"`
 	ToolPreferences api.ToolPreferences     `json:"toolPreferences,omitempty"`
+	ToolPolicy      api.PermissionPolicy    `json:"toolPolicy,omitempty"`
 	PermissionMode  api.PermissionMode      `json:"permissionMode,omitempty"`
+	Sandbox         *api.SandboxRef         `json:"sandbox,omitempty"`
 	ToolApproval    *api.ToolApprovalResume `json:"-"`
 
 	Context      string            `json:"context,omitempty"`
