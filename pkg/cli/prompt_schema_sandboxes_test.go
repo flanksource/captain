@@ -89,12 +89,12 @@ func TestBuildSandboxCatalogProjectsDescriptorCapabilitiesAndModes(t *testing.T)
 		t.Error("git-agent description is empty; the editor renders it as help text")
 	}
 
-	none := catalogKind(t, catalog, "none")
-	if len(none.Capabilities) != 0 {
-		t.Errorf("none capabilities = %v, want empty", none.Capabilities)
+	off := catalogKind(t, catalog, "off")
+	if len(off.Capabilities) != 0 {
+		t.Errorf("off capabilities = %v, want empty", off.Capabilities)
 	}
-	if len(none.Modes) != len(api.AllRuntimeModes()) {
-		t.Errorf("none modes = %v, want every runtime mode", none.Modes)
+	if len(off.Modes) != len(api.AllRuntimeModes()) {
+		t.Errorf("off modes = %v, want every runtime mode", off.Modes)
 	}
 }
 
@@ -102,7 +102,7 @@ func TestBuildSandboxCatalogNestsConfiguredBackendsUnderTheirKind(t *testing.T) 
 	catalog := buildSandboxCatalog(captainconfig.SandboxDefaults{
 		Backends: map[string]captainconfig.SandboxBackend{
 			"prod-pool":    gitAgentBackendFixture(),
-			"local-docker": {Kind: "container"},
+			"local-docker": {Kind: "docker"},
 		},
 	})
 
@@ -118,11 +118,11 @@ func TestBuildSandboxCatalogNestsConfiguredBackendsUnderTheirKind(t *testing.T) 
 		t.Errorf("prod-pool kind = %q, want git-agent", pool.Kind)
 	}
 
-	if container := catalogKind(t, catalog, "container"); len(container.Backends) != 1 {
-		t.Errorf("container backends = %+v, want just local-docker", container.Backends)
+	if docker := catalogKind(t, catalog, "docker"); len(docker.Backends) != 1 {
+		t.Errorf("docker backends = %+v, want just local-docker", docker.Backends)
 	}
-	if srt := catalogKind(t, catalog, "srt"); len(srt.Backends) != 0 {
-		t.Errorf("srt backends = %+v, want none configured", srt.Backends)
+	if native := catalogKind(t, catalog, "native"); len(native.Backends) != 0 {
+		t.Errorf("native backends = %+v, want none configured", native.Backends)
 	}
 	if len(catalog.Invalid) != 0 {
 		t.Errorf("catalog.Invalid = %+v, want empty", catalog.Invalid)
@@ -189,9 +189,9 @@ func TestBuildSandboxCatalogMarksTheConfiguredDefault(t *testing.T) {
 	}
 
 	// A bare kind as the default flags the kind, not any backend.
-	bare := buildSandboxCatalog(captainconfig.SandboxDefaults{Default: "srt"})
-	if !catalogKind(t, bare, "srt").Default {
-		t.Error("srt kind should be flagged as the default")
+	bare := buildSandboxCatalog(captainconfig.SandboxDefaults{Default: "native"})
+	if !catalogKind(t, bare, "native").Default {
+		t.Error("native kind should be flagged as the default")
 	}
 }
 
@@ -200,7 +200,7 @@ func TestBuildSandboxCatalogReportsBackendsWithAnUnusableKind(t *testing.T) {
 		Backends: map[string]captainconfig.SandboxBackend{
 			"typo":    {Kind: "git-agnet"},
 			"kindles": {Kind: "  "},
-			"good":    {Kind: "srt"},
+			"good":    {Kind: "native"},
 		},
 	})
 
@@ -211,19 +211,19 @@ func TestBuildSandboxCatalogReportsBackendsWithAnUnusableKind(t *testing.T) {
 	for _, entry := range catalog.Invalid {
 		byName[entry.Name] = entry
 	}
-	// An empty kind must NOT resolve to "none": ParseSandboxKind maps "" to none
+	// An empty kind must NOT resolve to "off": ParseSandboxKind maps "" to off
 	// because an absent selector means unconfined, but a backend that declares no
 	// kind is a mistake, and silently running unsandboxed is the failure the
 	// descriptor table exists to prevent.
 	if got := byName["kindles"].Error; got == "" {
-		t.Error("a backend with a blank kind must report an error, not resolve to none")
+		t.Error("a backend with a blank kind must report an error, not resolve to off")
 	}
 	if got := byName["typo"].Error; got == "" {
 		t.Error("a backend with an unknown kind must report an error")
 	}
 	// Valid backends are unaffected by an invalid sibling.
-	if srt := catalogKind(t, catalog, "srt"); len(srt.Backends) != 1 {
-		t.Errorf("srt backends = %+v, want the valid 'good' backend", srt.Backends)
+	if native := catalogKind(t, catalog, "native"); len(native.Backends) != 1 {
+		t.Errorf("native backends = %+v, want the valid 'good' backend", native.Backends)
 	}
 	// And an unusable backend is never offered as a selectable choice.
 	for _, entry := range catalog.Kinds {
@@ -245,29 +245,15 @@ func TestPromptSchemaSandboxModeConditionals(t *testing.T) {
 	}
 	spec := doc["spec"].(map[string]any)
 
-	// Regression against injectSpecConditionals' `specMap["allOf"] = allOf`
-	// assignment: appending the sandbox rules must not drop the backend rules.
-	backendRules := 0
 	modeBySelector := map[string][]any{}
 	for _, raw := range spec["allOf"].([]any) {
 		rule := raw.(map[string]any)
 		condition := rule["if"].(map[string]any)
-		if props, ok := condition["properties"].(map[string]any); ok {
-			if _, isBackend := props["backend"]; isBackend {
-				backendRules++
-				continue
-			}
-		}
 		scalar := condition["anyOf"].([]any)[0].(map[string]any)
 		selector := scalar["properties"].(map[string]any)["sandbox"].(map[string]any)["const"].(string)
 		then := rule["then"].(map[string]any)["properties"].(map[string]any)
 		modeBySelector[selector] = then["mode"].(map[string]any)["enum"].([]any)
 	}
-	if backendRules != len(api.AllBackends()) {
-		t.Errorf("backend conditionals = %d, want %d; the sandbox rules overwrote them",
-			backendRules, len(api.AllBackends()))
-	}
-
 	// git-agent cannot serve ModeAPI, so choosing it constrains mode.
 	wantGitAgent := []any{"", "cli", "agent", "cmux"}
 	if !reflect.DeepEqual(modeBySelector["git-agent"], wantGitAgent) {
@@ -277,13 +263,13 @@ func TestPromptSchemaSandboxModeConditionals(t *testing.T) {
 	if !reflect.DeepEqual(modeBySelector["prod-pool"], wantGitAgent) {
 		t.Errorf("prod-pool mode enum = %v, want %v", modeBySelector["prod-pool"], wantGitAgent)
 	}
-	// srt and container only hook the CLI exec site.
-	if want := []any{"", "cli"}; !reflect.DeepEqual(modeBySelector["srt"], want) {
-		t.Errorf("srt mode enum = %v, want %v", modeBySelector["srt"], want)
+	// Docker wraps only the CLI exec site.
+	if want := []any{"", "cli"}; !reflect.DeepEqual(modeBySelector["docker"], want) {
+		t.Errorf("docker mode enum = %v, want %v", modeBySelector["docker"], want)
 	}
-	// "none" serves every mode, so it needs no rule at all.
-	if enum, ok := modeBySelector["none"]; ok {
-		t.Errorf("none should emit no mode constraint, got %v", enum)
+	// Off serves every mode, so it needs no rule at all.
+	if enum, ok := modeBySelector["off"]; ok {
+		t.Errorf("off should emit no mode constraint, got %v", enum)
 	}
 }
 

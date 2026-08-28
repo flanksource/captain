@@ -17,19 +17,19 @@ func TestParseCompactElement(t *testing.T) {
 	}{
 		{in: "opus", want: Model{Name: "opus"}},
 		{in: "claude-sonnet-4-6", want: Model{Name: "claude-sonnet-4-6"}},
-		{in: "opus:high", want: Model{Name: "opus", Effort: EffortHigh}},
-		{in: "sonnet:medium", want: Model{Name: "sonnet", Effort: EffortMedium}},
-		{in: "agent:opus:high", want: Model{Name: "opus", Effort: EffortHigh, Backend: BackendClaudeAgent}},
-		{in: "sdk:opus:high", want: Model{Name: "opus", Effort: EffortHigh, Backend: BackendClaudeAgent}}, // sdk = agent
-		{in: "cmux:opus", want: Model{Name: "opus", Backend: BackendClaudeCmux}},
-		{in: "api:opus", want: Model{Name: "opus", Backend: BackendAnthropic}},
-		{in: "cli:opus", want: Model{Name: "opus", Backend: BackendClaudeCLI}},
-		{in: "cmux:codex:medium", want: Model{Name: "codex", Effort: EffortMedium, Backend: BackendCodexCmux}},
-		{in: "api:gpt-5.5", want: Model{Name: "gpt-5.5", Backend: BackendOpenAI}},
-		{in: "  opus : high ", want: Model{Name: "opus", Effort: EffortHigh}},
-		{in: "cmux:gemini-2.0", wantErr: "not supported for gemini"}, // no gemini cmux
-		{in: "bogusmode:opus:high", wantErr: "invalid mode"},
-		{in: "opus:notaneffort", wantErr: "ambiguous"},
+		{in: "agent:opus:high", want: Model{Name: "opus", Effort: EffortHigh, Mode: ModeAgent}},
+		{in: "cmux:opus", want: Model{Name: "opus", Mode: ModeCmux}},
+		{in: "api:opus", want: Model{Name: "opus", Mode: ModeAPI}},
+		{in: "cli:opus", want: Model{Name: "opus", Mode: ModeCLI}},
+		{in: "cmux:codex:medium", want: Model{Name: "codex", Effort: EffortMedium, Mode: ModeCmux}},
+		{in: "api:gpt-5.5", want: Model{Name: "gpt-5.5", Mode: ModeAPI}},
+		{in: "  agent : opus : high ", want: Model{Name: "opus", Effort: EffortHigh, Mode: ModeAgent}},
+		{in: "opus:high", wantErr: "invalid model configuration"},
+		{in: "sdk:opus:high", wantErr: "invalid model configuration"},
+		{in: "anthropic:opus:high", wantErr: "invalid model configuration"},
+		{in: "claude-agent:opus", wantErr: "invalid model configuration"},
+		{in: "bogusmode:opus:high", wantErr: "invalid model configuration"},
+		{in: "opus:notaneffort", wantErr: "invalid model configuration"},
 		{in: "a:b:c:d", wantErr: "too many"},
 		{in: "", wantErr: "empty"},
 	}
@@ -64,12 +64,12 @@ func TestModel_Expand(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got.Name != "opus" || got.Effort != EffortHigh || got.Backend != BackendClaudeAgent {
+		if got.Name != "opus" || got.Effort != EffortHigh || got.Mode != ModeAgent {
 			t.Errorf("got %+v", got)
 		}
 	})
 	t.Run("csv tail becomes fallbacks", func(t *testing.T) {
-		got, err := Model{Name: "opus:high, sonnet:medium, api:gpt-5.5"}.Expand()
+		got, err := Model{Name: "agent:opus:high, api:sonnet:medium, api:gpt-5.5"}.Expand()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -82,17 +82,17 @@ func TestModel_Expand(t *testing.T) {
 		if got.Fallbacks[0].Name != "sonnet" || got.Fallbacks[0].Effort != EffortMedium {
 			t.Errorf("fb0 = %+v", got.Fallbacks[0])
 		}
-		if got.Fallbacks[1].Name != "gpt-5.5" || got.Fallbacks[1].Backend != BackendOpenAI {
+		if got.Fallbacks[1].Name != "gpt-5.5" || got.Fallbacks[1].Mode != ModeAPI {
 			t.Errorf("fb1 = %+v", got.Fallbacks[1])
 		}
 	})
 	t.Run("preserves explicit fields not in compact", func(t *testing.T) {
-		got, err := Model{Name: "opus:high", Backend: BackendClaudeCmux}.Expand()
+		got, err := Model{Name: "cmux:opus:high"}.Expand()
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got.Backend != BackendClaudeCmux {
-			t.Errorf("backend = %q, want preserved claude-cmux", got.Backend)
+		if got.Mode != ModeCmux {
+			t.Errorf("backend = %q, want cmux", got.Mode)
 		}
 	})
 	t.Run("bad compact errors", func(t *testing.T) {
@@ -111,7 +111,7 @@ func TestModelList_Unmarshal(t *testing.T) {
 		if len(l) != 2 {
 			t.Fatalf("len = %d", len(l))
 		}
-		if l[0].Name != "opus" || l[0].Backend != BackendClaudeAgent || l[0].Effort != EffortHigh {
+		if l[0].Name != "opus" || l[0].Mode != ModeAgent || l[0].Effort != EffortHigh {
 			t.Errorf("l0 = %+v", l[0])
 		}
 		if l[1].Name != "sonnet" || l[1].Effort != EffortMedium {
@@ -123,7 +123,7 @@ func TestModelList_Unmarshal(t *testing.T) {
 		if err := yaml.Unmarshal([]byte("- api:opus\n- model: sonnet\n  effort: high\n"), &l); err != nil {
 			t.Fatal(err)
 		}
-		if len(l) != 2 || l[0].Name != "opus" || l[0].Backend != BackendAnthropic || l[1].Name != "sonnet" {
+		if len(l) != 2 || l[0].Name != "opus" || l[0].Mode != ModeAPI || l[1].Name != "sonnet" {
 			t.Errorf("got %+v", l)
 		}
 	})

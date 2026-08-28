@@ -75,7 +75,7 @@ var _ = Describe("runtime availability", func() {
 
 		runtimes, err := LiveRuntimeCatalog()
 		Expect(err).NotTo(HaveOccurred())
-		Expect(runtimeEntry(runtimes, BackendClaudeAgent).CatalogProvider).To(Equal("claude-agent"))
+		Expect(runtimeEntry(runtimes, BackendClaudeAgent).CatalogProvider).To(Equal("anthropic"))
 		Expect(runtimeEntry(runtimes, BackendOpenAI).CatalogProvider).To(Equal("openai"))
 		for _, test := range []struct {
 			backend Backend

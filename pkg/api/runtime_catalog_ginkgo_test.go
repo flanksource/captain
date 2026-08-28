@@ -7,11 +7,11 @@ import (
 	"github.com/flanksource/captain/pkg/api"
 )
 
-func backendsOf(families []api.RuntimeFamily) []string {
+func runtimesOf(families []api.RuntimeFamily) []string {
 	out := make([]string, 0, len(families))
 	for _, f := range families {
 		for _, m := range f.Modes {
-			out = append(out, m.Backend)
+			out = append(out, f.Provider+":"+m.Backend)
 		}
 	}
 	return out
@@ -28,7 +28,7 @@ func familyNamed(families []api.RuntimeFamily, name string) api.RuntimeFamily {
 
 func modeNamed(f api.RuntimeFamily, mode string) api.RuntimeModeEntry {
 	for _, m := range f.Modes {
-		if m.Mode == mode {
+		if m.Backend == mode {
 			return m
 		}
 	}
@@ -41,7 +41,7 @@ var _ = Describe("RuntimeCatalog", func() {
 		DeferCleanup(func() { api.SetDisabled(api.DisabledSet{}) })
 	}
 
-	It("serves every backend exactly once, grouped by family", func() {
+	It("serves every provider and backend pair exactly once", func() {
 		families := api.RuntimeCatalog()
 
 		names := make([]string, len(families))
@@ -51,10 +51,10 @@ var _ = Describe("RuntimeCatalog", func() {
 		Expect(names).To(ConsistOf("claude", "codex", "gemini", "deepseek"))
 
 		expected := make([]string, 0, len(api.AllBackends()))
-		for _, b := range api.AllBackends() {
-			expected = append(expected, string(b))
+		for _, backend := range api.AllBackends() {
+			expected = append(expected, string(backend.Provider())+":"+string(backend.Mode()))
 		}
-		Expect(backendsOf(families)).To(ConsistOf(expected))
+		Expect(runtimesOf(families)).To(ConsistOf(expected))
 	})
 
 	It("names the provider key and catalog prefix separately for gemini", func() {
@@ -72,29 +72,24 @@ var _ = Describe("RuntimeCatalog", func() {
 		modes := make([]string, len(claude.Modes))
 		kinds := make([]string, len(claude.Modes))
 		for i, m := range claude.Modes {
-			modes[i], kinds[i] = m.Mode, m.Kind
+			modes[i], kinds[i] = m.Backend, m.Kind
 		}
 		Expect(modes).To(Equal([]string{"api", "agent", "cli", "cmux"}))
 		Expect(kinds).To(Equal([]string{"api", "cli", "cli", "cli"}))
 	})
 
 	It("names the model-menu catalog provider of every mode", func() {
-		// The menu serves one row per model per *menu* backend: the three local
-		// Claude modes collapse onto claude-agent, while the API mode keeps the
-		// provider namespace. Leaving these empty made a picker fall back to the
-		// family's CatalogPrefix, so "Claude Agent" listed the Anthropic API rows
-		// and clicking one switched the backend to anthropic behind the user.
 		claude := familyNamed(api.RuntimeCatalog(), "claude")
 		Expect(modeNamed(claude, "api").CatalogProvider).To(Equal("anthropic"))
-		Expect(modeNamed(claude, "agent").CatalogProvider).To(Equal("claude-agent"))
-		Expect(modeNamed(claude, "cli").CatalogProvider).To(Equal("claude-agent"))
-		Expect(modeNamed(claude, "cmux").CatalogProvider).To(Equal("claude-agent"))
+		Expect(modeNamed(claude, "agent").CatalogProvider).To(Equal("anthropic"))
+		Expect(modeNamed(claude, "cli").CatalogProvider).To(Equal("anthropic"))
+		Expect(modeNamed(claude, "cmux").CatalogProvider).To(Equal("anthropic"))
 
 		codex := familyNamed(api.RuntimeCatalog(), "codex")
 		Expect(modeNamed(codex, "api").CatalogProvider).To(Equal("openai"))
-		Expect(modeNamed(codex, "agent").CatalogProvider).To(Equal("codex-agent"))
-		Expect(modeNamed(codex, "cli").CatalogProvider).To(Equal("codex-agent"))
-		Expect(modeNamed(codex, "cmux").CatalogProvider).To(Equal("codex-agent"))
+		Expect(modeNamed(codex, "agent").CatalogProvider).To(Equal("openai"))
+		Expect(modeNamed(codex, "cli").CatalogProvider).To(Equal("openai"))
+		Expect(modeNamed(codex, "cmux").CatalogProvider).To(Equal("openai"))
 	})
 
 	It("keeps a family with no agent mode on its catalog prefix", func() {
@@ -111,7 +106,7 @@ var _ = Describe("RuntimeCatalog", func() {
 	It("marks only cmux modes keyless", func() {
 		for _, f := range api.RuntimeCatalog() {
 			for _, m := range f.Modes {
-				Expect(m.Keyless).To(Equal(m.Mode == "cmux"), "backend %s", m.Backend)
+				Expect(m.Keyless).To(Equal(m.Backend == "cmux"), "backend %s", m.Backend)
 			}
 		}
 	})
@@ -130,7 +125,7 @@ var _ = Describe("RuntimeCatalog", func() {
 		disable([]string{"cmux"}, nil, nil)
 
 		families := api.RuntimeCatalog()
-		Expect(backendsOf(families)).To(ContainElements("claude-cmux", "codex-cmux"))
+		Expect(runtimesOf(families)).To(ContainElements("anthropic:cmux", "openai:cmux"))
 
 		cmux := modeNamed(familyNamed(families, "claude"), "cmux")
 		Expect(cmux.Disabled).To(BeTrue())

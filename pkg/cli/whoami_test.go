@@ -188,8 +188,8 @@ func TestRunWhoamiServesTheRuntimeCatalogAnnotated(t *testing.T) {
 	seen := map[string]bool{}
 	for _, family := range runtimes {
 		for _, mode := range family.Modes {
-			seen[mode.Backend] = true
-			wantDisabled := mode.Mode == string(api.ModeCmux)
+			seen[family.Provider+":"+mode.Backend] = true
+			wantDisabled := mode.Backend == string(api.ModeCmux)
 			if mode.Disabled != wantDisabled {
 				t.Errorf("%s disabled = %v, want %v", mode.Backend, mode.Disabled, wantDisabled)
 			}

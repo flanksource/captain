@@ -247,7 +247,7 @@ func backendOptions() []huh.Option[string] {
 			if mode.Disabled {
 				continue
 			}
-			out = append(out, huh.NewOption(runtimeLabel(family.Family, mode.Mode), mode.Backend))
+			out = append(out, huh.NewOption(runtimeLabel(family.Family, mode.Backend), mode.Adapter))
 		}
 	}
 	return out

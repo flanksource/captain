@@ -32,8 +32,12 @@ type RuntimeFamily struct {
 // RuntimeModeEntry is one provider×mode cell — the same pair
 // registry.ModeCapabilities describes, reduced to what a picker needs.
 type RuntimeModeEntry struct {
-	Mode    string `json:"mode"`
+	// Backend is the portable authored value: api | agent | cli | cmux. Family
+	// carries provider identity, so clients never need a composite adapter id.
 	Backend string `json:"backend"`
+	// Adapter is Captain's resolved implementation id for internal callers. It is
+	// deliberately absent from the wire contract.
+	Adapter string `json:"-"`
 	// Kind is "api" or "cli": whether the mode runs in-process against a remote
 	// API or supervises a local binary.
 	Kind string `json:"kind"`
@@ -66,6 +70,10 @@ type RuntimeModeEntry struct {
 	// honest answer, and a client that reads it from a TTL'd cache would render
 	// an empty tree as "this backend supports nothing".
 	Permissions PermissionCapabilities `json:"permissions"`
+	// Schema is the supported Spec surface for this mode. Native CLI and agent
+	// protocol bindings are attached to their owning fields with x-clicky
+	// annotations, so editors and provider mappings read one contract.
+	Schema map[string]any `json:"schema"`
 }
 
 // RuntimeCatalog projects the provider registry into the picker descriptor,
@@ -98,8 +106,8 @@ func RuntimeCatalog() []RuntimeFamily {
 				}
 			}
 			family.Modes = append(family.Modes, RuntimeModeEntry{
-				Mode:            string(mode),
-				Backend:         string(caps.Backend),
+				Backend:         string(mode),
+				Adapter:         string(caps.Backend),
 				Kind:            caps.Backend.Kind(),
 				Keyless:         caps.Keyless,
 				DefaultModel:    DefaultModelFor(caps.Backend),
@@ -108,6 +116,7 @@ func RuntimeCatalog() []RuntimeFamily {
 				DisabledReason:  reason,
 				Availability:    availability,
 				Permissions:     PermissionCapabilitiesFor(caps.Backend),
+				Schema:          RuntimeSchemaFor(caps.Backend),
 			})
 		}
 		out = append(out, family)
@@ -118,28 +127,11 @@ func RuntimeCatalog() []RuntimeFamily {
 // DefaultModelFor is the model a picker should seed for one backend.
 func DefaultModelFor(b Backend) string { return registry.DefaultModelFor(b) }
 
-// CatalogProviderFor is the `provider` value /api/chat/models stamps on the
-// menu row that serves this backend — the key a picker filters the flat model
-// list by once the user has chosen a family and a mode.
-//
-// It is not CatalogPrefixFor: the menu lists one row per model per *menu*
-// backend, and the local modes of a family collapse onto its agent backend
-// (claude-cli and claude-cmux models are listed as claude-agent rows). A family
-// with no agent mode has nothing to collapse onto — Gemini's CLI models already
-// appear under the googleai API rows — so it keeps the catalog prefix.
+// CatalogProviderFor is the model provider axis served to runtime pickers.
+// Runtime mode is carried independently by RuntimeModeEntry.Backend, so this
+// value never contains an adapter or execution mechanism.
 func CatalogProviderFor(b Backend) string {
-	p, mode, ok := registry.ProviderFor(b)
-	if !ok {
-		return ""
-	}
-	if mode == registry.ModeAPI {
-		return p.CatalogPrefix
-	}
-	agent, err := p.BackendFor(registry.ModeAgent)
-	if err != nil {
-		return p.CatalogPrefix
-	}
-	return string(agent)
+	return CatalogPrefixFor(b)
 }
 
 // CatalogPrefixFor is the namespace a backend's model ids live under:
