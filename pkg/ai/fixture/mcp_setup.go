@@ -113,6 +113,17 @@ func readMCPConfigContent(fixtureDir, cfg string) (data []byte, srcLabel string,
 // with a proxy URL (creating new proxies as needed via proxiesByURL), and
 // returns the rewritten JSON plus info on any new proxies that were created.
 func rewriteMCPConfig(data []byte, proxiesByURL map[string]*mcpproxy.Proxy, inject map[string]string) ([]byte, []MCPProxyInfo, error) {
+	return rewriteMCPConfigWithProxyKey(data, proxiesByURL, inject, func(_ string, upstreamURL string) string {
+		return upstreamURL
+	})
+}
+
+func rewriteMCPConfigWithProxyKey(
+	data []byte,
+	proxies map[string]*mcpproxy.Proxy,
+	inject map[string]string,
+	proxyKey func(server, upstreamURL string) string,
+) ([]byte, []MCPProxyInfo, error) {
 	var top map[string]json.RawMessage
 	if err := json.Unmarshal(data, &top); err != nil {
 		return nil, nil, fmt.Errorf("invalid mcp config json: %w", err)
@@ -136,13 +147,14 @@ func rewriteMCPConfig(data []byte, proxiesByURL map[string]*mcpproxy.Proxy, inje
 		if err := json.Unmarshal(urlRaw, &urlStr); err != nil || urlStr == "" {
 			continue
 		}
-		p, exists := proxiesByURL[urlStr]
+		key := proxyKey(name, urlStr)
+		p, exists := proxies[key]
 		if !exists {
 			np, startErr := mcpproxy.Start(name, urlStr, inject)
 			if startErr != nil {
 				return nil, nil, fmt.Errorf("starting proxy for mcp server %q: %w", name, startErr)
 			}
-			proxiesByURL[urlStr] = np
+			proxies[key] = np
 			p = np
 			newInfos = append(newInfos, MCPProxyInfo{
 				Server:   name,
@@ -209,7 +221,7 @@ func StartMCPConfigCapture(
 		}
 	}()
 
-	proxiesByURL := map[string]*mcpproxy.Proxy{}
+	proxiesByIdentity := map[string]*mcpproxy.Proxy{}
 	for index, config := range configs {
 		data, _, err := readMCPConfigContent(baseDir, config)
 		if err != nil {
@@ -221,7 +233,9 @@ func StartMCPConfigCapture(
 		}
 		capture.HasHTTP = capture.HasHTTP || hasHTTP
 		capture.HasUncaptured = capture.HasUncaptured || hasUncaptured
-		rewritten, _, err := rewriteMCPConfig(data, proxiesByURL, nil)
+		rewritten, _, err := rewriteMCPConfigWithProxyKey(data, proxiesByIdentity, nil, func(server, upstreamURL string) string {
+			return server + "\x00" + upstreamURL
+		})
 		if err != nil {
 			return nil, fmt.Errorf("rewrite MCP config %d: %w", index+1, err)
 		}
@@ -231,7 +245,7 @@ func StartMCPConfigCapture(
 		}
 		capture.Configs = append(capture.Configs, path)
 	}
-	for _, proxy := range proxiesByURL {
+	for _, proxy := range proxiesByIdentity {
 		proxy.SetObserver(observe)
 		capture.proxies = append(capture.proxies, proxy)
 	}

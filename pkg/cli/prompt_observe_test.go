@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -124,6 +125,73 @@ func TestObservationCaptureWritesOnlyNormalizedBoundedArtifacts(t *testing.T) {
 		if strings.Contains(string(data), forbidden) {
 			t.Fatalf("normalized artifact contains %q: %s", forbidden, data)
 		}
+	}
+}
+
+func TestObservationCaptureKeepsSharedUpstreamAliasesDistinct(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "mcp.json")
+	config := `{"mcpServers":{"alpha":{"url":"` + upstream.URL + `/mcp"},"beta":{"url":"` + upstream.URL + `/mcp"}}}`
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+		t.Fatalf("write MCP config: %v", err)
+	}
+	session, err := startObservationCapture(
+		map[string]string{"mcp-config": configPath, "artifacts": filepath.Join(dir, "artifacts")},
+		api.Model{Backend: api.BackendClaudeCLI},
+		ai.Request{Setup: &shell.Setup{Cwd: dir}},
+		ai.Config{Model: api.Model{Backend: api.BackendClaudeCLI}},
+		"observation-1",
+	)
+	if err != nil {
+		t.Fatalf("startObservationCapture: %v", err)
+	}
+	defer session.Close()
+	data, err := os.ReadFile(session.runtime.MCPConfigs[0])
+	if err != nil {
+		t.Fatalf("read rewritten MCP config: %v", err)
+	}
+	var rewritten struct {
+		Servers map[string]struct {
+			URL string `json:"url"`
+		} `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(data, &rewritten); err != nil {
+		t.Fatalf("decode rewritten MCP config: %v", err)
+	}
+	if rewritten.Servers["alpha"].URL == rewritten.Servers["beta"].URL {
+		t.Fatalf("shared-upstream aliases use one observation proxy: %#v", rewritten.Servers)
+	}
+	payload := `{"jsonrpc":"2.0","method":"tools/call","params":{"name":"query"}}`
+	for _, alias := range []string{"alpha", "beta"} {
+		request, err := http.NewRequest(http.MethodPost, rewritten.Servers[alias].URL, strings.NewReader(payload))
+		if err != nil {
+			t.Fatalf("create %s request: %v", alias, err)
+		}
+		request.Header.Set("Content-Type", "application/json")
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			t.Fatalf("request %s proxy: %v", alias, err)
+		}
+		response.Body.Close()
+	}
+	result := api.RuntimeObservation{Artifacts: []api.ObservationArtifact{}}
+	session.Apply(&result, []api.ObservationToolEvent{
+		{ToolCallID: "call-alpha", Name: "mcp__alpha__query"},
+		{ToolCallID: "call-beta", Name: "mcp__beta__query"},
+	})
+	if len(result.Capture.MCP.Events) != 2 {
+		t.Fatalf("MCP events = %#v", result.Capture.MCP.Events)
+	}
+	correlations := map[string]string{}
+	for _, event := range result.Capture.MCP.Events {
+		correlations[event.Target] = event.CorrelationID
+	}
+	if correlations["alpha"] != "call-alpha" || correlations["beta"] != "call-beta" {
+		t.Fatalf("MCP correlations = %#v", correlations)
 	}
 }
 
