@@ -3,6 +3,7 @@ package provider
 import (
 	"encoding/json"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -78,6 +79,18 @@ func TestBuildClaudeCLIArgs(t *testing.T) {
 	}
 	if answer["description"] == "" {
 		t.Fatalf("--json-schema should describe removed constraints, got %s", schema)
+	}
+}
+
+func TestBuildClaudeCLIArgsWithObservationMCPConfigs(t *testing.T) {
+	args, cleanup, err := buildClaudeCLIArgsWithMCP("claude-sonnet-5", ai.Request{}, []string{"/tmp/one.json", "/tmp/two.json"})
+	if err != nil {
+		t.Fatalf("buildClaudeCLIArgsWithMCP: %v", err)
+	}
+	defer cleanup()
+	index := slices.Index(args, "--mcp-config")
+	if index < 0 || index+3 >= len(args) || args[index+1] != "/tmp/one.json" || args[index+2] != "/tmp/two.json" || args[index+3] != "--strict-mcp-config" {
+		t.Fatalf("args = %v", args)
 	}
 }
 

@@ -9,9 +9,11 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/ai/observation"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/commons-db/shell"
 )
@@ -185,6 +187,20 @@ func newSandboxedCommand(ctx context.Context, cfg api.SandboxConfig, command str
 			cmd.Env = os.Environ()
 		}
 		cmd.Env = append(cmd.Env, session.Env...)
+	}
+	capture := observation.RuntimeCaptureFromContext(ctx)
+	if len(capture.Environment) > 0 {
+		if cmd.Env == nil {
+			cmd.Env = os.Environ()
+		}
+		names := make([]string, 0, len(capture.Environment))
+		for name := range capture.Environment {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			cmd.Env = append(cmd.Env, name+"="+capture.Environment[name])
+		}
 	}
 	cmd.Dir = req.Cwd()
 	if session != nil && session.WorkDir != "" {

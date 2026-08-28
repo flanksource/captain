@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/ai/observation"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/claude"
 )
@@ -55,7 +56,8 @@ func (c *ClaudeCLI) Execute(ctx context.Context, req ai.Request) (*ai.Response, 
 }
 
 func (c *ClaudeCLI) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai.Event, error) {
-	args, cleanup, err := buildClaudeCLIArgs(c.model, req)
+	capture := observation.RuntimeCaptureFromContext(ctx)
+	args, cleanup, err := buildClaudeCLIArgsWithMCP(c.model, req, capture.MCPConfigs)
 	if err != nil {
 		return nil, err
 	}
@@ -87,6 +89,10 @@ func (c *ClaudeCLI) ExecuteStream(ctx context.Context, req ai.Request) (<-chan a
 }
 
 func buildClaudeCLIArgs(model string, req ai.Request) ([]string, func(), error) {
+	return buildClaudeCLIArgsWithMCP(model, req, nil)
+}
+
+func buildClaudeCLIArgsWithMCP(model string, req ai.Request, mcpConfigs []string) ([]string, func(), error) {
 	args := []string{"-p", "--verbose", "--output-format", "stream-json"}
 	cleanup := func() {}
 	// claude-cli advertises tool-policy support, but only for allow/deny: the
@@ -132,7 +138,14 @@ func buildClaudeCLIArgs(model string, req ai.Request) ([]string, func(), error) 
 	if req.Memory.Bare || req.Permissions.HasPreset(api.PresetBare) {
 		args = append(args, "--bare")
 	}
-	if req.Permissions.MCP.Disabled {
+	if req.Permissions.MCP.Disabled && len(mcpConfigs) > 0 {
+		return nil, cleanup, fmt.Errorf("claude-cli: explicit MCP configs conflict with disabled MCP")
+	}
+	if len(mcpConfigs) > 0 {
+		args = append(args, "--mcp-config")
+		args = append(args, mcpConfigs...)
+		args = append(args, "--strict-mcp-config")
+	} else if req.Permissions.MCP.Disabled {
 		args = append(args, "--mcp-config", `{"mcpServers":{}}`, "--strict-mcp-config")
 	}
 	if binary, ok := captainBinary(); ok && api.MonitorHooksEnabled(req) {

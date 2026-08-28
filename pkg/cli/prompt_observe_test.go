@@ -2,11 +2,19 @@ package cli
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/ai/fixture/mcpproxy"
 	"github.com/flanksource/captain/pkg/ai/observation"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/commons-db/shell"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 type observationUsageProvider struct {
@@ -82,5 +90,121 @@ func TestExecuteObservationProviderDistinguishesMissingFromZeroUsage(t *testing.
 				t.Fatalf("known-zero usage buckets = %#v, want all five zero buckets", result.Metrics.Usage.Buckets)
 			}
 		})
+	}
+}
+
+func TestObservationCaptureWritesOnlyNormalizedBoundedArtifacts(t *testing.T) {
+	dir := t.TempDir()
+	session := &observationCaptureSession{
+		mcpCapture:  api.ObservationExternalCapture{Status: api.ObservationCaptureComplete, Events: []api.ObservationExternalEvent{}},
+		kubeCapture: api.ObservationExternalCapture{Status: api.ObservationCaptureNotRequested, Events: []api.ObservationExternalEvent{}},
+		artifactDir: filepath.Join(dir, "artifacts"), artifactBase: dir,
+	}
+	session.recordMCP(mcpproxy.ObservationEvent{
+		Server: "server with spaces", HTTPMethod: "POST", RPCMethod: "tools/call",
+		Tool: "query", Status: 200,
+	})
+	result := api.RuntimeObservation{Artifacts: []api.ObservationArtifact{}}
+	session.Apply(&result, []api.ObservationToolEvent{{ToolCallID: "call-1", Name: "mcp__server_with_spaces__query"}})
+	if result.Capture.MCP.Status != api.ObservationCaptureComplete || len(result.Capture.MCP.Events) != 1 {
+		t.Fatalf("MCP capture = %#v", result.Capture.MCP)
+	}
+	event := result.Capture.MCP.Events[0]
+	if event.Target != "server_with_spaces" || event.Method != "tools/call" || event.CorrelationID != "call-1" {
+		t.Fatalf("normalized MCP event = %#v", event)
+	}
+	if len(result.Artifacts) != 1 || result.Artifacts[0].SizeBytes <= 0 || result.Artifacts[0].SHA256 == "" {
+		t.Fatalf("artifacts = %#v", result.Artifacts)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, result.Artifacts[0].Path))
+	if err != nil {
+		t.Fatalf("read artifact: %v", err)
+	}
+	for _, forbidden := range []string{"Authorization", "Bearer", "prompt", "arguments", "credential"} {
+		if strings.Contains(string(data), forbidden) {
+			t.Fatalf("normalized artifact contains %q: %s", forbidden, data)
+		}
+	}
+}
+
+func TestObservationCaptureTruncatesExternalEvents(t *testing.T) {
+	dir := t.TempDir()
+	session := &observationCaptureSession{
+		mcpCapture:  api.ObservationExternalCapture{Status: api.ObservationCaptureComplete, Events: []api.ObservationExternalEvent{}},
+		kubeCapture: api.ObservationExternalCapture{Status: api.ObservationCaptureNotRequested, Events: []api.ObservationExternalEvent{}},
+		artifactDir: filepath.Join(dir, "artifacts"), artifactBase: dir,
+	}
+	for range maxObservationExternalEvents + 1 {
+		session.recordMCP(mcpproxy.ObservationEvent{Server: "server", HTTPMethod: "POST", Status: 200})
+	}
+	result := api.RuntimeObservation{Artifacts: []api.ObservationArtifact{}}
+	session.Apply(&result, nil)
+	if result.Capture.MCP.Status != api.ObservationCapturePartial || result.Capture.MCP.ReasonCode != "capture_truncated" {
+		t.Fatalf("MCP capture = %#v, want partial capture_truncated", result.Capture.MCP)
+	}
+	if len(result.Capture.MCP.Events) != maxObservationExternalEvents {
+		t.Fatalf("MCP events = %d, want %d", len(result.Capture.MCP.Events), maxObservationExternalEvents)
+	}
+}
+
+func TestObservationCaptureRoutesKubernetesTraffic(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+	dir := t.TempDir()
+	kubeconfig := filepath.Join(dir, "config")
+	config := "apiVersion: v1\nkind: Config\ncurrent-context: test\nclusters:\n- name: test\n  cluster:\n    server: " + upstream.URL + "\ncontexts:\n- name: test\n  context:\n    cluster: test\n"
+	if err := os.WriteFile(kubeconfig, []byte(config), 0o600); err != nil {
+		t.Fatalf("write kubeconfig: %v", err)
+	}
+	session, err := startObservationCapture(
+		map[string]string{"capture-kubernetes": "true", "kubeconfig": kubeconfig, "artifacts": filepath.Join(dir, "artifacts")},
+		api.Model{Backend: api.BackendCodexCLI},
+		ai.Request{Setup: &shell.Setup{Cwd: dir}},
+		ai.Config{Model: api.Model{Backend: api.BackendCodexCLI}},
+		"observation-1",
+	)
+	if err != nil {
+		t.Fatalf("startObservationCapture: %v", err)
+	}
+	defer session.Close()
+	rewritten, err := clientcmd.LoadFromFile(session.runtime.Environment["KUBECONFIG"])
+	if err != nil {
+		t.Fatalf("load rewritten kubeconfig: %v", err)
+	}
+	response, err := http.Get(rewritten.Clusters["captain-proxy"].Server + "/api/v1/namespaces/prod/pods?token=not-observed")
+	if err != nil {
+		t.Fatalf("request Kubernetes proxy: %v", err)
+	}
+	response.Body.Close()
+	result := api.RuntimeObservation{Artifacts: []api.ObservationArtifact{}}
+	session.Apply(&result, nil)
+	if result.Capture.Kubernetes.Status != api.ObservationCaptureComplete || len(result.Capture.Kubernetes.Events) != 1 {
+		t.Fatalf("Kubernetes capture = %#v", result.Capture.Kubernetes)
+	}
+	event := result.Capture.Kubernetes.Events[0]
+	if event.Method != http.MethodGet || event.Resource != "pods" || event.Status != "200" {
+		t.Fatalf("Kubernetes event = %#v", event)
+	}
+	if len(result.Artifacts) != 1 || result.Artifacts[0].Kind != "kubernetes_capture" {
+		t.Fatalf("artifacts = %#v", result.Artifacts)
+	}
+}
+
+func TestObservationCaptureRejectsUnsupportedMCPConfigBeforeDispatch(t *testing.T) {
+	session, err := startObservationCapture(
+		map[string]string{"mcp-config": "mcp.json"},
+		api.Model{Backend: api.BackendOpenAI},
+		ai.Request{Setup: &shell.Setup{Cwd: t.TempDir()}},
+		ai.Config{Model: api.Model{Backend: api.BackendOpenAI}},
+		"observation-1",
+	)
+	if err != nil {
+		t.Fatalf("startObservationCapture: %v", err)
+	}
+	defer session.Close()
+	if session.blockingCode != "mcp_config_unsupported" || session.mcpCapture.Status != api.ObservationCaptureUnsupported {
+		t.Fatalf("capture session = %#v", session)
 	}
 }

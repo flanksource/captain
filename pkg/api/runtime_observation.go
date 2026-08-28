@@ -128,18 +128,22 @@ type ObservationToolExecution struct {
 	State string `json:"state"`
 }
 
-// ObservationExternalCapture is the bounded C3 wire shape. C1/C2 reports an
-// honest non-complete status until Captain-owned MCP/Kubernetes interception
-// can populate these redacted fields.
+// ObservationExternalCapture reports only traffic routed through a
+// Captain-owned MCP or Kubernetes interception point.
 type ObservationExternalCapture struct {
-	Status ObservationCaptureStatus   `json:"status"`
-	Events []ObservationExternalEvent `json:"events"`
+	Status     ObservationCaptureStatus   `json:"status"`
+	ReasonCode string                     `json:"reasonCode,omitempty"`
+	Events     []ObservationExternalEvent `json:"events"`
 }
 
 type ObservationExternalEvent struct {
 	ID            string `json:"id"`
 	Kind          string `json:"kind"`
 	Target        string `json:"target,omitempty"`
+	Method        string `json:"method,omitempty"`
+	HTTPMethod    string `json:"httpMethod,omitempty"`
+	Tool          string `json:"tool,omitempty"`
+	Resource      string `json:"resource,omitempty"`
 	Status        string `json:"status,omitempty"`
 	DurationMS    *int64 `json:"durationMs,omitempty"`
 	CorrelationID string `json:"correlationId,omitempty"`
@@ -182,6 +186,7 @@ type ObservationUsageBuckets struct {
 type ObservationArtifact struct {
 	ID        string `json:"id"`
 	Kind      string `json:"kind"`
+	Path      string `json:"path,omitempty"`
 	MediaType string `json:"mediaType,omitempty"`
 	SizeBytes int64  `json:"sizeBytes,omitempty"`
 	SHA256    string `json:"sha256,omitempty"`

@@ -22,7 +22,11 @@ import (
 
 type PromptObserveFlags struct {
 	PromptActionFlags
-	Runtime string `flag:"runtime" help:"Exactly one runtime selector, e.g. api:gpt-5.6-sol:high" required:"true"`
+	Runtime           string   `flag:"runtime" help:"Exactly one runtime selector, e.g. api:gpt-5.6-sol:high" required:"true"`
+	MCPConfig         []string `flag:"mcp-config" help:"Explicit MCP config file to route through Captain capture (repeatable; Claude CLI)"`
+	CaptureKubernetes bool     `flag:"capture-kubernetes" help:"Route KUBECONFIG-aware Kubernetes traffic through Captain capture"`
+	Kubeconfig        string   `flag:"kubeconfig" help:"Source kubeconfig for --capture-kubernetes (default discovery when empty)"`
+	Artifacts         string   `flag:"artifacts" help:"Directory for bounded normalized capture artifacts"`
 }
 
 func (PromptObserveFlags) ClickyActionFlags() {}
@@ -98,7 +102,7 @@ func observePromptAction(ctx context.Context, id string, flags map[string]string
 	requestedEffort := requestedObservationEffort(selector, flags["effort"])
 	resolvedEffort, unsupported := resolveObservationEffort(runtime)
 	result := newRuntimeObservation(selector, runtime, requestedEffort, resolvedEffort)
-	applyObservationCaptureRequest(&result, rendered.Input)
+	applyObservationCaptureRequest(&result, rendered.Input, flags)
 	if unsupported != "" {
 		result.Availability = api.Available()
 		result.Execution = api.ObservationExecution{
@@ -122,15 +126,34 @@ func observePromptAction(ctx context.Context, id string, flags map[string]string
 	rendered.Config.Model.Fallbacks = nil
 
 	recorder := observation.NewRecorder()
+	req := rendered.Input
+	cfg := rendered.Config
+	capture, err := startObservationCapture(flags, runtime, req, cfg, result.ObservationID)
+	if err != nil {
+		return api.RuntimeObservation{}, err
+	}
+	defer capture.Close()
+	if capture.blockingCode != "" {
+		result.Availability = api.Available()
+		result.Execution = api.ObservationExecution{
+			State: "not_started",
+			Error: &api.ObservationError{Code: capture.blockingCode, Message: "the resolved runtime cannot apply the requested capture configuration"},
+		}
+		result.Capture.Dispatch.Status = api.ObservationCaptureComplete
+		result.Capture.Permissions.Status = api.ObservationCaptureComplete
+		result.Capture.Tools.Status = api.ObservationCaptureComplete
+		capture.Apply(&result, nil)
+		return checkedObservation(result)
+	}
+
+	contextWithCapture := capture.Context(observation.ContextWithRecorder(ctx, recorder))
 	runCtx, cancel := runContext(
-		observation.ContextWithRecorder(ctx, recorder),
+		contextWithCapture,
 		rendered.Input,
 		remoteAwareTimeout(rendered.Input, rendered.Config, runtimeTimeout(opts.Timeout)),
 	)
 	defer cancel()
 
-	req := rendered.Input
-	cfg := rendered.Config
 	cfg.CanUseTool = recorder.PermissionBroker(cfg.CanUseTool)
 	if err := preparePromptAttachments(runCtx, &req, cfg); err != nil {
 		return api.RuntimeObservation{}, err
@@ -141,7 +164,9 @@ func observePromptAction(ctx context.Context, id string, flags map[string]string
 		if failure, ok := unavailableObservationFailure(err); ok {
 			result.Availability = failure.availability
 			result.Execution = api.ObservationExecution{State: "not_started", Error: failure.observationError}
-			applyObservationSnapshot(&result, recorder.Snapshot(), false, relocatesRun(cfg))
+			snapshot := recorder.Snapshot()
+			applyObservationSnapshot(&result, snapshot, false, relocatesRun(cfg))
+			capture.Apply(&result, snapshot.Tools)
 			return checkedObservation(result)
 		}
 		return api.RuntimeObservation{}, err
@@ -155,7 +180,9 @@ func observePromptAction(ctx context.Context, id string, flags map[string]string
 	duration := run.durationMS
 	result.Execution.DurationMS = &duration
 	result.Metrics.DurationMS = api.ObservationNumberFact{State: api.ObservationFactKnown, Value: &duration, Unit: "ms"}
-	applyObservationSnapshot(&result, recorder.Snapshot(), run.usedStream, remote)
+	snapshot := recorder.Snapshot()
+	applyObservationSnapshot(&result, snapshot, run.usedStream, remote)
+	capture.Apply(&result, snapshot.Tools)
 	applyObservationMetrics(&result, runtime.Backend, firstNonEmpty(run.model, runtime.Name), run.usage, run.costUSD)
 	if run.runtimeErr != nil || !run.terminal {
 		failure := runtimeObservationFailure(run.runtimeErr, run.terminal)
@@ -305,6 +332,10 @@ func executeObservationProvider(ctx context.Context, provider ai.Provider, req a
 	if ctx.Err() != nil && result.runtimeErr == nil {
 		result.runtimeErr = ctx.Err()
 	}
+	usageSnapshot := recorder.Snapshot()
+	if usageSnapshot.UsageObserved {
+		result.usage = usageSnapshot.Usage
+	}
 	return
 }
 
@@ -345,9 +376,27 @@ func applyObservationSnapshot(result *api.RuntimeObservation, snapshot observati
 	}
 }
 
-func applyObservationCaptureRequest(result *api.RuntimeObservation, req ai.Request) {
+func applyObservationCaptureRequest(result *api.RuntimeObservation, req ai.Request, flags map[string]string) {
 	if req.Permissions.MCP.Disabled {
 		result.Capture.MCP.Status = api.ObservationCaptureNotRequested
+		result.Capture.MCP.ReasonCode = ""
+	} else if strings.TrimSpace(flags["mcp-config"]) == "" &&
+		(len(req.Permissions.MCP.Servers) > 0 || len(req.Permissions.MCP.Modes) > 0) {
+		result.Capture.MCP.Status = api.ObservationCaptureUnavailable
+		result.Capture.MCP.ReasonCode = "configured_mcp_not_intercepted"
+	} else if strings.TrimSpace(flags["mcp-config"]) == "" {
+		result.Capture.MCP.Status = api.ObservationCaptureNotRequested
+		result.Capture.MCP.ReasonCode = ""
+	} else {
+		result.Capture.MCP.Status = api.ObservationCaptureUnavailable
+		result.Capture.MCP.ReasonCode = "capture_not_started"
+	}
+	if !flagBool(flags["capture-kubernetes"]) {
+		result.Capture.Kubernetes.Status = api.ObservationCaptureNotRequested
+		result.Capture.Kubernetes.ReasonCode = ""
+	} else {
+		result.Capture.Kubernetes.Status = api.ObservationCaptureUnavailable
+		result.Capture.Kubernetes.ReasonCode = "capture_not_started"
 	}
 }
 

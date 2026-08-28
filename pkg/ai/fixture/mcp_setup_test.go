@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -116,5 +117,54 @@ func TestReadMCPConfigContent_InlineAndPath(t *testing.T) {
 	}
 	if label != "(inline)" {
 		t.Errorf("label = %q, want (inline)", label)
+	}
+}
+
+func TestStartMCPConfigCaptureRoutesHTTPAndRemovesRewrittenConfig(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") != "Bearer secret-value" {
+			t.Errorf("Authorization = %q", request.Header.Get("Authorization"))
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+	config := `{"mcpServers":{"remote":{"url":"` + upstream.URL + `/mcp","headers":{"Authorization":"Bearer secret-value"}},"local":{"command":"server"}}}`
+	var observed []mcpproxy.ObservationEvent
+	capture, err := StartMCPConfigCapture([]string{config}, t.TempDir(), func(event mcpproxy.ObservationEvent) {
+		observed = append(observed, event)
+	})
+	if err != nil {
+		t.Fatalf("StartMCPConfigCapture: %v", err)
+	}
+	if !capture.HasHTTP || !capture.HasUncaptured || len(capture.Configs) != 1 {
+		t.Fatalf("capture = %#v", capture)
+	}
+	rewrittenPath := capture.Configs[0]
+	data, err := os.ReadFile(rewrittenPath)
+	if err != nil {
+		t.Fatalf("read rewritten config: %v", err)
+	}
+	var rewritten struct {
+		Servers map[string]struct {
+			URL string `json:"url"`
+		} `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(data, &rewritten); err != nil {
+		t.Fatalf("decode rewritten config: %v", err)
+	}
+	request, _ := http.NewRequest(http.MethodPost, rewritten.Servers["remote"].URL+"?token=not-observed", strings.NewReader(`{"jsonrpc":"2.0","method":"tools/call","params":{"name":"query","arguments":{"credential":"not-observed"}}}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer secret-value")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("proxy request: %v", err)
+	}
+	response.Body.Close()
+	if len(observed) != 1 || observed[0].RPCMethod != "tools/call" || observed[0].Tool != "query" || observed[0].Status != http.StatusNoContent {
+		t.Fatalf("observed = %#v", observed)
+	}
+	capture.Close()
+	if _, err := os.Stat(rewrittenPath); !os.IsNotExist(err) {
+		t.Fatalf("rewritten credential config still exists: %v", err)
 	}
 }

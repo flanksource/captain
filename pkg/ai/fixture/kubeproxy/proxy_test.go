@@ -41,6 +41,8 @@ func TestProxy_ForwardsAndLogs(t *testing.T) {
 	}
 	defer logFile.Close()
 	proxy.SetLogger(NewRequestLogger(logFile))
+	var observed []ObservationEvent
+	proxy.SetObserver(func(event ObservationEvent) { observed = append(observed, event) })
 
 	req, _ := http.NewRequest("GET", proxy.URL()+"/api/v1/namespaces/prod/pods?limit=10", nil)
 	resp, err := http.DefaultClient.Do(req)
@@ -67,6 +69,9 @@ func TestProxy_ForwardsAndLogs(t *testing.T) {
 	}
 	if ev.Method != "GET" || ev.Path != "/api/v1/namespaces/prod/pods" || ev.Query != "limit=10" || ev.Status != 200 {
 		t.Errorf("log event mismatch: %+v", ev)
+	}
+	if len(observed) != 1 || observed[0].Method != "GET" || observed[0].Resource != "pods" || observed[0].Status != 200 {
+		t.Errorf("observation event mismatch: %+v", observed)
 	}
 }
 

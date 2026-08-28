@@ -40,8 +40,9 @@ type Proxy struct {
 	name     string
 	inject   map[string]string
 
-	mu     sync.Mutex
-	logger *RequestLogger
+	mu      sync.Mutex
+	logger  *RequestLogger
+	observe func(ObservationEvent)
 }
 
 type RequestEvent struct {
@@ -61,6 +62,17 @@ type RequestEvent struct {
 	// and Tool is the tool name when RPCMethod is "tools/call".
 	RPCMethod string `json:"rpcMethod,omitempty"`
 	Tool      string `json:"tool,omitempty"`
+}
+
+// ObservationEvent is the content-free subset safe for conformance evidence.
+type ObservationEvent struct {
+	Time       time.Time
+	Server     string
+	HTTPMethod string
+	RPCMethod  string
+	Tool       string
+	Status     int
+	Duration   time.Duration
 }
 
 // Start spins up a reverse proxy in front of upstreamURL. Headers in `inject`
@@ -139,14 +151,20 @@ func (p *Proxy) SetLogger(l *RequestLogger) {
 	p.logger = l
 }
 
+// SetObserver installs an in-memory request observer without exposing request
+// headers, URLs, queries, or bodies to the observation recorder.
+func (p *Proxy) SetObserver(observe func(ObservationEvent)) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.observe = observe
+}
+
 func (p *Proxy) logRequest(r *http.Request, rec *proxylog.StatusRecorder, rpcMethod, tool string, dur time.Duration) {
 	p.mu.Lock()
 	logger := p.logger
+	observe := p.observe
 	p.mu.Unlock()
-	if logger == nil {
-		return
-	}
-	logger.Write(RequestEvent{
+	event := RequestEvent{
 		Type:      "request",
 		Time:      time.Now().UTC(),
 		Server:    p.name,
@@ -159,7 +177,16 @@ func (p *Proxy) logRequest(r *http.Request, rec *proxylog.StatusRecorder, rpcMet
 		ErrorBody: rec.ErrorBody(),
 		RPCMethod: rpcMethod,
 		Tool:      tool,
-	})
+	}
+	if logger != nil {
+		logger.Write(event)
+	}
+	if observe != nil {
+		observe(ObservationEvent{
+			Time: event.Time, Server: event.Server, HTTPMethod: event.Method,
+			RPCMethod: event.RPCMethod, Tool: event.Tool, Status: event.Status, Duration: dur,
+		})
+	}
 }
 
 // peekJSONRPC reads up to peekCap bytes of the request body, parses it as a

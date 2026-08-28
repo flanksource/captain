@@ -1,0 +1,333 @@
+package cli
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"unicode"
+
+	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/ai/fixture"
+	"github.com/flanksource/captain/pkg/ai/fixture/kubeproxy"
+	"github.com/flanksource/captain/pkg/ai/fixture/mcpproxy"
+	"github.com/flanksource/captain/pkg/ai/observation"
+	"github.com/flanksource/captain/pkg/api"
+)
+
+const maxObservationExternalEvents = 256
+
+type observationCaptureSession struct {
+	mu sync.Mutex
+
+	mcpCapture   api.ObservationExternalCapture
+	kubeCapture  api.ObservationExternalCapture
+	mcpEvents    []api.ObservationExternalEvent
+	kubeEvents   []api.ObservationExternalEvent
+	mcpOverflow  bool
+	kubeOverflow bool
+	runtime      observation.RuntimeCaptureConfig
+	mcp          *fixture.MCPConfigCapture
+	kube         *kubeproxy.Proxy
+	kubeDir      string
+	artifactDir  string
+	artifactBase string
+	blockingCode string
+}
+
+func startObservationCapture(
+	flags map[string]string,
+	runtime api.Model,
+	req ai.Request,
+	cfg ai.Config,
+	observationID string,
+) (*observationCaptureSession, error) {
+	baseDir := req.Cwd()
+	if baseDir == "" {
+		var err error
+		baseDir, err = os.Getwd()
+		if err != nil {
+			return nil, fmt.Errorf("resolve observation capture directory: %w", err)
+		}
+	}
+	artifactDir := strings.TrimSpace(flags["artifacts"])
+	if artifactDir == "" {
+		artifactDir = filepath.Join(baseDir, ".captain", "observations", observationID)
+	} else if !filepath.IsAbs(artifactDir) {
+		artifactDir = filepath.Join(baseDir, artifactDir)
+	}
+	session := &observationCaptureSession{
+		mcpCapture:   api.ObservationExternalCapture{Status: api.ObservationCaptureUnavailable, Events: []api.ObservationExternalEvent{}},
+		kubeCapture:  api.ObservationExternalCapture{Status: api.ObservationCaptureNotRequested, Events: []api.ObservationExternalEvent{}},
+		runtime:      observation.RuntimeCaptureConfig{Environment: map[string]string{}},
+		artifactDir:  artifactDir,
+		artifactBase: baseDir,
+	}
+	if strings.TrimSpace(flags["kubeconfig"]) != "" && !flagBool(flags["capture-kubernetes"]) {
+		return nil, fmt.Errorf("--kubeconfig requires --capture-kubernetes")
+	}
+
+	mcpConfigs := flagSlice(flags["mcp-config"])
+	if req.Permissions.MCP.Disabled && len(mcpConfigs) > 0 {
+		return nil, fmt.Errorf("--mcp-config cannot be combined with --no-mcp")
+	}
+	if req.Permissions.MCP.Disabled {
+		session.mcpCapture.Status = api.ObservationCaptureNotRequested
+	} else if len(mcpConfigs) == 0 {
+		if len(req.Permissions.MCP.Servers) == 0 && len(req.Permissions.MCP.Modes) == 0 {
+			session.mcpCapture.Status = api.ObservationCaptureNotRequested
+		} else {
+			session.mcpCapture.ReasonCode = "configured_mcp_not_intercepted"
+		}
+	} else if runtime.Backend != api.BackendClaudeCLI {
+		session.mcpCapture.Status = api.ObservationCaptureUnsupported
+		session.mcpCapture.ReasonCode = "runtime_mcp_config_unsupported"
+		session.blockingCode = "mcp_config_unsupported"
+	} else if !localProcessCapture(cfg) || relocatesRun(cfg) {
+		session.mcpCapture.ReasonCode = "runtime_mcp_proxy_unreachable"
+		session.blockingCode = "mcp_capture_unavailable"
+	} else {
+		capture, err := fixture.StartMCPConfigCapture(mcpConfigs, baseDir, session.recordMCP)
+		if err != nil {
+			return nil, err
+		}
+		session.mcp = capture
+		session.runtime.MCPConfigs = append([]string(nil), capture.Configs...)
+		switch {
+		case capture.HasHTTP && capture.HasUncaptured:
+			session.mcpCapture.Status = api.ObservationCapturePartial
+			session.mcpCapture.ReasonCode = "non_http_mcp_not_interceptable"
+		case capture.HasHTTP || !capture.HasUncaptured:
+			session.mcpCapture.Status = api.ObservationCaptureComplete
+		default:
+			session.mcpCapture.Status = api.ObservationCaptureUnsupported
+			session.mcpCapture.ReasonCode = "non_http_mcp_not_interceptable"
+		}
+	}
+
+	if !flagBool(flags["capture-kubernetes"]) {
+		return session, nil
+	}
+	session.kubeCapture.Status = api.ObservationCaptureUnsupported
+	session.kubeCapture.ReasonCode = "runtime_kubernetes_capture_unsupported"
+	if !kubernetesProcessBackend(runtime.Backend) {
+		return session, nil
+	}
+	if !localProcessCapture(cfg) || relocatesRun(cfg) {
+		session.kubeCapture.Status = api.ObservationCaptureUnavailable
+		session.kubeCapture.ReasonCode = "runtime_kubernetes_proxy_unreachable"
+		return session, nil
+	}
+	proxy, err := kubeproxy.Start(strings.TrimSpace(flags["kubeconfig"]))
+	if err != nil {
+		session.kubeCapture.Status = api.ObservationCaptureUnavailable
+		session.kubeCapture.ReasonCode = "kubernetes_proxy_start_failed"
+		return session, nil
+	}
+	kubeDir, err := os.MkdirTemp("", "captain-observe-kube-")
+	if err != nil {
+		proxy.Close()
+		session.kubeCapture.Status = api.ObservationCaptureUnavailable
+		session.kubeCapture.ReasonCode = "kubernetes_proxy_setup_failed"
+		return session, nil
+	}
+	kubeconfig, err := proxy.WriteKubeconfig(kubeDir)
+	if err != nil {
+		proxy.Close()
+		_ = os.RemoveAll(kubeDir)
+		session.kubeCapture.Status = api.ObservationCaptureUnavailable
+		session.kubeCapture.ReasonCode = "kubernetes_proxy_setup_failed"
+		return session, nil
+	}
+	proxy.SetObserver(session.recordKubernetes)
+	session.kube = proxy
+	session.kubeDir = kubeDir
+	session.runtime.Environment["KUBECONFIG"] = kubeconfig
+	session.kubeCapture.Status = api.ObservationCaptureComplete
+	session.kubeCapture.ReasonCode = ""
+	return session, nil
+}
+
+func (s *observationCaptureSession) Context(ctx context.Context) context.Context {
+	return observation.ContextWithRuntimeCapture(ctx, s.runtime)
+}
+
+func (s *observationCaptureSession) Close() {
+	if s == nil {
+		return
+	}
+	if s.mcp != nil {
+		s.mcp.Close()
+	}
+	if s.kube != nil {
+		s.kube.Close()
+	}
+	if s.kubeDir != "" {
+		_ = os.RemoveAll(s.kubeDir)
+	}
+}
+
+func (s *observationCaptureSession) recordMCP(event mcpproxy.ObservationEvent) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.mcpEvents) >= maxObservationExternalEvents {
+		s.mcpOverflow = true
+		return
+	}
+	duration := event.Duration.Milliseconds()
+	method := captureIdentifier(event.RPCMethod)
+	if method == "" {
+		method = captureIdentifier(event.HTTPMethod)
+	}
+	s.mcpEvents = append(s.mcpEvents, api.ObservationExternalEvent{
+		ID: fmt.Sprintf("mcp-%d", len(s.mcpEvents)+1), Kind: "request",
+		Target: captureIdentifier(event.Server), Method: method,
+		HTTPMethod: captureIdentifier(event.HTTPMethod), Tool: captureIdentifier(event.Tool),
+		Status: strconv.Itoa(event.Status), DurationMS: &duration,
+	})
+}
+
+func (s *observationCaptureSession) recordKubernetes(event kubeproxy.ObservationEvent) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.kubeEvents) >= maxObservationExternalEvents {
+		s.kubeOverflow = true
+		return
+	}
+	duration := event.Duration.Milliseconds()
+	s.kubeEvents = append(s.kubeEvents, api.ObservationExternalEvent{
+		ID: fmt.Sprintf("kubernetes-%d", len(s.kubeEvents)+1), Kind: "request",
+		Method: captureIdentifier(event.Method), Resource: captureIdentifier(event.Resource),
+		Status: strconv.Itoa(event.Status), DurationMS: &duration,
+	})
+}
+
+func (s *observationCaptureSession) Apply(result *api.RuntimeObservation, tools []api.ObservationToolEvent) {
+	s.mu.Lock()
+	mcpEvents := append([]api.ObservationExternalEvent(nil), s.mcpEvents...)
+	kubeEvents := append([]api.ObservationExternalEvent(nil), s.kubeEvents...)
+	mcpOverflow, kubeOverflow := s.mcpOverflow, s.kubeOverflow
+	s.mu.Unlock()
+
+	correlateMCPObservationEvents(mcpEvents, tools)
+	s.mcpCapture.Events = mcpEvents
+	s.kubeCapture.Events = kubeEvents
+	if mcpOverflow {
+		s.mcpCapture.Status = partialIfComplete(s.mcpCapture.Status)
+		s.mcpCapture.ReasonCode = "capture_truncated"
+	}
+	if kubeOverflow {
+		s.kubeCapture.Status = partialIfComplete(s.kubeCapture.Status)
+		s.kubeCapture.ReasonCode = "capture_truncated"
+	}
+	result.Capture.MCP = s.mcpCapture
+	result.Capture.Kubernetes = s.kubeCapture
+	s.writeArtifact(result, "mcp", mcpEvents, &result.Capture.MCP)
+	s.writeArtifact(result, "kubernetes", kubeEvents, &result.Capture.Kubernetes)
+}
+
+func (s *observationCaptureSession) writeArtifact(
+	result *api.RuntimeObservation,
+	kind string,
+	events []api.ObservationExternalEvent,
+	capture *api.ObservationExternalCapture,
+) {
+	if len(events) == 0 {
+		return
+	}
+	var data []byte
+	for _, event := range events {
+		line, err := json.Marshal(event)
+		if err != nil {
+			capture.Status = partialIfComplete(capture.Status)
+			capture.ReasonCode = "artifact_encode_failed"
+			return
+		}
+		data = append(data, line...)
+		data = append(data, '\n')
+	}
+	if err := os.MkdirAll(s.artifactDir, 0o700); err != nil {
+		capture.Status = partialIfComplete(capture.Status)
+		capture.ReasonCode = "artifact_write_failed"
+		return
+	}
+	path := filepath.Join(s.artifactDir, kind+".jsonl")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		capture.Status = partialIfComplete(capture.Status)
+		capture.ReasonCode = "artifact_write_failed"
+		return
+	}
+	digest := sha256.Sum256(data)
+	result.Artifacts = append(result.Artifacts, api.ObservationArtifact{
+		ID: "artifact-" + kind, Kind: kind + "_capture", Path: observationArtifactPath(s.artifactBase, path),
+		MediaType: "application/x-ndjson", SizeBytes: int64(len(data)), SHA256: hex.EncodeToString(digest[:]),
+	})
+}
+
+func correlateMCPObservationEvents(events []api.ObservationExternalEvent, tools []api.ObservationToolEvent) {
+	for i := range events {
+		if events[i].Tool == "" {
+			continue
+		}
+		match := ""
+		for _, tool := range tools {
+			if tool.ToolCallID == "" || !mcpToolMatches(tool.Name, events[i].Target, events[i].Tool) {
+				continue
+			}
+			if match != "" && match != tool.ToolCallID {
+				match = ""
+				break
+			}
+			match = tool.ToolCallID
+		}
+		events[i].CorrelationID = match
+	}
+}
+
+func mcpToolMatches(recorded, server, proxied string) bool {
+	return recorded == proxied || server != "" && recorded == "mcp__"+server+"__"+proxied
+}
+
+func observationArtifactPath(baseDir, artifactPath string) string {
+	relative, err := filepath.Rel(baseDir, artifactPath)
+	if err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return filepath.ToSlash(relative)
+	}
+	return filepath.ToSlash(artifactPath)
+}
+
+func captureIdentifier(value string) string {
+	value = strings.TrimSpace(value)
+	var output strings.Builder
+	for _, r := range value {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || strings.ContainsRune("._:/-", r) {
+			output.WriteRune(r)
+		} else {
+			output.WriteByte('_')
+		}
+		if output.Len() >= 128 {
+			break
+		}
+	}
+	return output.String()
+}
+
+func localProcessCapture(cfg ai.Config) bool {
+	sandbox := cfg.ResolvedSandbox()
+	return sandbox == nil || sandbox.Kind == api.SandboxNone
+}
+
+func kubernetesProcessBackend(backend api.Backend) bool {
+	switch backend {
+	case api.BackendClaudeCLI, api.BackendCodexCLI, api.BackendGeminiCLI:
+		return true
+	default:
+		return false
+	}
+}

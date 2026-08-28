@@ -30,6 +30,7 @@ type Snapshot struct {
 	Tools           []api.ObservationToolEvent
 	Effort          api.ObservationStringFact
 	Usage           *api.Usage
+	UsageObserved   bool
 	DispatchPartial bool
 	Overflow        bool
 }
@@ -42,6 +43,7 @@ type Recorder struct {
 	tools       []api.ObservationToolEvent
 	efforts     []effortSample
 	usage       *api.Usage
+	usageSeen   bool
 	toolIndex   map[string]int
 	deniedTools map[string]bool
 	overflow    bool
@@ -105,6 +107,7 @@ func RecordUsage(ctx context.Context, usage *api.Usage) {
 func (r *Recorder) recordUsage(usage *api.Usage) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.usageSeen = true
 	if usage == nil {
 		r.usage = nil
 		return
@@ -251,6 +254,7 @@ func (r *Recorder) Snapshot() Snapshot {
 		Tools:           append([]api.ObservationToolEvent(nil), r.tools...),
 		Effort:          observedEffort(r.efforts, r.overflow),
 		Usage:           usage,
+		UsageObserved:   r.usageSeen,
 		DispatchPartial: dispatchPartial,
 		Overflow:        r.overflow,
 	}
