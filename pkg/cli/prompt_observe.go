@@ -26,7 +26,6 @@ type PromptObserveFlags struct {
 	MCPConfig         []string `flag:"mcp-config" help:"Explicit MCP config file to route through Captain capture (repeatable; Claude CLI)"`
 	CaptureKubernetes bool     `flag:"capture-kubernetes" help:"Route KUBECONFIG-aware Kubernetes traffic through Captain capture"`
 	Kubeconfig        string   `flag:"kubeconfig" help:"Source kubeconfig for --capture-kubernetes (default discovery when empty)"`
-	Artifacts         string   `flag:"artifacts" help:"Directory for bounded normalized capture artifacts"`
 }
 
 func (PromptObserveFlags) ClickyActionFlags() {}
@@ -124,7 +123,7 @@ func observePromptAction(ctx context.Context, id string, flags map[string]string
 	recorder := observation.NewRecorder()
 	req := rendered.Input
 	cfg := rendered.Config
-	capture, err := startObservationCapture(flags, runtime, req, cfg, result.ObservationID)
+	capture, err := startObservationCapture(flags, runtime, req, cfg)
 	if err != nil {
 		return api.RuntimeObservation{}, err
 	}
@@ -275,7 +274,6 @@ func newRuntimeObservation(selector string, runtime api.Model, requested api.Obs
 			CostUSD:    api.ObservationCostFact{State: api.ObservationFactUnknown, Unit: "USD"},
 			Usage:      api.ObservationUsageFact{State: api.ObservationFactUnknown, Semantics: "disjoint-v1"},
 		},
-		Artifacts: []api.ObservationArtifact{},
 	}
 }
 

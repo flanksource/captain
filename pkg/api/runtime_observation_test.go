@@ -20,7 +20,6 @@ func TestRuntimeObservationJSONPreservesZeroUsageBuckets(t *testing.T) {
 				Buckets: &ObservationUsageBuckets{},
 			},
 		},
-		Artifacts: []ObservationArtifact{},
 	}
 
 	data, err := json.Marshal(observation)
@@ -33,7 +32,6 @@ func TestRuntimeObservationJSONPreservesZeroUsageBuckets(t *testing.T) {
 		[]byte(`"reasoningTokens":0`),
 		[]byte(`"cacheReadTokens":0`),
 		[]byte(`"cacheWriteTokens":0`),
-		[]byte(`"artifacts":[]`),
 	} {
 		if !bytes.Contains(data, field) {
 			t.Fatalf("observation JSON %s does not contain %s", data, field)

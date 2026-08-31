@@ -2,12 +2,8 @@ package cli
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -39,8 +35,6 @@ type observationCaptureSession struct {
 	mcp          *fixture.MCPConfigCapture
 	kube         *kubeproxy.Proxy
 	kubeDir      string
-	artifactDir  string
-	artifactBase string
 	blockingCode string
 }
 
@@ -80,7 +74,6 @@ func startObservationCapture(
 	runtime api.Model,
 	req ai.Request,
 	cfg ai.Config,
-	observationID string,
 ) (*observationCaptureSession, error) {
 	baseDir := req.Cwd()
 	if baseDir == "" {
@@ -90,19 +83,11 @@ func startObservationCapture(
 			return nil, fmt.Errorf("resolve observation capture directory: %w", err)
 		}
 	}
-	artifactDir := strings.TrimSpace(flags["artifacts"])
-	if artifactDir == "" {
-		artifactDir = filepath.Join(baseDir, ".captain", "observations", observationID)
-	} else if !filepath.IsAbs(artifactDir) {
-		artifactDir = filepath.Join(baseDir, artifactDir)
-	}
 	mcpCapture, kubeCapture := initialObservationExternalCapture(req, flags)
 	session := &observationCaptureSession{
-		mcpCapture:   mcpCapture,
-		kubeCapture:  kubeCapture,
-		runtime:      observation.RuntimeCaptureConfig{Environment: map[string]string{}},
-		artifactDir:  artifactDir,
-		artifactBase: baseDir,
+		mcpCapture:  mcpCapture,
+		kubeCapture: kubeCapture,
+		runtime:     observation.RuntimeCaptureConfig{Environment: map[string]string{}},
 	}
 	if strings.TrimSpace(flags["kubeconfig"]) != "" && !flagBool(flags["capture-kubernetes"]) {
 		return nil, fmt.Errorf("--kubeconfig requires --capture-kubernetes")
@@ -258,46 +243,6 @@ func (s *observationCaptureSession) Apply(result *api.RuntimeObservation, tools 
 	}
 	result.Capture.MCP = s.mcpCapture
 	result.Capture.Kubernetes = s.kubeCapture
-	s.writeArtifact(result, "mcp", mcpEvents, &result.Capture.MCP)
-	s.writeArtifact(result, "kubernetes", kubeEvents, &result.Capture.Kubernetes)
-}
-
-func (s *observationCaptureSession) writeArtifact(
-	result *api.RuntimeObservation,
-	kind string,
-	events []api.ObservationExternalEvent,
-	capture *api.ObservationExternalCapture,
-) {
-	if len(events) == 0 {
-		return
-	}
-	var data []byte
-	for _, event := range events {
-		line, err := json.Marshal(event)
-		if err != nil {
-			capture.Status = partialIfComplete(capture.Status)
-			capture.ReasonCode = "artifact_encode_failed"
-			return
-		}
-		data = append(data, line...)
-		data = append(data, '\n')
-	}
-	if err := os.MkdirAll(s.artifactDir, 0o700); err != nil {
-		capture.Status = partialIfComplete(capture.Status)
-		capture.ReasonCode = "artifact_write_failed"
-		return
-	}
-	path := filepath.Join(s.artifactDir, kind+".jsonl")
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		capture.Status = partialIfComplete(capture.Status)
-		capture.ReasonCode = "artifact_write_failed"
-		return
-	}
-	digest := sha256.Sum256(data)
-	result.Artifacts = append(result.Artifacts, api.ObservationArtifact{
-		ID: "artifact-" + kind, Kind: kind + "_capture", Path: observationArtifactPath(s.artifactBase, path),
-		MediaType: "application/x-ndjson", SizeBytes: int64(len(data)), SHA256: hex.EncodeToString(digest[:]),
-	})
 }
 
 func correlateMCPObservationEvents(events []api.ObservationExternalEvent, tools []api.ObservationToolEvent) {
@@ -322,14 +267,6 @@ func correlateMCPObservationEvents(events []api.ObservationExternalEvent, tools 
 
 func mcpToolMatches(recorded, server, proxied string) bool {
 	return recorded == proxied || server != "" && recorded == "mcp__"+server+"__"+proxied
-}
-
-func observationArtifactPath(baseDir, artifactPath string) string {
-	relative, err := filepath.Rel(baseDir, artifactPath)
-	if err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-		return filepath.ToSlash(relative)
-	}
-	return filepath.ToSlash(artifactPath)
 }
 
 func captureIdentifier(value string) string {

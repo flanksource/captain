@@ -159,18 +159,16 @@ func TestObservationPreDispatchFailureProvesZeroEvents(t *testing.T) {
 	}
 }
 
-func TestObservationCaptureWritesOnlyNormalizedBoundedArtifacts(t *testing.T) {
-	dir := t.TempDir()
+func TestObservationCaptureNormalizesAndCorrelatesEvents(t *testing.T) {
 	session := &observationCaptureSession{
 		mcpCapture:  api.ObservationExternalCapture{Status: api.ObservationCaptureComplete, Events: []api.ObservationExternalEvent{}},
 		kubeCapture: api.ObservationExternalCapture{Status: api.ObservationCaptureNotRequested, Events: []api.ObservationExternalEvent{}},
-		artifactDir: filepath.Join(dir, "artifacts"), artifactBase: dir,
 	}
 	session.recordMCP(mcpproxy.ObservationEvent{
 		Server: "server with spaces", HTTPMethod: "POST", RPCMethod: "tools/call",
 		Tool: "query", Status: 200,
 	})
-	result := api.RuntimeObservation{Artifacts: []api.ObservationArtifact{}}
+	result := api.RuntimeObservation{}
 	session.Apply(&result, []api.ObservationToolEvent{{ToolCallID: "call-1", Name: "mcp__server_with_spaces__query"}})
 	if result.Capture.MCP.Status != api.ObservationCaptureComplete || len(result.Capture.MCP.Events) != 1 {
 		t.Fatalf("MCP capture = %#v", result.Capture.MCP)
@@ -178,18 +176,6 @@ func TestObservationCaptureWritesOnlyNormalizedBoundedArtifacts(t *testing.T) {
 	event := result.Capture.MCP.Events[0]
 	if event.Target != "server_with_spaces" || event.Method != "tools/call" || event.CorrelationID != "call-1" {
 		t.Fatalf("normalized MCP event = %#v", event)
-	}
-	if len(result.Artifacts) != 1 || result.Artifacts[0].SizeBytes <= 0 || result.Artifacts[0].SHA256 == "" {
-		t.Fatalf("artifacts = %#v", result.Artifacts)
-	}
-	data, err := os.ReadFile(filepath.Join(dir, result.Artifacts[0].Path))
-	if err != nil {
-		t.Fatalf("read artifact: %v", err)
-	}
-	for _, forbidden := range []string{"Authorization", "Bearer", "prompt", "arguments", "credential"} {
-		if strings.Contains(string(data), forbidden) {
-			t.Fatalf("normalized artifact contains %q: %s", forbidden, data)
-		}
 	}
 }
 
@@ -205,11 +191,10 @@ func TestObservationCaptureKeepsSharedUpstreamAliasesDistinct(t *testing.T) {
 		t.Fatalf("write MCP config: %v", err)
 	}
 	session, err := startObservationCapture(
-		map[string]string{"mcp-config": configPath, "artifacts": filepath.Join(dir, "artifacts")},
+		map[string]string{"mcp-config": configPath},
 		api.Model{Backend: api.BackendClaudeCLI},
 		ai.Request{Setup: &shell.Setup{Cwd: dir}},
 		ai.Config{Model: api.Model{Backend: api.BackendClaudeCLI}},
-		"observation-1",
 	)
 	if err != nil {
 		t.Fatalf("startObservationCapture: %v", err)
@@ -243,7 +228,7 @@ func TestObservationCaptureKeepsSharedUpstreamAliasesDistinct(t *testing.T) {
 		}
 		response.Body.Close()
 	}
-	result := api.RuntimeObservation{Artifacts: []api.ObservationArtifact{}}
+	result := api.RuntimeObservation{}
 	session.Apply(&result, []api.ObservationToolEvent{
 		{ToolCallID: "call-alpha", Name: "mcp__alpha__query"},
 		{ToolCallID: "call-beta", Name: "mcp__beta__query"},
@@ -261,16 +246,14 @@ func TestObservationCaptureKeepsSharedUpstreamAliasesDistinct(t *testing.T) {
 }
 
 func TestObservationCaptureTruncatesExternalEvents(t *testing.T) {
-	dir := t.TempDir()
 	session := &observationCaptureSession{
 		mcpCapture:  api.ObservationExternalCapture{Status: api.ObservationCaptureComplete, Events: []api.ObservationExternalEvent{}},
 		kubeCapture: api.ObservationExternalCapture{Status: api.ObservationCaptureNotRequested, Events: []api.ObservationExternalEvent{}},
-		artifactDir: filepath.Join(dir, "artifacts"), artifactBase: dir,
 	}
 	for range maxObservationExternalEvents + 1 {
 		session.recordMCP(mcpproxy.ObservationEvent{Server: "server", HTTPMethod: "POST", Status: 200})
 	}
-	result := api.RuntimeObservation{Artifacts: []api.ObservationArtifact{}}
+	result := api.RuntimeObservation{}
 	session.Apply(&result, nil)
 	if result.Capture.MCP.Status != api.ObservationCapturePartial || result.Capture.MCP.ReasonCode != "capture_truncated" {
 		t.Fatalf("MCP capture = %#v, want partial capture_truncated", result.Capture.MCP)
@@ -292,11 +275,10 @@ func TestObservationCaptureRoutesKubernetesTraffic(t *testing.T) {
 		t.Fatalf("write kubeconfig: %v", err)
 	}
 	session, err := startObservationCapture(
-		map[string]string{"capture-kubernetes": "true", "kubeconfig": kubeconfig, "artifacts": filepath.Join(dir, "artifacts")},
+		map[string]string{"capture-kubernetes": "true", "kubeconfig": kubeconfig},
 		api.Model{Backend: api.BackendCodexCLI},
 		ai.Request{Setup: &shell.Setup{Cwd: dir}},
 		ai.Config{Model: api.Model{Backend: api.BackendCodexCLI}},
-		"observation-1",
 	)
 	if err != nil {
 		t.Fatalf("startObservationCapture: %v", err)
@@ -311,7 +293,7 @@ func TestObservationCaptureRoutesKubernetesTraffic(t *testing.T) {
 		t.Fatalf("request Kubernetes proxy: %v", err)
 	}
 	response.Body.Close()
-	result := api.RuntimeObservation{Artifacts: []api.ObservationArtifact{}}
+	result := api.RuntimeObservation{}
 	session.Apply(&result, nil)
 	if result.Capture.Kubernetes.Status != api.ObservationCaptureComplete || len(result.Capture.Kubernetes.Events) != 1 {
 		t.Fatalf("Kubernetes capture = %#v", result.Capture.Kubernetes)
@@ -319,9 +301,6 @@ func TestObservationCaptureRoutesKubernetesTraffic(t *testing.T) {
 	event := result.Capture.Kubernetes.Events[0]
 	if event.Method != http.MethodGet || event.Resource != "pods" || event.Status != "200" {
 		t.Fatalf("Kubernetes event = %#v", event)
-	}
-	if len(result.Artifacts) != 1 || result.Artifacts[0].Kind != "kubernetes_capture" {
-		t.Fatalf("artifacts = %#v", result.Artifacts)
 	}
 }
 
@@ -361,7 +340,6 @@ func TestObservationKubernetesCaptureBlocksOnlyFailedLocalCLIInterception(t *tes
 				test.runtime,
 				ai.Request{Setup: &shell.Setup{Cwd: t.TempDir()}},
 				test.config,
-				"observation-1",
 			)
 			if err != nil {
 				t.Fatalf("startObservationCapture: %v", err)
@@ -455,7 +433,6 @@ func TestObservationKubernetesKubeconfigPreparationFailureBlocks(t *testing.T) {
 		api.Model{Backend: api.BackendClaudeCLI},
 		ai.Request{Setup: &shell.Setup{Cwd: dir}},
 		ai.Config{Model: api.Model{Backend: api.BackendClaudeCLI}},
-		"observation-1",
 	)
 	if err != nil {
 		t.Fatalf("startObservationCapture: %v", err)
@@ -477,7 +454,6 @@ func TestObservationCaptureRejectsUnsupportedMCPConfigBeforeDispatch(t *testing.
 		api.Model{Backend: api.BackendOpenAI},
 		ai.Request{Setup: &shell.Setup{Cwd: t.TempDir()}},
 		ai.Config{Model: api.Model{Backend: api.BackendOpenAI}},
-		"observation-1",
 	)
 	if err != nil {
 		t.Fatalf("startObservationCapture: %v", err)

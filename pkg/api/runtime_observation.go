@@ -24,16 +24,40 @@ const (
 	ObservationCaptureUnsupported  ObservationCaptureStatus = "unsupported"
 )
 
+// RuntimeObservation is the versioned, machine-readable evidence produced by a
+// single captain prompt observe execution. It reports facts for consumers to
+// evaluate without assigning a conformance pass or fail result.
 type RuntimeObservation struct {
-	SchemaVersion string                `json:"schemaVersion"`
-	ObservationID string                `json:"observationId"`
-	Runtime       ObservationRuntime    `json:"runtime"`
-	Availability  Availability          `json:"availability"`
-	Execution     ObservationExecution  `json:"execution"`
-	Controls      ObservationControls   `json:"controls"`
-	Capture       ObservationCapture    `json:"capture"`
-	Metrics       ObservationMetrics    `json:"metrics"`
-	Artifacts     []ObservationArtifact `json:"artifacts"`
+	// SchemaVersion identifies the observation contract used to encode this document.
+	SchemaVersion string `json:"schemaVersion"`
+	// ObservationID uniquely identifies this document and its execution.
+	ObservationID string `json:"observationId"`
+	// Runtime records the selector requested by the caller and the runtime Captain resolved.
+	Runtime ObservationRuntime `json:"runtime"`
+	// Availability reports whether the resolved runtime is currently usable, or
+	// why it is not, such as missing credentials, authentication, or an executable.
+	// It is separate from Execution: an available runtime can still fail a
+	// particular invocation because of a timeout, rate limit, or provider error.
+	Availability Availability `json:"availability"`
+	// Execution reports the outcome of this invocation: not_started, completed,
+	// or failed, together with its duration and any classified error. It remains
+	// not_started when availability or an unsupported control prevents dispatch.
+	Execution ObservationExecution `json:"execution"`
+	// Controls reports configuration knobs sent to the model; v1 contains only
+	// reasoning effort. For each knob it records the caller's requested value,
+	// Captain's resolved value, and the value found in the native provider request.
+	// For example, requested=high and resolved=high but observed=unset means the
+	// provider request omitted the requested effort.
+	Controls ObservationControls `json:"controls"`
+	// Capture is a bounded audit trail of activity around model execution. It
+	// records provider dispatches, permission decisions, tool calls, MCP requests,
+	// and Kubernetes requests as normalized events without prompt or tool bodies.
+	// Each channel's status qualifies its events: complete with no events proves no
+	// activity crossed that observed boundary, while unavailable or unsupported
+	// means an empty list is inconclusive.
+	Capture ObservationCapture `json:"capture"`
+	// Metrics contains normalized duration, cost, and disjoint token-usage facts when available.
+	Metrics ObservationMetrics `json:"metrics"`
 }
 
 type ObservationRuntime struct {
@@ -181,13 +205,4 @@ type ObservationUsageBuckets struct {
 	ReasoningTokens  int `json:"reasoningTokens"`
 	CacheReadTokens  int `json:"cacheReadTokens"`
 	CacheWriteTokens int `json:"cacheWriteTokens"`
-}
-
-type ObservationArtifact struct {
-	ID        string `json:"id"`
-	Kind      string `json:"kind"`
-	Path      string `json:"path,omitempty"`
-	MediaType string `json:"mediaType,omitempty"`
-	SizeBytes int64  `json:"sizeBytes,omitempty"`
-	SHA256    string `json:"sha256,omitempty"`
 }
