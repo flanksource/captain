@@ -60,6 +60,9 @@ type Event struct {
 	// (the call) and EventToolResult (its complete output). Backends that stream
 	// output incrementally accumulate it and emit a single EventToolResult.
 	ToolCallID string
+	// Delegated marks a lifecycle event reconstructed by the supervisor from an
+	// authenticated remote MCP call rather than emitted by its local provider.
+	Delegated bool `json:"-"`
 	// ApprovalID is the durable captain_turn_requests UUID associated with an
 	// EventPermission. It is distinct from the provider's tool-call ID.
 	ApprovalID string

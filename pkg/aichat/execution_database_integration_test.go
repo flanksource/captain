@@ -2,13 +2,21 @@ package aichat_test
 
 import (
 	"context"
+	"encoding/pem"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"time"
 
+	"github.com/flanksource/captain/pkg/ai/callertools"
 	"github.com/flanksource/captain/pkg/aichat"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/database"
+	"github.com/flanksource/captain/pkg/gitagent"
+	"github.com/flanksource/clicky/text"
 	"github.com/flanksource/commons-db/dbtest"
 	"github.com/google/uuid"
 	mcpclient "github.com/mark3labs/mcp-go/client"
@@ -18,6 +26,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	. "github.com/onsi/gomega/gstruct"
 )
 
 var _ = Describe("Database execution authority", func() {
@@ -106,6 +115,153 @@ var _ = Describe("Database execution authority", func() {
 			Where("prompt_run_id = ?", runID).
 			Scan(&credential).Error).To(Succeed())
 		Expect(credential.RevokedAt).NotTo(BeNil())
+	})
+
+	It("approves and executes an authenticated delegated tool without a local provider tool-use event", func(ctx SpecContext) {
+		testDB := dbtest.ForGinkgo(dbtest.Options{Name: "captain_aichat_delegated_execution"})
+		db, err := database.Open(ctx, database.WithDSN(testDB.DSN()), database.WithMigrations())
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(db.Close)
+		authority, err := aichat.NewDatabaseExecutionAuthority(db)
+		Expect(err).NotTo(HaveOccurred())
+		var calls atomic.Int32
+		threadID := uuid.NewString()
+		execution, err := authority.Begin(ctx, aichat.ExecutionRequest{
+			ThreadID: threadID, RequestID: "request-delegated-1", Title: "Delegated",
+			Spec: api.Spec{Model: api.Model{
+				Name: "codex", Backend: api.BackendCodexAgent,
+			}.Capabilities()},
+			Definitions: []api.ToolDefinition{{
+				Name: "version", DefaultPermission: api.ToolPolicyAsk,
+				Handler: func(context.Context, map[string]any) (any, error) {
+					calls.Add(1)
+					return map[string]any{"version": "test"}, nil
+				},
+			}},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(execution.Close)
+		supervisor := httptest.NewTLSServer(callertools.RemoteHandler())
+		DeferCleanup(supervisor.Close)
+		endpoint := execution.CallerTools()
+		Expect(endpoint).NotTo(BeNil())
+		delegation, err := endpoint.Delegate(ctx, api.CallerToolBinding{
+			TaskID: "task-delegated-1", Agent: "agent-1", ExpiresAt: time.Now().Add(time.Minute),
+			ToolNames: []string{"version"},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(delegation.Revoke)
+
+		sidecarRoot := GinkgoT().TempDir()
+		sidecar := httptest.NewUnstartedServer(nil)
+		sidecarHandler, err := gitagent.NewCallerToolProxy(gitagent.CallerToolProxyConfig{
+			Root: sidecarRoot, EndpointURL: "https://" + sidecar.Listener.Addr().String(),
+			SupervisorURL: supervisor.URL, SupervisorCAPath: testServerCAPath(supervisor),
+			Agent: "agent-1", DefaultRunner: true,
+			IdentifySupervisor: func(request *http.Request) (string, error) {
+				if request.Header.Get("Authorization") != "Bearer dispatch-token" {
+					return "", errors.New("invalid supervisor credential")
+				}
+				return "supervisor", nil
+			},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		sidecar.Config.Handler = sidecarHandler
+		sidecar.StartTLS()
+		DeferCleanup(sidecar.Close)
+		target := gitagent.TransportTarget{
+			URL: sidecar.URL, Token: text.NewSensitiveString("dispatch-token"),
+			CAPath: testServerCAPath(sidecar),
+		}
+		Expect(gitagent.RegisterCallerTools(ctx, target, gitagent.CallerToolGrant{
+			Task: "task-delegated-1", Agent: "agent-1", Endpoint: delegation.Endpoint,
+			ExpiresAt: time.Now().Add(time.Minute),
+		})).To(Succeed())
+		remoteEndpoint, err := gitagent.LoadCallerToolEndpoint(sidecarRoot, "task-delegated-1")
+		Expect(err).NotTo(HaveOccurred())
+		client := executionMCPClientWithHTTP(ctx, *remoteEndpoint, sidecar.Client())
+		DeferCleanup(client.Close)
+		type callOutcome struct {
+			result *mcp.CallToolResult
+			err    error
+		}
+		outcomes := make(chan callOutcome, 1)
+		go func() {
+			request := mcp.CallToolRequest{}
+			request.Params.Name = "version"
+			result, callErr := client.CallTool(ctx, request)
+			outcomes <- callOutcome{result: result, err: callErr}
+		}()
+
+		var use api.Event
+		Eventually(execution.Events()).Should(Receive(&use))
+		Expect(use).To(MatchFields(IgnoreExtras, Fields{
+			"Kind": Equal(api.EventToolUse), "Tool": Equal("version"),
+		}))
+		Expect(use.ToolCallID).To(HavePrefix("mcp_"))
+		var approval api.Event
+		Eventually(execution.Events()).Should(Receive(&approval))
+		Expect(approval).To(MatchFields(IgnoreExtras, Fields{
+			"Kind": Equal(api.EventPermission), "Tool": Equal("version"),
+			"ToolCallID": Equal(use.ToolCallID),
+		}))
+		Expect(calls.Load()).To(BeZero())
+		continuation, err := authority.ResolveToolApproval(ctx, aichat.ToolApprovalResolution{
+			ThreadID: threadID, ApprovalID: approval.ApprovalID, Approved: true,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(continuation).To(BeNil())
+		var terminal api.Event
+		Eventually(execution.Events()).Should(Receive(&terminal))
+		Expect(terminal).To(MatchFields(IgnoreExtras, Fields{
+			"Kind": Equal(api.EventToolResult), "Tool": Equal("version"),
+			"ToolCallID": Equal(use.ToolCallID), "Success": BeTrue(),
+		}))
+		var outcome callOutcome
+		Eventually(outcomes).Should(Receive(&outcome))
+		Expect(outcome.err).NotTo(HaveOccurred())
+		Expect(outcome.result.IsError).To(BeFalse())
+		Expect(outcome.result.StructuredContent).To(Equal(map[string]any{"version": "test"}))
+		Expect(calls.Load()).To(Equal(int32(1)))
+
+		go func() {
+			request := mcp.CallToolRequest{}
+			request.Params.Name = "version"
+			result, callErr := client.CallTool(ctx, request)
+			outcomes <- callOutcome{result: result, err: callErr}
+		}()
+		var deniedUse, deniedApproval api.Event
+		Eventually(execution.Events()).Should(Receive(&deniedUse))
+		Eventually(execution.Events()).Should(Receive(&deniedApproval))
+		Expect(deniedUse.Kind).To(Equal(api.EventToolUse))
+		Expect(deniedApproval).To(MatchFields(IgnoreExtras, Fields{
+			"Kind": Equal(api.EventPermission), "ToolCallID": Equal(deniedUse.ToolCallID),
+		}))
+		continuation, err = authority.ResolveToolApproval(ctx, aichat.ToolApprovalResolution{
+			ThreadID: threadID, ApprovalID: deniedApproval.ApprovalID, Approved: false,
+			Reason: "operator denied remote version",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(continuation).To(BeNil())
+		Eventually(execution.Events()).Should(Receive(&terminal))
+		Expect(terminal).To(MatchFields(IgnoreExtras, Fields{
+			"Kind": Equal(api.EventToolResult), "ToolCallID": Equal(deniedUse.ToolCallID),
+			"Success": BeFalse(), "Text": Equal("operator denied remote version"),
+		}))
+		Eventually(outcomes).Should(Receive(&outcome))
+		Expect(outcome.err).NotTo(HaveOccurred())
+		Expect(outcome.result.IsError).To(BeTrue())
+		Expect(outcome.result.Content).NotTo(BeEmpty())
+		text, ok := mcp.AsTextContent(outcome.result.Content[0])
+		Expect(ok).To(BeTrue())
+		Expect(text.Text).To(Equal("operator denied remote version"))
+		Expect(calls.Load()).To(Equal(int32(1)))
+
+		_, err = execution.Observe(ctx, api.Event{
+			Kind: api.EventResult, Success: true, SessionID: "remote-provider-session-1",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(execution.Close(ctx)).To(Succeed())
 	})
 
 	It("creates distinct prompt runs for sequential turn identities and rejects a replay", func(ctx SpecContext) {
@@ -451,7 +607,15 @@ var _ = Describe("Database execution authority", func() {
 })
 
 func executionMCPClient(ctx context.Context, endpoint api.CallerToolEndpoint) *mcpclient.Client {
-	channel, err := transport.NewStreamableHTTP(endpoint.URL, transport.WithHTTPHeaders(endpoint.Headers))
+	return executionMCPClientWithHTTP(ctx, endpoint, nil)
+}
+
+func executionMCPClientWithHTTP(ctx context.Context, endpoint api.CallerToolEndpoint, httpClient *http.Client) *mcpclient.Client {
+	options := []transport.StreamableHTTPCOption{transport.WithHTTPHeaders(endpoint.Headers)}
+	if httpClient != nil {
+		options = append(options, transport.WithHTTPBasicClient(httpClient))
+	}
+	channel, err := transport.NewStreamableHTTP(endpoint.URL, options...)
 	Expect(err).NotTo(HaveOccurred())
 	client := mcpclient.NewClient(channel)
 	Expect(client.Start(ctx)).To(Succeed())
@@ -461,4 +625,13 @@ func executionMCPClient(ctx context.Context, endpoint api.CallerToolEndpoint) *m
 	_, err = client.Initialize(ctx, request)
 	Expect(err).NotTo(HaveOccurred())
 	return client
+}
+
+func testServerCAPath(server *httptest.Server) string {
+	certificate := server.Certificate()
+	Expect(certificate).NotTo(BeNil())
+	payload := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificate.Raw})
+	path := filepath.Join(GinkgoT().TempDir(), "ca.pem")
+	Expect(os.WriteFile(path, payload, 0o600)).To(Succeed())
+	return path
 }

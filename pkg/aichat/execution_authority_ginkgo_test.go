@@ -209,6 +209,85 @@ var _ = Describe("Authoritative aichat execution", func() {
 		Expect(execution.closed).To(BeTrue())
 	})
 
+	It("streams a delegated caller-tool lifecycle reconstructed from its MCP call", func() {
+		store := aichat.NewMemoryThreadStore()
+		thread, err := store.Create(context.Background(), "Delegated")
+		Expect(err).NotTo(HaveOccurred())
+		execution := &fakeExecution{
+			events: make(chan api.Event),
+			endpoint: &api.CallerToolEndpoint{
+				Name: "captain", URL: "http://127.0.0.1:43210/mcp",
+				Headers: map[string]string{"Authorization": "Bearer secret"},
+			},
+		}
+		provider := &fakeStreamingProvider{
+			backend: api.BackendCodexAgent,
+			execute: func(context.Context, api.Spec) (<-chan api.Event, error) {
+				providerEvents := make(chan api.Event)
+				go func() {
+					execution.events <- api.Event{
+						Kind: api.EventToolUse, Tool: "version", ToolCallID: "mcp-call-1",
+						Input: map[string]any{}, Delegated: true,
+					}
+					execution.events <- api.Event{
+						Kind: api.EventPermission, Tool: "version", ToolCallID: "mcp-call-1",
+						ApprovalID: "approval-mcp-call-1", Input: map[string]any{}, Delegated: true,
+					}
+					execution.events <- api.Event{
+						Kind: api.EventToolResult, Tool: "version", ToolCallID: "mcp-call-1",
+						Text: `{"version":"test"}`, Success: true, Delegated: true,
+					}
+					execution.events <- api.Event{
+						Kind: api.EventToolUse, Tool: "version", ToolCallID: "mcp-call-2",
+						Input: map[string]any{}, Delegated: true,
+					}
+					execution.events <- api.Event{
+						Kind: api.EventToolResult, Tool: "version", ToolCallID: "mcp-call-2",
+						Text: "approval service unavailable", Success: false, Delegated: true,
+					}
+					providerEvents <- api.Event{Kind: api.EventResult, Success: true, SessionID: "remote-session-1"}
+					close(providerEvents)
+				}()
+				return providerEvents, nil
+			},
+		}
+		service := aichat.NewService(aichat.ServiceOptions{
+			Resolver: &fakeResolver{provider: provider}, Threads: aichat.FixedThreadStore(store),
+			Authority: &fakeExecutionAuthority{execution: execution},
+			Tools: aichat.StaticToolProvider([]api.ToolDefinition{{
+				Name: "version", DefaultPermission: api.ToolPolicyAsk,
+				Handler: func(context.Context, map[string]any) (any, error) { return nil, nil },
+			}}),
+		})
+
+		response := httptest.NewRecorder()
+		service.Handler().ServeHTTP(response, requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{
+			ID: thread.ID, ThreadID: thread.ID, Trigger: "submit-message",
+			Runtime: &api.Model{Name: "codex", Backend: api.BackendCodexAgent},
+			Messages: []aichat.UIMessage{{
+				ID: "user-message-delegated", Role: "user",
+				Parts: []aichat.UIPart{{Type: "text", Text: "Check the version remotely"}},
+			}},
+		}))
+
+		parts := decodedDataLines(response.Body.String())
+		Expect(response.Code).To(Equal(http.StatusOK), response.Body.String())
+		Expect(partTypes(parts)).To(Equal([]string{
+			"start", "start-step", "tool-input-available", "tool-approval-request",
+			"tool-output-available", "tool-input-available", "tool-output-error",
+			"data-result", "finish-step", "finish",
+		}))
+		Expect(execution.observed).To(ContainElements(
+			MatchFields(IgnoreExtras, Fields{"Kind": Equal(api.EventToolUse), "ToolCallID": Equal("mcp-call-1")}),
+			MatchFields(IgnoreExtras, Fields{"Kind": Equal(api.EventPermission), "ToolCallID": Equal("mcp-call-1")}),
+			MatchFields(IgnoreExtras, Fields{"Kind": Equal(api.EventToolResult), "ToolCallID": Equal("mcp-call-1")}),
+			MatchFields(IgnoreExtras, Fields{
+				"Kind": Equal(api.EventToolResult), "ToolCallID": Equal("mcp-call-2"),
+				"Success": BeFalse(), "Text": Equal("approval service unavailable"),
+			}),
+		))
+	})
+
 	It("streams API-provider approvals without waiting for agent caller-tool events", func() {
 		store := aichat.NewMemoryThreadStore()
 		thread, err := store.Create(context.Background(), "Accounts")

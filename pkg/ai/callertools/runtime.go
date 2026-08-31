@@ -71,6 +71,9 @@ type Options struct {
 	// immediately before a tool handler executes.
 	ValidateCredential func(context.Context) error
 	Audit              func(AuditEvent)
+	// ObserveDelegatedTool publishes the tool-use lifecycle reconstructed from
+	// an authenticated remote MCP call. Local providers publish their own events.
+	ObserveDelegatedTool func(context.Context, api.Event) error
 
 	ApprovalTimeout time.Duration
 }
@@ -78,15 +81,16 @@ type Options struct {
 // Runtime owns one loopback-only MCP server and its in-memory bearer
 // credential. Closing it revokes the capability by shutting down the listener.
 type Runtime struct {
-	definitions map[string]api.ToolDefinition
-	schemas     map[string]*jsonschema.Schema
-	canUseTool  api.PermissionFunc
-	validate    func(context.Context) error
-	sessionID   string
-	token       string
-	tokenHash   [sha256.Size]byte
-	expiresAt   time.Time
-	audit       func(AuditEvent)
+	definitions          map[string]api.ToolDefinition
+	schemas              map[string]*jsonschema.Schema
+	canUseTool           api.PermissionFunc
+	validate             func(context.Context) error
+	sessionID            string
+	token                string
+	tokenHash            [sha256.Size]byte
+	expiresAt            time.Time
+	audit                func(AuditEvent)
+	observeDelegatedTool func(context.Context, api.Event) error
 
 	approvalTimeout time.Duration
 	ctx             context.Context
@@ -151,19 +155,20 @@ func New(options Options) (*Runtime, error) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	runtime := &Runtime{
-		definitions:     make(map[string]api.ToolDefinition, len(definitions)),
-		schemas:         make(map[string]*jsonschema.Schema, len(definitions)),
-		canUseTool:      options.CanUseTool,
-		validate:        options.ValidateCredential,
-		audit:           options.Audit,
-		sessionID:       options.SessionID,
-		token:           token,
-		tokenHash:       sha256.Sum256([]byte(token)),
-		expiresAt:       options.ExpiresAt,
-		approvalTimeout: options.ApprovalTimeout,
-		ctx:             ctx,
-		cancel:          cancel,
-		listener:        listener,
+		definitions:          make(map[string]api.ToolDefinition, len(definitions)),
+		schemas:              make(map[string]*jsonschema.Schema, len(definitions)),
+		canUseTool:           options.CanUseTool,
+		validate:             options.ValidateCredential,
+		audit:                options.Audit,
+		observeDelegatedTool: options.ObserveDelegatedTool,
+		sessionID:            options.SessionID,
+		token:                token,
+		tokenHash:            sha256.Sum256([]byte(token)),
+		expiresAt:            options.ExpiresAt,
+		approvalTimeout:      options.ApprovalTimeout,
+		ctx:                  ctx,
+		cancel:               cancel,
+		listener:             listener,
 	}
 	// Validation stays in the handler because out-of-process providers add the
 	// synthetic tool-use ID that must be removed before strict schema checks.
@@ -373,7 +378,8 @@ func (r *Runtime) handler(definition api.ToolDefinition) server.ToolHandlerFunc 
 		stop := context.AfterFunc(r.ctx, cancel)
 		defer stop()
 		defer cancel()
-		if capability, ok := ctx.Value(delegationContextKey{}).(*delegatedCapability); ok {
+		capability, delegated := ctx.Value(delegationContextKey{}).(*delegatedCapability)
+		if delegated {
 			stopCapability := context.AfterFunc(capability.ctx, cancel)
 			defer stopCapability()
 		}
@@ -386,58 +392,94 @@ func (r *Runtime) handler(definition api.ToolDefinition) server.ToolHandlerFunc 
 			r.auditCall(ctx, definition.Name, "denied", "invalid_tool_use_id")
 			return mcp.NewToolResultError(err.Error()), nil
 		}
+		delegatedObserved := false
+		fail := func(message, result, reason string) (*mcp.CallToolResult, error) {
+			if delegatedObserved {
+				eventErr := r.observeDelegated(callCtx, api.Event{
+					Kind: api.EventToolResult, Tool: definition.Name, ToolCallID: toolUseID,
+					Text: message, Success: false, Delegated: true,
+				})
+				if eventErr != nil {
+					r.auditCall(ctx, definition.Name, "error", "event_delivery_failed")
+					return mcp.NewToolResultErrorf("%s (record delegated tool result: %v)", message, eventErr), nil
+				}
+			}
+			r.auditCall(ctx, definition.Name, result, reason)
+			return mcp.NewToolResultError(message), nil
+		}
+		if delegated {
+			if err := r.observeDelegated(callCtx, api.Event{
+				Kind: api.EventToolUse, Tool: definition.Name, ToolCallID: toolUseID, Input: input, Delegated: true,
+			}); err != nil {
+				r.auditCall(ctx, definition.Name, "error", "event_delivery_failed")
+				return mcp.NewToolResultErrorf("record delegated caller-tool use: %v", err), nil
+			}
+			delegatedObserved = true
+		}
 		if err := r.validateInput(definition.Name, input); err != nil {
-			r.auditCall(ctx, definition.Name, "denied", "invalid_input")
-			return mcp.NewToolResultError(err.Error()), nil
+			return fail(err.Error(), "denied", "invalid_input")
 		}
 		if definition.NeedsApproval() {
 			if r.canUseTool == nil {
-				r.auditCall(ctx, definition.Name, "denied", "approval_broker_unavailable")
-				return mcp.NewToolResultError("tool approval is required but no approval broker is configured"), nil
+				return fail("tool approval is required but no approval broker is configured", "denied", "approval_broker_unavailable")
 			}
 			approvalCtx, approvalCancel := context.WithTimeout(callCtx, r.approvalTimeout)
 			decision, err := r.canUseTool(approvalCtx, api.PermissionRequest{
 				Tool: definition.Name, Input: input, ToolUseID: toolUseID,
-				ToolUseIDGenerated: generatedToolUseID, SessionID: r.sessionID,
+				ToolUseIDGenerated: generatedToolUseID, Delegated: delegated, SessionID: r.sessionID,
 			})
 			approvalCancel()
 			if err != nil {
-				r.auditCall(ctx, definition.Name, "denied", "approval_failed")
-				return mcp.NewToolResultError(err.Error()), nil
+				return fail(err.Error(), "denied", "approval_failed")
 			}
 			if !decision.Allow {
 				message := decision.Message
 				if message == "" {
 					message = "tool call denied"
 				}
-				r.auditCall(ctx, definition.Name, "denied", "approval_denied")
-				return mcp.NewToolResultError(message), nil
+				return fail(message, "denied", "approval_denied")
 			}
 			if decision.UpdatedInput != nil {
 				input = decision.UpdatedInput
 			}
 		}
 		if err := r.validateInput(definition.Name, input); err != nil {
-			r.auditCall(ctx, definition.Name, "denied", "invalid_input")
-			return mcp.NewToolResultError(err.Error()), nil
+			return fail(err.Error(), "denied", "invalid_input")
 		}
 		if err := r.validateActive(callCtx); err != nil {
-			r.auditCall(ctx, definition.Name, "denied", "capability_inactive")
-			return mcp.NewToolResultError(err.Error()), nil
+			return fail(err.Error(), "denied", "capability_inactive")
 		}
 		output, err := definition.Handler(callCtx, input)
 		if err != nil {
-			r.auditCall(ctx, definition.Name, "error", "handler_failed")
-			return mcp.NewToolResultError(err.Error()), nil
+			return fail(err.Error(), "error", "handler_failed")
 		}
 		result, err := mcp.NewToolResultJSON(output)
 		if err != nil {
-			r.auditCall(ctx, definition.Name, "error", "result_encoding_failed")
-			return mcp.NewToolResultErrorf("marshal caller tool %q result: %v", definition.Name, err), nil
+			return fail(fmt.Sprintf("marshal caller tool %q result: %v", definition.Name, err), "error", "result_encoding_failed")
+		}
+		if delegatedObserved {
+			encoded, err := json.Marshal(output)
+			if err != nil {
+				return fail(fmt.Sprintf("marshal caller tool %q result: %v", definition.Name, err), "error", "result_encoding_failed")
+			}
+			if err := r.observeDelegated(callCtx, api.Event{
+				Kind: api.EventToolResult, Tool: definition.Name, ToolCallID: toolUseID,
+				Text: string(encoded), Success: true, Delegated: true,
+			}); err != nil {
+				r.auditCall(ctx, definition.Name, "error", "event_delivery_failed")
+				return mcp.NewToolResultErrorf("record delegated caller-tool result: %v", err), nil
+			}
 		}
 		r.auditCall(ctx, definition.Name, "allowed", "")
 		return result, nil
 	}
+}
+
+func (r *Runtime) observeDelegated(ctx context.Context, event api.Event) error {
+	if r.observeDelegatedTool == nil {
+		return nil
+	}
+	return r.observeDelegatedTool(ctx, event)
 }
 
 func (r *Runtime) authorizeLocal(next http.Handler) http.Handler {

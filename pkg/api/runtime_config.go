@@ -21,7 +21,11 @@ type PermissionRequest struct {
 	Input              map[string]any
 	ToolUseID          string
 	ToolUseIDGenerated bool
-	SessionID          string
+	// Delegated identifies a call authenticated by a task-scoped remote
+	// capability. Its MCP request is the authoritative tool-use observation;
+	// there is no local provider event to correlate with a generated ID.
+	Delegated bool `json:"-"`
+	SessionID string
 }
 
 // PermissionDecision is the answer to a PermissionRequest. On Allow the tool runs
