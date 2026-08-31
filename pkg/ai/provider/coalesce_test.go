@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/ai/observation"
 )
 
 // feedEvents pushes events onto a buffered channel and closes it, mimicking a
@@ -42,6 +43,36 @@ func TestCoalesceStream_AccumulatesTextAndUsageFromResult(t *testing.T) {
 	}
 	if resp.Usage.InputTokens != 42 || resp.Usage.OutputTokens != 17 {
 		t.Errorf("Usage = %+v, want input=42 output=17", resp.Usage)
+	}
+}
+
+func TestCoalesceStreamRecordsUsagePresence(t *testing.T) {
+	tests := []struct {
+		name      string
+		usage     *ai.Usage
+		wantUsage bool
+	}{
+		{name: "omitted", usage: nil, wantUsage: false},
+		{name: "present zero", usage: &ai.Usage{}, wantUsage: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := observation.NewRecorder()
+			ctx := observation.ContextWithRecorder(context.Background(), recorder)
+			_, err := CoalesceStream(ctx, "model", feedEvents([]ai.Event{{
+				Kind: ai.EventResult, Success: true, Usage: test.usage,
+			}}), time.Now())
+			if err != nil {
+				t.Fatalf("CoalesceStream: %v", err)
+			}
+			usage := recorder.Snapshot().Usage
+			if (usage != nil) != test.wantUsage {
+				t.Fatalf("recorded usage = %#v, want present %t", usage, test.wantUsage)
+			}
+			if usage != nil && *usage != (ai.Usage{}) {
+				t.Fatalf("recorded known-zero usage = %#v", usage)
+			}
+		})
 	}
 }
 

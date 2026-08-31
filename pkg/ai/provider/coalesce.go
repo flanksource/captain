@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/ai/observation"
 )
 
 // CoalesceStream drains an event channel and returns the equivalent buffered
@@ -32,6 +33,11 @@ func CoalesceStreamForBackend(ctx context.Context, backend ai.Backend, model str
 		select {
 		case ev, ok := <-events:
 			if !ok {
+				var terminalUsage *ai.Usage
+				if lastResult != nil {
+					terminalUsage = lastResult.Usage
+				}
+				observation.RecordUsage(ctx, terminalUsage)
 				if outcomeErr != nil {
 					return nil, fmt.Errorf("invalid terminal outcome: %w", outcomeErr)
 				}

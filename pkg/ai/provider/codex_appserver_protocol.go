@@ -124,12 +124,13 @@ func (n appServerNotif) foldUsage(usage *ai.Usage) {
 // --- notification mapping --------------------------------------------------
 
 // mapAppServerNotification maps one notification into an ai.Event. Pure: it
-// folds thread/tokenUsage/updated into usage (ok=false) and reads the folded
-// usage back out on turn/completed.
+// folds thread/tokenUsage/updated into usage (ok=false), records that the update
+// existed even when all buckets are zero, and emits it on turn/completed.
 type appServerEventContext struct {
-	Model      string
-	Usage      *ai.Usage
-	ToolOutput string
+	Model        string
+	Usage        *ai.Usage
+	UsagePresent *bool
+	ToolOutput   string
 }
 
 func mapAppServerNotification(method string, params json.RawMessage, ctx appServerEventContext) (ai.Event, bool) {
@@ -160,6 +161,9 @@ func mapAppServerNotification(method string, params json.RawMessage, ctx appServ
 		return mapAppServerItem(method, n.Item, n.threadID(), ctx)
 
 	case "thread/tokenUsage/updated":
+		if ctx.UsagePresent != nil && n.TokenUsage != nil {
+			*ctx.UsagePresent = true
+		}
 		n.foldUsage(ctx.Usage)
 		return ai.Event{}, false
 
@@ -177,7 +181,7 @@ func mapAppServerNotification(method string, params json.RawMessage, ctx appServ
 			}
 		}
 		out := ai.Event{Kind: ai.EventResult, Tool: "Result", SessionID: n.threadID(), Model: ctx.Model, Success: true}
-		if ctx.Usage != nil && ctx.Usage.TotalTokens() > 0 {
+		if ctx.Usage != nil && ctx.UsagePresent != nil && *ctx.UsagePresent {
 			u := *ctx.Usage
 			out.Usage = &u
 		}

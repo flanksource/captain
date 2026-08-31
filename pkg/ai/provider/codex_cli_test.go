@@ -39,6 +39,9 @@ func TestBuildCodexCLIArgs(t *testing.T) {
 	defer cleanup()
 	requireFlagValue(t, args, "-m", "gpt-5.5")
 	requireFlagValue(t, args, "-c", `model_reasoning_effort="ultra"`)
+	if effort, present := codexCLIReasoningEffort(args); !present || effort != "ultra" {
+		t.Fatalf("native reasoning effort = %q, %t; want ultra, true", effort, present)
+	}
 	requireFlagValue(t, args, "-C", cwd)
 	requireFlagValue(t, args, "--sandbox", "workspace-write")
 	requireHasArg(t, args, "--json")
@@ -225,5 +228,31 @@ func TestCodexCLIStateNetsTokenCountUsage(t *testing.T) {
 	}
 	if u.InputTokens+u.CacheReadTokens != 120 || u.OutputTokens+u.ReasoningTokens != 40 {
 		t.Fatalf("disjoint buckets must recover raw totals: %+v", u)
+	}
+}
+
+func TestCodexCLIStatePreservesUsagePresence(t *testing.T) {
+	tests := []struct {
+		name      string
+		line      string
+		wantUsage bool
+	}{
+		{name: "omitted", line: `{"type":"turn.completed"}`, wantUsage: false},
+		{name: "present zero", line: `{"type":"turn.completed","usage":{"input_tokens":0,"output_tokens":0}}`, wantUsage: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			state := codexCLIState{model: "gpt-5"}
+			events := state.mapLine([]byte(test.line))
+			if len(events) != 1 || events[0].Kind != ai.EventResult {
+				t.Fatalf("turn.completed events = %+v", events)
+			}
+			if (events[0].Usage != nil) != test.wantUsage {
+				t.Fatalf("usage = %#v, want present %t", events[0].Usage, test.wantUsage)
+			}
+			if events[0].Usage != nil && *events[0].Usage != (ai.Usage{}) {
+				t.Fatalf("known-zero usage = %#v", events[0].Usage)
+			}
+		})
 	}
 }

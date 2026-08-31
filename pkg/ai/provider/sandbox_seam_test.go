@@ -2,9 +2,12 @@ package provider
 
 import (
 	"context"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/ai/observation"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/sandbox/adapter"
 	"github.com/flanksource/commons-db/shell"
@@ -39,6 +42,20 @@ func TestNewCLICommand_UnsandboxedStaysBare(t *testing.T) {
 	}
 	if cmd.Env != nil {
 		t.Fatalf("env = %v, want inherited (nil)", cmd.Env)
+	}
+}
+
+func TestNewCLICommandAppliesObservationEnvironmentOnlyFromContext(t *testing.T) {
+	ctx := observation.ContextWithRuntimeCapture(context.Background(), observation.RuntimeCaptureConfig{
+		Environment: map[string]string{"KUBECONFIG": "/tmp/captain-observe-kube"},
+	})
+	cmd, cleanup, err := newCLICommand(ctx, "echo", []string{"hi"}, requestWithCwd(t.TempDir()), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if !slices.Contains(cmd.Env, "KUBECONFIG=/tmp/captain-observe-kube") {
+		t.Fatalf("env does not contain observation KUBECONFIG: %s", strings.Join(cmd.Env, " "))
 	}
 }
 

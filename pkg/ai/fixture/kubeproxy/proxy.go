@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -35,8 +36,9 @@ type Proxy struct {
 	server *httptest.Server
 	url    *url.URL
 
-	mu     sync.Mutex
-	logger *RequestLogger
+	mu      sync.Mutex
+	logger  *RequestLogger
+	observe func(ObservationEvent)
 }
 
 type RequestEvent struct {
@@ -49,6 +51,15 @@ type RequestEvent struct {
 	Duration  string    `json:"duration"`
 	Bytes     int64     `json:"bytes"`
 	ErrorBody string    `json:"errorBody,omitempty"`
+}
+
+// ObservationEvent is the content-free subset safe for conformance evidence.
+type ObservationEvent struct {
+	Time     time.Time
+	Method   string
+	Resource string
+	Status   int
+	Duration time.Duration
 }
 
 // CommandEvent is left in the public API for downstream callers; the runner
@@ -131,14 +142,20 @@ func (p *Proxy) SetLogger(l *RequestLogger) {
 	p.logger = l
 }
 
+// SetObserver installs an in-memory request observer without exposing request
+// headers, URLs, queries, or bodies to the observation recorder.
+func (p *Proxy) SetObserver(observe func(ObservationEvent)) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.observe = observe
+}
+
 func (p *Proxy) logRequest(r *http.Request, rec *proxylog.StatusRecorder, dur time.Duration) {
 	p.mu.Lock()
 	logger := p.logger
+	observe := p.observe
 	p.mu.Unlock()
-	if logger == nil {
-		return
-	}
-	logger.Write(RequestEvent{
+	event := RequestEvent{
 		Type:      "request",
 		Time:      time.Now().UTC(),
 		Method:    r.Method,
@@ -148,7 +165,49 @@ func (p *Proxy) logRequest(r *http.Request, rec *proxylog.StatusRecorder, dur ti
 		Duration:  dur.Round(time.Millisecond).String(),
 		Bytes:     rec.Bytes,
 		ErrorBody: rec.ErrorBody(),
-	})
+	}
+	if logger != nil {
+		logger.Write(event)
+	}
+	if observe != nil {
+		observe(ObservationEvent{
+			Time: event.Time, Method: event.Method, Resource: kubernetesResource(event.Path),
+			Status: event.Status, Duration: dur,
+		})
+	}
+}
+
+func kubernetesResource(requestPath string) string {
+	segments := strings.FieldsFunc(requestPath, func(r rune) bool { return r == '/' })
+	index := -1
+	if len(segments) >= 3 && segments[0] == "api" {
+		index = 2
+	} else if len(segments) >= 4 && segments[0] == "apis" {
+		index = 3
+	}
+	if index < 0 || index >= len(segments) {
+		return ""
+	}
+	if segments[index] == "namespaces" {
+		index += 2
+	}
+	if index >= len(segments) {
+		return ""
+	}
+	resource := segments[index]
+	if len(resource) > 128 {
+		return ""
+	}
+	for _, r := range resource {
+		if r < 'a' || r > 'z' {
+			if r < '0' || r > '9' {
+				if r != '.' && r != '-' {
+					return ""
+				}
+			}
+		}
+	}
+	return resource
 }
 
 // WriteKubeconfig generates a minimal kubeconfig pointing at the proxy with no

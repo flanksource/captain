@@ -111,7 +111,7 @@ func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, e
 		return nil, fmt.Errorf("genkit %s generate: %w", p.backend, err)
 	}
 
-	out := responseToResponse(resp, p.backend, p.cfg.Model.Name, start)
+	out := responseToResponse(ctx, resp, p.backend, p.cfg.Model.Name, start)
 	if resp.FinishReason == gkai.FinishReasonInterrupted {
 		out.ToolApproval, err = toolApprovalState(req, resp)
 		if err != nil {
@@ -197,7 +197,15 @@ func (p *Provider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai
 			ch <- ai.Event{Kind: ai.EventError, Error: err.Error(), Model: p.cfg.Model.Name}
 			return
 		}
-		usage := mapUsage(resp.Usage, p.backend)
+		var usage *ai.Usage
+		if resp.Usage != nil {
+			mapped := mapUsage(resp.Usage, p.backend)
+			usage = &mapped
+		}
+		costUSD := 0.0
+		if usage != nil {
+			costUSD = p.costUSD(*usage)
+		}
 		var approval *api.ToolApprovalState
 		if resp.FinishReason == gkai.FinishReasonInterrupted {
 			approval, err = toolApprovalState(req, resp)
@@ -209,8 +217,8 @@ func (p *Provider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai
 		ch <- ai.Event{
 			Kind:         ai.EventResult,
 			Success:      true,
-			Usage:        &usage,
-			CostUSD:      p.costUSD(usage),
+			Usage:        usage,
+			CostUSD:      costUSD,
 			Model:        p.cfg.Model.Name,
 			ToolApproval: approval,
 		}

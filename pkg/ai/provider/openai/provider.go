@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/ai/observation"
 	"github.com/flanksource/captain/pkg/api"
 
 	openaisdk "github.com/openai/openai-go"
@@ -18,7 +19,10 @@ import (
 	"github.com/openai/openai-go/responses"
 )
 
-const maxToolTurns = 16
+const (
+	maxToolTurns              = 16
+	responsesDispatchBoundary = "openai.responses.create"
+)
 
 // Provider implements Captain's streaming API provider over OpenAI Responses.
 type Provider struct {
@@ -151,6 +155,7 @@ func (p *Provider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai
 
 func (p *Provider) run(ctx context.Context, req ai.Request, state *requestState, out chan<- ai.Event) error {
 	var usage ai.Usage
+	usageComplete := true
 	if state.resume != nil {
 		outputs, err := p.resumeCalls(ctx, state.resume, state, out)
 		if err != nil {
@@ -165,7 +170,11 @@ func (p *Provider) run(ctx context.Context, req ai.Request, state *requestState,
 		if err != nil {
 			return err
 		}
-		usage = addUsage(usage, responseUsage(response.Usage))
+		if response.JSON.Usage.Valid() {
+			usage = addUsage(usage, responseUsage(response.Usage))
+		} else {
+			usageComplete = false
+		}
 
 		output, err := responseOutputParams(response.Output)
 		if err != nil {
@@ -184,7 +193,7 @@ func (p *Provider) run(ctx context.Context, req ai.Request, state *requestState,
 					return fmt.Errorf("%w: OpenAI returned invalid structured JSON", ai.ErrSchemaValidation)
 				}
 			}
-			cost := ai.PriceUsage(ai.BackendOpenAI, p.model, usage, 0).Total()
+			cost := observedResponseUsage(ctx, usage, usageComplete, p.model)
 			emit(ctx, out, ai.Event{
 				Kind: ai.EventResult, Success: true, Usage: &usage, CostUSD: cost,
 				Model: p.model, StructuredData: structured, Raw: response,
@@ -197,7 +206,7 @@ func (p *Provider) run(ctx context.Context, req ai.Request, state *requestState,
 			return err
 		}
 		if approval != nil {
-			cost := ai.PriceUsage(ai.BackendOpenAI, p.model, usage, 0).Total()
+			cost := observedResponseUsage(ctx, usage, usageComplete, p.model)
 			emit(ctx, out, ai.Event{
 				Kind: ai.EventResult, Success: true, Usage: &usage, CostUSD: cost,
 				Model: p.model, ToolApproval: approval, Raw: response,
@@ -210,6 +219,8 @@ func (p *Provider) run(ctx context.Context, req ai.Request, state *requestState,
 }
 
 func (p *Provider) streamResponse(ctx context.Context, params responses.ResponseNewParams, structured bool, out chan<- ai.Event) (*responses.Response, error) {
+	effort := string(params.Reasoning.Effort)
+	observation.RecordReasoningDispatch(ctx, responsesDispatchBoundary, effort != "", effort)
 	stream := p.client.Responses.NewStreaming(ctx, params)
 	defer stream.Close()
 
@@ -247,6 +258,15 @@ func (p *Provider) streamResponse(ctx context.Context, params responses.Response
 		return nil, fmt.Errorf("OpenAI Responses API stream closed before response.completed")
 	}
 	return completed, nil
+}
+
+func observedResponseUsage(ctx context.Context, usage ai.Usage, complete bool, model string) float64 {
+	if !complete {
+		observation.RecordUsage(ctx, nil)
+	} else {
+		observation.RecordUsage(ctx, &usage)
+	}
+	return ai.PriceUsage(ai.BackendOpenAI, model, usage, 0).Total()
 }
 
 func (p *Provider) normalizeError(ctx context.Context, err error) error {

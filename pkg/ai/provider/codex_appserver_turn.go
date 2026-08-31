@@ -13,6 +13,7 @@ import (
 type turnState struct {
 	ch                 chan ai.Event
 	usage              *ai.Usage
+	usagePresent       bool
 	model              string
 	streamed           map[string]string
 	toolOutput         map[string]string

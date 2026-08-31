@@ -360,8 +360,9 @@ func TestMapAppServerNotification_TurnFailed(t *testing.T) {
 // avoid the cache/reasoning double-count (findings B1/B2).
 func TestMapAppServerNotification_UsageFolding(t *testing.T) {
 	usage := &ai.Usage{}
+	usagePresent := false
 
-	ctx := appServerEventContext{Model: "m", Usage: usage}
+	ctx := appServerEventContext{Model: "m", Usage: usage, UsagePresent: &usagePresent}
 	_, ok := mapAppServerNotification(
 		"thread/tokenUsage/updated",
 		json.RawMessage(`{"tokenUsage":{"total":{"inputTokens":120,"outputTokens":40,"cachedInputTokens":12,"reasoningOutputTokens":7}}}`),
@@ -383,6 +384,25 @@ func TestMapAppServerNotification_UsageFolding(t *testing.T) {
 	// codex totals, so pricing cannot bill the overlap twice.
 	assert.Equal(t, 120, ev.Usage.InputTokens+ev.Usage.CacheReadTokens)
 	assert.Equal(t, 40, ev.Usage.OutputTokens+ev.Usage.ReasoningTokens)
+}
+
+func TestMapAppServerNotification_PreservesKnownZeroUsage(t *testing.T) {
+	usage := &ai.Usage{}
+	usagePresent := false
+	ctx := appServerEventContext{Model: "m", Usage: usage, UsagePresent: &usagePresent}
+
+	_, ok := mapAppServerNotification(
+		"thread/tokenUsage/updated",
+		json.RawMessage(`{"tokenUsage":{"total":{}}}`),
+		ctx,
+	)
+	assert.False(t, ok, "token usage update emits no event")
+	assert.True(t, usagePresent, "zero-valued provider usage remains present")
+
+	ev, ok := mapAppServerNotification("turn/completed", json.RawMessage(`{"threadId":"t","turn":{"id":"u"}}`), ctx)
+	require.True(t, ok)
+	require.NotNil(t, ev.Usage)
+	assert.Equal(t, ai.Usage{}, *ev.Usage)
 }
 
 func TestAppServerErrorIsFatal(t *testing.T) {

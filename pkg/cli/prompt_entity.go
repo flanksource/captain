@@ -186,6 +186,9 @@ func RegisterPromptEntity() {
 			WithAction(clicky.ActionWithFlagsAndContext("run", PromptActionFlags{}, runPromptAction).
 				WithShort("Run a prompt (id, name, .prompt file, --prompt/-p, or stdin)").
 				WithOptionalID()).
+			WithAction(clicky.ActionWithFlagsAndContext("observe", PromptObserveFlags{}, observePromptAction).
+				WithShort("Run exactly one runtime and emit a captain.observation/v1 JSON document").
+				WithOptionalID()).
 			Register()
 	})
 }
