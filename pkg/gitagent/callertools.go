@@ -304,7 +304,9 @@ func (proxy *callerToolProxy) revoke(w http.ResponseWriter, request *http.Reques
 	if session != nil && session.revoked.CompareAndSwap(false, true) {
 		proxy.log("git-agent caller-tool grant revoked task=%s agent=%s", session.task, session.agent)
 	}
-	_ = removeCallerToolSecret(proxy.root, task)
+	if err := removeCallerToolSecret(proxy.root, task); err != nil {
+		proxy.log("git-agent caller-tool secret cleanup failed task=%s: %v", task, err)
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -319,7 +321,9 @@ func (proxy *callerToolProxy) expire(session *callerToolSession) {
 		proxy.mu.Unlock()
 		proxy.log("git-agent caller-tool grant expired task=%s agent=%s", session.task, session.agent)
 		if removed {
-			_ = removeCallerToolSecret(proxy.root, session.task)
+			if err := removeCallerToolSecret(proxy.root, session.task); err != nil {
+				proxy.log("git-agent caller-tool secret cleanup failed task=%s agent=%s: %v", session.task, session.agent, err)
+			}
 		}
 	}
 }

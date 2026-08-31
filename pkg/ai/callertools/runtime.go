@@ -467,7 +467,7 @@ func (r *Runtime) handler(definition api.ToolDefinition) server.ToolHandlerFunc 
 				Text: string(encoded), Success: true, Delegated: true,
 			}); err != nil {
 				r.auditCall(ctx, definition.Name, "error", "event_delivery_failed")
-				return mcp.NewToolResultErrorf("record delegated caller-tool result: %v", err), nil
+				return result, nil
 			}
 		}
 		r.auditCall(ctx, definition.Name, "allowed", "")

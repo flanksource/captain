@@ -89,7 +89,9 @@ func (g *gitAgentSandbox) Execute(ctx context.Context, spec api.Spec) (*api.Resp
 		if err != nil {
 			return nil, err
 		}
-		expiresAt := time.Now().Add(target.waitTimeout)
+		// AwaitOutcome starts its full timeout only after mailbox setup and the
+		// dispatch push, so the capability needs a small head-start margin.
+		expiresAt := time.Now().Add(target.waitTimeout + callerToolExpiryGrace)
 		if deadline, ok := ctx.Deadline(); ok && deadline.Before(expiresAt) {
 			expiresAt = deadline
 		}
@@ -341,6 +343,8 @@ const (
 	dispatchKeyFile = "supervisor_ed25519"
 	servedReposDir  = "repos"
 )
+
+const callerToolExpiryGrace = 5 * time.Minute
 
 // DefaultWaitTimeout bounds how long a dispatch waits for its verdict. A
 // relocating sandbox blocks on a remote agent doing real work, so this is
