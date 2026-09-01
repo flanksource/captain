@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -154,6 +153,14 @@ func firstWritableSource(sources []promptSource) (promptSource, bool) {
 }
 
 func safeLocalPromptPath(source promptSource, rel string) (string, error) {
+	cleanRel, err := localPromptRel(rel)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(source.Root, cleanRel), nil
+}
+
+func localPromptRel(rel string) (string, error) {
 	cleanRel := strings.TrimPrefix(filepath.Clean(filepath.FromSlash(rel)), string(filepath.Separator))
 	if cleanRel == "." || cleanRel == "" || filepath.IsAbs(rel) || strings.HasPrefix(cleanRel, ".."+string(filepath.Separator)) || cleanRel == ".." {
 		return "", fmt.Errorf("invalid prompt path %q", rel)
@@ -161,22 +168,7 @@ func safeLocalPromptPath(source promptSource, rel string) (string, error) {
 	if filepath.Ext(cleanRel) != ".prompt" {
 		return "", fmt.Errorf("prompt path must end with .prompt")
 	}
-	full := filepath.Join(source.Root, cleanRel)
-	abs, err := filepath.Abs(full)
-	if err != nil {
-		return "", err
-	}
-	relToRoot, err := filepath.Rel(source.Root, abs)
-	if err != nil {
-		return "", err
-	}
-	if strings.HasPrefix(relToRoot, ".."+string(filepath.Separator)) || relToRoot == ".." || filepath.IsAbs(relToRoot) {
-		return "", fmt.Errorf("prompt path escapes source root")
-	}
-	if info, err := os.Lstat(abs); err == nil && info.Mode()&fs.ModeSymlink != 0 {
-		return "", fmt.Errorf("prompt symlinks are not supported")
-	}
-	return abs, nil
+	return cleanRel, nil
 }
 
 func normalizeWriteRelPath(relPath, name string) (string, error) {
