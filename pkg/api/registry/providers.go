@@ -18,18 +18,16 @@ var (
 		CatalogPrefix: "anthropic",
 		PricingPrefix: "anthropic",
 		EnvVars:       []string{"ANTHROPIC_API_KEY"},
+		DefaultMode:   ModeAgent,
 		modes: map[RuntimeMode]ModeCapabilities{
-			ModeAPI:   {Backend: BackendAnthropic, Streaming: true, CallerTools: true, MediaTypes: []string{"image/*"}},
-			ModeCLI:   {Backend: BackendClaudeCLI, Streaming: true, Resume: true, ToolPolicy: true},
-			ModeAgent: {Backend: BackendClaudeAgent, Streaming: true, Resume: true, Interrupt: true, Steer: true, CallerTools: true, ToolPolicy: true, MediaTypes: []string{"image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf"}},
-			ModeCmux:  {Backend: BackendClaudeCmux, Streaming: true, Resume: true, Keyless: true, ToolPolicy: true},
+			ModeAPI:   {Streaming: true, CallerTools: true, MediaTypes: []string{"image/*"}, SchemaDialect: SchemaDialectAnthropic},
+			ModeCLI:   {Streaming: true, Resume: true, ToolPolicy: true, RequiredBinary: "claude", SchemaDialect: SchemaDialectAnthropic, RunsThroughClaudeCode: true},
+			ModeAgent: {Streaming: true, Resume: true, Interrupt: true, Steer: true, CallerTools: true, ToolPolicy: true, MediaTypes: []string{"image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf"}, RequiredBinary: "tsx", SchemaDialect: SchemaDialectAnthropic, RunsThroughClaudeCode: true},
+			// cmux submits no response format, so it is in neither schema subset.
+			ModeCmux: {Streaming: true, Resume: true, Keyless: true, ToolPolicy: true, RequiredBinary: "claude"},
 		},
-		modeTokens: sortModeTokens([]modeToken{
-			{prefix: "claude-agent", mode: ModeAgent},
-			{prefix: "claude-code", mode: ModeCLI},
-		}),
 		claimPrefixes: []string{"claude", "opus", "sonnet", "haiku", "fable"},
-		identityTrim:  []string{"claude-agent-", "claude-code-", "claude-"},
+		identityTrim:  []string{"claude-"},
 		families:      []string{"fable", "opus", "sonnet", "haiku"},
 		emptyTokens:   []string{""},
 		emptyFamily:   "opus",
@@ -42,21 +40,18 @@ var (
 		CatalogPrefix: "openai",
 		PricingPrefix: "openai",
 		EnvVars:       []string{"OPENAI_API_KEY"},
+		DefaultMode:   ModeAgent,
 		modes: map[RuntimeMode]ModeCapabilities{
-			ModeAPI:   {Backend: BackendOpenAI, Streaming: true, CallerTools: true, MediaTypes: []string{"image/*"}},
-			ModeCLI:   {Backend: BackendCodexCLI, Streaming: true, Resume: true, MediaTypes: []string{"image/*"}},
-			ModeAgent: {Backend: BackendCodexAgent, Streaming: true, Resume: true, Interrupt: true, CallerTools: true, MediaTypes: []string{"image/*"}},
-			ModeCmux:  {Backend: BackendCodexCmux, Streaming: true, Resume: true, Keyless: true},
+			ModeAPI:   {Streaming: true, CallerTools: true, MediaTypes: []string{"image/*"}, SchemaDialect: SchemaDialectOpenAI},
+			ModeCLI:   {Streaming: true, Resume: true, MediaTypes: []string{"image/*"}, RequiredBinary: "codex", SchemaDialect: SchemaDialectOpenAI},
+			ModeAgent: {Streaming: true, Resume: true, Interrupt: true, CallerTools: true, MediaTypes: []string{"image/*"}, RequiredBinary: "codex", SchemaDialect: SchemaDialectOpenAI},
+			// Prompt-only cmux sessions submit no response format to OpenAI.
+			ModeCmux: {Streaming: true, Resume: true, Keyless: true, RequiredBinary: "codex"},
 		},
-		// A bare "codex" is the CLI, not the API — the asymmetry with "claude"
-		// (which stays on the API) is long-standing user-visible behaviour.
-		// "grok-" is served through the codex CLI.
-		modeTokens: sortModeTokens([]modeToken{
-			{prefix: "codex-agent", mode: ModeAgent},
-			{prefix: "codex", mode: ModeCLI},
-		}),
-		claimPrefixes: []string{"gpt-", "o1", "o3", "o4"},
-		identityTrim:  []string{"codex-agent-", "codex-"},
+		// "codex" claims the FAMILY (OpenAI's coding model), not a mode. It used
+		// to reach OpenAI through a mode token that also forced the CLI.
+		claimPrefixes: []string{"gpt-", "o1", "o3", "o4", "codex"},
+		identityTrim:  []string{"codex-"},
 		families:      []string{"gpt"},
 		emptyTokens:   []string{"", "codex"},
 		// A family name, not a model id: emptyFamily is matched against
@@ -76,15 +71,13 @@ var (
 		CatalogPrefix: "googleai",
 		PricingPrefix: "google",
 		EnvVars:       []string{"GEMINI_API_KEY", "GOOGLE_API_KEY"},
+		// No agent cell; its cli cell carries no tools, resume or media types.
+		DefaultMode:   ModeAPI,
 		modes: map[RuntimeMode]ModeCapabilities{
-			ModeAPI: {Backend: BackendGemini, Streaming: true, CallerTools: true, MediaTypes: []string{"image/*", "audio/*", "video/*", "application/pdf"}},
-			ModeCLI: {Backend: BackendGeminiCLI, Streaming: true},
+			ModeAPI: {Streaming: true, CallerTools: true, MediaTypes: []string{"image/*", "audio/*", "video/*", "application/pdf"}},
+			ModeCLI: {Streaming: true, RequiredBinary: "gemini"},
 		},
-		modeTokens: sortModeTokens([]modeToken{
-			{prefix: "gemini-cli", mode: ModeCLI},
-		}),
 		claimPrefixes: []string{"gemini", "models/gemini"},
-		identityTrim:  []string{"gemini-cli-"},
 		families:      []string{"gemini"},
 		genConfig:     googleGenerationConfig,
 	}
@@ -95,10 +88,11 @@ var (
 		CatalogPrefix: "deepseek",
 		PricingPrefix: "deepseek",
 		EnvVars:       []string{"DEEPSEEK_API_KEY"},
+		DefaultMode:   ModeAPI,
 		modes: map[RuntimeMode]ModeCapabilities{
 			// DeepSeek selects reasoning by model id (deepseek-reasoner vs
 			// deepseek-chat) and ships no attachment support.
-			ModeAPI: {Backend: BackendDeepSeek, Streaming: true, CallerTools: true},
+			ModeAPI: {Streaming: true, CallerTools: true},
 		},
 		claimPrefixes: []string{"deepseek"},
 		families:      []string{"deepseek"},
@@ -108,7 +102,7 @@ var (
 // Providers returns the provider families in canonical claim order. Parse walks
 // this slice and the FIRST provider to claim a token wins, so the order is a
 // contract, not an accident. The claim prefixes are disjoint today; the order
-// also fixes AllBackends ordering.
+// also fixes AllRuntimes ordering.
 func Providers() []*Provider {
 	return []*Provider{Anthropic, OpenAI, Google, DeepSeek}
 }
@@ -123,19 +117,4 @@ func ProviderByName(name string) (*Provider, bool) {
 		}
 	}
 	return nil, false
-}
-
-// ProviderFor returns the descriptor that owns a backend, and the mode that
-// backend represents. It replaces Backend.Provider, Backend.Kind, Backend.Family,
-// registryProviderForBackend, and modelSourceBackend — one reverse lookup over
-// the same table the forward direction uses.
-func ProviderFor(b Backend) (*Provider, RuntimeMode, bool) {
-	for _, p := range Providers() {
-		for _, mode := range p.Modes() {
-			if p.modes[mode].Backend == b {
-				return p, mode, true
-			}
-		}
-	}
-	return nil, "", false
 }

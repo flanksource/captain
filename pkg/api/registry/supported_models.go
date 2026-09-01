@@ -53,8 +53,7 @@ func (p *Provider) SupportedModels(ctx context.Context) []Model {
 
 // SupportedModelsFor returns the models this provider offers on one mode.
 func (p *Provider) SupportedModelsFor(ctx context.Context, mode RuntimeMode) []Model {
-	backend, err := p.BackendFor(mode)
-	if err != nil {
+	if _, err := p.RequireMode(mode); err != nil {
 		return nil
 	}
 
@@ -87,7 +86,11 @@ func (p *Provider) SupportedModelsFor(ctx context.Context, mode RuntimeMode) []M
 
 	out := make([]Model, 0, len(order))
 	for _, id := range order {
-		out = append(out, Model{Name: id, Backend: backend}.Capabilities())
+		enriched, err := Model{Name: id, Provider: p, Mode: mode}.WithCapabilities()
+		if err != nil {
+			continue
+		}
+		out = append(out, enriched)
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		return merged[out[i].Name].ReleaseDate > merged[out[j].Name].ReleaseDate

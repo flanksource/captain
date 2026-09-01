@@ -6,16 +6,12 @@ import (
 	"strings"
 )
 
-// ErrUnknownModel marks "no provider claims this model name". Callers enrich it
-// with "did you mean" suggestions, so it stays a wrapped sentinel.
-var ErrUnknownModel = ErrInferBackend
-
 // The model grammar
 //
-//	sonnet                   → {model: claude-sonnet-5, backend: api}
+//	sonnet                   → {model: claude-sonnet-5, mode: api}
 //	sonnet:high              → + effort high
-//	agent:sonnet:high        → + backend agent
-//	*:fable                  → every backend of the claiming family (multi only)
+//	agent:sonnet:high        → + mode agent
+//	*:fable                  → every mode of the claiming family (multi only)
 //	opus:high, sonnet:medium → primary opus:high with a sonnet:medium fallback
 //
 // One element is `[prefix:]model[:effort]`, where prefix is a runtime mode
@@ -31,9 +27,6 @@ var ErrUnknownModel = ErrInferBackend
 
 // ParseOptions tunes one parse.
 type ParseOptions struct {
-	// Backend forces an internal resolved adapter. It is not part of the authored
-	// model contract; callers use Mode for the portable backend field.
-	Backend Backend
 	// Mode forces the runtime mechanism when the element carries no prefix of its
 	// own — the object form of "agent:sonnet". An explicit prefix still wins.
 	Mode RuntimeMode
@@ -41,6 +34,12 @@ type ParseOptions struct {
 	BaseName string
 	// AllowWildcard permits "*" fan-out. Only --multi-models sets it.
 	AllowWildcard bool
+	// Provider is the family a previous resolution already recorded. It is the
+	// fallback when the name alone claims none, which is what makes Resolve a
+	// fixed point: a namespaced id ("openai/private-model") resolves to a bare
+	// name its own family no longer claims, so re-resolving the result would
+	// otherwise fail where the first pass succeeded.
+	Provider *Provider
 }
 
 // ParseModel parses one compact element into a concrete model. A wildcard, or
@@ -58,7 +57,7 @@ func ParseModel(s string) (Model, error) {
 }
 
 // ParseModelMulti expands one element, fanning a "*" prefix out across every
-// backend of the claiming family that actually offers the model.
+// mode of the claiming family that actually offers the model.
 func ParseModelMulti(s string, opts ParseOptions) ([]Model, error) {
 	opts.AllowWildcard = true
 	return ParseModelElement(s, opts)
@@ -86,56 +85,24 @@ func ParseModelElement(raw string, opts ParseOptions) ([]Model, error) {
 		return expandWildcard(raw, name, effort)
 	}
 
-	p, _, tokenMode, ok := ProviderForToken(name)
+	p, _, ok := ProviderForToken(name)
 	if !ok {
-		// An unclaimed model name is fine as long as the caller named a backend:
-		// that is how a brand-new provider model works before the catalog
-		// snapshot knows about it. Without one, fail loud.
-		if opts.Backend == "" {
-			return nil, fmt.Errorf("%w: %s (pass an explicit backend: %s)", ErrUnknownModel, name, BackendList())
+		// A name no provider claims cannot name a runtime unless a previous
+		// resolution already recorded one. Otherwise fail loud rather than
+		// guessing a family: the provider is derived from the model, so there is
+		// no second field left to supply it.
+		p = opts.Provider
+		if p == nil {
+			return nil, fmt.Errorf("%w: %s (known providers: %s)", ErrUnknownModel, name, ProviderList())
 		}
-		forced, mode, found := ProviderFor(opts.Backend)
-		if !found {
-			return nil, fmt.Errorf("invalid backend %q (valid: %s)", opts.Backend, BackendList())
-		}
-		p, tokenMode = forced, mode
 	}
 
-	// An explicit prefix wins over the sibling backend field, which wins over the mode the model
-	// name itself implies.
-	if prefix == "" && opts.Mode != "" {
-		parsedMode, valid := ParseRuntimeMode(string(opts.Mode))
-		if !valid {
-			return nil, invalidModelBackend(opts.Mode)
-		}
-		tokenMode = parsedMode
-	}
-	mode, err := resolveMode(prefix, tokenMode, p, name)
+	mode, err := resolveMode(prefix, opts.Mode, p)
 	if err != nil {
 		return nil, err
 	}
-	backend, err := p.BackendFor(mode)
-	if err != nil {
+	if _, err := p.RequireMode(mode); err != nil {
 		return nil, err
-	}
-	if opts.Backend != "" && backend != opts.Backend {
-		if prefix == "" {
-			// A bare model whose family does not match an explicitly requested
-			// backend: report the family clash, not the mode.
-			forced, _, ok := ProviderFor(opts.Backend)
-			if !ok {
-				return nil, fmt.Errorf("invalid backend %q (valid: %s)", opts.Backend, BackendList())
-			}
-			if forced != p {
-				return nil, fmt.Errorf("model %q belongs to the %s family and cannot use backend %q (%s family)",
-					name, p.AgentName, opts.Backend, forced.AgentName)
-			}
-			// Same family, different mode: honour the explicit backend.
-			backend = opts.Backend
-			mode = modeOf(opts.Backend)
-		} else {
-			return nil, fmt.Errorf("runtime selector %q resolves to backend %q but --backend is %q", raw, backend, opts.Backend)
-		}
 	}
 
 	resolved, err := resolveOn(p, mode, name)
@@ -145,7 +112,11 @@ func ParseModelElement(raw string, opts ParseOptions) ([]Model, error) {
 	if err := effort.Validate(); err != nil {
 		return nil, fmt.Errorf("runtime selector %q: %w", raw, err)
 	}
-	return []Model{Model{Name: resolved, Backend: backend, Mode: mode, Effort: effort}.Capabilities()}, nil
+	enriched, err := Model{Name: resolved, Provider: p, Mode: mode, Effort: effort}.WithCapabilities()
+	if err != nil {
+		return nil, fmt.Errorf("runtime selector %q: %w", raw, err)
+	}
+	return []Model{enriched}, nil
 }
 
 // splitElement pulls the optional prefix and effort suffix off an element.
@@ -163,12 +134,12 @@ func splitElement(raw, baseName string) (prefix, name string, effort Effort, err
 		return "", tokens[0], EffortNone, nil
 	case 2:
 		if !isPrefix(tokens[0]) {
-			return "", "", EffortNone, fmt.Errorf("invalid model configuration: backend %q in %q (valid: %s)", tokens[0], raw, RuntimeModeList())
+			return "", "", EffortNone, fmt.Errorf("invalid model configuration: mode %q in %q (valid: %s)", tokens[0], raw, RuntimeModeList())
 		}
 		return strings.ToLower(tokens[0]), tokens[1], EffortNone, nil
 	case 3:
 		if !isPrefix(tokens[0]) {
-			return "", "", EffortNone, fmt.Errorf("invalid model configuration: backend %q in %q (valid: %s)", tokens[0], raw, RuntimeModeList())
+			return "", "", EffortNone, fmt.Errorf("invalid model configuration: mode %q in %q (valid: %s)", tokens[0], raw, RuntimeModeList())
 		}
 		if !Effort(tokens[2]).Valid() || tokens[2] == "" {
 			return "", "", EffortNone, fmt.Errorf("invalid effort %q in %q", tokens[2], raw)
@@ -179,23 +150,37 @@ func splitElement(raw, baseName string) (prefix, name string, effort Effort, err
 	}
 }
 
-// resolveMode reconciles the element's prefix with the mode the model name
-// itself implies. An explicit prefix always wins.
-func resolveMode(prefix string, tokenMode RuntimeMode, p *Provider, name string) (RuntimeMode, error) {
-	if prefix == "" {
-		return tokenMode, nil
+// resolveMode picks the mechanism for one element. The order is the whole
+// contract: an explicit compact prefix ("agent:opus") wins, then the sibling
+// mode field — which by this point already carries the user's configured
+// default, applied at the boundary that owns it — and finally the provider's
+// declared default.
+//
+// There is deliberately no fourth source. The model name used to supply one,
+// which meant "claude-agent-opus" could override a mode the caller had
+// explicitly selected.
+func resolveMode(prefix string, authored RuntimeMode, p *Provider) (RuntimeMode, error) {
+	if prefix != "" {
+		mode, ok := ParseRuntimeMode(prefix)
+		if !ok {
+			return "", invalidRuntimeMode(RuntimeMode(prefix))
+		}
+		return mode, nil
 	}
-	mode, ok := ParseRuntimeMode(prefix)
-	if !ok {
-		return "", invalidModelBackend(RuntimeMode(prefix))
+	if authored != "" {
+		mode, ok := ParseRuntimeMode(string(authored))
+		if !ok {
+			return "", invalidRuntimeMode(authored)
+		}
+		return mode, nil
 	}
-	return mode, nil
+	return p.DefaultMode, nil
 }
 
 func expandWildcard(raw, name string, effort Effort) ([]Model, error) {
-	p, _, _, ok := ProviderForToken(name)
+	p, _, ok := ProviderForToken(name)
 	if !ok {
-		return nil, fmt.Errorf("%w: %s (pass an explicit backend: %s)", ErrUnknownModel, name, BackendList())
+		return nil, fmt.Errorf("%w: %s (known providers: %s)", ErrUnknownModel, name, ProviderList())
 	}
 	out := make([]Model, 0, len(p.Modes()))
 	for _, mode := range p.Modes() {
@@ -203,14 +188,14 @@ func expandWildcard(raw, name string, effort Effort) ([]Model, error) {
 		if err != nil {
 			continue
 		}
-		backend, err := p.BackendFor(mode)
+		enriched, err := Model{Name: resolved, Provider: p, Mode: mode, Effort: effort}.WithCapabilities()
 		if err != nil {
 			continue
 		}
-		out = append(out, Model{Name: resolved, Backend: backend, Mode: mode, Effort: effort}.Capabilities())
+		out = append(out, enriched)
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("runtime selector %q is not available on any backend", raw)
+		return nil, fmt.Errorf("runtime selector %q is not available on any runtime", raw)
 	}
 	return out, nil
 }
@@ -218,19 +203,18 @@ func expandWildcard(raw, name string, effort Effort) ([]Model, error) {
 // resolveOn maps a model token onto the exact id a provider's mode accepts,
 // failing loud when the catalog knows the model but not on that mode.
 func resolveOn(p *Provider, mode RuntimeMode, name string) (string, error) {
-	backend, err := p.BackendFor(mode)
-	if err != nil {
+	if _, err := p.RequireMode(mode); err != nil {
 		return "", err
 	}
 	if known, available := p.Availability(mode, name); known && !available {
-		return "", fmt.Errorf("model %q is not available on backend %q", name, backend)
+		return "", fmt.Errorf("model %q is not available on %s", name, RuntimeOf(p, mode))
 	}
 	resolved, _ := p.ResolveExact(mode, name)
 	return resolved, nil
 }
 
-// isPrefix reports whether a token can lead an element: a runtime mode, a
-// canonical backend name or the wildcard.
+// isPrefix reports whether a token can lead an element: a runtime mode or the
+// wildcard. Provider names and old composite adapter ids are not prefixes.
 func isPrefix(s string) bool {
 	s = strings.ToLower(strings.TrimSpace(s))
 	if s == "*" {
@@ -257,11 +241,6 @@ func ContainsSelector(s string) bool {
 	return false
 }
 
-func modeOf(b Backend) RuntimeMode {
-	_, mode, _ := ProviderFor(b)
-	return mode
-}
-
 // ResolveModel resolves a Model in place: its Name is parsed as a compact
 // element and its fallbacks each resolved independently. It is the entry point
 // for both `--model` and spec/frontmatter decoding, which is the whole point —
@@ -271,7 +250,7 @@ func ResolveModel(m Model) (Model, error) {
 	if strings.TrimSpace(m.Name) == "" {
 		return m, nil
 	}
-	resolved, err := ParseModelElement(m.Name, ParseOptions{Backend: m.Backend, Mode: m.Mode})
+	resolved, err := ParseModelElement(m.Name, ParseOptions{Mode: m.Mode, Provider: m.Provider})
 	if err != nil {
 		if strings.Contains(err.Error(), "invalid model configuration") {
 			return Model{}, err
@@ -281,14 +260,17 @@ func ResolveModel(m Model) (Model, error) {
 	if len(resolved) != 1 {
 		return Model{}, fmt.Errorf("wildcard selector %q is only valid for --multi-models", m.Name)
 	}
-	out := mergeResolved(m, resolved[0])
+	out, err := mergeResolved(m, resolved[0])
+	if err != nil {
+		return Model{}, fmt.Errorf("invalid model configuration: %w", err)
+	}
 	out.Fallbacks = make(ModelList, 0, len(m.Fallbacks))
 	for _, fb := range m.Fallbacks {
 		if strings.TrimSpace(fb.Name) == "" {
 			out.Fallbacks = append(out.Fallbacks, fb)
 			continue
 		}
-		rfb, err := ParseModelElement(fb.Name, ParseOptions{Backend: fb.Backend, Mode: fb.Mode})
+		rfb, err := ParseModelElement(fb.Name, ParseOptions{Mode: fb.Mode, Provider: fb.Provider})
 		if err != nil {
 			if strings.Contains(err.Error(), "invalid model configuration") {
 				return Model{}, err
@@ -298,13 +280,16 @@ func ResolveModel(m Model) (Model, error) {
 		if len(rfb) != 1 {
 			return Model{}, fmt.Errorf("wildcard selector %q is only valid for --multi-models", fb.Name)
 		}
-		out.Fallbacks = append(out.Fallbacks, mergeResolved(fb, rfb[0]))
+		merged, err := mergeResolved(fb, rfb[0])
+		if err != nil {
+			return Model{}, fmt.Errorf("invalid model configuration: fallback: %w", err)
+		}
+		out.Fallbacks = append(out.Fallbacks, merged)
 	}
 	return out, nil
 }
 
-// ResolveMulti expands --multi-models values into concrete runtime model/backend
-// pairs. Values may be repeated and/or comma-separated, a bare prefix ("cmux")
+// ResolveMulti expands --multi-models values into concrete model/mode pairs. Values may be repeated and/or comma-separated, a bare prefix ("cmux")
 // borrows the base model, and duplicates are dropped. Each result inherits the
 // base model's temperature/cache settings, and its effort when the element does
 // not set one.
@@ -327,7 +312,7 @@ func ResolveMulti(values []string, base Model) ([]Model, error) {
 					m.Effort = base.Effort
 				}
 				m.NoCache = base.NoCache
-				key := string(m.Backend) + "\x00" + m.Name + "\x00" + string(m.Effort)
+				key := m.RuntimeKey()
 				if seen[key] {
 					continue
 				}
@@ -339,7 +324,7 @@ func ResolveMulti(values []string, base Model) ([]Model, error) {
 	return out, nil
 }
 
-func mergeResolved(original, resolved Model) Model {
+func mergeResolved(original, resolved Model) (Model, error) {
 	out := original
 	if strings.TrimSpace(resolved.Name) != "" {
 		out.Name = resolved.Name
@@ -347,18 +332,22 @@ func mergeResolved(original, resolved Model) Model {
 	if resolved.ID != "" {
 		out.ID = resolved.ID
 	}
-	if resolved.Backend != "" {
-		out.Backend = resolved.Backend
-	}
 	if resolved.Mode != "" {
 		out.Mode = resolved.Mode
+	}
+	// The provider is a resolution result, so the parser's answer wins over
+	// whatever the caller had. Dropping it here left WithCapabilities to derive
+	// one from the already-stripped name — which is a different question, and
+	// fails outright for a namespaced id whose bare half claims no family.
+	if resolved.Provider != nil {
+		out.Provider = resolved.Provider
 	}
 	if resolved.Effort != EffortNone {
 		out.Effort = resolved.Effort
 	}
 	// Capabilities are derived, never carried over from the request: whatever the
 	// caller wrote for them is replaced by what the resolved adapter can do.
-	return out.Capabilities()
+	return out.WithCapabilities()
 }
 
 // IsUnknownModel reports whether err is the "no provider claims this" failure.

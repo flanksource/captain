@@ -21,23 +21,25 @@ func bareModel(model string) string {
 	return registry.StripProviderPrefix(model)
 }
 
-// modelRef produces the genkit model reference for a backend+model
+// modelRef produces the genkit model reference for a provider+model
 // (anthropic/<model>, openai/<model>, googleai/<model>).
 //
 // The namespace is the provider's CatalogPrefix — googleai for Gemini — which is
 // deliberately not the same field pricing uses (google). Keeping them as one
 // hand-written switch each is how the two drifted apart.
-func modelRef(backend ai.Backend, model string) (string, error) {
+func modelRef(provider *ai.ModelProvider, model string) (string, error) {
 	if model == "" {
 		return "", fmt.Errorf("genkit provider: model cannot be empty")
 	}
-	// genkit serves the API modes only; the CLI/agent/cmux backends are driven by
-	// their own providers.
-	p, mode, ok := registry.ProviderFor(backend)
-	if !ok || mode != registry.ModeAPI {
-		return "", fmt.Errorf("genkit provider: unsupported backend %q", backend)
+	// genkit serves the API mode only; the local transports are driven by their
+	// own adapters.
+	if provider == nil {
+		return "", fmt.Errorf("genkit provider: model %q resolves to no provider", model)
 	}
-	return p.CatalogPrefix + "/" + bareModel(model), nil
+	if _, serves := provider.Caps(registry.ModeAPI); !serves {
+		return "", fmt.Errorf("genkit provider: %q has no API mode", provider.Name)
+	}
+	return provider.CatalogPrefix + "/" + bareModel(model), nil
 }
 
 // generateOptions assembles the genkit Generate options for one turn: model,
@@ -121,14 +123,14 @@ func generateOptions(p *Provider, req ai.Request, stream gkai.ModelStreamCallbac
 		opts = append(opts, gkai.WithStreaming(stream))
 	}
 	if stream == nil {
-		if schema, handled, err := backendOutputSchema(p.backend, req); err != nil {
+		if schema, handled, err := runtimeOutputSchema(p.provider, req); err != nil {
 			return nil, err
 		} else if handled {
 			opts = append(opts, gkai.WithOutputSchema(schema))
 		} else if len(req.Prompt.SchemaJSON) > 0 {
 			var schema map[string]any
 			if err := json.Unmarshal(req.Prompt.SchemaJSON, &schema); err != nil {
-				return nil, fmt.Errorf("genkit %s: invalid Prompt.SchemaJSON: %w", p.backend, err)
+				return nil, fmt.Errorf("genkit %s: invalid Prompt.SchemaJSON: %w", p.provider.Name, err)
 			}
 			opts = append(opts, gkai.WithOutputSchema(schema))
 		} else if req.Prompt.Schema != nil {
@@ -271,21 +273,21 @@ func preparedAttachmentPart(attachment api.AttachmentRef, label string) (*gkai.P
 	return gkai.NewMediaPart(attachment.MediaType, uri), nil
 }
 
-// backendOutputSchema resolves schemas for native providers whose supported
+// runtimeOutputSchema resolves schemas for native providers whose supported
 // JSON Schema subset differs from Captain's caller-facing schema. The bool is
-// false for backends that should retain Genkit's existing WithOutputType or raw
+// false for runtimes that should retain Genkit's existing WithOutputType or raw
 // SchemaJSON behavior.
-func backendOutputSchema(backend ai.Backend, req ai.Request) (map[string]any, bool, error) {
-	if !req.Prompt.HasSchema() || (!ai.UsesAnthropicSchemaSubset(backend) && !ai.UsesOpenAISchemaSubset(backend)) {
+func runtimeOutputSchema(provider *ai.ModelProvider, req ai.Request) (map[string]any, bool, error) {
+	if !req.Prompt.HasSchema() || (!ai.UsesAnthropicSchemaSubset(provider, ai.ModeAPI) && !ai.UsesOpenAISchemaSubset(provider, ai.ModeAPI)) {
 		return nil, false, nil
 	}
-	raw, err := ai.SchemaJSONForBackend(backend, req.Prompt)
+	raw, err := ai.SchemaJSONForRuntime(provider, ai.ModeAPI, req.Prompt)
 	if err != nil {
-		return nil, true, fmt.Errorf("genkit %s: cannot derive Prompt schema: %w", backend, err)
+		return nil, true, fmt.Errorf("genkit %s: cannot derive Prompt schema: %w", provider.Name, err)
 	}
 	var schema map[string]any
 	if err := json.Unmarshal(raw, &schema); err != nil {
-		return nil, true, fmt.Errorf("genkit %s: invalid Prompt schema: %w", backend, err)
+		return nil, true, fmt.Errorf("genkit %s: invalid Prompt schema: %w", provider.Name, err)
 	}
 	return schema, true, nil
 }

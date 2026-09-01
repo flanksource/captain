@@ -27,7 +27,7 @@ var snapshotSuffix = regexp.MustCompile(`-\d{8}$`)
 // unknown rather than as zero, and must never substitute a related model's
 // price — pricing one version off another is the defect this replaced.
 func CostFor(model string) (ModelCost, bool) {
-	p, token, _, ok := ProviderForToken(model)
+	p, token, ok := ProviderForToken(model)
 	if !ok {
 		return ModelCost{}, false
 	}

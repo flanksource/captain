@@ -341,7 +341,7 @@ func composePrompt(req ai.Request) string {
 // (req.Memory.SkipUser/SkipProject/SkipHooks) have no first-class equivalent in
 // the versioned thread/start schema. Raw response items provide the authoritative
 // command output when Codex's normal command item misses an early output chunk.
-func buildThreadStartParams(model string, req ai.Request, callerTools *api.CallerToolEndpoint) map[string]any {
+func buildThreadStartParams(model string, req ai.Request, callerTools *api.CallerToolEndpoint) (map[string]any, error) {
 	p := map[string]any{"experimentalRawEvents": true}
 	if cwd := req.Cwd(); cwd != "" {
 		p["cwd"] = cwd
@@ -349,24 +349,30 @@ func buildThreadStartParams(model string, req ai.Request, callerTools *api.Calle
 	if model != "" {
 		p["model"] = model
 	}
-	sandbox, approval := codexSafety(req)
-	p["sandbox"], p["approvalPolicy"] = sandbox, approval
+	translation, err := translateCodexSandbox(api.RuntimeOf(api.OpenAI, api.ModeAgent), req)
+	if err != nil {
+		return nil, err
+	}
+	if translation.Sandbox != "" {
+		p["sandbox"] = string(translation.Sandbox)
+	}
+	if translation.Approval != "" {
+		p["approvalPolicy"] = string(translation.Approval)
+	}
 	if req.Memory.SkipMemory || req.Memory.Bare {
 		p["ephemeral"] = true
 	}
-	if config := codexThreadConfig(req, callerTools); config != nil {
+	config := codexThreadConfig(req, callerTools)
+	if len(translation.WorkspaceWrite) > 0 {
+		if config == nil {
+			config = map[string]any{}
+		}
+		config["sandbox_workspace_write"] = translation.WorkspaceWrite
+	}
+	if config != nil {
 		p["config"] = config
 	}
-	return p
-}
-
-// codexSafety maps edit/permission knobs onto the SandboxMode + AskForApproval
-// enums via the shared api.CodexSafety mapping (also used by the cmux backend).
-// Approvals are auto-accepted (handleApproval), so the policy only affects when
-// codex prompts, never whether work proceeds.
-func codexSafety(req ai.Request) (sandbox, approval string) {
-	s, a := api.CodexSafety(req.Permissions)
-	return string(s), string(a)
+	return p, nil
 }
 
 // buildTurnStartParams builds the turn/start params. outputSchema, when
@@ -375,10 +381,10 @@ func codexSafety(req ai.Request) (sandbox, approval string) {
 // bytes are embedded inline verbatim.
 
 func buildTurnStartParams(model string, req ai.Request, threadID string, outputSchema json.RawMessage) (map[string]any, error) {
-	if err := ai.ValidateAttachmentCompatibility([]api.Model{{Name: model, Backend: api.BackendCodexAgent}}, req.Prompt.Attachments); err != nil {
+	if err := ai.ValidateAttachmentCompatibility([]api.Model{{Name: model, Provider: api.OpenAI, Mode: api.ModeAgent}}, req.Prompt.Attachments); err != nil {
 		return nil, err
 	}
-	if err := api.RequireToolPolicySupport(api.BackendCodexAgent, req.Permissions); err != nil {
+	if err := api.RequireToolPolicySupport(api.OpenAI, api.ModeAgent, req.Permissions); err != nil {
 		return nil, err
 	}
 	input := make([]map[string]any, 0, len(req.Prompt.Attachments))

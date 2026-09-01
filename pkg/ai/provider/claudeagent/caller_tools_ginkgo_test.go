@@ -25,7 +25,8 @@ var _ = Describe("Claude Agent caller tools", func() {
 			},
 		}
 
-		params := provider.initializeParams(ai.Request{Prompt: api.Prompt{User: "inspect"}})
+		params, err := provider.initializeParams(ai.Request{Prompt: api.Prompt{User: "inspect"}})
+		Expect(err).NotTo(HaveOccurred())
 
 		Expect(params.MCPServers).To(HaveKey("captain"))
 		Expect(params.MCPServers["captain"].Type).To(Equal("http"))

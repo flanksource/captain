@@ -15,10 +15,10 @@ import (
 // the live event stream call this on a tee'd channel; for one-shot use, prefer
 // Provider.Execute.
 func CoalesceStream(ctx context.Context, model string, events <-chan ai.Event, start time.Time) (*ai.Response, error) {
-	return CoalesceStreamForBackend(ctx, ai.BackendClaudeCLI, model, events, start)
+	return CoalesceStreamForRuntime(ctx, ai.RuntimeOf(ai.Anthropic, ai.ModeCLI), model, events, start)
 }
 
-func CoalesceStreamForBackend(ctx context.Context, backend ai.Backend, model string, events <-chan ai.Event, start time.Time) (*ai.Response, error) {
+func CoalesceStreamForRuntime(ctx context.Context, runtime ai.Runtime, model string, events <-chan ai.Event, start time.Time) (*ai.Response, error) {
 	var (
 		text       strings.Builder
 		usage      ai.Usage
@@ -41,7 +41,7 @@ func CoalesceStreamForBackend(ctx context.Context, backend ai.Backend, model str
 				if outcomeErr != nil {
 					return nil, fmt.Errorf("invalid terminal outcome: %w", outcomeErr)
 				}
-				resp, err := finaliseCoalescedResponse(backend, model, text.String(), usage, lastResult, errEvents, sessionID, start)
+				resp, err := finaliseCoalescedResponse(runtime, model, text.String(), usage, lastResult, errEvents, sessionID, start)
 				if resp != nil {
 					resp.TerminalOutcome = outcome
 				}
@@ -80,7 +80,7 @@ func CoalesceStreamForBackend(ctx context.Context, backend ai.Backend, model str
 	}
 }
 
-func finaliseCoalescedResponse(backend ai.Backend, model, text string, usage ai.Usage, lastResult *ai.Event, errEvents []ai.Event, sessionID string, start time.Time) (*ai.Response, error) {
+func finaliseCoalescedResponse(runtime ai.Runtime, model, text string, usage ai.Usage, lastResult *ai.Event, errEvents []ai.Event, sessionID string, start time.Time) (*ai.Response, error) {
 	if lastResult != nil && !lastResult.Success {
 		msg := lastResult.Error
 		if msg == "" {
@@ -95,7 +95,7 @@ func finaliseCoalescedResponse(backend ai.Backend, model, text string, usage ai.
 	resp := &ai.Response{
 		Text:     text,
 		Model:    model,
-		Backend:  backend,
+		Runtime:  runtime,
 		Usage:    usage,
 		Duration: time.Since(start),
 	}

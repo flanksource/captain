@@ -36,7 +36,7 @@ func (p *Provider) toolOptions(opts captools.ResolveOptions, emit func(ai.Event)
 	if len(definitions) == 0 {
 		return nil, nil
 	}
-	if p.backend == ai.BackendAnthropic {
+	if p.provider == ai.Anthropic {
 		if count := explicitStrictToolCount(definitions); count > anthropicMaxStrictTools {
 			log.Warnf("Anthropic supports at most %d strict tools; keeping %d of %d explicit opt-ins strict and sending %d as non-strict", anthropicMaxStrictTools, anthropicMaxStrictTools, count, count-anthropicMaxStrictTools)
 		}

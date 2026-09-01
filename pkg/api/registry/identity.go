@@ -15,18 +15,22 @@ type ModelIdentity struct {
 }
 
 // ProviderForToken returns the provider that claims a model token, along with
-// the token stripped of any provider namespace and the mode its own prefix
-// implies. It is the single claim step: what InferBackend, splitModelProvider,
-// and selectorModelFamily each used to answer differently.
+// the token stripped of any provider namespace. It is the single claim step:
+// what InferBackend, splitModelProvider, and selectorModelFamily each used to
+// answer differently.
+//
+// It answers about the family and nothing else. It used to also return a mode
+// sniffed from the name's own prefix, which is how the deleted composite ids
+// kept steering runtime selection from inside the model string.
 //
 // An explicit namespace ("anthropic/…", "googleai/…") wins. Otherwise the
 // providers are tried in canonical order and the first claim wins; failing that,
 // a multi-segment id is retried on its last segment so proxied names such as
 // "openrouter/anthropic/claude-x" still resolve.
-func ProviderForToken(token string) (*Provider, string, RuntimeMode, bool) {
+func ProviderForToken(token string) (*Provider, string, bool) {
 	token = strings.TrimSpace(token)
 	if token == "" {
-		return nil, "", "", false
+		return nil, "", false
 	}
 	// Claim on the alias' target: a codename such as "sol" names no family by
 	// itself. Doing this here rather than deep in the resolver is what makes
@@ -38,18 +42,13 @@ func ProviderForToken(token string) (*Provider, string, RuntimeMode, bool) {
 	}
 	if i := strings.IndexByte(token, '/'); i >= 0 {
 		if p, ok := ProviderByName(token[:i]); ok {
-			rest := strings.TrimPrefix(token[i+1:], "models/")
-			mode, claimed := p.claim(rest)
-			if !claimed {
-				mode = ModeAPI
-			}
-			return p, rest, mode, true
+			return p, strings.TrimPrefix(token[i+1:], "models/"), true
 		}
 	}
 	canonical := canonicalModelToken(token)
 	for _, p := range Providers() {
-		if mode, ok := p.claim(canonical); ok {
-			return p, strings.TrimPrefix(token, "models/"), mode, true
+		if p.claim(canonical) {
+			return p, strings.TrimPrefix(token, "models/"), true
 		}
 	}
 	// Retry on the last path segment: an id proxied through another namespace
@@ -57,17 +56,17 @@ func ProviderForToken(token string) (*Provider, string, RuntimeMode, bool) {
 	// family it actually names.
 	if i := strings.LastIndexByte(token, '/'); i >= 0 {
 		for _, p := range Providers() {
-			if mode, ok := p.claim(canonicalModelToken(token[i+1:])); ok {
-				return p, token, mode, true
+			if p.claim(canonicalModelToken(token[i+1:])) {
+				return p, token, true
 			}
 		}
 	}
-	return nil, "", "", false
+	return nil, "", false
 }
 
 // StripProviderPrefix removes any known provider namespace from a model id.
 func StripProviderPrefix(model string) string {
-	p, token, _, ok := ProviderForToken(model)
+	p, token, ok := ProviderForToken(model)
 	if !ok {
 		return strings.TrimPrefix(strings.TrimSpace(model), "models/")
 	}
@@ -125,19 +124,20 @@ func splitKnownFamily(token string, families []string) (family, version string, 
 	return "", "", false
 }
 
-// availableFor reports whether a catalog row is offered on a mode. The registry
-// annotates rows with "api" or "codex" availability; the codex modes are the
-// only ones that read the codex list.
+// availableFor reports whether a catalog row is offered on a mode. An empty
+// Availability means "every mode this provider serves".
+//
+// The list holds runtime modes. It used to hold agent names — a row said
+// "codex", which the reader translated into "any OpenAI mode that is not api"
+// through a provider-specific branch here. That made the catalog a third place
+// the composite vocabulary survived, and it could not express a row available on
+// the CLI but not the agent.
 func (p *Provider) availableFor(m KnownModel, mode RuntimeMode) bool {
 	if len(m.Availability) == 0 {
 		return true
 	}
-	target := "api"
-	if p == OpenAI && mode != ModeAPI {
-		target = "codex"
-	}
 	for _, available := range m.Availability {
-		if strings.EqualFold(strings.TrimSpace(available), target) {
+		if strings.EqualFold(strings.TrimSpace(available), string(mode)) {
 			return true
 		}
 	}
@@ -254,8 +254,7 @@ func (p *Provider) resolveIdentity(mode RuntimeMode, identity ModelIdentity) (Kn
 // narrowed to one family. Models the user disabled are skipped, so resolving
 // "opus" lands on the next best model instead of one taken out of circulation.
 func (p *Provider) latestModel(mode RuntimeMode, family string) (KnownModel, bool) {
-	backend, err := p.BackendFor(mode)
-	if err != nil {
+	if _, err := p.RequireMode(mode); err != nil {
 		return KnownModel{}, false
 	}
 	disabled := Disabled()
@@ -267,7 +266,7 @@ func (p *Provider) latestModel(mode RuntimeMode, family string) (KnownModel, boo
 		if family != "" && m.Family != family {
 			continue
 		}
-		if disabled.Model(backend, m.ID) {
+		if disabled.Model(p, mode, m.ID) {
 			continue
 		}
 		candidates = append(candidates, m)

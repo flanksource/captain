@@ -22,10 +22,9 @@ var _ = Describe("Codex Agent caller tools", func() {
 			Prompt:    api.Prompt{User: "inspect"},
 		}
 
-		for _, params := range []map[string]any{
-			buildThreadStartParams("gpt-5.4", request, endpoint),
-			buildResumeParams(request, endpoint),
-		} {
+		start, err := buildThreadStartParams("gpt-5.4", request, endpoint)
+		Expect(err).NotTo(HaveOccurred())
+		for _, params := range []map[string]any{start, buildResumeParams(request, endpoint)} {
 			config, ok := params["config"].(map[string]any)
 			Expect(ok).To(BeTrue())
 			servers, ok := config["mcp_servers"].(map[string]any)

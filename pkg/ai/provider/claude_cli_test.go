@@ -37,6 +37,7 @@ func TestBuildClaudeCLIArgs(t *testing.T) {
 			},
 			MCP: api.MCP{Disabled: true},
 		},
+		Sandbox: &api.SandboxRef{Mode: api.SandboxNative},
 	}
 
 	args, cleanup, err := buildClaudeCLIArgs("claude-sonnet-5", req)

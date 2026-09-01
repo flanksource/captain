@@ -50,7 +50,7 @@ func parseCompactElement(s string) (Model, error) {
 	}
 	mode, ok := ParseRuntimeMode(prefix)
 	if !ok {
-		return Model{}, invalidModelBackend(RuntimeMode(prefix))
+		return Model{}, invalidRuntimeMode(RuntimeMode(prefix))
 	}
 	m.Mode = mode
 	return m, nil
@@ -93,9 +93,6 @@ func (m Model) Expand() (Model, error) {
 	}
 	if parsed.Effort == "" {
 		parsed.Effort = m.Effort
-	}
-	if parsed.Backend == "" {
-		parsed.Backend = m.Backend
 	}
 	if parsed.Mode == "" {
 		parsed.Mode = m.Mode

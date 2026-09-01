@@ -59,13 +59,9 @@ func claudeMonitorSettings(binary string) ([]byte, error) {
 	return data, nil
 }
 
-// writeClaudeMonitorSettings writes the --settings document to a temp file and
-// returns its path with a cleanup, mirroring writeTempSchema.
-func writeClaudeMonitorSettings(binary string) (string, func(), error) {
-	data, err := claudeMonitorSettings(binary)
-	if err != nil {
-		return "", nil, err
-	}
+// writeClaudeSettings writes the composed native-sandbox and monitor-hook
+// document to a temp file and returns its path with a cleanup.
+func writeClaudeSettings(data []byte) (string, func(), error) {
 	f, err := os.CreateTemp("", "captain-claude-hooks-*.json")
 	if err != nil {
 		return "", nil, fmt.Errorf("claude-cli: create monitor hooks settings file: %w", err)

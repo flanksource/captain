@@ -213,21 +213,17 @@ func TestDecodeUsage(t *testing.T) {
 	})
 }
 
-func TestAliasModel(t *testing.T) {
-	cases := map[string]string{
-		"claude-agent-sonnet": "claude-sonnet-5",
-		"claude-agent-opus":   "claude-opus-5",
-		"claude-code-haiku":   "claude-haiku-4-5",
-		"claude-sonnet-4-5":   "claude-sonnet-4-6",
-		// A bare family-less token resolves through the provider's emptyFamily,
-		// which is opus (see registry/providers.go). The "" case is short-circuited
-		// by aliasModel itself and so still answers sonnet.
-		"claude-agent-":         "claude-opus-5",
-		"":                      "claude-sonnet-5",
-		"claude-agent-opus-4-1": "claude-opus-4-8",
+// bridgeModel forwards the id it is given. Resolve has already produced a
+// driver-ready name by the time an adapter runs, and this used to re-derive one
+// — nine adapters each doing it, each discarding the failure, so the id captain
+// recorded and the id the SDK received could differ. All that is left is the
+// sentinel substitution, which names no model at all.
+func TestBridgeModelForwardsTheResolvedID(t *testing.T) {
+	for _, id := range []string{"claude-sonnet-5", "claude-opus-5", "claude-haiku-4-5", "claude-opus-4-8"} {
+		assert.Equalf(t, id, bridgeModel(id), "bridgeModel(%q)", id)
 	}
-	for in, want := range cases {
-		assert.Equalf(t, want, aliasModel(in), "aliasModel(%q)", in)
+	for _, sentinel := range []string{"", "  ", "claude"} {
+		assert.Equalf(t, defaultModel, bridgeModel(sentinel), "bridgeModel(%q)", sentinel)
 	}
 }
 

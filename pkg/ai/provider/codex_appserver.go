@@ -62,7 +62,6 @@ func NewCodexAppServer(cfg ai.Config) (*CodexAppServer, error) {
 	if model == "" {
 		model = CodexCLIDefaultModel
 	}
-	model = ai.NormalizeModelForBackend(ai.BackendCodexAgent, model)
 	provider := &CodexAppServer{model: model, cfg: cfg}
 	if cfg.CallerTools != nil {
 		endpoint := *cfg.CallerTools
@@ -73,7 +72,7 @@ func NewCodexAppServer(cfg ai.Config) (*CodexAppServer, error) {
 }
 
 func (c *CodexAppServer) GetModel() string          { return c.model }
-func (c *CodexAppServer) GetBackend() ai.Backend    { return ai.BackendCodexAgent }
+func (c *CodexAppServer) GetRuntime() ai.Runtime    { return ai.RuntimeOf(ai.OpenAI, ai.ModeAgent) }
 func (c *CodexAppServer) SupportsCallerTools() bool { return true }
 
 var _ api.ToolCapableProvider = (*CodexAppServer)(nil)
@@ -88,7 +87,7 @@ func (c *CodexAppServer) Execute(ctx context.Context, req ai.Request) (*ai.Respo
 	if err != nil {
 		return nil, err
 	}
-	resp, err := CoalesceStreamForBackend(ctx, ai.BackendCodexAgent, c.model, events, start)
+	resp, err := CoalesceStreamForRuntime(ctx, ai.RuntimeOf(ai.OpenAI, ai.ModeAgent), c.model, events, start)
 	if err != nil {
 		return nil, err
 	}
@@ -114,7 +113,7 @@ func (c *CodexAppServer) Execute(ctx context.Context, req ai.Request) (*ai.Respo
 // a text-mode request. A non-struct target fails loudly rather than silently
 // dropping the schema.
 func codexOutputSchema(req ai.Request) (json.RawMessage, error) {
-	schema, err := ai.SchemaJSONForBackend(ai.BackendCodexAgent, req.Prompt)
+	schema, err := ai.SchemaJSONForRuntime(ai.OpenAI, ai.ModeAgent, req.Prompt)
 	if err != nil {
 		return nil, fmt.Errorf("codex app-server: cannot derive structured-output schema: %w", err)
 	}
@@ -130,6 +129,9 @@ func (c *CodexAppServer) ExecuteStream(ctx context.Context, req ai.Request) (<-c
 	}
 
 	if err := c.prepareCallerTools(req); err != nil {
+		return nil, err
+	}
+	if _, err := translateCodexSandbox(api.RuntimeOf(api.OpenAI, api.ModeAgent), req); err != nil {
 		return nil, err
 	}
 	c.beginTurn(req)
@@ -335,7 +337,11 @@ func (c *CodexAppServer) startThread(ctx context.Context, req ai.Request) (strin
 		c.rememberThread(threadID)
 		return threadID, nil
 	}
-	raw, err := rpc.Call(ctx, "thread/start", buildThreadStartParams(c.model, req, c.callerTools))
+	params, err := buildThreadStartParams(c.model, req, c.callerTools)
+	if err != nil {
+		return "", err
+	}
+	raw, err := rpc.Call(ctx, "thread/start", params)
 	if err != nil {
 		return "", err
 	}

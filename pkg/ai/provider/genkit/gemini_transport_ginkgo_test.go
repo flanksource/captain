@@ -40,7 +40,8 @@ var _ = Describe("Gemini transport", func() {
 			http.DefaultTransport = transport
 		})
 
-		model := api.Model{Name: "gemini-2.5-flash", Backend: api.BackendGemini}
+		model, err := api.ResolveModel(api.Model{Name: "gemini-2.5-flash", Mode: api.ModeAPI})
+		Expect(err).NotTo(HaveOccurred())
 		provider, err := New(ai.Config{Model: model, APIKey: "gemini-role-contract-test"})
 		Expect(err).NotTo(HaveOccurred())
 

@@ -10,7 +10,7 @@
 // JSON-RPC `prompt` method and streams the resulting notifications back as
 // ai.Events; turns are serialized so the single SDK session stays consistent.
 //
-// pkg/ai/provider/init.go registers claudeagent.New for ai.BackendClaudeAgent.
+// pkg/ai/provider/init.go registers claudeagent.New for (anthropic, agent).
 package claudeagent
 
 import (
@@ -62,7 +62,7 @@ const (
 var safeEditAllowlist = []string{"Read", "Edit", "Write", "Glob", "Grep"}
 
 // Provider must satisfy ai.StreamingProvider so init.go can register New for
-// ai.BackendClaudeAgent.
+// the (anthropic, agent) runtime.
 var _ ai.StreamingProvider = (*Provider)(nil)
 
 // newAgentProcess builds the supervised child command. It is a package var so
@@ -134,7 +134,6 @@ func New(cfg ai.Config) (*Provider, error) {
 	if model == "" {
 		model = defaultModel
 	}
-	model = ai.NormalizeModelForBackend(ai.BackendClaudeAgent, model)
 	ctx, cancel := context.WithCancel(context.Background())
 	provider := &Provider{
 		model:      model,
@@ -153,7 +152,7 @@ func New(cfg ai.Config) (*Provider, error) {
 }
 
 func (p *Provider) GetModel() string          { return p.model }
-func (p *Provider) GetBackend() ai.Backend    { return ai.BackendClaudeAgent }
+func (p *Provider) GetRuntime() ai.Runtime    { return ai.RuntimeOf(ai.Anthropic, ai.ModeAgent) }
 func (p *Provider) SupportsCallerTools() bool { return true }
 
 var _ api.ToolCapableProvider = (*Provider)(nil)
@@ -230,7 +229,7 @@ func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, e
 	resp := &ai.Response{
 		Text:            text.String(),
 		Model:           p.model,
-		Backend:         ai.BackendClaudeAgent,
+		Runtime:         ai.RuntimeOf(ai.Anthropic, ai.ModeAgent),
 		Usage:           usage,
 		Duration:        time.Since(start),
 		TerminalOutcome: outcome,
@@ -276,7 +275,7 @@ func (p *Provider) resultError(req ai.Request, subtype, lastErr string) error {
 func (p *Provider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai.Event, error) {
 	// claude-agent advertises tool-policy support, but only for allow/deny:
 	// initializeParams has no way to express the policies the guard rejects.
-	if err := api.RequireToolPolicySupport(api.BackendClaudeAgent, req.Permissions); err != nil {
+	if err := api.RequireToolPolicySupport(api.Anthropic, api.ModeAgent, req.Permissions); err != nil {
 		return nil, err
 	}
 	schema, err := requestSchemaJSON(req)
@@ -308,7 +307,7 @@ func (p *Provider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai
 // Prompt.SchemaJSON), or nil for a text-mode request. A non-struct target fails
 // loudly rather than silently dropping the schema.
 func requestSchemaJSON(req ai.Request) (json.RawMessage, error) {
-	schema, err := ai.SchemaJSONForBackend(ai.BackendClaudeAgent, req.Prompt)
+	schema, err := ai.SchemaJSONForRuntime(ai.Anthropic, ai.ModeAgent, req.Prompt)
 	if err != nil {
 		return nil, fmt.Errorf("claude-agent: cannot derive structured-output schema: %w", err)
 	}
@@ -405,7 +404,12 @@ func (p *Provider) onChildStarted(child *exec.Process, req ai.Request) {
 
 	ctx, cancel := context.WithTimeout(p.baseCtx, initCallTimeout)
 	defer cancel()
-	if _, err := rpc.Call(ctx, methodInitialize, p.initializeParams(req)); err != nil {
+	params, err := p.initializeParams(req)
+	if err != nil {
+		p.setInitResult(err)
+		return
+	}
+	if _, err := rpc.Call(ctx, methodInitialize, params); err != nil {
 		p.setInitResult(fmt.Errorf("claude-agent: initialize failed: %w", err))
 		return
 	}
@@ -414,22 +418,35 @@ func (p *Provider) onChildStarted(child *exec.Process, req ai.Request) {
 
 // initializeParams maps the first request + provider config onto the SDK
 // Options the agent.ts initialize handler understands.
-func (p *Provider) initializeParams(req ai.Request) initializeParams {
+func (p *Provider) initializeParams(req ai.Request) (initializeParams, error) {
 	// brokered means the caller wants to vet each tool over the can_use_tool
 	// round-trip, so the SDK must consult canUseTool instead of auto-approving:
 	// bypassPermissions / allowDangerouslySkipPermissions would skip it entirely.
 	// The broker callback is a runtime concern, carried on the provider's Config.
 	brokered := p.cfg.CanUseTool != nil
 
-	mode := string(req.Permissions.Mode)
+	// The posture and the isolation boundary are independent: the mode comes from
+	// permissions and applies whether or not a sandbox was requested.
+	mode := "default"
+	if requested := req.Permissions.Mode; requested != "" {
+		if !api.PermissionCapabilitiesFor(api.RuntimeOf(api.Anthropic, api.ModeAgent)).ModeSupport(requested).Honoured() {
+			return initializeParams{}, fmt.Errorf("permissions.mode %q is not supported by %s", requested, api.RuntimeOf(api.Anthropic, api.ModeAgent))
+		}
+		mode = string(requested)
+	}
+	var sandbox map[string]any
+	if req.Sandbox != nil {
+		translated, err := api.TranslateClaudeSandbox(api.RuntimeOf(api.Anthropic, api.ModeAgent), *req.Sandbox)
+		if err != nil {
+			return initializeParams{}, err
+		}
+		sandbox = translated
+	}
 	// AllowList/DenyList, not the raw Allow/Deny slices: an `off` tool mode is a
 	// deny that only the normalized policy map reports, and forwarding the raw
 	// slice would let `tools: {Bash: off}` run.
 	allowed := req.Permissions.Tools.AllowList()
 	if req.Permissions.HasPreset(api.PresetEdit) {
-		if mode == "" {
-			mode = "acceptEdits"
-		}
 		if len(allowed) == 0 {
 			allowed = safeEditAllowlist
 		}
@@ -440,8 +457,8 @@ func (p *Provider) initializeParams(req ai.Request) initializeParams {
 	// server, so the unbrokered branch is the common one: defaulting it to bypass
 	// meant a prompt with no `permissions:` ran unconfined here while the same
 	// prompt on claude-cli got the default posture.
-	if mode == "" {
-		mode = "default"
+	if brokered && mode == "bypassPermissions" {
+		return initializeParams{}, fmt.Errorf("sandbox mode off cannot bypass Claude Agent built-in tools while preserving brokered MCP permissions")
 	}
 
 	approvalMode := "auto"
@@ -464,7 +481,7 @@ func (p *Provider) initializeParams(req ai.Request) initializeParams {
 
 	return initializeParams{
 		Cwd:                req.Cwd(),
-		Model:              aliasModel(p.model),
+		Model:              bridgeModel(p.model),
 		SystemPrompt:       req.Prompt.System,
 		AppendSystemPrompt: req.Prompt.AppendSystem,
 		AllowedTools:       allowed,
@@ -472,13 +489,14 @@ func (p *Provider) initializeParams(req ai.Request) initializeParams {
 		MaxTurns:           req.Budget.MaxTurns,
 		MaxBudgetUsd:       maxBudget,
 		PermissionMode:     mode,
+		Sandbox:            sandbox,
 		Resume:             resume,
 		ApprovalMode:       approvalMode,
 		OutputSchema:       p.sessionSchema,
 		MonitorURL:         monitorHooksURL(req),
 		MCPServers:         callerToolServers(p.callerTools),
 		CallerToolUseIDKey: callerToolUseIDKey(p.callerTools),
-	}
+	}, nil
 }
 
 // monitorHooksURL resolves the captain serve URL the SDK's session-monitoring

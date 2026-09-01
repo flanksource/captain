@@ -84,7 +84,7 @@ func TestGeminiCLIUsesContextDir(t *testing.T) {
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	provider := NewGeminiCLI("gemini-cli-pro")
-	provider.sandbox = &api.SandboxConfig{Kind: api.SandboxSRT}
+	provider.sandbox = &api.SandboxConfig{Kind: api.SandboxSRTInternal}
 	resp, err := provider.Execute(context.Background(), ai.Request{
 		Prompt: api.Prompt{User: "hello"},
 		Setup:  &shell.Setup{Cwd: cwd},
@@ -112,21 +112,24 @@ func TestGeminiCLIUsesContextDir(t *testing.T) {
 }
 
 func TestCLIProviderFactoriesCarrySandbox(t *testing.T) {
-	srtSelected := func(sandbox *api.SandboxConfig) bool {
-		return sandbox != nil && sandbox.Kind == api.SandboxSRT
+	dockerSelected := func(sandbox *api.SandboxConfig) bool {
+		return sandbox != nil && sandbox.Kind == api.SandboxDocker
 	}
 	tests := []struct {
-		backend api.Backend
+		runtime api.Runtime
 		model   string
 		enabled func(api.Provider) bool
 	}{
-		{api.BackendClaudeCLI, "claude-sonnet-5", func(p api.Provider) bool { return srtSelected(p.(*ClaudeCLI).sandbox) }},
-		{api.BackendCodexCLI, "gpt-5.5", func(p api.Provider) bool { return srtSelected(p.(*CodexCLI).sandbox) }},
-		{api.BackendGeminiCLI, "gemini-3.5-flash", func(p api.Provider) bool { return srtSelected(p.(*GeminiCLI).sandbox) }},
+		{api.RuntimeOf(api.Anthropic, api.ModeCLI), "claude-sonnet-5", func(p api.Provider) bool { return dockerSelected(p.(*ClaudeCLI).sandbox) }},
+		{api.RuntimeOf(api.OpenAI, api.ModeCLI), "gpt-5.5", func(p api.Provider) bool { return dockerSelected(p.(*CodexCLI).sandbox) }},
+		{api.RuntimeOf(api.Google, api.ModeCLI), "gemini-3.5-flash", func(p api.Provider) bool { return dockerSelected(p.(*GeminiCLI).sandbox) }},
 	}
 	for _, tt := range tests {
-		t.Run(string(tt.backend), func(t *testing.T) {
-			provider, err := api.NewProvider(api.Config{Model: api.Model{Name: tt.model, Backend: tt.backend}, Sandbox: true})
+		t.Run(tt.runtime.String(), func(t *testing.T) {
+			provider, err := api.NewProvider(api.Config{
+				Model:            api.Model{Name: tt.model, Mode: tt.runtime.Mode},
+				SandboxSelection: &api.SandboxConfig{Kind: api.SandboxDocker},
+			})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -141,7 +144,7 @@ func TestSandboxCommandFailuresClose(t *testing.T) {
 	original := adapter.NewSRTRuntime
 	t.Cleanup(func() { adapter.NewSRTRuntime = original })
 
-	srt := &api.SandboxConfig{Kind: api.SandboxSRT}
+	srt := &api.SandboxConfig{Kind: api.SandboxSRTInternal}
 	fake := &fakeCommandSandbox{commandErr: errors.New("wrap failed")}
 	adapter.NewSRTRuntime = func(context.Context, sandboxruntime.Config) (adapter.Runtime, error) { return fake, nil }
 	req := &ai.Request{Setup: &shell.Setup{Cwd: t.TempDir()}}
