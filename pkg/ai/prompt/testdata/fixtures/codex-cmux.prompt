@@ -1,6 +1,6 @@
 ---
 model: gpt-5-codex
-backend: codex-cmux
+mode: cmux
 effort: medium
 setup:
   cwd: .

@@ -1,6 +1,6 @@
 ---
 model: gpt-5-codex
-backend: codex-agent
+mode: agent
 effort: medium
 setup:
   cwd: .

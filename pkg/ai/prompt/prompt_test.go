@@ -65,7 +65,7 @@ func TestRender_FrontmatterAndMessages(t *testing.T) {
 	assert.NotContains(t, withoutCap.Prompt.User, "body: at most")
 
 	assert.Equal(t, "claude-sonnet-4-6", cfg.Model.Name)
-	assert.Equal(t, ai.BackendAnthropic, cfg.Model.Backend, "model name should infer the anthropic backend")
+	assert.Equal(t, ai.Anthropic, cfg.Model.Provider, "the model name names the anthropic family")
 	assert.Equal(t, 1024, req.Budget.MaxTokens)
 	temp, ok := req.Temp()
 	require.True(t, ok, "temperature should be set from frontmatter")
@@ -83,6 +83,7 @@ func TestRender_SpecFrontmatter(t *testing.T) {
 	require.NoError(t, err)
 
 	// Spec-native keys from the second parse.
+	require.NotNil(t, req.Sandbox)
 	assert.Equal(t, api.PermissionAcceptEdits, req.Permissions.Mode)
 	assert.Equal(t, []api.Preset{api.PresetEdit}, req.Permissions.Presets)
 	assert.Equal(t, []string{"Edit", "Read"}, req.Permissions.Tools.AllowList())
@@ -167,35 +168,62 @@ func TestLibrary_Render(t *testing.T) {
 	assert.Contains(t, req.Prompt.User, "x")
 }
 
-func TestRender_BackendFixtureExamples(t *testing.T) {
+// TestRender_AuthoredModeSelectsRuntime pins the contract that `mode:` names the
+// mechanism and, with the model name's family, is the whole runtime. The name
+// used to smuggle a mode of its own, so `opus` + `agent` could resolve to the
+// Anthropic API — a wrong-runtime execution rather than a loud failure.
+func TestRender_AuthoredModeSelectsRuntime(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		mode    string
+		model   string
+		runtime api.Runtime
+	}{
+		{name: "agent mode", mode: "agent", model: "opus", runtime: api.RuntimeOf(api.Anthropic, api.ModeAgent)},
+		{name: "cli mode", mode: "cli", model: "opus", runtime: api.RuntimeOf(api.Anthropic, api.ModeCLI)},
+		{name: "cmux mode", mode: "cmux", model: "opus", runtime: api.RuntimeOf(api.Anthropic, api.ModeCmux)},
+		{name: "api mode", mode: "api", model: "opus", runtime: api.RuntimeOf(api.Anthropic, api.ModeAPI)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req, cfg, err := Load("---\nmodel: "+tc.model+"\nmode: "+tc.mode+"\n---\n{{role \"user\"}}\nGo.\n").
+				Render(nil, nil)
+			require.NoError(t, err)
+			assert.Equal(t, tc.runtime, api.RuntimeOf(cfg.Model.Provider, cfg.Model.Mode), "the config runtime must follow the authored mode")
+			assert.Equal(t, tc.runtime, api.RuntimeOf(req.Model.Provider, req.Model.Mode), "the request runtime must follow the authored mode")
+			assert.Equal(t, api.RuntimeMode(tc.mode), cfg.Model.Mode, "authored mode must survive resolution")
+		})
+	}
+}
+
+func TestRender_RuntimeFixtureExamples(t *testing.T) {
 	expected := map[string]struct {
-		backend api.Backend
+		runtime api.Runtime
 		model   string
 	}{
-		"testdata/fixtures/anthropic-claude-opus.prompt":   {backend: api.BackendAnthropic, model: "claude-opus-4-6"},
-		"testdata/fixtures/anthropic-claude-sonnet.prompt": {backend: api.BackendAnthropic, model: "claude-sonnet-4-6"},
-		"testdata/fixtures/claude-agent-opus.prompt":       {backend: api.BackendClaudeAgent, model: "claude-agent-opus"},
-		"testdata/fixtures/claude-agent-sonnet.prompt":     {backend: api.BackendClaudeAgent, model: "claude-agent-sonnet"},
-		"testdata/fixtures/claude-cmux-opus.prompt":        {backend: api.BackendClaudeCmux, model: "claude-cmux-opus"},
-		"testdata/fixtures/claude-cmux-sonnet.prompt":      {backend: api.BackendClaudeCmux, model: "claude-cmux-sonnet"},
-		"testdata/fixtures/claude-cli-opus.prompt":         {backend: api.BackendClaudeCLI, model: "claude-agent-opus"},
-		"testdata/fixtures/claude-cli-sonnet.prompt":       {backend: api.BackendClaudeCLI, model: "claude-agent-sonnet"},
-		"testdata/fixtures/codex-agent.prompt":             {backend: api.BackendCodexAgent, model: "gpt-5-codex"},
-		"testdata/fixtures/codex-cmux.prompt":              {backend: api.BackendCodexCmux, model: "gpt-5-codex"},
-		"testdata/fixtures/deepseek.prompt":                {backend: api.BackendDeepSeek, model: "deepseek-reasoner"},
-		"testdata/fixtures/codex-cli.prompt":               {backend: api.BackendCodexCLI, model: "gpt-5-codex"},
-		"testdata/fixtures/gemini-api.prompt":              {backend: api.BackendGemini, model: "gemini-2.5-pro"},
-		"testdata/fixtures/gemini-cli.prompt":              {backend: api.BackendGeminiCLI, model: "gemini-cli-pro"},
-		"testdata/fixtures/openai-gpt.prompt":              {backend: api.BackendOpenAI, model: "gpt-5"},
+		"testdata/fixtures/anthropic-claude-opus.prompt":   {runtime: api.RuntimeOf(api.Anthropic, api.ModeAPI), model: "claude-opus-4-6"},
+		"testdata/fixtures/anthropic-claude-sonnet.prompt": {runtime: api.RuntimeOf(api.Anthropic, api.ModeAPI), model: "claude-sonnet-4-6"},
+		"testdata/fixtures/claude-agent-opus.prompt":       {runtime: api.RuntimeOf(api.Anthropic, api.ModeAgent), model: "claude-opus-5"},
+		"testdata/fixtures/claude-agent-sonnet.prompt":     {runtime: api.RuntimeOf(api.Anthropic, api.ModeAgent), model: "claude-sonnet-5"},
+		"testdata/fixtures/claude-cmux-opus.prompt":        {runtime: api.RuntimeOf(api.Anthropic, api.ModeCmux), model: "claude-opus-5"},
+		"testdata/fixtures/claude-cmux-sonnet.prompt":      {runtime: api.RuntimeOf(api.Anthropic, api.ModeCmux), model: "claude-sonnet-5"},
+		"testdata/fixtures/claude-cli-opus.prompt":         {runtime: api.RuntimeOf(api.Anthropic, api.ModeCLI), model: "claude-opus-5"},
+		"testdata/fixtures/claude-cli-sonnet.prompt":       {runtime: api.RuntimeOf(api.Anthropic, api.ModeCLI), model: "claude-sonnet-5"},
+		"testdata/fixtures/codex-agent.prompt":             {runtime: api.RuntimeOf(api.OpenAI, api.ModeAgent), model: "gpt-5-codex"},
+		"testdata/fixtures/codex-cmux.prompt":              {runtime: api.RuntimeOf(api.OpenAI, api.ModeCmux), model: "gpt-5-codex"},
+		"testdata/fixtures/deepseek.prompt":                {runtime: api.RuntimeOf(api.DeepSeek, api.ModeAPI), model: "deepseek-reasoner"},
+		"testdata/fixtures/codex-cli.prompt":               {runtime: api.RuntimeOf(api.OpenAI, api.ModeCLI), model: "gpt-5-codex"},
+		"testdata/fixtures/gemini-api.prompt":              {runtime: api.RuntimeOf(api.Google, api.ModeAPI), model: "gemini-2.5-pro"},
+		"testdata/fixtures/gemini-cli.prompt":              {runtime: api.RuntimeOf(api.Google, api.ModeCLI), model: "gemini-2.5-pro"},
+		"testdata/fixtures/openai-gpt.prompt":              {runtime: api.RuntimeOf(api.OpenAI, api.ModeAPI), model: "gpt-5"},
 	}
 
 	seenFiles := map[string]bool{}
-	seenBackends := map[api.Backend]bool{}
-	claudeFamilies := map[api.Backend]map[string]bool{
-		api.BackendAnthropic:   {},
-		api.BackendClaudeAgent: {},
-		api.BackendClaudeCLI:   {},
-		api.BackendClaudeCmux:  {},
+	seenRuntimes := map[api.Runtime]bool{}
+	claudeFamilies := map[api.Runtime]map[string]bool{
+		api.RuntimeOf(api.Anthropic, api.ModeAPI):   {},
+		api.RuntimeOf(api.Anthropic, api.ModeAgent): {},
+		api.RuntimeOf(api.Anthropic, api.ModeCLI):   {},
+		api.RuntimeOf(api.Anthropic, api.ModeCmux):  {},
 	}
 
 	err := fs.WalkDir(library, "testdata/fixtures", func(path string, d fs.DirEntry, err error) error {
@@ -220,11 +248,11 @@ func TestRender_BackendFixtureExamples(t *testing.T) {
 		assert.Contains(t, req.Prompt.User, "summarize the change")
 		assert.Equal(t, want.model, req.Model.Name)
 		assert.Equal(t, want.model, cfg.Model.Name)
-		assert.Equal(t, want.backend, req.Model.Backend)
-		assert.Equal(t, want.backend, cfg.Model.Backend)
+		assert.Equal(t, want.runtime, api.RuntimeOf(req.Model.Provider, req.Model.Mode))
+		assert.Equal(t, want.runtime, api.RuntimeOf(cfg.Model.Provider, cfg.Model.Mode))
 
-		seenBackends[want.backend] = true
-		if families, ok := claudeFamilies[want.backend]; ok {
+		seenRuntimes[want.runtime] = true
+		if families, ok := claudeFamilies[want.runtime]; ok {
 			switch model := strings.ToLower(want.model); {
 			case strings.Contains(model, "sonnet"):
 				families["sonnet"] = true
@@ -240,11 +268,11 @@ func TestRender_BackendFixtureExamples(t *testing.T) {
 	for path := range expected {
 		assert.True(t, seenFiles[path], "missing fixture %s", path)
 	}
-	for _, backend := range api.AllBackends() {
-		assert.True(t, seenBackends[backend], "missing fixture for backend %s", backend)
+	for _, runtime := range api.AllRuntimes() {
+		assert.True(t, seenRuntimes[runtime], "missing fixture for runtime %v", runtime)
 	}
-	for backend, families := range claudeFamilies {
-		assert.True(t, families["sonnet"], "missing sonnet fixture for backend %s", backend)
-		assert.True(t, families["opus"], "missing opus fixture for backend %s", backend)
+	for runtime, families := range claudeFamilies {
+		assert.True(t, families["sonnet"], "missing sonnet fixture for runtime %v", runtime)
+		assert.True(t, families["opus"], "missing opus fixture for runtime %v", runtime)
 	}
 }

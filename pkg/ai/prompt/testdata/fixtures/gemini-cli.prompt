@@ -1,6 +1,6 @@
 ---
-model: gemini-cli-pro
-backend: gemini-cli
+model: gemini-2.5-pro
+mode: cli
 budget:
   maxTokens: 4096
 ---

@@ -1,6 +1,6 @@
 ---
-model: claude-cmux-sonnet
-backend: claude-cmux
+model: claude-sonnet-5
+mode: cmux
 budget:
   maxTurns: 6
 setup:

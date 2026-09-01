@@ -1,6 +1,6 @@
 ---
-model: claude-agent-opus
-backend: claude-cli
+model: claude-opus-5
+mode: cli
 budget:
   maxTurns: 3
 permissions:
