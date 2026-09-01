@@ -193,9 +193,13 @@ table "captain_prompt_runs" {
     on_delete = NO_ACTION
   }
 
-  index "captain_prompt_runs_active_root_key" {
+  # One conversation cannot have two runs in flight — a second run against the
+  # same session would interleave turns into one transcript. A session
+  # aggregate root can: two runs against one root are two separate operations
+  # on the same subject, which a dispatcher may deliberately run in parallel.
+  index "captain_prompt_runs_active_session_key" {
     unique  = true
-    columns = [column.root_session_id]
+    columns = [column.session_id]
     where   = "state IN ('pending', 'running', 'waiting')"
   }
   index "captain_prompt_runs_admission_key" {

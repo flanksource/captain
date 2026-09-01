@@ -28,6 +28,10 @@ table "captain_sessions" {
     null = true
     type = uuid
   }
+  column "parent_relation" {
+    null = true
+    type = text
+  }
   column "root_session_id" {
     null = true
     type = uuid

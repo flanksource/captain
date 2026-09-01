@@ -1,5 +1,9 @@
 -- phase: post
 
+-- The backend column split into provider+mode, and CREATE OR REPLACE VIEW
+-- cannot change a view's column set. Drop first so the new shape lands.
+DROP VIEW IF EXISTS public.captain_session_costs CASCADE;
+
 CREATE OR REPLACE VIEW public.captain_session_costs
 WITH (security_barrier = true)
 AS
@@ -8,13 +12,15 @@ SELECT
     ':',
     t.session_id::text,
     c.model,
-    c.backend,
+    c.provider,
+    c.mode,
     COALESCE(c.effort, 'default'),
     upper(c.currency)
   ) AS id,
   t.session_id,
   c.model,
-  c.backend,
+  c.provider,
+  c.mode,
   c.effort,
   upper(c.currency) AS currency,
   count(*)::bigint AS model_call_count,
@@ -57,9 +63,10 @@ JOIN public.captain_model_calls c ON c.turn_id = t.id
 GROUP BY
   t.session_id,
   c.model,
-  c.backend,
+  c.provider,
+  c.mode,
   c.effort,
   upper(c.currency);
 
 COMMENT ON VIEW public.captain_session_costs IS
-  'Per-session model/backend/effort token and cost totals for the SessionInspector costs tab.';
+  'Per-session model/provider/mode/effort token and cost totals for the SessionInspector costs tab.';

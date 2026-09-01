@@ -14,7 +14,14 @@ table "captain_session_mcp_credentials" {
     null = false
     type = uuid
   }
-  column "backend" {
+  # The runtime that holds this credential, as (provider, mode). Unlike
+  # captain_model_calls this column always held an adapter id, so both axes are
+  # recoverable and stay NOT NULL.
+  column "provider" {
+    null = false
+    type = text
+  }
+  column "mode" {
     null = false
     type = text
   }
