@@ -55,8 +55,12 @@ type CostBreakdownMetadata struct {
 
 // MessageMetadata is attached to the assistant UIMessage by the finish part.
 type MessageMetadata struct {
-	Backend           api.Backend            `json:"backend,omitempty"`
-	ExecutionMode     api.RuntimeMode        `json:"executionMode,omitempty"`
+	// Provider and Mode are the runtime that served the turn. There is no
+	// composite adapter field: the pair is the whole answer, and one key that
+	// meant an adapter here and a mode on the way back in was the reason a
+	// client could echo a response and name a different runtime.
+	Provider          string                 `json:"provider,omitempty"`
+	Mode              api.RuntimeMode        `json:"mode,omitempty"`
 	Model             string                 `json:"model,omitempty"`
 	CaptainSessionID  string                 `json:"captainSessionId,omitempty"`
 	ProviderSessionID string                 `json:"providerSessionId,omitempty"`
@@ -92,15 +96,12 @@ func (c terminalMetadataContext) message(providerSessionID, eventModel string, s
 		if selected.Name != "" {
 			runtime.Name = selected.Name
 		}
-		runtime.Backend = selected.Backend
+		runtime.Provider = selected.Provider
 		runtime.Mode = selected.Mode
 	}
-	mode := runtime.Backend.Mode()
-	if mode == "" {
-		mode = runtime.Mode
-	}
+	identity := api.RuntimeIdentityOf(runtime)
 	return &MessageMetadata{
-		Backend: runtime.Backend, ExecutionMode: mode, Model: runtime.Name,
+		Provider: identity.Provider, Mode: identity.Mode, Model: runtime.Name,
 		CaptainSessionID: c.CaptainSessionID, ProviderSessionID: providerSessionID,
 		ThreadID: c.ThreadID, TurnID: c.TurnID, Success: &success,
 	}

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+
+	"github.com/flanksource/captain/pkg/database"
 )
 
 func (s *Service) handleResolveToolApproval(w http.ResponseWriter, request *http.Request) {
@@ -57,7 +59,18 @@ func (s *Service) handleResolveToolApproval(w http.ResponseWriter, request *http
 		Approved:       *body.Approved, UpdatedInput: body.UpdatedInput, Reason: body.Reason,
 	})
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusConflict)
+		// Only a genuine concurrency conflict is retryable. Reporting an internal
+		// invariant violation as 409 tells the client to refresh and try again,
+		// which is why a server-side ingest failure surfaced as a lost approval.
+		status := http.StatusInternalServerError
+		switch {
+		case errors.Is(err, database.ErrSessionConflict), errors.Is(err, database.ErrPromptRunConflict),
+			errors.Is(err, database.ErrTurnRequestConflict):
+			status = http.StatusConflict
+		case errors.Is(err, database.ErrSessionNotFound), errors.Is(err, database.ErrTurnRequestNotFound):
+			status = http.StatusNotFound
+		}
+		http.Error(w, err.Error(), status)
 		return
 	}
 	if continuation != nil {

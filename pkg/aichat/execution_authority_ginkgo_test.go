@@ -118,7 +118,7 @@ var _ = Describe("Authoritative aichat execution", func() {
 			defer close(chatDone)
 			service.Handler().ServeHTTP(chatResponse, requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{
 				ID: thread.ID, ThreadID: thread.ID, Trigger: "submit-message",
-				Runtime: &api.Model{Name: "sonnet", Backend: api.BackendClaudeAgent},
+				Runtime: &api.Model{Name: "sonnet", Mode: api.ModeAgent},
 				Messages: []aichat.UIMessage{{
 					ID: "user-message-interrupt", Role: "user",
 					Parts: []aichat.UIPart{{Type: "text", Text: "Start a long response"}},
@@ -163,7 +163,7 @@ var _ = Describe("Authoritative aichat execution", func() {
 		close(execution.events)
 		authority := &fakeExecutionAuthority{execution: execution}
 		provider := &fakeStreamingProvider{
-			backend: api.BackendClaudeAgent,
+			runtime: api.RuntimeOf(api.Anthropic, api.ModeAgent),
 			events: []api.Event{
 				{Kind: api.EventToolUse, Tool: "account_edit", ToolCallID: "call-account-1", Input: map[string]any{"id": "acc-1"}},
 				{Kind: api.EventToolResult, Tool: "account_edit", ToolCallID: "call-account-1", Text: `{"updated":true}`, Success: true},
@@ -187,7 +187,7 @@ var _ = Describe("Authoritative aichat execution", func() {
 		response := httptest.NewRecorder()
 		service.Handler().ServeHTTP(response, requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{
 			ID: thread.ID, ThreadID: thread.ID, Trigger: "submit-message",
-			Runtime: &api.Model{Name: "sonnet", Backend: api.BackendClaudeAgent},
+			Runtime: &api.Model{Name: "sonnet", Mode: api.ModeAgent},
 			Messages: []aichat.UIMessage{{
 				ID: "user-message-1", Role: "user", Parts: []aichat.UIPart{{Type: "text", Text: "Edit the account"}},
 			}},
@@ -218,7 +218,7 @@ var _ = Describe("Authoritative aichat execution", func() {
 			{ToolCallID: "call-account-2", Tool: "account_edit", Input: json.RawMessage(`{"id":"acc-2"}`)},
 		}
 		execution := &fakeExecution{events: make(chan api.Event)}
-		provider := &fakeStreamingProvider{backend: api.BackendGemini, events: []api.Event{
+		provider := &fakeStreamingProvider{runtime: api.RuntimeOf(api.Google, api.ModeAPI), events: []api.Event{
 			{Kind: api.EventToolUse, Tool: "account_edit", ToolCallID: calls[0].ToolCallID, Input: map[string]any{"id": "acc-1"}},
 			{Kind: api.EventToolUse, Tool: "account_edit", ToolCallID: calls[1].ToolCallID, Input: map[string]any{"id": "acc-2"}},
 			{Kind: api.EventPermission, Tool: "account_edit", ToolCallID: calls[0].ToolCallID},
@@ -237,7 +237,7 @@ var _ = Describe("Authoritative aichat execution", func() {
 		response := httptest.NewRecorder()
 		service.Handler().ServeHTTP(response, requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{
 			ID: thread.ID, ThreadID: thread.ID, Trigger: "submit-message",
-			Runtime: &api.Model{Name: "gemini", Backend: api.BackendGemini},
+			Runtime: &api.Model{Name: "gemini", Mode: api.ModeAPI},
 			Messages: []aichat.UIMessage{{
 				ID: "user-message-approval", Role: "user", Parts: []aichat.UIPart{{Type: "text", Text: "Edit the accounts"}},
 			}},
@@ -279,7 +279,7 @@ var _ = Describe("Authoritative aichat execution", func() {
 		first := httptest.NewRecorder()
 		service.Handler().ServeHTTP(first, requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{
 			ID: thread.ID, ThreadID: thread.ID, Trigger: "submit-message",
-			Runtime: &api.Model{Name: "gemini", Backend: api.BackendGemini}, Messages: messages,
+			Runtime: &api.Model{Name: "gemini", Mode: api.ModeAPI}, Messages: messages,
 		}))
 		Expect(first.Code).To(Equal(http.StatusOK), first.Body.String())
 
@@ -291,7 +291,7 @@ var _ = Describe("Authoritative aichat execution", func() {
 		second := httptest.NewRecorder()
 		service.Handler().ServeHTTP(second, requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{
 			ID: thread.ID, ThreadID: thread.ID, Trigger: "submit-message",
-			Runtime: &api.Model{Name: "gemini", Backend: api.BackendGemini}, Messages: messages,
+			Runtime: &api.Model{Name: "gemini", Mode: api.ModeAPI}, Messages: messages,
 		}))
 		Expect(second.Code).To(Equal(http.StatusOK), second.Body.String())
 
@@ -330,7 +330,7 @@ var _ = Describe("Authoritative aichat execution", func() {
 			response := httptest.NewRecorder()
 			service.Handler().ServeHTTP(response, requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{
 				ID: thread.ID, ThreadID: thread.ID, Trigger: "regenerate-message", MessageID: assistant.ID,
-				Runtime: &api.Model{Name: "gemini", Backend: api.BackendGemini}, Messages: []aichat.UIMessage{user},
+				Runtime: &api.Model{Name: "gemini", Mode: api.ModeAPI}, Messages: []aichat.UIMessage{user},
 			}))
 			return response
 		}
@@ -373,13 +373,13 @@ var _ = Describe("Authoritative aichat execution", func() {
 		authority := &fakeExecutionAuthority{beginErr: errors.New("duplicate prompt run")}
 		service := aichat.NewService(aichat.ServiceOptions{
 			Threads: aichat.FixedThreadStore(store), Authority: authority,
-			Resolver: &fakeResolver{provider: &fakeStreamingProvider{backend: api.BackendGemini}},
+			Resolver: &fakeResolver{provider: &fakeStreamingProvider{runtime: api.RuntimeOf(api.Google, api.ModeAPI)}},
 		})
 
 		response := httptest.NewRecorder()
 		service.Handler().ServeHTTP(response, requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{
 			ID: thread.ID, ThreadID: thread.ID, Trigger: "submit-message",
-			Runtime: &api.Model{Name: "gemini", Backend: api.BackendGemini},
+			Runtime: &api.Model{Name: "gemini", Mode: api.ModeAPI},
 			Messages: []aichat.UIMessage{{
 				ID: "user-message-1", Role: "user", Parts: []aichat.UIPart{{Type: "text", Text: "List accounts"}},
 			}},

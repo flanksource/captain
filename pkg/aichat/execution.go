@@ -57,6 +57,18 @@ type Execution interface {
 	Close(context.Context) error
 }
 
+type TerminalCommit struct {
+	Event   api.Event
+	Message UIMessage
+	Replace bool
+}
+
+// TerminalExecution commits the assistant message and authoritative terminal
+// execution state through one durable boundary.
+type TerminalExecution interface {
+	CommitTerminal(context.Context, TerminalCommit) error
+}
+
 // executionRuntimeBinder commits the provider runtime selected after fallback
 // resolution, before any provider session identity from that runtime is stored.
 type executionRuntimeBinder interface {
@@ -168,6 +180,12 @@ func observeExecutionEvents(
 	go func() {
 		defer close(out)
 		for event := range source {
+			if _, atomic := execution.(TerminalExecution); atomic && isExecutionTerminalEvent(event) {
+				if !sendEvent(ctx, out, event) {
+					return
+				}
+				continue
+			}
 			observed, err := execution.Observe(ctx, event)
 			if err != nil {
 				failure := api.Event{
@@ -177,10 +195,13 @@ func observeExecutionEvents(
 					if event.Error != "" {
 						failure.Error = errors.Join(errors.New(event.Error), err).Error()
 					}
-				} else if terminal, terminalErr := execution.Observe(ctx, failure); terminalErr != nil {
+				} else if _, atomic := execution.(TerminalExecution); atomic {
+					// The persistence stage will atomically commit this synthetic
+					// terminal event with its assistant message.
+				} else if observedTerminal, terminalErr := execution.Observe(ctx, failure); terminalErr != nil {
 					failure.Error = errors.Join(err, fmt.Errorf("finish authoritative execution: %w", terminalErr)).Error()
 				} else {
-					failure = terminal
+					failure = observedTerminal
 				}
 				sendEvent(ctx, out, failure)
 				return

@@ -60,8 +60,8 @@ var _ = Describe("Database chat sessions", func() {
 		})
 
 		for index, runtime := range []api.Model{
-			{Name: "first-model", Backend: api.BackendOpenAI},
-			{Name: "second-model", Backend: api.BackendAnthropic},
+			{Name: "gpt-5.6-sol", Mode: api.ModeAPI},
+			{Name: "claude-sonnet-4-6", Mode: api.ModeAPI},
 		} {
 			response := httptest.NewRecorder()
 			service.Handler().ServeHTTP(response, requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{
@@ -91,11 +91,11 @@ var _ = Describe("Database chat sessions", func() {
 		authority, err := aichat.NewDatabaseExecutionAuthority(db)
 		Expect(err).NotTo(HaveOccurred())
 		provider := &fakeStreamingProvider{
-			model: "fallback-model", backend: api.BackendGemini,
+			model: "gemini-2.5-pro", runtime: api.RuntimeOf(api.Google, api.ModeAPI),
 			events: []api.Event{
-				{Kind: api.EventSystem, SessionID: "fallback-session", Model: "fallback-model"},
-				{Kind: api.EventText, Text: "Fallback answer", Model: "fallback-model"},
-				{Kind: api.EventResult, Success: true, Model: "fallback-model", CostUSD: 0.25,
+				{Kind: api.EventSystem, SessionID: "fallback-session", Model: "gemini-2.5-pro"},
+				{Kind: api.EventText, Text: "Fallback answer", Model: "gemini-2.5-pro"},
+				{Kind: api.EventResult, Success: true, Model: "gemini-2.5-pro", CostUSD: 0.25,
 					Usage: &api.Usage{InputTokens: 12, OutputTokens: 4}},
 			},
 		}
@@ -115,20 +115,22 @@ var _ = Describe("Database chat sessions", func() {
 		}
 
 		primary := api.Model{
-			Name: "primary-model", Backend: api.BackendOpenAI,
-			Fallbacks: []api.Model{{Name: "fallback-model", Backend: api.BackendGemini, Effort: api.EffortHigh}},
+			Name: "gpt-5.6-sol", Mode: api.ModeAPI,
+			Fallbacks: []api.Model{{Name: "gemini-2.5-pro", Mode: api.ModeAPI, Effort: api.EffortHigh}},
 		}
 		first := submit("fallback-user-1", primary)
 		Expect(first.Code).To(Equal(http.StatusOK), first.Body.String())
 		stored, err := store.Get(ctx, thread.ID)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(stored.Runtime).To(Equal(&api.Model{Name: "fallback-model", Backend: api.BackendGemini}))
+		Expect(stored.Runtime).To(Equal(&api.RuntimeIdentity{
+			Model: "gemini-2.5-pro", Provider: api.Google.Name, Mode: api.ModeAPI,
+		}), "the identity records the fallback candidate that actually ran — model and runtime, not effort")
 		Expect(stored.ProviderSessionID).To(Equal("fallback-session"))
 
 		aggregate, err := store.GetSession(ctx, thread.ID)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(aggregate.Model).To(Equal("fallback-model"))
-		Expect(aggregate.Backend).To(Equal(string(api.BackendGemini)))
+		Expect(aggregate.Model).To(Equal("gemini-2.5-pro"))
+		Expect(aggregate.ModelMode).To(Equal(api.ModeAPI))
 		Expect(aggregate.Usage.InputTokens).To(Equal(12))
 		Expect(aggregate.Cost.Total()).To(BeNumerically("~", 0.25, 0.000001))
 		sessionID := uuid.MustParse(thread.ID)
@@ -136,12 +138,12 @@ var _ = Describe("Database chat sessions", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(runs).To(HaveLen(1))
 		Expect(runs[0].Runtime.Requested.Model).To(Equal(primary.Name))
-		Expect(runs[0].Runtime.Resolved.Model).To(Equal("fallback-model"))
+		Expect(runs[0].Runtime.Resolved.Model).To(Equal("gemini-2.5-pro"))
 		Expect(runs[0].Runtime.Resolved.Effort).To(Equal(string(api.EffortHigh)))
 
 		conflict := submit("fallback-user-conflict", primary)
 		Expect(conflict.Code).To(Equal(http.StatusConflict), conflict.Body.String())
-		selected := api.Model{Name: "fallback-model", Backend: api.BackendGemini}
+		selected := api.Model{Name: "gemini-2.5-pro", Mode: api.ModeAPI}
 		second := submit("fallback-user-2", selected)
 		Expect(second.Code).To(Equal(http.StatusOK), second.Body.String())
 		Expect(resolver.configs).To(HaveLen(2))
@@ -171,7 +173,7 @@ var _ = Describe("Database chat sessions", func() {
 		_, err = authority.Begin(ctx, aichat.ExecutionRequest{
 			ThreadID: thread.ID, RequestID: "stale-turn", Title: stale.Title,
 			ExpectedThreadUpdatedAt: stale.UpdatedAt,
-			Spec:                    api.Spec{Model: api.Model{Name: "test-model", Backend: api.BackendOpenAI}},
+			Spec:                    api.Spec{Model: withCaps(api.Model{Name: "gpt-5.6-sol", Mode: api.ModeAPI})},
 		})
 		Expect(errors.Is(err, database.ErrSessionConflict)).To(BeTrue())
 
@@ -198,7 +200,7 @@ var _ = Describe("Database chat sessions", func() {
 		Expect(store.AppendMessage(ctx, source.ID, aichat.UIMessage{
 			ID: "source-assistant", Role: "assistant", Parts: []aichat.UIPart{{Type: "text", Text: "Answer"}},
 		})).To(Succeed())
-		runtime := api.Model{Name: "test-model", Backend: api.BackendOpenAI}
+		runtime := withCaps(api.Model{Name: "gpt-5.6-sol", Mode: api.ModeAPI})
 		authority, err := aichat.NewDatabaseExecutionAuthority(db)
 		Expect(err).NotTo(HaveOccurred())
 		execution, err := authority.Begin(ctx, aichat.ExecutionRequest{
@@ -213,11 +215,11 @@ var _ = Describe("Database chat sessions", func() {
 		Expect(store.SetRuntime(ctx, source.ID, runtime)).To(Succeed())
 		bound, err := store.Get(ctx, source.ID)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(bound.Runtime).To(Equal(&runtime))
+		Expect(bound.Runtime).To(Equal(&api.RuntimeIdentity{Model: runtime.Name, Provider: api.OpenAI.Name, Mode: runtime.Mode}))
 		Expect(store.SetRuntime(ctx, source.ID, api.Model{
-			Name: "test-model", Backend: api.BackendOpenAI, Effort: api.EffortHigh,
+			Name: "gpt-5.6-sol", Mode: api.ModeAPI, Effort: api.EffortHigh,
 		})).To(Succeed())
-		err = store.SetRuntime(ctx, source.ID, api.Model{Name: "other-model", Backend: api.BackendOpenAI})
+		err = store.SetRuntime(ctx, source.ID, api.Model{Name: "gpt-5.5", Mode: api.ModeAPI})
 		Expect(errors.Is(err, aichat.ErrThreadRuntimeConflict)).To(BeTrue())
 		Expect(store.SetProviderSession(ctx, source.ID, "provider-source")).To(Succeed())
 		_, err = store.AddUsage(ctx, source.ID, aichat.TurnUsage{InputTokens: 11, OutputTokens: 5, CostUSD: 0.3})
@@ -270,7 +272,7 @@ var _ = Describe("Database chat sessions", func() {
 		Expect(err).NotTo(HaveOccurred())
 		execution, err := authority.Begin(ctx, aichat.ExecutionRequest{
 			ThreadID: thread.ID, RequestID: "user-message-1", Title: thread.Title,
-			Spec: api.Spec{Model: api.Model{Name: "gemini", Backend: api.BackendGemini}.Capabilities()},
+			Spec: api.Spec{Model: withCaps(api.Model{Name: "gemini", Mode: api.ModeAPI})},
 		})
 		Expect(err).NotTo(HaveOccurred())
 
@@ -358,7 +360,7 @@ var _ = Describe("Database chat sessions", func() {
 		authority, err := aichat.NewDatabaseExecutionAuthority(db)
 		Expect(err).NotTo(HaveOccurred())
 
-		provider := &fakeStreamingProvider{backend: api.BackendGemini}
+		provider := &fakeStreamingProvider{runtime: api.RuntimeOf(api.Google, api.ModeAPI)}
 		provider.execute = func(_ context.Context, spec api.Spec) (<-chan api.Event, error) {
 			var events []api.Event
 			if spec.ToolApproval == nil {
@@ -408,7 +410,7 @@ var _ = Describe("Database chat sessions", func() {
 		initial := httptest.NewRecorder()
 		service.Handler().ServeHTTP(initial, requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{
 			ID: thread.ID, ThreadID: thread.ID, Trigger: "submit-message",
-			Runtime: &api.Model{Name: "gemini", Backend: api.BackendGemini},
+			Runtime: &api.Model{Name: "gemini", Mode: api.ModeAPI},
 			Messages: []aichat.UIMessage{{
 				ID: "user-message-1", Role: "user", Parts: []aichat.UIPart{{Type: "text", Text: "Edit the account"}},
 			}},
@@ -459,7 +461,7 @@ var _ = Describe("Database chat sessions", func() {
 		Expect(err).NotTo(HaveOccurred())
 		authority, err := aichat.NewDatabaseExecutionAuthority(db)
 		Expect(err).NotTo(HaveOccurred())
-		provider := &fakeStreamingProvider{backend: api.BackendGemini, events: []api.Event{
+		provider := &fakeStreamingProvider{runtime: api.RuntimeOf(api.Google, api.ModeAPI), events: []api.Event{
 			{Kind: api.EventToolUse, ToolCallID: "call-account-1", Tool: "accounts_edit", Input: map[string]any{"id": "acc-1"}},
 			{Kind: api.EventPermission, ToolCallID: "call-account-1", Tool: "accounts_edit"},
 		}}
@@ -477,7 +479,7 @@ var _ = Describe("Database chat sessions", func() {
 		response := httptest.NewRecorder()
 		service.Handler().ServeHTTP(response, requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{
 			ID: thread.ID, ThreadID: thread.ID, Trigger: "submit-message",
-			Runtime: &api.Model{Name: "gemini", Backend: api.BackendGemini},
+			Runtime: &api.Model{Name: "gemini", Mode: api.ModeAPI},
 			Messages: []aichat.UIMessage{{
 				ID: "user-approval-failure", Role: "user",
 				Parts: []aichat.UIPart{{Type: "text", Text: "Edit the account"}},

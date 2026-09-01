@@ -29,22 +29,24 @@ type databaseExecution struct {
 	run         *database.PromptRun
 	modelCallID uuid.UUID
 	model       string
-	backend     api.Backend
+	provider    *api.ModelProvider
+	mode        api.RuntimeMode
 	definitions []api.ToolDefinition
 	events      chan api.Event
 
-	mu                   sync.Mutex
-	finishMu             sync.Mutex
-	credential           *database.CallerToolCredential
-	runtime              *callertools.Runtime
-	endpoint             *api.CallerToolEndpoint
-	terminal             bool
-	suspended            bool
-	closed               bool
-	providerID           string
-	approvalIDs          map[string]uuid.UUID
-	providerToolUses     []api.Event
-	providerToolUseReady chan struct{}
+	mu                    sync.Mutex
+	finishMu              sync.Mutex
+	credential            *database.CallerToolCredential
+	runtime               *callertools.Runtime
+	endpoint              *api.CallerToolEndpoint
+	terminal              bool
+	terminalCommitStarted bool
+	suspended             bool
+	closed                bool
+	providerID            string
+	approvalIDs           map[string]uuid.UUID
+	providerToolUses      []api.Event
+	providerToolUseReady  chan struct{}
 }
 
 // finishModelCall persists a terminal model call with its priced cost breakdown.
@@ -58,17 +60,26 @@ func (e *databaseExecution) finishModelCall(
 	event api.Event,
 ) error {
 	e.mu.Lock()
-	model, backend := e.model, e.backend
+	model, provider := e.model, e.provider
 	e.mu.Unlock()
 	input := database.FinishChatModelCallInput{
 		ID: e.modelCallID, Status: status, StopReason: stopReason, Event: event,
-		ContextWindowTokens: ai.ContextWindowFor(backend, model),
+		ContextWindowTokens: ai.ContextWindowFor(provider, model),
 	}
 	if event.Usage != nil {
-		cost := ai.PriceUsage(backend, model, *event.Usage, event.CostUSD)
+		cost := ai.PriceUsage(provider, model, *event.Usage, event.CostUSD)
 		input.Cost = &cost
 	}
 	return e.db.FinishChatModelCall(ctx, input)
+}
+
+// providerKey is a provider descriptor's stored key, or "" when the runtime
+// resolved to no provider.
+func providerKey(p *api.ModelProvider) string {
+	if p == nil {
+		return ""
+	}
+	return p.Name
 }
 
 func (e *databaseExecution) CaptainSessionID() string { return e.session.ID.String() }
@@ -87,18 +98,19 @@ func (e *databaseExecution) BindRuntime(ctx context.Context, runtime api.Model) 
 	defer e.mu.Unlock()
 	runID, runVersion, runRuntime := e.run.ID, e.run.Version, e.run.Runtime
 	runRuntime.Resolved = runtimeSelection(api.Model{
-		Name: identity.Name, Backend: identity.Backend, Effort: runtime.Effort,
+		Name: identity.Model, Provider: identity.ToModel().Provider, Mode: identity.Mode, Effort: runtime.Effort,
 	})
 	var updatedRun *database.PromptRun
 	err = e.db.Transaction(ctx, func(tx *database.DB) error {
-		if bindErr := tx.SetSessionMetadataOnce(ctx, e.session.ID, threadRuntimeMetadataKey, identity); bindErr != nil {
+		if bindErr := tx.SetSessionMetadataOnce(ctx, e.session.ID, threadRuntimeMetadataKey,
+			runtimeSelection(identity.ToModel())); bindErr != nil {
 			if errors.Is(bindErr, database.ErrSessionConflict) {
 				return fmt.Errorf("%w: %v", ErrThreadRuntimeConflict, bindErr)
 			}
 			return bindErr
 		}
 		if updateErr := tx.UpdateChatModelCallRuntime(ctx, database.UpdateChatModelCallRuntimeInput{
-			ID: e.modelCallID, Model: identity.Name, Backend: string(identity.Backend), Effort: string(runtime.Effort),
+			ID: e.modelCallID, Model: identity.Model, Provider: identity.Provider, Mode: string(identity.Mode), Effort: string(runtime.Effort),
 		}); updateErr != nil {
 			return updateErr
 		}
@@ -110,8 +122,9 @@ func (e *databaseExecution) BindRuntime(ctx context.Context, runtime api.Model) 
 	if err != nil {
 		return err
 	}
-	e.model = identity.Name
-	e.backend = identity.Backend
+	e.model = identity.Model
+	e.provider = identity.ToModel().Provider
+	e.mode = identity.Mode
 	e.run = updatedRun
 	return nil
 }
@@ -127,7 +140,7 @@ func (e *databaseExecution) CallerTools() *api.CallerToolEndpoint {
 	return &endpoint
 }
 
-func (e *databaseExecution) startCallerTools(ctx context.Context, backend api.Backend) error {
+func (e *databaseExecution) startCallerTools(ctx context.Context, provider *api.ModelProvider, mode api.RuntimeMode) error {
 	var credentialID uuid.UUID
 	runtime, err := callertools.New(callertools.Options{
 		Definitions: e.definitions, SessionID: e.session.ID.String(),
@@ -150,7 +163,7 @@ func (e *databaseExecution) startCallerTools(ctx context.Context, backend api.Ba
 		policy[definition.Name] = definition.DefaultPermission
 	}
 	credential, err := e.db.CreateCallerToolCredential(ctx, database.CreateCallerToolCredentialInput{
-		SessionID: e.session.ID, PromptRunID: e.run.ID, Backend: backend,
+		SessionID: e.session.ID, PromptRunID: e.run.ID, Provider: providerKey(provider), Mode: mode,
 		SecretHash: runtime.CredentialHash(), Policy: policy,
 	})
 	if err != nil {
@@ -334,13 +347,14 @@ func (e *databaseExecution) Close(ctx context.Context) error {
 	}
 	e.closed = true
 	terminal := e.terminal
+	terminalCommitStarted := e.terminalCommitStarted
 	suspended := e.suspended
 	runtime := e.runtime
 	credential := e.credential
 	e.mu.Unlock()
 
 	var errs []error
-	if !terminal && !suspended {
+	if !terminal && !terminalCommitStarted && !suspended {
 		errs = append(errs, e.finish(ctx, false, "provider stream ended without a terminal event", api.Event{Kind: api.EventError, Error: "provider stream ended without a terminal event"}))
 	}
 	if credential != nil {
@@ -406,8 +420,18 @@ func (e *databaseExecution) bindProviderSession(ctx context.Context, providerID 
 	if err != nil {
 		return err
 	}
-	updated, err := e.db.UpdateSessionState(ctx, database.UpdateSessionStateInput{
-		ID: session.ID, ExpectedVersion: session.StateVersion, ProviderSessionID: &providerID,
+	var updated *database.Session
+	err = e.db.Transaction(ctx, func(tx *database.DB) error {
+		updated, err = tx.UpdateSessionState(ctx, database.UpdateSessionStateInput{
+			ID: session.ID, ExpectedVersion: session.StateVersion, ProviderSessionID: &providerID,
+		})
+		if err != nil {
+			return err
+		}
+		if transcript := transcriptSessionInput(session, e.provider, providerID); transcript != nil {
+			_, err = tx.CreateOrGetSession(ctx, *transcript)
+		}
+		return err
 	})
 	if err != nil {
 		return err

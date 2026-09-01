@@ -12,6 +12,11 @@ import (
 	"github.com/flanksource/captain/pkg/api"
 )
 
+// apiRuntime pins the api mode: message projection is the api path's contract
+// (the agent path carries a single prompt instead), and a bare catalog id now
+// takes openai's default mode, which is agent.
+var apiRuntime = &api.Model{Name: "openai/test-model", Mode: api.ModeAPI}
+
 var _ = Describe("chat message projection", func() {
 	DescribeTable("omits assistant messages without provider content",
 		func(parts []aichat.UIPart) {
@@ -20,7 +25,7 @@ var _ = Describe("chat message projection", func() {
 			response := httptest.NewRecorder()
 
 			service.Handler().ServeHTTP(response, requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{
-				Model: "openai/test-model",
+				Runtime: apiRuntime,
 				Messages: []aichat.UIMessage{
 					{Role: "user", Parts: []aichat.UIPart{{Type: "text", Text: "Review the transaction."}}},
 					{Role: "assistant", Parts: parts},
@@ -48,7 +53,7 @@ var _ = Describe("chat message projection", func() {
 		response := httptest.NewRecorder()
 
 		service.Handler().ServeHTTP(response, requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{
-			Model: "openai/test-model",
+			Runtime: apiRuntime,
 			Messages: []aichat.UIMessage{
 				{Role: "user", Parts: []aichat.UIPart{{Type: "text", Text: "Review the transaction."}}},
 				{Role: "assistant", Parts: []aichat.UIPart{
@@ -75,7 +80,7 @@ var _ = Describe("chat message projection", func() {
 		response := httptest.NewRecorder()
 
 		service.Handler().ServeHTTP(response, requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{
-			Model:    "openai/test-model",
+			Runtime:  apiRuntime,
 			Messages: []aichat.UIMessage{{Role: "user", Parts: []aichat.UIPart{{Type: "step-start"}}}},
 		}))
 
@@ -90,7 +95,7 @@ var _ = Describe("chat message projection", func() {
 		response := httptest.NewRecorder()
 
 		service.Handler().ServeHTTP(response, requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{
-			Model: "openai/test-model",
+			Runtime: apiRuntime,
 			Messages: []aichat.UIMessage{
 				{Role: "user", Parts: []aichat.UIPart{{Type: "text", Text: "Review the transaction."}}},
 				{Role: "assistant", Parts: []aichat.UIPart{{Type: "finish-step"}}},

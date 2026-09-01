@@ -75,6 +75,12 @@ type ServiceOptions struct {
 	// per provider, so two tools stating the same facts cannot be answered
 	// differently according to which provider loaded them.
 	ToolStrategies []api.PermissionStrategy
+	// ToolPolicy is the rule list this deployment installs beneath every turn —
+	// its group baselines and app-wide overrides. It sits under the per-turn
+	// preferences and rules, and applies to every tool source at once, which is
+	// what keeps the served catalog and the executor from answering differently
+	// for the same tool.
+	ToolPolicy api.PermissionPolicy
 }
 
 // Service is Captain's AI SDK-compatible HTTP chat service.
@@ -97,11 +103,25 @@ func NewService(options ServiceOptions) *Service {
 	}
 }
 
+// resolveOptions layers one turn's tool authority onto the deployment's. It is
+// shared by the chat turn and the approval resume so a tool that survived
+// resolution once resolves identically when the approved call continues.
+func (s *Service) resolveOptions(prefs api.ToolPreferences, policy api.PermissionPolicy) aitools.ResolveOptions {
+	return aitools.ResolveOptions{
+		Base:        s.options.ToolPolicy,
+		Preferences: prefs,
+		Policy:      policy,
+		Strategies:  s.options.ToolStrategies,
+	}
+}
+
 func (s *Service) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/chat", s.handleChat)
 	mux.HandleFunc("GET /api/chat/models", s.handleModels)
 	mux.HandleFunc("GET /api/chat/runtimes", s.handleRuntimes)
+	s.registerToolRoutes(mux)
+	s.registerRuntimeProfileRoutes(mux)
 	s.registerThreadRoutes(mux)
 	return mux
 }
@@ -213,7 +233,7 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	definitions, err := aitools.ResolveDefinitions(set.Definitions, aitools.ResolveOptions{Preferences: spec.ToolPreferences, Policy: spec.ToolPolicy, Strategies: s.options.ToolStrategies})
+	definitions, err := aitools.ResolveDefinitions(set.Definitions, s.resolveOptions(spec.ToolPreferences, spec.ToolPolicy))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -274,7 +294,7 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 			callerToolEvents = execution.Events()
 		}
 	}
-	if len(definitions) > 0 && isAgentBackend(config.Model.Backend) &&
+	if len(definitions) > 0 && config.Model.Mode == api.ModeAgent &&
 		(execution == nil || config.CallerTools == nil) {
 		http.Error(w, "agent caller tools require an authoritative Captain execution", http.StatusServiceUnavailable)
 		return
@@ -292,7 +312,7 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 	if len(definitions) > 0 {
 		capability, ok := api.ProviderAs[api.ToolCapableProvider](provider)
 		if !ok || !capability.SupportsCallerTools() {
-			http.Error(w, fmt.Sprintf("backend %q does not support caller tools", provider.GetBackend()), http.StatusBadRequest)
+			http.Error(w, fmt.Sprintf("runtime %s does not support caller tools", provider.GetRuntime()), http.StatusBadRequest)
 			return
 		}
 	}
@@ -338,7 +358,7 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 	}
 	costs := &TurnCosts{}
 	persisted := s.persistedEvents(streamContext, persistedEventOptions{
-		Request: chat, TurnID: turnID, Model: config.Model, Runtime: runtime, Costs: costs,
+		Request: chat, TurnID: turnID, Model: config.Model, Runtime: runtime, Costs: costs, Execution: execution,
 		terminalMetadata: terminalMetadata,
 	}, events)
 	if err := WriteEventStream(writer, persisted, EventStreamOptions{
@@ -489,8 +509,8 @@ func enforceThreadRuntime(thread *Thread, requested api.Model) error {
 		}
 		if !sameThreadRuntime(*thread.Runtime, identity) {
 			return requestError{status: http.StatusConflict, text: fmt.Sprintf(
-				"chat session runtime is locked to %s/%s, not %s/%s; fork the session to use a different model or backend",
-				thread.Runtime.Backend, thread.Runtime.Name, identity.Backend, identity.Name,
+				"chat session runtime is locked to %s/%s, not %s/%s; fork the session to use a different model or mode",
+				thread.Runtime.Runtime(), thread.Runtime.Model, identity.Runtime(), identity.Model,
 			)}
 		}
 	}
@@ -498,12 +518,17 @@ func enforceThreadRuntime(thread *Thread, requested api.Model) error {
 }
 
 func providerRuntime(provider api.Provider, configured api.Model) api.Model {
-	selected := api.Model{Name: strings.TrimSpace(provider.GetModel()), Backend: provider.GetBackend()}
+	runtime := provider.GetRuntime()
+	selectedProvider, _ := runtime.ModelProvider()
+	selected := api.Model{Name: strings.TrimSpace(provider.GetModel()), Provider: selectedProvider, Mode: runtime.Mode}
 	for _, candidate := range configured.Candidates() {
 		identity, err := threadRuntimeIdentity(candidate)
-		if err == nil && sameThreadRuntime(identity, selected) {
-			candidate.Name = identity.Name
-			candidate.Backend = identity.Backend
+		if err == nil && sameThreadRuntime(identity, api.RuntimeIdentityOf(selected)) {
+			candidate.Name = identity.Model
+			candidate.Mode = identity.Mode
+			if p, ok := api.ProviderByName(identity.Provider); ok {
+				candidate.Provider = p
+			}
 			return candidate
 		}
 	}
@@ -630,7 +655,7 @@ func (s *Service) persistEvent(ctx context.Context, threadID string, event api.E
 }
 
 func costBreakdownMetadata(model api.Model, usage api.Usage, providerCostUSD float64) *CostBreakdownMetadata {
-	cost := ai.PriceUsage(model.Backend, model.Name, usage, providerCostUSD)
+	cost := ai.PriceUsage(model.Provider, model.Name, usage, providerCostUSD)
 	return &CostBreakdownMetadata{
 		Model:        cost.Model,
 		InputUSD:     cost.InputCost,

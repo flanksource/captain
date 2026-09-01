@@ -106,7 +106,14 @@ func (s *Service) handleGetThread(w http.ResponseWriter, request *http.Request) 
 	if sessions, ok := store.(SessionReader); ok {
 		aggregate, err := sessions.GetSession(request.Context(), request.PathValue("id"))
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			status := http.StatusInternalServerError
+			switch {
+			case errors.Is(err, ErrHistoryUnavailable), errors.Is(err, database.ErrSessionConflict):
+				status = http.StatusConflict
+			case errors.Is(err, ErrThreadNotFound), errors.Is(err, database.ErrSessionNotFound):
+				status = http.StatusNotFound
+			}
+			http.Error(w, err.Error(), status)
 			return
 		}
 		if err := writeJSON(w, http.StatusOK, aggregate); err != nil {

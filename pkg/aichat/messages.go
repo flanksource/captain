@@ -74,6 +74,8 @@ func requestSpec(request ChatRequest, profile RuntimeProfile, attachments map[pa
 	if err != nil {
 		return api.ResolvedSpec{}, err
 	}
+	// A requested posture is a permissions concern, so it no longer has to
+	// conjure a sandbox to carry it — the profile's isolation setting stands.
 	user := api.SpecLayer{Name: "chat request", Scope: api.SpecLayerUser, Spec: api.Spec{
 		Model:           override,
 		Budget:          request.Budget,
@@ -104,7 +106,7 @@ func requestSpec(request ChatRequest, profile RuntimeProfile, attachments map[pa
 		if err != nil {
 			return api.ResolvedSpec{}, err
 		}
-		if isAgentBackend(spec.Backend) {
+		if spec.Mode == api.ModeAgent {
 			user, promptAttachments, err := agentPrompt(messages, request.ProviderSessionID != "")
 			if err != nil {
 				return api.ResolvedSpec{}, err
@@ -154,25 +156,25 @@ func chatModel(request ChatRequest, fallback api.Model) (api.Model, error) {
 	// Resolve, not just Expand: the browser sends the chat catalog's id form
 	// ("anthropic/claude-opus-5"), which Expand leaves untouched because it
 	// carries no compact-form ":" separator — keeping the provider glued to the
-	// name and the backend empty for the configured default agent to claim.
-	resolved, err := ai.ResolveModelSelectors(selected)
+	// name and the mode empty for the configured default to claim.
+	resolved, err := ai.Resolve(selected)
 	if err != nil {
 		return api.Model{}, fmt.Errorf("invalid chat runtime: %w", err)
 	}
 	if request.Runtime != nil && strings.TrimSpace(request.Model) != "" {
-		legacy, err := ai.ResolveModelSelectors(api.Model{Name: strings.TrimSpace(request.Model)})
+		// The catalog id names a model, never a mode, so it is resolved under the
+		// structured runtime's mode. Resolving it bare would take the provider's
+		// default instead and read as a conflict with the very runtime the client
+		// authored — the two fields would contradict each other by construction.
+		bare, err := ai.Resolve(api.Model{Name: strings.TrimSpace(request.Model), Mode: resolved.Mode})
 		if err != nil {
 			return api.Model{}, fmt.Errorf("invalid chat model %q: %w", request.Model, err)
 		}
-		if legacy.Name != resolved.Name || legacy.Backend != resolved.Backend {
-			return api.Model{}, fmt.Errorf("chat model %q conflicts with structured runtime %s/%s", request.Model, resolved.Backend, resolved.Name)
+		if bare.Name != resolved.Name || bare.Provider != resolved.Provider {
+			return api.Model{}, fmt.Errorf("chat model %q conflicts with structured runtime %s/%s", request.Model, api.RuntimeOf(resolved.Provider, resolved.Mode), resolved.Name)
 		}
 	}
 	return resolved, nil
-}
-
-func isAgentBackend(backend api.Backend) bool {
-	return backend == api.BackendClaudeAgent || backend == api.BackendCodexAgent
 }
 
 func canonicalMessages(messages []UIMessage, attachments map[partLocation]api.AttachmentRef) ([]api.Message, error) {

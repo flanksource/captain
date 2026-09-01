@@ -23,14 +23,14 @@ type fakeResolver struct {
 }
 
 type fakeProviderConfigSource struct {
-	backends []api.Backend
+	providers []string
 	config   api.Config
 	requests []aichat.ProviderConfigRequest
 	resolve  func(aichat.ProviderConfigRequest) (api.Config, error)
 }
 
-func (f *fakeProviderConfigSource) ConfiguredProviders(context.Context) ([]api.Backend, error) {
-	return append([]api.Backend(nil), f.backends...), nil
+func (f *fakeProviderConfigSource) ConfiguredProviders(context.Context) ([]string, error) {
+	return append([]string(nil), f.providers...), nil
 }
 
 func (f *fakeProviderConfigSource) ProviderConfig(_ context.Context, request aichat.ProviderConfigRequest) (api.Config, error) {
@@ -65,9 +65,9 @@ type fakeStreamingProvider struct {
 	specs               []api.Spec
 	execute             func(context.Context, api.Spec) (<-chan api.Event, error)
 	model               string
-	backend             api.Backend
+	runtime             api.Runtime
 	activeModel         string
-	activeBackend       api.Backend
+	activeRuntime       api.Runtime
 	supportsCallerTools *bool
 	interrupt           func(context.Context) error
 }
@@ -79,7 +79,7 @@ func (f *fakeStreamingProvider) Execute(context.Context, api.Spec) (*api.Respons
 func (f *fakeStreamingProvider) ExecuteStream(ctx context.Context, spec api.Spec) (<-chan api.Event, error) {
 	f.specs = append(f.specs, spec)
 	f.activeModel = spec.Name
-	f.activeBackend = spec.Backend
+	f.activeRuntime = api.RuntimeOf(spec.Model.Provider, spec.Model.Mode)
 	if f.execute != nil {
 		return f.execute(ctx, spec)
 	}
@@ -100,14 +100,14 @@ func (f *fakeStreamingProvider) GetModel() string {
 	}
 	return "test-model"
 }
-func (f *fakeStreamingProvider) GetBackend() api.Backend {
-	if f.backend != "" {
-		return f.backend
+func (f *fakeStreamingProvider) GetRuntime() api.Runtime {
+	if (f.runtime != api.Runtime{}) {
+		return f.runtime
 	}
-	if f.activeBackend != "" {
-		return f.activeBackend
+	if (f.activeRuntime != api.Runtime{}) {
+		return f.activeRuntime
 	}
-	return api.BackendOpenAI
+	return api.RuntimeOf(api.OpenAI, api.ModeAPI)
 }
 func (f *fakeStreamingProvider) SupportsCallerTools() bool {
 	return f.supportsCallerTools == nil || *f.supportsCallerTools
@@ -126,7 +126,7 @@ var _ = Describe("Captain aichat service", func() {
 			{ID: "anthropic/claude-sonnet", Provider: "anthropic", Label: "Claude", Availability: api.Availability{State: api.AvailabilityMissingCredential, Reason: "No Claude API credentials.", Remediation: "Configure credentials."}},
 			{ID: "openai/gpt", Provider: "openai", Label: "GPT", Availability: api.Availability{State: api.AvailabilityMissingCredential, Reason: "No OpenAI API credentials.", Remediation: "Configure credentials."}},
 		}}
-		source := &fakeProviderConfigSource{backends: []api.Backend{api.BackendOpenAI}}
+		source := &fakeProviderConfigSource{providers: []string{api.OpenAI.Name}}
 		service := aichat.NewService(aichat.ServiceOptions{Resolver: resolver, ProviderConfig: source})
 
 		response := httptest.NewRecorder()
@@ -145,11 +145,11 @@ var _ = Describe("Captain aichat service", func() {
 		resolver := &fakeResolver{runtimes: []api.RuntimeFamily{{
 			Family: "codex", Provider: "openai", CatalogPrefix: "openai",
 			Modes: []api.RuntimeModeEntry{{
-				Backend: "api", Adapter: string(api.BackendOpenAI), Kind: "api",
+				Mode: "api", Kind: "api",
 				Availability: api.Availability{State: api.AvailabilityMissingCredential, Reason: "No OpenAI API credentials.", Remediation: "Configure credentials."},
 			}},
 		}}}
-		source := &fakeProviderConfigSource{backends: []api.Backend{api.BackendOpenAI}}
+		source := &fakeProviderConfigSource{providers: []string{api.OpenAI.Name}}
 		service := aichat.NewService(aichat.ServiceOptions{Resolver: resolver, ProviderConfig: source})
 
 		response := httptest.NewRecorder()
@@ -162,11 +162,11 @@ var _ = Describe("Captain aichat service", func() {
 	})
 
 	It("serves schema-backed native runtime mappings", func() {
-		schema := api.RuntimeSchemaFor(api.BackendCodexCLI)
+		schema := api.RuntimeSchemaFor(api.OpenAI, api.ModeCLI)
 		resolver := &fakeResolver{runtimes: []api.RuntimeFamily{{
 			Family: "codex", Provider: "openai", CatalogPrefix: "openai",
 			Modes: []api.RuntimeModeEntry{{
-				Backend: "cli", Adapter: string(api.BackendCodexCLI), Kind: "cli",
+				Mode: "cli", Kind: "cli",
 				Availability: api.Available(), Schema: schema,
 			}},
 		}}}
@@ -187,7 +187,7 @@ var _ = Describe("Captain aichat service", func() {
 		}}
 		resolver := &fakeResolver{provider: provider}
 		source := &fakeProviderConfigSource{
-			backends: []api.Backend{api.BackendOpenAI},
+			providers: []string{api.OpenAI.Name},
 			config:   api.Config{APIKey: "request-token", APIURL: "https://tenant-x.example/ai"},
 		}
 		service := aichat.NewService(aichat.ServiceOptions{
@@ -203,7 +203,8 @@ var _ = Describe("Captain aichat service", func() {
 		}))
 		Expect(response.Code).To(Equal(http.StatusOK))
 		Expect(source.requests).To(HaveLen(1))
-		Expect(source.requests[0].Model.Backend).To(Equal(api.BackendOpenAI))
+		Expect(source.requests[0].Model.Provider).To(Equal(api.OpenAI))
+		Expect(source.requests[0].Model.Mode).To(Equal(api.ModeAPI))
 		Expect(source.requests[0].Model.Name).To(Equal("gpt-5.4"))
 		Expect(resolver.configs).To(HaveLen(1))
 		Expect(resolver.configs[0].APIKey).To(Equal("request-token"))
@@ -214,7 +215,7 @@ var _ = Describe("Captain aichat service", func() {
 		resolver := &fakeResolver{provider: &fakeStreamingProvider{}}
 		source := &fakeProviderConfigSource{resolve: func(request aichat.ProviderConfigRequest) (api.Config, error) {
 			config := request.Config
-			config.Model = api.Model{Name: "claude-sonnet-4-6", Backend: api.BackendAnthropic}
+			config.Model = api.Model{Name: "claude-sonnet-4-6", Mode: api.ModeAPI}
 			return config, nil
 		}}
 		service := aichat.NewService(aichat.ServiceOptions{
@@ -266,7 +267,7 @@ var _ = Describe("Captain aichat service", func() {
 			Profile: aichat.RuntimeProfileProviderFunc(func(context.Context) (aichat.RuntimeProfile, error) {
 				return mustRuntimeProfile(api.SpecLayer{
 					Name: "application", Scope: api.SpecLayerGlobal,
-					Spec: api.Spec{Model: api.Model{Name: "openai/test-model"}},
+					Spec: api.Spec{Model: api.Model{Name: "openai/test-model", Mode: api.ModeAPI}},
 					Constraints: api.RuntimeConstraints{Quotas: []api.UsageQuota{{
 						Name: "application-monthly", CostLimitUSD: 10, CostUsedUSD: 10,
 					}}},
@@ -286,14 +287,14 @@ var _ = Describe("Captain aichat service", func() {
 		resolver := &fakeResolver{models: aichat.ModelCatalogResponse{{
 			ID: "openai/test-model", Provider: "openai", Label: "Test", Configured: true,
 			Availability: api.Available(),
-			Runtime:      api.Model{Name: "test-model", Backend: api.BackendOpenAI},
+			Runtime:      api.Model{Name: "test-model", Mode: api.ModeAPI},
 		}}}
 		service := aichat.NewService(aichat.ServiceOptions{Resolver: resolver})
 
 		models := httptest.NewRecorder()
 		service.Handler().ServeHTTP(models, httptest.NewRequest(http.MethodGet, "/api/chat/models", nil))
 		Expect(models.Code).To(Equal(http.StatusOK))
-		Expect(models.Body.String()).To(MatchJSON(`[{"id":"openai/test-model","provider":"openai","label":"Test","runtime":{"model":"test-model","backend":"openai"},"reasoning":false,"temperature":false,"configured":true,"availability":{"state":"available"},"contextWindow":0,"inputMediaTypes":null}]`))
+		Expect(models.Body.String()).To(MatchJSON(`[{"id":"openai/test-model","provider":"openai","label":"Test","runtime":{"model":"test-model","mode":"api"},"reasoning":false,"temperature":false,"configured":true,"availability":{"state":"available"},"contextWindow":0,"inputMediaTypes":null}]`))
 	})
 
 	It("maps the HTTP request directly into api.Spec and streams provider events", func() {
@@ -305,7 +306,7 @@ var _ = Describe("Captain aichat service", func() {
 		service := aichat.NewService(aichat.ServiceOptions{
 			Resolver: resolver,
 			Profile: aichat.RuntimeProfileProviderFunc(func(context.Context) (aichat.RuntimeProfile, error) {
-				profile := mustRuntimeProfile(api.SpecLayer{Name: "application", Scope: api.SpecLayerGlobal, Spec: api.Spec{Model: api.Model{Name: "openai/test-model"}}})
+				profile := mustRuntimeProfile(api.SpecLayer{Name: "application", Scope: api.SpecLayerGlobal, Spec: api.Spec{Model: api.Model{Name: "openai/test-model", Mode: api.ModeAPI}}})
 				profile.System = "Use application tools."
 				profile.ProviderConfig = api.Config{APIURL: "https://example.com/ai", ProjectName: "tenant-x"}
 				return profile, nil
@@ -337,7 +338,8 @@ var _ = Describe("Captain aichat service", func() {
 		// reach the provider split into a concrete name + backend, not glued
 		// together with the backend left for a default to claim.
 		Expect(spec.Model.Name).To(Equal("test-model"))
-		Expect(spec.Model.Backend).To(Equal(api.BackendOpenAI))
+		Expect(spec.Model.Provider).To(Equal(api.OpenAI))
+		Expect(spec.Model.Mode).To(Equal(api.ModeAPI))
 		Expect(spec.Model.Effort).To(Equal(api.EffortHigh))
 		Expect(spec.ToolPreferences).To(Equal(api.ToolPreferences{"billing": api.ToolPolicyAsk}))
 		// A requested posture no longer implies an isolation boundary: the two are
@@ -363,7 +365,7 @@ var _ = Describe("Captain aichat service", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(store.SetProviderSession(context.Background(), thread.ID, "provider-session-1")).To(Succeed())
 		provider := &fakeStreamingProvider{
-			backend: api.BackendClaudeAgent,
+			runtime: api.RuntimeOf(api.Anthropic, api.ModeAgent),
 			events:  []api.Event{{Kind: api.EventResult, Success: true}},
 		}
 		resolver := &fakeResolver{provider: provider}
@@ -378,7 +380,7 @@ var _ = Describe("Captain aichat service", func() {
 		service.Handler().ServeHTTP(response, requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{
 			ID:                thread.ID,
 			Trigger:           "submit-message",
-			Runtime:           &api.Model{Name: "sonnet", Backend: api.BackendClaudeAgent},
+			Runtime:           &api.Model{Name: "sonnet", Mode: api.ModeAgent},
 			ThreadID:          thread.ID,
 			ProviderSessionID: "provider-session-1",
 			Messages: []aichat.UIMessage{{
@@ -391,7 +393,8 @@ var _ = Describe("Captain aichat service", func() {
 		Expect(provider.specs[0].Messages).To(BeNil())
 		Expect(provider.specs[0].Prompt.System).To(Equal("Use accounting tools."))
 		Expect(provider.specs[0].Prompt.User).To(Equal("inspect the invoice"))
-		Expect(resolver.configs[0].Model.Backend).To(Equal(api.BackendClaudeAgent))
+		Expect(resolver.configs[0].Model.Provider).To(Equal(api.Anthropic))
+		Expect(resolver.configs[0].Model.Mode).To(Equal(api.ModeAgent))
 		Expect(resolver.configs[0].CaptainSessionID).To(Equal(thread.ID))
 		Expect(resolver.configs[0].SessionID).To(Equal("provider-session-1"))
 	})

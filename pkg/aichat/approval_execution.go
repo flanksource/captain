@@ -67,7 +67,7 @@ func (s *Service) resumeToolApproval(ctx context.Context, threadID string, conti
 	if err != nil {
 		return false, err
 	}
-	definitions, err := aitools.ResolveDefinitions(set.Definitions, aitools.ResolveOptions{Preferences: continuation.Spec.ToolPreferences, Policy: continuation.Spec.ToolPolicy, Strategies: s.options.ToolStrategies})
+	definitions, err := aitools.ResolveDefinitions(set.Definitions, s.resolveOptions(continuation.Spec.ToolPreferences, continuation.Spec.ToolPolicy))
 	if err != nil {
 		return false, err
 	}
@@ -94,7 +94,7 @@ func (s *Service) resumeToolApproval(ctx context.Context, threadID string, conti
 	if len(definitions) > 0 {
 		capability, ok := api.ProviderAs[api.ToolCapableProvider](provider)
 		if !ok || !capability.SupportsCallerTools() {
-			return false, fmt.Errorf("backend %q does not support caller tools", provider.GetBackend())
+			return false, fmt.Errorf("runtime %s does not support caller tools", provider.GetRuntime())
 		}
 	}
 	seed, err := s.awaitSuspendedSeed(ctx, threadID, execution.TurnID())
@@ -123,7 +123,7 @@ func (s *Service) resumeToolApproval(ctx context.Context, threadID string, conti
 	// A resumed approval writes no SSE stream, so no TurnCosts sink is needed;
 	// the thread total is recomputed from the database on the next read.
 	resumed := s.persistedEvents(streamContext, persistedEventOptions{
-		Request: request, TurnID: execution.TurnID(), Model: continuation.Spec.Model, Runtime: runtime,
+		Request: request, TurnID: execution.TurnID(), Model: continuation.Spec.Model, Runtime: runtime, Execution: execution,
 		terminalMetadata: terminalMetadataContext{
 			CaptainSessionID:  execution.CaptainSessionID(),
 			ProviderSessionID: config.SessionID,

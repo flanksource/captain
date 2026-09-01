@@ -31,7 +31,10 @@ var _ = Describe("chat session titles", func() {
 	submit := func(service *aichat.Service, threadID, text string) *httptest.ResponseRecorder {
 		response := httptest.NewRecorder()
 		service.Handler().ServeHTTP(response, requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{
-			ID: threadID, ThreadID: threadID, Trigger: "submit-message", Model: "openai/test-model",
+			// The api mode: these specs are about message-mode projection, and a bare
+			// catalog id would now take openai's agent default.
+			ID: threadID, ThreadID: threadID, Trigger: "submit-message",
+			Runtime: &api.Model{Name: "openai/test-model", Mode: api.ModeAPI},
 			Messages: []aichat.UIMessage{{
 				ID: "message-" + threadID, Role: "user", Parts: []aichat.UIPart{{Type: "text", Text: text}},
 			}},
@@ -45,7 +48,8 @@ var _ = Describe("chat session titles", func() {
 		Expect(err).NotTo(HaveOccurred())
 		service, _ := newService(store, nil, nil)
 
-		Expect(submit(service, thread.ID, opener).Code).To(Equal(http.StatusOK))
+		response := submit(service, thread.ID, opener)
+		Expect(response.Code).To(Equal(http.StatusOK), response.Body.String())
 
 		named, err := store.Get(context.Background(), thread.ID)
 		Expect(err).NotTo(HaveOccurred())
@@ -64,7 +68,8 @@ var _ = Describe("chat session titles", func() {
 			Text: `{"title":"Account dimension backfill"}`, Success: true,
 		}}, nil)
 
-		Expect(submit(service, thread.ID, opener).Code).To(Equal(http.StatusOK))
+		response := submit(service, thread.ID, opener)
+		Expect(response.Code).To(Equal(http.StatusOK), response.Body.String())
 
 		named, err := store.Get(context.Background(), thread.ID)
 		Expect(err).NotTo(HaveOccurred())
@@ -80,7 +85,8 @@ var _ = Describe("chat session titles", func() {
 			Handler: func(context.Context, map[string]any) (any, error) { return nil, nil },
 		}})
 
-		Expect(submit(service, thread.ID, opener).Code).To(Equal(http.StatusOK))
+		response := submit(service, thread.ID, opener)
+		Expect(response.Code).To(Equal(http.StatusOK), response.Body.String())
 
 		Expect(provider.specs).To(HaveLen(1))
 		Expect(provider.specs[0].Messages[0].Role).To(Equal(api.RoleSystem))
@@ -94,7 +100,8 @@ var _ = Describe("chat session titles", func() {
 		Expect(err).NotTo(HaveOccurred())
 		service, provider := newService(store, nil, nil)
 
-		Expect(submit(service, thread.ID, opener).Code).To(Equal(http.StatusOK))
+		response := submit(service, thread.ID, opener)
+		Expect(response.Code).To(Equal(http.StatusOK), response.Body.String())
 
 		Expect(provider.specs).To(HaveLen(1))
 		Expect(provider.specs[0].Prompt.AppendSystem).To(BeEmpty())
@@ -120,7 +127,8 @@ var _ = Describe("chat session titles", func() {
 		Expect(json.Unmarshal(rename.Body.Bytes(), &renamed)).To(Succeed())
 		Expect(renamed.Title).To(Equal("FY25 dimension cleanup"))
 
-		Expect(submit(service, thread.ID, opener).Code).To(Equal(http.StatusOK))
+		response := submit(service, thread.ID, opener)
+		Expect(response.Code).To(Equal(http.StatusOK), response.Body.String())
 
 		stored, err := store.Get(context.Background(), thread.ID)
 		Expect(err).NotTo(HaveOccurred())
