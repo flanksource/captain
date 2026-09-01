@@ -1,5 +1,9 @@
 -- phase: post
 
+-- The backend column split into provider+mode, and CREATE OR REPLACE VIEW
+-- cannot change a view's column set. Drop first so the new shape lands.
+DROP VIEW IF EXISTS public.captain_session_overview CASCADE;
+
 CREATE OR REPLACE VIEW public.captain_session_overview
 WITH (security_barrier = true)
 AS
@@ -70,7 +74,8 @@ SELECT
   COALESCE(file_stats.file_read_count, 0) AS file_read_count,
   COALESCE(file_stats.file_written_count, 0) AS file_written_count,
   latest_call.model,
-  latest_call.backend,
+  latest_call.provider AS model_provider,
+  latest_call.mode AS model_mode,
   latest_call.effort,
   latest_call.context_tokens,
   latest_call.context_window_tokens,
@@ -119,7 +124,8 @@ SELECT
   COALESCE(call_stats.cache_write_cost, 0::numeric) AS cache_write_cost,
   -- Claude's whole-session client estimate has no per-call attribution.
   s.claude_cli_cost_usd,
-  s.claude_cli_cost_observed_at
+  s.claude_cli_cost_observed_at,
+  s.parent_relation
 FROM public.captain_sessions s
 LEFT JOIN LATERAL (
   SELECT p.*
@@ -194,7 +200,8 @@ LEFT JOIN LATERAL (
 LEFT JOIN LATERAL (
   SELECT
     c.model,
-    c.backend,
+    c.provider,
+    c.mode,
     c.effort,
     c.context_tokens,
     c.context_window_tokens
@@ -205,9 +212,22 @@ LEFT JOIN LATERAL (
   LIMIT 1
 ) latest_call ON true
 LEFT JOIN LATERAL (
+  WITH RECURSIVE agents AS (
+    SELECT child.id
+    FROM public.captain_sessions child
+    WHERE child.root_session_id = s.id
+      AND (
+        (child.parent_session_id = s.id AND child.parent_relation = 'agent')
+        OR (child.parent_session_id IS NULL AND child.parent_relation IS NULL)
+      )
+    UNION ALL
+    SELECT child.id
+    FROM public.captain_sessions child
+    JOIN agents parent ON child.parent_session_id = parent.id
+    WHERE child.parent_relation = 'agent'
+  )
   SELECT count(*)::bigint + 1 AS agent_count
-  FROM public.captain_sessions child
-  WHERE child.root_session_id = s.id
+  FROM agents
 ) agent_stats ON true
 LEFT JOIN LATERAL (
   SELECT count(*)::bigint AS prompt_run_count

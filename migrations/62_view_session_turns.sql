@@ -1,5 +1,9 @@
 -- phase: post
 
+-- The backend column split into provider+mode, and CREATE OR REPLACE VIEW
+-- cannot change a view's column set. Drop first so the new shape lands.
+DROP VIEW IF EXISTS public.captain_session_turns CASCADE;
+
 CREATE OR REPLACE VIEW public.captain_session_turns
 WITH (security_barrier = true)
 AS
@@ -21,7 +25,8 @@ SELECT
     ELSE EXTRACT(EPOCH FROM COALESCE(t.ended_at, clock_timestamp()) - t.started_at)
   END AS duration_seconds,
   latest_call.model,
-  latest_call.backend,
+  latest_call.provider AS model_provider,
+  latest_call.mode AS model_mode,
   latest_call.effort,
   latest_call.context_tokens,
   latest_call.context_window_tokens,
@@ -96,7 +101,7 @@ LEFT JOIN LATERAL (
   WHERE c.turn_id = t.id
 ) call_stats ON true
 LEFT JOIN LATERAL (
-  SELECT c.model, c.backend, c.effort, c.context_tokens, c.context_window_tokens
+  SELECT c.model, c.provider, c.mode, c.effort, c.context_tokens, c.context_window_tokens
   FROM public.captain_model_calls c
   WHERE c.turn_id = t.id
   ORDER BY COALESCE(c.ended_at, c.started_at, c.created_at) DESC, c.call_index DESC

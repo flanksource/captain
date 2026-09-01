@@ -1,5 +1,9 @@
 -- phase: post
 
+-- The backend column split into provider+mode, and CREATE OR REPLACE VIEW
+-- cannot change a view's column set. Drop first so the new shape lands.
+DROP VIEW IF EXISTS public.captain_session_transcript CASCADE;
+
 CREATE OR REPLACE VIEW public.captain_session_transcript
 WITH (security_barrier = true)
 AS
@@ -17,7 +21,8 @@ SELECT
   m.occurred_at,
   m.recorded_at,
   c.model,
-  c.backend,
+  c.provider AS model_provider,
+  c.mode AS model_mode,
   c.effort,
   c.status AS model_call_status,
   -- Appended after initial release: CREATE OR REPLACE VIEW only allows adding

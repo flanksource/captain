@@ -122,8 +122,18 @@ table "captain_model_calls" {
     null = false
     type = text
   }
-  column "backend" {
-    null = false
+  # provider and mode replace the composite `backend` column. Both are nullable
+  # because the column never had one vocabulary: aichat and prompt runs wrote an
+  # adapter id (recoverable as both axes), pkg/monitor wrote a transcript source
+  # ("claude"/"codex" — provider recoverable, mode never known), and the ingest
+  # and import paths wrote "unknown"/"legacy" (neither known). NULL records that
+  # honestly rather than guessing a mode that was never observed.
+  column "provider" {
+    null = true
+    type = text
+  }
+  column "mode" {
+    null = true
     type = text
   }
   column "effort" {
