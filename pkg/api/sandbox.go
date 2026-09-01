@@ -18,10 +18,11 @@ type (
 )
 
 const (
-	SandboxNone      = registry.SandboxNone
-	SandboxSRT       = registry.SandboxSRT
-	SandboxContainer = registry.SandboxContainer
-	SandboxGitAgent  = registry.SandboxGitAgent
+	SandboxOff         = registry.SandboxOff
+	SandboxNative      = registry.SandboxNative
+	SandboxDocker      = registry.SandboxDocker
+	SandboxGitAgent    = registry.SandboxGitAgent
+	SandboxSRTInternal = registry.SandboxSRTInternal
 
 	CapabilityWrapCommand      = registry.CapabilityWrapCommand
 	CapabilityRemoteExec       = registry.CapabilityRemoteExec
@@ -29,7 +30,7 @@ const (
 	CapabilityEgressProxy      = registry.CapabilityEgressProxy
 )
 
-// ParseSandboxKind normalizes a kind token; empty resolves to SandboxNone.
+// ParseSandboxKind normalizes a selectable mode token; empty resolves to Off.
 func ParseSandboxKind(s string) (SandboxKind, bool) { return registry.ParseSandboxKind(s) }
 
 // SandboxFor returns the static descriptor for a kind.
@@ -37,6 +38,15 @@ func SandboxFor(kind SandboxKind) (*SandboxDescriptor, bool) { return registry.S
 
 // AllSandboxes lists every sandbox adapter descriptor in canonical order.
 func AllSandboxes() []*SandboxDescriptor { return registry.AllSandboxes() }
+
+// AllSandboxModes lists the public modes in canonical selector order.
+func AllSandboxModes() []SandboxKind {
+	modes := make([]SandboxKind, len(AllSandboxes()))
+	for i, sandbox := range AllSandboxes() {
+		modes[i] = sandbox.Kind
+	}
+	return modes
+}
 
 // SandboxKindList renders the adapter kinds as comma-separated text for
 // help/error strings.

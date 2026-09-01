@@ -12,9 +12,9 @@ import (
 // zero (a *bool false, a *int 0) counts as set instead of being read as unset.
 // Tool-approval resume state is indivisible: it is a snapshot of one suspended
 // turn, and half of one snapshot layered over half of another describes no turn
-// that ever happened. A sandbox ref is indivisible for the same reason: a
-// per-prompt sandbox replaces the global one wholesale, never key-wise — half
-// of one backend's selection over half of another names no backend at all.
+// that ever happened. SandboxRef replacement is handled by Spec.Merge: equal
+// modes merge their provider-neutral policy; changing modes replaces the whole
+// boundary so settings cannot leak between isolation mechanisms.
 func MergePolicy() merge.Policy {
 	return registry.MergePolicy().With(merge.Policy{
 		Replace: []any{
@@ -47,7 +47,12 @@ func MergePolicy() merge.Policy {
 // either, so a merged spec can be edited without reaching back into the config
 // it inherited from.
 func (s Spec) Merge(override Spec) Spec {
-	return merge.Apply(s, override, MergePolicy())
+	merged := merge.Apply(s, override, MergePolicy())
+	if s.Sandbox != nil && override.Sandbox != nil && s.Sandbox.Mode == override.Sandbox.Mode {
+		resolved := merge.Apply(*s.Sandbox, *override.Sandbox, MergePolicy())
+		merged.Sandbox = &resolved
+	}
+	return merged
 }
 
 // WithoutSession returns s stripped of everything that binds it to a prior

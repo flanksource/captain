@@ -24,11 +24,11 @@ func (c Cost) Pretty() clickyapi.Text {
 
 // Pretty renders a one-line permissions summary instead of a noisy field dump.
 func (p Permissions) Pretty() clickyapi.Text {
-	mode := string(p.Mode)
-	if mode == "" {
-		mode = "default"
+	t := clickyapi.Text{}
+	if p.Mode != "" {
+		t = t.Appendf("mode=%s · ", p.Mode)
 	}
-	t := clickyapi.Text{}.Append("mode=").Append(mode, "font-medium")
+	t = t.Append("tools=default", "font-medium")
 	if n := len(p.Tools.AllowList()); n > 0 {
 		t = t.Appendf(" · %d allow", n)
 	}
@@ -56,6 +56,11 @@ func (s Spec) Pretty() clickyapi.Text {
 		t = t.NewLine().Append(fmt.Sprintf("  budget: $%.2f / %d tokens", s.Budget.Cost, s.Budget.MaxTokens))
 	}
 	t = t.NewLine().Append("  perms: ").Add(s.Permissions.Pretty())
+	if s.Sandbox != nil {
+		// The permission posture prints with the other permissions above; the
+		// sandbox line is the isolation boundary only.
+		t = t.NewLine().Append("  sandbox: ").Append(string(s.Sandbox.Mode), "font-medium")
+	}
 	if cwd := s.Cwd(); cwd != "" {
 		t = t.NewLine().Append("  ").Add(icons.Folder).Space().Append(cwd, "font-medium")
 	}

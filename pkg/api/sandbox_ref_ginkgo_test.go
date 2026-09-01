@@ -14,8 +14,8 @@ var _ = Describe("SandboxRef", func() {
 	DescribeTable("round-trips the scalar form",
 		func(marshal func(any) ([]byte, error), decode func([]byte, any) error) {
 			var ref SandboxRef
-			Expect(decode(mustMarshal(marshal, SandboxRef{Backend: "git-agent"}), &ref)).To(Succeed())
-			Expect(ref).To(Equal(SandboxRef{Backend: "git-agent"}))
+			Expect(decode(mustMarshal(marshal, SandboxRef{Mode: SandboxNative}), &ref)).To(Succeed())
+			Expect(ref).To(Equal(SandboxRef{Mode: SandboxNative}))
 		},
 		Entry("JSON", json.Marshal, json.Unmarshal),
 		Entry("YAML", yaml.Marshal, yaml.Unmarshal),
@@ -24,9 +24,10 @@ var _ = Describe("SandboxRef", func() {
 	DescribeTable("round-trips the object form",
 		func(marshal func(any) ([]byte, error), decode func([]byte, any) error) {
 			full := SandboxRef{
-				Backend: "prod-pool",
-				Agent:   "worker-01",
-				Policy:  &SandboxPolicy{Paths: []string{"pkg/**", "!**/*.pem"}, MaxAttempts: 3},
+				Mode:     SandboxGitAgent,
+				Backend:  "prod-pool",
+				Agent:    "worker-01",
+				Dispatch: &SandboxDispatchPolicy{Paths: []string{"pkg/**", "!**/*.pem"}, MaxAttempts: 3},
 			}
 			var ref SandboxRef
 			Expect(decode(mustMarshal(marshal, full), &ref)).To(Succeed())
@@ -36,61 +37,50 @@ var _ = Describe("SandboxRef", func() {
 		Entry("YAML", yaml.Marshal, yaml.Unmarshal),
 	)
 
-	It("decodes a bare YAML scalar", func() {
+	It("decodes a bare YAML mode", func() {
 		var ref SandboxRef
 		Expect(yaml.Unmarshal([]byte(`git-agent`), &ref)).To(Succeed())
-		Expect(ref).To(Equal(SandboxRef{Backend: "git-agent"}))
+		Expect(ref).To(Equal(SandboxRef{Mode: SandboxGitAgent}))
 	})
 
-	It("emits the scalar form when only the backend is set", func() {
-		encoded, err := yaml.Marshal(SandboxRef{Backend: "prod-pool"})
+	It("emits the scalar form when only the mode is set", func() {
+		encoded, err := yaml.Marshal(SandboxRef{Mode: SandboxDocker})
 		Expect(err).NotTo(HaveOccurred())
-		Expect(strings.TrimSpace(string(encoded))).To(Equal("prod-pool"))
+		Expect(strings.TrimSpace(string(encoded))).To(Equal("docker"))
 	})
 
-	It("rejects unknown object keys despite the custom unmarshaler", func() {
+	DescribeTable("rejects unknown object keys",
+		func(decode func([]byte, any) error, document string) {
+			var ref SandboxRef
+			Expect(decode([]byte(document), &ref)).To(MatchError(ContainSubstring("field")))
+		},
+		Entry("JSON", json.Unmarshal, `{"mod":"native"}`),
+		Entry("YAML", yaml.Unmarshal, "mod: native"),
+	)
+
+	It("rejects unknown nested policy keys", func() {
 		var ref SandboxRef
-		err := yaml.Unmarshal([]byte("backed: container"), &ref)
-		Expect(err).To(MatchError(ContainSubstring(`unknown sandbox key "backed"`)))
+		err := yaml.Unmarshal([]byte("mode: native\npolicy: {network: {allowedDomain: [example.com]}}"), &ref)
+		Expect(err).To(MatchError(ContainSubstring("allowedDomain")))
 	})
 
-	It("rejects unknown object keys in JSON too", func() {
-		var ref SandboxRef
-		err := json.Unmarshal([]byte(`{"backed":"container"}`), &ref)
-		Expect(err).To(MatchError(ContainSubstring("unknown field")))
-	})
-
-	It("leaves the receiver unset on explicit JSON null", func() {
-		ref := SandboxRef{Backend: "keep"}
+	It("leaves the receiver unchanged on explicit JSON null", func() {
+		ref := SandboxRef{Mode: SandboxNative}
 		Expect(json.Unmarshal([]byte(`null`), &ref)).To(Succeed())
-		Expect(ref.Backend).To(Equal("keep"))
+		Expect(ref).To(Equal(SandboxRef{Mode: SandboxNative}))
 	})
 
-	It("rejects an empty scalar backend", func() {
-		err := SandboxRef{}.Validate()
-		Expect(err).To(MatchError(ContainSubstring("must name a backend or adapter kind")))
-	})
-
-	It("rejects unknown policy keys", func() {
-		var ref SandboxRef
-		err := yaml.Unmarshal([]byte("backend: p\npolicy: {maxAttempt: 3}"), &ref)
-		Expect(err).To(MatchError(ContainSubstring(`unknown sandbox policy key "maxAttempt"`)))
-	})
-
-	It("declares both forms in its JSON schema", func() {
+	It("declares only the four public modes in its JSON schema", func() {
 		schema := SandboxRef{}.JSONSchema()
 		Expect(schema.OneOf).To(HaveLen(2))
-		Expect(schema.OneOf[0].Type).To(Equal("string"))
-		Expect(schema.OneOf[1].Type).To(Equal("object"))
+		Expect(schema.OneOf[0].Enum).To(Equal(enumValues(AllSandboxModes())))
+		Expect(schema.OneOf[1].Required).To(Equal([]string{"mode"}))
 	})
 
-	It("rejects overrides with no backend", func() {
-		err := SandboxRef{Agent: "worker-01"}.Validate()
-		Expect(err).To(MatchError(ContainSubstring("require a backend")))
-	})
-
-	It("rejects a negative attempt bound", func() {
-		err := SandboxRef{Backend: "p", Policy: &SandboxPolicy{MaxAttempts: -1}}.Validate()
+	It("rejects a negative dispatch attempt bound", func() {
+		err := SandboxRef{
+			Mode: SandboxGitAgent, Dispatch: &SandboxDispatchPolicy{MaxAttempts: -1},
+		}.Validate()
 		Expect(err).To(MatchError(ContainSubstring("maxAttempts")))
 	})
 })
@@ -98,7 +88,7 @@ var _ = Describe("SandboxRef", func() {
 var _ = Describe("Spec.Sandbox", func() {
 	DescribeTable("survives a Spec marshal round-trip",
 		func(marshal func(any) ([]byte, error), decode func([]byte, any) error) {
-			spec := Spec{Sandbox: &SandboxRef{Backend: "prod-pool", Agent: "worker-01"}}
+			spec := Spec{Sandbox: &SandboxRef{Mode: SandboxGitAgent, Backend: "prod-pool", Agent: "worker-01"}}
 			var decoded Spec
 			Expect(decode(mustMarshal(marshal, spec), &decoded)).To(Succeed())
 			Expect(decoded.Sandbox).To(Equal(spec.Sandbox))
@@ -107,31 +97,15 @@ var _ = Describe("Spec.Sandbox", func() {
 		Entry("YAML", yaml.Marshal, yaml.Unmarshal),
 	)
 
-	It("replaces wholesale on merge rather than merging key-wise", func() {
-		base := Spec{Sandbox: &SandboxRef{Backend: "prod-pool", Agent: "worker-01"}}
-		override := Spec{Sandbox: &SandboxRef{Backend: "local-docker"}}
-
-		merged := base.Merge(override)
-
-		Expect(merged.Sandbox).To(Equal(&SandboxRef{Backend: "local-docker"}))
-	})
-
 	It("keeps the base sandbox when the override has none", func() {
-		base := Spec{Sandbox: &SandboxRef{Backend: "prod-pool"}}
-
-		merged := base.Merge(Spec{})
-
-		Expect(merged.Sandbox).To(Equal(&SandboxRef{Backend: "prod-pool"}))
+		base := Spec{Sandbox: &SandboxRef{Mode: SandboxDocker, Backend: "prod-pool"}}
+		Expect(base.Merge(Spec{}).Sandbox).To(Equal(base.Sandbox))
 	})
 })
 
-// specMarshal is a hand-maintained mirror of Spec; a field present in one and
-// absent from the other silently disappears on marshal. This test turns that
-// silent loss into a failure.
 var _ = Describe("Spec/specMarshal mirror", func() {
 	It("declares the same serialized fields in both structs", func() {
-		Expect(jsonTagSet(reflect.TypeOf(Spec{}))).To(
-			ConsistOf(jsonTagSet(reflect.TypeOf(specMarshal{}))))
+		Expect(jsonTagSet(reflect.TypeOf(Spec{}))).To(ConsistOf(jsonTagSet(reflect.TypeOf(specMarshal{}))))
 	})
 })
 
@@ -151,8 +125,8 @@ func jsonTagSet(t reflect.Type) []string {
 	return tags
 }
 
-func mustMarshal(marshal func(any) ([]byte, error), v any) []byte {
-	encoded, err := marshal(v)
+func mustMarshal(marshal func(any) ([]byte, error), value any) []byte {
+	encoded, err := marshal(value)
 	Expect(err).NotTo(HaveOccurred())
 	return encoded
 }

@@ -17,7 +17,7 @@ func TestCostPretty(t *testing.T) {
 
 func TestSpecPretty(t *testing.T) {
 	got := sampleSpec().Pretty().String()
-	for _, want := range []string{"Spec", "claude-sonnet-4-6", "effort=xhigh", "mode=acceptEdits", "/repo"} {
+	for _, want := range []string{"Spec", "claude-sonnet-4-6", "effort=xhigh", "sandbox: native", "mode=acceptEdits", "/repo"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("Spec.Pretty() = %q, want substring %q", got, want)
 		}

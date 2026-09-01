@@ -34,7 +34,7 @@ func (d sandboxDecorator) Unwrap() api.Sandbox { return d.inner }
 
 var _ = Describe("SandboxAs", func() {
 	It("finds a capability through nested decorators", func() {
-		sandbox := sandboxDecorator{inner: sandboxDecorator{inner: wrappingSandboxStub{sandboxStub{kind: api.SandboxSRT}}}}
+		sandbox := sandboxDecorator{inner: sandboxDecorator{inner: wrappingSandboxStub{sandboxStub{kind: api.SandboxDocker}}}}
 
 		wrapper, ok := api.SandboxAs[api.CommandWrapper](sandbox)
 
@@ -45,7 +45,7 @@ var _ = Describe("SandboxAs", func() {
 	})
 
 	It("reports absence when no layer implements the capability", func() {
-		sandbox := sandboxDecorator{inner: sandboxStub{kind: api.SandboxNone}}
+		sandbox := sandboxDecorator{inner: sandboxStub{kind: api.SandboxOff}}
 
 		_, ok := api.SandboxAs[api.RemoteExecutor](sandbox)
 
@@ -55,32 +55,32 @@ var _ = Describe("SandboxAs", func() {
 
 var _ = Describe("NewSandbox", func() {
 	It("constructs the registered adapter for a kind", func() {
-		api.RegisterSandbox(api.SandboxNone, func(cfg api.SandboxConfig) (api.Sandbox, error) {
-			return sandboxStub{kind: api.SandboxNone}, nil
+		api.RegisterSandbox(api.SandboxOff, func(cfg api.SandboxConfig) (api.Sandbox, error) {
+			return sandboxStub{kind: api.SandboxOff}, nil
 		})
 
-		sandbox, err := api.NewSandbox(api.SandboxConfig{Kind: api.SandboxNone})
+		sandbox, err := api.NewSandbox(api.SandboxConfig{Kind: api.SandboxOff})
 
 		Expect(err).NotTo(HaveOccurred())
-		Expect(sandbox.Kind()).To(Equal(api.SandboxNone))
+		Expect(sandbox.Kind()).To(Equal(api.SandboxOff))
 	})
 
-	It("defaults an empty kind to none", func() {
-		api.RegisterSandbox(api.SandboxNone, func(cfg api.SandboxConfig) (api.Sandbox, error) {
-			return sandboxStub{kind: api.SandboxNone}, nil
+	It("defaults an empty kind to off", func() {
+		api.RegisterSandbox(api.SandboxOff, func(cfg api.SandboxConfig) (api.Sandbox, error) {
+			return sandboxStub{kind: api.SandboxOff}, nil
 		})
 
 		sandbox, err := api.NewSandbox(api.SandboxConfig{})
 
 		Expect(err).NotTo(HaveOccurred())
-		Expect(sandbox.Kind()).To(Equal(api.SandboxNone))
+		Expect(sandbox.Kind()).To(Equal(api.SandboxOff))
 	})
 
 	It("rejects an unknown kind, naming the valid set", func() {
 		_, err := api.NewSandbox(api.SandboxConfig{Kind: "warp-drive"})
 
 		Expect(err).To(MatchError(ContainSubstring(`unknown sandbox kind "warp-drive"`)))
-		Expect(err).To(MatchError(ContainSubstring("none, srt, container, git-agent")))
+		Expect(err).To(MatchError(ContainSubstring("off, native, docker, git-agent")))
 	})
 
 	It("rejects a known kind with no registered adapter", func() {
@@ -90,51 +90,51 @@ var _ = Describe("NewSandbox", func() {
 	})
 
 	It("rejects an adapter that does not implement a declared capability", func() {
-		api.RegisterSandbox(api.SandboxSRT, func(cfg api.SandboxConfig) (api.Sandbox, error) {
-			return sandboxStub{kind: api.SandboxSRT}, nil // srt declares wrap-command; stub lacks Wrap
+		api.RegisterSandbox(api.SandboxDocker, func(cfg api.SandboxConfig) (api.Sandbox, error) {
+			return sandboxStub{kind: api.SandboxDocker}, nil
 		})
 
-		_, err := api.NewSandbox(api.SandboxConfig{Kind: api.SandboxSRT})
+		_, err := api.NewSandbox(api.SandboxConfig{Kind: api.SandboxDocker})
 
 		Expect(err).To(MatchError(ContainSubstring(`declares capability "wrap-command"`)))
 	})
 
 	It("rejects a declared capability with no construction verifier", func() {
-		descriptor, ok := api.SandboxFor(api.SandboxSRT)
+		descriptor, ok := api.SandboxFor(api.SandboxDocker)
 		Expect(ok).To(BeTrue())
 		original := append([]api.SandboxCapability(nil), descriptor.Capabilities...)
 		descriptor.Capabilities = append(descriptor.Capabilities, api.SandboxCapability("future-capability"))
 		DeferCleanup(func() { descriptor.Capabilities = original })
-		api.RegisterSandbox(api.SandboxSRT, func(cfg api.SandboxConfig) (api.Sandbox, error) {
-			return wrappingSandboxStub{sandboxStub{kind: api.SandboxSRT}}, nil
+		api.RegisterSandbox(api.SandboxDocker, func(cfg api.SandboxConfig) (api.Sandbox, error) {
+			return wrappingSandboxStub{sandboxStub{kind: api.SandboxDocker}}, nil
 		})
 
-		_, err := api.NewSandbox(api.SandboxConfig{Kind: api.SandboxSRT})
+		_, err := api.NewSandbox(api.SandboxConfig{Kind: api.SandboxDocker})
 
 		Expect(err).To(MatchError(ContainSubstring(`capability "future-capability" but no construction-time verifier`)))
 	})
 
 	It("rejects an adapter that fails a declared capability's verifier", func() {
-		descriptor, ok := api.SandboxFor(api.SandboxSRT)
+		descriptor, ok := api.SandboxFor(api.SandboxDocker)
 		Expect(ok).To(BeTrue())
 		original := append([]api.SandboxCapability(nil), descriptor.Capabilities...)
 		descriptor.Capabilities = append(descriptor.Capabilities, api.CapabilityEgressProxy)
 		DeferCleanup(func() { descriptor.Capabilities = original })
-		api.RegisterSandbox(api.SandboxSRT, func(cfg api.SandboxConfig) (api.Sandbox, error) {
-			return wrappingSandboxStub{sandboxStub{kind: api.SandboxSRT}}, nil // no EgressProxied
+		api.RegisterSandbox(api.SandboxDocker, func(cfg api.SandboxConfig) (api.Sandbox, error) {
+			return wrappingSandboxStub{sandboxStub{kind: api.SandboxDocker}}, nil
 		})
 
-		_, err := api.NewSandbox(api.SandboxConfig{Kind: api.SandboxSRT})
+		_, err := api.NewSandbox(api.SandboxConfig{Kind: api.SandboxDocker})
 
 		Expect(err).To(MatchError(ContainSubstring(`declares capability "egress-proxy" but its adapter does not implement it`)))
 	})
 
 	It("accepts an adapter that implements its declared capabilities", func() {
-		api.RegisterSandbox(api.SandboxSRT, func(cfg api.SandboxConfig) (api.Sandbox, error) {
-			return wrappingSandboxStub{sandboxStub{kind: api.SandboxSRT}}, nil
+		api.RegisterSandbox(api.SandboxDocker, func(cfg api.SandboxConfig) (api.Sandbox, error) {
+			return wrappingSandboxStub{sandboxStub{kind: api.SandboxDocker}}, nil
 		})
 
-		sandbox, err := api.NewSandbox(api.SandboxConfig{Kind: api.SandboxSRT})
+		sandbox, err := api.NewSandbox(api.SandboxConfig{Kind: api.SandboxDocker})
 
 		Expect(err).NotTo(HaveOccurred())
 		_, ok := api.SandboxAs[api.CommandWrapper](sandbox)
@@ -145,30 +145,26 @@ var _ = Describe("NewSandbox", func() {
 var _ = Describe("NewProvider sandbox validation", func() {
 	It("rejects an unsupported sandbox × backend pairing before construction", func() {
 		_, err := api.NewProvider(api.Config{
-			Model:            api.Model{Name: "claude-sonnet-5", Backend: api.BackendClaudeAgent},
-			SandboxSelection: &api.SandboxConfig{Kind: api.SandboxSRT},
+			Model:            api.Model{Name: "claude-sonnet-5", Mode: api.ModeAgent},
+			SandboxSelection: &api.SandboxConfig{Kind: api.SandboxDocker},
 		})
 
 		Expect(err).To(MatchError(ContainSubstring("does not support runtime mode")))
 	})
 
-	It("lets an explicit selection override a stale legacy boolean", func() {
-		// Sandbox=true would demand a CLI backend, but the explicit "none"
-		// selection has precedence — the run must get past the sandbox guards
-		// (failing later only because no provider factory is registered here).
+	It("accepts off for agent backends", func() {
 		_, err := api.NewProvider(api.Config{
-			Model:            api.Model{Name: "claude-sonnet-5", Backend: api.BackendClaudeAgent},
-			Sandbox:          true,
-			SandboxSelection: &api.SandboxConfig{Kind: api.SandboxNone},
+			Model:            api.Model{Name: "claude-sonnet-5", Mode: api.ModeAgent},
+			SandboxSelection: &api.SandboxConfig{Kind: api.SandboxOff},
 		})
 
-		Expect(err).NotTo(MatchError(ContainSubstring("sandbox-runtime requires a CLI backend")))
+		Expect(err).NotTo(MatchError(ContainSubstring("does not support runtime mode")))
 	})
 
 	It("rejects a factory returning a nil instance", func() {
-		api.RegisterSandbox(api.SandboxNone, func(api.SandboxConfig) (api.Sandbox, error) { return nil, nil })
+		api.RegisterSandbox(api.SandboxOff, func(api.SandboxConfig) (api.Sandbox, error) { return nil, nil })
 
-		_, err := api.NewSandbox(api.SandboxConfig{Kind: api.SandboxNone})
+		_, err := api.NewSandbox(api.SandboxConfig{Kind: api.SandboxOff})
 
 		Expect(err).To(MatchError(ContainSubstring("returned no instance")))
 	})

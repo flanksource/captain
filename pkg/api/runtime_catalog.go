@@ -3,8 +3,7 @@ package api
 import "github.com/flanksource/captain/pkg/api/registry"
 
 // RuntimeFamily is one provider projected for a picker: which modes it serves,
-// which backend each mode serializes to, and whether the user has switched any
-// of them off.
+// and whether the user has switched any of them off.
 //
 // This is the served answer to "what can I pick?". Before it existed, every
 // surface re-derived that from a hardcoded list — clicky-ui's SPEC_RUNTIME_FAMILIES,
@@ -32,12 +31,9 @@ type RuntimeFamily struct {
 // RuntimeModeEntry is one provider×mode cell — the same pair
 // registry.ModeCapabilities describes, reduced to what a picker needs.
 type RuntimeModeEntry struct {
-	// Backend is the portable authored value: api | agent | cli | cmux. Family
-	// carries provider identity, so clients never need a composite adapter id.
-	Backend string `json:"backend"`
-	// Adapter is Captain's resolved implementation id for internal callers. It is
-	// deliberately absent from the wire contract.
-	Adapter string `json:"-"`
+	// Mode is the mechanism: api | agent | cli | cmux. Family carries provider
+	// identity, so this and the model name are the whole runtime.
+	Mode string `json:"mode"`
 	// Kind is "api" or "cli": whether the mode runs in-process against a remote
 	// API or supervises a local binary.
 	Kind string `json:"kind"`
@@ -59,16 +55,16 @@ type RuntimeModeEntry struct {
 	// explain the absence instead of silently shrinking the picker.
 	Disabled bool `json:"disabled"`
 	// DisabledReason names the switch that turned it off — "mode cmux",
-	// "provider deepseek", "backend claude-agent" — or "" when enabled.
+	// "provider deepseek", "runtime anthropic cmux" — or "" when enabled.
 	DisabledReason string       `json:"disabledReason,omitempty"`
 	Availability   Availability `json:"availability"`
-	// Permissions is the declared permission surface for this backend: which
+	// Permissions is the declared permission surface for this runtime: which
 	// postures it honours, which per-tool policies it can enforce and from which
 	// source, and which resources it can switch. It is served here, on the static
 	// catalog, rather than on the probe result, because it is a property of the
-	// adapter rather than of the machine — an unprobed backend still has an
+	// adapter rather than of the machine — an unprobed runtime still has an
 	// honest answer, and a client that reads it from a TTL'd cache would render
-	// an empty tree as "this backend supports nothing".
+	// an empty tree as "this runtime supports nothing".
 	Permissions PermissionCapabilities `json:"permissions"`
 	// Schema is the supported Spec surface for this mode. Native CLI and agent
 	// protocol bindings are attached to their owning fields with x-clicky
@@ -96,7 +92,7 @@ func RuntimeCatalog() []RuntimeFamily {
 			if !ok {
 				continue
 			}
-			reason := disabled.Reason(caps.Backend)
+			reason := disabled.Reason(p, mode)
 			availability := Available()
 			if reason != "" {
 				availability = Availability{
@@ -106,17 +102,16 @@ func RuntimeCatalog() []RuntimeFamily {
 				}
 			}
 			family.Modes = append(family.Modes, RuntimeModeEntry{
-				Backend:         string(mode),
-				Adapter:         string(caps.Backend),
-				Kind:            caps.Backend.Kind(),
+				Mode:            string(mode),
+				Kind:            mode.Kind(),
 				Keyless:         caps.Keyless,
-				DefaultModel:    DefaultModelFor(caps.Backend),
-				CatalogProvider: CatalogProviderFor(caps.Backend),
-				Disabled:        disabled.Backend(caps.Backend),
+				DefaultModel:    DefaultModelFor(p, mode),
+				CatalogProvider: p.CatalogPrefix,
+				Disabled:        disabled.Runtime(p, mode),
 				DisabledReason:  reason,
 				Availability:    availability,
-				Permissions:     PermissionCapabilitiesFor(caps.Backend),
-				Schema:          RuntimeSchemaFor(caps.Backend),
+				Permissions:     PermissionCapabilitiesFor(RuntimeOf(p, mode)),
+				Schema:          RuntimeSchemaFor(p, mode),
 			})
 		}
 		out = append(out, family)
@@ -124,27 +119,7 @@ func RuntimeCatalog() []RuntimeFamily {
 	return out
 }
 
-// DefaultModelFor is the model a picker should seed for one backend.
-func DefaultModelFor(b Backend) string { return registry.DefaultModelFor(b) }
-
-// CatalogProviderFor is the model provider axis served to runtime pickers.
-// Runtime mode is carried independently by RuntimeModeEntry.Backend, so this
-// value never contains an adapter or execution mechanism.
-func CatalogProviderFor(b Backend) string {
-	return CatalogPrefixFor(b)
-}
-
-// CatalogPrefixFor is the namespace a backend's model ids live under:
-// "anthropic" for every Claude mode, "googleai" — not "google" — for Gemini.
-//
-// It is the grouping key a model menu buckets on, and the same string
-// RuntimeFamily.CatalogPrefix serves, so a client filtering a flat model list
-// down to one family joins the two on a value neither side had to spell out.
-// It returns "" for an unknown backend.
-func CatalogPrefixFor(b Backend) string {
-	p, _, ok := registry.ProviderFor(b)
-	if !ok {
-		return ""
-	}
-	return p.CatalogPrefix
+// DefaultModelFor is the model a picker should seed for one runtime.
+func DefaultModelFor(p *ModelProvider, mode RuntimeMode) string {
+	return registry.DefaultModelFor(p, mode)
 }

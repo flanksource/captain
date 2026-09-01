@@ -19,10 +19,10 @@ func TestIsEmpty(t *testing.T) {
 		{name: "zero spec", spec: Spec{}, want: true},
 		{
 			// The exact shape a hand-written six-field check reports as empty, so
-			// a `.gavel.yaml` declaring only a permission mode is discarded rather
+			// a `.gavel.yaml` declaring only a sandbox mode is discarded rather
 			// than applied.
-			name: "permission mode only",
-			spec: Spec{Permissions: Permissions{Mode: PermissionPlan}},
+			name: "sandbox mode only",
+			spec: Spec{Sandbox: &SandboxRef{Mode: SandboxNative}},
 		},
 		{name: "setup only", spec: Spec{Setup: &shell.Setup{Cwd: "/work"}}},
 		{name: "session only", spec: Spec{SessionID: "sess-1"}},

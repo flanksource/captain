@@ -12,7 +12,7 @@ import (
 var _ = Describe("Tool preferences", func() {
 	It("survives a Spec JSON round trip", func() {
 		in := api.Spec{
-			Model:           api.Model{Name: "claude-sonnet-4-6", Backend: api.BackendAnthropic},
+			Model:           api.Model{Name: "claude-sonnet-4-6", Mode: api.ModeAPI},
 			Prompt:          api.Prompt{User: "inspect invoices"},
 			ToolPreferences: api.ToolPreferences{"billing": api.ToolPolicyAsk, "invoice_delete": api.ToolPolicyDeny},
 		}
@@ -72,7 +72,7 @@ var _ = Describe("Tool preferences", func() {
 
 	It("rejects an unknown preference before provider execution", func() {
 		spec := api.Spec{
-			Model:           api.Model{Name: "claude-sonnet-4-6", Backend: api.BackendAnthropic},
+			Model:           api.Model{Name: "claude-sonnet-4-6", Mode: api.ModeAPI},
 			Prompt:          api.Prompt{User: "inspect invoices"},
 			ToolPreferences: api.ToolPreferences{"billing": "sometimes"},
 		}
@@ -89,7 +89,7 @@ var _ = Describe("Tool preferences", func() {
 	It("rejects removed enabled and disabled labels", func() {
 		for _, policy := range []api.ToolPolicy{"enabled", "disabled"} {
 			spec := api.Spec{
-				Model:           api.Model{Name: "claude-sonnet-4-6", Backend: api.BackendAnthropic},
+				Model:           api.Model{Name: "claude-sonnet-4-6", Mode: api.ModeAPI},
 				Prompt:          api.Prompt{User: "inspect invoices"},
 				ToolPreferences: api.ToolPreferences{"billing": policy},
 			}

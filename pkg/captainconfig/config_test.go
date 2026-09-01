@@ -39,7 +39,7 @@ func TestSaveLoad_RoundTrip(t *testing.T) {
 		AI: AIDefaults{
 			DefaultProvider: "anthropic",
 			Providers: map[string]ProviderDefaults{
-				"anthropic": {Agent: "claude-agent", Model: "claude-sonnet-4-6", ReasoningEffort: "medium"},
+				"anthropic": {Mode: "agent", Model: "claude-sonnet-4-6", ReasoningEffort: "medium"},
 			},
 			BudgetUSD:   2.5,
 			MaxTokens:   8192,
@@ -53,9 +53,9 @@ func TestSaveLoad_RoundTrip(t *testing.T) {
 		Prompts: PromptDefaults{
 			Dirs: []string{"/repo/prompts"},
 			SchemaRepair: SchemaRepairDefaults{
-				Model:   "gpt-5",
-				Backend: "openai",
-				Prompt:  "/repo/prompts/json-repair.prompt",
+				Model:  "gpt-5",
+				Mode:   "api",
+				Prompt: "/repo/prompts/json-repair.prompt",
 			},
 		},
 	}
@@ -83,57 +83,6 @@ func TestSaveLoad_RoundTrip(t *testing.T) {
 	}
 }
 
-func TestLegacyDefaultsProjectIntoActiveProviderAndMigrateOnSave(t *testing.T) {
-	path := withTempPath(t)
-	legacy := []byte("ai:\n  backend: codex-agent\n  model: gpt-5.6-sol\n  reasoningEffort: high\n  maxTokens: 4096\n")
-	if err := os.WriteFile(path, legacy, 0o644); err != nil {
-		t.Fatalf("seed legacy config: %v", err)
-	}
-	cfg, _, err := Load()
-	if err != nil {
-		t.Fatalf("Load() legacy config: %v", err)
-	}
-	if got := cfg.AI.ActiveProvider(); got != "openai" {
-		t.Fatalf("ActiveProvider() = %q, want openai", got)
-	}
-	if got := cfg.AI.Provider("openai"); !reflect.DeepEqual(got, ProviderDefaults{
-		Agent: "codex-agent", Model: "gpt-5.6-sol", ReasoningEffort: "high",
-	}) {
-		t.Fatalf("Provider(openai) = %+v", got)
-	}
-	if err := Save(cfg); err != nil {
-		t.Fatalf("Save() migrated config: %v", err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read migrated config: %v", err)
-	}
-	text := string(data)
-	if strings.Contains(text, "backend:") || strings.Contains(text, "\n  model:") || !strings.Contains(text, "defaultProvider: openai") {
-		t.Fatalf("legacy fields were not migrated:\n%s", text)
-	}
-}
-
-func TestLegacyDefaultsStayWithTheirProviderWhenDefaultProviderChanges(t *testing.T) {
-	cfg := Config{AI: AIDefaults{
-		DefaultProvider: "gemini",
-		Backend:         "codex-agent",
-		Model:           "gpt-5.6-sol",
-		ReasoningEffort: "high",
-	}}
-
-	normalized := normalize(cfg)
-	if got := normalized.AI.Providers["openai"]; got.Agent != "codex-agent" || got.Model != "gpt-5.6-sol" || got.ReasoningEffort != "high" {
-		t.Fatalf("openai legacy defaults = %+v", got)
-	}
-	if got := normalized.AI.Providers["gemini"]; got != (ProviderDefaults{}) {
-		t.Fatalf("gemini inherited openai legacy defaults: %+v", got)
-	}
-	if normalized.AI.DefaultProvider != "gemini" {
-		t.Fatalf("default provider = %q", normalized.AI.DefaultProvider)
-	}
-}
-
 func TestUpdatePreservesUnrelatedConfiguration(t *testing.T) {
 	withTempPath(t)
 	wantPrompt := PromptDefaults{Dirs: []string{"/repo/prompts"}}
@@ -141,9 +90,9 @@ func TestUpdatePreservesUnrelatedConfiguration(t *testing.T) {
 		t.Fatalf("seed config: %v", err)
 	}
 	if err := Update(func(cfg *Config) error {
-		cfg.AI.DefaultProvider = "gemini"
+		cfg.AI.DefaultProvider = "google"
 		cfg.AI.Providers = map[string]ProviderDefaults{
-			"gemini": {Agent: "gemini-cli", Model: "gemini-3.5-flash"},
+			"google": {Mode: "cli", Model: "gemini-3.5-flash"},
 		}
 		return nil
 	}); err != nil {
@@ -153,7 +102,7 @@ func TestUpdatePreservesUnrelatedConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load(): %v", err)
 	}
-	if !reflect.DeepEqual(got.Prompts, wantPrompt) || got.AI.DefaultProvider != "gemini" {
+	if !reflect.DeepEqual(got.Prompts, wantPrompt) || got.AI.DefaultProvider != "google" {
 		t.Fatalf("updated config = %+v", got)
 	}
 }
@@ -163,8 +112,8 @@ func TestDisabledSelections_RoundTrip(t *testing.T) {
 	want := DisabledSelections{
 		Modes:     []string{"cmux"},
 		Providers: []string{"deepseek"},
-		Backends:  []string{"gemini-cli"},
-		Models:    []string{"gemini/veo-3.1-generate-preview"},
+		Runtimes:  []DisabledRuntime{{Provider: "google", Mode: "cli"}},
+		Models:    []string{"google/veo-3.1-generate-preview"},
 		Efforts:   []string{"ultra"},
 	}
 	if err := Save(Config{AI: AIDefaults{DefaultProvider: "anthropic", Disabled: want}}); err != nil {
@@ -202,24 +151,92 @@ func TestDisabledSelections_OmittedWhenEmpty(t *testing.T) {
 }
 
 func TestActiveProvider_SkipsADisabledProvider(t *testing.T) {
-	// Every selection route into anthropic is exercised: the explicit default, the
-	// legacy backend/model projection, and the hardcoded anthropic fallback.
+	// Both routes into anthropic are exercised: the explicit default and the
+	// hardcoded fallback.
 	for name, cfg := range map[string]AIDefaults{
 		"explicit default": {DefaultProvider: "anthropic"},
-		"legacy backend":   {Backend: "claude-agent"},
-		"legacy model":     {Model: "claude-sonnet-5"},
 		"implicit default": {},
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg.Disabled = DisabledSelections{Providers: []string{"anthropic"}}
-			got := registry.Backend(cfg.ActiveProvider())
-			if got.Provider() == registry.AnthropicProvider {
+			got := cfg.ActiveProvider()
+			if got == registry.Anthropic.Name {
 				t.Fatalf("ActiveProvider() = %q, want a provider that is not disabled", got)
 			}
-			if got.Mode() != registry.ModeAPI || got.Provider() != got {
-				t.Fatalf("ActiveProvider() = %q, want an API provider root", got)
+			if _, ok := registry.ProviderByName(got); !ok {
+				t.Fatalf("ActiveProvider() = %q, which names no provider", got)
 			}
 		})
+	}
+}
+
+// A file written before a runtime became (model, mode) is rejected with a
+// message naming the key and its replacement. It is never silently upgraded:
+// every composite adapter id would have to be guessed back into a mode, and the
+// user would then be running somewhere they never chose.
+func TestRemovedKeysAreRejectedWithGuidance(t *testing.T) {
+	cases := map[string]struct {
+		yaml   string
+		expect []string
+	}{
+		"legacy global backend": {
+			yaml:   "ai:\n  backend: codex-agent\n  model: gpt-5.6-sol\n",
+			expect: []string{"ai.backend", "ai.model", "ai.providers.<provider>.mode"},
+		},
+		"per-provider agent": {
+			yaml:   "ai:\n  providers:\n    anthropic:\n      agent: claude-agent\n",
+			expect: []string{"ai.providers.*.agent", "mode: api | agent | cli | cmux"},
+		},
+		"disabled backends list": {
+			yaml:   "ai:\n  disabled:\n    backends: [claude-cmux]\n",
+			expect: []string{"ai.disabled.backends", "ai.disabled.runtimes: [{provider: anthropic, mode: cmux}]"},
+		},
+		"schema repair backend": {
+			yaml:   "prompts:\n  schemaRepair:\n    backend: openai\n",
+			expect: []string{"prompts.schemaRepair.backend", "prompts.schemaRepair.mode"},
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			path := withTempPath(t)
+			if err := os.WriteFile(path, []byte(tc.yaml), 0o644); err != nil {
+				t.Fatalf("seed config: %v", err)
+			}
+			_, _, err := Load()
+			if err == nil {
+				t.Fatal("Load() accepted a removed key")
+			}
+			for _, want := range tc.expect {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error does not mention %q:\n%v", want, err)
+				}
+			}
+		})
+	}
+}
+
+// The keys that replaced them must not themselves trip the check — a `mode:` in
+// the sandbox block or a provider literally named "model" would otherwise make
+// the config unloadable.
+func TestCurrentKeysLoadCleanly(t *testing.T) {
+	path := withTempPath(t)
+	current := "ai:\n" +
+		"  defaultProvider: anthropic\n" +
+		"  providers:\n    anthropic:\n      mode: agent\n      model: claude-opus-5\n" +
+		"  disabled:\n    runtimes:\n      - provider: anthropic\n        mode: cmux\n" +
+		"prompts:\n  schemaRepair:\n    mode: api\n    model: gpt-5\n"
+	if err := os.WriteFile(path, []byte(current), 0o644); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+	cfg, exists, err := Load()
+	if err != nil || !exists {
+		t.Fatalf("Load() = %v, %v", exists, err)
+	}
+	if got := cfg.AI.Provider("anthropic"); got.Mode != "agent" || got.Model != "claude-opus-5" {
+		t.Fatalf("anthropic defaults = %+v", got)
+	}
+	if got := cfg.AI.Disabled.Runtimes; len(got) != 1 || got[0].Provider != "anthropic" || got[0].Mode != "cmux" {
+		t.Fatalf("disabled runtimes = %+v", got)
 	}
 }
 
@@ -245,7 +262,7 @@ func TestLoad_MalformedYAMLReturnsError(t *testing.T) {
 
 func TestSave_AtomicLeavesNoTempFile(t *testing.T) {
 	path := withTempPath(t)
-	if err := Save(Config{AI: AIDefaults{Model: "x"}}); err != nil {
+	if err := Save(Config{AI: AIDefaults{DefaultProvider: "anthropic"}}); err != nil {
 		t.Fatalf("Save() err = %v", err)
 	}
 	entries, err := os.ReadDir(filepath.Dir(path))

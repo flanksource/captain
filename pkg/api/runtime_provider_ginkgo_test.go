@@ -17,7 +17,9 @@ func (runtimeProviderStub) Execute(context.Context, api.Spec) (*api.Response, er
 	return &api.Response{}, nil
 }
 func (runtimeProviderStub) GetModel() string                { return "test-model" }
-func (runtimeProviderStub) GetBackend() api.Backend         { return api.BackendClaudeAgent }
+func (runtimeProviderStub) GetRuntime() api.Runtime {
+	return api.RuntimeOf(api.Anthropic, api.ModeAgent)
+}
 func (runtimeProviderStub) Interrupt(context.Context) error { return nil }
 
 type runtimeProviderWrapper struct{ inner api.Provider }
@@ -26,7 +28,7 @@ func (w runtimeProviderWrapper) Execute(ctx context.Context, req api.Spec) (*api
 	return w.inner.Execute(ctx, req)
 }
 func (w runtimeProviderWrapper) GetModel() string        { return w.inner.GetModel() }
-func (w runtimeProviderWrapper) GetBackend() api.Backend { return w.inner.GetBackend() }
+func (w runtimeProviderWrapper) GetRuntime() api.Runtime { return w.inner.GetRuntime() }
 func (w runtimeProviderWrapper) Unwrap() api.Provider    { return w.inner }
 
 var _ = Describe("ProviderAs", func() {
@@ -62,14 +64,14 @@ var _ = Describe("API key resolution", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(vault.Set("openai", "vault-token")).To(Succeed())
 
-		resolved, err := api.ResolveAPIKey(api.BackendOpenAI)
+		resolved, err := api.ResolveAPIKey(api.OpenAI, api.ModeAPI)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(resolved.Token).To(Equal("vault-token"))
 		Expect(resolved.Source).To(Equal(credentials.SourceVault))
 	})
 
 	It("falls back to the environment", func() {
-		resolved, err := api.ResolveAPIKey(api.BackendOpenAI)
+		resolved, err := api.ResolveAPIKey(api.OpenAI, api.ModeAPI)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(resolved.Token).To(Equal("environment-token"))
 		Expect(resolved.Source).To(Equal(credentials.SourceEnvironment))
@@ -78,11 +80,11 @@ var _ = Describe("API key resolution", func() {
 })
 
 var _ = Describe("Sandbox provider selection", func() {
-	It("rejects non-CLI backends", func() {
+	It("rejects Docker for non-CLI runtimes", func() {
 		_, err := api.NewProvider(api.Config{
-			Model:   api.Model{Name: "claude-sonnet-5", Backend: api.BackendAnthropic},
-			Sandbox: true,
+			Model:            api.Model{Name: "claude-sonnet-5", Mode: api.ModeAPI},
+			SandboxSelection: &api.SandboxConfig{Kind: api.SandboxDocker},
 		})
-		Expect(err).To(MatchError(ContainSubstring("requires a CLI backend")))
+		Expect(err).To(MatchError(ContainSubstring("does not support runtime mode")))
 	})
 })
