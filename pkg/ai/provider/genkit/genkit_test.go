@@ -36,7 +36,7 @@ func TestMapUsage(t *testing.T) {
 		OutputTokens:    45,
 		ReasoningTokens: 30,
 		CacheReadTokens: 17,
-	}, mapUsage(raw, ai.BackendAnthropic))
+	}, mapUsage(raw, ai.Anthropic))
 
 	// Gemini: PromptTokenCount folds in cache → net input; CandidatesTokenCount
 	// excludes thoughts → output passes through.
@@ -45,7 +45,7 @@ func TestMapUsage(t *testing.T) {
 		OutputTokens:    45,
 		ReasoningTokens: 30,
 		CacheReadTokens: 17,
-	}, mapUsage(raw, ai.BackendGemini))
+	}, mapUsage(raw, ai.Google))
 
 	// OpenAI/DeepSeek (compat_oai): prompt_tokens folds in cache AND
 	// completion_tokens folds in reasoning → net both.
@@ -55,17 +55,17 @@ func TestMapUsage(t *testing.T) {
 		ReasoningTokens: 30,
 		CacheReadTokens: 17,
 	}
-	assert.Equal(t, openaiWant, mapUsage(raw, ai.BackendOpenAI))
-	assert.Equal(t, openaiWant, mapUsage(raw, ai.BackendDeepSeek))
+	assert.Equal(t, openaiWant, mapUsage(raw, ai.OpenAI))
+	assert.Equal(t, openaiWant, mapUsage(raw, ai.DeepSeek))
 
-	// Disjoint invariant: for cache-folding backends InputTokens no longer
+	// Disjoint invariant: for cache-folding providers InputTokens no longer
 	// overlaps CacheReadTokens, so pricing cannot bill the cached prefix twice.
-	for _, backend := range []ai.Backend{ai.BackendGemini, ai.BackendOpenAI, ai.BackendDeepSeek} {
-		got := mapUsage(raw, backend)
-		assert.Equal(t, raw.InputTokens, got.InputTokens+got.CacheReadTokens, "backend %s input+cache", backend)
+	for _, provider := range []*ai.ModelProvider{ai.Google, ai.OpenAI, ai.DeepSeek} {
+		got := mapUsage(raw, provider)
+		assert.Equal(t, raw.InputTokens, got.InputTokens+got.CacheReadTokens, "%s input+cache", provider.Name)
 	}
 
-	assert.Equal(t, ai.Usage{}, mapUsage(nil, ai.BackendAnthropic))
+	assert.Equal(t, ai.Usage{}, mapUsage(nil, ai.Anthropic))
 }
 
 func TestResponseToResponseRecordsNativeUsagePresence(t *testing.T) {
@@ -96,26 +96,26 @@ func TestResponseToResponseRecordsNativeUsagePresence(t *testing.T) {
 
 func TestModelRef(t *testing.T) {
 	tests := []struct {
-		name    string
-		backend ai.Backend
-		model   string
-		want    string
-		wantErr bool
+		name     string
+		provider *ai.ModelProvider
+		model    string
+		want     string
+		wantErr  bool
 	}{
-		{"anthropic bare", ai.BackendAnthropic, "claude-sonnet-4", "anthropic/claude-sonnet-4", false},
-		{"openai bare", ai.BackendOpenAI, "gpt-4o", "openai/gpt-4o", false},
-		{"gemini bare", ai.BackendGemini, "gemini-2.5-pro", "googleai/gemini-2.5-pro", false},
-		{"gemini normalizes models prefix", ai.BackendGemini, "models/gemini-2.5-pro", "googleai/gemini-2.5-pro", false},
-		{"deepseek bare", ai.BackendDeepSeek, "deepseek-chat", "deepseek/deepseek-chat", false},
-		{"deepseek re-prefixes existing", ai.BackendDeepSeek, "deepseek/deepseek-reasoner", "deepseek/deepseek-reasoner", false},
-		{"anthropic re-prefixes existing", ai.BackendAnthropic, "anthropic/claude-opus-4", "anthropic/claude-opus-4", false},
-		{"unsupported backend errors", ai.BackendClaudeCLI, "claude-code-foo", "", true},
-		{"empty model errors", ai.BackendAnthropic, "", "", true},
+		{"anthropic bare", ai.Anthropic, "claude-sonnet-4", "anthropic/claude-sonnet-4", false},
+		{"openai bare", ai.OpenAI, "gpt-4o", "openai/gpt-4o", false},
+		{"gemini bare", ai.Google, "gemini-2.5-pro", "googleai/gemini-2.5-pro", false},
+		{"gemini normalizes models prefix", ai.Google, "models/gemini-2.5-pro", "googleai/gemini-2.5-pro", false},
+		{"deepseek bare", ai.DeepSeek, "deepseek-chat", "deepseek/deepseek-chat", false},
+		{"deepseek re-prefixes existing", ai.DeepSeek, "deepseek/deepseek-reasoner", "deepseek/deepseek-reasoner", false},
+		{"anthropic re-prefixes existing", ai.Anthropic, "anthropic/claude-opus-4", "anthropic/claude-opus-4", false},
+		{"unsupported provider errors", nil, "claude-code-foo", "", true},
+		{"empty model errors", ai.Anthropic, "", "", true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := modelRef(tt.backend, tt.model)
+			got, err := modelRef(tt.provider, tt.model)
 			if tt.wantErr {
 				require.Error(t, err)
 				return
@@ -126,11 +126,15 @@ func TestModelRef(t *testing.T) {
 	}
 }
 
-func TestNewNormalizesBackendModelName(t *testing.T) {
-	p, err := New(ai.Config{
-		Model:  api.Model{Backend: ai.BackendAnthropic, Name: "opus-4-8"},
-		APIKey: "test-anthropic-key",
-	})
+// genkit sends the id it is given and only namespaces it for the genkit ref.
+// It used to re-resolve the name itself, which meant the id captain recorded
+// and the id the API received could differ.
+func TestNewForwardsTheResolvedModelID(t *testing.T) {
+	resolved, err := api.ResolveModel(api.Model{Name: "opus-4-8", Mode: api.ModeAPI})
+	require.NoError(t, err)
+	require.Equal(t, "claude-opus-4-8", resolved.Name, "Resolve owns the rewrite this adapter must not redo")
+
+	p, err := New(ai.Config{Model: resolved, APIKey: "test-anthropic-key"})
 	require.NoError(t, err)
 
 	assert.Equal(t, "claude-opus-4-8", p.GetModel())
@@ -138,11 +142,11 @@ func TestNewNormalizesBackendModelName(t *testing.T) {
 }
 
 func TestPricingModelID(t *testing.T) {
-	assert.Equal(t, "anthropic/claude-sonnet-4", pricingModelID(ai.BackendAnthropic, "claude-sonnet-4"))
-	assert.Equal(t, "openai/gpt-4o", pricingModelID(ai.BackendOpenAI, "gpt-4o"))
+	assert.Equal(t, "anthropic/claude-sonnet-4", pricingModelID(ai.Anthropic, "claude-sonnet-4"))
+	assert.Equal(t, "openai/gpt-4o", pricingModelID(ai.OpenAI, "gpt-4o"))
 	// Gemini's OpenRouter pricing key is google/, not the genkit googleai/ ref.
-	assert.Equal(t, "google/gemini-2.5-pro", pricingModelID(ai.BackendGemini, "googleai/gemini-2.5-pro"))
-	assert.Equal(t, "deepseek/deepseek-chat", pricingModelID(ai.BackendDeepSeek, "deepseek/deepseek-chat"))
+	assert.Equal(t, "google/gemini-2.5-pro", pricingModelID(ai.Google, "googleai/gemini-2.5-pro"))
+	assert.Equal(t, "deepseek/deepseek-chat", pricingModelID(ai.DeepSeek, "deepseek/deepseek-chat"))
 }
 
 func TestNewMissingAPIKey(t *testing.T) {
@@ -153,9 +157,9 @@ func TestNewMissingAPIKey(t *testing.T) {
 		t.Setenv(env, "")
 	}
 
-	for _, backend := range []ai.Backend{ai.BackendAnthropic, ai.BackendOpenAI, ai.BackendGemini, ai.BackendDeepSeek} {
-		t.Run(string(backend), func(t *testing.T) {
-			_, err := New(ai.Config{Model: api.Model{Backend: backend, Name: "some-model"}})
+	for _, provider := range []*ai.ModelProvider{ai.Anthropic, ai.OpenAI, ai.Google, ai.DeepSeek} {
+		t.Run(provider.Name, func(t *testing.T) {
+			_, err := New(ai.Config{Model: api.Model{Provider: provider, Mode: ai.ModeAPI, Name: "some-model"}})
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "no API key")
 			assert.ErrorIs(t, err, ai.ErrNoAPIKey)
@@ -163,10 +167,17 @@ func TestNewMissingAPIKey(t *testing.T) {
 	}
 }
 
-func TestNewUnsupportedBackend(t *testing.T) {
-	_, err := New(ai.Config{Model: api.Model{Backend: ai.BackendClaudeCLI, Name: "claude-code-foo"}, APIKey: "x"})
+// genkit is the api mode. A model recording another one is a routing bug: this
+// adapter would run it and then report a runtime it never used.
+func TestNewRejectsANonAPIMode(t *testing.T) {
+	_, err := New(ai.Config{Model: api.Model{Provider: ai.Anthropic, Mode: ai.ModeCLI, Name: "claude-opus-5"}, APIKey: "x"})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "does not support backend")
+	assert.Contains(t, err.Error(), "does not support cli mode")
+
+	// An unresolved model names no provider, so it cannot be routed at all.
+	_, err = New(ai.Config{Model: api.Model{Name: "claude-opus-5"}, APIKey: "x"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "needs a resolved model")
 }
 
 func TestIsSchemaMismatch(t *testing.T) {
@@ -203,20 +214,20 @@ func TestIsSchemaMismatch(t *testing.T) {
 	}
 }
 
-func TestBackendOutputSchema_NormalizesOpenAIStructuredOutput(t *testing.T) {
+func TestRuntimeOutputSchema_NormalizesOpenAIStructuredOutput(t *testing.T) {
 	type answer struct {
 		Answer string `json:"answer"`
 		Detail string `json:"detail,omitempty"`
 	}
 	req := ai.Request{Prompt: api.Prompt{Schema: &answer{}}}
 
-	schema, handled, err := backendOutputSchema(ai.BackendOpenAI, req)
+	schema, handled, err := runtimeOutputSchema(ai.OpenAI, req)
 	require.NoError(t, err)
 	require.True(t, handled)
 	assert.Equal(t, []any{"answer", "detail"}, schema["required"])
 	assert.Equal(t, false, schema["additionalProperties"])
 
-	_, handled, err = backendOutputSchema(ai.BackendGemini, req)
+	_, handled, err = runtimeOutputSchema(ai.Google, req)
 	require.NoError(t, err)
 	assert.False(t, handled, "Gemini should retain Genkit's WithOutputType path")
 }

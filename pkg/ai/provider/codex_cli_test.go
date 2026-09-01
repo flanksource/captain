@@ -29,7 +29,13 @@ func TestBuildCodexCLIArgs(t *testing.T) {
 			SkipProject: true,
 			SkipHooks:   true,
 		},
-		Permissions: api.Permissions{Presets: []api.Preset{api.PresetEdit}},
+		Permissions: api.Permissions{Mode: api.PermissionAuto, Presets: []api.Preset{api.PresetEdit}},
+		Sandbox: &api.SandboxRef{
+			Mode: api.SandboxNative,
+			Policy: &api.NativeSandboxPolicy{
+				Filesystem: &api.SandboxFilesystemPolicy{Access: api.SandboxFilesystemWorkspaceWrite},
+			},
+		},
 	}
 
 	args, cleanup, err := buildCodexCLIArgs(codexCLIConfig{Model: "gpt-5.5"}, req)
@@ -83,26 +89,44 @@ func TestBuildCodexCLIArgs(t *testing.T) {
 func TestBuildCodexCLIArgsEmitsApprovalPolicy(t *testing.T) {
 	tests := []struct {
 		name         string
-		permissions  api.Permissions
+		sandbox      api.SandboxRef
+		mode         api.PermissionMode
 		wantSandbox  string
 		wantApproval string
 	}{
 		{
 			name:         "default is read-only and still asks",
+			sandbox:      api.SandboxRef{Mode: api.SandboxNative},
+			mode:         api.PermissionDefault,
 			wantSandbox:  "read-only",
 			wantApproval: `approval_policy="on-request"`,
 		},
 		{
-			name:         "edit widens the sandbox but keeps asking",
-			permissions:  api.Permissions{Presets: []api.Preset{api.PresetEdit}},
+			name: "edit widens the sandbox but keeps asking",
+			sandbox: api.SandboxRef{
+				Mode: api.SandboxNative,
+				Policy: &api.NativeSandboxPolicy{
+					Filesystem: &api.SandboxFilesystemPolicy{Access: api.SandboxFilesystemWorkspaceWrite},
+				},
+			},
+			mode:         api.PermissionAcceptEdits,
 			wantSandbox:  "workspace-write",
 			wantApproval: `approval_policy="on-request"`,
 		},
 		{
 			name:         "bypass grants full access and stops asking",
-			permissions:  api.Permissions{Mode: api.PermissionBypass},
+			sandbox:      api.SandboxRef{Mode: api.SandboxOff},
+			mode:         api.PermissionBypass,
 			wantSandbox:  "danger-full-access",
 			wantApproval: `approval_policy="never"`,
+		},
+		{
+			// Turning isolation off no longer implies never-ask: the posture is
+			// stated on permissions, and an unstated one still asks.
+			name:         "sandbox off without a stated posture keeps asking",
+			sandbox:      api.SandboxRef{Mode: api.SandboxOff},
+			wantSandbox:  "danger-full-access",
+			wantApproval: `approval_policy="on-request"`,
 		},
 	}
 
@@ -110,7 +134,11 @@ func TestBuildCodexCLIArgsEmitsApprovalPolicy(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			args, cleanup, err := buildCodexCLIArgs(
 				codexCLIConfig{Model: "gpt-5.5"},
-				ai.Request{Prompt: api.Prompt{User: "hi"}, Permissions: tt.permissions},
+				ai.Request{
+					Prompt:      api.Prompt{User: "hi"},
+					Sandbox:     &tt.sandbox,
+					Permissions: api.Permissions{Mode: tt.mode},
+				},
 			)
 			if err != nil {
 				t.Fatalf("buildCodexCLIArgs: %v", err)

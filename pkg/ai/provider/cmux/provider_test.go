@@ -11,21 +11,28 @@ import (
 	"github.com/flanksource/commons-db/shell"
 )
 
-func TestNewDerivesAgentAndBackend(t *testing.T) {
+// New receives a model that has already been resolved, so it derives the agent
+// from the provider and passes the id through untouched. It used to re-normalize
+// the id itself, which is how the id captain recorded and the id the CLI received
+// could differ.
+func TestNewDerivesAgentFromTheResolvedProvider(t *testing.T) {
 	cases := []struct {
-		name        string
-		backend     api.Backend
-		model       string
-		wantModel   string
-		wantAgent   string
-		wantBackend api.Backend
+		name      string
+		model     string
+		wantModel string
+		wantAgent string
+		want      api.Runtime
 	}{
-		{"claude cmux", api.BackendClaudeCmux, "opus", "claude-opus-5", "claude", api.BackendClaudeCmux},
-		{"codex cmux", api.BackendCodexCmux, "gpt-5", "gpt-5", "codex", api.BackendCodexCmux},
+		{"claude cmux", "cmux:opus", "claude-opus-5", "claude", api.RuntimeOf(api.Anthropic, api.ModeCmux)},
+		{"codex cmux", "cmux:gpt-5", "gpt-5", "codex", api.RuntimeOf(api.OpenAI, api.ModeCmux)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			p, err := New(ai.Config{Model: api.Model{Name: tc.model, Backend: tc.backend}})
+			model, err := ai.Resolve(api.Model{Name: tc.model})
+			if err != nil {
+				t.Fatalf("Resolve(%q): %v", tc.model, err)
+			}
+			p, err := New(ai.Config{Model: model})
 			if err != nil {
 				t.Fatalf("New() error = %v", err)
 			}
@@ -35,21 +42,29 @@ func TestNewDerivesAgentAndBackend(t *testing.T) {
 			if p.GetModel() != tc.wantModel {
 				t.Fatalf("GetModel() = %q, want %q", p.GetModel(), tc.wantModel)
 			}
-			if p.GetBackend() != tc.wantBackend {
-				t.Fatalf("GetBackend() = %q, want %q", p.GetBackend(), tc.wantBackend)
+			if p.GetRuntime() != tc.want {
+				t.Fatalf("GetRuntime() = %q, want %q", p.GetRuntime(), tc.want)
 			}
 		})
 	}
 }
 
-func TestNewRejectsUnsupportedBackend(t *testing.T) {
-	if _, err := New(ai.Config{Model: api.Model{Name: "claude", Backend: api.BackendClaudeAgent}}); err == nil {
-		t.Fatal("New() error = nil, want an error for a non-cmux backend")
+func TestNewRejectsAProviderWithNoCmuxAgent(t *testing.T) {
+	model, err := ai.Resolve(api.Model{Name: "api:gemini-2.5-pro"})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if _, err := New(ai.Config{Model: model}); err == nil {
+		t.Fatal("New() error = nil, want an error for a family with no cmux agent")
 	}
 }
 
 func TestExecuteStreamRequiresPrompt(t *testing.T) {
-	p, err := New(ai.Config{Model: api.Model{Name: "claude", Backend: api.BackendClaudeCmux}})
+	model, err := ai.Resolve(api.Model{Name: "cmux:claude"})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	p, err := New(ai.Config{Model: model})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -70,7 +85,11 @@ func TestUsageFromStats(t *testing.T) {
 func TestExecuteFailsLoudWhenCmuxUnavailable(t *testing.T) {
 	// A runner that fails `ping` makes the whole run fail before any cmux surface is
 	// created; Execute must surface that as a CLI execution failure, never success.
-	p, err := New(ai.Config{Model: api.Model{Name: "claude", Backend: api.BackendClaudeCmux}})
+	model, err := ai.Resolve(api.Model{Name: "cmux:claude"})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	p, err := New(ai.Config{Model: model})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}

@@ -367,7 +367,9 @@
     "preferred": true,
     "availability": [
       "api",
-      "codex"
+      "cli",
+      "agent",
+      "cmux"
     ],
     "supportedEfforts": [
       "low",
@@ -403,7 +405,9 @@
     "preferred": true,
     "availability": [
       "api",
-      "codex"
+      "cli",
+      "agent",
+      "cmux"
     ],
     "supportedEfforts": [
       "low",
@@ -440,7 +444,9 @@
     "preferred": true,
     "availability": [
       "api",
-      "codex"
+      "cli",
+      "agent",
+      "cmux"
     ],
     "supportedEfforts": [
       "low",

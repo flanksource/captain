@@ -53,9 +53,9 @@ func TestInitializeParams_PermissionMode(t *testing.T) {
 			wantApproval: "auto",
 		},
 		{
-			name:         "the edit preset still implies acceptEdits",
+			name:         "the edit preset does not change sandbox approval",
 			presets:      []api.Preset{api.PresetEdit},
-			wantMode:     "acceptEdits",
+			wantMode:     "default",
 			wantApproval: "auto",
 		},
 	}
@@ -63,9 +63,10 @@ func TestInitializeParams_PermissionMode(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			p := &Provider{cfg: ai.Config{CanUseTool: tt.broker}}
-			params := p.initializeParams(ai.Request{
+			params, err := p.initializeParams(ai.Request{
 				Permissions: api.Permissions{Mode: tt.mode, Presets: tt.presets},
 			})
+			require.NoError(t, err)
 			assert.Equal(t, tt.wantMode, params.PermissionMode)
 			assert.Equal(t, tt.wantApproval, params.ApprovalMode)
 		})
@@ -76,17 +77,19 @@ func TestInitializeParams_PermissionMode(t *testing.T) {
 // attached to the preset rather than to the absence of a permission mode.
 func TestInitializeParams_EditPresetAllowlist(t *testing.T) {
 	p := &Provider{}
-	params := p.initializeParams(ai.Request{
+	params, err := p.initializeParams(ai.Request{
 		Permissions: api.Permissions{Presets: []api.Preset{api.PresetEdit}},
 	})
+	require.NoError(t, err)
 	assert.Equal(t, safeEditAllowlist, params.AllowedTools)
 
-	explicit := p.initializeParams(ai.Request{
+	explicit, err := p.initializeParams(ai.Request{
 		Permissions: api.Permissions{
 			Presets: []api.Preset{api.PresetEdit},
 			Tools:   api.Tools{"Read": api.ToolPolicyAllow},
 		},
 	})
+	require.NoError(t, err)
 	assert.Equal(t, []string{"Read"}, explicit.AllowedTools,
 		"an explicit allowlist must not be replaced by the preset's")
 }
@@ -100,9 +103,10 @@ func TestInitializeParams_NormalizesToolModes(t *testing.T) {
 	var tools api.Tools
 	require.NoError(t, json.Unmarshal(
 		[]byte(`{"deny":["WebFetch"],"modes":{"Bash":"off","Read":"on"}}`), &tools))
-	params := p.initializeParams(ai.Request{
+	params, err := p.initializeParams(ai.Request{
 		Permissions: api.Permissions{Tools: tools},
 	})
+	require.NoError(t, err)
 	assert.Equal(t, []string{"Bash", "WebFetch"}, params.DisallowedTools,
 		"an off tool mode is a deny and must reach disallowedTools")
 	// `on` resolves to auto — the agent's normal behaviour — so it must not

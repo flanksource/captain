@@ -17,17 +17,13 @@ const CodexAutoReviewModel = "codex-auto-review"
 // knobs. Maps onto the legacy ai.Config.Model + ai.Request.{Temperature,
 // ReasoningEffort}.
 type Model struct {
-	// Name is the catalog model slug, e.g. "claude-sonnet-4-6"; it drives backend
+	// Name is the catalog model slug, e.g. "claude-sonnet-4-6"; it drives provider
 	// inference and pricing lookup.
 	Name string `json:"model,omitempty" yaml:"model,omitempty" jsonschema:"required" pretty:"label=Model"`
 
 	// ID is the fully-qualified provider id when it differs from Name, e.g. the
 	// genkit "anthropic/claude-sonnet-4-6" or a codex slug. Empty means use Name.
 	ID string `json:"id,omitempty" yaml:"id,omitempty" pretty:"label=ID"`
-
-	// Backend is the resolved provider adapter. It is execution state, not authored
-	// configuration; the portable wire contract serializes Mode as `backend`.
-	Backend Backend `json:"-" yaml:"-" pretty:"-"`
 
 	// Temperature is the sampling temperature in [0,2]. A pointer so an explicit
 	// 0.0 is distinguishable from "unset" (fail loud, not a silent default).
@@ -41,16 +37,16 @@ type Model struct {
 
 	// Fallbacks are alternative models tried in order when the primary fails with a
 	// transient/unavailable error or its provider cannot be constructed. Each is a
-	// full Model (own backend/effort/temperature); a fallback's own nested Fallbacks
+	// full Model (own mode/effort/temperature); a fallback's own nested Fallbacks
 	// are ignored. Populate it directly, via a comma-separated Name (see ExpandCSV),
 	// or via the --fallback flag / fallbacks: frontmatter. Each entry may be a
 	// compact string ("agent:opus:high") or the object form (see ModelList).
 	Fallbacks ModelList `json:"fallbacks,omitempty" yaml:"fallbacks,omitempty" pretty:"label=Fallbacks"`
 
-	// Mode is the authored runtime backend: api | agent | cli | cmux. It serializes
-	// as `backend`; provider identity comes from Name, and the compact model prefix
-	// takes precedence over this sibling field.
-	Mode RuntimeMode `json:"backend,omitempty" yaml:"backend,omitempty" jsonschema:"enum=api,enum=agent,enum=cli,enum=cmux" pretty:"label=Backend"`
+	// Mode is the runtime mechanism: api | agent | cli | cmux. It is the only half
+	// of the runtime a caller authors — provider identity comes from Name — and the
+	// compact model prefix takes precedence over this sibling field.
+	Mode RuntimeMode `json:"mode,omitempty" yaml:"mode,omitempty" jsonschema:"enum=api,enum=agent,enum=cli,enum=cmux" pretty:"label=Mode"`
 
 	// The fields below are capabilities of the resolved provider×mode, filled in
 	// by Resolve. They are outputs: writing them in a spec does not change what
@@ -74,42 +70,51 @@ type Model struct {
 
 	// Provider is the descriptor that owns this model. Never serialized: it holds
 	// the whole catalog, so emitting it would inline the registry into every spec.
-	// Reach it from a decoded Model with Backend.ModelProvider().
+	// Resolve fills it from the model name; a decoded Model has it nil until then.
 	Provider *Provider `json:"-" yaml:"-"`
 }
 
-// Capabilities fills in Mode, Provider, and the capability flags from the
-// resolved backend. Resolve applies it; callers that build a Model by hand can
-// call it to get the same enrichment.
-func (m Model) Capabilities() Model {
-	p, mode, ok := ProviderFor(m.Backend)
-	if !ok {
-		return m
+// WithCapabilities fills in Provider and the capability flags for this model's
+// provider×mode cell. Resolve applies it; callers holding a model whose name and
+// mode are already concrete (a catalog row, a supported-models listing) use it
+// directly.
+//
+// It errors rather than returning the model unchanged. The silent version of
+// this was a real trap: a model whose provider could not be claimed, or whose
+// mode the provider does not serve, came back looking resolved but with every
+// capability flag false — so an adapter that streams was reported as
+// non-streaming, and the caller had no way to tell that from a genuine answer.
+func (m Model) WithCapabilities() (Model, error) {
+	p := m.Provider
+	if p == nil {
+		var err error
+		if p, err = ProviderFor(m.Name); err != nil {
+			return Model{}, err
+		}
 	}
-	caps, ok := p.Caps(mode)
-	if !ok {
-		return m
+	caps, err := p.RequireMode(m.Mode)
+	if err != nil {
+		return Model{}, err
 	}
 	m.Provider = p
-	m.Mode = mode
 	m.Streaming = caps.Streaming
 	m.Resume = caps.Resume
 	m.Interrupt = caps.Interrupt
 	m.Steer = caps.Steer
 	m.CallerTools = caps.CallerTools
-	m.MediaTypes = p.MediaTypesFor(mode, m.Name)
-	return m
+	m.MediaTypes = p.MediaTypesFor(m.Mode, m.Name)
+	return m, nil
 }
 
 // WithMode applies one runtime mechanism to the primary model and every
-// fallback before backend resolution. Explicit backends that name a different
-// mechanism remain contradictions rather than being silently rewritten.
+// fallback. A model that already names a different mechanism stays a
+// contradiction rather than being silently rewritten.
 func (m Model) WithMode(mode RuntimeMode) (Model, error) {
 	if mode == "" {
 		return m, nil
 	}
 	if _, ok := ParseRuntimeMode(string(mode)); !ok {
-		return Model{}, invalidModelBackend(mode)
+		return Model{}, invalidRuntimeMode(mode)
 	}
 
 	var err error
@@ -123,7 +128,7 @@ func (m Model) WithMode(mode RuntimeMode) (Model, error) {
 		}
 		candidate = expanded
 		if candidate.Mode != "" && candidate.Mode != mode {
-			return Model{}, fmt.Errorf("invalid model configuration: backend %q contradicts requested backend %q", candidate.Mode, mode)
+			return Model{}, fmt.Errorf("invalid model configuration: mode %q contradicts requested mode %q", candidate.Mode, mode)
 		}
 		candidate.Mode = mode
 		if err := candidate.validateMode(); err != nil {
@@ -143,15 +148,26 @@ func (m Model) WithMode(mode RuntimeMode) (Model, error) {
 	return m, nil
 }
 
-// ResolveBackend returns Backend when set, otherwise infers it from Name.
-func (m Model) ResolveBackend() (Backend, error) {
-	if m.Backend != "" {
-		if !m.Backend.Valid() {
-			return "", fmt.Errorf("invalid backend %q (valid: %s)", m.Backend, BackendList())
-		}
-		return m.Backend, nil
+// Runtime returns the provider that owns this model and the mode that serves
+// it. Both are read off the model, not re-derived: after Resolve the pair is a
+// fact the model carries. A model that has not been resolved fails loud rather
+// than quietly re-inferring a second answer — that duplicate inference is how
+// the same selection could mean two different runtimes at two call sites.
+func (m Model) Runtime() (*Provider, RuntimeMode, error) {
+	if m.Provider == nil {
+		return nil, "", fmt.Errorf("model %q has no provider: resolve it before asking for its runtime", m.Name)
 	}
-	return InferBackend(m.Name)
+	if _, err := m.Provider.RequireMode(m.Mode); err != nil {
+		return nil, "", err
+	}
+	return m.Provider, m.Mode, nil
+}
+
+// RuntimeKey is a comparable identity for deduplicating resolved selections:
+// which mode runs which model at which effort. It is an in-memory key only —
+// nothing parses it back, and no wire format carries it.
+func (m Model) RuntimeKey() string {
+	return string(m.Mode) + "\x00" + m.Name + "\x00" + string(m.Effort)
 }
 
 // Temp returns the temperature and whether it was explicitly set (non-nil), so
@@ -184,11 +200,8 @@ func (m Model) Validate() error {
 }
 
 // validateKnobs range-checks the per-request inference knobs shared by a primary
-// model and each fallback (backend/mode/temperature/effort), independent of Name.
+// model and each fallback (mode/temperature/effort), independent of Name.
 func (m Model) validateKnobs() error {
-	if m.Backend != "" && !m.Backend.Valid() {
-		return fmt.Errorf("invalid backend %q (valid: %s)", m.Backend, BackendList())
-	}
 	if err := m.validateMode(); err != nil {
 		return err
 	}
@@ -198,29 +211,21 @@ func (m Model) validateKnobs() error {
 	return m.Effort.Validate()
 }
 
-// validateMode rejects a mode that is unknown, or that contradicts an explicit
-// backend. Backend is exactly (provider, mode), so `backend: anthropic` with
-// `mode: agent` names two different runtimes — reconciling it silently would
-// pick one of them behind the user's back.
+// validateMode rejects a mode outside the four mechanisms. Provider identity
+// comes from the model name, so there is no sibling field left for a mode to
+// contradict.
 func (m Model) validateMode() error {
 	if m.Mode == "" {
 		return nil
 	}
 	if _, ok := ParseRuntimeMode(string(m.Mode)); !ok {
-		return invalidModelBackend(m.Mode)
-	}
-	if m.Backend == "" {
-		return nil
-	}
-	if actual := m.Backend.Mode(); actual != m.Mode {
-		return fmt.Errorf("invalid model configuration: backend %q contradicts resolved adapter %q, which uses backend %q",
-			m.Mode, m.Backend, actual)
+		return invalidRuntimeMode(m.Mode)
 	}
 	return nil
 }
 
-func invalidModelBackend(value RuntimeMode) error {
-	return fmt.Errorf("invalid model configuration: backend %q (valid: %s)", value, RuntimeModeList())
+func invalidRuntimeMode(value RuntimeMode) error {
+	return fmt.Errorf("invalid model configuration: mode %q (valid: %s)", value, RuntimeModeList())
 }
 
 // MergePolicy is the structural-merge policy for a Model, exported so a
@@ -240,8 +245,21 @@ func MergePolicy() merge.Policy {
 
 // Merge overlays o's set fields onto m, returning the result. It backs Spec
 // merging in pkg/api, where a later layer overrides an earlier one field by field.
+//
+// An override that names a different model drops the inherited Provider. The
+// provider is a resolution result derived from the name, never a field a layer
+// authors, so carrying the base's descriptor across a rename would report the
+// wrong family for the new model — a prompt pinning `model: claude` overridden
+// with `--model codex` came out as an anthropic runtime running "codex".
 func (m Model) Merge(o Model) Model {
-	return merge.Apply(m, o, MergePolicy())
+	merged := merge.Apply(m, o, MergePolicy())
+	if name := strings.TrimSpace(o.Name); name != "" && !strings.EqualFold(name, strings.TrimSpace(m.Name)) {
+		merged.Provider = o.Provider
+		merged.Streaming, merged.MediaTypes = o.Streaming, o.MediaTypes
+		merged.Resume, merged.Interrupt = o.Resume, o.Interrupt
+		merged.Steer, merged.CallerTools = o.Steer, o.CallerTools
+	}
+	return merged
 }
 
 // ExpandCSV moves any comma-separated tail of Name into name-only Fallbacks
@@ -283,10 +301,10 @@ func (m Model) Candidates() []Model {
 	}
 	out := make([]Model, 0, len(all))
 	for _, candidate := range all {
-		// A name we cannot map to a backend is kept: dropping it here would turn a
-		// "no such model" error into a silent disappearance.
-		backend, err := candidate.ResolveBackend()
-		if err != nil || !disabled.Model(backend, candidate.Name) {
+		// An unresolved candidate is kept: dropping it here would turn a "no such
+		// model" error into a silent disappearance.
+		p, mode, err := candidate.Runtime()
+		if err != nil || !disabled.Model(p, mode, candidate.Name) {
 			out = append(out, candidate)
 		}
 	}
@@ -323,35 +341,33 @@ func (m Model) candidates() []Model {
 }
 
 // substituteModel picks a stand-in for a chain the user disabled entirely: the
-// catalog's top preferred model on an enabled backend, favouring the original's
+// catalog's top preferred model on an enabled runtime, favouring the original's
 // own provider family before crossing to another one. The per-request knobs are
 // carried over, with the effort re-resolved against the substitute's own catalog
 // entry so an unsupported tier does not travel with it.
 func substituteModel(m Model, disabled DisabledSet) (Model, bool) {
 	family := modelProvider(m)
-	backends := AllBackends()
-	sort.SliceStable(backends, func(i, j int) bool {
-		return backends[i].Provider() == family && backends[j].Provider() != family
+	runtimes := AllRuntimes()
+	sort.SliceStable(runtimes, func(i, j int) bool {
+		return runtimes[i].Provider == family && runtimes[j].Provider != family
 	})
-	for _, backend := range backends {
-		if disabled.Backend(backend) {
+	for _, runtime := range runtimes {
+		p, ok := runtime.ModelProvider()
+		if !ok || disabled.Runtime(p, runtime.Mode) {
 			continue
 		}
-		p, mode, ok := ProviderFor(backend)
+		pick, ok := p.latestModel(runtime.Mode, "")
 		if !ok {
 			continue
 		}
-		pick, ok := p.latestModel(mode, "")
-		if !ok {
-			continue
-		}
-		effort, err := ResolveEffort(backend, pick.ID, m.Effort)
+		effort, err := ResolveEffort(p, runtime.Mode, pick.ID, m.Effort)
 		if err != nil {
 			effort = EffortNone
 		}
 		return Model{
 			Name:        pick.ID,
-			Backend:     backend,
+			Mode:        runtime.Mode,
+			Provider:    p,
 			Effort:      effort,
 			Temperature: m.Temperature,
 			NoCache:     m.NoCache,
@@ -360,15 +376,17 @@ func substituteModel(m Model, disabled DisabledSet) (Model, bool) {
 	return Model{}, false
 }
 
-func modelProvider(model Model) Backend {
-	if provider := model.Backend.Provider(); provider != "" {
-		return provider
+// modelProvider names the provider family a model belongs to, or "" when no
+// provider claims the name.
+func modelProvider(model Model) string {
+	if model.Provider != nil {
+		return model.Provider.Name
 	}
-	backend, err := InferBackend(model.Name)
+	p, err := ProviderFor(model.Name)
 	if err != nil {
 		return ""
 	}
-	return backend.Provider()
+	return p.Name
 }
 
 // splitCSV splits a comma-separated string into trimmed, non-empty parts.

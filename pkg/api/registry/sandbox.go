@@ -11,16 +11,22 @@ import (
 type SandboxKind string
 
 const (
-	// SandboxNone runs the agent as a bare child process on the host. It is the
-	// default and the behaviour every run had before adapters existed.
-	SandboxNone SandboxKind = "none"
-	// SandboxSRT wraps the agent's argv with sandbox-runtime's confinement.
-	SandboxSRT SandboxKind = "srt"
-	// SandboxContainer wraps the agent's argv with a container invocation.
-	SandboxContainer SandboxKind = "container"
+	// SandboxOff disables provider-native filesystem/network isolation and
+	// approval prompts. It is intentionally explicit: an absent sandbox inherits
+	// the configured default, while "off" overrides that default.
+	SandboxOff SandboxKind = "off"
+	// SandboxNative translates Captain's provider-neutral policy into the active
+	// Claude, Codex, or Gemini runtime's own sandbox controls.
+	SandboxNative SandboxKind = "native"
+	// SandboxDocker runs the provider inside a Docker boundary. Provider-native
+	// filesystem/network isolation is disabled inside that external boundary.
+	SandboxDocker SandboxKind = "docker"
 	// SandboxGitAgent relocates the whole run onto another machine over git.
 	// See specs/SPEC-git-agent-protocol.md.
 	SandboxGitAgent SandboxKind = "git-agent"
+	// SandboxSRTInternal confines Git Agent receive hooks. It is deliberately not
+	// present in AllSandboxes or ParseSandboxKind and cannot be selected by a run.
+	SandboxSRTInternal SandboxKind = "srt-internal"
 )
 
 // SandboxCapability names an optional behaviour an adapter may implement. The
@@ -110,13 +116,23 @@ func SandboxFor(kind SandboxKind) (*Sandbox, bool) {
 	return nil, false
 }
 
+// SandboxAdapterFor returns descriptors for both selectable modes and internal
+// adapters. Construction uses this wider registry; schemas and selectors use
+// SandboxFor so internal confinement mechanisms never leak into user config.
+func SandboxAdapterFor(kind SandboxKind) (*Sandbox, bool) {
+	if kind == SandboxSRTInternal {
+		return internalSRTSandbox, true
+	}
+	return SandboxFor(kind)
+}
+
 // ParseSandboxKind normalizes a kind token, reporting whether it names an
-// adapter. An empty token resolves to SandboxNone: absent means unsandboxed,
+// adapter. An empty token resolves to SandboxOff: absent means unsandboxed,
 // which is what every run did before this field existed.
 func ParseSandboxKind(s string) (SandboxKind, bool) {
 	trimmed := SandboxKind(strings.ToLower(strings.TrimSpace(s)))
 	if trimmed == "" {
-		return SandboxNone, true
+		return SandboxOff, true
 	}
 	if _, ok := SandboxFor(trimmed); ok {
 		return trimmed, true

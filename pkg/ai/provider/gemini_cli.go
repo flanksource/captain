@@ -30,12 +30,11 @@ func NewGeminiCLI(model string) *GeminiCLI {
 	if strings.TrimSpace(model) == "" {
 		model = geminiCLIDefaultModel
 	}
-	model = ai.NormalizeModelForBackend(ai.BackendGeminiCLI, model)
 	return &GeminiCLI{model: model}
 }
 
 func (g *GeminiCLI) GetModel() string       { return g.model }
-func (g *GeminiCLI) GetBackend() ai.Backend { return ai.BackendGeminiCLI }
+func (g *GeminiCLI) GetRuntime() ai.Runtime { return ai.RuntimeOf(ai.Google, ai.ModeCLI) }
 
 func (g *GeminiCLI) Execute(ctx context.Context, req ai.Request) (*ai.Response, error) {
 	start := time.Now()
@@ -43,7 +42,7 @@ func (g *GeminiCLI) Execute(ctx context.Context, req ai.Request) (*ai.Response, 
 	if err != nil {
 		return nil, err
 	}
-	resp, err := CoalesceStreamForBackend(ctx, ai.BackendGeminiCLI, g.model, events, start)
+	resp, err := CoalesceStreamForRuntime(ctx, ai.RuntimeOf(ai.Google, ai.ModeCLI), g.model, events, start)
 	if err != nil {
 		return nil, err
 	}
@@ -109,17 +108,23 @@ func (g *GeminiCLI) ExecuteStream(ctx context.Context, req ai.Request) (<-chan a
 // index rather than an id — which is why the registry declares no Resume for
 // this backend.
 func buildGeminiCLIArgs(model string, req ai.Request) ([]string, error) {
-	if err := ai.ValidateAttachmentCompatibility([]api.Model{{Name: model, Backend: api.BackendGeminiCLI}}, req.Prompt.Attachments); err != nil {
+	if err := ai.ValidateAttachmentCompatibility([]api.Model{{Name: model, Provider: api.Google, Mode: api.ModeCLI}}, req.Prompt.Attachments); err != nil {
 		return nil, err
 	}
-	if err := api.RequireToolPolicySupport(api.BackendGeminiCLI, req.Permissions); err != nil {
+	if err := api.RequireToolPolicySupport(api.Google, api.ModeCLI, req.Permissions); err != nil {
 		return nil, err
+	}
+	if err := validatePermissionMode(api.RuntimeOf(api.Google, api.ModeCLI), req.Permissions.Mode); err != nil {
+		return nil, err
+	}
+	if req.Sandbox != nil && req.Sandbox.Mode == api.SandboxNative {
+		return nil, fmt.Errorf("sandbox mode native is not supported by %s", api.RuntimeOf(api.Google, api.ModeCLI))
 	}
 	args := []string{"--output-format", "stream-json"}
 	if m := strings.TrimSpace(model); m != "" {
 		args = append(args, "--model", m)
 	}
-	if mode := geminiApprovalMode(req.Permissions); mode != "" {
+	if mode := geminiApprovalMode(permissionMode(req)); mode != "" {
 		args = append(args, "--approval-mode", mode)
 	}
 	return args, nil
@@ -129,15 +134,13 @@ func buildGeminiCLIArgs(model string, req ai.Request) ([]string, error) {
 // choices (default | auto_edit | yolo | plan). The default posture emits no flag
 // so gemini keeps its own default, under which a tool needing confirmation fails
 // loudly instead of silently running.
-func geminiApprovalMode(p api.Permissions) string {
-	switch {
-	case p.Mode == api.PermissionPlan:
+func geminiApprovalMode(mode api.PermissionMode) string {
+	switch mode {
+	case api.PermissionPlan:
 		return "plan"
-	case p.Mode == api.PermissionBypass, p.Mode == api.PermissionDontAsk:
+	case api.PermissionBypass, api.PermissionDontAsk:
 		return "yolo"
-	case p.Mode == api.PermissionAcceptEdits, p.Mode == api.PermissionAuto:
-		return "auto_edit"
-	case p.Mode == "" && p.HasPreset(api.PresetEdit):
+	case api.PermissionAcceptEdits, api.PermissionAuto:
 		return "auto_edit"
 	default:
 		return ""

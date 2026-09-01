@@ -5,20 +5,24 @@ import (
 	"sync"
 )
 
-// DisabledSet is the user's opt-out list: runtime modes, providers, backends,
-// models and effort tiers taken out of circulation from the whoami page and
-// persisted in ~/.captain.yaml under ai.disabled.
+// DisabledSet is the user's opt-out list: runtime modes, providers, individual
+// provider×mode runtimes, models and effort tiers taken out of circulation from
+// the whoami page and persisted in ~/.captain.yaml under ai.disabled.
 //
 // It lives here rather than in captainconfig because the resolution paths that
 // must honour it (ModelEfforts, ResolveEffort, Model.Candidates) are in this
 // leaf package and cannot import config. captainconfig owns the file format and
 // installs the parsed set with SetDisabled.
 //
+// The runtimes axis is not redundant with modes × providers: "cmux off for
+// anthropic but not for openai" is exactly the statement neither of the other
+// two can make, which is why it is a pair rather than a name.
+//
 // The zero value disables nothing, so every read path is safe before install.
 type DisabledSet struct {
 	modes     map[string]struct{}
 	providers map[string]struct{}
-	backends  map[string]struct{}
+	runtimes  map[Runtime]struct{}
 	models    map[string]struct{}
 	efforts   map[string]struct{}
 }
@@ -26,17 +30,39 @@ type DisabledSet struct {
 // NewDisabledSet normalizes the raw config lists into lookup sets. Tokens are
 // trimmed and lowercased; empty tokens are dropped.
 //
-// Model entries are keyed by backend, not by webapp menu id: "gemini/gemini-3.5-flash"
-// even though that model's menu id is "googleai/gemini-3.5-flash". A bare entry
-// with no slash ("claude-opus-4-7") disables that model on every backend.
-func NewDisabledSet(modes, providers, backends, models, efforts []string) DisabledSet {
+// Model entries are keyed by provider, not by webapp menu id:
+// "google/gemini-3.5-flash" even though that model's menu id is
+// "googleai/gemini-3.5-flash". A bare entry with no slash ("claude-opus-4-7")
+// disables that model everywhere.
+func NewDisabledSet(modes, providers []string, runtimes []Runtime, models, efforts []string) DisabledSet {
 	return DisabledSet{
 		modes:     tokenSet(modes),
 		providers: tokenSet(providers),
-		backends:  tokenSet(backends),
+		runtimes:  runtimeSet(runtimes),
 		models:    tokenSet(models),
 		efforts:   tokenSet(efforts),
 	}
+}
+
+func runtimeSet(values []Runtime) map[Runtime]struct{} {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[Runtime]struct{}, len(values))
+	for _, v := range values {
+		normalized := Runtime{
+			Provider: strings.ToLower(strings.TrimSpace(v.Provider)),
+			Mode:     RuntimeMode(strings.ToLower(strings.TrimSpace(string(v.Mode)))),
+		}
+		if normalized.Provider == "" || normalized.Mode == "" {
+			continue
+		}
+		out[normalized] = struct{}{}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func tokenSet(values []string) map[string]struct{} {
@@ -58,7 +84,7 @@ func tokenSet(values []string) map[string]struct{} {
 // Empty reports whether the set disables nothing at all, letting hot paths skip
 // the per-entry checks entirely.
 func (d DisabledSet) Empty() bool {
-	return len(d.modes) == 0 && len(d.providers) == 0 && len(d.backends) == 0 &&
+	return len(d.modes) == 0 && len(d.providers) == 0 && len(d.runtimes) == 0 &&
 		len(d.models) == 0 && len(d.efforts) == 0
 }
 
@@ -67,31 +93,43 @@ func (d DisabledSet) Mode(m RuntimeMode) bool {
 	return contains(d.modes, string(m))
 }
 
-// Provider reports whether a provider family is disabled. It accepts any
-// backend and resolves it to its API provider first, so Provider(claude-cmux)
-// answers for anthropic.
-func (d DisabledSet) Provider(b Backend) bool {
-	return contains(d.providers, string(b.Provider()))
+// Provider reports whether a provider family is disabled.
+func (d DisabledSet) Provider(p *Provider) bool {
+	if p == nil {
+		return false
+	}
+	return contains(d.providers, p.Name)
 }
 
-// Backend reports whether a backend cannot be used, whether it was disabled
-// directly or through its runtime mode or provider family.
-func (d DisabledSet) Backend(b Backend) bool {
-	return contains(d.backends, string(b)) || d.Mode(b.Mode()) || d.Provider(b)
+// Runtime reports whether a provider×mode pair cannot be used, whether it was
+// disabled directly or through its runtime mode or provider family.
+func (d DisabledSet) Runtime(p *Provider, mode RuntimeMode) bool {
+	return d.runtimeDisabled(p, mode) || d.Mode(mode) || d.Provider(p)
 }
 
-// Model reports whether a model is unusable on a backend: either the backend
-// itself is disabled, or the model is listed as "<backend>/<id>" or as a bare
-// "<id>" that applies to every backend.
-func (d DisabledSet) Model(b Backend, id string) bool {
-	if d.Backend(b) {
+func (d DisabledSet) runtimeDisabled(p *Provider, mode RuntimeMode) bool {
+	if p == nil || len(d.runtimes) == 0 {
+		return false
+	}
+	_, ok := d.runtimes[RuntimeOf(p, mode)]
+	return ok
+}
+
+// Model reports whether a model is unusable on a runtime: either the runtime
+// itself is disabled, or the model is listed as "<provider>/<id>" or as a bare
+// "<id>" that applies everywhere.
+func (d DisabledSet) Model(p *Provider, mode RuntimeMode, id string) bool {
+	if d.Runtime(p, mode) {
 		return true
 	}
-	return contains(d.models, id) || contains(d.models, string(b)+"/"+id)
+	if contains(d.models, id) {
+		return true
+	}
+	return p != nil && contains(d.models, p.Name+"/"+id)
 }
 
 // Effort reports whether an effort tier is disabled. EffortNone is never
-// disabled: it means "use the backend default" rather than naming a tier.
+// disabled: it means "use the runtime default" rather than naming a tier.
 func (d DisabledSet) Effort(e Effort) bool {
 	if e == EffortNone {
 		return false
@@ -123,18 +161,18 @@ func (d DisabledSet) EnabledEfforts() []Effort {
 	return d.Efforts(AllEfforts())
 }
 
-// Reason explains why a backend is unusable, for UI hints on the whoami page.
-// It returns "" when the backend is enabled. A backend disabled in its own
-// right reports "backend", so the UI can tell a directly-toggled card apart
-// from one switched off by its mode or provider.
-func (d DisabledSet) Reason(b Backend) string {
+// Reason explains why a runtime is unusable, for UI hints on the whoami page.
+// It returns "" when the runtime is enabled. A runtime disabled in its own right
+// reports "runtime", so the UI can tell a directly-toggled card apart from one
+// switched off by its mode or provider.
+func (d DisabledSet) Reason(p *Provider, mode RuntimeMode) string {
 	switch {
-	case contains(d.backends, string(b)):
-		return "backend " + string(b)
-	case d.Mode(b.Mode()):
-		return "mode " + string(b.Mode())
-	case d.Provider(b):
-		return "provider " + string(b.Provider())
+	case d.runtimeDisabled(p, mode):
+		return "runtime " + RuntimeOf(p, mode).String()
+	case d.Mode(mode):
+		return "mode " + string(mode)
+	case d.Provider(p):
+		return "provider " + p.Name
 	default:
 		return ""
 	}

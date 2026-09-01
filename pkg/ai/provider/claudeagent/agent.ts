@@ -68,6 +68,7 @@ interface InitializeParams {
   maxTurns?: number;
   maxBudgetUsd?: number;
   permissionMode?: string;
+  sandbox?: Options["sandbox"];
   resume?: string;
   approvalMode?: string;
   // outputSchema is the JSON Schema captain derives from the request's
@@ -122,6 +123,7 @@ function buildOptions(params: InitializeParams): Options {
     maxTurns: params.maxTurns || undefined,
     maxBudgetUsd: params.maxBudgetUsd || undefined,
     permissionMode,
+    sandbox: params.sandbox,
     allowDangerouslySkipPermissions:
       !brokered && permissionMode === "bypassPermissions",
     allowedTools:

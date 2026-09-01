@@ -127,9 +127,9 @@ func startCLIStream(ctx context.Context, command string, args []string, stdinDat
 }
 
 // newCLICommand builds the CLI process through the selected sandbox adapter.
-// nil means unsandboxed, which resolves the "none" adapter.
+// nil means the explicit identity adapter.
 func newCLICommand(ctx context.Context, command string, args []string, req *ai.Request, sandbox *api.SandboxConfig) (*exec.Cmd, func(), error) {
-	cfg := api.SandboxConfig{Kind: api.SandboxNone}
+	cfg := api.SandboxConfig{Kind: api.SandboxOff}
 	if sandbox != nil {
 		cfg = *sandbox
 	}
@@ -139,7 +139,7 @@ func newCLICommand(ctx context.Context, command string, args []string, req *ai.R
 // newSandboxedCommand constructs the selected sandbox adapter and builds the
 // command through its CommandWrapper when it provides one — the single exec
 // seam shared by claude-cli, codex-cli and gemini-cli. An adapter without the
-// capability falls through to a bare command, which is exactly what the "none"
+// capability falls through to a bare command, which is exactly what the "off"
 // adapter is; an adapter whose wrapping fails aborts the run rather than
 // falling back to an unconfined process.
 //

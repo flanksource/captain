@@ -152,16 +152,16 @@ func (c *toolEventCorrelation) observeResponse(response *gkai.ToolResponse) erro
 // double-count. genkit's GenerationUsage has no cache-write field, so
 // CacheWriteTokens is always zero here — cache-write spend on the API path is
 // invisible upstream (finding C4).
-func mapUsage(u *gkai.GenerationUsage, backend ai.Backend) ai.Usage {
+func mapUsage(u *gkai.GenerationUsage, provider *ai.ModelProvider) ai.Usage {
 	if u == nil {
 		return ai.Usage{}
 	}
 	input := u.InputTokens
-	if backend != ai.BackendAnthropic {
+	if provider != ai.Anthropic {
 		input = ai.NetInputTokens(u.InputTokens, u.CachedContentTokens)
 	}
 	output := u.OutputTokens
-	if backend == ai.BackendOpenAI || backend == ai.BackendDeepSeek {
+	if provider == ai.OpenAI || provider == ai.DeepSeek {
 		output = ai.NetOutputTokens(u.OutputTokens, u.ThoughtsTokens)
 	}
 	return ai.Usage{
@@ -179,8 +179,8 @@ func responseToResponse(ctx context.Context, resp *gkai.ModelResponse, backend a
 	out := &ai.Response{
 		Text:     resp.Text(),
 		Model:    model,
-		Backend:  backend,
-		Usage:    mapUsage(resp.Usage, backend),
+		Runtime:  ai.RuntimeOf(provider, ai.ModeAPI),
+		Usage:    mapUsage(resp.Usage, provider),
 		Duration: time.Since(start),
 		Raw:      resp,
 	}

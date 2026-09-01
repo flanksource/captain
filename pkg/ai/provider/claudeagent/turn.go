@@ -105,7 +105,7 @@ func (p *Provider) runTurn(ctx context.Context, req ai.Request, events chan ai.E
 		p.clearActive()
 	}()
 
-	if err := ai.ValidateAttachmentCompatibility([]api.Model{{Name: p.model, Backend: api.BackendClaudeAgent}}, req.Prompt.Attachments); err != nil {
+	if err := ai.ValidateAttachmentCompatibility([]api.Model{{Name: p.model, Provider: api.Anthropic, Mode: api.ModeAgent}}, req.Prompt.Attachments); err != nil {
 		emit(ctx, events, ai.Event{Kind: ai.EventError, Error: err.Error(), Model: p.model})
 		return
 	}

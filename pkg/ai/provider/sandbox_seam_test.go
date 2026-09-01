@@ -21,7 +21,7 @@ type wrapperSandboxStub struct {
 	gotEnv []string
 }
 
-func (s *wrapperSandboxStub) Kind() api.SandboxKind { return api.SandboxNone }
+func (s *wrapperSandboxStub) Kind() api.SandboxKind { return api.SandboxOff }
 func (s *wrapperSandboxStub) Prepare(context.Context, *api.Spec) (*api.SandboxSession, error) {
 	return &api.SandboxSession{}, nil
 }
@@ -61,10 +61,10 @@ func TestNewCLICommandAppliesObservationEnvironmentOnlyFromContext(t *testing.T)
 
 func TestNewSandboxedCommand_RoutesThroughCommandWrapper(t *testing.T) {
 	stub := &wrapperSandboxStub{}
-	api.RegisterSandbox(api.SandboxNone, func(api.SandboxConfig) (api.Sandbox, error) { return stub, nil })
-	t.Cleanup(func() { api.RegisterSandbox(api.SandboxNone, adapter.None) })
+	api.RegisterSandbox(api.SandboxOff, func(api.SandboxConfig) (api.Sandbox, error) { return stub, nil })
+	t.Cleanup(func() { api.RegisterSandbox(api.SandboxOff, adapter.Off) })
 
-	cmd, cleanup, err := newSandboxedCommand(context.Background(), api.SandboxConfig{Kind: api.SandboxNone}, "claude", []string{"-p"}, requestWithSetupVar(t.TempDir()))
+	cmd, cleanup, err := newSandboxedCommand(context.Background(), api.SandboxConfig{Kind: api.SandboxOff}, "claude", []string{"-p"}, requestWithSetupVar(t.TempDir()))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -16,7 +16,7 @@ func TestNewCodexAppServer_Defaults(t *testing.T) {
 	c, err := NewCodexAppServer(ai.Config{})
 	require.NoError(t, err)
 	assert.Equal(t, CodexCLIDefaultModel, c.GetModel())
-	assert.Equal(t, ai.BackendCodexAgent, c.GetBackend())
+	assert.Equal(t, ai.RuntimeOf(ai.OpenAI, ai.ModeAgent), c.GetRuntime())
 
 	c2, err := NewCodexAppServer(ai.Config{Model: api.Model{Name: "gpt-5.4"}})
 	require.NoError(t, err)

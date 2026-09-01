@@ -13,7 +13,7 @@ import (
 // difference so the declaration keeps telling the truth about both.
 
 func TestDeclaredClaudeCmuxPostureMatchesCommand(t *testing.T) {
-	caps := api.PermissionCapabilitiesFor(api.BackendClaudeCmux)
+	caps := api.PermissionCapabilitiesFor(api.Anthropic.Runtime(api.ModeCmux))
 	for _, mode := range api.AllPermissionModes() {
 		t.Run(string(mode), func(t *testing.T) {
 			support := caps.ModeSupport(mode)
@@ -32,7 +32,7 @@ func TestDeclaredClaudeCmuxPostureMatchesCommand(t *testing.T) {
 // row a sandbox/approval pair rather than a flag: the command itself never
 // mentions the posture, which rides on the typed cmux options instead.
 func TestDeclaredCodexCmuxCarriesNoPermissionFlag(t *testing.T) {
-	caps := api.PermissionCapabilitiesFor(api.BackendCodexCmux)
+	caps := api.PermissionCapabilitiesFor(api.OpenAI.Runtime(api.ModeCmux))
 	for _, mode := range api.AllPermissionModes() {
 		if flag := caps.ModeSupport(mode).Effects.Flag; flag != "" {
 			t.Fatalf("codex-cmux declares flag %q for %s, but codex has no permission-mode flag", flag, mode)
@@ -47,7 +47,7 @@ func TestDeclaredCodexCmuxCarriesNoPermissionFlag(t *testing.T) {
 // for the terminal transport: cmux forwards both claude tool flags, so allow and
 // deny are declared native there just as they are on claude-cli.
 func TestDeclaredClaudeCmuxToolPolicyMatchesCommand(t *testing.T) {
-	caps := api.PermissionCapabilitiesFor(api.BackendClaudeCmux)
+	caps := api.PermissionCapabilitiesFor(api.Anthropic.Runtime(api.ModeCmux))
 	cmd := AgentCommand(AgentCommandOpts{
 		Agent: "claude", AllowedTools: []string{"Read"}, DisallowedTools: []string{"Bash"},
 	})

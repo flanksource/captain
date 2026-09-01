@@ -10,8 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-
-	"github.com/flanksource/captain/pkg/ai"
 )
 
 //go:embed agent.ts
@@ -146,13 +144,13 @@ func nestingEnvOverrides(environ []string) map[string]string {
 	return overrides
 }
 
-// aliasModel is retained as the local model renderer for the agent.ts bridge.
-// It accepts legacy backend-prefixed aliases as input compatibility, but returns
-// the exact Claude model ID the SDK should receive.
-func aliasModel(model string) string {
+// bridgeModel renders the model for the agent.ts bridge. The id is already exact
+// by the time it reaches here, so this only supplies a model for the bare agent
+// sentinel, which names a family rather than a model.
+func bridgeModel(model string) string {
 	m := strings.TrimSpace(model)
 	if m == "" || m == "claude" {
-		return "claude-sonnet-5"
+		return defaultModel
 	}
-	return ai.NormalizeModelForBackend(ai.BackendClaudeAgent, m)
+	return m
 }

@@ -25,26 +25,27 @@ func TestBuildGeminiCLIArgs(t *testing.T) {
 
 func TestGeminiCLIApprovalMode(t *testing.T) {
 	cases := []struct {
-		name  string
-		perms api.Permissions
-		want  string
+		name string
+		mode api.PermissionMode
+		want string
 	}{
-		{"default posture leaves gemini's own default", api.Permissions{}, ""},
-		{"explicit default posture", api.Permissions{Mode: api.PermissionDefault}, ""},
-		{"plan is gemini's read-only mode", api.Permissions{Mode: api.PermissionPlan}, "plan"},
-		{"acceptEdits auto-approves edit tools", api.Permissions{Mode: api.PermissionAcceptEdits}, "auto_edit"},
-		{"auto auto-approves edit tools", api.Permissions{Mode: api.PermissionAuto}, "auto_edit"},
-		{"bypass is yolo", api.Permissions{Mode: api.PermissionBypass}, "yolo"},
-		{"dontAsk is yolo", api.Permissions{Mode: api.PermissionDontAsk}, "yolo"},
-		{"edit preset without a mode auto-approves edits", api.Permissions{Presets: []api.Preset{api.PresetEdit}}, "auto_edit"},
-		{"edit preset with an explicit mode defers to the mode", api.Permissions{Mode: api.PermissionDefault, Presets: []api.Preset{api.PresetEdit}}, ""},
+		{"default posture leaves gemini's own default", "", ""},
+		{"explicit default posture", api.PermissionDefault, ""},
+		{"plan is gemini's read-only mode", api.PermissionPlan, "plan"},
+		{"acceptEdits auto-approves edit tools", api.PermissionAcceptEdits, "auto_edit"},
+		{"auto auto-approves edit tools", api.PermissionAuto, "auto_edit"},
+		{"bypass is yolo", api.PermissionBypass, "yolo"},
+		{"dontAsk is yolo", api.PermissionDontAsk, "yolo"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := geminiApprovalMode(tc.perms); got != tc.want {
+			if got := geminiApprovalMode(tc.mode); got != tc.want {
 				t.Fatalf("geminiApprovalMode = %q, want %q", got, tc.want)
 			}
-			args, err := buildGeminiCLIArgs("gemini-3.5-flash", ai.Request{Permissions: tc.perms})
+			args, err := buildGeminiCLIArgs("gemini-3.5-flash", ai.Request{
+				Sandbox:     &api.SandboxRef{Mode: api.SandboxDocker},
+				Permissions: api.Permissions{Mode: tc.mode},
+			})
 			if err != nil {
 				t.Fatalf("buildGeminiCLIArgs: %v", err)
 			}

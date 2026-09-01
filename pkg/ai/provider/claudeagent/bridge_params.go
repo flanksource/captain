@@ -12,6 +12,7 @@ type initializeParams struct {
 	MaxTurns           int                         `json:"maxTurns,omitempty"`
 	MaxBudgetUsd       float64                     `json:"maxBudgetUsd,omitempty"`
 	PermissionMode     string                      `json:"permissionMode,omitempty"`
+	Sandbox            map[string]any              `json:"sandbox,omitempty"`
 	Resume             string                      `json:"resume,omitempty"`
 	ApprovalMode       string                      `json:"approvalMode,omitempty"`
 	OutputSchema       json.RawMessage             `json:"outputSchema,omitempty"`

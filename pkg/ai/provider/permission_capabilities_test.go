@@ -18,25 +18,41 @@ import (
 // unexported and sit above pkg/api: the declaration is the leaf, the
 // implementation is what has to agree with it.
 
-// argvFor is the real argv one backend produces for one posture.
-func argvFor(t *testing.T, backend api.Backend, mode api.PermissionMode) []string {
+// argvFor is the real argv one runtime produces for one posture.
+func argvFor(t *testing.T, runtime api.Runtime, mode api.PermissionMode) []string {
 	t.Helper()
-	req := ai.Request{Prompt: api.Prompt{User: "hi"}, Permissions: api.Permissions{Mode: mode}}
-	switch backend {
-	case api.BackendClaudeCLI:
+	req := ai.Request{Prompt: api.Prompt{User: "hi"}}
+	switch runtime {
+	case api.RuntimeOf(api.Anthropic, api.ModeCLI):
+		req.Sandbox = &api.SandboxRef{Mode: api.SandboxNative}
+		req.Permissions.Mode = mode
 		args, cleanup, err := buildClaudeCLIArgs("claude-sonnet-5", req)
 		if err != nil {
 			t.Fatalf("buildClaudeCLIArgs(%s): %v", mode, err)
 		}
 		t.Cleanup(cleanup)
 		return args
-	case api.BackendGeminiCLI:
+	case api.RuntimeOf(api.Google, api.ModeCLI):
+		req.Sandbox = &api.SandboxRef{Mode: api.SandboxDocker}
+		req.Permissions.Mode = mode
 		args, err := buildGeminiCLIArgs("gemini-3.5-flash", req)
 		if err != nil {
 			t.Fatalf("buildGeminiCLIArgs(%s): %v", mode, err)
 		}
 		return args
-	case api.BackendCodexCLI:
+	case api.RuntimeOf(api.OpenAI, api.ModeCLI):
+		support := api.PermissionCapabilitiesFor(runtime).ModeSupport(mode)
+		req.Sandbox = &api.SandboxRef{Mode: api.SandboxNative}
+		req.Permissions.Mode = mode
+		if support.Effects.Sandbox == "workspace-write" {
+			req.Sandbox.Policy = &api.NativeSandboxPolicy{
+				Filesystem: &api.SandboxFilesystemPolicy{Access: api.SandboxFilesystemWorkspaceWrite},
+			}
+		}
+		if support.Effects.Sandbox == "danger-full-access" {
+			// The posture stays stated: turning isolation off no longer supplies it.
+			req.Sandbox.Mode = api.SandboxOff
+		}
 		args, cleanup, err := buildCodexCLIArgs(codexCLIConfig{Model: "gpt-5.5"}, req)
 		if err != nil {
 			t.Fatalf("buildCodexCLIArgs(%s): %v", mode, err)
@@ -44,7 +60,7 @@ func argvFor(t *testing.T, backend api.Backend, mode api.PermissionMode) []strin
 		t.Cleanup(cleanup)
 		return args
 	default:
-		t.Fatalf("no argv builder for backend %s", backend)
+		t.Fatalf("no argv builder for runtime %s", runtime)
 		return nil
 	}
 }
@@ -73,46 +89,44 @@ func containsFlag(args []string, flag string) bool {
 // into argv, and a declared-empty Flag must leave the knob unset so the CLI's
 // own default stands.
 func TestDeclaredPostureMatchesArgv(t *testing.T) {
-	for _, backend := range []api.Backend{api.BackendClaudeCLI, api.BackendGeminiCLI} {
-		caps := api.PermissionCapabilitiesFor(backend)
+	for _, runtime := range []api.Runtime{api.RuntimeOf(api.Anthropic, api.ModeCLI), api.RuntimeOf(api.Google, api.ModeCLI)} {
+		caps := api.PermissionCapabilitiesFor(runtime)
 		knob := strings.Fields(caps.ModeSupport(api.PermissionPlan).Effects.Flag)[0]
 
 		for _, mode := range api.AllPermissionModes() {
-			t.Run(fmt.Sprintf("%s/%s", backend, mode), func(t *testing.T) {
+			t.Run(fmt.Sprintf("%s/%s", runtime, mode), func(t *testing.T) {
 				support := caps.ModeSupport(mode)
 				if !support.Honoured() {
-					t.Skipf("%s declares %s as %s", backend, mode, support.Kind)
+					t.Skipf("%s declares %s as %s", runtime, mode, support.Kind)
 				}
-				args := argvFor(t, backend, mode)
+				args := argvFor(t, runtime, mode)
 				if support.Effects.Flag == "" {
 					if slices.Contains(args, knob) {
-						t.Fatalf("%s declares no flag for %s but argv carries %s: %v", backend, mode, knob, args)
+						t.Fatalf("%s declares no flag for %s but argv carries %s: %v", runtime, mode, knob, args)
 					}
 					return
 				}
 				if !containsFlag(args, support.Effects.Flag) {
-					t.Fatalf("%s declares %q for %s, argv was %v", backend, support.Effects.Flag, mode, args)
+					t.Fatalf("%s declares %q for %s, argv was %v", runtime, support.Effects.Flag, mode, args)
 				}
 			})
 		}
 	}
 }
 
-// TestDeclaredCodexPostureMatchesArgv is the sandbox/approval half. codex has no
-// permission-mode flag at all: the posture is a --sandbox tier plus an
-// approval_policy config override, which is why those are separate Effects
-// fields rather than one Flag string.
+// TestDeclaredCodexPostureMatchesArgv proves that approval translates without
+// changing the independently selected Native isolation tier.
 func TestDeclaredCodexPostureMatchesArgv(t *testing.T) {
-	caps := api.PermissionCapabilitiesFor(api.BackendCodexCLI)
+	caps := api.PermissionCapabilitiesFor(api.OpenAI.Runtime(api.ModeCLI))
 	for _, mode := range api.AllPermissionModes() {
 		t.Run(string(mode), func(t *testing.T) {
 			support := caps.ModeSupport(mode)
 			if !support.Honoured() {
 				t.Skipf("codex-cli declares %s as %s", mode, support.Kind)
 			}
-			args := argvFor(t, api.BackendCodexCLI, mode)
-			if !containsFlag(args, "--sandbox "+support.Effects.Sandbox) {
-				t.Fatalf("declared sandbox %q for %s, argv was %v", support.Effects.Sandbox, mode, args)
+			args := argvFor(t, api.RuntimeOf(api.OpenAI, api.ModeCLI), mode)
+			if !containsFlag(args, "--sandbox read-only") {
+				t.Fatalf("native isolation changed for approval %s: %v", mode, args)
 			}
 			if !containsFlag(args, fmt.Sprintf("-c approval_policy=%q", support.Effects.Approval)) {
 				t.Fatalf("declared approval %q for %s, argv was %v", support.Effects.Approval, mode, args)
@@ -121,15 +135,14 @@ func TestDeclaredCodexPostureMatchesArgv(t *testing.T) {
 	}
 }
 
-// TestDeclaredUnsupportedCodexDontAskIsTheDefault pins the *reason* dontAsk is
-// declared unsupported rather than approximated: CodexSafety has no case for it,
-// so it lands on the read-only default — a posture that prompts more, not less.
-// If someone gives it a case, this fails and the cell must be re-declared.
-func TestDeclaredUnsupportedCodexDontAskIsTheDefault(t *testing.T) {
-	dontAsk := argvFor(t, api.BackendCodexCLI, api.PermissionDontAsk)
-	unset := argvFor(t, api.BackendCodexCLI, "")
-	if !slices.Equal(dontAsk, unset) {
-		t.Fatalf("dontAsk is declared unsupported because it is indistinguishable from the unset posture,\n dontAsk: %v\n   unset: %v", dontAsk, unset)
+func TestDeclaredUnsupportedCodexDontAskFailsLoudly(t *testing.T) {
+	ref := &api.SandboxRef{Mode: api.SandboxNative}
+	_, cleanup, err := buildCodexCLIArgs(codexCLIConfig{Model: "gpt-5.5"}, ai.Request{
+		Sandbox: ref, Permissions: api.Permissions{Mode: api.PermissionDontAsk},
+	})
+	t.Cleanup(cleanup)
+	if err == nil || !strings.Contains(err.Error(), "permissions.mode") {
+		t.Fatalf("codex dontAsk error = %v, want an unsupported permission mode error", err)
 	}
 }
 
@@ -144,20 +157,20 @@ func TestDeclaredAgentToolPolicyMatchesArgv(t *testing.T) {
 	perms := api.Permissions{Tools: api.Tools{"Bash": api.ToolPolicyDeny, "Read": api.ToolPolicyAllow}}
 	req := ai.Request{Prompt: api.Prompt{User: "hi"}, Permissions: perms}
 	cases := []struct {
-		backend api.Backend
+		runtime api.Runtime
 		argv    func() ([]string, error)
 	}{
-		{api.BackendClaudeCLI, func() ([]string, error) {
+		{api.RuntimeOf(api.Anthropic, api.ModeCLI), func() ([]string, error) {
 			args, cleanup, err := buildClaudeCLIArgs("claude-sonnet-5", req)
 			if cleanup != nil {
 				t.Cleanup(cleanup)
 			}
 			return args, err
 		}},
-		{api.BackendGeminiCLI, func() ([]string, error) {
+		{api.RuntimeOf(api.Google, api.ModeCLI), func() ([]string, error) {
 			return buildGeminiCLIArgs("gemini-3.5-flash", req)
 		}},
-		{api.BackendCodexCLI, func() ([]string, error) {
+		{api.RuntimeOf(api.OpenAI, api.ModeCLI), func() ([]string, error) {
 			args, cleanup, err := buildCodexCLIArgs(codexCLIConfig{Model: "gpt-5.5"}, req)
 			if cleanup != nil {
 				t.Cleanup(cleanup)
@@ -166,22 +179,22 @@ func TestDeclaredAgentToolPolicyMatchesArgv(t *testing.T) {
 		}},
 	}
 	for _, tc := range cases {
-		t.Run(string(tc.backend), func(t *testing.T) {
-			caps := api.PermissionCapabilitiesFor(tc.backend)
+		t.Run(tc.runtime.String(), func(t *testing.T) {
+			caps := api.PermissionCapabilitiesFor(tc.runtime)
 			enforces := caps.ToolPolicySupport(api.ProvenanceAgent, api.ToolPolicyDeny).Kind == api.SupportNative
 			args, err := tc.argv()
 
 			if !enforces {
 				if err == nil {
-					t.Fatalf("%s declares agent tool policy unsupported, but the run was accepted: %v", tc.backend, args)
+					t.Fatalf("%s declares agent tool policy unsupported, but the run was accepted: %v", tc.runtime, args)
 				}
-				if !strings.Contains(err.Error(), string(tc.backend)) {
-					t.Fatalf("refusal should name the backend, got %v", err)
+				if !strings.Contains(err.Error(), tc.runtime.String()) {
+					t.Fatalf("refusal should name the runtime, got %v", err)
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("%s declares agent tool policy native but refused: %v", tc.backend, err)
+				t.Fatalf("%s declares agent tool policy native but refused: %v", tc.runtime, err)
 			}
 			for _, pair := range []struct {
 				policy api.ToolPolicy
@@ -193,7 +206,7 @@ func TestDeclaredAgentToolPolicyMatchesArgv(t *testing.T) {
 				declared := caps.ToolPolicySupport(api.ProvenanceAgent, pair.policy).Kind == api.SupportNative
 				if got := slices.Contains(args, pair.flag); got != declared {
 					t.Fatalf("declared %s/%s native=%v but argv carries %s = %v: %v",
-						tc.backend, pair.policy, declared, pair.flag, got, args)
+						tc.runtime, pair.policy, declared, pair.flag, got, args)
 				}
 			}
 		})
@@ -211,7 +224,7 @@ func TestDeclaredMCPDisableMatchesArgv(t *testing.T) {
 	}
 	t.Cleanup(cleanup)
 
-	declared := api.PermissionCapabilitiesFor(api.BackendClaudeCLI).
+	declared := api.PermissionCapabilitiesFor(api.Anthropic.Runtime(api.ModeCLI)).
 		ResourceSupport(api.ResourceKindMCP, api.ResourceDisabled).Kind == api.SupportNative
 	if got := slices.Contains(args, "--strict-mcp-config"); got != declared {
 		t.Fatalf("claude-cli declares mcp/disabled native=%v, argv was %v", declared, args)

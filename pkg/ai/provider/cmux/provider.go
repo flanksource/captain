@@ -1,9 +1,9 @@
 // Package cmux implements captain's interactive-TUI provider: it drives a real
 // claude/codex CLI inside a cmux.app terminal surface (terminal automation, not
 // JSON-RPC), tailing the Claude session JSONL for structured progress. It backs
-// the ai.BackendClaudeCmux / ai.BackendCodexCmux backends.
+// the (anthropic, cmux) and (openai, cmux) runtimes.
 //
-// One Provider serves one backend (claude or codex, derived from cfg.Model.Backend).
+// One Provider serves one family (claude or codex, derived from the model's provider).
 // Each ExecuteStream spawns a goroutine that ensures a cmux workspace + terminal
 // surface, launches the agent, submits the host-assembled prompt, and streams the
 // resulting session events back as ai.Events, always ending in exactly one
@@ -33,48 +33,55 @@ var log = logger.GetLogger("cmux")
 
 // Provider drives an interactive claude/codex TUI inside a cmux surface.
 type Provider struct {
-	model string
-	agent string
-	cfg   ai.Config
+	model    string
+	agent    string
+	provider *api.ModelProvider
+	cfg      ai.Config
 }
 
 var _ ai.StreamingProvider = (*Provider)(nil)
 
-// New builds a cmux provider for the claude or codex agent, derived from
-// cfg.Model.Backend. The model name (cfg.Model.Name) may be empty, a bare agent
+// New builds a cmux provider for the claude or codex agent, derived from the
+// model's provider. The model name (cfg.Model.Name) may be empty, a bare agent
 // name ("claude"/"codex"), or a concrete model ("opus"/"gpt-…").
 func New(cfg ai.Config) (*Provider, error) {
-	agent, err := agentForBackend(cfg.Model.Backend)
+	provider := cfg.Model.Provider
+	agent, err := agentForProvider(provider)
 	if err != nil {
 		return nil, err
 	}
-	model := ai.NormalizeModelForBackend(cfg.Model.Backend, cfg.Model.Name)
+	// cfg.Model.Name is already the exact id the CLI expects: api.NewProvider
+	// resolved it before this factory ran.
 	return &Provider{
-		model: model,
-		agent: agent,
-		cfg:   cfg,
+		model:    cfg.Model.Name,
+		agent:    agent,
+		provider: provider,
+		cfg:      cfg,
 	}, nil
 }
 
-func agentForBackend(b api.Backend) (string, error) {
-	switch b {
-	case api.BackendClaudeCmux:
-		return "claude", nil
-	case api.BackendCodexCmux:
-		return "codex", nil
-	default:
-		return "", fmt.Errorf("cmux provider: unsupported backend %q (want %s or %s)", b, api.BackendClaudeCmux, api.BackendCodexCmux)
+// agentForProvider names the local binary cmux pilots for a family. Only the
+// families whose cmux cell the registry declares are served.
+func agentForProvider(p *api.ModelProvider) (string, error) {
+	if p != nil {
+		if _, serves := p.Caps(api.ModeCmux); serves {
+			return p.AgentName, nil
+		}
 	}
+	return "", fmt.Errorf("cmux provider: %q has no cmux mode (available: %s)", providerLabel(p), api.RuntimeList())
+}
+
+func providerLabel(p *api.ModelProvider) string {
+	if p == nil {
+		return ""
+	}
+	return p.Name
 }
 
 func (p *Provider) GetModel() string { return p.model }
 
-func (p *Provider) GetBackend() ai.Backend {
-	if p.agent == "codex" {
-		return api.BackendCodexCmux
-	}
-	return api.BackendClaudeCmux
-}
+// GetRuntime reports the (provider, cmux) pair this adapter serves.
+func (p *Provider) GetRuntime() ai.Runtime { return ai.RuntimeOf(p.provider, ai.ModeCmux) }
 
 // Execute drains its own ExecuteStream into a buffered ai.Response. cmux cannot
 // constrain output natively, so a structured-output request is served by
@@ -148,7 +155,7 @@ func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, e
 	resp := &ai.Response{
 		Text:            text.String(),
 		Model:           p.model,
-		Backend:         p.GetBackend(),
+		Runtime:         p.GetRuntime(),
 		Usage:           usage,
 		Duration:        time.Since(start),
 		TerminalOutcome: outcome,
@@ -180,7 +187,7 @@ func (p *Provider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai
 	}
 	// AgentCommand's codex branch emits no tool flags — codex has no equivalent —
 	// so a policy set here would be dropped rather than applied.
-	if err := api.RequireToolPolicySupport(p.GetBackend(), req.Permissions); err != nil {
+	if err := api.RequireToolPolicySupport(p.provider, api.ModeCmux, req.Permissions); err != nil {
 		return nil, err
 	}
 	events := make(chan ai.Event, 32)
@@ -236,10 +243,8 @@ func (p *Provider) drive(ctx context.Context, req ai.Request, schema json.RawMes
 	emit(ctx, events, ai.Event{Kind: ai.EventResult, Success: true, Usage: usage, CostUSD: cost, Model: p.model, StructuredData: structured})
 }
 
-// cmuxExtraArgs decodes req.CLIArgs into the backend's typed "extra cmux args"
-// struct. For codex it seeds the sandbox/approval posture from Permissions.Mode
-// (via api.CodexSafety) when the caller left them unset, so an unspecified form
-// still reflects the run's permission posture while an explicit value overrides it.
+// cmuxExtraArgs decodes req.CLIArgs into the backend's typed extra arguments and
+// projects the unified sandbox policy onto the provider-native flags/settings.
 func cmuxExtraArgs(agent string, req ai.Request) (any, error) {
 	switch agent {
 	case "codex":
@@ -247,19 +252,40 @@ func cmuxExtraArgs(agent string, req ai.Request) (any, error) {
 		if err := decodeCLIArgs(req.CLIArgs, &opts); err != nil {
 			return nil, err
 		}
-		sandbox, approval := api.CodexSafety(req.Permissions)
-		if opts.Sandbox == "" {
-			opts.Sandbox = sandbox
+		if req.Sandbox == nil {
+			return &opts, nil
 		}
-		if opts.AskForApproval == "" {
-			opts.AskForApproval = approval
+		if opts.Sandbox != "" || opts.AskForApproval != "" {
+			return nil, fmt.Errorf("sandbox conflicts with cliArgs sandbox/askForApproval")
 		}
+		translation, err := api.TranslateCodexSandbox(api.RuntimeOf(api.OpenAI, api.ModeCmux), req.Sandbox, req.Permissions.Mode)
+		if err != nil {
+			return nil, err
+		}
+		opts.Sandbox = translation.Sandbox
+		opts.AskForApproval = translation.Approval
+		opts.Config = append(opts.Config, translation.ConfigArgs()...)
 		return &opts, nil
 	default:
 		opts := api.ClaudeCmuxOptions{}
 		if err := decodeCLIArgs(req.CLIArgs, &opts); err != nil {
 			return nil, err
 		}
+		if req.Sandbox == nil {
+			return &opts, nil
+		}
+		if opts.Settings != "" {
+			return nil, fmt.Errorf("sandbox conflicts with cliArgs.settings")
+		}
+		sandbox, err := api.TranslateClaudeSandbox(api.RuntimeOf(api.Anthropic, api.ModeCmux), *req.Sandbox)
+		if err != nil {
+			return nil, err
+		}
+		settings, err := json.Marshal(map[string]any{"sandbox": sandbox})
+		if err != nil {
+			return nil, fmt.Errorf("encode Claude cmux sandbox settings: %w", err)
+		}
+		opts.Settings = string(settings)
 		return &opts, nil
 	}
 }
@@ -284,7 +310,8 @@ func decodeCLIArgs(args map[string]any, out any) error {
 func (p *Provider) execute(ctx context.Context, req ai.Request, r *run) (*ai.Usage, float64, error) {
 	start := time.Now()
 	agent := p.agent
-	r.planMode = req.Permissions.Mode == api.PermissionPlan
+	approval := req.Permissions.Mode
+	r.planMode = approval == api.PermissionPlan
 	model := modelFlag(agent, p.model)
 	workDir := groupWorkDir(req.Cwd())
 
@@ -317,8 +344,8 @@ func (p *Provider) execute(ctx context.Context, req ai.Request, r *run) (*ai.Usa
 		Model:           model,
 		SessionID:       sessionID,
 		Resume:          resume,
-		Plan:            req.Permissions.Mode == api.PermissionPlan,
-		PermissionMode:  req.Permissions.Mode,
+		Plan:            approval == api.PermissionPlan,
+		PermissionMode:  approval,
 		AllowedTools:    req.Permissions.Tools.AllowList(),
 		DisallowedTools: req.Permissions.Tools.DenyList(),
 		Effort:          req.Effort,
