@@ -25,7 +25,7 @@ type fakeProv struct {
 }
 
 func (f *fakeProv) GetModel() string    { return f.model }
-func (f *fakeProv) GetBackend() Backend { return BackendAnthropic }
+func (f *fakeProv) GetRuntime() Runtime { return RuntimeOf(Anthropic, ModeAPI) }
 
 func (f *fakeProv) Execute(_ context.Context, _ Request) (*Response, error) {
 	f.execCalls++
@@ -139,7 +139,7 @@ func TestFallback_Execute_BuildFailureAdvances(t *testing.T) {
 
 func TestFallback_Execute_MissingKeyBuildFailureAdvancesAndWarns(t *testing.T) {
 	fallback := &fakeProv{model: "fallback", execResp: &Response{Text: "ok"}}
-	models := []api.Model{{Name: "primary", Backend: BackendOpenAI}, {Name: "fallback", Backend: BackendCodexAgent}}
+	models := []api.Model{{Name: "primary", Provider: OpenAI, Mode: ModeAPI}, {Name: "fallback", Provider: OpenAI, Mode: ModeAgent}}
 	fp := &fallbackProvider{
 		candidates: models,
 		built:      make([]Provider, len(models)),

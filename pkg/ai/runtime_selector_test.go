@@ -2,87 +2,96 @@ package ai
 
 import (
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/api/registry"
 )
 
-func TestResolveModelSelectors(t *testing.T) {
+func TestResolveCompactSelectors(t *testing.T) {
 	cases := []struct {
-		name        string
-		in          api.Model
-		wantName    string
-		wantBackend api.Backend
+		name     string
+		in       api.Model
+		wantName string
+		wantMode api.RuntimeMode
 	}{
 		{
-			name:        "api claude shorthand",
-			in:          api.Model{Name: "api:sonnet-5"},
-			wantName:    "claude-sonnet-5",
-			wantBackend: api.BackendAnthropic,
+			name:     "api claude shorthand",
+			in:       api.Model{Name: "api:sonnet-5"},
+			wantName: "claude-sonnet-5",
+			wantMode: api.ModeAPI,
 		},
 		{
-			name:        "cmux codex shorthand",
-			in:          api.Model{Name: "cmux:gpt-5.5"},
-			wantName:    "gpt-5.5",
-			wantBackend: api.BackendCodexCmux,
+			name:     "cmux codex shorthand",
+			in:       api.Model{Name: "cmux:gpt-5.5"},
+			wantName: "gpt-5.5",
+			wantMode: api.ModeCmux,
 		},
 		{
-			name:        "agent claude shorthand",
-			in:          api.Model{Name: "agent:opus"},
-			wantName:    "claude-opus-5",
-			wantBackend: api.BackendClaudeAgent,
+			name:     "agent claude shorthand",
+			in:       api.Model{Name: "agent:opus"},
+			wantName: "claude-opus-5",
+			wantMode: api.ModeAgent,
 		},
 		{
-			name:        "agent codex app server",
-			in:          api.Model{Name: "agent:gpt-5.5"},
-			wantName:    "gpt-5.5",
-			wantBackend: api.BackendCodexAgent,
+			name:     "agent codex app server",
+			in:       api.Model{Name: "agent:gpt-5.5"},
+			wantName: "gpt-5.5",
+			wantMode: api.ModeAgent,
 		},
 		{
-			name:        "exact backend",
-			in:          api.Model{Name: "claude-cmux:opus"},
-			wantName:    "claude-opus-5",
-			wantBackend: api.BackendClaudeCmux,
+			// The compact prefix is a runtime mode; the family comes from the
+			// model name, so the two together name exactly one adapter.
+			name:     "exact mode",
+			in:       api.Model{Name: "cmux:opus"},
+			wantName: "claude-opus-5",
+			wantMode: api.ModeCmux,
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := ResolveModelSelectors(tc.in)
+			got, err := Resolve(tc.in)
 			if err != nil {
-				t.Fatalf("ResolveModelSelectors: %v", err)
+				t.Fatalf("Resolve: %v", err)
 			}
-			if got.Name != tc.wantName || got.Backend != tc.wantBackend {
-				t.Fatalf("got %s/%s, want %s/%s", got.Backend, got.Name, tc.wantBackend, tc.wantName)
+			if got.Name != tc.wantName || got.Mode != tc.wantMode {
+				t.Fatalf("got %s:%s, want %s:%s", got.Mode, got.Name, tc.wantMode, tc.wantName)
 			}
 		})
 	}
 }
 
-func TestNormalizeModelForBackend(t *testing.T) {
+// Resolve hands the driver the id it accepts. Aliases, family names and provider
+// namespaces are input conveniences; none of them survive. The adapters used to
+// redo this themselves — nine of them, each discarding the failure — so the id
+// captain recorded and the id the driver received could differ.
+func TestResolveRendersTheDriverModelID(t *testing.T) {
 	cases := []struct {
-		backend api.Backend
-		model   string
-		want    string
+		selector string
+		want     string
 	}{
-		{api.BackendClaudeAgent, "opus-4-8", "claude-opus-4-8"},
-		{api.BackendClaudeCmux, "claude-opus-4-8", "claude-opus-4-8"},
-		{api.BackendClaudeCLI, "fable-5", "claude-fable-5"},
-		{api.BackendAnthropic, "opus-4-8", "claude-opus-4-8"},
-		{api.BackendClaudeAgent, "claude-agent-opus", "claude-opus-5"},
-		{api.BackendClaudeAgent, "sonnet", "claude-sonnet-5"},
-		{api.BackendClaudeAgent, "sonnet-4", "claude-sonnet-4-6"},
-		{api.BackendClaudeAgent, "claude-sonnet-4-5", "claude-sonnet-4-6"},
-		{api.BackendClaudeAgent, "haiku", "claude-haiku-4-5"},
-		{api.BackendClaudeAgent, "haiku-4", "claude-haiku-4-5"},
-		{api.BackendClaudeAgent, "haiku-4.5", "claude-haiku-4-5"},
-		{api.BackendCodexCmux, "openai/gpt-5.5", "gpt-5.5"},
-		{api.BackendCodexAgent, "gpt-5.4-mini", "gpt-5.4-mini"},
+		{"agent:opus-4-8", "claude-opus-4-8"},
+		{"cmux:claude-opus-4-8", "claude-opus-4-8"},
+		{"cli:fable-5", "claude-fable-5"},
+		{"api:opus-4-8", "claude-opus-4-8"},
+		{"agent:sonnet", "claude-sonnet-5"},
+		{"agent:sonnet-4", "claude-sonnet-4-6"},
+		{"agent:claude-sonnet-4-5", "claude-sonnet-4-6"},
+		{"agent:haiku", "claude-haiku-4-5"},
+		{"agent:haiku-4", "claude-haiku-4-5"},
+		{"agent:haiku-4.5", "claude-haiku-4-5"},
+		{"cmux:openai/gpt-5.5", "gpt-5.5"},
+		// An id the catalog does not know is still a real model the provider
+		// offers, so it passes through rather than being rejected.
+		{"agent:gpt-5.4-mini", "gpt-5.4-mini"},
 	}
 	for _, tc := range cases {
-		if got := NormalizeModelForBackend(tc.backend, tc.model); got != tc.want {
-			t.Fatalf("NormalizeModelForBackend(%s, %q) = %q, want %q", tc.backend, tc.model, got, tc.want)
+		got, err := Resolve(api.Model{Name: tc.selector})
+		if err != nil {
+			t.Fatalf("Resolve(%q): %v", tc.selector, err)
+		}
+		if got.Name != tc.want {
+			t.Fatalf("Resolve(%q) = %q, want %q", tc.selector, got.Name, tc.want)
 		}
 	}
 }
@@ -94,7 +103,6 @@ func TestParseModelIdentity(t *testing.T) {
 	}{
 		{"opus-4-8", ModelIdentity{Provider: registry.Anthropic.Name, Family: "opus", Version: "4.8"}},
 		{"claude-opus-4-8-3003", ModelIdentity{Provider: registry.Anthropic.Name, Family: "opus", Version: "4.8-3003"}},
-		{"claude-agent-sonnet", ModelIdentity{Provider: registry.Anthropic.Name, Family: "sonnet"}},
 		{"openai/gpt-5.5", ModelIdentity{Provider: registry.OpenAI.Name, Family: "gpt", Version: "5.5"}},
 		{"codex-gpt-5.4", ModelIdentity{Provider: registry.OpenAI.Name, Family: "gpt", Version: "5.4"}},
 		{"gpt-5.4-mini", ModelIdentity{Provider: registry.OpenAI.Name, Family: "gpt", Version: "5.4-mini"}},
@@ -108,123 +116,129 @@ func TestParseModelIdentity(t *testing.T) {
 			t.Fatalf("ParseModelIdentity(%q) = %+v, want %+v", tc.model, got, tc.want)
 		}
 	}
+	// "claude-agent-sonnet" was a composite adapter id, not a model. Nothing
+	// mints it any more, and the trim table no longer privileges it — so it
+	// parses as whatever its literal text says, never as sonnet-on-agent.
+	if got, _ := ParseModelIdentity(registry.Anthropic.Name, "claude-agent-sonnet"); got.Family == "sonnet" {
+		t.Errorf("the removed composite id still resolves to a family: %+v", got)
+	}
 }
 
-func TestResolveModelSelectors_FallbackSelectors(t *testing.T) {
-	got, err := ResolveModelSelectors(api.Model{Name: "api:sonnet-5,cmux:opus"})
+func TestResolve_FallbackSelectors(t *testing.T) {
+	got, err := Resolve(api.Model{Name: "api:sonnet-5,cmux:opus"})
 	if err != nil {
-		t.Fatalf("ResolveModelSelectors: %v", err)
+		t.Fatalf("Resolve: %v", err)
 	}
-	if got.Name != "claude-sonnet-5" || got.Backend != api.BackendAnthropic {
-		t.Fatalf("primary = %s/%s", got.Backend, got.Name)
+	if got.Name != "claude-sonnet-5" || got.Provider != api.Anthropic || got.Mode != api.ModeAPI {
+		t.Fatalf("primary = %s %s/%s", got.Provider.Name, got.Mode, got.Name)
 	}
 	if len(got.Fallbacks) != 1 {
 		t.Fatalf("fallback count = %d, want 1", len(got.Fallbacks))
 	}
-	if fb := got.Fallbacks[0]; fb.Name != "claude-opus-5" || fb.Backend != api.BackendClaudeCmux {
-		t.Fatalf("fallback = %s/%s, want %s/%s", fb.Backend, fb.Name, api.BackendClaudeCmux, "claude-opus-5")
+	if fb := got.Fallbacks[0]; fb.Name != "claude-opus-5" || fb.Provider != api.Anthropic || fb.Mode != api.ModeCmux {
+		t.Fatalf("fallback = %s %s/%s, want anthropic cmux/claude-opus-5", fb.Provider.Name, fb.Mode, fb.Name)
 	}
 }
 
-func TestResolveRuntimeSelectors(t *testing.T) {
-	got, err := ResolveRuntimeSelectors(
+func TestResolveMulti_ExpandsEachSelector(t *testing.T) {
+	got, err := ResolveMulti(
 		[]string{"cli:sonnet-5,cmux:opus", "*:gpt-5.5"},
-		api.Model{Name: "claude-sonnet-5", Backend: api.BackendAnthropic},
+		api.Model{Name: "claude-sonnet-5", Mode: api.ModeAPI},
 	)
 	if err != nil {
-		t.Fatalf("ResolveRuntimeSelectors: %v", err)
+		t.Fatalf("ResolveMulti: %v", err)
 	}
 	var labels []string
 	for _, model := range got {
-		labels = append(labels, string(model.Backend)+":"+model.Name)
+		labels = append(labels, model.Provider.Name+" "+string(model.Mode)+":"+model.Name)
 	}
 	want := []string{
-		"claude-cli:claude-sonnet-5",
-		"claude-cmux:claude-opus-5",
-		"openai:gpt-5.5",
-		"codex-agent:gpt-5.5",
-		"codex-cli:gpt-5.5",
-		"codex-cmux:gpt-5.5",
+		"anthropic cli:claude-sonnet-5",
+		"anthropic cmux:claude-opus-5",
+		"openai api:gpt-5.5",
+		"openai agent:gpt-5.5",
+		"openai cli:gpt-5.5",
+		"openai cmux:gpt-5.5",
 	}
 	if !reflect.DeepEqual(labels, want) {
 		t.Fatalf("labels = %#v, want %#v", labels, want)
 	}
 }
 
-func TestResolveRuntimeSelectors_RequiresModelForPrefixOnly(t *testing.T) {
-	got, err := ResolveRuntimeSelectors([]string{"cmux"}, api.Model{Name: "gpt-5.5"})
+func TestResolveMulti_RequiresModelForPrefixOnly(t *testing.T) {
+	got, err := ResolveMulti([]string{"cmux"}, api.Model{Name: "gpt-5.5"})
 	if err != nil {
-		t.Fatalf("ResolveRuntimeSelectors: %v", err)
+		t.Fatalf("ResolveMulti: %v", err)
 	}
-	if len(got) != 1 || got[0].Backend != api.BackendCodexCmux || got[0].Name != "gpt-5.5" {
+	if len(got) != 1 || got[0].Provider != api.OpenAI || got[0].Mode != api.ModeCmux || got[0].Name != "gpt-5.5" {
 		t.Fatalf("got %#v, want codex-cmux:gpt-5.5", got)
 	}
-	if _, err := ResolveRuntimeSelectors([]string{"cmux"}, api.Model{}); err == nil {
+	if _, err := ResolveMulti([]string{"cmux"}, api.Model{}); err == nil {
 		t.Fatal("expected missing base model error")
 	}
 }
 
-func TestResolveRuntimeSelectors_PreservesExplicitUncatalogedVariant(t *testing.T) {
-	got, err := ResolveRuntimeSelectors([]string{"agent:gpt-5.4-mini"}, api.Model{})
+func TestResolveMulti_PreservesExplicitUncatalogedVariant(t *testing.T) {
+	got, err := ResolveMulti([]string{"agent:gpt-5.4-mini"}, api.Model{})
 	if err != nil {
-		t.Fatalf("ResolveRuntimeSelectors: %v", err)
+		t.Fatalf("ResolveMulti: %v", err)
 	}
 	if len(got) != 1 {
 		t.Fatalf("got %d models, want 1: %#v", len(got), got)
 	}
-	if got[0].Backend != api.BackendCodexAgent || got[0].Name != "gpt-5.4-mini" {
-		t.Fatalf("got %s/%s, want %s/gpt-5.4-mini", got[0].Backend, got[0].Name, api.BackendCodexAgent)
+	if got[0].Provider != api.OpenAI || got[0].Mode != api.ModeAgent || got[0].Name != "gpt-5.4-mini" {
+		t.Fatalf("got %s:%s, want agent:gpt-5.4-mini", got[0].Mode, got[0].Name)
 	}
 }
 
-func TestResolveModelSelectors_WildcardOnlyForMultiModels(t *testing.T) {
-	if _, err := ResolveModelSelectors(api.Model{Name: "*:sonnet-5"}); err == nil {
+func TestResolve_WildcardOnlyForMultiModels(t *testing.T) {
+	if _, err := Resolve(api.Model{Name: "*:sonnet-5"}); err == nil {
 		t.Fatal("expected wildcard selector to be rejected for single model")
 	}
 }
 
-func TestResolveModelSelectors_UnknownPrefixFails(t *testing.T) {
-	if _, err := ResolveModelSelectors(api.Model{Name: "nope:sonnet-5"}); err == nil {
+func TestResolve_UnknownPrefixFails(t *testing.T) {
+	if _, err := Resolve(api.Model{Name: "nope:sonnet-5"}); err == nil {
 		t.Fatal("expected unknown selector prefix error")
 	}
 }
 
-func TestResolveModelSelectors_EffortQualifiedAlias(t *testing.T) {
-	got, err := ResolveModelSelectors(api.Model{
+func TestResolve_EffortQualifiedAlias(t *testing.T) {
+	got, err := Resolve(api.Model{
 		Name:   "agent:sol:high",
 		Effort: api.EffortLow,
 	})
 	if err != nil {
-		t.Fatalf("ResolveModelSelectors: %v", err)
+		t.Fatalf("Resolve: %v", err)
 	}
-	if got.Backend != api.BackendCodexAgent || got.Name != "gpt-5.6-sol" || got.Effort != api.EffortHigh {
-		t.Fatalf("got %s/%s/%s, want codex-agent/gpt-5.6-sol/high", got.Backend, got.Name, got.Effort)
+	if got.Provider != api.OpenAI || got.Mode != api.ModeAgent || got.Name != "gpt-5.6-sol" || got.Effort != api.EffortHigh {
+		t.Fatalf("got %s:%s:%s, want agent:gpt-5.6-sol:high", got.Mode, got.Name, got.Effort)
 	}
 }
 
-func TestResolveRuntimeSelectors_PerSelectorEffortAndDedup(t *testing.T) {
-	got, err := ResolveRuntimeSelectors(
+func TestResolveMulti_PerSelectorEffortAndDedup(t *testing.T) {
+	got, err := ResolveMulti(
 		[]string{"agent:sol:high,agent:sol:xhigh,cmux:terra:max"},
 		api.Model{Effort: api.EffortLow},
 	)
 	if err != nil {
-		t.Fatalf("ResolveRuntimeSelectors: %v", err)
+		t.Fatalf("ResolveMulti: %v", err)
 	}
 	// Compare the identity triple: this pins per-selector effort and dedup. The
 	// derived capability fields are covered by TestResolvedModelCarriesCapabilities.
 	type runtime struct {
-		name    string
-		backend api.Backend
-		effort  api.Effort
+		name   string
+		mode   api.RuntimeMode
+		effort api.Effort
 	}
 	want := []runtime{
-		{"gpt-5.6-sol", api.BackendCodexAgent, api.EffortHigh},
-		{"gpt-5.6-sol", api.BackendCodexAgent, api.EffortXHigh},
-		{"gpt-5.6-terra", api.BackendCodexCmux, api.EffortMax},
+		{"gpt-5.6-sol", api.ModeAgent, api.EffortHigh},
+		{"gpt-5.6-sol", api.ModeAgent, api.EffortXHigh},
+		{"gpt-5.6-terra", api.ModeCmux, api.EffortMax},
 	}
 	gotRuntimes := make([]runtime, 0, len(got))
 	for _, m := range got {
-		gotRuntimes = append(gotRuntimes, runtime{m.Name, m.Backend, m.Effort})
+		gotRuntimes = append(gotRuntimes, runtime{m.Name, m.Mode, m.Effort})
 	}
 	if !reflect.DeepEqual(gotRuntimes, want) {
 		t.Fatalf("got %+v, want %+v", gotRuntimes, want)
@@ -252,9 +266,9 @@ func TestResolvedModelCarriesCapabilities(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.selector, func(t *testing.T) {
-			got, err := ResolveModelSelectors(api.Model{Name: tc.selector})
+			got, err := Resolve(api.Model{Name: tc.selector})
 			if err != nil {
-				t.Fatalf("ResolveModelSelectors(%q): %v", tc.selector, err)
+				t.Fatalf("Resolve(%q): %v", tc.selector, err)
 			}
 			if got.Mode != tc.wantMode {
 				t.Errorf("Mode = %q, want %q", got.Mode, tc.wantMode)
@@ -279,72 +293,80 @@ func TestResolvedModelCarriesCapabilities(t *testing.T) {
 	}
 }
 
-// TestModeContradictingBackendFailsLoud: Backend is exactly (provider, mode), so
-// a spec naming both must not name two different runtimes.
-func TestModeContradictingBackendFailsLoud(t *testing.T) {
-	_, err := ResolveModelSelectors(api.Model{Name: "sonnet", Backend: api.BackendAnthropic, Mode: registry.ModeAgent})
-	if err == nil {
-		t.Fatal("mode agent + backend anthropic should fail loud, not silently pick one")
+// A model can no longer name two runtimes: there is one mode field and the
+// provider is derived from the name, so the contradiction the deleted Backend
+// field made possible is now unrepresentable. What remains is precedence — a
+// compact prefix beats the mode field — which the registry suite pins.
+func TestCompactPrefixBeatsTheModeField(t *testing.T) {
+	got, err := Resolve(api.Model{Name: "agent:sonnet", Mode: api.ModeAPI})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
 	}
-	if !strings.Contains(err.Error(), "contradicts") {
-		t.Errorf("err = %v, want it to name the contradiction", err)
+	if got.Mode != api.ModeAgent {
+		t.Fatalf("mode = %q, want the compact prefix to win", got.Mode)
 	}
 }
 
-// TestModeSelectsBackend: {model, mode} is the object form of the compact
-// "mode:model" string and must resolve identically.
-func TestModeSelectsBackend(t *testing.T) {
-	byMode, err := ResolveModelSelectors(api.Model{Name: "sonnet", Mode: registry.ModeAgent})
+// TestModeFieldMatchesCompactPrefix: {model, mode} is the object form of the
+// compact "mode:model" string and must resolve identically.
+func TestModeFieldMatchesCompactPrefix(t *testing.T) {
+	byMode, err := Resolve(api.Model{Name: "sonnet", Mode: registry.ModeAgent})
 	if err != nil {
 		t.Fatalf("mode form: %v", err)
 	}
-	byPrefix, err := ResolveModelSelectors(api.Model{Name: "agent:sonnet"})
+	byPrefix, err := Resolve(api.Model{Name: "agent:sonnet"})
 	if err != nil {
 		t.Fatalf("compact form: %v", err)
 	}
-	if byMode.Backend != byPrefix.Backend || byMode.Name != byPrefix.Name {
-		t.Errorf("mode form = %s/%s, compact form = %s/%s; the two spellings must agree",
-			byMode.Backend, byMode.Name, byPrefix.Backend, byPrefix.Name)
+	if byMode.Provider != byPrefix.Provider || byMode.Mode != byPrefix.Mode || byMode.Name != byPrefix.Name {
+		t.Errorf("mode form = %s %s/%s, compact form = %s %s/%s; the two spellings must agree",
+			byMode.Provider.Name, byMode.Mode, byMode.Name,
+			byPrefix.Provider.Name, byPrefix.Mode, byPrefix.Name)
 	}
 }
 
-func TestResolveRuntimeSelectors_WildcardRespectsAvailability(t *testing.T) {
-	got, err := ResolveRuntimeSelectors([]string{"*:sol:high"}, api.Model{})
+// A wildcard fans out over the modes its provider actually serves, in the
+// registry's declared order.
+func TestResolveMulti_WildcardRespectsAvailability(t *testing.T) {
+	got, err := ResolveMulti([]string{"*:sol:high"}, api.Model{})
 	if err != nil {
-		t.Fatalf("ResolveRuntimeSelectors: %v", err)
+		t.Fatalf("ResolveMulti: %v", err)
 	}
-	var backends []api.Backend
+	var modes []api.RuntimeMode
 	for _, model := range got {
-		backends = append(backends, model.Backend)
+		if model.Provider != api.OpenAI {
+			t.Fatalf("provider = %v, want openai", model.Provider)
+		}
+		modes = append(modes, model.Mode)
 		if model.Name != "gpt-5.6-sol" || model.Effort != api.EffortHigh {
 			t.Fatalf("unexpected model: %+v", model)
 		}
 	}
-	want := []api.Backend{api.BackendOpenAI, api.BackendCodexAgent, api.BackendCodexCLI, api.BackendCodexCmux}
-	if !reflect.DeepEqual(backends, want) {
-		t.Fatalf("backends = %v, want %v", backends, want)
+	want := []api.RuntimeMode{api.ModeAPI, api.ModeAgent, api.ModeCLI, api.ModeCmux}
+	if !reflect.DeepEqual(modes, want) {
+		t.Fatalf("modes = %v, want %v", modes, want)
 	}
 }
 
-func TestResolveModelSelectors_EffortErrors(t *testing.T) {
-	if _, err := ResolveModelSelectors(api.Model{Name: "agent:sol:extreme"}); err == nil {
+func TestResolve_EffortErrors(t *testing.T) {
+	if _, err := Resolve(api.Model{Name: "agent:sol:extreme"}); err == nil {
 		t.Fatal("expected invalid effort suffix error")
 	}
 }
 
-func TestResolveModelSelectors_OpenAI56VariantsAvailableViaAPI(t *testing.T) {
+func TestResolve_OpenAI56VariantsAvailableViaAPI(t *testing.T) {
 	for alias, want := range map[string]string{
 		"luna":  "gpt-5.6-luna",
 		"sol":   "gpt-5.6-sol",
 		"terra": "gpt-5.6-terra",
 	} {
 		t.Run(alias, func(t *testing.T) {
-			got, err := ResolveModelSelectors(api.Model{Name: "api:" + alias})
+			got, err := Resolve(api.Model{Name: "api:" + alias})
 			if err != nil {
-				t.Fatalf("ResolveModelSelectors(api:%s): %v", alias, err)
+				t.Fatalf("Resolve(api:%s): %v", alias, err)
 			}
-			if got.Backend != api.BackendOpenAI || got.Name != want {
-				t.Fatalf("got %s/%s, want openai/%s", got.Backend, got.Name, want)
+			if got.Provider != api.OpenAI || got.Mode != api.ModeAPI || got.Name != want {
+				t.Fatalf("got %s %s:%s, want openai api:%s", got.Provider.Name, got.Mode, got.Name, want)
 			}
 		})
 	}

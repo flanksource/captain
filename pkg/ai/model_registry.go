@@ -13,7 +13,8 @@ import (
 //
 // It used to own a second copy of that knowledge (splitModelProvider,
 // ParseModelIdentity, normalizeCodexVariantAlias, isSupersededRegistryExact),
-// which disagreed with pkg/api's InferBackend about grok, sora, and codenames.
+// which disagreed with pkg/api's provider claim table about grok, sora, and
+// codenames.
 
 // ModelIdentity is captain's parsed model key.
 type ModelIdentity = registry.ModelIdentity
@@ -26,7 +27,7 @@ var defaultCatalogModelID = registry.StripProviderPrefix(DefaultModelID)
 // The token's own provider wins; defaultProvider only decides tokens that claim
 // no family of their own.
 func ParseModelIdentity(defaultProvider, model string) (ModelIdentity, bool) {
-	p, token, _, ok := registry.ProviderForToken(model)
+	p, token, ok := registry.ProviderForToken(model)
 	if !ok {
 		if p, ok = registry.ProviderByName(defaultProvider); !ok {
 			return ModelIdentity{}, false
@@ -36,17 +37,18 @@ func ParseModelIdentity(defaultProvider, model string) (ModelIdentity, bool) {
 	return p.ParseIdentity(token)
 }
 
-func registryModelDef(m registry.KnownModel, backend Backend) ModelDef {
+func registryModelDef(m registry.KnownModel, p *ModelProvider, mode RuntimeMode) ModelDef {
 	supported, defaultEffort := enabledEfforts(m.SupportedEfforts, m.DefaultEffort)
 	return ModelDef{
 		ID:                m.ID,
 		Name:              m.Label,
-		Backend:           backend,
+		Provider:          p.Name,
+		Mode:              mode,
 		ReleaseDate:       m.ReleaseDate,
 		CapabilitiesKnown: true,
 		Reasoning:         m.Reasoning,
 		Temperature:       m.Temperature,
-		InputMediaTypes:   clampInputMediaTypes(backend, m.InputMediaTypes),
+		InputMediaTypes:   clampInputMediaTypes(p, mode, m.InputMediaTypes),
 		SupportedEfforts:  supported,
 		DefaultEffort:     defaultEffort,
 		Priority:          m.Priority,
@@ -67,15 +69,14 @@ func enabledEfforts(supported []api.Effort, defaultEffort api.Effort) ([]api.Eff
 }
 
 // RegistryModelDef returns the registry metadata for an exact model on a
-// backend. The boolean is false when the model is known but unavailable there.
+// runtime. The boolean is false when the model is known but unavailable there.
 //
 // The lookup is exact (aliases aside) and deliberately does NOT resolve version
 // lines: "gpt-5.6" is an API-only base model, and resolving it here would answer
 // with its codex-available sibling gpt-5.6-sol and report the base as available
-// on Codex. Callers that want resolution call ResolveExactModelForBackend first.
-func RegistryModelDef(backend Backend, model string) (ModelDef, bool) {
-	p, mode, ok := registry.ProviderFor(backend)
-	if !ok {
+// on Codex. Callers that want resolution call ResolveExactModel first.
+func RegistryModelDef(p *ModelProvider, mode RuntimeMode, model string) (ModelDef, bool) {
+	if p == nil {
 		return ModelDef{}, false
 	}
 	entry, found := p.Lookup(model)
@@ -85,36 +86,34 @@ func RegistryModelDef(backend Backend, model string) (ModelDef, bool) {
 	if _, available := p.Availability(mode, entry.ID); !available {
 		return ModelDef{}, false
 	}
-	return registryModelDef(entry, backend), true
+	return registryModelDef(entry, p, mode), true
 }
 
 // RegistryModelAvailability distinguishes an unknown model from a registry
-// model that is intentionally unavailable on the requested backend.
-func RegistryModelAvailability(backend Backend, model string) (known, available bool) {
-	p, mode, ok := registry.ProviderFor(backend)
-	if !ok {
+// model that is intentionally unavailable on the requested runtime.
+func RegistryModelAvailability(p *ModelProvider, mode RuntimeMode, model string) (known, available bool) {
+	if p == nil {
 		return false, false
 	}
 	return p.Availability(mode, model)
 }
 
-// RegistryModelDefs returns exact, provider-native model IDs for a backend. CLI
-// and cmux backends are projected from their parent provider's model registry.
-func RegistryModelDefs(backend Backend) []ModelDef {
-	p, mode, ok := registry.ProviderFor(backend)
-	if !ok {
+// RegistryModelDefs returns exact, provider-native model IDs for a runtime. The
+// local transports are projected from their provider's model registry.
+func RegistryModelDefs(p *ModelProvider, mode RuntimeMode) []ModelDef {
+	if p == nil {
 		return nil
 	}
 	disabled := Disabled()
 	out := make([]ModelDef, 0)
 	for _, m := range p.Models() {
-		if !m.Preferred || disabled.Model(backend, m.ID) {
+		if !m.Preferred || disabled.Model(p, mode, m.ID) {
 			continue
 		}
 		if known, available := p.Availability(mode, m.ID); !known || !available {
 			continue
 		}
-		out = append(out, registryModelDef(m, backend))
+		out = append(out, registryModelDef(m, p, mode))
 	}
 	SortModelsByReleaseDateDesc(out)
 	return out
@@ -126,8 +125,7 @@ func RegistryModelDefs(backend Backend) []ModelDef {
 func registryCatalogModels() []Model {
 	out := make([]Model, 0, len(registry.KnownModels())+5)
 	for _, p := range registry.Providers() {
-		apiBackend, err := p.BackendFor(registry.ModeAPI)
-		if err != nil {
+		if _, known := p.Caps(registry.ModeAPI); !known {
 			continue
 		}
 		for _, m := range p.Models() {
@@ -139,14 +137,15 @@ func registryCatalogModels() []Model {
 			}
 			out = append(out, Model{
 				ID:               p.CatalogPrefix + "/" + m.ID,
-				Backend:          apiBackend,
+				Provider:         p,
+				Mode:             registry.ModeAPI,
 				Label:            m.Label,
 				Reasoning:        m.Reasoning,
 				Temperature:      m.Temperature,
 				AdaptiveThinking: m.AdaptiveThinking,
 				ContextWindow:    m.ContextWindow,
 				ReleaseDate:      m.ReleaseDate,
-				InputMediaTypes:  clampInputMediaTypes(apiBackend, m.InputMediaTypes),
+				InputMediaTypes:  clampInputMediaTypes(p, registry.ModeAPI, m.InputMediaTypes),
 				SupportedEfforts: m.SupportedEfforts,
 				DefaultEffort:    m.DefaultEffort,
 				Priority:         m.Priority,
@@ -170,8 +169,7 @@ func agentCatalogModels() []Model {
 		{registry.Anthropic, func(l string) string { return "Claude Agent · " + strings.TrimPrefix(l, "Claude ") }},
 		{registry.OpenAI, func(l string) string { return "Codex Agent · " + l }},
 	} {
-		backend, err := spec.provider.BackendFor(registry.ModeAgent)
-		if err != nil {
+		if _, known := spec.provider.Caps(registry.ModeAgent); !known {
 			continue
 		}
 		for _, m := range spec.provider.Models() {
@@ -183,14 +181,15 @@ func agentCatalogModels() []Model {
 			}
 			out = append(out, Model{
 				ID:               m.ID,
-				Backend:          backend,
+				Provider:         spec.provider,
+				Mode:             registry.ModeAgent,
 				Label:            spec.label(m.Label),
 				Reasoning:        m.Reasoning,
 				Temperature:      m.Temperature,
 				AdaptiveThinking: m.AdaptiveThinking && spec.provider == registry.Anthropic,
 				ContextWindow:    m.ContextWindow,
 				ReleaseDate:      m.ReleaseDate,
-				InputMediaTypes:  clampInputMediaTypes(backend, m.InputMediaTypes),
+				InputMediaTypes:  clampInputMediaTypes(spec.provider, registry.ModeAgent, m.InputMediaTypes),
 				SupportedEfforts: m.SupportedEfforts,
 				DefaultEffort:    m.DefaultEffort,
 				Priority:         m.Priority,
@@ -200,12 +199,11 @@ func agentCatalogModels() []Model {
 	return out
 }
 
-// ResolveExactModelForBackend resolves a user/catalog model token into the exact
-// model ID the selected backend should receive. It accepts old aliases for input
+// ResolveExactModel resolves a user/catalog model token into the exact model ID
+// the selected runtime should receive. It accepts old aliases for input
 // compatibility but never returns an alias.
-func ResolveExactModelForBackend(backend Backend, model string) (string, bool) {
-	p, mode, ok := registry.ProviderFor(backend)
-	if !ok {
+func ResolveExactModel(p *ModelProvider, mode RuntimeMode, model string) (string, bool) {
+	if p == nil {
 		return registry.StripProviderPrefix(model), false
 	}
 	return p.ResolveExact(mode, model)

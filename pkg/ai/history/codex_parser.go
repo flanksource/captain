@@ -1,7 +1,6 @@
 package history
 
 import (
-	"bufio"
 	"io"
 	"os"
 	"path/filepath"
@@ -10,6 +9,7 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/jsonl"
 	"github.com/segmentio/encoding/json"
 )
 
@@ -47,6 +47,20 @@ type CodexSessionInfo struct {
 	StartedAt       *time.Time
 	Model           string
 	ReasoningEffort string
+	// ParentThreadID is set for a forked or subagent thread: the thread whose
+	// history this rollout replays before its own records begin.
+	ParentThreadID string
+	ThreadSource   string
+	AgentNickname  string
+	AgentPath      string
+	// HistoryStartOrdinal is the first ordinal owned by this thread; records
+	// below it are the parent's and are ingested with the parent, not here.
+	HistoryStartOrdinal int
+}
+
+// IsFork reports whether the rollout belongs to a thread spawned from another.
+func (info CodexSessionInfo) IsFork() bool {
+	return info.ParentThreadID != "" && info.ParentThreadID != info.ID
 }
 
 // ReadCodexSessionMeta parses only the leading metadata needed for cheap
@@ -58,10 +72,11 @@ func ReadCodexSessionMeta(sessionFile string) (*CodexSessionInfo, error) {
 	}
 	defer func() { _ = file.Close() }()
 
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
+	for raw, err := range jsonl.Lines(file) {
+		if err != nil {
+			return nil, err
+		}
+		line := strings.TrimSpace(string(raw))
 		if line == "" {
 			continue
 		}
@@ -79,9 +94,6 @@ func ReadCodexSessionMeta(sessionFile string) (*CodexSessionInfo, error) {
 			return nil, nil
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
-	}
 	return nil, nil
 }
 
@@ -93,11 +105,12 @@ func ReadCodexSessionInfo(sessionFile string) (*CodexSessionInfo, error) {
 	}
 	defer func() { _ = file.Close() }()
 
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
 	var info *CodexSessionInfo
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
+	for raw, err := range jsonl.Lines(file) {
+		if err != nil {
+			return info, err
+		}
+		line := strings.TrimSpace(string(raw))
 		if line == "" {
 			continue
 		}
@@ -107,6 +120,8 @@ func ReadCodexSessionInfo(sessionFile string) (*CodexSessionInfo, error) {
 		}
 		switch event.Type {
 		case "session_meta":
+			// A fork replays its parent's session_meta after its own; only the
+			// first record describes this rollout.
 			if info == nil {
 				value := codexSessionInfo(event)
 				info = &value
@@ -133,20 +148,24 @@ func ReadCodexSessionInfo(sessionFile string) (*CodexSessionInfo, error) {
 			}
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return info, err
-	}
 	return info, nil
 }
 
 func codexSessionInfo(event CodexEvent) CodexSessionInfo {
 	info := CodexSessionInfo{
-		ID:            event.Payload.ID,
-		CWD:           event.Payload.CWD,
-		CLIVersion:    event.Payload.CLIVersion,
-		ModelProvider: event.Payload.ModelProvider,
-		Originator:    event.Payload.Originator,
-		StartedAt:     event.Time(),
+		ID:             event.Payload.ID,
+		CWD:            event.Payload.CWD,
+		CLIVersion:     event.Payload.CLIVersion,
+		ModelProvider:  event.Payload.ModelProvider,
+		Originator:     event.Payload.Originator,
+		StartedAt:      event.Time(),
+		ParentThreadID: firstNonEmpty(event.Payload.ParentThreadID, event.Payload.ForkedFromID),
+		ThreadSource:   event.Payload.ThreadSource,
+		AgentNickname:  event.Payload.AgentNickname,
+		AgentPath:      event.Payload.AgentPath,
+	}
+	if start := event.Payload.SubagentHistoryStartOrdinal; start != nil {
+		info.HistoryStartOrdinal = *start
 	}
 	if event.Payload.Git != nil {
 		info.GitBranch = event.Payload.Git.Branch

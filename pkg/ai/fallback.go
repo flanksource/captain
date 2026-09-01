@@ -15,7 +15,7 @@ var fallbackLog = logger.GetLogger("ai")
 
 // fallbackProvider tries an ordered list of candidate models, advancing to the
 // next when the current one fails with a fallback-eligible error or its provider cannot be
-// constructed. Providers are built lazily and cached. GetModel/GetBackend report
+// constructed. Providers are built lazily and cached. GetModel/GetRuntime report
 // the active (last-selected) candidate. It implements StreamingProvider; a
 // streaming candidate is abandoned in favour of the next only while it has not yet
 // emitted any content (see ExecuteStream).
@@ -39,9 +39,9 @@ func newFallbackProvider(base Config, candidates []api.Model) *fallbackProvider 
 }
 
 // cfgFor projects the shared Config onto candidate i. Non-primary candidates drop
-// the primary's explicit APIKey so a cross-backend fallback resolves its own key
-// from the environment (a --api-key meant for the primary must not be sent to a
-// different backend).
+// the primary's explicit APIKey so a fallback in another family resolves its own
+// key from the environment (a --api-key meant for the primary must not be sent to
+// a different provider).
 func (f *fallbackProvider) cfgFor(i int) Config {
 	cfg := f.base
 	cfg.Model = f.candidates[i]
@@ -78,15 +78,15 @@ func (f *fallbackProvider) GetModel() string {
 	return f.candidates[f.active].Name
 }
 
-func (f *fallbackProvider) GetBackend() Backend {
+func (f *fallbackProvider) GetRuntime() Runtime {
 	f.mu.Lock()
 	m := f.candidates[f.active]
 	f.mu.Unlock()
-	if m.Backend != "" {
-		return m.Backend
+	p, mode, err := m.Runtime()
+	if err != nil {
+		return Runtime{Mode: m.Mode}
 	}
-	b, _ := InferBackend(m.Name)
-	return b
+	return RuntimeOf(p, mode)
 }
 
 func (f *fallbackProvider) Unwrap() Provider {
@@ -181,7 +181,7 @@ func (f *fallbackProvider) ExecuteStream(ctx context.Context, req Request) (<-ch
 			}
 			sp, ok := p.(StreamingProvider)
 			if !ok {
-				record(fmt.Errorf("model %s backend does not support streaming", f.candidates[i].Name))
+				record(fmt.Errorf("model %s runtime does not support streaming", f.candidates[i].Name))
 				continue
 			}
 			f.setActive(i)

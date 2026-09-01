@@ -57,14 +57,15 @@ func ParseCodexDebugModels(data []byte) ([]ModelDef, error) {
 		def := ModelDef{
 			ID:            strings.TrimSpace(model.Slug),
 			Name:          strings.TrimSpace(model.DisplayName),
-			Backend:       BackendCodexAgent,
+			Provider:      OpenAI.Name,
+			Mode:          ModeAgent,
 			DefaultEffort: model.DefaultReasoningLevel,
 			Priority:      model.Priority,
 		}
 		if def.Name == "" {
 			def.Name = def.ID
 		}
-		if registry, ok := RegistryModelDef(BackendCodexAgent, def.ID); ok {
+		if registry, ok := RegistryModelDef(OpenAI, ModeAgent, def.ID); ok {
 			def.ReleaseDate = registry.ReleaseDate
 			def.CapabilitiesKnown = registry.CapabilitiesKnown
 			def.Reasoning = registry.Reasoning

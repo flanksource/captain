@@ -20,8 +20,10 @@ func (p *closeTrackingProvider) Execute(context.Context, api.Spec) (*api.Respons
 	return &api.Response{}, nil
 }
 
-func (p *closeTrackingProvider) GetModel() string        { return "test-model" }
-func (p *closeTrackingProvider) GetBackend() api.Backend { return api.BackendCodexAgent }
+func (p *closeTrackingProvider) GetModel() string { return "test-model" }
+func (p *closeTrackingProvider) GetRuntime() api.Runtime {
+	return api.RuntimeOf(api.OpenAI, api.ModeAgent)
+}
 func (p *closeTrackingProvider) Close() error {
 	p.closeCalls++
 	return p.closeErr
@@ -36,7 +38,7 @@ func (w providerWrapper) Execute(ctx context.Context, req api.Spec) (*api.Respon
 }
 
 func (w providerWrapper) GetModel() string        { return w.inner.GetModel() }
-func (w providerWrapper) GetBackend() api.Backend { return w.inner.GetBackend() }
+func (w providerWrapper) GetRuntime() api.Runtime { return w.inner.GetRuntime() }
 func (w providerWrapper) Unwrap() api.Provider    { return w.inner }
 
 var _ = Describe("Agent provider lifecycle", func() {

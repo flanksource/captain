@@ -26,7 +26,7 @@ var _ = Describe("PriceUsage", func() {
 	It("splits a turn across the per-bucket costs instead of collapsing it into one", func() {
 		usage := Usage{InputTokens: turnInputTokens, OutputTokens: turnOutputTokens}
 
-		cost := PriceUsage(BackendAnthropic, opusModel, usage, 0)
+		cost := PriceUsage(Anthropic, opusModel, usage, 0)
 
 		Expect(cost.InputCost).To(BeNumerically("~", turnInputUSD, 1e-6))
 		Expect(cost.OutputCost).To(BeNumerically("~", turnOutputUSD, 1e-6))
@@ -53,7 +53,7 @@ var _ = Describe("PriceUsage", func() {
 			CacheReadTokens: agentCacheRead, CacheWriteTokens: agentCacheWrite,
 		}
 
-		cost := PriceUsage(BackendClaudeAgent, opusModel, usage, 0)
+		cost := PriceUsage(Anthropic, opusModel, usage, 0)
 
 		Expect(cost.CacheReadCost).To(BeNumerically("~", expectCacheReadUSD, 1e-6))
 		Expect(cost.CacheWriteCost).To(BeNumerically("~", expectCacheWriteUSD, 1e-6))
@@ -66,7 +66,7 @@ var _ = Describe("PriceUsage", func() {
 		usage := Usage{InputTokens: turnInputTokens, OutputTokens: turnOutputTokens}
 		const providerReported = 4.295061
 
-		cost := PriceUsage(BackendClaudeAgent, opusModel, usage, providerReported)
+		cost := PriceUsage(Anthropic, opusModel, usage, providerReported)
 
 		Expect(cost.ProviderCostUSD).To(Equal(providerReported))
 		Expect(cost.Total()).To(Equal(providerReported))
@@ -77,7 +77,7 @@ var _ = Describe("PriceUsage", func() {
 	It("keeps token counts when the model is absent from the pricing registry", func() {
 		usage := Usage{InputTokens: 10, OutputTokens: 20}
 
-		cost := PriceUsage(BackendAnthropic, "model-that-does-not-exist", usage, 0)
+		cost := PriceUsage(Anthropic, "model-that-does-not-exist", usage, 0)
 
 		Expect(cost.TotalTokens).To(Equal(30))
 		Expect(cost.Total()).To(BeZero())

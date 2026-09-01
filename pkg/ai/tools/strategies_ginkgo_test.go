@@ -113,6 +113,60 @@ var _ = Describe("Resolving a tool through the permission layers", func() {
 		})).To(Equal(api.ToolPolicyAsk))
 	})
 
+	// A deployment's own rules sit under the turn's. They must still beat the
+	// tool's own facts — this is the defect the ordered list was built for: a
+	// group baseline of "off" could never reach a live GET tool while the answer
+	// was decided by whichever producer stamped the permission slot last.
+	Describe("the deployment's base rules", func() {
+		provider := func() api.ToolDefinition {
+			definition := listInvoices()
+			definition.Group = "provider.xero.read"
+			return definition
+		}
+		baseline := api.PermissionPolicy{
+			{ToolMatch: api.ToolMatch{Group: api.MatchPatterns{"provider.xero.*"}}, Policy: api.ToolPolicyDeny},
+		}
+
+		It("hides a GET tool whose group baseline denies it", func() {
+			resolved, err := tools.ResolveDefinitions([]api.ToolDefinition{provider()},
+				tools.ResolveOptions{Base: baseline})
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resolved).To(BeEmpty())
+		})
+
+		It("still hides it when its author registered it as auto-run", func() {
+			definition := provider()
+			definition.DefaultPermission = api.ToolPolicyAllow
+
+			Expect(resolveOne(definition, tools.ResolveOptions{Base: baseline})).To(Equal(api.ToolPolicyDeny))
+		})
+
+		It("yields to a per-turn preference that switches the group back on", func() {
+			Expect(resolveOne(provider(), tools.ResolveOptions{
+				Base:        baseline,
+				Preferences: api.ToolPreferences{"provider.xero.read": api.ToolPolicyAsk},
+			})).To(Equal(api.ToolPolicyAsk))
+		})
+
+		It("yields to a per-turn rule", func() {
+			Expect(resolveOne(provider(), tools.ResolveOptions{
+				Base: baseline,
+				Policy: api.PermissionPolicy{
+					{ToolMatch: api.ToolMatch{Group: api.MatchPatterns{"provider.xero.read"}}, Policy: api.ToolPolicyAllow},
+				},
+			})).To(Equal(api.ToolPolicyAllow))
+		})
+
+		It("rejects a base rule that matches everything", func() {
+			_, err := tools.ResolveDefinitions([]api.ToolDefinition{provider()}, tools.ResolveOptions{
+				Base: api.PermissionPolicy{{Policy: api.ToolPolicyDeny}},
+			})
+
+			Expect(err).To(MatchError(ContainSubstring("at least one match facet")))
+		})
+	})
+
 	It("honours a caller's own chain in place of the default", func() {
 		// A deployment that refuses to read anything from the HTTP method: the
 		// GET is no longer auto-run because nothing in this chain speaks for it.

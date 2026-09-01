@@ -4,8 +4,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	"github.com/flanksource/captain/pkg/api/registry"
 )
 
 const currentModelsPerFamily = 3
@@ -16,7 +14,7 @@ var legacyModelPrefixes = []string{
 	// OpenAI legacy
 	"gpt-3",
 	"gpt-4",  // covers gpt-4, gpt-4o, gpt-4.1, gpt-4-turbo, ...
-	"gpt-5-", // API variants like mini/nano/codex/pro; CLI Codex is exempt by backend
+	"gpt-5-", // API variants like mini/nano/codex/pro; CLI Codex is exempt by mode
 	"o1",
 	"o3",
 	"o4",
@@ -60,7 +58,7 @@ var legacyModelPrefixes = []string{
 }
 
 // IsLegacyModelID reports whether id is a known legacy, outdated, or non-chat
-// model id. Call IsLegacyModelIDForBackend when backend context is available.
+// model id. Call IsLegacyModelIDForRuntime when runtime context is available.
 func IsLegacyModelID(id string) bool {
 	idLower := strings.ToLower(bareModelID(strings.TrimPrefix(strings.TrimSpace(id), "models/")))
 	if IsIgnoredOpenAIModelID(idLower) {
@@ -78,8 +76,8 @@ func IsLegacyModelID(id string) bool {
 // hidden from ordinary model pickers. OpenAI exposes many non-primary surfaces
 // (realtime, audio, image, Sora, code/chat aliases, dated and size variants);
 // Captain's picker keeps stable primary GPT text ids and explicitly registered
-// Codex runtime variants. Use this before remapping live OpenAI ids onto Codex
-// backends.
+// Codex runtime variants. Use this before remapping live OpenAI ids onto the
+// Codex runtimes.
 func IsIgnoredOpenAIModelID(id string) bool {
 	idLower := strings.ToLower(bareModelID(strings.TrimPrefix(strings.TrimSpace(id), "models/")))
 	if idLower == "" {
@@ -120,18 +118,17 @@ func isPrimaryGPTModelID(id string) bool {
 	return sawDigit
 }
 
-// IsLegacyModelIDForBackend keeps model menus clean while retaining preferred
-// registry models explicitly available to the selected backend.
-func IsLegacyModelIDForBackend(id string, backend Backend) bool {
-	if isPreferredRegistryModelForBackend(backend, id) {
+// IsLegacyModelIDForRuntime keeps model menus clean while retaining preferred
+// registry models explicitly available to the selected runtime.
+func IsLegacyModelIDForRuntime(id string, p *ModelProvider, mode RuntimeMode) bool {
+	if isPreferredRegistryModel(p, mode, id) {
 		return false
 	}
 	return IsLegacyModelID(id)
 }
 
-func isPreferredRegistryModelForBackend(backend Backend, model string) bool {
-	p, mode, ok := registry.ProviderFor(backend)
-	if !ok {
+func isPreferredRegistryModel(p *ModelProvider, mode RuntimeMode, model string) bool {
+	if p == nil {
 		return false
 	}
 	entry, found := p.Lookup(model)
@@ -159,11 +156,11 @@ func CurrentCuratedModelsByReleaseDate(models []ModelDef) []ModelDef {
 func currentModelsByReleaseDate(models []ModelDef, filterLegacy bool) []ModelDef {
 	out := make([]ModelDef, 0, len(models))
 	for _, m := range models {
-		if filterLegacy && IsLegacyModelIDForBackend(m.ID, m.Backend) {
+		if filterLegacy && IsLegacyModelIDForRuntime(m.ID, m.ModelProvider(), m.Mode) {
 			continue
 		}
 		if m.ReleaseDate == "" {
-			m.ReleaseDate = CatalogReleaseDate(m.Backend, m.ID)
+			m.ReleaseDate = CatalogReleaseDate(m.ModelProvider(), m.Mode, m.ID)
 		}
 		out = append(out, m)
 	}
@@ -191,11 +188,11 @@ func SortModelsByReleaseDateDesc(models []ModelDef) {
 		}
 		left := models[i].ReleaseDate
 		if left == "" {
-			left = CatalogReleaseDate(models[i].Backend, models[i].ID)
+			left = CatalogReleaseDate(models[i].ModelProvider(), models[i].Mode, models[i].ID)
 		}
 		right := models[j].ReleaseDate
 		if right == "" {
-			right = CatalogReleaseDate(models[j].Backend, models[j].ID)
+			right = CatalogReleaseDate(models[j].ModelProvider(), models[j].Mode, models[j].ID)
 		}
 		if left == "" && right == "" {
 			return models[i].ID > models[j].ID
@@ -213,13 +210,13 @@ func SortModelsByReleaseDateDesc(models []ModelDef) {
 	})
 }
 
-// CatalogReleaseDate returns the catalog release date for a backend/model id
+// CatalogReleaseDate returns the catalog release date for a runtime's model id
 // when known. API callers may pass either provider-prefixed or bare ids.
-func CatalogReleaseDate(backend Backend, id string) string {
+func CatalogReleaseDate(p *ModelProvider, mode RuntimeMode, id string) string {
 	id = strings.TrimPrefix(strings.TrimSpace(id), "models/")
 	bare := bareModelID(id)
 	for _, m := range Catalog() {
-		if m.Backend != backend {
+		if m.Provider != p || m.Mode != mode {
 			continue
 		}
 		switch {
@@ -242,9 +239,6 @@ func ModelFamilyPrefix(id string) string {
 
 	switch parts[0] {
 	case "claude":
-		if len(parts) >= 3 && parts[1] == "agent" {
-			return strings.Join(parts[:3], "-")
-		}
 		return "claude-" + parts[1]
 	case "fable", "opus", "sonnet", "haiku":
 		return parts[0]

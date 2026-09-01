@@ -48,7 +48,7 @@ func TestSchemaJSONFor(t *testing.T) {
 	}
 }
 
-func TestSchemaJSONForBackend_AnthropicSanitizesUnsupportedConstraints(t *testing.T) {
+func TestSchemaJSONForRuntime_AnthropicSanitizesUnsupportedConstraints(t *testing.T) {
 	raw := json.RawMessage(`{
 		"type":"object",
 		"properties":{
@@ -57,9 +57,9 @@ func TestSchemaJSONForBackend_AnthropicSanitizesUnsupportedConstraints(t *testin
 		},
 		"required":["title"]
 	}`)
-	got, err := SchemaJSONForBackend(api.BackendAnthropic, api.Prompt{SchemaJSON: raw})
+	got, err := SchemaJSONForRuntime(api.Anthropic, api.ModeAPI, api.Prompt{SchemaJSON: raw})
 	if err != nil {
-		t.Fatalf("SchemaJSONForBackend: %v", err)
+		t.Fatalf("SchemaJSONForRuntime: %v", err)
 	}
 	if string(raw) == string(got) {
 		t.Fatal("anthropic schema should be transformed, got original")
@@ -98,7 +98,7 @@ func TestSchemaJSONForBackend_AnthropicSanitizesUnsupportedConstraints(t *testin
 	}
 }
 
-func TestSchemaJSONForBackend_OpenAIRequiresAllCommitMessageProperties(t *testing.T) {
+func TestSchemaJSONForRuntime_OpenAIRequiresAllCommitMessageProperties(t *testing.T) {
 	original := json.RawMessage(`{
 		"type":"object",
 		"additionalProperties":false,
@@ -111,9 +111,9 @@ func TestSchemaJSONForBackend_OpenAIRequiresAllCommitMessageProperties(t *testin
 		}
 	}`)
 	prompt := api.Prompt{SchemaJSON: original}
-	got, err := SchemaJSONForBackend(api.BackendCodexAgent, prompt)
+	got, err := SchemaJSONForRuntime(api.OpenAI, api.ModeAgent, prompt)
 	if err != nil {
-		t.Fatalf("SchemaJSONForBackend: %v", err)
+		t.Fatalf("SchemaJSONForRuntime: %v", err)
 	}
 
 	originalObject := decodeSchemaObject(t, original)
@@ -255,30 +255,47 @@ func TestOpenAICompatibleSchema_RejectsOpenEndedObjects(t *testing.T) {
 	type labels struct {
 		Values map[string]string `json:"values"`
 	}
-	_, err := SchemaJSONForBackend(api.BackendOpenAI, api.Prompt{Schema: &labels{}})
+	_, err := SchemaJSONForRuntime(api.OpenAI, api.ModeAPI, api.Prompt{Schema: &labels{}})
 	if err == nil || !strings.Contains(err.Error(), "additionalProperties must be false") {
 		t.Fatalf("error = %v, want open-ended object rejection", err)
 	}
 }
 
+// The OpenAI schema subset is a property of a provider×mode cell, not of a
+// family: openai's cmux mode hands the schema to the local CLI, which accepts
+// the full dialect.
 func TestUsesOpenAISchemaSubset(t *testing.T) {
-	for _, backend := range []api.Backend{api.BackendOpenAI, api.BackendCodexCLI, api.BackendCodexAgent} {
-		if !UsesOpenAISchemaSubset(backend) {
-			t.Errorf("UsesOpenAISchemaSubset(%s) = false, want true", backend)
+	type runtime struct {
+		provider *api.ModelProvider
+		mode     api.RuntimeMode
+	}
+	subset := []runtime{
+		{api.OpenAI, api.ModeAPI},
+		{api.OpenAI, api.ModeCLI},
+		{api.OpenAI, api.ModeAgent},
+	}
+	full := []runtime{
+		{api.Anthropic, api.ModeAPI},
+		{api.Google, api.ModeAPI},
+		{api.OpenAI, api.ModeCmux},
+	}
+	for _, r := range subset {
+		if !UsesOpenAISchemaSubset(r.provider, r.mode) {
+			t.Errorf("UsesOpenAISchemaSubset(%s, %s) = false, want true", r.provider.Name, r.mode)
 		}
 	}
-	for _, backend := range []api.Backend{api.BackendAnthropic, api.BackendGemini, api.BackendCodexCmux} {
-		if UsesOpenAISchemaSubset(backend) {
-			t.Errorf("UsesOpenAISchemaSubset(%s) = true, want false", backend)
+	for _, r := range full {
+		if UsesOpenAISchemaSubset(r.provider, r.mode) {
+			t.Errorf("UsesOpenAISchemaSubset(%s, %s) = true, want false", r.provider.Name, r.mode)
 		}
 	}
 }
 
-func TestSchemaJSONForBackend_NativeTransformNotUsedForGemini(t *testing.T) {
+func TestSchemaJSONForRuntime_NativeTransformNotUsedForGemini(t *testing.T) {
 	raw := json.RawMessage(`{"type":"array","maxItems":2}`)
-	got, err := SchemaJSONForBackend(api.BackendGemini, api.Prompt{SchemaJSON: raw})
+	got, err := SchemaJSONForRuntime(api.Google, api.ModeAPI, api.Prompt{SchemaJSON: raw})
 	if err != nil {
-		t.Fatalf("SchemaJSONForBackend: %v", err)
+		t.Fatalf("SchemaJSONForRuntime: %v", err)
 	}
 	if string(got) != string(raw) {
 		t.Fatalf("gemini schema changed: got %s want %s", got, raw)

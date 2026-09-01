@@ -15,39 +15,39 @@ import (
 var _ = Describe("catalog opt-out filtering", func() {
 	// Install the opt-out set for one spec only. Package-level state, so the
 	// zero value has to go back regardless of how the spec ends.
-	disable := func(modes, providers, backends, models, efforts []string) {
-		SetDisabled(api.NewDisabledSet(modes, providers, backends, models, efforts))
+	disable := func(modes, providers []string, runtimes []Runtime, models, efforts []string) {
+		SetDisabled(api.NewDisabledSet(modes, providers, runtimes, models, efforts))
 		DeferCleanup(func() { SetDisabled(DisabledSet{}) })
 	}
 
-	backendsIn := func(models []Model) []Backend {
-		out := make([]Backend, 0, len(models))
+	runtimesIn := func(models []Model) []Runtime {
+		out := make([]Runtime, 0, len(models))
 		for _, m := range models {
-			out = append(out, m.Backend)
+			out = append(out, RuntimeOf(m.Provider, m.Mode))
 		}
 		return out
 	}
 
 	It("drops a disabled provider's models after the catalog is already built", func() {
-		Expect(backendsIn(Catalog())).To(ContainElement(BackendDeepSeek))
+		Expect(runtimesIn(Catalog())).To(ContainElement(RuntimeOf(DeepSeek, ModeAPI)))
 
 		disable(nil, []string{"deepseek"}, nil, nil, nil)
 
-		Expect(backendsIn(Catalog())).NotTo(ContainElement(BackendDeepSeek))
+		Expect(runtimesIn(Catalog())).NotTo(ContainElement(RuntimeOf(DeepSeek, ModeAPI)))
 	})
 
 	It("drops a disabled runtime mode", func() {
 		disable([]string{"agent"}, nil, nil, nil, nil)
 
-		Expect(backendsIn(Catalog())).NotTo(ContainElements(BackendClaudeAgent, BackendCodexAgent))
+		Expect(runtimesIn(Catalog())).NotTo(ContainElements(RuntimeOf(Anthropic, ModeAgent), RuntimeOf(OpenAI, ModeAgent)))
 	})
 
-	It("drops a disabled backend but keeps its provider's other backends", func() {
-		disable(nil, nil, []string{"claude-agent"}, nil, nil)
+	It("drops a disabled runtime but keeps its provider's other modes", func() {
+		disable(nil, nil, []Runtime{RuntimeOf(Anthropic, ModeAgent)}, nil, nil)
 
-		backends := backendsIn(Catalog())
-		Expect(backends).NotTo(ContainElement(BackendClaudeAgent))
-		Expect(backends).To(ContainElement(BackendAnthropic))
+		runtimes := runtimesIn(Catalog())
+		Expect(runtimes).NotTo(ContainElement(RuntimeOf(Anthropic, ModeAgent)))
+		Expect(runtimes).To(ContainElement(RuntimeOf(Anthropic, ModeAPI)))
 	})
 
 	It("drops a bare model id from every backend that carries it", func() {
@@ -56,17 +56,18 @@ var _ = Describe("catalog opt-out filtering", func() {
 
 		disable(nil, nil, nil, []string{defaultCatalogModelID}, nil)
 
-		// The id is menu-prefixed on the API backend and bare on the agent
-		// backend; a bare opt-out entry has to reach both.
+		// The id is provider-prefixed on the api mode and bare on the local ones;
+		// a bare opt-out entry has to reach both.
 		Expect(modelIDsFrom(Catalog())).NotTo(ContainElements(DefaultModelID, defaultCatalogModelID))
 	})
 
-	It("keeps a model whose opt-out entry names a different backend", func() {
-		disable(nil, nil, nil, []string{"claude-agent/" + defaultCatalogModelID}, nil)
+	It("keeps a model whose opt-out entry qualifies it with another provider", func() {
+		disable(nil, nil, nil, []string{"openai/" + defaultCatalogModelID}, nil)
 
+		// The qualifier is a provider key, so an anthropic model survives an
+		// openai-qualified entry naming the same id.
 		ids := modelIDsFrom(Catalog())
-		Expect(ids).To(ContainElement(DefaultModelID))
-		Expect(ids).NotTo(ContainElement(defaultCatalogModelID))
+		Expect(ids).To(ContainElements(DefaultModelID, defaultCatalogModelID))
 	})
 
 	It("drops a disabled effort tier from every row that supports it", func() {
@@ -163,10 +164,12 @@ var _ = Describe("catalog opt-out filtering", func() {
 
 		Expect(info).To(HaveLen(len(models)))
 		for index, model := range models {
-			want := api.Model{
-				Name:    model.BareID(),
-				Backend: model.Backend,
-			}.Capabilities()
+			want, err := api.Model{
+				Name:     model.BareID(),
+				Provider: model.Provider,
+				Mode:     model.Mode,
+			}.WithCapabilities()
+			Expect(err).NotTo(HaveOccurred())
 			if model.ID != want.Name {
 				want.ID = model.ID
 			}

@@ -10,13 +10,14 @@ import (
 )
 
 // Model describes one entry in the chat model menu. captain owns the catalog
-// (it is keyed on Backend, which is captain data); clicky/aichat consumes it via
-// type aliases. API backends carry a provider-prefixed ID for storage/display
-// stability, while CLI/agent backends carry the exact provider model ID that the
-// local backend receives (never a family alias or synthetic backend prefix).
+// (it is keyed on the provider×mode runtime, which is captain data); clicky/aichat
+// consumes it via type aliases. The API mode carries a provider-prefixed ID for
+// storage/display stability, while local transports carry the exact provider model
+// ID the binary receives (never a family alias or synthetic prefix).
 type Model struct {
 	ID          string
-	Backend     Backend
+	Provider    *ModelProvider
+	Mode        RuntimeMode
 	Label       string // human-friendly menu label
 	Reasoning   bool   // model honours Effort
 	Temperature bool   // model honours the temperature sampling control
@@ -40,9 +41,9 @@ type Model struct {
 }
 
 // IsAgent reports whether the model runs through captain's agent framework (a
-// supervised local subprocess) rather than the in-process genkit API path. All
-// non-API backends are agent/CLI backends.
-func (m Model) IsAgent() bool { return m.Backend.Kind() == "cli" }
+// supervised local subprocess) rather than the in-process genkit API path. Every
+// mode but api is a local transport.
+func (m Model) IsAgent() bool { return m.Mode.Kind() == "cli" }
 
 // BareID strips the "provider/" prefix from an API model id (so it joins to live
 // API listings and pricing keys); agent ids have no prefix and are returned
@@ -57,15 +58,15 @@ func (m Model) BareID() string {
 	return m.ID
 }
 
-// DefaultModelID is the chat backend's default (captain's NewAnthropic default).
+// DefaultModelID is the chat default (captain's NewAnthropic default).
 // The catalog entry with this ID sets Default: true. It is declared once, in the
 // registry, so a picker seeding itself and a run resolving an unnamed model
 // cannot answer differently.
 const DefaultModelID = api.DefaultModelID
 
 // defaultCatalog is projected from the internal exact model registry. The API
-// rows keep provider prefixes for stable storage; CLI/agent rows keep exact
-// backend model IDs without synthetic claude-agent/codex prefixes.
+// rows keep provider prefixes for stable storage; local-mode rows keep the exact
+// model IDs their CLI accepts, with no synthetic prefix in front.
 var defaultCatalog = registryCatalogModels()
 
 var (
@@ -83,7 +84,7 @@ func Catalog() []Model {
 	models := catalogSnapshot()
 	out := make([]Model, 0, len(models))
 	for _, m := range models {
-		if disabled.Model(m.Backend, bareProviderModelID(m.ID)) {
+		if disabled.Model(m.Provider, m.Mode, bareProviderModelID(m.ID)) {
 			continue
 		}
 		m.SupportedEfforts, m.DefaultEffort = enabledEfforts(m.SupportedEfforts, m.DefaultEffort)
@@ -180,16 +181,17 @@ func normalizeModel(model Model) (Model, error) {
 	if model.ID == "" {
 		return Model{}, fmt.Errorf("model ID is required")
 	}
-	if model.Backend == "" {
-		return Model{}, fmt.Errorf("model %q must set Backend (one of: %s)", model.ID, BackendList())
+	if model.Provider == nil || model.Mode == "" {
+		return Model{}, fmt.Errorf("model %q must set Provider and Mode (modes: %s)", model.ID, api.RuntimeModeList())
 	}
-	if !model.Backend.Valid() {
-		return Model{}, fmt.Errorf("model %q has invalid backend %q; want one of: %s", model.ID, model.Backend, BackendList())
+	if !RuntimeOf(model.Provider, model.Mode).Valid() {
+		return Model{}, fmt.Errorf("model %q names unsupported runtime %s; want one of: %s",
+			model.ID, RuntimeOf(model.Provider, model.Mode), RuntimeList())
 	}
 	if model.Label == "" {
 		model.Label = model.ID
 	}
-	model.InputMediaTypes = clampInputMediaTypes(model.Backend, model.InputMediaTypes)
+	model.InputMediaTypes = clampInputMediaTypes(model.Provider, model.Mode, model.InputMediaTypes)
 	if model.ReleaseDate != "" {
 		normalized := normalizeReleaseDate(model.ReleaseDate)
 		if normalized == "" {

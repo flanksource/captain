@@ -18,59 +18,67 @@ type modelFetch struct {
 // substitute deterministic rows without hitting a provider API.
 var resolveModelRows = ResolveModels
 
-// fetchAPIModels resolves each direct provider backend's live /v1/models
-// endpoint once, concurrently. Local CLI/agent/cmux adapters deliberately do
-// not participate: their model catalogs must describe the runtime they execute,
+// fetchAPIModels resolves each API-mode provider's live /v1/models endpoint
+// once, concurrently. Local cli/agent/cmux transports deliberately do not
+// participate: their model catalogs must describe the runtime they execute,
 // independent of whether the parent provider's API key happens to be present.
 // The resolver is Captain's cached model path, so repeated probes reuse a fresh
 // cache instead of hitting providers every time; refresh bypasses that cache and
 // re-queries every provider listing.
-func fetchAPIModels(backends []Backend, credentials CredentialSnapshot, apiURLs map[Backend]string, refresh bool) map[Backend]modelFetch {
-	apis := map[Backend]bool{}
-	for _, b := range backends {
-		if b.Kind() != "api" {
+//
+// The result is keyed by provider name, not by runtime: every mode of a family
+// draws its listing from the same endpoint.
+func fetchAPIModels(runtimes []Runtime, credentials CredentialSnapshot, apiURLs map[string]string, refresh bool) map[string]modelFetch {
+	sources := map[string]*ModelProvider{}
+	for _, runtime := range runtimes {
+		// Only the api mode lists from the provider's endpoint. The local modes
+		// list from the static catalog or the CLI's own debug output, and
+		// calling out for them would spend a credential — and fail without one —
+		// on a runtime that never uses it.
+		if runtime.Mode != ModeAPI {
 			continue
 		}
-		source := modelSourceBackend(b)
-		if source == "" {
+		p := modelSourceProvider(runtime)
+		if p == nil {
 			continue
 		}
-		if strings.TrimSpace(credentials.APIKey(source).Token) != "" {
-			apis[source] = true
+		if strings.TrimSpace(credentials.APIKey(p).Token) != "" {
+			sources[p.Name] = p
 		}
 	}
 
-	out := make(map[Backend]modelFetch, len(apis))
+	out := make(map[string]modelFetch, len(sources))
 	var mu sync.Mutex
 	var wg sync.WaitGroup
-	for b := range apis {
+	for _, p := range sources {
 		wg.Add(1)
-		go func(backend Backend) {
+		go func(p *ModelProvider) {
 			defer wg.Done()
 			rows, err := resolveModelRows(context.Background(), ResolveOptions{
-				Backend:     backend,
+				Provider:    p,
+				Mode:        ModeAPI,
 				UseTokens:   true,
 				Refresh:     refresh,
 				Credentials: credentials,
-				APIURL:      apiURLs[backend],
+				APIURL:      apiURLs[p.Name],
 			})
-			m := liveModelDefs(rows, backend)
+			m := liveModelDefs(rows, p, ModeAPI)
 			mu.Lock()
-			out[backend] = modelFetch{models: m, err: err}
+			out[p.Name] = modelFetch{models: m, err: err}
 			mu.Unlock()
-		}(b)
+		}(p)
 	}
 	wg.Wait()
 	return out
 }
 
-func fetchCodexModels(backends []Backend, probe AuthProbe) modelFetch {
+func fetchCodexModels(runtimes []Runtime, probe AuthProbe) modelFetch {
 	if probe.CodexModels == nil {
 		return modelFetch{}
 	}
 	wanted := false
-	for _, backend := range backends {
-		if isCodexBackend(backend) {
+	for _, runtime := range runtimes {
+		if isCodexRuntime(runtime) {
 			wanted = true
 			break
 		}
@@ -86,7 +94,13 @@ func fetchCodexModels(backends []Backend, probe AuthProbe) modelFetch {
 	return modelFetch{models: models, err: err}
 }
 
-func liveModelDefs(rows []ResolvedModel, backend Backend) []ModelDef {
+// isCodexRuntime reports whether a runtime is served by the installed codex
+// binary, whose own catalog is a stronger source than the registry projection.
+func isCodexRuntime(runtime Runtime) bool {
+	return runtime.Provider == OpenAI.Name && runtime.Mode != ModeAPI
+}
+
+func liveModelDefs(rows []ResolvedModel, p *ModelProvider, mode RuntimeMode) []ModelDef {
 	out := make([]ModelDef, 0, len(rows))
 	for _, row := range rows {
 		if !row.Live {
@@ -103,7 +117,8 @@ func liveModelDefs(rows []ResolvedModel, backend Backend) []ModelDef {
 		out = append(out, ModelDef{
 			ID:                id,
 			Name:              name,
-			Backend:           backend,
+			Provider:          p.Name,
+			Mode:              mode,
 			ReleaseDate:       row.ReleaseDate,
 			CapabilitiesKnown: true,
 			Reasoning:         row.Reasoning,
@@ -117,41 +132,42 @@ func liveModelDefs(rows []ResolvedModel, backend Backend) []ModelDef {
 }
 
 // applyModels fills in the model listing (or the reason it is unavailable) for
-// a single adapter. Direct API backends use live provider rows. Local adapters
-// use the catalog of the runtime they execute: Codex's installed catalog when
-// available, otherwise Captain's backend-specific registry projection.
-func applyModels(st *AdapterStatus, b Backend, cache map[Backend]modelFetch, codex modelFetch, probe AuthProbe) {
-	if isCodexBackend(b) {
+// a single adapter. API modes use live provider rows. Local transports use the
+// catalog of the runtime they execute: Codex's installed catalog when available,
+// otherwise Captain's registry projection for that (provider, mode).
+func applyModels(st *AdapterStatus, runtime Runtime, cache map[string]modelFetch, codex modelFetch, probe AuthProbe) {
+	p := modelSourceProvider(runtime)
+	if p == nil {
+		st.ModelError = fmt.Sprintf("runtime %s has no model listing", runtime)
+		return
+	}
+
+	if isCodexRuntime(runtime) {
 		if codex.err == nil && len(codex.models) > 0 {
 			models := make([]ModelDef, len(codex.models))
 			for i, model := range codex.models {
-				model.Backend = b
+				model.Provider = p.Name
+				model.Mode = runtime.Mode
 				models[i] = model
 			}
 			setModels(st, models, true)
 			return
 		}
-		setRegistryModels(st, b, codex.err)
+		setRegistryModels(st, p, runtime.Mode, codex.err)
 		return
 	}
-	if b.Kind() == "cli" {
-		setRegistryModels(st, b, nil)
-		return
-	}
-
-	source := modelSourceBackend(b)
-	if source == "" {
-		st.ModelError = fmt.Sprintf("backend %s has no model listing", b)
+	if runtime.Mode.Kind() == "cli" {
+		setRegistryModels(st, p, runtime.Mode, nil)
 		return
 	}
 
-	envVars := AuthEnvVars(source)
-	if strings.TrimSpace(effectiveAPIKey(source, probe)) == "" {
+	envVars := AuthEnvVars(p, runtime.Mode)
+	if strings.TrimSpace(effectiveAPIKey(p, runtime.Mode, probe)) == "" {
 		st.ModelError = "configure a Captain vault token or set " + strings.Join(envVars, " or ") + " to list models"
 		return
 	}
 
-	fetch, ok := cache[source]
+	fetch, ok := cache[p.Name]
 	if !ok {
 		return
 	}
@@ -159,52 +175,58 @@ func applyModels(st *AdapterStatus, b Backend, cache map[Backend]modelFetch, cod
 		st.ModelError = fetch.err.Error()
 		return
 	}
-	setModels(st, modelsForAdapterBackend(b, fetch.models), false)
+	setModels(st, modelsForAdapterRuntime(p, runtime.Mode, fetch.models), false)
 }
 
-func effectiveAPIKey(backend Backend, probe AuthProbe) string {
+func effectiveAPIKey(p *ModelProvider, mode RuntimeMode, probe AuthProbe) string {
 	if probe.credentials.supplied {
-		return probe.credentials.APIKey(backend).Token
+		return probe.credentials.APIKey(p).Token
 	}
 	if probe.APICredentials != nil {
-		return probe.APICredentials[backend].Token
+		return probe.APICredentials[p.Name].Token
 	}
-	return firstEnv(AuthEnvVars(backend), probe.Getenv)
+	return firstEnv(AuthEnvVars(p, mode), probe.Getenv)
 }
 
-func setRegistryModels(st *AdapterStatus, backend Backend, discoveryErr error) {
-	setModels(st, RegistryModelDefs(backend), true)
+func setRegistryModels(st *AdapterStatus, p *ModelProvider, mode RuntimeMode, discoveryErr error) {
+	setModels(st, RegistryModelDefs(p, mode), true)
 	if len(st.Models) > 0 {
 		return
 	}
+	runtime := RuntimeOf(p, mode)
 	if discoveryErr != nil {
-		st.ModelError = fmt.Sprintf("runtime model discovery failed: %v; registry has no models for %s", discoveryErr, backend)
+		st.ModelError = fmt.Sprintf("runtime model discovery failed: %v; registry has no models for %s", discoveryErr, runtime)
 		return
 	}
-	st.ModelError = fmt.Sprintf("registry has no models for %s", backend)
+	st.ModelError = fmt.Sprintf("registry has no models for %s", runtime)
 }
 
-// modelSourceBackend maps any backend onto the API backend whose model list it
-// draws from: a CLI/agent/cmux adapter serves its provider family's models.
-func modelSourceBackend(backend Backend) Backend {
-	return backend.Provider()
+// modelSourceProvider maps any runtime onto the provider whose model list it
+// draws from: a local transport serves its provider family's models.
+func modelSourceProvider(runtime Runtime) *ModelProvider {
+	p, _ := api.ProviderByName(runtime.Provider)
+	return p
 }
 
-func modelsForAdapterBackend(backend Backend, models []ModelDef) []ModelDef {
+func modelsForAdapterRuntime(p *ModelProvider, mode RuntimeMode, models []ModelDef) []ModelDef {
 	out := make([]ModelDef, 0, len(models))
 	positions := map[string]int{}
 	for _, model := range models {
-		if model.Backend == BackendOpenAI {
-			if known, available := RegistryModelAvailability(backend, bareProviderModelID(model.ID)); known && !available {
+		if p == OpenAI {
+			if known, available := RegistryModelAvailability(p, mode, bareProviderModelID(model.ID)); known && !available {
 				continue
 			}
 			if IsIgnoredOpenAIModelID(model.ID) {
-				if _, ok := RegistryModelDef(backend, bareProviderModelID(model.ID)); !ok {
+				if _, ok := RegistryModelDef(p, mode, bareProviderModelID(model.ID)); !ok {
 					continue
 				}
 			}
 		}
-		id := modelIDForAdapterBackend(backend, model.ID)
+		// A live listing is catalog data, not a user selection, so it resolves
+		// through ResolveExactModel rather than the model resolver: an id the
+		// registry does not know is still a real model the provider offers, and
+		// it is listed under the id the provider gave it.
+		id, _ := ResolveExactModel(p, mode, bareProviderModelID(model.ID))
 		if id == "" {
 			continue
 		}
@@ -215,7 +237,8 @@ func modelsForAdapterBackend(backend Backend, models []ModelDef) []ModelDef {
 		next := ModelDef{
 			ID:                id,
 			Name:              name,
-			Backend:           backend,
+			Provider:          p.Name,
+			Mode:              mode,
 			ReleaseDate:       model.ReleaseDate,
 			CapabilitiesKnown: model.CapabilitiesKnown,
 			Reasoning:         model.Reasoning,
@@ -234,10 +257,6 @@ func modelsForAdapterBackend(backend Backend, models []ModelDef) []ModelDef {
 		out = append(out, next)
 	}
 	return out
-}
-
-func modelIDForAdapterBackend(backend Backend, id string) string {
-	return NormalizeModelForBackend(backend, bareProviderModelID(id))
 }
 
 func modelDefNewer(left, right ModelDef) bool {

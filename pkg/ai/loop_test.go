@@ -15,7 +15,7 @@ type fakeStreamingProvider struct {
 	scripts  [][]Event
 	requests []Request
 	err      error
-	backend  Backend
+	runtime  Runtime
 	model    string
 }
 
@@ -25,11 +25,11 @@ func (f *fakeStreamingProvider) GetModel() string {
 	}
 	return "fake"
 }
-func (f *fakeStreamingProvider) GetBackend() Backend {
-	if f.backend != "" {
-		return f.backend
+func (f *fakeStreamingProvider) GetRuntime() Runtime {
+	if (f.runtime != Runtime{}) {
+		return f.runtime
 	}
-	return Backend("fake")
+	return RuntimeOf(Anthropic, ModeAgent)
 }
 func (f *fakeStreamingProvider) Execute(ctx context.Context, req Request) (*Response, error) {
 	return nil, errors.New("not used")
@@ -137,7 +137,7 @@ func TestRunUntil_HitsMaxIterations(t *testing.T) {
 // C2). The loop prices the usage from the registry.
 func TestRunUntil_PricesUsageWhenProviderReportsNoCost(t *testing.T) {
 	p := &fakeStreamingProvider{
-		backend: BackendAnthropic,
+		runtime: RuntimeOf(Anthropic, ModeAPI),
 		model:   "claude-sonnet-4",
 		scripts: [][]Event{{
 			{Kind: EventResult, Success: true, CostUSD: 0, Usage: &Usage{InputTokens: 1_000_000, OutputTokens: 1_000_000}},

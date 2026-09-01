@@ -1,7 +1,6 @@
 package history
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flanksource/captain/pkg/jsonl"
 	"github.com/flanksource/commons/collections"
 	"github.com/flanksource/commons/logger"
 	"github.com/segmentio/encoding/json"
@@ -86,17 +86,16 @@ func ExtractToolUses(sessionFile string) ([]ToolUse, error) {
 	defer func() { _ = file.Close() }()
 
 	var toolUses []ToolUse
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line == "" {
+	for line, err := range jsonl.Lines(file) {
+		if err != nil {
+			return nil, err
+		}
+		if len(line) == 0 {
 			continue
 		}
 
 		var entry SessionEntry
-		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+		if err := json.Unmarshal(line, &entry); err != nil {
 			log.Debugf("Error parsing line in %s: %v", sessionFile, err)
 			continue
 		}
@@ -123,10 +122,6 @@ func ExtractToolUses(sessionFile string) ([]ToolUse, error) {
 				Source:    "claude",
 			})
 		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		return nil, err
 	}
 	return toolUses, nil
 }
