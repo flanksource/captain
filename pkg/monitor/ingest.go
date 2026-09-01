@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai/history"
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/session"
 )
@@ -426,10 +427,22 @@ func codexIngestInput(path string) (database.IngestTranscriptInput, error) {
 	if len(sessions) == 0 {
 		return database.IngestTranscriptInput{}, fmt.Errorf("codex transcript %s is not parseable", path)
 	}
-	s := sessions[0]
 	input := unifiedIngestInput(s, "codex", transcriptSequence)
 	input.Session.ProviderSessionID = s.ID
 	input.Source.SourceIdentity = s.ID
+	if s.ForkedFrom != "" {
+		parent, err := ing.db.CreateOrGetSession(ctx, database.CreateSessionInput{
+			ProviderSessionID: s.ForkedFrom, Source: "codex", HostID: ing.monitor.cfg.HostID,
+		})
+		if err != nil {
+			return database.IngestTranscriptInput{}, err
+		}
+		input.Session.ParentSessionID = &parent.ID
+		if s.Root != nil {
+			input.Session.AgentType = s.Root.Type
+			input.Session.Description = s.Root.Desc
+		}
+	}
 	return input, nil
 }
 
@@ -440,13 +453,29 @@ func codexIngestInput(path string) (database.IngestTranscriptInput, error) {
 // file and the high-water mark discarded every renumbered row.
 func transcriptSequence(m session.Message, _ int) int64 { return m.SourceLine }
 
+// transcriptProvider maps a transcript's writing agent onto the provider whose
+// models it billed. It answers the provider axis only — see unifiedIngestInput.
+func transcriptProvider(source string) string {
+	for _, p := range api.Providers() {
+		if p.AgentName == source {
+			return p.Name
+		}
+	}
+	return ""
+}
+
 // unifiedIngestInput maps the unified session model onto the native ingest
 // batch: turns become turn rows with one aggregate model call each, and
 // conversational messages become message rows keyed by sequence.
-func unifiedIngestInput(s *session.Session, backend string, sequence func(session.Message, int) int64) database.IngestTranscriptInput {
+// unifiedIngestInput builds the ingest payload from one transcript. source is
+// the agent that WROTE the transcript ("claude"/"codex"), which names the
+// provider but never the mode: a transcript looks identical whether the agent ran
+// under the cli, the agent SDK, or cmux. Model calls ingested here therefore
+// record a provider and leave mode unset, rather than inventing one.
+func unifiedIngestInput(s *session.Session, source string, sequence func(session.Message, int) int64) database.IngestTranscriptInput {
 	input := database.IngestTranscriptInput{
 		Session: database.IngestSessionInput{
-			Source: backend, Path: s.HistoryFile, Project: s.Project, CWD: s.CWD,
+			Source: source, Path: s.HistoryFile, Project: s.Project, CWD: s.CWD,
 			Title: s.Title, InitialPrompt: s.InitialPrompt, Slug: s.Slug, CLIVersion: s.Version,
 			StartedAt: s.StartedAt, LastActivityAt: s.EndedAt,
 			Git:      gitMetadata(s),
@@ -460,7 +489,7 @@ func unifiedIngestInput(s *session.Session, backend string, sequence func(sessio
 			Index: turn.Index, ProviderTurnID: turn.ID, Status: database.TurnStatusEnded,
 			StopReason: turn.StopReason, StartedAt: turn.StartedAt, EndedAt: turn.EndedAt,
 			Call: &database.IngestModelCall{
-				Model: turn.Model, Backend: backend, Effort: turn.ReasoningEffort,
+				Model: turn.Model, Provider: transcriptProvider(source), Effort: turn.ReasoningEffort,
 				InputTokens:  int64(turn.Usage.InputTokens),
 				OutputTokens: int64(turn.Usage.OutputTokens), ReasoningTokens: int64(turn.Usage.ReasoningTokens),
 				CacheReadTokens: int64(turn.Usage.CacheReadTokens), CacheWriteTokens: int64(turn.Usage.CacheWriteTokens),
