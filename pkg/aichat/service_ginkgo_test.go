@@ -24,9 +24,9 @@ type fakeResolver struct {
 
 type fakeProviderConfigSource struct {
 	providers []string
-	config   api.Config
-	requests []aichat.ProviderConfigRequest
-	resolve  func(aichat.ProviderConfigRequest) (api.Config, error)
+	config    api.Config
+	requests  []aichat.ProviderConfigRequest
+	resolve   func(aichat.ProviderConfigRequest) (api.Config, error)
 }
 
 func (f *fakeProviderConfigSource) ConfiguredProviders(context.Context) ([]string, error) {
@@ -188,7 +188,7 @@ var _ = Describe("Captain aichat service", func() {
 		resolver := &fakeResolver{provider: provider}
 		source := &fakeProviderConfigSource{
 			providers: []string{api.OpenAI.Name},
-			config:   api.Config{APIKey: "request-token", APIURL: "https://tenant-x.example/ai"},
+			config:    api.Config{APIKey: "request-token", APIURL: "https://tenant-x.example/ai"},
 		}
 		service := aichat.NewService(aichat.ServiceOptions{
 			Resolver: resolver, ProviderConfig: source,

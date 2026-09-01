@@ -36,7 +36,9 @@ type structuredPromptResultProvider struct{}
 
 func (structuredPromptResultProvider) GetModel() string { return "claude-sonnet-4-6" }
 
-func (structuredPromptResultProvider) GetRuntime() ai.Runtime { return ai.RuntimeOf(ai.Anthropic, ai.ModeAPI) }
+func (structuredPromptResultProvider) GetRuntime() ai.Runtime {
+	return ai.RuntimeOf(ai.Anthropic, ai.ModeAPI)
+}
 
 func (structuredPromptResultProvider) Execute(context.Context, ai.Request) (*ai.Response, error) {
 	return &ai.Response{
@@ -51,7 +53,9 @@ type promptResultStreamingProvider struct{}
 
 func (promptResultStreamingProvider) GetModel() string { return "gpt-5-codex" }
 
-func (promptResultStreamingProvider) GetRuntime() ai.Runtime { return ai.RuntimeOf(ai.OpenAI, ai.ModeCLI) }
+func (promptResultStreamingProvider) GetRuntime() ai.Runtime {
+	return ai.RuntimeOf(ai.OpenAI, ai.ModeCLI)
+}
 
 func (promptResultStreamingProvider) Execute(context.Context, ai.Request) (*ai.Response, error) {
 	return nil, nil
@@ -72,7 +76,9 @@ type structuredResultStreamingProvider struct {
 
 func (structuredResultStreamingProvider) GetModel() string { return "gpt-5-codex" }
 
-func (structuredResultStreamingProvider) GetRuntime() ai.Runtime { return ai.RuntimeOf(ai.OpenAI, ai.ModeCLI) }
+func (structuredResultStreamingProvider) GetRuntime() ai.Runtime {
+	return ai.RuntimeOf(ai.OpenAI, ai.ModeCLI)
+}
 
 func (structuredResultStreamingProvider) Execute(context.Context, ai.Request) (*ai.Response, error) {
 	return nil, nil

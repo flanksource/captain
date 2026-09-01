@@ -72,7 +72,7 @@ var (
 		PricingPrefix: "google",
 		EnvVars:       []string{"GEMINI_API_KEY", "GOOGLE_API_KEY"},
 		// No agent cell; its cli cell carries no tools, resume or media types.
-		DefaultMode:   ModeAPI,
+		DefaultMode: ModeAPI,
 		modes: map[RuntimeMode]ModeCapabilities{
 			ModeAPI: {Streaming: true, CallerTools: true, MediaTypes: []string{"image/*", "audio/*", "video/*", "application/pdf"}},
 			ModeCLI: {Streaming: true, RequiredBinary: "gemini"},

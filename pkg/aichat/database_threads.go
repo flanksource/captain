@@ -316,7 +316,7 @@ func sessionFromOverview(overview database.SessionOverview) *session.Session {
 		Slug: stringPointer(overview.Slug), Title: stringPointer(overview.Title), InitialPrompt: stringPointer(overview.InitialPrompt),
 		Version: stringPointer(overview.CLIVersion), Provider: overview.Provider,
 		ModelMode: api.RuntimeMode(stringPointer(overview.ModelMode)),
-		Model: stringPointer(overview.Model), ReasoningEffort: stringPointer(overview.Effort),
+		Model:     stringPointer(overview.Model), ReasoningEffort: stringPointer(overview.Effort),
 		ExecutionMode: api.RuntimeMode(overview.ExecutionMode),
 		HistoryFile:   stringPointer(overview.HistoryFile), StartedAt: overview.StartedAt, EndedAt: overview.EndedAt,
 		Usage: api.Usage{
@@ -371,7 +371,7 @@ func projectSessionTurns(rows []database.SessionTurn, messages []session.Message
 			StopReason: stringPointer(rows[i].StopReason), Model: stringPointer(rows[i].Model),
 			ModelProvider: stringPointer(rows[i].ModelProvider), Mode: stringPointer(rows[i].ModelMode),
 			ReasoningEffort: stringPointer(rows[i].Effort),
-			MessageIDs: messageIDs[rows[i].ID.String()],
+			MessageIDs:      messageIDs[rows[i].ID.String()],
 			Usage: api.Usage{
 				InputTokens: int(rows[i].InputTokens), OutputTokens: int(rows[i].OutputTokens),
 				ReasoningTokens: int(rows[i].ReasoningTokens), CacheReadTokens: int(rows[i].CacheReadTokens),

@@ -47,15 +47,15 @@ type PromptRunOverview struct {
 	Resolved          PromptRunRuntimeSelection `json:"resolved"`
 	Provider          string                    `json:"provider,omitempty"`
 	// RuntimeMode is the mechanism the model ran on; Mode below is the run mode.
-	RuntimeMode       string                    `json:"runtimeMode,omitempty"`
-	Model             string                    `json:"model,omitempty"`
-	Effort            string                    `json:"effort,omitempty"`
-	Mode              string                    `json:"mode,omitempty"`
-	Driver            string                    `json:"driver,omitempty"`
-	Status            PromptRunDisplayStatus    `json:"status"`
-	PID               *int64                    `json:"pid,omitempty"`
-	DurationMS        *int64                    `json:"durationMs,omitempty"`
-	ProcessActive     bool                      `json:"processActive"`
+	RuntimeMode   string                 `json:"runtimeMode,omitempty"`
+	Model         string                 `json:"model,omitempty"`
+	Effort        string                 `json:"effort,omitempty"`
+	Mode          string                 `json:"mode,omitempty"`
+	Driver        string                 `json:"driver,omitempty"`
+	Status        PromptRunDisplayStatus `json:"status"`
+	PID           *int64                 `json:"pid,omitempty"`
+	DurationMS    *int64                 `json:"durationMs,omitempty"`
+	ProcessActive bool                   `json:"processActive"`
 }
 
 type PromptRunOverviewFilter struct {
