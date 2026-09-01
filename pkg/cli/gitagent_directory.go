@@ -126,17 +126,24 @@ func enrollmentRefusal(err error) error {
 	}
 }
 
-// RecordAgent stores everything a dispatch to this agent needs: its client
-// key, its endpoint, and the host key to pin when pushing there. Recording
-// only the key would leave an enrollment that looks complete but cannot be
-// dispatched to.
+// RecordAgent stores everything a dispatch to this agent needs: its identity,
+// endpoint, authentication credential, and optional HTTPS trust anchor.
+// Recording only the key would leave an enrollment that looks complete but
+// cannot be dispatched to.
 func (d gitAgentDirectory) RecordAgent(e gitagent.AgentEnrollment) error {
+	if err := captaintoken.ValidateName(e.Name); err != nil {
+		return fmt.Errorf("invalid agent name: %w", err)
+	}
 	if e.URL == "" {
 		return fmt.Errorf(
 			"agent %q advertised no endpoint; rerun its serve with --advertise ssh://host:port or "+
 				"--advertise https://host/git/%s", e.Name, SidecarRepoName)
 	}
 	credential, err := recordDispatchCredential(e)
+	if err != nil {
+		return err
+	}
+	trust, err := recordDispatchTrust(e)
 	if err != nil {
 		return err
 	}
@@ -158,6 +165,7 @@ func (d gitAgentDirectory) RecordAgent(e gitagent.AgentEnrollment) error {
 		// agent across transports cannot leave the other one's key beside it and
 		// make the entry look like it authenticates two ways.
 		maps.Copy(entry, credential)
+		maps.Copy(entry, trust)
 		agents[e.Name] = entry
 		backend.Options["agents"] = agents
 		cfg.Sandbox.Backends[d.backend] = backend
@@ -199,6 +207,25 @@ func recordDispatchCredential(e gitagent.AgentEnrollment) (map[string]any, error
 	}
 }
 
+// recordDispatchTrust persists a supervisor-local copy of a generated sidecar
+// certificate. An empty certificate deliberately leaves public HTTPS endpoints
+// on the system trust store without a renewal-sensitive pin.
+func recordDispatchTrust(e gitagent.AgentEnrollment) (map[string]any, error) {
+	certificate := strings.TrimSpace(e.CACertificate)
+	if gitagent.EndpointScheme(e.URL) != "https" || certificate == "" {
+		return nil, nil
+	}
+	path, err := writeDispatchCertificateFile(e.Name, certificate)
+	if err != nil {
+		return nil, err
+	}
+	trust := map[string]any{"caPath": path}
+	if pin := strings.TrimSpace(e.PinnedPublicKey); pin != "" {
+		trust["pinnedPubkey"] = pin
+	}
+	return trust, nil
+}
+
 // dispatchTokensDir holds one file per agent this supervisor dispatches to over
 // https.
 //
@@ -216,6 +243,11 @@ func recordDispatchCredential(e gitagent.AgentEnrollment) (map[string]any, error
 // import this package.
 const dispatchTokensDir = "dispatch-tokens"
 
+// dispatchCertificatesDir holds supervisor-local trust anchors received during
+// authenticated enrollment. Re-enrollment atomically replaces the agent's file,
+// making generated-certificate rotation an explicit re-enrollment operation.
+const dispatchCertificatesDir = "dispatch-certificates"
+
 func writeDispatchTokenFile(agent, token string) (string, error) {
 	keysDir, err := gitAgentKeysDir()
 	if err != nil {
@@ -224,6 +256,25 @@ func writeDispatchTokenFile(agent, token string) (string, error) {
 	path := filepath.Join(keysDir, dispatchTokensDir, agent+".token")
 	if err := gitagent.WriteTokenFile(path, text.NewSensitiveString(token)); err != nil {
 		return "", fmt.Errorf("store the dispatch token for agent %q: %w", agent, err)
+	}
+	return path, nil
+}
+
+func writeDispatchCertificateFile(agent, certificate string) (string, error) {
+	keysDir, err := gitAgentKeysDir()
+	if err != nil {
+		return "", err
+	}
+	filename := agent + ".crt"
+	if !filepath.IsLocal(filename) {
+		return "", fmt.Errorf("agent name %q does not produce a local certificate path", agent)
+	}
+	path := filepath.Join(keysDir, dispatchCertificatesDir, filename)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return "", fmt.Errorf("create dispatch certificate directory: %w", err)
+	}
+	if err := writeCredentialFile(path, []byte(certificate)); err != nil {
+		return "", fmt.Errorf("store dispatch certificate for agent %q: %w", agent, err)
 	}
 	return path, nil
 }

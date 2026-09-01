@@ -73,6 +73,27 @@ func reusableEnrollment(
 		if _, err := gitagent.LoadDispatchCredential(filepath.Join(keysDir, gitagent.DispatchCredentialName)); err != nil {
 			return "", nil
 		}
+		if enrolledPin, trustRecorded := supervisor["sidecarPinnedPubkey"].(string); trustRecorded {
+			currentPin := ""
+			if strings.TrimSpace(opts.TLSCert) == "" && strings.TrimSpace(opts.TLSKey) == "" {
+				advertise, err := advertiseURL(opts.Advertise)
+				if err != nil {
+					return "", err
+				}
+				host, err := advertiseHostname(advertise)
+				if err != nil {
+					return "", err
+				}
+				credential, err := gitagent.EnsureTLSCredential(keysDir, []string{host})
+				if err != nil {
+					return "", fmt.Errorf("load generated sidecar certificate: %w", err)
+				}
+				currentPin = credential.PublicKeyPin
+			}
+			if strings.TrimSpace(enrolledPin) != currentPin {
+				return "", nil
+			}
+		}
 	} else {
 		agents, _ := backend.Options["agents"].(map[string]any)
 		dispatch, _ := agents[supervisorAgentID].(map[string]any)

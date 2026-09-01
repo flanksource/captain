@@ -58,6 +58,13 @@ type EnrollRequest struct {
 	// rejects. Redaction belongs where the value is held — see
 	// DispatchRequest.Token — not where it is transmitted.
 	DispatchToken string `json:"dispatchToken,omitempty"`
+	// CACertificate is the agent's Captain-generated TLS certificate,
+	// PEM-encoded. The supervisor persists its own copy as the trust anchor for
+	// direct HTTPS dispatches. Empty for endpoints using operator-supplied TLS,
+	// which continue to use the system trust store.
+	CACertificate string `json:"caCertificate,omitempty"`
+	// PinnedPublicKey optionally pins the key in CACertificate.
+	PinnedPublicKey string `json:"pinnedPubkey,omitempty"`
 }
 
 // EnrollResponse is what the supervisor hands back so the agent can complete
@@ -94,8 +101,8 @@ func (o EnrollmentOffer) ResponseFor(agent string) EnrollResponse {
 	}
 }
 
-// AgentEnrollment is one recorded agent: its key, its endpoint, and the host
-// key to pin when dispatching there.
+// AgentEnrollment is one recorded agent: its identity, endpoint, dispatch
+// authentication, and HTTPS trust material.
 type AgentEnrollment struct {
 	Name        string
 	Fingerprint string
@@ -106,6 +113,10 @@ type AgentEnrollment struct {
 	// bearer token the agent minted. Exactly one is ever set.
 	HostFingerprint string
 	DispatchToken   string
+	// CACertificate and PinnedPublicKey carry trust for a Captain-generated
+	// HTTPS certificate. They remain empty for publicly trusted endpoints.
+	CACertificate   string
+	PinnedPublicKey string
 }
 
 // Enroll reaches the supervisor endpoint, presents the captain token along

@@ -267,12 +267,31 @@ func joinSupervisor(
 	if err != nil {
 		return err
 	}
+	var caCertificate, pinnedPublicKey string
+	if transport == transportHTTPS &&
+		strings.TrimSpace(opts.TLSCert) == "" && strings.TrimSpace(opts.TLSKey) == "" {
+		host, err := advertiseHostname(advertise)
+		if err != nil {
+			return err
+		}
+		credential, err := gitagent.EnsureTLSCredential(keysDir, []string{host})
+		if err != nil {
+			return fmt.Errorf("prepare generated sidecar certificate for enrollment: %w", err)
+		}
+		pem, err := credential.PEM()
+		if err != nil {
+			return fmt.Errorf("read generated sidecar certificate for enrollment: %w", err)
+		}
+		caCertificate, pinnedPublicKey = string(pem), credential.PublicKeyPin
+	}
 	resp, err := gitagent.Enroll(ctx, opts.Supervisor, token.Value(), opts.HostFingerprint, signer, gitagent.EnrollRequest{
 		Agent:           enrolledAgentName(opts.Backend),
 		AdvertiseURL:    advertise,
 		ListenPort:      port,
 		HostFingerprint: hostFP,
 		DispatchToken:   dispatchToken.Value(),
+		CACertificate:   caCertificate,
+		PinnedPublicKey: pinnedPublicKey,
 	})
 	if err != nil {
 		return err
@@ -309,6 +328,9 @@ func joinSupervisor(
 			"tokenPath":       tokenPath,
 			"caPath":          caPath,
 			"pinnedPubkey":    resp.PinnedPublicKey,
+			// Present even when empty, distinguishing system-trusted TLS from a
+			// legacy enrollment that never exchanged sidecar trust.
+			"sidecarPinnedPubkey": pinnedPublicKey,
 		}
 		// Authorize the supervisor's dispatch key so its push is accepted
 		// here — the direction a one-way enrollment leaves broken.

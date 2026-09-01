@@ -139,6 +139,8 @@ func handleEnroll(s ssh.Session, cfg ServerConfig, fingerprint string, cmd []str
 		URL:             agentDispatchURL(req, s.RemoteAddr(), cfg.AgentRepoPath),
 		HostFingerprint: strings.TrimSpace(req.HostFingerprint),
 		DispatchToken:   strings.TrimSpace(req.DispatchToken),
+		CACertificate:   strings.TrimSpace(req.CACertificate),
+		PinnedPublicKey: strings.TrimSpace(req.PinnedPublicKey),
 	}
 	if err := cfg.Directory.RecordAgent(enrollment); err != nil {
 		fmt.Fprintf(s.Stderr(), "captain: enrollment failed: %v\n", err)
