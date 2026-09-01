@@ -87,7 +87,7 @@ func RunGitAgentServe(ctx context.Context, opts GitAgentServeOptions) (any, erro
 	if transport == transportHTTPS {
 		startSidecarBackground(ctx, root)
 		return nil, serveSidecarHTTPS(ctx, sidecarHTTPSPlan{
-			listen: opts.Listen, root: root, keysDir: keysDir, advertise: opts.Advertise,
+			listen: opts.Listen, root: root, keysDir: keysDir, advertise: opts.Advertise, backend: opts.Backend,
 			certPath: opts.TLSCert, keyPath: opts.TLSKey,
 		})
 	}

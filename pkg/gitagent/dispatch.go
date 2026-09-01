@@ -24,6 +24,9 @@ type TaskPayload struct {
 	Prompt string `json:"prompt"`
 	System string `json:"system,omitempty"`
 	Model  string `json:"model,omitempty"`
+	// CallerTools announces that the runner must consume the separately
+	// delivered task secret. No endpoint or credential enters task.json.
+	CallerTools bool `json:"callerTools,omitempty"`
 	// Backend and Effort record the runtime the supervisor resolved, so the
 	// agent does not re-resolve the model against its own defaults.
 	Backend string     `json:"backend,omitempty"`

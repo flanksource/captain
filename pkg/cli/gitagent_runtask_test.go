@@ -24,7 +24,7 @@ func TestRunTaskPromptCarriesSupervisorRuntime(t *testing.T) {
 		Prompt: "make a change", Model: "gpt-5.6-sol",
 		Backend: string(api.BackendCodexCLI), Effort: api.EffortHigh, Timeout: "17m",
 	}
-	if err := runTaskPrompt(context.Background(), t.TempDir(), payload); err != nil {
+	if err := runTaskPrompt(context.Background(), t.TempDir(), payload, nil); err != nil {
 		t.Fatal(err)
 	}
 	if captured.Budget.Timeout != "17m" {

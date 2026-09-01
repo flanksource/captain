@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/flanksource/captain/pkg/ai/callertools"
 	"github.com/flanksource/captain/pkg/aichat"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/captaintoken"
@@ -240,6 +241,8 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	root := http.NewServeMux()
 	root.Handle("/api/", mux)
 	root.Handle("/health", mux)
+	root.Handle(gitagent.GitHTTPPrefix, mux)
+	root.Handle(callertools.RemoteEndpointPrefix, callertools.RemoteHandler())
 	root.Handle("/", uiHandler)
 
 	tlsConfig := serveTLSConfig(certificate)

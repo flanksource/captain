@@ -51,6 +51,7 @@ func recordSandboxSelection(req *ai.Request, cfg *ai.Config, selection captainco
 		ref := api.SandboxRef{Backend: flagSelector}
 		if req.Sandbox != nil {
 			ref.Agent = req.Sandbox.Agent
+			ref.CallerTools = req.Sandbox.CallerTools
 			ref.Policy = req.Sandbox.Policy
 		}
 		req.Sandbox = &ref
@@ -99,6 +100,7 @@ func sandboxSelectionConfig(selection captainconfig.SandboxSelection, ref *api.S
 	cfg := &api.SandboxConfig{Kind: selection.Kind, Name: selection.Name, Options: selection.Options}
 	if ref != nil {
 		cfg.Agent = ref.Agent
+		cfg.CallerTools = ref.CallerTools
 		cfg.Policy = ref.Policy
 	}
 	return cfg

@@ -69,6 +69,13 @@ func newCaptainChatService(
 		Threads:     aichat.ThreadStoreProviderFunc(contextThreadStore),
 		Authority:   authority,
 		Attachments: chatAttachmentResolver{store: attachmentStore},
+		ResolveSandbox: func(_ context.Context, ref api.SandboxRef) (*api.SandboxConfig, error) {
+			selection, err := resolveSandboxSelection("", &ref, loadSavedConfig().Sandbox)
+			if err != nil {
+				return nil, err
+			}
+			return sandboxSelectionConfig(selection, &ref), nil
+		},
 	})
 	return chat, mcpTools, nil
 }

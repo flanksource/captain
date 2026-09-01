@@ -49,7 +49,17 @@ func NewProvider(cfg Config) (Provider, error) {
 }
 
 func newResolvedProvider(cfg Config) (Provider, error) {
-	p, err := api.NewProvider(cfg)
+	var p Provider
+	var err error
+	if cfg.SandboxSelection != nil {
+		if descriptor, ok := api.SandboxFor(cfg.SandboxSelection.Kind); ok && descriptor.Has(api.CapabilityRemoteExec) {
+			p, err = newRemoteProvider(cfg)
+		} else {
+			p, err = api.NewProvider(cfg)
+		}
+	} else {
+		p, err = api.NewProvider(cfg)
+	}
 	if err != nil {
 		return nil, err
 	}

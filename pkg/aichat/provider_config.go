@@ -196,3 +196,18 @@ func (s *Service) prepareProviderConfig(ctx context.Context, config api.Config) 
 	}
 	return config, nil
 }
+
+func (s *Service) applySandboxSelection(ctx context.Context, config api.Config, ref *api.SandboxRef) (api.Config, error) {
+	if ref == nil {
+		return config, nil
+	}
+	if s.options.ResolveSandbox == nil {
+		return api.Config{}, fmt.Errorf("chat sandbox selection is not supported by this host")
+	}
+	selection, err := s.options.ResolveSandbox(ctx, *ref)
+	if err != nil {
+		return api.Config{}, fmt.Errorf("resolve chat sandbox %q: %w", ref.Backend, err)
+	}
+	config.SandboxSelection = selection
+	return config, nil
+}

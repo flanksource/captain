@@ -21,7 +21,11 @@ type PermissionRequest struct {
 	Input              map[string]any
 	ToolUseID          string
 	ToolUseIDGenerated bool
-	SessionID          string
+	// Delegated identifies a call authenticated by a task-scoped remote
+	// capability. Its MCP request is the authoritative tool-use observation;
+	// there is no local provider event to correlate with a generated ID.
+	Delegated bool `json:"-"`
+	SessionID string
 }
 
 // PermissionDecision is the answer to a PermissionRequest. On Allow the tool runs
@@ -48,7 +52,34 @@ type CallerToolEndpoint struct {
 	Name    string
 	URL     string
 	Headers map[string]string
+	// Delegate issues a narrower transport capability for one remote task. It
+	// is present only on Captain-owned endpoints and never crosses a wire.
+	Delegate CallerToolDelegateFunc `json:"-"`
 }
+
+// CallerToolBinding is the identity and lifetime a delegated endpoint must
+// re-check independently of its bearer credential.
+type CallerToolBinding struct {
+	TaskID    string
+	Agent     string
+	ExpiresAt time.Time
+	// ToolNames is the requested child allowlist. Delegation intersects it with
+	// the already-resolved parent definitions, so unknown or parent-denied names
+	// can never acquire authority.
+	ToolNames []string
+}
+
+// CallerToolDelegation is a task-scoped endpoint plus its revocation hook.
+// The endpoint headers contain a plaintext capability and must stay in memory
+// or an authenticated secret-delivery channel.
+type CallerToolDelegation struct {
+	Endpoint CallerToolEndpoint
+	Revoke   func()
+}
+
+// CallerToolDelegateFunc issues a task-scoped child of an already-resolved
+// caller-tool endpoint. The child can retain but never widen the parent's tools.
+type CallerToolDelegateFunc func(context.Context, CallerToolBinding) (*CallerToolDelegation, error)
 
 func (endpoint CallerToolEndpoint) Validate() error {
 	if endpoint.Name == "" {

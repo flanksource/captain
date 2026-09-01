@@ -131,7 +131,8 @@ func (e *databaseExecution) startCallerTools(ctx context.Context, backend api.Ba
 	var credentialID uuid.UUID
 	runtime, err := callertools.New(callertools.Options{
 		Definitions: e.definitions, SessionID: e.session.ID.String(),
-		ApprovalTimeout: callerToolApprovalTimeout,
+		ApprovalTimeout:      callerToolApprovalTimeout,
+		ObserveDelegatedTool: e.emitCallerToolEvent,
 		ValidateCredential: func(ctx context.Context) error {
 			if credentialID == uuid.Nil {
 				return fmt.Errorf("caller-tool credential has not been issued")
@@ -172,7 +173,7 @@ func (e *databaseExecution) requestApproval(
 	credentialID uuid.UUID,
 	request api.PermissionRequest,
 ) (api.PermissionDecision, error) {
-	if request.ToolUseIDGenerated {
+	if request.ToolUseIDGenerated && !request.Delegated {
 		toolUseID, err := e.claimProviderToolUse(ctx, request)
 		if err != nil {
 			return api.PermissionDecision{}, err
@@ -200,17 +201,22 @@ func (e *databaseExecution) requestApproval(
 	return decision, errors.Join(err, restoreErr)
 }
 
-func (e *databaseExecution) emitApproval(ctx context.Context, approvalID uuid.UUID, request api.PermissionRequest) error {
-	event := api.Event{
-		Kind: api.EventPermission, Tool: request.Tool,
-		ToolCallID: request.ToolUseID, ApprovalID: approvalID.String(), Input: request.Input,
-	}
+func (e *databaseExecution) emitCallerToolEvent(ctx context.Context, event api.Event) error {
 	select {
 	case e.events <- event:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+func (e *databaseExecution) emitApproval(ctx context.Context, approvalID uuid.UUID, request api.PermissionRequest) error {
+	event := api.Event{
+		Kind: api.EventPermission, Tool: request.Tool,
+		ToolCallID: request.ToolUseID, ApprovalID: approvalID.String(), Input: request.Input,
+		Delegated: request.Delegated,
+	}
+	return e.emitCallerToolEvent(ctx, event)
 }
 
 func (e *databaseExecution) waitForApproval(
@@ -267,7 +273,9 @@ func (e *databaseExecution) Observe(ctx context.Context, event api.Event) (api.E
 	}
 	switch event.Kind {
 	case api.EventToolUse:
-		e.rememberProviderToolUse(event)
+		if !event.Delegated {
+			e.rememberProviderToolUse(event)
+		}
 		return event, nil
 	case api.EventPermission:
 		if event.ApprovalID != "" {

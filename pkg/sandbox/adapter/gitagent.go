@@ -63,6 +63,61 @@ func (g *gitAgentSandbox) Execute(ctx context.Context, spec api.Spec) (*api.Resp
 	if err != nil {
 		return nil, err
 	}
+	task := ""
+	var delegation *api.CallerToolDelegation
+	callerToolsDelivered := false
+	if len(g.cfg.CallerTools) > 0 {
+		if g.cfg.CallerToolEndpoint == nil {
+			return nil, fmt.Errorf("delegated caller tools require a supervisor caller-tool endpoint")
+		}
+		if !api.SupportsCallerTools(spec.Backend) {
+			return nil, fmt.Errorf("remote backend %q does not support delegated caller tools", spec.Backend)
+		}
+		if spec.Permissions.MCP.Disabled {
+			return nil, fmt.Errorf("delegated caller tools require MCP but MCP is disabled")
+		}
+		if gitagent.EndpointScheme(target.url) != "https" {
+			return nil, fmt.Errorf("delegated caller tools require an HTTPS git-agent sidecar; agent %q uses %s", target.agent, target.url)
+		}
+		if err := g.cfg.CallerToolEndpoint.Validate(); err != nil {
+			return nil, fmt.Errorf("delegate caller tools: %w", err)
+		}
+		if g.cfg.CallerToolEndpoint.Delegate == nil {
+			return nil, fmt.Errorf("caller-tool endpoint does not support task-scoped remote delegation")
+		}
+		task, err = gitagent.NewTaskID()
+		if err != nil {
+			return nil, err
+		}
+		// AwaitOutcome starts its full timeout only after mailbox setup and the
+		// dispatch push, so the capability needs a small head-start margin.
+		expiresAt := time.Now().Add(target.waitTimeout + callerToolExpiryGrace)
+		if deadline, ok := ctx.Deadline(); ok && deadline.Before(expiresAt) {
+			expiresAt = deadline
+		}
+		delegation, err = g.cfg.CallerToolEndpoint.Delegate(ctx, api.CallerToolBinding{
+			TaskID: task, Agent: target.agent, ExpiresAt: expiresAt,
+			ToolNames: append([]string(nil), g.cfg.CallerTools...),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("issue delegated caller tools: %w", err)
+		}
+		if delegation == nil || delegation.Revoke == nil {
+			return nil, fmt.Errorf("issue delegated caller tools: endpoint returned an incomplete delegation")
+		}
+		defer delegation.Revoke()
+		defer func() {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = gitagent.RevokeCallerTools(cleanupCtx, target.transport(), task)
+		}()
+		if err := gitagent.RegisterCallerTools(ctx, target.transport(), gitagent.CallerToolGrant{
+			Task: task, Agent: target.agent, Endpoint: delegation.Endpoint, ExpiresAt: expiresAt,
+		}); err != nil {
+			return nil, fmt.Errorf("deliver delegated caller tools: %w", err)
+		}
+		callerToolsDelivered = true
+	}
 	repoDir := spec.Cwd()
 	mailbox, err := gitagent.EnsureMailbox(ctx, target.mailboxRoot, repoDir)
 	if err != nil {
@@ -104,12 +159,14 @@ func (g *gitAgentSandbox) Execute(ctx context.Context, spec api.Spec) (*api.Resp
 		KeyPath:       target.keyPath,
 		Relay:         target.relay,
 		Policy:        target.policy,
+		Task:          task,
 		// The resolved backend travels with the model: the agent must run the
 		// runtime the supervisor selected, not re-resolve the name against its
 		// own defaults and quietly pick a different one.
 		TaskPayload: gitagent.TaskPayload{
 			Prompt: prompt, System: system,
 			Model: spec.Name, Backend: string(spec.Backend), Effort: spec.Effort, Timeout: timeout,
+			CallerTools: callerToolsDelivered,
 		},
 		HooksJSON: hooksJSON,
 	})
@@ -173,6 +230,13 @@ type gitAgentTarget struct {
 	relay       gitagent.RelayMode
 	policy      gitagent.Policy
 	waitTimeout time.Duration
+}
+
+func (target gitAgentTarget) transport() gitagent.TransportTarget {
+	return gitagent.TransportTarget{
+		URL: target.url, KeyPath: target.keyPath, HostFingerprint: target.hostFingerprint,
+		Token: target.token,
+	}
 }
 
 // resolveTarget picks the enrolled agent — pinned by the spec's sandbox.agent,
@@ -279,6 +343,8 @@ const (
 	dispatchKeyFile = "supervisor_ed25519"
 	servedReposDir  = "repos"
 )
+
+const callerToolExpiryGrace = 5 * time.Minute
 
 // DefaultWaitTimeout bounds how long a dispatch waits for its verdict. A
 // relocating sandbox blocks on a remote agent doing real work, so this is

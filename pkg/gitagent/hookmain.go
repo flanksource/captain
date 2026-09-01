@@ -31,6 +31,7 @@ type HookRuntime struct {
 	// test binary and cannot activate in production.
 	HookSandbox  string      `json:"hookSandbox,omitempty"`
 	AgentCommand string      `json:"agentCommand,omitempty"`
+	Agent        string      `json:"-"`                  // sidecar-local enrollment identity
 	RealRepo     string      `json:"realRepo,omitempty"` // mailbox-local integration target
 	Relay        RelayTarget `json:"relay,omitempty"`    // sidecar: supervisor base endpoint
 }

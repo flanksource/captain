@@ -17,6 +17,7 @@ import (
 //	sandbox:                      # object: backend plus overrides
 //	  backend: prod-pool
 //	  agent: worker-01
+//	  callerTools: [invoice_get, invoice_update]
 //	  policy: {paths: ["pkg/**"], maxAttempts: 3}
 //
 // The scalar form is sugar for {backend: <value>}. Whether the name is a bare
@@ -28,6 +29,9 @@ type SandboxRef struct {
 	Backend string `json:"backend,omitempty" yaml:"backend,omitempty"`
 	// Agent optionally pins one enrolled agent of a git-agent backend.
 	Agent string `json:"agent,omitempty" yaml:"agent,omitempty"`
+	// CallerTools is the exact caller-tool allowlist delegated to a remote run.
+	// Omitted means no caller tools leave the supervisor.
+	CallerTools []string `json:"callerTools,omitempty" yaml:"callerTools,omitempty"`
 	// Policy optionally overrides the backend's dispatch policy for this run.
 	Policy *SandboxPolicy `json:"policy,omitempty" yaml:"policy,omitempty"`
 }
@@ -48,7 +52,7 @@ type sandboxRefAlias SandboxRef
 // isScalar reports whether the ref carries only a backend name and so can
 // round-trip through the scalar form.
 func (r SandboxRef) isScalar() bool {
-	return r.Agent == "" && r.Policy == nil
+	return r.Agent == "" && len(r.CallerTools) == 0 && r.Policy == nil
 }
 
 func (r SandboxRef) MarshalJSON() ([]byte, error) {
@@ -116,13 +120,17 @@ func (r *SandboxRef) UnmarshalYAML(value *yaml.Node) error {
 			if err := val.Decode(&r.Agent); err != nil {
 				return err
 			}
+		case "callerTools":
+			if err := val.Decode(&r.CallerTools); err != nil {
+				return err
+			}
 		case "policy":
 			r.Policy = &SandboxPolicy{}
 			if err := r.Policy.unmarshalStrict(val); err != nil {
 				return err
 			}
 		default:
-			return fmt.Errorf("unknown sandbox key %q (valid: backend, agent, policy)", key)
+			return fmt.Errorf("unknown sandbox key %q (valid: backend, agent, callerTools, policy)", key)
 		}
 	}
 	return nil
@@ -165,6 +173,8 @@ func (SandboxRef) JSONSchema() *jsonschema.Schema {
 		Description: "Configured sandbox backend from ~/.captain.yaml, or a bare adapter kind"})
 	properties.Set("agent", &jsonschema.Schema{Type: "string",
 		Description: "Pin one enrolled agent of a git-agent backend"})
+	properties.Set("callerTools", &jsonschema.Schema{Type: "array", Items: &jsonschema.Schema{Type: "string"},
+		Description: "Exact caller-tool names delegated to the remote run; omitted delegates none"})
 	properties.Set("policy", &jsonschema.Schema{Type: "object", Properties: policyProperties, AdditionalProperties: jsonschema.FalseSchema})
 
 	return &jsonschema.Schema{
@@ -184,9 +194,19 @@ func (SandboxRef) JSONSchema() *jsonschema.Schema {
 func (r SandboxRef) Validate() error {
 	if r.Backend == "" {
 		if !r.isScalar() {
-			return fmt.Errorf("sandbox overrides (agent/policy) require a backend")
+			return fmt.Errorf("sandbox overrides (agent/callerTools/policy) require a backend")
 		}
 		return fmt.Errorf("sandbox must name a backend or adapter kind (one of: %s)", SandboxKindList())
+	}
+	seen := make(map[string]struct{}, len(r.CallerTools))
+	for i, name := range r.CallerTools {
+		if name == "" {
+			return fmt.Errorf("sandbox callerTools entry %d cannot be empty", i)
+		}
+		if _, exists := seen[name]; exists {
+			return fmt.Errorf("sandbox callerTools contains duplicate %q", name)
+		}
+		seen[name] = struct{}{}
 	}
 	if r.Policy != nil && r.Policy.MaxAttempts < 0 {
 		return fmt.Errorf("sandbox policy maxAttempts must be >= 0, got %d", r.Policy.MaxAttempts)

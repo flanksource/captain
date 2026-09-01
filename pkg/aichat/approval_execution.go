@@ -77,6 +77,11 @@ func (s *Service) resumeToolApproval(ctx context.Context, threadID string, conti
 	config.SessionID = continuation.Spec.SessionID
 	config.CaptainSessionID = execution.CaptainSessionID()
 	config.Tools = definitions
+	config.CallerTools = execution.CallerTools()
+	config, err = s.applySandboxSelection(ctx, config, continuation.Spec.Sandbox)
+	if err != nil {
+		return false, err
+	}
 	config, err = s.prepareProviderConfig(ctx, config)
 	if err != nil {
 		return false, err

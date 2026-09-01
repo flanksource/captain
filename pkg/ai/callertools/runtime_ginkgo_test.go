@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"sync/atomic"
 	"time"
 
@@ -15,6 +17,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	. "github.com/onsi/gomega/gstruct"
 )
 
 var _ = Describe("Authenticated caller-tool runtime", func() {
@@ -78,6 +81,7 @@ var _ = Describe("Authenticated caller-tool runtime", func() {
 				Expect(request.Tool).To(Equal("invoice_update"))
 				Expect(request.SessionID).To(Equal("captain-session-2"))
 				Expect(request.ToolUseID).To(Equal("approval-call-1"))
+				Expect(request.Delegated).To(BeFalse())
 				return api.PermissionDecision{Allow: true, UpdatedInput: map[string]any{"status": "approved"}}, nil
 			},
 			SessionID: "captain-session-2",
@@ -308,6 +312,167 @@ var _ = Describe("Authenticated caller-tool runtime", func() {
 		}
 		Expect(values).To(ConsistOf("first", "second"))
 	})
+
+	It("exposes and executes only the tools selected for a remote task", func(ctx SpecContext) {
+		remote := httptest.NewServer(callertools.RemoteHandler())
+		DeferCleanup(remote.Close)
+		var hiddenCalls atomic.Int32
+		runtime, err := callertools.New(callertools.Options{
+			Definitions: []api.ToolDefinition{
+				{
+					Name: "version", DefaultPermission: api.ToolPolicyAllow,
+					Handler: func(context.Context, map[string]any) (any, error) {
+						return map[string]any{"version": "test"}, nil
+					},
+				},
+				{
+					Name: "contexts", DefaultPermission: api.ToolPolicyAllow,
+					Handler: func(context.Context, map[string]any) (any, error) { return []string{"default"}, nil },
+				},
+				{
+					Name: "whoami", DefaultPermission: api.ToolPolicyAllow,
+					Handler: func(context.Context, map[string]any) (any, error) {
+						hiddenCalls.Add(1)
+						return "captain", nil
+					},
+				},
+			},
+			SessionID: "remote-session",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(runtime.Close)
+
+		delegation, err := runtime.Endpoint().Delegate(ctx, api.CallerToolBinding{
+			TaskID: "task-1", Agent: "agent-1", ExpiresAt: time.Now().Add(time.Minute),
+			ToolNames: []string{"version", "contexts"},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(delegation.Revoke)
+		client := authenticatedClient(ctx, servedDelegation(remote.URL, delegation.Endpoint))
+		DeferCleanup(client.Close)
+
+		tools, err := client.ListTools(ctx, mcp.ListToolsRequest{})
+		Expect(err).NotTo(HaveOccurred())
+		names := make([]string, 0, len(tools.Tools))
+		for _, tool := range tools.Tools {
+			names = append(names, tool.Name)
+		}
+		Expect(names).To(ConsistOf("version", "contexts"))
+
+		request := mcp.CallToolRequest{}
+		request.Params.Name = "version"
+		result, err := client.CallTool(ctx, request)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.IsError).To(BeFalse())
+		Expect(result.StructuredContent).To(Equal(map[string]any{"version": "test"}))
+
+		request.Params.Name = "whoami"
+		_, err = client.CallTool(ctx, request)
+		Expect(err).To(HaveOccurred())
+		Expect(hiddenCalls.Load()).To(BeZero())
+	})
+
+	It("rejects remote credentials with the wrong bearer or binding and after expiry or revocation", func(ctx SpecContext) {
+		remote := httptest.NewServer(callertools.RemoteHandler())
+		DeferCleanup(remote.Close)
+		runtime := newRuntime("remote-auth-session", "remote")
+		DeferCleanup(runtime.Close)
+		issue := func(expiry time.Time) *api.CallerToolDelegation {
+			delegation, err := runtime.Endpoint().Delegate(ctx, api.CallerToolBinding{
+				TaskID: "task-auth", Agent: "agent-auth", ExpiresAt: expiry, ToolNames: []string{"identity"},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			delegation.Endpoint = servedDelegation(remote.URL, delegation.Endpoint)
+			return delegation
+		}
+
+		active := issue(time.Now().Add(time.Minute))
+		DeferCleanup(active.Revoke)
+		invalidBearer := cloneEndpoint(active.Endpoint)
+		invalidBearer.Headers["Authorization"] = "Bearer invalid"
+		Expect(authenticatedStatus(invalidBearer)).To(Equal(http.StatusUnauthorized))
+		wrongTask := cloneEndpoint(active.Endpoint)
+		wrongTask.Headers[callertools.TaskHeader] = "another-task"
+		Expect(authenticatedStatus(wrongTask)).To(Equal(http.StatusForbidden))
+		wrongAgent := cloneEndpoint(active.Endpoint)
+		wrongAgent.Headers[callertools.AgentHeader] = "another-agent"
+		Expect(authenticatedStatus(wrongAgent)).To(Equal(http.StatusForbidden))
+
+		expiring := issue(time.Now().Add(25 * time.Millisecond))
+		Eventually(func() int { return authenticatedStatus(expiring.Endpoint) }).Should(Equal(http.StatusUnauthorized))
+		revoked := issue(time.Now().Add(time.Minute))
+		revoked.Revoke()
+		Expect(authenticatedStatus(revoked.Endpoint)).To(Equal(http.StatusUnauthorized))
+	})
+
+	It("returns terminal remote tool results for approval denial and broker failure", func(ctx SpecContext) {
+		remote := httptest.NewServer(callertools.RemoteHandler())
+		DeferCleanup(remote.Close)
+		for _, test := range []struct {
+			name     string
+			decision api.PermissionDecision
+			err      error
+			message  string
+			reason   string
+		}{
+			{name: "denied", decision: api.PermissionDecision{Message: "operator denied the call"}, message: "operator denied the call", reason: "approval_denied"},
+			{name: "failed", err: errors.New("approval service unavailable"), message: "approval service unavailable", reason: "approval_failed"},
+		} {
+			var calls atomic.Int32
+			events := make(chan api.Event, 2)
+			audits := make(chan callertools.AuditEvent, 4)
+			runtime, err := callertools.New(callertools.Options{
+				Definitions: []api.ToolDefinition{{
+					Name: "version", DefaultPermission: api.ToolPolicyAsk,
+					Handler: func(context.Context, map[string]any) (any, error) {
+						calls.Add(1)
+						return "must not execute", nil
+					},
+				}},
+				SessionID: "remote-approval-" + test.name,
+				CanUseTool: func(_ context.Context, request api.PermissionRequest) (api.PermissionDecision, error) {
+					Expect(request.Delegated).To(BeTrue())
+					Expect(request.ToolUseIDGenerated).To(BeTrue())
+					return test.decision, test.err
+				},
+				ObserveDelegatedTool: func(_ context.Context, event api.Event) error {
+					events <- event
+					return nil
+				},
+				Audit: func(event callertools.AuditEvent) { audits <- event },
+			})
+			Expect(err).NotTo(HaveOccurred())
+			delegation, err := runtime.Endpoint().Delegate(ctx, api.CallerToolBinding{
+				TaskID: "task-" + test.name, Agent: "agent-1", ExpiresAt: time.Now().Add(time.Minute),
+				ToolNames: []string{"version"},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			client := authenticatedClient(ctx, servedDelegation(remote.URL, delegation.Endpoint))
+
+			request := mcp.CallToolRequest{}
+			request.Params.Name = "version"
+			result, err := client.CallTool(ctx, request)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.IsError).To(BeTrue())
+			Expect(toolResultText(result)).To(ContainSubstring(test.message))
+			Expect(calls.Load()).To(BeZero())
+			var use, terminal api.Event
+			Eventually(events).Should(Receive(&use))
+			Eventually(events).Should(Receive(&terminal))
+			Expect(use.Kind).To(Equal(api.EventToolUse))
+			Expect(terminal).To(MatchFields(IgnoreExtras, Fields{
+				"Kind": Equal(api.EventToolResult), "ToolCallID": Equal(use.ToolCallID),
+				"Success": BeFalse(), "Text": ContainSubstring(test.message), "Delegated": BeTrue(),
+			}))
+			Eventually(audits).Should(Receive(MatchFields(IgnoreExtras, Fields{
+				"Action": Equal("call"), "Result": Equal("denied"), "Reason": Equal(test.reason),
+			})))
+
+			Expect(client.Close()).To(Succeed())
+			delegation.Revoke()
+			Expect(runtime.Close()).To(Succeed())
+		}
+	})
 })
 
 func authenticatedClient(ctx context.Context, endpoint api.CallerToolEndpoint) *mcpclient.Client {
@@ -335,6 +500,29 @@ func authenticatedStatus(endpoint api.CallerToolEndpoint) int {
 		Expect(response.Body.Close()).To(Succeed())
 	}()
 	return response.StatusCode
+}
+
+func servedDelegation(serverURL string, endpoint api.CallerToolEndpoint) api.CallerToolEndpoint {
+	parsed, err := url.Parse(endpoint.URL)
+	Expect(err).NotTo(HaveOccurred())
+	endpoint.URL = serverURL + parsed.RequestURI()
+	return endpoint
+}
+
+func cloneEndpoint(endpoint api.CallerToolEndpoint) api.CallerToolEndpoint {
+	cloned := endpoint
+	cloned.Headers = make(map[string]string, len(endpoint.Headers))
+	for name, value := range endpoint.Headers {
+		cloned.Headers[name] = value
+	}
+	return cloned
+}
+
+func toolResultText(result *mcp.CallToolResult) string {
+	Expect(result.Content).NotTo(BeEmpty())
+	text, ok := mcp.AsTextContent(result.Content[0])
+	Expect(ok).To(BeTrue())
+	return text.Text
 }
 
 func newRuntime(sessionID, marker string) *callertools.Runtime {

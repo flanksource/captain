@@ -99,6 +99,39 @@ func mergeExecutionEvents(
 			deferred = deferred[:0]
 			return true
 		}
+		handleEvent := func(event api.Event) bool {
+			if event.Kind == api.EventToolUse {
+				if !send(event) {
+					return false
+				}
+				if askTools[event.Tool] {
+					awaiting[event.ToolCallID] = true
+					if approval, ok := pendingApprovals[event.ToolCallID]; ok {
+						if !send(approval) {
+							return false
+						}
+						delete(pendingApprovals, event.ToolCallID)
+						delete(awaiting, event.ToolCallID)
+					}
+				}
+				return true
+			}
+			if event.Kind == api.EventToolResult && awaiting[event.ToolCallID] {
+				if !send(event) {
+					return false
+				}
+				delete(awaiting, event.ToolCallID)
+				if len(awaiting) == 0 && !flush() {
+					return false
+				}
+				return true
+			}
+			if len(awaiting) > 0 {
+				deferred = append(deferred, event)
+				return true
+			}
+			return send(event)
+		}
 		for provider != nil || (len(awaiting) > 0 && approvals != nil) {
 			select {
 			case <-ctx.Done():
@@ -106,6 +139,12 @@ func mergeExecutionEvents(
 			case approval, ok := <-approvals:
 				if !ok {
 					approvals = nil
+					continue
+				}
+				if approval.Kind != api.EventPermission {
+					if !handleEvent(approval) {
+						return
+					}
 					continue
 				}
 				if !awaiting[approval.ToolCallID] {
@@ -124,27 +163,7 @@ func mergeExecutionEvents(
 					provider = nil
 					continue
 				}
-				if event.Kind == api.EventToolUse {
-					if !send(event) {
-						return
-					}
-					if askTools[event.Tool] {
-						awaiting[event.ToolCallID] = true
-						if approval, ok := pendingApprovals[event.ToolCallID]; ok {
-							if !send(approval) {
-								return
-							}
-							delete(pendingApprovals, event.ToolCallID)
-							delete(awaiting, event.ToolCallID)
-						}
-					}
-					continue
-				}
-				if len(awaiting) > 0 {
-					deferred = append(deferred, event)
-					continue
-				}
-				if !send(event) {
+				if !handleEvent(event) {
 					return
 				}
 			}

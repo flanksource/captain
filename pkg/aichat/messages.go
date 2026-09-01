@@ -78,8 +78,10 @@ func requestSpec(request ChatRequest, profile RuntimeProfile, attachments map[pa
 		Model:           override,
 		Budget:          request.Budget,
 		ToolPreferences: request.ToolPreferences,
+		ToolPolicy:      request.ToolPolicy,
 		ToolApproval:    request.ToolApproval,
 		Permissions:     api.Permissions{Mode: request.PermissionMode},
+		Sandbox:         request.Sandbox,
 		SessionID:       request.ProviderSessionID,
 	}}
 	layers := append([]api.SpecLayer(nil), profile.Resolved.Trace...)

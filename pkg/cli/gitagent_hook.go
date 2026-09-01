@@ -146,6 +146,7 @@ func hookRuntimeFromConfig(backendName string) (gitagent.HookRuntime, error) {
 		url, _ := supervisor["url"].(string)
 		hostFP, _ := supervisor["hostFingerprint"].(string)
 		tokenPath, _ := supervisor["tokenPath"].(string)
+		rt.Agent, _ = supervisor["agent"].(string)
 		keysDir, err := gitAgentKeysDir()
 		if err != nil {
 			return rt, err

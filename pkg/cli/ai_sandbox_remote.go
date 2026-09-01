@@ -49,8 +49,9 @@ func remoteExecProviderFor(req *ai.Request, cfg ai.Config) (ai.Provider, error) 
 	if !relocatesRun(cfg) {
 		return nil, nil
 	}
-	selection := cfg.SandboxSelection
-	sandbox, err := api.NewSandbox(*selection)
+	selection := *cfg.SandboxSelection
+	selection.CallerToolEndpoint = cfg.CallerTools
+	sandbox, err := api.NewSandbox(selection)
 	if err != nil {
 		return nil, err
 	}
