@@ -1,6 +1,6 @@
 ---
-model: claude-agent-sonnet
-backend: claude-agent
+model: claude-sonnet-5
+mode: agent
 budget:
   maxTurns: 6
 setup:

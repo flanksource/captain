@@ -1,6 +1,6 @@
 ---
 model: claude-opus-4-6
-backend: anthropic
+mode: api
 effort: high
 config:
   maxOutputTokens: 8192

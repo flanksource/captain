@@ -1,6 +1,6 @@
 ---
 model: gpt-5-codex
-backend: codex-cli
+mode: cli
 effort: medium
 setup:
   cwd: .

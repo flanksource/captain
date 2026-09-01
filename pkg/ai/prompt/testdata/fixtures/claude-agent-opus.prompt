@@ -1,6 +1,6 @@
 ---
-model: claude-agent-opus
-backend: claude-agent
+model: claude-opus-5
+mode: agent
 budget:
   maxTurns: 4
 setup:

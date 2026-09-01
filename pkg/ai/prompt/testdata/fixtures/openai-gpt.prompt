@@ -1,6 +1,6 @@
 ---
 model: gpt-5
-backend: openai
+mode: api
 effort: high
 config:
   maxOutputTokens: 4096

@@ -1,6 +1,6 @@
 ---
-model: claude-cmux-opus
-backend: claude-cmux
+model: claude-opus-5
+mode: cmux
 budget:
   maxTurns: 4
 setup:

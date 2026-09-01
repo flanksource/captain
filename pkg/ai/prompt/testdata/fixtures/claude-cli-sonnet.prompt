@@ -1,6 +1,6 @@
 ---
-model: claude-agent-sonnet
-backend: claude-cli
+model: claude-sonnet-5
+mode: cli
 budget:
   maxTurns: 3
 permissions:

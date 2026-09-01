@@ -1,6 +1,6 @@
 ---
 model: deepseek-reasoner
-backend: deepseek
+mode: api
 config:
   maxOutputTokens: 4096
   temperature: 0.3
