@@ -290,8 +290,10 @@ func AwaitOutcome(ctx context.Context, mailbox, task string, timeout time.Durati
 			return nil, err
 		}
 		maxAttempts := 0
+		highestAttempt := 0
 		if ok {
 			maxAttempts = st.Policy.MaxAttempts
+			highestAttempt = st.Attempts
 		}
 		for attempt := 1; attempt <= MaxAttempt; attempt++ {
 			v, found, err := LoadVerdict(mailbox, task, attempt)
@@ -299,7 +301,10 @@ func AwaitOutcome(ctx context.Context, mailbox, task string, timeout time.Durati
 				return nil, err
 			}
 			if !found {
-				break
+				if attempt >= highestAttempt {
+					break
+				}
+				continue
 			}
 			if v.Status == StatusAccepted {
 				return v, nil

@@ -67,6 +67,17 @@ func readRelayedVerdict(ctx context.Context, repo string, env []string, commit s
 	if !strings.HasPrefix(tree, "100644 blob ") || !strings.HasSuffix(tree, "\t"+ControlVerdictFile+"\x00") || strings.Count(tree, "\x00") != 1 {
 		return verdict, fmt.Errorf("relayed verdict control commit must contain only %s", ControlVerdictFile)
 	}
+	sizeText, err := runGit(ctx, repo, env, "cat-file", "-s", commit+":"+ControlVerdictFile)
+	if err != nil {
+		return verdict, fmt.Errorf("read relayed verdict size: %w", err)
+	}
+	size, err := strconv.ParseInt(sizeText, 10, 64)
+	if err != nil {
+		return verdict, fmt.Errorf("read relayed verdict size %q: %w", sizeText, err)
+	}
+	if size > MaxFeedbackBytes {
+		return verdict, fmt.Errorf("relayed verdict is %d bytes, over the %d-byte cap", size, MaxFeedbackBytes)
+	}
 	raw, err := ReadControlPayload(ctx, repo, env, commit, ControlVerdictFile)
 	if err != nil {
 		return verdict, fmt.Errorf("read relayed verdict: %w", err)

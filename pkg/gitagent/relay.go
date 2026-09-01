@@ -236,20 +236,16 @@ func ReportTaskFailure(ctx context.Context, repo string, target RelayTarget, tas
 	if failure == nil {
 		return fmt.Errorf("task failure is required")
 	}
-	var attempt int
-	st, err := UpdateTaskState(repo, task, func(current *TaskState) (bool, error) {
-		attempt = current.Attempts + 1
-		if current.Policy.MaxAttempts > 0 && attempt > current.Policy.MaxAttempts {
-			return false, fmt.Errorf("attempt %d exceeds the task's maxAttempts %d", attempt, current.Policy.MaxAttempts)
-		}
-		current.Attempts = attempt
-		return true, nil
-	})
+	st, ok, err := LoadTaskState(repo, task)
 	if err != nil {
 		return err
 	}
-	if st == nil {
+	if !ok {
 		return fmt.Errorf("task %s state is missing", task)
+	}
+	attempt := st.Attempts + 1
+	if st.Policy.MaxAttempts > 0 && attempt > st.Policy.MaxAttempts {
+		return fmt.Errorf("attempt %d exceeds the task's maxAttempts %d", attempt, st.Policy.MaxAttempts)
 	}
 	message := failure.Error()
 	if len(message) > maxFindingFeedback {
@@ -302,6 +298,15 @@ func ReportTaskFailure(ctx context.Context, repo string, target RelayTarget, tas
 	}
 	if _, err := runGit(ctx, repo, env, args...); err != nil {
 		return fmt.Errorf("relay terminal failure verdict: %w", err)
+	}
+	if _, err := UpdateTaskState(repo, task, func(current *TaskState) (bool, error) {
+		if current.Attempts >= attempt {
+			return false, nil
+		}
+		current.Attempts = attempt
+		return true, nil
+	}); err != nil {
+		return fmt.Errorf("record relayed failure attempt: %w", err)
 	}
 	return nil
 }
