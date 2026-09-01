@@ -97,7 +97,7 @@ func startObservationCapture(
 	if req.Permissions.MCP.Disabled && len(mcpConfigs) > 0 {
 		return nil, fmt.Errorf("--mcp-config cannot be combined with --no-mcp")
 	}
-	if len(mcpConfigs) > 0 && runtime.Backend != api.BackendClaudeCLI {
+	if len(mcpConfigs) > 0 && (runtime.Provider != api.Anthropic || runtime.Mode != api.ModeCLI) {
 		session.mcpCapture.Status = api.ObservationCaptureUnsupported
 		session.mcpCapture.ReasonCode = "runtime_mcp_config_unsupported"
 		session.blockingCode = "mcp_config_unsupported"
@@ -128,7 +128,7 @@ func startObservationCapture(
 	}
 	session.kubeCapture.Status = api.ObservationCaptureUnsupported
 	session.kubeCapture.ReasonCode = "runtime_kubernetes_capture_unsupported"
-	if !kubernetesProcessBackend(runtime.Backend) {
+	if !kubernetesProcessRuntime(runtime.Provider, runtime.Mode) {
 		return session, nil
 	}
 	if !localProcessCapture(cfg) || relocatesRun(cfg) {
@@ -287,14 +287,9 @@ func captureIdentifier(value string) string {
 
 func localProcessCapture(cfg ai.Config) bool {
 	sandbox := cfg.ResolvedSandbox()
-	return sandbox == nil || sandbox.Kind == api.SandboxNone
+	return sandbox == nil || sandbox.Kind == api.SandboxOff
 }
 
-func kubernetesProcessBackend(backend api.Backend) bool {
-	switch backend {
-	case api.BackendClaudeCLI, api.BackendCodexCLI, api.BackendGeminiCLI:
-		return true
-	default:
-		return false
-	}
+func kubernetesProcessRuntime(provider *api.ModelProvider, mode api.RuntimeMode) bool {
+	return mode == api.ModeCLI && (provider == api.Anthropic || provider == api.OpenAI || provider == api.Google)
 }

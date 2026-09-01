@@ -24,11 +24,11 @@ type observationUsageProvider struct {
 }
 
 func (p observationUsageProvider) GetModel() string       { return "test-model" }
-func (p observationUsageProvider) GetBackend() ai.Backend { return ai.BackendOpenAI }
+func (p observationUsageProvider) GetRuntime() ai.Runtime { return ai.RuntimeOf(ai.OpenAI, ai.ModeAPI) }
 
 func (p observationUsageProvider) Execute(ctx context.Context, _ ai.Request) (*ai.Response, error) {
 	observation.RecordUsage(ctx, p.usage)
-	return &ai.Response{Model: p.GetModel()}, nil
+	return &ai.Response{Model: p.GetModel(), Runtime: p.GetRuntime()}, nil
 }
 
 func TestApplyObservationMetricsPreservesDisjointUsageAndProviderCost(t *testing.T) {
@@ -41,7 +41,9 @@ func TestApplyObservationMetricsPreservesDisjointUsageAndProviderCost(t *testing
 		CacheReadTokens: 14, CacheWriteTokens: 15,
 	}
 
-	applyObservationMetrics(&result, api.BackendClaudeCLI, "claude-sonnet-5", &usage, 0.25)
+	applyObservationMetrics(&result, api.Model{
+		Name: "claude-sonnet-5", Provider: api.Anthropic, Mode: api.ModeCLI,
+	}, &usage, 0.25)
 
 	if result.Metrics.Usage.State != api.ObservationFactKnown || result.Metrics.Usage.Buckets == nil {
 		t.Fatalf("usage fact = %#v, want known buckets", result.Metrics.Usage)
@@ -77,7 +79,9 @@ func TestExecuteObservationProviderDistinguishesMissingFromZeroUsage(t *testing.
 			result := api.RuntimeObservation{Metrics: api.ObservationMetrics{
 				Usage: api.ObservationUsageFact{State: api.ObservationFactUnknown, Semantics: "disjoint-v1"},
 			}}
-			applyObservationMetrics(&result, api.BackendOpenAI, "test-model", run.usage, 0)
+			applyObservationMetrics(&result, api.Model{
+				Name: "test-model", Provider: api.OpenAI, Mode: api.ModeAPI,
+			}, run.usage, 0)
 
 			if result.Metrics.Usage.State != test.wantState {
 				t.Fatalf("usage state = %q, want %q", result.Metrics.Usage.State, test.wantState)
@@ -130,7 +134,7 @@ func TestRequestedObservationEffortRejectsConflictingSources(t *testing.T) {
 func TestObservationPreDispatchFailureProvesZeroEvents(t *testing.T) {
 	result := newRuntimeObservation(
 		"api:deepseek-reasoner:high",
-		api.Model{Backend: api.BackendDeepSeek, Name: "deepseek-reasoner"},
+		api.Model{Name: "deepseek-reasoner", Provider: api.DeepSeek, Mode: api.ModeAPI},
 		api.ObservationStringFact{State: api.ObservationFactUnset},
 		api.EffortNone,
 	)
@@ -192,9 +196,9 @@ func TestObservationCaptureKeepsSharedUpstreamAliasesDistinct(t *testing.T) {
 	}
 	session, err := startObservationCapture(
 		map[string]string{"mcp-config": configPath},
-		api.Model{Backend: api.BackendClaudeCLI},
+		api.Model{Provider: api.Anthropic, Mode: api.ModeCLI},
 		ai.Request{Setup: &shell.Setup{Cwd: dir}},
-		ai.Config{Model: api.Model{Backend: api.BackendClaudeCLI}},
+		ai.Config{Model: api.Model{Provider: api.Anthropic, Mode: api.ModeCLI}},
 	)
 	if err != nil {
 		t.Fatalf("startObservationCapture: %v", err)
@@ -276,9 +280,9 @@ func TestObservationCaptureRoutesKubernetesTraffic(t *testing.T) {
 	}
 	session, err := startObservationCapture(
 		map[string]string{"capture-kubernetes": "true", "kubeconfig": kubeconfig},
-		api.Model{Backend: api.BackendCodexCLI},
+		api.Model{Provider: api.OpenAI, Mode: api.ModeCLI},
 		ai.Request{Setup: &shell.Setup{Cwd: dir}},
-		ai.Config{Model: api.Model{Backend: api.BackendCodexCLI}},
+		ai.Config{Model: api.Model{Provider: api.OpenAI, Mode: api.ModeCLI}},
 	)
 	if err != nil {
 		t.Fatalf("startObservationCapture: %v", err)
@@ -314,21 +318,21 @@ func TestObservationKubernetesCaptureBlocksOnlyFailedLocalCLIInterception(t *tes
 		wantBlock  string
 	}{
 		{
-			name: "supported local CLI", runtime: api.Model{Backend: api.BackendCodexCLI},
-			config:     ai.Config{Model: api.Model{Backend: api.BackendCodexCLI}},
+			name: "supported local CLI", runtime: api.Model{Provider: api.OpenAI, Mode: api.ModeCLI},
+			config:     ai.Config{Model: api.Model{Provider: api.OpenAI, Mode: api.ModeCLI}},
 			wantStatus: api.ObservationCaptureUnavailable, wantReason: "kubernetes_proxy_start_failed",
 			wantBlock: kubernetesCaptureUnavailableErrorCode,
 		},
 		{
-			name: "unsupported API", runtime: api.Model{Backend: api.BackendOpenAI},
-			config:     ai.Config{Model: api.Model{Backend: api.BackendOpenAI}},
+			name: "unsupported API", runtime: api.Model{Provider: api.OpenAI, Mode: api.ModeAPI},
+			config:     ai.Config{Model: api.Model{Provider: api.OpenAI, Mode: api.ModeAPI}},
 			wantStatus: api.ObservationCaptureUnsupported, wantReason: "runtime_kubernetes_capture_unsupported",
 		},
 		{
-			name: "sandboxed CLI", runtime: api.Model{Backend: api.BackendCodexCLI},
+			name: "sandboxed CLI", runtime: api.Model{Provider: api.OpenAI, Mode: api.ModeCLI},
 			config: ai.Config{
-				Model:            api.Model{Backend: api.BackendCodexCLI},
-				SandboxSelection: &api.SandboxConfig{Kind: api.SandboxSRT},
+				Model:            api.Model{Provider: api.OpenAI, Mode: api.ModeCLI},
+				SandboxSelection: &api.SandboxConfig{Kind: api.SandboxSRTInternal},
 			},
 			wantStatus: api.ObservationCaptureUnavailable, wantReason: "runtime_kubernetes_proxy_unreachable",
 		},
@@ -358,18 +362,18 @@ func TestObservationKubernetesCaptureBlocksOnlyFailedLocalCLIInterception(t *tes
 func TestObservationSetupFailuresDoNotConstructProvider(t *testing.T) {
 	isolateSavedAI(t)
 	providerBuilt := false
-	api.RegisterProvider(api.BackendCodexCLI, func(ai.Config) (ai.Provider, error) {
+	api.RegisterProvider(api.RuntimeOf(api.OpenAI, api.ModeCLI), func(ai.Config) (ai.Provider, error) {
 		providerBuilt = true
 		return observationUsageProvider{}, nil
 	})
 	t.Cleanup(func() {
-		api.RegisterProvider(api.BackendCodexCLI, func(cfg ai.Config) (ai.Provider, error) {
+		api.RegisterProvider(api.RuntimeOf(api.OpenAI, api.ModeCLI), func(cfg ai.Config) (ai.Provider, error) {
 			return aiprovider.NewCodexCLI(cfg), nil
 		})
 	})
 
 	_, err := observePromptAction(context.Background(), "", map[string]string{
-		"runtime": "codex-cli:gpt-5.5:high",
+		"runtime": "cli:gpt-5.5:high",
 		"effort":  "low",
 		"prompt":  "do not run",
 	})
@@ -381,7 +385,7 @@ func TestObservationSetupFailuresDoNotConstructProvider(t *testing.T) {
 	}
 
 	result, err := observePromptAction(context.Background(), "", map[string]string{
-		"runtime":            "codex-cli:gpt-5.5",
+		"runtime":            "cli:gpt-5.5",
 		"prompt":             "do not run",
 		"no-mcp":             "true",
 		"capture-kubernetes": "true",
@@ -430,9 +434,9 @@ func TestObservationKubernetesKubeconfigPreparationFailureBlocks(t *testing.T) {
 
 	session, err := startObservationCapture(
 		map[string]string{"capture-kubernetes": "true", "kubeconfig": kubeconfig},
-		api.Model{Backend: api.BackendClaudeCLI},
+		api.Model{Provider: api.Anthropic, Mode: api.ModeCLI},
 		ai.Request{Setup: &shell.Setup{Cwd: dir}},
-		ai.Config{Model: api.Model{Backend: api.BackendClaudeCLI}},
+		ai.Config{Model: api.Model{Provider: api.Anthropic, Mode: api.ModeCLI}},
 	)
 	if err != nil {
 		t.Fatalf("startObservationCapture: %v", err)
@@ -451,9 +455,9 @@ func TestObservationKubernetesKubeconfigPreparationFailureBlocks(t *testing.T) {
 func TestObservationCaptureRejectsUnsupportedMCPConfigBeforeDispatch(t *testing.T) {
 	session, err := startObservationCapture(
 		map[string]string{"mcp-config": "mcp.json"},
-		api.Model{Backend: api.BackendOpenAI},
+		api.Model{Provider: api.OpenAI, Mode: api.ModeAPI},
 		ai.Request{Setup: &shell.Setup{Cwd: t.TempDir()}},
-		ai.Config{Model: api.Model{Backend: api.BackendOpenAI}},
+		ai.Config{Model: api.Model{Provider: api.OpenAI, Mode: api.ModeAPI}},
 	)
 	if err != nil {
 		t.Fatalf("startObservationCapture: %v", err)
