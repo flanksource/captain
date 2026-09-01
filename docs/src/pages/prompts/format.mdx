@@ -25,7 +25,7 @@ A `.prompt` file has YAML frontmatter followed by a Handlebars body. dotprompt o
     <tr>
       <td><code>model</code></td>
       <td>dotprompt and Captain config</td>
-      <td>Seeds the model name. Captain infers the backend when possible.</td>
+      <td>Seeds the model name. Captain derives the provider family from it, and fills the mode from that provider's default when <code>mode</code> is unset.</td>
     </tr>
     <tr>
       <td><code>config.maxOutputTokens</code>, <code>temperature</code>, <code>reasoning</code></td>
@@ -61,13 +61,13 @@ The rendered body is split with dotprompt role markers. Captain treats rendered 
 
 <CodeExample client:load language="yaml" title="Role-marked body" source={`
 ---
-model: claude-agent-sonnet
-backend: claude-cli
+model: claude-sonnet-5
+mode: cli
 permissions:
   mode: default
 ---
 {{role "system"}}
-You are using the Claude CLI backend. Keep the answer concise.
+You are running on the Claude CLI. Keep the answer concise.
 {{role "user"}}
 Handle:
 {{task}}

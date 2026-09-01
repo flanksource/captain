@@ -23,12 +23,14 @@ import CodeExample from "../../components/CodeExample.tsx";
 
 ## Drivers
 
-`--driver` is `<agent>-<mechanism>`, defaulting to `claude-cmux`:
+`--driver` names the mechanism alone — `cmux` (default), `cli`, `agent`, or `api`. It is one half of Captain's runtime pair `(model, mode)`; the coding agent is derived from the model, so `--model codex` runs the codex agent on whichever mechanism the driver names.
 
-- **`claude-cmux` / `codex-cmux`** — drives the agent's interactive TUI inside a cmux terminal surface, via Captain's `BackendClaudeCmux` / `BackendCodexCmux`. `--dry-run` prints the exact cmux command sequence and rendered prompt without executing.
-- **`claude-headless` / `codex-headless`** — `claude -p --output-format stream-json` / `codex exec --json` streamed through the same executor.
+- **`cmux`** — drives the agent's interactive TUI inside a cmux terminal surface. `--dry-run` prints the exact cmux command sequence and rendered prompt without executing.
+- **`cli`** — `claude -p --output-format stream-json` / `codex exec --json` streamed through the same executor.
+- **`agent`** — Captain's local agent runtime.
+- **`api`** — the provider API with a local tool loop.
 
-Both mechanisms route through the same executor composing Captain's `agent.Runner` with provider, plugins, and loop settings.
+Every mechanism routes through the same executor composing Captain's `agent.Runner` with provider, plugins, and loop settings.
 
 ## `gavel todos run` flags
 
@@ -39,7 +41,7 @@ Both mechanisms route through the same executor composing Captain's `agent.Runne
 | `-i, --interactive` | `false` | Multi-select TODOs to run |
 | `--group-by` | `repo` for cmux | `file` / `directory` / `repo` / `all` / `none`; a group shares one agent session |
 | `--mode` | `run` | `run` / `plan` / `verify` |
-| `--driver` | `claude-cmux` | Agent and mechanism |
+| `--driver` | `cmux` | Execution mechanism: `cmux` / `cli` / `agent` / `api` |
 | `--model` | | LLM model override |
 | `--effort` | `medium` | Reasoning effort: `low` / `medium` / `high` / `xhigh` |
 | `--resume` | `false` | Resume the TODO's prior agent session |

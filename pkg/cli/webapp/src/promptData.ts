@@ -33,6 +33,33 @@ export type PromptSummary = {
   variables?: PromptVariable[];
   parseError?: string;
   updatedAt?: string;
+  /** Content hash echoed back as `baseVersion` on save so a concurrent edit is reported, not clobbered. */
+  version?: string;
+};
+
+/** One discovered prompt source, as served in the prompt schema document. */
+export type PromptSourceInfo = {
+  id: string;
+  kind: string;
+  label: string;
+  root?: string;
+  writable: boolean;
+  implicit?: boolean;
+};
+
+export type PromptPreviewResult = {
+  id: string;
+  name: string;
+  model?: string;
+  backend?: string;
+  user?: string;
+  system?: string;
+  input?: unknown;
+  config?: unknown;
+  inputSchema?: Record<string, unknown>;
+  inputDefault?: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
+  validationError?: string;
 };
 
 export type PromptDetail = PromptSummary & {

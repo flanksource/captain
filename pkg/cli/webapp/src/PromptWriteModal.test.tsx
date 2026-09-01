@@ -82,6 +82,35 @@ describe("PromptWriteModal", () => {
     );
   });
 
+  it("previews the destination file for a duplicate before it is created", () => {
+    render(
+      <PromptWriteModal
+        open
+        mode="duplicate"
+        sources={[
+          { id: "local-1", label: "/work/prompts", root: "/work/prompts" },
+        ]}
+        initialName="Commit Message copy"
+        initialContent={SOURCE}
+        onClose={vi.fn()}
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("dialog", { name: "Duplicate Prompt" })).toBeInTheDocument();
+    expect(screen.getByTestId("prompt-write-destination")).toHaveTextContent(
+      "Writes /work/prompts/commit-message-copy.prompt",
+    );
+
+    fireEvent.change(screen.getByLabelText("Path"), {
+      target: { value: "copies/commit" },
+    });
+
+    expect(screen.getByTestId("prompt-write-destination")).toHaveTextContent(
+      "Writes /work/prompts/copies/commit.prompt",
+    );
+  });
+
   it("keeps a failed save-as open and displays the create error", async () => {
     render(
       <PromptWriteModal
