@@ -89,7 +89,7 @@ func observePromptAction(ctx context.Context, id string, flags map[string]string
 		return api.RuntimeObservation{}, errors.New("prompt observe v1 does not support workflow-backed prompts")
 	}
 
-	runtimes, err := ai.ResolveRuntimeSelectors([]string{selector}, rendered.Config.Model)
+	runtimes, err := ai.ResolveMulti([]string{selector}, rendered.Config.Model)
 	if err != nil {
 		return api.RuntimeObservation{}, err
 	}
@@ -100,8 +100,6 @@ func observePromptAction(ctx context.Context, id string, flags map[string]string
 	if err := runtime.Validate(); err != nil {
 		return api.RuntimeObservation{}, fmt.Errorf("invalid --runtime: %w", err)
 	}
-	runtime = runtime.Capabilities()
-
 	resolvedEffort, unsupported := resolveObservationEffort(runtime)
 	result := newRuntimeObservation(selector, runtime, requestedEffort, resolvedEffort)
 	applyObservationCaptureRequest(&result, rendered.Input, flags)
@@ -171,7 +169,9 @@ func observePromptAction(ctx context.Context, id string, flags map[string]string
 	snapshot := recorder.Snapshot()
 	applyObservationSnapshot(&result, snapshot, run.usedStream, remote)
 	capture.Apply(&result, snapshot.Tools)
-	applyObservationMetrics(&result, runtime.Backend, firstNonEmpty(run.model, runtime.Name), run.usage, run.costUSD)
+	metricRuntime := runtime
+	metricRuntime.Name = firstNonEmpty(run.model, runtime.Name)
+	applyObservationMetrics(&result, metricRuntime, run.usage, run.costUSD)
 	if run.runtimeErr != nil || !run.terminal {
 		failure := runtimeObservationFailure(run.runtimeErr, run.terminal)
 		result.Availability = failure.availability
@@ -223,11 +223,11 @@ func resolveObservationEffort(runtime api.Model) (api.Effort, string) {
 	if effort == api.EffortNone {
 		return effort, ""
 	}
-	supported, _, known := registry.ModelEfforts(runtime.Backend, runtime.Name)
+	supported, _, known := registry.ModelEfforts(runtime.Provider, runtime.Mode, runtime.Name)
 	if known && (len(supported) == 0 || !slices.Contains(supported, effort)) {
 		return api.EffortNone, "reasoning_effort_unsupported"
 	}
-	resolved, err := registry.ResolveEffort(runtime.Backend, runtime.Name, effort)
+	resolved, err := registry.ResolveEffort(runtime.Provider, runtime.Mode, runtime.Name, effort)
 	if err != nil || resolved == api.EffortNone {
 		return api.EffortNone, "reasoning_effort_unsupported"
 	}
@@ -235,10 +235,6 @@ func resolveObservationEffort(runtime api.Model) (api.Effort, string) {
 }
 
 func newRuntimeObservation(selector string, runtime api.Model, requested api.ObservationStringFact, effort api.Effort) api.RuntimeObservation {
-	provider := ""
-	if owner, _, ok := registry.ProviderFor(runtime.Backend); ok {
-		provider = owner.Name
-	}
 	resolved := api.ObservationStringFact{State: api.ObservationFactUnset}
 	if effort != api.EffortNone {
 		value := string(effort)
@@ -250,7 +246,7 @@ func newRuntimeObservation(selector string, runtime api.Model, requested api.Obs
 		Runtime: api.ObservationRuntime{
 			Requested: api.ObservationRuntimeRequested{Selector: selector},
 			Resolved: api.ObservationRuntimeResolved{
-				Provider: provider, Backend: runtime.Backend, Mode: runtime.Mode, Model: runtime.Name,
+				Provider: runtime.Provider.Name, Mode: runtime.Mode, Model: runtime.Name,
 			},
 		},
 		Availability: api.Available(),
@@ -263,8 +259,8 @@ func newRuntimeObservation(selector string, runtime api.Model, requested api.Obs
 			},
 		}},
 		Capture: api.ObservationCapture{
-			Dispatch:    api.ObservationDispatchCapture{Status: dispatchCaptureStatus(runtime.Backend), Events: []api.ObservationDispatchEvent{}},
-			Permissions: api.ObservationPermissionCapture{Status: permissionCaptureStatus(runtime.Backend), Events: []api.ObservationPermissionEvent{}},
+			Dispatch:    api.ObservationDispatchCapture{Status: dispatchCaptureStatus(runtime.Provider, runtime.Mode), Events: []api.ObservationDispatchEvent{}},
+			Permissions: api.ObservationPermissionCapture{Status: permissionCaptureStatus(runtime.Provider, runtime.Mode), Events: []api.ObservationPermissionEvent{}},
 			Tools:       api.ObservationToolCapture{Status: api.ObservationCaptureUnavailable, Events: []api.ObservationToolEvent{}},
 			MCP:         api.ObservationExternalCapture{Status: api.ObservationCaptureUnsupported, Events: []api.ObservationExternalEvent{}},
 			Kubernetes:  api.ObservationExternalCapture{Status: api.ObservationCaptureUnsupported, Events: []api.ObservationExternalEvent{}},
@@ -389,7 +385,7 @@ func applyObservationCaptureRequest(result *api.RuntimeObservation, req ai.Reque
 	result.Capture.MCP, result.Capture.Kubernetes = initialObservationExternalCapture(req, flags)
 }
 
-func applyObservationMetrics(result *api.RuntimeObservation, backend api.Backend, model string, usage *api.Usage, reportedCost float64) {
+func applyObservationMetrics(result *api.RuntimeObservation, runtime api.Model, usage *api.Usage, reportedCost float64) {
 	if usage != nil {
 		result.Metrics.Usage = api.ObservationUsageFact{
 			State: api.ObservationFactKnown, Semantics: "disjoint-v1",
@@ -400,7 +396,7 @@ func applyObservationMetrics(result *api.RuntimeObservation, backend api.Backend
 			},
 		}
 	}
-	if reportedCost > 0 && providerReportsCost(backend) {
+	if reportedCost > 0 && providerReportsCost(runtime.Provider, runtime.Mode) {
 		value := reportedCost
 		result.Metrics.CostUSD = api.ObservationCostFact{
 			State: api.ObservationFactKnown, Value: &value, Unit: "USD", Source: "provider",
@@ -410,7 +406,7 @@ func applyObservationMetrics(result *api.RuntimeObservation, backend api.Backend
 	if usage == nil {
 		return
 	}
-	estimate := ai.PriceUsage(backend, model, *usage, 0).Total()
+	estimate := ai.PriceUsage(runtime.Provider, runtime.Name, *usage, 0).Total()
 	if estimate > 0 {
 		result.Metrics.CostUSD = api.ObservationCostFact{
 			State: api.ObservationFactKnown, Value: &estimate, Unit: "USD", Source: "captain_estimated",
@@ -418,8 +414,8 @@ func applyObservationMetrics(result *api.RuntimeObservation, backend api.Backend
 	}
 }
 
-func providerReportsCost(backend api.Backend) bool {
-	return backend == api.BackendClaudeCLI || backend == api.BackendClaudeAgent
+func providerReportsCost(provider *api.ModelProvider, mode api.RuntimeMode) bool {
+	return provider == api.Anthropic && (mode == api.ModeCLI || mode == api.ModeAgent)
 }
 
 type observationFailure struct {
@@ -499,24 +495,30 @@ func classifyObservationFailure(err error) observationFailure {
 	}
 }
 
-func dispatchCaptureStatus(backend api.Backend) api.ObservationCaptureStatus {
-	switch backend {
-	case api.BackendOpenAI, api.BackendCodexCLI, api.BackendCodexAgent:
+func dispatchCaptureStatus(provider *api.ModelProvider, mode api.RuntimeMode) api.ObservationCaptureStatus {
+	if provider == api.OpenAI && (mode == api.ModeAPI || mode == api.ModeCLI || mode == api.ModeAgent) {
 		return api.ObservationCaptureComplete
-	default:
-		return api.ObservationCaptureUnsupported
 	}
+	return api.ObservationCaptureUnsupported
 }
 
-func permissionCaptureStatus(backend api.Backend) api.ObservationCaptureStatus {
-	switch backend {
-	case api.BackendAnthropic, api.BackendOpenAI, api.BackendGemini, api.BackendDeepSeek, api.BackendClaudeAgent:
+func permissionCaptureStatus(provider *api.ModelProvider, mode api.RuntimeMode) api.ObservationCaptureStatus {
+	switch mode {
+	case api.ModeAPI:
 		return api.ObservationCaptureComplete
-	case api.BackendCodexAgent, api.BackendClaudeCmux, api.BackendCodexCmux:
-		return api.ObservationCapturePartial
-	default:
-		return api.ObservationCaptureUnsupported
+	case api.ModeAgent:
+		if provider == api.Anthropic {
+			return api.ObservationCaptureComplete
+		}
+		if provider == api.OpenAI {
+			return api.ObservationCapturePartial
+		}
+	case api.ModeCmux:
+		if provider == api.Anthropic || provider == api.OpenAI {
+			return api.ObservationCapturePartial
+		}
 	}
+	return api.ObservationCaptureUnsupported
 }
 
 func partialIfComplete(status api.ObservationCaptureStatus) api.ObservationCaptureStatus {

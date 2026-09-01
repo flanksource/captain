@@ -35,3 +35,4 @@ hack/*
 .okignore
 .ginkgo/
 !pkg/cli/webapp/dist/index.html
+*.test

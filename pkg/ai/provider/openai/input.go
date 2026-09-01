@@ -26,7 +26,7 @@ func (p *Provider) prepare(req ai.Request) (*requestState, error) {
 	if err := req.ValidateRequestMode(); err != nil {
 		return nil, err
 	}
-	if err := api.RequireToolPolicySupport(ai.BackendOpenAI, req.Permissions); err != nil {
+	if err := api.RequireToolPolicySupport(ai.OpenAI, ai.ModeAPI, req.Permissions); err != nil {
 		return nil, err
 	}
 
@@ -55,7 +55,7 @@ func (p *Provider) prepare(req ai.Request) (*requestState, error) {
 		state.params.Tools = append(state.params.Tools, tool)
 	}
 
-	generation := ai.EffortConfig(ai.BackendOpenAI, p.model, req.Effort, req.Budget.MaxTokens, req.Temperature)
+	generation := ai.EffortConfig(ai.OpenAI, ai.ModeAPI, p.model, req.Effort, req.Budget.MaxTokens, req.Temperature)
 	if value, ok := generation["temperature"].(float64); ok {
 		state.params.Temperature = openaisdk.Float(value)
 	}
@@ -67,7 +67,7 @@ func (p *Provider) prepare(req ai.Request) (*requestState, error) {
 		state.params.MaxOutputTokens = openaisdk.Int(int64(req.Budget.MaxTokens))
 	}
 	if req.Prompt.HasSchema() {
-		schema, err := ai.SchemaJSONForBackend(ai.BackendOpenAI, req.Prompt)
+		schema, err := ai.SchemaJSONForRuntime(ai.OpenAI, ai.ModeAPI, req.Prompt)
 		if err != nil {
 			return nil, fmt.Errorf("openai responses: cannot derive Prompt schema: %w", err)
 		}

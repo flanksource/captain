@@ -34,6 +34,7 @@ type codexCheckpoint struct {
 
 type codexPreparation struct {
 	checkpoint *codexCheckpoint
+	session    *session.Session
 	offset     int64
 	resetMark  bool
 }
@@ -284,6 +285,20 @@ func (ing *ingestor) ingestFile(ctx context.Context, source, path string) error 
 		}
 		return err
 	}
+	if codex != nil && codex.session.ForkedFrom != "" {
+		parent, err := ing.db.CreateOrGetSession(ctx, database.CreateSessionInput{
+			ProviderSessionID: codex.session.ForkedFrom, Source: "codex", HostID: ing.monitor.cfg.HostID,
+		})
+		if err != nil {
+			ing.dropCodexCheckpoint(path)
+			return err
+		}
+		input.Session.ParentSessionID = &parent.ID
+		if codex.session.Root != nil {
+			input.Session.AgentType = codex.session.Root.Type
+			input.Session.Description = codex.session.Root.Desc
+		}
+	}
 	input.Session.HostID = ing.monitor.cfg.HostID
 	input.Source.SourceKind = source
 	input.Source.Path = path
@@ -395,6 +410,7 @@ func (ing *ingestor) incrementalCodexIngestInput(file *os.File, path string, inf
 	input := unifiedIngestInput(s, "codex", transcriptSequence)
 	input.Session.ProviderSessionID = s.ID
 	input.Source.SourceIdentity = s.ID
+	preparation.session = s
 	return input, preparation, false, nil
 }
 
@@ -427,22 +443,10 @@ func codexIngestInput(path string) (database.IngestTranscriptInput, error) {
 	if len(sessions) == 0 {
 		return database.IngestTranscriptInput{}, fmt.Errorf("codex transcript %s is not parseable", path)
 	}
+	s := sessions[0]
 	input := unifiedIngestInput(s, "codex", transcriptSequence)
 	input.Session.ProviderSessionID = s.ID
 	input.Source.SourceIdentity = s.ID
-	if s.ForkedFrom != "" {
-		parent, err := ing.db.CreateOrGetSession(ctx, database.CreateSessionInput{
-			ProviderSessionID: s.ForkedFrom, Source: "codex", HostID: ing.monitor.cfg.HostID,
-		})
-		if err != nil {
-			return database.IngestTranscriptInput{}, err
-		}
-		input.Session.ParentSessionID = &parent.ID
-		if s.Root != nil {
-			input.Session.AgentType = s.Root.Type
-			input.Session.Description = s.Root.Desc
-		}
-	}
 	return input, nil
 }
 

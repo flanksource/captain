@@ -11,7 +11,12 @@ func TestRuntimeObservationJSONPreservesZeroUsageBuckets(t *testing.T) {
 	observation := RuntimeObservation{
 		SchemaVersion: ObservationSchemaV1,
 		ObservationID: "observation-1",
-		Execution:     ObservationExecution{State: "completed", DurationMS: &zero},
+		Runtime: ObservationRuntime{Resolved: ObservationRuntimeResolved{
+			Provider: OpenAI.Name,
+			Mode:     ModeAPI,
+			Model:    "gpt-5",
+		}},
+		Execution: ObservationExecution{State: "completed", DurationMS: &zero},
 		Metrics: ObservationMetrics{
 			DurationMS: ObservationNumberFact{State: ObservationFactKnown, Value: &zero, Unit: "ms"},
 			CostUSD:    ObservationCostFact{State: ObservationFactUnknown, Unit: "USD"},
@@ -39,5 +44,8 @@ func TestRuntimeObservationJSONPreservesZeroUsageBuckets(t *testing.T) {
 	}
 	if bytes.Contains(data, []byte(`"passed"`)) {
 		t.Fatalf("captain observation must not declare conformance: %s", data)
+	}
+	if bytes.Contains(data, []byte(`"backend"`)) {
+		t.Fatalf("observation runtime must use provider and mode, not a composite backend: %s", data)
 	}
 }

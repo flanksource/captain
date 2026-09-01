@@ -30,12 +30,6 @@ func BuildCodex(files []string) []*Session {
 			codexLog.Warnf("skipping unreadable codex session %s: %v", f, err)
 			continue
 		}
-		if len(uses) == 0 {
-			continue
-		}
-		accumulator := newCodexAccumulator(f, true)
-		accumulator.Add(info, uses)
-		s := accumulator.fullSession()
 		out = append(out, s)
 	}
 	return out
@@ -121,6 +115,8 @@ type CodexAccumulator struct {
 	cumulative    codexCumulative
 	plan          codexPlanState
 	freshMessages []Message
+	rootType      string
+	rootDesc      string
 }
 
 // NewCodexAccumulator creates the compact accumulator used for live monitor
@@ -167,6 +163,9 @@ func (a *CodexAccumulator) applyInfo(info *history.CodexSessionInfo) {
 	}
 	a.session.Provider = info.ModelProvider
 	a.session.Version = info.CLIVersion
+	a.session.ForkedFrom = info.ParentThreadID
+	a.rootType = info.ThreadSource
+	a.rootDesc = strings.TrimSpace(info.AgentNickname + " " + info.AgentPath)
 	a.session.Git.Branch = info.GitBranch
 	a.session.Git.Commit = info.GitCommit
 	if a.session.Model == "" {
@@ -333,6 +332,10 @@ func (a *CodexAccumulator) baseSession() Session {
 	s.Plan = a.plan.value()
 	s.Usage = usageFromCost(s.Cost)
 	s.ToolCosts = codexCostsByModel(a.costByModel)
+	s.Root = &Agent{
+		ID: s.ID, IsRoot: true, HistoryFile: s.HistoryFile,
+		Type: a.rootType, Desc: a.rootDesc, Cost: s.Cost, Usage: s.Usage,
+	}
 	return s
 }
 
@@ -361,10 +364,7 @@ func (a *CodexAccumulator) fullSession() *Session {
 	s.Capabilities.Agents = sortedStrings(s.Capabilities.Agents)
 	s.Capabilities.Skills = sortedStrings(s.Capabilities.Skills)
 
-	root := &Agent{
-		ID: s.ID, IsRoot: true, HistoryFile: s.HistoryFile,
-		Cost: s.Cost, Usage: s.Usage,
-	}
+	root := s.Root
 	s.Root = root
 	s.Agents = []*Agent{root}
 	for _, agent := range sortedCodexAgents(a.agents) {

@@ -175,7 +175,7 @@ func mapUsage(u *gkai.GenerationUsage, provider *ai.ModelProvider) ai.Usage {
 // responseToResponse builds the base captain response from a buffered genkit
 // generation and records native usage presence before flattening it to a value.
 // Structured output and cost are applied by the caller.
-func responseToResponse(ctx context.Context, resp *gkai.ModelResponse, backend ai.Backend, model string, start time.Time) *ai.Response {
+func responseToResponse(ctx context.Context, resp *gkai.ModelResponse, provider *ai.ModelProvider, model string, start time.Time) *ai.Response {
 	out := &ai.Response{
 		Text:     resp.Text(),
 		Model:    model,

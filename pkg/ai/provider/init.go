@@ -18,22 +18,17 @@ import (
 // from the model's family — and only the local agent/cli transports need a
 // per-family adapter.
 func init() {
-	ai.RegisterRuntimeProbe(ai.BackendClaudeAgent, claudeagent.ProbeRuntime)
-	// Anthropic, Gemini, and DeepSeek remain on Genkit; OpenAI uses its official
-	// SDK directly so Captain can use the Responses API.
-	ai.RegisterProvider(ai.BackendAnthropic, func(cfg ai.Config) (ai.Provider, error) { return genkit.New(cfg) })
-	ai.RegisterProvider(ai.BackendOpenAI, func(cfg ai.Config) (ai.Provider, error) { return openai.New(cfg) })
-	ai.RegisterProvider(ai.BackendGemini, func(cfg ai.Config) (ai.Provider, error) { return genkit.New(cfg) })
-	// DeepSeek exposes an OpenAI-compatible API; genkit serves it via compat_oai
-	// with a custom base URL (see pluginFor).
-	ai.RegisterProvider(ai.BackendDeepSeek, func(cfg ai.Config) (ai.Provider, error) { return genkit.New(cfg) })
+	ai.RegisterRuntimeProbe(ai.Anthropic, ai.ModeAgent, claudeagent.ProbeRuntime)
 
 	// The API mode is served by Firebase Genkit for every family (DeepSeek via
 	// compat_oai with a custom base URL; see pluginFor).
 	genkitFactory := func(cfg ai.Config) (ai.Provider, error) { return genkit.New(cfg) }
-	for _, p := range []*ai.ModelProvider{ai.Anthropic, ai.OpenAI, ai.Google, ai.DeepSeek} {
+	for _, p := range []*ai.ModelProvider{ai.Anthropic, ai.Google, ai.DeepSeek} {
 		ai.RegisterProvider(ai.RuntimeOf(p, ai.ModeAPI), genkitFactory)
 	}
+	ai.RegisterProvider(ai.RuntimeOf(ai.OpenAI, ai.ModeAPI), func(cfg ai.Config) (ai.Provider, error) {
+		return openai.New(cfg)
+	})
 
 	// cmux drives an interactive claude/codex TUI inside a tmux/cmux surface,
 	// tailing the session JSONL; one provider serves both families (it reads the
