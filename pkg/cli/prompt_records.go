@@ -254,7 +254,7 @@ func parsedPromptDetail(record promptRecord, content string) (PromptDetail, erro
 	}
 	summary.Version = promptVersion(content)
 	spec := &api.Spec{Model: api.Model{
-		Name:    summary.Model,
+		Name: summary.Model,
 		Mode: api.RuntimeMode(summary.Mode),
 	}}
 	return PromptDetail{
@@ -342,13 +342,14 @@ func readPromptContent(record promptRecord) (string, error) {
 		}
 		return string(data), nil
 	}
-	full, err := safeLocalPromptPath(record.Source, record.Rel)
+	file, err := openLocalPromptFile(record, false)
 	if err != nil {
 		return "", err
 	}
-	data, err := os.ReadFile(full)
+	defer file.Close()
+	data, err := file.root.ReadFile(file.rel)
 	if err != nil {
-		return "", fmt.Errorf("read prompt %s: %w", full, err)
+		return "", fmt.Errorf("read prompt %s: %w", file.path, err)
 	}
 	return string(data), nil
 }

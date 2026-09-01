@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -133,7 +132,7 @@ type PromptRenderResult struct {
 type PromptActionFlags struct {
 	AIRuntimeOptions
 
-	Prompt       string   `flag:"prompt" help:"Prompt text (or @file); alternative to the positional" short:"p"`
+	Prompt       string   `flag:"prompt" clicky:"cli-file-read" help:"Prompt text (or @file); alternative to the positional" short:"p"`
 	System       string   `flag:"system" help:"System prompt" short:"s"`
 	AppendSystem string   `flag:"append-system" help:"Append text to the default system prompt"`
 	Var          []string `flag:"var" help:"Template variable key=value (repeatable)" short:"V"`
@@ -282,19 +281,24 @@ func writeNewLocalPrompt(ctx context.Context, req PromptWriteRequest) (PromptDet
 	if strings.TrimSpace(req.Content) == "" {
 		return PromptDetail{}, fmt.Errorf("prompt content cannot be empty")
 	}
-	if _, err := os.Stat(full); err == nil {
+	record := promptRecord{Source: source, ID: encodePromptID(source.Kind, source.ID, rel), Path: full, Rel: rel}
+	file, err := openLocalPromptFile(record, true)
+	if err != nil {
+		return PromptDetail{}, err
+	}
+	defer file.Close()
+	if _, err := file.root.Stat(file.rel); err == nil {
 		return PromptDetail{}, fmt.Errorf("prompt %s already exists", rel)
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return PromptDetail{}, fmt.Errorf("stat %s: %w", full, err)
 	}
-	record := promptRecord{Source: source, ID: encodePromptID(source.Kind, source.ID, rel), Path: full, Rel: rel}
 	if _, err := parsedPromptDetail(record, req.Content); err != nil {
 		return PromptDetail{}, invalidPromptError(err)
 	}
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+	if err := file.root.MkdirAll(filepath.Dir(file.rel), 0o755); err != nil {
 		return PromptDetail{}, fmt.Errorf("ensure prompt directory: %w", err)
 	}
-	if err := writePromptFileAtomic(full, req.Content); err != nil {
+	if err := writePromptFileAtomic(file, req.Content); err != nil {
 		return PromptDetail{}, err
 	}
 	return promptDetail(record)
@@ -315,7 +319,7 @@ func updatePrompt(ctx context.Context, id string, body map[string]any) (PromptDe
 	if strings.TrimSpace(req.Content) == "" {
 		return PromptDetail{}, fmt.Errorf("prompt content cannot be empty")
 	}
-	full, err := safeLocalPromptPath(record.Source, record.Rel)
+	_, err = safeLocalPromptPath(record.Source, record.Rel)
 	if err != nil {
 		return PromptDetail{}, err
 	}
@@ -325,7 +329,12 @@ func updatePrompt(ctx context.Context, id string, body map[string]any) (PromptDe
 	if _, err := parsedPromptDetail(record, req.Content); err != nil {
 		return PromptDetail{}, invalidPromptError(err)
 	}
-	if err := writePromptFileAtomic(full, req.Content); err != nil {
+	file, err := openLocalPromptFile(record, false)
+	if err != nil {
+		return PromptDetail{}, err
+	}
+	defer file.Close()
+	if err := writePromptFileAtomic(file, req.Content); err != nil {
 		return PromptDetail{}, err
 	}
 	record.UpdatedAt = ""
@@ -340,11 +349,12 @@ func deletePrompt(ctx context.Context, id string) error {
 	if !record.Source.Writable {
 		return fmt.Errorf("embedded prompts are read-only")
 	}
-	full, err := safeLocalPromptPath(record.Source, record.Rel)
+	file, err := openLocalPromptFile(record, false)
 	if err != nil {
 		return err
 	}
-	if err := os.Remove(full); err != nil {
+	defer file.Close()
+	if err := file.root.Remove(file.rel); err != nil {
 		return fmt.Errorf("delete prompt: %w", err)
 	}
 	return nil

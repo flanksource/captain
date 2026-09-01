@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -12,6 +13,33 @@ import (
 
 	"github.com/flanksource/clicky/entity"
 )
+
+type localPromptFile struct {
+	root *os.Root
+	rel  string
+	path string
+}
+
+func openLocalPromptFile(record promptRecord, createRoot bool) (*localPromptFile, error) {
+	rel, err := localPromptRel(record.Rel)
+	if err != nil {
+		return nil, err
+	}
+	if createRoot {
+		if err := os.MkdirAll(record.Source.Root, 0o755); err != nil {
+			return nil, fmt.Errorf("ensure prompt source: %w", err)
+		}
+	}
+	root, err := os.OpenRoot(record.Source.Root)
+	if err != nil {
+		return nil, fmt.Errorf("open prompt source: %w", err)
+	}
+	return &localPromptFile{root: root, rel: rel, path: filepath.Join(record.Source.Root, rel)}, nil
+}
+
+func (file *localPromptFile) Close() error {
+	return file.root.Close()
+}
 
 // promptVersion identifies one exact prompt content. The editor echoes it back
 // as baseVersion on save so a file edited elsewhere since it was loaded is
@@ -45,18 +73,18 @@ func checkPromptBaseVersion(record promptRecord, baseVersion string) error {
 	return nil
 }
 
-// writePromptFileAtomic replaces full through a temp file and rename so a
+// writePromptFileAtomic replaces the prompt through a temp file and rename so a
 // failed write never leaves a half-written prompt behind. The temp name ends in
 // .tmp, which the source walker ignores.
-func writePromptFileAtomic(full, content string) error {
-	tmp, err := os.CreateTemp(filepath.Dir(full), "."+filepath.Base(full)+".*.tmp")
+func writePromptFileAtomic(file *localPromptFile, content string) error {
+	tmpRel := filepath.Join(filepath.Dir(file.rel), "."+filepath.Base(file.rel)+"."+rand.Text()+".tmp")
+	tmp, err := file.root.OpenFile(tmpRel, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return fmt.Errorf("write prompt: %w", err)
 	}
-	tmpPath := tmp.Name()
 	cleanup := func(err error) error {
 		_ = tmp.Close()
-		_ = os.Remove(tmpPath)
+		_ = file.root.Remove(tmpRel)
 		return fmt.Errorf("write prompt: %w", err)
 	}
 	if _, err := tmp.WriteString(content); err != nil {
@@ -65,10 +93,10 @@ func writePromptFileAtomic(full, content string) error {
 	if err := tmp.Close(); err != nil {
 		return cleanup(err)
 	}
-	if err := os.Chmod(tmpPath, 0o644); err != nil {
+	if err := file.root.Chmod(tmpRel, 0o644); err != nil {
 		return cleanup(err)
 	}
-	if err := os.Rename(tmpPath, full); err != nil {
+	if err := file.root.Rename(tmpRel, file.rel); err != nil {
 		return cleanup(err)
 	}
 	return nil
@@ -84,7 +112,12 @@ func promptRecordModTime(record promptRecord) string {
 		}
 		return modTimeString(info)
 	}
-	info, err := os.Stat(record.Path)
+	file, err := openLocalPromptFile(record, false)
+	if err != nil {
+		return ""
+	}
+	defer file.Close()
+	info, err := file.root.Stat(file.rel)
 	if err != nil {
 		return ""
 	}
