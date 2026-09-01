@@ -15,8 +15,8 @@ import (
 var _ = Describe("Resolved runtime profiles", func() {
 	It("annotates models outside the effective catalog with actionable provenance", func() {
 		resolver := &fakeResolver{models: aichat.ModelCatalogResponse{
-			{ID: "openai/gpt-5.6-sol", Provider: "openai", Label: "GPT", Runtime: api.Model{Name: "gpt-5.6-sol", Backend: api.BackendOpenAI}, Configured: true, Availability: api.Available()},
-			{ID: "anthropic/claude-sonnet-5", Provider: "anthropic", Label: "Claude", Runtime: api.Model{Name: "claude-sonnet-5", Backend: api.BackendAnthropic}, Configured: true, Availability: api.Available()},
+			{ID: "openai/gpt-5.6-sol", Provider: "openai", Label: "GPT", Runtime: api.Model{Name: "gpt-5.6-sol", Mode: api.ModeAPI}, Configured: true, Availability: api.Available()},
+			{ID: "anthropic/claude-sonnet-5", Provider: "anthropic", Label: "Claude", Runtime: api.Model{Name: "claude-sonnet-5", Mode: api.ModeAPI}, Configured: true, Availability: api.Available()},
 		}}
 		profile := mustRuntimeProfile(api.SpecLayer{
 			Name: "claims", Scope: api.SpecLayerContext,
@@ -46,11 +46,11 @@ var _ = Describe("Resolved runtime profiles", func() {
 		resolver := &fakeResolver{runtimes: []api.RuntimeFamily{
 			{
 				Family: "codex", Provider: "openai", CatalogPrefix: "openai",
-				Modes: []api.RuntimeModeEntry{{Backend: "api", Adapter: string(api.BackendOpenAI), Availability: api.Available()}},
+				Modes: []api.RuntimeModeEntry{{Mode: "api", Availability: api.Available()}},
 			},
 			{
 				Family: "claude", Provider: "anthropic", CatalogPrefix: "anthropic",
-				Modes: []api.RuntimeModeEntry{{Backend: "api", Adapter: string(api.BackendAnthropic), Availability: api.Available()}},
+				Modes: []api.RuntimeModeEntry{{Mode: "api", Availability: api.Available()}},
 			},
 		}}
 		profile := mustRuntimeProfile(api.SpecLayer{

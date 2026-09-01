@@ -150,6 +150,10 @@ func (s *DatabaseThreadStore) getSession(ctx context.Context, overview database.
 	if err != nil {
 		return nil, err
 	}
+	aggregate.Messages, err = s.recoverMessages(ctx, overview, turns, aggregate.Messages)
+	if err != nil {
+		return nil, err
+	}
 	aggregate.Turns = projectSessionTurns(turns, aggregate.Messages)
 	aggregate.Requests, err = projectSessionRequests(requests)
 	if err != nil {
@@ -238,7 +242,12 @@ func (s *DatabaseThreadStore) SetRuntime(ctx context.Context, id string, runtime
 	if err != nil {
 		return err
 	}
-	if err := s.db.SetSessionMetadataOnce(ctx, parsed, threadRuntimeMetadataKey, identity); err != nil {
+	// Stored as a runtime selection, not a bare api.Model: Model.Provider is
+	// json:"-" (it carries the whole catalog), so persisting the model would drop
+	// the family half of the runtime, and the write-once key would then compare a
+	// providerless record against a resolved one on read.
+	if err := s.db.SetSessionMetadataOnce(ctx, parsed, threadRuntimeMetadataKey,
+		runtimeSelection(identity.ToModel())); err != nil {
 		if errors.Is(err, database.ErrSessionConflict) {
 			return fmt.Errorf("%w: %v", ErrThreadRuntimeConflict, err)
 		}
@@ -305,7 +314,8 @@ func sessionFromOverview(overview database.SessionOverview) *session.Session {
 		HealthState: overview.HealthState, StateReason: stringPointer(overview.StateReason),
 		Source: overview.Source, Project: stringPointer(overview.Project), CWD: stringPointer(overview.CWD),
 		Slug: stringPointer(overview.Slug), Title: stringPointer(overview.Title), InitialPrompt: stringPointer(overview.InitialPrompt),
-		Version: stringPointer(overview.CLIVersion), Provider: overview.Provider, Backend: stringPointer(overview.Backend),
+		Version: stringPointer(overview.CLIVersion), Provider: overview.Provider,
+		ModelMode: api.RuntimeMode(stringPointer(overview.ModelMode)),
 		Model: stringPointer(overview.Model), ReasoningEffort: stringPointer(overview.Effort),
 		ExecutionMode: api.RuntimeMode(overview.ExecutionMode),
 		HistoryFile:   stringPointer(overview.HistoryFile), StartedAt: overview.StartedAt, EndedAt: overview.EndedAt,
@@ -359,7 +369,8 @@ func projectSessionTurns(rows []database.SessionTurn, messages []session.Message
 			ID: rows[i].ID.String(), Status: rows[i].Status, Index: rows[i].TurnIndex,
 			StartedAt: rows[i].StartedAt, EndedAt: rows[i].EndedAt,
 			StopReason: stringPointer(rows[i].StopReason), Model: stringPointer(rows[i].Model),
-			Backend: stringPointer(rows[i].Backend), ReasoningEffort: stringPointer(rows[i].Effort),
+			ModelProvider: stringPointer(rows[i].ModelProvider), Mode: stringPointer(rows[i].ModelMode),
+			ReasoningEffort: stringPointer(rows[i].Effort),
 			MessageIDs: messageIDs[rows[i].ID.String()],
 			Usage: api.Usage{
 				InputTokens: int(rows[i].InputTokens), OutputTokens: int(rows[i].OutputTokens),
@@ -512,7 +523,7 @@ func threadSummaryFromOverview(overview database.SessionOverview) (*Thread, erro
 	}, nil
 }
 
-func threadIdentityMetadata(raw json.RawMessage) (*api.Model, string, error) {
+func threadIdentityMetadata(raw json.RawMessage) (*api.RuntimeIdentity, string, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil, "", nil
 	}
@@ -520,13 +531,13 @@ func threadIdentityMetadata(raw json.RawMessage) (*api.Model, string, error) {
 	if err := json.Unmarshal(raw, &metadata); err != nil {
 		return nil, "", err
 	}
-	var runtime *api.Model
+	var runtime *api.RuntimeIdentity
 	if value := metadata[threadRuntimeMetadataKey]; len(value) > 0 {
-		var decoded api.Model
+		var decoded database.PromptRunRuntimeSelection
 		if err := json.Unmarshal(value, &decoded); err != nil {
 			return nil, "", err
 		}
-		identity, err := threadRuntimeIdentity(decoded)
+		identity, err := threadRuntimeIdentity(runtimeModel(decoded, api.Model{}))
 		if err != nil {
 			return nil, "", err
 		}

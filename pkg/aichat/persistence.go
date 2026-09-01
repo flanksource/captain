@@ -87,6 +87,7 @@ type persistedEventOptions struct {
 	Model            api.Model
 	Runtime          func() api.Model
 	Costs            *TurnCosts
+	Execution        Execution
 	terminalMetadata terminalMetadataContext
 }
 
@@ -197,15 +198,30 @@ func (s *Service) persistCompletedTurn(
 	event api.Event,
 	options persistedEventOptions,
 ) error {
+	if len(builder.message.Parts) == 0 {
+		return fmt.Errorf("completed assistant turn has no message parts")
+	}
+	if committer, ok := options.Execution.(TerminalExecution); ok && isExecutionTerminalEvent(event) {
+		if err := committer.CommitTerminal(ctx, TerminalCommit{
+			Event: event, Message: builder.message, Replace: builder.replace,
+		}); err != nil {
+			return err
+		}
+		if err := s.persistEvent(ctx, threadID, event, options.runtime(), options.Costs); err != nil {
+			return err
+		}
+		if builder.message.Metadata != nil && options.Costs != nil {
+			builder.message.Metadata.CostBreakdown = options.Costs.Breakdown
+			builder.message.Metadata.ThreadCostUSD = options.Costs.ThreadCostUSD
+		}
+		return nil
+	}
 	if err := s.persistEvent(ctx, threadID, event, options.runtime(), options.Costs); err != nil {
 		return err
 	}
 	if builder.message.Metadata != nil && options.Costs != nil {
 		builder.message.Metadata.CostBreakdown = options.Costs.Breakdown
 		builder.message.Metadata.ThreadCostUSD = options.Costs.ThreadCostUSD
-	}
-	if len(builder.message.Parts) == 0 {
-		return fmt.Errorf("completed assistant turn has no message parts")
 	}
 	if err := s.persistAssistantMessage(ctx, threadID, builder); err != nil {
 		return fmt.Errorf("persist assistant message: %w", err)

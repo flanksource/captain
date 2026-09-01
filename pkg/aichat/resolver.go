@@ -21,16 +21,17 @@ type Resolver interface {
 type captainResolver struct{}
 
 func (captainResolver) Models(_ context.Context) (ModelCatalogResponse, error) {
-	configured := make([]string, 0, 4)
-	for _, backend := range []api.Backend{
-		api.BackendAnthropic, api.BackendOpenAI, api.BackendGemini, api.BackendDeepSeek,
-	} {
-		resolved, err := ai.ResolveAPIKey(backend)
+	// A credential belongs to a provider, not to a runtime: every mode of a
+	// family authenticates the same way, so only the API mode is probed.
+	providers := api.Providers()
+	configured := make([]string, 0, len(providers))
+	for _, p := range providers {
+		resolved, err := ai.ResolveAPIKey(p, api.ModeAPI)
 		if err != nil {
-			return nil, fmt.Errorf("resolve %s credentials: %w", backend, err)
+			return nil, fmt.Errorf("resolve %s credentials: %w", p.Name, err)
 		}
 		if resolved.Token != "" {
-			configured = append(configured, ai.BackendToProvider(backend))
+			configured = append(configured, p.Name)
 		}
 	}
 	return ai.LiveCatalogInfo(configured)
@@ -48,9 +49,9 @@ func (captainResolver) Provider(_ context.Context, config api.Config) (api.Strea
 	streaming, ok := api.ProviderAs[api.StreamingProvider](provider)
 	if !ok {
 		if closeErr := closeProvider(provider); closeErr != nil {
-			return nil, fmt.Errorf("backend %q does not support streaming; close provider: %w", provider.GetBackend(), closeErr)
+			return nil, fmt.Errorf("runtime %s does not support streaming; close provider: %w", provider.GetRuntime(), closeErr)
 		}
-		return nil, fmt.Errorf("backend %q does not support streaming", provider.GetBackend())
+		return nil, fmt.Errorf("runtime %s does not support streaming", provider.GetRuntime())
 	}
 	return streaming, nil
 }

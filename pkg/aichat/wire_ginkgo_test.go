@@ -66,17 +66,25 @@ var _ = Describe("AI SDK v6 wire types", func() {
 		Expect(aichat.UIPart{Type: "text"}.EffectiveToolName()).To(BeEmpty())
 	})
 
+	// An authored runtime names its model and its mode; the provider follows from
+	// the model name, server-side. The wire carried a `backend` key that meant the
+	// resolved adapter outbound and the mode inbound — a client read one and posted
+	// back the other, which is the bug this vocabulary removes.
 	It("decodes an exact structured runtime", func() {
 		var request aichat.ChatRequest
 		Expect(json.Unmarshal([]byte(`{
-			"runtime":{"model":"sonnet","backend":"claude-agent","effort":"high"},
+			"runtime":{"model":"sonnet","mode":"agent","effort":"high"},
 			"messages":[{"role":"user","parts":[{"type":"text","text":"hello"}]}]
 		}`), &request)).To(Succeed())
 
 		Expect(request.Runtime).NotTo(BeNil())
 		Expect(*request.Runtime).To(Equal(api.Model{
-			Name: "sonnet", Backend: api.BackendClaudeAgent, Effort: api.EffortHigh,
+			Name: "sonnet", Mode: api.ModeAgent, Effort: api.EffortHigh,
 		}))
+		resolved, err := api.ResolveModel(*request.Runtime)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resolved.Provider).To(Equal(api.Anthropic))
+		Expect(resolved.Mode).To(Equal(api.ModeAgent))
 	})
 
 	It("rejects client-owned tool approval state", func() {
@@ -92,7 +100,7 @@ var _ = Describe("AI SDK v6 wire types", func() {
 			ID: "openai/gpt", Provider: "openai", Label: "GPT", Reasoning: true,
 			Temperature: true, Configured: true, Availability: api.Available(), ContextWindow: 128000,
 			InputMediaTypes: []string{"image/*"},
-			Runtime:         api.Model{Name: "gpt", Backend: api.BackendOpenAI},
+			Runtime:         api.Model{Name: "gpt-5.5", Mode: api.ModeAPI},
 		}}
 		tools := aichat.ToolCatalogResponse{Tools: []aichat.ToolCatalogEntry{{
 			Name: "invoice_get", Source: "custom", Group: "billing",
@@ -103,7 +111,7 @@ var _ = Describe("AI SDK v6 wire types", func() {
 
 		modelJSON, err := json.Marshal(models)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(modelJSON).To(MatchJSON(`[{"id":"openai/gpt","provider":"openai","label":"GPT","runtime":{"model":"gpt","backend":"openai"},"reasoning":true,"temperature":true,"configured":true,"availability":{"state":"available"},"contextWindow":128000,"inputMediaTypes":["image/*"]}]`))
+		Expect(modelJSON).To(MatchJSON(`[{"id":"openai/gpt","provider":"openai","label":"GPT","runtime":{"model":"gpt-5.5","mode":"api"},"reasoning":true,"temperature":true,"configured":true,"availability":{"state":"available"},"contextWindow":128000,"inputMediaTypes":["image/*"]}]`))
 		toolJSON, err := json.Marshal(tools)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(toolJSON).To(MatchJSON(`{"tools":[{"name":"invoice_get","source":"custom","group":"billing","preferenceKey":"billing","defaultPermission":"ask","strict":true,"method":"GET","path":"/invoices/{id}","operationName":"invoice get","inputSchema":{"type":"object"}}]}`))
