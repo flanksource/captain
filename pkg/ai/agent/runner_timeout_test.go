@@ -17,7 +17,7 @@ import (
 type hangingProvider struct{}
 
 func (h *hangingProvider) GetModel() string       { return "hanging" }
-func (h *hangingProvider) GetBackend() ai.Backend { return ai.Backend("fake") }
+func (h *hangingProvider) GetRuntime() ai.Runtime { return ai.RuntimeOf(ai.Anthropic, ai.ModeAgent) }
 
 func (h *hangingProvider) Execute(ctx context.Context, _ ai.Request) (*ai.Response, error) {
 	<-ctx.Done()

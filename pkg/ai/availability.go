@@ -12,8 +12,8 @@ import (
 // AvailabilityForAdapter projects provider readiness into presentation-safe
 // status without exposing credentials or authentication details.
 func AvailabilityForAdapter(status AdapterStatus) api.Availability {
-	backend := Backend(status.Backend)
-	label := runtimeLabel(backend)
+	runtime := Runtime{Provider: status.Provider, Mode: api.RuntimeMode(status.Mode)}
+	label := runtimeLabel(runtime)
 	switch {
 	case status.Disabled:
 		return api.Availability{State: api.AvailabilityDisabled,
@@ -30,7 +30,8 @@ func AvailabilityForAdapter(status AdapterStatus) api.Availability {
 	case status.Type == "cli" && status.Binary == "":
 		binary := status.BinaryMissing
 		if binary == "" {
-			binary = strings.TrimSpace(string(backend))
+			p, _ := api.ProviderByName(runtime.Provider)
+			binary = requiredBinary(p, runtime.Mode)
 		}
 		return api.Availability{State: api.AvailabilityMissingExecutable,
 			Reason:      fmt.Sprintf("%s was not found on PATH.", quoted(binary)),
@@ -38,7 +39,7 @@ func AvailabilityForAdapter(status AdapterStatus) api.Availability {
 	case !status.Authenticated && status.Type == "cli":
 		return api.Availability{State: api.AvailabilityNotAuthenticated,
 			Reason:      label + " is installed but not authenticated.",
-			Remediation: "Authenticate with " + loginCommand(backend) + ", then refresh."}
+			Remediation: "Authenticate with " + loginCommand(runtime) + ", then refresh."}
 	case !status.Authenticated:
 		return api.Availability{State: api.AvailabilityMissingCredential,
 			Reason:      "No " + label + " credentials are configured.",
@@ -54,22 +55,26 @@ func LiveRuntimeCatalog() ([]api.RuntimeFamily, error) {
 	if err != nil && !errors.Is(err, ErrAdapterProbeUnsettled) {
 		return nil, err
 	}
-	byBackend := make(map[string]AdapterStatus, len(adapters))
+	byRuntime := make(map[Runtime]AdapterStatus, len(adapters))
 	for _, adapter := range adapters {
-		byBackend[adapter.Backend] = adapter
+		byRuntime[Runtime{Provider: adapter.Provider, Mode: api.RuntimeMode(adapter.Mode)}] = adapter
 	}
 	runtimes := api.RuntimeCatalog()
 	for familyIndex := range runtimes {
 		for modeIndex := range runtimes[familyIndex].Modes {
 			mode := &runtimes[familyIndex].Modes[modeIndex]
-			backend := Backend(mode.Backend)
 			if mode.Disabled {
 				continue
 			}
-			adapter, ok := byBackend[mode.Backend]
+			// Both sides key on the same (provider, mode) pair. They used to key
+			// on different vocabularies — adapter statuses on the resolved adapter
+			// id, the catalog entry on the authored mode — so nothing ever
+			// matched and every runtime reported "readiness was not reported".
+			runtime := Runtime{Provider: runtimes[familyIndex].Provider, Mode: api.RuntimeMode(mode.Mode)}
+			adapter, ok := byRuntime[runtime]
 			if !ok {
 				mode.Availability = api.Availability{State: api.AvailabilityUnavailable,
-					Reason:      runtimeLabel(backend) + " readiness was not reported.",
+					Reason:      runtimeLabel(runtime) + " readiness was not reported.",
 					Remediation: "Review the runtime diagnostics on the Whoami page, then refresh."}
 				continue
 			}
@@ -79,12 +84,15 @@ func LiveRuntimeCatalog() ([]api.RuntimeFamily, error) {
 	return runtimes, nil
 }
 
-func runtimeLabel(backend Backend) string {
-	family := backend.Family()
+func runtimeLabel(runtime Runtime) string {
+	family := ""
+	if p, ok := api.ProviderByName(runtime.Provider); ok {
+		family = p.AgentName
+	}
 	if family != "" {
 		family = strings.ToUpper(family[:1]) + family[1:]
 	}
-	switch backend.Mode() {
+	switch runtime.Mode {
 	case api.ModeAPI:
 		return family + " API"
 	case api.ModeCLI:
@@ -94,15 +102,15 @@ func runtimeLabel(backend Backend) string {
 	case api.ModeCmux:
 		return family + " cmux"
 	default:
-		return string(backend)
+		return runtime.String()
 	}
 }
 
-func loginCommand(backend Backend) string {
-	if adapter, ok := cliAdapters()[backend]; ok && len(adapter.logins) > 0 {
+func loginCommand(runtime Runtime) string {
+	if adapter, ok := cliAdapters()[runtime.Provider]; ok && len(adapter.logins) > 0 {
 		return quoted(adapter.logins[0].label)
 	}
-	return quoted(string(backend) + " login")
+	return quoted(runtime.Provider + " login")
 }
 
 func quoted(value string) string { return "`" + value + "`" }

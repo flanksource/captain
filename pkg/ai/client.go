@@ -17,25 +17,32 @@ import (
 // registry unchanged.
 type ProviderFactory = api.ProviderFactory
 
-// RegisterProvider registers a factory for a backend in the shared api registry.
-func RegisterProvider(backend Backend, factory ProviderFactory) {
-	api.RegisterProvider(backend, factory)
+// RegisterProvider registers a factory for a runtime in the shared api registry.
+func RegisterProvider(runtime Runtime, factory ProviderFactory) {
+	api.RegisterProvider(runtime, factory)
 }
 
-// NewProvider constructs the registered provider for cfg's backend. When the model
+// NewProvider constructs the registered adapter for cfg's runtime. When the model
 // name is unrecognized, the error is enriched with the closest known model names
 // ("did you mean …"). When cfg.Model resolves to more than one candidate (a
 // comma-separated Name or a Fallbacks list), a fallback provider is returned that
 // tries each in order on a fallback-eligible failure.
 func NewProvider(cfg Config) (Provider, error) {
-	resolved, err := ResolveModelSelectors(cfg.Model)
+	resolved, err := Resolve(cfg.Model)
 	if err != nil {
 		return nil, err
 	}
-	cfg.Model = normalizeProviderModel(resolved)
+	cfg.Model = resolved
+	// Each candidate is resolved through the same entry point rather than a
+	// bespoke normalizer: a fallback chain and a substitute picked from the
+	// catalog must land on exactly the ids and modes the primary would.
 	candidates := cfg.Model.Candidates()
 	for i := range candidates {
-		candidates[i] = normalizeProviderModel(candidates[i])
+		candidate, err := Resolve(candidates[i])
+		if err != nil {
+			return nil, suggestModelName(err, candidates[i].Name)
+		}
+		candidates[i] = candidate
 	}
 	cfg.Model = candidates[0]
 	if len(candidates) > 1 {
@@ -56,24 +63,10 @@ func newResolvedProvider(cfg Config) (Provider, error) {
 	return withModelErrorRecommendations(withEffortValidation(p, cfg.Model.Effort)), nil
 }
 
-func normalizeProviderModel(model api.Model) api.Model {
-	backend := model.Backend
-	if backend == "" {
-		if inferred, err := api.InferBackend(model.Name); err == nil {
-			backend = inferred
-		}
-	}
-	if backend != "" {
-		model.Name = NormalizeModelForBackend(backend, model.Name)
-		model.Backend = backend
-	}
-	return model
-}
-
 // suggestModelName appends the closest catalog model ids to an unresolvable-model
 // error, so e.g. "claud-sonnet-4" points at "claude-sonnet-4".
 func suggestModelName(err error, model string) error {
-	if model == "" || !errors.Is(err, api.ErrInferBackend) {
+	if model == "" || !errors.Is(err, api.ErrUnknownModel) {
 		return err
 	}
 	// Candidates are the catalog base names ("claude-sonnet-5"), which is the form
@@ -99,11 +92,11 @@ func suggestModelName(err error, model string) error {
 	return fmt.Errorf("%w; did you mean: %s", err, strings.Join(similar, ", "))
 }
 
-// GetAPIKeyFromEnv returns the first non-empty value among a backend's auth env vars.
-func GetAPIKeyFromEnv(backend Backend) string {
-	return api.GetAPIKeyFromEnv(backend)
+// GetAPIKeyFromEnv returns the first non-empty value among a runtime's auth env vars.
+func GetAPIKeyFromEnv(p *ModelProvider, mode RuntimeMode) string {
+	return api.GetAPIKeyFromEnv(p, mode)
 }
 
-func ResolveAPIKey(backend Backend) (api.ResolvedAPIKey, error) {
-	return api.ResolveAPIKey(backend)
+func ResolveAPIKey(p *ModelProvider, mode RuntimeMode) (api.ResolvedAPIKey, error) {
+	return api.ResolveAPIKey(p, mode)
 }

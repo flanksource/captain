@@ -23,29 +23,30 @@ var _ = Describe("runtime availability", func() {
 			}
 		},
 		Entry("disabled mode",
-			AdapterStatus{Backend: string(BackendClaudeCmux), Type: "cli", Authenticated: true, Binary: "/bin/claude",
+			AdapterStatus{Provider: Anthropic.Name, Mode: string(ModeCmux), Type: "cli", Authenticated: true, Binary: "/bin/claude",
 				Disabled: true, DisabledReason: "mode cmux"},
 			api.AvailabilityDisabled, "mode cmux"),
 		Entry("missing API credentials",
-			AdapterStatus{Backend: string(BackendOpenAI), Type: "api"},
+			AdapterStatus{Provider: OpenAI.Name, Mode: string(ModeAPI), Type: "api"},
 			api.AvailabilityMissingCredential, "credentials"),
 		Entry("local CLI not authenticated",
-			AdapterStatus{Backend: string(BackendCodexCLI), Type: "cli", Binary: "/bin/codex"},
+			AdapterStatus{Provider: OpenAI.Name, Mode: string(ModeCLI), Type: "cli", Binary: "/bin/codex"},
 			api.AvailabilityNotAuthenticated, "authenticated"),
 		Entry("missing executable",
-			AdapterStatus{Backend: string(BackendGeminiCLI), Type: "cli", Authenticated: true, BinaryMissing: "gemini"},
+			AdapterStatus{Provider: Google.Name, Mode: string(ModeCLI), Type: "cli", Authenticated: true, BinaryMissing: "gemini"},
 			api.AvailabilityMissingExecutable, "gemini"),
 		Entry("missing runtime dependency",
-			AdapterStatus{Backend: string(BackendClaudeAgent), Type: "cli", Authenticated: true, DependencyMissing: "npm"},
+			AdapterStatus{Provider: Anthropic.Name, Mode: string(ModeAgent), Type: "cli", Authenticated: true, DependencyMissing: "npm"},
 			api.AvailabilityMissingDependency, "npm"),
 		Entry("ready",
-			AdapterStatus{Backend: string(BackendCodexCLI), Type: "cli", Authenticated: true, Binary: "/bin/codex"},
+			AdapterStatus{Provider: OpenAI.Name, Mode: string(ModeCLI), Type: "cli", Authenticated: true, Binary: "/bin/codex"},
 			api.AvailabilityAvailable, ""),
 	)
 
 	It("does not expose runtime probe error details", func() {
 		availability := AvailabilityForAdapter(AdapterStatus{
-			Backend:      string(BackendCodexCLI),
+			Provider:     OpenAI.Name,
+			Mode:         string(ModeCLI),
 			Type:         "cli",
 			RuntimeError: "inspect token=super-secret: permission denied",
 		})
@@ -67,43 +68,50 @@ var _ = Describe("runtime availability", func() {
 		adapterAuthProbe = func() AuthProbe { return fakeProbe(nil, nil, nil, home) }
 		adapterProbe = func(AuthProbe) ([]AdapterStatus, error) {
 			return []AdapterStatus{
-				{Backend: string(BackendOpenAI), Type: "api"},
-				{Backend: string(BackendCodexCLI), Type: "cli", Binary: "/bin/codex"},
-				{Backend: string(BackendClaudeAgent), Type: "cli", Authenticated: true, DependencyMissing: "npm"},
+				{Provider: OpenAI.Name, Mode: string(ModeAPI), Type: "api"},
+				{Provider: OpenAI.Name, Mode: string(ModeCLI), Type: "cli", Binary: "/bin/codex"},
+				{Provider: Anthropic.Name, Mode: string(ModeAgent), Type: "cli", Authenticated: true, DependencyMissing: "npm"},
 			}, nil
 		}
 
 		runtimes, err := LiveRuntimeCatalog()
 		Expect(err).NotTo(HaveOccurred())
-		Expect(runtimeEntry(runtimes, BackendClaudeAgent).CatalogProvider).To(Equal("anthropic"))
-		Expect(runtimeEntry(runtimes, BackendOpenAI).CatalogProvider).To(Equal("openai"))
+		Expect(runtimeEntry(runtimes, RuntimeOf(Anthropic, ModeAgent)).CatalogProvider).To(Equal("anthropic"))
+		Expect(runtimeEntry(runtimes, RuntimeOf(OpenAI, ModeAPI)).CatalogProvider).To(Equal("openai"))
 		for _, test := range []struct {
-			backend Backend
+			runtime Runtime
 			state   api.AvailabilityState
 		}{
-			{backend: BackendOpenAI, state: api.AvailabilityMissingCredential},
-			{backend: BackendCodexCLI, state: api.AvailabilityNotAuthenticated},
-			{backend: BackendClaudeAgent, state: api.AvailabilityMissingDependency},
+			{runtime: RuntimeOf(OpenAI, ModeAPI), state: api.AvailabilityMissingCredential},
+			{runtime: RuntimeOf(OpenAI, ModeCLI), state: api.AvailabilityNotAuthenticated},
+			{runtime: RuntimeOf(Anthropic, ModeAgent), state: api.AvailabilityMissingDependency},
 		} {
-			availability := runtimeAvailability(runtimes, test.backend)
-			Expect(availability.State).To(Equal(test.state), string(test.backend))
-			Expect(availability.Remediation).NotTo(BeEmpty(), string(test.backend))
+			availability := runtimeAvailability(runtimes, test.runtime)
+			Expect(availability.State).To(Equal(test.state), test.runtime.String())
+			Expect(availability.Remediation).NotTo(BeEmpty(), test.runtime.String())
 		}
 	})
 })
 
-func runtimeAvailability(families []api.RuntimeFamily, backend Backend) api.Availability {
-	return runtimeEntry(families, backend).Availability
+func runtimeAvailability(families []api.RuntimeFamily, runtime Runtime) api.Availability {
+	return runtimeEntry(families, runtime).Availability
 }
 
-func runtimeEntry(families []api.RuntimeFamily, backend Backend) api.RuntimeModeEntry {
+// runtimeEntry matches on the two axes independently: the family carries the
+// provider key, the entry carries the mode. The version this replaces compared a
+// single composite adapter id, which the catalog no longer emits — so every
+// lookup missed and every runtime reported "readiness was not reported".
+func runtimeEntry(families []api.RuntimeFamily, runtime Runtime) api.RuntimeModeEntry {
 	for _, family := range families {
+		if family.Provider != runtime.Provider {
+			continue
+		}
 		for _, mode := range family.Modes {
-			if mode.Backend == string(backend) {
+			if mode.Mode == string(runtime.Mode) {
 				return mode
 			}
 		}
 	}
-	Fail("runtime backend " + string(backend) + " not found")
+	Fail("runtime " + runtime.String() + " not found")
 	return api.RuntimeModeEntry{}
 }

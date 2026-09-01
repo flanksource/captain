@@ -13,14 +13,14 @@ import (
 )
 
 type modelErrorTestProvider struct {
-	backend Backend
+	runtime Runtime
 	model   string
 	err     error
 	events  []Event
 }
 
 func (p *modelErrorTestProvider) GetModel() string    { return p.model }
-func (p *modelErrorTestProvider) GetBackend() Backend { return p.backend }
+func (p *modelErrorTestProvider) GetRuntime() Runtime { return p.runtime }
 func (p *modelErrorTestProvider) Execute(context.Context, Request) (*Response, error) {
 	return nil, p.err
 }
@@ -39,7 +39,7 @@ func (p *modelErrorTestProvider) ExecuteStream(context.Context, Request) (<-chan
 func stubModelRecommendations(t *testing.T) {
 	t.Helper()
 	previous := modelAvailabilityResolver
-	modelAvailabilityResolver = func(context.Context, Backend) []ModelDef {
+	modelAvailabilityResolver = func(context.Context, *ModelProvider, RuntimeMode) []ModelDef {
 		return []ModelDef{
 			{ID: "gpt-5.6-sol"},
 			{ID: "gpt-5.6-terra"},
@@ -52,21 +52,21 @@ func stubModelRecommendations(t *testing.T) {
 	t.Cleanup(func() { modelAvailabilityResolver = previous })
 }
 
-func TestRecommendModelErrorUsesAvailableBackendModels(t *testing.T) {
+func TestRecommendModelErrorUsesTheRuntimesAvailableModels(t *testing.T) {
 	stubModelRecommendations(t)
 	base := fmtModelUnavailable("The 'gpt-5.6-line' model is not supported when using Codex with a ChatGPT account.")
-	err := recommendModelError(context.Background(), BackendCodexAgent, "gpt-5.6-line", base)
+	err := recommendModelError(context.Background(), OpenAI, ModeAgent, "gpt-5.6-line", base)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `did you mean "gpt-5.6-luna"?`)
-	assert.Contains(t, err.Error(), "available models for codex-agent: gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna, gpt-5.5, gpt-5.4 (+1 more)")
+	assert.Contains(t, err.Error(), "available models for openai agent: gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna, gpt-5.5, gpt-5.4 (+1 more)")
 	assert.ErrorIs(t, err, ErrModelUnavailable)
 }
 
 func TestModelErrorProviderEnrichesBufferedFailure(t *testing.T) {
 	stubModelRecommendations(t)
 	base := &modelErrorTestProvider{
-		backend: BackendCodexCLI,
+		runtime: RuntimeOf(OpenAI, ModeCLI),
 		model:   "gpt-5.6-line",
 		err:     errors.New("unsupported model gpt-5.6-line"),
 	}
@@ -79,13 +79,13 @@ func TestModelErrorProviderEnrichesBufferedFailure(t *testing.T) {
 func TestModelErrorProviderEnrichesStreamingFailure(t *testing.T) {
 	previous := modelAvailabilityResolver
 	resolveCalls := 0
-	modelAvailabilityResolver = func(context.Context, Backend) []ModelDef {
+	modelAvailabilityResolver = func(context.Context, *ModelProvider, RuntimeMode) []ModelDef {
 		resolveCalls++
 		return []ModelDef{{ID: "gpt-5.6-luna"}, {ID: "gpt-5.6-sol"}}
 	}
 	t.Cleanup(func() { modelAvailabilityResolver = previous })
 	base := &modelErrorTestProvider{
-		backend: BackendCodexAgent,
+		runtime: RuntimeOf(OpenAI, ModeAgent),
 		model:   "gpt-5.6-line",
 		events: []Event{
 			{Kind: EventError, Error: "unknown model gpt-5.6-line"},
@@ -105,7 +105,7 @@ func TestModelErrorProviderEnrichesStreamingFailure(t *testing.T) {
 func TestRecommendModelErrorLeavesOtherFailuresUnchanged(t *testing.T) {
 	stubModelRecommendations(t)
 	base := errors.New("authentication failed: invalid API key")
-	err := recommendModelError(context.Background(), BackendOpenAI, "gpt-5.6", base)
+	err := recommendModelError(context.Background(), OpenAI, ModeAPI, "gpt-5.6", base)
 	assert.Same(t, base, err)
 	assert.False(t, strings.Contains(err.Error(), "available models"))
 }

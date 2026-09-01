@@ -41,10 +41,10 @@ func TestBareID(t *testing.T) {
 		model Model
 		want  string
 	}{
-		"api strips provider prefix": {Model{ID: "anthropic/claude-sonnet-4-5", Backend: BackendAnthropic}, "claude-sonnet-4-5"},
-		"gemini googleai prefix":     {Model{ID: "googleai/gemini-2.5-pro", Backend: BackendGemini}, "gemini-2.5-pro"},
-		"agent id verbatim":          {Model{ID: "claude-sonnet-5", Backend: BackendClaudeAgent}, "claude-sonnet-5"},
-		"codex slug id verbatim":     {Model{ID: "gpt-5.5", Backend: BackendCodexCLI}, "gpt-5.5"},
+		"api strips provider prefix": {Model{ID: "anthropic/claude-sonnet-4-5", Provider: Anthropic, Mode: ModeAPI}, "claude-sonnet-4-5"},
+		"gemini googleai prefix":     {Model{ID: "googleai/gemini-2.5-pro", Provider: Google, Mode: ModeAPI}, "gemini-2.5-pro"},
+		"agent id verbatim":          {Model{ID: "claude-sonnet-5", Provider: Anthropic, Mode: ModeAgent}, "claude-sonnet-5"},
+		"codex slug id verbatim":     {Model{ID: "gpt-5.5", Provider: OpenAI, Mode: ModeCLI}, "gpt-5.5"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -55,18 +55,18 @@ func TestBareID(t *testing.T) {
 	}
 }
 
+// "Agent" is a property of the mode alone — any local transport supervises a
+// binary — so it needs no provider to answer.
 func TestIsAgent(t *testing.T) {
-	cases := map[Backend]bool{
-		BackendAnthropic:   false,
-		BackendOpenAI:      false,
-		BackendGemini:      false,
-		BackendClaudeAgent: true,
-		BackendCodexCLI:    true,
-		BackendClaudeCLI:   true,
+	cases := map[RuntimeMode]bool{
+		ModeAPI:   false,
+		ModeAgent: true,
+		ModeCLI:   true,
+		ModeCmux:  true,
 	}
-	for b, want := range cases {
-		if got := (Model{Backend: b}).IsAgent(); got != want {
-			t.Fatalf("Backend %q IsAgent() = %v, want %v", b, got, want)
+	for mode, want := range cases {
+		if got := (Model{Mode: mode}).IsAgent(); got != want {
+			t.Fatalf("mode %q IsAgent() = %v, want %v", mode, got, want)
 		}
 	}
 }
@@ -74,7 +74,7 @@ func TestIsAgent(t *testing.T) {
 func TestRegisterModelAddsAndUpdates(t *testing.T) {
 	t.Cleanup(ResetModelCatalog)
 
-	if err := RegisterModel(Model{ID: "anthropic/new-model", Backend: BackendAnthropic, Label: "New"}); err != nil {
+	if err := RegisterModel(Model{ID: "anthropic/new-model", Provider: Anthropic, Mode: ModeAPI, Label: "New"}); err != nil {
 		t.Fatalf("RegisterModel add: %v", err)
 	}
 	m, err := LookupModel("anthropic/new-model")
@@ -82,7 +82,7 @@ func TestRegisterModelAddsAndUpdates(t *testing.T) {
 		t.Fatalf("added model missing/wrong: %+v err=%v", m, err)
 	}
 
-	if err := RegisterModel(Model{ID: "anthropic/new-model", Backend: BackendAnthropic, Label: "Updated"}); err != nil {
+	if err := RegisterModel(Model{ID: "anthropic/new-model", Provider: Anthropic, Mode: ModeAPI, Label: "Updated"}); err != nil {
 		t.Fatalf("RegisterModel update: %v", err)
 	}
 	m, _ = LookupModel("anthropic/new-model")
@@ -94,7 +94,7 @@ func TestRegisterModelAddsAndUpdates(t *testing.T) {
 func TestSetModelCatalogAndReset(t *testing.T) {
 	t.Cleanup(ResetModelCatalog)
 
-	if err := SetModelCatalog([]Model{{ID: "openai/only", Backend: BackendOpenAI}}); err != nil {
+	if err := SetModelCatalog([]Model{{ID: "openai/only", Provider: OpenAI, Mode: ModeAPI}}); err != nil {
 		t.Fatalf("SetModelCatalog: %v", err)
 	}
 	if got := len(Catalog()); got != 1 {
@@ -110,16 +110,16 @@ func TestSetModelCatalogAndReset(t *testing.T) {
 func TestRegisterModelValidation(t *testing.T) {
 	t.Cleanup(ResetModelCatalog)
 
-	if err := RegisterModel(Model{ID: "", Backend: BackendAnthropic}); err == nil {
+	if err := RegisterModel(Model{ID: "", Provider: Anthropic, Mode: ModeAPI}); err == nil {
 		t.Fatal("expected error for empty ID")
 	}
 	if err := RegisterModel(Model{ID: "x/y"}); err == nil {
-		t.Fatal("expected error for missing Backend")
+		t.Fatal("expected error for a missing runtime")
 	}
-	if err := RegisterModel(Model{ID: "x/y", Backend: Backend("nonsense")}); err == nil {
-		t.Fatal("expected error for invalid Backend")
+	if err := RegisterModel(Model{ID: "x/y", Provider: OpenAI, Mode: RuntimeMode("nonsense")}); err == nil {
+		t.Fatal("expected error for an invalid mode")
 	}
-	if err := RegisterModel(Model{ID: "x/y", Backend: BackendOpenAI, ReleaseDate: "not-a-date"}); err == nil {
+	if err := RegisterModel(Model{ID: "x/y", Provider: OpenAI, Mode: ModeAPI, ReleaseDate: "not-a-date"}); err == nil {
 		t.Fatal("expected error for invalid release date")
 	}
 }
@@ -128,32 +128,32 @@ func TestCatalogReleaseDateMatchesBareAndRuntimeIDs(t *testing.T) {
 	t.Cleanup(ResetModelCatalog)
 
 	if err := SetModelCatalog([]Model{
-		{ID: "openai/gpt-test", Backend: BackendOpenAI, ReleaseDate: "2026-01-02"},
-		{ID: "codex-gpt-test", Backend: BackendCodexCLI, AgentModel: "gpt-test-runtime", ReleaseDate: "2026-03-04"},
+		{ID: "openai/gpt-test", Provider: OpenAI, Mode: ModeAPI, ReleaseDate: "2026-01-02"},
+		{ID: "codex-gpt-test", Provider: OpenAI, Mode: ModeCLI, AgentModel: "gpt-test-runtime", ReleaseDate: "2026-03-04"},
 	}); err != nil {
 		t.Fatalf("SetModelCatalog: %v", err)
 	}
 
-	if got := CatalogReleaseDate(BackendOpenAI, "gpt-test"); got != "2026-01-02" {
+	if got := CatalogReleaseDate(OpenAI, ModeAPI, "gpt-test"); got != "2026-01-02" {
 		t.Fatalf("bare API release date = %q", got)
 	}
-	if got := CatalogReleaseDate(BackendCodexCLI, "gpt-test-runtime"); got != "2026-03-04" {
+	if got := CatalogReleaseDate(OpenAI, ModeCLI, "gpt-test-runtime"); got != "2026-03-04" {
 		t.Fatalf("agent runtime release date = %q", got)
 	}
 }
 
 func TestCurrentModelsByReleaseDateFiltersAndSorts(t *testing.T) {
 	models := []ModelDef{
-		{ID: "claude-sonnet-5", Backend: BackendAnthropic, ReleaseDate: "2026-06-01"},
-		{ID: "claude-sonnet-4-6", Backend: BackendAnthropic, ReleaseDate: "2026-05-01"},
-		{ID: "claude-sonnet-4-5", Backend: BackendAnthropic, ReleaseDate: "2026-04-01"},
-		{ID: "claude-sonnet-4-4", Backend: BackendAnthropic, ReleaseDate: "2026-03-01"},
-		{ID: "sonnet-5", Backend: BackendClaudeCmux, ReleaseDate: "2026-06-01"},
-		{ID: "sonnet-4-6", Backend: BackendClaudeCmux, ReleaseDate: "2026-05-01"},
-		{ID: "claude-haiku-4-5", Backend: BackendAnthropic, ReleaseDate: "2025-10-15"},
-		{ID: "gemini-3.0-pro", Backend: BackendGemini},
-		{ID: "gpt-4o", Backend: BackendOpenAI, ReleaseDate: "2026-04-01"},
-		{ID: "gpt-5-codex", Backend: BackendCodexCLI, ReleaseDate: "2026-03-01"},
+		{ID: "claude-sonnet-5", Provider: Anthropic.Name, Mode: ModeAPI, ReleaseDate: "2026-06-01"},
+		{ID: "claude-sonnet-4-6", Provider: Anthropic.Name, Mode: ModeAPI, ReleaseDate: "2026-05-01"},
+		{ID: "claude-sonnet-4-5", Provider: Anthropic.Name, Mode: ModeAPI, ReleaseDate: "2026-04-01"},
+		{ID: "claude-sonnet-4-4", Provider: Anthropic.Name, Mode: ModeAPI, ReleaseDate: "2026-03-01"},
+		{ID: "sonnet-5", Provider: Anthropic.Name, Mode: ModeCmux, ReleaseDate: "2026-06-01"},
+		{ID: "sonnet-4-6", Provider: Anthropic.Name, Mode: ModeCmux, ReleaseDate: "2026-05-01"},
+		{ID: "claude-haiku-4-5", Provider: Anthropic.Name, Mode: ModeAPI, ReleaseDate: "2025-10-15"},
+		{ID: "gemini-3.0-pro", Provider: Google.Name, Mode: ModeAPI},
+		{ID: "gpt-4o", Provider: OpenAI.Name, Mode: ModeAPI, ReleaseDate: "2026-04-01"},
+		{ID: "gpt-5-codex", Provider: OpenAI.Name, Mode: ModeCLI, ReleaseDate: "2026-03-01"},
 	}
 
 	got := CurrentModelsByReleaseDate(models)
@@ -177,7 +177,6 @@ func TestCurrentModelsByReleaseDateFiltersAndSorts(t *testing.T) {
 func TestModelFamilyPrefix(t *testing.T) {
 	cases := map[string]string{
 		"anthropic/claude-haiku-4-5": "claude-haiku",
-		"claude-agent-sonnet":        "claude-agent-sonnet",
 		"claude-sonnet-5":            "claude-sonnet",
 		"sonnet-5":                   "sonnet",
 		"sonnet-4-6":                 "sonnet",

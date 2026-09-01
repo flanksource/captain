@@ -19,7 +19,7 @@ type fakeProvider struct {
 }
 
 func (f *fakeProvider) GetModel() string       { return "fake" }
-func (f *fakeProvider) GetBackend() ai.Backend { return ai.Backend("fake") }
+func (f *fakeProvider) GetRuntime() ai.Runtime { return ai.RuntimeOf(ai.Anthropic, ai.ModeAgent) }
 func (f *fakeProvider) Execute(context.Context, ai.Request) (*ai.Response, error) {
 	return &ai.Response{}, nil
 }

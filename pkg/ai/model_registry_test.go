@@ -3,8 +3,8 @@ package ai
 import "testing"
 
 func TestRegistryModelDefsIncludeFableCapabilities(t *testing.T) {
-	for _, backend := range []Backend{BackendClaudeAgent, BackendClaudeCLI, BackendClaudeCmux} {
-		defs := RegistryModelDefs(backend)
+	for _, mode := range []RuntimeMode{ModeAgent, ModeCLI, ModeCmux} {
+		defs := RegistryModelDefs(Anthropic, mode)
 		var fable *ModelDef
 		for i := range defs {
 			if defs[i].ID == "claude-fable-5" {
@@ -13,13 +13,13 @@ func TestRegistryModelDefsIncludeFableCapabilities(t *testing.T) {
 			}
 		}
 		if fable == nil {
-			t.Fatalf("%s registry models omit claude-fable-5: %+v", backend, defs)
+			t.Fatalf("anthropic %s registry models omit claude-fable-5: %+v", mode, defs)
 		}
 		if !fable.CapabilitiesKnown || !fable.Reasoning || fable.Temperature {
-			t.Fatalf("%s fable capabilities = %+v", backend, *fable)
+			t.Fatalf("anthropic %s fable capabilities = %+v", mode, *fable)
 		}
 		if len(fable.SupportedEfforts) != 5 || fable.SupportedEfforts[0] != "low" || fable.SupportedEfforts[4] != "max" {
-			t.Fatalf("%s fable efforts = %v", backend, fable.SupportedEfforts)
+			t.Fatalf("anthropic %s fable efforts = %v", mode, fable.SupportedEfforts)
 		}
 	}
 }

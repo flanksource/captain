@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"encoding/json"
 	"os/exec"
 	"slices"
 
@@ -29,15 +30,48 @@ type ModelInfo struct {
 	InputMediaTypes []string `json:"inputMediaTypes"`
 }
 
-// BackendToProvider returns the provider axis used by model catalogs and
-// persisted runtime metadata. Execution mechanism is serialized separately as
-// api | agent | cli | cmux and never encoded into this value.
-func BackendToProvider(b Backend) string {
-	p, _, ok := registry.ProviderFor(b)
-	if !ok {
-		return string(b)
+// Runtime is published as an api.RuntimeIdentity so the row keeps naming its
+// resolved adapter. Marshalling api.Model directly would emit the runtime mode
+// under `backend` instead, collapsing every provider's modes into "api"/"agent".
+type modelInfoWire struct {
+	modelInfoAlias
+	Runtime api.RuntimeIdentity `json:"runtime"`
+}
+
+type modelInfoAlias ModelInfo
+
+func (m ModelInfo) MarshalJSON() ([]byte, error) {
+	return json.Marshal(modelInfoWire{modelInfoAlias(m), api.RuntimeIdentityOf(m.Runtime)})
+}
+
+func (m *ModelInfo) UnmarshalJSON(data []byte) error {
+	var wire modelInfoWire
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	*m = ModelInfo(wire.modelInfoAlias)
+	m.Runtime = wire.Runtime.ToModel()
+	return nil
+}
+
+// CatalogPrefixOf is the id prefix a provider's API-mode catalog rows carry
+// ("googleai/gemini-3.5-flash"). It is a model-id detail, not the provider
+// identity on the wire — that is providerName, which every surface agrees on.
+func CatalogPrefixOf(p *ModelProvider) string {
+	if p == nil {
+		return ""
 	}
 	return p.CatalogPrefix
+}
+
+// providerName is the one provider token that crosses the wire: the descriptor's
+// Name. Google's catalog prefix ("googleai") differs from its name ("google"),
+// so a surface that mixed the two silently failed to match its own rows.
+func providerName(p *ModelProvider) string {
+	if p == nil {
+		return ""
+	}
+	return p.Name
 }
 
 // CatalogInfo returns the static model menu annotated with selectability. API
@@ -63,16 +97,25 @@ func catalogInfoFrom(models []Model, options catalogInfoOptions) []ModelInfo {
 	out := make([]ModelInfo, 0, len(models))
 	for _, m := range models {
 		availability := modelAvailability(m, options)
-		runtime := api.Model{
-			Name:    m.BareID(),
-			Backend: m.Backend,
-		}.Capabilities()
+		// A catalog row already names its provider and mode, so this enriches
+		// rather than resolves. A row whose pair the provider does not serve is
+		// listed without capability flags instead of being dropped: the menu's
+		// job is to show what exists, and its selectability is answered
+		// separately by modelAvailability.
+		runtime, err := api.Model{
+			Name:     m.BareID(),
+			Provider: m.Provider,
+			Mode:     m.Mode,
+		}.WithCapabilities()
+		if err != nil {
+			runtime = api.Model{Name: m.BareID(), Provider: m.Provider, Mode: m.Mode}
+		}
 		if m.ID != runtime.Name {
 			runtime.ID = m.ID
 		}
 		out = append(out, ModelInfo{
 			ID:              m.ID,
-			Provider:        BackendToProvider(m.Backend),
+			Provider:        providerName(m.Provider),
 			Label:           m.Label,
 			Runtime:         runtime,
 			Reasoning:       m.Reasoning,
@@ -89,8 +132,8 @@ func catalogInfoFrom(models []Model, options catalogInfoOptions) []ModelInfo {
 
 func modelAvailability(model Model, options catalogInfoOptions) api.Availability {
 	disabled := Disabled()
-	if disabled.Model(model.Backend, model.BareID()) {
-		reason := disabled.Reason(model.Backend)
+	if disabled.Model(model.Provider, model.Mode, model.BareID()) {
+		reason := disabled.Reason(model.Provider, model.Mode)
 		if reason == "" {
 			reason = "model " + model.ID
 		}
@@ -98,53 +141,42 @@ func modelAvailability(model Model, options catalogInfoOptions) api.Availability
 			Reason:      "Disabled by " + reason + " in Captain configuration.",
 			Remediation: "Enable " + reason + " on the Whoami page, then refresh."}
 	}
-	if slices.Contains(options.ConfiguredProviders, BackendToProvider(model.Backend)) {
+	if slices.Contains(options.ConfiguredProviders, providerName(model.Provider)) {
 		return api.Available()
 	}
 	for _, adapter := range options.Adapters {
-		if adapter.Backend == string(model.Backend) {
+		if adapter.Provider == providerName(model.Provider) && adapter.Mode == string(model.Mode) {
 			return AvailabilityForAdapter(adapter)
 		}
 	}
-	if model.IsAgent() && agentBackendAvailable(model.Backend) {
+	status := AdapterStatus{
+		Provider: providerName(model.Provider),
+		Mode:     string(model.Mode),
+		Type:     model.Mode.Kind(),
+	}
+	if !model.IsAgent() {
+		return AvailabilityForAdapter(status)
+	}
+	binary := requiredBinary(model.Provider, model.Mode)
+	if binary != "" && binaryOnPath(binary) {
 		return api.Available()
 	}
-	if model.IsAgent() {
-		return AvailabilityForAdapter(AdapterStatus{Backend: string(model.Backend), Type: "cli", BinaryMissing: requiredBinary(model.Backend)})
-	}
-	return AvailabilityForAdapter(AdapterStatus{Backend: string(model.Backend), Type: "api"})
+	status.BinaryMissing = binary
+	return AvailabilityForAdapter(status)
 }
 
-func requiredBinary(backend Backend) string {
-	switch backend {
-	case BackendCodexCLI, BackendCodexAgent, BackendCodexCmux:
-		return "codex"
-	case BackendClaudeCLI, BackendClaudeCmux:
-		return "claude"
-	case BackendClaudeAgent:
-		return "tsx"
-	case BackendGeminiCLI:
-		return "gemini"
-	default:
-		return string(backend)
+// requiredBinary is the executable a local transport needs on PATH, declared per
+// provider×mode cell. It is read rather than switched on: the Anthropic agent SDK
+// runs under tsx, which no rule derived from the family or the mode would produce.
+func requiredBinary(p *ModelProvider, mode RuntimeMode) string {
+	if p == nil {
+		return ""
 	}
-}
-
-// agentBackendAvailable reports whether an agent backend's local binary is
-// installed (best effort): codex backends need the `codex` binary; claude-cli
-// needs `claude`; claude-agent needs `tsx`. A turn still fails loud if the probe
-// is wrong.
-func agentBackendAvailable(b Backend) bool {
-	switch b {
-	case BackendCodexCLI, BackendCodexAgent, BackendCodexCmux:
-		return binaryOnPath("codex")
-	case BackendClaudeCLI, BackendClaudeCmux:
-		return binaryOnPath("claude")
-	case BackendClaudeAgent:
-		return binaryOnPath("tsx")
-	default:
-		return false
+	caps, ok := p.Caps(mode)
+	if !ok {
+		return ""
 	}
+	return caps.RequiredBinary
 }
 
 func binaryOnPath(bin string) bool {

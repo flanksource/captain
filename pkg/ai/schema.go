@@ -151,50 +151,72 @@ func SchemaJSONFor(p api.Prompt) (json.RawMessage, error) {
 	return json.Marshal(schema)
 }
 
-// SchemaJSONForBackend resolves the schema a provider should send to its
-// backend. Native structured-output backends receive a transformed subset of
-// the caller's original JSON Schema when their API imposes stricter schema
-// rules; every other backend receives the original schema from SchemaJSONFor.
-func SchemaJSONForBackend(backend api.Backend, p api.Prompt) (json.RawMessage, error) {
+// SchemaJSONForRuntime resolves the schema a provider should send on a runtime.
+// Native structured-output runtimes receive a transformed subset of the caller's
+// original JSON Schema when their API imposes stricter schema rules; every other
+// runtime receives the original schema from SchemaJSONFor.
+func SchemaJSONForRuntime(provider *api.ModelProvider, mode api.RuntimeMode, p api.Prompt) (json.RawMessage, error) {
 	schema, err := SchemaJSONFor(p)
 	if err != nil || len(schema) == 0 {
 		return schema, err
 	}
 	switch {
-	case backend == api.BackendClaudeCLI:
+	case RunsThroughClaudeCode(provider, mode):
 		return ClaudeCLICompatibleSchema(schema)
-	case UsesAnthropicSchemaSubset(backend):
+	case UsesAnthropicSchemaSubset(provider, mode):
 		return AnthropicCompatibleSchema(schema)
-	case UsesOpenAISchemaSubset(backend):
+	case UsesOpenAISchemaSubset(provider, mode):
 		return OpenAICompatibleSchema(schema)
 	default:
 		return schema, nil
 	}
 }
 
-// UsesAnthropicSchemaSubset reports whether a backend sends JSON Schema to
-// Claude's native structured-output machinery and therefore needs Captain to
-// apply Anthropic's supported-subset transformation before dispatch.
-func UsesAnthropicSchemaSubset(backend api.Backend) bool {
-	switch backend {
-	case api.BackendAnthropic, api.BackendClaudeAgent, api.BackendClaudeCLI:
-		return true
-	default:
-		return false
-	}
+// RunsThroughClaudeCode reports whether a runtime's schema is ultimately handed
+// to Claude Code rather than to the Anthropic API.
+//
+// The distinction is not cosmetic: Claude Code validates the schema up front and
+// tries to RESOLVE the root `$schema` dialect URI, which fails with
+// `no schema with key or ref "https://json-schema.org/draft/2020-12/schema"` and
+// kills the run before any model call. The Anthropic API accepts the same
+// declaration happily. So these runtimes need ClaudeCLICompatibleSchema, which
+// strips it.
+//
+// Anthropic's agent mode belongs here despite running "in process": its bridge
+// sets the Agent SDK's `outputFormat: {type: "json_schema"}`, and the SDK spawns
+// Claude Code — the same consumer the cli mode invokes directly. Classifying it
+// as an Anthropic API consumer made every structured-output agent run fail. The
+// answer is declared per provider×mode cell in the registry, not derived here.
+func RunsThroughClaudeCode(provider *api.ModelProvider, mode api.RuntimeMode) bool {
+	caps, known := modeCaps(provider, mode)
+	return known && caps.RunsThroughClaudeCode
 }
 
-// UsesOpenAISchemaSubset reports whether a backend sends JSON Schema to
-// OpenAI's native strict structured-output machinery. Prompt-only Codex cmux
-// sessions are deliberately excluded because they do not submit a response
-// format to OpenAI.
-func UsesOpenAISchemaSubset(backend api.Backend) bool {
-	switch backend {
-	case api.BackendOpenAI, api.BackendCodexCLI, api.BackendCodexAgent:
-		return true
-	default:
-		return false
+// UsesAnthropicSchemaSubset reports whether a runtime sends JSON Schema to
+// Claude's native structured-output machinery and therefore needs Captain to
+// apply Anthropic's supported-subset transformation before dispatch.
+//
+// It stays true for the Claude Code cells: ClaudeCLICompatibleSchema applies
+// this subset internally before stripping the dialect declaration.
+func UsesAnthropicSchemaSubset(provider *api.ModelProvider, mode api.RuntimeMode) bool {
+	caps, known := modeCaps(provider, mode)
+	return known && caps.SchemaDialect == api.SchemaDialectAnthropic
+}
+
+// UsesOpenAISchemaSubset reports whether a runtime sends JSON Schema to OpenAI's
+// native strict structured-output machinery. Prompt-only cmux sessions are
+// deliberately excluded because they do not submit a response format at all —
+// which the registry records as SchemaDialectNone on those cells.
+func UsesOpenAISchemaSubset(provider *api.ModelProvider, mode api.RuntimeMode) bool {
+	caps, known := modeCaps(provider, mode)
+	return known && caps.SchemaDialect == api.SchemaDialectOpenAI
+}
+
+func modeCaps(provider *api.ModelProvider, mode api.RuntimeMode) (api.ModeCapabilities, bool) {
+	if provider == nil {
+		return api.ModeCapabilities{}, false
 	}
+	return provider.Caps(mode)
 }
 
 // OpenAICompatibleSchema returns a provider-facing copy of schema that obeys

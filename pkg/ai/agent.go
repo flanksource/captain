@@ -9,7 +9,6 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai/pricing"
 	"github.com/flanksource/captain/pkg/api"
-	"github.com/flanksource/captain/pkg/api/registry"
 )
 
 // Agent is a convenience wrapper over a Provider that offers the named-prompt /
@@ -82,8 +81,8 @@ func NewAgentWithProvider(p Provider, cfg Config) *Agent {
 // GetModel returns the configured model.
 func (a *Agent) GetModel() string { return a.provider.GetModel() }
 
-// GetBackend returns the underlying backend.
-func (a *Agent) GetBackend() Backend { return a.provider.GetBackend() }
+// GetRuntime returns the underlying (provider, mode) pair.
+func (a *Agent) GetRuntime() Runtime { return a.provider.GetRuntime() }
 
 // ExecutePrompt runs one prompt and accrues its cost onto the agent. It fails
 // with ErrBudgetExceeded before executing once accumulated spend has reached the
@@ -193,7 +192,8 @@ func (a *Agent) accrue(resp *Response) Cost {
 	if model == "" {
 		model = a.cfg.Model.Name
 	}
-	cost := PriceResponse(a.provider.GetBackend(), model, resp)
+	p, _ := api.ProviderByName(a.provider.GetRuntime().Provider)
+	cost := PriceResponse(p, model, resp)
 
 	a.mu.Lock()
 	a.costs = append(a.costs, cost)
@@ -206,14 +206,14 @@ func (a *Agent) accrue(resp *Response) Cost {
 // list-price breakdown for display. A pricing miss leaves the bucket costs zero
 // but preserves the token counts and any provider-reported total, so cost is
 // never silently dropped just because a model is absent from the registry.
-func PriceResponse(backend Backend, model string, resp *Response) Cost {
-	return PriceUsage(backend, model, resp.Usage, resp.CostUSD)
+func PriceResponse(p *ModelProvider, model string, resp *Response) Cost {
+	return PriceUsage(p, model, resp.Usage, resp.CostUSD)
 }
 
 // PriceUsage is PriceResponse for callers that hold a bare Usage plus the
 // provider's reported total (stream events, persisted model calls) rather than
 // a full Response.
-func PriceUsage(backend Backend, model string, usage Usage, providerCostUSD float64) Cost {
+func PriceUsage(p *ModelProvider, model string, usage Usage, providerCostUSD float64) Cost {
 	cost := Cost{
 		Model:            model,
 		InputTokens:      usage.InputTokens,
@@ -225,8 +225,8 @@ func PriceUsage(backend Backend, model string, usage Usage, providerCostUSD floa
 		ProviderCostUSD:  providerCostUSD,
 	}
 	// The pricing registry is keyed on OpenRouter-style ids (provider/model);
-	// try the backend-prefixed id first, then the bare model.
-	for _, id := range PricingIDs(backend, model) {
+	// try the provider-prefixed id first, then the bare model.
+	for _, id := range PricingIDs(p, model) {
 		if res, err := pricing.CalculateCost(id, cost.InputTokens, cost.OutputTokens, cost.ReasoningTokens, cost.CacheReadTokens, cost.CacheWriteTokens); err == nil {
 			cost.InputCost = res.InputCost
 			cost.OutputCost = res.OutputCost
@@ -242,8 +242,8 @@ func PriceUsage(backend Backend, model string, usage Usage, providerCostUSD floa
 // ContextWindowFor returns a model's context window from the pricing registry,
 // or 0 when unknown, so persisted model calls can record context occupancy
 // server-side instead of relying on the UI's catalog for the denominator.
-func ContextWindowFor(backend Backend, model string) int {
-	for _, id := range PricingIDs(backend, model) {
+func ContextWindowFor(p *ModelProvider, model string) int {
+	for _, id := range PricingIDs(p, model) {
 		if info, ok := pricing.GetModelInfo(id); ok && info.ContextWindow > 0 {
 			return info.ContextWindow
 		}
@@ -252,13 +252,11 @@ func ContextWindowFor(backend Backend, model string) int {
 }
 
 // PricingIDs returns the candidate OpenRouter-style pricing keys for a model,
-// most specific first. Every backend maps to its underlying vendor prefix so
-// list-price lookups resolve even for the CLI/agent/cmux backends (whose models
-// are still OpenAI/Anthropic/Google under the hood); the bare model is included
-// as a fallback.
-func PricingIDs(backend Backend, model string) []string {
-	p, _, ok := registry.ProviderFor(backend)
-	if !ok {
+// most specific first. Pricing is a property of the provider alone — the local
+// transports bill against the same vendor as the API mode — so the mode plays no
+// part here; the bare model is included as a fallback.
+func PricingIDs(p *ModelProvider, model string) []string {
+	if p == nil {
 		return []string{model}
 	}
 	return p.PricingIDs(model)

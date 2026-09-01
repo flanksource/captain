@@ -397,9 +397,9 @@ func declaresText(modalities []string) bool {
 func hiddenModel(provider, id string) bool {
 	switch provider {
 	case "openai":
-		return captainai.IsLegacyModelIDForBackend(id, captainai.BackendOpenAI)
+		return captainai.IsLegacyModelIDForRuntime(id, captainai.OpenAI, captainai.ModeAPI)
 	case "anthropic":
-		return captainai.IsLegacyModelIDForBackend(id, captainai.BackendAnthropic)
+		return captainai.IsLegacyModelIDForRuntime(id, captainai.Anthropic, captainai.ModeAPI)
 	case "google":
 		lower := strings.ToLower(id)
 		return strings.Contains(lower, "embedding") || strings.Contains(lower, "image") || strings.Contains(lower, "tts")

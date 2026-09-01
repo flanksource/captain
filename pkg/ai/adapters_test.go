@@ -44,7 +44,7 @@ func fakeProbe(env map[string]string, binaries map[string]string, files map[stri
 }
 
 func TestResolveAdapter_APIKeyFromEnv(t *testing.T) {
-	st := resolveAdapter(BackendAnthropic, fakeProbe(
+	st := resolveAdapter(RuntimeOf(Anthropic, ModeAPI), fakeProbe(
 		map[string]string{"ANTHROPIC_API_KEY": "sk-ant-api03-SECRETKEY"},
 		nil, nil, "/home/u"))
 
@@ -63,7 +63,7 @@ func TestResolveAdapter_APIKeyFromEnv(t *testing.T) {
 }
 
 func TestResolveAdapter_APINotConfigured(t *testing.T) {
-	st := resolveAdapter(BackendOpenAI, fakeProbe(nil, nil, nil, "/home/u"))
+	st := resolveAdapter(RuntimeOf(OpenAI, ModeAPI), fakeProbe(nil, nil, nil, "/home/u"))
 	if st.Authenticated || st.Ready() {
 		t.Errorf("expected unauthenticated, got %+v", st)
 	}
@@ -72,7 +72,7 @@ func TestResolveAdapter_APINotConfigured(t *testing.T) {
 func TestOSAuthProbeUsesVaultCredential(t *testing.T) {
 	credentials.SetPathForTesting(filepath.Join(t.TempDir(), "vault"))
 	t.Cleanup(func() { credentials.SetPathForTesting("") })
-	for _, name := range api.AuthEnvVars(BackendOpenAI) {
+	for _, name := range api.AuthEnvVars(OpenAI, ModeAPI) {
 		t.Setenv(name, "")
 	}
 	vault, err := credentials.DefaultVault()
@@ -83,7 +83,7 @@ func TestOSAuthProbeUsesVaultCredential(t *testing.T) {
 		t.Fatalf("Set: %v", err)
 	}
 
-	adapters, err := ProbeAdapters(WhoamiOptions{Backend: "openai"}, OSAuthProbe())
+	adapters, err := ProbeAdapters(WhoamiOptions{Provider: "openai", Mode: string(ModeAPI)}, OSAuthProbe())
 	if err != nil {
 		t.Fatalf("ProbeAdapters: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestOSAuthProbeUsesVaultCredential(t *testing.T) {
 func TestResolveAdapter_CLILoginFile(t *testing.T) {
 	home := "/home/u"
 	authFile := filepath.Join(home, ".codex", "auth.json")
-	st := resolveAdapter(BackendCodexCLI, fakeProbe(
+	st := resolveAdapter(RuntimeOf(OpenAI, ModeCLI), fakeProbe(
 		nil,
 		map[string]string{"codex": "/usr/local/bin/codex"},
 		map[string]bool{authFile: true},
@@ -123,7 +123,7 @@ func TestResolveAdapter_CmuxUsesLocalLoginWithoutAPIKey(t *testing.T) {
 	claudeAuth := filepath.Join(home, ".claude.json")
 	codexAuth := filepath.Join(home, ".codex", "auth.json")
 
-	claude := resolveAdapter(BackendClaudeCmux, fakeProbe(
+	claude := resolveAdapter(RuntimeOf(Anthropic, ModeCmux), fakeProbe(
 		nil,
 		map[string]string{"claude": "/usr/local/bin/claude"},
 		map[string]bool{claudeAuth: true},
@@ -135,7 +135,7 @@ func TestResolveAdapter_CmuxUsesLocalLoginWithoutAPIKey(t *testing.T) {
 		t.Fatalf("claude-cmux auth = %q %q", claude.AuthMethod, claude.AuthDetail)
 	}
 
-	codex := resolveAdapter(BackendCodexCmux, fakeProbe(
+	codex := resolveAdapter(RuntimeOf(OpenAI, ModeCmux), fakeProbe(
 		nil,
 		map[string]string{"codex": "/usr/local/bin/codex"},
 		map[string]bool{codexAuth: true},
@@ -150,7 +150,7 @@ func TestResolveAdapter_CmuxUsesLocalLoginWithoutAPIKey(t *testing.T) {
 
 func TestResolveAdapter_CLIBinaryMissingNotReady(t *testing.T) {
 	home := "/home/u"
-	st := resolveAdapter(BackendGeminiCLI, fakeProbe(
+	st := resolveAdapter(RuntimeOf(Google, ModeCLI), fakeProbe(
 		map[string]string{"GEMINI_API_KEY": "AIzaSyD-aaaaaaaa"}, // authenticated...
 		nil, // ...but no gemini binary
 		nil, home))
@@ -168,7 +168,7 @@ func TestResolveAdapter_CLIBinaryMissingNotReady(t *testing.T) {
 
 func TestResolveAdapter_EnvKeyPreferredOverLogin(t *testing.T) {
 	home := "/home/u"
-	st := resolveAdapter(BackendClaudeAgent, fakeProbe(
+	st := resolveAdapter(RuntimeOf(Anthropic, ModeAgent), fakeProbe(
 		map[string]string{"ANTHROPIC_API_KEY": "sk-ant-PREFERREDKEY"},
 		map[string]string{"claude": "/usr/local/bin/claude"},
 		map[string]bool{filepath.Join(home, ".claude.json"): true},
@@ -189,7 +189,7 @@ func TestProbeAdaptersUsesRegistryModelsForClaudeCmuxRegardlessOfAPIKey(t *testi
 
 	var withoutKey []string
 	for _, env := range []map[string]string{nil, {"ANTHROPIC_API_KEY": "sk-ant-test"}} {
-		adapters, err := ProbeAdapters(WhoamiOptions{Backend: string(BackendClaudeCmux), Models: true}, fakeProbe(
+		adapters, err := ProbeAdapters(WhoamiOptions{Provider: Anthropic.Name, Mode: string(ModeCmux), Models: true}, fakeProbe(
 			env,
 			map[string]string{"claude": "/usr/local/bin/claude"},
 			nil,
@@ -227,25 +227,25 @@ func TestProbeAdaptersUsesRegistryModelsForClaudeCmuxRegardlessOfAPIKey(t *testi
 func TestProbeAdaptersFiltersNoisyOpenAIModelsForDirectAPI(t *testing.T) {
 	prev := resolveModelRows
 	resolveModelRows = func(_ context.Context, opts ResolveOptions) ([]ResolvedModel, error) {
-		if opts.Backend != BackendOpenAI || !opts.UseTokens {
+		if opts.Provider != OpenAI || opts.Mode != ModeAPI || !opts.UseTokens {
 			t.Fatalf("resolve opts = %+v, want openai live token resolve", opts)
 		}
 		return []ResolvedModel{
-			{Model: Model{ID: "openai/gpt-5.5", Backend: BackendOpenAI, Label: "GPT-5.5", ReleaseDate: "2026-06-01"}, Live: true},
-			{Model: Model{ID: "openai/gpt-5.4", Backend: BackendOpenAI, Label: "GPT-5.4", ReleaseDate: "2026-05-15"}, Live: true},
-			{Model: Model{ID: "openai/gpt-realtime-2.1", Backend: BackendOpenAI, Label: "Realtime"}, Live: true},
-			{Model: Model{ID: "openai/gpt-image-2", Backend: BackendOpenAI, Label: "Image"}, Live: true},
-			{Model: Model{ID: "openai/gpt-audio-1.5", Backend: BackendOpenAI, Label: "Audio"}, Live: true},
-			{Model: Model{ID: "openai/gpt-5.3-codex", Backend: BackendOpenAI, Label: "Codex"}, Live: true},
-			{Model: Model{ID: "openai/gpt-5.3-chat-latest", Backend: BackendOpenAI, Label: "Chat latest"}, Live: true},
-			{Model: Model{ID: "openai/gpt-5.5-pro", Backend: BackendOpenAI, Label: "Pro"}, Live: true},
-			{Model: Model{ID: "openai/o4-mini", Backend: BackendOpenAI, Label: "O4 mini"}, Live: true},
-			{Model: Model{ID: "openai/sora-2", Backend: BackendOpenAI, Label: "Sora"}, Live: true},
+			{Model: Model{ID: "openai/gpt-5.5", Provider: OpenAI, Mode: ModeAPI, Label: "GPT-5.5", ReleaseDate: "2026-06-01"}, Live: true},
+			{Model: Model{ID: "openai/gpt-5.4", Provider: OpenAI, Mode: ModeAPI, Label: "GPT-5.4", ReleaseDate: "2026-05-15"}, Live: true},
+			{Model: Model{ID: "openai/gpt-realtime-2.1", Provider: OpenAI, Mode: ModeAPI, Label: "Realtime"}, Live: true},
+			{Model: Model{ID: "openai/gpt-image-2", Provider: OpenAI, Mode: ModeAPI, Label: "Image"}, Live: true},
+			{Model: Model{ID: "openai/gpt-audio-1.5", Provider: OpenAI, Mode: ModeAPI, Label: "Audio"}, Live: true},
+			{Model: Model{ID: "openai/gpt-5.3-codex", Provider: OpenAI, Mode: ModeAPI, Label: "Codex"}, Live: true},
+			{Model: Model{ID: "openai/gpt-5.3-chat-latest", Provider: OpenAI, Mode: ModeAPI, Label: "Chat latest"}, Live: true},
+			{Model: Model{ID: "openai/gpt-5.5-pro", Provider: OpenAI, Mode: ModeAPI, Label: "Pro"}, Live: true},
+			{Model: Model{ID: "openai/o4-mini", Provider: OpenAI, Mode: ModeAPI, Label: "O4 mini"}, Live: true},
+			{Model: Model{ID: "openai/sora-2", Provider: OpenAI, Mode: ModeAPI, Label: "Sora"}, Live: true},
 		}, nil
 	}
 	t.Cleanup(func() { resolveModelRows = prev })
 
-	adapters, err := ProbeAdapters(WhoamiOptions{Backend: string(BackendOpenAI), Models: true}, fakeProbe(
+	adapters, err := ProbeAdapters(WhoamiOptions{Provider: OpenAI.Name, Mode: string(ModeAPI), Models: true}, fakeProbe(
 		map[string]string{"OPENAI_API_KEY": "sk-test"},
 		map[string]string{"codex": "/usr/local/bin/codex"},
 		nil,
@@ -288,13 +288,13 @@ func TestProbeAdaptersNoCacheBypassesPersistedModelCache(t *testing.T) {
 					t.Fatalf("ResolveOptions.Refresh = %v, want %v", opts.Refresh, tc.wantRefresh)
 				}
 				return []ResolvedModel{
-					{Model: Model{ID: "anthropic/claude-opus-5", Backend: BackendAnthropic, Label: "Opus 5", ReleaseDate: "2026-05-01"}, Live: true},
+					{Model: Model{ID: "anthropic/claude-opus-5", Provider: Anthropic, Mode: ModeAPI, Label: "Opus 5", ReleaseDate: "2026-05-01"}, Live: true},
 				}, nil
 			}
 			t.Cleanup(func() { resolveModelRows = prev })
 
 			adapters, err := ProbeAdapters(
-				WhoamiOptions{Backend: string(BackendAnthropic), Models: true, NoCache: tc.noCache},
+				WhoamiOptions{Provider: Anthropic.Name, Mode: string(ModeAPI), Models: true, NoCache: tc.noCache},
 				fakeProbe(map[string]string{"ANTHROPIC_API_KEY": "sk-ant-test"}, nil, nil, "/home/u"),
 			)
 			if err != nil {
@@ -311,8 +311,8 @@ func TestProbeAdaptersNoCacheBypassesPersistedModelCache(t *testing.T) {
 }
 
 func TestProbeAdaptersUsesExactCallerCredentialSnapshot(t *testing.T) {
-	credentials := map[Backend]api.ResolvedAPIKey{
-		BackendOpenAI: {Token: "caller-token-b", Source: "test", Detail: "caller"},
+	credentials := map[string]api.ResolvedAPIKey{
+		OpenAI.Name: {Token: "caller-token-b", Source: "test", Detail: "caller"},
 	}
 	probe := fakeProbe(map[string]string{"OPENAI_API_KEY": "process-token-a"}, nil, nil, "/home/u")
 	probe.APICredentials = credentials
@@ -321,18 +321,18 @@ func TestProbeAdaptersUsesExactCallerCredentialSnapshot(t *testing.T) {
 	resolveModelRows = func(_ context.Context, opts ResolveOptions) ([]ResolvedModel, error) {
 		// Mutating the caller-owned map after ProbeAdapters starts must not alter
 		// the operation snapshot passed to model resolution.
-		credentials[BackendOpenAI] = api.ResolvedAPIKey{Token: "mutated-token-c"}
-		if got := opts.Credentials.APIKey(BackendOpenAI).Token; got != "caller-token-b" {
+		credentials[OpenAI.Name] = api.ResolvedAPIKey{Token: "mutated-token-c"}
+		if got := opts.Credentials.APIKey(OpenAI).Token; got != "caller-token-b" {
 			t.Fatalf("model resolver credential = %q, want caller-token-b", got)
 		}
 		return []ResolvedModel{{
-			Model: Model{ID: "openai/private-model-b", Backend: BackendOpenAI},
+			Model: Model{ID: "openai/private-model-b", Provider: OpenAI, Mode: ModeAPI},
 			Live:  true,
 		}}, nil
 	}
 	t.Cleanup(func() { resolveModelRows = prev })
 
-	adapters, err := ProbeAdapters(WhoamiOptions{Backend: string(BackendOpenAI), Models: true}, probe)
+	adapters, err := ProbeAdapters(WhoamiOptions{Provider: OpenAI.Name, Mode: string(ModeAPI), Models: true}, probe)
 	if err != nil {
 		t.Fatalf("ProbeAdapters: %v", err)
 	}
@@ -343,7 +343,7 @@ func TestProbeAdaptersUsesExactCallerCredentialSnapshot(t *testing.T) {
 
 func TestProbeAdaptersExplicitEmptyCredentialsDoNotFallBackToEnvironment(t *testing.T) {
 	probe := fakeProbe(map[string]string{"OPENAI_API_KEY": "process-token-a"}, nil, nil, "/home/u")
-	probe.APICredentials = map[Backend]api.ResolvedAPIKey{}
+	probe.APICredentials = map[string]api.ResolvedAPIKey{}
 
 	prev := resolveModelRows
 	resolveModelRows = func(context.Context, ResolveOptions) ([]ResolvedModel, error) {
@@ -352,7 +352,7 @@ func TestProbeAdaptersExplicitEmptyCredentialsDoNotFallBackToEnvironment(t *test
 	}
 	t.Cleanup(func() { resolveModelRows = prev })
 
-	adapters, err := ProbeAdapters(WhoamiOptions{Backend: string(BackendOpenAI), Models: true}, probe)
+	adapters, err := ProbeAdapters(WhoamiOptions{Provider: OpenAI.Name, Mode: string(ModeAPI), Models: true}, probe)
 	if err != nil {
 		t.Fatalf("ProbeAdapters: %v", err)
 	}
@@ -381,7 +381,7 @@ func TestProbeAdaptersUsesCodexDebugModelsOnceRegardlessOfAPIKey(t *testing.T) {
 	if calls != 1 {
 		t.Fatalf("codex debug calls = %d, want 1", calls)
 	}
-	for _, backend := range []Backend{BackendCodexCLI, BackendCodexAgent, BackendCodexCmux} {
+	for _, backend := range []Runtime{RuntimeOf(OpenAI, ModeCLI), RuntimeOf(OpenAI, ModeAgent), RuntimeOf(OpenAI, ModeCmux)} {
 		adapter := findAdapter(t, adapters, backend)
 		if len(adapter.Models) != 2 || adapter.Models[0] != "gpt-5.6-sol" {
 			t.Fatalf("%s models = %v", backend, adapter.Models)
@@ -402,7 +402,7 @@ func TestFetchCodexModelsUsesDebugWithAPIKey(t *testing.T) {
 		}
 		return []ModelDef{{ID: "gpt-5.6-sol"}}, nil
 	}
-	got := fetchCodexModels([]Backend{BackendCodexAgent}, probe)
+	got := fetchCodexModels([]Runtime{RuntimeOf(OpenAI, ModeAgent)}, probe)
 	if got.err != nil || len(got.models) != 1 || calls != 1 {
 		t.Fatalf("fetch = %+v calls = %d, want one discovered model", got, calls)
 	}
@@ -413,7 +413,7 @@ func TestProbeAdaptersFallsBackToRegistryWhenCodexDebugFails(t *testing.T) {
 	probe.CodexModels = func(context.Context, string) ([]ModelDef, error) {
 		return nil, errors.New("old codex")
 	}
-	adapters, err := ProbeAdapters(WhoamiOptions{Backend: string(BackendCodexCLI), Models: true}, probe)
+	adapters, err := ProbeAdapters(WhoamiOptions{Provider: OpenAI.Name, Mode: string(ModeCLI), Models: true}, probe)
 	if err != nil {
 		t.Fatalf("ProbeAdapters: %v", err)
 	}
@@ -422,26 +422,26 @@ func TestProbeAdaptersFallsBackToRegistryWhenCodexDebugFails(t *testing.T) {
 	}
 }
 
-func findAdapter(t *testing.T, adapters []AdapterStatus, backend Backend) AdapterStatus {
+func findAdapter(t *testing.T, adapters []AdapterStatus, runtime Runtime) AdapterStatus {
 	t.Helper()
 	for _, adapter := range adapters {
-		if adapter.Backend == string(backend) {
+		if adapter.Provider == runtime.Provider && adapter.Mode == string(runtime.Mode) {
 			return adapter
 		}
 	}
-	t.Fatalf("adapter %s not found", backend)
+	t.Fatalf("adapter %s not found", runtime)
 	return AdapterStatus{}
 }
 
 func TestSetModelsFiltersAndSortsByReleaseDate(t *testing.T) {
-	st := AdapterStatus{Backend: string(BackendAnthropic)}
+	st := AdapterStatus{Provider: Anthropic.Name, Mode: string(ModeAPI)}
 	setModels(&st, []ModelDef{
-		{ID: "claude-sonnet-5", Backend: BackendAnthropic, ReleaseDate: "2026-06-01"},
-		{ID: "claude-sonnet-4-6", Backend: BackendAnthropic, ReleaseDate: "2026-05-01"},
-		{ID: "claude-sonnet-4-5", Backend: BackendAnthropic, ReleaseDate: "2026-04-01"},
-		{ID: "claude-sonnet-4-4", Backend: BackendAnthropic, ReleaseDate: "2026-03-01"},
-		{ID: "claude-haiku-4-5", Backend: BackendAnthropic, ReleaseDate: "2025-10-15"},
-		{ID: "claude-3-5-sonnet-20241022", Backend: BackendAnthropic, ReleaseDate: "2024-10-22"},
+		{ID: "claude-sonnet-5", Provider: Anthropic.Name, Mode: ModeAPI, ReleaseDate: "2026-06-01"},
+		{ID: "claude-sonnet-4-6", Provider: Anthropic.Name, Mode: ModeAPI, ReleaseDate: "2026-05-01"},
+		{ID: "claude-sonnet-4-5", Provider: Anthropic.Name, Mode: ModeAPI, ReleaseDate: "2026-04-01"},
+		{ID: "claude-sonnet-4-4", Provider: Anthropic.Name, Mode: ModeAPI, ReleaseDate: "2026-03-01"},
+		{ID: "claude-haiku-4-5", Provider: Anthropic.Name, Mode: ModeAPI, ReleaseDate: "2025-10-15"},
+		{ID: "claude-3-5-sonnet-20241022", Provider: Anthropic.Name, Mode: ModeAPI, ReleaseDate: "2024-10-22"},
 	}, false)
 
 	want := []string{"claude-sonnet-5", "claude-sonnet-4-6", "claude-sonnet-4-5", "claude-haiku-4-5"}
@@ -456,12 +456,12 @@ func TestSetModelsFiltersAndSortsByReleaseDate(t *testing.T) {
 }
 
 func TestSetModelsKeepsGeminiProFamily(t *testing.T) {
-	st := AdapterStatus{Backend: string(BackendGemini)}
+	st := AdapterStatus{Provider: Google.Name, Mode: string(ModeAPI)}
 	setModels(&st, []ModelDef{
-		{ID: "gemini-3.5-flash", Backend: BackendGemini, ReleaseDate: "2026-06-10"},
-		{ID: "gemini-3.0-pro", Backend: BackendGemini},
-		{ID: "gemini-2.5-pro", Backend: BackendGemini, ReleaseDate: "2025-06-17"},
-		{ID: "gemini-2.0-flash", Backend: BackendGemini, ReleaseDate: "2025-02-05"},
+		{ID: "gemini-3.5-flash", Provider: Google.Name, Mode: ModeAPI, ReleaseDate: "2026-06-10"},
+		{ID: "gemini-3.0-pro", Provider: Google.Name, Mode: ModeAPI},
+		{ID: "gemini-2.5-pro", Provider: Google.Name, Mode: ModeAPI, ReleaseDate: "2025-06-17"},
+		{ID: "gemini-2.0-flash", Provider: Google.Name, Mode: ModeAPI, ReleaseDate: "2025-02-05"},
 	}, false)
 
 	want := []string{"gemini-3.5-flash", "gemini-3.0-pro", "gemini-2.5-pro"}
@@ -476,9 +476,9 @@ func TestSetModelsKeepsGeminiProFamily(t *testing.T) {
 }
 
 func TestSetModelsHidesCodexCodeVariantsForCLI(t *testing.T) {
-	st := AdapterStatus{Backend: string(BackendCodexCLI)}
+	st := AdapterStatus{Provider: OpenAI.Name, Mode: string(ModeCLI)}
 	setModels(&st, []ModelDef{
-		{ID: "gpt-5-codex", Backend: BackendCodexCLI, ReleaseDate: "2025-08-07"},
+		{ID: "gpt-5-codex", Provider: OpenAI.Name, Mode: ModeCLI, ReleaseDate: "2025-08-07"},
 	}, false)
 
 	if st.ModelCount != 0 || len(st.Models) != 0 {

@@ -22,7 +22,7 @@ func TestCachedAdaptersReusesWithinTTL(t *testing.T) {
 	probe := fakeProbe(nil, nil, nil, t.TempDir())
 	adapterAuthProbe = func() AuthProbe { return probe }
 
-	stub := []AdapterStatus{{Backend: string(BackendAnthropic), Type: "api"}}
+	stub := []AdapterStatus{{Provider: Anthropic.Name, Mode: string(ModeAPI), Type: "api"}}
 	calls := 0
 	adapterProbe = func(AuthProbe) ([]AdapterStatus, error) {
 		calls++
@@ -82,7 +82,7 @@ func TestCachedAdaptersUsesMetadataForCacheHits(t *testing.T) {
 	calls := 0
 	adapterProbe = func(probe AuthProbe) ([]AdapterStatus, error) {
 		calls++
-		return []AdapterStatus{{Backend: string(BackendCodexCLI), Models: []string{probe.FileIdentity(authFile)}}}, nil
+		return []AdapterStatus{{Provider: OpenAI.Name, Mode: string(ModeCLI), Models: []string{probe.FileIdentity(authFile)}}}, nil
 	}
 
 	base := time.Unix(1_500_000, 0)
@@ -130,7 +130,7 @@ func TestCachedAdaptersDoesNotCacheErrors(t *testing.T) {
 		if calls == 1 {
 			return nil, errors.New("transient probe failure")
 		}
-		return []AdapterStatus{{Backend: string(BackendOpenAI), Type: "api"}}, nil
+		return []AdapterStatus{{Provider: OpenAI.Name, Mode: string(ModeAPI), Type: "api"}}, nil
 	}
 
 	base := time.Unix(2_000_000, 0)
@@ -143,7 +143,7 @@ func TestCachedAdaptersDoesNotCacheErrors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CachedAdapters retry: %v", err)
 	}
-	if len(got) != 1 || got[0].Backend != string(BackendOpenAI) {
+	if len(got) != 1 || got[0].Provider != OpenAI.Name || got[0].Mode != string(ModeAPI) {
 		t.Fatalf("retry adapters = %+v, want the successful probe result", got)
 	}
 	if calls != 2 {
@@ -167,16 +167,16 @@ func TestCachedAdaptersInvalidatesCredentialSourceTokenAndEndpointImmediately(t 
 	home := t.TempDir()
 	adapterAuthProbe = func() AuthProbe {
 		probe := fakeProbe(nil, nil, nil, home)
-		probe.APICredentials = map[Backend]api.ResolvedAPIKey{
-			BackendOpenAI: {Token: token, Source: source, Detail: detail},
+		probe.APICredentials = map[string]api.ResolvedAPIKey{
+			OpenAI.Name: {Token: token, Source: source, Detail: detail},
 		}
-		probe.APIURLs = map[Backend]string{BackendOpenAI: apiURL}
+		probe.APIURLs = map[string]string{OpenAI.Name: apiURL}
 		return probe
 	}
 	calls := 0
 	adapterProbe = func(probe AuthProbe) ([]AdapterStatus, error) {
 		calls++
-		return []AdapterStatus{resolveAdapterFrozen(BackendOpenAI, probe)}, nil
+		return []AdapterStatus{resolveAdapterFrozen(RuntimeOf(OpenAI, ModeAPI), probe)}, nil
 	}
 
 	base := time.Unix(3_000_000, 0)
@@ -235,7 +235,7 @@ func TestCachedAdaptersInvalidatesLocalLoginIdentityImmediately(t *testing.T) {
 	calls := 0
 	adapterProbe = func(probe AuthProbe) ([]AdapterStatus, error) {
 		calls++
-		status := resolveAdapterFrozen(BackendCodexCLI, probe)
+		status := resolveAdapterFrozen(RuntimeOf(OpenAI, ModeCLI), probe)
 		status.Models = []string{probe.FileIdentity(authFile)}
 		return []AdapterStatus{status}, nil
 	}
@@ -264,7 +264,7 @@ func TestCachedAdaptersReturnsDeepCopies(t *testing.T) {
 	adapterAuthProbe = func() AuthProbe { return probe }
 	adapterProbe = func(AuthProbe) ([]AdapterStatus, error) {
 		return []AdapterStatus{{
-			Backend: string(BackendOpenAI), Models: []string{"model-a"},
+			Provider: OpenAI.Name, Mode: string(ModeAPI), Models: []string{"model-a"},
 			ModelDetails: []ModelDef{{
 				ID: "model-a", InputMediaTypes: []string{"image/png"}, SupportedEfforts: []api.Effort{api.EffortLow},
 			}},
@@ -276,7 +276,7 @@ func TestCachedAdaptersReturnsDeepCopies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first[0].Backend = "poisoned"
+	first[0].Provider = "poisoned"
 	first[0].Models[0] = "poisoned"
 	first[0].ModelDetails[0].ID = "poisoned"
 	first[0].ModelDetails[0].InputMediaTypes[0] = "poisoned"
@@ -286,7 +286,7 @@ func TestCachedAdaptersReturnsDeepCopies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second[0].Backend != string(BackendOpenAI) || second[0].Models[0] != "model-a" || second[0].ModelDetails[0].ID != "model-a" || second[0].ModelDetails[0].InputMediaTypes[0] != "image/png" || second[0].ModelDetails[0].SupportedEfforts[0] != api.EffortLow {
+	if second[0].Provider != OpenAI.Name || second[0].Mode != string(ModeAPI) || second[0].Models[0] != "model-a" || second[0].ModelDetails[0].ID != "model-a" || second[0].ModelDetails[0].InputMediaTypes[0] != "image/png" || second[0].ModelDetails[0].SupportedEfforts[0] != api.EffortLow {
 		t.Fatalf("cached adapters were mutated through a returned value: %+v", second)
 	}
 }
@@ -305,15 +305,15 @@ func TestCachedAdaptersReturnsFreshestUnsettledProbeState(t *testing.T) {
 	adapterAuthProbe = func() AuthProbe {
 		captures++
 		probe := fakeProbe(nil, nil, nil, home)
-		probe.APICredentials = map[Backend]api.ResolvedAPIKey{
-			BackendOpenAI: {Token: string(rune('a' + captures))},
+		probe.APICredentials = map[string]api.ResolvedAPIKey{
+			OpenAI.Name: {Token: string(rune('a' + captures))},
 		}
 		return probe
 	}
 	adapterProbe = func(probe AuthProbe) ([]AdapterStatus, error) {
 		return []AdapterStatus{{
-			Backend: string(BackendOpenAI),
-			Models:  []string{probe.credentials.APIKey(BackendOpenAI).Token},
+			Provider: OpenAI.Name, Mode: string(ModeAPI),
+			Models: []string{probe.credentials.APIKey(OpenAI).Token},
 		}}, nil
 	}
 
@@ -349,7 +349,7 @@ func TestCachedAdaptersRejectsRecaptureError(t *testing.T) {
 		return probe
 	}
 	adapterProbe = func(AuthProbe) ([]AdapterStatus, error) {
-		return []AdapterStatus{{Backend: string(BackendOpenAI)}}, nil
+		return []AdapterStatus{{Provider: OpenAI.Name, Mode: string(ModeAPI)}}, nil
 	}
 
 	got, err := CachedAdapters(time.Unix(7_000_000, 0))

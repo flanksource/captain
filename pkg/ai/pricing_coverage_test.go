@@ -30,16 +30,12 @@ func TestPricingIDsCoverEveryCatalogModel(t *testing.T) {
 	pricing.EnsureLoaded(pricing.LoadOptions{})
 
 	for _, p := range registry.Providers() {
-		backend, err := p.BackendFor(registry.ModeAPI)
-		if err != nil {
-			t.Fatalf("%s has no API backend: %v", p.Name, err)
-		}
 		for _, m := range p.Models() {
 			if !m.Preferred {
 				continue
 			}
 			t.Run(p.Name+"/"+m.ID, func(t *testing.T) {
-				info, ok := lookupPricing(backend, m.ID)
+				info, ok := lookupPricing(p, m.ID)
 				if reason, gap := knownPricingGaps[m.ID]; gap {
 					if ok {
 						t.Fatalf("%s now has pricing — remove it from knownPricingGaps (%s)", m.ID, reason)
@@ -48,7 +44,7 @@ func TestPricingIDsCoverEveryCatalogModel(t *testing.T) {
 				}
 				if !ok {
 					t.Fatalf("no pricing for %s via %v; a missing prefix reports $0 rather than failing",
-						m.ID, PricingIDs(backend, m.ID))
+						m.ID, PricingIDs(p, m.ID))
 				}
 				if info.InputPrice <= 0 && info.OutputPrice <= 0 {
 					t.Errorf("%s priced at zero (input=%v output=%v)", m.ID, info.InputPrice, info.OutputPrice)
@@ -80,12 +76,12 @@ func TestPricingAgreesAcrossCatalogAndBilling(t *testing.T) {
 
 	for _, model := range []string{"claude-sonnet-5", "claude-opus-4-8"} {
 		t.Run(model, func(t *testing.T) {
-			catalog, ok := lookupPricing(BackendAnthropic, model)
+			catalog, ok := lookupPricing(Anthropic, model)
 			if !ok {
 				t.Fatalf("catalog has no price for %s", model)
 			}
 			var billing pricing.ModelInfo
-			for _, id := range PricingIDs(BackendAnthropic, model) {
+			for _, id := range PricingIDs(Anthropic, model) {
 				if info, found := pricing.GetModelInfo(id); found {
 					billing = info
 					break

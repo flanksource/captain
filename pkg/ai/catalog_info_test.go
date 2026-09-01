@@ -2,19 +2,30 @@ package ai
 
 import "testing"
 
-func TestBackendToProvider(t *testing.T) {
-	cases := map[Backend]string{
-		BackendAnthropic:   "anthropic",
-		BackendOpenAI:      "openai",
-		BackendGemini:      "googleai",
-		BackendDeepSeek:    "deepseek",
-		BackendClaudeAgent: "anthropic",
-		BackendCodexCLI:    "openai",
+// A catalog row's provider is its family key, the same token every surface
+// speaks. It used to be a composite adapter id run through a translation, which
+// is how Google — whose key is "google" but whose catalog prefix is "googleai" —
+// ended up under two different names depending on which side you asked.
+func TestModelInfoProviderIsTheProviderKey(t *testing.T) {
+	cases := map[*ModelProvider]string{
+		Anthropic: "anthropic",
+		OpenAI:    "openai",
+		Google:    "google",
+		DeepSeek:  "deepseek",
 	}
-	for b, want := range cases {
-		if got := BackendToProvider(b); got != want {
-			t.Fatalf("BackendToProvider(%q) = %q, want %q", b, got, want)
+	for p, want := range cases {
+		if got := providerName(p); got != want {
+			t.Fatalf("providerName(%v) = %q, want %q", p, got, want)
 		}
+	}
+	if got := providerName(nil); got != "" {
+		t.Fatalf("providerName(nil) = %q, want empty", got)
+	}
+	// The catalog prefix stays a model-id detail and is deliberately not the
+	// provider key: deriving one from the other is how pricing lookups silently
+	// missed and reported $0.
+	if CatalogPrefixOf(Google) == providerName(Google) {
+		t.Fatal("google's catalog prefix and provider key must stay distinct")
 	}
 }
 
@@ -35,14 +46,14 @@ func TestCatalogInfoMatchesCatalog(t *testing.T) {
 		if got.ID != m.ID {
 			t.Fatalf("row %d id = %q, want %q", i, got.ID, m.ID)
 		}
-		if got.Provider != BackendToProvider(m.Backend) {
-			t.Fatalf("row %d provider = %q, want %q", i, got.Provider, BackendToProvider(m.Backend))
+		if got.Provider != providerName(m.Provider) {
+			t.Fatalf("row %d provider = %q, want %q", i, got.Provider, providerName(m.Provider))
 		}
 		if got.Label != m.Label || got.Reasoning != m.Reasoning || got.ContextWindow != m.ContextWindow {
 			t.Fatalf("row %d field mismatch: %+v vs %+v", i, got, m)
 		}
 		if !m.IsAgent() {
-			want := m.Backend == BackendAnthropic
+			want := m.Provider == Anthropic && m.Mode == ModeAPI
 			if got.Configured != want {
 				t.Fatalf("row %d (%s) configured = %v, want %v", i, m.ID, got.Configured, want)
 			}

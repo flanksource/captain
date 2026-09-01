@@ -14,7 +14,7 @@ var _ = Describe("Claude CLI schema shaping", func() {
 		rejected, err := os.ReadFile("provider/testdata/claude_cli_rejected_schema.json")
 		Expect(err).NotTo(HaveOccurred())
 
-		got, err := SchemaJSONForBackend(api.BackendClaudeCLI, api.Prompt{SchemaJSON: rejected})
+		got, err := SchemaJSONForRuntime(api.Anthropic, api.ModeCLI, api.Prompt{SchemaJSON: rejected})
 		Expect(err).NotTo(HaveOccurred())
 
 		var root map[string]any
@@ -35,11 +35,35 @@ var _ = Describe("Claude CLI schema shaping", func() {
 		Expect(items).To(HaveKeyWithValue("$ref", "#/$defs/AgentQuestion"))
 	})
 
+	// claude-agent reaches Claude Code through the Agent SDK's
+	// `outputFormat: {type: "json_schema"}`, so it needs the same dialect strip
+	// claude-cli gets. It was previously grouped with the Anthropic API, which
+	// made every structured-output claude-agent run die on
+	// `--json-schema is not a valid JSON Schema: no schema with key or ref ...`.
+	It("strips the dialect for every backend that reaches Claude Code", func() {
+		rejected, err := os.ReadFile("provider/testdata/claude_cli_rejected_schema.json")
+		Expect(err).NotTo(HaveOccurred())
+
+		cli, err := SchemaJSONForRuntime(api.Anthropic, api.ModeCLI, api.Prompt{SchemaJSON: rejected})
+		Expect(err).NotTo(HaveOccurred())
+
+		claudeAgent, err := SchemaJSONForRuntime(api.Anthropic, api.ModeAgent, api.Prompt{SchemaJSON: rejected})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(claudeAgent).To(MatchJSON(cli))
+
+		var agentRoot map[string]any
+		Expect(json.Unmarshal(claudeAgent, &agentRoot)).To(Succeed())
+		Expect(agentRoot).NotTo(HaveKey("$schema"))
+		Expect(agentRoot).To(HaveKeyWithValue("type", "object"))
+	})
+
+	// The Anthropic API accepts the dialect declaration, so it must keep it —
+	// this is the half of the old grouping that was correct.
 	It("keeps the Anthropic API dialect metadata", func() {
 		rejected, err := os.ReadFile("provider/testdata/claude_cli_rejected_schema.json")
 		Expect(err).NotTo(HaveOccurred())
 
-		got, err := SchemaJSONForBackend(api.BackendAnthropic, api.Prompt{SchemaJSON: rejected})
+		got, err := SchemaJSONForRuntime(api.Anthropic, api.ModeAPI, api.Prompt{SchemaJSON: rejected})
 		Expect(err).NotTo(HaveOccurred())
 
 		var root map[string]any
@@ -47,20 +71,16 @@ var _ = Describe("Claude CLI schema shaping", func() {
 		Expect(root).To(HaveKeyWithValue("$schema", "https://json-schema.org/draft/2020-12/schema"))
 		Expect(root).NotTo(HaveKey("type"))
 
-		claudeAgent, err := SchemaJSONForBackend(api.BackendClaudeAgent, api.Prompt{SchemaJSON: rejected})
-		Expect(err).NotTo(HaveOccurred())
-		Expect(claudeAgent).To(MatchJSON(got))
-
 		openAICompatible, err := OpenAICompatibleSchema(rejected)
 		Expect(err).NotTo(HaveOccurred())
-		for _, backend := range []api.Backend{api.BackendCodexCLI, api.BackendCodexAgent} {
-			codex, err := SchemaJSONForBackend(backend, api.Prompt{SchemaJSON: rejected})
+		for _, mode := range []api.RuntimeMode{api.ModeCLI, api.ModeAgent} {
+			codex, err := SchemaJSONForRuntime(api.OpenAI, mode, api.Prompt{SchemaJSON: rejected})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(codex).To(MatchJSON(openAICompatible))
 		}
 
-		for _, backend := range []api.Backend{api.BackendClaudeCmux, api.BackendCodexCmux} {
-			cmux, err := SchemaJSONForBackend(backend, api.Prompt{SchemaJSON: rejected})
+		for _, provider := range []*api.ModelProvider{api.Anthropic, api.OpenAI} {
+			cmux, err := SchemaJSONForRuntime(provider, api.ModeCmux, api.Prompt{SchemaJSON: rejected})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(cmux).To(MatchJSON(rejected))
 		}

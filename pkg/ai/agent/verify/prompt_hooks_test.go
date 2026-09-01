@@ -18,8 +18,10 @@ func (p *judgeStubProvider) Execute(_ context.Context, req ai.Request) (*ai.Resp
 	p.requests = append(p.requests, req)
 	return &ai.Response{Text: `{"ok":false,"reason":"stub","feedback":"try again"}`}, nil
 }
-func (p *judgeStubProvider) GetModel() string        { return "stub" }
-func (p *judgeStubProvider) GetBackend() api.Backend { return api.BackendAnthropic }
+func (p *judgeStubProvider) GetModel() string { return "stub" }
+func (p *judgeStubProvider) GetRuntime() api.Runtime {
+	return api.RuntimeOf(api.Anthropic, api.ModeAPI)
+}
 
 func writeJudgePrompt(t *testing.T) string {
 	t.Helper()

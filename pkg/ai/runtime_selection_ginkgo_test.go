@@ -8,52 +8,45 @@ import (
 )
 
 var _ = Describe("runtime model selection", func() {
-	It("infers a concrete backend for a bare model", func() {
-		model, err := ResolveModelSelectors(api.Model{Name: "gemini-3.5-flash"})
+	It("derives the provider from a bare model and takes that provider's default mode", func() {
+		model, err := Resolve(api.Model{Name: "gemini-3.5-flash"})
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(model.Name).To(Equal("gemini-3.5-flash"))
-		Expect(model.Backend).To(Equal(api.BackendGemini))
+		Expect(model.Provider).To(Equal(api.Google))
+		Expect(model.Mode).To(Equal(api.Google.DefaultMode))
 	})
 
-	It("infers each bare multi-model runtime independently", func() {
-		models, err := ResolveRuntimeSelectors(
+	It("resolves each item of a multi-model list independently", func() {
+		models, err := ResolveMulti(
 			[]string{"gemini-3.5-flash,gpt-5.5"},
-			api.Model{Name: "opus", Backend: api.BackendClaudeAgent},
+			api.Model{Name: "opus", Mode: api.ModeAgent},
 		)
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(models).To(HaveLen(2))
 		Expect(models[0].Name).To(Equal("gemini-3.5-flash"))
-		Expect(models[0].Backend).To(Equal(api.BackendGemini))
+		Expect(models[0].Provider).To(Equal(api.Google))
 		Expect(models[1].Name).To(Equal("gpt-5.5"))
-		Expect(models[1].Backend).To(Equal(api.BackendOpenAI))
+		Expect(models[1].Provider).To(Equal(api.OpenAI))
 	})
 
-	It("rejects a known model forced through another family", func() {
-		_, err := ResolveModelSelectors(api.Model{
-			Name:    "gemini-3.5-flash",
-			Backend: api.BackendClaudeAgent,
+	It("rejects a model whose provider does not serve the selected mode", func() {
+		_, err := Resolve(api.Model{
+			Name: "gemini-3.5-flash",
+			Mode: api.ModeAgent,
 		})
 
 		Expect(err).To(MatchError(ContainSubstring("gemini")))
-		Expect(err).To(MatchError(ContainSubstring("claude-agent")))
+		Expect(err).To(MatchError(ContainSubstring("agent")))
 	})
 
-	It("allows an unknown provider model when its backend is explicit", func() {
-		model, err := ResolveModelSelectors(api.Model{
-			Name:    "provider-future-model",
-			Backend: api.BackendGemini,
+	It("requires a claimable family: a mode alone does not name a provider", func() {
+		_, err := Resolve(api.Model{
+			Name: "provider-future-model",
+			Mode: api.ModeAPI,
 		})
 
-		Expect(err).NotTo(HaveOccurred())
-		Expect(model.Name).To(Equal("provider-future-model"))
-		Expect(model.Backend).To(Equal(api.BackendGemini))
-	})
-
-	It("requires a backend for an unknown bare model", func() {
-		_, err := ResolveModelSelectors(api.Model{Name: "provider-future-model"})
-
-		Expect(err).To(MatchError(ContainSubstring("pass an explicit backend")))
+		Expect(err).To(MatchError(ContainSubstring("provider-future-model")))
 	})
 })

@@ -27,22 +27,22 @@ func TestResolveFingerprintChangesWhenVaultTokenRotates(t *testing.T) {
 	if err := vault.Set("openai", "first-secret-token"); err != nil {
 		t.Fatalf("Set first token: %v", err)
 	}
-	firstCredentials, err := credentialSnapshotForOptions(ResolveOptions{Backend: BackendOpenAI, UseTokens: true})
+	firstCredentials, err := credentialSnapshotForOptions(ResolveOptions{Provider: OpenAI, Mode: ModeAPI, UseTokens: true})
 	if err != nil {
 		t.Fatalf("first credential snapshot: %v", err)
 	}
-	first, cacheable, err := resolveFingerprint(ResolveOptions{Backend: BackendOpenAI, UseTokens: true}, firstCredentials)
+	first, cacheable, err := resolveFingerprint(ResolveOptions{Provider: OpenAI, Mode: ModeAPI, UseTokens: true}, firstCredentials)
 	if err != nil || !cacheable {
 		t.Fatalf("first fingerprint: cacheable=%v err=%v", cacheable, err)
 	}
 	if err := vault.Set("openai", "second-secret-token"); err != nil {
 		t.Fatalf("Set second token: %v", err)
 	}
-	secondCredentials, err := credentialSnapshotForOptions(ResolveOptions{Backend: BackendOpenAI, UseTokens: true})
+	secondCredentials, err := credentialSnapshotForOptions(ResolveOptions{Provider: OpenAI, Mode: ModeAPI, UseTokens: true})
 	if err != nil {
 		t.Fatalf("second credential snapshot: %v", err)
 	}
-	second, cacheable, err := resolveFingerprint(ResolveOptions{Backend: BackendOpenAI, UseTokens: true}, secondCredentials)
+	second, cacheable, err := resolveFingerprint(ResolveOptions{Provider: OpenAI, Mode: ModeAPI, UseTokens: true}, secondCredentials)
 	if err != nil || !cacheable {
 		t.Fatalf("second fingerprint: cacheable=%v err=%v", cacheable, err)
 	}
@@ -57,7 +57,7 @@ func TestResolveFingerprintChangesWhenVaultTokenRotates(t *testing.T) {
 // stubLiveFetcher installs a fake live-model fetcher for the test and restores
 // the real one on cleanup. It also isolates API-key env so only the backends
 // the test opts into are fetched, and points the model cache at a temp HOME.
-func stubLiveFetcher(t *testing.T, fn func(b Backend) ([]ModelDef, error)) {
+func stubLiveFetcher(t *testing.T, fn func(p *ModelProvider) ([]ModelDef, error)) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("ANTHROPIC_API_KEY", "")
@@ -66,7 +66,7 @@ func stubLiveFetcher(t *testing.T, fn func(b Backend) ([]ModelDef, error)) {
 	t.Setenv("GOOGLE_API_KEY", "")
 
 	prev := liveModelFetcher
-	liveModelFetcher = func(_ context.Context, b Backend, _, _ string) ([]ModelDef, error) { return fn(b) }
+	liveModelFetcher = func(_ context.Context, p *ModelProvider, _, _ string) ([]ModelDef, error) { return fn(p) }
 	t.Cleanup(func() { liveModelFetcher = prev })
 }
 
@@ -80,12 +80,12 @@ func hasModelID(rows []ResolvedModel, id string) (ResolvedModel, bool) {
 }
 
 func TestResolveModels_NoTokensCatalogOnly(t *testing.T) {
-	stubLiveFetcher(t, func(b Backend) ([]ModelDef, error) {
-		t.Fatalf("live fetch must not run without tokens (backend %q)", b)
+	stubLiveFetcher(t, func(p *ModelProvider) ([]ModelDef, error) {
+		t.Fatalf("live fetch must not run without tokens (provider %s)", p.Name)
 		return nil, nil
 	})
 
-	rows, err := ResolveModels(context.Background(), ResolveOptions{Backend: BackendAnthropic, UseTokens: false})
+	rows, err := ResolveModels(context.Background(), ResolveOptions{Provider: Anthropic, Mode: ModeAPI, UseTokens: false})
 	if err != nil {
 		t.Fatalf("ResolveModels: %v", err)
 	}
@@ -93,8 +93,8 @@ func TestResolveModels_NoTokensCatalogOnly(t *testing.T) {
 		t.Fatal("expected catalog anthropic models")
 	}
 	for _, r := range rows {
-		if r.Backend != BackendAnthropic {
-			t.Fatalf("backend filter leaked: %q", r.Backend)
+		if r.Provider != Anthropic || r.Mode != ModeAPI {
+			t.Fatalf("runtime filter leaked: %s %s", r.Provider.Name, r.Mode)
 		}
 		if r.Live {
 			t.Fatalf("no row should be Live without tokens: %q", r.ID)
@@ -103,18 +103,18 @@ func TestResolveModels_NoTokensCatalogOnly(t *testing.T) {
 }
 
 func TestResolveModels_TokensUnionDedup(t *testing.T) {
-	stubLiveFetcher(t, func(b Backend) ([]ModelDef, error) {
-		if b != BackendAnthropic {
+	stubLiveFetcher(t, func(p *ModelProvider) ([]ModelDef, error) {
+		if p != Anthropic {
 			return nil, nil
 		}
 		return []ModelDef{
-			{ID: "claude-sonnet-5", Backend: BackendAnthropic}, // dedups with catalog anthropic/claude-sonnet-5
-			{ID: "claude-new-xyz", Backend: BackendAnthropic},  // net-new live model
+			{ID: "claude-sonnet-5", Provider: Anthropic.Name, Mode: ModeAPI}, // dedups with catalog anthropic/claude-sonnet-5
+			{ID: "claude-new-xyz", Provider: Anthropic.Name, Mode: ModeAPI},  // net-new live model
 		}, nil
 	})
 	t.Setenv("ANTHROPIC_API_KEY", "k") // after stub clears the key set
 
-	rows, err := ResolveModels(context.Background(), ResolveOptions{Backend: BackendAnthropic, UseTokens: true})
+	rows, err := ResolveModels(context.Background(), ResolveOptions{Provider: Anthropic, Mode: ModeAPI, UseTokens: true})
 	if err != nil {
 		t.Fatalf("ResolveModels: %v", err)
 	}
@@ -128,10 +128,10 @@ func TestResolveModels_TokensUnionDedup(t *testing.T) {
 		t.Fatalf("net-new live model missing/!Live: %+v ok=%v", liveRow, ok)
 	}
 
-	// No duplicate (backend, bareID) for claude-sonnet-5.
+	// No duplicate (runtime, bareID) for claude-sonnet-5.
 	bareCount := 0
 	for _, r := range rows {
-		if r.Backend == BackendAnthropic && r.BareID() == "claude-sonnet-5" {
+		if r.Provider == Anthropic && r.Mode == ModeAPI && r.BareID() == "claude-sonnet-5" {
 			bareCount++
 		}
 	}
@@ -141,26 +141,26 @@ func TestResolveModels_TokensUnionDedup(t *testing.T) {
 }
 
 func TestResolveModels_LiveErrorFailsLoud(t *testing.T) {
-	stubLiveFetcher(t, func(b Backend) ([]ModelDef, error) {
+	stubLiveFetcher(t, func(p *ModelProvider) ([]ModelDef, error) {
 		return nil, errors.New("boom")
 	})
 	t.Setenv("ANTHROPIC_API_KEY", "k") // after stub clears the key set
 
-	if _, err := ResolveModels(context.Background(), ResolveOptions{Backend: BackendAnthropic, UseTokens: true}); err == nil {
+	if _, err := ResolveModels(context.Background(), ResolveOptions{Provider: Anthropic, Mode: ModeAPI, UseTokens: true}); err == nil {
 		t.Fatal("expected live fetch error to propagate (fail loud)")
 	}
 }
 
 func TestResolveModels_LegacyHiddenUnlessFiltered(t *testing.T) {
-	stubLiveFetcher(t, func(b Backend) ([]ModelDef, error) {
-		if b != BackendAnthropic {
+	stubLiveFetcher(t, func(p *ModelProvider) ([]ModelDef, error) {
+		if p != Anthropic {
 			return nil, nil
 		}
-		return []ModelDef{{ID: "claude-3-5-sonnet-20241022", Backend: BackendAnthropic}}, nil
+		return []ModelDef{{ID: "claude-3-5-sonnet-20241022", Provider: Anthropic.Name, Mode: ModeAPI}}, nil
 	})
 	t.Setenv("ANTHROPIC_API_KEY", "k") // after stub clears the key set
 
-	noFilter, err := ResolveModels(context.Background(), ResolveOptions{Backend: BackendAnthropic, UseTokens: true})
+	noFilter, err := ResolveModels(context.Background(), ResolveOptions{Provider: Anthropic, Mode: ModeAPI, UseTokens: true})
 	if err != nil {
 		t.Fatalf("ResolveModels: %v", err)
 	}
@@ -168,7 +168,7 @@ func TestResolveModels_LegacyHiddenUnlessFiltered(t *testing.T) {
 		t.Fatal("legacy id should be hidden without a filter")
 	}
 
-	withFilter, err := ResolveModels(context.Background(), ResolveOptions{Backend: BackendAnthropic, UseTokens: true, Filter: "claude-3-5", Refresh: true})
+	withFilter, err := ResolveModels(context.Background(), ResolveOptions{Provider: Anthropic, Mode: ModeAPI, UseTokens: true, Filter: "claude-3-5", Refresh: true})
 	if err != nil {
 		t.Fatalf("ResolveModels: %v", err)
 	}
@@ -178,20 +178,20 @@ func TestResolveModels_LegacyHiddenUnlessFiltered(t *testing.T) {
 }
 
 func TestResolveModels_PreferredOpenAIVariantsRemainVisible(t *testing.T) {
-	stubLiveFetcher(t, func(b Backend) ([]ModelDef, error) {
-		if b != BackendOpenAI {
+	stubLiveFetcher(t, func(p *ModelProvider) ([]ModelDef, error) {
+		if p != OpenAI {
 			return nil, nil
 		}
 		return []ModelDef{
-			{ID: "gpt-5.6-sol", Backend: BackendOpenAI},
-			{ID: "gpt-5.6-terra", Backend: BackendOpenAI},
-			{ID: "gpt-5.6-luna", Backend: BackendOpenAI},
-			{ID: "gpt-5.5-pro", Backend: BackendOpenAI},
+			{ID: "gpt-5.6-sol", Provider: OpenAI.Name, Mode: ModeAPI},
+			{ID: "gpt-5.6-terra", Provider: OpenAI.Name, Mode: ModeAPI},
+			{ID: "gpt-5.6-luna", Provider: OpenAI.Name, Mode: ModeAPI},
+			{ID: "gpt-5.5-pro", Provider: OpenAI.Name, Mode: ModeAPI},
 		}, nil
 	})
 	t.Setenv("OPENAI_API_KEY", "k")
 
-	rows, err := ResolveModels(context.Background(), ResolveOptions{Backend: BackendOpenAI, UseTokens: true})
+	rows, err := ResolveModels(context.Background(), ResolveOptions{Provider: OpenAI, Mode: ModeAPI, UseTokens: true})
 	if err != nil {
 		t.Fatalf("ResolveModels: %v", err)
 	}
@@ -208,15 +208,15 @@ func TestResolveModels_PreferredOpenAIVariantsRemainVisible(t *testing.T) {
 
 func TestResolveModels_CacheWrittenAndReused(t *testing.T) {
 	calls := 0
-	stubLiveFetcher(t, func(b Backend) ([]ModelDef, error) {
-		if b == BackendAnthropic {
+	stubLiveFetcher(t, func(p *ModelProvider) ([]ModelDef, error) {
+		if p == Anthropic {
 			calls++
 		}
 		return nil, nil
 	})
 	t.Setenv("ANTHROPIC_API_KEY", "k") // after stub clears the key set
 
-	opts := ResolveOptions{Backend: BackendAnthropic, UseTokens: true}
+	opts := ResolveOptions{Provider: Anthropic, Mode: ModeAPI, UseTokens: true}
 	if _, err := ResolveModels(context.Background(), opts); err != nil {
 		t.Fatalf("first resolve: %v", err)
 	}
@@ -233,7 +233,7 @@ func TestResolveModels_CacheWrittenAndReused(t *testing.T) {
 	}
 
 	// Refresh re-resolves.
-	if _, err := ResolveModels(context.Background(), ResolveOptions{Backend: BackendAnthropic, UseTokens: true, Refresh: true}); err != nil {
+	if _, err := ResolveModels(context.Background(), ResolveOptions{Provider: Anthropic, Mode: ModeAPI, UseTokens: true, Refresh: true}); err != nil {
 		t.Fatalf("refresh resolve: %v", err)
 	}
 	if calls != 2 {
@@ -245,24 +245,25 @@ func TestResolveModelsCredentialCacheIsolationAndSourceConsistency(t *testing.T)
 	t.Setenv("HOME", t.TempDir())
 	prev := liveModelFetcher
 	calls := map[string]int{}
-	liveModelFetcher = func(_ context.Context, backend Backend, token, _ string) ([]ModelDef, error) {
-		if backend != BackendOpenAI {
-			t.Fatalf("unexpected live backend %s", backend)
+	liveModelFetcher = func(_ context.Context, p *ModelProvider, token, _ string) ([]ModelDef, error) {
+		if p != OpenAI {
+			t.Fatalf("unexpected live provider %s", p.Name)
 		}
 		calls[token]++
 		modelID := map[string]string{"token-a": "private-model-a", "token-b": "private-model-b"}[token]
-		return []ModelDef{{ID: modelID, Backend: backend}}, nil
+		return []ModelDef{{ID: modelID, Provider: p.Name, Mode: ModeAPI}}, nil
 	}
 	t.Cleanup(func() { liveModelFetcher = prev })
 
 	resolve := func(openAIToken, source, unrelatedToken string) []ResolvedModel {
 		t.Helper()
 		rows, err := ResolveModels(context.Background(), ResolveOptions{
-			Backend:   BackendOpenAI,
+			Provider:  OpenAI,
+			Mode:      ModeAPI,
 			UseTokens: true,
-			Credentials: NewCredentialSnapshot(map[Backend]api.ResolvedAPIKey{
-				BackendOpenAI:    {Token: openAIToken, Source: source, Detail: source},
-				BackendAnthropic: {Token: unrelatedToken, Source: source, Detail: source},
+			Credentials: NewCredentialSnapshot(map[string]api.ResolvedAPIKey{
+				OpenAI.Name:    {Token: openAIToken, Source: source, Detail: source},
+				Anthropic.Name: {Token: unrelatedToken, Source: source, Detail: source},
 			}),
 		})
 		if err != nil {
@@ -293,13 +294,13 @@ func TestResolveModelsEndpointIsolation(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	prev := liveModelFetcher
 	var endpoints []string
-	liveModelFetcher = func(_ context.Context, backend Backend, _ string, endpoint string) ([]ModelDef, error) {
+	liveModelFetcher = func(_ context.Context, p *ModelProvider, _ string, endpoint string) ([]ModelDef, error) {
 		endpoints = append(endpoints, endpoint)
-		return []ModelDef{{ID: fmt.Sprintf("endpoint-%d", len(endpoints)), Backend: backend}}, nil
+		return []ModelDef{{ID: fmt.Sprintf("endpoint-%d", len(endpoints)), Provider: p.Name, Mode: ModeAPI}}, nil
 	}
 	t.Cleanup(func() { liveModelFetcher = prev })
-	credentials := NewCredentialSnapshot(map[Backend]api.ResolvedAPIKey{
-		BackendOpenAI: {Token: "endpoint-token"},
+	credentials := NewCredentialSnapshot(map[string]api.ResolvedAPIKey{
+		OpenAI.Name: {Token: "endpoint-token"},
 	})
 
 	for _, apiURL := range []string{
@@ -308,7 +309,7 @@ func TestResolveModelsEndpointIsolation(t *testing.T) {
 		"https://tenant-two.example/v1?account=private-two",
 	} {
 		if _, err := ResolveModels(context.Background(), ResolveOptions{
-			Backend: BackendOpenAI, UseTokens: true, Credentials: credentials, APIURL: apiURL,
+			Provider: OpenAI, Mode: ModeAPI, UseTokens: true, Credentials: credentials, APIURL: apiURL,
 		}); err != nil {
 			t.Fatalf("ResolveModels(%s): %v", apiURL, err)
 		}
@@ -334,7 +335,7 @@ func TestResolveModelsEndpointIsolation(t *testing.T) {
 	}
 }
 
-func TestResolveModelsConcurrentBackendsRetainSecureIndependentEntries(t *testing.T) {
+func TestResolveModelsConcurrentProvidersRetainSecureIndependentEntries(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	root := filepath.Join(home, ".config", "captain")
@@ -348,18 +349,18 @@ func TestResolveModelsConcurrentBackendsRetainSecureIndependentEntries(t *testin
 
 	prev := liveModelFetcher
 	var mu sync.Mutex
-	calls := map[Backend]int{}
-	liveModelFetcher = func(_ context.Context, backend Backend, _, _ string) ([]ModelDef, error) {
+	calls := map[string]int{}
+	liveModelFetcher = func(_ context.Context, p *ModelProvider, _, _ string) ([]ModelDef, error) {
 		mu.Lock()
-		calls[backend]++
+		calls[p.Name]++
 		mu.Unlock()
-		return []ModelDef{{ID: string(backend) + "-private", Backend: backend}}, nil
+		return []ModelDef{{ID: p.Name + "-private", Provider: p.Name, Mode: ModeAPI}}, nil
 	}
 	t.Cleanup(func() { liveModelFetcher = prev })
 
 	options := []ResolveOptions{
-		{Backend: BackendOpenAI, UseTokens: true, Credentials: NewCredentialSnapshot(map[Backend]api.ResolvedAPIKey{BackendOpenAI: {Token: "openai-secret-token"}})},
-		{Backend: BackendAnthropic, UseTokens: true, Credentials: NewCredentialSnapshot(map[Backend]api.ResolvedAPIKey{BackendAnthropic: {Token: "anthropic-secret-token"}})},
+		{Provider: OpenAI, Mode: ModeAPI, UseTokens: true, Credentials: NewCredentialSnapshot(map[string]api.ResolvedAPIKey{OpenAI.Name: {Token: "openai-secret-token"}})},
+		{Provider: Anthropic, Mode: ModeAPI, UseTokens: true, Credentials: NewCredentialSnapshot(map[string]api.ResolvedAPIKey{Anthropic.Name: {Token: "anthropic-secret-token"}})},
 	}
 	runConcurrent := func(options []ResolveOptions) {
 		t.Helper()
@@ -383,8 +384,8 @@ func TestResolveModelsConcurrentBackendsRetainSecureIndependentEntries(t *testin
 	}
 	runConcurrent(options)
 	runConcurrent(options)
-	if calls[BackendOpenAI] != 1 || calls[BackendAnthropic] != 1 {
-		t.Fatalf("warm-cache calls = %v, want one fetch per backend", calls)
+	if calls[OpenAI.Name] != 1 || calls[Anthropic.Name] != 1 {
+		t.Fatalf("warm-cache calls = %v, want one fetch per p", calls)
 	}
 	refresh := options[0]
 	refresh.Refresh = true
@@ -394,7 +395,7 @@ func TestResolveModelsConcurrentBackendsRetainSecureIndependentEntries(t *testin
 	if _, err := ResolveModels(context.Background(), options[1]); err != nil {
 		t.Fatalf("warm Anthropic after OpenAI refresh: %v", err)
 	}
-	if calls[BackendOpenAI] != 2 || calls[BackendAnthropic] != 1 {
+	if calls[OpenAI.Name] != 2 || calls[Anthropic.Name] != 1 {
 		t.Fatalf("refresh calls = %v, want refresh isolated to OpenAI", calls)
 	}
 
@@ -436,7 +437,7 @@ func TestResolveModelsConcurrentBackendsRetainSecureIndependentEntries(t *testin
 		}
 	}
 	if jsonEntries != 2 {
-		t.Fatalf("cache entries = %v, want one JSON entry per backend", entries)
+		t.Fatalf("cache entries = %v, want one JSON entry per p", entries)
 	}
 }
 
@@ -447,7 +448,7 @@ func TestResolveModelsSerializesSameCredentialCacheEntry(t *testing.T) {
 	release := make(chan struct{})
 	calls := 0
 	var mu sync.Mutex
-	liveModelFetcher = func(_ context.Context, backend Backend, _, _ string) ([]ModelDef, error) {
+	liveModelFetcher = func(_ context.Context, p *ModelProvider, _, _ string) ([]ModelDef, error) {
 		mu.Lock()
 		calls++
 		call := calls
@@ -456,12 +457,12 @@ func TestResolveModelsSerializesSameCredentialCacheEntry(t *testing.T) {
 			close(started)
 			<-release
 		}
-		return []ModelDef{{ID: fmt.Sprintf("private-model-%d", call), Backend: backend}}, nil
+		return []ModelDef{{ID: fmt.Sprintf("private-model-%d", call), Provider: p.Name, Mode: ModeAPI}}, nil
 	}
 	t.Cleanup(func() { liveModelFetcher = previous })
 	opts := ResolveOptions{
-		Backend: BackendOpenAI, UseTokens: true,
-		Credentials: NewCredentialSnapshot(map[Backend]api.ResolvedAPIKey{BackendOpenAI: {Token: "shared-token"}}),
+		Provider: OpenAI, Mode: ModeAPI, UseTokens: true,
+		Credentials: NewCredentialSnapshot(map[string]api.ResolvedAPIKey{OpenAI.Name: {Token: "shared-token"}}),
 	}
 
 	firstDone := make(chan error, 1)
@@ -514,14 +515,14 @@ func TestResolveModelsCatalogOnlyCreatesNoCredentialVerifier(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	prev := liveModelFetcher
-	liveModelFetcher = func(_ context.Context, backend Backend, _, _ string) ([]ModelDef, error) {
-		t.Fatalf("catalog-only resolution fetched %s", backend)
+	liveModelFetcher = func(_ context.Context, p *ModelProvider, _, _ string) ([]ModelDef, error) {
+		t.Fatalf("catalog-only resolution fetched %s", p.Name)
 		return nil, nil
 	}
 	t.Cleanup(func() { liveModelFetcher = prev })
 	if _, err := ResolveModels(context.Background(), ResolveOptions{
-		Backend: BackendAnthropic, UseTokens: false,
-		Credentials: NewCredentialSnapshot(map[Backend]api.ResolvedAPIKey{BackendAnthropic: {Token: "must-not-be-fingerprinted"}}),
+		Provider: Anthropic, Mode: ModeAPI, UseTokens: false,
+		Credentials: NewCredentialSnapshot(map[string]api.ResolvedAPIKey{Anthropic.Name: {Token: "must-not-be-fingerprinted"}}),
 	}); err != nil {
 		t.Fatalf("ResolveModels: %v", err)
 	}
@@ -535,9 +536,9 @@ func TestResolveModelsSecureKeyFailureFallsBackToUncachedLiveResolution(t *testi
 	prevFetcher := liveModelFetcher
 	prevKey := modelCacheHMACKey
 	calls := 0
-	liveModelFetcher = func(_ context.Context, backend Backend, _, _ string) ([]ModelDef, error) {
+	liveModelFetcher = func(_ context.Context, p *ModelProvider, _, _ string) ([]ModelDef, error) {
 		calls++
-		return []ModelDef{{ID: "uncached-private", Backend: backend}}, nil
+		return []ModelDef{{ID: "uncached-private", Provider: p.Name, Mode: ModeAPI}}, nil
 	}
 	modelCacheHMACKey = func() ([]byte, error) { return nil, errors.New("unavailable") }
 	t.Cleanup(func() {
@@ -545,8 +546,8 @@ func TestResolveModelsSecureKeyFailureFallsBackToUncachedLiveResolution(t *testi
 		modelCacheHMACKey = prevKey
 	})
 	opts := ResolveOptions{
-		Backend: BackendOpenAI, UseTokens: true,
-		Credentials: NewCredentialSnapshot(map[Backend]api.ResolvedAPIKey{BackendOpenAI: {Token: "still-usable-live"}}),
+		Provider: OpenAI, Mode: ModeAPI, UseTokens: true,
+		Credentials: NewCredentialSnapshot(map[string]api.ResolvedAPIKey{OpenAI.Name: {Token: "still-usable-live"}}),
 	}
 	for i := 0; i < 2; i++ {
 		if _, err := ResolveModels(context.Background(), opts); err != nil {

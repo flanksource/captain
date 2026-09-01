@@ -9,6 +9,10 @@ type CodexEvent struct {
 	Timestamp string       `json:"timestamp"`
 	Type      string       `json:"type"`
 	Payload   CodexPayload `json:"payload"`
+	// Ordinal is the record's position in the thread's history. A forked or
+	// subagent rollout replays its parent's records first; session_meta's
+	// subagent_history_start_ordinal marks where the thread's own history begins.
+	Ordinal *int `json:"ordinal,omitempty"`
 
 	// Fields used by the newer dotted-name `codex exec --json` schema.
 	// Older rollout-jsonl events nest everything under Payload; newer live
@@ -54,10 +58,21 @@ type CodexPayload struct {
 	Type string         `json:"type"`
 	Raw  map[string]any `json:"-"`
 
-	// session_meta
-	ID         string `json:"id,omitempty"`
-	CWD        string `json:"cwd,omitempty"`
-	CLIVersion string `json:"cli_version,omitempty"`
+	// session_meta. ID is this thread; SessionID is the root thread of the
+	// fork tree (equal to ID for a top-level thread), so a subagent's rollout
+	// must never be filed under SessionID.
+	ID             string `json:"id,omitempty"`
+	SessionID      string `json:"session_id,omitempty"`
+	ForkedFromID   string `json:"forked_from_id,omitempty"`
+	ParentThreadID string `json:"parent_thread_id,omitempty"`
+	ThreadSource   string `json:"thread_source,omitempty"`
+	AgentNickname  string `json:"agent_nickname,omitempty"`
+	AgentPath      string `json:"agent_path,omitempty"`
+	// SubagentHistoryStartOrdinal is the first ordinal that belongs to this
+	// thread; earlier records are the parent's history replayed for context.
+	SubagentHistoryStartOrdinal *int   `json:"subagent_history_start_ordinal,omitempty"`
+	CWD                         string `json:"cwd,omitempty"`
+	CLIVersion                  string `json:"cli_version,omitempty"`
 	// Source has appeared as both a scalar (for root sessions) and an object
 	// (for example {"subagent":{"other":"guardian"}}). Keep the provider
 	// shape opaque so a new source variant cannot invalidate the whole
