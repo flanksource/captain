@@ -8,6 +8,11 @@ import (
 	"github.com/segmentio/encoding/json"
 )
 
+// TranscriptParserVersion identifies the persisted transcript projection shape.
+// Consumers that parse a complete source use it when registering that source so
+// the monitor resumes from the recorded offset instead of replaying old events.
+const TranscriptParserVersion = 4
+
 // Session is the unified session aggregate. It is the single source of truth the
 // history/sessions commands render, the viewer consumes, and the chat/live
 // surfaces project from.
@@ -26,14 +31,20 @@ type Session struct {
 	Title             string          `json:"title,omitempty"`
 	InitialPrompt     string          `json:"initialPrompt,omitempty"`
 	Version           string          `json:"version,omitempty"`
+	// Provider is the session's provider label (a family key for agent-backed
+	// sessions, or "captain"/"multi-model" for captain's own). ModelMode is the
+	// mechanism the latest model call ran on; ExecutionMode is the prompt RUN mode
+	// and is a different concept.
 	Provider          string          `json:"provider,omitempty"`
-	Backend           string          `json:"backend,omitempty"`
+	ModelMode         api.RuntimeMode `json:"modelMode,omitempty"`
 	ExecutionMode     api.RuntimeMode `json:"executionMode,omitempty"`
 	Model             string          `json:"model,omitempty"` // primary model
-	Runtime           *api.Model      `json:"runtime,omitempty"`
-	ForkedFrom        string          `json:"forkedFrom,omitempty"`
-	ReasoningEffort   string          `json:"reasoningEffort,omitempty"`
-	HistoryFile       string          `json:"historyFile,omitempty"`
+	// An identity, not an api.Model: Model.Provider is json:"-", so serializing the
+	// model would hide which runtime the session is bound to.
+	Runtime         *api.RuntimeIdentity `json:"runtime,omitempty"`
+	ForkedFrom      string               `json:"forkedFrom,omitempty"`
+	ReasoningEffort string               `json:"reasoningEffort,omitempty"`
+	HistoryFile     string               `json:"historyFile,omitempty"`
 
 	Git       GitState   `json:"git,omitempty"`
 	StartedAt *time.Time `json:"startedAt,omitempty"`
@@ -147,7 +158,8 @@ type Turn struct {
 	EndedAt         *time.Time `json:"endedAt,omitempty"`
 	StopReason      string     `json:"stopReason,omitempty"`
 	Model           string     `json:"model,omitempty"`
-	Backend         string     `json:"backend,omitempty"`
+	ModelProvider   string     `json:"modelProvider,omitempty"`
+	Mode            string     `json:"mode,omitempty"`
 	ReasoningEffort string     `json:"reasoningEffort,omitempty"`
 	MessageIDs      []string   `json:"messageIds,omitempty"`
 	Usage           api.Usage  `json:"usage,omitempty"`
