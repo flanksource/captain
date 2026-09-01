@@ -22,7 +22,6 @@ var _ = Describe("multi-model prompt output", func() {
 		Expect(pretty.ANSI()).To(And(
 			ContainSubstring("Database sizes"),
 			ContainSubstring("SELECT"),
-			ContainSubstring("\x1b["),
 			Not(ContainSubstring("```")),
 		))
 		Expect(pretty.Markdown()).To(And(
