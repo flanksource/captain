@@ -71,7 +71,7 @@ var _ = Describe("git-agent API status", func() {
 			},
 		)
 		request := httptest.NewRequest(http.MethodPost,
-			gitagent.AgentWhoamiPath+"?backend=codex-cmux&models=false&limit=2&disabled=true&no-cache=true",
+			gitagent.AgentWhoamiPath+"?provider=openai&mode=cmux&models=false&limit=2&disabled=true&no-cache=true",
 			strings.NewReader("{}"))
 		request.Header.Set("Authorization", "Bearer allowed")
 		response := httptest.NewRecorder()
@@ -81,7 +81,7 @@ var _ = Describe("git-agent API status", func() {
 		Expect(response.Code).To(Equal(http.StatusOK), response.Body.String())
 		Expect(response.Header().Get("Content-Type")).To(Equal("application/json"))
 		Expect(received).To(Equal(WhoamiOptions{
-			Backend: "codex-cmux", Models: false, Limit: 2, IncludeDisabled: true, NoCache: true,
+			Provider: "openai", Mode: "cmux", Models: false, Limit: 2, IncludeDisabled: true, NoCache: true,
 		}))
 		Expect(response.Body.String()).To(MatchJSON(`{"adapters":[]}`))
 	})
@@ -145,7 +145,8 @@ var _ = Describe("git-agent API status", func() {
 		Expect(received.URL.Query().Get("models")).To(Equal("true"))
 		Expect(received.URL.Query().Get("limit")).To(Equal("0"))
 		Expect(received.Header.Get("Authorization")).To(Equal("Bearer " + dispatchToken))
-		Expect(response.Body.String()).To(ContainSubstring("codex-agent"))
+		Expect(response.Body.String()).To(ContainSubstring(`"provider":"openai"`))
+		Expect(response.Body.String()).To(ContainSubstring(`"mode":"agent"`))
 		Expect(response.Body.String()).To(ContainSubstring("gpt-5.6-sol"))
 		Expect(response.Body.String()).NotTo(ContainSubstring(dispatchToken))
 		Expect(response.Body.String()).NotTo(ContainSubstring(tokenPath))

@@ -46,11 +46,12 @@ type AIAgentResult struct {
 	Iterations int    `json:"iterations" pretty:"label=Iterations"`
 	StopReason string `json:"stopReason" pretty:"label=Stop Reason"`
 	Passed     bool   `json:"passed" pretty:"label=Passed"`
-	// Model and Backend are what the run actually resolved to, not what was
+	// Model, Provider and Mode are what the run actually resolved to, not what was
 	// asked for: a caller handing the session to a chat thread needs the model
 	// the provider answered as, and only the server can name it.
 	Model        string   `json:"model,omitempty" pretty:"label=Model"`
-	Backend      string   `json:"backend,omitempty" pretty:"label=Backend"`
+	Provider     string   `json:"provider,omitempty" pretty:"label=Provider"`
+	Mode         string   `json:"mode,omitempty" pretty:"label=Mode"`
 	CostUSD      float64  `json:"costUSD,omitempty" pretty:"label=Cost USD"`
 	SessionID    string   `json:"sessionId,omitempty" pretty:"label=Session"`
 	Branch       string   `json:"branch,omitempty" pretty:"label=Branch"`
@@ -183,7 +184,7 @@ func RunAIAgent(opts AIAgentOptions) (any, error) {
 	}
 	sp, ok := p.(ai.StreamingProvider)
 	if !ok {
-		return nil, fmt.Errorf("backend %s does not support the streaming agent loop", cfg.Model.Backend)
+		return nil, fmt.Errorf("runtime %s does not support the streaming agent loop", api.RuntimeOf(cfg.Model.Provider, cfg.Model.Mode))
 	}
 
 	hooks, _, err := buildAgentPlugins(opts, p)
@@ -224,7 +225,8 @@ func RunAIAgent(opts AIAgentOptions) (any, error) {
 		Duration: time.Since(start).Round(time.Millisecond).String(),
 		Passed:   verifyPassed(result.Verdicts),
 		Model:    firstNonEmpty(result.Response.Model, sp.GetModel(), cfg.Model.Name),
-		Backend:  firstNonEmpty(string(result.Response.Backend), string(sp.GetBackend()), string(cfg.Model.Backend)),
+		Provider: firstRuntime(result.Response.Runtime, sp.GetRuntime(), api.RuntimeOf(cfg.Model.Provider, cfg.Model.Mode)).Provider,
+		Mode:     string(firstRuntime(result.Response.Runtime, sp.GetRuntime(), api.RuntimeOf(cfg.Model.Provider, cfg.Model.Mode)).Mode),
 	}
 	if ws != nil {
 		res.ChangedFiles = ws.Changed

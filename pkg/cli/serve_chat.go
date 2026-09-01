@@ -46,6 +46,7 @@ func newCaptainChatService(
 	}
 	chat := aichat.NewService(aichat.ServiceOptions{
 		ToolStrategies: chatTools.Strategies(),
+		ToolPolicy:     chatTools.ToolPolicy(),
 		Profile: aichat.RuntimeProfileProviderFunc(func(context.Context) (aichat.RuntimeProfile, error) {
 			resolved, err := api.ResolveSpecLayers(api.SpecLayer{
 				Name: "captain serve", Scope: api.SpecLayerGlobal,

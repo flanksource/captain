@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/google/uuid"
@@ -18,7 +17,8 @@ type promptRunRecordInput struct {
 	Binding    *promptSessionBinding
 	SessionID  string
 	Model      string
-	Backend    string
+	Provider   *api.ModelProvider
+	Mode       api.RuntimeMode
 	BatchID    *uuid.UUID
 	ResultText string
 	ResultJSON map[string]any
@@ -32,7 +32,7 @@ func persistPromptRun(ctx context.Context, input promptRunRecordInput) {
 	if input.Binding == nil && strings.TrimSpace(input.SessionID) == "" {
 		return
 	}
-	source := backendSource(api.Backend(input.Backend))
+	source := transcriptSource(input.Provider, input.Mode)
 	if source == "" {
 		source = "claude"
 	}
@@ -53,7 +53,7 @@ func persistPromptRun(ctx context.Context, input promptRunRecordInput) {
 	} else {
 		session, err = db.CreateOrGetSession(ctx, database.CreateSessionInput{
 			ProviderSessionID: input.SessionID, Source: source, HostID: captainHostID(),
-			Provider: ai.BackendToProvider(api.Backend(input.Backend)), CWD: input.Rendered.Input.Cwd(),
+			Provider: providerName(input.Provider), CWD: input.Rendered.Input.Cwd(),
 		})
 	}
 	if err != nil {
@@ -74,7 +74,7 @@ func persistPromptRun(ctx context.Context, input promptRunRecordInput) {
 			Runtime: database.PromptRunRuntime{
 				Mode: "run",
 				Resolved: database.PromptRunRuntimeSelection{
-					Provider: ai.BackendToProvider(api.Backend(input.Backend)), Backend: input.Backend,
+					Provider: providerName(input.Provider), Mode: string(input.Mode),
 					Model: input.Model, Effort: string(input.Rendered.Config.Model.Effort),
 				},
 			},
@@ -130,22 +130,32 @@ func trackLaunchedTranscript(input promptRunRecordInput, source string) {
 	if mon == nil {
 		return
 	}
-	path := historyFileForRun(api.Backend(input.Backend), input.SessionID, input.Rendered.Input.Cwd())
+	path := historyFileForRun(input.Provider, input.Mode, input.SessionID, input.Rendered.Input.Cwd())
 	if path != "" {
 		mon.TrackTranscript(path, source)
 	}
 }
 
-// backendSource maps a prompt backend to the transcript source it produces.
-func backendSource(backend api.Backend) string {
-	switch backend {
-	case api.BackendClaudeAgent, api.BackendClaudeCLI, api.BackendClaudeCmux:
-		return "claude"
-	case api.BackendCodexAgent, api.BackendCodexCLI, api.BackendCodexCmux:
-		return "codex"
+// transcriptSource names the transcript a runtime leaves behind. It is a
+// property of the provider family plus running locally at all: every local
+// Claude mode writes a `claude` transcript, and the API mode writes none.
+func transcriptSource(provider *api.ModelProvider, mode api.RuntimeMode) string {
+	if provider == nil || mode.Kind() != "cli" {
+		return ""
+	}
+	switch provider {
+	case api.Anthropic, api.OpenAI:
+		return provider.AgentName
 	default:
 		return ""
 	}
+}
+
+func providerName(p *api.ModelProvider) string {
+	if p == nil {
+		return ""
+	}
+	return p.Name
 }
 
 // renderedSpecMap round-trips the realized prompt render into the jsonb shape

@@ -124,7 +124,7 @@ func buildSessionGetItem(ctx context.Context, db sessionGetStore, overview datab
 	item.Summary.DetailAvailable = true
 	item.Summary.Messages = max(item.Summary.Messages, len(detail.Messages))
 	item.Summary.Provider = firstNonEmpty(item.Summary.Provider, detail.Provider)
-	item.Summary.Backend = firstNonEmpty(item.Summary.Backend, detail.Backend)
+	item.Summary.ModelMode = firstNonEmpty(item.Summary.ModelMode, string(detail.ModelMode))
 	item.Summary.Model = firstNonEmpty(item.Summary.Model, detail.Model)
 	item.Summary.ReasoningEffort = firstNonEmpty(item.Summary.ReasoningEffort, detail.ReasoningEffort)
 	notice, err := applyTranscriptWindow(detail, opts, item.Summary.Messages)
@@ -232,7 +232,7 @@ func sessionFromPromptRun(overview database.SessionOverview, run database.Prompt
 		InitialPrompt:     stringOr(overview.InitialPrompt, run.PromptMarkdown),
 		Version:           stringOr(overview.CLIVersion, ""),
 		Provider:          firstNonEmpty(overview.Provider, resolved.Provider, requested.Provider),
-		Backend:           firstNonEmpty(stringOr(overview.Backend, ""), resolved.Backend, requested.Backend),
+		ModelMode:         api.RuntimeMode(firstNonEmpty(stringOr(overview.ModelMode, ""), resolved.Mode, requested.Mode)),
 		Model:             firstNonEmpty(stringOr(overview.Model, ""), resolved.Model, requested.Model),
 		ReasoningEffort:   firstNonEmpty(stringOr(overview.Effort, ""), resolved.Effort, requested.Effort),
 		StartedAt:         firstTime(overview.StartedAt, run.StartedAt, &run.QueuedAt),
@@ -322,7 +322,7 @@ func firstTime(values ...*time.Time) *time.Time {
 }
 
 func sessionChatCapabilities(summary SessionRecord) ChatCapabilities {
-	capabilities := chatCapabilitiesForBackend(summary.Backend)
+	capabilities := chatCapabilitiesFor(summary.Provider, summary.ModelMode)
 	if summary.Source == "claude" || summary.Source == "codex" {
 		capabilities.Resume = true
 	}
@@ -336,11 +336,11 @@ func enrichSessionDetail(detail *session.Session, summary SessionRecord) {
 	if detail.Model == "" {
 		detail.Model = summary.Model
 	}
-	if detail.Backend == "" {
-		detail.Backend = summary.Backend
+	if detail.ModelMode == "" {
+		detail.ModelMode = api.RuntimeMode(summary.ModelMode)
 	}
 	if detail.ExecutionMode == "" {
-		detail.ExecutionMode = api.Backend(detail.Backend).Mode()
+		detail.ExecutionMode = detail.ModelMode
 	}
 	if detail.ReasoningEffort == "" {
 		detail.ReasoningEffort = summary.ReasoningEffort
@@ -353,8 +353,9 @@ func enrichSessionDetail(detail *session.Session, summary SessionRecord) {
 		}
 	}
 	for i := range detail.Turns {
-		if detail.Turns[i].Backend == "" {
-			detail.Turns[i].Backend = summary.Backend
+		if detail.Turns[i].Mode == "" {
+			detail.Turns[i].Mode = summary.ModelMode
+			detail.Turns[i].ModelProvider = summary.Provider
 		}
 		if detail.Turns[i].ReasoningEffort == "" {
 			detail.Turns[i].ReasoningEffort = summary.ReasoningEffort

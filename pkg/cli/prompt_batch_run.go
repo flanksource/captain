@@ -39,15 +39,15 @@ func launchAsyncBatch(ctx context.Context, id string, rendered PromptRenderResul
 		variant := renderVariant(rendered, run.Runtime, nil)
 		runID := run.SessionID.String()
 		stream := promptRuns.create(runID)
-		capabilities := chatCapabilitiesForBackend(variant.Backend)
+		capabilities := chatCapabilitiesFor(variant.Provider, variant.Mode)
 		stream.setRun(PromptRunFrame{
 			RunID: runID, SessionID: runID, Status: "running", Chat: chat,
-			Model: variant.Model, Backend: variant.Backend, Capabilities: capabilities,
+			Model: variant.Model, Provider: variant.Provider, Mode: variant.Mode, Capabilities: capabilities,
 		})
 		updatePromptSessionLifecycle(ctx, run.SessionID, database.SessionLifecycleRunning, "")
 		result.Runs[i] = PromptRunItem{
 			RunID: runID, SessionID: runID, Selector: runtimeSelector(run.Runtime),
-			Status: "running", Model: run.Runtime.Name, Backend: string(run.Runtime.Backend),
+			Status: "running", Model: run.Runtime.Name, Provider: providerName(run.Runtime.Provider), Mode: string(run.Runtime.Mode),
 			Effort: string(run.Runtime.Effort), Chat: chat, Capabilities: capabilities,
 		}
 		handles[i] = group.Add(runtimeSelector(run.Runtime), func(_ flanksourceContext.Context, t *task.Task) (PromptRunSummary, error) {
@@ -60,7 +60,7 @@ func launchAsyncBatch(ctx context.Context, id string, rendered PromptRenderResul
 			if runErr != nil {
 				persistPromptRun(context.WithoutCancel(t.Context()), promptRunRecordInput{
 					Rendered: variant, RunID: runID, Binding: binding,
-					Model: run.Runtime.Name, Backend: string(run.Runtime.Backend), Error: runErr.Error(),
+					Model: run.Runtime.Name, Provider: run.Runtime.Provider, Mode: run.Runtime.Mode, Error: runErr.Error(),
 				})
 			}
 			return summary, runErr

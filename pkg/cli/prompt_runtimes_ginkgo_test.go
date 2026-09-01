@@ -29,7 +29,7 @@ model: gemini-3.5-flash
 runtimes:
   - api:gemini-3.5-flash:high
   - model: claude-sonnet-5
-    backend: anthropic
+    mode: api
     effort: medium
 ---
 {{role "user"}}
@@ -44,12 +44,12 @@ Review the screenshot.
 		Expect(rendered.Runtimes).To(HaveLen(2))
 		Expect(rendered.Runtimes[0]).To(SatisfyAll(
 			HaveField("Name", "gemini-3.5-flash"),
-			HaveField("Backend", api.BackendGemini),
+			HaveField("Provider", api.Google), HaveField("Mode", api.ModeAPI),
 			HaveField("Effort", api.EffortHigh),
 		))
 		Expect(rendered.Runtimes[1]).To(SatisfyAll(
 			HaveField("Name", "claude-sonnet-5"),
-			HaveField("Backend", api.BackendAnthropic),
+			HaveField("Provider", api.Anthropic), HaveField("Mode", api.ModeAPI),
 			HaveField("Effort", api.EffortMedium),
 		))
 	})
@@ -64,19 +64,19 @@ Review the screenshot.
 		Expect(detail.Run).To(Equal(PromptRenderRequest{
 			Variables: map[string]any{},
 			Spec: &api.Spec{Model: api.Model{
-				Name:    "gemini-3.5-flash",
-				Backend: api.BackendGemini,
+				Name: "gemini-3.5-flash",
+				Mode: api.ModeAPI,
 			}},
 			Runtimes: []api.Model{
 				{
-					Name:    "gemini-3.5-flash",
-					Backend: api.BackendGemini,
-					Effort:  api.EffortHigh,
+					Name:   "gemini-3.5-flash",
+					Mode:   api.ModeAPI,
+					Effort: api.EffortHigh,
 				},
 				{
-					Name:    "claude-sonnet-5",
-					Backend: api.BackendAnthropic,
-					Effort:  api.EffortMedium,
+					Name:   "claude-sonnet-5",
+					Mode:   api.ModeAPI,
+					Effort: api.EffortMedium,
 				},
 			},
 			Chat: true,
@@ -130,21 +130,24 @@ Review the screenshot.
 		Expect(err).NotTo(HaveOccurred())
 		Expect(rendered.Runtimes).To(HaveLen(2))
 		Expect(rendered.Runtimes[0].Name).To(Equal("gpt-5.5"))
-		Expect(rendered.Runtimes[1].Backend).To(Equal(api.BackendCodexAgent))
+		Expect(rendered.Runtimes[1].Provider).To(Equal(api.OpenAI))
+		Expect(rendered.Runtimes[1].Mode).To(Equal(api.ModeAgent))
 	})
 
 	It("lets explicit HTTP runtimes replace prompt defaults", func() {
 		record, err := filePromptRecord(path)
 		Expect(err).NotTo(HaveOccurred())
 		rendered, err := renderPrompt(context.Background(), record.ID, PromptRenderRequest{Runtimes: []api.Model{
-			{Name: "gpt-5.5", Backend: api.BackendOpenAI, Effort: api.EffortHigh},
-			{Name: "gpt-5.6-sol", Backend: api.BackendCodexAgent, Effort: api.EffortMedium},
+			{Name: "gpt-5.5", Mode: api.ModeAPI, Effort: api.EffortHigh},
+			{Name: "gpt-5.6-sol", Mode: api.ModeAgent, Effort: api.EffortMedium},
 		}})
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(rendered.Runtimes).To(HaveLen(2))
-		Expect(rendered.Runtimes[0].Backend).To(Equal(api.BackendOpenAI))
-		Expect(rendered.Runtimes[1].Backend).To(Equal(api.BackendCodexAgent))
+		Expect(rendered.Runtimes[0].Provider).To(Equal(api.OpenAI))
+		Expect(rendered.Runtimes[0].Mode).To(Equal(api.ModeAPI))
+		Expect(rendered.Runtimes[1].Provider).To(Equal(api.OpenAI))
+		Expect(rendered.Runtimes[1].Mode).To(Equal(api.ModeAgent))
 	})
 
 	DescribeTable("executes name-resolved runtimes without CLI selectors",
@@ -159,7 +162,7 @@ Review the screenshot.
 				mu.Lock()
 				defer mu.Unlock()
 				executed = append(executed, cfg.Model)
-				return AIPromptResult{Text: "ok", Model: cfg.Model.Name, Backend: string(cfg.Model.Backend)}, nil
+				return AIPromptResult{Text: "ok", Model: cfg.Model.Name, Provider: cfg.Model.Provider.Name, Mode: string(cfg.Model.Mode)}, nil
 			}
 			ctx := ContextWithPromptDirs(context.Background(), []string{filepath.Dir(path)})
 			rendered, err := renderPromptCLI(ctx, id, AIPromptOptions{}, "", "")
@@ -170,8 +173,8 @@ Review the screenshot.
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.Runs).To(HaveLen(2))
 			Expect(executed).To(ConsistOf(
-				SatisfyAll(HaveField("Name", "gemini-3.5-flash"), HaveField("Backend", api.BackendGemini)),
-				SatisfyAll(HaveField("Name", "claude-sonnet-5"), HaveField("Backend", api.BackendAnthropic)),
+				SatisfyAll(HaveField("Name", "gemini-3.5-flash"), HaveField("Provider", api.Google), HaveField("Mode", api.ModeAPI)),
+				SatisfyAll(HaveField("Name", "claude-sonnet-5"), HaveField("Provider", api.Anthropic), HaveField("Mode", api.ModeAPI)),
 			))
 		},
 		Entry("without the extension", "compare"),
@@ -183,7 +186,7 @@ Review the screenshot.
 		Expect(os.WriteFile(invalidPath, []byte(`---
 runtimes:
   - model: gemini-3.5-flash
-    backend: gemini
+    mode: api
     typo: true
   - api:sonnet-5:medium
 ---
@@ -197,17 +200,19 @@ Review the screenshot.
 })
 
 var _ = Describe("prompt schema model catalog", func() {
-	It("collapses exact adapters into canonical provider and backend axes", func() {
+	It("serves one row per model, listing the modes that can execute it", func() {
 		models := PromptModelCatalog([]AdapterStatus{
 			{
-				Backend:       string(api.BackendCodexCLI),
+				Provider:      api.OpenAI.Name,
+				Mode:          string(api.ModeCLI),
 				Type:          "cli",
 				Authenticated: true,
 				Binary:        "/usr/local/bin/codex",
 				Models:        []string{"gpt-5.6-sol"},
 			},
 			{
-				Backend:       string(api.BackendCodexCmux),
+				Provider:      api.OpenAI.Name,
+				Mode:          string(api.ModeCmux),
 				Type:          "cli",
 				Authenticated: true,
 				Binary:        "/usr/local/bin/codex",
@@ -217,7 +222,7 @@ var _ = Describe("prompt schema model catalog", func() {
 
 		Expect(models).To(HaveLen(1))
 		Expect(models[0].Provider).To(Equal("openai"))
-		Expect(models[0].Backends).To(Equal([]string{"cli", "cmux"}))
+		Expect(models[0].Modes).To(Equal([]string{"cli", "cmux"}))
 		Expect(models[0].Runtime).To(Equal(api.Model{Name: "gpt-5.6-sol"}))
 	})
 })

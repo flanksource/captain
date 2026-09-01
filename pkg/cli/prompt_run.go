@@ -22,7 +22,8 @@ type PromptRunSummary struct {
 	RunID        string  `json:"runId,omitempty"`
 	SessionID    string  `json:"sessionId,omitempty"`
 	Model        string  `json:"model,omitempty"`
-	Backend      string  `json:"backend,omitempty"`
+	Provider     string  `json:"provider,omitempty"`
+	Mode         string  `json:"mode,omitempty"`
 	InputTokens  int     `json:"inputTokens,omitempty"`
 	OutputTokens int     `json:"outputTokens,omitempty"`
 	CostUSD      float64 `json:"costUSD,omitempty"`
@@ -94,10 +95,10 @@ func launchAsyncRun(id string, rendered PromptRenderResult, chat bool) PromptRun
 	runID := uuid.NewString()
 	stream := promptRuns.create(runID)
 	timeout := renderedTimeout(rendered)
-	capabilities := chatCapabilitiesForBackend(rendered.Backend)
+	capabilities := chatCapabilitiesFor(rendered.Provider, rendered.Mode)
 	stream.setRun(PromptRunFrame{
 		RunID: runID, Status: "running", Chat: chat, Model: rendered.Model,
-		Backend: rendered.Backend, Capabilities: capabilities,
+		Provider: rendered.Provider, Mode: rendered.Mode, Capabilities: capabilities,
 	})
 
 	group := task.StartGroup[PromptRunSummary](
@@ -118,7 +119,7 @@ func launchAsyncRun(id string, rendered PromptRenderResult, chat bool) PromptRun
 		})
 	}
 	return PromptRunResult{
-		RunID: runID, Status: "running", Model: rendered.Model, Backend: rendered.Backend,
+		RunID: runID, Status: "running", Model: rendered.Model, Provider: rendered.Provider, Mode: rendered.Mode,
 		Chat: chat, Capabilities: capabilities,
 	}
 }
@@ -142,7 +143,7 @@ func executeSyncRunSingle(ctx context.Context, rendered PromptRenderResult, opts
 		task.WithKind("prompt"),
 		task.WithLabels(promptTaskLabels(rendered, "")),
 	)
-	run := group.Add("execute "+rendered.Backend+":"+rendered.Model, func(_ flanksourceContext.Context, t *task.Task) (PromptRunResult, error) {
+	run := group.Add("execute "+rendered.Mode+":"+rendered.Model, func(_ flanksourceContext.Context, t *task.Task) (PromptRunResult, error) {
 		taskCtx := ai.ContextWithLogger(t.Context(), t)
 		return executeSyncRunSingleDirect(taskCtx, t, rendered, opts, nil)
 	}, task.WithModel(rendered.Model), task.WithPrompt(rendered.Input.Prompt.User))
@@ -162,13 +163,15 @@ func executeSyncRunSingleDirect(ctx context.Context, t *task.Task, rendered Prom
 	}
 	r, _ := out.(AIPromptResult)
 	persistPromptRun(context.WithoutCancel(ctx), promptRunRecordInput{
-		Rendered: rendered, SessionID: r.SessionID, Model: r.Model, Backend: r.Backend,
+		Rendered: rendered, SessionID: r.SessionID, Model: r.Model,
+		Provider: providerOf(api.Runtime{Provider: r.Provider, Mode: api.RuntimeMode(r.Mode)}), Mode: api.RuntimeMode(r.Mode),
 		Binding: binding, ResultText: r.Text, ResultJSON: r.StructuredOutput,
 	})
 	return PromptRunResult{
 		Status:           "completed",
 		Model:            r.Model,
-		Backend:          r.Backend,
+		Provider:         r.Provider,
+		Mode:             r.Mode,
 		Text:             r.Text,
 		StructuredOutput: r.StructuredOutput,
 		SessionID:        r.SessionID,
@@ -210,7 +213,8 @@ func executeSyncWorkflowRun(t *task.Task, rendered PromptRenderResult, noStream 
 		Status:           "completed",
 		RunID:            summary.RunID,
 		Model:            summary.Model,
-		Backend:          summary.Backend,
+		Provider:         summary.Provider,
+		Mode:             summary.Mode,
 		Text:             summary.Text,
 		StructuredOutput: summary.StructuredOutput,
 		SessionID:        summary.SessionID,
@@ -225,7 +229,7 @@ func executeSyncBatch(ctx context.Context, rendered PromptRenderResult, opts AIP
 	models := rendered.Runtimes
 	if len(models) == 0 {
 		var err error
-		models, err = ai.ResolveRuntimeSelectors(opts.MultiModels, rendered.Config.Model)
+		models, err = ai.ResolveMulti(opts.MultiModels, rendered.Config.Model)
 		if err != nil {
 			return PromptRunResult{}, err
 		}
@@ -240,7 +244,8 @@ func executeSyncBatch(ctx context.Context, rendered PromptRenderResult, opts AIP
 		single, runErr := executeSyncRunSingle(ctx, variant, opts)
 		item := PromptRunItem{
 			Selector: runtimeSelector(models[0]), Model: firstNonEmpty(single.Model, models[0].Name),
-			Backend: firstNonEmpty(single.Backend, string(models[0].Backend)), Effort: string(models[0].Effort),
+			Provider: firstNonEmpty(single.Provider, providerName(models[0].Provider)),
+			Mode:     firstNonEmpty(single.Mode, string(models[0].Mode)), Effort: string(models[0].Effort),
 			Text: single.Text, SessionID: single.SessionID, Dir: single.Dir, HistoryFile: single.HistoryFile,
 			InputTokens: single.InputTokens, OutputTokens: single.OutputTokens, CostUSD: single.CostUSD, Duration: single.Duration,
 		}
@@ -260,10 +265,10 @@ func executeSyncBatch(ctx context.Context, rendered PromptRenderResult, opts AIP
 	if rendered.Input.SessionID != "" && len(models) > 1 {
 		return PromptRunResult{}, errors.New("--resume cannot be used with multiple --multi-models variants")
 	}
-	if forced := api.Backend(strings.TrimSpace(opts.Backend)); forced != "" {
+	if forced := api.RuntimeMode(strings.TrimSpace(opts.Mode)); forced != "" {
 		for _, model := range models {
-			if model.Backend != forced {
-				return PromptRunResult{}, fmt.Errorf("--multi-models selector %s:%s conflicts with --backend %s", model.Backend, model.Name, forced)
+			if model.Mode != forced {
+				return PromptRunResult{}, fmt.Errorf("--multi-models selector %s:%s conflicts with --mode %s", model.Mode, model.Name, forced)
 			}
 		}
 	}
@@ -284,7 +289,7 @@ func executeSyncBatch(ctx context.Context, rendered PromptRenderResult, opts AIP
 	tasks := make([]task.TypedTask[PromptRunItem], len(models))
 	for i, model := range models {
 		i, model := i, model
-		selector := string(model.Backend) + ":" + model.Name
+		selector := string(model.Mode) + ":" + model.Name
 		if model.Effort != api.EffortNone {
 			selector += ":" + string(model.Effort)
 		}
@@ -300,28 +305,30 @@ func executeSyncBatch(ctx context.Context, rendered PromptRenderResult, opts AIP
 				RunID:    binding.SessionID.String(),
 				Selector: selector,
 				Model:    model.Name,
-				Backend:  string(model.Backend),
+				Provider: providerName(model.Provider),
+				Mode:     string(model.Mode),
 				Dir:      actualRunDir(variant.Input),
 			}
 			if err != nil {
 				item.Status = "failed"
-				item.HistoryFile = historyFileForRun(model.Backend, item.SessionID, item.Dir)
+				item.HistoryFile = historyFileForRun(model.Provider, model.Mode, item.SessionID, item.Dir)
 				item.Error = err.Error()
 				persistPromptRun(context.WithoutCancel(taskCtx), promptRunRecordInput{
 					Rendered: variant, RunID: binding.SessionID.String(), Binding: binding,
-					Model: model.Name, Backend: string(model.Backend), Error: err.Error(),
+					Model: model.Name, Provider: model.Provider, Mode: model.Mode, Error: err.Error(),
 				})
 				return item, err
 			}
 			item.Status = result.Status
 			item.Model = firstNonEmpty(result.Model, item.Model)
-			item.Backend = firstNonEmpty(result.Backend, item.Backend)
+			item.Provider = firstNonEmpty(result.Provider, item.Provider)
+			item.Mode = firstNonEmpty(result.Mode, item.Mode)
 			item.Text = result.Text
 			item.StructuredOutput = result.StructuredOutput
 			providerSessionID := result.SessionID
 			item.SessionID = binding.SessionID.String()
 			item.Dir = firstNonEmpty(result.Dir, item.Dir)
-			item.HistoryFile = firstNonEmpty(result.HistoryFile, historyFileForRun(api.Backend(item.Backend), providerSessionID, item.Dir))
+			item.HistoryFile = firstNonEmpty(result.HistoryFile, historyFileForRun(providerOf(api.Runtime{Provider: item.Provider, Mode: api.RuntimeMode(item.Mode)}), api.RuntimeMode(item.Mode), providerSessionID, item.Dir))
 			item.InputTokens = result.InputTokens
 			item.OutputTokens = result.OutputTokens
 			item.CostUSD = result.CostUSD
@@ -379,7 +386,8 @@ func promptTaskLabels(rendered PromptRenderResult, mode string) map[string]strin
 	}
 	if mode != "multi" {
 		labels["model"] = rendered.Model
-		labels["backend"] = rendered.Backend
+		labels["provider"] = rendered.Provider
+		labels["mode"] = rendered.Mode
 	}
 	if rendered.Name != "" {
 		labels["prompt"] = rendered.Name
@@ -410,6 +418,7 @@ func renderVariant(rendered PromptRenderResult, model api.Model, fallbacks []api
 	out.Input = req
 	out.Config = cfg
 	out.Model = cfg.Model.Name
-	out.Backend = string(cfg.Model.Backend)
+	out.Provider = providerName(cfg.Model.Provider)
+	out.Mode = string(cfg.Model.Mode)
 	return out
 }

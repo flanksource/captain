@@ -19,7 +19,7 @@ func TestDisabledPutSavesNormalizesAndInstalls(t *testing.T) {
 	setupDisabledTest(t)
 
 	response := serveDisabledRequest(t, `{"modes":[" CMUX ","cmux"],"providers":["DeepSeek"],
-		"backends":["gemini-cli"],"models":["gemini/Veo-3"],"efforts":["  ultra"]}`)
+		"runtimes":[{"provider":"google","mode":"cli"}],"models":["gemini/Veo-3"],"efforts":["  ultra"]}`)
 	if response.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
@@ -31,7 +31,8 @@ func TestDisabledPutSavesNormalizesAndInstalls(t *testing.T) {
 	// Enum axes are canonicalized and de-duplicated; a model id keeps its case.
 	want := disabledSelectionsRequest{
 		Modes: []string{"cmux"}, Providers: []string{"deepseek"},
-		Backends: []string{"gemini-cli"}, Models: []string{"gemini/Veo-3"}, Efforts: []string{"ultra"},
+		Runtimes: []captainconfig.DisabledRuntime{{Provider: "google", Mode: "cli"}},
+		Models:   []string{"gemini/Veo-3"}, Efforts: []string{"ultra"},
 	}
 	if !reflect.DeepEqual(result, want) {
 		t.Fatalf("response = %+v, want %+v", result, want)
@@ -52,18 +53,18 @@ func TestDisabledPutSavesNormalizesAndInstalls(t *testing.T) {
 func TestDisabledPutPreservesUnrelatedConfiguration(t *testing.T) {
 	setupDisabledTest(t)
 	if err := captainconfig.Save(captainconfig.Config{
-		AI:      captainconfig.AIDefaults{DefaultProvider: "gemini"},
+		AI:      captainconfig.AIDefaults{DefaultProvider: "google"},
 		Prompts: captainconfig.PromptDefaults{Dirs: []string{"/repo/prompts"}},
 	}); err != nil {
 		t.Fatalf("seed config: %v", err)
 	}
 
-	if response := serveDisabledRequest(t, `{"modes":["cmux"],"providers":[],"backends":[],"models":[],"efforts":[]}`); response.Code != http.StatusOK {
+	if response := serveDisabledRequest(t, `{"modes":["cmux"],"providers":[],"runtimes":[],"models":[],"efforts":[]}`); response.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
 
 	config, _, err := captainconfig.Load()
-	if err != nil || config.AI.DefaultProvider != "gemini" || len(config.Prompts.Dirs) != 1 {
+	if err != nil || config.AI.DefaultProvider != "google" || len(config.Prompts.Dirs) != 1 {
 		t.Fatalf("config=%+v err=%v", config, err)
 	}
 }
@@ -71,8 +72,8 @@ func TestDisabledPutPreservesUnrelatedConfiguration(t *testing.T) {
 func TestDisabledPutKeepsPersistedAndRuntimeSelectionsConsistentUnderConcurrency(t *testing.T) {
 	setupDisabledTest(t)
 	bodies := []string{
-		`{"modes":["cmux"],"providers":[],"backends":[],"models":[],"efforts":[]}`,
-		`{"modes":[],"providers":["deepseek"],"backends":[],"models":[],"efforts":[]}`,
+		`{"modes":["cmux"],"providers":[],"runtimes":[],"models":[],"efforts":[]}`,
+		`{"modes":[],"providers":["deepseek"],"runtimes":[],"models":[],"efforts":[]}`,
 	}
 
 	for range 50 {
@@ -109,15 +110,17 @@ func TestDisabledPutKeepsPersistedAndRuntimeSelectionsConsistentUnderConcurrency
 
 func TestDisabledPutRejectsInvalidSets(t *testing.T) {
 	for name, body := range map[string]string{
-		"unknown mode":     `{"modes":["telepathy"],"providers":[],"backends":[],"models":[],"efforts":[]}`,
-		"unknown provider": `{"modes":[],"providers":["acme"],"backends":[],"models":[],"efforts":[]}`,
-		"unknown backend":  `{"modes":[],"providers":[],"backends":["claude-carrier-pigeon"],"models":[],"efforts":[]}`,
-		"unknown effort":   `{"modes":[],"providers":[],"backends":[],"models":[],"efforts":["frantic"]}`,
-		"every provider":   `{"modes":[],"providers":["anthropic","openai","gemini","deepseek"],"backends":[],"models":[],"efforts":[]}`,
-		"every effort":     `{"modes":[],"providers":[],"backends":[],"models":[],"efforts":["low","medium","high","xhigh","max","ultra"]}`,
-		"every mode":       `{"modes":["api","cli","agent","cmux"],"providers":[],"backends":[],"models":[],"efforts":[]}`,
+		"unknown mode":             `{"modes":["telepathy"],"providers":[],"runtimes":[],"models":[],"efforts":[]}`,
+		"unknown provider":         `{"modes":[],"providers":["acme"],"runtimes":[],"models":[],"efforts":[]}`,
+		"unknown runtime provider": `{"modes":[],"providers":[],"runtimes":[{"provider":"carrier-pigeon","mode":"cli"}],"models":[],"efforts":[]}`,
+		"unknown runtime mode":     `{"modes":[],"providers":[],"runtimes":[{"provider":"anthropic","mode":"telepathy"}],"models":[],"efforts":[]}`,
+		"unknown effort":           `{"modes":[],"providers":[],"runtimes":[],"models":[],"efforts":["frantic"]}`,
+		"every provider":           `{"modes":[],"providers":["anthropic","openai","google","deepseek"],"runtimes":[],"models":[],"efforts":[]}`,
+		"every effort":             `{"modes":[],"providers":[],"runtimes":[],"models":[],"efforts":["low","medium","high","xhigh","max","ultra"]}`,
+		"every mode":               `{"modes":["api","cli","agent","cmux"],"providers":[],"runtimes":[],"models":[],"efforts":[]}`,
 		"active provider stranded": `{"modes":[],"providers":[],"models":[],"efforts":[],
-			"backends":["anthropic","claude-cli","claude-agent","claude-cmux"]}`,
+			"runtimes":[{"provider":"anthropic","mode":"api"},{"provider":"anthropic","mode":"cli"},
+				{"provider":"anthropic","mode":"agent"},{"provider":"anthropic","mode":"cmux"}]}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			setupDisabledTest(t)
@@ -142,7 +145,7 @@ func TestDisabledPutRejectsNonLocalRequests(t *testing.T) {
 	mux := http.NewServeMux()
 	registerDisabledHandlers(mux)
 	request := httptest.NewRequest(http.MethodPut, "/api/captain/ai/disabled",
-		strings.NewReader(`{"modes":["cmux"],"providers":[],"backends":[],"models":[],"efforts":[]}`))
+		strings.NewReader(`{"modes":["cmux"],"providers":[],"runtimes":[],"models":[],"efforts":[]}`))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Origin", "https://captain.example.com")
 	request.Host = "captain.example.com"
@@ -159,7 +162,7 @@ func TestDisabledPutRejectsNonLocalRequests(t *testing.T) {
 func TestDisabledPutRejectsUnknownFields(t *testing.T) {
 	setupDisabledTest(t)
 
-	response := serveDisabledRequest(t, `{"modes":[],"providers":[],"backends":[],"models":[],"efforts":[],"kinds":["x"]}`)
+	response := serveDisabledRequest(t, `{"modes":[],"providers":[],"runtimes":[],"models":[],"efforts":[],"kinds":["x"]}`)
 
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())

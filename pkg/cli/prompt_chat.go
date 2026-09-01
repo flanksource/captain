@@ -43,7 +43,7 @@ type chatSession struct {
 }
 
 func newChatSession(runID string, rendered PromptRenderResult, timeout time.Duration, stream *runStream, binding *promptSessionBinding) *chatSession {
-	capabilities := chatCapabilitiesForBackend(rendered.Backend)
+	capabilities := chatCapabilitiesFor(rendered.Provider, rendered.Mode)
 	chat := &chatSession{
 		runID: runID, rendered: rendered, timeout: timeout, stream: stream, binding: binding,
 		wake: make(chan struct{}, 1), startedAt: time.Now(),
@@ -75,12 +75,12 @@ func (c *chatSession) run(t *task.Task) (PromptRunSummary, error) {
 	defer closeProvider(provider)
 	streamer, ok := provider.(ai.StreamingProvider)
 	if !ok {
-		return c.fail(t, fmt.Errorf("backend %s does not support streaming", c.rendered.Backend))
+		return c.fail(t, fmt.Errorf("runtime %s/%s does not support streaming", c.rendered.Provider, c.rendered.Mode))
 	}
 	c.mu.Lock()
 	c.provider = provider
 	c.streamer = streamer
-	c.acc = newPromptEventAccumulator(c.stream.publish, t, c.rendered.Model, c.rendered.Backend)
+	c.acc = newPromptEventAccumulator(c.stream.publish, t, c.rendered.Model, c.rendered.Mode)
 	c.acc.cwd = req.Cwd()
 	c.acc.idPrefix = c.runID
 	c.mu.Unlock()
@@ -175,7 +175,7 @@ func (c *chatSession) runTurn(baseCtx context.Context, t *task.Task, req ai.Requ
 	}
 	summary := PromptRunSummary{
 		RunID: c.runID, SessionID: sessionID, Model: model,
-		Backend: string(c.provider.GetBackend()), InputTokens: usage.InputTokens,
+		Provider: c.provider.GetRuntime().Provider, Mode: string(c.provider.GetRuntime().Mode), InputTokens: usage.InputTokens,
 		OutputTokens: usage.OutputTokens, CostUSD: cost,
 		Duration: time.Since(c.startedAt).Round(time.Millisecond).String(), Success: true,
 	}
@@ -358,7 +358,7 @@ func (c *chatSession) stop() bool {
 func (c *chatSession) markRunning(sessionID string) {
 	c.mu.Lock()
 	c.state.Status = "running"
-	c.state.Capabilities = chatCapabilitiesForBackend(string(c.provider.GetBackend()))
+	c.state.Capabilities = chatCapabilitiesForRuntime(providerOf(c.provider.GetRuntime()), c.provider.GetRuntime().Mode)
 	if sessionID != "" {
 		c.state.SessionID = sessionID
 	}
@@ -386,7 +386,7 @@ func (c *chatSession) persistTurn(req ai.Request, summary PromptRunSummary) {
 	rendered.Input = req
 	persistPromptRun(context.Background(), promptRunRecordInput{
 		Rendered: rendered, RunID: runID, SessionID: summary.SessionID,
-		Binding: c.binding, Model: summary.Model, Backend: summary.Backend,
+		Binding: c.binding, Model: summary.Model, Provider: providerOf(api.Runtime{Provider: summary.Provider, Mode: api.RuntimeMode(summary.Mode)}), Mode: api.RuntimeMode(summary.Mode),
 	})
 }
 
@@ -409,7 +409,7 @@ func (c *chatSession) fail(t *task.Task, err error) (PromptRunSummary, error) {
 	if c.binding != nil {
 		persistPromptRun(context.Background(), promptRunRecordInput{
 			Rendered: c.rendered, RunID: c.runID, Binding: c.binding,
-			Model: c.rendered.Model, Backend: c.rendered.Backend, Error: err.Error(),
+			Model: c.rendered.Model, Provider: providerOf(api.Runtime{Provider: c.rendered.Provider, Mode: api.RuntimeMode(c.rendered.Mode)}), Mode: api.RuntimeMode(c.rendered.Mode), Error: err.Error(),
 		})
 	}
 	summary := c.stream.fail(err.Error())

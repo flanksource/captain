@@ -12,7 +12,7 @@ import (
 )
 
 // `captain permissions matrix` prints the declared permission capability table:
-// which posture each backend honours, which per-tool policies it can enforce and
+// which posture each runtime honours, which per-tool policies it can enforce and
 // from which source, and which resources it can switch.
 //
 // It is a reporting command over static data — nothing is probed, nothing is run
@@ -21,32 +21,37 @@ import (
 // truth an explicit diff in review rather than a behaviour change nobody noticed.
 
 type PermissionsMatrixOptions struct {
-	Backend    string `flag:"backend" help:"Restrict the matrix to one backend" short:"b"`
+	// Provider takes no shorthand: -p is provenance's here, and this command's
+	// axis of interest is the policy source rather than the family.
+	Provider   string `flag:"provider" help:"Restrict the matrix to one provider: anthropic|openai|google|deepseek"`
+	Mode       string `flag:"mode" help:"Restrict the matrix to one runtime mode: api|agent|cli|cmux"`
 	Provenance string `flag:"provenance" help:"Tool-policy source to show: agent, caller, or mcp" default:"agent" short:"p"`
 	Notes      bool   `flag:"notes" help:"Print the caveat attached to each approximated or unsupported cell" short:"n"`
 }
 
-// PermissionsMatrixResult is the whole declaration. The JSON form is per-backend
+// PermissionsMatrixResult is the whole declaration. The JSON form is per-runtime
 // because that is how a client consumes it; the pretty form transposes to
-// settings × backends because that is how a human compares them.
+// settings × runtimes because that is how a human compares them.
 type PermissionsMatrixResult struct {
 	Provenance string                   `json:"provenance"`
-	Backends   []PermissionsMatrixEntry `json:"backends"`
+	Runtimes   []PermissionsMatrixEntry `json:"runtimes"`
 	Notes      []PermissionsMatrixNote  `json:"notes,omitempty"`
 	legend     map[api.SupportKind]string
 }
 
-// PermissionsMatrixEntry is one backend's row, carrying the served capability
+// PermissionsMatrixEntry is one runtime's row, carrying the served capability
 // object verbatim so `--json` and the HTTP catalog cannot disagree.
 type PermissionsMatrixEntry struct {
-	Backend     string                     `json:"backend"`
+	Provider    string                     `json:"provider"`
+	Mode        string                     `json:"mode"`
 	Kind        string                     `json:"kind"`
 	Permissions api.PermissionCapabilities `json:"permissions"`
 }
 
 // PermissionsMatrixNote is one caveat, addressed to a cell.
 type PermissionsMatrixNote struct {
-	Backend string `json:"backend" pretty:"label=Backend,table"`
+	Provider string `json:"provider" pretty:"label=Provider,table"`
+	Mode     string `json:"mode" pretty:"label=Mode,table"`
 	Setting string `json:"setting" pretty:"label=Setting,table"`
 	Support string `json:"support" pretty:"label=Support,table"`
 	Note    string `json:"note" pretty:"label=Note,table"`
@@ -57,21 +62,22 @@ func RunPermissionsMatrix(opts PermissionsMatrixOptions) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	backends, err := matrixBackends(opts.Backend)
+	runtimes, err := matrixRuntimes(opts.Provider, opts.Mode)
 	if err != nil {
 		return nil, err
 	}
 
 	result := PermissionsMatrixResult{Provenance: string(provenance), legend: supportGlyphs()}
-	for _, backend := range backends {
-		result.Backends = append(result.Backends, PermissionsMatrixEntry{
-			Backend:     string(backend),
-			Kind:        backend.Kind(),
-			Permissions: api.PermissionCapabilitiesFor(backend),
+	for _, runtime := range runtimes {
+		result.Runtimes = append(result.Runtimes, PermissionsMatrixEntry{
+			Provider:    runtime.Provider,
+			Mode:        string(runtime.Mode),
+			Kind:        runtime.Mode.Kind(),
+			Permissions: api.PermissionCapabilitiesFor(runtime),
 		})
 	}
 	if opts.Notes {
-		result.Notes = collectMatrixNotes(backends, provenance)
+		result.Notes = collectMatrixNotes(runtimes, provenance)
 	}
 	return result, nil
 }
@@ -91,15 +97,40 @@ func parseProvenance(s string) (api.ToolProvenance, error) {
 	return "", fmt.Errorf("unknown tool provenance %q (valid: %s)", s, strings.Join(names, ", "))
 }
 
-func matrixBackends(selector string) ([]api.Backend, error) {
-	if strings.TrimSpace(selector) == "" {
-		return api.AllBackends(), nil
+// matrixRuntimes narrows the full matrix by the two independent axes. Neither is
+// a runtime id: --provider names a family, --mode a mechanism, and passing both
+// selects one cell.
+func matrixRuntimes(providerSelector, modeSelector string) ([]api.Runtime, error) {
+	provider := ""
+	if raw := strings.TrimSpace(providerSelector); raw != "" {
+		p, ok := api.ProviderByName(raw)
+		if !ok {
+			return nil, fmt.Errorf("unknown provider %q (valid: %s)", providerSelector, api.ProviderList())
+		}
+		provider = p.Name
 	}
-	want := api.Backend(strings.TrimSpace(selector))
-	if !slices.Contains(api.AllBackends(), want) {
-		return nil, fmt.Errorf("unknown backend %q (valid: %s)", selector, api.BackendList())
+	var mode api.RuntimeMode
+	if raw := strings.TrimSpace(modeSelector); raw != "" {
+		parsed, ok := api.ParseRuntimeMode(raw)
+		if !ok {
+			return nil, fmt.Errorf("unknown mode %q (valid: %s)", modeSelector, api.RuntimeModeList())
+		}
+		mode = parsed
 	}
-	return []api.Backend{want}, nil
+	out := make([]api.Runtime, 0, len(api.AllRuntimes()))
+	for _, runtime := range api.AllRuntimes() {
+		if provider != "" && runtime.Provider != provider {
+			continue
+		}
+		if mode != "" && runtime.Mode != mode {
+			continue
+		}
+		out = append(out, runtime)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no runtime matches provider %q mode %q (available: %s)", providerSelector, modeSelector, api.RuntimeList())
+	}
+	return out, nil
 }
 
 // supportGlyphs keeps the four kinds distinguishable in a dense grid, using the
@@ -117,16 +148,16 @@ func supportGlyphs() map[api.SupportKind]string {
 }
 
 func (r PermissionsMatrixResult) Pretty() clickyapi.Text {
-	if len(r.Backends) == 0 {
-		return clickyapi.Text{Content: "no backends"}
+	if len(r.Runtimes) == 0 {
+		return clickyapi.Text{Content: "no runtimes"}
 	}
 	text := clickyapi.Text{}.
 		Append("Declared permission capabilities", "font-bold").
 		Append(fmt.Sprintf("  (tool policies for the %q source)", r.Provenance), "text-gray-500")
 
-	// One table per family rather than one 11-column grid: eleven backend names
-	// do not fit a terminal, and truncating them collapses claude-cli and
-	// claude-cmux into the same ambiguous header. Grouping also matches the
+	// One table per family rather than one wide grid: every runtime name at once
+	// does not fit a terminal, and truncating them collapses "anthropic cli" and
+	// "anthropic cmux" into the same ambiguous header. Grouping also matches the
 	// question people actually ask — "I picked claude, which transport honours
 	// this?" — and the families come from RuntimeCatalog so the grouping is the
 	// same one clients see.
@@ -154,8 +185,8 @@ func (r PermissionsMatrixResult) Pretty() clickyapi.Text {
 func (r PermissionsMatrixResult) entriesIn(family api.RuntimeFamily) []PermissionsMatrixEntry {
 	var out []PermissionsMatrixEntry
 	for _, mode := range family.Modes {
-		for _, entry := range r.Backends {
-			if entry.Backend == mode.Backend {
+		for _, entry := range r.Runtimes {
+			if entry.Provider == family.Provider && entry.Mode == mode.Mode {
 				out = append(out, entry)
 			}
 		}
@@ -170,7 +201,7 @@ func (r PermissionsMatrixResult) table(entries []PermissionsMatrixEntry) clickya
 	}
 	for i, entry := range entries {
 		table.FieldNames = append(table.FieldNames, matrixColumnField(i))
-		table.Headers = append(table.Headers, textCell(entry.Backend))
+		table.Headers = append(table.Headers, textCell(entry.Provider+" "+entry.Mode))
 	}
 
 	add := func(setting string, value func(api.PermissionCapabilities) string) {
@@ -223,38 +254,41 @@ func matrixSettings(provenance api.ToolProvenance) []matrixSetting {
 
 func notesTable(notes []PermissionsMatrixNote) clickyapi.TextTable {
 	table := clickyapi.TextTable{
-		Headers:    clickyapi.TextList{textCell("Backend"), textCell("Setting"), textCell("Support"), textCell("Note")},
-		FieldNames: []string{"backend", "setting", "support", "note"},
+		Headers:    clickyapi.TextList{textCell("Provider"), textCell("Mode"), textCell("Setting"), textCell("Support"), textCell("Note")},
+		FieldNames: []string{"provider", "mode", "setting", "support", "note"},
 	}
 	for _, n := range notes {
 		table.Rows = append(table.Rows, clickyapi.TableRow{
-			"backend": cell(n.Backend), "setting": cell(n.Setting),
+			"provider": cell(n.Provider), "mode": cell(n.Mode), "setting": cell(n.Setting),
 			"support": cell(n.Support), "note": cell(n.Note),
 		})
 	}
 	return table
 }
 
-// collectMatrixNotes gathers every explained cell. Sorting by backend then
+// collectMatrixNotes gathers every explained cell. Sorting by runtime then
 // setting keeps the golden fixture stable regardless of map iteration.
-func collectMatrixNotes(backends []api.Backend, provenance api.ToolProvenance) []PermissionsMatrixNote {
+func collectMatrixNotes(runtimes []api.Runtime, provenance api.ToolProvenance) []PermissionsMatrixNote {
 	var out []PermissionsMatrixNote
-	for _, backend := range backends {
-		caps := api.PermissionCapabilitiesFor(backend)
+	for _, runtime := range runtimes {
+		caps := api.PermissionCapabilitiesFor(runtime)
 		for _, setting := range matrixSettings(provenance) {
 			support := setting.support(caps)
 			if support.Effects.Note == "" {
 				continue
 			}
 			out = append(out, PermissionsMatrixNote{
-				Backend: string(backend), Setting: setting.label,
+				Provider: runtime.Provider, Mode: string(runtime.Mode), Setting: setting.label,
 				Support: string(support.Kind), Note: support.Effects.Note,
 			})
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].Backend != out[j].Backend {
-			return out[i].Backend < out[j].Backend
+		if out[i].Provider != out[j].Provider {
+			return out[i].Provider < out[j].Provider
+		}
+		if out[i].Mode != out[j].Mode {
+			return out[i].Mode < out[j].Mode
 		}
 		return out[i].Setting < out[j].Setting
 	})

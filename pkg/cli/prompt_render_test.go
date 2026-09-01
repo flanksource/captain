@@ -43,7 +43,8 @@ Hello {{name}}
 			Model: api.Model{
 				Name:        "gpt-4o",
 				ID:          "openai/gpt-4o",
-				Backend:     api.BackendOpenAI,
+				Provider:    api.OpenAI,
+				Mode:        api.ModeAPI,
 				Temperature: &temp,
 				Effort:      api.EffortLow,
 				NoCache:     true,
@@ -70,6 +71,7 @@ Hello {{name}}
 				Plugins: api.ResourcePolicies{"/plugins": api.ResourceEnabled},
 				Skills:  api.ResourcePolicies{"/permission-skills": api.ResourceEnabled},
 			},
+			Sandbox: &api.SandboxRef{Mode: api.SandboxNative},
 			Memory: api.Memory{
 				Skills:     []string{"/skills"},
 				SkipUser:   true,
@@ -99,8 +101,8 @@ Hello {{name}}
 	if rendered.ValidationError != "" {
 		t.Fatalf("render validation error = %q", rendered.ValidationError)
 	}
-	if rendered.Model != "gpt-4o" || rendered.Backend != "openai" {
-		t.Fatalf("rendered model/backend = %s/%s, want gpt-4o/openai", rendered.Model, rendered.Backend)
+	if rendered.Model != "gpt-4o" || rendered.Provider != "openai" || rendered.Mode != "api" {
+		t.Fatalf("rendered model/runtime = %s %s/%s, want openai api/gpt-4o", rendered.Provider, rendered.Mode, rendered.Model)
 	}
 	if rendered.Config.Model.ID != "openai/gpt-4o" {
 		t.Fatalf("config model ID = %q, want openai/gpt-4o", rendered.Config.Model.ID)
@@ -121,7 +123,7 @@ Hello {{name}}
 	if rendered.Input.Prompt.Source != "runtime-source" || rendered.Input.Prompt.Metadata["surface"] != "prompt-ui" {
 		t.Fatalf("prompt source/metadata = %+v, want runtime overrides", rendered.Input.Prompt)
 	}
-	if rendered.Input.Permissions.Mode != api.PermissionAcceptEdits ||
+	if rendered.Input.Sandbox == nil || rendered.Input.Permissions.Mode != api.PermissionAcceptEdits ||
 		rendered.Input.Permissions.Tools["Bash"] != api.ToolPolicyDeny ||
 		!rendered.Input.Permissions.MCP.Disabled {
 		t.Fatalf("permissions = %+v, want runtime overrides", rendered.Input.Permissions)
@@ -159,7 +161,8 @@ func TestRenderPromptEphemeralSpec(t *testing.T) {
 		Spec: &api.Spec{
 			Model: api.Model{
 				Name:        "gpt-5.5",
-				Backend:     api.BackendCodexAgent,
+				Provider:    api.OpenAI,
+				Mode:        api.ModeAgent,
 				Temperature: &temp,
 				Effort:      api.EffortHigh,
 			},
@@ -182,8 +185,8 @@ func TestRenderPromptEphemeralSpec(t *testing.T) {
 	if rendered.User != "Draft a deployment plan" || rendered.System != "scratch system" {
 		t.Fatalf("rendered prompt = user %q system %q", rendered.User, rendered.System)
 	}
-	if rendered.Model != "gpt-5.5" || rendered.Backend != "codex-agent" {
-		t.Fatalf("rendered model/backend = %s/%s, want gpt-5.5/codex-agent", rendered.Model, rendered.Backend)
+	if rendered.Model != "gpt-5.5" || rendered.Provider != "openai" || rendered.Mode != "agent" {
+		t.Fatalf("rendered model/runtime = %s %s/%s, want openai agent/gpt-5.5", rendered.Provider, rendered.Mode, rendered.Model)
 	}
 	if rendered.Input.Prompt.Source != "<ephemeral>" {
 		t.Fatalf("prompt source = %q, want <ephemeral>", rendered.Input.Prompt.Source)
@@ -208,30 +211,30 @@ func TestRenderPromptResolvesSandbox(t *testing.T) {
 	}{
 		{
 			name:        "frontmatter selects the sandbox",
-			frontmatter: "sandbox: srt\n",
-			want:        registry.SandboxSRT,
+			frontmatter: "sandbox: docker\n",
+			want:        registry.SandboxDocker,
 		},
 		{
 			name:          "global default applies when the prompt selects none",
-			globalDefault: "srt",
-			want:          registry.SandboxSRT,
+			globalDefault: "docker",
+			want:          registry.SandboxDocker,
 		},
 		{
 			name:          "frontmatter beats the global default",
-			frontmatter:   "sandbox: none\n",
-			globalDefault: "srt",
-			want:          registry.SandboxNone,
+			frontmatter:   "sandbox: off\n",
+			globalDefault: "docker",
+			want:          registry.SandboxOff,
 		},
 		{
 			name:          "request spec beats both",
-			frontmatter:   "sandbox: none\n",
-			globalDefault: "none",
-			override:      &api.SandboxRef{Backend: "srt"},
-			want:          registry.SandboxSRT,
+			frontmatter:   "sandbox: off\n",
+			globalDefault: "off",
+			override:      &api.SandboxRef{Mode: api.SandboxDocker},
+			want:          registry.SandboxDocker,
 		},
 		{
 			name: "nothing selects anything",
-			want: registry.SandboxNone,
+			want: registry.SandboxOff,
 		},
 	}
 
@@ -268,7 +271,7 @@ func TestRenderPromptResolvesSandbox(t *testing.T) {
 				t.Fatalf("render validation error = %q", rendered.ValidationError)
 			}
 
-			got := registry.SandboxNone
+			got := registry.SandboxOff
 			if selection := rendered.Config.ResolvedSandbox(); selection != nil {
 				got = selection.Kind
 			}
@@ -290,15 +293,15 @@ func TestRenderPromptPreservesSandboxMetadata(t *testing.T) {
 	ctx := ContextWithPromptDirs(context.Background(), []string{dir})
 	created, err := createPrompt(ctx, map[string]any{
 		"name":    "Sandboxed",
-		"content": "---\nname: Sandboxed\nmodel: claude-code-opus\nsandbox: none\n---\n{{role \"user\"}}\nHello\n",
+		"content": "---\nname: Sandboxed\nmodel: claude-code-opus\nsandbox: off\n---\n{{role \"user\"}}\nHello\n",
 	})
 	if err != nil {
 		t.Fatalf("createPrompt() err = %v", err)
 	}
 
-	policy := &api.SandboxPolicy{Paths: []string{"pkg/**"}, MaxAttempts: 3}
+	policy := &api.SandboxDispatchPolicy{Paths: []string{"pkg/**"}, MaxAttempts: 3}
 	rendered, err := renderPrompt(ctx, created.ID, PromptRenderRequest{
-		Spec: &api.Spec{Sandbox: &api.SandboxRef{Backend: "srt", Agent: "builder-1", Policy: policy}},
+		Spec: &api.Spec{Sandbox: &api.SandboxRef{Mode: api.SandboxGitAgent, Agent: "builder-1", Dispatch: policy}},
 	})
 	if err != nil {
 		t.Fatalf("renderPrompt() err = %v", err)
@@ -313,22 +316,22 @@ func TestRenderPromptPreservesSandboxMetadata(t *testing.T) {
 	if rendered.Input.Sandbox.Agent != "builder-1" {
 		t.Errorf("request sandbox agent = %q, want builder-1", rendered.Input.Sandbox.Agent)
 	}
-	if !reflect.DeepEqual(rendered.Input.Sandbox.Policy, policy) {
-		t.Errorf("request sandbox policy = %+v, want %+v", rendered.Input.Sandbox.Policy, policy)
+	if !reflect.DeepEqual(rendered.Input.Sandbox.Dispatch, policy) {
+		t.Errorf("request sandbox dispatch = %+v, want %+v", rendered.Input.Sandbox.Dispatch, policy)
 	}
 
 	selection := rendered.Config.ResolvedSandbox()
 	if selection == nil {
-		t.Fatal("resolved sandbox = nil, want the srt selection")
+		t.Fatal("resolved sandbox = nil, want the git-agent selection")
 	}
-	if selection.Kind != registry.SandboxSRT {
-		t.Errorf("resolved sandbox kind = %q, want %q", selection.Kind, registry.SandboxSRT)
+	if selection.Kind != registry.SandboxGitAgent {
+		t.Errorf("resolved sandbox kind = %q, want %q", selection.Kind, registry.SandboxGitAgent)
 	}
 	if selection.Agent != "builder-1" {
 		t.Errorf("resolved sandbox agent = %q, want builder-1", selection.Agent)
 	}
-	if !reflect.DeepEqual(selection.Policy, policy) {
-		t.Errorf("resolved sandbox policy = %+v, want %+v", selection.Policy, policy)
+	if !reflect.DeepEqual(selection.Dispatch, policy) {
+		t.Errorf("resolved sandbox dispatch = %+v, want %+v", selection.Dispatch, policy)
 	}
 }
 
@@ -336,14 +339,14 @@ func TestApplyPromptDefaultsSelectorEffortWins(t *testing.T) {
 	isolateCaptainConfig(t)
 	req := ai.Request{Model: api.Model{Effort: api.EffortLow}}
 	cfg := ai.Config{Model: api.Model{
-		Name:    "gpt-5.6-sol",
-		Backend: api.BackendCodexAgent,
-		Effort:  api.EffortHigh,
+		Name:   "gpt-5.6-sol",
+		Mode:   api.ModeAgent,
+		Effort: api.EffortHigh,
 	}}
 	if err := applyPromptDefaults(&req, &cfg); err != nil {
 		t.Fatalf("applyPromptDefaults: %v", err)
 	}
-	if req.Name != "gpt-5.6-sol" || req.Backend != api.BackendCodexAgent || req.Effort != api.EffortHigh {
+	if req.Name != "gpt-5.6-sol" || req.Mode != api.ModeAgent || req.Effort != api.EffortHigh {
 		t.Fatalf("request = %+v, want selector model/effort", req.Model)
 	}
 	if cfg.Model.Effort != api.EffortHigh {

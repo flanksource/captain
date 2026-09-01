@@ -8,7 +8,8 @@ import (
 
 var _ = Describe("whoami disabled model visibility", func() {
 	enabledAdapter := AdapterStatus{
-		Backend:    string(ai.BackendCodexCLI),
+		Provider:   ai.OpenAI.Name,
+		Mode:       string(ai.ModeCLI),
 		Type:       "cli",
 		ModelCount: 3,
 		Models:     []string{"current", "retired", "stable"},
@@ -19,13 +20,14 @@ var _ = Describe("whoami disabled model visibility", func() {
 		},
 	}
 	disabledAdapter := AdapterStatus{
-		Backend:    string(ai.BackendClaudeCmux),
+		Provider:   ai.Anthropic.Name,
+		Mode:       string(ai.ModeCmux),
 		Type:       "cli",
 		Disabled:   true,
 		ModelCount: 1,
-		Models:     []string{"disabled-backend-model"},
+		Models:     []string{"disabled-runtime-model"},
 		ModelDetails: []ai.ModelDef{
-			{ID: "disabled-backend-model", Disabled: true},
+			{ID: "disabled-runtime-model", Disabled: true},
 		},
 	}
 
@@ -34,7 +36,8 @@ var _ = Describe("whoami disabled model visibility", func() {
 
 		Expect(filtered).To(Equal([]AdapterStatus{
 			{
-				Backend:    string(ai.BackendCodexCLI),
+				Provider:   ai.OpenAI.Name,
+				Mode:       string(ai.ModeCLI),
 				Type:       "cli",
 				ModelCount: 2,
 				Models:     []string{"current", "stable"},
@@ -44,7 +47,8 @@ var _ = Describe("whoami disabled model visibility", func() {
 				},
 			},
 			{
-				Backend:  string(ai.BackendClaudeCmux),
+				Provider: ai.Anthropic.Name,
+				Mode:     string(ai.ModeCmux),
 				Type:     "cli",
 				Disabled: true,
 			},

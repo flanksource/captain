@@ -12,8 +12,27 @@ import (
 	"github.com/flanksource/captain/pkg/api"
 )
 
+// withoutSavedModelSeed drops a model override that merely echoes the saved
+// prompt's own frontmatter (the seed PromptDetail.Run hands the editor), so a
+// draft that changes `model:` renders with the draft's model. An override that
+// differs from the saved seed is an explicit choice and is kept.
+func withoutSavedModelSeed(spec *api.Spec, record promptRecord, savedContent string) *api.Spec {
+	if spec == nil {
+		return nil
+	}
+	saved, err := promptSummaryFromContent(record, savedContent)
+	if err != nil || spec.Name != saved.Model || string(spec.Mode) != saved.Mode {
+		return spec
+	}
+	stripped := *spec
+	stripped.Name, stripped.ID, stripped.Mode = "", "", ""
+	stripped.Provider = nil
+	return &stripped
+}
+
 // renderPrompt is the HTTP/Spec render path: overlay a structured api.Spec (the
-// web UI's rich runtime overrides) onto the rendered template.
+// web UI's rich runtime overrides) onto the rendered template. A non-empty
+// Content renders that draft instead of the saved file.
 func renderPrompt(ctx context.Context, id string, renderReq PromptRenderRequest) (PromptRenderResult, error) {
 	if strings.TrimSpace(id) == "" {
 		return renderEphemeralPrompt(renderReq)
@@ -25,6 +44,10 @@ func renderPrompt(ctx context.Context, id string, renderReq PromptRenderRequest)
 	content, err := readPromptContent(record)
 	if err != nil {
 		return PromptRenderResult{}, err
+	}
+	if strings.TrimSpace(renderReq.Content) != "" {
+		renderReq.Spec = withoutSavedModelSeed(renderReq.Spec, record, content)
+		content = renderReq.Content
 	}
 	vars := renderReq.Variables
 	if vars == nil {
@@ -117,7 +140,7 @@ func renderPromptCLI(ctx context.Context, id string, opts AIPromptOptions, varsJ
 		return PromptRenderResult{}, err
 	}
 	if len(opts.MultiModels) > 0 {
-		result.Runtimes, err = ai.ResolveRuntimeSelectors(opts.MultiModels, result.Config.Model)
+		result.Runtimes, err = ai.ResolveMulti(opts.MultiModels, result.Config.Model)
 		if err != nil {
 			return PromptRenderResult{}, err
 		}
@@ -134,18 +157,18 @@ func finalizeRenderResult(record promptRecord, content string, req ai.Request, c
 	req.Model = req.ExpandCSV()
 	cfg.Model = cfg.Model.ExpandCSV()
 	var err error
-	req.Model, err = ai.ResolveModelSelectors(req.Model)
+	req.Model, err = ai.Resolve(req.Model)
 	if err != nil {
 		return PromptRenderResult{}, err
 	}
-	cfg.Model, err = ai.ResolveModelSelectors(cfg.Model)
+	cfg.Model, err = ai.Resolve(cfg.Model)
 	if err != nil {
 		return PromptRenderResult{}, err
 	}
 	for _, c := range cfg.Model.Candidates() {
 		warnIfLikelyModelTypo(c.Name)
 	}
-	detail, err := promptDetailFromContent(record, content)
+	detail, err := parsedPromptDetail(record, content)
 	if err != nil {
 		return PromptRenderResult{}, err
 	}
@@ -161,7 +184,8 @@ func finalizeRenderResult(record promptRecord, content string, req ai.Request, c
 		ID:           detail.ID,
 		Name:         detail.Name,
 		Model:        cfg.Model.Name,
-		Backend:      string(cfg.Model.Backend),
+		Provider:     providerName(cfg.Model.Provider),
+		Mode:         string(cfg.Model.Mode),
 		User:         req.Prompt.User,
 		System:       req.Prompt.System,
 		Input:        req,
@@ -198,7 +222,7 @@ func resolvePromptRuntimes(runtimes []api.Model, base api.Model) ([]api.Model, e
 		}
 		runtime.NoCache = runtime.NoCache || base.NoCache
 		var err error
-		resolved[i], err = ai.ResolveModelSelectors(runtime)
+		resolved[i], err = ai.Resolve(runtime)
 		if err != nil {
 			return nil, fmt.Errorf("runtime %d: %w", i+1, err)
 		}
@@ -215,16 +239,25 @@ func overlayRuntimeSpec(req *ai.Request, cfg *ai.Config, spec api.Spec) {
 		cfg.Model.Name = spec.Name
 		req.ID = spec.ID
 		cfg.Model.ID = spec.ID
-		req.Backend = spec.Backend
-		cfg.Model.Backend = spec.Backend
+		// The caller replaced the model, so the frontmatter's resolved provider is
+		// stale: carry the authored mode instead and let resolution derive the
+		// provider from the new model name.
+		req.Mode = spec.Mode
+		cfg.Model.Mode = spec.Mode
+		req.Provider = spec.Provider
+		cfg.Model.Provider = spec.Provider
 	} else {
 		if spec.ID != "" {
 			req.ID = spec.ID
 			cfg.Model.ID = spec.ID
 		}
-		if spec.Backend != "" {
-			req.Backend = spec.Backend
-			cfg.Model.Backend = spec.Backend
+		if spec.Provider != nil {
+			req.Provider = spec.Provider
+			cfg.Model.Provider = spec.Provider
+		}
+		if spec.Mode != "" {
+			req.Mode = spec.Mode
+			cfg.Model.Mode = spec.Mode
 		}
 	}
 	if spec.Temperature != nil {

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/google/uuid"
@@ -37,14 +36,14 @@ func createPromptBatchSessions(ctx context.Context, rendered PromptRenderResult,
 	batch := promptBatchSession{ID: uuid.New(), Runs: make([]promptBatchRun, len(runtimes))}
 	children := make([]database.CreateSessionInput, len(runtimes))
 	for i, runtime := range runtimes {
-		source := backendSource(runtime.Backend)
+		source := transcriptSource(runtime.Provider, runtime.Mode)
 		if source == "" {
 			source = "captain"
 		}
 		batch.Runs[i] = promptBatchRun{SessionID: uuid.New(), Runtime: runtime}
 		children[i] = database.CreateSessionInput{
 			ID: batch.Runs[i].SessionID, Source: source,
-			Provider: ai.BackendToProvider(runtime.Backend), HostID: captainHostID(),
+			Provider: providerName(runtime.Provider), HostID: captainHostID(),
 			CWD: rendered.Input.Cwd(), Title: runtime.Name, InitialPrompt: rendered.Input.Prompt.User,
 			AgentType: "model", Description: runtimeSelector(runtime),
 		}
@@ -73,12 +72,12 @@ func validatePromptRuntimes(runtimes []api.Model) error {
 		if err := runtime.Validate(); err != nil {
 			return fmt.Errorf("runtime %d: %w", i+1, err)
 		}
-		backend, err := runtime.ResolveBackend()
-		if err != nil {
+		// A batch runs what it is handed, so every member must already be
+		// resolved: Runtime() is the assertion, not a derivation step.
+		if _, _, err := runtime.Runtime(); err != nil {
 			return fmt.Errorf("runtime %d: %w", i+1, err)
 		}
-		runtimes[i].Backend = backend
-		key := runtimeSelector(runtimes[i])
+		key := runtimeSelector(runtime)
 		if _, ok := seen[key]; ok {
 			return fmt.Errorf("runtime %d duplicates %s", i+1, key)
 		}
@@ -88,7 +87,7 @@ func validatePromptRuntimes(runtimes []api.Model) error {
 }
 
 func runtimeSelector(runtime api.Model) string {
-	parts := []string{string(runtime.Backend), runtime.Name}
+	parts := []string{string(runtime.Mode), runtime.Name}
 	if runtime.Effort != api.EffortNone {
 		parts = append(parts, string(runtime.Effort))
 	}

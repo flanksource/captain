@@ -26,13 +26,16 @@ func applyPromptDefaults(req *ai.Request, cfg *ai.Config) error {
 	if promptModel.ID == "" {
 		promptModel.ID = cfg.Model.ID
 	}
-	if promptModel.Backend == "" {
-		promptModel.Backend = cfg.Model.Backend
+	if promptModel.Mode == "" {
+		promptModel.Mode = cfg.Model.Mode
+	}
+	if promptModel.Provider == nil {
+		promptModel.Provider = cfg.Model.Provider
 	}
 	identity := selectModelIdentity(
-		api.Model{Name: promptModel.Name, ID: promptModel.ID, Backend: promptModel.Backend},
+		api.Model{Name: promptModel.Name, ID: promptModel.ID, Mode: promptModel.Mode, Provider: promptModel.Provider},
 	)
-	req.Name, req.ID, req.Backend = identity.Name, identity.ID, identity.Backend
+	req.Name, req.ID, req.Mode, req.Provider = identity.Name, identity.ID, identity.Mode, identity.Provider
 	if cfg.Model.Effort != api.EffortNone {
 		// An effort-qualified model selector (for example agent:sol:high)
 		// is model-local and intentionally overrides the request-wide flag/default.
@@ -164,8 +167,8 @@ func mergePromptActionFlags(req *PromptRenderRequest, flags map[string]string) e
 	if v := strings.TrimSpace(flags["fallback"]); v != "" {
 		ensureRenderSpec(req).Fallbacks = fallbackModelsFromFlags([]string{v})
 	}
-	if v := strings.TrimSpace(flags["backend"]); v != "" {
-		ensureRenderSpec(req).Backend = api.Backend(v)
+	if v := strings.TrimSpace(flags["mode"]); v != "" {
+		ensureRenderSpec(req).Mode = api.RuntimeMode(v)
 	}
 	if v := strings.TrimSpace(flags["timeout"]); v != "" {
 		ensureRenderSpec(req).Budget.Timeout = v

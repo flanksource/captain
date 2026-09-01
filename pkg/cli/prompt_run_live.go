@@ -11,6 +11,7 @@ import (
 	"github.com/flanksource/captain/pkg/ai/agent"
 	"github.com/flanksource/captain/pkg/ai/agent/commit"
 	"github.com/flanksource/captain/pkg/ai/agent/verify"
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/clicky/task"
 )
 
@@ -51,7 +52,7 @@ func runPromptWorkflow(t *task.Task, rendered PromptRenderResult, timeout time.D
 	}
 
 	start := time.Now()
-	acc := newPromptEventAccumulator(stream.publish, t, rendered.Model, rendered.Backend)
+	acc := newPromptEventAccumulator(stream.publish, t, rendered.Model, rendered.Mode)
 	acc.cwd = req.Cwd()
 	acc.idPrefix = runID
 	runner := &agent.Runner[string]{
@@ -93,7 +94,7 @@ func runPromptWorkflow(t *task.Task, rendered PromptRenderResult, timeout time.D
 	}
 	record := promptRunRecordInput{
 		Rendered: rendered, RunID: runID, Binding: binding, SessionID: session,
-		Model: model, Backend: rendered.Backend, ResultText: resultText, ResultJSON: structuredOutput,
+		Model: model, Provider: providerOf(api.Runtime{Provider: rendered.Provider, Mode: api.RuntimeMode(rendered.Mode)}), Mode: api.RuntimeMode(rendered.Mode), ResultText: resultText, ResultJSON: structuredOutput,
 	}
 	if !passed {
 		record.Error = verifyReason(runResult.Verdicts)
@@ -107,7 +108,8 @@ func runPromptWorkflow(t *task.Task, rendered PromptRenderResult, timeout time.D
 		RunID:            runID,
 		SessionID:        summarySessionID,
 		Model:            model,
-		Backend:          rendered.Backend,
+		Provider:         rendered.Provider,
+		Mode:             rendered.Mode,
 		InputTokens:      usage.InputTokens,
 		OutputTokens:     usage.OutputTokens,
 		CostUSD:          cost,

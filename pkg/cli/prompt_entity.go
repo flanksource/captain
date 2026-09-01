@@ -46,11 +46,14 @@ type PromptSummary struct {
 	RelPath     string           `json:"relPath"`
 	Writable    bool             `json:"writable"`
 	Model       string           `json:"model,omitempty"`
-	Backend     string           `json:"backend,omitempty"`
+	Mode        string           `json:"mode,omitempty"`
 	Runtimes    []api.Model      `json:"runtimes,omitempty"`
 	Variables   []PromptVariable `json:"variables,omitempty"`
 	ParseError  string           `json:"parseError,omitempty"`
 	UpdatedAt   string           `json:"updatedAt,omitempty"`
+	// Version identifies the exact content this summary describes; writes echo
+	// it back as baseVersion so a concurrent edit is reported, not clobbered.
+	Version string `json:"version,omitempty"`
 }
 
 func (p PromptSummary) GetID() string   { return p.ID }
@@ -91,6 +94,9 @@ type PromptWriteRequest struct {
 	RelPath string `json:"relPath"`
 	Name    string `json:"name"`
 	Content string `json:"content"`
+	// BaseVersion is the PromptSummary.Version the editor loaded; an update whose
+	// base no longer matches the file is refused as a conflict.
+	BaseVersion string `json:"baseVersion,omitempty"`
 }
 
 type PromptRenderRequest struct {
@@ -98,13 +104,16 @@ type PromptRenderRequest struct {
 	Spec      *api.Spec      `json:"spec,omitempty"`
 	Runtimes  []api.Model    `json:"runtimes,omitempty"`
 	Chat      bool           `json:"chat,omitempty"`
+	// Content, when set, is an unsaved draft rendered in place of the saved file.
+	Content string `json:"content,omitempty"`
 }
 
 type PromptRenderResult struct {
 	ID              string         `json:"id"`
 	Name            string         `json:"name"`
 	Model           string         `json:"model,omitempty"`
-	Backend         string         `json:"backend,omitempty"`
+	Provider        string         `json:"provider,omitempty"`
+	Mode            string         `json:"mode,omitempty"`
 	User            string         `json:"user,omitempty"`
 	System          string         `json:"system,omitempty"`
 	Input           ai.Request     `json:"input"`
@@ -149,10 +158,11 @@ type promptSource struct {
 }
 
 type promptRecord struct {
-	Source promptSource
-	ID     string
-	Path   string
-	Rel    string
+	Source    promptSource
+	ID        string
+	Path      string
+	Rel       string
+	UpdatedAt string
 }
 
 type promptRef struct {
@@ -277,13 +287,17 @@ func writeNewLocalPrompt(ctx context.Context, req PromptWriteRequest) (PromptDet
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return PromptDetail{}, fmt.Errorf("stat %s: %w", full, err)
 	}
+	record := promptRecord{Source: source, ID: encodePromptID(source.Kind, source.ID, rel), Path: full, Rel: rel}
+	if _, err := parsedPromptDetail(record, req.Content); err != nil {
+		return PromptDetail{}, invalidPromptError(err)
+	}
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		return PromptDetail{}, fmt.Errorf("ensure prompt directory: %w", err)
 	}
-	if err := os.WriteFile(full, []byte(req.Content), 0o644); err != nil {
-		return PromptDetail{}, fmt.Errorf("write prompt: %w", err)
+	if err := writePromptFileAtomic(full, req.Content); err != nil {
+		return PromptDetail{}, err
 	}
-	return promptDetail(promptRecord{Source: source, ID: encodePromptID(source.Kind, source.ID, rel), Path: full, Rel: rel})
+	return promptDetail(record)
 }
 
 func updatePrompt(ctx context.Context, id string, body map[string]any) (PromptDetail, error) {
@@ -305,9 +319,16 @@ func updatePrompt(ctx context.Context, id string, body map[string]any) (PromptDe
 	if err != nil {
 		return PromptDetail{}, err
 	}
-	if err := os.WriteFile(full, []byte(req.Content), 0o644); err != nil {
-		return PromptDetail{}, fmt.Errorf("write prompt: %w", err)
+	if err := checkPromptBaseVersion(record, req.BaseVersion); err != nil {
+		return PromptDetail{}, err
 	}
+	if _, err := parsedPromptDetail(record, req.Content); err != nil {
+		return PromptDetail{}, invalidPromptError(err)
+	}
+	if err := writePromptFileAtomic(full, req.Content); err != nil {
+		return PromptDetail{}, err
+	}
+	record.UpdatedAt = ""
 	return promptDetail(record)
 }
 

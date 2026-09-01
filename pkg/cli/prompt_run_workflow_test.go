@@ -12,11 +12,12 @@ import (
 // workflowRendered builds a rendered CLI run carrying a workflow. The prompt
 // body is empty so the run is verify-only: hooks execute with no model call.
 func workflowRendered(verify *api.Verify) PromptRenderResult {
-	model := api.Model{Name: "claude-sonnet-5", Backend: api.BackendClaudeCLI}
+	model := api.Model{Name: "claude-sonnet-5", Provider: api.Anthropic, Mode: api.ModeCLI}
 	return PromptRenderResult{
-		Name:    "workflow-test",
-		Model:   model.Name,
-		Backend: string(model.Backend),
+		Name:     "workflow-test",
+		Model:    model.Name,
+		Provider: model.Provider.Name,
+		Mode:     string(model.Mode),
 		Input: ai.Request{
 			Model:    model,
 			Workflow: &api.Workflow{Verify: verify},
@@ -29,15 +30,17 @@ type bufferedOnlyWorkflowProvider struct {
 	executeCalls int
 }
 
-func (p *bufferedOnlyWorkflowProvider) GetModel() string       { return "buffered-model" }
-func (p *bufferedOnlyWorkflowProvider) GetBackend() ai.Backend { return api.BackendDeepSeek }
+func (p *bufferedOnlyWorkflowProvider) GetModel() string { return "buffered-model" }
+func (p *bufferedOnlyWorkflowProvider) GetRuntime() ai.Runtime {
+	return api.RuntimeOf(api.DeepSeek, api.ModeAPI)
+}
 func (p *bufferedOnlyWorkflowProvider) Execute(context.Context, ai.Request) (*ai.Response, error) {
 	p.executeCalls++
 	return &ai.Response{
 		Text:           "done",
 		StructuredData: map[string]any{"status": "ok"},
 		Model:          "buffered-model",
-		Backend:        api.BackendDeepSeek,
+		Runtime:        api.RuntimeOf(api.DeepSeek, api.ModeAPI),
 		Usage:          ai.Usage{InputTokens: 2, OutputTokens: 3},
 		CostUSD:        0.01,
 	}, nil

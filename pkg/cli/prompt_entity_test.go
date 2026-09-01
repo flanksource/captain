@@ -150,8 +150,9 @@ Hello {{name}}
 		t.Fatalf("local prompt count = %d, want 1", len(localPrompts))
 	}
 	if err := captainconfig.Save(captainconfig.Config{AI: captainconfig.AIDefaults{
-		Backend: "codex-cli",
-		Model:   "gpt-5-codex",
+		Providers: map[string]captainconfig.ProviderDefaults{
+			"openai": {Mode: "cli", Model: "gpt-5-codex"},
+		},
 	}}); err != nil {
 		t.Fatalf("save config: %v", err)
 	}
@@ -168,8 +169,8 @@ Hello {{name}}
 	if !strings.Contains(rendered.User, "Hello Ada") {
 		t.Fatalf("rendered user prompt = %q, want greeting", rendered.User)
 	}
-	if rendered.Model != "claude-sonnet-4-6" || rendered.Backend != "anthropic" {
-		t.Fatalf("rendered model/backend = %s/%s, want claude-sonnet-4-6/anthropic", rendered.Model, rendered.Backend)
+	if rendered.Model != "claude-sonnet-4-6" || rendered.Provider != "anthropic" {
+		t.Fatalf("rendered model/provider = %s/%s, want claude-sonnet-4-6/anthropic", rendered.Model, rendered.Provider)
 	}
 	if rendered.Input.Cwd() == "" || !filepath.IsAbs(rendered.Input.Cwd()) {
 		t.Fatalf("rendered setup cwd = %q, want absolute", rendered.Input.Cwd())

@@ -107,7 +107,7 @@ type reflectedSchemaBytes struct {
 	spec         []byte
 	prompt       []byte
 	promptAction []byte
-	args         map[api.Backend][]byte // per-backend cmux "extra args" schema
+	args         map[api.Runtime][]byte // per-runtime cmux "extra args" schema
 }
 
 var reflectedSchemas = sync.OnceValues(func() (reflectedSchemaBytes, error) {
@@ -123,7 +123,7 @@ var reflectedSchemas = sync.OnceValues(func() (reflectedSchemaBytes, error) {
 	if err != nil {
 		return reflectedSchemaBytes{}, fmt.Errorf("reflect promptAction schema: %w", err)
 	}
-	args, err := backendArgSchemasJSON()
+	args, err := runtimeArgSchemasJSON()
 	if err != nil {
 		return reflectedSchemaBytes{}, err
 	}
@@ -132,11 +132,11 @@ var reflectedSchemas = sync.OnceValues(func() (reflectedSchemaBytes, error) {
 
 // promptSchemaExampleSpec is a portable, self-consistent example: no machine paths,
 // a model resolved from the catalog default, and cliArgs that only use fields the
-// selected backend (claude-cmux) actually accepts.
+// selected runtime (anthropic cmux) actually accepts.
 func promptSchemaExampleSpec() map[string]any {
 	return map[string]any{
 		"model":       exampleModelName(),
-		"backend":     string(api.ModeCmux),
+		"mode":        string(api.ModeCmux),
 		"effort":      string(api.EffortMedium),
 		"temperature": 0.2,
 		"noCache":     true,

@@ -10,6 +10,6 @@ import "github.com/flanksource/captain/pkg/ai"
 //
 // The returned ID is the exact provider model ID Captain sends at runtime.
 // CLI/cmux modes share the corresponding agent catalog entries.
-func agentCatalogModels(b ai.Backend) []ai.ModelDef {
-	return ai.AgentCatalogModels(b)
+func agentCatalogModels(p *ai.ModelProvider, mode ai.RuntimeMode) []ai.ModelDef {
+	return ai.AgentCatalogModels(p, mode)
 }
