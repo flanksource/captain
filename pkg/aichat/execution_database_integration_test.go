@@ -33,9 +33,7 @@ var _ = Describe("Database execution authority", func() {
 		threadID := uuid.NewString()
 		execution, err := authority.Begin(ctx, aichat.ExecutionRequest{
 			ThreadID: threadID, RequestID: "request-account-1", Title: "Accounts",
-			Spec: api.Spec{Model: api.Model{
-				Name: "sonnet", Backend: api.BackendClaudeAgent,
-			}.Capabilities()},
+			Spec: api.Spec{Model: withCaps(api.Model{Name: "sonnet", Mode: api.ModeAgent})},
 			Definitions: []api.ToolDefinition{{
 				Name: "account_edit", DefaultPermission: api.ToolPolicyAsk,
 				Handler: func(_ context.Context, input map[string]any) (any, error) {
@@ -117,7 +115,7 @@ var _ = Describe("Database execution authority", func() {
 		authority, err := aichat.NewDatabaseExecutionAuthority(db)
 		Expect(err).NotTo(HaveOccurred())
 		threadID := uuid.NewString()
-		spec := api.Spec{Model: api.Model{Name: "gemini", Backend: api.BackendGemini}.Capabilities()}
+		spec := api.Spec{Model: withCaps(api.Model{Name: "gemini", Mode: api.ModeAPI})}
 		for _, turnID := range []string{"user-message-1", "user-message-2"} {
 			execution, beginErr := authority.Begin(ctx, aichat.ExecutionRequest{
 				ThreadID: threadID, RequestID: turnID, Title: "Accounts", Spec: spec,
@@ -154,9 +152,9 @@ var _ = Describe("Database execution authority", func() {
 		threadID := uuid.NewString()
 		_, err = authority.Begin(ctx, aichat.ExecutionRequest{
 			ThreadID: threadID, RequestID: "invalid-model-call", Title: "Atomic admission",
-			Spec: api.Spec{Model: api.Model{Backend: api.BackendOpenAI}.Capabilities()},
+			Spec: api.Spec{Model: api.Model{Mode: api.ModeAPI}},
 		})
-		Expect(err).To(MatchError(ContainSubstring("model")))
+		Expect(err).To(MatchError(ContainSubstring("resolved (provider, mode) runtime")))
 
 		sessionID := uuid.MustParse(threadID)
 		turns, err := db.ListThreadTurns(ctx, sessionID)
@@ -168,7 +166,7 @@ var _ = Describe("Database execution authority", func() {
 
 		execution, err := authority.Begin(ctx, aichat.ExecutionRequest{
 			ThreadID: threadID, RequestID: "valid-model-call", Title: "Atomic admission",
-			Spec: api.Spec{Model: api.Model{Name: "gpt", Backend: api.BackendOpenAI}.Capabilities()},
+			Spec: api.Spec{Model: withCaps(api.Model{Name: "gpt-5.5", Mode: api.ModeAPI})},
 		})
 		Expect(err).NotTo(HaveOccurred())
 		_, err = execution.Observe(ctx, api.Event{Kind: api.EventResult, Success: true})
@@ -201,7 +199,7 @@ var _ = Describe("Database execution authority", func() {
 		Expect(err).NotTo(HaveOccurred())
 		execution, err := authority.Begin(ctx, aichat.ExecutionRequest{
 			ThreadID: session.ID.String(), RequestID: "valid-model-call", Title: "Recovered admission",
-			Spec: api.Spec{Model: api.Model{Name: "gpt", Backend: api.BackendOpenAI}.Capabilities()},
+			Spec: api.Spec{Model: withCaps(api.Model{Name: "gpt-5.5", Mode: api.ModeAPI})},
 		})
 		Expect(err).NotTo(HaveOccurred())
 
@@ -244,7 +242,7 @@ var _ = Describe("Database execution authority", func() {
 		Expect(err).NotTo(HaveOccurred())
 		execution, err := authority.Begin(ctx, aichat.ExecutionRequest{
 			ThreadID: session.ID.String(), RequestID: requestID, Title: "Retried admission",
-			Spec: api.Spec{Model: api.Model{Name: "gpt", Backend: api.BackendOpenAI}.Capabilities()},
+			Spec: api.Spec{Model: withCaps(api.Model{Name: "gpt-5.5", Mode: api.ModeAPI})},
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(execution.TurnID()).To(Equal(incompleteTurn.ID.String()))
@@ -268,7 +266,7 @@ var _ = Describe("Database execution authority", func() {
 		authority, err := aichat.NewDatabaseExecutionAuthority(db)
 		Expect(err).NotTo(HaveOccurred())
 		threadID := uuid.NewString()
-		spec := api.Spec{Model: api.Model{Name: "gpt", Backend: api.BackendOpenAI}.Capabilities()}
+		spec := api.Spec{Model: withCaps(api.Model{Name: "gpt-5.5", Mode: api.ModeAPI})}
 		execution, err := authority.Begin(ctx, aichat.ExecutionRequest{
 			ThreadID: threadID, RequestID: "running-model-call", Title: "Active admission", Spec: spec,
 		})
@@ -291,7 +289,7 @@ var _ = Describe("Database execution authority", func() {
 		authority, err := aichat.NewDatabaseExecutionAuthority(db)
 		Expect(err).NotTo(HaveOccurred())
 		threadID := uuid.NewString()
-		spec := api.Spec{Model: api.Model{Name: "gpt", Backend: api.BackendOpenAI}.Capabilities()}
+		spec := api.Spec{Model: withCaps(api.Model{Name: "gpt-5.5", Mode: api.ModeAPI})}
 		interrupted, err := authority.Begin(ctx, aichat.ExecutionRequest{
 			ThreadID: threadID, RequestID: "user-message-interrupted", Title: "Interrupt", Spec: spec,
 		})
@@ -343,7 +341,7 @@ var _ = Describe("Database execution authority", func() {
 		execution, err := authority.Begin(ctx, aichat.ExecutionRequest{
 			ThreadID: uuid.NewString(), RequestID: "user-message-approval", Title: "Accounts",
 			Spec: api.Spec{
-				Model:    api.Model{Name: "gemini", Backend: api.BackendGemini}.Capabilities(),
+				Model:    withCaps(api.Model{Name: "gemini", Mode: api.ModeAPI}),
 				Messages: []api.Message{{Role: api.RoleUser, Parts: []api.Part{{Type: api.PartText, Text: "Edit the account"}}}},
 			},
 		})

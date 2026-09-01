@@ -89,7 +89,7 @@ func (realChatResolver) Provider(_ context.Context, config api.Config) (api.Stre
 	}
 	streaming, ok := api.ProviderAs[api.StreamingProvider](provider)
 	if !ok {
-		return nil, fmt.Errorf("backend %q is not streaming", provider.GetBackend())
+		return nil, fmt.Errorf("backend %q is not streaming", provider.GetRuntime())
 	}
 	return streaming, nil
 }
@@ -255,20 +255,20 @@ var _ = Describe("Mocked Captain chat lifecycle", func() {
 			}
 		},
 		Entry("Anthropic API", lifecycleRuntime{
-			name: "anthropic_api", model: api.Model{Name: "claude-sonnet-4-6", Backend: api.BackendAnthropic, Mode: api.ModeAPI},
+			name: "anthropic_api", model: api.Model{Name: "claude-sonnet-4-6", Mode: api.ModeAPI},
 			protocol: aimock.SectionAnthropic, scenario: "chat-api-flows.yaml",
 		}),
 		Entry("OpenAI API", lifecycleRuntime{
-			name: "openai_api", model: api.Model{Name: "gpt-5", Backend: api.BackendOpenAI, Mode: api.ModeAPI},
+			name: "openai_api", model: api.Model{Name: "gpt-5", Mode: api.ModeAPI},
 			protocol: aimock.SectionOpenAI, scenario: "chat-api-flows.yaml",
 		}),
 		Entry("Claude Agent", lifecycleRuntime{
-			name: "claude_agent", model: api.Model{Name: "claude-sonnet-5", Backend: api.BackendClaudeAgent, Mode: api.ModeAgent},
+			name: "claude_agent", model: api.Model{Name: "claude-sonnet-5", Mode: api.ModeAgent},
 			protocol: aimock.SectionAnthropic, agent: true, binaries: []string{"npm", "claude"},
 			scenario: "chat-agent-flows.yaml", configEnv: "CLAUDE_CONFIG_DIR",
 		}),
 		Entry("Codex Agent", lifecycleRuntime{
-			name: "codex_agent", model: api.Model{Name: "gpt-5.6-sol", Backend: api.BackendCodexAgent, Mode: api.ModeAgent},
+			name: "codex_agent", model: api.Model{Name: "gpt-5.6-sol", Mode: api.ModeAgent},
 			protocol: aimock.SectionOpenAI, agent: true, binaries: []string{"codex"},
 			scenario: "chat-agent-flows.yaml", configEnv: "CODEX_HOME",
 		}),
@@ -395,8 +395,11 @@ func assertCompletedSession(
 	aggregate := getLifecycleSession(ctx, client, baseURL, sessionID)
 	Expect(aggregate.LifecycleStatus).To(Equal(string(database.SessionLifecycleSucceeded)))
 	Expect(aggregate.ActivityState).To(Equal(string(database.SessionActivityIdle)))
-	Expect(aggregate.ExecutionMode).To(Equal(runtime.model.Mode))
-	Expect(aggregate.Backend).To(Equal(string(runtime.model.Backend)))
+	// Two different vocabularies: ExecutionMode is the prompt RUN kind, ModelMode
+	// the mechanism the model call itself ran on. They used to coincide because a
+	// single composite id stood in for both.
+	Expect(aggregate.ExecutionMode).To(Equal(api.RuntimeMode("run")))
+	Expect(aggregate.ModelMode).To(Equal(runtime.model.Mode))
 	Expect(aggregate.Model).To(Equal(runtime.model.Name))
 	Expect(aggregate.Turns).To(HaveLen(1))
 	Expect(aggregate.Turns[0].Status).To(Equal(string(database.TurnStatusEnded)))

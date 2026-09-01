@@ -25,14 +25,19 @@ var (
 )
 
 type Thread struct {
-	ID         string      `json:"id"`
-	Title      string      `json:"title"`
-	Revision   int64       `json:"revision"`
-	CreatedAt  time.Time   `json:"createdAt"`
-	UpdatedAt  time.Time   `json:"updatedAt"`
-	Messages   []UIMessage `json:"messages,omitempty"`
-	Runtime    *api.Model  `json:"runtime,omitempty"`
-	ForkedFrom string      `json:"forkedFrom,omitempty"`
+	ID        string      `json:"id"`
+	Title     string      `json:"title"`
+	Revision  int64       `json:"revision"`
+	CreatedAt time.Time   `json:"createdAt"`
+	UpdatedAt time.Time   `json:"updatedAt"`
+	Messages  []UIMessage `json:"messages,omitempty"`
+	// Runtime is an identity, not an api.Model: the model's resolved Provider is
+	// json:"-", so a client could not see which runtime the thread is locked to.
+	// Projecting on the field rather than via a Thread-level marshaller keeps
+	// Thread safe to embed — a promoted MarshalJSON silently drops the embedder's
+	// own fields.
+	Runtime    *api.RuntimeIdentity `json:"runtime,omitempty"`
+	ForkedFrom string               `json:"forkedFrom,omitempty"`
 
 	TotalInputTokens      int     `json:"totalInputTokens"`
 	TotalOutputTokens     int     `json:"totalOutputTokens"`
@@ -224,7 +229,7 @@ func (s *memoryThreadStore) SetRuntime(_ context.Context, id string, runtime api
 			return nil
 		}
 		return fmt.Errorf("%w: runtime is already bound to %s/%s", ErrThreadRuntimeConflict,
-			thread.Runtime.Backend, thread.Runtime.Name)
+			thread.Runtime.Runtime(), thread.Runtime.Model)
 	}
 	thread.Runtime = &identity
 	touchMemoryThread(thread)
@@ -313,20 +318,32 @@ func touchMemoryThread(thread *Thread) {
 	thread.UpdatedAt = time.Now()
 }
 
-func threadRuntimeIdentity(runtime api.Model) (api.Model, error) {
-	resolved, err := ai.ResolveModelSelectors(runtime)
+// threadRuntimeIdentity projects a resolved model onto the thread's stored
+// identity. It goes through RuntimeIdentityOf rather than hand-building the
+// struct: a hand-built identity omitted Mode, so a client that read the thread
+// back and posted it as a request named a runtime the thread was never locked
+// to — the whole reason an agent-backed session came back as "api".
+func threadRuntimeIdentity(runtime api.Model) (api.RuntimeIdentity, error) {
+	resolved, err := ai.Resolve(runtime)
 	if err != nil {
-		return api.Model{}, fmt.Errorf("resolve thread runtime: %w", err)
+		return api.RuntimeIdentity{}, fmt.Errorf("resolve thread runtime: %w", err)
 	}
-	identity := api.Model{Name: strings.TrimSpace(resolved.Name), Backend: resolved.Backend}
-	if identity.Name == "" || !identity.Backend.Valid() {
-		return api.Model{}, fmt.Errorf("thread runtime requires a model name and valid backend")
+	identity := api.RuntimeIdentityOf(resolved)
+	identity.Model = strings.TrimSpace(identity.Model)
+	// Effort is a per-turn choice, not part of the thread's locked identity —
+	// sameThreadRuntime compares model and (provider, mode) only. Storing it
+	// anyway made the write-once metadata lock stricter than the check above it,
+	// so raising the effort on a later turn read as a runtime change and the
+	// thread refused it.
+	identity.Effort = ""
+	if identity.Model == "" || !identity.Runtime().Valid() {
+		return api.RuntimeIdentity{}, fmt.Errorf("thread runtime requires a model name and a valid (provider, mode) pair")
 	}
 	return identity, nil
 }
 
-func sameThreadRuntime(left, right api.Model) bool {
-	return left.Name == right.Name && left.Backend == right.Backend
+func sameThreadRuntime(left, right api.RuntimeIdentity) bool {
+	return left.Model == right.Model && left.Runtime() == right.Runtime()
 }
 
 func validateLastMessageReplacement(messages []UIMessage, replacement UIMessage) error {

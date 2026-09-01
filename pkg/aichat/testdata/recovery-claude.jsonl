@@ -1,0 +1,3 @@
+{"type":"user","uuid":"provider-user-1","sessionId":"provider-recovery","timestamp":"2026-08-27T09:00:00Z","cwd":"/work/example","message":{"role":"user","content":"Recover this answer"}}
+{"type":"ai-title","aiTitle":"Recovered conversation","sessionId":"provider-recovery"}
+{"type":"assistant","uuid":"provider-assistant-1","sessionId":"provider-recovery","timestamp":"2026-08-27T09:00:01Z","message":{"role":"assistant","model":"claude-sonnet-5","usage":{"input_tokens":120,"output_tokens":18},"content":[{"type":"text","text":"Recovered from provider history"}]}}

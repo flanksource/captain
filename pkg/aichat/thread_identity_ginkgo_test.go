@@ -107,7 +107,7 @@ var _ = Describe("Authoritative chat thread identity", func() {
 			return response
 		}
 
-		first := submit("new-user-1", api.Model{Name: "test-model", Backend: api.BackendOpenAI},
+		first := submit("new-user-1", api.Model{Name: "gpt-5.6-sol", Mode: api.ModeAPI},
 			aichat.UIMessage{ID: "stale", Role: "user", Parts: []aichat.UIPart{{Type: "text", Text: "Stale client history"}}})
 		Expect(first.Code).To(Equal(http.StatusOK), first.Body.String())
 		Expect(provider.specs).To(HaveLen(1))
@@ -119,11 +119,11 @@ var _ = Describe("Authoritative chat thread identity", func() {
 
 		bound, err := store.Get(ctx, thread.ID)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(bound.Runtime).To(Equal(&api.Model{Name: "test-model", Backend: api.BackendOpenAI}))
+		Expect(bound.Runtime).To(Equal(&api.RuntimeIdentity{Model: "gpt-5.6-sol", Provider: api.OpenAI.Name, Mode: api.ModeAPI}))
 		Expect(bound.ProviderSessionID).To(Equal("provider-session-1"))
 
 		sameModel := submit("new-user-2", api.Model{
-			Name: "test-model", Backend: api.BackendOpenAI, Effort: api.EffortHigh,
+			Name: "gpt-5.6-sol", Mode: api.ModeAPI, Effort: api.EffortHigh,
 		})
 		Expect(sameModel.Code).To(Equal(http.StatusOK), sameModel.Body.String())
 		Expect(provider.specs).To(HaveLen(2))
@@ -132,10 +132,10 @@ var _ = Describe("Authoritative chat thread identity", func() {
 
 		beforeConflict, err := store.Get(ctx, thread.ID)
 		Expect(err).NotTo(HaveOccurred())
-		mismatch := submit("new-user-3", api.Model{Name: "claude-sonnet-4-6", Backend: api.BackendAnthropic})
+		mismatch := submit("new-user-3", api.Model{Name: "claude-sonnet-4-6", Mode: api.ModeAPI})
 		Expect(mismatch.Code).To(Equal(http.StatusConflict))
-		Expect(mismatch.Body.String()).To(ContainSubstring("openai/test-model"))
-		Expect(mismatch.Body.String()).To(ContainSubstring("anthropic/claude-sonnet-4-6"))
+		Expect(mismatch.Body.String()).To(ContainSubstring("openai api/gpt-5.6-sol"))
+		Expect(mismatch.Body.String()).To(ContainSubstring("anthropic api/claude-sonnet-4-6"))
 		Expect(strings.ToLower(mismatch.Body.String())).To(ContainSubstring("fork"))
 		Expect(provider.specs).To(HaveLen(2), "a rejected resume must not launch the provider")
 		afterConflict, err := store.Get(ctx, thread.ID)
@@ -149,7 +149,7 @@ var _ = Describe("Authoritative chat thread identity", func() {
 		thread, err := store.Create(ctx, "Runtime race")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(store.SetRuntime(ctx, thread.ID, api.Model{
-			Name: "bound-model", Backend: api.BackendOpenAI,
+			Name: "gpt-5.6-terra", Mode: api.ModeAPI,
 		})).To(Succeed())
 		provider := &fakeStreamingProvider{}
 		service := aichat.NewService(aichat.ServiceOptions{
@@ -160,7 +160,7 @@ var _ = Describe("Authoritative chat thread identity", func() {
 		response := httptest.NewRecorder()
 		service.Handler().ServeHTTP(response, requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{
 			ID: thread.ID, ThreadID: thread.ID, Trigger: "submit-message",
-			Runtime: &api.Model{Name: "other-model", Backend: api.BackendOpenAI},
+			Runtime: &api.Model{Name: "gpt-5.5", Mode: api.ModeAPI},
 			Messages: []aichat.UIMessage{{
 				ID: "losing-message", Role: "user", Parts: []aichat.UIPart{{Type: "text", Text: "Do not persist"}},
 			}},
@@ -196,7 +196,7 @@ var _ = Describe("Authoritative chat thread identity", func() {
 			response := httptest.NewRecorder()
 			service.Handler().ServeHTTP(response, requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{
 				ID: thread.ID, ThreadID: thread.ID, Trigger: "submit-message",
-				Runtime: &api.Model{Name: "test-model", Backend: api.BackendOpenAI},
+				Runtime: &api.Model{Name: "gpt-5.6-sol", Mode: api.ModeAPI},
 				Messages: []aichat.UIMessage{{
 					ID: messageID, Role: "user", Parts: []aichat.UIPart{{Type: "text", Text: messageID}},
 				}},
@@ -229,7 +229,9 @@ var _ = Describe("Authoritative chat thread identity", func() {
 		store := aichat.NewMemoryThreadStore()
 		thread, err := store.Create(ctx, "Approval resume")
 		Expect(err).NotTo(HaveOccurred())
-		Expect(store.SetRuntime(ctx, thread.ID, api.Model{Name: "test-model", Backend: api.BackendOpenAI})).To(Succeed())
+		// A catalog-resolvable name with an explicit mode: `backend` on the wire is
+		// the runtime mode, so a request body cannot name a resolved adapter.
+		Expect(store.SetRuntime(ctx, thread.ID, api.Model{Name: "gpt-5", Mode: api.ModeAPI})).To(Succeed())
 		Expect(store.AppendMessage(ctx, thread.ID, aichat.UIMessage{
 			ID: "approval-user", Role: "user", TurnID: "turn-1",
 			Parts: []aichat.UIPart{{Type: "text", Text: "Update the account"}},
@@ -273,7 +275,7 @@ var _ = Describe("Authoritative chat thread identity", func() {
 		authority := &fakeExecutionAuthority{continuation: &aichat.ApprovalContinuation{
 			Execution: execution,
 			Spec: api.Spec{
-				Model:        api.Model{Name: "test-model", Backend: api.BackendOpenAI},
+				Model:        api.Model{Name: "gpt-5", Mode: api.ModeAPI},
 				ToolApproval: &api.ToolApprovalResume{},
 			},
 		}, execution: &fakeExecution{}}
@@ -297,7 +299,7 @@ var _ = Describe("Authoritative chat thread identity", func() {
 		concurrent := httptest.NewRecorder()
 		service.Handler().ServeHTTP(concurrent, requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{
 			ID: thread.ID, ThreadID: thread.ID, Trigger: "submit-message",
-			Runtime: &api.Model{Name: "test-model", Backend: api.BackendOpenAI},
+			Runtime: &api.Model{Name: "gpt-5", Mode: api.ModeAPI},
 			Messages: []aichat.UIMessage{{
 				ID: "concurrent-user", Role: "user", Parts: []aichat.UIPart{{Type: "text", Text: "Race the approval"}},
 			}},
@@ -316,7 +318,7 @@ var _ = Describe("Authoritative chat thread identity", func() {
 			response := httptest.NewRecorder()
 			service.Handler().ServeHTTP(response, requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{
 				ID: thread.ID, ThreadID: thread.ID, Trigger: "submit-message",
-				Runtime: &api.Model{Name: "test-model", Backend: api.BackendOpenAI},
+				Runtime: &api.Model{Name: "gpt-5", Mode: api.ModeAPI},
 				Messages: []aichat.UIMessage{{
 					ID: "next-user", Role: "user", Parts: []aichat.UIPart{{Type: "text", Text: "Continue after approval"}},
 				}},
@@ -368,7 +370,7 @@ var _ = Describe("Authoritative chat thread identity", func() {
 		concurrent := httptest.NewRecorder()
 		service.Handler().ServeHTTP(concurrent, requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{
 			ID: thread.ID, ThreadID: thread.ID, Trigger: "submit-message",
-			Runtime: &api.Model{Name: "test-model", Backend: api.BackendOpenAI},
+			Runtime: &api.Model{Name: "gpt-5.6-sol", Mode: api.ModeAPI},
 			Messages: []aichat.UIMessage{{
 				ID: "concurrent-user", Role: "user", Parts: []aichat.UIPart{{Type: "text", Text: "Race the fork"}},
 			}},
@@ -394,7 +396,7 @@ var _ = Describe("Authoritative chat thread identity", func() {
 			ID: "source-assistant", Role: "assistant", Parts: []aichat.UIPart{{Type: "text", Text: "Answer"}},
 		})).To(Succeed())
 		Expect(store.SetProviderSession(ctx, source.ID, "provider-source")).To(Succeed())
-		Expect(store.SetRuntime(ctx, source.ID, api.Model{Name: "test-model", Backend: api.BackendOpenAI})).To(Succeed())
+		Expect(store.SetRuntime(ctx, source.ID, api.Model{Name: "gpt-5.6-sol", Mode: api.ModeAPI})).To(Succeed())
 		_, err = store.AddUsage(ctx, source.ID, aichat.TurnUsage{InputTokens: 10, OutputTokens: 4, CostUSD: 0.2})
 		Expect(err).NotTo(HaveOccurred())
 		service := aichat.NewService(aichat.ServiceOptions{Threads: aichat.FixedThreadStore(store)})
@@ -472,7 +474,7 @@ var _ = Describe("Authoritative chat thread identity", func() {
 		agentFork, err := store.Fork(ctx, source.ID)
 		Expect(err).NotTo(HaveOccurred())
 		agentProvider := &fakeStreamingProvider{
-			backend: api.BackendClaudeAgent,
+			runtime: api.RuntimeOf(api.Anthropic, api.ModeAgent),
 			events:  []api.Event{{Kind: api.EventResult, Success: true, SessionID: "provider-fork"}},
 		}
 		agentResolver := &fakeResolver{provider: agentProvider}
@@ -483,7 +485,7 @@ var _ = Describe("Authoritative chat thread identity", func() {
 			response := httptest.NewRecorder()
 			agentService.Handler().ServeHTTP(response, requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{
 				ID: agentFork.ID, ThreadID: agentFork.ID, Trigger: "submit-message",
-				Runtime: &api.Model{Name: "sonnet", Backend: api.BackendClaudeAgent},
+				Runtime: &api.Model{Name: "sonnet", Mode: api.ModeAgent},
 				Messages: []aichat.UIMessage{{
 					ID: id, Role: "user", Parts: []aichat.UIPart{{Type: "text", Text: text}},
 				}},
@@ -515,7 +517,7 @@ var _ = Describe("Authoritative chat thread identity", func() {
 		apiResponse := httptest.NewRecorder()
 		apiService.Handler().ServeHTTP(apiResponse, requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{
 			ID: apiFork.ID, ThreadID: apiFork.ID, Trigger: "submit-message",
-			Runtime: &api.Model{Name: "test-model", Backend: api.BackendOpenAI},
+			Runtime: &api.Model{Name: "gpt-5.6-sol", Mode: api.ModeAPI},
 			Messages: []aichat.UIMessage{{
 				ID: "api-user-1", Role: "user", Parts: []aichat.UIPart{{Type: "text", Text: "Continue on API"}},
 			}},
@@ -541,7 +543,7 @@ var _ = Describe("Authoritative chat thread identity", func() {
 			})).To(Succeed())
 			detailID = thread.ID
 		}
-		Expect(store.SetRuntime(ctx, detailID, api.Model{Name: "test-model", Backend: api.BackendOpenAI})).To(Succeed())
+		Expect(store.SetRuntime(ctx, detailID, api.Model{Name: "gpt-5.6-sol", Mode: api.ModeAPI})).To(Succeed())
 		service := aichat.NewService(aichat.ServiceOptions{Threads: aichat.FixedThreadStore(store)})
 
 		list := httptest.NewRecorder()
@@ -559,6 +561,6 @@ var _ = Describe("Authoritative chat thread identity", func() {
 		var hydrated aichat.Thread
 		Expect(json.Unmarshal(detail.Body.Bytes(), &hydrated)).To(Succeed())
 		Expect(hydrated.Messages).To(HaveLen(1))
-		Expect(hydrated.Runtime).To(Equal(&api.Model{Name: "test-model", Backend: api.BackendOpenAI}))
+		Expect(hydrated.Runtime).To(Equal(&api.RuntimeIdentity{Model: "gpt-5.6-sol", Provider: api.OpenAI.Name, Mode: api.ModeAPI}))
 	})
 })

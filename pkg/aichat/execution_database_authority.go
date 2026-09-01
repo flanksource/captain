@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/google/uuid"
@@ -31,8 +30,8 @@ func (a *DatabaseExecutionAuthority) Begin(
 	if err != nil {
 		return nil, fmt.Errorf("chat thread ID %q is not a UUID: %w", request.ThreadID, err)
 	}
-	if request.Spec.Backend == "" {
-		return nil, fmt.Errorf("authoritative chat execution requires a resolved backend")
+	if request.Spec.Mode == "" || request.Spec.Provider == nil {
+		return nil, fmt.Errorf("authoritative chat execution requires a resolved (provider, mode) runtime")
 	}
 	renderedSpec, err := renderedSpecMap(request.Spec, request.Profile)
 	if err != nil {
@@ -54,7 +53,7 @@ func (a *DatabaseExecutionAuthority) Begin(
 		}
 		var createErr error
 		session, createErr = tx.CreateOrGetSession(ctx, database.CreateSessionInput{
-			ID: sessionID, Source: "aichat", Provider: ai.BackendToProvider(request.Spec.Backend),
+			ID: sessionID, Source: "aichat", Provider: request.Spec.Provider.Name,
 			HostID: "local", Title: request.Title, InitialPrompt: initialUserPrompt(request.Spec),
 			Metadata: map[string]any{"aichat": true},
 		})
@@ -84,7 +83,9 @@ func (a *DatabaseExecutionAuthority) Begin(
 			SessionID: session.ID, TurnID: &turn.ID, AdmissionKey: executionAdmissionKey(request),
 			Origin: "aichat", RenderedSpec: renderedSpec,
 			Runtime: database.PromptRunRuntime{
-				Mode: string(request.Spec.Mode), Driver: string(request.Spec.Backend),
+				// Runtime.Mode here is the RUN mode; the runtime mechanism travels on
+				// the requested/resolved selections.
+				Mode: "run", Driver: request.Spec.Provider.AgentName,
 				Requested: runtimeSelection(request.Spec.Model),
 				Resolved:  runtimeSelection(request.Spec.Model),
 			},
@@ -98,14 +99,14 @@ func (a *DatabaseExecutionAuthority) Begin(
 		}
 		modelCallID, createErr := tx.CreateChatModelCall(ctx, database.CreateChatModelCallInput{
 			TurnID: turn.ID, PromptRunID: run.ID, Model: request.Spec.Name,
-			Backend: string(request.Spec.Backend), Effort: string(request.Spec.Effort),
+			Provider: request.Spec.Provider.Name, Mode: string(request.Spec.Mode), Effort: string(request.Spec.Effort),
 		})
 		if createErr != nil {
 			return createErr
 		}
 		execution = &databaseExecution{
 			db: tx, ctx: ctx, session: session, turn: turn, run: run, modelCallID: modelCallID,
-			model: request.Spec.Name, backend: request.Spec.Backend,
+			model: request.Spec.Name, provider: request.Spec.Provider, mode: request.Spec.Mode,
 			events: make(chan api.Event, 16), definitions: append([]api.ToolDefinition(nil), request.Definitions...),
 			approvalIDs: map[string]uuid.UUID{}, providerToolUseReady: make(chan struct{}, 1),
 		}
@@ -121,8 +122,8 @@ func (a *DatabaseExecutionAuthority) Begin(
 	if resumed {
 		serviceLog.Warnf("resumed incomplete chat admission turn %s for session %s", execution.turn.ID, session.ID)
 	}
-	if len(request.Definitions) > 0 && isAgentBackend(request.Spec.Backend) {
-		if err := execution.startCallerTools(ctx, request.Spec.Backend); err != nil {
+	if len(request.Definitions) > 0 && request.Spec.Mode == api.ModeAgent {
+		if err := execution.startCallerTools(ctx, request.Spec.Provider, request.Spec.Mode); err != nil {
 			_ = execution.Close(context.Background())
 			return nil, err
 		}
@@ -221,6 +222,17 @@ func (a *DatabaseExecutionAuthority) resolveToolApproval(
 	if err := json.Unmarshal(rendered, &spec); err != nil {
 		return nil, fmt.Errorf("decode prompt run %s rendered spec: %w", run.ID, err)
 	}
+	// RenderedSpec cannot carry the resolved provider (api.Model.Provider is
+	// json:"-"), so the runtime comes from the run's recorded selection rather than
+	// the decoded spec. Re-deriving it from the model name would resume an agent
+	// turn on the Anthropic API, and would miss a model a fallback swapped in
+	// mid-turn.
+	runtime := run.Runtime.Effective()
+	if strings.TrimSpace(runtime.Mode) == "" || strings.TrimSpace(runtime.Model) == "" {
+		return nil, fmt.Errorf("prompt run %s has no recorded runtime to resume: model %q mode %q",
+			run.ID, runtime.Model, runtime.Mode)
+	}
+	spec.Model = runtimeModel(runtime, spec.Model)
 	spec.Messages = nil
 	spec.Prompt.User = ""
 	spec.Prompt.System = ""
@@ -244,7 +256,7 @@ func (a *DatabaseExecutionAuthority) resolveToolApproval(
 	}
 	modelCallID, err = a.db.CreateChatModelCall(ctx, database.CreateChatModelCallInput{
 		TurnID: turn.ID, PromptRunID: run.ID, Model: spec.Name,
-		Backend: string(spec.Backend), Effort: string(spec.Effort),
+		Provider: providerKey(spec.Provider), Mode: string(spec.Mode), Effort: string(spec.Effort),
 	})
 	if err != nil {
 		return nil, err
@@ -255,7 +267,7 @@ func (a *DatabaseExecutionAuthority) resolveToolApproval(
 	}
 	execution := &databaseExecution{
 		db: a.db, ctx: ctx, session: sessionRecord, turn: turn, run: resumed, modelCallID: modelCallID,
-		model: spec.Name, backend: spec.Backend,
+		model: spec.Name, provider: spec.Provider, mode: spec.Mode,
 		events: make(chan api.Event, 16), approvalIDs: map[string]uuid.UUID{},
 		providerToolUseReady: make(chan struct{}, 1),
 	}
@@ -301,10 +313,24 @@ func approvalDecisions(state api.ToolApprovalState, requests []database.TurnRequ
 }
 
 func runtimeSelection(model api.Model) database.PromptRunRuntimeSelection {
+	identity := api.RuntimeIdentityOf(model)
 	return database.PromptRunRuntimeSelection{
-		Provider: ai.BackendToProvider(model.Backend), Backend: string(model.Backend),
-		Model: model.Name, Effort: string(model.Effort),
+		Provider: identity.Provider, Mode: string(identity.Mode),
+		Model: identity.Model, Effort: string(identity.Effort),
 	}
+}
+
+// runtimeModel is the inverse of runtimeSelection: it restores the recorded model
+// identity onto base, leaving the rest of the authored model (fallbacks,
+// temperature, cache settings) as the stored spec declared it.
+func runtimeModel(selection database.PromptRunRuntimeSelection, base api.Model) api.Model {
+	base.Name = selection.Model
+	base.Mode = api.RuntimeMode(selection.Mode)
+	base.Effort = api.Effort(selection.Effort)
+	if p, ok := api.ProviderByName(selection.Provider); ok {
+		base.Provider = p
+	}
+	return base
 }
 
 func renderedSpecMap(spec api.Spec, profile api.ResolvedSpec) (map[string]any, error) {
