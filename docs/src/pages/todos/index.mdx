@@ -22,7 +22,7 @@ The dependency is one-directional: gavel embeds Captain, Captain has no awarenes
   </div>
   <div className="docs-card">
     <h3>Captain owns the agent runtime</h3>
-    <p>Gavel builds Captain `ai.Request`s, selects Captain backends (`BackendClaudeCmux`, `BackendClaudeAgent`, `BackendCodexCLI`, …), and streams events from Captain's `agent.Runner` — the same runtime documented under <a href="/agents/">AI Agents</a>.</p>
+    <p>Gavel builds Captain `ai.Request`s, selects a Captain runtime — the `(model, mode)` pair, where mode is `api`, `agent`, `cli`, or `cmux` — and streams events from Captain's `agent.Runner`, the same runtime documented under <a href="/agents/">AI Agents</a>.</p>
   </div>
   <div className="docs-card">
     <h3>Prompts are Captain prompts</h3>

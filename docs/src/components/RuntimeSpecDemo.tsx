@@ -36,7 +36,7 @@ const tools: ToolMeta[] = [
 
 const initialValue: AISpecRuntimeValue = {
   model: "claude-sonnet-4-6",
-  backend: "anthropic",
+  mode: "agent",
   effort: "medium",
   temperature: 0.2,
   budget: {

@@ -55,7 +55,7 @@ const renderResult = {
   id: "local\\u0000a18f2c431efa\\u0000commit.prompt",
   name: "commit",
   model: "claude-sonnet-4-6",
-  backend: "anthropic",
+  mode: "agent",
   user: "DIFF INPUT:\\n\\n...\\n\\nREQUIREMENTS:\\n- type: one of feat|fix|perf|refactor|test|docs|build|ci|chore|revert\\n...",
   system: "You are a commit message generator. Analyze the diff below and produce a Conventional Commit message.",
   validationError: "",

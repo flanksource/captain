@@ -3,6 +3,7 @@ import { Button, Modal } from "@flanksource/clicky-ui/components";
 import { Icon, UiAdd, UiSave } from "@flanksource/clicky-ui/data";
 import "@flanksource/clicky-ui/mdx-editor.css";
 import { MdxEditorField } from "@flanksource/clicky-ui/mdx-editor";
+import { promptWriteDestination } from "./promptWriteDestination";
 
 export type PromptWriteInput = {
   target: string;
@@ -11,12 +12,38 @@ export type PromptWriteInput = {
   content: string;
 };
 
-export type PromptWriteMode = "create" | "save-as";
+/** create: a fresh prompt; save-as: fork a read-only prompt; duplicate: copy an existing one. */
+export type PromptWriteMode = "create" | "save-as" | "duplicate";
 
 export type PromptWriteSource = {
   id: string;
   label: string;
+  /** Directory the file lands in; shown in the destination preview. */
+  root?: string;
 };
+
+const MODAL_TITLES: Record<PromptWriteMode, string> = {
+  create: "New Prompt",
+  "save-as": "Save Prompt As",
+  duplicate: "Duplicate Prompt",
+};
+
+/**
+ * What the modal starts from: save-as and duplicate carry the current draft,
+ * create starts empty — a new prompt is never silently seeded from whatever
+ * happened to be selected.
+ */
+export function promptWriteSeed(
+  mode: PromptWriteMode | undefined,
+  from: { name: string } | undefined,
+  draft: string,
+): Pick<PromptWriteModalProps, "initialName" | "initialContent"> {
+  if (!from || mode === "create" || mode === undefined) return {};
+  return {
+    initialName: mode === "duplicate" ? `${from.name} copy` : from.name,
+    initialContent: draft,
+  };
+}
 
 export type PromptWriteModalProps = {
   open: boolean;
@@ -79,6 +106,11 @@ function PromptWriteModalForm({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>();
   const saveAs = mode === "save-as";
+  const destination = promptWriteDestination(
+    sources.find((source) => source.id === target),
+    relPath,
+    name,
+  );
 
   async function submit() {
     setLoading(true);
@@ -96,7 +128,7 @@ function PromptWriteModalForm({
     <Modal
       open
       onClose={onClose}
-      title={saveAs ? "Save Prompt As" : "New Prompt"}
+      title={MODAL_TITLES[mode]}
       size="xl"
       footer={
         <div className="flex justify-end gap-density-2">
@@ -158,6 +190,15 @@ function PromptWriteModalForm({
               )}
             </select>
           </Field>
+        </div>
+        <div className="text-xs text-muted-foreground" data-testid="prompt-write-destination">
+          {destination ? (
+            <>
+              Writes <code className="font-mono">{destination}</code>
+            </>
+          ) : (
+            "Enter a name or a path to see where the file will be written."
+          )}
         </div>
         <PromptSourceMarkdownEditor
           label="Prompt Source"

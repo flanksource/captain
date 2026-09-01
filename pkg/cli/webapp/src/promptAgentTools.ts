@@ -1,0 +1,88 @@
+import type { ToolMeta } from "@flanksource/clicky-ui/ai";
+
+export const AGENT_TOOLS = [
+  {
+    name: "Read",
+    label: "Read",
+    group: "Files",
+    description: "Read files from the workspace.",
+    defaultPermission: "ask",
+  },
+  {
+    name: "Edit",
+    label: "Edit",
+    group: "Files",
+    description: "Apply targeted file edits.",
+    defaultPermission: "ask",
+  },
+  {
+    name: "MultiEdit",
+    label: "MultiEdit",
+    group: "Files",
+    description: "Apply multiple edits to one file.",
+    defaultPermission: "ask",
+  },
+  {
+    name: "Write",
+    label: "Write",
+    group: "Files",
+    description: "Create or overwrite files.",
+    defaultPermission: "ask",
+  },
+  {
+    name: "Glob",
+    label: "Glob",
+    group: "Search",
+    description: "Find files by glob pattern.",
+    defaultPermission: "ask",
+  },
+  {
+    name: "Grep",
+    label: "Grep",
+    group: "Search",
+    description: "Search file contents.",
+    defaultPermission: "ask",
+  },
+  {
+    name: "LS",
+    label: "List",
+    group: "Search",
+    description: "List directory contents.",
+    defaultPermission: "ask",
+  },
+  {
+    name: "Bash",
+    label: "Bash",
+    group: "Shell",
+    description: "Run shell commands.",
+    defaultPermission: "ask",
+  },
+  {
+    name: "Task",
+    label: "Task",
+    group: "Agent",
+    description: "Launch a delegated agent task.",
+    defaultPermission: "ask",
+  },
+  {
+    name: "TodoWrite",
+    label: "Todos",
+    group: "Agent",
+    description: "Track an agent todo list.",
+    defaultPermission: "ask",
+  },
+  {
+    name: "WebFetch",
+    label: "Web Fetch",
+    group: "Web",
+    description: "Fetch content from a URL.",
+    defaultPermission: "ask",
+  },
+  {
+    name: "WebSearch",
+    label: "Web Search",
+    group: "Web",
+    description: "Search the web.",
+    defaultPermission: "ask",
+  },
+] satisfies ToolMeta[];
