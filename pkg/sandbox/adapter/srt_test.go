@@ -304,12 +304,12 @@ func TestSRTAdapter_HookProfileFailsClosedWithoutWorkspace(t *testing.T) {
 	}
 }
 
-// The none adapter is registered here but confines nothing; resolving it for
+// The off adapter is registered here but confines nothing; resolving it for
 // hooks must fail at resolve time rather than let exec hooks run bare (R5.2).
-func TestResolveHookWrap_NoneIsRefused(t *testing.T) {
-	if _, err := gitagent.ResolveHookWrap("none", t.TempDir()); err == nil ||
+func TestResolveHookWrap_OffIsRefused(t *testing.T) {
+	if _, err := gitagent.ResolveHookWrap("off", t.TempDir()); err == nil ||
 		!strings.Contains(err.Error(), "no command wrapper") {
-		t.Fatalf("hookSandbox none must be refused loudly, got err = %v", err)
+		t.Fatalf("hookSandbox off must be refused loudly, got err = %v", err)
 	}
 }
 

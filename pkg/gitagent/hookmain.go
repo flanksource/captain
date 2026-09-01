@@ -117,10 +117,15 @@ func ResolveHookWrap(name, repo string) (HookWrapFactory, error) {
 			return wrap, func() error { return nil }, nil
 		}, nil
 	}
+	kind := api.SandboxSRTInternal
 	if name != "srt" {
-		return nil, fmt.Errorf("unknown hook sandbox kind %q", name)
+		var ok bool
+		kind, ok = api.ParseSandboxKind(name)
+		if !ok {
+			return nil, fmt.Errorf("unknown hook sandbox kind %q", name)
+		}
 	}
-	cfg := api.SandboxConfig{Kind: api.SandboxSRTInternal, Options: map[string]any{
+	cfg := api.SandboxConfig{Kind: kind, Options: map[string]any{
 		api.SandboxOptionProfile: api.SandboxProfileHook,
 	}}
 	if abs, err := filepath.Abs(repo); err == nil && repo != "" {
