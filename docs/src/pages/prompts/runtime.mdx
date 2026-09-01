@@ -22,7 +22,7 @@ The prompt file provides the base request, but it is not the last word. Captain 
 </div>
 <div className="docs-step">
   <h3>2. Saved defaults</h3>
-  <p>`captain configure` values fill gaps such as default model, backend, max tokens, budget, no-cache, and memory toggles.</p>
+  <p>`captain configure` values fill gaps such as default model, mode, max tokens, budget, no-cache, and memory toggles.</p>
 </div>
 <div className="docs-step">
   <h3>3. CLI or UI overlay</h3>
@@ -39,7 +39,7 @@ The prompt file provides the base request, but it is not the last word. Captain 
 {
   "model": {
     "name": "claude-sonnet-4-6",
-    "backend": "anthropic"
+    "mode": "agent"
   },
   "prompt": {
     "source": "options.prompt",
@@ -70,9 +70,9 @@ The prompt file provides the base request, but it is not the last word. Captain 
 }
 `} />
 
-## Model and backend
+## Model and mode
 
-The prompt workbench keeps runtime selection catalog-backed. The UI groups by provider family first, then mode/backend, then the model list filtered to that backend. Prompt files can still name `model` and `backend` directly when the runtime should be pinned.
+A runtime is the pair `(model, mode)`: the mode is the mechanism — `api`, `agent`, `cli`, or `cmux` — and the provider family is derived from the model name, never authored. The prompt workbench keeps runtime selection catalog-backed: the UI groups by provider family first, then mode, then the model list filtered to that runtime. Prompt files can name `model` and `mode` directly when the runtime should be pinned.
 
 ## Parallel runtimes
 
@@ -84,7 +84,7 @@ name: Compare screenshot audits
 runtimes:
   - api:gemini-3.5-flash:high
   - model: claude-sonnet-5
-    backend: anthropic
+    mode: agent
     effort: medium
 ---
 {{role "user"}}

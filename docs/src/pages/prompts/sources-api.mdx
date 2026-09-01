@@ -47,11 +47,19 @@ CLI prompt commands accept an opaque prompt ID, an explicit file path, or a bare
 }
 `} />
 
-`PromptDetail` extends the summary with raw `content`, `inputSchema`, `inputDefault`, and metadata extracted by dotprompt.
+Every summary and detail also carries `version` — a hash of the exact file content — and `updatedAt`.
+
+`PromptDetail` extends the summary with raw `content`, `inputSchema`, `inputDefault`, and metadata extracted by dotprompt. A prompt whose frontmatter no longer parses is still returned: `content` holds the raw text and `parseError` the parser message, so the editor can open it for repair. Render and run refuse such a prompt until it parses again.
+
+## Saving
+
+`PUT /api/v1/prompt` and `POST /api/v1/prompt` take `content` and validate it exactly the way a later read would (render plus inspect) **before** anything is written; invalid content never reaches disk. Writes replace the file atomically. An update may send `baseVersion` — the `version` it loaded — and is refused with a `conflict` error when the file changed since, so an edit made on disk or in another tab is reported rather than overwritten.
+
+The schema document at `/api/captain/ai/prompt/schema` lists every discovered source under `sources` (`id`, `kind`, `label`, `root`, `writable`, `implicit`), so a save destination can be chosen even when the directory holds no prompts yet.
 
 ## Render request
 
-Rendering accepts template variables and an optional runtime `spec` overlay. It returns the rendered user/system prompt, full typed request input, config mirror, schema metadata, and a validation error field when the request is incomplete.
+Rendering accepts template variables and an optional runtime `spec` overlay. It may also carry `content`: an unsaved draft that is rendered (or run) in place of the saved file. A `spec.model` that merely echoes the saved prompt's own frontmatter is ignored for a draft, so a draft that changes `model:` runs with the draft's model; any other override is kept. It returns the rendered user/system prompt, full typed request input, config mirror, schema metadata, and a validation error field when the request is incomplete.
 
 <CodeExample client:load language="json" title="PromptRenderRequest" source={`
 {
@@ -61,7 +69,7 @@ Rendering accepts template variables and an optional runtime `spec` overlay. It 
   "spec": {
     "model": {
       "name": "claude-sonnet-4-6",
-      "backend": "anthropic"
+      "mode": "agent"
     },
     "budget": {
       "timeout": "2h",
