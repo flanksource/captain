@@ -31,12 +31,14 @@ SELECT
     + COALESCE(call_stats.reasoning_tokens, 0)
     + COALESCE(call_stats.cache_read_tokens, 0)
     + COALESCE(call_stats.cache_write_tokens, 0) AS total_tokens,
-  COALESCE(call_stats.cost_usd, 0::numeric) AS cost_usd
+  COALESCE(call_stats.cost_usd, 0::numeric) AS cost_usd,
+  s.parent_relation
 FROM public.captain_sessions s
 LEFT JOIN LATERAL (
   SELECT count(*)::bigint AS child_count
   FROM public.captain_sessions child
   WHERE child.parent_session_id = s.id
+    AND child.parent_relation = 'agent'
 ) child_stats ON true
 LEFT JOIN LATERAL (
   SELECT
