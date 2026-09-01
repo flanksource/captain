@@ -11,7 +11,7 @@ import (
 // resolved form of a `sandbox:` selection — after precedence between flag,
 // frontmatter and global config has been applied.
 type SandboxConfig struct {
-	// Kind selects the adapter. Empty means SandboxNone.
+	// Kind selects the adapter. Empty means SandboxOff.
 	Kind SandboxKind `json:"kind" yaml:"kind"`
 	// Name is the configured backend this config came from (e.g. "prod-pool"),
 	// empty for ad-hoc construction. It exists for errors and logs.
@@ -22,8 +22,8 @@ type SandboxConfig struct {
 	// Agent pins one enrolled agent of a git-agent backend, from
 	// SandboxRef.Agent. Empty lets the adapter choose.
 	Agent string `json:"agent,omitempty" yaml:"agent,omitempty"`
-	// Policy is the per-run override from SandboxRef.Policy.
-	Policy *SandboxPolicy `json:"policy,omitempty" yaml:"policy,omitempty"`
+	// Dispatch is the per-run Git Agent override from SandboxRef.Dispatch.
+	Dispatch *SandboxDispatchPolicy `json:"dispatch,omitempty" yaml:"dispatch,omitempty"`
 }
 
 // Options keys shared between the git-agent hook resolver and the adapters it
@@ -60,7 +60,7 @@ var (
 // table and an implementation disagree, which must fail at process start rather
 // than at first use.
 func RegisterSandbox(kind SandboxKind, factory SandboxFactory) {
-	if _, ok := registry.SandboxFor(kind); !ok {
+	if _, ok := registry.SandboxAdapterFor(kind); !ok {
 		panic(fmt.Sprintf("RegisterSandbox: kind %q has no descriptor in pkg/api/registry", kind))
 	}
 	sandboxFactoriesMu.Lock()
@@ -75,9 +75,9 @@ func RegisterSandbox(kind SandboxKind, factory SandboxFactory) {
 func NewSandbox(cfg SandboxConfig) (Sandbox, error) {
 	kind := cfg.Kind
 	if kind == "" {
-		kind = SandboxNone
+		kind = SandboxOff
 	}
-	descriptor, ok := SandboxFor(kind)
+	descriptor, ok := registry.SandboxAdapterFor(kind)
 	if !ok {
 		return nil, fmt.Errorf("unknown sandbox kind %q; want one of: %s", kind, SandboxKindList())
 	}

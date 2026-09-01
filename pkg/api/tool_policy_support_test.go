@@ -6,33 +6,38 @@ import (
 	"testing"
 )
 
-// TestRequireToolPolicySupport enumerates which backends may carry a per-tool
-// policy. A deny-list exists only to forbid a tool, so a backend that drops it
+// TestRequireToolPolicySupport enumerates which runtimes may carry a per-tool
+// policy. A deny-list exists only to forbid a tool, so a runtime that drops it
 // runs with strictly more authority than the spec granted — the run must fail
-// instead. The table is the contract: adding a backend forces a decision here.
+// instead. The table is the contract: adding a provider×mode cell forces a
+// decision here.
 func TestRequireToolPolicySupport(t *testing.T) {
-	supported := map[Backend]bool{
-		BackendClaudeCLI:   true,
-		BackendClaudeAgent: true,
-		BackendClaudeCmux:  true,
+	supported := map[Runtime]bool{
+		{Provider: "anthropic", Mode: ModeCLI}:   true,
+		{Provider: "anthropic", Mode: ModeAgent}: true,
+		{Provider: "anthropic", Mode: ModeCmux}:  true,
 	}
 
 	policy := Permissions{Tools: Tools{"Bash": ToolPolicyDeny}}
-	for _, backend := range AllBackends() {
-		t.Run(string(backend), func(t *testing.T) {
-			err := RequireToolPolicySupport(backend, policy)
-			if supported[backend] {
+	for _, runtime := range AllRuntimes() {
+		t.Run(runtime.String(), func(t *testing.T) {
+			p, ok := runtime.ModelProvider()
+			if !ok {
+				t.Fatalf("AllRuntimes returned %s, which resolves to no provider", runtime)
+			}
+			err := RequireToolPolicySupport(p, runtime.Mode, policy)
+			if supported[runtime] {
 				if err != nil {
-					t.Fatalf("%s must carry a tool policy, got %v", backend, err)
+					t.Fatalf("%s must carry a tool policy, got %v", runtime, err)
 				}
 				return
 			}
 			if err == nil {
-				t.Fatalf("%s silently drops the deny-list; want a loud refusal", backend)
+				t.Fatalf("%s silently drops the deny-list; want a loud refusal", runtime)
 			}
 			// The message has to name the offending tools and a way forward, or the
 			// operator cannot tell which knob to remove.
-			for _, want := range []string{string(backend), "Bash", string(BackendClaudeCLI)} {
+			for _, want := range []string{runtime.String(), "Bash", RuntimeOf(Anthropic, ModeCLI).String()} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("error %q does not mention %q", err, want)
 				}
@@ -42,15 +47,15 @@ func TestRequireToolPolicySupport(t *testing.T) {
 }
 
 // TestRequireToolPolicySupport_EmptyPolicyAlwaysPasses keeps the guard scoped to
-// runs that actually declared a policy: every backend must stay usable without one.
+// runs that actually declared a policy: every runtime must stay usable without one.
 func TestRequireToolPolicySupport_EmptyPolicyAlwaysPasses(t *testing.T) {
-	for _, backend := range AllBackends() {
-		if err := RequireToolPolicySupport(backend, Permissions{}); err != nil {
-			t.Errorf("%s rejected an empty policy: %v", backend, err)
+	for _, runtime := range AllRuntimes() {
+		p, ok := runtime.ModelProvider()
+		if !ok {
+			t.Fatalf("AllRuntimes returned %s, which resolves to no provider", runtime)
 		}
-		// A mode alone is not a per-tool policy.
-		if err := RequireToolPolicySupport(backend, Permissions{Mode: PermissionPlan}); err != nil {
-			t.Errorf("%s rejected a bare permission mode: %v", backend, err)
+		if err := RequireToolPolicySupport(p, runtime.Mode, Permissions{}); err != nil {
+			t.Errorf("%s rejected an empty policy: %v", runtime, err)
 		}
 	}
 }
@@ -71,14 +76,14 @@ func legacyTools(t *testing.T, body string) Tools {
 // backend with no tool filter must refuse it exactly like an explicit deny.
 func TestRequireToolPolicySupport_NormalizesToolModes(t *testing.T) {
 	policy := Permissions{Tools: legacyTools(t, `{"modes":{"Bash":"off"}}`)}
-	err := RequireToolPolicySupport(BackendCodexCLI, policy)
+	err := RequireToolPolicySupport(OpenAI, ModeCLI, policy)
 	if err == nil {
 		t.Fatal("codex-cli silently drops an off tool mode; want a loud refusal")
 	}
 	if !strings.Contains(err.Error(), "Bash") {
 		t.Errorf("error %q does not name the offending tool", err)
 	}
-	if err := RequireToolPolicySupport(BackendClaudeCLI, policy); err != nil {
+	if err := RequireToolPolicySupport(Anthropic, ModeCLI, policy); err != nil {
 		t.Fatalf("claude-cli must carry an off tool mode, got %v", err)
 	}
 	// Legacy `on` resolves to auto in this encoding — the allow list already
@@ -87,24 +92,28 @@ func TestRequireToolPolicySupport_NormalizesToolModes(t *testing.T) {
 	if auto.Tools["Read"] != ToolPolicyAuto {
 		t.Fatalf(`legacy modes "on" = %q, want auto`, auto.Tools["Read"])
 	}
-	if err := RequireToolPolicySupport(BackendCodexCLI, auto); err != nil {
+	if err := RequireToolPolicySupport(OpenAI, ModeCLI, auto); err != nil {
 		t.Errorf("an auto policy constrains nothing but was refused: %v", err)
 	}
 }
 
 // TestRequireToolPolicySupport_AskIsRefusedEverywhere pins the gap the tool
 // policy cannot express: no transport has a per-tool prompt, so an `ask` would
-// resolve to "allowed" even on the backends that advertise support.
+// resolve to "allowed" even on the runtimes that advertise support.
 func TestRequireToolPolicySupport_AskIsRefusedEverywhere(t *testing.T) {
 	policy := Permissions{Tools: Tools{"Bash": ToolPolicyAsk}}
-	for _, backend := range AllBackends() {
-		err := RequireToolPolicySupport(backend, policy)
+	for _, runtime := range AllRuntimes() {
+		p, ok := runtime.ModelProvider()
+		if !ok {
+			t.Fatalf("AllRuntimes returned %s, which resolves to no provider", runtime)
+		}
+		err := RequireToolPolicySupport(p, runtime.Mode, policy)
 		if err == nil {
-			t.Errorf("%s accepted an unenforceable ask policy", backend)
+			t.Errorf("%s accepted an unenforceable ask policy", runtime)
 			continue
 		}
 		if !strings.Contains(err.Error(), "Bash") {
-			t.Errorf("%s: error %q does not name the offending tool", backend, err)
+			t.Errorf("%s: error %q does not name the offending tool", runtime, err)
 		}
 	}
 }
@@ -131,10 +140,10 @@ func TestToolsAllowDenyLists(t *testing.T) {
 // unenforced, and silently ignoring it grants more than the spec allowed.
 func TestRequireToolPolicySupport_AllowListToo(t *testing.T) {
 	policy := Permissions{Tools: Tools{"Read": ToolPolicyAllow}}
-	if err := RequireToolPolicySupport(BackendCodexCLI, policy); err == nil {
+	if err := RequireToolPolicySupport(OpenAI, ModeCLI, policy); err == nil {
 		t.Fatal("codex-cli silently drops an allow-list; want a loud refusal")
 	}
-	if err := RequireToolPolicySupport(BackendClaudeCLI, policy); err != nil {
+	if err := RequireToolPolicySupport(Anthropic, ModeCLI, policy); err != nil {
 		t.Fatalf("claude-cli must carry an allow-list, got %v", err)
 	}
 }

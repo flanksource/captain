@@ -12,10 +12,10 @@ type Response struct {
 	TerminalOutcome *TerminalOutcome
 	ToolApproval    *ToolApprovalState
 	Model           string
-	Backend         Backend
+	Runtime         Runtime
 	Usage           Usage
 	// CostUSD is the response's reported cost: the provider's authoritative value
-	// when it supplies one (claude-cli total_cost_usd, claude-agent cost_usd),
+	// when it supplies one (the claude CLI's total_cost_usd, the agent's cost_usd),
 	// otherwise the provider's list-price estimate. 0 means no cost was reported
 	// (the buffered path used to drop it — see finding D4). Consumers should
 	// prefer this over recomputing from tokens.

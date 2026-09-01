@@ -111,8 +111,13 @@ type ToolCatalog struct {
 }
 
 // ToolCatalogEntry is the frontend-facing DTO for one tool. Unlike ToolInfo it
-// keeps method/path/operationName as typed fields, since the tool-preferences UI
-// renders them.
+// flattens the operation's identity into typed fields, since the tool-
+// preferences UI renders them.
+//
+// Every facet a permission rule can match on is served, not just the ones the UI
+// displays: the same rule list is evaluated in the browser to show what a tool
+// will do and on the server to enforce it, and a facet the client cannot see is
+// one it would silently resolve differently.
 type ToolCatalogEntry struct {
 	Name              string         `json:"name"`
 	Title             string         `json:"title,omitempty"`
@@ -128,6 +133,13 @@ type ToolCatalogEntry struct {
 	Method            string         `json:"method,omitempty"`
 	Path              string         `json:"path,omitempty"`
 	OperationName     string         `json:"operationName,omitempty"`
+	Entity            string         `json:"entity,omitempty"`
+	Verb              string         `json:"verb,omitempty"`
+	Action            string         `json:"action,omitempty"`
+	Scope             string         `json:"scope,omitempty"`
+	ReadOnlyHint      *bool          `json:"readOnlyHint,omitempty"`
+	DestructiveHint   *bool          `json:"destructiveHint,omitempty"`
+	IdempotentHint    *bool          `json:"idempotentHint,omitempty"`
 	InputSchema       map[string]any `json:"inputSchema"`
 	OutputSchema      map[string]any `json:"outputSchema,omitempty"`
 }
@@ -153,6 +165,9 @@ func CustomCatalogEntry(def ToolDefinition, name string, schema map[string]any) 
 		Icon:              def.Icon,
 		DefaultPermission: policy,
 		Strict:            def.Strict,
+		ReadOnlyHint:      def.ReadOnlyHint,
+		DestructiveHint:   def.DestructiveHint,
+		IdempotentHint:    def.IdempotentHint,
 		Operation:         def.Operation,
 		Annotations:       def.Annotations,
 	}
@@ -170,6 +185,13 @@ func CustomCatalogEntry(def ToolDefinition, name string, schema map[string]any) 
 		Method:            info.Method(),
 		Path:              info.Path(),
 		OperationName:     def.Name,
+		Entity:            info.Entity(),
+		Verb:              info.Verb(),
+		Action:            info.Action(),
+		Scope:             info.Scope(),
+		ReadOnlyHint:      def.ReadOnlyHint,
+		DestructiveHint:   def.DestructiveHint,
+		IdempotentHint:    def.IdempotentHint,
 		InputSchema:       ObjectSchema(schema),
 	}
 }

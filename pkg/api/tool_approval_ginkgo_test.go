@@ -53,7 +53,7 @@ var _ = Describe("Resumable tool approval", func() {
 		}
 		Expect(resume.Validate()).To(Succeed())
 
-		spec := api.Spec{Model: api.Model{Name: "gpt-5", Backend: api.BackendOpenAI}, ToolApproval: &resume}
+		spec := api.Spec{Model: api.Model{Name: "gpt-5", Mode: api.ModeAPI}, ToolApproval: &resume}
 		Expect(spec.Validate()).To(Succeed())
 	})
 

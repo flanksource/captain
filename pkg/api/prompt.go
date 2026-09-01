@@ -31,7 +31,7 @@ type Prompt struct {
 	// SchemaJSON are mutually exclusive.
 	SchemaJSON json.RawMessage `json:"schemaJSON,omitempty" yaml:"schemaJSON,omitempty" pretty:"-"`
 	// SchemaStrictness governs how a response that fails JSON-schema validation is
-	// handled: "" uses the backend default (Anthropic structured output retries,
+	// handled: "" uses the runtime default (Anthropic structured output retries,
 	// others skip post-validation); "none" always skips; "warning" logs and
 	// continues; "error" fails; "retry" re-asks the model with the validation
 	// error, then fails. Only meaningful alongside a schema (Schema or SchemaJSON).

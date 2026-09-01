@@ -7,22 +7,44 @@ import (
 	"github.com/flanksource/captain/pkg/api"
 )
 
-// codexBackends are the three transports that share api.CodexSafety.
-var codexBackends = []api.Backend{api.BackendCodexCLI, api.BackendCodexAgent, api.BackendCodexCmux}
+// codexRuntimes are the three transports that share api.CodexSafety.
+var codexRuntimes = []api.Runtime{
+	{Provider: "openai", Mode: api.ModeCLI},
+	{Provider: "openai", Mode: api.ModeAgent},
+	{Provider: "openai", Mode: api.ModeCmux},
+}
+
+// These three read (provider, mode) rather than a Runtime. Splitting the pair at
+// the call site keeps the test iterating one canonical list — a second list keyed
+// differently is exactly the drift this table exists to prevent.
+func split(runtime api.Runtime) (*api.ModelProvider, api.RuntimeMode) {
+	p, _ := runtime.ModelProvider()
+	return p, runtime.Mode
+}
+
+func supportedModes(runtime api.Runtime) []api.PermissionMode {
+	return api.SupportedPermissionModes(split(runtime))
+}
+
+func callerTools(runtime api.Runtime) bool { return api.SupportsCallerTools(split(runtime)) }
+
+func provenances(runtime api.Runtime) []api.ToolProvenance {
+	return api.ToolPolicyProvenances(split(runtime))
+}
 
 var _ = Describe("PermissionCapabilities", func() {
 	Describe("completeness", func() {
 		// The declaration is only useful if it is total: a missing cell reads as
 		// "unsupported" through the accessors, which would quietly downgrade a
-		// backend rather than failing. Adding a backend must force a decision here
+		// runtime rather than failing. Adding a provider×mode cell must force a decision here
 		// the way tool_policy_support_test.go already forces one for ToolPolicy.
-		It("declares a row for every backend", func() {
-			Expect(api.PermissionCapabilityBackends()).To(Equal(api.AllBackends()))
+		It("declares a row for every runtime", func() {
+			Expect(api.PermissionCapabilityRuntimes()).To(Equal(api.AllRuntimes()))
 		})
 
-		for _, backend := range api.AllBackends() {
-			Context(string(backend), func() {
-				caps := api.PermissionCapabilitiesFor(backend)
+		for _, runtime := range api.AllRuntimes() {
+			Context(runtime.String(), func() {
+				caps := api.PermissionCapabilitiesFor(runtime)
 
 				It("declares every permission mode", func() {
 					Expect(caps.Modes).To(HaveLen(len(api.AllPermissionModes())))
@@ -78,9 +100,9 @@ var _ = Describe("PermissionCapabilities", func() {
 			})
 		}
 
-		It("fails closed for an unknown backend", func() {
-			caps := api.PermissionCapabilitiesFor(api.Backend("not-a-backend"))
-			Expect(api.SupportedPermissionModes("not-a-backend")).To(BeEmpty())
+		It("fails closed for an unknown runtime", func() {
+			caps := api.PermissionCapabilitiesFor(api.Runtime{Provider: "not-a-provider", Mode: "not-a-mode"})
+			Expect(supportedModes(api.Runtime{Provider: "not-a-provider", Mode: "not-a-mode"})).To(BeEmpty())
 			Expect(caps.ToolPolicySupport(api.ProvenanceCaller, api.ToolPolicyDeny).Kind).
 				To(Equal(api.SupportUnsupported))
 			Expect(caps.ResourceSupport(api.ResourceKindMCP, api.ResourceDisabled).Kind).
@@ -91,26 +113,25 @@ var _ = Describe("PermissionCapabilities", func() {
 	// The declaration claims to describe the mappers. These specs check it against
 	// the one mapper that lives in this package; the claude and gemini halves are
 	// pinned next to their own mappers, which is where they can be reached.
-	Describe("agreement with CodexSafety", func() {
-		for _, backend := range codexBackends {
-			Context(string(backend), func() {
-				caps := api.PermissionCapabilitiesFor(backend)
+	Describe("agreement with the Codex sandbox translator", func() {
+		for _, runtime := range codexRuntimes {
+			Context(runtime.String(), func() {
+				caps := api.PermissionCapabilitiesFor(runtime)
 
 				for _, mode := range api.AllPermissionModes() {
-					It("matches the declared posture for "+string(mode), func() {
-						sandbox, approval := api.CodexSafety(api.Permissions{Mode: mode})
+					It("matches the declared approval for "+string(mode), func() {
+						translation, err := api.TranslateCodexSandbox(runtime, &api.SandboxRef{
+							Mode: api.SandboxNative,
+						}, mode)
 						support := caps.ModeSupport(mode)
 						if support.Kind == api.SupportUnsupported {
-							// dontAsk is declared unsupported precisely because it lands
-							// on the read-only default rather than on anything resembling
-							// "stop asking". Pinning that keeps the reason true.
-							defSandbox, defApproval := api.CodexSafety(api.Permissions{})
-							Expect(sandbox).To(Equal(defSandbox))
-							Expect(approval).To(Equal(defApproval))
+							Expect(err).To(HaveOccurred())
 							return
 						}
-						Expect(support.Effects.Sandbox).To(Equal(string(sandbox)))
-						Expect(support.Effects.Approval).To(Equal(string(approval)))
+						Expect(err).NotTo(HaveOccurred())
+						Expect(translation.Sandbox).To(Equal(api.CodexSandboxReadOnly))
+						Expect(support.Effects.Sandbox).To(BeEmpty())
+						Expect(support.Effects.Approval).To(Equal(string(translation.Approval)))
 					})
 				}
 			})
@@ -118,28 +139,30 @@ var _ = Describe("PermissionCapabilities", func() {
 	})
 
 	Describe("supported vocabularies", func() {
-		It("offers no posture on the API backends", func() {
-			// The four API backends never read Permissions.Mode. Offering a posture
+		It("offers no posture on the API runtimes", func() {
+			// The four API runtimes never read Permissions.Mode. Offering a posture
 			// picker there is the F6 half of what this table exists to stop.
-			for _, backend := range []api.Backend{
-				api.BackendAnthropic, api.BackendOpenAI, api.BackendGemini, api.BackendDeepSeek,
+			for _, runtime := range []api.Runtime{
+				{Provider: "anthropic", Mode: api.ModeAPI}, {Provider: "openai", Mode: api.ModeAPI},
+				{Provider: "google", Mode: api.ModeAPI}, {Provider: "deepseek", Mode: api.ModeAPI},
 			} {
-				Expect(api.SupportedPermissionModes(backend)).To(BeEmpty(), string(backend))
+				Expect(supportedModes(runtime)).To(BeEmpty(), runtime.String())
 			}
 		})
 
 		It("offers every posture on every claude transport", func() {
-			for _, backend := range []api.Backend{
-				api.BackendClaudeCLI, api.BackendClaudeAgent, api.BackendClaudeCmux,
+			for _, runtime := range []api.Runtime{
+				{Provider: "anthropic", Mode: api.ModeCLI}, {Provider: "anthropic", Mode: api.ModeAgent},
+				{Provider: "anthropic", Mode: api.ModeCmux},
 			} {
-				Expect(api.SupportedPermissionModes(backend)).To(Equal(api.AllPermissionModes()), string(backend))
+				Expect(supportedModes(runtime)).To(Equal(api.AllPermissionModes()), runtime.String())
 			}
 		})
 
 		It("drops dontAsk on codex and keeps the rest", func() {
-			for _, backend := range codexBackends {
-				Expect(api.SupportedPermissionModes(backend)).ToNot(ContainElement(api.PermissionDontAsk), string(backend))
-				Expect(api.SupportedPermissionModes(backend)).To(ContainElement(api.PermissionPlan), string(backend))
+			for _, runtime := range codexRuntimes {
+				Expect(supportedModes(runtime)).ToNot(ContainElement(api.PermissionDontAsk), runtime.String())
+				Expect(supportedModes(runtime)).To(ContainElement(api.PermissionPlan), runtime.String())
 			}
 		})
 	})
@@ -147,11 +170,11 @@ var _ = Describe("PermissionCapabilities", func() {
 	// This is the finding the provenance dimension exists to express: a per-tool
 	// deny is enforceable on codex-agent — by omission from the tool list captain
 	// itself builds — even though codex has no --disallowedTools of its own.
-	// A single backend→bool cannot say that, and RequireToolPolicySupport refuses
+	// A single runtime→bool cannot say that, and RequireToolPolicySupport refuses
 	// the whole run today because of it.
 	Describe("provenance", func() {
 		It("enforces deny on a caller tool but not an agent built-in, on codex-agent", func() {
-			caps := api.PermissionCapabilitiesFor(api.BackendCodexAgent)
+			caps := api.PermissionCapabilitiesFor(api.Runtime{Provider: "openai", Mode: api.ModeAgent})
 			Expect(caps.ToolPolicySupport(api.ProvenanceCaller, api.ToolPolicyDeny).Kind).
 				To(Equal(api.SupportNative))
 			Expect(caps.ToolPolicySupport(api.ProvenanceAgent, api.ToolPolicyDeny).Kind).
@@ -159,7 +182,7 @@ var _ = Describe("PermissionCapabilities", func() {
 		})
 
 		It("enforces deny on an agent built-in but not a caller tool, on claude-cli", func() {
-			caps := api.PermissionCapabilitiesFor(api.BackendClaudeCLI)
+			caps := api.PermissionCapabilitiesFor(api.Runtime{Provider: "anthropic", Mode: api.ModeCLI})
 			Expect(caps.ToolPolicySupport(api.ProvenanceAgent, api.ToolPolicyDeny).Kind).
 				To(Equal(api.SupportNative))
 			Expect(caps.ToolPolicySupport(api.ProvenanceCaller, api.ToolPolicyDeny).Kind).
@@ -171,10 +194,10 @@ var _ = Describe("PermissionCapabilities", func() {
 			// the adapter can carry caller-supplied tools at all. Deriving the
 			// expectation from the registry keeps the two declarations from drifting
 			// into disagreement.
-			for _, backend := range api.AllBackends() {
-				enforced := api.PermissionCapabilitiesFor(backend).
+			for _, runtime := range api.AllRuntimes() {
+				enforced := api.PermissionCapabilitiesFor(runtime).
 					ToolPolicySupport(api.ProvenanceCaller, api.ToolPolicyDeny).Kind == api.SupportNative
-				Expect(enforced).To(Equal(api.SupportsCallerTools(backend)), string(backend))
+				Expect(enforced).To(Equal(callerTools(runtime)), runtime.String())
 			}
 		})
 
@@ -182,19 +205,19 @@ var _ = Describe("PermissionCapabilities", func() {
 			// Captain can stop a server loading; it cannot filter that server's tools
 			// until a captain-owned gateway proxies them. Declaring it per provenance
 			// means that arriving is a data change in this row.
-			for _, backend := range api.AllBackends() {
-				Expect(api.ToolPolicyProvenances(backend)).ToNot(ContainElement(api.ProvenanceMCP), string(backend))
+			for _, runtime := range api.AllRuntimes() {
+				Expect(provenances(runtime)).ToNot(ContainElement(api.ProvenanceMCP), runtime.String())
 			}
 		})
 
 		It("reports ask as brokered wherever caller tools exist and unsupported elsewhere", func() {
-			for _, backend := range api.AllBackends() {
+			for _, runtime := range api.AllRuntimes() {
 				want := api.SupportUnsupported
-				if api.SupportsCallerTools(backend) {
+				if callerTools(runtime) {
 					want = api.SupportRequiresBroker
 				}
-				Expect(api.PermissionCapabilitiesFor(backend).
-					ToolPolicySupport(api.ProvenanceCaller, api.ToolPolicyAsk).Kind).To(Equal(want), string(backend))
+				Expect(api.PermissionCapabilitiesFor(runtime).
+					ToolPolicySupport(api.ProvenanceCaller, api.ToolPolicyAsk).Kind).To(Equal(want), runtime.String())
 			}
 		})
 	})
@@ -203,38 +226,38 @@ var _ = Describe("PermissionCapabilities", func() {
 	// the opposite direction is accepted and then dropped in both cases.
 	Describe("resources", func() {
 		It("silences MCP only where a provider actually sends the empty server set", func() {
-			for _, backend := range api.AllBackends() {
+			for _, runtime := range api.AllRuntimes() {
 				want := api.SupportUnsupported
-				if backend == api.BackendClaudeCLI || backend == api.BackendCodexAgent {
+				if runtime == (api.Runtime{Provider: "anthropic", Mode: api.ModeCLI}) || runtime == (api.Runtime{Provider: "openai", Mode: api.ModeAgent}) {
 					want = api.SupportNative
 				}
-				Expect(api.PermissionCapabilitiesFor(backend).
-					ResourceSupport(api.ResourceKindMCP, api.ResourceDisabled).Kind).To(Equal(want), string(backend))
+				Expect(api.PermissionCapabilitiesFor(runtime).
+					ResourceSupport(api.ResourceKindMCP, api.ResourceDisabled).Kind).To(Equal(want), runtime.String())
 			}
 		})
 
 		It("loads skills only on claude-cli, and never unloads them anywhere", func() {
-			for _, backend := range api.AllBackends() {
-				caps := api.PermissionCapabilitiesFor(backend)
+			for _, runtime := range api.AllRuntimes() {
+				caps := api.PermissionCapabilitiesFor(runtime)
 				want := api.SupportUnsupported
-				if backend == api.BackendClaudeCLI {
+				if runtime == (api.Runtime{Provider: "anthropic", Mode: api.ModeCLI}) {
 					want = api.SupportNative
 				}
 				Expect(caps.ResourceSupport(api.ResourceKindSkills, api.ResourceEnabled).Kind).
-					To(Equal(want), string(backend))
+					To(Equal(want), runtime.String())
 				Expect(caps.ResourceSupport(api.ResourceKindSkills, api.ResourceDisabled).Kind).
-					To(Equal(api.SupportUnsupported), string(backend))
+					To(Equal(api.SupportUnsupported), runtime.String())
 			}
 		})
 
-		It("declares permissions.plugins inert on every backend", func() {
+		It("declares permissions.plugins inert on every runtime", func() {
 			// The evidence for deleting the field in the next phase: it is declared
 			// dead everywhere, and the matrix prints it.
-			for _, backend := range api.AllBackends() {
-				caps := api.PermissionCapabilitiesFor(backend)
+			for _, runtime := range api.AllRuntimes() {
+				caps := api.PermissionCapabilitiesFor(runtime)
 				for _, mode := range api.AllResourceModes() {
 					Expect(caps.ResourceSupport(api.ResourceKindPlugins, mode).Kind).
-						To(Equal(api.SupportUnsupported), string(backend))
+						To(Equal(api.SupportUnsupported), runtime.String())
 				}
 			}
 		})
@@ -243,21 +266,22 @@ var _ = Describe("PermissionCapabilities", func() {
 	Describe("tool vocabulary", func() {
 		It("gives each agent family its own built-in names", func() {
 			// F15: the permission catalog served Claude's tool names for every
-			// backend. codex has never had a tool called Bash.
-			Expect(api.PermissionCapabilitiesFor(api.BackendClaudeCLI).Tools).To(ContainElement("Bash"))
-			Expect(api.PermissionCapabilitiesFor(api.BackendCodexCLI).Tools).To(ContainElement("shell"))
-			Expect(api.PermissionCapabilitiesFor(api.BackendCodexCLI).Tools).ToNot(ContainElement("Bash"))
-			Expect(api.PermissionCapabilitiesFor(api.BackendGeminiCLI).Tools).To(ContainElement("run_shell_command"))
+			// runtime. codex has never had a tool called Bash.
+			Expect(api.PermissionCapabilitiesFor(api.Runtime{Provider: "anthropic", Mode: api.ModeCLI}).Tools).To(ContainElement("Bash"))
+			Expect(api.PermissionCapabilitiesFor(api.Runtime{Provider: "openai", Mode: api.ModeCLI}).Tools).To(ContainElement("shell"))
+			Expect(api.PermissionCapabilitiesFor(api.Runtime{Provider: "openai", Mode: api.ModeCLI}).Tools).ToNot(ContainElement("Bash"))
+			Expect(api.PermissionCapabilitiesFor(api.Runtime{Provider: "google", Mode: api.ModeCLI}).Tools).To(ContainElement("run_shell_command"))
 		})
 
-		It("declares no built-in vocabulary for the API backends", func() {
-			// An API backend has no built-in tools at all: everything it can call is
+		It("declares no built-in vocabulary for the API runtimes", func() {
+			// An API runtime has no built-in tools at all: everything it can call is
 			// caller-supplied. An empty list here is the honest answer, and it is why
 			// the editor must not render an agent-tool tree there.
-			for _, backend := range []api.Backend{
-				api.BackendAnthropic, api.BackendOpenAI, api.BackendGemini, api.BackendDeepSeek,
+			for _, runtime := range []api.Runtime{
+				{Provider: "anthropic", Mode: api.ModeAPI}, {Provider: "openai", Mode: api.ModeAPI},
+				{Provider: "google", Mode: api.ModeAPI}, {Provider: "deepseek", Mode: api.ModeAPI},
 			} {
-				Expect(api.PermissionCapabilitiesFor(backend).Tools).To(BeEmpty(), string(backend))
+				Expect(api.PermissionCapabilitiesFor(runtime).Tools).To(BeEmpty(), runtime.String())
 			}
 		})
 	})

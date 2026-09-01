@@ -12,10 +12,16 @@ import (
 )
 
 // Permissions governs what an agent may do: the base posture, named presets,
-// per-tool policy, MCP servers, and plugin directories. Consolidates the legacy
-// ai.Request.{PermissionMode,AllowedTools,DisallowedTools,Edit,Bare,NoMCP,SkillDirs}.
+// per-tool policy, MCP servers, and plugin directories.
+//
+// The permission mode is orthogonal to the sandbox. A sandbox constrains what
+// the process can reach — filesystem, network — while the mode decides whether
+// the agent asks before acting. The two vary independently: a run can ask for
+// `plan` with no sandbox at all, and a fully sandboxed run can still want
+// `acceptEdits`. Folding the mode into the sandbox made `sandbox: off` imply
+// bypassPermissions, which silently escalated a run that had asked for plan.
 type Permissions struct {
-	// Mode is the base permission posture. (ai.Request.PermissionMode)
+	// Mode is the base permission posture, independent of any sandbox.
 	Mode PermissionMode `json:"mode,omitempty" yaml:"mode,omitempty" pretty:"label=Mode"`
 	// Presets are named safety bundles applied before per-tool rules. (--edit/--bare)
 	Presets []Preset `json:"presets,omitempty" yaml:"presets,omitempty" pretty:"label=Presets"`
@@ -85,35 +91,28 @@ func (t Tools) toolsWithPolicy(want ToolPolicy) []string {
 // --disallowedTools equivalent today, so the rest fail loud here rather than
 // proceeding as if the policy had been applied.
 //
-// Allow-lists are checked too: on a backend with no tool filter, an allowlist is
+// Allow-lists are checked too: on a runtime with no tool filter, an allowlist is
 // equally unenforced. `ask` is refused everywhere — no transport has a per-tool
-// prompt, so it would resolve to "allowed" on the backends that advertise tool
-// policy support. `auto` constrains nothing, so it needs no backend support.
-func RequireToolPolicySupport(backend Backend, permissions Permissions) error {
+// prompt, so it would resolve to "allowed" on the runtimes that advertise tool
+// policy support. `auto` constrains nothing, so it needs no runtime support.
+func RequireToolPolicySupport(p *ModelProvider, mode RuntimeMode, permissions Permissions) error {
 	if asked := permissions.Tools.toolsWithPolicy(ToolPolicyAsk); len(asked) > 0 {
 		return fmt.Errorf(
-			"per-tool policy \"ask\" (%s) is not enforceable on any backend: transports carry allow/deny tool lists only, so the tool would run unprompted; use allow or deny",
+			"per-tool policy \"ask\" (%s) is not enforceable on any runtime: transports carry allow/deny tool lists only, so the tool would run unprompted; use allow or deny",
 			strings.Join(asked, ", "))
 	}
 	enforced := append(permissions.Tools.AllowList(), permissions.Tools.DenyList()...)
-	if len(enforced) == 0 || registry.SupportsToolPolicy(backend) {
+	if len(enforced) == 0 || registry.SupportsToolPolicy(p, mode) {
 		return nil
 	}
 	sort.Strings(enforced)
 	return fmt.Errorf(
-		"backend %s cannot enforce a per-tool policy (%s), and running without it would grant more than the spec allows; remove permissions.tools or use one of: %s",
-		backend, strings.Join(enforced, ", "), backendListOf(registry.ToolPolicyBackends()))
+		"%s cannot enforce a per-tool policy (%s), and running without it would grant more than the spec allows; remove permissions.tools or use one of: %s",
+		registry.RuntimeOf(p, mode), strings.Join(enforced, ", "), registry.RuntimesList(registry.ToolPolicyRuntimes()))
 }
 
-func backendListOf(backends []Backend) string {
-	out := make([]string, len(backends))
-	for i, b := range backends {
-		out[i] = string(b)
-	}
-	return strings.Join(out, ", ")
-}
-
-// Validate checks the mode, presets, and tool modes are recognised.
+// Validate checks the mode, presets, tool policies, and resource modes are
+// recognised.
 func (p Permissions) Validate() error {
 	if !p.Mode.Valid() {
 		return fmt.Errorf("invalid permission mode %q", p.Mode)

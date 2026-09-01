@@ -11,7 +11,7 @@ func runtimesOf(families []api.RuntimeFamily) []string {
 	out := make([]string, 0, len(families))
 	for _, f := range families {
 		for _, m := range f.Modes {
-			out = append(out, f.Provider+":"+m.Backend)
+			out = append(out, f.Provider+":"+m.Mode)
 		}
 	}
 	return out
@@ -28,7 +28,7 @@ func familyNamed(families []api.RuntimeFamily, name string) api.RuntimeFamily {
 
 func modeNamed(f api.RuntimeFamily, mode string) api.RuntimeModeEntry {
 	for _, m := range f.Modes {
-		if m.Backend == mode {
+		if m.Mode == mode {
 			return m
 		}
 	}
@@ -36,12 +36,12 @@ func modeNamed(f api.RuntimeFamily, mode string) api.RuntimeModeEntry {
 }
 
 var _ = Describe("RuntimeCatalog", func() {
-	disable := func(modes, providers, backends []string) {
-		api.SetDisabled(api.NewDisabledSet(modes, providers, backends, nil, nil))
+	disable := func(modes, providers []string, runtimes []api.Runtime) {
+		api.SetDisabled(api.NewDisabledSet(modes, providers, runtimes, nil, nil))
 		DeferCleanup(func() { api.SetDisabled(api.DisabledSet{}) })
 	}
 
-	It("serves every provider and backend pair exactly once", func() {
+	It("serves every provider and mode pair exactly once", func() {
 		families := api.RuntimeCatalog()
 
 		names := make([]string, len(families))
@@ -50,9 +50,13 @@ var _ = Describe("RuntimeCatalog", func() {
 		}
 		Expect(names).To(ConsistOf("claude", "codex", "gemini", "deepseek"))
 
-		expected := make([]string, 0, len(api.AllBackends()))
-		for _, backend := range api.AllBackends() {
-			expected = append(expected, string(backend.Provider())+":"+string(backend.Mode()))
+		// Runtime.Provider is the provider key ("google"), which is what the
+		// catalog buckets on and what runtimesOf reads. The family label ("gemini")
+		// and the catalog prefix ("googleai") are two other names for the same
+		// family; mixing them silently empties a picker.
+		expected := make([]string, 0, len(api.AllRuntimes()))
+		for _, runtime := range api.AllRuntimes() {
+			expected = append(expected, runtime.Provider+":"+string(runtime.Mode))
 		}
 		Expect(runtimesOf(families)).To(ConsistOf(expected))
 	})
@@ -72,7 +76,7 @@ var _ = Describe("RuntimeCatalog", func() {
 		modes := make([]string, len(claude.Modes))
 		kinds := make([]string, len(claude.Modes))
 		for i, m := range claude.Modes {
-			modes[i], kinds[i] = m.Backend, m.Kind
+			modes[i], kinds[i] = m.Mode, m.Kind
 		}
 		Expect(modes).To(Equal([]string{"api", "agent", "cli", "cmux"}))
 		Expect(kinds).To(Equal([]string{"api", "cli", "cli", "cli"}))
@@ -106,7 +110,7 @@ var _ = Describe("RuntimeCatalog", func() {
 	It("marks only cmux modes keyless", func() {
 		for _, f := range api.RuntimeCatalog() {
 			for _, m := range f.Modes {
-				Expect(m.Keyless).To(Equal(m.Backend == "cmux"), "backend %s", m.Backend)
+				Expect(m.Keyless).To(Equal(m.Mode == "cmux"), "mode %s", m.Mode)
 			}
 		}
 	})
@@ -145,11 +149,14 @@ var _ = Describe("RuntimeCatalog", func() {
 		}
 	})
 
-	It("distinguishes a directly-disabled backend from its mode and provider", func() {
-		disable(nil, nil, []string{"claude-agent"})
+	// The pair is the point: switching off the anthropic agent must leave the
+	// openai agent alone, which is precisely what a single composite token could
+	// express but neither a bare mode nor a bare provider can.
+	It("distinguishes a directly-disabled runtime from its mode and provider", func() {
+		disable(nil, nil, []api.Runtime{{Provider: "anthropic", Mode: api.ModeAgent}})
 
 		claude := familyNamed(api.RuntimeCatalog(), "claude")
-		Expect(modeNamed(claude, "agent").DisabledReason).To(Equal("backend claude-agent"))
+		Expect(modeNamed(claude, "agent").DisabledReason).To(Equal("runtime anthropic agent"))
 		Expect(modeNamed(familyNamed(api.RuntimeCatalog(), "codex"), "agent").Disabled).To(BeFalse())
 	})
 })

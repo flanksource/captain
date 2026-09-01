@@ -13,7 +13,7 @@ func TestSandboxDefaults_Resolve(t *testing.T) {
 		Default: "prod-pool",
 		Backends: map[string]SandboxBackend{
 			"prod-pool":    {Kind: "git-agent", Options: map[string]any{"relay": "sync"}},
-			"local-docker": {Kind: "container"},
+			"local-docker": {Kind: "docker"},
 			"broken":       {Kind: "warp-drive"},
 		},
 	}
@@ -29,11 +29,11 @@ func TestSandboxDefaults_Resolve(t *testing.T) {
 	})
 
 	t.Run("resolves a bare kind with no backend name", func(t *testing.T) {
-		got, err := defaults.Resolve("srt")
+		got, err := defaults.Resolve("native")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got.Kind != registry.SandboxSRT || got.Name != "" || got.Options != nil {
+		if got.Kind != registry.SandboxNative || got.Name != "" || got.Options != nil {
 			t.Fatalf("selection = %+v", got)
 		}
 	})
@@ -48,13 +48,13 @@ func TestSandboxDefaults_Resolve(t *testing.T) {
 		}
 	})
 
-	t.Run("empty selector and empty default resolve to none", func(t *testing.T) {
+	t.Run("empty selector and empty default resolve to off", func(t *testing.T) {
 		got, err := SandboxDefaults{}.Resolve("")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got.Kind != registry.SandboxNone {
-			t.Fatalf("kind = %q, want none", got.Kind)
+		if got.Kind != registry.SandboxOff {
+			t.Fatalf("kind = %q, want off", got.Kind)
 		}
 	})
 
@@ -82,7 +82,7 @@ backends:
     relay: sync
     mailboxRoot: ~/.captain/sandbox/repos
   local-docker:
-    kind: container
+    kind: docker
     presets: [golang, git]
 `
 	var defaults SandboxDefaults

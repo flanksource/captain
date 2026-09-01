@@ -17,6 +17,15 @@ const (
 	SpecLayerUser    SpecLayerScope = "user"
 )
 
+// SpecLayerSource identifies whether a runtime-profile trace row came from a
+// reusable preset or the task-specific profile spec.
+type SpecLayerSource string
+
+const (
+	SpecLayerSourcePreset  SpecLayerSource = "preset"
+	SpecLayerSourceProfile SpecLayerSource = "profile"
+)
+
 // RunLimits are per-run ceilings applied after structural Spec defaults are layered.
 type RunLimits struct {
 	MaxInputTokens int    `json:"maxInputTokens,omitempty" yaml:"maxInputTokens,omitempty"`
@@ -43,6 +52,8 @@ type RuntimeConstraints struct {
 
 // SpecLayer is one named source of runtime defaults and constraints.
 type SpecLayer struct {
+	ID          string             `json:"id,omitempty" yaml:"id,omitempty"`
+	Source      SpecLayerSource    `json:"source,omitempty" yaml:"source,omitempty"`
 	Name        string             `json:"name" yaml:"name"`
 	Scope       SpecLayerScope     `json:"scope" yaml:"scope"`
 	Spec        Spec               `json:"spec,omitempty" yaml:"spec,omitempty"`
@@ -293,7 +304,7 @@ func modelSelectorMatches(selector string, model Model) bool {
 	}
 	allowed, allowedErr := (Model{Name: selector}).Expand()
 	actual, actualErr := model.Expand()
-	return allowedErr == nil && actualErr == nil && allowed.Name == actual.Name && allowed.Backend == actual.Backend
+	return allowedErr == nil && actualErr == nil && allowed.Name == actual.Name && allowed.Mode == actual.Mode
 }
 
 func cloneSpecLayer(layer SpecLayer) SpecLayer {

@@ -1,13 +1,13 @@
 package api
 
-// This file is the declared answer to "what can this backend actually do with a
+// This file is the declared answer to "what can this runtime actually do with a
 // permissions block?".
 //
 // It exists because every other configurable axis — model, effort, cliArgs,
 // sandbox — is gated by a capability that is declared, served, and enforced,
 // while permissions were offered unconditionally and reconciled only when a
 // provider built argv. The mapping functions (CodexSafety here,
-// cliClaudePermissionMode in the claude-cli provider, geminiApprovalMode in the
+// cliClaudePermissionMode in the anthropic cli provider, geminiApprovalMode in the
 // gemini one) remain the implementation; this table is the static declaration
 // they are proven against, so drift becomes a failing test and a printed row
 // rather than a surprise at dispatch.
@@ -21,23 +21,23 @@ package api
 // keyed by — PermissionMode, ToolPolicy, ResourceMode — lives here, and nothing
 // below pkg/api consults it. The "completeness" specs in
 // permission_capabilities_ginkgo_test.go pin this table against
-// registry.AllBackends so a new backend cannot be added there without a decision
+// registry.AllRuntimes so a new runtime cannot be added there without a decision
 // being made here.
 
-// SupportKind is how faithfully a backend honours one permission setting.
+// SupportKind is how faithfully a runtime honours one permission setting.
 type SupportKind string
 
 const (
-	// SupportNative: the backend expresses the setting exactly.
+	// SupportNative: the runtime expresses the setting exactly.
 	SupportNative SupportKind = "native"
-	// SupportApproximated: the backend expresses something close, described by
+	// SupportApproximated: the runtime expresses something close, described by
 	// Effects. The run is honoured, but not literally as written.
 	SupportApproximated SupportKind = "approximated"
 	// SupportRequiresBroker: enforceable only when an approval broker is
 	// attached (Config.CanUseTool, or a cmux terminal interceptor). Without one
 	// the setting cannot be honoured and the run must be refused.
 	SupportRequiresBroker SupportKind = "requires-broker"
-	// SupportUnsupported: the backend cannot express it at all.
+	// SupportUnsupported: the runtime cannot express it at all.
 	SupportUnsupported SupportKind = "unsupported"
 )
 
@@ -45,8 +45,8 @@ const (
 // structured rather than prose so a test can compare it against what the mapper
 // actually returns, and a UI can key off it instead of parsing a sentence.
 type PermissionEffects struct {
-	// Flag is the literal argv the backend emits, when it emits one. An empty
-	// Flag on a native mode means the backend omits the flag deliberately and
+	// Flag is the literal argv the runtime emits, when it emits one. An empty
+	// Flag on a native mode means the runtime omits the flag deliberately and
 	// inherits its own default.
 	Flag string `json:"flag,omitempty"`
 	// Sandbox and Approval are codex's two-part posture (CodexSafety).
@@ -56,7 +56,7 @@ type PermissionEffects struct {
 	Note string `json:"note,omitempty"`
 }
 
-// Support is one cell: how a backend honours one setting, and what it becomes.
+// Support is one cell: how a runtime honours one setting, and what it becomes.
 type Support struct {
 	Kind    SupportKind       `json:"kind"`
 	Effects PermissionEffects `json:"effects,omitzero"`
@@ -72,9 +72,9 @@ func (s Support) Honoured() bool {
 // ToolProvenance is where a tool came from, which is what determines whether a
 // per-tool policy can be enforced at all.
 //
-// This is the dimension a per-backend boolean misses. Captain owns the MCP
+// This is the dimension a per-runtime boolean misses. Captain owns the MCP
 // server it builds for caller tools, so it enforces a deny by simply not
-// registering the tool — on backends whose own CLI has no tool filter at all.
+// registering the tool — on runtimes whose own CLI has no tool filter at all.
 type ToolProvenance string
 
 const (
@@ -117,13 +117,13 @@ func AllResourceModes() []ResourceMode {
 	return []ResourceMode{ResourceEnabled, ResourceDisabled}
 }
 
-// PermissionCapabilities is one backend's declared permission surface.
+// PermissionCapabilities is one runtime's declared permission surface.
 type PermissionCapabilities struct {
 	// Modes is the per-posture support map. Every recognised PermissionMode has
 	// an entry, so an absent key is a bug rather than "unsupported".
 	Modes map[PermissionMode]Support `json:"modes"`
 	// ToolPolicies is keyed by provenance first, because the same policy value
-	// is enforceable from one source and not another on the same backend.
+	// is enforceable from one source and not another on the same runtime.
 	ToolPolicies map[ToolProvenance]map[ToolPolicy]Support `json:"toolPolicies"`
 	// Resources is the availability axis, keyed by kind and then by the value
 	// requested. Both keys matter because the two directions are independent and
@@ -132,7 +132,7 @@ type PermissionCapabilities struct {
 	// is dropped before it reaches any provider). One Support per kind would
 	// report "supported" for a request that is silently ignored.
 	Resources map[ResourceKind]map[ResourceMode]Support `json:"resources"`
-	// Tools is the backend's built-in tool vocabulary — the names a per-tool
+	// Tools is the runtime's built-in tool vocabulary — the names a per-tool
 	// policy can legitimately mention for ProvenanceAgent.
 	Tools []string `json:"tools,omitempty"`
 }
@@ -166,11 +166,11 @@ func (c PermissionCapabilities) ResourceSupport(kind ResourceKind, mode Resource
 	return Support{Kind: SupportUnsupported}
 }
 
-// PermissionCapabilitiesFor returns the declared surface for a backend. An
-// unknown backend gets a fully-unsupported row rather than a zero value, so a
+// PermissionCapabilitiesFor returns the declared surface for a runtime. An
+// unknown runtime gets a fully-unsupported row rather than a zero value, so a
 // caller that forgets to check still fails closed.
-func PermissionCapabilitiesFor(b Backend) PermissionCapabilities {
-	if caps, ok := permissionCapabilities[b]; ok {
+func PermissionCapabilitiesFor(runtime Runtime) PermissionCapabilities {
+	if caps, ok := permissionCapabilities[runtime]; ok {
 		return caps
 	}
 	return PermissionCapabilities{
@@ -180,13 +180,13 @@ func PermissionCapabilitiesFor(b Backend) PermissionCapabilities {
 	}
 }
 
-// PermissionCapabilityBackends lists the backends the table declares, in
-// canonical AllBackends order.
-func PermissionCapabilityBackends() []Backend {
-	out := make([]Backend, 0, len(permissionCapabilities))
-	for _, b := range AllBackends() {
-		if _, ok := permissionCapabilities[b]; ok {
-			out = append(out, b)
+// PermissionCapabilityRuntimes lists the runtimes the table declares, in
+// canonical AllRuntimes order.
+func PermissionCapabilityRuntimes() []Runtime {
+	out := make([]Runtime, 0, len(permissionCapabilities))
+	for _, r := range AllRuntimes() {
+		if _, ok := permissionCapabilities[r]; ok {
+			out = append(out, r)
 		}
 	}
 	return out
@@ -227,7 +227,7 @@ func approxFlag(flag, note string) Support {
 func unsupportedModes() map[PermissionMode]Support {
 	out := make(map[PermissionMode]Support, len(AllPermissionModes()))
 	for _, m := range AllPermissionModes() {
-		out[m] = unsupported("this backend never reads permissions.mode")
+		out[m] = unsupported("this runtime has no provider-native sandbox approval posture")
 	}
 	return out
 }
@@ -280,16 +280,16 @@ func callerTools() map[ToolPolicy]Support {
 //   - mcpOff: does `permissions.mcp.disabled` actually silence ambient servers.
 //   - skillsOn: does `permissions.skills: {dir: enabled}` actually load them.
 //
-// Everything else is unsupported on every backend today, and says why:
+// Everything else is unsupported on every runtime today, and says why:
 // `mcp.servers` and `mcp.modes` have no reader outside Validate, a disabled skill
 // is dropped by ResourcePolicies.Enabled before any provider sees it, and
 // `permissions.plugins` reaches req.Permissions.Plugins and stops there.
 func resources(mcpOff, skillsOn bool) map[ResourceKind]map[ResourceMode]Support {
-	mcpDisabled := unsupported("permissions.mcp.disabled is accepted and then dropped on this backend")
+	mcpDisabled := unsupported("permissions.mcp.disabled is accepted and then dropped on this runtime")
 	if mcpOff {
 		mcpDisabled = native("all MCP servers silenced")
 	}
-	skillsEnabled := unsupported("skill directories are not loaded on this backend")
+	skillsEnabled := unsupported("skill directories are not loaded on this runtime")
 	if skillsOn {
 		skillsEnabled = native("--plugin-dir")
 	}
@@ -316,8 +316,8 @@ func resources(mcpOff, skillsOn bool) map[ResourceKind]map[ResourceMode]Support 
 // literal flag, the SDK bridge sends a `permissionMode` initialize param — so
 // Effects.Flag stays a truthful record of what is actually sent.
 //
-// emitsDefault distinguishes the two treatments of the unset posture: claude-cli
-// omits the flag entirely, while cmux and the agent bridge send `default`
+// emitsDefault distinguishes the two treatments of the unset posture: the
+// anthropic cli omits the flag entirely, while cmux and the agent bridge send `default`
 // explicitly. Claude 2.1.237 advertises `manual` in place of `default` yet still
 // accepts `default`, so both spellings work today; the alias is undocumented and
 // may not survive.
@@ -337,45 +337,27 @@ func claudeModes(setting string, emitsDefault bool) map[PermissionMode]Support {
 	}
 }
 
-// codexModes is the posture row for every codex transport, derived from the one
-// shared CodexSafety mapper. Two cells are the interesting ones:
+// codexModes is the approval-posture row for every Codex transport. Isolation
+// is selected independently through sandbox.mode and sandbox.policy.
 //
-//   - plan has no codex flag at all. On codex-agent the app-server additionally
-//     refuses every escalation request (codexPosture.allowsEscalation); on
-//     codex-cli and codex-cmux the read-only sandbox is the whole enforcement.
-//   - dontAsk has no case in CodexSafety, so it falls through to the read-only
-//     default — the precise inversion of what the name asks for. Declared
-//     unsupported rather than approximated, because "never prompt" becoming
-//     "restricted, and escalations are refused" is not an approximation of the
-//     request.
-//
-// extra is appended to every cell's note, carrying a transport-wide caveat.
-func codexModes(suppressesEscalation bool, extra string) map[PermissionMode]Support {
-	planNote := "codex has no plan flag; the read-only sandbox is the whole enforcement"
+// Plan remains approximated because Codex has no plan-only execution mode.
+func codexModes(suppressesEscalation bool) map[PermissionMode]Support {
+	planNote := "codex has no plan-only approval posture; native isolation remains independently configured"
 	if suppressesEscalation {
 		planNote = "the app-server additionally refuses every escalation request while in plan mode"
 	}
-	out := map[PermissionMode]Support{
-		PermissionDefault: codexPosture("read-only", "on-request",
-			"codex has no default posture of its own; an unset mode resolves to the read-only sandbox"),
-		PermissionPlan: codexPosture("read-only", "on-request", planNote),
-		PermissionAcceptEdits: codexPosture("workspace-write", "on-request",
-			"codex grants workspace writes wholesale rather than auto-approving each edit prompt"),
-		PermissionAuto: codexPosture("workspace-write", "on-request",
-			"codex has one write tier, so auto and acceptEdits are indistinguishable here"),
-		PermissionBypass: codexPosture("danger-full-access", "never",
-			"danger-full-access removes the sandbox as well as the prompts"),
+	return map[PermissionMode]Support{
+		PermissionDefault: codexPosture("", "on-request", "codex has no default posture of its own; approval resolves to on-request"),
+		PermissionPlan:    codexPosture("", "on-request", planNote),
+		PermissionAcceptEdits: codexPosture("", "on-request",
+			"codex cannot auto-approve edits independently from other approval requests"),
+		PermissionAuto: codexPosture("", "on-request",
+			"codex has no auto posture distinct from on-request"),
+		PermissionBypass: codexPosture("", "never",
+			"approval prompts are disabled without changing the configured sandbox isolation"),
 		PermissionDontAsk: unsupported(
-			"CodexSafety has no dontAsk case, so it resolves to the read-only default — the opposite of the request"),
+			"codex cannot preserve tool-level denial while disabling approval prompts"),
 	}
-	if extra == "" {
-		return out
-	}
-	for mode, s := range out {
-		s.Effects.Note = joinNotes(s.Effects.Note, extra)
-		out[mode] = s
-	}
-	return out
 }
 
 // geminiModes is derived from geminiApprovalMode, which emits no flag at all for
@@ -394,74 +376,57 @@ func geminiModes() map[PermissionMode]Support {
 	}
 }
 
-func joinNotes(a, b string) string {
-	switch {
-	case a == "":
-		return b
-	case b == "":
-		return a
-	default:
-		return a + "; " + b
-	}
-}
-
 // claudeBuiltinTools and the rest are the built-in vocabularies a per-tool
-// policy may name. codexBuiltinTools is taken from the codex→claude
-// normalisation table in pkg/ai/history, which is the only accurate list in the
-// tree; the permission catalog's hardcoded claude names were served for every
-// backend regardless.
+// policy may name. They are projected from the agent tool tables in
+// agent_resources.go rather than restated here: the permission catalog serves
+// those same tools with their groups and descriptions, and two hand-kept lists
+// of the same names is how the catalog came to serve claude's tools to every
+// runtime in the first place.
 var (
-	claudeBuiltinTools = []string{
-		"Bash", "Edit", "Glob", "Grep", "MultiEdit", "Read", "TodoWrite", "WebFetch", "WebSearch", "Write",
-	}
-	codexBuiltinTools = []string{
-		"apply_patch", "close_agent", "request_user_input", "resume_agent", "send_input",
-		"shell", "spawn_agent", "update_plan", "wait", "wait_agent",
-	}
-	geminiBuiltinTools = []string{
-		"google_web_search", "read_file", "replace", "run_shell_command", "write_file",
-	}
+	claudeBuiltinTools = agentToolNames(agentTools["claude"])
+	codexBuiltinTools  = agentToolNames(agentTools["codex"])
+	geminiBuiltinTools = agentToolNames(agentTools["gemini"])
 )
 
-// permissionCapabilities is the matrix. One row per backend; every backend in
-// AllBackends must appear, which TestPermissionCapabilitiesCoverEveryBackend
-// enforces so that adding a backend forces a decision here.
-var permissionCapabilities = map[Backend]PermissionCapabilities{
-	// --- API backends: genkit reads Permissions.Tools only to refuse an
-	// unenforceable policy, and never reads Permissions.Mode at all. Caller
+// permissionCapabilities is the matrix. One row per provider×mode runtime; every
+// runtime in AllRuntimes must appear, which TestPermissionCapabilitiesCoverEveryRuntime
+// enforces so that adding one forces a decision here.
+var permissionCapabilities = map[Runtime]PermissionCapabilities{
+	// --- The api mode: genkit reads Permissions.Tools only to refuse an
+	// unenforceable policy, and has no provider-native approval posture. Caller
 	// tools are the one axis these can honour, and they honour it fully.
-	BackendAnthropic: {
+	RuntimeOf(Anthropic, ModeAPI): {
 		Modes:        unsupportedModes(),
 		ToolPolicies: toolPolicies(noToolFilter(), callerTools(), noToolFilter()),
 		Resources:    resources(false, false),
 	},
-	BackendOpenAI: {
+	RuntimeOf(OpenAI, ModeAPI): {
 		Modes:        unsupportedModes(),
 		ToolPolicies: toolPolicies(noToolFilter(), callerTools(), noToolFilter()),
 		Resources:    resources(false, false),
 	},
-	BackendGemini: {
+	RuntimeOf(Google, ModeAPI): {
 		Modes:        unsupportedModes(),
 		ToolPolicies: toolPolicies(noToolFilter(), callerTools(), noToolFilter()),
 		Resources:    resources(false, false),
 	},
-	BackendDeepSeek: {
+	RuntimeOf(DeepSeek, ModeAPI): {
 		Modes:        unsupportedModes(),
 		ToolPolicies: toolPolicies(noToolFilter(), callerTools(), noToolFilter()),
 		Resources:    resources(false, false),
 	},
 
 	// --- claude transports: the enum's native home.
-	BackendClaudeCLI: {
+	RuntimeOf(Anthropic, ModeCLI): {
 		Modes:        claudeModes("--permission-mode ", false),
 		ToolPolicies: toolPolicies(claudeAgentTools(), noToolFilter(), noToolFilter()),
 		// --mcp-config {} --strict-mcp-config genuinely disables ambient MCP;
-		// --plugin-dir carries permissions.skills. This is the only backend that
+		// --plugin-dir carries permissions.skills. This is the only runtime that
 		// honours either.
 		Resources: resources(true, true),
 		Tools:     claudeBuiltinTools,
 	},
-	BackendClaudeAgent: {
+	RuntimeOf(Anthropic, ModeAgent): {
 		Modes:        claudeModes("permissionMode=", true),
 		ToolPolicies: toolPolicies(claudeAgentTools(), callerTools(), noToolFilter()),
 		// The SDK bridge sends only the caller-tool server list, so an
@@ -471,7 +436,7 @@ var permissionCapabilities = map[Backend]PermissionCapabilities{
 		Resources: resources(false, false),
 		Tools:     claudeBuiltinTools,
 	},
-	BackendClaudeCmux: {
+	RuntimeOf(Anthropic, ModeCmux): {
 		Modes:        claudeModes("--permission-mode ", true),
 		ToolPolicies: toolPolicies(claudeAgentTools(), noToolFilter(), noToolFilter()),
 		Resources:    resources(false, false),
@@ -479,28 +444,24 @@ var permissionCapabilities = map[Backend]PermissionCapabilities{
 	},
 
 	// --- codex transports: posture is a sandbox/approval pair, never a mode.
-	BackendCodexCLI: {
-		Modes:        codexModes(false, ""),
+	RuntimeOf(OpenAI, ModeCLI): {
+		Modes:        codexModes(false),
 		ToolPolicies: toolPolicies(noToolFilter(), noToolFilter(), noToolFilter()),
 		Resources:    resources(false, false),
 		Tools:        codexBuiltinTools,
 	},
-	BackendCodexAgent: {
-		Modes: codexModes(true, ""),
-		// The caller row is the point of the provenance dimension: codex-agent
-		// has no tool filter of its own, yet a denied caller tool is simply
+	RuntimeOf(OpenAI, ModeAgent): {
+		Modes: codexModes(true),
+		// The caller row is the point of the provenance dimension: the openai
+		// agent has no tool filter of its own, yet a denied caller tool is simply
 		// never registered, so the policy is fully enforced.
 		ToolPolicies: toolPolicies(noToolFilter(), callerTools(), noToolFilter()),
 		// codexThreadConfig sends an empty mcp_servers map when MCP is disabled.
 		Resources: resources(true, false),
 		Tools:     codexBuiltinTools,
 	},
-	BackendCodexCmux: {
-		// cmuxExtraArgs seeds the posture from CodexSafety only when the caller
-		// left the option unset, so an explicit cliArgs value silently wins over
-		// permissions.mode here and nowhere else.
-		Modes: codexModes(false,
-			"cliArgs.sandbox / cliArgs.askForApproval override this posture when set"),
+	RuntimeOf(OpenAI, ModeCmux): {
+		Modes:        codexModes(false),
 		ToolPolicies: toolPolicies(noToolFilter(), noToolFilter(), noToolFilter()),
 		Resources:    resources(false, false),
 		Tools:        codexBuiltinTools,
@@ -508,7 +469,7 @@ var permissionCapabilities = map[Backend]PermissionCapabilities{
 
 	// --- gemini CLI: an approval-mode flag and nothing else. The provider
 	// documents that it has no per-run MCP override.
-	BackendGeminiCLI: {
+	RuntimeOf(Google, ModeCLI): {
 		Modes:        geminiModes(),
 		ToolPolicies: toolPolicies(noToolFilter(), noToolFilter(), noToolFilter()),
 		Resources:    resources(false, false),
@@ -516,28 +477,28 @@ var permissionCapabilities = map[Backend]PermissionCapabilities{
 	},
 }
 
-// SupportedPermissionModes lists the postures a backend honours natively or by
+// SupportedPermissionModes lists the postures a runtime honours natively or by
 // approximation, in canonical order. It is what a picker should offer.
-func SupportedPermissionModes(b Backend) []PermissionMode {
-	caps := PermissionCapabilitiesFor(b)
+func SupportedPermissionModes(p *ModelProvider, mode RuntimeMode) []PermissionMode {
+	caps := PermissionCapabilitiesFor(RuntimeOf(p, mode))
 	out := make([]PermissionMode, 0, len(caps.Modes))
-	for _, mode := range AllPermissionModes() {
-		if caps.ModeSupport(mode).Honoured() {
-			out = append(out, mode)
+	for _, posture := range AllPermissionModes() {
+		if caps.ModeSupport(posture).Honoured() {
+			out = append(out, posture)
 		}
 	}
 	return out
 }
 
-// SupportedToolPolicies lists the policy values a backend can enforce for one
+// SupportedToolPolicies lists the policy values a runtime can enforce for one
 // provenance, in canonical order. A requires-broker value is included because
 // whether it is usable depends on runtime state this table cannot see; the
 // caller decides.
-func SupportedToolPolicies(b Backend, p ToolProvenance) []ToolPolicy {
-	caps := PermissionCapabilitiesFor(b)
+func SupportedToolPolicies(p *ModelProvider, mode RuntimeMode, provenance ToolProvenance) []ToolPolicy {
+	caps := PermissionCapabilitiesFor(RuntimeOf(p, mode))
 	out := make([]ToolPolicy, 0, 4)
 	for _, policy := range AllToolPolicies() {
-		if s := caps.ToolPolicySupport(p, policy); s.Kind != SupportUnsupported {
+		if s := caps.ToolPolicySupport(provenance, policy); s.Kind != SupportUnsupported {
 			out = append(out, policy)
 		}
 	}
@@ -545,15 +506,15 @@ func SupportedToolPolicies(b Backend, p ToolProvenance) []ToolPolicy {
 }
 
 // ToolPolicyProvenances lists the provenances that can carry a constraining
-// policy on a backend, in canonical order. Empty means no per-tool policy is
+// policy on a runtime, in canonical order. Empty means no per-tool policy is
 // enforceable there from any source.
-func ToolPolicyProvenances(b Backend) []ToolProvenance {
-	caps := PermissionCapabilitiesFor(b)
+func ToolPolicyProvenances(p *ModelProvider, mode RuntimeMode) []ToolProvenance {
+	caps := PermissionCapabilitiesFor(RuntimeOf(p, mode))
 	var out []ToolProvenance
-	for _, p := range AllToolProvenances() {
+	for _, provenance := range AllToolProvenances() {
 		for _, policy := range []ToolPolicy{ToolPolicyAllow, ToolPolicyDeny} {
-			if caps.ToolPolicySupport(p, policy).Honoured() {
-				out = append(out, p)
+			if caps.ToolPolicySupport(provenance, policy).Honoured() {
+				out = append(out, provenance)
 				break
 			}
 		}

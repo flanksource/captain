@@ -70,9 +70,6 @@ func legacyMergeModel(m, o Model) Model {
 	if o.ID != "" {
 		m.ID = o.ID
 	}
-	if o.Backend != "" {
-		m.Backend = o.Backend
-	}
 	if o.Temperature != nil {
 		m.Temperature = o.Temperature
 	}
@@ -193,6 +190,9 @@ func neutralize(s Spec) Spec {
 	s.Permissions.MCP = MCP{}
 	s.Setup = nil
 	s.Workflow = nil
+	// Sandbox now deep-merges only when both layers select the same mode and
+	// replaces when the mode changes; the old implementation always replaced it.
+	s.Sandbox = nil
 
 	// Maps that used to be replaced wholesale and now merge key-wise, because
 	// each key is an independent setting.

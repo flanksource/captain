@@ -30,7 +30,7 @@ type Config struct {
 // plus a name→config map, shaped like AIDefaults' DefaultProvider + Providers.
 type SandboxDefaults struct {
 	// Default is the sandbox applied when neither the CLI flag nor the prompt
-	// frontmatter selects one. Empty means none.
+	// frontmatter selects one. Empty means off.
 	Default string `yaml:"default,omitempty"`
 	// Backends are the named sandbox configurations, keyed by the name written
 	// in `sandbox:` frontmatter or passed to --sandbox.
@@ -61,7 +61,7 @@ type SandboxSelection struct {
 
 // Resolve maps a selector — a configured backend name, or a bare adapter kind —
 // to its selection. An empty selector falls back to Default, and an empty
-// Default to "none". A selector that names neither a configured backend nor a
+// Default to "off". A selector that names neither a configured backend nor a
 // kind is an error, as is a configured backend whose kind is unknown: silently
 // running unsandboxed is the failure this method exists to prevent.
 func (s SandboxDefaults) Resolve(selector string) (SandboxSelection, error) {
@@ -71,7 +71,7 @@ func (s SandboxDefaults) Resolve(selector string) (SandboxSelection, error) {
 	}
 	if backend, ok := s.Backends[name]; ok {
 		// An empty kind must not fall through ParseSandboxKind, where empty
-		// deliberately means "none": a backend whose kind is missing or
+		// deliberately means "off": a backend whose kind is missing or
 		// misspelled would silently disable confinement.
 		if strings.TrimSpace(backend.Kind) == "" {
 			return SandboxSelection{}, fmt.Errorf("sandbox backend %q declares no kind (valid: %s)",
@@ -124,11 +124,8 @@ type AIDefaults struct {
 	Providers       map[string]ProviderDefaults `yaml:"providers,omitempty"`
 	Disabled        DisabledSelections          `yaml:"disabled,omitempty"`
 
-	// Legacy global selection fields are read so existing configurations can be
-	// projected into the provider map. Save omits them after migration.
-	Backend         string  `yaml:"backend,omitempty"`
-	Model           string  `yaml:"model,omitempty"`
-	ReasoningEffort string  `yaml:"reasoningEffort,omitempty"`
+	// File-wide generation settings. These are global on purpose: they are
+	// properties of a run, not of a provider.
 	BudgetUSD       float64 `yaml:"budgetUSD,omitempty"`
 	MaxTokens       int     `yaml:"maxTokens,omitempty"`
 	Temperature     float64 `yaml:"temperature,omitempty"`
@@ -143,29 +140,45 @@ type AIDefaults struct {
 }
 
 type ProviderDefaults struct {
-	Agent           string `yaml:"agent,omitempty" json:"agent"`
+	// Mode is the runtime mechanism this provider defaults to: api|agent|cli|cmux.
+	Mode            string `yaml:"mode,omitempty" json:"mode"`
 	Model           string `yaml:"model,omitempty" json:"model"`
 	ReasoningEffort string `yaml:"reasoningEffort,omitempty" json:"effort"`
 }
 
+// DisabledRuntime is one provider×mode pair switched off. It is a pair rather
+// than a name because "cmux off for anthropic but not for openai" is exactly
+// what neither the modes nor the providers list can say.
+type DisabledRuntime struct {
+	Provider string `yaml:"provider" json:"provider"`
+	Mode     string `yaml:"mode" json:"mode"`
+}
+
 // DisabledSelections is the opt-out set edited from the whoami page: runtime
-// modes, provider families, backends, models and effort tiers the user never
-// wants captain to reach for. Tokens are matched case-insensitively.
+// modes, provider families, individual runtimes, models and effort tiers the
+// user never wants captain to reach for. Tokens are matched case-insensitively.
 //
-// Models are keyed by backend rather than by webapp menu id — "gemini/gemini-3.5-flash",
-// not "googleai/gemini-3.5-flash". A bare id with no slash disables that model
-// on every backend that serves it.
+// Models are keyed by provider rather than by webapp menu id —
+// "google/gemini-3.5-flash", not "googleai/gemini-3.5-flash". A bare id with no
+// slash disables that model everywhere.
 type DisabledSelections struct {
-	Modes     []string `yaml:"modes,omitempty" json:"modes"`
-	Providers []string `yaml:"providers,omitempty" json:"providers"`
-	Backends  []string `yaml:"backends,omitempty" json:"backends"`
-	Models    []string `yaml:"models,omitempty" json:"models"`
-	Efforts   []string `yaml:"efforts,omitempty" json:"efforts"`
+	Modes     []string          `yaml:"modes,omitempty" json:"modes"`
+	Providers []string          `yaml:"providers,omitempty" json:"providers"`
+	Runtimes  []DisabledRuntime `yaml:"runtimes,omitempty" json:"runtimes"`
+	Models    []string          `yaml:"models,omitempty" json:"models"`
+	Efforts   []string          `yaml:"efforts,omitempty" json:"efforts"`
 }
 
 // Set converts the config lists into the registry lookup type.
 func (d DisabledSelections) Set() registry.DisabledSet {
-	return registry.NewDisabledSet(d.Modes, d.Providers, d.Backends, d.Models, d.Efforts)
+	runtimes := make([]registry.Runtime, 0, len(d.Runtimes))
+	for _, r := range d.Runtimes {
+		runtimes = append(runtimes, registry.Runtime{
+			Provider: r.Provider,
+			Mode:     registry.RuntimeMode(r.Mode),
+		})
+	}
+	return registry.NewDisabledSet(d.Modes, d.Providers, runtimes, d.Models, d.Efforts)
 }
 
 // ApplyToRegistry installs the opt-out set process-wide so the resolution paths
@@ -177,53 +190,24 @@ func (c Config) ApplyToRegistry() {
 
 func (a AIDefaults) ActiveProvider() string {
 	disabled := a.Disabled.Set()
-	if provider := registry.Backend(strings.TrimSpace(a.DefaultProvider)); provider != "" && provider.Provider() == provider && !disabled.Provider(provider) {
-		return string(provider)
+	if p, ok := registry.ProviderByName(strings.TrimSpace(a.DefaultProvider)); ok && !disabled.Provider(p) {
+		return p.Name
 	}
-	if provider := registry.Backend(strings.TrimSpace(a.Backend)).Provider(); provider != "" && !disabled.Provider(provider) {
-		return string(provider)
+	if !disabled.Provider(registry.Anthropic) {
+		return registry.Anthropic.Name
 	}
-	if backend, err := registry.InferBackend(strings.TrimSpace(a.Model)); err == nil && !disabled.Provider(backend) {
-		return string(backend.Provider())
-	}
-	if !disabled.Provider(registry.AnthropicProvider) {
-		return string(registry.AnthropicProvider)
-	}
-	for _, backend := range registry.AllBackends() {
-		if backend.Mode() == registry.ModeAPI && !disabled.Provider(backend) {
-			return string(backend)
+	for _, p := range registry.Providers() {
+		if _, serves := p.Caps(registry.ModeAPI); serves && !disabled.Provider(p) {
+			return p.Name
 		}
 	}
-	return string(registry.AnthropicProvider)
+	return registry.Anthropic.Name
 }
 
-func (a AIDefaults) legacyProvider() string {
-	if provider := registry.Backend(strings.TrimSpace(a.Backend)).Provider(); provider != "" {
-		return string(provider)
-	}
-	if backend, err := registry.InferBackend(strings.TrimSpace(a.Model)); err == nil {
-		return string(backend.Provider())
-	}
-	return strings.TrimSpace(a.DefaultProvider)
-}
-
+// Provider returns one provider's saved defaults. A provider with nothing saved
+// returns the zero value, which the resolution path fills from the registry.
 func (a AIDefaults) Provider(provider string) ProviderDefaults {
-	provider = strings.TrimSpace(provider)
-	defaults := a.Providers[provider]
-	if provider != a.legacyProvider() {
-		return defaults
-	}
-	legacyAgent := registry.Backend(strings.TrimSpace(a.Backend))
-	if defaults.Agent == "" && legacyAgent.Provider() == registry.Backend(provider) {
-		defaults.Agent = string(legacyAgent)
-	}
-	if defaults.Model == "" {
-		defaults.Model = strings.TrimSpace(a.Model)
-	}
-	if defaults.ReasoningEffort == "" {
-		defaults.ReasoningEffort = strings.TrimSpace(a.ReasoningEffort)
-	}
-	return defaults
+	return a.Providers[strings.TrimSpace(provider)]
 }
 
 type PromptDefaults struct {
@@ -232,9 +216,11 @@ type PromptDefaults struct {
 }
 
 type SchemaRepairDefaults struct {
-	Model   string `yaml:"model,omitempty"`
-	Backend string `yaml:"backend,omitempty"`
-	Prompt  string `yaml:"prompt,omitempty"`
+	Model string `yaml:"model,omitempty"`
+	// Mode names the runtime mechanism (api|agent|cli|cmux). The provider follows
+	// from the model name.
+	Mode   string `yaml:"mode,omitempty"`
+	Prompt string `yaml:"prompt,omitempty"`
 }
 
 // pathOverride redirects Path() away from $HOME. Empty string means
@@ -287,6 +273,13 @@ func load(path string) (Config, bool, error) {
 		}
 		return Config{}, false, fmt.Errorf("read %s: %w", path, err)
 	}
+	// A file written before runtimes became (model, mode) is rejected, not
+	// upgraded. Rewriting it would mean guessing which runtime each composite
+	// adapter id meant and then silently running on that guess; the user is the
+	// only one who can say, and the message tells them exactly what to write.
+	if err := checkRemovedKeys(path, data); err != nil {
+		return Config{}, false, err
+	}
 	var cfg Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return Config{}, false, fmt.Errorf("parse %s: %w", path, err)
@@ -327,23 +320,10 @@ func Update(update func(*Config) error) error {
 	})
 }
 
+// normalize is the last step before a write. Every field the file carries is now
+// one the reader accepts, so there is nothing to fold or clear — it exists as the
+// single place a future write-time invariant belongs.
 func normalize(cfg Config) Config {
-	a := &cfg.AI
-	hasLegacy := a.Backend != "" || a.Model != "" || a.ReasoningEffort != ""
-	if hasLegacy {
-		provider := a.legacyProvider()
-		if provider == "" {
-			provider = a.ActiveProvider()
-		}
-		if a.Providers == nil {
-			a.Providers = map[string]ProviderDefaults{}
-		}
-		a.Providers[provider] = a.Provider(provider)
-		if a.DefaultProvider == "" {
-			a.DefaultProvider = provider
-		}
-	}
-	a.Backend, a.Model, a.ReasoningEffort = "", "", ""
 	return cfg
 }
 
