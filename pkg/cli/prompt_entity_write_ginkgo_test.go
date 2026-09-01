@@ -73,6 +73,19 @@ var _ = Describe("prompt entity writes", func() {
 			Expect(filepath.Join(dir, "broken.prompt")).NotTo(BeAnExistingFile())
 		})
 
+		It("refuses a parent symlink that escapes the prompt source", func() {
+			outside := GinkgoT().TempDir()
+			Expect(os.Symlink(outside, filepath.Join(dir, "escape"))).To(Succeed())
+
+			_, err := writeNewLocalPrompt(ctx, PromptWriteRequest{
+				RelPath: "escape/leaked.prompt",
+				Content: validPromptSource,
+			})
+
+			Expect(err).To(HaveOccurred())
+			Expect(filepath.Join(outside, "leaked.prompt")).NotTo(BeAnExistingFile())
+		})
+
 		It("returns the content version of the new prompt", func() {
 			detail := createPrompt("summary", validPromptSource)
 			Expect(detail.Version).To(Equal(promptVersion(validPromptSource)))
