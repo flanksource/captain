@@ -71,7 +71,6 @@ type ObservationRuntimeRequested struct {
 
 type ObservationRuntimeResolved struct {
 	Provider string      `json:"provider"`
-	Backend  Backend     `json:"backend"`
 	Mode     RuntimeMode `json:"mode"`
 	Model    string      `json:"model"`
 }

@@ -114,7 +114,7 @@ func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, e
 		return nil, fmt.Errorf("genkit %s generate: %w", p.provider.Name, err)
 	}
 
-	out := responseToResponse(ctx, resp, p.backend, p.cfg.Model.Name, start)
+	out := responseToResponse(ctx, resp, p.provider, p.cfg.Model.Name, start)
 	if resp.FinishReason == gkai.FinishReasonInterrupted {
 		out.ToolApproval, err = toolApprovalState(req, resp)
 		if err != nil {
@@ -202,7 +202,7 @@ func (p *Provider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai
 		}
 		var usage *ai.Usage
 		if resp.Usage != nil {
-			mapped := mapUsage(resp.Usage, p.backend)
+			mapped := mapUsage(resp.Usage, p.provider)
 			usage = &mapped
 		}
 		costUSD := 0.0

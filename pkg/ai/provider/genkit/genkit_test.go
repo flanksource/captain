@@ -81,7 +81,7 @@ func TestResponseToResponseRecordsNativeUsagePresence(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			recorder := observation.NewRecorder()
 			ctx := observation.ContextWithRecorder(context.Background(), recorder)
-			responseToResponse(ctx, &gkai.ModelResponse{Usage: test.usage}, ai.BackendOpenAI, "gpt-5", time.Now())
+			responseToResponse(ctx, &gkai.ModelResponse{Usage: test.usage}, ai.OpenAI, "gpt-5", time.Now())
 
 			usage := recorder.Snapshot().Usage
 			if (usage != nil) != test.wantUsage {

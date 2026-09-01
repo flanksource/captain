@@ -36,16 +36,8 @@ var _ api.ToolCapableProvider = (*Provider)(nil)
 
 // New constructs a direct OpenAI Responses provider.
 func New(cfg ai.Config) (*Provider, error) {
-	backend := cfg.Model.Backend
-	if backend == "" {
-		var err error
-		backend, err = ai.InferBackend(cfg.Model.Name)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if backend != ai.BackendOpenAI {
-		return nil, fmt.Errorf("openai provider does not support backend %q", backend)
+	if cfg.Model.Provider != ai.OpenAI || cfg.Model.Mode != ai.ModeAPI {
+		return nil, fmt.Errorf("openai provider requires the openai/api runtime, got %s", api.RuntimeIdentityOf(cfg.Model).Runtime())
 	}
 	if cfg.Model.Name == "" {
 		return nil, fmt.Errorf("openai provider: model cannot be empty")
@@ -53,7 +45,7 @@ func New(cfg ai.Config) (*Provider, error) {
 
 	apiKey := cfg.APIKey
 	if apiKey == "" {
-		resolved, err := ai.ResolveAPIKey(backend)
+		resolved, err := ai.ResolveAPIKey(ai.OpenAI, ai.ModeAPI)
 		if err != nil {
 			return nil, err
 		}
@@ -63,8 +55,6 @@ func New(cfg ai.Config) (*Provider, error) {
 		return nil, fmt.Errorf("%w: openai provider has no API key (set OPENAI_API_KEY)", ai.ErrNoAPIKey)
 	}
 
-	cfg.Model.Backend = backend
-	cfg.Model.Name = ai.NormalizeModelForBackend(backend, cfg.Model.Name)
 	opts := []option.RequestOption{option.WithAPIKey(apiKey)}
 	if cfg.APIURL != "" {
 		opts = append(opts, option.WithBaseURL(cfg.APIURL))
@@ -73,7 +63,7 @@ func New(cfg ai.Config) (*Provider, error) {
 }
 
 func (p *Provider) GetModel() string       { return p.model }
-func (p *Provider) GetBackend() ai.Backend { return ai.BackendOpenAI }
+func (p *Provider) GetRuntime() ai.Runtime { return ai.RuntimeOf(ai.OpenAI, ai.ModeAPI) }
 
 // SupportsCallerTools reports that Captain can expose and execute caller tools
 // in-process for this provider.
@@ -111,7 +101,7 @@ func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, e
 	out := &ai.Response{
 		Text:         text.String(),
 		Model:        p.model,
-		Backend:      ai.BackendOpenAI,
+		Runtime:      p.GetRuntime(),
 		CostUSD:      result.CostUSD,
 		Duration:     time.Since(start),
 		Raw:          result.Raw,
@@ -266,7 +256,7 @@ func observedResponseUsage(ctx context.Context, usage ai.Usage, complete bool, m
 	} else {
 		observation.RecordUsage(ctx, &usage)
 	}
-	return ai.PriceUsage(ai.BackendOpenAI, model, usage, 0).Total()
+	return ai.PriceUsage(ai.OpenAI, model, usage, 0).Total()
 }
 
 func (p *Provider) normalizeError(ctx context.Context, err error) error {

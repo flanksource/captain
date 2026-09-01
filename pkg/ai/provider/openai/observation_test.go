@@ -23,7 +23,7 @@ func TestPreparationFailureDoesNotRecordResponsesDispatch(t *testing.T) {
 	}))
 	defer server.Close()
 	provider, err := New(ai.Config{
-		Model:  api.Model{Name: "gpt-5", Backend: api.BackendOpenAI},
+		Model:  api.Model{Name: "gpt-5", Provider: api.OpenAI, Mode: api.ModeAPI},
 		APIKey: "test-key", APIURL: server.URL,
 	})
 	if err != nil {
@@ -51,7 +51,7 @@ func TestResponsesDispatchRecordsNativeParams(t *testing.T) {
 	server, body := newObservationResponsesServer(t, zeroUsageJSON, "ok")
 	defer server.Close()
 	provider, err := New(ai.Config{
-		Model:  api.Model{Name: "gpt-5", Backend: api.BackendOpenAI},
+		Model:  api.Model{Name: "gpt-5", Provider: api.OpenAI, Mode: api.ModeAPI},
 		APIKey: "test-key", APIURL: server.URL,
 	})
 	if err != nil {
@@ -105,7 +105,7 @@ func TestResponsesUsagePresenceSurvivesStreamingAndBufferedPaths(t *testing.T) {
 			server, _ := newObservationResponsesServer(t, test.usage, `{"ok":true}`)
 			defer server.Close()
 			provider, err := New(ai.Config{
-				Model:  api.Model{Name: "gpt-5", Backend: api.BackendOpenAI},
+				Model:  api.Model{Name: "gpt-5", Provider: api.OpenAI, Mode: api.ModeAPI},
 				APIKey: "test-key", APIURL: server.URL,
 			})
 			if err != nil {
@@ -176,7 +176,7 @@ func TestResponsesDispatchRecordsNativeOmission(t *testing.T) {
 	server, body := newObservationResponsesServer(t, zeroUsageJSON, "ok")
 	defer server.Close()
 	provider, err := New(ai.Config{
-		Model:  api.Model{Name: "gpt-5", Backend: api.BackendOpenAI},
+		Model:  api.Model{Name: "gpt-5", Provider: api.OpenAI, Mode: api.ModeAPI},
 		APIKey: "test-key", APIURL: server.URL,
 	})
 	if err != nil {

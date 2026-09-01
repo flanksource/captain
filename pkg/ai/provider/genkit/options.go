@@ -115,7 +115,7 @@ func generateOptions(p *Provider, req ai.Request, stream gkai.ModelStreamCallbac
 	if modelToken == "" {
 		modelToken = req.ID
 	}
-	cfg := ai.EffortConfig(p.backend, modelToken, req.Effort, req.Budget.MaxTokens, req.Temperature)
+	cfg := ai.EffortConfig(p.provider, ai.ModeAPI, modelToken, req.Effort, req.Budget.MaxTokens, req.Temperature)
 	if cfg != nil {
 		opts = append(opts, gkai.WithConfig(cfg))
 	}

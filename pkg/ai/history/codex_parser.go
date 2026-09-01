@@ -222,6 +222,10 @@ func (p *CodexParser) ConsumeLine(line string) []ToolUse {
 		log.Debugf("Error parsing codex line: %v", err)
 		return nil
 	}
+	if p.info != nil && p.info.IsFork() && p.event.Ordinal != nil &&
+		*p.event.Ordinal < p.info.HistoryStartOrdinal {
+		return nil
+	}
 
 	var settled []ToolUse
 	add := func(uses []ToolUse) {
@@ -344,15 +348,13 @@ func (p *CodexParser) LineNumber() int64 { return p.lineNumber }
 func (p *CodexParser) Ignored() bool     { return p.ignored }
 
 func ExtractCodexToolUsesFromReader(reader io.Reader) ([]ToolUse, error) {
-	scanner := bufio.NewScanner(reader)
-	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
 	parser := NewCodexParser()
 	var uses []ToolUse
-	for scanner.Scan() {
-		uses = append(uses, parser.ConsumeLine(scanner.Text())...)
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
+	for line, err := range jsonl.Lines(reader) {
+		if err != nil {
+			return nil, err
+		}
+		uses = append(uses, parser.ConsumeLine(string(line))...)
 	}
 	if parser.Ignored() {
 		return nil, nil
