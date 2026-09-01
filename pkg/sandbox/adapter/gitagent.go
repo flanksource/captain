@@ -1,12 +1,13 @@
 // The git-agent adapter: whole-run relocation over the git-agent protocol.
 // Execute snapshots the supervisor's dirty worktree, dispatches it to an
 // enrolled agent's sidecar, and blocks until the two-tier vet loop produces a
-// final verdict, which comes back as the run's response.
+// final outcome, returned as either the run response or a terminal worker error.
 package adapter
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -119,7 +120,11 @@ func (g *gitAgentSandbox) Execute(ctx context.Context, spec api.Spec) (*api.Resp
 	if err != nil {
 		return nil, fmt.Errorf("task %s dispatched but not concluded: %w", dispatch.Task, err)
 	}
-	return gitAgentResponse(dispatch.Task, verdict), nil
+	response := gitAgentResponse(dispatch.Task, verdict)
+	if verdict.Terminal && verdict.Status == gitagent.StatusError {
+		return nil, errors.New(response.Text)
+	}
+	return response, nil
 }
 
 // hookSetsJSON preserves the sidecar/supervisor split declared by the backend

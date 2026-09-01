@@ -15,9 +15,10 @@ import (
 
 // Control payload file names (§4).
 const (
-	ControlTaskFile   = "task.json"
-	ControlHooksFile  = "hooks.json"
-	ControlPolicyFile = "policy.json"
+	ControlTaskFile    = "task.json"
+	ControlHooksFile   = "hooks.json"
+	ControlPolicyFile  = "policy.json"
+	ControlVerdictFile = "verdict.json"
 )
 
 // HookSets is the hooks.json wire payload. The supervisor chooses both tiers;

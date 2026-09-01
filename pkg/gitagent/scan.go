@@ -34,10 +34,11 @@ type TaskSnapshot struct {
 // Concluded reports the terminal outcome of a task, if it has one.
 //
 // The filesystem never records "this task is over", so it is derived: an
-// accepted verdict at the supervisor tier ends the task, and so does a
-// non-accepted one once the attempt budget is spent. Anything else is still in
-// flight — a rejection with attempts remaining is explicitly not terminal
-// (SPEC-git-agent-protocol §6.3, "rejection is not termination").
+// accepted verdict at the supervisor tier ends the task, as does an explicitly
+// terminal worker error or a non-accepted verdict once the attempt budget is
+// spent. Anything else is still in flight — a rejection with attempts
+// remaining is explicitly not terminal (SPEC-git-agent-protocol §6.3,
+// "rejection is not termination").
 func (s TaskSnapshot) Concluded() (VerdictStatus, bool) {
 	final, ok := s.finalVerdict()
 	if !ok {
@@ -45,6 +46,9 @@ func (s TaskSnapshot) Concluded() (VerdictStatus, bool) {
 	}
 	if final.Status == StatusAccepted {
 		return StatusAccepted, true
+	}
+	if final.Terminal {
+		return final.Status, true
 	}
 	budget := 0
 	if s.State != nil {

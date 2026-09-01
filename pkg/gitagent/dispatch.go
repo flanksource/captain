@@ -273,9 +273,9 @@ func SSHTransportCommand(executable string) string {
 }
 
 // AwaitOutcome polls the mailbox for the task's final verdict: the first
-// accepted one, or a rejection on the task's last permitted attempt, or a
-// timeout. Rejected non-final attempts keep waiting — rejection is not
-// termination (§6.3).
+// accepted one, a worker-reported terminal error, a rejection on the task's
+// last permitted attempt, or a timeout. Rejected non-final attempts keep
+// waiting — rejection is not termination (§6.3).
 func AwaitOutcome(ctx context.Context, mailbox, task string, timeout time.Duration) (*TierVerdict, error) {
 	if timeout <= 0 {
 		timeout = time.Hour
@@ -302,6 +302,9 @@ func AwaitOutcome(ctx context.Context, mailbox, task string, timeout time.Durati
 				break
 			}
 			if v.Status == StatusAccepted {
+				return v, nil
+			}
+			if v.Terminal {
 				return v, nil
 			}
 			if maxAttempts > 0 && attempt >= maxAttempts {

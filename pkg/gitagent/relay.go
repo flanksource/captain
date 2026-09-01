@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 )
 
@@ -225,6 +226,82 @@ func Relay(ctx context.Context, repo string, hookEnv []string, target RelayTarge
 			return &upstreamRejectedError{verdict: *feedback.verdict}
 		}
 		return fmt.Errorf("supervisor rejected attempt %d (exit %d)%s", envelope.Attempt, code, strings.TrimSpace(out))
+	}
+	return nil
+}
+
+// ReportTaskFailure sends a terminal error verdict when the detached worker
+// exits before it can make the ordinary branch push that starts result relay.
+func ReportTaskFailure(ctx context.Context, repo string, target RelayTarget, task string, failure error) error {
+	if failure == nil {
+		return fmt.Errorf("task failure is required")
+	}
+	var attempt int
+	st, err := UpdateTaskState(repo, task, func(current *TaskState) (bool, error) {
+		attempt = current.Attempts + 1
+		if current.Policy.MaxAttempts > 0 && attempt > current.Policy.MaxAttempts {
+			return false, fmt.Errorf("attempt %d exceeds the task's maxAttempts %d", attempt, current.Policy.MaxAttempts)
+		}
+		current.Attempts = attempt
+		return true, nil
+	})
+	if err != nil {
+		return err
+	}
+	if st == nil {
+		return fmt.Errorf("task %s state is missing", task)
+	}
+	message := failure.Error()
+	if len(message) > maxFindingFeedback {
+		message = message[:maxFindingFeedback] + "\n[failure message truncated]"
+	}
+	verdict := TierVerdict{
+		V: ProtocolVersion, Task: task, Attempt: attempt,
+		Tier: string(RoleSidecar), Status: StatusError, Terminal: true,
+		Findings: []Finding{{Hook: "agent", Kind: "exec", Message: message}},
+	}
+	if err := SaveVerdict(repo, verdict); err != nil {
+		return fmt.Errorf("save local failure verdict: %w", err)
+	}
+	payload, err := json.MarshalIndent(verdict, "", "  ")
+	if err != nil {
+		return err
+	}
+	commit, err := BuildControlCommit(ctx, repo, nil, map[string][]byte{ControlVerdictFile: payload})
+	if err != nil {
+		return err
+	}
+	mailboxURL, err := MailboxURL(target.URL, st.Mailbox)
+	if err != nil {
+		return err
+	}
+	verdictRef, err := VerdictRef(task, attempt)
+	if err != nil {
+		return err
+	}
+	envelope := Envelope{
+		Version: ProtocolVersion, Task: task, Attempt: attempt,
+		Base: st.Base, Depth: 0, Agent: st.Agent, Relay: st.Relay,
+	}
+	opts, err := envelope.Encode()
+	if err != nil {
+		return err
+	}
+	args := []string{"push", "--atomic"}
+	for _, option := range opts {
+		args = append(args, "--push-option="+option)
+	}
+	args = append(args, mailboxURL, commit+":"+verdictRef)
+	transport, err := target.Transport(mailboxURL)
+	if err != nil {
+		return err
+	}
+	env, err := TransportEnv(ScrubGitEnv(os.Environ()), transport)
+	if err != nil {
+		return err
+	}
+	if _, err := runGit(ctx, repo, env, args...); err != nil {
+		return fmt.Errorf("relay terminal failure verdict: %w", err)
 	}
 	return nil
 }
