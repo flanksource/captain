@@ -28,7 +28,7 @@ const (
 type scriptedProvider struct {
 	responses []string
 	calls     int
-	backend   ai.Backend
+	runtime   ai.Runtime
 }
 
 func (s *scriptedProvider) Execute(context.Context, ai.Request) (*ai.Response, error) {
@@ -40,11 +40,11 @@ func (s *scriptedProvider) Execute(context.Context, ai.Request) (*ai.Response, e
 	return &ai.Response{Text: s.responses[idx], Model: "test-model"}, nil
 }
 func (s *scriptedProvider) GetModel() string { return "test-model" }
-func (s *scriptedProvider) GetBackend() ai.Backend {
-	if s.backend != "" {
-		return s.backend
+func (s *scriptedProvider) GetRuntime() ai.Runtime {
+	if (s.runtime != ai.Runtime{}) {
+		return s.runtime
 	}
-	return ai.BackendOpenAI
+	return ai.RuntimeOf(ai.OpenAI, ai.ModeAPI)
 }
 
 // outcome is one scripted provider result: a text response or an error.
@@ -60,7 +60,7 @@ type erroringProvider struct {
 	outcomes []outcome
 	calls    int
 	prompts  []string
-	backend  ai.Backend
+	runtime  ai.Runtime
 }
 
 func (e *erroringProvider) Execute(_ context.Context, req ai.Request) (*ai.Response, error) {
@@ -76,11 +76,11 @@ func (e *erroringProvider) Execute(_ context.Context, req ai.Request) (*ai.Respo
 	return &ai.Response{Text: e.outcomes[idx].text, Model: "test-model"}, nil
 }
 func (e *erroringProvider) GetModel() string { return "test-model" }
-func (e *erroringProvider) GetBackend() ai.Backend {
-	if e.backend != "" {
-		return e.backend
+func (e *erroringProvider) GetRuntime() ai.Runtime {
+	if (e.runtime != ai.Runtime{}) {
+		return e.runtime
 	}
-	return ai.BackendOpenAI
+	return ai.RuntimeOf(ai.OpenAI, ai.ModeAPI)
 }
 
 func capRequest(strictness api.SchemaStrictness) ai.Request {
@@ -117,7 +117,7 @@ func TestValidation_NoStrictnessSkipsValidation(t *testing.T) {
 }
 
 func TestValidation_AnthropicNoStrictnessDefaultsToRetry(t *testing.T) {
-	inner := &scriptedProvider{backend: ai.BackendAnthropic, responses: []string{overCapJSON, validJSON}}
+	inner := &scriptedProvider{runtime: ai.RuntimeOf(ai.Anthropic, ai.ModeAPI), responses: []string{overCapJSON, validJSON}}
 	p, err := WithSchemaValidation()(inner)
 	if err != nil {
 		t.Fatalf("WithSchemaValidation: %v", err)
@@ -135,7 +135,7 @@ func TestValidation_AnthropicNoStrictnessDefaultsToRetry(t *testing.T) {
 }
 
 func TestValidation_AnthropicExplicitNoneSkipsValidation(t *testing.T) {
-	inner := &scriptedProvider{backend: ai.BackendAnthropic, responses: []string{overCapJSON}}
+	inner := &scriptedProvider{runtime: ai.RuntimeOf(ai.Anthropic, ai.ModeAPI), responses: []string{overCapJSON}}
 	p, err := WithSchemaValidation()(inner)
 	if err != nil {
 		t.Fatalf("WithSchemaValidation: %v", err)
@@ -268,9 +268,9 @@ func TestValidation_ProviderSchemaErrorExhaustsRetries(t *testing.T) {
 
 func TestValidation_RepairRequestUsesConfiguredModel(t *testing.T) {
 	v := &validatingProvider{
-		provider: &scriptedProvider{backend: ai.BackendAnthropic},
+		provider: &scriptedProvider{runtime: ai.RuntimeOf(ai.Anthropic, ai.ModeAPI)},
 		cfg: ai.Config{SchemaRepair: api.SchemaRepairConfig{
-			Model: api.Model{Name: "gpt-5", Backend: ai.BackendOpenAI},
+			Model: api.Model{Name: "gpt-5", Mode: ai.ModeAPI},
 		}},
 	}
 	req, cfg, useParent, err := v.repairRequest(capRequest(api.SchemaStrictnessRetry), json.RawMessage(capSchema), "bad", &ai.Response{Text: overCapJSON}, 1)
@@ -280,7 +280,7 @@ func TestValidation_RepairRequestUsesConfiguredModel(t *testing.T) {
 	if useParent {
 		t.Fatal("repair with configured model should not reuse parent provider")
 	}
-	if cfg.Model.Name != "gpt-5" || cfg.Model.Backend != ai.BackendOpenAI {
+	if cfg.Model.Name != "gpt-5" || cfg.Model.Mode != ai.ModeAPI {
 		t.Fatalf("repair cfg model = %#v", cfg.Model)
 	}
 	if req.Prompt.SchemaStrictness != api.SchemaStrictnessDisabled {
@@ -300,7 +300,7 @@ Previous: {{previousResponse}}
 		t.Fatalf("write repair prompt: %v", err)
 	}
 	v := &validatingProvider{
-		provider: &scriptedProvider{backend: ai.BackendAnthropic},
+		provider: &scriptedProvider{runtime: ai.RuntimeOf(ai.Anthropic, ai.ModeAPI)},
 		cfg:      ai.Config{SchemaRepair: api.SchemaRepairConfig{Prompt: path}},
 	}
 	req, _, useParent, err := v.repairRequest(capRequest(api.SchemaStrictnessRetry), json.RawMessage(capSchema), "custom-error", &ai.Response{Text: overCapJSON}, 1)

@@ -15,7 +15,7 @@ type cachingProvider struct {
 }
 
 func (c *cachingProvider) GetModel() string       { return c.provider.GetModel() }
-func (c *cachingProvider) GetBackend() ai.Backend { return c.provider.GetBackend() }
+func (c *cachingProvider) GetRuntime() ai.Runtime { return c.provider.GetRuntime() }
 func (c *cachingProvider) Unwrap() ai.Provider    { return c.provider }
 
 func (c *cachingProvider) Execute(ctx context.Context, req ai.Request) (*ai.Response, error) {
@@ -26,11 +26,11 @@ func (c *cachingProvider) Execute(ctx context.Context, req ai.Request) (*ai.Resp
 	cacheIdentity := req.Prompt.CacheIdentity()
 	entry, err := c.cache.Get(cacheIdentity, c.provider.GetModel())
 	if err == nil && entry != nil && entry.Error == "" {
-		log.Debugf("[%s/%s] cache hit", c.provider.GetBackend(), c.provider.GetModel())
+		log.Debugf("[%s/%s] cache hit", c.provider.GetRuntime(), c.provider.GetModel())
 		return &ai.Response{
 			Text:     entry.Response,
 			Model:    entry.Model,
-			Backend:  c.provider.GetBackend(),
+			Runtime:  c.provider.GetRuntime(),
 			CacheHit: true,
 			Usage: ai.Usage{
 				InputTokens:      entry.TokensInput,
@@ -44,7 +44,7 @@ func (c *cachingProvider) Execute(ctx context.Context, req ai.Request) (*ai.Resp
 		return nil, err
 	}
 
-	log.Debugf("[%s/%s] cache miss", c.provider.GetBackend(), c.provider.GetModel())
+	log.Debugf("[%s/%s] cache miss", c.provider.GetRuntime(), c.provider.GetModel())
 
 	start := time.Now()
 	resp, execErr := c.provider.Execute(ctx, req)
@@ -54,7 +54,7 @@ func (c *cachingProvider) Execute(ctx context.Context, req ai.Request) (*ai.Resp
 		Model:      c.provider.GetModel(),
 		Prompt:     cacheIdentity,
 		DurationMS: duration.Milliseconds(),
-		Provider:   string(c.provider.GetBackend()),
+		Provider:   c.provider.GetRuntime().Provider,
 	}
 
 	if execErr != nil {

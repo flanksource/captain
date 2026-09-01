@@ -28,7 +28,7 @@ type retryProvider struct {
 }
 
 func (r *retryProvider) GetModel() string       { return r.provider.GetModel() }
-func (r *retryProvider) GetBackend() ai.Backend { return r.provider.GetBackend() }
+func (r *retryProvider) GetRuntime() ai.Runtime { return r.provider.GetRuntime() }
 func (r *retryProvider) Unwrap() ai.Provider    { return r.provider }
 
 func (r *retryProvider) Execute(ctx context.Context, req ai.Request) (*ai.Response, error) {
