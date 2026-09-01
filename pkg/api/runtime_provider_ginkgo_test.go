@@ -16,7 +16,7 @@ type runtimeProviderStub struct{}
 func (runtimeProviderStub) Execute(context.Context, api.Spec) (*api.Response, error) {
 	return &api.Response{}, nil
 }
-func (runtimeProviderStub) GetModel() string                { return "test-model" }
+func (runtimeProviderStub) GetModel() string { return "test-model" }
 func (runtimeProviderStub) GetRuntime() api.Runtime {
 	return api.RuntimeOf(api.Anthropic, api.ModeAgent)
 }

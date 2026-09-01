@@ -126,17 +126,17 @@ type AIDefaults struct {
 
 	// File-wide generation settings. These are global on purpose: they are
 	// properties of a run, not of a provider.
-	BudgetUSD       float64 `yaml:"budgetUSD,omitempty"`
-	MaxTokens       int     `yaml:"maxTokens,omitempty"`
-	Temperature     float64 `yaml:"temperature,omitempty"`
-	Timeout         string  `yaml:"timeout,omitempty"`
-	NoCache         bool    `yaml:"noCache,omitempty"`
-	NoMCP           bool    `yaml:"noMCP,omitempty"`
-	NoHooks         bool    `yaml:"noHooks,omitempty"`
-	NoSkills        bool    `yaml:"noSkills,omitempty"`
-	NoUser          bool    `yaml:"noUser,omitempty"`
-	NoProject       bool    `yaml:"noProject,omitempty"`
-	NoMemory        bool    `yaml:"noMemory,omitempty"`
+	BudgetUSD   float64 `yaml:"budgetUSD,omitempty"`
+	MaxTokens   int     `yaml:"maxTokens,omitempty"`
+	Temperature float64 `yaml:"temperature,omitempty"`
+	Timeout     string  `yaml:"timeout,omitempty"`
+	NoCache     bool    `yaml:"noCache,omitempty"`
+	NoMCP       bool    `yaml:"noMCP,omitempty"`
+	NoHooks     bool    `yaml:"noHooks,omitempty"`
+	NoSkills    bool    `yaml:"noSkills,omitempty"`
+	NoUser      bool    `yaml:"noUser,omitempty"`
+	NoProject   bool    `yaml:"noProject,omitempty"`
+	NoMemory    bool    `yaml:"noMemory,omitempty"`
 }
 
 type ProviderDefaults struct {

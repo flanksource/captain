@@ -52,9 +52,9 @@ type PermissionsMatrixEntry struct {
 type PermissionsMatrixNote struct {
 	Provider string `json:"provider" pretty:"label=Provider,table"`
 	Mode     string `json:"mode" pretty:"label=Mode,table"`
-	Setting string `json:"setting" pretty:"label=Setting,table"`
-	Support string `json:"support" pretty:"label=Support,table"`
-	Note    string `json:"note" pretty:"label=Note,table"`
+	Setting  string `json:"setting" pretty:"label=Setting,table"`
+	Support  string `json:"support" pretty:"label=Support,table"`
+	Note     string `json:"note" pretty:"label=Note,table"`
 }
 
 func RunPermissionsMatrix(opts PermissionsMatrixOptions) (any, error) {
