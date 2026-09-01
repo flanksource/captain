@@ -129,7 +129,7 @@ var _ = Describe("Genkit tool event correlation", func() {
 
 		provider := &Provider{
 			cfg: ai.Config{
-				Model: api.Model{Name: "parallel-journals", Backend: api.BackendAnthropic},
+				Model: api.Model{Name: "parallel-journals", Mode: api.ModeAPI},
 				Tools: []api.ToolDefinition{{
 					Name:              "journals",
 					DefaultPermission: api.ToolPolicyAllow,
@@ -145,8 +145,8 @@ var _ = Describe("Genkit tool event correlation", func() {
 					},
 				}},
 			},
-			backend: api.BackendAnthropic,
-			g:       genkit, modelRef: modelRef,
+			provider: ai.Anthropic,
+			g:        genkit, modelRef: modelRef,
 		}
 
 		stream, err := provider.ExecuteStream(ctx, api.Spec{Prompt: api.Prompt{User: "Inspect both journal sets."}})

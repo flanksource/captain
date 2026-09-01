@@ -18,13 +18,13 @@ const mockBaseURL = "http://127.0.0.1:9999"
 // instance would be served from the entry built against the real API, making the
 // override silently order-dependent.
 func TestInstanceKeyDistinguishesBaseURL(t *testing.T) {
-	real := instanceKey{backend: ai.BackendAnthropic, apiKey: "k"}
-	mocked := instanceKey{backend: ai.BackendAnthropic, apiKey: "k", baseURL: mockBaseURL}
+	real := instanceKey{provider: ai.Anthropic.Name, apiKey: "k"}
+	mocked := instanceKey{provider: ai.Anthropic.Name, apiKey: "k", baseURL: mockBaseURL}
 	assert.NotEqual(t, real, mocked)
 }
 
 func TestPluginForAnthropicCarriesBaseURL(t *testing.T) {
-	plugin, err := pluginFor(ai.BackendAnthropic, "k", mockBaseURL)
+	plugin, err := pluginFor(ai.Anthropic, "k", mockBaseURL)
 	require.NoError(t, err)
 
 	got, ok := plugin.(*anthropic.Anthropic)
@@ -35,13 +35,13 @@ func TestPluginForAnthropicCarriesBaseURL(t *testing.T) {
 // openai.OpenAI has no BaseURL field, so the override has to travel as a client
 // request option instead.
 func TestPluginForOpenAICarriesBaseURLAsAnOption(t *testing.T) {
-	plugin, err := pluginFor(ai.BackendOpenAI, "k", mockBaseURL)
+	plugin, err := pluginFor(ai.OpenAI, "k", mockBaseURL)
 	require.NoError(t, err)
 	overridden, ok := plugin.(*openai.OpenAI)
 	require.True(t, ok)
 	assert.Len(t, overridden.Opts, 1, "the endpoint override is configured")
 
-	plugin, err = pluginFor(ai.BackendOpenAI, "k", "")
+	plugin, err = pluginFor(ai.OpenAI, "k", "")
 	require.NoError(t, err)
 	plain, ok := plugin.(*openai.OpenAI)
 	require.True(t, ok)
@@ -49,13 +49,13 @@ func TestPluginForOpenAICarriesBaseURLAsAnOption(t *testing.T) {
 }
 
 func TestPluginForDeepSeekOverridesItsHardcodedEndpoint(t *testing.T) {
-	plugin, err := pluginFor(ai.BackendDeepSeek, "k", mockBaseURL)
+	plugin, err := pluginFor(ai.DeepSeek, "k", mockBaseURL)
 	require.NoError(t, err)
 	overridden, ok := plugin.(*compat_oai.OpenAICompatible)
 	require.True(t, ok)
 	assert.Equal(t, mockBaseURL, overridden.BaseURL)
 
-	plugin, err = pluginFor(ai.BackendDeepSeek, "k", "")
+	plugin, err = pluginFor(ai.DeepSeek, "k", "")
 	require.NoError(t, err)
 	plain, ok := plugin.(*compat_oai.OpenAICompatible)
 	require.True(t, ok)
@@ -65,14 +65,14 @@ func TestPluginForDeepSeekOverridesItsHardcodedEndpoint(t *testing.T) {
 // googlegenai exposes no endpoint override, so an APIURL that cannot be honoured
 // must fail rather than quietly calling the real API.
 func TestPluginForRejectsGeminiBaseURL(t *testing.T) {
-	_, err := pluginFor(ai.BackendGemini, "k", mockBaseURL)
+	_, err := pluginFor(ai.Google, "k", mockBaseURL)
 	require.ErrorContains(t, err, "does not support an API URL override")
 
-	_, err = pluginFor(ai.BackendGemini, "k", "")
+	_, err = pluginFor(ai.Google, "k", "")
 	require.NoError(t, err)
 }
 
 func TestGetInstanceRequiresAnAPIKey(t *testing.T) {
-	_, err := getInstance(t.Context(), ai.BackendAnthropic, "", "")
+	_, err := getInstance(t.Context(), ai.Anthropic, "", "")
 	require.ErrorIs(t, err, ai.ErrNoAPIKey)
 }

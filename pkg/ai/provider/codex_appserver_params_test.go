@@ -28,41 +28,55 @@ func TestBuildThreadStartParams_Safety(t *testing.T) {
 		wantEphem    bool
 		wantNoMCP    bool
 	}{
-		{name: "default is read-only on-request", req: req(api.Prompt{User: "p"}), wantSandbox: "read-only", wantApproval: "on-request"},
+		{name: "native defaults to read-only on-request", req: codexNativeRequest(codexNativeRequestOptions{}), wantSandbox: "read-only", wantApproval: "on-request"},
 		{
-			name:        "edit maps to workspace-write",
-			req:         ai.Request{Prompt: api.Prompt{User: "p"}, Permissions: api.Permissions{Presets: []api.Preset{api.PresetEdit}}},
+			name: "edit maps to workspace-write",
+			req: ai.Request{Prompt: api.Prompt{User: "p"}, Permissions: api.Permissions{Mode: api.PermissionAcceptEdits}, Sandbox: &api.SandboxRef{
+				Mode: api.SandboxNative,
+				Policy: &api.NativeSandboxPolicy{Filesystem: &api.SandboxFilesystemPolicy{
+					Access: api.SandboxFilesystemWorkspaceWrite,
+				}},
+			}},
 			wantSandbox: "workspace-write", wantApproval: "on-request",
 		},
 		{
-			name:        "explicit permission mode skips workspace-write default",
-			req:         ai.Request{Prompt: api.Prompt{User: "p"}, Permissions: api.Permissions{Presets: []api.Preset{api.PresetEdit}, Mode: api.PermissionDefault}},
+			name: "plan keeps the native sandbox read-only",
+			req: ai.Request{Prompt: api.Prompt{User: "p"}, Permissions: api.Permissions{Mode: api.PermissionPlan}, Sandbox: &api.SandboxRef{
+				Mode: api.SandboxNative,
+				Policy: &api.NativeSandboxPolicy{Filesystem: &api.SandboxFilesystemPolicy{
+					Access: api.SandboxFilesystemWorkspaceWrite,
+				}},
+			}},
 			wantSandbox: "read-only", wantApproval: "on-request",
 		},
 		{
-			name:        "bypass permissions maps to danger-full-access never",
-			req:         ai.Request{Prompt: api.Prompt{User: "p"}, Permissions: api.Permissions{Mode: api.PermissionBypass}},
+			name: "bypass permissions maps to danger-full-access never",
+			req: ai.Request{
+				Prompt: api.Prompt{User: "p"}, Permissions: api.Permissions{Mode: api.PermissionBypass},
+				Sandbox: &api.SandboxRef{Mode: api.SandboxOff},
+			},
 			wantSandbox: "danger-full-access", wantApproval: "never",
 		},
 		{
 			name:        "no-memory sets ephemeral",
-			req:         ai.Request{Prompt: api.Prompt{User: "p"}, Memory: api.Memory{SkipMemory: true}},
+			req:         codexNativeRequest(codexNativeRequestOptions{Memory: api.Memory{SkipMemory: true}}),
 			wantSandbox: "read-only", wantApproval: "on-request", wantEphem: true,
 		},
 		{
 			name:        "bare sets ephemeral",
-			req:         ai.Request{Prompt: api.Prompt{User: "p"}, Memory: api.Memory{Bare: true}},
+			req:         codexNativeRequest(codexNativeRequestOptions{Memory: api.Memory{Bare: true}}),
 			wantSandbox: "read-only", wantApproval: "on-request", wantEphem: true,
 		},
 		{
 			name:        "no-mcp sets empty mcp_servers override",
-			req:         ai.Request{Prompt: api.Prompt{User: "p"}, Permissions: api.Permissions{MCP: api.MCP{Disabled: true}}},
+			req:         codexNativeRequest(codexNativeRequestOptions{Permissions: api.Permissions{MCP: api.MCP{Disabled: true}}}),
 			wantSandbox: "read-only", wantApproval: "on-request", wantNoMCP: true,
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			p := buildThreadStartParams("gpt-5", tc.req, nil)
+			p, err := buildThreadStartParams("gpt-5", tc.req, nil)
+			require.NoError(t, err)
 			assert.Equal(t, true, p["experimentalRawEvents"])
 			assert.Equal(t, tc.wantSandbox, p["sandbox"])
 			assert.Equal(t, tc.wantApproval, p["approvalPolicy"])
@@ -77,13 +91,33 @@ func TestBuildThreadStartParams_Safety(t *testing.T) {
 	}
 }
 
+type codexNativeRequestOptions struct {
+	Memory      api.Memory
+	Permissions api.Permissions
+}
+
+func codexNativeRequest(options codexNativeRequestOptions) ai.Request {
+	permissions := options.Permissions
+	if permissions.Mode == "" {
+		permissions.Mode = api.PermissionDefault
+	}
+	return ai.Request{
+		Prompt:      api.Prompt{User: "p"},
+		Memory:      options.Memory,
+		Permissions: permissions,
+		Sandbox:     &api.SandboxRef{Mode: api.SandboxNative},
+	}
+}
+
 func TestBuildThreadStartParams_CwdAndModel(t *testing.T) {
-	p := buildThreadStartParams("gpt-5", ai.Request{
+	p, err := buildThreadStartParams("gpt-5", ai.Request{
 		Prompt: api.Prompt{User: "p"}, Setup: &shell.Setup{Cwd: "/repo"},
 	}, nil)
+	require.NoError(t, err)
 	assert.Equal(t, "/repo", p["cwd"])
 	assert.Equal(t, "gpt-5", p["model"])
-	noModel := buildThreadStartParams("", req(api.Prompt{User: "p"}), nil)
+	noModel, err := buildThreadStartParams("", ai.Request{}, nil)
+	require.NoError(t, err)
 	_, hasModel := noModel["model"]
 	assert.False(t, hasModel, "empty model must be omitted")
 }
@@ -109,26 +143,30 @@ func TestHandleApproval_AnswersFromPosture(t *testing.T) {
 		{"some/unknown/approval", "approved", "denied"},
 	}
 	postures := []struct {
-		name        string
-		permissions api.Permissions
-		wantAccept  bool
+		name       string
+		sandbox    *api.SandboxRef
+		mode       api.PermissionMode
+		wantAccept bool
 	}{
 		{
-			name:        "the default read-only posture declines",
-			permissions: api.Permissions{},
+			name:    "the default read-only posture declines",
+			sandbox: &api.SandboxRef{Mode: api.SandboxNative},
 		},
 		{
-			name:        "plan declines",
-			permissions: api.Permissions{Mode: api.PermissionPlan},
+			name:    "plan declines",
+			sandbox: &api.SandboxRef{Mode: api.SandboxNative},
+			mode:    api.PermissionPlan,
 		},
 		{
-			name:        "the edit preset declines escalation beyond its workspace",
-			permissions: api.Permissions{Presets: []api.Preset{api.PresetEdit}},
+			name: "the edit preset declines escalation beyond its workspace",
+			sandbox: &api.SandboxRef{Mode: api.SandboxNative, Policy: &api.NativeSandboxPolicy{
+				Filesystem: &api.SandboxFilesystemPolicy{Access: api.SandboxFilesystemWorkspaceWrite},
+			}},
 		},
 		{
-			name:        "an explicit bypass has already granted it",
-			permissions: api.Permissions{Mode: api.PermissionBypass},
-			wantAccept:  true,
+			name:       "an explicit bypass has already granted it",
+			sandbox:    &api.SandboxRef{Mode: api.SandboxOff},
+			wantAccept: true,
 		},
 	}
 
@@ -136,7 +174,9 @@ func TestHandleApproval_AnswersFromPosture(t *testing.T) {
 		t.Run(posture.name, func(t *testing.T) {
 			c, err := NewCodexAppServer(ai.Config{Model: api.Model{Name: "m"}})
 			require.NoError(t, err)
-			c.setPosture(postureFor(ai.Request{Permissions: posture.permissions}))
+			c.setPosture(postureFor(ai.Request{
+				Sandbox: posture.sandbox, Permissions: api.Permissions{Mode: posture.mode},
+			}))
 
 			for _, m := range methods {
 				want := m.decline
@@ -170,12 +210,12 @@ func TestBeginTurn_ConcurrentTurnCannotEscalateTheInFlightPosture(t *testing.T) 
 	c, err := NewCodexAppServer(ai.Config{Model: api.Model{Name: "m"}})
 	require.NoError(t, err)
 
-	c.beginTurn(ai.Request{Permissions: api.Permissions{Presets: []api.Preset{api.PresetEdit}}})
+	c.beginTurn(ai.Request{Sandbox: &api.SandboxRef{Mode: api.SandboxNative}})
 
 	queued := make(chan struct{})
 	go func() {
 		defer close(queued)
-		c.beginTurn(ai.Request{Permissions: api.Permissions{Mode: api.PermissionBypass}})
+		c.beginTurn(ai.Request{Sandbox: &api.SandboxRef{Mode: api.SandboxOff}})
 		c.turnMu.Unlock()
 	}()
 

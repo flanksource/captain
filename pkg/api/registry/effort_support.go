@@ -5,7 +5,7 @@ import (
 	"slices"
 )
 
-// ModelEfforts returns the effort tiers a backend/model pair accepts, when the
+// ModelEfforts returns the effort tiers a runtime/model pair accepts, when the
 // catalog knows the combination. ok is false for models the catalog has never
 // heard of, which keeps effort validation permissive for brand-new ids.
 //
@@ -14,8 +14,8 @@ import (
 //
 // The lookup is exact: callers pass an already-resolved id, and resolving again
 // here would answer for a sibling model (see RegistryModelDef).
-func ModelEfforts(backend Backend, model string) (supported []Effort, defaultEffort Effort, ok bool) {
-	raw, def, found := catalogEfforts(backend, model)
+func ModelEfforts(p *Provider, mode RuntimeMode, model string) (supported []Effort, defaultEffort Effort, ok bool) {
+	raw, def, found := catalogEfforts(p, mode, model)
 	if !found {
 		return nil, EffortNone, false
 	}
@@ -26,9 +26,8 @@ func ModelEfforts(backend Backend, model string) (supported []Effort, defaultEff
 // catalogEfforts is ModelEfforts without the disabled filter — the raw catalog
 // truth, so ResolveEffort can tell "this model has no reasoning knob" apart from
 // "every tier this model supports is disabled".
-func catalogEfforts(backend Backend, model string) (supported []Effort, defaultEffort Effort, ok bool) {
-	p, mode, found := ProviderFor(backend)
-	if !found {
+func catalogEfforts(p *Provider, mode RuntimeMode, model string) (supported []Effort, defaultEffort Effort, ok bool) {
+	if p == nil {
 		return nil, EffortNone, false
 	}
 	m, found := p.Lookup(model)
@@ -38,14 +37,14 @@ func catalogEfforts(backend Backend, model string) (supported []Effort, defaultE
 	return append([]Effort(nil), m.SupportedEfforts...), m.DefaultEffort, true
 }
 
-// ResolveEffort returns the executable effort for a backend/model pair. Valid
+// ResolveEffort returns the executable effort for a runtime/model pair. Valid
 // tiers unsupported by a known model degrade to its highest supported tier;
-// models without a reasoning knob use the backend default. Unknown models retain
+// models without a reasoning knob use the adapter default. Unknown models retain
 // the requested tier so a newer provider model is not blocked by a stale catalog.
 //
 // A tier the user disabled is never returned: it degrades like an unsupported
 // one. Only an opt-out set that leaves nothing to fall back to is an error.
-func ResolveEffort(backend Backend, model string, effort Effort) (Effort, error) {
+func ResolveEffort(p *Provider, mode RuntimeMode, model string, effort Effort) (Effort, error) {
 	if err := effort.Validate(); err != nil {
 		return EffortNone, err
 	}
@@ -53,7 +52,7 @@ func ResolveEffort(backend Backend, model string, effort Effort) (Effort, error)
 		return EffortNone, nil
 	}
 	disabled := Disabled()
-	raw, _, known := catalogEfforts(backend, model)
+	raw, _, known := catalogEfforts(p, mode, model)
 	if !known {
 		if !disabled.Effort(effort) {
 			return effort, nil
@@ -69,7 +68,7 @@ func ResolveEffort(backend Backend, model string, effort Effort) (Effort, error)
 	}
 	supported := disabled.Efforts(raw)
 	if len(supported) == 0 {
-		return EffortNone, fmt.Errorf("every reasoning effort supported by model %q on %s is disabled; re-enable one under ai.disabled.efforts", model, backend)
+		return EffortNone, fmt.Errorf("every reasoning effort supported by model %q on %s is disabled; re-enable one under ai.disabled.efforts", model, RuntimeOf(p, mode))
 	}
 	if slices.Contains(supported, effort) {
 		return effort, nil
@@ -80,7 +79,7 @@ func ResolveEffort(backend Backend, model string, effort Effort) (Effort, error)
 			return ordered[i], nil
 		}
 	}
-	return EffortNone, fmt.Errorf("model %q on %s has no valid supported reasoning efforts", model, backend)
+	return EffortNone, fmt.Errorf("model %q on %s has no valid supported reasoning efforts", model, RuntimeOf(p, mode))
 }
 
 // degradeEffort picks the closest allowed tier at or below effort, falling back

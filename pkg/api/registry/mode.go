@@ -6,12 +6,10 @@ import "strings"
 // driven through an installed CLI binary, run via an agent SDK subprocess, or
 // piloted in an interactive TUI inside a cmux surface.
 //
-// A Backend is exactly a (Provider, RuntimeMode) pair — "claude-agent" is
-// anthropic×agent. Backend remains the serialized form (it is written to specs,
-// session rows, and the webapp wire format); RuntimeMode is the axis captain
-// reasons about, and previously existed only in the frontend's RuntimeModePicker
-// while Go smeared it across Backend.Kind, isMode, isSelectorPrefix,
-// backendForMode, selectorBackend, and runtimeLogIdentity.
+// It is the only half of a runtime a caller authors — the provider half is
+// derived from the model name. Captain used to compress the pair into a
+// composite id ("claude-agent" for anthropic×agent) and serialize that instead,
+// which meant the same JSON key named an adapter outbound and a mode inbound.
 type RuntimeMode string
 
 const (
@@ -47,6 +45,16 @@ func ParseRuntimeMode(s string) (RuntimeMode, bool) {
 	default:
 		return "", false
 	}
+}
+
+// Kind classifies a mode as "api" (called directly over HTTP with an API key)
+// or "cli" (delegated to an installed coding-agent binary with its own auth).
+// It is a property of the mechanism alone — no provider input.
+func (m RuntimeMode) Kind() string {
+	if m == ModeAPI {
+		return "api"
+	}
+	return "cli"
 }
 
 // RuntimeModeList renders the modes as comma-separated text for help/errors.

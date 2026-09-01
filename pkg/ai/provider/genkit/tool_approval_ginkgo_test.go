@@ -121,7 +121,7 @@ var _ = Describe("Genkit resumable tool approval", func() {
 
 		provider := &Provider{
 			cfg: ai.Config{
-				Model: api.Model{Name: "resumable-approval", Backend: api.BackendOpenAI},
+				Model: api.Model{Name: "resumable-approval", Mode: api.ModeAPI},
 				Tools: []api.ToolDefinition{
 					{Name: "invoice_get", DefaultPermission: api.ToolPolicyAllow, Handler: func(context.Context, map[string]any) (any, error) {
 						readRuns.Add(1)
@@ -134,8 +134,8 @@ var _ = Describe("Genkit resumable tool approval", func() {
 					}},
 				},
 			},
-			backend: api.BackendOpenAI,
-			g:       genkit, modelRef: modelRef,
+			provider: ai.OpenAI,
+			g:        genkit, modelRef: modelRef,
 		}
 
 		firstStream, err := provider.ExecuteStream(ctx, api.Spec{Prompt: api.Prompt{User: "Update then inspect."}})

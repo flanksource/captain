@@ -31,14 +31,14 @@ func NewCodexCLI(cfg ai.Config) *CodexCLI {
 		model = CodexCLIDefaultModel
 	}
 	return &CodexCLI{
-		model:   ai.NormalizeModelForBackend(ai.BackendCodexCLI, model),
+		model:   model,
 		apiURL:  strings.TrimSpace(cfg.APIURL),
 		sandbox: cfg.ResolvedSandbox(),
 	}
 }
 
 func (c *CodexCLI) GetModel() string       { return c.model }
-func (c *CodexCLI) GetBackend() ai.Backend { return ai.BackendCodexCLI }
+func (c *CodexCLI) GetRuntime() ai.Runtime { return ai.RuntimeOf(ai.OpenAI, ai.ModeCLI) }
 
 func (c *CodexCLI) Execute(ctx context.Context, req ai.Request) (*ai.Response, error) {
 	start := time.Now()
@@ -46,7 +46,7 @@ func (c *CodexCLI) Execute(ctx context.Context, req ai.Request) (*ai.Response, e
 	if err != nil {
 		return nil, err
 	}
-	resp, err := CoalesceStreamForBackend(ctx, ai.BackendCodexCLI, c.model, events, start)
+	resp, err := CoalesceStreamForRuntime(ctx, ai.RuntimeOf(ai.OpenAI, ai.ModeCLI), c.model, events, start)
 	if err != nil {
 		return nil, err
 	}
@@ -129,10 +129,10 @@ func buildCodexCLIArgs(cfg codexCLIConfig, req ai.Request) ([]string, func(), er
 	model := cfg.Model
 	args := []string{"exec", "--json"}
 	cleanup := func() {}
-	if err := ai.ValidateAttachmentCompatibility([]api.Model{{Name: model, Backend: api.BackendCodexCLI}}, req.Prompt.Attachments); err != nil {
+	if err := ai.ValidateAttachmentCompatibility([]api.Model{{Name: model, Provider: api.OpenAI, Mode: api.ModeCLI}}, req.Prompt.Attachments); err != nil {
 		return nil, cleanup, err
 	}
-	if err := api.RequireToolPolicySupport(api.BackendCodexCLI, req.Permissions); err != nil {
+	if err := api.RequireToolPolicySupport(api.OpenAI, api.ModeCLI, req.Permissions); err != nil {
 		return nil, cleanup, err
 	}
 	if cfg.APIURL != "" {
@@ -154,16 +154,18 @@ func buildCodexCLIArgs(cfg codexCLIConfig, req ai.Request) ([]string, func(), er
 	if cwd := req.Cwd(); cwd != "" {
 		args = append(args, "-C", cwd)
 	}
-	// Both halves of the posture, so the exec path enforces what the app-server
-	// path enforces from the same helper. `codex exec` has no --ask-for-approval
-	// flag, so the approval policy rides on the config override instead; the key
-	// and its accepted values are validated by --strict-config.
-	sandbox, approval := codexSafety(req)
-	if sandbox != "" {
-		args = append(args, "--sandbox", sandbox)
+	translation, err := translateCodexSandbox(api.RuntimeOf(api.OpenAI, api.ModeCLI), req)
+	if err != nil {
+		return nil, cleanup, err
 	}
-	if approval != "" {
-		args = append(args, "-c", fmt.Sprintf("approval_policy=%q", approval))
+	if translation.Sandbox != "" {
+		args = append(args, "--sandbox", string(translation.Sandbox))
+	}
+	if translation.Approval != "" {
+		args = append(args, "-c", fmt.Sprintf("approval_policy=%q", translation.Approval))
+	}
+	for _, config := range translation.ConfigArgs() {
+		args = append(args, "-c", config)
 	}
 	if req.Memory.SkipMemory || req.Memory.Bare || req.Permissions.HasPreset(api.PresetBare) {
 		args = append(args, "--ephemeral")
@@ -181,7 +183,7 @@ func buildCodexCLIArgs(cfg codexCLIConfig, req ai.Request) ([]string, func(), er
 		}
 		args = append(args, "-c", notify)
 	}
-	schema, err := ai.SchemaJSONForBackend(ai.BackendCodexCLI, req.Prompt)
+	schema, err := ai.SchemaJSONForRuntime(ai.OpenAI, ai.ModeCLI, req.Prompt)
 	if err != nil {
 		return nil, cleanup, fmt.Errorf("codex-cli: cannot derive structured-output schema: %w", err)
 	}

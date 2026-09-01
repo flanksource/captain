@@ -24,12 +24,11 @@ func NewClaudeCLI(model string) *ClaudeCLI {
 	if strings.TrimSpace(model) == "" {
 		model = "opus"
 	}
-	model = ai.NormalizeModelForBackend(ai.BackendClaudeCLI, model)
 	return &ClaudeCLI{model: model}
 }
 
 func (c *ClaudeCLI) GetModel() string       { return c.model }
-func (c *ClaudeCLI) GetBackend() ai.Backend { return ai.BackendClaudeCLI }
+func (c *ClaudeCLI) GetRuntime() ai.Runtime { return ai.RuntimeOf(ai.Anthropic, ai.ModeCLI) }
 
 func (c *ClaudeCLI) Execute(ctx context.Context, req ai.Request) (*ai.Response, error) {
 	start := time.Now()
@@ -37,7 +36,7 @@ func (c *ClaudeCLI) Execute(ctx context.Context, req ai.Request) (*ai.Response, 
 	if err != nil {
 		return nil, err
 	}
-	resp, err := CoalesceStreamForBackend(ctx, ai.BackendClaudeCLI, c.model, events, start)
+	resp, err := CoalesceStreamForRuntime(ctx, ai.RuntimeOf(ai.Anthropic, ai.ModeCLI), c.model, events, start)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +96,10 @@ func buildClaudeCLIArgsWithMCP(model string, req ai.Request, mcpConfigs []string
 	cleanup := func() {}
 	// claude-cli advertises tool-policy support, but only for allow/deny: the
 	// guard still has to reject the policies no transport can express.
-	if err := api.RequireToolPolicySupport(api.BackendClaudeCLI, req.Permissions); err != nil {
+	if err := api.RequireToolPolicySupport(api.Anthropic, api.ModeCLI, req.Permissions); err != nil {
+		return nil, cleanup, err
+	}
+	if err := validatePermissionMode(api.RuntimeOf(api.Anthropic, api.ModeCLI), req.Permissions.Mode); err != nil {
 		return nil, cleanup, err
 	}
 	if m := claudeCLIModel(model); m != "" {
@@ -118,7 +120,7 @@ func buildClaudeCLIArgsWithMCP(model string, req ai.Request, mcpConfigs []string
 	if req.Budget.Cost > 0 {
 		args = append(args, "--max-budget-usd", fmt.Sprintf("%g", req.Budget.Cost))
 	}
-	if mode := cliClaudePermissionMode(req.Permissions.Mode); mode != "" {
+	if mode := cliClaudePermissionMode(permissionMode(req)); mode != "" {
 		args = append(args, "--permission-mode", mode)
 	}
 	if allow := req.Permissions.Tools.AllowList(); len(allow) > 0 {
@@ -148,15 +150,23 @@ func buildClaudeCLIArgsWithMCP(model string, req ai.Request, mcpConfigs []string
 	} else if req.Permissions.MCP.Disabled {
 		args = append(args, "--mcp-config", `{"mcpServers":{}}`, "--strict-mcp-config")
 	}
+	monitorBinary := ""
 	if binary, ok := captainBinary(); ok && api.MonitorHooksEnabled(req) {
-		settingsPath, remove, err := writeClaudeMonitorSettings(binary)
+		monitorBinary = binary
+	}
+	settings, err := claudeSettingsDocument(req, monitorBinary)
+	if err != nil {
+		return nil, cleanup, err
+	}
+	if len(settings) > 0 {
+		settingsPath, remove, err := writeClaudeSettings(settings)
 		if err != nil {
 			return nil, cleanup, err
 		}
 		cleanup = remove
 		args = append(args, "--settings", settingsPath)
 	}
-	schema, err := ai.SchemaJSONForBackend(ai.BackendClaudeCLI, req.Prompt)
+	schema, err := ai.SchemaJSONForRuntime(ai.Anthropic, ai.ModeCLI, req.Prompt)
 	if err != nil {
 		return nil, cleanup, fmt.Errorf("claude-cli: cannot derive structured-output schema: %w", err)
 	}
@@ -166,12 +176,15 @@ func buildClaudeCLIArgsWithMCP(model string, req ai.Request, mcpConfigs []string
 	return args, cleanup, nil
 }
 
+// claudeCLIModel renders the --model argument. The id arrives resolved, so this
+// only drops the bare agent sentinel, which names a family rather than a model
+// and lets the CLI use its own default.
 func claudeCLIModel(model string) string {
 	model = strings.TrimSpace(model)
 	if model == "claude" {
 		return ""
 	}
-	return ai.NormalizeModelForBackend(ai.BackendClaudeCLI, model)
+	return model
 }
 
 func cliClaudePermissionMode(mode api.PermissionMode) string {

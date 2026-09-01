@@ -1,8 +1,10 @@
 package cmux
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -67,8 +69,18 @@ func TestCLIPermissionMode(t *testing.T) {
 }
 
 func TestCmuxExtraArgs(t *testing.T) {
-	// codex seeds sandbox/approval from the permission posture when unset.
-	seeded, err := cmuxExtraArgs("codex", ai.Request{Permissions: api.Permissions{Mode: api.PermissionBypass}})
+	includeSystemTemp := false
+	seeded, err := cmuxExtraArgs("codex", ai.Request{Permissions: api.Permissions{Mode: api.PermissionAcceptEdits}, Sandbox: &api.SandboxRef{
+		Mode: api.SandboxNative,
+		Policy: &api.NativeSandboxPolicy{
+			Filesystem: &api.SandboxFilesystemPolicy{
+				Access:            api.SandboxFilesystemWorkspaceWrite,
+				WritableRoots:     []string{"pkg"},
+				IncludeSystemTemp: &includeSystemTemp,
+			},
+			Network: &api.SandboxNetworkPolicy{Access: api.SandboxNetworkUnrestricted},
+		},
+	}})
 	if err != nil {
 		t.Fatalf("cmuxExtraArgs: %v", err)
 	}
@@ -76,34 +88,40 @@ func TestCmuxExtraArgs(t *testing.T) {
 	if !ok {
 		t.Fatalf("got %T, want *api.CodexCmuxOptions", seeded)
 	}
-	if codex.Sandbox != api.CodexSandboxDangerFull || codex.AskForApproval != api.CodexApprovalNever {
-		t.Errorf("seeded posture = (%q, %q), want (danger-full-access, never)", codex.Sandbox, codex.AskForApproval)
+	if codex.Sandbox != api.CodexSandboxWorkspaceWrite || codex.AskForApproval != api.CodexApprovalOnRequest {
+		t.Errorf("translated sandbox = (%q, %q), want (workspace-write, on-request)", codex.Sandbox, codex.AskForApproval)
+	}
+	wantConfig := []string{
+		"sandbox_workspace_write.network_access=true",
+		`sandbox_workspace_write.writable_roots=["pkg"]`,
+		"sandbox_workspace_write.exclude_slash_tmp=true",
+		"sandbox_workspace_write.exclude_tmpdir_env_var=true",
+	}
+	if !reflect.DeepEqual(codex.Config, wantConfig) {
+		t.Errorf("translated config = %#v, want %#v", codex.Config, wantConfig)
 	}
 
-	// An explicit CLIArgs sandbox overrides the seed; approval still seeds.
-	override, err := cmuxExtraArgs("codex", ai.Request{
-		Permissions: api.Permissions{Mode: api.PermissionBypass},
-		CLIArgs:     map[string]any{"sandbox": "read-only"},
-	})
-	if err != nil {
-		t.Fatalf("cmuxExtraArgs override: %v", err)
-	}
-	codex = override.(*api.CodexCmuxOptions)
-	if codex.Sandbox != api.CodexSandboxReadOnly {
-		t.Errorf("override sandbox = %q, want read-only", codex.Sandbox)
-	}
-	if codex.AskForApproval != api.CodexApprovalNever {
-		t.Errorf("seeded approval = %q, want never", codex.AskForApproval)
-	}
-
-	// claude decodes CLIArgs into the claude option struct.
-	claudeAny, err := cmuxExtraArgs("claude", ai.Request{CLIArgs: map[string]any{"addDir": []any{"pkg"}, "strictMcpConfig": true}})
+	claudeAny, err := cmuxExtraArgs("claude", ai.Request{Permissions: api.Permissions{Mode: api.PermissionPlan}, Sandbox: &api.SandboxRef{
+		Mode: api.SandboxNative,
+		Policy: &api.NativeSandboxPolicy{
+			Filesystem: &api.SandboxFilesystemPolicy{WritableRoots: []string{"pkg"}},
+		},
+	}})
 	if err != nil {
 		t.Fatalf("cmuxExtraArgs claude: %v", err)
 	}
 	claude := claudeAny.(*api.ClaudeCmuxOptions)
-	if len(claude.AddDir) != 1 || claude.AddDir[0] != "pkg" || !claude.StrictMCPConfig {
-		t.Errorf("claude decode = %+v, want AddDir=[pkg] StrictMCPConfig=true", claude)
+	var settings map[string]any
+	if err := json.Unmarshal([]byte(claude.Settings), &settings); err != nil {
+		t.Fatalf("decode Claude settings: %v", err)
+	}
+	if !reflect.DeepEqual(settings, map[string]any{
+		"sandbox": map[string]any{
+			"enabled":    true,
+			"filesystem": map[string]any{"allowWrite": []any{"pkg"}},
+		},
+	}) {
+		t.Errorf("Claude settings = %#v", settings)
 	}
 }
 
@@ -118,15 +136,16 @@ func TestWithEnvSortsAndQuotes(t *testing.T) {
 	}
 }
 
+// modelFlag only decides whether to pass --model at all. The id arrives already
+// resolved, so it is passed through verbatim: re-resolving here is what let the
+// recorded model and the one the CLI actually ran diverge.
 func TestModelFlag(t *testing.T) {
 	cases := []struct {
 		agent, model, want string
 	}{
 		{"claude", "claude", ""},
 		{"claude", "", ""},
-		{"claude", "opus", "claude-opus-5"},
-		{"claude", "claude-agent-opus", "claude-opus-5"},
-		{"claude", "claude-code-sonnet", "claude-sonnet-5"},
+		{"claude", "claude-opus-5", "claude-opus-5"},
 		{"codex", "codex", ""},
 		{"codex", "gpt-5", "gpt-5"},
 	}

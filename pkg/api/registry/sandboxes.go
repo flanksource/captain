@@ -9,22 +9,22 @@ package registry
 // ModeAPI is an in-process HTTP call with no argv at all. Widening a Modes list
 // means adding the wrapping seam for that mode first.
 var (
-	NoSandbox = &Sandbox{
-		Kind:         SandboxNone,
-		Description:  "Run the agent directly on the host, unconfined",
+	OffSandbox = &Sandbox{
+		Kind:         SandboxOff,
+		Description:  "Disable provider filesystem/network isolation and built-in approval prompts",
 		Capabilities: nil,
 		Modes:        []RuntimeMode{ModeAPI, ModeCLI, ModeAgent, ModeCmux},
 	}
 
-	SRTSandbox = &Sandbox{
-		Kind:         SandboxSRT,
-		Description:  "Confine the agent with sandbox-runtime (filesystem and network policy)",
-		Capabilities: []SandboxCapability{CapabilityWrapCommand},
-		Modes:        []RuntimeMode{ModeCLI},
+	NativeSandbox = &Sandbox{
+		Kind:         SandboxNative,
+		Description:  "Translate one Captain policy into the provider's native sandbox",
+		Capabilities: nil,
+		Modes:        []RuntimeMode{ModeCLI, ModeAgent, ModeCmux},
 	}
 
-	ContainerSandbox = &Sandbox{
-		Kind:         SandboxContainer,
+	DockerSandbox = &Sandbox{
+		Kind:         SandboxDocker,
 		Description:  "Run the agent inside a container image built from the configured presets",
 		Capabilities: []SandboxCapability{CapabilityWrapCommand},
 		Modes:        []RuntimeMode{ModeCLI},
@@ -43,11 +43,18 @@ var (
 		// push.
 		Modes: []RuntimeMode{ModeCLI, ModeAgent, ModeCmux},
 	}
+
+	internalSRTSandbox = &Sandbox{
+		Kind:         SandboxSRTInternal,
+		Description:  "Confine Git Agent receive hooks with sandbox-runtime",
+		Capabilities: []SandboxCapability{CapabilityWrapCommand},
+		Modes:        []RuntimeMode{ModeCLI},
+	}
 )
 
 // AllSandboxes lists every sandbox adapter in canonical order — the single
 // source of truth behind SandboxFor, ParseSandboxKind, and the help/error
 // strings. "none" is first because it is the default.
 func AllSandboxes() []*Sandbox {
-	return []*Sandbox{NoSandbox, SRTSandbox, ContainerSandbox, GitAgentSandbox}
+	return []*Sandbox{OffSandbox, NativeSandbox, DockerSandbox, GitAgentSandbox}
 }

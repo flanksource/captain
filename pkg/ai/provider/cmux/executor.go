@@ -446,19 +446,14 @@ func shellSingleQuote(v string) string {
 	return "'" + strings.ReplaceAll(v, "'", `'\''`) + "'"
 }
 
-// modelFlag normalizes the configured model into the exact value claude/codex
-// --model expects. The bare agent names ("claude"/"codex") and an empty string
-// carry no concrete model, so they yield "" (no flag).
+// modelFlag renders the value claude/codex --model expects. The model arrives
+// already resolved, so this only decides whether to pass the flag at all: a bare
+// agent name or an empty string carries no concrete model and lets the CLI use
+// its own default.
 func modelFlag(agent, model string) string {
 	lower := strings.ToLower(strings.TrimSpace(model))
 	if lower == "" || lower == agent {
 		return ""
-	}
-	if agent == "claude" {
-		return ai.NormalizeModelForBackend(ai.BackendClaudeCmux, model)
-	}
-	if agent == "codex" {
-		return ai.NormalizeModelForBackend(ai.BackendCodexCmux, model)
 	}
 	return model
 }

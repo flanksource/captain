@@ -20,7 +20,7 @@ func TestProvider_StreamLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = p.Close() })
 
-	assert.Equal(t, ai.BackendClaudeAgent, p.GetBackend())
+	assert.Equal(t, ai.RuntimeOf(ai.Anthropic, ai.ModeAgent), p.GetRuntime())
 	assert.Equal(t, "claude-sonnet-5", p.GetModel())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -74,7 +74,7 @@ func TestProvider_ExecuteCoalesce(t *testing.T) {
 	resp, err := p.Execute(ctx, ai.Request{Prompt: api.Prompt{User: "hello"}})
 	require.NoError(t, err)
 	assert.Equal(t, "hi from fake", resp.Text)
-	assert.Equal(t, ai.BackendClaudeAgent, resp.Backend)
+	assert.Equal(t, ai.RuntimeOf(ai.Anthropic, ai.ModeAgent), resp.Runtime)
 	assert.Equal(t, 10, resp.Usage.InputTokens)
 }
 
@@ -155,7 +155,8 @@ func TestRequestSchemaJSON(t *testing.T) {
 		require.NotEmpty(t, raw)
 
 		p := &Provider{model: "claude-sonnet-5", sessionSchema: raw}
-		ip := p.initializeParams(ai.Request{Prompt: api.Prompt{User: "x", Schema: &plan{}}})
+		ip, err := p.initializeParams(ai.Request{Prompt: api.Prompt{User: "x", Schema: &plan{}}})
+		require.NoError(t, err)
 		require.NotEmpty(t, ip.OutputSchema, "outputSchema should be set from the session schema")
 
 		var decoded map[string]any

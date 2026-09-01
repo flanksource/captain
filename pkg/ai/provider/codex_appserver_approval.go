@@ -22,10 +22,17 @@ type codexPosture struct {
 }
 
 func postureFor(req ai.Request) codexPosture {
-	sandbox, approval := api.CodexSafety(req.Permissions)
+	// The isolation boundary comes from the sandbox, the posture from
+	// permissions; escalation needs both to allow it.
+	mode := api.SandboxOff
+	if req.Sandbox != nil {
+		mode = req.Sandbox.Mode
+	}
+	approval := req.Permissions.Mode
 	return codexPosture{
-		grantsEscalation: sandbox == api.CodexSandboxDangerFull && approval == api.CodexApprovalNever,
-		planMode:         req.Permissions.Mode == api.PermissionPlan,
+		grantsEscalation: mode == api.SandboxOff ||
+			((mode == api.SandboxDocker || mode == api.SandboxGitAgent) && approval == api.PermissionBypass),
+		planMode: approval == api.PermissionPlan,
 	}
 }
 
