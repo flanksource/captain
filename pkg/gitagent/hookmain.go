@@ -448,7 +448,7 @@ func rejectWithVerdict(repo string, verdict TierVerdict, sideband io.Writer) err
 
 // RunPostReceive owns the work that is only legal once quarantine has ended
 // (R6.4): sidecar workspace setup and agent launch on dispatch, supervisor
-// integration and the verdict ref on an accepted result.
+// integration, and persistence of accepted or worker-reported verdicts.
 func RunPostReceive(ctx context.Context, repo string, role ReceiverRole, host HookHost, stdin io.Reader) error {
 	updates, err := ParseRefUpdates(stdin)
 	if err != nil {
@@ -550,6 +550,21 @@ func loadDispatchPayloads(ctx context.Context, repo string, updates []RefUpdate,
 }
 
 func mailboxPostReceive(ctx context.Context, repo string, host HookHost, updates []RefUpdate) error {
+	if verdictUpdate, info, ok := singleVerdictUpdate(updates); ok {
+		verdict, err := readRelayedVerdict(ctx, repo, os.Environ(), verdictUpdate.New, info)
+		if err != nil {
+			return err
+		}
+		if _, err := UpdateTaskState(repo, info.Task, func(current *TaskState) (bool, error) {
+			if info.Attempt > current.Attempts {
+				current.Attempts = info.Attempt
+			}
+			return true, nil
+		}); err != nil {
+			return err
+		}
+		return SaveVerdict(repo, verdict)
+	}
 	resultUpdate, info, ok := singleResultUpdate(updates)
 	if !ok {
 		return nil
@@ -607,7 +622,7 @@ func writeVerdictRef(ctx context.Context, repo string, verdict TierVerdict) erro
 	if err != nil {
 		return err
 	}
-	commit, err := BuildControlCommit(ctx, repo, nil, map[string][]byte{"verdict.json": payload})
+	commit, err := BuildControlCommit(ctx, repo, nil, map[string][]byte{ControlVerdictFile: payload})
 	if err != nil {
 		return err
 	}
@@ -627,6 +642,15 @@ func singleAgentBranchUpdate(updates []RefUpdate) (RefUpdate, string, bool) {
 func singleResultUpdate(updates []RefUpdate) (RefUpdate, RefInfo, bool) {
 	for _, u := range updates {
 		if info, err := ParseTaskRef(u.Ref); err == nil && info.Kind == RefResult {
+			return u, info, true
+		}
+	}
+	return RefUpdate{}, RefInfo{}, false
+}
+
+func singleVerdictUpdate(updates []RefUpdate) (RefUpdate, RefInfo, bool) {
+	for _, u := range updates {
+		if info, err := ParseTaskRef(u.Ref); err == nil && info.Kind == RefVerdict {
 			return u, info, true
 		}
 	}

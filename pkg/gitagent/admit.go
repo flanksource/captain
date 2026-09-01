@@ -112,7 +112,7 @@ func admitProtocolRef(req AdmitRequest, u RefUpdate) (RefInfo, error) {
 	}
 	allowed := map[ReceiverRole][]RefKind{
 		RoleSidecar: {RefDispatch, RefControl},
-		RoleMailbox: {RefResult, RefControl},
+		RoleMailbox: {RefResult, RefControl, RefVerdict},
 	}[req.Role]
 	if !containsKind(allowed, info.Kind) {
 		return RefInfo{}, fmt.Errorf("ref %s: a %s does not accept %s refs over the wire", u.Ref, req.Role, info.Kind)
@@ -201,6 +201,12 @@ func requireAtomicPairs(ctx context.Context, req AdmitRequest, protocol map[stri
 		kinds[k][info.Kind] = true
 	}
 	for k, present := range kinds {
+		if present[RefVerdict] {
+			if len(present) != 1 {
+				return fmt.Errorf("task %s attempt %d: a terminal verdict must be pushed alone", k.task, k.attempt)
+			}
+			continue
+		}
 		code := present[RefDispatch] || present[RefResult]
 		if code && !present[RefControl] && !controlRefExists(ctx, req, k.task, k.attempt) {
 			return fmt.Errorf("task %s attempt %d: a code ref without its control ref is unprocessable (R3.4)", k.task, k.attempt)
@@ -224,7 +230,7 @@ func controlRefExists(ctx context.Context, req AdmitRequest, task string, attemp
 // admitCodeContent runs the content checks that need object access: result
 // parentage, blob caps and name gates. Control refs carry no worktree code.
 func admitCodeContent(ctx context.Context, req AdmitRequest, u RefUpdate, info RefInfo) error {
-	if info.Kind != RefResult {
+	if info.Kind != RefResult && info.Kind != RefVerdict {
 		return nil
 	}
 	st, ok, err := LoadTaskState(req.Repo, info.Task)
@@ -240,6 +246,10 @@ func admitCodeContent(ctx context.Context, req AdmitRequest, u RefUpdate, info R
 			got = req.Envelope.Base
 		}
 		return fmt.Errorf("task %s: envelope base %s does not match dispatched base %s", info.Task, got, st.Base)
+	}
+	if info.Kind == RefVerdict {
+		_, err := readRelayedVerdict(ctx, req.Repo, req.Env, u.New, info)
+		return err
 	}
 	parents, err := runGit(ctx, req.Repo, req.Env, "rev-list", "--parents", "-n", "1", u.New)
 	if err != nil {

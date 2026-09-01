@@ -76,7 +76,11 @@ func RunGitAgentHook(ctx context.Context, opts GitAgentHookOptions) (any, error)
 		// alternative — launching nothing — leaves the supervisor waiting out
 		// its whole budget on work that never started.
 		DefaultAgentCommand: func(repo, task string) string {
-			return DefaultAgentCommand(exe, repo, task, configPath)
+			command := DefaultAgentCommand(exe, repo, task, configPath)
+			if backend := strings.TrimSpace(opts.Backend); backend != "" {
+				command += fmt.Sprintf(" --backend %q", backend)
+			}
+			return command
 		},
 	}
 	switch opts.Hook {

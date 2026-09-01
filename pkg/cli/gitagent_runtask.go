@@ -26,13 +26,28 @@ type GitAgentRunTaskOptions struct {
 
 // RunGitAgentRunTask performs one task end to end on the agent host: read the
 // dispatched prompt, run it in the worktree, then commit and push. Its output
-// is the agent log, so every failure is reported there rather than to a
-// terminal nobody is watching.
+// is the agent log; failures are also relayed as terminal supervisor outcomes.
 func RunGitAgentRunTask(ctx context.Context, opts GitAgentRunTaskOptions) (_ any, runErr error) {
 	started := time.Now()
+	reportFailure := true
 	defer func() {
 		if runErr != nil {
 			log.Errorf("git-agent task %s failed after %s: %v", opts.Task, time.Since(started).Round(time.Millisecond), runErr)
+			if !reportFailure {
+				return
+			}
+			runtime, err := hookRuntimeFromConfig(opts.Backend)
+			if err != nil {
+				log.Errorf("git-agent task %s could not load relay configuration: %v", opts.Task, err)
+				return
+			}
+			reportCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			defer cancel()
+			if err := gitagent.ReportTaskFailure(reportCtx, opts.Repo, runtime.Relay, opts.Task, runErr); err != nil {
+				log.Errorf("git-agent task %s could not report its failure to the supervisor: %v", opts.Task, err)
+				return
+			}
+			log.Infof("git-agent task %s reported its terminal failure to the supervisor", opts.Task)
 		}
 	}()
 	if strings.TrimSpace(opts.Config) != "" {
@@ -52,7 +67,9 @@ func RunGitAgentRunTask(ctx context.Context, opts GitAgentRunTaskOptions) (_ any
 		return nil, fmt.Errorf("running the dispatched prompt: %w", err)
 	}
 	log.Infof("git-agent task %s agent finished after %s; preparing submission", opts.Task, time.Since(started).Round(time.Millisecond))
-	if err := submitWork(ctx, worktree, opts.Task); err != nil {
+	pushAttempted, err := submitWork(ctx, worktree, opts.Task)
+	reportFailure = !pushAttempted
+	if err != nil {
 		return nil, err
 	}
 	log.Infof("git-agent task %s accepted after %s", opts.Task, time.Since(started).Round(time.Millisecond))
@@ -89,27 +106,29 @@ func runTaskPrompt(ctx context.Context, worktree string, payload gitagent.TaskPa
 
 // submitWork performs the agent's half of the protocol: stage everything the
 // run produced, commit, and push. A run that changed nothing is reported as
-// such rather than pushed as an empty success.
-func submitWork(ctx context.Context, worktree, task string) error {
+// such rather than pushed as an empty success. The boolean becomes true once
+// push starts, because a failed push may already have produced an authoritative
+// hook verdict that the runner must not replace with a terminal worker error.
+func submitWork(ctx context.Context, worktree, task string) (bool, error) {
 	log.Infof("git-agent task %s staging workspace changes", task)
 	if err := git(ctx, worktree, "add", "-A"); err != nil {
-		return err
+		return false, err
 	}
 	staged, err := hasStagedChanges(ctx, worktree)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if !staged {
-		return fmt.Errorf("the agent produced no changes for task %s; nothing to submit", task)
+		return false, fmt.Errorf("the agent produced no changes for task %s; nothing to submit", task)
 	}
 	log.Infof("git-agent task %s committing workspace changes", task)
 	if err := git(ctx, worktree, "commit", "-m", "captain: "+task); err != nil {
-		return err
+		return false, err
 	}
 	// The push carries the work through both hook tiers and blocks until the
 	// verdict, so its output is the agent's most important log line.
 	log.Infof("git-agent task %s pushing for sidecar and supervisor verification", task)
-	return git(ctx, worktree, "push")
+	return true, git(ctx, worktree, "push")
 }
 
 func git(ctx context.Context, dir string, args ...string) error {
