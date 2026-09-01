@@ -17,10 +17,10 @@ type ChatMessageMetadata struct {
 }
 
 // ToUIMessages projects the session into the Vercel AI SDK v6 chat shape:
-// tool_result parts are merged into their originating tool call (matched by
-// ToolCallID) so each tool interaction is a single part, and the aggregate
-// usage/cost rides on the returned metadata. The message ordering is preserved
-// from the transcript.
+// synthetic transcript events are omitted, tool_result parts are merged into
+// their originating tool call (matched by ToolCallID) so each tool interaction
+// is a single part, and the aggregate usage/cost rides on the returned
+// metadata. The message ordering is preserved from the transcript.
 func (s *Session) ToUIMessages() ([]Message, ChatMessageMetadata) {
 	resultByID := map[string]Part{}
 	for _, m := range s.Messages {
@@ -35,6 +35,9 @@ func (s *Session) ToUIMessages() ([]Message, ChatMessageMetadata) {
 	for _, m := range s.Messages {
 		parts := make([]Part, 0, len(m.Parts))
 		for _, p := range m.Parts {
+			if isToolCall(p) && IsSyntheticEventTool(p.ToolName) {
+				continue
+			}
 			if isToolResult(p) {
 				// merged into its originating call below; drop the standalone row.
 				continue

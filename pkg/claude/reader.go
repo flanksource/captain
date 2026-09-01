@@ -1,12 +1,13 @@
 package claude
 
 import (
-	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 
+	"github.com/flanksource/captain/pkg/jsonl"
 	"github.com/segmentio/encoding/json"
 )
 
@@ -66,17 +67,16 @@ func ReadStreamJSON(r io.Reader) ([]HistoryEntry, error) {
 // dispatchEvent.
 func readJSONL(r io.Reader, fallbackToHistoryEntry bool, opts ReadOptions) ([]HistoryEntry, error) {
 	var entries []HistoryEntry
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 1024*1024), 10*1024*1024)
-
 	lineNo := 0
 	// lastTS tracks the most recent successfully-parsed line timestamp so a
 	// synthetic ParseError row can inherit it — otherwise ParseError rows have no
 	// timestamp, sort last, and are the first discarded by the row limit.
 	lastTS := ""
-	for scanner.Scan() {
+	for line, err := range jsonl.Lines(r) {
+		if err != nil {
+			return entries, err
+		}
 		lineNo++
-		line := scanner.Bytes()
 		if len(line) == 0 {
 			continue
 		}
@@ -115,8 +115,7 @@ func readJSONL(r io.Reader, fallbackToHistoryEntry bool, opts ReadOptions) ([]Hi
 			entries = append(entries, entry)
 		}
 	}
-
-	return entries, scanner.Err()
+	return entries, nil
 }
 
 // streamJSONLine captures the discriminator fields shared by Claude Code
@@ -616,22 +615,24 @@ func syntheticEntry(sj streamJSONLine, toolName string, raw []byte, keys []strin
 
 // HistoryIterator provides streaming access to JSONL history
 type HistoryIterator struct {
-	scanner *bufio.Scanner
+	lines   *jsonl.Reader
 	current HistoryEntry
 	err     error
 }
 
 // NewHistoryIterator creates an iterator for streaming large files
 func NewHistoryIterator(r io.Reader) *HistoryIterator {
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 1024*1024), 10*1024*1024)
-	return &HistoryIterator{scanner: scanner}
+	return &HistoryIterator{lines: jsonl.NewReader(r)}
 }
 
 // Next advances to the next entry, returns false when done or on error
 func (it *HistoryIterator) Next() bool {
-	for it.scanner.Scan() {
-		line := it.scanner.Bytes()
+	for {
+		line, err := it.lines.Next()
+		if err != nil {
+			it.err = readErr(err)
+			return false
+		}
 		if len(line) == 0 {
 			continue
 		}
@@ -641,12 +642,17 @@ func (it *HistoryIterator) Next() bool {
 			it.err = err
 			return false
 		}
-		it.current.RawLine = append(json.RawMessage(nil), line...)
+		it.current.RawLine = json.RawMessage(line)
 		return true
 	}
+}
 
-	it.err = it.scanner.Err()
-	return false
+// readErr maps the reader's end-of-input to the iterators' "done" state.
+func readErr(err error) error {
+	if errors.Is(err, io.EOF) {
+		return nil
+	}
+	return err
 }
 
 // Entry returns the current entry
@@ -665,7 +671,7 @@ func (it *HistoryIterator) Err() error {
 // used by ReadStreamJSON. Use it when a caller needs live progress instead of
 // buffering the whole stream.
 type StreamJSONIterator struct {
-	scanner *bufio.Scanner
+	lines   *jsonl.Reader
 	pending []HistoryEntry
 	current HistoryEntry
 	lineNo  int
@@ -674,9 +680,7 @@ type StreamJSONIterator struct {
 
 // NewStreamJSONIterator creates an iterator over Claude Code stream-json.
 func NewStreamJSONIterator(r io.Reader) *StreamJSONIterator {
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 1024*1024), 10*1024*1024)
-	return &StreamJSONIterator{scanner: scanner}
+	return &StreamJSONIterator{lines: jsonl.NewReader(r)}
 }
 
 // Next advances to the next entry. A single stream-json line can dispatch to
@@ -689,9 +693,13 @@ func (it *StreamJSONIterator) Next() bool {
 		it.pending = it.pending[1:]
 		return true
 	}
-	for it.scanner.Scan() {
+	for {
+		line, err := it.lines.Next()
+		if err != nil {
+			it.err = readErr(err)
+			return false
+		}
 		it.lineNo++
-		line := it.scanner.Bytes()
 		if len(line) == 0 {
 			continue
 		}
@@ -699,7 +707,7 @@ func (it *StreamJSONIterator) Next() bool {
 		var sj streamJSONLine
 		if err := json.Unmarshal(line, &sj); err != nil {
 			it.current = parseErrorEntry(it.lineNo, line, err, "")
-			it.current.RawLine = append(json.RawMessage(nil), line...)
+			it.current.RawLine = json.RawMessage(line)
 			return true
 		}
 
@@ -708,7 +716,7 @@ func (it *StreamJSONIterator) Next() bool {
 			continue
 		}
 		for i := range entries {
-			entries[i].RawLine = append(json.RawMessage(nil), line...)
+			entries[i].RawLine = json.RawMessage(line)
 		}
 		it.current = entries[0]
 		if len(entries) > 1 {
@@ -716,9 +724,6 @@ func (it *StreamJSONIterator) Next() bool {
 		}
 		return true
 	}
-
-	it.err = it.scanner.Err()
-	return false
 }
 
 // Entry returns the current entry.

@@ -1,6 +1,7 @@
 package session
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -24,11 +25,7 @@ var codexLog = logger.GetLogger("session")
 func BuildCodex(files []string) []*Session {
 	out := make([]*Session, 0, len(files))
 	for _, f := range files {
-		info, _ := history.ReadCodexSessionInfo(f)
-		if info != nil && history.IsCodexAutoReviewModel(info.Model) {
-			continue
-		}
-		uses, err := history.ExtractCodexToolUses(f)
+		s, err := BuildCodexFile(f)
 		if err != nil {
 			codexLog.Warnf("skipping unreadable codex session %s: %v", f, err)
 			continue
@@ -42,6 +39,53 @@ func BuildCodex(files []string) []*Session {
 		out = append(out, s)
 	}
 	return out
+}
+
+// ErrCodexAutoReview marks a rollout written by Codex's automatic review
+// model: not a user session, skipped everywhere.
+var ErrCodexAutoReview = errors.New("codex auto-review session")
+
+// ErrCodexEmpty marks a readable rollout with nothing to build a session from.
+var ErrCodexEmpty = errors.New("codex rollout has no tool uses")
+
+// BuildCodexFile builds one session from a rollout file, or reports why the
+// file yields none so an ingest failure names its cause.
+func BuildCodexFile(f string) (*Session, error) {
+	info, _ := history.ReadCodexSessionInfo(f)
+	if info != nil && history.IsCodexAutoReviewModel(info.Model) {
+		return nil, ErrCodexAutoReview
+	}
+	uses, err := history.ExtractCodexToolUses(f)
+	if err != nil {
+		return nil, err
+	}
+	if len(uses) == 0 {
+		return nil, ErrCodexEmpty
+	}
+	sessionID := ""
+	if info != nil {
+		sessionID = strings.TrimSpace(info.ID)
+	}
+	if sessionID == "" {
+		sessionID = codexSessionIDFromHistoryFile(f)
+	}
+	if sessionID != "" {
+		if info == nil {
+			info = &history.CodexSessionInfo{}
+		}
+		info.ID = sessionID
+		for i := range uses {
+			if strings.TrimSpace(uses[i].SessionID) == "" {
+				uses[i].SessionID = sessionID
+			}
+		}
+	}
+	s := buildCodexSession(uses, info)
+	s.HistoryFile = f
+	if s.Root != nil {
+		s.Root.HistoryFile = f
+	}
+	return s, nil
 }
 
 // codexSessionIDFromHistoryFile recovers the UUID Codex writes at the end of
