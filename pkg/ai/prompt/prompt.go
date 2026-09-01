@@ -7,7 +7,7 @@
 // (model, config.maxOutputTokens/temperature/reasoning, input/output schema),
 // and a second time straight into the spec (ai.Request = api.Spec) so any
 // request option can be declared in its native, nested shape — e.g.
-// permissions.mode, permissions.tools.allow, memory.skipUser, budget.maxTokens,
+// sandbox.approval, permissions.tools.allow, memory.skipUser, budget.maxTokens,
 // context.dir, effort, sessionId, maxTurns. When a file mixes both dialects the
 // dotprompt config: block wins for the three knobs it owns.
 //
@@ -144,9 +144,21 @@ func (t *Template) Render(data map[string]any, out any) (ai.Request, ai.Config, 
 	if cfg.Model.Name == "" {
 		cfg.Model.Name = rendered.Model
 	}
-	if cfg.Model.Backend == "" && cfg.Model.Name != "" {
-		if b, berr := ai.InferBackend(cfg.Model.Name); berr == nil {
-			cfg.Model.Backend = b
+	// Resolve name+mode together: the adapter follows from both, so inferring it
+	// from the name alone would send `model: opus` + `backend: agent` to the
+	// Anthropic API. Both copies are assigned so they cannot disagree downstream.
+	//
+	// A name the catalog does not know is not fatal here — a caller may supply its
+	// own provider — so it stays as authored and the runtime decides. An authored
+	// mode we cannot honour is fatal: dropping it would pick an adapter silently.
+	if cfg.Model.Name != "" {
+		resolved, rerr := ai.Resolve(cfg.Model)
+		switch {
+		case rerr == nil:
+			cfg.Model = resolved
+			req.Model = resolved
+		case cfg.Model.Mode != "":
+			return ai.Request{}, ai.Config{}, fmt.Errorf("prompt %s model: %w", t.name, rerr)
 		}
 	}
 	// The dotprompt config: block stays canonical for maxOutputTokens/temperature/

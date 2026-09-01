@@ -18,6 +18,7 @@ func TestParse_SpecAndFrontmatter(t *testing.T) {
 	doc, err := Parse(string(src))
 	require.NoError(t, err)
 
+	require.NotNil(t, doc.Spec.Sandbox)
 	assert.Equal(t, api.PermissionAcceptEdits, doc.Spec.Permissions.Mode)
 	assert.Equal(t, 3, doc.Spec.Budget.MaxTurns)
 
@@ -42,6 +43,8 @@ func TestDocument_StringRoundTrip(t *testing.T) {
 		"    properties:\n" +
 		"      title:\n" +
 		"        type: string\n" +
+		"sandbox:\n" +
+		"  mode: native\n" +
 		"permissions:\n" +
 		"  mode: acceptEdits\n" +
 		"---\n" +
@@ -50,6 +53,7 @@ func TestDocument_StringRoundTrip(t *testing.T) {
 	doc, err := Parse(src)
 	require.NoError(t, err)
 	assert.Equal(t, "claude-sonnet-4-6", doc.Spec.Model.Name)
+	require.NotNil(t, doc.Spec.Sandbox)
 	assert.Equal(t, api.PermissionAcceptEdits, doc.Spec.Permissions.Mode)
 
 	out, err := doc.String()
@@ -60,6 +64,7 @@ func TestDocument_StringRoundTrip(t *testing.T) {
 	rt, err := Parse(out)
 	require.NoError(t, err)
 	assert.Equal(t, doc.Spec.Model.Name, rt.Spec.Model.Name)
+	require.NotNil(t, rt.Spec.Sandbox)
 	assert.Equal(t, doc.Spec.Permissions.Mode, rt.Spec.Permissions.Mode)
 	assert.Equal(t, doc.Body, rt.Body)
 	assert.Contains(t, rt.Frontmatter, "output")
