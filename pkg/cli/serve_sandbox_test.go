@@ -58,7 +58,7 @@ func TestSandboxCatalogRouteServesEveryAdapter(t *testing.T) {
 	for _, entry := range catalog.Kinds {
 		byKind[entry.Kind] = entry
 	}
-	for _, kind := range []string{"none", "srt", "container", "git-agent"} {
+	for _, kind := range []string{"off", "native", "docker", "git-agent"} {
 		if _, ok := byKind[kind]; !ok {
 			t.Errorf("catalog missing %q", kind)
 		}

@@ -20,13 +20,16 @@ var _ = Describe("prompt batch sessions", func() {
 		})
 		setCaptainDBForTest(db)
 
-		rendered := PromptRenderResult{Name: "compare", Backend: "codex-cmux", Model: "gpt-5.6-sol"}
+		rendered := PromptRenderResult{Name: "compare", Provider: "openai", Mode: "cmux", Model: "gpt-5.6-sol"}
 		rendered.Input.Prompt.User = "Compare these approaches"
 		rendered.Input.SetCwd("/workspace/captain")
-		batch, err := createPromptBatchSessions(GinkgoT().Context(), rendered, []api.Model{
-			{Name: "gpt-5.6-sol", Backend: api.BackendCodexCmux, Effort: api.EffortHigh},
-			{Name: "gemini-2.5-flash", Backend: api.BackendGemini},
-		})
+		// The batch is handed resolved runtimes, exactly as prompt execution hands
+		// it the output of resolvePromptRuntimes — a member with no provider is a
+		// caller bug, and validatePromptRuntimes says so rather than deriving one.
+		batch, err := createPromptBatchSessions(GinkgoT().Context(), rendered, resolveAll(
+			api.Model{Name: "gpt-5.6-sol", Mode: api.ModeCmux, Effort: api.EffortHigh},
+			api.Model{Name: "gemini-2.5-flash", Mode: api.ModeAPI},
+		))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(batch.ID).NotTo(Equal(uuid.Nil))
 		Expect(batch.Runs).To(HaveLen(2))

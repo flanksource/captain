@@ -25,7 +25,7 @@ type ConfigureTokenResult struct {
 type ConfigureProviderDefaultsResult struct {
 	Path     string `json:"path" pretty:"label=Saved To"`
 	Provider string `json:"provider" pretty:"label=Provider"`
-	Agent    string `json:"agent" pretty:"label=Agent"`
+	Mode     string `json:"mode" pretty:"label=Mode"`
 	Model    string `json:"model" pretty:"label=Model"`
 	Effort   string `json:"effort,omitempty" pretty:"label=Effort"`
 	Active   bool   `json:"active" pretty:"label=Active Provider"`
@@ -33,25 +33,25 @@ type ConfigureProviderDefaultsResult struct {
 
 var (
 	configureTokenModels    = ai.ListModelsWithAPIKey
-	configureDefaultsModels = modelsForConfigurableAgent
+	configureDefaultsModels = modelsForRuntime
 )
 
 func runProviderConfigure(ctx context.Context, opts ConfigureOptions) (any, error) {
-	provider := api.Backend(strings.TrimSpace(opts.Provider))
-	if !configurableAPIBackend(provider) {
-		return nil, fmt.Errorf("provider must be one of: anthropic, openai, gemini, deepseek (got %q)", opts.Provider)
+	provider, known := api.ProviderByName(strings.TrimSpace(opts.Provider))
+	if !known {
+		return nil, fmt.Errorf("provider must be one of: %s (got %q)", api.ProviderList(), opts.Provider)
 	}
-	hasDefaults := opts.Agent != "" || opts.Model != "" || opts.Effort != "" || opts.Active
+	hasDefaults := opts.Mode != "" || opts.Model != "" || opts.Effort != "" || opts.Active
 	if hasDefaults {
 		if !opts.Token.IsEmpty() || opts.Test {
-			return nil, fmt.Errorf("token flags cannot be combined with agent, model, effort, or active defaults")
+			return nil, fmt.Errorf("token flags cannot be combined with mode, model, effort, or active defaults")
 		}
 		return runProviderDefaultsConfigure(ctx, provider, opts)
 	}
 	return runProviderTokenConfigure(ctx, provider, opts)
 }
 
-func runProviderDefaultsConfigure(ctx context.Context, provider api.Backend, opts ConfigureOptions) (ConfigureProviderDefaultsResult, error) {
+func runProviderDefaultsConfigure(ctx context.Context, provider *api.ModelProvider, opts ConfigureOptions) (ConfigureProviderDefaultsResult, error) {
 	saved, _, err := captainconfig.Load()
 	if err != nil {
 		return ConfigureProviderDefaultsResult{}, err
@@ -60,27 +60,27 @@ func runProviderDefaultsConfigure(ctx context.Context, provider api.Backend, opt
 	if err != nil {
 		return ConfigureProviderDefaultsResult{}, err
 	}
-	if opts.Active && opts.Agent == "" && opts.Model == "" && opts.Effort == "" {
+	if opts.Active && opts.Mode == "" && opts.Model == "" && opts.Effort == "" {
 		if err := captainconfig.Update(func(cfg *captainconfig.Config) error {
-			cfg.AI.DefaultProvider = string(provider)
+			cfg.AI.DefaultProvider = provider.Name
 			return nil
 		}); err != nil {
 			return ConfigureProviderDefaultsResult{}, err
 		}
 		path, _ := captainconfig.Path()
 		return ConfigureProviderDefaultsResult{
-			Path: path, Provider: string(provider), Agent: current.Agent,
+			Path: path, Provider: provider.Name, Mode: current.Mode,
 			Model: current.Model, Effort: current.Effort, Active: true,
 		}, nil
 	}
 	next := current
 	selectionChanged := false
-	if opts.Agent != "" {
-		next.Agent = strings.TrimSpace(opts.Agent)
-		if next.Agent != current.Agent && opts.Model == "" {
-			next.Model = defaultModelFor(api.Backend(next.Agent))
+	if opts.Mode != "" {
+		next.Mode = strings.TrimSpace(opts.Mode)
+		if next.Mode != current.Mode && opts.Model == "" {
+			next.Model = defaultModelFor(provider, api.RuntimeMode(next.Mode))
 		}
-		selectionChanged = next.Agent != current.Agent
+		selectionChanged = next.Mode != current.Mode
 	}
 	if opts.Model != "" {
 		next.Model = strings.TrimSpace(opts.Model)
@@ -93,7 +93,7 @@ func runProviderDefaultsConfigure(ctx context.Context, provider api.Backend, opt
 			next.Effort = strings.TrimSpace(opts.Effort)
 		}
 	} else if selectionChanged {
-		next.Effort = defaultEffortFor(api.Backend(next.Agent), next.Model)
+		next.Effort = defaultEffortFor(provider, api.RuntimeMode(next.Mode), next.Model)
 	}
 	if err := validateProviderDefaults(ctx, provider, next); err != nil {
 		return ConfigureProviderDefaultsResult{}, err
@@ -102,11 +102,11 @@ func runProviderDefaultsConfigure(ctx context.Context, provider api.Backend, opt
 		if cfg.AI.Providers == nil {
 			cfg.AI.Providers = map[string]captainconfig.ProviderDefaults{}
 		}
-		cfg.AI.Providers[string(provider)] = captainconfig.ProviderDefaults{
-			Agent: next.Agent, Model: next.Model, ReasoningEffort: next.Effort,
+		cfg.AI.Providers[provider.Name] = captainconfig.ProviderDefaults{
+			Mode: next.Mode, Model: next.Model, ReasoningEffort: next.Effort,
 		}
 		if opts.Active {
-			cfg.AI.DefaultProvider = string(provider)
+			cfg.AI.DefaultProvider = provider.Name
 		}
 		return nil
 	}); err != nil {
@@ -114,40 +114,44 @@ func runProviderDefaultsConfigure(ctx context.Context, provider api.Backend, opt
 	}
 	path, _ := captainconfig.Path()
 	return ConfigureProviderDefaultsResult{
-		Path: path, Provider: string(provider), Agent: next.Agent, Model: next.Model,
-		Effort: next.Effort, Active: opts.Active || saved.AI.ActiveProvider() == string(provider),
+		Path: path, Provider: provider.Name, Mode: next.Mode, Model: next.Model,
+		Effort: next.Effort, Active: opts.Active || saved.AI.ActiveProvider() == provider.Name,
 	}, nil
 }
 
-func defaultEffortFor(agent api.Backend, model string) string {
-	_, effort, ok := ai.ModelEfforts(agent, model)
+func defaultEffortFor(provider *api.ModelProvider, mode api.RuntimeMode, model string) string {
+	_, effort, ok := ai.ModelEfforts(provider, mode, model)
 	if !ok {
 		return ""
 	}
 	return string(effort)
 }
 
-func validateProviderDefaults(ctx context.Context, provider api.Backend, defaults ProviderDefaultView) error {
-	agent := api.Backend(strings.TrimSpace(defaults.Agent))
-	if agent.Provider() != provider {
-		return fmt.Errorf("agent %q does not belong to provider %q", agent, provider)
+func validateProviderDefaults(ctx context.Context, provider *api.ModelProvider, defaults ProviderDefaultView) error {
+	mode, ok := api.ParseRuntimeMode(strings.TrimSpace(defaults.Mode))
+	if !ok {
+		return fmt.Errorf("mode must be one of: %s (got %q)", api.RuntimeModeList(), defaults.Mode)
 	}
+	if _, serves := provider.Caps(mode); !serves {
+		return fmt.Errorf("provider %q has no %s mode (available: %s)", provider.Name, mode, api.RuntimeList())
+	}
+	runtime := api.RuntimeOf(provider, mode)
 	// Saving a default is an explicit choice, so a disabled selection is rejected
 	// rather than silently degraded: the fallback chain exists for runs, not for
 	// writing a preference the user cannot see is being overridden.
 	disabled := ai.Disabled()
-	if reason := disabled.Reason(agent); reason != "" {
-		return fmt.Errorf("agent %q is disabled (%s); re-enable it before making it a default", agent, reason)
+	if reason := disabled.Reason(provider, mode); reason != "" {
+		return fmt.Errorf("runtime %s is disabled (%s); re-enable it before making it a default", runtime, reason)
 	}
-	if disabled.Model(agent, strings.TrimSpace(defaults.Model)) {
-		return fmt.Errorf("model %q is disabled on agent %q; re-enable it before making it a default", defaults.Model, agent)
+	if disabled.Model(provider, mode, strings.TrimSpace(defaults.Model)) {
+		return fmt.Errorf("model %q is disabled on runtime %s; re-enable it before making it a default", defaults.Model, runtime)
 	}
 	if disabled.Effort(api.Effort(strings.TrimSpace(defaults.Effort))) {
 		return fmt.Errorf("reasoning effort %q is disabled; re-enable it before making it a default", defaults.Effort)
 	}
-	models, err := configureDefaultsModels(ctx, agent)
+	models, err := configureDefaultsModels(ctx, provider, mode)
 	if err != nil {
-		return fmt.Errorf("list models for %s: %w", agent, err)
+		return fmt.Errorf("list models for %s: %w", runtime, err)
 	}
 	model := strings.TrimSpace(defaults.Model)
 	found := false
@@ -158,7 +162,7 @@ func validateProviderDefaults(ctx context.Context, provider api.Backend, default
 		}
 	}
 	if !found {
-		return fmt.Errorf("model %q is not available for agent %q", model, agent)
+		return fmt.Errorf("model %q is not available for runtime %s", model, runtime)
 	}
 	if err := api.Effort(defaults.Effort).Validate(); err != nil {
 		return err
@@ -166,14 +170,14 @@ func validateProviderDefaults(ctx context.Context, provider api.Backend, default
 	return nil
 }
 
-func modelsForConfigurableAgent(ctx context.Context, agent api.Backend) ([]ai.ModelDef, error) {
-	if agent.Kind() == "api" {
-		return ai.ListModels(ctx, agent)
+func modelsForRuntime(ctx context.Context, provider *api.ModelProvider, mode api.RuntimeMode) ([]ai.ModelDef, error) {
+	if mode.Kind() == "api" {
+		return ai.ListModels(ctx, provider)
 	}
-	return ai.RegistryModelDefs(agent), nil
+	return ai.RegistryModelDefs(provider, mode), nil
 }
 
-func runProviderTokenConfigure(ctx context.Context, backend api.Backend, opts ConfigureOptions) (ConfigureTokenResult, error) {
+func runProviderTokenConfigure(ctx context.Context, provider *api.ModelProvider, opts ConfigureOptions) (ConfigureTokenResult, error) {
 	vault, err := credentials.DefaultVault()
 	if err != nil {
 		return ConfigureTokenResult{}, err
@@ -181,30 +185,30 @@ func runProviderTokenConfigure(ctx context.Context, backend api.Backend, opts Co
 	token := strings.TrimSpace(opts.Token.Value())
 	source := "candidate"
 	if token == "" && opts.Test {
-		resolved, err := ai.ResolveAPIKey(backend)
+		resolved, err := ai.ResolveAPIKey(provider, api.ModeAPI)
 		if err != nil {
 			return ConfigureTokenResult{}, err
 		}
 		token, source = resolved.Token, resolved.Source
 		if token == "" {
-			return ConfigureTokenResult{}, fmt.Errorf("no credential configured for %s", backend)
+			return ConfigureTokenResult{}, fmt.Errorf("no credential configured for %s", provider.Name)
 		}
 	} else if token == "" {
-		token, err = promptConfigureToken(backend)
+		token, err = promptConfigureToken(provider)
 		if err != nil {
 			return ConfigureTokenResult{}, err
 		}
 	}
-	models, err := configureTokenModels(ctx, backend, token)
+	models, err := configureTokenModels(ctx, provider, token)
 	if err != nil {
-		return ConfigureTokenResult{}, fmt.Errorf("validate %s credential: %w", backend, err)
+		return ConfigureTokenResult{}, fmt.Errorf("validate %s credential: %w", provider.Name, err)
 	}
 	result := ConfigureTokenResult{
-		Path: vault.Path(), Provider: string(backend), MaskedToken: ai.MaskKey(token),
+		Path: vault.Path(), Provider: provider.Name, MaskedToken: ai.MaskKey(token),
 		Source: source, ModelCount: len(models), Saved: !opts.Test,
 	}
 	if !opts.Test {
-		if err := vault.Set(string(backend), token); err != nil {
+		if err := vault.Set(provider.Name, token); err != nil {
 			return ConfigureTokenResult{}, err
 		}
 		result.Source = credentials.SourceVault
@@ -212,11 +216,7 @@ func runProviderTokenConfigure(ctx context.Context, backend api.Backend, opts Co
 	return result, nil
 }
 
-func configurableAPIBackend(backend api.Backend) bool {
-	return backend.Provider() == backend
-}
-
-func promptConfigureToken(backend api.Backend) (string, error) {
+func promptConfigureToken(provider *api.ModelProvider) (string, error) {
 	info, err := os.Stdin.Stat()
 	if err != nil {
 		return "", fmt.Errorf("inspect stdin: %w", err)
@@ -226,7 +226,7 @@ func promptConfigureToken(backend api.Backend) (string, error) {
 	}
 	var token string
 	form := huh.NewForm(huh.NewGroup(
-		huh.NewInput().Title(fmt.Sprintf("%s API token", backend)).EchoMode(huh.EchoModePassword).
+		huh.NewInput().Title(fmt.Sprintf("%s API token", provider.Name)).EchoMode(huh.EchoModePassword).
 			Value(&token).Validate(func(value string) error {
 			if strings.TrimSpace(value) == "" {
 				return fmt.Errorf("token cannot be empty")

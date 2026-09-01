@@ -81,7 +81,7 @@ type SessionRecord struct {
 	Version         string              `json:"version,omitempty"`
 	GitBranch       string              `json:"gitBranch,omitempty"`
 	Provider        string              `json:"provider,omitempty"`
-	Backend         string              `json:"backend,omitempty"`
+	ModelMode       string              `json:"modelMode,omitempty"`
 	LifecycleStatus string              `json:"lifecycleStatus,omitempty"`
 	CWD             string              `json:"cwd,omitempty"`
 	ToolCalls       int                 `json:"toolCalls"`
@@ -329,11 +329,11 @@ func buildSessionModel(candidate sessionCandidate) (*session.Session, error) {
 		}
 		return nil, fmt.Errorf("session %q not found", id)
 	case "codex":
-		sessions := session.BuildCodex([]string{candidate.path})
-		if len(sessions) == 0 {
-			return nil, fmt.Errorf("codex session %q not parseable", candidate.path)
+		s, err := session.BuildCodexFile(candidate.path)
+		if err != nil {
+			return nil, fmt.Errorf("codex session %q: %w", candidate.path, err)
 		}
-		return sessions[0], nil
+		return s, nil
 	default:
 		return nil, fmt.Errorf("unknown session source %q", candidate.record.Source)
 	}

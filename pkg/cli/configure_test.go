@@ -29,15 +29,15 @@ func TestRunProviderConfigureTestsBeforeSaving(t *testing.T) {
 	credentials.SetPathForTesting(filepath.Join(t.TempDir(), "vault"))
 	t.Cleanup(func() { credentials.SetPathForTesting("") })
 	previous := configureTokenModels
-	configureTokenModels = func(_ context.Context, backend ai.Backend, token string) ([]ai.ModelDef, error) {
-		if backend != ai.BackendOpenAI || token != "candidate-secret" {
-			t.Fatalf("validation got backend=%s token=%q", backend, token)
+	configureTokenModels = func(_ context.Context, provider *ai.ModelProvider, token string) ([]ai.ModelDef, error) {
+		if provider != ai.OpenAI || token != "candidate-secret" {
+			t.Fatalf("validation got provider=%s token=%q", provider.Name, token)
 		}
 		return []ai.ModelDef{{ID: "gpt-example"}}, nil
 	}
 	t.Cleanup(func() { configureTokenModels = previous })
 
-	result, err := runProviderTokenConfigure(context.Background(), ai.BackendOpenAI, ConfigureOptions{
+	result, err := runProviderTokenConfigure(context.Background(), ai.OpenAI, ConfigureOptions{
 		Token: text.SensitiveString("candidate-secret"),
 	})
 	if err != nil {
@@ -61,12 +61,12 @@ func TestRunProviderConfigureFailedValidationPreservesToken(t *testing.T) {
 		t.Fatalf("seed vault: %v", err)
 	}
 	previous := configureTokenModels
-	configureTokenModels = func(context.Context, ai.Backend, string) ([]ai.ModelDef, error) {
+	configureTokenModels = func(context.Context, *ai.ModelProvider, string) ([]ai.ModelDef, error) {
 		return nil, errors.New("credential rejected")
 	}
 	t.Cleanup(func() { configureTokenModels = previous })
 
-	_, err := runProviderTokenConfigure(context.Background(), ai.BackendAnthropic, ConfigureOptions{
+	_, err := runProviderTokenConfigure(context.Background(), ai.Anthropic, ConfigureOptions{
 		Token: text.SensitiveString("invalid-secret"),
 	})
 	if err == nil {
@@ -83,15 +83,15 @@ func TestRunProviderConfigureTestCurrentDoesNotWrite(t *testing.T) {
 	t.Cleanup(func() { credentials.SetPathForTesting("") })
 	t.Setenv("DEEPSEEK_API_KEY", "environment-secret")
 	previous := configureTokenModels
-	configureTokenModels = func(_ context.Context, backend ai.Backend, token string) ([]ai.ModelDef, error) {
-		if backend != ai.BackendDeepSeek || token != "environment-secret" {
-			t.Fatalf("validation got backend=%s token=%q", backend, token)
+	configureTokenModels = func(_ context.Context, provider *ai.ModelProvider, token string) ([]ai.ModelDef, error) {
+		if provider != ai.DeepSeek || token != "environment-secret" {
+			t.Fatalf("validation got provider=%s token=%q", provider.Name, token)
 		}
 		return []ai.ModelDef{{ID: "deepseek-example"}}, nil
 	}
 	t.Cleanup(func() { configureTokenModels = previous })
 
-	result, err := runProviderTokenConfigure(context.Background(), ai.BackendDeepSeek, ConfigureOptions{Test: true})
+	result, err := runProviderTokenConfigure(context.Background(), ai.DeepSeek, ConfigureOptions{Test: true})
 	if err != nil {
 		t.Fatalf("runProviderConfigure: %v", err)
 	}
@@ -111,35 +111,35 @@ func TestRunProviderDefaultsConfigureSavesPartialDefaultsAndActiveProvider(t *te
 	if err := captainconfig.Save(captainconfig.Config{AI: captainconfig.AIDefaults{
 		DefaultProvider: "anthropic",
 		Providers: map[string]captainconfig.ProviderDefaults{
-			"anthropic": {Agent: "claude-agent", Model: "claude-existing", ReasoningEffort: "low"},
-			"openai":    {Agent: "openai", Model: "gpt-existing", ReasoningEffort: "medium"},
+			"anthropic": {Mode: "agent", Model: "claude-existing", ReasoningEffort: "low"},
+			"openai":    {Mode: "api", Model: "gpt-existing", ReasoningEffort: "medium"},
 		},
 	}}); err != nil {
 		t.Fatalf("seed config: %v", err)
 	}
 	previous := configureDefaultsModels
-	configureDefaultsModels = func(_ context.Context, agent api.Backend) ([]ai.ModelDef, error) {
-		if agent != api.BackendCodexAgent {
-			t.Fatalf("agent = %s", agent)
+	configureDefaultsModels = func(_ context.Context, provider *api.ModelProvider, mode api.RuntimeMode) ([]ai.ModelDef, error) {
+		if provider != api.OpenAI || mode != api.ModeAgent {
+			t.Fatalf("runtime = %s %s", provider.Name, mode)
 		}
 		return []ai.ModelDef{{ID: "gpt-5.6-sol"}}, nil
 	}
 	t.Cleanup(func() { configureDefaultsModels = previous })
 
-	result, err := runProviderDefaultsConfigure(context.Background(), api.OpenAIProvider, ConfigureOptions{
-		Agent: "codex-agent", Active: true,
+	result, err := runProviderDefaultsConfigure(context.Background(), api.OpenAI, ConfigureOptions{
+		Mode: "agent", Active: true,
 	})
 	if err != nil {
 		t.Fatalf("runProviderDefaultsConfigure: %v", err)
 	}
-	if result.Agent != "codex-agent" || result.Model != "gpt-5.6-sol" || !result.Active {
+	if result.Mode != "agent" || result.Model != "gpt-5.6-sol" || !result.Active {
 		t.Fatalf("result = %+v", result)
 	}
 	got, _, err := captainconfig.Load()
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	if got.AI.DefaultProvider != "openai" || got.AI.Providers["openai"].Agent != "codex-agent" || got.AI.Providers["anthropic"].Model != "claude-existing" {
+	if got.AI.DefaultProvider != "openai" || got.AI.Providers["openai"].Mode != "agent" || got.AI.Providers["anthropic"].Model != "claude-existing" {
 		t.Fatalf("saved config = %+v", got.AI)
 	}
 }
@@ -149,18 +149,18 @@ func TestRunProviderDefaultsConfigureDefaultEffortClearsSavedEffort(t *testing.T
 	t.Cleanup(func() { captainconfig.SetPathForTesting("") })
 	if err := captainconfig.Save(captainconfig.Config{AI: captainconfig.AIDefaults{
 		Providers: map[string]captainconfig.ProviderDefaults{
-			"openai": {Agent: "codex-agent", Model: "gpt-5.6-sol", ReasoningEffort: "high"},
+			"openai": {Mode: "agent", Model: "gpt-5.6-sol", ReasoningEffort: "high"},
 		},
 	}}); err != nil {
 		t.Fatalf("seed config: %v", err)
 	}
 	previous := configureDefaultsModels
-	configureDefaultsModels = func(context.Context, api.Backend) ([]ai.ModelDef, error) {
+	configureDefaultsModels = func(context.Context, *api.ModelProvider, api.RuntimeMode) ([]ai.ModelDef, error) {
 		return []ai.ModelDef{{ID: "gpt-5.6-sol"}}, nil
 	}
 	t.Cleanup(func() { configureDefaultsModels = previous })
 
-	result, err := runProviderDefaultsConfigure(context.Background(), api.OpenAIProvider, ConfigureOptions{Effort: "default"})
+	result, err := runProviderDefaultsConfigure(context.Background(), api.OpenAI, ConfigureOptions{Effort: "default"})
 	if err != nil {
 		t.Fatalf("runProviderDefaultsConfigure: %v", err)
 	}
@@ -181,7 +181,8 @@ func TestRunProviderConfigureRejectsCredentialAndDefaultFlagsTogether(t *testing
 
 func TestBuildConfigFromForm_TogglesInvert(t *testing.T) {
 	in := formInputs{
-		Backend:         "anthropic",
+		Provider:        api.Anthropic,
+		Mode:            "agent",
 		Model:           "claude-sonnet-4-6",
 		ReasoningEffort: "medium",
 		BudgetUSD:       "1.50",
@@ -194,7 +195,7 @@ func TestBuildConfigFromForm_TogglesInvert(t *testing.T) {
 		AI: captainconfig.AIDefaults{
 			DefaultProvider: "anthropic",
 			Providers: map[string]captainconfig.ProviderDefaults{
-				"anthropic": {Agent: "anthropic", Model: "claude-sonnet-4-6", ReasoningEffort: "medium"},
+				"anthropic": {Mode: "agent", Model: "claude-sonnet-4-6", ReasoningEffort: "medium"},
 			},
 			BudgetUSD: 1.5,
 			MaxTokens: 8192,
@@ -215,9 +216,10 @@ func TestBuildConfigFromForm_TogglesInvert(t *testing.T) {
 
 func TestBuildConfigFromForm_BlankNumericInputs(t *testing.T) {
 	got := buildConfigFromForm(formInputs{
-		Backend: "openai",
-		Model:   "gpt-5",
-		Enabled: allToggles, // all enabled
+		Provider: api.OpenAI,
+		Mode:     "api",
+		Model:    "gpt-5",
+		Enabled:  allToggles, // all enabled
 	})
 	if got.AI.BudgetUSD != 0 {
 		t.Errorf("blank budget should parse to 0, got %v", got.AI.BudgetUSD)
@@ -281,28 +283,28 @@ func TestModelOptionsFor_NoKeyShowsErrorRow(t *testing.T) {
 	t.Setenv("GEMINI_API_KEY", "")
 	t.Setenv("DEEPSEEK_API_KEY", "")
 
-	for _, b := range []ai.Backend{ai.BackendAnthropic, ai.BackendOpenAI, ai.BackendGemini, ai.BackendDeepSeek} {
-		opts := modelOptionsFor(b)
+	for _, p := range ai.Providers() {
+		opts := modelOptionsFor(p, ai.ModeAPI)
 		if len(opts) != 1 {
-			t.Errorf("backend=%s: expected 1 sentinel row, got %d (%+v)", b, len(opts), opts)
+			t.Errorf("%s api: expected 1 sentinel row, got %d (%+v)", p.Name, len(opts), opts)
 			continue
 		}
 		if !strings.Contains(opts[0].Key, "no models") {
-			t.Errorf("backend=%s: sentinel row should carry an error message, got %+v", b, opts[0])
+			t.Errorf("%s api: sentinel row should carry an error message, got %+v", p.Name, opts[0])
 		}
 	}
 }
 
-// TestModelOptionsFor_CLIBackendsUseCatalogWithoutKey verifies CLI/agent
-// backends populate the picker from the static catalog with no API key set:
-// they authenticate internally, so the wizard must never gate them on a key.
-func TestModelOptionsFor_CLIBackendsUseCatalogWithoutKey(t *testing.T) {
+// TestModelOptionsFor_LocalModesUseCatalogWithoutKey verifies the cli and agent
+// modes populate the picker from the static catalog with no API key set: they
+// authenticate internally, so the wizard must never gate them on a key.
+func TestModelOptionsFor_LocalModesUseCatalogWithoutKey(t *testing.T) {
 	installTestCatalog(t)
 	t.Setenv("OPENAI_API_KEY", "")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("GEMINI_API_KEY", "")
 
-	opts := modelOptionsFor(ai.BackendCodexCLI)
+	opts := modelOptionsFor(ai.OpenAI, ai.ModeCLI)
 	if len(opts) != 1 {
 		t.Fatalf("codex-cli picker = %+v, want a single catalog option", opts)
 	}
@@ -320,59 +322,69 @@ func TestDefaultModelFor_SeedsARunnableModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("catalog does not carry the declared default: %v", err)
 	}
-	for _, b := range []ai.Backend{ai.BackendAnthropic, ai.BackendClaudeCLI, ai.BackendClaudeAgent, ai.BackendClaudeCmux} {
-		if got := defaultModelFor(b); got != declared.BareID() {
-			t.Errorf("defaultModelFor(%s) = %q, want the declared default %q", b, got, declared.BareID())
+	for _, mode := range ai.Anthropic.Modes() {
+		if got := defaultModelFor(ai.Anthropic, mode); got != declared.BareID() {
+			t.Errorf("defaultModelFor(anthropic %s) = %q, want the declared default %q", mode, got, declared.BareID())
 		}
 	}
 
-	// Every other backend seeds a model its own provider offers on that mode —
+	// Every other runtime seeds a model its own provider offers on that mode —
 	// never a claude id, and never one the catalog cannot run there.
-	for _, b := range ai.AllBackends() {
-		seed := defaultModelFor(b)
-		if seed == "" {
-			t.Errorf("defaultModelFor(%s) seeded nothing", b)
-			continue
-		}
-		if known, available := ai.RegistryModelAvailability(b, seed); !known || !available {
-			t.Errorf("defaultModelFor(%s) = %q, which is not available on that backend", b, seed)
+	for _, p := range ai.Providers() {
+		for _, mode := range p.Modes() {
+			seed := defaultModelFor(p, mode)
+			if seed == "" {
+				t.Errorf("defaultModelFor(%s %s) seeded nothing", p.Name, mode)
+				continue
+			}
+			if known, available := ai.RegistryModelAvailability(p, mode, seed); !known || !available {
+				t.Errorf("defaultModelFor(%s %s) = %q, which that runtime cannot run", p.Name, mode, seed)
+			}
 		}
 	}
 }
 
-// TestDefaultModelFor_SkipsDisabledModels covers the seed a picker would
-// otherwise pre-select after the user switched that exact model off.
-func TestDefaultModelFor_SkipsDisabledModels(t *testing.T) {
-	seed := defaultModelFor(ai.BackendAnthropic)
+// TestEffectiveProviderDefaults_SkipsDisabledModels covers the seed a picker
+// would otherwise pre-select after the user switched that exact model off.
+//
+// The opt-out is applied here rather than in defaultModelFor: that table is
+// deliberately hand-maintained (deriving it would move every unconfigured user's
+// default whenever the catalog snapshot changes), so degrading a switched-off
+// selection is this projection's job.
+func TestEffectiveProviderDefaults_SkipsDisabledModels(t *testing.T) {
+	seed := defaultModelFor(ai.Anthropic, ai.Anthropic.DefaultMode)
 	api.SetDisabled(api.NewDisabledSet(nil, nil, nil, []string{seed}, nil))
 	t.Cleanup(func() { api.SetDisabled(api.DisabledSet{}) })
 
-	next := defaultModelFor(ai.BackendAnthropic)
-	if next == seed {
-		t.Fatalf("defaultModelFor(anthropic) still seeds the disabled model %q", seed)
+	view, err := effectiveProviderDefaults(captainconfig.AIDefaults{}, ai.Anthropic)
+	if err != nil {
+		t.Fatalf("effectiveProviderDefaults: %v", err)
 	}
-	if next == "" {
-		t.Fatal("defaultModelFor(anthropic) fell back to nothing instead of the next available model")
+	if view.Model == seed {
+		t.Fatalf("anthropic still seeds the disabled model %q", seed)
+	}
+	if view.Model == "" {
+		t.Fatal("anthropic fell back to nothing instead of the next available model")
 	}
 }
 
-// TestBackendOptions_DropsDisabledBackends covers the wizard's backend picker,
+// TestRuntimeOptions_DropsDisabledRuntimes covers the wizard's runtime picker,
 // which used to be eleven hardcoded rows that no opt-out could reach.
-func TestBackendOptions_DropsDisabledBackends(t *testing.T) {
-	if got, want := len(backendOptions()), len(ai.AllBackends()); got != want {
-		t.Fatalf("backendOptions() = %d rows, want one per backend (%d)", got, want)
+func TestRuntimeOptions_DropsDisabledRuntimes(t *testing.T) {
+	if got, want := len(runtimeOptions()), len(ai.AllRuntimes()); got != want {
+		t.Fatalf("runtimeOptions() = %d rows, want one per runtime (%d)", got, want)
 	}
 
 	api.SetDisabled(api.NewDisabledSet([]string{"cmux"}, nil, nil, nil, nil))
 	t.Cleanup(func() { api.SetDisabled(api.DisabledSet{}) })
 
-	for _, option := range backendOptions() {
-		if strings.HasSuffix(option.Value, "-cmux") {
-			t.Errorf("backendOptions() still offers %q with cmux disabled", option.Value)
+	for _, option := range runtimeOptions() {
+		if strings.HasSuffix(option.Value, "/cmux") {
+			t.Errorf("runtimeOptions() still offers %q with cmux disabled", option.Value)
 		}
 	}
-	if got, want := len(backendOptions()), len(ai.AllBackends())-2; got != want {
-		t.Fatalf("backendOptions() = %d rows with cmux disabled, want %d", got, want)
+	if got, want := len(runtimeOptions()), len(ai.AllRuntimes())-2; got != want {
+		t.Fatalf("runtimeOptions() = %d rows with cmux disabled, want %d", got, want)
 	}
 }
 
@@ -394,13 +406,13 @@ func TestRuntimeLabel_DerivesFromIDs(t *testing.T) {
 }
 
 func TestEffortHuhOptionsForModel(t *testing.T) {
-	luna := effortHuhOptionsFor(ai.BackendCodexAgent, "luna")
+	luna := effortHuhOptionsFor(ai.OpenAI, ai.ModeAgent, "luna")
 	for _, option := range luna {
 		if option.Value == "ultra" {
 			t.Fatalf("Luna options should not include ultra: %+v", luna)
 		}
 	}
-	sol := effortHuhOptionsFor(ai.BackendCodexAgent, "sol")
+	sol := effortHuhOptionsFor(ai.OpenAI, ai.ModeAgent, "sol")
 	foundMax := false
 	for _, option := range sol {
 		foundMax = foundMax || option.Value == "max"
@@ -408,9 +420,9 @@ func TestEffortHuhOptionsForModel(t *testing.T) {
 	if !foundMax {
 		t.Fatalf("Sol options should include max: %+v", sol)
 	}
-	noEffort := effortHuhOptionsFor(ai.BackendDeepSeek, "deepseek-v4-pro")
+	noEffort := effortHuhOptionsFor(ai.DeepSeek, ai.ModeAPI, "deepseek-v4-pro")
 	if len(noEffort) != 1 || noEffort[0].Value != "" {
-		t.Fatalf("DeepSeek options = %+v, want only the backend default", noEffort)
+		t.Fatalf("DeepSeek options = %+v, want only the runtime default", noEffort)
 	}
 }
 

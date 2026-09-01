@@ -17,12 +17,12 @@ import (
 var _ = Describe("CLI model selection", func() {
 	BeforeEach(func() {
 		path := filepath.Join(GinkgoT().TempDir(), ".captain.yaml")
-		Expect(os.WriteFile(path, []byte("ai:\n  model: opus\n  backend: claude-agent\n"), 0o600)).To(Succeed())
+		Expect(os.WriteFile(path, []byte("ai:\n  defaultProvider: anthropic\n  providers:\n    anthropic:\n      model: opus\n      mode: agent\n"), 0o600)).To(Succeed())
 		captainconfig.SetPathForTesting(path)
 		DeferCleanup(func() { captainconfig.SetPathForTesting("") })
 	})
 
-	It("does not attach the saved Claude backend to an explicit model", func() {
+	It("does not attach the saved Claude runtime to an explicit model", func() {
 		opts := AIPromptOptions{}
 		opts.Model = "gemini-3.5-flash"
 
@@ -30,7 +30,8 @@ var _ = Describe("CLI model selection", func() {
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(req.Model.Name).To(Equal("gemini-3.5-flash"))
-		Expect(req.Model.Backend).To(Equal(api.BackendGemini))
+		Expect(req.Model.Provider).To(Equal(api.Google))
+		Expect(req.Model.Mode).To(Equal(api.ModeAPI))
 		Expect(cfg.Model).To(Equal(req.Model))
 	})
 
@@ -39,48 +40,53 @@ var _ = Describe("CLI model selection", func() {
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(cfg.Model.Name).To(Equal("gemini-3.5-flash"))
-		Expect(cfg.Model.Backend).To(Equal(api.BackendGemini))
+		Expect(cfg.Model.Provider).To(Equal(api.Google))
+		Expect(cfg.Model.Mode).To(Equal(api.ModeAPI))
 	})
 
 	It("passes an unsupported valid effort through for runtime degradation", func() {
-		cfg, err := (AIProviderOptions{ModelFlags: aiflags.ModelFlags{Model: "gemini-3.6-flash:xhigh"}}).ToConfig()
+		// The compact grammar is mode:model[:effort]; the prefix is never an adapter.
+		cfg, err := (AIProviderOptions{ModelFlags: aiflags.ModelFlags{Model: "api:gemini-3.6-flash:xhigh"}}).ToConfig()
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(cfg.Model.Name).To(Equal("gemini-3.6-flash"))
-		Expect(cfg.Model.Backend).To(Equal(api.BackendGemini))
+		Expect(cfg.Model.Provider).To(Equal(api.Google))
+		Expect(cfg.Model.Mode).To(Equal(api.ModeAPI))
 		Expect(cfg.Model.Effort).To(Equal(api.EffortXHigh))
 	})
 
-	It("accepts the whoami catalog model when configuring Gemini CLI defaults", func() {
-		Expect(validateProviderDefaults(context.Background(), api.BackendGemini, ProviderDefaultView{
-			Agent: "gemini-cli", Model: "gemini-3.6-flash", Effort: "high",
+	It("accepts the whoami catalog model when configuring Gemini cli defaults", func() {
+		Expect(validateProviderDefaults(context.Background(), api.Google, ProviderDefaultView{
+			Mode: "cli", Model: "gemini-3.6-flash", Effort: "high",
 		})).To(Succeed())
 	})
 
-	It("keeps the saved model and backend paired when there is no override", func() {
+	It("keeps the saved model and runtime paired when there is no override", func() {
 		cfg, err := (AIProviderOptions{}).ToConfig()
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(cfg.Model.Name).To(Equal("claude-opus-5"))
-		Expect(cfg.Model.Backend).To(Equal(api.BackendClaudeAgent))
+		Expect(cfg.Model.Provider).To(Equal(api.Anthropic))
+		Expect(cfg.Model.Mode).To(Equal(api.ModeAgent))
 	})
 
-	It("does not retain a prompt backend when a structured spec replaces its model", func() {
-		req := ai.Request{Model: api.Model{Name: "opus", Backend: api.BackendClaudeAgent}}
+	It("does not retain a prompt runtime when a structured spec replaces its model", func() {
+		req := ai.Request{Model: api.Model{Name: "opus", Mode: api.ModeAgent}}
 		cfg := ai.Config{Model: req.Model}
 
 		overlayRuntimeSpec(&req, &cfg, api.Spec{Model: api.Model{Name: "gemini-3.5-flash"}})
 		Expect(applyPromptDefaults(&req, &cfg)).To(Succeed())
-		resolved, err := ai.ResolveModelSelectors(cfg.Model)
+		resolved, err := ai.Resolve(cfg.Model)
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(resolved.Name).To(Equal("gemini-3.5-flash"))
-		Expect(resolved.Backend).To(Equal(api.BackendGemini))
+		Expect(resolved.Provider).To(Equal(api.Google))
+		Expect(resolved.Mode).To(Equal(api.ModeAPI))
 	})
 
 	It("omits single-runtime identity from multi-model parent labels", func() {
 		labels := promptTaskLabels(PromptRenderResult{
-			Name: "test", Model: "opus", Backend: string(api.BackendClaudeAgent),
+			Name: "test", Model: "opus", Provider: api.Anthropic.Name, Mode: string(api.ModeAgent),
 		}, "multi")
 
 		Expect(labels).To(HaveKeyWithValue("mode", "multi"))
@@ -94,25 +100,28 @@ var _ = Describe("CLI model selection", func() {
 		var executed ai.Config
 		executePromptRequestFunc = func(_ context.Context, _ ai.Request, cfg ai.Config, _ time.Duration, _ bool) (any, error) {
 			executed = cfg
-			return AIPromptResult{Text: "ok", Model: cfg.Model.Name, Backend: string(cfg.Model.Backend)}, nil
+			return AIPromptResult{Text: "ok", Model: cfg.Model.Name, Provider: cfg.Model.Provider.Name, Mode: string(cfg.Model.Mode)}, nil
 		}
 
 		result, err := executeSyncBatch(
 			context.Background(),
-			testRenderedPrompt(api.Model{Name: "opus", Backend: api.BackendClaudeAgent}),
+			testRenderedPrompt(api.Model{Name: "opus", Mode: api.ModeAgent}),
 			AIPromptOptions{AIRuntimeOptions: AIRuntimeOptions{AIProviderOptions: AIProviderOptions{}}, MultiModels: []string{"gemini-3.5-flash"}},
 		)
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(executed.Model.Name).To(Equal("gemini-3.5-flash"))
-		Expect(executed.Model.Backend).To(Equal(api.BackendGemini))
+		Expect(executed.Model.Provider).To(Equal(api.Google))
+		Expect(executed.Model.Mode).To(Equal(api.ModeAPI))
 		Expect(result.Runs).To(HaveLen(1))
-		Expect(result.Runs[0].Selector).To(Equal("gemini:gemini-3.5-flash"))
+		// The selector is the compact form the user could have typed: a mode prefix,
+		// never a provider name.
+		Expect(result.Runs[0].Selector).To(Equal("api:gemini-3.5-flash"))
 	})
 
 	It("replaces the configured runtime identity for a multi-model variant", func() {
-		configured := api.Model{Name: "gpt-5.6-luna", Backend: api.BackendCodexCLI}.Capabilities()
-		selected := api.Model{Name: "gemini-3.5-flash", Backend: api.BackendGemini, Effort: api.EffortHigh}.Capabilities()
+		configured := withCaps(api.Model{Name: "gpt-5.6-luna", Mode: api.ModeCLI})
+		selected := withCaps(api.Model{Name: "gemini-3.5-flash", Mode: api.ModeAPI, Effort: api.EffortHigh})
 
 		variant := renderVariant(testRenderedPrompt(configured), selected, nil).Config.Model
 
@@ -123,8 +132,9 @@ var _ = Describe("CLI model selection", func() {
 	It("preserves runtime fallbacks when no CLI fallback override is set", func() {
 		selected := api.Model{
 			Name:      "gemini-3.5-flash",
-			Backend:   api.BackendGemini,
-			Fallbacks: api.ModelList{{Name: "gemini-3-flash", Backend: api.BackendGemini}},
+			Provider:  api.Google,
+			Mode:      api.ModeAPI,
+			Fallbacks: api.ModelList{{Name: "gemini-3-flash", Mode: api.ModeAPI}},
 		}
 
 		variant := renderVariant(testRenderedPrompt(api.Model{}), selected, nil).Config.Model

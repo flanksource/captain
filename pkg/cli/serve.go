@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"embed"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,7 +12,6 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -22,6 +20,7 @@ import (
 	"github.com/flanksource/captain/pkg/aichat"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/captaintoken"
+	"github.com/flanksource/captain/pkg/cli/webapp"
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/gitagent"
 	"github.com/flanksource/captain/pkg/monitor"
@@ -30,14 +29,6 @@ import (
 	"github.com/flanksource/clicky/task"
 	"github.com/spf13/cobra"
 )
-
-// The built webapp under webapp/dist is generated locally and ignored. The
-// tracked .gitkeep lets the embed pattern compile before `task www:build`
-// generates the Vite assets. all: ensures the placeholder is embedded too.
-// When index.html is absent, serve.go reports it at runtime.
-//
-//go:embed all:webapp/dist
-var captainWebappFS embed.FS
 
 type ServeOptions struct {
 	Host       string
@@ -422,12 +413,21 @@ func startCaptainViteDevServer(ctx context.Context, opts viteDevServerOptions) (
 	return vite, nil
 }
 
+// captainWebappDevDir resolves the Vite source tree from the working directory
+// rather than runtime.Caller: under -trimpath the caller's file is the import
+// path, not a filesystem location, so anchoring to it silently resolves against
+// the process CWD. Dev mode only runs from inside a checkout, so the repo root
+// is the right anchor.
 func captainWebappDevDir() (string, error) {
-	_, thisFile, _, ok := runtime.Caller(0)
-	if !ok {
-		return "", fmt.Errorf("cannot locate webapp source")
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("locate webapp source: %w", err)
 	}
-	dir := filepath.Join(filepath.Dir(thisFile), "webapp")
+	root := repoRoot(cwd)
+	if root == "" {
+		return "", fmt.Errorf("locate webapp source: %s is not inside the captain repository", cwd)
+	}
+	dir := filepath.Join(root, "pkg", "cli", "webapp")
 	if _, err := os.Stat(filepath.Join(dir, "package.json")); err != nil {
 		return "", fmt.Errorf("webapp/package.json not found at %s: %w", dir, err)
 	}
@@ -435,7 +435,7 @@ func captainWebappDevDir() (string, error) {
 }
 
 func newCaptainWebappHandler() (http.Handler, error) {
-	sub, err := fs.Sub(captainWebappFS, "webapp/dist")
+	sub, err := fs.Sub(webapp.FS, "dist")
 	if err != nil {
 		return nil, err
 	}

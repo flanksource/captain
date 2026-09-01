@@ -15,11 +15,11 @@ import (
 // whole-set PUT can never leave the file in a half-applied state the way a
 // per-entry add/remove pair could.
 type disabledSelectionsRequest struct {
-	Modes     []string `json:"modes"`
-	Providers []string `json:"providers"`
-	Backends  []string `json:"backends"`
-	Models    []string `json:"models"`
-	Efforts   []string `json:"efforts"`
+	Modes     []string                        `json:"modes"`
+	Providers []string                        `json:"providers"`
+	Runtimes  []captainconfig.DisabledRuntime `json:"runtimes"`
+	Models    []string                        `json:"models"`
+	Efforts   []string                        `json:"efforts"`
 }
 
 func registerDisabledHandlers(mux *http.ServeMux) {
@@ -52,7 +52,7 @@ func handleDisabledSelections(w http.ResponseWriter, r *http.Request) {
 	selections := captainconfig.DisabledSelections{
 		Modes:     normalizeTokens(request.Modes, true),
 		Providers: normalizeTokens(request.Providers, true),
-		Backends:  normalizeTokens(request.Backends, true),
+		Runtimes:  normalizeRuntimes(request.Runtimes),
 		Models:    normalizeTokens(request.Models, false),
 		Efforts:   normalizeTokens(request.Efforts, true),
 	}
@@ -80,7 +80,10 @@ func handleDisabledSelections(w http.ResponseWriter, r *http.Request) {
 	// The registry global is what every resolution path reads, so install the new
 	// set before answering: the page refetches immediately after this call.
 	api.SetDisabled(selections.Set())
-	writeConfigurationJSON(w, disabledSelectionsRequest(selections))
+	writeConfigurationJSON(w, disabledSelectionsRequest{
+		Modes: selections.Modes, Providers: selections.Providers, Runtimes: selections.Runtimes,
+		Models: selections.Models, Efforts: selections.Efforts,
+	})
 }
 
 var disabledWriteMu sync.Mutex
@@ -123,13 +126,13 @@ func validateDisabledSelections(saved captainconfig.AIDefaults, selections capta
 		}
 	}
 	for _, provider := range selections.Providers {
-		if !configurableAPIBackend(api.Backend(provider)) {
-			return fmt.Errorf("unknown provider %q; expected one of: anthropic, openai, gemini, deepseek", provider)
+		if _, ok := api.ProviderByName(provider); !ok {
+			return fmt.Errorf("unknown provider %q; expected one of: %s", provider, api.ProviderList())
 		}
 	}
-	for _, backend := range selections.Backends {
-		if !knownBackend(api.Backend(backend)) {
-			return fmt.Errorf("unknown backend %q; expected one of: %s", backend, api.BackendList())
+	for _, runtime := range selections.Runtimes {
+		if !knownRuntime(runtime) {
+			return fmt.Errorf("unknown runtime %s/%s; expected one of: %s", runtime.Provider, runtime.Mode, api.RuntimeList())
 		}
 	}
 	for _, effort := range selections.Efforts {
@@ -145,24 +148,49 @@ func validateDisabledSelections(saved captainconfig.AIDefaults, selections capta
 		return fmt.Errorf("cannot disable every provider; leave at least one enabled")
 	}
 	// A flagless run resolves through ActiveProvider, so it is not enough that
-	// some backend somewhere survives: the provider that run would land on has to
-	// keep one. Disabling all four anthropic backends individually leaves
+	// some runtime somewhere survives: the provider that run would land on has to
+	// keep one. Disabling all four anthropic modes individually leaves
 	// ActiveProvider on anthropic with nothing to serve it.
 	saved.Disabled = selections
-	active := api.Backend(saved.ActiveProvider())
-	for _, backend := range api.AllBackends() {
-		if backend.Provider() == active && !set.Backend(backend) {
+	active, known := api.ProviderByName(saved.ActiveProvider())
+	if !known {
+		return fmt.Errorf("active provider %q is not a known provider", saved.ActiveProvider())
+	}
+	for _, mode := range active.Modes() {
+		if !set.Runtime(active, mode) {
 			return nil
 		}
 	}
-	return fmt.Errorf("this would leave the active provider %q with no enabled backend; re-enable a mode or backend for it, or disable the provider outright so another one takes over", active)
+	return fmt.Errorf("this would leave the active provider %q with no enabled mode; re-enable a mode for it, or disable the provider outright so another one takes over", active.Name)
 }
 
-func knownBackend(backend api.Backend) bool {
-	for _, candidate := range api.AllBackends() {
-		if candidate == backend {
-			return true
+// normalizeRuntimes canonicalizes each pair and drops blanks and duplicates.
+func normalizeRuntimes(runtimes []captainconfig.DisabledRuntime) []captainconfig.DisabledRuntime {
+	out := make([]captainconfig.DisabledRuntime, 0, len(runtimes))
+	seen := map[captainconfig.DisabledRuntime]bool{}
+	for _, runtime := range runtimes {
+		key := captainconfig.DisabledRuntime{
+			Provider: strings.ToLower(strings.TrimSpace(runtime.Provider)),
+			Mode:     strings.ToLower(strings.TrimSpace(runtime.Mode)),
 		}
+		if key.Provider == "" || key.Mode == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, key)
 	}
-	return false
+	return out
+}
+
+func knownRuntime(runtime captainconfig.DisabledRuntime) bool {
+	p, ok := api.ProviderByName(runtime.Provider)
+	if !ok {
+		return false
+	}
+	mode, ok := api.ParseRuntimeMode(runtime.Mode)
+	if !ok {
+		return false
+	}
+	_, serves := p.Caps(mode)
+	return serves
 }

@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 
+	toml "github.com/pelletier/go-toml/v2"
+
 	"github.com/flanksource/captain/pkg/api"
 )
 
@@ -23,8 +25,22 @@ func handlePermissionCatalog(baseCwd string) http.HandlerFunc {
 			http.Error(w, "invalid dir", http.StatusBadRequest)
 			return
 		}
+		// The catalog describes one agent's world, so the runtime is required
+		// rather than defaulted: there is no honest catalog for "some agent",
+		// and the previous default — every source on the machine, merged — is
+		// exactly the answer this endpoint no longer gives.
+		provider, known := api.ProviderByName(strings.TrimSpace(r.URL.Query().Get("provider")))
+		if !known {
+			http.Error(w, fmt.Sprintf("provider must be one of: %s", api.ProviderList()), http.StatusBadRequest)
+			return
+		}
+		mode, ok := api.ParseRuntimeMode(strings.TrimSpace(r.URL.Query().Get("mode")))
+		if !ok {
+			http.Error(w, fmt.Sprintf("mode must be one of: %s", api.RuntimeModeList()), http.StatusBadRequest)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(buildPermissionCatalog(resolved)); err != nil {
+		if err := json.NewEncoder(w).Encode(buildPermissionCatalog(resolved, provider, mode)); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	}
@@ -72,78 +88,113 @@ func resolveCatalogDir(baseCwd, dir string) (string, error) {
 	return target, nil
 }
 
-func buildPermissionCatalog(dir string) api.PermissionCatalog {
+// buildPermissionCatalog lists what the agent behind a runtime can actually see:
+// its own built-in tools, and the MCP servers, skills and plugins it discovers
+// from its own configuration. The API mode runs no agent CLI and therefore has
+// an empty catalog rather than a borrowed one.
+func buildPermissionCatalog(dir string, provider *api.ModelProvider, mode api.RuntimeMode) api.PermissionCatalog {
 	home, _ := os.UserHomeDir()
-	catalog := api.PermissionCatalog{
-		Tools: builtinPermissionTools(),
+
+	catalog := api.PermissionCatalog{Tools: catalogTools(provider, mode)}
+	byKind := map[api.ResourceKind]map[string]api.PermissionCatalogItem{}
+	for _, source := range api.AgentResourceSourcesFor(provider, mode) {
+		root := dir
+		if source.Scope == api.AgentScopeHome {
+			if home == "" {
+				continue
+			}
+			root = home
+		}
+		items, ok := byKind[source.Kind]
+		if !ok {
+			items = map[string]api.PermissionCatalogItem{}
+			byKind[source.Kind] = items
+		}
+		readCatalogSource(items, filepath.Join(root, source.Path), source)
 	}
 
-	mcp := map[string]api.PermissionCatalogItem{}
-	addMCPServers(mcp, filepath.Join(dir, ".mcp.json"), "workspace")
-	if home != "" {
-		addMCPServers(mcp, filepath.Join(home, ".claude.json"), "claude")
-	}
-	catalog.MCP = sortedCatalogItems(mcp)
-
-	plugins := map[string]api.PermissionCatalogItem{}
-	if home != "" {
-		addPluginDirs(plugins, filepath.Join(home, ".codex", "plugins"), "codex")
-		addClaudeInstalledPlugins(plugins, filepath.Join(home, ".claude", "plugins", "installed_plugins.json"))
-	}
-	catalog.Plugins = sortedCatalogItems(plugins)
-
-	skills := map[string]api.PermissionCatalogItem{}
-	addWorkspaceSkills(skills, dir)
-	if home != "" {
-		addSkillDirs(skills, filepath.Join(home, ".claude", "skills"), "claude")
-		addSkillDirs(skills, filepath.Join(home, ".agents", "skills"), "agents")
-	}
-	catalog.Skills = sortedCatalogItems(skills)
-
+	catalog.MCP = sortedCatalogItems(byKind[api.ResourceKindMCP])
+	catalog.Skills = sortedCatalogItems(byKind[api.ResourceKindSkills])
+	catalog.Plugins = sortedCatalogItems(byKind[api.ResourceKindPlugins])
 	return catalog
 }
 
-func builtinPermissionTools() []api.PermissionCatalogItem {
-	return []api.PermissionCatalogItem{
-		{ID: "Read", Label: "Read", Group: "Files", Description: "Read files from the workspace.", Source: "builtin", Available: true, DefaultMode: "auto"},
-		{ID: "Edit", Label: "Edit", Group: "Files", Description: "Apply targeted file edits.", Source: "builtin", Available: true, DefaultMode: "auto"},
-		{ID: "Write", Label: "Write", Group: "Files", Description: "Write a new file.", Source: "builtin", Available: true, DefaultMode: "auto"},
-		{ID: "MultiEdit", Label: "MultiEdit", Group: "Files", Description: "Apply several edits to one file.", Source: "builtin", Available: true, DefaultMode: "auto"},
-		{ID: "Glob", Label: "Glob", Group: "Files", Description: "Find files by glob pattern.", Source: "builtin", Available: true, DefaultMode: "auto"},
-		{ID: "Grep", Label: "Grep", Group: "Files", Description: "Search file contents.", Source: "builtin", Available: true, DefaultMode: "auto"},
-		{ID: "Bash", Label: "Bash", Group: "Shell", Description: "Run shell commands.", Source: "builtin", Available: true, DefaultMode: "ask"},
-		{ID: "WebSearch", Label: "WebSearch", Group: "Web", Description: "Search the web.", Source: "builtin", Available: true, DefaultMode: "ask"},
-		{ID: "WebFetch", Label: "WebFetch", Group: "Web", Description: "Fetch a web page.", Source: "builtin", Available: true, DefaultMode: "ask"},
-		{ID: "TodoWrite", Label: "TodoWrite", Group: "Planning", Description: "Track task progress.", Source: "builtin", Available: true, DefaultMode: "auto"},
+// catalogTools projects the selected agent's declared tool vocabulary. The
+// names used to be a hardcoded claude list served to codex and gemini runs,
+// which could not name a single one of them.
+func catalogTools(provider *api.ModelProvider, mode api.RuntimeMode) []api.PermissionCatalogItem {
+	tools := api.AgentToolsFor(provider, mode)
+	out := make([]api.PermissionCatalogItem, 0, len(tools))
+	for _, tool := range tools {
+		out = append(out, api.PermissionCatalogItem{
+			ID:          tool.Name,
+			Label:       tool.Name,
+			Group:       tool.Group,
+			Description: tool.Description,
+			Source:      "builtin",
+			Available:   true,
+			DefaultMode: string(tool.Default),
+		})
+	}
+	return out
+}
+
+// readCatalogSource adds every item one declared source yields. A source that
+// does not exist, or cannot be parsed, contributes nothing: an agent's config
+// files are the user's, and a missing ~/.codex/config.toml is the normal state
+// of a machine without codex rather than a captain failure.
+func readCatalogSource(out map[string]api.PermissionCatalogItem, path string, source api.AgentResourceSource) {
+	switch source.Format {
+	case api.SourceFormatMCPJSON:
+		addNamedJSONEntries(out, path, source, "mcpServers")
+	case api.SourceFormatPluginsJSON:
+		addNamedJSONEntries(out, path, source, "plugins")
+	case api.SourceFormatMCPTOML:
+		addTOMLMCPServers(out, path, source)
+	case api.SourceFormatChildDirs:
+		addChildDirs(out, path, source)
+	case api.SourceFormatDirectory:
+		addDirectory(out, path, source)
 	}
 }
 
-func addMCPServers(out map[string]api.PermissionCatalogItem, path, source string) {
+func addNamedJSONEntries(out map[string]api.PermissionCatalogItem, path string, source api.AgentResourceSource, key string) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return
 	}
-	var raw struct {
-		MCPServers map[string]json.RawMessage `json:"mcpServers"`
-	}
+	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return
 	}
-	for name := range raw.MCPServers {
-		addCatalogItem(out, api.PermissionCatalogItem{
-			ID:          name,
-			Label:       name,
-			Group:       "MCP",
-			Source:      source,
-			SourcePath:  path,
-			Configured:  true,
-			Available:   true,
-			DefaultMode: "enabled",
-		})
+	var entries map[string]json.RawMessage
+	if err := json.Unmarshal(raw[key], &entries); err != nil {
+		return
+	}
+	for name := range entries {
+		addCatalogItem(out, catalogItem(name, name, path, source))
 	}
 }
 
-func addPluginDirs(out map[string]api.PermissionCatalogItem, dir, source string) {
+// addTOMLMCPServers reads codex's [mcp_servers.<name>] tables — the one source
+// no other agent shares, and the one captain never read at all.
+func addTOMLMCPServers(out map[string]api.PermissionCatalogItem, path string, source api.AgentResourceSource) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var servers struct {
+		MCPServers map[string]map[string]any `toml:"mcp_servers"`
+	}
+	if err := toml.Unmarshal(data, &servers); err != nil {
+		return
+	}
+	for name := range servers.MCPServers {
+		addCatalogItem(out, catalogItem(name, name, path, source))
+	}
+}
+
+func addChildDirs(out map[string]api.PermissionCatalogItem, dir string, source api.AgentResourceSource) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
@@ -153,80 +204,32 @@ func addPluginDirs(out map[string]api.PermissionCatalogItem, dir, source string)
 			continue
 		}
 		path := filepath.Join(dir, entry.Name())
-		addCatalogItem(out, api.PermissionCatalogItem{
-			ID:          path,
-			Label:       entry.Name(),
-			Group:       "Plugins",
-			Source:      source,
-			SourcePath:  path,
-			Configured:  true,
-			Available:   true,
-			DefaultMode: "enabled",
-		})
+		addCatalogItem(out, catalogItem(path, entry.Name(), path, source))
 	}
 }
 
-func addClaudeInstalledPlugins(out map[string]api.PermissionCatalogItem, path string) {
-	data, err := os.ReadFile(path)
-	if err != nil {
+func addDirectory(out map[string]api.PermissionCatalogItem, dir string, source api.AgentResourceSource) {
+	info, err := os.Stat(dir)
+	if err != nil || !info.IsDir() {
 		return
 	}
-	var raw struct {
-		Plugins map[string]json.RawMessage `json:"plugins"`
+	id := source.ID
+	if id == "" {
+		id = dir
 	}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return
-	}
-	for name := range raw.Plugins {
-		addCatalogItem(out, api.PermissionCatalogItem{
-			ID:          name,
-			Label:       name,
-			Group:       "Plugins",
-			Source:      "claude",
-			SourcePath:  path,
-			Configured:  true,
-			Available:   true,
-			DefaultMode: "enabled",
-		})
-	}
+	addCatalogItem(out, catalogItem(id, id, dir, source))
 }
 
-func addWorkspaceSkills(out map[string]api.PermissionCatalogItem, dir string) {
-	path := filepath.Join(dir, ".skills")
-	if info, err := os.Stat(path); err == nil && info.IsDir() {
-		addCatalogItem(out, api.PermissionCatalogItem{
-			ID:          "$CWD/.skills",
-			Label:       "$CWD/.skills",
-			Group:       "Skills",
-			Source:      "workspace",
-			SourcePath:  path,
-			Configured:  true,
-			Available:   true,
-			DefaultMode: "enabled",
-		})
-	}
-}
-
-func addSkillDirs(out map[string]api.PermissionCatalogItem, dir, source string) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
-			continue
-		}
-		path := filepath.Join(dir, entry.Name())
-		addCatalogItem(out, api.PermissionCatalogItem{
-			ID:          path,
-			Label:       entry.Name(),
-			Group:       "Skills",
-			Source:      source,
-			SourcePath:  path,
-			Configured:  true,
-			Available:   true,
-			DefaultMode: "enabled",
-		})
+func catalogItem(id, label, path string, source api.AgentResourceSource) api.PermissionCatalogItem {
+	return api.PermissionCatalogItem{
+		ID:          id,
+		Label:       label,
+		Group:       source.Group,
+		Source:      source.Source,
+		SourcePath:  path,
+		Configured:  true,
+		Available:   true,
+		DefaultMode: string(api.ResourceEnabled),
 	}
 }
 

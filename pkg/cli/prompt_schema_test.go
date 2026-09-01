@@ -17,8 +17,8 @@ import (
 
 // fakeSchemaProbe reports no API keys and no CLI login files but all CLI
 // binaries present. This keeps the probe hermetic: fetchAPIModels makes no
-// network call without an API key, API backends stay key-gated, and CLI-style
-// backends project exact IDs from Captain's internal registry.
+// network call without an API key, api modes stay key-gated, and the local modes
+// project exact IDs from Captain's internal registry.
 func fakeSchemaProbe() ai.AuthProbe {
 	return ai.AuthProbe{
 		Getenv:     func(string) string { return "" },
@@ -37,7 +37,7 @@ func stubbedSchemaAdapters(t *testing.T) []AdapterStatus {
 	return adapters
 }
 
-func TestPromptSchemaDocumentBackendsAndConditionals(t *testing.T) {
+func TestPromptSchemaDocumentRuntimeAdaptersAndConditionals(t *testing.T) {
 	doc, err := buildPromptSchemaDocument(stubbedSchemaAdapters(t), captainconfig.SandboxDefaults{})
 	if err != nil {
 		t.Fatalf("buildPromptSchemaDocument: %v", err)
@@ -46,36 +46,38 @@ func TestPromptSchemaDocumentBackendsAndConditionals(t *testing.T) {
 		t.Fatalf("schemaVersion = %v, want 2", doc["schemaVersion"])
 	}
 
-	backends := doc["backends"].([]map[string]any)
-	if len(backends) != len(api.AllBackends()) {
-		t.Fatalf("backends length = %d, want %d", len(backends), len(api.AllBackends()))
+	runtimeAdapters := doc["runtimeAdapters"].([]map[string]any)
+	if len(runtimeAdapters) != len(api.AllRuntimes()) {
+		t.Fatalf("runtimeAdapters length = %d, want %d", len(runtimeAdapters), len(api.AllRuntimes()))
 	}
-	byName := map[string]map[string]any{}
-	for _, e := range backends {
-		byName[e["backend"].(string)] = e
+	byRuntime := map[api.Runtime]map[string]any{}
+	for _, e := range runtimeAdapters {
+		byRuntime[api.Runtime{Provider: e["provider"].(string), Mode: api.RuntimeMode(e["mode"].(string))}] = e
 	}
-	for _, b := range api.AllBackends() {
-		e, ok := byName[string(b)]
+	for _, r := range api.AllRuntimes() {
+		e, ok := byRuntime[r]
 		if !ok {
-			t.Fatalf("backends[] missing %q", b)
+			t.Fatalf("runtimeAdapters[] missing %v", r)
 		}
 		_, hasArgs := e["args"]
-		wantArgs := b == api.BackendClaudeCmux || b == api.BackendCodexCmux
+		// Only the cmux modes take adapter arguments.
+		wantArgs := r.Mode == api.ModeCmux
 		if hasArgs != wantArgs {
-			t.Errorf("backend %s args present = %v, want %v", b, hasArgs, wantArgs)
+			t.Errorf("runtime %v args present = %v, want %v", r, hasArgs, wantArgs)
 		}
 	}
 
-	codexCLIModels, hasModels := byName[string(api.BackendCodexCLI)]["models"].([]string)
-	if !hasModels || len(codexCLIModels) == 0 {
-		t.Fatalf("codex-cli should expose exact registry models without API provider data: %+v", byName[string(api.BackendCodexCLI)])
+	openAICLI := byRuntime[api.RuntimeOf(api.OpenAI, api.ModeCLI)]
+	openAICLIModels, hasModels := openAICLI["models"].([]string)
+	if !hasModels || len(openAICLIModels) == 0 {
+		t.Fatalf("openai cli should expose exact registry models without API provider data: %+v", openAICLI)
 	}
-	if got := codexCLIModels[0]; got != "gpt-5.6-sol" {
-		t.Errorf("codex-cli first model = %q, want gpt-5.6-sol", got)
+	if got := openAICLIModels[0]; got != "gpt-5.6-sol" {
+		t.Errorf("openai cli first model = %q, want gpt-5.6-sol", got)
 	}
 	flat := doc["models"].([]PromptModelCatalogEntry)
-	codexModel := schemaModelForBackend(t, flat, "gpt-5.6-sol", "cli")
-	// The provider is the catalog namespace, not the backend: every Codex mode
+	codexModel := schemaModelForMode(t, flat, "gpt-5.6-sol", "cli")
+	// The provider is the catalog namespace, not a runtime: every openai mode
 	// buckets under "openai" so one family filter reaches all of them.
 	if got := codexModel.Provider; got != "openai" {
 		t.Errorf("flat model provider = %v, want openai", got)
@@ -99,7 +101,7 @@ func TestPromptSchemaDocumentBackendsAndConditionals(t *testing.T) {
 		t.Errorf("flat model runtime = %#v, want provider-independent model", got)
 	}
 
-	anthropic := byName[string(api.BackendAnthropic)]
+	anthropic := byRuntime[api.RuntimeOf(api.Anthropic, api.ModeAPI)]
 	if _, hasModels := anthropic["models"]; hasModels {
 		t.Errorf("anthropic should not synthesize models without live provider data: %+v", anthropic)
 	}
@@ -112,7 +114,7 @@ func TestPromptSchemaDocumentBackendsAndConditionals(t *testing.T) {
 		condition := raw.(map[string]any)["if"].(map[string]any)
 		if props, ok := condition["properties"].(map[string]any); ok {
 			if _, leaked := props["backend"]; leaked {
-				t.Fatal("spec schema must not key runtime rules on exact Captain adapters")
+				t.Fatal("spec schema must not key runtime rules on the removed composite adapter id")
 			}
 		}
 	}
@@ -145,11 +147,11 @@ func TestPromptSchemaDocumentSandboxEnumIncludesConfiguredBackends(t *testing.T)
 }
 
 // TestPromptSchemaDocumentDropsDisabledEntries covers the opposite policy to
-// whoami: a schema that still offered a disabled backend, model or tier would
+// whoami: a schema that still offered a disabled runtime, model or tier would
 // let a run pick something the user opted out of.
 func TestPromptSchemaDocumentDropsDisabledEntries(t *testing.T) {
 	api.SetDisabled(api.NewDisabledSet(
-		[]string{"cmux"}, nil, nil, []string{"codex-cli/gpt-5.6-sol"}, []string{"ultra"}))
+		[]string{"cmux"}, nil, nil, []string{"openai/gpt-5.6-sol"}, []string{"ultra"}))
 	t.Cleanup(func() { api.SetDisabled(api.DisabledSet{}) })
 
 	doc, err := buildPromptSchemaDocument(stubbedSchemaAdapters(t), captainconfig.SandboxDefaults{})
@@ -157,31 +159,32 @@ func TestPromptSchemaDocumentDropsDisabledEntries(t *testing.T) {
 		t.Fatalf("buildPromptSchemaDocument: %v", err)
 	}
 
-	backends := doc["backends"].([]map[string]any)
-	for _, entry := range backends {
-		if backend := api.Backend(entry["backend"].(string)); backend.Mode() == api.ModeCmux {
-			t.Errorf("backends[] still offers disabled %s", backend)
+	runtimeAdapters := doc["runtimeAdapters"].([]map[string]any)
+	for _, entry := range runtimeAdapters {
+		r := api.Runtime{Provider: entry["provider"].(string), Mode: api.RuntimeMode(entry["mode"].(string))}
+		if r.Mode == api.ModeCmux {
+			t.Errorf("runtimeAdapters[] still offers disabled %v", r)
 		}
-		if backend := entry["backend"].(string); backend == string(api.BackendCodexCLI) {
+		if r == api.RuntimeOf(api.OpenAI, api.ModeCLI) {
 			if models, _ := entry["models"].([]string); containsString(models, "gpt-5.6-sol") {
-				t.Errorf("codex-cli still offers the disabled model: %v", models)
+				t.Errorf("openai cli still offers the disabled model: %v", models)
 			}
 		}
 	}
 	want := 0
-	for _, backend := range api.AllBackends() {
-		if backend.Mode() != api.ModeCmux {
+	for _, r := range api.AllRuntimes() {
+		if r.Mode != api.ModeCmux {
 			want++
 		}
 	}
-	if len(backends) != want {
-		t.Errorf("backends length = %d, want %d with every cmux backend dropped", len(backends), want)
+	if len(runtimeAdapters) != want {
+		t.Errorf("runtimeAdapters length = %d, want %d with every cmux runtime dropped", len(runtimeAdapters), want)
 	}
 
 	for _, family := range doc["runtimes"].([]api.RuntimeFamily) {
 		for _, mode := range family.Modes {
-			if mode.Backend == string(api.ModeCmux) {
-				t.Errorf("runtimes[] still offers the disabled %s mode", mode.Backend)
+			if mode.Mode == string(api.ModeCmux) {
+				t.Errorf("runtimes[] still offers the disabled %s mode", mode.Mode)
 			}
 			if mode.Disabled {
 				t.Errorf("runtimes[] served a disabled entry instead of dropping it: %+v", mode)
@@ -214,17 +217,17 @@ func TestPromptSchemaDocumentServesTheRuntimeCatalog(t *testing.T) {
 			t.Errorf("runtime family is missing an identity: %+v", family)
 		}
 		for _, mode := range family.Modes {
-			seen[family.Provider+":"+mode.Backend] = true
+			seen[family.Provider+":"+mode.Mode] = true
 			if mode.DefaultModel == "" {
-				t.Errorf("%s serves no default model, so a picker would have to hardcode one", mode.Backend)
+				t.Errorf("%s %s serves no default model, so a picker would have to hardcode one", family.Provider, mode.Mode)
 			}
-			if _, ok := api.ParseRuntimeMode(mode.Backend); !ok {
-				t.Errorf("runtime backend %q is outside the canonical grammar", mode.Backend)
+			if _, ok := api.ParseRuntimeMode(mode.Mode); !ok {
+				t.Errorf("runtime mode %q is outside the canonical grammar", mode.Mode)
 			}
 		}
 	}
-	if len(seen) != len(api.AllBackends()) {
-		t.Errorf("runtimes cover %d backends, want all %d", len(seen), len(api.AllBackends()))
+	if len(seen) != len(api.AllRuntimes()) {
+		t.Errorf("runtimes cover %d cells, want all %d", len(seen), len(api.AllRuntimes()))
 	}
 }
 
@@ -243,17 +246,17 @@ func TestPromptSchemaDocumentServesTheEffortUniverse(t *testing.T) {
 	}
 }
 
-func schemaModelForBackend(t *testing.T, models []PromptModelCatalogEntry, id, backend string) PromptModelCatalogEntry {
+func schemaModelForMode(t *testing.T, models []PromptModelCatalogEntry, id, mode string) PromptModelCatalogEntry {
 	t.Helper()
 	for _, model := range models {
 		if model.ID != id {
 			continue
 		}
-		if containsString(model.Backends, backend) {
+		if containsString(model.Modes, mode) {
 			return model
 		}
 	}
-	t.Fatalf("models[] missing id %q with backend %q: %+v", id, backend, models)
+	t.Fatalf("models[] missing id %q with mode %q: %+v", id, mode, models)
 	return PromptModelCatalogEntry{}
 }
 
@@ -272,8 +275,8 @@ func TestPromptSchemaExampleIsPortable(t *testing.T) {
 	if strings.Contains(model, "/") {
 		t.Errorf("example model %q should be a bare slug (no provider prefix)", model)
 	}
-	if _, err := api.InferBackend(model); err != nil {
-		t.Errorf("example model %q does not resolve to a backend: %v", model, err)
+	if _, err := api.ProviderFor(model); err != nil {
+		t.Errorf("example model %q names no provider: %v", model, err)
 	}
 	prompt := ex["prompt"].(map[string]any)
 	for _, excluded := range []string{"source", "metadata"} {

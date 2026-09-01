@@ -50,7 +50,7 @@ func disabledAxes() DisabledAxes {
 		axes.Modes = append(axes.Modes, string(mode))
 	}
 	for _, provider := range configurableProviders() {
-		axes.Providers = append(axes.Providers, string(provider))
+		axes.Providers = append(axes.Providers, provider.Name)
 	}
 	for _, effort := range api.AllEfforts() {
 		axes.Efforts = append(axes.Efforts, string(effort))

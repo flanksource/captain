@@ -3,6 +3,7 @@ package cli
 import (
 	"testing"
 
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -11,13 +12,13 @@ import (
 
 func TestPersistPromptRunRecordsNativeRun(t *testing.T) {
 	db := withTestCaptainDB(t)
-	rendered := PromptRenderResult{Name: "fix-bug", Model: "claude-sonnet-5", Backend: "claude-agent"}
+	rendered := PromptRenderResult{Name: "fix-bug", Model: "claude-sonnet-5", Provider: "anthropic", Mode: "agent"}
 	rendered.Input.Prompt.User = "fix the failing test"
 	batchID := uuid.New()
 
 	persistPromptRun(t.Context(), promptRunRecordInput{
 		Rendered: rendered, RunID: "run-1", SessionID: "0195c1de-4ab8-7000-8000-00000000abcd",
-		Model: "claude-sonnet-5", Backend: "claude-agent", BatchID: &batchID, ResultText: "done",
+		Model: "claude-sonnet-5", Provider: api.Anthropic, Mode: api.ModeAgent, BatchID: &batchID, ResultText: "done",
 		ResultJSON: map[string]any{"answer": "42"},
 	})
 
@@ -37,14 +38,16 @@ func TestPersistPromptRunRecordsNativeRun(t *testing.T) {
 	require.NotNil(t, runs[0].BatchID)
 	assert.Equal(t, batchID, *runs[0].BatchID)
 	assert.Equal(t, "run", runs[0].Runtime.Mode)
-	assert.Equal(t, "claude-agent", runs[0].Runtime.Resolved.Provider)
-	assert.Equal(t, "claude-agent", runs[0].Runtime.Resolved.Backend)
+	// Provider is the family that owns the model; Mode is the mechanism serving
+	// it. One family runs on several modes, so the two must stay separate.
+	assert.Equal(t, "anthropic", runs[0].Runtime.Resolved.Provider)
+	assert.Equal(t, "agent", runs[0].Runtime.Resolved.Mode)
 	assert.Equal(t, "claude-sonnet-5", runs[0].Runtime.Resolved.Model)
 
 	t.Run("replay with the same run id is idempotent", func(t *testing.T) {
 		persistPromptRun(t.Context(), promptRunRecordInput{
 			Rendered: rendered, RunID: "run-1", SessionID: "0195c1de-4ab8-7000-8000-00000000abcd",
-			Model: "claude-sonnet-5", Backend: "claude-agent", ResultText: "done",
+			Model: "claude-sonnet-5", Provider: api.Anthropic, Mode: api.ModeAgent, ResultText: "done",
 		})
 		runs, err := db.ListPromptRuns(t.Context(), database.PromptRunFilter{SessionID: &session.ID})
 		require.NoError(t, err)
@@ -54,7 +57,7 @@ func TestPersistPromptRunRecordsNativeRun(t *testing.T) {
 	t.Run("failed run records error and failed state", func(t *testing.T) {
 		persistPromptRun(t.Context(), promptRunRecordInput{
 			Rendered: rendered, RunID: "run-2", SessionID: "0195c1de-4ab8-7000-8000-00000000abcd",
-			Model: "claude-sonnet-5", Backend: "claude-agent", Error: "verify failed: tests red",
+			Model: "claude-sonnet-5", Provider: api.Anthropic, Mode: api.ModeAgent, Error: "verify failed: tests red",
 		})
 		runs, err := db.ListPromptRuns(t.Context(), database.PromptRunFilter{SessionID: &session.ID})
 		require.NoError(t, err)

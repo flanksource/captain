@@ -41,7 +41,8 @@ func TestExecuteSyncRunMultiModelsParallel(t *testing.T) {
 			Text:             cfg.Model.Name,
 			StructuredOutput: map[string]any{"model": cfg.Model.Name},
 			Model:            cfg.Model.Name,
-			Backend:          string(cfg.Model.Backend),
+			Provider:         cfg.Model.Provider.Name,
+			Mode:             string(cfg.Model.Mode),
 			Dir:              req.Cwd(),
 			SessionID:        "session-" + cfg.Model.Name,
 			HistoryFile:      filepath.Join(req.Cwd(), ".history", cfg.Model.Name+".jsonl"),
@@ -54,7 +55,7 @@ func TestExecuteSyncRunMultiModelsParallel(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	rendered := testRenderedPrompt(api.Model{Name: "claude-sonnet-5", Backend: api.BackendAnthropic})
+	rendered := testRenderedPrompt(api.Model{Name: "claude-sonnet-5", Mode: api.ModeAPI})
 	rendered.Input.SetCwd(t.TempDir())
 	got, err := executeSyncRun(ctx, rendered, AIPromptOptions{MultiModels: []string{"cli:sonnet-5,cmux:opus"}})
 	if err != nil {
@@ -64,15 +65,16 @@ func TestExecuteSyncRunMultiModelsParallel(t *testing.T) {
 		t.Fatalf("batch status = %s total=%d succeeded=%d failed=%d", got.Status, got.Total, got.Succeeded, got.Failed)
 	}
 	want := []struct {
-		backend api.Backend
-		model   string
+		provider string
+		mode     api.RuntimeMode
+		model    string
 	}{
-		{api.BackendClaudeCLI, "claude-sonnet-5"},
-		{api.BackendClaudeCmux, "claude-opus-5"},
+		{api.Anthropic.Name, api.ModeCLI, "claude-sonnet-5"},
+		{api.Anthropic.Name, api.ModeCmux, "claude-opus-5"},
 	}
 	for i, w := range want {
-		if got.Runs[i].Backend != string(w.backend) || got.Runs[i].Model != w.model {
-			t.Fatalf("run[%d] = %s/%s, want %s/%s", i, got.Runs[i].Backend, got.Runs[i].Model, w.backend, w.model)
+		if got.Runs[i].Provider != w.provider || got.Runs[i].Mode != string(w.mode) || got.Runs[i].Model != w.model {
+			t.Fatalf("run[%d] = %s %s/%s, want %s %s/%s", i, got.Runs[i].Provider, got.Runs[i].Mode, got.Runs[i].Model, w.provider, w.mode, w.model)
 		}
 	}
 	if got.InputTokens != 2 || got.OutputTokens != 4 {
@@ -100,12 +102,13 @@ func TestExecuteSyncRunMultiModelsHonorsNoStream(t *testing.T) {
 		return AIPromptResult{
 			Text:     "ok",
 			Model:    cfg.Model.Name,
-			Backend:  string(cfg.Model.Backend),
+			Provider: cfg.Model.Provider.Name,
+			Mode:     string(cfg.Model.Mode),
 			Duration: "1ms",
 		}, nil
 	}
 
-	rendered := testRenderedPrompt(api.Model{Name: "claude-sonnet-5", Backend: api.BackendAnthropic})
+	rendered := testRenderedPrompt(api.Model{Name: "claude-sonnet-5", Mode: api.ModeAPI})
 	got, err := executeSyncRun(context.Background(), rendered, AIPromptOptions{MultiModels: []string{"cli:sonnet-5"}, NoStream: true})
 	if err != nil {
 		t.Fatalf("executeSyncRun: %v", err)
@@ -122,20 +125,20 @@ func TestExecuteSyncRunMultiModelsPartialFailure(t *testing.T) {
 	t.Cleanup(func() { executePromptRequestFunc = old })
 
 	executePromptRequestFunc = func(_ context.Context, _ ai.Request, cfg ai.Config, _ time.Duration, _ bool) (any, error) {
-		if cfg.Model.Backend == api.BackendCodexCmux {
+		if cfg.Model.Mode == api.ModeCmux {
 			return nil, errors.New("cmux unavailable")
 		}
 		return AIPromptResult{
 			Text:        "ok",
 			Model:       cfg.Model.Name,
-			Backend:     string(cfg.Model.Backend),
+			Mode:        string(cfg.Model.Mode),
 			InputTokens: 3,
 			Output:      4,
 			Duration:    "2ms",
 		}, nil
 	}
 
-	rendered := testRenderedPrompt(api.Model{Name: "gpt-5.5", Backend: api.BackendOpenAI})
+	rendered := testRenderedPrompt(api.Model{Name: "gpt-5.5", Mode: api.ModeAPI})
 	got, err := executeSyncRun(context.Background(), rendered, AIPromptOptions{MultiModels: []string{"api:gpt-5.5,cmux:gpt-5.5"}})
 	if err != nil {
 		t.Fatalf("executeSyncRun: %v", err)
@@ -149,7 +152,7 @@ func TestExecuteSyncRunMultiModelsPartialFailure(t *testing.T) {
 }
 
 func TestExecuteSyncRunMultiModelsRejectsResume(t *testing.T) {
-	rendered := testRenderedPrompt(api.Model{Name: "gpt-5.5", Backend: api.BackendOpenAI})
+	rendered := testRenderedPrompt(api.Model{Name: "gpt-5.5", Mode: api.ModeAPI})
 	rendered.Input.SessionID = "session-1"
 	_, err := executeSyncRun(context.Background(), rendered, AIPromptOptions{MultiModels: []string{"api:gpt-5.5,cmux:gpt-5.5"}})
 	if err == nil || !strings.Contains(err.Error(), "--resume") {
@@ -158,10 +161,10 @@ func TestExecuteSyncRunMultiModelsRejectsResume(t *testing.T) {
 }
 
 func TestVariantModelUsesSelectorEffort(t *testing.T) {
-	selector := api.Model{Name: "gpt-5.6-terra", Backend: api.BackendCodexCmux, Effort: api.EffortUltra}
+	selector := api.Model{Name: "gpt-5.6-terra", Mode: api.ModeCmux, Effort: api.EffortUltra}
 	got := variantModel(selector, nil)
-	if got.Name != selector.Name || got.Backend != selector.Backend || got.Effort != api.EffortUltra {
-		t.Fatalf("variant = %+v, want selector model/backend/effort", got)
+	if got.Name != selector.Name || got.Provider != selector.Provider || got.Mode != selector.Mode || got.Effort != api.EffortUltra {
+		t.Fatalf("variant = %+v, want selector model/runtime/effort", got)
 	}
 }
 
@@ -175,7 +178,8 @@ func TestPromptRunResultPrettyRendersRunsAsColumns(t *testing.T) {
 			{
 				Selector:     "api:sonnet-5",
 				Status:       "completed",
-				Backend:      "anthropic",
+				Provider:     "anthropic",
+				Mode:         "api",
 				Model:        "claude-sonnet-5",
 				Dir:          "/repo",
 				SessionID:    "0123456789abcdef",
@@ -189,7 +193,8 @@ func TestPromptRunResultPrettyRendersRunsAsColumns(t *testing.T) {
 			{
 				Selector: "cmux:opus",
 				Status:   "failed",
-				Backend:  "claude-cmux",
+				Provider: "anthropic",
+				Mode:     "cmux",
 				Model:    "claude-opus-4-8",
 				Duration: "2s",
 				Error:    "cmux unavailable",
@@ -219,7 +224,8 @@ func TestPromptRunResultPrettyRendersRunsAsColumns(t *testing.T) {
 		run2   string
 	}{
 		{"Status", "completed", "failed"},
-		{"Backend", "anthropic", "claude-cmux"},
+		{"Provider", "anthropic", "anthropic"},
+		{"Mode", "api", "cmux"},
 		{"Model", "claude-sonnet-5", "claude-opus-4-8"},
 		{"Error", "", "cmux unavailable"},
 		{"Duration", "1s", "2s"},
@@ -248,7 +254,7 @@ func TestHistoryFileForRun(t *testing.T) {
 		t.Fatalf("mkdir cwd: %v", err)
 	}
 
-	got := historyFileForRun(api.BackendClaudeCLI, "claude-session", cwd)
+	got := historyFileForRun(api.Anthropic, api.ModeCLI, "claude-session", cwd)
 	if want := filepath.Join(home, ".claude", "projects"); !strings.HasPrefix(got, want) || !strings.HasSuffix(got, "claude-session.jsonl") {
 		t.Fatalf("claude history path = %q, want under %q", got, want)
 	}
@@ -261,7 +267,7 @@ func TestHistoryFileForRun(t *testing.T) {
 	if err := os.WriteFile(codexFile, []byte(`{"type":"session_meta","payload":{"id":"codex-session","cwd":"`+cwd+`"}}`+"\n"), 0o644); err != nil {
 		t.Fatalf("write codex session: %v", err)
 	}
-	if got := historyFileForRun(api.BackendCodexAgent, "codex-session", cwd); got != codexFile {
+	if got := historyFileForRun(api.OpenAI, api.ModeAgent, "codex-session", cwd); got != codexFile {
 		t.Fatalf("codex history path = %q, want %q", got, codexFile)
 	}
 }
@@ -295,11 +301,16 @@ func testRenderedPrompt(model api.Model) PromptRenderResult {
 		Budget: api.Budget{Timeout: "1s"},
 	}
 	cfg := ai.Config{Model: model}
+	provider := ""
+	if model.Provider != nil {
+		provider = model.Provider.Name
+	}
 	return PromptRenderResult{
-		Name:    "test",
-		Model:   model.Name,
-		Backend: string(model.Backend),
-		Input:   req,
-		Config:  cfg,
+		Name:     "test",
+		Model:    model.Name,
+		Provider: provider,
+		Mode:     string(model.Mode),
+		Input:    req,
+		Config:   cfg,
 	}
 }

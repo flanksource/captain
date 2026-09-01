@@ -72,8 +72,11 @@ func overlayCLI(base ai.Request, baseCfg ai.Config, o AIPromptOptions) (ai.Reque
 	if bm.ID == "" {
 		bm.ID = baseCfg.Model.ID
 	}
-	if bm.Backend == "" {
-		bm.Backend = baseCfg.Model.Backend
+	if bm.Mode == "" {
+		bm.Mode = baseCfg.Model.Mode
+	}
+	if bm.Provider == nil {
+		bm.Provider = baseCfg.Model.Provider
 	}
 	if bm.Temperature == nil {
 		bm.Temperature = baseCfg.Model.Temperature
@@ -82,11 +85,11 @@ func overlayCLI(base ai.Request, baseCfg ai.Config, o AIPromptOptions) (ai.Reque
 		bm.Effort = baseCfg.Model.Effort
 	}
 	identity := selectModelIdentity(
-		api.Model{Name: bm.Name, ID: bm.ID, Backend: bm.Backend},
-		api.Model{Name: o.Model, Backend: api.Backend(o.Backend)},
+		api.Model{Name: bm.Name, ID: bm.ID, Mode: bm.Mode, Provider: bm.Provider},
+		api.Model{Name: o.Model},
 	)
 	m := bm
-	m.Name, m.ID, m.Backend = identity.Name, identity.ID, identity.Backend
+	m.Name, m.ID, m.Mode, m.Provider = identity.Name, identity.ID, identity.Mode, identity.Provider
 	if temperature != 0 {
 		t := temperature
 		m.Temperature = &t
@@ -110,6 +113,17 @@ func overlayCLI(base ai.Request, baseCfg ai.Config, o AIPromptOptions) (ai.Reque
 	if err != nil {
 		return base, baseCfg, err
 	}
+	if selector := o.SandboxSelector(); selector != "" || req.Sandbox == nil {
+		resolved := sandboxRefFromSelection(sandbox)
+		if req.Sandbox != nil {
+			resolved.Policy = req.Sandbox.Policy
+			resolved.Agent = req.Sandbox.Agent
+			resolved.Dispatch = req.Sandbox.Dispatch
+		}
+		req.Sandbox = &resolved
+	} else if req.Sandbox.Mode == "" {
+		req.Sandbox.Mode = sandbox.Kind
+	}
 	if forced := sandboxForcedMode(sandbox.Kind); forced != "" {
 		if requestedMode != "" && requestedMode != forced {
 			return base, baseCfg, fmt.Errorf("sandbox %q requires %s mode, but --mode is %q", sandbox.Kind, forced, requestedMode)
@@ -118,12 +132,8 @@ func overlayCLI(base ai.Request, baseCfg ai.Config, o AIPromptOptions) (ai.Reque
 	}
 	if requestedMode != "" {
 		m.Mode = ""
-		if strings.TrimSpace(o.Backend) == "" && !ai.ContainsRuntimeSelector(o.Model) {
-			m.Backend = ""
-		}
 		if len(o.Fallback) == 0 {
 			for i := range m.Fallbacks {
-				m.Fallbacks[i].Backend = ""
 				m.Fallbacks[i].Mode = ""
 			}
 		}
@@ -136,7 +146,7 @@ func overlayCLI(base ai.Request, baseCfg ai.Config, o AIPromptOptions) (ai.Reque
 	if err != nil {
 		return base, baseCfg, err
 	}
-	req.Model, err = ai.ResolveModelSelectors(m)
+	req.Model, err = ai.Resolve(m)
 	if err != nil {
 		return base, baseCfg, err
 	}
@@ -162,6 +172,8 @@ func overlayCLI(base ai.Request, baseCfg ai.Config, o AIPromptOptions) (ai.Reque
 
 	if o.PermissionMode != "" {
 		req.Permissions.Mode = api.PermissionMode(o.PermissionMode)
+	} else if o.Edit {
+		req.Permissions.Mode = api.PermissionAcceptEdits
 	}
 	if o.Edit && !req.Permissions.HasPreset(api.PresetEdit) {
 		req.Permissions.Presets = append(req.Permissions.Presets, api.PresetEdit)
@@ -188,19 +200,6 @@ func overlayCLI(base ai.Request, baseCfg ai.Config, o AIPromptOptions) (ai.Reque
 		req.SessionID = o.Resume
 	}
 
-	// Record the winning sandbox on the request when the flag overrode it, so the
-	// serialized spec carries the choice the run was actually made with. The
-	// selector only replaces the backend; an independently declared agent and
-	// policy remain part of the request.
-	if selector := o.SandboxSelector(); selector != "" {
-		ref := api.SandboxRef{Backend: selector}
-		if base.Sandbox != nil {
-			ref.Agent = base.Sandbox.Agent
-			ref.Policy = base.Sandbox.Policy
-		}
-		req.Sandbox = &ref
-	}
-
 	// Config mirrors the resolved model + budget; runtime-only knobs from CLI+saved.
 	cfg := baseCfg
 	cfg.Model = req.Model
@@ -209,10 +208,9 @@ func overlayCLI(base ai.Request, baseCfg ai.Config, o AIPromptOptions) (ai.Reque
 	cfg.APIURL = firstNonEmpty(strings.TrimSpace(o.APIURL), baseCfg.APIURL)
 	// The overlay's resolution saw every layer (flag > frontmatter > default),
 	// so it overwrites rather than ORs with baseCfg: an explicit "none" must be
-	// able to turn an inherited srt selection OFF.
-	cfg.Sandbox = sandbox.Kind == registry.SandboxSRT
+	// able to turn an inherited external selection off.
 	// req.Sandbox is the winning ref (frontmatter, or the flag's override
-	// recorded above), so its agent pin and policy ride along.
+	// recorded above), so its agent pin and dispatch policy ride along.
 	cfg.SandboxSelection = sandboxSelectionConfig(sandbox, req.Sandbox)
 	cfg.NoCache = req.NoCache
 	return req, cfg, nil
@@ -270,22 +268,26 @@ func firstNonEmpty(vals ...string) string {
 }
 
 // selectModelIdentity applies precedence from lowest to highest while keeping a
-// model name and backend coupled. A higher-priority name clears a lower-priority
-// backend unless that same layer explicitly supplies one.
+// model name and its runtime coupled. A higher-priority name clears a
+// lower-priority mode/provider unless that same layer explicitly supplies one.
 func selectModelIdentity(layers ...api.Model) api.Model {
 	var selected api.Model
 	for _, layer := range layers {
 		if layer.Name != "" {
 			selected.Name = layer.Name
 			selected.ID = layer.ID
-			selected.Backend = layer.Backend
+			selected.Mode = layer.Mode
+			selected.Provider = layer.Provider
 			continue
 		}
 		if layer.ID != "" {
 			selected.ID = layer.ID
 		}
-		if layer.Backend != "" {
-			selected.Backend = layer.Backend
+		if layer.Mode != "" {
+			selected.Mode = layer.Mode
+		}
+		if layer.Provider != nil {
+			selected.Provider = layer.Provider
 		}
 	}
 	return selected

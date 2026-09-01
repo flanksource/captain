@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	promptlib "github.com/flanksource/captain/pkg/ai/prompt"
 	"github.com/flanksource/captain/pkg/api"
@@ -42,15 +41,12 @@ func listPromptRecordsFromSource(source promptSource) ([]promptRecord, error) {
 		if source.Root != "" {
 			path = filepath.Join(source.Root, filepath.FromSlash(rel))
 		}
-		updatedAt := ""
-		if info != nil && !info.ModTime().IsZero() {
-			updatedAt = info.ModTime().Format(time.RFC3339)
-		}
 		records = append(records, promptRecord{
-			Source: source,
-			ID:     encodePromptID(source.Kind, source.ID, rel),
-			Path:   path + "\x00" + updatedAt,
-			Rel:    rel,
+			Source:    source,
+			ID:        encodePromptID(source.Kind, source.ID, rel),
+			Path:      path,
+			Rel:       rel,
+			UpdatedAt: modTimeString(info),
 		})
 	}
 
@@ -190,10 +186,11 @@ func filePromptRecord(id string) (promptRecord, error) {
 		return promptRecord{}, fmt.Errorf("%s is a directory, not a .prompt file", id)
 	}
 	return promptRecord{
-		Source: promptSource{Kind: "file", ID: "file", Label: "File", Root: filepath.Dir(abs)},
-		ID:     id,
-		Path:   abs,
-		Rel:    filepath.Base(abs),
+		Source:    promptSource{Kind: "file", ID: "file", Label: "File", Root: filepath.Dir(abs)},
+		ID:        id,
+		Path:      abs,
+		Rel:       filepath.Base(abs),
+		UpdatedAt: modTimeString(info),
 	}, nil
 }
 
@@ -202,15 +199,20 @@ func promptSummary(record promptRecord) (PromptSummary, error) {
 	if err != nil {
 		return PromptSummary{}, err
 	}
+	return promptSummaryOrRepair(record, content), nil
+}
+
+// promptSummaryOrRepair keeps a prompt that no longer parses listable: the base
+// summary carries the parser message so the UI can offer the raw source for
+// repair instead of a dead row.
+func promptSummaryOrRepair(record promptRecord, content string) PromptSummary {
 	summary, err := promptSummaryFromContent(record, content)
 	if err != nil {
 		summary = basePromptSummary(record)
 		summary.ParseError = err.Error()
 	}
-	if idx := strings.LastIndex(record.Path, "\x00"); idx >= 0 {
-		summary.UpdatedAt = strings.TrimPrefix(record.Path[idx+1:], "\x00")
-	}
-	return summary, nil
+	summary.Version = promptVersion(content)
+	return summary
 }
 
 func promptDetail(record promptRecord) (PromptDetail, error) {
@@ -218,10 +220,30 @@ func promptDetail(record promptRecord) (PromptDetail, error) {
 	if err != nil {
 		return PromptDetail{}, err
 	}
+	if record.UpdatedAt == "" {
+		record.UpdatedAt = promptRecordModTime(record)
+	}
 	return promptDetailFromContent(record, content)
 }
 
+// promptDetailFromContent builds the editable view of a prompt. Content that no
+// longer parses is still returned — with ParseError set and no run seed — so the
+// editor can show the raw source for repair rather than refusing to open it.
 func promptDetailFromContent(record promptRecord, content string) (PromptDetail, error) {
+	detail, err := parsedPromptDetail(record, content)
+	if err == nil {
+		return detail, nil
+	}
+	summary := basePromptSummary(record)
+	summary.ParseError = err.Error()
+	summary.Version = promptVersion(content)
+	return PromptDetail{PromptSummary: summary, Content: content}, nil
+}
+
+// parsedPromptDetail is the strict form: it fails on any content that cannot be
+// rendered or inspected, which is exactly what a write must check before it
+// touches disk.
+func parsedPromptDetail(record promptRecord, content string) (PromptDetail, error) {
 	summary, err := promptSummaryFromContent(record, content)
 	if err != nil {
 		return PromptDetail{}, err
@@ -230,9 +252,10 @@ func promptDetailFromContent(record promptRecord, content string) (PromptDetail,
 	if err != nil {
 		return PromptDetail{}, err
 	}
+	summary.Version = promptVersion(content)
 	spec := &api.Spec{Model: api.Model{
 		Name:    summary.Model,
-		Backend: api.Backend(summary.Backend),
+		Mode: api.RuntimeMode(summary.Mode),
 	}}
 	return PromptDetail{
 		PromptSummary: summary,
@@ -259,7 +282,7 @@ func promptRunModels(models []api.Model) []api.Model {
 		out[index] = api.Model{
 			Name:        model.Name,
 			ID:          model.ID,
-			Backend:     model.Backend,
+			Mode:        model.Mode,
 			Temperature: model.Temperature,
 			Effort:      model.Effort,
 			NoCache:     model.NoCache,
@@ -287,7 +310,7 @@ func promptSummaryFromContent(record promptRecord, content string) (PromptSummar
 		summary.Description = strings.TrimSpace(v)
 	}
 	summary.Model = firstNonEmpty(cfg.Model.Name, req.Name)
-	summary.Backend = firstNonEmpty(string(cfg.Model.Backend), string(req.Backend))
+	summary.Mode = firstNonEmpty(string(cfg.Model.Mode), string(req.Mode))
 	summary.Runtimes, err = resolvePromptRuntimes(inspection.Runtimes, cfg.Model)
 	if err != nil {
 		return PromptSummary{}, err
@@ -304,17 +327,11 @@ func basePromptSummary(record promptRecord) PromptSummary {
 		SourceKind: record.Source.Kind,
 		SourceID:   record.Source.ID,
 		Source:     record.Source.Label,
-		Path:       displayPromptPath(record),
+		Path:       record.Path,
 		RelPath:    record.Rel,
 		Writable:   record.Source.Writable,
+		UpdatedAt:  record.UpdatedAt,
 	}
-}
-
-func displayPromptPath(record promptRecord) string {
-	if idx := strings.LastIndex(record.Path, "\x00"); idx >= 0 {
-		return record.Path[:idx]
-	}
-	return record.Path
 }
 
 func readPromptContent(record promptRecord) (string, error) {
@@ -450,7 +467,7 @@ func promptMatches(summary PromptSummary, filter string) bool {
 		summary.Path,
 		summary.RelPath,
 		summary.Model,
-		summary.Backend,
+		summary.Mode,
 	}, "\n"))
 	return strings.Contains(haystack, filter)
 }

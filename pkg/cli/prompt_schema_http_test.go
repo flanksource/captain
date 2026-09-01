@@ -28,8 +28,11 @@ func TestHandlePromptSchemaServesDocument(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &doc); err != nil {
 		t.Fatalf("response is not valid JSON: %v", err)
 	}
-	if _, ok := doc["backends"].([]any); !ok {
-		t.Fatalf("response has no backends[] array: %#v", doc["backends"])
+	if _, ok := doc["runtimeAdapters"].([]any); !ok {
+		t.Fatalf("response has no runtimeAdapters[] array: %#v", doc["runtimeAdapters"])
+	}
+	if _, ok := doc["runtimes"].([]any); !ok {
+		t.Fatalf("response has no runtimes[] catalog: %#v", doc["runtimes"])
 	}
 	if _, ok := doc["spec"].(map[string]any); !ok {
 		t.Fatalf("response has no spec schema object")

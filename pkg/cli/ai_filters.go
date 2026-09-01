@@ -35,7 +35,8 @@ func aiFilters[T any]() []entity.Filter[T] {
 		aiEnumFilter[T]{key: "model", label: "Model", options: modelFilterOptions},
 		aiEnumFilter[T]{key: "effort", label: "Reasoning Effort", options: effortFilterOptions},
 		aiEnumFilter[T]{key: "scope", label: "Verifier Scope", options: scopeFilterOptions},
-		aiEnumFilter[T]{key: "backend", label: "Backend", options: backendFilterOptions},
+		aiEnumFilter[T]{key: "mode", label: "Runtime Mode", options: modeFilterOptions},
+		aiEnumFilter[T]{key: "provider", label: "Provider", options: providerFilterOptions},
 	}
 }
 
@@ -68,30 +69,42 @@ func scopeFilterOptions() map[string]api.Textable {
 	return out
 }
 
-// backendOptions sources the backends from ai.AllBackends (the same source
-// Backend.Valid validates against), minus the ones the user switched off.
-// AllBackends stays the validation universe — a disabled backend is still a
-// valid name, so an explicit --backend=claude-cmux fails on the opt-out rather
-// than on "unknown backend" — but a picker must not offer it. The set is read
-// here rather than captured, because completion runs long after config load.
-func backendFilterOptions() map[string]api.Textable {
-	out := make(map[string]api.Textable, len(ai.AllBackends()))
-	for _, b := range ai.AllBackends() {
-		if capapi.Disabled().Backend(b) {
+// modeFilterOptions and providerFilterOptions source the two runtime axes from
+// the registry — the same universe ParseRuntimeMode and ProviderByName validate
+// against — minus the ones the user switched off. The full set stays the
+// validation universe: an explicit --mode=cmux fails on the opt-out rather than
+// on "unknown mode", but a picker must not offer it. Both are read here rather
+// than captured, because completion runs long after config load.
+func modeFilterOptions() map[string]api.Textable {
+	out := make(map[string]api.Textable, len(capapi.AllRuntimeModes()))
+	for _, mode := range capapi.AllRuntimeModes() {
+		if capapi.Disabled().Mode(mode) {
 			continue
 		}
-		out[string(b)] = api.Text{Content: string(b)}
+		out[string(mode)] = api.Text{Content: string(mode)}
+	}
+	return out
+}
+
+func providerFilterOptions() map[string]api.Textable {
+	providers := capapi.Providers()
+	out := make(map[string]api.Textable, len(providers))
+	for _, p := range providers {
+		if capapi.Disabled().Provider(p) {
+			continue
+		}
+		out[p.Name] = api.Text{Content: p.Name}
 	}
 	return out
 }
 
 // modelOptions suggests the captain model catalog as bare model names that
-// captain's --model accepts (InferBackend matches bare prefixes). API ids are
-// "provider/model" so the provider prefix is stripped; agent ids already carry
-// a captain-recognised backend prefix (claude-agent-*, codex-*) and are used
-// verbatim — using their AgentModel slug instead would misroute (e.g.
-// "gpt-5-codex" infers OpenAI, not codex). Completion is suggest-only:
-// arbitrary models are still accepted, so the catalog need not be exhaustive.
+// captain's --model accepts (ProviderFor matches bare prefixes). API ids are
+// "provider/model" so the provider prefix is stripped; local-mode ids are the
+// exact ids their CLI accepts and are used verbatim. A mode is never part of a
+// suggestion — it is a separate axis, chosen with --mode or a compact prefix.
+// Completion is suggest-only: arbitrary models are still accepted, so the catalog
+// need not be exhaustive.
 func modelFilterOptions() map[string]api.Textable {
 	catalog := ai.Catalog()
 	out := make(map[string]api.Textable, len(catalog))

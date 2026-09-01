@@ -47,24 +47,14 @@ type AIProviderOptions struct {
 	aiflags.ModelFlags
 
 	APIKey  string `flag:"api-key" help:"API key (env: ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, GOOGLE_API_KEY, DEEPSEEK_API_KEY)"`
-	APIURL  string `flag:"api-url" help:"Override the backend endpoint, e.g. a 'captain ai mock' URL. Required for codex-cli, which ignores OPENAI_BASE_URL when a ChatGPT credential is stored"`
+	APIURL  string `flag:"api-url" help:"Override the provider endpoint, e.g. a 'captain ai mock' URL. Required for the openai cli mode, which ignores OPENAI_BASE_URL when a ChatGPT credential is stored"`
 	Budget  string `flag:"budget" help:"Max spend in USD, 0=unlimited" default:"0"`
-	Sandbox string `flag:"sandbox" help:"Sandbox for the run: an adapter kind (none|srt|container|git-agent) or a backend configured under sandbox.backends in ~/.captain.yaml"`
+	Sandbox string `flag:"sandbox" help:"Sandbox for the run: off|native|docker|git-agent, or a configured Docker/Git Agent backend"`
 }
 
-// SandboxSelector normalizes --sandbox. The flag was previously a boolean that
-// toggled sandbox-runtime; the explicit boolean spellings (--sandbox=true,
-// --sandbox=false) keep their old meaning. A bare valueless --sandbox no
-// longer parses — the flag is a string selector now, so a value is required.
+// SandboxSelector trims the public sandbox mode or configured backend selector.
 func (o AIProviderOptions) SandboxSelector() string {
-	value := strings.TrimSpace(o.Sandbox)
-	switch strings.ToLower(value) {
-	case "true", "1", "yes":
-		return string(registry.SandboxSRT)
-	case "false", "0", "no":
-		return string(registry.SandboxNone)
-	}
-	return value
+	return strings.TrimSpace(o.Sandbox)
 }
 
 // BudgetUSD parses --budget, failing loud on malformed input.
@@ -128,16 +118,21 @@ func (o AIProviderOptions) ToConfig() (ai.Config, error) {
 		Budget:           api.Budget{Cost: budget},
 		APIKey:           o.APIKey,
 		APIURL:           strings.TrimSpace(o.APIURL),
-		Sandbox:          sandbox.Kind == registry.SandboxSRT,
 		SandboxSelection: sandboxSelectionConfig(sandbox, nil),
 		NoCache:          o.NoCache || saved.NoCache,
 		SchemaRepair:     schemaRepairConfig(savedCfg.Prompts.SchemaRepair),
 	}, nil
 }
 
+// schemaRepairConfig reads the `model:`/`mode:` pair out of ~/.captain.yaml.
+// `mode:` names the mechanism (api|agent|cli|cmux); the provider follows from the
+// model name, and the pair is resolved where the repair provider is built.
 func schemaRepairConfig(saved captainconfig.SchemaRepairDefaults) api.SchemaRepairConfig {
 	return api.SchemaRepairConfig{
-		Model:  api.Model{Name: saved.Model, Backend: api.Backend(saved.Backend)},
+		Model: api.Model{
+			Name: strings.TrimSpace(saved.Model),
+			Mode: api.RuntimeMode(strings.TrimSpace(saved.Mode)),
+		},
 		Prompt: strings.TrimSpace(saved.Prompt),
 	}
 }
@@ -146,7 +141,8 @@ func isZeroSchemaRepair(c api.SchemaRepairConfig) bool {
 	return strings.TrimSpace(c.Prompt) == "" &&
 		c.Model.Name == "" &&
 		c.Model.ID == "" &&
-		c.Model.Backend == "" &&
+		c.Model.Mode == "" &&
+		c.Model.Provider == nil &&
 		c.Model.Temperature == nil &&
 		c.Model.Effort == "" &&
 		!c.Model.NoCache &&
@@ -170,8 +166,8 @@ type AIRuntimeOptions struct {
 	// the embedded aiflags.ModelFlags, promoted through AIProviderOptions.
 	// Redeclaring them would bind --effort twice and panic cobra at init.
 	MaxTokens int    `flag:"max-tokens" help:"Maximum output tokens (0 = saved default or 4096)"`
-	MaxTurns  int    `flag:"max-turns" help:"Max agent turns 0-100, 0 = provider default (claude-agent)"`
-	Resume    string `flag:"resume" help:"Resume an existing session by id (claude-agent, codex)"`
+	MaxTurns  int    `flag:"max-turns" help:"Max agent turns 0-100, 0 = provider default (agent mode)"`
+	Resume    string `flag:"resume" help:"Resume an existing session by id (agent and cli modes)"`
 
 	Edit            bool     `flag:"edit" help:"Safe defaults: acceptEdits + Read/Edit/Write/Glob/Grep allowlist"`
 	AllowedTools    []string `flag:"allowed-tools" help:"Override --edit's built-in allowlist (claude only)"`
@@ -222,7 +218,8 @@ type AIPromptResult struct {
 	Text             string         `json:"text" pretty:"label=Response"`
 	StructuredOutput map[string]any `json:"structuredOutput,omitempty" pretty:"-"`
 	Model            string         `json:"model" pretty:"label=Model"`
-	Backend          string         `json:"backend" pretty:"label=Backend"`
+	Provider         string         `json:"provider" pretty:"label=Provider"`
+	Mode             string         `json:"mode" pretty:"label=Mode"`
 	Dir              string         `json:"dir,omitempty" pretty:"label=Dir"`
 	SessionID        string         `json:"sessionId,omitempty" pretty:"label=Session"`
 	HistoryFile      string         `json:"historyFile,omitempty" pretty:"label=History"`
@@ -271,8 +268,8 @@ func (o AIRuntimeOptions) ToRequest(systemPrompt, appendSystemPrompt, userPrompt
 		maxTokens = 4096
 	}
 
-	// Resolve the USD budget onto the request (flag > saved) so backends that read
-	// req.Budget.Cost — claude-cli, claude-agent — enforce it without relying on a
+	// Resolve the USD budget onto the request (flag > saved) so the runtimes that
+	// read req.Budget.Cost — the anthropic cli and agent — enforce it without a
 	// later config-side reconciliation that not every path performs (finding A4).
 	budget, err := parseFloatFlag("budget", o.Budget)
 	if err != nil {
@@ -297,12 +294,15 @@ func (o AIRuntimeOptions) ToRequest(systemPrompt, appendSystemPrompt, userPrompt
 	}
 
 	perms := api.Permissions{
-		Mode:  api.PermissionMode(o.PermissionMode),
 		Tools: api.ToolsFromLists(o.AllowedTools, o.DisallowedTools),
 		MCP:   api.MCP{Disabled: o.NoMCP || saved.NoMCP},
 	}
+	perms.Mode = api.PermissionMode(o.PermissionMode)
 	if o.Edit {
 		perms.Presets = append(perms.Presets, api.PresetEdit)
+		if perms.Mode == "" {
+			perms.Mode = api.PermissionAcceptEdits
+		}
 	}
 
 	return ai.Request{
@@ -372,8 +372,8 @@ func runContext(parent context.Context, req ai.Request, timeout time.Duration) (
 
 // warnIfLikelyModelTypo emits a "did you mean" hint when the model name is not a
 // known catalog id but is a close (edit-distance ≤ 2) match to one — catching
-// typos like "claud-sonnet-4" even when an explicit backend is configured (so
-// InferBackend's suggestion never fires). Non-blocking: an unrecognized model may
+// typos like "claud-sonnet-4" even when an explicit mode is configured (so
+// ProviderFor's suggestion never fires). Non-blocking: an unrecognized model may
 // still be a valid provider/OpenRouter id, so the run proceeds.
 func warnIfLikelyModelTypo(model string) {
 	if suggestion, ok := suggestKnownModel(model); ok {
@@ -496,8 +496,8 @@ func runBuffered(ctx context.Context, p ai.Provider, req ai.Request) (any, error
 		return nil, err
 	}
 	model := firstNonEmpty(resp.Model, p.GetModel(), req.Name)
-	backend := firstNonEmpty(string(resp.Backend), string(p.GetBackend()), string(req.Backend))
-	input := resolvedPromptInput(req, model, backend, req.SessionID)
+	runtime := firstRuntime(resp.Runtime, p.GetRuntime(), api.RuntimeOf(req.Provider, req.Mode))
+	input := resolvedPromptInput(req, model, runtime, req.SessionID)
 	dir := actualRunDir(input)
 	structuredOutput, err := structuredOutputMap(resp.StructuredData)
 	if err != nil {
@@ -511,10 +511,11 @@ func runBuffered(ctx context.Context, p ai.Provider, req ai.Request) (any, error
 		Text:             text,
 		StructuredOutput: structuredOutput,
 		Model:            model,
-		Backend:          backend,
+		Provider:         runtime.Provider,
+		Mode:             string(runtime.Mode),
 		Dir:              dir,
 		SessionID:        input.SessionID,
-		HistoryFile:      historyFileForRun(api.Backend(backend), input.SessionID, dir),
+		HistoryFile:      historyFileForRun(providerOf(runtime), runtime.Mode, input.SessionID, dir),
 		Input:            input,
 		InputTokens:      resp.Usage.InputTokens,
 		Output:           resp.Usage.OutputTokens,
@@ -531,7 +532,7 @@ func runStreaming(ctx context.Context, sp ai.StreamingProvider, req ai.Request) 
 		text             string
 		usage            ai.Usage
 		cost             float64
-		backend          = string(sp.GetBackend())
+		runtime          = sp.GetRuntime()
 		model            = sp.GetModel()
 		session          = req.SessionID
 		structuredOutput map[string]any
@@ -589,16 +590,17 @@ func runStreaming(ctx context.Context, sp ai.StreamingProvider, req ai.Request) 
 	if session == "" && len(loop.Iterations) > 0 {
 		session = loop.Iterations[0].SessionID
 	}
-	input := resolvedPromptInput(req, model, backend, session)
+	input := resolvedPromptInput(req, model, runtime, session)
 	dir := actualRunDir(input)
 	return AIPromptResult{
 		Text:             text,
 		StructuredOutput: structuredOutput,
 		Model:            model,
-		Backend:          backend,
+		Provider:         runtime.Provider,
+		Mode:             string(runtime.Mode),
 		Dir:              dir,
 		SessionID:        input.SessionID,
-		HistoryFile:      historyFileForRun(api.Backend(backend), input.SessionID, dir),
+		HistoryFile:      historyFileForRun(providerOf(runtime), runtime.Mode, input.SessionID, dir),
 		Input:            input,
 		InputTokens:      usage.InputTokens,
 		Output:           usage.OutputTokens,
@@ -607,13 +609,31 @@ func runStreaming(ctx context.Context, sp ai.StreamingProvider, req ai.Request) 
 	}, nil
 }
 
-func resolvedPromptInput(req ai.Request, model, backend, sessionID string) ai.Request {
+// firstRuntime is the first fully-resolved (provider, mode) pair among the
+// candidates: what the response reported, else what the provider serves, else
+// what the request asked for.
+func firstRuntime(candidates ...api.Runtime) api.Runtime {
+	for _, candidate := range candidates {
+		if candidate.Valid() {
+			return candidate
+		}
+	}
+	return api.Runtime{}
+}
+
+func providerOf(runtime api.Runtime) *api.ModelProvider {
+	p, _ := runtime.ModelProvider()
+	return p
+}
+
+func resolvedPromptInput(req ai.Request, model string, runtime api.Runtime, sessionID string) ai.Request {
 	out := req
 	if model != "" {
 		out.Name = model
 	}
-	if backend != "" {
-		out.Backend = api.Backend(backend)
+	if runtime.Valid() {
+		out.Provider = providerOf(runtime)
+		out.Mode = runtime.Mode
 	}
 	if sessionID != "" {
 		out.SessionID = sessionID
@@ -638,9 +658,10 @@ type AITestOptions struct {
 }
 
 type AITestResult struct {
-	Model   string `json:"model" pretty:"label=Model"`
-	Backend string `json:"backend" pretty:"label=Backend"`
-	Status  string `json:"status" pretty:"label=Status"`
+	Model    string `json:"model" pretty:"label=Model"`
+	Provider string `json:"provider" pretty:"label=Provider"`
+	Mode     string `json:"mode" pretty:"label=Mode"`
+	Status   string `json:"status" pretty:"label=Status"`
 	Latency string `json:"latency" pretty:"label=Latency"`
 }
 
@@ -674,9 +695,10 @@ func RunAITest(opts AITestOptions) (any, error) {
 	})
 
 	result := AITestResult{
-		Model:   p.GetModel(),
-		Backend: string(p.GetBackend()),
-		Latency: time.Since(start).Round(time.Millisecond).String(),
+		Model:    p.GetModel(),
+		Provider: p.GetRuntime().Provider,
+		Mode:     string(p.GetRuntime().Mode),
+		Latency:  time.Since(start).Round(time.Millisecond).String(),
 	}
 
 	if err != nil {

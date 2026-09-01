@@ -13,15 +13,26 @@ type sessionLiveRow struct {
 	SessionRecord
 }
 
+// sessionLiveConfiguration is the runtime a live session is running on. It
+// carries both halves: a mode alone does not say which family is running it, and
+// the single composite id that used to stand in for the pair is gone.
 type sessionLiveConfiguration struct {
-	mode   string
-	model  string
-	effort string
+	provider string
+	mode     string
+	model    string
+	effort   string
+}
+
+func (c sessionLiveConfiguration) runtime() string {
+	if c.provider == "" || c.mode == "" {
+		return sessionLiveConfigValue(strings.TrimSpace(c.provider + " " + c.mode))
+	}
+	return c.provider + " " + c.mode
 }
 
 func (c sessionLiveConfiguration) Pretty() api.Text {
 	return api.Text{}.
-		Append(sessionLiveConfigValue(c.mode), "text-cyan-600").
+		Append(c.runtime(), "text-cyan-600").
 		Append(" · ", "text-gray-400").
 		Append(sessionLiveConfigValue(c.model), "text-purple-600 font-medium").
 		Append(" · ", "text-gray-400").
@@ -71,7 +82,7 @@ func (r sessionLiveRow) Row() map[string]any {
 		title = strings.TrimSpace(title)
 	}
 	row := map[string]any{
-		"configuration": sessionLiveConfiguration{mode: r.Backend, model: r.Model, effort: r.ReasoningEffort},
+		"configuration": sessionLiveConfiguration{provider: r.Provider, mode: r.ModelMode, model: r.Model, effort: r.ReasoningEffort},
 		"project":       sessionProjectName(r.SessionRecord),
 		"session":       sessionListID(r.ID),
 		"title":         title,

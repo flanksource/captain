@@ -17,7 +17,8 @@ import (
 func TestWhoamiPrettyKeylessCmuxDoesNotRequestAPIKey(t *testing.T) {
 	got := (WhoamiResult{
 		Adapters: []AdapterStatus{{
-			Backend:       string(ai.BackendClaudeCmux),
+			Provider:      ai.Anthropic.Name,
+			Mode:          string(ai.ModeCmux),
 			Type:          "cli",
 			BinaryMissing: "claude",
 		}},
@@ -33,7 +34,8 @@ func TestWhoamiPrettyKeylessCmuxDoesNotRequestAPIKey(t *testing.T) {
 
 func TestWhoamiPrettyRendersModelListItems(t *testing.T) {
 	adapter := AdapterStatus{
-		Backend:       string(ai.BackendOpenAI),
+		Provider:      ai.OpenAI.Name,
+		Mode:          string(ai.ModeAPI),
 		Type:          "api",
 		Authenticated: true,
 		AuthMethod:    "OPENAI_API_KEY (env)",
@@ -73,9 +75,10 @@ func TestWhoamiPrettyRendersModelListItems(t *testing.T) {
 	}
 }
 
-// TestRunWhoami_NoModelsCoversEveryBackend asserts the command lists exactly one
-// adapter per backend without making any network calls when --models=false.
-func TestRunWhoami_NoModelsCoversEveryBackend(t *testing.T) {
+// TestRunWhoami_NoModelsCoversEveryRuntime asserts the command lists exactly one
+// adapter per provider×mode cell without making any network calls when
+// --models=false.
+func TestRunWhoami_NoModelsCoversEveryRuntime(t *testing.T) {
 	res, err := RunWhoami(WhoamiOptions{Models: false})
 	if err != nil {
 		t.Fatalf("RunWhoami: %v", err)
@@ -84,19 +87,22 @@ func TestRunWhoami_NoModelsCoversEveryBackend(t *testing.T) {
 	if !ok {
 		t.Fatalf("RunWhoami returned %T, want WhoamiResult", res)
 	}
-	if len(r.Adapters) != len(ai.AllBackends()) {
-		t.Fatalf("got %d adapters, want %d", len(r.Adapters), len(ai.AllBackends()))
+	if len(r.Adapters) != len(ai.AllRuntimes()) {
+		t.Fatalf("got %d adapters, want %d", len(r.Adapters), len(ai.AllRuntimes()))
 	}
 	for _, a := range r.Adapters {
 		if a.ModelCount != 0 || len(a.Models) != 0 {
-			t.Errorf("adapter %s has models with --models=false: %+v", a.Backend, a)
+			t.Errorf("adapter %s %s has models with --models=false: %+v", a.Provider, a.Mode, a)
 		}
 	}
 }
 
-func TestRunWhoami_RejectsUnknownBackend(t *testing.T) {
-	if _, err := RunWhoami(WhoamiOptions{Backend: "bogus", Models: false}); err == nil {
-		t.Fatal("expected error for unknown --backend")
+func TestRunWhoami_RejectsUnknownAxes(t *testing.T) {
+	if _, err := RunWhoami(WhoamiOptions{Mode: "bogus", Models: false}); err == nil {
+		t.Fatal("expected error for unknown --mode")
+	}
+	if _, err := RunWhoami(WhoamiOptions{Provider: "bogus", Models: false}); err == nil {
+		t.Fatal("expected error for unknown --provider")
 	}
 }
 
@@ -106,7 +112,7 @@ func TestRunWhoamiIncludesProviderDefaults(t *testing.T) {
 	if err := captainconfig.Save(captainconfig.Config{AI: captainconfig.AIDefaults{
 		DefaultProvider: "openai",
 		Providers: map[string]captainconfig.ProviderDefaults{
-			"openai": {Agent: "codex-agent", Model: "gpt-5.6-sol", ReasoningEffort: "high"},
+			"openai": {Mode: "agent", Model: "gpt-5.6-sol", ReasoningEffort: "high"},
 		},
 	}}); err != nil {
 		t.Fatalf("seed config: %v", err)
@@ -116,7 +122,7 @@ func TestRunWhoamiIncludesProviderDefaults(t *testing.T) {
 		t.Fatalf("RunWhoami: %v", err)
 	}
 	got := result.(WhoamiResult)
-	if got.DefaultProvider != "openai" || got.ProviderDefaults["openai"].Agent != "codex-agent" {
+	if got.DefaultProvider != "openai" || got.ProviderDefaults["openai"].Mode != "agent" {
 		t.Fatalf("whoami defaults = %+v", got)
 	}
 }
@@ -143,19 +149,20 @@ func TestRunWhoamiAnnotatesDisabledAdapters(t *testing.T) {
 	}
 	got := result.(WhoamiResult)
 
-	if len(got.Adapters) != len(ai.AllBackends()) {
-		t.Fatalf("got %d adapters, want all %d annotated rather than filtered", len(got.Adapters), len(ai.AllBackends()))
+	if len(got.Adapters) != len(ai.AllRuntimes()) {
+		t.Fatalf("got %d adapters, want all %d annotated rather than filtered", len(got.Adapters), len(ai.AllRuntimes()))
 	}
 	for _, adapter := range got.Adapters {
-		wantDisabled := ai.Backend(adapter.Backend).Mode() == api.ModeCmux
+		if adapter.Provider == "" || adapter.Mode == "" {
+			t.Errorf("adapter is missing its provider/mode axes: %+v", adapter)
+			continue
+		}
+		wantDisabled := adapter.Mode == string(api.ModeCmux)
 		if adapter.Disabled != wantDisabled {
-			t.Errorf("adapter %s disabled = %v, want %v", adapter.Backend, adapter.Disabled, wantDisabled)
+			t.Errorf("adapter %s %s disabled = %v, want %v", adapter.Provider, adapter.Mode, adapter.Disabled, wantDisabled)
 		}
 		if wantDisabled && adapter.DisabledReason != "mode cmux" {
-			t.Errorf("adapter %s reason = %q, want %q", adapter.Backend, adapter.DisabledReason, "mode cmux")
-		}
-		if adapter.Provider == "" || adapter.Mode == "" {
-			t.Errorf("adapter %s is missing its provider/mode axes: %+v", adapter.Backend, adapter)
+			t.Errorf("adapter %s %s reason = %q, want %q", adapter.Provider, adapter.Mode, adapter.DisabledReason, "mode cmux")
 		}
 	}
 	if !reflect.DeepEqual(got.Disabled.Modes, []string{"cmux"}) {
@@ -188,18 +195,18 @@ func TestRunWhoamiServesTheRuntimeCatalogAnnotated(t *testing.T) {
 	seen := map[string]bool{}
 	for _, family := range runtimes {
 		for _, mode := range family.Modes {
-			seen[family.Provider+":"+mode.Backend] = true
-			wantDisabled := mode.Backend == string(api.ModeCmux)
+			seen[family.Provider+":"+mode.Mode] = true
+			wantDisabled := mode.Mode == string(api.ModeCmux)
 			if mode.Disabled != wantDisabled {
-				t.Errorf("%s disabled = %v, want %v", mode.Backend, mode.Disabled, wantDisabled)
+				t.Errorf("%s %s disabled = %v, want %v", family.Provider, mode.Mode, mode.Disabled, wantDisabled)
 			}
 			if wantDisabled && mode.DisabledReason != "mode cmux" {
-				t.Errorf("%s reason = %q, want %q", mode.Backend, mode.DisabledReason, "mode cmux")
+				t.Errorf("%s %s reason = %q, want %q", family.Provider, mode.Mode, mode.DisabledReason, "mode cmux")
 			}
 		}
 	}
-	if len(seen) != len(api.AllBackends()) {
-		t.Errorf("runtimes cover %d backends, want all %d annotated rather than filtered", len(seen), len(api.AllBackends()))
+	if len(seen) != len(api.AllRuntimes()) {
+		t.Errorf("runtimes cover %d cells, want all %d annotated rather than filtered", len(seen), len(api.AllRuntimes()))
 	}
 }
 
@@ -221,7 +228,7 @@ func TestRunWhoamiServesEveryAxisUniverse(t *testing.T) {
 	if len(axes.Efforts) != len(api.AllEfforts()) {
 		t.Errorf("axes.Efforts = %v, want every effort tier", axes.Efforts)
 	}
-	if !reflect.DeepEqual(axes.Providers, []string{"anthropic", "openai", "gemini", "deepseek"}) {
+	if !reflect.DeepEqual(axes.Providers, []string{"anthropic", "openai", "google", "deepseek"}) {
 		t.Errorf("axes.Providers = %v", axes.Providers)
 	}
 }

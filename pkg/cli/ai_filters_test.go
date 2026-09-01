@@ -51,32 +51,50 @@ func TestAIFilters_ScopeFromAllScopes(t *testing.T) {
 	}
 }
 
-func TestAIFilters_BackendFromAllBackends(t *testing.T) {
-	want := make([]string, 0, len(ai.AllBackends()))
-	for _, b := range ai.AllBackends() {
-		want = append(want, string(b))
+// A runtime is two independent axes, so the picker offers two: every mode and
+// every provider. The single composite list this replaces could not express
+// "cmux off for anthropic but not for openai".
+func TestAIFilters_ModeAndProviderFromRegistry(t *testing.T) {
+	wantModes := make([]string, 0, len(capapi.AllRuntimeModes()))
+	for _, mode := range capapi.AllRuntimeModes() {
+		wantModes = append(wantModes, string(mode))
 	}
-	sort.Strings(want)
-	if got := optionKeys(t, "backend"); !equalStrings(got, want) {
-		t.Errorf("backend options = %v, want %v", got, want)
+	sort.Strings(wantModes)
+	if got := optionKeys(t, "mode"); !equalStrings(got, wantModes) {
+		t.Errorf("mode options = %v, want %v", got, wantModes)
+	}
+
+	wantProviders := make([]string, 0, len(capapi.Providers()))
+	for _, p := range capapi.Providers() {
+		wantProviders = append(wantProviders, p.Name)
+	}
+	sort.Strings(wantProviders)
+	if got := optionKeys(t, "provider"); !equalStrings(got, wantProviders) {
+		t.Errorf("provider options = %v, want %v", got, wantProviders)
 	}
 }
 
-// The completion picker is a menu, not a validator: a backend switched off on
-// /whoami must not be suggested, while AllBackends keeps naming it so an
-// explicit --backend still fails on the opt-out rather than on "unknown".
-func TestAIFilters_BackendDropsDisabled(t *testing.T) {
-	capapi.SetDisabled(capapi.NewDisabledSet([]string{"cmux"}, nil, nil, nil, nil))
+// The completion picker is a menu, not a validator: an axis switched off on
+// /whoami must not be suggested, while the registry keeps naming it so an
+// explicit --mode still fails on the opt-out rather than on "unknown".
+func TestAIFilters_ModeAndProviderDropDisabled(t *testing.T) {
+	capapi.SetDisabled(capapi.NewDisabledSet([]string{"cmux"}, []string{"deepseek"}, nil, nil, nil))
 	t.Cleanup(func() { capapi.SetDisabled(capapi.DisabledSet{}) })
 
-	keys := optionKeys(t, "backend")
-	for _, gone := range []string{string(ai.BackendClaudeCmux), string(ai.BackendCodexCmux)} {
-		if contains(keys, gone) {
-			t.Errorf("backend options %v still offer disabled %q", keys, gone)
-		}
+	modes := optionKeys(t, "mode")
+	if contains(modes, string(ai.ModeCmux)) {
+		t.Errorf("mode options %v still offer disabled cmux", modes)
 	}
-	if !contains(keys, string(ai.BackendClaudeCLI)) {
-		t.Errorf("backend options %v dropped the provider's still-enabled cli backend", keys)
+	if !contains(modes, string(ai.ModeCLI)) {
+		t.Errorf("mode options %v dropped the still-enabled cli mode", modes)
+	}
+
+	providers := optionKeys(t, "provider")
+	if contains(providers, ai.DeepSeek.Name) {
+		t.Errorf("provider options %v still offer disabled deepseek", providers)
+	}
+	if !contains(providers, ai.Anthropic.Name) {
+		t.Errorf("provider options %v dropped the still-enabled anthropic", providers)
 	}
 }
 
@@ -99,7 +117,7 @@ func TestAIFilters_ModelDropsDisabled(t *testing.T) {
 
 // TestAIFilters_ModelSuggestsBareNames pins that genkit catalog ids are
 // suggested without their "provider/" prefix, so the value is directly usable as
-// --model (captain's InferBackend matches bare prefixes). The synthetic catalog
+// --model (captain derives the provider from bare prefixes). The synthetic catalog
 // keeps the assertion deterministic across clicky/aichat dependency bumps.
 func TestAIFilters_ModelSuggestsBareNames(t *testing.T) {
 	installTestCatalog(t)

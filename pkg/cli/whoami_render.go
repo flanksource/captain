@@ -48,7 +48,7 @@ func adapterPrettyLine(a AdapterStatus, showModels bool, limit int) api.Text {
 	t := api.Text{}.
 		Append("  ", "").
 		Add(adapterStatusIcon(a)).Space().
-		Append(fmt.Sprintf("%-13s", a.Backend), "font-medium")
+		Append(fmt.Sprintf("%-13s", a.Provider+" "+a.Mode), "font-medium")
 
 	t = adapterAppendAuth(a, t)
 	if a.Type == "cli" {
@@ -82,8 +82,10 @@ func adapterStatusIcon(a AdapterStatus) api.Textable {
 func adapterAppendAuth(a AdapterStatus, t api.Text) api.Text {
 	if !a.Authenticated {
 		msg := "not configured"
-		if vars := strings.Join(ai.AuthEnvVars(ai.Backend(a.Backend)), " or "); vars != "" {
-			msg += " (set " + vars + ")"
+		if p, ok := ai.ProviderByName(a.Provider); ok {
+			if vars := strings.Join(ai.AuthEnvVars(p, ai.RuntimeMode(a.Mode)), " or "); vars != "" {
+				msg += " (set " + vars + ")"
+			}
 		}
 		return t.Append(msg, "text-red-500")
 	}
@@ -117,7 +119,8 @@ func adapterAppendModels(a AdapterStatus, t api.Text, limit int) api.Text {
 	if len(sample) == 0 && len(a.Models) > 0 {
 		sample = make([]ai.ModelDef, 0, len(a.Models))
 		for _, id := range a.Models {
-			sample = append(sample, ai.ModelDef{ID: id, ReleaseDate: ai.CatalogReleaseDate(ai.Backend(a.Backend), id)})
+			p, _ := ai.ProviderByName(a.Provider)
+			sample = append(sample, ai.ModelDef{ID: id, ReleaseDate: ai.CatalogReleaseDate(p, ai.RuntimeMode(a.Mode), id)})
 		}
 	}
 	if limit > 0 && len(sample) > limit {

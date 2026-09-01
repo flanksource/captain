@@ -142,16 +142,25 @@ func addCaptainDisabledPaths(spec *rpc.OpenAPISpec) {
 	if spec.Paths == nil {
 		spec.Paths = map[string]rpc.OpenAPIPath{}
 	}
-	axes := []string{"modes", "providers", "backends", "models", "efforts"}
+	// The axes are DisabledSelections' own fields. "runtimes" carries objects
+	// rather than strings because a runtime is the (provider, mode) pair — the
+	// composite "backends" axis it replaces could not say which half it meant.
+	axes := []string{"modes", "providers", "runtimes", "models", "efforts"}
 	schema := func() *rpc.OpenAPISchema {
 		properties := make(map[string]*rpc.OpenAPISchema, len(axes))
 		for _, axis := range axes {
-			properties[axis] = &rpc.OpenAPISchema{Type: "array", Items: &rpc.OpenAPISchema{Type: "string"}}
+			item := &rpc.OpenAPISchema{Type: "string"}
+			if axis == "runtimes" {
+				item = &rpc.OpenAPISchema{Type: "object", Required: []string{"provider", "mode"}, Properties: map[string]*rpc.OpenAPISchema{
+					"provider": {Type: "string"}, "mode": {Type: "string"},
+				}}
+			}
+			properties[axis] = &rpc.OpenAPISchema{Type: "array", Items: item}
 		}
 		return &rpc.OpenAPISchema{Type: "object", Required: axes, Properties: properties}
 	}
 	spec.Paths["/api/captain/ai/disabled"] = rpc.OpenAPIPath{"put": {
-		Tags: []string{"Provider configuration"}, Summary: "Replace the disabled modes, providers, backends, models and efforts",
+		Tags: []string{"Provider configuration"}, Summary: "Replace the disabled modes, providers, runtimes, models and efforts",
 		OperationID: "saveDisabledSelections",
 		RequestBody: &rpc.OpenAPIRequestBody{Required: true, Content: map[string]rpc.OpenAPIMediaType{
 			"application/json": {Schema: schema()},
@@ -200,7 +209,7 @@ func chatMessageRequestSchema() *rpc.OpenAPISchema {
 		Type: "object", Required: []string{"text"},
 		Properties: map[string]*rpc.OpenAPISchema{
 			"text": {Type: "string"}, "messageId": {Type: "string"},
-			"model": {Type: "string"}, "backend": {Type: "string"},
+			"model": {Type: "string"}, "mode": {Type: "string"},
 		},
 	}
 }

@@ -10,14 +10,20 @@ import (
 	"github.com/flanksource/captain/pkg/claude"
 )
 
-func historyFileForRun(backend api.Backend, sessionID, cwd string) string {
+func historyFileForRun(provider *api.ModelProvider, mode api.RuntimeMode, sessionID, cwd string) string {
 	if strings.TrimSpace(sessionID) == "" {
 		return ""
 	}
-	switch backend {
-	case api.BackendClaudeAgent, api.BackendClaudeCLI, api.BackendClaudeCmux:
+	// Which history file a run leaves is a property of the provider family plus
+	// running locally at all — every local Claude mode writes the same file, and
+	// the API mode writes none.
+	if provider == nil || mode.Kind() != "cli" {
+		return ""
+	}
+	switch provider {
+	case api.Anthropic:
 		return claudeHistoryFile(sessionID, cwd)
-	case api.BackendCodexAgent, api.BackendCodexCLI, api.BackendCodexCmux:
+	case api.OpenAI:
 		return codexHistoryFile(sessionID)
 	default:
 		return ""

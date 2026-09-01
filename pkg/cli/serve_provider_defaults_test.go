@@ -18,16 +18,16 @@ import (
 func TestProviderDefaultsPutValidatesAndSaves(t *testing.T) {
 	setupProviderDefaultsTest(t)
 	previous := configureDefaultsModels
-	configureDefaultsModels = func(_ context.Context, agent api.Backend) ([]ai.ModelDef, error) {
-		if agent != api.BackendCodexAgent {
-			t.Fatalf("agent = %s", agent)
+	configureDefaultsModels = func(_ context.Context, provider *api.ModelProvider, mode api.RuntimeMode) ([]ai.ModelDef, error) {
+		if provider != api.OpenAI || mode != api.ModeAgent {
+			t.Fatalf("runtime = %s %s", provider.Name, mode)
 		}
 		return []ai.ModelDef{{ID: "gpt-5.6-sol"}}, nil
 	}
 	t.Cleanup(func() { configureDefaultsModels = previous })
 
 	response := serveProviderDefaultsRequest(t, "/api/captain/ai/providers/openai/defaults",
-		`{"agent":"codex-agent","model":"gpt-5.6-sol","effort":"high"}`)
+		`{"mode":"agent","model":"gpt-5.6-sol","effort":"high"}`)
 	if response.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
@@ -35,7 +35,7 @@ func TestProviderDefaultsPutValidatesAndSaves(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if result.Agent != "codex-agent" || result.Model != "gpt-5.6-sol" || result.Effort != "high" {
+	if result.Mode != "agent" || result.Model != "gpt-5.6-sol" || result.Effort != "high" {
 		t.Fatalf("response = %+v", result)
 	}
 	config, _, err := captainconfig.Load()
@@ -48,19 +48,19 @@ func TestProviderDefaultsPutFailurePreservesExistingDefaults(t *testing.T) {
 	setupProviderDefaultsTest(t)
 	if err := captainconfig.Save(captainconfig.Config{AI: captainconfig.AIDefaults{
 		Providers: map[string]captainconfig.ProviderDefaults{
-			"openai": {Agent: "openai", Model: "gpt-existing", ReasoningEffort: "medium"},
+			"openai": {Mode: "api", Model: "gpt-existing", ReasoningEffort: "medium"},
 		},
 	}}); err != nil {
 		t.Fatalf("seed config: %v", err)
 	}
 	previous := configureDefaultsModels
-	configureDefaultsModels = func(context.Context, api.Backend) ([]ai.ModelDef, error) {
+	configureDefaultsModels = func(context.Context, *api.ModelProvider, api.RuntimeMode) ([]ai.ModelDef, error) {
 		return []ai.ModelDef{{ID: "gpt-valid"}}, nil
 	}
 	t.Cleanup(func() { configureDefaultsModels = previous })
 
 	response := serveProviderDefaultsRequest(t, "/api/captain/ai/providers/openai/defaults",
-		`{"agent":"openai","model":"gpt-invalid","effort":"high"}`)
+		`{"mode":"api","model":"gpt-invalid","effort":"high"}`)
 	if response.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
@@ -75,12 +75,12 @@ func TestDefaultProviderPutChangesOnlyActiveProvider(t *testing.T) {
 	if err := captainconfig.Save(captainconfig.Config{Prompts: captainconfig.PromptDefaults{Dirs: []string{"/repo/prompts"}}}); err != nil {
 		t.Fatalf("seed config: %v", err)
 	}
-	response := serveProviderDefaultsRequest(t, "/api/captain/ai/default-provider", `{"provider":"gemini"}`)
+	response := serveProviderDefaultsRequest(t, "/api/captain/ai/default-provider", `{"provider":"google"}`)
 	if response.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
 	config, _, err := captainconfig.Load()
-	if err != nil || config.AI.DefaultProvider != "gemini" || len(config.Prompts.Dirs) != 1 {
+	if err != nil || config.AI.DefaultProvider != "google" || len(config.Prompts.Dirs) != 1 {
 		t.Fatalf("config=%+v err=%v", config, err)
 	}
 }

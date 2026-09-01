@@ -31,7 +31,8 @@ type PromptRunFrame struct {
 	Status       string           `json:"status"`
 	Chat         bool             `json:"chat"`
 	Model        string           `json:"model,omitempty"`
-	Backend      string           `json:"backend,omitempty"`
+	Provider     string           `json:"provider,omitempty"`
+	Mode         string           `json:"mode,omitempty"`
 	Capabilities ChatCapabilities `json:"capabilities"`
 }
 
@@ -39,7 +40,7 @@ type ChatMessageRequest struct {
 	Text      string `json:"text"`
 	MessageID string `json:"messageId,omitempty"`
 	Model     string `json:"model,omitempty"`
-	Backend   string `json:"backend,omitempty"`
+	Mode      string `json:"mode,omitempty"`
 }
 
 type ChatMessageResponse struct {
@@ -54,15 +55,31 @@ type ChatInterruptResponse struct {
 	DiscardedMessageIDs []string `json:"discardedMessageIds,omitempty"`
 }
 
-func chatCapabilitiesForBackend(backend string) ChatCapabilities {
-	switch api.Backend(backend) {
-	case api.BackendClaudeAgent:
-		return ChatCapabilities{Interrupt: true, Steer: true, FollowUp: true, Resume: true}
-	case api.BackendCodexAgent:
-		return ChatCapabilities{Interrupt: true, FollowUp: true, Resume: true}
-	case api.BackendClaudeCLI, api.BackendCodexCLI, api.BackendClaudeCmux, api.BackendCodexCmux:
-		return ChatCapabilities{Resume: true}
-	default:
+// chatCapabilitiesForRuntime reads the provider×mode cell rather than restating
+// it. This was an eleven-way switch that duplicated
+// registry.ModeCapabilities{Streaming,Resume,Interrupt,Steer} and could drift
+// from the adapters it described.
+func chatCapabilitiesForRuntime(provider *api.ModelProvider, mode api.RuntimeMode) ChatCapabilities {
+	if provider == nil {
 		return ChatCapabilities{}
 	}
+	caps, known := provider.Caps(mode)
+	if !known {
+		return ChatCapabilities{}
+	}
+	return ChatCapabilities{
+		Interrupt: caps.Interrupt,
+		Steer:     caps.Steer,
+		// A follow-up turn needs an interruptible, resumable session: the local
+		// transports that only resume can continue, but not mid-turn.
+		FollowUp: caps.Interrupt && caps.Resume,
+		Resume:   caps.Resume,
+	}
+}
+
+// chatCapabilitiesFor resolves the runtime from a rendered result's provider and
+// mode strings.
+func chatCapabilitiesFor(provider, mode string) ChatCapabilities {
+	p, _ := api.ProviderByName(provider)
+	return chatCapabilitiesForRuntime(p, api.RuntimeMode(mode))
 }

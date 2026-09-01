@@ -8,18 +8,21 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/pricing"
+	"github.com/flanksource/captain/pkg/api"
 )
 
 type AIModelsOptions struct {
-	Filter  string `flag:"filter" help:"Filter models by name substring" short:"f"`
-	Backend string `flag:"backend" help:"Filter by backend: anthropic|gemini|openai|deepseek|claude-cli|claude-agent|claude-cmux|codex-cli|codex-agent|codex-cmux|gemini-cli" short:"b"`
-	Limit   int    `flag:"limit" help:"Maximum models to show" default:"50" short:"l"`
-	All     bool   `flag:"all" help:"Include all OpenRouter models" short:"a"`
+	Filter   string `flag:"filter" help:"Filter models by name substring" short:"f"`
+	Provider string `flag:"provider" help:"Filter by provider: anthropic|openai|google|deepseek" short:"p"`
+	Mode     string `flag:"mode" help:"Filter by runtime mode: api|agent|cli|cmux"`
+	Limit    int    `flag:"limit" help:"Maximum models to show" default:"50" short:"l"`
+	All      bool   `flag:"all" help:"Include all OpenRouter models" short:"a"`
 }
 
 type AIModelRow struct {
 	Model     string `json:"model" pretty:"label=Model,width=45,table"`
-	Backend   string `json:"backend" pretty:"label=Backend,table"`
+	Provider  string `json:"provider" pretty:"label=Provider,table"`
+	Mode      string `json:"mode" pretty:"label=Mode,table"`
 	Input     string `json:"input" pretty:"label=Input/1M,table"`
 	Output    string `json:"output" pretty:"label=Output/1M,table"`
 	Context   string `json:"context" pretty:"label=Context,table"`
@@ -43,34 +46,49 @@ func RunAIModels(opts AIModelsOptions) (any, error) {
 // runLiveModels lists what the user's API credentials can actually call by
 // hitting provider model endpoints, then augments each row with pricing and
 // context-window data from the OpenRouter registry. There is no static fallback:
-// if a backend has no configured credential or the call fails, the user learns
+// if a provider has no configured credential or the call fails, the user learns
 // about it directly instead of being shown a stale hard-coded catalog.
 func runLiveModels(opts AIModelsOptions) (any, error) {
-	backendFilter := ai.Backend(strings.TrimSpace(opts.Backend))
-	if backendFilter != "" && !backendFilter.Valid() {
-		return nil, fmt.Errorf("--backend must be one of: %s (got %q)", ai.BackendList(), opts.Backend)
+	var providerFilter *ai.ModelProvider
+	if raw := strings.TrimSpace(opts.Provider); raw != "" {
+		p, ok := ai.ProviderByName(raw)
+		if !ok {
+			return nil, fmt.Errorf("--provider must be one of: %s (got %q)", ai.ProviderList(), opts.Provider)
+		}
+		providerFilter = p
 	}
-	// CLI/agent backends authenticate internally, so their models come from the
+	modeFilter := api.RuntimeMode(strings.TrimSpace(opts.Mode))
+	if modeFilter != "" {
+		parsed, ok := api.ParseRuntimeMode(string(modeFilter))
+		if !ok {
+			return nil, fmt.Errorf("--mode must be one of: %s (got %q)", api.RuntimeModeList(), opts.Mode)
+		}
+		modeFilter = parsed
+	}
+	// The local transports authenticate internally, so their models come from the
 	// static catalog without an API key.
-	if backendFilter != "" && backendFilter.Kind() == "cli" {
-		return catalogModelsResult(opts, backendFilter), nil
+	if modeFilter != "" && modeFilter != api.ModeAPI {
+		if providerFilter == nil {
+			return nil, fmt.Errorf("--mode %s also needs --provider: a local catalog belongs to one family", modeFilter)
+		}
+		return catalogModelsResult(opts, providerFilter, modeFilter), nil
 	}
 
 	ctx := context.Background()
 	type fetched struct {
-		backend ai.Backend
-		models  []ai.ModelDef
-		err     error
+		provider *ai.ModelProvider
+		models   []ai.ModelDef
+		err      error
 	}
 	var results []fetched
 
-	backends := []ai.Backend{ai.BackendOpenAI, ai.BackendAnthropic}
-	if backendFilter != "" {
-		backends = []ai.Backend{backendFilter}
+	providers := []*ai.ModelProvider{ai.OpenAI, ai.Anthropic}
+	if providerFilter != nil {
+		providers = []*ai.ModelProvider{providerFilter}
 	}
-	for _, backend := range backends {
-		models, err := ai.ListModels(ctx, backend)
-		results = append(results, fetched{backend, models, err})
+	for _, p := range providers {
+		models, err := ai.ListModels(ctx, p)
+		results = append(results, fetched{p, models, err})
 	}
 
 	// Surface the first hard error. With no static fallback, an error means
@@ -78,7 +96,7 @@ func runLiveModels(opts AIModelsOptions) (any, error) {
 	// leave them staring at an empty list and guessing why.
 	for _, r := range results {
 		if r.err != nil {
-			return nil, fmt.Errorf("%s: %w", r.backend, r.err)
+			return nil, fmt.Errorf("%s: %w", r.provider.Name, r.err)
 		}
 	}
 
@@ -92,15 +110,16 @@ func runLiveModels(opts AIModelsOptions) (any, error) {
 			// Hide legacy/non-chat IDs unless the user asked for them by
 			// name via --filter. Filtering by user intent overrides the
 			// blacklist so "ai models -f gpt-3.5" still works.
-			if opts.Filter == "" && ai.IsLegacyModelIDForBackend(m.ID, r.backend) {
+			if opts.Filter == "" && ai.IsLegacyModelIDForRuntime(m.ID, r.provider, api.ModeAPI) {
 				continue
 			}
 
 			row := AIModelRow{
-				Model:   m.ID,
-				Backend: string(r.backend),
+				Model:    m.ID,
+				Provider: r.provider.Name,
+				Mode:     string(api.ModeAPI),
 			}
-			if info, ok := lookupPricing(r.backend, m.ID); ok {
+			if info, ok := lookupPricing(r.provider, m.ID); ok {
 				row.Input = formatPrice(info.InputPrice)
 				row.Output = formatPrice(info.OutputPrice)
 				row.Context = formatContext(info.ContextWindow)
@@ -115,13 +134,13 @@ func runLiveModels(opts AIModelsOptions) (any, error) {
 		}
 	}
 
-	// Stable, deterministic display order: backend first (so anthropic and
+	// Stable, deterministic display order: provider first (so anthropic and
 	// openai groups stay together when both are listed), then model id.
 	// Sort happens before the limit cap so truncation is over the final
 	// alphabetised list, not whichever provider's response came back first.
 	sort.SliceStable(rows, func(i, j int) bool {
-		if rows[i].Backend != rows[j].Backend {
-			return rows[i].Backend < rows[j].Backend
+		if rows[i].Provider != rows[j].Provider {
+			return rows[i].Provider < rows[j].Provider
 		}
 		return rows[i].Model < rows[j].Model
 	})
@@ -133,19 +152,19 @@ func runLiveModels(opts AIModelsOptions) (any, error) {
 	return AIModelsResult{Total: len(rows), Rows: rows}, nil
 }
 
-// catalogModelsResult lists a CLI/agent backend's models from the static
+// catalogModelsResult lists a local transport's models from the static
 // catalog (no API key). --filter narrows by id/name substring; pricing and
 // context columns are filled when the OpenRouter registry knows the model and
 // shown as "-" otherwise. Rows arrive pre-sorted by id from agentCatalogModels.
-func catalogModelsResult(opts AIModelsOptions, backend ai.Backend) AIModelsResult {
+func catalogModelsResult(opts AIModelsOptions, provider *ai.ModelProvider, mode ai.RuntimeMode) AIModelsResult {
 	filterLower := strings.ToLower(opts.Filter)
 	rows := make([]AIModelRow, 0)
-	for _, m := range agentCatalogModels(backend) {
+	for _, m := range agentCatalogModels(provider, mode) {
 		if opts.Filter != "" && !strings.Contains(strings.ToLower(m.ID), filterLower) && !strings.Contains(strings.ToLower(m.Name), filterLower) {
 			continue
 		}
-		row := AIModelRow{Model: m.ID, Backend: string(backend), Input: "-", Output: "-", Context: "-", MaxTokens: "-"}
-		if info, ok := lookupPricing(backend, m.ID); ok {
+		row := AIModelRow{Model: m.ID, Provider: provider.Name, Mode: string(mode), Input: "-", Output: "-", Context: "-", MaxTokens: "-"}
+		if info, ok := lookupPricing(provider, m.ID); ok {
 			row.Input = formatPrice(info.InputPrice)
 			row.Output = formatPrice(info.OutputPrice)
 			row.Context = formatContext(info.ContextWindow)
@@ -160,9 +179,9 @@ func catalogModelsResult(opts AIModelsOptions, backend ai.Backend) AIModelsResul
 }
 
 // lookupPricing uses the provider registry's canonical OpenRouter candidates so
-// API and local-agent backends resolve the same model price.
-func lookupPricing(backend ai.Backend, id string) (pricing.ModelInfo, bool) {
-	for _, candidate := range ai.PricingIDs(backend, id) {
+// every mode of a family resolves the same model price.
+func lookupPricing(provider *ai.ModelProvider, id string) (pricing.ModelInfo, bool) {
+	for _, candidate := range ai.PricingIDs(provider, id) {
 		if info, ok := pricing.GetModelInfo(candidate); ok {
 			return info, true
 		}

@@ -131,7 +131,7 @@ func resumeSessionScore(item SessionGetItem) int {
 	if strings.TrimSpace(item.Summary.Model) != "" {
 		score += 4
 	}
-	if strings.TrimSpace(item.Summary.Backend) != "" {
+	if strings.TrimSpace(item.Summary.ModelMode) != "" {
 		score += 2
 	}
 	if strings.TrimSpace(item.Summary.CWD) != "" {
@@ -157,13 +157,17 @@ func resumeSessionMessage(item SessionGetItem, request ChatMessageRequest) (Chat
 	if err != nil || !info.IsDir() {
 		return ChatMessageResponse{}, newChatError(http.StatusUnprocessableEntity, "session working directory is unavailable")
 	}
-	backend, err := resumeBackend(item.Summary.Source)
+	provider, err := resumeProvider(item.Summary.Source)
 	if err != nil {
 		return ChatMessageResponse{}, err
 	}
-	if request.Backend != "" && api.Backend(request.Backend) != backend {
+	// A transcript names the agent that wrote it, never the mode it ran under, so
+	// the mode is a deliberate choice here rather than a recovered fact: resume
+	// goes to the agent mode, the only one that can continue a session mid-thread.
+	mode := api.ModeAgent
+	if request.Mode != "" && api.RuntimeMode(request.Mode) != mode {
 		return ChatMessageResponse{}, newChatError(http.StatusUnprocessableEntity,
-			fmt.Sprintf("session source %s must resume with backend %s", item.Summary.Source, backend))
+			fmt.Sprintf("session source %s must resume on the %s mode", item.Summary.Source, mode))
 	}
 	model := strings.TrimSpace(request.Model)
 	if model == "" {
@@ -177,7 +181,7 @@ func resumeSessionMessage(item SessionGetItem, request ChatMessageRequest) (Chat
 		messageID = newMessageID()
 	}
 	modelSpec := api.Model{
-		Name: model, Backend: backend, Effort: api.Effort(item.Summary.ReasoningEffort),
+		Name: model, Provider: provider, Mode: mode, Effort: api.Effort(item.Summary.ReasoningEffort),
 	}
 	req := api.Spec{
 		Model: modelSpec, Prompt: api.Prompt{User: strings.TrimSpace(request.Text)},
@@ -185,7 +189,7 @@ func resumeSessionMessage(item SessionGetItem, request ChatMessageRequest) (Chat
 	}
 	req.SetCwd(item.Summary.CWD)
 	rendered := PromptRenderResult{
-		Name: "resume " + item.CaptainID, Model: model, Backend: string(backend),
+		Name: "resume " + item.CaptainID, Model: model, Provider: provider.Name, Mode: string(mode),
 		User: req.Prompt.User, Input: req,
 		Config: ai.Config{Model: modelSpec, SessionID: item.ProviderSessionID},
 	}
@@ -198,15 +202,15 @@ func resumeSessionMessage(item SessionGetItem, request ChatMessageRequest) (Chat
 	}, nil
 }
 
-func resumeBackend(source string) (api.Backend, error) {
-	switch strings.ToLower(strings.TrimSpace(source)) {
-	case "claude":
-		return api.BackendClaudeAgent, nil
-	case "codex":
-		return api.BackendCodexAgent, nil
-	default:
-		return "", newChatError(http.StatusUnprocessableEntity, "session source is not resumable")
+// resumeProvider maps a transcript source onto the provider that wrote it. The
+// mode is NOT recoverable from a transcript — see resumeSessionMessage.
+func resumeProvider(source string) (*api.ModelProvider, error) {
+	for _, p := range api.Providers() {
+		if p.AgentName == strings.ToLower(strings.TrimSpace(source)) {
+			return p, nil
+		}
 	}
+	return nil, newChatError(http.StatusUnprocessableEntity, "session source is not resumable")
 }
 
 func userChatMessage(messageID, text string) session.Message {

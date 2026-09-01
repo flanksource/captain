@@ -232,6 +232,33 @@ func decodePromptID(id string) (promptRef, error) {
 	return promptRef{Kind: parts[0], SourceID: parts[1], RelPath: filepath.ToSlash(parts[2])}, nil
 }
 
+// PromptSourceInfo is one discovered prompt source as the editor's destination
+// picker sees it, so a configured-but-empty writable directory (or the implicit
+// .captain/prompts fallback) is still offered as a save target.
+type PromptSourceInfo struct {
+	ID       string `json:"id"`
+	Kind     string `json:"kind"`
+	Label    string `json:"label"`
+	Root     string `json:"root,omitempty"`
+	Writable bool   `json:"writable"`
+	Implicit bool   `json:"implicit,omitempty"`
+}
+
+func promptSourceInfos(ctx context.Context) ([]PromptSourceInfo, error) {
+	sources, err := buildPromptSources(ctx)
+	if err != nil {
+		return nil, err
+	}
+	infos := make([]PromptSourceInfo, 0, len(sources))
+	for _, source := range sources {
+		infos = append(infos, PromptSourceInfo{
+			ID: source.ID, Kind: source.Kind, Label: source.Label, Root: source.Root,
+			Writable: source.Writable, Implicit: source.Implicit,
+		})
+	}
+	return infos, nil
+}
+
 func hashPromptDir(dir string) string {
 	sum := sha256.Sum256([]byte(dir))
 	return hex.EncodeToString(sum[:])[:12]

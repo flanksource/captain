@@ -46,7 +46,7 @@ func RunGitAgentRunTask(ctx context.Context, opts GitAgentRunTaskOptions) (_ any
 	if err != nil {
 		return nil, err
 	}
-	identity := ai.LogIdentity(api.Backend(payload.Backend), payload.Model, payload.Effort)
+	identity := ai.LogIdentity(payload.Mode, payload.Model, payload.Effort)
 	log.Infof("git-agent task %s starting %s in %s", opts.Task, identity, worktree)
 	if err := runTaskPrompt(ctx, worktree, payload); err != nil {
 		return nil, fmt.Errorf("running the dispatched prompt: %w", err)
@@ -60,12 +60,12 @@ func RunGitAgentRunTask(ctx context.Context, opts GitAgentRunTaskOptions) (_ any
 }
 
 // runTaskPrompt executes the dispatched prompt in the worktree. The sandbox is
-// pinned to none: this process IS the relocated run, so resolving a relocating
+// pinned to off: this process IS the relocated run, so resolving a relocating
 // sandbox here would dispatch the task to another agent, and so on (H15).
 func runTaskPrompt(ctx context.Context, worktree string, payload gitagent.TaskPayload) error {
 	providerOpts := AIProviderOptions{
-		ModelFlags: aiflags.ModelFlags{Model: payload.Model, Backend: payload.Backend, Effort: string(payload.Effort)},
-		Sandbox:    "none",
+		ModelFlags: aiflags.ModelFlags{Model: payload.Model, Mode: string(payload.Mode), Effort: string(payload.Effort)},
+		Sandbox:    string(api.SandboxOff),
 	}
 	cfg, err := providerOpts.ToConfig()
 	if err != nil {
@@ -79,6 +79,7 @@ func runTaskPrompt(ctx context.Context, worktree string, payload gitagent.TaskPa
 	req.SetCwd(worktree)
 	// Editing is the point: a coding agent that cannot write files produces an
 	// empty result and an unexplained silence on the supervisor.
+	req.Sandbox = &api.SandboxRef{Mode: api.SandboxNative}
 	req.Permissions.Mode = api.PermissionAcceptEdits
 
 	if _, err := executePromptRequestFunc(ctx, req, cfg, renderedTimeout(PromptRenderResult{Input: req, Config: cfg}), true); err != nil {

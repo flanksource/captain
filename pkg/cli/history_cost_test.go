@@ -108,8 +108,8 @@ func TestResultCostLookupThreadProviderPriority(t *testing.T) {
 		VALUES (?, ?, 0, 'ended')`, turnID, providerChildID).Error)
 	require.NoError(t, db.Gorm().Exec(`
 		INSERT INTO captain_model_calls
-		  (turn_id, call_index, model, backend, status, input_tokens, input_cost, provider_cost_usd, currency)
-		VALUES (?, 0, 'claude-test', 'claude', 'succeeded', 10, 0.1, 0.75, 'USD')`, turnID).Error)
+		  (turn_id, call_index, model, provider, mode, status, input_tokens, input_cost, provider_cost_usd, currency)
+		VALUES (?, 0, 'claude-test', 'anthropic', 'api', 'succeeded', 10, 0.1, 0.75, 'USD')`, turnID).Error)
 
 	lookup := resultCostLookup{db: db}
 	cost, ok := lookup.find(t.Context(), "provider-child-cost", providerChildPath)

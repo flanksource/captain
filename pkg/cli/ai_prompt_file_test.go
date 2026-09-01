@@ -117,6 +117,7 @@ func baseFileReq() ai.Request {
 		Prompt:      api.Prompt{User: "body prompt"},
 		Model:       api.Model{Name: "claude-file-4-6"},
 		Budget:      api.Budget{MaxTokens: 100},
+		Sandbox:     &api.SandboxRef{Mode: api.SandboxNative},
 		Permissions: api.Permissions{Mode: api.PermissionAcceptEdits},
 		Memory:      api.Memory{SkipUser: true},
 	}
@@ -142,8 +143,8 @@ func TestOverlayCLI_CLIOverridesFrontmatter(t *testing.T) {
 	if req.Budget.MaxTokens != 200 {
 		t.Errorf("MaxTokens = %d, want CLI value 200", req.Budget.MaxTokens)
 	}
-	if req.Permissions.Mode != api.PermissionPlan {
-		t.Errorf("Mode = %q, want CLI value plan", req.Permissions.Mode)
+	if req.Sandbox == nil || req.Permissions.Mode != api.PermissionPlan {
+		t.Errorf("Sandbox approval = %#v, want CLI value plan", req.Sandbox)
 	}
 }
 
@@ -155,9 +156,9 @@ func TestOverlayCLI_Sandbox(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			isolateSavedAI(t)
 			base := baseFileReq()
-			base.Model.Backend = api.BackendAnthropic
-			// The legacy boolean spelling must keep meaning srt.
-			opts := AIPromptOptions{AIRuntimeOptions: AIRuntimeOptions{AIProviderOptions: AIProviderOptions{Sandbox: "true"}}}
+			base.Model.Provider = api.Anthropic
+			base.Model.Mode = api.ModeAPI
+			opts := AIPromptOptions{AIRuntimeOptions: AIRuntimeOptions{AIProviderOptions: AIProviderOptions{Sandbox: "docker"}}}
 			opts.Mode = tt.mode
 			req, cfg, err := overlayCLI(base, ai.Config{}, opts)
 			if tt.wantErr != "" {
@@ -169,27 +170,28 @@ func TestOverlayCLI_Sandbox(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if req.Model.Backend != api.BackendClaudeCLI || req.Model.Name != base.Model.Name || !cfg.Sandbox {
-				t.Fatalf("sandbox model = %#v, sandbox=%v", req.Model, cfg.Sandbox)
+			if req.Model.Provider != api.Anthropic || req.Model.Mode != api.ModeCLI || req.Model.Name != base.Model.Name ||
+				cfg.SandboxSelection == nil || cfg.SandboxSelection.Kind != api.SandboxDocker {
+				t.Fatalf("sandbox model = %#v, selection=%v", req.Model, cfg.SandboxSelection)
 			}
 		})
 	}
 }
 
-// An explicit --sandbox=none must turn OFF a sandbox the base config carried:
+// An explicit --sandbox=off must turn off a sandbox the base config carried:
 // the overlay resolved every layer, so it overwrites instead of ORing.
-func TestOverlayCLI_SandboxNoneClearsInherited(t *testing.T) {
+func TestOverlayCLI_SandboxOffClearsInherited(t *testing.T) {
 	isolateSavedAI(t)
 	base := baseFileReq()
-	baseCfg := ai.Config{Sandbox: true, SandboxSelection: &api.SandboxConfig{Kind: api.SandboxSRT}}
-	opts := AIPromptOptions{AIRuntimeOptions: AIRuntimeOptions{AIProviderOptions: AIProviderOptions{Sandbox: "none"}}}
+	baseCfg := ai.Config{SandboxSelection: &api.SandboxConfig{Kind: api.SandboxDocker}}
+	opts := AIPromptOptions{AIRuntimeOptions: AIRuntimeOptions{AIProviderOptions: AIProviderOptions{Sandbox: "off"}}}
 
 	_, cfg, err := overlayCLI(base, baseCfg, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Sandbox || cfg.SandboxSelection != nil {
-		t.Fatalf("sandbox=%v selection=%v, want both cleared by the explicit none", cfg.Sandbox, cfg.SandboxSelection)
+	if cfg.SandboxSelection != nil {
+		t.Fatalf("selection=%v, want cleared by explicit off", cfg.SandboxSelection)
 	}
 	if resolved := cfg.ResolvedSandbox(); resolved != nil {
 		t.Fatalf("ResolvedSandbox = %+v, want nil", resolved)
@@ -200,9 +202,10 @@ func TestOverlayCLI_SandboxFlagPreservesFrontmatterAgentAndPolicy(t *testing.T) 
 	isolateSavedAI(t)
 	base := baseFileReq()
 	base.Sandbox = &api.SandboxRef{
-		Backend: "old-pool",
-		Agent:   "worker-01",
-		Policy:  &api.SandboxPolicy{Paths: []string{"pkg/**"}, MaxAttempts: 3},
+		Mode:     api.SandboxGitAgent,
+		Backend:  "old-pool",
+		Agent:    "worker-01",
+		Dispatch: &api.SandboxDispatchPolicy{Paths: []string{"pkg/**"}, MaxAttempts: 3},
 	}
 	opts := AIPromptOptions{AIRuntimeOptions: AIRuntimeOptions{AIProviderOptions: AIProviderOptions{Sandbox: "git-agent"}}}
 
@@ -210,13 +213,13 @@ func TestOverlayCLI_SandboxFlagPreservesFrontmatterAgentAndPolicy(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if req.Sandbox == nil || req.Sandbox.Backend != "git-agent" || req.Sandbox.Agent != "worker-01" {
+	if req.Sandbox == nil || req.Sandbox.Mode != api.SandboxGitAgent || req.Sandbox.Backend != "" || req.Sandbox.Agent != "worker-01" {
 		t.Fatalf("request sandbox = %#v", req.Sandbox)
 	}
-	if req.Sandbox.Policy == nil || req.Sandbox.Policy.MaxAttempts != 3 {
-		t.Fatalf("request policy = %#v", req.Sandbox.Policy)
+	if req.Sandbox.Dispatch == nil || req.Sandbox.Dispatch.MaxAttempts != 3 {
+		t.Fatalf("request dispatch = %#v", req.Sandbox.Dispatch)
 	}
-	if cfg.SandboxSelection == nil || cfg.SandboxSelection.Agent != "worker-01" || cfg.SandboxSelection.Policy != req.Sandbox.Policy {
+	if cfg.SandboxSelection == nil || cfg.SandboxSelection.Agent != "worker-01" || cfg.SandboxSelection.Dispatch != req.Sandbox.Dispatch {
 		t.Fatalf("config sandbox = %#v", cfg.SandboxSelection)
 	}
 }

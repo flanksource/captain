@@ -39,7 +39,7 @@ func buildPromptSchemaDocument(adapters []AdapterStatus, sandboxes captainconfig
 		return nil, err
 	}
 	injectSandboxModeConditionals(specMap, sandboxes)
-	backends, err := buildBackendsCatalog(adapters, reflected.args)
+	runtimes, err := buildRuntimesCatalog(adapters, reflected.args)
 	if err != nil {
 		return nil, err
 	}
@@ -49,9 +49,9 @@ func buildPromptSchemaDocument(adapters []AdapterStatus, sandboxes captainconfig
 		"spec":          specMap,
 		"prompt":        promptMap,
 		"promptAction":  actionMap,
-		"backends":      backends,
-		"sandboxes":     buildSandboxCatalog(sandboxes),
-		"runtimes":      enabledRuntimes(),
+		"runtimeAdapters": runtimes,
+		"sandboxes":       buildSandboxCatalog(sandboxes),
+		"runtimes":        enabledRuntimes(),
 		"models":        PromptModelCatalog(adapters),
 		"efforts":       enabledEffortNames(),
 		"examples": map[string]any{
@@ -160,7 +160,7 @@ func enabledEffortNames() []string {
 	return out
 }
 
-// enabledAdapters removes the backends, models and effort tiers the user
+// enabledAdapters removes the runtimes, models and effort tiers the user
 // disabled. The whoami page is the one surface that keeps disabled entries
 // (annotated, so the toggle has something to switch back on); a schema that
 // still offered them would let a run pick something the user opted out of.
@@ -171,15 +171,16 @@ func enabledAdapters(adapters []AdapterStatus) []AdapterStatus {
 	}
 	out := make([]AdapterStatus, 0, len(adapters))
 	for _, a := range adapters {
-		backend := api.Backend(a.Backend)
-		if disabled.Backend(backend) {
+		provider, known := api.ProviderByName(a.Provider)
+		mode := api.RuntimeMode(a.Mode)
+		if !known || disabled.Runtime(provider, mode) {
 			continue
 		}
 		a.Models = slices.DeleteFunc(slices.Clone(a.Models), func(id string) bool {
-			return disabled.Model(backend, id)
+			return disabled.Model(provider, mode, id)
 		})
 		a.ModelDetails = slices.DeleteFunc(slices.Clone(a.ModelDetails), func(md ai.ModelDef) bool {
-			return disabled.Model(backend, md.ID)
+			return disabled.Model(provider, mode, md.ID)
 		})
 		for i := range a.ModelDetails {
 			a.ModelDetails[i].SupportedEfforts = disabled.Efforts(a.ModelDetails[i].SupportedEfforts)
@@ -193,16 +194,17 @@ func enabledAdapters(adapters []AdapterStatus) []AdapterStatus {
 	return out
 }
 
-// backendArgSchemasJSON reflects each backend's cmux "extra args" option struct
-// into a JSON schema, keyed by backend. Backends without cmux options
+// runtimeArgSchemasJSON reflects each runtime's cmux "extra args" option struct
+// into a JSON schema, keyed by runtime. Runtimes without cmux options
 // (CLIOptionsFor fails loud) are simply absent — this is the source of truth for
-// "which backends have args".
-func backendArgSchemasJSON() (map[api.Backend][]byte, error) {
-	out := map[api.Backend][]byte{}
-	for _, b := range api.AllBackends() {
-		opts, err := api.CLIOptionsFor(b)
+// "which runtimes have args".
+func runtimeArgSchemasJSON() (map[api.Runtime][]byte, error) {
+	out := map[api.Runtime][]byte{}
+	for _, b := range api.AllRuntimes() {
+		provider, _ := api.ProviderByName(b.Provider)
+		opts, err := api.CLIOptionsFor(provider, b.Mode)
 		if err != nil {
-			continue // backend has no cmux args
+			continue // runtime has no cmux args
 		}
 		raw, err := json.Marshal(clickyrpc.SchemaForStruct(opts))
 		if err != nil {
@@ -213,24 +215,28 @@ func backendArgSchemasJSON() (map[api.Backend][]byte, error) {
 	return out, nil
 }
 
-// buildBackendsCatalog renders every backend as a catalog entry: its kind, auth
-// env vars, live auth/model status from the probe, and (where available) its
-// args schema. This replaces the old duplicated claudeCLIArgs/codexCLIArgs keys.
-func buildBackendsCatalog(adapters []AdapterStatus, argsByBackend map[api.Backend][]byte) ([]map[string]any, error) {
+// buildRuntimesCatalog renders every runtime as a catalog entry: its provider,
+// mode, kind, auth env vars, live auth/model status from the probe, and (where
+// available) its args schema. This replaces the old duplicated
+// claudeCLIArgs/codexCLIArgs keys.
+func buildRuntimesCatalog(adapters []AdapterStatus, argsByRuntime map[api.Runtime][]byte) ([]map[string]any, error) {
 	out := make([]map[string]any, 0, len(adapters))
 	for _, a := range adapters {
-		b := api.Backend(a.Backend)
+		provider, _ := api.ProviderByName(a.Provider)
+		mode := api.RuntimeMode(a.Mode)
+		b := api.RuntimeOf(provider, mode)
 		entry := map[string]any{
-			"backend":       a.Backend,
-			"kind":          b.Kind(),
+			"provider":      a.Provider,
+			"mode":          a.Mode,
+			"kind":          mode.Kind(),
 			"authenticated": a.Authenticated,
 			"ready":         a.Ready(),
 			// Declared, not probed: served on every entry including an unready
-			// one, so the editor can render "this backend cannot enforce a deny"
+			// one, so the editor can render "this runtime cannot enforce a deny"
 			// rather than an empty tree that reads as "no tools here".
 			"permissions": api.PermissionCapabilitiesFor(b),
 		}
-		if env := api.AuthEnvVars(b); len(env) > 0 {
+		if env := api.AuthEnvVars(provider, mode); len(env) > 0 {
 			entry["authEnvVars"] = env
 		}
 		if a.Binary != "" {
@@ -248,7 +254,7 @@ func buildBackendsCatalog(adapters []AdapterStatus, argsByBackend map[api.Backen
 		if a.ModelError != "" {
 			entry["modelError"] = a.ModelError
 		}
-		if raw, ok := argsByBackend[b]; ok {
+		if raw, ok := argsByRuntime[b]; ok {
 			argsMap, err := unmarshalMap(raw)
 			if err != nil {
 				return nil, fmt.Errorf("decode %s args schema: %w", b, err)
@@ -272,20 +278,19 @@ type PromptModelCatalogEntry struct {
 	SupportedEfforts  []string  `json:"supportedEfforts,omitempty"`
 	DefaultEffort     string    `json:"defaultEffort,omitempty"`
 	Configured        bool      `json:"configured"`
-	Backends          []string  `json:"backends"`
+	Modes             []string  `json:"modes"`
 	Runtime           api.Model `json:"runtime"`
 }
 
-// PromptModelCatalog serves one display row per provider model. Exact Captain adapters
-// collapse into the portable backend axis so consumers never translate
-// claude-agent, claude-cli, or other implementation ids.
+// PromptModelCatalog serves one display row per provider model, listing the
+// modes that can execute it. There is nothing to collapse any more: a runtime
+// IS (provider, mode), so no implementation id exists to leak.
 func PromptModelCatalog(adapters []AdapterStatus) []PromptModelCatalogEntry {
 	out := []PromptModelCatalogEntry{}
 	rows := map[string]int{}
 	for _, a := range adapters {
-		backend := api.Backend(a.Backend)
-		provider := api.CatalogPrefixFor(backend)
-		mode := string(backend.Mode())
+		provider := a.Provider
+		mode := a.Mode
 		for _, model := range flatModelDetails(a) {
 			id := strings.TrimSpace(model.id)
 			if id == "" {
@@ -296,8 +301,8 @@ func PromptModelCatalog(adapters []AdapterStatus) []PromptModelCatalogEntry {
 				if a.Ready() {
 					out[index].Configured = true
 				}
-				if !containsString(out[index].Backends, mode) {
-					out[index].Backends = append(out[index].Backends, mode)
+				if !containsString(out[index].Modes, mode) {
+					out[index].Modes = append(out[index].Modes, mode)
 				}
 				continue
 			}
@@ -313,7 +318,7 @@ func PromptModelCatalog(adapters []AdapterStatus) []PromptModelCatalogEntry {
 				Reasoning:         model.reasoning || modelSupportsReasoning(id),
 				Temperature:       model.temperature,
 				Configured:        a.Ready(),
-				Backends:          []string{mode},
+				Modes:             []string{mode},
 				Runtime:           api.Model{Name: id},
 			})
 			rows[key] = len(out) - 1

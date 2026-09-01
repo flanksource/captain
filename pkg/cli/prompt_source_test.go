@@ -10,7 +10,7 @@ import (
 func TestActionFlagsToOptions_DecodesSlicesBoolsInts(t *testing.T) {
 	f := map[string]string{
 		"model":           "gpt-4o",
-		"backend":         "openai",
+		"mode":            "api",
 		"no-stream":       "true",
 		"edit":            "true",
 		"allowed-tools":   "Read,Write",
@@ -26,7 +26,7 @@ func TestActionFlagsToOptions_DecodesSlicesBoolsInts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("actionFlagsToOptions: %v", err)
 	}
-	if o.Model != "gpt-4o" || o.Backend != "openai" || o.Prompt != "hi" || o.PermissionMode != "plan" || o.Sandbox != "true" {
+	if o.Model != "gpt-4o" || o.Mode != "api" || o.Prompt != "hi" || o.PermissionMode != "plan" || o.Sandbox != "true" {
 		t.Fatalf("scalars = %+v", o)
 	}
 	if !o.NoStream || !o.Edit {

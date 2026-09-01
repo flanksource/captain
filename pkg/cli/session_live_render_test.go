@@ -16,7 +16,7 @@ func TestSessionLiveResultPrettyReportsDatabaseDiagnostics(t *testing.T) {
 	result := SessionLiveResult{
 		Sessions: []SessionRecord{{
 			ID: "6522fe00-9a7c-4cee-a205-123456789abc", Source: "codex", Project: "/work/captain",
-			Backend: "codex-cmux", Model: "gpt-5.6-sol", ReasoningEffort: "high",
+			Provider: "openai", ModelMode: "cmux", Model: "gpt-5.6-sol", ReasoningEffort: "high",
 			InitialPrompt: "Diagnose the monitor lock without polling",
 			Live: &SessionLiveWire{
 				PID: 24680, Status: "sleeping", SampledAt: &sampledAt, LastHeartbeatAt: &sampledAt,
@@ -52,7 +52,7 @@ func TestSessionLiveResultPrettyKeepsUnavailableDatabaseDiagnosticsVisible(t *te
 
 func TestSessionLiveRowColumnsIncludeModelConfigurationAndTitle(t *testing.T) {
 	row := sessionLiveRow{SessionRecord: SessionRecord{
-		Backend: "codex-cli", Model: "gpt-5.5", ReasoningEffort: "medium",
+		Provider: "openai", ModelMode: "cli", Model: "gpt-5.5", ReasoningEffort: "medium",
 		Title: "Stored title", InitialPrompt: "Fallback prompt",
 	}}
 	wantColumns := []string{
@@ -85,7 +85,7 @@ func TestSessionLiveRowColumnsIncludeModelConfigurationAndTitle(t *testing.T) {
 		HTML() string
 		Markdown() string
 	})
-	if configuration.String() != "codex-cli · gpt-5.5 · medium" {
+	if configuration.String() != "openai cli · gpt-5.5 · medium" {
 		t.Fatalf("configuration = %q", configuration.String())
 	}
 	if configuration.Markdown() != configuration.String() {
@@ -175,10 +175,10 @@ func TestSessionLiveRowKeepsEmptyModelConfigurationColumnsVisible(t *testing.T) 
 	}
 }
 
-func TestRecordFromOverviewIncludesDatabaseBackend(t *testing.T) {
-	backend := "claude-cmux"
-	record := recordFromOverview(database.SessionOverview{Backend: &backend})
-	if record.Backend != backend {
-		t.Fatalf("backend = %q, want %q", record.Backend, backend)
+func TestRecordFromOverviewIncludesDatabaseRuntime(t *testing.T) {
+	mode := "cmux"
+	record := recordFromOverview(database.SessionOverview{Provider: "anthropic", ModelMode: &mode})
+	if record.Provider != "anthropic" || record.ModelMode != mode {
+		t.Fatalf("runtime = %s %s, want anthropic cmux", record.Provider, record.ModelMode)
 	}
 }

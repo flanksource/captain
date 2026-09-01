@@ -12,24 +12,24 @@ import (
 
 func TestResolveSandboxSelection_Precedence(t *testing.T) {
 	defaults := captainconfig.SandboxDefaults{
-		Default: "srt",
+		Default: "docker",
 		Backends: map[string]captainconfig.SandboxBackend{
-			"pool": {Kind: "srt", Options: map[string]any{"tier": "pool"}},
+			"pool": {Kind: "docker", Options: map[string]any{"tier": "pool"}},
 		},
 	}
 
 	t.Run("flag beats frontmatter", func(t *testing.T) {
-		got, err := resolveSandboxSelection("none", &api.SandboxRef{Backend: "pool"}, defaults)
+		got, err := resolveSandboxSelection("off", &api.SandboxRef{Mode: api.SandboxDocker, Backend: "pool"}, defaults)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got.Kind != registry.SandboxNone {
+		if got.Kind != registry.SandboxOff {
 			t.Fatalf("kind = %q, want the flag's", got.Kind)
 		}
 	})
 
 	t.Run("frontmatter beats the global default", func(t *testing.T) {
-		got, err := resolveSandboxSelection("", &api.SandboxRef{Backend: "pool"}, defaults)
+		got, err := resolveSandboxSelection("", &api.SandboxRef{Mode: api.SandboxDocker, Backend: "pool"}, defaults)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -43,18 +43,18 @@ func TestResolveSandboxSelection_Precedence(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got.Kind != registry.SandboxSRT {
+		if got.Kind != registry.SandboxDocker {
 			t.Fatalf("kind = %q, want the default's", got.Kind)
 		}
 	})
 
-	t.Run("everything empty resolves to none", func(t *testing.T) {
+	t.Run("everything empty resolves to off", func(t *testing.T) {
 		got, err := resolveSandboxSelection("", nil, captainconfig.SandboxDefaults{})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got.Kind != registry.SandboxNone {
-			t.Fatalf("kind = %q, want none", got.Kind)
+		if got.Kind != registry.SandboxOff {
+			t.Fatalf("kind = %q, want off", got.Kind)
 		}
 	})
 
@@ -84,7 +84,7 @@ func TestActionFlags_ModeSandboxConflictRejected(t *testing.T) {
 	opts, err := actionFlagsToOptions(map[string]string{
 		"model":   "gemini-3.5-flash",
 		"mode":    "api",
-		"sandbox": "container",
+		"sandbox": "docker",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -99,11 +99,9 @@ func TestActionFlags_ModeSandboxConflictRejected(t *testing.T) {
 	}
 }
 
-func TestSandboxSelector_LegacySpellings(t *testing.T) {
+func TestSandboxSelector_TrimsPublicSelector(t *testing.T) {
 	for flag, want := range map[string]string{
-		"true": "srt", "1": "srt", "yes": "srt",
-		"false": "none", "0": "none", "no": "none",
-		"prod-pool": "prod-pool", "": "",
+		" native ": "native", "docker": "docker", "prod-pool": "prod-pool", "": "",
 	} {
 		if got := (AIProviderOptions{Sandbox: flag}).SandboxSelector(); got != want {
 			t.Errorf("SandboxSelector(%q) = %q, want %q", flag, got, want)
