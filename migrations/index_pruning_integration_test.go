@@ -24,7 +24,7 @@ var _ = Describe("Captain index reconciliation", func() {
 		for _, statement := range []string{
 			`CREATE INDEX captain_sessions_project_idx ON public.captain_sessions (project)`,
 			`CREATE INDEX captain_model_calls_started_at_idx ON public.captain_model_calls (started_at)`,
-			`CREATE INDEX captain_model_calls_model_idx ON public.captain_model_calls (model, backend)`,
+			`CREATE INDEX captain_model_calls_model_idx ON public.captain_model_calls (model, provider, mode)`,
 			`CREATE INDEX captain_model_calls_iteration_id_idx ON public.captain_model_calls (iteration_id)`,
 			`DROP INDEX public.captain_messages_model_call_id_idx`,
 			`CREATE INDEX captain_messages_model_call_id_idx ON public.captain_messages (model_call_id)`,
