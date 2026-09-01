@@ -8,13 +8,13 @@ import (
 )
 
 func TestNoneAdapter(t *testing.T) {
-	sandbox, err := api.NewSandbox(api.SandboxConfig{Kind: api.SandboxNone})
+	sandbox, err := api.NewSandbox(api.SandboxConfig{Kind: api.SandboxOff})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer sandbox.Close()
 
-	if sandbox.Kind() != api.SandboxNone {
+	if sandbox.Kind() != api.SandboxOff {
 		t.Fatalf("kind = %q", sandbox.Kind())
 	}
 	session, err := sandbox.Prepare(context.Background(), &api.Spec{})

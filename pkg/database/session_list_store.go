@@ -57,7 +57,8 @@ type SessionListSummary struct {
 	CPUPercent          *float64        `gorm:"column:cpu_percent" json:"cpuPercent,omitempty"`
 	MemoryPercent       *float64        `gorm:"column:memory_percent" json:"memoryPercent,omitempty"`
 	Model               *string         `gorm:"column:model" json:"model,omitempty"`
-	Backend             *string         `gorm:"column:backend" json:"backend,omitempty"`
+	ModelProvider       *string         `gorm:"column:model_provider" json:"modelProvider,omitempty"`
+	ModelMode           *string         `gorm:"column:model_mode" json:"modelMode,omitempty"`
 	Effort              *string         `gorm:"column:effort" json:"effort,omitempty"`
 	ContextTokens       *int64          `gorm:"column:context_tokens" json:"contextTokens,omitempty"`
 	ContextWindowTokens *int64          `gorm:"column:context_window_tokens" json:"contextWindowTokens,omitempty"`
@@ -202,7 +203,7 @@ func cursorID(cursor *sessionListCursor) any {
 const sessionListQuery = `
 WITH latest_call AS MATERIALIZED (
   SELECT DISTINCT ON (t.session_id)
-    t.session_id, c.model, c.backend, c.effort, c.context_tokens, c.context_window_tokens
+    t.session_id, c.model, c.provider AS model_provider, c.mode AS model_mode, c.effort, c.context_tokens, c.context_window_tokens
   FROM captain_turns t
   JOIN captain_model_calls c ON c.turn_id = t.id
   ORDER BY t.session_id, COALESCE(c.ended_at, c.started_at, c.created_at) DESC, c.call_index DESC
@@ -222,7 +223,7 @@ WITH latest_call AS MATERIALIZED (
     ap.pid, ap.status AS process_status, ap.command AS process_command, ap.cwd AS process_cwd,
     ap.process_started_at, ap.sampled_at AS process_sampled_at, ap.last_heartbeat_at,
     ap.lease_owner, ap.lease_expires_at, ap.session_id IS NOT NULL AS process_active,
-    ap.cpu_percent, ap.memory_percent, lc.model, lc.backend, lc.effort,
+    ap.cpu_percent, ap.memory_percent, lc.model, lc.model_provider, lc.model_mode, lc.effort,
     lc.context_tokens, lc.context_window_tokens, count(*) OVER () AS total_count
   FROM captain_sessions s
   LEFT JOIN latest_call lc ON lc.session_id = s.id
@@ -240,7 +241,7 @@ WITH latest_call AS MATERIALIZED (
     AND (
       @query = '' OR concat_ws(' ', s.id::text, s.provider_session_id, s.source, s.provider,
         s.project, s.cwd, s.title, s.initial_prompt, s.slug, s.cli_version,
-        s.git->>'branch', lc.model, lc.backend, lc.effort, ap.pid::text, ap.status,
+        s.git->>'branch', lc.model, lc.model_provider, lc.model_mode, lc.effort, ap.pid::text, ap.status,
         ap.cwd, ap.command) ILIKE '%' || @query || '%'
     )
 ), paged AS MATERIALIZED (
@@ -301,7 +302,7 @@ SELECT
   p.started_at, p.ended_at, p.last_activity_at, p.activity_at, p.pid, p.process_status,
   p.process_command, p.process_cwd, p.process_started_at, p.process_sampled_at,
   p.last_heartbeat_at, p.lease_owner, p.lease_expires_at, p.process_active,
-  p.cpu_percent, p.memory_percent, p.model, p.backend, p.effort, p.context_tokens,
+  p.cpu_percent, p.memory_percent, p.model, p.model_provider, p.model_mode, p.effort, p.context_tokens,
   p.context_window_tokens,
   CASE WHEN p.context_window_tokens > 0 THEN GREATEST(0, LEAST(100,
     round((1 - p.context_tokens::numeric / p.context_window_tokens::numeric) * 100)::integer)) END AS context_free_percent,

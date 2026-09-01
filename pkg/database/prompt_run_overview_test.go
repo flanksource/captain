@@ -8,13 +8,13 @@ func TestResolvePromptRunRuntimeSelectionPerField(t *testing.T) {
 	t.Parallel()
 
 	resolved := PromptRunRuntimeSelection{Provider: "openai", Model: "gpt-resolved"}
-	requested := PromptRunRuntimeSelection{Backend: "codex-agent", Model: "gpt-requested", Effort: "high"}
-	execution := PromptRunRuntimeSelection{Provider: "anthropic", Backend: "claude-agent", Model: "claude-session", Effort: "medium"}
+	requested := PromptRunRuntimeSelection{Provider: "openai", Mode: "agent", Model: "gpt-requested", Effort: "high"}
+	execution := PromptRunRuntimeSelection{Provider: "anthropic", Mode: "agent", Model: "claude-session", Effort: "medium"}
 
 	actual := resolvePromptRunRuntimeSelection(resolved, requested, execution)
 	want := PromptRunRuntimeSelection{
 		Provider: "openai",
-		Backend:  "codex-agent",
+		Mode:     "agent",
 		Model:    "gpt-resolved",
 		Effort:   "high",
 	}

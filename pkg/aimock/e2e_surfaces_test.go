@@ -33,7 +33,7 @@ var surfaces = []surface{
 	{
 		name: "api",
 		run: func(t *testing.T, srv *anthropicmock.Server) string {
-			model := api.Model{Name: "claude-sonnet-4-5", Backend: api.BackendAnthropic}
+			model := api.Model{Name: "claude-sonnet-4-5", Mode: api.ModeAPI}
 			events, err := mockedProvider(t, model, srv.APIURL()).
 				ExecuteStream(context.Background(), api.Spec{Prompt: api.Prompt{User: capitalPrompt}})
 			require.NoError(t, err)
@@ -43,7 +43,7 @@ var surfaces = []surface{
 	{
 		name: "agent",
 		run: func(t *testing.T, srv *anthropicmock.Server) string {
-			model := api.Model{Name: "claude-sonnet-4-5", Backend: api.BackendAnthropic}
+			model := api.Model{Name: "claude-sonnet-4-5", Mode: api.ModeAPI}
 			runner := agent.Runner[string]{
 				Provider: mockedProvider(t, model, srv.APIURL()),
 				Request:  api.Spec{Prompt: api.Prompt{User: capitalPrompt}},

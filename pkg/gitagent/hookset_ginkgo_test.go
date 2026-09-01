@@ -41,7 +41,7 @@ func (p *judgeStub) Execute(_ context.Context, req ai.Request) (*ai.Response, er
 	return &ai.Response{Text: p.verdict}, nil
 }
 func (p *judgeStub) GetModel() string        { return "stub" }
-func (p *judgeStub) GetBackend() api.Backend { return api.BackendAnthropic }
+func (p *judgeStub) GetRuntime() api.Runtime { return api.RuntimeOf(api.Anthropic, api.ModeAPI) }
 
 var _ = Describe("materialization", func() {
 	ctx := context.Background()

@@ -156,15 +156,19 @@ type CreateChatModelCallInput struct {
 	TurnID      uuid.UUID
 	PromptRunID uuid.UUID
 	Model       string
-	Backend     string
-	Effort      string
+	// Provider and Mode are the runtime: the family that owns the model and the
+	// mechanism that served it. There is no composite id.
+	Provider string
+	Mode     string
+	Effort   string
 }
 
 type UpdateChatModelCallRuntimeInput struct {
-	ID      uuid.UUID
-	Model   string
-	Backend string
-	Effort  string
+	ID       uuid.UUID
+	Model    string
+	Provider string
+	Mode     string
+	Effort   string
 }
 
 type ModelCallStatus string
@@ -197,8 +201,8 @@ func (db *DB) GetChatTurn(ctx context.Context, id uuid.UUID) (*ChatTurn, error) 
 }
 
 func (db *DB) CreateChatModelCall(ctx context.Context, input CreateChatModelCallInput) (uuid.UUID, error) {
-	if input.TurnID == uuid.Nil || input.PromptRunID == uuid.Nil || strings.TrimSpace(input.Model) == "" || strings.TrimSpace(input.Backend) == "" {
-		return uuid.Nil, fmt.Errorf("%w: turn, prompt run, model, and backend are required", ErrInvalidIngest)
+	if input.TurnID == uuid.Nil || input.PromptRunID == uuid.Nil || strings.TrimSpace(input.Model) == "" || strings.TrimSpace(input.Mode) == "" {
+		return uuid.Nil, fmt.Errorf("%w: turn, prompt run, model, and mode are required", ErrInvalidIngest)
 	}
 	var index int
 	if err := db.gorm.WithContext(ctx).Model(&modelCallRecord{}).
@@ -209,7 +213,8 @@ func (db *DB) CreateChatModelCall(ctx context.Context, input CreateChatModelCall
 	now := time.Now().UTC()
 	record := modelCallRecord{
 		ID: uuid.New(), TurnID: input.TurnID, PromptRunID: &input.PromptRunID,
-		CallIndex: index, Model: strings.TrimSpace(input.Model), Backend: strings.TrimSpace(input.Backend),
+		CallIndex: index, Model: strings.TrimSpace(input.Model),
+		Provider: nullableTrimmed(input.Provider), Mode: nullableTrimmed(input.Mode),
 		Effort: nullableTrimmed(input.Effort), Status: "running", Currency: "USD", StartedAt: &now,
 	}
 	if err := db.gorm.WithContext(ctx).Create(&record).Error; err != nil {
@@ -222,14 +227,15 @@ func (db *DB) CreateChatModelCall(ctx context.Context, input CreateChatModelCall
 // selected while the model call is still running.
 func (db *DB) UpdateChatModelCallRuntime(ctx context.Context, input UpdateChatModelCallRuntimeInput) error {
 	input.Model = strings.TrimSpace(input.Model)
-	input.Backend = strings.TrimSpace(input.Backend)
-	if input.ID == uuid.Nil || input.Model == "" || input.Backend == "" {
-		return fmt.Errorf("%w: model call ID, model, and backend are required", ErrInvalidIngest)
+	input.Mode = strings.TrimSpace(input.Mode)
+	if input.ID == uuid.Nil || input.Model == "" || input.Mode == "" {
+		return fmt.Errorf("%w: model call ID, model, and mode are required", ErrInvalidIngest)
 	}
 	result := db.gorm.WithContext(ctx).Model(&modelCallRecord{}).
 		Where("id = ? AND status = 'running'", input.ID).
 		Updates(map[string]any{
-			"model": input.Model, "backend": input.Backend, "effort": nullableTrimmed(input.Effort),
+			"model": input.Model, "provider": nullableTrimmed(input.Provider),
+			"mode": input.Mode, "effort": nullableTrimmed(input.Effort),
 		})
 	if result.Error != nil {
 		return fmt.Errorf("update Captain chat model call runtime: %w", result.Error)
@@ -271,7 +277,7 @@ func (db *DB) FinishChatModelCall(ctx context.Context, input FinishChatModelCall
 		updates["cache_write_tokens"] = input.Event.Usage.CacheWriteTokens
 		// Context occupancy is the whole prompt, and the buckets are disjoint
 		// (pkg/api/cost.go): cache reads are context too. Counting InputTokens
-		// alone reports "5 / 1,000,000" for a 115K-token claude-agent turn.
+		// alone reports "5 / 1,000,000" for a 115K-token anthropic agent turn.
 		updates["context_tokens"] = input.Event.Usage.InputTokens +
 			input.Event.Usage.CacheReadTokens + input.Event.Usage.CacheWriteTokens
 	}
