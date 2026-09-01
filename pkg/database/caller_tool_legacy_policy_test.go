@@ -31,7 +31,7 @@ func TestCallerToolCredentialReadsLegacyPolicySpelling(t *testing.T) {
 	session, _, run, _ := createCallerToolRun(t, db)
 	secretHash := sha256.Sum256([]byte("legacy-credential-secret"))
 	credential, err := db.CreateCallerToolCredential(t.Context(), CreateCallerToolCredentialInput{
-		SessionID: session.ID, PromptRunID: run.ID, Backend: api.BackendClaudeAgent,
+		SessionID: session.ID, PromptRunID: run.ID, Provider: api.Anthropic.Name, Mode: api.ModeAgent,
 		SecretHash: secretHash[:], Policy: map[string]api.ToolPolicy{"account_edit": api.ToolPolicyAsk},
 	})
 	require.NoError(t, err)

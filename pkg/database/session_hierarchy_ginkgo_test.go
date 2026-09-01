@@ -8,6 +8,51 @@ import (
 )
 
 var _ = Describe("session hierarchy enrichment", func() {
+	It("records transcript ownership when an existing provider session is adopted", func(ctx SpecContext) {
+		handle := dbtest.ForGinkgo(dbtest.Options{Name: "captain_transcript_hierarchy"})
+		db, err := Open(ctx, WithDSN(handle.DSN()), WithMigrations())
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { Expect(db.Close()).To(Succeed()) })
+
+		providerSessionID := "provider-session-before-chat"
+		providerSession, err := db.CreateOrGetSession(ctx, CreateSessionInput{
+			ProviderSessionID: providerSessionID,
+			Source:            "claude",
+			Provider:          "anthropic",
+			HostID:            "hierarchy-test",
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		chat, err := db.CreateOrGetSession(ctx, CreateSessionInput{
+			Source: "aichat", Provider: "captain", HostID: "hierarchy-test",
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		adopted, err := db.CreateOrGetSession(ctx, CreateSessionInput{
+			ProviderSessionID: providerSessionID,
+			Source:            "claude",
+			Provider:          "anthropic",
+			HostID:            "hierarchy-test",
+			ParentSessionID:   &chat.ID,
+			ParentRelation:    SessionParentRelationTranscript,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(adopted.ID).To(Equal(providerSession.ID))
+		Expect(adopted.ParentSessionID).To(Equal(&chat.ID))
+		Expect(adopted.RootSessionID).To(Equal(&chat.ID))
+		Expect(adopted.ParentRelation).To(Equal(SessionParentRelationTranscript))
+
+		_, err = db.CreateOrGetSession(ctx, CreateSessionInput{
+			ProviderSessionID: providerSessionID,
+			Source:            "claude",
+			Provider:          "anthropic",
+			HostID:            "hierarchy-test",
+			ParentSessionID:   &chat.ID,
+			ParentRelation:    SessionParentRelationAgent,
+		})
+		Expect(err).To(MatchError(ContainSubstring("different hierarchy")))
+	})
+
 	It("adopts a monitored provider session into its owning operation tree", func(ctx SpecContext) {
 		handle := dbtest.ForGinkgo(dbtest.Options{Name: "captain_session_hierarchy"})
 		db, err := Open(ctx, WithDSN(handle.DSN()), WithMigrations())

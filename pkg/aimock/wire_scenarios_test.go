@@ -30,7 +30,7 @@ type wireTarget struct {
 func wireTargets() []wireTarget {
 	return []wireTarget{{
 		name:  "anthropic",
-		model: api.Model{Name: "claude-sonnet-4-5", Backend: api.BackendAnthropic},
+		model: api.Model{Name: "claude-sonnet-4-5", Mode: api.ModeAPI},
 		start: func(t *testing.T, scenario string) (string, func() []string) {
 			t.Helper()
 			srv, err := anthropicmock.Start(anthropicmock.Options{Scenario: loadScenario(t, scenario)})
@@ -40,7 +40,7 @@ func wireTargets() []wireTarget {
 		},
 	}, {
 		name:  "openai",
-		model: api.Model{Name: "gpt-5", Backend: api.BackendOpenAI},
+		model: api.Model{Name: "gpt-5", Mode: api.ModeAPI},
 		start: func(t *testing.T, scenario string) (string, func() []string) {
 			t.Helper()
 			srv, err := openaimock.Start(openaimock.Options{Scenario: loadScenario(t, scenario)})

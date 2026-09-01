@@ -26,7 +26,7 @@ func TestE2EClaudeAgent(t *testing.T) {
 	// exported into the test process.
 	exportEnv(t, srv.Env())
 
-	agent, err := claudeagent.New(api.Config{Model: api.Model{Name: "sonnet", Backend: api.BackendClaudeAgent}})
+	agent, err := claudeagent.New(api.Config{Model: api.Model{Name: "sonnet", Mode: api.ModeAgent}})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = agent.Close() })
 

@@ -72,9 +72,9 @@ func SRT(cfg api.SandboxConfig) (api.Sandbox, error) {
 	return s, nil
 }
 
-func init() { api.RegisterSandbox(api.SandboxSRT, SRT) }
+func init() { api.RegisterSandbox(api.SandboxSRTInternal, SRT) }
 
-func (s *srtSandbox) Kind() api.SandboxKind { return api.SandboxSRT }
+func (s *srtSandbox) Kind() api.SandboxKind { return api.SandboxSRTInternal }
 
 func (s *srtSandbox) Prepare(ctx context.Context, spec *api.Spec) (*api.SandboxSession, error) {
 	s.cwd = spec.Cwd()

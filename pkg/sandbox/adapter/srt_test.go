@@ -37,7 +37,7 @@ func TestSRTAdapter_WrapAndClose(t *testing.T) {
 		return fake, nil
 	}
 
-	sandbox, err := api.NewSandbox(api.SandboxConfig{Kind: api.SandboxSRT})
+	sandbox, err := api.NewSandbox(api.SandboxConfig{Kind: api.SandboxSRTInternal})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +181,7 @@ func hookSandboxConfig(denyRead ...string) api.SandboxConfig {
 	if len(denyRead) > 0 {
 		options[api.SandboxOptionDenyRead] = denyRead
 	}
-	return api.SandboxConfig{Kind: api.SandboxSRT, Options: options}
+	return api.SandboxConfig{Kind: api.SandboxSRTInternal, Options: options}
 }
 
 // The hook profile is the boundary for agent-authored commands (issue #40

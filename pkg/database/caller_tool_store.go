@@ -27,7 +27,8 @@ type CallerToolCredential struct {
 	ID               uuid.UUID                 `json:"id"`
 	SessionID        uuid.UUID                 `json:"sessionId"`
 	PromptRunID      uuid.UUID                 `json:"promptRunId"`
-	Backend          api.Backend               `json:"backend"`
+	Provider         string                    `json:"provider"`
+	Mode             api.RuntimeMode           `json:"mode"`
 	SecretHash       []byte                    `json:"-"`
 	Policy           map[string]api.ToolPolicy `json:"policy"`
 	ExpiresAt        *time.Time                `json:"expiresAt,omitempty"`
@@ -39,7 +40,8 @@ type CallerToolCredential struct {
 type CreateCallerToolCredentialInput struct {
 	SessionID   uuid.UUID
 	PromptRunID uuid.UUID
-	Backend     api.Backend
+	Provider    string
+	Mode        api.RuntimeMode
 	SecretHash  []byte
 	Policy      map[string]api.ToolPolicy
 	ExpiresAt   *time.Time
@@ -49,7 +51,8 @@ type callerToolCredentialRecord struct {
 	ID               uuid.UUID                 `gorm:"column:id;type:uuid;primaryKey"`
 	SessionID        uuid.UUID                 `gorm:"column:session_id;type:uuid"`
 	PromptRunID      uuid.UUID                 `gorm:"column:prompt_run_id;type:uuid"`
-	Backend          api.Backend               `gorm:"column:backend"`
+	Provider         string                    `gorm:"column:provider"`
+	Mode             api.RuntimeMode           `gorm:"column:mode"`
 	SecretHash       []byte                    `gorm:"column:secret_hash"`
 	Policy           map[string]api.ToolPolicy `gorm:"column:policy;serializer:json;type:jsonb"`
 	ExpiresAt        *time.Time                `gorm:"column:expires_at"`
@@ -81,7 +84,8 @@ func (db *DB) CreateCallerToolCredential(
 	}
 	record := callerToolCredentialRecord{
 		ID: uuid.New(), SessionID: input.SessionID, PromptRunID: input.PromptRunID,
-		Backend: input.Backend, SecretHash: append([]byte(nil), input.SecretHash...),
+		Provider: input.Provider, Mode: input.Mode,
+		SecretHash: append([]byte(nil), input.SecretHash...),
 		Policy: cloneToolPolicy(input.Policy), ExpiresAt: input.ExpiresAt,
 	}
 	if err := db.gorm.WithContext(ctx).Create(&record).Error; err != nil {
@@ -94,8 +98,8 @@ func validateCallerToolCredentialInput(input CreateCallerToolCredentialInput) er
 	if input.SessionID == uuid.Nil || input.PromptRunID == uuid.Nil {
 		return fmt.Errorf("%w: session and prompt run IDs are required", ErrCallerToolCredentialInvalid)
 	}
-	if !input.Backend.Valid() {
-		return fmt.Errorf("%w: backend %q is invalid", ErrCallerToolCredentialInvalid, input.Backend)
+	if !(api.Runtime{Provider: input.Provider, Mode: input.Mode}).Valid() {
+		return fmt.Errorf("%w: runtime %s/%s is invalid", ErrCallerToolCredentialInvalid, input.Provider, input.Mode)
 	}
 	if len(input.SecretHash) != 32 {
 		return fmt.Errorf("%w: secret hash must be 32 bytes", ErrCallerToolCredentialInvalid)
@@ -449,7 +453,8 @@ func (db *DB) CancelPendingTurnRequests(ctx context.Context, sessionID, promptRu
 func callerToolCredentialFromRecord(record callerToolCredentialRecord) CallerToolCredential {
 	return CallerToolCredential{
 		ID: record.ID, SessionID: record.SessionID, PromptRunID: record.PromptRunID,
-		Backend: record.Backend, SecretHash: append([]byte(nil), record.SecretHash...),
+		Provider: record.Provider, Mode: record.Mode,
+		SecretHash: append([]byte(nil), record.SecretHash...),
 		Policy: cloneToolPolicy(record.Policy), ExpiresAt: record.ExpiresAt,
 		RevokedAt: record.RevokedAt, RevocationReason: optionalString(record.RevocationReason),
 		CreatedAt: record.CreatedAt,

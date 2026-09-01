@@ -22,7 +22,7 @@ func prepareContainer(t *testing.T, cwd string, options map[string]any) api.Sand
 
 func newContainer(t *testing.T, options map[string]any) api.Sandbox {
 	t.Helper()
-	sandbox, err := api.NewSandbox(api.SandboxConfig{Kind: api.SandboxContainer, Options: options})
+	sandbox, err := api.NewSandbox(api.SandboxConfig{Kind: api.SandboxDocker, Options: options})
 	if err != nil {
 		t.Fatal(err)
 	}

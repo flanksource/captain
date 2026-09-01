@@ -15,13 +15,13 @@
 //
 // Expand, then Merge, then Resolve — once, at the end.
 //
-// Merging an unexpanded override onto a base silently keeps the base's backend:
-// base{Backend: claude-agent}.Merge(Model{Name: "api:opus"}) still says
-// claude-agent, and resolution then fails or, worse, runs the wrong runtime.
-// Expand sets Backend only when the string carries a prefix, so a bare
-// `--model opus` correctly inherits the base's backend while `api:opus`
-// correctly overrides it. Every ladder in this package and its callers follows
-// that order; departing from it is how a model string loses its mode again.
+// Merging an unexpanded override onto a base silently keeps the base's mode:
+// base{Mode: agent}.Merge(Model{Name: "api:opus"}) still says agent, and
+// resolution then runs the wrong runtime. Expand sets Mode only when the string
+// carries a prefix, so a bare `--model opus` correctly inherits the base's mode
+// while `api:opus` correctly overrides it. Every ladder in this package and its
+// callers follows that order; departing from it is how a model string loses its
+// mode again.
 package aiflags
 
 import (
@@ -48,7 +48,7 @@ import (
 // validated in Resolve instead.
 //
 // Flag names are global to a command — clicky does not prefix embedded structs —
-// so this struct owns --model, --fallback, --backend, --mode, --effort,
+// so this struct owns --model, --fallback, --mode, --provider, --effort,
 // --temperature and --no-cache outright. An embedder that redeclares any of them
 // panics cobra at init.
 //
@@ -63,8 +63,7 @@ import (
 type ModelFlags struct {
 	Model       string   `flag:"model" help:"Model name(s), e.g. claude-sonnet-5, a compact selector like agent:opus:high, or a comma-separated primary,fallback list (defaults to the value saved by 'captain configure')"`
 	Fallback    []string `flag:"fallback" help:"Model to try if the primary is unavailable (repeatable; comma-separated allowed)"`
-	Backend     string   `flag:"backend" help:"Force backend: anthropic|gemini|openai|deepseek|claude-cli|claude-agent|claude-cmux|codex-cli|codex-agent|codex-cmux|gemini-cli (default: inferred from model or saved by 'captain configure')"`
-	Mode        string   `flag:"mode" help:"Runtime mechanism: api|cli|agent|cmux (sdk aliases agent). Combined with the model's family to pick a backend; contradicting --backend or a mode prefix on --model fails loud"`
+	Mode        string   `flag:"mode" help:"Runtime mechanism: api|cli|agent|cmux (sdk aliases agent). The provider comes from the model name; a mode prefix on --model wins, and contradicting it fails loud"`
 	Effort      string   `flag:"effort" help:"Reasoning effort: low|medium|high|xhigh|max|ultra (model-dependent)"`
 	Temperature string   `flag:"temperature" help:"Sampling temperature (0.0-2.0)"`
 	NoCache     bool     `flag:"no-cache" help:"Disable response caching"`
@@ -76,19 +75,14 @@ type ModelFlags struct {
 func (f ModelFlags) ToModel() (registry.Model, error) {
 	m := registry.Model{
 		Name:    strings.TrimSpace(f.Model),
-		Backend: registry.Backend(strings.TrimSpace(f.Backend)),
 		Effort:  registry.Effort(strings.TrimSpace(f.Effort)),
 		NoCache: f.NoCache,
-	}
-	if m.Backend != "" && !m.Backend.Valid() {
-		return registry.Model{}, fmt.Errorf("invalid --backend %q (valid: %s)", f.Backend, registry.BackendList())
 	}
 	if err := m.Effort.Validate(); err != nil {
 		return registry.Model{}, fmt.Errorf("invalid --effort %q: %w", f.Effort, err)
 	}
-	// Normalize the mode BEFORE it can reach Model.validateMode: that check
-	// compares Mode against Backend.Mode() by equality, so an un-normalized "sdk"
-	// alongside backend claude-agent would report a contradiction that isn't real.
+	// Normalize the mode BEFORE it can reach Model.validateMode, which only
+	// accepts the four canonical tokens — "sdk" is an accepted input alias.
 	if s := strings.TrimSpace(f.Mode); s != "" {
 		mode, ok := registry.ParseRuntimeMode(s)
 		if !ok {

@@ -21,7 +21,7 @@ import (
 // still goes on the request — the override names OPENAI_API_KEY as its env_key.
 func codexProvider(apiURL string) *provider.CodexCLI {
 	return provider.NewCodexCLI(api.Config{
-		Model:  api.Model{Name: "gpt-5", Backend: api.BackendCodexCLI},
+		Model:  api.Model{Name: "gpt-5", Mode: api.ModeCLI},
 		APIURL: apiURL,
 	})
 }

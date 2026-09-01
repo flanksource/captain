@@ -264,10 +264,15 @@ func TestDurableSessionPromptRunAndPlanStores(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, session.ID, childRun.RootSessionID, "child runs must use their aggregate root")
-	_, err = db.CreatePromptRun(t.Context(), CreatePromptRunInput{
+	sameRootRun, err := db.CreatePromptRun(t.Context(), CreatePromptRunInput{
 		SessionID: explicitRootMember.ID, AdmissionKey: "same-root-active-run",
 	})
-	assert.ErrorIs(t, err, ErrPromptRunConflict, "all members of an aggregate share the active-run uniqueness boundary")
+	require.NoError(t, err, "two sessions in one aggregate are two operations and may be in flight together")
+	assert.Equal(t, session.ID, sameRootRun.RootSessionID)
+	_, err = db.CreatePromptRun(t.Context(), CreatePromptRunInput{
+		SessionID: explicitRootMember.ID, AdmissionKey: "second-run-on-the-same-session",
+	})
+	assert.ErrorIs(t, err, ErrPromptRunConflict, "one session cannot have two runs in flight")
 	_, err = db.UpdatePromptRun(t.Context(), UpdatePromptRunInput{
 		ID: childRun.ID, ExpectedVersion: childRun.Version, Phase: &finished, State: &succeeded,
 	})

@@ -21,7 +21,7 @@ func TestCallerToolCredentialAndApprovalLifecycle(t *testing.T) {
 	session, turn, run, modelCallID := createCallerToolRun(t, db)
 	secretHash := sha256.Sum256([]byte("credential-secret"))
 	credential, err := db.CreateCallerToolCredential(t.Context(), CreateCallerToolCredentialInput{
-		SessionID: session.ID, PromptRunID: run.ID, Backend: api.BackendClaudeAgent,
+		SessionID: session.ID, PromptRunID: run.ID, Provider: api.Anthropic.Name, Mode: api.ModeAgent,
 		SecretHash: secretHash[:], Policy: map[string]api.ToolPolicy{"account_edit": api.ToolPolicyAsk},
 	})
 	require.NoError(t, err)
@@ -92,7 +92,7 @@ func createCallerToolRun(t *testing.T, db *DB) (*Session, *ChatTurn, *PromptRun,
 	run, err := db.CreatePromptRun(t.Context(), CreatePromptRunInput{SessionID: session.ID, TurnID: &turn.ID})
 	require.NoError(t, err)
 	modelCallID, err := db.CreateChatModelCall(t.Context(), CreateChatModelCallInput{
-		TurnID: turn.ID, PromptRunID: run.ID, Model: "sonnet", Backend: string(api.BackendClaudeAgent),
+		TurnID: turn.ID, PromptRunID: run.ID, Model: "sonnet", Provider: api.Anthropic.Name, Mode: string(api.ModeAgent),
 	})
 	require.NoError(t, err)
 	var currency string

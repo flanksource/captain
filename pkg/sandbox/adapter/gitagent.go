@@ -103,12 +103,12 @@ func (g *gitAgentSandbox) Execute(ctx context.Context, spec api.Spec) (*api.Resp
 		KeyPath:       target.keyPath,
 		Relay:         target.relay,
 		Policy:        target.policy,
-		// The resolved backend travels with the model: the agent must run the
-		// runtime the supervisor selected, not re-resolve the name against its
-		// own defaults and quietly pick a different one.
+		// The resolved runtime travels with the model: the agent must run the
+		// mode the supervisor selected, not re-resolve the name against its own
+		// defaults and quietly pick a different one.
 		TaskPayload: gitagent.TaskPayload{
 			Prompt: prompt, System: system,
-			Model: spec.Name, Backend: string(spec.Backend), Effort: spec.Effort, Timeout: timeout,
+			Model: spec.Name, Mode: spec.Mode, Provider: specProviderName(spec), Effort: spec.Effort, Timeout: timeout,
 		},
 		HooksJSON: hooksJSON,
 	})
@@ -120,6 +120,15 @@ func (g *gitAgentSandbox) Execute(ctx context.Context, spec api.Spec) (*api.Resp
 		return nil, fmt.Errorf("task %s dispatched but not concluded: %w", dispatch.Task, err)
 	}
 	return gitAgentResponse(dispatch.Task, verdict), nil
+}
+
+// specProviderName is the resolved provider's key, or "" when the spec named a
+// model no provider claims — the runner re-derives it from the model name then.
+func specProviderName(spec api.Spec) string {
+	if spec.Provider == nil {
+		return ""
+	}
+	return spec.Provider.Name
 }
 
 // hookSetsJSON preserves the sidecar/supervisor split declared by the backend
@@ -216,8 +225,8 @@ func (g *gitAgentSandbox) resolveTarget() (*gitAgentTarget, error) {
 		relay:       gitagent.RelayMode(stringOption(opts, "relay", string(gitagent.RelaySync))),
 		waitTimeout: WaitTimeout(opts),
 	}
-	if g.cfg.Policy != nil {
-		target.policy = gitagent.Policy{Paths: g.cfg.Policy.Paths, MaxAttempts: g.cfg.Policy.MaxAttempts}
+	if g.cfg.Dispatch != nil {
+		target.policy = gitagent.Policy{Paths: g.cfg.Dispatch.Paths, MaxAttempts: g.cfg.Dispatch.MaxAttempts}
 	}
 	return target, nil
 }

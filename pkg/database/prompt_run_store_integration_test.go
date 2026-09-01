@@ -77,7 +77,7 @@ func TestListPromptRunsFiltersAndOrdersDeterministically(t *testing.T) {
 		Runtime: PromptRunRuntime{
 			Mode: "plan",
 			Requested: PromptRunRuntimeSelection{
-				Provider: "openai", Backend: "responses", Effort: "high",
+				Provider: "openai", Mode: "api", Effort: "high",
 			},
 			Resolved: PromptRunRuntimeSelection{Model: "gpt-resolved"},
 		},
@@ -97,7 +97,7 @@ func TestListPromptRunsFiltersAndOrdersDeterministically(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, PromptRunStatusPlanning, overview.Status)
 	assert.Equal(t, "openai", overview.Provider)
-	assert.Equal(t, "responses", overview.Backend)
+	assert.Equal(t, "api", overview.RuntimeMode)
 	assert.Equal(t, "gpt-resolved", overview.Model)
 	assert.Equal(t, "high", overview.Effort)
 	require.NotNil(t, overview.PID)

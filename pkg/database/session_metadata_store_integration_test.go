@@ -21,13 +21,13 @@ func TestSessionMetadataWriteOnceAndTurnlessMessage(t *testing.T) {
 		ID: uuid.New(), Source: "aichat", Provider: "captain", HostID: "local",
 	})
 	require.NoError(t, err)
-	runtime := map[string]any{"model": "test-model", "backend": "openai"}
+	runtime := map[string]any{"model": "test-model", "mode": "api"}
 	require.NoError(t, db.SetSessionMetadataOnce(t.Context(), session.ID, "aichatRuntime", runtime))
 	require.NoError(t, db.SetSessionMetadataOnce(t.Context(), session.ID, "aichatRuntime", map[string]any{
-		"backend": "openai", "model": "test-model",
+		"mode": "api", "model": "test-model",
 	}))
 	err = db.SetSessionMetadataOnce(t.Context(), session.ID, "aichatRuntime", map[string]any{
-		"model": "other-model", "backend": "openai",
+		"model": "other-model", "mode": "api",
 	})
 	assert.True(t, errors.Is(err, ErrSessionConflict))
 

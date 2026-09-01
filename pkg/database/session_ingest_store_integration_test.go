@@ -57,7 +57,7 @@ func testIngestBatch(modTime time.Time, byteOffset int64) IngestTranscriptInput 
 				Index: 0, ProviderTurnID: "turn-0", Status: TurnStatusEnded,
 				StartedAt: &started, EndedAt: &turn0End,
 				Call: &IngestModelCall{
-					Model: "claude-sonnet-5", Backend: "claude", InputTokens: 1000, OutputTokens: 200, ReasoningTokens: 100,
+					Model: "claude-sonnet-5", Provider: "anthropic", Mode: "agent", InputTokens: 1000, OutputTokens: 200, ReasoningTokens: 100,
 					CacheReadTokens: 5000, CacheWriteTokens: 250, ContextTokens: 40000, ContextWindowTokens: 200000,
 					InputCost: 0.003, OutputCost: 0.003, ReasoningCost: 0.001,
 					CacheReadCost: 0.002, CacheWriteCost: 0.004, Currency: "USD",
@@ -67,7 +67,7 @@ func testIngestBatch(modTime time.Time, byteOffset int64) IngestTranscriptInput 
 				Index: 1, ProviderTurnID: "turn-1", Status: TurnStatusEnded,
 				StartedAt: &turn0End, EndedAt: &modTime,
 				Call: &IngestModelCall{
-					Model: "claude-sonnet-5", Backend: "claude", Effort: "high", InputTokens: 2000, OutputTokens: 400, ReasoningTokens: 200,
+					Model: "claude-sonnet-5", Provider: "anthropic", Mode: "agent", Effort: "high", InputTokens: 2000, OutputTokens: 400, ReasoningTokens: 200,
 					CacheReadTokens: 8000, CacheWriteTokens: 500, ContextTokens: 60000, ContextWindowTokens: 200000,
 					InputCost: 0.006, OutputCost: 0.006, ReasoningCost: 0.002,
 					CacheReadCost: 0.004, CacheWriteCost: 0.008, Currency: "USD",

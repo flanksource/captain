@@ -117,11 +117,10 @@ func ResolveHookWrap(name, repo string) (HookWrapFactory, error) {
 			return wrap, func() error { return nil }, nil
 		}, nil
 	}
-	kind, ok := api.ParseSandboxKind(name)
-	if !ok {
+	if name != "srt" {
 		return nil, fmt.Errorf("unknown hook sandbox kind %q", name)
 	}
-	cfg := api.SandboxConfig{Kind: kind, Options: map[string]any{
+	cfg := api.SandboxConfig{Kind: api.SandboxSRTInternal, Options: map[string]any{
 		api.SandboxOptionProfile: api.SandboxProfileHook,
 	}}
 	if abs, err := filepath.Abs(repo); err == nil && repo != "" {
@@ -504,10 +503,10 @@ func sidecarPostReceive(ctx context.Context, repo string, host HookHost, updates
 // legacy or human-driven payloads usable with the generic agent name.
 func taskRuntimeIdentity(data []byte) string {
 	var payload TaskPayload
-	if err := json.Unmarshal(data, &payload); err != nil || payload.Backend == "" || payload.Model == "" {
+	if err := json.Unmarshal(data, &payload); err != nil || payload.Mode == "" || payload.Model == "" {
 		return "captain-agent"
 	}
-	return ai.LogIdentity(api.Backend(payload.Backend), payload.Model, payload.Effort)
+	return ai.LogIdentity(payload.Mode, payload.Model, payload.Effort)
 }
 
 type dispatchPayloads struct {
