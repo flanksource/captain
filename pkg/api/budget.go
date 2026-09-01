@@ -11,11 +11,11 @@ type Budget struct {
 	// accumulated spend would exceed it. (legacy ai.Config.BudgetUSD)
 	Cost float64 `json:"cost,omitempty" yaml:"cost,omitempty" jsonschema:"minimum=0" pretty:"label=Budget USD"`
 
-	// MaxTokens caps output tokens per model call; 0 = backend default.
+	// MaxTokens caps output tokens per model call; 0 = runtime default.
 	// (legacy ai.Request.MaxTokens / ai.Config.MaxTokens)
 	MaxTokens int `json:"maxTokens,omitempty" yaml:"maxTokens,omitempty" jsonschema:"minimum=0" pretty:"label=Max Tokens"`
 
-	// MaxTurns caps agent turns; 0 = backend default.
+	// MaxTurns caps agent turns; 0 = runtime default.
 	MaxTurns int `json:"maxTurns,omitempty" yaml:"maxTurns,omitempty" jsonschema:"minimum=0,maximum=100" pretty:"label=Max Turns"`
 
 	// Timeout caps the overall request duration. Empty means caller default.
@@ -31,7 +31,7 @@ func (b Budget) Validate() error {
 		return fmt.Errorf("invalid maxTokens %d (must be >= 0)", b.MaxTokens)
 	}
 	if b.MaxTurns < 0 || b.MaxTurns > 100 {
-		return fmt.Errorf("invalid maxTurns %d (valid: 0-100, 0=backend default)", b.MaxTurns)
+		return fmt.Errorf("invalid maxTurns %d (valid: 0-100, 0=runtime default)", b.MaxTurns)
 	}
 	if _, err := b.ParseTimeout(); err != nil {
 		return err

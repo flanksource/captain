@@ -63,7 +63,7 @@ type Cost struct {
 	CacheWriteCost   float64 `json:"cacheWriteCost,omitempty" yaml:"cacheWriteCost,omitempty" pretty:"label=Cache Write $,table"`
 
 	// ProviderCostUSD, when > 0, is the authoritative total the model provider
-	// reported for this call (e.g. claude-cli total_cost_usd). Total() returns it
+	// reported for this call (e.g. the claude CLI's total_cost_usd). Total() returns it
 	// in preference to the list-price bucket sum, so provider billing wins over a
 	// recomputed estimate. The per-bucket costs are retained for display; this
 	// value is not rendered as its own column since Total already reflects it.

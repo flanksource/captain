@@ -55,49 +55,25 @@ func TestCodexApprovalJSONSchema(t *testing.T) {
 	}
 }
 
-func TestCodexSafety(t *testing.T) {
-	cases := []struct {
-		name         string
-		perms        Permissions
-		wantSandbox  CodexSandbox
-		wantApproval CodexApprovalPolicy
-	}{
-		{"bypass is full access", Permissions{Mode: PermissionBypass}, CodexSandboxDangerFull, CodexApprovalNever},
-		{"accept edits is workspace write", Permissions{Mode: PermissionAcceptEdits}, CodexSandboxWorkspaceWrite, CodexApprovalOnRequest},
-		{"auto is workspace write", Permissions{Mode: PermissionAuto}, CodexSandboxWorkspaceWrite, CodexApprovalOnRequest},
-		{"edit preset is workspace write", Permissions{Presets: []Preset{PresetEdit}}, CodexSandboxWorkspaceWrite, CodexApprovalOnRequest},
-		{"default is read-only", Permissions{}, CodexSandboxReadOnly, CodexApprovalOnRequest},
-		{"edit preset with explicit mode stays read-only", Permissions{Mode: PermissionDefault, Presets: []Preset{PresetEdit}}, CodexSandboxReadOnly, CodexApprovalOnRequest},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			sandbox, approval := CodexSafety(tc.perms)
-			if sandbox != tc.wantSandbox || approval != tc.wantApproval {
-				t.Errorf("CodexSafety() = (%q, %q), want (%q, %q)", sandbox, approval, tc.wantSandbox, tc.wantApproval)
-			}
-		})
-	}
-}
-
 func TestCLIOptionsFor(t *testing.T) {
-	if v, err := CLIOptionsFor(BackendClaudeCmux); err != nil {
+	if v, err := CLIOptionsFor(Anthropic, ModeCmux); err != nil {
 		t.Errorf("claude-cmux: unexpected error %v", err)
 	} else if _, ok := v.(ClaudeCmuxOptions); !ok {
 		t.Errorf("claude-cmux: got %T, want ClaudeCmuxOptions", v)
 	}
-	if v, err := CLIOptionsFor(BackendCodexCmux); err != nil {
+	if v, err := CLIOptionsFor(OpenAI, ModeCmux); err != nil {
 		t.Errorf("codex-cmux: unexpected error %v", err)
 	} else if _, ok := v.(CodexCmuxOptions); !ok {
 		t.Errorf("codex-cmux: got %T, want CodexCmuxOptions", v)
 	}
-	if _, err := CLIOptionsFor(BackendClaudeCLI); err == nil {
+	if _, err := CLIOptionsFor(Anthropic, ModeCLI); err == nil {
 		t.Errorf("claude-cli: want error for non-cmux backend, got nil")
 	}
 }
 
 // TestClaudeCmuxOptionsHasNoSpecFlags guards the Group-A/Group-B split: the extra
 // option struct must not redeclare a flag that already has an api.Spec home (model,
-// effort, permission mode, allow/deny tools, or the memory-derived flags), which
+// effort, sandbox approval, allow/deny tools, or the memory-derived flags), which
 // would create a second source of truth for that flag.
 func TestClaudeCmuxOptionsHasNoSpecFlags(t *testing.T) {
 	specOwned := map[string]bool{

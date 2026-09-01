@@ -7,7 +7,7 @@ import "context"
 type Provider interface {
 	Execute(ctx context.Context, req Spec) (*Response, error)
 	GetModel() string
-	GetBackend() Backend
+	GetRuntime() Runtime
 }
 
 // StreamingProvider adds incremental streaming over the buffered Provider.

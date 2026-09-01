@@ -67,7 +67,7 @@ var _ = Describe("Canonical messages", func() {
 	})
 
 	It("keeps conversation and single-turn prompt as mutually exclusive request modes", func() {
-		spec := api.Spec{Model: api.Model{Name: "gpt-5", Backend: api.BackendOpenAI}, Messages: validMessages()}
+		spec := api.Spec{Model: api.Model{Name: "gpt-5", Mode: api.ModeAPI}, Messages: validMessages()}
 		Expect(spec.Validate()).To(Succeed())
 		Expect(spec.IsVerifyOnly()).To(BeFalse())
 

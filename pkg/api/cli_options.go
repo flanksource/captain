@@ -2,10 +2,10 @@ package api
 
 import "fmt"
 
-// This file models the interactive CLI flag surface of the cmux backends
-// (claude-cmux / codex-cmux) as typed option structs. It covers only the flags
+// This file models the interactive CLI flag surface of the cmux mode (served by
+// anthropic and openai alike) as typed option structs. It covers only the flags
 // that have NO api.Spec home ("extra cmux args"); flags that map onto the Spec
-// (model, effort, permission mode, allow/deny tools, memory toggles) stay on the
+// (model, effort, sandbox approval, allow/deny tools, memory toggles) stay on the
 // Spec and are emitted by the cmux provider from there — one source per flag.
 //
 // The structs carry three tags: json (form/value key + CLIArgs key), flag (the
@@ -28,10 +28,8 @@ type ClaudeCmuxOptions struct {
 	SafeMode        bool     `json:"safeMode,omitempty"          flag:"safe-mode"            clicky:"title=Safe Mode,desc=Start with all customizations disabled,order=11"`
 }
 
-// CodexCmuxOptions are the interactive `codex` extra args plus the codex posture
-// flags (sandbox / ask-for-approval), which have no direct api.Spec field. The
-// provider seeds Sandbox/AskForApproval defaults from Permissions.Mode via
-// CodexSafety; an explicit value here overrides that default.
+// CodexCmuxOptions are the interactive `codex` extra args plus the translated
+// native sandbox and approval flags.
 type CodexCmuxOptions struct {
 	Sandbox        CodexSandbox        `json:"sandbox,omitempty"        flag:"sandbox"          clicky:"title=Sandbox,order=1"`
 	AskForApproval CodexApprovalPolicy `json:"askForApproval,omitempty" flag:"ask-for-approval" clicky:"title=Approval Policy,order=2"`
@@ -104,32 +102,19 @@ func (CodexApprovalPolicy) JSONSchema() map[string]any {
 	)
 }
 
-// CodexSafety maps the permission posture onto codex's sandbox + approval policy.
-// It is the single source of truth shared by the codex app-server and cmux
-// providers, so the two backends stay consistent.
-func CodexSafety(p Permissions) (CodexSandbox, CodexApprovalPolicy) {
-	switch {
-	case p.Mode == PermissionBypass:
-		return CodexSandboxDangerFull, CodexApprovalNever
-	case p.Mode == PermissionAcceptEdits, p.Mode == PermissionAuto:
-		return CodexSandboxWorkspaceWrite, CodexApprovalOnRequest
-	case p.HasPreset(PresetEdit) && p.Mode == "":
-		return CodexSandboxWorkspaceWrite, CodexApprovalOnRequest
-	default:
-		return CodexSandboxReadOnly, CodexApprovalOnRequest
+// CLIOptionsFor returns the zero-value option struct for a cmux runtime, for
+// reflecting into a form schema. It fails loud on any non-cmux runtime.
+func CLIOptionsFor(p *ModelProvider, mode RuntimeMode) (any, error) {
+	if mode != ModeCmux || p == nil {
+		return nil, fmt.Errorf("%s has no cmux CLI options: only the cmux mode carries them", RuntimeOf(p, mode))
 	}
-}
-
-// CLIOptionsFor returns the zero-value option struct for a cmux backend, for
-// reflecting into a form schema. It fails loud on any non-cmux backend.
-func CLIOptionsFor(b Backend) (any, error) {
-	switch b {
-	case BackendClaudeCmux:
+	switch p.Name {
+	case Anthropic.Name:
 		return ClaudeCmuxOptions{}, nil
-	case BackendCodexCmux:
+	case OpenAI.Name:
 		return CodexCmuxOptions{}, nil
 	default:
-		return nil, fmt.Errorf("backend %q has no cmux CLI options (valid: %s, %s)", b, BackendClaudeCmux, BackendCodexCmux)
+		return nil, fmt.Errorf("provider %q has no cmux CLI options (valid: %s, %s)", p.Name, Anthropic.Name, OpenAI.Name)
 	}
 }
 

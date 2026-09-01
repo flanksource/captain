@@ -4,37 +4,35 @@ import "github.com/flanksource/captain/pkg/api/registry"
 
 // Model identity lives in pkg/api/registry — a leaf package, because decoding a
 // Spec parses model strings and the parser therefore cannot sit above pkg/api.
-// These aliases keep api.Model / api.Backend / api.Effort the names the rest of
+// These aliases keep api.Model / api.Runtime / api.Effort the names the rest of
 // captain uses: an alias is the identical type, methods included, so nothing
 // downstream (including pkg/ai's own re-exports) has to know registry exists.
 
 type (
-	Backend          = registry.Backend
 	DisabledSet      = registry.DisabledSet
 	Effort           = registry.Effort
 	Model            = registry.Model
 	ModelList        = registry.ModelList
 	ModeCapabilities = registry.ModeCapabilities
+	ModelProvider    = registry.Provider
+	Runtime          = registry.Runtime
 	RuntimeMode      = registry.RuntimeMode
+	SchemaDialect    = registry.SchemaDialect
+)
+
+var (
+	// Anthropic, OpenAI, Google and DeepSeek are the provider descriptors. A
+	// provider is derived from a model name, never selected alongside one.
+	Anthropic = registry.Anthropic
+	OpenAI    = registry.OpenAI
+	Google    = registry.Google
+	DeepSeek  = registry.DeepSeek
 )
 
 const (
-	BackendAnthropic   = registry.BackendAnthropic
-	BackendGemini      = registry.BackendGemini
-	BackendOpenAI      = registry.BackendOpenAI
-	BackendDeepSeek    = registry.BackendDeepSeek
-	BackendClaudeCLI   = registry.BackendClaudeCLI
-	BackendCodexCLI    = registry.BackendCodexCLI
-	BackendGeminiCLI   = registry.BackendGeminiCLI
-	BackendClaudeAgent = registry.BackendClaudeAgent
-	BackendCodexAgent  = registry.BackendCodexAgent
-	BackendClaudeCmux  = registry.BackendClaudeCmux
-	BackendCodexCmux   = registry.BackendCodexCmux
-
-	AnthropicProvider = registry.AnthropicProvider
-	OpenAIProvider    = registry.OpenAIProvider
-	GeminiProvider    = registry.GeminiProvider
-	DeepSeekProvider  = registry.DeepSeekProvider
+	SchemaDialectNone      = registry.SchemaDialectNone
+	SchemaDialectAnthropic = registry.SchemaDialectAnthropic
+	SchemaDialectOpenAI    = registry.SchemaDialectOpenAI
 
 	ModeAPI   = registry.ModeAPI
 	ModeCLI   = registry.ModeCLI
@@ -55,29 +53,87 @@ const (
 	DefaultModelID = registry.DefaultModelID
 )
 
-// ErrInferBackend marks the "can't infer a backend from this model name" failure
-// so callers can enrich it (e.g. with "did you mean" model suggestions).
-var ErrInferBackend = registry.ErrInferBackend
+// ErrUnknownModel marks the "no provider claims this model name" failure so
+// callers can enrich it (e.g. with "did you mean" model suggestions).
+var ErrUnknownModel = registry.ErrUnknownModel
 
-// AllBackends lists every supported backend in canonical order.
-func AllBackends() []Backend { return registry.AllBackends() }
+// AllRuntimes lists every supported provider×mode pair in canonical order.
+func AllRuntimes() []Runtime { return registry.AllRuntimes() }
 
-// BackendList renders AllBackends as a comma-separated string for help/error text.
-func BackendList() string { return registry.BackendList() }
+// RuntimeOf pairs a provider descriptor with a mode.
+func RuntimeOf(p *ModelProvider, mode RuntimeMode) Runtime { return registry.RuntimeOf(p, mode) }
 
-// AuthEnvVars returns the environment variables consulted for a backend's API
+// RuntimeList renders the supported pairs, grouped by provider, for help text.
+func RuntimeList() string { return registry.RuntimeList() }
+
+// ProviderList renders the provider keys for help and error text.
+func ProviderList() string { return registry.ProviderList() }
+
+// ProviderByName resolves a provider by Name, CatalogPrefix, or PricingPrefix.
+func ProviderByName(name string) (*ModelProvider, bool) { return registry.ProviderByName(name) }
+
+// Providers returns the provider families in canonical claim order.
+func Providers() []*ModelProvider { return registry.Providers() }
+
+// AuthEnvVars returns the environment variables consulted for a runtime's API
 // key, in priority order.
-func AuthEnvVars(b Backend) []string { return registry.AuthEnvVars(b) }
+func AuthEnvVars(p *ModelProvider, mode RuntimeMode) []string { return registry.AuthEnvVars(p, mode) }
 
-// CapsFor returns the declared capability cell for a backend.
-func CapsFor(b Backend) (ModeCapabilities, bool) { return registry.CapsFor(b) }
+// SupportsCallerTools reports whether a runtime can expose caller-supplied tools.
+func SupportsCallerTools(p *ModelProvider, mode RuntimeMode) bool {
+	return registry.SupportsCallerTools(p, mode)
+}
 
-// SupportsCallerTools reports whether a backend can expose caller-supplied tools.
-func SupportsCallerTools(b Backend) bool { return registry.SupportsCallerTools(b) }
+// ProviderFor resolves the family that owns a model name, failing loud when the
+// name matches nothing. It answers about the family only — a mode is never
+// inferred from a name.
+func ProviderFor(model string) (*ModelProvider, error) { return registry.ProviderFor(model) }
 
-// InferBackend resolves the backend from a model name prefix, failing loud when
-// the name matches nothing.
-func InferBackend(model string) (Backend, error) { return registry.InferBackend(model) }
+// ResolveModel turns an authored selection into a concrete one: the exact model
+// id the driver is handed, the mode that serves it, and the provider that owns
+// it. It is the single resolution point — after it, nothing derives a runtime
+// again.
+func ResolveModel(model Model) (Model, error) { return registry.ResolveModel(model) }
+
+// RuntimeIdentity is the wire form of a resolved runtime selection: which model
+// ran, on which mechanism. Model cannot serialize one on its own because its
+// Provider is json:"-", so any response reporting a resolved runtime projects it
+// through this type instead of marshalling the model directly.
+//
+// There is no adapter field: a runtime is (model, mode), and provider identity
+// is recoverable from the model name. The composite id this type used to carry
+// under `backend` meant the adapter outbound and the mode inbound, so a client
+// echoing a response back as a request named a different runtime than it read.
+type RuntimeIdentity struct {
+	Model    string      `json:"model,omitempty"`
+	Mode     RuntimeMode `json:"mode,omitempty"`
+	Provider string      `json:"provider,omitempty"`
+	Effort   Effort      `json:"effort,omitempty"`
+}
+
+// RuntimeIdentityOf projects a resolved model onto its wire identity.
+func RuntimeIdentityOf(model Model) RuntimeIdentity {
+	identity := RuntimeIdentity{Model: model.Name, Mode: model.Mode, Effort: model.Effort}
+	if model.Provider != nil {
+		identity.Provider = model.Provider.Name
+	}
+	return identity
+}
+
+// Runtime is the (provider, mode) pair this identity names.
+func (r RuntimeIdentity) Runtime() Runtime {
+	return Runtime{Provider: r.Provider, Mode: r.Mode}
+}
+
+// ToModel restores the identity onto a model. Only the identity fields are set;
+// everything else is the caller's to supply.
+func (r RuntimeIdentity) ToModel() Model {
+	model := Model{Name: r.Model, Mode: r.Mode, Effort: r.Effort}
+	if p, ok := registry.ProviderByName(r.Provider); ok {
+		model.Provider = p
+	}
+	return model
+}
 
 // AllEfforts lists the non-empty effort tiers in ascending order.
 func AllEfforts() []Effort { return registry.AllEfforts() }
@@ -93,8 +149,8 @@ func ParseRuntimeMode(s string) (RuntimeMode, bool) { return registry.ParseRunti
 func RuntimeModeList() string { return registry.RuntimeModeList() }
 
 // NewDisabledSet builds the opt-out lookup from the raw config lists.
-func NewDisabledSet(modes, providers, backends, models, efforts []string) DisabledSet {
-	return registry.NewDisabledSet(modes, providers, backends, models, efforts)
+func NewDisabledSet(modes, providers []string, runtimes []Runtime, models, efforts []string) DisabledSet {
+	return registry.NewDisabledSet(modes, providers, runtimes, models, efforts)
 }
 
 // Disabled returns the process-wide opt-out set installed from ~/.captain.yaml.

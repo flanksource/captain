@@ -242,6 +242,33 @@ var _ = Describe("PermissionPolicy", func() {
 		})
 	})
 
+	// The browser resolves the same rule list to show what a tool will do, so its
+	// matcher is a port of MatchItems rather than an approximation of it. This
+	// table is the shared contract: the identical cases are asserted in
+	// clicky-ui's packages/ui/src/data/chat/tool-policy.test.ts, and a divergence
+	// means the popover promises a policy the request does not produce.
+	DescribeTable("pattern matching, mirrored by the TypeScript port",
+		func(item string, patterns api.MatchPatterns, expected bool) {
+			Expect(patterns.Matches(item)).To(Equal(expected))
+		},
+		Entry("exact match is case-insensitive", "provider.xero.read", api.MatchPatterns{"PROVIDER.XERO.READ"}, true),
+		Entry("a different group does not match", "provider.xero.read", api.MatchPatterns{"provider.xero.write"}, false),
+		Entry("prefix wildcard", "provider.xero.read", api.MatchPatterns{"provider.*"}, true),
+		Entry("suffix wildcard", "accounting.metadata.write", api.MatchPatterns{"*.write"}, true),
+		Entry("substring wildcard", "provider.xero.read", api.MatchPatterns{"*xero*"}, true),
+		Entry("prefix wildcard that does not apply", "admin.read", api.MatchPatterns{"provider.*"}, false),
+		Entry("bare star", "anything", api.MatchPatterns{"*"}, true),
+		Entry("no patterns constrain nothing", "anything", api.MatchPatterns(nil), true),
+		Entry("comma-separated alternatives", "rules.write", api.MatchPatterns{"admin.*, rules.write"}, true),
+		Entry("comma-separated alternatives that miss", "templates.read", api.MatchPatterns{"admin.*, rules.write"}, false),
+		// The one that order alone would get wrong: an exclusion wins even when a
+		// positive pattern is written first.
+		Entry("exclusion beats an earlier positive match", "provider.xero.read", api.MatchPatterns{"provider.*", "!*.read"}, false),
+		Entry("exclusion leaves a sibling matched", "provider.xero.write", api.MatchPatterns{"provider.*", "!*.read"}, true),
+		Entry("exclusion-only admits what it does not exclude", "admin.read", api.MatchPatterns{"!provider.*"}, true),
+		Entry("exclusion-only rejects what it excludes", "provider.xero.read", api.MatchPatterns{"!provider.*"}, false),
+	)
+
 	Describe("decoding", func() {
 		// `.prompt` frontmatter authors write a bare selector; requiring a list
 		// there is ceremony that buys nothing.

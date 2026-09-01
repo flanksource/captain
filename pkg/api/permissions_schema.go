@@ -33,7 +33,7 @@ func (PermissionMode) JSONSchema() *jsonschema.Schema {
 	return &jsonschema.Schema{
 		Type:        "string",
 		Enum:        enumValues(AllPermissionModes()),
-		Description: "Base permission posture. Which of these a backend honours is declared per backend; see the permissions capability matrix.",
+		Description: "Base permission posture. Which of these a runtime honours is declared per runtime; see the permissions capability matrix.",
 	}
 }
 
@@ -102,7 +102,7 @@ func (ToolPreferences) JSONSchema() *jsonschema.Schema {
 func (MCP) JSONSchema() *jsonschema.Schema {
 	properties := jsonschema.NewProperties()
 	properties.Set("disabled", &jsonschema.Schema{Type: "boolean",
-		Description: "Turn off all MCP servers. Honoured on claude-cli and codex-agent; accepted and dropped elsewhere."})
+		Description: "Turn off all MCP servers. Honoured on the anthropic cli and the openai agent; accepted and dropped elsewhere."})
 	properties.Set("servers", &jsonschema.Schema{Type: "array", Items: &jsonschema.Schema{Type: "string"},
 		Description: "Allowlist subset of configured servers."})
 	properties.Set("modes", &jsonschema.Schema{Type: "object",

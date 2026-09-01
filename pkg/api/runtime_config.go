@@ -110,13 +110,9 @@ type Config struct {
 	// and Codex Agent declare a model_providers entry because stored account auth
 	// otherwise takes precedence over OPENAI_BASE_URL.
 	APIURL string
-	// Sandbox runs local agent CLI processes through sandbox-runtime. Provider
-	// selection must resolve to CLI mode so the flag cannot be silently ignored.
-	// It is the legacy boolean shorthand for SandboxSelection = {kind: srt}.
-	Sandbox bool
-	// SandboxSelection is the resolved sandbox for the run — kind, configured
-	// backend name, and that backend's options. nil means unsandboxed. When both
-	// this and the legacy Sandbox boolean are set, this wins.
+	// SandboxSelection is the resolved external execution boundary for the run.
+	// Off and Native use identity adapters; Docker wraps a local CLI; Git Agent
+	// relocates execution. Provider-native policy stays on Spec.Sandbox.
 	SandboxSelection *SandboxConfig
 	CacheDBPath      string
 	CacheTTL         time.Duration
@@ -134,7 +130,7 @@ type Config struct {
 	// CanUseTool, when set, brokers tool permissions over the stream-json control
 	// protocol: the streaming provider asks this callback before a tool that needs
 	// approval runs, and forwards the decision to the agent. Only providers that
-	// support a server→client permission round-trip honour it (claude-agent);
+	// support a server→client permission round-trip honour it (the anthropic agent);
 	// others ignore it. A nil callback keeps the auto-approve (bypass) behaviour.
 	// It is never serialized (the agent process never sees the Go closure).
 	CanUseTool PermissionFunc `json:"-"`
@@ -152,14 +148,7 @@ type Config struct {
 	CallerTools *CallerToolEndpoint `json:"-"`
 }
 
-// ResolvedSandbox returns the sandbox selection for the run, folding the legacy
-// boolean onto the srt kind. nil means run unsandboxed.
+// ResolvedSandbox returns the already-resolved sandbox selection for the run.
 func (c Config) ResolvedSandbox() *SandboxConfig {
-	if c.SandboxSelection != nil {
-		return c.SandboxSelection
-	}
-	if c.Sandbox {
-		return &SandboxConfig{Kind: SandboxSRT}
-	}
-	return nil
+	return c.SandboxSelection
 }
