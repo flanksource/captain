@@ -149,8 +149,8 @@ func (cfg HTTPServerConfig) enroll(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// maxEnrollRequestBytes bounds an enrollment body. It carries a URL, a port and
-// a fingerprint; anything larger is not a captain agent.
+// maxEnrollRequestBytes bounds an enrollment body. It carries endpoint and
+// authentication details plus, at most, one PEM certificate.
 const maxEnrollRequestBytes = 64 << 10
 
 func enrollRefusalDetail(err error) string {

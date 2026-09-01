@@ -185,6 +185,8 @@ func gitAgentEnroll(offer gitagent.EnrollmentOffer, backend string) func(*http.R
 			URL:             url,
 			HostFingerprint: strings.TrimSpace(req.HostFingerprint),
 			DispatchToken:   strings.TrimSpace(req.DispatchToken),
+			CACertificate:   strings.TrimSpace(req.CACertificate),
+			PinnedPublicKey: strings.TrimSpace(req.PinnedPublicKey),
 		})
 		if err != nil {
 			return nil, err

@@ -93,17 +93,20 @@ func (g *gitAgentSandbox) Execute(ctx context.Context, spec api.Spec) (*api.Resp
 	if timeout == "" {
 		timeout = target.waitTimeout.String()
 	}
+	transport := target.transport()
 	dispatch, err := gitagent.Dispatch(ctx, gitagent.DispatchRequest{
-		RepoDir:       repoDir,
-		MailboxPath:   mailbox.Path,
-		MailboxRoute:  mailbox.Route,
-		Agent:         target.agent,
-		SidecarURL:    target.url,
-		SidecarHostFP: target.hostFingerprint,
-		Token:         target.token,
-		KeyPath:       target.keyPath,
-		Relay:         target.relay,
-		Policy:        target.policy,
+		RepoDir:         repoDir,
+		MailboxPath:     mailbox.Path,
+		MailboxRoute:    mailbox.Route,
+		Agent:           target.agent,
+		SidecarURL:      transport.URL,
+		SidecarHostFP:   transport.HostFingerprint,
+		Token:           transport.Token,
+		CAPath:          transport.CAPath,
+		PinnedPublicKey: transport.PinnedPublicKey,
+		KeyPath:         transport.KeyPath,
+		Relay:           target.relay,
+		Policy:          target.policy,
 		// The resolved backend travels with the model: the agent must run the
 		// runtime the supervisor selected, not re-resolve the name against its
 		// own defaults and quietly pick a different one.
@@ -167,12 +170,23 @@ type gitAgentTarget struct {
 	hostFingerprint string
 	// token authenticates this supervisor to an https agent, and is empty for an
 	// ssh one, which authenticates by key instead.
-	token       text.SensitiveString
-	keyPath     string
-	mailboxRoot string
-	relay       gitagent.RelayMode
-	policy      gitagent.Policy
-	waitTimeout time.Duration
+	token           text.SensitiveString
+	caPath          string
+	pinnedPublicKey string
+	keyPath         string
+	mailboxRoot     string
+	relay           gitagent.RelayMode
+	policy          gitagent.Policy
+	waitTimeout     time.Duration
+}
+
+// transport is the shared trust and authentication boundary for Git dispatch
+// and HTTPS sidecar control requests.
+func (target gitAgentTarget) transport() gitagent.TransportTarget {
+	return gitagent.TransportTarget{
+		URL: target.url, KeyPath: target.keyPath, HostFingerprint: target.hostFingerprint,
+		Token: target.token, CAPath: target.caPath, PinnedPublicKey: target.pinnedPublicKey,
+	}
 }
 
 // resolveTarget picks the enrolled agent — pinned by the spec's sandbox.agent,
@@ -214,6 +228,8 @@ func (g *gitAgentSandbox) resolveTarget() (*gitAgentTarget, error) {
 		url:             url,
 		hostFingerprint: hostFP,
 		token:           token,
+		caPath:          stringOption(entry, "caPath", ""),
+		pinnedPublicKey: stringOption(entry, "pinnedPubkey", ""),
 		keyPath:         stringOption(opts, "key", filepath.Join(keysDir, dispatchKeyFile)),
 		// The long-running endpoint serves this root; each dispatch derives a
 		// repository-specific mailbox beneath it from the request working tree.
@@ -229,11 +245,6 @@ func (g *gitAgentSandbox) resolveTarget() (*gitAgentTarget, error) {
 
 // dispatchCredentials resolves how this supervisor authenticates to an agent,
 // which the agent's own URL scheme decides.
-//
-// CAPath and PinnedPublicKey are deliberately left empty for https. The agent is
-// fronted by an ingress holding a publicly trusted certificate for its own
-// hostname, so the git client verifies it by name through the system trust
-// store; pinning here would break on every certificate renewal.
 func dispatchCredentials(name, endpoint string, entry map[string]any) (string, text.SensitiveString, error) {
 	switch scheme := gitagent.EndpointScheme(endpoint); scheme {
 	case "ssh":
