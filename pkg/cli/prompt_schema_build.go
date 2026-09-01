@@ -44,16 +44,16 @@ func buildPromptSchemaDocument(adapters []AdapterStatus, sandboxes captainconfig
 		return nil, err
 	}
 	return map[string]any{
-		"schemaVersion": 2,
-		"source":        "captain prompt --schema",
-		"spec":          specMap,
-		"prompt":        promptMap,
-		"promptAction":  actionMap,
+		"schemaVersion":   2,
+		"source":          "captain prompt --schema",
+		"spec":            specMap,
+		"prompt":          promptMap,
+		"promptAction":    actionMap,
 		"runtimeAdapters": runtimes,
 		"sandboxes":       buildSandboxCatalog(sandboxes),
 		"runtimes":        enabledRuntimes(),
-		"models":        PromptModelCatalog(adapters),
-		"efforts":       enabledEffortNames(),
+		"models":          PromptModelCatalog(adapters),
+		"efforts":         enabledEffortNames(),
 		"examples": map[string]any{
 			"spec": promptSchemaExampleSpec(),
 		},

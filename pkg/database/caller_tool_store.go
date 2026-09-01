@@ -86,7 +86,7 @@ func (db *DB) CreateCallerToolCredential(
 		ID: uuid.New(), SessionID: input.SessionID, PromptRunID: input.PromptRunID,
 		Provider: input.Provider, Mode: input.Mode,
 		SecretHash: append([]byte(nil), input.SecretHash...),
-		Policy: cloneToolPolicy(input.Policy), ExpiresAt: input.ExpiresAt,
+		Policy:     cloneToolPolicy(input.Policy), ExpiresAt: input.ExpiresAt,
 	}
 	if err := db.gorm.WithContext(ctx).Create(&record).Error; err != nil {
 		return nil, fmt.Errorf("create caller-tool credential: %w", err)
@@ -455,7 +455,7 @@ func callerToolCredentialFromRecord(record callerToolCredentialRecord) CallerToo
 		ID: record.ID, SessionID: record.SessionID, PromptRunID: record.PromptRunID,
 		Provider: record.Provider, Mode: record.Mode,
 		SecretHash: append([]byte(nil), record.SecretHash...),
-		Policy: cloneToolPolicy(record.Policy), ExpiresAt: record.ExpiresAt,
+		Policy:     cloneToolPolicy(record.Policy), ExpiresAt: record.ExpiresAt,
 		RevokedAt: record.RevokedAt, RevocationReason: optionalString(record.RevocationReason),
 		CreatedAt: record.CreatedAt,
 	}

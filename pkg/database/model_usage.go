@@ -106,11 +106,11 @@ func (db *DB) modelUsageInSchema(ctx context.Context, query ModelUsageQuery, sch
 		return ModelUsageTotals{}, false, fmt.Errorf("captain usage schema %q is missing captain_model_calls", schema)
 	}
 	statement := db.gorm.WithContext(ctx).
-		Table(schema + ".captain_model_calls AS calls").
+		Table(schema+".captain_model_calls AS calls").
 		Where("calls.created_at >= ?", query.Since)
 	if query.Sessions != nil {
 		statement = statement.
-			Joins("JOIN " + schema + ".captain_turns AS turns ON turns.id = calls.turn_id").
+			Joins("JOIN "+schema+".captain_turns AS turns ON turns.id = calls.turn_id").
 			Where("turns.session_id IN (?)", query.Sessions)
 	}
 	var usage ModelUsageTotals

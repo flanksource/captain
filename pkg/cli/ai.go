@@ -204,7 +204,7 @@ type AIPromptOptions struct {
 	// File is a positional .prompt template path rendered through pkg/ai/prompt.
 	// The frontmatter sets model + any ai.Request option; the body is the prompt.
 	File         string   `args:"true" help:"Path to a .prompt template to render"`
-	Prompt       string   `flag:"prompt" help:"Prompt text, or @file to load and render a .prompt template" short:"p"`
+	Prompt       string   `flag:"prompt" clicky:"cli-file-read" help:"Prompt text, or @file to load and render a .prompt template" short:"p"`
 	System       string   `flag:"system" help:"System prompt" short:"s"`
 	AppendSystem string   `flag:"append-system" help:"Append text to the default system prompt"`
 	Var          []string `flag:"var" help:"Template variable key=value (repeatable)" short:"V"`
@@ -662,7 +662,7 @@ type AITestResult struct {
 	Provider string `json:"provider" pretty:"label=Provider"`
 	Mode     string `json:"mode" pretty:"label=Mode"`
 	Status   string `json:"status" pretty:"label=Status"`
-	Latency string `json:"latency" pretty:"label=Latency"`
+	Latency  string `json:"latency" pretty:"label=Latency"`
 }
 
 func RunAITest(opts AITestOptions) (any, error) {

@@ -17,28 +17,28 @@ const TranscriptParserVersion = 4
 // history/sessions commands render, the viewer consumes, and the chat/live
 // surfaces project from.
 type Session struct {
-	ID                string          `json:"id"`
-	ProviderSessionID string          `json:"providerSessionId,omitempty"`
-	Revision          int64           `json:"revision"`
-	LifecycleStatus   string          `json:"lifecycleStatus,omitempty"`
-	ActivityState     string          `json:"activityState,omitempty"`
-	HealthState       string          `json:"healthState,omitempty"`
-	StateReason       string          `json:"stateReason,omitempty"`
-	Source            string          `json:"source,omitempty"` // "claude" | "codex"
-	Project           string          `json:"project,omitempty"`
-	CWD               string          `json:"cwd,omitempty"`
-	Slug              string          `json:"slug,omitempty"`
-	Title             string          `json:"title,omitempty"`
-	InitialPrompt     string          `json:"initialPrompt,omitempty"`
-	Version           string          `json:"version,omitempty"`
+	ID                string `json:"id"`
+	ProviderSessionID string `json:"providerSessionId,omitempty"`
+	Revision          int64  `json:"revision"`
+	LifecycleStatus   string `json:"lifecycleStatus,omitempty"`
+	ActivityState     string `json:"activityState,omitempty"`
+	HealthState       string `json:"healthState,omitempty"`
+	StateReason       string `json:"stateReason,omitempty"`
+	Source            string `json:"source,omitempty"` // "claude" | "codex"
+	Project           string `json:"project,omitempty"`
+	CWD               string `json:"cwd,omitempty"`
+	Slug              string `json:"slug,omitempty"`
+	Title             string `json:"title,omitempty"`
+	InitialPrompt     string `json:"initialPrompt,omitempty"`
+	Version           string `json:"version,omitempty"`
 	// Provider is the session's provider label (a family key for agent-backed
 	// sessions, or "captain"/"multi-model" for captain's own). ModelMode is the
 	// mechanism the latest model call ran on; ExecutionMode is the prompt RUN mode
 	// and is a different concept.
-	Provider          string          `json:"provider,omitempty"`
-	ModelMode         api.RuntimeMode `json:"modelMode,omitempty"`
-	ExecutionMode     api.RuntimeMode `json:"executionMode,omitempty"`
-	Model             string          `json:"model,omitempty"` // primary model
+	Provider      string          `json:"provider,omitempty"`
+	ModelMode     api.RuntimeMode `json:"modelMode,omitempty"`
+	ExecutionMode api.RuntimeMode `json:"executionMode,omitempty"`
+	Model         string          `json:"model,omitempty"` // primary model
 	// An identity, not an api.Model: Model.Provider is json:"-", so serializing the
 	// model would hide which runtime the session is bound to.
 	Runtime         *api.RuntimeIdentity `json:"runtime,omitempty"`
