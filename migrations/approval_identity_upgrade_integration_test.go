@@ -118,8 +118,8 @@ func seedLegacyToolApproval(ctx context.Context, db *sql.DB, modelCallCount int)
 		ids.modelCalls = append(ids.modelCalls, modelCallID)
 		_, err = db.ExecContext(ctx, `
 			INSERT INTO captain_model_calls (
-				id, turn_id, prompt_run_id, call_index, model, backend, status, started_at
-			) VALUES ($1, $2, $3, $4, 'gemini', 'google', 'running', now())
+				id, turn_id, prompt_run_id, call_index, model, provider, mode, status, started_at
+			) VALUES ($1, $2, $3, $4, 'gemini', 'google', 'api', 'running', now())
 		`, modelCallID, ids.turn, ids.promptRun, i)
 		Expect(err).NotTo(HaveOccurred())
 	}
@@ -127,8 +127,8 @@ func seedLegacyToolApproval(ctx context.Context, db *sql.DB, modelCallCount int)
 	credentialID := uuid.New()
 	_, err = db.ExecContext(ctx, `
 		INSERT INTO captain_session_mcp_credentials (
-			id, session_id, prompt_run_id, backend, secret_hash, policy, expires_at
-		) VALUES ($1, $2, $3, 'google', $4, '{"accounts_edit":"ask"}', $5)
+			id, session_id, prompt_run_id, provider, mode, secret_hash, policy, expires_at
+		) VALUES ($1, $2, $3, 'google', 'api', $4, '{"accounts_edit":"ask"}', $5)
 	`, credentialID, ids.session, ids.promptRun, []byte(strings.Repeat("a", 32)), time.Now().Add(time.Hour))
 	Expect(err).NotTo(HaveOccurred())
 	_, err = db.ExecContext(ctx, `
