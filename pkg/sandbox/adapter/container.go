@@ -38,9 +38,9 @@ func Container(cfg api.SandboxConfig) (api.Sandbox, error) {
 	return &containerSandbox{options: cfg.Options}, nil
 }
 
-func init() { api.RegisterSandbox(api.SandboxContainer, Container) }
+func init() { api.RegisterSandbox(api.SandboxDocker, Container) }
 
-func (c *containerSandbox) Kind() api.SandboxKind { return api.SandboxContainer }
+func (c *containerSandbox) Kind() api.SandboxKind { return api.SandboxDocker }
 
 func (c *containerSandbox) Prepare(_ context.Context, spec *api.Spec) (*api.SandboxSession, error) {
 	c.cwd = spec.Cwd()

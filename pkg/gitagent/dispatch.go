@@ -24,10 +24,17 @@ type TaskPayload struct {
 	Prompt string `json:"prompt"`
 	System string `json:"system,omitempty"`
 	Model  string `json:"model,omitempty"`
-	// Backend and Effort record the runtime the supervisor resolved, so the
-	// agent does not re-resolve the model against its own defaults.
-	Backend string     `json:"backend,omitempty"`
-	Effort  api.Effort `json:"effort,omitempty"`
+	// Mode, Provider and Effort record the runtime the supervisor resolved, so
+	// the agent does not re-resolve the model against its own defaults. Mode is
+	// the mechanism (api|agent|cli|cmux); Provider is derived from the model and
+	// carried only so the agent need not re-derive it.
+	//
+	// This is an on-disk cross-process contract: a task.json written by an older
+	// supervisor carries `backend` instead and is rejected by the runner rather
+	// than silently run on a different runtime.
+	Mode     api.RuntimeMode `json:"mode,omitempty"`
+	Provider string          `json:"provider,omitempty"`
+	Effort   api.Effort      `json:"effort,omitempty"`
 	// Timeout is the supervisor's effective deadline. The relocated runner
 	// must not fall back to the shorter local model-call default.
 	Timeout string `json:"timeout,omitempty"`

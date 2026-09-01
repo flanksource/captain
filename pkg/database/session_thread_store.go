@@ -22,7 +22,8 @@ type SessionTurn struct {
 	StartedAt        *time.Time `gorm:"column:started_at" json:"startedAt,omitempty"`
 	EndedAt          *time.Time `gorm:"column:ended_at" json:"endedAt,omitempty"`
 	Model            *string    `gorm:"column:model" json:"model,omitempty"`
-	Backend          *string    `gorm:"column:backend" json:"backend,omitempty"`
+	ModelProvider    *string    `gorm:"column:model_provider" json:"modelProvider,omitempty"`
+	ModelMode        *string    `gorm:"column:model_mode" json:"modelMode,omitempty"`
 	Effort           *string    `gorm:"column:effort" json:"effort,omitempty"`
 	ModelCallCount   int64      `gorm:"column:model_call_count" json:"modelCallCount"`
 	InputTokens      int64      `gorm:"column:input_tokens" json:"inputTokens"`
@@ -48,39 +49,41 @@ func (SessionTurn) TableName() string { return "captain_session_turns" }
 
 // SessionAgent is one root or child session in a provider thread.
 type SessionAgent struct {
-	ID               uuid.UUID  `gorm:"column:id" json:"id"`
-	SessionID        uuid.UUID  `gorm:"column:session_id" json:"sessionId"`
-	ParentSessionID  *uuid.UUID `gorm:"column:parent_session_id" json:"parentSessionId,omitempty"`
-	RootSessionID    *uuid.UUID `gorm:"column:root_session_id" json:"rootSessionId,omitempty"`
-	IsRoot           bool       `gorm:"column:is_root" json:"isRoot"`
-	AgentType        *string    `gorm:"column:agent_type" json:"agentType,omitempty"`
-	Description      *string    `gorm:"column:description" json:"description,omitempty"`
-	HistoryFile      *string    `gorm:"column:history_file" json:"historyFile,omitempty"`
-	Source           string     `gorm:"column:source" json:"source"`
-	Provider         string     `gorm:"column:provider" json:"provider,omitempty"`
-	LifecycleStatus  string     `gorm:"column:lifecycle_status" json:"lifecycleStatus"`
-	ActivityState    string     `gorm:"column:activity_state" json:"activityState"`
-	HealthState      string     `gorm:"column:health_state" json:"healthState"`
-	StartedAt        *time.Time `gorm:"column:started_at" json:"startedAt,omitempty"`
-	EndedAt          *time.Time `gorm:"column:ended_at" json:"endedAt,omitempty"`
-	ChildCount       int64      `gorm:"column:child_count" json:"childCount"`
-	InputTokens      int64      `gorm:"column:input_tokens" json:"inputTokens"`
-	OutputTokens     int64      `gorm:"column:output_tokens" json:"outputTokens"`
-	ReasoningTokens  int64      `gorm:"column:reasoning_tokens" json:"reasoningTokens"`
-	CacheReadTokens  int64      `gorm:"column:cache_read_tokens" json:"cacheReadTokens"`
-	CacheWriteTokens int64      `gorm:"column:cache_write_tokens" json:"cacheWriteTokens"`
-	TotalTokens      int64      `gorm:"column:total_tokens" json:"totalTokens"`
-	CostUSD          float64    `gorm:"column:cost_usd" json:"costUsd"`
+	ID               uuid.UUID             `gorm:"column:id" json:"id"`
+	SessionID        uuid.UUID             `gorm:"column:session_id" json:"sessionId"`
+	ParentSessionID  *uuid.UUID            `gorm:"column:parent_session_id" json:"parentSessionId,omitempty"`
+	ParentRelation   SessionParentRelation `gorm:"column:parent_relation" json:"parentRelation,omitempty"`
+	RootSessionID    *uuid.UUID            `gorm:"column:root_session_id" json:"rootSessionId,omitempty"`
+	IsRoot           bool                  `gorm:"column:is_root" json:"isRoot"`
+	AgentType        *string               `gorm:"column:agent_type" json:"agentType,omitempty"`
+	Description      *string               `gorm:"column:description" json:"description,omitempty"`
+	HistoryFile      *string               `gorm:"column:history_file" json:"historyFile,omitempty"`
+	Source           string                `gorm:"column:source" json:"source"`
+	Provider         string                `gorm:"column:provider" json:"provider,omitempty"`
+	LifecycleStatus  string                `gorm:"column:lifecycle_status" json:"lifecycleStatus"`
+	ActivityState    string                `gorm:"column:activity_state" json:"activityState"`
+	HealthState      string                `gorm:"column:health_state" json:"healthState"`
+	StartedAt        *time.Time            `gorm:"column:started_at" json:"startedAt,omitempty"`
+	EndedAt          *time.Time            `gorm:"column:ended_at" json:"endedAt,omitempty"`
+	ChildCount       int64                 `gorm:"column:child_count" json:"childCount"`
+	InputTokens      int64                 `gorm:"column:input_tokens" json:"inputTokens"`
+	OutputTokens     int64                 `gorm:"column:output_tokens" json:"outputTokens"`
+	ReasoningTokens  int64                 `gorm:"column:reasoning_tokens" json:"reasoningTokens"`
+	CacheReadTokens  int64                 `gorm:"column:cache_read_tokens" json:"cacheReadTokens"`
+	CacheWriteTokens int64                 `gorm:"column:cache_write_tokens" json:"cacheWriteTokens"`
+	TotalTokens      int64                 `gorm:"column:total_tokens" json:"totalTokens"`
+	CostUSD          float64               `gorm:"column:cost_usd" json:"costUsd"`
 }
 
 func (SessionAgent) TableName() string { return "captain_session_agents" }
 
-// SessionCost groups actual model calls by model/backend/effort for one agent.
+// SessionCost groups actual model calls by model/provider/mode/effort for one agent.
 type SessionCost struct {
 	ID               string     `gorm:"column:id" json:"id"`
 	SessionID        uuid.UUID  `gorm:"column:session_id" json:"sessionId"`
 	Model            string     `gorm:"column:model" json:"model"`
-	Backend          string     `gorm:"column:backend" json:"backend"`
+	Provider         *string    `gorm:"column:provider" json:"provider,omitempty"`
+	ModelMode        *string    `gorm:"column:model_mode" json:"modelMode,omitempty"`
 	Effort           *string    `gorm:"column:effort" json:"effort,omitempty"`
 	Currency         string     `gorm:"column:currency" json:"currency"`
 	ModelCallCount   int64      `gorm:"column:model_call_count" json:"modelCallCount"`
@@ -108,7 +111,7 @@ func (db *DB) ListThreadSessionOverviews(ctx context.Context, rootID uuid.UUID) 
 		return nil, fmt.Errorf("%w: thread root ID is required", ErrInvalidSession)
 	}
 	var rows []SessionOverview
-	if err := db.gorm.WithContext(ctx).Where("id = ? OR root_session_id = ?", rootID, rootID).
+	if err := db.gorm.WithContext(ctx).Where(threadSessionScopePredicate, rootID, rootID, rootID).
 		Order("parent_session_id NULLS FIRST, COALESCE(last_activity_at, started_at, created_at), id").Find(&rows).Error; err != nil {
 		return nil, fmt.Errorf("list Captain thread sessions: %w", err)
 	}
@@ -116,18 +119,37 @@ func (db *DB) ListThreadSessionOverviews(ctx context.Context, rootID uuid.UUID) 
 }
 
 // threadScopePredicate restricts a thread-scoped table or view to one root
-// session plus its subagents. `= ANY (ARRAY(...))` rather than `IN (...)`: the
+// session plus its agent descendants. Transcript-owned branches mirror provider
+// history for recovery and must not be counted a second time. `= ANY
+// (ARRAY(...))` rather than `IN (...)`: the
 // subquery form plans as a semi-join, which Postgres can only apply as a filter
 // above the join, forcing a full scan of captain_messages. The array form is an
 // InitPlan producing a run-time constant, so both OR arms stay index conditions.
-const threadScopePredicate = "session_id = ? OR session_id = ANY (ARRAY(SELECT id FROM captain_sessions WHERE root_session_id = ?))"
+const threadDescendantIDs = `ARRAY(
+	WITH RECURSIVE scoped_sessions AS (
+		SELECT id
+		FROM captain_sessions
+		WHERE root_session_id = ?
+		  AND (parent_session_id = ? OR parent_session_id IS NULL)
+		  AND parent_relation IS DISTINCT FROM 'transcript'
+		UNION ALL
+		SELECT child.id
+		FROM captain_sessions child
+		JOIN scoped_sessions parent ON child.parent_session_id = parent.id
+		WHERE child.parent_relation IS DISTINCT FROM 'transcript'
+	)
+	SELECT id FROM scoped_sessions
+)`
+
+const threadScopePredicate = "session_id = ? OR session_id = ANY (" + threadDescendantIDs + ")"
+const threadSessionScopePredicate = "id = ? OR id = ANY (" + threadDescendantIDs + ")"
 
 func (db *DB) ListThreadTranscriptMessages(ctx context.Context, rootID uuid.UUID) ([]TranscriptMessage, error) {
 	if rootID == uuid.Nil {
 		return nil, fmt.Errorf("%w: thread root ID is required", ErrInvalidSession)
 	}
 	var rows []TranscriptMessage
-	if err := db.gorm.WithContext(ctx).Where(threadScopePredicate, rootID, rootID).
+	if err := db.gorm.WithContext(ctx).Where(threadScopePredicate, rootID, rootID, rootID).
 		Order("occurred_at NULLS LAST, session_id, sequence").Find(&rows).Error; err != nil {
 		return nil, fmt.Errorf("list Captain thread transcript: %w", err)
 	}
@@ -152,7 +174,7 @@ func (db *DB) ListThreadAgents(ctx context.Context, rootID uuid.UUID) ([]Session
 
 func (db *DB) ListThreadCosts(ctx context.Context, rootID uuid.UUID) ([]SessionCost, error) {
 	var rows []SessionCost
-	if err := db.threadQuery(ctx, rootID, &SessionCost{}).Order("first_call_at NULLS LAST, model, backend").Find(&rows).Error; err != nil {
+	if err := db.threadQuery(ctx, rootID, &SessionCost{}).Order("first_call_at NULLS LAST, model, provider, mode").Find(&rows).Error; err != nil {
 		return nil, fmt.Errorf("list Captain thread costs: %w", err)
 	}
 	return rows, nil
@@ -163,5 +185,5 @@ func (db *DB) threadQuery(ctx context.Context, rootID uuid.UUID, model any) *gor
 	if rootID == uuid.Nil {
 		return query.Where("1 = 0")
 	}
-	return query.Where(threadScopePredicate, rootID, rootID)
+	return query.Where(threadScopePredicate, rootID, rootID, rootID)
 }

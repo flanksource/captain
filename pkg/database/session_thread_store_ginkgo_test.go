@@ -12,11 +12,13 @@ import (
 
 var _ = Describe("Thread-scoped session queries", Ordered, func() {
 	var (
-		db      *DB
-		rootID  = uuid.MustParse("00000000-0000-0000-0000-0000000003a1")
-		childID = uuid.MustParse("00000000-0000-0000-0000-0000000003a2")
-		soloID  = uuid.MustParse("00000000-0000-0000-0000-0000000003b1")
-		otherID = uuid.MustParse("00000000-0000-0000-0000-0000000003c1")
+		db                *DB
+		rootID            = uuid.MustParse("00000000-0000-0000-0000-0000000003a1")
+		childID           = uuid.MustParse("00000000-0000-0000-0000-0000000003a2")
+		transcriptID      = uuid.MustParse("00000000-0000-0000-0000-0000000003a3")
+		transcriptChildID = uuid.MustParse("00000000-0000-0000-0000-0000000003a4")
+		soloID            = uuid.MustParse("00000000-0000-0000-0000-0000000003b1")
+		otherID           = uuid.MustParse("00000000-0000-0000-0000-0000000003c1")
 	)
 
 	BeforeAll(func(ctx SpecContext) {
@@ -27,16 +29,21 @@ var _ = Describe("Thread-scoped session queries", Ordered, func() {
 		DeferCleanup(func() { Expect(db.Close()).To(Succeed()) })
 
 		for _, session := range []struct {
-			id     uuid.UUID
-			rootID *uuid.UUID
+			id       uuid.UUID
+			rootID   *uuid.UUID
+			parentID *uuid.UUID
+			relation SessionParentRelation
 		}{
 			{id: rootID},
-			{id: childID, rootID: &rootID},
+			{id: childID, rootID: &rootID, parentID: &rootID, relation: SessionParentRelationAgent},
+			{id: transcriptID, rootID: &rootID, parentID: &rootID, relation: SessionParentRelationTranscript},
+			{id: transcriptChildID, rootID: &rootID, parentID: &transcriptID, relation: SessionParentRelationAgent},
 			{id: soloID},
 			{id: otherID},
 		} {
 			_, err = db.CreateOrGetSession(ctx, CreateSessionInput{
-				ID: session.id, RootSessionID: session.rootID, Source: "codex",
+				ID: session.id, RootSessionID: session.rootID, ParentSessionID: session.parentID,
+				ParentRelation: session.relation, Source: "codex",
 				Provider: "openai", HostID: "thread-test",
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -51,13 +58,15 @@ var _ = Describe("Thread-scoped session queries", Ordered, func() {
 			  (?, 1, 'assistant', '[]'::jsonb, NULL),
 			  (?, 2, 'assistant', '[]'::jsonb, '2026-07-16 10:02:00+00'),
 			  (?, 0, 'user',      '[]'::jsonb, '2026-07-16 10:01:00+00'),
+			  (?, 0, 'assistant', '[]'::jsonb, '2026-07-16 10:01:10+00'),
+			  (?, 0, 'assistant', '[]'::jsonb, '2026-07-16 10:01:20+00'),
 			  (?, 0, 'user',      '[]'::jsonb, '2026-07-16 10:00:30+00'),
 			  (?, 0, 'user',      '[]'::jsonb, '2026-07-16 10:00:40+00')`,
-			rootID, rootID, rootID, childID, soloID, otherID,
+			rootID, rootID, rootID, childID, transcriptID, transcriptChildID, soloID, otherID,
 		).Error).NotTo(HaveOccurred())
 	})
 
-	It("returns the root and its subagents in one chronological transcript", func(ctx SpecContext) {
+	It("returns the root and agent children without duplicating transcript-owned messages", func(ctx SpecContext) {
 		rows, err := db.ListThreadTranscriptMessages(ctx, rootID)
 
 		Expect(err).NotTo(HaveOccurred())
@@ -101,7 +110,7 @@ func explainThreadTranscript(db *DB, rootID uuid.UUID) string {
 		rows, err := tx.Raw(
 			"EXPLAIN SELECT * FROM captain_session_transcript WHERE "+threadScopePredicate+
 				" ORDER BY occurred_at NULLS LAST, session_id, sequence",
-			rootID, rootID,
+			rootID, rootID, rootID,
 		).Rows()
 		if err != nil {
 			return err

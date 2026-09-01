@@ -73,7 +73,8 @@ type modelCallRecord struct {
 	ProviderCallID      *string    `gorm:"column:provider_call_id"`
 	CallIndex           int        `gorm:"column:call_index"`
 	Model               string     `gorm:"column:model"`
-	Backend             string     `gorm:"column:backend"`
+	Provider            *string    `gorm:"column:provider"`
+	Mode                *string    `gorm:"column:mode"`
 	Effort              *string    `gorm:"column:effort"`
 	Status              string     `gorm:"column:status"`
 	StopReason          *string    `gorm:"column:stop_reason"`
@@ -148,8 +149,12 @@ type IngestSourceInput struct {
 }
 
 type IngestModelCall struct {
-	Model               string
-	Backend             string
+	Model string
+	// Provider is the family that served the call. Mode is the mechanism, and is
+	// empty on ingest paths that only observe a transcript source: a transcript
+	// says which agent wrote it, never which of that agent's modes ran.
+	Provider            string
+	Mode                string
 	Effort              string
 	StopReason          string
 	InputTokens         int64
@@ -498,16 +503,13 @@ func turnCallRecord(turnID uuid.UUID, call IngestModelCall) modelCallRecord {
 	if model == "" {
 		model = "unknown"
 	}
-	backend := strings.TrimSpace(call.Backend)
-	if backend == "" {
-		backend = "unknown"
-	}
 	currency := strings.ToUpper(strings.TrimSpace(call.Currency))
 	if currency == "" {
 		currency = "USD"
 	}
 	return modelCallRecord{
-		ID: uuid.New(), TurnID: turnID, CallIndex: 0, Model: model, Backend: backend,
+		ID: uuid.New(), TurnID: turnID, CallIndex: 0, Model: model,
+		Provider: nullableTrimmed(call.Provider), Mode: nullableTrimmed(call.Mode),
 		Effort: nullableTrimmed(call.Effort), Status: "succeeded", StopReason: nullableTrimmed(call.StopReason),
 		InputTokens: call.InputTokens, OutputTokens: call.OutputTokens, ReasoningTokens: call.ReasoningTokens,
 		CacheReadTokens: call.CacheReadTokens, CacheWriteTokens: call.CacheWriteTokens,

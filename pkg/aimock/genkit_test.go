@@ -38,7 +38,7 @@ func mockedProvider(t *testing.T, model api.Model, apiURL string) api.StreamingP
 	p, err := api.NewProvider(api.Config{Model: model, APIKey: aimock.DummyKey, APIURL: apiURL})
 	require.NoError(t, err)
 	streaming, ok := p.(api.StreamingProvider)
-	require.True(t, ok, "%s provider must stream", model.Backend)
+	require.True(t, ok, "%s provider must stream", model.Name)
 	return streaming
 }
 
@@ -89,7 +89,7 @@ func TestAnthropicBackendHonoursAPIURL(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(srv.Close)
 
-	model := api.Model{Name: "claude-sonnet-4-5", Backend: api.BackendAnthropic}
+	model := api.Model{Name: "claude-sonnet-4-5", Mode: api.ModeAPI}
 	events, err := mockedProvider(t, model, srv.APIURL()).
 		ExecuteStream(context.Background(), api.Spec{Prompt: api.Prompt{User: capitalPrompt}})
 	require.NoError(t, err)
@@ -112,7 +112,7 @@ func TestOpenAIBackendHonoursAPIURL(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(srv.Close)
 
-	model := api.Model{Name: "gpt-5", Backend: api.BackendOpenAI}
+	model := api.Model{Name: "gpt-5", Mode: api.ModeAPI}
 	events, err := mockedProvider(t, model, srv.APIURL()).
 		ExecuteStream(context.Background(), api.Spec{Prompt: api.Prompt{User: capitalPrompt}})
 	require.NoError(t, err)
@@ -129,7 +129,7 @@ func TestOpenAIBackendHonoursAPIURL(t *testing.T) {
 // API — genkit's googlegenai plugin exposes no endpoint override.
 func TestGeminiBackendRejectsAPIURL(t *testing.T) {
 	_, err := api.NewProvider(api.Config{
-		Model:  api.Model{Name: "gemini-2.5-pro", Backend: api.BackendGemini},
+		Model:  api.Model{Name: "gemini-2.5-pro", Mode: api.ModeAPI},
 		APIKey: aimock.DummyKey,
 		APIURL: "http://127.0.0.1:9999",
 	})

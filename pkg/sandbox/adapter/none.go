@@ -13,18 +13,27 @@ import (
 // noneSandbox is the identity adapter: the run executes as a bare child process
 // on the host, exactly as every run did before adapters existed. It declares no
 // capabilities, so the exec seam falls through to an unwrapped command.
-type noneSandbox struct{}
+type identitySandbox struct{ kind api.SandboxKind }
 
 // None is the SandboxFactory for the identity adapter, exported so tests that
 // stub the "none" registration can restore it.
-func None(api.SandboxConfig) (api.Sandbox, error) { return noneSandbox{}, nil }
+func Off(api.SandboxConfig) (api.Sandbox, error) {
+	return identitySandbox{kind: api.SandboxOff}, nil
+}
 
-func init() { api.RegisterSandbox(api.SandboxNone, None) }
+func Native(api.SandboxConfig) (api.Sandbox, error) {
+	return identitySandbox{kind: api.SandboxNative}, nil
+}
 
-func (noneSandbox) Kind() api.SandboxKind { return api.SandboxNone }
+func init() {
+	api.RegisterSandbox(api.SandboxOff, Off)
+	api.RegisterSandbox(api.SandboxNative, Native)
+}
 
-func (noneSandbox) Prepare(context.Context, *api.Spec) (*api.SandboxSession, error) {
+func (s identitySandbox) Kind() api.SandboxKind { return s.kind }
+
+func (identitySandbox) Prepare(context.Context, *api.Spec) (*api.SandboxSession, error) {
 	return &api.SandboxSession{}, nil
 }
 
-func (noneSandbox) Close() error { return nil }
+func (identitySandbox) Close() error { return nil }

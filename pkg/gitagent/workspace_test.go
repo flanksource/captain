@@ -9,12 +9,17 @@ import (
 )
 
 func TestTaskRuntimeIdentityUsesModelAndEffort(t *testing.T) {
-	got := taskRuntimeIdentity([]byte(`{"model":"gpt-5.6-sol","backend":"codex-agent","effort":"high"}`))
+	got := taskRuntimeIdentity([]byte(`{"model":"gpt-5.6-sol","provider":"openai","mode":"agent","effort":"high"}`))
 	if got != "agent:gpt-5.6-sol:high" {
 		t.Fatalf("identity = %q", got)
 	}
+	// A payload naming no mode names no runtime, so the log identity falls back to
+	// the generic agent name rather than half-labelling the run.
 	if got := taskRuntimeIdentity([]byte(`{}`)); got != "captain-agent" {
-		t.Fatalf("legacy identity = %q", got)
+		t.Fatalf("modeless identity = %q", got)
+	}
+	if got := taskRuntimeIdentity([]byte(`{"model":"gpt-5.6-sol"}`)); got != "captain-agent" {
+		t.Fatalf("modeless identity = %q", got)
 	}
 }
 

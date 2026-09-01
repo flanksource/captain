@@ -42,9 +42,9 @@ var _ = Describe("Session list pages", func() {
 		).Error).NotTo(HaveOccurred())
 		Expect(db.Gorm().Exec(`
 			INSERT INTO captain_model_calls
-			  (turn_id, call_index, model, backend, input_tokens, output_tokens, context_tokens, context_window_tokens)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			turnID, 0, "gpt-5", "codex", 10, 5, 25, 100,
+			  (turn_id, call_index, model, provider, mode, input_tokens, output_tokens, context_tokens, context_window_tokens)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			turnID, 0, "gpt-5", "openai", "cli", 10, 5, 25, 100,
 		).Error).NotTo(HaveOccurred())
 		Expect(db.Gorm().Exec(
 			"INSERT INTO captain_messages (session_id, sequence, role, parts) VALUES (?, ?, ?, ?::jsonb)",

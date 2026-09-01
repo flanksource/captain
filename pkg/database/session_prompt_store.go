@@ -52,6 +52,13 @@ const (
 	SessionHealthZombie  SessionHealthState = "zombie"
 )
 
+type SessionParentRelation string
+
+const (
+	SessionParentRelationAgent      SessionParentRelation = "agent"
+	SessionParentRelationTranscript SessionParentRelation = "transcript"
+)
+
 // Session is Captain's authoritative provider-session identity.
 type Session struct {
 	ID                uuid.UUID              `json:"id"`
@@ -60,6 +67,7 @@ type Session struct {
 	Provider          string                 `json:"provider"`
 	HostID            string                 `json:"hostId"`
 	ParentSessionID   *uuid.UUID             `json:"parentSessionId,omitempty"`
+	ParentRelation    SessionParentRelation  `json:"parentRelation,omitempty"`
 	RootSessionID     *uuid.UUID             `json:"rootSessionId,omitempty"`
 	Path              string                 `json:"path,omitempty"`
 	Project           string                 `json:"project,omitempty"`
@@ -90,6 +98,7 @@ type CreateSessionInput struct {
 	Provider          string
 	HostID            string
 	ParentSessionID   *uuid.UUID
+	ParentRelation    SessionParentRelation
 	RootSessionID     *uuid.UUID
 	Path              string
 	Project           string
@@ -110,6 +119,7 @@ type sessionRecord struct {
 	Provider          string                 `gorm:"column:provider"`
 	HostID            string                 `gorm:"column:host_id"`
 	ParentSessionID   *uuid.UUID             `gorm:"column:parent_session_id;type:uuid"`
+	ParentRelation    *SessionParentRelation `gorm:"column:parent_relation"`
 	RootSessionID     *uuid.UUID             `gorm:"column:root_session_id;type:uuid"`
 	Path              *string                `gorm:"column:path"`
 	Project           *string                `gorm:"column:project"`
@@ -141,7 +151,8 @@ func (sessionRecord) TableName() string { return "captain_sessions" }
 //
 // provider is deliberately not part of the lookup, and matches
 // captain_sessions_provider_identity_key. It is a label three writers spell
-// differently for one Codex rollout (`openai`, `codex-agent`, or empty), so matching
+// differently for one Codex rollout (`openai`, the old composite `codex-agent`, or
+// empty), so matching
 // on it meant none of them ever found the others and each inserted its own row
 // for the same transcript.
 func (db *DB) findSessionByIdentity(ctx context.Context, record sessionRecord) (*sessionRecord, error) {
@@ -195,7 +206,16 @@ func (db *DB) CreateOrGetSession(ctx context.Context, input CreateSessionInput) 
 			return nil, fmt.Errorf("%w: root session %s does not match parent aggregate root %s", ErrSessionConflict, *input.RootSessionID, derivedRoot)
 		}
 		input.RootSessionID = &derivedRoot
+		if input.ParentRelation == "" {
+			input.ParentRelation = SessionParentRelationAgent
+		}
+		if input.ParentRelation != SessionParentRelationAgent && input.ParentRelation != SessionParentRelationTranscript {
+			return nil, fmt.Errorf("%w: unknown parent relation %q", ErrInvalidSession, input.ParentRelation)
+		}
 	} else if input.RootSessionID != nil {
+		if input.ParentRelation != "" {
+			return nil, fmt.Errorf("%w: parent relation requires a parent session", ErrInvalidSession)
+		}
 		if *input.RootSessionID == uuid.Nil {
 			return nil, fmt.Errorf("%w: root session ID cannot be empty", ErrInvalidSession)
 		}
@@ -216,7 +236,7 @@ func (db *DB) CreateOrGetSession(ctx context.Context, input CreateSessionInput) 
 	now := time.Now().UTC()
 	record := sessionRecord{
 		ID: input.ID, ProviderSessionID: nullableTrimmed(input.ProviderSessionID), Source: input.Source,
-		Provider: input.Provider, HostID: input.HostID, ParentSessionID: input.ParentSessionID,
+		Provider: input.Provider, HostID: input.HostID, ParentSessionID: input.ParentSessionID, ParentRelation: nullableParentRelation(input.ParentRelation),
 		RootSessionID: input.RootSessionID, Path: nullableTrimmed(input.Path), Project: nullableTrimmed(input.Project),
 		CWD: nullableTrimmed(normalizeCWD(input.CWD)), Title: nullableTrimmed(input.Title), InitialPrompt: nullableTrimmed(input.InitialPrompt),
 		Slug: nullableTrimmed(input.Slug), AgentType: nullableTrimmed(input.AgentType), Description: nullableTrimmed(input.Description),
@@ -510,7 +530,7 @@ func filterSessionIdentity(query *gorm.DB, source, provider, hostID string) *gor
 func sessionFromRecord(record sessionRecord) Session {
 	return Session{
 		ID: record.ID, ProviderSessionID: optionalString(record.ProviderSessionID), Source: record.Source,
-		Provider: record.Provider, HostID: record.HostID, ParentSessionID: record.ParentSessionID,
+		Provider: record.Provider, HostID: record.HostID, ParentSessionID: record.ParentSessionID, ParentRelation: optionalParentRelation(record.ParentRelation),
 		RootSessionID: record.RootSessionID, Path: optionalString(record.Path), Project: optionalString(record.Project),
 		CWD: optionalString(record.CWD), Title: optionalString(record.Title), InitialPrompt: optionalString(record.InitialPrompt),
 		Slug: optionalString(record.Slug), AgentType: optionalString(record.AgentType), Description: optionalString(record.Description),

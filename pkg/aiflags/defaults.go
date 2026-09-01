@@ -11,7 +11,7 @@ import (
 // ProviderDefaultView is one provider's effective saved defaults, with the legacy
 // flat config projected in and validated.
 type ProviderDefaultView struct {
-	Agent      string `json:"agent"`
+	Mode       string `json:"mode"`
 	Model      string `json:"model"`
 	Effort     string `json:"effort"`
 	Configured bool   `json:"configured"`
@@ -35,40 +35,30 @@ func LoadDefaults() (captainconfig.AIDefaults, error) {
 }
 
 // EffectiveDefaults resolves one provider's saved defaults: the per-provider block
-// back-filled from the legacy flat keys, with the agent defaulting to the provider
-// itself and the model to that agent's built-in default.
-func EffectiveDefaults(saved captainconfig.AIDefaults, provider registry.Backend) (ProviderDefaultView, error) {
-	if provider.Provider() != provider {
-		return ProviderDefaultView{}, fmt.Errorf("invalid provider %q", provider)
+// back-filled from the legacy flat keys, with the mode defaulting to api and the
+// model to that runtime's built-in default.
+func EffectiveDefaults(saved captainconfig.AIDefaults, provider *registry.Provider) (ProviderDefaultView, error) {
+	if provider == nil {
+		return ProviderDefaultView{}, fmt.Errorf("provider is required")
 	}
-	configured, exists := saved.Providers[string(provider)]
-	legacy := saved.Provider(string(provider))
-	if configured.Agent == "" {
-		configured.Agent = legacy.Agent
+	configured, exists := saved.Providers[provider.Name]
+	mode := registry.RuntimeMode(strings.TrimSpace(configured.Mode))
+	if mode == "" {
+		mode = provider.DefaultMode
 	}
-	if configured.Model == "" {
-		configured.Model = legacy.Model
-	}
-	if configured.ReasoningEffort == "" {
-		configured.ReasoningEffort = legacy.ReasoningEffort
-	}
-	agent := registry.Backend(strings.TrimSpace(configured.Agent))
-	if agent == "" {
-		agent = provider
-	}
-	if agent.Provider() != provider {
-		return ProviderDefaultView{}, fmt.Errorf("agent %q does not belong to provider %q", agent, provider)
+	if _, err := provider.RequireMode(mode); err != nil {
+		return ProviderDefaultView{}, err
 	}
 	model := strings.TrimSpace(configured.Model)
 	if model == "" {
-		model = DefaultModelFor(agent)
+		model = DefaultModelFor(provider, mode)
 	}
 	effort := registry.Effort(strings.TrimSpace(configured.ReasoningEffort))
 	if err := effort.Validate(); err != nil {
 		return ProviderDefaultView{}, err
 	}
 	return ProviderDefaultView{
-		Agent: string(agent), Model: model, Effort: string(effort), Configured: exists,
+		Mode: string(mode), Model: model, Effort: string(effort), Configured: exists,
 	}, nil
 }
 
@@ -101,29 +91,27 @@ func ApplyDefaults(model registry.Model, saved captainconfig.AIDefaults) (regist
 }
 
 func applyCandidateDefaults(model registry.Model, saved captainconfig.AIDefaults, allowActive bool) (registry.Model, error) {
-	provider := model.Backend.Provider()
-	if provider == "" && strings.TrimSpace(model.Name) != "" {
-		backend, err := registry.InferBackend(model.Name)
+	provider := model.Provider
+	if provider == nil && strings.TrimSpace(model.Name) != "" {
+		p, err := registry.ProviderFor(model.Name)
 		if err != nil {
 			return registry.Model{}, err
 		}
-		provider = backend.Provider()
+		provider = p
 	}
-	if provider == "" && allowActive {
-		provider = registry.Backend(saved.ActiveProvider())
+	if provider == nil && allowActive {
+		provider, _ = registry.ProviderByName(saved.ActiveProvider())
 	}
-	if provider == "" {
+	if provider == nil {
 		return registry.Model{}, fmt.Errorf("provider cannot be resolved for model %q", model.Name)
 	}
 	defaults, err := EffectiveDefaults(saved, provider)
 	if err != nil {
 		return registry.Model{}, err
 	}
-	// An explicit --mode owns the mechanism. Taking the saved agent here would make
-	// `--mode cli` against a saved claude-agent default fail as "mode cli
-	// contradicts backend claude-agent" — a contradiction the user never wrote.
-	if model.Backend == "" && model.Mode == "" {
-		model.Backend = registry.Backend(defaults.Agent)
+	// An explicit --mode owns the mechanism; the saved default only fills a gap.
+	if model.Mode == "" {
+		model.Mode = registry.RuntimeMode(defaults.Mode)
 	}
 	if strings.TrimSpace(model.Name) == "" {
 		model.Name = defaults.Model
@@ -143,22 +131,18 @@ func applyCandidateDefaults(model registry.Model, saved captainconfig.AIDefaults
 func AllProviderDefaults(saved captainconfig.AIDefaults) (map[string]ProviderDefaultView, error) {
 	out := make(map[string]ProviderDefaultView, len(registry.Providers()))
 	for _, p := range registry.Providers() {
-		provider, err := p.BackendFor(registry.ModeAPI)
+		defaults, err := EffectiveDefaults(saved, p)
 		if err != nil {
 			return nil, err
 		}
-		defaults, err := EffectiveDefaults(saved, provider)
-		if err != nil {
-			return nil, err
-		}
-		out[string(provider)] = defaults
+		out[p.Name] = defaults
 	}
 	return out, nil
 }
 
-// DefaultModelFor returns a hard-coded picker default per backend that seeds the
-// form. CLI/agent backends use exact provider model IDs from the catalog so the
-// seeded default is a selectable option. API backends have no "default" flag on
+// DefaultModelFor returns a hard-coded picker default per runtime that seeds the
+// form. Local transports use exact provider model IDs from the catalog so the
+// seeded default is a selectable option. The API mode has no "default" flag on
 // /v1/models, so we use the most-current id we expect each provider to keep
 // stable; the user can pick anything else.
 //
@@ -166,20 +150,27 @@ func AllProviderDefaults(saved captainconfig.AIDefaults) (map[string]ProviderDef
 // model": these are the values `captain configure` seeds and users have saved, and
 // deriving them would silently move every unconfigured user's default whenever the
 // catalog snapshot updates.
-func DefaultModelFor(b registry.Backend) string {
-	switch b {
-	case registry.BackendAnthropic:
+func DefaultModelFor(p *registry.Provider, mode registry.RuntimeMode) string {
+	if p == nil {
+		return ""
+	}
+	switch p.Name {
+	case registry.Anthropic.Name:
 		return "claude-sonnet-5"
-	case registry.BackendClaudeCLI, registry.BackendClaudeAgent, registry.BackendClaudeCmux:
-		return "claude-sonnet-5"
-	case registry.BackendOpenAI:
+	case registry.OpenAI.Name:
+		// The only provider whose local transports seed a different model than its
+		// API: codex names its own coding-tuned id.
+		if mode.Kind() == "cli" {
+			return "gpt-5.6-sol"
+		}
 		return "gpt-5.6"
-	case registry.BackendDeepSeek:
-		return "deepseek-reasoner"
-	case registry.BackendCodexCLI, registry.BackendCodexAgent, registry.BackendCodexCmux:
-		return "gpt-5.6-sol"
-	case registry.BackendGemini, registry.BackendGeminiCLI:
+	case registry.Google.Name:
 		return "gemini-3.5-flash"
+	case registry.DeepSeek.Name:
+		// The reasoning-tuned member of the current line. "deepseek-reasoner" was
+		// the previous generation's id and is no longer in the catalog, so it
+		// seeded a picker with a model the provider cannot run.
+		return "deepseek-v4-pro"
 	}
 	return ""
 }

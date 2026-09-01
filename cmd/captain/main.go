@@ -144,11 +144,11 @@ func newRootCommand() *cobra.Command {
 	// and probes nothing.
 	permissionsCmd := &cobra.Command{
 		Use:   "permissions",
-		Short: "Inspect what each backend can do with a permissions block",
+		Short: "Inspect what each runtime can do with a permissions block",
 	}
 	rootCmd.AddCommand(permissionsCmd)
 	clicky.AddNamedCommand("matrix", permissionsCmd, cli.PermissionsMatrixOptions{}, cli.RunPermissionsMatrix).Short =
-		"Print the declared permission capability matrix (settings × backends)"
+		"Print the declared permission capability matrix (settings × runtimes)"
 
 	sandboxCmd := &cobra.Command{
 		Use:   "sandbox",
@@ -270,7 +270,7 @@ func newRootCommand() *cobra.Command {
 
 	whoamiCmd := clicky.AddNamedCommand("whoami", rootCmd, cli.WhoamiOptions{}, cli.RunWhoami)
 	whoamiCmd.Short = "List agent adapters, auth methods, and available models"
-	whoamiCmd.Long = "Show every AI agent adapter (API providers and CLI agents), how each is authenticated (Captain vault, API-key env var, or CLI login), whether its CLI binary is installed, and the models each provider exposes via a live API call. Disabled models are hidden by default; pass --disabled=true to include them. Pass --models=false to skip the network probes, --backend to inspect a single adapter, or --no-cache to bypass the persisted model and pricing caches and re-query both live."
+	whoamiCmd.Long = "Show every AI agent adapter (API providers and CLI agents), how each is authenticated (Captain vault, API-key env var, or CLI login), whether its CLI binary is installed, and the models each provider exposes via a live API call. Disabled models are hidden by default; pass --disabled=true to include them. Pass --models=false to skip the network probes, --mode/--provider to inspect a single runtime, or --no-cache to bypass the persisted model and pricing caches and re-query both live."
 
 	configureCmd := clicky.AddNamedCommandWithContext("configure", rootCmd, cli.ConfigureOptions{}, cli.RunConfigure)
 	configureCmd.Use = "configure [provider]"

@@ -10,9 +10,13 @@ import (
 	"github.com/google/uuid"
 )
 
+// PromptRunRuntimeSelection is one recorded runtime selection: which model ran,
+// on which provider and mechanism. Mode here is the RUNTIME mode
+// (api|agent|cli|cmux) — distinct from PromptRunRuntime.Mode, which is the run
+// mode ("run"/"api"). The two were never the same concept and must not merge.
 type PromptRunRuntimeSelection struct {
 	Provider string `json:"provider,omitempty"`
-	Backend  string `json:"backend,omitempty"`
+	Mode     string `json:"mode,omitempty"`
 	Model    string `json:"model,omitempty"`
 	Effort   string `json:"effort,omitempty"`
 }
@@ -42,7 +46,8 @@ type PromptRunOverview struct {
 	Requested         PromptRunRuntimeSelection `json:"requested"`
 	Resolved          PromptRunRuntimeSelection `json:"resolved"`
 	Provider          string                    `json:"provider,omitempty"`
-	Backend           string                    `json:"backend,omitempty"`
+	// RuntimeMode is the mechanism the model ran on; Mode below is the run mode.
+	RuntimeMode       string                    `json:"runtimeMode,omitempty"`
 	Model             string                    `json:"model,omitempty"`
 	Effort            string                    `json:"effort,omitempty"`
 	Mode              string                    `json:"mode,omitempty"`
@@ -85,7 +90,7 @@ type promptRunOverviewRecord struct {
 	UpdatedAt              time.Time       `gorm:"column:updated_at"`
 	ProviderSessionID      *string         `gorm:"column:provider_session_id"`
 	ExecutionProvider      *string         `gorm:"column:execution_provider"`
-	ExecutionBackend       *string         `gorm:"column:execution_backend"`
+	ExecutionRuntimeMode   *string         `gorm:"column:execution_runtime_mode"`
 	ExecutionModel         *string         `gorm:"column:execution_model"`
 	ExecutionEffort        *string         `gorm:"column:execution_effort"`
 	ExecutionActivity      *string         `gorm:"column:execution_activity"`
@@ -113,7 +118,7 @@ func (db *DB) ListPromptRunOverviews(ctx context.Context, filter PromptRunOvervi
 		Table("captain_prompt_runs AS run").
 		Select(`run.*, admission.provider_session_id,
 			execution.provider AS execution_provider,
-			execution.backend AS execution_backend,
+			execution.model_mode AS execution_runtime_mode,
 			execution.model AS execution_model,
 			execution.effort AS execution_effort,
 			execution.activity_state AS execution_activity,
@@ -178,7 +183,7 @@ func promptRunOverviewFromRecord(record promptRunOverviewRecord) (PromptRunOverv
 		}
 	}
 	execution := PromptRunRuntimeSelection{
-		Provider: optionalString(record.ExecutionProvider), Backend: optionalString(record.ExecutionBackend),
+		Provider: optionalString(record.ExecutionProvider), Mode: optionalString(record.ExecutionRuntimeMode),
 		Model: optionalString(record.ExecutionModel), Effort: optionalString(record.ExecutionEffort),
 	}
 	effective := resolvePromptRunRuntimeSelection(runtime.Resolved, runtime.Requested, execution)
@@ -210,16 +215,24 @@ func promptRunOverviewFromRecord(record promptRunOverviewRecord) (PromptRunOverv
 			StartedAt: record.StartedAt, FinishedAt: record.FinishedAt, CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt,
 		},
 		ProviderSessionID: optionalString(record.ProviderSessionID), Requested: runtime.Requested, Resolved: runtime.Resolved,
-		Provider: effective.Provider, Backend: effective.Backend, Model: effective.Model, Effort: effective.Effort,
+		Provider: effective.Provider, RuntimeMode: effective.Mode, Model: effective.Model, Effort: effective.Effort,
 		Mode: runtime.Mode, Driver: runtime.Driver, Status: status, PID: pid, DurationMS: durationMS,
 		ProcessActive: record.ExecutionProcessActive,
 	}, nil
 }
 
+// Effective is the runtime this run actually used: the resolved selection, falling
+// back to what was requested. It is recorded history, not derivable configuration —
+// a fallback may have swapped the model mid-run, and re-deriving a mode from the
+// model name alone yields the family default rather than the mechanism that ran.
+func (r PromptRunRuntime) Effective() PromptRunRuntimeSelection {
+	return resolvePromptRunRuntimeSelection(r.Resolved, r.Requested, PromptRunRuntimeSelection{})
+}
+
 func resolvePromptRunRuntimeSelection(resolved, requested, execution PromptRunRuntimeSelection) PromptRunRuntimeSelection {
 	return PromptRunRuntimeSelection{
 		Provider: firstRuntimeValue(resolved.Provider, requested.Provider, execution.Provider),
-		Backend:  firstRuntimeValue(resolved.Backend, requested.Backend, execution.Backend),
+		Mode:     firstRuntimeValue(resolved.Mode, requested.Mode, execution.Mode),
 		Model:    firstRuntimeValue(resolved.Model, requested.Model, execution.Model),
 		Effort:   firstRuntimeValue(resolved.Effort, requested.Effort, execution.Effort),
 	}

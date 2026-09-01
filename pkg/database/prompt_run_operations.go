@@ -94,7 +94,7 @@ func (db *DB) CreatePromptRun(ctx context.Context, input CreatePromptRunInput) (
 	}
 	if err := query.First(&existing).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("%w: another active run exists for root session %s", ErrPromptRunConflict, rootID)
+			return nil, activeSessionRunConflict(ctx, db, input.SessionID)
 		}
 		return nil, fmt.Errorf("read existing Captain prompt run: %w", err)
 	}
@@ -105,6 +105,23 @@ func (db *DB) CreatePromptRun(ctx context.Context, input CreatePromptRunInput) (
 		return nil, fmt.Errorf("%w: admission identity already belongs to run %s, not caller-supplied ID %s", ErrPromptRunConflict, existing.ID, input.ID)
 	}
 	return db.GetPromptRun(ctx, existing.ID)
+}
+
+// activeSessionRunConflict explains an insert that lost to
+// captain_prompt_runs_active_session_key by naming the run already in flight on
+// that session. The caller cannot act on "a unique index rejected this"; it can
+// act on which run is holding the session.
+func activeSessionRunConflict(ctx context.Context, db *DB, sessionID uuid.UUID) error {
+	var blocking promptRunRecord
+	err := db.gorm.WithContext(ctx).
+		Where("session_id = ? AND state IN ?", sessionID,
+			[]PromptRunState{PromptRunStatePending, PromptRunStateRunning, PromptRunStateWaiting}).
+		Order("queued_at DESC, id DESC").First(&blocking).Error
+	if err != nil {
+		return fmt.Errorf("%w: session %s already has an active run", ErrPromptRunConflict, sessionID)
+	}
+	return fmt.Errorf("%w: session %s already has run %s in state %s",
+		ErrPromptRunConflict, sessionID, blocking.ID, blocking.State)
 }
 
 func (db *DB) GetPromptRun(ctx context.Context, id uuid.UUID) (*PromptRun, error) {

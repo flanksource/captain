@@ -113,7 +113,7 @@ var _ = Describe("Schema-scoped Captain storage", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			callID, err := db.CreateChatModelCall(ctx, CreateChatModelCallInput{
-				TurnID: turn.ID, PromptRunID: run.ID, Model: "model-schema-test", Backend: "codex",
+				TurnID: turn.ID, PromptRunID: run.ID, Model: "model-schema-test", Provider: "openai", Mode: "cli",
 			})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(db.FinishChatModelCall(ctx, FinishChatModelCallInput{
@@ -123,7 +123,7 @@ var _ = Describe("Schema-scoped Captain storage", func() {
 
 			if fixture.includeNonUSDCall {
 				nonUSDCallID, err := db.CreateChatModelCall(ctx, CreateChatModelCallInput{
-					TurnID: turn.ID, PromptRunID: run.ID, Model: "model-schema-test", Backend: "codex",
+					TurnID: turn.ID, PromptRunID: run.ID, Model: "model-schema-test", Provider: "openai", Mode: "cli",
 				})
 				Expect(err).NotTo(HaveOccurred())
 				nonUSDUsage := api.Usage{InputTokens: 2, CacheReadTokens: 1}
@@ -136,7 +136,7 @@ var _ = Describe("Schema-scoped Captain storage", func() {
 					Where("id = ?", nonUSDCallID).Update("currency", "EUR").Error).NotTo(HaveOccurred())
 			}
 
-			usage, err := db.ModelUsageSince(ctx, since, fixture.schema)
+			usage, err := db.ModelUsage(ctx, ModelUsageQuery{Since: since, Schemas: []string{fixture.schema}})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(usage.TotalTokens).To(Equal(fixture.expectedSchemaTotal))
 			Expect(usage.TotalCostUSD).To(BeNumerically("~", fixture.expectedCostUSD, 0.000000001))
@@ -144,13 +144,13 @@ var _ = Describe("Schema-scoped Captain storage", func() {
 
 		usageSchemas := append([]string{}, schemaNames...)
 		usageSchemas = append(usageSchemas, "agent_context_not_opened", schemaNames[0])
-		usage, err := databases[0].ModelUsageSince(ctx, since, usageSchemas...)
+		usage, err := databases[0].ModelUsage(ctx, ModelUsageQuery{Since: since, Schemas: usageSchemas})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(usage.TotalTokens).To(Equal(63))
 		Expect(usage.TotalCostUSD).To(BeNumerically("~", 0.74, 0.000000001))
 
 		Expect(databases[0].Gorm().WithContext(ctx).Exec("CREATE SCHEMA agent_context_incomplete").Error).NotTo(HaveOccurred())
-		_, err = databases[0].ModelUsageSince(ctx, since, "agent_context_incomplete")
+		_, err = databases[0].ModelUsage(ctx, ModelUsageQuery{Since: since, Schemas: []string{"agent_context_incomplete"}})
 		Expect(err).To(MatchError(ContainSubstring("missing captain_model_calls")))
 	})
 })

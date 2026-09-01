@@ -18,14 +18,14 @@ func (db *DB) upsertTurnCalls(ctx context.Context, calls []modelCallRecord) erro
 	err := db.gorm.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "turn_id"}, {Name: "call_index"}},
 		DoUpdates: clause.AssignmentColumns([]string{
-			"model", "backend", "effort", "stop_reason",
+			"model", "provider", "mode", "effort", "stop_reason",
 			"input_tokens", "output_tokens", "reasoning_tokens", "cache_read_tokens", "cache_write_tokens",
 			"context_tokens", "context_window_tokens",
 			"input_cost", "output_cost", "reasoning_cost", "cache_read_cost", "cache_write_cost", "currency",
 			"started_at", "ended_at",
 		}),
 		Where: clause.Where{Exprs: []clause.Expression{clause.Expr{SQL: `
-			(captain_model_calls.model, captain_model_calls.backend, captain_model_calls.effort,
+			(captain_model_calls.model, captain_model_calls.provider, captain_model_calls.mode, captain_model_calls.effort,
 			 captain_model_calls.stop_reason, captain_model_calls.input_tokens, captain_model_calls.output_tokens,
 			 captain_model_calls.reasoning_tokens, captain_model_calls.cache_read_tokens,
 			 captain_model_calls.cache_write_tokens, captain_model_calls.context_tokens,
@@ -34,7 +34,7 @@ func (db *DB) upsertTurnCalls(ctx context.Context, calls []modelCallRecord) erro
 			 captain_model_calls.cache_read_cost, captain_model_calls.cache_write_cost,
 			 captain_model_calls.currency, captain_model_calls.started_at, captain_model_calls.ended_at)
 			IS DISTINCT FROM
-			(excluded.model, excluded.backend, excluded.effort, excluded.stop_reason,
+			(excluded.model, excluded.provider, excluded.mode, excluded.effort, excluded.stop_reason,
 			 excluded.input_tokens, excluded.output_tokens, excluded.reasoning_tokens,
 			 excluded.cache_read_tokens, excluded.cache_write_tokens, excluded.context_tokens,
 			 excluded.context_window_tokens, excluded.input_cost, excluded.output_cost,

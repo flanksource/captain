@@ -13,7 +13,8 @@ func (db *DB) reconcileSessionHierarchy(ctx context.Context, existing *sessionRe
 		return nil
 	}
 	if equalOptionalUUID(existing.ParentSessionID, requested.ParentSessionID) &&
-		equalOptionalUUID(existing.RootSessionID, requested.RootSessionID) {
+		equalOptionalUUID(existing.RootSessionID, requested.RootSessionID) &&
+		equalOptionalParentRelation(existing.ParentRelation, requested.ParentRelation) {
 		return nil
 	}
 	if existing.ParentSessionID != nil || existing.RootSessionID != nil {
@@ -32,7 +33,8 @@ func (db *DB) reconcileSessionHierarchy(ctx context.Context, existing *sessionRe
 		return err
 	}
 	if !equalOptionalUUID(current.ParentSessionID, requested.ParentSessionID) ||
-		!equalOptionalUUID(current.RootSessionID, requested.RootSessionID) {
+		!equalOptionalUUID(current.RootSessionID, requested.RootSessionID) ||
+		current.ParentRelation != optionalParentRelation(requested.ParentRelation) {
 		return fmt.Errorf("%w: existing session has a different hierarchy", ErrSessionConflict)
 	}
 	return nil
@@ -45,6 +47,7 @@ func (db *DB) adoptSessionHierarchy(ctx context.Context, sessionID uuid.UUID, re
 			Where("id = ? AND parent_session_id IS NULL AND root_session_id IS NULL", sessionID).
 			Updates(map[string]any{
 				"parent_session_id": requested.ParentSessionID,
+				"parent_relation":   requested.ParentRelation,
 				"root_session_id":   requested.RootSessionID,
 			})
 		if result.Error != nil || result.RowsAffected == 0 {
@@ -74,4 +77,22 @@ func sessionAggregateRoot(session *Session) uuid.UUID {
 		return uuid.Nil
 	}
 	return session.ID
+}
+
+func equalOptionalParentRelation(left, right *SessionParentRelation) bool {
+	return optionalParentRelation(left) == optionalParentRelation(right)
+}
+
+func nullableParentRelation(value SessionParentRelation) *SessionParentRelation {
+	if value == "" {
+		return nil
+	}
+	return &value
+}
+
+func optionalParentRelation(value *SessionParentRelation) SessionParentRelation {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
