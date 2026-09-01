@@ -173,10 +173,17 @@ func NormalizedPreference(prefs ToolPreferences, name string) (ToolPolicy, bool)
 // ResolveOptions carries the shapes a caller may express tool authority in.
 //
 // All are evaluated through ONE ordered chain, so a spec that sets several
-// cannot get different answers for the same tool. Preferences are lowered first
-// and the policy appended after, which makes an explicit rule beat an inherited
-// preference — the layering the whole design turns on.
+// cannot get different answers for the same tool. Base is lowest, Preferences
+// are lowered next and Policy is appended last, which makes a per-turn rule beat
+// an inherited preference and both beat the deployment's own baseline — the
+// layering the whole design turns on.
 type ResolveOptions struct {
+	// Base is the rule list the deployment itself installs — group baselines and
+	// app-wide overrides that hold for every turn. It is the weakest rule layer
+	// so a per-turn preference or rule still wins: an application stating that
+	// live provider tools are off by default must not thereby outrank the user
+	// switching one back on.
+	Base PermissionPolicy
 	// Preferences is the legacy flat tool→policy map, keyed by tool name or
 	// group. Lowered through api.FromPreferences rather than matched separately.
 	Preferences ToolPreferences
@@ -199,7 +206,63 @@ func (o ResolveOptions) EffectiveStrategies() []PermissionStrategy {
 
 // EffectivePolicy is the single ordered list these options resolve through.
 func (o ResolveOptions) EffectivePolicy() PermissionPolicy {
-	return api.FromPreferences(o.Preferences).Append(o.Policy)
+	return o.Base.Append(api.FromPreferences(o.Preferences)).Append(o.Policy)
+}
+
+// Resolver validates these options and combines their layers into the single
+// chain every tool is answered through. Building it once per batch keeps the
+// combined rule list off the per-tool path, and validating here means an
+// authoring mistake surfaces once rather than as a per-tool answer nobody chose.
+func (o ResolveOptions) Resolver() (ToolResolver, error) {
+	if err := o.Base.Validate(); err != nil {
+		return ToolResolver{}, err
+	}
+	if err := o.Preferences.Validate(); err != nil {
+		return ToolResolver{}, err
+	}
+	if err := o.Policy.Validate(); err != nil {
+		return ToolResolver{}, err
+	}
+	return ToolResolver{policy: o.EffectivePolicy(), strategies: o.EffectiveStrategies()}, nil
+}
+
+// ToolResolver answers what authority a tool ends up with. It is exported
+// because a served catalog has to answer that question about tools it holds no
+// handler for: sharing one resolver rather than restating the layer order is
+// what keeps a catalog's advertised permission and the executor's enforced one
+// from drifting apart.
+type ToolResolver struct {
+	policy     PermissionPolicy
+	strategies []PermissionStrategy
+}
+
+// Resolve reads the layers weakest to strongest: what the tool's own facts
+// imply, then what its author registered explicitly, then what an operator's
+// rules say.
+//
+// The result is never `auto`. At the registration and rule layers `auto` is not
+// an answer but a refusal to give one, handing the tool back to what its facts
+// imply; a tool no layer speaks for is asked about.
+func (r ToolResolver) Resolve(info ToolInfo) (ToolPolicy, error) {
+	policy, _ := ResolveStrategies(r.strategies, info)
+	// A registration is validated even when it defers, so a typo is caught
+	// rather than silently deferring.
+	if info.DefaultPermission != "" {
+		registered, ok := NormalizeToolPolicy(string(info.DefaultPermission))
+		if !ok {
+			return "", fmt.Errorf("tool %q has invalid default permission %q", info.Name, info.DefaultPermission)
+		}
+		if registered != ToolPolicyAuto {
+			policy = registered
+		}
+	}
+	if resolved, matched := r.policy.Resolve(info); matched && resolved != ToolPolicyAuto {
+		policy = resolved
+	}
+	if policy == ToolPolicyAuto {
+		policy = ToolPolicyAsk
+	}
+	return policy, nil
 }
 
 // toolInfo projects a definition onto the subject a rule matches against. It
@@ -231,16 +294,34 @@ func toolInfo(definition api.ToolDefinition) ToolInfo {
 // MCP server, so omission IS the enforcement — which is why a deny is honoured
 // even on backends whose own CLI has no tool filter.
 func ResolveDefinitions(definitions []api.ToolDefinition, opts ResolveOptions) ([]api.ToolDefinition, error) {
-	if err := opts.Preferences.Validate(); err != nil {
+	policies, err := resolveDefinitionPolicies(definitions, opts)
+	if err != nil {
 		return nil, err
 	}
-	if err := opts.Policy.Validate(); err != nil {
-		return nil, err
-	}
-	effective := opts.EffectivePolicy()
-	strategies := opts.EffectiveStrategies()
 	selected := make([]api.ToolDefinition, 0, len(definitions))
-	seen := make(map[string]struct{}, len(definitions))
+	for _, definition := range definitions {
+		policy := policies[definition.Name]
+		if policy == ToolPolicyDeny {
+			continue
+		}
+		definition.DefaultPermission = policy
+		selected = append(selected, definition)
+	}
+	return selected, nil
+}
+
+// ResolveToolPermissions returns the final authority for every caller tool,
+// including denied tools that execution omits from the served MCP catalog.
+func ResolveToolPermissions(definitions []api.ToolDefinition, opts ResolveOptions) (map[string]ToolPolicy, error) {
+	return resolveDefinitionPolicies(definitions, opts)
+}
+
+func resolveDefinitionPolicies(definitions []api.ToolDefinition, opts ResolveOptions) (map[string]ToolPolicy, error) {
+	resolver, err := opts.Resolver()
+	if err != nil {
+		return nil, err
+	}
+	policies := make(map[string]ToolPolicy, len(definitions))
 	for _, definition := range definitions {
 		if definition.Name == "" {
 			return nil, fmt.Errorf("caller tool name cannot be empty")
@@ -248,43 +329,19 @@ func ResolveDefinitions(definitions []api.ToolDefinition, opts ResolveOptions) (
 		if !validCallerToolName(definition.Name) {
 			return nil, fmt.Errorf("caller tool name %q contains unsupported characters", definition.Name)
 		}
-		if _, ok := seen[definition.Name]; ok {
+		if _, exists := policies[definition.Name]; exists {
 			return nil, fmt.Errorf("duplicate caller tool %q", definition.Name)
 		}
-		seen[definition.Name] = struct{}{}
 		if definition.Handler == nil {
 			return nil, fmt.Errorf("caller tool %q has no handler", definition.Name)
 		}
-		// Weakest to strongest: what the tool's own facts imply, then what its
-		// author registered explicitly, then what an operator's rules say.
-		info := toolInfo(definition)
-		policy, _ := ResolveStrategies(strategies, info)
-		// At both layers above, `auto` is not an answer but a refusal to give one:
-		// it hands the tool back to what its own facts imply rather than replacing
-		// that with a blanket default. A registration is still validated even when
-		// it defers, so a typo is caught rather than silently deferring.
-		if definition.DefaultPermission != "" {
-			registered, ok := NormalizeToolPolicy(string(definition.DefaultPermission))
-			if !ok {
-				return nil, fmt.Errorf("tool %q has invalid default permission %q", definition.Name, definition.DefaultPermission)
-			}
-			if registered != ToolPolicyAuto {
-				policy = registered
-			}
+		policy, err := resolver.Resolve(toolInfo(definition))
+		if err != nil {
+			return nil, err
 		}
-		if resolved, matched := effective.Resolve(info); matched && resolved != ToolPolicyAuto {
-			policy = resolved
-		}
-		if policy == ToolPolicyDeny {
-			continue
-		}
-		if policy == ToolPolicyAuto {
-			policy = ToolPolicyAsk
-		}
-		definition.DefaultPermission = policy
-		selected = append(selected, definition)
+		policies[definition.Name] = policy
 	}
-	return selected, nil
+	return policies, nil
 }
 
 func validCallerToolName(name string) bool {

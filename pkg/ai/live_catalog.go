@@ -42,9 +42,9 @@ func LiveCatalogInfo(configuredProviders []string) ([]ModelInfo, error) {
 // follows the static catalog, with live-only models appended in probe order so
 // the menu stays stable across refreshes.
 //
-// Disabled entries are skipped against both the probed backend and the menu
-// backend it collapses onto: without the menu-backend check, disabling a model
-// on the claude-agent card would still let the claude-cli probe re-add it under
+// Disabled entries are skipped against both the probed runtime and the menu
+// runtime it collapses onto: without the menu-runtime check, disabling a model
+// on the Claude agent card would still let the Claude cli probe re-add it under
 // the same menu id.
 type liveCatalogOptions struct {
 	IncludeDisabled bool
@@ -59,16 +59,20 @@ func mergeLiveCatalog(static []Model, adapters []AdapterStatus, options liveCata
 
 	disabled := Disabled()
 	for _, a := range adapters {
-		probed := Backend(a.Backend)
-		menuBackend, hasMenu := menuBackendFor(probed)
-		if !hasMenu || (!options.IncludeDisabled && disabled.Backend(probed)) {
+		probedProvider, known := api.ProviderByName(a.Provider)
+		if !known {
+			continue
+		}
+		probed := RuntimeOf(probedProvider, api.RuntimeMode(a.Mode))
+		menu, hasMenu := menuRuntimeFor(probed)
+		if !hasMenu || (!options.IncludeDisabled && disabled.Runtime(probedProvider, probed.Mode)) {
 			continue
 		}
 		for _, md := range a.ModelDetails {
-			if !options.IncludeDisabled && (disabled.Model(probed, md.ID) || disabled.Model(menuBackend, md.ID)) {
+			if !options.IncludeDisabled && (disabled.Model(probedProvider, probed.Mode, md.ID) || disabled.Model(probedProvider, menu.Mode, md.ID)) {
 				continue
 			}
-			live := liveModel(menuBackend, md)
+			live := liveModel(menu, md)
 			if idx, seen := pos[live.ID]; seen {
 				out[idx] = mergeModel(out[idx], live)
 				continue
@@ -80,37 +84,39 @@ func mergeLiveCatalog(static []Model, adapters []AdapterStatus, options liveCata
 	return out
 }
 
-// menuBackendFor maps a probed backend to the backend the menu uses for that
-// model, and whether the backend has a menu representation at all. The three
-// claude execution backends collapse onto claude-agent and the three codex ones
-// onto codex-agent — the menu offers one agent entry per model. Backends with no
-// menu representation (gemini-cli, whose models already appear under the googleai
-// API entry) return false and are skipped. Whether an id is provider-prefixed is
-// decided later by the menu backend's Kind (see liveModel).
-func menuBackendFor(b Backend) (Backend, bool) {
-	switch b {
-	case BackendAnthropic, BackendOpenAI, BackendGemini, BackendDeepSeek:
-		return b, true
-	case BackendClaudeAgent, BackendClaudeCLI, BackendClaudeCmux:
-		return BackendClaudeAgent, true
-	case BackendCodexAgent, BackendCodexCLI, BackendCodexCmux:
-		return BackendCodexAgent, true
-	default:
-		return "", false
+// menuRuntimeFor maps a probed runtime onto the one the menu shows for that
+// model, and whether it has a menu representation at all. Every local transport
+// of a family collapses onto its agent row — the menu offers one local entry per
+// model, because all three drive the same binary's model list. Google has no
+// local row (its CLI models already appear under the googleai API entry), so it
+// returns false and is skipped. Whether an id is provider-prefixed is decided
+// later by the menu mode's Kind (see liveModel).
+func menuRuntimeFor(runtime Runtime) (Runtime, bool) {
+	p, ok := api.ProviderByName(runtime.Provider)
+	if !ok {
+		return Runtime{}, false
 	}
+	if runtime.Mode.Kind() == "api" {
+		return runtime, true
+	}
+	if _, serves := p.Caps(ModeAgent); !serves {
+		return Runtime{}, false
+	}
+	return RuntimeOf(p, ModeAgent), true
 }
 
 // liveModel builds a catalog Model from one probed model detail, in the menu's
-// id convention (provider-prefixed for API backends, exact id for agent
-// backends). ContextWindow/AdaptiveThinking are not carried by the live probe;
+// id convention (provider-prefixed for the API mode, exact id for the local
+// transports). ContextWindow/AdaptiveThinking are not carried by the live probe;
 // a model already in the static catalog keeps them via mergeModel, and a
 // live-only model leaves ContextWindow zero (the usage gauge degrades to no
 // denominator rather than a fabricated one).
-func liveModel(menuBackend Backend, md ModelDef) Model {
+func liveModel(menu Runtime, md ModelDef) Model {
+	provider, _ := api.ProviderByName(menu.Provider)
 	bare := bareProviderModelID(md.ID)
 	id := bare
-	if menuBackend.Kind() == "api" {
-		id = BackendToProvider(menuBackend) + "/" + bare
+	if menu.Mode.Kind() == "api" {
+		id = CatalogPrefixOf(provider) + "/" + bare
 	}
 	label := md.Name
 	if label == "" {
@@ -119,7 +125,8 @@ func liveModel(menuBackend Backend, md ModelDef) Model {
 	supported, defaultEffort := enabledEfforts(md.SupportedEfforts, md.DefaultEffort)
 	return Model{
 		ID:               id,
-		Backend:          menuBackend,
+		Provider:         provider,
+		Mode:             menu.Mode,
 		Label:            label,
 		Reasoning:        md.Reasoning,
 		Temperature:      md.Temperature,

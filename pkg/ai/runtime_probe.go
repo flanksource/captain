@@ -16,20 +16,20 @@ type RuntimeProbe func() RuntimeStatus
 
 var (
 	runtimeProbeMu sync.RWMutex
-	runtimeProbes  = map[Backend]RuntimeProbe{}
+	runtimeProbes  = map[Runtime]RuntimeProbe{}
 )
 
 // RegisterRuntimeProbe lets a provider report the prerequisites its real
 // launch path uses instead of relying on a generic PATH check.
-func RegisterRuntimeProbe(backend Backend, probe RuntimeProbe) {
+func RegisterRuntimeProbe(p *ModelProvider, mode RuntimeMode, probe RuntimeProbe) {
 	runtimeProbeMu.Lock()
 	defer runtimeProbeMu.Unlock()
-	runtimeProbes[backend] = probe
+	runtimeProbes[RuntimeOf(p, mode)] = probe
 }
 
-func probeRuntime(backend Backend) (RuntimeStatus, bool) {
+func probeRuntime(p *ModelProvider, mode RuntimeMode) (RuntimeStatus, bool) {
 	runtimeProbeMu.RLock()
-	probe, ok := runtimeProbes[backend]
+	probe, ok := runtimeProbes[RuntimeOf(p, mode)]
 	runtimeProbeMu.RUnlock()
 	if !ok {
 		return RuntimeStatus{}, false

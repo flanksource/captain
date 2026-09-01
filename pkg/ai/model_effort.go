@@ -11,10 +11,10 @@ import (
 var modelEffortLog = logger.GetLogger("ai")
 
 // ModelEfforts returns model-specific effort metadata when the embedded
-// registry knows the exact backend/model combination, minus the tiers the user
+// registry knows the exact runtime/model combination, minus the tiers the user
 // has disabled.
-func ModelEfforts(backend Backend, model string) (supported []api.Effort, defaultEffort api.Effort, ok bool) {
-	def, ok := RegistryModelDef(backend, model)
+func ModelEfforts(p *ModelProvider, mode RuntimeMode, model string) (supported []api.Effort, defaultEffort api.Effort, ok bool) {
+	def, ok := RegistryModelDef(p, mode, model)
 	if !ok {
 		return nil, api.EffortNone, false
 	}
@@ -25,9 +25,9 @@ func ModelEfforts(backend Backend, model string) (supported []api.Effort, defaul
 	return disabled.Efforts(append([]api.Effort(nil), def.SupportedEfforts...)), def.DefaultEffort, true
 }
 
-// ResolveModelEffort returns the executable effort for a backend/model pair.
-func ResolveModelEffort(backend Backend, model string, effort api.Effort) (api.Effort, error) {
-	return registry.ResolveEffort(backend, model, effort)
+// ResolveModelEffort returns the executable effort for a runtime/model pair.
+func ResolveModelEffort(p *ModelProvider, mode RuntimeMode, model string, effort api.Effort) (api.Effort, error) {
+	return registry.ResolveEffort(p, mode, model, effort)
 }
 
 type effortValidatingProvider struct {
@@ -36,14 +36,16 @@ type effortValidatingProvider struct {
 }
 
 func (p *effortValidatingProvider) GetModel() string    { return p.provider.GetModel() }
-func (p *effortValidatingProvider) GetBackend() Backend { return p.provider.GetBackend() }
+func (p *effortValidatingProvider) GetRuntime() Runtime { return p.provider.GetRuntime() }
 func (p *effortValidatingProvider) Unwrap() Provider    { return p.provider }
 func (p *effortValidatingProvider) request(ctx context.Context, req Request) (Request, error) {
 	if req.Effort == api.EffortNone {
 		req.Effort = p.configuredEffort
 	}
 	requested := req.Effort
-	effective, err := ResolveModelEffort(p.GetBackend(), p.GetModel(), requested)
+	runtime := p.GetRuntime()
+	provider, _ := runtime.ModelProvider()
+	effective, err := ResolveModelEffort(provider, runtime.Mode, p.GetModel(), requested)
 	if err != nil {
 		return Request{}, err
 	}
@@ -51,7 +53,7 @@ func (p *effortValidatingProvider) request(ctx context.Context, req Request) (Re
 		// Name the agent in the selector notation the user already reads in
 		// dispatch lines, so a degraded-effort debug line can be matched back to
 		// the run it belongs to.
-		identity := LogIdentity(p.GetBackend(), p.GetModel(), requested)
+		identity := LogIdentity(runtime.Mode, p.GetModel(), requested)
 		if effective == api.EffortNone {
 			LoggerFromContext(ctx, modelEffortLog).Debugf(
 				"%s does not support reasoning effort %q; continuing without effort",

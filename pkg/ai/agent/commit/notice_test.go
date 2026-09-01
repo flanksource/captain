@@ -71,7 +71,7 @@ type writeOnceProvider struct {
 }
 
 func (p *writeOnceProvider) GetModel() string       { return "fake" }
-func (p *writeOnceProvider) GetBackend() ai.Backend { return ai.Backend("fake") }
+func (p *writeOnceProvider) GetRuntime() ai.Runtime { return ai.RuntimeOf(ai.Anthropic, ai.ModeAgent) }
 func (p *writeOnceProvider) Execute(context.Context, ai.Request) (*ai.Response, error) {
 	return &ai.Response{}, nil
 }

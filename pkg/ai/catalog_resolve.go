@@ -50,22 +50,25 @@ func (r ResolvedModel) Context() int {
 
 // ResolveOptions controls a ResolveModels query.
 type ResolveOptions struct {
-	Backend     Backend // empty = all backends
-	Filter      string  // substring filter on id/label; non-empty also reveals legacy ids
-	UseTokens   bool    // when true, augment API backends (that have a key) with live /v1/models
-	Refresh     bool    // bypass the persisted cache and re-resolve
+	// Provider narrows to one family; nil means every provider.
+	Provider *ModelProvider
+	// Mode narrows to one mechanism; empty means every mode.
+	Mode        RuntimeMode
+	Filter      string // substring filter on id/label; non-empty also reveals legacy ids
+	UseTokens   bool   // when true, augment the API mode (where a key exists) with live /v1/models
+	Refresh     bool   // bypass the persisted cache and re-resolve
 	Credentials CredentialSnapshot
-	APIURL      string // optional provider base URL; valid only for a selected API backend
+	APIURL      string // optional provider base URL; valid only for one selected API provider
 }
 
-// liveModelFetcher fetches a backend's live model list. It is a package var so
+// liveModelFetcher fetches a provider's live model list. It is a package var so
 // tests can stub it without hitting the network.
-var liveModelFetcher = func(ctx context.Context, b Backend, token, endpoint string) ([]ModelDef, error) {
-	return listModelsWithAPIKeyAtEndpoint(ctx, b, token, endpoint)
+var liveModelFetcher = func(ctx context.Context, p *ModelProvider, token, endpoint string) ([]ModelDef, error) {
+	return listModelsWithAPIKeyAtEndpoint(ctx, p, token, endpoint)
 }
 
-// apiBackends are the direct-API backends the resolver can list live.
-var apiBackends = []Backend{BackendAnthropic, BackendOpenAI, BackendGemini, BackendDeepSeek}
+// apiProviders are the providers the resolver can list live over HTTP.
+var apiProviders = []*ModelProvider{Anthropic, OpenAI, Google, DeepSeek}
 
 // ResolveModels returns the merged catalog ∪ live-API view for opts, joined to
 // merged OpenRouter/static pricing and persisted in an auth-scoped cache entry.
@@ -107,35 +110,38 @@ func ResolveModels(ctx context.Context, opts ResolveOptions) ([]ResolvedModel, e
 }
 
 func credentialSnapshotForOptions(opts ResolveOptions) (CredentialSnapshot, error) {
-	if strings.TrimSpace(opts.APIURL) != "" && (opts.Backend == "" || opts.Backend.Kind() != "api") {
-		return CredentialSnapshot{}, fmt.Errorf("APIURL requires one selected API backend")
+	if strings.TrimSpace(opts.APIURL) != "" && (opts.Provider == nil || opts.Mode.Kind() != "api") {
+		return CredentialSnapshot{}, fmt.Errorf("APIURL requires one selected provider on the api mode")
 	}
 	if opts.Credentials.supplied {
 		return opts.Credentials.clone(), nil
 	}
-	resolved := make(map[Backend]api.ResolvedAPIKey)
+	resolved := make(map[string]api.ResolvedAPIKey)
 	if opts.UseTokens {
-		for _, backend := range selectedAPIBackends(opts.Backend) {
-			credential, err := ResolveAPIKey(backend)
+		for _, p := range selectedAPIProviders(opts) {
+			credential, err := ResolveAPIKey(p, ModeAPI)
 			if err != nil {
 				return CredentialSnapshot{}, err
 			}
-			resolved[backend] = credential
+			resolved[p.Name] = credential
 		}
 	}
 	return NewCredentialSnapshot(resolved), nil
 }
 
-func selectedAPIBackends(backend Backend) []Backend {
-	if backend == "" {
-		return append([]Backend(nil), apiBackends...)
-	}
-	if backend.Kind() != "api" {
+// selectedAPIProviders narrows the live-listing set to the requested provider,
+// or every provider when none was named. A request pinned to a local mode lists
+// nothing live: those models come from the installed binary, not an HTTP call.
+func selectedAPIProviders(opts ResolveOptions) []*ModelProvider {
+	if opts.Mode != "" && opts.Mode.Kind() != "api" {
 		return nil
 	}
-	for _, candidate := range apiBackends {
-		if candidate == backend {
-			return []Backend{backend}
+	if opts.Provider == nil {
+		return append([]*ModelProvider(nil), apiProviders...)
+	}
+	for _, candidate := range apiProviders {
+		if candidate == opts.Provider {
+			return []*ModelProvider{candidate}
 		}
 	}
 	return nil
@@ -159,7 +165,7 @@ func cachedRows(opts ResolveOptions, fp string) ([]ResolvedModel, bool) {
 // the pricing snapshot too: bypassing the model cache while still pricing from a
 // day-old OpenRouter snapshot would only half-honour --no-cache.
 func resolveFresh(ctx context.Context, opts ResolveOptions, credentials CredentialSnapshot) ([]ResolvedModel, error) {
-	rows, index := seedCatalog(opts.Backend)
+	rows, index := seedCatalog(opts.Provider, opts.Mode)
 
 	if opts.UseTokens {
 		if err := unionLive(ctx, opts, credentials, &rows, index); err != nil {
@@ -169,72 +175,80 @@ func resolveFresh(ctx context.Context, opts ResolveOptions, credentials Credenti
 
 	pricing.EnsureLoaded(pricing.LoadOptions{Refresh: opts.Refresh})
 	for i := range rows {
-		if info, ok := lookupPricing(rows[i].Backend, rows[i].BareID()); ok {
+		if info, ok := lookupPricing(rows[i].Provider, rows[i].BareID()); ok {
 			rows[i].Price = info
 		}
 	}
 	return rows, nil
 }
 
-// modelKey dedups a (backend, bare-id) pair across catalog and live listings.
+// modelKey dedups a (provider, catalog-mode, bare-id) triple across catalog and
+// live listings.
 type modelKey struct {
-	backend Backend
-	bare    string
+	provider string
+	mode     RuntimeMode
+	bare     string
 }
 
-func seedCatalog(backend Backend) ([]ResolvedModel, map[modelKey]int) {
+func seedCatalog(provider *ModelProvider, mode RuntimeMode) ([]ResolvedModel, map[modelKey]int) {
 	rows := make([]ResolvedModel, 0)
 	index := map[modelKey]int{}
 	for _, m := range Catalog() {
-		if !catalogBackendMatch(backend, m.Backend) {
+		if provider != nil && m.Provider != provider {
 			continue
 		}
-		index[modelKey{m.Backend, m.BareID()}] = len(rows)
+		if mode != "" && catalogMode(m.Mode) != catalogMode(mode) {
+			continue
+		}
+		index[catalogKey(m)] = len(rows)
 		rows = append(rows, ResolvedModel{Model: m})
 	}
 	return rows, index
 }
 
-// catalogBackendMatch reports whether a catalog model's backend satisfies the
-// requested filter. cli/cmux backends share their agent catalog entries.
-func catalogBackendMatch(want, modelBackend Backend) bool {
-	if want == "" {
-		return true
+func catalogKey(m Model) modelKey {
+	name := ""
+	if m.Provider != nil {
+		name = m.Provider.Name
 	}
-	switch want {
-	case BackendClaudeCLI, BackendClaudeCmux:
-		want = BackendClaudeAgent
-	case BackendCodexCLI, BackendCodexCmux:
-		want = BackendCodexAgent
-	}
-	return modelBackend == want
+	return modelKey{provider: name, mode: catalogMode(m.Mode), bare: m.BareID()}
 }
 
-// unionLive fetches live /v1/models for every API backend (matching the filter)
-// that has a key set, and merges them into rows. A fetch error fails loud.
+// catalogMode is the catalog bucket a mode reads from. Every local transport —
+// cli, agent, cmux — drives the same installed binary, so one per-family local
+// catalog serves all three; only the API mode has its own listing.
+func catalogMode(mode RuntimeMode) RuntimeMode {
+	if mode.Kind() == "api" {
+		return ModeAPI
+	}
+	return ModeAgent
+}
+
+// unionLive fetches live /v1/models for every selected provider that has a key
+// set, and merges them into rows. A fetch error fails loud.
 func unionLive(ctx context.Context, opts ResolveOptions, credentials CredentialSnapshot, rows *[]ResolvedModel, index map[modelKey]int) error {
-	for _, b := range selectedAPIBackends(opts.Backend) {
-		resolved := credentials.APIKey(b)
+	for _, p := range selectedAPIProviders(opts) {
+		resolved := credentials.APIKey(p)
 		if strings.TrimSpace(resolved.Token) == "" {
 			continue
 		}
-		endpoint, err := modelListEndpoint(b, opts.APIURL)
+		endpoint, err := modelListEndpoint(p, opts.APIURL)
 		if err != nil {
 			return err
 		}
-		live, err := liveModelFetcher(ctx, b, resolved.Token, endpoint)
+		live, err := liveModelFetcher(ctx, p, resolved.Token, endpoint)
 		if err != nil {
-			return fmt.Errorf("%s: %w", b, err)
+			return fmt.Errorf("%s: %w", p.Name, err)
 		}
 		for _, d := range live {
-			key := modelKey{b, bareModelID(d.ID)}
+			key := modelKey{provider: p.Name, mode: ModeAPI, bare: bareModelID(d.ID)}
 			if i, ok := index[key]; ok {
 				(*rows)[i].Live = true
 				continue
 			}
 			index[key] = len(*rows)
 			*rows = append(*rows, ResolvedModel{
-				Model: Model{ID: d.ID, Backend: b, Label: d.Name, ReleaseDate: d.ReleaseDate},
+				Model: Model{ID: d.ID, Provider: p, Mode: ModeAPI, Label: d.Name, ReleaseDate: d.ReleaseDate},
 				Live:  true,
 			})
 		}
@@ -252,7 +266,7 @@ func filterResolved(rows []ResolvedModel, filter string) []ResolvedModel {
 			if !strings.Contains(strings.ToLower(r.ID), fl) && !strings.Contains(strings.ToLower(r.Label), fl) {
 				continue
 			}
-		} else if IsLegacyModelIDForBackend(r.ID, r.Backend) {
+		} else if IsLegacyModelIDForRuntime(r.ID, r.Provider, r.Mode) {
 			continue
 		}
 		out = append(out, r)
@@ -274,14 +288,17 @@ func filterResolved(rows []ResolvedModel, filter string) []ResolvedModel {
 const resolveSchemaVersion = "v3"
 
 type resolveCacheSource struct {
-	Backend      Backend `json:"backend"`
-	EndpointHash string  `json:"endpointHash"`
-	TokenHMAC    string  `json:"tokenHMAC"`
+	// Provider names the family whose endpoint was listed. A live listing is an
+	// API-mode call, so the mode adds nothing to the identity here.
+	Provider     string `json:"provider"`
+	EndpointHash string `json:"endpointHash"`
+	TokenHMAC    string `json:"tokenHMAC"`
 }
 
 type resolveCacheDescriptor struct {
 	Schema      string               `json:"schema"`
-	Backend     Backend              `json:"backend"`
+	Provider    string               `json:"provider"`
+	Mode        RuntimeMode          `json:"mode"`
 	UseTokens   bool                 `json:"useTokens"`
 	LiveSources []resolveCacheSource `json:"liveSources,omitempty"`
 }
@@ -292,19 +309,22 @@ type resolveCacheDescriptor struct {
 func resolveFingerprint(opts ResolveOptions, credentials CredentialSnapshot) (string, bool, error) {
 	descriptor := resolveCacheDescriptor{
 		Schema:    resolveSchemaVersion,
-		Backend:   opts.Backend,
+		Mode:      opts.Mode,
 		UseTokens: opts.UseTokens,
 	}
+	if opts.Provider != nil {
+		descriptor.Provider = opts.Provider.Name
+	}
 	var hmacKey []byte
-	for _, backend := range selectedAPIBackends(opts.Backend) {
+	for _, p := range selectedAPIProviders(opts) {
 		if !opts.UseTokens {
 			break
 		}
-		resolved := credentials.APIKey(backend)
+		resolved := credentials.APIKey(p)
 		if strings.TrimSpace(resolved.Token) == "" {
 			continue
 		}
-		endpoint, err := modelListEndpoint(backend, opts.APIURL)
+		endpoint, err := modelListEndpoint(p, opts.APIURL)
 		if err != nil {
 			return "", false, err
 		}
@@ -319,13 +339,13 @@ func resolveFingerprint(opts ResolveOptions, credentials CredentialSnapshot) (st
 		mac := hmac.New(sha256.New, hmacKey)
 		_, _ = mac.Write([]byte(resolved.Token))
 		descriptor.LiveSources = append(descriptor.LiveSources, resolveCacheSource{
-			Backend:      backend,
+			Provider:     p.Name,
 			EndpointHash: fmt.Sprintf("%x", endpointHash),
 			TokenHMAC:    fmt.Sprintf("%x", mac.Sum(nil)),
 		})
 	}
 	sort.Slice(descriptor.LiveSources, func(i, j int) bool {
-		return descriptor.LiveSources[i].Backend < descriptor.LiveSources[j].Backend
+		return descriptor.LiveSources[i].Provider < descriptor.LiveSources[j].Provider
 	})
 	encoded, err := json.Marshal(descriptor)
 	if err != nil {
@@ -342,22 +362,16 @@ func bareModelID(id string) string {
 	return id
 }
 
-// AgentCatalogModels returns the model list for a CLI/agent backend from the
+// AgentCatalogModels returns the model list for a local transport from the
 // catalog — the key-free source of truth shared with the chat menu and shell
 // completion. Returned IDs are exact provider model IDs; legacy AgentModel is
 // still honored for externally registered old entries.
-func AgentCatalogModels(b Backend) []ModelDef {
-	want := b
-	switch want {
-	case BackendClaudeCLI, BackendClaudeCmux:
-		want = BackendClaudeAgent
-	case BackendCodexCLI, BackendCodexCmux:
-		want = BackendCodexAgent
-	}
+func AgentCatalogModels(p *ModelProvider, mode RuntimeMode) []ModelDef {
+	wantMode := catalogMode(mode)
 
 	out := []ModelDef{}
 	for _, m := range Catalog() {
-		if !m.IsAgent() || m.Backend != want {
+		if !m.IsAgent() || m.Provider != p || catalogMode(m.Mode) != wantMode {
 			continue
 		}
 		id := m.ID
@@ -371,7 +385,8 @@ func AgentCatalogModels(b Backend) []ModelDef {
 		out = append(out, ModelDef{
 			ID:                id,
 			Name:              label,
-			Backend:           b,
+			Provider:          p.Name,
+			Mode:              mode,
 			ReleaseDate:       m.ReleaseDate,
 			CapabilitiesKnown: true,
 			Reasoning:         m.Reasoning,
@@ -393,10 +408,10 @@ func AgentCatalogModels(b Backend) []ModelDef {
 // is "googleai" while OpenRouter keys it under "google". Deriving one from the
 // other makes every Gemini price silently resolve to nothing. This used to be
 // three hand-written maps (PricingIDs, orPrefix, pricingModelID) that disagreed
-// about whether CLI/agent backends get a prefix at all — they do; a codex-run
+// about whether the local transports get a prefix at all — they do; a codex-run
 // model costs what the model costs.
-func lookupPricing(backend Backend, id string) (pricing.ModelInfo, bool) {
-	for _, candidate := range PricingIDs(backend, id) {
+func lookupPricing(p *ModelProvider, id string) (pricing.ModelInfo, bool) {
+	for _, candidate := range PricingIDs(p, id) {
 		if info, ok := pricing.GetModelInfo(candidate); ok {
 			return info, true
 		}

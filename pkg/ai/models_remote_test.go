@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flanksource/captain/pkg/api/registry"
 	"github.com/flanksource/captain/pkg/credentials"
 )
 
@@ -82,8 +83,8 @@ func TestFetchOpenAIModels_HappyPath(t *testing.T) {
 		t.Errorf("ReleaseDate = %q, want parsed OpenAI created date", got[0].ReleaseDate)
 	}
 	for _, m := range got {
-		if m.Backend != BackendOpenAI {
-			t.Errorf("Backend = %q on %+v", m.Backend, m)
+		if m.Provider != OpenAI.Name || m.Mode != ModeAPI {
+			t.Errorf("runtime = %s %s on %+v", m.Provider, m.Mode, m)
 		}
 		if m.Name == "" || m.ID == "" {
 			t.Errorf("missing fields: %+v", m)
@@ -142,8 +143,8 @@ func TestFetchAnthropicModels_HappyPath(t *testing.T) {
 		t.Errorf("ReleaseDate = %q, want parsed Anthropic created_at date", got[0].ReleaseDate)
 	}
 	for _, m := range got {
-		if m.Backend != BackendAnthropic {
-			t.Errorf("Backend = %q on %+v", m.Backend, m)
+		if m.Provider != Anthropic.Name || m.Mode != ModeAPI {
+			t.Errorf("runtime = %s %s on %+v", m.Provider, m.Mode, m)
 		}
 	}
 }
@@ -174,8 +175,8 @@ func TestFetchDeepSeekModels_HappyPath(t *testing.T) {
 		t.Fatalf("len = %d", len(got))
 	}
 	for _, m := range got {
-		if m.Backend != BackendDeepSeek {
-			t.Errorf("Backend = %q on %+v", m.Backend, m)
+		if m.Provider != DeepSeek.Name || m.Mode != ModeAPI {
+			t.Errorf("runtime = %s %s on %+v", m.Provider, m.Mode, m)
 		}
 		if m.ID == "" || m.Name == "" {
 			t.Errorf("missing fields: %+v", m)
@@ -197,32 +198,10 @@ func TestListModels_ErrorsOnMissingKey(t *testing.T) {
 	t.Setenv("GEMINI_API_KEY", "")
 	t.Setenv("DEEPSEEK_API_KEY", "")
 
-	for _, b := range []Backend{BackendOpenAI, BackendAnthropic, BackendGemini, BackendDeepSeek} {
-		_, err := ListModels(context.Background(), b)
+	for _, p := range registry.Providers() {
+		_, err := ListModels(context.Background(), p)
 		if err == nil {
-			t.Errorf("backend=%s: expected error when no API key set", b)
-		}
-	}
-}
-
-// TestListModels_RejectsNonAPIBackends pins that non-API backends have no live
-// listing path: they authenticate internally and enumerate from the static
-// catalog (pkg/cli), so ListModels must fail loud rather than require an API key.
-func TestListModels_RejectsNonAPIBackends(t *testing.T) {
-	t.Setenv("OPENAI_API_KEY", "sk-test")
-	t.Setenv("ANTHROPIC_API_KEY", "ant-test")
-	t.Setenv("GEMINI_API_KEY", "g-test")
-
-	for _, b := range []Backend{
-		BackendClaudeCLI,
-		BackendClaudeAgent,
-		BackendCodexCLI,
-		BackendGeminiCLI,
-		BackendClaudeCmux,
-		BackendCodexCmux,
-	} {
-		if _, err := ListModels(context.Background(), b); err == nil {
-			t.Errorf("backend=%s: expected error (no live listing for non-API backends)", b)
+			t.Errorf("provider=%s: expected error when no API key set", p.Name)
 		}
 	}
 }
@@ -235,7 +214,7 @@ func TestListModels_ErrorsOnHTTPFailure(t *testing.T) {
 	withTestServer(t, srv)
 
 	t.Setenv("OPENAI_API_KEY", "sk-test")
-	if _, err := ListModels(context.Background(), BackendOpenAI); err == nil {
+	if _, err := ListModels(context.Background(), OpenAI); err == nil {
 		t.Fatal("expected HTTP 500 to be surfaced as an error (no static fallback)")
 	}
 }
@@ -250,7 +229,7 @@ func TestListModels_SortsAlphabetically(t *testing.T) {
 	withTestServer(t, srv)
 
 	t.Setenv("OPENAI_API_KEY", "sk-test")
-	got, err := ListModels(context.Background(), BackendOpenAI)
+	got, err := ListModels(context.Background(), OpenAI)
 	if err != nil {
 		t.Fatalf("ListModels: %v", err)
 	}
@@ -277,7 +256,7 @@ func TestListModelsWithAPIKeyAndURLUsesExactResolvedEndpointAndCredential(t *tes
 	defer srv.Close()
 
 	models, err := ListModelsWithAPIKeyAndURL(
-		context.Background(), BackendOpenAI, "caller-token-b", srv.URL+"/tenant/v1?account=private",
+		context.Background(), OpenAI, "caller-token-b", srv.URL+"/tenant/v1?account=private",
 	)
 	if err != nil {
 		t.Fatalf("ListModelsWithAPIKeyAndURL: %v", err)
@@ -296,7 +275,7 @@ func TestListModelsWithAPIKeyAndURLRedactsEndpointFromTransportErrors(t *testing
 	t.Cleanup(func() { http.DefaultClient.Transport = original })
 
 	_, err := ListModelsWithAPIKeyAndURL(
-		context.Background(), BackendOpenAI, "caller-token", "https://tenant.example/v1?access_token=query-secret",
+		context.Background(), OpenAI, "caller-token", "https://tenant.example/v1?access_token=query-secret",
 	)
 	if err == nil {
 		t.Fatal("expected transport error")
@@ -321,7 +300,7 @@ func TestListModelsWithAPIKeyAndURLDoesNotFollowRedirects(t *testing.T) {
 	defer source.Close()
 
 	_, err := ListModelsWithAPIKeyAndURL(
-		context.Background(), BackendAnthropic, "caller-token", source.URL+"?access_token=query-secret",
+		context.Background(), Anthropic, "caller-token", source.URL+"?access_token=query-secret",
 	)
 	var httpErr ModelHTTPError
 	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusTemporaryRedirect {
@@ -365,8 +344,8 @@ func TestFetchGeminiModels_StripsModelsPrefix(t *testing.T) {
 		t.Errorf("expected Gemini catalog release-date fallback, got %+v", got)
 	}
 	for _, m := range got {
-		if m.Backend != BackendGemini {
-			t.Errorf("Backend = %q on %+v", m.Backend, m)
+		if m.Provider != Google.Name || m.Mode != ModeAPI {
+			t.Errorf("runtime = %s %s on %+v", m.Provider, m.Mode, m)
 		}
 	}
 }

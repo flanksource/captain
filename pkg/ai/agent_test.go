@@ -23,7 +23,7 @@ type mockProvider struct {
 }
 
 func (m *mockProvider) GetModel() string    { return m.model }
-func (m *mockProvider) GetBackend() Backend { return BackendAnthropic }
+func (m *mockProvider) GetRuntime() Runtime { return RuntimeOf(Anthropic, ModeAPI) }
 func (m *mockProvider) Close() error        { m.closed = true; return nil }
 func (m *mockProvider) Execute(_ context.Context, req Request) (*Response, error) {
 	m.lastReq = req
@@ -34,7 +34,7 @@ func (m *mockProvider) Execute(_ context.Context, req Request) (*Response, error
 	return &Response{
 		Text:            m.text + ":" + req.Prompt.User,
 		Model:           m.model,
-		Backend:         BackendAnthropic,
+		Runtime:         RuntimeOf(Anthropic, ModeAPI),
 		Usage:           Usage{InputTokens: 10, OutputTokens: 5},
 		CostUSD:         m.cost,
 		TerminalOutcome: m.outcome,

@@ -20,18 +20,18 @@ func findModel(t *testing.T, models []Model, id string) Model {
 
 func TestMergeLiveCatalogUpsertsLiveAndPreservesStatic(t *testing.T) {
 	static := []Model{
-		{ID: "anthropic/claude-sonnet-5", Backend: BackendAnthropic, Label: "Claude Sonnet 5", ContextWindow: 1_000_000, ReleaseDate: "2026-06-01"},
-		{ID: "claude-opus-4-8", Backend: BackendClaudeAgent, Label: "Claude Agent · Opus 4.8", ContextWindow: 1_000_000},
+		{ID: "anthropic/claude-sonnet-5", Provider: Anthropic, Mode: ModeAPI, Label: "Claude Sonnet 5", ContextWindow: 1_000_000, ReleaseDate: "2026-06-01"},
+		{ID: "claude-opus-4-8", Provider: Anthropic, Mode: ModeAgent, Label: "Claude Agent · Opus 4.8", ContextWindow: 1_000_000},
 	}
 	adapters := []AdapterStatus{
-		{Backend: string(BackendCodexCLI), Type: "cli", ModelDetails: []ModelDef{
+		{Provider: OpenAI.Name, Mode: string(ModeCLI), Type: "cli", ModelDetails: []ModelDef{
 			{ID: "gpt-5.6-sol", Name: "GPT-5.6-Sol", Reasoning: true, ReleaseDate: "2026-07-09", SupportedEfforts: []api.Effort{api.EffortLow, api.EffortMax}},
 		}},
-		{Backend: string(BackendAnthropic), Type: "api", ModelDetails: []ModelDef{
+		{Provider: Anthropic.Name, Mode: string(ModeAPI), Type: "api", ModelDetails: []ModelDef{
 			{ID: "claude-sonnet-5", Name: "Claude Sonnet 5", Reasoning: true, ReleaseDate: "2026-06-29"},
 		}},
 		// gemini-cli has no menu backend; its models must not leak into the menu.
-		{Backend: string(BackendGeminiCLI), Type: "cli", ModelDetails: []ModelDef{
+		{Provider: Google.Name, Mode: string(ModeCLI), Type: "cli", ModelDetails: []ModelDef{
 			{ID: "gemini-3.5-flash", Name: "Gemini 3.5 Flash"},
 		}},
 	}
@@ -40,8 +40,8 @@ func TestMergeLiveCatalogUpsertsLiveAndPreservesStatic(t *testing.T) {
 
 	// A live codex model becomes one codex-agent entry keyed by its exact id.
 	sol := findModel(t, merged, "gpt-5.6-sol")
-	if sol.Backend != BackendCodexAgent {
-		t.Errorf("sol backend = %q, want codex-agent", sol.Backend)
+	if sol.Provider != OpenAI || sol.Mode != ModeAgent {
+		t.Errorf("sol runtime = %v %s, want openai agent", sol.Provider, sol.Mode)
 	}
 	if !sol.Reasoning || sol.ReleaseDate != "2026-07-09" || len(sol.SupportedEfforts) != 2 {
 		t.Errorf("sol not projected from live probe: %+v", sol)
@@ -62,7 +62,7 @@ func TestMergeLiveCatalogUpsertsLiveAndPreservesStatic(t *testing.T) {
 	findModel(t, merged, "claude-opus-4-8")
 
 	for _, m := range merged {
-		if m.ID == "googleai/gemini-3.5-flash" || m.Backend == BackendGeminiCLI {
+		if m.ID == "googleai/gemini-3.5-flash" || (m.Provider == Google && m.Mode == ModeCLI) {
 			t.Errorf("gemini-cli model leaked into the menu: %+v", m)
 		}
 	}
@@ -80,10 +80,10 @@ func TestLiveCatalogInfoAppliesPerProviderConfigured(t *testing.T) {
 	adapterAuthProbe = func() AuthProbe { return fakeProbe(nil, nil, nil, home) }
 	adapterProbe = func(AuthProbe) ([]AdapterStatus, error) {
 		return []AdapterStatus{
-			{Backend: string(BackendAnthropic), Type: "api", ModelDetails: []ModelDef{
+			{Provider: Anthropic.Name, Mode: string(ModeAPI), Type: "api", ModelDetails: []ModelDef{
 				{ID: "claude-sonnet-5", Name: "Claude Sonnet 5", Reasoning: true},
 			}},
-			{Backend: string(BackendOpenAI), Type: "api", ModelDetails: []ModelDef{
+			{Provider: OpenAI.Name, Mode: string(ModeAPI), Type: "api", ModelDetails: []ModelDef{
 				{ID: "gpt-5.5", Name: "GPT-5.5", Reasoning: true},
 			}},
 		}, nil

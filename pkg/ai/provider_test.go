@@ -5,130 +5,73 @@ import (
 	"testing"
 )
 
-func TestBackendValid(t *testing.T) {
-	for _, b := range AllBackends() {
-		if !b.Valid() {
-			t.Errorf("AllBackends()[%q].Valid() = false", b)
+// Every runtime the registry enumerates is a real provider×mode cell, and the
+// list users are shown in error hints reaches all of them. It groups by family
+// ("anthropic: api, agent, …") because a runtime has no single-token spelling —
+// that spelling was the composite id this vocabulary replaced.
+func TestRuntimeListReachesEveryRuntime(t *testing.T) {
+	runtimes := AllRuntimes()
+	if len(runtimes) == 0 {
+		t.Fatal("AllRuntimes() is empty")
+	}
+	list := RuntimeList()
+	for _, r := range runtimes {
+		if !r.Valid() {
+			t.Errorf("AllRuntimes() yielded %v, which is not a served cell", r)
 		}
-	}
-	for _, junk := range []Backend{"", "nope", "claude", "anthropic-cli"} {
-		if junk.Valid() {
-			t.Errorf("Backend(%q).Valid() = true, want false", junk)
-		}
-	}
-}
-
-func TestBackendListContainsEveryBackend(t *testing.T) {
-	list := BackendList()
-	for _, b := range AllBackends() {
-		if !strings.Contains(list, string(b)) {
-			t.Errorf("BackendList() = %q is missing %q", list, b)
-		}
-	}
-	// All seven backends are enumerated.
-	if got := strings.Count(list, ",") + 1; got != len(AllBackends()) {
-		t.Errorf("BackendList() lists %d backends, want %d", got, len(AllBackends()))
-	}
-}
-
-// TestInferBackendErrorListsAllBackends ensures the "pass --backend explicitly"
-// hint stays in sync with AllBackends().
-func TestInferBackendErrorListsAllBackends(t *testing.T) {
-	_, err := InferBackend("totally-unknown-model")
-	if err == nil {
-		t.Fatal("InferBackend(unknown) = nil error, want failure")
-	}
-	for _, b := range AllBackends() {
-		if !strings.Contains(err.Error(), string(b)) {
-			t.Errorf("InferBackend error %q is missing %q", err.Error(), b)
+		if !strings.Contains(list, r.Provider) || !strings.Contains(list, string(r.Mode)) {
+			t.Errorf("RuntimeList() = %q does not reach %v", list, r)
 		}
 	}
 }
 
-func TestBackendKind(t *testing.T) {
-	api := map[Backend]bool{BackendAnthropic: true, BackendGemini: true, BackendOpenAI: true, BackendDeepSeek: true}
-	for _, b := range AllBackends() {
-		want := "cli"
-		if api[b] {
-			want = "api"
-		}
-		if got := b.Kind(); got != want {
-			t.Errorf("Backend(%q).Kind() = %q, want %q", b, got, want)
-		}
-	}
-}
-
-// TestAuthEnvVars pins each backend to the env vars it authenticates with.
-// Cmux backends are intentionally keyless: they use the local CLI login.
-func TestAuthEnvVars(t *testing.T) {
-	cases := map[Backend][]string{
-		BackendAnthropic:   {"ANTHROPIC_API_KEY"},
-		BackendClaudeCLI:   {"ANTHROPIC_API_KEY"},
-		BackendClaudeAgent: {"ANTHROPIC_API_KEY"},
-		BackendClaudeCmux:  nil,
-		BackendOpenAI:      {"OPENAI_API_KEY"},
-		BackendCodexCLI:    {"OPENAI_API_KEY"},
-		BackendCodexAgent:  {"OPENAI_API_KEY"},
-		BackendCodexCmux:   nil,
-		BackendDeepSeek:    {"DEEPSEEK_API_KEY"},
-		BackendGemini:      {"GEMINI_API_KEY", "GOOGLE_API_KEY"},
-		BackendGeminiCLI:   {"GEMINI_API_KEY", "GOOGLE_API_KEY"},
-	}
-	for _, b := range AllBackends() {
-		want, ok := cases[b]
-		if !ok {
-			t.Errorf("backend %q has no AuthEnvVars expectation in test", b)
-			continue
-		}
-		got := AuthEnvVars(b)
-		if strings.Join(got, ",") != strings.Join(want, ",") {
-			t.Errorf("AuthEnvVars(%q) = %v, want %v", b, got, want)
-		}
-	}
-}
-
-// TestGetAPIKeyFromEnvPrefersFirstSet verifies the priority order and that a CLI
-// backend resolves the same key as its parent API backend.
+// A mode authenticates with its provider's credential: the CLI and agent modes
+// share the API key of the family that owns them, and the cmux modes are
+// deliberately keyless because they ride the local CLI's own login.
 func TestGetAPIKeyFromEnvPrefersFirstSet(t *testing.T) {
 	t.Setenv("GEMINI_API_KEY", "")
 	t.Setenv("GOOGLE_API_KEY", "from-google")
-	if got := GetAPIKeyFromEnv(BackendGemini); got != "from-google" {
-		t.Errorf("GetAPIKeyFromEnv(gemini) = %q, want fallback to GOOGLE_API_KEY", got)
+	if got := GetAPIKeyFromEnv(Google, ModeAPI); got != "from-google" {
+		t.Errorf("GetAPIKeyFromEnv(google, api) = %q, want fallback to GOOGLE_API_KEY", got)
 	}
 
 	t.Setenv("ANTHROPIC_API_KEY", "ant-123")
-	if got := GetAPIKeyFromEnv(BackendClaudeCLI); got != "ant-123" {
-		t.Errorf("GetAPIKeyFromEnv(claude-cli) = %q, want claude-cli to share ANTHROPIC_API_KEY", got)
+	if got := GetAPIKeyFromEnv(Anthropic, ModeCLI); got != "ant-123" {
+		t.Errorf("GetAPIKeyFromEnv(anthropic, cli) = %q, want the family's ANTHROPIC_API_KEY", got)
 	}
 
 	t.Setenv("OPENAI_API_KEY", "openai-123")
-	if got := GetAPIKeyFromEnv(BackendClaudeCmux); got != "" {
-		t.Errorf("GetAPIKeyFromEnv(claude-cmux) = %q, want keyless cmux", got)
+	if got := GetAPIKeyFromEnv(Anthropic, ModeCmux); got != "" {
+		t.Errorf("GetAPIKeyFromEnv(anthropic, cmux) = %q, want keyless", got)
 	}
-	if got := GetAPIKeyFromEnv(BackendCodexCmux); got != "" {
-		t.Errorf("GetAPIKeyFromEnv(codex-cmux) = %q, want keyless cmux", got)
+	if got := GetAPIKeyFromEnv(OpenAI, ModeCmux); got != "" {
+		t.Errorf("GetAPIKeyFromEnv(openai, cmux) = %q, want keyless", got)
 	}
 }
 
-func TestInferBackendKnownPrefixes(t *testing.T) {
-	cases := map[string]Backend{
-		"claude-agent-sonnet": BackendClaudeAgent,
-		"claude-code-opus":    BackendClaudeCLI,
-		"claude-sonnet-4":     BackendAnthropic,
-		"gemini-2.0-flash":    BackendGemini,
-		"gemini-cli-pro":      BackendGeminiCLI,
-		"gpt-4o":              BackendOpenAI,
-		"codex-mini":          BackendCodexCLI,
-		"deepseek-reasoner":   BackendDeepSeek,
+// A model name names a family. It used to name a runtime too, and the mode it
+// smuggled overrode the one the caller chose.
+func TestProviderForClaimsFamilyOnly(t *testing.T) {
+	cases := map[string]*ModelProvider{
+		"claude-sonnet-4":   Anthropic,
+		"claude-agent-opus": Anthropic,
+		"gemini-2.0-flash":  Google,
+		"gemini-cli-pro":    Google,
+		"gpt-4o":            OpenAI,
+		"codex-mini":        OpenAI,
+		"deepseek-reasoner": DeepSeek,
 	}
 	for model, want := range cases {
-		got, err := InferBackend(model)
+		got, err := ProviderFor(model)
 		if err != nil {
-			t.Errorf("InferBackend(%q) error: %v", model, err)
+			t.Errorf("ProviderFor(%q) error: %v", model, err)
 			continue
 		}
 		if got != want {
-			t.Errorf("InferBackend(%q) = %q, want %q", model, got, want)
+			t.Errorf("ProviderFor(%q) = %s, want %s", model, got.Name, want.Name)
 		}
+	}
+	if _, err := ProviderFor("totally-unknown-model"); err == nil {
+		t.Fatal("ProviderFor(unknown) = nil error, want failure")
 	}
 }
