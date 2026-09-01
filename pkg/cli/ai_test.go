@@ -21,13 +21,13 @@ type promptResultProvider struct{}
 
 func (promptResultProvider) GetModel() string { return "claude-sonnet-4-6" }
 
-func (promptResultProvider) GetBackend() ai.Backend { return ai.BackendAnthropic }
+func (promptResultProvider) GetRuntime() ai.Runtime { return ai.RuntimeOf(ai.Anthropic, ai.ModeAPI) }
 
 func (promptResultProvider) Execute(context.Context, ai.Request) (*ai.Response, error) {
 	return &ai.Response{
 		Text:    "done",
 		Model:   "claude-sonnet-4-6",
-		Backend: ai.BackendAnthropic,
+		Runtime: ai.RuntimeOf(ai.Anthropic, ai.ModeAPI),
 		Usage:   ai.Usage{InputTokens: 12, OutputTokens: 7},
 	}, nil
 }
@@ -36,14 +36,14 @@ type structuredPromptResultProvider struct{}
 
 func (structuredPromptResultProvider) GetModel() string { return "claude-sonnet-4-6" }
 
-func (structuredPromptResultProvider) GetBackend() ai.Backend { return ai.BackendAnthropic }
+func (structuredPromptResultProvider) GetRuntime() ai.Runtime { return ai.RuntimeOf(ai.Anthropic, ai.ModeAPI) }
 
 func (structuredPromptResultProvider) Execute(context.Context, ai.Request) (*ai.Response, error) {
 	return &ai.Response{
 		Text:           `{"answer":"42"}`,
 		StructuredData: json.RawMessage(`{"answer":"42"}`),
 		Model:          "claude-sonnet-4-6",
-		Backend:        ai.BackendAnthropic,
+		Runtime:        ai.RuntimeOf(ai.Anthropic, ai.ModeAPI),
 	}, nil
 }
 
@@ -51,7 +51,7 @@ type promptResultStreamingProvider struct{}
 
 func (promptResultStreamingProvider) GetModel() string { return "gpt-5-codex" }
 
-func (promptResultStreamingProvider) GetBackend() ai.Backend { return ai.BackendCodexCLI }
+func (promptResultStreamingProvider) GetRuntime() ai.Runtime { return ai.RuntimeOf(ai.OpenAI, ai.ModeCLI) }
 
 func (promptResultStreamingProvider) Execute(context.Context, ai.Request) (*ai.Response, error) {
 	return nil, nil
@@ -72,7 +72,7 @@ type structuredResultStreamingProvider struct {
 
 func (structuredResultStreamingProvider) GetModel() string { return "gpt-5-codex" }
 
-func (structuredResultStreamingProvider) GetBackend() ai.Backend { return ai.BackendCodexCLI }
+func (structuredResultStreamingProvider) GetRuntime() ai.Runtime { return ai.RuntimeOf(ai.OpenAI, ai.ModeCLI) }
 
 func (structuredResultStreamingProvider) Execute(context.Context, ai.Request) (*ai.Response, error) {
 	return nil, nil
@@ -191,7 +191,7 @@ func TestAIPromptOptions_ToRequest_PassesScalars(t *testing.T) {
 		t.Errorf("AppendSystemPrompt = %q", req.Prompt.AppendSystem)
 	}
 	if req.Permissions.Mode != api.PermissionAcceptEdits {
-		t.Errorf("PermissionMode = %q", req.Permissions.Mode)
+		t.Errorf("Permissions.Mode = %q, want acceptEdits", req.Permissions.Mode)
 	}
 	if !req.Permissions.HasPreset(api.PresetEdit) {
 		t.Error("Edit preset not propagated")
@@ -255,8 +255,8 @@ func TestAIRuntimeOptions_ToRequest_ValidationErrors(t *testing.T) {
 
 func TestAIProviderOptions_ToConfig_ValidationErrors(t *testing.T) {
 	isolateSavedAI(t)
-	if _, err := (AIProviderOptions{ModelFlags: aiflags.ModelFlags{Model: "claude-x", Backend: "nope"}}).ToConfig(); err == nil || !strings.Contains(err.Error(), "backend") {
-		t.Fatalf("expected invalid backend error, got %v", err)
+	if _, err := (AIProviderOptions{ModelFlags: aiflags.ModelFlags{Model: "claude-x", Mode: "nope"}}).ToConfig(); err == nil || !strings.Contains(err.Error(), "mode") {
+		t.Fatalf("expected invalid mode error, got %v", err)
 	}
 	if _, err := (AIProviderOptions{ModelFlags: aiflags.ModelFlags{Model: "claude-x"}, Budget: "free"}).ToConfig(); err == nil || !strings.Contains(err.Error(), "budget") {
 		t.Fatalf("expected invalid budget error, got %v", err)
@@ -267,13 +267,13 @@ func TestAIProviderOptions_ToConfig_Sandbox(t *testing.T) {
 	tests := []struct {
 		name, saved, wantName, wantErr string
 		flags                          aiflags.ModelFlags
-		backends                       []api.Backend
+		// A sandbox forces cli mode, so only the provider varies per candidate.
+		providers []*api.ModelProvider
 	}{
-		{name: "selects CLI without changing model", flags: aiflags.ModelFlags{Model: "claude-sonnet-5"}, wantName: "claude-sonnet-5", backends: []api.Backend{api.BackendClaudeCLI}},
-		{name: "rejects explicit API backend", flags: aiflags.ModelFlags{Model: "claude-sonnet-5", Backend: "anthropic"}, wantErr: "contradicts backend"},
+		{name: "selects CLI without changing model", flags: aiflags.ModelFlags{Model: "claude-sonnet-5"}, wantName: "claude-sonnet-5", providers: []*api.ModelProvider{api.Anthropic}},
 		{name: "rejects explicit API mode", flags: aiflags.ModelFlags{Model: "claude-sonnet-5", Mode: "api"}, wantErr: "requires cli mode"},
-		{name: "overrides saved runtime", saved: "ai:\n  model: opus\n  backend: claude-agent\n", backends: []api.Backend{api.BackendClaudeCLI}},
-		{name: "resolves fallbacks in CLI mode", flags: aiflags.ModelFlags{Model: "claude-sonnet-5,gpt-5.5", Fallback: []string{"gemini-3.5-flash"}}, backends: []api.Backend{api.BackendClaudeCLI, api.BackendCodexCLI, api.BackendGeminiCLI}},
+		{name: "overrides the saved agent mode", saved: "ai:\n  providers:\n    anthropic:\n      model: opus\n      mode: agent\n", providers: []*api.ModelProvider{api.Anthropic}},
+		{name: "resolves fallbacks in CLI mode", flags: aiflags.ModelFlags{Model: "claude-sonnet-5,gpt-5.5", Fallback: []string{"gemini-3.5-flash"}}, providers: []*api.ModelProvider{api.Anthropic, api.OpenAI, api.Google}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -282,7 +282,7 @@ func TestAIProviderOptions_ToConfig_Sandbox(t *testing.T) {
 			} else {
 				seedSavedAI(t, tt.saved)
 			}
-			cfg, err := (AIProviderOptions{ModelFlags: tt.flags, Sandbox: "srt"}).ToConfig()
+			cfg, err := (AIProviderOptions{ModelFlags: tt.flags, Sandbox: "docker"}).ToConfig()
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("err = %v, want %q", err, tt.wantErr)
@@ -293,12 +293,12 @@ func TestAIProviderOptions_ToConfig_Sandbox(t *testing.T) {
 				t.Fatal(err)
 			}
 			candidates := cfg.Model.Candidates()
-			if !cfg.Sandbox || len(candidates) != len(tt.backends) {
-				t.Fatalf("sandbox/candidates = %v/%v, want true/%v", cfg.Sandbox, candidates, tt.backends)
+			if cfg.SandboxSelection == nil || cfg.SandboxSelection.Kind != api.SandboxDocker || len(candidates) != len(tt.providers) {
+				t.Fatalf("sandbox/candidates = %v/%v, want docker/%v", cfg.SandboxSelection, candidates, tt.providers)
 			}
-			for i, backend := range tt.backends {
-				if candidates[i].Backend != backend || candidates[i].Mode != registry.ModeCLI {
-					t.Fatalf("candidate[%d] runtime = %s/%s, want %s/%s", i, candidates[i].Backend, candidates[i].Mode, backend, registry.ModeCLI)
+			for i, provider := range tt.providers {
+				if candidates[i].Provider != provider || candidates[i].Mode != registry.ModeCLI {
+					t.Fatalf("candidate[%d] runtime = %v %s, want %s cli", i, candidates[i].Provider, candidates[i].Mode, provider.Name)
 				}
 			}
 			if tt.wantName != "" && cfg.Model.Name != tt.wantName {
@@ -309,13 +309,13 @@ func TestAIProviderOptions_ToConfig_Sandbox(t *testing.T) {
 }
 
 // --api-url is the only way to point a captain run at a `captain ai mock`
-// endpoint for the backends that read Config.APIURL — the genkit ones, and
-// codex-cli, which ignores OPENAI_BASE_URL when a ChatGPT credential is stored.
+// endpoint for the runtimes that read Config.APIURL — the genkit ones, and
+// openai cli, which ignores OPENAI_BASE_URL when a ChatGPT credential is stored.
 func TestAIProviderOptions_ToConfig_CarriesAPIURL(t *testing.T) {
 	isolateSavedAI(t)
 	const endpoint = "http://127.0.0.1:18095"
 	cfg, err := (AIProviderOptions{
-		ModelFlags: aiflags.ModelFlags{Model: "claude-sonnet-5", Backend: "anthropic"},
+		ModelFlags: aiflags.ModelFlags{Model: "claude-sonnet-5"},
 		APIURL:     "  " + endpoint + "  ",
 	}).ToConfig()
 	if err != nil {
@@ -329,20 +329,27 @@ func TestAIProviderOptions_ToConfig_CarriesAPIURL(t *testing.T) {
 func TestAIProviderOptions_ToConfig_LoadsSchemaRepairDefaults(t *testing.T) {
 	seedSavedAI(t, `
 ai:
-  model: claude-sonnet-5
-  backend: anthropic
+  providers:
+    anthropic:
+      model: claude-sonnet-5
+      mode: api
 prompts:
   schemaRepair:
     model: gpt-5
-    backend: openai
+    mode: api
     prompt: /repo/prompts/json-repair.prompt
 `)
 	cfg, err := (AIProviderOptions{}).ToConfig()
 	if err != nil {
 		t.Fatalf("ToConfig: %v", err)
 	}
-	if cfg.SchemaRepair.Model.Name != "gpt-5" || cfg.SchemaRepair.Model.Backend != api.BackendOpenAI {
+	// Saved `mode:` is the mechanism; the provider follows from the model name.
+	if cfg.SchemaRepair.Model.Name != "gpt-5" || cfg.SchemaRepair.Model.Mode != api.ModeAPI {
 		t.Fatalf("schema repair model = %#v", cfg.SchemaRepair.Model)
+	}
+	resolved, err := api.ResolveModel(cfg.SchemaRepair.Model)
+	if err != nil || resolved.Provider != api.OpenAI || resolved.Mode != api.ModeAPI {
+		t.Fatalf("schema repair resolves to %#v (err %v)", resolved, err)
 	}
 	if cfg.SchemaRepair.Prompt != "/repo/prompts/json-repair.prompt" {
 		t.Fatalf("schema repair prompt = %q", cfg.SchemaRepair.Prompt)
@@ -389,7 +396,7 @@ func TestAIRuntimeOptions_ToRequest_MaxTokensPrecedence(t *testing.T) {
 // NoMCP/.../MaxTokens/ReasoningEffort from ~/.captain.yaml, and an explicit
 // --effort flag should override the saved value.
 func TestAIRuntimeOptions_ToRequest_OverlaysSaved(t *testing.T) {
-	seedSavedAI(t, "ai:\n  noMCP: true\n  noHooks: true\n  noSkills: true\n  noUser: true\n  noProject: true\n  noMemory: true\n  maxTokens: 16000\n  reasoningEffort: low\n")
+	seedSavedAI(t, "ai:\n  noMCP: true\n  noHooks: true\n  noSkills: true\n  noUser: true\n  noProject: true\n  noMemory: true\n  maxTokens: 16000\n  providers:\n    anthropic:\n      reasoningEffort: low\n")
 
 	opts := AIRuntimeOptions{AIProviderOptions: AIProviderOptions{ModelFlags: aiflags.ModelFlags{Effort: "high"}}} // flag overrides saved low
 	req, err := opts.ToRequest("sys", "", "user")
@@ -416,24 +423,35 @@ func TestAIRuntimeOptions_ToRequest_OverlaysSaved(t *testing.T) {
 	}
 }
 
-// TestBackendHelpEnumeratesAllBackends guards the static --backend help strings
-// against drift from ai.AllBackends() (the single source of truth).
-func TestBackendHelpEnumeratesAllBackends(t *testing.T) {
+// TestRuntimeFlagHelpEnumeratesEveryAxis guards the static --mode and --provider
+// help strings against drift from the registry, the single source of truth.
+func TestRuntimeFlagHelpEnumeratesEveryAxis(t *testing.T) {
+	modes := make([]string, 0, len(api.AllRuntimeModes()))
+	for _, mode := range api.AllRuntimeModes() {
+		modes = append(modes, string(mode))
+	}
+	providers := make([]string, 0, len(api.Providers()))
+	for _, p := range api.Providers() {
+		providers = append(providers, p.Name)
+	}
 	for _, c := range []struct {
-		typ  reflect.Type
-		name string
+		typ   reflect.Type
+		name  string
+		field string
+		want  []string
 	}{
-		{reflect.TypeOf(AIProviderOptions{}), "AIProviderOptions"},
-		{reflect.TypeOf(AIModelsOptions{}), "AIModelsOptions"},
+		{reflect.TypeOf(aiflags.ModelFlags{}), "ModelFlags", "Mode", modes},
+		{reflect.TypeOf(AIModelsOptions{}), "AIModelsOptions", "Mode", modes},
+		{reflect.TypeOf(AIModelsOptions{}), "AIModelsOptions", "Provider", providers},
 	} {
-		f, ok := c.typ.FieldByName("Backend")
+		f, ok := c.typ.FieldByName(c.field)
 		if !ok {
-			t.Fatalf("%s has no Backend field", c.name)
+			t.Fatalf("%s has no %s field", c.name, c.field)
 		}
 		help := f.Tag.Get("help")
-		for _, b := range ai.AllBackends() {
-			if !strings.Contains(help, string(b)) {
-				t.Errorf("%s Backend help %q is missing backend %q", c.name, help, b)
+		for _, want := range c.want {
+			if !strings.Contains(help, want) {
+				t.Errorf("%s %s help %q is missing %q", c.name, c.field, help, want)
 			}
 		}
 	}
@@ -441,7 +459,7 @@ func TestBackendHelpEnumeratesAllBackends(t *testing.T) {
 
 func TestRunBuffered_JSONIncludesFullInputSpec(t *testing.T) {
 	req := ai.Request{
-		Model:  api.Model{Name: "claude-sonnet-4-6", Backend: api.BackendAnthropic, Effort: api.EffortMedium},
+		Model:  api.Model{Name: "claude-sonnet-4-6", Mode: api.ModeAPI, Effort: api.EffortMedium},
 		Prompt: api.Prompt{System: "be precise", User: "summarize"},
 		Budget: api.Budget{MaxTokens: 2048},
 		Setup:  &shell.Setup{Cwd: "/repo"},
@@ -466,8 +484,8 @@ func TestRunBuffered_JSONIncludesFullInputSpec(t *testing.T) {
 	if result.InputTokens != 12 {
 		t.Fatalf("InputTokens = %d, want 12", result.InputTokens)
 	}
-	if result.Model != "claude-sonnet-4-6" || result.Backend != "anthropic" || result.Dir != "/repo" || result.SessionID != "resume-1" {
-		t.Fatalf("resolved fields = model %q backend %q dir %q session %q", result.Model, result.Backend, result.Dir, result.SessionID)
+	if result.Model != "claude-sonnet-4-6" || result.Provider != "anthropic" || result.Mode != "api" || result.Dir != "/repo" || result.SessionID != "resume-1" {
+		t.Fatalf("resolved fields = model %q provider %q mode %q dir %q session %q", result.Model, result.Provider, result.Mode, result.Dir, result.SessionID)
 	}
 
 	var encoded map[string]any
@@ -486,8 +504,13 @@ func TestRunBuffered_JSONIncludesFullInputSpec(t *testing.T) {
 	if !ok || prompt["user"] != "summarize" || prompt["system"] != "be precise" {
 		t.Fatalf("json input.prompt = %#v, want rendered prompt", input["prompt"])
 	}
-	if input["model"] != "claude-sonnet-4-6" || input["backend"] != "anthropic" || input["effort"] != "medium" {
+	// input is the authored spec, so it carries the model and effort; the resolved
+	// runtime is run history and is published on the result itself.
+	if input["model"] != "claude-sonnet-4-6" || input["effort"] != "medium" {
 		t.Fatalf("json input model fields = %#v", input)
+	}
+	if encoded["provider"] != "anthropic" || encoded["mode"] != "api" {
+		t.Fatalf("json runtime = %#v/%#v, want the resolved pair", encoded["provider"], encoded["mode"])
 	}
 	setup, ok := input["setup"].(map[string]any)
 	if !ok || setup["cwd"] != "/repo" {
@@ -520,7 +543,7 @@ func TestRunBuffered_PreservesStructuredOutput(t *testing.T) {
 
 func TestRunStreaming_JSONIncludesFullInputSpec(t *testing.T) {
 	req := ai.Request{
-		Model:       api.Model{Name: "gpt-5-codex", Backend: api.BackendCodexCLI, Effort: api.EffortHigh},
+		Model:       api.Model{Name: "gpt-5-codex", Mode: api.ModeCLI, Effort: api.EffortHigh},
 		Prompt:      api.Prompt{User: "fix tests"},
 		Setup:       &shell.Setup{Cwd: "/repo"},
 		Permissions: api.Permissions{MCP: api.MCP{Disabled: true}},
@@ -534,7 +557,7 @@ func TestRunStreaming_JSONIncludesFullInputSpec(t *testing.T) {
 	if !ok {
 		t.Fatalf("runStreaming returned %T, want AIPromptResult", got)
 	}
-	if result.Input.Prompt.User != "fix tests" || result.Input.Model.Backend != api.BackendCodexCLI {
+	if result.Input.Prompt.User != "fix tests" || result.Input.Model.Mode != api.ModeCLI {
 		t.Fatalf("result input = %+v, want original request", result.Input)
 	}
 	if result.Dir != "/repo" || result.SessionID != "stream-session-1" || result.Input.SessionID != "stream-session-1" {

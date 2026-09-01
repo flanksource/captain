@@ -93,7 +93,8 @@ var _ = Describe("session get multi-result output", func() {
 	It("projects overview runtime data into the unified session detail", func() {
 		detail := &session.Session{Turns: []session.Turn{{ID: "turn-1", Index: 1}}}
 		summary := SessionRecord{
-			Backend:         "codex-cmux",
+			Provider:        "openai",
+			ModelMode:       "cmux",
 			ReasoningEffort: "high",
 			Live: &SessionLiveWire{
 				PID: 4821, Status: "running", Active: true, CWD: "/repo", Command: "codex",
@@ -102,29 +103,33 @@ var _ = Describe("session get multi-result output", func() {
 
 		enrichSessionDetail(detail, summary)
 
-		Expect(detail.Backend).To(Equal("codex-cmux"))
+		Expect(detail.Provider).To(Equal("openai"))
+		Expect(detail.ModelMode).To(Equal(api.ModeCmux))
 		Expect(detail.ExecutionMode).To(Equal(api.ModeCmux))
 		Expect(detail.ReasoningEffort).To(Equal("high"))
 		Expect(detail.Live).To(Equal(&session.LiveProcess{
 			PID: 4821, Status: "running", Active: true, CWD: "/repo", Command: "codex",
 		}))
+		// A turn carries both halves of its runtime. The mode alone no longer
+		// names the family that ran it, so the projection fills the provider
+		// beside it rather than leaving the turn ambiguous.
 		Expect(detail.Turns).To(Equal([]session.Turn{{
-			ID: "turn-1", Index: 1, Backend: "codex-cmux", ReasoningEffort: "high",
+			ID: "turn-1", Index: 1, Mode: "cmux", ModelProvider: "openai", ReasoningEffort: "high",
 		}}))
 	})
 
-	DescribeTable("projects each backend runtime mode into session detail",
-		func(backend string, mode api.RuntimeMode) {
+	DescribeTable("projects each runtime mode into session detail",
+		func(mode api.RuntimeMode) {
 			detail := &session.Session{}
 
-			enrichSessionDetail(detail, SessionRecord{Backend: backend})
+			enrichSessionDetail(detail, SessionRecord{ModelMode: string(mode)})
 
 			Expect(detail.ExecutionMode).To(Equal(mode))
 		},
-		Entry("api", "anthropic", api.ModeAPI),
-		Entry("cli", "codex-cli", api.ModeCLI),
-		Entry("agent", "claude-agent", api.ModeAgent),
-		Entry("cmux", "codex-cmux", api.ModeCmux),
+		Entry("api", api.ModeAPI),
+		Entry("cli", api.ModeCLI),
+		Entry("agent", api.ModeAgent),
+		Entry("cmux", api.ModeCmux),
 	)
 
 	It("passes UUID-prefix searches through the bounded list filter", func() {
@@ -264,7 +269,7 @@ var _ = Describe("session get multi-result output", func() {
 					PromptMarkdown: "Review the attached form screenshot.",
 					ResultText:     `{"summary":"Use a single-column form layout."}`,
 					Runtime: database.PromptRunRuntime{Resolved: database.PromptRunRuntimeSelection{
-						Provider: "google", Backend: "gemini-api", Model: "gemini-2.5-pro", Effort: "high",
+						Provider: "google", Mode: "api", Model: "gemini-2.5-pro", Effort: "high",
 					}},
 					State: database.PromptRunStateSucceeded, Phase: database.PromptRunPhaseFinished,
 					StartedAt: &startedAt, FinishedAt: &finishedAt,
@@ -284,7 +289,7 @@ var _ = Describe("session get multi-result output", func() {
 		Expect(child.Summary.DetailAvailable).To(BeTrue())
 		Expect(child.Summary.Messages).To(Equal(2))
 		Expect(child.Summary.Model).To(Equal("gemini-2.5-pro"))
-		Expect(child.Summary.Backend).To(Equal("gemini-api"))
+		Expect(child.Summary.ModelMode).To(Equal("api"))
 		Expect(child.Summary.Provider).To(Equal("google"))
 		Expect(child.Detail).NotTo(BeNil())
 		Expect(child.Detail.Messages).To(Equal([]session.Message{
@@ -298,7 +303,7 @@ var _ = Describe("session get multi-result output", func() {
 			},
 		}))
 		Expect(child.Detail.Model).To(Equal("gemini-2.5-pro"))
-		Expect(child.Detail.Backend).To(Equal("gemini-api"))
+		Expect(child.Detail.ModelMode).To(Equal(api.ModeAPI))
 		Expect(child.Detail.Provider).To(Equal("google"))
 		Expect(child.Detail.StartedAt).To(PointTo(Equal(startedAt)))
 		Expect(child.Detail.EndedAt).To(PointTo(Equal(finishedAt)))

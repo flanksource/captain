@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/flanksource/captain/pkg/ai"
@@ -11,7 +10,7 @@ import (
 )
 
 // resolveSandboxSelection applies the sandbox precedence chain — CLI flag >
-// prompt frontmatter > global default > none — and resolves the winner against
+// prompt frontmatter > global default > off — and resolves the winner against
 // the backends configured in ~/.captain.yaml.
 //
 // Kinds whose execution seam is not wired yet fail loud here rather than
@@ -21,19 +20,15 @@ func resolveSandboxSelection(flagSelector string, ref *api.SandboxRef, defaults 
 	selector := strings.TrimSpace(flagSelector)
 	if selector == "" && ref != nil {
 		selector = strings.TrimSpace(ref.Backend)
+		if selector == "" {
+			selector = string(ref.Mode)
+		}
 	}
 	selection, err := defaults.Resolve(selector)
 	if err != nil {
 		return captainconfig.SandboxSelection{}, err
 	}
-	switch selection.Kind {
-	case registry.SandboxNone, registry.SandboxSRT, registry.SandboxContainer, registry.SandboxGitAgent:
-		return selection, nil
-	default:
-		return captainconfig.SandboxSelection{}, fmt.Errorf(
-			"sandbox kind %q is not wired to execution yet (supported today: %s, %s, %s, %s)",
-			selection.Kind, registry.SandboxNone, registry.SandboxSRT, registry.SandboxContainer, registry.SandboxGitAgent)
-	}
+	return selection, nil
 }
 
 // resolveRunSandbox resolves the sandbox for one run from the request's own ref
@@ -48,14 +43,14 @@ func resolveRunSandbox(req *ai.Request, flagSelector string) (captainconfig.Sand
 // ref, so the serialized spec carries the choice the run was actually made with.
 func recordSandboxSelection(req *ai.Request, cfg *ai.Config, selection captainconfig.SandboxSelection, flagSelector string) {
 	if flagSelector != "" {
-		ref := api.SandboxRef{Backend: flagSelector}
+		ref := sandboxRefFromSelection(selection)
 		if req.Sandbox != nil {
-			ref.Agent = req.Sandbox.Agent
 			ref.Policy = req.Sandbox.Policy
+			ref.Agent = req.Sandbox.Agent
+			ref.Dispatch = req.Sandbox.Dispatch
 		}
 		req.Sandbox = &ref
 	}
-	cfg.Sandbox = selection.Kind == registry.SandboxSRT
 	cfg.SandboxSelection = sandboxSelectionConfig(selection, req.Sandbox)
 }
 
@@ -75,10 +70,10 @@ func applyRunSandbox(req *ai.Request, cfg *ai.Config, flagSelector string) error
 }
 
 // sandboxForcedMode returns the single runtime mode a sandbox kind can serve,
-// or "" when the kind serves several (or is none). Argv-wrapping adapters are
+// or "" when the kind serves several (or is off/native). Argv-wrapping adapters are
 // CLI-only, so selecting one forces CLI mode the way --sandbox always has.
 func sandboxForcedMode(kind registry.SandboxKind) registry.RuntimeMode {
-	if kind == registry.SandboxNone {
+	if kind == registry.SandboxOff || kind == registry.SandboxNative {
 		return ""
 	}
 	descriptor, ok := registry.SandboxFor(kind)
@@ -89,17 +84,25 @@ func sandboxForcedMode(kind registry.SandboxKind) registry.RuntimeMode {
 }
 
 // sandboxSelectionConfig projects a resolved selection onto the runtime
-// config. "none" stays nil, so an unsandboxed run carries no selection at all
-// and the exec seam's nil check keeps its meaning. ref, when present, carries
+// config. Off and Native stay nil because they do not wrap or relocate the
+// provider process. ref, when present, carries
 // the per-prompt agent pin and policy override (git-agent).
 func sandboxSelectionConfig(selection captainconfig.SandboxSelection, ref *api.SandboxRef) *api.SandboxConfig {
-	if selection.Kind == registry.SandboxNone {
+	if selection.Kind == registry.SandboxOff || selection.Kind == registry.SandboxNative {
 		return nil
 	}
 	cfg := &api.SandboxConfig{Kind: selection.Kind, Name: selection.Name, Options: selection.Options}
 	if ref != nil {
 		cfg.Agent = ref.Agent
-		cfg.Policy = ref.Policy
+		cfg.Dispatch = ref.Dispatch
 	}
 	return cfg
+}
+
+func sandboxRefFromSelection(selection captainconfig.SandboxSelection) api.SandboxRef {
+	ref := api.SandboxRef{Mode: selection.Kind}
+	if selection.Name != "" {
+		ref.Backend = selection.Name
+	}
+	return ref
 }

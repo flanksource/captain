@@ -9,6 +9,7 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/aiflags"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/captainconfig"
 	clickyrpc "github.com/flanksource/clicky/rpc"
@@ -19,7 +20,7 @@ type ConfigureOptions struct {
 	Provider string               `flag:"provider" args:"true" help:"API provider to configure: anthropic|openai|gemini|deepseek"`
 	Token    text.SensitiveString `flag:"token" hidden:"true" help:"Provider API token (prefer the secure interactive prompt)"`
 	Test     bool                 `flag:"test" help:"Test the current or supplied token without saving it"`
-	Agent    string               `flag:"agent" help:"Default runtime agent for this provider"`
+	Mode     string               `flag:"mode" help:"Default runtime mode for this provider: api|agent|cli|cmux"`
 	Model    string               `flag:"model" help:"Default model for this provider"`
 	Effort   string               `flag:"effort" help:"Default reasoning effort, or default to use the model default"`
 	Active   bool                 `flag:"active" help:"Use this provider for completely flagless runs"`
@@ -27,7 +28,8 @@ type ConfigureOptions struct {
 
 type ConfigureResult struct {
 	Path            string `json:"path" pretty:"label=Saved To"`
-	Backend         string `json:"backend" pretty:"label=Backend"`
+	Provider        string `json:"provider" pretty:"label=Provider"`
+	Mode            string `json:"mode" pretty:"label=Mode"`
 	Model           string `json:"model" pretty:"label=Model"`
 	ReasoningEffort string `json:"reasoningEffort,omitempty" pretty:"label=Reasoning Effort"`
 	BudgetUSD       string `json:"budgetUSD,omitempty" pretty:"label=Budget (USD)"`
@@ -57,7 +59,7 @@ func RunConfigure(ctx context.Context, opts ConfigureOptions) (any, error) {
 	if strings.TrimSpace(opts.Provider) != "" {
 		return runProviderConfigure(ctx, opts)
 	}
-	if !opts.Token.IsEmpty() || opts.Test || opts.Agent != "" || opts.Model != "" || opts.Effort != "" || opts.Active {
+	if !opts.Token.IsEmpty() || opts.Test || opts.Mode != "" || opts.Model != "" || opts.Effort != "" || opts.Active {
 		return nil, fmt.Errorf("provider is required when using token or provider-default flags")
 	}
 	return runConfigureWizard()
@@ -69,12 +71,15 @@ func runConfigureWizard() (any, error) {
 		return nil, err
 	}
 
-	activeProvider := api.Backend(current.AI.ActiveProvider())
+	activeProvider, known := api.ProviderByName(current.AI.ActiveProvider())
+	if !known {
+		return nil, fmt.Errorf("active provider %q is not a known provider (available: %s)", current.AI.ActiveProvider(), api.ProviderList())
+	}
 	currentDefaults, err := effectiveProviderDefaults(current.AI, activeProvider)
 	if err != nil {
 		return nil, err
 	}
-	backend := currentDefaults.Agent
+	runtimeKey := runtimeOptionKey(activeProvider.Name, currentDefaults.Mode)
 	model := currentDefaults.Model
 	effort := defaultString(currentDefaults.Effort, "high")
 	budget := floatToInput(current.AI.BudgetUSD)
@@ -85,25 +90,26 @@ func runConfigureWizard() (any, error) {
 	form := huh.NewForm(
 		huh.NewGroup(
 			huh.NewSelect[string]().
-				Title("Default backend").
-				Description("Used when --backend is not passed. Determines which models are available below.").
-				Options(backendOptions()...).
-				Value(&backend),
+				Title("Default runtime").
+				Description("Used when --mode is not passed. Determines which models are available below.").
+				Options(runtimeOptions()...).
+				Value(&runtimeKey),
 		),
 		huh.NewGroup(
 			huh.NewSelect[string]().
 				Title("Default model").
-				Description("Used when --model is not passed. List is filtered by the backend chosen above.").
+				Description("Used when --model is not passed. List is filtered by the runtime chosen above.").
 				OptionsFunc(func() []huh.Option[string] {
-					return modelOptionsFor(ai.Backend(backend))
-				}, &backend).
+					return modelOptionsFor(splitRuntimeOptionKey(runtimeKey))
+				}, &runtimeKey).
 				Value(&model),
 			huh.NewSelect[string]().
 				Title("Reasoning effort").
-				Description("Honoured by codex-agent and the API backends (thinking budget); CLI wrappers may ignore.").
+				Description("Honoured by the agent and API modes (thinking budget); CLI wrappers may ignore.").
 				OptionsFunc(func() []huh.Option[string] {
-					return effortHuhOptionsFor(ai.Backend(backend), model)
-				}, []any{&backend, &model}).
+					p, mode := splitRuntimeOptionKey(runtimeKey)
+					return effortHuhOptionsFor(p, mode, model)
+				}, []any{&runtimeKey, &model}).
 				Value(&effort),
 			huh.NewInput().
 				Title("Budget (USD)").
@@ -134,8 +140,10 @@ func runConfigureWizard() (any, error) {
 		return nil, err
 	}
 
+	formProvider, formMode := splitRuntimeOptionKey(runtimeKey)
 	cfg := buildConfigFromForm(formInputs{
-		Backend:         backend,
+		Provider:        formProvider,
+		Mode:            string(formMode),
 		Model:           model,
 		ReasoningEffort: effort,
 		BudgetUSD:       budget,
@@ -157,7 +165,8 @@ func runConfigureWizard() (any, error) {
 	path, _ := captainconfig.Path()
 	return ConfigureResult{
 		Path:            path,
-		Backend:         backend,
+		Provider:        formProvider.Name,
+		Mode:            string(formMode),
 		Model:           model,
 		ReasoningEffort: effort,
 		BudgetUSD:       budget,
@@ -171,7 +180,8 @@ func runConfigureWizard() (any, error) {
 // struct makes buildConfigFromForm a pure function we can unit-test without a
 // TTY.
 type formInputs struct {
-	Backend         string
+	Provider        *api.ModelProvider
+	Mode            string
 	Model           string
 	ReasoningEffort string
 	BudgetUSD       string
@@ -189,12 +199,11 @@ func buildConfigFromForm(in formInputs) captainconfig.Config {
 		enabled[e] = true
 	}
 
-	provider := api.Backend(in.Backend).Provider()
 	return captainconfig.Config{
 		AI: captainconfig.AIDefaults{
-			DefaultProvider: string(provider),
+			DefaultProvider: in.Provider.Name,
 			Providers: map[string]captainconfig.ProviderDefaults{
-				string(provider): {Agent: in.Backend, Model: in.Model, ReasoningEffort: in.ReasoningEffort},
+				in.Provider.Name: {Mode: in.Mode, Model: in.Model, ReasoningEffort: in.ReasoningEffort},
 			},
 			BudgetUSD: budget,
 			MaxTokens: maxTokens,
@@ -237,20 +246,31 @@ func toggleHuhOptions() []huh.Option[string] {
 	return out
 }
 
-// backendOptions renders the runtime descriptor as picker rows, dropping what
+// runtimeOptions renders the runtime descriptor as picker rows, dropping what
 // the user switched off. It used to be eleven hand-written rows that neither
 // tracked a new provider×mode pair nor honoured ai.disabled.
-func backendOptions() []huh.Option[string] {
-	out := make([]huh.Option[string], 0, len(api.AllBackends()))
+// runtimeOptions renders the enabled provider×mode cells. The option VALUE is a
+// "provider/mode" form key, not a runtime id: the pair never collapses into one
+// token on the wire or in config, only inside this form's widget state.
+func runtimeOptions() []huh.Option[string] {
+	out := make([]huh.Option[string], 0, len(api.AllRuntimes()))
 	for _, family := range api.RuntimeCatalog() {
 		for _, mode := range family.Modes {
 			if mode.Disabled {
 				continue
 			}
-			out = append(out, huh.NewOption(runtimeLabel(family.Family, mode.Backend), mode.Adapter))
+			out = append(out, huh.NewOption(runtimeLabel(family.Family, mode.Mode), runtimeOptionKey(family.Provider, mode.Mode)))
 		}
 	}
 	return out
+}
+
+func runtimeOptionKey(provider, mode string) string { return provider + "/" + mode }
+
+func splitRuntimeOptionKey(key string) (*api.ModelProvider, api.RuntimeMode) {
+	name, mode, _ := strings.Cut(key, "/")
+	p, _ := api.ProviderByName(name)
+	return p, api.RuntimeMode(mode)
 }
 
 // runtimeLabel renders "claude"+"api" as "Claude API". The descriptor carries
@@ -281,30 +301,30 @@ func modeCase(mode string) string {
 	}
 }
 
-// modelOptionsFor renders the chosen backend's models as huh select options.
-// CLI/agent backends authenticate internally, so their models come from the
-// static catalog (no API key). API backends fetch the live /v1/models
+// modelOptionsFor renders the chosen runtime's models as huh select options.
+// The local transports authenticate internally, so their models come from the
+// static catalog (no API key). The API mode fetches the live /v1/models
 // catalogue — the only source of truth, with no static fallback: if the key is
 // missing or the call fails, the picker shows a single sentinel row carrying
 // the error so the user can fix their environment without dropping out of the
 // form.
-func modelOptionsFor(b ai.Backend) []huh.Option[string] {
-	if b.Kind() == "cli" {
-		return modelHuhOptions(agentCatalogModels(b))
+func modelOptionsFor(p *ai.ModelProvider, mode ai.RuntimeMode) []huh.Option[string] {
+	if mode.Kind() == "cli" {
+		return modelHuhOptions(agentCatalogModels(p, mode))
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	models, err := ai.ListModels(ctx, b)
+	models, err := ai.ListModels(ctx, p)
 	if err != nil {
 		return []huh.Option[string]{huh.NewOption(fmt.Sprintf("(no models: %v)", err), "")}
 	}
 
 	// Drop legacy / non-chat IDs (Grok 3 mini, gpt-3.5, dall-e, ...) so the
 	// picker shows only models worth defaulting to. Shared with `captain ai
-	// models` so both surfaces stay consistent. The catalog used for CLI
-	// backends is already curated, so this filter applies only to the raw
+	// models` so both surfaces stay consistent. The catalog used for the local
+	// transports is already curated, so this filter applies only to the raw
 	// live list.
 	filtered := make([]ai.ModelDef, 0, len(models))
 	for _, m := range models {
@@ -329,21 +349,21 @@ func modelHuhOptions(models []ai.ModelDef) []huh.Option[string] {
 	return out
 }
 
-// defaultModelFor seeds the form with the backend provider's current top pick
-// for that backend's mode. It was a hardcoded switch, which named models the
-// catalog had since superseded and could seed one the user had disabled.
-func defaultModelFor(b ai.Backend) string {
-	return api.DefaultModelFor(b)
+// defaultModelFor seeds the form with the provider's current top pick for that
+// mode. It was a hardcoded switch, which named models the catalog had since
+// superseded and could seed one the user had disabled.
+func defaultModelFor(p *ai.ModelProvider, mode ai.RuntimeMode) string {
+	return aiflags.DefaultModelFor(p, mode)
 }
 
 func effortHuhOptions() []huh.Option[string] {
 	return effortOptions(api.Disabled().EnabledEfforts())
 }
 
-func effortHuhOptionsFor(backend ai.Backend, model string) []huh.Option[string] {
-	if supported, _, ok := ai.ModelEfforts(backend, model); ok {
+func effortHuhOptionsFor(p *ai.ModelProvider, mode ai.RuntimeMode, model string) []huh.Option[string] {
+	if supported, _, ok := ai.ModelEfforts(p, mode, model); ok {
 		if len(supported) == 0 {
-			return []huh.Option[string]{huh.NewOption("Backend default", "")}
+			return []huh.Option[string]{huh.NewOption("Runtime default", "")}
 		}
 		return effortOptions(supported)
 	}

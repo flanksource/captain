@@ -81,7 +81,7 @@ func TestBuildProviderWrapsRemoteWithoutAdvertisingStreaming(t *testing.T) {
 // it as a failure ("dispatched but not concluded: context deadline exceeded").
 func TestRemoteAwareTimeout(t *testing.T) {
 	remote := ai.Config{SandboxSelection: &api.SandboxConfig{Kind: registry.SandboxGitAgent}}
-	local := ai.Config{SandboxSelection: &api.SandboxConfig{Kind: registry.SandboxSRT}}
+	local := ai.Config{SandboxSelection: &api.SandboxConfig{Kind: registry.SandboxDocker}}
 	const requestDefault = 120 * time.Second
 
 	t.Run("a relocated run waits for the agent, not the model", func(t *testing.T) {
@@ -112,7 +112,7 @@ func TestRemoteAwareTimeout(t *testing.T) {
 	})
 
 	t.Run("local sandboxes keep the request default", func(t *testing.T) {
-		for name, cfg := range map[string]ai.Config{"srt": local, "none": {}} {
+		for name, cfg := range map[string]ai.Config{"docker": local, "off": {}} {
 			if got := remoteAwareTimeout(ai.Request{}, cfg, requestDefault); got != requestDefault {
 				t.Fatalf("%s: timeout = %s, want %s", name, got, requestDefault)
 			}
@@ -123,8 +123,8 @@ func TestRemoteAwareTimeout(t *testing.T) {
 func TestRemoteExecProviderForLeavesLocalSandboxesAlone(t *testing.T) {
 	for _, selection := range []*api.SandboxConfig{
 		nil,
-		{Kind: registry.SandboxSRT},
-		{Kind: registry.SandboxContainer},
+		{Kind: registry.SandboxNative},
+		{Kind: registry.SandboxDocker},
 	} {
 		provider, err := remoteExecProviderFor(&ai.Request{}, ai.Config{SandboxSelection: selection})
 		if err != nil {

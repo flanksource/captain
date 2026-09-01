@@ -17,7 +17,8 @@ var _ = Describe("prompt run failures", func() {
 			SessionID: "session-91bd",
 			Status:    "running",
 			Model:     "claude-sonnet-5",
-			Backend:   "anthropic",
+			Provider:  "anthropic",
+			Mode:      "api",
 		})
 		stream.fail("provider rejected the request")
 
@@ -34,7 +35,8 @@ var _ = Describe("prompt run failures", func() {
 				"status": "error",
 				"chat": false,
 				"model": "claude-sonnet-5",
-				"backend": "anthropic",
+				"provider": "anthropic",
+				"mode": "api",
 				"capabilities": {
 					"interrupt": false,
 					"steer": false,
@@ -48,7 +50,8 @@ var _ = Describe("prompt run failures", func() {
 				"runId": "run-4a82",
 				"sessionId": "session-91bd",
 				"model": "claude-sonnet-5",
-				"backend": "anthropic",
+				"provider": "anthropic",
+				"mode": "api",
 				"success": false,
 				"error": "provider rejected the request"
 			},
@@ -64,7 +67,8 @@ var _ = Describe("prompt run failures", func() {
 			SessionID: "session-91bd",
 			Status:    "running",
 			Model:     "claude-sonnet-5",
-			Backend:   "anthropic",
+			Provider:  "anthropic",
+			Mode:      "api",
 		})
 		stream.fail("provider rejected the request")
 
@@ -75,9 +79,9 @@ var _ = Describe("prompt run failures", func() {
 
 		Expect(response.Body.String()).To(Equal(
 			"event: run\n" +
-				`data: {"runId":"run-4a82","sessionId":"session-91bd","status":"error","chat":false,"model":"claude-sonnet-5","backend":"anthropic","capabilities":{"interrupt":false,"steer":false,"followUp":false,"resume":false}}` + "\n\n" +
+				`data: {"runId":"run-4a82","sessionId":"session-91bd","status":"error","chat":false,"model":"claude-sonnet-5","provider":"anthropic","mode":"api","capabilities":{"interrupt":false,"steer":false,"followUp":false,"resume":false}}` + "\n\n" +
 				"event: error\n" +
-				`data: {"runId":"run-4a82","sessionId":"session-91bd","model":"claude-sonnet-5","backend":"anthropic","success":false,"error":"provider rejected the request"}` + "\n\n",
+				`data: {"runId":"run-4a82","sessionId":"session-91bd","model":"claude-sonnet-5","provider":"anthropic","mode":"api","success":false,"error":"provider rejected the request"}` + "\n\n",
 		))
 	})
 })

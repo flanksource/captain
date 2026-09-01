@@ -16,7 +16,8 @@ type PromptRunResult struct {
 	BatchID      string           `json:"batchId,omitempty"`
 	Status       string           `json:"status,omitempty" pretty:"label=Status"`
 	Model        string           `json:"model,omitempty" pretty:"label=Model"`
-	Backend      string           `json:"backend,omitempty" pretty:"label=Backend"`
+	Provider     string           `json:"provider,omitempty" pretty:"label=Provider"`
+	Mode         string           `json:"mode,omitempty" pretty:"label=Mode"`
 	Chat         bool             `json:"chat,omitempty"`
 	Capabilities ChatCapabilities `json:"capabilities,omitempty"`
 
@@ -41,7 +42,8 @@ type PromptRunItem struct {
 	Selector         string           `json:"selector,omitempty" pretty:"label=Selector"`
 	Status           string           `json:"status,omitempty" pretty:"label=Status"`
 	Model            string           `json:"model,omitempty" pretty:"label=Model"`
-	Backend          string           `json:"backend,omitempty" pretty:"label=Backend"`
+	Provider         string           `json:"provider,omitempty" pretty:"label=Provider"`
+	Mode             string           `json:"mode,omitempty" pretty:"label=Mode"`
 	Effort           string           `json:"effort,omitempty" pretty:"label=Effort"`
 	Chat             bool             `json:"chat,omitempty"`
 	Capabilities     ChatCapabilities `json:"capabilities,omitempty"`
@@ -109,7 +111,8 @@ func promptRunComparisonTable(runs []PromptRunItem) clickyapi.TextTable {
 		table.Rows = append(table.Rows, row)
 	}
 	add("Status", func(run PromptRunItem) string { return run.Status })
-	add("Backend", func(run PromptRunItem) string { return run.Backend })
+	add("Provider", func(run PromptRunItem) string { return run.Provider })
+	add("Mode", func(run PromptRunItem) string { return run.Mode })
 	add("Model", func(run PromptRunItem) string { return run.Model })
 	add("Error", func(run PromptRunItem) string { return truncateCell(run.Error, 160) })
 	add("Duration", func(run PromptRunItem) string { return run.Duration })
@@ -129,10 +132,12 @@ func runColumnHeader(run PromptRunItem) string {
 	if strings.TrimSpace(run.Selector) != "" {
 		return run.Selector
 	}
-	if run.Backend != "" && run.Model != "" {
-		return run.Backend + ":" + run.Model
+	// mode:model is captain's own compact selector grammar, so the label a user
+	// reads is a token they can paste straight back into --model.
+	if run.Mode != "" && run.Model != "" {
+		return run.Mode + ":" + run.Model
 	}
-	return firstNonEmpty(run.Model, run.Backend, "run")
+	return firstNonEmpty(run.Model, run.Mode, "run")
 }
 
 func textCell(s string) clickyapi.Textable {

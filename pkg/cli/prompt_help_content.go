@@ -32,7 +32,7 @@ output:
 runtimes:
   - agent:sonnet:high
   - model: gemini-3.5-flash
-    backend: gemini
+    mode: api
     effort: high
 budget:
   cost: 0.50
@@ -71,13 +71,13 @@ func promptDotpromptHelpFields() []promptHelpField {
 		{"input.schema", "Input Picoschema or JSON Schema used by dotprompt to describe and validate template variables."},
 		{"input.default", "Default values merged into missing template variables."},
 		{"output.schema", "Output Picoschema or raw JSON Schema sent to the model as the structured-output contract."},
-		{"runtimes[]", "Two or more default parallel targets. Each entry is a compact model selector or a full model/backend/effort object."},
+		{"runtimes[]", "Two or more default parallel targets. Each entry is a compact model selector or a full model/mode/effort object."},
 	}
 }
 
 func promptSpecHelpFields() []promptHelpField {
 	return []promptHelpField{
-		{"model, id, backend", "Catalog model name, optional fully qualified provider ID, and optional backend override."},
+		{"model, id", "Catalog model name and optional fully qualified provider ID. The provider is derived from the name; the mechanism is the separate mode field below."},
 		{"mode", "Runtime mechanism: api, cli, agent, or cmux."},
 		{"temperature", "Sampling temperature from 0 through 2. config.temperature wins when both are set."},
 		{"effort", "Reasoning effort: low, medium, high, xhigh, max, or ultra."},
@@ -88,7 +88,7 @@ func promptSpecHelpFields() []promptHelpField {
 		{"prompt.appendSystem", "Text appended to the runtime's default system prompt."},
 		{"prompt.source", "Diagnostic source label; Captain normally fills this from the .prompt path."},
 		{"prompt.schemaJSON", "Raw JSON Schema in the native run spec. In .prompt files, prefer output.schema."},
-		{"prompt.schemaStrictness", "Schema failure policy: backend default, none, warning, error, or retry."},
+		{"prompt.schemaStrictness", "Schema failure policy: runtime default, none, warning, error, or retry."},
 		{"prompt.metadata", "Arbitrary string-to-string diagnostic metadata."},
 		{"prompt.attachments[]", "Ordered multimodal inputs. Each has exactly one source (id, path, or url), plus optional filename, mediaType, size, and sha256 metadata."},
 		{"messages[].role", "Role for one provider-neutral history entry: system, user, assistant, or tool."},
@@ -96,16 +96,16 @@ func promptSpecHelpFields() []promptHelpField {
 		{"messages[].parts[].toolRequest", "Tool request with name, toolCallId, and JSON input; tool results must correlate with these stable call IDs."},
 		{"messages[].parts[].toolResult", "Tool result with toolCallId and either JSON output or an error. messages[] is mutually exclusive with prompt body fields and toolApproval."},
 		{"budget.cost", "Maximum spend in USD; zero means no ceiling."},
-		{"budget.maxTokens", "Maximum output tokens per call; zero uses the backend default. config.maxOutputTokens wins when set."},
-		{"budget.maxTurns", "Maximum agent turns from 0 through 100; zero uses the backend default."},
+		{"budget.maxTokens", "Maximum output tokens per call; zero uses the runtime default. config.maxOutputTokens wins when set."},
+		{"budget.maxTurns", "Maximum agent turns from 0 through 100; zero uses the runtime default."},
 		{"budget.timeout", "Overall run duration such as 30m; empty uses the caller default."},
 		{"memory.skills[]", "Additional skill or plugin directories to load."},
 		{"memory.skipProject, memory.skipUser", "Skip project-local or user-level ambient settings."},
 		{"memory.skipSkills, memory.skipHooks, memory.skipMemory", "Disable skills, hooks, or auto-memory/agent instruction files."},
 		{"memory.bare", "Skip hooks, skills, memory, and ambient settings together."},
-		{"permissions.mode", "Base posture: default, plan, acceptEdits, auto, bypassPermissions, or dontAsk."},
+		{"permissions.mode", "Permission posture, independent of the sandbox: default, plan, acceptEdits, auto, bypassPermissions, or dontAsk."},
 		{"permissions.presets[]", "Named safety bundles: edit or bare."},
-		{"permissions.tools.<tool>", "Per-tool policy: auto, ask, allow, or deny. Captain fails if the selected backend cannot enforce it."},
+		{"permissions.tools.<tool>", "Per-tool policy: auto, ask, allow, or deny. Captain fails if the selected runtime cannot enforce it."},
 		{"permissions.mcp.disabled", "Disable all MCP servers."},
 		{"permissions.mcp.servers[]", "Optional allowlist of configured MCP servers."},
 		{"permissions.mcp.<server>", "Enable or disable one configured MCP server."},
@@ -145,6 +145,6 @@ func promptSpecHelpFields() []promptHelpField {
 		{"workflow.commits[].dryRun", "Report the proposed commit without writing it."},
 		{"workflow.autoVerifyWithoutFixture", "Allow a successful generate-only run to become durably verified without a fixture."},
 		{"sessionId", "Resume a provider session by ID when the selected runtime supports resume."},
-		{"cliArgs", "Backend-specific cmux CLI arguments keyed by their JSON field names; ignored by non-cmux backends. Use --schema for the selected backend's exact fields."},
+		{"cliArgs", "Provider-specific cmux CLI arguments keyed by their JSON field names; ignored outside cmux mode. Use --schema for the selected runtime's exact fields."},
 	}
 }

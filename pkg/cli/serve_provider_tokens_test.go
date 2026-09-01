@@ -18,15 +18,15 @@ func TestProviderTokenPutValidatesAndSavesWithoutEchoingSecret(t *testing.T) {
 	setupProviderTokenTest(t)
 	const secret = "submitted-provider-secret"
 	previous := configureTokenModels
-	configureTokenModels = func(_ context.Context, backend ai.Backend, token string) ([]ai.ModelDef, error) {
-		if backend != ai.BackendGemini || token != secret {
-			t.Fatalf("validation got backend=%s token=%q", backend, token)
+	configureTokenModels = func(_ context.Context, provider *ai.ModelProvider, token string) ([]ai.ModelDef, error) {
+		if provider != ai.Google || token != secret {
+			t.Fatalf("validation got provider=%s token=%q", provider.Name, token)
 		}
 		return []ai.ModelDef{{ID: "gemini-example"}}, nil
 	}
 	t.Cleanup(func() { configureTokenModels = previous })
 
-	response := serveProviderTokenRequest(t, http.MethodPut, "/api/captain/ai/providers/gemini/token", `{"token":"`+secret+`"}`)
+	response := serveProviderTokenRequest(t, http.MethodPut, "/api/captain/ai/providers/google/token", `{"token":"`+secret+`"}`)
 	if response.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
@@ -42,7 +42,7 @@ func TestProviderTokenPutValidatesAndSavesWithoutEchoingSecret(t *testing.T) {
 	}
 	vault, _ := credentials.DefaultVault()
 	values, err := vault.Load()
-	if err != nil || values["gemini"] != secret {
+	if err != nil || values["google"] != secret {
 		t.Fatalf("vault=%v err=%v", values, err)
 	}
 }
@@ -54,8 +54,8 @@ func TestProviderTokenPutRejectsCredentialWithoutReplacingOldToken(t *testing.T)
 		t.Fatalf("seed vault: %v", err)
 	}
 	previous := configureTokenModels
-	configureTokenModels = func(context.Context, ai.Backend, string) ([]ai.ModelDef, error) {
-		return nil, ai.ModelHTTPError{Backend: ai.BackendOpenAI, StatusCode: http.StatusUnauthorized}
+	configureTokenModels = func(context.Context, *ai.ModelProvider, string) ([]ai.ModelDef, error) {
+		return nil, ai.ModelHTTPError{Provider: ai.OpenAI.Name, StatusCode: http.StatusUnauthorized}
 	}
 	t.Cleanup(func() { configureTokenModels = previous })
 
@@ -73,7 +73,7 @@ func TestProviderTokenTestCurrentDoesNotWrite(t *testing.T) {
 	setupProviderTokenTest(t)
 	t.Setenv("ANTHROPIC_API_KEY", "environment-provider-secret")
 	previous := configureTokenModels
-	configureTokenModels = func(_ context.Context, _ ai.Backend, token string) ([]ai.ModelDef, error) {
+	configureTokenModels = func(_ context.Context, _ *ai.ModelProvider, token string) ([]ai.ModelDef, error) {
 		if token != "environment-provider-secret" {
 			t.Fatalf("token=%q", token)
 		}

@@ -75,7 +75,7 @@ var _ = Describe("attachment flags", func() {
 			Size:      512,
 		}
 		rendered, err := renderPrompt(context.Background(), "", PromptRenderRequest{Spec: &api.Spec{
-			Model:  api.Model{Name: "gemini-2.5-pro", Backend: api.BackendGemini},
+			Model:  api.Model{Name: "gemini-2.5-pro", Mode: api.ModeAPI},
 			Prompt: api.Prompt{Attachments: []api.AttachmentRef{attachment}},
 		}})
 
@@ -98,7 +98,7 @@ var _ = Describe("attachment flags", func() {
 			if err := preparePromptAttachments(ctx, &req, cfg); err != nil {
 				return nil, err
 			}
-			return AIPromptResult{Text: "ok", Model: req.Model.Name, Backend: string(req.Model.Backend)}, nil
+			return AIPromptResult{Text: "ok", Model: req.Model.Name, Provider: req.Model.Provider.Name, Mode: string(req.Model.Mode)}, nil
 		}
 
 		req := ai.Request{Prompt: api.Prompt{
@@ -114,7 +114,7 @@ var _ = Describe("attachment flags", func() {
 		Expect(result.Succeeded).To(Equal(3))
 		Expect(result.Failed).To(Equal(1))
 		Expect(result.Runs).To(ContainElement(And(
-			HaveField("Backend", string(api.BackendCodexCmux)),
+			HaveField("Provider", api.OpenAI.Name), HaveField("Mode", string(api.ModeCmux)),
 			HaveField("Status", "failed"),
 			HaveField("Error", ContainSubstring("does not accept image/png attachments")),
 		)))

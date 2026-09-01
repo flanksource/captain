@@ -5,88 +5,71 @@ import (
 	"strings"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/aiflags"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/captainconfig"
 )
 
-type ProviderDefaultView struct {
-	Agent      string `json:"agent"`
-	Model      string `json:"model"`
-	Effort     string `json:"effort"`
-	Configured bool   `json:"configured"`
-}
+// ProviderDefaultView is aiflags' projection re-exported: one provider's saved
+// mode/model/effort. It lives there because pkg/aiflags owns default resolution
+// for every caller, not just the CLI.
+type ProviderDefaultView = aiflags.ProviderDefaultView
 
-func effectiveProviderDefaults(saved captainconfig.AIDefaults, provider api.Backend) (ProviderDefaultView, error) {
-	if provider.Provider() != provider {
-		return ProviderDefaultView{}, fmt.Errorf("invalid provider %q", provider)
-	}
-	configured, exists := saved.Providers[string(provider)]
-	legacy := saved.Provider(string(provider))
-	if configured.Agent == "" {
-		configured.Agent = legacy.Agent
-	}
-	if configured.Model == "" {
-		configured.Model = legacy.Model
-	}
-	if configured.ReasoningEffort == "" {
-		configured.ReasoningEffort = legacy.ReasoningEffort
-	}
-	agent := api.Backend(strings.TrimSpace(configured.Agent))
-	if agent == "" {
-		agent = provider
-	}
-	if agent.Provider() != provider {
-		return ProviderDefaultView{}, fmt.Errorf("agent %q does not belong to provider %q", agent, provider)
-	}
-	disabled := ai.Disabled()
-	if disabled.Backend(agent) {
-		agent = firstEnabledAgent(provider, agent)
-	}
-	model := strings.TrimSpace(configured.Model)
-	if model == "" {
-		model = defaultModelFor(agent)
-	}
-	if disabled.Model(agent, model) {
-		model = firstEnabledModel(agent)
-	}
-	effort := api.Effort(strings.TrimSpace(configured.ReasoningEffort))
-	if err := effort.Validate(); err != nil {
+// effectiveProviderDefaults resolves a provider's saved defaults and then
+// degrades any selection the user has switched off. aiflags answers what is
+// configured; the opt-out set is applied here, where the CLI can also explain
+// it (see the whoami disable card).
+func effectiveProviderDefaults(saved captainconfig.AIDefaults, provider *api.ModelProvider) (ProviderDefaultView, error) {
+	view, err := aiflags.EffectiveDefaults(saved, provider)
+	if err != nil {
 		return ProviderDefaultView{}, err
 	}
+	disabled := ai.Disabled()
+	mode := api.RuntimeMode(view.Mode)
+	if disabled.Runtime(provider, mode) {
+		mode = firstEnabledMode(provider, mode)
+	}
+	model := strings.TrimSpace(view.Model)
+	if model == "" {
+		model = defaultModelFor(provider, mode)
+	}
+	if disabled.Model(provider, mode, model) {
+		model = firstEnabledModel(provider, mode)
+	}
+	effort := api.Effort(strings.TrimSpace(view.Effort))
 	if disabled.Effort(effort) {
-		degraded, err := ai.ResolveModelEffort(agent, model, effort)
+		degraded, err := ai.ResolveModelEffort(provider, mode, model, effort)
 		if err != nil {
 			return ProviderDefaultView{}, err
 		}
 		effort = degraded
 	}
-	return ProviderDefaultView{
-		Agent: string(agent), Model: model, Effort: string(effort), Configured: exists,
-	}, nil
+	view.Mode, view.Model, view.Effort = string(mode), model, string(effort)
+	return view, nil
 }
 
-// firstEnabledAgent replaces a disabled agent with another backend of the same
-// provider that is still enabled. When every one is off it returns the original
-// so the view still names what the user configured — the whoami disable card,
-// not this projection, is where that state is meant to be visible.
-func firstEnabledAgent(provider, agent api.Backend) api.Backend {
+// firstEnabledMode replaces a disabled mode with another of the same provider
+// that is still enabled. When every one is off it returns the original so the
+// view still names what the user configured — the whoami disable card, not this
+// projection, is where that state is meant to be visible.
+func firstEnabledMode(provider *api.ModelProvider, mode api.RuntimeMode) api.RuntimeMode {
 	disabled := ai.Disabled()
-	for _, candidate := range api.AllBackends() {
-		if candidate.Provider() == provider && !disabled.Backend(candidate) {
+	for _, candidate := range provider.Modes() {
+		if !disabled.Runtime(provider, candidate) {
 			return candidate
 		}
 	}
-	return agent
+	return mode
 }
 
-// firstEnabledModel is the agent's top catalog pick that survives the opt-out
+// firstEnabledModel is the runtime's top catalog pick that survives the opt-out
 // set. RegistryModelDefs already drops disabled models, so an empty result means
-// the whole agent has been switched off and the seed default stands in.
-func firstEnabledModel(agent api.Backend) string {
-	if models := ai.RegistryModelDefs(agent); len(models) > 0 {
+// the whole runtime has been switched off and the seed default stands in.
+func firstEnabledModel(provider *api.ModelProvider, mode api.RuntimeMode) string {
+	if models := ai.RegistryModelDefs(provider, mode); len(models) > 0 {
 		return models[0].ID
 	}
-	return defaultModelFor(agent)
+	return defaultModelFor(provider, mode)
 }
 
 func applyProviderDefaults(model api.Model, saved captainconfig.AIDefaults) (api.Model, error) {
@@ -117,26 +100,29 @@ func applyProviderDefaults(model api.Model, saved captainconfig.AIDefaults) (api
 }
 
 func applyCandidateDefaults(model api.Model, saved captainconfig.AIDefaults, allowActive bool) (api.Model, error) {
-	provider := model.Backend.Provider()
-	if provider == "" && strings.TrimSpace(model.Name) != "" {
-		backend, err := api.InferBackend(model.Name)
+	provider := model.Provider
+	if provider == nil && strings.TrimSpace(model.Name) != "" {
+		inferred, err := api.ProviderFor(model.Name)
 		if err != nil {
 			return api.Model{}, err
 		}
-		provider = backend.Provider()
+		provider = inferred
 	}
-	if provider == "" && allowActive {
-		provider = api.Backend(saved.ActiveProvider())
+	if provider == nil && allowActive {
+		provider, _ = api.ProviderByName(saved.ActiveProvider())
 	}
-	if provider == "" {
+	if provider == nil {
 		return api.Model{}, fmt.Errorf("provider cannot be resolved for model %q", model.Name)
 	}
 	defaults, err := effectiveProviderDefaults(saved, provider)
 	if err != nil {
 		return api.Model{}, err
 	}
-	if model.Backend == "" && model.Mode == "" {
-		model.Backend = api.Backend(defaults.Agent)
+	if model.Mode == "" {
+		model.Mode = api.RuntimeMode(defaults.Mode)
+	}
+	if model.Provider == nil {
+		model.Provider = provider
 	}
 	if strings.TrimSpace(model.Name) == "" {
 		model.Name = defaults.Model
@@ -150,11 +136,9 @@ func applyCandidateDefaults(model api.Model, saved captainconfig.AIDefaults, all
 	return model, nil
 }
 
-// configurableProviders lists the API provider families a user can configure
-// defaults for and toggle off — the Provider() roots of every backend.
-func configurableProviders() []api.Backend {
-	return []api.Backend{api.AnthropicProvider, api.OpenAIProvider, api.GeminiProvider, api.DeepSeekProvider}
-}
+// configurableProviders lists the provider families a user can configure
+// defaults for and toggle off.
+func configurableProviders() []*api.ModelProvider { return api.Providers() }
 
 func allProviderDefaults(saved captainconfig.AIDefaults) (map[string]ProviderDefaultView, error) {
 	providers := configurableProviders()
@@ -164,7 +148,7 @@ func allProviderDefaults(saved captainconfig.AIDefaults) (map[string]ProviderDef
 		if err != nil {
 			return nil, err
 		}
-		out[string(provider)] = defaults
+		out[provider.Name] = defaults
 	}
 	return out, nil
 }

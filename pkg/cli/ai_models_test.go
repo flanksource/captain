@@ -75,7 +75,7 @@ func TestRunAIModels_LiveOpenAIOnly(t *testing.T) {
 		nil,
 	)
 
-	got, err := RunAIModels(AIModelsOptions{Backend: "openai", Limit: 50})
+	got, err := RunAIModels(AIModelsOptions{Provider: "openai", Limit: 50})
 	if err != nil {
 		t.Fatalf("RunAIModels: %v", err)
 	}
@@ -84,8 +84,8 @@ func TestRunAIModels_LiveOpenAIOnly(t *testing.T) {
 		t.Fatalf("Total = %d, want 2", res.Total)
 	}
 	for _, row := range res.Rows {
-		if row.Backend != "openai" {
-			t.Errorf("backend = %q on %+v", row.Backend, row)
+		if row.Provider != "openai" {
+			t.Errorf("provider = %q on %+v", row.Provider, row)
 		}
 	}
 }
@@ -102,7 +102,7 @@ func TestRunAIModels_LiveErrorIsSurfaced(t *testing.T) {
 		nil,
 	)
 
-	_, err := RunAIModels(AIModelsOptions{Backend: "openai", Limit: 10})
+	_, err := RunAIModels(AIModelsOptions{Provider: "openai", Limit: 10})
 	if err == nil {
 		t.Fatal("expected error to be surfaced (no static fallback)")
 	}
@@ -116,19 +116,19 @@ func TestRunAIModels_NoKeyIsSurfaced(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 
-	_, err := RunAIModels(AIModelsOptions{Backend: "openai"})
+	_, err := RunAIModels(AIModelsOptions{Provider: "openai"})
 	if err == nil {
 		t.Fatal("expected error when key missing (no static fallback)")
 	}
 }
 
-func TestRunAIModels_RejectsUnsupportedBackend(t *testing.T) {
-	_, err := RunAIModels(AIModelsOptions{Backend: "unknown"})
+func TestRunAIModels_RejectsUnsupportedProvider(t *testing.T) {
+	_, err := RunAIModels(AIModelsOptions{Provider: "unknown"})
 	if err == nil {
-		t.Fatal("expected error for unsupported backend")
+		t.Fatal("expected error for unsupported provider")
 	}
-	if !strings.Contains(err.Error(), "--backend must be one of") {
-		t.Fatalf("error = %q, want canonical backend validation", err)
+	if !strings.Contains(err.Error(), "--provider must be one of") {
+		t.Fatalf("error = %q, want canonical provider validation", err)
 	}
 }
 
@@ -261,7 +261,7 @@ func TestRunAIModels_HidesLegacyByDefault(t *testing.T) {
 		nil,
 	)
 
-	got, err := RunAIModels(AIModelsOptions{Backend: "openai", Limit: 50})
+	got, err := RunAIModels(AIModelsOptions{Provider: "openai", Limit: 50})
 	if err != nil {
 		t.Fatalf("RunAIModels: %v", err)
 	}
@@ -296,7 +296,7 @@ func TestRunAIModels_FilterOverridesBlacklist(t *testing.T) {
 		nil,
 	)
 
-	got, err := RunAIModels(AIModelsOptions{Backend: "openai", Filter: "gpt-3.5", Limit: 10})
+	got, err := RunAIModels(AIModelsOptions{Provider: "openai", Filter: "gpt-3.5", Limit: 10})
 	if err != nil {
 		t.Fatalf("RunAIModels: %v", err)
 	}
@@ -306,7 +306,7 @@ func TestRunAIModels_FilterOverridesBlacklist(t *testing.T) {
 	}
 }
 
-func TestRunAIModels_SortsByBackendThenModel(t *testing.T) {
+func TestRunAIModels_SortsByProviderThenModel(t *testing.T) {
 	isolateAIModelsVault(t)
 	t.Setenv("OPENAI_API_KEY", "sk-test")
 	t.Setenv("ANTHROPIC_API_KEY", "ant-test")
@@ -345,7 +345,7 @@ func TestRunAIModels_SortsByBackendThenModel(t *testing.T) {
 		t.Fatalf("rows = %d, want %d (%+v)", len(res.Rows), len(wantOrder), res.Rows)
 	}
 	for i, want := range wantOrder {
-		got := res.Rows[i].Backend + "|" + res.Rows[i].Model
+		got := res.Rows[i].Provider + "|" + res.Rows[i].Model
 		if got != want {
 			t.Errorf("rows[%d] = %q, want %q", i, got, want)
 		}
@@ -374,7 +374,7 @@ func TestRunAIModels_LimitTruncatesAfterSort(t *testing.T) {
 		nil,
 	)
 
-	got, err := RunAIModels(AIModelsOptions{Backend: "openai", Limit: 2})
+	got, err := RunAIModels(AIModelsOptions{Provider: "openai", Limit: 2})
 	if err != nil {
 		t.Fatalf("RunAIModels: %v", err)
 	}
@@ -405,7 +405,7 @@ func TestRunAIModels_FilterAppliesToLiveResults(t *testing.T) {
 		nil,
 	)
 
-	got, err := RunAIModels(AIModelsOptions{Backend: "openai", Filter: "mini", Limit: 50})
+	got, err := RunAIModels(AIModelsOptions{Provider: "openai", Filter: "mini", Limit: 50})
 	if err != nil {
 		t.Fatalf("RunAIModels: %v", err)
 	}

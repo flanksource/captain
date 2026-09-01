@@ -160,8 +160,9 @@ func (s *runStream) finish(sum *PromptRunSummary, errMsg string) {
 		if sum.Model == "" {
 			sum.Model = s.run.Model
 		}
-		if sum.Backend == "" {
-			sum.Backend = s.run.Backend
+		if sum.Mode == "" {
+			sum.Mode = s.run.Mode
+			sum.Provider = s.run.Provider
 		}
 		if sum.SessionID != "" {
 			s.run.SessionID = sum.SessionID

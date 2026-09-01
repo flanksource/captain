@@ -13,7 +13,7 @@ import (
 // re-fetching a flat schema per backend.
 func handlePromptSchema() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		doc, err := PromptSchemaDocument()
+		doc, err := PromptSchemaDocument(r.Context())
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

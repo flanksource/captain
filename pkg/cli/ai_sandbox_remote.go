@@ -63,7 +63,7 @@ func remoteExecProviderFor(req *ai.Request, cfg ai.Config) (ai.Provider, error) 
 		_ = sandbox.Close()
 		return nil, err
 	}
-	return &remoteExecProvider{executor: executor, sandbox: sandbox, model: cfg.Model.Name, backend: cfg.Model.Backend}, nil
+	return &remoteExecProvider{executor: executor, sandbox: sandbox, model: cfg.Model.Name, runtime: api.RuntimeOf(cfg.Model.Provider, cfg.Model.Mode)}, nil
 }
 
 // remoteExecProvider adapts a RemoteExecutor to ai.Provider. Streaming is
@@ -73,7 +73,7 @@ type remoteExecProvider struct {
 	executor api.RemoteExecutor
 	sandbox  api.Sandbox
 	model    string
-	backend  api.Backend
+	runtime  api.Runtime
 	close    sync.Once
 	closeErr error
 }
@@ -90,7 +90,7 @@ func (p *remoteExecProvider) Execute(ctx context.Context, req ai.Request) (*ai.R
 }
 
 func (p *remoteExecProvider) GetModel() string        { return p.model }
-func (p *remoteExecProvider) GetBackend() api.Backend { return p.backend }
+func (p *remoteExecProvider) GetRuntime() api.Runtime { return p.runtime }
 
 // Close releases the prepared remote sandbox. It is idempotent because both
 // provider setup failures and execution completion can reach this boundary.

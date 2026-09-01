@@ -41,9 +41,9 @@ func handleProviderToken(testOnly bool) http.Handler {
 			http.Error(w, err.Error(), http.StatusForbidden)
 			return
 		}
-		backend := ai.Backend(strings.TrimSpace(r.PathValue("provider")))
-		if !configurableAPIBackend(backend) {
-			http.Error(w, "provider must be one of: anthropic, openai, gemini, deepseek", http.StatusBadRequest)
+		provider, known := ai.ProviderByName(strings.TrimSpace(r.PathValue("provider")))
+		if !known {
+			http.Error(w, "provider must be one of: "+ai.ProviderList(), http.StatusBadRequest)
 			return
 		}
 		request, err := decodeProviderTokenRequest(w, r)
@@ -57,21 +57,21 @@ func handleProviderToken(testOnly bool) http.Handler {
 				http.Error(w, "token cannot be empty", http.StatusBadRequest)
 				return
 			}
-			resolved, err := ai.ResolveAPIKey(backend)
+			resolved, err := ai.ResolveAPIKey(provider, ai.ModeAPI)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
 			token, source = resolved.Token, resolved.Source
 			if token == "" {
-				http.Error(w, fmt.Sprintf("no credential configured for %s", backend), http.StatusBadRequest)
+				http.Error(w, fmt.Sprintf("no credential configured for %s", provider.Name), http.StatusBadRequest)
 				return
 			}
 		}
 
-		models, err := configureTokenModels(r.Context(), backend, token)
+		models, err := configureTokenModels(r.Context(), provider, token)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("validate %s credential: %v", backend, err), providerValidationStatus(err))
+			http.Error(w, fmt.Sprintf("validate %s credential: %v", provider.Name, err), providerValidationStatus(err))
 			return
 		}
 		if !testOnly {
@@ -80,14 +80,14 @@ func handleProviderToken(testOnly bool) http.Handler {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
-			if err := vault.Set(string(backend), token); err != nil {
+			if err := vault.Set(provider.Name, token); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
 			source = credentials.SourceVault
 		}
 		writeConfigurationJSON(w, providerTokenResponse{
-			Provider: string(backend), Valid: true, Saved: !testOnly,
+			Provider: provider.Name, Valid: true, Saved: !testOnly,
 			Source: source, MaskedToken: ai.MaskKey(token), ModelCount: len(models),
 		})
 	})

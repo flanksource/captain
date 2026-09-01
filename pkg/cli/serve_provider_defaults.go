@@ -14,14 +14,14 @@ import (
 )
 
 type providerDefaultsRequest struct {
-	Agent  string `json:"agent"`
+	Mode   string `json:"mode"`
 	Model  string `json:"model"`
 	Effort string `json:"effort"`
 }
 
 type providerDefaultsResponse struct {
 	Provider string `json:"provider"`
-	Agent    string `json:"agent"`
+	Mode     string `json:"mode"`
 	Model    string `json:"model"`
 	Effort   string `json:"effort"`
 	Active   bool   `json:"active"`
@@ -41,9 +41,9 @@ func handleProviderDefaults(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusForbidden)
 		return
 	}
-	provider := api.Backend(strings.TrimSpace(r.PathValue("provider")))
-	if !configurableAPIBackend(provider) {
-		http.Error(w, "provider must be one of: anthropic, openai, gemini, deepseek", http.StatusBadRequest)
+	provider, known := api.ProviderByName(strings.TrimSpace(r.PathValue("provider")))
+	if !known {
+		http.Error(w, "provider must be one of: "+api.ProviderList(), http.StatusBadRequest)
 		return
 	}
 	var request providerDefaultsRequest
@@ -52,7 +52,7 @@ func handleProviderDefaults(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defaults := ProviderDefaultView{
-		Agent: strings.TrimSpace(request.Agent), Model: strings.TrimSpace(request.Model),
+		Mode: strings.TrimSpace(request.Mode), Model: strings.TrimSpace(request.Model),
 		Effort: strings.TrimSpace(request.Effort), Configured: true,
 	}
 	if err := validateProviderDefaults(r.Context(), provider, defaults); err != nil {
@@ -64,17 +64,17 @@ func handleProviderDefaults(w http.ResponseWriter, r *http.Request) {
 		if cfg.AI.Providers == nil {
 			cfg.AI.Providers = map[string]captainconfig.ProviderDefaults{}
 		}
-		cfg.AI.Providers[string(provider)] = captainconfig.ProviderDefaults{
-			Agent: defaults.Agent, Model: defaults.Model, ReasoningEffort: defaults.Effort,
+		cfg.AI.Providers[provider.Name] = captainconfig.ProviderDefaults{
+			Mode: defaults.Mode, Model: defaults.Model, ReasoningEffort: defaults.Effort,
 		}
-		active = cfg.AI.ActiveProvider() == string(provider)
+		active = cfg.AI.ActiveProvider() == provider.Name
 		return nil
 	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	writeConfigurationJSON(w, providerDefaultsResponse{
-		Provider: string(provider), Agent: defaults.Agent, Model: defaults.Model,
+		Provider: provider.Name, Mode: defaults.Mode, Model: defaults.Model,
 		Effort: defaults.Effort, Active: active,
 	})
 }
@@ -89,19 +89,19 @@ func handleDefaultProvider(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	provider := api.Backend(strings.TrimSpace(request.Provider))
-	if !configurableAPIBackend(provider) {
-		http.Error(w, "provider must be one of: anthropic, openai, gemini, deepseek", http.StatusBadRequest)
+	provider, known := api.ProviderByName(strings.TrimSpace(request.Provider))
+	if !known {
+		http.Error(w, "provider must be one of: "+api.ProviderList(), http.StatusBadRequest)
 		return
 	}
 	if err := captainconfig.Update(func(cfg *captainconfig.Config) error {
-		cfg.AI.DefaultProvider = string(provider)
+		cfg.AI.DefaultProvider = provider.Name
 		return nil
 	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeConfigurationJSON(w, defaultProviderRequest{Provider: string(provider)})
+	writeConfigurationJSON(w, defaultProviderRequest{Provider: provider.Name})
 }
 
 func decodeConfigurationRequest(w http.ResponseWriter, r *http.Request, target any) error {

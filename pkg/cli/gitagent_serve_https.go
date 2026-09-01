@@ -159,7 +159,7 @@ func agentWhoamiHandler(identify func(*http.Request) (string, error), run whoami
 
 func agentWhoamiOptions(r *http.Request) (WhoamiOptions, error) {
 	query := r.URL.Query()
-	options := WhoamiOptions{Backend: strings.TrimSpace(query.Get("backend")), Models: true}
+	options := WhoamiOptions{Provider: strings.TrimSpace(query.Get("provider")), Mode: strings.TrimSpace(query.Get("mode")), Models: true}
 	var err error
 	if value := query.Get("models"); value != "" {
 		options.Models, err = strconv.ParseBool(value)
