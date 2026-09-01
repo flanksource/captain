@@ -26,7 +26,7 @@ func (s stubProvider) Execute(context.Context, ai.Request) (*ai.Response, error)
 	return s.resp, nil
 }
 func (s stubProvider) GetModel() string       { return "test-model" }
-func (s stubProvider) GetBackend() ai.Backend { return ai.BackendAnthropic }
+func (s stubProvider) GetRuntime() ai.Runtime { return ai.RuntimeOf(ai.Anthropic, ai.ModeAPI) }
 
 type streamingStubProvider struct{ stubProvider }
 
@@ -38,21 +38,21 @@ func (s streamingStubProvider) ExecuteStream(context.Context, ai.Request) (<-cha
 
 func TestRuntimeLogIdentity(t *testing.T) {
 	tests := []struct {
-		name    string
-		backend api.Backend
-		model   string
-		effort  api.Effort
-		want    string
+		name   string
+		mode   api.RuntimeMode
+		model  string
+		effort api.Effort
+		want   string
 	}{
-		{"agent without effort", api.BackendCodexAgent, "gpt-5.6-luna", api.EffortNone, "agent:gpt-5.6-luna"},
-		{"agent with effort", api.BackendCodexAgent, "gpt-5.6-sol", api.EffortMax, "agent:gpt-5.6-sol:max"},
-		{"cli", api.BackendClaudeCLI, "claude-sonnet-5", api.EffortHigh, "cli:claude-sonnet-5:high"},
-		{"cmux", api.BackendCodexCmux, "gpt-5.6-terra", api.EffortUltra, "cmux:gpt-5.6-terra:ultra"},
-		{"api", api.BackendOpenAI, "gpt-5.6", api.EffortLow, "api:gpt-5.6:low"},
+		{"agent without effort", api.ModeAgent, "gpt-5.6-luna", api.EffortNone, "agent:gpt-5.6-luna"},
+		{"agent with effort", api.ModeAgent, "gpt-5.6-sol", api.EffortMax, "agent:gpt-5.6-sol:max"},
+		{"cli", api.ModeCLI, "claude-sonnet-5", api.EffortHigh, "cli:claude-sonnet-5:high"},
+		{"cmux", api.ModeCmux, "gpt-5.6-terra", api.EffortUltra, "cmux:gpt-5.6-terra:ultra"},
+		{"api", api.ModeAPI, "gpt-5.6", api.EffortLow, "api:gpt-5.6:low"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := ai.LogIdentity(tt.backend, tt.model, tt.effort); got != tt.want {
+			if got := ai.LogIdentity(tt.mode, tt.model, tt.effort); got != tt.want {
 				t.Fatalf("ai.LogIdentity() = %q, want %q", got, tt.want)
 			}
 		})
@@ -71,7 +71,7 @@ func TestLoggingProvider_UsesEffortQualifiedRuntimeIdentity(t *testing.T) {
 		t.Fatalf("WithLogging: %v", err)
 	}
 	if _, err := p.Execute(context.Background(), ai.Request{
-		Model:  api.Model{Name: "gpt-5.6-sol", Backend: api.BackendCodexAgent, Effort: api.EffortMax},
+		Model:  api.Model{Name: "gpt-5.6-sol", Mode: api.ModeAgent, Effort: api.EffortMax},
 		Prompt: api.Prompt{Source: "commit-grouping.prompt"},
 	}); err != nil {
 		t.Fatalf("Execute: %v", err)
@@ -101,7 +101,7 @@ func TestLoggingProvider_StreamOmitsEmptyEffort(t *testing.T) {
 	}
 	streamer := p.(ai.StreamingProvider)
 	if _, err := streamer.ExecuteStream(context.Background(), ai.Request{
-		Model:  api.Model{Name: "gpt-5.6-luna", Backend: api.BackendCodexAgent},
+		Model:  api.Model{Name: "gpt-5.6-luna", Mode: api.ModeAgent},
 		Prompt: api.Prompt{Source: "commit-grouping.prompt"},
 	}); err != nil {
 		t.Fatalf("ExecuteStream: %v", err)

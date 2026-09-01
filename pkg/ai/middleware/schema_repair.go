@@ -43,7 +43,8 @@ func (v *validatingProvider) repairRequest(parent ai.Request, schema json.RawMes
 	}
 	renderedReq, renderedCfg, err := tmpl.Render(map[string]any{
 		"attempt":          attempt,
-		"backend":          string(v.provider.GetBackend()),
+		"mode":             string(v.provider.GetRuntime().Mode),
+		"provider":         v.provider.GetRuntime().Provider,
 		"model":            v.provider.GetModel(),
 		"originalPrompt":   parent.Prompt.User,
 		"previousResponse": responseJSON(prev),
@@ -58,8 +59,12 @@ func (v *validatingProvider) repairRequest(parent ai.Request, schema json.RawMes
 	if parentModel.Name == "" {
 		parentModel.Name = v.provider.GetModel()
 	}
-	if parentModel.Backend == "" {
-		parentModel.Backend = v.provider.GetBackend()
+	runtime := v.provider.GetRuntime()
+	if parentModel.Mode == "" {
+		parentModel.Mode = runtime.Mode
+	}
+	if parentModel.Provider == nil {
+		parentModel.Provider, _ = runtime.ModelProvider()
 	}
 
 	model := parentModel
@@ -78,11 +83,13 @@ func (v *validatingProvider) repairRequest(parent ai.Request, schema json.RawMes
 	cfg := v.cfg
 	cfg.Model = model
 	cfg.SchemaRepair = api.SchemaRepairConfig{}
-	if model.Backend != "" && model.Backend != v.provider.GetBackend() {
+	// A repair routed to a different runtime must not inherit the parent's
+	// resolved key: it belongs to the parent's provider.
+	if api.RuntimeOf(model.Provider, model.Mode) != runtime {
 		cfg.APIKey = ""
 	}
 
-	return req, cfg, sameModelBackend(model, parentModel), nil
+	return req, cfg, sameModelRuntime(model, parentModel), nil
 }
 
 func (v *validatingProvider) repairTemplate() (*promptlib.Template, error) {
@@ -99,8 +106,8 @@ func overlayModel(base, overlay api.Model) api.Model {
 	if overlay.ID != "" {
 		base.ID = overlay.ID
 	}
-	if overlay.Backend != "" {
-		base.Backend = overlay.Backend
+	if overlay.Mode != "" {
+		base.Mode = overlay.Mode
 	}
 	if overlay.Temperature != nil {
 		base.Temperature = overlay.Temperature
@@ -117,8 +124,8 @@ func overlayModel(base, overlay api.Model) api.Model {
 	return base
 }
 
-func sameModelBackend(a, b api.Model) bool {
+func sameModelRuntime(a, b api.Model) bool {
 	return strings.TrimSpace(a.Name) == strings.TrimSpace(b.Name) &&
 		strings.TrimSpace(a.ID) == strings.TrimSpace(b.ID) &&
-		a.Backend == b.Backend
+		a.Provider == b.Provider && a.Mode == b.Mode
 }

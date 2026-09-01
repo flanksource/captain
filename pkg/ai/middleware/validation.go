@@ -28,7 +28,7 @@ type validatingProvider struct {
 }
 
 func (v *validatingProvider) GetModel() string       { return v.provider.GetModel() }
-func (v *validatingProvider) GetBackend() ai.Backend { return v.provider.GetBackend() }
+func (v *validatingProvider) GetRuntime() ai.Runtime { return v.provider.GetRuntime() }
 func (v *validatingProvider) Unwrap() ai.Provider    { return v.provider }
 
 // WithSchemaValidation validates structured responses against the request schema
@@ -77,7 +77,7 @@ func (v *validatingProvider) Execute(ctx context.Context, req ai.Request) (*ai.R
 
 	switch strictness {
 	case api.SchemaStrictnessWarning:
-		log.Warnf("schema validation failed (%s/%s): %s", v.provider.GetBackend(), v.provider.GetModel(), verrs)
+		log.Warnf("schema validation failed (%s/%s): %s", v.provider.GetRuntime(), v.provider.GetModel(), verrs)
 		return resp, nil
 	case api.SchemaStrictnessRetry:
 		return v.retryWithFeedback(ctx, req, schema, verrs, resp)
@@ -93,7 +93,9 @@ func (v *validatingProvider) effectiveStrictness(req ai.Request) api.SchemaStric
 	case api.SchemaStrictnessDisabled:
 		return api.SchemaStrictnessNone
 	case api.SchemaStrictnessNone:
-		if req.Prompt.HasSchema() && ai.UsesAnthropicSchemaSubset(v.provider.GetBackend()) {
+		runtime := v.provider.GetRuntime()
+		provider, _ := runtime.ModelProvider()
+		if req.Prompt.HasSchema() && ai.UsesAnthropicSchemaSubset(provider, runtime.Mode) {
 			return api.SchemaStrictnessRetry
 		}
 		return api.SchemaStrictnessNone
@@ -142,7 +144,7 @@ func (v *validatingProvider) retryWithFeedback(ctx context.Context, req ai.Reque
 func (v *validatingProvider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai.Event, error) {
 	streamer, ok := v.provider.(ai.StreamingProvider)
 	if !ok {
-		return nil, fmt.Errorf("provider %s/%s does not support streaming", v.provider.GetBackend(), v.provider.GetModel())
+		return nil, fmt.Errorf("provider %s/%s does not support streaming", v.provider.GetRuntime(), v.provider.GetModel())
 	}
 
 	strictness := v.effectiveStrictness(req)
@@ -201,7 +203,7 @@ func (v *validatingProvider) emitValidation(out chan<- ai.Event, schema json.Raw
 		return
 	}
 	if strictness == api.SchemaStrictnessWarning {
-		log.Warnf("schema validation failed (%s/%s): %s", v.provider.GetBackend(), v.provider.GetModel(), verrs)
+		log.Warnf("schema validation failed (%s/%s): %s", v.provider.GetRuntime(), v.provider.GetModel(), verrs)
 		return
 	}
 	out <- ai.Event{Kind: ai.EventError, Error: fmt.Sprintf("%s: %s", ai.ErrSchemaValidation, verrs)}

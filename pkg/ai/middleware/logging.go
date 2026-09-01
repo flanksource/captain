@@ -22,13 +22,13 @@ type loggingProvider struct {
 }
 
 func (l *loggingProvider) GetModel() string       { return l.provider.GetModel() }
-func (l *loggingProvider) GetBackend() ai.Backend { return l.provider.GetBackend() }
+func (l *loggingProvider) GetRuntime() ai.Runtime { return l.provider.GetRuntime() }
 func (l *loggingProvider) Unwrap() ai.Provider    { return l.provider }
 
 func (l *loggingProvider) Execute(ctx context.Context, req ai.Request) (*ai.Response, error) {
 	start := time.Now()
-	backend, model := logRuntime(l.provider, req)
-	identity := ai.LogIdentity(backend, model, req.Effort)
+	mode, model := logRuntime(l.provider, req)
+	identity := ai.LogIdentity(mode, model, req.Effort)
 
 	dispatch := clicky.Text("").
 		Add(icons.AI).
@@ -86,10 +86,10 @@ func (l *loggingProvider) Execute(ctx context.Context, req ai.Request) (*ai.Resp
 func (l *loggingProvider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai.Event, error) {
 	streamer, ok := l.provider.(ai.StreamingProvider)
 	if !ok {
-		return nil, fmt.Errorf("provider %s/%s does not support streaming", l.provider.GetBackend(), l.provider.GetModel())
+		return nil, fmt.Errorf("provider %s/%s does not support streaming", l.provider.GetRuntime(), l.provider.GetModel())
 	}
-	backend, model := logRuntime(l.provider, req)
-	identity := ai.LogIdentity(backend, model, req.Effort)
+	mode, model := logRuntime(l.provider, req)
+	identity := ai.LogIdentity(mode, model, req.Effort)
 
 	dispatch := clicky.Text("").
 		Add(icons.AI).
@@ -106,16 +106,16 @@ func (l *loggingProvider) ExecuteStream(ctx context.Context, req ai.Request) (<-
 	return streamer.ExecuteStream(ctx, req)
 }
 
-func logRuntime(provider ai.Provider, req ai.Request) (api.Backend, string) {
-	backend := req.Backend
-	if backend == "" {
-		backend = provider.GetBackend()
+func logRuntime(provider ai.Provider, req ai.Request) (api.RuntimeMode, string) {
+	mode := req.Mode
+	if mode == "" {
+		mode = provider.GetRuntime().Mode
 	}
 	model := req.Name
 	if model == "" {
 		model = provider.GetModel()
 	}
-	return backend, model
+	return mode, model
 }
 
 func WithLogging() Option {
