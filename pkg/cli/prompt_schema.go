@@ -71,7 +71,8 @@ func WritePromptSchema(ctx context.Context, w io.Writer) error {
 // from the environment (ai.CachedAdapters owns the short-TTL cache so a
 // long-running serve process reflects key/model changes without re-probing per
 // request). The discovered prompt sources ride along so the editor's save
-// destination picker sees every writable directory, including empty ones.
+// destination picker sees every writable directory, including empty ones; the
+// runtime catalog's sources do the same for the preset/profile editor.
 func PromptSchemaDocument(ctx context.Context) (map[string]any, error) {
 	adapters, err := schemaAdapters()
 	if err != nil {
@@ -86,6 +87,11 @@ func PromptSchemaDocument(ctx context.Context) (map[string]any, error) {
 		return nil, err
 	}
 	doc["sources"] = sources
+	catalog, err := buildRuntimeCatalog(ctx)
+	if err != nil {
+		return nil, err
+	}
+	doc["runtimeSources"] = catalog.Sources()
 	return doc, nil
 }
 

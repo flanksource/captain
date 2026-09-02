@@ -11,6 +11,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	promptlib "github.com/flanksource/captain/pkg/ai/prompt"
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/claude"
 	clickyrpc "github.com/flanksource/clicky/rpc"
 )
@@ -88,26 +89,37 @@ func promptVars(opts AIPromptOptions, varsJSON, stdin string, usedStdin bool) (m
 	return data, nil
 }
 
-// renderLoadedContent renders already-loaded .prompt content with vars, overlays
-// the CLI options, tags the source, and normalizes the context dir.
-func renderLoadedContent(content, source string, vars map[string]any, opts AIPromptOptions) (ai.Request, ai.Config, error) {
-	fileReq, fileCfg, err := promptlib.Load(content).Render(vars, nil)
+// renderLoadedContent renders already-loaded .prompt content with vars, layers
+// the selected runtime profile (--runtime-profile, else the frontmatter pin)
+// beneath the frontmatter, overlays the CLI options, tags the source, and
+// normalizes the context dir. The flags are not a spec layer yet: overlayCLI
+// also folds saved defaults, API keys and the sandbox selection, none of which
+// are Spec fields, so it stays the step above the resolved layers.
+func renderLoadedContent(ctx context.Context, content, source string, vars map[string]any, opts AIPromptOptions) (ai.Request, ai.Config, api.ResolvedSpec, error) {
+	frontmatter, _, err := promptlib.Load(content).Render(vars, nil)
 	if err != nil {
-		return ai.Request{}, ai.Config{}, err
+		return ai.Request{}, ai.Config{}, api.ResolvedSpec{}, err
 	}
-	req, cfg, err := overlayCLI(fileReq, fileCfg, opts)
+	frontmatter.Prompt.Source = source
+	resolved, err := resolveRenderLayers(ctx, source, content, frontmatter, PromptRenderRequest{RuntimeProfile: opts.RuntimeProfile})
 	if err != nil {
-		return ai.Request{}, ai.Config{}, err
+		return ai.Request{}, ai.Config{}, api.ResolvedSpec{}, err
+	}
+	layered := resolved.Spec
+	foldSkillPolicies(&layered)
+	req, cfg, err := overlayCLI(layered, configFromResolved(layered), opts)
+	if err != nil {
+		return ai.Request{}, ai.Config{}, api.ResolvedSpec{}, err
 	}
 	req.Prompt.Source = source
 	cwd, err := os.Getwd()
 	if err != nil {
-		return ai.Request{}, ai.Config{}, fmt.Errorf("get working directory: %w", err)
+		return ai.Request{}, ai.Config{}, api.ResolvedSpec{}, fmt.Errorf("get working directory: %w", err)
 	}
 	if err := normalizePromptContextDir(&req, cwd); err != nil {
-		return ai.Request{}, ai.Config{}, err
+		return ai.Request{}, ai.Config{}, api.ResolvedSpec{}, err
 	}
-	return req, cfg, nil
+	return req, cfg, resolved, nil
 }
 
 // actionFlagsToOptions reconstructs the typed AIPromptOptions from the entity
@@ -118,7 +130,7 @@ func actionFlagsToOptions(f map[string]string) (AIPromptOptions, error) {
 	o.Model = f["model"]
 	o.Fallback = flagSlice(f["fallback"])
 	o.Mode = f["mode"]
-	o.Mode = f["mode"]
+	o.RuntimeProfile = f["runtime-profile"]
 	o.APIKey = f["api-key"]
 	o.APIURL = f["api-url"]
 	o.NoCache = flagBool(f["no-cache"])

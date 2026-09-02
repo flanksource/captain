@@ -11,10 +11,8 @@ import (
 	"github.com/flanksource/captain/pkg/ai/tools"
 	"github.com/flanksource/captain/pkg/aichat"
 	"github.com/flanksource/captain/pkg/api"
-	"github.com/flanksource/captain/pkg/api/registry"
 	"github.com/flanksource/captain/pkg/attachments"
 	clickyaichat "github.com/flanksource/clicky/aichat"
-	"github.com/flanksource/commons-db/shell"
 	"github.com/spf13/cobra"
 )
 
@@ -47,23 +45,7 @@ func newCaptainChatService(
 	chat := aichat.NewService(aichat.ServiceOptions{
 		ToolStrategies: chatTools.Strategies(),
 		ToolPolicy:     chatTools.ToolPolicy(),
-		Profile: aichat.RuntimeProfileProviderFunc(func(context.Context) (aichat.RuntimeProfile, error) {
-			resolved, err := api.ResolveSpecLayers(api.SpecLayer{
-				Name: "captain serve", Scope: api.SpecLayerGlobal,
-				Spec: api.Spec{
-					Model: api.Model{Name: "sol", Mode: registry.ModeAgent},
-					Setup: &shell.Setup{Cwd: cwd},
-				},
-			})
-			if err != nil {
-				return aichat.RuntimeProfile{}, err
-			}
-			return aichat.RuntimeProfile{
-				System: "You are Captain's coding-agent launcher assistant. Use Captain and Clicky tools when useful, " +
-					"prefer read-only inspection unless the user explicitly asks for edits, and keep follow-up guidance concise.",
-				Resolved: resolved,
-			}, nil
-		}),
+		Profile:        captainChatProfileProvider(cwd),
 		// Thread reads follow the request's database context; writes never reach
 		// a secondary because the context middleware rejects unsafe methods.
 		Tools: chatTools, MCP: mcpTools,

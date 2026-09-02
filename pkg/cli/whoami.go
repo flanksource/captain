@@ -17,15 +17,16 @@ type AdapterStatus = ai.AdapterStatus
 // display-only knobs consumed by Pretty(). The knobs are never serialized.
 //
 // Disabled carries the current opt-out set, Axes the universes it is drawn
-// from, and Runtimes the provider×mode descriptor every picker renders from, so
-// the whoami page can build every control from the one request it already makes
-// instead of hardcoding the enums a second time.
+// from, Models the picker-ready live catalog, and Runtimes the provider×mode
+// descriptor every picker renders from. Together they let every UI control use
+// this one readiness snapshot.
 type WhoamiResult struct {
 	Adapters         []AdapterStatus                  `json:"adapters"`
 	DefaultProvider  string                           `json:"defaultProvider"`
 	ProviderDefaults map[string]ProviderDefaultView   `json:"providerDefaults"`
 	Disabled         captainconfig.DisabledSelections `json:"disabled"`
 	Axes             DisabledAxes                     `json:"axes"`
+	Models           []ai.ModelInfo                   `json:"models,omitempty"`
 	Runtimes         []api.RuntimeFamily              `json:"runtimes"`
 
 	sampleLimit int
@@ -102,10 +103,14 @@ func RunWhoami(opts WhoamiOptions) (any, error) {
 		return nil, err
 	}
 	adapters = filterWhoamiModels(ai.ApplyDisabled(adapters), opts.IncludeDisabled)
+	var models []ai.ModelInfo
+	if opts.Models {
+		models = ai.CatalogInfoFromAdapters(adapters)
+	}
 	return WhoamiResult{
 		Adapters: adapters, DefaultProvider: config.AI.ActiveProvider(),
 		ProviderDefaults: defaults, Disabled: config.AI.Disabled, Axes: disabledAxes(),
-		Runtimes:    api.RuntimeCatalog(),
+		Models: models, Runtimes: ai.RuntimeCatalogFromAdapters(adapters),
 		sampleLimit: opts.Limit, showModels: opts.Models,
 	}, nil
 }

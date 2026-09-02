@@ -52,6 +52,11 @@ A `.prompt` file has YAML frontmatter followed by a Handlebars body. dotprompt o
       <td>Captain execution metadata</td>
       <td>Declares the default parallel runtime matrix without becoming part of the request sent to each model.</td>
     </tr>
+    <tr>
+      <td><code>runtimeProfile</code></td>
+      <td>Captain runtime catalog</td>
+      <td>Pins the runtime profile (id or name) whose presets and spec are layered beneath this frontmatter. A request <code>runtimeProfile</code> or <code>--runtime-profile</code> overrides the pin.</td>
+    </tr>
   </tbody>
 </table>
 
@@ -104,6 +109,21 @@ You are a careful refactoring assistant.
 {{role "user"}}
 Refactor:
 {{target}}
+`} />
+
+## Runtime profile pin
+
+`runtimeProfile` names a saved runtime profile by id or name. Rendering resolves the profile's presets (ordered by scope), then its spec, then this frontmatter, then the caller's request or CLI flags, so the file can defer model, budget, and permission defaults to a shared profile while still overriding any of them inline. A caller that passes `runtimeProfile` on the render request or `--runtime-profile` on the command line replaces the pin; a pin that names no profile in the catalog fails the render rather than silently running without it. The render result's `resolution.trace` lists every layer that contributed. Captain binaries older than this key reject a file that uses it.
+
+<CodeExample client:load language="yaml" title="Pinned runtime profile" source={`
+---
+model: claude-sonnet-4-6
+runtimeProfile: review
+budget:
+  maxTurns: 7
+---
+{{role "user"}}
+Review the diff in {{path}}.
 `} />
 
 ## Structured output

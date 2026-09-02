@@ -35,21 +35,23 @@ type PromptVariable struct {
 }
 
 type PromptSummary struct {
-	ID          string           `json:"id"`
-	Name        string           `json:"name"`
-	Description string           `json:"description,omitempty"`
-	SourceKind  string           `json:"sourceKind"`
-	SourceID    string           `json:"sourceId"`
-	Source      string           `json:"source"`
-	Path        string           `json:"path"`
-	RelPath     string           `json:"relPath"`
-	Writable    bool             `json:"writable"`
-	Model       string           `json:"model,omitempty"`
-	Mode        string           `json:"mode,omitempty"`
-	Runtimes    []api.Model      `json:"runtimes,omitempty"`
-	Variables   []PromptVariable `json:"variables,omitempty"`
-	ParseError  string           `json:"parseError,omitempty"`
-	UpdatedAt   string           `json:"updatedAt,omitempty"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	SourceKind  string `json:"sourceKind"`
+	SourceID    string `json:"sourceId"`
+	Source      string `json:"source"`
+	Path        string `json:"path"`
+	RelPath     string `json:"relPath"`
+	Writable    bool   `json:"writable"`
+	Model       string `json:"model,omitempty"`
+	Mode        string `json:"mode,omitempty"`
+	// RuntimeProfile is the profile (id or name) the frontmatter pins, if any.
+	RuntimeProfile string           `json:"runtimeProfile,omitempty"`
+	Runtimes       []api.Model      `json:"runtimes,omitempty"`
+	Variables      []PromptVariable `json:"variables,omitempty"`
+	ParseError     string           `json:"parseError,omitempty"`
+	UpdatedAt      string           `json:"updatedAt,omitempty"`
 	// Version identifies the exact content this summary describes; writes echo
 	// it back as baseVersion so a concurrent edit is reported, not clobbered.
 	Version string `json:"version,omitempty"`
@@ -100,28 +102,34 @@ type PromptWriteRequest struct {
 
 type PromptRenderRequest struct {
 	Variables map[string]any `json:"variables,omitempty"`
-	Spec      *api.Spec      `json:"spec,omitempty"`
-	Runtimes  []api.Model    `json:"runtimes,omitempty"`
-	Chat      bool           `json:"chat,omitempty"`
+	// RuntimeProfile selects the catalog profile (id or name) whose presets and
+	// spec are layered beneath the frontmatter; it overrides a frontmatter pin.
+	RuntimeProfile string      `json:"runtimeProfile,omitempty"`
+	Spec           *api.Spec   `json:"spec,omitempty"`
+	Runtimes       []api.Model `json:"runtimes,omitempty"`
+	Chat           bool        `json:"chat,omitempty"`
 	// Content, when set, is an unsaved draft rendered in place of the saved file.
 	Content string `json:"content,omitempty"`
 }
 
 type PromptRenderResult struct {
-	ID              string         `json:"id"`
-	Name            string         `json:"name"`
-	Model           string         `json:"model,omitempty"`
-	Provider        string         `json:"provider,omitempty"`
-	Mode            string         `json:"mode,omitempty"`
-	User            string         `json:"user,omitempty"`
-	System          string         `json:"system,omitempty"`
-	Input           ai.Request     `json:"input"`
-	Config          ai.Config      `json:"config"`
-	InputSchema     map[string]any `json:"inputSchema,omitempty"`
-	InputDefault    map[string]any `json:"inputDefault,omitempty"`
-	OutputSchema    map[string]any `json:"outputSchema,omitempty"`
-	Runtimes        []api.Model    `json:"runtimes,omitempty"`
-	ValidationError string         `json:"validationError,omitempty"`
+	ID           string         `json:"id"`
+	Name         string         `json:"name"`
+	Model        string         `json:"model,omitempty"`
+	Provider     string         `json:"provider,omitempty"`
+	Mode         string         `json:"mode,omitempty"`
+	User         string         `json:"user,omitempty"`
+	System       string         `json:"system,omitempty"`
+	Input        ai.Request     `json:"input"`
+	Config       ai.Config      `json:"config"`
+	InputSchema  map[string]any `json:"inputSchema,omitempty"`
+	InputDefault map[string]any `json:"inputDefault,omitempty"`
+	OutputSchema map[string]any `json:"outputSchema,omitempty"`
+	Runtimes     []api.Model    `json:"runtimes,omitempty"`
+	// Resolution is the layer trace the render resolved through; its Spec is
+	// the final request after saved defaults, so the trace explains Input.
+	Resolution      api.ResolvedSpec `json:"resolution"`
+	ValidationError string           `json:"validationError,omitempty"`
 }
 
 // PromptActionFlags is the full flag surface for `captain prompt run|render` —
@@ -132,15 +140,16 @@ type PromptRenderResult struct {
 type PromptActionFlags struct {
 	AIRuntimeOptions
 
-	Prompt       string   `flag:"prompt" clicky:"cli-file-read" help:"Prompt text (or @file); alternative to the positional" short:"p"`
-	System       string   `flag:"system" help:"System prompt" short:"s"`
-	AppendSystem string   `flag:"append-system" help:"Append text to the default system prompt"`
-	Var          []string `flag:"var" help:"Template variable key=value (repeatable)" short:"V"`
-	Attach       []string `flag:"attach" help:"Attach a local path or URL (repeatable; RFC 4180 comma-separated values allowed)" short:"A"`
-	Vars         string   `flag:"vars" help:"JSON object of template variables (HTTP callers)"`
-	MultiModels  []string `flag:"multi-models" help:"Run prompt once per runtime selector in parallel, e.g. cli:sonnet-5,cmux:opus (repeatable; comma-separated allowed)" short:"M"`
-	Timeout      string   `flag:"timeout" help:"Request timeout (default 120s; a relocating sandbox waits for the remote agent instead)"`
-	NoStream     bool     `flag:"no-stream" help:"Disable streaming; print only the final text (CLI)"`
+	Prompt         string   `flag:"prompt" clicky:"cli-file-read" help:"Prompt text (or @file); alternative to the positional" short:"p"`
+	RuntimeProfile string   `flag:"runtime-profile" help:"Runtime profile (id or name) whose presets and spec are layered beneath the prompt frontmatter; overrides a runtimeProfile frontmatter pin"`
+	System         string   `flag:"system" help:"System prompt" short:"s"`
+	AppendSystem   string   `flag:"append-system" help:"Append text to the default system prompt"`
+	Var            []string `flag:"var" help:"Template variable key=value (repeatable)" short:"V"`
+	Attach         []string `flag:"attach" help:"Attach a local path or URL (repeatable; RFC 4180 comma-separated values allowed)" short:"A"`
+	Vars           string   `flag:"vars" help:"JSON object of template variables (HTTP callers)"`
+	MultiModels    []string `flag:"multi-models" help:"Run prompt once per runtime selector in parallel, e.g. cli:sonnet-5,cmux:opus (repeatable; comma-separated allowed)" short:"M"`
+	Timeout        string   `flag:"timeout" help:"Request timeout (default 120s; a relocating sandbox waits for the remote agent instead)"`
+	NoStream       bool     `flag:"no-stream" help:"Disable streaming; print only the final text (CLI)"`
 }
 
 func (PromptActionFlags) ClickyActionFlags() {}
@@ -171,12 +180,13 @@ type promptRef struct {
 }
 
 type promptInspection struct {
-	Metadata     map[string]any
-	InputSchema  map[string]any
-	InputDefault map[string]any
-	OutputSchema map[string]any
-	Runtimes     []api.Model
-	Variables    []PromptVariable
+	Metadata       map[string]any
+	InputSchema    map[string]any
+	InputDefault   map[string]any
+	OutputSchema   map[string]any
+	Runtimes       []api.Model
+	RuntimeProfile string
+	Variables      []PromptVariable
 }
 
 func RegisterPromptEntity() {
@@ -361,8 +371,9 @@ func deletePrompt(ctx context.Context, id string) error {
 }
 
 // renderPromptAction renders a prompt for `captain prompt render`. HTTP callers
-// pass a structured api.Spec in the body (rich overlay via overlayRuntimeSpec);
-// the CLI passes flat flags (overlayCLI) plus filepath/-p/stdin sources.
+// pass a structured api.Spec in the body (the request layer over the profile
+// and frontmatter layers); the CLI passes flat flags (overlayCLI) plus
+// filepath/-p/stdin sources.
 func renderPromptAction(ctx context.Context, id string, flags map[string]string) (PromptRenderResult, error) {
 	if _, isHTTP := clickyrpc.RequestFromContext(ctx); isHTTP {
 		req, err := readRenderRequest(ctx, flags)
