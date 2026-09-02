@@ -31,11 +31,22 @@ func LiveCatalogInfo(configuredProviders []string) ([]ModelInfo, error) {
 	if err != nil && !errors.Is(err, ErrAdapterProbeUnsettled) {
 		return nil, err
 	}
+	return catalogInfoFromAdapters(adapters, configuredProviders), nil
+}
+
+// CatalogInfoFromAdapters builds the picker catalog from the same probe result
+// carried by whoami, avoiding a second cache read and a second availability
+// snapshot for clients that consume both models and runtimes together.
+func CatalogInfoFromAdapters(adapters []AdapterStatus) []ModelInfo {
+	return catalogInfoFromAdapters(adapters, nil)
+}
+
+func catalogInfoFromAdapters(adapters []AdapterStatus, configuredProviders []string) []ModelInfo {
 	models := mergeLiveCatalog(catalogSnapshot(), adapters, liveCatalogOptions{IncludeDisabled: true})
 	return catalogInfoFrom(models, catalogInfoOptions{
 		ConfiguredProviders: configuredProviders,
 		Adapters:            adapters,
-	}), nil
+	})
 }
 
 // mergeLiveCatalog upserts each probed model onto the static catalog. Ordering
@@ -86,11 +97,11 @@ func mergeLiveCatalog(static []Model, adapters []AdapterStatus, options liveCata
 
 // menuRuntimeFor maps a probed runtime onto the one the menu shows for that
 // model, and whether it has a menu representation at all. Every local transport
-// of a family collapses onto its agent row — the menu offers one local entry per
-// model, because all three drive the same binary's model list. Google has no
-// local row (its CLI models already appear under the googleai API entry), so it
-// returns false and is skipped. Whether an id is provider-prefixed is decided
-// later by the menu mode's Kind (see liveModel).
+// of an agent-capable family collapses onto its agent row — the menu offers one
+// local entry per model, because those transports drive the same model list.
+// Providers without an agent mode retain their direct local mode, so Gemini CLI
+// models remain selectable independently of the credential-gated API catalog.
+// Whether an id is provider-prefixed is decided later by the menu mode's Kind.
 func menuRuntimeFor(runtime Runtime) (Runtime, bool) {
 	p, ok := api.ProviderByName(runtime.Provider)
 	if !ok {
@@ -100,7 +111,7 @@ func menuRuntimeFor(runtime Runtime) (Runtime, bool) {
 		return runtime, true
 	}
 	if _, serves := p.Caps(ModeAgent); !serves {
-		return Runtime{}, false
+		return runtime, true
 	}
 	return RuntimeOf(p, ModeAgent), true
 }

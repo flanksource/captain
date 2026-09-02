@@ -24,6 +24,7 @@ type ChatRequest struct {
 	Budget          api.Budget              `json:"budget,omitempty"`
 	ToolPreferences api.ToolPreferences     `json:"toolPreferences,omitempty"`
 	PermissionMode  api.PermissionMode      `json:"permissionMode,omitempty"`
+	RuntimeProfile  string                  `json:"runtimeProfile,omitempty"`
 	ToolApproval    *api.ToolApprovalResume `json:"-"`
 
 	Context      string            `json:"context,omitempty"`

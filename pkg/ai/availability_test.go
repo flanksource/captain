@@ -91,6 +91,66 @@ var _ = Describe("runtime availability", func() {
 			Expect(availability.Remediation).NotTo(BeEmpty(), test.runtime.String())
 		}
 	})
+
+	It("projects runtime availability from the supplied whoami adapters", func() {
+		runtimes := RuntimeCatalogFromAdapters([]AdapterStatus{
+			{Provider: OpenAI.Name, Mode: string(ModeAPI), Type: "api"},
+			{Provider: OpenAI.Name, Mode: string(ModeCLI), Type: "cli", Authenticated: true, Binary: "/bin/codex"},
+		})
+
+		Expect(runtimeAvailability(runtimes, RuntimeOf(OpenAI, ModeAPI)).State).To(Equal(api.AvailabilityMissingCredential))
+		Expect(runtimeAvailability(runtimes, RuntimeOf(OpenAI, ModeCLI)).State).To(Equal(api.AvailabilityAvailable))
+	})
+
+	It("projects picker models from the supplied whoami adapters", func() {
+		models := CatalogInfoFromAdapters([]AdapterStatus{{
+			Provider: OpenAI.Name, Mode: string(ModeCLI), Type: "cli",
+			Authenticated: true, Binary: "/bin/codex",
+			ModelDetails: []ModelDef{{
+				ID: "gpt-whoami-only", Name: "GPT Whoami Only",
+				CapabilitiesKnown: true, Reasoning: true,
+				SupportedEfforts: []api.Effort{api.EffortLow, api.EffortHigh},
+				DefaultEffort:    api.EffortHigh,
+			}},
+		}})
+
+		var projected *ModelInfo
+		for i := range models {
+			if models[i].ID == "gpt-whoami-only" {
+				projected = &models[i]
+				break
+			}
+		}
+		Expect(projected).NotTo(BeNil())
+		Expect(projected.Provider).To(Equal("openai"))
+		Expect(projected.Runtime.Name).To(Equal("gpt-whoami-only"))
+		Expect(projected.Configured).To(BeTrue())
+		Expect(projected.Availability.State).To(Equal(api.AvailabilityAvailable))
+	})
+
+	It("keeps Gemini CLI models separate from the unconfigured API catalog", func() {
+		models := CatalogInfoFromAdapters([]AdapterStatus{
+			{Provider: Google.Name, Mode: string(ModeAPI), Type: "api"},
+			{
+				Provider: Google.Name, Mode: string(ModeCLI), Type: "cli",
+				Authenticated: true, Binary: "/bin/gemini",
+				ModelDetails: []ModelDef{{ID: "gemini-cli-live", Name: "Gemini CLI Live"}},
+			},
+		})
+
+		var cli *ModelInfo
+		for i := range models {
+			if models[i].ID == "gemini-cli-live" {
+				cli = &models[i]
+				break
+			}
+		}
+		Expect(cli).NotTo(BeNil())
+		Expect(cli.Provider).To(Equal("google"))
+		Expect(cli.Runtime.Mode).To(Equal(ModeCLI))
+		Expect(cli.Configured).To(BeTrue())
+		Expect(cli.Availability.State).To(Equal(api.AvailabilityAvailable))
+	})
 })
 
 func runtimeAvailability(families []api.RuntimeFamily, runtime Runtime) api.Availability {

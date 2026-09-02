@@ -192,7 +192,7 @@ var _ = Describe("Captain aichat service", func() {
 		}
 		service := aichat.NewService(aichat.ServiceOptions{
 			Resolver: resolver, ProviderConfig: source,
-			Profile: aichat.RuntimeProfileProviderFunc(func(context.Context) (aichat.RuntimeProfile, error) {
+			Profile: aichat.RuntimeProfileProviderFunc(func(context.Context, ...aichat.RuntimeProfileOption) (aichat.RuntimeProfile, error) {
 				return mustRuntimeProfile(api.SpecLayer{Name: "application", Scope: api.SpecLayerGlobal, Spec: api.Spec{Model: api.Model{Name: "api:gpt-5.4"}}}), nil
 			}),
 		})
@@ -220,7 +220,7 @@ var _ = Describe("Captain aichat service", func() {
 		}}
 		service := aichat.NewService(aichat.ServiceOptions{
 			Resolver: resolver, ProviderConfig: source,
-			Profile: aichat.RuntimeProfileProviderFunc(func(context.Context) (aichat.RuntimeProfile, error) {
+			Profile: aichat.RuntimeProfileProviderFunc(func(context.Context, ...aichat.RuntimeProfileOption) (aichat.RuntimeProfile, error) {
 				return mustRuntimeProfile(api.SpecLayer{Name: "application", Scope: api.SpecLayerGlobal, Spec: api.Spec{Model: api.Model{Name: "api:gpt-5.4"}}}), nil
 			}),
 		})
@@ -242,7 +242,7 @@ var _ = Describe("Captain aichat service", func() {
 		resolver := &fakeResolver{provider: provider}
 		service := aichat.NewService(aichat.ServiceOptions{
 			Resolver: resolver,
-			Profile: aichat.RuntimeProfileProviderFunc(func(context.Context) (aichat.RuntimeProfile, error) {
+			Profile: aichat.RuntimeProfileProviderFunc(func(context.Context, ...aichat.RuntimeProfileOption) (aichat.RuntimeProfile, error) {
 				return mustRuntimeProfile(api.SpecLayer{Name: "application", Scope: api.SpecLayerGlobal, Spec: api.Spec{
 					Model:  api.Model{Name: "openai/test-model"},
 					Budget: api.Budget{Cost: 5, MaxTokens: 2_000, MaxTurns: 3},
@@ -264,7 +264,7 @@ var _ = Describe("Captain aichat service", func() {
 		resolver := &fakeResolver{provider: &fakeStreamingProvider{}}
 		service := aichat.NewService(aichat.ServiceOptions{
 			Resolver: resolver,
-			Profile: aichat.RuntimeProfileProviderFunc(func(context.Context) (aichat.RuntimeProfile, error) {
+			Profile: aichat.RuntimeProfileProviderFunc(func(context.Context, ...aichat.RuntimeProfileOption) (aichat.RuntimeProfile, error) {
 				return mustRuntimeProfile(api.SpecLayer{
 					Name: "application", Scope: api.SpecLayerGlobal,
 					Spec: api.Spec{Model: api.Model{Name: "openai/test-model", Mode: api.ModeAPI}},
@@ -305,7 +305,7 @@ var _ = Describe("Captain aichat service", func() {
 		resolver := &fakeResolver{provider: provider}
 		service := aichat.NewService(aichat.ServiceOptions{
 			Resolver: resolver,
-			Profile: aichat.RuntimeProfileProviderFunc(func(context.Context) (aichat.RuntimeProfile, error) {
+			Profile: aichat.RuntimeProfileProviderFunc(func(context.Context, ...aichat.RuntimeProfileOption) (aichat.RuntimeProfile, error) {
 				profile := mustRuntimeProfile(api.SpecLayer{Name: "application", Scope: api.SpecLayerGlobal, Spec: api.Spec{Model: api.Model{Name: "openai/test-model", Mode: api.ModeAPI}}})
 				profile.System = "Use application tools."
 				profile.ProviderConfig = api.Config{APIURL: "https://example.com/ai", ProjectName: "tenant-x"}
@@ -371,7 +371,7 @@ var _ = Describe("Captain aichat service", func() {
 		resolver := &fakeResolver{provider: provider}
 		service := aichat.NewService(aichat.ServiceOptions{
 			Resolver: resolver, Threads: aichat.FixedThreadStore(store),
-			Profile: aichat.RuntimeProfileProviderFunc(func(context.Context) (aichat.RuntimeProfile, error) {
+			Profile: aichat.RuntimeProfileProviderFunc(func(context.Context, ...aichat.RuntimeProfileOption) (aichat.RuntimeProfile, error) {
 				return aichat.RuntimeProfile{System: "Use accounting tools."}, nil
 			}),
 		})

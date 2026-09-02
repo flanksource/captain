@@ -59,12 +59,6 @@ func (s *Service) resolveRuntimeProfileTools(
 	capabilities := api.PermissionCapabilitiesFor(api.RuntimeOf(resolved.Spec.Provider, resolved.Spec.Mode))
 	for name, policy := range permissions {
 		support[name] = capabilities.ToolPolicySupport(api.ProvenanceCaller, policy)
-		if support[name].Kind == api.SupportUnsupported {
-			return api.RuntimeProfileResolveResponse{}, fmt.Errorf(
-				"caller-tool policy %q for %q is not available for runtime %s",
-				policy, name, api.RuntimeOf(resolved.Spec.Provider, resolved.Spec.Mode),
-			)
-		}
 	}
 	return api.RuntimeProfileResolveResponse{
 		Resolved: resolved, Tools: set.Catalog, Permissions: permissions,

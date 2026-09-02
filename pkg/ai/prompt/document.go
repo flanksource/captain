@@ -29,6 +29,9 @@ type Document struct {
 	Spec api.Spec
 	// Runtimes are the prompt's default parallel execution targets.
 	Runtimes []api.Model
+	// RuntimeProfile pins the runtime profile (id or name) the prompt resolves
+	// under; empty when the prompt leaves the selection to the caller.
+	RuntimeProfile string
 	// Body is the unrendered Handlebars template body.
 	Body string
 }
@@ -54,10 +57,30 @@ func Parse(source string) (*Document, error) {
 		return nil, fmt.Errorf("decode prompt runtimes: %w", err)
 	}
 	doc.Runtimes = runtimes
+	doc.RuntimeProfile, err = decodePromptRuntimeProfile(raw)
+	if err != nil {
+		return nil, fmt.Errorf("decode prompt runtime profile: %w", err)
+	}
 	if err := decodeSpecFrontmatter(raw, &doc.Spec); err != nil {
 		return nil, fmt.Errorf("decode prompt frontmatter into spec: %w", err)
 	}
 	return doc, nil
+}
+
+func decodePromptRuntimeProfile(raw map[string]any) (string, error) {
+	value, ok := raw["runtimeProfile"]
+	if !ok {
+		return "", nil
+	}
+	ref, ok := value.(string)
+	if !ok {
+		return "", fmt.Errorf("runtimeProfile must be a string, got %T", value)
+	}
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return "", fmt.Errorf("runtimeProfile must name a profile")
+	}
+	return ref, nil
 }
 
 func decodePromptRuntimes(raw map[string]any) ([]api.Model, error) {

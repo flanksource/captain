@@ -112,6 +112,14 @@ func TestGeminiCLIUsesContextDir(t *testing.T) {
 }
 
 func TestCLIProviderFactoriesCarrySandbox(t *testing.T) {
+	binDir := t.TempDir()
+	for _, binary := range []string{"claude", "codex", "gemini"} {
+		if err := os.WriteFile(filepath.Join(binDir, binary), []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatalf("write fake %s: %v", binary, err)
+		}
+	}
+	t.Setenv("PATH", binDir)
+
 	dockerSelected := func(sandbox *api.SandboxConfig) bool {
 		return sandbox != nil && sandbox.Kind == api.SandboxDocker
 	}

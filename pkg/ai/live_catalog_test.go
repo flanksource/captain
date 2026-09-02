@@ -30,7 +30,7 @@ func TestMergeLiveCatalogUpsertsLiveAndPreservesStatic(t *testing.T) {
 		{Provider: Anthropic.Name, Mode: string(ModeAPI), Type: "api", ModelDetails: []ModelDef{
 			{ID: "claude-sonnet-5", Name: "Claude Sonnet 5", Reasoning: true, ReleaseDate: "2026-06-29"},
 		}},
-		// gemini-cli has no menu backend; its models must not leak into the menu.
+		// Gemini has no agent mode, so its CLI models keep their own runtime row.
 		{Provider: Google.Name, Mode: string(ModeCLI), Type: "cli", ModelDetails: []ModelDef{
 			{ID: "gemini-3.5-flash", Name: "Gemini 3.5 Flash"},
 		}},
@@ -61,10 +61,9 @@ func TestMergeLiveCatalogUpsertsLiveAndPreservesStatic(t *testing.T) {
 	// LiveCatalogInfo when its provider is unconfigured).
 	findModel(t, merged, "claude-opus-4-8")
 
-	for _, m := range merged {
-		if m.ID == "googleai/gemini-3.5-flash" || (m.Provider == Google && m.Mode == ModeCLI) {
-			t.Errorf("gemini-cli model leaked into the menu: %+v", m)
-		}
+	gemini := findModel(t, merged, "gemini-3.5-flash")
+	if gemini.Provider != Google || gemini.Mode != ModeCLI {
+		t.Errorf("gemini runtime = %v %s, want google cli", gemini.Provider, gemini.Mode)
 	}
 }
 

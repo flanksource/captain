@@ -58,6 +58,11 @@ func TestSaveLoad_RoundTrip(t *testing.T) {
 				Prompt: "/repo/prompts/json-repair.prompt",
 			},
 		},
+		Runtime: RuntimeDefaults{
+			PresetDirs:  []string{"/repo/runtime/presets", "team-presets"},
+			ProfileDirs: []string{"/repo/runtime/profiles"},
+		},
+		Chat: ChatDefaults{RuntimeProfile: "Review"},
 	}
 	if err := Save(want); err != nil {
 		t.Fatalf("Save() err = %v", err)
@@ -147,6 +152,30 @@ func TestDisabledSelections_OmittedWhenEmpty(t *testing.T) {
 	}
 	if strings.Contains(string(data), "disabled:") {
 		t.Errorf("empty opt-out set was written to the file:\n%s", data)
+	}
+}
+
+// An unset runtime or chat block is left out of the file entirely rather than
+// written as `runtime: {}`, the same way an empty sandbox block is.
+func TestRuntimeAndChatDefaults_OmittedWhenEmpty(t *testing.T) {
+	path := withTempPath(t)
+	if err := Save(Config{AI: AIDefaults{DefaultProvider: "anthropic"}}); err != nil {
+		t.Fatalf("Save() err = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	for _, key := range []string{"runtime:", "chat:"} {
+		if strings.Contains(string(data), key) {
+			t.Errorf("empty %s block was written to the file:\n%s", key, data)
+		}
+	}
+	if !(RuntimeDefaults{}).IsZero() || !(ChatDefaults{}).IsZero() {
+		t.Error("zero runtime and chat defaults must report IsZero")
+	}
+	if (RuntimeDefaults{ProfileDirs: []string{"x"}}).IsZero() || (ChatDefaults{RuntimeProfile: "x"}).IsZero() {
+		t.Error("populated runtime and chat defaults must not report IsZero")
 	}
 }
 

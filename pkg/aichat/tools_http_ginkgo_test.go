@@ -17,7 +17,7 @@ import (
 var _ = Describe("Chat tool catalog HTTP", func() {
 	It("serves frontend metadata for every configured tool source", func() {
 		service := aichat.NewService(aichat.ServiceOptions{
-			Profile: aichat.RuntimeProfileProviderFunc(func(context.Context) (aichat.RuntimeProfile, error) {
+			Profile: aichat.RuntimeProfileProviderFunc(func(context.Context, ...aichat.RuntimeProfileOption) (aichat.RuntimeProfile, error) {
 				return aichat.RuntimeProfile{}, errors.New("runtime profile unavailable")
 			}),
 			Tools: aichat.StaticToolProvider([]api.ToolDefinition{{
