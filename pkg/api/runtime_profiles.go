@@ -73,37 +73,28 @@ type RuntimeProfileResolveResponse struct {
 
 // ResolveRuntimeProfile materializes selected presets, adds the task-specific
 // profile spec, and delegates ordering and structural merge semantics to the
-// canonical Spec layer resolver.
+// canonical Spec layer resolver. A profile references its presets by id or by
+// a name that matches exactly one preset, the runtime catalog's convention.
 func ResolveRuntimeProfile(request RuntimeProfileResolveRequest) (ResolvedSpec, error) {
 	if err := validateRuntimeProfile(request.Profile); err != nil {
 		return ResolvedSpec{}, err
 	}
-	byID := make(map[string]RuntimePreset, len(request.Presets))
-	for _, preset := range request.Presets {
-		if err := validateRuntimePreset(preset); err != nil {
-			return ResolvedSpec{}, err
-		}
-		if _, exists := byID[preset.ID]; exists {
-			return ResolvedSpec{}, fmt.Errorf("runtime preset id %q is duplicated", preset.ID)
-		}
-		byID[preset.ID] = preset
+	index, err := indexRuntimePresets(request.Presets)
+	if err != nil {
+		return ResolvedSpec{}, err
 	}
 
 	layers := make([]SpecLayer, 0, len(request.Profile.Presets)+1)
 	selected := make(map[string]struct{}, len(request.Profile.Presets))
-	for _, presetID := range request.Profile.Presets {
-		presetID = strings.TrimSpace(presetID)
-		if presetID == "" {
-			return ResolvedSpec{}, fmt.Errorf("runtime profile %q contains an empty preset id", request.Profile.Name)
+	for _, ref := range request.Profile.Presets {
+		preset, err := index.lookup(request.Profile.Name, ref)
+		if err != nil {
+			return ResolvedSpec{}, err
 		}
-		if _, repeated := selected[presetID]; repeated {
-			return ResolvedSpec{}, fmt.Errorf("runtime profile %q repeats preset %q", request.Profile.Name, presetID)
+		if _, repeated := selected[preset.ID]; repeated {
+			return ResolvedSpec{}, fmt.Errorf("runtime profile %q repeats preset %q", request.Profile.Name, ref)
 		}
-		selected[presetID] = struct{}{}
-		preset, exists := byID[presetID]
-		if !exists {
-			return ResolvedSpec{}, fmt.Errorf("runtime profile %q references missing preset %q", request.Profile.Name, presetID)
-		}
+		selected[preset.ID] = struct{}{}
 		layers = append(layers, SpecLayer{
 			ID: preset.ID, Source: SpecLayerSourcePreset,
 			Name: preset.Name, Scope: preset.Scope, Spec: preset.Spec.ToSpec(),
@@ -134,6 +125,48 @@ func ResolveRuntimeProfile(request RuntimeProfileResolveRequest) (ResolvedSpec, 
 		return ResolvedSpec{}, err
 	}
 	return resolved, nil
+}
+
+type runtimePresetIndex struct {
+	byID   map[string]RuntimePreset
+	byName map[string][]RuntimePreset
+}
+
+func indexRuntimePresets(presets []RuntimePreset) (runtimePresetIndex, error) {
+	index := runtimePresetIndex{
+		byID:   make(map[string]RuntimePreset, len(presets)),
+		byName: make(map[string][]RuntimePreset, len(presets)),
+	}
+	for _, preset := range presets {
+		if err := validateRuntimePreset(preset); err != nil {
+			return runtimePresetIndex{}, err
+		}
+		if _, exists := index.byID[preset.ID]; exists {
+			return runtimePresetIndex{}, fmt.Errorf("runtime preset id %q is duplicated", preset.ID)
+		}
+		index.byID[preset.ID] = preset
+		name := strings.ToLower(strings.TrimSpace(preset.Name))
+		index.byName[name] = append(index.byName[name], preset)
+	}
+	return index, nil
+}
+
+func (i runtimePresetIndex) lookup(profile, ref string) (RuntimePreset, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return RuntimePreset{}, fmt.Errorf("runtime profile %q contains an empty preset reference", profile)
+	}
+	if preset, ok := i.byID[ref]; ok {
+		return preset, nil
+	}
+	switch named := i.byName[strings.ToLower(ref)]; len(named) {
+	case 0:
+		return RuntimePreset{}, fmt.Errorf("runtime profile %q references missing preset %q", profile, ref)
+	case 1:
+		return named[0], nil
+	default:
+		return RuntimePreset{}, fmt.Errorf("runtime profile %q references preset %q by name, which matches %d presets", profile, ref, len(named))
+	}
 }
 
 func (s RuntimePresetSpec) ToSpec() Spec {
@@ -170,6 +203,11 @@ func validateRuntimeProfile(profile RuntimeProfile) error {
 	}
 	return nil
 }
+
+// ValidateRuntimePreset checks a preset's identity, scope, and every reusable
+// spec fragment it carries, so stores reject an unusable preset at write time
+// rather than at the first resolution that references it.
+func ValidateRuntimePreset(preset RuntimePreset) error { return validateRuntimePreset(preset) }
 
 func validateRuntimePreset(preset RuntimePreset) error {
 	preset.ID = strings.TrimSpace(preset.ID)

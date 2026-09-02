@@ -23,6 +23,7 @@ func TestSchemaBundleContainsGavelIntegrationContract(t *testing.T) {
 		"32_execution_approvals.pg.hcl",
 		"35_git_agent.pg.hcl",
 		"40_artifacts.pg.hcl",
+		"41_runtime_profiles.pg.hcl",
 		"50_constraints.sql",
 		"51_state_triggers.sql",
 		"52_session_activity_triggers.sql",
@@ -53,6 +54,8 @@ func TestSchemaBundleContainsGavelIntegrationContract(t *testing.T) {
 		`values = ["created", "running", "succeeded", "partial", "failed", "cancelled", "interrupted"]`,
 		`enum "captain_git_agent_task_status"`,
 		`enum "captain_git_agent_verdict_status"`,
+		`enum "captain_spec_layer_scope"`,
+		`values = ["global", "context", "surface", "user"]`,
 	)
 	assertContainsAll(t, "01_session_lifecycle_partial.sql",
 		"-- phase: pre",
@@ -115,6 +118,23 @@ func TestSchemaBundleContainsGavelIntegrationContract(t *testing.T) {
 		`column "tier"`,
 		`index "captain_git_agent_task_attempts_task_attempt_tier_key"`,
 	)
+	// Presets and profiles are referenced by name from other profiles, prompt
+	// frontmatter, and CLI flags, so the name index is case-insensitive; the
+	// preset list is an ordered cross-source reference list, not a join table.
+	assertContainsAll(t, "41_runtime_profiles.pg.hcl",
+		`table "captain_runtime_presets"`,
+		`column "scope"`,
+		`type = enum.captain_spec_layer_scope`,
+		`index "captain_runtime_presets_name_key"`,
+		`expr = "lower(name)"`,
+		`check "captain_runtime_presets_spec"`,
+		`table "captain_runtime_profiles"`,
+		`column "presets"`,
+		`default = sql("'[]'::jsonb")`,
+		`index "captain_runtime_profiles_name_key"`,
+		`check "captain_runtime_profiles_presets"`,
+	)
+	assertContainsNone(t, "41_runtime_profiles.pg.hcl", `table "captain_runtime_profile_presets"`)
 	assertContainsAll(t, "50_constraints.sql",
 		"-- phase: post",
 		"ALTER CONSTRAINT captain_prompt_runs_input_plan_id_fkey",

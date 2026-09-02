@@ -45,11 +45,9 @@ type RuntimeModeEntry struct {
 	// is what lets a client stop shipping its own "claude-sonnet-5" literal,
 	// which went stale on every model release.
 	DefaultModel string `json:"defaultModel,omitempty"`
-	// CatalogProvider is the provider key used by /api/chat/models for this
-	// mode. Local Claude/Codex modes share their agent catalog. It is always
-	// served: a client joining the model list to a mode falls back to the
-	// family's CatalogPrefix when it is absent, which puts every local Claude
-	// mode on "anthropic" and hands the Agent picker the Anthropic API rows.
+	// CatalogProvider is the canonical provider key used by picker model rows for
+	// this mode. It is distinct from CatalogPrefix for Google: "google" joins the
+	// models while "googleai" only namespaces fully-qualified model IDs.
 	CatalogProvider string `json:"catalogProvider"`
 	// Disabled reports the user's opt-out. The entry is still served so a UI can
 	// explain the absence instead of silently shrinking the picker.
@@ -106,7 +104,7 @@ func RuntimeCatalog() []RuntimeFamily {
 				Kind:            mode.Kind(),
 				Keyless:         caps.Keyless,
 				DefaultModel:    DefaultModelFor(p, mode),
-				CatalogProvider: p.CatalogPrefix,
+				CatalogProvider: p.Name,
 				Disabled:        disabled.Runtime(p, mode),
 				DisabledReason:  reason,
 				Availability:    availability,

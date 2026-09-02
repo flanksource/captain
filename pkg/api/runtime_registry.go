@@ -75,9 +75,6 @@ func NewProvider(cfg Config) (Provider, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := requireRuntimeBinary(provider, mode); err != nil {
-		return nil, err
-	}
 
 	// The legacy boolean only speaks when no explicit selection was made:
 	// ResolvedSandbox gives SandboxSelection precedence, so a caller selecting
@@ -93,6 +90,9 @@ func NewProvider(cfg Config) (Provider, error) {
 		if err := descriptor.ValidateMode(mode); err != nil {
 			return nil, err
 		}
+	}
+	if err := requireRuntimeBinary(provider, mode); err != nil {
+		return nil, err
 	}
 
 	runtime := RuntimeOf(provider, mode)
