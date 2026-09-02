@@ -57,7 +57,10 @@ func NewLayeredRuntimeProfileProvider(options LayeredRuntimeProfileProviderOptio
 		})
 		if err != nil {
 			var selection *runtimeprofiles.SelectionError
-			if errors.As(err, &selection) && selection.Origin == runtimeprofiles.SelectionRequested {
+			if errors.As(err, &selection) && selection.Origin == runtimeprofiles.SelectionRequested &&
+				(errors.Is(err, runtimeprofiles.ErrNotFound) ||
+					errors.Is(err, runtimeprofiles.ErrAmbiguous) ||
+					errors.Is(err, runtimeprofiles.ErrCatalogUnavailable)) {
 				return RuntimeProfile{}, RequestError(http.StatusBadRequest, selection.Error())
 			}
 			return RuntimeProfile{}, err

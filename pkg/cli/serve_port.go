@@ -7,15 +7,15 @@ import (
 	"strings"
 )
 
-func viteDevServerArgs(configuredPort int, open bool) ([]string, error) {
+func viteDevServerArgs(configuredPort int) ([]string, int, error) {
 	port := configuredPort
 	if port == 0 {
 		listener, _, selectedPort, err := listenCaptainServer("localhost", 0)
 		if err != nil {
-			return nil, fmt.Errorf("select Vite dev port: %w", err)
+			return nil, 0, fmt.Errorf("select Vite dev port: %w", err)
 		}
 		if err := listener.Close(); err != nil {
-			return nil, fmt.Errorf("release Vite dev port %d: %w", selectedPort, err)
+			return nil, 0, fmt.Errorf("release Vite dev port %d: %w", selectedPort, err)
 		}
 		port = selectedPort
 	}
@@ -24,10 +24,7 @@ func viteDevServerArgs(configuredPort int, open bool) ([]string, error) {
 	if configuredPort != 0 {
 		args = append(args, "--strictPort")
 	}
-	if open {
-		args = append(args, "--open")
-	}
-	return append(args, "--host", "localhost"), nil
+	return append(args, "--host", "localhost"), port, nil
 }
 
 func (o ServeOptions) validate() error {

@@ -5,14 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
-	"github.com/flanksource/captain/pkg/collections"
 	clickyrpc "github.com/flanksource/clicky/rpc"
 )
 
@@ -65,64 +63,6 @@ func applyPromptDefaults(req *ai.Request, cfg *ai.Config) error {
 	return nil
 }
 
-func mergeStringMaps(base, overlay map[string]string) map[string]string {
-	if len(overlay) == 0 {
-		return base
-	}
-	out := make(map[string]string, collections.SafeAdd(len(base), len(overlay)))
-	for k, v := range base {
-		out[k] = v
-	}
-	for k, v := range overlay {
-		out[k] = v
-	}
-	return out
-}
-
-func mergePresets(base, overlay []api.Preset) []api.Preset {
-	if len(overlay) == 0 {
-		return base
-	}
-	seen := make(map[api.Preset]bool, collections.SafeAdd(len(base), len(overlay)))
-	out := make([]api.Preset, 0, collections.SafeAdd(len(base), len(overlay)))
-	for _, preset := range base {
-		if seen[preset] {
-			continue
-		}
-		seen[preset] = true
-		out = append(out, preset)
-	}
-	for _, preset := range overlay {
-		if seen[preset] {
-			continue
-		}
-		seen[preset] = true
-		out = append(out, preset)
-	}
-	return out
-}
-
-func sortedStringKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for key := range m {
-		if key != "" {
-			keys = append(keys, key)
-		}
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-func enabledResourcePolicies(in api.ResourcePolicies) api.ResourcePolicies {
-	out := api.ResourcePolicies{}
-	for _, key := range sortedStringKeys(in) {
-		if in[key] == api.ResourceEnabled {
-			out[key] = api.ResourceEnabled
-		}
-	}
-	return out
-}
-
 func dedupeStrings(in []string) []string {
 	seen := map[string]bool{}
 	var out []string
@@ -160,6 +100,9 @@ func mergePromptActionFlags(req *PromptRenderRequest, flags map[string]string) e
 			return fmt.Errorf("parse --vars JSON: %w", err)
 		}
 		req.Variables = vars
+	}
+	if v := strings.TrimSpace(flags["runtime-profile"]); v != "" {
+		req.RuntimeProfile = v
 	}
 	if v := strings.TrimSpace(flags["model"]); v != "" {
 		ensureRenderSpec(req).Name = v

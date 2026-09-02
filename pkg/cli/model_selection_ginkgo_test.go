@@ -70,18 +70,43 @@ var _ = Describe("CLI model selection", func() {
 		Expect(cfg.Model.Mode).To(Equal(api.ModeAgent))
 	})
 
-	It("does not retain a prompt runtime when a structured spec replaces its model", func() {
-		req := ai.Request{Model: api.Model{Name: "opus", Mode: api.ModeAgent}}
-		cfg := ai.Config{Model: req.Model}
-
-		overlayRuntimeSpec(&req, &cfg, api.Spec{Model: api.Model{Name: "gemini-3.5-flash"}})
-		Expect(applyPromptDefaults(&req, &cfg)).To(Succeed())
-		resolved, err := ai.Resolve(cfg.Model)
-
+	// layeredModel resolves a request-layer model over a resolved frontmatter
+	// model exactly as renderPrompt does: expand, layer, fold, defaults, resolve.
+	layeredModel := func(frontmatter, request api.Model) api.Model {
+		GinkgoHelper()
+		layers, err := promptLayers(nil, "selection.prompt", ai.Request{Model: frontmatter}, &api.Spec{Model: request})
 		Expect(err).NotTo(HaveOccurred())
+		resolved, err := resolvePromptLayers(layers)
+		Expect(err).NotTo(HaveOccurred())
+		req := resolved.Spec
+		cfg := configFromResolved(req)
+		Expect(applyPromptDefaults(&req, &cfg)).To(Succeed())
+		model, err := ai.Resolve(cfg.Model)
+		Expect(err).NotTo(HaveOccurred())
+		return model
+	}
+	frontmatterModel := api.Model{Name: "claude-opus-4-6", Mode: api.ModeAPI, Provider: api.Anthropic}
+
+	It("keeps the frontmatter mode for a bare request-layer rename and re-derives the provider", func() {
+		resolved := layeredModel(frontmatterModel, api.Model{Name: "gemini-3.5-flash"})
+
 		Expect(resolved.Name).To(Equal("gemini-3.5-flash"))
 		Expect(resolved.Provider).To(Equal(api.Google))
 		Expect(resolved.Mode).To(Equal(api.ModeAPI))
+	})
+
+	It("lets a mode-prefixed request-layer selector override the frontmatter mode", func() {
+		resolved := layeredModel(frontmatterModel, api.Model{Name: "cli:gemini-3.5-flash"})
+
+		Expect(resolved.Name).To(Equal("gemini-3.5-flash"))
+		Expect(resolved.Provider).To(Equal(api.Google))
+		Expect(resolved.Mode).To(Equal(api.ModeCLI))
+	})
+
+	It("rejects a malformed request-layer selector before layering", func() {
+		_, err := promptLayers(nil, "selection.prompt", ai.Request{Model: frontmatterModel}, &api.Spec{Model: api.Model{Name: "warp:gemini-3.5-flash"}})
+
+		Expect(err).To(MatchError(ContainSubstring("render request model")))
 	})
 
 	It("omits single-runtime identity from multi-model parent labels", func() {

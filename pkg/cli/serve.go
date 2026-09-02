@@ -9,10 +9,8 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -222,7 +220,25 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 		return err
 	}
 
-	uiHandler, err := newCaptainWebappHandler()
+	var vite *captainViteDevServer
+	if opts.Dev {
+		vite, err = startCaptainViteDevServer(ctx, viteDevServerOptions{
+			APIHost: opts.Host,
+			APIPort: servePort,
+			UIPort:  opts.UIPort,
+			Stdout:  stdout,
+			Stderr:  stderr,
+		})
+		if err != nil {
+			return err
+		}
+		defer vite.stop()
+	}
+	uiOptions := captainUIHandlerOptions{Dev: opts.Dev}
+	if vite != nil {
+		uiOptions.ViteURL = vite.url
+	}
+	uiHandler, err := newCaptainUIHandler(uiOptions)
 	if err != nil {
 		return err
 	}
@@ -321,30 +337,8 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 		}
 	}()
 
-	var vite *exec.Cmd
-	if opts.Dev {
-		vite, err = startCaptainViteDevServer(ctx, viteDevServerOptions{
-			APIHost: opts.Host,
-			APIPort: servePort,
-			UIPort:  opts.UIPort,
-			Open:    opts.Open,
-			Stdout:  stdout,
-			Stderr:  stderr,
-		})
-		if err != nil {
-			_ = httpSrv.Close()
-			return err
-		}
-		defer func() {
-			if vite.Process != nil {
-				_ = vite.Cancel()
-			}
-			_ = vite.Wait()
-		}()
-	}
-
-	if opts.Open && !opts.Dev {
-		openURL := fmt.Sprintf("http://%s/", addr)
+	if opts.Open {
+		openURL := fmt.Sprintf("%s://%s/", scheme, addr)
 		go func() {
 			time.Sleep(500 * time.Millisecond)
 			if err := rpc.OpenBrowser(openURL); err != nil {
@@ -361,77 +355,6 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	case err := <-errCh:
 		return err
 	}
-}
-
-type viteDevServerOptions struct {
-	APIHost string
-	APIPort int
-	UIPort  int
-	Open    bool
-	Stdout  io.Writer
-	Stderr  io.Writer
-}
-
-func startCaptainViteDevServer(ctx context.Context, opts viteDevServerOptions) (*exec.Cmd, error) {
-	webappDir, err := captainWebappDevDir()
-	if err != nil {
-		return nil, err
-	}
-	// A wildcard bind is not a dialable target, so map it to the loopback address
-	// of the same family — mapping :: to 127.0.0.1 would leave Vite unable to
-	// reach an API listening only on IPv6. JoinHostPort brackets IPv6 literals,
-	// which a bare host:port concatenation would produce invalidly.
-	targetHost := opts.APIHost
-	switch targetHost {
-	case "0.0.0.0", "":
-		targetHost = "127.0.0.1"
-	case "::":
-		targetHost = "::1"
-	}
-	apiURL := "http://" + net.JoinHostPort(targetHost, strconv.Itoa(opts.APIPort))
-	args, err := viteDevServerArgs(opts.UIPort, opts.Open)
-	if err != nil {
-		return nil, err
-	}
-	vite := exec.CommandContext(ctx, "pnpm", args...)
-	vite.Dir = webappDir
-	vite.Env = append(os.Environ(), "CAPTAIN_API_URL="+apiURL)
-	vite.Stdout = opts.Stdout
-	vite.Stderr = opts.Stderr
-	vite.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	vite.Cancel = func() error {
-		if vite.Process == nil {
-			return nil
-		}
-		return syscall.Kill(-vite.Process.Pid, syscall.SIGTERM)
-	}
-	vite.WaitDelay = 5 * time.Second
-	if err := vite.Start(); err != nil {
-		return nil, fmt.Errorf("start vite dev server in %s: %w", webappDir, err)
-	}
-	fmt.Fprintf(opts.Stdout, "  Dev API proxy: /api -> %s\n", apiURL)
-	return vite, nil
-}
-
-// captainWebappDevDir resolves the Vite source tree from the working directory
-// rather than runtime.Caller: under -trimpath the caller's file is the import
-// path, not a filesystem location, so anchoring to it silently resolves against
-// the process CWD. Dev mode only runs from inside a checkout, so the repo root
-// is the right anchor.
-func captainWebappDevDir() (string, error) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "", fmt.Errorf("locate webapp source: %w", err)
-	}
-	root := repoRoot(cwd)
-	if root == "" {
-		return "", fmt.Errorf("locate webapp source: %s is not inside the captain repository", cwd)
-	}
-	dir := filepath.Join(root, "pkg", "cli", "webapp")
-	if _, err := os.Stat(filepath.Join(dir, "package.json")); err != nil {
-		return "", fmt.Errorf("webapp/package.json not found at %s: %w", dir, err)
-	}
-	return dir, nil
 }
 
 func newCaptainWebappHandler() (http.Handler, error) {

@@ -24,6 +24,12 @@ func TestRenderPromptAppliesRuntimeSpec(t *testing.T) {
 	content := `---
 name: Runtime Spec
 model: claude-sonnet-4-6
+prompt:
+  attachments:
+    - path: frontmatter.png
+permissions:
+  tools:
+    Edit: allow
 ---
 {{role "user"}}
 Hello {{name}}
@@ -54,6 +60,7 @@ Hello {{name}}
 				AppendSystem: "runtime append",
 				Source:       "runtime-source",
 				Metadata:     map[string]string{"surface": "prompt-ui"},
+				Attachments:  []api.AttachmentRef{{Path: "request.png"}},
 			},
 			Budget: api.Budget{Cost: 0.5, MaxTokens: 1234, MaxTurns: 4, Timeout: "90s"},
 			Permissions: api.Permissions{
@@ -148,6 +155,27 @@ Hello {{name}}
 	}
 	if rendered.Input.SessionID != "sess-runtime" {
 		t.Fatalf("runtime session = input=%+v", rendered.Input)
+	}
+	wantTools := api.Tools{"Edit": api.ToolPolicyAllow, "Read": api.ToolPolicyAllow, "Bash": api.ToolPolicyDeny}
+	if !reflect.DeepEqual(rendered.Input.Permissions.Tools, wantTools) {
+		t.Fatalf("tools = %+v, want frontmatter and request policies composed key-wise %+v", rendered.Input.Permissions.Tools, wantTools)
+	}
+	wantAttachments := []api.AttachmentRef{{Path: "request.png"}}
+	if !reflect.DeepEqual(rendered.Input.Prompt.Attachments, wantAttachments) {
+		t.Fatalf("attachments = %+v, want the request's to replace the frontmatter's", rendered.Input.Prompt.Attachments)
+	}
+	var sources []api.SpecLayerSource
+	for _, layer := range rendered.Resolution.Trace {
+		sources = append(sources, layer.Source)
+	}
+	if !reflect.DeepEqual(sources, []api.SpecLayerSource{api.SpecLayerSourcePrompt, api.SpecLayerSourceRequest}) {
+		t.Fatalf("trace sources = %v, want [prompt request]", sources)
+	}
+	if rendered.Resolution.Trace[0].Name != created.RelPath || rendered.Resolution.Trace[1].Name != "render request" {
+		t.Fatalf("trace names = %q %q, want the prompt path and the render request", rendered.Resolution.Trace[0].Name, rendered.Resolution.Trace[1].Name)
+	}
+	if !reflect.DeepEqual(rendered.Resolution.Spec, rendered.Input) {
+		t.Fatalf("resolution spec = %+v, want the final input after defaults", rendered.Resolution.Spec)
 	}
 }
 

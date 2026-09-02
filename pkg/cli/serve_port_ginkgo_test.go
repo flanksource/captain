@@ -32,21 +32,23 @@ var _ = Describe("serve ports", func() {
 		Expect(flag.DefValue).To(Equal("0"))
 	})
 
-	It("builds Vite arguments with an available port and Vite-owned browser opening", func() {
-		args, err := viteDevServerArgs(0, true)
+	It("builds Vite arguments with an available port", func() {
+		args, port, err := viteDevServerArgs(0)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(args).To(HaveLen(7))
+		Expect(args).To(HaveLen(6))
 		Expect(args[:3]).To(Equal([]string{"exec", "vite", "--port"}))
-		port, err := strconv.Atoi(args[3])
+		argPort, err := strconv.Atoi(args[3])
 		Expect(err).NotTo(HaveOccurred())
 		Expect(port).To(BeNumerically(">", 0))
-		Expect(args[4:]).To(Equal([]string{"--open", "--host", "localhost"}))
+		Expect(argPort).To(Equal(port))
+		Expect(args[4:]).To(Equal([]string{"--host", "localhost"}))
 		Expect(args).NotTo(ContainElement("--strictPort"))
 	})
 
 	It("keeps an explicit Vite port strict", func() {
-		args, err := viteDevServerArgs(62183, false)
+		args, port, err := viteDevServerArgs(62183)
 		Expect(err).NotTo(HaveOccurred())
+		Expect(port).To(Equal(62183))
 		Expect(args).To(Equal([]string{"exec", "vite", "--port", "62183", "--strictPort", "--host", "localhost"}))
 	})
 

@@ -374,6 +374,7 @@ func newRootCommand() *cobra.Command {
 	clicky.AddNamedCommand("run", containerCmd, cli.ContainerRunOptions{}, cli.RunContainerRun).Short = "Run container sandbox"
 
 	cli.RegisterPromptEntity()
+	cli.RegisterRuntimeEntities()
 	clicky.GenerateCLI(rootCmd)
 	if err := cli.AttachPromptSchemaFlag(rootCmd); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to attach prompt schema flag: %v\n", err)

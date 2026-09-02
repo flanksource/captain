@@ -265,10 +265,11 @@ func parsedPromptDetail(record promptRecord, content string) (PromptDetail, erro
 		OutputSchema:  inspection.OutputSchema,
 		Metadata:      inspection.Metadata,
 		Run: PromptRenderRequest{
-			Variables: maps.Clone(inspection.InputDefault),
-			Spec:      spec,
-			Runtimes:  promptRunModels(summary.Runtimes),
-			Chat:      len(inspection.OutputSchema) == 0,
+			Variables:      maps.Clone(inspection.InputDefault),
+			RuntimeProfile: summary.RuntimeProfile,
+			Spec:           spec,
+			Runtimes:       promptRunModels(summary.Runtimes),
+			Chat:           len(inspection.OutputSchema) == 0,
 		},
 	}, nil
 }
@@ -311,6 +312,7 @@ func promptSummaryFromContent(record promptRecord, content string) (PromptSummar
 	}
 	summary.Model = firstNonEmpty(cfg.Model.Name, req.Name)
 	summary.Mode = firstNonEmpty(string(cfg.Model.Mode), string(req.Mode))
+	summary.RuntimeProfile = inspection.RuntimeProfile
 	summary.Runtimes, err = resolvePromptRuntimes(inspection.Runtimes, cfg.Model)
 	if err != nil {
 		return PromptSummary{}, err
@@ -387,12 +389,13 @@ func inspectPrompt(content string, data map[string]any) (promptInspection, error
 		inputDefault[k] = v
 	}
 	return promptInspection{
-		Metadata:     metadata,
-		InputSchema:  inputSchema,
-		InputDefault: inputDefault,
-		OutputSchema: anyToMap(rendered.Output.Schema),
-		Runtimes:     doc.Runtimes,
-		Variables:    variablesFromSchema(inputSchema),
+		Metadata:       metadata,
+		InputSchema:    inputSchema,
+		InputDefault:   inputDefault,
+		OutputSchema:   anyToMap(rendered.Output.Schema),
+		Runtimes:       doc.Runtimes,
+		RuntimeProfile: doc.RuntimeProfile,
+		Variables:      variablesFromSchema(inputSchema),
 	}, nil
 }
 
