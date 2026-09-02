@@ -78,3 +78,11 @@ enum "captain_api_token_scope" {
   schema = schema.public
   values = ["git", "api"]
 }
+
+# Where a runtime preset sits in the resolved layer order: later scopes override
+# earlier ones, and a user-scoped preset ties with the caller's request layer.
+# Mirrors api.SpecLayerScope.
+enum "captain_spec_layer_scope" {
+  schema = schema.public
+  values = ["global", "context", "surface", "user"]
+}

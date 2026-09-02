@@ -17,13 +17,16 @@ const (
 	SpecLayerUser    SpecLayerScope = "user"
 )
 
-// SpecLayerSource identifies whether a runtime-profile trace row came from a
-// reusable preset or the task-specific profile spec.
+// SpecLayerSource identifies where a trace row came from: a reusable preset,
+// the task-specific profile spec, a .prompt document's frontmatter, or the
+// caller's request.
 type SpecLayerSource string
 
 const (
 	SpecLayerSourcePreset  SpecLayerSource = "preset"
 	SpecLayerSourceProfile SpecLayerSource = "profile"
+	SpecLayerSourcePrompt  SpecLayerSource = "prompt"
+	SpecLayerSourceRequest SpecLayerSource = "request"
 )
 
 // RunLimits are per-run ceilings applied after structural Spec defaults are layered.
@@ -69,7 +72,13 @@ type ResolvedSpec struct {
 
 // PromptSpecLayer adapts parsed .prompt frontmatter into the normal surface layer.
 func PromptSpecLayer(name string, spec Spec) SpecLayer {
-	return SpecLayer{Name: name, Scope: SpecLayerSurface, Spec: spec}
+	return SpecLayer{Name: name, Source: SpecLayerSourcePrompt, Scope: SpecLayerSurface, Spec: spec}
+}
+
+// RequestSpecLayer adapts a caller's per-run overrides into the user layer, the
+// last layer resolved so it wins over every authored default.
+func RequestSpecLayer(name string, spec Spec) SpecLayer {
+	return SpecLayer{Name: name, Source: SpecLayerSourceRequest, Scope: SpecLayerUser, Spec: spec}
 }
 
 // ResolveSpecLayers deterministically overlays defaults and intersects constraints.

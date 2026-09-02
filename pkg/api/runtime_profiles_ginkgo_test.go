@@ -76,6 +76,41 @@ var _ = Describe("Runtime profiles", func() {
 		Expect(err).To(MatchError(ContainSubstring(`references missing preset "missing"`)))
 	})
 
+	It("resolves a preset referenced by name, matching case-insensitively", func() {
+		resolved, err := api.ResolveRuntimeProfile(api.RuntimeProfileResolveRequest{
+			Profile: api.RuntimeProfile{ID: "review", Name: "Review", Presets: []string{"org defaults"}},
+			Presets: []api.RuntimePreset{{
+				ID: "preset-1", Name: "Org defaults", Scope: api.SpecLayerGlobal,
+				Spec: api.RuntimePresetSpec{Budget: api.Budget{MaxTurns: 8}},
+			}},
+		})
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resolved.Spec.Budget.MaxTurns).To(Equal(8))
+		Expect(resolved.Trace[0].ID).To(Equal("preset-1"))
+	})
+
+	It("rejects a name reference that matches more than one preset", func() {
+		_, err := api.ResolveRuntimeProfile(api.RuntimeProfileResolveRequest{
+			Profile: api.RuntimeProfile{ID: "review", Name: "Review", Presets: []string{"Defaults"}},
+			Presets: []api.RuntimePreset{
+				{ID: "db-defaults", Name: "Defaults", Scope: api.SpecLayerGlobal},
+				{ID: "file-defaults", Name: "defaults", Scope: api.SpecLayerUser},
+			},
+		})
+
+		Expect(err).To(MatchError(ContainSubstring(`references preset "Defaults" by name, which matches 2 presets`)))
+	})
+
+	It("rejects a profile that selects the same preset by id and by name", func() {
+		_, err := api.ResolveRuntimeProfile(api.RuntimeProfileResolveRequest{
+			Profile: api.RuntimeProfile{ID: "review", Name: "Review", Presets: []string{"preset-1", "Org defaults"}},
+			Presets: []api.RuntimePreset{{ID: "preset-1", Name: "Org defaults", Scope: api.SpecLayerGlobal}},
+		})
+
+		Expect(err).To(MatchError(ContainSubstring(`repeats preset "Org defaults"`)))
+	})
+
 	It("rejects a permission mode the resolved runtime cannot honour", func() {
 		_, err := api.ResolveRuntimeProfile(api.RuntimeProfileResolveRequest{
 			Profile: api.RuntimeProfile{

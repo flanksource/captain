@@ -96,12 +96,12 @@ var _ = Describe("RuntimeCatalog", func() {
 		Expect(modeNamed(codex, "cmux").CatalogProvider).To(Equal("openai"))
 	})
 
-	It("keeps a family with no agent mode on its catalog prefix", func() {
+	It("keeps model joins on the canonical provider key", func() {
 		// Gemini's CLI models are already listed under the googleai API rows, so
 		// there is no separate agent catalog for them to collapse onto.
 		gemini := familyNamed(api.RuntimeCatalog(), "gemini")
-		Expect(modeNamed(gemini, "api").CatalogProvider).To(Equal("googleai"))
-		Expect(modeNamed(gemini, "cli").CatalogProvider).To(Equal("googleai"))
+		Expect(modeNamed(gemini, "api").CatalogProvider).To(Equal("google"))
+		Expect(modeNamed(gemini, "cli").CatalogProvider).To(Equal("google"))
 
 		deepseek := familyNamed(api.RuntimeCatalog(), "deepseek")
 		Expect(modeNamed(deepseek, "api").CatalogProvider).To(Equal("deepseek"))
