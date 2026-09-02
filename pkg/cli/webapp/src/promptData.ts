@@ -1,6 +1,7 @@
 import type {
   AIPromptRunValue,
   AISpecRuntimeValue,
+  ResolvedRuntimeSpec,
 } from "@flanksource/clicky-ui/ai";
 import type {
   ExecutionResponse,
@@ -28,8 +29,10 @@ export type PromptSummary = {
   relPath: string;
   writable: boolean;
   model?: string;
-  backend?: string;
+  mode?: string;
   runtimes?: AISpecRuntimeValue[];
+  /** The runtime profile (id or name) pinned in the prompt frontmatter. */
+  runtimeProfile?: string;
   variables?: PromptVariable[];
   parseError?: string;
   updatedAt?: string;
@@ -51,7 +54,8 @@ export type PromptPreviewResult = {
   id: string;
   name: string;
   model?: string;
-  backend?: string;
+  provider?: string;
+  mode?: string;
   user?: string;
   system?: string;
   input?: unknown;
@@ -60,6 +64,8 @@ export type PromptPreviewResult = {
   inputDefault?: Record<string, unknown>;
   outputSchema?: Record<string, unknown>;
   validationError?: string;
+  /** The spec the server resolved through presets, profile, frontmatter and request, with its layer trace. */
+  resolution?: ResolvedRuntimeSpec;
 };
 
 export type PromptDetail = PromptSummary & {

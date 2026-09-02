@@ -13,11 +13,15 @@ import {
   familiesFromRuntimeCatalog,
   type AIPromptRunValue,
   type AISpecRuntimePermissionCatalog,
+  type ResolvedRuntimeProfile,
   type RuntimeCatalogFamily,
+  type RuntimePreset,
+  type RuntimeProfile,
+  type RuntimeProfileResolveRequest,
   type ToolMeta,
 } from "@flanksource/clicky-ui/ai";
 import { type ChatModel } from "@flanksource/clicky-ui/chat";
-import { resolveAdapter } from "./promptWorkbenchHelpers";
+import { resolveProvider } from "./promptWorkbenchHelpers";
 import { PromptRunStream } from "./PromptRunStream";
 import { PromptBatchInspector } from "./PromptBatchInspector";
 import { PromptSchemaEditor } from "./PromptSchemaEditor";
@@ -62,6 +66,11 @@ export function PromptDetailPane({
   promptSchema,
   tools,
   permissionCatalog,
+  presets,
+  profiles,
+  onSaveProfile,
+  onCreateProfile,
+  onResolveProfile,
   previewResult,
   activeRunID,
   activeBatch,
@@ -94,6 +103,12 @@ export function PromptDetailPane({
   promptSchema?: PromptSchemaDoc;
   tools: ToolMeta[];
   permissionCatalog?: AISpecRuntimePermissionCatalog;
+  /** Saved runtime presets and profiles; both present enables the profile picker in the spec editor. */
+  presets?: RuntimePreset[];
+  profiles?: RuntimeProfile[];
+  onSaveProfile?: (profile: RuntimeProfile) => Promise<RuntimeProfile>;
+  onCreateProfile?: (profile: RuntimeProfile) => Promise<RuntimeProfile>;
+  onResolveProfile?: (request: RuntimeProfileResolveRequest) => Promise<ResolvedRuntimeProfile>;
   previewResult?: PromptPreviewResult;
   activeRunID?: string;
   activeBatch?: PromptBatchHandle;
@@ -147,15 +162,14 @@ export function PromptDetailPane({
   const schema = scratch
     ? undefined
     : normalizeObjectSchema(detail.inputSchema);
-  // promptSchema.backends is keyed by adapter id while spec.backend is the
-  // authored runtime mode, so the two only join through the model catalog.
-  const selectedAdapter = resolveAdapter(
+  const selectedProvider = resolveProvider(
     models,
     runRequest.spec?.model,
-    runRequest.spec?.backend,
   );
-  const backendCliArgs = promptSchema?.backends?.find(
-    (backend) => backend.backend === selectedAdapter,
+  const runtimeCliArgs = promptSchema?.runtimeAdapters?.find(
+    (runtime) =>
+      runtime.provider === selectedProvider &&
+      runtime.mode === runRequest.spec?.mode,
   )?.args;
   const runtimeFamilies = familiesFromRuntimeCatalog(runtimeCatalog);
   const promptReady =
@@ -224,11 +238,18 @@ export function PromptDetailPane({
                 enableAttachments
                 {...(permissionCatalog ? { permissionCatalog } : {})}
                 {...(schema ? { variablesSchema: schema } : {})}
-                {...(backendCliArgs
-                  ? { cliOptions: { schema: backendCliArgs } }
+                {...(runtimeCliArgs
+                  ? { cliOptions: { schema: runtimeCliArgs } }
                   : {})}
                 {...(promptSchema?.sandboxes
                   ? { sandboxCatalog: promptSchema.sandboxes }
+                  : {})}
+                {...(profiles && presets ? { profiles, presets } : {})}
+                {...(onSaveProfile ? { onSaveProfile } : {})}
+                {...(onCreateProfile ? { onCreateProfile } : {})}
+                {...(onResolveProfile ? { onResolveProfile } : {})}
+                {...(previewResult?.resolution
+                  ? { resolution: previewResult.resolution }
                   : {})}
                 {...(scratch
                   ? {

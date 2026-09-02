@@ -4,9 +4,10 @@ import { readFileSync } from "node:fs";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
+import { browserDefines } from "./viteBrowserDefines";
 
 const apiTarget = process.env.CAPTAIN_API_URL || "http://localhost:8080";
-const clickyPackageRoot = path.resolve(__dirname, "../../../../clicky-ui/packages/ui");
+export const clickyPackageRoot = path.resolve(__dirname, "../../../../clicky-ui/packages/ui");
 const clickySourceRoot = path.resolve(clickyPackageRoot, "src");
 
 export default defineConfig(({ command }) => {
@@ -15,7 +16,10 @@ export default defineConfig(({ command }) => {
 
   return {
     base: "/",
-    define: useClickySource ? clickyVersionDefines() : {},
+    define: browserDefines(
+      command,
+      useClickySource ? clickyVersionDefines() : {},
+    ),
     plugins: [tailwindcss(), react()],
     resolve: {
       alias: [
@@ -47,7 +51,7 @@ export default defineConfig(({ command }) => {
   };
 });
 
-function clickySourceAliases(enabled: boolean) {
+export function clickySourceAliases(enabled: boolean) {
   if (!enabled) return [];
   return [
     {

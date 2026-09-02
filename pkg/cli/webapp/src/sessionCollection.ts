@@ -54,15 +54,15 @@ export function batchSessionCollection(
             label: run.selector || run.model || run.sessionId,
             status: run.status,
             summary: {
-              provider: run.backend,
-              backend: run.backend,
+              provider: run.provider,
+              modelMode: run.mode,
               model: run.model,
               effort: run.effort,
               status: run.status,
             },
             session: emptySession(
               run.sessionId,
-              run.backend || "captain",
+              "captain",
               run.selector || run.model,
             ),
           };
@@ -112,7 +112,7 @@ function sessionCollectionItem(item: SessionGetItem): SessionCollectionItem {
     status: item.summary.lifecycleStatus || item.summary.live?.status,
     summary: {
       provider: item.summary.provider || item.summary.source,
-      backend: item.summary.backend,
+      modelMode: item.summary.modelMode,
       model: item.summary.model,
       effort: item.summary.reasoningEffort,
       status: item.summary.lifecycleStatus || item.summary.live?.status,

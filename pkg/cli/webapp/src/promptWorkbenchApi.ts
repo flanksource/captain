@@ -19,10 +19,11 @@ import {
   type PromptSourceInfo,
 } from "./promptData";
 
-// One backend entry from `captain prompt --schema`: its kind/auth/model status
-// plus, for cmux backends, the JSON schema for its extra CLI args.
-export type PromptSchemaBackend = {
-  backend: string;
+// One provider/mode entry from `captain prompt --schema`, including the JSON
+// schema for any runtime-specific CLI arguments.
+export type PromptSchemaRuntimeAdapter = {
+  provider: string;
+  mode: string;
   kind?: string;
   authenticated?: boolean;
   ready?: boolean;
@@ -35,7 +36,7 @@ export type PromptSchemaBackend = {
 // schemas and a flat `models` list.
 export type PromptSchemaDoc = {
   schemaVersion: number;
-  backends?: PromptSchemaBackend[];
+  runtimeAdapters?: PromptSchemaRuntimeAdapter[];
   models?: ChatModel[];
   /**
    * The provider×mode catalog the runtime picker renders. The server projects it
@@ -71,25 +72,13 @@ export async function fetchPromptSchema(): Promise<PromptSchemaDoc> {
   return doc;
 }
 
-export async function fetchCatalog<T>(
-  endpoint: string,
-  label: string,
-): Promise<T[]> {
-  const response = await fetch(endpoint, {
-    headers: { Accept: "application/json" },
-  });
-  if (!response.ok) {
-    const message = await response.text();
-    throw new Error(message || `${label} failed with ${response.status}`);
-  }
-  const data: unknown = await response.json();
-  if (!Array.isArray(data)) throw new Error(`${label} must be an array`);
-  return data as T[];
-}
-
-export async function fetchPermissionCatalog(backend: string) {
+export async function fetchPermissionCatalog(runtime: {
+  provider: string;
+  mode: string;
+}) {
+  const query = new URLSearchParams(runtime);
   const response = await fetch(
-    `/api/captain/ai/permissions/catalog?backend=${encodeURIComponent(backend)}`,
+    `/api/captain/ai/permissions/catalog?${query}`,
     { headers: { Accept: "application/json" } },
   );
   if (!response.ok) {

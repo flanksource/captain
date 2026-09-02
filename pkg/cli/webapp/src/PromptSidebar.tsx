@@ -111,7 +111,7 @@ export function PromptSidebar({
               </span>
             </div>
             <div className="truncate text-xs text-muted-foreground">
-              {selected.model || selected.backend || "no model"}
+              {selected.model || selected.mode || "no model"}
               {selected.variables?.length
                 ? ` - ${selected.variables.length} vars`
                 : ""}
@@ -195,7 +195,7 @@ export function PromptHeader({
       </div>
       <div className="mt-1 flex min-w-0 flex-wrap gap-x-density-3 gap-y-1 text-xs text-muted-foreground">
         {prompt.model && <span>{prompt.model}</span>}
-        {prompt.backend && <span>{prompt.backend}</span>}
+        {prompt.mode && <span>{prompt.mode}</span>}
         <span className="max-w-full truncate">{prompt.path}</span>
       </div>
     </div>

@@ -35,6 +35,19 @@ describe("captainNavSections", () => {
       active: true,
     });
   });
+
+  it("lists the runtime profiles library right after prompts and marks it active", () => {
+    const items = captainNavSections("runtime-profiles")[0]?.items ?? [];
+    const keys = items.map((item) => item.key);
+
+    expect(keys.indexOf("runtime-profiles")).toBe(keys.indexOf("prompts") + 1);
+    expect(items.find((item) => item.key === "runtime-profiles")).toMatchObject({
+      label: "Runtime profiles",
+      to: "/runtime-profiles",
+      active: true,
+    });
+    expect(items.filter((item) => item.active)).toHaveLength(1);
+  });
 });
 
 describe("projectOptions", () => {

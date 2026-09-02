@@ -16,7 +16,8 @@ describe("PromptRunStream", () => {
         runId: "run-4a82",
         sessionId: "session-91bd",
         model: "claude-sonnet-5",
-        backend: "anthropic",
+        provider: "anthropic",
+        mode: "api",
         success: false,
         error: "provider rejected the request",
       },
@@ -28,7 +29,8 @@ describe("PromptRunStream", () => {
         status: "error",
         chat: false,
         model: "claude-sonnet-5",
-        backend: "anthropic",
+        provider: "anthropic",
+        mode: "api",
       },
     });
   });
@@ -45,6 +47,7 @@ describe("PromptRunStream", () => {
     expect(screen.getByText("session-91bd")).toBeInTheDocument();
     expect(screen.getByText("claude-sonnet-5")).toBeInTheDocument();
     expect(screen.getByText("anthropic")).toBeInTheDocument();
+    expect(screen.getByText("api")).toBeInTheDocument();
     expect(
       screen.getByText("Run failed before session activity."),
     ).toBeInTheDocument();

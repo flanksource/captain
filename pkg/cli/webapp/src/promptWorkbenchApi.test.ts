@@ -1,5 +1,8 @@
-import { describe, expect, it } from "vitest";
-import { operationRequestPath } from "./promptWorkbenchApi";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  fetchPermissionCatalog,
+  operationRequestPath,
+} from "./promptWorkbenchApi";
 
 // Shapes as served by captain's OpenAPI document: the entity update is a
 // collection-level PUT taking the id as the positional `args`; render/run are
@@ -54,5 +57,25 @@ describe("operationRequestPath", () => {
 
   it("drops an empty placeholder segment", () => {
     expect(operationRequestPath(GET, { id: "" })).toBe("/api/v1/prompt");
+  });
+});
+
+describe("fetchPermissionCatalog", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("identifies the runtime by provider and mode", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ tools: [] }), {
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fetchPermissionCatalog({ provider: "openai", mode: "cli" });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/captain/ai/permissions/catalog?provider=openai&mode=cli",
+      { headers: { Accept: "application/json" } },
+    );
   });
 });

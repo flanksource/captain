@@ -78,6 +78,20 @@ describe("promptDetailReducer", () => {
     expect(isPromptDirty(reloaded, alpha)).toBe(true);
   });
 
+  it("seeds the run request with the runtime profile the prompt pins, and only then", () => {
+    const pinned: PromptDetail = {
+      ...detail("alpha", "alpha v1"),
+      runtimeProfile: "Review",
+      run: { ...EMPTY_RUN_REQUEST, runtimeProfile: "Review" },
+    };
+
+    expect(promptDetailStateFor({}, pinned).runRequest).toMatchObject({
+      runtimeProfile: "Review",
+      spec: EMPTY_RUN_REQUEST.spec,
+    });
+    expect(promptDetailStateFor({}, alpha).runRequest).not.toHaveProperty("runtimeProfile");
+  });
+
   it("never reports the scratch prompt as dirty", () => {
     const states = promptDetailReducer({}, {
       type: "run-request",

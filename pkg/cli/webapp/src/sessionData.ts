@@ -39,7 +39,7 @@ export type SessionRecord = {
   version?: string;
   gitBranch?: string;
   provider?: string;
-  backend?: string;
+  modelMode?: string;
   lifecycleStatus?: string;
   cwd?: string;
   toolCalls: number;

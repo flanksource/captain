@@ -5,7 +5,6 @@ import {
   type AppShellProps,
   type AppShellNavSection,
 } from "@flanksource/clicky-ui/components";
-import { type RuntimeCatalogFamily } from "@flanksource/clicky-ui/ai";
 import { type ChatModel } from "@flanksource/clicky-ui/chat";
 import { useOperations } from "@flanksource/clicky-ui/rpc";
 import { apiClient } from "./api";
@@ -24,10 +23,7 @@ import {
   type PromptSourceFilter,
   type PromptSummary,
 } from "./promptData";
-import {
-  mergePromptModelCatalogs,
-  resolveAdapter,
-} from "./promptWorkbenchHelpers";
+import { resolveProvider } from "./promptWorkbenchHelpers";
 import {
   PromptWriteModal,
   promptWriteSeed,
@@ -52,7 +48,6 @@ import {
 import {
   errorMessage,
   executePromptOperation,
-  fetchCatalog,
   fetchPermissionCatalog,
   fetchPromptDetail,
   fetchPromptSchema,
@@ -60,6 +55,8 @@ import {
   submitPromptOperation,
 } from "./promptWorkbenchApi";
 import { AGENT_TOOLS } from "./promptAgentTools";
+import { usePromptRuntimeProfiles } from "./runtimeProfilesData";
+import { useWhoamiCatalog } from "./whoamiCatalog";
 
 type Navigate = (to: string, opts?: { replace?: boolean }) => void;
 
@@ -121,29 +118,11 @@ function usePromptWorkbenchView({
     queryKey: ["prompt-schema"],
     queryFn: fetchPromptSchema,
   });
-  const modelCatalogQuery = useQuery({
-    queryKey: ["chat-model-catalog"],
-    queryFn: () => fetchCatalog<ChatModel>("/api/chat/models", "Model catalog"),
-  });
-  const runtimeCatalogQuery = useQuery({
-    queryKey: ["chat-runtime-catalog"],
-    queryFn: () =>
-      fetchCatalog<RuntimeCatalogFamily>(
-        "/api/chat/runtimes",
-        "Runtime catalog",
-      ),
-  });
+  const whoamiCatalogQuery = useWhoamiCatalog();
+  const runtimeProfiles = usePromptRuntimeProfiles();
   const prompts = listQuery.data ?? EMPTY_PROMPTS;
-  const models = useMemo(
-    () =>
-      mergePromptModelCatalogs(
-        promptSchemaQuery.data?.models ?? EMPTY_MODELS,
-        modelCatalogQuery.data ?? EMPTY_MODELS,
-      ),
-    [modelCatalogQuery.data, promptSchemaQuery.data?.models],
-  );
-  const runtimeCatalog =
-    runtimeCatalogQuery.data ?? promptSchemaQuery.data?.runtimes;
+  const models = whoamiCatalogQuery.data?.models ?? EMPTY_MODELS;
+  const runtimeCatalog = whoamiCatalogQuery.data?.runtimes;
   const activePromptId = selectedId;
 
   const selectedSummary = useMemo(
@@ -172,20 +151,21 @@ function usePromptWorkbenchView({
   const detail = activePromptId ? detailQuery.data : SCRATCH_PROMPT;
   const selected = detail ?? selectedSummary;
   const selectedDetailState = promptDetailStateFor(detailStates, detail);
-  // The permission catalog describes one agent's world — its own tool names,
-  // its own MCP/skill/plugin config files — so it is keyed by the selected
-  // backend and refetched when the runtime picker moves.
-  // spec.backend is the authored runtime mode, not an adapter id; the catalog
-  // supplies the adapter the permission catalog is actually keyed by.
-  const selectedBackend = resolveAdapter(
+  // The permission catalog describes one agent's world, so both halves of the
+  // selected runtime identify it and trigger a refetch when either changes.
+  const selectedProvider = resolveProvider(
     models,
     selectedDetailState.runRequest.spec?.model,
-    selectedDetailState.runRequest.spec?.backend,
   );
+  const selectedMode = selectedDetailState.runRequest.spec?.mode;
+  const selectedRuntime =
+    selectedProvider && selectedMode
+      ? { provider: selectedProvider, mode: selectedMode }
+      : undefined;
   const permissionCatalogQuery = useQuery({
-    queryKey: ["permission-catalog", selectedBackend],
-    queryFn: () => fetchPermissionCatalog(selectedBackend as string),
-    enabled: Boolean(selectedBackend),
+    queryKey: ["permission-catalog", selectedProvider, selectedMode],
+    queryFn: () => fetchPermissionCatalog(selectedRuntime!),
+    enabled: Boolean(selectedRuntime),
   });
   const scratch = isScratchPrompt(detail);
   const dirty = Boolean(detail) && isPromptDirty(selectedDetailState, detail);
@@ -437,9 +417,9 @@ function usePromptWorkbenchView({
           error={
             detailQuery.error ??
             promptSchemaQuery.error ??
-            modelCatalogQuery.error ??
-            runtimeCatalogQuery.error ??
-            selectedDetailState.actionError
+            whoamiCatalogQuery.error ??
+            selectedDetailState.actionError ??
+            runtimeProfiles.error
           }
           tab={tab}
           onTabChange={(next) => setTab(next as DetailTab)}
@@ -462,6 +442,7 @@ function usePromptWorkbenchView({
           promptSchema={promptSchemaQuery.data}
           tools={AGENT_TOOLS}
           permissionCatalog={permissionCatalogQuery.data}
+          {...runtimeProfiles.editorProps}
           previewResult={selectedDetailState.previewResult}
           activeRunID={selectedDetailState.activeRunID}
           activeBatch={selectedDetailState.activeBatch}

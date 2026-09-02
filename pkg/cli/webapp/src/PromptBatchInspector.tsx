@@ -54,9 +54,10 @@ export function PromptBatchInspector({
       sessions.set(run.sessionId, {
         ...saved,
         id: run.sessionId,
-        source: run.backend || saved?.source || "captain",
+        source: saved?.source || "captain",
         title: run.selector || run.model || saved?.title,
-        backend: run.backend || saved?.backend,
+        provider: run.provider || saved?.provider,
+        modelMode: run.mode || saved?.modelMode,
         model: run.model || saved?.model,
         reasoningEffort: run.effort || saved?.reasoningEffort,
         messages: mergeSessionMessages(saved?.messages ?? [], stream.messages),

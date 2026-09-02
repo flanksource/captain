@@ -16,6 +16,8 @@ const HANDLE: PromptBatchHandle = {
       sessionId: "session-1",
       selector: "codex-agent:gpt-5",
       status: "running",
+      provider: "openai",
+      mode: "agent",
       chat: true,
       capabilities: {
         interrupt: true,
@@ -29,6 +31,8 @@ const HANDLE: PromptBatchHandle = {
       sessionId: "session-2",
       selector: "gemini:gemini-2.5-flash",
       status: "running",
+      provider: "google",
+      mode: "cli",
       chat: false,
     },
   ],
@@ -44,8 +48,16 @@ describe("batch session collection", () => {
     ]);
     expect(collection.sessions).toMatchObject([
       { id: "batch-1" },
-      { id: "session-1", parentId: "batch-1" },
-      { id: "session-2", parentId: "batch-1" },
+      {
+        id: "session-1",
+        parentId: "batch-1",
+        summary: { provider: "openai", modelMode: "agent" },
+      },
+      {
+        id: "session-2",
+        parentId: "batch-1",
+        summary: { provider: "google", modelMode: "cli" },
+      },
     ]);
   });
 

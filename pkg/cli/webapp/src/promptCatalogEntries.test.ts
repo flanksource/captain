@@ -13,7 +13,7 @@ const local: PromptSummary = {
   relPath: "review.prompt",
   writable: true,
   model: "claude-sonnet-4-6",
-  backend: "claude-agent",
+  mode: "agent",
   variables: [{ name: "diff", required: true }, { name: "notes" }],
   version: "0c9f6601ed6035f3",
   updatedAt: "2026-08-27T09:00:00Z",
@@ -35,7 +35,7 @@ describe("promptCatalogEntry", () => {
       variables: ["diff", "notes"],
       effective: {
         model: "claude-sonnet-4-6",
-        backend: "claude-agent",
+        backend: "agent",
         modelSource: "prompt default",
       },
       layers: [
@@ -58,7 +58,7 @@ describe("promptCatalogEntry", () => {
       source: "Embedded examples",
       writable: false,
       model: undefined,
-      backend: undefined,
+      mode: undefined,
       parseError: "yaml: line 2",
     });
     expect(entry.source).toBe("builtin");
