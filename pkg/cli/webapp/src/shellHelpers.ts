@@ -10,6 +10,7 @@ import {
   UiHistory,
   UiRobotAi,
   UiServer,
+  UiSliders,
 } from "@flanksource/clicky-ui/data";
 import { DEFAULT_DB_CONTEXT, type DbContextOption } from "./dbContext";
 import {
@@ -26,6 +27,7 @@ export type PrimaryRoute =
   | "prompts"
   | "whoami"
   | "sandboxes"
+  | "runtime-profiles"
   | "operations";
 
 export const CAPTAIN_SIDEBAR_COLLAPSE_KEY = "captain:sidebar:collapsed";
@@ -64,6 +66,13 @@ export function captainNavSections(
           active: active === "sessions",
         },
         { key: "prompts", label: "Prompts", to: "/prompts", icon: UiFileText, active: active === "prompts" },
+        {
+          key: "runtime-profiles",
+          label: "Runtime profiles",
+          to: "/runtime-profiles",
+          icon: UiSliders,
+          active: active === "runtime-profiles",
+        },
         {
           key: "sandboxes",
           label: "Sandboxes",

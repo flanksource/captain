@@ -21,7 +21,7 @@ export function promptCatalogEntry(summary: PromptSummary): PromptCatalogEntry {
     variables: summary.variables?.map((variable) => variable.name),
     effective: {
       model: summary.model,
-      backend: summary.backend,
+      backend: summary.mode,
       modelSource: summary.model ? "prompt default" : "runtime",
     },
     layers: [

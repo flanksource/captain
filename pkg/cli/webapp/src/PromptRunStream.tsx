@@ -32,7 +32,8 @@ export function PromptRunStream({ runID }: { runID: string }) {
           runID={summary?.runId ?? run?.runId ?? runID}
           sessionID={summary?.sessionId ?? run?.sessionId}
           model={summary?.model ?? run?.model}
-          backend={summary?.backend ?? run?.backend}
+          provider={summary?.provider ?? run?.provider}
+          mode={summary?.mode ?? run?.mode}
         />
       )}
       <div className="min-h-0 flex-1 overflow-auto rounded-md border border-border">
@@ -72,19 +73,22 @@ function RunFailureDetails({
   runID,
   sessionID,
   model,
-  backend,
+  provider,
+  mode,
 }: {
   error: string;
   runID: string;
   sessionID?: string;
   model?: string;
-  backend?: string;
+  provider?: string;
+  mode?: string;
 }) {
   const details = [
     { label: "Run UID", value: runID },
     { label: "Session UID", value: sessionID || "Not assigned" },
     { label: "Model", value: model || "Unknown" },
-    { label: "Backend", value: backend || "Unknown" },
+    { label: "Provider", value: provider || "Unknown" },
+    { label: "Mode", value: mode || "Unknown" },
   ];
   return (
     <div
@@ -134,7 +138,9 @@ function StatusPill({ status }: { status: PromptRunStreamStatus }) {
 function RunSummaryFooter({ summary }: { summary: PromptRunSummary }) {
   const parts: Array<{ id: string; label: string }> = [];
   if (summary.model) parts.push({ id: "model", label: summary.model });
-  if (summary.backend) parts.push({ id: "backend", label: summary.backend });
+  if (summary.provider)
+    parts.push({ id: "provider", label: summary.provider });
+  if (summary.mode) parts.push({ id: "mode", label: summary.mode });
   if (summary.duration) parts.push({ id: "duration", label: summary.duration });
   if (summary.inputTokens != null)
     parts.push({ id: "input-tokens", label: `${summary.inputTokens} in` });

@@ -1,10 +1,15 @@
 import { useMemo } from "react";
-import { ChatFab, ChatWindowLayer } from "@flanksource/clicky-ui/ai";
+import {
+  ChatFab,
+  ChatWindowLayer,
+  familiesFromRuntimeCatalog,
+} from "@flanksource/clicky-ui/ai";
 import { clickyOperationsToTools } from "@flanksource/clicky-ui/chat";
 import { useOperations } from "@flanksource/clicky-ui/rpc";
 import { apiClient } from "./api";
 import { isReadOnlyDbContext } from "./dbContext";
 import { isChatToolOperation } from "./session";
+import { useWhoamiCatalog } from "./whoamiCatalog";
 
 export function ChatLayer() {
   const { operations } = useOperations(apiClient);
@@ -17,6 +22,13 @@ export function ChatLayer() {
     () => clickyOperationsToTools(operations.filter(isChatToolOperation)),
     [operations],
   );
+  const whoamiCatalogQuery = useWhoamiCatalog();
+  const runtimeFamilies = useMemo(
+    () => whoamiCatalogQuery.data
+      ? familiesFromRuntimeCatalog(whoamiCatalogQuery.data.runtimes)
+      : undefined,
+    [whoamiCatalogQuery.data],
+  );
 
   if (readOnly) return null;
 
@@ -25,12 +37,13 @@ export function ChatLayer() {
       <ChatFab />
       <ChatWindowLayer
         sessionsApi="/api/chat/sessions"
-        runtimesApi="/api/chat/runtimes"
         tools={tools}
-        defaultToolMode="auto"
+        defaultToolPolicy="auto"
         chat={{
           api: "/api/chat",
-          modelsApi: "/api/chat/models",
+          models: whoamiCatalogQuery.data?.models ?? [],
+          modelsApi: null,
+          runtimeFamilies,
           // No defaultModel: the served menu marks captain's own default, so a
           // literal here would only go stale or name a disabled model.
           enableAttachments: true,

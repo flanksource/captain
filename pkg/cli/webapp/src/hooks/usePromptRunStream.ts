@@ -13,7 +13,8 @@ export interface PromptRunHandle {
   runId: string;
   status: string;
   model?: string;
-  backend?: string;
+  provider?: string;
+  mode?: string;
   chat?: boolean;
   capabilities?: ChatCapabilities;
 }
@@ -24,7 +25,8 @@ export interface PromptBatchRunHandle {
   selector?: string;
   status: string;
   model?: string;
-  backend?: string;
+  provider?: string;
+  mode?: string;
   effort?: string;
   chat?: boolean;
   capabilities?: ChatCapabilities;
@@ -85,7 +87,8 @@ export interface PromptRunSummary {
   runId?: string;
   sessionId?: string;
   model?: string;
-  backend?: string;
+  provider?: string;
+  mode?: string;
   inputTokens?: number;
   outputTokens?: number;
   costUSD?: number;

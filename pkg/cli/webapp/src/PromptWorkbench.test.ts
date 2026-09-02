@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { ChatModel } from "@flanksource/clicky-ui/chat";
 import {
-  mergePromptModelCatalogs,
   promptOptions,
+  resolveProvider,
 } from "./promptWorkbenchHelpers";
 
 function prompt(
@@ -92,57 +91,21 @@ describe("promptOptions", () => {
   });
 });
 
-describe("mergePromptModelCatalogs", () => {
-  const model = (
-    id: string,
-    backend: string,
-    configured: boolean,
-    state: "available" | "disabled" = "available",
-  ): ChatModel => ({
-    id,
-    provider: backend.startsWith("claude") ? "claude-agent" : "anthropic",
-    label: `${backend} ${id}`,
-    runtime: { model: id, backend },
-    reasoning: true,
-    configured,
-    availability: { state },
-  });
-
-  it("keeps prompt selections and adds only distinct unavailable status rows", () => {
-    const promptModels = [
-      model("claude-opus-5", "claude-agent", true),
-      model("claude-opus-5", "claude-cli", true),
-    ];
-    const result = mergePromptModelCatalogs(promptModels, [
-      model("claude-opus-5", "claude-agent", true),
-      model("claude-sonnet-5", "claude-agent", false, "disabled"),
-      model("claude-opus-5", "anthropic", false, "disabled"),
-    ]);
-
-    expect(result).toEqual([
-      ...promptModels,
-      model("claude-sonnet-5", "claude-agent", false, "disabled"),
-      model("claude-opus-5", "anthropic", false, "disabled"),
-    ]);
-  });
-
-  it("treats an exact prompt model as authoritative over stale availability", () => {
-    const promptModel = model("claude-opus-5", "claude-agent", true);
-
+describe("resolveProvider", () => {
+  it("returns the provider that owns the selected model", () => {
     expect(
-      mergePromptModelCatalogs(
-        [promptModel],
-        [model("claude-opus-5", "claude-agent", false, "disabled")],
+      resolveProvider(
+        [
+          {
+            id: "gpt-5",
+            provider: "openai",
+            label: "GPT-5",
+            runtime: { model: "gpt-5" },
+            reasoning: true,
+          },
+        ],
+        "gpt-5",
       ),
-    ).toEqual([promptModel]);
-  });
-
-  it("adds a configured-false model even when no availability detail was served", () => {
-    const unavailable = {
-      ...model("claude-sonnet-5", "claude-agent", false),
-      availability: undefined,
-    };
-
-    expect(mergePromptModelCatalogs([], [unavailable])).toEqual([unavailable]);
+    ).toBe("openai");
   });
 });

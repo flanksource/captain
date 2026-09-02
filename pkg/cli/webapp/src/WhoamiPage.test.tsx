@@ -1,74 +1,112 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WhoamiPage } from "./WhoamiPage";
-
-const AXES = {
-  modes: ["api", "cli", "agent", "cmux"],
-  providers: ["anthropic", "openai", "gemini", "deepseek"],
-  efforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
-};
 
 const NOTHING_DISABLED = {
   modes: null,
   providers: null,
-  backends: null,
+  runtimes: null,
   models: null,
   efforts: null,
 };
 
 const WHOAMI_RESULT = {
-  defaultProvider: "gemini",
-  axes: AXES,
+  defaultProvider: "openai",
+  axes: {
+    modes: ["api", "cli", "agent", "cmux"],
+    providers: ["anthropic", "openai", "google", "deepseek"],
+    efforts: ["low", "medium", "high"],
+  },
   disabled: NOTHING_DISABLED,
   providerDefaults: {
-    gemini: {
-      agent: "gemini-cli",
-      model: "gemini-3.5-flash",
+    openai: {
+      mode: "cli",
+      model: "gpt-5.5-codex",
       effort: "high",
       configured: true,
     },
   },
-  adapters: [
+  models: [
     {
-      backend: "gemini",
-      type: "api",
-      provider: "gemini",
-      mode: "api",
-      authenticated: false,
-      modelCount: 0,
-      modelError: "set GEMINI_API_KEY or GOOGLE_API_KEY to list models",
+      id: "gpt-5.5-codex",
+      provider: "openai",
+      label: "GPT-5.5 Codex",
+      runtime: { model: "gpt-5.5-codex", mode: "agent" },
+      reasoning: true,
+      configured: true,
+      availability: { state: "available" },
+    },
+  ],
+  runtimes: [
+    {
+      family: "codex",
+      provider: "openai",
+      catalogPrefix: "openai",
+      modes: [
+        { mode: "api", kind: "api", keyless: false },
+        { mode: "cli", kind: "cli", keyless: true },
+      ],
     },
     {
-      backend: "gemini-cli",
-      type: "cli",
-      provider: "gemini",
-      mode: "cli",
+      family: "deepseek",
+      provider: "deepseek",
+      catalogPrefix: "deepseek",
+      modes: [{ mode: "api", kind: "api", keyless: false }],
+    },
+  ],
+  adapters: [
+    {
+      type: "api",
+      provider: "openai",
+      mode: "api",
       authenticated: true,
-      authMethod: "gemini login",
-      authDetail: "/home/example/.gemini/oauth_creds.json",
-      binary: "/usr/local/bin/gemini",
+      authMethod: "Captain vault",
       modelCount: 2,
-      models: ["gemini-3.5-flash", "gemini-2.5-pro"],
       modelDetails: [
         {
-          id: "gemini-3.5-flash",
-          label: "Gemini 3.5 Flash",
-          backend: "gemini-cli",
-          releaseDate: "2026-05-19",
+          id: "gpt-5.6-sol",
+          label: "GPT-5.6 Sol",
+          provider: "openai",
+          mode: "api",
           reasoning: true,
-          temperature: true,
           supportedEfforts: ["low", "medium", "high"],
         },
         {
-          id: "gemini-2.5-pro",
-          label: "Gemini 2.5 Pro",
-          backend: "gemini-cli",
-          releaseDate: "2025-06-17",
+          id: "gpt-5.6-terra",
+          label: "GPT-5.6 Terra",
+          provider: "openai",
+          mode: "api",
           reasoning: true,
-          temperature: true,
         },
       ],
+    },
+    {
+      type: "cli",
+      provider: "openai",
+      mode: "cli",
+      authenticated: true,
+      authMethod: "codex login",
+      authDetail: "/home/example/.codex/auth.json",
+      binary: "/usr/local/bin/codex",
+      modelCount: 1,
+      modelDetails: [
+        {
+          id: "gpt-5.5-codex",
+          label: "GPT-5.5 Codex",
+          provider: "openai",
+          mode: "cli",
+          reasoning: true,
+        },
+      ],
+    },
+    {
+      type: "api",
+      provider: "deepseek",
+      mode: "api",
+      authenticated: false,
+      modelCount: 0,
+      modelError: "set DEEPSEEK_API_KEY to list models",
     },
   ],
 };
@@ -79,178 +117,139 @@ afterEach(() => {
 });
 
 describe("WhoamiPage", () => {
-  it("renders the complete whoami adapter and model details", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify(WHOAMI_RESULT), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
+  it("renders the provider, mode, and model topology from the consolidated contract", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(WHOAMI_RESULT));
     vi.stubGlobal("fetch", fetchMock);
 
     renderWhoamiPage();
 
-    expect(screen.getByRole("heading", { name: "AI adapters" })).toBeInTheDocument();
-    expect(await screen.findByRole("heading", { name: "API providers" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "CLI agents" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Configure API token" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Provider defaults" })).toBeInTheDocument();
-    expect(screen.getByText("Active default")).toBeInTheDocument();
-    expect(screen.getAllByLabelText(/API token$/)).toHaveLength(1);
-    expect(screen.getByText("gemini", { selector: "h3" })).toBeInTheDocument();
-    expect(screen.getByText("Needs setup")).toBeInTheDocument();
-    expect(
-      screen.getByText("set GEMINI_API_KEY or GOOGLE_API_KEY to list models"),
-    ).toBeInTheDocument();
-    expect(screen.getByText("gemini login")).toBeInTheDocument();
-    expect(screen.getByText("/home/example/.gemini/oauth_creds.json")).toBeInTheDocument();
-    expect(screen.getByText("/usr/local/bin/gemini")).toBeInTheDocument();
-    expect(screen.getByText("Gemini 3.5 Flash", { selector: "div" })).toBeInTheDocument();
-    expect(screen.getByText("gemini-3.5-flash")).toBeInTheDocument();
-    expect(screen.getByText("2026-05-19")).toBeInTheDocument();
-    expect(screen.getByText("low / medium / high")).toBeInTheDocument();
-    expect(screen.getByText("Gemini 2.5 Pro", { selector: "div" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Capability topology" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Runtime capability tree" })).toBeInTheDocument();
+    expect(screen.getByRole("treeitem", { name: /OpenAI 2 runtimes · 3 models/ })).toBeInTheDocument();
+    const apiRuntime = runtimeTreeItem("OpenAI", "API");
+    const cliRuntime = runtimeTreeItem("OpenAI", "CLI");
+    expect(apiRuntime).toHaveTextContent("Token valid");
+    expect(cliRuntime).toHaveTextContent("CLI");
+    expect(cliRuntime).toHaveTextContent("Ready");
+    expect(cliRuntime).not.toHaveTextContent("Token");
+    expect(screen.getAllByText("GPT-5.5 Codex").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: /Run model GPT-5.5 Codex via OpenAI \/ CLI/ })).toBeInTheDocument();
+    expect(screen.queryAllByText("reasoning")).toHaveLength(0);
+    expect(screen.queryByText("codex-cli")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Expand DeepSeek provider" }));
+    expect(runtimeTreeItem("DeepSeek", "API")).toHaveTextContent("No token");
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/v1/whoami?models=true&limit=0&disabled=true",
       expect.objectContaining({ method: "POST", body: "{}" }),
     );
   });
 
-  it("surfaces a failed whoami request", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(new Response("probe failed", { status: 500 })),
-    );
-
+  it("does not claim an available API token is valid when model validation failed", async () => {
+    const unverified = {
+      ...WHOAMI_RESULT,
+      adapters: WHOAMI_RESULT.adapters.map((adapter) => adapter.provider === "openai" && adapter.mode === "api"
+        ? { ...adapter, modelError: "validate openai credential: HTTP 401" }
+        : adapter),
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(unverified)));
     renderWhoamiPage();
 
-    expect(await screen.findByText("probe failed")).toBeInTheDocument();
+    await screen.findByRole("heading", { name: "Runtime capability tree" });
+    expect(runtimeTreeItem("OpenAI", "API")).toHaveTextContent("Token unverified");
+    expect(runtimeTreeItem("OpenAI", "API")).not.toHaveTextContent("Token valid");
   });
 
-  it("validates and saves an API token, clears it, and refreshes whoami", async () => {
+  it("tests a candidate API token without saving it", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse(WHOAMI_RESULT))
       .mockResolvedValueOnce(jsonResponse({
-        provider: "gemini",
-        valid: true,
-        saved: true,
-        source: "captain-vault",
-        maskedToken: "gemi…cret",
-        modelCount: 1,
-      }))
-      .mockResolvedValueOnce(jsonResponse(WHOAMI_RESULT));
-    vi.stubGlobal("fetch", fetchMock);
-    renderWhoamiPage();
-
-    const input = await screen.findByLabelText("gemini API token");
-    fireEvent.change(input, { target: { value: "gemini-provider-secret" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save & test gemini token" }));
-
-    expect(await screen.findByText("Token saved and validated against 1 model.")).toBeInTheDocument();
-    expect(input).toHaveValue("");
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      2,
-      "/api/captain/ai/providers/gemini/token",
-      expect.objectContaining({
-        method: "PUT",
-        body: JSON.stringify({ token: "gemini-provider-secret" }),
-      }),
-    );
-  });
-
-  it("retains a rejected token and shows the provider error", async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse(WHOAMI_RESULT))
-      .mockResolvedValueOnce(new Response("validate gemini credential: HTTP 401", { status: 422 }));
-    vi.stubGlobal("fetch", fetchMock);
-    renderWhoamiPage();
-
-    const input = await screen.findByLabelText("gemini API token");
-    fireEvent.change(input, { target: { value: "rejected-provider-secret" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save & test gemini token" }));
-
-    expect(await screen.findByText("validate gemini credential: HTTP 401")).toBeInTheDocument();
-    expect(input).toHaveValue("rejected-provider-secret");
-  });
-
-  it("tests the current API credential without sending a token", async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse(WHOAMI_RESULT))
-      .mockResolvedValueOnce(jsonResponse({
-        provider: "gemini",
+        provider: "openai",
         valid: true,
         saved: false,
-        source: "environment",
-        maskedToken: "gemi…cret",
-        modelCount: 2,
+        source: "candidate",
+        maskedToken: "cand…cret",
+        modelCount: 3,
       }));
     vi.stubGlobal("fetch", fetchMock);
     renderWhoamiPage();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Test current gemini token" }));
+    await selectOpenAIAPI();
+    const token = await screen.findByLabelText("OpenAI API token");
+    fireEvent.change(token, { target: { value: "candidate-secret" } });
+    fireEvent.click(screen.getByRole("button", { name: "Test token" }));
 
-    expect(await screen.findByText("Current token is valid for 2 models.")).toBeInTheDocument();
+    expect(await screen.findByRole("status")).toHaveTextContent("Candidate token is valid for 3 models");
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
-      "/api/captain/ai/providers/gemini/token/test",
-      expect.objectContaining({ method: "POST", body: "{}" }),
+      "/api/captain/ai/providers/openai/token/test",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ token: "candidate-secret" }),
+      }),
     );
+    expect(token).toHaveValue("candidate-secret");
   });
 
-  it("saves model, effort, and agent defaults for the provider", async () => {
+  it("validates and saves an API token before refreshing the shared catalog", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse(WHOAMI_RESULT))
       .mockResolvedValueOnce(jsonResponse({
-        provider: "gemini",
-        agent: "gemini-cli",
-        model: "gemini-2.5-pro",
-        effort: "",
-        active: true,
+        provider: "openai",
+        valid: true,
+        saved: true,
+        source: "captain-vault",
+        maskedToken: "repl…cret",
+        modelCount: 2,
       }))
       .mockResolvedValueOnce(jsonResponse(WHOAMI_RESULT));
     vi.stubGlobal("fetch", fetchMock);
     renderWhoamiPage();
 
-    fireEvent.change(await screen.findByLabelText("gemini default model"), {
-      target: { value: "gemini-2.5-pro" },
-    });
-    fireEvent.change(screen.getByLabelText("gemini default effort"), { target: { value: "" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save defaults" }));
+    await selectOpenAIAPI();
+    const token = await screen.findByLabelText("OpenAI API token");
+    fireEvent.change(token, { target: { value: "replacement-secret" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save token" }));
 
-    expect(await screen.findByText("Provider defaults saved.")).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      2,
-      "/api/captain/ai/providers/gemini/defaults",
-      expect.objectContaining({
-        method: "PUT",
-        body: JSON.stringify({ agent: "gemini-cli", model: "gemini-2.5-pro", effort: "" }),
-      }),
-    );
-  });
-
-  it("sets a provider as the active default", async () => {
-    const inactive = { ...WHOAMI_RESULT, defaultProvider: "anthropic" };
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse(inactive))
-      .mockResolvedValueOnce(jsonResponse({ provider: "gemini" }))
-      .mockResolvedValueOnce(jsonResponse(WHOAMI_RESULT));
-    vi.stubGlobal("fetch", fetchMock);
-    renderWhoamiPage();
-
-    fireEvent.click(await screen.findByRole("button", { name: "Set as default" }));
-
-    expect(await screen.findByText("Active default")).toBeInTheDocument();
+    expect(await screen.findByRole("status")).toHaveTextContent("Token saved and validated against 2 models");
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
-      "/api/captain/ai/default-provider",
-      expect.objectContaining({ method: "PUT", body: JSON.stringify({ provider: "gemini" }) }),
+      "/api/captain/ai/providers/openai/token",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({ token: "replacement-secret" }),
+      }),
     );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      "/api/v1/whoami?models=true&limit=0&disabled=true",
+      expect.objectContaining({ method: "POST", body: "{}" }),
+    );
+    expect(token).toHaveValue("");
   });
 
-  it("sends the whole opt-out set when a mode is switched off, then refetches", async () => {
-    const saved = { ...NOTHING_DISABLED, modes: ["cmux"] };
+  it("keeps a rejected API token and surfaces the validation error", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(WHOAMI_RESULT))
+      .mockResolvedValueOnce(new Response("validate openai credential: HTTP 401", { status: 422 }));
+    vi.stubGlobal("fetch", fetchMock);
+    renderWhoamiPage();
+
+    await selectOpenAIAPI();
+    const token = await screen.findByLabelText("OpenAI API token");
+    fireEvent.change(token, { target: { value: "rejected-secret" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save token" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("validate openai credential: HTTP 401");
+    expect(token).toHaveValue("rejected-secret");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("persists a runtime exclusion as a provider and mode pair", async () => {
+    const saved = {
+      ...NOTHING_DISABLED,
+      runtimes: [{ provider: "openai", mode: "cli" }],
+    };
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse(WHOAMI_RESULT))
       .mockResolvedValueOnce(jsonResponse(saved))
@@ -258,49 +257,7 @@ describe("WhoamiPage", () => {
     vi.stubGlobal("fetch", fetchMock);
     renderWhoamiPage();
 
-    fireEvent.click(await screen.findByRole("switch", { name: "cmux" }));
-
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      2,
-      "/api/captain/ai/disabled",
-      expect.objectContaining({
-        method: "PUT",
-        body: JSON.stringify({
-          modes: ["cmux"],
-          providers: [],
-          backends: [],
-          models: [],
-          efforts: [],
-        }),
-      }),
-    );
-    expect(screen.getByRole("switch", { name: "cmux" })).toHaveAttribute("aria-checked", "false");
-  });
-
-  it("keeps its own switch on when a write is rejected and shows the reason", async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse(WHOAMI_RESULT))
-      .mockResolvedValueOnce(new Response("cannot disable every reasoning effort", { status: 422 }));
-    vi.stubGlobal("fetch", fetchMock);
-    renderWhoamiPage();
-
-    fireEvent.click(await screen.findByRole("switch", { name: "ultra" }));
-
-    expect(await screen.findByText("cannot disable every reasoning effort")).toBeInTheDocument();
-    expect(screen.getByRole("switch", { name: "ultra" })).toHaveAttribute("aria-checked", "true");
-  });
-
-  it("writes a per-model opt-out qualified by its backend", async () => {
-    const saved = { ...NOTHING_DISABLED, models: ["gemini-cli/gemini-2.5-pro"] };
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse(WHOAMI_RESULT))
-      .mockResolvedValueOnce(jsonResponse(saved))
-      .mockResolvedValueOnce(jsonResponse({ ...WHOAMI_RESULT, disabled: saved }));
-    vi.stubGlobal("fetch", fetchMock);
-    renderWhoamiPage();
-
-    fireEvent.click(await screen.findByRole("switch", { name: "Enable gemini-cli/gemini-2.5-pro" }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Enable OpenAI CLI runtime" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
     expect(fetchMock).toHaveBeenNthCalledWith(
@@ -311,36 +268,70 @@ describe("WhoamiPage", () => {
         body: JSON.stringify({
           modes: [],
           providers: [],
-          backends: [],
-          models: ["gemini-cli/gemini-2.5-pro"],
+          runtimes: [{ provider: "openai", mode: "cli" }],
+          models: [],
           efforts: [],
         }),
       }),
     );
   });
 
-  it("shows a card disabled by its provider as read-only, naming the axis that did it", async () => {
-    const disabledByProvider = {
-      ...WHOAMI_RESULT,
-      disabled: { ...NOTHING_DISABLED, providers: ["gemini"] },
-      adapters: WHOAMI_RESULT.adapters.map((adapter) => ({
-        ...adapter,
-        disabled: true,
-        disabledReason: "provider gemini",
-        modelDetails: adapter.modelDetails?.map((model) => ({ ...model, disabled: true })),
-      })),
-    };
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(disabledByProvider)));
+  it("persists model exclusions by provider rather than a composite backend", async () => {
+    const saved = { ...NOTHING_DISABLED, models: ["openai/gpt-5.5-codex"] };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(WHOAMI_RESULT))
+      .mockResolvedValueOnce(jsonResponse(saved))
+      .mockResolvedValueOnce(jsonResponse({ ...WHOAMI_RESULT, disabled: saved }));
+    vi.stubGlobal("fetch", fetchMock);
     renderWhoamiPage();
 
-    const card = await screen.findByRole("switch", { name: "Enable gemini-cli" });
-    expect(card).toBeDisabled();
-    expect(card).toHaveAttribute("aria-checked", "false");
-    expect(screen.getAllByText("off via provider gemini").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Disabled").length).toBe(2);
-    // The provider switch is the one place the whole family turns back on.
-    expect(screen.getByRole("switch", { name: "gemini" })).toHaveAttribute("aria-checked", "false");
-    expect(screen.getByRole("switch", { name: "gemini" })).not.toBeDisabled();
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Enable gpt-5.5-codex model" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/captain/ai/disabled",
+      expect.objectContaining({
+        body: JSON.stringify({
+          modes: [],
+          providers: [],
+          runtimes: [],
+          models: ["openai/gpt-5.5-codex"],
+          efforts: [],
+        }),
+      }),
+    );
+  });
+
+  it("shows inherited provider policy without erasing child selections", async () => {
+    const disabled = { ...NOTHING_DISABLED, providers: ["openai"] };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({
+      ...WHOAMI_RESULT,
+      disabled,
+      adapters: WHOAMI_RESULT.adapters.map((adapter) => adapter.provider === "openai"
+        ? {
+            ...adapter,
+            disabled: true,
+            disabledReason: "provider openai",
+            modelDetails: adapter.modelDetails?.map((model) => ({ ...model, disabled: true })),
+          }
+        : adapter),
+    })));
+    renderWhoamiPage();
+
+    expect(await screen.findByRole("checkbox", { name: "Enable OpenAI provider" })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Enable OpenAI CLI runtime" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Enable gpt-5.5-codex model" })).toBeChecked();
+    expect(screen.getAllByText("Disabled").length).toBeGreaterThan(0);
+    expect(screen.getByText("Excluded by provider policy")).toBeInTheDocument();
+  });
+
+  it("surfaces a failed whoami request", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("probe failed", { status: 500 })));
+
+    renderWhoamiPage();
+
+    expect(await screen.findByText("probe failed")).toBeInTheDocument();
   });
 });
 
@@ -360,4 +351,16 @@ function renderWhoamiPage() {
       <WhoamiPage />
     </QueryClientProvider>,
   );
+}
+
+async function selectOpenAIAPI() {
+  await screen.findByRole("checkbox", { name: "Enable OpenAI API runtime" });
+  fireEvent.click(within(runtimeTreeItem("OpenAI", "API")).getByRole("button", { name: /^API Ready/ }));
+}
+
+function runtimeTreeItem(provider: string, mode: string): HTMLElement {
+  const checkbox = screen.getByRole("checkbox", { name: `Enable ${provider} ${mode} runtime` });
+  const treeitem = checkbox.closest<HTMLElement>('[role="treeitem"]');
+  if (!treeitem) throw new Error(`${provider} ${mode} runtime tree item was not rendered`);
+  return treeitem;
 }

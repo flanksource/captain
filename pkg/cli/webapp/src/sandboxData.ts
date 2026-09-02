@@ -67,7 +67,7 @@ export function isDispatchable(agent: GitAgent) {
   return !isPending(agent) && agent.dispatchable;
 }
 
-async function readError(response: Response, fallback: string): Promise<never> {
+export async function readError(response: Response, fallback: string): Promise<never> {
   const message = (await response.text()).trim();
   throw new Error(message || `${fallback} (${response.status})`);
 }
