@@ -40,7 +40,7 @@ require (
 )
 
 require (
-	github.com/flanksource/commons-db v0.1.30-0.20260831071002-2c7627a5ba93
+	github.com/flanksource/commons-db v0.1.30
 	github.com/gliderlabs/ssh v0.3.8
 	github.com/pelletier/go-toml/v2 v2.4.3
 )
