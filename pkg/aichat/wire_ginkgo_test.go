@@ -30,7 +30,8 @@ var _ = Describe("AI SDK v6 wire types", func() {
 			"contextItems":[{"id":"inv-1","type":"invoice","label":"Invoice 1","fields":{"status":"draft"},"payload":{"total":25}}],
 			"threadId":"thread-1",
 			"providerSessionId":"session-1",
-			"permissionMode":"acceptEdits"
+			"permissionMode":"acceptEdits",
+			"runtimeProfile":"review"
 		}`
 
 		var request aichat.ChatRequest
@@ -51,6 +52,7 @@ var _ = Describe("AI SDK v6 wire types", func() {
 		Expect(request.ToolApproval).To(BeNil())
 		Expect(request.ThreadID).To(Equal("thread-1"))
 		Expect(request.ProviderSessionID).To(Equal("session-1"))
+		Expect(request.RuntimeProfile).To(Equal("review"))
 		Expect(request.ContextItems).To(HaveLen(1))
 		Expect(request.ContextItems[0].Payload).To(MatchJSON(`{"total":25}`))
 

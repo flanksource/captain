@@ -24,7 +24,7 @@ var _ = Describe("Resolved runtime profiles", func() {
 		})
 		service := aichat.NewService(aichat.ServiceOptions{
 			Resolver: resolver,
-			Profile: aichat.RuntimeProfileProviderFunc(func(context.Context) (aichat.RuntimeProfile, error) {
+			Profile: aichat.RuntimeProfileProviderFunc(func(context.Context, ...aichat.RuntimeProfileOption) (aichat.RuntimeProfile, error) {
 				return profile, nil
 			}),
 		})
@@ -59,7 +59,7 @@ var _ = Describe("Resolved runtime profiles", func() {
 		})
 		service := aichat.NewService(aichat.ServiceOptions{
 			Resolver: resolver,
-			Profile: aichat.RuntimeProfileProviderFunc(func(context.Context) (aichat.RuntimeProfile, error) {
+			Profile: aichat.RuntimeProfileProviderFunc(func(context.Context, ...aichat.RuntimeProfileOption) (aichat.RuntimeProfile, error) {
 				return profile, nil
 			}),
 		})
@@ -100,7 +100,7 @@ var _ = Describe("Resolved runtime profiles", func() {
 
 		for _, test := range cases {
 			service := aichat.NewService(aichat.ServiceOptions{
-				Profile: aichat.RuntimeProfileProviderFunc(func(context.Context) (aichat.RuntimeProfile, error) {
+				Profile: aichat.RuntimeProfileProviderFunc(func(context.Context, ...aichat.RuntimeProfileOption) (aichat.RuntimeProfile, error) {
 					return aichat.RuntimeProfile{Resolved: test.resolved}, nil
 				}),
 			})
@@ -121,7 +121,7 @@ var _ = Describe("Resolved runtime profiles", func() {
 			Constraints: api.RuntimeConstraints{Models: []string{"gpt-5.6-sol"}},
 		})
 		service := aichat.NewService(aichat.ServiceOptions{
-			Profile: aichat.RuntimeProfileProviderFunc(func(context.Context) (aichat.RuntimeProfile, error) {
+			Profile: aichat.RuntimeProfileProviderFunc(func(context.Context, ...aichat.RuntimeProfileOption) (aichat.RuntimeProfile, error) {
 				return profile, nil
 			}),
 		})
@@ -151,7 +151,7 @@ var _ = Describe("Resolved runtime profiles", func() {
 		)
 		service := aichat.NewService(aichat.ServiceOptions{
 			Resolver: resolver,
-			Profile: aichat.RuntimeProfileProviderFunc(func(context.Context) (aichat.RuntimeProfile, error) {
+			Profile: aichat.RuntimeProfileProviderFunc(func(context.Context, ...aichat.RuntimeProfileOption) (aichat.RuntimeProfile, error) {
 				return profile, nil
 			}),
 		})

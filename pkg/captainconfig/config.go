@@ -24,7 +24,34 @@ type Config struct {
 	Attachments AttachmentDefaults `yaml:"attachments"`
 	Sandbox     SandboxDefaults    `yaml:"sandbox,omitempty"`
 	Credentials CredentialDefaults `yaml:"credentials,omitempty"`
+	Runtime     RuntimeDefaults    `yaml:"runtime,omitempty"`
+	Chat        ChatDefaults       `yaml:"chat,omitempty"`
 }
+
+// RuntimeDefaults names extra directories of runtime preset and profile YAML
+// files, one record per file. Relative paths resolve against the config file's
+// directory, like Prompts.Dirs; the implicit ~/.config/captain and repo-local
+// .captain locations need no entry here.
+type RuntimeDefaults struct {
+	PresetDirs  []string `yaml:"presetDirs,omitempty"`
+	ProfileDirs []string `yaml:"profileDirs,omitempty"`
+}
+
+// IsZero lets yaml omit an empty runtime block instead of writing `runtime: {}`.
+func (r RuntimeDefaults) IsZero() bool {
+	return len(r.PresetDirs) == 0 && len(r.ProfileDirs) == 0
+}
+
+// ChatDefaults is the chat block of ~/.captain.yaml.
+type ChatDefaults struct {
+	// RuntimeProfile is the catalog id or name of the runtime profile a chat
+	// resolves through when the request names none. Empty means the served
+	// base layer alone.
+	RuntimeProfile string `yaml:"runtimeProfile,omitempty"`
+}
+
+// IsZero lets yaml omit an empty chat block instead of writing `chat: {}`.
+func (c ChatDefaults) IsZero() bool { return c.RuntimeProfile == "" }
 
 // SandboxDefaults is the sandbox block of ~/.captain.yaml: a default selector
 // plus a name→config map, shaped like AIDefaults' DefaultProvider + Providers.

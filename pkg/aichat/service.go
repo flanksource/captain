@@ -20,26 +20,6 @@ import (
 
 var serviceLog = logger.GetLogger("aichat")
 
-// RuntimeProfile is the request-scoped, hierarchically resolved application
-// configuration for a chat. Resolved carries the effective Spec, constraints,
-// and ordered provenance; provider credentials remain runtime-only.
-type RuntimeProfile struct {
-	System         string
-	Resolved       api.ResolvedSpec
-	ProviderConfig api.Config
-}
-
-// RuntimeProfileProvider supplies request-scoped application profiles.
-type RuntimeProfileProvider interface {
-	RuntimeProfile(context.Context) (RuntimeProfile, error)
-}
-
-type RuntimeProfileProviderFunc func(context.Context) (RuntimeProfile, error)
-
-func (f RuntimeProfileProviderFunc) RuntimeProfile(ctx context.Context) (RuntimeProfile, error) {
-	return f(ctx)
-}
-
 // ThreadStoreProvider supplies the request-scoped thread store. Applications
 // that can serve more than one database resolve it per request; a fixed store
 // is expressed as a provider that ignores the context.
@@ -127,9 +107,9 @@ func (s *Service) Handler() http.Handler {
 }
 
 func (s *Service) handleRuntimes(w http.ResponseWriter, request *http.Request) {
-	profile, err := s.runtimeProfile(request.Context())
+	profile, err := s.runtimeProfile(request.Context(), WithRuntimeProfileRef(request.URL.Query().Get("runtimeProfile")))
 	if err != nil {
-		http.Error(w, fmt.Sprintf("load chat runtime profile: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("load chat runtime profile: %v", err), runtimeProfileStatus(err))
 		return
 	}
 	runtimes, err := s.resolver.Runtimes(request.Context())
@@ -148,9 +128,9 @@ func (s *Service) handleRuntimes(w http.ResponseWriter, request *http.Request) {
 }
 
 func (s *Service) handleModels(w http.ResponseWriter, request *http.Request) {
-	profile, err := s.runtimeProfile(request.Context())
+	profile, err := s.runtimeProfile(request.Context(), WithRuntimeProfileRef(request.URL.Query().Get("runtimeProfile")))
 	if err != nil {
-		http.Error(w, fmt.Sprintf("load chat runtime profile: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("load chat runtime profile: %v", err), runtimeProfileStatus(err))
 		return
 	}
 	models, err := s.resolver.Models(request.Context())
@@ -179,9 +159,9 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	profile, err := s.runtimeProfile(request.Context())
+	profile, err := s.runtimeProfile(request.Context(), WithRuntimeProfileRef(chat.RuntimeProfile))
 	if err != nil {
-		http.Error(w, fmt.Sprintf("load chat runtime profile: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("load chat runtime profile: %v", err), runtimeProfileStatus(err))
 		return
 	}
 	reserved := false
@@ -429,30 +409,6 @@ func validateThreadTurn(request ChatRequest, thread *Thread) error {
 		return fmt.Errorf("regenerate-message messageId %q must match the final persisted assistant message", request.MessageID)
 	}
 	return nil
-}
-
-// runtimeProfile validates the server-owned profile before request fields are
-// layered onto it, so profile defects remain server errors at the HTTP boundary.
-func (s *Service) runtimeProfile(ctx context.Context) (RuntimeProfile, error) {
-	if s.options.Profile == nil {
-		return RuntimeProfile{}, nil
-	}
-	profile, err := s.options.Profile.RuntimeProfile(ctx)
-	if err != nil {
-		return RuntimeProfile{}, err
-	}
-	if len(profile.Resolved.Trace) == 0 {
-		if !api.IsEmpty(profile.Resolved.Spec) || !api.IsEmpty(profile.Resolved.Constraints) {
-			return RuntimeProfile{}, fmt.Errorf("chat runtime profile must include its resolution trace")
-		}
-		return profile, nil
-	}
-	resolved, err := api.ResolveSpecLayers(profile.Resolved.Trace...)
-	if err != nil {
-		return RuntimeProfile{}, fmt.Errorf("resolve chat runtime profile: %w", err)
-	}
-	profile.Resolved = resolved
-	return profile, nil
 }
 
 func (s *Service) resolveThreadSession(ctx context.Context, request *ChatRequest) (*Thread, error) {

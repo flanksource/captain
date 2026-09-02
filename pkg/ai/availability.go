@@ -55,6 +55,12 @@ func LiveRuntimeCatalog() ([]api.RuntimeFamily, error) {
 	if err != nil && !errors.Is(err, ErrAdapterProbeUnsettled) {
 		return nil, err
 	}
+	return RuntimeCatalogFromAdapters(adapters), nil
+}
+
+// RuntimeCatalogFromAdapters annotates the registry catalog from an existing
+// whoami probe so model and runtime pickers observe one readiness snapshot.
+func RuntimeCatalogFromAdapters(adapters []AdapterStatus) []api.RuntimeFamily {
 	byRuntime := make(map[Runtime]AdapterStatus, len(adapters))
 	for _, adapter := range adapters {
 		byRuntime[Runtime{Provider: adapter.Provider, Mode: api.RuntimeMode(adapter.Mode)}] = adapter
@@ -81,7 +87,7 @@ func LiveRuntimeCatalog() ([]api.RuntimeFamily, error) {
 			mode.Availability = AvailabilityForAdapter(adapter)
 		}
 	}
-	return runtimes, nil
+	return runtimes
 }
 
 func runtimeLabel(runtime Runtime) string {

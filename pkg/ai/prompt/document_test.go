@@ -99,3 +99,35 @@ func TestParse_UnknownSpecKey(t *testing.T) {
 	_, err := Parse("---\nbogusKey: nope\n---\nbody\n")
 	require.Error(t, err)
 }
+
+// A runtimeProfile pin is a prompt-level selection rather than a spec field: it
+// lands on Document.RuntimeProfile, stays in the raw frontmatter for round-trip,
+// and is stripped before the spec decode.
+func TestParse_RuntimeProfilePin(t *testing.T) {
+	doc, err := Parse("---\nruntimeProfile: review\nmodel: claude-sonnet-4-6\n---\nbody\n")
+	require.NoError(t, err)
+	assert.Equal(t, "review", doc.RuntimeProfile)
+	assert.Equal(t, "claude-sonnet-4-6", doc.Spec.Model.Name)
+	assert.Contains(t, doc.Frontmatter, "runtimeProfile")
+}
+
+func TestParse_RuntimeProfileMustBeNonEmptyString(t *testing.T) {
+	for _, src := range []string{
+		"---\nruntimeProfile: 3\n---\nbody\n",
+		"---\nruntimeProfile: [review]\n---\nbody\n",
+		"---\nruntimeProfile: \"\"\n---\nbody\n",
+	} {
+		_, err := Parse(src)
+		require.Error(t, err, src)
+		assert.ErrorContains(t, err, "runtimeProfile", src)
+	}
+}
+
+// Render's strict spec decode must accept the pin the same way it accepts the
+// other prompt-only keys (name, runtimes, ...).
+func TestRender_RuntimeProfilePin(t *testing.T) {
+	req, _, err := Load("---\nruntimeProfile: review\nmodel: claude-sonnet-4-6\n---\n{{role \"user\"}}\nhello\n").Render(nil, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "claude-sonnet-4-6", req.Model.Name)
+	assert.Equal(t, "hello", req.Prompt.User)
+}

@@ -102,4 +102,39 @@ var _ = Describe("Runtime profile HTTP resolution", func() {
 		Expect(payload.PermissionSupport["invoice_update"].Kind).To(Equal(api.SupportNative))
 		Expect(payload.EffectivePolicy).To(HaveLen(1))
 	})
+
+	// The deployment's own tool policy can ask for a posture the selected runtime
+	// cannot express. That is a fact about the deployment for the UI to show
+	// through permissionSupport, not a defect in the profile being resolved.
+	It("reports caller-tool support gaps instead of rejecting the profile", func() {
+		runtime := api.RuntimeOf(api.Anthropic, api.ModeCLI)
+		Expect(api.PermissionCapabilitiesFor(runtime).ToolPolicySupport(api.ProvenanceCaller, api.ToolPolicyAsk).Kind).
+			To(Equal(api.SupportUnsupported))
+		service := aichat.NewService(aichat.ServiceOptions{
+			Tools: aichat.StaticToolProvider([]api.ToolDefinition{{
+				Name: "version", Group: "captain.info", DefaultPermission: api.ToolPolicyAuto,
+				Handler: func(context.Context, map[string]any) (any, error) { return nil, nil },
+			}}),
+			ToolPolicy: api.PermissionPolicy{{
+				ToolMatch: api.ToolMatch{Name: api.MatchPatterns{"version"}},
+				Policy:    api.ToolPolicyAsk,
+			}},
+		})
+
+		response := httptest.NewRecorder()
+		service.Handler().ServeHTTP(response, requestJSON(
+			http.MethodPost,
+			"/api/chat/runtime-profiles/resolve",
+			api.RuntimeProfileResolveRequest{Profile: api.RuntimeProfile{
+				ID: "review", Name: "Review", Spec: api.Spec{Model: api.Model{Name: "sonnet", Mode: api.ModeCLI}},
+			}},
+		))
+
+		Expect(response.Code).To(Equal(http.StatusOK), response.Body.String())
+		var payload api.RuntimeProfileResolveResponse
+		Expect(json.Unmarshal(response.Body.Bytes(), &payload)).To(Succeed())
+		Expect(payload.Resolved.Spec.Mode).To(Equal(api.ModeCLI))
+		Expect(payload.Permissions["version"]).To(Equal(api.ToolPolicyAsk))
+		Expect(payload.PermissionSupport["version"].Kind).To(Equal(api.SupportUnsupported))
+	})
 })

@@ -172,7 +172,7 @@ var _ = Describe("Authoritative aichat execution", func() {
 		}
 		service := aichat.NewService(aichat.ServiceOptions{
 			Resolver: &fakeResolver{provider: provider}, Threads: aichat.FixedThreadStore(store), Authority: authority,
-			Profile: aichat.RuntimeProfileProviderFunc(func(context.Context) (aichat.RuntimeProfile, error) {
+			Profile: aichat.RuntimeProfileProviderFunc(func(context.Context, ...aichat.RuntimeProfileOption) (aichat.RuntimeProfile, error) {
 				return mustRuntimeProfile(api.SpecLayer{
 					Name: "accounts", Scope: api.SpecLayerContext,
 					Spec: api.Spec{Prompt: api.Prompt{System: "Use account policy."}},
@@ -442,7 +442,7 @@ var _ = Describe("Authoritative aichat execution", func() {
 		})
 		service := aichat.NewService(aichat.ServiceOptions{
 			Threads: aichat.FixedThreadStore(store), Authority: authority, Resolver: resolver,
-			Profile: aichat.RuntimeProfileProviderFunc(func(context.Context) (aichat.RuntimeProfile, error) {
+			Profile: aichat.RuntimeProfileProviderFunc(func(context.Context, ...aichat.RuntimeProfileOption) (aichat.RuntimeProfile, error) {
 				return profile, nil
 			}),
 		})
