@@ -34,19 +34,35 @@ func runPromptWorkflow(t *task.Task, rendered PromptRenderResult, timeout time.D
 	if err := preparePromptAttachments(ctx, &req, cfg); err != nil {
 		return failRun(t, stream, err)
 	}
-	p, cleanup, err := buildProvider(ctx, &req, cfg)
+	// Judge prompts load before the provider is built: a workflow naming a
+	// prompt that does not exist is broken everywhere, and building first would
+	// report whichever runtime binary this machine lacks instead.
+	judgePrompts, err := verify.LoadJudgePrompts(req.Workflow)
 	if err != nil {
 		return failRun(t, stream, err)
 	}
-	defer cleanup()
-	defer closeProvider(p)
+
+	// A verify-only run makes no model call — agent.Runner takes runVerifyOnce
+	// and never touches the provider — so constructing one, and demanding its
+	// runtime binary on PATH, would fail a run that only executes shell hooks.
+	// A declared judge does execute on the provider, so it still needs one.
+	var p ai.Provider
+	if !req.IsVerifyOnly() || len(judgePrompts) > 0 {
+		built, cleanup, err := buildProvider(ctx, &req, cfg)
+		if err != nil {
+			return failRun(t, stream, err)
+		}
+		defer cleanup()
+		defer closeProvider(built)
+		p = built
+	}
 
 	streamer, err := workflowRunnerProvider(p, noStream, req.IsVerifyOnly())
 	if err != nil {
 		return failRun(t, stream, err)
 	}
 
-	judgeHooks, err := verify.PromptHooksForWorkflow(req.Workflow, p)
+	judgeHooks, err := verify.JudgeHooks(judgePrompts, p)
 	if err != nil {
 		return failRun(t, stream, err)
 	}
@@ -127,6 +143,12 @@ func runPromptWorkflow(t *task.Task, rendered PromptRenderResult, timeout time.D
 }
 
 func workflowRunnerProvider(provider ai.Provider, noStream, verifyOnly bool) (ai.StreamingProvider, error) {
+	if provider == nil {
+		if verifyOnly {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("a generating run needs a provider")
+	}
 	if noStream {
 		return bufferedWorkflowProvider{Provider: provider}, nil
 	}

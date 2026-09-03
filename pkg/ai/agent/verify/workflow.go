@@ -31,22 +31,24 @@ func HooksForWorkflow(wf *api.Workflow) []any {
 	return hooks
 }
 
-// PromptHooksForWorkflow builds the LLM-judge hooks from Verify.Prompts: each
-// entry is a .prompt template whose output schema is {ok, reason, feedback},
-// judged by the given provider. It is separate from HooksForWorkflow because
-// judge hooks need a provider and command hooks do not — keeping the original
-// signature stable for gavel, which shares it.
+// JudgePrompt is a loaded Verify.Prompts entry awaiting the provider that will
+// judge with it.
+type JudgePrompt struct {
+	Path     string
+	Template *prompt.Template
+}
+
+// LoadJudgePrompts loads every Verify.Prompts entry declared by a workflow.
 //
-// A prompt that fails to load is an error, not a skipped hook: a declared
-// check that silently never runs is a false accept.
-func PromptHooksForWorkflow(wf *api.Workflow, provider ai.Provider) ([]any, error) {
+// Loading is separate from binding so a caller can reject a broken declaration
+// before it builds a provider: a workflow naming a prompt that does not exist
+// is wrong on every machine, while the runtime a provider needs is missing only
+// on some, and reporting the environment first hides the real defect.
+func LoadJudgePrompts(wf *api.Workflow) ([]JudgePrompt, error) {
 	if wf == nil || wf.Verify == nil || len(wf.Verify.Prompts) == 0 {
 		return nil, nil
 	}
-	if provider == nil {
-		return nil, fmt.Errorf("verify prompts declared but no provider available to judge them")
-	}
-	var hooks []any
+	var prompts []JudgePrompt
 	for i, path := range wf.Verify.Prompts {
 		path = strings.TrimSpace(path)
 		if path == "" {
@@ -59,12 +61,44 @@ func PromptHooksForWorkflow(wf *api.Workflow, provider ai.Provider) ([]any, erro
 		if err != nil {
 			return nil, fmt.Errorf("verify prompt %q: %w", path, err)
 		}
-		if err := rejectJudgeOverrides(path, tmpl, provider); err != nil {
+		prompts = append(prompts, JudgePrompt{Path: path, Template: tmpl})
+	}
+	return prompts, nil
+}
+
+// JudgeHooks binds loaded judge prompts to the provider that executes them:
+// each is a template whose output schema is {ok, reason, feedback}.
+func JudgeHooks(prompts []JudgePrompt, provider ai.Provider) ([]any, error) {
+	if len(prompts) == 0 {
+		return nil, nil
+	}
+	if provider == nil {
+		return nil, fmt.Errorf("verify prompts declared but no provider available to judge them")
+	}
+	var hooks []any
+	for _, p := range prompts {
+		if err := rejectJudgeOverrides(p.Path, p.Template, provider); err != nil {
 			return nil, err
 		}
-		hooks = append(hooks, New("judge:"+path, &LLMJudgeVerifier{Provider: provider, Prompt: tmpl}))
+		hooks = append(hooks, New("judge:"+p.Path, &LLMJudgeVerifier{Provider: provider, Prompt: p.Template}))
 	}
 	return hooks, nil
+}
+
+// PromptHooksForWorkflow builds the LLM-judge hooks from Verify.Prompts: each
+// entry is a .prompt template whose output schema is {ok, reason, feedback},
+// judged by the given provider. It is separate from HooksForWorkflow because
+// judge hooks need a provider and command hooks do not — keeping the original
+// signature stable for gavel, which shares it.
+//
+// A prompt that fails to load is an error, not a skipped hook: a declared
+// check that silently never runs is a false accept.
+func PromptHooksForWorkflow(wf *api.Workflow, provider ai.Provider) ([]any, error) {
+	prompts, err := LoadJudgePrompts(wf)
+	if err != nil {
+		return nil, err
+	}
+	return JudgeHooks(prompts, provider)
 }
 
 // rejectJudgeOverrides refuses judge frontmatter the hook cannot honour. A
