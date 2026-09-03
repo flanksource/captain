@@ -34,32 +34,99 @@ func LoadDefaults() (captainconfig.AIDefaults, error) {
 	return cfg.AI, nil
 }
 
-// EffectiveDefaults resolves one provider's saved defaults: the per-provider block
-// back-filled from the legacy flat keys, with the mode defaulting to api and the
-// model to that runtime's built-in default.
+// EffectiveDefaults SEEDS a form: one provider's saved defaults with the gaps
+// filled from the registry — the mode from Provider.DefaultMode and the model
+// from the built-in DefaultModelFor table.
+//
+// It is for `captain configure` and the whoami/picker surfaces, where proposing
+// a value the user can accept or change is exactly right. It must NOT be used to
+// decide what a run executes on: proposing there is the silent defaulting this
+// package now refuses. See SavedDefaults.
 func EffectiveDefaults(saved captainconfig.AIDefaults, provider *registry.Provider) (ProviderDefaultView, error) {
+	view, err := SavedDefaults(saved, provider)
+	if err != nil {
+		return ProviderDefaultView{}, err
+	}
+	if view.Mode == "" {
+		view.Mode = string(provider.DefaultMode)
+	}
+	if _, err := provider.RequireMode(registry.RuntimeMode(view.Mode)); err != nil {
+		return ProviderDefaultView{}, err
+	}
+	if view.Model == "" {
+		view.Model = DefaultModelFor(provider, registry.RuntimeMode(view.Mode))
+	}
+	return view, nil
+}
+
+// SavedDefaults RESOLVES a run: strictly what ~/.captain.yaml records for this
+// provider, plus the global ai.defaultModel selector as a last config-owned
+// fallback. Unset fields come back empty so the caller fails loudly instead of
+// inheriting a compiled-in model or mode.
+//
+// The global default is a compact selector, so it can supply a mode as well as a
+// name — which is the whole reason it can stand in for a missing provider block.
+func SavedDefaults(saved captainconfig.AIDefaults, provider *registry.Provider) (ProviderDefaultView, error) {
 	if provider == nil {
 		return ProviderDefaultView{}, fmt.Errorf("provider is required")
 	}
 	configured, exists := saved.Providers[provider.Name]
 	mode := registry.RuntimeMode(strings.TrimSpace(configured.Mode))
-	if mode == "" {
-		mode = provider.DefaultMode
-	}
-	if _, err := provider.RequireMode(mode); err != nil {
-		return ProviderDefaultView{}, err
-	}
 	model := strings.TrimSpace(configured.Model)
-	if model == "" {
-		model = DefaultModelFor(provider, mode)
-	}
 	effort := registry.Effort(strings.TrimSpace(configured.ReasoningEffort))
+
+	if model == "" || mode == "" {
+		global, err := globalDefaultModel(saved)
+		if err != nil {
+			return ProviderDefaultView{}, err
+		}
+		// Only adopt the global model when it belongs to this provider; its mode
+		// is a mechanism and travels regardless.
+		if model == "" && global.Provider == provider {
+			model = global.Name
+		}
+		if mode == "" {
+			mode = global.Mode
+		}
+	}
+
+	// A provider that serves exactly one mode leaves nothing to guess: naming it
+	// is arithmetic, not a default. Without this, configuring one provider and
+	// then naming a model from another would demand a second `captain configure`
+	// for a mechanism that was never ambiguous.
+	if mode == "" {
+		if modes := provider.Modes(); len(modes) == 1 {
+			mode = modes[0]
+		}
+	}
+	if mode != "" {
+		if _, err := provider.RequireMode(mode); err != nil {
+			return ProviderDefaultView{}, err
+		}
+	}
 	if err := effort.Validate(); err != nil {
 		return ProviderDefaultView{}, err
 	}
 	return ProviderDefaultView{
 		Mode: string(mode), Model: model, Effort: string(effort), Configured: exists,
 	}, nil
+}
+
+// globalDefaultModel expands the ai.defaultModel compact selector. An unset key
+// yields the zero model, which contributes nothing.
+func globalDefaultModel(saved captainconfig.AIDefaults) (registry.Model, error) {
+	name := strings.TrimSpace(saved.DefaultModel)
+	if name == "" {
+		return registry.Model{}, nil
+	}
+	model, err := (registry.Model{Name: name}).Expand()
+	if err != nil {
+		return registry.Model{}, fmt.Errorf("invalid ai.defaultModel %q in captain config: %w", name, err)
+	}
+	if p, _, ok := registry.ProviderForToken(model.Name); ok {
+		model.Provider = p
+	}
+	return model, nil
 }
 
 // ApplyDefaults fills a model's unset fields from the saved per-provider defaults,
@@ -99,13 +166,26 @@ func applyCandidateDefaults(model registry.Model, saved captainconfig.AIDefaults
 		}
 		provider = p
 	}
+	// A nameless model takes the configured provider, preferring the one
+	// ai.defaultModel names over the coarser defaultProvider key.
+	if provider == nil && allowActive {
+		if global, err := globalDefaultModel(saved); err != nil {
+			return registry.Model{}, err
+		} else if global.Provider != nil {
+			provider = global.Provider
+		}
+	}
 	if provider == nil && allowActive {
 		provider, _ = registry.ProviderByName(saved.ActiveProvider())
 	}
 	if provider == nil {
 		return registry.Model{}, fmt.Errorf("provider cannot be resolved for model %q", model.Name)
 	}
-	defaults, err := EffectiveDefaults(saved, provider)
+	// SavedDefaults, not EffectiveDefaults: a run inherits only what the user
+	// configured. EffectiveDefaults would fill the gaps from the registry's
+	// built-in tables, which is right for seeding a form and wrong here — it is
+	// exactly how an unconfigured `--ai-model haiku` silently acquired agent mode.
+	defaults, err := SavedDefaults(saved, provider)
 	if err != nil {
 		return registry.Model{}, err
 	}

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -46,7 +47,7 @@ func TestScopeFromFlag(t *testing.T) {
 }
 
 func TestBuildAgentPlugins_CommitRequiresWorktree(t *testing.T) {
-	_, _, err := buildAgentPlugins(AIAgentOptions{Commit: true}, nil)
+	_, _, err := buildAgentPlugins(context.Background(), AIAgentOptions{Commit: true}, nil)
 	if err == nil || !strings.Contains(err.Error(), "worktree") {
 		t.Fatalf("err = %v, want a --commit-requires-worktree error", err)
 	}
@@ -60,7 +61,7 @@ func TestBuildAgentPlugins_WorktreeBranchAndCommit(t *testing.T) {
 		Squash:   true,
 	}
 	opts.Prompt = "fix the failing lint\nsecond line ignored"
-	plugins, wt, err := buildAgentPlugins(opts, nil)
+	plugins, wt, err := buildAgentPlugins(context.Background(), opts, nil)
 	if err != nil {
 		t.Fatalf("buildAgentPlugins: %v", err)
 	}
@@ -88,7 +89,7 @@ func TestBuildAgentPlugins_WorktreeBranchAndCommit(t *testing.T) {
 // fail at flag-parse time, not silently register a hook that never fires.
 func TestBuildAgentPlugins_CommitPhaseIsValidated(t *testing.T) {
 	opts := AIAgentOptions{Worktree: true, Commit: true, CommitOn: "whenever", Squash: true}
-	if _, _, err := buildAgentPlugins(opts, nil); err == nil || !strings.Contains(err.Error(), "whenever") {
+	if _, _, err := buildAgentPlugins(context.Background(), opts, nil); err == nil || !strings.Contains(err.Error(), "whenever") {
 		t.Fatalf("err = %v, want the unknown phase rejected by name", err)
 	}
 }
@@ -98,7 +99,7 @@ func TestBuildAgentPlugins_CommitPhaseIsValidated(t *testing.T) {
 // `--commit-on=run` into a validation error the user never asked for.
 func TestBuildAgentPlugins_SquashDefaultSurvivesRunPhase(t *testing.T) {
 	opts := AIAgentOptions{Worktree: true, Commit: true, CommitOn: string(api.CommitOnRun), Squash: true}
-	plugins, _, err := buildAgentPlugins(opts, nil)
+	plugins, _, err := buildAgentPlugins(context.Background(), opts, nil)
 	if err != nil {
 		t.Fatalf("buildAgentPlugins: %v", err)
 	}
@@ -109,7 +110,7 @@ func TestBuildAgentPlugins_SquashDefaultSurvivesRunPhase(t *testing.T) {
 
 func TestBuildAgentPlugins_WorktreeWithoutCommit(t *testing.T) {
 	opts := AIAgentOptions{Worktree: true}
-	_, wt, err := buildAgentPlugins(opts, nil)
+	_, wt, err := buildAgentPlugins(context.Background(), opts, nil)
 	if err != nil {
 		t.Fatalf("buildAgentPlugins: %v", err)
 	}
@@ -126,7 +127,7 @@ func TestBuildAgentPlugins_VerifyAndJudge(t *testing.T) {
 		Verify: []string{"make lint", "  ", "go test ./..."},
 		Judge:  "the change must include a test",
 	}
-	plugins, wt, err := buildAgentPlugins(opts, nil)
+	plugins, wt, err := buildAgentPlugins(context.Background(), opts, nil)
 	if err != nil {
 		t.Fatalf("buildAgentPlugins: %v", err)
 	}
@@ -137,17 +138,5 @@ func TestBuildAgentPlugins_VerifyAndJudge(t *testing.T) {
 	got := pluginNames(plugins)
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Errorf("plugin names = %v, want %v (blank --verify entries skipped)", got, want)
-	}
-}
-
-func TestVerifyPassed(t *testing.T) {
-	if !verifyPassed(nil) {
-		t.Error("no verdicts should pass")
-	}
-	if !verifyPassed([]agent.VerifyResult{{Valid: false}, {Valid: true}}) {
-		t.Error("last verdict valid should pass")
-	}
-	if verifyPassed([]agent.VerifyResult{{Valid: true}, {Valid: false}}) {
-		t.Error("last verdict not valid should fail")
 	}
 }

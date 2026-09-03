@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/bash"
 	"github.com/flanksource/captain/pkg/session"
 	"github.com/segmentio/encoding/json"
@@ -30,7 +31,14 @@ type taskSink interface {
 type promptEventAccumulator struct {
 	mu   sync.Mutex
 	emit func(session.Message)
-	task taskSink
+	// verify receives the run's verification state — every in-flight snapshot and
+	// the verdict — on its own channel rather than as transcript frames. Nil for
+	// a consumer with no stream behind it (the terminal renderer).
+	verify func(VerifyFrame)
+	// lastVerify is the newest report any verify event carried, kept so a verdict
+	// that arrives without one can still close the frame without blanking it.
+	lastVerify *api.VerifyReport
+	task       taskSink
 
 	sessionID string
 	model     string
@@ -96,6 +104,21 @@ func (a *promptEventAccumulator) handle(_ int, ev ai.Event) {
 		a.emitToolResult(ev)
 	case ai.EventPermission:
 		a.task.Warnf("permission: %s awaiting approval", ev.Tool)
+	case ai.EventVerifyProgress:
+		// Stream state, never a transcript frame and never a log line: a check
+		// reporting every few hundred milliseconds would otherwise write a
+		// superseded count into the replay buffer, and into the task log, for
+		// each one. The task gets its status updated in place instead.
+		a.publishVerify(ev, false)
+	case ai.EventVerified, ai.EventVerifyFailed:
+		// The loop's definition of done, reported as it is reached. Like a
+		// lifecycle notice it stands on its own rather than joining the in-flight
+		// turn, so the buffers are flushed first; unlike one it carries its own
+		// role, so a reader can find the verdicts in a transcript without
+		// matching on prose.
+		a.flush()
+		a.publishVerify(ev, true)
+		a.emitVerdict(ev)
 	case ai.EventError:
 		a.flush()
 		a.emitError(ev)
@@ -246,6 +269,80 @@ func (a *promptEventAccumulator) emitNotice(text string) {
 		ID:         a.nextID("notice"),
 		Role:       "system",
 		Parts:      []session.Part{{Type: session.PartText, Text: text}},
+		Provenance: a.provenance(),
+	})
+}
+
+// publishVerify forwards the event's typed report as the run's current
+// verification state.
+//
+// A progress event without a report publishes nothing: a frame with a nil report
+// would blank whatever the last real snapshot put on screen. A verdict without
+// one still publishes — Done is the only thing that turns the verification panel
+// from a running check into a result, and withholding it left the panel spinning
+// on a superseded snapshot for the rest of the run. It carries the last snapshot
+// forward rather than a nil report, so the panel keeps what it was showing and
+// merely stops.
+func (a *promptEventAccumulator) publishVerify(ev ai.Event, done bool) {
+	report, _ := ev.Raw.(*api.VerifyReport)
+	if report != nil {
+		a.lastVerify = report
+	} else if !done {
+		return
+	}
+	if !done && report != nil {
+		a.task.SetDescription(verifyProgressStatus(*report))
+	}
+	if a.verify != nil {
+		a.verify(VerifyFrame{Report: a.lastVerify, Done: done})
+	}
+}
+
+// verifyProgressStatus is the one-line count a task's status shows while a check
+// runs: how far it has got, and whether anything has gone red yet.
+func verifyProgressStatus(report api.VerifyReport) string {
+	s := report.Summary
+	name := report.Name
+	if s.Total == 0 {
+		return "verifying " + name
+	}
+	// A producer that reports more outstanding rows than its tree has — a suite
+	// still settling its own totals — must not read as negative progress in the
+	// one line a person is watching.
+	done := max(s.Total-s.Pending-s.Running, 0)
+	if failed := s.Failed + s.TimedOut; failed > 0 {
+		return fmt.Sprintf("verifying %s %d/%d, %d failed", name, done, s.Total, failed)
+	}
+	return fmt.Sprintf("verifying %s %d/%d", name, done, s.Total)
+}
+
+// emitVerdict records one verify verdict as its own transcript role, so it is
+// selectable in a stored session rather than being one more system line. The
+// typed report rides beside the prose as a data part: the verdict is a tree a
+// viewer draws, and the sentence is only its headline.
+func (a *promptEventAccumulator) emitVerdict(ev ai.Event) {
+	role := session.RoleVerifyFailed
+	if ev.Kind == ai.EventVerified {
+		role = session.RoleVerified
+		a.task.Infof("verified: %s", ev.Text)
+	} else {
+		a.task.Warnf("not verified: %s", ev.Text)
+	}
+	parts := []session.Part{{Type: session.PartText, Text: ev.Text}}
+	if report, ok := ev.Raw.(*api.VerifyReport); ok && report != nil {
+		encoded, err := json.Marshal(report)
+		if err != nil {
+			// The verdict itself still lands; losing the tree is a defect worth
+			// naming rather than a frame worth dropping.
+			a.task.Warnf("verify report for %s could not be encoded: %v", report.Name, err)
+		} else {
+			parts = append(parts, session.Part{Type: session.PartVerify, Data: encoded})
+		}
+	}
+	a.emit(session.Message{
+		ID:         a.nextID(string(ev.Kind)),
+		Role:       role,
+		Parts:      parts,
 		Provenance: a.provenance(),
 	})
 }

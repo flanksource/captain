@@ -233,8 +233,10 @@ func TestRunner_TurnPhaseFiresPerTurnBeforeVerifiers(t *testing.T) {
 
 func TestRunner_VerifyOnlyEmitsNoTurnPhase(t *testing.T) {
 	var log []string
-	// Empty prompt body ⇒ verify-only: nothing generated, so no turn boundary.
+	// No prompt body + a declared verification ⇒ verify-only: nothing generated,
+	// so no turn boundary.
 	r := &Runner[string]{
+		Request: ai.Request{Workflow: &api.Workflow{Verify: &api.Verify{}}},
 		Hooks: []any{
 			&lifecycleHook{log: &log},
 			verifyHook{name: "score", fn: func(*HookContext) (VerifyResult, error) {
@@ -413,9 +415,11 @@ func TestRunner_RunPhaseSeesVerifiedAndFailed(t *testing.T) {
 
 func TestRunner_VerifyOnlySkipsGeneration(t *testing.T) {
 	var verifyCalls int
-	// Empty prompt body ⇒ verify-only: no provider, no generation loop.
+	// No prompt body + a declared verification ⇒ verify-only: no provider, no
+	// generation loop.
 	r := &Runner[string]{
-		Scope: ScopeAll,
+		Request: ai.Request{Workflow: &api.Workflow{Verify: &api.Verify{}}},
+		Scope:   ScopeAll,
 		Hooks: []any{
 			verifyHook{name: "score", fn: func(*HookContext) (VerifyResult, error) {
 				verifyCalls++

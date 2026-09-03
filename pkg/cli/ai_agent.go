@@ -16,6 +16,7 @@ import (
 	"github.com/flanksource/captain/pkg/ai/middleware"
 	"github.com/flanksource/captain/pkg/ai/prompt"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/promptrun"
 )
 
 // AIAgentOptions runs the plugin-based agent loop (pkg/ai/agent) from the CLI:
@@ -84,7 +85,7 @@ func scopeFromFlag(s string) (agent.Scope, error) {
 // the worktree plugin so the chain is squashed into one commit *before* the
 // merge, leaving `wt merge` real commits to take rather than a dirty tree it
 // would have to invent an LLM message for.
-func buildAgentPlugins(opts AIAgentOptions, p ai.Provider) ([]any, *worktree.Plugin, error) {
+func buildAgentPlugins(ctx context.Context, opts AIAgentOptions, p ai.Provider) ([]any, *worktree.Plugin, error) {
 	if opts.Commit && !opts.Worktree {
 		return nil, nil, fmt.Errorf("--commit requires --worktree (captain commits the isolated branch, not your working tree)")
 	}
@@ -130,14 +131,24 @@ func buildAgentPlugins(opts AIAgentOptions, p ai.Provider) ([]any, *worktree.Plu
 		hooks = append(hooks, wt)
 	}
 
-	for _, cmd := range opts.Verify {
-		cmd = strings.TrimSpace(cmd)
-		if cmd == "" {
-			continue
-		}
-		hooks = append(hooks, verify.New("verify:"+cmd, &verify.CmdVerifier{Cmd: "sh", Args: []string{"-c", cmd}}))
+	// --verify is a workflow declaration like any other, so it is dispatched
+	// through the verifier registry rather than rebuilt here. One place decides
+	// how a declared check becomes a hook — including the process bounds and the
+	// confinement seam a hand-built CmdVerifier silently left unset — and a kind
+	// the host has claimed is honoured instead of being bypassed.
+	wf := &api.Workflow{Verify: &api.Verify{Commands: opts.Verify}}
+	if err := wf.Validate(); err != nil {
+		return nil, nil, err
 	}
+	checks, err := verify.HooksFor(ctx, wf, verify.Options{Provider: p})
+	if err != nil {
+		return nil, nil, err
+	}
+	hooks = append(hooks, checks...)
 
+	// The judge is not a registry kind: --judge carries a rubric typed on the
+	// command line, while api.Verify.Prompts names .prompt files on disk. There
+	// is no declaration to dispatch, so this hook is built here on purpose.
 	if opts.Judge != "" {
 		judge := &verify.LLMJudgeVerifier{
 			Provider: p,
@@ -175,19 +186,28 @@ func RunAIAgent(opts AIAgentOptions) (any, error) {
 		return nil, err
 	}
 
-	p, err := ai.NewProvider(cfg)
-	if err != nil {
-		return nil, err
+	timeout, _ := time.ParseDuration(opts.Timeout)
+	if timeout <= 0 {
+		timeout = 600 * time.Second
 	}
-	if p, err = middleware.Wrap(p, middleware.WithLogging()); err != nil {
-		return nil, err
-	}
-	sp, ok := p.(ai.StreamingProvider)
-	if !ok {
-		return nil, fmt.Errorf("runtime %s does not support the streaming agent loop", api.RuntimeOf(cfg.Model.Provider, cfg.Model.Mode))
-	}
+	// The run's context is created before the hooks are: a factory may need it
+	// (loading a judge template, reaching a host's fixture runner), and a hook
+	// built outside the run's deadline is a hook the deadline never bounds.
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 
-	hooks, _, err := buildAgentPlugins(opts, p)
+	// --judge is the one hook that needs a model of its own before the run starts,
+	// because it is built here rather than from the workflow promptrun assembles.
+	// Nothing else does, so nothing else pays for a provider: promptrun builds the
+	// run's, with the whole middleware stack behind it.
+	var judgeProvider ai.Provider
+	if opts.Judge != "" {
+		if judgeProvider, err = middleware.NewProvider(cfg); err != nil {
+			return nil, err
+		}
+		defer closeProvider(judgeProvider)
+	}
+	hooks, _, err := buildAgentPlugins(ctx, opts, judgeProvider)
 	if err != nil {
 		return nil, err
 	}
@@ -196,39 +216,34 @@ func RunAIAgent(opts AIAgentOptions) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	baseReq.SetCwd(cwd)
 
 	renderer := NewEventRenderer(os.Stderr)
-	runner := &agent.Runner[string]{
-		Provider:      sp,
+	start := time.Now()
+	// promptrun.Run is the one definition of a run: the tool-policy refusal before
+	// the first model call, the setup plugin, the middleware provider and the
+	// deadline all arrive with it. `captain ai agent` used to assemble those by
+	// hand and had none of them.
+	result, runErr := promptrun.Run(ctx, promptrun.Input{
 		Request:       baseReq,
+		Config:        cfg,
 		Hooks:         hooks,
 		MaxIterations: opts.MaxIterations,
-		Repo:          cwd,
-		Cwd:           cwd,
 		Scope:         scope,
+		Repo:          cwd,
+		Timeout:       timeout,
 		OnEvent:       renderer.Handle,
-	}
-
-	timeout, _ := time.ParseDuration(opts.Timeout)
-	if timeout <= 0 {
-		timeout = 600 * time.Second
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
-	start := time.Now()
-	result, runErr := runner.Run(ctx)
+	})
 	renderErr := renderer.Flush()
-	ws := result.Response.Workspace
 
 	res := AIAgentResult{
 		Duration: time.Since(start).Round(time.Millisecond).String(),
-		Passed:   verifyPassed(result.Verdicts),
-		Model:    firstNonEmpty(result.Response.Model, sp.GetModel(), cfg.Model.Name),
-		Provider: firstRuntime(result.Response.Runtime, sp.GetRuntime(), api.RuntimeOf(cfg.Model.Provider, cfg.Model.Mode)).Provider,
-		Mode:     string(firstRuntime(result.Response.Runtime, sp.GetRuntime(), api.RuntimeOf(cfg.Model.Provider, cfg.Model.Mode)).Mode),
+		Passed:   result.Passed,
+		Model:    firstNonEmpty(result.Model, cfg.Model.Name),
 	}
-	if ws != nil {
+	runtime := firstRuntime(responseRuntime(result.Response), api.RuntimeOf(cfg.Model.Provider, cfg.Model.Mode))
+	res.Provider, res.Mode = runtime.Provider, string(runtime.Mode)
+	if ws := responseWorkspace(result.Response); ws != nil {
 		res.ChangedFiles = ws.Changed
 		res.SessionID = ws.SessionID
 		res.Branch = ws.Branch
@@ -245,4 +260,22 @@ func RunAIAgent(opts AIAgentOptions) (any, error) {
 		return res, errors.Join(runErr, renderErr)
 	}
 	return res, nil
+}
+
+// responseRuntime / responseWorkspace read a run's response, which is nil when
+// the run failed before the runner ever built one (an unenforceable tool policy,
+// a refused attachment). Reading through it unguarded panicked on exactly the
+// runs whose error the caller most needs to see.
+func responseRuntime(resp *ai.Response) api.Runtime {
+	if resp == nil {
+		return api.Runtime{}
+	}
+	return resp.Runtime
+}
+
+func responseWorkspace(resp *ai.Response) *api.Workspace {
+	if resp == nil {
+		return nil
+	}
+	return resp.Workspace
 }

@@ -16,7 +16,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/history"
@@ -29,183 +28,9 @@ import (
 // fallbackLog is used when ctx carries no task-scoped logger (ai.ContextWithLogger).
 var fallbackLog = logger.GetLogger("agent")
 
-// Scope controls how much hooks act on. ScopeChanged restricts them to the files
-// the agent edited; ScopeAll lets each act on the whole tree.
-type Scope string
-
-const (
-	ScopeChanged Scope = "changed"
-	ScopeAll     Scope = "all"
-)
-
-// AllScopes lists every scope in canonical order.
-func AllScopes() []Scope { return []Scope{ScopeAll, ScopeChanged} }
-
-// Valid reports whether s is one of the supported scopes.
-func (s Scope) Valid() bool {
-	for _, x := range AllScopes() {
-		if s == x {
-			return true
-		}
-	}
-	return false
-}
-
-// ScopeList renders the supported scopes as a comma-separated string.
-func ScopeList() string {
-	parts := make([]string, len(AllScopes()))
-	for i, s := range AllScopes() {
-		parts[i] = string(s)
-	}
-	return strings.Join(parts, ", ")
-}
-
-// ParseScope resolves a CLI/flag value into a Scope, defaulting empty to ScopeAll.
-func ParseScope(s string) (Scope, error) {
-	switch Scope(s) {
-	case "", ScopeAll:
-		return ScopeAll, nil
-	case ScopeChanged:
-		return ScopeChanged, nil
-	default:
-		return "", fmt.Errorf("invalid --scope %q (valid: %s)", s, ScopeList())
-	}
-}
-
-// HookContext carries what hooks read/mutate: the request for this iteration and
-// the accumulating response, whose Workspace holds the run's working-dir state.
-type HookContext struct {
-	context.Context
-	// Request is the CURRENT request: PreRun hooks rewrite it (setup replaces the
-	// checkout it performed with where that landed), and the runner replaces it
-	// wholesale with each verify-driven retry.
-	Request *ai.Request
-	// Original is the request the run started from, before any hook rewrote it.
-	// It is the only place a Post hook can read what the run was *asked* to do —
-	// which repo to check out, which branch to isolate on — while Request says
-	// where that ended up. Cloned once by Run, so mutating it affects nothing.
-	Original  ai.Request
-	Response  *ai.Response
-	Iteration int
-	Scope     Scope
-
-	// Hooks is the run's hook list, so a hook can detect an incompatible peer
-	// rather than silently competing with it (see EnsureSingleIsolator).
-	Hooks []any
-
-	// Phase is the boundary currently being dispatched; it is only meaningful
-	// inside a Post hook, which also receives it as an argument.
-	Phase Phase
-	// Turn is the loop iteration that just completed. Set only during PhaseTurn;
-	// nil everywhere else.
-	Turn *ai.LoopIteration
-
-	// Verified and Failed describe the run's outcome so PhaseAgent/PhaseRun
-	// hooks (e.g. the worktree merge/cleanup gate) can act on it. Runner.Run
-	// sets both right after the loop ends; they are meaningless beforehand, and
-	// in particular are not yet settled during PhaseTurn.
-	//
-	// Verified mirrors VerifyPassed(result.Verdicts) — true when the last verify
-	// verdict passed, or trivially true when no Verify hooks ran at all.
-	Verified bool
-	// Failed is true when the generate/verify run itself returned an error
-	// (a provider failure, not a failing verdict).
-	Failed bool
-
-	// emit publishes an event on the run's stream, so what a hook does between
-	// turns reaches the same renderers as what the model does during them. Set by
-	// Runner.Run; nil in a hand-built context, which Notify tolerates.
-	emit func(ai.Event)
-}
-
-// Notify reports one thing this hook did, in the run's own voice. It reaches the
-// live stream as an ai.EventSystem and is buffered on the workspace with its
-// timestamp, so a caller can persist it into the transcript once the run's
-// session id is known — a hook firing mid-turn cannot know it yet.
-//
-// Purely informational: a hook that failed returns an error, it does not Notify.
-func (hc *HookContext) Notify(format string, args ...any) {
-	text := fmt.Sprintf(format, args...)
-	hc.Workspace().AddNotice(time.Now(), string(hc.Phase), text)
-	if hc.emit != nil {
-		hc.emit(ai.Event{Kind: ai.EventSystem, Text: text})
-	}
-}
-
-// Workspace returns the run's working-dir state, allocating it if needed (so it
-// is never nil for a hook to read/mutate).
-func (hc *HookContext) Workspace() *api.Workspace {
-	if hc.Response.Workspace == nil {
-		hc.Response.Workspace = &api.Workspace{}
-	}
-	return hc.Response.Workspace
-}
-
-// WorkspaceIsolator is implemented by a hook that relocates the run into its own
-// working tree — a git worktree from Spec.Setup.Checkout, or the `wt` worktree
-// plugin. Two of them in one run create two trees and use one, so each declares
-// itself here and calls EnsureSingleIsolator before acting.
-type WorkspaceIsolator interface {
-	Name() string
-	// IsolatesWorkspace reports whether this hook will relocate the run given
-	// hc's request; a hook whose isolation is configured on the spec answers
-	// from hc.Request rather than from its own fields.
-	IsolatesWorkspace(*HookContext) bool
-}
-
-// EnsureSingleIsolator fails when more than one registered hook would relocate
-// the run into its own working tree. Silently creating two and working in one is
-// the failure this exists to prevent: the run edits a tree nobody merges.
-func (hc *HookContext) EnsureSingleIsolator() error {
-	var names []string
-	for _, h := range hc.Hooks {
-		if iso, ok := h.(WorkspaceIsolator); ok && iso.IsolatesWorkspace(hc) {
-			names = append(names, iso.Name())
-		}
-	}
-	if len(names) > 1 {
-		return fmt.Errorf("agent: hooks %s each isolate the run in their own working tree; register exactly one", strings.Join(names, " and "))
-	}
-	return nil
-}
-
-// VerifyResult is a Verify hook's judgement on an iteration. When !Valid, Retry
-// (if non-nil) is the exact next request to run — the hook bakes its feedback
-// into that request's prompt. Output carries structured verify output.
-type VerifyResult struct {
-	Valid  bool
-	Retry  *ai.Request
-	Output any
-}
-
-// PreRun runs once before the loop.
-type PreRun interface {
-	Name() string
-	PreRun(*HookContext) error
-}
-
-// Verify runs after each completed iteration and votes.
-type Verify interface {
-	Name() string
-	Verify(*HookContext) (VerifyResult, error)
-}
-
-// Post runs after a lifecycle phase completes (commit, teardown, checkpointing).
-// A hook declares which phases it handles via Phases(); the runner dispatches
-// only those, and always — including on the failure path, so a hook can make
-// work durable or tear down after an error.
-type Post interface {
-	Name() string
-	Phases() []Phase
-	Post(*HookContext, Phase) error
-}
-
-// Output produces the workflow's typed final result. Optional; when absent the
-// runner leaves Result.Output at its zero value.
-type Output[T any] interface {
-	Name() string
-	Output(*HookContext) (T, error)
-}
+// HookContext and its Notify/Emit/Workspace methods live in hook_context.go;
+// Scope lives in scope.go; the hook interfaces (PreRun, Verify, Post, Output),
+// VerifyResult and WorkspaceIsolator live in hooks.go.
 
 // Runner drives a generate→verify loop composed of hooks, producing a typed
 // result T. Hooks is a heterogeneous list; each element may implement any of
@@ -236,6 +61,9 @@ type Result[T any] struct {
 // Verify hooks runs generate-only.
 func (r *Runner[T]) Run(ctx context.Context) (Result[T], error) {
 	var zero Result[T]
+	if err := r.Request.ValidateRunnable(); err != nil {
+		return zero, fmt.Errorf("agent: %w", err)
+	}
 	// The spec's budget.timeout bounds the whole run, not one model call. Only
 	// pkg/cli applied it before, so every caller driving the Runner directly
 	// (gavel's `pr status --ai-fix`) ran unbounded and a wedged turn could hang
@@ -286,7 +114,11 @@ func (r *Runner[T]) Run(ctx context.Context) (Result[T], error) {
 		}
 	}
 
-	verifyOnly := strings.TrimSpace(r.Request.Prompt.User) == ""
+	// One rule, shared with every caller: api.Spec.IsVerifyOnly. Deciding here
+	// with a second test of its own ("is the user prompt blank?") is how a request
+	// carrying attachments or a message history got a provider built for it and
+	// then never generated — reporting a pass with nothing verified.
+	verifyOnly := r.Request.IsVerifyOnly()
 	var runErr error
 	if verifyOnly {
 		runErr = r.runVerifyOnce(hc, &result)
@@ -297,7 +129,7 @@ func (r *Runner[T]) Run(ctx context.Context) (Result[T], error) {
 	}
 
 	hc.Failed = runErr != nil
-	hc.Verified = verifyPassed(result.Verdicts)
+	hc.Verified = VerifyPassed(result.Verdicts)
 	// PhaseAgent closes out the loop while the working tree is still live (the
 	// last point a hook can commit an isolated worktree); PhaseRun then tears it
 	// down. Both run even when the loop failed — that is what makes a failed
@@ -416,7 +248,14 @@ func (r *Runner[T]) runLoop(ctx context.Context, hc *HookContext, result *Result
 				}
 				req = *retry
 			}
-			hc.Iteration = iter
+			// RunUntil calls BuildRequest once more after the final executed turn
+			// and only then notices it is out of iterations, so advancing the
+			// index here unconditionally left the run — and every PhaseAgent /
+			// PhaseRun hook and event after it — attributed to a turn that never
+			// ran. Name the turn only when it is really about to execute.
+			if iter < maxIter {
+				hc.Iteration = iter
+			}
 			hc.Request = &req
 			// A hook that relocated the run recorded where on the workspace;
 			// propagate it, because a verify-driven retry is built fresh and
@@ -445,17 +284,19 @@ func (r *Runner[T]) runLoop(ctx context.Context, hc *HookContext, result *Result
 	return verifyErr
 }
 
-// verifyPassed reports whether the run's last verify verdict passed, or
-// trivially true when no Verify hooks ran at all. Runner.Run uses it to set
-// HookContext.Verified for Post hooks; mirrors pkg/cli's own verifyPassed,
-// which summarizes the same Result.Verdicts for CLI output.
+// VerifyPassed reports whether the run's last verify verdict passed, or
+// trivially true when no Verify hooks ran at all. It is the single definition of
+// "did this run verify": Runner.Run sets HookContext.Verified from it, and
+// promptrun.Passed is it — a caller reading Result.Verdicts must never re-derive
+// the rule, because a second copy is free to drift into calling a failed run
+// green.
 //
 // Reading only the last verdict is sound because verify() stops a round at
 // its first failure: within any round a failure is that round's final
 // verdict, so the last entry of the accumulated list is always the final
 // round's outcome. Earlier invalid entries are the history of rounds whose
 // feedback drove a retry, not the run's result.
-func verifyPassed(verdicts []VerifyResult) bool {
+func VerifyPassed(verdicts []VerifyResult) bool {
 	if len(verdicts) == 0 {
 		return true
 	}
@@ -465,7 +306,7 @@ func verifyPassed(verdicts []VerifyResult) bool {
 // verify runs the Verify hooks in declaration order and stops at the first
 // failure (issue #40 R5.1). Stopping is not just economy — a cheap failing
 // gate short-circuits the expensive judges behind it — it is what keeps
-// verifyPassed's last-verdict read correct: continuing past a failure lets a
+// VerifyPassed's last-verdict read correct: continuing past a failure lets a
 // later passing hook become the round's final verdict and mask the failure.
 // retry is the failing hook's proposed next request.
 func (r *Runner[T]) verify(hc *HookContext) (verdicts []VerifyResult, retry *ai.Request, allValid bool, err error) {

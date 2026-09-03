@@ -8,7 +8,7 @@ It provides tools to:
 - summarize tool usage, paths, binaries, and API cost
 - list files changed by a session
 - install Claude Code hooks
-- enforce a session-specific **Definition of Done** gate
+- run a workflow's **verification** checks — commands, LLM judges, and fixtures — as a definition of done
 - test and use AI providers from the command line
 - run iterative AI agents with verifiers, worktrees, and commits
 - generate/build/run containerized Claude Code sandboxes
@@ -86,21 +86,18 @@ It analyzes:
 Captain can install hook commands into Claude settings for:
 
 - **PreToolUse bash scanning** via `hook bash-check`
-- **Stop hook gating** via `hook dod install`
 
 The bash-check hook scans bash commands and can deny unsafe or disallowed commands.
 
-### 3. Definition of Done (DoD)
+### 3. Verification
 
-Captain supports a per-session Definition of Done workflow:
+`captain verify` runs the checks an `api.Workflow` declares against a working tree and reports each one's verdict:
 
-- `dod set` — attach one or more validation commands to a Claude session
-- `dod check` — intended for Claude Stop hooks
-- `dod run` — manually execute DoD checks
-- `dod status` — show current DoD config/results
-- `dod clear` — remove the DoD gate
+- `--command` — a shell command run as a pass/fail check (repeatable)
+- `--prompt` — a `.prompt` LLM judge, judged by the run's provider (repeatable)
+- `--fixture` — a fixture document handed to the runner configured as `verify.fixtureRunner` in `~/.captain.yaml`
 
-This lets Claude continue iterating until required checks pass.
+The same checks are the generate→verify loop's definition of done: a failing verdict's output feeds the next iteration. A declared check with nothing to run it is an error, never a silent pass.
 
 ### 4. Session changes
 
@@ -138,7 +135,7 @@ Supported backends are inferred from code and dependencies, including:
 ### 7. Web UI and MCP server
 
 - `serve` — starts an HTTP API and embedded web UI for launching AI agents and opening follow-up chat sessions; supports `--dev` to proxy to the Vite dev server
-- `mcp` — exposes captain commands (history, info, cost, changes, dod, etc.) as MCP tools so Claude Code can invoke them directly
+- `mcp` — exposes captain commands (history, info, cost, changes, verify, etc.) as MCP tools so Claude Code can invoke them directly
 
 ### 8. Utility commands
 
@@ -189,7 +186,6 @@ captain/
 ├── pkg/collections/       # Generic collection utilities
 ├── pkg/container/         # Sandbox discovery, generation, build/run logic
 ├── pkg/container/base/    # Embedded agent base image (Dockerfile, deps.yaml, entrypoint.sh)
-├── pkg/dod/               # Definition of Done persistence and execution
 ├── pkg/git/               # Git worktree helpers
 ├── pkg/sandbox/           # Token/preset/sandbox helpers
 ├── Makefile               # Thin wrapper around Taskfile
@@ -210,7 +206,7 @@ captain ai
 captain whoami
 captain configure
 captain serve
-captain dod
+captain verify
 captain hook
 captain projects
 captain container
@@ -299,21 +295,23 @@ captain hook bash-check install
 captain hook bash-check install --user
 ```
 
-Install the DoD stop hook and related skill files:
+### Verification
 
 ```bash
-captain hook dod install
-captain hook dod install --user
+captain verify --command "go test ./..." --command "golangci-lint run"
+captain verify --fixture acceptance.md --cwd /path/to/repo
+captain verify --prompt review-diff.prompt --model claude-sonnet-4-6
 ```
 
-### Definition of Done
+Running fixtures needs a runner, since captain declares fixtures but does not execute them:
 
-```bash
-captain dod set --session-id <session-id> "go test ./..." "golangci-lint run"
-captain dod status --session-id <session-id>
-captain dod run --session-id <session-id>
-captain dod clear --session-id <session-id>
+```yaml
+# ~/.captain.yaml
+verify:
+  fixtureRunner: [gavel, fixture, verify]
 ```
+
+The runner is handed the fixture document on stdin, plus `--cwd <dir>` and one `--changed <path>` per changed file, and answers on stdout with NDJSON: any number of `{"progress": <report>}` lines, then exactly one `{"report": <report>}`.
 
 ### AI utilities
 
@@ -536,7 +534,7 @@ Starts an HTTP API and embedded web UI. The UI launches `captain ai agent` opera
 captain mcp
 ```
 
-Exposes captain commands as MCP tools. Auto-exposes all commands except `sandbox`, `projects`, `container`, `hook`, `ai`, `dod set/clear/run`.
+Exposes captain commands as MCP tools. Auto-exposes all commands except `sandbox`, `projects`, `container`, `hook`, and `ai`.
 
 ### Utility commands
 
@@ -803,7 +801,6 @@ If you want to use hooks:
 
 ```bash
 .bin/captain hook bash-check install --user
-.bin/captain hook dod install --user
 .bin/captain hook monitor install
 # Opt in to Claude CLI estimate capture:
 .bin/captain hook monitor install --capture-cost

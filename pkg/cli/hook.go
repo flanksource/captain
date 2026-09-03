@@ -4,12 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/flanksource/captain/pkg/bash"
 	"github.com/flanksource/captain/pkg/claude"
-	"github.com/flanksource/captain/pkg/dod"
 )
 
 type HookInstallOptions struct {
@@ -75,40 +73,11 @@ func RunBashCheckInstall(opts HookInstallOptions) (any, error) {
 	}
 
 	hookCommand := fmt.Sprintf("%s hook bash-check", captainPath)
-	result, err := installHook(target, "PreToolUse", "Bash", hookCommand, "dod check", opts.Timeout)
+	result, err := installHook(target, "PreToolUse", "Bash", hookCommand, "hook bash-check", opts.Timeout)
 	if err != nil {
 		return nil, err
 	}
 	return result, nil
-}
-
-func RunDodInstall(opts HookInstallOptions) (any, error) {
-	captainPath, err := os.Executable()
-	if err != nil {
-		captainPath = "captain"
-	}
-
-	target, err := resolveSettingsTarget(opts.User)
-	if err != nil {
-		return nil, err
-	}
-
-	var results []string
-
-	hookCommand := fmt.Sprintf("%s dod check", captainPath)
-	hookResult, err := installHook(target, "Stop", "", hookCommand, "dod check", opts.Timeout)
-	if err != nil {
-		return nil, err
-	}
-	results = append(results, hookResult)
-
-	skillResult, err := installSkills()
-	if err != nil {
-		return nil, err
-	}
-	results = append(results, skillResult)
-
-	return strings.Join(results, "\n"), nil
 }
 
 func resolveSettingsTarget(userGlobal bool) (string, error) {
@@ -195,30 +164,6 @@ findExisting:
 		return "", fmt.Errorf("writing %s: %w", target, err)
 	}
 	return fmt.Sprintf("%s hook: %s in %s (%s)", eventType, action, target, hookCommand), nil
-}
-
-func installSkills() (string, error) {
-	skillsDir := filepath.Join(claude.GetClaudeHome(), "skills", "captain-dod")
-	if err := os.MkdirAll(skillsDir, 0755); err != nil {
-		return "", fmt.Errorf("creating skills dir: %w", err)
-	}
-
-	skills := map[string]string{
-		"dod.md":        dod.SkillDod,
-		"dod-clear.md":  dod.SkillDodClear,
-		"dod-status.md": dod.SkillDodStatus,
-		"dod-run.md":    dod.SkillDodRun,
-	}
-
-	installed := 0
-	for name, content := range skills {
-		path := filepath.Join(skillsDir, name)
-		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-			return "", fmt.Errorf("writing skill %s: %w", name, err)
-		}
-		installed++
-	}
-	return fmt.Sprintf("Skills: installed %d skill files to %s", installed, skillsDir), nil
 }
 
 func asSlice(v any) []any {

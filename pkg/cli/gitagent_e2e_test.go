@@ -200,6 +200,35 @@ func (h *host) configBytes() string {
 	return string(data)
 }
 
+// configureDefaultModel writes ai.defaultModel into this host's config, which a
+// dispatch now requires: captain no longer falls back to a compiled-in model, so
+// a host with no configured model refuses to run rather than silently picking
+// one. These tests are about git-agent dispatch mechanics, so they configure the
+// model the way `captain configure` would and get on with it.
+func (h *host) configureDefaultModel(t *testing.T, selector string) {
+	t.Helper()
+	path := filepath.Join(h.home, ".captain.yaml")
+	cfg := map[string]any{}
+	if data, err := os.ReadFile(path); err == nil {
+		if err := yaml.Unmarshal(data, &cfg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	aiCfg, _ := cfg["ai"].(map[string]any)
+	if aiCfg == nil {
+		aiCfg = map[string]any{}
+	}
+	aiCfg["defaultModel"] = selector
+	cfg["ai"] = aiCfg
+	out, err := yaml.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // setBackendOption edits one option under sandbox.backends.git-agent in this
 // host's config, the way an operator would.
 func (h *host) setBackendOption(t *testing.T, key, value string) {
@@ -424,6 +453,7 @@ func TestFullCycleWithAManualAgent(t *testing.T) {
 		t.Skip("builds the captain binary and runs two endpoints")
 	}
 	supervisor, agent, repo, _, _ := enrollPair(t)
+	supervisor.configureDefaultModel(t, "agent:claude-sonnet-5")
 	// Opt out of the launcher: this test drives the agent itself.
 	agent.setBackendOption(t, "agentCommand", gitagent.NoAgentCommand)
 
@@ -689,6 +719,7 @@ func TestOneEndpointRoutesTwoRepositories(t *testing.T) {
 		t.Skip("builds the captain binary and runs two endpoints")
 	}
 	supervisor, agent, repoA, _, _ := enrollPair(t)
+	supervisor.configureDefaultModel(t, "agent:claude-sonnet-5")
 	repoB := newRepo(t) // same basename, different canonical path
 	agent.setBackendOption(t, "agentCommand",
 		`echo "// completed $CAPTAIN_TASK" >> pkg/main.go `+
@@ -807,6 +838,10 @@ func TestUnconfiguredDispatchLaunchesTheDefaultAgent(t *testing.T) {
 		t.Skip("builds the captain binary and runs two endpoints")
 	}
 	supervisor, agent, repo, _, _ := enrollPair(t)
+	// "Unconfigured" here means no agentCommand — the backend must fall back to
+	// captain's own agent launcher. The MODEL is configured, because that is no
+	// longer something captain will choose on your behalf.
+	supervisor.configureDefaultModel(t, "agent:claude-sonnet-5")
 	if strings.Contains(agent.configBytes(), "agentCommand") {
 		t.Fatalf("this test requires an unconfigured backend:\n%s", agent.configBytes())
 	}

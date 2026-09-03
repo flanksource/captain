@@ -36,9 +36,18 @@ func remoteAwareTimeout(req ai.Request, cfg ai.Config, timeout time.Duration) ti
 }
 
 // renderedTimeout is remoteAwareTimeout for an already-rendered prompt, used
-// by the stream and batch paths that size their own deadline.
-func renderedTimeout(rendered PromptRenderResult) time.Duration {
-	return remoteAwareTimeout(rendered.Input, rendered.Config, runtimeTimeout(rendered.Input.Budget.Timeout))
+// by the stream and batch paths that size their own deadline. A spec that
+// declares no budget.timeout gets the CLI default; one that declares an
+// unparseable value is an error, not a run on a substituted deadline.
+func renderedTimeout(rendered PromptRenderResult) (time.Duration, error) {
+	declared, err := runtimeTimeout(rendered.Input.Budget.Timeout)
+	if err != nil {
+		return 0, err
+	}
+	if declared <= 0 {
+		declared = defaultRunTimeout
+	}
+	return remoteAwareTimeout(rendered.Input, rendered.Config, declared), nil
 }
 
 // remoteExecProviderFor returns a provider backed by the resolved sandbox's

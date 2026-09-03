@@ -82,7 +82,7 @@ func runPromptAction(ctx context.Context, id string, flags map[string]string) (P
 		if len(rendered.Runtimes) > 0 {
 			return launchAsyncBatch(ctx, id, rendered, rendered.Runtimes, chatRequested)
 		}
-		return launchAsyncRun(id, rendered, chatRequested), nil
+		return launchAsyncRun(id, rendered, chatRequested)
 	}
 	return executeSyncRun(ctx, rendered, opts)
 }
@@ -91,10 +91,13 @@ var executePromptRequestFunc = executePromptRequest
 
 // launchAsyncRun starts the background clicky task + SSE stream and returns the
 // run handle (the serve/web-UI contract).
-func launchAsyncRun(id string, rendered PromptRenderResult, chat bool) PromptRunResult {
+func launchAsyncRun(id string, rendered PromptRenderResult, chat bool) (PromptRunResult, error) {
+	timeout, err := renderedTimeout(rendered)
+	if err != nil {
+		return PromptRunResult{}, err
+	}
 	runID := uuid.NewString()
 	stream := promptRuns.create(runID)
-	timeout := renderedTimeout(rendered)
 	capabilities := chatCapabilitiesFor(rendered.Provider, rendered.Mode)
 	stream.setRun(PromptRunFrame{
 		RunID: runID, Status: "running", Chat: chat, Model: rendered.Model,
@@ -121,7 +124,7 @@ func launchAsyncRun(id string, rendered PromptRenderResult, chat bool) PromptRun
 	return PromptRunResult{
 		RunID: runID, Status: "running", Model: rendered.Model, Provider: rendered.Provider, Mode: rendered.Mode,
 		Chat: chat, Capabilities: capabilities,
-	}
+	}, nil
 }
 
 func workflowConfigured(workflow *api.Workflow) bool {
@@ -157,7 +160,11 @@ func executeSyncRunSingleDirect(ctx context.Context, t *task.Task, rendered Prom
 	if workflowConfigured(rendered.Input.Workflow) {
 		return executeSyncWorkflowRun(t, rendered, opts.NoStream, binding)
 	}
-	out, err := executePromptRequestFunc(ctx, rendered.Input, rendered.Config, renderedTimeout(rendered), opts.NoStream)
+	timeout, err := renderedTimeout(rendered)
+	if err != nil {
+		return PromptRunResult{}, err
+	}
+	out, err := executePromptRequestFunc(ctx, rendered.Input, rendered.Config, timeout, opts.NoStream)
 	if err != nil {
 		return PromptRunResult{}, err
 	}
@@ -195,9 +202,11 @@ func executeSyncWorkflowRun(t *task.Task, rendered PromptRenderResult, noStream 
 	// loop only runs under `captain serve` — deregister so embedders don't
 	// accumulate finished runs.
 	defer promptRuns.remove(runID)
-	timeout := renderedTimeout(rendered)
+	timeout, err := renderedTimeout(rendered)
+	if err != nil {
+		return PromptRunResult{}, err
+	}
 	var summary PromptRunSummary
-	var err error
 	if noStream {
 		summary, err = runPromptBufferedWorkflow(t, rendered, timeout, runID, stream, binding)
 	} else {

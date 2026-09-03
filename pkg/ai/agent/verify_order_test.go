@@ -31,7 +31,7 @@ func TestVerify_StopsAtFirstFailure(t *testing.T) {
 	require.Len(t, verdicts, 1)
 	assert.False(t, verdicts[len(verdicts)-1].Valid, "the round's last verdict must be the failure")
 	assert.NotNil(t, retry, "the failing hook's retry must be proposed")
-	assert.False(t, verifyPassed(verdicts))
+	assert.False(t, VerifyPassed(verdicts))
 }
 
 func TestVerify_AllPassingRunsEveryHook(t *testing.T) {
@@ -49,5 +49,5 @@ func TestVerify_AllPassingRunsEveryHook(t *testing.T) {
 	assert.Nil(t, retry)
 	assert.Equal(t, 3, calls)
 	assert.Len(t, verdicts, 3)
-	assert.True(t, verifyPassed(verdicts))
+	assert.True(t, VerifyPassed(verdicts))
 }

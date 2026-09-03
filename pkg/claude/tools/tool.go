@@ -241,6 +241,10 @@ func NewTool(base BaseTool) Tool {
 		return &UserTool{BaseTool: base}
 	case "System":
 		return &SystemTool{BaseTool: base}
+	case "Verified":
+		return &VerifyTool{BaseTool: base}
+	case "Verify failed":
+		return &VerifyTool{BaseTool: base, Failed: true}
 	case "Assistant":
 		return &AssistantTool{BaseTool: base}
 	case "Reasoning":

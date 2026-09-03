@@ -340,7 +340,10 @@ func (o AIPromptOptions) ToRequest() (ai.Request, error) {
 }
 
 func executePromptRequest(parent context.Context, req ai.Request, cfg ai.Config, timeout time.Duration, noStream bool) (any, error) {
-	ctx, cancel := runContext(parent, req, remoteAwareTimeout(req, cfg, timeout))
+	ctx, cancel, err := runContext(parent, req, remoteAwareTimeout(req, cfg, timeout))
+	if err != nil {
+		return nil, err
+	}
 	defer cancel()
 	if err := preparePromptAttachments(ctx, &req, cfg); err != nil {
 		return nil, err
@@ -360,19 +363,25 @@ func executePromptRequest(parent context.Context, req ai.Request, cfg ai.Config,
 }
 
 // runContext derives the timeout-bounded context for a prompt execution. A
-// non-empty req.Budget.Timeout overrides the caller-supplied timeout; a
-// non-positive timeout falls back to 120s.
-func runContext(parent context.Context, req ai.Request, timeout time.Duration) (context.Context, context.CancelFunc) {
+// parseable req.Budget.Timeout overrides the caller-supplied timeout; an
+// unparseable one is an error, not a silent substitution. A caller-supplied
+// timeout of zero falls back to the CLI default.
+func runContext(parent context.Context, req ai.Request, timeout time.Duration) (context.Context, context.CancelFunc, error) {
 	if parent == nil {
 		parent = context.Background()
 	}
-	if req.Budget.Timeout != "" {
-		timeout = runtimeTimeout(req.Budget.Timeout)
+	declared, err := runtimeTimeout(req.Budget.Timeout)
+	if err != nil {
+		return nil, nil, err
+	}
+	if declared > 0 {
+		timeout = declared
 	}
 	if timeout <= 0 {
-		timeout = 120 * time.Second
+		timeout = defaultRunTimeout
 	}
-	return context.WithTimeout(parent, timeout)
+	ctx, cancel := context.WithTimeout(parent, timeout)
+	return ctx, cancel, nil
 }
 
 // warnIfLikelyModelTypo emits a "did you mean" hint when the model name is not a

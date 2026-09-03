@@ -12,8 +12,10 @@ import (
 
 var _ = Describe("root help", func() {
 	// commonsMarker is a property only the commons help block documents, so its
-	// presence distinguishes the appended block from cobra's own output.
-	const commonsMarker = "http.har.maxBodySize"
+	// presence distinguishes the appended block from cobra's own output. It is
+	// a knob that exists in every commons release captain builds against, not
+	// one whose name is still moving (the body-size cap was renamed after v1.57.0).
+	const commonsMarker = "http.har.level"
 
 	newRoot := func() (*cobra.Command, *cobra.Command, *bytes.Buffer) {
 		out := &bytes.Buffer{}

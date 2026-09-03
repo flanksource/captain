@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/claude/tools"
 	"github.com/flanksource/clicky"
 	clickyapi "github.com/flanksource/clicky/api"
@@ -172,6 +173,12 @@ func partTool(m Message, p Part, agent *Agent) tools.Tool {
 		return newPrettyTool("File", map[string]any{
 			"filename": p.Filename, "url": p.URL, "mediaType": p.MediaType,
 		}, m.Provenance, agent)
+	case PartVerify:
+		input := verifyPartInput(p)
+		if input == nil {
+			return nil
+		}
+		return newPrettyTool("Verify", input, m.Provenance, agent)
 	default:
 		if strings.HasPrefix(p.Type, "tool-") {
 			name := strings.TrimPrefix(p.Type, "tool-")
@@ -188,6 +195,34 @@ func partTool(m Message, p Part, agent *Agent) tools.Tool {
 	}
 }
 
+// verifyPartInput renders a stored verdict's typed report as the fields a
+// transcript row shows: what was checked, how it ended, and the tally.
+//
+// Without this case a data-verify part fell through to the default branch, which
+// renders an unknown part type from its Text — and a verdict's structure lives
+// in Data, not Text. Every stored verdict therefore printed one blank row. A
+// part with no data at all still prints nothing, which is the row this removes.
+func verifyPartInput(p Part) map[string]any {
+	if len(p.Data) == 0 {
+		return nil
+	}
+	var report api.VerifyReport
+	if err := json.Unmarshal(p.Data, &report); err != nil {
+		return map[string]any{"verify": compactWhitespace(string(p.Data))}
+	}
+	input := map[string]any{"name": report.Name, "state": string(report.State)}
+	if report.Reason != "" {
+		input["reason"] = report.Reason
+	}
+	if s := report.Summary; s.Total > 0 {
+		input["tests"] = fmt.Sprintf("%d passed, %d failed of %d", s.Passed, s.Failed, s.Total)
+	}
+	if report.Iteration > 0 {
+		input["iteration"] = report.Iteration
+	}
+	return cleanToolInput(input)
+}
+
 func prettyRole(role string) string {
 	switch strings.ToLower(strings.TrimSpace(role)) {
 	case "user":
@@ -196,6 +231,10 @@ func prettyRole(role string) string {
 		return "Assistant"
 	case "system":
 		return "System"
+	case RoleVerified:
+		return "Verified"
+	case RoleVerifyFailed:
+		return "Verify failed"
 	default:
 		if role == "" {
 			return "Message"

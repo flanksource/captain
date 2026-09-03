@@ -18,6 +18,8 @@ const runSubBuffer = 64
 // runStream is the in-process pub/sub buffer for one prompt run's session.Message
 // frames. Every frame is buffered for replay to late/reconnecting subscribers
 // and fanned out to current subscribers.
+// VerifyFrame, setVerify and cloneVerify live in prompt_run_stream_verify.go.
+
 type runStream struct {
 	mu            sync.Mutex
 	entries       []session.Message
@@ -25,6 +27,7 @@ type runStream struct {
 	eventSubs     map[chan runStreamEvent]struct{}
 	run           PromptRunFrame
 	chatState     *ChatStateFrame
+	verify        *VerifyFrame
 	cancel        context.CancelFunc
 	stopRequested bool
 	done          bool
@@ -205,17 +208,22 @@ func (s *runStream) subscribe() (replay []session.Message, ch chan session.Messa
 	return replay, ch, false, nil, ""
 }
 
-func (s *runStream) subscribeEvents() (PromptRunFrame, []session.Message, *ChatStateFrame, chan runStreamEvent, bool, *PromptRunSummary, string) {
+func (s *runStream) subscribeEvents() (promptRunSnapshotBody, chan runStreamEvent) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	replay := append([]session.Message(nil), s.entries...)
-	state := cloneChatState(s.chatState)
+	snapshot := promptRunSnapshotBody{
+		Run:     s.run,
+		Entries: append([]session.Message(nil), s.entries...),
+		State:   cloneChatState(s.chatState),
+		Verify:  cloneVerify(s.verify),
+	}
 	if s.done {
-		return s.run, replay, state, nil, true, s.summary, s.errMsg
+		snapshot.Done, snapshot.Summary, snapshot.Error = true, s.summary, s.errMsg
+		return snapshot, nil
 	}
 	ch := make(chan runStreamEvent, runSubBuffer)
 	s.eventSubs[ch] = struct{}{}
-	return s.run, replay, state, ch, false, nil, ""
+	return snapshot, ch
 }
 
 func (s *runStream) unsubscribeEvents(ch chan runStreamEvent) {
@@ -299,10 +307,15 @@ func (b *runBroker) prune(maxAge time.Duration) {
 	}
 }
 
+// promptRunSnapshotBody is everything a subscriber needs to render the run as
+// it stands at the moment it connects, before a single live event arrives. It
+// is both what subscribeEvents hands a new SSE subscriber and the JSON body of
+// the snapshot endpoint, so the two can never describe different runs.
 type promptRunSnapshotBody struct {
 	Run     PromptRunFrame    `json:"run"`
 	Entries []session.Message `json:"entries"`
 	State   *ChatStateFrame   `json:"state,omitempty"`
+	Verify  *VerifyFrame      `json:"verify,omitempty"`
 	Done    bool              `json:"done"`
 	Summary *PromptRunSummary `json:"summary,omitempty"`
 	Error   string            `json:"error,omitempty"`
@@ -311,6 +324,7 @@ type promptRunSnapshotBody struct {
 // handlePromptRunStream streams a run's session.Message frames as SSE:
 //
 //	event: entry  data: <session.Message>   (one per frame; replayed on connect)
+//	event: verify data: <VerifyFrame>        (latest verification state; sent on connect)
 //	event: done   data: <PromptRunSummary>   (terminal, success)
 //	event: error  data: <PromptRunSummary>   (terminal, failure)
 func handlePromptRunStream(b *runBroker) http.HandlerFunc {
@@ -327,17 +341,20 @@ func handlePromptRunStream(b *runBroker) http.HandlerFunc {
 		}
 		setSSEHeaders(w)
 
-		run, replay, state, ch, done, summary, errMsg := stream.subscribeEvents()
+		snapshot, ch := stream.subscribeEvents()
 		defer stream.unsubscribeEvents(ch)
-		writeSSE(w, "run", run)
-		for _, e := range replay {
+		writeSSE(w, "run", snapshot.Run)
+		for _, e := range snapshot.Entries {
 			writeSSE(w, "entry", e)
 		}
-		if state != nil {
-			writeSSE(w, "state", state)
+		if snapshot.State != nil {
+			writeSSE(w, "state", snapshot.State)
 		}
-		if done {
-			writeTerminal(w, summary, errMsg)
+		if snapshot.Verify != nil {
+			writeSSE(w, "verify", snapshot.Verify)
+		}
+		if snapshot.Done {
+			writeTerminal(w, snapshot.Summary, snapshot.Error)
 			flusher.Flush()
 			return
 		}
@@ -376,10 +393,10 @@ func handlePromptRunSnapshot(b *runBroker) http.HandlerFunc {
 			http.Error(w, "unknown run", http.StatusNotFound)
 			return
 		}
-		run, entries, state, ch, done, summary, errMsg := stream.subscribeEvents()
+		snapshot, ch := stream.subscribeEvents()
 		stream.unsubscribeEvents(ch)
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(promptRunSnapshotBody{Run: run, Entries: entries, State: state, Done: done, Summary: summary, Error: errMsg})
+		_ = json.NewEncoder(w).Encode(snapshot)
 	}
 }
 
