@@ -70,7 +70,7 @@ func RunVerify(ctx context.Context, opts VerifyOptions) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	provider, err := opts.judgeProvider()
+	provider, model, err := opts.judgeProvider()
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +78,10 @@ func RunVerify(ctx context.Context, opts VerifyOptions) (any, error) {
 		defer closeProvider(provider)
 	}
 
-	hooks, err := verify.HooksFor(ctx, wf, verify.Options{Provider: provider, Timeout: timeout})
+	// The spec this verification runs under, so a verifier that grades with an
+	// agent of its own inherits the model resolved here instead of choosing one.
+	spec := &api.Spec{Model: model, Workflow: wf}
+	hooks, err := verify.HooksFor(ctx, wf, verify.Options{Provider: provider, Timeout: timeout, RunSpec: spec})
 	if err != nil {
 		return nil, err
 	}
@@ -151,23 +154,29 @@ func (o VerifyOptions) workflow() (*api.Workflow, error) {
 
 // judgeProvider builds the provider the LLM-judge prompts execute on, and only
 // then: a verification made of commands and fixtures needs no model, and
-// constructing one would demand credentials the run does not use.
-func (o VerifyOptions) judgeProvider() (ai.Provider, error) {
+// constructing one would demand credentials the run does not use. It returns the
+// resolved model alongside, because that is what the run's spec declares — a
+// zero model when nothing here needs one.
+func (o VerifyOptions) judgeProvider() (ai.Provider, api.Model, error) {
 	if len(o.Prompts) == 0 {
-		return nil, nil
+		return nil, api.Model{}, nil
 	}
 	cfg, err := o.ToConfig()
 	if err != nil {
-		return nil, err
+		return nil, api.Model{}, err
 	}
 	if cfg.Model.Name == "" {
-		return nil, fmt.Errorf("--prompt needs a model to judge with: pass --model or run 'captain configure'")
+		return nil, api.Model{}, fmt.Errorf("--prompt needs a model to judge with: pass --model or run 'captain configure'")
 	}
 	provider, err := ai.NewProvider(cfg)
 	if err != nil {
-		return nil, err
+		return nil, api.Model{}, err
 	}
-	return middleware.Wrap(provider, middleware.WithLogging())
+	wrapped, err := middleware.Wrap(provider, middleware.WithLogging())
+	if err != nil {
+		return nil, api.Model{}, err
+	}
+	return wrapped, cfg.Model, nil
 }
 
 func verifyTimeout(value string) (time.Duration, error) {
