@@ -6,7 +6,7 @@ import "github.com/flanksource/captain/pkg/api"
 // per declared policy, in declaration order. Returns nil when the workflow
 // commits nothing, which is the default: captain never commits unless asked to.
 //
-// Sibling of verify.HooksForWorkflow, and returns []any for the same reason —
+// Sibling of verify.HooksFor, and returns []any for the same reason —
 // the runner's hook list is heterogeneous. Register these ahead of the worktree
 // plugin so a run-phase commit is cut while the worktree is still live, and
 // therefore has something for the merge to take.

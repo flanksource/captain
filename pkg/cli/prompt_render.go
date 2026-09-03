@@ -196,18 +196,32 @@ func finalizeRenderResult(record promptRecord, content string, req ai.Request, c
 	}, nil
 }
 
+// renderValidationError is the render-time verdict `captain prompt run` refuses
+// on. Runnability is asked with api.Spec.ValidateRunnable — the same rule
+// promptrun.Run enforces — so a spec that the run seam will reject is rejected
+// here, before a provider or a stream exists, with the same message. Render used
+// to ask a looser question ("prompt text or attachment"), so an attachments-only
+// or messages-only prompt passed here and failed later.
 func renderValidationError(req ai.Request, cfg ai.Config, runtimes []api.Model) string {
-	switch {
-	case req.Prompt.User == "" && len(req.Prompt.Attachments) == 0 && !req.IsVerifyOnly():
-		return "prompt text or attachment required"
-	case cfg.Model.Name == "" && len(runtimes) == 0:
-		return "no model: set prompt frontmatter, pass a model override, or run 'captain configure'"
-	default:
-		if err := req.Validate(); err != nil {
-			return err.Error()
-		}
-		return ""
+	if err := req.ValidateRunnable(); err != nil {
+		return err.Error()
 	}
+	if cfg.Model.Name == "" && len(runtimes) == 0 {
+		return "no model: set prompt frontmatter, pass a model override, or run 'captain configure'"
+	}
+	// A prompt that declares its own runtimes needs no singular base model:
+	// each runtime names one and the run fans out across them. Validate
+	// against the first so the rest of the request is still checked. This
+	// used to pass only because the base name was back-filled from a
+	// compiled-in default table, which made an unconfigured captain look
+	// configured.
+	if req.Name == "" && len(runtimes) > 0 {
+		req.Model = runtimes[0]
+	}
+	if err := req.Validate(); err != nil {
+		return err.Error()
+	}
+	return ""
 }
 
 func resolvePromptRuntimes(runtimes []api.Model, base api.Model) ([]api.Model, error) {

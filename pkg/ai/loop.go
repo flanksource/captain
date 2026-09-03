@@ -3,6 +3,7 @@ package ai
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 // LoopOptions configures a RunUntil run. The driver is provider-agnostic but
@@ -36,6 +37,12 @@ type LoopIteration struct {
 	Usage     Usage
 	Success   bool
 	Err       error
+	// StartedAt and FinishedAt bracket the provider call. A host persisting one
+	// row per turn needs both: sending neither leaves the store's own trigger to
+	// invent them from the clock at write time, which is after the whole run
+	// ended and makes every turn look instantaneous and simultaneous.
+	StartedAt  time.Time
+	FinishedAt time.Time
 }
 
 // LoopResult bundles the entire run.
@@ -95,8 +102,10 @@ func RunUntil(ctx context.Context, opts LoopOptions) (*LoopResult, error) {
 		iter := &LoopIteration{
 			Iteration: len(result.Iterations),
 			Request:   req,
+			StartedAt: time.Now(),
 		}
 		runOneIteration(ctx, opts, req, iter)
+		iter.FinishedAt = time.Now()
 		result.Iterations = append(result.Iterations, iter)
 		result.TotalCost += iter.CostUSD
 

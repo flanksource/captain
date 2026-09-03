@@ -363,6 +363,82 @@ func TestRenderPromptPreservesSandboxMetadata(t *testing.T) {
 	}
 }
 
+// TestRenderPromptRunnability pins render-time agreement with
+// api.Spec.ValidateRunnable, which promptrun.Run enforces. Render used to accept
+// an attachments-only prompt ("prompt text or attachment required" fired only
+// when both were absent), so `captain prompt run` built a provider and opened a
+// stream before the run seam rejected the very same spec — the failure arrived
+// after the expensive part, with a different message.
+func TestRenderPromptRunnability(t *testing.T) {
+	notRunnable := api.Spec{}.ValidateRunnable().Error()
+
+	tests := []struct {
+		name        string
+		frontmatter string
+		body        string
+		want        string
+	}{
+		{
+			name:        "attachments without a prompt body or verify are not a run",
+			frontmatter: "prompt:\n  attachments:\n    - path: diagram.png\n",
+			want:        notRunnable,
+		},
+		{
+			// api.Spec.IsVerifyOnly requires no attachments: attachments are
+			// input to a generation, so a spec carrying them but no instruction
+			// is under-specified even with a verify declared. Render must give
+			// the same answer promptrun.Run does, not a friendlier one.
+			name:        "attachments plus workflow.verify are still not a run",
+			frontmatter: "prompt:\n  attachments:\n    - path: diagram.png\n" + verifyFrontmatter,
+			want:        notRunnable,
+		},
+		{
+			name: "a prompt body is runnable on its own",
+			body: "Summarize the diagram\n",
+			want: "",
+		},
+		{
+			name:        "an empty prompt with workflow.verify is verify-only",
+			frontmatter: verifyFrontmatter,
+			want:        "",
+		},
+		{
+			name: "an empty prompt with neither is not a run",
+			want: notRunnable,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			isolateCaptainConfig(t)
+			dir := t.TempDir()
+			t.Chdir(t.TempDir())
+			ctx := ContextWithPromptDirs(context.Background(), []string{dir})
+			created, err := createPrompt(ctx, map[string]any{
+				"name": "Runnable",
+				"content": "---\nname: Runnable\nmodel: claude-sonnet-4-6\n" + tt.frontmatter +
+					"---\n{{role \"user\"}}\n" + tt.body,
+			})
+			if err != nil {
+				t.Fatalf("createPrompt() err = %v", err)
+			}
+
+			rendered, err := renderPrompt(ctx, created.ID, PromptRenderRequest{})
+			if err != nil {
+				t.Fatalf("renderPrompt() err = %v", err)
+			}
+			if rendered.ValidationError != tt.want {
+				t.Fatalf("validation error = %q, want %q", rendered.ValidationError, tt.want)
+			}
+			if tt.want == "" && tt.body == "" && !rendered.Input.IsVerifyOnly() {
+				t.Fatalf("spec %+v is not verify-only; render accepted a body-less prompt for another reason", rendered.Input.Prompt)
+			}
+		})
+	}
+}
+
+const verifyFrontmatter = "workflow:\n  verify:\n    commands:\n      - \"true\"\n"
+
 func TestApplyPromptDefaultsSelectorEffortWins(t *testing.T) {
 	isolateCaptainConfig(t)
 	req := ai.Request{Model: api.Model{Effort: api.EffortLow}}

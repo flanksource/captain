@@ -57,13 +57,17 @@ var _ = Describe("attachment flags", func() {
 		}))
 	})
 
-	It("renders an attachment-only canonical prompt", func() {
+	// Attachments plumb through the render, but they are not an instruction:
+	// api.Spec.ValidateRunnable (which promptrun.Run enforces) refuses a spec
+	// with no prompt.user and no workflow.verify, and render now gives the same
+	// answer instead of accepting the run and failing after the provider exists.
+	It("carries an attachment-only canonical prompt but reports it as not runnable", func() {
 		rendered, err := renderPromptCLI(context.Background(), "", AIPromptOptions{
 			AIRuntimeOptions: AIRuntimeOptions{AIProviderOptions: AIProviderOptions{ModelFlags: aiflags.ModelFlags{Model: "gemini-2.5-pro"}}},
 			Attach:           []string{"diagram.png"},
 		}, "", "")
 		Expect(err).NotTo(HaveOccurred())
-		Expect(rendered.ValidationError).To(BeEmpty())
+		Expect(rendered.ValidationError).To(Equal(api.Spec{}.ValidateRunnable().Error()))
 		Expect(rendered.Input.Prompt.Attachments).To(Equal([]api.AttachmentRef{{Path: "diagram.png"}}))
 	})
 
@@ -76,7 +80,7 @@ var _ = Describe("attachment flags", func() {
 		}
 		rendered, err := renderPrompt(context.Background(), "", PromptRenderRequest{Spec: &api.Spec{
 			Model:  api.Model{Name: "gemini-2.5-pro", Mode: api.ModeAPI},
-			Prompt: api.Prompt{Attachments: []api.AttachmentRef{attachment}},
+			Prompt: api.Prompt{User: "Describe this diagram", Attachments: []api.AttachmentRef{attachment}},
 		}})
 
 		Expect(err).NotTo(HaveOccurred())

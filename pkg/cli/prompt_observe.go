@@ -133,11 +133,21 @@ func observePromptAction(ctx context.Context, id string, flags map[string]string
 	}
 
 	contextWithCapture := capture.Context(observation.ContextWithRecorder(ctx, recorder))
-	runCtx, cancel := runContext(
+	flagTimeout, err := runtimeTimeout(opts.Timeout)
+	if err != nil {
+		return api.RuntimeObservation{}, fmt.Errorf("--timeout: %w", err)
+	}
+	if flagTimeout <= 0 {
+		flagTimeout = defaultRunTimeout
+	}
+	runCtx, cancel, err := runContext(
 		contextWithCapture,
 		rendered.Input,
-		remoteAwareTimeout(rendered.Input, rendered.Config, runtimeTimeout(opts.Timeout)),
+		remoteAwareTimeout(rendered.Input, rendered.Config, flagTimeout),
 	)
+	if err != nil {
+		return api.RuntimeObservation{}, err
+	}
 	defer cancel()
 
 	cfg.CanUseTool = recorder.PermissionBroker(cfg.CanUseTool)

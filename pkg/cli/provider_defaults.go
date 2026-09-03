@@ -48,6 +48,40 @@ func effectiveProviderDefaults(saved captainconfig.AIDefaults, provider *api.Mod
 	return view, nil
 }
 
+// savedProviderDefaults is effectiveProviderDefaults' run-path sibling: the same
+// opt-out degradation, but over what the user actually configured rather than
+// over registry-seeded values, and it never invents a model for an empty slot.
+//
+// The distinction is the point. effectiveProviderDefaults fills gaps from
+// Provider.DefaultMode and the DefaultModelFor table, which is right for seeding
+// `captain configure` and wrong for deciding what a run executes on — an unset
+// field must survive as unset so ResolveForRun can refuse it.
+func savedProviderDefaults(saved captainconfig.AIDefaults, provider *api.ModelProvider) (ProviderDefaultView, error) {
+	view, err := aiflags.SavedDefaults(saved, provider)
+	if err != nil {
+		return ProviderDefaultView{}, err
+	}
+	disabled := ai.Disabled()
+	mode := api.RuntimeMode(strings.TrimSpace(view.Mode))
+	if mode != "" && disabled.Runtime(provider, mode) {
+		mode = firstEnabledMode(provider, mode)
+	}
+	model := strings.TrimSpace(view.Model)
+	if model != "" && disabled.Model(provider, mode, model) {
+		model = firstEnabledModel(provider, mode)
+	}
+	effort := api.Effort(strings.TrimSpace(view.Effort))
+	if effort != api.EffortNone && disabled.Effort(effort) {
+		degraded, err := ai.ResolveModelEffort(provider, mode, model, effort)
+		if err != nil {
+			return ProviderDefaultView{}, err
+		}
+		effort = degraded
+	}
+	view.Mode, view.Model, view.Effort = string(mode), model, string(effort)
+	return view, nil
+}
+
 // firstEnabledMode replaces a disabled mode with another of the same provider
 // that is still enabled. When every one is off it returns the original so the
 // view still names what the user configured — the whoami disable card, not this
@@ -114,7 +148,10 @@ func applyCandidateDefaults(model api.Model, saved captainconfig.AIDefaults, all
 	if provider == nil {
 		return api.Model{}, fmt.Errorf("provider cannot be resolved for model %q", model.Name)
 	}
-	defaults, err := effectiveProviderDefaults(saved, provider)
+	// Saved, not effective: this is the run path. Seeding from the registry's
+	// built-in tables here is how `captain ai prompt` kept silently defaulting
+	// after the flag path stopped.
+	defaults, err := savedProviderDefaults(saved, provider)
 	if err != nil {
 		return api.Model{}, err
 	}

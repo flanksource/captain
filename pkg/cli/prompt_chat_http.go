@@ -193,7 +193,10 @@ func resumeSessionMessage(item SessionGetItem, request ChatMessageRequest) (Chat
 		User: req.Prompt.User, Input: req,
 		Config: ai.Config{Model: modelSpec, SessionID: item.ProviderSessionID},
 	}
-	run := launchAsyncRun(item.CaptainID, rendered, true)
+	run, err := launchAsyncRun(item.CaptainID, rendered, true)
+	if err != nil {
+		return ChatMessageResponse{}, err
+	}
 	if stream, ok := promptRuns.get(run.RunID); ok {
 		stream.publish(userChatMessage(messageID, req.Prompt.User))
 	}

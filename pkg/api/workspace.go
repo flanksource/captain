@@ -48,12 +48,32 @@ type Notice struct {
 	At    time.Time `json:"at" yaml:"at"`
 	Phase string    `json:"phase,omitempty" yaml:"phase,omitempty"`
 	Text  string    `json:"text" yaml:"text"`
+	// Kind is the event kind this notice was reported as, so a reader can tell a
+	// verify verdict from a commit line without matching on prose. Empty means
+	// EventSystem — the generic lifecycle narration most hooks emit.
+	Kind EventKind `json:"kind,omitempty" yaml:"kind,omitempty"`
+	// Report is the typed verdict a verify notice reports on. Text is that
+	// verdict's headline; the tree, the checklist and the counters live here, so a
+	// stored transcript carries the same document the live stream did instead of
+	// one sentence about it.
+	Report *VerifyReport `json:"report,omitempty" yaml:"report,omitempty"`
 }
 
-// AddNotice appends a notice; nil-safe convenience for hooks.
+// AddNotice appends a generic lifecycle notice; nil-safe convenience for hooks.
 func (w *Workspace) AddNotice(at time.Time, phase, text string) {
+	w.AddKindNotice(at, phase, text, EventSystem)
+}
+
+// AddKindNotice appends a notice reported under a specific event kind.
+func (w *Workspace) AddKindNotice(at time.Time, phase, text string, kind EventKind) {
+	w.AddNoticeRecord(Notice{At: at, Phase: phase, Text: text, Kind: kind})
+}
+
+// AddNoticeRecord appends a fully-formed notice; nil-safe. It is the way to
+// record one that carries a typed report alongside its prose.
+func (w *Workspace) AddNoticeRecord(n Notice) {
 	if w == nil {
 		return
 	}
-	w.Notices = append(w.Notices, Notice{At: at, Phase: phase, Text: text})
+	w.Notices = append(w.Notices, n)
 }

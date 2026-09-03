@@ -31,7 +31,7 @@ func registerDisabledHandlers(mux *http.ServeMux) {
 // CLI invocation honours the same disables the whoami page writes. Loading the
 // config is deliberately side-effect free, which is why this is explicit.
 func InstallDisabledSelections() error {
-	config, _, err := captainconfig.Load()
+	config, _, err := LoadCaptainConfigOnce()
 	if err != nil {
 		return err
 	}

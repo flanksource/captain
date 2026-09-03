@@ -414,7 +414,7 @@ func vetTree(ctx context.Context, repo string, req vetRequest) TierVerdict {
 	// was computed for any other directory would confine the wrong thing. A
 	// factory failure is fail-closed (R5.2): status error, and error rejects.
 	var wrap verify.CommandWrapFunc
-	if req.host.WrapFor != nil && len(verify.HooksForWorkflow(req.workflow)) > 0 {
+	if req.host.WrapFor != nil && verify.DeclaresExec(req.workflow) {
 		wrapped, closeWrap, err := req.host.WrapFor(ctx, dir)
 		if err != nil {
 			verdict.Findings = append(verdict.Findings, Finding{Hook: "hookset", Kind: "exec",

@@ -38,9 +38,15 @@ type Verify struct {
 	// executes.
 	Commands []string `json:"commands,omitempty" yaml:"commands,omitempty"`
 	// Fixture is a clicky-FixtureEditor markdown document (acceptance criteria /
-	// LLM-judge checklist). Captain declares and reflects it in the spec schema
-	// for the SpecRuntimeEditor, but does not execute it — only gavel runs
-	// fixtures.
+	// LLM-judge checklist). Captain does not implement a fixture engine, but it
+	// does dispatch this document: the declaration is handed to whatever claimed
+	// the `fixture` verifier — a runner the host linked in-process, or the
+	// external program named by `verify.fixtureRunner` in ~/.captain.yaml, which
+	// receives the document on stdin and answers with a report.
+	//
+	// Declaring a fixture with neither registered is an error, not a pass: a
+	// definition of done that contributes no check would let the run succeed
+	// without ever being verified.
 	Fixture string `json:"fixture,omitempty" yaml:"fixture,omitempty"`
 	// Prompts are .prompt template paths run as LLM-judge checks: each renders
 	// against the run's context and must yield {ok, reason, feedback}; a false

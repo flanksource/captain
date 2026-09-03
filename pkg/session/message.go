@@ -18,6 +18,11 @@ const (
 	PartReasoning = "reasoning"
 	PartFile      = "file"
 	PartTool      = "dynamic-tool"
+	// PartVerify carries an api.VerifyReport in Data, alongside the human-readable
+	// text part of the same verdict message. It follows the AI SDK's `data-<name>`
+	// convention for a typed payload a renderer draws itself: a viewer that knows
+	// the verification tree draws it, and one that does not still has the text.
+	PartVerify = "data-verify"
 )
 
 // Tool-part state machine values (AI SDK v6).
@@ -77,6 +82,16 @@ type Part struct {
 	Data       json.RawMessage `json:"data,omitempty"`
 	Approval   *Approval       `json:"approval,omitempty"`
 }
+
+// Roles the harness writes itself, alongside the provider's own user/assistant
+// /system. A verify verdict gets its own role rather than sharing "system" with
+// lifecycle narration, because it is the run's outcome: a reader filtering a
+// stored session for "did this pass, and why not" should select on the role
+// instead of matching on the text.
+const (
+	RoleVerified     = "verified"
+	RoleVerifyFailed = "verify_failed"
+)
 
 // Message is one message in a session, matching aichat's UIMessage plus an
 // optional provenance extension. Raw retains the original JSONL line for

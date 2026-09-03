@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/google/uuid"
 )
 
@@ -56,6 +57,10 @@ type PromptRunOverview struct {
 	PID           *int64                 `json:"pid,omitempty"`
 	DurationMS    *int64                 `json:"durationMs,omitempty"`
 	ProcessActive bool                   `json:"processActive"`
+	// LatestVerification is the newest report the run's iterations produced. The
+	// overview view projects the newest iteration's result, which is null while
+	// that iteration is still running; this carries the last actual verdict.
+	LatestVerification *api.VerifyReport `json:"latestVerification,omitempty"`
 }
 
 type PromptRunOverviewFilter struct {
@@ -160,7 +165,32 @@ func (db *DB) ListPromptRunOverviews(ctx context.Context, filter PromptRunOvervi
 		}
 		rows[i] = row
 	}
+	if err := db.attachLatestVerifications(ctx, rows); err != nil {
+		return nil, err
+	}
 	return rows, nil
+}
+
+// attachLatestVerifications resolves every listed run's newest verification in a
+// single batched query rather than one per row.
+func (db *DB) attachLatestVerifications(ctx context.Context, rows []PromptRunOverview) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	ids := make([]uuid.UUID, len(rows))
+	for i := range rows {
+		ids[i] = rows[i].ID
+	}
+	latest, err := db.latestPromptRunVerifications(ctx, ids)
+	if err != nil {
+		return err
+	}
+	for i := range rows {
+		if found, ok := latest[rows[i].ID]; ok {
+			rows[i].LatestVerification = found.Report
+		}
+	}
+	return nil
 }
 
 func promptRunOverviewFromRecord(record promptRunOverviewRecord) (PromptRunOverview, error) {

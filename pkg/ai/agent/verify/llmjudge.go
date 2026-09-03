@@ -3,9 +3,11 @@ package verify
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/prompt"
+	"github.com/flanksource/captain/pkg/api"
 )
 
 // judgeVerdict is the structured output an LLM judge returns.
@@ -40,8 +42,19 @@ func (j *LLMJudgeVerifier) Verify(ctx context.Context, cwd string, changed []str
 	if err != nil {
 		return Verdict{}, err
 	}
+	started := time.Now()
 	if _, err := j.Provider.Execute(ctx, req); err != nil {
 		return Verdict{}, err
 	}
-	return Verdict{OK: out.OK, Reason: out.Reason, Feedback: out.Feedback}, nil
+	// One leaf per judgement; the Plugin names the report after the hook
+	// ("judge:<prompt path>") since the template does not carry its path.
+	report := api.NewNodeReport(api.VerifyKindPrompt, "", api.VerifyNode{
+		// The framework is the report's own kind, not a second name for it: a
+		// renderer grouping a mixed tree by framework would otherwise show a
+		// judge's node and a judge report as two different families.
+		Name: "llm judge", Framework: api.VerifyKindPrompt, Passed: out.OK, Failed: !out.OK,
+		Message: out.Reason, Duration: time.Since(started),
+	})
+	report.Feedback = out.Feedback
+	return Verdict{OK: out.OK, Reason: out.Reason, Feedback: out.Feedback, Report: &report}, nil
 }

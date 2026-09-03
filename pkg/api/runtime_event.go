@@ -46,6 +46,25 @@ const (
 	// the requested tool; the decision itself flows back through the CanUseTool
 	// callback, not through the event stream.
 	EventPermission EventKind = "permission"
+
+	// EventVerified and EventVerifyFailed carry one verify hook's verdict on the
+	// turn that just finished — the loop's definition of done, reported as it is
+	// reached. Tool names the check, Text is the report, Duration is its wall
+	// clock, and on a failure Text carries the output the next turn will be given.
+	//
+	// They are distinct kinds rather than an EventSystem line because the verdict
+	// is the run's outcome, not a narration of it: a renderer has to colour a pass
+	// and a failure differently, a dashboard filters on them, and a transcript
+	// reader must be able to find them without matching on prose.
+	EventVerified     EventKind = "verified"
+	EventVerifyFailed EventKind = "verify_failed"
+
+	// EventVerifyProgress is one in-flight snapshot of a check that has not
+	// reached a verdict yet: a fixture run's tests as they land, rate-limited so
+	// a chatty runner does not flood the stream. Tool names the check and Raw
+	// carries the same *VerifyReport the verdict will, so a renderer redraws the
+	// tree from one shape whether the check is running or done.
+	EventVerifyProgress EventKind = "verify_progress"
 )
 
 // Event is one item in a streaming provider's output channel.
@@ -70,7 +89,12 @@ type Event struct {
 	SessionID string  // when Kind == EventSystem
 	Model     string
 	Error     string // when Kind == EventError
-	Reason    string // when Kind == EventInterrupted
+	Reason    string // when Kind == EventInterrupted or EventVerifyFailed
+
+	// Duration is how long the reported work took, when the event reports a
+	// completed unit of work rather than a fragment of one (EventVerified /
+	// EventVerifyFailed). Zero elsewhere.
+	Duration time.Duration
 
 	// StructuredData is the validated structured output (raw JSON) carried on an
 	// EventResult when the request supplied a schema; nil for text-mode runs. It

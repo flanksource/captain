@@ -3,6 +3,8 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/flanksource/captain/pkg/api"
@@ -23,6 +25,14 @@ type promptRunRecordInput struct {
 	ResultText string
 	ResultJSON map[string]any
 	Error      string
+	// State overrides the state the run row is recorded under. Empty derives it
+	// from Error, which is what a run that reached its own end needs. An
+	// interrupted run is neither succeeded nor failed — its work was cut off, not
+	// judged — so the run path stamps `cancelled` explicitly.
+	State database.PromptRunState
+	// Iterations is one row per executed loop turn (1-based), built by
+	// promptRunIterationRecords from the runner's own loop and verdicts.
+	Iterations []database.UpsertPromptRunIterationInput
 }
 
 // persistPromptRun records a captain-launched run against its session in the
@@ -64,6 +74,7 @@ func persistPromptRun(ctx context.Context, input promptRunRecordInput) {
 	if input.Binding != nil {
 		batchID = &input.Binding.BatchID
 	}
+	var runID uuid.UUID
 	err = db.Transaction(ctx, func(tx *database.DB) error {
 		run, createErr := tx.CreatePromptRun(ctx, database.CreatePromptRunInput{
 			SessionID:    session.ID,
@@ -84,9 +95,12 @@ func persistPromptRun(ctx context.Context, input promptRunRecordInput) {
 			return createErr
 		}
 		finished := database.PromptRunPhaseFinished
-		state := database.PromptRunStateSucceeded
-		if input.Error != "" {
-			state = database.PromptRunStateFailed
+		state := input.State
+		if state == "" {
+			state = database.PromptRunStateSucceeded
+			if input.Error != "" {
+				state = database.PromptRunStateFailed
+			}
 		}
 		update := database.UpdatePromptRunInput{
 			ID: run.ID, ExpectedVersion: run.Version, Phase: &finished, State: &state,
@@ -100,19 +114,42 @@ func persistPromptRun(ctx context.Context, input promptRunRecordInput) {
 		if input.Error != "" {
 			update.Error = &input.Error
 		}
-		_, updateErr := tx.UpdatePromptRun(ctx, update)
-		return updateErr
+		if _, updateErr := tx.UpdatePromptRun(ctx, update); updateErr != nil {
+			return updateErr
+		}
+		runID = run.ID
+		return nil
 	})
 	if err != nil {
 		log.Errorf("persist prompt run for session %s: %v", firstNonEmpty(input.SessionID, bindingSessionID(input.Binding)), err)
 		return
 	}
+	if err := upsertPromptRunIterations(ctx, db, runID, input.Iterations); err != nil {
+		log.Errorf("persist prompt run %s iterations for session %s: %v", input.RunID, firstNonEmpty(input.SessionID, bindingSessionID(input.Binding)), err)
+	}
 	lifecycle := database.SessionLifecycleSucceeded
-	if input.Error != "" {
+	if input.Error != "" || input.State == database.PromptRunStateCancelled {
 		lifecycle = database.SessionLifecycleFailed
 	}
 	updatePromptSessionLifecycle(ctx, session.ID, lifecycle, input.Error)
 	trackLaunchedTranscript(input, source)
+}
+
+// upsertPromptRunIterations writes the run's per-turn rows after the run row
+// has been committed, one row at a time and all of them: a turn the store
+// refuses (a report that fails its own validation) must cost exactly that row.
+// Writing them inside the run's transaction took the run itself down with a bad
+// turn, leaving no record that the run had happened at all; and stopping at the
+// first refusal hid the turns after it. Every refusal is reported.
+func upsertPromptRunIterations(ctx context.Context, db *database.DB, runID uuid.UUID, records []database.UpsertPromptRunIterationInput) error {
+	var errs []error
+	for _, record := range records {
+		record.PromptRunID = runID
+		if _, err := db.UpsertPromptRunIteration(ctx, record); err != nil {
+			errs = append(errs, fmt.Errorf("iteration %d: %w", record.Iteration, err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func bindingSessionID(binding *promptSessionBinding) string {
