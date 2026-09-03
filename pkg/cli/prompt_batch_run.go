@@ -51,12 +51,16 @@ func launchAsyncBatch(ctx context.Context, id string, rendered PromptRenderResul
 			Effort: string(run.Runtime.Effort), Chat: chat, Capabilities: capabilities,
 		}
 		handles[i] = group.Add(runtimeSelector(run.Runtime), func(_ flanksourceContext.Context, t *task.Task) (PromptRunSummary, error) {
+			timeout, err := renderedTimeout(variant)
+			if err != nil {
+				return PromptRunSummary{}, err
+			}
 			if chat {
-				chatSession := newChatSession(runID, variant, renderedTimeout(variant), stream, binding)
+				chatSession := newChatSession(runID, variant, timeout, stream, binding)
 				promptChats.register(chatSession)
 				return chatSession.run(t)
 			}
-			summary, runErr := runPromptStream(t, variant, renderedTimeout(variant), runID, stream, binding)
+			summary, runErr := runPromptStream(t, variant, timeout, runID, stream, binding)
 			if runErr != nil {
 				persistPromptRun(context.WithoutCancel(t.Context()), promptRunRecordInput{
 					Rendered: variant, RunID: runID, Binding: binding,

@@ -61,6 +61,13 @@ func newRootCommand() *cobra.Command {
 				fmt.Fprintln(os.Stderr, err)
 				os.Exit(1)
 			}
+			// The configured fixture runner claims the `fixture` verifier before
+			// any command can build verify hooks: a workflow declaring a fixture
+			// must dispatch it, never fall through to an empty hook list.
+			if err := cli.InstallFixtureVerifier(); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
 			// Bind the database context every command reads from, so an unknown
 			// --context fails before the command runs rather than at first query.
 			name, err := cli.ResolveDatabaseContextName(cmd.Context())
@@ -287,25 +294,12 @@ func newRootCommand() *cobra.Command {
 	rootCmd.AddCommand(attachmentsCmd)
 	clicky.AddNamedCommand("gc", attachmentsCmd, cli.AttachmentsGCOptions{}, cli.RunAttachmentsGC).Short = "Remove old unreferenced attachments"
 
-	dodCmd := &cobra.Command{
-		Use:   "dod",
-		Short: "Definition of Done checks",
-		Long:  "Manage Definition of Done gates that must pass before Claude Code stops. Use 'status' to check current gate state and 'check' to run the gate commands.",
-	}
-	rootCmd.AddCommand(dodCmd)
-	clicky.AddNamedCommand("set", dodCmd, cli.DodSetOptions{}, cli.RunDodSet)
-
-	dodCheckCmd := clicky.AddNamedCommand("check", dodCmd, cli.DodCheckOptions{}, cli.RunDodCheck)
-	dodCheckCmd.Short = "Run Definition of Done gate checks"
-	dodCheckCmd.Long = "Execute the configured DoD commands and report pass/fail status for each gate."
-
-	clicky.AddNamedCommand("clear", dodCmd, cli.DodClearOptions{}, cli.RunDodClear)
-
-	dodStatusCmd := clicky.AddNamedCommand("status", dodCmd, cli.DodStatusOptions{}, cli.RunDodStatus)
-	dodStatusCmd.Short = "Show current Definition of Done gate status"
-	dodStatusCmd.Long = "Display which DoD gates are configured and their last pass/fail state."
-
-	clicky.AddNamedCommand("run", dodCmd, cli.DodRunOptions{}, cli.RunDodRun)
+	// Local-only: --command is run through `sh -c` against a caller-chosen --cwd,
+	// so published as REST or MCP it would be unauthenticated remote execution.
+	verifyCmd := clicky.AddNamedCommandWithContext("verify", rootCmd, cli.VerifyOptions{}, cli.RunVerify)
+	verifyCmd.Short = "Run a workflow's verification checks and report the verdict"
+	verifyCmd.Long = "Run the checks an api.Workflow declares — shell commands, LLM-judge prompts, and a fixture document handed to the configured fixture runner — against a working tree, and print each check's report. Exits non-zero when any check fails or cannot reach a verdict."
+	clicky.MarkLocalOnly(verifyCmd)
 
 	hookCmd := &cobra.Command{Use: "hook", Short: "Claude Code hook commands"}
 	rootCmd.AddCommand(hookCmd)
@@ -315,9 +309,6 @@ func newRootCommand() *cobra.Command {
 	}}
 	hookCmd.AddCommand(bashCheckCmd)
 	clicky.AddNamedCommand("install", bashCheckCmd, cli.HookInstallOptions{}, cli.RunBashCheckInstall)
-	dodHookCmd := &cobra.Command{Use: "dod", Short: "Definition of Done hook"}
-	hookCmd.AddCommand(dodHookCmd)
-	clicky.AddNamedCommand("install", dodHookCmd, cli.HookInstallOptions{}, cli.RunDodInstall)
 
 	monitorHookCmd := &cobra.Command{Use: "monitor", Short: "Session monitoring hooks (hooks-first session tracking)"}
 	hookCmd.AddCommand(monitorHookCmd)
@@ -396,9 +387,7 @@ func newRootCommand() *cobra.Command {
 				"^container",
 				"^hook",
 				"^ai",
-				"^dod set",
-				"^dod clear",
-				"^dod run",
+				"^verify",
 			},
 		},
 	}

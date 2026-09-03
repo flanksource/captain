@@ -73,14 +73,25 @@ func WritePromptSchema(ctx context.Context, w io.Writer) error {
 // request). The discovered prompt sources ride along so the editor's save
 // destination picker sees every writable directory, including empty ones; the
 // runtime catalog's sources do the same for the preset/profile editor.
+//
+// `verifiers` says which workflow.verify.* kinds this host can actually run, and
+// `fixtureSchemas` carries the configured fixture runner's own fence schemas
+// (omitted when no runner is configured), so the editor can author a fixture
+// document knowing whether it will ever run.
 func PromptSchemaDocument(ctx context.Context) (map[string]any, error) {
 	adapters, err := schemaAdapters()
 	if err != nil {
 		return nil, err
 	}
-	doc, err := buildPromptSchemaDocument(adapters, loadSavedConfig().Sandbox)
+	saved := loadSavedConfig()
+	doc, err := buildPromptSchemaDocument(adapters, saved.Sandbox)
 	if err != nil {
 		return nil, err
+	}
+	verifiers, fixtureSchemas := verifierCatalog(ctx, enabledAdapters(adapters), saved.Verify.FixtureRunner)
+	doc["verifiers"] = verifiers
+	if len(fixtureSchemas) > 0 {
+		doc["fixtureSchemas"] = fixtureSchemas
 	}
 	sources, err := promptSourceInfos(ctx)
 	if err != nil {

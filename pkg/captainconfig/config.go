@@ -26,7 +26,23 @@ type Config struct {
 	Credentials CredentialDefaults `yaml:"credentials,omitempty"`
 	Runtime     RuntimeDefaults    `yaml:"runtime,omitempty"`
 	Chat        ChatDefaults       `yaml:"chat,omitempty"`
+	Verify      VerifyDefaults     `yaml:"verify,omitempty"`
 }
+
+// VerifyDefaults is the verify block of ~/.captain.yaml: how this host runs the
+// parts of a workflow's verification captain does not implement itself.
+type VerifyDefaults struct {
+	// FixtureRunner is the argv of the external program that executes a
+	// workflow's `verify.fixture` document — captain declares fixtures but does
+	// not run them. It is handed the fixture on stdin and answers with a
+	// VerifyReport (see agent/verify.ExternalVerifier). Empty means this host
+	// runs no fixtures, and a workflow that declares one fails rather than
+	// passing without its definition of done.
+	FixtureRunner []string `yaml:"fixtureRunner,omitempty"`
+}
+
+// IsZero lets yaml omit an empty verify block instead of writing `verify: {}`.
+func (v VerifyDefaults) IsZero() bool { return len(v.FixtureRunner) == 0 }
 
 // RuntimeDefaults names extra directories of runtime preset and profile YAML
 // files, one record per file. Relative paths resolve against the config file's
@@ -147,9 +163,17 @@ func (a AttachmentDefaults) WithDefaults() AttachmentDefaults {
 }
 
 type AIDefaults struct {
-	DefaultProvider string                      `yaml:"defaultProvider,omitempty"`
-	Providers       map[string]ProviderDefaults `yaml:"providers,omitempty"`
-	Disabled        DisabledSelections          `yaml:"disabled,omitempty"`
+	DefaultProvider string `yaml:"defaultProvider,omitempty"`
+	// DefaultModel is the global fallback when no provider block, prompt, spec or
+	// flag names a model. It is a COMPACT SELECTOR ("agent:claude-sonnet-5"), not
+	// a bare name: a name alone cannot carry a mode, and a mode is exactly what
+	// the caller is missing when it falls through to here.
+	//
+	// It is the single value that makes a one-line ~/.captain.yaml sufficient, and
+	// the last stop before ResolveForRun refuses to guess.
+	DefaultModel string                      `yaml:"defaultModel,omitempty"`
+	Providers    map[string]ProviderDefaults `yaml:"providers,omitempty"`
+	Disabled     DisabledSelections          `yaml:"disabled,omitempty"`
 
 	// File-wide generation settings. These are global on purpose: they are
 	// properties of a run, not of a provider.

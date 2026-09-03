@@ -234,6 +234,25 @@ func (s Spec) IsVerifyOnly() bool {
 	return s.ToolApproval == nil && len(s.Messages) == 0 && s.Prompt.User == "" && len(s.Prompt.Attachments) == 0 && s.Workflow != nil && s.Workflow.Verify != nil
 }
 
+// ValidateRunnable refuses a spec that names neither work to generate nor work
+// to verify — the one classification a run is allowed to make, so that a caller
+// building the provider and the runner deciding whether to call it can never
+// answer it differently.
+//
+// The shape this exists for is the near miss: attachments or a message history,
+// no prompt body, and no workflow.verify. IsVerifyOnly says no (there is nothing
+// to verify), while the runner's own "is the user prompt blank" test said yes —
+// so the caller built a provider for a generating run, the runner skipped
+// generation, no Verify hook voted, and the run reported a pass having done
+// nothing at all. A run with no instruction is an error, never a quiet pass.
+func (s Spec) ValidateRunnable() error {
+	if s.IsVerifyOnly() || s.ToolApproval != nil || strings.TrimSpace(s.Prompt.User) != "" {
+		return nil
+	}
+	return fmt.Errorf("a run needs something to do: prompt.user is empty and workflow.verify is not declared" +
+		" (attachments and messages accompany a prompt, they do not stand in for one)")
+}
+
 func (s Spec) hasPromptBody() bool {
 	return s.Prompt.User != "" || s.Prompt.System != "" || s.Prompt.AppendSystem != "" || len(s.Prompt.Attachments) > 0
 }

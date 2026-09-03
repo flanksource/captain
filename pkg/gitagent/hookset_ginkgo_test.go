@@ -127,6 +127,25 @@ var _ = Describe("hook sets", func() {
 		Expect(v.Findings[0].Message).To(ContainSubstring("R5.2"))
 	})
 
+	It("refuses a fixture the same way, and never accepts one it cannot run", func() {
+		wf := &api.Workflow{Verify: &api.Verify{Fixture: "# acceptance\n- [ ] it works\n"}}
+
+		v := gitagent.RunHookSet(ctx, ws(), gitagent.HookSetOptions{
+			Task: "t-1", Attempt: 1, Tier: "sidecar", Workflow: wf,
+		})
+		Expect(v.Status).To(Equal(gitagent.StatusError))
+		Expect(v.Findings[0].Message).To(ContainSubstring("R5.2"),
+			"a fixture runs a process too, so it needs the same confinement")
+
+		v = gitagent.RunHookSet(ctx, ws(), gitagent.HookSetOptions{
+			Task: "t-1", Attempt: 1, Tier: "sidecar", Workflow: wf, Wrap: identityWrap,
+		})
+		Expect(v.Status).To(Equal(gitagent.StatusError))
+		Expect(v.Rejects()).To(BeTrue(), "an indeterminate verdict rejects (R7.5)")
+		Expect(v.Findings[0].Message).To(ContainSubstring("no fixture verifier is registered"),
+			"a declared definition of done that cannot run must never pass vacuously")
+	})
+
 	It("kills a hook that overruns its timeout and reports error status", func() {
 		v := gitagent.RunHookSet(ctx, ws(), gitagent.HookSetOptions{
 			Task: "t-1", Attempt: 1, Tier: "sidecar",

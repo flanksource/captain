@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/session"
 	"github.com/segmentio/encoding/json"
 )
@@ -177,5 +179,185 @@ func TestPromptRunAccumulator_CapturesSessionAndUsage(t *testing.T) {
 	}
 	if acc.cost != 0.02 {
 		t.Fatalf("cost = %v, want 0.02", acc.cost)
+	}
+}
+
+// TestPromptRunAccumulator_VerdictsGetTheirOwnRole covers the session half of a
+// verify verdict: it is the run's outcome, so a stored transcript must let a
+// reader select the verdicts by role rather than searching the system lines for
+// prose that looks like one.
+func TestPromptRunAccumulator_VerdictsGetTheirOwnRole(t *testing.T) {
+	msgs := collectEntries("m", "b",
+		ai.Event{Kind: ai.EventText, Text: "applying the fix"},
+		ai.Event{Kind: ai.EventVerifyFailed, Text: "failed in 5m7s: sh failed — verify:oipa-cli test x.yaml"},
+		ai.Event{Kind: ai.EventVerified, Success: true, Text: "passed in 4m2s — verify:oipa-cli test x.yaml"},
+	)
+
+	var roles []string
+	for _, m := range msgs {
+		roles = append(roles, m.Role)
+	}
+	// The in-flight text is flushed first, so the verdict never lands inside the
+	// sentence the model was part-way through.
+	want := []string{"assistant", session.RoleVerifyFailed, session.RoleVerified}
+	if strings.Join(roles, ",") != strings.Join(want, ",") {
+		t.Fatalf("roles = %v, want %v", roles, want)
+	}
+	last := msgs[len(msgs)-1]
+	if last.Parts[0].Text != "passed in 4m2s — verify:oipa-cli test x.yaml" {
+		t.Fatalf("verdict parts = %+v, want the report verbatim", last.Parts)
+	}
+}
+
+// verifyReport builds a report of `done` passing leaves out of `total`, the
+// shape a fixture runner streams while it works.
+func verifyReport(done, total int) *api.VerifyReport {
+	tests := make([]api.VerifyNode, 0, total)
+	for i := 0; i < total; i++ {
+		node := api.VerifyNode{Name: fmt.Sprintf("check %d", i+1)}
+		if i < done {
+			node.Passed = true
+		} else {
+			node.Pending = true
+		}
+		tests = append(tests, node)
+	}
+	report := api.VerifyReport{
+		Kind: api.VerifyKindFunc, Name: "fixture", Ran: true, Tests: tests,
+		Summary: api.SummarizeNodes(tests), State: api.StateForReport(tests),
+	}
+	report.Passed = report.State == api.VerifyStatePassed
+	return &report
+}
+
+// A verdict is a structure as much as a sentence: the webapp draws the
+// verification tree, and the only place the transcript could carry it was the
+// prose. The typed report rides alongside the text as an AI SDK data part.
+func TestPromptRunAccumulator_VerdictCarriesTheTypedReport(t *testing.T) {
+	report := verifyReport(3, 3)
+	msgs := collectEntries("m", "b", ai.Event{
+		Kind: ai.EventVerified, Success: true, Text: "passed in 4ms — fixture", Raw: report,
+	})
+
+	if len(msgs) != 1 {
+		t.Fatalf("want one verdict frame, got %d", len(msgs))
+	}
+	parts := msgs[0].Parts
+	if len(parts) != 2 {
+		t.Fatalf("verdict parts = %+v, want the text then the report", parts)
+	}
+	if parts[0].Type != session.PartText || parts[1].Type != session.PartVerify {
+		t.Fatalf("part types = %q/%q, want %q then %q", parts[0].Type, parts[1].Type, session.PartText, session.PartVerify)
+	}
+	var round api.VerifyReport
+	if err := json.Unmarshal(parts[1].Data, &round); err != nil {
+		t.Fatalf("data-verify part does not decode as a report: %v", err)
+	}
+	if err := round.Validate(); err != nil {
+		t.Fatalf("round-tripped report is not valid: %v", err)
+	}
+	if round.Summary != report.Summary || round.State != report.State {
+		t.Fatalf("round-tripped report = %+v, want %+v", round, *report)
+	}
+}
+
+// Progress is stream state, not transcript: it is superseded within the second,
+// and the replay buffer every later subscriber receives in full is the wrong
+// place for it.
+func TestPromptRunAccumulator_ProgressPublishesFramesAndNoEntries(t *testing.T) {
+	var frames []VerifyFrame
+	var entries []session.Message
+	acc := newPromptEventAccumulator(func(m session.Message) { entries = append(entries, m) }, fakeTaskSink{}, "m", "b")
+	acc.verify = func(f VerifyFrame) { frames = append(frames, f) }
+
+	for done := 1; done <= 3; done++ {
+		acc.handle(0, ai.Event{Kind: ai.EventVerifyProgress, Tool: "fixture", Raw: verifyReport(done, 3)})
+	}
+	if len(entries) != 0 {
+		t.Fatalf("progress produced %d transcript entries, want none: %+v", len(entries), entries)
+	}
+	if len(frames) != 3 {
+		t.Fatalf("progress frames = %d, want one per snapshot", len(frames))
+	}
+	for i, frame := range frames {
+		if frame.Done {
+			t.Fatalf("frame %d is marked done while the check is still running", i)
+		}
+		if frame.Report.Summary.Passed != i+1 {
+			t.Fatalf("frame %d passed = %d, want %d", i, frame.Report.Summary.Passed, i+1)
+		}
+	}
+
+	acc.handle(0, ai.Event{Kind: ai.EventVerified, Success: true, Text: "passed in 4ms — fixture", Raw: verifyReport(3, 3)})
+	if len(frames) != 4 || !frames[3].Done {
+		t.Fatalf("final frame = %+v, want the verdict marked done", frames[len(frames)-1])
+	}
+	if len(entries) != 1 {
+		t.Fatalf("verdict produced %d entries, want exactly one", len(entries))
+	}
+}
+
+// A count divided by a total the producer has not finished settling — more
+// running leaves reported than the tree has rows — must not read as negative
+// progress in the one line a person is watching.
+func TestVerifyProgressStatus_ClampsDoneAtZero(t *testing.T) {
+	report := api.VerifyReport{Name: "fixture", Summary: api.VerifySummary{Total: 2, Pending: 2, Running: 1}}
+	if got := verifyProgressStatus(report); got != "verifying fixture 0/2" {
+		t.Fatalf("verifyProgressStatus = %q, want the count clamped at zero", got)
+	}
+	failing := api.VerifyReport{Name: "fixture", Summary: api.VerifySummary{Total: 2, Running: 3, Failed: 1}}
+	if got := verifyProgressStatus(failing); got != "verifying fixture 0/2, 1 failed" {
+		t.Fatalf("verifyProgressStatus = %q, want the count clamped at zero", got)
+	}
+}
+
+// The verdict is what turns the verification panel from "running" to a result.
+// A verdict event whose Raw carries no report used to publish nothing at all, so
+// the panel sat on the last progress snapshot forever, spinner and all.
+func TestPromptRunAccumulator_VerdictWithoutAReportStillFinishesTheFrame(t *testing.T) {
+	var frames []VerifyFrame
+	acc := newPromptEventAccumulator(func(session.Message) {}, fakeTaskSink{}, "m", "b")
+	acc.verify = func(f VerifyFrame) { frames = append(frames, f) }
+
+	snapshot := verifyReport(1, 3)
+	acc.handle(0, ai.Event{Kind: ai.EventVerifyProgress, Tool: "fixture", Raw: snapshot})
+	acc.handle(0, ai.Event{Kind: ai.EventVerifyFailed, Text: "failed in 4ms — fixture"})
+
+	if len(frames) != 2 {
+		t.Fatalf("frames = %d, want the snapshot and then the verdict", len(frames))
+	}
+	if !frames[1].Done {
+		t.Fatalf("verdict frame = %+v, want Done", frames[1])
+	}
+	if frames[1].Report != snapshot {
+		t.Fatalf("verdict frame report = %+v, want the last snapshot kept rather than blanked", frames[1].Report)
+	}
+}
+
+// A progress snapshot with no report is the one frame that must be dropped:
+// publishing it would blank whatever the last real snapshot put on screen.
+func TestPromptRunAccumulator_ProgressWithoutAReportPublishesNothing(t *testing.T) {
+	var frames []VerifyFrame
+	acc := newPromptEventAccumulator(func(session.Message) {}, fakeTaskSink{}, "m", "b")
+	acc.verify = func(f VerifyFrame) { frames = append(frames, f) }
+
+	acc.handle(0, ai.Event{Kind: ai.EventVerifyProgress, Tool: "fixture"})
+	if len(frames) != 0 {
+		t.Fatalf("frames = %+v, want none", frames)
+	}
+}
+
+// Every other publisher on the stream stops at done; setVerify did not, so a
+// check reporting after the run's terminal frame appended to a buffer whose
+// subscribers were already closed.
+func TestRunStreamSetVerify_StopsAtDone(t *testing.T) {
+	stream := newRunStream()
+	stream.fail("stopped")
+	stream.setVerify(VerifyFrame{Report: verifyReport(1, 1), Done: true})
+
+	snapshot, ch := stream.subscribeEvents()
+	stream.unsubscribeEvents(ch)
+	if snapshot.Verify != nil {
+		t.Fatalf("verify frame = %+v, want nothing published after the run ended", snapshot.Verify)
 	}
 }

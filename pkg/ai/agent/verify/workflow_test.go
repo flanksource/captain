@@ -7,22 +7,23 @@ import (
 	"github.com/flanksource/captain/pkg/api"
 )
 
-func TestHooksForWorkflow(t *testing.T) {
-	if HooksForWorkflow(nil) != nil {
-		t.Errorf("nil workflow should yield no hooks")
-	}
-	if HooksForWorkflow(&api.Workflow{}) != nil {
-		t.Errorf("workflow without verify should yield no hooks")
-	}
-
-	wf := &api.Workflow{Verify: &api.Verify{Commands: []string{"go test ./...", "  ", "go vet ./..."}}}
-	hooks := HooksForWorkflow(wf)
-	if len(hooks) != 2 {
-		t.Fatalf("want 2 hooks (blank command skipped), got %d", len(hooks))
-	}
-	named, ok := hooks[0].(interface{ Name() string })
-	if !ok || named.Name() != "verify:go test ./..." {
-		t.Errorf("unexpected first hook %v", hooks[0])
+func TestDeclaresExec(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		wf   *api.Workflow
+		want bool
+	}{
+		{name: "nil workflow", wf: nil},
+		{name: "no verify stage", wf: &api.Workflow{}},
+		{name: "only blank commands", wf: &api.Workflow{Verify: &api.Verify{Commands: []string{"  "}}}},
+		{name: "a command", wf: &api.Workflow{Verify: &api.Verify{Commands: []string{"go test ./..."}}}, want: true},
+		{name: "a fixture", wf: &api.Workflow{Verify: &api.Verify{Fixture: "# acceptance"}}, want: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := DeclaresExec(test.wf); got != test.want {
+				t.Errorf("DeclaresExec = %t, want %t", got, test.want)
+			}
+		})
 	}
 }
 

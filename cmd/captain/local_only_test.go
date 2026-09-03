@@ -59,6 +59,7 @@ var _ = Describe("REST executor exposure", func() {
 		Entry("git-agent add", http.MethodPost, "/api/v1/sandbox/git-agent"),
 		Entry("git-agent list", http.MethodGet, "/api/v1/sandbox/git-agent"),
 		Entry("captain serve", http.MethodPost, "/api/v1/serve"),
+		Entry("captain verify", http.MethodPost, "/api/v1/verify"),
 	)
 
 	// The token group is the load-bearing case: these routes are what stands in

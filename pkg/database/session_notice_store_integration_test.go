@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/session"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -125,4 +126,84 @@ func TestEmptyNoticesWriteNothing(t *testing.T) {
 	messages, err := db.ListTranscriptMessages(t.Context(), TranscriptPage{SessionID: session.ID})
 	require.NoError(t, err)
 	assert.Len(t, messages, len(testIngestBatch(modTime, 2048).Messages))
+}
+
+// A verify verdict is a tree, not a sentence. The notice recorded only its
+// headline, so a run whose verdict was read back from the transcript lost the
+// checklist, the counters and every failing row — the whole reason the panel
+// exists — while the live stream had them all along.
+func TestNoticeCarriesItsVerifyReport(t *testing.T) {
+	db := openIngestTestDB(t)
+	modTime := time.Now().UTC().Truncate(time.Second)
+	sess, err := db.IngestTranscript(t.Context(), testIngestBatch(modTime, 2048))
+	require.NoError(t, err)
+
+	report := api.NewNodeReport(api.VerifyKindCmd, "verify:go test ./...", api.VerifyNode{
+		Name: "go test ./...", Failed: true, Message: "TestFoo failed",
+	})
+	report.Ran, report.Reason, report.Iteration = true, "go test ./... failed", 2
+
+	require.NoError(t, db.PutSessionNotices(t.Context(), sess.ID, []api.Notice{{
+		At: modTime, Phase: "turn", Kind: api.EventVerifyFailed,
+		Text: "failed in 4ms: go test ./... failed — verify:go test ./...", Report: &report,
+	}}))
+
+	messages, err := db.ListTranscriptMessages(t.Context(), TranscriptPage{SessionID: sess.ID})
+	require.NoError(t, err)
+
+	var verdict *TranscriptMessage
+	for i := range messages {
+		if messages[i].Role == session.RoleVerifyFailed {
+			verdict = &messages[i]
+		}
+	}
+	require.NotNil(t, verdict, "the verdict is stored under its own role")
+
+	var parts []struct {
+		Type string          `json:"type"`
+		Text string          `json:"text"`
+		Data json.RawMessage `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(verdict.Parts, &parts))
+	require.Len(t, parts, 2, "the prose and the report travel together")
+	assert.Equal(t, "text", parts[0].Type)
+	assert.Equal(t, "data-verify", parts[1].Type)
+
+	var stored api.VerifyReport
+	require.NoError(t, json.Unmarshal(parts[1].Data, &stored))
+	require.NoError(t, stored.Validate())
+	assert.Equal(t, report.Summary, stored.Summary)
+	assert.Equal(t, 2, stored.Iteration)
+	assert.Equal(t, api.VerifyStateFailed, stored.State)
+}
+
+// A notice with no report is one text part, exactly as before: the second part
+// exists only when there is a report to put in it.
+func TestNoticeWithoutAReportStaysOnePart(t *testing.T) {
+	db := openIngestTestDB(t)
+	modTime := time.Now().UTC().Truncate(time.Second)
+	session, err := db.IngestTranscript(t.Context(), testIngestBatch(modTime, 2048))
+	require.NoError(t, err)
+
+	require.NoError(t, db.PutSessionNotices(t.Context(), session.ID, []api.Notice{
+		{At: modTime, Phase: "turn", Text: "[post-turn] committed abc1234"},
+	}))
+
+	messages, err := db.ListTranscriptMessages(t.Context(), TranscriptPage{SessionID: session.ID})
+	require.NoError(t, err)
+
+	var found int
+	for _, message := range messages {
+		var parts []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}
+		require.NoError(t, json.Unmarshal(message.Parts, &parts))
+		if len(parts) == 0 || parts[0].Text != "[post-turn] committed abc1234" {
+			continue
+		}
+		found++
+		assert.Len(t, parts, 1, "a notice with no report is one text part")
+	}
+	assert.Equal(t, 1, found, "the notice is in the transcript")
 }

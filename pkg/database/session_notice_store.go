@@ -17,6 +17,20 @@ import (
 // reader can tell "the harness committed this" from anything the model said.
 const noticeRole = "system"
 
+// roleForNotice keeps a notice's own kind in the transcript. A verify verdict is
+// the run's outcome rather than narration of it, so it is selectable by role —
+// "which runs failed verification, and on what" is a query, not a text search.
+func roleForNotice(notice api.Notice) string {
+	switch notice.Kind {
+	case api.EventVerified:
+		return session.RoleVerified
+	case api.EventVerifyFailed:
+		return session.RoleVerifyFailed
+	default:
+		return noticeRole
+	}
+}
+
 // PutSessionNotices records what a run's lifecycle hooks did as transcript
 // messages, so a commit cut between two turns is readable from the transcript
 // rather than only from whatever scrolled past in the terminal.
@@ -45,7 +59,11 @@ func (db *DB) PutSessionNotices(ctx context.Context, sessionID uuid.UUID, notice
 		if text == "" {
 			continue
 		}
-		parts, err := json.Marshal([]session.Part{{Type: session.PartText, Text: text}})
+		content, err := noticeParts(notice, text)
+		if err != nil {
+			return fmt.Errorf("encode notice %d: %w", i, err)
+		}
+		parts, err := json.Marshal(content)
 		if err != nil {
 			return fmt.Errorf("encode notice %d: %w", i, err)
 		}
@@ -54,7 +72,7 @@ func (db *DB) PutSessionNotices(ctx context.Context, sessionID uuid.UUID, notice
 			at = time.Now().UTC()
 		}
 		records = append(records, messageRecord{
-			ID: uuid.New(), SessionID: sessionID, Role: noticeRole,
+			ID: uuid.New(), SessionID: sessionID, Role: roleForNotice(notice),
 			Parts: parts, OccurredAt: &at,
 			// Stable across replays of the same run, so re-flushing the same
 			// workspace (a resumed run, a retried write) updates rather than
@@ -91,6 +109,26 @@ func (db *DB) PutSessionNotices(ctx context.Context, sessionID uuid.UUID, notice
 		return fmt.Errorf("write %d Captain session notice(s): %w", len(records), err)
 	}
 	return nil
+}
+
+// noticeParts is the notice as transcript content: its prose, and — for a
+// verdict — the typed report beside it under the AI SDK's data-part convention,
+// exactly as the live stream carries the two.
+//
+// Storing only the text made a stored verdict strictly poorer than a live one: a
+// reader got "failed in 4ms — verify:go test" and nothing else, while the tree,
+// the checklist and the counters the verification panel is built to draw had all
+// been thrown away at the point they were written down.
+func noticeParts(notice api.Notice, text string) ([]session.Part, error) {
+	parts := []session.Part{{Type: session.PartText, Text: text}}
+	if notice.Report == nil {
+		return parts, nil
+	}
+	encoded, err := json.Marshal(notice.Report)
+	if err != nil {
+		return nil, fmt.Errorf("encode the verify report of %q: %w", notice.Report.Name, err)
+	}
+	return append(parts, session.Part{Type: session.PartVerify, Data: encoded}), nil
 }
 
 // noticeMessageID identifies a notice across replays of the same run. The phase

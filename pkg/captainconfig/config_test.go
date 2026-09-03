@@ -88,6 +88,42 @@ func TestSaveLoad_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestVerifyDefaults_RoundTrip(t *testing.T) {
+	path := withTempPath(t)
+	want := VerifyDefaults{FixtureRunner: []string{"gavel", "fixture", "verify"}}
+	if err := Save(Config{Verify: want}); err != nil {
+		t.Fatalf("Save() err = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if !strings.Contains(string(data), "fixtureRunner:") {
+		t.Fatalf("saved config has no fixture runner:\n%s", data)
+	}
+
+	got, _, err := Load()
+	if err != nil {
+		t.Fatalf("Load() err = %v", err)
+	}
+	if !reflect.DeepEqual(got.Verify, want) {
+		t.Errorf("verify round-trip:\n got  = %+v\n want = %+v", got.Verify, want)
+	}
+
+	// An unconfigured host writes no verify block at all, rather than an empty
+	// one a reader would have to interpret.
+	if err := Save(Config{}); err != nil {
+		t.Fatalf("Save() err = %v", err)
+	}
+	data, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if strings.Contains(string(data), "verify:") {
+		t.Errorf("empty verify block written:\n%s", data)
+	}
+}
+
 func TestUpdatePreservesUnrelatedConfiguration(t *testing.T) {
 	withTempPath(t)
 	wantPrompt := PromptDefaults{Dirs: []string{"/repo/prompts"}}

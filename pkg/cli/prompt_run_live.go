@@ -2,16 +2,14 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
-	"github.com/flanksource/captain/pkg/ai/agent"
-	"github.com/flanksource/captain/pkg/ai/agent/commit"
-	"github.com/flanksource/captain/pkg/ai/agent/verify"
+	"github.com/flanksource/captain/pkg/ai/middleware"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/database"
+	"github.com/flanksource/captain/pkg/promptrun"
 	"github.com/flanksource/clicky/task"
 )
 
@@ -23,193 +21,172 @@ func runPromptBufferedWorkflow(t *task.Task, rendered PromptRenderResult, timeou
 	return runPromptWorkflow(t, rendered, timeout, runID, stream, binding, true)
 }
 
+// runPromptWorkflow is `captain prompt run`'s caller of promptrun.Run: it owns
+// what is specific to this process — the stop button, the live stream and its
+// transcript frames, attachment resolution against the local store, the remote
+// sandbox provider, and persistence — and hands the run itself to the shared
+// seam so it means the same thing here as in an embedding host.
 func runPromptWorkflow(t *task.Task, rendered PromptRenderResult, timeout time.Duration, runID string, stream *runStream, binding *promptSessionBinding, noStream bool) (PromptRunSummary, error) {
-	ctx, cancel := runContext(t.Context(), rendered.Input, timeout)
+	ctx, cancel := context.WithCancel(t.Context())
 	stream.setCancel(cancel)
 	defer cancel()
 	ctx = ai.ContextWithLogger(ctx, t)
 
 	req := rendered.Input
-	cfg := rendered.Config
-	if err := preparePromptAttachments(ctx, &req, cfg); err != nil {
-		return failRun(t, stream, err)
-	}
-	// Judge prompts load before the provider is built: a workflow naming a
-	// prompt that does not exist is broken everywhere, and building first would
-	// report whichever runtime binary this machine lacks instead.
-	judgePrompts, err := verify.LoadJudgePrompts(req.Workflow)
+	remote, err := preparePromptRun(ctx, &req, rendered.Config)
 	if err != nil {
 		return failRun(t, stream, err)
 	}
-
-	// A verify-only run makes no model call — agent.Runner takes runVerifyOnce
-	// and never touches the provider — so constructing one, and demanding its
-	// runtime binary on PATH, would fail a run that only executes shell hooks.
-	// A declared judge does execute on the provider, so it still needs one.
-	var p ai.Provider
-	if !req.IsVerifyOnly() || len(judgePrompts) > 0 {
-		built, cleanup, err := buildProvider(ctx, &req, cfg)
-		if err != nil {
-			return failRun(t, stream, err)
-		}
-		defer cleanup()
-		defer closeProvider(built)
-		p = built
-	}
-
-	streamer, err := workflowRunnerProvider(p, noStream, req.IsVerifyOnly())
-	if err != nil {
-		return failRun(t, stream, err)
-	}
-
-	judgeHooks, err := verify.JudgeHooks(judgePrompts, p)
-	if err != nil {
-		return failRun(t, stream, err)
+	if remote != nil {
+		defer closeProvider(remote)
 	}
 
 	start := time.Now()
 	acc := newPromptEventAccumulator(stream.publish, t, rendered.Model, rendered.Mode)
-	acc.cwd = req.Cwd()
-	acc.idPrefix = runID
-	runner := &agent.Runner[string]{
-		Provider: streamer,
+	acc.cwd, acc.idPrefix, acc.verify = req.Cwd(), runID, stream.setVerify
+	result, err := promptrun.Run(ctx, promptrun.Input{
 		Request:  req,
-		// Commit hooks lead so that at PhaseRun they squash before any teardown
-		// hook (a worktree merge) runs and takes the result.
-		Hooks:         append(append(commit.HooksForWorkflow(req.Workflow), verify.HooksForWorkflow(req.Workflow)...), judgeHooks...),
-		MaxIterations: verify.MaxIterationsForWorkflow(req.Workflow),
-		Repo:          req.Cwd(),
-		Cwd:           req.Cwd(),
-		Scope:         verify.ScopeForWorkflow(req.Workflow),
-		OnEvent:       acc.handle,
-	}
-	runResult, err := runner.Run(ctx)
-	session, model, usage, cost := acc.snapshot()
-	loop := runResult.Loop
-	if session == "" && runResult.Response.Workspace != nil {
-		session = runResult.Response.Workspace.SessionID
-	}
-	if session == "" && loop != nil && len(loop.Iterations) > 0 {
-		session = loop.Iterations[0].SessionID
-	}
-	stream.setRunMetadata(session, model)
+		Config:   rendered.Config,
+		Provider: remote,
+		OnEvent:  acc.handle,
+		Timeout:  timeout,
+		NoStream: noStream,
+	})
+	stream.setRunMetadata(result.SessionID, firstNonEmpty(result.Model, rendered.Model))
+
+	interrupted := contextEndedRun(ctx, err)
+	record := promptRunRecord(rendered, runID, binding, result, interrupted)
 	if err != nil {
 		if stream.wasStopped() {
 			err = errors.New("stopped")
 		}
+		persistPromptRun(context.WithoutCancel(ctx), failedRunRecord(record, err, interrupted))
 		return failRun(t, stream, err)
 	}
-	passed := verifyPassed(runResult.Verdicts)
-	structuredOutput, err := structuredOutputMap(runResult.Response.StructuredData)
+	structured, err := completeRunRecord(&record, result)
 	if err != nil {
+		persistPromptRun(context.WithoutCancel(ctx), failedRunRecord(record, err, false))
 		return failRun(t, stream, err)
-	}
-	resultText, err := structuredOutputText(runResult.Response.Text, structuredOutput)
-	if err != nil {
-		return failRun(t, stream, err)
-	}
-	record := promptRunRecordInput{
-		Rendered: rendered, RunID: runID, Binding: binding, SessionID: session,
-		Model: model, Provider: providerOf(api.Runtime{Provider: rendered.Provider, Mode: api.RuntimeMode(rendered.Mode)}), Mode: api.RuntimeMode(rendered.Mode), ResultText: resultText, ResultJSON: structuredOutput,
-	}
-	if !passed {
-		record.Error = verifyReason(runResult.Verdicts)
 	}
 	persistPromptRun(context.WithoutCancel(ctx), record)
-	summarySessionID := session
-	if binding != nil {
-		summarySessionID = binding.SessionID.String()
-	}
-	summary := PromptRunSummary{
-		RunID:            runID,
-		SessionID:        summarySessionID,
-		Model:            model,
-		Provider:         rendered.Provider,
-		Mode:             rendered.Mode,
-		InputTokens:      usage.InputTokens,
-		OutputTokens:     usage.OutputTokens,
-		CostUSD:          cost,
-		Duration:         time.Since(start).Round(time.Millisecond).String(),
-		Success:          passed,
-		Text:             resultText,
-		StructuredOutput: structuredOutput,
-	}
-	if !passed {
-		summary.Error = verifyReason(runResult.Verdicts)
-	}
+
+	summary := completedRunSummary(record, result, binding, structured, time.Since(start))
 	stream.complete(summary)
 	t.Success()
 	return summary, nil
 }
 
-func workflowRunnerProvider(provider ai.Provider, noStream, verifyOnly bool) (ai.StreamingProvider, error) {
-	if provider == nil {
-		if verifyOnly {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("a generating run needs a provider")
+// preparePromptRun is everything this process must do to the request before the
+// shared seam sees it: warn on a model name that looks mistyped, resolve the
+// prompt's attachments against the local store, and — when the resolved sandbox
+// executes elsewhere — build the provider that owns the whole run. A nil
+// provider means the run executes here.
+func preparePromptRun(ctx context.Context, req *ai.Request, cfg ai.Config) (ai.Provider, error) {
+	for _, c := range cfg.Model.Candidates() {
+		warnIfLikelyModelTypo(c.Name)
 	}
-	if noStream {
-		return bufferedWorkflowProvider{Provider: provider}, nil
+	if err := resolvePromptAttachments(ctx, req); err != nil {
+		return nil, err
 	}
-	streamer, ok := provider.(ai.StreamingProvider)
-	if ok || verifyOnly {
-		return streamer, nil
-	}
-	return bufferedWorkflowProvider{Provider: provider}, nil
+	return remoteWorkflowProvider(req, cfg)
 }
 
-// bufferedWorkflowProvider preserves the agent runner's event contract while
-// forcing generation through Provider.Execute. It emits only completed response
-// events, so --no-stream never invokes an underlying ExecuteStream method.
-type bufferedWorkflowProvider struct {
-	ai.Provider
+// promptRunRecord is the run as it will be persisted, assembled before the error
+// branch so that an interrupted run — or one that broke on turn 2 of 3 — is
+// still written down. Its verdict travels two ways: one row per turn (what was
+// asked, what the check said, how long it took) and result_json.verify, the
+// round's report beside the prompt's own structured output. Returning on the
+// error path before this left a stopped run with no rows and no report at all.
+func promptRunRecord(rendered PromptRenderResult, runID string, binding *promptSessionBinding, result promptrun.Result, interrupted bool) promptRunRecordInput {
+	runtime := api.Runtime{Provider: rendered.Provider, Mode: api.RuntimeMode(rendered.Mode)}
+	return promptRunRecordInput{
+		Rendered: rendered, RunID: runID, Binding: binding, SessionID: result.SessionID,
+		Model: firstNonEmpty(result.Model, rendered.Model), Provider: providerOf(runtime), Mode: runtime.Mode,
+		ResultJSON: resultJSONWithVerify(nil, result.Report),
+		Iterations: promptRunIterationRecords(result.Loop, result.Verdicts, interrupted),
+	}
 }
 
-func (p bufferedWorkflowProvider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai.Event, error) {
-	resp, err := p.Execute(ctx, req)
+// completeRunRecord fills in what only a run that reached its own end has: the
+// answer, as text and as structured output, and the failure reason of a run
+// whose checks said no.
+func completeRunRecord(record *promptRunRecordInput, result promptrun.Result) (map[string]any, error) {
+	structured, err := structuredOutputMap(result.StructuredData)
 	if err != nil {
 		return nil, err
 	}
-	if resp == nil {
-		return nil, errors.New("buffered workflow provider returned a nil response")
-	}
-	structured, err := bufferedStructuredData(resp.StructuredData)
-	if err != nil {
+	if record.ResultText, err = structuredOutputText(result.Response.Text, structured); err != nil {
 		return nil, err
 	}
-
-	events := make(chan ai.Event, 3)
-	if resp.Workspace != nil && resp.Workspace.SessionID != "" {
-		events <- ai.Event{Kind: ai.EventSystem, SessionID: resp.Workspace.SessionID, Model: resp.Model}
+	record.ResultJSON = resultJSONWithVerify(structured, result.Report)
+	if !result.Passed {
+		record.Error = promptrun.FailureReason(result.Verdicts)
 	}
-	if resp.Text != "" {
-		events <- ai.Event{Kind: ai.EventText, Text: resp.Text, Model: resp.Model}
-	}
-	usage := resp.Usage
-	events <- ai.Event{
-		Kind: ai.EventResult, Success: true, Model: resp.Model, Usage: &usage,
-		CostUSD: resp.CostUSD, StructuredData: structured, ToolApproval: resp.ToolApproval,
-	}
-	close(events)
-	return events, nil
+	return structured, nil
 }
 
-func bufferedStructuredData(value any) (json.RawMessage, error) {
-	if value == nil {
-		return nil, nil
+// completedRunSummary is the finished run as the CLI prints it and the stream
+// reports it. The session it names is the captain session when the run is bound
+// to one, not the provider's own id.
+func completedRunSummary(record promptRunRecordInput, result promptrun.Result, binding *promptSessionBinding, structured map[string]any, elapsed time.Duration) PromptRunSummary {
+	sessionID := record.SessionID
+	if binding != nil {
+		sessionID = binding.SessionID.String()
 	}
-	if raw, ok := value.(json.RawMessage); ok {
-		return raw, nil
+	return PromptRunSummary{
+		RunID:            record.RunID,
+		SessionID:        sessionID,
+		Model:            record.Model,
+		Provider:         record.Rendered.Provider,
+		Mode:             record.Rendered.Mode,
+		InputTokens:      result.Usage.InputTokens,
+		OutputTokens:     result.Usage.OutputTokens,
+		CostUSD:          result.CostUSD,
+		Duration:         elapsed.Round(time.Millisecond).String(),
+		Success:          result.Passed,
+		Text:             record.ResultText,
+		StructuredOutput: structured,
+		Error:            record.Error,
 	}
-	raw, err := json.Marshal(value)
+}
+
+// remoteWorkflowProvider is the whole-run relocation branch: when the resolved
+// sandbox executes remotely, the run happens on another machine and comes back
+// whole, so the provider it returns owns the workspace (promptrun adds no setup
+// hook) and never streams. Nil means the run executes here.
+func remoteWorkflowProvider(req *ai.Request, cfg ai.Config) (ai.Provider, error) {
+	remote, err := remoteExecProviderFor(req, cfg)
+	if err != nil || remote == nil {
+		return nil, err
+	}
+	wrapped, err := middleware.Wrap(remote, middleware.WithLogging(), middleware.WithSchemaValidation(cfg))
 	if err != nil {
-		return nil, fmt.Errorf("encode buffered workflow structured output: %w", err)
+		closeProvider(remote)
+		return nil, err
 	}
-	if string(raw) == "null" {
-		return nil, nil
+	return bufferedOnlyProvider{Provider: wrapped}, nil
+}
+
+// contextEndedRun reports whether the loop stopped because its context did —
+// the stop button, or the run's own deadline. Both leave the last turn cut off
+// rather than judged, and neither is the work's fault.
+func contextEndedRun(ctx context.Context, err error) bool {
+	if err == nil {
+		return false
 	}
-	return raw, nil
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil
+}
+
+// failedRunRecord stamps the record of a run that ended in an error: an
+// interrupted run is cancelled — its work was cut off, not judged — and anything
+// else failed.
+func failedRunRecord(record promptRunRecordInput, err error, interrupted bool) promptRunRecordInput {
+	record.Error = err.Error()
+	record.State = database.PromptRunStateFailed
+	if interrupted {
+		record.State = database.PromptRunStateCancelled
+	}
+	return record
 }
 
 func failRun(t *task.Task, stream *runStream, err error) (PromptRunSummary, error) {

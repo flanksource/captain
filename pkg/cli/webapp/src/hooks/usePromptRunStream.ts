@@ -7,6 +7,7 @@ import {
 } from "react";
 import type { SessionUIMessage } from "@flanksource/clicky-ui/ai";
 import { useEventSource } from "./useEventSource";
+import { parseVerifyFrame, type VerifyFrame } from "../types/verifyReport";
 
 /** Immediate response of the async prompt "run" action. */
 export interface PromptRunHandle {
@@ -111,6 +112,7 @@ export interface PromptRunStreamState {
   error?: string;
   run?: PromptRunFrame;
   chatState?: ChatStateFrame;
+  verify: VerifyFrame | null;
 }
 
 const PROMPT_RUN_BASE = "/api/captain/prompt/runs";
@@ -129,7 +131,10 @@ type PromptRunStreamAction =
       messages: SessionUIMessage[];
     }
   | { type: "done"; summary?: PromptRunSummary }
-  | { type: "error"; summary: PromptRunSummary };
+  | { type: "error"; summary: PromptRunSummary }
+  | { type: "verify"; verify: VerifyFrame }
+  | { type: "verify-error"; message: string }
+  | { type: "stream-handler-error"; message: string };
 
 type MessageIndex = {
   byId: Map<string, SessionUIMessage>;
@@ -152,9 +157,16 @@ function streamReducer(
         done: !action.runID,
         run: undefined,
         chatState: undefined,
+        verify: null,
       };
     case "run":
       return { ...state, run: action.run };
+    case "verify":
+      return { ...state, verify: action.verify };
+    case "verify-error":
+      return { ...state, verify: null, error: action.message };
+    case "stream-handler-error":
+      return { ...state, error: action.message };
     case "chat-state":
       return {
         ...state,
@@ -198,6 +210,7 @@ function initialStreamState(): PromptRunStreamReducerState {
     done: true,
     run: undefined,
     chatState: undefined,
+    verify: null,
   };
 }
 
@@ -268,6 +281,18 @@ export function usePromptRunStream(
       });
       return;
     }
+    if (event === "verify") {
+      try {
+        const raw: unknown = JSON.parse(data);
+        update({ type: "verify", verify: parseVerifyFrame(raw) });
+      } catch (error) {
+        update({
+          type: "verify-error",
+          message: `invalid verify frame: ${describeError(error)}`,
+        });
+      }
+      return;
+    }
     if (event !== "entry") return;
     const message = parse<SessionUIMessage>(data);
     if (!message) return;
@@ -281,10 +306,21 @@ export function usePromptRunStream(
   const url = runID
     ? `${basePath}/${encodeURIComponent(runID)}/stream`
     : undefined;
+  const onError = useCallback(
+    (event: string, message: string) => {
+      update({
+        type: "stream-handler-error",
+        message: `${event} handler error: ${message}`,
+      });
+    },
+    [update],
+  );
+
   useEventSource(url, {
     enabled: Boolean(url) && !state.done,
-    events: ["run", "entry", "state", "done", "error"],
+    events: ["run", "entry", "state", "done", "error", "verify"],
     onEvent,
+    onError,
   });
 
   return {
@@ -294,6 +330,7 @@ export function usePromptRunStream(
     error: state.error,
     run: state.run,
     chatState: state.chatState,
+    verify: state.verify,
   };
 }
 
@@ -325,4 +362,8 @@ function parse<T>(data: string): T | undefined {
   } catch {
     return undefined;
   }
+}
+
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

@@ -60,7 +60,7 @@ func RunHookSet(ctx context.Context, ws HookWorkspace, opts HookSetOptions) Tier
 		verdict.Findings = append(verdict.Findings, finding)
 		return verdict
 	}
-	plugins, errFinding := buildHookPlugins(wf, opts)
+	plugins, errFinding := buildHookPlugins(ctx, wf, opts)
 	if errFinding != nil {
 		verdict.Status = StatusError
 		verdict.Findings = append(verdict.Findings, *errFinding)
@@ -106,33 +106,15 @@ func runCommitGates(ws HookWorkspace, wf *api.Workflow) (Finding, bool) {
 	return Finding{}, false
 }
 
-// buildHookPlugins assembles exec and prompt verifiers via the same builders
-// the local run path uses (A5.1: one hook machinery), confining every exec
-// hook and bounding prompt-hook recursion.
-func buildHookPlugins(wf *api.Workflow, opts HookSetOptions) ([]*verify.Plugin, *Finding) {
-	var plugins []*verify.Plugin
-	execHooks := verify.HooksForWorkflow(wf)
-	if len(execHooks) > 0 && opts.Wrap == nil {
+// buildHookPlugins assembles every declared verifier through the registry the
+// local run path uses (A5.1: one hook machinery), confining every process the
+// checks start and bounding prompt-hook recursion.
+func buildHookPlugins(ctx context.Context, wf *api.Workflow, opts HookSetOptions) ([]*verify.Plugin, *Finding) {
+	if verify.DeclaresExec(wf) && opts.Wrap == nil {
 		return nil, &Finding{
 			Hook: "hookset", Kind: "exec",
 			Message: "exec hooks require a wrap-command sandbox; refusing to run agent-authored commands on the host (R5.2)",
 		}
-	}
-	timeout := opts.Timeout
-	if timeout <= 0 {
-		timeout = DefaultHookTimeout
-	}
-	for _, h := range execHooks {
-		p, ok := h.(*verify.Plugin)
-		if !ok {
-			return nil, &Finding{Hook: "hookset", Kind: "exec", Message: fmt.Sprintf("unexpected hook type %T", h)}
-		}
-		if cv, ok := p.Verifier().(*verify.CmdVerifier); ok {
-			cv.Env = opts.Env
-			cv.Wrap = opts.Wrap
-			cv.Timeout = timeout
-		}
-		plugins = append(plugins, p)
 	}
 	if wf.Verify != nil && len(wf.Verify.Prompts) > 0 && opts.Depth+1 > MaxHookDepth {
 		return nil, &Finding{
@@ -140,14 +122,28 @@ func buildHookPlugins(wf *api.Workflow, opts HookSetOptions) ([]*verify.Plugin, 
 			Message: fmt.Sprintf("prompt hooks at depth %d exceed the recursion bound %d (R5.4/H15)", opts.Depth+1, MaxHookDepth),
 		}
 	}
-	judgeHooks, err := verify.PromptHooksForWorkflow(wf, opts.Judge)
-	if err != nil {
-		return nil, &Finding{Hook: "hookset", Kind: "prompt", Message: err.Error()}
+	timeout := opts.Timeout
+	if timeout <= 0 {
+		timeout = DefaultHookTimeout
 	}
-	for _, h := range judgeHooks {
+	hooks, err := verify.HooksFor(ctx, wf, verify.Options{
+		Provider: opts.Judge, Env: opts.Env, Wrap: opts.Wrap, Timeout: timeout,
+	})
+	if err != nil {
+		// The only factories that refuse to build are the judge (a prompt that
+		// will not load, or no provider to judge it) and the fixture guard, so a
+		// workflow declaring prompts names them as the finding's kind.
+		kind := "exec"
+		if wf.Verify != nil && len(wf.Verify.Prompts) > 0 {
+			kind = "prompt"
+		}
+		return nil, &Finding{Hook: "hookset", Kind: kind, Message: err.Error()}
+	}
+	var plugins []*verify.Plugin
+	for _, h := range hooks {
 		p, ok := h.(*verify.Plugin)
 		if !ok {
-			return nil, &Finding{Hook: "hookset", Kind: "prompt", Message: fmt.Sprintf("unexpected hook type %T", h)}
+			return nil, &Finding{Hook: "hookset", Kind: "exec", Message: fmt.Sprintf("unexpected hook type %T", h)}
 		}
 		plugins = append(plugins, p)
 	}

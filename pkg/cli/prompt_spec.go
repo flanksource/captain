@@ -164,10 +164,18 @@ func decodePromptBody(ctx context.Context, flat map[string]any, dst any) error {
 	return nil
 }
 
-func runtimeTimeout(raw string) time.Duration {
-	timeout, _ := time.ParseDuration(raw)
-	if timeout <= 0 {
-		return 120 * time.Second
-	}
-	return timeout
+// defaultRunTimeout is the CLI's own deadline for a run whose spec declares no
+// budget.timeout. It belongs at the call sites that need a bound — the value
+// pkg/cli hands promptrun.Input.Timeout — not inside the parser, where it would
+// stand in for a value the author got wrong.
+const defaultRunTimeout = 120 * time.Second
+
+// runtimeTimeout resolves a declared budget.timeout string through the same
+// parser api.Spec validation uses. Zero means no bound was declared and the
+// caller's own default applies; an unparseable or non-positive value is an
+// error naming the field and the raw value. Substituting a default here made
+// `budget.timeout: "2 minutes"` run to a deadline nobody asked for, reported as
+// if the declared ceiling had been honoured.
+func runtimeTimeout(raw string) (time.Duration, error) {
+	return api.Budget{Timeout: raw}.ParseTimeout()
 }

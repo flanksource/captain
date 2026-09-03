@@ -99,7 +99,11 @@ func runTaskPrompt(ctx context.Context, worktree string, payload gitagent.TaskPa
 	req.Sandbox = &api.SandboxRef{Mode: api.SandboxNative}
 	req.Permissions.Mode = api.PermissionAcceptEdits
 
-	if _, err := executePromptRequestFunc(ctx, req, cfg, renderedTimeout(PromptRenderResult{Input: req, Config: cfg}), true); err != nil {
+	timeout, err := renderedTimeout(PromptRenderResult{Input: req, Config: cfg})
+	if err != nil {
+		return err
+	}
+	if _, err := executePromptRequestFunc(ctx, req, cfg, timeout, true); err != nil {
 		return err
 	}
 	return nil

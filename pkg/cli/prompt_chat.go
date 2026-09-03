@@ -120,7 +120,10 @@ func (c *chatSession) run(t *task.Task) (PromptRunSummary, error) {
 var errChatIdle = errors.New("chat idle timeout")
 
 func (c *chatSession) runTurn(baseCtx context.Context, t *task.Task, req ai.Request) (PromptRunSummary, bool, error) {
-	turnCtx, cancel := runContext(baseCtx, req, c.timeout)
+	turnCtx, cancel, err := runContext(baseCtx, req, c.timeout)
+	if err != nil {
+		return PromptRunSummary{}, false, err
+	}
 	turnDone := make(chan struct{})
 	c.mu.Lock()
 	c.state.Turn++

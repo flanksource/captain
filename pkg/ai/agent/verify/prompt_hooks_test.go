@@ -33,21 +33,26 @@ func writeJudgePrompt(t *testing.T) string {
 	return path
 }
 
-func TestPromptHooksForWorkflow(t *testing.T) {
+// judgeHooks builds the hooks for a workflow that declares only prompts.
+func judgeHooks(t *testing.T, provider ai.Provider, prompts ...string) ([]any, error) {
+	t.Helper()
+	return HooksFor(context.Background(), &api.Workflow{Verify: &api.Verify{Prompts: prompts}}, Options{Provider: provider})
+}
+
+func TestPromptHooks(t *testing.T) {
 	provider := &judgeStubProvider{}
 
 	t.Run("nothing declared yields no hooks", func(t *testing.T) {
-		if hooks, err := PromptHooksForWorkflow(nil, provider); err != nil || hooks != nil {
+		if hooks, err := HooksFor(context.Background(), nil, Options{Provider: provider}); err != nil || hooks != nil {
 			t.Fatalf("hooks = %v, err = %v", hooks, err)
 		}
-		if hooks, err := PromptHooksForWorkflow(&api.Workflow{Verify: &api.Verify{}}, provider); err != nil || hooks != nil {
+		if hooks, err := judgeHooks(t, provider); err != nil || hooks != nil {
 			t.Fatalf("hooks = %v, err = %v", hooks, err)
 		}
 	})
 
 	t.Run("a blank prompt entry fails instead of dropping the check", func(t *testing.T) {
-		path := writeJudgePrompt(t)
-		_, err := PromptHooksForWorkflow(&api.Workflow{Verify: &api.Verify{Prompts: []string{path, "  "}}}, provider)
+		_, err := judgeHooks(t, provider, writeJudgePrompt(t), "  ")
 		if err == nil || !strings.Contains(err.Error(), "prompts[1] is empty") {
 			t.Fatalf("err = %v, want blank entry rejected", err)
 		}
@@ -55,9 +60,7 @@ func TestPromptHooksForWorkflow(t *testing.T) {
 
 	t.Run("builds a named LLM judge per prompt", func(t *testing.T) {
 		path := writeJudgePrompt(t)
-		wf := &api.Workflow{Verify: &api.Verify{Prompts: []string{path}}}
-
-		hooks, err := PromptHooksForWorkflow(wf, provider)
+		hooks, err := judgeHooks(t, provider, path)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -74,8 +77,7 @@ func TestPromptHooksForWorkflow(t *testing.T) {
 	})
 
 	t.Run("the judge consults the provider, not a live model", func(t *testing.T) {
-		path := writeJudgePrompt(t)
-		hooks, err := PromptHooksForWorkflow(&api.Workflow{Verify: &api.Verify{Prompts: []string{path}}}, provider)
+		hooks, err := judgeHooks(t, provider, writeJudgePrompt(t))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -93,8 +95,28 @@ func TestPromptHooksForWorkflow(t *testing.T) {
 		}
 	})
 
+	// The node's framework names the verifier family that produced it, using the
+	// same kind string the report carries — a renderer grouping a mixed tree by
+	// framework must not see "judge" and "prompt" as two families.
+	t.Run("the judgement is one node in the prompt framework", func(t *testing.T) {
+		hooks, err := judgeHooks(t, provider, writeJudgePrompt(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+		vd, err := hooks[0].(*Plugin).v.Verify(context.Background(), "/work", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if vd.Report.Kind != api.VerifyKindPrompt {
+			t.Fatalf("report kind = %q, want %q", vd.Report.Kind, api.VerifyKindPrompt)
+		}
+		if got := vd.Report.Tests[0].Framework; got != api.VerifyKindPrompt {
+			t.Fatalf("node framework = %q, want %q — the kind string, not a second name for it", got, api.VerifyKindPrompt)
+		}
+	})
+
 	t.Run("a missing prompt file is an error, not a skipped check", func(t *testing.T) {
-		_, err := PromptHooksForWorkflow(&api.Workflow{Verify: &api.Verify{Prompts: []string{"/does/not/exist.prompt"}}}, provider)
+		_, err := judgeHooks(t, provider, "/does/not/exist.prompt")
 		if err == nil || !strings.Contains(err.Error(), "/does/not/exist.prompt") {
 			t.Fatalf("err = %v", err)
 		}
@@ -106,7 +128,7 @@ func TestPromptHooksForWorkflow(t *testing.T) {
 		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		_, err := PromptHooksForWorkflow(&api.Workflow{Verify: &api.Verify{Prompts: []string{path}}}, provider)
+		_, err := judgeHooks(t, provider, path)
 		if err == nil || !strings.Contains(err.Error(), "declares a sandbox") {
 			t.Fatalf("err = %v, want sandbox declaration rejected (R5.4)", err)
 		}
@@ -118,7 +140,7 @@ func TestPromptHooksForWorkflow(t *testing.T) {
 		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		_, err := PromptHooksForWorkflow(&api.Workflow{Verify: &api.Verify{Prompts: []string{path}}}, provider)
+		_, err := judgeHooks(t, provider, path)
 		if err == nil || !strings.Contains(err.Error(), `declares model "gpt-5.5"`) {
 			t.Fatalf("err = %v, want model mismatch rejected", err)
 		}
@@ -130,15 +152,14 @@ func TestPromptHooksForWorkflow(t *testing.T) {
 		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		hooks, err := PromptHooksForWorkflow(&api.Workflow{Verify: &api.Verify{Prompts: []string{path}}}, provider)
+		hooks, err := judgeHooks(t, provider, path)
 		if err != nil || len(hooks) != 1 {
 			t.Fatalf("hooks = %v, err = %v", hooks, err)
 		}
 	})
 
 	t.Run("declared prompts with no provider fail loud", func(t *testing.T) {
-		path := writeJudgePrompt(t)
-		_, err := PromptHooksForWorkflow(&api.Workflow{Verify: &api.Verify{Prompts: []string{path}}}, nil)
+		_, err := judgeHooks(t, nil, writeJudgePrompt(t))
 		if err == nil || !strings.Contains(err.Error(), "no provider") {
 			t.Fatalf("err = %v", err)
 		}
