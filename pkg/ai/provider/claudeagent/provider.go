@@ -55,6 +55,13 @@ const (
 	initTimeout = 2 * time.Minute
 	// initCallTimeout bounds the single initialize Call once stdio is bound.
 	initCallTimeout = 90 * time.Second
+	// processOutputDrain bounds how long a terminal diagnostic waits for the
+	// child's stderr to catch up with the failure already announced on stdout.
+	// The two pipes carry no ordering guarantee between them, so the wait is the
+	// only way to reconcile them; it ends as soon as stderr lands or the child
+	// exits, and only an error that truly wrote nothing pays the full bound.
+	processOutputDrain = 250 * time.Millisecond
+	processOutputPoll  = 5 * time.Millisecond
 )
 
 // safeEditAllowlist is the curated allowlist applied by --edit. It is kept local
