@@ -144,10 +144,8 @@ func modelAvailability(model Model, options catalogInfoOptions) api.Availability
 	if slices.Contains(options.ConfiguredProviders, providerName(model.Provider)) {
 		return api.Available()
 	}
-	for _, adapter := range options.Adapters {
-		if adapter.Provider == providerName(model.Provider) && adapter.Mode == string(model.Mode) {
-			return AvailabilityForAdapter(adapter)
-		}
+	if adapter, ok := adapterForModel(options.Adapters, model); ok {
+		return AvailabilityForAdapter(adapter)
 	}
 	status := AdapterStatus{
 		Provider: providerName(model.Provider),
@@ -163,6 +161,35 @@ func modelAvailability(model Model, options catalogInfoOptions) api.Availability
 	}
 	status.BinaryMissing = binary
 	return AvailabilityForAdapter(status)
+}
+
+// adapterForModel finds the whoami probe a catalog row was built from. An exact
+// provider×mode match wins; failing that, a local-transport probe that
+// mergeLiveCatalog collapsed onto this row's menu runtime (a cli probe lands on
+// the family's agent row) still answers for it. Without the collapsed match such
+// a row falls through to the PATH probe below and reports the tooling installed
+// on this machine instead of the status the caller actually supplied.
+func adapterForModel(adapters []AdapterStatus, model Model) (AdapterStatus, bool) {
+	name := providerName(model.Provider)
+	collapsed := -1
+	for i, adapter := range adapters {
+		if adapter.Provider != name {
+			continue
+		}
+		if adapter.Mode == string(model.Mode) {
+			return adapter, true
+		}
+		if collapsed >= 0 {
+			continue
+		}
+		if menu, ok := menuRuntimeFor(Runtime{Provider: adapter.Provider, Mode: RuntimeMode(adapter.Mode)}); ok && menu.Mode == model.Mode {
+			collapsed = i
+		}
+	}
+	if collapsed >= 0 {
+		return adapters[collapsed], true
+	}
+	return AdapterStatus{}, false
 }
 
 // requiredBinary is the executable a local transport needs on PATH, declared per
