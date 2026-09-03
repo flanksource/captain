@@ -9,6 +9,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/flanksource/captain/pkg/ai/agent/verify"
 	"github.com/flanksource/captain/pkg/api"
 	clickyapi "github.com/flanksource/clicky/api"
 )
@@ -74,6 +75,29 @@ var _ = Describe("captain verify", func() {
 
 		_, err := RunVerify(ctx, VerifyOptions{Fixture: fixture, Cwd: GinkgoT().TempDir()})
 		Expect(err).To(MatchError(ContainSubstring("no fixture verifier is registered")))
+	})
+
+	// A fixture runner that grades with its own agent inherits the run's model
+	// and permissions from the spec `captain verify` resolved, rather than
+	// inventing a posture of its own.
+	It("hands the spec it built to the verifier factory", func() {
+		fixture := filepath.Join(GinkgoT().TempDir(), "acceptance.md")
+		Expect(os.WriteFile(fixture, []byte("# acceptance\n"), 0o644)).To(Succeed())
+
+		var captured *api.Spec
+		verify.Register(verify.KindFixture, func(_ context.Context, _ api.Verify, opts verify.Options) ([]*verify.Plugin, error) {
+			captured = opts.RunSpec
+			return []*verify.Plugin{verify.New("fixture", verify.FuncVerifier(
+				func(context.Context, string, []string) (verify.Verdict, error) {
+					return verify.Verdict{OK: true}, nil
+				}))}, nil
+		})
+		DeferCleanup(func() { verify.Unregister(verify.KindFixture) })
+
+		_, err := RunVerify(ctx, VerifyOptions{Fixture: fixture, Cwd: GinkgoT().TempDir()})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(captured).NotTo(BeNil())
+		Expect(captured.Workflow.Verify.Fixture).To(Equal("# acceptance\n"))
 	})
 
 	It("refuses a run with nothing declared rather than passing vacuously", func() {

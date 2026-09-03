@@ -42,6 +42,14 @@ type Options struct {
 	// Progress receives each coalesced in-flight snapshot a verifier reports.
 	// Nil means the caller wants only the final verdict.
 	Progress func(api.VerifyReport)
+	// RunSpec is the resolved spec of the run these checks belong to — the model,
+	// permissions, budget and workflow it was started under — and is read-only to
+	// a factory. A factory that runs an agent of its own (a fixture grader
+	// judging a document's acceptance criteria) inherits the run's posture from
+	// it; without it such a grader has to invent a model and a permission mode,
+	// and grades outside the bounds the run declared. Nil when the checks are
+	// driven with no run behind them.
+	RunSpec *api.Spec
 }
 
 // Factory builds the hooks one kind contributes. It returns *Plugin rather than
