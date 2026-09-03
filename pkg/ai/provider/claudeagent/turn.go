@@ -14,6 +14,7 @@ import (
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/provider/jsonrpc"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/clicky/exec"
 )
 
 // turnState carries the channels a single in-flight turn uses to receive mapped
@@ -122,11 +123,11 @@ func (p *Provider) runTurn(ctx context.Context, req ai.Request, events chan ai.E
 	for {
 		select {
 		case ev := <-ts.inbox:
-			if !emit(ctx, events, ev) {
+			if !emit(ctx, events, p.withCapturedOutput(ev)) {
 				return
 			}
 		case <-ts.term:
-			drainInbox(ctx, ts.inbox, events)
+			p.drainInbox(ctx, ts.inbox, events)
 			return
 		case <-ctx.Done():
 			p.interrupt()
@@ -147,9 +148,6 @@ func (p *Provider) runTurn(ctx context.Context, req ai.Request, events chan ai.E
 // on the turn's quit and the provider's base context.
 func (p *Provider) onNotification(method string, params json.RawMessage) {
 	ev, ok := mapNotification(method, params, p.model)
-	if ok && ev.Kind == ai.EventError {
-		ev.Error = p.withProcessOutput(ev.Error)
-	}
 	if ok && ev.SessionID != "" {
 		p.rememberSession(ev.SessionID)
 	}
@@ -176,6 +174,27 @@ func (p *Provider) onNotification(method string, params json.RawMessage) {
 	}
 }
 
+// withCapturedOutput attaches the child's captured stdio to an error event.
+//
+// It runs on the turn's own goroutine, never the jsonrpc read loop: the wait in
+// withProcessOutput ends when the child's pumps drain, and draining stdout is
+// the read loop's own job — enriching there would make the wait outlive its
+// cause.
+func (p *Provider) withCapturedOutput(ev ai.Event) ai.Event {
+	if ev.Kind == ai.EventError {
+		ev.Error = p.withProcessOutput(ev.Error)
+	}
+	return ev
+}
+
+// withProcessOutput appends the child's captured stdio to a terminal
+// diagnostic.
+//
+// stdout and stderr are pumped independently, so the turn/error announcing a
+// subprocess failure arrives before the stderr flush that explains it: the
+// message then carries the JSON-RPC transcript and none of the subprocess's own
+// output — an authentication detail written to stderr goes missing from the very
+// error raised to report it. awaitStderr reconciles the two pipes first.
 func (p *Provider) withProcessOutput(message string) string {
 	p.procMu.RLock()
 	proc := p.proc
@@ -183,6 +202,7 @@ func (p *Provider) withProcessOutput(message string) string {
 	if proc == nil {
 		return message
 	}
+	p.awaitStderr(proc)
 
 	stdout := outputTail(proc.GetStdout())
 	stderr := outputTail(proc.GetStderr())
@@ -201,6 +221,23 @@ func (p *Provider) withProcessOutput(message string) string {
 		detail.WriteString(stderr)
 	}
 	return detail.String()
+}
+
+// awaitStderr gives the child's stderr pump a bounded chance to land before its
+// output is read. It returns the moment stderr has anything, or the child is
+// gone and no more is coming — a diagnostic never waits on a pipe that already
+// spoke.
+func (p *Provider) awaitStderr(proc *exec.Process) {
+	deadline := time.Now().Add(processOutputDrain)
+	for proc.GetStderr() == "" && time.Now().Before(deadline) {
+		select {
+		case <-p.procExited:
+			return
+		case <-p.baseCtx.Done():
+			return
+		case <-time.After(processOutputPoll):
+		}
+	}
 }
 
 func outputTail(output string) string {
@@ -402,11 +439,11 @@ func emit(ctx context.Context, events chan ai.Event, ev ai.Event) bool {
 
 // drainInbox flushes any events the handler already queued (e.g. the terminal
 // result enqueued just before term closed) without blocking.
-func drainInbox(ctx context.Context, inbox chan ai.Event, events chan ai.Event) {
+func (p *Provider) drainInbox(ctx context.Context, inbox chan ai.Event, events chan ai.Event) {
 	for {
 		select {
 		case ev := <-inbox:
-			if !emit(ctx, events, ev) {
+			if !emit(ctx, events, p.withCapturedOutput(ev)) {
 				return
 			}
 		default:
