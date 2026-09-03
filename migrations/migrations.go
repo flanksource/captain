@@ -162,19 +162,42 @@ func verifyToolApprovalIdentity(ctx context.Context, request applyRequest) (resu
 	if err != nil {
 		return fmt.Errorf("read captain_turn_requests_tool_approval_identity: %w", err)
 	}
-	normalized := strings.ToLower(strings.Join(strings.Fields(definition), " "))
+	normalized := flattenConstraintDefinition(definition)
 	if !validated || strings.Contains(normalized, "credential_id is not null") {
 		return fmt.Errorf("captain_turn_requests_tool_approval_identity is invalid: %s", definition)
 	}
-	for _, required := range []string{
-		"prompt_run_id is not null", "turn_id is not null",
-		"model_call_id is not null", "tool_call_id is not null",
-	} {
+	for _, required := range approvalIdentityFragments {
 		if !strings.Contains(normalized, required) {
 			return fmt.Errorf("captain_turn_requests_tool_approval_identity omits %q: %s", required, definition)
 		}
 	}
 	return nil
+}
+
+// approvalIdentityFragments are what the tool-approval identity constraint must
+// say, as 81_turn_request_provider_approval_identity.sql leaves it.
+//
+// The third fragment is the whole point of that migration and the one this
+// check exists to defend: identity is conditional on the credential, so a
+// credential-less provider approval — `captain prompt run`, or an external host
+// driving a streaming provider, neither of which ever opens a turn or a model
+// call — is identified by its prompt run and tool call alone. A definition that
+// demands turn_id and model_call_id unconditionally is 74's retired shape, and
+// finding it here means the database drifted back to a constraint that rejects
+// every provider approval the broker writes.
+var approvalIdentityFragments = []string{
+	"prompt_run_id is not null",
+	"tool_call_id is not null",
+	"credential_id is null or turn_id is not null and model_call_id is not null",
+}
+
+// flattenConstraintDefinition renders pg_get_constraintdef's output as one
+// lower-case line with its parenthesis nesting dropped, so a fragment can be
+// matched without reproducing exactly how PostgreSQL chose to bracket the
+// expression it deparsed.
+func flattenConstraintDefinition(definition string) string {
+	unbracketed := strings.NewReplacer("(", " ", ")", " ").Replace(definition)
+	return strings.ToLower(strings.Join(strings.Fields(unbracketed), " "))
 }
 
 type migrationLock struct {
