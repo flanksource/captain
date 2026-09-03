@@ -23,6 +23,11 @@ status:
   summary: {}
 test:
   outlineSummary: {}
+  # pkg/ai/fixture drives real agent subprocesses; the 5m default kills it on a
+  # loaded machine. Set here rather than only in CI so a local run and the SSH
+  # git-push backend use the same deadlines.
+  timeout: 45m
+  testTimeout: 20m
 todos:
   plan: {}
   run: {}
