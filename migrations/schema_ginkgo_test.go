@@ -8,6 +8,18 @@ import (
 	. "github.com/onsi/gomega"
 )
 
+// addedCheckConstraint extracts the CHECK body of the script's
+// ADD CONSTRAINT ... statement, with whitespace collapsed so the two files are
+// compared on what they say rather than how they are indented.
+func addedCheckConstraint(script, name string) string {
+	GinkgoHelper()
+	_, after, found := strings.Cut(script, "ADD CONSTRAINT captain_turn_requests_tool_approval_identity")
+	Expect(found).To(BeTrue(), "%s no longer adds the constraint", name)
+	body, _, found := strings.Cut(after, ") NOT VALID;")
+	Expect(found).To(BeTrue(), "%s no longer ends the constraint with ) NOT VALID;", name)
+	return strings.Join(strings.Fields(body), " ")
+}
+
 var _ = Describe("schema-scoped Captain migrations", func() {
 	It("leaves the public bundle unchanged", func() {
 		filesystem, err := schemaFilesystem(DefaultSchema)
@@ -52,6 +64,27 @@ var _ = Describe("schema-scoped Captain migrations", func() {
 	It("rejects invalid schemas", func() {
 		_, err := schemaFilesystem(strings.Repeat("x", 64))
 		Expect(err).To(HaveOccurred())
+	})
+
+	// 74 is retired but still installs the tool-approval identity constraint,
+	// because either script can re-run without the other (a content-hash change,
+	// a dropped ledger row) and whichever runs last decides the shape the
+	// database ends up with. They only agree by staying byte-identical.
+	It("installs one tool-approval identity constraint from both 74 and 81", func() {
+		bodies := map[string]string{}
+		for _, name := range []string{
+			"74_turn_request_approval_identity.sql",
+			"81_turn_request_provider_approval_identity.sql",
+		} {
+			content, err := schemaFS.ReadFile(name)
+			Expect(err).NotTo(HaveOccurred())
+			bodies[name] = addedCheckConstraint(string(content), name)
+		}
+		Expect(bodies["74_turn_request_approval_identity.sql"]).
+			To(Equal(bodies["81_turn_request_provider_approval_identity.sql"]))
+		for name, body := range bodies {
+			Expect(body).To(ContainSubstring("credential_id IS NULL"), name)
+		}
 	})
 
 	It("uses a stable schema-specific advisory lock", func() {

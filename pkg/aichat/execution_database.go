@@ -6,19 +6,13 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/ai/approval"
 	"github.com/flanksource/captain/pkg/ai/callertools"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/google/uuid"
-)
-
-const (
-	callerToolApprovalTimeout = 5 * time.Minute
-	providerApprovalTimeout   = 24 * time.Hour
-	approvalPollInterval      = 100 * time.Millisecond
 )
 
 type databaseExecution struct {
@@ -144,7 +138,7 @@ func (e *databaseExecution) startCallerTools(ctx context.Context, provider *api.
 	var credentialID uuid.UUID
 	runtime, err := callertools.New(callertools.Options{
 		Definitions: e.definitions, SessionID: e.session.ID.String(),
-		ApprovalTimeout: callerToolApprovalTimeout,
+		ApprovalTimeout: approval.CallerToolTimeout,
 		ValidateCredential: func(ctx context.Context) error {
 			if credentialID == uuid.Nil {
 				return fmt.Errorf("caller-tool credential has not been issued")
@@ -152,7 +146,7 @@ func (e *databaseExecution) startCallerTools(ctx context.Context, provider *api.
 			return e.db.ValidateCallerToolCredential(ctx, credentialID)
 		},
 		CanUseTool: func(ctx context.Context, request api.PermissionRequest) (api.PermissionDecision, error) {
-			return e.requestApproval(ctx, credentialID, request)
+			return e.approvalBroker(credentialID).CanUseTool(ctx, request)
 		},
 	})
 	if err != nil {
@@ -180,95 +174,33 @@ func (e *databaseExecution) startCallerTools(ctx context.Context, provider *api.
 	return nil
 }
 
-func (e *databaseExecution) requestApproval(
-	ctx context.Context,
-	credentialID uuid.UUID,
-	request api.PermissionRequest,
-) (api.PermissionDecision, error) {
-	if request.ToolUseIDGenerated {
-		toolUseID, err := e.claimProviderToolUse(ctx, request)
-		if err != nil {
-			return api.PermissionDecision{}, err
-		}
-		request.ToolUseID = toolUseID
+// approvalBroker is this execution's durable tool-approval seam. The caller-tool
+// path names its credential, turn and model call, so a host answers it from the
+// same captain_turn_requests row a credential-less provider run writes.
+func (e *databaseExecution) approvalBroker(credentialID uuid.UUID) *approval.Broker {
+	// The broker outlives this call and keeps whatever it is handed, so it gets
+	// copies rather than pointers into the execution: &e.turn.ID and
+	// &e.modelCallID aim inside state this execution mutates under e.mu (the
+	// prompt run is swapped wholesale on every runtime bind), which is a live
+	// read of shared memory from whichever goroutine later records the approval.
+	e.mu.Lock()
+	turnID, modelCallID, runID := e.turn.ID, e.modelCallID, e.run.ID
+	e.mu.Unlock()
+	return &approval.Broker{
+		DB: e.db, SessionID: e.session.ID, PromptRunID: runID,
+		TurnID: &turnID, ModelCallID: &modelCallID, CredentialID: credentialID,
+		RequestedBy: "caller_tool", Timeout: approval.CallerToolTimeout,
+		Notify: e.emit, OnWaiting: e.markWaiting, OnRunning: e.markRunning,
+		ClaimToolUseID: e.claimProviderToolUse,
 	}
-	expiresAt := time.Now().Add(callerToolApprovalTimeout)
-	pending, err := e.db.CreateToolApprovalRequest(ctx, database.CreateToolApprovalRequestInput{
-		CredentialID: credentialID, SessionID: e.session.ID, TurnID: e.turn.ID, PromptRunID: e.run.ID,
-		ModelCallID: e.modelCallID, RequestedBy: "caller_tool",
-		ToolCallID: request.ToolUseID, Tool: request.Tool, Input: request.Input,
-		ExpiresAt: expiresAt,
-	})
-	if err != nil {
-		return api.PermissionDecision{}, err
-	}
-	if err := e.markWaiting(ctx); err != nil {
-		return api.PermissionDecision{}, err
-	}
-	if err := e.emitApproval(ctx, pending.ID, request); err != nil {
-		return api.PermissionDecision{}, err
-	}
-	decision, err := e.waitForApproval(ctx, pending.ID)
-	restoreErr := e.markRunning(ctx)
-	return decision, errors.Join(err, restoreErr)
 }
 
-func (e *databaseExecution) emitApproval(ctx context.Context, approvalID uuid.UUID, request api.PermissionRequest) error {
-	event := api.Event{
-		Kind: api.EventPermission, Tool: request.Tool,
-		ToolCallID: request.ToolUseID, ApprovalID: approvalID.String(), Input: request.Input,
-	}
+func (e *databaseExecution) emit(ctx context.Context, event api.Event) error {
 	select {
 	case e.events <- event:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
-	}
-}
-
-func (e *databaseExecution) waitForApproval(
-	ctx context.Context,
-	requestID uuid.UUID,
-) (api.PermissionDecision, error) {
-	ticker := time.NewTicker(approvalPollInterval)
-	defer ticker.Stop()
-	for {
-		request, err := e.db.GetTurnRequest(ctx, requestID)
-		if err != nil {
-			return api.PermissionDecision{}, err
-		}
-		switch request.State {
-		case database.TurnRequestStateApproved:
-			decision := api.PermissionDecision{Allow: true}
-			if updated, ok := request.Response["updatedInput"].(map[string]any); ok {
-				decision.UpdatedInput = updated
-			}
-			return decision, nil
-		case database.TurnRequestStateDenied:
-			message := request.Reason
-			if message == "" {
-				message = "tool call denied"
-			}
-			return api.PermissionDecision{Message: message}, nil
-		case database.TurnRequestStateExpired, database.TurnRequestStateCancelled:
-			return api.PermissionDecision{}, fmt.Errorf("tool approval %s", request.State)
-		}
-		if request.ExpiresAt != nil && !time.Now().Before(*request.ExpiresAt) {
-			if err := e.db.ExpireToolApprovalRequest(ctx, request.ID, database.TurnRequestStateExpired, "approval timed out"); err != nil {
-				return api.PermissionDecision{}, err
-			}
-			continue
-		}
-		if err := e.db.ValidateCallerToolCredential(ctx, *request.CredentialID); err != nil {
-			_ = e.db.ExpireToolApprovalRequest(ctx, request.ID, database.TurnRequestStateCancelled, err.Error())
-			return api.PermissionDecision{}, err
-		}
-		select {
-		case <-ctx.Done():
-			_ = e.db.ExpireToolApprovalRequest(context.Background(), request.ID, database.TurnRequestStateCancelled, ctx.Err().Error())
-			return api.PermissionDecision{}, ctx.Err()
-		case <-ticker.C:
-		}
 	}
 }
 
@@ -286,11 +218,11 @@ func (e *databaseExecution) Observe(ctx context.Context, event api.Event) (api.E
 		if event.ApprovalID != "" {
 			return event, nil
 		}
-		approval, err := e.createProviderApproval(ctx, event)
+		pending, err := e.createProviderApproval(ctx, event)
 		if err != nil {
 			return event, err
 		}
-		event.ApprovalID = approval.ID.String()
+		event.ApprovalID = pending.ID.String()
 		return event, nil
 	case api.EventResult:
 		if event.ToolApproval != nil {
@@ -441,25 +373,6 @@ func (e *databaseExecution) bindProviderSession(ctx context.Context, providerID 
 	return nil
 }
 
-func (e *databaseExecution) markRunning(ctx context.Context) error {
-	phase := database.PromptRunPhaseGenerate
-	state := database.PromptRunStateRunning
-	activity := database.SessionActivityWorking
-	if err := e.updateRun(ctx, runUpdate{Phase: &phase, State: &state}); err != nil {
-		return err
-	}
-	return e.updateSessionActivity(ctx, activity)
-}
-
-func (e *databaseExecution) markWaiting(ctx context.Context) error {
-	state := database.PromptRunStateWaiting
-	activity := database.SessionActivityApproval
-	if err := e.updateRun(ctx, runUpdate{State: &state}); err != nil {
-		return err
-	}
-	return e.updateSessionActivity(ctx, activity)
-}
-
 func (e *databaseExecution) finish(ctx context.Context, success bool, message string, event api.Event) error {
 	e.finishMu.Lock()
 	defer e.finishMu.Unlock()
@@ -513,66 +426,5 @@ func (e *databaseExecution) finish(ctx context.Context, success bool, message st
 	e.mu.Lock()
 	e.terminal = true
 	e.mu.Unlock()
-	return nil
-}
-
-type runUpdate struct {
-	Phase                   *database.PromptRunPhase
-	State                   *database.PromptRunState
-	Message                 *string
-	ApprovalState           *api.ToolApprovalState
-	ProviderCheckpoint      *database.PromptRunCheckpoint
-	ClearApprovalState      bool
-	ClearProviderCheckpoint bool
-}
-
-func (e *databaseExecution) updateRun(ctx context.Context, update runUpdate) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	input := database.UpdatePromptRunInput{
-		ID: e.run.ID, ExpectedVersion: e.run.Version, Phase: update.Phase, State: update.State,
-	}
-	if update.Message != nil && *update.Message != "" {
-		input.Error = update.Message
-	}
-	input.ApprovalState = update.ApprovalState
-	input.ProviderCheckpoint = update.ProviderCheckpoint
-	input.ClearApprovalState = update.ClearApprovalState
-	input.ClearProviderCheckpoint = update.ClearProviderCheckpoint
-	run, err := e.db.UpdatePromptRun(ctx, input)
-	if err != nil {
-		return err
-	}
-	e.run = run
-	return nil
-}
-
-func (e *databaseExecution) updateSessionActivity(
-	ctx context.Context,
-	activity database.SessionActivityState,
-) error {
-	return e.updateSessionState(ctx, database.SessionLifecycleRunning, activity, "")
-}
-
-func (e *databaseExecution) updateSessionState(
-	ctx context.Context,
-	lifecycle database.SessionLifecycleStatus,
-	activity database.SessionActivityState,
-	reason string,
-) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	session, err := e.db.GetSession(ctx, e.session.ID)
-	if err != nil {
-		return err
-	}
-	updated, err := e.db.UpdateSessionState(ctx, database.UpdateSessionStateInput{
-		ID: session.ID, ExpectedVersion: session.StateVersion,
-		LifecycleStatus: &lifecycle, ActivityState: &activity, StateReason: &reason,
-	})
-	if err != nil {
-		return err
-	}
-	e.session = updated
 	return nil
 }
