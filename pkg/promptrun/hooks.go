@@ -2,6 +2,7 @@ package promptrun
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/agent/commit"
@@ -24,16 +25,32 @@ import (
 //
 // It is exported so a host can assert the list it will run — and so a caller
 // that drives verifiers out of loop can still ask what a spec declares.
+//
+// Input.CallerOwnsCommits drops the leading commit hooks: the host commits, and
+// its own hooks keep their position between the checks and setup.
 func Hooks(ctx context.Context, in Input, provider ai.Provider) ([]any, error) {
+	if in.CallerOwnsCommits && len(in.Hooks) == 0 {
+		return nil, fmt.Errorf("promptrun: CallerOwnsCommits is set but Input.Hooks is empty: nothing would commit")
+	}
 	opts := in.Verify
 	if opts.Provider == nil {
 		opts.Provider = provider
+	}
+	if opts.RunSpec == nil {
+		// A verifier that runs an agent of its own inherits the run's model,
+		// permissions and budget from here. It is the resolved request — the same
+		// one the runner executes — and read-only to a factory.
+		opts.RunSpec = &in.Request
 	}
 	verifyHooks, err := verify.HooksFor(ctx, in.Request.Workflow, opts)
 	if err != nil {
 		return nil, err
 	}
-	hooks := append(commit.HooksForWorkflow(in.Request.Workflow), verifyHooks...)
+	var hooks []any
+	if !in.CallerOwnsCommits {
+		hooks = append(hooks, commit.HooksForWorkflow(in.Request.Workflow)...)
+	}
+	hooks = append(hooks, verifyHooks...)
 	hooks = append(hooks, in.Hooks...)
 	if in.Provider == nil && in.Request.Setup != nil {
 		hooks = append(hooks, &setup.Plugin{})

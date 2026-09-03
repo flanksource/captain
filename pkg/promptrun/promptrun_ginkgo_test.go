@@ -169,6 +169,72 @@ var _ = Describe("promptrun.Run", func() {
 		})
 	})
 
+	Describe("commit ownership", func() {
+		BeforeEach(func() {
+			request.Workflow = &api.Workflow{
+				Verify:  &api.Verify{Commands: []string{"true"}},
+				Commits: []api.Commit{{On: api.CommitOnRun}},
+			}
+		})
+
+		It("builds captain's own commit hook from the workflow by default", func() {
+			hooks, err := promptrun.Hooks(context.Background(), promptrun.Input{Request: request}, provider)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(hookNames(hooks)).To(Equal([]string{"commit:run", "verify:true", "setup"}))
+		})
+
+		// A host with its own commit pipeline — gavel's pre-commit gates and
+		// trailers — would otherwise commit the same tree twice. It used to strip
+		// Workflow.Commits off the request to prevent that, which also took the
+		// declaration out of the spec that gets recorded and validated.
+		It("adds no commit hook when the caller owns commits, and leaves the declaration on the request", func() {
+			var log []string
+			in := promptrun.Input{
+				Request:           request,
+				Hooks:             []any{&recordingHook{name: "host", log: &log}},
+				CallerOwnsCommits: true,
+			}
+
+			hooks, err := promptrun.Hooks(context.Background(), in, provider)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(hookNames(hooks)).To(Equal([]string{"verify:true", "host", "setup"}),
+				"the caller's hooks keep their position: after the checks, before setup")
+			Expect(request.Workflow.Commits).To(Equal([]api.Commit{{On: api.CommitOnRun}}),
+				"the resolved spec still declares what the host commits")
+		})
+
+		It("refuses caller-owned commits with no caller hook to do the committing", func() {
+			_, err := promptrun.Hooks(context.Background(),
+				promptrun.Input{Request: request, CallerOwnsCommits: true}, provider)
+			Expect(err).To(MatchError(ContainSubstring("CallerOwnsCommits")))
+		})
+	})
+
+	Describe("the spec a verifier factory is given", func() {
+		// A factory that runs its own agent — a fixture grader judging a
+		// document's acceptance criteria — has no other way to inherit the run's
+		// model, permissions and budget, and one that invents its own runs the
+		// grading outside the posture the run was started under.
+		It("hands the run's resolved spec to every registered factory", func() {
+			var captured *api.Spec
+			verify.Register(verify.KindFixture, func(_ context.Context, _ api.Verify, opts verify.Options) ([]*verify.Plugin, error) {
+				captured = opts.RunSpec
+				return []*verify.Plugin{verify.New("fixture", &progressVerifier{})}, nil
+			})
+			request.Permissions.Mode = api.PermissionAcceptEdits
+			request.Workflow = &api.Workflow{Verify: &api.Verify{Fixture: "acceptance"}}
+
+			res, err := promptrun.Run(context.Background(), promptrun.Input{
+				Request: request, Provider: provider, Timeout: testTimeout,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res.Passed).To(BeTrue())
+			Expect(captured).NotTo(BeNil(), "a factory with no spec cannot inherit the run's model or permissions")
+			Expect(captured.Model.Name).To(Equal("claude-sonnet-5"))
+			Expect(captured.Permissions.Mode).To(Equal(api.PermissionAcceptEdits))
+		})
+	})
+
 	Describe("verify-only", func() {
 		// An empty prompt body means "judge the tree as it is". The provider is
 		// never asked anything — and never even constructed when nothing needs
