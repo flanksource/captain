@@ -57,7 +57,11 @@ jobs:
       - name: Test with Gavel
         uses: flanksource/gavel@43a9189b99e71ed928f418e01cd34aa797c2c0e0 # v0.0.54
         with:
-          args: test --timeout 20m --ignore tests/e2e --ignore pkg/cli/webapp
+          # --test-timeout is the per-package deadline (gavel defaults to 5m).
+          # pkg/ai/fixture drives real agent subprocesses and exceeded it on a
+          # loaded runner, and a killed suite writes no ginkgo report, so one
+          # slow package was reported as three failures.
+          args: test --timeout 45m --test-timeout 20m --ignore tests/e2e --ignore pkg/cli/webapp
           version: v0.0.54
           artifact-name: gavel-test-results
           comment-header: captain-gavel-test
