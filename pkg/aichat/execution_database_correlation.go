@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/flanksource/captain/pkg/ai/approval"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/database"
 )
@@ -53,7 +54,7 @@ func (e *databaseExecution) createProviderApproval(ctx context.Context, event ap
 	request, err := e.db.CreateToolApprovalRequest(ctx, database.CreateToolApprovalRequestInput{
 		SessionID: e.session.ID, TurnID: e.turn.ID, PromptRunID: e.run.ID, ModelCallID: e.modelCallID,
 		ToolCallID: event.ToolCallID, Tool: event.Tool, Input: event.Input,
-		RequestedBy: "provider", ExpiresAt: time.Now().Add(providerApprovalTimeout),
+		RequestedBy: "provider", ExpiresAt: time.Now().Add(approval.ProviderTimeout),
 	})
 	if err != nil {
 		return nil, err
