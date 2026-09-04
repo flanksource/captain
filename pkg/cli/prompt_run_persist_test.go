@@ -100,7 +100,7 @@ func TestPersistPromptRunRecordsEveryIteration(t *testing.T) {
 		Model: "claude-sonnet-5", Provider: api.Anthropic, Mode: api.ModeAgent,
 		ResultText: "fixed",
 		ResultJSON: resultJSONWithVerify(map[string]any{"answer": "42"}, final),
-		Iterations: promptRunIterationRecords(loop, verdicts, false),
+		Iterations: promptrun.IterationRecords(promptrun.Result{Loop: loop, Verdicts: verdicts}, false),
 	})
 
 	session, err := db.GetSessionByIdentity(t.Context(), providerSession, "claude", "", "")
@@ -165,7 +165,7 @@ func TestPersistPromptRunRecordsACancelledRun(t *testing.T) {
 		Rendered: rendered, RunID: "run-stopped", SessionID: providerSession,
 		Model: "claude-sonnet-5", Provider: api.Anthropic, Mode: api.ModeAgent,
 		Error: "stopped", State: database.PromptRunStateCancelled,
-		Iterations: promptRunIterationRecords(loopWith(1, base, nil), verdicts, true),
+		Iterations: promptrun.IterationRecords(promptrun.Result{Loop: loopWith(1, base, nil), Verdicts: verdicts}, true),
 	})
 
 	session, err := db.GetSessionByIdentity(t.Context(), providerSession, "claude", "", "")
@@ -218,7 +218,7 @@ func TestPersistPromptRunKeepsTheRunWhenAnIterationIsRejected(t *testing.T) {
 		Rendered: rendered, RunID: "run-partial", SessionID: providerSession,
 		Model: "claude-sonnet-5", Provider: api.Anthropic, Mode: api.ModeAgent,
 		ResultText: "fixed",
-		Iterations: promptRunIterationRecords(loopWith(2, base, nil), verdicts, false),
+		Iterations: promptrun.IterationRecords(promptrun.Result{Loop: loopWith(2, base, nil), Verdicts: verdicts}, false),
 	})
 
 	session, err := db.GetSessionByIdentity(t.Context(), providerSession, "claude", "", "")

@@ -1,11 +1,43 @@
 ---
 layout: ../../layouts/DocsLayout.astro
 title: AI Agents
-description: Placeholder for Captain AI agent documentation.
-section: Next Sections
+description: The generate→verify loop, its hooks, and how a host embeds it.
+section: AI Agents
 ---
 
 # AI agents
 
-This section is scaffolded for the iterative agent loop, verification commands, git worktrees, commit finalization, and judge checks. Prompts are the first authored section; agent lifecycle docs can build on the same runtime spec vocabulary.
+An `api.Spec` (a rendered `.prompt` file plus any runtime overlay) declares a **workflow**: what to generate, how to verify it, and how to commit it. `pkg/promptrun.Run` is the seam that turns a spec into one executed run — `captain prompt run` and an embedding host (gavel's todo lifecycle) both go through it, so the two never drift on what a run actually does.
 
+<div className="docs-card-grid">
+  <div className="docs-card">
+    <h3>Verification</h3>
+    <p>`workflow.verify` declares commands, LLM-judge prompts, and a fixture document as the loop's definition of done. See <a href="/agents/verification/">Verification</a>.</p>
+  </div>
+  <div className="docs-card">
+    <h3>Embedding a run</h3>
+    <p>`promptrun.Run` assembles the provider, the hook list, and the `agent.Runner` loop from one `Input`. See <a href="/agents/embedding/">Embedding a run</a>.</p>
+  </div>
+  <div className="docs-card">
+    <h3>Approvals</h3>
+    <p>`approval.Broker` is the durable `PermissionFunc` that records a pending tool call and blocks until a host resolves it. See <a href="/agents/approvals/">Approvals</a>.</p>
+  </div>
+</div>
+
+## Hook order
+
+`promptrun.Hooks` assembles one run's `agent.Runner` hooks in a fixed order:
+
+```
+commit → cmd → prompt → fixture → caller → setup
+```
+
+Commit hooks lead so a squash is cut before any teardown can take the tree it commits from. The workflow's own checks run cheap to expensive — commands, then LLM judges, then the fixture — so a run that is going to fail fails on the fast check first. The caller's own hooks sit between the checks and setup: a host's commit pipeline at `PhaseRun` still sees a live worktree, and a host's `PreRun` hook runs before the tree is relocated. Setup trails so its teardown is the last thing to happen.
+
+A caller that sets `Input.CallerOwnsCommits` drops the leading commit hooks — the host commits the tree itself — and must supply at least one hook of its own, or nothing would commit at all.
+
+## Where to go next
+
+- [Verification](/agents/verification/) — verifier kinds, `workflow.verify`, the fixture-runner contract, and `captain verify`.
+- [Embedding a run](/agents/embedding/) — `promptrun.Input`, timeouts, verify-only runs, and `Result`.
+- [Approvals](/agents/approvals/) — the durable tool-approval broker.

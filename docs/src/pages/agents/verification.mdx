@@ -1,0 +1,135 @@
+---
+layout: ../../layouts/DocsLayout.astro
+title: Verification
+description: Verifier kinds, workflow.verify, the fixture-runner contract, and captain verify.
+section: AI Agents
+---
+
+import CodeExample from "../../components/CodeExample.tsx";
+
+# Verification
+
+`workflow.verify` is a run's definition of done. It runs after each generation and votes; a non-passing verdict appends feedback to the prompt and triggers another iteration, up to `maxIterations`. Everything below is `pkg/ai/agent/verify` and `pkg/api.Verify`/`api.VerifyReport`.
+
+## Verifier kinds
+
+Three kinds of check exist, each mapped from one field of `workflow.verify` by a registered `verify.Factory`:
+
+| Kind | Field | Factory |
+| --- | --- | --- |
+| `cmd` | `commands` | built in, registered at package init |
+| `prompt` | `prompts` | built in, registered at package init |
+| `fixture` | `fixture` | not registered by default — a host links one in-process, or configures an external runner |
+
+A round runs every declared kind in `kindOrder`: `cmd`, then `prompt`, then `fixture` — cheap and deterministic first, so a run that is going to fail fails on the fast check rather than after a model call or a whole test run.
+
+## `workflow.verify`
+
+<CodeExample client:load language="yaml" title="workflow.verify fields (api.Verify)" source={`
+workflow:
+  verify:
+    commands:
+      - go build ./...
+      - go test ./pkg/...
+    prompts:
+      - .captain/prompts/judge-readability.prompt
+    fixture: |
+      # Acceptance criteria
+      - [ ] the new endpoint returns 404 for an unknown id
+    scope: changed        # "" | all | changed — default is the whole tree
+    maxIterations: 3       # 0 means the run default (1)
+`} />
+
+- **`commands`** (`[]string`) — shell commands run as pass/fail checks (exit 0 = pass); their output tail becomes the re-run feedback. This is the only part of `verify` captain itself executes, via `agent/verify.CmdVerifier`.
+- **`fixture`** (`string`) — a clicky-FixtureEditor markdown document (acceptance criteria / LLM-judge checklist). Captain does not implement a fixture engine; it dispatches this document to whatever claimed the `fixture` kind.
+- **`prompts`** (`[]string`) — `.prompt` template paths run as LLM-judge checks. Each renders against the run's context and must yield `{ok, reason, feedback}` (`agent/verify.LLMJudgeVerifier`). A judge prompt **cannot** declare its own `sandbox` or a `model` different from the run's provider — both are hard validation errors, not a silent downgrade.
+- **`scope`** (`""` \| `all` \| `changed`) — narrows verification to the agent's changed files instead of the whole tree.
+- **`maxIterations`** (`int`, `>= 0`) — caps the generate→verify loop; `0` means the run default of `1` (a single generation, verification votes once with no automatic re-run).
+
+## A declared fixture with no verifier is an error
+
+Declaring `workflow.verify.fixture` with no `fixture` factory registered does **not** silently produce zero hooks — a workflow whose only verification is a fixture would otherwise pass vacuously. `verify.HooksFor` refuses the run outright with:
+
+```
+workflow.verify.fixture declared but no fixture verifier is registered
+(link a fixture runner in-process or set verify.fixtureRunner in ~/.captain.yaml)
+```
+
+A host claims the `fixture` kind one of two ways: linking a fixture engine in-process (`verify.Register(verify.KindFixture, factory)` — gavel does this from `fixtures/verifier`, panicking if something has already registered it), or configuring an external runner in `~/.captain.yaml`.
+
+## External fixture runner (`verify.fixtureRunner`)
+
+<CodeExample client:load language="yaml" title="~/.captain.yaml" source={`
+verify:
+  fixtureRunner: [gavel, fixtures, run, --format, captain-verify-report]
+`} />
+
+When `verify.fixtureRunner` names a program, captain installs it as the `fixture` verifier (`agent/verify.ExternalVerifier`) and dispatches every declared fixture to it as **one process, three streams**:
+
+- **stdin** — the fixture markdown document, verbatim.
+- **argv** — the configured command, then `--cwd <cwd>` and one `--changed <path>` per file the agent changed (scope permitting).
+- **stdout** — NDJSON: zero or more `{"progress": <VerifyReport>}` lines while it runs, then exactly one `{"report": <VerifyReport>}`.
+- **stderr** — diagnostics; its tail is appended to any error captain reports.
+
+The contract fails loudly rather than guessing a verdict:
+
+| Runner behavior | Result |
+| --- | --- |
+| Exits 0 with exactly one `report` line | The verdict. A failing fixture is still a verdict (the runner exits non-zero for it and the report says `passed: false`). |
+| Non-zero exit with no `report` line | Error: `"...exited N with no report line"`, plus the process error (e.g. a missing binary) and the stderr tail. |
+| More than one `report` line | Error: `"emitted more than one report line"`. |
+| Malformed JSON on a line | Error naming the malformed line (truncated to 200 bytes). |
+| Wall clock exceeds `Timeout` | Error: `"...timed out after <duration>"`, with the stderr tail. |
+
+`gavel fixtures run --format captain-verify-report` implements exactly this contract — it is gavel's own external-runner entry point, reading the fixture document from stdin and writing NDJSON progress/report lines to stdout.
+
+## `VerifyReport`
+
+Every verifier's verdict is a typed `api.VerifyReport` — what a `Verify` hook returns, what captain persists per iteration, and what a renderer draws.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `kind` | `string` | `cmd` \| `prompt` \| `fixture` \| `func` \| `round` (a merged round whose reports don't share one kind) |
+| `name` | `string` | |
+| `ran` | `bool` | |
+| `passed` | `bool` | Only `true` when `state == "passed"` |
+| `reason`, `feedback` | `string` | Feedback is what a failing verdict appends to the next turn's prompt |
+| `iteration` | `int` | **1-based** loop turn this report judged — the same numbering `captain_prompt_run_iterations` is keyed on; always present, never omitted |
+| `summary` | `VerifySummary` | `total`, `passed`, `failed`, `warned`, `skipped`, `pending`, `running`, and `timedout` (its own bucket, spelled `timedout` to match clicky-ui's `StatusCounts`) |
+| `tests` | `[]VerifyNode` | The tree of what ran; a node can carry its own `summary` and no `children`, which lets a producer report a suite's totals without listing every row it elided |
+| `checklist` | `[]VerifyChecklistItem` | `{item, passed, message}` — `passed` is `nil` while unjudged |
+| `state` | `VerifyState` | `queued`, `running`, `passed`, `failed`, `errored`, `warned`, `skipped`, `cancelled`, `timed_out` |
+| `started_at`, `finished_at`, `duration` | | |
+
+`state` normally follows the tree (`Failed > TimedOut > Warned > Running > Queued > Skipped > Passed`, in that precedence), but `errored` and `cancelled` are **host-stamped**: a runner that could not schedule its checks, or a run stopped mid-check, asserts one of these directly rather than have it derived from whatever queued leaves it left behind. Neither can pass, and `VerifyReport.Validate()` skips the tree-consistency check for a host-stamped state.
+
+## Progress streaming, end to end
+
+A running check can report where it has got to before it has a verdict, at up to one snapshot every `ProgressInterval` (`500ms`), with the last snapshot always flushed before the verdict:
+
+1. A `ProgressVerifier` (the `ExternalVerifier`, gavel's fixture engine) calls its progress sink.
+2. `verify.Plugin` coalesces snapshots through a `progressEmitter` and fans each one out: onto the run's own event stream as `ai.EventVerifyProgress`, and into whatever extra sinks a caller registered via `verify.Options.Progress`.
+3. `captain prompt run`'s stream republishes the newest snapshot as its own SSE `verify` event: `{"report": <VerifyReport>, "done": bool}` (`cli.VerifyFrame`). Only the latest is kept — a late subscriber gets the run's current verification state on connect, the same way it gets `run` and `state`.
+4. The session-message model carries the same shape as a `data-verify` part (`session.PartVerify`) alongside the human-readable text of the same verdict — a renderer that knows the verification tree draws it, one that doesn't still has the text.
+5. Once a turn is judged, its rolled-up report (see [Embedding a run](/agents/embedding/#result-final-report-and-merging)) is persisted as the `verification_result` `jsonb` column on `captain_prompt_run_iterations`.
+6. The run's own final report rides on `result_json.verify` in `captain_prompt_runs`, alongside the prompt's own structured output.
+
+## `captain verify` — local only
+
+`captain verify` runs a workflow's checks against a working tree without spending a generation on it — the same checks the loop votes with, driven out of the generate→verify loop:
+
+<CodeExample client:load language="bash" title="captain verify flags" source={`
+captain verify --command "go build ./..." --command "go vet ./..."
+captain verify --prompt .captain/prompts/judge-readability.prompt
+captain verify --fixture ./acceptance.md --cwd ./worktree --timeout 5m
+`} />
+
+| Flag | Meaning |
+| --- | --- |
+| `--fixture` | Fixture document run by the configured `verify.fixtureRunner` |
+| `--command`, `-c` | Shell command run as a pass/fail check (repeatable) |
+| `--prompt` | LLM-judge `.prompt` template, judged by the run's provider (repeatable) |
+| `--cwd` | Directory the checks run in (default `.`) |
+| `--timeout` | Wall-clock bound per check (default `10m`) |
+
+`captain verify` is **local only** — it is excluded from both the REST API (`clicky.MarkLocalOnly`) and the MCP tool set (`^verify` is in `mcp.ToolsConfig.Exclude`). The reason is in the command's own registration: `--command` is run through `sh -c` against a caller-chosen `--cwd`, so published as REST or MCP it would be unauthenticated remote code execution.

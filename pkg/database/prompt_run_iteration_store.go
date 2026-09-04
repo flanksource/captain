@@ -225,10 +225,21 @@ func (db *DB) LatestPromptRunVerification(ctx context.Context, runID uuid.UUID) 
 	return found.Report, found.Iteration, nil
 }
 
-type promptRunVerification struct {
+// PromptRunVerification is the newest report a run produced and the iteration
+// that produced it.
+type PromptRunVerification struct {
 	Iteration int
 	Report    *api.VerifyReport
 }
+
+// LatestPromptRunVerifications is LatestPromptRunVerification for a batch of
+// runs, resolved in one query so an attempt listing never fans out per row. A
+// run that was never verified is absent from the result.
+func (db *DB) LatestPromptRunVerifications(ctx context.Context, runIDs []uuid.UUID) (map[uuid.UUID]PromptRunVerification, error) {
+	return db.latestPromptRunVerifications(ctx, runIDs)
+}
+
+type promptRunVerification = PromptRunVerification
 
 type promptRunVerificationRecord struct {
 	PromptRunID        uuid.UUID       `gorm:"column:prompt_run_id"`

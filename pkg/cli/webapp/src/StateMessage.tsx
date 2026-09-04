@@ -10,5 +10,6 @@ export function StateMessage({
   const classes = tone === "error"
     ? "border-destructive/30 bg-destructive/10 text-destructive"
     : "border-border bg-muted/30 text-muted-foreground";
-  return <div className={`rounded-md border px-density-4 py-density-3 text-sm ${classes}`}>{children}</div>;
+  return <div role={tone === "error" ? "alert" : undefined}
+    className={`rounded-md border px-density-4 py-density-3 text-sm ${classes}`}>{children}</div>;
 }

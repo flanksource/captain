@@ -99,6 +99,8 @@ The bash-check hook scans bash commands and can deny unsafe or disallowed comman
 
 The same checks are the generate→verify loop's definition of done: a failing verdict's output feeds the next iteration. A declared check with nothing to run it is an error, never a silent pass.
 
+`captain verify` is local only — it is excluded from both the REST API and the MCP tool set, because `--command` runs through `sh -c` against a caller-chosen `--cwd`, and published as REST or MCP that would be unauthenticated remote code execution.
+
 ### 4. Session changes
 
 `captain changes` lists the files written or edited during a Claude Code or Codex session:
