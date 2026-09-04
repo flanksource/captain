@@ -105,6 +105,9 @@ func Run(ctx context.Context, in Input) (Result, error) {
 	if err := requireToolPolicy(in); err != nil {
 		return Result{}, err
 	}
+	if err := verify.ValidatePromptDeclarations(in.Request.Workflow); err != nil {
+		return Result{}, err
+	}
 	provider, release, err := buildProvider(in)
 	if err != nil {
 		return Result{}, err

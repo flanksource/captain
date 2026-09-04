@@ -27,7 +27,7 @@ func resultJSONWithVerify(structured map[string]any, report *api.VerifyReport) m
 		log.Errorf("prompt run result_json: decoding the verify report of %q failed: %v", report.Name, err)
 		return structured
 	}
-	merged := make(map[string]any, len(structured)+1)
+	merged := make(map[string]any, len(structured))
 	for key, value := range structured {
 		merged[key] = value
 	}
