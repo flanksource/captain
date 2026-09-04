@@ -107,6 +107,7 @@ function CapabilityTopology({
           Expand a provider, runtime mode, or model. Child selections remain intact when a parent policy is disabled.
         </p>
       </div>
+      {controller.error && <StateMessage tone="error">{controller.error}</StateMessage>}
       <AvailabilitySummary families={families} policy={policy} />
       <CapabilityPicker
         families={families}
@@ -157,7 +158,6 @@ function CapabilityTopology({
           onRefresh={onRefresh}
         />
       </div>
-      {controller.error && <StateMessage tone="error">{controller.error}</StateMessage>}
     </div>
   );
 }

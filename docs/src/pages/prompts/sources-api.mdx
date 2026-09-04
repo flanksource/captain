@@ -57,6 +57,24 @@ Every summary and detail also carries `version` — a hash of the exact file con
 
 The schema document at `/api/captain/ai/prompt/schema` lists every discovered source under `sources` (`id`, `kind`, `label`, `root`, `writable`, `implicit`), so a save destination can be chosen even when the directory holds no prompts yet.
 
+It also carries `verifiers`, one entry per `workflow.verify.*` kind, so the workbench can show whether a check it is about to author will ever run:
+
+<CodeExample client:load language="json" title="schema document: verifiers" source={`
+"verifiers": [
+  { "kind": "cmd", "available": true, "reason": "" },
+  { "kind": "prompt", "available": true, "reason": "" },
+  {
+    "kind": "fixture",
+    "available": false,
+    "reason": "workflow.verify.fixture declared but no fixture verifier is registered (link a fixture runner in-process or set verify.fixtureRunner in ~/.captain.yaml)"
+  }
+]
+`} />
+
+`cmd` is always available — it is captain's own factory, registered at package init. `prompt` is available unless every probed runtime is unauthenticated (`reason` names that). `fixture` reflects whether the registry has a `fixture` factory — an in-process registration, or a configured `verify.fixtureRunner` — and its `reason`, when unavailable, is the exact sentence `verify.HooksFor` would refuse a run with (see [Verification](/agents/verification/)).
+
+When `verify.fixtureRunner` is configured, the document also carries `fixtureSchemas`: the raw JSON that runner prints for `<runner> --schema`, so the fixture editor can complete a fixture document against that runner's own fence types. It is omitted when no runner is configured, and a runner that fails to answer `--schema` still leaves `fixture` available — the schema is advisory editor metadata, not a precondition for dispatch.
+
 ## Render request
 
 Rendering accepts template variables and an optional runtime `spec` overlay. It may also carry `content`: an unsaved draft that is rendered (or run) in place of the saved file. A `spec.model` that merely echoes the saved prompt's own frontmatter is ignored for a draft, so a draft that changes `model:` runs with the draft's model; any other override is kept. It returns the rendered user/system prompt, full typed request input, config mirror, schema metadata, and a validation error field when the request is incomplete.
@@ -82,3 +100,5 @@ Rendering accepts template variables and an optional runtime `spec` overlay. It 
 ## Run stream
 
 The `run` action renders synchronously, creates a prompt run id, then streams session entries through `/api/captain/prompt/runs/{runId}/stream`. A snapshot endpoint at `/api/captain/prompt/runs/{runId}` lets the UI recover entries, completion state, summary, and error text.
+
+A workflow that declares `workflow.verify` also publishes its own `verify` SSE event: `{"report": <VerifyReport>, "done": boolean}`. Only the newest snapshot is kept — a late subscriber gets the run's current verification state on connect, the same way it gets `run` and `state` — and it stops updating once the run is done. See [Verification](/agents/verification/) for the report shape and how it is persisted.

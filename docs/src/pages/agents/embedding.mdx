@@ -1,0 +1,87 @@
+---
+layout: ../../layouts/DocsLayout.astro
+title: Embedding a Run
+description: pkg/promptrun.Run — Input, hooks, timeouts, verify-only runs, and Result.
+section: AI Agents
+---
+
+import CodeExample from "../../components/CodeExample.tsx";
+
+# Embedding a run
+
+`pkg/promptrun.Run` executes one resolved prompt spec through captain's generate→verify loop: attachment checks, provider construction, tool-policy enforcement, the workflow's commit and verify hooks, the caller's own hooks, the setup plugin, and finally `agent.Runner`. It is the seam `captain prompt run` and an embedding host (gavel's todo lifecycle) share, so the two never assemble the same pieces by hand and drift.
+
+What stays with the caller: rendering the prompt and resolving its spec, resolving attachments against a store, persisting the run, and streaming events to whoever is watching (`OnEvent` is the tap for that).
+
+## `Input`
+
+<CodeExample client:load language="go" title="pkg/promptrun.Input" source={`
+type Input struct {
+    Request           ai.Request        // rendered prompt + resolved spec; attachments must already be resolved
+    Config            ai.Config         // builds the provider when Provider is nil: model, credentials, sandbox, cache, CanUseTool
+    Provider          ai.Provider       // set to use as-is; taken to own the workspace (a remote sandbox, or a test double)
+    Hooks             []any             // the caller's own agent hooks
+    CallerOwnsCommits bool              // hands committing to Hooks; Run builds no commit hook of its own
+    Verify            verify.Options    // Provider/RunSpec are filled in when nil; Progress receives in-flight snapshots
+    OnEvent           func(iter int, ev ai.Event)
+    Timeout           time.Duration     // bounds the run when spec.budget.timeout is empty; no compiled-in default
+    MaxIterations     int               // overrides workflow.verify.maxIterations; 0 means the workflow decides
+    Scope             agent.Scope       // overrides workflow.verify.scope; empty means the workflow decides
+    NoStream          bool              // forces buffered execution even on a streaming provider
+    Repo              string            // root the run's changed files are recorded relative to; empty means the request's cwd
+}
+`} />
+
+- **`Provider`** — when set, `Run` takes it as owning the workspace: a remote-executing sandbox that materialises the checkout on its own side, or a test double. `Run` adds no setup hook in that case. When nil, `Run` constructs the provider from `Config` and prepares `Request.Setup` through the setup plugin, in-process.
+- **`CallerOwnsCommits`** — for a host whose own commit pipeline runs the commit (gavel's pre-commit gates and trailers): `Run` builds no commit hook from `Workflow.Commits`, and leaves the declaration on the request so the recorded spec still says what the run commits, and validation of that declaration still runs. `Hooks` must be non-empty when this is set — nothing would commit otherwise, and `Hooks()` refuses the run rather than silently doing nothing.
+
+## Timeout rule
+
+<CodeExample client:load language="text" title="runTimeout precedence" source={`
+1. spec.budget.timeout  — wins when declared: it is what the run's author chose
+2. Input.Timeout        — the caller's default, used only when the spec declares none
+3. (no third fallback)  — error: "no timeout: declare budget.timeout on the spec or set Input.Timeout"
+`} />
+
+There is deliberately no compiled-in ceiling. An earlier fallback capped a run that had declared nothing, so a job that legitimately needed an hour died at a couple of minutes with a deadline nobody had chosen and nothing naming it.
+
+## Verify-only runs
+
+A spec with an empty `prompt.user` but a declared `workflow.verify` is **verify-only**: generation is skipped and the run scores the state that already exists (`api.Spec.IsVerifyOnly`). `Run` classifies every request exactly once, through `Request.ValidateRunnable`, so the caller building the provider and the runner deciding whether to call a model can never disagree about what kind of run this is.
+
+The rule this exists for is the near miss: attachments or a message history with no prompt body and no `workflow.verify` declared is **not** verify-only (there is nothing to verify) and is **not** runnable either — attachments and messages accompany a prompt, they never stand in for one. `ValidateRunnable` refuses that shape outright rather than let it silently report a pass having generated nothing and verified nothing.
+
+A verify-only run of only `commands` and a `fixture` needs no model and builds no provider — it must work without credentials to hand. A verify-only run that also declares `prompts` (LLM judges) still builds one, because the judge needs it.
+
+## `OnEvent`
+
+<CodeExample client:load language="go" title="Input.OnEvent" source={`
+OnEvent func(iter int, ev ai.Event)
+`} />
+
+`OnEvent` taps the live event stream — the model's events and the hooks' — with the runner's own signature: `iter` names the turn an event belongs to, which a renderer needs and a single-turn caller ignores.
+
+## `Result`, final report and merging
+
+<CodeExample client:load language="go" title="pkg/promptrun.Result" source={`
+type Result struct {
+    Response        *ai.Response          // final text, structured data, terminal outcome, workspace
+    Verdicts        []agent.VerifyResult  // every verify verdict, in the order it was reached
+    Report          *api.VerifyReport     // the last round's rolled-up report
+    Passed          bool                  // Passed(Verdicts): the final round's verdict, or true when nothing was declared
+    Loop            *ai.LoopResult        // nil for a verify-only run
+    StructuredData  any
+    TerminalOutcome *api.TerminalOutcome
+    SessionID       string
+    Model           string
+    Usage           api.Usage
+    CostUSD         float64
+    Duration        time.Duration
+}
+`} />
+
+`Passed`, `FailureReason`, and `FinalReport` are exported functions over `[]agent.VerifyResult`, not methods that could disagree with what the runner itself decided:
+
+- **`Passed(verdicts)`** is `agent.VerifyPassed(verdicts)` — the rule the runner sets `HookContext.Verified` from — so a caller reading `Result.Passed` and a `Post` hook reading its context never disagree about whether the run verified.
+- **`FailureReason(verdicts)`** is the last failing verdict's reason, empty when the run passed.
+- **`FinalReport(verdicts)`** is the run's verdict as one report: a round runs every verifier the workflow declares, so it produces one report per verifier. Taking only the last of them used to throw the rest away — a round of `commands` + `fixture` came back as the fixture's tree alone. A round of one report is that report unwrapped; a round of several is `api.MergeReports`, which nests each report under its own group node (its own `summary` carried on the node, not recomputed, so an elided suite still contributes its whole tally) and passes only when every report in the round passed.

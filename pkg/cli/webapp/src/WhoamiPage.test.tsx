@@ -303,6 +303,23 @@ describe("WhoamiPage", () => {
     );
   });
 
+  it("shows a rejected model exclusion as a banner above the capability tree", async () => {
+    const rejection = "configuration changes require a loopback request host";
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(jsonResponse(WHOAMI_RESULT))
+      .mockResolvedValueOnce(new Response(rejection, { status: 403 })));
+    renderWhoamiPage();
+
+    const checkbox = await screen.findByRole("checkbox", { name: "Enable gpt-5.5-codex model" });
+    fireEvent.click(checkbox);
+
+    const banner = await screen.findByRole("alert");
+    const tree = screen.getByRole("tree", { name: "Capability topology" });
+    expect(banner).toHaveTextContent(rejection);
+    expect(banner.compareDocumentPosition(tree) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+    expect(checkbox).toBeChecked();
+  });
+
   it("shows inherited provider policy without erasing child selections", async () => {
     const disabled = { ...NOTHING_DISABLED, providers: ["openai"] };
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({
