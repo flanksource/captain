@@ -92,16 +92,25 @@ func (t Tools) toolsWithPolicy(want ToolPolicy) []string {
 // proceeding as if the policy had been applied.
 //
 // Allow-lists are checked too: on a runtime with no tool filter, an allowlist is
-// equally unenforced. `ask` is refused everywhere — no transport has a per-tool
-// prompt, so it would resolve to "allowed" on the runtimes that advertise tool
-// policy support. `auto` constrains nothing, so it needs no runtime support.
+// equally unenforced. Policies naming a known tool from another agent do not
+// apply to the selected runtime; a portable spec may carry both Claude and Codex
+// names. `ask` is refused for applicable tools everywhere — no transport has a
+// per-tool prompt, so it would resolve to "allowed" on the runtimes that
+// advertise tool policy support. `auto` constrains nothing, so it needs no
+// runtime support.
 func RequireToolPolicySupport(p *ModelProvider, mode RuntimeMode, permissions Permissions) error {
-	if asked := permissions.Tools.toolsWithPolicy(ToolPolicyAsk); len(asked) > 0 {
+	vocabulary := PermissionCapabilitiesFor(RuntimeOf(p, mode)).Tools
+	applicable := func(tools []string) []string {
+		return slices.DeleteFunc(tools, func(tool string) bool {
+			return !agentToolPolicyApplies(vocabulary, tool)
+		})
+	}
+	if asked := applicable(permissions.Tools.toolsWithPolicy(ToolPolicyAsk)); len(asked) > 0 {
 		return fmt.Errorf(
 			"per-tool policy \"ask\" (%s) is not enforceable on any runtime: transports carry allow/deny tool lists only, so the tool would run unprompted; use allow or deny",
 			strings.Join(asked, ", "))
 	}
-	enforced := append(permissions.Tools.AllowList(), permissions.Tools.DenyList()...)
+	enforced := applicable(append(permissions.Tools.AllowList(), permissions.Tools.DenyList()...))
 	if len(enforced) == 0 || registry.SupportsToolPolicy(p, mode) {
 		return nil
 	}
@@ -109,6 +118,23 @@ func RequireToolPolicySupport(p *ModelProvider, mode RuntimeMode, permissions Pe
 	return fmt.Errorf(
 		"%s cannot enforce a per-tool policy (%s), and running without it would grant more than the spec allows; remove permissions.tools or use one of: %s",
 		registry.RuntimeOf(p, mode), strings.Join(enforced, ", "), registry.RuntimesList(registry.ToolPolicyRuntimes()))
+}
+
+// agentToolPolicyApplies treats a tool positively identified as another agent's
+// built-in as inapplicable. Unknown names remain applicable so a stale
+// vocabulary cannot silently drop a policy for a newly added built-in.
+func agentToolPolicyApplies(vocabulary []string, tool string) bool {
+	if len(vocabulary) == 0 || slices.Contains(vocabulary, tool) {
+		return true
+	}
+	for _, tools := range agentTools {
+		if slices.ContainsFunc(tools, func(candidate AgentTool) bool {
+			return candidate.Name == tool
+		}) {
+			return false
+		}
+	}
+	return true
 }
 
 // Validate checks the mode, presets, tool policies, and resource modes are
