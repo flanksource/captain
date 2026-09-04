@@ -259,7 +259,10 @@ func validateResolvedPermissions(spec Spec) error {
 	if posture := spec.Permissions.Mode; posture != "" && !caps.ModeSupport(posture).Honoured() {
 		return fmt.Errorf("permissions.mode %q is not available for %s", posture, runtime)
 	}
-	for _, policy := range spec.Permissions.Tools {
+	for tool, policy := range spec.Permissions.Tools {
+		if !agentToolPolicyApplies(caps.Tools, tool) {
+			continue
+		}
 		if err := requireResolvedToolPolicy(caps, runtime, ProvenanceAgent, policy); err != nil {
 			return err
 		}

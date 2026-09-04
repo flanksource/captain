@@ -6,11 +6,11 @@ import (
 	"testing"
 )
 
-// TestRequireToolPolicySupport enumerates which runtimes may carry a per-tool
-// policy. A deny-list exists only to forbid a tool, so a runtime that drops it
-// runs with strictly more authority than the spec granted — the run must fail
-// instead. The table is the contract: adding a provider×mode cell forces a
-// decision here.
+// TestRequireToolPolicySupport enumerates which runtimes may carry a policy for
+// one of their own built-in tools. A deny-list exists only to forbid a tool, so a
+// runtime that drops an applicable entry runs with strictly more authority than
+// the spec granted — the run must fail instead. The table is the contract:
+// adding a provider×mode cell forces a decision here.
 func TestRequireToolPolicySupport(t *testing.T) {
 	supported := map[Runtime]bool{
 		{Provider: "anthropic", Mode: ModeCLI}:   true,
@@ -18,13 +18,17 @@ func TestRequireToolPolicySupport(t *testing.T) {
 		{Provider: "anthropic", Mode: ModeCmux}:  true,
 	}
 
-	policy := Permissions{Tools: Tools{"Bash": ToolPolicyDeny}}
 	for _, runtime := range AllRuntimes() {
 		t.Run(runtime.String(), func(t *testing.T) {
 			p, ok := runtime.ModelProvider()
 			if !ok {
 				t.Fatalf("AllRuntimes returned %s, which resolves to no provider", runtime)
 			}
+			tool := "Bash"
+			if vocabulary := PermissionCapabilitiesFor(runtime).Tools; !supported[runtime] && len(vocabulary) > 0 {
+				tool = vocabulary[0]
+			}
+			policy := Permissions{Tools: Tools{tool: ToolPolicyDeny}}
 			err := RequireToolPolicySupport(p, runtime.Mode, policy)
 			if supported[runtime] {
 				if err != nil {
@@ -37,7 +41,7 @@ func TestRequireToolPolicySupport(t *testing.T) {
 			}
 			// The message has to name the offending tools and a way forward, or the
 			// operator cannot tell which knob to remove.
-			for _, want := range []string{runtime.String(), "Bash", RuntimeOf(Anthropic, ModeCLI).String()} {
+			for _, want := range []string{runtime.String(), tool, RuntimeOf(Anthropic, ModeCLI).String()} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("error %q does not mention %q", err, want)
 				}
@@ -72,18 +76,19 @@ func legacyTools(t *testing.T, body string) Tools {
 }
 
 // TestRequireToolPolicySupport_NormalizesToolModes pins that the guard reads the
-// canonical policy map: legacy `modes: {Bash: off}` decodes to a deny, so a
-// backend with no tool filter must refuse it exactly like an explicit deny.
+// canonical policy map: legacy `modes: {shell: off}` decodes to a deny, so Codex
+// must refuse it exactly like an explicit deny of its built-in shell.
 func TestRequireToolPolicySupport_NormalizesToolModes(t *testing.T) {
-	policy := Permissions{Tools: legacyTools(t, `{"modes":{"Bash":"off"}}`)}
-	err := RequireToolPolicySupport(OpenAI, ModeCLI, policy)
+	codexPolicy := Permissions{Tools: legacyTools(t, `{"modes":{"shell":"off"}}`)}
+	err := RequireToolPolicySupport(OpenAI, ModeCLI, codexPolicy)
 	if err == nil {
 		t.Fatal("codex-cli silently drops an off tool mode; want a loud refusal")
 	}
-	if !strings.Contains(err.Error(), "Bash") {
+	if !strings.Contains(err.Error(), "shell") {
 		t.Errorf("error %q does not name the offending tool", err)
 	}
-	if err := RequireToolPolicySupport(Anthropic, ModeCLI, policy); err != nil {
+	claudePolicy := Permissions{Tools: legacyTools(t, `{"modes":{"Bash":"off"}}`)}
+	if err := RequireToolPolicySupport(Anthropic, ModeCLI, claudePolicy); err != nil {
 		t.Fatalf("claude-cli must carry an off tool mode, got %v", err)
 	}
 	// Legacy `on` resolves to auto in this encoding — the allow list already
@@ -101,19 +106,23 @@ func TestRequireToolPolicySupport_NormalizesToolModes(t *testing.T) {
 // policy cannot express: no transport has a per-tool prompt, so an `ask` would
 // resolve to "allowed" even on the runtimes that advertise support.
 func TestRequireToolPolicySupport_AskIsRefusedEverywhere(t *testing.T) {
-	policy := Permissions{Tools: Tools{"Bash": ToolPolicyAsk}}
 	for _, runtime := range AllRuntimes() {
 		p, ok := runtime.ModelProvider()
 		if !ok {
 			t.Fatalf("AllRuntimes returned %s, which resolves to no provider", runtime)
 		}
+		tool := "Bash"
+		if vocabulary := PermissionCapabilitiesFor(runtime).Tools; len(vocabulary) > 0 {
+			tool = vocabulary[0]
+		}
+		policy := Permissions{Tools: Tools{tool: ToolPolicyAsk}}
 		err := RequireToolPolicySupport(p, runtime.Mode, policy)
 		if err == nil {
 			t.Errorf("%s accepted an unenforceable ask policy", runtime)
 			continue
 		}
-		if !strings.Contains(err.Error(), "Bash") {
-			t.Errorf("%s: error %q does not name the offending tool", runtime, err)
+		if !strings.Contains(err.Error(), tool) {
+			t.Errorf("%s: error %q does not name the offending tool %q", runtime, err, tool)
 		}
 	}
 }
@@ -139,11 +148,12 @@ func TestToolsAllowDenyLists(t *testing.T) {
 // the same backends: where there is no tool filter, an allowlist is equally
 // unenforced, and silently ignoring it grants more than the spec allowed.
 func TestRequireToolPolicySupport_AllowListToo(t *testing.T) {
-	policy := Permissions{Tools: Tools{"Read": ToolPolicyAllow}}
-	if err := RequireToolPolicySupport(OpenAI, ModeCLI, policy); err == nil {
+	codexPolicy := Permissions{Tools: Tools{"shell": ToolPolicyAllow}}
+	if err := RequireToolPolicySupport(OpenAI, ModeCLI, codexPolicy); err == nil {
 		t.Fatal("codex-cli silently drops an allow-list; want a loud refusal")
 	}
-	if err := RequireToolPolicySupport(Anthropic, ModeCLI, policy); err != nil {
+	claudePolicy := Permissions{Tools: Tools{"Read": ToolPolicyAllow}}
+	if err := RequireToolPolicySupport(Anthropic, ModeCLI, claudePolicy); err != nil {
 		t.Fatalf("claude-cli must carry an allow-list, got %v", err)
 	}
 }
