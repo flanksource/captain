@@ -1,0 +1,85 @@
+---
+layout: ../../layouts/DocsLayout.astro
+title: Approvals
+description: The durable tool-approval broker (pkg/ai/approval.Broker).
+section: AI Agents
+---
+
+import CodeExample from "../../components/CodeExample.tsx";
+
+# Approvals
+
+`pkg/ai/approval.Broker` is the `api.PermissionFunc` every execution path that owns a session and a prompt run shares: it records one pending `captain_turn_requests` row, hands the host an `api.EventPermission` frame to surface, and blocks until that row is resolved, expires, or the caller's context ends.
+
+The aichat execution path supplies its caller-tool credential, turn, and model call; a streaming provider run (`captain prompt run`) or an external host such as a dashboard supplies none of the three and is identified by its prompt run and tool call alone.
+
+## Fields
+
+<CodeExample client:load language="go" title="approval.Broker" source={`
+type Broker struct {
+    DB          *database.DB
+    SessionID   uuid.UUID // captain_sessions.id; required
+    PromptRunID uuid.UUID // captain_prompt_runs.id; required
+
+    // Identify a caller-tool approval raised inside an aichat turn.
+    // A provider or host approval leaves all three empty.
+    TurnID       *uuid.UUID
+    ModelCallID  *uuid.UUID
+    CredentialID uuid.UUID
+
+    RequestedBy string        // who raised it, e.g. "provider" or "caller_tool"
+    Timeout     time.Duration // approval expiry; required
+    Poll        time.Duration // re-read interval; DefaultPoll (100ms) when zero
+
+    // Notify surfaces the EventPermission frame; required.
+    Notify func(context.Context, api.Event) error
+
+    // OnWaiting / OnRunning bracket the wait with the host's own state transitions.
+    OnWaiting func(context.Context) error
+    OnRunning func(context.Context) error
+
+    // ClaimToolUseID resolves a locally generated tool-use ID onto the provider's
+    // own tool-call ID. Required only when a caller can set ToolUseIDGenerated.
+    ClaimToolUseID func(context.Context, api.PermissionRequest) (string, error)
+}
+`} />
+
+`Validate()` refuses to broker anything without a database, a session ID, a prompt run ID, a `Notify` callback, and a positive `Timeout`.
+
+## `Notify`, `OnWaiting` / `OnRunning`
+
+`CanUseTool` (the `PermissionFunc`) records the pending approval idempotently, calls `Notify` with the `EventPermission` frame, and blocks. `OnWaiting` and `OnRunning` bracket that wait with the host's own state: once the host has been told the run is waiting, **every** way out of `CanUseTool` tells it the run is running again — a cancelled caller resumes on a context with cancellation stripped (`context.WithoutCancel`), because ending the wait is the response to the cancellation, not a victim of it. A credential-less (provider or host) approval depends on `OnWaiting`: the store only resolves such an approval while its prompt run is in the `waiting` state.
+
+## The provider path: no turn, no model call
+
+A `captain prompt run` or external-host approval — as opposed to one raised inside an aichat turn — leaves `TurnID`, `ModelCallID`, and `CredentialID` all unset (`uuid.Nil` / `nil`). The durable row still records the session and prompt run it belongs to, and is resolved the same way: by session ID and request ID, with no credential or turn to check against.
+
+## Listing and resolving
+
+<CodeExample client:load language="go" title="database.DB approval queries" source={`
+db.ListTurnRequests(ctx, database.TurnRequestFilter{
+    SessionID:   sessionID,
+    PromptRunID: &promptRunID, // optional
+})
+
+db.ResolveToolApprovalRequest(ctx, database.ResolveToolApprovalRequestInput{
+    SessionID:      sessionID,
+    RequestID:      requestID,
+    ExpectedTurnID: nil, // set only for a caller-tool approval tied to an active turn
+    Approved:       true,
+    UpdatedInput:   nil,
+    ResolvedBy:     "person@example.com",
+})
+
+db.CancelPendingTurnRequests(ctx, sessionID, promptRunID, "run cancelled")
+`} />
+
+- **`ListTurnRequests`** requires `SessionID`; filter to one run with `PromptRunID`. A host listing what a user needs to answer filters the results for `state == "pending"` itself.
+- **`ResolveToolApprovalRequest`** flips a pending row to `approved` or `denied`. A credential-backed (caller-tool) approval can only resolve while its expected turn is still active; a credential-less (provider/host) approval can only resolve while its prompt run is `waiting`.
+- **`CancelPendingTurnRequests`** cancels every still-pending approval for one session + prompt run — used when a run ends with approvals nobody ever answered.
+
+## Per-tool `ask` needs a broker
+
+`api.RequireToolPolicySupport` is checked before a run's first model call. A per-tool policy of `deny` or `allow` is refused outright on a runtime that cannot carry an allow/deny list at all — running without it would grant the agent more than the spec allows. A per-tool policy of `ask` is refused unconditionally: no transport exposes a per-tool prompt to the *runtime's own* declarative tool filter, so it would resolve to "allowed" on every runtime that does support allow/deny lists.
+
+That check is about the runtime's declarative filter, not about whether a broker exists — an `ask` decision made per call, live, is a different mechanism: it is what `approval.Broker.CanUseTool` implements as the `PermissionFunc` itself, and it is how the caller-tool path (aichat) honours a per-tool `ask` policy today. A streaming provider run's declared `permissions.tools` still cannot say `ask` — only `allow`/`deny` — regardless of whether a broker is attached.

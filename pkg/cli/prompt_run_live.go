@@ -103,7 +103,7 @@ func promptRunRecord(rendered PromptRenderResult, runID string, binding *promptS
 		Rendered: rendered, RunID: runID, Binding: binding, SessionID: result.SessionID,
 		Model: firstNonEmpty(result.Model, rendered.Model), Provider: providerOf(runtime), Mode: runtime.Mode,
 		ResultJSON: resultJSONWithVerify(nil, result.Report),
-		Iterations: promptRunIterationRecords(result.Loop, result.Verdicts, interrupted),
+		Iterations: promptrun.IterationRecords(result, interrupted),
 	}
 }
 

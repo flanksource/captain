@@ -75,18 +75,41 @@ export const docSections: DocSection[] = [
     ],
   },
   {
+    label: "AI Agents",
+    items: [
+      {
+        label: "AI Agents Overview",
+        href: "/agents/",
+        description: "The generate→verify loop, its hooks, and how a host embeds it.",
+        status: "ready",
+      },
+      {
+        label: "Verification",
+        href: "/agents/verification/",
+        description: "Verifier kinds, workflow.verify, the fixture-runner contract, and captain verify.",
+        status: "ready",
+      },
+      {
+        label: "Embedding a Run",
+        href: "/agents/embedding/",
+        description: "pkg/promptrun.Run — Input, hooks, timeouts, verify-only runs, and Result.",
+        status: "ready",
+      },
+      {
+        label: "Approvals",
+        href: "/agents/approvals/",
+        description: "The durable tool-approval broker (pkg/ai/approval.Broker).",
+        status: "ready",
+      },
+    ],
+  },
+  {
     label: "Next Sections",
     items: [
       {
         label: "Serve",
         href: "/serve/",
         description: "Embedded API and web UI.",
-        status: "stub",
-      },
-      {
-        label: "AI Agents",
-        href: "/agents/",
-        description: "Agent loop, verifiers, worktrees, and judges.",
         status: "stub",
       },
       {
