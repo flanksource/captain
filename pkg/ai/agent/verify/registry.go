@@ -149,6 +149,25 @@ func HooksFor(ctx context.Context, wf *api.Workflow, opts Options) ([]any, error
 	return hooks, nil
 }
 
+// ValidatePromptDeclarations loads every declared judge prompt before a run
+// constructs its provider. This keeps a broken workflow attributable to the
+// prompt declaration even when the selected provider is unavailable.
+func ValidatePromptDeclarations(wf *api.Workflow) error {
+	if wf == nil || wf.Verify == nil {
+		return nil
+	}
+	for i, path := range wf.Verify.Prompts {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			return fmt.Errorf("workflow.verify.prompts[%d] is empty", i)
+		}
+		if _, err := prompt.LoadFile(path); err != nil {
+			return fmt.Errorf("verify prompt %q: %w", path, err)
+		}
+	}
+	return nil
+}
+
 // DeclaresExec reports whether the workflow declares a check that starts a
 // process — a shell command or a fixture handed to an external runner. A
 // receive path asks before it has any hooks, because the confinement wrapper is
