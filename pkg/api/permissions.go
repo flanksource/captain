@@ -92,25 +92,26 @@ func (t Tools) toolsWithPolicy(want ToolPolicy) []string {
 // proceeding as if the policy had been applied.
 //
 // Allow-lists are checked too: on a runtime with no tool filter, an allowlist is
-// equally unenforced. Policies naming a known tool from another agent do not
-// apply to the selected runtime; a portable spec may carry both Claude and Codex
-// names. `ask` is refused for applicable tools everywhere — no transport has a
-// per-tool prompt, so it would resolve to "allowed" on the runtimes that
-// advertise tool policy support. `auto` constrains nothing, so it needs no
-// runtime support.
+// equally unenforced. The one entry that may be dropped is an allow naming
+// another agent's built-in (a Claude `Read: allow` on a codex run): an allow only
+// pre-approves a tool the agent already has, so on an agent without that tool it
+// constrains nothing, and a portable spec can carry both vocabularies. A deny or
+// ask is never dropped on that basis — `Bash` is codex's `shell` under another
+// name, and dropping the deny would hand the agent the very tool the spec
+// forbade. `ask` is refused everywhere: no transport has a per-tool prompt, so it
+// would resolve to "allowed" on the runtimes that advertise tool policy support.
+// `auto` constrains nothing, so it needs no runtime support.
 func RequireToolPolicySupport(p *ModelProvider, mode RuntimeMode, permissions Permissions) error {
-	vocabulary := PermissionCapabilitiesFor(RuntimeOf(p, mode)).Tools
-	applicable := func(tools []string) []string {
-		return slices.DeleteFunc(tools, func(tool string) bool {
-			return !agentToolPolicyApplies(vocabulary, tool)
-		})
-	}
-	if asked := applicable(permissions.Tools.toolsWithPolicy(ToolPolicyAsk)); len(asked) > 0 {
+	if asked := permissions.Tools.toolsWithPolicy(ToolPolicyAsk); len(asked) > 0 {
 		return fmt.Errorf(
 			"per-tool policy \"ask\" (%s) is not enforceable on any runtime: transports carry allow/deny tool lists only, so the tool would run unprompted; use allow or deny",
 			strings.Join(asked, ", "))
 	}
-	enforced := applicable(append(permissions.Tools.AllowList(), permissions.Tools.DenyList()...))
+	vocabulary := PermissionCapabilitiesFor(RuntimeOf(p, mode)).Tools
+	allowed := slices.DeleteFunc(permissions.Tools.AllowList(), func(tool string) bool {
+		return isForeignBuiltin(vocabulary, tool)
+	})
+	enforced := append(allowed, permissions.Tools.DenyList()...)
 	if len(enforced) == 0 || registry.SupportsToolPolicy(p, mode) {
 		return nil
 	}
@@ -120,21 +121,25 @@ func RequireToolPolicySupport(p *ModelProvider, mode RuntimeMode, permissions Pe
 		registry.RuntimeOf(p, mode), strings.Join(enforced, ", "), registry.RuntimesList(registry.ToolPolicyRuntimes()))
 }
 
-// agentToolPolicyApplies treats a tool positively identified as another agent's
-// built-in as inapplicable. Unknown names remain applicable so a stale
-// vocabulary cannot silently drop a policy for a newly added built-in.
-func agentToolPolicyApplies(vocabulary []string, tool string) bool {
+// isForeignBuiltin reports whether tool is positively identified as another
+// agent's built-in and absent from the selected runtime's vocabulary. It is the
+// only basis on which an allow entry may be skipped; see RequireToolPolicySupport.
+//
+// A name no agent declares stays enforceable: the vocabularies are hand-kept,
+// and a stale table must fail loud on a newly added built-in rather than wave it
+// through. A runtime with no vocabulary at all (the API modes) owns every name.
+func isForeignBuiltin(vocabulary []string, tool string) bool {
 	if len(vocabulary) == 0 || slices.Contains(vocabulary, tool) {
-		return true
+		return false
 	}
 	for _, tools := range agentTools {
 		if slices.ContainsFunc(tools, func(candidate AgentTool) bool {
 			return candidate.Name == tool
 		}) {
-			return false
+			return true
 		}
 	}
-	return true
+	return false
 }
 
 // Validate checks the mode, presets, tool policies, and resource modes are

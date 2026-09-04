@@ -154,31 +154,24 @@ func TestDeclaredUnsupportedCodexDontAskFailsLoudly(t *testing.T) {
 // captain already fails loud instead of silently ignoring a permission field, and
 // this pins the table to that behaviour so the two cannot drift apart.
 func TestDeclaredAgentToolPolicyMatchesArgv(t *testing.T) {
-	request := func(tools api.Tools) ai.Request {
-		return ai.Request{Prompt: api.Prompt{User: "hi"}, Permissions: api.Permissions{Tools: tools}}
-	}
+	perms := api.Permissions{Tools: api.Tools{"Bash": api.ToolPolicyDeny, "Read": api.ToolPolicyAllow}}
+	req := ai.Request{Prompt: api.Prompt{User: "hi"}, Permissions: perms}
 	cases := []struct {
 		runtime api.Runtime
 		argv    func() ([]string, error)
 	}{
 		{api.RuntimeOf(api.Anthropic, api.ModeCLI), func() ([]string, error) {
-			args, cleanup, err := buildClaudeCLIArgs("claude-sonnet-5", request(api.Tools{
-				"Bash": api.ToolPolicyDeny, "Read": api.ToolPolicyAllow,
-			}))
+			args, cleanup, err := buildClaudeCLIArgs("claude-sonnet-5", req)
 			if cleanup != nil {
 				t.Cleanup(cleanup)
 			}
 			return args, err
 		}},
 		{api.RuntimeOf(api.Google, api.ModeCLI), func() ([]string, error) {
-			return buildGeminiCLIArgs("gemini-3.5-flash", request(api.Tools{
-				"run_shell_command": api.ToolPolicyDeny, "read_file": api.ToolPolicyAllow,
-			}))
+			return buildGeminiCLIArgs("gemini-3.5-flash", req)
 		}},
 		{api.RuntimeOf(api.OpenAI, api.ModeCLI), func() ([]string, error) {
-			args, cleanup, err := buildCodexCLIArgs(codexCLIConfig{Model: "gpt-5.5"}, request(api.Tools{
-				"shell": api.ToolPolicyDeny, "apply_patch": api.ToolPolicyAllow,
-			}))
+			args, cleanup, err := buildCodexCLIArgs(codexCLIConfig{Model: "gpt-5.5"}, req)
 			if cleanup != nil {
 				t.Cleanup(cleanup)
 			}

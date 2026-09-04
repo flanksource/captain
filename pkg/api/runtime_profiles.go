@@ -260,7 +260,9 @@ func validateResolvedPermissions(spec Spec) error {
 		return fmt.Errorf("permissions.mode %q is not available for %s", posture, runtime)
 	}
 	for tool, policy := range spec.Permissions.Tools {
-		if !agentToolPolicyApplies(caps.Tools, tool) {
+		// Same rule as RequireToolPolicySupport: only an allow for another
+		// agent's built-in is inert here; a deny or ask must still be honoured.
+		if policy == ToolPolicyAllow && isForeignBuiltin(caps.Tools, tool) {
 			continue
 		}
 		if err := requireResolvedToolPolicy(caps, runtime, ProvenanceAgent, policy); err != nil {
