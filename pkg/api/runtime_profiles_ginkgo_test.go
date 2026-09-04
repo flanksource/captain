@@ -124,6 +124,36 @@ var _ = Describe("Runtime profiles", func() {
 		Expect(err).To(MatchError(ContainSubstring("is not available for openai agent")))
 	})
 
+	// Profile validation shares RequireToolPolicySupport's one relaxation: an
+	// allow for a tool the runtime does not have (Claude's Read on codex) is
+	// inert, but a deny on a foreign name still describes a codex capability and
+	// must be refused like any other agent-tool policy codex cannot carry.
+	It("skips a foreign allow but refuses a foreign deny for the resolved runtime", func() {
+		profile := func(tools api.Tools) api.RuntimeProfile {
+			return api.RuntimeProfile{
+				ID: "codex", Name: "Codex", Spec: api.Spec{
+					Model:       api.Model{Name: "gpt-5", Mode: api.ModeAgent},
+					Permissions: api.Permissions{Tools: tools},
+				},
+			}
+		}
+
+		_, err := api.ResolveRuntimeProfile(api.RuntimeProfileResolveRequest{
+			Profile: profile(api.Tools{"Read": api.ToolPolicyAllow, "Edit": api.ToolPolicyAllow}),
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = api.ResolveRuntimeProfile(api.RuntimeProfileResolveRequest{
+			Profile: profile(api.Tools{"Bash": api.ToolPolicyDeny}),
+		})
+		Expect(err).To(MatchError(ContainSubstring(`agent-tool policy "deny" is not available for openai agent`)))
+
+		_, err = api.ResolveRuntimeProfile(api.RuntimeProfileResolveRequest{
+			Profile: profile(api.Tools{"shell": api.ToolPolicyAllow}),
+		})
+		Expect(err).To(MatchError(ContainSubstring(`agent-tool policy "allow" is not available for openai agent`)))
+	})
+
 	// The posture is independent of isolation: a run with no sandbox at all must
 	// still carry the mode it asked for, which folding it into SandboxRef broke.
 	It("keeps a permission mode when no sandbox is configured", func() {
