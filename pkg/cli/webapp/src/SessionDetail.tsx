@@ -13,6 +13,7 @@ import {
   errorMessage,
 } from "./sessionData";
 import { sessionResultCollection } from "./sessionCollection";
+import { RunVerification } from "./RunVerification";
 import {
   mergeSessionMessages,
   useSessionChat,
@@ -53,11 +54,19 @@ export function SessionDetail({
   const collection = sessionResultCollection(result);
   if (collection) {
     return (
-      <div className="h-full min-h-0 p-density-4">
-        <SessionInspector
-          session={collection}
-          transcriptProps={{ defaultExpanded: false }}
-        />
+      <div className="flex h-full min-h-0 flex-col gap-density-3 overflow-auto p-density-4">
+        <div className="min-h-80 flex-1">
+          <SessionInspector
+            session={collection}
+            transcriptProps={{ defaultExpanded: false }}
+          />
+        </div>
+        {result.sessions.map((item) => (
+          <RunVerification key={item.captainId}
+            storedReport={item.detail?.structuredOutput?.verify}
+            title={`Verification · ${item.summary.title || item.captainId}`}
+          />
+        ))}
       </div>
     );
   }
@@ -154,7 +163,7 @@ function SessionGetItemDetail({
         </div>
       ) : null}
       {detail ? (
-        <div className={single ? "min-h-0 flex-1" : "h-[70vh] min-h-[32rem]"}>
+        <div className={single ? "min-h-80 flex-1" : "h-[70vh] min-h-[32rem]"}>
           <SessionInspector
             session={detail}
             transcriptProps={{ defaultExpanded: false }}
@@ -166,6 +175,7 @@ function SessionGetItemDetail({
           Transcript unavailable.
         </div>
       )}
+      <RunVerification frame={chat.verify} storedReport={detail?.structuredOutput?.verify} />
     </section>
   );
 }
