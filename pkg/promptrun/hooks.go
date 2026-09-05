@@ -29,8 +29,8 @@ import (
 // Input.CallerOwnsCommits drops the leading commit hooks: the host commits, and
 // its own hooks keep their position between the checks and setup.
 func Hooks(ctx context.Context, in Input, provider ai.Provider) ([]any, error) {
-	if in.CallerOwnsCommits && len(in.Hooks) == 0 {
-		return nil, fmt.Errorf("promptrun: CallerOwnsCommits is set but Input.Hooks is empty: nothing would commit")
+	if err := validateCommitOwnership(in); err != nil {
+		return nil, err
 	}
 	opts := in.Verify
 	if opts.Provider == nil {
@@ -56,4 +56,11 @@ func Hooks(ctx context.Context, in Input, provider ai.Provider) ([]any, error) {
 		hooks = append(hooks, &setup.Plugin{})
 	}
 	return hooks, nil
+}
+
+func validateCommitOwnership(in Input) error {
+	if in.CallerOwnsCommits && len(in.Hooks) == 0 {
+		return fmt.Errorf("promptrun: CallerOwnsCommits is set but Input.Hooks is empty: nothing would commit")
+	}
+	return nil
 }

@@ -172,7 +172,11 @@ func (s Spec) MarshalYAML() (any, error) {
 
 // Validate runs each component's validation, failing loud on the first error.
 func (s Spec) Validate() error {
-	if err := s.Model.Validate(); err != nil {
+	validateModel := s.Model.Validate
+	if s.IsVerifyOnly() && len(s.Workflow.Verify.Prompts) == 0 {
+		validateModel = s.ValidateOptions
+	}
+	if err := validateModel(); err != nil {
 		return fmt.Errorf("model: %w", err)
 	}
 	if s.ToolApproval != nil {
