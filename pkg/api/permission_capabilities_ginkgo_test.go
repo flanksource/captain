@@ -236,7 +236,7 @@ var _ = Describe("PermissionCapabilities", func() {
 			}
 		})
 
-		It("loads skills only on claude-cli, and never unloads them anywhere", func() {
+		It("loads skills only on claude-cli and omits disabled skills on every runtime", func() {
 			for _, runtime := range api.AllRuntimes() {
 				caps := api.PermissionCapabilitiesFor(runtime)
 				want := api.SupportUnsupported
@@ -246,7 +246,7 @@ var _ = Describe("PermissionCapabilities", func() {
 				Expect(caps.ResourceSupport(api.ResourceKindSkills, api.ResourceEnabled).Kind).
 					To(Equal(want), runtime.String())
 				Expect(caps.ResourceSupport(api.ResourceKindSkills, api.ResourceDisabled).Kind).
-					To(Equal(api.SupportUnsupported), runtime.String())
+					To(Equal(api.SupportNative), runtime.String())
 			}
 		})
 
