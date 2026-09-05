@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Button, Tabs } from "@flanksource/clicky-ui/components";
+import { Button, Field, Tabs } from "@flanksource/clicky-ui/components";
 import {
   CodeBlock,
   Icon,
@@ -30,7 +30,7 @@ import { PromptSourceMarkdownEditor } from "./PromptWriteModal";
 import type { PromptBatchHandle } from "./hooks/usePromptRunStream";
 import type { PromptDetail, PromptPreviewResult } from "./promptData";
 import type { PromptSchemaKind } from "./promptSchemaSource";
-import { isScratchPrompt } from "./promptDetailState";
+import { isScratchPrompt, promptRuntimeForDisplay } from "./promptDetailState";
 import {
   CAPTAIN_SECRET_SELECTOR,
   errorMessage,
@@ -162,14 +162,15 @@ export function PromptDetailPane({
   const schema = scratch
     ? undefined
     : normalizeObjectSchema(detail.inputSchema);
+  const effectiveRuntime = promptRuntimeForDisplay(runRequest, previewResult);
   const selectedProvider = resolveProvider(
     models,
-    runRequest.spec?.model,
+    effectiveRuntime.model,
   );
   const runtimeCliArgs = promptSchema?.runtimeAdapters?.find(
     (runtime) =>
       runtime.provider === selectedProvider &&
-      runtime.mode === runRequest.spec?.mode,
+      runtime.mode === effectiveRuntime.mode,
   )?.args;
   const runtimeFamilies = familiesFromRuntimeCatalog(runtimeCatalog);
   const promptReady =
@@ -226,6 +227,7 @@ export function PromptDetailPane({
         ) : (
           <div className="grid min-h-full gap-density-4 xl:grid-cols-[minmax(340px,0.9fr)_minmax(0,1.1fr)]">
             <div className="space-y-density-4">
+              {previewResult && <Field label="Resolution"><span className="text-sm text-muted-foreground">{[effectiveRuntime.model, effectiveRuntime.mode].filter(Boolean).join(' · ')}</span></Field>}
               <PromptRunEditor
                 key={detail.id}
                 value={runRequest}
