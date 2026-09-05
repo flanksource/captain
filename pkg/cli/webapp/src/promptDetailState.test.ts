@@ -7,6 +7,8 @@ import {
   isPromptDirty,
   promptDetailReducer,
   promptDetailStateFor,
+  promptRuntimeForDisplay,
+  promptPreviewKey,
   type PromptDetailStates,
 } from "./promptDetailState";
 
@@ -29,6 +31,52 @@ const alpha = detail("alpha", "alpha v1");
 const beta = detail("beta", "beta v1");
 
 describe("promptDetailReducer", () => {
+  it("keeps saved runtime defaults out of the request and preserves explicit profile overrides", () => {
+    const seeded: PromptDetail = {
+      ...alpha,
+      run: { variables: { topic: 'example' }, chat: true, spec: { model: 'saved-model', mode: 'agent', budget: { timeout: '2h' } }, runtimes: [{ model: 'saved-comparison' }] },
+    };
+    const initial = promptDetailStateFor({}, seeded);
+    expect(initial.runRequest).toEqual({ variables: { topic: 'example' }, chat: true, spec: {} });
+    const selected = { ...initial.runRequest, runtimeProfile: 'review-profile' };
+    let states = promptDetailReducer({}, { type: 'run-request', detail: seeded, value: selected });
+    expect(promptDetailStateFor(states, seeded).runRequest).toEqual(selected);
+    const explicit = { ...selected, spec: { model: 'saved-model' } };
+    states = promptDetailReducer(states, { type: 'run-request', detail: seeded, value: explicit });
+    expect(promptDetailStateFor(states, seeded).runRequest).toEqual(explicit);
+  });
+
+  it.each(['draft', 'run-request'] as const)('clears stale resolution after a %s edit', type => {
+    let states = promptDetailReducer({}, { type: 'preview-result', detail: alpha, key: promptPreviewKey(promptDetailStateFor({}, alpha)), value: { id: alpha.id, name: alpha.name, model: 'previous-model' } });
+    states = promptDetailReducer(states, type === 'draft'
+      ? { type, detail: alpha, value: 'updated source' }
+      : { type, detail: alpha, value: { runtimeProfile: 'new-profile', spec: {} } });
+    expect(promptDetailStateFor(states, alpha).previewResult).toBeUndefined();
+  });
+
+  it.each(['draft', 'run-request'] as const)('ignores an old preview received after a %s edit', type => {
+    const key = promptPreviewKey(promptDetailStateFor({}, alpha));
+    let states = promptDetailReducer({}, type === 'draft'
+      ? { type, detail: alpha, value: 'updated source' }
+      : { type, detail: alpha, value: { runtimeProfile: 'new-profile', spec: {} } });
+    states = promptDetailReducer(states, { type: 'preview-result', detail: alpha, key, value: { id: alpha.id, name: alpha.name, model: 'previous-model' } });
+    expect(promptDetailStateFor(states, alpha).previewResult).toBeUndefined();
+    const latest = { id: alpha.id, name: alpha.name, model: 'updated-model' };
+    states = promptDetailReducer(states, { type: 'preview-result', detail: alpha, key: promptPreviewKey(promptDetailStateFor(states, alpha)), value: latest });
+    expect(promptDetailStateFor(states, alpha).previewResult).toEqual(latest);
+  });
+
+  it('uses resolved profile runtime only for display', () => {
+    const request = { runtimeProfile: 'review-profile', spec: {} };
+    const runtime = promptRuntimeForDisplay(request, {
+      id: alpha.id, name: alpha.name,
+      resolution: { spec: { model: 'preset-model', mode: 'cmux' }, constraints: {}, trace: [] },
+    });
+    expect(runtime).toEqual({ model: 'preset-model', mode: 'cmux' });
+    expect(request).toEqual({ runtimeProfile: 'review-profile', spec: {} });
+    expect(promptRuntimeForDisplay({ spec: { model: 'operator-model', mode: 'api' } })).toEqual({ model: 'operator-model', mode: 'api' });
+  });
+
   it("keeps a draft when the user switches to another prompt and back", () => {
     let states: PromptDetailStates = {};
     states = promptDetailReducer(states, { type: "draft", detail: alpha, value: "alpha edited" });
@@ -78,17 +126,15 @@ describe("promptDetailReducer", () => {
     expect(isPromptDirty(reloaded, alpha)).toBe(true);
   });
 
-  it("seeds the run request with the runtime profile the prompt pins, and only then", () => {
+  it("keeps a frontmatter profile pin out of explicit request overrides when the draft changes", () => {
     const pinned: PromptDetail = {
       ...detail("alpha", "alpha v1"),
       runtimeProfile: "Review",
       run: { ...EMPTY_RUN_REQUEST, runtimeProfile: "Review" },
     };
 
-    expect(promptDetailStateFor({}, pinned).runRequest).toMatchObject({
-      runtimeProfile: "Review",
-      spec: EMPTY_RUN_REQUEST.spec,
-    });
+    const states = promptDetailReducer({}, { type: 'draft', detail: pinned, value: 'runtimeProfile: Plan' });
+    expect(promptDetailStateFor(states, pinned).runRequest).toEqual(EMPTY_RUN_REQUEST);
     expect(promptDetailStateFor({}, alpha).runRequest).not.toHaveProperty("runtimeProfile");
   });
 

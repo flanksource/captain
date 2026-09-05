@@ -43,6 +43,8 @@ import {
   isScratchPrompt,
   promptDetailReducer,
   promptDetailStateFor,
+  promptRuntimeForDisplay,
+  promptPreviewKey,
   type PromptDetailStates,
 } from "./promptDetailState";
 import {
@@ -151,13 +153,14 @@ function usePromptWorkbenchView({
   const detail = activePromptId ? detailQuery.data : SCRATCH_PROMPT;
   const selected = detail ?? selectedSummary;
   const selectedDetailState = promptDetailStateFor(detailStates, detail);
+  const effectiveRuntime = promptRuntimeForDisplay(selectedDetailState.runRequest, selectedDetailState.previewResult);
   // The permission catalog describes one agent's world, so both halves of the
   // selected runtime identify it and trigger a refetch when either changes.
   const selectedProvider = resolveProvider(
     models,
-    selectedDetailState.runRequest.spec?.model,
+    effectiveRuntime.model,
   );
-  const selectedMode = selectedDetailState.runRequest.spec?.mode;
+  const selectedMode = effectiveRuntime.mode;
   const selectedRuntime =
     selectedProvider && selectedMode
       ? { provider: selectedProvider, mode: selectedMode }
@@ -282,7 +285,7 @@ function usePromptWorkbenchView({
         promptActionParams(detail),
         actionBody(),
       );
-      dispatchDetailState({ type: "preview-result", detail, value: preview });
+      dispatchDetailState({ type: "preview-result", detail, key: promptPreviewKey(selectedDetailState), value: preview });
       dispatchDetailState({ type: "active-run", detail, value: undefined });
       dispatchDetailState({ type: "active-batch", detail, value: undefined });
     } catch (error) {
@@ -306,7 +309,7 @@ function usePromptWorkbenchView({
         promptActionParams(detail),
         actionBody(),
       );
-      dispatchDetailState({ type: "preview-result", detail, value: undefined });
+      dispatchDetailState({ type: "preview-result", detail, key: promptPreviewKey(selectedDetailState), value: undefined });
       if (isPromptBatchHandle(handle)) {
         dispatchDetailState({ type: "active-run", detail, value: undefined });
         dispatchDetailState({ type: "active-batch", detail, value: handle });

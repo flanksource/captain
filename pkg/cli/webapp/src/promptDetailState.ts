@@ -5,9 +5,16 @@ import type { PromptSchemaKind } from "./promptSchemaSource";
 
 export const EMPTY_RUN_REQUEST: AIPromptRunValue = {
   variables: {},
-  spec: { budget: { timeout: "2h" } },
+  spec: {},
   chat: true,
 };
+
+export function promptRuntimeForDisplay(request: AIPromptRunValue, preview?: PromptPreviewResult): { model?: string; mode?: string } {
+  return {
+    model: preview?.resolution?.spec.model ?? preview?.model ?? request.spec?.model,
+    mode: preview?.resolution?.spec.mode ?? preview?.mode ?? request.spec?.mode,
+  };
+}
 
 export const SCRATCH_PROMPT_ID = "__scratch__";
 
@@ -48,6 +55,10 @@ export type PromptDetailState = {
 /** One editing slot per prompt id, so switching prompts never discards a draft. */
 export type PromptDetailStates = Record<string, PromptDetailState>;
 
+export function promptPreviewKey(state: Pick<PromptDetailState, 'draft' | 'runRequest'>): string {
+  return JSON.stringify([state.draft, state.runRequest]);
+}
+
 export type PromptDetailStateAction =
   | { type: "draft"; detail?: PromptDetail; value: string }
   | { type: "run-request"; detail?: PromptDetail; value: AIPromptRunValue }
@@ -61,6 +72,7 @@ export type PromptDetailStateAction =
   | {
       type: "preview-result";
       detail?: PromptDetail;
+      key: string;
       value?: PromptPreviewResult;
     }
   | { type: "active-run"; detail?: PromptDetail; value?: string }
@@ -87,9 +99,9 @@ function applyAction(
 ): PromptDetailState {
   switch (action.type) {
     case "draft":
-      return { ...current, draft: action.value };
+      return { ...current, draft: action.value, previewResult: undefined };
     case "run-request":
-      return { ...current, runRequest: action.value };
+      return { ...current, runRequest: action.value, previewResult: undefined };
     case "variables-validity":
       return { ...current, variablesValid: action.value };
     case "schema-validity":
@@ -101,6 +113,7 @@ function applyAction(
         },
       };
     case "preview-result":
+      if (action.value && action.key !== promptPreviewKey(current)) return current;
       return { ...current, previewResult: action.value };
     case "active-run":
       return { ...current, activeRunID: action.value };
@@ -118,7 +131,7 @@ function applyAction(
 export function initialPromptDetailState(
   detail?: PromptDetail,
 ): PromptDetailState {
-  const runRequest = detail?.run ?? EMPTY_RUN_REQUEST;
+  const { spec: _spec, runtimes: _runtimes, runtimeProfile: _runtimeProfile, ...runRequest } = detail?.run ?? EMPTY_RUN_REQUEST;
   const content = detail?.content ?? "";
   return {
     draft: content,
@@ -126,7 +139,7 @@ export function initialPromptDetailState(
     detailContent: content,
     runRequest: {
       ...runRequest,
-      spec: { ...EMPTY_RUN_REQUEST.spec, ...runRequest.spec },
+      spec: {},
     },
     variablesValid: true,
     schemaValidity: { input: true, output: true },

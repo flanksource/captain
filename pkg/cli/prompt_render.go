@@ -11,24 +11,6 @@ import (
 	"github.com/flanksource/captain/pkg/api"
 )
 
-// withoutSavedModelSeed drops a model override that merely echoes the saved
-// prompt's own frontmatter (the seed PromptDetail.Run hands the editor), so a
-// draft that changes `model:` renders with the draft's model. An override that
-// differs from the saved seed is an explicit choice and is kept.
-func withoutSavedModelSeed(spec *api.Spec, record promptRecord, savedContent string) *api.Spec {
-	if spec == nil {
-		return nil
-	}
-	saved, err := promptSummaryFromContent(record, savedContent)
-	if err != nil || spec.Name != saved.Model || string(spec.Mode) != saved.Mode {
-		return spec
-	}
-	stripped := *spec
-	stripped.Name, stripped.ID, stripped.Mode = "", "", ""
-	stripped.Provider = nil
-	return &stripped
-}
-
 // renderPrompt is the HTTP/Spec render path: the caller's structured api.Spec
 // (the web UI's runtime overrides) is the last layer over the selected runtime
 // profile and the rendered frontmatter. A non-empty Content renders that draft
@@ -46,7 +28,6 @@ func renderPrompt(ctx context.Context, id string, renderReq PromptRenderRequest)
 		return PromptRenderResult{}, err
 	}
 	if strings.TrimSpace(renderReq.Content) != "" {
-		renderReq.Spec = withoutSavedModelSeed(renderReq.Spec, record, content)
 		content = renderReq.Content
 	}
 	vars := renderReq.Variables
