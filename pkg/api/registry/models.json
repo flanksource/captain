@@ -1,5 +1,35 @@
 [
   {
+    "id": "claude-fable-5-1",
+    "provider": "anthropic",
+    "family": "fable",
+    "version": "5.1",
+    "label": "Claude Fable 5.1",
+    "releaseDate": "2026-09-01",
+    "reasoning": true,
+    "contextWindow": 1000000,
+    "cost": {
+      "input": 10,
+      "output": 50,
+      "cacheRead": 0.25,
+      "cacheWrite": 12.5
+    },
+    "inputMediaTypes": [
+      "image/*",
+      "application/pdf"
+    ],
+    "preferred": true,
+    "adaptiveThinking": true,
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ],
+    "defaultEffort": "high"
+  },
+  {
     "id": "claude-opus-5",
     "provider": "anthropic",
     "family": "opus",
@@ -313,6 +343,43 @@
       "application/pdf"
     ],
     "supersededBy": "claude-sonnet-4-6"
+  },
+  {
+    "id": "gpt-6-astra",
+    "provider": "openai",
+    "family": "gpt",
+    "version": "6-astra",
+    "label": "GPT-6 Astra",
+    "releaseDate": "2026-09-04",
+    "reasoning": true,
+    "contextWindow": 1050000,
+    "cost": {
+      "input": 10,
+      "output": 50,
+      "cacheRead": 1,
+      "cacheWrite": 12.5
+    },
+    "inputMediaTypes": [
+      "image/*",
+      "application/pdf"
+    ],
+    "preferred": true,
+    "availability": [
+      "api",
+      "cli",
+      "agent",
+      "cmux"
+    ],
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ],
+    "aliases": [
+      "astra"
+    ]
   },
   {
     "id": "gpt-5.6",
