@@ -16,8 +16,8 @@ importers:
         specifier: ^3.0.201
         version: 3.0.216(react@18.3.1)(zod@4.4.3)
       '@flanksource/clicky-ui':
-        specifier: 0.3.29
-        version: 0.3.29(@ai-sdk/react@3.0.216(react@18.3.1)(zod@4.4.3))(@babel/core@7.29.7)(@babel/template@7.29.7)(@shikijs/langs@1.29.2)(@shikijs/themes@1.29.2)(@shikijs/transformers@1.29.2)(@types/react@19.2.17)(ai@6.0.214(zod@4.4.3))(marked@15.0.12)(monaco-editor@0.48.0)(react-dom@18.3.1(react@18.3.1))(react-rnd@10.5.3(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(react@18.3.1)(recharts@3.10.1(@types/react@19.2.17)(react-dom@18.3.1(react@18.3.1))(react-is@17.0.2)(react@18.3.1)(redux@5.0.1))(shiki@1.29.2)(streamdown@2.5.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(tailwindcss@4.3.1)
+        specifier: 0.3.34
+        version: 0.3.34(@ai-sdk/react@3.0.216(react@18.3.1)(zod@4.4.3))(@babel/core@7.29.7)(@babel/template@7.29.7)(@shikijs/langs@1.29.2)(@shikijs/themes@1.29.2)(@shikijs/transformers@1.29.2)(@types/react@19.2.17)(ai@6.0.214(zod@4.4.3))(marked@15.0.12)(monaco-editor@0.48.0)(react-dom@18.3.1(react@18.3.1))(react-rnd@10.5.3(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(react@18.3.1)(recharts@3.10.1(@types/react@19.2.17)(react-dom@18.3.1(react@18.3.1))(react-is@17.0.2)(react@18.3.1)(redux@5.0.1))(shiki@1.29.2)(streamdown@2.5.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(tailwindcss@4.3.1)
       '@shikijs/langs':
         specifier: ^1.24.0
         version: 1.29.2
@@ -426,8 +426,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@flanksource/clicky-ui@0.3.29':
-    resolution: {integrity: sha512-iQqRadiTqqfUuhcxAASbZoV3bgHl2UoMvL5NiVO5lQVfUNZlPQYYW3svz2xUWDQdz9mqgNCCtggQClsh3Pdi5A==}
+  '@flanksource/clicky-ui@0.3.34':
+    resolution: {integrity: sha512-5o1e8K2ZWbS9bWjsE0sd/rm0UkxZMbQ4/d0PRNQMHwGh3a55XG3oAkBhlBYxv2uUfhBj1zR1F6f195rDnKLvRg==}
     peerDependencies:
       '@ai-sdk/react': ^3.0.0
       '@mdxeditor/editor': ^4.0.4
@@ -2771,7 +2771,7 @@ snapshots:
   '@esbuild/win32-x64@0.28.1':
     optional: true
 
-  '@flanksource/clicky-ui@0.3.29(@ai-sdk/react@3.0.216(react@18.3.1)(zod@4.4.3))(@babel/core@7.29.7)(@babel/template@7.29.7)(@shikijs/langs@1.29.2)(@shikijs/themes@1.29.2)(@shikijs/transformers@1.29.2)(@types/react@19.2.17)(ai@6.0.214(zod@4.4.3))(marked@15.0.12)(monaco-editor@0.48.0)(react-dom@18.3.1(react@18.3.1))(react-rnd@10.5.3(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(react@18.3.1)(recharts@3.10.1(@types/react@19.2.17)(react-dom@18.3.1(react@18.3.1))(react-is@17.0.2)(react@18.3.1)(redux@5.0.1))(shiki@1.29.2)(streamdown@2.5.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(tailwindcss@4.3.1)':
+  '@flanksource/clicky-ui@0.3.34(@ai-sdk/react@3.0.216(react@18.3.1)(zod@4.4.3))(@babel/core@7.29.7)(@babel/template@7.29.7)(@shikijs/langs@1.29.2)(@shikijs/themes@1.29.2)(@shikijs/transformers@1.29.2)(@types/react@19.2.17)(ai@6.0.214(zod@4.4.3))(marked@15.0.12)(monaco-editor@0.48.0)(react-dom@18.3.1(react@18.3.1))(react-rnd@10.5.3(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(react@18.3.1)(recharts@3.10.1(@types/react@19.2.17)(react-dom@18.3.1(react@18.3.1))(react-is@17.0.2)(react@18.3.1)(redux@5.0.1))(shiki@1.29.2)(streamdown@2.5.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(tailwindcss@4.3.1)':
     dependencies:
       '@codemirror/autocomplete': 6.20.3
       '@codemirror/commands': 6.11.0

@@ -5,7 +5,7 @@ import {
   type PromptRunSummary,
 } from "./hooks/usePromptRunStream";
 import { useSessionChat } from "./hooks/useSessionChat";
-import type { VerifyFrame, VerifyState } from "./types/verifyReport";
+import { RunVerification } from "./RunVerification";
 
 /**
  * PromptRunStream renders a prompt run's session history live: it subscribes to
@@ -16,7 +16,6 @@ export function PromptRunStream({ runID }: { runID: string }) {
   const chat = useSessionChat({ initialRunID: runID });
   const { messages, summary, status, error, run, chatState, verify } = chat;
   const empty = messages.length === 0;
-  const verifyLine = verifyStatusLine(verify);
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-density-3">
@@ -28,14 +27,7 @@ export function PromptRunStream({ runID }: { runID: string }) {
           </Button>
         ) : null}
       </div>
-      {verifyLine && (
-        <div
-          data-testid="verify-status"
-          className="text-xs text-muted-foreground"
-        >
-          {verifyLine}
-        </div>
-      )}
+      <RunVerification frame={verify} />
       {error && (
         <RunFailureDetails
           error={error}
@@ -46,7 +38,7 @@ export function PromptRunStream({ runID }: { runID: string }) {
           mode={summary?.mode ?? run?.mode}
         />
       )}
-      <div className="min-h-0 flex-1 overflow-auto rounded-md border border-border">
+      <div className="min-h-60 flex-1 overflow-auto rounded-md border border-border">
         {empty ? (
           <div className="flex min-h-[240px] items-center justify-center p-density-6 text-sm text-muted-foreground">
             {status === "done"
@@ -135,37 +127,6 @@ const STATUS_DOT: Record<PromptRunStreamStatus, string> = {
   done: "bg-green-500",
   error: "bg-destructive",
 };
-
-const VERIFY_FAILURE_STATES: readonly VerifyState[] = [
-  "failed",
-  "errored",
-  "timed_out",
-  "cancelled",
-];
-
-/**
- * verifyStatusLine renders the run's latest `verify` frame as a single line:
- * a live progress count while a check is still running, and a terse verdict
- * once it is done. Returns null when there is nothing to show yet.
- */
-function verifyStatusLine(verify: VerifyFrame | null): string | null {
-  const report = verify?.report;
-  if (!report) return null;
-  if (report.state === "passed") return "verified";
-  if (VERIFY_FAILURE_STATES.includes(report.state)) {
-    return report.reason
-      ? `verification failed · ${report.reason}`
-      : "verification failed";
-  }
-  if (report.state === "warned") {
-    return report.reason
-      ? `verification warned · ${report.reason}`
-      : "verification warned";
-  }
-  if (report.state === "skipped") return "verification skipped";
-  const { passed, total } = report.summary;
-  return `verifying · ${passed}/${total} passed`;
-}
 
 function StatusPill({ status }: { status: PromptRunStreamStatus }) {
   return (
