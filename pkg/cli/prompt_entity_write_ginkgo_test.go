@@ -160,18 +160,29 @@ var _ = Describe("prompt entity writes", func() {
 	})
 
 	Describe("render", func() {
-		It("renders the draft and lets the draft's frontmatter model win over the saved seed", func() {
+		It("renders the draft model when the sparse request has no model override", func() {
 			detail := createPrompt("summary", validPromptSource)
 
 			result, err := renderPrompt(ctx, detail.ID, PromptRenderRequest{
 				Content:   draftPromptSource,
 				Variables: map[string]any{"patch": "abc"},
-				Spec:      detail.Run.Spec,
+				Spec:      &api.Spec{},
 			})
 
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.User).To(ContainSubstring("Draft body for abc."))
 			Expect(result.Model).To(Equal("gpt-5"))
+		})
+
+		It("preserves an explicit model equal to the saved prompt when rendering a draft", func() {
+			detail := createPrompt("summary", validPromptSource)
+			result, err := renderPrompt(ctx, detail.ID, PromptRenderRequest{
+				Content:   draftPromptSource,
+				Variables: map[string]any{"patch": "abc"},
+				Spec:      &api.Spec{Model: api.Model{Name: detail.Model, Mode: api.RuntimeMode(detail.Mode)}},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Model).To(Equal("claude-sonnet-4-6"))
 		})
 
 		It("keeps an explicit runtime override when rendering a draft", func() {
