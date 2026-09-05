@@ -127,9 +127,8 @@ type PermissionCapabilities struct {
 	ToolPolicies map[ToolProvenance]map[ToolPolicy]Support `json:"toolPolicies"`
 	// Resources is the availability axis, keyed by kind and then by the value
 	// requested. Both keys matter because the two directions are independent and
-	// today they are opposites: MCP is only switchable *off* (there is no
-	// per-server enable), while skills are only switchable *on* (a disabled entry
-	// is dropped before it reaches any provider). One Support per kind would
+	// MCP is only switchable *off* (there is no per-server enable), while disabled
+	// skills are enforced by omission before reaching any provider. One Support per kind would
 	// report "supported" for a request that is silently ignored.
 	Resources map[ResourceKind]map[ResourceMode]Support `json:"resources"`
 	// Tools is the runtime's built-in tool vocabulary — the names a per-tool
@@ -280,9 +279,8 @@ func callerTools() map[ToolPolicy]Support {
 //   - mcpOff: does `permissions.mcp.disabled` actually silence ambient servers.
 //   - skillsOn: does `permissions.skills: {dir: enabled}` actually load them.
 //
-// Everything else is unsupported on every runtime today, and says why:
-// `mcp.servers` and `mcp.modes` have no reader outside Validate, a disabled skill
-// is dropped by ResourcePolicies.Enabled before any provider sees it, and
+// Disabled skills are enforced by omission before any provider sees them.
+// Other cells are unsupported: `mcp.servers` and `mcp.modes` have no reader, and
 // `permissions.plugins` reaches req.Permissions.Plugins and stops there.
 func resources(mcpOff, skillsOn bool) map[ResourceKind]map[ResourceMode]Support {
 	mcpDisabled := unsupported("permissions.mcp.disabled is accepted and then dropped on this runtime")
@@ -300,7 +298,7 @@ func resources(mcpOff, skillsOn bool) map[ResourceKind]map[ResourceMode]Support 
 		},
 		ResourceKindSkills: {
 			ResourceEnabled:  skillsEnabled,
-			ResourceDisabled: unsupported("ResourcePolicies.Enabled drops disabled skills before any provider sees them"),
+			ResourceDisabled: native("omitted by ResourcePolicies.Enabled before any provider sees it"),
 		},
 		ResourceKindPlugins: {
 			ResourceEnabled:  unsupported("permissions.plugins reaches req.Permissions.Plugins and has no reader beyond it"),
@@ -475,55 +473,4 @@ var permissionCapabilities = map[Runtime]PermissionCapabilities{
 		Resources:    resources(false, false),
 		Tools:        geminiBuiltinTools,
 	},
-}
-
-// SupportedPermissionModes lists the postures a runtime honours natively or by
-// approximation, in canonical order. It is what a picker should offer.
-func SupportedPermissionModes(p *ModelProvider, mode RuntimeMode) []PermissionMode {
-	caps := PermissionCapabilitiesFor(RuntimeOf(p, mode))
-	out := make([]PermissionMode, 0, len(caps.Modes))
-	for _, posture := range AllPermissionModes() {
-		if caps.ModeSupport(posture).Honoured() {
-			out = append(out, posture)
-		}
-	}
-	return out
-}
-
-// SupportedToolPolicies lists the policy values a runtime can enforce for one
-// provenance, in canonical order. A requires-broker value is included because
-// whether it is usable depends on runtime state this table cannot see; the
-// caller decides.
-func SupportedToolPolicies(p *ModelProvider, mode RuntimeMode, provenance ToolProvenance) []ToolPolicy {
-	caps := PermissionCapabilitiesFor(RuntimeOf(p, mode))
-	out := make([]ToolPolicy, 0, 4)
-	for _, policy := range AllToolPolicies() {
-		if s := caps.ToolPolicySupport(provenance, policy); s.Kind != SupportUnsupported {
-			out = append(out, policy)
-		}
-	}
-	return out
-}
-
-// ToolPolicyProvenances lists the provenances that can carry a constraining
-// policy on a runtime, in canonical order. Empty means no per-tool policy is
-// enforceable there from any source.
-func ToolPolicyProvenances(p *ModelProvider, mode RuntimeMode) []ToolProvenance {
-	caps := PermissionCapabilitiesFor(RuntimeOf(p, mode))
-	var out []ToolProvenance
-	for _, provenance := range AllToolProvenances() {
-		for _, policy := range []ToolPolicy{ToolPolicyAllow, ToolPolicyDeny} {
-			if caps.ToolPolicySupport(provenance, policy).Honoured() {
-				out = append(out, provenance)
-				break
-			}
-		}
-	}
-	return out
-}
-
-// AllToolPolicies lists the policy values in canonical order. ToolPolicy had no
-// All* helper of its own because, until now, nothing enumerated it.
-func AllToolPolicies() []ToolPolicy {
-	return []ToolPolicy{ToolPolicyAuto, ToolPolicyAsk, ToolPolicyAllow, ToolPolicyDeny}
 }

@@ -127,9 +127,8 @@ func HooksFor(ctx context.Context, wf *api.Workflow, opts Options) ([]any, error
 	if wf == nil || wf.Verify == nil {
 		return nil, nil
 	}
-	if strings.TrimSpace(wf.Verify.Fixture) != "" && !Registered(KindFixture) {
-		return nil, fmt.Errorf("workflow.verify.fixture declared but no fixture verifier is registered " +
-			"(link a fixture runner in-process or set verify.fixtureRunner in ~/.captain.yaml)")
+	if err := ValidateDeclarations(wf, DeclarationOptions{Provider: opts.Provider}); err != nil {
+		return nil, err
 	}
 	var hooks []any
 	for _, kind := range kindOrder {
@@ -147,25 +146,6 @@ func HooksFor(ctx context.Context, wf *api.Workflow, opts Options) ([]any, error
 		}
 	}
 	return hooks, nil
-}
-
-// ValidatePromptDeclarations loads every declared judge prompt before a run
-// constructs its provider. This keeps a broken workflow attributable to the
-// prompt declaration even when the selected provider is unavailable.
-func ValidatePromptDeclarations(wf *api.Workflow) error {
-	if wf == nil || wf.Verify == nil {
-		return nil
-	}
-	for i, path := range wf.Verify.Prompts {
-		path = strings.TrimSpace(path)
-		if path == "" {
-			return fmt.Errorf("workflow.verify.prompts[%d] is empty", i)
-		}
-		if _, err := prompt.LoadFile(path); err != nil {
-			return fmt.Errorf("verify prompt %q: %w", path, err)
-		}
-	}
-	return nil
 }
 
 // DeclaresExec reports whether the workflow declares a check that starts a
@@ -231,7 +211,7 @@ func promptFactory(_ context.Context, spec api.Verify, opts Options) ([]*Plugin,
 		if err != nil {
 			return nil, fmt.Errorf("verify prompt %q: %w", path, err)
 		}
-		if err := rejectJudgeOverrides(path, tmpl, opts.Provider); err != nil {
+		if err := rejectJudgeOverrides(path, tmpl, opts.Provider.GetModel()); err != nil {
 			return nil, err
 		}
 		plugins = append(plugins, New("judge:"+path, &LLMJudgeVerifier{Provider: opts.Provider, Prompt: tmpl}))
@@ -245,7 +225,7 @@ func promptFactory(_ context.Context, spec api.Verify, opts Options) ([]*Plugin,
 // ignored, which is exactly the downgrade issue #39 forbids (R5.4: a hook
 // prompt declaring a relocating sandbox is a validation error, never a silent
 // fallback).
-func rejectJudgeOverrides(path string, tmpl *prompt.Template, provider ai.Provider) error {
+func rejectJudgeOverrides(path string, tmpl *prompt.Template, model string) error {
 	probe, _, err := tmpl.Render(map[string]any{"cwd": "", "changed": []string{}}, nil)
 	if err != nil {
 		return fmt.Errorf("verify prompt %q: %w", path, err)
@@ -253,9 +233,9 @@ func rejectJudgeOverrides(path string, tmpl *prompt.Template, provider ai.Provid
 	if probe.Sandbox != nil {
 		return fmt.Errorf("verify prompt %q declares a sandbox; judge hooks run on the run's provider and cannot relocate", path)
 	}
-	if declared := strings.TrimSpace(probe.Name); declared != "" && declared != provider.GetModel() {
+	if declared := strings.TrimSpace(probe.Name); declared != "" && declared != model {
 		return fmt.Errorf("verify prompt %q declares model %q but judge hooks run on the run's provider (%s); remove the model or match it",
-			path, declared, provider.GetModel())
+			path, declared, model)
 	}
 	return nil
 }

@@ -185,6 +185,12 @@ func (m Model) Validate() error {
 	if m.Name == "" {
 		return fmt.Errorf("model name is required")
 	}
+	return m.ValidateOptions()
+}
+
+// ValidateOptions checks inference knobs and fallback declarations without
+// requiring a primary model for operations that do not call one.
+func (m Model) ValidateOptions() error {
 	if err := m.validateKnobs(); err != nil {
 		return err
 	}

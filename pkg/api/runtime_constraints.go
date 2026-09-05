@@ -1,6 +1,9 @@
 package api
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // RuntimeConstraintViolation identifies the constraint that rejected a run.
 type RuntimeConstraintViolation string
@@ -42,8 +45,15 @@ func (e *RuntimeConstraintError) Error() string {
 	}
 }
 
-// ValidateRuntimeConstraints checks model selection, quotas, and input limits.
+// ValidateRuntimeConstraints checks the actual run against model, budget, quota
+// and input ceilings. It never clamps a copy while leaving execution unbounded.
 func ValidateRuntimeConstraints(resolved ResolvedSpec, model Model, estimatedInputTokens int) error {
+	if err := resolved.Constraints.Validate(); err != nil {
+		return err
+	}
+	if err := validateBudgetLimits(resolved.Spec.Budget, resolved.Constraints.Limits.Budget); err != nil {
+		return err
+	}
 	if estimatedInputTokens < 0 {
 		return &RuntimeConstraintError{
 			Violation: RuntimeConstraintInvalidInput, EstimatedInputTokens: estimatedInputTokens,
@@ -70,6 +80,60 @@ func ValidateRuntimeConstraints(resolved ResolvedSpec, model Model, estimatedInp
 		return &RuntimeConstraintError{
 			Violation: RuntimeConstraintInputTokens, EstimatedInputTokens: estimatedInputTokens, MaxInputTokens: maxInputTokens,
 		}
+	}
+	return nil
+}
+
+// Validate checks effective constraints without resolving models or merging layers.
+func (constraints RuntimeConstraints) Validate() error {
+	if _, err := strictRunLimits(RunLimits{}, constraints.Limits); err != nil {
+		return fmt.Errorf("runtime constraints: %w", err)
+	}
+	for _, selector := range constraints.Models {
+		if strings.TrimSpace(selector) == "" {
+			return fmt.Errorf("runtime constraints model catalog contains an empty selector")
+		}
+	}
+	for _, quota := range constraints.Quotas {
+		if strings.TrimSpace(quota.Name) == "" {
+			return fmt.Errorf("runtime constraints quota name is required")
+		}
+		if quota.Scope != SpecLayerGlobal && quota.Scope != SpecLayerContext {
+			return fmt.Errorf("runtime constraints quota %q requires global or context scope", quota.Name)
+		}
+		if quota.TokenLimit < 0 || quota.TokensUsed < 0 || quota.CostLimitUSD < 0 || quota.CostUsedUSD < 0 {
+			return fmt.Errorf("runtime constraints quota %q cannot contain negative usage or limits", quota.Name)
+		}
+	}
+	return nil
+}
+
+func validateBudgetLimits(actual, limit Budget) error {
+	if err := actual.Validate(); err != nil {
+		return err
+	}
+	for _, ceiling := range []struct {
+		name          string
+		actual, limit float64
+	}{
+		{"cost", actual.Cost, limit.Cost},
+		{"maxTokens", float64(actual.MaxTokens), float64(limit.MaxTokens)},
+		{"maxTurns", float64(actual.MaxTurns), float64(limit.MaxTurns)},
+	} {
+		if ceiling.limit > 0 && (ceiling.actual == 0 || ceiling.actual > ceiling.limit) {
+			return fmt.Errorf("budget.%s %v exceeds the effective limit %v (zero is unbounded)", ceiling.name, ceiling.actual, ceiling.limit)
+		}
+	}
+	actualTimeout, err := actual.ParseTimeout()
+	if err != nil {
+		return err
+	}
+	limitTimeout, err := limit.ParseTimeout()
+	if err != nil {
+		return err
+	}
+	if limitTimeout > 0 && (actualTimeout == 0 || actualTimeout > limitTimeout) {
+		return fmt.Errorf("budget.timeout %s exceeds the effective limit %s", actualTimeout, limitTimeout)
 	}
 	return nil
 }

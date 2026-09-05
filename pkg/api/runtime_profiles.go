@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/flanksource/commons-db/shell"
@@ -125,7 +126,7 @@ func ResolveRuntimeProfile(request RuntimeProfileResolveRequest) (ResolvedSpec, 
 		}
 		resolved.Spec.Model = model
 	}
-	if err := validateResolvedSandbox(resolved.Spec); err != nil {
+	if err := ValidateResolvedSandbox(resolved.Spec); err != nil {
 		return ResolvedSpec{}, err
 	}
 	if err := validateResolvedPermissions(resolved.Spec); err != nil {
@@ -254,59 +255,63 @@ func validateRuntimePreset(preset RuntimePreset) error {
 }
 
 func validateResolvedPermissions(spec Spec) error {
+	warnings := UnsupportedPermissions(spec)
+	if len(warnings) > 0 {
+		return fmt.Errorf("%s", warnings[0])
+	}
+	return nil
+}
+
+// UnsupportedPermissions reports settings the selected runtime cannot honour.
+// Callers choose whether these capability diagnostics refuse a run or warn.
+func UnsupportedPermissions(spec Spec) []string {
 	if !hasResolvedPermissionSettings(spec) {
 		return nil
 	}
 	provider, mode, err := spec.Runtime()
 	if err != nil {
-		return fmt.Errorf("permission settings require a resolved runtime: %w", err)
+		return []string{fmt.Sprintf("permission settings require a resolved runtime: %v", err)}
 	}
 	runtime := RuntimeOf(provider, mode)
 	caps := PermissionCapabilitiesFor(runtime)
+	var warnings []string
+	add := func(err error) {
+		if err != nil {
+			warnings = append(warnings, err.Error())
+		}
+	}
 	if posture := spec.Permissions.Mode; posture != "" && !caps.ModeSupport(posture).Honoured() {
-		return fmt.Errorf("permissions.mode %q is not available for %s", posture, runtime)
+		warnings = append(warnings, fmt.Sprintf("permissions.mode %q is not available for %s", posture, runtime))
 	}
-	for _, policy := range spec.Permissions.Tools {
-		if err := requireResolvedToolPolicy(caps, runtime, ProvenanceAgent, policy); err != nil {
-			return err
-		}
+	for _, name := range sortedKeys(spec.Permissions.Tools) {
+		add(requireResolvedToolPolicy(caps, runtime, ProvenanceAgent, spec.Permissions.Tools[name]))
 	}
-	for _, policy := range spec.ToolPreferences {
-		if err := requireResolvedToolPolicy(caps, runtime, ProvenanceCaller, policy); err != nil {
-			return err
-		}
+	for _, name := range sortedKeys(spec.ToolPreferences) {
+		add(requireResolvedToolPolicy(caps, runtime, ProvenanceCaller, spec.ToolPreferences[name]))
 	}
 	for _, rule := range spec.ToolPolicy {
-		if err := requireResolvedToolPolicy(caps, runtime, ProvenanceCaller, rule.Policy); err != nil {
-			return err
-		}
+		add(requireResolvedToolPolicy(caps, runtime, ProvenanceCaller, rule.Policy))
 	}
 	if spec.Permissions.MCP.Disabled {
-		if err := requireResolvedResource(caps, runtime, ResourceKindMCP, ResourceDisabled); err != nil {
-			return err
-		}
+		add(requireResolvedResource(caps, runtime, ResourceKindMCP, ResourceDisabled))
 	}
 	if len(spec.Permissions.MCP.Servers) > 0 {
-		if err := requireResolvedResource(caps, runtime, ResourceKindMCP, ResourceEnabled); err != nil {
-			return err
+		add(requireResolvedResource(caps, runtime, ResourceKindMCP, ResourceEnabled))
+	}
+	for _, name := range sortedKeys(spec.Permissions.MCP.Modes) {
+		add(requireResolvedResource(caps, runtime, ResourceKindMCP, spec.Permissions.MCP.Modes[name]))
+	}
+	for _, name := range sortedKeys(spec.Permissions.Skills) {
+		add(requireResolvedResource(caps, runtime, ResourceKindSkills, spec.Permissions.Skills[name]))
+		if spec.Permissions.Skills[name] == ResourceDisabled && slices.Contains(spec.Memory.Skills, name) &&
+			caps.ResourceSupport(ResourceKindSkills, ResourceEnabled).Honoured() {
+			warnings = append(warnings, fmt.Sprintf("permissions.skills %q is disabled but memory.skills still loads it for %s", name, runtime))
 		}
 	}
-	for _, mode := range spec.Permissions.MCP.Modes {
-		if err := requireResolvedResource(caps, runtime, ResourceKindMCP, mode); err != nil {
-			return err
-		}
+	for _, name := range sortedKeys(spec.Permissions.Plugins) {
+		add(requireResolvedResource(caps, runtime, ResourceKindPlugins, spec.Permissions.Plugins[name]))
 	}
-	for _, mode := range spec.Permissions.Skills {
-		if err := requireResolvedResource(caps, runtime, ResourceKindSkills, mode); err != nil {
-			return err
-		}
-	}
-	for _, mode := range spec.Permissions.Plugins {
-		if err := requireResolvedResource(caps, runtime, ResourceKindPlugins, mode); err != nil {
-			return err
-		}
-	}
-	return nil
+	return warnings
 }
 
 func hasResolvedPermissionSettings(spec Spec) bool {
@@ -317,9 +322,13 @@ func hasResolvedPermissionSettings(spec Spec) bool {
 		len(spec.ToolPreferences) > 0 || len(spec.ToolPolicy) > 0
 }
 
-func validateResolvedSandbox(spec Spec) error {
+// ValidateResolvedSandbox refuses sandbox isolation unsupported by the runtime.
+func ValidateResolvedSandbox(spec Spec) error {
 	if spec.Sandbox == nil {
 		return nil
+	}
+	if err := spec.Sandbox.Validate(); err != nil {
+		return err
 	}
 	provider, mode, err := spec.Runtime()
 	if err != nil {
@@ -328,6 +337,17 @@ func validateResolvedSandbox(spec Spec) error {
 	capabilities := RuntimeSandboxCapabilitiesFor(provider, mode)
 	if !containsSandboxMode(capabilities.Modes, spec.Sandbox.Mode) {
 		return fmt.Errorf("sandbox mode %q is not available for %s", spec.Sandbox.Mode, RuntimeOf(provider, mode))
+	}
+	if mode != ModeAPI {
+		switch provider {
+		case Anthropic:
+			_, err = TranslateClaudeSandbox(RuntimeOf(provider, mode), *spec.Sandbox)
+		case OpenAI:
+			_, err = TranslateCodexSandbox(RuntimeOf(provider, mode), spec.Sandbox, spec.Permissions.Mode)
+		}
+	}
+	if err != nil {
+		return err
 	}
 	return nil
 }

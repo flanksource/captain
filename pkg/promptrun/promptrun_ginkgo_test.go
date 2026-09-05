@@ -322,7 +322,7 @@ var _ = Describe("promptrun.Run", func() {
 			request.Permissions.Tools = api.Tools{"Bash": api.ToolPolicyDeny}
 
 			_, err := promptrun.Run(context.Background(), promptrun.Input{
-				Request: request, Provider: provider, Timeout: testTimeout,
+				Request: request, Timeout: testTimeout,
 				Config: ai.Config{Model: api.Model{Name: "gpt-5", Provider: api.OpenAI, Mode: api.ModeAPI}},
 			})
 			Expect(err).To(MatchError(ContainSubstring(api.RuntimeOf(api.OpenAI, api.ModeAPI).String())))
@@ -334,7 +334,7 @@ var _ = Describe("promptrun.Run", func() {
 			request.Prompt.Attachments = []api.AttachmentRef{preparedAttachment("image/png")}
 
 			_, err := promptrun.Run(context.Background(), promptrun.Input{
-				Request: request, Provider: provider, Timeout: testTimeout,
+				Request: request, Timeout: testTimeout,
 				Config: ai.Config{Model: api.Model{Name: "claude-sonnet-5", Provider: api.Anthropic, Mode: api.ModeCLI}},
 			})
 			Expect(err).To(MatchError(ContainSubstring("image/png")))
