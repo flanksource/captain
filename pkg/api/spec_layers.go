@@ -81,13 +81,18 @@ func RequestSpecLayer(name string, spec Spec) SpecLayer {
 	return SpecLayer{Name: name, Source: SpecLayerSourceRequest, Scope: SpecLayerUser, Spec: spec}
 }
 
-// ResolveSpecLayers deterministically overlays defaults and intersects constraints.
-func ResolveSpecLayers(input ...SpecLayer) (ResolvedSpec, error) {
+// OrderSpecLayers copies the stack into effective scope order, preserving ties.
+func OrderSpecLayers(input ...SpecLayer) []SpecLayer {
 	layers := append([]SpecLayer(nil), input...)
 	slices.SortStableFunc(layers, func(left, right SpecLayer) int {
 		return scopeRank(left.Scope) - scopeRank(right.Scope)
 	})
+	return layers
+}
 
+// ResolveSpecLayers deterministically overlays defaults and intersects constraints.
+func ResolveSpecLayers(input ...SpecLayer) (ResolvedSpec, error) {
+	layers := OrderSpecLayers(input...)
 	resolved := ResolvedSpec{Trace: make([]SpecLayer, 0, len(layers))}
 	for _, layer := range layers {
 		if err := validateSpecLayer(layer); err != nil {

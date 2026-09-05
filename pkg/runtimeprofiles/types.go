@@ -97,11 +97,12 @@ type ProfileInput struct {
 }
 
 // Resolution is a profile materialised through the catalog: the profile with
-// its preset references canonicalised to ids, the presets in reference order,
-// and the resolved spec with its layer trace.
+// its preset references canonicalised to ids, the presets and layers in reference
+// order, and the effective spec populated only by Catalog.Resolve for preview.
 type Resolution struct {
 	Profile  Profile          `json:"profile"`
 	Presets  []Preset         `json:"presets"`
+	Layers   []api.SpecLayer   `json:"-"`
 	Resolved api.ResolvedSpec `json:"resolved"`
 }
 
