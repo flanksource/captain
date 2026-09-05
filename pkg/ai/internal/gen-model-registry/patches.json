@@ -1,4 +1,8 @@
 {
+  "claude-fable-5-1": {
+    "preferred": true,
+    "defaultEffort": "high"
+  },
   "claude-opus-5": {
     "preferred": true
   },
@@ -16,6 +20,11 @@
   },
   "claude-haiku-4-5": {
     "preferred": true
+  },
+  "gpt-6-astra": {
+    "preferred": true,
+    "availability": ["api", "cli", "agent", "cmux"],
+    "aliases": ["astra"]
   },
   "gpt-5.6": {
     "preferred": true,
