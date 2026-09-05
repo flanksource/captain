@@ -24,6 +24,7 @@ import (
 	"github.com/flanksource/captain/pkg/ai/agent/verify"
 	"github.com/flanksource/captain/pkg/ai/middleware"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/commons/logger"
 )
 
 // Input is everything one run needs.
@@ -78,6 +79,8 @@ type Input struct {
 	// Repo is the root of the tree the run's changed files are recorded relative
 	// to; empty means the request's cwd.
 	Repo string
+	// Constraints is the restrictive channel from the final ResolvedSpec.
+	Constraints api.RuntimeConstraints
 }
 
 // Run executes one prompt run and returns its outcome. A failing verdict is a
@@ -85,29 +88,16 @@ type Input struct {
 // not complete — a hook failed, the provider failed, the policy is unenforceable.
 func Run(ctx context.Context, in Input) (Result, error) {
 	start := time.Now()
-	// One classification, the same one the runner makes: a run generates, or it
-	// verifies what is already there. Anything else — attachments or a message
-	// history with no prompt and nothing declared to verify — used to build a
-	// provider and then quietly report a pass having done neither.
-	if err := in.Request.ValidateRunnable(); err != nil {
-		return Result{}, fmt.Errorf("promptrun: %w", err)
-	}
-	if err := validateAttachments(in); err != nil {
-		return Result{}, err
-	}
-	timeout, err := runTimeout(in)
+	admission, err := preflight(in)
 	if err != nil {
 		return Result{}, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	for _, warning := range admission.warnings {
+		logger.Warnf("promptrun: %s", warning)
+	}
+	in.Config.Model = admission.model
+	ctx, cancel := context.WithTimeout(ctx, admission.timeout)
 	defer cancel()
-
-	if err := requireToolPolicy(in); err != nil {
-		return Result{}, err
-	}
-	if err := verify.ValidatePromptDeclarations(in.Request.Workflow); err != nil {
-		return Result{}, err
-	}
 	provider, release, err := buildProvider(in)
 	if err != nil {
 		return Result{}, err
@@ -164,8 +154,7 @@ func scopeOf(in Input) agent.Scope {
 // validateAttachments refuses a request whose attachments were never resolved
 // — a path or URL the provider would have to fetch itself — and one whose
 // resolved attachments the selected models cannot accept.
-func validateAttachments(in Input) error {
-	refs := in.Request.Prompt.Attachments
+func validateAttachments(refs []api.AttachmentRef, model api.Model) error {
 	if len(refs) == 0 {
 		return nil
 	}
@@ -174,26 +163,28 @@ func validateAttachments(in Input) error {
 			return fmt.Errorf("promptrun: attachment %d (%s) is not resolved; resolve attachments against a store before running", i, ref.Path+ref.URL+ref.ID)
 		}
 	}
-	model := executingModel(in)
 	models := append([]api.Model{model}, model.Fallbacks...)
 	return ai.ValidateAttachmentCompatibility(models, refs)
 }
 
-// executingModel is the model this run will actually be answered by: the one
-// middleware.NewProvider is handed, which is Config.Model whenever the config
-// names one, and the request's own model otherwise (a caller that supplied its
-// provider, or a test).
-//
-// It exists because the two pre-flight checks resolved it differently — the
-// attachment check preferred the request's model and the tool-policy check the
-// config's — so a prompt whose frontmatter named a different model than the
-// config had its attachments validated against a runtime that would never see
-// them, and its policy against one that could not enforce it.
+// executingModel follows provider construction, including caller-owned providers.
 func executingModel(in Input) api.Model {
+	if in.Provider != nil {
+		return suppliedModel(in.Provider)
+	}
+	if in.Request.IsVerifyOnly() && in.Verify.Provider != nil {
+		return suppliedModel(in.Verify.Provider)
+	}
 	if in.Config.Model.Name != "" || in.Config.Model.Provider != nil {
 		return in.Config.Model
 	}
 	return in.Request.Model
+}
+
+func suppliedModel(provider ai.Provider) api.Model {
+	runtime := provider.GetRuntime()
+	descriptor, _ := runtime.ModelProvider()
+	return api.Model{Name: provider.GetModel(), Provider: descriptor, Mode: runtime.Mode}
 }
 
 // runTimeout is the spec's budget.timeout when declared, else the caller's. The
@@ -217,15 +208,6 @@ func runTimeout(in Input) (time.Duration, error) {
 	return 0, fmt.Errorf("promptrun: no timeout: declare budget.timeout on the spec or set Input.Timeout")
 }
 
-// requireToolPolicy refuses a per-tool policy the selected runtime cannot
-// enforce before anything runs. Every provider repeats the check at execution
-// time, but by then setup has materialised a checkout and a host has recorded
-// a run that was never going to start.
-func requireToolPolicy(in Input) error {
-	model := executingModel(in)
-	return api.RequireToolPolicySupport(model.Provider, model.Mode, in.Request.Permissions)
-}
-
 // buildProvider returns the caller's provider, or constructs one from Config
 // when the run will call a model: a generating run always does, and a
 // verify-only run does when it declares judge prompts. A verify-only run of
@@ -236,10 +218,11 @@ func buildProvider(in Input) (ai.Provider, func(), error) {
 	if in.Provider != nil {
 		return in.Provider, release, nil
 	}
-	if in.Request.IsVerifyOnly() && !declaresPrompts(in.Request.Workflow) {
+	if !constructsProvider(in) {
 		return nil, release, nil
 	}
 	cfg := in.Config
+	cfg.Model = executingModel(in)
 	if in.Request.NoCache {
 		cfg.NoCache = true
 	}
