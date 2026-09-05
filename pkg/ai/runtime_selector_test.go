@@ -72,7 +72,7 @@ func TestResolveRendersTheDriverModelID(t *testing.T) {
 	}{
 		{"agent:opus-4-8", "claude-opus-4-8"},
 		{"cmux:claude-opus-4-8", "claude-opus-4-8"},
-		{"cli:fable-5", "claude-fable-5"},
+		{"cli:fable-5", "claude-fable-5-1"},
 		{"api:opus-4-8", "claude-opus-4-8"},
 		{"agent:sonnet", "claude-sonnet-5"},
 		{"agent:sonnet-4", "claude-sonnet-4-6"},
