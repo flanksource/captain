@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PromptRunStream } from "./PromptRunStream";
 import type { VerifyReport } from "./types/verifyReport";
@@ -28,6 +28,10 @@ function verifyReport(overrides: Partial<VerifyReport> = {}): VerifyReport {
       running: 0,
       timedout: 0,
     },
+    tests: [
+      { name: "Compile packages", framework: "fixture", passed: true },
+      { name: "Check policy", framework: "fixture", running: true },
+    ],
     state: "running",
     ...overrides,
   };
@@ -82,10 +86,10 @@ describe("PromptRunStream", () => {
 
   it("shows nothing when there is no verify frame yet", () => {
     render(<PromptRunStream runID="run-4a82" />);
-    expect(screen.queryByTestId("verify-status")).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Verification" })).not.toBeInTheDocument();
   });
 
-  it("shows a live progress line while a check is still running", () => {
+  it("shows live verification checks beside the transcript", () => {
     useSessionChatMock.mockReturnValue({
       messages: [],
       status: "streaming",
@@ -95,12 +99,13 @@ describe("PromptRunStream", () => {
 
     render(<PromptRunStream runID="run-verify" />);
 
-    expect(screen.getByTestId("verify-status")).toHaveTextContent(
-      "verifying · 3/5 passed",
-    );
+    expect(screen.getByText("Running verification…")).toBeInTheDocument();
+    expect(screen.getByText("Compile packages")).toBeInTheDocument();
+    expect(screen.getByText("Check policy")).toBeInTheDocument();
+    expect(screen.getByText("Starting run…")).toBeInTheDocument();
   });
 
-  it("shows a plain verdict once the check has passed", () => {
+  it("keeps the verification checks visible once the run has passed", () => {
     useSessionChatMock.mockReturnValue({
       messages: [],
       status: "done",
@@ -113,7 +118,8 @@ describe("PromptRunStream", () => {
 
     render(<PromptRunStream runID="run-verify" />);
 
-    expect(screen.getByTestId("verify-status")).toHaveTextContent("verified");
+    expect(screen.getByText("Compile packages")).toBeInTheDocument();
+    expect(screen.queryByText("Running verification…")).not.toBeInTheDocument();
   });
 
   it("renders a malformed verify frame's error without dropping the transcript", () => {
@@ -128,7 +134,7 @@ describe("PromptRunStream", () => {
     render(<PromptRunStream runID="run-verify" />);
 
     expect(screen.getByRole("alert")).toHaveTextContent(/invalid verify frame/);
-    expect(screen.queryByTestId("verify-status")).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Verification" })).not.toBeInTheDocument();
   });
 
   it("shows the failure reason once the check has failed", () => {
@@ -147,8 +153,32 @@ describe("PromptRunStream", () => {
 
     render(<PromptRunStream runID="run-verify" />);
 
-    expect(screen.getByTestId("verify-status")).toHaveTextContent(
-      "verification failed · 2 of 5 checks failed",
-    );
+    expect(screen.getByText("2 of 5 checks failed")).toBeInTheDocument();
+  });
+
+  it("opens failed fixture evidence including command output", () => {
+    useSessionChatMock.mockReturnValue({
+      messages: [],
+      status: "error",
+      run: { runId: "run-verify", status: "error" },
+      verify: {
+        report: verifyReport({
+          state: "failed",
+          tests: [{
+            name: "Policy assertion",
+            framework: "fixture",
+            failed: true,
+            command: "check-policy",
+            stdout: "Observed retry limit: 2",
+            context: { exit_code: 1, cel_expression: "retry_limit == 3" },
+          }],
+        }),
+        done: true,
+      },
+    });
+
+    render(<PromptRunStream runID="run-verify" />);
+    fireEvent.click(screen.getByText("Policy assertion"));
+    expect(screen.getByText("Observed retry limit: 2")).toBeInTheDocument();
   });
 });
