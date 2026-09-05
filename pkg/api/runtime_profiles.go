@@ -71,17 +71,15 @@ type RuntimeProfileResolveResponse struct {
 	EffectivePolicy   PermissionPolicy      `json:"effectivePolicy"`
 }
 
-// ResolveRuntimeProfile materializes selected presets, adds the task-specific
-// profile spec, and delegates ordering and structural merge semantics to the
-// canonical Spec layer resolver. A profile references its presets by id or by
-// a name that matches exactly one preset, the runtime catalog's convention.
-func ResolveRuntimeProfile(request RuntimeProfileResolveRequest) (ResolvedSpec, error) {
+// RuntimeProfileLayers materializes selected presets and the profile spec in
+// reference order. Runtime resolution waits until the host adds its other layers.
+func RuntimeProfileLayers(request RuntimeProfileResolveRequest) ([]SpecLayer, error) {
 	if err := validateRuntimeProfile(request.Profile); err != nil {
-		return ResolvedSpec{}, err
+		return nil, err
 	}
 	index, err := indexRuntimePresets(request.Presets)
 	if err != nil {
-		return ResolvedSpec{}, err
+		return nil, err
 	}
 
 	layers := make([]SpecLayer, 0, len(request.Profile.Presets)+1)
@@ -89,10 +87,10 @@ func ResolveRuntimeProfile(request RuntimeProfileResolveRequest) (ResolvedSpec, 
 	for _, ref := range request.Profile.Presets {
 		preset, err := index.lookup(request.Profile.Name, ref)
 		if err != nil {
-			return ResolvedSpec{}, err
+			return nil, err
 		}
 		if _, repeated := selected[preset.ID]; repeated {
-			return ResolvedSpec{}, fmt.Errorf("runtime profile %q repeats preset %q", request.Profile.Name, ref)
+			return nil, fmt.Errorf("runtime profile %q repeats preset %q", request.Profile.Name, ref)
 		}
 		selected[preset.ID] = struct{}{}
 		layers = append(layers, SpecLayer{
@@ -100,10 +98,19 @@ func ResolveRuntimeProfile(request RuntimeProfileResolveRequest) (ResolvedSpec, 
 			Name: preset.Name, Scope: preset.Scope, Spec: preset.Spec.ToSpec(),
 		})
 	}
-	layers = append(layers, SpecLayer{
+	return append(layers, SpecLayer{
 		ID: request.Profile.ID + ":spec", Source: SpecLayerSourceProfile,
 		Name: request.Profile.Name + " run spec", Scope: SpecLayerSurface, Spec: request.Profile.Spec,
-	})
+	}), nil
+}
+
+// ResolveRuntimeProfile resolves and validates a profile in isolation for preview.
+// Hosts composing a run use RuntimeProfileLayers before adding their other layers.
+func ResolveRuntimeProfile(request RuntimeProfileResolveRequest) (ResolvedSpec, error) {
+	layers, err := RuntimeProfileLayers(request)
+	if err != nil {
+		return ResolvedSpec{}, err
+	}
 	resolved, err := ResolveSpecLayers(layers...)
 	if err != nil {
 		return ResolvedSpec{}, fmt.Errorf("resolve runtime profile %q: %w", request.Profile.Name, err)
