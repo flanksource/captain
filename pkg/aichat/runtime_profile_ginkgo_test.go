@@ -168,7 +168,7 @@ var _ = Describe("Resolved runtime profiles", func() {
 })
 
 func mustRuntimeProfile(layers ...api.SpecLayer) aichat.RuntimeProfile {
-	composed, err := api.ComposeSpecLayers(layers...)
+	composed, err := api.ComposeSpecLayers(api.ResolveSpecOptions{Layers: layers})
 	Expect(err).NotTo(HaveOccurred())
 	return aichat.RuntimeProfile{Composed: composed}
 }
