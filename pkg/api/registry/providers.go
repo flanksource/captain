@@ -107,12 +107,12 @@ func Providers() []*Provider {
 	return []*Provider{Anthropic, OpenAI, Google, DeepSeek}
 }
 
-// ProviderByName resolves a provider by Name, CatalogPrefix, or PricingPrefix,
-// so both "google" and "googleai" find Google.
+// ProviderByName resolves a provider by Name, AgentName, CatalogPrefix, or
+// PricingPrefix, so "google", "gemini", and "googleai" all find Google.
 func ProviderByName(name string) (*Provider, bool) {
 	name = strings.ToLower(strings.TrimSpace(name))
 	for _, p := range Providers() {
-		if name == p.Name || name == p.CatalogPrefix || name == p.PricingPrefix {
+		if name == p.Name || name == p.AgentName || name == p.CatalogPrefix || name == p.PricingPrefix {
 			return p, true
 		}
 	}

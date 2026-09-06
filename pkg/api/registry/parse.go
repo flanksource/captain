@@ -345,6 +345,11 @@ func mergeResolved(original, resolved Model) (Model, error) {
 	if resolved.Effort != EffortNone {
 		out.Effort = resolved.Effort
 	}
+	effort, err := ResolveEffort(out.Provider, out.Mode, out.Name, out.Effort)
+	if err != nil {
+		return Model{}, err
+	}
+	out.Effort = effort
 	// Capabilities are derived, never carried over from the request: whatever the
 	// caller wrote for them is replaced by what the resolved adapter can do.
 	return out.WithCapabilities()

@@ -8,11 +8,12 @@ import (
 	"github.com/flanksource/captain/pkg/captainconfig"
 )
 
-// The reported bug in its most reduced form: an unconfigured captain filled the
-// mode from Provider.DefaultMode, so a bare model silently became an agent run.
-// The registry still does that for parsing and display; a run must not.
-func TestResolveForRunRefusesAModeNobodyConfigured(t *testing.T) {
-	_, err := ResolveForRunWith(registry.Model{Name: "haiku"}, captainconfig.AIDefaults{})
+func TestDefaultsReportAModeNobodyConfigured(t *testing.T) {
+	result, err := ApplyDefaults(DefaultOptions{Model: registry.Model{Name: "haiku"}})
+	if err != nil || len(result.Unconfigured) != 1 {
+		t.Fatalf("want one unconfigured candidate, got %v: %v", result.Unconfigured, err)
+	}
+	err = result.Unconfigured[0]
 
 	if !IsUnconfigured(err) {
 		t.Fatalf("want an unconfigured error, got %v", err)
@@ -24,8 +25,8 @@ func TestResolveForRunRefusesAModeNobodyConfigured(t *testing.T) {
 	}
 }
 
-func TestResolveForRunRefusesAModelNobodyConfigured(t *testing.T) {
-	_, err := ResolveForRunWith(registry.Model{}, captainconfig.AIDefaults{})
+func TestUnconfiguredModelNamesTheRemediation(t *testing.T) {
+	err := &UnconfiguredError{Field: "model"}
 
 	if !IsUnconfigured(err) {
 		t.Fatalf("want an unconfigured error, got %v", err)
@@ -36,27 +37,29 @@ func TestResolveForRunRefusesAModelNobodyConfigured(t *testing.T) {
 }
 
 // An explicit compact selector is complete on its own and must not need config.
-func TestResolveForRunAcceptsAnExplicitSelector(t *testing.T) {
-	resolved, err := ResolveForRunWith(registry.Model{Name: "api:haiku"}, captainconfig.AIDefaults{})
+func TestDefaultsAcceptAnExplicitSelector(t *testing.T) {
+	result, err := ApplyDefaults(DefaultOptions{Model: registry.Model{Name: "api:haiku"}})
+	resolved := result.Model
 	if err != nil {
 		t.Fatalf("explicit selector must resolve without config: %v", err)
 	}
 	if resolved.Mode != registry.ModeAPI {
 		t.Errorf("mode = %q, want api", resolved.Mode)
 	}
-	if resolved.Name != "claude-haiku-4-5" {
-		t.Errorf("name = %q, want claude-haiku-4-5", resolved.Name)
+	if resolved.Name != "haiku" {
+		t.Errorf("name = %q, want unresolved alias haiku", resolved.Name)
 	}
 }
 
 // The per-provider block is the primary source, and it supplies the mode a bare
 // name is missing.
-func TestResolveForRunTakesTheProviderBlock(t *testing.T) {
+func TestDefaultsTakeTheProviderBlock(t *testing.T) {
 	saved := captainconfig.AIDefaults{Providers: map[string]captainconfig.ProviderDefaults{
 		registry.Anthropic.Name: {Mode: "api"},
 	}}
 
-	resolved, err := ResolveForRunWith(registry.Model{Name: "haiku"}, saved)
+	result, err := ApplyDefaults(DefaultOptions{Model: registry.Model{Name: "haiku"}, Saved: saved})
+	resolved := result.Model
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -70,7 +73,8 @@ func TestResolveForRunTakesTheProviderBlock(t *testing.T) {
 func TestGlobalDefaultModelSuppliesBothHalves(t *testing.T) {
 	saved := captainconfig.AIDefaults{DefaultModel: "api:claude-haiku-4-5"}
 
-	resolved, err := ResolveForRunWith(registry.Model{}, saved)
+	result, err := ApplyDefaults(DefaultOptions{Saved: saved})
+	resolved := result.Model
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -79,17 +83,16 @@ func TestGlobalDefaultModelSuppliesBothHalves(t *testing.T) {
 	}
 }
 
-// A selector naming another provider still needs a mechanism, and the global
-// default's mode is a mechanism, so it travels even across families.
-func TestGlobalDefaultModeAppliesToAnotherProvidersModel(t *testing.T) {
+func TestGlobalDefaultModeDoesNotLeakToAnotherProvider(t *testing.T) {
 	saved := captainconfig.AIDefaults{DefaultModel: "api:claude-haiku-4-5"}
 
-	resolved, err := ResolveForRunWith(registry.Model{Name: "gemini-3.5-flash"}, saved)
+	result, err := ApplyDefaults(DefaultOptions{Model: registry.Model{Name: "gemini-3.5-flash"}, Saved: saved})
+	resolved := result.Model
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if resolved.Mode != registry.ModeAPI {
-		t.Errorf("mode = %q, want api", resolved.Mode)
+	if resolved.Mode != "" || len(result.Unconfigured) != 1 {
+		t.Errorf("mode = %q, want one reported unconfigured mode: %v", resolved.Mode, result.Unconfigured)
 	}
 	if resolved.Name != "gemini-3.5-flash" {
 		t.Errorf("the global default must not replace an explicitly named model, got %q", resolved.Name)

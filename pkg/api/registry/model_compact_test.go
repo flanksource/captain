@@ -111,7 +111,7 @@ func TestModelList_Unmarshal(t *testing.T) {
 		if len(l) != 2 {
 			t.Fatalf("len = %d", len(l))
 		}
-		if l[0].Name != "opus" || l[0].Mode != ModeAgent || l[0].Effort != EffortHigh {
+		if l[0].Name != "agent:opus:high" || l[0].Mode != "" || l[0].Effort != "" {
 			t.Errorf("l0 = %+v", l[0])
 		}
 		if l[1].Name != "sonnet" || l[1].Effort != EffortMedium {
@@ -123,7 +123,7 @@ func TestModelList_Unmarshal(t *testing.T) {
 		if err := yaml.Unmarshal([]byte("- api:opus\n- model: sonnet\n  effort: high\n"), &l); err != nil {
 			t.Fatal(err)
 		}
-		if len(l) != 2 || l[0].Name != "opus" || l[0].Mode != ModeAPI || l[1].Name != "sonnet" {
+		if len(l) != 2 || l[0].Name != "api:opus" || l[0].Mode != "" || l[1].Name != "sonnet" {
 			t.Errorf("got %+v", l)
 		}
 	})
