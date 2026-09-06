@@ -10,18 +10,12 @@ import (
 	"unicode/utf8"
 )
 
-func CmuxBin() string {
-	if p := os.Getenv("CMUX_BIN"); p != "" {
-		return p
-	}
-	if p, err := exec.LookPath("cmux"); err == nil {
-		return p
-	}
-	return "/Applications/cmux.app/Contents/Resources/bin/cmux"
-}
-
 func run(args ...string) (string, error) {
-	cmd := exec.Command(CmuxBin(), args...)
+	binary, err := CmuxBin()
+	if err != nil {
+		return "", err
+	}
+	cmd := exec.Command(binary, args...)
 	out, err := cmd.Output()
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
