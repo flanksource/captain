@@ -163,6 +163,8 @@ func (a AttachmentDefaults) WithDefaults() AttachmentDefaults {
 }
 
 type AIDefaults struct {
+	Explicit registry.FieldPresence `yaml:"-" json:"-"`
+
 	DefaultProvider string `yaml:"defaultProvider,omitempty"`
 	// DefaultModel is the global fallback when no provider block, prompt, spec or
 	// flag names a model. It is a COMPACT SELECTOR ("agent:claude-sonnet-5"), not
@@ -170,7 +172,7 @@ type AIDefaults struct {
 	// the caller is missing when it falls through to here.
 	//
 	// It is the single value that makes a one-line ~/.captain.yaml sufficient, and
-	// the last stop before ResolveForRun refuses to guess.
+	// supplies the model before generating requests enforce their required-model gate.
 	DefaultModel string                      `yaml:"defaultModel,omitempty"`
 	Providers    map[string]ProviderDefaults `yaml:"providers,omitempty"`
 	Disabled     DisabledSelections          `yaml:"disabled,omitempty"`
@@ -253,12 +255,6 @@ func (a AIDefaults) ActiveProvider() string {
 		}
 	}
 	return registry.Anthropic.Name
-}
-
-// Provider returns one provider's saved defaults. A provider with nothing saved
-// returns the zero value, which the resolution path fills from the registry.
-func (a AIDefaults) Provider(provider string) ProviderDefaults {
-	return a.Providers[strings.TrimSpace(provider)]
 }
 
 type PromptDefaults struct {
