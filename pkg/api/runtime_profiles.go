@@ -99,10 +99,14 @@ func RuntimeProfileLayers(request RuntimeProfileResolveRequest) ([]SpecLayer, er
 			Name: preset.Name, Scope: preset.Scope, Spec: preset.Spec.ToSpec(),
 		})
 	}
-	return append(layers, SpecLayer{
+	layers = append(layers, SpecLayer{
 		ID: request.Profile.ID + ":spec", Source: SpecLayerSourceProfile,
 		Name: request.Profile.Name + " run spec", Scope: SpecLayerSurface, Spec: request.Profile.Spec,
-	}), nil
+	})
+	if err := ValidateSpecLayers(layers...); err != nil {
+		return nil, err
+	}
+	return layers, nil
 }
 
 // ResolveRuntimeProfile resolves and validates a profile in isolation for preview.
@@ -115,22 +119,6 @@ func ResolveRuntimeProfile(request RuntimeProfileResolveRequest) (ResolvedSpec, 
 	resolved, err := ResolveSpecLayers(layers...)
 	if err != nil {
 		return ResolvedSpec{}, fmt.Errorf("resolve runtime profile %q: %w", request.Profile.Name, err)
-	}
-	// The layers carry an authored model (name plus mode); the validators below
-	// need the resolved adapter, which no longer survives serialization. Derive it
-	// here rather than letting them reject their own input.
-	if strings.TrimSpace(resolved.Spec.Name) != "" {
-		model, modelErr := ResolveModel(resolved.Spec.Model)
-		if modelErr != nil {
-			return ResolvedSpec{}, fmt.Errorf("resolve runtime profile %q model: %w", request.Profile.Name, modelErr)
-		}
-		resolved.Spec.Model = model
-	}
-	if err := ValidateResolvedSandbox(resolved.Spec); err != nil {
-		return ResolvedSpec{}, err
-	}
-	if err := validateResolvedPermissions(resolved.Spec); err != nil {
-		return ResolvedSpec{}, err
 	}
 	return resolved, nil
 }
@@ -225,41 +213,8 @@ func validateRuntimePreset(preset RuntimePreset) error {
 	if strings.TrimSpace(preset.Name) == "" {
 		return fmt.Errorf("runtime preset %q name is required", preset.ID)
 	}
-	if scopeRank(preset.Scope) < 0 {
-		return fmt.Errorf("runtime preset %q has invalid scope %q", preset.ID, preset.Scope)
-	}
-	spec := preset.Spec.ToSpec()
-	if !IsEmpty(spec.Model) {
-		if err := spec.Model.Validate(); err != nil {
-			return fmt.Errorf("runtime preset %q model: %w", preset.ID, err)
-		}
-	}
-	if err := spec.Budget.Validate(); err != nil {
-		return fmt.Errorf("runtime preset %q budget: %w", preset.ID, err)
-	}
-	if err := spec.Permissions.Validate(); err != nil {
-		return fmt.Errorf("runtime preset %q permissions: %w", preset.ID, err)
-	}
-	if err := spec.ToolPreferences.Validate(); err != nil {
-		return fmt.Errorf("runtime preset %q: %w", preset.ID, err)
-	}
-	if err := spec.ToolPolicy.Validate(); err != nil {
-		return fmt.Errorf("runtime preset %q: %w", preset.ID, err)
-	}
-	if spec.Sandbox != nil {
-		if err := spec.Sandbox.Validate(); err != nil {
-			return fmt.Errorf("runtime preset %q sandbox: %w", preset.ID, err)
-		}
-	}
-	return nil
-}
-
-func validateResolvedPermissions(spec Spec) error {
-	warnings := UnsupportedPermissions(spec)
-	if len(warnings) > 0 {
-		return fmt.Errorf("%s", warnings[0])
-	}
-	return nil
+	return ValidateSpecLayers(SpecLayer{ID: preset.ID, Name: preset.Name, Scope: preset.Scope,
+		Source: SpecLayerSourcePreset, Spec: preset.Spec.ToSpec()})
 }
 
 // UnsupportedPermissions reports settings the selected runtime cannot honour.

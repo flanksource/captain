@@ -111,8 +111,8 @@ var _ = Describe("Runtime profiles", func() {
 		Expect(err).To(MatchError(ContainSubstring(`repeats preset "Org defaults"`)))
 	})
 
-	It("rejects a permission mode the resolved runtime cannot honour", func() {
-		_, err := api.ResolveRuntimeProfile(api.RuntimeProfileResolveRequest{
+	It("warns about a permission mode the resolved runtime cannot honour", func() {
+		resolved, err := api.ResolveRuntimeProfile(api.RuntimeProfileResolveRequest{
 			Profile: api.RuntimeProfile{
 				ID: "codex", Name: "Codex", Spec: api.Spec{
 					Model:       api.Model{Name: "gpt-5", Mode: api.ModeAgent},
@@ -121,7 +121,8 @@ var _ = Describe("Runtime profiles", func() {
 			},
 		})
 
-		Expect(err).To(MatchError(ContainSubstring("is not available for openai agent")))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resolved.Warnings).To(Equal([]string{`permissions.mode "dontAsk" is not available for openai agent`}))
 	})
 
 	// The posture is independent of isolation: a run with no sandbox at all must
@@ -141,8 +142,8 @@ var _ = Describe("Runtime profiles", func() {
 		Expect(resolved.Spec.Permissions.Mode).To(Equal(api.PermissionPlan))
 	})
 
-	It("rejects caller-tool policy on a runtime that cannot serve caller tools", func() {
-		_, err := api.ResolveRuntimeProfile(api.RuntimeProfileResolveRequest{
+	It("warns about caller-tool policy on a runtime that cannot serve caller tools", func() {
+		resolved, err := api.ResolveRuntimeProfile(api.RuntimeProfileResolveRequest{
 			Profile: api.RuntimeProfile{
 				ID: "cli", Name: "CLI", Spec: api.Spec{
 					Model: api.Model{Name: "claude", Mode: api.ModeCLI},
@@ -154,7 +155,8 @@ var _ = Describe("Runtime profiles", func() {
 			},
 		})
 
-		Expect(err).To(MatchError(ContainSubstring(`caller-tool policy "deny" is not available for anthropic cli`)))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resolved.Warnings).To(Equal([]string{`caller-tool policy "deny" is not available for anthropic cli`}))
 	})
 
 	It("accepts brokered caller-tool policy when the backend supports caller tools", func() {
@@ -173,8 +175,8 @@ var _ = Describe("Runtime profiles", func() {
 		Expect(err).NotTo(HaveOccurred())
 	})
 
-	It("rejects resource controls the resolved runtime drops", func() {
-		_, err := api.ResolveRuntimeProfile(api.RuntimeProfileResolveRequest{
+	It("warns about resource controls the resolved runtime drops", func() {
+		resolved, err := api.ResolveRuntimeProfile(api.RuntimeProfileResolveRequest{
 			Profile: api.RuntimeProfile{
 				ID: "codex", Name: "Codex", Spec: api.Spec{
 					Model:       api.Model{Name: "codex", Mode: api.ModeCLI},
@@ -183,7 +185,8 @@ var _ = Describe("Runtime profiles", func() {
 			},
 		})
 
-		Expect(err).To(MatchError(ContainSubstring(`resource policy mcp=disabled is not available for openai cli`)))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resolved.Warnings).To(Equal([]string{`resource policy mcp=disabled is not available for openai cli`}))
 	})
 })
 
