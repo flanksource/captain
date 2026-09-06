@@ -251,7 +251,7 @@ func newRootCommand() *cobra.Command {
 	clicky.AddNamedCommandWithContext("list", tokenCmd, cli.TokenListOptions{}, cli.RunTokenList).Short = "List tokens and what each can reach"
 	clicky.AddNamedCommandWithContext("revoke", tokenCmd, cli.TokenRevokeOptions{}, cli.RunTokenRevoke).Short = "Refuse a token from now on"
 
-	registerAIRuntimeCommands(rootCmd)
+	rootcmd.RegisterAIRuntimeCommands(rootCmd)
 
 	whoamiCmd := clicky.AddNamedCommand("whoami", rootCmd, cli.WhoamiOptions{}, cli.RunWhoami)
 	whoamiCmd.Short = "List agent adapters, auth methods, and available models"
