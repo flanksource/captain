@@ -49,6 +49,17 @@ var _ = Describe("promptrun.Preflight constraints and runtimes", func() {
 		Expect(in.Request.Budget.Timeout).To(Equal("30s"))
 	})
 
+	It("returns the same permission-constraint refusal from preview and Run", func() {
+		in.Request.Permissions.Tools = api.Tools{"Bash": api.ToolPolicyAllow}
+		in.Constraints.Permissions = api.PermissionConstraints{Tools: api.Tools{"Bash": api.ToolPolicyDeny}}
+
+		_, previewErr := promptrun.Preflight(in)
+		_, runErr := promptrun.Run(context.Background(), in)
+
+		Expect(previewErr).To(MatchError(ContainSubstring("permissions.tools.Bash")))
+		Expect(runErr).To(MatchError(previewErr.Error()))
+	})
+
 	DescribeTable("checks constraints against the actual run",
 		func(mutate func(*promptrun.Input), message string) {
 			mutate(&in)
