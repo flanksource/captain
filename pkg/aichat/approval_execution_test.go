@@ -13,19 +13,19 @@ func TestEnforceApprovalRuntimeProfile(t *testing.T) {
 	tests := []struct {
 		name     string
 		spec     api.Spec
-		resolved api.ResolvedSpec
+		resolved api.ComposedSpec
 		wantErr  string
 	}{
 		{
 			name:     "persisted model is no longer allowed",
 			spec:     api.Spec{Model: api.Model{Name: "gpt-5.6-sol"}},
-			resolved: api.ResolvedSpec{Constraints: api.RuntimeConstraints{Models: []string{"claude-sonnet-5"}}},
+			resolved: api.ComposedSpec{Constraints: api.RuntimeConstraints{Models: []string{"claude-sonnet-5"}}},
 			wantErr:  `model "gpt-5.6-sol" is outside the current effective model catalog`,
 		},
 		{
 			name: "current quota is exhausted",
 			spec: api.Spec{Model: api.Model{Name: "gpt-5.6-sol"}},
-			resolved: api.ResolvedSpec{Constraints: api.RuntimeConstraints{Quotas: []api.UsageQuota{{
+			resolved: api.ComposedSpec{Constraints: api.RuntimeConstraints{Quotas: []api.UsageQuota{{
 				Name: "monthly", Scope: api.SpecLayerUser, Layer: "claims", TokenLimit: 100, TokensUsed: 100,
 			}}}},
 			wantErr: `quota "monthly" from layer "claims" exhausted`,
@@ -33,7 +33,7 @@ func TestEnforceApprovalRuntimeProfile(t *testing.T) {
 		{
 			name: "changed default does not replace an allowed persisted model",
 			spec: api.Spec{Model: api.Model{Name: "gpt-5.6-sol"}},
-			resolved: api.ResolvedSpec{
+			resolved: api.ComposedSpec{
 				Spec:        api.Spec{Model: api.Model{Name: "claude-sonnet-5"}},
 				Constraints: api.RuntimeConstraints{Models: []string{"gpt-5.6-sol", "claude-sonnet-5"}},
 			},

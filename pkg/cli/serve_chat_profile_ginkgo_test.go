@@ -45,15 +45,15 @@ var _ = Describe("chat runtime profile provider", func() {
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(profile.System).To(Equal(captainChatSystemPrompt))
-		Expect(traceNames(profile.Resolved)).To(Equal([]string{"captain serve", "Team", "Review run spec"}))
-		Expect(profile.Resolved.Trace).To(HaveExactElements(
+		Expect(profile.Composed.Trace).To(HaveExactElements(HaveField("Name", "captain serve"), HaveField("Name", "Team"), HaveField("Name", "Review run spec")))
+		Expect(profile.Composed.Trace).To(HaveExactElements(
 			HaveField("Scope", api.SpecLayerGlobal),
 			HaveField("Scope", api.SpecLayerContext),
 			HaveField("Scope", api.SpecLayerSurface),
 		))
-		Expect(profile.Resolved.Spec.Model.Name).To(Equal("claude-sonnet-4-6"), "the preset overrides the base model")
-		Expect(profile.Resolved.Spec.Budget.MaxTurns).To(Equal(5), "the profile spec overrides the preset")
-		Expect(profile.Resolved.Spec.Cwd()).To(Equal(cwd), "the base layer survives")
+		Expect(profile.Composed.Spec.Model.Name).To(Equal("claude-sonnet-4-6"), "the preset overrides the base model")
+		Expect(profile.Composed.Spec.Budget.MaxTurns).To(Equal(5), "the profile spec overrides the preset")
+		Expect(profile.Composed.Spec.Cwd()).To(Equal(cwd), "the base layer survives")
 	})
 
 	It("serves the base layer alone when nothing selects a profile", func() {
@@ -62,8 +62,8 @@ var _ = Describe("chat runtime profile provider", func() {
 		profile, err := captainChatProfileProvider(GinkgoT().TempDir()).RuntimeProfile(f.ctx)
 
 		Expect(err).NotTo(HaveOccurred())
-		Expect(traceNames(profile.Resolved)).To(Equal([]string{"captain serve"}))
-		Expect(profile.Resolved.Spec.Model.Name).To(Equal("sol"))
+		Expect(profile.Composed.Trace).To(HaveExactElements(HaveField("Name", "captain serve")))
+		Expect(profile.Composed.Spec.Model.Name).To(Equal("sol"))
 	})
 
 	It("applies the configured chat default when the request names no profile", func() {
@@ -73,7 +73,7 @@ var _ = Describe("chat runtime profile provider", func() {
 		profile, err := captainChatProfileProvider(GinkgoT().TempDir()).RuntimeProfile(f.ctx)
 
 		Expect(err).NotTo(HaveOccurred())
-		Expect(traceNames(profile.Resolved)).To(Equal([]string{"captain serve", "Team", "Review run spec"}))
+		Expect(profile.Composed.Trace).To(HaveExactElements(HaveField("Name", "captain serve"), HaveField("Name", "Team"), HaveField("Name", "Review run spec")))
 	})
 
 	It("lets the request's profile override the configured default", func() {
@@ -83,7 +83,7 @@ var _ = Describe("chat runtime profile provider", func() {
 		profile, err := captainChatProfileProvider(GinkgoT().TempDir()).RuntimeProfile(f.ctx, aichat.WithRuntimeProfileRef("plan"))
 
 		Expect(err).NotTo(HaveOccurred())
-		Expect(traceNames(profile.Resolved)).To(Equal([]string{"captain serve", "Plan run spec"}))
+		Expect(profile.Composed.Trace).To(HaveExactElements(HaveField("Name", "captain serve"), HaveField("Name", "Plan run spec")))
 	})
 
 	It("rejects an unknown request profile as a 400 and a broken default as a server error", func() {

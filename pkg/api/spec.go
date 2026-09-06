@@ -172,6 +172,9 @@ func (s Spec) MarshalYAML() (any, error) {
 
 // Validate runs each component's validation, failing loud on the first error.
 func (s Spec) Validate() error {
+	if err := s.ValidateStructure(); err != nil {
+		return err
+	}
 	validateModel := s.Model.Validate
 	if s.IsVerifyOnly() && len(s.Workflow.Verify.Prompts) == 0 {
 		validateModel = s.ValidateOptions
@@ -179,53 +182,9 @@ func (s Spec) Validate() error {
 	if err := validateModel(); err != nil {
 		return fmt.Errorf("model: %w", err)
 	}
-	if s.ToolApproval != nil {
-		if s.hasPromptBody() || len(s.Messages) > 0 {
-			return fmt.Errorf("tool approval resume state, prompt body, and messages are mutually exclusive request modes")
-		}
-		if err := s.ToolApproval.Validate(); err != nil {
-			return fmt.Errorf("tool approval: %w", err)
-		}
-		if err := s.Prompt.SchemaStrictness.Validate(); err != nil {
+	if s.ToolApproval == nil && len(s.Messages) == 0 && !s.IsVerifyOnly() {
+		if err := s.Prompt.Validate(); err != nil {
 			return fmt.Errorf("prompt: %w", err)
-		}
-	} else if len(s.Messages) > 0 {
-		if err := s.ValidateRequestMode(); err != nil {
-			return err
-		}
-		if err := ValidateMessages(s.Messages); err != nil {
-			return fmt.Errorf("messages: %w", err)
-		}
-		if err := s.Prompt.SchemaStrictness.Validate(); err != nil {
-			return fmt.Errorf("prompt: %w", err)
-		}
-		// A verify-only spec (no body, workflow.verify present) legitimately has an
-		// empty prompt; only its strictness setting is checked.
-	} else if s.IsVerifyOnly() {
-		if err := s.Prompt.SchemaStrictness.Validate(); err != nil {
-			return fmt.Errorf("prompt: %w", err)
-		}
-	} else if err := s.Prompt.Validate(); err != nil {
-		return fmt.Errorf("prompt: %w", err)
-	}
-	if err := s.Budget.Validate(); err != nil {
-		return fmt.Errorf("budget: %w", err)
-	}
-	if err := s.Permissions.Validate(); err != nil {
-		return fmt.Errorf("permissions: %w", err)
-	}
-	if err := s.ToolPreferences.Validate(); err != nil {
-		return err
-	}
-	if err := s.ToolPolicy.Validate(); err != nil {
-		return err
-	}
-	if err := s.Workflow.Validate(); err != nil {
-		return fmt.Errorf("workflow: %w", err)
-	}
-	if s.Sandbox != nil {
-		if err := s.Sandbox.Validate(); err != nil {
-			return fmt.Errorf("sandbox: %w", err)
 		}
 	}
 	return nil
