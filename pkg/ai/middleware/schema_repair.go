@@ -41,7 +41,7 @@ func (v *validatingProvider) repairRequest(parent ai.Request, schema json.RawMes
 	if err != nil {
 		return ai.Request{}, ai.Config{}, false, err
 	}
-	renderedReq, renderedCfg, err := tmpl.Render(map[string]any{
+	renderedReq, renderedCfg, err := tmpl.Render(promptlib.RenderOptions{Data: map[string]any{
 		"attempt":          attempt,
 		"mode":             string(v.provider.GetRuntime().Mode),
 		"provider":         v.provider.GetRuntime().Provider,
@@ -50,7 +50,7 @@ func (v *validatingProvider) repairRequest(parent ai.Request, schema json.RawMes
 		"previousResponse": responseJSON(prev),
 		"schema":           string(schema),
 		"validationErrors": verrs,
-	}, nil)
+	}})
 	if err != nil {
 		return ai.Request{}, ai.Config{}, false, fmt.Errorf("render schema repair prompt: %w", err)
 	}

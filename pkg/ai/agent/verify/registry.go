@@ -226,7 +226,7 @@ func promptFactory(_ context.Context, spec api.Verify, opts Options) ([]*Plugin,
 // prompt declaring a relocating sandbox is a validation error, never a silent
 // fallback).
 func rejectJudgeOverrides(path string, tmpl *prompt.Template, model string) error {
-	probe, _, err := tmpl.Render(map[string]any{"cwd": "", "changed": []string{}}, nil)
+	probe, _, err := tmpl.Render(prompt.RenderOptions{Data: map[string]any{"cwd": "", "changed": []string{}}})
 	if err != nil {
 		return fmt.Errorf("verify prompt %q: %w", path, err)
 	}
