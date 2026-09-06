@@ -97,6 +97,9 @@ func (r *Resolver) Layers(ctx context.Context, options ResolveOptions) (LayerRes
 	}
 	layers = append(layers, options.SurfaceLayers...)
 	layers = append(layers, options.RequestLayers...)
+	if err := api.ValidateSpecLayers(layers...); err != nil {
+		return LayerResult{}, err
+	}
 	return LayerResult{Profile: profile, Layers: api.OrderSpecLayers(layers...)}, nil
 }
 

@@ -87,35 +87,23 @@ func preflight(in Input) (admission, error) {
 }
 
 func validateRuntime(in Input, spec api.Spec) ([]string, error) {
-	var warnings []string
 	if constructsProvider(in) {
 		if err := validateConstructionConfig(in); err != nil {
 			return nil, err
 		}
 	}
-	for index, model := range append([]api.Model{spec.Model}, spec.Fallbacks...) {
-		if _, _, err := model.Runtime(); err != nil {
-			return warnings, fmt.Errorf("promptrun model %q: %w", model.Name, err)
-		}
-		if err := api.RequireToolPolicySupport(model.Provider, model.Mode, spec.Permissions); err != nil {
-			return warnings, err
-		}
+	warnings, err := api.ValidateRuntimeSpec(spec)
+	if err != nil {
+		return warnings, fmt.Errorf("promptrun: %w", err)
+	}
+	for _, model := range append([]api.Model{spec.Model}, spec.Fallbacks...) {
 		candidate := spec
 		candidate.Model = model
-		if err := api.ValidateResolvedSandbox(candidate); err != nil {
-			return warnings, fmt.Errorf("promptrun model %q: %w", model.Name, err)
-		}
 		if constructsProvider(in) && in.Config.SandboxSelection != nil {
 			descriptor, _ := api.SandboxFor(in.Config.SandboxSelection.Kind)
 			if err := descriptor.ValidateMode(model.Mode); err != nil {
 				return warnings, err
 			}
-		}
-		for _, warning := range api.UnsupportedPermissions(candidate) {
-			if index > 0 {
-				warning = fmt.Sprintf("fallback[%d] %q: %s", index-1, model.Name, warning)
-			}
-			warnings = append(warnings, warning)
 		}
 		caps := api.PermissionCapabilitiesFor(api.RuntimeOf(model.Provider, model.Mode))
 		if constructsProvider(in) && in.Config.CanUseTool == nil && requiresBroker(candidate, caps) {

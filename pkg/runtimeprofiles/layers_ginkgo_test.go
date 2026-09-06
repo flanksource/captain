@@ -28,7 +28,8 @@ var _ = Describe("Catalog layers", func() {
 					Spec: api.Spec{Permissions: api.Permissions{Mode: api.PermissionDontAsk}}},
 			},
 		}))
-		_, err = catalog.Resolve(ctx, profile.ID)
-		Expect(err).To(MatchError(ContainSubstring(`permissions.mode "dontAsk" is not available for openai agent`)))
+		resolution, err = catalog.Resolve(ctx, profile.ID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resolution.Resolved.Warnings).To(Equal([]string{`permissions.mode "dontAsk" is not available for openai agent`}))
 	})
 })

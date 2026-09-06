@@ -27,7 +27,7 @@ A supplied `Provider` owns its runtime and workspace; construction `Config` is i
 
 Invalid input, existing tool-policy refusals, unsupported sandbox isolation or native policy fields, missing fixture wiring, broken judge declarations, and constraint violations are errors. Newly diagnosed unsupported permission/resource settings and missing approval brokers produce warnings for this compatibility release. A disabled skill is omitted; a contradictory skill still explicitly loaded through `memory.skills` is diagnosed. These warnings are also logged by `Run`.
 
-Preflight validates the runtime identity exposed by a supplied provider. Its private fallback chain, credentials, adapter-specific configuration, external service availability, and runtime launch failures remain the provider's responsibility. This API is execution admission; structural runtime-profile layer validation and saved-model default resolution remain separate contracts.
+Preflight validates the runtime identity exposed by a supplied provider. Its private fallback chain, credentials, adapter-specific configuration, external service availability, and runtime launch failures remain the provider's responsibility. This API is execution admission; [runtime-profile composition](../runtimeprofiles/README.md) and saved-model default resolution remain separate contracts. The final layer resolver and Preflight share the same pure runtime capability checker; Preflight additionally checks the actual supplied or constructed execution runtime and its input-specific configuration.
 
 Run the executable examples and focused admission regressions without making AI calls:
 

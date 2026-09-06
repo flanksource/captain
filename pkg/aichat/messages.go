@@ -70,7 +70,7 @@ func (s *Service) resolveAttachments(ctx context.Context, messages []UIMessage) 
 }
 
 func requestSpec(request ChatRequest, profile RuntimeProfile, attachments map[partLocation]api.AttachmentRef) (api.ResolvedSpec, error) {
-	override, err := chatModel(request, profile.Resolved.Spec.Model)
+	override, err := chatModel(request)
 	if err != nil {
 		return api.ResolvedSpec{}, err
 	}
@@ -84,12 +84,15 @@ func requestSpec(request ChatRequest, profile RuntimeProfile, attachments map[pa
 		Permissions:     api.Permissions{Mode: request.PermissionMode},
 		SessionID:       request.ProviderSessionID,
 	}}
-	layers := append([]api.SpecLayer(nil), profile.Resolved.Trace...)
+	layers := append([]api.SpecLayer(nil), profile.Composed.Trace...)
 	resolved, err := api.ResolveSpecLayers(append(layers, user)...)
 	if err != nil {
 		return api.ResolvedSpec{}, fmt.Errorf("resolve chat runtime profile: %w", err)
 	}
 	spec := resolved.Spec
+	if err := validateChatModel(request, spec.Model); err != nil {
+		return api.ResolvedSpec{}, err
+	}
 	baseSystem := strings.TrimSpace(strings.Join([]string{
 		profile.System, spec.Prompt.System, spec.Prompt.AppendSystem,
 	}, "\n\n"))
@@ -131,19 +134,23 @@ func requestSpec(request ChatRequest, profile RuntimeProfile, attachments map[pa
 	return resolved, nil
 }
 
-func chatModel(request ChatRequest, fallback api.Model) (api.Model, error) {
-	selected := fallback
+func chatModel(request ChatRequest) (api.Model, error) {
+	var selected api.Model
 	if request.Runtime != nil {
 		selected = *request.Runtime
 	} else if model := strings.TrimSpace(request.Model); model != "" {
 		selected = api.Model{Name: model}
 	}
-	if strings.TrimSpace(selected.Name) == "" {
-		return api.Model{}, fmt.Errorf("chat model is required")
+	if err := api.ValidateSpecLayers(api.RequestSpecLayer("chat request", api.Spec{Model: selected})); err != nil {
+		return api.Model{}, err
+	}
+	expanded, err := selected.Expand()
+	if err != nil {
+		return api.Model{}, fmt.Errorf("invalid chat runtime: %w", err)
 	}
 	if request.ReasoningEffort != "" {
-		if selected.Effort != "" && selected.Effort != request.ReasoningEffort {
-			return api.Model{}, fmt.Errorf("chat runtime effort %q conflicts with reasoning effort %q", selected.Effort, request.ReasoningEffort)
+		if expanded.Effort != "" && expanded.Effort != request.ReasoningEffort {
+			return api.Model{}, fmt.Errorf("chat runtime effort %q conflicts with reasoning effort %q", expanded.Effort, request.ReasoningEffort)
 		}
 		selected.Effort = request.ReasoningEffort
 	}
@@ -153,14 +160,10 @@ func chatModel(request ChatRequest, fallback api.Model) (api.Model, error) {
 		}
 		selected.Temperature = request.Temperature
 	}
-	// Resolve, not just Expand: the browser sends the chat catalog's id form
-	// ("anthropic/claude-opus-5"), which Expand leaves untouched because it
-	// carries no compact-form ":" separator — keeping the provider glued to the
-	// name and the mode empty for the configured default to claim.
-	resolved, err := ai.Resolve(selected)
-	if err != nil {
-		return api.Model{}, fmt.Errorf("invalid chat runtime: %w", err)
-	}
+	return selected, nil
+}
+
+func validateChatModel(request ChatRequest, resolved api.Model) error {
 	if request.Runtime != nil && strings.TrimSpace(request.Model) != "" {
 		// The catalog id names a model, never a mode, so it is resolved under the
 		// structured runtime's mode. Resolving it bare would take the provider's
@@ -168,13 +171,13 @@ func chatModel(request ChatRequest, fallback api.Model) (api.Model, error) {
 		// authored — the two fields would contradict each other by construction.
 		bare, err := ai.Resolve(api.Model{Name: strings.TrimSpace(request.Model), Mode: resolved.Mode})
 		if err != nil {
-			return api.Model{}, fmt.Errorf("invalid chat model %q: %w", request.Model, err)
+			return fmt.Errorf("invalid chat model %q: %w", request.Model, err)
 		}
 		if bare.Name != resolved.Name || bare.Provider != resolved.Provider {
-			return api.Model{}, fmt.Errorf("chat model %q conflicts with structured runtime %s/%s", request.Model, api.RuntimeOf(resolved.Provider, resolved.Mode), resolved.Name)
+			return fmt.Errorf("chat model %q conflicts with structured runtime %s/%s", request.Model, api.RuntimeOf(resolved.Provider, resolved.Mode), resolved.Name)
 		}
 	}
-	return resolved, nil
+	return nil
 }
 
 func canonicalMessages(messages []UIMessage, attachments map[partLocation]api.AttachmentRef) ([]api.Message, error) {

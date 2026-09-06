@@ -80,7 +80,9 @@ var _ = Describe("Runtime profile resolver", func() {
 				RequestedProfile: profile.ID, RequestLayers: []api.SpecLayer{request},
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.Resolved.Spec.Model).To(Equal(request.Spec.Model))
+			expected, err := api.ResolveModel(request.Spec.Model)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Resolved.Spec.Model).To(Equal(expected))
 			Expect(result.Resolved.Spec.Permissions.Mode).To(Equal(api.PermissionDontAsk))
 			Expect(result.Resolved.Trace).To(HaveLen(2))
 			Expect(result.Resolved.Trace[0].Spec.Model).To(Equal(profileModel))

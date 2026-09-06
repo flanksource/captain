@@ -6,5 +6,6 @@
 // that must resolve to exactly one record across every source. Names are unique
 // case-insensitively across sources. A profile's preset references are an
 // ordered list of ids or names; deleting a preset a profile still names is
-// refused, and Resolve materialises a profile through api.ResolveRuntimeProfile.
+// refused. Layers returns structurally validated raw configuration; Resolve
+// materialises a complete profile through api.ResolveSpecLayers for preview.
 package runtimeprofiles

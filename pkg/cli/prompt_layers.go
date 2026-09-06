@@ -29,32 +29,31 @@ func selectRuntimeProfile(ctx context.Context, requested, pin string) (*runtimep
 	if err != nil {
 		return nil, fmt.Errorf("runtime profile %q: %w", ref, err)
 	}
-	resolution, err := catalog.Resolve(ctx, ref)
+	resolution, err := catalog.Layers(ctx, ref)
 	if err != nil {
 		return nil, fmt.Errorf("runtime profile %q: %w", ref, err)
 	}
 	return &resolution, nil
 }
 
-// promptLayers orders a render's layers: the profile's presets and spec, the
-// prompt frontmatter, then the caller's request. The request model is expanded
-// first (the aiflags invariant) so a mode-prefixed selector such as api:opus
-// overrides the frontmatter mode while a bare name inherits it.
+// promptLayers assembles authored profile, prompt and request layers. Captain's
+// final resolution expands the effective model selector while retaining the raw trace.
 func promptLayers(profile *runtimeprofiles.Resolution, source string, frontmatter ai.Request, user *api.Spec) ([]api.SpecLayer, error) {
 	var layers []api.SpecLayer
 	if profile != nil {
-		layers = append(layers, profile.Resolved.Trace...)
+		layers = append(layers, profile.Layers...)
 	}
 	layers = append(layers, api.PromptSpecLayer(source, frontmatter))
+	if err := api.ValidateSpecLayers(layers...); err != nil {
+		return nil, fmt.Errorf("prompt configuration: %w", err)
+	}
 	if user == nil {
 		return layers, nil
 	}
 	request := *user
-	model, err := request.Expand()
-	if err != nil {
-		return nil, fmt.Errorf("render request model: %w", err)
+	if err := api.ValidateSpecLayers(api.RequestSpecLayer(renderRequestLayer, request)); err != nil {
+		return nil, err
 	}
-	request.Model = model
 	return append(layers, api.RequestSpecLayer(renderRequestLayer, request)), nil
 }
 
