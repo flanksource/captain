@@ -16,7 +16,11 @@ import (
 	clickyapi "github.com/flanksource/clicky/api"
 )
 
-func buildPromptSources(ctx context.Context) ([]promptSource, error) {
+type promptSourceOptions struct {
+	Config *captainconfig.Config
+}
+
+func buildPromptSources(ctx context.Context, options promptSourceOptions) ([]promptSource, error) {
 	sources := []promptSource{{
 		Kind:     "embedded",
 		ID:       "embedded",
@@ -46,11 +50,15 @@ func buildPromptSources(ctx context.Context) ([]promptSource, error) {
 		return nil
 	}
 
-	cfg, exists, err := captainconfig.Load()
-	if err != nil {
-		return nil, err
+	cfg := options.Config
+	if cfg == nil {
+		loaded, err := loadSavedConfig()
+		if err != nil {
+			return nil, err
+		}
+		cfg = &loaded
 	}
-	if exists {
+	if len(cfg.Prompts.Dirs) > 0 {
 		configPath, err := captainconfig.Path()
 		if err != nil {
 			return nil, err
@@ -237,7 +245,7 @@ type PromptSourceInfo struct {
 }
 
 func promptSourceInfos(ctx context.Context) ([]PromptSourceInfo, error) {
-	sources, err := buildPromptSources(ctx)
+	sources, err := buildPromptSources(ctx, promptSourceOptions{})
 	if err != nil {
 		return nil, err
 	}

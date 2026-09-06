@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/api/registry"
 	"github.com/flanksource/captain/pkg/captainconfig"
@@ -47,10 +46,10 @@ Hello {{name}}
 		Variables: map[string]any{"name": "Ada"},
 		Spec: &api.Spec{
 			Model: api.Model{
-				Name:        "gpt-4o",
-				ID:          "openai/gpt-4o",
-				Provider:    api.OpenAI,
-				Mode:        api.ModeAPI,
+				Name:        "claude-sonnet-5",
+				ID:          "anthropic/claude-sonnet-5",
+				Provider:    api.Anthropic,
+				Mode:        api.ModeAgent,
 				Temperature: &temp,
 				Effort:      api.EffortLow,
 				NoCache:     true,
@@ -108,11 +107,11 @@ Hello {{name}}
 	if rendered.ValidationError != "" {
 		t.Fatalf("render validation error = %q", rendered.ValidationError)
 	}
-	if rendered.Model != "gpt-4o" || rendered.Provider != "openai" || rendered.Mode != "api" {
-		t.Fatalf("rendered model/runtime = %s %s/%s, want openai api/gpt-4o", rendered.Provider, rendered.Mode, rendered.Model)
+	if rendered.Model != "claude-sonnet-5" || rendered.Provider != "anthropic" || rendered.Mode != "agent" {
+		t.Fatalf("rendered model/runtime = %s %s/%s, want anthropic agent/claude-sonnet-5", rendered.Provider, rendered.Mode, rendered.Model)
 	}
-	if rendered.Config.Model.ID != "openai/gpt-4o" {
-		t.Fatalf("config model ID = %q, want openai/gpt-4o", rendered.Config.Model.ID)
+	if rendered.Config.Model.ID != "anthropic/claude-sonnet-5" {
+		t.Fatalf("config model ID = %q, want anthropic/claude-sonnet-5", rendered.Config.Model.ID)
 	}
 	if rendered.Input.Temperature == nil || *rendered.Input.Temperature != temp {
 		t.Fatalf("temperature = %v, want %v", rendered.Input.Temperature, temp)
@@ -439,17 +438,16 @@ func TestRenderPromptRunnability(t *testing.T) {
 
 const verifyFrontmatter = "workflow:\n  verify:\n    commands:\n      - \"true\"\n"
 
-func TestApplyPromptDefaultsSelectorEffortWins(t *testing.T) {
+func TestResolvePromptSelectorEffortWins(t *testing.T) {
 	isolateCaptainConfig(t)
-	req := ai.Request{Model: api.Model{Effort: api.EffortLow}}
-	cfg := ai.Config{Model: api.Model{
-		Name:   "gpt-5.6-sol",
-		Mode:   api.ModeAgent,
-		Effort: api.EffortHigh,
-	}}
-	if err := applyPromptDefaults(&req, &cfg); err != nil {
-		t.Fatalf("applyPromptDefaults: %v", err)
+	resolved, err := resolveInvocation(AIRuntimeOptions{}, []api.SpecLayer{
+		api.PromptSpecLayer("template", api.Spec{Model: api.Model{Effort: api.EffortLow}}),
+		api.RequestSpecLayer("request", api.Spec{Model: api.Model{Name: "gpt-5.6-sol", Mode: api.ModeAgent, Effort: api.EffortHigh}}),
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
+	req, cfg := resolved.Request, resolved.Config
 	if req.Name != "gpt-5.6-sol" || req.Mode != api.ModeAgent || req.Effort != api.EffortHigh {
 		t.Fatalf("request = %+v, want selector model/effort", req.Model)
 	}

@@ -157,7 +157,11 @@ func resolvePromptAttachments(ctx context.Context, req *ai.Request) error {
 }
 
 func newAttachmentStore(baseDir string) (*attachments.Store, error) {
-	defaults := loadSavedConfig().Attachments.WithDefaults()
+	saved, err := loadSavedConfig()
+	if err != nil {
+		return nil, err
+	}
+	defaults := saved.Attachments.WithDefaults()
 	directory := defaults.Directory
 	if !filepath.IsAbs(directory) {
 		directory = filepath.Join(baseDir, directory)

@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strconv"
 	"strings"
 	"time"
@@ -151,10 +152,11 @@ func runConfigureWizard() (any, error) {
 		Timeout:         timeout,
 		Enabled:         enabled,
 	})
-	for provider, defaults := range current.AI.Providers {
-		if _, exists := cfg.AI.Providers[provider]; !exists {
-			cfg.AI.Providers[provider] = defaults
-		}
+	cfg.AI, err = mergeConfiguredProvider(providerDefaultsMergeOptions{
+		Current: current.AI, Next: cfg.AI, Provider: formProvider,
+	})
+	if err != nil {
+		return nil, err
 	}
 	cfg.Prompts = current.Prompts
 	cfg.Attachments = current.Attachments
@@ -174,6 +176,28 @@ func runConfigureWizard() (any, error) {
 		Timeout:         cfg.AI.Timeout,
 		Toggles:         strings.Join(enabled, ", "),
 	}, nil
+}
+
+type providerDefaultsMergeOptions struct {
+	Current  captainconfig.AIDefaults
+	Next     captainconfig.AIDefaults
+	Provider *api.ModelProvider
+}
+
+func mergeConfiguredProvider(options providerDefaultsMergeOptions) (captainconfig.AIDefaults, error) {
+	if options.Provider == nil {
+		return captainconfig.AIDefaults{}, fmt.Errorf("configured provider is required")
+	}
+	defaults, ok := options.Next.Providers[options.Provider.Name]
+	if !ok {
+		return captainconfig.AIDefaults{}, fmt.Errorf("form result has no defaults for provider %s", options.Provider.Name)
+	}
+	merged := options.Next
+	merged.Providers = maps.Clone(options.Current.Providers)
+	if err := merged.SetProvider(options.Provider, defaults); err != nil {
+		return captainconfig.AIDefaults{}, err
+	}
+	return merged, nil
 }
 
 // formInputs is the raw string/slice output of the huh form. Keeping it in a
