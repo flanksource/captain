@@ -48,9 +48,10 @@ type UsageQuota struct {
 
 // RuntimeConstraints restrict values a later Spec layer may select.
 type RuntimeConstraints struct {
-	Models []string     `json:"models,omitempty" yaml:"models,omitempty"`
-	Limits RunLimits    `json:"limits,omitempty" yaml:"limits,omitempty"`
-	Quotas []UsageQuota `json:"quotas,omitempty" yaml:"quotas,omitempty"`
+	Models      []string              `json:"models,omitempty" yaml:"models,omitempty"`
+	Limits      RunLimits             `json:"limits,omitempty" yaml:"limits,omitempty"`
+	Quotas      []UsageQuota          `json:"quotas,omitempty" yaml:"quotas,omitempty"`
+	Permissions PermissionConstraints `json:"permissions,omitempty" yaml:"permissions,omitempty"`
 }
 
 // SpecLayer is one named source of runtime defaults and constraints.
@@ -114,6 +115,11 @@ func ComposeSpecLayers(options ResolveSpecOptions) (ComposedSpec, error) {
 			return ComposedSpec{}, fmt.Errorf("spec layer %q limits: %w", layer.Name, err)
 		}
 		resolved.Constraints.Limits = limits
+		permissions, err := strictPermissionConstraints(resolved.Constraints.Permissions, layer.Constraints.Permissions)
+		if err != nil {
+			return ComposedSpec{}, fmt.Errorf("spec layer %q permission constraints: %w", layer.Name, err)
+		}
+		resolved.Constraints.Permissions = permissions
 		limitSources.record(layer, limits.Budget)
 		for _, quota := range layer.Constraints.Quotas {
 			quota.Name = strings.TrimSpace(quota.Name)
@@ -138,6 +144,9 @@ func ComposeSpecLayers(options ResolveSpecOptions) (ComposedSpec, error) {
 	}
 	resolved.Spec.Budget = budget
 	resolved.recordLimits(limitSources)
+	if err := validatePermissionConstraints(resolved.Spec, resolved.Constraints.Permissions, resolved.Trace); err != nil {
+		return ComposedSpec{}, err
+	}
 	return resolved, nil
 }
 
@@ -167,6 +176,9 @@ func validateSpecLayer(layer SpecLayer) error {
 	}
 	if _, err := strictRunLimits(RunLimits{}, layer.Constraints.Limits); err != nil {
 		return fmt.Errorf("spec layer %q limits: %w", layer.Name, err)
+	}
+	if err := layer.Constraints.Permissions.Validate(); err != nil {
+		return fmt.Errorf("spec layer %q permission constraints: %w", layer.Name, err)
 	}
 	seenModels := map[string]bool{}
 	for _, model := range layer.Constraints.Models {
@@ -343,5 +355,6 @@ func cloneSpecLayer(layer SpecLayer) SpecLayer {
 	layer.Spec = Spec{}.Merge(layer.Spec)
 	layer.Constraints.Models = append([]string(nil), layer.Constraints.Models...)
 	layer.Constraints.Quotas = append([]UsageQuota(nil), layer.Constraints.Quotas...)
+	layer.Constraints.Permissions = layer.Constraints.Permissions.clone()
 	return layer
 }
