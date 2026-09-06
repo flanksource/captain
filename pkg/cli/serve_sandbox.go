@@ -107,7 +107,12 @@ func sandboxBackendParam(r *http.Request) string {
 // drift apart.
 func handleSandboxCatalog() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeServeJSON(w, http.StatusOK, buildSandboxCatalog(loadSavedConfig().Sandbox))
+		saved, err := loadSavedConfig()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeServeJSON(w, http.StatusOK, buildSandboxCatalog(saved.Sandbox))
 	})
 }
 

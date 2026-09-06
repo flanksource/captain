@@ -100,10 +100,12 @@ func hookJudgeProvider(runtime gitagent.HookRuntime) (ai.Provider, error) {
 	if !runtime.RequiresJudge() {
 		return nil, nil
 	}
-	cfg, err := (AIProviderOptions{Sandbox: "none"}).ToConfig()
+	resolved, err := resolveInvocation(AIRuntimeOptions{AIProviderOptions: AIProviderOptions{Sandbox: "none"}}, nil)
 	if err != nil {
 		return nil, fmt.Errorf("configure hook judge: %w", err)
 	}
+	cfg := resolved.Config
+	logRuntimeWarnings(resolved.Resolution.Warnings)
 	if strings.TrimSpace(cfg.Model.Name) == "" {
 		return nil, fmt.Errorf("verify prompts declared but no model is configured for the hook judge")
 	}

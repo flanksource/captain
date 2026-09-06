@@ -61,11 +61,10 @@ func handleProviderDefaults(w http.ResponseWriter, r *http.Request) {
 	}
 	active := false
 	if err := captainconfig.Update(func(cfg *captainconfig.Config) error {
-		if cfg.AI.Providers == nil {
-			cfg.AI.Providers = map[string]captainconfig.ProviderDefaults{}
-		}
-		cfg.AI.Providers[provider.Name] = captainconfig.ProviderDefaults{
+		if err := cfg.AI.SetProvider(provider, captainconfig.ProviderDefaults{
 			Mode: defaults.Mode, Model: defaults.Model, ReasoningEffort: defaults.Effort,
+		}); err != nil {
+			return err
 		}
 		active = cfg.AI.ActiveProvider() == provider.Name
 		return nil

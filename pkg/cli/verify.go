@@ -161,10 +161,12 @@ func (o VerifyOptions) judgeProvider() (ai.Provider, api.Model, error) {
 	if len(o.Prompts) == 0 {
 		return nil, api.Model{}, nil
 	}
-	cfg, err := o.ToConfig()
+	resolved, err := resolveInvocation(AIRuntimeOptions{AIProviderOptions: o.AIProviderOptions}, nil)
 	if err != nil {
 		return nil, api.Model{}, err
 	}
+	cfg := resolved.Config
+	logRuntimeWarnings(resolved.Resolution.Warnings)
 	if cfg.Model.Name == "" {
 		return nil, api.Model{}, fmt.Errorf("--prompt needs a model to judge with: pass --model or run 'captain configure'")
 	}

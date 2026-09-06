@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/ai/prompt"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/commons-db/shell"
 )
@@ -64,7 +65,7 @@ func TestResolvePromptTemplate(t *testing.T) {
 		if usedStdin {
 			t.Error("usedStdin = true, want false when a file is the source")
 		}
-		req, _, err := tmpl.Render(nil, nil)
+		req, _, err := tmpl.Render(prompt.RenderOptions{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -83,7 +84,7 @@ func TestResolvePromptTemplate(t *testing.T) {
 		if usedStdin {
 			t.Error("usedStdin = true, want false when --prompt is the source")
 		}
-		req, _, _ := tmpl.Render(nil, nil)
+		req, _, _ := tmpl.Render(prompt.RenderOptions{})
 		if req.Prompt.User != "literal text" {
 			t.Errorf("User = %q, want %q", req.Prompt.User, "literal text")
 		}
@@ -97,7 +98,7 @@ func TestResolvePromptTemplate(t *testing.T) {
 		if !usedStdin {
 			t.Error("usedStdin = false, want true when stdin is the source")
 		}
-		req, _, _ := tmpl.Render(nil, nil)
+		req, _, _ := tmpl.Render(prompt.RenderOptions{})
 		if req.Prompt.User != "from stdin" {
 			t.Errorf("User = %q, want %q", req.Prompt.User, "from stdin")
 		}
@@ -115,7 +116,7 @@ func TestResolvePromptTemplate(t *testing.T) {
 func baseFileReq() ai.Request {
 	return ai.Request{
 		Prompt:      api.Prompt{User: "body prompt"},
-		Model:       api.Model{Name: "claude-file-4-6"},
+		Model:       api.Model{Name: "claude-sonnet-5"},
 		Budget:      api.Budget{MaxTokens: 100},
 		Sandbox:     &api.SandboxRef{Mode: api.SandboxNative},
 		Permissions: api.Permissions{Mode: api.PermissionAcceptEdits},
@@ -123,21 +124,21 @@ func baseFileReq() ai.Request {
 	}
 }
 
-func TestOverlayCLI_CLIOverridesFrontmatter(t *testing.T) {
+func TestResolveCLI_CLIOverridesFrontmatter(t *testing.T) {
 	isolateSavedAI(t)
 	opts := AIPromptOptions{}
-	opts.Model = "claude-cli-4-6"
+	opts.Model = "claude-opus-4-8"
 	opts.MaxTokens = 200
 	opts.PermissionMode = "plan"
 
-	req, cfg, err := overlayCLI(baseFileReq(), ai.Config{}, opts)
+	req, cfg, err := runtimeLayersForTest(baseFileReq(), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if req.Model.Name != "claude-cli-4-6" {
-		t.Errorf("Model.Name = %q, want CLI value claude-cli-4-6", req.Model.Name)
+	if req.Model.Name != "claude-opus-4-8" {
+		t.Errorf("Model.Name = %q, want CLI value claude-opus-4-8", req.Model.Name)
 	}
-	if cfg.Model.Name != "claude-cli-4-6" {
+	if cfg.Model.Name != "claude-opus-4-8" {
 		t.Errorf("cfg.Model.Name = %q, want CLI value mirrored into config", cfg.Model.Name)
 	}
 	if req.Budget.MaxTokens != 200 {
@@ -148,19 +149,20 @@ func TestOverlayCLI_CLIOverridesFrontmatter(t *testing.T) {
 	}
 }
 
-func TestOverlayCLI_Sandbox(t *testing.T) {
-	for _, tt := range []struct{ name, mode, wantErr string }{
+func TestResolveCLI_Sandbox(t *testing.T) {
+	for _, tt := range []struct{ name, mode, baseMode, wantErr string }{
 		{name: "selects CLI for frontmatter model"},
 		{name: "rejects explicit API mode", mode: "api", wantErr: "requires cli mode"},
+		{name: "rejects authored API mode", baseMode: "api", wantErr: "requires cli mode"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			isolateSavedAI(t)
 			base := baseFileReq()
 			base.Model.Provider = api.Anthropic
-			base.Model.Mode = api.ModeAPI
+			base.Model.Mode = api.RuntimeMode(tt.baseMode)
 			opts := AIPromptOptions{AIRuntimeOptions: AIRuntimeOptions{AIProviderOptions: AIProviderOptions{Sandbox: "docker"}}}
 			opts.Mode = tt.mode
-			req, cfg, err := overlayCLI(base, ai.Config{}, opts)
+			req, cfg, err := runtimeLayersForTest(base, opts)
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("err = %v, want %q", err, tt.wantErr)
@@ -180,13 +182,13 @@ func TestOverlayCLI_Sandbox(t *testing.T) {
 
 // An explicit --sandbox=off must turn off a sandbox the base config carried:
 // the overlay resolved every layer, so it overwrites instead of ORing.
-func TestOverlayCLI_SandboxOffClearsInherited(t *testing.T) {
+func TestResolveCLI_SandboxOffClearsInherited(t *testing.T) {
 	isolateSavedAI(t)
 	base := baseFileReq()
-	baseCfg := ai.Config{SandboxSelection: &api.SandboxConfig{Kind: api.SandboxDocker}}
+	base.Sandbox = &api.SandboxRef{Mode: api.SandboxDocker}
 	opts := AIPromptOptions{AIRuntimeOptions: AIRuntimeOptions{AIProviderOptions: AIProviderOptions{Sandbox: "off"}}}
 
-	_, cfg, err := overlayCLI(base, baseCfg, opts)
+	_, cfg, err := runtimeLayersForTest(base, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +200,7 @@ func TestOverlayCLI_SandboxOffClearsInherited(t *testing.T) {
 	}
 }
 
-func TestOverlayCLI_SandboxFlagPreservesFrontmatterAgentAndPolicy(t *testing.T) {
+func TestResolveCLI_SandboxFlagPreservesFrontmatterAgentAndPolicy(t *testing.T) {
 	isolateSavedAI(t)
 	base := baseFileReq()
 	base.Sandbox = &api.SandboxRef{
@@ -209,7 +211,7 @@ func TestOverlayCLI_SandboxFlagPreservesFrontmatterAgentAndPolicy(t *testing.T) 
 	}
 	opts := AIPromptOptions{AIRuntimeOptions: AIRuntimeOptions{AIProviderOptions: AIProviderOptions{Sandbox: "git-agent"}}}
 
-	req, cfg, err := overlayCLI(base, ai.Config{}, opts)
+	req, cfg, err := runtimeLayersForTest(base, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,14 +226,12 @@ func TestOverlayCLI_SandboxFlagPreservesFrontmatterAgentAndPolicy(t *testing.T) 
 	}
 }
 
-// --api-url is what points a run at a `captain ai mock` endpoint, so it has to
-// survive the overlay; a prompt file may pin its own endpoint, and the flag wins.
-func TestOverlayCLI_APIURLFlagBeatsFrontmatter(t *testing.T) {
+func TestResolveCLI_APIURLTransport(t *testing.T) {
 	isolateSavedAI(t)
 	opts := AIPromptOptions{}
 	opts.APIURL = "http://127.0.0.1:18096/v1"
 
-	_, cfg, err := overlayCLI(baseFileReq(), ai.Config{APIURL: "https://api.openai.com/v1"}, opts)
+	_, cfg, err := runtimeLayersForTest(baseFileReq(), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,34 +239,34 @@ func TestOverlayCLI_APIURLFlagBeatsFrontmatter(t *testing.T) {
 		t.Errorf("cfg.APIURL = %q, want CLI value %q", cfg.APIURL, opts.APIURL)
 	}
 
-	_, cfg, err = overlayCLI(baseFileReq(), ai.Config{APIURL: "https://api.openai.com/v1"}, AIPromptOptions{})
+	_, cfg, err = runtimeLayersForTest(baseFileReq(), AIPromptOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.APIURL != "https://api.openai.com/v1" {
-		t.Errorf("cfg.APIURL = %q, want the frontmatter value to stand without a flag", cfg.APIURL)
+	if cfg.APIURL != "" {
+		t.Errorf("cfg.APIURL = %q, want no endpoint without an explicit flag", cfg.APIURL)
 	}
 }
 
-func TestOverlayCLI_FrontmatterOverridesSaved(t *testing.T) {
-	seedSavedAI(t, "ai:\n  model: claude-saved-4-6\n  maxTokens: 16000\n")
-	req, _, err := overlayCLI(baseFileReq(), ai.Config{}, AIPromptOptions{})
+func TestResolveCLI_FrontmatterOverridesSaved(t *testing.T) {
+	seedSavedAI(t, "ai:\n  defaultModel: agent:claude-haiku-4-5\n  maxTokens: 16000\n")
+	req, _, err := runtimeLayersForTest(baseFileReq(), AIPromptOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if req.Model.Name != "claude-file-4-6" {
-		t.Errorf("Model.Name = %q, want frontmatter value claude-file-4-6 (beats saved)", req.Model.Name)
+	if req.Model.Name != "claude-sonnet-5" {
+		t.Errorf("Model.Name = %q, want frontmatter value claude-sonnet-5 (beats saved)", req.Model.Name)
 	}
 	if req.Budget.MaxTokens != 100 {
 		t.Errorf("MaxTokens = %d, want frontmatter value 100 (beats saved 16000)", req.Budget.MaxTokens)
 	}
 }
 
-func TestOverlayCLI_BuiltinMaxTokens(t *testing.T) {
+func TestResolveCLI_BuiltinMaxTokens(t *testing.T) {
 	isolateSavedAI(t)
 	base := baseFileReq()
 	base.Budget.MaxTokens = 0 // frontmatter omitted it
-	req, _, err := overlayCLI(base, ai.Config{}, AIPromptOptions{})
+	req, _, err := runtimeLayersForTest(base, AIPromptOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,14 +275,14 @@ func TestOverlayCLI_BuiltinMaxTokens(t *testing.T) {
 	}
 }
 
-func TestOverlayCLI_BooleansOR(t *testing.T) {
+func TestResolveCLI_OmittedBooleansInherit(t *testing.T) {
 	isolateSavedAI(t)
 	opts := AIPromptOptions{}
 	opts.NoMCP = true   // CLI sets it
 	opts.Edit = true    // CLI preset
 	opts.NoUser = false // base already has SkipUser=true
 
-	req, _, err := overlayCLI(baseFileReq(), ai.Config{}, opts)
+	req, _, err := runtimeLayersForTest(baseFileReq(), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +290,7 @@ func TestOverlayCLI_BooleansOR(t *testing.T) {
 		t.Error("MCP.Disabled = false, want true (CLI --no-mcp)")
 	}
 	if !req.Memory.SkipUser {
-		t.Error("SkipUser = false, want true (frontmatter set it; CLI false must not clear it)")
+		t.Error("SkipUser = false, want true (frontmatter set it; omitted CLI flag must not clear it)")
 	}
 	if !req.Permissions.HasPreset(api.PresetEdit) {
 		t.Error("missing edit preset from --edit")
@@ -298,7 +298,7 @@ func TestOverlayCLI_BooleansOR(t *testing.T) {
 	// --edit must not duplicate a preset the frontmatter already declared.
 	base := baseFileReq()
 	base.Permissions.Presets = []api.Preset{api.PresetEdit}
-	req2, _, err := overlayCLI(base, ai.Config{}, opts)
+	req2, _, err := runtimeLayersForTest(base, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -318,17 +318,18 @@ func fallbackNames(models []api.Model) []string {
 	return out
 }
 
-func TestOverlayCLI_ModelCSVExpandsToFallbacks(t *testing.T) {
+func TestResolveCLI_ModelCSVExpandsToFallbacks(t *testing.T) {
 	isolateSavedAI(t)
 	opts := AIPromptOptions{}
-	opts.Model = "claude-primary-5,gpt-4o,gemini-2.0-flash"
+	opts.Sandbox = "off"
+	opts.Model = "claude-sonnet-5,gpt-4o,gemini-2.0-flash"
 
-	req, cfg, err := overlayCLI(baseFileReq(), ai.Config{}, opts)
+	req, cfg, err := runtimeLayersForTest(baseFileReq(), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if req.Model.Name != "claude-primary-5" {
-		t.Errorf("Model.Name = %q, want CSV head claude-primary-5", req.Model.Name)
+	if req.Model.Name != "claude-sonnet-5" {
+		t.Errorf("Model.Name = %q, want CSV head claude-sonnet-5", req.Model.Name)
 	}
 	if got := fallbackNames(req.Model.Fallbacks); !reflect.DeepEqual(got, []string{"gpt-4o", "gemini-2.0-flash"}) {
 		t.Errorf("req fallbacks = %v, want [gpt-4o gemini-2.0-flash]", got)
@@ -338,14 +339,15 @@ func TestOverlayCLI_ModelCSVExpandsToFallbacks(t *testing.T) {
 	}
 }
 
-func TestOverlayCLI_FallbackFlagOverridesFrontmatter(t *testing.T) {
+func TestResolveCLI_FallbackFlagOverridesFrontmatter(t *testing.T) {
 	isolateSavedAI(t)
 	base := baseFileReq()
 	base.Model.Fallbacks = []api.Model{{Name: "frontmatter-fallback"}}
 	opts := AIPromptOptions{}
+	opts.Sandbox = "off"
 	opts.Fallback = []string{"gemini-3.5-flash", "gpt-5.5,claude-sonnet-5"} // repeatable + comma-split
 
-	req, _, err := overlayCLI(base, ai.Config{}, opts)
+	req, _, err := runtimeLayersForTest(base, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -355,17 +357,17 @@ func TestOverlayCLI_FallbackFlagOverridesFrontmatter(t *testing.T) {
 	}
 }
 
-func TestOverlayCLI_FrontmatterFallbacksStandWithoutFlag(t *testing.T) {
+func TestResolveCLI_FrontmatterFallbacksStandWithoutFlag(t *testing.T) {
 	isolateSavedAI(t)
 	base := baseFileReq()
-	base.Model.Fallbacks = []api.Model{{Name: "gpt-4o", Effort: api.EffortHigh}}
+	base.Model.Fallbacks = []api.Model{{Name: "gpt-5.6-sol", Effort: api.EffortHigh}}
 
-	req, _, err := overlayCLI(base, ai.Config{}, AIPromptOptions{})
+	req, _, err := runtimeLayersForTest(base, AIPromptOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := fallbackNames(req.Model.Fallbacks); !reflect.DeepEqual(got, []string{"gpt-4o"}) {
-		t.Errorf("fallbacks = %v, want frontmatter [gpt-4o] when no --fallback", got)
+	if got := fallbackNames(req.Model.Fallbacks); !reflect.DeepEqual(got, []string{"gpt-5.6-sol"}) {
+		t.Errorf("fallbacks = %v, want frontmatter [gpt-5.6-sol] when no --fallback", got)
 	}
 	if req.Model.Fallbacks[0].Effort != api.EffortHigh {
 		t.Errorf("frontmatter fallback effort = %q, want preserved high", req.Model.Fallbacks[0].Effort)

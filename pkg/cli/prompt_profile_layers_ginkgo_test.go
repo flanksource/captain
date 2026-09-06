@@ -17,7 +17,7 @@ var _ = Describe("Composed prompt profile layers", func() {
 			Model:       api.Model{Name: "gpt-5.6-sol", Mode: api.ModeCLI},
 			Permissions: api.Permissions{Tools: api.Tools{"Bash": api.ToolPolicyDeny}},
 		}})
-		profile, err := selectRuntimeProfile(f.ctx, "restricted", "")
+		profile, err := selectRuntimeProfile(f.ctx, runtimeProfileSelection{Requested: "restricted"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(profile.Resolved).To(Equal(api.ResolvedSpec{}))
 		Expect(profile.Layers).To(HaveLen(1))
@@ -25,7 +25,7 @@ var _ = Describe("Composed prompt profile layers", func() {
 			Model: api.Model{Name: "agent:claude-sonnet-5"},
 		})
 		Expect(err).NotTo(HaveOccurred())
-		resolved, err := resolvePromptLayers(layers)
+		resolved, err := api.ResolveSpecLayers(api.ResolveSpecOptions{Layers: layers})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(resolved.Spec.Mode).To(Equal(api.ModeAgent))
 		Expect(resolved.Spec.Permissions.Tools).To(Equal(api.Tools{"Bash": api.ToolPolicyDeny}))

@@ -126,6 +126,7 @@ type PromptRenderResult struct {
 	InputDefault map[string]any `json:"inputDefault,omitempty"`
 	OutputSchema map[string]any `json:"outputSchema,omitempty"`
 	Runtimes     []api.Model    `json:"runtimes,omitempty"`
+	variants     []AIRuntimeResolved
 	// Resolution is the layer trace the render resolved through; its Spec is
 	// the final request after saved defaults, so the trace explains Input.
 	Resolution      api.ResolvedSpec `json:"resolution"`
@@ -253,7 +254,7 @@ func listPrompts(ctx context.Context, opts PromptListOptions) ([]PromptSummary, 
 }
 
 func getPrompt(ctx context.Context, id string) (PromptDetail, error) {
-	record, err := resolvePromptRecord(ctx, id)
+	record, err := resolvePromptRecord(ctx, promptRecordOptions{ID: id})
 	if err != nil {
 		return PromptDetail{}, err
 	}
@@ -269,7 +270,7 @@ func createPrompt(ctx context.Context, body map[string]any) (PromptDetail, error
 }
 
 func writeNewLocalPrompt(ctx context.Context, req PromptWriteRequest) (PromptDetail, error) {
-	sources, err := buildPromptSources(ctx)
+	sources, err := buildPromptSources(ctx, promptSourceOptions{})
 	if err != nil {
 		return PromptDetail{}, err
 	}
@@ -315,7 +316,7 @@ func writeNewLocalPrompt(ctx context.Context, req PromptWriteRequest) (PromptDet
 }
 
 func updatePrompt(ctx context.Context, id string, body map[string]any) (PromptDetail, error) {
-	record, err := resolvePromptRecord(ctx, id)
+	record, err := resolvePromptRecord(ctx, promptRecordOptions{ID: id})
 	if err != nil {
 		return PromptDetail{}, err
 	}
@@ -352,7 +353,7 @@ func updatePrompt(ctx context.Context, id string, body map[string]any) (PromptDe
 }
 
 func deletePrompt(ctx context.Context, id string) error {
-	record, err := resolvePromptRecord(ctx, id)
+	record, err := resolvePromptRecord(ctx, promptRecordOptions{ID: id})
 	if err != nil {
 		return err
 	}
@@ -372,7 +373,7 @@ func deletePrompt(ctx context.Context, id string) error {
 
 // renderPromptAction renders a prompt for `captain prompt render`. HTTP callers
 // pass a structured api.Spec in the body (the request layer over the profile
-// and frontmatter layers); the CLI passes flat flags (overlayCLI) plus
+// and frontmatter layers); the CLI passes explicit flags plus
 // filepath/-p/stdin sources.
 func renderPromptAction(ctx context.Context, id string, flags map[string]string) (PromptRenderResult, error) {
 	if _, isHTTP := clickyrpc.RequestFromContext(ctx); isHTTP {

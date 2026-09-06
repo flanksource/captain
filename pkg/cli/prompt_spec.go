@@ -9,59 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
 	clickyrpc "github.com/flanksource/clicky/rpc"
 )
-
-func applyPromptDefaults(req *ai.Request, cfg *ai.Config) error {
-	savedCfg := loadSavedConfig()
-	saved := savedCfg.AI
-	promptModel := req.Model
-	if promptModel.Name == "" {
-		promptModel.Name = cfg.Model.Name
-	}
-	if promptModel.ID == "" {
-		promptModel.ID = cfg.Model.ID
-	}
-	if promptModel.Mode == "" {
-		promptModel.Mode = cfg.Model.Mode
-	}
-	if promptModel.Provider == nil {
-		promptModel.Provider = cfg.Model.Provider
-	}
-	identity := selectModelIdentity(
-		api.Model{Name: promptModel.Name, ID: promptModel.ID, Mode: promptModel.Mode, Provider: promptModel.Provider},
-	)
-	req.Name, req.ID, req.Mode, req.Provider = identity.Name, identity.ID, identity.Mode, identity.Provider
-	if cfg.Model.Effort != api.EffortNone {
-		// An effort-qualified model selector (for example agent:sol:high)
-		// is model-local and intentionally overrides the request-wide flag/default.
-		req.Effort = cfg.Model.Effort
-	} else if req.Effort == "" {
-		req.Effort = cfg.Model.Effort
-	}
-	resolved, err := applyProviderDefaults(req.Model, saved)
-	if err != nil {
-		return err
-	}
-	req.Model = resolved
-	req.NoCache = req.NoCache || saved.NoCache
-	if req.Budget.MaxTokens == 0 {
-		req.Budget.MaxTokens = firstPositive(cfg.Budget.MaxTokens, saved.MaxTokens, 4096)
-	}
-	if req.Budget.Cost == 0 {
-		req.Budget.Cost = firstPositiveFloat(cfg.Budget.Cost, saved.BudgetUSD)
-	}
-
-	cfg.Model = req.Model
-	cfg.Budget = req.Budget
-	cfg.NoCache = req.NoCache
-	if isZeroSchemaRepair(cfg.SchemaRepair) {
-		cfg.SchemaRepair = schemaRepairConfig(savedCfg.Prompts.SchemaRepair)
-	}
-	return nil
-}
 
 func dedupeStrings(in []string) []string {
 	seen := map[string]bool{}
@@ -122,6 +72,7 @@ func mergePromptActionFlags(req *PromptRenderRequest, flags map[string]string) e
 			return fmt.Errorf("invalid --max-tokens %q: %w", v, err)
 		}
 		ensureRenderSpec(req).Budget.MaxTokens = n
+		*req.Spec = req.Spec.WithExplicit("/budget/maxTokens")
 	}
 	return nil
 }
