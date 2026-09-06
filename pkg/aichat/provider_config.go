@@ -11,7 +11,7 @@ import (
 	"github.com/flanksource/captain/pkg/api/registry"
 )
 
-func annotateProfileModels(resolved api.ResolvedSpec, models ModelCatalogResponse) {
+func annotateProfileModels(resolved api.ComposedSpec, models ModelCatalogResponse) {
 	if len(resolved.Constraints.Models) == 0 {
 		return
 	}
@@ -26,7 +26,7 @@ func annotateProfileModels(resolved api.ResolvedSpec, models ModelCatalogRespons
 	}
 }
 
-func annotateProfileRuntimes(resolved api.ResolvedSpec, runtimes []api.RuntimeFamily) {
+func annotateProfileRuntimes(resolved api.ComposedSpec, runtimes []api.RuntimeFamily) {
 	if len(resolved.Constraints.Models) == 0 {
 		return
 	}
@@ -64,17 +64,17 @@ func restrictedAvailability(layer *api.SpecLayer, allowed []string) api.Availabi
 	}
 }
 
-func modelRestrictionLayer(resolved api.ResolvedSpec, model api.Model) *api.SpecLayer {
+func modelRestrictionLayer(resolved api.ComposedSpec, model api.Model) *api.SpecLayer {
 	for index := len(resolved.Trace) - 1; index >= 0; index-- {
 		layer := &resolved.Trace[index]
-		if len(layer.Constraints.Models) > 0 && !(api.ResolvedSpec{Constraints: layer.Constraints}).AllowsModel(model) {
+		if len(layer.Constraints.Models) > 0 && !(api.ComposedSpec{Constraints: layer.Constraints}).AllowsModel(model) {
 			return layer
 		}
 	}
 	return nil
 }
 
-func runtimeRestrictionLayer(resolved api.ResolvedSpec, provider *api.ModelProvider, mode api.RuntimeMode) *api.SpecLayer {
+func runtimeRestrictionLayer(resolved api.ComposedSpec, provider *api.ModelProvider, mode api.RuntimeMode) *api.SpecLayer {
 	for index := len(resolved.Trace) - 1; index >= 0; index-- {
 		layer := &resolved.Trace[index]
 		if len(layer.Constraints.Models) > 0 && !runtimeAllowed(layer.Constraints.Models, provider, mode) {
@@ -96,7 +96,7 @@ func runtimeAllowed(models []string, provider *api.ModelProvider, mode api.Runti
 			return true
 		}
 	}
-	resolved := api.ResolvedSpec{Constraints: api.RuntimeConstraints{Models: models}}
+	resolved := api.ComposedSpec{Constraints: api.RuntimeConstraints{Models: models}}
 	for _, model := range provider.Models() {
 		if !model.Preferred {
 			continue

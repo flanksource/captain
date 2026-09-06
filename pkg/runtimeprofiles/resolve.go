@@ -2,6 +2,7 @@ package runtimeprofiles
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/flanksource/captain/pkg/api"
@@ -12,6 +13,9 @@ import (
 func (c *Catalog) Layers(ctx context.Context, ref string) (Resolution, error) {
 	profile, err := c.GetProfile(ctx, ref)
 	if err != nil {
+		if !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrAmbiguous) {
+			return Resolution{}, &OwnedLayersError{Ref: ref, Err: err}
+		}
 		return Resolution{}, err
 	}
 	presets := make([]Preset, 0, len(profile.Presets))
@@ -20,7 +24,7 @@ func (c *Catalog) Layers(ctx context.Context, ref string) (Resolution, error) {
 	for _, presetRef := range profile.Presets {
 		preset, err := c.GetPreset(ctx, presetRef)
 		if err != nil {
-			return Resolution{}, fmt.Errorf("runtime profile %q references preset %q: %w", profile.Name, presetRef, err)
+			return Resolution{}, &OwnedLayersError{Ref: ref, Err: fmt.Errorf("runtime profile %q references preset %q: %w", profile.Name, presetRef, err)}
 		}
 		presets = append(presets, preset)
 		apiPresets = append(apiPresets, preset.API())
@@ -31,7 +35,7 @@ func (c *Catalog) Layers(ctx context.Context, ref string) (Resolution, error) {
 		Profile: profile.API(), Presets: apiPresets,
 	})
 	if err != nil {
-		return Resolution{}, err
+		return Resolution{}, &OwnedLayersError{Ref: ref, Err: err}
 	}
 	return Resolution{Profile: profile, Presets: presets, Layers: layers}, nil
 }
@@ -42,13 +46,7 @@ func (c *Catalog) Resolve(ctx context.Context, ref string) (Resolution, error) {
 	if err != nil {
 		return Resolution{}, err
 	}
-	presets := make([]api.RuntimePreset, 0, len(resolution.Presets))
-	for _, preset := range resolution.Presets {
-		presets = append(presets, preset.API())
-	}
-	resolved, err := api.ResolveRuntimeProfile(api.RuntimeProfileResolveRequest{
-		Profile: resolution.Profile.API(), Presets: presets,
-	})
+	resolved, err := api.ResolveSpecLayers(resolution.Layers...)
 	if err != nil {
 		return Resolution{}, err
 	}

@@ -68,6 +68,7 @@ type ResolvedSpec struct {
 	Spec        Spec               `json:"spec" yaml:"spec"`
 	Constraints RuntimeConstraints `json:"constraints" yaml:"constraints"`
 	Trace       []SpecLayer        `json:"trace" yaml:"trace"`
+	Warnings    []string           `json:"warnings,omitempty" yaml:"warnings,omitempty"`
 }
 
 // PromptSpecLayer adapts parsed .prompt frontmatter into the normal surface layer.
@@ -90,24 +91,24 @@ func OrderSpecLayers(input ...SpecLayer) []SpecLayer {
 	return layers
 }
 
-// ResolveSpecLayers deterministically overlays defaults and intersects constraints.
-func ResolveSpecLayers(input ...SpecLayer) (ResolvedSpec, error) {
+// ComposeSpecLayers overlays raw defaults and constraints without resolving a runtime.
+func ComposeSpecLayers(input ...SpecLayer) (ComposedSpec, error) {
+	if err := ValidateSpecLayers(input...); err != nil {
+		return ComposedSpec{}, err
+	}
 	layers := OrderSpecLayers(input...)
-	resolved := ResolvedSpec{Trace: make([]SpecLayer, 0, len(layers))}
+	resolved := ComposedSpec{Trace: make([]SpecLayer, 0, len(layers))}
 	for _, layer := range layers {
-		if err := validateSpecLayer(layer); err != nil {
-			return ResolvedSpec{}, err
-		}
 		resolved.Spec = resolved.Spec.Merge(layer.Spec)
 		if len(layer.Constraints.Models) > 0 {
 			resolved.Constraints.Models = intersectModels(resolved.Constraints.Models, layer.Constraints.Models)
 			if len(resolved.Constraints.Models) == 0 {
-				return ResolvedSpec{}, fmt.Errorf("spec layer %q leaves the effective model catalog empty", layer.Name)
+				return ComposedSpec{}, fmt.Errorf("spec layer %q leaves the effective model catalog empty", layer.Name)
 			}
 		}
 		limits, err := strictRunLimits(resolved.Constraints.Limits, layer.Constraints.Limits)
 		if err != nil {
-			return ResolvedSpec{}, fmt.Errorf("spec layer %q limits: %w", layer.Name, err)
+			return ComposedSpec{}, fmt.Errorf("spec layer %q limits: %w", layer.Name, err)
 		}
 		resolved.Constraints.Limits = limits
 		for _, quota := range layer.Constraints.Quotas {
@@ -121,21 +122,22 @@ func ResolveSpecLayers(input ...SpecLayer) (ResolvedSpec, error) {
 
 	budget, err := strictBudget(resolved.Spec.Budget, resolved.Constraints.Limits.Budget)
 	if err != nil {
-		return ResolvedSpec{}, fmt.Errorf("effective run budget: %w", err)
+		return ComposedSpec{}, fmt.Errorf("effective run budget: %w", err)
 	}
 	resolved.Spec.Budget = budget
-	if err := validateResolvedModels(resolved); err != nil {
-		return ResolvedSpec{}, err
-	}
 	return resolved, nil
 }
 
 // AllowsModel reports whether a model belongs to the effective restrictive catalog.
 func (resolved ResolvedSpec) AllowsModel(model Model) bool {
-	if len(resolved.Constraints.Models) == 0 {
+	return allowsModel(resolved.Constraints.Models, model)
+}
+
+func allowsModel(models []string, model Model) bool {
+	if len(models) == 0 {
 		return true
 	}
-	for _, allowed := range resolved.Constraints.Models {
+	for _, allowed := range models {
 		if modelSelectorMatches(allowed, model) {
 			return true
 		}
@@ -316,9 +318,12 @@ func modelSelectorMatches(selector string, model Model) bool {
 	if selector == model.Name || selector == model.ID {
 		return true
 	}
-	allowed, allowedErr := (Model{Name: selector}).Expand()
-	actual, actualErr := model.Expand()
-	return allowedErr == nil && actualErr == nil && allowed.Name == actual.Name && allowed.Mode == actual.Mode
+	actual, actualErr := ResolveModel(model)
+	if actualErr != nil {
+		return false
+	}
+	allowed, allowedErr := ResolveModel(Model{Name: selector, Mode: actual.Mode})
+	return allowedErr == nil && allowed.Name == actual.Name && allowed.Mode == actual.Mode && allowed.Provider == actual.Provider
 }
 
 func cloneSpecLayer(layer SpecLayer) SpecLayer {
