@@ -62,7 +62,7 @@ func (s Spec) validateRuntimeFields() error {
 		return fmt.Errorf("workflow: %w", err)
 	}
 	if s.Sandbox != nil {
-		if err := s.Sandbox.Validate(); err != nil {
+		if err := s.Sandbox.ValidateStructure(); err != nil {
 			return fmt.Errorf("sandbox: %w", err)
 		}
 	}
