@@ -38,6 +38,13 @@ var _ = Describe("DisabledSet", func() {
 		Expect(set.Effort(EffortUltra)).To(BeTrue())
 	})
 
+	It("canonicalizes provider aliases for provider and runtime lookups", func() {
+		set := NewDisabledSet(nil, []string{"gemini"}, []Runtime{{Provider: "codex", Mode: ModeAgent}}, nil, nil)
+
+		Expect(set.Provider(Google)).To(BeTrue())
+		Expect(set.Runtime(OpenAI, ModeAgent)).To(BeTrue())
+	})
+
 	It("drops blank tokens rather than disabling the empty string", func() {
 		set := NewDisabledSet([]string{"  ", ""}, nil, nil, nil, nil)
 

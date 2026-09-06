@@ -17,6 +17,9 @@ const CodexAutoReviewModel = "codex-auto-review"
 // knobs. Maps onto the legacy ai.Config.Model + ai.Request.{Temperature,
 // ReasoningEffort}.
 type Model struct {
+	// Explicit records authored fields whose zero values must survive merging.
+	Explicit FieldPresence `json:"-" yaml:"-" pretty:"-"`
+
 	// Name is the catalog model slug, e.g. "claude-sonnet-4-6"; it drives provider
 	// inference and pricing lookup.
 	Name string `json:"model,omitempty" yaml:"model,omitempty" jsonschema:"required" pretty:"label=Model"`
@@ -117,6 +120,7 @@ func (m Model) WithMode(mode RuntimeMode) (Model, error) {
 		return Model{}, invalidRuntimeMode(mode)
 	}
 
+	m = (Model{}).Merge(m)
 	var err error
 	if m, err = m.Expand(); err != nil {
 		return Model{}, err
@@ -259,6 +263,7 @@ func MergePolicy() merge.Policy {
 // with `--model codex` came out as an anthropic runtime running "codex".
 func (m Model) Merge(o Model) Model {
 	merged := merge.Apply(m, o, MergePolicy())
+	merged = mergeExplicitModel(merged, o)
 	if name := strings.TrimSpace(o.Name); name != "" && !strings.EqualFold(name, strings.TrimSpace(m.Name)) {
 		merged.Provider = o.Provider
 		merged.Streaming, merged.MediaTypes = o.Streaming, o.MediaTypes
@@ -332,13 +337,13 @@ func (m Model) candidates() []Model {
 	for _, fb := range m.Fallbacks {
 		fb.Fallbacks = nil
 		fb.ID = ""
-		if fb.Temperature == nil {
+		if fb.Temperature == nil && !fb.Explicit.Has("/temperature") {
 			fb.Temperature = m.Temperature
 		}
-		if fb.Effort == "" && modelProvider(fb) == modelProvider(m) {
+		if fb.Effort == "" && !fb.Explicit.Has("/effort") && modelProvider(fb) == modelProvider(m) {
 			fb.Effort = m.Effort
 		}
-		if !fb.NoCache {
+		if !fb.NoCache && !fb.Explicit["/noCache"] {
 			fb.NoCache = m.NoCache
 		}
 		out = append(out, fb)
