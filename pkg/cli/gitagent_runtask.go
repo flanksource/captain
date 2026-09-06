@@ -84,20 +84,21 @@ func runTaskPrompt(ctx context.Context, worktree string, payload gitagent.TaskPa
 		ModelFlags: aiflags.ModelFlags{Model: payload.Model, Mode: string(payload.Mode), Effort: string(payload.Effort)},
 		Sandbox:    string(api.SandboxOff),
 	}
-	cfg, err := providerOpts.ToConfig()
-	if err != nil {
-		return err
-	}
 	var req ai.Request
 	req.Prompt.User = payload.Prompt
 	req.Prompt.System = payload.System
-	req.Model = cfg.Model
 	req.Budget.Timeout = payload.Timeout
 	req.SetCwd(worktree)
 	// Editing is the point: a coding agent that cannot write files produces an
 	// empty result and an unexplained silence on the supervisor.
 	req.Sandbox = &api.SandboxRef{Mode: api.SandboxNative}
 	req.Permissions.Mode = api.PermissionAcceptEdits
+	resolved, err := resolveInvocation(AIRuntimeOptions{AIProviderOptions: providerOpts}, []api.SpecLayer{api.PromptSpecLayer("dispatched task", req)})
+	if err != nil {
+		return err
+	}
+	req, cfg := resolved.Request, resolved.Config
+	logRuntimeWarnings(resolved.Resolution.Warnings)
 
 	timeout, err := renderedTimeout(PromptRenderResult{Input: req, Config: cfg})
 	if err != nil {

@@ -77,22 +77,22 @@ func TestLoadPromptContent_Sources(t *testing.T) {
 	}
 
 	// filepath positional
-	content, _, usedStdin, _, err := loadPromptContent(ctx, path, AIPromptOptions{}, "")
+	content, _, usedStdin, _, err := loadPromptContent(ctx, promptContentOptions{ID: path})
 	if err != nil || content != body || usedStdin {
 		t.Fatalf("file source: content=%q usedStdin=%v err=%v", content, usedStdin, err)
 	}
 	// --prompt/-p text (positional empty)
-	content, _, _, _, err = loadPromptContent(ctx, "", AIPromptOptions{AIRuntimeOptions: AIRuntimeOptions{}, Prompt: "inline body"}, "")
+	content, _, _, _, err = loadPromptContent(ctx, promptContentOptions{Prompt: AIPromptOptions{Prompt: "inline body"}})
 	if err != nil || content != "inline body" {
 		t.Fatalf("prompt source: content=%q err=%v", content, err)
 	}
 	// stdin
-	content, _, usedStdin, _, err = loadPromptContent(ctx, "", AIPromptOptions{}, "piped body")
+	content, _, usedStdin, _, err = loadPromptContent(ctx, promptContentOptions{Stdin: "piped body"})
 	if err != nil || content != "piped body" || !usedStdin {
 		t.Fatalf("stdin source: content=%q usedStdin=%v err=%v", content, usedStdin, err)
 	}
 	// nothing
-	if _, _, _, _, err = loadPromptContent(ctx, "", AIPromptOptions{}, ""); err == nil {
+	if _, _, _, _, err = loadPromptContent(ctx, promptContentOptions{}); err == nil {
 		t.Error("expected error when no source is given")
 	}
 }
