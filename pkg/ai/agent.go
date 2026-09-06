@@ -2,7 +2,6 @@ package ai
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
@@ -24,27 +23,10 @@ type Agent struct {
 	costs Costs
 }
 
-// PromptRequest is a single named prompt. Field names/types mirror the former
-// clicky/ai.PromptRequest so consumers need only change the import path.
+// PromptRequest carries the complete specification of one named model call.
 type PromptRequest struct {
-	Name             string            `json:"name"`
-	Prompt           string            `json:"prompt"`
-	SystemPrompt     string            `json:"system_prompt,omitempty"`
-	Context          map[string]string `json:"context,omitempty"`
-	StructuredOutput any               `json:"structured_output,omitempty"`
-	// SchemaJSON is a pre-built JSON Schema (e.g. from a .prompt frontmatter
-	// output block) forwarded verbatim to ai.Request.Prompt.SchemaJSON. Prefer it
-	// over StructuredOutput when the schema is declared in the prompt file rather
-	// than a Go type; the two are mutually exclusive.
-	SchemaJSON json.RawMessage `json:"schema_json,omitempty"`
-	// SchemaStrictness forwards api.Prompt.SchemaStrictness — the policy for a
-	// response that fails schema validation (warning/error/retry). "" (default)
-	// skips validation.
-	SchemaStrictness api.SchemaStrictness `json:"schema_strictness,omitempty"`
-	// Source identifies the prompt template (e.g. the .prompt filename) for
-	// diagnostics; forwarded to ai.Request.Source and printed by the logging
-	// middleware.
-	Source string `json:"source,omitempty"`
+	Name string   `json:"name"`
+	Spec api.Spec `json:"spec"`
 }
 
 // PromptResponse is the result of one PromptRequest.
@@ -95,14 +77,7 @@ func (a *Agent) ExecutePrompt(ctx context.Context, req PromptRequest) (*PromptRe
 			return &PromptResponse{Request: req, Model: a.cfg.Model.Name, Error: err.Error()}, err
 		}
 	}
-	resp, err := a.provider.Execute(ctx, Request{Prompt: api.Prompt{
-		User:             req.Prompt,
-		System:           req.SystemPrompt,
-		Source:           req.Source,
-		Schema:           req.StructuredOutput,
-		SchemaJSON:       req.SchemaJSON,
-		SchemaStrictness: req.SchemaStrictness,
-	}})
+	resp, err := a.provider.Execute(ctx, req.Spec)
 	if err != nil {
 		return &PromptResponse{Request: req, Model: a.cfg.Model.Name, Error: err.Error(), Duration: time.Since(start)}, err
 	}

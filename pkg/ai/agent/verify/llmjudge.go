@@ -38,7 +38,7 @@ func (j *LLMJudgeVerifier) Verify(ctx context.Context, cwd string, changed []str
 	}
 
 	out := &judgeVerdict{}
-	req, _, err := j.Prompt.Render(data, out)
+	req, _, err := j.Prompt.Render(prompt.RenderOptions{Data: data, Output: out})
 	if err != nil {
 		return Verdict{}, err
 	}
