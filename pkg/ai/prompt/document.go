@@ -1,7 +1,6 @@
 package prompt
 
 import (
-	"bytes"
 	"fmt"
 	"strings"
 
@@ -117,9 +116,10 @@ func decodePromptRuntimes(raw map[string]any) ([]api.Model, error) {
 			continue
 		}
 		var runtime api.Model
-		dec := yaml.NewDecoder(bytes.NewReader(encoded))
-		dec.KnownFields(true)
-		if err := dec.Decode(&runtime); err != nil {
+		if err := validateDeclarationFields(encoded, runtime.DecodeFields()); err != nil {
+			return nil, fmt.Errorf("runtime %d: %w", i+1, err)
+		}
+		if err := yaml.Unmarshal(encoded, &runtime); err != nil {
 			return nil, fmt.Errorf("runtime %d: %w", i+1, err)
 		}
 		runtimes = append(runtimes, runtime)

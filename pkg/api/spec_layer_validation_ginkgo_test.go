@@ -17,7 +17,7 @@ var _ = Describe("Structural spec layer validation", func() {
 		Expect(errors.As(err, &structural)).To(BeTrue())
 		Expect(structural.Layer).To(Equal("project.prompt"))
 		Expect(err.Error()).To(ContainSubstring(fragment))
-		_, err = ResolveSpecLayers(layer, RequestSpecLayer("request", Spec{Model: Model{Name: "agent:sonnet"}, Budget: Budget{Timeout: "1m"}}))
+		_, err = ResolveSpecLayers(ResolveSpecOptions{Layers: []SpecLayer{layer, RequestSpecLayer("request", Spec{Model: Model{Name: "agent:sonnet"}, Budget: Budget{Timeout: "1m"}})}})
 		Expect(errors.As(err, &structural)).To(BeTrue())
 	},
 		Entry("budget", Spec{Budget: Budget{Timeout: "tomorrow"}}, "timeout"),
@@ -51,7 +51,7 @@ var _ = Describe("Structural spec layer validation", func() {
 			PromptSpecLayer("unknown.prompt", Spec{Model: Model{Name: "unregistered-model"}}),
 		}
 		Expect(ValidateSpecLayers(layers...)).To(Succeed())
-		composed, err := ComposeSpecLayers(layers...)
+		composed, err := ComposeSpecLayers(ResolveSpecOptions{Layers: layers})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(composed.Spec.Model).To(Equal(Model{Name: "unregistered-model", Mode: ModeAgent, Effort: EffortHigh}))
 		Expect(composed.Trace).To(Equal(layers))

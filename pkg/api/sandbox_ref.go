@@ -18,7 +18,7 @@ import (
 // two are independent, and a run with the sandbox off may still want a
 // restrictive posture.
 type SandboxRef struct {
-	Mode SandboxKind `json:"mode" yaml:"mode"`
+	Mode SandboxKind `json:"mode,omitempty" yaml:"mode,omitempty"`
 	// Backend names a configured Docker or Git Agent backend.
 	Backend string `json:"backend,omitempty" yaml:"backend,omitempty"`
 	// Policy is translated into the active provider's native sandbox settings.
@@ -115,7 +115,7 @@ func (SandboxRef) JSONSchema() *jsonschema.Schema {
 			{
 				Type:                 "object",
 				Properties:           properties,
-				Required:             []string{"mode"},
+				AnyOf:                []*jsonschema.Schema{{Required: []string{"mode"}}, {Required: []string{"backend"}}},
 				AdditionalProperties: jsonschema.FalseSchema,
 			},
 		},
@@ -134,13 +134,23 @@ func (r SandboxRef) Validate() error {
 	if err := r.Mode.Validate(); err != nil {
 		return err
 	}
+	return r.ValidateStructure()
+}
+
+// ValidateStructure permits a named backend pending captured-context selection.
+func (r SandboxRef) ValidateStructure() error {
+	if r.Mode != "" || r.Backend == "" {
+		if err := r.Mode.Validate(); err != nil {
+			return err
+		}
+	}
 	if r.Policy != nil && r.Mode != SandboxNative {
 		return fmt.Errorf("native policy requires sandbox mode native, got %q", r.Mode)
 	}
-	if r.Backend != "" && r.Mode != SandboxDocker && r.Mode != SandboxGitAgent {
+	if r.Backend != "" && r.Mode != "" && r.Mode != SandboxDocker && r.Mode != SandboxGitAgent {
 		return fmt.Errorf("sandbox backend is only valid for docker or git-agent mode, got %q", r.Mode)
 	}
-	if (r.Agent != "" || r.Dispatch != nil) && r.Mode != SandboxGitAgent {
+	if (r.Agent != "" || r.Dispatch != nil) && r.Mode != "" && r.Mode != SandboxGitAgent {
 		return fmt.Errorf("sandbox agent/dispatch settings require git-agent mode, got %q", r.Mode)
 	}
 	if err := r.Policy.Validate(); err != nil {
