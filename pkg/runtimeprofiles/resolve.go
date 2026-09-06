@@ -46,7 +46,7 @@ func (c *Catalog) Resolve(ctx context.Context, ref string) (Resolution, error) {
 	if err != nil {
 		return Resolution{}, err
 	}
-	resolved, err := api.ResolveSpecLayers(resolution.Layers...)
+	resolved, err := api.ResolveSpecLayers(api.ResolveSpecOptions{Layers: resolution.Layers})
 	if err != nil {
 		return Resolution{}, err
 	}

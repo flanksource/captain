@@ -97,7 +97,7 @@ func registerRuntimeProfileEntity() {
 }
 
 func listRuntimeProfiles(ctx context.Context, opts RuntimeProfileListOptions) ([]RuntimeProfileRecord, error) {
-	catalog, err := buildRuntimeCatalog(ctx)
+	catalog, err := buildRuntimeCatalog(ctx, runtimeprofiles.DefaultCatalogOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +132,7 @@ func runtimeProfileCandidates(ctx context.Context, catalog *runtimeprofiles.Cata
 }
 
 func getRuntimeProfile(ctx context.Context, id string) (RuntimeProfileRecord, error) {
-	catalog, err := buildRuntimeCatalog(ctx)
+	catalog, err := buildRuntimeCatalog(ctx, runtimeprofiles.DefaultCatalogOptions{})
 	if err != nil {
 		return RuntimeProfileRecord{}, err
 	}
@@ -155,7 +155,7 @@ func createRuntimeProfile(ctx context.Context, body map[string]any) (RuntimeProf
 	if err != nil {
 		return RuntimeProfileRecord{}, err
 	}
-	catalog, err := buildRuntimeCatalog(ctx)
+	catalog, err := buildRuntimeCatalog(ctx, runtimeprofiles.DefaultCatalogOptions{})
 	if err != nil {
 		return RuntimeProfileRecord{}, err
 	}
@@ -181,7 +181,7 @@ func updateRuntimeProfile(ctx context.Context, id string, body map[string]any) (
 	if err != nil {
 		return RuntimeProfileRecord{}, err
 	}
-	catalog, err := buildRuntimeCatalog(ctx)
+	catalog, err := buildRuntimeCatalog(ctx, runtimeprofiles.DefaultCatalogOptions{})
 	if err != nil {
 		return RuntimeProfileRecord{}, err
 	}
@@ -193,7 +193,7 @@ func updateRuntimeProfile(ctx context.Context, id string, body map[string]any) (
 }
 
 func deleteRuntimeProfile(ctx context.Context, id string) error {
-	catalog, err := buildRuntimeCatalog(ctx)
+	catalog, err := buildRuntimeCatalog(ctx, runtimeprofiles.DefaultCatalogOptions{})
 	if err != nil {
 		return err
 	}
@@ -204,7 +204,7 @@ func deleteRuntimeProfile(ctx context.Context, id string) error {
 // GET /api/v1/runtime-profile/{id}/resolve: the profile with its references
 // canonicalised, the presets in reference order, and the resolved spec.
 func resolveRuntimeProfileAction(ctx context.Context, id string, _ map[string]string) (runtimeprofiles.Resolution, error) {
-	catalog, err := buildRuntimeCatalog(ctx)
+	catalog, err := buildRuntimeCatalog(ctx, runtimeprofiles.DefaultCatalogOptions{})
 	if err != nil {
 		return runtimeprofiles.Resolution{}, err
 	}

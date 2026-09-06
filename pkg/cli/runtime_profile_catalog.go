@@ -20,13 +20,12 @@ func ContextWithRuntimeCatalog(ctx context.Context, catalog *runtimeprofiles.Cat
 // buildRuntimeCatalog assembles the preset and profile sources: the monitored
 // database, the user's ~/.config/captain directories, the directories named in
 // ~/.captain.yaml, and the repository's .captain directories.
-func buildRuntimeCatalog(ctx context.Context) (*runtimeprofiles.Catalog, error) {
+func buildRuntimeCatalog(ctx context.Context, options runtimeprofiles.DefaultCatalogOptions) (*runtimeprofiles.Catalog, error) {
 	if catalog, ok := ctx.Value(runtimeCatalogContextKey{}).(*runtimeprofiles.Catalog); ok && catalog != nil {
 		return catalog, nil
 	}
-	return runtimeprofiles.NewDefaultCatalog(ctx, runtimeprofiles.DefaultCatalogOptions{
-		Read: captainDB, Write: captainDefaultDB,
-	})
+	options.Read, options.Write = captainDB, captainDefaultDB
+	return runtimeprofiles.NewDefaultCatalog(ctx, options)
 }
 
 // runtimeCatalogError maps catalog failures onto HTTP statuses for the entity
