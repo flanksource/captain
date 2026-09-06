@@ -9,9 +9,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/flanksource/captain/pkg/ai"
 	promptlib "github.com/flanksource/captain/pkg/ai/prompt"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/captainconfig"
 	"github.com/flanksource/captain/pkg/claude"
 	clickyrpc "github.com/flanksource/clicky/rpc"
 )
@@ -37,10 +37,18 @@ func readStdinIfCLI(ctx context.Context) string {
 // id) > --prompt/-p text > piped stdin. usedStdin reports whether stdin became
 // the prompt body (so the caller does not also expose it as the {{input}}
 // variable).
-func loadPromptContent(ctx context.Context, id string, opts AIPromptOptions, stdin string) (content, source string, usedStdin bool, record promptRecord, err error) {
+type promptContentOptions struct {
+	ID     string
+	Prompt AIPromptOptions
+	Stdin  string
+	Config *captainconfig.Config
+}
+
+func loadPromptContent(ctx context.Context, options promptContentOptions) (content, source string, usedStdin bool, record promptRecord, err error) {
+	id, opts, stdin := options.ID, options.Prompt, options.Stdin
 	switch {
 	case strings.TrimSpace(id) != "":
-		record, err := resolvePromptRecord(ctx, id)
+		record, err := resolvePromptRecord(ctx, promptRecordOptions{ID: id, Config: options.Config})
 		if err != nil {
 			return "", "", false, promptRecord{}, err
 		}
@@ -89,42 +97,32 @@ func promptVars(opts AIPromptOptions, varsJSON, stdin string, usedStdin bool) (m
 	return data, nil
 }
 
-// renderLoadedContent renders already-loaded .prompt content with vars, layers
-// the selected runtime profile (--runtime-profile, else the frontmatter pin)
-// beneath the frontmatter, overlays the CLI options, tags the source, and
-// normalizes the context dir. The flags are not a spec layer yet: overlayCLI
-// also folds saved defaults, API keys and the sandbox selection, none of which
-// are Spec fields, so it stays the step above the resolved layers.
-func renderLoadedContent(ctx context.Context, content, source string, vars map[string]any, opts AIPromptOptions) (ai.Request, ai.Config, api.ResolvedSpec, error) {
-	frontmatter, _, err := promptlib.Load(content).Render(vars, nil)
+func renderLoadedLayers(ctx context.Context, content, source string, vars map[string]any, opts AIPromptOptions, saved captainconfig.Config) ([]api.SpecLayer, error) {
+	frontmatter, _, err := promptlib.Load(content).Render(promptlib.RenderOptions{Data: vars, Declared: true})
 	if err != nil {
-		return ai.Request{}, ai.Config{}, api.ResolvedSpec{}, err
+		return nil, err
 	}
 	frontmatter.Prompt.Source = source
-	resolved, err := resolveRenderLayers(ctx, source, content, frontmatter, PromptRenderRequest{RuntimeProfile: opts.RuntimeProfile})
+	layers, err := renderLayers(ctx, source, content, frontmatter, PromptRenderRequest{RuntimeProfile: opts.RuntimeProfile}, saved)
 	if err != nil {
-		return ai.Request{}, ai.Config{}, api.ResolvedSpec{}, err
+		return nil, err
 	}
-	layered := resolved.Spec
-	foldSkillPolicies(&layered)
-	req, cfg, err := overlayCLI(layered, configFromResolved(layered), opts)
+	promptFlags, err := opts.promptSpec()
 	if err != nil {
-		return ai.Request{}, ai.Config{}, api.ResolvedSpec{}, err
+		return nil, err
 	}
-	req.Prompt.Source = source
-	cwd, err := os.Getwd()
-	if err != nil {
-		return ai.Request{}, ai.Config{}, api.ResolvedSpec{}, fmt.Errorf("get working directory: %w", err)
+	if len(promptFlags.Prompt.Attachments) > 0 {
+		promptFlags.Prompt.Attachments = append(append([]api.AttachmentRef(nil), frontmatter.Prompt.Attachments...), promptFlags.Prompt.Attachments...)
 	}
-	if err := normalizePromptContextDir(&req, cwd); err != nil {
-		return ai.Request{}, ai.Config{}, api.ResolvedSpec{}, err
+	if len(promptFlags.Fields()) > 0 {
+		layers = append(layers, api.RequestSpecLayer("prompt flags", promptFlags))
 	}
-	return req, cfg, resolved, nil
+	return layers, nil
 }
 
 // actionFlagsToOptions reconstructs the typed AIPromptOptions from the entity
 // action's stringly-typed flag map (clicky CSV-encodes []string and "true"/"false"
-// for bool), so the render/run core can reuse overlayCLI.
+// for bool). Only changed flags are present, including explicit false values.
 func actionFlagsToOptions(f map[string]string) (AIPromptOptions, error) {
 	var o AIPromptOptions
 	o.Model = f["model"]
@@ -171,6 +169,11 @@ func actionFlagsToOptions(f map[string]string) (AIPromptOptions, error) {
 	o.MultiModels = flagSlice(f["multi-models"])
 	o.Timeout = f["timeout"]
 	o.NoStream = flagBool(f["no-stream"])
+	for flag, path := range runtimeFlagFields {
+		if _, present := f[flag]; present {
+			o.AIRuntimeOptions = o.WithExplicit(path)
+		}
+	}
 	return o, nil
 }
 

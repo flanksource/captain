@@ -11,6 +11,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/runtimeprofiles"
 	clickyrpc "github.com/flanksource/clicky/rpc"
 	"github.com/spf13/cobra"
 )
@@ -83,7 +84,10 @@ func PromptSchemaDocument(ctx context.Context) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	saved := loadSavedConfig()
+	saved, err := loadSavedConfig()
+	if err != nil {
+		return nil, err
+	}
 	doc, err := buildPromptSchemaDocument(adapters, saved.Sandbox)
 	if err != nil {
 		return nil, err
@@ -98,7 +102,7 @@ func PromptSchemaDocument(ctx context.Context) (map[string]any, error) {
 		return nil, err
 	}
 	doc["sources"] = sources
-	catalog, err := buildRuntimeCatalog(ctx)
+	catalog, err := buildRuntimeCatalog(ctx, runtimeprofiles.DefaultCatalogOptions{Config: &saved})
 	if err != nil {
 		return nil, err
 	}

@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/api/registry"
 	"github.com/flanksource/captain/pkg/captainconfig"
@@ -19,7 +18,7 @@ func TestResolveSandboxSelection_Precedence(t *testing.T) {
 	}
 
 	t.Run("flag beats frontmatter", func(t *testing.T) {
-		got, err := resolveSandboxSelection("off", &api.SandboxRef{Mode: api.SandboxDocker, Backend: "pool"}, defaults)
+		got, err := resolveSandboxSelection(sandboxSelectionOptions{Selector: "off", Spec: api.Spec{Sandbox: &api.SandboxRef{Mode: api.SandboxDocker, Backend: "pool"}}, Saved: defaults})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -29,7 +28,7 @@ func TestResolveSandboxSelection_Precedence(t *testing.T) {
 	})
 
 	t.Run("frontmatter beats the global default", func(t *testing.T) {
-		got, err := resolveSandboxSelection("", &api.SandboxRef{Mode: api.SandboxDocker, Backend: "pool"}, defaults)
+		got, err := resolveSandboxSelection(sandboxSelectionOptions{Spec: api.Spec{Sandbox: &api.SandboxRef{Mode: api.SandboxDocker, Backend: "pool"}}, Saved: defaults})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -39,7 +38,7 @@ func TestResolveSandboxSelection_Precedence(t *testing.T) {
 	})
 
 	t.Run("global default applies when nothing else selects", func(t *testing.T) {
-		got, err := resolveSandboxSelection("", nil, defaults)
+		got, err := resolveSandboxSelection(sandboxSelectionOptions{Saved: defaults})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -49,7 +48,7 @@ func TestResolveSandboxSelection_Precedence(t *testing.T) {
 	})
 
 	t.Run("everything empty resolves to off", func(t *testing.T) {
-		got, err := resolveSandboxSelection("", nil, captainconfig.SandboxDefaults{})
+		got, err := resolveSandboxSelection(sandboxSelectionOptions{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -59,7 +58,7 @@ func TestResolveSandboxSelection_Precedence(t *testing.T) {
 	})
 
 	t.Run("git-agent resolves now that remote execution is wired", func(t *testing.T) {
-		got, err := resolveSandboxSelection("git-agent", nil, defaults)
+		got, err := resolveSandboxSelection(sandboxSelectionOptions{Selector: "git-agent", Saved: defaults})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -69,7 +68,7 @@ func TestResolveSandboxSelection_Precedence(t *testing.T) {
 	})
 
 	t.Run("an unknown selector fails loud", func(t *testing.T) {
-		_, err := resolveSandboxSelection("nope", nil, defaults)
+		_, err := resolveSandboxSelection(sandboxSelectionOptions{Selector: "nope", Saved: defaults})
 		if err == nil || !strings.Contains(err.Error(), `unknown sandbox "nope"`) {
 			t.Fatalf("err = %v", err)
 		}
@@ -93,7 +92,7 @@ func TestActionFlags_ModeSandboxConflictRejected(t *testing.T) {
 		t.Fatalf("Mode = %q: --mode must survive actionFlagsToOptions", opts.Mode)
 	}
 
-	_, _, err = overlayCLI(baseFileReq(), ai.Config{}, opts)
+	_, _, err = runtimeLayersForTest(baseFileReq(), opts)
 	if err == nil || !strings.Contains(err.Error(), "requires cli mode") {
 		t.Fatalf("err = %v, want the API-mode × container-sandbox contradiction rejected", err)
 	}

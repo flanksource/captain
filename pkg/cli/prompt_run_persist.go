@@ -42,46 +42,31 @@ func persistPromptRun(ctx context.Context, input promptRunRecordInput) {
 	if input.Binding == nil && strings.TrimSpace(input.SessionID) == "" {
 		return
 	}
-	source := transcriptSource(input.Provider, input.Mode)
-	if source == "" {
-		source = "claude"
-	}
 	db, err := captainDefaultDB(ctx)
 	if err != nil {
 		log.Errorf("persist prompt run for session %s: %v", input.SessionID, err)
-		return
-	}
-	var session *database.Session
-	if input.Binding != nil {
-		session, err = db.GetSession(ctx, input.Binding.SessionID)
-		if err == nil && strings.TrimSpace(input.SessionID) != "" {
-			providerSessionID := strings.TrimSpace(input.SessionID)
-			session, err = db.UpdateSessionState(ctx, database.UpdateSessionStateInput{
-				ID: session.ID, ExpectedVersion: session.StateVersion, ProviderSessionID: &providerSessionID,
-			})
-		}
-	} else {
-		session, err = db.CreateOrGetSession(ctx, database.CreateSessionInput{
-			ProviderSessionID: input.SessionID, Source: source, HostID: captainHostID(),
-			Provider: providerName(input.Provider), CWD: input.Rendered.Input.Cwd(),
-		})
-	}
-	if err != nil {
-		log.Errorf("persist prompt run for session %s: %v", firstNonEmpty(input.SessionID, bindingSessionID(input.Binding)), err)
 		return
 	}
 	batchID := input.BatchID
 	if input.Binding != nil {
 		batchID = &input.Binding.BatchID
 	}
+	var session *database.Session
 	var runID uuid.UUID
 	err = db.Transaction(ctx, func(tx *database.DB) error {
+		var executionSessionID *uuid.UUID
+		var sessionErr error
+		session, executionSessionID, sessionErr = preparePromptRunSession(ctx, tx, input)
+		if sessionErr != nil {
+			return sessionErr
+		}
 		run, createErr := tx.CreatePromptRun(ctx, database.CreatePromptRunInput{
-			SessionID:    session.ID,
-			BatchID:      batchID,
-			Origin:       "captain",
-			AdmissionKey: input.RunID,
-			RenderedSpec: renderedSpecMap(input.Rendered),
+			SessionID:          session.ID,
+			ExecutionSessionID: executionSessionID,
+			BatchID:            batchID,
+			Origin:             "captain",
+			AdmissionKey:       input.RunID,
+			RenderedSpec:       renderedSpecMap(input.Rendered),
 			Runtime: database.PromptRunRuntime{
 				Mode: "run",
 				Resolved: database.PromptRunRuntimeSelection{
@@ -132,7 +117,46 @@ func persistPromptRun(ctx context.Context, input promptRunRecordInput) {
 		lifecycle = database.SessionLifecycleFailed
 	}
 	updatePromptSessionLifecycle(ctx, session.ID, lifecycle, input.Error)
-	trackLaunchedTranscript(input, source)
+	trackLaunchedTranscript(input, transcriptSource(input.Provider, input.Mode))
+}
+
+func preparePromptRunSession(ctx context.Context, tx *database.DB, input promptRunRecordInput) (*database.Session, *uuid.UUID, error) {
+	if input.Binding == nil {
+		source := transcriptSource(input.Provider, input.Mode)
+		if source == "" {
+			source = "claude"
+		}
+		session, err := tx.CreateOrGetSession(ctx, database.CreateSessionInput{
+			ProviderSessionID: input.SessionID, Source: source, HostID: captainHostID(),
+			Provider: providerName(input.Provider), CWD: input.Rendered.Input.Cwd(),
+		})
+		return session, nil, err
+	}
+
+	session, err := tx.GetSession(ctx, input.Binding.SessionID)
+	providerSessionID := strings.TrimSpace(input.SessionID)
+	if err != nil || providerSessionID == "" {
+		return session, nil, err
+	}
+	session, err = tx.UpdateSessionState(ctx, database.UpdateSessionStateInput{
+		ID: session.ID, ExpectedVersion: session.StateVersion, ProviderSessionID: &providerSessionID,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	source := transcriptSource(input.Provider, input.Mode)
+	if source == "" {
+		return session, nil, nil
+	}
+	transcript, err := tx.CreateOrGetSession(ctx, database.CreateSessionInput{
+		ProviderSessionID: providerSessionID, Source: source, HostID: session.HostID,
+		Provider: providerName(input.Provider), CWD: session.CWD,
+		ParentSessionID: &session.ID, ParentRelation: database.SessionParentRelationTranscript,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return session, &transcript.ID, nil
 }
 
 // upsertPromptRunIterations writes the run's per-turn rows after the run row

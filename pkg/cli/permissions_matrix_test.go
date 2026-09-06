@@ -136,8 +136,8 @@ func TestPermissionsMatrixCoversEveryRuntime(t *testing.T) {
 // producing an empty or full matrix — the same fail-loud rule the declaration
 // itself follows.
 func TestPermissionsMatrixRejectsUnknownSelectors(t *testing.T) {
-	if _, err := RunPermissionsMatrix(PermissionsMatrixOptions{Provider: "claude"}); err == nil {
-		t.Fatal("a family nickname that is not a provider key should be refused")
+	if _, err := RunPermissionsMatrix(PermissionsMatrixOptions{Provider: "acme"}); err == nil {
+		t.Fatal("an unknown provider should be refused")
 	}
 	if _, err := RunPermissionsMatrix(PermissionsMatrixOptions{Mode: "sdk"}); err == nil {
 		t.Fatal("an unknown runtime mode should be refused")

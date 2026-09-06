@@ -57,7 +57,12 @@ func TestExecuteSyncRunMultiModelsParallel(t *testing.T) {
 	defer cancel()
 	rendered := testRenderedPrompt(api.Model{Name: "claude-sonnet-5", Mode: api.ModeAPI})
 	rendered.Input.SetCwd(t.TempDir())
-	got, err := executeSyncRun(ctx, rendered, AIPromptOptions{MultiModels: []string{"cli:sonnet-5,cmux:opus"}})
+	opts := AIPromptOptions{MultiModels: []string{"cli:sonnet-5,cmux:opus"}}
+	rendered, err := testRenderedVariants(rendered.Input, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := executeSyncRun(ctx, rendered, opts)
 	if err != nil {
 		t.Fatalf("executeSyncRun: %v", err)
 	}
@@ -109,7 +114,12 @@ func TestExecuteSyncRunMultiModelsHonorsNoStream(t *testing.T) {
 	}
 
 	rendered := testRenderedPrompt(api.Model{Name: "claude-sonnet-5", Mode: api.ModeAPI})
-	got, err := executeSyncRun(context.Background(), rendered, AIPromptOptions{MultiModels: []string{"cli:sonnet-5"}, NoStream: true})
+	opts := AIPromptOptions{MultiModels: []string{"cli:sonnet-5"}, NoStream: true}
+	rendered, err := testRenderedVariants(rendered.Input, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := executeSyncRun(context.Background(), rendered, opts)
 	if err != nil {
 		t.Fatalf("executeSyncRun: %v", err)
 	}
@@ -139,7 +149,12 @@ func TestExecuteSyncRunMultiModelsPartialFailure(t *testing.T) {
 	}
 
 	rendered := testRenderedPrompt(api.Model{Name: "gpt-5.5", Mode: api.ModeAPI})
-	got, err := executeSyncRun(context.Background(), rendered, AIPromptOptions{MultiModels: []string{"api:gpt-5.5,cmux:gpt-5.5"}})
+	opts := AIPromptOptions{MultiModels: []string{"api:gpt-5.5,cmux:gpt-5.5"}}
+	rendered, err := testRenderedVariants(rendered.Input, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := executeSyncRun(context.Background(), rendered, opts)
 	if err != nil {
 		t.Fatalf("executeSyncRun: %v", err)
 	}
@@ -154,7 +169,12 @@ func TestExecuteSyncRunMultiModelsPartialFailure(t *testing.T) {
 func TestExecuteSyncRunMultiModelsRejectsResume(t *testing.T) {
 	rendered := testRenderedPrompt(api.Model{Name: "gpt-5.5", Mode: api.ModeAPI})
 	rendered.Input.SessionID = "session-1"
-	_, err := executeSyncRun(context.Background(), rendered, AIPromptOptions{MultiModels: []string{"api:gpt-5.5,cmux:gpt-5.5"}})
+	opts := AIPromptOptions{MultiModels: []string{"api:gpt-5.5,cmux:gpt-5.5"}}
+	rendered, err := testRenderedVariants(rendered.Input, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = executeSyncRun(context.Background(), rendered, opts)
 	if err == nil || !strings.Contains(err.Error(), "--resume") {
 		t.Fatalf("error = %v, want --resume rejection", err)
 	}
@@ -162,7 +182,7 @@ func TestExecuteSyncRunMultiModelsRejectsResume(t *testing.T) {
 
 func TestVariantModelUsesSelectorEffort(t *testing.T) {
 	selector := api.Model{Name: "gpt-5.6-terra", Mode: api.ModeCmux, Effort: api.EffortUltra}
-	got := variantModel(selector, nil)
+	got := renderVariant(PromptRenderResult{}, testRuntimeVariant(selector)).Input.Model
 	if got.Name != selector.Name || got.Provider != selector.Provider || got.Mode != selector.Mode || got.Effort != api.EffortUltra {
 		t.Fatalf("variant = %+v, want selector model/runtime/effort", got)
 	}
@@ -313,4 +333,17 @@ func testRenderedPrompt(model api.Model) PromptRenderResult {
 		Input:    req,
 		Config:   cfg,
 	}
+}
+
+func testRuntimeVariant(model api.Model) AIRuntimeResolved {
+	spec := api.Spec{Model: model}
+	return AIRuntimeResolved{Request: spec, Config: ai.Config{Model: model}, Resolution: api.ResolvedSpec{Spec: spec}}
+}
+
+func testRenderedVariants(spec api.Spec, options AIPromptOptions) (PromptRenderResult, error) {
+	return completePromptRender(promptRenderInput{
+		Record: promptRecord{Rel: "test.prompt"}, Content: "hello", Options: options,
+		Layers:   []api.SpecLayer{api.PromptSpecLayer("test.prompt", spec)},
+		Runtimes: fallbackModelsFromFlags(options.MultiModels),
+	})
 }

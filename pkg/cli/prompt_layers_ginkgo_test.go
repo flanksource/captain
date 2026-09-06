@@ -278,7 +278,8 @@ var _ = Describe("prompt layers", func() {
 		Expect(rendered.Input.Budget.MaxTurns).To(Equal(2), "the flag stays above the resolved layers")
 		Expect(rendered.Input.Permissions.Mode).To(Equal(api.PermissionPlan))
 		Expect(rendered.Input.Memory.SkipUser).To(BeTrue())
-		Expect(traceNames(rendered.Resolution)).To(Equal([]string{"Org", "Review run spec", "layered.prompt"}))
+		Expect(traceNames(rendered.Resolution)).To(Equal([]string{"Org", "Review run spec", "layered.prompt", "CLI flags"}))
+		Expect(rendered.Resolution.Provenance["/budget/maxTurns"].Source.Name).To(Equal("CLI flags"))
 	})
 
 	It("never consults the catalog for a render without a profile reference or pin", func() {

@@ -56,14 +56,37 @@ var _ = Describe("chat runtime profile provider", func() {
 		Expect(profile.Composed.Spec.Cwd()).To(Equal(cwd), "the base layer survives")
 	})
 
-	It("serves the base layer alone when nothing selects a profile", func() {
-		f := chatCatalog()
+	It("serves a model-free base layer when nothing selects a profile or saved model", func() {
+		f, _, _ := newRuntimeCatalogFixture()
 
 		profile, err := captainChatProfileProvider(GinkgoT().TempDir()).RuntimeProfile(f.ctx)
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(profile.Composed.Trace).To(HaveExactElements(HaveField("Name", "captain serve")))
-		Expect(profile.Composed.Spec.Model.Name).To(Equal("sol"))
+		Expect(profile.Composed.Spec.Model.Name).To(BeEmpty())
+	})
+
+	It("takes model settings from one saved snapshot while keeping them out of authored layers", func() {
+		f, _, _ := newRuntimeCatalogFixture()
+		Expect(captainconfig.Save(captainconfig.Config{AI: captainconfig.AIDefaults{DefaultModel: "agent:sonnet:high", BudgetUSD: 4}})).To(Succeed())
+		profile, err := captainChatProfileProvider(GinkgoT().TempDir()).RuntimeProfile(f.ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(profile.Saved).NotTo(BeNil())
+		Expect(profile.Saved.DefaultModel).To(Equal("agent:sonnet:high"))
+		Expect(profile.Composed.Spec.Name).To(Equal("sonnet"))
+		Expect(profile.Composed.Spec.Effort).To(Equal(api.EffortHigh))
+		Expect(profile.Composed.Spec.Budget.Cost).To(Equal(float64(4)))
+		Expect(profile.Composed.Trace[0].Spec.Name).To(BeEmpty())
+		Expect(profile.Composed.Provenance["/model"].Source.Key).To(Equal("ai.defaultModel"))
+		Expect(captainconfig.Save(captainconfig.Config{AI: captainconfig.AIDefaults{DefaultModel: "api:sol"}})).To(Succeed())
+		Expect(profile.Saved.DefaultModel).To(Equal("agent:sonnet:high"))
+	})
+
+	It("rejects malformed saved settings even when an explicit profile supplies a valid model", func() {
+		f := chatCatalog()
+		Expect(captainconfig.Save(captainconfig.Config{AI: captainconfig.AIDefaults{Temperature: 3}})).To(Succeed())
+		_, err := captainChatProfileProvider(GinkgoT().TempDir()).RuntimeProfile(f.ctx, aichat.WithRuntimeProfileRef("plan"))
+		Expect(err).To(MatchError(ContainSubstring("ai.temperature")))
 	})
 
 	It("applies the configured chat default when the request names no profile", func() {
