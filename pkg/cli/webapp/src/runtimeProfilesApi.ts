@@ -29,6 +29,10 @@ type StoredRecord = {
   updatedAt: string;
 };
 
+type EntityRecordMetadata = Partial<StoredRecord> & {
+  _id?: string;
+};
+
 export type StoredRuntimePreset = RuntimePreset & StoredRecord;
 export type StoredRuntimeProfile = RuntimeProfile & StoredRecord;
 
@@ -63,6 +67,11 @@ export type RuntimeProfileResolution = {
   profile: StoredRuntimeProfile;
   presets: StoredRuntimePreset[];
   resolved: ResolvedRuntimeSpec;
+};
+
+type RuntimeProfileResolveInput = {
+  profile: RuntimeProfile & EntityRecordMetadata;
+  presets: Array<RuntimePreset & EntityRecordMetadata>;
 };
 
 /** The catalog's database source id, the default create target. */
@@ -133,7 +142,7 @@ export async function fetchRuntimeProfileResolution(
  * decodes its contract strictly, so only the contract fields are sent.
  */
 export async function resolveRuntimeProfile(
-  request: RuntimeProfileResolveRequest,
+  request: RuntimeProfileResolveInput,
   signal?: AbortSignal,
 ): Promise<ResolvedRuntimeProfile> {
   const body: RuntimeProfileResolveRequest = {
