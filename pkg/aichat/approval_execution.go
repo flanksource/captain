@@ -57,7 +57,7 @@ func (s *Service) resumeToolApproval(ctx context.Context, threadID string, conti
 	if err != nil {
 		return false, fmt.Errorf("load chat runtime profile: %w", err)
 	}
-	if err := enforceApprovalRuntimeProfile(continuation.Spec, profile.Resolved); err != nil {
+	if err := enforceApprovalRuntimeProfile(continuation.Spec, profile.Composed); err != nil {
 		if interruptErr := execution.Interrupt(ctx, err.Error()); interruptErr != nil {
 			return false, fmt.Errorf("%w (interrupt rejected approval continuation: %v)", err, interruptErr)
 		}
@@ -140,7 +140,7 @@ func (s *Service) resumeToolApproval(ctx context.Context, threadID string, conti
 	return true, nil
 }
 
-func enforceApprovalRuntimeProfile(spec api.Spec, resolved api.ResolvedSpec) error {
+func enforceApprovalRuntimeProfile(spec api.Spec, resolved api.ComposedSpec) error {
 	if err := enforceRuntimeQuotas(resolved); err != nil {
 		return err
 	}

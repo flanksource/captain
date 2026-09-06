@@ -35,18 +35,21 @@ func captainChatProfileProvider(cwd string) aichat.RuntimeProfileProvider {
 		if err != nil {
 			return aichat.RuntimeProfile{}, err
 		}
-		resolved, err := api.ResolveSpecLayers(layers...)
+		composed, err := api.ComposeSpecLayers(layers...)
 		if err != nil {
 			return aichat.RuntimeProfile{}, fmt.Errorf("resolve chat runtime profile: %w", err)
 		}
-		return aichat.RuntimeProfile{System: captainChatSystemPrompt, Resolved: resolved}, nil
+		return aichat.RuntimeProfile{System: captainChatSystemPrompt, Composed: composed}, nil
 	})
 }
 
-// chatProfileLayers appends the selected profile's trace to the base layer. A
+// chatProfileLayers appends the selected profile's raw layers to the base. A
 // reference the caller supplied that resolves nowhere is the caller's error; a
 // configured default that fails stays a server error.
 func chatProfileLayers(ctx context.Context, base api.SpecLayer, selection aichat.RuntimeProfileOptions) ([]api.SpecLayer, error) {
+	if err := api.ValidateSpecLayers(base); err != nil {
+		return nil, fmt.Errorf("chat runtime profile base: %w", err)
+	}
 	ref := strings.TrimSpace(selection.Ref)
 	requested := ref != ""
 	if !requested {
@@ -63,12 +66,13 @@ func chatProfileLayers(ctx context.Context, base api.SpecLayer, selection aichat
 	if err != nil {
 		return nil, fmt.Errorf("chat runtime profile %q: %w", ref, err)
 	}
-	resolution, err := catalog.Resolve(ctx, ref)
+	resolution, err := catalog.Layers(ctx, ref)
 	if err != nil {
-		if requested && (errors.Is(err, runtimeprofiles.ErrNotFound) || errors.Is(err, runtimeprofiles.ErrAmbiguous)) {
+		var owned *runtimeprofiles.OwnedLayersError
+		if requested && !errors.As(err, &owned) && (errors.Is(err, runtimeprofiles.ErrNotFound) || errors.Is(err, runtimeprofiles.ErrAmbiguous)) {
 			return nil, aichat.RequestError(http.StatusBadRequest, fmt.Sprintf("runtime profile %q: %v", ref, err))
 		}
 		return nil, fmt.Errorf("chat runtime profile %q: %w", ref, err)
 	}
-	return append([]api.SpecLayer{base}, resolution.Resolved.Trace...), nil
+	return append([]api.SpecLayer{base}, resolution.Layers...), nil
 }

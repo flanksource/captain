@@ -102,7 +102,7 @@ type ProfileInput struct {
 type Resolution struct {
 	Profile  Profile          `json:"profile"`
 	Presets  []Preset         `json:"presets"`
-	Layers   []api.SpecLayer   `json:"-"`
+	Layers   []api.SpecLayer  `json:"-"`
 	Resolved api.ResolvedSpec `json:"resolved"`
 }
 
@@ -175,7 +175,7 @@ func (in PresetInput) validate() error {
 	}
 	preset := api.RuntimePreset{ID: name, Name: name, Scope: in.Scope, Spec: in.Spec}
 	if err := api.ValidateRuntimePreset(preset); err != nil {
-		return fmt.Errorf("%w: %v", ErrInvalid, err)
+		return fmt.Errorf("%w: %w", ErrInvalid, err)
 	}
 	return nil
 }
@@ -209,6 +209,10 @@ func (in ProfileInput) validate() error {
 		if strings.TrimSpace(ref) == "" {
 			return fmt.Errorf("%w: profile %q preset reference %d is blank", ErrInvalid, name, index)
 		}
+	}
+	if err := api.ValidateSpecLayers(api.SpecLayer{Name: name + " run spec", Scope: api.SpecLayerSurface,
+		Source: api.SpecLayerSourceProfile, Spec: in.Spec}); err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalid, err)
 	}
 	return nil
 }
