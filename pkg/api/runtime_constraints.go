@@ -14,6 +14,7 @@ const (
 	RuntimeConstraintInputTokens  RuntimeConstraintViolation = "input_tokens"
 	RuntimeConstraintTokenQuota   RuntimeConstraintViolation = "token_quota"
 	RuntimeConstraintCostQuota    RuntimeConstraintViolation = "cost_quota"
+	RuntimeConstraintPermission   RuntimeConstraintViolation = "permission"
 	RuntimeConstraintInvalidInput RuntimeConstraintViolation = "invalid_input"
 )
 
@@ -24,6 +25,12 @@ type RuntimeConstraintError struct {
 	Quota                UsageQuota
 	EstimatedInputTokens int
 	MaxInputTokens       int
+	Field                string
+	Actual               string
+	Constraint           string
+	ActualLayer          string
+	ConstraintLayer      string
+	ConstraintSource     SpecLayerSource
 }
 
 func (e *RuntimeConstraintError) Error() string {
@@ -38,6 +45,18 @@ func (e *RuntimeConstraintError) Error() string {
 		return fmt.Sprintf("%s quota %q from layer %q is exhausted: %d tokens used of %d", e.Quota.Scope, e.Quota.Name, e.Quota.Layer, e.Quota.TokensUsed, e.Quota.TokenLimit)
 	case RuntimeConstraintCostQuota:
 		return fmt.Sprintf("%s quota %q from layer %q is exhausted: $%.4f used of $%.4f", e.Quota.Scope, e.Quota.Name, e.Quota.Layer, e.Quota.CostUsedUSD, e.Quota.CostLimitUSD)
+	case RuntimeConstraintPermission:
+		actual := e.Actual
+		if actual == "" {
+			actual = "<unset>"
+		}
+		if e.ActualLayer != "" && e.ConstraintLayer != "" {
+			if e.ConstraintSource != "" {
+				return fmt.Sprintf("spec layer %q %s %q exceeds constraint %q from %s layer %q", e.ActualLayer, e.Field, actual, e.Constraint, e.ConstraintSource, e.ConstraintLayer)
+			}
+			return fmt.Sprintf("spec layer %q %s %q exceeds constraint %q from layer %q", e.ActualLayer, e.Field, actual, e.Constraint, e.ConstraintLayer)
+		}
+		return fmt.Sprintf("%s %q exceeds effective permission constraint %q", e.Field, actual, e.Constraint)
 	case RuntimeConstraintInvalidInput:
 		return fmt.Sprintf("estimated input tokens must be non-negative, got %d", e.EstimatedInputTokens)
 	default:
@@ -49,6 +68,9 @@ func (e *RuntimeConstraintError) Error() string {
 // and input ceilings. It never clamps a copy while leaving execution unbounded.
 func ValidateRuntimeConstraints(resolved ResolvedSpec, model Model, estimatedInputTokens int) error {
 	if err := resolved.Constraints.Validate(); err != nil {
+		return err
+	}
+	if err := validatePermissionConstraints(resolved.Spec, resolved.Constraints.Permissions, resolved.Trace); err != nil {
 		return err
 	}
 	if err := validateBudgetLimits(resolved.Spec.Budget, resolved.Constraints.Limits.Budget); err != nil {
@@ -87,6 +109,9 @@ func ValidateRuntimeConstraints(resolved ResolvedSpec, model Model, estimatedInp
 // Validate checks effective constraints without resolving models or merging layers.
 func (constraints RuntimeConstraints) Validate() error {
 	if _, err := strictRunLimits(RunLimits{}, constraints.Limits); err != nil {
+		return fmt.Errorf("runtime constraints: %w", err)
+	}
+	if err := constraints.Permissions.Validate(); err != nil {
 		return fmt.Errorf("runtime constraints: %w", err)
 	}
 	for _, selector := range constraints.Models {
