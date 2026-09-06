@@ -77,6 +77,7 @@ func requestSpec(request ChatRequest, profile RuntimeProfile, attachments map[pa
 	// A requested posture is a permissions concern, so it no longer has to
 	// conjure a sandbox to carry it — the profile's isolation setting stands.
 	user := api.SpecLayer{Name: "chat request", Scope: api.SpecLayerUser, Spec: api.Spec{
+		Explicit:        request.Explicit.Clone(),
 		Model:           override,
 		Budget:          request.Budget,
 		ToolPreferences: request.ToolPreferences,
@@ -85,7 +86,7 @@ func requestSpec(request ChatRequest, profile RuntimeProfile, attachments map[pa
 		SessionID:       request.ProviderSessionID,
 	}}
 	layers := append([]api.SpecLayer(nil), profile.Composed.Trace...)
-	resolved, err := api.ResolveSpecLayers(append(layers, user)...)
+	resolved, err := api.ResolveSpecLayers(api.ResolveSpecOptions{Layers: append(layers, user), Saved: profile.Saved, RequireModel: true})
 	if err != nil {
 		return api.ResolvedSpec{}, fmt.Errorf("resolve chat runtime profile: %w", err)
 	}
@@ -140,6 +141,11 @@ func chatModel(request ChatRequest) (api.Model, error) {
 		selected = *request.Runtime
 	} else if model := strings.TrimSpace(request.Model); model != "" {
 		selected = api.Model{Name: model}
+	}
+	for _, path := range []string{"/model", "/effort", "/temperature"} {
+		if request.Explicit.Has(path) {
+			selected = selected.WithExplicit(path)
+		}
 	}
 	if err := api.ValidateSpecLayers(api.RequestSpecLayer("chat request", api.Spec{Model: selected})); err != nil {
 		return api.Model{}, err
