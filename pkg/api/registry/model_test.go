@@ -139,10 +139,11 @@ func TestModel_Validate_Fallbacks(t *testing.T) {
 // YAML round-trips with their per-model knobs intact.
 func TestModel_FallbacksRoundTrip(t *testing.T) {
 	in := Model{
-		Name: "claude-sonnet-5",
+		Explicit: FieldPresence{"/model": true, "/fallbacks": true},
+		Name:     "claude-sonnet-5",
 		Fallbacks: []Model{
-			{Name: "gpt-4o", Effort: EffortHigh},
-			{Name: "gemini-2.0-flash", Temperature: floatPtr(0.2)},
+			{Name: "gpt-4o", Effort: EffortHigh, Explicit: FieldPresence{"/model": true, "/effort": true}},
+			{Name: "gemini-2.0-flash", Temperature: floatPtr(0.2), Explicit: FieldPresence{"/model": true, "/temperature": true}},
 		},
 	}
 	for _, tc := range []struct {

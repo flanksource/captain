@@ -13,15 +13,9 @@
 //
 // # The invariant
 //
-// Expand, then Merge, then Resolve — once, at the end.
-//
-// Merging an unexpanded override onto a base silently keeps the base's mode:
-// base{Mode: agent}.Merge(Model{Name: "api:opus"}) still says agent, and
-// resolution then runs the wrong runtime. Expand sets Mode only when the string
-// carries a prefix, so a bare `--model opus` correctly inherits the base's mode
-// while `api:opus` correctly overrides it. Every ladder in this package and its
-// callers follows that order; departing from it is how a model string loses its
-// mode again.
+// Preserve authored selectors while layering, then apply saved defaults and
+// resolve once at the complete request boundary. Compact selector pins retain
+// precedence over sibling fields when the final model is expanded.
 package aiflags
 
 import (
@@ -59,24 +53,24 @@ import (
 //
 // No field carries a `default:` tag: defaults only materialize through cobra
 // binding, so a directly-constructed ModelFlags would disagree with a bound one.
-// Zero means unset, everywhere.
+// Explicit records changed flags whose zero values must override saved values.
 type ModelFlags struct {
-	Model       string   `flag:"model" help:"Model name(s), e.g. claude-sonnet-5, a compact selector like agent:opus:high, or a comma-separated primary,fallback list (defaults to the value saved by 'captain configure')"`
-	Fallback    []string `flag:"fallback" help:"Model to try if the primary is unavailable (repeatable; comma-separated allowed)"`
-	Mode        string   `flag:"mode" help:"Runtime mechanism: api|cli|agent|cmux (sdk aliases agent). The provider comes from the model name; a mode prefix on --model wins, and contradicting it fails loud"`
-	Effort      string   `flag:"effort" help:"Reasoning effort: low|medium|high|xhigh|max|ultra (model-dependent)"`
-	Temperature string   `flag:"temperature" help:"Sampling temperature (0.0-2.0)"`
-	NoCache     bool     `flag:"no-cache" help:"Disable response caching"`
+	Explicit    registry.FieldPresence `flag:"-" json:"-" yaml:"-"`
+	Model       string                 `flag:"model" help:"Model name(s), e.g. claude-sonnet-5, a compact selector like agent:opus:high, or a comma-separated primary,fallback list (defaults to the value saved by 'captain configure')"`
+	Fallback    []string               `flag:"fallback" help:"Model to try if the primary is unavailable (repeatable; comma-separated allowed)"`
+	Mode        string                 `flag:"mode" help:"Runtime mechanism: api|cli|agent|cmux (sdk aliases agent). The provider comes from the model name; a mode prefix on --model wins, and contradicting it fails loud"`
+	Effort      string                 `flag:"effort" help:"Reasoning effort: low|medium|high|xhigh|max|ultra (model-dependent)"`
+	Temperature string                 `flag:"temperature" help:"Sampling temperature (0.0-2.0)"`
+	NoCache     bool                   `flag:"no-cache" help:"Disable response caching"`
 }
 
-// ToModel projects the flags onto a Model and expands any compact selector, but
-// does NOT resolve it against the catalog. That is the merge-safe form: callers
-// layering flags over a spec must Merge before resolving (see the package doc).
+// ToModel projects authored flags without normalizing compact selectors.
 func (f ModelFlags) ToModel() (registry.Model, error) {
 	m := registry.Model{
-		Name:    strings.TrimSpace(f.Model),
-		Effort:  registry.Effort(strings.TrimSpace(f.Effort)),
-		NoCache: f.NoCache,
+		Explicit: f.Explicit.Clone(),
+		Name:     strings.TrimSpace(f.Model),
+		Effort:   registry.Effort(strings.TrimSpace(f.Effort)),
+		NoCache:  f.NoCache,
 	}
 	if err := m.Effort.Validate(); err != nil {
 		return registry.Model{}, fmt.Errorf("invalid --effort %q: %w", f.Effort, err)
@@ -97,20 +91,31 @@ func (f ModelFlags) ToModel() (registry.Model, error) {
 	m.Temperature = temp
 	m.Fallbacks = FallbackModels(f.Fallback)
 
-	if m.Name != "" {
-		if m, err = m.Expand(); err != nil {
-			return registry.Model{}, err
-		}
+	if _, err = m.Expand(); err != nil {
+		return registry.Model{}, err
 	}
 	if strings.TrimSpace(f.Mode) != "" {
-		return m.WithMode(m.Mode)
+		if _, err := m.WithMode(m.Mode); err != nil {
+			return registry.Model{}, err
+		}
+		m = m.ExpandCSV()
+		for i := range m.Fallbacks {
+			m.Fallbacks[i].Mode = m.Mode
+		}
 	}
 	return m, nil
 }
 
+// WithExplicit records the JSON-pointer fields set by a flag binder, including
+// --no-cache=false and an explicitly empty --fallback list.
+func (f ModelFlags) WithExplicit(paths ...string) ModelFlags {
+	f.Explicit = (registry.Model{Explicit: f.Explicit}).WithExplicit(paths...).Explicit
+	return f
+}
+
 // Resolve is the one-call path: flags + ~/.captain.yaml → a fully resolved Model.
-// A broken config surfaces as an error; callers that prefer to warn and carry on
-// with zero defaults load their own and use ResolveWith.
+// A broken config surfaces as an error; callers with a captured snapshot use
+// ResolveWith.
 func (f ModelFlags) Resolve() (registry.Model, error) {
 	saved, err := LoadDefaults()
 	if err != nil {
@@ -126,21 +131,18 @@ func (f ModelFlags) ResolveWith(saved captainconfig.AIDefaults) (registry.Model,
 	if err != nil {
 		return registry.Model{}, err
 	}
-	if !f.NoCache && saved.NoCache {
-		m.NoCache = true
-	}
-	if m, err = ApplyDefaults(m, saved); err != nil {
+	applied, err := ApplyDefaults(DefaultOptions{Model: m, Saved: saved})
+	if err != nil {
 		return registry.Model{}, err
 	}
-	return registry.ResolveModel(m)
+	return registry.ResolveModel(applied.Model)
 }
 
 // Overlay layers the flags over an already-structured base (a spec's model),
 // flags winning field by field, and resolves the result once.
 //
-// This is the entry point for callers that have both a config/spec and flags —
-// which is most of them. Doing it by hand is how a caller ends up merging an
-// unexpanded name onto a populated backend and losing the mode.
+// Model-only consumers use this helper. Full request pipelines preserve these
+// authored flags as a layer and resolve their complete specification together.
 func (f ModelFlags) Overlay(base registry.Model) (registry.Model, error) {
 	saved, err := LoadDefaults()
 	if err != nil {
@@ -155,11 +157,11 @@ func (f ModelFlags) OverlayWith(base registry.Model, saved captainconfig.AIDefau
 	if err != nil {
 		return registry.Model{}, err
 	}
-	merged, err := ApplyDefaults(base.Merge(over), saved)
+	merged, err := ApplyDefaults(DefaultOptions{Model: base.Merge(over), Saved: saved})
 	if err != nil {
 		return registry.Model{}, err
 	}
-	return registry.ResolveModel(merged)
+	return registry.ResolveModel(merged.Model)
 }
 
 // Temp parses --temperature. A nil result means unset: an explicit 0 and "unset"
@@ -167,7 +169,7 @@ func (f ModelFlags) OverlayWith(base registry.Model, saved captainconfig.AIDefau
 // from "use the model's default".
 func (f ModelFlags) Temp() (*float64, error) {
 	v, err := parseFloat("temperature", f.Temperature)
-	if err != nil || v == 0 {
+	if err != nil || strings.TrimSpace(f.Temperature) == "" {
 		return nil, err
 	}
 	if v < 0 || v > 2 {
@@ -179,6 +181,9 @@ func (f ModelFlags) Temp() (*float64, error) {
 // FallbackModels turns repeatable/comma-separated --fallback values into models.
 func FallbackModels(flags []string) registry.ModelList {
 	var out registry.ModelList
+	if flags != nil {
+		out = registry.ModelList{}
+	}
 	for _, flag := range flags {
 		for _, name := range strings.Split(flag, ",") {
 			if name = strings.TrimSpace(name); name != "" {
