@@ -42,7 +42,7 @@ func groupsNode(t *testing.T, schemaJSON json.RawMessage) map[string]any {
 }
 
 func TestRenderFrontmatter_InterpolatesOutputSchemaCap(t *testing.T) {
-	req, _, err := Load(templatedSchemaPrompt).Render(map[string]any{"limit": 3}, nil)
+	req, _, err := Load(templatedSchemaPrompt).Render(RenderOptions{Data: map[string]any{"limit": 3}})
 	require.NoError(t, err)
 	assert.Contains(t, req.Prompt.User, "limit 3", "body is still templated normally")
 
@@ -52,7 +52,7 @@ func TestRenderFrontmatter_InterpolatesOutputSchemaCap(t *testing.T) {
 }
 
 func TestRenderFrontmatter_GuardOmitsCapWhenFalsy(t *testing.T) {
-	req, _, err := Load(templatedSchemaPrompt).Render(map[string]any{"limit": 0}, nil)
+	req, _, err := Load(templatedSchemaPrompt).Render(RenderOptions{Data: map[string]any{"limit": 0}})
 	require.NoError(t, err)
 
 	groups := groupsNode(t, req.Prompt.SchemaJSON)
@@ -66,7 +66,7 @@ func TestRenderFrontmatter_NoTemplateIsInert(t *testing.T) {
 	// literal {{limit}} in the BODY still renders — proving only the frontmatter is
 	// pre-rendered.
 	const static = "---\nmodel: claude-sonnet-4-6\n---\nEcho {{limit}}.\n"
-	req, _, err := Load(static).Render(map[string]any{"limit": 5}, nil)
+	req, _, err := Load(static).Render(RenderOptions{Data: map[string]any{"limit": 5}})
 	require.NoError(t, err)
 	assert.Contains(t, req.Prompt.User, "Echo 5.")
 }

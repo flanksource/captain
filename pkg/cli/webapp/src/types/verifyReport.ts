@@ -1,12 +1,14 @@
-/**
- * Local mirror of captain's wire-level verification types (Go source of truth:
- * `pkg/api/verify_report.go`). Kept as a plain type module — no clicky-ui
- * import — so it can later be swapped for that package's own export (once the
- * release carrying `VerificationResults` lands) without touching consumers.
- *
- * Field names stay snake_case to match the JSON the server actually sends;
- * this module does not camelCase or otherwise reshape the wire.
- */
+import type {
+  VerifyChecklistItem,
+  VerifyNode,
+  VerifyNodeContext,
+  VerifyNodeProgress,
+  VerifyReport,
+  VerifyState,
+  VerifySummary,
+} from "@flanksource/clicky-ui/data";
+
+export type { VerifyReport } from "@flanksource/clicky-ui/data";
 
 /** Canonical order mirrors Go's `AllVerifyStates()`. */
 export const VERIFY_STATES = [
@@ -20,86 +22,6 @@ export const VERIFY_STATES = [
   "cancelled",
   "timed_out",
 ] as const;
-
-export type VerifyState = (typeof VERIFY_STATES)[number];
-
-export interface VerifySummary {
-  total: number;
-  passed: number;
-  failed: number;
-  warned: number;
-  skipped: number;
-  pending: number;
-  running: number;
-  timedout: number;
-}
-
-export interface VerifyNodeProgress {
-  phase?: string;
-  done: number;
-  total: number;
-}
-
-export interface VerifyNodeContext {
-  command?: string;
-  exit_code: number;
-  cwd?: string;
-  cel_expression?: string;
-  cel_vars?: Record<string, unknown>;
-  expected?: unknown;
-  actual?: unknown;
-}
-
-export interface VerifyNode {
-  name: string;
-  framework?: string;
-  task_id?: string;
-  file?: string;
-  line?: number;
-  message?: string;
-  command?: string;
-  work_dir?: string;
-  stdout?: string;
-  stderr?: string;
-  duration?: number;
-  passed?: boolean;
-  failed?: boolean;
-  warned?: boolean;
-  skipped?: boolean;
-  pending?: boolean;
-  running?: boolean;
-  timed_out?: boolean;
-  progress?: VerifyNodeProgress;
-  context?: VerifyNodeContext;
-  /** Rolled-up counts for this node's subtree, same shape as the report summary. */
-  summary?: VerifySummary;
-  detail?: unknown;
-  children?: VerifyNode[];
-}
-
-export interface VerifyChecklistItem {
-  item: string;
-  passed: boolean | null;
-  message?: string;
-}
-
-export interface VerifyReport {
-  kind: string;
-  name?: string;
-  ran: boolean;
-  passed: boolean;
-  reason?: string;
-  feedback?: string;
-  /** 1-based loop turn ("turn 1 of 3"); always on the wire. */
-  iteration: number;
-  summary: VerifySummary;
-  tests?: VerifyNode[];
-  checklist?: VerifyChecklistItem[];
-  state: VerifyState;
-  started_at?: string;
-  finished_at?: string;
-  duration?: number;
-}
 
 /** The `verify` SSE event payload: the newest report, and whether it is the
  * verdict (`done: true`) or a still-running snapshot (`done: false`). */

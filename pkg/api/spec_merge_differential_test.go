@@ -374,6 +374,10 @@ func randomValue(rnd *rand.Rand, v reflect.Value, depth int) {
 	if !v.CanSet() || depth > randomMaxDepth {
 		return
 	}
+	// Authorship metadata is exercised by presence tests, not arbitrary keys.
+	if v.Type() == reflect.TypeOf(FieldPresence(nil)) {
+		return
+	}
 	// Raw JSON is a []byte to Go but not to anything that reads it, and the
 	// diagnostics on failure marshal the spec — random bytes would fail there
 	// instead of at the comparison.

@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/flanksource/commons-db/shell"
@@ -13,6 +14,7 @@ import (
 // task-specific profile fields and cannot be represented here.
 type RuntimePresetSpec struct {
 	Model           `json:",inline" yaml:",inline"`
+	Explicit        FieldPresence       `json:"-" yaml:"-"`
 	Budget          Budget              `json:"budget,omitempty" yaml:"budget,omitempty"`
 	Memory          Memory              `json:"memory,omitempty" yaml:"memory,omitempty"`
 	Permissions     Permissions         `json:"permissions,omitempty" yaml:"permissions,omitempty"`
@@ -71,17 +73,15 @@ type RuntimeProfileResolveResponse struct {
 	EffectivePolicy   PermissionPolicy      `json:"effectivePolicy"`
 }
 
-// ResolveRuntimeProfile materializes selected presets, adds the task-specific
-// profile spec, and delegates ordering and structural merge semantics to the
-// canonical Spec layer resolver. A profile references its presets by id or by
-// a name that matches exactly one preset, the runtime catalog's convention.
-func ResolveRuntimeProfile(request RuntimeProfileResolveRequest) (ResolvedSpec, error) {
+// RuntimeProfileLayers materializes selected presets and the profile spec in
+// reference order. Runtime resolution waits until the host adds its other layers.
+func RuntimeProfileLayers(request RuntimeProfileResolveRequest) ([]SpecLayer, error) {
 	if err := validateRuntimeProfile(request.Profile); err != nil {
-		return ResolvedSpec{}, err
+		return nil, err
 	}
 	index, err := indexRuntimePresets(request.Presets)
 	if err != nil {
-		return ResolvedSpec{}, err
+		return nil, err
 	}
 
 	layers := make([]SpecLayer, 0, len(request.Profile.Presets)+1)
@@ -89,10 +89,10 @@ func ResolveRuntimeProfile(request RuntimeProfileResolveRequest) (ResolvedSpec, 
 	for _, ref := range request.Profile.Presets {
 		preset, err := index.lookup(request.Profile.Name, ref)
 		if err != nil {
-			return ResolvedSpec{}, err
+			return nil, err
 		}
 		if _, repeated := selected[preset.ID]; repeated {
-			return ResolvedSpec{}, fmt.Errorf("runtime profile %q repeats preset %q", request.Profile.Name, ref)
+			return nil, fmt.Errorf("runtime profile %q repeats preset %q", request.Profile.Name, ref)
 		}
 		selected[preset.ID] = struct{}{}
 		layers = append(layers, SpecLayer{
@@ -104,25 +104,22 @@ func ResolveRuntimeProfile(request RuntimeProfileResolveRequest) (ResolvedSpec, 
 		ID: request.Profile.ID + ":spec", Source: SpecLayerSourceProfile,
 		Name: request.Profile.Name + " run spec", Scope: SpecLayerSurface, Spec: request.Profile.Spec,
 	})
-	resolved, err := ResolveSpecLayers(layers...)
+	if err := ValidateSpecLayers(layers...); err != nil {
+		return nil, err
+	}
+	return layers, nil
+}
+
+// ResolveRuntimeProfile resolves and validates a profile in isolation for preview.
+// Hosts composing a run use RuntimeProfileLayers before adding their other layers.
+func ResolveRuntimeProfile(request RuntimeProfileResolveRequest) (ResolvedSpec, error) {
+	layers, err := RuntimeProfileLayers(request)
+	if err != nil {
+		return ResolvedSpec{}, err
+	}
+	resolved, err := ResolveSpecLayers(ResolveSpecOptions{Layers: layers})
 	if err != nil {
 		return ResolvedSpec{}, fmt.Errorf("resolve runtime profile %q: %w", request.Profile.Name, err)
-	}
-	// The layers carry an authored model (name plus mode); the validators below
-	// need the resolved adapter, which no longer survives serialization. Derive it
-	// here rather than letting them reject their own input.
-	if strings.TrimSpace(resolved.Spec.Name) != "" {
-		model, modelErr := ResolveModel(resolved.Spec.Model)
-		if modelErr != nil {
-			return ResolvedSpec{}, fmt.Errorf("resolve runtime profile %q model: %w", request.Profile.Name, modelErr)
-		}
-		resolved.Spec.Model = model
-	}
-	if err := validateResolvedSandbox(resolved.Spec); err != nil {
-		return ResolvedSpec{}, err
-	}
-	if err := validateResolvedPermissions(resolved.Spec); err != nil {
-		return ResolvedSpec{}, err
 	}
 	return resolved, nil
 }
@@ -171,7 +168,7 @@ func (i runtimePresetIndex) lookup(profile, ref string) (RuntimePreset, error) {
 
 func (s RuntimePresetSpec) ToSpec() Spec {
 	return Spec{
-		Model: s.Model, Budget: s.Budget, Memory: s.Memory,
+		Model: s.Model, Explicit: s.Explicit.Clone(), Budget: s.Budget, Memory: s.Memory,
 		Permissions: s.Permissions, ToolPreferences: s.ToolPreferences,
 		ToolPolicy: s.ToolPolicy, Setup: s.Setup.toSetup(), Sandbox: s.Sandbox,
 	}
@@ -217,89 +214,60 @@ func validateRuntimePreset(preset RuntimePreset) error {
 	if strings.TrimSpace(preset.Name) == "" {
 		return fmt.Errorf("runtime preset %q name is required", preset.ID)
 	}
-	if scopeRank(preset.Scope) < 0 {
-		return fmt.Errorf("runtime preset %q has invalid scope %q", preset.ID, preset.Scope)
-	}
-	spec := preset.Spec.ToSpec()
-	if !IsEmpty(spec.Model) {
-		if err := spec.Model.Validate(); err != nil {
-			return fmt.Errorf("runtime preset %q model: %w", preset.ID, err)
-		}
-	}
-	if err := spec.Budget.Validate(); err != nil {
-		return fmt.Errorf("runtime preset %q budget: %w", preset.ID, err)
-	}
-	if err := spec.Permissions.Validate(); err != nil {
-		return fmt.Errorf("runtime preset %q permissions: %w", preset.ID, err)
-	}
-	if err := spec.ToolPreferences.Validate(); err != nil {
-		return fmt.Errorf("runtime preset %q: %w", preset.ID, err)
-	}
-	if err := spec.ToolPolicy.Validate(); err != nil {
-		return fmt.Errorf("runtime preset %q: %w", preset.ID, err)
-	}
-	if spec.Sandbox != nil {
-		if err := spec.Sandbox.Validate(); err != nil {
-			return fmt.Errorf("runtime preset %q sandbox: %w", preset.ID, err)
-		}
-	}
-	return nil
+	return ValidateSpecLayers(SpecLayer{ID: preset.ID, Name: preset.Name, Scope: preset.Scope,
+		Source: SpecLayerSourcePreset, Spec: preset.Spec.ToSpec()})
 }
 
-func validateResolvedPermissions(spec Spec) error {
+// UnsupportedPermissions reports settings the selected runtime cannot honour.
+// Callers choose whether these capability diagnostics refuse a run or warn.
+func UnsupportedPermissions(spec Spec) []string {
 	if !hasResolvedPermissionSettings(spec) {
 		return nil
 	}
 	provider, mode, err := spec.Runtime()
 	if err != nil {
-		return fmt.Errorf("permission settings require a resolved runtime: %w", err)
+		return []string{fmt.Sprintf("permission settings require a resolved runtime: %v", err)}
 	}
 	runtime := RuntimeOf(provider, mode)
 	caps := PermissionCapabilitiesFor(runtime)
+	var warnings []string
+	add := func(err error) {
+		if err != nil {
+			warnings = append(warnings, err.Error())
+		}
+	}
 	if posture := spec.Permissions.Mode; posture != "" && !caps.ModeSupport(posture).Honoured() {
-		return fmt.Errorf("permissions.mode %q is not available for %s", posture, runtime)
+		warnings = append(warnings, fmt.Sprintf("permissions.mode %q is not available for %s", posture, runtime))
 	}
-	for _, policy := range spec.Permissions.Tools {
-		if err := requireResolvedToolPolicy(caps, runtime, ProvenanceAgent, policy); err != nil {
-			return err
-		}
+	for _, name := range sortedKeys(spec.Permissions.Tools) {
+		add(requireResolvedToolPolicy(caps, runtime, ProvenanceAgent, spec.Permissions.Tools[name]))
 	}
-	for _, policy := range spec.ToolPreferences {
-		if err := requireResolvedToolPolicy(caps, runtime, ProvenanceCaller, policy); err != nil {
-			return err
-		}
+	for _, name := range sortedKeys(spec.ToolPreferences) {
+		add(requireResolvedToolPolicy(caps, runtime, ProvenanceCaller, spec.ToolPreferences[name]))
 	}
 	for _, rule := range spec.ToolPolicy {
-		if err := requireResolvedToolPolicy(caps, runtime, ProvenanceCaller, rule.Policy); err != nil {
-			return err
-		}
+		add(requireResolvedToolPolicy(caps, runtime, ProvenanceCaller, rule.Policy))
 	}
 	if spec.Permissions.MCP.Disabled {
-		if err := requireResolvedResource(caps, runtime, ResourceKindMCP, ResourceDisabled); err != nil {
-			return err
-		}
+		add(requireResolvedResource(caps, runtime, ResourceKindMCP, ResourceDisabled))
 	}
 	if len(spec.Permissions.MCP.Servers) > 0 {
-		if err := requireResolvedResource(caps, runtime, ResourceKindMCP, ResourceEnabled); err != nil {
-			return err
+		add(requireResolvedResource(caps, runtime, ResourceKindMCP, ResourceEnabled))
+	}
+	for _, name := range sortedKeys(spec.Permissions.MCP.Modes) {
+		add(requireResolvedResource(caps, runtime, ResourceKindMCP, spec.Permissions.MCP.Modes[name]))
+	}
+	for _, name := range sortedKeys(spec.Permissions.Skills) {
+		add(requireResolvedResource(caps, runtime, ResourceKindSkills, spec.Permissions.Skills[name]))
+		if spec.Permissions.Skills[name] == ResourceDisabled && slices.Contains(spec.Memory.Skills, name) &&
+			caps.ResourceSupport(ResourceKindSkills, ResourceEnabled).Honoured() {
+			warnings = append(warnings, fmt.Sprintf("permissions.skills %q is disabled but memory.skills still loads it for %s", name, runtime))
 		}
 	}
-	for _, mode := range spec.Permissions.MCP.Modes {
-		if err := requireResolvedResource(caps, runtime, ResourceKindMCP, mode); err != nil {
-			return err
-		}
+	for _, name := range sortedKeys(spec.Permissions.Plugins) {
+		add(requireResolvedResource(caps, runtime, ResourceKindPlugins, spec.Permissions.Plugins[name]))
 	}
-	for _, mode := range spec.Permissions.Skills {
-		if err := requireResolvedResource(caps, runtime, ResourceKindSkills, mode); err != nil {
-			return err
-		}
-	}
-	for _, mode := range spec.Permissions.Plugins {
-		if err := requireResolvedResource(caps, runtime, ResourceKindPlugins, mode); err != nil {
-			return err
-		}
-	}
-	return nil
+	return warnings
 }
 
 func hasResolvedPermissionSettings(spec Spec) bool {
@@ -310,9 +278,13 @@ func hasResolvedPermissionSettings(spec Spec) bool {
 		len(spec.ToolPreferences) > 0 || len(spec.ToolPolicy) > 0
 }
 
-func validateResolvedSandbox(spec Spec) error {
+// ValidateResolvedSandbox refuses sandbox isolation unsupported by the runtime.
+func ValidateResolvedSandbox(spec Spec) error {
 	if spec.Sandbox == nil {
 		return nil
+	}
+	if err := spec.Sandbox.Validate(); err != nil {
+		return err
 	}
 	provider, mode, err := spec.Runtime()
 	if err != nil {
@@ -321,6 +293,17 @@ func validateResolvedSandbox(spec Spec) error {
 	capabilities := RuntimeSandboxCapabilitiesFor(provider, mode)
 	if !containsSandboxMode(capabilities.Modes, spec.Sandbox.Mode) {
 		return fmt.Errorf("sandbox mode %q is not available for %s", spec.Sandbox.Mode, RuntimeOf(provider, mode))
+	}
+	if mode != ModeAPI {
+		switch provider {
+		case Anthropic:
+			_, err = TranslateClaudeSandbox(RuntimeOf(provider, mode), *spec.Sandbox)
+		case OpenAI:
+			_, err = TranslateCodexSandbox(RuntimeOf(provider, mode), spec.Sandbox, spec.Permissions.Mode)
+		}
+	}
+	if err != nil {
+		return err
 	}
 	return nil
 }

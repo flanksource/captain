@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/captainconfig"
 )
 
 // ErrCatalogUnavailable reports selection against a resolver with no catalog.
@@ -55,6 +56,9 @@ type ResolveOptions struct {
 	DefaultProfile   string
 	SurfaceLayers    []api.SpecLayer
 	RequestLayers    []api.SpecLayer
+	Saved            *captainconfig.AIDefaults
+	RequireModel     bool
+	Normalize        func(api.Spec) (api.SpecNormalization, error)
 }
 
 // ResolveResult retains the selected catalog records and effective spec.
@@ -63,39 +67,57 @@ type ResolveResult struct {
 	Resolved api.ResolvedSpec
 }
 
-// Resolve selects one profile and resolves every layer exactly once.
-func (r *Resolver) Resolve(ctx context.Context, options ResolveOptions) (ResolveResult, error) {
+// LayerResult retains the selected catalog records and unresolved layer stack.
+type LayerResult struct {
+	Profile *Resolution
+	Layers  []api.SpecLayer
+}
+
+// Layers selects one profile and assembles its layers without resolving a model.
+func (r *Resolver) Layers(ctx context.Context, options ResolveOptions) (LayerResult, error) {
 	if r == nil {
-		return ResolveResult{}, fmt.Errorf("runtime profile resolver is required")
+		return LayerResult{}, fmt.Errorf("runtime profile resolver is required")
 	}
 	ref, origin := selectProfile(options)
 	layers := append([]api.SpecLayer(nil), options.BaseLayers...)
 	var profile *Resolution
 	if ref != "" {
 		if r.catalog == nil {
-			return ResolveResult{}, &SelectionError{Origin: origin, Ref: ref, Err: ErrCatalogUnavailable}
+			return LayerResult{}, &SelectionError{Origin: origin, Ref: ref, Err: ErrCatalogUnavailable}
 		}
 		catalog, err := r.catalog(ctx)
 		if err != nil {
-			return ResolveResult{}, &SelectionError{Origin: origin, Ref: ref, Err: err}
+			return LayerResult{}, &SelectionError{Origin: origin, Ref: ref, Err: err}
 		}
 		if catalog == nil {
-			return ResolveResult{}, &SelectionError{Origin: origin, Ref: ref, Err: ErrCatalogUnavailable}
+			return LayerResult{}, &SelectionError{Origin: origin, Ref: ref, Err: ErrCatalogUnavailable}
 		}
-		resolution, err := catalog.Resolve(ctx, ref)
+		resolution, err := catalog.Layers(ctx, ref)
 		if err != nil {
-			return ResolveResult{}, &SelectionError{Origin: origin, Ref: ref, Err: err}
+			return LayerResult{}, &SelectionError{Origin: origin, Ref: ref, Err: err}
 		}
 		profile = &resolution
-		layers = append(layers, resolution.Resolved.Trace...)
+		layers = append(layers, resolution.Layers...)
 	}
 	layers = append(layers, options.SurfaceLayers...)
 	layers = append(layers, options.RequestLayers...)
-	resolved, err := api.ResolveSpecLayers(layers...)
+	if err := api.ValidateSpecLayers(layers...); err != nil {
+		return LayerResult{}, err
+	}
+	return LayerResult{Profile: profile, Layers: api.OrderSpecLayers(layers...)}, nil
+}
+
+// Resolve selects one profile and resolves every layer exactly once.
+func (r *Resolver) Resolve(ctx context.Context, options ResolveOptions) (ResolveResult, error) {
+	layers, err := r.Layers(ctx, options)
+	if err != nil {
+		return ResolveResult{}, err
+	}
+	resolved, err := api.ResolveSpecLayers(api.ResolveSpecOptions{Layers: layers.Layers, Saved: options.Saved, RequireModel: options.RequireModel, Normalize: options.Normalize})
 	if err != nil {
 		return ResolveResult{}, fmt.Errorf("resolve runtime profile layers: %w", err)
 	}
-	return ResolveResult{Profile: profile, Resolved: resolved}, nil
+	return ResolveResult{Profile: layers.Profile, Resolved: resolved}, nil
 }
 
 func selectProfile(options ResolveOptions) (string, SelectionOrigin) {

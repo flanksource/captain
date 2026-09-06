@@ -95,7 +95,7 @@ func listRuntimePresets(ctx context.Context, opts RuntimePresetListOptions) ([]R
 	if err != nil {
 		return nil, err
 	}
-	catalog, err := buildRuntimeCatalog(ctx)
+	catalog, err := buildRuntimeCatalog(ctx, runtimeprofiles.DefaultCatalogOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +120,7 @@ func listRuntimePresets(ctx context.Context, opts RuntimePresetListOptions) ([]R
 }
 
 func getRuntimePreset(ctx context.Context, id string) (RuntimePresetRecord, error) {
-	catalog, err := buildRuntimeCatalog(ctx)
+	catalog, err := buildRuntimeCatalog(ctx, runtimeprofiles.DefaultCatalogOptions{})
 	if err != nil {
 		return RuntimePresetRecord{}, err
 	}
@@ -143,7 +143,7 @@ func createRuntimePreset(ctx context.Context, body map[string]any) (RuntimePrese
 	if err != nil {
 		return RuntimePresetRecord{}, err
 	}
-	catalog, err := buildRuntimeCatalog(ctx)
+	catalog, err := buildRuntimeCatalog(ctx, runtimeprofiles.DefaultCatalogOptions{})
 	if err != nil {
 		return RuntimePresetRecord{}, err
 	}
@@ -169,7 +169,7 @@ func updateRuntimePreset(ctx context.Context, id string, body map[string]any) (R
 	if err != nil {
 		return RuntimePresetRecord{}, err
 	}
-	catalog, err := buildRuntimeCatalog(ctx)
+	catalog, err := buildRuntimeCatalog(ctx, runtimeprofiles.DefaultCatalogOptions{})
 	if err != nil {
 		return RuntimePresetRecord{}, err
 	}
@@ -181,7 +181,7 @@ func updateRuntimePreset(ctx context.Context, id string, body map[string]any) (R
 }
 
 func deleteRuntimePreset(ctx context.Context, id string) error {
-	catalog, err := buildRuntimeCatalog(ctx)
+	catalog, err := buildRuntimeCatalog(ctx, runtimeprofiles.DefaultCatalogOptions{})
 	if err != nil {
 		return err
 	}

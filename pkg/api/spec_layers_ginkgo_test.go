@@ -23,7 +23,7 @@ var _ = Describe("Hierarchical spec profiles", func() {
 			Spec: Spec{Model: Model{Effort: EffortLow}},
 		}
 
-		resolved, err := ResolveSpecLayers(user, surface, context, global)
+		resolved, err := ResolveSpecLayers(ResolveSpecOptions{Layers: []SpecLayer{user, surface, context, global}})
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(resolved.Spec.Model.Name).To(Equal("claude-sonnet-5"))
@@ -54,7 +54,7 @@ var _ = Describe("Hierarchical spec profiles", func() {
 			},
 		}
 
-		resolved, err := ResolveSpecLayers(layers...)
+		resolved, err := ResolveSpecLayers(ResolveSpecOptions{Layers: layers})
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(resolved.Constraints.Models).To(Equal([]string{"claude-sonnet-5", "gpt-5.6-sol"}))
@@ -62,12 +62,12 @@ var _ = Describe("Hierarchical spec profiles", func() {
 		Expect(resolved.AllowsModel(Model{Name: "gpt-5.6-sol"})).To(BeTrue())
 
 		layers[2].Spec.Model.Fallbacks = []Model{{Name: "gpt-5.4"}}
-		_, err = ResolveSpecLayers(layers...)
+		_, err = ResolveSpecLayers(ResolveSpecOptions{Layers: layers})
 		Expect(err).To(MatchError(ContainSubstring(`fallback model "gpt-5.4" is outside the effective model catalog`)))
 	})
 
 	It("normalizes model selectors before intersecting catalogs", func() {
-		resolved, err := ResolveSpecLayers(
+		resolved, err := ResolveSpecLayers(ResolveSpecOptions{Layers: []SpecLayer{
 			SpecLayer{
 				Name: "platform", Scope: SpecLayerGlobal,
 				Constraints: RuntimeConstraints{Models: []string{" gpt-5.4 "}},
@@ -76,14 +76,14 @@ var _ = Describe("Hierarchical spec profiles", func() {
 				Name: "claims", Scope: SpecLayerContext,
 				Constraints: RuntimeConstraints{Models: []string{"gpt-5.4"}},
 			},
-		)
+		}})
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(resolved.Constraints.Models).To(Equal([]string{"gpt-5.4"}))
 	})
 
 	It("uses strict non-zero run ceilings and retains each named quota independently", func() {
-		resolved, err := ResolveSpecLayers(
+		resolved, err := ResolveSpecLayers(ResolveSpecOptions{Layers: []SpecLayer{
 			SpecLayer{
 				Name: "platform", Scope: SpecLayerGlobal,
 				Spec: Spec{Budget: Budget{Cost: 12, MaxTokens: 9000, MaxTurns: 10, Timeout: "10m"}},
@@ -100,7 +100,7 @@ var _ = Describe("Hierarchical spec profiles", func() {
 					Quotas: []UsageQuota{{Name: "claims-monthly", CostLimitUSD: 50, CostUsedUSD: 2}},
 				},
 			},
-		)
+		}})
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(resolved.Spec.Budget).To(Equal(Budget{Cost: 5, MaxTokens: 6000, MaxTurns: 6, Timeout: "5m"}))

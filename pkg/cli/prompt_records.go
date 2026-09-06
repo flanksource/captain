@@ -14,11 +14,12 @@ import (
 
 	promptlib "github.com/flanksource/captain/pkg/ai/prompt"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/captainconfig"
 	dp "github.com/google/dotprompt/go/dotprompt"
 )
 
 func listPromptRecords(ctx context.Context) ([]promptRecord, error) {
-	sources, err := buildPromptSources(ctx)
+	sources, err := buildPromptSources(ctx, promptSourceOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -96,8 +97,13 @@ func listPromptRecordsFromSource(source promptSource) ([]promptRecord, error) {
 	return records, err
 }
 
-func resolvePromptRecord(ctx context.Context, id string) (promptRecord, error) {
-	id = strings.TrimSpace(id)
+type promptRecordOptions struct {
+	ID     string
+	Config *captainconfig.Config
+}
+
+func resolvePromptRecord(ctx context.Context, options promptRecordOptions) (promptRecord, error) {
+	id := strings.TrimSpace(options.ID)
 	if looksLikePromptPath(id) {
 		record, err := filePromptRecord(id)
 		if err == nil {
@@ -107,7 +113,7 @@ func resolvePromptRecord(ctx context.Context, id string) (promptRecord, error) {
 			return promptRecord{}, err
 		}
 	}
-	sources, err := buildPromptSources(ctx)
+	sources, err := buildPromptSources(ctx, promptSourceOptions{Config: options.Config})
 	if err != nil {
 		return promptRecord{}, err
 	}
@@ -281,6 +287,7 @@ func promptRunModels(models []api.Model) []api.Model {
 	out := make([]api.Model, len(models))
 	for index, model := range models {
 		out[index] = api.Model{
+			Explicit:    model.Explicit.Clone(),
 			Name:        model.Name,
 			ID:          model.ID,
 			Mode:        model.Mode,
@@ -295,7 +302,7 @@ func promptRunModels(models []api.Model) []api.Model {
 
 func promptSummaryFromContent(record promptRecord, content string) (PromptSummary, error) {
 	tmpl := promptlib.Load(content)
-	req, cfg, err := tmpl.Render(map[string]any{}, nil)
+	req, cfg, err := tmpl.Render(promptlib.RenderOptions{Data: map[string]any{}, Declared: true})
 	if err != nil {
 		return PromptSummary{}, err
 	}
@@ -313,10 +320,7 @@ func promptSummaryFromContent(record promptRecord, content string) (PromptSummar
 	summary.Model = firstNonEmpty(cfg.Model.Name, req.Name)
 	summary.Mode = firstNonEmpty(string(cfg.Model.Mode), string(req.Mode))
 	summary.RuntimeProfile = inspection.RuntimeProfile
-	summary.Runtimes, err = resolvePromptRuntimes(inspection.Runtimes, cfg.Model)
-	if err != nil {
-		return PromptSummary{}, err
-	}
+	summary.Runtimes = inspection.Runtimes
 	summary.Variables = inspection.Variables
 	return summary, nil
 }

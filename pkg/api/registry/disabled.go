@@ -37,7 +37,7 @@ type DisabledSet struct {
 func NewDisabledSet(modes, providers []string, runtimes []Runtime, models, efforts []string) DisabledSet {
 	return DisabledSet{
 		modes:     tokenSet(modes),
-		providers: tokenSet(providers),
+		providers: providerSet(providers),
 		runtimes:  runtimeSet(runtimes),
 		models:    tokenSet(models),
 		efforts:   tokenSet(efforts),
@@ -50,8 +50,12 @@ func runtimeSet(values []Runtime) map[Runtime]struct{} {
 	}
 	out := make(map[Runtime]struct{}, len(values))
 	for _, v := range values {
+		provider := strings.ToLower(strings.TrimSpace(v.Provider))
+		if known, ok := ProviderByName(provider); ok {
+			provider = known.Name
+		}
 		normalized := Runtime{
-			Provider: strings.ToLower(strings.TrimSpace(v.Provider)),
+			Provider: provider,
 			Mode:     RuntimeMode(strings.ToLower(strings.TrimSpace(string(v.Mode)))),
 		}
 		if normalized.Provider == "" || normalized.Mode == "" {
@@ -61,6 +65,17 @@ func runtimeSet(values []Runtime) map[Runtime]struct{} {
 	}
 	if len(out) == 0 {
 		return nil
+	}
+	return out
+}
+
+func providerSet(values []string) map[string]struct{} {
+	out := tokenSet(values)
+	for token := range out {
+		if provider, ok := ProviderByName(token); ok && token != provider.Name {
+			delete(out, token)
+			out[provider.Name] = struct{}{}
+		}
 	}
 	return out
 }

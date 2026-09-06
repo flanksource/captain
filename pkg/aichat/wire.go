@@ -13,6 +13,7 @@ import (
 
 // ChatRequest is the body posted by the AI SDK DefaultChatTransport.
 type ChatRequest struct {
+	Explicit        api.FieldPresence       `json:"-"`
 	ID              string                  `json:"id,omitempty"`
 	Trigger         string                  `json:"trigger,omitempty"`
 	MessageID       string                  `json:"messageId,omitempty"`
@@ -43,7 +44,12 @@ func (r *ChatRequest) UnmarshalJSON(data []byte) error {
 		return fmt.Errorf("toolApproval is server-owned; resolve approvals through the Captain session approval endpoint")
 	}
 	type wireChatRequest ChatRequest
-	return json.Unmarshal(data, (*wireChatRequest)(r))
+	var decoded wireChatRequest
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*r = ChatRequest(decoded)
+	return r.captureSettings(fields)
 }
 
 // ChatContextItem carries app-owned structured state alongside its readable label.

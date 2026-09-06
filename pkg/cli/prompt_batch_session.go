@@ -36,13 +36,9 @@ func createPromptBatchSessions(ctx context.Context, rendered PromptRenderResult,
 	batch := promptBatchSession{ID: uuid.New(), Runs: make([]promptBatchRun, len(runtimes))}
 	children := make([]database.CreateSessionInput, len(runtimes))
 	for i, runtime := range runtimes {
-		source := transcriptSource(runtime.Provider, runtime.Mode)
-		if source == "" {
-			source = "captain"
-		}
 		batch.Runs[i] = promptBatchRun{SessionID: uuid.New(), Runtime: runtime}
 		children[i] = database.CreateSessionInput{
-			ID: batch.Runs[i].SessionID, Source: source,
+			ID: batch.Runs[i].SessionID, Source: "captain",
 			Provider: providerName(runtime.Provider), HostID: captainHostID(),
 			CWD: rendered.Input.Cwd(), Title: runtime.Name, InitialPrompt: rendered.Input.Prompt.User,
 			AgentType: "model", Description: runtimeSelector(runtime),

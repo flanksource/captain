@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/captainconfig"
 	"github.com/flanksource/captain/pkg/runtimeprofiles"
 )
 
@@ -15,6 +16,7 @@ import (
 type RuntimeProfileBase struct {
 	System         string
 	Layers         []api.SpecLayer
+	Saved          *captainconfig.AIDefaults
 	ProviderConfig api.Config
 }
 
@@ -45,6 +47,14 @@ func NewLayeredRuntimeProfileProvider(options LayeredRuntimeProfileProviderOptio
 		if err != nil {
 			return RuntimeProfile{}, fmt.Errorf("load runtime profile base: %w", err)
 		}
+		if err := api.ValidateSpecLayers(base.Layers...); err != nil {
+			return RuntimeProfile{}, fmt.Errorf("chat runtime profile base: %w", err)
+		}
+		if base.Saved != nil {
+			if err := base.Saved.Validate(); err != nil {
+				return RuntimeProfile{}, fmt.Errorf("chat saved defaults: %w", err)
+			}
+		}
 		var defaultProfile string
 		if request.Ref == "" && options.DefaultProfile != nil {
 			defaultProfile, err = options.DefaultProfile(ctx)
@@ -52,12 +62,13 @@ func NewLayeredRuntimeProfileProvider(options LayeredRuntimeProfileProviderOptio
 				return RuntimeProfile{}, fmt.Errorf("load default runtime profile: %w", err)
 			}
 		}
-		result, err := options.Resolver.Resolve(ctx, runtimeprofiles.ResolveOptions{
+		result, err := options.Resolver.Layers(ctx, runtimeprofiles.ResolveOptions{
 			BaseLayers: base.Layers, RequestedProfile: request.Ref, DefaultProfile: strings.TrimSpace(defaultProfile),
 		})
 		if err != nil {
 			var selection *runtimeprofiles.SelectionError
-			if errors.As(err, &selection) && selection.Origin == runtimeprofiles.SelectionRequested &&
+			var owned *runtimeprofiles.OwnedLayersError
+			if !errors.As(err, &owned) && errors.As(err, &selection) && selection.Origin == runtimeprofiles.SelectionRequested &&
 				(errors.Is(err, runtimeprofiles.ErrNotFound) ||
 					errors.Is(err, runtimeprofiles.ErrAmbiguous) ||
 					errors.Is(err, runtimeprofiles.ErrCatalogUnavailable)) {
@@ -65,8 +76,12 @@ func NewLayeredRuntimeProfileProvider(options LayeredRuntimeProfileProviderOptio
 			}
 			return RuntimeProfile{}, err
 		}
+		composed, err := api.ComposeSpecLayers(api.ResolveSpecOptions{Layers: result.Layers, Saved: base.Saved})
+		if err != nil {
+			return RuntimeProfile{}, fmt.Errorf("compose chat runtime profile: %w", err)
+		}
 		return RuntimeProfile{
-			System: base.System, Resolved: result.Resolved, ProviderConfig: base.ProviderConfig,
+			System: base.System, Composed: composed, Saved: base.Saved, ProviderConfig: base.ProviderConfig,
 		}, nil
 	}), nil
 }

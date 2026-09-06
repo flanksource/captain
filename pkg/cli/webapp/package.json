@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@ai-sdk/react": "^3.0.201",
-    "@flanksource/clicky-ui": "0.3.29",
+    "@flanksource/clicky-ui": "github:flanksource/clicky-ui#e045560b6af4d717250ae66ad48b08c07772d0cd&path:packages/ui",
     "@shikijs/langs": "^1.24.0",
     "@shikijs/themes": "^1.24.0",
     "@shikijs/transformers": "^1.24.0",

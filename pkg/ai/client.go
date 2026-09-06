@@ -28,21 +28,9 @@ func RegisterProvider(runtime Runtime, factory ProviderFactory) {
 // comma-separated Name or a Fallbacks list), a fallback provider is returned that
 // tries each in order on a fallback-eligible failure.
 func NewProvider(cfg Config) (Provider, error) {
-	resolved, err := Resolve(cfg.Model)
+	candidates, err := ResolveCandidates(cfg.Model)
 	if err != nil {
 		return nil, err
-	}
-	cfg.Model = resolved
-	// Each candidate is resolved through the same entry point rather than a
-	// bespoke normalizer: a fallback chain and a substitute picked from the
-	// catalog must land on exactly the ids and modes the primary would.
-	candidates := cfg.Model.Candidates()
-	for i := range candidates {
-		candidate, err := Resolve(candidates[i])
-		if err != nil {
-			return nil, suggestModelName(err, candidates[i].Name)
-		}
-		candidates[i] = candidate
 	}
 	cfg.Model = candidates[0]
 	if len(candidates) > 1 {

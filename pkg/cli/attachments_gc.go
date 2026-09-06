@@ -27,7 +27,11 @@ func RunAttachmentsGC(opts AttachmentsGCOptions) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	retention, err := parseAttachmentRetention(loadSavedConfig().Attachments.WithDefaults().Retention)
+	saved, err := loadSavedConfig()
+	if err != nil {
+		return nil, err
+	}
+	retention, err := parseAttachmentRetention(saved.Attachments.WithDefaults().Retention)
 	if err != nil {
 		return nil, err
 	}

@@ -16,8 +16,8 @@ importers:
         specifier: ^3.0.201
         version: 3.0.216(react@18.3.1)(zod@4.4.3)
       '@flanksource/clicky-ui':
-        specifier: 0.3.29
-        version: 0.3.29(@ai-sdk/react@3.0.216(react@18.3.1)(zod@4.4.3))(@babel/core@7.29.7)(@babel/template@7.29.7)(@shikijs/langs@1.29.2)(@shikijs/themes@1.29.2)(@shikijs/transformers@1.29.2)(@types/react@19.2.17)(ai@6.0.214(zod@4.4.3))(marked@15.0.12)(monaco-editor@0.48.0)(react-dom@18.3.1(react@18.3.1))(react-rnd@10.5.3(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(react@18.3.1)(recharts@3.10.1(@types/react@19.2.17)(react-dom@18.3.1(react@18.3.1))(react-is@17.0.2)(react@18.3.1)(redux@5.0.1))(shiki@1.29.2)(streamdown@2.5.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(tailwindcss@4.3.1)
+        specifier: github:flanksource/clicky-ui#e045560b6af4d717250ae66ad48b08c07772d0cd&path:packages/ui
+        version: https://codeload.github.com/flanksource/clicky-ui/tar.gz/e045560b6af4d717250ae66ad48b08c07772d0cd#path:packages/ui(@ai-sdk/react@3.0.216(react@18.3.1)(zod@4.4.3))(@babel/core@7.29.7)(@babel/template@7.29.7)(@shikijs/langs@1.29.2)(@shikijs/themes@1.29.2)(@shikijs/transformers@1.29.2)(@types/react@19.2.17)(ai@6.0.214(zod@4.4.3))(marked@15.0.12)(monaco-editor@0.48.0)(react-dom@18.3.1(react@18.3.1))(react-rnd@10.5.3(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(react@18.3.1)(recharts@3.10.1(@types/react@19.2.17)(react-dom@18.3.1(react@18.3.1))(react-is@17.0.2)(react@18.3.1)(redux@5.0.1))(shiki@1.29.2)(streamdown@2.5.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(tailwindcss@4.3.1)
       '@shikijs/langs':
         specifier: ^1.24.0
         version: 1.29.2
@@ -426,8 +426,9 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@flanksource/clicky-ui@0.3.29':
-    resolution: {integrity: sha512-iQqRadiTqqfUuhcxAASbZoV3bgHl2UoMvL5NiVO5lQVfUNZlPQYYW3svz2xUWDQdz9mqgNCCtggQClsh3Pdi5A==}
+  '@flanksource/clicky-ui@https://codeload.github.com/flanksource/clicky-ui/tar.gz/e045560b6af4d717250ae66ad48b08c07772d0cd#path:packages/ui':
+    resolution: {gitHosted: true, integrity: sha512-US4YoTqe1mZPnqbdJv70EHo4CVXabShfHaC4OsLbd8M4TphCTr7z4rDwUo0+vs0SLoKm9s2dI4M/sk1rCwWmnw==, path: packages/ui, tarball: https://codeload.github.com/flanksource/clicky-ui/tar.gz/e045560b6af4d717250ae66ad48b08c07772d0cd}
+    version: 0.3.34
     peerDependencies:
       '@ai-sdk/react': ^3.0.0
       '@mdxeditor/editor': ^4.0.4
@@ -2771,7 +2772,7 @@ snapshots:
   '@esbuild/win32-x64@0.28.1':
     optional: true
 
-  '@flanksource/clicky-ui@0.3.29(@ai-sdk/react@3.0.216(react@18.3.1)(zod@4.4.3))(@babel/core@7.29.7)(@babel/template@7.29.7)(@shikijs/langs@1.29.2)(@shikijs/themes@1.29.2)(@shikijs/transformers@1.29.2)(@types/react@19.2.17)(ai@6.0.214(zod@4.4.3))(marked@15.0.12)(monaco-editor@0.48.0)(react-dom@18.3.1(react@18.3.1))(react-rnd@10.5.3(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(react@18.3.1)(recharts@3.10.1(@types/react@19.2.17)(react-dom@18.3.1(react@18.3.1))(react-is@17.0.2)(react@18.3.1)(redux@5.0.1))(shiki@1.29.2)(streamdown@2.5.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(tailwindcss@4.3.1)':
+  '@flanksource/clicky-ui@https://codeload.github.com/flanksource/clicky-ui/tar.gz/e045560b6af4d717250ae66ad48b08c07772d0cd#path:packages/ui(@ai-sdk/react@3.0.216(react@18.3.1)(zod@4.4.3))(@babel/core@7.29.7)(@babel/template@7.29.7)(@shikijs/langs@1.29.2)(@shikijs/themes@1.29.2)(@shikijs/transformers@1.29.2)(@types/react@19.2.17)(ai@6.0.214(zod@4.4.3))(marked@15.0.12)(monaco-editor@0.48.0)(react-dom@18.3.1(react@18.3.1))(react-rnd@10.5.3(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(react@18.3.1)(recharts@3.10.1(@types/react@19.2.17)(react-dom@18.3.1(react@18.3.1))(react-is@17.0.2)(react@18.3.1)(redux@5.0.1))(shiki@1.29.2)(streamdown@2.5.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(tailwindcss@4.3.1)':
     dependencies:
       '@codemirror/autocomplete': 6.20.3
       '@codemirror/commands': 6.11.0

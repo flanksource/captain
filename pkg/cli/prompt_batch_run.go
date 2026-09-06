@@ -12,6 +12,9 @@ import (
 )
 
 func launchAsyncBatch(ctx context.Context, id string, rendered PromptRenderResult, runtimes []api.Model, chat bool) (PromptRunResult, error) {
+	if err := rendered.validateVariants(); err != nil {
+		return PromptRunResult{}, err
+	}
 	if rendered.Input.SessionID != "" {
 		return PromptRunResult{}, errors.New("a multi-model run cannot resume one provider session")
 	}
@@ -36,7 +39,7 @@ func launchAsyncBatch(ctx context.Context, id string, rendered PromptRenderResul
 		i := i
 		run := batch.Runs[i]
 		binding := promptBinding(batch, i)
-		variant := renderVariant(rendered, run.Runtime, nil)
+		variant := renderVariant(rendered, rendered.variants[i])
 		runID := run.SessionID.String()
 		stream := promptRuns.create(runID)
 		capabilities := chatCapabilitiesFor(variant.Provider, variant.Mode)

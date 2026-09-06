@@ -20,7 +20,6 @@
 package prompt
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -101,10 +100,16 @@ func LoadFS(fsys fs.FS, path string) (*Template, error) {
 	return t, nil
 }
 
-// Render executes the template body with data and folds the frontmatter into an
-// ai.Request and ai.Config. When out is non-nil it becomes
-// Request.Prompt.Schema (the structured-output target).
-func (t *Template) Render(data map[string]any, out any) (ai.Request, ai.Config, error) {
+type RenderOptions struct {
+	Data     map[string]any
+	Output   any
+	Declared bool
+}
+
+// Render executes the body and preserves frontmatter and output schemas.
+// Declared leaves model selection authored for subsequent layer resolution.
+func (t *Template) Render(options RenderOptions) (ai.Request, ai.Config, error) {
+	data, out := options.Data, options.Output
 	src, err := renderFrontmatter(t.source, data)
 	if err != nil {
 		return ai.Request{}, ai.Config{}, fmt.Errorf("render prompt %s frontmatter: %w", t.name, err)
@@ -144,6 +149,7 @@ func (t *Template) Render(data map[string]any, out any) (ai.Request, ai.Config, 
 	if cfg.Model.Name == "" {
 		cfg.Model.Name = rendered.Model
 	}
+	req.Model = cfg.Model
 	// Resolve name+mode together: the adapter follows from both, so inferring it
 	// from the name alone would send `model: opus` + `backend: agent` to the
 	// Anthropic API. Both copies are assigned so they cannot disagree downstream.
@@ -151,7 +157,7 @@ func (t *Template) Render(data map[string]any, out any) (ai.Request, ai.Config, 
 	// A name the catalog does not know is not fatal here — a caller may supply its
 	// own provider — so it stays as authored and the runtime decides. An authored
 	// mode we cannot honour is fatal: dropping it would pick an adapter silently.
-	if cfg.Model.Name != "" {
+	if cfg.Model.Name != "" && !options.Declared {
 		resolved, rerr := ai.Resolve(cfg.Model)
 		switch {
 		case rerr == nil:
@@ -163,7 +169,8 @@ func (t *Template) Render(data map[string]any, out any) (ai.Request, ai.Config, 
 	}
 	// The dotprompt config: block stays canonical for maxOutputTokens/temperature/
 	// reasoning when a file mixes both frontmatter dialects, so apply it last.
-	applyModelConfig(rendered.Config, &req, &cfg)
+	applyModelConfig(rendered.Config, &req)
+	cfg.Model = req.Model
 	cfg.Budget = req.Budget
 	if out != nil {
 		req.Prompt.Schema = out
@@ -203,9 +210,10 @@ func decodeSpecFrontmatter(raw map[string]any, req *ai.Request) error {
 	if err != nil {
 		return fmt.Errorf("re-encode frontmatter: %w", err)
 	}
-	dec := yaml.NewDecoder(bytes.NewReader(b))
-	dec.KnownFields(true)
-	return dec.Decode(req)
+	if err := validateDeclarationFields(b, req.DecodeFields()); err != nil {
+		return err
+	}
+	return yaml.Unmarshal(b, req)
 }
 
 // Library renders named .prompt files from an fs.FS (typically an embed.FS), the
@@ -216,28 +224,29 @@ type Library struct{ fsys fs.FS }
 func NewLibrary(fsys fs.FS) *Library { return &Library{fsys: fsys} }
 
 // Render loads name from the library and renders it.
-func (l *Library) Render(name string, data map[string]any, out any) (ai.Request, ai.Config, error) {
+func (l *Library) Render(name string, options RenderOptions) (ai.Request, ai.Config, error) {
 	t, err := LoadFS(l.fsys, name)
 	if err != nil {
 		return ai.Request{}, ai.Config{}, err
 	}
-	return t.Render(data, out)
+	return t.Render(options)
 }
 
 // applyModelConfig maps the dotprompt config block (model-agnostic keys) onto
 // the captain request/config.
-func applyModelConfig(c dp.ModelConfig, req *ai.Request, cfg *ai.Config) {
+func applyModelConfig(c dp.ModelConfig, req *ai.Request) {
 	if v, ok := floatOf(c["maxOutputTokens"]); ok {
 		req.Budget.MaxTokens = int(v)
-		cfg.Budget.MaxTokens = int(v)
+		*req = req.WithExplicit("/budget/maxTokens")
 	}
 	if v, ok := floatOf(c["temperature"]); ok {
-		temp := v
-		req.Temperature = &temp
-		cfg.Model.Temperature = &temp
+		req.Temperature = &v
+		*req = req.WithExplicit("/temperature")
 	}
 	if s, ok := c["reasoning"].(string); ok {
 		req.Effort = api.Effort(s)
+		req.Model = req.Model.WithExplicit("/effort")
+		*req = req.WithExplicit("/effort")
 	}
 }
 

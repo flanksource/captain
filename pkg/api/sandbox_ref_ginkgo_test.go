@@ -70,11 +70,14 @@ var _ = Describe("SandboxRef", func() {
 		Expect(ref).To(Equal(SandboxRef{Mode: SandboxNative}))
 	})
 
-	It("declares only the four public modes in its JSON schema", func() {
+	It("declares the public modes and permits a named backend awaiting context resolution", func() {
 		schema := SandboxRef{}.JSONSchema()
 		Expect(schema.OneOf).To(HaveLen(2))
 		Expect(schema.OneOf[0].Enum).To(Equal(enumValues(AllSandboxModes())))
-		Expect(schema.OneOf[1].Required).To(Equal([]string{"mode"}))
+		Expect(schema.OneOf[1].Required).To(BeEmpty())
+		Expect(schema.OneOf[1].AnyOf).To(HaveLen(2))
+		Expect(schema.OneOf[1].AnyOf[0].Required).To(Equal([]string{"mode"}))
+		Expect(schema.OneOf[1].AnyOf[1].Required).To(Equal([]string{"backend"}))
 	})
 
 	It("rejects a negative dispatch attempt bound", func() {
@@ -113,12 +116,16 @@ func jsonTagSet(t reflect.Type) []string {
 	var tags []string
 	for i := range t.NumField() {
 		field := t.Field(i)
-		if !field.IsExported() {
+		if !field.IsExported() && !field.Anonymous {
 			continue
 		}
 		tag, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+		if tag == "-" {
+			continue
+		}
 		if tag == "" && field.Anonymous {
-			tag = "(inline)" + field.Type.Name()
+			tags = append(tags, jsonTagSet(field.Type)...)
+			continue
 		}
 		tags = append(tags, tag)
 	}

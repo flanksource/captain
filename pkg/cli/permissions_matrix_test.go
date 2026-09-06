@@ -99,7 +99,7 @@ func TestPermissionsMatrixCells(t *testing.T) {
 		{"anthropic agent does not", agent, "mcp disabled", "anthropic agent", "✗"},
 		{"no runtime enables MCP per server", agent, "mcp enabled", "openai agent", "✗"},
 		{"only anthropic cli loads skills", agent, "skills enabled", "anthropic cli", "✓"},
-		{"nothing unloads a skill", agent, "skills disabled", "anthropic cli", "✗"},
+		{"captain omits a disabled skill before dispatch", agent, "skills disabled", "anthropic cli", "✓"},
 		{"plugins are inert", agent, "plugins enabled", "anthropic cli", "✗"},
 	}
 	for _, tc := range cases {
@@ -136,8 +136,8 @@ func TestPermissionsMatrixCoversEveryRuntime(t *testing.T) {
 // producing an empty or full matrix — the same fail-loud rule the declaration
 // itself follows.
 func TestPermissionsMatrixRejectsUnknownSelectors(t *testing.T) {
-	if _, err := RunPermissionsMatrix(PermissionsMatrixOptions{Provider: "claude"}); err == nil {
-		t.Fatal("a family nickname that is not a provider key should be refused")
+	if _, err := RunPermissionsMatrix(PermissionsMatrixOptions{Provider: "acme"}); err == nil {
+		t.Fatal("an unknown provider should be refused")
 	}
 	if _, err := RunPermissionsMatrix(PermissionsMatrixOptions{Mode: "sdk"}); err == nil {
 		t.Fatal("an unknown runtime mode should be refused")

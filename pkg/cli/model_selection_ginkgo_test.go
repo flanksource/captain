@@ -26,7 +26,7 @@ var _ = Describe("CLI model selection", func() {
 		opts := AIPromptOptions{}
 		opts.Model = "gemini-3.5-flash"
 
-		req, cfg, err := overlayCLI(ai.Request{}, ai.Config{}, opts)
+		req, cfg, err := runtimeLayersForTest(ai.Request{}, opts)
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(req.Model.Name).To(Equal("gemini-3.5-flash"))
@@ -36,7 +36,7 @@ var _ = Describe("CLI model selection", func() {
 	})
 
 	It("uses the same precedence for provider options", func() {
-		cfg, err := (AIProviderOptions{ModelFlags: aiflags.ModelFlags{Model: "gemini-3.5-flash"}}).ToConfig()
+		cfg, err := providerConfigForTest(AIProviderOptions{ModelFlags: aiflags.ModelFlags{Model: "gemini-3.5-flash"}})
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(cfg.Model.Name).To(Equal("gemini-3.5-flash"))
@@ -44,15 +44,19 @@ var _ = Describe("CLI model selection", func() {
 		Expect(cfg.Model.Mode).To(Equal(api.ModeAPI))
 	})
 
-	It("passes an unsupported valid effort through for runtime degradation", func() {
+	It("reports effort normalization while preserving the authored selector", func() {
 		// The compact grammar is mode:model[:effort]; the prefix is never an adapter.
-		cfg, err := (AIProviderOptions{ModelFlags: aiflags.ModelFlags{Model: "api:gemini-3.6-flash:xhigh"}}).ToConfig()
+		resolved, err := resolveInvocation(AIRuntimeOptions{AIProviderOptions: AIProviderOptions{ModelFlags: aiflags.ModelFlags{Model: "api:gemini-3.6-flash:xhigh"}}}, nil)
 
 		Expect(err).NotTo(HaveOccurred())
+		cfg := resolved.Config
 		Expect(cfg.Model.Name).To(Equal("gemini-3.6-flash"))
 		Expect(cfg.Model.Provider).To(Equal(api.Google))
 		Expect(cfg.Model.Mode).To(Equal(api.ModeAPI))
-		Expect(cfg.Model.Effort).To(Equal(api.EffortXHigh))
+		Expect(cfg.Model.Effort).To(Equal(api.EffortHigh))
+		Expect(resolved.Resolution.Provenance["/effort"].Source.Name).To(Equal("CLI flags"))
+		Expect(resolved.Resolution.Provenance["/effort"].NormalizedBy).To(HaveField("Kind", api.FieldSourceCatalog))
+		Expect(resolved.Resolution.Trace).To(HaveExactElements(HaveField("Spec.Model.Name", "api:gemini-3.6-flash:xhigh")))
 	})
 
 	It("accepts the whoami catalog model when configuring Gemini cli defaults", func() {
@@ -62,7 +66,7 @@ var _ = Describe("CLI model selection", func() {
 	})
 
 	It("keeps the saved model and runtime paired when there is no override", func() {
-		cfg, err := (AIProviderOptions{}).ToConfig()
+		cfg, err := providerConfigForTest(AIProviderOptions{})
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(cfg.Model.Name).To(Equal("claude-opus-5"))
@@ -70,20 +74,13 @@ var _ = Describe("CLI model selection", func() {
 		Expect(cfg.Model.Mode).To(Equal(api.ModeAgent))
 	})
 
-	// layeredModel resolves a request-layer model over a resolved frontmatter
-	// model exactly as renderPrompt does: expand, layer, fold, defaults, resolve.
 	layeredModel := func(frontmatter, request api.Model) api.Model {
 		GinkgoHelper()
 		layers, err := promptLayers(nil, "selection.prompt", ai.Request{Model: frontmatter}, &api.Spec{Model: request})
 		Expect(err).NotTo(HaveOccurred())
-		resolved, err := resolvePromptLayers(layers)
+		resolved, err := resolveInvocation(AIRuntimeOptions{}, layers)
 		Expect(err).NotTo(HaveOccurred())
-		req := resolved.Spec
-		cfg := configFromResolved(req)
-		Expect(applyPromptDefaults(&req, &cfg)).To(Succeed())
-		model, err := ai.Resolve(cfg.Model)
-		Expect(err).NotTo(HaveOccurred())
-		return model
+		return resolved.Request.Model
 	}
 	frontmatterModel := api.Model{Name: "claude-opus-4-6", Mode: api.ModeAPI, Provider: api.Anthropic}
 
@@ -106,7 +103,7 @@ var _ = Describe("CLI model selection", func() {
 	It("rejects a malformed request-layer selector before layering", func() {
 		_, err := promptLayers(nil, "selection.prompt", ai.Request{Model: frontmatterModel}, &api.Spec{Model: api.Model{Name: "warp:gemini-3.5-flash"}})
 
-		Expect(err).To(MatchError(ContainSubstring("render request model")))
+		Expect(err).To(MatchError(ContainSubstring(`spec layer "render request": model:`)))
 	})
 
 	It("omits single-runtime identity from multi-model parent labels", func() {
@@ -128,11 +125,10 @@ var _ = Describe("CLI model selection", func() {
 			return AIPromptResult{Text: "ok", Model: cfg.Model.Name, Provider: cfg.Model.Provider.Name, Mode: string(cfg.Model.Mode)}, nil
 		}
 
-		result, err := executeSyncBatch(
-			context.Background(),
-			testRenderedPrompt(api.Model{Name: "opus", Mode: api.ModeAgent}),
-			AIPromptOptions{AIRuntimeOptions: AIRuntimeOptions{AIProviderOptions: AIProviderOptions{}}, MultiModels: []string{"gemini-3.5-flash"}},
-		)
+		opts := AIPromptOptions{MultiModels: []string{"gemini-3.5-flash"}}
+		rendered, err := testRenderedVariants(testRenderedPrompt(api.Model{Name: "opus"}).Input, opts)
+		Expect(err).NotTo(HaveOccurred())
+		result, err := executeSyncBatch(context.Background(), rendered, opts)
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(executed.Model.Name).To(Equal("gemini-3.5-flash"))
@@ -148,7 +144,7 @@ var _ = Describe("CLI model selection", func() {
 		configured := withCaps(api.Model{Name: "gpt-5.6-luna", Mode: api.ModeCLI})
 		selected := withCaps(api.Model{Name: "gemini-3.5-flash", Mode: api.ModeAPI, Effort: api.EffortHigh})
 
-		variant := renderVariant(testRenderedPrompt(configured), selected, nil).Config.Model
+		variant := renderVariant(testRenderedPrompt(configured), testRuntimeVariant(selected)).Config.Model
 
 		Expect(variant.Validate()).To(Succeed())
 		Expect(variant).To(Equal(selected))
@@ -162,7 +158,7 @@ var _ = Describe("CLI model selection", func() {
 			Fallbacks: api.ModelList{{Name: "gemini-3-flash", Mode: api.ModeAPI}},
 		}
 
-		variant := renderVariant(testRenderedPrompt(api.Model{}), selected, nil).Config.Model
+		variant := renderVariant(testRenderedPrompt(api.Model{}), testRuntimeVariant(selected)).Config.Model
 
 		Expect(variant.Fallbacks).To(Equal(selected.Fallbacks))
 	})

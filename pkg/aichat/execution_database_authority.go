@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"strings"
 
 	"github.com/flanksource/captain/pkg/api"
@@ -214,7 +215,9 @@ func (a *DatabaseExecutionAuthority) resolveToolApproval(
 	if err != nil {
 		return nil, err
 	}
-	rendered, err := json.Marshal(run.RenderedSpec)
+	renderedSpec := maps.Clone(run.RenderedSpec)
+	delete(renderedSpec, "resolution")
+	rendered, err := json.Marshal(renderedSpec)
 	if err != nil {
 		return nil, fmt.Errorf("encode prompt run %s rendered spec: %w", run.ID, err)
 	}

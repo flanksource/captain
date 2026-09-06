@@ -79,19 +79,19 @@ var _ = Describe("Resolved runtime profiles", func() {
 	It("reports malformed server profiles as internal errors", func() {
 		cases := []struct {
 			name     string
-			resolved api.ResolvedSpec
+			composed api.ComposedSpec
 			message  string
 		}{
 			{
 				name: "missing trace",
-				resolved: api.ResolvedSpec{Spec: api.Spec{
+				composed: api.ComposedSpec{Spec: api.Spec{
 					Model: api.Model{Name: "gpt-5.4"},
 				}},
-				message: "must include its resolution trace",
+				message: "must include its composition trace",
 			},
 			{
 				name: "invalid trace",
-				resolved: api.ResolvedSpec{Trace: []api.SpecLayer{{
+				composed: api.ComposedSpec{Trace: []api.SpecLayer{{
 					Name: "broken", Scope: api.SpecLayerScope("invalid"),
 				}}},
 				message: "invalid scope",
@@ -101,7 +101,7 @@ var _ = Describe("Resolved runtime profiles", func() {
 		for _, test := range cases {
 			service := aichat.NewService(aichat.ServiceOptions{
 				Profile: aichat.RuntimeProfileProviderFunc(func(context.Context, ...aichat.RuntimeProfileOption) (aichat.RuntimeProfile, error) {
-					return aichat.RuntimeProfile{Resolved: test.resolved}, nil
+					return aichat.RuntimeProfile{Composed: test.composed}, nil
 				}),
 			})
 			response := httptest.NewRecorder()
@@ -168,7 +168,7 @@ var _ = Describe("Resolved runtime profiles", func() {
 })
 
 func mustRuntimeProfile(layers ...api.SpecLayer) aichat.RuntimeProfile {
-	resolved, err := api.ResolveSpecLayers(layers...)
+	composed, err := api.ComposeSpecLayers(api.ResolveSpecOptions{Layers: layers})
 	Expect(err).NotTo(HaveOccurred())
-	return aichat.RuntimeProfile{Resolved: resolved}
+	return aichat.RuntimeProfile{Composed: composed}
 }

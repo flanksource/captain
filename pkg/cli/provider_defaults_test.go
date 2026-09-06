@@ -15,10 +15,11 @@ func TestApplyProviderDefaultsFillsMissingFieldsAndFallbacks(t *testing.T) {
 			"openai":    {Mode: "agent", Model: "gpt-5.6-sol", ReasoningEffort: "medium"},
 		},
 	}
-	got, err := applyProviderDefaults(api.Model{Fallbacks: api.ModelList{{Name: "gpt-5.6"}}}, saved)
+	resolved, err := api.ResolveSpecLayers(api.ResolveSpecOptions{Layers: []api.SpecLayer{api.PromptSpecLayer("selection", api.Spec{Model: api.Model{Fallbacks: api.ModelList{{Name: "gpt-5.6-sol"}}}})}, Saved: &saved})
 	if err != nil {
-		t.Fatalf("applyProviderDefaults: %v", err)
+		t.Fatalf("ResolveSpecLayers: %v", err)
 	}
+	got := resolved.Spec.Model
 	if got.Mode != api.ModeAgent || got.Name != "claude-sonnet-5" || got.Effort != api.EffortHigh {
 		t.Fatalf("primary = %+v", got)
 	}
@@ -32,10 +33,11 @@ func TestApplyProviderDefaultsPreservesExplicitFields(t *testing.T) {
 		"openai": {Mode: "agent", Model: "gpt-5.6-sol", ReasoningEffort: "medium"},
 	}}
 	want := api.Model{Name: "gpt-explicit", Mode: api.ModeAPI, Effort: api.EffortHigh}
-	got, err := applyProviderDefaults(want, saved)
+	resolved, err := api.ResolveSpecLayers(api.ResolveSpecOptions{Layers: []api.SpecLayer{api.PromptSpecLayer("selection", api.Spec{Model: want})}, Saved: &saved})
 	if err != nil {
-		t.Fatalf("applyProviderDefaults: %v", err)
+		t.Fatalf("ResolveSpecLayers: %v", err)
 	}
+	got := resolved.Spec.Model
 	if got.Name != want.Name || got.Mode != want.Mode || got.Effort != want.Effort {
 		t.Fatalf("explicit model changed: got %+v want %+v", got, want)
 	}

@@ -54,7 +54,7 @@ Review the screenshot.
 		))
 	})
 
-	It("serves the canonical prompt run request with the detail", func() {
+	It("serves authored model selectors and presence with the prompt detail", func() {
 		record, err := filePromptRecord(path)
 		Expect(err).NotTo(HaveOccurred())
 
@@ -65,18 +65,16 @@ Review the screenshot.
 			Variables: map[string]any{},
 			Spec: &api.Spec{Model: api.Model{
 				Name: "gemini-3.5-flash",
-				Mode: api.ModeAPI,
 			}},
 			Runtimes: []api.Model{
 				{
-					Name:   "gemini-3.5-flash",
-					Mode:   api.ModeAPI,
-					Effort: api.EffortHigh,
+					Name: "api:gemini-3.5-flash:high",
 				},
 				{
-					Name:   "claude-sonnet-5",
-					Mode:   api.ModeAPI,
-					Effort: api.EffortMedium,
+					Name:     "claude-sonnet-5",
+					Mode:     api.ModeAPI,
+					Effort:   api.EffortMedium,
+					Explicit: api.FieldPresence{"/model": true, "/mode": true, "/effort": true},
 				},
 			},
 			Chat: true,
@@ -89,7 +87,7 @@ Review the screenshot.
 			expectedPath, err := filepath.EvalSymlinks(path)
 			Expect(err).NotTo(HaveOccurred())
 
-			record, err := resolvePromptRecord(ctx, id)
+			record, err := resolvePromptRecord(ctx, promptRecordOptions{ID: id})
 
 			Expect(err).NotTo(HaveOccurred())
 			Expect(record.Path).To(Equal(expectedPath))
@@ -105,7 +103,7 @@ Review the screenshot.
 		Expect(os.WriteFile(otherPath, []byte("Review this screenshot."), 0o600)).To(Succeed())
 		ctx := ContextWithPromptDirs(context.Background(), []string{filepath.Dir(path), otherDir})
 
-		_, err := resolvePromptRecord(ctx, "compare")
+		_, err := resolvePromptRecord(ctx, promptRecordOptions{ID: "compare"})
 
 		Expect(err).To(MatchError(ContainSubstring("prompt name \"compare\" is ambiguous")))
 	})

@@ -8,6 +8,7 @@ import (
 	"github.com/flanksource/captain/pkg/ai"
 	promptlib "github.com/flanksource/captain/pkg/ai/prompt"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/captainconfig"
 	"github.com/flanksource/captain/pkg/runtimeprofiles"
 )
 
@@ -17,72 +18,63 @@ const renderRequestLayer = "render request"
 // reference, else the prompt's frontmatter pin, else none. The catalog is only
 // built once a reference exists, so a plain render never opens the database;
 // a reference that resolves nowhere fails naming it.
-func selectRuntimeProfile(ctx context.Context, requested, pin string) (*runtimeprofiles.Resolution, error) {
-	ref := strings.TrimSpace(requested)
+type runtimeProfileSelection struct {
+	Requested string
+	Pin       string
+	Config    *captainconfig.Config
+}
+
+func selectRuntimeProfile(ctx context.Context, options runtimeProfileSelection) (*runtimeprofiles.Resolution, error) {
+	ref := strings.TrimSpace(options.Requested)
 	if ref == "" {
-		ref = strings.TrimSpace(pin)
+		ref = strings.TrimSpace(options.Pin)
 	}
 	if ref == "" {
 		return nil, nil
 	}
-	catalog, err := buildRuntimeCatalog(ctx)
+	catalog, err := buildRuntimeCatalog(ctx, runtimeprofiles.DefaultCatalogOptions{Config: options.Config})
 	if err != nil {
 		return nil, fmt.Errorf("runtime profile %q: %w", ref, err)
 	}
-	resolution, err := catalog.Resolve(ctx, ref)
+	resolution, err := catalog.Layers(ctx, ref)
 	if err != nil {
 		return nil, fmt.Errorf("runtime profile %q: %w", ref, err)
 	}
 	return &resolution, nil
 }
 
-// promptLayers orders a render's layers: the profile's presets and spec, the
-// prompt frontmatter, then the caller's request. The request model is expanded
-// first (the aiflags invariant) so a mode-prefixed selector such as api:opus
-// overrides the frontmatter mode while a bare name inherits it.
+// promptLayers assembles authored profile, prompt and request layers. Captain's
+// final resolution expands the effective model selector while retaining the raw trace.
 func promptLayers(profile *runtimeprofiles.Resolution, source string, frontmatter ai.Request, user *api.Spec) ([]api.SpecLayer, error) {
 	var layers []api.SpecLayer
 	if profile != nil {
-		layers = append(layers, profile.Resolved.Trace...)
+		layers = append(layers, profile.Layers...)
 	}
 	layers = append(layers, api.PromptSpecLayer(source, frontmatter))
+	if err := api.ValidateSpecLayers(layers...); err != nil {
+		return nil, fmt.Errorf("prompt configuration: %w", err)
+	}
 	if user == nil {
 		return layers, nil
 	}
 	request := *user
-	model, err := request.Expand()
-	if err != nil {
-		return nil, fmt.Errorf("render request model: %w", err)
+	if err := api.ValidateSpecLayers(api.RequestSpecLayer(renderRequestLayer, request)); err != nil {
+		return nil, err
 	}
-	request.Model = model
 	return append(layers, api.RequestSpecLayer(renderRequestLayer, request)), nil
 }
 
-func resolvePromptLayers(layers []api.SpecLayer) (api.ResolvedSpec, error) {
-	resolved, err := api.ResolveSpecLayers(layers...)
-	if err != nil {
-		return api.ResolvedSpec{}, fmt.Errorf("resolve prompt spec layers: %w", err)
-	}
-	return resolved, nil
-}
-
-// resolveRenderLayers is the shared seam every render path goes through:
-// select the profile (request reference, else the frontmatter pin), then
-// resolve presets → profile → frontmatter → request.
-func resolveRenderLayers(ctx context.Context, source, content string, frontmatter ai.Request, renderReq PromptRenderRequest) (api.ResolvedSpec, error) {
+// renderLayers retains declarations until every request override is available.
+func renderLayers(ctx context.Context, source, content string, frontmatter ai.Request, renderReq PromptRenderRequest, saved captainconfig.Config) ([]api.SpecLayer, error) {
 	doc, err := promptlib.Parse(content)
 	if err != nil {
-		return api.ResolvedSpec{}, err
+		return nil, err
 	}
-	profile, err := selectRuntimeProfile(ctx, renderReq.RuntimeProfile, doc.RuntimeProfile)
+	profile, err := selectRuntimeProfile(ctx, runtimeProfileSelection{Requested: renderReq.RuntimeProfile, Pin: doc.RuntimeProfile, Config: &saved})
 	if err != nil {
-		return api.ResolvedSpec{}, err
+		return nil, err
 	}
-	layers, err := promptLayers(profile, source, frontmatter, renderReq.Spec)
-	if err != nil {
-		return api.ResolvedSpec{}, err
-	}
-	return resolvePromptLayers(layers)
+	return promptLayers(profile, source, frontmatter, renderReq.Spec)
 }
 
 // configFromResolved projects the runtime knobs providers read off ai.Config.

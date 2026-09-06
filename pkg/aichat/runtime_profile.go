@@ -9,14 +9,16 @@ import (
 	"strings"
 
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/captainconfig"
 )
 
-// RuntimeProfile is the request-scoped, hierarchically resolved application
-// configuration for a chat. Resolved carries the effective Spec, constraints,
-// and ordered provenance; provider credentials remain runtime-only.
+// RuntimeProfile is the request-scoped application configuration for a chat.
+// Composed carries structurally validated defaults, constraints and raw layers;
+// runtime capability validation waits for the complete chat request.
 type RuntimeProfile struct {
 	System         string
-	Resolved       api.ResolvedSpec
+	Composed       api.ComposedSpec
+	Saved          *captainconfig.AIDefaults
 	ProviderConfig api.Config
 }
 
@@ -77,17 +79,16 @@ func (s *Service) runtimeProfile(ctx context.Context, options ...RuntimeProfileO
 	if err != nil {
 		return RuntimeProfile{}, err
 	}
-	if len(profile.Resolved.Trace) == 0 {
-		if !api.IsEmpty(profile.Resolved.Spec) || !api.IsEmpty(profile.Resolved.Constraints) {
-			return RuntimeProfile{}, fmt.Errorf("chat runtime profile must include its resolution trace")
+	if len(profile.Composed.Trace) == 0 {
+		if (profile.Saved == nil && !api.IsEmpty(profile.Composed.Spec)) || !api.IsEmpty(profile.Composed.Constraints) {
+			return RuntimeProfile{}, fmt.Errorf("chat runtime profile must include its composition trace")
 		}
-		return profile, nil
 	}
-	resolved, err := api.ResolveSpecLayers(profile.Resolved.Trace...)
+	composed, err := api.ComposeSpecLayers(api.ResolveSpecOptions{Layers: profile.Composed.Trace, Saved: profile.Saved})
 	if err != nil {
 		return RuntimeProfile{}, fmt.Errorf("resolve chat runtime profile: %w", err)
 	}
-	profile.Resolved = resolved
+	profile.Composed = composed
 	return profile, nil
 }
 
@@ -127,7 +128,7 @@ func requestErrorStatus(err error) int {
 	return http.StatusBadRequest
 }
 
-func enforceRuntimeProfile(request ChatRequest, resolved api.ResolvedSpec) error {
+func enforceRuntimeProfile(request ChatRequest, resolved api.ComposedSpec) error {
 	if err := enforceRuntimeQuotas(resolved); err != nil {
 		return err
 	}
@@ -153,7 +154,7 @@ func enforceRuntimeProfile(request ChatRequest, resolved api.ResolvedSpec) error
 	return nil
 }
 
-func enforceRuntimeQuotas(resolved api.ResolvedSpec) error {
+func enforceRuntimeQuotas(resolved api.ComposedSpec) error {
 	for _, quota := range resolved.Constraints.Quotas {
 		if quota.CostLimitUSD > 0 && quota.CostUsedUSD >= quota.CostLimitUSD {
 			return requestError{status: http.StatusPaymentRequired, text: fmt.Sprintf(
@@ -169,4 +170,46 @@ func enforceRuntimeQuotas(resolved api.ResolvedSpec) error {
 		}
 	}
 	return nil
+}
+
+func (s *Service) handleRuntimes(w http.ResponseWriter, request *http.Request) {
+	profile, err := s.runtimeProfile(request.Context(), WithRuntimeProfileRef(request.URL.Query().Get("runtimeProfile")))
+	if err != nil {
+		http.Error(w, fmt.Sprintf("load chat runtime profile: %v", err), runtimeProfileStatus(err))
+		return
+	}
+	runtimes, err := s.resolver.Runtimes(request.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	if err := s.annotateConfiguredRuntimes(request.Context(), runtimes); err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	annotateProfileRuntimes(profile.Composed, runtimes)
+	if err := writeJSON(w, http.StatusOK, runtimes); err != nil {
+		serviceLog.Errorf("write chat runtimes response: %v", err)
+	}
+}
+
+func (s *Service) handleModels(w http.ResponseWriter, request *http.Request) {
+	profile, err := s.runtimeProfile(request.Context(), WithRuntimeProfileRef(request.URL.Query().Get("runtimeProfile")))
+	if err != nil {
+		http.Error(w, fmt.Sprintf("load chat runtime profile: %v", err), runtimeProfileStatus(err))
+		return
+	}
+	models, err := s.resolver.Models(request.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	if err := s.annotateConfiguredModels(request.Context(), models); err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	annotateProfileModels(profile.Composed, models)
+	if err := writeJSON(w, http.StatusOK, models); err != nil {
+		serviceLog.Errorf("write chat models response: %v", err)
+	}
 }

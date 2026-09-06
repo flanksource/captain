@@ -98,6 +98,7 @@ func (m Model) Expand() (Model, error) {
 		parsed.Mode = m.Mode
 	}
 	parsed.ID = m.ID
+	parsed.Explicit = m.Explicit
 	parsed.Temperature = m.Temperature
 	if !parsed.NoCache {
 		parsed.NoCache = m.NoCache
@@ -108,10 +109,7 @@ func (m Model) Expand() (Model, error) {
 
 // ModelList is the type of Model.Fallbacks. Each entry may be written as a
 // compact string ("agent:opus:high") or the object form. It is a named slice
-// rather than a method on Model itself because Model is inline-embedded in Spec:
-// a value-level Unmarshaler on Model would hijack the whole Spec object and break
-// field promotion. A Spec-level `model:` scalar lands in Model.Name (a string) —
-// Model.Expand parses that.
+// so compact strings retain their authored spelling until final resolution.
 type ModelList []Model
 
 func (l *ModelList) UnmarshalJSON(data []byte) error {
@@ -132,11 +130,10 @@ func (l *ModelList) UnmarshalJSON(data []byte) error {
 			if err := json.Unmarshal(e, &s); err != nil {
 				return err
 			}
-			m, err := parseCompactElement(s)
-			if err != nil {
+			if _, err := parseCompactElement(s); err != nil {
 				return err
 			}
-			out = append(out, m)
+			out = append(out, Model{Name: s})
 			continue
 		}
 		var m Model
@@ -156,11 +153,10 @@ func (l *ModelList) UnmarshalYAML(value *yaml.Node) error {
 	out := make(ModelList, 0, len(value.Content))
 	for _, node := range value.Content {
 		if node.Kind == yaml.ScalarNode && node.Tag != "!!null" {
-			m, err := parseCompactElement(node.Value)
-			if err != nil {
+			if _, err := parseCompactElement(node.Value); err != nil {
 				return err
 			}
-			out = append(out, m)
+			out = append(out, Model{Name: node.Value})
 			continue
 		}
 		var m Model

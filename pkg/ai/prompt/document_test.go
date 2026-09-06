@@ -126,7 +126,7 @@ func TestParse_RuntimeProfileMustBeNonEmptyString(t *testing.T) {
 // Render's strict spec decode must accept the pin the same way it accepts the
 // other prompt-only keys (name, runtimes, ...).
 func TestRender_RuntimeProfilePin(t *testing.T) {
-	req, _, err := Load("---\nruntimeProfile: review\nmodel: claude-sonnet-4-6\n---\n{{role \"user\"}}\nhello\n").Render(nil, nil)
+	req, _, err := Load("---\nruntimeProfile: review\nmodel: claude-sonnet-4-6\n---\n{{role \"user\"}}\nhello\n").Render(RenderOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, "claude-sonnet-4-6", req.Model.Name)
 	assert.Equal(t, "hello", req.Prompt.User)

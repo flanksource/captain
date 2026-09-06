@@ -69,6 +69,9 @@ func runPromptAction(ctx context.Context, id string, flags map[string]string) (P
 	if rendered.ValidationError != "" {
 		return PromptRunResult{}, errors.New(rendered.ValidationError)
 	}
+	if !isHTTP {
+		logRuntimeWarnings(rendered.Resolution.Warnings)
+	}
 	if chatRequested {
 		if rendered.Input.Prompt.HasSchema() {
 			return PromptRunResult{}, errors.New("chat mode does not support structured-output prompts")
@@ -236,18 +239,17 @@ func executeSyncWorkflowRun(t *task.Task, rendered PromptRenderResult, noStream 
 
 func executeSyncBatch(ctx context.Context, rendered PromptRenderResult, opts AIPromptOptions) (PromptRunResult, error) {
 	models := rendered.Runtimes
-	if len(models) == 0 {
-		var err error
-		models, err = ai.ResolveMulti(opts.MultiModels, rendered.Config.Model)
-		if err != nil {
-			return PromptRunResult{}, err
-		}
+	if err := rendered.validateVariants(); err != nil {
+		return PromptRunResult{}, err
 	}
 	if len(models) == 0 {
+		if len(opts.MultiModels) > 0 {
+			return PromptRunResult{}, errors.New("multi-model runtimes must be prepared by prompt rendering")
+		}
 		return executeSyncRunSingle(ctx, rendered, opts)
 	}
 	if len(models) == 1 {
-		variant := renderVariant(rendered, models[0], fallbackModelsFromFlags(opts.Fallback))
+		variant := renderVariant(rendered, rendered.variants[0])
 		opts.MultiModels = nil
 		start := time.Now()
 		single, runErr := executeSyncRunSingle(ctx, variant, opts)
@@ -303,7 +305,7 @@ func executeSyncBatch(ctx context.Context, rendered PromptRenderResult, opts AIP
 			selector += ":" + string(model.Effort)
 		}
 		tasks[i] = group.Add(selector, func(_ flanksourceContext.Context, t *task.Task) (PromptRunItem, error) {
-			variant := renderVariant(rendered, model, fallbackModelsFromFlags(opts.Fallback))
+			variant := renderVariant(rendered, rendered.variants[i])
 			variantOpts := opts
 			variantOpts.MultiModels = nil
 			taskCtx := ai.ContextWithLogger(t.Context(), t)
@@ -416,18 +418,4 @@ func promptTaskLabelsWithID(rendered PromptRenderResult, id, mode string) map[st
 		labels["promptId"] = id
 	}
 	return labels
-}
-
-func renderVariant(rendered PromptRenderResult, model api.Model, fallbacks []api.Model) PromptRenderResult {
-	out := rendered
-	req := rendered.Input
-	cfg := rendered.Config
-	req.Model = variantModel(model, fallbacks)
-	cfg.Model = variantModel(model, fallbacks)
-	out.Input = req
-	out.Config = cfg
-	out.Model = cfg.Model.Name
-	out.Provider = providerName(cfg.Model.Provider)
-	out.Mode = string(cfg.Model.Mode)
-	return out
 }

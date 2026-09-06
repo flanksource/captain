@@ -168,10 +168,14 @@ func RunAIAgent(opts AIAgentOptions) (any, error) {
 		return nil, fmt.Errorf("prompt text required (use --prompt or pipe via stdin)")
 	}
 
-	cfg, err := opts.ToConfig()
+	resolved, err := resolveInvocation(opts.AIRuntimeOptions, []api.SpecLayer{api.PromptSpecLayer("agent prompt", api.Spec{
+		Prompt: api.Prompt{System: opts.System, AppendSystem: opts.AppendSystem, User: opts.Prompt},
+	})})
 	if err != nil {
 		return nil, err
 	}
+	cfg := resolved.Config
+	logRuntimeWarnings(resolved.Resolution.Warnings)
 	if cfg.Model.Name == "" {
 		return nil, fmt.Errorf("no model: pass --model or run 'captain configure' to set a default")
 	}
@@ -179,12 +183,7 @@ func RunAIAgent(opts AIAgentOptions) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Validate runtime knobs (temperature/permission-mode/effort) and
-	// snapshot the base request once; Build only varies the prompt per turn.
-	baseReq, err := opts.ToRequest(opts.System, opts.AppendSystem, opts.Prompt)
-	if err != nil {
-		return nil, err
-	}
+	baseReq := resolved.Request
 
 	timeout, _ := time.ParseDuration(opts.Timeout)
 	if timeout <= 0 {
@@ -212,11 +211,7 @@ func RunAIAgent(opts AIAgentOptions) (any, error) {
 		return nil, err
 	}
 
-	cwd, err := os.Getwd()
-	if err != nil {
-		return nil, err
-	}
-	baseReq.SetCwd(cwd)
+	cwd := baseReq.Cwd()
 
 	renderer := NewEventRenderer(os.Stderr)
 	start := time.Now()

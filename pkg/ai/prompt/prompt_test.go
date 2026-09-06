@@ -21,10 +21,10 @@ func TestRender_FrontmatterAndMessages(t *testing.T) {
 	tmpl, err := LoadFS(library, "testdata/commit.prompt")
 	require.NoError(t, err)
 
-	req, cfg, err := tmpl.Render(map[string]any{
+	req, cfg, err := tmpl.Render(RenderOptions{Data: map[string]any{
 		"patch":        "+func Login() bool { return a < b && c > d }",
 		"maxBodyLines": 3,
-	}, nil)
+	}})
 	require.NoError(t, err)
 
 	assert.Contains(t, req.Prompt.System, "commit message generator")
@@ -56,10 +56,10 @@ func TestRender_FrontmatterAndMessages(t *testing.T) {
 		}
 	}`, string(req.Prompt.SchemaJSON))
 
-	withoutCap, _, err := tmpl.Render(map[string]any{
+	withoutCap, _, err := tmpl.Render(RenderOptions{Data: map[string]any{
 		"patch":        "+trivial change",
 		"maxBodyLines": 0,
-	}, nil)
+	}})
 	require.NoError(t, err)
 	assert.Contains(t, withoutCap.Prompt.User, "body: omit unless the change is non-trivial")
 	assert.NotContains(t, withoutCap.Prompt.User, "body: at most")
@@ -79,7 +79,7 @@ func TestRender_SpecFrontmatter(t *testing.T) {
 	tmpl, err := LoadFS(library, "testdata/options.prompt")
 	require.NoError(t, err)
 
-	req, _, err := tmpl.Render(map[string]any{"target": "parser.go"}, nil)
+	req, _, err := tmpl.Render(RenderOptions{Data: map[string]any{"target": "parser.go"}})
 	require.NoError(t, err)
 
 	// Spec-native keys from the second parse.
@@ -122,7 +122,7 @@ func TestRender_StructuredOutputTarget(t *testing.T) {
 	}
 	out := &commitMsg{}
 
-	req, _, err := Load("{{role \"user\"}}\nhi").Render(nil, out)
+	req, _, err := Load("{{role \"user\"}}\nhi").Render(RenderOptions{Output: out})
 	require.NoError(t, err)
 	assert.Same(t, out, req.Prompt.Schema)
 	assert.Empty(t, req.Prompt.SchemaJSON, "a Go target takes precedence over any frontmatter schema")
@@ -144,7 +144,7 @@ func TestRender_FrontmatterOutputSchema(t *testing.T) {
 		"---\n" +
 		"{{role \"user\"}}\nname a PR"
 
-	req, _, err := Load(src).Render(nil, nil)
+	req, _, err := Load(src).Render(RenderOptions{})
 	require.NoError(t, err)
 	require.Nil(t, req.Prompt.Schema, "no Go target was passed")
 	require.NotEmpty(t, req.Prompt.SchemaJSON, "frontmatter output.schema must reach SchemaJSON")
@@ -159,10 +159,10 @@ func TestRender_FrontmatterOutputSchema(t *testing.T) {
 
 func TestLibrary_Render(t *testing.T) {
 	lib := NewLibrary(library)
-	req, cfg, err := lib.Render("testdata/commit.prompt", map[string]any{
+	req, cfg, err := lib.Render("testdata/commit.prompt", RenderOptions{Data: map[string]any{
 		"patch":        "x",
 		"maxBodyLines": 0,
-	}, nil)
+	}})
 	require.NoError(t, err)
 	assert.Equal(t, "claude-sonnet-4-6", cfg.Model.Name)
 	assert.Contains(t, req.Prompt.User, "x")
@@ -185,8 +185,8 @@ func TestRender_AuthoredModeSelectsRuntime(t *testing.T) {
 		{name: "api mode", mode: "api", model: "opus", runtime: api.RuntimeOf(api.Anthropic, api.ModeAPI)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			req, cfg, err := Load("---\nmodel: "+tc.model+"\nmode: "+tc.mode+"\n---\n{{role \"user\"}}\nGo.\n").
-				Render(nil, nil)
+			req, cfg, err := Load("---\nmodel: " + tc.model + "\nmode: " + tc.mode + "\n---\n{{role \"user\"}}\nGo.\n").
+				Render(RenderOptions{})
 			require.NoError(t, err)
 			assert.Equal(t, tc.runtime, api.RuntimeOf(cfg.Model.Provider, cfg.Model.Mode), "the config runtime must follow the authored mode")
 			assert.Equal(t, tc.runtime, api.RuntimeOf(req.Model.Provider, req.Model.Mode), "the request runtime must follow the authored mode")
@@ -240,7 +240,7 @@ func TestRender_RuntimeFixtureExamples(t *testing.T) {
 
 		tmpl, err := LoadFS(library, path)
 		require.NoError(t, err)
-		req, cfg, err := tmpl.Render(map[string]any{"task": "summarize the change and propose next steps"}, nil)
+		req, cfg, err := tmpl.Render(RenderOptions{Data: map[string]any{"task": "summarize the change and propose next steps"}})
 		require.NoError(t, err)
 		require.NoError(t, req.Validate())
 

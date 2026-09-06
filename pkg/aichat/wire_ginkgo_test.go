@@ -81,7 +81,8 @@ var _ = Describe("AI SDK v6 wire types", func() {
 
 		Expect(request.Runtime).NotTo(BeNil())
 		Expect(*request.Runtime).To(Equal(api.Model{
-			Name: "sonnet", Mode: api.ModeAgent, Effort: api.EffortHigh,
+			Explicit: api.FieldPresence{"/model": true, "/mode": true, "/effort": true},
+			Name:     "sonnet", Mode: api.ModeAgent, Effort: api.EffortHigh,
 		}))
 		resolved, err := api.ResolveModel(*request.Runtime)
 		Expect(err).NotTo(HaveOccurred())
