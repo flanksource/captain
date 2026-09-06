@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
@@ -19,11 +18,12 @@ import (
 // domain object.
 type Spec struct {
 	Model       `json:",inline" yaml:",inline"`
-	Prompt      Prompt      `json:"prompt" yaml:"prompt"`
-	Messages    []Message   `json:"messages,omitempty" yaml:"messages,omitempty" pretty:"-"`
-	Budget      Budget      `json:"budget,omitempty" yaml:"budget,omitempty"`
-	Memory      Memory      `json:"memory,omitempty" yaml:"memory,omitempty"`
-	Permissions Permissions `json:"permissions,omitempty" yaml:"permissions,omitempty"`
+	Explicit    FieldPresence `json:"-" yaml:"-"`
+	Prompt      Prompt        `json:"prompt" yaml:"prompt"`
+	Messages    []Message     `json:"messages,omitempty" yaml:"messages,omitempty" pretty:"-"`
+	Budget      Budget        `json:"budget,omitempty" yaml:"budget,omitempty"`
+	Memory      Memory        `json:"memory,omitempty" yaml:"memory,omitempty"`
+	Permissions Permissions   `json:"permissions,omitempty" yaml:"permissions,omitempty"`
 	// ToolPreferences is the serializable per-turn tool/group selection policy.
 	// Executable tool handlers remain in Config.Tools.
 	ToolPreferences ToolPreferences `json:"toolPreferences,omitempty" yaml:"toolPreferences,omitempty" pretty:"-"`
@@ -53,7 +53,7 @@ type Spec struct {
 }
 
 type specMarshal struct {
-	Model       `json:",inline" yaml:",inline"`
+	ModelFields `json:",inline" yaml:",inline"`
 	Prompt      *Prompt             `json:"prompt,omitempty" yaml:"prompt,omitempty"`
 	Messages    []Message           `json:"messages,omitempty" yaml:"messages,omitempty"`
 	Budget      *Budget             `json:"budget,omitempty" yaml:"budget,omitempty"`
@@ -95,6 +95,14 @@ func isEmpty(value reflect.Value) bool {
 	}
 	if value.CanInterface() {
 		switch typed := value.Interface().(type) {
+		case Spec:
+			if len(typed.Explicit) > 0 || len(typed.Model.Explicit) > 0 {
+				return false
+			}
+		case Model:
+			if len(typed.Explicit) > 0 {
+				return false
+			}
 		case Tools:
 			return len(typed.Policies()) == 0
 		case MCP:
@@ -145,7 +153,7 @@ func omitEmptyPointer[T any](value *T) *T {
 
 func (s Spec) marshalValue() specMarshal {
 	return specMarshal{
-		Model:       s.Model,
+		ModelFields: specModelWire(s.Model),
 		Prompt:      omitEmptyValue(s.Prompt),
 		Messages:    s.Messages,
 		Budget:      omitEmptyValue(s.Budget),
@@ -162,18 +170,15 @@ func (s Spec) marshalValue() specMarshal {
 	}
 }
 
-func (s Spec) MarshalJSON() ([]byte, error) {
-	return json.Marshal(s.marshalValue())
-}
-
-func (s Spec) MarshalYAML() (any, error) {
-	return s.marshalValue(), nil
-}
-
 // Validate runs each component's validation, failing loud on the first error.
 func (s Spec) Validate() error {
 	if err := s.ValidateStructure(); err != nil {
 		return err
+	}
+	if s.Sandbox != nil {
+		if err := s.Sandbox.Validate(); err != nil {
+			return fmt.Errorf("sandbox: %w", err)
+		}
 	}
 	validateModel := s.Model.Validate
 	if s.IsVerifyOnly() && len(s.Workflow.Verify.Prompts) == 0 {
