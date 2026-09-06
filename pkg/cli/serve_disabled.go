@@ -144,7 +144,14 @@ func validateDisabledSelections(saved captainconfig.AIDefaults, selections capta
 	if len(set.EnabledEfforts()) == 0 {
 		return fmt.Errorf("cannot disable every reasoning effort; leave at least one enabled")
 	}
-	if len(selections.Providers) >= len(configurableProviders()) {
+	providers := configurableProviders()
+	disabledProviders := 0
+	for _, provider := range providers {
+		if set.Provider(provider) {
+			disabledProviders++
+		}
+	}
+	if disabledProviders == len(providers) {
 		return fmt.Errorf("cannot disable every provider; leave at least one enabled")
 	}
 	// A flagless run resolves through ActiveProvider, so it is not enough that

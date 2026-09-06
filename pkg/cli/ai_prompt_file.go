@@ -7,7 +7,6 @@ import (
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/prompt"
 	"github.com/flanksource/captain/pkg/api"
-	"github.com/flanksource/captain/pkg/api/registry"
 	"github.com/flanksource/commons-db/shell"
 )
 
@@ -45,177 +44,6 @@ func parseVars(pairs []string) (map[string]any, error) {
 	return data, nil
 }
 
-// overlayCLI layers the CLI flags over the rendered file spec, implementing the
-// precedence CLI flag (non-zero) > frontmatter > saved defaults > built-in. The
-// user prompt always comes from the rendered template body; everything else is
-// merged per nested group. Negative toggles (--no-*) OR across all three layers,
-// matching the existing flag semantics. Range/enum validation is left to the
-// caller via req.Validate so the rules live in one place (pkg/api).
-func overlayCLI(base ai.Request, baseCfg ai.Config, o AIPromptOptions) (ai.Request, ai.Config, error) {
-	saved := loadSavedAI()
-
-	temperature, err := parseFloatFlag("temperature", o.Temperature)
-	if err != nil {
-		return base, baseCfg, err
-	}
-	budget, err := parseFloatFlag("budget", o.Budget)
-	if err != nil {
-		return base, baseCfg, err
-	}
-
-	req := base
-
-	bm := base.Model
-	if bm.Name == "" {
-		bm.Name = baseCfg.Model.Name
-	}
-	if bm.ID == "" {
-		bm.ID = baseCfg.Model.ID
-	}
-	if bm.Mode == "" {
-		bm.Mode = baseCfg.Model.Mode
-	}
-	if bm.Provider == nil {
-		bm.Provider = baseCfg.Model.Provider
-	}
-	if bm.Temperature == nil {
-		bm.Temperature = baseCfg.Model.Temperature
-	}
-	if bm.Effort == "" {
-		bm.Effort = baseCfg.Model.Effort
-	}
-	identity := selectModelIdentity(
-		api.Model{Name: bm.Name, ID: bm.ID, Mode: bm.Mode, Provider: bm.Provider},
-		api.Model{Name: o.Model},
-	)
-	m := bm
-	m.Name, m.ID, m.Mode, m.Provider = identity.Name, identity.ID, identity.Mode, identity.Provider
-	if temperature != 0 {
-		t := temperature
-		m.Temperature = &t
-	}
-	m.Effort = api.Effort(firstNonEmpty(o.Effort, string(bm.Effort)))
-	m.NoCache = o.NoCache || bm.NoCache || saved.NoCache
-	m.Fallbacks = firstFallbacks(o.Fallback, bm.Fallbacks)
-
-	requestedMode := registry.RuntimeMode("")
-	if value := strings.TrimSpace(o.Mode); value != "" {
-		var ok bool
-		requestedMode, ok = registry.ParseRuntimeMode(value)
-		if !ok {
-			return base, baseCfg, fmt.Errorf("invalid --mode %q (valid: %s)", o.Mode, registry.RuntimeModeList())
-		}
-	}
-	// Sandbox precedence: --sandbox > frontmatter (req.Sandbox) > global default.
-	// Resolved here rather than at the end because the winning kind can force the
-	// runtime mode below; the selection is recorded onto req/cfg once cfg exists.
-	sandbox, err := resolveRunSandbox(&req, o.SandboxSelector())
-	if err != nil {
-		return base, baseCfg, err
-	}
-	if selector := o.SandboxSelector(); selector != "" || req.Sandbox == nil {
-		resolved := sandboxRefFromSelection(sandbox)
-		if req.Sandbox != nil {
-			resolved.Policy = req.Sandbox.Policy
-			resolved.Agent = req.Sandbox.Agent
-			resolved.Dispatch = req.Sandbox.Dispatch
-		}
-		req.Sandbox = &resolved
-	} else if req.Sandbox.Mode == "" {
-		req.Sandbox.Mode = sandbox.Kind
-	}
-	if forced := sandboxForcedMode(sandbox.Kind); forced != "" {
-		if requestedMode != "" && requestedMode != forced {
-			return base, baseCfg, fmt.Errorf("sandbox %q requires %s mode, but --mode is %q", sandbox.Kind, forced, requestedMode)
-		}
-		requestedMode = forced
-	}
-	if requestedMode != "" {
-		m.Mode = ""
-		if len(o.Fallback) == 0 {
-			for i := range m.Fallbacks {
-				m.Fallbacks[i].Mode = ""
-			}
-		}
-		m, err = m.WithMode(requestedMode)
-		if err != nil {
-			return base, baseCfg, err
-		}
-	}
-	m, err = applyProviderDefaults(m, saved)
-	if err != nil {
-		return base, baseCfg, err
-	}
-	req.Model, err = ai.Resolve(m)
-	if err != nil {
-		return base, baseCfg, err
-	}
-
-	req.Budget.MaxTokens = firstPositive(o.MaxTokens, base.Budget.MaxTokens, baseCfg.Budget.MaxTokens, saved.MaxTokens, 4096)
-	req.Budget.Cost = firstPositiveFloat(budget, base.Budget.Cost, baseCfg.Budget.Cost, saved.BudgetUSD)
-	req.Budget.MaxTurns = firstPositive(o.MaxTurns, base.Budget.MaxTurns)
-	req.Budget.Timeout = firstNonEmpty(o.Timeout, base.Budget.Timeout)
-
-	if o.System != "" {
-		req.Prompt.System = o.System
-	}
-	if o.AppendSystem != "" {
-		req.Prompt.AppendSystem = o.AppendSystem
-	}
-	if len(o.Attach) > 0 {
-		attachments, err := attachmentRefsFromFlags(o.Attach)
-		if err != nil {
-			return base, baseCfg, err
-		}
-		req.Prompt.Attachments = append(req.Prompt.Attachments, attachments...)
-	}
-
-	if o.PermissionMode != "" {
-		req.Permissions.Mode = api.PermissionMode(o.PermissionMode)
-	} else if o.Edit {
-		req.Permissions.Mode = api.PermissionAcceptEdits
-	}
-	if o.Edit && !req.Permissions.HasPreset(api.PresetEdit) {
-		req.Permissions.Presets = append(req.Permissions.Presets, api.PresetEdit)
-	}
-	if o.AllowedTools != nil {
-		req.Permissions.Tools.SetList(api.ToolPolicyAllow, o.AllowedTools)
-	}
-	if o.DisallowedTools != nil {
-		req.Permissions.Tools.SetList(api.ToolPolicyDeny, o.DisallowedTools)
-	}
-	req.Permissions.MCP.Disabled = o.NoMCP || base.Permissions.MCP.Disabled || saved.NoMCP
-
-	if o.SkillDirs != nil {
-		req.Memory.Skills = o.SkillDirs
-	}
-	req.Memory.SkipHooks = o.NoHooks || base.Memory.SkipHooks || saved.NoHooks
-	req.Memory.SkipSkills = o.NoSkills || base.Memory.SkipSkills || saved.NoSkills
-	req.Memory.SkipUser = o.NoUser || base.Memory.SkipUser || saved.NoUser
-	req.Memory.SkipProject = o.NoProject || base.Memory.SkipProject || saved.NoProject
-	req.Memory.SkipMemory = o.NoMemory || base.Memory.SkipMemory || saved.NoMemory
-	req.Memory.Bare = o.Bare || base.Memory.Bare
-
-	if o.Resume != "" {
-		req.SessionID = o.Resume
-	}
-
-	// Config mirrors the resolved model + budget; runtime-only knobs from CLI+saved.
-	cfg := baseCfg
-	cfg.Model = req.Model
-	cfg.Budget = req.Budget
-	cfg.APIKey = o.APIKey
-	cfg.APIURL = firstNonEmpty(strings.TrimSpace(o.APIURL), baseCfg.APIURL)
-	// The overlay's resolution saw every layer (flag > frontmatter > default),
-	// so it overwrites rather than ORs with baseCfg: an explicit "none" must be
-	// able to turn an inherited external selection off.
-	// req.Sandbox is the winning ref (frontmatter, or the flag's override
-	// recorded above), so its agent pin and dispatch policy ride along.
-	cfg.SandboxSelection = sandboxSelectionConfig(sandbox, req.Sandbox)
-	cfg.NoCache = req.NoCache
-	return req, cfg, nil
-}
-
 // normalizePromptContextDir resolves the complete Setup through its owning
 // commons-db type before providers see the request.
 func normalizePromptContextDir(req *ai.Request, cwd string) error {
@@ -248,15 +76,6 @@ func fallbackModelsFromFlags(flags []string) []api.Model {
 	return out
 }
 
-// firstFallbacks implements the CLI-over-frontmatter precedence for the fallback
-// list: the --fallback flags win when present, otherwise the frontmatter list stands.
-func firstFallbacks(flags []string, frontmatter []api.Model) []api.Model {
-	if models := fallbackModelsFromFlags(flags); len(models) > 0 {
-		return models
-	}
-	return frontmatter
-}
-
 // firstNonEmpty returns the first non-empty string, or "" when all are empty.
 func firstNonEmpty(vals ...string) string {
 	for _, v := range vals {
@@ -265,50 +84,4 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
-}
-
-// selectModelIdentity applies precedence from lowest to highest while keeping a
-// model name and its runtime coupled. A higher-priority name clears a
-// lower-priority mode/provider unless that same layer explicitly supplies one.
-func selectModelIdentity(layers ...api.Model) api.Model {
-	var selected api.Model
-	for _, layer := range layers {
-		if layer.Name != "" {
-			selected.Name = layer.Name
-			selected.ID = layer.ID
-			selected.Mode = layer.Mode
-			selected.Provider = layer.Provider
-			continue
-		}
-		if layer.ID != "" {
-			selected.ID = layer.ID
-		}
-		if layer.Mode != "" {
-			selected.Mode = layer.Mode
-		}
-		if layer.Provider != nil {
-			selected.Provider = layer.Provider
-		}
-	}
-	return selected
-}
-
-// firstPositive returns the first value > 0, or 0 when none qualify.
-func firstPositive(vals ...int) int {
-	for _, v := range vals {
-		if v > 0 {
-			return v
-		}
-	}
-	return 0
-}
-
-// firstPositiveFloat returns the first value > 0, or 0 when none qualify.
-func firstPositiveFloat(vals ...float64) float64 {
-	for _, v := range vals {
-		if v > 0 {
-			return v
-		}
-	}
-	return 0
 }

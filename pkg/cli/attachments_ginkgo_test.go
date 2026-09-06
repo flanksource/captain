@@ -109,9 +109,10 @@ var _ = Describe("attachment flags", func() {
 			User: "What is this image of?", Attachments: []api.AttachmentRef{{Path: path}},
 		}}
 		req.SetCwd(dir)
-		result, err := executeSyncBatch(context.Background(), PromptRenderResult{
-			Name: "attachment batch", Input: req,
-		}, AIPromptOptions{MultiModels: []string{"*:sol"}})
+		opts := AIPromptOptions{MultiModels: []string{"*:sol"}}
+		rendered, err := testRenderedVariants(req, opts)
+		Expect(err).NotTo(HaveOccurred())
+		result, err := executeSyncBatch(context.Background(), rendered, opts)
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result.Status).To(Equal("partial"))

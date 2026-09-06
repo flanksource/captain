@@ -8,7 +8,6 @@ import (
 	"io"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/observation"
@@ -89,18 +88,15 @@ func observePromptAction(ctx context.Context, id string, flags map[string]string
 		return api.RuntimeObservation{}, errors.New("prompt observe v1 does not support workflow-backed prompts")
 	}
 
-	runtimes, err := ai.ResolveMulti([]string{selector}, rendered.Config.Model)
-	if err != nil {
-		return api.RuntimeObservation{}, err
-	}
-	if len(runtimes) != 1 {
-		return api.RuntimeObservation{}, fmt.Errorf("--runtime must resolve to exactly one runtime, got %d", len(runtimes))
-	}
-	runtime := runtimes[0]
+	runtime := rendered.Config.Model
 	if err := runtime.Validate(); err != nil {
 		return api.RuntimeObservation{}, fmt.Errorf("invalid --runtime: %w", err)
 	}
-	resolvedEffort, unsupported := resolveObservationEffort(runtime)
+	requestedRuntime := runtime
+	if requestedEffort.Value != nil {
+		requestedRuntime.Effort = api.Effort(*requestedEffort.Value)
+	}
+	resolvedEffort, unsupported := resolveObservationEffort(requestedRuntime)
 	result := newRuntimeObservation(selector, runtime, requestedEffort, resolvedEffort)
 	applyObservationCaptureRequest(&result, rendered.Input, flags)
 	if unsupported != "" {
@@ -113,11 +109,6 @@ func observePromptAction(ctx context.Context, id string, flags map[string]string
 		}
 		return checkedObservation(result)
 	}
-	runtime.Effort = resolvedEffort
-	rendered = renderVariant(rendered, runtime, nil)
-	rendered.Input.Fallbacks = nil
-	rendered.Config.Model.Fallbacks = nil
-
 	recorder := observation.NewRecorder()
 	req := rendered.Input
 	cfg := rendered.Config
@@ -281,63 +272,6 @@ func newRuntimeObservation(selector string, runtime api.Model, requested api.Obs
 			Usage:      api.ObservationUsageFact{State: api.ObservationFactUnknown, Semantics: "disjoint-v1"},
 		},
 	}
-}
-
-func executeObservationProvider(ctx context.Context, provider ai.Provider, req ai.Request, stream bool, recorder *observation.Recorder) (result observationRunResult) {
-	start := time.Now()
-	result = observationRunResult{model: provider.GetModel(), usedStream: stream}
-	defer func() { result.durationMS = time.Since(start).Milliseconds() }()
-	if !stream {
-		response, err := provider.Execute(ctx, req)
-		result.runtimeErr = err
-		result.usage = recorder.Snapshot().Usage
-		if response == nil {
-			return
-		}
-		result.costUSD = response.CostUSD
-		result.model = firstNonEmpty(response.Model, result.model)
-		result.terminal = err == nil
-		return
-	}
-
-	streamer, ok := provider.(ai.StreamingProvider)
-	if !ok {
-		result.runtimeErr = errors.New("resolved provider does not expose streaming")
-		return
-	}
-	events, err := streamer.ExecuteStream(ctx, req)
-	if err != nil {
-		result.runtimeErr = err
-		return
-	}
-	for event := range events {
-		recorder.RecordEvent(event)
-		if event.Model != "" {
-			result.model = event.Model
-		}
-		switch event.Kind {
-		case ai.EventError:
-			result.runtimeErr = errors.New(firstNonEmpty(event.Error, "provider emitted an error event"))
-		case ai.EventResult:
-			result.terminal = event.Success
-			if event.Usage != nil {
-				usage := *event.Usage
-				result.usage = &usage
-			}
-			result.costUSD = event.CostUSD
-			if !event.Success && result.runtimeErr == nil {
-				result.runtimeErr = errors.New("provider reported an unsuccessful result")
-			}
-		}
-	}
-	if ctx.Err() != nil && result.runtimeErr == nil {
-		result.runtimeErr = ctx.Err()
-	}
-	usageSnapshot := recorder.Snapshot()
-	if usageSnapshot.UsageObserved {
-		result.usage = usageSnapshot.Usage
-	}
-	return
 }
 
 func applyObservationSnapshot(result *api.RuntimeObservation, snapshot observation.Snapshot, streamed, remote bool) {

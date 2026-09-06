@@ -99,11 +99,10 @@ func runProviderDefaultsConfigure(ctx context.Context, provider *api.ModelProvid
 		return ConfigureProviderDefaultsResult{}, err
 	}
 	if err := captainconfig.Update(func(cfg *captainconfig.Config) error {
-		if cfg.AI.Providers == nil {
-			cfg.AI.Providers = map[string]captainconfig.ProviderDefaults{}
-		}
-		cfg.AI.Providers[provider.Name] = captainconfig.ProviderDefaults{
+		if err := cfg.AI.SetProvider(provider, captainconfig.ProviderDefaults{
 			Mode: next.Mode, Model: next.Model, ReasoningEffort: next.Effort,
+		}); err != nil {
+			return err
 		}
 		if opts.Active {
 			cfg.AI.DefaultProvider = provider.Name
