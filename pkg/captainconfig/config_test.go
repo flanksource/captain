@@ -64,6 +64,7 @@ func TestSaveLoad_RoundTrip(t *testing.T) {
 		},
 		Chat: ChatDefaults{RuntimeProfile: "Review"},
 	}
+	want.AI = want.AI.WithExplicit("/defaultProvider", "/providers", "/budgetUSD", "/maxTokens", "/temperature", "/timeout", "/noCache", "/noMCP", "/noMemory")
 	if err := Save(want); err != nil {
 		t.Fatalf("Save() err = %v", err)
 	}
@@ -297,7 +298,8 @@ func TestCurrentKeysLoadCleanly(t *testing.T) {
 	if err != nil || !exists {
 		t.Fatalf("Load() = %v, %v", exists, err)
 	}
-	if got := cfg.AI.Provider("anthropic"); got.Mode != "agent" || got.Model != "claude-opus-5" {
+	got, _, err := cfg.AI.Provider(registry.Anthropic)
+	if err != nil || got.Mode != "agent" || got.Model != "claude-opus-5" {
 		t.Fatalf("anthropic defaults = %+v", got)
 	}
 	if got := cfg.AI.Disabled.Runtimes; len(got) != 1 || got[0].Provider != "anthropic" || got[0].Mode != "cmux" {
