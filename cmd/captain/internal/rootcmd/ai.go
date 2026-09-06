@@ -1,4 +1,4 @@
-package main
+package rootcmd
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func registerAIRuntimeCommands(rootCmd *cobra.Command) {
+func RegisterAIRuntimeCommands(root *cobra.Command) {
 	aiCmd := &cobra.Command{
 		Use:   "ai",
 		Short: "AI provider commands",
@@ -20,11 +20,11 @@ func registerAIRuntimeCommands(rootCmd *cobra.Command) {
 			"bodies. Use -Plog.level.http=<level> to raise only HTTP logging, or " +
 			"-Phttp.har=<path> to write the exchanges to a HAR archive instead.",
 	}
-	rootCmd.AddCommand(aiCmd)
+	root.AddCommand(aiCmd)
 	aiCmd.AddCommand(cli.NewCommandAlias(cli.CommandAliasOptions{
 		Name:   "prompt",
 		Short:  "Alias for captain prompt run",
-		Root:   rootCmd,
+		Root:   root,
 		Target: []string{"prompt", "run"},
 	}))
 	var agentCmd *cobra.Command
@@ -42,15 +42,12 @@ func registerAIRuntimeCommands(rootCmd *cobra.Command) {
 	clicky.AddNamedCommand("fixture", aiCmd, cli.AIFixtureOptions{}, cli.RunAIFixture).Short = "Run a YAML fixture across multiple Claude configurations"
 	clicky.AddNamedCommandWithContext("mock", aiCmd, cli.AIMockOptions{}, cli.RunAIMock).Short = "Serve scripted OpenAI/Anthropic replies so agent runs spend no tokens"
 
-	// Local-only: --command is run through `sh -c` against a caller-chosen --cwd,
-	// so published as REST or MCP it would be unauthenticated remote execution.
 	var verifyCmd *cobra.Command
-	verifyCmd = clicky.AddNamedCommandWithContext("verify", rootCmd, cli.VerifyOptions{}, func(ctx context.Context, opts cli.VerifyOptions) (any, error) {
+	verifyCmd = clicky.AddNamedCommandWithContext("verify", root, cli.VerifyOptions{}, func(ctx context.Context, opts cli.VerifyOptions) (any, error) {
 		opts.AIProviderOptions = (cli.AIRuntimeOptions{AIProviderOptions: opts.AIProviderOptions}).WithChangedFlags(verifyCmd.Flags()).AIProviderOptions
 		return cli.RunVerify(ctx, opts)
 	})
 	verifyCmd.Short = "Run a workflow's verification checks and report the verdict"
 	verifyCmd.Long = "Run the checks an api.Workflow declares — shell commands, LLM-judge prompts, and a fixture document handed to the configured fixture runner — against a working tree, and print each check's report. Exits non-zero when any check fails or cannot reach a verdict."
 	clicky.MarkLocalOnly(verifyCmd)
-
 }
