@@ -18,6 +18,7 @@ trustPolicyExclude:
   - semver@6.3.1
 
 allowBuilds:
+  '@flanksource/clicky-ui@https://codeload.github.com/flanksource/clicky-ui/tar.gz/e045560b6af4d717250ae66ad48b08c07772d0cd#path:packages/ui': true
   esbuild: true
 overrides:
   '@types/react': 19.2.17
