@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/captainconfig"
 )
 
 // RuntimeProfile is the request-scoped application configuration for a chat.
@@ -17,6 +18,7 @@ import (
 type RuntimeProfile struct {
 	System         string
 	Composed       api.ComposedSpec
+	Saved          *captainconfig.AIDefaults
 	ProviderConfig api.Config
 }
 
@@ -78,12 +80,11 @@ func (s *Service) runtimeProfile(ctx context.Context, options ...RuntimeProfileO
 		return RuntimeProfile{}, err
 	}
 	if len(profile.Composed.Trace) == 0 {
-		if !api.IsEmpty(profile.Composed.Spec) || !api.IsEmpty(profile.Composed.Constraints) {
+		if (profile.Saved == nil && !api.IsEmpty(profile.Composed.Spec)) || !api.IsEmpty(profile.Composed.Constraints) {
 			return RuntimeProfile{}, fmt.Errorf("chat runtime profile must include its composition trace")
 		}
-		return profile, nil
 	}
-	composed, err := api.ComposeSpecLayers(profile.Composed.Trace...)
+	composed, err := api.ComposeSpecLayers(api.ResolveSpecOptions{Layers: profile.Composed.Trace, Saved: profile.Saved})
 	if err != nil {
 		return RuntimeProfile{}, fmt.Errorf("resolve chat runtime profile: %w", err)
 	}

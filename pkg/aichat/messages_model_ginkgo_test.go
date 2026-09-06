@@ -14,9 +14,9 @@ var _ = ginkgo.Describe("chatModel composition", func() {
 	// default to claim — that gap is how an agent-backed session came back as api.
 	// A catalog id carries no mode, so the authored profile mode survives.
 	resolve := func(request ChatRequest) (api.Model, error) {
-		composed, err := api.ComposeSpecLayers(api.SpecLayer{Name: "application", Scope: api.SpecLayerGlobal,
+		composed, err := api.ComposeSpecLayers(api.ResolveSpecOptions{Layers: []api.SpecLayer{{Name: "application", Scope: api.SpecLayerGlobal,
 			Spec: api.Spec{Model: api.Model{Name: "gpt-5.6-luna", Mode: api.ModeAPI}},
-		})
+		}}})
 		Expect(err).NotTo(HaveOccurred())
 		request.Messages = []UIMessage{{Role: "user", Parts: []UIPart{{Type: "text", Text: "Hello"}}}}
 		resolved, err := requestSpec(request, RuntimeProfile{Composed: composed}, nil)
