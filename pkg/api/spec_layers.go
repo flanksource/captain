@@ -65,10 +65,11 @@ type SpecLayer struct {
 
 // ResolvedSpec is Captain's effective runtime profile plus ordered provenance.
 type ResolvedSpec struct {
-	Spec        Spec               `json:"spec" yaml:"spec"`
-	Constraints RuntimeConstraints `json:"constraints" yaml:"constraints"`
-	Trace       []SpecLayer        `json:"trace" yaml:"trace"`
-	Warnings    []string           `json:"warnings,omitempty" yaml:"warnings,omitempty"`
+	Spec        Spec                       `json:"spec" yaml:"spec"`
+	Constraints RuntimeConstraints         `json:"constraints" yaml:"constraints"`
+	Trace       []SpecLayer                `json:"trace" yaml:"trace"`
+	Warnings    []string                   `json:"warnings,omitempty" yaml:"warnings,omitempty"`
+	Provenance  map[string]FieldProvenance `json:"provenance,omitempty" yaml:"provenance,omitempty"`
 }
 
 // PromptSpecLayer adapts parsed .prompt frontmatter into the normal surface layer.
@@ -92,13 +93,15 @@ func OrderSpecLayers(input ...SpecLayer) []SpecLayer {
 }
 
 // ComposeSpecLayers overlays raw defaults and constraints without resolving a runtime.
-func ComposeSpecLayers(input ...SpecLayer) (ComposedSpec, error) {
-	if err := ValidateSpecLayers(input...); err != nil {
+func ComposeSpecLayers(options ResolveSpecOptions) (ComposedSpec, error) {
+	if err := ValidateSpecLayers(options.Layers...); err != nil {
 		return ComposedSpec{}, err
 	}
-	layers := OrderSpecLayers(input...)
-	resolved := ComposedSpec{Trace: make([]SpecLayer, 0, len(layers))}
+	layers := OrderSpecLayers(options.Layers...)
+	limitSources := budgetLimitSources{}
+	resolved := ComposedSpec{Trace: make([]SpecLayer, 0, len(layers)), Provenance: map[string]FieldProvenance{}}
 	for _, layer := range layers {
+		resolved.recordLayer(layer)
 		resolved.Spec = resolved.Spec.Merge(layer.Spec)
 		if len(layer.Constraints.Models) > 0 {
 			resolved.Constraints.Models = intersectModels(resolved.Constraints.Models, layer.Constraints.Models)
@@ -111,6 +114,7 @@ func ComposeSpecLayers(input ...SpecLayer) (ComposedSpec, error) {
 			return ComposedSpec{}, fmt.Errorf("spec layer %q limits: %w", layer.Name, err)
 		}
 		resolved.Constraints.Limits = limits
+		limitSources.record(layer, limits.Budget)
 		for _, quota := range layer.Constraints.Quotas {
 			quota.Name = strings.TrimSpace(quota.Name)
 			quota.Scope = layer.Scope
@@ -120,11 +124,20 @@ func ComposeSpecLayers(input ...SpecLayer) (ComposedSpec, error) {
 		resolved.Trace = append(resolved.Trace, cloneSpecLayer(layer))
 	}
 
+	if options.Saved != nil || options.RequireModel || options.Normalize != nil {
+		if err := resolved.expandModel(); err != nil {
+			return ComposedSpec{}, err
+		}
+	}
+	if err := resolved.applyDefaults(options); err != nil {
+		return ComposedSpec{}, err
+	}
 	budget, err := strictBudget(resolved.Spec.Budget, resolved.Constraints.Limits.Budget)
 	if err != nil {
 		return ComposedSpec{}, fmt.Errorf("effective run budget: %w", err)
 	}
 	resolved.Spec.Budget = budget
+	resolved.recordLimits(limitSources)
 	return resolved, nil
 }
 

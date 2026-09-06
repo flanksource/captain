@@ -208,8 +208,8 @@ func TestSpec_FallbacksCompact(t *testing.T) {
 	if len(spec.Model.Fallbacks) != 2 {
 		t.Fatalf("fallbacks = %+v", spec.Model.Fallbacks)
 	}
-	// The compact prefix is a runtime mode; the adapter follows from resolution.
-	if spec.Model.Fallbacks[0].Name != "sonnet" || spec.Model.Fallbacks[0].Mode != ModeAgent {
+	// Keep authored compact selectors until final composition and resolution.
+	if spec.Model.Fallbacks[0].Name != "agent:sonnet:medium" || spec.Model.Fallbacks[0].Mode != "" {
 		t.Errorf("fb0 = %+v", spec.Model.Fallbacks[0])
 	}
 	resolved, err := ResolveModel(spec.Model.Fallbacks[0])
@@ -218,7 +218,7 @@ func TestSpec_FallbacksCompact(t *testing.T) {
 	}
 	// Candidates flattens primary + fallbacks in order.
 	cands := spec.Model.Candidates()
-	if len(cands) != 3 || cands[0].Name != "opus" || cands[1].Name != "sonnet" || cands[2].Name != "gpt-5.5" {
+	if len(cands) != 3 || cands[0].Name != "opus" || cands[1].Name != "agent:sonnet:medium" || cands[2].Name != "api:gpt-5.5" {
 		t.Errorf("candidates = %+v", cands)
 	}
 }

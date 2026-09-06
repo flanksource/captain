@@ -1,6 +1,10 @@
 package api
 
 import (
+	"reflect"
+	"sort"
+	"strings"
+
 	"github.com/flanksource/captain/pkg/api/registry"
 	"github.com/flanksource/commons/merge"
 )
@@ -29,8 +33,8 @@ func MergePolicy() merge.Policy {
 	})
 }
 
-// Merge returns a copy of s with override's set (non-zero) fields taking
-// precedence. A zero-valued field in override is treated as "unset" and keeps
+// Merge returns a copy of s with override's supplied fields taking precedence.
+// A zero-valued field without explicit presence is "unset" and keeps
 // s's value, so a base spec can supply defaults that an operation-specific spec
 // selectively overrides:
 //
@@ -40,19 +44,57 @@ func MergePolicy() merge.Policy {
 // slices are replaced wholesale when the override's is non-empty, maps merge
 // key-wise, and structs — including Setup, Workflow and Permissions.Tools behind
 // their pointers — merge field by field, so setting one sub-field does not erase
-// its siblings. Boolean toggles follow zero=unset: an override can turn a flag on
-// but not off, since false is indistinguishable from absent.
+// its siblings. Decoded explicit zero values, or fields marked by WithExplicit,
+// replace inherited values, including false booleans and empty collections.
 //
 // Neither operand is mutated and the result shares no mutable memory with
 // either, so a merged spec can be edited without reaching back into the config
 // it inherited from.
 func (s Spec) Merge(override Spec) Spec {
+	s = s.withoutReplacedPresence(override)
 	merged := merge.Apply(s, override, MergePolicy())
 	if s.Sandbox != nil && override.Sandbox != nil && s.Sandbox.Mode == override.Sandbox.Mode {
 		resolved := merge.Apply(*s.Sandbox, *override.Sandbox, MergePolicy())
 		merged.Sandbox = &resolved
 	}
+	cloned := merge.Apply(Spec{}, override, MergePolicy())
+	paths := make([]string, 0, len(override.explicitFields()))
+	for path := range override.explicitFields() {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
+		tokens := strings.Split(strings.TrimPrefix(path, "/"), "/")
+		source := serializedField(reflect.ValueOf(cloned), tokens)
+		target := serializedField(reflect.ValueOf(&merged).Elem(), tokens)
+		if source.IsValid() && target.IsValid() && target.CanSet() {
+			target.Set(source)
+		}
+	}
 	return merged
+}
+
+func (s Spec) withoutReplacedPresence(override Spec) Spec {
+	s.Explicit = s.Explicit.Clone()
+	s.Model.Explicit = s.Model.Explicit.Clone()
+	for path := range override.Fields() {
+		value := serializedField(reflect.ValueOf(override), strings.Split(strings.TrimPrefix(path, "/"), "/"))
+		if !replacesField(value) && path != "/toolApproval" && (path != "/sandbox" || s.Sandbox == nil || override.Sandbox == nil || s.Sandbox.Mode == override.Sandbox.Mode) {
+			continue
+		}
+		for _, fields := range []FieldPresence{s.Explicit, s.Model.Explicit} {
+			for previous := range fields {
+				if previous == path || strings.HasPrefix(previous, path+"/") {
+					delete(fields, previous)
+				}
+			}
+		}
+	}
+	return s
+}
+
+func replacesField(value reflect.Value) bool {
+	return value.IsValid() && (value.Kind() == reflect.Slice || value.Kind() == reflect.Map && value.Len() == 0 || value.Kind() == reflect.Pointer && value.IsNil())
 }
 
 // WithoutSession returns s stripped of everything that binds it to a prior
@@ -68,5 +110,13 @@ func (s Spec) WithoutSession() Spec {
 	s.SessionID = ""
 	s.ToolApproval = nil
 	s.Messages = nil
+	s.Explicit = s.Explicit.Clone()
+	for path := range s.Explicit {
+		for _, removed := range []string{"/sessionId", "/toolApproval", "/messages"} {
+			if path == removed || strings.HasPrefix(path, removed+"/") {
+				delete(s.Explicit, path)
+			}
+		}
+	}
 	return s
 }

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/captainconfig"
 )
 
 // ErrCatalogUnavailable reports selection against a resolver with no catalog.
@@ -55,6 +56,9 @@ type ResolveOptions struct {
 	DefaultProfile   string
 	SurfaceLayers    []api.SpecLayer
 	RequestLayers    []api.SpecLayer
+	Saved            *captainconfig.AIDefaults
+	RequireModel     bool
+	Normalize        func(api.Spec) (api.SpecNormalization, error)
 }
 
 // ResolveResult retains the selected catalog records and effective spec.
@@ -109,7 +113,7 @@ func (r *Resolver) Resolve(ctx context.Context, options ResolveOptions) (Resolve
 	if err != nil {
 		return ResolveResult{}, err
 	}
-	resolved, err := api.ResolveSpecLayers(layers.Layers...)
+	resolved, err := api.ResolveSpecLayers(api.ResolveSpecOptions{Layers: layers.Layers, Saved: options.Saved, RequireModel: options.RequireModel, Normalize: options.Normalize})
 	if err != nil {
 		return ResolveResult{}, fmt.Errorf("resolve runtime profile layers: %w", err)
 	}

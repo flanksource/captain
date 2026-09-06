@@ -14,6 +14,7 @@ import (
 // task-specific profile fields and cannot be represented here.
 type RuntimePresetSpec struct {
 	Model           `json:",inline" yaml:",inline"`
+	Explicit        FieldPresence       `json:"-" yaml:"-"`
 	Budget          Budget              `json:"budget,omitempty" yaml:"budget,omitempty"`
 	Memory          Memory              `json:"memory,omitempty" yaml:"memory,omitempty"`
 	Permissions     Permissions         `json:"permissions,omitempty" yaml:"permissions,omitempty"`
@@ -116,7 +117,7 @@ func ResolveRuntimeProfile(request RuntimeProfileResolveRequest) (ResolvedSpec, 
 	if err != nil {
 		return ResolvedSpec{}, err
 	}
-	resolved, err := ResolveSpecLayers(layers...)
+	resolved, err := ResolveSpecLayers(ResolveSpecOptions{Layers: layers})
 	if err != nil {
 		return ResolvedSpec{}, fmt.Errorf("resolve runtime profile %q: %w", request.Profile.Name, err)
 	}
@@ -167,7 +168,7 @@ func (i runtimePresetIndex) lookup(profile, ref string) (RuntimePreset, error) {
 
 func (s RuntimePresetSpec) ToSpec() Spec {
 	return Spec{
-		Model: s.Model, Budget: s.Budget, Memory: s.Memory,
+		Model: s.Model, Explicit: s.Explicit.Clone(), Budget: s.Budget, Memory: s.Memory,
 		Permissions: s.Permissions, ToolPreferences: s.ToolPreferences,
 		ToolPolicy: s.ToolPolicy, Setup: s.Setup.toSetup(), Sandbox: s.Sandbox,
 	}

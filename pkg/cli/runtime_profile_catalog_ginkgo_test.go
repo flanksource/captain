@@ -27,7 +27,7 @@ var _ = Describe("CLI runtime catalog discovery", func() {
 	It("preserves the supplied catalog without reading user config", func() {
 		fixture := newRuntimeEntityFixture()
 		Expect(os.WriteFile(configPath, []byte("runtime: [malformed\n"), 0o600)).To(Succeed())
-		Expect(buildRuntimeCatalog(fixture.ctx)).To(BeIdenticalTo(fixture.catalog))
+		Expect(buildRuntimeCatalog(fixture.ctx, runtimeprofiles.DefaultCatalogOptions{})).To(BeIdenticalTo(fixture.catalog))
 	})
 
 	It("uses the shared discovery sources with the CLI database registered first", func(ctx SpecContext) {
@@ -35,7 +35,7 @@ var _ = Describe("CLI runtime catalog discovery", func() {
 			Read: captainDB, Write: captainDefaultDB,
 		})
 		Expect(err).NotTo(HaveOccurred())
-		actual, err := buildRuntimeCatalog(ctx)
+		actual, err := buildRuntimeCatalog(ctx, runtimeprofiles.DefaultCatalogOptions{})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(actual.Sources()).To(Equal(expected.Sources()))
 		Expect(actual.Sources()).To(HaveLen(5))
@@ -44,7 +44,7 @@ var _ = Describe("CLI runtime catalog discovery", func() {
 
 	It("reports invalid configured discovery directories", func(ctx SpecContext) {
 		Expect(os.WriteFile(configPath, []byte("runtime:\n  profileDirs: [missing]\n"), 0o600)).To(Succeed())
-		_, err := buildRuntimeCatalog(ctx)
+		_, err := buildRuntimeCatalog(ctx, runtimeprofiles.DefaultCatalogOptions{})
 		Expect(err).To(MatchError(ContainSubstring("runtime.profileDirs")))
 		Expect(err).To(MatchError(ContainSubstring("missing")))
 	})

@@ -10,9 +10,9 @@ var _ = Describe("Effective layered runtime validation", func() {
 		profile := PromptSpecLayer("profile", Spec{Model: Model{Name: "agent:sol"}, Permissions: Permissions{Tools: Tools{"Bash": ToolPolicyDeny}}})
 		request := RequestSpecLayer("request", Spec{Model: Model{Name: "sonnet", Mode: ModeCLI}})
 		Expect(ValidateSpecLayers(profile)).To(Succeed())
-		_, err := ResolveSpecLayers(profile)
+		_, err := ResolveSpecLayers(ResolveSpecOptions{Layers: []SpecLayer{profile}})
 		Expect(err).To(HaveOccurred())
-		resolved, err := ResolveSpecLayers(profile, request)
+		resolved, err := ResolveSpecLayers(ResolveSpecOptions{Layers: []SpecLayer{profile, request}})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(resolved.Spec.Name).To(Equal("claude-sonnet-5"))
 		Expect(resolved.Spec.Provider).To(Equal(Anthropic))
@@ -22,7 +22,7 @@ var _ = Describe("Effective layered runtime validation", func() {
 	})
 
 	It("keeps an explicit API mode after subsequent provider model resolution", func() {
-		resolved, err := ResolveSpecLayers(PromptSpecLayer("profile", Spec{Model: Model{Name: "api:sonnet"}}))
+		resolved, err := ResolveSpecLayers(ResolveSpecOptions{Layers: []SpecLayer{PromptSpecLayer("profile", Spec{Model: Model{Name: "api:sonnet"}})}})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(resolved.Spec.Mode).To(Equal(ModeAPI))
 		again, err := ResolveModel(resolved.Spec.Model)
@@ -35,7 +35,7 @@ var _ = Describe("Effective layered runtime validation", func() {
 			Model:       Model{Name: "agent:sonnet", Fallbacks: []Model{{Name: "cli:sol"}}},
 			Permissions: Permissions{Plugins: ResourcePolicies{"example": ResourceEnabled}},
 		})
-		resolved, err := ResolveSpecLayers(layer)
+		resolved, err := ResolveSpecLayers(ResolveSpecOptions{Layers: []SpecLayer{layer}})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(resolved.Warnings).To(ConsistOf(
 			"resource policy plugins=enabled is not available for anthropic agent",
@@ -45,7 +45,7 @@ var _ = Describe("Effective layered runtime validation", func() {
 	})
 
 	DescribeTable("refuses unsupported isolation on every candidate", func(model Model) {
-		_, err := ResolveSpecLayers(PromptSpecLayer("profile", Spec{Model: model, Sandbox: &SandboxRef{Mode: SandboxNative}}))
+		_, err := ResolveSpecLayers(ResolveSpecOptions{Layers: []SpecLayer{PromptSpecLayer("profile", Spec{Model: model, Sandbox: &SandboxRef{Mode: SandboxNative}})}})
 		Expect(err).To(MatchError(ContainSubstring(`sandbox mode "native" is not available`)))
 	},
 		Entry("primary", Model{Name: "api:sonnet"}),
@@ -53,20 +53,20 @@ var _ = Describe("Effective layered runtime validation", func() {
 	)
 
 	It("retains hard agent-tool policy refusal for fallback runtimes", func() {
-		_, err := ResolveSpecLayers(PromptSpecLayer("profile", Spec{
+		_, err := ResolveSpecLayers(ResolveSpecOptions{Layers: []SpecLayer{PromptSpecLayer("profile", Spec{
 			Model:       Model{Name: "cli:sonnet", Fallbacks: []Model{{Name: "cli:sol"}}},
 			Permissions: Permissions{Tools: Tools{"Bash": ToolPolicyDeny}},
-		}))
+		})}})
 		Expect(err).To(MatchError(ContainSubstring("tool policy")))
 	})
 
 	It("uses native translators for unsupported policy fields on fallbacks", func() {
-		_, err := ResolveSpecLayers(PromptSpecLayer("profile", Spec{
+		_, err := ResolveSpecLayers(ResolveSpecOptions{Layers: []SpecLayer{PromptSpecLayer("profile", Spec{
 			Model: Model{Name: "agent:sonnet", Fallbacks: []Model{{Name: "agent:sol"}}},
 			Sandbox: &SandboxRef{Mode: SandboxNative, Policy: &NativeSandboxPolicy{
 				Network: &SandboxNetworkPolicy{AllowedDomains: []string{"example.com"}},
 			}},
-		}))
+		})}})
 		Expect(err).To(MatchError(ContainSubstring("allowedDomains")))
 	})
 
@@ -77,7 +77,7 @@ var _ = Describe("Effective layered runtime validation", func() {
 				Filesystem: &SandboxFilesystemPolicy{Access: SandboxFilesystemWorkspaceWrite},
 			}},
 		})
-		resolved, err := ResolveSpecLayers(layer)
+		resolved, err := ResolveSpecLayers(ResolveSpecOptions{Layers: []SpecLayer{layer}})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(resolved.Spec.Sandbox).To(Equal(layer.Spec.Sandbox))
 		Expect(resolved.Trace).To(Equal([]SpecLayer{layer}))
@@ -88,7 +88,7 @@ var _ = Describe("Effective layered runtime validation", func() {
 			Workflow:    &Workflow{Verify: &Verify{Commands: []string{"true"}}},
 			Permissions: Permissions{Plugins: ResourcePolicies{"example": ResourceEnabled}},
 		})
-		resolved, err := ResolveSpecLayers(layer)
+		resolved, err := ResolveSpecLayers(ResolveSpecOptions{Layers: []SpecLayer{layer}})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(resolved.Spec.Model).To(Equal(layer.Spec.Model))
 		Expect(resolved.Warnings).To(BeEmpty())
@@ -100,7 +100,7 @@ var _ = Describe("Effective layered runtime validation", func() {
 			Constraints: RuntimeConstraints{Models: []string{"sol", "sonnet"}},
 			Spec:        Spec{Model: Model{Name: "sol", Fallbacks: []Model{{Name: "sonnet"}}}},
 		}
-		resolved, err := ResolveSpecLayers(layer)
+		resolved, err := ResolveSpecLayers(ResolveSpecOptions{Layers: []SpecLayer{layer}})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(resolved.Spec.Name).To(Equal("gpt-5.6-sol"))
 		Expect(resolved.Spec.Fallbacks[0].Name).To(Equal("claude-sonnet-5"))
