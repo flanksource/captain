@@ -2,18 +2,19 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 
-	"github.com/flanksource/captain/pkg/aichat"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/session"
+	"github.com/flanksource/captain/pkg/session/load"
+	sessionquery "github.com/flanksource/captain/pkg/session/query"
+	sessiontranscript "github.com/flanksource/captain/pkg/session/transcript"
 	"github.com/flanksource/clicky"
 	clickyapi "github.com/flanksource/clicky/api"
 	rpchttp "github.com/flanksource/clicky/rpc/http"
+	"github.com/flanksource/commons/logger"
 )
 
 type SessionGetResult struct {
@@ -23,24 +24,31 @@ type SessionGetResult struct {
 }
 
 type SessionGetItem struct {
-	CaptainID         string            `json:"captainId"`
-	ParentSessionID   string            `json:"parentSessionId,omitempty"`
-	RootSessionID     string            `json:"rootSessionId,omitempty"`
-	ProviderSessionID string            `json:"providerSessionId,omitempty"`
-	Host              string            `json:"host,omitempty"`
-	Aggregate         bool              `json:"aggregate,omitempty"`
-	DetailAvailable   bool              `json:"detailAvailable"`
-	Summary           SessionRecord     `json:"summary"`
-	Detail            *session.Session  `json:"detail,omitempty"`
-	ActiveRunID       string            `json:"activeRunId,omitempty"`
-	Chat              *ChatCapabilities `json:"chat,omitempty"`
-	ChatState         *ChatStateFrame   `json:"chatState,omitempty"`
-	notice            transcriptNotice
+	CaptainID         string `json:"captainId"`
+	ParentSessionID   string `json:"parentSessionId,omitempty"`
+	RootSessionID     string `json:"rootSessionId,omitempty"`
+	ProviderSessionID string `json:"providerSessionId,omitempty"`
+	Host              string `json:"host,omitempty"`
+	Aggregate         bool   `json:"aggregate,omitempty"`
+	DetailAvailable   bool   `json:"detailAvailable"`
+	// DetailSource names the source of each facet of Detail. DetailAvailable
+	// alone could not tell a parsed transcript from a single synthesised prompt
+	// message, which is how an un-ingested session read as an empty one.
+	DetailSource map[string]string `json:"detailSource,omitempty"`
+	Summary      SessionRecord     `json:"summary"`
+	Detail       *session.Session  `json:"detail,omitempty"`
+	// Browsers are the live agent-browser sessions this agent session launched.
+	Browsers    []BrowserSession  `json:"browsers,omitempty"`
+	ActiveRunID string            `json:"activeRunId,omitempty"`
+	Chat        *ChatCapabilities `json:"chat,omitempty"`
+	ChatState   *ChatStateFrame   `json:"chatState,omitempty"`
+	notice      transcriptNotice
 }
 
 type sessionGetStore interface {
 	sessionOverviewStore
-	ListPromptRuns(context.Context, database.PromptRunFilter) ([]database.PromptRun, error)
+	sessionquery.Store
+	sessionquery.TranscriptStore
 }
 
 // RunSessionGet returns every Captain session matching an exact Captain UUID
@@ -82,6 +90,10 @@ func runSessionGet(ctx context.Context, db sessionGetStore, opts SessionGetOptio
 		}
 		items = append(items, item)
 	}
+	stopBrowsers := rpchttp.Track(ctx, "browsers")
+	attachBrowserSessions(ctx, items)
+	stopBrowsers()
+
 	rootID := ""
 	if len(items) > 1 && items[0].ParentSessionID == "" {
 		rootID = items[0].CaptainID
@@ -112,7 +124,7 @@ func buildSessionGetItem(ctx context.Context, db sessionGetStore, overview datab
 		item.ActiveRunID, activeCapabilities, item.ChatState = active.projection()
 		item.Chat = &activeCapabilities
 	}
-	detail, err := loadSessionDetail(ctx, db, overview)
+	detail, provenance, err := loadSessionDetail(ctx, db, overview)
 	if err != nil {
 		return SessionGetItem{}, err
 	}
@@ -120,6 +132,10 @@ func buildSessionGetItem(ctx context.Context, db sessionGetStore, overview datab
 		return item, nil
 	}
 	enrichSessionDetail(detail, item.Summary)
+	// Provenance travels with the detail so an unread session is distinguishable
+	// from an empty one: messages sourced from "prompt-run" mean the transcript
+	// has not been ingested, not that nothing happened.
+	item.DetailSource = provenance.Facets()
 	item.DetailAvailable = true
 	item.Summary.DetailAvailable = true
 	item.Summary.Messages = max(item.Summary.Messages, len(detail.Messages))
@@ -136,189 +152,96 @@ func buildSessionGetItem(ctx context.Context, db sessionGetStore, overview datab
 	return item, nil
 }
 
-func loadSessionDetail(ctx context.Context, db sessionGetStore, overview database.SessionOverview) (*session.Session, error) {
-	if overview.MessageCount > 0 {
-		captainDB, ok := db.(*database.DB)
-		if !ok {
-			return nil, fmt.Errorf("captain session %s has database messages but its store cannot load the canonical aggregate", overview.ID)
-		}
-		store, err := aichat.NewDatabaseThreadStore(captainDB)
-		if err != nil {
-			return nil, err
-		}
-		detail, err := store.GetSession(ctx, overview.ID.String())
-		if err != nil {
-			return nil, fmt.Errorf("load canonical Captain session %s: %w", overview.ID, err)
-		}
-		runs, err := db.ListPromptRuns(ctx, database.PromptRunFilter{SessionID: &overview.ID})
-		if err != nil {
-			return nil, fmt.Errorf("list prompt runs for Captain session %s: %w", overview.ID, err)
-		}
-		if len(runs) > 0 {
-			if err := attachPromptRunData(detail, runs[0]); err != nil {
-				return nil, fmt.Errorf("attach prompt run %s to Captain session %s: %w", runs[0].ID, overview.ID, err)
-			}
-		}
-		return detail, nil
-	}
-	path := stringOr(overview.HistoryFile, stringOr(overview.Path, ""))
-	var detail *session.Session
-	if path != "" {
-		stopParse := rpchttp.Track(ctx, "parse")
-		parsed, err := buildSessionModel(candidateFromOverview(overview))
-		stopParse()
-		if err != nil {
-			return nil, fmt.Errorf("parse Captain session %s: %w", overview.ID, err)
-		}
-		detail = parsed
-		detail.ID = overview.ID.String()
-		detail.ProviderSessionID = stringOr(overview.ProviderSessionID, "")
-		detail.Revision = overview.StateVersion
-	}
-	stopPromptRuns := rpchttp.Track(ctx, "prompt_runs")
-	runs, err := db.ListPromptRuns(ctx, database.PromptRunFilter{SessionID: &overview.ID})
-	stopPromptRuns()
-	if err != nil {
-		return nil, fmt.Errorf("list prompt runs for Captain session %s: %w", overview.ID, err)
-	}
-	if len(runs) > 0 {
-		if detail == nil {
-			if detail, err = sessionFromPromptRun(overview, runs[0]); err != nil {
-				return nil, err
-			}
-		} else if err := attachPromptRunData(detail, runs[0]); err != nil {
-			return nil, fmt.Errorf("attach prompt run %s to Captain session %s: %w", runs[0].ID, overview.ID, err)
-		}
-	}
-	if detail == nil {
-		return nil, nil
-	}
-	// The transcript and prompt-run branches build the aggregate from the source
-	// that produced the session, so neither carries the stored projection the
-	// database branch gets from GetSession.
-	if err := applyOverviewProjection(ctx, db, overview, detail); err != nil {
-		return nil, fmt.Errorf("project Captain session %s overview: %w", overview.ID, err)
-	}
-	return detail, nil
-}
-
-// applyOverviewProjection adapts the store interface; the projection itself is
-// shared with the database branch.
-func applyOverviewProjection(
+// loadSessionDetail composes one session aggregate from every source that holds
+// facts about it.
+//
+// It used to be three mutually exclusive producers chosen by incidental database
+// state — stored messages, then a recorded transcript path, then a prompt run —
+// so which facts a caller received depended on which branch ran, and nothing in
+// the response said which one did. Approvals were read in only one of the three,
+// which is why a run suspended on a tool approval reported none at all.
+//
+// Every contributor now runs; load.Precedence decides contested facets. A source
+// that fails is reported but does not fail the read: a transcript that will not
+// parse must not hide the approval that is blocking the run.
+func loadSessionDetail(
 	ctx context.Context,
 	db sessionGetStore,
 	overview database.SessionOverview,
-	detail *session.Session,
-) error {
-	store, ok := db.(aichat.OverviewProjectionStore)
-	if !ok {
-		return nil
+) (*session.Session, load.Provenance, error) {
+	stored, err := storedSource(ctx, db, overview)
+	if err != nil {
+		return nil, load.Provenance{}, err
 	}
-	return aichat.ApplyOverviewProjection(ctx, store, overview, detail)
+
+	stopCompose := rpchttp.Track(ctx, "compose")
+	transcript, err := parsedTranscript(ctx, db, overview)
+	if err != nil {
+		stopCompose()
+		return nil, load.Provenance{}, err
+	}
+	result, _, err := sessionquery.ComposeSession(ctx, db, overview, sessionquery.ComposeOptions{
+		Stored: stored, Transcript: transcript,
+	})
+	stopCompose()
+	if err != nil {
+		return nil, load.Provenance{}, err
+	}
+	// A session nothing could say anything about stays metadata-only, rather
+	// than being reported as an empty one.
+	if result.Provenance.Of(load.FacetMessages) == load.SourceNone &&
+		result.Provenance.Of(load.FacetPrompt) == load.SourceNone {
+		return nil, result.Provenance, nil
+	}
+	return result.Session, result.Provenance, nil
 }
 
-func sessionFromPromptRun(overview database.SessionOverview, run database.PromptRun) (*session.Session, error) {
-	resolved := run.Runtime.Resolved
-	requested := run.Runtime.Requested
-	detail := &session.Session{
-		ID:                overview.ID.String(),
-		ProviderSessionID: stringOr(overview.ProviderSessionID, ""),
-		Revision:          overview.StateVersion,
-		Source:            overview.Source,
-		Project:           stringOr(overview.Project, ""),
-		CWD:               stringOr(overview.CWD, ""),
-		Slug:              stringOr(overview.Slug, ""),
-		Title:             stringOr(overview.Title, ""),
-		InitialPrompt:     stringOr(overview.InitialPrompt, run.PromptMarkdown),
-		Version:           stringOr(overview.CLIVersion, ""),
-		Provider:          firstNonEmpty(overview.Provider, resolved.Provider, requested.Provider),
-		ModelMode:         api.RuntimeMode(firstNonEmpty(stringOr(overview.ModelMode, ""), resolved.Mode, requested.Mode)),
-		Model:             firstNonEmpty(stringOr(overview.Model, ""), resolved.Model, requested.Model),
-		ReasoningEffort:   firstNonEmpty(stringOr(overview.Effort, ""), resolved.Effort, requested.Effort),
-		StartedAt:         firstTime(overview.StartedAt, run.StartedAt, &run.QueuedAt),
-		EndedAt:           firstTime(overview.EndedAt, run.FinishedAt),
-	}
-	if run.PromptMarkdown != "" {
-		detail.Messages = append(detail.Messages, promptRunMessage(run, "user", run.PromptMarkdown))
-	}
-	resultText, err := promptRunResultText(run)
+// parsedTranscript parses the transcript of the row that actually holds one,
+// which for a Gavel run is a sibling rather than the session asked for: the
+// admission root is a provider-identity bridge and carries no log.
+//
+// A transcript that cannot be resolved or parsed is not an error — it is the
+// normal state of a run whose log has not been ingested yet — so this reports
+// nothing and lets the other sources answer.
+func parsedTranscript(ctx context.Context, db sessionGetStore, overview database.SessionOverview) (*session.Session, error) {
+	candidate, ok, err := sessionquery.TranscriptCandidate(ctx, db, overview)
 	if err != nil {
 		return nil, err
 	}
-	if resultText != "" {
-		detail.Messages = append(detail.Messages, promptRunMessage(run, "assistant", resultText))
+	if !ok {
+		return nil, nil
 	}
-	if run.Error != "" {
-		detail.Events = append(detail.Events, session.Event{
-			Type: "error", Scope: "prompt_run", Timestamp: run.FinishedAt, UUID: run.ID.String(),
-			Data: map[string]any{"message": run.Error, "state": run.State},
-		})
-	}
-	if err := attachPromptRunData(detail, run); err != nil {
-		return nil, fmt.Errorf("encode prompt run %s: %w", run.ID, err)
-	}
-	return detail, nil
-}
-
-func promptRunMessage(run database.PromptRun, role, text string) session.Message {
-	return session.Message{
-		ID: run.ID.String() + "-" + role, Role: role,
-		Parts: []session.Part{{Type: session.PartText, Text: text}},
-	}
-}
-
-func promptRunResultText(run database.PromptRun) (string, error) {
-	if run.ResultText != "" {
-		return run.ResultText, nil
-	}
-	if len(run.ResultJSON) == 0 {
-		return "", nil
-	}
-	raw, err := json.Marshal(run.ResultJSON)
+	stopParse := rpchttp.Track(ctx, "parse")
+	parsed, err := sessiontranscript.Parse(candidate)
+	stopParse()
 	if err != nil {
-		return "", fmt.Errorf("encode prompt run %s result: %w", run.ID, err)
+		logger.Debugf("captain session %s: no usable transcript: %v", overview.ID, err)
+		return nil, nil
 	}
-	return string(raw), nil
+	parsed.ID = overview.ID.String()
+	parsed.ProviderSessionID = stringOr(overview.ProviderSessionID, "")
+	parsed.Revision = overview.StateVersion
+	return parsed, nil
 }
 
-func attachPromptRunData(detail *session.Session, run database.PromptRun) error {
-	if len(run.RenderedSpec) > 0 {
-		raw, err := json.Marshal(run.RenderedSpec)
-		if err != nil {
-			return err
-		}
-		detail.Prompt = raw
+// storedSource loads the aggregate the database holds, when it holds one.
+func storedSource(ctx context.Context, db sessionGetStore, overview database.SessionOverview) (*session.Session, error) {
+	if overview.MessageCount == 0 {
+		return nil, nil
 	}
-	detail.StructuredOutput = promptRunStructuredOutput(run)
-	return nil
-}
-
-func promptRunStructuredOutput(run database.PromptRun) map[string]any {
-	if run.ResultJSON != nil {
-		return run.ResultJSON
+	captainDB, ok := db.(*database.DB)
+	if !ok {
+		return nil, fmt.Errorf("captain session %s has database messages but its store cannot load the canonical aggregate", overview.ID)
 	}
-	if !promptRunDeclaresOutputSchema(run.RenderedSpec) || !json.Valid([]byte(run.ResultText)) {
-		return nil
+	store, err := sessionquery.New(captainDB)
+	if err != nil {
+		return nil, err
 	}
-	var output map[string]any
-	if err := json.Unmarshal([]byte(run.ResultText), &output); err != nil {
-		return nil
+	stored, err := store.StoredAggregate(ctx, overview)
+	if err != nil {
+		return nil, fmt.Errorf("load canonical Captain session %s: %w", overview.ID, err)
 	}
-	return output
-}
-
-func promptRunDeclaresOutputSchema(rendered map[string]any) bool {
-	schema, ok := rendered["outputSchema"].(map[string]any)
-	return ok && len(schema) > 0
-}
-
-func firstTime(values ...*time.Time) *time.Time {
-	for _, value := range values {
-		if value != nil && !value.IsZero() {
-			return value
-		}
-	}
-	return nil
+	return stored, nil
 }
 
 func sessionChatCapabilities(summary SessionRecord) ChatCapabilities {

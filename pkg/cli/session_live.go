@@ -59,7 +59,9 @@ func RunSessionLive(ctx context.Context, opts SessionLiveOptions) (SessionLiveRe
 	if err != nil {
 		return SessionLiveResult{}, err
 	}
-	enrichLiveSessionSurfaces(page.Records)
+	if err := enrichLiveSessionSurfaces(page.Records); err != nil {
+		return SessionLiveResult{}, err
+	}
 	coverage := "page"
 	if opts.Full {
 		coverage = "all"
@@ -96,7 +98,15 @@ func buildSessionLiveResult(options sessionLiveResultOptions) SessionLiveResult 
 	}
 }
 
-func enrichLiveSessionSurfaces(records []SessionRecord) {
+func enrichLiveSessionSurfaces(records []SessionRecord) error {
+	processes, err := discoverSessionProcesses()
+	if err != nil {
+		return err
+	}
+	byPID := make(map[int]*CmuxSurface, len(processes))
+	for _, process := range processes {
+		byPID[process.PID] = process.Surface
+	}
 	detected := false
 	for i := range records {
 		if records[i].Live == nil || records[i].Live.PID <= 0 {
@@ -105,17 +115,17 @@ func enrichLiveSessionSurfaces(records []SessionRecord) {
 		if records[i].Live.Surface != nil {
 			detected = true
 		}
-		if surface := discoverProcessSurface(records[i].Live.PID); surface != nil {
+		if surface := byPID[records[i].Live.PID]; surface != nil {
 			records[i].Live.Surface = surface
 			detected = true
 		}
 	}
 	if !detected {
-		return
+		return nil
 	}
 	surfaces, err := discoverCmuxSurfaces()
 	if err != nil {
-		return
+		return nil
 	}
 	for i := range records {
 		if records[i].Live == nil {
@@ -125,6 +135,7 @@ func enrichLiveSessionSurfaces(records []SessionRecord) {
 			enrichCmuxSurface(surface, surfaces)
 		}
 	}
+	return nil
 }
 
 // sessionDatabaseStatus reports the database the records were actually read
