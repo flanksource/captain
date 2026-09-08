@@ -538,6 +538,48 @@ captain mcp
 
 Exposes captain commands as MCP tools. Auto-exposes all commands except `sandbox`, `projects`, `container`, `hook`, and `ai`.
 
+### Browser sessions
+
+```bash
+# List live agent-browser sessions with their cost and owning agent session
+captain browser ls
+
+# Include sessions whose daemon has exited, and search by name/pid/agent session
+captain browser ls --all
+captain browser ls -q 8c630de6
+
+# Register captain as an agent-browser launch plugin (inspect the merge first)
+captain browser install --global --dry-run
+captain browser install --global
+```
+
+```
+ SESSION                    AGE    CPU    MEMORY  PID    AGENT SESSION     PROJECT
+ captain-fb7c9f910548       12m    3.1%   412MB   11473  claude 8c630de6   captain
+ designpg/default           2h4m   0.4%   180MB    9921  codex  01f2a9c    clicky-ui
+```
+
+An `agent-browser` session is only a name plus a set of sidecar files, and its `<session>.pid` holds the **daemon's** pid — the browser itself is an unrecorded child of that daemon. So CPU and memory are summed across the daemon's whole process tree, and age comes from the daemon's start time.
+
+The owning agent session is resolved from three independent signals, first hit wins, and the one used is reported as the row's link source:
+
+1. **`env`** — the daemon inherits the environment of the shell the agent ran `agent-browser` from, including `CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID`. This needs no setup and works for browsers started before the plugin was installed.
+2. **`sidecar`** — the record `captain browser install` arranges for, written to `~/.captain/browser/<namespace>/<session>.json` when the browser launches. Covers the cases where the environment cannot be read.
+3. **`ancestor`** — the nearest claude/codex process above the daemon in the process tree.
+
+`captain browser install` merges captain into `agent-browser.json` as a `launch.mutate` plugin, preserving the rest of the configuration. The plugin appends nothing to the launch: agent-browser hashes the launch configuration into `<session>.config`, and a hash that varied per agent session would restart the daemon and discard the browser's state. Captain never deletes agent-browser's sidecar files — `agent-browser doctor` owns that cleanup.
+
+Install also creates `~/.captain/browser` and registers it as writable in both agent sandboxes, because the plugin runs inside whatever sandbox confines the agent's own tools and cannot grant itself access once it is running:
+
+| Agent | File | Key |
+|---|---|---|
+| Claude Code | `~/.claude/settings.json` | `sandbox.filesystem.allowWrite` |
+| codex | `~/.codex/config.toml` | `[sandbox_workspace_write].writable_roots` |
+
+Without this the plugin's write is denied as a bare "operation not permitted" and browsers silently go unattributed. `pkg/agentsandbox.EnsureWritable` is the reusable entry point for any other captain feature that has to write from inside an agent's sandbox; pass `--sandbox=false` to skip it. The codex edit is line-level so comments and ordering survive; `settings.json` is rewritten by `encoding/json` and comes back key-sorted, exactly as `captain hook monitor install` already leaves it.
+
+Browsers a session opened also appear on `captain sessions get <id>` under `browsers`.
+
 ### Utility commands
 
 ```bash
