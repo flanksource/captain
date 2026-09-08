@@ -283,6 +283,54 @@ func (db *DB) ListSessionOverviewsByProviderSessionID(ctx context.Context, provi
 	return rows, nil
 }
 
+// GetTranscriptSessionByIdentity resolves the session that actually holds a
+// provider identity's transcript.
+//
+// One provider session id legitimately names several Captain rows: a launcher
+// books the run against an admission root (source `gavel`) that never holds a
+// message, and the monitor ingests the on-disk log into a `claude`/`codex` row
+// beneath it. Every read surface wants the second one — live state, timing,
+// messages and accounting all live there — and the root, having a parent, is not
+// reachable by thread expansion from itself.
+//
+// Ambiguity is refused rather than guessed: two transcript-bearing rows for one
+// provider id is a data defect a caller must see.
+func (db *DB) GetTranscriptSessionByIdentity(ctx context.Context, providerSessionID string) (*Session, error) {
+	providerSessionID = strings.TrimSpace(providerSessionID)
+	if providerSessionID == "" {
+		return nil, fmt.Errorf("%w: provider session ID is required", ErrInvalidSession)
+	}
+	rows, err := db.ListSessionOverviewsByProviderSessionID(ctx, providerSessionID)
+	if err != nil {
+		return nil, err
+	}
+	var provider, bearing []SessionOverview
+	for _, row := range rows {
+		if row.Source != "claude" && row.Source != "codex" {
+			continue
+		}
+		provider = append(provider, row)
+		if row.MessageCount > 0 || row.TurnCount > 0 || row.Path != nil || row.HistoryFile != nil {
+			bearing = append(bearing, row)
+		}
+	}
+	// A provider row with no transcript yet is still the right row: the log is
+	// being written, and the ingest that fills it in lands on this same session.
+	candidates := bearing
+	if len(candidates) == 0 {
+		candidates = provider
+	}
+	switch len(candidates) {
+	case 0:
+		return nil, fmt.Errorf("%w: transcript session for provider session %s", ErrSessionNotFound, providerSessionID)
+	case 1:
+		return db.GetSession(ctx, candidates[0].ID)
+	default:
+		return nil, fmt.Errorf("%w: provider session %q has %d transcript-bearing sessions",
+			ErrSessionConflict, providerSessionID, len(candidates))
+	}
+}
+
 // ListSessionIdentityMatches resolves prefixes against the lightweight base
 // table so ambiguous lookups do not evaluate every overview aggregate.
 func (db *DB) ListSessionIdentityMatches(ctx context.Context, identity string) ([]SessionIdentityMatch, error) {

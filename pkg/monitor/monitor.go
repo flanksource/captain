@@ -53,6 +53,10 @@ type Config struct {
 	// scan over every known transcript plus database maintenance, catching
 	// whatever hooks and fsnotify missed.
 	BackfillInterval time.Duration
+	// ApprovalSweepInterval is how often pending tool approvals are checked
+	// against their own expiry (default 1m), terminating the ones nobody can
+	// answer any more. See approval_sweep.go.
+	ApprovalSweepInterval time.Duration
 	// DiscoverProcesses overrides ps-based agent-process discovery (tests).
 	DiscoverProcesses func() ([]Process, error)
 }
@@ -102,6 +106,9 @@ func New(cfg Config) (*Monitor, error) {
 	}
 	if cfg.BackfillInterval <= 0 {
 		cfg.BackfillInterval = 24 * time.Hour
+	}
+	if cfg.ApprovalSweepInterval <= 0 {
+		cfg.ApprovalSweepInterval = defaultApprovalSweepInterval
 	}
 	if cfg.DiscoverProcesses == nil {
 		cfg.DiscoverProcesses = discoverAgentProcesses
@@ -260,8 +267,10 @@ func (m *Monitor) runLocked(ctx context.Context, lock *sql.Conn) error {
 
 	processTicker := time.NewTicker(m.nextPollInterval())
 	backfillTicker := time.NewTicker(m.cfg.BackfillInterval)
+	approvalTicker := time.NewTicker(m.cfg.ApprovalSweepInterval)
 	defer processTicker.Stop()
 	defer backfillTicker.Stop()
+	defer approvalTicker.Stop()
 
 	for {
 		select {
@@ -286,6 +295,8 @@ func (m *Monitor) runLocked(ctx context.Context, lock *sql.Conn) error {
 		case <-backfillTicker.C:
 			m.maintenanceDue.Store(true)
 			requestBackfill(backfillRequests)
+		case <-approvalTicker.C:
+			m.sweepApprovals(runCtx)
 		case event, ok := <-watcher.events():
 			if !ok {
 				return errors.New("transcript watcher closed unexpectedly")
