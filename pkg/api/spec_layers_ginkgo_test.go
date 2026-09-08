@@ -68,11 +68,11 @@ var _ = Describe("Hierarchical spec profiles", func() {
 
 	It("normalizes model selectors before intersecting catalogs", func() {
 		resolved, err := ResolveSpecLayers(ResolveSpecOptions{Layers: []SpecLayer{
-			SpecLayer{
+			{
 				Name: "platform", Scope: SpecLayerGlobal,
 				Constraints: RuntimeConstraints{Models: []string{" gpt-5.4 "}},
 			},
-			SpecLayer{
+			{
 				Name: "claims", Scope: SpecLayerContext,
 				Constraints: RuntimeConstraints{Models: []string{"gpt-5.4"}},
 			},
@@ -84,7 +84,7 @@ var _ = Describe("Hierarchical spec profiles", func() {
 
 	It("uses strict non-zero run ceilings and retains each named quota independently", func() {
 		resolved, err := ResolveSpecLayers(ResolveSpecOptions{Layers: []SpecLayer{
-			SpecLayer{
+			{
 				Name: "platform", Scope: SpecLayerGlobal,
 				Spec: Spec{Budget: Budget{Cost: 12, MaxTokens: 9000, MaxTurns: 10, Timeout: "10m"}},
 				Constraints: RuntimeConstraints{
@@ -92,7 +92,7 @@ var _ = Describe("Hierarchical spec profiles", func() {
 					Quotas: []UsageQuota{{Name: "platform-monthly", TokenLimit: 1_000_000, TokensUsed: 10}},
 				},
 			},
-			SpecLayer{
+			{
 				Name: "claims", Scope: SpecLayerContext,
 				Spec: Spec{Budget: Budget{Cost: 10, MaxTokens: 8000, MaxTurns: 6, Timeout: "9m"}},
 				Constraints: RuntimeConstraints{

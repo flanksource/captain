@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 
 import {
   SessionChatComposer,
@@ -13,11 +13,18 @@ import {
   errorMessage,
 } from "./sessionData";
 import { sessionResultCollection } from "./sessionCollection";
+import {
+  findSessionForApproval,
+  resolveSessionApproval,
+  type ApprovalResolveAction,
+} from "./sessionApprovals";
 import { RunVerification } from "./RunVerification";
 import {
   mergeSessionMessages,
   useSessionChat,
 } from "./hooks/useSessionChat";
+
+const SESSIONS_API = "/api/chat/sessions";
 
 export function SessionDetail({
   result,
@@ -30,6 +37,8 @@ export function SessionDetail({
   error: unknown;
   onRefresh: () => Promise<unknown>;
 }) {
+  const onResolveApproval = useResolveApproval(result?.sessions, onRefresh);
+
   if (loading) {
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center p-6 text-sm text-muted-foreground">
@@ -59,6 +68,7 @@ export function SessionDetail({
           <SessionInspector
             session={collection}
             transcriptProps={{ defaultExpanded: false }}
+            onResolveApproval={onResolveApproval}
           />
         </div>
         {result.sessions.map((item) => (
@@ -78,6 +88,7 @@ export function SessionDetail({
           item={item}
           single={result.sessions.length === 1}
           onRefresh={onRefresh}
+          onResolveApproval={onResolveApproval}
         />
       ))}
     </div>
@@ -88,10 +99,16 @@ function SessionGetItemDetail({
   item,
   single,
   onRefresh,
+  onResolveApproval,
 }: {
   item: SessionGetItem;
   single: boolean;
   onRefresh: () => Promise<unknown>;
+  onResolveApproval: (
+    approvalId: string,
+    action: ApprovalResolveAction,
+    message?: string,
+  ) => Promise<void>;
 }) {
   const chat = useSessionChat({
     initialRunID: item.activeRunId,
@@ -167,6 +184,7 @@ function SessionGetItemDetail({
           <SessionInspector
             session={detail}
             transcriptProps={{ defaultExpanded: false }}
+            onResolveApproval={onResolveApproval}
             {...(composer ? { composer } : {})}
           />
         </div>
@@ -177,5 +195,32 @@ function SessionGetItemDetail({
       )}
       <RunVerification frame={chat.verify} storedReport={detail?.structuredOutput?.verify} />
     </section>
+  );
+}
+
+/** Resolves a pending tool approval by id, regardless of which session in
+ *  `sessions` owns it — the Approvals tab keys off `session.requests[]`
+ *  directly, so this is the only place a sessionId needs recovering before
+ *  hitting the existing `POST .../approvals/{approvalId}` endpoint. */
+function useResolveApproval(
+  sessions: SessionGetItem[] | undefined,
+  onRefresh: () => Promise<unknown>,
+) {
+  return useCallback(
+    async (approvalId: string, action: ApprovalResolveAction, message?: string) => {
+      const sessionId = findSessionForApproval(sessions ?? [], approvalId);
+      if (!sessionId) {
+        throw new Error(`No session found for approval ${approvalId}.`);
+      }
+      await resolveSessionApproval({
+        sessionsApi: SESSIONS_API,
+        sessionId,
+        approvalId,
+        approved: action === "approve",
+        ...(message ? { reason: message } : {}),
+      });
+      await onRefresh();
+    },
+    [sessions, onRefresh],
   );
 }

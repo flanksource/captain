@@ -161,6 +161,12 @@ func legacyMergePermissions(p, o Permissions) Permissions {
 	if o.Mode != "" {
 		p.Mode = o.Mode
 	}
+	// The approval window layers exactly as the mode does; it is a scalar, so a
+	// layer that names one replaces the layer below and a layer that says nothing
+	// inherits it.
+	if o.ApprovalTimeout != "" {
+		p.ApprovalTimeout = o.ApprovalTimeout
+	}
 	if len(o.Presets) > 0 {
 		p.Presets = o.Presets
 	}

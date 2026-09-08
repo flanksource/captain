@@ -3,6 +3,7 @@ package verify
 import (
 	"context"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"time"
@@ -42,6 +43,15 @@ type Options struct {
 	// Progress receives each coalesced in-flight snapshot a verifier reports.
 	// Nil means the caller wants only the final verdict.
 	Progress func(api.VerifyReport)
+	// Output receives every byte the checks' child processes write, as they
+	// write it, on top of the tail each verifier keeps for feedback. It is how a
+	// caller shows a ten-minute check moving instead of a stalled cursor; nil
+	// keeps the historical silence.
+	//
+	// Errors from the writer are swallowed (see safeSink): the verdict is the
+	// product and the live echo is a courtesy, and a courtesy must never be able
+	// to truncate the output the next iteration is judged on.
+	Output io.Writer
 	// RunSpec is the resolved spec of the run these checks belong to — the model,
 	// permissions, budget and workflow it was started under — and is read-only to
 	// a factory. A factory that runs an agent of its own (a fixture grader
@@ -179,7 +189,7 @@ func cmdFactory(_ context.Context, spec api.Verify, opts Options) ([]*Plugin, er
 		}
 		plugins = append(plugins, New("verify:"+cmd, &CmdVerifier{
 			Cmd: "sh", Args: []string{"-c", cmd},
-			Env: opts.Env, Wrap: opts.Wrap, Timeout: opts.Timeout,
+			Env: opts.Env, Wrap: opts.Wrap, Timeout: opts.Timeout, Output: opts.Output,
 		}))
 	}
 	return plugins, nil
