@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,11 +18,21 @@ import (
 )
 
 type PSOptions struct {
-	Source  string `flag:"source" help:"Filter source: all, claude, codex" default:"all"`
-	All     bool   `flag:"all" help:"Include agents from all projects" short:"a"`
-	Project string `flag:"project" help:"Restrict to an explicit project path"`
-	Query   string `flag:"q" help:"Search session id, cwd, pid, surface, or health"`
+	// PIDs is []string rather than []int because clicky's CLI flag binder only
+	// feeds positional args to string and []string fields — int and []int
+	// fields silently bind their zero value (flags/assignment.go).
+	PIDs    []string `args:"true" help:"Inspect these process IDs instead of scanning for agent sessions"`
+	Source  string   `flag:"source" help:"Filter source: all, claude, codex" default:"all"`
+	All     bool     `flag:"all" help:"Include agents from all projects" short:"a"`
+	Project string   `flag:"project" help:"Restrict to an explicit project path"`
+	Query   string   `flag:"q" help:"Search session id, cwd, pid, surface, or health"`
 }
+
+func (PSOptions) GetName() string { return "ps [pid...]" }
+
+// psScopePID marks a result as a PID inspection rather than a scan, which is
+// what switches the renderer from the table to per-process detail blocks.
+const psScopePID = "pid"
 
 type PSResult struct {
 	Source   string  `json:"source" pretty:"label=Source"`
@@ -41,7 +52,16 @@ type PSResult struct {
 // live process listing, resolves each process's session-id/agent-ids/CMUX
 // surface/last-activity from the OS (ps + lsof + environ), then augments each
 // from the session cache/DB — so it reports only sessions with a live process.
+//
+// Given PIDs it inspects exactly those processes instead of scanning, and
+// reports each one whether or not it is an agent: the caller named a process,
+// so no source or project filter may exclude it, and a PID that is not running
+// is an error rather than an empty result.
 func RunPS(ctx context.Context, opts PSOptions) (PSResult, error) {
+	pids, err := parsePSPIDs(opts.PIDs)
+	if err != nil {
+		return PSResult{}, err
+	}
 	source, err := normalizeSessionSource(opts.Source)
 	if err != nil {
 		return PSResult{}, err
@@ -52,15 +72,27 @@ func RunPS(ctx context.Context, opts PSOptions) (PSResult, error) {
 	}
 	scope, projectRoot, _ := resolveSessionScope(cwd, opts.All, opts.Project)
 
-	stopDiscover := rpchttp.Track(ctx, "discover")
-	processes, err := discoverSessionProcesses()
-	stopDiscover()
+	var processes []agentProcess
+	if len(pids) > 0 {
+		// An explicitly named PID outranks the scan's filters: the user asked
+		// for that process, so neither its source nor its project can exclude it.
+		scope, projectRoot = psScopePID, ""
+		stopInspectPIDs := rpchttp.Track(ctx, "inspect-pids")
+		processes, err = inspectSessionProcesses(ctx, pids)
+		stopInspectPIDs()
+	} else {
+		stopDiscover := rpchttp.Track(ctx, "discover")
+		processes, err = discoverSessionProcesses()
+		stopDiscover()
+	}
 	if err != nil {
 		return PSResult{}, err
 	}
-	processes = filterProcessesBySource(processes, source)
-	if projectRoot != "" {
-		processes = filterAgentProcessesByProject(processes, projectRoot)
+	if len(pids) == 0 {
+		processes = filterProcessesBySource(processes, source)
+		if projectRoot != "" {
+			processes = filterAgentProcessesByProject(processes, projectRoot)
+		}
 	}
 
 	stopInspect := rpchttp.Track(ctx, "inspect")
@@ -111,6 +143,27 @@ func psSummaryCost(summary SessionDashboardWire) string {
 		return ""
 	}
 	return fmt.Sprintf("$%.2f", summary.CostUSD)
+}
+
+// parsePSPIDs turns the positional args into PIDs, rejecting anything that is
+// not a usable process id rather than silently scanning instead.
+func parsePSPIDs(args []string) ([]int, error) {
+	pids := make([]int, 0, len(args))
+	for _, arg := range args {
+		trimmed := strings.TrimSpace(arg)
+		if trimmed == "" {
+			continue
+		}
+		pid, err := strconv.Atoi(trimmed)
+		if err != nil {
+			return nil, fmt.Errorf("invalid PID %q", arg)
+		}
+		if pid <= 0 {
+			return nil, fmt.Errorf("PID must be positive, got %d", pid)
+		}
+		pids = append(pids, pid)
+	}
+	return pids, nil
 }
 
 func filterProcessesBySource(processes []agentProcess, source string) []agentProcess {
@@ -191,19 +244,35 @@ func enrichProcessFromOpenFiles(p *agentProcess, paths []string) {
 		return
 	}
 	if len(opens) == 0 {
+		// Nothing open to attribute — a codex thread id or any other declared
+		// identity in argv/env is all the process has to offer.
+		p.SessionID = declaredSessionID(p)
 		return
 	}
 	selectPrimaryTranscript(p, opens)
 }
 
-// resolveClaudeSession sets the primary session by priority — (1) the explicit
-// argv "--session-id" when its transcript exists, (2) the process's own-cwd open
-// transcript, (3) the newest transcript under the cwd — then records any own-cwd
-// sub-agent transcripts. The argv id leads because it is set explicitly by the
-// launcher, whereas open fds are unreliable (claude inherits foreign transcript
-// fds — the source of the original mis-attribution).
-func resolveClaudeSession(p *agentProcess, ownOpens []openTranscript) {
+// declaredSessionID is the session id the launcher stamped on the process
+// itself, via argv or the environment. Both are set explicitly by whatever
+// started the agent, so they outrank transcript and cwd heuristics — notably
+// for a session so new that no transcript has been written yet.
+func declaredSessionID(p *agentProcess) string {
 	if id := sessionprocess.SessionIDFromCommand(p.Command); id != "" {
+		return id
+	}
+	_, id := sessionprocess.IdentityFromEnvironment(p.Environment)
+	return id
+}
+
+// resolveClaudeSession sets the primary session by priority — (1) the id the
+// launcher declared in argv or the environment, when its transcript exists,
+// (2) the process's own-cwd open transcript, (3) the newest transcript under
+// the cwd — then records any own-cwd sub-agent transcripts. The declared id
+// leads because it is set explicitly by the launcher, whereas open fds are
+// unreliable (claude inherits foreign transcript fds — the source of the
+// original mis-attribution).
+func resolveClaudeSession(p *agentProcess, ownOpens []openTranscript) {
+	if id := declaredSessionID(p); id != "" {
 		if path := locateClaudeTranscript(id, p.CWD); path != "" {
 			setPrimaryFromFile(p, id, path)
 		}
@@ -309,9 +378,17 @@ func claudeProjectName(path string) string {
 }
 
 // resolveClaudeSessionByCwd resolves a claude process that holds no own
-// transcript open: it picks the newest transcript under the process's cwd
-// project (like `sessions live`), falling back to the "--session-id" argv.
+// transcript open: it takes the id declared in argv/env, and only when there is
+// none falls back to the newest transcript under the process's cwd project
+// (like `sessions live`).
 func resolveClaudeSessionByCwd(p *agentProcess) {
+	// A declared id names this process's own session even when its transcript
+	// does not exist yet; the newest transcript in the project is a different,
+	// older session, so guessing it here would mis-attribute the process.
+	if id := declaredSessionID(p); id != "" {
+		p.SessionID = id
+		return
+	}
 	files, err := claude.FindSessionFiles(claude.GetProjectsDir(), p.CWD, false)
 	if err == nil {
 		var newestPath string
@@ -330,10 +407,8 @@ func resolveClaudeSessionByCwd(p *agentProcess) {
 			p.SessionFile = newestPath
 			mod := newest
 			p.LastActivity = &mod
-			return
 		}
 	}
-	p.SessionID = sessionprocess.SessionIDFromCommand(p.Command)
 }
 
 // selectPrimaryTranscript picks the primary session among a process's open

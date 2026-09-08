@@ -108,23 +108,29 @@ type SessionContextWire struct {
 }
 
 type SessionLiveWire struct {
-	PID             int          `json:"pid,omitempty"`
-	Status          string       `json:"status,omitempty"`
-	Active          bool         `json:"active"`
-	CPUPercent      float64      `json:"cpuPercent,omitempty"`
-	MemoryPercent   float64      `json:"memoryPercent,omitempty"`
-	StartedAt       *time.Time   `json:"startedAt,omitempty"`
-	SampledAt       *time.Time   `json:"sampledAt,omitempty"`
-	LastHeartbeatAt *time.Time   `json:"lastHeartbeatAt,omitempty"`
-	LeaseOwner      string       `json:"leaseOwner,omitempty"`
-	LeaseExpiresAt  *time.Time   `json:"leaseExpiresAt,omitempty"`
-	CWD             string       `json:"cwd,omitempty"`
-	Command         string       `json:"command,omitempty"`
-	SessionID       string       `json:"sessionId,omitempty"`
-	AgentIDs        []string     `json:"agentIds,omitempty"`
-	LastActivity    *time.Time   `json:"lastActivity,omitempty"`
-	SessionFile     string       `json:"sessionFile,omitempty"`
-	Surface         *CmuxSurface `json:"surface,omitempty"`
+	PID             int        `json:"pid,omitempty"`
+	PPID            int        `json:"ppid,omitempty"`
+	Status          string     `json:"status,omitempty"`
+	Active          bool       `json:"active"`
+	CPUPercent      float64    `json:"cpuPercent,omitempty"`
+	MemoryPercent   float64    `json:"memoryPercent,omitempty"`
+	RSSBytes        uint64     `json:"rssBytes,omitempty"`
+	StartedAt       *time.Time `json:"startedAt,omitempty"`
+	SampledAt       *time.Time `json:"sampledAt,omitempty"`
+	LastHeartbeatAt *time.Time `json:"lastHeartbeatAt,omitempty"`
+	LeaseOwner      string     `json:"leaseOwner,omitempty"`
+	LeaseExpiresAt  *time.Time `json:"leaseExpiresAt,omitempty"`
+	CWD             string     `json:"cwd,omitempty"`
+	Command         string     `json:"command,omitempty"`
+	// Environment carries the session-bearing variables sampled off the
+	// process (CLAUDE_CODE_SESSION_ID, CODEX_THREAD_ID, CMUX_*,
+	// AGENT_BROWSER_*), and every variable when a PID was inspected directly.
+	Environment  map[string]string `json:"environment,omitempty"`
+	SessionID    string            `json:"sessionId,omitempty"`
+	AgentIDs     []string          `json:"agentIds,omitempty"`
+	LastActivity *time.Time        `json:"lastActivity,omitempty"`
+	SessionFile  string            `json:"sessionFile,omitempty"`
+	Surface      *CmuxSurface      `json:"surface,omitempty"`
 }
 
 // CmuxSurface identifies the cmux multiplexer surface hosting an agent process.
