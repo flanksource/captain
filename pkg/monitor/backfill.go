@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 
@@ -26,13 +27,50 @@ func (m *Monitor) backfill(ctx context.Context, ingestor *ingestor) {
 		log.Warnf("refresh transcript bookkeeping: %v", err)
 		return
 	}
-	roots, agents := discoverTranscripts()
+	roots, agents := m.transcriptScanSet(ctx)
 	ingestChanged(ctx, ingestor, roots)
 	ingestChanged(ctx, ingestor, agents)
 	// Remote task history rides the same pass: it is cheap when no mailbox
 	// exists, and live task views read the mailbox directly rather than the
 	// database, so this cadence only bounds how stale *history* can be.
 	m.ingestGitAgentTasks(ctx)
+}
+
+// transcriptScanSet is everything one recon pass considers: what the filesystem
+// offers, plus what has been registered by session id and the filesystem did not.
+func (m *Monitor) transcriptScanSet(ctx context.Context) (roots, agents []transcriptRef) {
+	roots, agents = discoverTranscripts()
+	return append(roots, m.registeredTranscripts(ctx, roots, agents)...), agents
+}
+
+// registeredTranscripts are the transcripts some writer bound to a session by
+// id (RegisterTranscriptSource) that filesystem discovery did not turn up.
+// Discovery globs the agent's project directories, which is a snapshot of where
+// agents have run; a run in a git worktree, or one whose project directory the
+// ephemeral filter drops, is a session someone is waiting on that the glob never
+// offers. They are scanned as roots because a registration names the session's
+// own transcript, never a sub-agent's.
+func (m *Monitor) registeredTranscripts(ctx context.Context, discovered ...[]transcriptRef) []transcriptRef {
+	sources, err := m.db.ListSessionSources(ctx)
+	if err != nil {
+		log.Warnf("list registered transcript sources: %v", err)
+		return nil
+	}
+	seen := make(map[string]struct{})
+	for _, refs := range discovered {
+		for _, ref := range refs {
+			seen[ref.path] = struct{}{}
+		}
+	}
+	extra := make([]transcriptRef, 0)
+	for path, state := range sources {
+		if _, known := seen[path]; known || strings.TrimSpace(state.SourceKind) == "" {
+			continue
+		}
+		extra = append(extra, transcriptRef{source: state.SourceKind, path: path})
+	}
+	slices.SortFunc(extra, func(left, right transcriptRef) int { return strings.Compare(left.path, right.path) })
+	return extra
 }
 
 func discoverTranscripts() (roots, agents []transcriptRef) {
