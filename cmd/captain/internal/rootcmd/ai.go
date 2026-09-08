@@ -1,4 +1,4 @@
-package main
+package rootcmd
 
 import (
 	"context"
@@ -8,7 +8,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func registerAIRuntimeCommands(rootCmd *cobra.Command) {
+// RegisterAIRuntimeCommands adds the `ai` command group and the top-level
+// `verify` command to the root command.
+func RegisterAIRuntimeCommands(rootCmd *cobra.Command) {
 	aiCmd := &cobra.Command{
 		Use:   "ai",
 		Short: "AI provider commands",
@@ -52,5 +54,4 @@ func registerAIRuntimeCommands(rootCmd *cobra.Command) {
 	verifyCmd.Short = "Run a workflow's verification checks and report the verdict"
 	verifyCmd.Long = "Run the checks an api.Workflow declares — shell commands, LLM-judge prompts, and a fixture document handed to the configured fixture runner — against a working tree, and print each check's report. Exits non-zero when any check fails or cannot reach a verdict."
 	clicky.MarkLocalOnly(verifyCmd)
-
 }
