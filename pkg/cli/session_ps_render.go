@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -10,6 +11,47 @@ import (
 	"github.com/flanksource/clicky/api"
 	"github.com/flanksource/clicky/api/icons"
 )
+
+// Pretty renders the result itself so `ps` controls its own layout. Two things
+// require this. Inspecting a PID prints a detail block per process rather than a
+// table, because a named process has more to say than a row can hold. And the
+// generic struct path renders the summary from a Go map, so its field order
+// shuffles between runs (clicky api/meta.go TextMap.Value).
+func (r PSResult) Pretty() api.Text {
+	if r.Scope == psScopePID {
+		return psInspectionText(r)
+	}
+	return psListingText(r)
+}
+
+// psListingText is the scan view: a summary header followed by the session
+// table. Blank text fields are dropped — DescriptionList renders an empty pair
+// as an empty line rather than skipping it — while the counts are kept even at
+// zero, because "0 alerts" is a real answer.
+func psListingText(r PSResult) api.Text {
+	summary := []api.KeyValuePair{}
+	addText := func(label, value string) {
+		if value != "" {
+			summary = append(summary, api.KeyValue(label, value))
+		}
+	}
+	addText("Source", r.Source)
+	addText("Scope", r.Scope)
+	addText("Project", r.Project)
+	summary = append(summary,
+		api.KeyValue("Total", r.Total),
+		api.KeyValue("Live", r.Live),
+		api.KeyValue("Active", r.Active),
+		api.KeyValue("Alerts", r.Alerts),
+	)
+	addText("Tokens", r.Tokens)
+	addText("Cost", r.Cost)
+
+	return api.Text{}.
+		Add(api.DescriptionList{Items: summary}).
+		NewLine().
+		Add(api.NewTableFrom(r.Sessions))
+}
 
 // PSRow is a live-session table row. It embeds SessionRecord (so JSON keeps the
 // SessionRecord shape via field promotion) and implements clicky's TableProvider
@@ -84,6 +126,10 @@ func (r PSRow) RowDetail() api.Textable {
 	}
 	if r.Live != nil {
 		items = append(items, api.KeyValue("Command", compactSessionCommand(r.Live.Command)))
+		items = append(items, api.KeyValue("PPID", intOrBlank(r.Live.PPID)))
+		if r.Live.RSSBytes > 0 {
+			items = append(items, api.KeyValue("Memory", api.HumanizeBytes(int64(r.Live.RSSBytes)).String()))
+		}
 		if s := r.Live.Surface; s != nil {
 			items = append(items,
 				api.KeyValue("Workspace", s.Workspace),
@@ -103,6 +149,9 @@ func (r PSRow) RowDetail() api.Textable {
 	t := api.Text{}.Add(api.DescriptionList{Items: items})
 	if agents := psAgentIDs(r); len(agents) > 0 {
 		t = t.NewLine().Append("Sub-agents: ", "text-muted").Add(api.CompactList(agents))
+	}
+	if env := psEnvironmentItems(r); len(env) > 0 {
+		t = t.NewLine().Append("Environment", "text-muted").Add(api.DescriptionList{Items: env})
 	}
 	for _, h := range r.Health {
 		t = t.NewLine().Add(psHealthIcon(h.Severity)).Space().Append(h.Message, psHealthStyle(h.Severity))
@@ -154,8 +203,11 @@ func psSourceText(source string) api.Text {
 		return api.Text{Content: "claude", Style: "text-violet-500"}
 	case "codex":
 		return api.Text{Content: "codex", Style: "text-cyan-600"}
+	case "":
+		// An inspected PID that is not an agent at all still needs a cell.
+		return api.Text{Content: "-", Style: "text-muted"}
 	default:
-		return api.Text{Content: source}
+		return api.Text{Content: source, Style: "text-muted"}
 	}
 }
 
@@ -218,4 +270,44 @@ func psAgentIDs(r PSRow) []string {
 
 func psAgentCount(r PSRow) int {
 	return len(psAgentIDs(r))
+}
+
+// psInterestingEnvPrefixes are the variables that identify an agent session, so
+// they lead the environment list ahead of the rest of a process's environment.
+var psInterestingEnvPrefixes = []string{
+	"CLAUDE_", "CODEX_", "CMUX_", "AGENT_BROWSER_", "CAPTAIN_", "GAVEL_",
+}
+
+// psEnvironmentItems renders the process environment with the session-bearing
+// variables first — an inspected PID often carries its session id there and
+// nowhere else.
+func psEnvironmentItems(r PSRow) []api.KeyValuePair {
+	if r.Live == nil || len(r.Live.Environment) == 0 {
+		return nil
+	}
+	var leading, trailing []string
+	for key := range r.Live.Environment {
+		if hasAnyPrefix(key, psInterestingEnvPrefixes) {
+			leading = append(leading, key)
+		} else {
+			trailing = append(trailing, key)
+		}
+	}
+	sort.Strings(leading)
+	sort.Strings(trailing)
+
+	items := make([]api.KeyValuePair, 0, len(leading)+len(trailing))
+	for _, key := range append(leading, trailing...) {
+		items = append(items, api.KeyValue(key, r.Live.Environment[key]))
+	}
+	return items
+}
+
+func hasAnyPrefix(value string, prefixes []string) bool {
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(value, prefix) {
+			return true
+		}
+	}
+	return false
 }

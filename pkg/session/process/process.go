@@ -27,6 +27,7 @@ type Surface struct {
 type Agent struct {
 	Source        string
 	PID           int
+	PPID          int
 	Status        string
 	Active        bool
 	CPUPercent    float64
@@ -68,15 +69,23 @@ func FromSnapshot(snapshot *clickyprocess.Snapshot) []Agent {
 		if source == "" {
 			continue
 		}
-		agents = append(agents, Agent{
-			Source: source, PID: process.PID, Status: process.Status, Active: process.Active,
-			CPUPercent: process.CPUPercent, MemoryPercent: process.MemoryPercent,
-			RSSBytes:  process.RSSBytes,
-			StartedAt: process.StartedAt, CWD: process.CWD, Command: process.Command,
-			Environment: process.Environment, Surface: SurfaceFromEnvironment(process.Environment),
-		})
+		agents = append(agents, agentFrom(process, source))
 	}
 	return agents
+}
+
+// agentFrom projects one sampled process onto an Agent under a caller-chosen
+// source, which is how discovery (agents only) and inspection (any named PID)
+// share one projection without sharing their inclusion rule.
+func agentFrom(process clickyprocess.Process, source string) Agent {
+	return Agent{
+		Source: source, PID: process.PID, PPID: process.PPID,
+		Status: process.Status, Active: process.Active,
+		CPUPercent: process.CPUPercent, MemoryPercent: process.MemoryPercent,
+		RSSBytes:  process.RSSBytes,
+		StartedAt: process.StartedAt, CWD: process.CWD, Command: process.Command,
+		Environment: process.Environment, Surface: SurfaceFromEnvironment(process.Environment),
+	}
 }
 
 func Source(command string) string {

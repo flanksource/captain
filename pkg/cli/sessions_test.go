@@ -220,9 +220,25 @@ func TestRunSessionGetReturnsAllProviderPrefixMatches(t *testing.T) {
 	if !result.Sessions[0].DetailAvailable || result.Sessions[0].Detail == nil {
 		t.Fatalf("first match should contain parsed transcript: %+v", result.Sessions[0])
 	}
+	// The three rows share one provider session, and only the first records a
+	// path. A Gavel admission root is a provider-identity bridge that never holds
+	// a log of its own, so it resolves the transcript-bearing sibling and reports
+	// it — that hop is what stops a run's session reading as empty. A provider row
+	// with no path is a different case: it owns its transcript, and not having one
+	// yet means there is nothing to show.
 	for _, item := range result.Sessions[1:] {
-		if item.DetailAvailable || item.Detail != nil {
-			t.Fatalf("metadata-only match = %+v", item)
+		switch item.Summary.Source {
+		case "gavel":
+			if !item.DetailAvailable || item.Detail == nil {
+				t.Fatalf("admission root should resolve its transcript-bearing sibling: %+v", item)
+			}
+			if got := item.DetailSource["messages"]; got != "transcript" {
+				t.Fatalf("admission root messages should come from the transcript, got %q: %+v", got, item)
+			}
+		default:
+			if item.DetailAvailable || item.Detail != nil {
+				t.Fatalf("provider row without its own transcript should stay metadata-only: %+v", item)
+			}
 		}
 	}
 }
