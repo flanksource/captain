@@ -59,7 +59,7 @@ func (e *ExternalVerifier) Verify(ctx context.Context, cwd string, changed []str
 	}
 
 	reader := &ndjsonReader{onLine: e.consume}
-	stderr := newTailBuffer(defaultFeedbackTail)
+	stderr := newTailBuffer(externalStderrTail)
 	outcome, err := runProcess(ctx, execRequest{
 		Cmd: e.Command[0], Args: args, Dir: cwd, Env: e.Env, Wrap: e.Wrap, Timeout: e.Timeout,
 		Stdin: e.Fixture, Stdout: reader, Stderr: stderr,

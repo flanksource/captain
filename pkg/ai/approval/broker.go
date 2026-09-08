@@ -30,7 +30,18 @@ const (
 	CallerToolTimeout = 5 * time.Minute
 	// ProviderTimeout bounds an approval raised by a provider, which suspends
 	// the run and may be answered long after the process that raised it exited.
+	// It is a ceiling for a host that declares no window of its own, not the
+	// answer: a run under a deadline gets the deadline instead.
 	ProviderTimeout = 24 * time.Hour
+	// DeadlineGrace is how far before a run's own deadline an approval lapses
+	// when the deadline is the binding bound.
+	//
+	// The two clocks report different things. A run that dies on its deadline
+	// reports a timeout — an exhausted budget, a cancelled context — naming no
+	// tool and no person. Only the approval lapsing first produces an error that
+	// says nobody answered. Expiring at exactly the deadline makes which one
+	// happens a race, so the approval is pulled in far enough to win it.
+	DeadlineGrace = 30 * time.Second
 )
 
 // ErrInvalidBroker reports a Broker that cannot broker anything.
@@ -50,8 +61,14 @@ type Broker struct {
 	CredentialID uuid.UUID
 
 	RequestedBy string        // who raised it, e.g. "provider" or "caller_tool"
-	Timeout     time.Duration // approval expiry; required
+	Timeout     time.Duration // longest an approval may stay unanswered; required
 	Poll        time.Duration // re-read interval; DefaultPoll when zero
+
+	// Deadline is when the run this approval blocks ends regardless of the
+	// answer — its budget timeout, typically. When set it bounds the expiry:
+	// Timeout is the ceiling, and whichever of the two comes first decides.
+	// Zero leaves the expiry to Timeout and the calling context alone.
+	Deadline time.Time
 
 	// Notify receives the EventPermission frame carrying the tool, its input,
 	// the provider tool-call ID and the durable approval ID, so the host can
@@ -120,11 +137,15 @@ func (b *Broker) CanUseTool(
 		}
 		req.ToolUseID = toolUseID
 	}
+	expiresAt, err := b.expiry(ctx, time.Now(), req.Tool)
+	if err != nil {
+		return api.PermissionDecision{}, err
+	}
 	pending, err := b.DB.CreateToolApprovalRequest(ctx, database.CreateToolApprovalRequestInput{
 		CredentialID: b.CredentialID, SessionID: b.SessionID, PromptRunID: b.PromptRunID,
 		TurnID: optionalUUID(b.TurnID), ModelCallID: optionalUUID(b.ModelCallID),
 		RequestedBy: b.RequestedBy, ToolCallID: req.ToolUseID, Tool: req.Tool, Input: req.Input,
-		ExpiresAt: time.Now().Add(b.Timeout),
+		ExpiresAt: expiresAt,
 	})
 	if err != nil {
 		return api.PermissionDecision{}, err
@@ -153,6 +174,45 @@ func (b *Broker) CanUseTool(
 	return b.wait(ctx, pending.ID)
 }
 
+// expiry resolves when this approval lapses: the configured window, pulled in to
+// sit DeadlineGrace ahead of every deadline the run is already under — the one
+// the host declared and the one the calling context carries.
+//
+// Without the bound the window is decoration. A 24h approval on a run whose
+// budget allows 2h expires 22h after the run is already dead, so the run always
+// fails on the budget and the failure names a timeout rather than the question
+// nobody answered.
+//
+// A window that has already closed is refused rather than recorded: an approval
+// that can only ever expire is worse than none, because it reads to a person as
+// a live question they still have time to answer.
+func (b *Broker) expiry(ctx context.Context, now time.Time, tool string) (time.Time, error) {
+	expiresAt := now.Add(b.Timeout)
+	bound := time.Time{}
+	for _, deadline := range b.deadlines(ctx) {
+		if pulled := deadline.Add(-DeadlineGrace); pulled.Before(expiresAt) {
+			expiresAt, bound = pulled, deadline
+		}
+	}
+	if !expiresAt.After(now) {
+		return time.Time{}, fmt.Errorf(
+			"cannot ask anyone to approve %q: the run's deadline is %s away, less than the %s an approval needs to be raised and answered",
+			tool, bound.Sub(now).Round(time.Second), DeadlineGrace)
+	}
+	return expiresAt, nil
+}
+
+func (b *Broker) deadlines(ctx context.Context) []time.Time {
+	var deadlines []time.Time
+	if !b.Deadline.IsZero() {
+		deadlines = append(deadlines, b.Deadline)
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		deadlines = append(deadlines, deadline)
+	}
+	return deadlines
+}
+
 func (b *Broker) resume(ctx context.Context) error {
 	if b.OnRunning == nil {
 		return nil
@@ -169,6 +229,16 @@ func (b *Broker) wait(ctx context.Context, requestID uuid.UUID) (api.PermissionD
 			return api.PermissionDecision{}, err
 		}
 		if decision, resolved, err := decide(request); resolved {
+			if err != nil {
+				// The wait ended without an answer — because it lapsed here, or
+				// because another writer (the monitor's sweep) took the row while this
+				// process was blocked on it. Either way the only trace on the host's
+				// narration so far is "awaiting approval", which a reader cannot tell
+				// apart from a run still waiting.
+				if notifyErr := b.notifyEnded(ctx, request); notifyErr != nil {
+					err = errors.Join(err, notifyErr)
+				}
+			}
 			return decision, err
 		}
 		if request.ExpiresAt != nil && !time.Now().Before(*request.ExpiresAt) {
@@ -220,9 +290,47 @@ func decide(request *database.TurnRequest) (api.PermissionDecision, bool, error)
 		}
 		return api.PermissionDecision{Message: message}, true, nil
 	case database.TurnRequestStateExpired, database.TurnRequestStateCancelled:
-		return api.PermissionDecision{}, true, fmt.Errorf("tool approval %s", request.State)
+		return api.PermissionDecision{}, true, unansweredError(request)
 	}
 	return api.PermissionDecision{}, false, nil
+}
+
+// unansweredError explains an approval that ended without a decision in the
+// terms an operator can act on. "tool approval expired" named none of them: not
+// the tool, not the durable row to go look at, not how long somebody had to
+// answer, and not the fact that a person was asked at all — so the same four
+// words covered a 24-hour abandonment and a run stopped a second after it
+// started.
+func unansweredError(request *database.TurnRequest) error {
+	waited := time.Since(request.CreatedAt)
+	if request.ResolvedAt != nil {
+		waited = request.ResolvedAt.Sub(request.CreatedAt)
+	}
+	message := fmt.Sprintf("tool approval %s: nobody answered the request to run %q; waited %s (approval %s",
+		request.State, toolOf(request), waited.Round(time.Millisecond), request.ID)
+	if request.Reason != "" {
+		message += "; " + request.Reason
+	}
+	return errors.New(message + ")")
+}
+
+// notifyEnded surfaces the outcome of an approval on the same stream the request
+// went out on. An EventPermission carrying a Reason is the answer to the earlier
+// frame with the same ApprovalID, not a second ask.
+func (b *Broker) notifyEnded(ctx context.Context, request *database.TurnRequest) error {
+	reason := string(request.State)
+	if request.Reason != "" {
+		reason += ": " + request.Reason
+	}
+	return b.Notify(ctx, api.Event{
+		Kind: api.EventPermission, Tool: toolOf(request), ToolCallID: request.ToolCallID,
+		ApprovalID: request.ID.String(), Reason: reason,
+	})
+}
+
+func toolOf(request *database.TurnRequest) string {
+	tool, _ := request.Request["tool"].(string)
+	return tool
 }
 
 func optionalUUID(id *uuid.UUID) uuid.UUID {

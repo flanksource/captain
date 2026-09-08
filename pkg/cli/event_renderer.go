@@ -211,12 +211,37 @@ func (r *EventRenderer) renderVerdict(event ai.Event) {
 	}
 	prefix := clicky.Text(icon+" verify ", style)
 	r.write(truncateANSI(prefix.Append(headline, "text-muted").ANSI(), r.width) + "\n")
+
+	shown := 0
 	for _, line := range strings.Split(body, "\n") {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
+		if shown == maxVerdictBodyLines {
+			r.write(clicky.Text(fmt.Sprintf("  … %d more lines (full output sent to the agent)",
+				countNonBlank(body)-shown), "text-muted").ANSI() + "\n")
+			return
+		}
 		r.write(truncateANSI(line, r.width) + "\n")
+		shown++
 	}
+}
+
+// maxVerdictBodyLines caps how much of a verdict's output is echoed here. The
+// feedback the agent receives is deliberately unbounded by this — a check's
+// output streams live through the caller's verify Output sink and the whole
+// tail reaches the next iteration — so a megabyte-long failure does not have to
+// be replayed down the terminal a second time to be acted on.
+const maxVerdictBodyLines = 200
+
+func countNonBlank(body string) int {
+	n := 0
+	for _, line := range strings.Split(body, "\n") {
+		if strings.TrimSpace(line) != "" {
+			n++
+		}
+	}
+	return n
 }
 
 func (r *EventRenderer) renderMessage(message session.Message) {

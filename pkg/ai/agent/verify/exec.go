@@ -158,8 +158,29 @@ func newTailBuffer(max int) *tailBuffer {
 }
 
 // defaultFeedbackTail bounds how much of a failing check's output is fed back
-// into the next iteration's prompt.
-const defaultFeedbackTail = 4096
+// into the next iteration's prompt. It is generous on purpose — a truncated
+// test failure sends the next turn after the wrong symptom — in the same spirit
+// as maxReportLineBytes (external.go). Both ends stay bounded: the buffer is
+// filled as the command streams, never held whole.
+const defaultFeedbackTail = 1 << 20
+
+// externalStderrTail bounds the runner diagnostics appended to an error by
+// diagnostics(). It is deliberately smaller than defaultFeedbackTail: this tail
+// becomes an error string that gets logged, wrapped and stored, not model
+// input, and a megabyte-long error is unreadable wherever it lands.
+const externalStderrTail = 64 << 10
+
+// safeSink shields the feedback tail from a caller's live sink. io.MultiWriter
+// stops at the first writer that errors, so a sink that fails — a closed
+// terminal, a broken pipe — would otherwise cut short the output the next
+// iteration is judged on. It always reports a full write, because a short write
+// makes io.MultiWriter return ErrShortWrite for the same reason.
+type safeSink struct{ w io.Writer }
+
+func (s safeSink) Write(p []byte) (int, error) {
+	_, _ = s.w.Write(p)
+	return len(p), nil
+}
 
 func (b *tailBuffer) Write(p []byte) (int, error) {
 	b.mu.Lock()
