@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	toml "github.com/pelletier/go-toml/v2"
@@ -115,7 +116,7 @@ func insertWritableRoots(content string, roots []string) (string, error) {
 			entries = append(entries, "  "+tomlString(root)+",")
 		}
 		block := append([]string{writableRootsKey + " = ["}, append(entries, "]")...)
-		return strings.Join(insertAt(lines, tableStart+1, block...), "\n"), nil
+		return strings.Join(slices.Insert(lines, tableStart+1, block...), "\n"), nil
 	}
 	if closing := strings.Index(lines[keyLine], "]"); closing >= 0 {
 		lines[keyLine] = extendSingleLineArray(lines[keyLine], closing, roots)
@@ -136,7 +137,7 @@ func insertWritableRoots(content string, roots []string) (string, error) {
 	for _, root := range roots {
 		entries = append(entries, indent+tomlString(root)+",")
 	}
-	return strings.Join(insertAt(lines, closing, entries...), "\n"), nil
+	return strings.Join(slices.Insert(lines, closing, entries...), "\n"), nil
 }
 
 // extendSingleLineArray splices entries in before the array's closing bracket,
@@ -268,13 +269,6 @@ func arrayEntryIndent(lines []string, keyLine, closing int) string {
 		return lines[i][:len(lines[i])-len(trimmed)]
 	}
 	return "  "
-}
-
-func insertAt(lines []string, index int, values ...string) []string {
-	combined := make([]string, 0, len(lines)+len(values))
-	combined = append(combined, lines[:index]...)
-	combined = append(combined, values...)
-	return append(combined, lines[index:]...)
 }
 
 // tomlString renders a TOML basic string. A JSON string is valid TOML.
