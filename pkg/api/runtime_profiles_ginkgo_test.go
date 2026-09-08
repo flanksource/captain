@@ -127,8 +127,11 @@ var _ = Describe("Runtime profiles", func() {
 
 	// Profile validation shares RequireToolPolicySupport's one relaxation: an
 	// allow for a tool the runtime does not have (Claude's Read on codex) is
-	// inert, but a deny on a foreign name still describes a codex capability and
-	// must be refused like any other agent-tool policy codex cannot carry.
+	// inert, so it is dropped without a refusal and without a capability warning.
+	// A deny on a foreign name still describes a codex capability, and an allow on
+	// a name codex owns is a real constraint, so both stay fail-closed — here as a
+	// hard error from RequireToolPolicySupport, which ValidateRuntimeSpec runs
+	// before the capability warnings.
 	It("skips a foreign allow but refuses a foreign deny for the resolved runtime", func() {
 		profile := func(tools api.Tools) api.RuntimeProfile {
 			return api.RuntimeProfile{
@@ -139,20 +142,21 @@ var _ = Describe("Runtime profiles", func() {
 			}
 		}
 
-		_, err := api.ResolveRuntimeProfile(api.RuntimeProfileResolveRequest{
+		resolved, err := api.ResolveRuntimeProfile(api.RuntimeProfileResolveRequest{
 			Profile: profile(api.Tools{"Read": api.ToolPolicyAllow, "Edit": api.ToolPolicyAllow}),
 		})
 		Expect(err).NotTo(HaveOccurred())
+		Expect(resolved.Warnings).To(BeEmpty())
 
 		_, err = api.ResolveRuntimeProfile(api.RuntimeProfileResolveRequest{
 			Profile: profile(api.Tools{"Bash": api.ToolPolicyDeny}),
 		})
-		Expect(err).To(MatchError(ContainSubstring(`agent-tool policy "deny" is not available for openai agent`)))
+		Expect(err).To(MatchError(ContainSubstring(`openai agent cannot enforce a per-tool policy (Bash)`)))
 
 		_, err = api.ResolveRuntimeProfile(api.RuntimeProfileResolveRequest{
 			Profile: profile(api.Tools{"shell": api.ToolPolicyAllow}),
 		})
-		Expect(err).To(MatchError(ContainSubstring(`agent-tool policy "allow" is not available for openai agent`)))
+		Expect(err).To(MatchError(ContainSubstring(`openai agent cannot enforce a per-tool policy (shell)`)))
 	})
 
 	// The posture is independent of isolation: a run with no sandbox at all must
