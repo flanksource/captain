@@ -1,18 +1,14 @@
 package monitor
 
 import (
-	"bytes"
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/flanksource/captain/pkg/claude"
 	"github.com/flanksource/captain/pkg/database"
+	sessionprocess "github.com/flanksource/captain/pkg/session/process"
 	"github.com/google/uuid"
 )
 
@@ -74,7 +70,7 @@ func (m *Monitor) pollProcesses(ctx context.Context, watcher *transcriptWatcher)
 // working directory; finally a provisional session that later transcript
 // ingest fills in.
 func (m *Monitor) resolveProcessSession(ctx context.Context, proc Process) (uuid.UUID, error) {
-	if providerSessionID := parseClaudeSessionIDFromCommand(proc.Command); providerSessionID != "" {
+	if providerSessionID := sessionprocess.SessionIDFromCommand(proc.Command); providerSessionID != "" {
 		session, err := m.db.CreateOrGetSession(ctx, database.CreateSessionInput{
 			ProviderSessionID: providerSessionID, Source: proc.Source, HostID: m.cfg.HostID, CWD: proc.CWD,
 		})
@@ -182,219 +178,19 @@ func processStartOrNow(proc Process) time.Time {
 // replace this without a schema change.
 func bootID() string { return "boot" }
 
-// parseClaudeSessionIDFromCommand extracts the session id claude was launched
-// with, from its "--session-id <uuid>" / "--resume <uuid>" argv (either the
-// space-separated or "=<uuid>" form). Returns "" when absent.
-func parseClaudeSessionIDFromCommand(command string) string {
-	fields := strings.Fields(command)
-	for i, field := range fields {
-		for _, flag := range []string{"--session-id", "--resume"} {
-			if field == flag && i+1 < len(fields) {
-				return fields[i+1]
-			}
-			if value, ok := strings.CutPrefix(field, flag+"="); ok {
-				return value
-			}
-		}
-	}
-	return ""
-}
-
 func discoverAgentProcesses() ([]Process, error) {
-	if runtime.GOOS == "windows" {
-		return nil, nil
-	}
-	out, err := exec.Command("ps", "-eo", "pid=,pcpu=,pmem=,rss=,stat=,lstart=,command=").Output()
+	agents, err := sessionprocess.Discover(context.Background())
 	if err != nil {
 		return nil, err
 	}
-	lines := bytes.Split(out, []byte{'\n'})
-	processes := make([]Process, 0)
-	for _, raw := range lines {
-		line := strings.TrimSpace(string(raw))
-		if line == "" {
-			continue
+	processes := make([]Process, len(agents))
+	for i, agent := range agents {
+		processes[i] = Process{
+			Source: agent.Source, PID: agent.PID, Status: agent.Status,
+			CPUPercent: agent.CPUPercent, MemoryPercent: agent.MemoryPercent,
+			MemoryRSSKB: int64(agent.RSSBytes / 1024), StartedAt: agent.StartedAt,
+			CWD: agent.CWD, Command: agent.Command,
 		}
-		proc, ok := parseAgentProcessLine(line)
-		if !ok {
-			continue
-		}
-		processes = append(processes, proc)
-	}
-	cwds := processCWDs(processIDs(processes))
-	for i := range processes {
-		processes[i].CWD = cwds[processes[i].PID]
 	}
 	return processes, nil
-}
-
-func parseAgentProcessLine(line string) (Process, bool) {
-	fields := strings.Fields(line)
-	if len(fields) < 11 {
-		return Process{}, false
-	}
-	pid, err := strconv.Atoi(fields[0])
-	if err != nil || pid <= 0 {
-		return Process{}, false
-	}
-	command := strings.Join(fields[10:], " ")
-	source := processSource(command)
-	if source == "" {
-		return Process{}, false
-	}
-	cpu, _ := strconv.ParseFloat(fields[1], 64)
-	mem, _ := strconv.ParseFloat(fields[2], 64)
-	rss, _ := strconv.ParseInt(fields[3], 10, 64)
-	stat := fields[4]
-	start := parseProcessStart(strings.Join(fields[5:10], " "))
-	status, _ := processStatus(stat)
-	return Process{
-		Source:        source,
-		PID:           pid,
-		Status:        status,
-		CPUPercent:    cpu,
-		MemoryPercent: mem,
-		MemoryRSSKB:   rss,
-		StartedAt:     start,
-		Command:       command,
-	}, true
-}
-
-func processSource(command string) string {
-	lower := strings.ToLower(command)
-	if strings.Contains(lower, "captain") || strings.Contains(lower, "ctop") || strings.Contains(lower, "claude-manager") {
-		return ""
-	}
-	if strings.Contains(lower, "claude.app") {
-		return ""
-	}
-	if commandNameMatches(lower, "claude") {
-		return "claude"
-	}
-	if strings.Contains(lower, "codex-darwin") ||
-		strings.Contains(lower, "codex-linux") ||
-		strings.Contains(lower, "codex-win") ||
-		commandNameMatches(lower, "codex") {
-		// mcp-server / app-server are codex's tool/IPC servers, not interactive
-		// sessions — they never hold a rollout transcript open.
-		if commandNameMatches(lower, "mcp-server") || commandNameMatches(lower, "app-server") {
-			return ""
-		}
-		return "codex"
-	}
-	return ""
-}
-
-func commandNameMatches(command, name string) bool {
-	fields := strings.Fields(command)
-	for _, field := range fields {
-		base := field
-		if idx := strings.LastIndex(base, "/"); idx >= 0 {
-			base = base[idx+1:]
-		}
-		base = strings.Trim(base, `"'`)
-		if base == name {
-			return true
-		}
-	}
-	return false
-}
-
-func processStatus(stat string) (string, bool) {
-	switch {
-	case strings.Contains(stat, "Z"):
-		return "zombie", false
-	case strings.Contains(stat, "T"):
-		return "stopped", false
-	case strings.Contains(stat, "S"):
-		return "sleeping", true
-	default:
-		return "active", true
-	}
-}
-
-func parseProcessStart(value string) *time.Time {
-	return parseProcessStartInLocation(value, time.Local)
-}
-
-func parseProcessStartInLocation(value string, location *time.Location) *time.Time {
-	if value == "" {
-		return nil
-	}
-	if location == nil {
-		location = time.Local
-	}
-	// ps(1) renders lstart in the host's local timezone, but the value carries
-	// no offset. time.Parse would interpret it as UTC and, on positive-offset
-	// hosts, persist a process start several hours in the future. Closing that
-	// row then violates ended_at >= process_started_at.
-	t, err := time.ParseInLocation("Mon Jan 2 15:04:05 2006", value, location)
-	if err != nil {
-		return nil
-	}
-	utc := t.UTC()
-	return &utc
-}
-
-func processIDs(processes []Process) []int {
-	pids := make([]int, 0, len(processes))
-	for _, proc := range processes {
-		if proc.PID > 0 {
-			pids = append(pids, proc.PID)
-		}
-	}
-	return pids
-}
-
-func processCWDs(pids []int) map[int]string {
-	cwds := make(map[int]string, len(pids))
-	if runtime.GOOS == "linux" {
-		for _, pid := range pids {
-			if pid <= 0 {
-				continue
-			}
-			cwd, err := os.Readlink("/proc/" + strconv.Itoa(pid) + "/cwd")
-			if err == nil {
-				cwds[pid] = cwd
-			}
-		}
-		return cwds
-	}
-	var pidList []string
-	for _, pid := range pids {
-		if pid > 0 {
-			pidList = append(pidList, strconv.Itoa(pid))
-		}
-	}
-	if len(pidList) == 0 {
-		return cwds
-	}
-	out, err := exec.Command("lsof", "-a", "-d", "cwd", "-F", "pn", "-p", strings.Join(pidList, ",")).Output()
-	if err != nil {
-		return cwds
-	}
-	return parseLsofCWDs(out)
-}
-
-func parseLsofCWDs(out []byte) map[int]string {
-	cwds := make(map[int]string)
-	currentPID := 0
-	for _, raw := range bytes.Split(out, []byte{'\n'}) {
-		line := strings.TrimSpace(string(raw))
-		if line == "" {
-			continue
-		}
-		switch line[0] {
-		case 'p':
-			pid, err := strconv.Atoi(strings.TrimPrefix(line, "p"))
-			if err == nil {
-				currentPID = pid
-			}
-		case 'n':
-			if currentPID > 0 {
-				cwds[currentPID] = strings.TrimPrefix(line, "n")
-			}
-		}
-	}
-	return cwds
 }

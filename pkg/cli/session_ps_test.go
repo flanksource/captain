@@ -256,16 +256,27 @@ func stubPSDiscovery(
 	t.Helper()
 	origProcs := discoverSessionProcesses
 	origFiles := discoverOpenSessionFiles
-	origSurface := discoverProcessSurface
 	origCmux := discoverCmuxSurfaces
-	discoverSessionProcesses = procs
+	discoverSessionProcesses = func() ([]agentProcess, error) {
+		if procs == nil {
+			return nil, nil
+		}
+		processes, err := procs()
+		if err != nil {
+			return nil, err
+		}
+		if surface != nil {
+			for i := range processes {
+				processes[i].Surface = surface(processes[i].PID)
+			}
+		}
+		return processes, nil
+	}
 	discoverOpenSessionFiles = files
-	discoverProcessSurface = surface
 	discoverCmuxSurfaces = func() (map[string]cmux.Surface, error) { return cmuxSurfaces, nil }
 	return func() {
 		discoverSessionProcesses = origProcs
 		discoverOpenSessionFiles = origFiles
-		discoverProcessSurface = origSurface
 		discoverCmuxSurfaces = origCmux
 	}
 }

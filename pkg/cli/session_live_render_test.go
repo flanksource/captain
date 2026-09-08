@@ -138,7 +138,9 @@ func TestEnrichLiveSessionSurfacesResolvesShortRef(t *testing.T) {
 		pid       = 24680
 		surfaceID = "4F846CB1-2EE5-4359-8D5B-A0F6F3837952"
 	)
-	defer stubPSDiscovery(t, nil, nil, func(gotPID int) *CmuxSurface {
+	defer stubPSDiscovery(t, func() ([]agentProcess, error) {
+		return []agentProcess{{PID: pid}}, nil
+	}, nil, func(gotPID int) *CmuxSurface {
 		if gotPID != pid {
 			t.Fatalf("surface lookup pid = %d, want %d", gotPID, pid)
 		}
@@ -148,7 +150,9 @@ func TestEnrichLiveSessionSurfacesResolvesShortRef(t *testing.T) {
 	})()
 
 	records := []SessionRecord{{Live: &SessionLiveWire{PID: pid}}}
-	enrichLiveSessionSurfaces(records)
+	if err := enrichLiveSessionSurfaces(records); err != nil {
+		t.Fatalf("enrich live surfaces: %v", err)
+	}
 	if got := records[0].Live.Surface; got == nil || got.SurfaceRef != "surface:383" {
 		t.Fatalf("surface = %+v, want short cmux ref", got)
 	}

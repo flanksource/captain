@@ -316,29 +316,6 @@ var _ = Describe("session get multi-result output", func() {
 		}))
 	})
 
-	It("prefers persisted structured output and ignores non-schema JSON text", func() {
-		runID := uuid.MustParse("293b06b4-f6b7-4f69-a531-7499bd5a473a")
-		overview := database.SessionOverview{ID: uuid.New(), Source: "captain"}
-		detail, err := sessionFromPromptRun(overview, database.PromptRun{
-			ID: runID,
-			RenderedSpec: map[string]any{
-				"outputSchema": map[string]any{"type": "object"},
-			},
-			ResultText: `{"source":"text"}`,
-			ResultJSON: map[string]any{"source": "stored"},
-		})
-		Expect(err).NotTo(HaveOccurred())
-		Expect(detail.StructuredOutput).To(Equal(map[string]any{"source": "stored"}))
-		Expect(detail.Messages).To(HaveLen(1))
-		Expect(detail.Messages[0].Parts[0].Text).To(Equal(`{"source":"text"}`))
-
-		detail, err = sessionFromPromptRun(overview, database.PromptRun{
-			ID: runID, ResultText: `{"source":"plain-text-prompt"}`,
-		})
-		Expect(err).NotTo(HaveOccurred())
-		Expect(detail.StructuredOutput).To(BeNil())
-	})
-
 	It("renders every match sequentially and preserves metadata-only sessions", func() {
 		result := SessionGetResult{
 			Sessions: []SessionGetItem{
@@ -391,7 +368,7 @@ var _ = Describe("session get multi-result output", func() {
 					"host": "MacBook-Pro.local",
 					"detailAvailable": true,
 					"summary": {"key":"","id":"ad4c854e-cde6-4b99-99f3-667bf74112e3","source":"claude","project":"flanksource","toolCalls":0,"messages":0,"detailAvailable":false},
-					"detail": {"id":"ad4c854e-cde6-4b99-99f3-667bf74112e3","revision":0,"source":"claude","git":{},"usage":{"inputTokens":0,"outputTokens":0},"cost":{"inputTokens":0,"outputTokens":0,"totalTokens":0,"inputCost":0,"outputCost":0},"capabilities":{},"files":{},"approvals":{"approved":0,"denied":0}}
+					"detail": {"id":"ad4c854e-cde6-4b99-99f3-667bf74112e3","revision":0,"source":"claude","git":{},"usage":{"inputTokens":0,"outputTokens":0},"cost":{"inputTokens":0,"outputTokens":0,"totalTokens":0,"inputCost":0,"outputCost":0},"capabilities":{},"files":{},"approvals":{"approved":0,"denied":0,"pending":0}}
 				},
 				{
 					"captainId": "7ca78c55-e280-50ff-a19a-9f355a6fc55e",
@@ -448,4 +425,16 @@ func (s *sessionGetOverviewStore) ListPromptRuns(_ context.Context, filter datab
 		return nil, nil
 	}
 	return s.promptRuns[*filter.SessionID], nil
+}
+
+func (s *sessionGetOverviewStore) ListTurnRequests(context.Context, database.TurnRequestFilter) ([]database.TurnRequest, error) {
+	return nil, nil
+}
+
+func (s *sessionGetOverviewStore) ListPlans(context.Context, database.PlanFilter) ([]database.Plan, error) {
+	return nil, nil
+}
+
+func (s *sessionGetOverviewStore) GetTranscriptSessionByIdentity(context.Context, string) (*database.Session, error) {
+	return nil, database.ErrSessionNotFound
 }

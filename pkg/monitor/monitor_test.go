@@ -8,56 +8,6 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
-func TestParseAgentProcessLine(t *testing.T) {
-	line := "4242 12.5  3.2 204800 S+   Sun Jul 12 09:00:00 2026 /usr/local/bin/claude --resume 0195c1de-4ab8-7000-8000-0123456789ab"
-	proc, ok := parseAgentProcessLine(line)
-	if !ok {
-		t.Fatal("line should parse")
-	}
-	if proc.PID != 4242 || proc.Source != "claude" {
-		t.Fatalf("pid=%d source=%q", proc.PID, proc.Source)
-	}
-	if proc.CPUPercent != 12.5 || proc.MemoryPercent != 3.2 {
-		t.Fatalf("cpu=%v mem=%v", proc.CPUPercent, proc.MemoryPercent)
-	}
-	if proc.MemoryRSSKB != 204800 {
-		t.Fatalf("rss=%d", proc.MemoryRSSKB)
-	}
-	if proc.Status != "sleeping" {
-		t.Fatalf("status=%q", proc.Status)
-	}
-	if proc.StartedAt == nil || proc.StartedAt.Year() != 2026 {
-		t.Fatalf("startedAt=%v", proc.StartedAt)
-	}
-	if got := parseClaudeSessionIDFromCommand(proc.Command); got != "0195c1de-4ab8-7000-8000-0123456789ab" {
-		t.Fatalf("session id from command = %q", got)
-	}
-}
-
-func TestParseProcessStartUsesHostTimezone(t *testing.T) {
-	location := time.FixedZone("UTC+03", 3*60*60)
-	started := parseProcessStartInLocation("Sun Jul 12 09:00:00 2026", location)
-	if started == nil {
-		t.Fatal("process start should parse")
-	}
-	want := time.Date(2026, time.July, 12, 6, 0, 0, 0, time.UTC)
-	if !started.Equal(want) {
-		t.Fatalf("process start = %s, want %s", started, want)
-	}
-}
-
-func TestParseAgentProcessLine_SkipsNonAgents(t *testing.T) {
-	for _, line := range []string{
-		"77 0.0 0.1 1024 S Sun Jul 12 09:00:00 2026 /usr/bin/captain serve",
-		"78 0.0 0.1 1024 S Sun Jul 12 09:00:00 2026 /opt/codex/mcp-server --port 1",
-		"79 0.0 0.1 1024 S Sun Jul 12 09:00:00 2026 /bin/zsh -l",
-	} {
-		if _, ok := parseAgentProcessLine(line); ok {
-			t.Errorf("line should be skipped: %s", line)
-		}
-	}
-}
-
 // TestWatcherDebounce verifies a burst of write events produces one ingest
 // after the quiet period rather than one per event.
 func TestWatcherDebounce(t *testing.T) {

@@ -11,6 +11,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/claude"
 	"github.com/flanksource/captain/pkg/cmux"
+	sessionprocess "github.com/flanksource/captain/pkg/session/process"
 	"github.com/flanksource/clicky/api"
 	rpchttp "github.com/flanksource/clicky/rpc/http"
 )
@@ -127,7 +128,6 @@ func filterProcessesBySource(processes []agentProcess, source string) []agentPro
 
 // Indirection points so RunPS can be tested without live processes.
 var (
-	discoverProcessSurface   = processSurface
 	discoverOpenSessionFiles = processOpenSessionFiles
 	discoverCmuxSurfaces     = cmux.Surfaces
 )
@@ -138,7 +138,6 @@ var (
 func enrichProcessesFromOS(processes []agentProcess) {
 	openFiles := discoverOpenSessionFiles(processIDs(processes))
 	for i := range processes {
-		processes[i].Surface = discoverProcessSurface(processes[i].PID)
 		enrichProcessFromOpenFiles(&processes[i], openFiles[processes[i].PID])
 	}
 }
@@ -204,7 +203,7 @@ func enrichProcessFromOpenFiles(p *agentProcess, paths []string) {
 // launcher, whereas open fds are unreliable (claude inherits foreign transcript
 // fds — the source of the original mis-attribution).
 func resolveClaudeSession(p *agentProcess, ownOpens []openTranscript) {
-	if id := parseClaudeSessionIDFromCommand(p.Command); id != "" {
+	if id := sessionprocess.SessionIDFromCommand(p.Command); id != "" {
 		if path := locateClaudeTranscript(id, p.CWD); path != "" {
 			setPrimaryFromFile(p, id, path)
 		}
@@ -334,7 +333,7 @@ func resolveClaudeSessionByCwd(p *agentProcess) {
 			return
 		}
 	}
-	p.SessionID = parseClaudeSessionIDFromCommand(p.Command)
+	p.SessionID = sessionprocess.SessionIDFromCommand(p.Command)
 }
 
 // selectPrimaryTranscript picks the primary session among a process's open

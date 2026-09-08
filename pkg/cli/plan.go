@@ -10,6 +10,7 @@ import (
 	"github.com/flanksource/captain/pkg/claude"
 	captaindb "github.com/flanksource/captain/pkg/database"
 	captainsession "github.com/flanksource/captain/pkg/session"
+	sessionquery "github.com/flanksource/captain/pkg/session/query"
 	"github.com/flanksource/clicky"
 	"github.com/flanksource/clicky/api"
 	"github.com/flanksource/clicky/api/icons"
@@ -113,8 +114,8 @@ func resolveLatestTranscriptPlan(
 			if ok {
 				return native, nil
 			}
-			candidate := candidateFromOverview(overview)
-			if candidate.path == "" {
+			candidate := sessionquery.CandidateFromOverview(overview)
+			if candidate.Path == "" {
 				continue
 			}
 			plan, err := resolveSessionPlan(candidate)
@@ -184,8 +185,8 @@ func resolveIdentityPlan(ctx context.Context, db planIdentityStore, identity, so
 		}
 	}
 	for i := range overviews {
-		candidate := candidateFromOverview(overviews[i])
-		if candidate.path == "" {
+		candidate := sessionquery.CandidateFromOverview(overviews[i])
+		if candidate.Path == "" {
 			continue
 		}
 		plan, err := resolveSessionPlan(candidate)
@@ -249,19 +250,19 @@ func resolveNativePlan(
 
 // resolveSessionPlan reads a session transcript and recovers its plan. It returns
 // nil (no error) when the session has no plan.
-func resolveSessionPlan(candidate sessionCandidate) (*PlanResult, error) {
-	switch candidate.record.Source {
+func resolveSessionPlan(candidate sessionquery.Candidate) (*PlanResult, error) {
+	switch candidate.Source {
 	case "claude":
 		return resolveClaudePlan(candidate)
 	case "codex":
 		return resolveCodexPlan(candidate)
 	default:
-		return nil, fmt.Errorf("unknown session source %q", candidate.record.Source)
+		return nil, fmt.Errorf("unknown session source %q", candidate.Source)
 	}
 }
 
-func resolveClaudePlan(candidate sessionCandidate) (*PlanResult, error) {
-	entries, err := claude.ReadHistoryFile(candidate.path)
+func resolveClaudePlan(candidate sessionquery.Candidate) (*PlanResult, error) {
+	entries, err := claude.ReadHistoryFile(candidate.Path)
 	if err != nil {
 		return nil, err
 	}
@@ -288,7 +289,7 @@ func resolveClaudePlan(candidate sessionCandidate) (*PlanResult, error) {
 	}
 
 	return &PlanResult{
-		SessionID: candidate.record.ID,
+		SessionID: candidate.ID,
 		Source:    "claude",
 		Path:      sp.Path,
 		OnDisk:    onDisk,
@@ -297,8 +298,8 @@ func resolveClaudePlan(candidate sessionCandidate) (*PlanResult, error) {
 	}, nil
 }
 
-func resolveCodexPlan(candidate sessionCandidate) (*PlanResult, error) {
-	uses, err := history.ExtractCodexToolUses(candidate.path)
+func resolveCodexPlan(candidate sessionquery.Candidate) (*PlanResult, error) {
+	uses, err := history.ExtractCodexToolUses(candidate.Path)
 	if err != nil {
 		return nil, err
 	}
@@ -307,7 +308,7 @@ func resolveCodexPlan(candidate sessionCandidate) (*PlanResult, error) {
 		return nil, nil
 	}
 	return &PlanResult{
-		SessionID: candidate.record.ID,
+		SessionID: candidate.ID,
 		Source:    "codex",
 		Content:   plan.Content,
 	}, nil

@@ -8,13 +8,10 @@ import (
 
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/session"
-	"github.com/google/uuid"
+	sessionquery "github.com/flanksource/captain/pkg/session/query"
 )
 
-type sessionOverviewStore interface {
-	ListSessionOverviewsByIdentity(context.Context, string) ([]database.SessionOverview, error)
-	ListThreadSessionOverviews(context.Context, uuid.UUID) ([]database.SessionOverview, error)
-}
+type sessionOverviewStore = sessionquery.OverviewStore
 
 type sessionListStore interface {
 	ListSessionSummaries(context.Context, database.SessionListFilter) (database.SessionListPage, error)
@@ -93,33 +90,7 @@ func dbAllSessionRecords(ctx context.Context, db sessionListStore, query session
 // resolveOverviewsByIdentity resolves sessions by Captain UUID or
 // provider-session-id prefix.
 func resolveOverviewsByIdentity(ctx context.Context, db sessionOverviewStore, id string) ([]database.SessionOverview, error) {
-	overviews, err := db.ListSessionOverviewsByIdentity(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	if parsed, parseErr := uuid.Parse(id); parseErr == nil && len(overviews) == 1 &&
-		overviews[0].ID == parsed && overviews[0].ParentSessionID == nil && overviews[0].RootSessionID == nil {
-		thread, threadErr := db.ListThreadSessionOverviews(ctx, parsed)
-		if threadErr != nil {
-			return nil, threadErr
-		}
-		if len(thread) > 1 {
-			return thread, nil
-		}
-	}
-	return overviews, nil
-}
-
-// candidateFromOverview adapts a DB overview row to the transcript-parsing
-// candidate shape used by the detail and plan readers.
-func candidateFromOverview(overview database.SessionOverview) sessionCandidate {
-	path := stringOr(overview.HistoryFile, stringOr(overview.Path, ""))
-	return sessionCandidate{
-		record: SessionRecord{
-			ID: stringOr(overview.ProviderSessionID, overview.ID.String()), Source: overview.Source, DetailAvailable: true,
-		},
-		path: path,
-	}
+	return sessionquery.Resolve(ctx, db, id)
 }
 
 func overviewGitBranch(overview database.SessionOverview) string {

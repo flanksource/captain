@@ -1,13 +1,10 @@
 package cli
 
 import (
-	"bytes"
-	"os"
-	"os/exec"
-	"runtime"
-	"strconv"
-	"strings"
+	"context"
 	"time"
+
+	sessionprocess "github.com/flanksource/captain/pkg/session/process"
 )
 
 type agentProcess struct {
@@ -29,238 +26,51 @@ type agentProcess struct {
 
 func (p agentProcess) wire() *SessionLiveWire {
 	return &SessionLiveWire{
-		PID:           p.PID,
-		Status:        p.Status,
-		Active:        p.Active,
-		CPUPercent:    p.CPUPercent,
-		MemoryPercent: p.MemoryPercent,
-		StartedAt:     p.StartedAt,
-		CWD:           p.CWD,
-		Command:       p.Command,
-		SessionID:     p.SessionID,
-		AgentIDs:      p.AgentIDs,
-		LastActivity:  p.LastActivity,
-		SessionFile:   p.SessionFile,
-		Surface:       p.Surface,
+		PID: p.PID, Status: p.Status, Active: p.Active,
+		CPUPercent: p.CPUPercent, MemoryPercent: p.MemoryPercent,
+		StartedAt: p.StartedAt, CWD: p.CWD, Command: p.Command,
+		SessionID: p.SessionID, AgentIDs: p.AgentIDs,
+		LastActivity: p.LastActivity, SessionFile: p.SessionFile, Surface: p.Surface,
 	}
 }
 
-// discoverSessionProcesses is indirected so ps tests can fake process lists.
 var discoverSessionProcesses = discoverAgentProcesses
+
+func discoverAgentProcesses() ([]agentProcess, error) {
+	processes, err := sessionprocess.Discover(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	result := make([]agentProcess, len(processes))
+	for i, process := range processes {
+		result[i] = agentProcess{
+			Source: process.Source, PID: process.PID, Status: process.Status, Active: process.Active,
+			CPUPercent: process.CPUPercent, MemoryPercent: process.MemoryPercent,
+			StartedAt: process.StartedAt, CWD: process.CWD, Command: process.Command, Surface: process.Surface,
+		}
+	}
+	return result, nil
+}
 
 func filterAgentProcessesByProject(processes []agentProcess, projectRoot string) []agentProcess {
 	if projectRoot == "" {
 		return processes
 	}
 	filtered := make([]agentProcess, 0, len(processes))
-	for _, proc := range processes {
-		if sessionRecordMatchesProject(SessionRecord{CWD: proc.CWD}, projectRoot) {
-			filtered = append(filtered, proc)
+	for _, process := range processes {
+		if sessionRecordMatchesProject(SessionRecord{CWD: process.CWD}, projectRoot) {
+			filtered = append(filtered, process)
 		}
 	}
 	return filtered
 }
 
-// parseClaudeSessionIDFromCommand extracts the session id claude was launched
-// with, from its "--session-id <uuid>" / "--resume <uuid>" argv (either the
-// space-separated or "=<uuid>" form). Returns "" when absent.
-func parseClaudeSessionIDFromCommand(command string) string {
-	fields := strings.Fields(command)
-	for i, field := range fields {
-		for _, flag := range []string{"--session-id", "--resume"} {
-			if field == flag && i+1 < len(fields) {
-				return fields[i+1]
-			}
-			if value, ok := strings.CutPrefix(field, flag+"="); ok {
-				return value
-			}
-		}
-	}
-	return ""
-}
-
-func discoverAgentProcesses() ([]agentProcess, error) {
-	if runtime.GOOS == "windows" {
-		return nil, nil
-	}
-	out, err := exec.Command("ps", "-eo", "pid=,pcpu=,pmem=,stat=,lstart=,command=").Output()
-	if err != nil {
-		return nil, err
-	}
-	lines := bytes.Split(out, []byte{'\n'})
-	processes := make([]agentProcess, 0)
-	for _, raw := range lines {
-		line := strings.TrimSpace(string(raw))
-		if line == "" {
-			continue
-		}
-		proc, ok := parseAgentProcessLine(line)
-		if !ok {
-			continue
-		}
-		processes = append(processes, proc)
-	}
-	cwds := processCWDs(processIDs(processes))
-	for i := range processes {
-		processes[i].CWD = cwds[processes[i].PID]
-	}
-	return processes, nil
-}
-
-func parseAgentProcessLine(line string) (agentProcess, bool) {
-	fields := strings.Fields(line)
-	if len(fields) < 10 {
-		return agentProcess{}, false
-	}
-	pid, err := strconv.Atoi(fields[0])
-	if err != nil || pid <= 0 {
-		return agentProcess{}, false
-	}
-	command := strings.Join(fields[9:], " ")
-	source := processSource(command)
-	if source == "" {
-		return agentProcess{}, false
-	}
-	cpu, _ := strconv.ParseFloat(fields[1], 64)
-	mem, _ := strconv.ParseFloat(fields[2], 64)
-	stat := fields[3]
-	start := parseProcessStart(strings.Join(fields[4:9], " "))
-	status, active := processStatus(stat)
-	return agentProcess{
-		Source:        source,
-		PID:           pid,
-		Status:        status,
-		Active:        active,
-		CPUPercent:    cpu,
-		MemoryPercent: mem,
-		StartedAt:     start,
-		Command:       command,
-	}, true
-}
-
-func processSource(command string) string {
-	lower := strings.ToLower(command)
-	if strings.Contains(lower, "captain") || strings.Contains(lower, "ctop") || strings.Contains(lower, "claude-manager") {
-		return ""
-	}
-	if strings.Contains(lower, "claude.app") {
-		return ""
-	}
-	if commandNameMatches(lower, "claude") {
-		return "claude"
-	}
-	if strings.Contains(lower, "codex-darwin") ||
-		strings.Contains(lower, "codex-linux") ||
-		strings.Contains(lower, "codex-win") ||
-		commandNameMatches(lower, "codex") {
-		// mcp-server / app-server are codex's tool/IPC servers, not interactive
-		// sessions — they never hold a rollout transcript open.
-		if commandNameMatches(lower, "mcp-server") || commandNameMatches(lower, "app-server") {
-			return ""
-		}
-		return "codex"
-	}
-	return ""
-}
-
-func commandNameMatches(command, name string) bool {
-	fields := strings.Fields(command)
-	for _, field := range fields {
-		base := field
-		if idx := strings.LastIndex(base, "/"); idx >= 0 {
-			base = base[idx+1:]
-		}
-		base = strings.Trim(base, `"'`)
-		if base == name {
-			return true
-		}
-	}
-	return false
-}
-
-func processStatus(stat string) (string, bool) {
-	switch {
-	case strings.Contains(stat, "Z"):
-		return "zombie", false
-	case strings.Contains(stat, "T"):
-		return "stopped", false
-	case strings.Contains(stat, "S"):
-		return "sleeping", true
-	default:
-		return "active", true
-	}
-}
-
-func parseProcessStart(value string) *time.Time {
-	if value == "" {
-		return nil
-	}
-	t, err := time.Parse("Mon Jan 2 15:04:05 2006", value)
-	if err != nil {
-		return nil
-	}
-	return &t
-}
-
 func processIDs(processes []agentProcess) []int {
 	pids := make([]int, 0, len(processes))
-	for _, proc := range processes {
-		if proc.PID > 0 {
-			pids = append(pids, proc.PID)
+	for _, process := range processes {
+		if process.PID > 0 {
+			pids = append(pids, process.PID)
 		}
 	}
 	return pids
-}
-
-func processCWDs(pids []int) map[int]string {
-	cwds := make(map[int]string, len(pids))
-	if runtime.GOOS == "linux" {
-		for _, pid := range pids {
-			if pid <= 0 {
-				continue
-			}
-			cwd, err := os.Readlink("/proc/" + strconv.Itoa(pid) + "/cwd")
-			if err == nil {
-				cwds[pid] = cwd
-			}
-		}
-		return cwds
-	}
-	var pidList []string
-	for _, pid := range pids {
-		if pid > 0 {
-			pidList = append(pidList, strconv.Itoa(pid))
-		}
-	}
-	if len(pidList) == 0 {
-		return cwds
-	}
-	out, err := exec.Command("lsof", "-a", "-d", "cwd", "-F", "pn", "-p", strings.Join(pidList, ",")).Output()
-	if err != nil {
-		return cwds
-	}
-	return parseLsofCWDs(out)
-}
-
-func parseLsofCWDs(out []byte) map[int]string {
-	cwds := make(map[int]string)
-	currentPID := 0
-	for _, raw := range bytes.Split(out, []byte{'\n'}) {
-		line := strings.TrimSpace(string(raw))
-		if line == "" {
-			continue
-		}
-		switch line[0] {
-		case 'p':
-			pid, err := strconv.Atoi(strings.TrimPrefix(line, "p"))
-			if err == nil {
-				currentPID = pid
-			}
-		case 'n':
-			if currentPID > 0 {
-				cwds[currentPID] = strings.TrimPrefix(line, "n")
-			}
-		}
-	}
-	return cwds
 }
