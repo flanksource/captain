@@ -210,11 +210,19 @@ type Denial struct {
 	Reason    string `json:"reason,omitempty"`
 }
 
-// ApprovalStats aggregates tool approvals/denials for a session.
+// ApprovalStats aggregates tool approval requests for a session by state.
+//
+// Pending is load-bearing: a run suspended on a tool approval is indistinguishable
+// from a run nobody ever asked anything unless the unanswered requests are counted.
+// Cancelled and Expired are counted for the same reason — a request that lapsed is
+// a fact about the run, not an absence.
 type ApprovalStats struct {
-	Approved int      `json:"approved"`
-	Denied   int      `json:"denied"`
-	Denials  []Denial `json:"denials,omitempty"`
+	Approved  int      `json:"approved"`
+	Denied    int      `json:"denied"`
+	Pending   int      `json:"pending"`
+	Cancelled int      `json:"cancelled,omitempty"`
+	Expired   int      `json:"expired,omitempty"`
+	Denials   []Denial `json:"denials,omitempty"`
 }
 
 // Health is a derived health signal for a session (low context, cost spike,

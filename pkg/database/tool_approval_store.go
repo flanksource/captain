@@ -285,6 +285,76 @@ func (db *DB) ListTurnRequests(ctx context.Context, filter TurnRequestFilter) ([
 	return requests, nil
 }
 
+// StaleToolApproval is one pending tool approval that no wait can still answer,
+// as a sweeper running outside the process that raised it sees it.
+type StaleToolApproval struct {
+	ID          uuid.UUID
+	SessionID   uuid.UUID
+	PromptRunID *uuid.UUID
+	Tool        string
+	RequestedBy string
+	CreatedAt   time.Time
+	ExpiresAt   *time.Time
+	RunState    PromptRunState
+	// Lapsed distinguishes the two reasons, which are not the same event: the
+	// approval's own window closed with nobody answering (expired), or the prompt
+	// run it blocks ended and took the question with it (cancelled).
+	Lapsed bool
+}
+
+type staleToolApprovalRow struct {
+	ID          uuid.UUID  `gorm:"column:id"`
+	SessionID   uuid.UUID  `gorm:"column:session_id"`
+	PromptRunID *uuid.UUID `gorm:"column:prompt_run_id"`
+	Tool        string     `gorm:"column:tool"`
+	RequestedBy string     `gorm:"column:requested_by"`
+	CreatedAt   time.Time  `gorm:"column:created_at"`
+	ExpiresAt   *time.Time `gorm:"column:expires_at"`
+	RunState    string     `gorm:"column:run_state"`
+	Lapsed      bool       `gorm:"column:lapsed"`
+}
+
+// ListStaleToolApprovals returns the pending tool approvals a sweeper may
+// terminate as of now.
+//
+// It exists because expires_at was, until it had this reader, data nobody
+// enforced: the only code that looked at it lived inside the broker's own wait
+// loop, so an approval outlived the process that raised it — a crash, a serve
+// restart, a laptop closing — and stayed `pending` with a timestamp long past.
+//
+// Two shapes qualify, and nothing else does. A live pending row inside its own
+// window belongs to whoever is looking at it, and a row that already reached a
+// decision keeps that decision; re-terminating either would destroy an answer.
+func (db *DB) ListStaleToolApprovals(ctx context.Context, now time.Time) ([]StaleToolApproval, error) {
+	var rows []staleToolApprovalRow
+	err := db.gorm.WithContext(ctx).Raw(`
+		SELECT request.id, request.session_id, request.prompt_run_id,
+		       COALESCE(request.request->>'tool', '') AS tool,
+		       COALESCE(request.requested_by, '') AS requested_by,
+		       request.created_at, request.expires_at,
+		       COALESCE(run.state::text, '') AS run_state,
+		       (request.expires_at IS NOT NULL AND request.expires_at <= ?) AS lapsed
+		FROM captain_turn_requests request
+		LEFT JOIN captain_prompt_runs run ON run.id = request.prompt_run_id
+		WHERE request.kind = 'tool_approval'
+		  AND request.state = 'pending'
+		  AND ((request.expires_at IS NOT NULL AND request.expires_at <= ?)
+		    OR run.state IN ('succeeded', 'failed', 'cancelled'))
+		ORDER BY request.created_at, request.id`, now, now).Scan(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("list stale Captain tool approvals: %w", err)
+	}
+	stale := make([]StaleToolApproval, len(rows))
+	for i, row := range rows {
+		stale[i] = StaleToolApproval{
+			ID: row.ID, SessionID: row.SessionID, PromptRunID: row.PromptRunID,
+			Tool: row.Tool, RequestedBy: row.RequestedBy, CreatedAt: row.CreatedAt,
+			ExpiresAt: row.ExpiresAt, RunState: PromptRunState(row.RunState), Lapsed: row.Lapsed,
+		}
+	}
+	return stale, nil
+}
+
 func (db *DB) ExpireToolApprovalRequest(ctx context.Context, id uuid.UUID, state TurnRequestState, reason string) error {
 	if state != TurnRequestStateExpired && state != TurnRequestStateCancelled {
 		return fmt.Errorf("%w: terminal state %q is invalid", ErrTurnRequestInvalid, state)

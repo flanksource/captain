@@ -2,12 +2,18 @@ package monitor
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/flanksource/captain/pkg/ai/history"
+	"github.com/flanksource/captain/pkg/database"
 	"github.com/fsnotify/fsnotify"
+	"github.com/google/uuid"
 )
 
 // transcriptWatcher tails live transcripts: it watches directories (per-file
@@ -45,13 +51,37 @@ func newTranscriptWatcher(m *Monitor, ingestor *ingestor) (*transcriptWatcher, e
 		w.watchDir(subagentsDir(rootTranscriptPath), "claude")
 	}
 	ingestor.requeue = w.schedule
+	registerActiveWatcher(w)
 	return w, nil
+}
+
+// activeWatchers is every transcript watcher running in this process. A watcher
+// exists only while a monitor holds the writer lock, and RegisterTranscriptSource
+// hands newly bound transcripts to whichever one that is — the alternative is
+// waiting out the process poll or the daily recon for a project directory that
+// was created seconds ago.
+var activeWatchers = struct {
+	mu  sync.Mutex
+	set map[*transcriptWatcher]struct{}
+}{set: map[*transcriptWatcher]struct{}{}}
+
+func registerActiveWatcher(w *transcriptWatcher) {
+	activeWatchers.mu.Lock()
+	activeWatchers.set[w] = struct{}{}
+	activeWatchers.mu.Unlock()
+}
+
+func unregisterActiveWatcher(w *transcriptWatcher) {
+	activeWatchers.mu.Lock()
+	delete(activeWatchers.set, w)
+	activeWatchers.mu.Unlock()
 }
 
 func (w *transcriptWatcher) events() chan fsnotify.Event { return w.watcher.Events }
 func (w *transcriptWatcher) errors() chan error          { return w.watcher.Errors }
 
 func (w *transcriptWatcher) close() {
+	unregisterActiveWatcher(w)
 	w.mu.Lock()
 	for _, timer := range w.timers {
 		timer.Stop()
@@ -144,4 +174,110 @@ func (w *transcriptWatcher) classify(path string) (string, bool) {
 		return source, true
 	}
 	return "", false
+}
+
+// ErrTranscriptNotFound reports that a provider session id names no transcript
+// on disk yet. Registration happens the moment the id becomes known, which can
+// be before the agent has flushed its first line, so a caller reads this as
+// "not yet" rather than as a failure.
+var ErrTranscriptNotFound = errors.New("no transcript file for provider session")
+
+// RegisterTranscriptSource binds a provider session id to the transcript file it
+// writes and arms this process's monitor on it.
+//
+// Discovery is otherwise shaped by the working directory — an adaptive ps poll
+// plus a scan of the agent's project directories — so a run inside a fresh git
+// worktree writes into a directory that did not exist when the last scan ran and
+// that no live process names, and its transcript waits for the daily recon.
+// Provider session ids are the one handle that exists at run start and that the
+// agent keys its log by, so resolution here is by id and needs no cwd at all.
+func RegisterTranscriptSource(ctx context.Context, db *database.DB, sessionID uuid.UUID, providerSessionID, source string) (string, error) {
+	if db == nil {
+		return "", fmt.Errorf("register transcript source: a database is required")
+	}
+	if sessionID == uuid.Nil {
+		return "", fmt.Errorf("register transcript source: session ID is required")
+	}
+	source = strings.TrimSpace(source)
+	providerSessionID = strings.TrimSpace(providerSessionID)
+	path, err := findTranscriptPath(source, providerSessionID)
+	if err != nil {
+		return "", err
+	}
+	if err := db.RegisterTranscriptSource(ctx, sessionID, source, path, providerSessionID); err != nil {
+		return "", err
+	}
+	armActiveWatchers(ctx, source, path)
+	return path, nil
+}
+
+// findTranscriptPath resolves a provider session id to the transcript file the
+// agent writes for it, without knowing the working directory the agent ran in.
+func findTranscriptPath(source, providerSessionID string) (string, error) {
+	source, providerSessionID = strings.TrimSpace(source), strings.TrimSpace(providerSessionID)
+	if providerSessionID == "" {
+		return "", fmt.Errorf("resolve transcript: provider session ID is required")
+	}
+	switch source {
+	case "claude":
+		path, err := history.FindSessionFile(providerSessionID)
+		if err != nil {
+			return "", fmt.Errorf("%w: claude session %s: %w", ErrTranscriptNotFound, providerSessionID, err)
+		}
+		return path, nil
+	case "codex":
+		return findCodexRollout(providerSessionID)
+	default:
+		return "", fmt.Errorf("resolve transcript: unknown transcript source %q", source)
+	}
+}
+
+// findCodexRollout locates the rollout file whose name ends in the session id.
+// Codex names a rollout by its start time and its id, so the id is the stable
+// half; the newest match wins when a session was rolled over more than once.
+func findCodexRollout(providerSessionID string) (string, error) {
+	files, err := history.FindCodexSessionFiles()
+	if err != nil {
+		return "", fmt.Errorf("resolve codex session %s: %w", providerSessionID, err)
+	}
+	newest, newestMod := "", int64(-1)
+	for _, file := range files {
+		base := strings.TrimSuffix(filepath.Base(file), ".jsonl")
+		if base != providerSessionID && !strings.HasSuffix(base, "-"+providerSessionID) {
+			continue
+		}
+		info, statErr := os.Stat(file)
+		if statErr != nil {
+			continue
+		}
+		if mod := info.ModTime().UnixNano(); mod > newestMod {
+			newest, newestMod = file, mod
+		}
+	}
+	if newest == "" {
+		return "", fmt.Errorf("%w: codex session %s", ErrTranscriptNotFound, providerSessionID)
+	}
+	return newest, nil
+}
+
+// armActiveWatchers hands a transcript to every watcher running in this process:
+// the directory, so later appends are tailed, and one scheduled ingest, so a file
+// already written in full is not left for the daily recon.
+//
+// The scheduled ingest deliberately outlives the caller's context. Registration
+// happens on a run-start report or an HTTP request whose context is cancelled
+// long before the agent stops writing, and cancelling the ingest with it would
+// make the fast path the one that reliably does nothing.
+func armActiveWatchers(ctx context.Context, source, path string) {
+	ingestCtx := context.WithoutCancel(ctx)
+	activeWatchers.mu.Lock()
+	watchers := make([]*transcriptWatcher, 0, len(activeWatchers.set))
+	for watcher := range activeWatchers.set {
+		watchers = append(watchers, watcher)
+	}
+	activeWatchers.mu.Unlock()
+	for _, watcher := range watchers {
+		watcher.track(path, source)
+		watcher.schedule(ingestCtx, source, path)
+	}
 }
