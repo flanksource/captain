@@ -7,6 +7,7 @@ package verify
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -263,6 +264,23 @@ type CmdVerifier struct {
 	Timeout      time.Duration   // wall-clock bound; 0 ⇒ DefaultCmdTimeout
 	Env          []string        // command environment; nil ⇒ inherit the process's
 	Wrap         CommandWrapFunc // optional confinement seam; see CommandWrapFunc
+	Output       io.Writer       // live copy of the child's output; nil ⇒ discarded
+}
+
+// sink is where the child's output goes: the feedback tail always, and the
+// caller's live Output as well when one was supplied.
+//
+// The result is assigned to BOTH execRequest.Stdout and execRequest.Stderr as a
+// single value on purpose. os/exec gives the child one pipe only while the two
+// are interface-equal (Cmd.childStderr), so one writer keeps the streams
+// interleaved in the order the child wrote them and serialises every write
+// through one copy goroutine. Building the writer twice splits them onto two
+// pipes and races the sink.
+func (c *CmdVerifier) sink(tail *tailBuffer) io.Writer {
+	if c.Output == nil {
+		return tail
+	}
+	return io.MultiWriter(tail, safeSink{c.Output})
 }
 
 func (c *CmdVerifier) Verify(ctx context.Context, cwd string, changed []string) (Verdict, error) {
@@ -271,9 +289,10 @@ func (c *CmdVerifier) Verify(ctx context.Context, cwd string, changed []string) 
 		args = append(args, changed...)
 	}
 	output := newTailBuffer(c.FeedbackTail)
+	stream := c.sink(output)
 	outcome, err := runProcess(ctx, execRequest{
 		Cmd: c.Cmd, Args: args, Dir: cwd, Env: c.Env, Wrap: c.Wrap, Timeout: c.Timeout,
-		Stdout: output, Stderr: output,
+		Stdout: stream, Stderr: stream,
 	})
 	if err != nil {
 		return Verdict{}, err

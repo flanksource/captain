@@ -79,6 +79,31 @@ var _ = Describe("the verifier registry", func() {
 		Expect(hooks).To(BeNil())
 	})
 
+	// pkg/cli/verify.go and pkg/gitagent/hookset.go drive verifiers out of loop
+	// via Verifier().Verify, bypassing Plugin.Verify entirely. A live-output seam
+	// installed on the Plugin would miss both, so it lives on CmdVerifier and
+	// this spec exercises it the way those callers do.
+	It("threads Options.Output into every command verifier, including the direct-drive path", func() {
+		var sink safeStringBuilder
+
+		hooks, err := HooksFor(ctx, &api.Workflow{
+			Verify: &api.Verify{Commands: []string{"echo wired"}},
+		}, Options{Output: &sink})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(hooks).To(HaveLen(1))
+
+		plugin, ok := hooks[0].(*Plugin)
+		Expect(ok).To(BeTrue())
+		cmd, ok := plugin.Verifier().(*CmdVerifier)
+		Expect(ok).To(BeTrue())
+		Expect(cmd.Output).To(BeIdenticalTo(&sink))
+
+		verdict, err := cmd.Verify(ctx, GinkgoT().TempDir(), nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(verdict.OK).To(BeTrue())
+		Expect(sink.String()).To(ContainSubstring("wired"))
+	})
+
 	It("refuses a declared fixture when no fixture verifier is registered", func() {
 		Expect(Registered(KindFixture)).To(BeFalse(), "no fixture runner is linked in this test binary")
 

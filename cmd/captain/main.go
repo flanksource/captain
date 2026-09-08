@@ -144,8 +144,8 @@ func newRootCommand() *cobra.Command {
 	rootCmd.AddCommand(cli.NewBrowserCommand())
 
 	psCmd := clicky.AddNamedCommandWithContext("ps", rootCmd, cli.PSOptions{}, cli.RunPS)
-	psCmd.Short = "List live agent sessions (claude/codex) with session id, agents, and cmux surface"
-	psCmd.Long = "Detect running claude/codex agent processes (via ps + lsof), resolve each one's session id, sub-agent ids, cmux surface (from CMUX_* env vars), and last activity, then augment with cached token/cost/context data. Only currently-active sessions are listed."
+	psCmd.Short = "List live agent sessions, or inspect specific process IDs"
+	psCmd.Long = "Detect running claude/codex agent processes (via ps + lsof), resolve each one's session id, sub-agent ids, cmux surface (from CMUX_* env vars), and last activity, then augment with cached token/cost/context data. Only currently-active sessions are listed.\n\nGiven one or more PIDs, captain inspects exactly those processes instead of scanning, and reports each one whether or not it is an agent — an agent-browser daemon, a session that was never ingested, or any other process. Inspection surfaces the process runtime (command, cwd, parent, memory, full environment) alongside whatever the database and on-disk transcript know about it. A PID that is not running is an error."
 	clicky.AddNamedCommandWithContext("ps", sessionsCmd, cli.PSOptions{}, cli.RunPS).Short = psCmd.Short
 
 	// A separate namespace from `sandbox presets`, which already owns that word

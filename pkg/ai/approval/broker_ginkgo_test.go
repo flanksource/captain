@@ -9,7 +9,6 @@ import (
 	"github.com/flanksource/captain/pkg/ai/approval"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/database"
-	"github.com/flanksource/commons-db/dbtest"
 	"github.com/google/uuid"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -30,11 +29,7 @@ var _ = Describe("Approval broker", Ordered, func() {
 	var db *database.DB
 
 	BeforeAll(func(ctx SpecContext) {
-		handle := dbtest.ForGinkgo(dbtest.Options{Name: "captain_approval_broker"})
-		opened, err := database.Open(ctx, database.WithDSN(handle.DSN()), database.WithMigrations())
-		Expect(err).NotTo(HaveOccurred())
-		DeferCleanup(func() { Expect(opened.Close()).To(Succeed()) })
-		db = opened
+		db = openBrokerDB(ctx)
 	})
 
 	It("blocks on a durable pending row and unblocks with the approved input", func(ctx SpecContext) {
