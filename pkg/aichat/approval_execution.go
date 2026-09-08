@@ -11,30 +11,39 @@ import (
 )
 
 const (
-	suspendedSeedTimeout  = 15 * time.Second
+	// suspendedSeedWait bounds how long an approval resolution waits for the
+	// suspending turn's assistant message to land in the thread store.
+	suspendedSeedWait     = 5 * time.Second
 	suspendedSeedInterval = 25 * time.Millisecond
 )
 
-// awaitSuspendedSeed returns the assistant message the suspended turn ended on.
-// The durable suspension (prompt run -> waiting) is committed while the same
-// stream's persistence goroutine is still writing that assistant message, so an
-// approval resolved the instant the run becomes resumable can observe the run
-// before its transcript. Wait for that in-flight write instead of rejecting a
-// legitimate approval, and fail loudly when it never lands.
+// awaitSuspendedSeed returns the thread's trailing assistant message for the
+// suspended turn.
+//
+// The durable suspension (prompt run -> waiting) is committed from the event
+// pipeline while the same stream is still persisting the assistant message it
+// suspended on, so an approval resolved the instant the run becomes resumable
+// can observe the run before its transcript. The run's durable approval state
+// guarantees that message is committed or imminent — wait the in-flight write
+// out instead of failing a resolution that has already consumed the approval,
+// and fail loudly when it never lands.
 func awaitSuspendedSeed(ctx context.Context, store ThreadStore, threadID, turnID string) (*UIMessage, error) {
-	deadline := time.Now().Add(suspendedSeedTimeout)
+	deadline := time.Now().Add(suspendedSeedWait)
 	for {
 		thread, err := store.Get(ctx, threadID)
 		if err != nil {
 			return nil, err
 		}
-		if len(thread.Messages) > 0 {
-			seed := thread.Messages[len(thread.Messages)-1]
+		if count := len(thread.Messages); count > 0 {
+			seed := thread.Messages[count-1]
 			if strings.EqualFold(seed.Role, string(api.RoleAssistant)) && seed.TurnID == turnID {
 				return &seed, nil
 			}
 		}
 		if time.Now().After(deadline) {
+			if len(thread.Messages) == 0 {
+				return nil, fmt.Errorf("captain chat session %s has no suspended assistant message", threadID)
+			}
 			return nil, fmt.Errorf("captain chat session %s does not end with the suspended turn %s", threadID, turnID)
 		}
 		select {
@@ -155,44 +164,11 @@ func enforceApprovalRuntimeProfile(spec api.Spec, resolved api.ComposedSpec) err
 	return nil
 }
 
-// suspendedSeedWait bounds how long an approval resolution waits for the
-// suspending turn's assistant message to land in the thread store.
-const suspendedSeedWait = 5 * time.Second
-
-// awaitSuspendedSeed returns the thread's trailing assistant message for the
-// suspended turn. The prompt run reaches its waiting state from the event
-// pipeline before the suspending stream persists that message on its final
-// unwind, so an approval resolved from a session poll can arrive while the
-// write is still in flight. The run's durable approval state guarantees the
-// message is committed or imminent — wait it out instead of failing a
-// resolution that has already consumed the approval.
+// awaitSuspendedSeed resolves this service's thread store and waits there.
 func (s *Service) awaitSuspendedSeed(ctx context.Context, threadID, turnID string) (*UIMessage, error) {
 	store, err := s.threads(ctx)
 	if err != nil {
 		return nil, err
 	}
-	deadline := time.Now().Add(suspendedSeedWait)
-	for {
-		thread, err := store.Get(ctx, threadID)
-		if err != nil {
-			return nil, err
-		}
-		if count := len(thread.Messages); count > 0 {
-			seed := thread.Messages[count-1]
-			if strings.EqualFold(seed.Role, string(api.RoleAssistant)) && seed.TurnID == turnID {
-				return &seed, nil
-			}
-		}
-		if time.Now().After(deadline) {
-			if len(thread.Messages) == 0 {
-				return nil, fmt.Errorf("captain chat session %s has no suspended assistant message", threadID)
-			}
-			return nil, fmt.Errorf("captain chat session %s does not end with the suspended turn %s", threadID, turnID)
-		}
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(50 * time.Millisecond):
-		}
-	}
+	return awaitSuspendedSeed(ctx, store, threadID, turnID)
 }
