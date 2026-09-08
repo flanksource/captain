@@ -385,8 +385,13 @@ var _ = Describe("Database execution authority", func() {
 		continueResolution := make(chan struct{})
 		var intercepted atomic.Bool
 		const callback = "test:pause_approval_after_prompt_run_read"
+		// Pause the run read the resolution *resumes* from — the one inside its
+		// transaction, whose version the update then asserts on. Resolution also
+		// reads the run outside any transaction first, to wait out a suspension
+		// still landing; pausing there would stall a read this race is not about.
 		Expect(db.Gorm().Callback().Query().After("gorm:query").Register(callback, func(tx *gorm.DB) {
-			if tx.Statement.Table == "captain_prompt_runs" && intercepted.CompareAndSwap(false, true) {
+			_, inTransaction := tx.Statement.ConnPool.(gorm.TxCommitter)
+			if inTransaction && tx.Statement.Table == "captain_prompt_runs" && intercepted.CompareAndSwap(false, true) {
 				close(versionRead)
 				<-continueResolution
 			}
