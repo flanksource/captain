@@ -172,6 +172,12 @@ RUN npm install -g \
   agent-browser@${AGENT_BROWSER_VERSION} \
   && npm cache clean --force
 
+# Register captain as an agent-browser launch.mutate plugin, so every browser an
+# agent opens records which agent session opened it. Written into the agent
+# user's own ~/.agent-browser/config.json, which is why this runs before the
+# switch back to root.
+RUN captain browser install --global
+
 USER root
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
