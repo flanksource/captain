@@ -8,8 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/flanksource/captain/pkg/claude"
-	"github.com/flanksource/captain/pkg/session"
+	sessionprocess "github.com/flanksource/captain/pkg/session/process"
 )
 
 type SessionListOptions struct {
@@ -131,19 +130,7 @@ type SessionLiveWire struct {
 // CmuxSurface identifies the cmux multiplexer surface hosting an agent process.
 // SurfaceID/WorkspaceID/… are derived from the process's CMUX_* environment
 // variables; Title/Workspace are the authoritative names joined from cmux itself.
-type CmuxSurface struct {
-	SurfaceID   string `json:"surfaceId,omitempty"`
-	SurfaceRef  string `json:"surfaceRef,omitempty"`
-	WorkspaceID string `json:"workspaceId,omitempty"`
-	TabID       string `json:"tabId,omitempty"`
-	PanelID     string `json:"panelId,omitempty"`
-	Port        int    `json:"port,omitempty"`
-	AgentKind   string `json:"agentKind,omitempty"`
-	SocketPath  string `json:"socketPath,omitempty"`
-	ClaudePID   int    `json:"claudePid,omitempty"`
-	Title       string `json:"title,omitempty"`
-	Workspace   string `json:"workspace,omitempty"`
-}
+type CmuxSurface = sessionprocess.Surface
 
 type SessionHealthWire struct {
 	Kind     string `json:"kind"`
@@ -249,11 +236,6 @@ func compactSessionInt(value int) string {
 	}
 }
 
-type sessionCandidate struct {
-	record SessionRecord
-	path   string
-}
-
 func RunSessionList(ctx context.Context, opts SessionListOptions) (SessionListResult, error) {
 	source, err := normalizeSessionSource(opts.Source)
 	if err != nil {
@@ -302,41 +284,6 @@ func sessionActivityRange(from, before time.Time) (*time.Time, *time.Time, error
 		activityBefore = &before
 	}
 	return activityFrom, activityBefore, nil
-}
-
-func buildSessionModel(candidate sessionCandidate) (*session.Session, error) {
-	switch candidate.record.Source {
-	case "claude":
-		id := candidate.record.ID
-		if id == "" {
-			id = sessionIDFromFile(candidate.path)
-		}
-		sessions, err := session.Build("", true, claude.Filter{
-			SessionIDs:    []string{id},
-			KeepRaw:       true,
-			IncludeAgents: true,
-		})
-		if err != nil {
-			return nil, err
-		}
-		for _, s := range sessions {
-			if s.ID == id {
-				return s, nil
-			}
-		}
-		if len(sessions) > 0 {
-			return sessions[0], nil
-		}
-		return nil, fmt.Errorf("session %q not found", id)
-	case "codex":
-		s, err := session.BuildCodexFile(candidate.path)
-		if err != nil {
-			return nil, fmt.Errorf("codex session %q: %w", candidate.path, err)
-		}
-		return s, nil
-	default:
-		return nil, fmt.Errorf("unknown session source %q", candidate.record.Source)
-	}
 }
 
 func normalizeSessionSource(source string) (string, error) {
