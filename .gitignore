@@ -36,3 +36,4 @@ hack/*
 .ginkgo/
 !pkg/cli/webapp/dist/index.html
 *.test
+.codegraph/
