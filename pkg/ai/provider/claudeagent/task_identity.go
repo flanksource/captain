@@ -10,7 +10,8 @@ import (
 )
 
 // Reserved label keys the host may set to name its run. Everything else in
-// Spec.Labels is passed through untouched.
+// Spec.Labels is passed through untouched, except the runtime-owned keys
+// api.RuntimeOwnedLabels reserves for the provider.
 const (
 	labelTitle = "title"
 	labelHref  = "href"
@@ -25,12 +26,7 @@ const (
 // the task list filters on, while Annotations are re-read on every snapshot and
 // carry what only becomes true (or changes) while the process runs.
 func (p *Provider) taskIdentity(req ai.Request) exec.SupervisedTaskOptions {
-	labels := map[string]string{}
-	for key, value := range req.Labels {
-		if value != "" {
-			labels[key] = value
-		}
-	}
+	labels := req.HostLabels()
 	runtime := p.GetRuntime()
 	labels["model"] = p.model
 	labels["provider"] = runtime.Provider
@@ -46,7 +42,7 @@ func (p *Provider) taskIdentity(req ai.Request) exec.SupervisedTaskOptions {
 		Name:        agentTaskName(req, p.model),
 		Kind:        "agent",
 		Labels:      labels,
-		Href:        req.Labels[labelHref],
+		Href:        req.HostLabel(labelHref),
 		Background:  true,
 		Annotations: p.taskAnnotations,
 	}
@@ -55,7 +51,7 @@ func (p *Provider) taskIdentity(req ai.Request) exec.SupervisedTaskOptions {
 // agentTaskName prefers the host's own name for the work, because "implement
 // the stack-trace viewer" identifies a run and "claude-agent" does not.
 func agentTaskName(req ai.Request, model string) string {
-	if title := req.Labels[labelTitle]; title != "" {
+	if title := req.HostLabel(labelTitle); title != "" {
 		return title
 	}
 	return fmt.Sprintf("claude-agent (%s)", model)
