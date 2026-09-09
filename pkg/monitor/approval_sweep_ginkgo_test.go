@@ -156,6 +156,32 @@ var _ = Describe("Restoring runs an approval still holds", Ordered, func() {
 			"a run nothing is holding must not be parked in waiting")
 	})
 
+	// The listing is a snapshot, so the approval that justified restoring a run
+	// can be answered before the loop reaches it. Standing in for that interleave:
+	// the run is a listed candidate, and by the time the write is attempted no
+	// approval is pending any more. Parking it would be unrecoverable — no wait
+	// is left to move it out of waiting again.
+	It("does not park a run whose last approval was answered after it was listed", func(ctx SpecContext) {
+		run := newSweepRun(ctx, db)
+		answered := run.approval(ctx, "toolu_answered_mid_sweep", "Read", time.Now().Add(time.Hour))
+		run.setRunState(ctx, database.PromptRunStateRunning)
+
+		listed, err := db.ListUnwaitedPromptRuns(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(listed).To(ContainElement(HaveField("ID", run.run)))
+
+		Expect(db.ExpireToolApprovalRequest(ctx, answered.ID,
+			database.TurnRequestStateCancelled, "answered before the sweep wrote")).To(Succeed())
+
+		moved, err := db.RestorePromptRunToWaiting(ctx, run.run)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(moved).To(BeFalse(), "the write re-checks the approval it was listed for")
+
+		current, err := db.GetPromptRun(ctx, run.run)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(current.State).To(Equal(database.PromptRunStateRunning))
+	})
+
 	It("leaves a run that already reached a verdict alone", func(ctx SpecContext) {
 		run := newSweepRun(ctx, db)
 		run.approval(ctx, "toolu_terminal_run", "Read", time.Now().Add(time.Hour))
