@@ -74,10 +74,7 @@ func (c *CodexAppServer) taskAnnotations() map[string]string {
 // supervised process can name itself. Recorded per turn for the same reason the
 // approval posture is: the spawn path cannot reach the request.
 func (c *CodexAppServer) rememberRunLabels(req ai.Request) {
-	labels := make(map[string]string, len(req.Labels)+1)
-	for key, value := range req.Labels {
-		labels[key] = value
-	}
+	labels := req.HostLabels()
 	if budget := req.Budget.Cost; budget > 0 {
 		labels["budget"] = strconv.FormatFloat(budget, 'f', -1, 64)
 	}
