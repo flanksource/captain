@@ -129,6 +129,9 @@ func buildClaudeCLIArgsWithMCP(model string, req ai.Request, mcpConfigs []string
 	if deny := req.Permissions.Tools.DenyList(); len(deny) > 0 {
 		args = append(args, "--disallowedTools", strings.Join(deny, ","))
 	}
+	if dirs := req.Permissions.CleanDirectories(); len(dirs) > 0 {
+		args = append(append(args, "--add-dir"), dirs...)
+	}
 	for _, dir := range req.Memory.Skills {
 		if strings.TrimSpace(dir) != "" {
 			args = append(args, "--plugin-dir", dir)

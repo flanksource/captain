@@ -127,3 +127,25 @@ func TestExecuteStream_RefusesUnenforceableAskPolicy(t *testing.T) {
 	assert.ErrorContains(t, err, "ask")
 	assert.ErrorContains(t, err, "Bash")
 }
+
+// TestInitializeParams_AdditionalDirectories pins the SDK bridge's half of
+// permissions.directories. The claudeagent runtime is the one gavel todo runs
+// actually use, and it had no directory input beyond cwd at all — so a run in a
+// worktree could not be told about its own parent checkout and raised a
+// permission request for every read of it.
+func TestInitializeParams_AdditionalDirectories(t *testing.T) {
+	p := &Provider{}
+	params, err := p.initializeParams(ai.Request{
+		Permissions: api.Permissions{
+			Directories: []string{"/repo/parent", " ", "/repo/parent", "/repo/sibling"},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"/repo/parent", "/repo/sibling"}, params.AdditionalDirs,
+		"blanks are dropped and a path named twice is granted once")
+
+	none, err := p.initializeParams(ai.Request{})
+	require.NoError(t, err)
+	assert.Empty(t, none.AdditionalDirs,
+		"a run naming no directories must send none, not an empty entry")
+}

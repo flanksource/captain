@@ -32,6 +32,18 @@ type Permissions struct {
 	Plugins ResourcePolicies `json:"plugins,omitempty" yaml:"plugins,omitempty" pretty:"label=Plugins"`
 	// Skills are skill directories enabled for this request.
 	Skills ResourcePolicies `json:"skills,omitempty" yaml:"skills,omitempty" pretty:"label=Skills"`
+	// Directories are paths outside the working directory the run's own tools may
+	// read and write (claude/codex --add-dir, the Claude Agent SDK's
+	// additionalDirectories).
+	//
+	// The working directory alone is not the run's world. A run in a git worktree
+	// reaches its parent checkout for anything .gitignore hides, a linked module
+	// or `file:` dependency resolves outside the tree, and a monorepo task spans
+	// siblings. Without this the runtime raises a permission prompt for each such
+	// path, which an unattended run has nobody to answer — so the grant belongs
+	// with the rest of the posture, resolved through the same layering, rather
+	// than in per-host CLI arguments only one runtime reads.
+	Directories []string `json:"directories,omitempty" yaml:"directories,omitempty" pretty:"label=Directories"`
 	// ApprovalTimeout is how long a tool the mode makes the agent ask about may
 	// stay unanswered before the run gives up on it, as a Go duration ("30m").
 	// Empty means the brokering host's own default.
@@ -42,6 +54,30 @@ type Permissions struct {
 	// rather than a compile-time constant that cannot tell an unattended CI run
 	// from a dashboard somebody is watching.
 	ApprovalTimeout string `json:"approvalTimeout,omitempty" yaml:"approvalTimeout,omitempty" pretty:"label=Approval Timeout"`
+}
+
+// CleanDirectories is Directories as a transport should emit it: trimmed, with
+// blanks dropped and duplicates collapsed, in the order first named.
+//
+// Every runtime needs the same shape and none of them should each invent it —
+// a blank entry becomes a flag with an empty value, and the same path arriving
+// from two layers (a profile and the worktree that contributed it) would
+// otherwise be granted twice.
+func (p Permissions) CleanDirectories() []string {
+	var dirs []string
+	seen := make(map[string]struct{}, len(p.Directories))
+	for _, dir := range p.Directories {
+		dir = strings.TrimSpace(dir)
+		if dir == "" {
+			continue
+		}
+		if _, ok := seen[dir]; ok {
+			continue
+		}
+		seen[dir] = struct{}{}
+		dirs = append(dirs, dir)
+	}
+	return dirs
 }
 
 // ParseApprovalTimeout resolves ApprovalTimeout to a duration. Zero means "no

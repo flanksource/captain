@@ -22,6 +22,23 @@ func validatePermissionMode(runtime api.Runtime, mode api.PermissionMode) error 
 	return fmt.Errorf("permissions.mode %q is not supported by %s", mode, runtime)
 }
 
+// rejectUnsupportedDirectories refuses permissions.directories on a runtime that
+// has no way to widen its tool scope.
+//
+// The grant is the difference between a run that reads its worktree's parent
+// checkout and one that stops to ask a person about it, so accepting it and
+// dropping it would not degrade quietly — it would reinstate exactly the stall
+// the field exists to prevent, on a runtime the caller believes is configured.
+// Every runtime that can honour it does; the rest say so.
+func rejectUnsupportedDirectories(runtime api.Runtime, permissions api.Permissions) error {
+	dirs := permissions.CleanDirectories()
+	if len(dirs) == 0 {
+		return nil
+	}
+	return fmt.Errorf("permissions.directories is not supported by %s: %s has no flag to widen tool access beyond the working directory",
+		runtime, runtime)
+}
+
 func claudeSettingsDocument(req ai.Request, monitorBinary string) ([]byte, error) {
 	settings := map[string]any{}
 	if req.Sandbox != nil {

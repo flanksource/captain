@@ -50,6 +50,15 @@ type Spec struct {
 	// keyed by their json field names — interactive CLI flags with no dedicated
 	// Spec field. Ignored by non-cmux providers.
 	CLIArgs map[string]any `json:"cliArgs,omitempty" yaml:"cliArgs,omitempty"`
+
+	// Labels is the caller's own identification of this run, carried through to
+	// the supervised process so an operator watching the task list can tell one
+	// agent from another. Captain neither interprets nor requires any key; the
+	// conventional ones a host sets are "title" (what the run is called),
+	// "href" (where to read more about it) and whatever identifiers the host
+	// tracks it by. Providers merge these with the runtime facts they own —
+	// model, provider, mode, session — so the two never have to agree.
+	Labels map[string]string `json:"labels,omitempty" yaml:"labels,omitempty"`
 }
 
 type specMarshal struct {
@@ -67,6 +76,7 @@ type specMarshal struct {
 	Workflow    *Workflow           `json:"workflow,omitempty" yaml:"workflow,omitempty"`
 	SessionID   string              `json:"sessionId,omitempty" yaml:"sessionId,omitempty"`
 	CLIArgs     map[string]any      `json:"cliArgs,omitempty" yaml:"cliArgs,omitempty"`
+	Labels      map[string]string   `json:"labels,omitempty" yaml:"labels,omitempty"`
 }
 
 // IsEmpty reports whether v carries no instruction: every exported, serialized
@@ -167,6 +177,7 @@ func (s Spec) marshalValue() specMarshal {
 		Workflow:    omitEmptyPointer(s.Workflow),
 		SessionID:   s.SessionID,
 		CLIArgs:     s.CLIArgs,
+		Labels:      s.Labels,
 	}
 }
 
