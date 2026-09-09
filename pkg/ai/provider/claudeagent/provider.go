@@ -373,7 +373,7 @@ func (p *Provider) provisionAndSupervise(req ai.Request) error {
 		// generating an AI message between turns is the reported case: the drain
 		// blocks the work that would send `shutdown`, and the process keeps the
 		// drain from returning. Only Close stops it.
-		Task: exec.SupervisedTaskOptions{Background: true},
+		Task: p.taskIdentity(req),
 		OnStarted: func(child *exec.Process) {
 			p.procMu.Lock()
 			p.proc = child
@@ -493,6 +493,7 @@ func (p *Provider) initializeParams(req ai.Request) (initializeParams, error) {
 		AppendSystemPrompt: req.Prompt.AppendSystem,
 		AllowedTools:       allowed,
 		DisallowedTools:    req.Permissions.Tools.DenyList(),
+		AdditionalDirs:     req.Permissions.CleanDirectories(),
 		MaxTurns:           req.Budget.MaxTurns,
 		MaxBudgetUsd:       maxBudget,
 		PermissionMode:     mode,

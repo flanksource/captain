@@ -3,12 +3,16 @@ package claudeagent
 import "encoding/json"
 
 type initializeParams struct {
-	Cwd                string                      `json:"cwd,omitempty"`
-	Model              string                      `json:"model,omitempty"`
-	SystemPrompt       string                      `json:"systemPrompt,omitempty"`
-	AppendSystemPrompt string                      `json:"appendSystemPrompt,omitempty"`
-	AllowedTools       []string                    `json:"allowedTools,omitempty"`
-	DisallowedTools    []string                    `json:"disallowedTools,omitempty"`
+	Cwd                string   `json:"cwd,omitempty"`
+	Model              string   `json:"model,omitempty"`
+	SystemPrompt       string   `json:"systemPrompt,omitempty"`
+	AppendSystemPrompt string   `json:"appendSystemPrompt,omitempty"`
+	AllowedTools       []string `json:"allowedTools,omitempty"`
+	DisallowedTools    []string `json:"disallowedTools,omitempty"`
+	// AdditionalDirs are paths outside Cwd the SDK's own tools may reach. Without
+	// them a run in a worktree raises a permission request for every read of its
+	// parent checkout, and a headless run has nobody to answer one.
+	AdditionalDirs     []string                    `json:"additionalDirectories,omitempty"`
 	MaxTurns           int                         `json:"maxTurns,omitempty"`
 	MaxBudgetUsd       float64                     `json:"maxBudgetUsd,omitempty"`
 	PermissionMode     string                      `json:"permissionMode,omitempty"`

@@ -285,6 +285,63 @@ func (db *DB) ListTurnRequests(ctx context.Context, filter TurnRequestFilter) ([
 	return requests, nil
 }
 
+// CountPendingToolApprovals reports how many tool approvals a prompt run is
+// still blocked on.
+//
+// It is the predicate behind the waiting posture. A run raises one approval per
+// tool call, so a turn that issues parallel calls has several outstanding at
+// once; "is this run waiting" is a property of the set, not of whichever wait
+// happens to finish first. Counting in SQL keeps the answer true at read time
+// rather than tracked in a process that may not be the only one writing.
+func (db *DB) CountPendingToolApprovals(ctx context.Context, promptRunID uuid.UUID) (int64, error) {
+	if promptRunID == uuid.Nil {
+		return 0, fmt.Errorf("%w: prompt run ID is required", ErrTurnRequestInvalid)
+	}
+	var pending int64
+	err := db.gorm.WithContext(ctx).Model(&turnRequestRecord{}).
+		Where("prompt_run_id = ? AND kind = 'tool_approval' AND state = ?",
+			promptRunID, TurnRequestStatePending).
+		Count(&pending).Error
+	if err != nil {
+		return 0, fmt.Errorf("count pending Captain tool approvals: %w", err)
+	}
+	return pending, nil
+}
+
+// UnwaitedPromptRun is a prompt run whose state claims it is progressing while
+// a tool approval is still holding it.
+//
+// The pair is contradictory and self-perpetuating: ResolveToolApprovalRequest
+// only accepts a credential-less approval while its prompt run is waiting, so a
+// run in this state cannot be answered back out of it. Whatever produced the
+// divergence — a host that un-waited the run while siblings were outstanding, a
+// process that died between the two writes — the row is the evidence and the
+// only exit is the approval's own expiry.
+type UnwaitedPromptRun struct {
+	ID        uuid.UUID
+	SessionID uuid.UUID
+	Pending   int64
+}
+
+// ListUnwaitedPromptRuns returns the runs whose state and outstanding approvals
+// disagree, so a sweeper can restore the waiting posture the approvals imply.
+func (db *DB) ListUnwaitedPromptRuns(ctx context.Context) ([]UnwaitedPromptRun, error) {
+	var rows []UnwaitedPromptRun
+	err := db.gorm.WithContext(ctx).Raw(`
+		SELECT run.id AS id, run.session_id AS session_id, count(*) AS pending
+		FROM captain_prompt_runs run
+		JOIN captain_turn_requests request ON request.prompt_run_id = run.id
+		WHERE run.state = 'running'
+		  AND request.kind = 'tool_approval'
+		  AND request.state = 'pending'
+		GROUP BY run.id, run.session_id
+		ORDER BY run.id`).Scan(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("list unwaited Captain prompt runs: %w", err)
+	}
+	return rows, nil
+}
+
 // StaleToolApproval is one pending tool approval that no wait can still answer,
 // as a sweeper running outside the process that raised it sees it.
 type StaleToolApproval struct {

@@ -169,6 +169,14 @@ func (b *Broker) CanUseTool(
 		Kind: api.EventPermission, Tool: req.Tool, ToolCallID: req.ToolUseID,
 		ApprovalID: pending.ID.String(), Input: req.Input,
 	}); notifyErr != nil {
+		// A request nobody was shown is not a live question, and leaving the row
+		// pending would now hold the run in `waiting` on it — the posture is
+		// derived from the outstanding set. Ending the row is the same response
+		// the cancelled-caller path already makes, for the same reason.
+		if cancelErr := b.DB.ExpireToolApprovalRequest(context.WithoutCancel(ctx), pending.ID,
+			database.TurnRequestStateCancelled, notifyErr.Error()); cancelErr != nil {
+			notifyErr = errors.Join(notifyErr, cancelErr)
+		}
 		return api.PermissionDecision{}, notifyErr
 	}
 	return b.wait(ctx, pending.ID)
@@ -213,8 +221,30 @@ func (b *Broker) deadlines(ctx context.Context) []time.Time {
 	return deadlines
 }
 
+// resume tells the host the run is running again — but only once nothing else
+// is holding it.
+//
+// A turn that issues parallel tool calls raises one approval per call, each
+// waited on by its own goroutine, so several waits overlap on one prompt run.
+// Firing OnRunning from whichever wait finishes first un-waits a run its
+// siblings are still blocking, and that strands them: the store only resolves a
+// credential-less approval while its prompt run is waiting, so the host's
+// approve button starts returning a conflict and the siblings can no longer end
+// any way but expiry.
+//
+// The posture is therefore derived from the outstanding set rather than
+// bracketed around one wait. Recomputing it in SQL also makes the answer true
+// for approvals this process never saw — another host, or a sweep, may have
+// resolved one while this wait was blocked.
 func (b *Broker) resume(ctx context.Context) error {
 	if b.OnRunning == nil {
+		return nil
+	}
+	pending, err := b.DB.CountPendingToolApprovals(ctx, b.PromptRunID)
+	if err != nil {
+		return err
+	}
+	if pending > 0 {
 		return nil
 	}
 	return b.OnRunning(ctx)

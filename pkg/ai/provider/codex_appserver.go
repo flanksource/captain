@@ -44,6 +44,9 @@ type CodexAppServer struct {
 	// rpc read loop, not the turn goroutine, so it cannot reach the request; the
 	// posture is recorded here when the turn starts.
 	posture codexPosture
+	// runLabels is the host's identification of the current run, recorded here
+	// for the same reason posture is: the spawn path cannot reach the request.
+	runLabels map[string]string
 
 	callerToolsMu      sync.Mutex
 	callerToolsRuntime *callertools.Runtime
@@ -208,6 +211,7 @@ func (c *CodexAppServer) failTurn(ts *turnState, err error) {
 func (c *CodexAppServer) beginTurn(req ai.Request) {
 	c.turnMu.Lock()
 	c.setPosture(postureFor(req))
+	c.rememberRunLabels(req)
 }
 
 func (c *CodexAppServer) setActive(ts *turnState) { c.mu.Lock(); c.active = ts; c.mu.Unlock() }
@@ -245,10 +249,7 @@ func (c *CodexAppServer) ensureStarted(ctx context.Context) error {
 	sup := newCodexAppServerProcess(c.cfg).WithStdioPipe().Supervise(exec.SuperviseOptions{
 		// No restart: a crash surfaces as EventError, never a silent retry.
 		RestartPolicy: exec.RestartNo,
-		// The app-server outlives any wait its caller makes, so it must not be
-		// counted by a global task drain — see the claude-agent provider for the
-		// deadlock this avoids.
-		Task: exec.SupervisedTaskOptions{Background: true},
+		Task:          c.taskIdentity(),
 		OnStarted: func(p *exec.Process) {
 			process = p
 			rpc := jsonrpc.New(p.Stdin(), p.StdoutReader(), true, jsonrpc.Handlers{
