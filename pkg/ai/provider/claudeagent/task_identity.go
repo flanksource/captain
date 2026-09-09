@@ -23,8 +23,8 @@ const (
 // operator cannot tell which run is which.
 //
 // The split is deliberate: Labels are fixed when the run starts and are what
-// the task list filters on, while Annotations are re-read on every snapshot and
-// carry what only becomes true (or changes) while the process runs.
+// the task list filters on, while Metadata is re-read on every snapshot and
+// carries what only becomes true (or changes) while the process runs.
 func (p *Provider) taskIdentity(req ai.Request) exec.SupervisedTaskOptions {
 	labels := req.HostLabels()
 	runtime := p.GetRuntime()
@@ -39,12 +39,12 @@ func (p *Provider) taskIdentity(req ai.Request) exec.SupervisedTaskOptions {
 	}
 
 	return exec.SupervisedTaskOptions{
-		Name:        agentTaskName(req, p.model),
-		Kind:        "agent",
-		Labels:      labels,
-		Href:        req.HostLabel(labelHref),
-		Background:  true,
-		Annotations: p.taskAnnotations,
+		Name:       agentTaskName(req, p.model),
+		Kind:       "agent",
+		Labels:     labels,
+		Href:       req.HostLabel(labelHref),
+		Background: true,
+		Metadata:   p.taskMetadata,
 	}
 }
 
@@ -57,25 +57,24 @@ func agentTaskName(req ai.Request, model string) string {
 	return fmt.Sprintf("claude-agent (%s)", model)
 }
 
-// taskAnnotations reports what has changed since the process started: the
-// provider session only exists once the handshake lands, and whether a turn is
-// in flight is the difference between an agent that is working and one that is
-// waiting on its caller.
-func (p *Provider) taskAnnotations() map[string]string {
-	annotations := map[string]string{"state": "idle"}
+// taskMetadata reports what has changed since the process started: the provider
+// session only exists once the handshake lands, and whether a turn is in flight
+// is the difference between an agent that is working and one that is waiting on
+// its caller. The turn reports its own shape, so a viewer can tell a plan-only
+// turn, or one already winding down under an interrupt, from an ordinary one.
+func (p *Provider) taskMetadata() any {
+	metadata := ai.AgentMetadata{State: ai.AgentIdle}
 
 	p.activeMu.Lock()
-	active := p.active != nil
+	active := p.active
 	p.activeMu.Unlock()
-	if active {
-		annotations["state"] = "running"
+	if active != nil {
+		metadata.State = ai.AgentRunning
+		metadata.Turn = active.summary()
 	}
 
 	p.sessMu.Lock()
-	sessionID := p.sessionID
+	metadata.Session = p.sessionID
 	p.sessMu.Unlock()
-	if sessionID != "" {
-		annotations["session"] = sessionID
-	}
-	return annotations
+	return metadata
 }

@@ -16,8 +16,8 @@ import (
 //
 // Unlike the claude-agent provider the app-server is spawned once and reused
 // across turns, so the fixed Labels can only describe the run that started it.
-// Anything that moves from turn to turn belongs in Annotations, which are
-// re-read on every snapshot.
+// Anything that moves from turn to turn belongs in Metadata, which is re-read on
+// every snapshot.
 func (c *CodexAppServer) taskIdentity() exec.SupervisedTaskOptions {
 	c.mu.Lock()
 	runLabels := c.runLabels
@@ -46,28 +46,29 @@ func (c *CodexAppServer) taskIdentity() exec.SupervisedTaskOptions {
 		// The app-server outlives any wait its caller makes, so it must not be
 		// counted by a global task drain — see the claude-agent provider for the
 		// deadlock this avoids.
-		Background:  true,
-		Annotations: c.taskAnnotations,
+		Background: true,
+		Metadata:   c.taskMetadata,
 	}
 }
 
-// taskAnnotations reports what changes while the server runs: whether a turn is
-// in flight, and the thread the current run is working in.
-func (c *CodexAppServer) taskAnnotations() map[string]string {
+// taskMetadata reports what changes while the server runs: whether a turn is in
+// flight, the thread the current run is working in, and the run itself — the
+// app-server outlives any one of them, so none can be a fixed Label.
+func (c *CodexAppServer) taskMetadata() any {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	annotations := map[string]string{"state": "idle"}
+	metadata := ai.AgentMetadata{
+		State:  ai.AgentIdle,
+		Thread: c.threadID,
+		Run:    c.runLabels["title"],
+	}
 	if c.active != nil {
-		annotations["state"] = "running"
+		metadata.State = ai.AgentRunning
 	}
-	if c.threadID != "" {
-		annotations["thread"] = c.threadID
-	}
-	if title := c.runLabels["title"]; title != "" {
-		annotations["run"] = title
-	}
-	return annotations
+	// Turn is left nil: the app-server's turn state carries no plan mode, prompt
+	// count or interrupt flag to report, and State already says one is in flight.
+	return metadata
 }
 
 // rememberRunLabels records the host's identification of the current run so the

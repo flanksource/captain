@@ -402,6 +402,20 @@ func (p *Provider) rememberSession(id string) {
 	p.sessMu.Unlock()
 }
 
+// summary projects the turn for a task snapshot. It reads pending under the
+// same lock that maintains it, because the snapshot path runs concurrently with
+// the turn it is describing.
+func (ts *turnState) summary() *ai.AgentTurn {
+	ts.promptMu.Lock()
+	pending := ts.pending
+	ts.promptMu.Unlock()
+	return &ai.AgentTurn{
+		PlanMode:     ts.planMode,
+		Pending:      pending,
+		Interrupting: ts.interrupting.Load(),
+	}
+}
+
 func (ts *turnState) addPrompt() bool {
 	ts.promptMu.Lock()
 	defer ts.promptMu.Unlock()
