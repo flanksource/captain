@@ -64,17 +64,21 @@ var _ = Describe("Supervised agent task identity", func() {
 	It("reports the turn state and fills the session in once the handshake lands", func() {
 		provider := newProvider()
 
-		Expect(provider.taskAnnotations()).To(Equal(map[string]string{"state": "idle"}))
+		Expect(provider.taskMetadata()).To(Equal(ai.AgentMetadata{State: ai.AgentIdle}))
 
-		provider.setActive(&turnState{})
+		provider.setActive(&turnState{planMode: true, pending: 2})
 		provider.rememberSession("df7aa36e")
 
-		Expect(provider.taskAnnotations()).To(Equal(map[string]string{
-			"state":   "running",
-			"session": "df7aa36e",
+		Expect(provider.taskMetadata()).To(Equal(ai.AgentMetadata{
+			State:   ai.AgentRunning,
+			Session: "df7aa36e",
+			Turn:    &ai.AgentTurn{PlanMode: true, Pending: 2},
 		}))
 
 		provider.clearActive()
-		Expect(provider.taskAnnotations()).To(HaveKeyWithValue("state", "idle"))
+		Expect(provider.taskMetadata()).To(Equal(ai.AgentMetadata{
+			State:   ai.AgentIdle,
+			Session: "df7aa36e",
+		}))
 	})
 })
