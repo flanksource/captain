@@ -114,6 +114,9 @@ func buildGeminiCLIArgs(model string, req ai.Request) ([]string, error) {
 	if err := api.RequireToolPolicySupport(api.Google, api.ModeCLI, req.Permissions); err != nil {
 		return nil, err
 	}
+	if err := rejectUnsupportedDirectories(api.RuntimeOf(api.Google, api.ModeCLI), req.Permissions); err != nil {
+		return nil, err
+	}
 	if err := validatePermissionMode(api.RuntimeOf(api.Google, api.ModeCLI), req.Permissions.Mode); err != nil {
 		return nil, err
 	}

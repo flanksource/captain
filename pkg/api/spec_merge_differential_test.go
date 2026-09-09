@@ -60,6 +60,9 @@ func legacyMerge(s, override Spec) Spec {
 	if len(override.CLIArgs) > 0 {
 		s.CLIArgs = override.CLIArgs
 	}
+	if len(override.Labels) > 0 {
+		s.Labels = override.Labels
+	}
 	return s
 }
 
@@ -182,6 +185,9 @@ func legacyMergePermissions(p, o Permissions) Permissions {
 	if len(o.Skills) > 0 {
 		p.Skills = o.Skills
 	}
+	if len(o.Directories) > 0 {
+		p.Directories = o.Directories
+	}
 	return p
 }
 
@@ -204,6 +210,7 @@ func neutralize(s Spec) Spec {
 	// each key is an independent setting.
 	s.ToolPreferences = nil
 	s.CLIArgs = nil
+	s.Labels = nil
 	s.Prompt.Metadata = nil
 	s.Permissions.Plugins = nil
 	s.Permissions.Skills = nil

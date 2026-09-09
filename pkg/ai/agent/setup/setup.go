@@ -17,6 +17,7 @@ package setup
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/agent"
@@ -51,9 +52,29 @@ func Apply(ctx context.Context, req *ai.Request, baseDir string) (*shell.SetupRe
 	// ones, which are the defaults the environment supplies.
 	declared := append([]string(nil), resolved.Env...)
 
+	// The checkout the run was pointed at, captured before Prepare replaces the
+	// cwd with the worktree it creates and the checkout is cleared below. This is
+	// the only point where both are in hand.
+	origin := strings.TrimSpace(resolved.Cwd)
+	if origin == "" {
+		origin = strings.TrimSpace(baseDir)
+	}
+	intoWorktree := resolved.Checkout != nil && resolved.Checkout.Worktree != nil &&
+		resolved.Checkout.Worktree.Mode != "" && resolved.Checkout.Worktree.Mode != shell.WorktreeNone
+
 	res, err := shell.Prepare(dbcontext.NewContext(ctx), &resolved)
 	if err != nil {
 		return nil, fmt.Errorf("setup: prepare: %w", err)
+	}
+
+	// A worktree is not a self-contained copy: `git worktree add` brings no
+	// gitignored content, so the run reaches its parent checkout for installed
+	// dependencies, build output and anything else .gitignore hides. Granting the
+	// origin here means the worktree travels with the directories it needs, for
+	// every caller, instead of each one remembering to configure it — and a
+	// headless run never stalls on a permission request nobody is there to answer.
+	if intoWorktree && origin != "" && res.Cwd != "" && res.Cwd != origin {
+		req.Permissions.Directories = append(req.Permissions.Directories, origin)
 	}
 
 	resolved.Cwd = res.Cwd

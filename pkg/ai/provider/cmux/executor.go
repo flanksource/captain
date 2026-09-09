@@ -257,6 +257,12 @@ type AgentCommandOpts struct {
 	// --disallowedTools. codex ignores them.
 	AllowedTools    []string
 	DisallowedTools []string
+	// Directories are Spec.Permissions.Directories, emitted as --add-dir for both
+	// agents. The same flag is also reachable through the free-form cmux args
+	// (ClaudeCmuxOptions.AddDir), which is why these are merged rather than both
+	// appended: a path named in a profile and contributed by a worktree would
+	// otherwise be granted twice.
+	Directories []string
 	// Effort maps onto claude --effort or Codex's model_reasoning_effort config.
 	Effort api.Effort
 	// Memory drives claude --bare / --disable-slash-commands / --setting-sources
@@ -298,7 +304,12 @@ func AgentCommand(opts AgentCommandOpts) string {
 			tokens = append(tokens, "-c", fmt.Sprintf("model_reasoning_effort=%q", opts.Effort))
 		}
 		if extra, ok := opts.Extra.(*api.CodexCmuxOptions); ok && extra != nil {
-			tokens = append(tokens, flagArgs(*extra)...)
+			merged := *extra
+			tokens = append(tokens, addDirArgs(opts.Directories, merged.AddDir)...)
+			merged.AddDir = nil
+			tokens = append(tokens, flagArgs(merged)...)
+		} else {
+			tokens = append(tokens, addDirArgs(opts.Directories, nil)...)
 		}
 		return joinCommand(tokens)
 	default:
@@ -331,10 +342,28 @@ func AgentCommand(opts AgentCommandOpts) string {
 		}
 		tokens = append(tokens, claudeMemoryArgs(opts.Memory)...)
 		if extra, ok := opts.Extra.(*api.ClaudeCmuxOptions); ok && extra != nil {
-			tokens = append(tokens, flagArgs(*extra)...)
+			merged := *extra
+			tokens = append(tokens, addDirArgs(opts.Directories, merged.AddDir)...)
+			merged.AddDir = nil
+			tokens = append(tokens, flagArgs(merged)...)
+		} else {
+			tokens = append(tokens, addDirArgs(opts.Directories, nil)...)
 		}
 		return joinCommand(tokens)
 	}
+}
+
+// addDirArgs emits the variadic `--add-dir <dir...>` the CLIs declare, merging
+// the Spec-sourced grant with the free-form cmux one. The flag has two possible
+// sources and must have a single emitter: the caller clears the extra's own
+// AddDir before handing it to flagArgs, so a path named in both places is
+// granted once.
+func addDirArgs(spec, extra []string) []string {
+	dirs := (api.Permissions{Directories: append(append([]string{}, spec...), extra...)}).CleanDirectories()
+	if len(dirs) == 0 {
+		return nil
+	}
+	return append([]string{"--add-dir"}, dirs...)
 }
 
 // claudeMemoryArgs maps Spec.Memory toggles onto claude flags: Bare -> --bare,

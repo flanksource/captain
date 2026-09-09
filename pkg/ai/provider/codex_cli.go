@@ -154,6 +154,9 @@ func buildCodexCLIArgs(cfg codexCLIConfig, req ai.Request) ([]string, func(), er
 	if cwd := req.Cwd(); cwd != "" {
 		args = append(args, "-C", cwd)
 	}
+	if dirs := req.Permissions.CleanDirectories(); len(dirs) > 0 {
+		args = append(append(args, "--add-dir"), dirs...)
+	}
 	translation, err := translateCodexSandbox(api.RuntimeOf(api.OpenAI, api.ModeCLI), req)
 	if err != nil {
 		return nil, cleanup, err

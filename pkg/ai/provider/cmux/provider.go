@@ -348,6 +348,7 @@ func (p *Provider) execute(ctx context.Context, req ai.Request, r *run) (*ai.Usa
 		PermissionMode:  approval,
 		AllowedTools:    req.Permissions.Tools.AllowList(),
 		DisallowedTools: req.Permissions.Tools.DenyList(),
+		Directories:     req.Permissions.CleanDirectories(),
 		Effort:          req.Effort,
 		Memory:          req.Memory,
 		Extra:           extra,
