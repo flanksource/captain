@@ -17,7 +17,6 @@ require (
 	github.com/google/dotprompt/go v0.0.0-20260502013637-5cd4a8405ca3
 	github.com/google/uuid v1.6.0
 	github.com/invopop/jsonschema v0.13.0
-	github.com/mattn/go-sqlite3 v1.14.38
 	github.com/onsi/ginkgo/v2 v2.32.1
 	github.com/onsi/gomega v1.42.1
 	github.com/samber/lo v1.53.0
@@ -43,6 +42,7 @@ require (
 	github.com/flanksource/commons-db v0.1.31
 	github.com/gliderlabs/ssh v0.3.8
 	github.com/pelletier/go-toml/v2 v2.4.3
+	modernc.org/sqlite v1.55.0
 )
 
 require (
@@ -62,7 +62,6 @@ require (
 	modernc.org/libc v1.74.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
-	modernc.org/sqlite v1.55.0 // indirect
 )
 
 require (
