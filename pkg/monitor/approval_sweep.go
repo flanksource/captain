@@ -23,6 +23,9 @@ const defaultApprovalSweepInterval = time.Minute
 type approvalSweepStore interface {
 	ListStaleToolApprovals(ctx context.Context, now time.Time) ([]database.StaleToolApproval, error)
 	ExpireToolApprovalRequest(ctx context.Context, id uuid.UUID, state database.TurnRequestState, reason string) error
+	ListUnwaitedPromptRuns(ctx context.Context) ([]database.UnwaitedPromptRun, error)
+	GetPromptRun(ctx context.Context, id uuid.UUID) (*database.PromptRun, error)
+	UpdatePromptRun(ctx context.Context, input database.UpdatePromptRunInput) (*database.PromptRun, error)
 }
 
 type approvalSweepResult struct {
@@ -72,6 +75,48 @@ func sweepVerdict(approval database.StaleToolApproval, now time.Time) (database.
 		approval.RunState, approval.Tool)
 }
 
+// restoreWaitingRuns puts back the waiting posture of runs an outstanding
+// approval is still holding.
+//
+// The sweep has only ever read run state to terminate approvals. That leaves the
+// opposite divergence — a run marked `running` with an approval still pending —
+// with no reader at all, and it is the one a person is stuck behind: the store
+// refuses to resolve a credential-less approval unless its run is waiting, so
+// the approve button fails and the question can only expire. Restoring the state
+// is what makes the row answerable again.
+//
+// It is deliberately narrow. Only `running` moves, only while the database still
+// shows a pending approval, and the read is re-checked under the run's own
+// version so a run that reached a verdict between the query and the write keeps
+// it.
+func restoreWaitingRuns(ctx context.Context, store approvalSweepStore) (int, error) {
+	runs, err := store.ListUnwaitedPromptRuns(ctx)
+	if err != nil {
+		return 0, err
+	}
+	var restored int
+	var failures []error
+	waiting := database.PromptRunStateWaiting
+	for _, run := range runs {
+		current, err := store.GetPromptRun(ctx, run.ID)
+		if err != nil {
+			failures = append(failures, fmt.Errorf("read prompt run %s: %w", run.ID, err))
+			continue
+		}
+		if current.State != database.PromptRunStateRunning {
+			continue
+		}
+		if _, err := store.UpdatePromptRun(ctx, database.UpdatePromptRunInput{
+			ID: run.ID, ExpectedVersion: current.Version, State: &waiting,
+		}); err != nil {
+			failures = append(failures, fmt.Errorf("restore prompt run %s to waiting: %w", run.ID, err))
+			continue
+		}
+		restored++
+	}
+	return restored, errors.Join(failures...)
+}
+
 // sweepApprovals is the monitor's periodic half of the sweep. It runs here
 // because the monitor is already the single writer for this database — the
 // advisory lock in Run makes exactly one process eligible — which is the
@@ -84,5 +129,14 @@ func (m *Monitor) sweepApprovals(ctx context.Context) {
 	if result.swept() > 0 {
 		log.Infof("tool approval sweep: expired %d unanswered, cancelled %d whose run had ended",
 			result.expired, result.cancelled)
+	}
+	// After the terminations, so an approval that just lapsed is no longer
+	// pending and its run is not restored to waiting on the way out.
+	restored, err := restoreWaitingRuns(ctx, m.db)
+	if err != nil {
+		log.Warnf("tool approval sweep: %v", err)
+	}
+	if restored > 0 {
+		log.Infof("tool approval sweep: restored %d run(s) to waiting for approvals still outstanding", restored)
 	}
 }

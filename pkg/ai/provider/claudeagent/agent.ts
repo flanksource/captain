@@ -65,6 +65,10 @@ interface InitializeParams {
   appendSystemPrompt?: string;
   allowedTools?: string[];
   disallowedTools?: string[];
+  // additionalDirectories are paths outside cwd the SDK's tools may reach.
+  // Absent, a run in a worktree has to ask a person for every read of its parent
+  // checkout — and a headless run has nobody to ask.
+  additionalDirectories?: string[];
   maxTurns?: number;
   maxBudgetUsd?: number;
   permissionMode?: string;
@@ -133,6 +137,10 @@ function buildOptions(params: InitializeParams): Options {
     disallowedTools:
       params.disallowedTools && params.disallowedTools.length
         ? params.disallowedTools
+        : undefined,
+    additionalDirectories:
+      params.additionalDirectories && params.additionalDirectories.length
+        ? params.additionalDirectories
         : undefined,
     mcpServers: params.mcpServers,
     stderr: (data: string) => process.stderr.write(data),

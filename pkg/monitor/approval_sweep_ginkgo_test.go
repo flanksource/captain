@@ -102,6 +102,74 @@ var _ = Describe("Tool approval sweep", Ordered, func() {
 	})
 })
 
+// A run left `running` with an approval still pending is the one divergence the
+// sweep never looked at, and it is the one a person is stuck behind: the store
+// refuses a credential-less resolve unless the run is waiting, so the approve
+// button fails and the question can only expire.
+var _ = Describe("Restoring runs an approval still holds", Ordered, func() {
+	var db *database.DB
+
+	BeforeAll(func(ctx SpecContext) {
+		handle := dbtest.ForGinkgo(dbtest.Options{Name: "captain_monitor_sweep"})
+		opened, err := database.Open(ctx, database.WithDSN(handle.DSN()), database.WithMigrations())
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { Expect(opened.Close()).To(Succeed()) })
+		db = opened
+	})
+
+	It("puts a run whose approval is still pending back to waiting, and makes it answerable", func(ctx SpecContext) {
+		run := newSweepRun(ctx, db)
+		stranded := run.approval(ctx, "toolu_stranded", "Read", time.Now().Add(time.Hour))
+		run.setRunState(ctx, database.PromptRunStateRunning)
+
+		// The precondition is the bug's signature: resolving is refused precisely
+		// because the run says it is running.
+		_, err := db.ResolveToolApprovalRequest(ctx, database.ResolveToolApprovalRequestInput{
+			SessionID: run.session, RequestID: stranded.ID, Approved: true, ResolvedBy: "spec",
+		})
+		Expect(err).To(HaveOccurred(), "a stranded approval is unresolvable until its run is waiting again")
+
+		restored, err := restoreWaitingRuns(ctx, db)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(restored).To(BeNumerically(">=", 1))
+
+		current, err := db.GetPromptRun(ctx, run.run)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(current.State).To(Equal(database.PromptRunStateWaiting))
+
+		_, err = db.ResolveToolApprovalRequest(ctx, database.ResolveToolApprovalRequestInput{
+			SessionID: run.session, RequestID: stranded.ID, Approved: true, ResolvedBy: "spec",
+		})
+		Expect(err).NotTo(HaveOccurred(), "restoring the posture is only worth doing if it makes the question answerable")
+	})
+
+	It("leaves a run with no pending approval alone", func(ctx SpecContext) {
+		run := newSweepRun(ctx, db)
+		run.setRunState(ctx, database.PromptRunStateRunning)
+
+		_, err := restoreWaitingRuns(ctx, db)
+		Expect(err).NotTo(HaveOccurred())
+
+		current, err := db.GetPromptRun(ctx, run.run)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(current.State).To(Equal(database.PromptRunStateRunning),
+			"a run nothing is holding must not be parked in waiting")
+	})
+
+	It("leaves a run that already reached a verdict alone", func(ctx SpecContext) {
+		run := newSweepRun(ctx, db)
+		run.approval(ctx, "toolu_terminal_run", "Read", time.Now().Add(time.Hour))
+		run.setRunState(ctx, database.PromptRunStateFailed)
+
+		_, err := restoreWaitingRuns(ctx, db)
+		Expect(err).NotTo(HaveOccurred())
+
+		current, err := db.GetPromptRun(ctx, run.run)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(current.State).To(Equal(database.PromptRunStateFailed))
+	})
+})
+
 type sweepRun struct {
 	db      *database.DB
 	session uuid.UUID

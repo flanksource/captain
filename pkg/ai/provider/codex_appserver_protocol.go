@@ -387,6 +387,9 @@ func buildTurnStartParams(model string, req ai.Request, threadID string, outputS
 	if err := api.RequireToolPolicySupport(api.OpenAI, api.ModeAgent, req.Permissions); err != nil {
 		return nil, err
 	}
+	if err := rejectUnsupportedDirectories(api.RuntimeOf(api.OpenAI, api.ModeAgent), req.Permissions); err != nil {
+		return nil, err
+	}
 	input := make([]map[string]any, 0, len(req.Prompt.Attachments))
 	if text := composePrompt(req); text != "" {
 		input = append(input, map[string]any{"type": "text", "text": text})
