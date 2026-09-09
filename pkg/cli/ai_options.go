@@ -140,6 +140,16 @@ type AIPromptOptions struct {
 	// run|render --runtime-profile` layers beneath the frontmatter. It is not a
 	// flag here: the deprecated `captain ai prompt` alias does not grow it.
 	RuntimeProfile string
+
+	// Vars is the --vars JSON object. Not a flag here for the same reason as
+	// RuntimeProfile.
+	Vars string
+
+	// PromptRef is the raw --prompt/-p value as typed, before an @reference was
+	// expanded into the file's contents. The expansion is what makes `-p @file`
+	// work, but it also erases the path — and the path is what says whether the
+	// caller pointed at an authored .prompt template or at a document.
+	PromptRef string
 }
 
 type AIPromptResult struct {

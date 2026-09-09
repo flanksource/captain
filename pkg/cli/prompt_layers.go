@@ -65,12 +65,19 @@ func promptLayers(profile *runtimeprofiles.Resolution, source string, frontmatte
 }
 
 // renderLayers retains declarations until every request override is available.
+// A literal body is not parsed: it carries no frontmatter, so it can pin no
+// runtime profile, and reading its opening "---" as YAML would let piped data
+// silently redirect the run.
 func renderLayers(ctx context.Context, source, content string, frontmatter ai.Request, renderReq PromptRenderRequest, saved captainconfig.Config) ([]api.SpecLayer, error) {
-	doc, err := promptlib.Parse(content)
-	if err != nil {
-		return nil, err
+	var pinnedProfile string
+	if !renderReq.Literal {
+		doc, err := promptlib.Parse(content)
+		if err != nil {
+			return nil, err
+		}
+		pinnedProfile = doc.RuntimeProfile
 	}
-	profile, err := selectRuntimeProfile(ctx, runtimeProfileSelection{Requested: renderReq.RuntimeProfile, Pin: doc.RuntimeProfile, Config: &saved})
+	profile, err := selectRuntimeProfile(ctx, runtimeProfileSelection{Requested: renderReq.RuntimeProfile, Pin: pinnedProfile, Config: &saved})
 	if err != nil {
 		return nil, err
 	}
