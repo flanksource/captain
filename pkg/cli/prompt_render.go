@@ -80,8 +80,11 @@ description: Ephemeral prompt
 }
 
 type promptRenderInput struct {
-	Record   promptRecord
-	Content  string
+	Record  promptRecord
+	Content string
+	// Literal marks Content as caller data, so it is not inspected for
+	// frontmatter, input/output schemas or template variables.
+	Literal  bool
 	Layers   []api.SpecLayer
 	Runtimes []api.Model
 	Options  AIPromptOptions
@@ -93,19 +96,32 @@ func renderPromptCLI(ctx context.Context, id string, opts AIPromptOptions, varsJ
 	if err != nil {
 		return PromptRenderResult{}, err
 	}
-	content, source, usedStdin, record, err := loadPromptContent(ctx, promptContentOptions{ID: id, Prompt: opts, Stdin: stdin, Config: &saved})
+	hasVars := len(opts.Var) > 0 || strings.TrimSpace(varsJSON) != ""
+	body, err := loadPromptContent(ctx, promptContentOptions{ID: id, Prompt: opts, Stdin: stdin, Config: &saved, HasVars: hasVars})
 	if err != nil {
 		return PromptRenderResult{}, err
 	}
-	vars, err := promptVars(opts, varsJSON, stdin, usedStdin)
+	vars, err := promptVars(opts, varsJSON, stdin, body.UsedStdin)
 	if err != nil {
 		return PromptRenderResult{}, err
 	}
-	layers, err := renderLoadedLayers(ctx, content, source, vars, opts, saved)
+	layers, err := renderLoadedLayers(ctx, body, vars, stdin, opts, saved)
 	if err != nil {
 		return PromptRenderResult{}, err
 	}
-	return completePromptRender(promptRenderInput{Record: record, Content: content, Layers: layers, Runtimes: fallbackModelsFromFlags(opts.MultiModels), Options: opts, Saved: saved})
+	return completePromptRender(promptRenderInput{Record: body.Record, Content: body.Text, Literal: body.Literal, Layers: layers, Runtimes: fallbackModelsFromFlags(opts.MultiModels), Options: opts, Saved: saved})
+}
+
+// literalOrParsedDetail describes the prompt behind a render. A literal body is
+// only ever a body: inspecting it would split a leading "---" off as
+// frontmatter and mine its braces for variables, which is the thing a literal
+// body exists to prevent. It gets the bare record summary instead — enough for
+// the run's name and task labels, which is all a render reads from it.
+func literalOrParsedDetail(input promptRenderInput) (PromptDetail, error) {
+	if !input.Literal {
+		return parsedPromptDetail(input.Record, input.Content)
+	}
+	return PromptDetail{PromptSummary: basePromptSummary(input.Record), Content: input.Content}, nil
 }
 
 func completePromptRender(input promptRenderInput) (PromptRenderResult, error) {
@@ -122,7 +138,7 @@ func completePromptRender(input promptRenderInput) (PromptRenderResult, error) {
 	if len(flags.Fields()) > 0 {
 		layers = append(layers, api.RequestSpecLayer("CLI flags", flags))
 	}
-	detail, err := parsedPromptDetail(input.Record, input.Content)
+	detail, err := literalOrParsedDetail(input)
 	if err != nil {
 		return PromptRenderResult{}, err
 	}

@@ -107,8 +107,11 @@ func promptHelpGuide(cmd *cobra.Command, styled bool) api.Text {
 		NewLine().NewLine().
 		Add(promptHelpHeading("Prompt source selection", styled)).NewLine().
 		Add(promptHelpBullets(styled,
-			"Pass a prompt ID, catalog name, or .prompt path as the positional source.",
+			"Pass a prompt ID, catalog name, or .prompt path as the positional source, or - to read the body from stdin.",
 			"Use -p/--prompt for inline text. If neither a positional source nor -p is supplied, Captain reads the prompt body from stdin.",
+			"-p, -s/--system, --append-system and --vars accept @file or @url to load the value; credential stores, private keys and kernel state are refused.",
+			"A .prompt file is a template. Inline text and piped input are data: they are sent verbatim, so braces and a leading --- stay content. Supply -V/--vars, or write {{input}}, to render them as a template instead.",
+			"Piped input is bound to {{input}}, or to a named variable with -V key=-. If the prompt uses neither, it is appended to the prompt body rather than dropped.",
 			"Use runtimes[] for prompt-owned parallel defaults, or repeat -M/--multi-models at execution time to compare explicit runtime targets.",
 		)).
 		NewLine().NewLine().
