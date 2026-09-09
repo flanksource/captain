@@ -24,8 +24,7 @@ type approvalSweepStore interface {
 	ListStaleToolApprovals(ctx context.Context, now time.Time) ([]database.StaleToolApproval, error)
 	ExpireToolApprovalRequest(ctx context.Context, id uuid.UUID, state database.TurnRequestState, reason string) error
 	ListUnwaitedPromptRuns(ctx context.Context) ([]database.UnwaitedPromptRun, error)
-	GetPromptRun(ctx context.Context, id uuid.UUID) (*database.PromptRun, error)
-	UpdatePromptRun(ctx context.Context, input database.UpdatePromptRunInput) (*database.PromptRun, error)
+	RestorePromptRunToWaiting(ctx context.Context, promptRunID uuid.UUID) (bool, error)
 }
 
 type approvalSweepResult struct {
@@ -85,10 +84,10 @@ func sweepVerdict(approval database.StaleToolApproval, now time.Time) (database.
 // the approve button fails and the question can only expire. Restoring the state
 // is what makes the row answerable again.
 //
-// It is deliberately narrow. Only `running` moves, only while the database still
-// shows a pending approval, and the read is re-checked under the run's own
-// version so a run that reached a verdict between the query and the write keeps
-// it.
+// It is deliberately narrow. Only `running` moves, and only while the database
+// still shows a pending approval — both conditions re-checked inside the write
+// itself, because the listing is a snapshot and the approval it saw may have
+// been answered by the time this loop reaches the run.
 func restoreWaitingRuns(ctx context.Context, store approvalSweepStore) (int, error) {
 	runs, err := store.ListUnwaitedPromptRuns(ctx)
 	if err != nil {
@@ -96,23 +95,15 @@ func restoreWaitingRuns(ctx context.Context, store approvalSweepStore) (int, err
 	}
 	var restored int
 	var failures []error
-	waiting := database.PromptRunStateWaiting
 	for _, run := range runs {
-		current, err := store.GetPromptRun(ctx, run.ID)
+		moved, err := store.RestorePromptRunToWaiting(ctx, run.ID)
 		if err != nil {
-			failures = append(failures, fmt.Errorf("read prompt run %s: %w", run.ID, err))
-			continue
-		}
-		if current.State != database.PromptRunStateRunning {
-			continue
-		}
-		if _, err := store.UpdatePromptRun(ctx, database.UpdatePromptRunInput{
-			ID: run.ID, ExpectedVersion: current.Version, State: &waiting,
-		}); err != nil {
 			failures = append(failures, fmt.Errorf("restore prompt run %s to waiting: %w", run.ID, err))
 			continue
 		}
-		restored++
+		if moved {
+			restored++
+		}
 	}
 	return restored, errors.Join(failures...)
 }

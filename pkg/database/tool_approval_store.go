@@ -342,6 +342,39 @@ func (db *DB) ListUnwaitedPromptRuns(ctx context.Context) ([]UnwaitedPromptRun, 
 	return rows, nil
 }
 
+// RestorePromptRunToWaiting moves one run back to waiting, but only while the
+// database still shows the approval that justifies it.
+//
+// The predicate and the write have to be the same statement. Evaluate them
+// separately and the last approval can be answered in between: the broker's own
+// resume moves the run to running and the trigger bumps its version, so a
+// re-read supplies exactly the version an optimistic write expects and the
+// restore lands anyway. That parks a run nobody is waiting on — no pending
+// approval left to answer, no wait left to call OnRunning — and neither half of
+// the sweep moves a run out of waiting, so nothing ever repairs it.
+//
+// Reports whether the row moved. Not moving is the ordinary outcome rather than
+// an error: it means the run stopped needing the restore.
+func (db *DB) RestorePromptRunToWaiting(ctx context.Context, promptRunID uuid.UUID) (bool, error) {
+	if promptRunID == uuid.Nil {
+		return false, fmt.Errorf("%w: prompt run ID is required", ErrTurnRequestInvalid)
+	}
+	result := db.gorm.WithContext(ctx).Exec(`
+		UPDATE captain_prompt_runs SET state = ?
+		WHERE id = ?
+		  AND state = ?
+		  AND EXISTS (
+		    SELECT 1 FROM captain_turn_requests
+		    WHERE prompt_run_id = captain_prompt_runs.id
+		      AND kind = 'tool_approval'
+		      AND state = ?)`,
+		PromptRunStateWaiting, promptRunID, PromptRunStateRunning, TurnRequestStatePending)
+	if result.Error != nil {
+		return false, fmt.Errorf("restore Captain prompt run to waiting: %w", result.Error)
+	}
+	return result.RowsAffected > 0, nil
+}
+
 // StaleToolApproval is one pending tool approval that no wait can still answer,
 // as a sweeper running outside the process that raised it sees it.
 type StaleToolApproval struct {
