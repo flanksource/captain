@@ -33,11 +33,10 @@ tasks:
       OUTPUT: '{{.OUTPUT | default (printf "%s/%s" .BIN_DIR .BINARY)}}'
     cmds:
       - mkdir -p {{dir .OUTPUT}}
-      # GOOS set (image:lab) means cross-compiling: there is no linux cgo
-      # toolchain on a macOS host, so that binary drops the sqlite-backed AI
-      # response cache — opt-in via CacheTTL/CacheDBPath, and it fails loudly
-      # rather than silently when enabled.
-      - '{{if .GOOS}}GOOS={{.GOOS}} GOARCH={{.GOARCH}} CGO_ENABLED=0 {{end}}go build -ldflags "{{.LDFLAGS}}" -o {{.OUTPUT}} ./cmd/captain'
+      # CGO_ENABLED=0 unconditionally: every dependency is pure Go (sqlite comes
+      # from modernc.org/sqlite), so a cross-compile for image:lab produces the
+      # same binary the host build does, with no linux cgo toolchain needed.
+      - 'CGO_ENABLED=0 {{if .GOOS}}GOOS={{.GOOS}} GOARCH={{.GOARCH}} {{end}}go build -ldflags "{{.LDFLAGS}}" -o {{.OUTPUT}} ./cmd/captain'
 
   www:build:
     desc: Build the embedded Captain web UI

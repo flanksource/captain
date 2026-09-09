@@ -10,8 +10,13 @@ import (
 	"time"
 
 	"github.com/flanksource/commons/logger"
-	_ "github.com/mattn/go-sqlite3"
 	"github.com/samber/lo"
+
+	// Pure Go, so the cache works on the CGO_ENABLED=0 binaries goreleaser and
+	// the sandbox image ship. commons-db/connection blank-imports the same
+	// driver, and the name "sqlite" may only be registered once — see the
+	// github.com/glebarez/sqlite replace in go.mod before adding another.
+	_ "modernc.org/sqlite"
 )
 
 // log is the package-scoped logger for AI providers. Its level follows
@@ -91,7 +96,7 @@ func New(config Config) (*Cache, error) {
 		return nil, fmt.Errorf("failed to create cache directory: %w", err)
 	}
 
-	db, err := sql.Open("sqlite3", config.DBPath)
+	db, err := sql.Open("sqlite", config.DBPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
@@ -240,6 +245,9 @@ func (c *Cache) GetStats() ([]StatsEntry, error) {
 		var s StatsEntry
 		var provider sql.NullString
 		var inputTok, outputTok, reasonTok, cacheReadTok, cacheWriteTok sql.NullInt64
+		// MIN/MAX erase the column's declared TIMESTAMP type, so the driver hands
+		// back the raw stored text instead of a time.Time.
+		var firstRequest, lastRequest sql.NullString
 
 		if err := rows.Scan(
 			&s.Model, &provider,
@@ -247,9 +255,16 @@ func (c *Cache) GetStats() ([]StatsEntry, error) {
 			&inputTok, &outputTok, &reasonTok,
 			&cacheReadTok, &cacheWriteTok,
 			&s.TotalCost, &s.AvgDurationMS,
-			&s.FirstRequest, &s.LastRequest,
+			&firstRequest, &lastRequest,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan stats: %w", err)
+		}
+
+		if s.FirstRequest, err = parseTimestamp(firstRequest); err != nil {
+			return nil, fmt.Errorf("failed to parse first request time for %s: %w", s.Model, err)
+		}
+		if s.LastRequest, err = parseTimestamp(lastRequest); err != nil {
+			return nil, fmt.Errorf("failed to parse last request time for %s: %w", s.Model, err)
 		}
 
 		if provider.Valid {
@@ -274,6 +289,28 @@ func (c *Cache) GetStats() ([]StatsEntry, error) {
 		stats = append(stats, s)
 	}
 	return stats, nil
+}
+
+// timestampLayouts covers what lands in a TIMESTAMP column: CURRENT_TIMESTAMP
+// writes UTC seconds with a space separator, while a driver-bound time.Time
+// keeps its offset and sub-second precision.
+var timestampLayouts = []string{
+	"2006-01-02 15:04:05.999999999-07:00",
+	"2006-01-02T15:04:05.999999999-07:00",
+	"2006-01-02 15:04:05.999999999",
+	"2006-01-02T15:04:05.999999999",
+}
+
+func parseTimestamp(value sql.NullString) (time.Time, error) {
+	if !value.Valid || value.String == "" {
+		return time.Time{}, nil
+	}
+	for _, layout := range timestampLayouts {
+		if parsed, err := time.Parse(layout, value.String); err == nil {
+			return parsed.UTC(), nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("unrecognised timestamp %q", value.String)
 }
 
 func (c *Cache) cleanupExpired() {
