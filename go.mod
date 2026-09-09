@@ -9,7 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.43.3
 	github.com/charmbracelet/huh v1.0.0
 	github.com/firebase/genkit/go v1.11.0
-	github.com/flanksource/clicky v1.21.60
+	github.com/flanksource/clicky v1.21.61-0.20260909025458-3d41408b1c07
 	github.com/flanksource/clicky/aichat v1.21.58-0.20260823135047-e9ff84a33d81
 	github.com/flanksource/commons v1.59.0
 	github.com/flanksource/sandbox-runtime v1.0.2
