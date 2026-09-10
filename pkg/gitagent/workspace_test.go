@@ -49,6 +49,52 @@ func TestSetupAgentWorkspacePinsRuntimeIdentity(t *testing.T) {
 	}
 }
 
+// The workspace path is published only once it is a workspace. `git clone`
+// creates its target first and writes the branch ref and upstream config last,
+// so cloning straight onto the final path let an observer read a directory
+// whose HEAD named a branch that did not exist yet — which is how the git-agent
+// e2e cycle intermittently failed its `@{u}` check on CI.
+func TestSetupAgentWorkspaceIsCompleteWhenItAppears(t *testing.T) {
+	ctx := context.Background()
+	repo := filepath.Join(t.TempDir(), "sidecar.git")
+	if err := InitSidecar(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	commit, err := BuildControlCommit(ctx, repo, nil, map[string][]byte{"seed.txt": []byte("seed\n")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const task = "t-complete"
+	if err := SaveTaskState(repo, &TaskState{Task: task}); err != nil {
+		t.Fatal(err)
+	}
+	workdir, err := SetupAgentWorkspace(ctx, repo, task, commit, "captain-agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A bare `git push` needs an upstream, and it has to be there the moment the
+	// path exists — not a few milliseconds later (H17).
+	env := ScrubGitEnv(os.Environ())
+	upstream, err := runGit(ctx, workdir, env, "rev-parse", "--abbrev-ref", "@{u}")
+	if err != nil {
+		t.Fatalf("the published workspace has no upstream: %v", err)
+	}
+	if !strings.HasSuffix(upstream, task) {
+		t.Fatalf("upstream = %q, want one ending in %q", upstream, task)
+	}
+	// The staging directory the clone was built in is gone, so a later dispatch
+	// cannot mistake a half-built workspace for a finished one.
+	entries, err := os.ReadDir(taskStateDir(repo, task))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".worktree-") {
+			t.Fatalf("staging directory %q survived the setup", entry.Name())
+		}
+	}
+}
+
 // A dispatch that launches nothing leaves the supervisor waiting out its whole
 // budget on work that never started — a silence indistinguishable from an
 // agent still thinking. Empty must therefore be an error, and "no agent" must
