@@ -41,7 +41,7 @@ type FieldSource struct {
 	LayerID string          `json:"layerId,omitempty" yaml:"layerId,omitempty"`
 }
 
-// FieldProvenance retains authorship when a runtime or constraint normalizes it.
+// FieldProvenance retains authorship when a runtime normalizes it.
 type FieldProvenance struct {
 	Source       FieldSource  `json:"source" yaml:"source"`
 	NormalizedBy *FieldSource `json:"normalizedBy,omitempty" yaml:"normalizedBy,omitempty"`
@@ -51,7 +51,6 @@ type FieldProvenance struct {
 type ComposedSpec struct {
 	fieldLayers map[string]int
 	Spec        Spec                       `json:"spec" yaml:"spec"`
-	Constraints RuntimeConstraints         `json:"constraints" yaml:"constraints"`
 	Trace       []SpecLayer                `json:"trace" yaml:"trace"`
 	Provenance  map[string]FieldProvenance `json:"provenance,omitempty" yaml:"provenance,omitempty"`
 	Warnings    []string                   `json:"warnings,omitempty" yaml:"warnings,omitempty"`
@@ -68,7 +67,7 @@ func ResolveSpecLayers(options ResolveSpecOptions) (ResolvedSpec, error) {
 			return ResolvedSpec{}, err
 		}
 	}
-	resolved := ResolvedSpec{Spec: composed.Spec, Constraints: composed.Constraints, Trace: composed.Trace,
+	resolved := ResolvedSpec{Spec: composed.Spec, Trace: composed.Trace,
 		Provenance: composed.Provenance, Warnings: composed.Warnings}
 	if err := resolved.Spec.ValidateStructure(); err != nil {
 		return ResolvedSpec{}, fmt.Errorf("effective spec: %w", err)
@@ -86,9 +85,6 @@ func ResolveSpecLayers(options ResolveSpecOptions) (ResolvedSpec, error) {
 	if err != nil {
 		return ResolvedSpec{}, err
 	}
-	if err := validateResolvedModels(resolved); err != nil {
-		return ResolvedSpec{}, err
-	}
 	resolved.recordNormalization(before)
 	warnings, err := ValidateRuntimeSpec(resolved.Spec)
 	if err != nil {
@@ -96,9 +92,4 @@ func ResolveSpecLayers(options ResolveSpecOptions) (ResolvedSpec, error) {
 	}
 	resolved.Warnings = append(resolved.Warnings, warnings...)
 	return resolved, nil
-}
-
-// AllowsModel reports membership in the composed restrictive catalog.
-func (composed ComposedSpec) AllowsModel(model Model) bool {
-	return allowsModel(composed.Constraints.Models, model)
 }
