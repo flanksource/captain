@@ -83,7 +83,7 @@ func preflight(in Input) (admission, error) {
 		}
 	}
 	spec.Budget.Timeout = out.timeout.String()
-	return out, api.ValidateRuntimeConstraints(api.ResolvedSpec{Spec: spec, Constraints: in.Constraints}, out.model, estimatedInputTokens(in.Request))
+	return out, nil
 }
 
 func validateRuntime(in Input, spec api.Spec) ([]string, error) {
@@ -128,14 +128,4 @@ func requiresBroker(spec api.Spec, caps api.PermissionCapabilities) bool {
 		}
 	}
 	return false
-}
-
-func estimatedInputTokens(request api.Spec) int {
-	size := len(request.Prompt.System) + len(request.Prompt.AppendSystem) + len(request.Prompt.User)
-	for _, message := range request.Messages {
-		for _, part := range message.Parts {
-			size += len(part.Text)
-		}
-	}
-	return (size + 3) / 4
 }

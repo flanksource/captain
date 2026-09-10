@@ -79,8 +79,6 @@ type Input struct {
 	// Repo is the root of the tree the run's changed files are recorded relative
 	// to; empty means the request's cwd.
 	Repo string
-	// Constraints is the restrictive channel from the final ResolvedSpec.
-	Constraints api.RuntimeConstraints
 }
 
 // Run executes one prompt run and returns its outcome. A failing verdict is a

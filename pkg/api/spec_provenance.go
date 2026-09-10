@@ -128,33 +128,3 @@ func (resolved *ResolvedSpec) recordNormalization(before Model) {
 		resolved.Provenance[path] = source
 	}
 }
-
-type budgetLimitSources map[string]FieldSource
-
-func (sources budgetLimitSources) record(layer SpecLayer, limits Budget) {
-	for _, key := range []string{"cost", "maxTokens", "maxTurns", "timeout"} {
-		value := serializedField(reflect.ValueOf(layer.Constraints.Limits.Budget), []string{key})
-		limit := serializedField(reflect.ValueOf(limits), []string{key})
-		if !value.IsZero() && reflect.DeepEqual(value.Interface(), limit.Interface()) {
-			sources[key] = FieldSource{Kind: FieldSourceLayer, Name: layer.Name, LayerID: layer.ID, Key: "/constraints/limits/budget/" + key}
-		}
-	}
-}
-
-func (composed *ComposedSpec) recordLimits(sources budgetLimitSources) {
-	for key, constraint := range sources {
-		limit := serializedField(reflect.ValueOf(composed.Constraints.Limits.Budget), []string{key})
-		effective := serializedField(reflect.ValueOf(composed.Spec.Budget), []string{key})
-		if !reflect.DeepEqual(limit.Interface(), effective.Interface()) {
-			continue
-		}
-		path := "/budget/" + key
-		provenance, exists := composed.Provenance[path]
-		if exists {
-			provenance.NormalizedBy = &constraint
-		} else {
-			provenance.Source = constraint
-		}
-		composed.Provenance[path] = provenance
-	}
-}

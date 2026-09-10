@@ -146,10 +146,6 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 		http.Error(w, err.Error(), requestErrorStatus(err))
 		return
 	}
-	if err := enforceRuntimeProfile(chat, profile.Composed); err != nil {
-		http.Error(w, err.Error(), requestErrorStatus(err))
-		return
-	}
 	var attachments map[partLocation]api.AttachmentRef
 	if chat.ToolApproval == nil {
 		attachments, err = s.resolveAttachments(request.Context(), chat.Messages)

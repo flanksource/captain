@@ -57,12 +57,6 @@ func (s *Service) resumeToolApproval(ctx context.Context, threadID string, conti
 	if err != nil {
 		return false, fmt.Errorf("load chat runtime profile: %w", err)
 	}
-	if err := enforceApprovalRuntimeProfile(continuation.Spec, profile.Composed); err != nil {
-		if interruptErr := execution.Interrupt(ctx, err.Error()); interruptErr != nil {
-			return false, fmt.Errorf("%w (interrupt rejected approval continuation: %v)", err, interruptErr)
-		}
-		return false, err
-	}
 	set, err := s.loadTools(ctx)
 	if err != nil {
 		return false, err
@@ -138,21 +132,6 @@ func (s *Service) resumeToolApproval(ctx context.Context, threadID string, conti
 		}
 	}
 	return true, nil
-}
-
-func enforceApprovalRuntimeProfile(spec api.Spec, resolved api.ComposedSpec) error {
-	if err := enforceRuntimeQuotas(resolved); err != nil {
-		return err
-	}
-	if !resolved.AllowsModel(spec.Model) {
-		return fmt.Errorf("approval continuation model %q is outside the current effective model catalog", spec.Name)
-	}
-	for _, fallback := range spec.Fallbacks {
-		if !resolved.AllowsModel(fallback) {
-			return fmt.Errorf("approval continuation fallback model %q is outside the current effective model catalog", fallback.Name)
-		}
-	}
-	return nil
 }
 
 // suspendedSeedWait bounds how long an approval resolution waits for the

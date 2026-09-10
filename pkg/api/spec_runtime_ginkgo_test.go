@@ -95,16 +95,13 @@ var _ = Describe("Effective layered runtime validation", func() {
 		Expect(resolved.Trace).To(Equal([]SpecLayer{layer}))
 	})
 
-	It("matches an authored alias constraint against the canonical primary and fallback", func() {
+	It("canonicalizes an authored alias for both the primary model and its fallback", func() {
 		layer := SpecLayer{Name: "catalog", Scope: SpecLayerGlobal,
-			Constraints: RuntimeConstraints{Models: []string{"sol", "sonnet"}},
-			Spec:        Spec{Model: Model{Name: "sol", Fallbacks: []Model{{Name: "sonnet"}}}},
+			Spec: Spec{Model: Model{Name: "sol", Fallbacks: []Model{{Name: "sonnet"}}}},
 		}
 		resolved, err := ResolveSpecLayers(ResolveSpecOptions{Layers: []SpecLayer{layer}})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(resolved.Spec.Name).To(Equal("gpt-5.6-sol"))
 		Expect(resolved.Spec.Fallbacks[0].Name).To(Equal("claude-sonnet-5"))
-		Expect(resolved.Constraints).To(Equal(layer.Constraints))
-		Expect(ValidateRuntimeConstraints(resolved, resolved.Spec.Model, 0)).To(Succeed())
 	})
 })
