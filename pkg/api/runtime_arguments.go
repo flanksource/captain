@@ -69,6 +69,7 @@ var claudeCLIArguments = []runtimeArgumentBinding{
 var claudeAgentArguments = []runtimeArgumentBinding{
 	mappedArgument("cwd", "setup.cwd"),
 	mappedArgument("model", "model"),
+	mappedArgument("effort", "effort"),
 	mappedArgument("systemPrompt", "prompt.system"),
 	mappedArgument("appendSystemPrompt", "prompt.appendSystem"),
 	mappedArgument("allowedTools", "permissions.tools"),
