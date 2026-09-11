@@ -48,6 +48,19 @@ describe("captainNavSections", () => {
     });
     expect(items.filter((item) => item.active)).toHaveLength(1);
   });
+
+  it("lists adapter schemas after runtime profiles and marks the route active", () => {
+    const items = captainNavSections("adapter-schemas")[0]?.items ?? [];
+    const keys = items.map((item) => item.key);
+
+    expect(keys.indexOf("adapter-schemas")).toBe(keys.indexOf("runtime-profiles") + 1);
+    expect(items.find((item) => item.key === "adapter-schemas")).toMatchObject({
+      label: "Adapter schemas",
+      to: "/adapter-schemas",
+      active: true,
+    });
+    expect(items.filter((item) => item.active)).toHaveLength(1);
+  });
 });
 
 describe("projectOptions", () => {

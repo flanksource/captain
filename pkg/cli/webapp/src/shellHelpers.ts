@@ -8,10 +8,11 @@ import {
   UiFileText,
   UiFingerprint,
   UiHistory,
+  UiListTree,
   UiRobotAi,
   UiServer,
   UiSliders,
-} from "@flanksource/clicky-ui/data";
+} from "@flanksource/clicky-ui/icons";
 import { DEFAULT_DB_CONTEXT, type DbContextOption } from "./dbContext";
 import {
   ALL_PROJECTS_SCOPE,
@@ -28,6 +29,7 @@ export type PrimaryRoute =
   | "whoami"
   | "sandboxes"
   | "runtime-profiles"
+  | "adapter-schemas"
   | "operations";
 
 export const CAPTAIN_SIDEBAR_COLLAPSE_KEY = "captain:sidebar:collapsed";
@@ -72,6 +74,13 @@ export function captainNavSections(
           to: "/runtime-profiles",
           icon: UiSliders,
           active: active === "runtime-profiles",
+        },
+        {
+          key: "adapter-schemas",
+          label: "Adapter schemas",
+          to: "/adapter-schemas",
+          icon: UiListTree,
+          active: active === "adapter-schemas",
         },
         {
           key: "sandboxes",

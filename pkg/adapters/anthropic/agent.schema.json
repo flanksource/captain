@@ -1,0 +1,394 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AnthropicAgentOptions",
+  "description": "Native Claude Agent SDK options and Captain bridge arguments used by the Anthropic agent runtime.",
+  "type": "object",
+  "additionalProperties": false,
+  "x-captain-adapter": {
+    "provider": "anthropic",
+    "mode": "agent",
+    "sources": [
+      {"kind": "sdk", "reference": "@anthropic-ai/claude-agent-sdk.Options", "version": "0.3.210"},
+      {"kind": "protocol", "reference": "pkg/ai/provider/claudeagent/protocol.ts InitializeParams and PromptParams", "version": "6a2b56cbd26702b18905865f21fc66d44cc864cc"},
+      {"kind": "implementation", "reference": "pkg/ai/provider/claudeagent/agent.ts and bridge_params.go", "version": "6a2b56cbd26702b18905865f21fc66d44cc864cc"}
+    ]
+  },
+  "properties": {
+    "model": {
+      "title": "Model", "description": "Claude model identifier passed to the Agent SDK.",
+      "type": "string", "x-clicky-section": "model", "x-clicky-order": 10, "x-icon": "sparkles",
+      "x-captain-option": {"nativeName": "model", "support": "mapped", "specPath": "model.name"}
+    },
+    "effort": {
+      "title": "Effort", "description": "Adaptive reasoning effort used by supported Claude models.",
+      "type": "string", "enum": ["low", "medium", "high", "xhigh", "max"], "x-clicky-section": "model", "x-clicky-order": 20, "x-enum-display": "combobox",
+      "x-captain-option": {"nativeName": "effort", "support": "mapped", "specPath": "model.effort"}
+    },
+    "cwd": {
+      "title": "Working directory", "description": "Working directory used by Claude Code tools and settings discovery.",
+      "type": "string", "format": "path", "x-clicky-section": "workspace", "x-clicky-order": 30,
+      "x-captain-option": {"nativeName": "cwd", "support": "mapped", "specPath": "context.dir"}
+    },
+    "systemPrompt": {
+      "title": "System prompt", "description": "System prompt string or preset configuration used for the session.",
+      "oneOf": [{"type": "string"}, {"type": "object", "additionalProperties": true}], "x-clicky-section": "prompt", "x-clicky-order": 40,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "systemPrompt", "support": "mapped", "specPath": "prompt.system"}
+    },
+    "appendSystemPrompt": {
+      "title": "Append system prompt", "description": "Captain bridge text appended to the Agent SDK system prompt.",
+      "type": "string", "x-clicky-section": "prompt", "x-clicky-order": 50,
+      "x-captain-option": {"nativeName": "initialize.appendSystemPrompt", "support": "mapped", "specPath": "prompt.appendSystem"}
+    },
+    "allowedTools": {
+      "title": "Allowed tools", "description": "Tool names the Agent SDK may use without being denied by Captain's policy.",
+      "type": "array", "items": {"type": "string"}, "x-clicky-section": "permissions", "x-clicky-order": 60, "x-array-display": "list",
+      "x-captain-option": {"nativeName": "allowedTools", "support": "mapped", "specPath": "permissions.tools.allow"}
+    },
+    "disallowedTools": {
+      "title": "Disallowed tools", "description": "Tool names explicitly denied by Captain's policy.",
+      "type": "array", "items": {"type": "string"}, "x-clicky-section": "permissions", "x-clicky-order": 70, "x-array-display": "list",
+      "x-captain-option": {"nativeName": "disallowedTools", "support": "mapped", "specPath": "permissions.tools.deny"}
+    },
+    "additionalDirectories": {
+      "title": "Additional directories", "description": "Directories outside cwd that Claude's tools may access.",
+      "type": "array", "items": {"type": "string", "format": "path"}, "x-clicky-section": "workspace", "x-clicky-order": 80, "x-array-display": "list",
+      "x-captain-option": {"nativeName": "additionalDirectories", "support": "mapped", "specPath": "permissions.directories"}
+    },
+    "maxTurns": {
+      "title": "Maximum turns", "description": "Maximum number of agent turns before the SDK stops.",
+      "type": "integer", "minimum": 1, "x-clicky-section": "model", "x-clicky-order": 90,
+      "x-captain-option": {"nativeName": "maxTurns", "support": "mapped", "specPath": "budget.maxTurns"}
+    },
+    "maxBudgetUsd": {
+      "title": "Maximum budget", "description": "Maximum spend in US dollars before the SDK stops.",
+      "type": "number", "minimum": 0, "x-clicky-section": "model", "x-clicky-order": 100,
+      "x-captain-option": {"nativeName": "maxBudgetUsd", "support": "mapped", "specPath": "budget.cost"}
+    },
+    "permissionMode": {
+      "title": "Permission mode", "description": "Claude Code permission posture translated from Captain's runtime policy.",
+      "type": "string", "enum": ["default", "acceptEdits", "bypassPermissions", "plan", "dontAsk"], "x-clicky-section": "permissions", "x-clicky-order": 110, "x-enum-display": "combobox",
+      "x-captain-option": {"nativeName": "permissionMode", "support": "mapped", "specPath": "permissions.mode"}
+    },
+    "sandbox": {
+      "title": "Sandbox", "description": "Claude Agent SDK filesystem and command sandbox configuration.",
+      "type": "object", "additionalProperties": true, "x-clicky-section": "sandbox", "x-clicky-order": 120,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "sandbox", "support": "mapped", "specPath": "permissions"}
+    },
+    "resume": {
+      "title": "Resume session", "description": "Claude session identifier resumed by the Agent SDK.",
+      "type": "string", "x-clicky-section": "workspace", "x-clicky-order": 130,
+      "x-captain-option": {"nativeName": "resume", "support": "mapped", "specPath": "sessionId"}
+    },
+    "outputFormat": {
+      "title": "Output format", "description": "Structured-output JSON Schema passed to the Agent SDK.",
+      "type": "object", "additionalProperties": true, "x-clicky-section": "prompt", "x-clicky-order": 140,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "outputFormat", "support": "mapped", "specPath": ["prompt.schema", "prompt.schemaJson"]}
+    },
+    "outputSchema": {
+      "title": "Bridge output schema", "description": "Captain bridge JSON Schema converted into the SDK outputFormat option.",
+      "type": "object", "additionalProperties": true, "x-clicky-section": "prompt", "x-clicky-order": 150,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "initialize.outputSchema", "support": "mapped", "specPath": ["prompt.schema", "prompt.schemaJson"]}
+    },
+    "promptText": {
+      "title": "Prompt text", "description": "Text sent in a Captain bridge prompt request.",
+      "type": "string", "x-clicky-section": "prompt", "x-clicky-order": 160,
+      "x-captain-option": {"nativeName": "prompt.text", "support": "mapped", "specPath": "prompt.user"}
+    },
+    "promptAttachments": {
+      "title": "Prompt attachments", "description": "File and image attachments sent in a Captain bridge prompt request.",
+      "type": "array", "items": {"type": "object", "additionalProperties": true}, "x-clicky-section": "prompt", "x-clicky-order": 170, "x-array-display": "stacked",
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "prompt.attachments", "support": "mapped", "specPath": "prompt.attachments"}
+    },
+    "approvalMode": {
+      "title": "Bridge approval mode", "description": "Whether the bridge asks Captain to broker each caller-tool decision.",
+      "type": "string", "enum": ["auto", "ask"], "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 180, "x-enum-display": "segmented",
+      "x-captain-option": {"nativeName": "initialize.approvalMode", "support": "managed", "note": "Captain selects ask only when a caller-tool approval broker is active."}
+    },
+    "mcpServers": {
+      "title": "MCP servers", "description": "Agent SDK MCP server definitions injected for Captain caller tools.",
+      "type": "object", "additionalProperties": true, "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 190,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "mcpServers", "support": "managed", "note": "Captain builds an HTTP MCP server entry for the active caller-tool endpoint."}
+    },
+    "canUseTool": {
+      "title": "Tool permission callback", "description": "Agent SDK callback used to ask Captain for a tool-use decision.",
+      "type": "object", "additionalProperties": true, "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 200,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "canUseTool", "support": "managed", "note": "The TypeScript bridge installs a callback backed by the host protocol."}
+    },
+    "hooks": {
+      "title": "Hooks", "description": "Claude lifecycle and tool hooks installed for monitoring and caller-tool correlation.",
+      "type": "object", "additionalProperties": true, "readOnly": true, "x-clicky-section": "environment", "x-clicky-order": 210,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "hooks", "support": "managed", "note": "Captain's bridge installs monitoring and caller-tool hooks when their endpoints are active."}
+    },
+    "monitorUrl": {
+      "title": "Monitor URL", "description": "Captain bridge URL receiving SDK lifecycle hook events.",
+      "type": "string", "format": "uri", "readOnly": true, "x-clicky-section": "environment", "x-clicky-order": 220,
+      "x-captain-option": {"nativeName": "initialize.monitorUrl", "support": "managed", "note": "Captain derives the monitor endpoint from its local serve configuration."}
+    },
+    "callerToolUseIDKey": {
+      "title": "Caller tool use ID key", "description": "Reserved metadata key correlating MCP tool calls with SDK hook events.",
+      "type": "string", "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 230,
+      "x-captain-option": {"nativeName": "initialize.callerToolUseIDKey", "support": "managed", "note": "Captain injects its reserved correlation key when caller tools are enabled."}
+    },
+    "allowDangerouslySkipPermissions": {
+      "title": "Allow bypass permissions", "description": "Required Agent SDK acknowledgement before bypassPermissions may be used.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 240,
+      "x-captain-option": {"nativeName": "allowDangerouslySkipPermissions", "support": "managed", "note": "The bridge enables this acknowledgement only for Captain's explicit bypass permission mode."}
+    },
+    "stderr": {
+      "title": "Standard error handler", "description": "Agent SDK callback forwarding child-process diagnostics to Captain.",
+      "type": "object", "additionalProperties": true, "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 250,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "stderr", "support": "managed", "note": "The bridge owns stderr forwarding over the host protocol."}
+    },
+    "abortController": {
+      "title": "Abort controller", "description": "JavaScript AbortController used to cancel an SDK query.",
+      "type": "object", "additionalProperties": true, "readOnly": true, "x-clicky-section": "environment", "x-clicky-order": 260,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "abortController", "support": "unsupported", "note": "Captain cancels through its bridge protocol instead of accepting a JavaScript object."}
+    },
+    "agent": {
+      "title": "Agent", "description": "Named SDK agent selected as the main execution agent.",
+      "type": "string", "readOnly": true, "x-clicky-section": "prompt", "x-clicky-order": 270,
+      "x-captain-option": {"nativeName": "agent", "support": "unsupported", "note": "Captain does not select a named Claude Agent SDK agent."}
+    },
+    "agents": {
+      "title": "Agent definitions", "description": "Named subagent definitions made available to Claude.",
+      "type": "object", "additionalProperties": true, "readOnly": true, "x-clicky-section": "prompt", "x-clicky-order": 280,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "agents", "support": "unsupported", "note": "Captain does not expose inline Claude Agent SDK agent definitions."}
+    },
+    "continue": {
+      "title": "Continue recent session", "description": "Whether the SDK continues the most recent conversation in cwd.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 290,
+      "x-captain-option": {"nativeName": "continue", "support": "unsupported", "note": "Captain resumes only an explicit session identifier."}
+    },
+    "toolAliases": {
+      "title": "Tool aliases", "description": "Alternate display names and descriptions for SDK tools.",
+      "type": "object", "additionalProperties": true, "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 300,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "toolAliases", "support": "unsupported", "note": "Captain does not rewrite native Claude tool metadata."}
+    },
+    "tools": {
+      "title": "Tool set", "description": "Built-in tool preset or explicit SDK tool-name list.",
+      "oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}], "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 310,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "tools", "support": "unsupported", "note": "Captain maps allow and deny policies instead of replacing the SDK tool set."}
+    },
+    "env": {
+      "title": "Environment", "description": "Environment variables supplied to the Claude Code child process.",
+      "type": "object", "additionalProperties": {"type": "string"}, "readOnly": true, "x-clicky-section": "environment", "x-clicky-order": 320,
+      "x-captain-option": {"nativeName": "env", "support": "unsupported", "note": "Captain owns child-process environment construction outside the Agent SDK options payload."}
+    },
+    "executable": {
+      "title": "Executable runtime", "description": "JavaScript runtime used to launch the Agent SDK child process.",
+      "type": "string", "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 330,
+      "x-captain-option": {"nativeName": "executable", "support": "unsupported", "note": "Captain's packaged bridge owns the executable runtime."}
+    },
+    "executableArgs": {
+      "title": "Executable arguments", "description": "Arguments prepended when launching the Agent SDK runtime.",
+      "type": "array", "items": {"type": "string"}, "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 340, "x-array-display": "list",
+      "x-captain-option": {"nativeName": "executableArgs", "support": "unsupported", "note": "Captain does not expose bridge runtime arguments."}
+    },
+    "extraArgs": {
+      "title": "Extra Claude arguments", "description": "Additional raw command-line arguments passed by the SDK to Claude Code.",
+      "type": "object", "additionalProperties": true, "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 350,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "extraArgs", "support": "unsupported", "note": "Captain exposes typed request fields rather than raw Claude arguments."}
+    },
+    "fallbackModel": {
+      "title": "Fallback model", "description": "Model used if the requested Claude model is unavailable.",
+      "type": "string", "readOnly": true, "x-clicky-section": "model", "x-clicky-order": 360,
+      "x-captain-option": {"nativeName": "fallbackModel", "support": "unsupported", "note": "Captain performs fallback selection in its provider registry."}
+    },
+    "enableFileCheckpointing": {
+      "title": "File checkpointing", "description": "Whether the SDK records file state so edits can be rewound.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 370,
+      "x-captain-option": {"nativeName": "enableFileCheckpointing", "support": "unsupported", "note": "Captain does not expose SDK file checkpointing."}
+    },
+    "toolConfig": {
+      "title": "Tool configuration", "description": "Native per-tool configuration supplied to the Agent SDK.",
+      "type": "object", "additionalProperties": true, "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 380,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "toolConfig", "support": "unsupported", "note": "Captain does not expose Agent SDK per-tool configuration."}
+    },
+    "forkSession": {
+      "title": "Fork session", "description": "Whether resuming creates a new session identifier instead of continuing in place.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 390,
+      "x-captain-option": {"nativeName": "forkSession", "support": "unsupported", "note": "Captain resumes the requested session in place."}
+    },
+    "betas": {
+      "title": "Beta features", "description": "Anthropic beta feature identifiers enabled for the SDK query.",
+      "type": "array", "items": {"type": "string"}, "readOnly": true, "x-clicky-section": "model", "x-clicky-order": 400, "x-array-display": "list",
+      "x-captain-option": {"nativeName": "betas", "support": "unsupported", "note": "Captain does not expose per-query Anthropic beta headers."}
+    },
+    "onElicitation": {
+      "title": "Elicitation callback", "description": "Callback handling MCP elicitation requests from the SDK.",
+      "type": "object", "additionalProperties": true, "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 410,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "onElicitation", "support": "unsupported", "note": "Captain's bridge does not provide an MCP elicitation callback."}
+    },
+    "onUserDialog": {
+      "title": "User dialog callback", "description": "Callback handling native Claude user-dialog requests.",
+      "type": "object", "additionalProperties": true, "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 420,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "onUserDialog", "support": "unsupported", "note": "Captain does not bridge native Agent SDK user dialogs."}
+    },
+    "supportedDialogKinds": {
+      "title": "Supported dialog kinds", "description": "User-dialog kinds the host declares it can render.",
+      "type": "array", "items": {"type": "string"}, "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 430, "x-array-display": "list",
+      "x-captain-option": {"nativeName": "supportedDialogKinds", "support": "unsupported", "note": "Captain does not advertise Agent SDK native dialog rendering."}
+    },
+    "persistSession": {
+      "title": "Persist session", "description": "Whether the Agent SDK persists the session to disk.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 440,
+      "x-captain-option": {"nativeName": "persistSession", "support": "unsupported", "note": "Captain does not override the Agent SDK persistence default."}
+    },
+    "sessionStore": {
+      "title": "Session store", "description": "Custom storage implementation used for Agent SDK session data.",
+      "type": "object", "additionalProperties": true, "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 450,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "sessionStore", "support": "unsupported", "note": "Captain does not inject a custom Agent SDK session store."}
+    },
+    "sessionStoreFlush": {
+      "title": "Session store flush", "description": "Callback invoked to flush custom session storage.",
+      "type": "object", "additionalProperties": true, "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 460,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "sessionStoreFlush", "support": "unsupported", "note": "Captain does not inject a custom session store flush callback."}
+    },
+    "loadTimeoutMs": {
+      "title": "Load timeout", "description": "Maximum milliseconds allowed when loading a persisted session.",
+      "type": "integer", "minimum": 0, "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 470,
+      "x-captain-option": {"nativeName": "loadTimeoutMs", "support": "unsupported", "note": "Captain does not override the SDK session-load timeout."}
+    },
+    "includeHookEvents": {
+      "title": "Include hook events", "description": "Whether hook lifecycle events are emitted in the SDK message stream.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 480,
+      "x-captain-option": {"nativeName": "includeHookEvents", "support": "unsupported", "note": "Captain receives its installed hooks directly instead of emitting hook messages."}
+    },
+    "includePartialMessages": {
+      "title": "Include partial messages", "description": "Whether partial assistant message chunks are emitted by the SDK.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 490,
+      "x-captain-option": {"nativeName": "includePartialMessages", "support": "unsupported", "note": "Captain consumes complete SDK message events."}
+    },
+    "forwardSubagentText": {
+      "title": "Forward subagent text", "description": "Whether subagent text is forwarded into the parent query stream.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 500,
+      "x-captain-option": {"nativeName": "forwardSubagentText", "support": "unsupported", "note": "Captain does not enable native SDK subagent text forwarding."}
+    },
+    "thinking": {
+      "title": "Thinking", "description": "Detailed native thinking configuration beyond the effort level.",
+      "type": "object", "additionalProperties": true, "readOnly": true, "x-clicky-section": "model", "x-clicky-order": 510,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "thinking", "support": "unsupported", "note": "Captain maps model.effort and does not expose the lower-level SDK thinking object."}
+    },
+    "maxThinkingTokens": {
+      "title": "Maximum thinking tokens", "description": "Maximum tokens allocated to extended thinking.",
+      "type": "integer", "minimum": 0, "readOnly": true, "x-clicky-section": "model", "x-clicky-order": 520,
+      "x-captain-option": {"nativeName": "maxThinkingTokens", "support": "unsupported", "note": "Captain exposes effort rather than a fixed thinking-token budget."}
+    },
+    "taskBudget": {
+      "title": "Task budget", "description": "Native budget constraints applied to SDK task execution.",
+      "type": "object", "additionalProperties": true, "readOnly": true, "x-clicky-section": "model", "x-clicky-order": 530,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "taskBudget", "support": "unsupported", "note": "Captain maps maxTurns and maxBudgetUsd but not the SDK taskBudget object."}
+    },
+    "pathToClaudeCodeExecutable": {
+      "title": "Claude executable path", "description": "Filesystem path to the Claude Code executable launched by the SDK.",
+      "type": "string", "format": "path", "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 540,
+      "x-captain-option": {"nativeName": "pathToClaudeCodeExecutable", "support": "unsupported", "note": "Captain's package resolver owns the Claude Code executable path."}
+    },
+    "permissionPromptToolName": {
+      "title": "Permission prompt tool", "description": "MCP tool name used by Claude Code to request permission decisions.",
+      "type": "string", "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 550,
+      "x-captain-option": {"nativeName": "permissionPromptToolName", "support": "unsupported", "note": "Captain uses the Agent SDK canUseTool callback instead of a permission-prompt MCP tool."}
+    },
+    "planModeInstructions": {
+      "title": "Plan mode instructions", "description": "Additional instructions injected when Claude enters plan mode.",
+      "type": "string", "readOnly": true, "x-clicky-section": "prompt", "x-clicky-order": 560,
+      "x-captain-option": {"nativeName": "planModeInstructions", "support": "unsupported", "note": "Captain does not override Claude's native plan-mode instructions."}
+    },
+    "plugins": {
+      "title": "Plugins", "description": "Local Claude Code plugin directories loaded for the query.",
+      "type": "array", "items": {"type": "object", "additionalProperties": true}, "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 570, "x-array-display": "stacked",
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "plugins", "support": "unsupported", "note": "Captain does not expose Agent SDK plugin loading."}
+    },
+    "promptSuggestions": {
+      "title": "Prompt suggestions", "description": "Whether the SDK emits suggested follow-up prompts.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "prompt", "x-clicky-order": 580,
+      "x-captain-option": {"nativeName": "promptSuggestions", "support": "unsupported", "note": "Captain does not request Agent SDK prompt suggestions."}
+    },
+    "agentProgressSummaries": {
+      "title": "Agent progress summaries", "description": "Whether progress summaries are generated for long-running agent work.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 590,
+      "x-captain-option": {"nativeName": "agentProgressSummaries", "support": "unsupported", "note": "Captain does not enable native SDK progress summaries."}
+    },
+    "sessionId": {
+      "title": "New session ID", "description": "Explicit UUID assigned when starting a new Agent SDK session.",
+      "type": "string", "format": "uuid", "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 600,
+      "x-captain-option": {"nativeName": "sessionId", "support": "unsupported", "note": "Captain reads the session identifier emitted by the SDK instead of assigning one."}
+    },
+    "resumeSessionAt": {
+      "title": "Resume session at", "description": "Message identifier at which an existing session is resumed.",
+      "type": "string", "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 610,
+      "x-captain-option": {"nativeName": "resumeSessionAt", "support": "unsupported", "note": "Captain resumes the latest point of an explicit session."}
+    },
+    "settings": {
+      "title": "Settings", "description": "In-memory Claude Code settings applied to the query.",
+      "type": "object", "additionalProperties": true, "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 620,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "settings", "support": "unsupported", "note": "Captain does not inject Agent SDK settings objects."}
+    },
+    "managedSettings": {
+      "title": "Managed settings", "description": "Enterprise-managed Claude Code settings applied to the query.",
+      "type": "object", "additionalProperties": true, "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 630,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "managedSettings", "support": "unsupported", "note": "Captain does not inject enterprise-managed settings."}
+    },
+    "settingSources": {
+      "title": "Setting sources", "description": "Filesystem setting scopes loaded by Claude Code.",
+      "type": "array", "items": {"type": "string", "enum": ["user", "project", "local"]}, "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 640, "x-array-display": "list",
+      "x-captain-option": {"nativeName": "settingSources", "support": "unsupported", "note": "Captain leaves Agent SDK settings-source discovery at its default."}
+    },
+    "skills": {
+      "title": "Skills", "description": "Skill configuration made available to the Agent SDK query.",
+      "type": "array", "items": {"type": "object", "additionalProperties": true}, "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 650, "x-array-display": "stacked",
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "skills", "support": "unsupported", "note": "Captain does not pass inline Agent SDK skill configuration."}
+    },
+    "debug": {
+      "title": "Debug", "description": "Whether Agent SDK debug logging is enabled.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 660,
+      "x-captain-option": {"nativeName": "debug", "support": "unsupported", "note": "Captain does not expose the SDK debug switch."}
+    },
+    "debugFile": {
+      "title": "Debug file", "description": "Path receiving Agent SDK debug logs.",
+      "type": "string", "format": "path", "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 670,
+      "x-captain-option": {"nativeName": "debugFile", "support": "unsupported", "note": "Captain does not expose native SDK debug-file output."}
+    },
+    "strictMcpConfig": {
+      "title": "Strict MCP configuration", "description": "Whether Claude ignores all MCP servers except those supplied in options.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 680,
+      "x-captain-option": {"nativeName": "strictMcpConfig", "support": "unsupported", "note": "Captain injects its caller-tool server without replacing user MCP configuration."}
+    },
+    "title": {
+      "title": "Session title", "description": "Display title assigned to the Claude Agent SDK session.",
+      "type": "string", "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 690,
+      "x-captain-option": {"nativeName": "title", "support": "unsupported", "note": "Captain does not assign an SDK-native session title."}
+    },
+    "spawnClaudeCodeProcess": {
+      "title": "Process spawner", "description": "Custom callback used by the SDK to start the Claude Code process.",
+      "type": "object", "additionalProperties": true, "readOnly": true, "x-clicky-section": "environment", "x-clicky-order": 700,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "spawnClaudeCodeProcess", "support": "unsupported", "note": "Captain's packaged bridge uses the SDK default process spawner."}
+    }
+  }
+}
