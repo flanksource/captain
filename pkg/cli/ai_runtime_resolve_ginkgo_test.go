@@ -37,7 +37,11 @@ var _ = Describe("captured CLI runtime projection", func() {
 		opts, err := actionFlagsToOptions(map[string]string{"timeout": "", "system": "", "append-system": ""})
 		Expect(err).NotTo(HaveOccurred())
 		saved := captainconfig.Config{AI: captainconfig.AIDefaults{Timeout: "2m"}}
-		layers, err := renderLoadedLayers(context.Background(), "---\nmodel: agent:claude-sonnet-5\nprompt:\n  system: Authored system\n  appendSystem: Authored suffix\nbudget:\n  timeout: 1m\n---\nReview", "review.prompt", nil, opts, saved)
+		body := promptBody{
+			Text:   "---\nmodel: agent:claude-sonnet-5\nprompt:\n  system: Authored system\n  appendSystem: Authored suffix\nbudget:\n  timeout: 1m\n---\nReview",
+			Source: "review.prompt",
+		}
+		layers, err := renderLoadedLayers(context.Background(), body, promptVarsResult{}, "", opts, saved)
 		Expect(err).NotTo(HaveOccurred())
 		result, err := opts.Resolve(AIRuntimeResolveOptions{Layers: layers, Saved: saved})
 		Expect(err).NotTo(HaveOccurred())

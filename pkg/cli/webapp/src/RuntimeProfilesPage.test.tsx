@@ -82,7 +82,6 @@ const PROFILES = [
 const RESOLUTION = {
   resolved: {
     spec: { model: "anthropic/claude-sonnet-5", mode: "cli" },
-    constraints: {},
     trace: [
       {
         id: "organization-defaults",
@@ -90,7 +89,6 @@ const RESOLUTION = {
         scope: "global",
         source: "preset",
         spec: {},
-        constraints: {},
       },
     ],
   },

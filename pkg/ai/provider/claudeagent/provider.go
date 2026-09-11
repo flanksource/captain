@@ -489,6 +489,7 @@ func (p *Provider) initializeParams(req ai.Request) (initializeParams, error) {
 	return initializeParams{
 		Cwd:                req.Cwd(),
 		Model:              bridgeModel(p.model),
+		Effort:             req.Effort,
 		SystemPrompt:       req.Prompt.System,
 		AppendSystemPrompt: req.Prompt.AppendSystem,
 		AllowedTools:       allowed,

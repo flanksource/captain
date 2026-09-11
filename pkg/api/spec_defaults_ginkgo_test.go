@@ -109,15 +109,14 @@ var _ = Describe("Saved spec defaults", func() {
 		Expect(pure.Spec.Budget.MaxTokens).To(BeZero())
 	})
 
-	It("records a constraint that reduces a saved budget without rewriting its source", func() {
+	It("lets a layer budget replace a saved one and owns its provenance", func() {
 		saved := captainconfig.AIDefaults{BudgetUSD: 4}
-		limit := SpecLayer{Name: "organization", Scope: SpecLayerGlobal, Constraints: RuntimeConstraints{Limits: RunLimits{Budget: Budget{Cost: 2}}}}
-		result, err := ComposeSpecLayers(ResolveSpecOptions{Saved: &saved, Layers: []SpecLayer{limit}})
+		layer := SpecLayer{Name: "organization", Scope: SpecLayerGlobal, Spec: Spec{Budget: Budget{Cost: 2}}}
+		result, err := ComposeSpecLayers(ResolveSpecOptions{Saved: &saved, Layers: []SpecLayer{layer}})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result.Spec.Budget.Cost).To(Equal(float64(2)))
 		Expect(result.Provenance["/budget/cost"]).To(Equal(FieldProvenance{
-			Source:       FieldSource{Kind: FieldSourceSaved, Name: "~/.captain.yaml", Key: "ai.budgetUSD"},
-			NormalizedBy: &FieldSource{Kind: FieldSourceLayer, Name: "organization", Key: "/constraints/limits/budget/cost"},
+			Source: FieldSource{Kind: FieldSourceLayer, Name: "organization", Key: "/budget/cost"},
 		}))
 	})
 

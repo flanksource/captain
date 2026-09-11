@@ -4,8 +4,8 @@
 //
 // Protocol (newline-delimited JSON, one object per line on stdout):
 //   client -> server requests:
-//     initialize {cwd, model, systemPrompt, appendSystemPrompt, allowedTools,
-//                 maxTurns, maxBudgetUsd, permissionMode, resume, approvalMode,
+//     initialize {cwd, model, effort, systemPrompt, appendSystemPrompt,
+//                 allowedTools, maxTurns, maxBudgetUsd, permissionMode, resume, approvalMode,
 //                 outputSchema, mcpServers}
 //                 -> reply {ok:true}
 //     prompt {text, attachments?} -> reply {accepted:true}
@@ -61,6 +61,7 @@ delete process.env.CLAUDE_CODE_ENTRYPOINT;
 interface InitializeParams {
   cwd?: string;
   model?: string;
+  effort?: Options["effort"];
   systemPrompt?: string;
   appendSystemPrompt?: string;
   allowedTools?: string[];
@@ -124,6 +125,7 @@ function buildOptions(params: InitializeParams): Options {
   const options: Options = {
     cwd: params.cwd,
     model: params.model,
+    effort: params.effort,
     maxTurns: params.maxTurns || undefined,
     maxBudgetUsd: params.maxBudgetUsd || undefined,
     permissionMode,

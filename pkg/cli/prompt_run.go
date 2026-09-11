@@ -62,7 +62,11 @@ func runPromptAction(ctx context.Context, id string, flags map[string]string) (P
 		if opts, err = actionFlagsToOptions(flags); err != nil {
 			return PromptRunResult{}, err
 		}
-		if rendered, err = renderPromptCLI(ctx, id, opts, flags["vars"], readStdinIfCLI(ctx)); err != nil {
+		stdin, err := readStdinIfCLI(ctx)
+		if err != nil {
+			return PromptRunResult{}, err
+		}
+		if rendered, err = renderPromptCLI(ctx, id, opts, opts.Vars, stdin); err != nil {
 			return PromptRunResult{}, err
 		}
 	}

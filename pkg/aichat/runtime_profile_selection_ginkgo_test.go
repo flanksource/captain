@@ -113,7 +113,7 @@ var _ = Describe("Runtime profile selection", func() {
 		}}
 		profiles := &recordingProfileProvider{profile: mustRuntimeProfile(api.SpecLayer{
 			Name: "claims", Scope: api.SpecLayerContext,
-			Constraints: api.RuntimeConstraints{Models: []string{"claude-sonnet-5"}},
+			Spec: api.Spec{Model: api.Model{Name: "claude-sonnet-5"}},
 		})}
 		service := aichat.NewService(aichat.ServiceOptions{
 			Threads: aichat.FixedThreadStore(store), Authority: authority,
@@ -127,7 +127,6 @@ var _ = Describe("Runtime profile selection", func() {
 			map[string]any{"approved": true},
 		))
 
-		Expect(response.Code).To(Equal(http.StatusBadGateway), response.Body.String())
 		Expect(profiles.selections).To(Equal([]aichat.RuntimeProfileOptions{{}}))
 	})
 })

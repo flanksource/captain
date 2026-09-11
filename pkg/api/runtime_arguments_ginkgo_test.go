@@ -47,6 +47,11 @@ var _ = Describe("Runtime argument mappings", func() {
 		Expect(claudeTurns["x-clicky-arguments"]).To(ContainElement(map[string]any{
 			"name": "maxTurns", "implementation": "mapped",
 		}))
+
+		claudeEffort := runtimeSchemaProperty(api.RuntimeSchemaFor(api.Anthropic, api.ModeAgent), "effort")
+		Expect(claudeEffort["x-clicky-arguments"]).To(ContainElement(map[string]any{
+			"name": "effort", "implementation": "mapped",
+		}))
 	})
 
 	It("classifies memory and skill controls as model configuration", func() {
