@@ -101,17 +101,7 @@ func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, e
 	}
 	resp, err := gk.Generate(ctx, p.g, opts...)
 	if err != nil {
-		if ctx.Err() != nil {
-			return nil, fmt.Errorf("%w: %v", ai.ErrTimeout, ctx.Err())
-		}
-		// genkit validates the model's constrained output against the request
-		// schema during generation; a rejection is recoverable by re-asking the
-		// model with the errors, so classify it as ErrSchemaValidation (preserving
-		// genkit's detail lines) for the schema-validation middleware to act on.
-		if isSchemaMismatch(err) {
-			return nil, fmt.Errorf("%w: %v", ai.ErrSchemaValidation, err)
-		}
-		return nil, fmt.Errorf("genkit %s generate: %w", p.provider.Name, err)
+		return nil, p.generationError(ctx, err)
 	}
 
 	out := responseToResponse(ctx, resp, p.provider, p.cfg.Model.Name, start)
@@ -125,18 +115,15 @@ func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, e
 	if out.ToolApproval != nil {
 		return out, nil
 	}
+	structured, _, err := structuredResponseData(req, resp)
+	if err != nil {
+		return nil, err
+	}
+	if structured != nil {
+		out.StructuredData = structured
+	}
 	if req.Prompt.Schema != nil {
-		if err := resp.Output(req.Prompt.Schema); err != nil {
-			return nil, fmt.Errorf("%w: %v", ai.ErrSchemaValidation, err)
-		}
-		out.StructuredData = req.Prompt.Schema
 		out.Text = ""
-	} else if len(req.Prompt.SchemaJSON) > 0 {
-		// A pre-built JSON schema has no Go target to bind into; genkit returns the
-		// constrained JSON as text — surface it as raw structured data too.
-		if out.Text != "" {
-			out.StructuredData = json.RawMessage(out.Text)
-		}
 	}
 
 	if cost := p.costUSD(out.Usage); cost > 0 {
@@ -145,6 +132,45 @@ func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, e
 	}
 
 	return out, nil
+}
+
+func (p *Provider) generationError(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		return fmt.Errorf("%w: %v", ai.ErrTimeout, ctx.Err())
+	}
+	// Genkit validates the model's constrained output against the request
+	// schema during generation. Preserve the details but classify the rejection
+	// so schema-validation middleware can act on buffered calls and streamed
+	// callers receive the same failure class.
+	if isSchemaMismatch(err) {
+		return fmt.Errorf("%w: %v", ai.ErrSchemaValidation, err)
+	}
+	return fmt.Errorf("genkit %s generate: %w", p.provider.Name, err)
+}
+
+func structuredResponseData(req ai.Request, resp *gkai.ModelResponse) (any, json.RawMessage, error) {
+	if req.Prompt.Schema != nil {
+		if err := resp.Output(req.Prompt.Schema); err != nil {
+			return nil, nil, fmt.Errorf("%w: %v", ai.ErrSchemaValidation, err)
+		}
+		raw, err := json.Marshal(req.Prompt.Schema)
+		if err != nil {
+			return nil, nil, fmt.Errorf("%w: encode structured output: %v", ai.ErrSchemaValidation, err)
+		}
+		return req.Prompt.Schema, raw, nil
+	}
+	if len(req.Prompt.SchemaJSON) == 0 {
+		return nil, nil, nil
+	}
+	var value any
+	if err := resp.Output(&value); err != nil {
+		return nil, nil, fmt.Errorf("%w: %v", ai.ErrSchemaValidation, err)
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: encode structured output: %v", ai.ErrSchemaValidation, err)
+	}
+	return raw, raw, nil
 }
 
 // isSchemaMismatch reports whether a genkit Generate error is the library's
@@ -157,13 +183,9 @@ func isSchemaMismatch(err error) bool {
 }
 
 // ExecuteStream runs a streaming generation, publishing each chunk as ai.Events
-// and a terminal EventResult carrying usage + best-effort cost. Structured
-// output is unsupported in stream mode (mirrors the claude_cli stream provider).
+// and a terminal EventResult carrying usage + best-effort cost. Structured JSON
+// chunks stay internal; their validated final value is carried by EventResult.
 func (p *Provider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai.Event, error) {
-	if req.Prompt.HasSchema() {
-		return nil, fmt.Errorf("genkit stream mode does not support structured output; use Execute")
-	}
-
 	ch := make(chan ai.Event, 16)
 	correlation := newToolEventCorrelation()
 	cb := func(_ context.Context, chunk *gkai.ModelResponseChunk) error {
@@ -172,6 +194,9 @@ func (p *Provider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai
 			return err
 		}
 		for _, ev := range events {
+			if req.Prompt.HasSchema() && ev.Kind == ai.EventText {
+				continue
+			}
 			select {
 			case ch <- ev:
 			case <-ctx.Done():
@@ -197,7 +222,7 @@ func (p *Provider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai
 		defer close(ch)
 		resp, err := gk.Generate(ctx, p.g, opts...)
 		if err != nil {
-			ch <- ai.Event{Kind: ai.EventError, Error: err.Error(), Model: p.cfg.Model.Name}
+			ch <- ai.Event{Kind: ai.EventError, Error: p.generationError(ctx, err).Error(), Model: p.cfg.Model.Name}
 			return
 		}
 		var usage *ai.Usage
@@ -217,13 +242,22 @@ func (p *Provider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai
 				return
 			}
 		}
+		var structured json.RawMessage
+		if approval == nil {
+			_, structured, err = structuredResponseData(req, resp)
+			if err != nil {
+				ch <- ai.Event{Kind: ai.EventError, Error: err.Error(), Model: p.cfg.Model.Name}
+				return
+			}
+		}
 		ch <- ai.Event{
-			Kind:         ai.EventResult,
-			Success:      true,
-			Usage:        usage,
-			CostUSD:      costUSD,
-			Model:        p.cfg.Model.Name,
-			ToolApproval: approval,
+			Kind:           ai.EventResult,
+			Success:        true,
+			Usage:          usage,
+			CostUSD:        costUSD,
+			Model:          p.cfg.Model.Name,
+			ToolApproval:   approval,
+			StructuredData: structured,
 		}
 	}()
 

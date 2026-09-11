@@ -147,6 +147,7 @@ function streamReducer(
   state: PromptRunStreamReducerState,
   action: PromptRunStreamAction,
 ): PromptRunStreamReducerState {
+  if (state.done && action.type !== "reset") return state;
   switch (action.type) {
     case "reset":
       return {
