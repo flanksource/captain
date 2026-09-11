@@ -174,6 +174,26 @@ func addCaptainDisabledPaths(spec *rpc.OpenAPISpec) {
 	}}
 }
 
+func addCaptainAdapterSchemaPaths(spec *rpc.OpenAPISpec) {
+	if spec.Paths == nil {
+		spec.Paths = map[string]rpc.OpenAPIPath{}
+	}
+	document := &rpc.OpenAPISchema{
+		Type: "object", Required: []string{"provider", "mode", "title", "description", "schema"},
+		Properties: map[string]*rpc.OpenAPISchema{
+			"provider": {Type: "string"}, "mode": {Type: "string"}, "title": {Type: "string"},
+			"description": {Type: "string"}, "schema": {Type: "object"},
+		},
+	}
+	spec.Paths["/api/captain/ai/adapter-schemas"] = rpc.OpenAPIPath{"get": {
+		Tags: []string{"Adapter schemas"}, Summary: "List native runtime adapter schemas", OperationID: "listAdapterSchemas",
+		Responses: map[string]rpc.OpenAPIResponse{
+			"200": jsonResponse(&rpc.OpenAPISchema{Type: "array", Items: document}),
+			"500": {Description: "Embedded adapter schema is invalid"},
+		},
+	}}
+}
+
 func promptRunOperation(
 	id, summary string,
 	parameter rpc.OpenAPIParameter,

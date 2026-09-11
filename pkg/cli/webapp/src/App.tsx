@@ -9,6 +9,8 @@ import { ChatWindowManagerProvider } from "@flanksource/clicky-ui/ai";
 import { EntityExplorerApp } from "@flanksource/clicky-ui/rpc";
 import { apiClient } from "./api";
 import { AgentLauncher } from "./AgentLauncher";
+import { AdapterSchemasPage } from "./AdapterSchemasPage";
+import { parseAdapterSchemaPath, type AdapterSchemaSelection } from "./adapterSchemas";
 import { ChatLayer } from "./ChatLayer";
 import {
   CommandPalette,
@@ -111,6 +113,8 @@ export function App() {
                 <SandboxesPage />
               ) : route.kind === "runtime-profiles" ? (
                 <RuntimeProfilesPage search={locationSearch} onNavigate={router.navigate} />
+              ) : route.kind === "adapter-schemas" ? (
+                <AdapterSchemasPage selection={route.selection} onNavigate={router.navigate} />
               ) : route.kind === "operations" ? (
                 <EntityExplorerApp
                   client={apiClient}
@@ -198,6 +202,7 @@ type Route =
   | { kind: "whoami" }
   | { kind: "sandboxes" }
   | { kind: "runtime-profiles" }
+  | { kind: "adapter-schemas"; selection: AdapterSchemaSelection }
   | { kind: "operations" }
   | { kind: "chat"; threadId: string; model?: string };
 
@@ -207,6 +212,7 @@ function primaryRoute(route: Route): PrimaryRoute {
   if (route.kind === "whoami") return "whoami";
   if (route.kind === "sandboxes") return "sandboxes";
   if (route.kind === "runtime-profiles") return "runtime-profiles";
+  if (route.kind === "adapter-schemas") return "adapter-schemas";
   if (route.kind === "prompts") return "prompts";
   if (route.kind === "sessions") return "sessions";
   return "agent";
@@ -217,6 +223,9 @@ function parseRoute(pathname: string, search: string): Route {
   if (pathname.startsWith("/whoami")) return { kind: "whoami" };
   if (pathname.startsWith("/sandboxes")) return { kind: "sandboxes" };
   if (pathname.startsWith("/runtime-profiles")) return { kind: "runtime-profiles" };
+  if (pathname.startsWith("/adapter-schemas")) {
+    return { kind: "adapter-schemas", selection: parseAdapterSchemaPath(pathname) };
+  }
   if (pathname.startsWith("/prompts")) {
     const raw = pathname.slice("/prompts".length).replace(/^\/+/, "");
     const promptId = raw ? decodeURIComponent(raw.split("/")[0] ?? "") : undefined;
