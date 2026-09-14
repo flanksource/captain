@@ -42,11 +42,11 @@ require (
 	github.com/flanksource/commons-db v0.1.31
 	github.com/gliderlabs/ssh v0.3.8
 	github.com/pelletier/go-toml/v2 v2.4.3
-	modernc.org/sqlite v1.55.0
 )
 
 require (
 	github.com/alpkeskin/gotoon v0.1.1 // indirect
+	github.com/atombender/go-jsonschema v0.24.1 // indirect
 	github.com/go-openapi/swag/cmdutils v0.25.4 // indirect
 	github.com/go-openapi/swag/conv v0.25.4 // indirect
 	github.com/go-openapi/swag/fileutils v0.25.4 // indirect
@@ -59,9 +59,12 @@ require (
 	github.com/go-openapi/swag/yamlutils v0.25.4 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
+	github.com/sanity-io/litter v1.5.8 // indirect
+	github.com/sosodev/duration v1.4.0 // indirect
 	modernc.org/libc v1.74.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
+	modernc.org/sqlite v1.55.0 // indirect
 )
 
 require (
@@ -405,3 +408,5 @@ require (
 // modernc.org/sqlite/lib instead of vendoring, so there is exactly one
 // registration. gavel and oipa-cli carry the identical replace.
 replace github.com/glebarez/sqlite => github.com/clarkmcc/gorm-sqlite v0.0.0-20240426202654-00ed082c0311
+
+tool github.com/atombender/go-jsonschema
