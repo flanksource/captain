@@ -24,7 +24,9 @@ var _ = Describe("Codex Agent caller tools", func() {
 
 		start, err := buildThreadStartParams("gpt-5.4", request, endpoint)
 		Expect(err).NotTo(HaveOccurred())
-		for _, params := range []map[string]any{start, buildResumeParams(request, endpoint)} {
+		resume, err := buildResumeParams(request, endpoint)
+		Expect(err).NotTo(HaveOccurred())
+		for _, params := range []map[string]any{start, resume} {
 			config, ok := params["config"].(map[string]any)
 			Expect(ok).To(BeTrue())
 			servers, ok := config["mcp_servers"].(map[string]any)

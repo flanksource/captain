@@ -33,8 +33,8 @@ type Permissions struct {
 	// Skills are skill directories enabled for this request.
 	Skills ResourcePolicies `json:"skills,omitempty" yaml:"skills,omitempty" pretty:"label=Skills"`
 	// Directories are paths outside the working directory the run's own tools may
-	// read and write (claude/codex --add-dir, the Claude Agent SDK's
-	// additionalDirectories).
+	// read and write (claude/codex --add-dir, Codex app-server's
+	// runtimeWorkspaceRoots, and the Claude Agent SDK's additionalDirectories).
 	//
 	// The working directory alone is not the run's world. A run in a git worktree
 	// reaches its parent checkout for anything .gitignore hides, a linked module

@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/api/registry"
 	"github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -107,11 +109,57 @@ var _ = ginkgo.Describe("Adapter schema contract", func() {
 		assertJSONRoundTrip[AnthropicAgentOptions](map[string]any{"model": "claude-sonnet-5", "includePartialMessages": true, "agent": "reviewer"})
 		assertJSONRoundTrip[AnthropicCLIOptions](map[string]any{"model": "claude-sonnet-5", "print": true, "agent": "reviewer"})
 		assertJSONRoundTrip[OpenAIAPIOptions](map[string]any{"model": "gpt-5.6", "input": "hello", "stream": true, "background": true})
-		assertJSONRoundTrip[OpenAIAgentOptions](map[string]any{"threadStart": map[string]any{"model": "gpt-5.6", "cwd": "/workspace", "personality": "friendly"}})
+		assertJSONRoundTrip[OpenAIAgentOptions](map[string]any{
+			"threadStart": map[string]any{
+				"model": "gpt-5.6", "cwd": "/workspace", "personality": "friendly",
+				"approvalPolicy": "on-request", "permissions": "workspace", "runtimeWorkspaceRoots": []any{"/workspace", "/shared"},
+			},
+			"threadResume": map[string]any{
+				"threadId": "thread-1", "approvalPolicy": "on-request", "permissions": "workspace", "runtimeWorkspaceRoots": []any{"/workspace", "/shared"},
+			},
+			"turnStart": map[string]any{
+				"threadId": "thread-1", "input": []any{map[string]any{"type": "text", "text": "inspect"}},
+				"approvalPolicy": "on-request", "permissions": "workspace", "sandboxPolicy": map[string]any{"type": "workspaceWrite", "writableRoots": []any{"/shared"}},
+			},
+		})
 		assertJSONRoundTrip[OpenAICLIOptions](map[string]any{"model": "gpt-5.6", "json": true, "oss": true})
 		assertJSONRoundTrip[GoogleAPIOptions](map[string]any{"model": "gemini-3.5-pro", "contents": []any{map[string]any{"role": "user"}}, "temperature": 0.3, "candidateCount": 1})
 		assertJSONRoundTrip[GoogleCLIOptions](map[string]any{"model": "gemini-3.5-pro", "outputFormat": "stream-json", "debug": true})
 		assertJSONRoundTrip[DeepSeekAPIOptions](map[string]any{"model": "deepseek-chat", "messages": []any{map[string]any{"role": "user"}}, "stream": true, "frequency_penalty": 0.5})
+	})
+
+	ginkgo.It("aligns OpenAI agent mappings with the published runtime schema", func() {
+		var document adapterSchema
+		for _, candidate := range loadAdapterSchemas() {
+			if candidate.path == filepath.Join("openai", "agent.schema.json") {
+				document = candidate
+				break
+			}
+		}
+		Expect(document.body).NotTo(BeNil())
+		runtimeSchema := api.RuntimeSchemaFor(api.OpenAI, api.ModeAgent)
+		walkLeafOptions(document.body, "", func(path string, field map[string]any) {
+			option := objectField(field, "x-captain-option", path)
+			if stringField(option, "support") != "mapped" {
+				return
+			}
+			for _, specPath := range specPaths(option["specPath"]) {
+				Expect(runtimeArgumentNames(runtimeSchema, specPath)).To(
+					ContainElement(stringField(option, "nativeName")), "%s maps %s", path, specPath,
+				)
+			}
+		})
+	})
+
+	ginkgo.It("generates named permission profiles as strings", func() {
+		for _, field := range []reflect.StructField{
+			generatedField(reflect.TypeFor[ThreadStart](), "Permissions"),
+			generatedField(reflect.TypeFor[ThreadResume](), "Permissions"),
+			generatedField(reflect.TypeFor[TurnStart](), "Permissions"),
+		} {
+			Expect(field.Type.Kind()).To(Equal(reflect.Pointer), field.Name)
+			Expect(field.Type.Elem().Kind()).To(Equal(reflect.String), field.Name)
+		}
 	})
 })
 
@@ -265,4 +313,44 @@ func assertJSONRoundTrip[T any](input map[string]any) {
 	var actual map[string]any
 	Expect(json.Unmarshal(encoded, &actual)).To(Succeed())
 	Expect(actual).To(Equal(expected), fmt.Sprintf("%T", dto))
+}
+
+func specPaths(value any) []string {
+	switch typed := value.(type) {
+	case string:
+		return []string{typed}
+	case []any:
+		paths := make([]string, len(typed))
+		for i, entry := range typed {
+			path, ok := entry.(string)
+			Expect(ok).To(BeTrue(), "specPath entry %d is %T", i, entry)
+			paths[i] = path
+		}
+		return paths
+	default:
+		ginkgo.Fail(fmt.Sprintf("invalid specPath type %T", value))
+		return nil
+	}
+}
+
+func runtimeArgumentNames(schema map[string]any, path string) []string {
+	field := schema
+	for _, name := range strings.Split(path, ".") {
+		field = objectField(objectField(field, "properties", path), name, path)
+	}
+	raw, ok := field["x-clicky-arguments"].([]any)
+	Expect(ok).To(BeTrue(), "runtime field %s has no native arguments", path)
+	names := make([]string, 0, len(raw))
+	for _, entry := range raw {
+		argument, ok := entry.(map[string]any)
+		Expect(ok).To(BeTrue(), "runtime field %s has malformed native argument", path)
+		names = append(names, stringField(argument, "name"))
+	}
+	return names
+}
+
+func generatedField(root reflect.Type, name string) reflect.StructField {
+	field, ok := root.FieldByName(name)
+	Expect(ok).To(BeTrue(), "%s.%s", root.Name(), name)
+	return field
 }
