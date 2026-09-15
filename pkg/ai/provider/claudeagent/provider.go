@@ -41,6 +41,8 @@ const (
 	methodPrompt     = "prompt"
 	methodInterrupt  = "interrupt"
 	methodShutdown   = "shutdown"
+	// methodSetPermissionMode switches the live query's posture (Query.setPermissionMode).
+	methodSetPermissionMode = "set_permission_mode"
 )
 
 // methodCanUseTool is the server→client request agent.ts sends to broker a
@@ -504,6 +506,7 @@ func (p *Provider) initializeParams(req ai.Request) (initializeParams, error) {
 		OutputSchema:       p.sessionSchema,
 		MonitorURL:         monitorHooksURL(req),
 		MCPServers:         callerToolServers(p.callerTools),
+		StrictMCPConfig:    req.Permissions.MCP.Disabled,
 		CallerToolUseIDKey: callerToolUseIDKey(p.callerTools),
 	}, nil
 }

@@ -28,4 +28,7 @@ type initializeParams struct {
 	MonitorURL         string                      `json:"monitorUrl,omitempty"`
 	MCPServers         map[string]callerToolServer `json:"mcpServers,omitempty"`
 	CallerToolUseIDKey string                      `json:"callerToolUseIDKey,omitempty"`
+	// StrictMCPConfig limits the SDK to MCPServers. Without it every ambient
+	// server (.mcp.json, user settings, plugins) loads alongside them.
+	StrictMCPConfig bool `json:"strictMcpConfig,omitempty"`
 }
