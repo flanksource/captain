@@ -40,16 +40,16 @@ func (t CodexSandboxTranslation) ConfigArgs() []string {
 // `sandbox: off` no longer forces never-ask — an unstated mode still resolves to
 // on-request, which is the safe direction to default in.
 func TranslateCodexSandbox(runtime Runtime, ref *SandboxRef, mode PermissionMode) (CodexSandboxTranslation, error) {
-	if ref == nil {
-		return CodexSandboxTranslation{}, nil
-	}
-	if err := ref.Validate(); err != nil {
-		return CodexSandboxTranslation{}, fmt.Errorf("%s sandbox: %w", runtime, err)
-	}
 	if err := validatePermissionModeSupport(runtime, mode); err != nil {
 		return CodexSandboxTranslation{}, err
 	}
 	approval := codexApproval(mode)
+	if ref == nil {
+		return CodexSandboxTranslation{Approval: approval}, nil
+	}
+	if err := ref.Validate(); err != nil {
+		return CodexSandboxTranslation{}, fmt.Errorf("%s sandbox: %w", runtime, err)
+	}
 	switch ref.Mode {
 	case SandboxOff:
 		return CodexSandboxTranslation{Sandbox: CodexSandboxDangerFull, Approval: approval}, nil

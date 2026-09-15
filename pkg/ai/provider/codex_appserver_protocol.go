@@ -3,6 +3,8 @@ package provider
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/flanksource/captain/pkg/ai"
@@ -349,27 +351,15 @@ func buildThreadStartParams(model string, req ai.Request, callerTools *api.Calle
 	if model != "" {
 		p["model"] = model
 	}
-	translation, err := translateCodexSandbox(api.RuntimeOf(api.OpenAI, api.ModeAgent), req)
+	translation, roots, err := codexAppServerSafety(req)
 	if err != nil {
 		return nil, err
 	}
-	if translation.Sandbox != "" {
-		p["sandbox"] = string(translation.Sandbox)
-	}
-	if translation.Approval != "" {
-		p["approvalPolicy"] = string(translation.Approval)
-	}
-	if req.Memory.SkipMemory || req.Memory.Bare {
+	applyCodexThreadSafety(p, translation, roots)
+	if req.Memory.SkipMemory || req.Memory.Bare || req.Permissions.HasPreset(api.PresetBare) {
 		p["ephemeral"] = true
 	}
-	config := codexThreadConfig(req, callerTools)
-	if len(translation.WorkspaceWrite) > 0 {
-		if config == nil {
-			config = map[string]any{}
-		}
-		config["sandbox_workspace_write"] = translation.WorkspaceWrite
-	}
-	if config != nil {
+	if config := codexThreadConfig(req, callerTools, translation.WorkspaceWrite); config != nil {
 		p["config"] = config
 	}
 	return p, nil
@@ -379,15 +369,11 @@ func buildThreadStartParams(model string, req ai.Request, callerTools *api.Calle
 // non-empty, is sent as the turn-scoped `outputSchema` that constrains the final
 // assistant message to validated JSON (structured output); the raw JSON Schema
 // bytes are embedded inline verbatim.
-
 func buildTurnStartParams(model string, req ai.Request, threadID string, outputSchema json.RawMessage) (map[string]any, error) {
 	if err := ai.ValidateAttachmentCompatibility([]api.Model{{Name: model, Provider: api.OpenAI, Mode: api.ModeAgent}}, req.Prompt.Attachments); err != nil {
 		return nil, err
 	}
 	if err := api.RequireToolPolicySupport(api.OpenAI, api.ModeAgent, req.Permissions); err != nil {
-		return nil, err
-	}
-	if err := rejectUnsupportedDirectories(api.RuntimeOf(api.OpenAI, api.ModeAgent), req.Permissions); err != nil {
 		return nil, err
 	}
 	input := make([]map[string]any, 0, len(req.Prompt.Attachments))
@@ -405,6 +391,22 @@ func buildTurnStartParams(model string, req ai.Request, threadID string, outputS
 		"threadId": threadID,
 		"input":    input,
 	}
+	translation, roots, err := codexAppServerSafety(req)
+	if err != nil {
+		return nil, err
+	}
+	if cwd := req.Cwd(); cwd != "" {
+		p["cwd"] = cwd
+	}
+	if translation.Approval != "" {
+		p["approvalPolicy"] = string(translation.Approval)
+	}
+	if len(roots) > 0 {
+		p["runtimeWorkspaceRoots"] = roots
+	}
+	if translation.Sandbox != "" {
+		p["sandboxPolicy"] = codexTurnSandboxPolicy(translation)
+	}
 	if model != "" {
 		p["model"] = model
 	}
@@ -417,7 +419,7 @@ func buildTurnStartParams(model string, req ai.Request, threadID string, outputS
 	return p, nil
 }
 
-func buildResumeParams(req ai.Request, callerTools *api.CallerToolEndpoint) map[string]any {
+func buildResumeParams(req ai.Request, callerTools *api.CallerToolEndpoint) (map[string]any, error) {
 	// Unlike thread/start, Codex's versioned thread/resume schema does not expose
 	// experimentalRawEvents. A cold-resumed thread therefore uses the ordinary
 	// command-output fallback until Codex adds that protocol capability.
@@ -425,23 +427,117 @@ func buildResumeParams(req ai.Request, callerTools *api.CallerToolEndpoint) map[
 	if cwd := req.Cwd(); cwd != "" {
 		p["cwd"] = cwd
 	}
-	if config := codexThreadConfig(req, callerTools); config != nil {
+	translation, roots, err := codexAppServerSafety(req)
+	if err != nil {
+		return nil, err
+	}
+	applyCodexThreadSafety(p, translation, roots)
+	if config := codexThreadConfig(req, callerTools, translation.WorkspaceWrite); config != nil {
 		p["config"] = config
 	}
-	return p
+	return p, nil
 }
 
-func codexThreadConfig(req ai.Request, callerTools *api.CallerToolEndpoint) map[string]any {
-	if req.Permissions.MCP.Disabled {
-		return map[string]any{"mcp_servers": map[string]any{}}
+func codexAppServerSafety(req ai.Request) (api.CodexSandboxTranslation, []string, error) {
+	translation, err := translateCodexSandbox(api.RuntimeOf(api.OpenAI, api.ModeAgent), req)
+	if err != nil {
+		return api.CodexSandboxTranslation{}, nil, err
 	}
-	if callerTools == nil {
+	roots, err := codexRuntimeWorkspaceRoots(req)
+	if err != nil {
+		return api.CodexSandboxTranslation{}, nil, err
+	}
+	return translation, roots, nil
+}
+
+func codexRuntimeWorkspaceRoots(req ai.Request) ([]string, error) {
+	directories := req.Permissions.CleanDirectories()
+	if len(directories) == 0 {
+		return nil, nil
+	}
+	cwd := req.Cwd()
+	if cwd == "" {
+		var err error
+		cwd, err = os.Getwd()
+		if err != nil {
+			return nil, fmt.Errorf("resolve Codex runtime workspace cwd: %w", err)
+		}
+	}
+	absCwd, err := filepath.Abs(cwd)
+	if err != nil {
+		return nil, fmt.Errorf("resolve Codex runtime workspace cwd %q: %w", cwd, err)
+	}
+	roots := []string{filepath.Clean(absCwd)}
+	seen := map[string]struct{}{roots[0]: {}}
+	for _, directory := range directories {
+		if !filepath.IsAbs(directory) {
+			directory = filepath.Join(absCwd, directory)
+		}
+		directory = filepath.Clean(directory)
+		if _, exists := seen[directory]; exists {
+			continue
+		}
+		seen[directory] = struct{}{}
+		roots = append(roots, directory)
+	}
+	return roots, nil
+}
+
+func applyCodexThreadSafety(params map[string]any, translation api.CodexSandboxTranslation, roots []string) {
+	if translation.Sandbox != "" {
+		params["sandbox"] = string(translation.Sandbox)
+	}
+	if translation.Approval != "" {
+		params["approvalPolicy"] = string(translation.Approval)
+	}
+	if len(roots) > 0 {
+		params["runtimeWorkspaceRoots"] = roots
+	}
+}
+
+func codexTurnSandboxPolicy(translation api.CodexSandboxTranslation) map[string]any {
+	switch translation.Sandbox {
+	case api.CodexSandboxDangerFull:
+		return map[string]any{"type": "dangerFullAccess"}
+	case api.CodexSandboxReadOnly:
+		policy := map[string]any{"type": "readOnly"}
+		if networkAccess, ok := translation.WorkspaceWrite["network_access"]; ok {
+			policy["networkAccess"] = networkAccess
+		}
+		return policy
+	case api.CodexSandboxWorkspaceWrite:
+		policy := map[string]any{"type": "workspaceWrite"}
+		for source, target := range map[string]string{
+			"writable_roots": "writableRoots", "exclude_slash_tmp": "excludeSlashTmp",
+			"exclude_tmpdir_env_var": "excludeTmpdirEnvVar", "network_access": "networkAccess",
+		} {
+			if value, ok := translation.WorkspaceWrite[source]; ok {
+				policy[target] = value
+			}
+		}
+		return policy
+	default:
+		panic(fmt.Sprintf("unsupported validated Codex sandbox %q", translation.Sandbox))
+	}
+}
+
+func codexThreadConfig(req ai.Request, callerTools *api.CallerToolEndpoint, workspaceWrite map[string]any) map[string]any {
+	config := map[string]any{}
+	if req.Permissions.MCP.Disabled {
+		config["mcp_servers"] = map[string]any{}
+	} else if callerTools != nil {
+		config["mcp_servers"] = map[string]any{
+			callerTools.Name: map[string]any{
+				"url": callerTools.URL, "http_headers": cloneStringMap(callerTools.Headers),
+				"required": true, "enabled": true, "default_tools_approval_mode": "approve",
+			},
+		}
+	}
+	if len(workspaceWrite) > 0 {
+		config["sandbox_workspace_write"] = workspaceWrite
+	}
+	if len(config) == 0 {
 		return nil
 	}
-	return map[string]any{"mcp_servers": map[string]any{
-		callerTools.Name: map[string]any{
-			"url": callerTools.URL, "http_headers": cloneStringMap(callerTools.Headers),
-			"required": true, "enabled": true, "default_tools_approval_mode": "approve",
-		},
-	}}
+	return config
 }

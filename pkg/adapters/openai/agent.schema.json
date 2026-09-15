@@ -9,7 +9,7 @@
     "mode": "agent",
     "sources": [
       {"kind": "protocol", "reference": "codex app-server generate-json-schema --experimental", "version": "codex-cli 0.154.0"},
-      {"kind": "implementation", "reference": "pkg/ai/provider/codex_appserver.go and codex_appserver_protocol.go", "version": "6a2b56cbd26702b18905865f21fc66d44cc864cc"}
+      {"kind": "implementation", "reference": "pkg/ai/provider/codex_appserver.go and codex_appserver_protocol.go", "version": "7220b7c99be01dfd9809a1fc237dafda9aa712b3"}
     ]
   },
   "properties": {
@@ -38,33 +38,34 @@
         "cwd": {
           "title": "Working directory", "description": "Initial working directory for the Codex thread.",
           "type": "string", "format": "path", "x-clicky-section": "workspace", "x-clicky-order": 30,
-          "x-captain-option": {"nativeName": "thread/start.cwd", "support": "mapped", "specPath": "context.dir"}
+          "x-captain-option": {"nativeName": "thread/start.cwd", "support": "mapped", "specPath": "setup.cwd"}
         },
         "model": {
           "title": "Model", "description": "Model identifier used to start the Codex thread.",
           "type": "string", "x-clicky-section": "model", "x-clicky-order": 40, "x-icon": "sparkles",
-          "x-captain-option": {"nativeName": "thread/start.model", "support": "mapped", "specPath": "model.name"}
+          "x-captain-option": {"nativeName": "thread/start.model", "support": "mapped", "specPath": "model"}
         },
         "sandbox": {
           "title": "Sandbox mode", "description": "Named Codex sandbox mode for the thread.",
           "type": "string", "enum": ["read-only", "workspace-write", "danger-full-access"], "x-clicky-section": "sandbox", "x-clicky-order": 50, "x-enum-display": "segmented",
-          "x-captain-option": {"nativeName": "thread/start.sandbox", "support": "mapped", "specPath": "permissions"}
+          "x-captain-option": {"nativeName": "thread/start.sandbox", "support": "mapped", "specPath": ["sandbox.mode", "sandbox.policy.filesystem.access"]}
         },
         "approvalPolicy": {
           "title": "Approval policy", "description": "Codex command-approval policy for the thread.",
-          "type": "string", "x-clicky-section": "permissions", "x-clicky-order": 60,
+          "oneOf": [{"type": "string", "enum": ["untrusted", "on-request", "never"]}, {"type": "object", "additionalProperties": false, "required": ["granular"], "properties": {"granular": {"type": "object", "additionalProperties": false, "required": ["mcp_elicitations", "rules", "sandbox_approval"], "properties": {"mcp_elicitations": {"type": "boolean"}, "request_permissions": {"type": "boolean", "default": false}, "rules": {"type": "boolean"}, "sandbox_approval": {"type": "boolean"}, "skill_approval": {"type": "boolean", "default": false}}}}}],
+          "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]}, "x-clicky-section": "permissions", "x-clicky-order": 60,
           "x-captain-option": {"nativeName": "thread/start.approvalPolicy", "support": "mapped", "specPath": "permissions.mode"}
         },
         "ephemeral": {
           "title": "Ephemeral thread", "description": "Whether Codex avoids persisting the thread to disk.",
           "type": "boolean", "x-clicky-section": "workspace", "x-clicky-order": 70,
-          "x-captain-option": {"nativeName": "thread/start.ephemeral", "support": "mapped", "specPath": "memory.skip"}
+          "x-captain-option": {"nativeName": "thread/start.ephemeral", "support": "mapped", "specPath": ["memory.skipMemory", "memory.bare", "permissions.presets"]}
         },
         "config": {
           "title": "Configuration overrides", "description": "Codex configuration overrides derived from Captain sandbox and caller-tool settings.",
           "type": "object", "additionalProperties": true, "readOnly": true, "x-clicky-section": "environment", "x-clicky-order": 80,
           "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
-          "x-captain-option": {"nativeName": "thread/start.config", "support": "managed", "note": "Captain builds protocol configuration overrides for writable roots and its caller-tool MCP server."}
+          "x-captain-option": {"nativeName": "thread/start.config", "support": "managed", "note": "Captain assembles sandbox and MCP overrides from mapped Spec values and its registered caller-tool endpoint."}
         },
         "experimentalRawEvents": {
           "title": "Experimental raw events", "description": "Whether raw protocol events are included in item streams.",
@@ -78,7 +79,7 @@
         },
         "approvalsReviewer": {
           "title": "Approvals reviewer", "description": "Reviewer implementation used to evaluate approval requests.",
-          "type": "string", "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 110,
+          "type": "string", "enum": ["user", "auto_review", "guardian_subagent"], "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 110,
           "x-captain-option": {"nativeName": "thread/start.approvalsReviewer", "support": "unsupported", "note": "Captain does not select a native Codex approvals reviewer."}
         },
         "baseInstructions": {
@@ -124,10 +125,9 @@
           "x-captain-option": {"nativeName": "thread/start.multiAgentMode", "support": "unsupported", "note": "Captain does not override Codex multi-agent mode."}
         },
         "permissions": {
-          "title": "Permissions", "description": "Detailed Codex permission configuration for the thread.",
-          "type": "object", "additionalProperties": true, "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 200,
-          "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
-          "x-captain-option": {"nativeName": "thread/start.permissions", "support": "unsupported", "note": "Captain currently maps the legacy sandbox and approvalPolicy fields."}
+          "title": "Permission profile", "description": "Named Codex permission-profile identifier for the thread; it cannot be combined with sandbox.",
+          "type": "string", "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 200,
+          "x-captain-option": {"nativeName": "thread/start.permissions", "support": "unsupported", "note": "Captain maps sandbox and approvalPolicy explicitly and does not select native named permission profiles."}
         },
         "personality": {
           "title": "Personality", "description": "Named Codex response personality for the thread.",
@@ -140,9 +140,9 @@
           "x-captain-option": {"nativeName": "thread/start.projectId", "support": "unsupported", "note": "Captain does not set a native Codex project identifier."}
         },
         "runtimeWorkspaceRoots": {
-          "title": "Runtime workspace roots", "description": "Workspace roots reported to the Codex runtime.",
-          "type": "array", "items": {"type": "string", "format": "path"}, "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 230, "x-array-display": "list",
-          "x-captain-option": {"nativeName": "thread/start.runtimeWorkspaceRoots", "support": "unsupported", "note": "Captain encodes writable roots through config overrides instead of this protocol field."}
+          "title": "Runtime workspace roots", "description": "Replacement runtime workspace roots for the Codex thread; paths must be absolute.",
+          "type": "array", "items": {"type": "string", "format": "path"}, "x-clicky-section": "workspace", "x-clicky-order": 230, "x-array-display": "list",
+          "x-captain-option": {"nativeName": "thread/start.runtimeWorkspaceRoots", "support": "mapped", "specPath": "permissions.directories"}
         },
         "selectedCapabilityRoots": {
           "title": "Selected capability roots", "description": "Filesystem roots selected for capability discovery.",
@@ -183,7 +183,7 @@
         "cwd": {
           "title": "Working directory", "description": "Working directory applied when the thread is resumed.",
           "type": "string", "format": "path", "x-clicky-section": "workspace", "x-clicky-order": 300,
-          "x-captain-option": {"nativeName": "thread/resume.cwd", "support": "mapped", "specPath": "context.dir"}
+          "x-captain-option": {"nativeName": "thread/resume.cwd", "support": "mapped", "specPath": "setup.cwd"}
         },
         "config": {
           "title": "Configuration overrides", "description": "Codex configuration overrides reconstructed for the resumed thread.",
@@ -193,12 +193,13 @@
         },
         "approvalPolicy": {
           "title": "Approval policy", "description": "Approval policy override applied while resuming the thread.",
-          "type": "string", "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 320,
-          "x-captain-option": {"nativeName": "thread/resume.approvalPolicy", "support": "unsupported", "note": "Captain relies on the resumed thread's approval policy."}
+          "oneOf": [{"type": "string", "enum": ["untrusted", "on-request", "never"]}, {"type": "object", "additionalProperties": false, "required": ["granular"], "properties": {"granular": {"type": "object", "additionalProperties": false, "required": ["mcp_elicitations", "rules", "sandbox_approval"], "properties": {"mcp_elicitations": {"type": "boolean"}, "request_permissions": {"type": "boolean", "default": false}, "rules": {"type": "boolean"}, "sandbox_approval": {"type": "boolean"}, "skill_approval": {"type": "boolean", "default": false}}}}}],
+          "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]}, "x-clicky-section": "permissions", "x-clicky-order": 320,
+          "x-captain-option": {"nativeName": "thread/resume.approvalPolicy", "support": "mapped", "specPath": "permissions.mode"}
         },
         "approvalsReviewer": {
           "title": "Approvals reviewer", "description": "Reviewer override applied to the resumed thread.",
-          "type": "string", "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 330,
+          "type": "string", "enum": ["user", "auto_review", "guardian_subagent"], "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 330,
           "x-captain-option": {"nativeName": "thread/resume.approvalsReviewer", "support": "unsupported", "note": "Captain does not select a native approvals reviewer on resume."}
         },
         "baseInstructions": {
@@ -244,10 +245,9 @@
           "x-captain-option": {"nativeName": "thread/resume.path", "support": "unsupported", "note": "Captain resumes by thread ID rather than rollout path."}
         },
         "permissions": {
-          "title": "Permissions", "description": "Detailed permission override applied to the resumed thread.",
-          "type": "object", "additionalProperties": true, "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 420,
-          "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
-          "x-captain-option": {"nativeName": "thread/resume.permissions", "support": "unsupported", "note": "Captain relies on the resumed thread's native permission state."}
+          "title": "Permission profile", "description": "Named Codex permission-profile identifier applied to the resumed thread; it cannot be combined with sandbox.",
+          "type": "string", "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 420,
+          "x-captain-option": {"nativeName": "thread/resume.permissions", "support": "unsupported", "note": "Captain reapplies sandbox and approvalPolicy explicitly and does not select native named permission profiles."}
         },
         "personality": {
           "title": "Personality", "description": "Response personality override applied to the resumed thread.",
@@ -255,14 +255,14 @@
           "x-captain-option": {"nativeName": "thread/resume.personality", "support": "unsupported", "note": "Captain does not override Codex personality on resume."}
         },
         "runtimeWorkspaceRoots": {
-          "title": "Runtime workspace roots", "description": "Workspace roots reported when resuming the thread.",
-          "type": "array", "items": {"type": "string", "format": "path"}, "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 440, "x-array-display": "list",
-          "x-captain-option": {"nativeName": "thread/resume.runtimeWorkspaceRoots", "support": "unsupported", "note": "Captain encodes writable roots through config overrides."}
+          "title": "Runtime workspace roots", "description": "Replacement runtime workspace roots for the resumed thread; paths must be absolute.",
+          "type": "array", "items": {"type": "string", "format": "path"}, "x-clicky-section": "workspace", "x-clicky-order": 440, "x-array-display": "list",
+          "x-captain-option": {"nativeName": "thread/resume.runtimeWorkspaceRoots", "support": "mapped", "specPath": "permissions.directories"}
         },
         "sandbox": {
           "title": "Sandbox mode", "description": "Sandbox override applied while resuming the thread.",
-          "type": "string", "readOnly": true, "x-clicky-section": "sandbox", "x-clicky-order": 450,
-          "x-captain-option": {"nativeName": "thread/resume.sandbox", "support": "unsupported", "note": "Captain relies on the resumed thread's sandbox and config overrides."}
+          "type": "string", "enum": ["read-only", "workspace-write", "danger-full-access"], "x-clicky-section": "sandbox", "x-clicky-order": 450,
+          "x-captain-option": {"nativeName": "thread/resume.sandbox", "support": "mapped", "specPath": ["sandbox.mode", "sandbox.policy.filesystem.access"]}
         },
         "serviceTier": {
           "title": "Service tier", "description": "Processing tier override applied to the resumed thread.",
@@ -284,23 +284,23 @@
           "title": "Input", "description": "Text and local-image items supplied for the Codex turn.",
           "type": "array", "items": {"type": "object", "additionalProperties": true}, "x-clicky-section": "prompt", "x-clicky-order": 480, "x-array-display": "stacked",
           "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
-          "x-captain-option": {"nativeName": "turn/start.input", "support": "mapped", "specPath": ["prompt.user", "prompt.attachments"]}
+          "x-captain-option": {"nativeName": "turn/start.input", "support": "mapped", "specPath": ["prompt.user", "prompt.system", "prompt.appendSystem", "prompt.attachments"]}
         },
         "model": {
           "title": "Model", "description": "Model identifier used for this Codex turn.",
           "type": "string", "x-clicky-section": "model", "x-clicky-order": 490,
-          "x-captain-option": {"nativeName": "turn/start.model", "support": "mapped", "specPath": "model.name"}
+          "x-captain-option": {"nativeName": "turn/start.model", "support": "mapped", "specPath": "model"}
         },
         "effort": {
           "title": "Reasoning effort", "description": "Reasoning effort used for this Codex turn.",
-          "type": "string", "enum": ["low", "medium", "high", "xhigh"], "x-clicky-section": "model", "x-clicky-order": 500, "x-enum-display": "combobox",
-          "x-captain-option": {"nativeName": "turn/start.effort", "support": "mapped", "specPath": "model.effort"}
+          "type": "string", "minLength": 1, "x-clicky-section": "model", "x-clicky-order": 500,
+          "x-captain-option": {"nativeName": "turn/start.effort", "support": "mapped", "specPath": "effort"}
         },
         "outputSchema": {
           "title": "Output schema", "description": "JSON Schema constraining the final turn response.",
           "type": "object", "additionalProperties": true, "x-clicky-section": "prompt", "x-clicky-order": 510,
           "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
-          "x-captain-option": {"nativeName": "turn/start.outputSchema", "support": "mapped", "specPath": ["prompt.schema", "prompt.schemaJson"]}
+          "x-captain-option": {"nativeName": "turn/start.outputSchema", "support": "mapped", "specPath": ["prompt.schema", "prompt.schemaJSON"]}
         },
         "additionalContext": {
           "title": "Additional context", "description": "Extra context attached to the turn outside the user input list.",
@@ -309,12 +309,13 @@
         },
         "approvalPolicy": {
           "title": "Approval policy", "description": "Approval-policy override for the turn.",
-          "type": "string", "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 530,
-          "x-captain-option": {"nativeName": "turn/start.approvalPolicy", "support": "unsupported", "note": "Captain sets approval policy when creating the thread."}
+          "oneOf": [{"type": "string", "enum": ["untrusted", "on-request", "never"]}, {"type": "object", "additionalProperties": false, "required": ["granular"], "properties": {"granular": {"type": "object", "additionalProperties": false, "required": ["mcp_elicitations", "rules", "sandbox_approval"], "properties": {"mcp_elicitations": {"type": "boolean"}, "request_permissions": {"type": "boolean", "default": false}, "rules": {"type": "boolean"}, "sandbox_approval": {"type": "boolean"}, "skill_approval": {"type": "boolean", "default": false}}}}}],
+          "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]}, "x-clicky-section": "permissions", "x-clicky-order": 530,
+          "x-captain-option": {"nativeName": "turn/start.approvalPolicy", "support": "mapped", "specPath": "permissions.mode"}
         },
         "approvalsReviewer": {
           "title": "Approvals reviewer", "description": "Reviewer override used for approvals in this turn.",
-          "type": "string", "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 540,
+          "type": "string", "enum": ["user", "auto_review", "guardian_subagent"], "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 540,
           "x-captain-option": {"nativeName": "turn/start.approvalsReviewer", "support": "unsupported", "note": "Captain does not select a native approvals reviewer."}
         },
         "clientUserMessageId": {
@@ -329,8 +330,8 @@
         },
         "cwd": {
           "title": "Working directory", "description": "Working-directory override for the turn.",
-          "type": "string", "format": "path", "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 570,
-          "x-captain-option": {"nativeName": "turn/start.cwd", "support": "unsupported", "note": "Captain sets cwd when starting or resuming the thread."}
+          "type": "string", "format": "path", "x-clicky-section": "workspace", "x-clicky-order": 570,
+          "x-captain-option": {"nativeName": "turn/start.cwd", "support": "mapped", "specPath": "setup.cwd"}
         },
         "cyberAccessProgram": {
           "title": "Cyber access program", "description": "Codex cyber-access program configuration for the turn.",
@@ -350,10 +351,9 @@
           "x-captain-option": {"nativeName": "turn/start.multiAgentMode", "support": "unsupported", "note": "Captain does not override native multi-agent mode."}
         },
         "permissions": {
-          "title": "Permissions", "description": "Detailed permission override for this turn.",
-          "type": "object", "additionalProperties": true, "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 610,
-          "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
-          "x-captain-option": {"nativeName": "turn/start.permissions", "support": "unsupported", "note": "Captain sets permission posture when creating the thread."}
+          "title": "Permission profile", "description": "Named Codex permission-profile identifier for this turn and subsequent turns; it cannot be combined with sandboxPolicy.",
+          "type": "string", "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 610,
+          "x-captain-option": {"nativeName": "turn/start.permissions", "support": "unsupported", "note": "Captain maps sandbox and approvalPolicy explicitly and does not select native named permission profiles."}
         },
         "personality": {
           "title": "Personality", "description": "Response personality override for this turn.",
@@ -367,15 +367,21 @@
           "x-captain-option": {"nativeName": "turn/start.responsesapiClientMetadata", "support": "unsupported", "note": "Captain does not attach Codex Responses API client metadata."}
         },
         "runtimeWorkspaceRoots": {
-          "title": "Runtime workspace roots", "description": "Workspace roots reported for this turn.",
-          "type": "array", "items": {"type": "string", "format": "path"}, "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 640, "x-array-display": "list",
-          "x-captain-option": {"nativeName": "turn/start.runtimeWorkspaceRoots", "support": "unsupported", "note": "Captain configures writable roots at thread start."}
+          "title": "Runtime workspace roots", "description": "Replacement runtime workspace roots for this turn and subsequent turns; paths must be absolute.",
+          "type": "array", "items": {"type": "string", "format": "path"}, "x-clicky-section": "workspace", "x-clicky-order": 640, "x-array-display": "list",
+          "x-captain-option": {"nativeName": "turn/start.runtimeWorkspaceRoots", "support": "mapped", "specPath": "permissions.directories"}
         },
         "sandboxPolicy": {
           "title": "Sandbox policy", "description": "Detailed sandbox policy override for this turn.",
-          "type": "object", "additionalProperties": true, "readOnly": true, "x-clicky-section": "sandbox", "x-clicky-order": 650,
+          "oneOf": [
+            {"type": "object", "required": ["type"], "properties": {"type": {"const": "dangerFullAccess"}}},
+            {"type": "object", "required": ["type"], "properties": {"type": {"const": "readOnly"}, "networkAccess": {"type": "boolean", "default": false}}},
+            {"type": "object", "required": ["type"], "properties": {"type": {"const": "externalSandbox"}, "networkAccess": {"type": "string", "enum": ["restricted", "enabled"], "default": "restricted"}}},
+            {"type": "object", "required": ["type"], "properties": {"type": {"const": "workspaceWrite"}, "writableRoots": {"type": "array", "items": {"type": "string", "format": "path"}, "default": []}, "excludeSlashTmp": {"type": "boolean", "default": false}, "excludeTmpdirEnvVar": {"type": "boolean", "default": false}, "networkAccess": {"type": "boolean", "default": false}}}
+          ],
+          "x-clicky-section": "sandbox", "x-clicky-order": 650,
           "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
-          "x-captain-option": {"nativeName": "turn/start.sandboxPolicy", "support": "unsupported", "note": "Captain sets sandbox mode and configuration at thread start."}
+          "x-captain-option": {"nativeName": "turn/start.sandboxPolicy", "support": "mapped", "specPath": ["sandbox.mode", "sandbox.policy.filesystem.access", "sandbox.policy.filesystem.writableRoots", "sandbox.policy.filesystem.includeSystemTemp", "sandbox.policy.network.access"]}
         },
         "serviceTier": {
           "title": "Service tier", "description": "Processing tier selected for this turn.",

@@ -330,7 +330,11 @@ func (c *CodexAppServer) startThread(ctx context.Context, req ai.Request) (strin
 		return threadID, nil
 	}
 	if req.SessionID != "" {
-		raw, err := rpc.Call(ctx, "thread/resume", buildResumeParams(req, c.callerTools))
+		params, err := buildResumeParams(req, c.callerTools)
+		if err != nil {
+			return "", err
+		}
+		raw, err := rpc.Call(ctx, "thread/resume", params)
 		if err != nil {
 			return "", err
 		}
@@ -442,10 +446,11 @@ func (c *CodexAppServer) prepareCallerTools(req ai.Request) error {
 	if req.Permissions.MCP.Disabled {
 		return fmt.Errorf("codex app-server: caller tools require MCP but MCP is disabled")
 	}
-	runtime, err := callertools.New(callertools.Options{
-		Definitions: definitions, CanUseTool: c.cfg.CanUseTool,
-		SessionID: firstNonEmpty(c.cfg.CaptainSessionID, req.SessionID, c.cfg.SessionID),
-	})
+	options, err := c.callerToolOptions(req, definitions)
+	if err != nil {
+		return err
+	}
+	runtime, err := callertools.New(options)
 	if err != nil {
 		return fmt.Errorf("start codex app-server caller tools: %w", err)
 	}
@@ -453,6 +458,21 @@ func (c *CodexAppServer) prepareCallerTools(req ai.Request) error {
 	c.callerToolsRuntime = runtime
 	c.callerTools = &endpoint
 	return nil
+}
+
+func (c *CodexAppServer) callerToolOptions(req ai.Request, definitions []api.ToolDefinition) (callertools.Options, error) {
+	approvalTimeout, err := req.Permissions.ParseApprovalTimeout()
+	if err != nil {
+		return callertools.Options{}, fmt.Errorf("codex app-server caller tools: %w", err)
+	}
+	return callertools.Options{
+		// Owned by the provider, which outlives any one request.
+		Context:         context.Background(),
+		Definitions:     definitions,
+		CanUseTool:      c.cfg.CanUseTool,
+		SessionID:       firstNonEmpty(c.cfg.CaptainSessionID, req.SessionID, c.cfg.SessionID),
+		ApprovalTimeout: approvalTimeout,
+	}, nil
 }
 
 func cloneStringMap(values map[string]string) map[string]string {
