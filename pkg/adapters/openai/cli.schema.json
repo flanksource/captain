@@ -116,7 +116,7 @@
     "approveForMe": {
       "title": "Automatic approvals", "description": "Whether Codex chooses when to request command approval.",
       "type": "boolean", "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 210,
-      "x-captain-option": {"nativeName": "--approve-for-me", "support": "unsupported", "note": "Captain maps its permission mode through Codex approval_policy configuration."}
+      "x-captain-option": {"nativeName": "--approve-for-me", "support": "unsupported", "note": "Captain maps its permission mode through Codex approval_policy and approvals_reviewer configuration."}
     },
     "dangerouslyBypassApprovalsAndSandbox": {
       "title": "Bypass approvals and sandbox", "description": "Whether Codex executes without approval prompts or sandbox isolation.",

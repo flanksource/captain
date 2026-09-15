@@ -79,8 +79,8 @@
         },
         "approvalsReviewer": {
           "title": "Approvals reviewer", "description": "Reviewer implementation used to evaluate approval requests.",
-          "type": "string", "enum": ["user", "auto_review", "guardian_subagent"], "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 110,
-          "x-captain-option": {"nativeName": "thread/start.approvalsReviewer", "support": "unsupported", "note": "Captain does not select a native Codex approvals reviewer."}
+          "type": "string", "enum": ["user", "auto_review", "guardian_subagent"], "x-clicky-section": "permissions", "x-clicky-order": 110,
+          "x-captain-option": {"nativeName": "thread/start.approvalsReviewer", "support": "mapped", "specPath": "permissions.mode"}
         },
         "baseInstructions": {
           "title": "Base instructions", "description": "Replacement base instruction text for the Codex thread.",
@@ -199,8 +199,8 @@
         },
         "approvalsReviewer": {
           "title": "Approvals reviewer", "description": "Reviewer override applied to the resumed thread.",
-          "type": "string", "enum": ["user", "auto_review", "guardian_subagent"], "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 330,
-          "x-captain-option": {"nativeName": "thread/resume.approvalsReviewer", "support": "unsupported", "note": "Captain does not select a native approvals reviewer on resume."}
+          "type": "string", "enum": ["user", "auto_review", "guardian_subagent"], "x-clicky-section": "permissions", "x-clicky-order": 330,
+          "x-captain-option": {"nativeName": "thread/resume.approvalsReviewer", "support": "mapped", "specPath": "permissions.mode"}
         },
         "baseInstructions": {
           "title": "Base instructions", "description": "Replacement base instructions applied to the resumed thread.",
@@ -315,8 +315,8 @@
         },
         "approvalsReviewer": {
           "title": "Approvals reviewer", "description": "Reviewer override used for approvals in this turn.",
-          "type": "string", "enum": ["user", "auto_review", "guardian_subagent"], "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 540,
-          "x-captain-option": {"nativeName": "turn/start.approvalsReviewer", "support": "unsupported", "note": "Captain does not select a native approvals reviewer."}
+          "type": "string", "enum": ["user", "auto_review", "guardian_subagent"], "x-clicky-section": "permissions", "x-clicky-order": 540,
+          "x-captain-option": {"nativeName": "turn/start.approvalsReviewer", "support": "mapped", "specPath": "permissions.mode"}
         },
         "clientUserMessageId": {
           "title": "Client user message ID", "description": "Client-assigned identifier for the turn's user message.",
