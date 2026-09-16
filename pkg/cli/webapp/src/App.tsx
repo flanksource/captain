@@ -1,16 +1,19 @@
 import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { AppShell, type AppShellProps } from "@flanksource/clicky-ui/components";
 import {
-  RouterProvider,
-  useBrowserRouter,
-} from "@flanksource/clicky-ui/rpc";
+  AppShell,
+  type AppShellProps,
+} from "@flanksource/clicky-ui/components";
+import { RouterProvider, useBrowserRouter } from "@flanksource/clicky-ui/rpc";
 import { ChatWindowManagerProvider } from "@flanksource/clicky-ui/ai";
 import { EntityExplorerApp } from "@flanksource/clicky-ui/rpc";
 import { apiClient } from "./api";
 import { AgentLauncher } from "./AgentLauncher";
 import { AdapterSchemasPage } from "./AdapterSchemasPage";
-import { parseAdapterSchemaPath, type AdapterSchemaSelection } from "./adapterSchemas";
+import {
+  parseAdapterSchemaPath,
+  type AdapterSchemaSelection,
+} from "./adapterSchemas";
 import { ChatLayer } from "./ChatLayer";
 import {
   CommandPalette,
@@ -63,10 +66,18 @@ export function App() {
   );
 
   const setProjectScope = (scope: ProjectScope) => {
-    setProjectScopeInLocation(scope, router.navigate, router.pathname, locationSearch);
+    setProjectScopeInLocation(
+      scope,
+      router.navigate,
+      router.pathname,
+      locationSearch,
+    );
   };
   const shellActions = (
-    <ShellActions projectScope={projectScope} onProjectScopeChange={setProjectScope} />
+    <ShellActions
+      projectScope={projectScope}
+      onProjectScopeChange={setProjectScope}
+    />
   );
 
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -106,15 +117,24 @@ export function App() {
               search={shellSearch}
             >
               {route.kind === "dashboard" ? (
-                <HomeDashboard onNavigate={router.navigate} projectScope={projectScope} />
+                <HomeDashboard
+                  onNavigate={router.navigate}
+                  projectScope={projectScope}
+                />
               ) : route.kind === "whoami" ? (
                 <WhoamiPage />
               ) : route.kind === "sandboxes" ? (
                 <SandboxesPage />
               ) : route.kind === "runtime-profiles" ? (
-                <RuntimeProfilesPage search={locationSearch} onNavigate={router.navigate} />
+                <RuntimeProfilesPage
+                  search={locationSearch}
+                  onNavigate={router.navigate}
+                />
               ) : route.kind === "adapter-schemas" ? (
-                <AdapterSchemasPage selection={route.selection} onNavigate={router.navigate} />
+                <AdapterSchemasPage
+                  selection={route.selection}
+                  onNavigate={router.navigate}
+                />
               ) : route.kind === "operations" ? (
                 <EntityExplorerApp
                   client={apiClient}
@@ -222,22 +242,36 @@ function parseRoute(pathname: string, search: string): Route {
   if (pathname.startsWith("/operations")) return { kind: "operations" };
   if (pathname.startsWith("/whoami")) return { kind: "whoami" };
   if (pathname.startsWith("/sandboxes")) return { kind: "sandboxes" };
-  if (pathname.startsWith("/runtime-profiles")) return { kind: "runtime-profiles" };
+  if (
+    pathname.startsWith("/runtime-presets") ||
+    pathname.startsWith("/runtime-profiles")
+  ) {
+    return { kind: "runtime-profiles" };
+  }
   if (pathname.startsWith("/adapter-schemas")) {
-    return { kind: "adapter-schemas", selection: parseAdapterSchemaPath(pathname) };
+    return {
+      kind: "adapter-schemas",
+      selection: parseAdapterSchemaPath(pathname),
+    };
   }
   if (pathname.startsWith("/prompts")) {
     const raw = pathname.slice("/prompts".length).replace(/^\/+/, "");
-    const promptId = raw ? decodeURIComponent(raw.split("/")[0] ?? "") : undefined;
+    const promptId = raw
+      ? decodeURIComponent(raw.split("/")[0] ?? "")
+      : undefined;
     return promptId ? { kind: "prompts", promptId } : { kind: "prompts" };
   }
   if (pathname.startsWith("/sessions")) {
     const raw = pathname.slice("/sessions".length).replace(/^\/+/, "");
-    const sessionId = raw ? decodeURIComponent(raw.split("/")[0] ?? "") : undefined;
+    const sessionId = raw
+      ? decodeURIComponent(raw.split("/")[0] ?? "")
+      : undefined;
     return sessionId ? { kind: "sessions", sessionId } : { kind: "sessions" };
   }
   if (pathname.startsWith("/chat/")) {
-    const threadId = decodeURIComponent(pathname.slice("/chat/".length).split("/")[0] ?? "");
+    const threadId = decodeURIComponent(
+      pathname.slice("/chat/".length).split("/")[0] ?? "",
+    );
     const model = new URLSearchParams(search).get("model") || undefined;
     return threadId ? { kind: "chat", threadId, model } : { kind: "dashboard" };
   }

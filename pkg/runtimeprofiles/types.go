@@ -18,12 +18,16 @@ const (
 	KindProfile Kind = "profile"
 )
 
-// SourceKind distinguishes the database from a directory of YAML files.
+// SourceKind distinguishes the database, a directory of YAML files, and the
+// presets captain ships.
 type SourceKind string
 
 const (
 	SourceDB   SourceKind = "db"
 	SourceFile SourceKind = "file"
+	// SourceBuiltin records are embedded in the binary. A database or file
+	// record with the same name shadows one; see Catalog.
+	SourceBuiltin SourceKind = "builtin"
 )
 
 // SourceInfo describes one catalog source as a destination picker sees it.
@@ -51,12 +55,13 @@ type Preset struct {
 	Description string                `json:"description,omitempty"`
 	Scope       api.SpecLayerScope    `json:"scope"`
 	Spec        api.RuntimePresetSpec `json:"spec"`
+	Presets     []string              `json:"presets"`
 	UpdatedAt   time.Time             `json:"updatedAt"`
 }
 
 // API projects the preset onto the resolver's input type.
 func (p Preset) API() api.RuntimePreset {
-	return api.RuntimePreset{ID: p.ID, Name: p.Name, Description: p.Description, Scope: p.Scope, Spec: p.Spec}
+	return api.RuntimePreset{ID: p.ID, Name: p.Name, Description: p.Description, Scope: p.Scope, Spec: p.Spec, Presets: slices.Clone(p.Presets)}
 }
 
 // Profile is a task-specific spec plus the ordered preset references (ids or
@@ -86,6 +91,7 @@ type PresetInput struct {
 	Description string                `json:"description,omitempty" yaml:"description,omitempty"`
 	Scope       api.SpecLayerScope    `json:"scope" yaml:"scope"`
 	Spec        api.RuntimePresetSpec `json:"spec,omitempty" yaml:"spec,omitempty"`
+	Presets     []string              `json:"presets,omitempty" yaml:"presets,omitempty"`
 }
 
 // ProfileInput is everything a caller authors for a profile; see PresetInput.
@@ -101,6 +107,15 @@ type ProfileInput struct {
 // order, and the effective spec populated only by Catalog.Resolve for preview.
 type Resolution struct {
 	Profile  Profile          `json:"profile"`
+	Presets  []Preset         `json:"presets"`
+	Layers   []api.SpecLayer  `json:"-"`
+	Resolved api.ResolvedSpec `json:"resolved"`
+	Warnings []string         `json:"warnings,omitempty"`
+}
+
+// PresetResolution is an ordered preset selection materialised through the
+// catalog. Resolved is populated only by Catalog.ResolvePresets.
+type PresetResolution struct {
 	Presets  []Preset         `json:"presets"`
 	Layers   []api.SpecLayer  `json:"-"`
 	Resolved api.ResolvedSpec `json:"resolved"`
@@ -165,6 +180,9 @@ func (in PresetInput) name() string { return strings.TrimSpace(in.Name) }
 func (in PresetInput) trimmed() PresetInput {
 	in.Name = strings.TrimSpace(in.Name)
 	in.Description = strings.TrimSpace(in.Description)
+	for index := range in.Presets {
+		in.Presets[index] = strings.TrimSpace(in.Presets[index])
+	}
 	return in
 }
 
@@ -173,7 +191,7 @@ func (in PresetInput) validate() error {
 	if name == "" {
 		return fmt.Errorf("%w: preset name is required", ErrInvalid)
 	}
-	preset := api.RuntimePreset{ID: name, Name: name, Scope: in.Scope, Spec: in.Spec}
+	preset := api.RuntimePreset{ID: name, Name: name, Scope: in.Scope, Spec: in.Spec, Presets: in.Presets}
 	if err := api.ValidateRuntimePreset(preset); err != nil {
 		return fmt.Errorf("%w: %w", ErrInvalid, err)
 	}
@@ -183,7 +201,7 @@ func (in PresetInput) validate() error {
 func (in PresetInput) build(meta recordMeta) Preset {
 	return Preset{
 		ID: meta.ID, Key: meta.Key, Source: meta.Source, Name: in.Name, Description: in.Description,
-		Scope: in.Scope, Spec: in.Spec, UpdatedAt: meta.UpdatedAt,
+		Scope: in.Scope, Spec: in.Spec, Presets: slices.Clone(in.Presets), UpdatedAt: meta.UpdatedAt,
 	}
 }
 

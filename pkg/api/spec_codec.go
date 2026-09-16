@@ -271,39 +271,3 @@ func decodeWireJSON(data []byte, value any) error {
 	decoder.UseNumber()
 	return decoder.Decode(value)
 }
-
-func validateFallbackJSON(data []byte) error {
-	var fields any
-	if err := json.Unmarshal(data, &fields); err != nil {
-		return err
-	}
-	return validateFallbackValues(fields)
-}
-
-func validateFallbackValues(value any) error {
-	fields, ok := value.(map[string]any)
-	if !ok {
-		return nil
-	}
-	fallbacks, _ := fields["fallbacks"].([]any)
-	for i, fallback := range fallbacks {
-		object, ok := fallback.(map[string]any)
-		if !ok {
-			continue
-		}
-		data, err := json.Marshal(object)
-		if err != nil {
-			return err
-		}
-		var wire specModelWire
-		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&wire); err != nil {
-			return fmt.Errorf("fallback[%d]: %w", i, err)
-		}
-		if err := validateFallbackValues(object); err != nil {
-			return fmt.Errorf("fallback[%d]: %w", i, err)
-		}
-	}
-	return nil
-}

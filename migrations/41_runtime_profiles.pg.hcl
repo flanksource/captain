@@ -33,11 +33,18 @@ table "captain_runtime_presets" {
     null = false
     type = enum.captain_spec_layer_scope
   }
-  # The reusable subset of a Spec (api.RuntimePresetSpec) as JSON.
+  # The complete task Spec (api.RuntimePresetSpec) as JSON.
   column "spec" {
     null    = false
     type    = jsonb
     default = sql("'{}'::jsonb")
+  }
+  # Reserved ordered nested preset references. CRUD round-trips this field;
+  # runtime expansion is deferred to Gavel TODO 3178c771.
+  column "presets" {
+    null    = false
+    type    = jsonb
+    default = sql("'[]'::jsonb")
   }
   column "created_at" {
     null    = false
@@ -66,6 +73,9 @@ table "captain_runtime_presets" {
   }
   check "captain_runtime_presets_spec" {
     expr = "jsonb_typeof(spec) = 'object'"
+  }
+  check "captain_runtime_presets_presets" {
+    expr = "jsonb_typeof(presets) = 'array'"
   }
 }
 

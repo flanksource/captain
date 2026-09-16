@@ -107,8 +107,30 @@ func TestParse_RuntimeProfilePin(t *testing.T) {
 	doc, err := Parse("---\nruntimeProfile: review\nmodel: claude-sonnet-4-6\n---\nbody\n")
 	require.NoError(t, err)
 	assert.Equal(t, "review", doc.RuntimeProfile)
+	assert.Equal(t, []string{"runtimeProfile is deprecated and ignored; use presets"}, doc.Warnings)
 	assert.Equal(t, "claude-sonnet-4-6", doc.Spec.Model.Name)
 	assert.Contains(t, doc.Frontmatter, "runtimeProfile")
+}
+
+func TestParse_PresetSelection(t *testing.T) {
+	doc, err := Parse("---\npresets:\n  - organization\n  - review\nmodel: claude-sonnet-4-6\n---\nbody\n")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"organization", "review"}, doc.Presets)
+	assert.Empty(t, doc.Warnings)
+	assert.Equal(t, "claude-sonnet-4-6", doc.Spec.Model.Name)
+	assert.Contains(t, doc.Frontmatter, "presets")
+}
+
+func TestParse_PresetsMustBeNonEmptyStrings(t *testing.T) {
+	for _, src := range []string{
+		"---\npresets: review\n---\nbody\n",
+		"---\npresets: [review, 3]\n---\nbody\n",
+		"---\npresets: [review, \"\"]\n---\nbody\n",
+	} {
+		_, err := Parse(src)
+		require.Error(t, err, src)
+		assert.ErrorContains(t, err, "presets", src)
+	}
 }
 
 func TestParse_RuntimeProfileMustBeNonEmptyString(t *testing.T) {

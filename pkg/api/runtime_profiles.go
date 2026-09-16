@@ -1,48 +1,20 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
-
-	"github.com/flanksource/commons-db/shell"
-	"github.com/flanksource/commons-db/types"
 )
 
-// RuntimePresetSpec is the reusable subset of Spec. Prompt bodies, messages,
-// verification, session identity, CLI flags, and checkout locations remain
-// task-specific profile fields and cannot be represented here.
-type RuntimePresetSpec struct {
-	Model           `json:",inline" yaml:",inline"`
-	Explicit        FieldPresence       `json:"-" yaml:"-"`
-	Budget          Budget              `json:"budget,omitempty" yaml:"budget,omitempty"`
-	Memory          Memory              `json:"memory,omitempty" yaml:"memory,omitempty"`
-	Permissions     Permissions         `json:"permissions,omitempty" yaml:"permissions,omitempty"`
-	ToolPreferences ToolPreferences     `json:"toolPreferences,omitempty" yaml:"toolPreferences,omitempty"`
-	ToolPolicy      PermissionPolicy    `json:"toolPolicy,omitempty" yaml:"toolPolicy,omitempty"`
-	Setup           *RuntimePresetSetup `json:"setup,omitempty" yaml:"setup,omitempty"`
-	Sandbox         *SandboxRef         `json:"sandbox,omitempty" yaml:"sandbox,omitempty"`
-}
+// RuntimePresetSpec is the complete reusable task specification. The named
+// type is retained while profile APIs are deprecated so existing callers keep
+// compiling until the final removal release.
+type RuntimePresetSpec Spec
 
-// RuntimePresetSetup contains reusable environment and checkout behaviour.
-// It deliberately has no cwd, base directory, repository, ref, or worktree path.
-type RuntimePresetSetup struct {
-	EnvVars  []types.EnvVar         `json:"envVars,omitempty" yaml:"envVars,omitempty"`
-	Checkout *RuntimePresetCheckout `json:"checkout,omitempty" yaml:"checkout,omitempty"`
-}
+var ErrRuntimePresetNestingUnsupported = errors.New("nested runtime presets are not supported yet")
 
-type RuntimePresetCheckout struct {
-	Mode     shell.CheckoutMode     `json:"mode,omitempty" yaml:"mode,omitempty"`
-	Depth    *int                   `json:"depth,omitempty" yaml:"depth,omitempty"`
-	Worktree *RuntimePresetWorktree `json:"worktree,omitempty" yaml:"worktree,omitempty"`
-}
-
-type RuntimePresetWorktree struct {
-	Mode        shell.WorktreeMode `json:"mode,omitempty" yaml:"mode,omitempty"`
-	Keep        bool               `json:"keep,omitempty" yaml:"keep,omitempty"`
-	Uncommitted shell.CloneMode    `json:"uncommitted,omitempty" yaml:"uncommitted,omitempty"`
-	Ignored     shell.CloneMode    `json:"ignored,omitempty" yaml:"ignored,omitempty"`
-}
+const RuntimeProfileDeprecationWarning = "runtimeProfile is deprecated and ignored; use presets"
 
 type RuntimePreset struct {
 	ID          string            `json:"id" yaml:"id"`
@@ -50,6 +22,7 @@ type RuntimePreset struct {
 	Description string            `json:"description,omitempty" yaml:"description,omitempty"`
 	Scope       SpecLayerScope    `json:"scope" yaml:"scope"`
 	Spec        RuntimePresetSpec `json:"spec" yaml:"spec"`
+	Presets     []string          `json:"presets,omitempty" yaml:"presets,omitempty"`
 }
 
 type RuntimeProfile struct {
@@ -65,6 +38,11 @@ type RuntimeProfileResolveRequest struct {
 	Presets []RuntimePreset `json:"presets"`
 }
 
+type RuntimePresetResolveRequest struct {
+	Selected []string        `json:"selected"`
+	Presets  []RuntimePreset `json:"presets"`
+}
+
 type RuntimeProfileResolveResponse struct {
 	Resolved          ResolvedSpec          `json:"resolved"`
 	Tools             []ToolCatalogEntry    `json:"tools"`
@@ -73,32 +51,62 @@ type RuntimeProfileResolveResponse struct {
 	EffectivePolicy   PermissionPolicy      `json:"effectivePolicy"`
 }
 
-// RuntimeProfileLayers materializes selected presets and the profile spec in
-// reference order. Runtime resolution waits until the host adds its other layers.
-func RuntimeProfileLayers(request RuntimeProfileResolveRequest) ([]SpecLayer, error) {
-	if err := validateRuntimeProfile(request.Profile); err != nil {
-		return nil, err
-	}
+type RuntimePresetResolveResponse = RuntimeProfileResolveResponse
+
+// RuntimePresetLayers materializes a flat ordered preset selection. Nested
+// references are persisted by the API but deliberately fail until the
+// deferred resolver tracked by Gavel TODO 3178c771 is implemented.
+func RuntimePresetLayers(request RuntimePresetResolveRequest) ([]SpecLayer, error) {
 	index, err := indexRuntimePresets(request.Presets)
 	if err != nil {
 		return nil, err
 	}
-
-	layers := make([]SpecLayer, 0, len(request.Profile.Presets)+1)
-	selected := make(map[string]struct{}, len(request.Profile.Presets))
-	for _, ref := range request.Profile.Presets {
-		preset, err := index.lookup(request.Profile.Name, ref)
+	layers := make([]SpecLayer, 0, len(request.Selected))
+	selected := make(map[string]struct{}, len(request.Selected))
+	for _, ref := range request.Selected {
+		preset, err := index.lookup("runtime preset selection", ref)
 		if err != nil {
 			return nil, err
 		}
+		if len(preset.Presets) > 0 {
+			return nil, fmt.Errorf("runtime preset %q declares nested presets, which are not supported yet: %w", preset.Name, ErrRuntimePresetNestingUnsupported)
+		}
 		if _, repeated := selected[preset.ID]; repeated {
-			return nil, fmt.Errorf("runtime profile %q repeats preset %q", request.Profile.Name, ref)
+			return nil, fmt.Errorf("runtime preset selection repeats preset %q", ref)
 		}
 		selected[preset.ID] = struct{}{}
 		layers = append(layers, SpecLayer{
 			ID: preset.ID, Source: SpecLayerSourcePreset,
 			Name: preset.Name, Scope: preset.Scope, Spec: preset.Spec.ToSpec(),
 		})
+	}
+	if err := ValidateSpecLayers(layers...); err != nil {
+		return nil, err
+	}
+	return layers, nil
+}
+
+func ResolveRuntimePresets(request RuntimePresetResolveRequest) (ResolvedSpec, error) {
+	layers, err := RuntimePresetLayers(request)
+	if err != nil {
+		return ResolvedSpec{}, err
+	}
+	resolved, err := ResolveSpecLayers(ResolveSpecOptions{Layers: layers})
+	if err != nil {
+		return ResolvedSpec{}, fmt.Errorf("resolve runtime presets: %w", err)
+	}
+	return resolved, nil
+}
+
+// RuntimeProfileLayers materializes selected presets and the profile spec in
+// reference order. Runtime resolution waits until the host adds its other layers.
+func RuntimeProfileLayers(request RuntimeProfileResolveRequest) ([]SpecLayer, error) {
+	if err := validateRuntimeProfile(request.Profile); err != nil {
+		return nil, err
+	}
+	layers, err := RuntimePresetLayers(RuntimePresetResolveRequest{Selected: request.Profile.Presets, Presets: request.Presets})
+	if err != nil {
+		return nil, fmt.Errorf("runtime profile %q: %w", request.Profile.Name, err)
 	}
 	layers = append(layers, SpecLayer{
 		ID: request.Profile.ID + ":spec", Source: SpecLayerSourceProfile,
@@ -167,28 +175,9 @@ func (i runtimePresetIndex) lookup(profile, ref string) (RuntimePreset, error) {
 }
 
 func (s RuntimePresetSpec) ToSpec() Spec {
-	return Spec{
-		Model: s.Model, Explicit: s.Explicit.Clone(), Budget: s.Budget, Memory: s.Memory,
-		Permissions: s.Permissions, ToolPreferences: s.ToolPreferences,
-		ToolPolicy: s.ToolPolicy, Setup: s.Setup.toSetup(), Sandbox: s.Sandbox,
-	}
-}
-
-func (s *RuntimePresetSetup) toSetup() *shell.Setup {
-	if s == nil {
-		return nil
-	}
-	setup := &shell.Setup{EnvVars: append([]types.EnvVar(nil), s.EnvVars...)}
-	if s.Checkout != nil {
-		setup.Checkout = &shell.Checkout{Mode: s.Checkout.Mode, Depth: s.Checkout.Depth}
-		if s.Checkout.Worktree != nil {
-			setup.Checkout.Worktree = &shell.Worktree{
-				Mode: s.Checkout.Worktree.Mode, Keep: s.Checkout.Worktree.Keep,
-				Uncommitted: s.Checkout.Worktree.Uncommitted, Ignored: s.Checkout.Worktree.Ignored,
-			}
-		}
-	}
-	return setup
+	spec := Spec(s)
+	spec.Explicit = spec.Explicit.Clone()
+	return spec
 }
 
 func validateRuntimeProfile(profile RuntimeProfile) error {
@@ -213,6 +202,11 @@ func validateRuntimePreset(preset RuntimePreset) error {
 	}
 	if strings.TrimSpace(preset.Name) == "" {
 		return fmt.Errorf("runtime preset %q name is required", preset.ID)
+	}
+	for index, ref := range preset.Presets {
+		if strings.TrimSpace(ref) == "" {
+			return fmt.Errorf("runtime preset %q preset reference %d is blank", preset.Name, index)
+		}
 	}
 	return ValidateSpecLayers(SpecLayer{ID: preset.ID, Name: preset.Name, Scope: preset.Scope,
 		Source: SpecLayerSourcePreset, Spec: preset.Spec.ToSpec()})
@@ -239,15 +233,13 @@ func UnsupportedPermissions(spec Spec) []string {
 	if posture := spec.Permissions.Mode; posture != "" && !caps.ModeSupport(posture).Honoured() {
 		warnings = append(warnings, fmt.Sprintf("permissions.mode %q is not available for %s", posture, runtime))
 	}
-	for _, name := range sortedKeys(spec.Permissions.Tools) {
-		policy := spec.Permissions.Tools[name]
-		// Same rule as RequireToolPolicySupport: only an allow for another
-		// agent's built-in is inert here; a deny or ask must still be honoured.
-		if policy == ToolPolicyAllow && isForeignBuiltin(caps.Tools, name) {
-			continue
-		}
-		add(requireResolvedToolPolicy(caps, runtime, ProvenanceAgent, policy))
+	// The same translation RequireToolPolicySupport checks: the runtime's own
+	// tool names, with alias-only allows already inert on an unfiltered runtime.
+	tools, ignored := spec.Permissions.Tools.ForRuntime(provider, mode)
+	for _, name := range sortedKeys(tools) {
+		add(requireResolvedToolPolicy(caps, runtime, ProvenanceAgent, tools[name]))
 	}
+	warnings = append(warnings, ignored...)
 	for _, name := range sortedKeys(spec.ToolPreferences) {
 		add(requireResolvedToolPolicy(caps, runtime, ProvenanceCaller, spec.ToolPreferences[name]))
 	}
