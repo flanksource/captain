@@ -1,0 +1,172 @@
+# Ordinary Captain commands are trusted. More privileged commands below
+# override this rule because Codex applies the strictest matching decision.
+prefix_rule(
+    pattern = ["captain"],
+    decision = "allow",
+    justification = "Allow ordinary Captain user commands without approval",
+    match = [
+        "captain history --since 1d",
+        "captain sessions list",
+        "captain info",
+        "captain whoami --models=false",
+    ],
+    not_match = [
+        "go run ./cmd/captain sessions list",
+    ],
+)
+
+# Prompt CRUD writes or removes local .prompt files. Include the generated
+# entity's plural alias.
+prefix_rule(
+    pattern = ["captain", ["prompt", "prompts"], ["create", "update", "delete"]],
+    decision = "prompt",
+    justification = "Confirm creation, modification, or deletion of local prompt files",
+    match = [
+        "captain prompt create --name review --content Review",
+        "captain prompt update local:review --content Updated",
+        "captain prompt delete local:review",
+        "captain prompts delete local:review",
+    ],
+    not_match = [
+        "captain prompt list",
+        "captain prompt get embedded:commit",
+        "captain prompt render commit",
+        "captain prompt run commit",
+    ],
+)
+
+# Provider configuration can persist API tokens and runtime defaults.
+prefix_rule(
+    pattern = ["captain", "configure"],
+    decision = "prompt",
+    justification = "Confirm changes to Captain provider credentials or runtime defaults",
+    match = [
+        "captain configure",
+        "captain configure openai",
+        "captain configure --agent codex --model gpt-5",
+    ],
+    not_match = [
+        "captain whoami",
+        "captain ai models",
+    ],
+)
+
+# Attachment garbage collection removes durable files.
+prefix_rule(
+    pattern = ["captain", "attachments", "gc"],
+    decision = "prompt",
+    justification = "Confirm deletion of unreferenced prompt attachments",
+    match = [
+        "captain attachments gc",
+    ],
+    not_match = [
+        "captain attachments",
+    ],
+)
+
+# Project cleanup removes stored session history, including when selection is
+# interactive.
+prefix_rule(
+    pattern = ["captain", "projects", "clean"],
+    decision = "prompt",
+    justification = "Confirm cleanup of stored Claude project sessions",
+    match = [
+        "captain projects clean",
+        "captain projects clean --interactive",
+        "captain projects clean --dry-run",
+    ],
+    not_match = [
+        "captain projects list",
+    ],
+)
+
+# Hook installation modifies Claude or Codex configuration, and may install
+# user-global files.
+prefix_rule(
+    pattern = ["captain", "hook", ["bash-check", "dod", "monitor"], "install"],
+    decision = "prompt",
+    justification = "Confirm installation of Captain hooks into agent configuration",
+    match = [
+        "captain hook bash-check install",
+        "captain hook bash-check install --user",
+        "captain hook dod install",
+        "captain hook monitor install",
+    ],
+    not_match = [
+        "captain hook bash-check",
+        "captain hook monitor notify",
+    ],
+)
+
+# These Definition of Done operations persist or clear gates, or execute the
+# configured workflow.
+prefix_rule(
+    pattern = ["captain", "dod", ["set", "clear", "run"]],
+    decision = "prompt",
+    justification = "Confirm Definition of Done configuration changes or workflow execution",
+    match = [
+        "captain dod set --command make test",
+        "captain dod clear",
+        "captain dod run",
+    ],
+    not_match = [
+        "captain dod status",
+        "captain dod check",
+    ],
+)
+
+# Sandbox generation writes runtime configuration.
+prefix_rule(
+    pattern = ["captain", "sandbox", "generate"],
+    decision = "prompt",
+    justification = "Confirm generation of sandbox runtime configuration",
+    match = [
+        "captain sandbox generate",
+        "captain sandbox generate --preset golang",
+    ],
+    not_match = [
+        "captain sandbox presets",
+    ],
+)
+
+# The container command can generate files, build images, and execute a local
+# sandbox. Protect the interactive parent as well as every subcommand.
+prefix_rule(
+    pattern = ["captain", "container"],
+    decision = "prompt",
+    justification = "Confirm container generation, image builds, or sandbox execution",
+    match = [
+        "captain container",
+        "captain container generate",
+        "captain container build",
+        "captain container run",
+    ],
+)
+
+# Agent execution may modify a worktree and create a commit.
+prefix_rule(
+    pattern = ["captain", "ai", "agent"],
+    decision = "prompt",
+    justification = "Confirm autonomous agent execution with worktree and commit access",
+    match = [
+        "captain ai agent",
+    ],
+    not_match = [
+        "captain ai models",
+        "captain ai test",
+    ],
+)
+
+# Port cleanup terminates a process with SIGKILL.
+prefix_rule(
+    pattern = ["captain", "port", "kill"],
+    decision = "prompt",
+    justification = "Confirm forcefully terminating the process bound to a TCP port",
+    match = [
+        "captain port kill 9020",
+    ],
+    not_match = [
+        "captain ps",
+        "captain sessions ps",
+    ],
+)
