@@ -171,7 +171,7 @@ func partTool(m Message, p Part, agent *Agent) tools.Tool {
 		return newPrettyTool(name, toolPartInput(p), m.Provenance, agent)
 	case PartFile:
 		return newPrettyTool("File", map[string]any{
-			"filename": p.Filename, "url": p.URL, "mediaType": p.MediaType,
+			"filename": p.Filename, "url": p.URL, "mediaType": p.MediaType, "attachmentId": p.AttachmentID,
 		}, m.Provenance, agent)
 	case PartVerify:
 		input := verifyPartInput(p)

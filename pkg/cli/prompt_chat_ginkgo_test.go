@@ -80,6 +80,7 @@ var _ = Describe("prompt chat lifecycle", func() {
 		Expect(spec.Paths).To(HaveKey("/api/captain/prompt/runs/{runId}/message"))
 		Expect(spec.Paths).To(HaveKey("/api/captain/prompt/runs/{runId}/interrupt"))
 		Expect(spec.Paths).To(HaveKey("/api/captain/prompt/runs/{runId}/stop"))
+		Expect(spec.Paths).To(HaveKey("/api/captain/prompt/runs/{runId}/permission-mode"))
 		Expect(spec.Paths).To(HaveKey("/api/captain/sessions/{id}/message"))
 	})
 

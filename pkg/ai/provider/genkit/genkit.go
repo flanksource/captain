@@ -166,11 +166,22 @@ func structuredResponseData(req ai.Request, resp *gkai.ModelResponse) (any, json
 	if err := resp.Output(&value); err != nil {
 		return nil, nil, fmt.Errorf("%w: %v", ai.ErrSchemaValidation, err)
 	}
-	raw, err := json.Marshal(value)
+	raw, err := structuredJSONBytes(value)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: encode structured output: %v", ai.ErrSchemaValidation, err)
 	}
 	return raw, raw, nil
+}
+
+func structuredJSONBytes(value any) (json.RawMessage, error) {
+	if data, ok := value.([]byte); ok {
+		var raw json.RawMessage
+		if err := json.Unmarshal(data, &raw); err != nil {
+			return nil, err
+		}
+		return raw, nil
+	}
+	return json.Marshal(value)
 }
 
 // isSchemaMismatch reports whether a genkit Generate error is the library's

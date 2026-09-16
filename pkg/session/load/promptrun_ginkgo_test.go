@@ -43,6 +43,35 @@ var _ = Describe("PromptRun", func() {
 		Expect(result.Provenance.Of(load.FacetMessages)).To(Equal(load.SourceTranscript))
 	})
 
+	It("enriches transcript file parts from the realized prompt attachment metadata", func() {
+		const attachmentID = "sha256:7d432b84dfb5e1cda66c73adae2848da8f2afea3f6f1bd255f517ebce71b3d8e"
+		withAttachment := run
+		withAttachment.RenderedSpec = map[string]any{
+			"model":        "claude-opus-4",
+			"outputSchema": map[string]any{"type": "object"},
+			"input": map[string]any{
+				"prompt": map[string]any{
+					"attachments": []any{map[string]any{
+						"id": attachmentID, "filename": "scorecard.png", "mediaType": "image/png", "size": float64(492991),
+					}},
+				},
+			},
+		}
+		transcript := &session.Session{Messages: []session.Message{{
+			ID: "transcript-m1", Role: "user", Parts: []session.Part{{
+				Type: session.PartFile, AttachmentID: attachmentID, URL: "/api/attachments/" + attachmentID,
+			}},
+		}}}
+
+		result, failures := load.Load(context.Background(), load.Transcript(transcript), load.PromptRun(withAttachment))
+
+		Expect(failures).To(BeEmpty())
+		Expect(result.Session.Messages[0].Parts[0]).To(Equal(session.Part{
+			Type: session.PartFile, AttachmentID: attachmentID, URL: "/api/attachments/" + attachmentID,
+			Filename: "scorecard.png", MediaType: "image/png",
+		}))
+	})
+
 	It("synthesises the prompt and result messages when nothing else supplied any", func() {
 		result, _ := load.Load(context.Background(), load.PromptRun(run))
 

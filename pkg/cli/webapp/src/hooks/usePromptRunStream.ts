@@ -5,7 +5,10 @@ import {
   useRef,
   type MutableRefObject,
 } from "react";
-import type { SessionUIMessage } from "@flanksource/clicky-ui/ai";
+import type {
+  SessionUIMessage,
+  SpecPermissionMode,
+} from "@flanksource/clicky-ui/ai";
 import { useEventSource } from "./useEventSource";
 import { parseVerifyFrame, type VerifyFrame } from "../types/verifyReport";
 
@@ -54,6 +57,7 @@ export interface ChatCapabilities {
   steer: boolean;
   followUp: boolean;
   resume: boolean;
+  setPermissionMode: boolean;
 }
 
 export interface ChatQueuedMessage {
@@ -77,6 +81,8 @@ export interface ChatStateFrame {
   queued?: ChatQueuedMessage[];
   discardedMessageIds?: string[];
   summary?: PromptRunSummary;
+  permissionMode?: SpecPermissionMode;
+  permissionModes?: SpecPermissionMode[];
 }
 
 export interface PromptRunFrame extends PromptRunHandle {

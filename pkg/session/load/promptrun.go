@@ -53,6 +53,9 @@ func (c promptRunContributor) Contribute(_ context.Context, aggregate *session.S
 		return ErrNoFacts
 	}
 	c.mergeRuntime(aggregate)
+	if err := c.enrichAttachments(aggregate); err != nil {
+		return err
+	}
 	resultText, err := c.resultText()
 	if err != nil {
 		return err
@@ -84,6 +87,51 @@ func (c promptRunContributor) Contribute(_ context.Context, aggregate *session.S
 	output, err := c.structuredOutput()
 	aggregate.StructuredOutput = output
 	return err
+}
+
+func (c promptRunContributor) enrichAttachments(aggregate *session.Session) error {
+	input, ok := c.facts.RenderedSpec["input"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	prompt, ok := input["prompt"].(map[string]any)
+	if !ok || prompt["attachments"] == nil {
+		return nil
+	}
+	raw, err := json.Marshal(prompt["attachments"])
+	if err != nil {
+		return fmt.Errorf("encode prompt run %s attachments: %w", c.facts.RunID, err)
+	}
+	var attachments []api.AttachmentRef
+	if err := json.Unmarshal(raw, &attachments); err != nil {
+		return fmt.Errorf("decode prompt run %s attachments: %w", c.facts.RunID, err)
+	}
+	byID := make(map[string]api.AttachmentRef, len(attachments))
+	for _, attachment := range attachments {
+		if err := attachment.Validate(); err != nil {
+			return fmt.Errorf("validate prompt run %s attachment: %w", c.facts.RunID, err)
+		}
+		byID[attachment.ID] = attachment
+	}
+	for messageIndex := range aggregate.Messages {
+		for partIndex := range aggregate.Messages[messageIndex].Parts {
+			part := &aggregate.Messages[messageIndex].Parts[partIndex]
+			attachment, ok := byID[part.AttachmentID]
+			if part.Type != session.PartFile || !ok {
+				continue
+			}
+			if attachment.Filename != "" {
+				part.Filename = attachment.Filename
+			}
+			if attachment.MediaType != "" {
+				part.MediaType = attachment.MediaType
+			}
+			if part.URL == "" {
+				part.URL = "/api/attachments/" + attachment.ID
+			}
+		}
+	}
+	return nil
 }
 
 func (c promptRunContributor) mergeRuntime(aggregate *session.Session) {

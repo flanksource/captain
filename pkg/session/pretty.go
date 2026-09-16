@@ -1,11 +1,13 @@
 package session
 
 import (
+	"encoding/json"
 	"fmt"
 	"path"
 	"strings"
 
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/clicky"
 	clickyapi "github.com/flanksource/clicky/api"
 )
 
@@ -43,6 +45,16 @@ func (s *Session) Pretty() clickyapi.Text {
 		t = t.NewLine().Add(historyFilesTable(rows))
 	}
 
+	if len(s.StructuredOutput) > 0 {
+		body, err := json.MarshalIndent(s.StructuredOutput, "", "  ")
+		t = t.NewLine().NewLine().Append("Structured Output", "font-bold").NewLine()
+		if err != nil {
+			t = t.Append("unable to encode structured output: "+err.Error(), "text-red-600")
+		} else {
+			t = t.Add(clicky.CodeBlock("json", string(body)))
+		}
+	}
+
 	if items := s.TranscriptRows(); len(items) > 0 {
 		t = t.NewLine().NewLine().Append("Transcript", "font-bold").
 			NewLine().Add(TranscriptList(items))
@@ -78,6 +90,11 @@ func sessionSummaryRows(s *Session) []prettyKVRow {
 	add("Ended", prettyTime(s.EndedAt))
 	add("Duration", prettyDuration(s.StartedAt, s.EndedAt))
 	add("Counts", prettyCounts(s))
+	if s.Context != nil && s.Context.WindowTokens > 0 {
+		add("Context", fmt.Sprintf("%s / %s (%d%% used, %d%% free)",
+			FormatTokens(s.Context.UsedTokens), FormatTokens(s.Context.WindowTokens),
+			100-s.Context.FreePercent, s.Context.FreePercent))
+	}
 	add("Tokens", prettyTokens(s.Usage))
 	if cost := s.Cost.Total(); cost > 0 {
 		add("Cost", FormatCostEstimated(cost, s.Cost.ProviderCostUSD == 0))
@@ -140,7 +157,7 @@ func prettyTokens(u api.Usage) string {
 			buckets = append(buckets, FormatTokens(bucket.count)+" "+bucket.label)
 		}
 	}
-	return fmt.Sprintf("%s total (%s)", FormatTokens(total), strings.Join(buckets, ", "))
+	return fmt.Sprintf("%s cumulative (%s)", FormatTokens(total), strings.Join(buckets, ", "))
 }
 
 type historyFileRow struct {

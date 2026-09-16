@@ -212,6 +212,7 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	mux.Handle("POST /api/captain/prompt/runs/{runId}/message", handlePromptRunMessage(promptChats))
 	mux.Handle("POST /api/captain/prompt/runs/{runId}/interrupt", handlePromptRunInterrupt(promptChats))
 	mux.Handle("POST /api/captain/prompt/runs/{runId}/stop", handlePromptRunStop(promptRuns, promptChats))
+	mux.Handle("POST /api/captain/prompt/runs/{runId}/permission-mode", handlePromptRunPermissionMode(promptChats))
 	mux.Handle("POST /api/captain/sessions/{id}/message", handleSessionMessage(promptChats))
 	chatHandler := chat.Handler()
 	mux.Handle("/api/chat", chatHandler)
