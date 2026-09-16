@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/flanksource/captain/pkg/ai"
 	promptlib "github.com/flanksource/captain/pkg/ai/prompt"
@@ -14,41 +13,37 @@ import (
 
 const renderRequestLayer = "render request"
 
-// selectRuntimeProfile picks the profile a render runs under: the caller's
-// reference, else the prompt's frontmatter pin, else none. The catalog is only
-// built once a reference exists, so a plain render never opens the database;
-// a reference that resolves nowhere fails naming it.
-type runtimeProfileSelection struct {
-	Requested string
-	Pin       string
-	Config    *captainconfig.Config
+type runtimePresetSelection struct {
+	Requested         []string
+	RequestedSet      bool
+	Pin               []string
+	PinSet            bool
+	DeprecatedRequest string
+	DeprecatedPin     string
+	Config            *captainconfig.Config
 }
 
-func selectRuntimeProfile(ctx context.Context, options runtimeProfileSelection) (*runtimeprofiles.Resolution, error) {
-	ref := strings.TrimSpace(options.Requested)
-	if ref == "" {
-		ref = strings.TrimSpace(options.Pin)
-	}
-	if ref == "" {
-		return nil, nil
-	}
-	catalog, err := buildRuntimeCatalog(ctx, runtimeprofiles.DefaultCatalogOptions{Config: options.Config})
+func selectRuntimePresets(ctx context.Context, options runtimePresetSelection) (*runtimeprofiles.PresetResolution, []string, error) {
+	resolver := runtimeprofiles.NewResolver(func(ctx context.Context) (*runtimeprofiles.Catalog, error) {
+		return buildRuntimeCatalog(ctx, runtimeprofiles.DefaultCatalogOptions{Config: options.Config})
+	})
+	result, err := resolver.Layers(ctx, runtimeprofiles.ResolveOptions{
+		RequestedPresets: options.Requested, RequestedPresetsSet: options.RequestedSet,
+		PinnedPresets: options.Pin, PinnedPresetsSet: options.PinSet,
+		RequestedProfile: options.DeprecatedRequest, PinnedProfile: options.DeprecatedPin,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("runtime profile %q: %w", ref, err)
+		return nil, nil, err
 	}
-	resolution, err := catalog.Layers(ctx, ref)
-	if err != nil {
-		return nil, fmt.Errorf("runtime profile %q: %w", ref, err)
-	}
-	return &resolution, nil
+	return result.Presets, result.Warnings, nil
 }
 
-// promptLayers assembles authored profile, prompt and request layers. Captain's
+// promptLayers assembles authored preset, prompt and request layers. Captain's
 // final resolution expands the effective model selector while retaining the raw trace.
-func promptLayers(profile *runtimeprofiles.Resolution, source string, frontmatter ai.Request, user *api.Spec) ([]api.SpecLayer, error) {
+func promptLayers(presets *runtimeprofiles.PresetResolution, source string, frontmatter ai.Request, user *api.Spec) ([]api.SpecLayer, error) {
 	var layers []api.SpecLayer
-	if profile != nil {
-		layers = append(layers, profile.Layers...)
+	if presets != nil {
+		layers = append(layers, presets.Layers...)
 	}
 	layers = append(layers, api.PromptSpecLayer(source, frontmatter))
 	if err := api.ValidateSpecLayers(layers...); err != nil {
@@ -66,22 +61,32 @@ func promptLayers(profile *runtimeprofiles.Resolution, source string, frontmatte
 
 // renderLayers retains declarations until every request override is available.
 // A literal body is not parsed: it carries no frontmatter, so it can pin no
-// runtime profile, and reading its opening "---" as YAML would let piped data
+// presets, and reading its opening "---" as YAML would let piped data
 // silently redirect the run.
-func renderLayers(ctx context.Context, source, content string, frontmatter ai.Request, renderReq PromptRenderRequest, saved captainconfig.Config) ([]api.SpecLayer, error) {
-	var pinnedProfile string
+func renderLayers(ctx context.Context, source, content string, frontmatter ai.Request, renderReq PromptRenderRequest, saved captainconfig.Config) ([]api.SpecLayer, []string, error) {
+	var pinnedPresets []string
+	var pinnedPresetsSet bool
+	var deprecatedPin string
 	if !renderReq.Literal {
 		doc, err := promptlib.Parse(content)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		pinnedProfile = doc.RuntimeProfile
+		pinnedPresets = doc.Presets
+		pinnedPresetsSet = doc.PresetsSet
+		deprecatedPin = doc.RuntimeProfile
 	}
-	profile, err := selectRuntimeProfile(ctx, runtimeProfileSelection{Requested: renderReq.RuntimeProfile, Pin: pinnedProfile, Config: &saved})
+	presets, warnings, err := selectRuntimePresets(ctx, runtimePresetSelection{
+		Requested: renderReq.Presets, RequestedSet: renderReq.Presets != nil,
+		Pin: pinnedPresets, PinSet: pinnedPresetsSet,
+		DeprecatedRequest: renderReq.RuntimeProfile, DeprecatedPin: deprecatedPin,
+		Config: &saved,
+	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return promptLayers(profile, source, frontmatter, renderReq.Spec)
+	layers, err := promptLayers(presets, source, frontmatter, renderReq.Spec)
+	return layers, warnings, err
 }
 
 // configFromResolved projects the runtime knobs providers read off ai.Config.

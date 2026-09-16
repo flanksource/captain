@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"net/http"
 
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/runtimeprofiles"
@@ -11,7 +12,7 @@ import (
 
 type RuntimePresetListOptions struct {
 	Query  string `flag:"query" help:"Search preset name or description"`
-	Source string `flag:"source" help:"Filter by source: db|file|<source-id>"`
+	Source string `flag:"source" help:"Filter by source: db|file|builtin|<source-id>"`
 	Scope  string `flag:"scope" help:"Filter by scope: global|context|surface|user"`
 }
 
@@ -57,19 +58,20 @@ type RuntimePresetWriteRequest struct {
 	Description string                 `json:"description,omitempty"`
 	Scope       api.SpecLayerScope     `json:"scope,omitempty"`
 	Spec        *api.RuntimePresetSpec `json:"spec,omitempty"`
+	Presets     []string               `json:"presets,omitempty"`
 	Content     string                 `json:"content,omitempty"`
 }
 
 func (req RuntimePresetWriteRequest) input() (runtimeprofiles.PresetInput, error) {
 	if req.Content == "" {
-		in := runtimeprofiles.PresetInput{Name: req.Name, Description: req.Description, Scope: req.Scope}
+		in := runtimeprofiles.PresetInput{Name: req.Name, Description: req.Description, Scope: req.Scope, Presets: req.Presets}
 		if req.Spec != nil {
 			in.Spec = *req.Spec
 		}
 		return in, nil
 	}
-	if req.Name != "" || req.Description != "" || req.Scope != "" || req.Spec != nil {
-		return runtimeprofiles.PresetInput{}, runtimeBodyError("content excludes name, description, scope and spec; send one or the other")
+	if req.Name != "" || req.Description != "" || req.Scope != "" || req.Spec != nil || len(req.Presets) > 0 {
+		return runtimeprofiles.PresetInput{}, runtimeBodyError("content excludes name, description, scope, spec and presets; send one or the other")
 	}
 	var in runtimeprofiles.PresetInput
 	if err := decodeRuntimeContent(req.Content, &in); err != nil {
@@ -77,6 +79,10 @@ func (req RuntimePresetWriteRequest) input() (runtimeprofiles.PresetInput, error
 	}
 	return in, nil
 }
+
+type RuntimePresetResolveFlags struct{}
+
+func (RuntimePresetResolveFlags) ClickyActionFlags() {}
 
 func registerRuntimePresetEntity() {
 	clicky.NewEntity[RuntimePresetRecord, RuntimePresetListOptions, RuntimePresetRecord]("runtime-preset").
@@ -87,6 +93,9 @@ func registerRuntimePresetEntity() {
 		CreateWithContext(createRuntimePreset).
 		UpdateWithContext(updateRuntimePreset).
 		DeleteWithContext(deleteRuntimePreset).
+		WithAction(clicky.ActionWithFlagsAndContext("resolve", RuntimePresetResolveFlags{}, resolveRuntimePresetAction).
+			WithShort("Resolve a preset into its effective spec and layer trace").
+			WithMethod(http.MethodGet)).
 		Register()
 }
 
@@ -186,4 +195,16 @@ func deleteRuntimePreset(ctx context.Context, id string) error {
 		return err
 	}
 	return runtimeCatalogError(catalog.DeletePreset(ctx, id))
+}
+
+func resolveRuntimePresetAction(ctx context.Context, id string, _ map[string]string) (runtimeprofiles.PresetResolution, error) {
+	catalog, err := buildRuntimeCatalog(ctx, runtimeprofiles.DefaultCatalogOptions{})
+	if err != nil {
+		return runtimeprofiles.PresetResolution{}, err
+	}
+	resolution, err := catalog.ResolvePresets(ctx, []string{id})
+	if err != nil {
+		return runtimeprofiles.PresetResolution{}, runtimeCatalogError(err)
+	}
+	return resolution, nil
 }

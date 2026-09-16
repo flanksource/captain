@@ -41,7 +41,7 @@ var _ = Describe("captured CLI runtime projection", func() {
 			Text:   "---\nmodel: agent:claude-sonnet-5\nprompt:\n  system: Authored system\n  appendSystem: Authored suffix\nbudget:\n  timeout: 1m\n---\nReview",
 			Source: "review.prompt",
 		}
-		layers, err := renderLoadedLayers(context.Background(), body, promptVarsResult{}, "", opts, saved)
+		layers, _, err := renderLoadedLayers(context.Background(), body, promptVarsResult{}, "", opts, saved)
 		Expect(err).NotTo(HaveOccurred())
 		result, err := opts.Resolve(AIRuntimeResolveOptions{Layers: layers, Saved: saved})
 		Expect(err).NotTo(HaveOccurred())

@@ -14,7 +14,7 @@ import (
 
 // renderPrompt is the HTTP/Spec render path: the caller's structured api.Spec
 // (the web UI's runtime overrides) is the last layer over the selected runtime
-// profile and the rendered frontmatter. A non-empty Content renders that draft
+// presets and the rendered frontmatter. A non-empty Content renders that draft
 // instead of the saved file.
 func renderPrompt(ctx context.Context, id string, renderReq PromptRenderRequest) (PromptRenderResult, error) {
 	if strings.TrimSpace(id) == "" {
@@ -44,11 +44,11 @@ func renderPrompt(ctx context.Context, id string, renderReq PromptRenderRequest)
 		return PromptRenderResult{}, err
 	}
 	frontmatter.Prompt.Source = record.Rel
-	resolved, err := renderLayers(ctx, record.Rel, content, frontmatter, renderReq, saved)
+	resolved, warnings, err := renderLayers(ctx, record.Rel, content, frontmatter, renderReq, saved)
 	if err != nil {
 		return PromptRenderResult{}, err
 	}
-	return completePromptRender(promptRenderInput{Record: record, Content: content, Layers: resolved, Runtimes: renderReq.Runtimes, Saved: saved})
+	return completePromptRender(promptRenderInput{Record: record, Content: content, Layers: resolved, Warnings: warnings, Runtimes: renderReq.Runtimes, Saved: saved})
 }
 
 func renderEphemeralPrompt(ctx context.Context, renderReq PromptRenderRequest) (PromptRenderResult, error) {
@@ -63,11 +63,11 @@ func renderEphemeralPrompt(ctx context.Context, renderReq PromptRenderRequest) (
 	if err != nil {
 		return PromptRenderResult{}, err
 	}
-	resolved, err := renderLayers(ctx, record.Rel, content, frontmatter, renderReq, saved)
+	resolved, warnings, err := renderLayers(ctx, record.Rel, content, frontmatter, renderReq, saved)
 	if err != nil {
 		return PromptRenderResult{}, err
 	}
-	return completePromptRender(promptRenderInput{Record: record, Content: content, Layers: resolved, Runtimes: renderReq.Runtimes, Saved: saved})
+	return completePromptRender(promptRenderInput{Record: record, Content: content, Layers: resolved, Warnings: warnings, Runtimes: renderReq.Runtimes, Saved: saved})
 }
 
 func ephemeralPromptContent() string {
@@ -86,6 +86,7 @@ type promptRenderInput struct {
 	// frontmatter, input/output schemas or template variables.
 	Literal  bool
 	Layers   []api.SpecLayer
+	Warnings []string
 	Runtimes []api.Model
 	Options  AIPromptOptions
 	Saved    captainconfig.Config
@@ -105,11 +106,11 @@ func renderPromptCLI(ctx context.Context, id string, opts AIPromptOptions, varsJ
 	if err != nil {
 		return PromptRenderResult{}, err
 	}
-	layers, err := renderLoadedLayers(ctx, body, vars, stdin, opts, saved)
+	layers, warnings, err := renderLoadedLayers(ctx, body, vars, stdin, opts, saved)
 	if err != nil {
 		return PromptRenderResult{}, err
 	}
-	return completePromptRender(promptRenderInput{Record: body.Record, Content: body.Text, Literal: body.Literal, Layers: layers, Runtimes: fallbackModelsFromFlags(opts.MultiModels), Options: opts, Saved: saved})
+	return completePromptRender(promptRenderInput{Record: body.Record, Content: body.Text, Literal: body.Literal, Layers: layers, Warnings: warnings, Runtimes: fallbackModelsFromFlags(opts.MultiModels), Options: opts, Saved: saved})
 }
 
 // literalOrParsedDetail describes the prompt behind a render. A literal body is
@@ -167,6 +168,7 @@ func completePromptRender(input promptRenderInput) (PromptRenderResult, error) {
 			}
 		}
 	}
+	result.Resolution.Warnings = append(input.Warnings, result.Resolution.Warnings...)
 	req, cfg := result.Request, result.Config
 	return PromptRenderResult{
 		ID: detail.ID, Name: detail.Name, Model: cfg.Model.Name, Provider: providerName(cfg.Model.Provider), Mode: string(cfg.Model.Mode),

@@ -214,18 +214,22 @@ func promptVars(opts AIPromptOptions, varsJSON, stdin string, usedStdin bool) (p
 // downstream reader agrees on what was sent: the layer trace, the persisted
 // spec, task labels, and each --multi-models variant (which re-derives its own
 // request from the resolved spec and would drop a later mutation).
-func renderLoadedLayers(ctx context.Context, body promptBody, vars promptVarsResult, stdin string, opts AIPromptOptions, saved captainconfig.Config) ([]api.SpecLayer, error) {
+func renderLoadedLayers(ctx context.Context, body promptBody, vars promptVarsResult, stdin string, opts AIPromptOptions, saved captainconfig.Config) ([]api.SpecLayer, []string, error) {
 	frontmatter, err := promptFrontmatter(body, vars, stdin)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	layers, err := renderLayers(ctx, body.Source, body.Text, frontmatter, PromptRenderRequest{RuntimeProfile: opts.RuntimeProfile, Literal: body.Literal}, saved)
+	presets := opts.Presets
+	if opts.PresetsSet && presets == nil {
+		presets = []string{}
+	}
+	layers, warnings, err := renderLayers(ctx, body.Source, body.Text, frontmatter, PromptRenderRequest{Presets: presets, RuntimeProfile: opts.RuntimeProfile, Literal: body.Literal}, saved)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	promptFlags, err := opts.promptSpec()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if len(promptFlags.Prompt.Attachments) > 0 {
 		promptFlags.Prompt.Attachments = append(append([]api.AttachmentRef(nil), frontmatter.Prompt.Attachments...), promptFlags.Prompt.Attachments...)
@@ -233,7 +237,7 @@ func renderLoadedLayers(ctx context.Context, body promptBody, vars promptVarsRes
 	if len(promptFlags.Fields()) > 0 {
 		layers = append(layers, api.RequestSpecLayer("prompt flags", promptFlags))
 	}
-	return layers, nil
+	return layers, warnings, nil
 }
 
 // promptFrontmatter turns the resolved body into the prompt's own spec — the
@@ -283,6 +287,13 @@ func actionFlagsToOptions(f map[string]string) (AIPromptOptions, error) {
 	o.Model = f["model"]
 	o.Fallback = flagSlice(f["fallback"])
 	o.Mode = f["mode"]
+	if flagBool(f["no-presets"]) {
+		o.Presets = []string{}
+		o.PresetsSet = true
+	} else if raw, present := f["preset"]; present {
+		o.Presets = flagSlice(raw)
+		o.PresetsSet = true
+	}
 	o.RuntimeProfile = f["runtime-profile"]
 	o.APIKey = f["api-key"]
 	o.APIURL = f["api-url"]

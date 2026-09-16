@@ -52,7 +52,13 @@ export function captainNavSections(
           icon: UiActivity,
           active: active === "dashboard",
         },
-        { key: "agent", label: "Agent", to: "/agent", icon: UiRobotAi, active: active === "agent" },
+        {
+          key: "agent",
+          label: "Agent",
+          to: "/agent",
+          icon: UiRobotAi,
+          active: active === "agent",
+        },
         {
           key: "whoami",
           label: "Whoami",
@@ -67,11 +73,17 @@ export function captainNavSections(
           icon: UiHistory,
           active: active === "sessions",
         },
-        { key: "prompts", label: "Prompts", to: "/prompts", icon: UiFileText, active: active === "prompts" },
+        {
+          key: "prompts",
+          label: "Prompts",
+          to: "/prompts",
+          icon: UiFileText,
+          active: active === "prompts",
+        },
         {
           key: "runtime-profiles",
-          label: "Runtime profiles",
-          to: "/runtime-profiles",
+          label: "Runtime presets",
+          to: "/runtime-presets",
           icon: UiSliders,
           active: active === "runtime-profiles",
         },
@@ -123,7 +135,11 @@ export function projectOptions(
       group: "Projects",
     });
   }
-  if (projectScope && projectScope !== ALL_PROJECTS_SCOPE && !seen.has(projectScope)) {
+  if (
+    projectScope &&
+    projectScope !== ALL_PROJECTS_SCOPE &&
+    !seen.has(projectScope)
+  ) {
     options.push({
       value: projectScope,
       label: projectLabel(projectScope),
@@ -188,7 +204,9 @@ export function setProjectScopeInLocation(
   search: string,
 ) {
   const nextScope = projectScope || ALL_PROJECTS_SCOPE;
-  navigate(withProjectScope(`${pathname}${search}`, nextScope), { replace: true });
+  navigate(withProjectScope(`${pathname}${search}`, nextScope), {
+    replace: true,
+  });
   notifyProjectScopeChanged();
 }
 

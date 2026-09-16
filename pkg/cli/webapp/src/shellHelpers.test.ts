@@ -36,24 +36,28 @@ describe("captainNavSections", () => {
     });
   });
 
-  it("lists the runtime profiles library right after prompts and marks it active", () => {
+  it("lists the runtime presets library right after prompts and marks it active", () => {
     const items = captainNavSections("runtime-profiles")[0]?.items ?? [];
     const keys = items.map((item) => item.key);
 
     expect(keys.indexOf("runtime-profiles")).toBe(keys.indexOf("prompts") + 1);
-    expect(items.find((item) => item.key === "runtime-profiles")).toMatchObject({
-      label: "Runtime profiles",
-      to: "/runtime-profiles",
-      active: true,
-    });
+    expect(items.find((item) => item.key === "runtime-profiles")).toMatchObject(
+      {
+        label: "Runtime presets",
+        to: "/runtime-presets",
+        active: true,
+      },
+    );
     expect(items.filter((item) => item.active)).toHaveLength(1);
   });
 
-  it("lists adapter schemas after runtime profiles and marks the route active", () => {
+  it("lists adapter schemas after runtime presets and marks the route active", () => {
     const items = captainNavSections("adapter-schemas")[0]?.items ?? [];
     const keys = items.map((item) => item.key);
 
-    expect(keys.indexOf("adapter-schemas")).toBe(keys.indexOf("runtime-profiles") + 1);
+    expect(keys.indexOf("adapter-schemas")).toBe(
+      keys.indexOf("runtime-profiles") + 1,
+    );
     expect(items.find((item) => item.key === "adapter-schemas")).toMatchObject({
       label: "Adapter schemas",
       to: "/adapter-schemas",
@@ -71,7 +75,12 @@ describe("projectOptions", () => {
   });
 
   it("lists each database context and marks the active one", () => {
-    const options = projectOptions("all", [], [DEFAULT_CONTEXT, PROD_CONTEXT], "prod");
+    const options = projectOptions(
+      "all",
+      [],
+      [DEFAULT_CONTEXT, PROD_CONTEXT],
+      "prod",
+    );
 
     expect(options.filter((option) => option.group === "Database")).toEqual([
       {

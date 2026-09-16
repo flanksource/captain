@@ -1,17 +1,14 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
-  ResolvedRuntimeProfile,
   RuntimePreset,
   RuntimeProfile,
-  RuntimeProfileResolveRequest,
   RuntimeProfilesPersistence,
   RuntimeProfilesStore,
   RuntimeRecordMeta,
 } from "@flanksource/clicky-ui/ai";
 import { errorMessage } from "./promptWorkbenchApi";
 import {
-  RUNTIME_DB_TARGET,
   createRuntimePreset,
   createRuntimeProfile,
   deleteRuntimePreset,
@@ -20,7 +17,6 @@ import {
   fetchRuntimeProfiles,
   presetWrite,
   profileWrite,
-  resolveRuntimeProfile,
   updateRuntimePreset,
   updateRuntimeProfile,
   type RuntimePresetWrite,
@@ -54,7 +50,9 @@ export function useRuntimeProfiles() {
 export function useRuntimeProfileMutations() {
   const queryClient = useQueryClient();
   const refresh = (...keys: Array<readonly string[]>) =>
-    Promise.all(keys.map((queryKey) => queryClient.invalidateQueries({ queryKey })));
+    Promise.all(
+      keys.map((queryKey) => queryClient.invalidateQueries({ queryKey })),
+    );
   const createPreset = useMutation({
     mutationFn: createRuntimePreset,
     onSuccess: () => refresh(RUNTIME_PRESETS_QUERY_KEY),
@@ -66,7 +64,8 @@ export function useRuntimeProfileMutations() {
   });
   const deletePreset = useMutation({
     mutationFn: deleteRuntimePreset,
-    onSuccess: () => refresh(RUNTIME_PRESETS_QUERY_KEY, RUNTIME_PROFILES_QUERY_KEY),
+    onSuccess: () =>
+      refresh(RUNTIME_PRESETS_QUERY_KEY, RUNTIME_PROFILES_QUERY_KEY),
   });
   const createProfile = useMutation({
     mutationFn: createRuntimeProfile,
@@ -81,49 +80,40 @@ export function useRuntimeProfileMutations() {
     mutationFn: deleteRuntimeProfile,
     onSuccess: () => refresh(RUNTIME_PROFILES_QUERY_KEY),
   });
-  return { createPreset, updatePreset, deletePreset, createProfile, updateProfile, deleteProfile };
+  return {
+    createPreset,
+    updatePreset,
+    deletePreset,
+    createProfile,
+    updateProfile,
+    deleteProfile,
+  };
 }
 
 export type PromptRuntimeProfileProps = {
   presets?: RuntimePreset[];
-  profiles?: RuntimeProfile[];
-  onSaveProfile: (profile: RuntimeProfile) => Promise<RuntimeProfile>;
-  onCreateProfile: (profile: RuntimeProfile) => Promise<RuntimeProfile>;
-  onResolveProfile: (request: RuntimeProfileResolveRequest) => Promise<ResolvedRuntimeProfile>;
 };
 
 /**
- * The profile picker's inputs for the prompt spec editor. The lists are passed
- * only once both loaded; a failed list surfaces through `error` instead of an
- * empty picker that would read as "no profiles". Saves from the picker land
- * in the database.
+ * Direct preset inputs for the prompt spec editor. Profiles are intentionally
+ * not loaded or exposed in the UI during their deprecation window.
  */
 export function usePromptRuntimeProfiles(): {
   editorProps: PromptRuntimeProfileProps;
   error: unknown;
 } {
   const presets = useRuntimePresets();
-  const profiles = useRuntimeProfiles();
-  const mutations = useRuntimeProfileMutations();
   return {
-    error: profiles.error ?? presets.error,
+    error: presets.error,
     editorProps: {
-      ...(profiles.data && presets.data
-        ? { profiles: profiles.data, presets: presets.data }
-        : {}),
-      onSaveProfile: (profile) =>
-        mutations.updateProfile.mutateAsync({ id: profile.id, input: profileWrite(profile) }),
-      onCreateProfile: (profile) =>
-        mutations.createProfile.mutateAsync({
-          target: RUNTIME_DB_TARGET,
-          ...profileWrite(profile),
-        }),
-      onResolveProfile: resolveRuntimeProfile,
+      ...(presets.data ? { presets: presets.data } : {}),
     },
   };
 }
 
-export function runtimeRecordMeta(record: { source: RuntimeRecordSource }): RuntimeRecordMeta {
+export function runtimeRecordMeta(record: {
+  source: RuntimeRecordSource;
+}): RuntimeRecordMeta {
   return { sourceLabel: record.source.kind, writable: record.source.writable };
 }
 
@@ -157,7 +147,9 @@ type Drafts<T> = Record<string, T>;
 export function useRuntimeDrafts(options: RuntimeDraftsOptions): RuntimeDrafts {
   const mutations = useRuntimeProfileMutations();
   const [presetDrafts, setPresetDrafts] = useState<Drafts<RuntimePreset>>({});
-  const [profileDrafts, setProfileDrafts] = useState<Drafts<RuntimeProfile>>({});
+  const [profileDrafts, setProfileDrafts] = useState<Drafts<RuntimeProfile>>(
+    {},
+  );
   const [error, setError] = useState<string>();
   const [saving, setSaving] = useState(false);
 
@@ -166,7 +158,8 @@ export function useRuntimeDrafts(options: RuntimeDraftsOptions): RuntimeDrafts {
     [options.presets, presetDrafts],
   );
   const profiles = useMemo(
-    () => options.profiles.map((profile) => profileDrafts[profile.id] ?? profile),
+    () =>
+      options.profiles.map((profile) => profileDrafts[profile.id] ?? profile),
     [options.profiles, profileDrafts],
   );
 
@@ -189,7 +182,8 @@ export function useRuntimeDrafts(options: RuntimeDraftsOptions): RuntimeDrafts {
 
   const targetFor = (kind: RuntimeRecordKind) => {
     const target = options.targets[kind];
-    if (!target) throw new Error(`No writable runtime source accepts ${kind}s.`);
+    if (!target)
+      throw new Error(`No writable runtime source accepts ${kind}s.`);
     return target;
   };
 
@@ -209,11 +203,17 @@ export function useRuntimeDrafts(options: RuntimeDraftsOptions): RuntimeDrafts {
     setSaving(true);
     try {
       for (const draft of Object.values(presetDrafts)) {
-        await mutations.updatePreset.mutateAsync({ id: draft.id, input: presetWrite(draft) });
+        await mutations.updatePreset.mutateAsync({
+          id: draft.id,
+          input: presetWrite(draft),
+        });
         setPresetDrafts((drafts) => without(drafts, draft.id));
       }
       for (const draft of Object.values(profileDrafts)) {
-        await mutations.updateProfile.mutateAsync({ id: draft.id, input: profileWrite(draft) });
+        await mutations.updateProfile.mutateAsync({
+          id: draft.id,
+          input: profileWrite(draft),
+        });
         setProfileDrafts((drafts) => without(drafts, draft.id));
       }
     } finally {
@@ -253,7 +253,8 @@ export function useRuntimeDrafts(options: RuntimeDraftsOptions): RuntimeDrafts {
   };
 
   const persistence: RuntimeProfilesPersistence = {
-    dirty: Object.keys(presetDrafts).length + Object.keys(profileDrafts).length > 0,
+    dirty:
+      Object.keys(presetDrafts).length + Object.keys(profileDrafts).length > 0,
     saving,
     ...(error !== undefined ? { error } : {}),
     onSave: () => void run(saveAll),

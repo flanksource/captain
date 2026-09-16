@@ -35,17 +35,18 @@ type PromptVariable struct {
 }
 
 type PromptSummary struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	SourceKind  string `json:"sourceKind"`
-	SourceID    string `json:"sourceId"`
-	Source      string `json:"source"`
-	Path        string `json:"path"`
-	RelPath     string `json:"relPath"`
-	Writable    bool   `json:"writable"`
-	Model       string `json:"model,omitempty"`
-	Mode        string `json:"mode,omitempty"`
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Description string   `json:"description,omitempty"`
+	SourceKind  string   `json:"sourceKind"`
+	SourceID    string   `json:"sourceId"`
+	Source      string   `json:"source"`
+	Path        string   `json:"path"`
+	RelPath     string   `json:"relPath"`
+	Writable    bool     `json:"writable"`
+	Model       string   `json:"model,omitempty"`
+	Mode        string   `json:"mode,omitempty"`
+	Presets     []string `json:"presets,omitempty"`
 	// RuntimeProfile is the profile (id or name) the frontmatter pins, if any.
 	RuntimeProfile string           `json:"runtimeProfile,omitempty"`
 	Runtimes       []api.Model      `json:"runtimes,omitempty"`
@@ -102,8 +103,11 @@ type PromptWriteRequest struct {
 
 type PromptRenderRequest struct {
 	Variables map[string]any `json:"variables,omitempty"`
+	// Presets selects ordered reusable task specs. A present empty list clears
+	// a frontmatter selection.
+	Presets []string `json:"presets,omitempty"`
 	// RuntimeProfile selects the catalog profile (id or name) whose presets and
-	// spec are layered beneath the frontmatter; it overrides a frontmatter pin.
+	// spec were layered beneath the frontmatter. It is deprecated and ignored.
 	RuntimeProfile string      `json:"runtimeProfile,omitempty"`
 	Spec           *api.Spec   `json:"spec,omitempty"`
 	Runtimes       []api.Model `json:"runtimes,omitempty"`
@@ -146,7 +150,9 @@ type PromptActionFlags struct {
 	AIRuntimeOptions
 
 	Prompt         string   `flag:"prompt" clicky:"cli-file-read" help:"Prompt text, @file or @url to load it, or - for stdin; alternative to the positional" short:"p"`
-	RuntimeProfile string   `flag:"runtime-profile" help:"Runtime profile (id or name) whose presets and spec are layered beneath the prompt frontmatter; overrides a runtimeProfile frontmatter pin"`
+	Preset         []string `flag:"preset" help:"Runtime preset (id or name) layered beneath the prompt frontmatter (repeatable)"`
+	NoPresets      bool     `flag:"no-presets" help:"Clear presets selected by prompt frontmatter"`
+	RuntimeProfile string   `flag:"runtime-profile" help:"Deprecated and ignored; use --preset"`
 	System         string   `flag:"system" clicky:"cli-file-read" help:"System prompt (or @file/@url)" short:"s"`
 	AppendSystem   string   `flag:"append-system" clicky:"cli-file-read" help:"Append text to the default system prompt (or @file/@url)"`
 	Var            []string `flag:"var" help:"Template variable key=value (repeatable); a value of @file loads it, - reads stdin" short:"V"`
@@ -190,6 +196,7 @@ type promptInspection struct {
 	InputDefault   map[string]any
 	OutputSchema   map[string]any
 	Runtimes       []api.Model
+	Presets        []string
 	RuntimeProfile string
 	Variables      []PromptVariable
 }

@@ -53,7 +53,7 @@ func (s *dbSource) preset(row database.RuntimePreset) Preset {
 	key := row.ID.String()
 	return Preset{
 		ID: EncodeID(KindPreset, s.info.ID, key), Key: key, Source: s.info, Name: row.Name,
-		Description: row.Description, Scope: row.Scope, Spec: row.Spec, UpdatedAt: row.UpdatedAt,
+		Description: row.Description, Scope: row.Scope, Spec: row.Spec, Presets: row.Presets, UpdatedAt: row.UpdatedAt,
 	}
 }
 
