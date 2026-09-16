@@ -287,7 +287,7 @@ func callerTools() map[ToolPolicy]Support {
 func resources(mcpOff, skillsOn bool) map[ResourceKind]map[ResourceMode]Support {
 	mcpDisabled := unsupported("permissions.mcp.disabled is accepted and then dropped on this runtime")
 	if mcpOff {
-		mcpDisabled = native("all MCP servers silenced")
+		mcpDisabled = native("external and ambient MCP servers silenced; captain's caller-tool server is kept")
 	}
 	skillsEnabled := unsupported("skill directories are not loaded on this runtime")
 	if skillsOn {
@@ -434,8 +434,8 @@ var permissionCapabilities = map[Runtime]PermissionCapabilities{
 		Modes:        claudeModes("permissionMode=", true),
 		ToolPolicies: toolPolicies(claudeAgentTools(), callerTools(), noToolFilter()),
 		// mcp.disabled becomes the SDK's strictMcpConfig, which ignores every
-		// server the bridge did not pass in mcpServers. Like the openai agent,
-		// prepareCallerTools refuses caller tools combined with mcp.disabled.
+		// server the bridge did not pass in mcpServers, so captain's caller-tool
+		// server is the only one that survives mcp.disabled.
 		Resources: resources(true, false),
 		Tools:     claudeBuiltinTools,
 	},
@@ -459,7 +459,8 @@ var permissionCapabilities = map[Runtime]PermissionCapabilities{
 		// agent has no tool filter of its own, yet a denied caller tool is simply
 		// never registered, so the policy is fully enforced.
 		ToolPolicies: toolPolicies(noToolFilter(), callerTools(), noToolFilter()),
-		// codexThreadConfig sends an empty mcp_servers map when MCP is disabled.
+		// When MCP is disabled, codexThreadConfig sends only captain's caller-tool
+		// server in mcp_servers, or an empty map when there are no caller tools.
 		Resources: resources(true, false),
 		Tools:     codexBuiltinTools,
 	},

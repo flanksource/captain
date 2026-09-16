@@ -41,7 +41,8 @@ var _ = Describe("prompt run failures", func() {
 					"interrupt": false,
 					"steer": false,
 					"followUp": false,
-					"resume": false
+					"resume": false,
+					"setPermissionMode": false
 				}
 			},
 			"entries": null,
@@ -79,7 +80,7 @@ var _ = Describe("prompt run failures", func() {
 
 		Expect(response.Body.String()).To(Equal(
 			"event: run\n" +
-				`data: {"runId":"run-4a82","sessionId":"session-91bd","status":"error","chat":false,"model":"claude-sonnet-5","provider":"anthropic","mode":"api","capabilities":{"interrupt":false,"steer":false,"followUp":false,"resume":false}}` + "\n\n" +
+				`data: {"runId":"run-4a82","sessionId":"session-91bd","status":"error","chat":false,"model":"claude-sonnet-5","provider":"anthropic","mode":"api","capabilities":{"interrupt":false,"steer":false,"followUp":false,"resume":false,"setPermissionMode":false}}` + "\n\n" +
 				"event: error\n" +
 				`data: {"runId":"run-4a82","sessionId":"session-91bd","model":"claude-sonnet-5","provider":"anthropic","mode":"api","success":false,"error":"provider rejected the request"}` + "\n\n",
 		))

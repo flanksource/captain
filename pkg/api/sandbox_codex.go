@@ -8,10 +8,23 @@ import (
 // CodexSandboxTranslation is the exact Codex CLI/app-server projection of a
 // provider-neutral sandbox reference.
 type CodexSandboxTranslation struct {
-	Sandbox        CodexSandbox
-	Approval       CodexApprovalPolicy
-	WorkspaceWrite map[string]any
+	Sandbox  CodexSandbox
+	Approval CodexApprovalPolicy
+	// ApprovalsReviewer is who answers the approval requests Approval lets
+	// through; empty inherits the user's Codex configuration.
+	ApprovalsReviewer CodexApprovalsReviewer
+	WorkspaceWrite    map[string]any
 }
+
+// CodexApprovalsReviewer is Codex's approvals_reviewer (app-server
+// approvalsReviewer), per `codex app-server generate-ts`.
+type CodexApprovalsReviewer string
+
+const (
+	CodexReviewerUser             CodexApprovalsReviewer = "user"
+	CodexReviewerAutoReview       CodexApprovalsReviewer = "auto_review"
+	CodexReviewerGuardianSubagent CodexApprovalsReviewer = "guardian_subagent"
+)
 
 // ConfigArgs returns deterministic dotted TOML overrides for Codex's
 // workspace-write policy.
@@ -43,23 +56,25 @@ func TranslateCodexSandbox(runtime Runtime, ref *SandboxRef, mode PermissionMode
 	if err := validatePermissionModeSupport(runtime, mode); err != nil {
 		return CodexSandboxTranslation{}, err
 	}
-	approval := codexApproval(mode)
+	posture := CodexSandboxTranslation{Approval: codexApproval(mode), ApprovalsReviewer: codexReviewer(mode)}
 	if ref == nil {
-		return CodexSandboxTranslation{Approval: approval}, nil
+		return posture, nil
 	}
 	if err := ref.Validate(); err != nil {
 		return CodexSandboxTranslation{}, fmt.Errorf("%s sandbox: %w", runtime, err)
 	}
 	switch ref.Mode {
 	case SandboxOff:
-		return CodexSandboxTranslation{Sandbox: CodexSandboxDangerFull, Approval: approval}, nil
+		posture.Sandbox = CodexSandboxDangerFull
+		return posture, nil
 	case SandboxDocker, SandboxGitAgent:
 		if mode == PermissionPlan {
 			return CodexSandboxTranslation{}, fmt.Errorf("permissions.mode plan is not supported by %s with %s sandbox mode", runtime, ref.Mode)
 		}
-		return CodexSandboxTranslation{Sandbox: CodexSandboxDangerFull, Approval: approval}, nil
+		posture.Sandbox = CodexSandboxDangerFull
+		return posture, nil
 	case SandboxNative:
-		return translateCodexNative(runtime, ref.Policy, mode, approval)
+		return translateCodexNative(runtime, ref.Policy, mode, posture)
 	default:
 		return CodexSandboxTranslation{}, fmt.Errorf("%s sandbox mode %q is unsupported", runtime, ref.Mode)
 	}
@@ -69,9 +84,9 @@ func translateCodexNative(
 	runtime Runtime,
 	policy *NativeSandboxPolicy,
 	mode PermissionMode,
-	approval CodexApprovalPolicy,
+	translation CodexSandboxTranslation,
 ) (CodexSandboxTranslation, error) {
-	translation := CodexSandboxTranslation{Sandbox: CodexSandboxReadOnly, Approval: approval}
+	translation.Sandbox = CodexSandboxReadOnly
 	if policy == nil {
 		return translation, nil
 	}
@@ -178,5 +193,39 @@ func codexApproval(mode PermissionMode) CodexApprovalPolicy {
 		return CodexApprovalOnRequest
 	default:
 		panic(fmt.Sprintf("invalid validated sandbox approval %q", mode))
+	}
+}
+
+// codexReviewer names the reviewer explicitly for every stated posture: Codex
+// keeps a turn/start override for the rest of the thread, so a switch away from
+// auto must say "user" rather than fall silent.
+func codexReviewer(mode PermissionMode) CodexApprovalsReviewer {
+	switch mode {
+	case "":
+		return ""
+	case PermissionAuto:
+		return CodexReviewerAutoReview
+	default:
+		return CodexReviewerUser
+	}
+}
+
+// CodexPermissionMode recovers the posture a recorded Codex turn ran under from
+// its approval policy, approvals reviewer, and collaboration mode — the inverse
+// of the approval half of TranslateCodexSandbox. default and acceptEdits share
+// one Codex posture, so both read back as default; a policy other than never
+// (on-request, untrusted, granular) still asks.
+func CodexPermissionMode(approval string, reviewer CodexApprovalsReviewer, collaboration string) PermissionMode {
+	switch {
+	case collaboration == "plan":
+		return PermissionPlan
+	case approval == "":
+		return ""
+	case approval == string(CodexApprovalNever):
+		return PermissionBypass
+	case reviewer == CodexReviewerAutoReview || reviewer == CodexReviewerGuardianSubagent:
+		return PermissionAuto
+	default:
+		return PermissionDefault
 	}
 }

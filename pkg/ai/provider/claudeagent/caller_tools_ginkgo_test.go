@@ -129,4 +129,32 @@ var _ = Describe("Claude Agent caller tools", func() {
 		Expect(provider.prepareCallerTools(request)).To(Succeed())
 		Expect(provider.callerTools).To(BeNil())
 	})
+
+	It("keeps only captain's caller-tool server under strict MCP config when MCP is disabled", func() {
+		provider, err := New(ai.Config{
+			Model: api.Model{Name: "claude-sonnet-5"},
+			Tools: []api.ToolDefinition{{
+				Name: "invoice_get", DefaultPermission: api.ToolPolicyAllow,
+				Handler: func(context.Context, map[string]any) (any, error) { return "ok", nil },
+			}},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(provider.Close)
+
+		request := ai.Request{
+			Prompt:      api.Prompt{User: "inspect"},
+			Permissions: api.Permissions{MCP: api.MCP{Disabled: true}},
+		}
+		Expect(provider.prepareCallerTools(request)).To(Succeed())
+		Expect(provider.callerTools).NotTo(BeNil())
+		Expect(provider.prepareCallerTools(request)).To(Succeed(), "an existing endpoint is reused under mcp.disabled")
+
+		params, err := provider.initializeParams(request)
+		Expect(err).NotTo(HaveOccurred())
+		endpoint := provider.callerTools
+		Expect(params.StrictMCPConfig).To(BeTrue())
+		Expect(params.MCPServers).To(Equal(map[string]callerToolServer{
+			endpoint.Name: {Type: "http", URL: endpoint.URL, Headers: endpoint.Headers},
+		}))
+	})
 })

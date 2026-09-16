@@ -31,6 +31,9 @@ type AgentTool struct {
 	// Default is the policy a picker should seed the tool with. Tools that run
 	// commands or reach the network default to ask; the rest to auto.
 	Default ToolPolicy
+	// Aliases are the shared, agent-neutral names (shell, edit, …) a portable
+	// permissions.tools key may use for this tool; see Tools.ForRuntime.
+	Aliases []string
 }
 
 // AgentResourceScope is the root a source path is resolved against.
@@ -124,39 +127,74 @@ func agentToolNames(tools []AgentTool) []string {
 // --- tool vocabularies ----------------------------------------------------
 
 var agentTools = map[string][]AgentTool{
+	// Every table must declare each tool pkg/ai/history recognises for that
+	// agent, because a name a runtime does not declare is ignored and a deny on
+	// it would be dropped; history's agent_tool_vocabulary_ginkgo_test.go
+	// enforces that.
 	"claude": {
-		{Name: "Bash", Group: "Shell", Description: "Run shell commands.", Default: ToolPolicyAsk},
-		{Name: "Edit", Group: "Files", Description: "Apply targeted file edits.", Default: ToolPolicyAuto},
-		{Name: "Glob", Group: "Files", Description: "Find files by glob pattern.", Default: ToolPolicyAuto},
-		{Name: "Grep", Group: "Files", Description: "Search file contents.", Default: ToolPolicyAuto},
-		{Name: "MultiEdit", Group: "Files", Description: "Apply several edits to one file.", Default: ToolPolicyAuto},
-		{Name: "Read", Group: "Files", Description: "Read files from the workspace.", Default: ToolPolicyAuto},
-		{Name: "TodoWrite", Group: "Planning", Description: "Track task progress.", Default: ToolPolicyAuto},
-		{Name: "WebFetch", Group: "Web", Description: "Fetch a web page.", Default: ToolPolicyAsk},
-		{Name: "WebSearch", Group: "Web", Description: "Search the web.", Default: ToolPolicyAsk},
-		{Name: "Write", Group: "Files", Description: "Write a new file.", Default: ToolPolicyAuto},
+		{Name: "Agent", Group: "Agents", Description: "Spawn a sub-agent.", Default: ToolPolicyAsk},
+		{Name: "AskUserQuestion", Group: "Interaction", Description: "Ask the user a question mid-run.", Default: ToolPolicyAuto},
+		{Name: "Bash", Group: "Shell", Description: "Run shell commands.", Default: ToolPolicyAsk, Aliases: []string{"shell"}},
+		{Name: "BashOutput", Group: "Shell", Description: "Read output from a background shell.", Default: ToolPolicyAuto, Aliases: []string{"shell"}},
+		{Name: "DesignSync", Group: "Web", Description: "Sync with a design tool.", Default: ToolPolicyAsk},
+		{Name: "Edit", Group: "Files", Description: "Apply targeted file edits.", Default: ToolPolicyAuto, Aliases: []string{"edit"}},
+		{Name: "EnterPlanMode", Group: "Planning", Description: "Switch the run into plan mode.", Default: ToolPolicyAuto},
+		{Name: "ExitPlanMode", Group: "Planning", Description: "Present the plan and leave plan mode.", Default: ToolPolicyAuto},
+		{Name: "Glob", Group: "Files", Description: "Find files by glob pattern.", Default: ToolPolicyAuto, Aliases: []string{"search"}},
+		{Name: "Grep", Group: "Files", Description: "Search file contents.", Default: ToolPolicyAuto, Aliases: []string{"search"}},
+		{Name: "KillShell", Group: "Shell", Description: "Stop a background shell.", Default: ToolPolicyAuto, Aliases: []string{"shell"}},
+		{Name: "Monitor", Group: "Shell", Description: "Run a command and stream its output.", Default: ToolPolicyAsk, Aliases: []string{"shell"}},
+		{Name: "MultiEdit", Group: "Files", Description: "Apply several edits to one file.", Default: ToolPolicyAuto, Aliases: []string{"edit"}},
+		{Name: "NotebookEdit", Group: "Files", Description: "Edit a Jupyter notebook cell.", Default: ToolPolicyAuto, Aliases: []string{"edit", "write"}},
+		{Name: "PushNotification", Group: "Interaction", Description: "Send the user a push notification.", Default: ToolPolicyAsk},
+		{Name: "Read", Group: "Files", Description: "Read files from the workspace.", Default: ToolPolicyAuto, Aliases: []string{"read"}},
+		{Name: "ScheduleWakeup", Group: "Planning", Description: "Schedule the run to resume later.", Default: ToolPolicyAuto},
+		{Name: "Skill", Group: "Skills", Description: "Invoke a skill.", Default: ToolPolicyAuto},
+		{Name: "Task", Group: "Agents", Description: "Spawn a sub-agent (older name for Agent).", Default: ToolPolicyAsk},
+		{Name: "TaskCreate", Group: "Planning", Description: "Add a task to the task list.", Default: ToolPolicyAuto, Aliases: []string{"todo"}},
+		{Name: "TaskGet", Group: "Planning", Description: "Read a task from the task list.", Default: ToolPolicyAuto, Aliases: []string{"todo"}},
+		{Name: "TaskList", Group: "Planning", Description: "List the task list.", Default: ToolPolicyAuto, Aliases: []string{"todo"}},
+		{Name: "TaskOutput", Group: "Agents", Description: "Read output from a background task.", Default: ToolPolicyAuto},
+		{Name: "TaskStop", Group: "Agents", Description: "Stop a background task.", Default: ToolPolicyAuto},
+		{Name: "TaskUpdate", Group: "Planning", Description: "Update a task on the task list.", Default: ToolPolicyAuto, Aliases: []string{"todo"}},
+		{Name: "TodoWrite", Group: "Planning", Description: "Track task progress.", Default: ToolPolicyAuto, Aliases: []string{"todo"}},
+		{Name: "ToolSearch", Group: "Interaction", Description: "Load deferred tool definitions.", Default: ToolPolicyAuto},
+		{Name: "WebFetch", Group: "Web", Description: "Fetch a web page.", Default: ToolPolicyAsk, Aliases: []string{"web_fetch"}},
+		{Name: "WebSearch", Group: "Web", Description: "Search the web.", Default: ToolPolicyAsk, Aliases: []string{"web_search"}},
+		{Name: "Workflow", Group: "Agents", Description: "Run a multi-agent workflow script.", Default: ToolPolicyAsk},
+		{Name: "Write", Group: "Files", Description: "Write a new file.", Default: ToolPolicyAuto, Aliases: []string{"write"}},
 	},
 	// codex's vocabulary is taken from the codex→claude normalisation table in
 	// pkg/ai/history, which is the only accurate list in the tree. Note that
-	// there is no separate read tool: codex reads through `shell`.
+	// there is no separate read tool: codex reads through `shell`, which
+	// deliberately carries no `read` alias — a read allow must not grant a shell.
 	"codex": {
-		{Name: "apply_patch", Group: "Files", Description: "Apply a patch to workspace files.", Default: ToolPolicyAuto},
+		{Name: "apply_patch", Group: "Files", Description: "Apply a patch to workspace files.", Default: ToolPolicyAuto, Aliases: []string{"edit", "write"}},
 		{Name: "close_agent", Group: "Agents", Description: "Close a spawned sub-agent.", Default: ToolPolicyAuto},
+		{Name: "exec", Group: "Shell", Description: "Run a script that drives exec_command, apply_patch and write_stdin.", Default: ToolPolicyAsk, Aliases: []string{"shell"}},
+		{Name: "exec_command", Group: "Shell", Description: "Run a command in a unified exec session.", Default: ToolPolicyAsk, Aliases: []string{"shell"}},
 		{Name: "request_user_input", Group: "Interaction", Description: "Ask the user a question mid-run.", Default: ToolPolicyAuto},
 		{Name: "resume_agent", Group: "Agents", Description: "Resume a previously spawned sub-agent.", Default: ToolPolicyAsk},
 		{Name: "send_input", Group: "Agents", Description: "Send input to a running sub-agent.", Default: ToolPolicyAuto},
-		{Name: "shell", Group: "Shell", Description: "Run shell commands; also how codex reads files.", Default: ToolPolicyAsk},
+		{Name: "shell", Group: "Shell", Description: "Run shell commands; also how codex reads files.", Default: ToolPolicyAsk, Aliases: []string{"shell"}},
 		{Name: "spawn_agent", Group: "Agents", Description: "Spawn a sub-agent.", Default: ToolPolicyAsk},
-		{Name: "update_plan", Group: "Planning", Description: "Record or revise the run plan.", Default: ToolPolicyAuto},
+		{Name: "update_plan", Group: "Planning", Description: "Record or revise the run plan.", Default: ToolPolicyAuto, Aliases: []string{"todo"}},
 		{Name: "wait", Group: "Agents", Description: "Wait before continuing.", Default: ToolPolicyAuto},
 		{Name: "wait_agent", Group: "Agents", Description: "Wait for a sub-agent to finish.", Default: ToolPolicyAuto},
+		{Name: "web_search", Group: "Web", Description: "Search the web.", Default: ToolPolicyAsk, Aliases: []string{"web_search"}},
+		{Name: "write_stdin", Group: "Shell", Description: "Write to a running exec session.", Default: ToolPolicyAsk, Aliases: []string{"shell"}},
 	},
 	"gemini": {
-		{Name: "google_web_search", Group: "Web", Description: "Search the web with Google.", Default: ToolPolicyAsk},
-		{Name: "read_file", Group: "Files", Description: "Read a file from the workspace.", Default: ToolPolicyAuto},
-		{Name: "replace", Group: "Files", Description: "Replace text within a file.", Default: ToolPolicyAuto},
-		{Name: "run_shell_command", Group: "Shell", Description: "Run shell commands.", Default: ToolPolicyAsk},
-		{Name: "write_file", Group: "Files", Description: "Write a file.", Default: ToolPolicyAuto},
+		{Name: "glob", Group: "Files", Description: "Find files by glob pattern.", Default: ToolPolicyAuto, Aliases: []string{"search"}},
+		{Name: "google_web_search", Group: "Web", Description: "Search the web with Google.", Default: ToolPolicyAsk, Aliases: []string{"web_search"}},
+		{Name: "list_directory", Group: "Files", Description: "List a directory.", Default: ToolPolicyAuto, Aliases: []string{"search"}},
+		{Name: "read_file", Group: "Files", Description: "Read a file from the workspace.", Default: ToolPolicyAuto, Aliases: []string{"read"}},
+		{Name: "read_many_files", Group: "Files", Description: "Read several files at once.", Default: ToolPolicyAuto, Aliases: []string{"read"}},
+		{Name: "replace", Group: "Files", Description: "Replace text within a file.", Default: ToolPolicyAuto, Aliases: []string{"edit"}},
+		{Name: "run_shell_command", Group: "Shell", Description: "Run shell commands.", Default: ToolPolicyAsk, Aliases: []string{"shell"}},
+		{Name: "search_file_content", Group: "Files", Description: "Search file contents.", Default: ToolPolicyAuto, Aliases: []string{"search"}},
+		{Name: "web_fetch", Group: "Web", Description: "Fetch a web page.", Default: ToolPolicyAsk, Aliases: []string{"web_fetch"}},
+		{Name: "write_file", Group: "Files", Description: "Write a file.", Default: ToolPolicyAuto, Aliases: []string{"write"}},
 	},
 }
 
