@@ -453,8 +453,14 @@ func (p *Provider) initializeParams(req ai.Request) (initializeParams, error) {
 	}
 	// AllowList/DenyList, not the raw Allow/Deny slices: an `off` tool mode is a
 	// deny that only the normalized policy map reports, and forwarding the raw
-	// slice would let `tools: {Bash: off}` run.
-	allowed := req.Permissions.Tools.AllowList()
+	// slice would let `tools: {Bash: off}` run. The lists are built from the
+	// tools as claude names them, so a portable `shell: deny` reaches Bash.
+	permissions, ignored := req.Permissions.ForRuntime(api.Anthropic, api.ModeAgent)
+	for _, warning := range ignored {
+		log.Warnf("%s", warning)
+	}
+	tools := permissions.Tools
+	allowed := tools.AllowList()
 	if req.Permissions.HasPreset(api.PresetEdit) {
 		if len(allowed) == 0 {
 			allowed = safeEditAllowlist
@@ -495,7 +501,7 @@ func (p *Provider) initializeParams(req ai.Request) (initializeParams, error) {
 		SystemPrompt:       req.Prompt.System,
 		AppendSystemPrompt: req.Prompt.AppendSystem,
 		AllowedTools:       allowed,
-		DisallowedTools:    req.Permissions.Tools.DenyList(),
+		DisallowedTools:    tools.DenyList(),
 		AdditionalDirs:     req.Permissions.CleanDirectories(),
 		MaxTurns:           req.Budget.MaxTurns,
 		MaxBudgetUsd:       maxBudget,

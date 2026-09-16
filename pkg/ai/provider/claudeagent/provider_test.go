@@ -1,6 +1,7 @@
 package claudeagent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/commons/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -47,6 +49,28 @@ func TestProvider_StreamLifecycle(t *testing.T) {
 	require.NotNil(t, result.Usage)
 	assert.Equal(t, 10, result.Usage.InputTokens)
 	assert.Equal(t, 5, result.Usage.OutputTokens)
+}
+
+// TestProvider_InitializeParamsTranslatesPortableToolNames pins that the bridge
+// receives claude's own tool names, and that collisions only tighten: an exact
+// `Edit: auto` never lifts the `edit` alias deny. An ignored deny is logged.
+func TestProvider_InitializeParamsTranslatesPortableToolNames(t *testing.T) {
+	prev := logger.GetOutput()
+	t.Cleanup(func() { logger.SetOutput(prev) })
+	var logs bytes.Buffer
+	logger.SetOutput(&logs)
+
+	params, err := (&Provider{}).initializeParams(ai.Request{Permissions: api.Permissions{Tools: api.Tools{
+		"shell":    api.ToolPolicyDeny,
+		"edit":     api.ToolPolicyDeny,
+		"Edit":     api.ToolPolicyAuto,
+		"read":     api.ToolPolicyAllow,
+		"NotATool": api.ToolPolicyDeny,
+	}}})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Bash", "BashOutput", "Edit", "KillShell", "Monitor", "MultiEdit", "NotebookEdit"}, params.DisallowedTools)
+	assert.Equal(t, []string{"Read"}, params.AllowedTools)
+	assert.Contains(t, logs.String(), `permissions.tools "NotATool" deny is ignored: anthropic agent has no tool it names`)
 }
 
 func TestAgentProcessEnvHonoursAPIURL(t *testing.T) {

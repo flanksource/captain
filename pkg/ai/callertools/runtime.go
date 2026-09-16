@@ -37,6 +37,10 @@ const (
 
 // Options defines one private caller-tool capability.
 type Options struct {
+	// Context is the context of the request that opened the capability. Tool
+	// handlers run with its values, as in-process providers run them on the turn's
+	// context, and cancelling it cancels calls still in flight.
+	Context     context.Context
 	Definitions []api.ToolDefinition
 	Preferences api.ToolPreferences
 	// Policy is the ordered, last-match-wins rule list layered after Preferences.
@@ -78,6 +82,9 @@ type Runtime struct {
 
 // New validates and resolves the tool policy before starting a private server.
 func New(options Options) (*Runtime, error) {
+	if options.Context == nil {
+		return nil, fmt.Errorf("caller-tool runtime requires a context")
+	}
 	if !options.ExpiresAt.IsZero() && !options.ExpiresAt.After(time.Now()) {
 		return nil, fmt.Errorf("caller-tool credential expiry must be in the future")
 	}
@@ -102,7 +109,7 @@ func New(options Options) (*Runtime, error) {
 	if err != nil {
 		return nil, fmt.Errorf("listen for caller tools: %w", err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(options.Context)
 	runtime := &Runtime{
 		definitions:     make(map[string]api.ToolDefinition, len(definitions)),
 		schemas:         make(map[string]*jsonschema.Schema, len(definitions)),
@@ -205,8 +212,10 @@ func (r *Runtime) handler(definition api.ToolDefinition) server.ToolHandlerFunc 
 		if _, ok := r.definitions[definition.Name]; !ok {
 			return nil, fmt.Errorf("caller tool %q is not authorized", definition.Name)
 		}
-		callCtx, cancel := context.WithCancel(ctx)
-		stop := context.AfterFunc(r.ctx, cancel)
+		// The MCP request's context knows nothing about the caller; values come from
+		// the runtime's, and the call ends with whichever finishes first.
+		callCtx, cancel := context.WithCancel(r.ctx)
+		stop := context.AfterFunc(ctx, cancel)
 		defer stop()
 		defer cancel()
 		input := request.GetArguments()

@@ -44,6 +44,13 @@ type CodexAppServer struct {
 	// rpc read loop, not the turn goroutine, so it cannot reach the request; the
 	// posture is recorded here when the turn starts.
 	posture codexPosture
+	// sandbox is the current run's isolation boundary, which a posture switch
+	// must stay compatible with.
+	sandbox *api.SandboxRef
+	// permissionMode is a posture switched mid-session; it replaces the posture
+	// of every later turn, the way Codex keeps a turn/start override for the
+	// rest of the thread.
+	permissionMode api.PermissionMode
 	// runLabels is the host's identification of the current run, recorded here
 	// for the same reason posture is: the spawn path cannot reach the request.
 	runLabels map[string]string
@@ -78,7 +85,10 @@ func (c *CodexAppServer) GetModel() string          { return c.model }
 func (c *CodexAppServer) GetRuntime() ai.Runtime    { return ai.RuntimeOf(ai.OpenAI, ai.ModeAgent) }
 func (c *CodexAppServer) SupportsCallerTools() bool { return true }
 
-var _ api.ToolCapableProvider = (*CodexAppServer)(nil)
+var (
+	_ api.ToolCapableProvider          = (*CodexAppServer)(nil)
+	_ api.PermissionSwitchableProvider = (*CodexAppServer)(nil)
+)
 
 // Execute drains the streaming output into a buffered ai.Response. When the
 // request carries a structured-output schema, the final agent message's JSON is
@@ -137,7 +147,7 @@ func (c *CodexAppServer) ExecuteStream(ctx context.Context, req ai.Request) (<-c
 	if _, err := translateCodexSandbox(api.RuntimeOf(api.OpenAI, api.ModeAgent), req); err != nil {
 		return nil, err
 	}
-	c.beginTurn(req)
+	req = c.beginTurn(req)
 	if err := c.ensureStarted(ctx); err != nil {
 		c.turnMu.Unlock()
 		return nil, err
@@ -208,10 +218,37 @@ func (c *CodexAppServer) failTurn(ts *turnState, err error) {
 // but never before the lock: a second, more permissive ExecuteStream queued
 // behind an in-flight turn would otherwise overwrite the posture that turn's
 // approvals are still being judged against. driveTurn releases turnMu.
-func (c *CodexAppServer) beginTurn(req ai.Request) {
+//
+// A posture switched mid-session replaces the request's, so the returned request
+// is the one the turn must run.
+func (c *CodexAppServer) beginTurn(req ai.Request) ai.Request {
 	c.turnMu.Lock()
-	c.setPosture(postureFor(req))
+	c.mu.Lock()
+	if c.permissionMode != "" {
+		req.Permissions.Mode = c.permissionMode
+	}
+	c.sandbox = req.Sandbox
+	c.posture = postureFor(req)
+	c.mu.Unlock()
 	c.rememberRunLabels(req)
+	return req
+}
+
+// SetPermissionMode switches the thread's posture. Captain's own approval
+// answers change at once; Codex accepts approval policy and reviewer only on
+// turn/start, so its side of the posture takes effect from the next turn.
+func (c *CodexAppServer) SetPermissionMode(_ context.Context, mode api.PermissionMode) error {
+	if mode == "" {
+		return fmt.Errorf("codex app-server: permission mode is required")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, err := api.TranslateCodexSandbox(api.RuntimeOf(api.OpenAI, api.ModeAgent), c.sandbox, mode); err != nil {
+		return err
+	}
+	c.permissionMode = mode
+	c.posture = postureFor(ai.Request{Sandbox: c.sandbox, Permissions: api.Permissions{Mode: mode}})
+	return nil
 }
 
 func (c *CodexAppServer) setActive(ts *turnState) { c.mu.Lock(); c.active = ts; c.mu.Unlock() }
@@ -428,9 +465,6 @@ func (c *CodexAppServer) prepareCallerTools(req ai.Request) error {
 	c.callerToolsMu.Lock()
 	defer c.callerToolsMu.Unlock()
 	if c.callerTools != nil {
-		if req.Permissions.MCP.Disabled {
-			return fmt.Errorf("codex app-server: caller tools require MCP but MCP is disabled")
-		}
 		return c.callerTools.Validate()
 	}
 	if len(c.cfg.Tools) == 0 {
@@ -442,9 +476,6 @@ func (c *CodexAppServer) prepareCallerTools(req ai.Request) error {
 	}
 	if len(definitions) == 0 {
 		return nil
-	}
-	if req.Permissions.MCP.Disabled {
-		return fmt.Errorf("codex app-server: caller tools require MCP but MCP is disabled")
 	}
 	options, err := c.callerToolOptions(req, definitions)
 	if err != nil {

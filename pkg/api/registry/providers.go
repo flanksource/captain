@@ -5,9 +5,10 @@ import "strings"
 // The provider descriptors. Everything captain used to rediscover with string
 // prefixes and per-backend switches is a field here.
 //
-// Media types come from what each adapter can actually carry; Interrupt/Steer
-// mirror the InterruptibleProvider/SteerableProvider implementations in
-// pkg/ai/provider (steer: claude-agent only; interrupt: claude-agent and
+// Media types come from what each adapter can actually carry; Interrupt/Steer/
+// SetPermissionMode mirror the InterruptibleProvider/SteerableProvider/
+// PermissionSwitchableProvider implementations in pkg/ai/provider (steer:
+// claude-agent only; interrupt and permission switch: claude-agent and
 // codex-agent). Streaming is true everywhere because every adapter implements
 // ExecuteStream; it is declared rather than assumed so a future non-streaming
 // adapter has an honest place to say so.
@@ -22,7 +23,7 @@ var (
 		modes: map[RuntimeMode]ModeCapabilities{
 			ModeAPI:   {Streaming: true, CallerTools: true, MediaTypes: []string{"image/*"}, SchemaDialect: SchemaDialectAnthropic},
 			ModeCLI:   {Streaming: true, Resume: true, ToolPolicy: true, RequiredBinary: "claude", SchemaDialect: SchemaDialectAnthropic, RunsThroughClaudeCode: true},
-			ModeAgent: {Streaming: true, Resume: true, Interrupt: true, Steer: true, CallerTools: true, ToolPolicy: true, MediaTypes: []string{"image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf"}, RequiredBinary: "tsx", SchemaDialect: SchemaDialectAnthropic, RunsThroughClaudeCode: true},
+			ModeAgent: {Streaming: true, Resume: true, Interrupt: true, Steer: true, SetPermissionMode: true, CallerTools: true, ToolPolicy: true, MediaTypes: []string{"image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf"}, RequiredBinary: "tsx", SchemaDialect: SchemaDialectAnthropic, RunsThroughClaudeCode: true},
 			// cmux submits no response format, so it is in neither schema subset.
 			ModeCmux: {Streaming: true, Resume: true, Keyless: true, ToolPolicy: true, RequiredBinary: "claude"},
 		},
@@ -44,7 +45,7 @@ var (
 		modes: map[RuntimeMode]ModeCapabilities{
 			ModeAPI:   {Streaming: true, CallerTools: true, MediaTypes: []string{"image/*"}, SchemaDialect: SchemaDialectOpenAI},
 			ModeCLI:   {Streaming: true, Resume: true, MediaTypes: []string{"image/*"}, RequiredBinary: "codex", SchemaDialect: SchemaDialectOpenAI},
-			ModeAgent: {Streaming: true, Resume: true, Interrupt: true, CallerTools: true, MediaTypes: []string{"image/*"}, RequiredBinary: "codex", SchemaDialect: SchemaDialectOpenAI},
+			ModeAgent: {Streaming: true, Resume: true, Interrupt: true, SetPermissionMode: true, CallerTools: true, MediaTypes: []string{"image/*"}, RequiredBinary: "codex", SchemaDialect: SchemaDialectOpenAI},
 			// Prompt-only cmux sessions submit no response format to OpenAI.
 			ModeCmux: {Streaming: true, Resume: true, Keyless: true, RequiredBinary: "codex"},
 		},

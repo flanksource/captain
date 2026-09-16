@@ -401,6 +401,9 @@ func buildTurnStartParams(model string, req ai.Request, threadID string, outputS
 	if translation.Approval != "" {
 		p["approvalPolicy"] = string(translation.Approval)
 	}
+	if translation.ApprovalsReviewer != "" {
+		p["approvalsReviewer"] = string(translation.ApprovalsReviewer)
+	}
 	if len(roots) > 0 {
 		p["runtimeWorkspaceRoots"] = roots
 	}
@@ -490,6 +493,9 @@ func applyCodexThreadSafety(params map[string]any, translation api.CodexSandboxT
 	if translation.Approval != "" {
 		params["approvalPolicy"] = string(translation.Approval)
 	}
+	if translation.ApprovalsReviewer != "" {
+		params["approvalsReviewer"] = string(translation.ApprovalsReviewer)
+	}
 	if len(roots) > 0 {
 		params["runtimeWorkspaceRoots"] = roots
 	}
@@ -523,15 +529,17 @@ func codexTurnSandboxPolicy(translation api.CodexSandboxTranslation) map[string]
 
 func codexThreadConfig(req ai.Request, callerTools *api.CallerToolEndpoint, workspaceWrite map[string]any) map[string]any {
 	config := map[string]any{}
-	if req.Permissions.MCP.Disabled {
-		config["mcp_servers"] = map[string]any{}
-	} else if callerTools != nil {
-		config["mcp_servers"] = map[string]any{
-			callerTools.Name: map[string]any{
-				"url": callerTools.URL, "http_headers": cloneStringMap(callerTools.Headers),
-				"required": true, "enabled": true, "default_tools_approval_mode": "approve",
-			},
+	// mcp.disabled replaces every ambient server with captain's own caller-tool
+	// server, or with nothing when there are no caller tools.
+	servers := map[string]any{}
+	if callerTools != nil {
+		servers[callerTools.Name] = map[string]any{
+			"url": callerTools.URL, "http_headers": cloneStringMap(callerTools.Headers),
+			"required": true, "enabled": true, "default_tools_approval_mode": "approve",
 		}
+	}
+	if req.Permissions.MCP.Disabled || callerTools != nil {
+		config["mcp_servers"] = servers
 	}
 	if len(workspaceWrite) > 0 {
 		config["sandbox_workspace_write"] = workspaceWrite
