@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/flanksource/captain/pkg/api"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gstruct"
@@ -257,6 +258,25 @@ text(example);`
 			"ToolUseID":  Equal("call-patch"),
 			"RecordType": Equal("response_item.custom_tool_call"),
 			"SourceLine": Equal(int64(2)),
+		})))
+	})
+
+	It("projects a Codex image input as an attachment and removes its transport wrapper", func() {
+		const digest = "7d432b84dfb5e1cda66c73adae2848da8f2afea3f6f1bd255f517ebce71b3d8e"
+		const imagePath = "/repo/.captain/attachments/sha256/7d/" + digest
+		stream := strings.Join([]string{
+			`{"timestamp":"2026-09-11T11:55:21Z","type":"session_meta","payload":{"id":"session-image","cwd":"/repo"}}`,
+			`{"timestamp":"2026-09-11T11:55:22Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<image name=[Image #1] path=\"` + imagePath + `\">"},{"type":"input_image","image_url":"data:image/png;base64,iVBORw0KGgo="},{"type":"input_text","text":"</image>"},{"type":"input_text","text":"Classify the attached report"}]}}`,
+		}, "\n")
+
+		uses, err := ExtractCodexToolUsesFromReader(strings.NewReader(stream))
+		Expect(err).ToNot(HaveOccurred())
+		Expect(uses).To(ConsistOf(MatchFields(IgnoreExtras, Fields{
+			"Tool":  Equal("User"),
+			"Input": Equal(map[string]any{"text": "Classify the attached report"}),
+			"Attachments": Equal([]api.AttachmentRef{{
+				Path: imagePath, Filename: "Image #1", MediaType: "image/png",
+			}}),
 		})))
 	})
 

@@ -24,6 +24,10 @@ type TerminalQuestion struct {
 	Text    string   `json:"text"`
 	Context string   `json:"context,omitempty"`
 	Options []string `json:"options,omitempty"`
+	// OptionDescriptions explains the options the agent described, by label.
+	OptionDescriptions map[string]string `json:"optionDescriptions,omitempty"`
+	// MultiSelect lets the person pick several options.
+	MultiSelect bool `json:"multiSelect,omitempty"`
 }
 
 // TerminalOutcome carries native plan or question completion independently of

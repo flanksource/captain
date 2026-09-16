@@ -79,6 +79,18 @@ var _ = Describe("Genkit structured streaming", func() {
 		Expect(got[0].Kind).To(Equal(ai.EventError))
 		Expect(got[0].Error).To(ContainSubstring(ai.ErrSchemaValidation.Error()))
 	})
+
+	It("preserves raw structured JSON bytes", func() {
+		const output = `{"status":"ok"}`
+		raw, err := structuredJSONBytes([]byte(output))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(raw).To(MatchJSON(output))
+	})
+
+	It("rejects invalid structured JSON bytes", func() {
+		_, err := structuredJSONBytes([]byte(`{"status":`))
+		Expect(err).To(HaveOccurred())
+	})
 })
 
 func newStructuredStreamingProvider(ctx context.Context, response string) *Provider {

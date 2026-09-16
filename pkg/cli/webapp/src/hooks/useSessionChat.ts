@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { SessionUIMessage } from "@flanksource/clicky-ui/ai";
+import type {
+  SessionUIMessage,
+  SpecPermissionMode,
+} from "@flanksource/clicky-ui/ai";
 import {
   usePromptRunStream,
   type ChatCapabilities,
@@ -12,6 +15,7 @@ const EMPTY_CAPABILITIES: ChatCapabilities = {
   steer: false,
   followUp: false,
   resume: false,
+  setPermissionMode: false,
 };
 
 export type UseSessionChatOptions = {
@@ -21,12 +25,35 @@ export type UseSessionChatOptions = {
   initialState?: ChatStateFrame;
   clearOnTerminal?: boolean;
   onTerminal?: () => Promise<unknown>;
+  initialPermissionMode?: SpecPermissionMode;
+  permissionModes?: SpecPermissionMode[];
 };
+
+/** Picks the permission mode a not-yet-live session should start selected on:
+ *  the caller's initial mode when the runtime still honours it, else
+ *  "default" when offered, else the runtime's first supported mode. */
+export function selectInitialPermissionMode(
+  initial: SpecPermissionMode | undefined,
+  modes: SpecPermissionMode[] | undefined,
+): SpecPermissionMode | undefined {
+  if (!modes || modes.length === 0) return undefined;
+  if (initial && modes.includes(initial)) return initial;
+  if (modes.includes("default")) return "default";
+  return modes[0];
+}
 
 export function useSessionChat(options: UseSessionChatOptions) {
   const [activeRunID, setActiveRunID] = useState(options.initialRunID);
   const [optimistic, setOptimistic] = useState<SessionUIMessage[]>([]);
   const [actionError, setActionError] = useState<string>();
+  const [localPermissionMode, setLocalPermissionMode] = useState<
+    SpecPermissionMode | undefined
+  >(() =>
+    selectInitialPermissionMode(
+      options.initialPermissionMode,
+      options.permissionModes,
+    ),
+  );
   const terminalHandled = useRef<string | undefined>(undefined);
   const stream = usePromptRunStream(activeRunID);
 
@@ -75,6 +102,26 @@ export function useSessionChat(options: UseSessionChatOptions) {
       ? { ...liveChatState, status: "idle" as const, queued: [] }
       : liveChatState;
 
+  const isLiveRun =
+    Boolean(activeRunID) &&
+    stream.status !== "done" &&
+    stream.status !== "error";
+  const livePermissionMode = isLiveRun
+    ? resolvedChatState?.permissionMode
+    : undefined;
+  const permissionMode = isLiveRun ? livePermissionMode : localPermissionMode;
+  const permissionModes = isLiveRun
+    ? (resolvedChatState?.permissionModes ?? [])
+    : (options.permissionModes ?? []);
+  const canSetPermissionMode = isLiveRun
+    ? capabilities.setPermissionMode
+    : permissionModes.length > 0;
+
+  // The next resumed run should continue in whatever posture the live run ended on.
+  useEffect(() => {
+    if (livePermissionMode) setLocalPermissionMode(livePermissionMode);
+  }, [livePermissionMode]);
+
   const send = useCallback(
     async (text: string) => {
       const messageID = crypto.randomUUID();
@@ -104,6 +151,7 @@ export function useSessionChat(options: UseSessionChatOptions) {
               `/api/captain/sessions/${encodeURIComponent(sessionID)}/message`,
               text,
               messageID,
+              permissionMode,
             );
           }
         } else {
@@ -112,6 +160,7 @@ export function useSessionChat(options: UseSessionChatOptions) {
             `/api/captain/sessions/${encodeURIComponent(sessionID)}/message`,
             text,
             messageID,
+            permissionMode,
           );
         }
         if (response.runId !== activeRunID) {
@@ -125,7 +174,33 @@ export function useSessionChat(options: UseSessionChatOptions) {
         setActionError(errorMessage(error));
       }
     },
-    [activeRunID, options.sessionID, stream.status, stream.summary?.sessionId],
+    [
+      activeRunID,
+      options.sessionID,
+      permissionMode,
+      stream.status,
+      stream.summary?.sessionId,
+    ],
+  );
+
+  const setPermissionMode = useCallback(
+    async (mode: SpecPermissionMode) => {
+      if (!isLiveRun) {
+        setLocalPermissionMode(mode);
+        return;
+      }
+      if (!activeRunID) return;
+      setActionError(undefined);
+      try {
+        await postJSON(
+          `/api/captain/prompt/runs/${encodeURIComponent(activeRunID)}/permission-mode`,
+          { mode },
+        );
+      } catch (error) {
+        setActionError(errorMessage(error));
+      }
+    },
+    [activeRunID, isLiveRun],
   );
 
   const interrupt = useCallback(async () => {
@@ -164,6 +239,10 @@ export function useSessionChat(options: UseSessionChatOptions) {
     send,
     interrupt,
     stop,
+    permissionMode,
+    permissionModes,
+    setPermissionMode,
+    canSetPermissionMode,
   };
 }
 
@@ -205,8 +284,17 @@ function userMessage(id: string, text: string): SessionUIMessage {
   return { id, role: "user", parts: [{ type: "text", text }] };
 }
 
-async function postChatMessage(path: string, text: string, messageId: string) {
-  return postJSON<ChatMessageResponse>(path, { text, messageId });
+async function postChatMessage(
+  path: string,
+  text: string,
+  messageId: string,
+  permissionMode?: SpecPermissionMode,
+) {
+  return postJSON<ChatMessageResponse>(path, {
+    text,
+    messageId,
+    ...(permissionMode ? { permissionMode } : {}),
+  });
 }
 
 async function postJSON<T>(path: string, body: unknown): Promise<T> {

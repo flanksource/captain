@@ -144,6 +144,20 @@ type streamJSONLine struct {
 	Slug           string          `json:"slug,omitempty"`
 	Error          json.RawMessage `json:"error,omitempty"`
 	Attachment     json.RawMessage `json:"attachment,omitempty"`
+	PermissionMode string          `json:"permissionMode,omitempty"`
+	IsMeta         bool            `json:"isMeta,omitempty"`
+	IsCompact      bool            `json:"isCompactSummary,omitempty"`
+}
+
+const interruptNoticePrefix = "[Request interrupted by user"
+
+// injectedUserLine reports a user line Claude wrote on the person's behalf.
+func injectedUserLine(sj streamJSONLine, msg Message) bool {
+	if sj.IsMeta || sj.IsCompact {
+		return true
+	}
+	text, ok := singleTextContent(msg)
+	return ok && strings.HasPrefix(text, interruptNoticePrefix)
 }
 
 func (sj streamJSONLine) sessionID() string {
@@ -177,7 +191,6 @@ func (sj streamJSONLine) contentString() string {
 var knownSessionStorageTypes = map[string]bool{
 	"file-history-snapshot": true,
 	"file-history-delta":    true, // incremental checkpoint bookkeeping for the snapshot above
-	"permission-mode":       true,
 	"agent-name":            true,
 	// Operational/streaming state with no unique row-level content — the real
 	// content surfaces via the actual user/assistant messages. Listed so they
@@ -431,6 +444,7 @@ func dispatchEvent(sj streamJSONLine, raw []byte, lineNo int) []HistoryEntry {
 			GitBranch: sj.GitBranch,
 			Slug:      sj.Slug,
 			Message:   msg,
+			Injected:  sj.Type == "user" && injectedUserLine(sj, msg),
 		}}
 		if errEntry, ok := apiErrorFromAssistantLine(sj, raw); ok {
 			out = append(out, errEntry)
@@ -519,6 +533,11 @@ func dispatchEvent(sj streamJSONLine, raw []byte, lineNo int) []HistoryEntry {
 
 	case "last-prompt":
 		return metadataEventEntry(sj, "last-prompt", "session", rawObject(raw))
+
+	case PermissionModeEvent:
+		// Claude Code rewrites this checkpoint whenever the posture changes, so the
+		// last one in the file is the session's current permission mode.
+		return metadataEventEntry(sj, PermissionModeEvent, "session", map[string]any{"permissionMode": sj.PermissionMode})
 	}
 
 	if knownSessionStorageTypes[sj.Type] {

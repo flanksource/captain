@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai/assistanttags"
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/claude"
 )
 
@@ -16,11 +17,12 @@ const (
 )
 
 type sessionMetadataBuild struct {
-	events       []Event
-	capabilities Capabilities
-	budget       *Budget
-	turns        []Turn
-	turnByEntry  map[string]string
+	events         []Event
+	capabilities   Capabilities
+	budget         *Budget
+	turns          []Turn
+	turnByEntry    map[string]string
+	permissionMode api.PermissionMode
 }
 
 func buildTranscriptMetadata(parsed claude.ParsedSession) sessionMetadataBuild {
@@ -31,6 +33,9 @@ func buildTranscriptMetadata(parsed claude.ParsedSession) sessionMetadataBuild {
 			agentID = transcript.AgentID
 		}
 		current := buildSessionMetadata("claude", transcript.Entries)
+		if !transcript.IsAgent && current.permissionMode != "" {
+			combined.permissionMode = current.permissionMode
+		}
 		namespaceTurns(&current, agentID)
 		combined.events = append(combined.events, current.events...)
 		combined.turns = append(combined.turns, current.turns...)
@@ -163,6 +168,12 @@ func buildSessionMetadata(source string, entries []claude.HistoryEntry) sessionM
 			seenEntries[entry.UUID] = struct{}{}
 		}
 		ts := entryTime(entry)
+		if entry.Event != nil && entry.Event.Type == claude.PermissionModeEvent {
+			if mode, _ := entry.Event.Data["permissionMode"].(string); mode != "" {
+				b.permissionMode = api.PermissionMode(mode)
+			}
+			continue
+		}
 		if entry.Event != nil {
 			ev := eventFromEntry(entry)
 			switch entry.Event.Scope {

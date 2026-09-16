@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/session"
 	"github.com/flanksource/clicky/task"
 	"github.com/google/uuid"
@@ -37,9 +39,13 @@ type chatSession struct {
 	queue           []ChatQueuedMessage
 	discarded       []string
 	interruptedTurn int
+	recordedTurns   int
 	terminal        bool
 	startedAt       time.Time
 	binding         *promptSessionBinding
+	// permissionMode is the posture explicitly requested for the run — the
+	// rendered one until a switch replaces it — and what follow-up turns carry.
+	permissionMode api.PermissionMode
 }
 
 func newChatSession(runID string, rendered PromptRenderResult, timeout time.Duration, stream *runStream, binding *promptSessionBinding) *chatSession {
@@ -47,12 +53,26 @@ func newChatSession(runID string, rendered PromptRenderResult, timeout time.Dura
 	chat := &chatSession{
 		runID: runID, rendered: rendered, timeout: timeout, stream: stream, binding: binding,
 		wake: make(chan struct{}, 1), startedAt: time.Now(),
+		permissionMode: rendered.Input.Permissions.Mode,
 		state: ChatStateFrame{
 			RunID: runID, Status: "starting", Capabilities: capabilities,
 		},
 	}
+	p, _ := api.ProviderByName(rendered.Provider)
+	chat.setPermissionModesLocked(api.RuntimeOf(p, api.RuntimeMode(rendered.Mode)))
 	stream.setChatState(chat.state)
 	return chat
+}
+
+// setPermissionModesLocked projects the runtime's honoured postures and the
+// current one onto the state frame. An unstated posture reads as default only
+// where the runtime honours default at all.
+func (c *chatSession) setPermissionModesLocked(runtime api.Runtime) {
+	c.state.PermissionModes = api.SupportedPermissionModes(providerOf(runtime), runtime.Mode)
+	c.state.PermissionMode = c.permissionMode
+	if c.permissionMode == "" && slices.Contains(c.state.PermissionModes, api.PermissionDefault) {
+		c.state.PermissionMode = api.PermissionDefault
+	}
 }
 
 func (c *chatSession) run(t *task.Task) (PromptRunSummary, error) {
@@ -87,25 +107,13 @@ func (c *chatSession) run(t *task.Task) (PromptRunSummary, error) {
 
 	next := req
 	for {
-		summary, interrupted, turnErr := c.runTurn(baseCtx, t, next)
-		if turnErr != nil {
-			if c.stream.wasStopped() {
-				turnErr = errors.New("stopped")
-			}
-			return c.fail(t, turnErr)
+		turn, turnErr := c.runTurn(baseCtx, next)
+		if err := c.endTurn(next, turn, turnErr); err != nil {
+			return c.fail(t, err)
 		}
-		if c.stream.wasStopped() {
-			return c.fail(t, errors.New("stopped"))
-		}
-		if !interrupted {
-			c.persistTurn(next, summary)
-		}
-		if !summary.Success && !interrupted {
-			return c.fail(t, errors.New(summary.Error))
-		}
-		nextMessage, waitErr := c.waitForMessage(baseCtx, summary)
+		nextMessage, waitErr := c.waitForMessage(baseCtx, turn.Summary)
 		if errors.Is(waitErr, errChatIdle) {
-			return c.complete(t, summary), nil
+			return c.complete(t, turn.Summary), nil
 		}
 		if waitErr != nil {
 			if c.stream.wasStopped() || errors.Is(waitErr, context.Canceled) {
@@ -119,10 +127,31 @@ func (c *chatSession) run(t *task.Task) (PromptRunSummary, error) {
 
 var errChatIdle = errors.New("chat idle timeout")
 
-func (c *chatSession) runTurn(baseCtx context.Context, t *task.Task, req ai.Request) (PromptRunSummary, bool, error) {
+// chatTurn is how one turn of a chat ended.
+type chatTurn struct {
+	Summary     PromptRunSummary
+	Interrupted bool
+	// Delivered is set once the provider answered the turn with any event: its
+	// prompt reached the provider, so the turn is part of the session's history.
+	Delivered bool
+}
+
+// endTurn records a turn that reached the provider, however it ended, and
+// returns the error that ends the chat, if any.
+func (c *chatSession) endTurn(req ai.Request, turn chatTurn, turnErr error) error {
+	if c.stream.wasStopped() {
+		turnErr = errors.New("stopped")
+	}
+	if turn.Delivered {
+		c.persistTurn(req, turn, turnErr)
+	}
+	return turnErr
+}
+
+func (c *chatSession) runTurn(baseCtx context.Context, req ai.Request) (chatTurn, error) {
 	turnCtx, cancel, err := runContext(baseCtx, req, c.timeout)
 	if err != nil {
-		return PromptRunSummary{}, false, err
+		return chatTurn{}, err
 	}
 	turnDone := make(chan struct{})
 	c.mu.Lock()
@@ -146,13 +175,13 @@ func (c *chatSession) runTurn(baseCtx context.Context, t *task.Task, req ai.Requ
 
 	events, err := streamer.ExecuteStream(turnCtx, req)
 	if err != nil {
-		return PromptRunSummary{}, false, err
+		return chatTurn{}, err
 	}
-	started := false
+	var result chatTurn
 	var eventErr string
 	for event := range events {
-		if !started {
-			started = true
+		if !result.Delivered {
+			result.Delivered = true
 			c.markRunning(event.SessionID)
 		}
 		if event.SessionID != "" {
@@ -168,21 +197,22 @@ func (c *chatSession) runTurn(baseCtx context.Context, t *task.Task, req ai.Requ
 		c.rememberSession(sessionID)
 	}
 	c.mu.Lock()
-	interrupted := c.interruptedTurn == turn
-	if interrupted {
+	result.Interrupted = c.interruptedTurn == turn
+	if result.Interrupted {
 		c.interruptedTurn = 0
 	}
 	c.mu.Unlock()
-	if eventErr != "" && !interrupted {
-		return PromptRunSummary{}, false, errors.New(eventErr)
-	}
-	summary := PromptRunSummary{
+	result.Summary = PromptRunSummary{
 		RunID: c.runID, SessionID: sessionID, Model: model,
 		Provider: c.provider.GetRuntime().Provider, Mode: string(c.provider.GetRuntime().Mode), InputTokens: usage.InputTokens,
 		OutputTokens: usage.OutputTokens, CostUSD: cost,
 		Duration: time.Since(c.startedAt).Round(time.Millisecond).String(), Success: true,
 	}
-	return summary, interrupted, nil
+	if eventErr != "" && !result.Interrupted {
+		result.Summary.Success, result.Summary.Error = false, eventErr
+		return result, errors.New(eventErr)
+	}
+	return result, nil
 }
 
 func (c *chatSession) waitForMessage(ctx context.Context, summary PromptRunSummary) (ChatQueuedMessage, error) {
@@ -235,6 +265,11 @@ func (c *chatSession) send(ctx context.Context, request ChatMessageRequest) (Cha
 		messageID = uuid.NewString()
 	}
 	message := ChatQueuedMessage{MessageID: messageID, Text: text}
+	if request.PermissionMode != "" && request.PermissionMode != c.currentPermissionMode() {
+		if _, err := c.setPermissionMode(ctx, request.PermissionMode); err != nil {
+			return ChatMessageResponse{}, err
+		}
+	}
 
 	c.mu.Lock()
 	if c.terminal {
@@ -327,6 +362,50 @@ func (c *chatSession) interrupt(ctx context.Context) (ChatInterruptResponse, err
 	return ChatInterruptResponse{Status: "interrupting", DiscardedMessageIDs: discarded}, nil
 }
 
+// setPermissionMode switches the live run's posture through the provider and
+// records it for the state frame and every later follow-up turn.
+func (c *chatSession) setPermissionMode(ctx context.Context, mode api.PermissionMode) (ChatPermissionModeResponse, error) {
+	if mode == "" || !mode.Valid() {
+		return ChatPermissionModeResponse{}, newChatError(http.StatusBadRequest, fmt.Sprintf("invalid permission mode %q", mode))
+	}
+	c.mu.Lock()
+	terminal, status, provider := c.terminal, c.state.Status, c.provider
+	switchable := c.state.Capabilities.SetPermissionMode
+	supported := slices.Contains(c.state.PermissionModes, mode)
+	c.mu.Unlock()
+	switch {
+	case terminal:
+		return ChatPermissionModeResponse{}, newChatError(http.StatusConflict, "run is terminal")
+	case !switchable:
+		return ChatPermissionModeResponse{}, newChatError(http.StatusConflict, "active runtime cannot switch permission mode")
+	case !supported:
+		return ChatPermissionModeResponse{}, newChatError(http.StatusUnprocessableEntity,
+			fmt.Sprintf("permission mode %q is not supported by the active runtime", mode))
+	case provider == nil || status == "starting" || status == "stopping":
+		return ChatPermissionModeResponse{}, newChatError(http.StatusConflict, "run is not ready for a permission mode change")
+	}
+	switcher, ok := api.ProviderAs[api.PermissionSwitchableProvider](provider)
+	if !ok {
+		return ChatPermissionModeResponse{}, fmt.Errorf("runtime %s declares a permission mode switch its provider does not implement", provider.GetRuntime())
+	}
+	if err := switcher.SetPermissionMode(ctx, mode); err != nil {
+		return ChatPermissionModeResponse{}, err
+	}
+	c.mu.Lock()
+	c.permissionMode = mode
+	c.state.PermissionMode = mode
+	state := c.stateCopyLocked()
+	c.mu.Unlock()
+	c.stream.setChatState(state)
+	return ChatPermissionModeResponse{RunID: c.runID, PermissionMode: mode}, nil
+}
+
+func (c *chatSession) currentPermissionMode() api.PermissionMode {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.state.PermissionMode
+}
+
 func cancelTurnBackstop(done <-chan struct{}, cancel context.CancelFunc) {
 	if cancel == nil {
 		return
@@ -362,6 +441,7 @@ func (c *chatSession) markRunning(sessionID string) {
 	c.mu.Lock()
 	c.state.Status = "running"
 	c.state.Capabilities = chatCapabilitiesForRuntime(providerOf(c.provider.GetRuntime()), c.provider.GetRuntime().Mode)
+	c.setPermissionModesLocked(c.provider.GetRuntime())
 	if sessionID != "" {
 		c.state.SessionID = sessionID
 	}
@@ -379,17 +459,46 @@ func (c *chatSession) rememberSession(sessionID string) {
 	promptChats.bindSession(c, sessionID)
 }
 
-func (c *chatSession) persistTurn(req ai.Request, summary PromptRunSummary) {
-	turn := c.state.Turn
+// persistTurn records a turn under its own run: succeeded, failed with the
+// error that ended it, or cancelled when the person interrupted or stopped it.
+func (c *chatSession) persistTurn(req ai.Request, turn chatTurn, turnErr error) {
+	c.mu.Lock()
+	number := c.state.Turn
+	c.recordedTurns++
+	c.mu.Unlock()
 	runID := c.runID
-	if turn > 1 {
-		runID = fmt.Sprintf("%s-turn-%d", c.runID, turn)
+	if number > 1 {
+		runID = fmt.Sprintf("%s-turn-%d", c.runID, number)
 	}
 	rendered := c.rendered
 	rendered.Input = req
-	persistPromptRun(context.Background(), promptRunRecordInput{
-		Rendered: rendered, RunID: runID, SessionID: summary.SessionID,
+	summary := turn.Summary
+	record := promptRunRecordInput{
+		Rendered: rendered, RunID: runID, SessionID: firstNonEmpty(summary.SessionID, c.sessionID()),
 		Binding: c.binding, Model: summary.Model, Provider: providerOf(api.Runtime{Provider: summary.Provider, Mode: api.RuntimeMode(summary.Mode)}), Mode: api.RuntimeMode(summary.Mode),
+		ResultText: summary.Text, ResultJSON: summary.StructuredOutput,
+	}
+	if turnErr != nil {
+		record.Error = turnErr.Error()
+	}
+	if turn.Interrupted || c.stream.wasStopped() {
+		record.State = database.PromptRunStateCancelled
+	}
+	persistPromptRun(context.Background(), record)
+}
+
+// recordFailedRun gives a batch chat that failed before any of its turns was
+// recorded its run row. A chat with a recorded turn already has its record.
+func (c *chatSession) recordFailedRun(err error) {
+	c.mu.Lock()
+	recorded := c.recordedTurns > 0
+	c.mu.Unlock()
+	if c.binding == nil || recorded {
+		return
+	}
+	persistPromptRun(context.Background(), promptRunRecordInput{
+		Rendered: c.rendered, RunID: c.runID, Binding: c.binding,
+		Model: c.rendered.Model, Provider: providerOf(api.Runtime{Provider: c.rendered.Provider, Mode: api.RuntimeMode(c.rendered.Mode)}), Mode: api.RuntimeMode(c.rendered.Mode), Error: err.Error(),
 	})
 }
 
@@ -409,12 +518,7 @@ func (c *chatSession) fail(t *task.Task, err error) (PromptRunSummary, error) {
 	c.terminal = true
 	c.mu.Unlock()
 	promptChats.finish(c)
-	if c.binding != nil {
-		persistPromptRun(context.Background(), promptRunRecordInput{
-			Rendered: c.rendered, RunID: c.runID, Binding: c.binding,
-			Model: c.rendered.Model, Provider: providerOf(api.Runtime{Provider: c.rendered.Provider, Mode: api.RuntimeMode(c.rendered.Mode)}), Mode: api.RuntimeMode(c.rendered.Mode), Error: err.Error(),
-		})
-	}
+	c.recordFailedRun(err)
 	summary := c.stream.fail(err.Error())
 	_, _ = t.FailedWithError(err)
 	return summary, err
@@ -422,6 +526,9 @@ func (c *chatSession) fail(t *task.Task, err error) (PromptRunSummary, error) {
 
 func (c *chatSession) followUpRequest(base ai.Request, text string) ai.Request {
 	req := base
+	c.mu.Lock()
+	req.Permissions.Mode = c.permissionMode
+	c.mu.Unlock()
 	req.Prompt.User = text
 	req.Prompt.Attachments = nil
 	req.Prompt.Schema = nil

@@ -111,9 +111,13 @@ func entryToMessage(e claude.HistoryEntry, agentID, turnID string) (Message, boo
 	if len(parts) == 0 {
 		return Message{}, false
 	}
+	role := string(e.Message.Role)
+	if e.Injected {
+		role = "system"
+	}
 	m := Message{
 		ID:         e.UUID,
-		Role:       string(e.Message.Role),
+		Role:       role,
 		Parts:      parts,
 		Provenance: provenanceFromEntry(e, agentID),
 		AgentID:    agentID,
