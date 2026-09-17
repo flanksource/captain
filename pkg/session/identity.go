@@ -30,7 +30,7 @@ func applySessionIdentity(s *Session) {
 
 func firstClaudeUserPrompt(entries []claude.HistoryEntry) string {
 	for _, entry := range entries {
-		if !entry.IsUserMessage() {
+		if !entry.IsUserMessage() || entry.Injected {
 			continue
 		}
 		for _, block := range entry.Message.Content {

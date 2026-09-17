@@ -1,0 +1,170 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GoogleCLIOptions",
+  "description": "Native Gemini CLI arguments used by Captain's Google CLI runtime.",
+  "type": "object",
+  "additionalProperties": false,
+  "x-captain-adapter": {
+    "provider": "google",
+    "mode": "cli",
+    "sources": [
+      {"kind": "cli-help", "reference": "gemini --help", "version": "0.50.0"},
+      {"kind": "implementation", "reference": "pkg/ai/provider/gemini_cli.go", "version": "6a2b56cbd26702b18905865f21fc66d44cc864cc"}
+    ]
+  },
+  "properties": {
+    "prompt": {
+      "title": "Prompt", "description": "Composed prompt text written to Gemini standard input.",
+      "type": "string", "x-clicky-section": "prompt", "x-clicky-order": 10,
+      "x-captain-option": {"nativeName": "stdin", "support": "mapped", "specPath": ["prompt.system", "prompt.appendSystem", "prompt.user"]}
+    },
+    "model": {
+      "title": "Model", "description": "Gemini model identifier used for the request.",
+      "type": "string", "x-clicky-section": "model", "x-clicky-order": 20, "x-icon": "sparkles",
+      "x-captain-option": {"nativeName": "--model", "support": "mapped", "specPath": "model.name"}
+    },
+    "approvalMode": {
+      "title": "Approval mode", "description": "Gemini tool-approval posture translated from Captain policy.",
+      "type": "string", "enum": ["default", "auto_edit", "yolo", "plan"], "x-clicky-section": "permissions", "x-clicky-order": 30, "x-enum-display": "segmented",
+      "x-captain-option": {"nativeName": "--approval-mode", "support": "mapped", "specPath": "permissions.mode"}
+    },
+    "outputFormat": {
+      "title": "Output format", "description": "Format used for Gemini CLI output.",
+      "type": "string", "const": "stream-json", "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 40,
+      "x-captain-option": {"nativeName": "--output-format", "support": "managed", "note": "Captain requires stream-json for typed event parsing."}
+    },
+    "debug": {
+      "title": "Debug", "description": "Whether Gemini CLI debug logging is enabled.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 50,
+      "x-captain-option": {"nativeName": "--debug", "support": "unsupported", "note": "Captain does not expose Gemini CLI debug logging."}
+    },
+    "promptFlag": {
+      "title": "Prompt flag", "description": "Prompt text supplied directly by the --prompt flag.",
+      "type": "string", "readOnly": true, "x-clicky-section": "prompt", "x-clicky-order": 60,
+      "x-captain-option": {"nativeName": "--prompt", "support": "unsupported", "note": "Captain writes the composed prompt to standard input."}
+    },
+    "promptInteractive": {
+      "title": "Interactive prompt", "description": "Initial prompt followed by an interactive Gemini session.",
+      "type": "string", "readOnly": true, "x-clicky-section": "prompt", "x-clicky-order": 70,
+      "x-captain-option": {"nativeName": "--prompt-interactive", "support": "unsupported", "note": "Captain runs Gemini headlessly for one request."}
+    },
+    "skipTrust": {
+      "title": "Skip trust check", "description": "Whether Gemini skips workspace trust validation.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 80,
+      "x-captain-option": {"nativeName": "--skip-trust", "support": "unsupported", "note": "Captain does not bypass Gemini workspace trust checks."}
+    },
+    "worktree": {
+      "title": "Worktree", "description": "Whether Gemini creates and runs in a Git worktree.",
+      "oneOf": [{"type": "boolean"}, {"type": "string"}], "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 90,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "--worktree", "support": "unsupported", "note": "Captain executes in the working directory supplied by its context."}
+    },
+    "sandbox": {
+      "title": "Sandbox", "description": "Whether Gemini enables its native sandbox, optionally with a sandbox image.",
+      "oneOf": [{"type": "boolean"}, {"type": "string"}], "readOnly": true, "x-clicky-section": "sandbox", "x-clicky-order": 100,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "--sandbox", "support": "unsupported", "note": "Captain rejects native sandbox mode for the Gemini CLI adapter."}
+    },
+    "yolo": {
+      "title": "YOLO mode", "description": "Whether Gemini automatically approves every tool action.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 110,
+      "x-captain-option": {"nativeName": "--yolo", "support": "unsupported", "note": "Captain maps explicit bypass and dontAsk policies through --approval-mode yolo."}
+    },
+    "policy": {
+      "title": "Policy files", "description": "Policy files applied by Gemini CLI.",
+      "type": "array", "items": {"type": "string", "format": "path"}, "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 120, "x-array-display": "list",
+      "x-captain-option": {"nativeName": "--policy", "support": "unsupported", "note": "Captain does not expose Gemini policy files."}
+    },
+    "adminPolicy": {
+      "title": "Admin policy", "description": "Additional administrator policy files applied by Gemini CLI.",
+      "type": "array", "items": {"type": "string", "format": "path"}, "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 130, "x-array-display": "list",
+      "x-captain-option": {"nativeName": "--admin-policy", "support": "unsupported", "note": "Captain does not expose Gemini administrator policy files."}
+    },
+    "acp": {
+      "title": "ACP mode", "description": "Whether Gemini runs as an Agent Client Protocol server.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 140,
+      "x-captain-option": {"nativeName": "--acp", "support": "unsupported", "note": "Captain integrates with Gemini through stream-json rather than ACP."}
+    },
+    "experimentalAcp": {
+      "title": "Experimental ACP mode", "description": "Whether Gemini enables experimental Agent Client Protocol behavior.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 150,
+      "x-captain-option": {"nativeName": "--experimental-acp", "support": "unsupported", "note": "Captain does not use Gemini's experimental ACP server."}
+    },
+    "allowedMcpServerNames": {
+      "title": "Allowed MCP servers", "description": "MCP server names allowed to connect in ACP mode.",
+      "type": "array", "items": {"type": "string"}, "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 160, "x-array-display": "list",
+      "x-captain-option": {"nativeName": "--allowed-mcp-server-names", "support": "unsupported", "note": "Captain does not configure Gemini ACP MCP servers."}
+    },
+    "allowedTools": {
+      "title": "Allowed tools", "description": "Deprecated list of tools allowed to execute without confirmation.",
+      "type": "array", "items": {"type": "string"}, "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 170, "x-array-display": "list",
+      "x-captain-option": {"nativeName": "--allowed-tools", "support": "unsupported", "note": "Gemini marks this flag deprecated; Captain rejects tool policies the adapter cannot represent."}
+    },
+    "extensions": {
+      "title": "Extensions", "description": "Gemini CLI extensions enabled for the session.",
+      "type": "array", "items": {"type": "string"}, "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 180, "x-array-display": "list",
+      "x-captain-option": {"nativeName": "--extensions", "support": "unsupported", "note": "Captain does not select Gemini CLI extensions."}
+    },
+    "listExtensions": {
+      "title": "List extensions", "description": "Whether Gemini lists installed extensions and exits.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 190,
+      "x-captain-option": {"nativeName": "--list-extensions", "support": "unsupported", "note": "Captain executes requests rather than extension discovery."}
+    },
+    "resume": {
+      "title": "Resume session", "description": "Session index or latest selector resumed by Gemini CLI.",
+      "oneOf": [{"type": "integer", "minimum": 0}, {"type": "string", "const": "latest"}], "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 200,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "--resume", "support": "unsupported", "note": "Gemini resumes by local session index rather than Captain's stable session ID."}
+    },
+    "sessionFile": {
+      "title": "Session file", "description": "Path to a Gemini session file loaded for execution.",
+      "type": "string", "format": "path", "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 210,
+      "x-captain-option": {"nativeName": "--session-file", "support": "unsupported", "note": "Captain does not load Gemini session files directly."}
+    },
+    "sessionId": {
+      "title": "Session ID", "description": "Explicit Gemini session identifier selected for execution.",
+      "type": "string", "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 220,
+      "x-captain-option": {"nativeName": "--session-id", "support": "unsupported", "note": "Captain's Gemini registry does not advertise resume support."}
+    },
+    "listSessions": {
+      "title": "List sessions", "description": "Whether Gemini lists stored sessions for the current project.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 230,
+      "x-captain-option": {"nativeName": "--list-sessions", "support": "unsupported", "note": "Captain performs session discovery outside request execution."}
+    },
+    "deleteSession": {
+      "title": "Delete session", "description": "Stored Gemini session index deleted before exit.",
+      "type": "integer", "minimum": 0, "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 240,
+      "x-captain-option": {"nativeName": "--delete-session", "support": "unsupported", "note": "Captain never deletes provider sessions as part of execution."}
+    },
+    "includeDirectories": {
+      "title": "Included directories", "description": "Additional workspace directories included in the Gemini session.",
+      "type": "array", "items": {"type": "string", "format": "path"}, "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 250, "x-array-display": "list",
+      "x-captain-option": {"nativeName": "--include-directories", "support": "unsupported", "note": "Captain rejects additional directories for the Gemini CLI adapter."}
+    },
+    "screenReader": {
+      "title": "Screen reader mode", "description": "Whether interactive output is optimized for screen readers.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 260,
+      "x-captain-option": {"nativeName": "--screen-reader", "support": "unsupported", "note": "Captain consumes machine-readable output and does not expose terminal accessibility flags."}
+    },
+    "rawOutput": {
+      "title": "Raw output", "description": "Whether terminal control sequences are preserved in streamed output.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 270,
+      "x-captain-option": {"nativeName": "--raw-output", "support": "unsupported", "note": "Captain parses structured JSON events rather than raw terminal output."}
+    },
+    "acceptRawOutputRisk": {
+      "title": "Accept raw output risk", "description": "Explicit acknowledgement required before raw output is enabled.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 280,
+      "x-captain-option": {"nativeName": "--accept-raw-output-risk", "support": "unsupported", "note": "Captain does not enable raw terminal output."}
+    },
+    "help": {
+      "title": "Help", "description": "Whether Gemini prints command help and exits.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 290,
+      "x-captain-option": {"nativeName": "--help", "support": "unsupported", "note": "Captain executes requests rather than CLI help."}
+    },
+    "version": {
+      "title": "Version", "description": "Whether Gemini prints its version and exits.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 300,
+      "x-captain-option": {"nativeName": "--version", "support": "unsupported", "note": "Captain resolves the installed CLI version outside request execution."}
+    }
+  }
+}

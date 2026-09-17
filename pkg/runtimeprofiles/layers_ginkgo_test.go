@@ -7,6 +7,40 @@ import (
 )
 
 var _ = Describe("Catalog layers", func() {
+	It("materialises an ordered flat preset selection without a profile", func(ctx SpecContext) {
+		source := newMemSource("db", SourceDB, true)
+		organization := source.presets.put("organization", globalPreset("Organization"))
+		review := source.presets.put("review", PresetInput{
+			Name: "Review", Scope: api.SpecLayerSurface,
+			Spec: api.RuntimePresetSpec(api.Spec{Budget: api.Budget{MaxTurns: 3}}),
+		})
+		catalog, err := NewCatalog(source)
+		Expect(err).NotTo(HaveOccurred())
+
+		resolution, err := catalog.PresetLayers(ctx, []string{"organization", review.ID})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resolution.Presets).To(Equal([]Preset{organization, review}))
+		Expect(resolution.Layers).To(Equal([]api.SpecLayer{
+			{ID: organization.ID, Name: "Organization", Scope: api.SpecLayerGlobal, Source: api.SpecLayerSourcePreset,
+				Spec: api.Spec{Model: api.Model{Name: "gpt-5", Mode: api.ModeAgent}}},
+			{ID: review.ID, Name: "Review", Scope: api.SpecLayerSurface, Source: api.SpecLayerSourcePreset,
+				Spec: api.Spec{Budget: api.Budget{MaxTurns: 3}}},
+		}))
+	})
+
+	It("loads nested references but refuses to execute them", func(ctx SpecContext) {
+		source := newMemSource("db", SourceDB, true)
+		organization := source.presets.put("organization", globalPreset("Organization"))
+		team := source.presets.put("team", PresetInput{
+			Name: "Team", Scope: api.SpecLayerGlobal, Presets: []string{organization.ID},
+		})
+		catalog, err := NewCatalog(source)
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = catalog.PresetLayers(ctx, []string{team.ID})
+		Expect(err).To(MatchError(ContainSubstring(api.ErrRuntimePresetNestingUnsupported.Error())))
+	})
+
 	It("canonicalises preset names without validating the profile's isolated runtime", func(ctx SpecContext) {
 		source := newMemSource("db", SourceDB, true)
 		preset := source.presets.put("model", globalPreset("Model"))

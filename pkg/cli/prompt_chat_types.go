@@ -7,6 +7,9 @@ type ChatCapabilities struct {
 	Steer     bool `json:"steer"`
 	FollowUp  bool `json:"followUp"`
 	Resume    bool `json:"resume"`
+	// SetPermissionMode reports that the live run can switch permission posture
+	// mid-session.
+	SetPermissionMode bool `json:"setPermissionMode"`
 }
 
 type ChatQueuedMessage struct {
@@ -23,6 +26,10 @@ type ChatStateFrame struct {
 	Queued              []ChatQueuedMessage `json:"queued,omitempty"`
 	DiscardedMessageIDs []string            `json:"discardedMessageIds,omitempty"`
 	Summary             *PromptRunSummary   `json:"summary,omitempty"`
+	// PermissionMode is the posture the run is currently in; PermissionModes are
+	// the postures its runtime honours.
+	PermissionMode  api.PermissionMode   `json:"permissionMode,omitempty"`
+	PermissionModes []api.PermissionMode `json:"permissionModes,omitempty"`
 }
 
 type PromptRunFrame struct {
@@ -41,6 +48,18 @@ type ChatMessageRequest struct {
 	MessageID string `json:"messageId,omitempty"`
 	Model     string `json:"model,omitempty"`
 	Mode      string `json:"mode,omitempty"`
+	// PermissionMode is the posture the message runs under: a resumed session
+	// starts in it, and a live run whose posture differs is switched first.
+	PermissionMode api.PermissionMode `json:"permissionMode,omitempty"`
+}
+
+type ChatPermissionModeRequest struct {
+	Mode api.PermissionMode `json:"mode"`
+}
+
+type ChatPermissionModeResponse struct {
+	RunID          string             `json:"runId"`
+	PermissionMode api.PermissionMode `json:"permissionMode"`
 }
 
 type ChatMessageResponse struct {
@@ -72,8 +91,9 @@ func chatCapabilitiesForRuntime(provider *api.ModelProvider, mode api.RuntimeMod
 		Steer:     caps.Steer,
 		// A follow-up turn needs an interruptible, resumable session: the local
 		// transports that only resume can continue, but not mid-turn.
-		FollowUp: caps.Interrupt && caps.Resume,
-		Resume:   caps.Resume,
+		FollowUp:          caps.Interrupt && caps.Resume,
+		Resume:            caps.Resume,
+		SetPermissionMode: caps.SetPermissionMode,
 	}
 }
 

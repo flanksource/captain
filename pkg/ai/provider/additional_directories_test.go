@@ -105,16 +105,10 @@ func TestUnsupportedRuntimesRefuseDirectories(t *testing.T) {
 	if _, err := buildGeminiCLIArgs("gemini-2.5-pro", directoriesRequest()); err == nil {
 		t.Fatal("gemini-cli accepted permissions.directories it cannot honour")
 	}
-	if _, err := buildTurnStartParams("codex", directoriesRequest(), "thread-1", nil); err == nil {
-		t.Fatal("codex app-server accepted permissions.directories it cannot honour")
-	}
 
 	// ...and a request naming none still builds.
 	plain := ai.Request{Prompt: api.Prompt{User: "hi"}}
 	if _, err := buildGeminiCLIArgs("gemini-2.5-pro", plain); err != nil {
 		t.Fatalf("gemini-cli rejected a request with no directories: %v", err)
-	}
-	if _, err := buildTurnStartParams("codex", plain, "thread-1", nil); err != nil {
-		t.Fatalf("codex app-server rejected a request with no directories: %v", err)
 	}
 }

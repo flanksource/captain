@@ -49,9 +49,11 @@ type PermissionEffects struct {
 	// Flag on a native mode means the runtime omits the flag deliberately and
 	// inherits its own default.
 	Flag string `json:"flag,omitempty"`
-	// Sandbox and Approval are codex's two-part posture (CodexSafety).
+	// Sandbox and Approval are codex's two-part posture (CodexSafety); Reviewer
+	// is who answers the approval requests Approval lets through.
 	Sandbox  string `json:"sandbox,omitempty"`
 	Approval string `json:"approval,omitempty"`
+	Reviewer string `json:"reviewer,omitempty"`
 	// Note explains an approximation or a caveat a caller must know about.
 	Note string `json:"note,omitempty"`
 }
@@ -212,10 +214,10 @@ func broker(note string) Support {
 	return Support{Kind: SupportRequiresBroker, Effects: PermissionEffects{Note: note}}
 }
 
-func codexPosture(sandbox, approval, note string) Support {
+func codexPosture(approval CodexApprovalPolicy, reviewer CodexApprovalsReviewer, note string) Support {
 	return Support{
 		Kind:    SupportApproximated,
-		Effects: PermissionEffects{Sandbox: sandbox, Approval: approval, Note: note},
+		Effects: PermissionEffects{Approval: string(approval), Reviewer: string(reviewer), Note: note},
 	}
 }
 
@@ -285,7 +287,7 @@ func callerTools() map[ToolPolicy]Support {
 func resources(mcpOff, skillsOn bool) map[ResourceKind]map[ResourceMode]Support {
 	mcpDisabled := unsupported("permissions.mcp.disabled is accepted and then dropped on this runtime")
 	if mcpOff {
-		mcpDisabled = native("all MCP servers silenced")
+		mcpDisabled = native("external and ambient MCP servers silenced; captain's caller-tool server is kept")
 	}
 	skillsEnabled := unsupported("skill directories are not loaded on this runtime")
 	if skillsOn {
@@ -345,13 +347,17 @@ func codexModes(suppressesEscalation bool) map[PermissionMode]Support {
 		planNote = "the app-server additionally refuses every escalation request while in plan mode"
 	}
 	return map[PermissionMode]Support{
-		PermissionDefault: codexPosture("", "on-request", "codex has no default posture of its own; approval resolves to on-request"),
-		PermissionPlan:    codexPosture("", "on-request", planNote),
-		PermissionAcceptEdits: codexPosture("", "on-request",
+		PermissionDefault: codexPosture(CodexApprovalOnRequest, CodexReviewerUser,
+			"codex has no default posture of its own; approval resolves to on-request"),
+		PermissionPlan: codexPosture(CodexApprovalOnRequest, CodexReviewerUser, planNote),
+		PermissionAcceptEdits: codexPosture(CodexApprovalOnRequest, CodexReviewerUser,
 			"codex cannot auto-approve edits independently from other approval requests"),
-		PermissionAuto: codexPosture("", "on-request",
-			"codex has no auto posture distinct from on-request"),
-		PermissionBypass: codexPosture("", "never",
+		// auto_review is Codex's own classifier posture: a prompted subagent judges
+		// each approval request instead of a person.
+		PermissionAuto: {Kind: SupportNative, Effects: PermissionEffects{
+			Approval: string(CodexApprovalOnRequest), Reviewer: string(CodexReviewerAutoReview),
+		}},
+		PermissionBypass: codexPosture(CodexApprovalNever, CodexReviewerUser,
 			"approval prompts are disabled without changing the configured sandbox isolation"),
 		PermissionDontAsk: unsupported(
 			"codex cannot preserve tool-level denial while disabling approval prompts"),
@@ -420,18 +426,17 @@ var permissionCapabilities = map[Runtime]PermissionCapabilities{
 		ToolPolicies: toolPolicies(claudeAgentTools(), noToolFilter(), noToolFilter()),
 		// --mcp-config {} --strict-mcp-config genuinely disables ambient MCP;
 		// --plugin-dir carries permissions.skills. This is the only runtime that
-		// honours either.
+		// loads skills.
 		Resources: resources(true, true),
 		Tools:     claudeBuiltinTools,
 	},
 	RuntimeOf(Anthropic, ModeAgent): {
 		Modes:        claudeModes("permissionMode=", true),
 		ToolPolicies: toolPolicies(claudeAgentTools(), callerTools(), noToolFilter()),
-		// The SDK bridge sends only the caller-tool server list, so an
-		// mcp.disabled request never reaches ambient servers. prepareCallerTools
-		// errors when caller tools and mcp.disabled are combined, which is a
-		// compatibility refusal rather than enforcement.
-		Resources: resources(false, false),
+		// mcp.disabled becomes the SDK's strictMcpConfig, which ignores every
+		// server the bridge did not pass in mcpServers, so captain's caller-tool
+		// server is the only one that survives mcp.disabled.
+		Resources: resources(true, false),
 		Tools:     claudeBuiltinTools,
 	},
 	RuntimeOf(Anthropic, ModeCmux): {
@@ -454,7 +459,8 @@ var permissionCapabilities = map[Runtime]PermissionCapabilities{
 		// agent has no tool filter of its own, yet a denied caller tool is simply
 		// never registered, so the policy is fully enforced.
 		ToolPolicies: toolPolicies(noToolFilter(), callerTools(), noToolFilter()),
-		// codexThreadConfig sends an empty mcp_servers map when MCP is disabled.
+		// When MCP is disabled, codexThreadConfig sends only captain's caller-tool
+		// server in mcp_servers, or an empty map when there are no caller tools.
 		Resources: resources(true, false),
 		Tools:     codexBuiltinTools,
 	},

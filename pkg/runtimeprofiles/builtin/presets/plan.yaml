@@ -1,0 +1,11 @@
+name: Plan
+description: >-
+  Plan mode: the agent reads and researches but does not act. Reads are allowed and shell commands are denied; it sets no web search or fetch policy, so those keep what other layers or the runtime decide.
+  Edit and write stay available so the runtime's native plan mode can write its plan file, and MCP tools and the sandbox are untouched.
+scope: context
+spec:
+  permissions:
+    mode: plan
+    tools:
+      read: allow
+      shell: deny

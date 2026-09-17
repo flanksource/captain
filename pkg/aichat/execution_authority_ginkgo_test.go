@@ -422,7 +422,9 @@ var _ = Describe("Authoritative aichat execution", func() {
 		Expect(authority.resolutions).To(HaveLen(1))
 	})
 
-	It("interrupts an approval continuation whose persisted model is no longer allowed", func() {
+	// A profile is a set of defaults, so a continuation keeps the model it was
+	// suspended with even when the profile has since defaulted to another one.
+	It("resumes an approval continuation on its persisted model after the profile default changed", func() {
 		store := aichat.NewMemoryThreadStore()
 		thread, err := store.Create(context.Background(), "Restricted")
 		Expect(err).NotTo(HaveOccurred())
@@ -437,8 +439,7 @@ var _ = Describe("Authoritative aichat execution", func() {
 		resolver := &fakeResolver{provider: &fakeStreamingProvider{}}
 		profile := mustRuntimeProfile(api.SpecLayer{
 			Name: "claims", Scope: api.SpecLayerContext,
-			Spec:        api.Spec{Model: api.Model{Name: "claude-sonnet-5"}},
-			Constraints: api.RuntimeConstraints{Models: []string{"claude-sonnet-5"}},
+			Spec: api.Spec{Model: api.Model{Name: "claude-sonnet-5"}},
 		})
 		service := aichat.NewService(aichat.ServiceOptions{
 			Threads: aichat.FixedThreadStore(store), Authority: authority, Resolver: resolver,
@@ -454,10 +455,8 @@ var _ = Describe("Authoritative aichat execution", func() {
 			map[string]any{"approved": true},
 		))
 
-		Expect(response.Code).To(Equal(http.StatusBadGateway))
-		Expect(response.Body.String()).To(ContainSubstring(`model "gpt-5.6-sol" is outside the current effective model catalog`))
-		Expect(execution.interrupts).To(ConsistOf(ContainSubstring("outside the current effective model catalog")))
-		Expect(execution.closed).To(BeTrue())
-		Expect(resolver.configs).To(BeEmpty())
+		Expect(execution.interrupts).To(BeEmpty())
+		Expect(resolver.configs).ToNot(BeEmpty())
+		Expect(resolver.configs[0].Model.Name).To(Equal("gpt-5.6-sol"))
 	})
 })

@@ -321,11 +321,15 @@ var _ = Describe("promptrun.Run", func() {
 			request.Model = api.Model{Name: "claude-sonnet-5", Provider: api.Anthropic, Mode: api.ModeAgent}
 			request.Permissions.Tools = api.Tools{"Bash": api.ToolPolicyDeny}
 
+			// The API modes ship no built-ins and ignore a Bash deny, so the
+			// executing model is the codex CLI, which has a shell it cannot filter.
 			_, err := promptrun.Run(context.Background(), promptrun.Input{
 				Request: request, Timeout: testTimeout,
-				Config: ai.Config{Model: api.Model{Name: "gpt-5", Provider: api.OpenAI, Mode: api.ModeAPI}},
+				Config: ai.Config{Model: api.Model{Name: "gpt-5", Provider: api.OpenAI, Mode: api.ModeCLI}},
 			})
-			Expect(err).To(MatchError(ContainSubstring(api.RuntimeOf(api.OpenAI, api.ModeAPI).String())))
+			Expect(err).To(MatchError(And(
+				ContainSubstring(api.RuntimeOf(api.OpenAI, api.ModeCLI).String()+" cannot enforce a per-tool policy"),
+				ContainSubstring("shell (from Bash)"))))
 			Expect(provider.Calls()).To(BeZero())
 		})
 

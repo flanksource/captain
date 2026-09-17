@@ -33,6 +33,22 @@ func decodeFile[I any](path string, data []byte) (I, error) {
 	return in, nil
 }
 
+// decodeRecord turns one record file into a record: strict decode, trim,
+// validate, then the identity its source assigned. Every source that reads the
+// YAML file form goes through it, so they accept exactly the same documents.
+func decodeRecord[R record, I input[R, I]](path string, data []byte, meta recordMeta) (R, error) {
+	var zero R
+	in, err := decodeFile[I](path, data)
+	if err != nil {
+		return zero, err
+	}
+	in = in.trimmed()
+	if err := in.validate(); err != nil {
+		return zero, fmt.Errorf("%s: %w", path, err)
+	}
+	return in.build(meta), nil
+}
+
 func encodeFile(in any) ([]byte, error) {
 	var buffer bytes.Buffer
 	encoder := yaml.NewEncoder(&buffer)

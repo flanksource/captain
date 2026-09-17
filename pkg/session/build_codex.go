@@ -187,6 +187,9 @@ func (a *CodexAccumulator) observe(use history.ToolUse) {
 	if s.Model == "" {
 		s.Model = use.Model
 	}
+	if use.PermissionMode != "" {
+		s.PermissionMode = use.PermissionMode
+	}
 	if use.Timestamp != nil {
 		extendRange(s, *use.Timestamp)
 	}
@@ -254,6 +257,9 @@ func (a *CodexAccumulator) collectPaths(use history.ToolUse) {
 	for _, path := range footprint.Read {
 		a.addPath(a.read, &a.session.Files.Read, path, use.CWD)
 	}
+	for _, attachment := range use.Attachments {
+		a.addPath(a.read, &a.session.Files.Read, attachment.Path, use.CWD)
+	}
 	for _, path := range footprint.Written {
 		a.addPath(a.written, &a.session.Files.Written, path, use.CWD)
 	}
@@ -303,6 +309,9 @@ func (a *CodexAccumulator) Project(provisional []history.ToolUse) *Session {
 		if use.Timestamp != nil {
 			extendRange(&s, *use.Timestamp)
 		}
+		if use.PermissionMode != "" {
+			s.PermissionMode = use.PermissionMode
+		}
 		plan.observe(use)
 		if items := todosFromCodexUse(use); len(items) > 0 {
 			s.Todos = items
@@ -312,6 +321,9 @@ func (a *CodexAccumulator) Project(provisional []history.ToolUse) *Session {
 		}
 		footprint := history.ToolFootprint(use)
 		appendAbsolute(&extraRead, footprint.Read, use.CWD)
+		for _, attachment := range use.Attachments {
+			appendAbsolute(&extraRead, []string{attachment.Path}, use.CWD)
+		}
 		appendAbsolute(&extraWritten, footprint.Written, use.CWD)
 		message := codexUseToMessage(use)
 		s.Messages = append(s.Messages, message)
@@ -548,7 +560,22 @@ func codexUseToMessageBody(u history.ToolUse) Message {
 	case "System":
 		return Message{ID: id, Role: "system", Parts: []Part{{Type: PartText, Text: codexText(u)}}, TurnID: u.TurnID, Provenance: prov, AgentID: agentID}
 	case "User":
-		return Message{ID: id, Role: "user", Parts: []Part{{Type: PartText, Text: codexText(u)}}, TurnID: u.TurnID, Provenance: prov, AgentID: agentID}
+		parts := make([]Part, 0, len(u.Attachments)+1)
+		for _, attachment := range u.Attachments {
+			part := Part{
+				Type: PartFile, MediaType: attachment.MediaType, URL: attachment.URL,
+				Filename: attachment.Filename, AttachmentID: attachment.ID,
+			}
+			if id := codexAttachmentID(attachment.Path); id != "" {
+				part.AttachmentID = id
+				part.URL = "/api/attachments/" + id
+			}
+			parts = append(parts, part)
+		}
+		if text := codexText(u); text != "" {
+			parts = append(parts, Part{Type: PartText, Text: text})
+		}
+		return Message{ID: id, Role: "user", Parts: parts, TurnID: u.TurnID, Provenance: prov, AgentID: agentID}
 	case "Assistant":
 		return Message{ID: id, Role: "assistant", Parts: []Part{{Type: PartText, Text: codexText(u)}}, TurnID: u.TurnID, Provenance: prov, AgentID: agentID}
 	case "Reasoning":
@@ -569,6 +596,19 @@ func codexUseToMessageBody(u history.ToolUse) Message {
 		}
 		return Message{ID: id, Role: "assistant", Parts: []Part{part}, TurnID: u.TurnID, Provenance: prov, AgentID: agentID}
 	}
+}
+
+func codexAttachmentID(path string) string {
+	digest := filepath.Base(path)
+	if filepath.Base(filepath.Dir(path)) != strings.ToLower(digest[:min(2, len(digest))]) ||
+		filepath.Base(filepath.Dir(filepath.Dir(path))) != "sha256" {
+		return ""
+	}
+	id := api.AttachmentIDPrefix + strings.ToLower(digest)
+	if err := (api.AttachmentRef{ID: id}).Validate(); err != nil {
+		return ""
+	}
+	return id
 }
 
 func codexUseToEvent(u history.ToolUse) Event {

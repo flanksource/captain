@@ -47,7 +47,8 @@ func TestTerminalOutcomeFromEventQuestions(t *testing.T) {
 	require.Equal(t, []TerminalQuestion{{
 		Text:    "Which database?",
 		Context: "Storage",
-		Options: []string{"PostgreSQL", "SQLite"},
+		Options:            []string{"PostgreSQL", "SQLite"},
+		OptionDescriptions: map[string]string{"PostgreSQL": "Production database"},
 	}}, outcome.Questions)
 }
 

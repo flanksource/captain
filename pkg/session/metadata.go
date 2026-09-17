@@ -1,6 +1,7 @@
 package session
 
 import (
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/claude/tools"
 	"github.com/segmentio/encoding/json"
 )
@@ -12,12 +13,13 @@ import (
 // already depends on. Mirroring the shape per-package is what previously made
 // todos write-only: the writer emitted a key no reader declared.
 type Metadata struct {
-	Model     string           `json:"model,omitempty"`
-	Provider  string           `json:"provider,omitempty"`
-	Files     ChangedFiles     `json:"files,omitempty"`
-	Todos     []tools.TodoItem `json:"todos,omitempty"`
-	Approvals ApprovalStats    `json:"approvals,omitempty"`
-	Plan      *Plan            `json:"plan,omitempty"`
+	Model          string             `json:"model,omitempty"`
+	Provider       string             `json:"provider,omitempty"`
+	Files          ChangedFiles       `json:"files,omitempty"`
+	Todos          []tools.TodoItem   `json:"todos,omitempty"`
+	Approvals      ApprovalStats      `json:"approvals,omitempty"`
+	Plan           *Plan              `json:"plan,omitempty"`
+	PermissionMode api.PermissionMode `json:"permissionMode,omitempty"`
 }
 
 // DecodeMetadata projects a stored blob. Rows carry sibling keys from other
@@ -73,6 +75,9 @@ func (m Metadata) Encode() map[string]any {
 	}
 	if m.Plan != nil {
 		encoded["plan"] = m.Plan
+	}
+	if m.PermissionMode != "" {
+		encoded["permissionMode"] = m.PermissionMode
 	}
 	if len(encoded) == 0 {
 		return nil

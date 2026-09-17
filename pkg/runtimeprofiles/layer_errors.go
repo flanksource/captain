@@ -2,15 +2,20 @@ package runtimeprofiles
 
 import "fmt"
 
-// OwnedLayersError marks invalid stored profile data or its referenced presets,
+// OwnedLayersError marks invalid stored profile or preset data,
 // distinct from an absent or ambiguous top-level selection supplied by a caller.
 type OwnedLayersError struct {
-	Ref string
-	Err error
+	Kind Kind
+	Ref  string
+	Err  error
 }
 
 func (e *OwnedLayersError) Error() string {
-	return fmt.Sprintf("runtime profile %q configuration: %v", e.Ref, e.Err)
+	kind := e.Kind
+	if kind == "" {
+		kind = KindProfile
+	}
+	return fmt.Sprintf("runtime %s %q configuration: %v", kind, e.Ref, e.Err)
 }
 
 func (e *OwnedLayersError) Unwrap() error { return e.Err }

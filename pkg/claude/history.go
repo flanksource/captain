@@ -24,13 +24,20 @@ type HistoryEntry struct {
 	// PlanFilePath is set on synthetic entries surfaced from plan_mode /
 	// plan_mode_exit attachments; it points at the session's plan file even when
 	// the transcript carries no ExitPlanMode tool call or plan-file write.
-	PlanFilePath string           `json:"-"`
-	Event        *TranscriptEvent `json:"-"`
-	RawLine      json.RawMessage  `json:"-"`
+	PlanFilePath string `json:"-"`
+	// Injected marks a user-role line the person did not type: a meta message,
+	// a compaction summary, or an interrupt notice.
+	Injected bool             `json:"-"`
+	Event    *TranscriptEvent `json:"-"`
+	RawLine  json.RawMessage  `json:"-"`
 	// Line is the 1-based JSONL line number the entry was read from, so
 	// downstream consumers can seek back into the transcript file.
 	Line int `json:"-"`
 }
+
+// PermissionModeEvent is the TranscriptEvent type carrying a Claude Code
+// permission-mode checkpoint; Data["permissionMode"] holds the posture.
+const PermissionModeEvent = "permission-mode"
 
 // TranscriptEvent is a non-message, non-tool transcript line. It lets callers
 // preserve session/turn metadata without pretending discovery or budget records

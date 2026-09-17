@@ -38,17 +38,18 @@ func buildSession(ps claude.ParsedSession) *Session {
 	h := buildHierarchy(ps, meta.turnByEntry)
 
 	s := &Session{
-		ID:           ps.SessionID,
-		Source:       "claude",
-		HistoryFile:  h.root.HistoryFile,
-		Context:      latestContext(meta.turns),
-		Budget:       meta.budget,
-		Capabilities: meta.capabilities,
-		Events:       meta.events,
-		Turns:        meta.turns,
-		Root:         h.root,
-		Agents:       h.agents,
-		Messages:     h.messages,
+		ID:             ps.SessionID,
+		Source:         "claude",
+		HistoryFile:    h.root.HistoryFile,
+		Context:        latestContext(meta.turns),
+		Budget:         meta.budget,
+		Capabilities:   meta.capabilities,
+		Events:         meta.events,
+		Turns:          meta.turns,
+		Root:           h.root,
+		Agents:         h.agents,
+		Messages:       h.messages,
+		PermissionMode: meta.permissionMode,
 	}
 
 	applyMetadata(s, ps, allEntries)

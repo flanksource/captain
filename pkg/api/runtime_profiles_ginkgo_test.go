@@ -125,13 +125,14 @@ var _ = Describe("Runtime profiles", func() {
 		Expect(resolved.Warnings).To(Equal([]string{`permissions.mode "dontAsk" is not available for openai agent`}))
 	})
 
-	// Profile validation shares RequireToolPolicySupport's one relaxation: an
-	// allow for a tool the runtime does not have (Claude's Read on codex) is
+	// Profile validation shares RequireToolPolicySupport's translation: an allow
+	// reaching codex only through another agent's name (Claude's Read or Edit) is
 	// inert, so it is dropped without a refusal and without a capability warning.
 	// A deny on a foreign name still describes a codex capability, and an allow on
 	// a name codex owns is a real constraint, so both stay fail-closed — here as a
 	// hard error from RequireToolPolicySupport, which ValidateRuntimeSpec runs
-	// before the capability warnings.
+	// before the capability warnings. A deny naming nothing codex has is ignored
+	// with a warning.
 	It("skips a foreign allow but refuses a foreign deny for the resolved runtime", func() {
 		profile := func(tools api.Tools) api.RuntimeProfile {
 			return api.RuntimeProfile{
@@ -151,12 +152,28 @@ var _ = Describe("Runtime profiles", func() {
 		_, err = api.ResolveRuntimeProfile(api.RuntimeProfileResolveRequest{
 			Profile: profile(api.Tools{"Bash": api.ToolPolicyDeny}),
 		})
-		Expect(err).To(MatchError(ContainSubstring(`openai agent cannot enforce a per-tool policy (Bash)`)))
+		Expect(err).To(MatchError(ContainSubstring(
+			`openai agent cannot enforce a per-tool policy (exec (from Bash), exec_command (from Bash), shell (from Bash), write_stdin (from Bash))`)))
 
 		_, err = api.ResolveRuntimeProfile(api.RuntimeProfileResolveRequest{
+			Profile: profile(api.Tools{"exec_command": api.ToolPolicyAllow}),
+		})
+		Expect(err).To(MatchError(ContainSubstring(`openai agent cannot enforce a per-tool policy (exec_command)`)))
+
+		resolved, err = api.ResolveRuntimeProfile(api.RuntimeProfileResolveRequest{
 			Profile: profile(api.Tools{"shell": api.ToolPolicyAllow}),
 		})
-		Expect(err).To(MatchError(ContainSubstring(`openai agent cannot enforce a per-tool policy (shell)`)))
+		Expect(err).NotTo(HaveOccurred(), "an allow written as an alias is portable, even where it is also a tool name")
+		Expect(resolved.Warnings).To(BeEmpty())
+
+		resolved, err = api.ResolveRuntimeProfile(api.RuntimeProfileResolveRequest{
+			Profile: profile(api.Tools{"NotATool": api.ToolPolicyDeny, "Read": api.ToolPolicyDeny}),
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resolved.Warnings).To(Equal([]string{
+			`permissions.tools "NotATool" deny is ignored: openai agent has no tool it names`,
+			`permissions.tools "Read" deny is ignored: openai agent has no tool it names`,
+		}))
 	})
 
 	// The posture is independent of isolation: a run with no sandbox at all must

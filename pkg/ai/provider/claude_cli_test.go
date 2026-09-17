@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"bytes"
 	"encoding/json"
 	"reflect"
 	"slices"
@@ -10,6 +11,7 @@ import (
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/claude"
+	"github.com/flanksource/commons/logger"
 )
 
 func TestBuildClaudeCLIArgs(t *testing.T) {
@@ -80,6 +82,36 @@ func TestBuildClaudeCLIArgs(t *testing.T) {
 	}
 	if answer["description"] == "" {
 		t.Fatalf("--json-schema should describe removed constraints, got %s", schema)
+	}
+}
+
+// TestBuildClaudeCLIArgsTranslatesPortableToolNames pins that the flags carry
+// claude's own tool names: a shared alias reaches the tool it stands for, a
+// lower layer's exact allow cannot lift it, and names claude has no tool for
+// never reach the command line; an ignored deny is logged as a warning.
+func TestBuildClaudeCLIArgsTranslatesPortableToolNames(t *testing.T) {
+	prev := logger.GetOutput()
+	t.Cleanup(func() { logger.SetOutput(prev) })
+	var logs bytes.Buffer
+	logger.SetOutput(&logs)
+
+	req := ai.Request{Permissions: api.Permissions{Tools: api.Tools{
+		"shell":           api.ToolPolicyDeny,
+		"Bash(git log:*)": api.ToolPolicyAllow,
+		"search":          api.ToolPolicyAllow,
+		"codex:shell":     api.ToolPolicyDeny,
+		"NotATool":        api.ToolPolicyDeny,
+	}}}
+
+	args, cleanup, err := buildClaudeCLIArgs("claude-sonnet-5", req)
+	if err != nil {
+		t.Fatalf("buildClaudeCLIArgs: %v", err)
+	}
+	defer cleanup()
+	requireFlagValue(t, args, "--disallowedTools", "Bash,BashOutput,KillShell,Monitor")
+	requireFlagValue(t, args, "--allowedTools", "Bash(git log:*),Glob,Grep")
+	if want := `permissions.tools "NotATool" deny is ignored: anthropic cli has no tool it names`; !strings.Contains(logs.String(), want) {
+		t.Errorf("log output missing %q\n--- output ---\n%s", want, logs.String())
 	}
 }
 

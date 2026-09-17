@@ -1,6 +1,8 @@
 package api_test
 
 import (
+	"strings"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -47,6 +49,11 @@ var _ = Describe("Runtime argument mappings", func() {
 		Expect(claudeTurns["x-clicky-arguments"]).To(ContainElement(map[string]any{
 			"name": "maxTurns", "implementation": "mapped",
 		}))
+
+		claudeEffort := runtimeSchemaProperty(api.RuntimeSchemaFor(api.Anthropic, api.ModeAgent), "effort")
+		Expect(claudeEffort["x-clicky-arguments"]).To(ContainElement(map[string]any{
+			"name": "effort", "implementation": "mapped",
+		}))
 	})
 
 	It("classifies memory and skill controls as model configuration", func() {
@@ -84,9 +91,33 @@ var _ = Describe("Runtime argument mappings", func() {
 	It("keeps transport-managed arguments on the schema root", func() {
 		managed := api.RuntimeSchemaFor(api.OpenAI, api.ModeAgent)["x-clicky-managed-arguments"]
 		Expect(managed).To(ContainElement(map[string]any{
-			"name": "turn/start.input", "implementation": "managed",
-			"description": "Captain composes text and prepared local-image inputs.",
+			"name": "thread/start.config.mcp_servers.caller", "implementation": "managed",
+			"description": "Captain projects registered caller tools into an MCP server.",
 		}))
+	})
+
+	It("publishes each Codex agent permission mapping at every lifecycle boundary", func() {
+		schema := api.RuntimeSchemaFor(api.OpenAI, api.ModeAgent)
+		for _, mapping := range []struct {
+			path string
+			name string
+		}{
+			{path: "permissions.directories", name: "thread/start.runtimeWorkspaceRoots"},
+			{path: "permissions.directories", name: "thread/resume.runtimeWorkspaceRoots"},
+			{path: "permissions.directories", name: "turn/start.runtimeWorkspaceRoots"},
+			{path: "permissions.mode", name: "thread/start.approvalPolicy"},
+			{path: "permissions.mode", name: "thread/resume.approvalPolicy"},
+			{path: "permissions.mode", name: "turn/start.approvalPolicy"},
+			{path: "sandbox.mode", name: "thread/start.sandbox"},
+			{path: "sandbox.mode", name: "thread/resume.sandbox"},
+			{path: "sandbox.mode", name: "turn/start.sandboxPolicy"},
+			{path: "permissions.approvalTimeout", name: "Captain caller-tool approval timeout"},
+		} {
+			field := runtimeSchemaProperty(schema, strings.Split(mapping.path, ".")...)
+			Expect(field["x-clicky-arguments"]).To(ContainElement(map[string]any{
+				"name": mapping.name, "implementation": "mapped",
+			}), mapping.path)
+		}
 	})
 
 	It("describes structured collections and policy maps with their real JSON shapes", func() {
