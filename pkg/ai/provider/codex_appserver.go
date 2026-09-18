@@ -156,15 +156,18 @@ func (c *CodexAppServer) ExecuteStream(ctx context.Context, req ai.Request) (<-c
 	rpcDone := c.rpcDone
 	c.mu.Unlock()
 
+	questionCtx, cancelQuestions := context.WithCancel(ctx)
 	ts := &turnState{
-		ch:           make(chan ai.Event, 16),
-		usage:        &ai.Usage{},
-		model:        c.model,
-		streamed:     map[string]string{},
-		toolOutput:   map[string]string{},
-		terminal:     make(chan struct{}),
-		started:      make(chan struct{}),
-		outputSchema: schema,
+		ctx:             questionCtx,
+		cancelQuestions: cancelQuestions,
+		ch:              make(chan ai.Event, 16),
+		usage:           &ai.Usage{},
+		model:           c.model,
+		streamed:        map[string]string{},
+		toolOutput:      map[string]string{},
+		terminal:        make(chan struct{}),
+		started:         make(chan struct{}),
+		outputSchema:    schema,
 	}
 	c.setActive(ts)
 

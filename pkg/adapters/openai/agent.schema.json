@@ -325,8 +325,16 @@
         },
         "collaborationMode": {
           "title": "Collaboration mode", "description": "Codex collaboration mode applied for the turn.",
-          "type": "string", "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 560,
-          "x-captain-option": {"nativeName": "turn/start.collaborationMode", "support": "unsupported", "note": "Captain does not override native Codex collaboration mode."}
+          "type": "object", "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 560,
+          "properties": {
+            "mode": {"type": "string", "enum": ["default", "plan"]},
+            "settings": {"type": "object", "properties": {
+              "model": {"type": "string"},
+              "reasoning_effort": {"type": ["string", "null"]},
+              "developer_instructions": {"type": "null"}
+            }}
+          },
+          "x-captain-option": {"nativeName": "turn/start.collaborationMode", "support": "mapped", "specPath": "permissions.mode"}
         },
         "cwd": {
           "title": "Working directory", "description": "Working-directory override for the turn.",

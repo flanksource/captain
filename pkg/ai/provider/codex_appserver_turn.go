@@ -11,6 +11,8 @@ import (
 )
 
 type turnState struct {
+	ctx                context.Context
+	cancelQuestions    context.CancelFunc
 	ch                 chan ai.Event
 	usage              *ai.Usage
 	usagePresent       bool
@@ -82,6 +84,9 @@ func (ts *turnState) send(event ai.Event) {
 }
 
 func (ts *turnState) finish() {
+	if ts.cancelQuestions != nil {
+		ts.cancelQuestions()
+	}
 	ts.signalStarted()
 	ts.signalTerminal()
 	ts.sendMu.Lock()
