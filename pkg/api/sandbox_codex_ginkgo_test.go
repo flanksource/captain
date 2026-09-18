@@ -24,4 +24,16 @@ var _ = Describe("Codex sandbox translation", func() {
 			Expect(translation.Approval).To(Equal(test.approval))
 		}
 	})
+
+	It("pins an unstated plan sandbox to read-only", func() {
+		translation, err := api.TranslateCodexSandbox(api.RuntimeOf(api.OpenAI, api.ModeAgent), nil, api.PermissionPlan)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(translation.Sandbox).To(Equal(api.CodexSandboxReadOnly))
+		Expect(translation.Approval).To(Equal(api.CodexApprovalOnRequest))
+	})
+
+	It("rejects plan mode with an explicit disabled sandbox", func() {
+		_, err := api.TranslateCodexSandbox(api.RuntimeOf(api.OpenAI, api.ModeAgent), &api.SandboxRef{Mode: api.SandboxOff}, api.PermissionPlan)
+		Expect(err).To(MatchError(ContainSubstring("plan")))
+	})
 })

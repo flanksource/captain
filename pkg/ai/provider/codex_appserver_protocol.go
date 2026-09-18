@@ -391,6 +391,20 @@ func buildTurnStartParams(model string, req ai.Request, threadID string, outputS
 		"threadId": threadID,
 		"input":    input,
 	}
+	mode := "default"
+	if req.Permissions.Mode == api.PermissionPlan {
+		mode = "plan"
+	}
+	var effort any
+	if req.Effort != "" {
+		effort = string(req.Effort)
+	}
+	p["collaborationMode"] = map[string]any{
+		"mode": mode,
+		"settings": map[string]any{
+			"model": model, "reasoning_effort": effort, "developer_instructions": nil,
+		},
+	}
 	translation, roots, err := codexAppServerSafety(req)
 	if err != nil {
 		return nil, err

@@ -40,18 +40,31 @@ var _ = Describe("Codex app-server permission mode", func() {
 		Entry("an unstated posture leaves the user's Codex configuration alone", api.PermissionMode(""), ""),
 	)
 
+	DescribeTable("sets the collaboration mode on every turn",
+		func(permission api.PermissionMode, want string) {
+			request := ai.Request{Model: api.Model{Effort: api.EffortHigh}, Prompt: api.Prompt{User: "inspect"}, Permissions: api.Permissions{Mode: permission}}
+			turn, err := buildTurnStartParams("gpt-5.6", request, "thread-1", nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(turn["collaborationMode"]).To(Equal(map[string]any{
+				"mode":     want,
+				"settings": map[string]any{"model": "gpt-5.6", "reasoning_effort": "high", "developer_instructions": nil},
+			}))
+		},
+		Entry("plan", api.PermissionPlan, "plan"),
+		Entry("default after plan", api.PermissionDefault, "default"),
+	)
+
 	It("answers approvals under a switched posture at once and carries it into the next turn", func() {
 		c, err := NewCodexAppServer(ai.Config{Model: api.Model{Name: "gpt-5.6"}})
 		Expect(err).NotTo(HaveOccurred())
-		sandboxOff := &api.SandboxRef{Mode: api.SandboxOff}
-		c.beginTurn(ai.Request{Sandbox: sandboxOff, Permissions: api.Permissions{Mode: api.PermissionBypass}})
-		Expect(commandApproval(c)).To(Equal("accept"))
+		c.beginTurn(ai.Request{Permissions: api.Permissions{Mode: api.PermissionBypass}})
+		Expect(commandApproval(c)).To(Equal("decline"))
 
 		Expect(c.SetPermissionMode(context.Background(), api.PermissionPlan)).To(Succeed())
 
 		Expect(commandApproval(c)).To(Equal("decline"))
 		c.turnMu.Unlock()
-		next := c.beginTurn(ai.Request{Sandbox: sandboxOff, Permissions: api.Permissions{Mode: api.PermissionBypass}})
+		next := c.beginTurn(ai.Request{Permissions: api.Permissions{Mode: api.PermissionBypass}})
 		c.turnMu.Unlock()
 		Expect(next.Permissions.Mode).To(Equal(api.PermissionPlan))
 		Expect(commandApproval(c)).To(Equal("decline"))
@@ -87,6 +100,7 @@ var _ = Describe("Codex app-server permission mode", func() {
 		},
 		Entry("dontAsk, which codex cannot express", nil, api.PermissionDontAsk, `"dontAsk" is not supported`),
 		Entry("plan inside a docker sandbox", &api.SandboxRef{Mode: api.SandboxDocker}, api.PermissionPlan, "plan is not supported"),
+		Entry("plan with disabled sandbox", &api.SandboxRef{Mode: api.SandboxOff}, api.PermissionPlan, "plan requires a read-only sandbox"),
 		Entry("no posture at all", nil, api.PermissionMode(""), "permission mode is required"),
 	)
 })

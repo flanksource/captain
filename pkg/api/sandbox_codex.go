@@ -58,6 +58,9 @@ func TranslateCodexSandbox(runtime Runtime, ref *SandboxRef, mode PermissionMode
 	}
 	posture := CodexSandboxTranslation{Approval: codexApproval(mode), ApprovalsReviewer: codexReviewer(mode)}
 	if ref == nil {
+		if mode == PermissionPlan {
+			posture.Sandbox = CodexSandboxReadOnly
+		}
 		return posture, nil
 	}
 	if err := ref.Validate(); err != nil {
@@ -65,6 +68,9 @@ func TranslateCodexSandbox(runtime Runtime, ref *SandboxRef, mode PermissionMode
 	}
 	switch ref.Mode {
 	case SandboxOff:
+		if mode == PermissionPlan {
+			return CodexSandboxTranslation{}, fmt.Errorf("permissions.mode plan requires a read-only sandbox; %s sandbox mode %s disables it", runtime, ref.Mode)
+		}
 		posture.Sandbox = CodexSandboxDangerFull
 		return posture, nil
 	case SandboxDocker, SandboxGitAgent:
