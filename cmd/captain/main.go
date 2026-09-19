@@ -48,6 +48,9 @@ func newRootCommand() *cobra.Command {
 		// command prints just the error.
 		SilenceUsage: true,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			if rootcmd.IsStandalone(cmd) {
+				return nil
+			}
 			clicky.Flags.UseFlags()
 			// A malformed -Phttp.har.level is a hard stop rather than a run
 			// that silently captures nothing.
@@ -254,6 +257,7 @@ func newRootCommand() *cobra.Command {
 	clicky.AddNamedCommandWithContext("revoke", tokenCmd, cli.TokenRevokeOptions{}, cli.RunTokenRevoke).Short = "Refuse a token from now on"
 
 	rootcmd.RegisterAIRuntimeCommands(rootCmd)
+	rootcmd.RegisterDiagramsCommand(rootCmd)
 
 	whoamiCmd := clicky.AddNamedCommand("whoami", rootCmd, cli.WhoamiOptions{}, cli.RunWhoami)
 	whoamiCmd.Short = "List agent adapters, auth methods, and available models"
@@ -349,21 +353,7 @@ func newRootCommand() *cobra.Command {
 		os.Exit(1)
 	}
 
-	mcpConfig := &mcp.Config{
-		Name:    "captain",
-		Version: version,
-		Tools: mcp.ToolsConfig{
-			AutoExpose: true,
-			Exclude: []string{
-				"^sandbox",
-				"^projects",
-				"^container",
-				"^hook",
-				"^ai",
-				"^verify",
-			},
-		},
-	}
+	mcpConfig := newMCPConfig()
 	mcpCmd := mcp.NewCommandWithConfig(mcpConfig)
 	// Clear the -v shorthand only if the mcp command registers a verbose flag;
 	// newer clicky versions don't, and an unconditional Lookup(...).Shorthand
@@ -449,6 +439,25 @@ func bindHistoryAtRoot(cmd *cobra.Command) {
 		}
 		clicky.PrintAndWriteSinks(result, clicky.Flags.FormatOptions)
 		return nil
+	}
+}
+
+func newMCPConfig() *mcp.Config {
+	return &mcp.Config{
+		Name:    "captain",
+		Version: version,
+		Tools: mcp.ToolsConfig{
+			AutoExpose: true,
+			Exclude: []string{
+				"^sandbox",
+				"^projects",
+				"^container",
+				"^hook",
+				"^ai",
+				"^verify",
+				"^diagrams",
+			},
+		},
 	}
 }
 

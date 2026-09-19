@@ -101,6 +101,52 @@ The same checks are the generate→verify loop's definition of done: a failing v
 
 `captain verify` is local only — it is excluded from both the REST API and the MCP tool set, because `--command` runs through `sh -c` against a caller-chosen `--cwd`, and published as REST or MCP that would be unauthenticated remote code execution.
 
+### Diagram source analysis
+
+`captain diagrams analyze` statically checks Facet's React diagram form in explicit `.tsx` and `.mdx` files. `.md` is also accepted as a supported no-op input type. The analyzer recognizes a `Diagram` render prop and literal calls to its scoped id parameter, for example:
+
+```tsx
+<Diagram>
+  {(id) => (
+    <>
+      <BoxNode id={id('source')} />
+      <BoxNode id={id('target')} />
+      <Arrow from={id('source')} to={id('target')} />
+    </>
+  )}
+</Diagram>
+```
+
+It reports duplicate `BoxNode` ids, missing `Arrow from` endpoints, and missing `Arrow to` endpoints as errors. A repeated identical directed arrow is a warning. The older `start`/`end` props remain accepted as compatibility aliases, but canonical `from`/`to` props win when both are present. Dynamic expressions such as `id(name)` or `id(makeName())` are deliberately ignored: the analyzer only makes claims about literal scoped-id calls. Checks are isolated to each `Diagram`, and line and column locations are one-based. JSX inside fenced code blocks in MDX is not analyzed.
+
+Run the local-only filesystem command with an explicit schema and at least one explicit regular file:
+
+```bash
+captain diagrams analyze --schema-version=1 -- diagram.tsx guide.mdx notes.md
+```
+
+The command writes exactly one JSON report to stdout. Schema version 1 is:
+
+```json
+{
+  "schema_version": 1,
+  "files_analyzed": 1,
+  "diagrams_analyzed": 1,
+  "diagnostics": [
+    {
+      "file": "diagram.tsx",
+      "line": 12,
+      "column": 20,
+      "severity": "error",
+      "code": "missing-arrow-to",
+      "message": "Arrow to endpoint \"target\" has no matching BoxNode id in this Diagram"
+    }
+  ]
+}
+```
+
+`files_analyzed` counts every accepted input, including `.md`; `diagrams_analyzed` counts recognized `Diagram` render-prop blocks. Diagnostic codes are `duplicate-box-id`, `missing-arrow-from`, `missing-arrow-to`, and `duplicate-arrow`; severity is `error` for the first three and `warning` for the last. Diagnostics preserve supplied file paths and are ordered by supplied file order, then source location. Finding diagnostics is a successful exit. Bad arguments, a schema other than 1, missing/unreadable/unsupported/non-regular inputs, and analyzer failures exit non-zero and write errors only to stderr.
+
 ### 4. Session changes
 
 `captain changes` lists the files written or edited during a Claude Code or Codex session:
@@ -209,6 +255,7 @@ captain whoami
 captain configure
 captain serve
 captain verify
+captain diagrams analyze --schema-version=1 -- <files...>
 captain hook
 captain projects
 captain container
@@ -650,11 +697,7 @@ task lint
 task install
 ```
 
-By default this copies the built binary to:
-
-```text
-/usr/local/bin/captain
-```
+This runs `go install`, which writes `captain` to `$GOBIN` when set, otherwise to the first directory reported by `go env GOPATH` followed by `/bin`.
 
 ## Docker image
 
