@@ -99,8 +99,11 @@
   "deepseek-v4-pro": {
     "preferred": true
   },
-  "deepseek-v4-flash": {
+  "deepseek-flash": {
     "preferred": true
+  },
+  "deepseek-v4-flash": {
+    "preferred": false
   },
   "deepseek-reasoner": null,
   "deepseek-chat": null,

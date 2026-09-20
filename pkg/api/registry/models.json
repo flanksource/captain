@@ -1117,21 +1117,62 @@
     ]
   },
   {
+    "id": "deepseek-flash",
+    "provider": "deepseek",
+    "family": "deepseek",
+    "version": "flash",
+    "label": "DeepSeek V4.1 Flash",
+    "releaseDate": "2026-09-10",
+    "reasoning": true,
+    "temperature": true,
+    "contextWindow": 1000000,
+    "cost": {
+      "input": 0.15,
+      "output": 0.6,
+      "cacheRead": 0.003
+    },
+    "inputMediaTypes": [
+      "image/*"
+    ],
+    "preferred": true
+  },
+  {
     "id": "deepseek-v4-flash",
     "provider": "deepseek",
     "family": "deepseek",
     "version": "v4-flash",
     "label": "DeepSeek V4 Flash",
-    "releaseDate": "2026-04-24",
+    "releaseDate": "2026-09-10",
     "reasoning": true,
     "temperature": true,
     "contextWindow": 1000000,
     "cost": {
-      "input": 0.14,
-      "output": 0.28,
-      "cacheRead": 0.0028
+      "input": 0.15,
+      "output": 0.6,
+      "cacheRead": 0.003
     },
-    "preferred": true
+    "inputMediaTypes": [
+      "image/*"
+    ]
+  },
+  {
+    "id": "deepseek-v4-flash-vision-exp",
+    "provider": "deepseek",
+    "family": "deepseek",
+    "version": "v4-flash-vision-exp",
+    "label": "DeepSeek V4 Flash Vision Exp",
+    "releaseDate": "2026-09-10",
+    "reasoning": true,
+    "temperature": true,
+    "contextWindow": 1000000,
+    "cost": {
+      "input": 0.15,
+      "output": 0.6,
+      "cacheRead": 0.003
+    },
+    "inputMediaTypes": [
+      "image/*"
+    ]
   },
   {
     "id": "deepseek-v4-pro",
@@ -1139,7 +1180,7 @@
     "family": "deepseek",
     "version": "v4-pro",
     "label": "DeepSeek V4 Pro",
-    "releaseDate": "2026-04-24",
+    "releaseDate": "2026-08-12",
     "reasoning": true,
     "temperature": true,
     "contextWindow": 1000000,

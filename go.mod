@@ -39,7 +39,7 @@ require (
 )
 
 require (
-	github.com/flanksource/commons-db v0.1.31
+	github.com/flanksource/commons-db v0.1.37
 	github.com/gliderlabs/ssh v0.3.8
 	github.com/pelletier/go-toml/v2 v2.4.3
 )
@@ -57,6 +57,7 @@ require (
 	github.com/go-openapi/swag/stringutils v0.25.4 // indirect
 	github.com/go-openapi/swag/typeutils v0.25.4 // indirect
 	github.com/go-openapi/swag/yamlutils v0.25.4 // indirect
+	github.com/hexops/gotextdiff v1.0.3 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/sanity-io/litter v1.5.8 // indirect
@@ -186,7 +187,7 @@ require (
 	github.com/fatih/color v1.18.0 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/flanksource/gomplate/v3 v3.24.89 // indirect
-	github.com/flanksource/is-healthy v1.0.90 // indirect
+	github.com/flanksource/is-healthy v1.0.92 // indirect
 	github.com/flanksource/kubectl-neat v1.0.4 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
 	github.com/geoffgarside/ber v1.2.0 // indirect
