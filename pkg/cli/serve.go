@@ -17,6 +17,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/aichat"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/budgets"
 	"github.com/flanksource/captain/pkg/captaintoken"
 	"github.com/flanksource/captain/pkg/cli/webapp"
 	"github.com/flanksource/captain/pkg/database"
@@ -117,7 +118,12 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	if err != nil {
 		return err
 	}
-	authority, err := aichat.NewDatabaseExecutionAuthority(db)
+	fixedBudgetDB := func(context.Context) (*database.DB, error) { return db, nil }
+	budgetCatalog, err := budgets.NewDefaultCatalog(ctx, budgets.DefaultCatalogOptions{Read: fixedBudgetDB, Write: fixedBudgetDB})
+	if err != nil {
+		return err
+	}
+	authority, err := aichat.NewDatabaseExecutionAuthority(db, aichat.WithBudgetCatalog(budgetCatalog))
 	if err != nil {
 		return err
 	}

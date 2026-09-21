@@ -24,6 +24,7 @@ func TestSchemaBundleContainsGavelIntegrationContract(t *testing.T) {
 		"35_git_agent.pg.hcl",
 		"40_artifacts.pg.hcl",
 		"41_runtime_profiles.pg.hcl",
+		"42_budget_rules.pg.hcl",
 		"50_constraints.sql",
 		"51_state_triggers.sql",
 		"52_session_activity_triggers.sql",
@@ -133,6 +134,16 @@ func TestSchemaBundleContainsGavelIntegrationContract(t *testing.T) {
 		`default = sql("'[]'::jsonb")`,
 		`index "captain_runtime_profiles_name_key"`,
 		`check "captain_runtime_profiles_presets"`,
+	)
+	assertContainsAll(t, "42_budget_rules.pg.hcl",
+		`table "captain_budget_rules"`,
+		`column "match"`,
+		`column "group_by"`,
+		`column "amount"`,
+		`column "window"`,
+		`table "captain_turn_budgets"`,
+		`column "budget_rule_id"`,
+		`column "group_values"`,
 	)
 	assertContainsNone(t, "41_runtime_profiles.pg.hcl", `table "captain_runtime_profile_presets"`)
 	assertContainsAll(t, "50_constraints.sql",
