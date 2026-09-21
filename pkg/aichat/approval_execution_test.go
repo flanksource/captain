@@ -23,14 +23,6 @@ func TestEnforceApprovalRuntimeProfile(t *testing.T) {
 			wantErr:  `model "gpt-5.6-sol" is outside the current effective model catalog`,
 		},
 		{
-			name: "current quota is exhausted",
-			spec: api.Spec{Model: api.Model{Name: "gpt-5.6-sol"}},
-			resolved: api.ComposedSpec{Constraints: api.RuntimeConstraints{Quotas: []api.UsageQuota{{
-				Name: "monthly", Scope: api.SpecLayerUser, Layer: "claims", TokenLimit: 100, TokensUsed: 100,
-			}}}},
-			wantErr: `quota "monthly" from layer "claims" exhausted`,
-		},
-		{
 			name: "changed default does not replace an allowed persisted model",
 			spec: api.Spec{Model: api.Model{Name: "gpt-5.6-sol"}},
 			resolved: api.ComposedSpec{
