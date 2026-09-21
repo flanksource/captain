@@ -260,29 +260,6 @@ var _ = Describe("Captain aichat service", func() {
 		Expect(provider.specs[0].Budget).To(Equal(api.Budget{Cost: 5, MaxTokens: 1_000, MaxTurns: 3}))
 	})
 
-	It("rejects exhausted runtime budgets before provider construction", func() {
-		resolver := &fakeResolver{provider: &fakeStreamingProvider{}}
-		service := aichat.NewService(aichat.ServiceOptions{
-			Resolver: resolver,
-			Profile: aichat.RuntimeProfileProviderFunc(func(context.Context, ...aichat.RuntimeProfileOption) (aichat.RuntimeProfile, error) {
-				return mustRuntimeProfile(api.SpecLayer{
-					Name: "application", Scope: api.SpecLayerGlobal,
-					Spec: api.Spec{Model: api.Model{Name: "openai/test-model", Mode: api.ModeAPI}},
-					Constraints: api.RuntimeConstraints{Quotas: []api.UsageQuota{{
-						Name: "application-monthly", CostLimitUSD: 10, CostUsedUSD: 10,
-					}}},
-				}), nil
-			}),
-		})
-
-		response := httptest.NewRecorder()
-		service.Handler().ServeHTTP(response, requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{
-			Messages: []aichat.UIMessage{{Role: "user", Parts: []aichat.UIPart{{Type: "text", Text: "hello"}}}},
-		}))
-		Expect(response.Code).To(Equal(http.StatusPaymentRequired))
-		Expect(resolver.configs).To(BeEmpty())
-	})
-
 	It("serves models from the injected Captain seam", func() {
 		resolver := &fakeResolver{models: aichat.ModelCatalogResponse{{
 			ID: "openai/test-model", Provider: "openai", Label: "Test", Configured: true,

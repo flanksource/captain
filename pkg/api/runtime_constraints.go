@@ -12,8 +12,6 @@ const (
 	RuntimeConstraintModel        RuntimeConstraintViolation = "model"
 	RuntimeConstraintFallback     RuntimeConstraintViolation = "fallback"
 	RuntimeConstraintInputTokens  RuntimeConstraintViolation = "input_tokens"
-	RuntimeConstraintTokenQuota   RuntimeConstraintViolation = "token_quota"
-	RuntimeConstraintCostQuota    RuntimeConstraintViolation = "cost_quota"
 	RuntimeConstraintPermission   RuntimeConstraintViolation = "permission"
 	RuntimeConstraintInvalidInput RuntimeConstraintViolation = "invalid_input"
 )
@@ -22,7 +20,6 @@ const (
 type RuntimeConstraintError struct {
 	Violation            RuntimeConstraintViolation
 	Model                Model
-	Quota                UsageQuota
 	EstimatedInputTokens int
 	MaxInputTokens       int
 	Field                string
@@ -41,10 +38,6 @@ func (e *RuntimeConstraintError) Error() string {
 		return fmt.Sprintf("fallback model %q is outside the effective model catalog", e.Model.Name)
 	case RuntimeConstraintInputTokens:
 		return fmt.Sprintf("input is about %d tokens, exceeding the configured limit of %d", e.EstimatedInputTokens, e.MaxInputTokens)
-	case RuntimeConstraintTokenQuota:
-		return fmt.Sprintf("%s quota %q from layer %q is exhausted: %d tokens used of %d", e.Quota.Scope, e.Quota.Name, e.Quota.Layer, e.Quota.TokensUsed, e.Quota.TokenLimit)
-	case RuntimeConstraintCostQuota:
-		return fmt.Sprintf("%s quota %q from layer %q is exhausted: $%.4f used of $%.4f", e.Quota.Scope, e.Quota.Name, e.Quota.Layer, e.Quota.CostUsedUSD, e.Quota.CostLimitUSD)
 	case RuntimeConstraintPermission:
 		actual := e.Actual
 		if actual == "" {
@@ -64,7 +57,7 @@ func (e *RuntimeConstraintError) Error() string {
 	}
 }
 
-// ValidateRuntimeConstraints checks the actual run against model, budget, quota
+// ValidateRuntimeConstraints checks the actual run against model, budget,
 // and input ceilings. It never clamps a copy while leaving execution unbounded.
 func ValidateRuntimeConstraints(resolved ResolvedSpec, model Model, estimatedInputTokens int) error {
 	if err := resolved.Constraints.Validate(); err != nil {
@@ -89,14 +82,6 @@ func ValidateRuntimeConstraints(resolved ResolvedSpec, model Model, estimatedInp
 			return &RuntimeConstraintError{Violation: RuntimeConstraintFallback, Model: fallback}
 		}
 	}
-	for _, quota := range resolved.Constraints.Quotas {
-		if quota.CostLimitUSD > 0 && quota.CostUsedUSD >= quota.CostLimitUSD {
-			return &RuntimeConstraintError{Violation: RuntimeConstraintCostQuota, Quota: quota}
-		}
-		if quota.TokenLimit > 0 && quota.TokensUsed >= quota.TokenLimit {
-			return &RuntimeConstraintError{Violation: RuntimeConstraintTokenQuota, Quota: quota}
-		}
-	}
 	maxInputTokens := resolved.Constraints.Limits.MaxInputTokens
 	if maxInputTokens > 0 && estimatedInputTokens > maxInputTokens {
 		return &RuntimeConstraintError{
@@ -117,17 +102,6 @@ func (constraints RuntimeConstraints) Validate() error {
 	for _, selector := range constraints.Models {
 		if strings.TrimSpace(selector) == "" {
 			return fmt.Errorf("runtime constraints model catalog contains an empty selector")
-		}
-	}
-	for _, quota := range constraints.Quotas {
-		if strings.TrimSpace(quota.Name) == "" {
-			return fmt.Errorf("runtime constraints quota name is required")
-		}
-		if quota.Scope != SpecLayerGlobal && quota.Scope != SpecLayerContext {
-			return fmt.Errorf("runtime constraints quota %q requires global or context scope", quota.Name)
-		}
-		if quota.TokenLimit < 0 || quota.TokensUsed < 0 || quota.CostLimitUSD < 0 || quota.CostUsedUSD < 0 {
-			return fmt.Errorf("runtime constraints quota %q cannot contain negative usage or limits", quota.Name)
 		}
 	}
 	return nil

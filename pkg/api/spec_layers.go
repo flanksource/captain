@@ -35,22 +35,10 @@ type RunLimits struct {
 	Budget         Budget `json:"budget,omitempty" yaml:"budget,omitempty"`
 }
 
-// UsageQuota is one independently enforced accumulated usage allowance.
-type UsageQuota struct {
-	Name         string         `json:"name" yaml:"name"`
-	Scope        SpecLayerScope `json:"scope" yaml:"scope"`
-	Layer        string         `json:"layer" yaml:"layer"`
-	TokenLimit   int            `json:"tokenLimit,omitempty" yaml:"tokenLimit,omitempty"`
-	TokensUsed   int            `json:"tokensUsed,omitempty" yaml:"tokensUsed,omitempty"`
-	CostLimitUSD float64        `json:"costLimitUsd,omitempty" yaml:"costLimitUsd,omitempty"`
-	CostUsedUSD  float64        `json:"costUsedUsd,omitempty" yaml:"costUsedUsd,omitempty"`
-}
-
 // RuntimeConstraints restrict values a later Spec layer may select.
 type RuntimeConstraints struct {
 	Models      []string              `json:"models,omitempty" yaml:"models,omitempty"`
 	Limits      RunLimits             `json:"limits,omitempty" yaml:"limits,omitempty"`
-	Quotas      []UsageQuota          `json:"quotas,omitempty" yaml:"quotas,omitempty"`
 	Permissions PermissionConstraints `json:"permissions,omitempty" yaml:"permissions,omitempty"`
 }
 
@@ -121,12 +109,6 @@ func ComposeSpecLayers(options ResolveSpecOptions) (ComposedSpec, error) {
 		}
 		resolved.Constraints.Permissions = permissions
 		limitSources.record(layer, limits.Budget)
-		for _, quota := range layer.Constraints.Quotas {
-			quota.Name = strings.TrimSpace(quota.Name)
-			quota.Scope = layer.Scope
-			quota.Layer = layer.Name
-			resolved.Constraints.Quotas = append(resolved.Constraints.Quotas, quota)
-		}
 		resolved.Trace = append(resolved.Trace, cloneSpecLayer(layer))
 	}
 
@@ -190,23 +172,6 @@ func validateSpecLayer(layer SpecLayer) error {
 			return fmt.Errorf("spec layer %q model catalog repeats %q", layer.Name, model)
 		}
 		seenModels[model] = true
-	}
-	seenQuotas := map[string]bool{}
-	for _, quota := range layer.Constraints.Quotas {
-		name := strings.TrimSpace(quota.Name)
-		if name == "" {
-			return fmt.Errorf("spec layer %q quota name is required", layer.Name)
-		}
-		if layer.Scope != SpecLayerGlobal && layer.Scope != SpecLayerContext {
-			return fmt.Errorf("spec layer %q quota %q requires global or context scope", layer.Name, name)
-		}
-		if seenQuotas[name] {
-			return fmt.Errorf("spec layer %q repeats quota %q", layer.Name, name)
-		}
-		seenQuotas[name] = true
-		if quota.TokenLimit < 0 || quota.TokensUsed < 0 || quota.CostLimitUSD < 0 || quota.CostUsedUSD < 0 {
-			return fmt.Errorf("spec layer %q quota %q cannot contain negative usage or limits", layer.Name, name)
-		}
 	}
 	return nil
 }
@@ -354,7 +319,6 @@ func modelSelectorMatches(selector string, model Model) bool {
 func cloneSpecLayer(layer SpecLayer) SpecLayer {
 	layer.Spec = Spec{}.Merge(layer.Spec)
 	layer.Constraints.Models = append([]string(nil), layer.Constraints.Models...)
-	layer.Constraints.Quotas = append([]UsageQuota(nil), layer.Constraints.Quotas...)
 	layer.Constraints.Permissions = layer.Constraints.Permissions.clone()
 	return layer
 }

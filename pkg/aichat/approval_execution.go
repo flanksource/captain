@@ -141,9 +141,6 @@ func (s *Service) resumeToolApproval(ctx context.Context, threadID string, conti
 }
 
 func enforceApprovalRuntimeProfile(spec api.Spec, resolved api.ComposedSpec) error {
-	if err := enforceRuntimeQuotas(resolved); err != nil {
-		return err
-	}
 	if !resolved.AllowsModel(spec.Model) {
 		return fmt.Errorf("approval continuation model %q is outside the current effective model catalog", spec.Name)
 	}
