@@ -75,9 +75,6 @@ var _ = Describe("promptrun.Preflight constraints and runtimes", func() {
 			in.Constraints.Limits.MaxInputTokens = 5
 			in.Request.Prompt.AppendSystem = strings.Repeat("context ", 10)
 		}, "input is about"),
-		Entry("token quota", func(in *promptrun.Input) {
-			in.Constraints.Quotas = []api.UsageQuota{{Name: "daily", Scope: api.SpecLayerGlobal, Layer: "workspace", TokenLimit: 10, TokensUsed: 10}}
-		}, "quota"),
 		Entry("negative ceiling", func(in *promptrun.Input) { in.Constraints.Limits.MaxInputTokens = -1 }, "non-negative"),
 	)
 

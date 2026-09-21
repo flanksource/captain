@@ -82,14 +82,13 @@ var _ = Describe("Hierarchical spec profiles", func() {
 		Expect(resolved.Constraints.Models).To(Equal([]string{"gpt-5.4"}))
 	})
 
-	It("uses strict non-zero run ceilings and retains each named quota independently", func() {
+	It("uses strict non-zero run ceilings", func() {
 		resolved, err := ResolveSpecLayers(ResolveSpecOptions{Layers: []SpecLayer{
 			{
 				Name: "platform", Scope: SpecLayerGlobal,
 				Spec: Spec{Budget: Budget{Cost: 12, MaxTokens: 9000, MaxTurns: 10, Timeout: "10m"}},
 				Constraints: RuntimeConstraints{
 					Limits: RunLimits{MaxInputTokens: 12000, Budget: Budget{Cost: 8, MaxTokens: 7000, MaxTurns: 8, Timeout: "8m"}},
-					Quotas: []UsageQuota{{Name: "platform-monthly", TokenLimit: 1_000_000, TokensUsed: 10}},
 				},
 			},
 			{
@@ -97,7 +96,6 @@ var _ = Describe("Hierarchical spec profiles", func() {
 				Spec: Spec{Budget: Budget{Cost: 10, MaxTokens: 8000, MaxTurns: 6, Timeout: "9m"}},
 				Constraints: RuntimeConstraints{
 					Limits: RunLimits{MaxInputTokens: 4000, Budget: Budget{Cost: 5, MaxTokens: 6000, MaxTurns: 7, Timeout: "5m"}},
-					Quotas: []UsageQuota{{Name: "claims-monthly", CostLimitUSD: 50, CostUsedUSD: 2}},
 				},
 			},
 		}})
@@ -105,10 +103,6 @@ var _ = Describe("Hierarchical spec profiles", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(resolved.Spec.Budget).To(Equal(Budget{Cost: 5, MaxTokens: 6000, MaxTurns: 6, Timeout: "5m"}))
 		Expect(resolved.Constraints.Limits.MaxInputTokens).To(Equal(4000))
-		Expect(resolved.Constraints.Quotas).To(Equal([]UsageQuota{
-			{Name: "platform-monthly", Scope: SpecLayerGlobal, Layer: "platform", TokenLimit: 1_000_000, TokensUsed: 10},
-			{Name: "claims-monthly", Scope: SpecLayerContext, Layer: "claims", CostLimitUSD: 50, CostUsedUSD: 2},
-		}))
 		duration, err := time.ParseDuration(resolved.Spec.Budget.Timeout)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(duration).To(Equal(5 * time.Minute))

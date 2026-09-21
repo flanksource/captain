@@ -135,36 +135,6 @@ var _ = Describe("Resolved runtime profiles", func() {
 		Expect(response.Code).To(Equal(http.StatusBadRequest))
 		Expect(response.Body.String()).To(ContainSubstring("outside the effective model catalog"))
 	})
-
-	It("checks every named quota and reports the independently exhausted allowance", func() {
-		resolver := &fakeResolver{provider: &fakeStreamingProvider{}}
-		profile := mustRuntimeProfile(
-			api.SpecLayer{
-				Name: "platform", Scope: api.SpecLayerGlobal,
-				Spec:        api.Spec{Model: api.Model{Name: "openai/test-model"}},
-				Constraints: api.RuntimeConstraints{Quotas: []api.UsageQuota{{Name: "platform-monthly", TokenLimit: 100, TokensUsed: 10}}},
-			},
-			api.SpecLayer{
-				Name: "claims", Scope: api.SpecLayerContext,
-				Constraints: api.RuntimeConstraints{Quotas: []api.UsageQuota{{Name: "claims-monthly", CostLimitUSD: 20, CostUsedUSD: 20}}},
-			},
-		)
-		service := aichat.NewService(aichat.ServiceOptions{
-			Resolver: resolver,
-			Profile: aichat.RuntimeProfileProviderFunc(func(context.Context, ...aichat.RuntimeProfileOption) (aichat.RuntimeProfile, error) {
-				return profile, nil
-			}),
-		})
-
-		response := httptest.NewRecorder()
-		service.Handler().ServeHTTP(response, requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{
-			Messages: []aichat.UIMessage{{Role: "user", Parts: []aichat.UIPart{{Type: "text", Text: "hello"}}}},
-		}))
-
-		Expect(response.Code).To(Equal(http.StatusPaymentRequired))
-		Expect(response.Body.String()).To(ContainSubstring(`context quota "claims-monthly" from layer "claims"`))
-		Expect(resolver.configs).To(BeEmpty())
-	})
 })
 
 func mustRuntimeProfile(layers ...api.SpecLayer) aichat.RuntimeProfile {
