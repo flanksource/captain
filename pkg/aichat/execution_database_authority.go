@@ -106,6 +106,9 @@ func (a *DatabaseExecutionAuthority) Begin(
 			return fmt.Errorf("chat turn %q already exists in state %s", request.RequestID, turn.Status)
 		}
 		resumed = !created
+		if err := reserveTurnBudgets(ctx, tx, turn.ID, budgetAdmission, primaryAttributions); err != nil {
+			return err
+		}
 		run, createErr := tx.CreatePromptRun(ctx, database.CreatePromptRunInput{
 			SessionID: session.ID, TurnID: &turn.ID, AdmissionKey: executionAdmissionKey(request),
 			Origin: "aichat", RenderedSpec: renderedSpec,
@@ -323,7 +326,7 @@ func (a *DatabaseExecutionAuthority) budgetAdmission(ctx context.Context, dimens
 			return nil, fmt.Errorf("load budget rules: %w", err)
 		}
 	}
-	return budgets.Admit(ctx, rules, dimensions, models, budget, time.Now().UTC(), a.db)
+	return budgets.Admit(rules, dimensions, models, budget)
 }
 
 // AdmitStateless refuses thread-less turns while budget rules are active:
@@ -348,6 +351,39 @@ func databaseAttributions(input []budgets.Attribution) []database.BudgetAttribut
 		out = append(out, database.BudgetAttribution{RuleID: attribution.Rule.ID, GroupValues: attribution.GroupValues})
 	}
 	return out
+}
+
+// reserveTurnBudgets holds the admission's per-run amount in every attributed
+// bucket. With no rules there are no attributions and nothing to hold.
+func reserveTurnBudgets(ctx context.Context, db *database.DB, turnID uuid.UUID, admission *budgets.Admission, input []budgets.Attribution) error {
+	if admission == nil || len(input) == 0 {
+		return nil
+	}
+	now := time.Now().UTC()
+	reservations := make([]database.BudgetReservation, 0, len(input))
+	for _, attribution := range input {
+		rule := attribution.Rule
+		start, err := rule.WindowStart(now)
+		if err != nil {
+			return &budgets.Refusal{Rule: rule.Name, GroupValues: attribution.GroupValues, Limit: rule.Amount, Reason: err.Error()}
+		}
+		reservations = append(reservations, database.BudgetReservation{
+			RuleID: rule.ID, Rule: rule.Name, GroupValues: attribution.GroupValues,
+			Amount: admission.Amount, Limit: rule.Amount, WindowStart: start,
+		})
+	}
+	err := db.ReserveChatTurnBudgets(ctx, turnID, reservations)
+	var capacity *database.BudgetCapacityError
+	switch {
+	case errors.As(err, &capacity):
+		return &budgets.Refusal{
+			Rule: capacity.Rule, GroupValues: capacity.GroupValues,
+			Spend: capacity.Committed, Limit: capacity.Limit,
+		}
+	case errors.Is(err, database.ErrBudgetSpendNotUSD):
+		return &budgets.Refusal{Reason: err.Error()}
+	}
+	return err
 }
 
 func isBudgetRefusal(err error) bool {

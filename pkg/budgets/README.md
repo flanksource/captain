@@ -27,7 +27,17 @@ is minute. Absolute anchors and future starts are rejected.
 
 Captain records the concrete rule groups selected for each model call and derives
 their settled `captain_model_calls` spend at admission. Once any rule exists,
-every primary and fallback model must have coverage and every matching rule
-must remain below its amount. In-flight turns are not yet counted: concurrent
-active turns can proceed from the same settled balance until reservation
-support closes that gap.
+every primary and fallback model must have coverage. Admission reserves the
+positive resolved `budget.cost` against every rule/group bucket matched by the
+selected model. Bucket locks make the settled-spend plus active-reservation
+check atomic, and a multi-rule turn acquires every hold or none.
+
+The hold remains attached to the turn across approval continuation and moves
+atomically if fallback binding selects different buckets. As model calls settle,
+their cost replaces the same amount of outstanding hold rather than counting
+twice. Terminal completion, failure, or cancellation releases the unused hold.
+Amounts remain USD-only; a completed non-USD call fails admission closed.
+
+The reservation closes concurrent admission against the same balance, but it
+does not make the run ceiling a provider-independent hard dollar cap. A single
+model call can still exceed `budget.cost`, and its full settled cost is charged.

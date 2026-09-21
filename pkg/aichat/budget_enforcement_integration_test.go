@@ -23,7 +23,8 @@ var _ = Describe("Budget enforcement against settled spend", func() {
 		GinkgoT().Setenv(api.MonitorHooksEnv, "off")
 		covered := api.Model{Name: "claude-sonnet-4-6", Mode: api.ModeAPI}
 		uncovered := api.Model{Name: "claude-haiku-4-5", Mode: api.ModeAPI}
-		runBudget := api.Budget{Cost: 1}
+		// The per-run hold must fit the bucket to be admitted at all.
+		runBudget := api.Budget{Cost: 0.000005}
 
 		mock := startLifecycleMock(lifecycleRuntime{protocol: aimock.SectionAnthropic, scenario: "chat-api-flows.yaml"})
 		DeferCleanup(mock.server.Close)
