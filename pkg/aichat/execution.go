@@ -19,6 +19,7 @@ type ExecutionRequest struct {
 	Spec                    api.Spec
 	Profile                 api.ResolvedSpec
 	Definitions             []api.ToolDefinition
+	Dimensions              map[string]string
 }
 
 // ToolApprovalResolution is the authenticated user's answer to one live

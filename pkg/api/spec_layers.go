@@ -316,6 +316,12 @@ func modelSelectorMatches(selector string, model Model) bool {
 	return allowedErr == nil && allowed.Name == actual.Name && allowed.Mode == actual.Mode && allowed.Provider == actual.Provider
 }
 
+// ModelSelectorMatches exposes the canonical model-selector comparison for
+// policy packages that must compare authored selectors with resolved runtimes.
+func ModelSelectorMatches(selector string, model Model) bool {
+	return modelSelectorMatches(selector, model)
+}
+
 func cloneSpecLayer(layer SpecLayer) SpecLayer {
 	layer.Spec = Spec{}.Merge(layer.Spec)
 	layer.Constraints.Models = append([]string(nil), layer.Constraints.Models...)

@@ -49,6 +49,8 @@ func TestCaptainMigrationsAreIdempotentAndShareOnePool(t *testing.T) {
 		"captain_plan_revisions",
 		"captain_turns",
 		"captain_model_calls",
+		"captain_budget_rules",
+		"captain_turn_budgets",
 		"captain_events",
 		"captain_turn_requests",
 	} {
@@ -81,8 +83,10 @@ func TestCaptainMigrationsAreIdempotentAndShareOnePool(t *testing.T) {
 		"captain_prompt_run_iterations": {"id", "prompt_run_id", "state"},
 		"captain_plans":                 {"id", "source_session_id", "approved_revision_id", "approval_state"},
 		"captain_plan_revisions":        {"id", "plan_id", "revision"},
-		"captain_turns":                 {"id", "session_id", "status"},
+		"captain_turns":                 {"id", "session_id", "status", "dimensions"},
 		"captain_model_calls":           {"id", "turn_id", "prompt_run_id", "iteration_id", "status"},
+		"captain_budget_rules":          {"id", "name", "match", "group_by", "amount", "window"},
+		"captain_turn_budgets":          {"turn_id", "budget_rule_id", "group_values"},
 		"captain_events":                {"id", "session_id", "turn_id", "prompt_run_id", "iteration_id", "kind"},
 		"captain_turn_requests":         {"id", "session_id", "turn_id", "prompt_run_id", "plan_id", "state", "version"},
 	} {

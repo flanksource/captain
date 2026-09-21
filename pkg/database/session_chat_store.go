@@ -25,6 +25,7 @@ type ChatTurn struct {
 	ProviderTurnID string
 	Index          int
 	Status         TurnStatus
+	Dimensions     map[string]string
 }
 
 type CreateChatTurnInput struct {
@@ -80,7 +81,7 @@ func (db *DB) CreateChatTurn(ctx context.Context, input CreateChatTurnInput) (*C
 		now := time.Now().UTC()
 		record := turnRecord{
 			ID: uuid.New(), SessionID: input.SessionID, ProviderTurnID: &providerTurnID,
-			TurnIndex: next, Status: TurnStatusOpen, StartedAt: &now,
+			TurnIndex: next, Status: TurnStatusOpen, Dimensions: map[string]string{}, StartedAt: &now,
 		}
 		if err := tx.gorm.WithContext(ctx).Create(&record).Error; err != nil {
 			return fmt.Errorf("create Captain chat turn: %w", err)
@@ -464,6 +465,6 @@ func (db *DB) touchChatSession(ctx context.Context, id uuid.UUID) error {
 func chatTurnFromRecord(record turnRecord) *ChatTurn {
 	return &ChatTurn{
 		ID: record.ID, SessionID: record.SessionID, ProviderTurnID: optionalString(record.ProviderTurnID),
-		Index: record.TurnIndex, Status: record.Status,
+		Index: record.TurnIndex, Status: record.Status, Dimensions: cloneStrings(record.Dimensions),
 	}
 }
