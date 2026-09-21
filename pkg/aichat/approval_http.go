@@ -64,6 +64,8 @@ func (s *Service) handleResolveToolApproval(w http.ResponseWriter, request *http
 		// which is why a server-side ingest failure surfaced as a lost approval.
 		status := http.StatusInternalServerError
 		switch {
+		case isBudgetRefusal(err):
+			status = http.StatusPaymentRequired
 		case errors.Is(err, database.ErrSessionConflict), errors.Is(err, database.ErrPromptRunConflict),
 			errors.Is(err, database.ErrTurnRequestConflict):
 			status = http.StatusConflict

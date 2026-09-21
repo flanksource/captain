@@ -3,9 +3,11 @@ package aichat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"strings"
+	"time"
 
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/budgets"
@@ -16,6 +18,7 @@ import (
 type DatabaseExecutionAuthority struct {
 	db      *database.DB
 	budgets *budgets.Catalog
+	now     func() time.Time
 }
 
 type DatabaseExecutionAuthorityOption func(*DatabaseExecutionAuthority)
@@ -26,15 +29,24 @@ func WithBudgetCatalog(catalog *budgets.Catalog) DatabaseExecutionAuthorityOptio
 	return func(authority *DatabaseExecutionAuthority) { authority.budgets = catalog }
 }
 
+// WithBudgetNow injects the clock shared by all window calculations in one
+// admission.
+func WithBudgetNow(now func() time.Time) DatabaseExecutionAuthorityOption {
+	return func(authority *DatabaseExecutionAuthority) { authority.now = now }
+}
+
 func NewDatabaseExecutionAuthority(db *database.DB, options ...DatabaseExecutionAuthorityOption) (*DatabaseExecutionAuthority, error) {
 	if db == nil || db.Gorm() == nil {
 		return nil, fmt.Errorf("captain execution authority requires a database")
 	}
-	authority := &DatabaseExecutionAuthority{db: db}
+	authority := &DatabaseExecutionAuthority{db: db, now: time.Now}
 	for _, option := range options {
 		if option != nil {
 			option(authority)
 		}
+	}
+	if authority.now == nil {
+		authority.now = time.Now
 	}
 	return authority, nil
 }
@@ -50,7 +62,7 @@ func (a *DatabaseExecutionAuthority) Begin(
 	if request.Spec.Mode == "" || request.Spec.Provider == nil {
 		return nil, fmt.Errorf("authoritative chat execution requires a resolved (provider, mode) runtime")
 	}
-	budgetAdmission, err := a.budgetAdmission(ctx, request.Dimensions, request.Spec.Model.Candidates())
+	budgetAdmission, err := a.budgetAdmission(ctx, request.Dimensions, request.Spec.Model.Candidates(), request.Spec.Budget)
 	if err != nil {
 		return nil, err
 	}
@@ -132,8 +144,8 @@ func (a *DatabaseExecutionAuthority) Begin(
 		execution = &databaseExecution{
 			db: tx, ctx: ctx, session: session, turn: turn, run: run, modelCallID: modelCallID,
 			model: request.Spec.Name, provider: request.Spec.Provider, mode: request.Spec.Mode,
-			budgetAdmission: budgetAdmission,
-			events:          make(chan api.Event, 16), definitions: append([]api.ToolDefinition(nil), request.Definitions...),
+			budgetAdmission: budgetAdmission, budgetNow: a.now,
+			events: make(chan api.Event, 16), definitions: append([]api.ToolDefinition(nil), request.Definitions...),
 			approvalIDs: map[string]uuid.UUID{}, providerToolUseReady: make(chan struct{}, 1),
 		}
 		return execution.markRunning(ctx)
@@ -164,7 +176,7 @@ func (a *DatabaseExecutionAuthority) ResolveToolApproval(
 	var continuation *ApprovalContinuation
 	err := a.db.Transaction(ctx, func(tx *database.DB) error {
 		var resolveErr error
-		continuation, resolveErr = (&DatabaseExecutionAuthority{db: tx, budgets: a.budgets}).resolveToolApproval(ctx, resolution)
+		continuation, resolveErr = (&DatabaseExecutionAuthority{db: tx, budgets: a.budgets, now: a.now}).resolveToolApproval(ctx, resolution)
 		return resolveErr
 	})
 	if err != nil {
@@ -271,7 +283,7 @@ func (a *DatabaseExecutionAuthority) resolveToolApproval(
 	if err != nil {
 		return nil, err
 	}
-	budgetAdmission, err := a.budgetAdmission(ctx, turn.Dimensions, spec.Model.Candidates())
+	budgetAdmission, err := a.budgetAdmission(ctx, turn.Dimensions, spec.Model.Candidates(), spec.Budget)
 	if err != nil {
 		return nil, err
 	}
@@ -300,8 +312,8 @@ func (a *DatabaseExecutionAuthority) resolveToolApproval(
 	execution := &databaseExecution{
 		db: a.db, ctx: ctx, session: sessionRecord, turn: turn, run: resumed, modelCallID: modelCallID,
 		model: spec.Name, provider: spec.Provider, mode: spec.Mode,
-		budgetAdmission: budgetAdmission,
-		events:          make(chan api.Event, 16), approvalIDs: map[string]uuid.UUID{},
+		budgetAdmission: budgetAdmission, budgetNow: a.now,
+		events: make(chan api.Event, 16), approvalIDs: map[string]uuid.UUID{},
 		providerToolUseReady: make(chan struct{}, 1),
 	}
 	if err := execution.updateSessionActivity(ctx, database.SessionActivityWorking); err != nil {
@@ -310,9 +322,9 @@ func (a *DatabaseExecutionAuthority) resolveToolApproval(
 	return &ApprovalContinuation{Execution: execution, Spec: spec}, nil
 }
 
-func (a *DatabaseExecutionAuthority) budgetAdmission(ctx context.Context, dimensions map[string]string, models []api.Model) (*budgets.Admission, error) {
+func (a *DatabaseExecutionAuthority) budgetAdmission(ctx context.Context, dimensions map[string]string, models []api.Model, budget api.Budget) (*budgets.Admission, error) {
 	if a.budgets == nil {
-		return budgets.Evaluate(nil, dimensions, models), nil
+		return budgets.Enforce(ctx, nil, dimensions, models, a.now().UTC(), a.db)
 	}
 	rules, err := a.budgets.List(ctx)
 	if err != nil {
@@ -321,7 +333,10 @@ func (a *DatabaseExecutionAuthority) budgetAdmission(ctx context.Context, dimens
 		serviceLog.Warnf("load budget rules (observe-only, continuing without attribution): %v", err)
 		return budgets.Evaluate(nil, dimensions, models), nil
 	}
-	return budgets.Evaluate(rules, dimensions, models), nil
+	if len(rules) > 0 && budget.Cost <= 0 {
+		return nil, &budgets.Refusal{Reason: "budget rules require a positive resolved per-run budget cost"}
+	}
+	return budgets.Enforce(ctx, rules, dimensions, models, a.now().UTC(), a.db)
 }
 
 func databaseAttributions(input []budgets.Attribution) []database.BudgetAttribution {
@@ -330,6 +345,11 @@ func databaseAttributions(input []budgets.Attribution) []database.BudgetAttribut
 		out = append(out, database.BudgetAttribution{RuleID: attribution.RuleID, GroupValues: attribution.GroupValues})
 	}
 	return out
+}
+
+func isBudgetRefusal(err error) bool {
+	var refusal *budgets.Refusal
+	return errors.As(err, &refusal)
 }
 
 func approvalDecisions(state api.ToolApprovalState, requests []database.TurnRequest) ([]api.ToolApprovalDecision, error) {
