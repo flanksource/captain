@@ -300,6 +300,15 @@ func (db *DB) FinishChatTurn(ctx context.Context, id uuid.UUID, status TurnStatu
 	if status != TurnStatusEnded && status != TurnStatusError && status != TurnStatusInterrupted {
 		return fmt.Errorf("%w: terminal chat turn status %q is invalid", ErrInvalidIngest, status)
 	}
+	return db.Transaction(ctx, func(tx *DB) error {
+		if err := tx.finishChatTurn(ctx, id, status, reason); err != nil {
+			return err
+		}
+		return tx.ReleaseChatTurnBudgetReservations(ctx, id)
+	})
+}
+
+func (db *DB) finishChatTurn(ctx context.Context, id uuid.UUID, status TurnStatus, reason string) error {
 	updates := map[string]any{"status": status, "ended_at": time.Now().UTC()}
 	if strings.TrimSpace(reason) != "" {
 		if status == TurnStatusError {

@@ -116,3 +116,63 @@ table "captain_model_call_budgets" {
     expr = "jsonb_typeof(group_values) = 'object'"
   }
 }
+
+# Active holds are separate from retained turn attribution: fallback binding
+# may move a hold before a call starts, while attribution remains the ledger's
+# record of buckets an executed turn was charged to.
+table "captain_budget_reservations" {
+  schema = schema.public
+
+  column "turn_id" {
+    null = false
+    type = uuid
+  }
+  column "budget_rule_id" {
+    null = false
+    type = uuid
+  }
+  column "group_values" {
+    null    = false
+    type    = jsonb
+    default = sql("'{}'::jsonb")
+  }
+  column "amount" {
+    null = false
+    type = numeric(20, 8)
+  }
+  column "created_at" {
+    null    = false
+    type    = timestamptz
+    default = sql("now()")
+  }
+  column "released_at" {
+    null = true
+    type = timestamptz
+  }
+
+  primary_key {
+    columns = [column.turn_id, column.budget_rule_id, column.group_values]
+  }
+  foreign_key "captain_budget_reservations_turn_id_fkey" {
+    columns     = [column.turn_id]
+    ref_columns = [table.captain_turns.column.id]
+    on_update   = NO_ACTION
+    on_delete   = CASCADE
+  }
+  foreign_key "captain_budget_reservations_budget_rule_id_fkey" {
+    columns     = [column.budget_rule_id]
+    ref_columns = [table.captain_budget_rules.column.id]
+    on_update   = NO_ACTION
+    on_delete   = RESTRICT
+  }
+  index "captain_budget_reservations_active_bucket_idx" {
+    columns = [column.budget_rule_id, column.group_values]
+    where   = "released_at IS NULL"
+  }
+  check "captain_budget_reservations_group_values" {
+    expr = "jsonb_typeof(group_values) = 'object'"
+  }
+  check "captain_budget_reservations_amount" {
+    expr = "amount > 0"
+  }
+}

@@ -100,7 +100,7 @@ func (e *databaseExecution) BindRuntime(ctx context.Context, runtime api.Model) 
 		if e.budgetNow != nil {
 			now = e.budgetNow().UTC()
 		}
-		attributions, err = e.budgetAdmission.CheckModel(ctx, runtime, now, e.db)
+		attributions, err = e.budgetAdmission.CheckModel(runtime, now)
 		if err != nil {
 			return err
 		}
@@ -112,6 +112,9 @@ func (e *databaseExecution) BindRuntime(ctx context.Context, runtime api.Model) 
 	var updatedRun *database.PromptRun
 	err = e.db.Transaction(ctx, func(tx *database.DB) error {
 		if e.budgetAdmission != nil {
+			if budgetErr := reserveTurnBudgets(ctx, tx, e.turn.ID, e.budgetAdmission, attributions); budgetErr != nil {
+				return budgetErr
+			}
 			if budgetErr := tx.SetModelCallBudgets(ctx, e.turn.ID, e.modelCallID, e.budgetAdmission.Dimensions, databaseAttributions(attributions)); budgetErr != nil {
 				return budgetErr
 			}

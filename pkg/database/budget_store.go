@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -201,6 +202,47 @@ type BudgetAttribution struct {
 	GroupValues map[string]string
 }
 
+type budgetReservationRecord struct {
+	TurnID       uuid.UUID         `gorm:"column:turn_id;type:uuid;primaryKey"`
+	BudgetRuleID uuid.UUID         `gorm:"column:budget_rule_id;type:uuid;primaryKey"`
+	GroupValues  map[string]string `gorm:"column:group_values;serializer:json;type:jsonb;primaryKey"`
+	Amount       float64           `gorm:"column:amount"`
+	CreatedAt    time.Time         `gorm:"column:created_at"`
+	ReleasedAt   *time.Time        `gorm:"column:released_at"`
+}
+
+func (budgetReservationRecord) TableName() string { return "captain_budget_reservations" }
+
+// BudgetReservation is one rule/group hold requested for a turn.
+type BudgetReservation struct {
+	RuleID      uuid.UUID
+	Rule        string
+	GroupValues map[string]string
+	Amount      float64
+	Limit       float64
+	WindowStart time.Time
+}
+
+type preparedBudgetReservation struct {
+	BudgetReservation
+	groupJSON []byte
+	key       string
+}
+
+// BudgetCapacityError reports the atomic settled-plus-reserved capacity that
+// prevented a hold from being acquired.
+type BudgetCapacityError struct {
+	Rule        string
+	GroupValues map[string]string
+	Committed   float64
+	Limit       float64
+}
+
+func (e *BudgetCapacityError) Error() string {
+	return fmt.Sprintf("budget rule %q group %v has $%.8f committed against a $%.8f limit",
+		e.Rule, e.GroupValues, e.Committed, e.Limit)
+}
+
 // SetModelCallBudgets atomically records the turn's host dimensions and the
 // concrete rule groups selected for one model call before its provider
 // execution starts. Replacement is scoped to that call, so attribution already
@@ -249,6 +291,217 @@ func (db *DB) ListModelCallBudgets(ctx context.Context, modelCallID uuid.UUID) (
 	return out, nil
 }
 
+// ReserveChatTurnBudgets atomically replaces a turn's active holds. Bucket
+// advisory locks serialize capacity checks across turns; sorting makes a
+// multi-rule admission deadlock-safe and the transaction makes it all-or-none.
+func (db *DB) ReserveChatTurnBudgets(ctx context.Context, turnID uuid.UUID, reservations []BudgetReservation) error {
+	if turnID == uuid.Nil {
+		return fmt.Errorf("%w: budget reservation turn ID is required", ErrBudgetInvalid)
+	}
+	return db.Transaction(ctx, func(tx *DB) error {
+		return tx.reserveChatTurnBudgets(ctx, turnID, reservations)
+	})
+}
+
+func (db *DB) reserveChatTurnBudgets(ctx context.Context, turnID uuid.UUID, reservations []BudgetReservation) error {
+	prepared := make([]preparedBudgetReservation, 0, len(reservations))
+	seen := make(map[string]bool, len(reservations))
+	for _, reservation := range reservations {
+		if reservation.RuleID == uuid.Nil || reservation.Amount <= 0 || reservation.Limit <= 0 || reservation.WindowStart.IsZero() {
+			return fmt.Errorf("%w: reservation rule, positive amount/limit, and window start are required", ErrBudgetInvalid)
+		}
+		groupJSON, err := json.Marshal(cloneStrings(reservation.GroupValues))
+		if err != nil {
+			return fmt.Errorf("encode budget reservation group: %w", err)
+		}
+		key, err := budgetReservationKey(reservation.RuleID, reservation.GroupValues)
+		if err != nil {
+			return err
+		}
+		if seen[key] {
+			return fmt.Errorf("%w: duplicate budget reservation bucket %q", ErrBudgetInvalid, key)
+		}
+		seen[key] = true
+		prepared = append(prepared, preparedBudgetReservation{BudgetReservation: reservation, groupJSON: groupJSON, key: key})
+	}
+
+	var current []budgetReservationRecord
+	if err := db.gorm.WithContext(ctx).Where("turn_id = ? AND released_at IS NULL", turnID).Find(&current).Error; err != nil {
+		return fmt.Errorf("list active turn budget reservations: %w", err)
+	}
+	lockKeys := make([]string, 0, len(prepared)+len(current))
+	lockSeen := map[string]bool{}
+	for _, reservation := range prepared {
+		lockKeys = append(lockKeys, reservation.key)
+		lockSeen[reservation.key] = true
+	}
+	for _, reservation := range current {
+		key, err := budgetReservationKey(reservation.BudgetRuleID, reservation.GroupValues)
+		if err != nil {
+			return err
+		}
+		if !lockSeen[key] {
+			lockKeys = append(lockKeys, key)
+			lockSeen[key] = true
+		}
+	}
+	sort.Strings(lockKeys)
+	for _, key := range lockKeys {
+		if err := db.gorm.WithContext(ctx).Exec("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", key).Error; err != nil {
+			return fmt.Errorf("lock budget reservation bucket: %w", err)
+		}
+	}
+	if err := db.gorm.WithContext(ctx).Where("turn_id = ? AND released_at IS NULL", turnID).Find(&current).Error; err != nil {
+		return fmt.Errorf("reload active turn budget reservations: %w", err)
+	}
+	if reservationsEqual(current, prepared) {
+		return nil
+	}
+
+	for _, reservation := range prepared {
+		committed, turnSpend, err := db.budgetCommittedUSD(ctx, reservation.RuleID, reservation.groupJSON, reservation.WindowStart, turnID)
+		if err != nil {
+			return err
+		}
+		turnCommitment := reservation.Amount
+		if turnSpend > turnCommitment {
+			turnCommitment = turnSpend
+		}
+		committed += turnCommitment
+		if committed > reservation.Limit {
+			return &BudgetCapacityError{
+				Rule: reservation.Rule, GroupValues: cloneStrings(reservation.GroupValues),
+				Committed: committed, Limit: reservation.Limit,
+			}
+		}
+	}
+	if err := db.gorm.WithContext(ctx).Model(&budgetReservationRecord{}).
+		Where("turn_id = ? AND released_at IS NULL", turnID).Update("released_at", time.Now().UTC()).Error; err != nil {
+		return fmt.Errorf("release replaced turn budget reservations: %w", err)
+	}
+	for _, reservation := range prepared {
+		if err := db.gorm.WithContext(ctx).Exec(`
+			INSERT INTO captain_budget_reservations (turn_id, budget_rule_id, group_values, amount)
+			VALUES (?, ?, ?::jsonb, ?)
+			ON CONFLICT (turn_id, budget_rule_id, group_values) DO UPDATE
+			SET amount = EXCLUDED.amount, released_at = NULL
+		`, turnID, reservation.RuleID, string(reservation.groupJSON), reservation.Amount).Error; err != nil {
+			return fmt.Errorf("store turn budget reservation: %w", err)
+		}
+	}
+	return nil
+}
+
+func reservationsEqual(current []budgetReservationRecord, desired []preparedBudgetReservation) bool {
+	if len(current) != len(desired) {
+		return false
+	}
+	want := make(map[string]float64, len(desired))
+	for _, reservation := range desired {
+		want[reservation.key] = reservation.Amount
+	}
+	for _, reservation := range current {
+		key, err := budgetReservationKey(reservation.BudgetRuleID, reservation.GroupValues)
+		if err != nil || want[key] != reservation.Amount {
+			return false
+		}
+	}
+	return true
+}
+
+func budgetReservationKey(ruleID uuid.UUID, groupValues map[string]string) (string, error) {
+	encoded, err := json.Marshal([]any{ruleID, cloneStrings(groupValues)})
+	if err != nil {
+		return "", fmt.Errorf("encode budget reservation lock key: %w", err)
+	}
+	return string(encoded), nil
+}
+
+func (db *DB) budgetCommittedUSD(ctx context.Context, ruleID uuid.UUID, groupJSON []byte, since time.Time, exceptTurn uuid.UUID) (float64, float64, error) {
+	var summary struct {
+		Settled   float64
+		Active    float64
+		TurnSpend float64
+		NonUSD    int64
+	}
+	if err := db.gorm.WithContext(ctx).Raw(`
+		SELECT
+			(SELECT COALESCE(SUM(`+modelCallCostSQL+`), 0)
+			 FROM captain_model_calls calls
+			 JOIN captain_model_call_budgets budgets ON budgets.model_call_id = calls.id
+			 WHERE budgets.budget_rule_id = ? AND budgets.group_values = ?::jsonb
+			   AND calls.ended_at IS NOT NULL AND calls.ended_at >= ? AND calls.turn_id <> ?) AS settled,
+			(SELECT COALESCE(SUM(GREATEST(reservations.amount - COALESCE(costs.total, 0), 0)), 0)
+			 FROM captain_budget_reservations reservations
+			 LEFT JOIN LATERAL (
+				 SELECT SUM(`+modelCallCostSQL+`) AS total
+				 FROM captain_model_calls calls
+				 JOIN captain_model_call_budgets budgets ON budgets.model_call_id = calls.id
+				 WHERE calls.turn_id = reservations.turn_id
+				   AND budgets.budget_rule_id = reservations.budget_rule_id
+				   AND budgets.group_values = reservations.group_values
+				   AND calls.ended_at IS NOT NULL
+			 ) costs ON true
+			 WHERE reservations.budget_rule_id = ? AND reservations.group_values = ?::jsonb
+			   AND reservations.released_at IS NULL AND reservations.turn_id <> ?) AS active,
+			(SELECT COALESCE(SUM(`+modelCallCostSQL+`), 0)
+			 FROM captain_model_calls calls
+			 JOIN captain_model_call_budgets budgets ON budgets.model_call_id = calls.id
+			 WHERE calls.turn_id = ? AND budgets.budget_rule_id = ?
+			   AND budgets.group_values = ?::jsonb AND calls.ended_at IS NOT NULL) AS turn_spend,
+			(SELECT count(*) FROM (
+				 SELECT calls.id
+				 FROM captain_model_calls calls
+				 JOIN captain_model_call_budgets budgets ON budgets.model_call_id = calls.id
+				 WHERE budgets.budget_rule_id = ? AND budgets.group_values = ?::jsonb
+				   AND calls.ended_at IS NOT NULL AND calls.ended_at >= ? AND calls.turn_id <> ?
+				   AND upper(calls.currency) <> 'USD'
+				 UNION
+				 SELECT calls.id
+				 FROM captain_budget_reservations reservations
+				 JOIN captain_model_calls calls ON calls.turn_id = reservations.turn_id
+				 JOIN captain_model_call_budgets budgets ON budgets.model_call_id = calls.id
+				 WHERE reservations.budget_rule_id = ? AND reservations.group_values = ?::jsonb
+				   AND reservations.released_at IS NULL AND reservations.turn_id <> ?
+				   AND budgets.budget_rule_id = reservations.budget_rule_id
+				   AND budgets.group_values = reservations.group_values
+				   AND calls.ended_at IS NOT NULL AND upper(calls.currency) <> 'USD'
+				 UNION
+				 SELECT calls.id
+				 FROM captain_model_calls calls
+				 JOIN captain_model_call_budgets budgets ON budgets.model_call_id = calls.id
+				 WHERE calls.turn_id = ? AND budgets.budget_rule_id = ?
+				   AND budgets.group_values = ?::jsonb AND calls.ended_at IS NOT NULL
+				   AND upper(calls.currency) <> 'USD'
+			) non_usd_calls) AS non_usd
+	`,
+		ruleID, string(groupJSON), since, exceptTurn,
+		ruleID, string(groupJSON), exceptTurn,
+		exceptTurn, ruleID, string(groupJSON),
+		ruleID, string(groupJSON), since, exceptTurn,
+		ruleID, string(groupJSON), exceptTurn,
+		exceptTurn, ruleID, string(groupJSON),
+	).Scan(&summary).Error; err != nil {
+		return 0, 0, fmt.Errorf("aggregate committed budget amount: %w", err)
+	}
+	if summary.NonUSD > 0 {
+		return 0, 0, fmt.Errorf("budget ledger contains %d completed non-USD model calls", summary.NonUSD)
+	}
+	return summary.Settled + summary.Active, summary.TurnSpend, nil
+}
+
+// ReleaseChatTurnBudgetReservations releases every hold after the turn reaches
+// a durable terminal state. Retained rows make retries idempotent and auditable.
+func (db *DB) ReleaseChatTurnBudgetReservations(ctx context.Context, turnID uuid.UUID) error {
+	if err := db.gorm.WithContext(ctx).Model(&budgetReservationRecord{}).
+		Where("turn_id = ? AND released_at IS NULL", turnID).Update("released_at", time.Now().UTC()).Error; err != nil {
+		return fmt.Errorf("release turn budget reservations: %w", err)
+	}
+	return nil
+}
+
+const modelCallCostSQL = `CASE WHEN calls.provider_cost_usd > 0 THEN calls.provider_cost_usd ELSE calls.input_cost + calls.output_cost + calls.reasoning_cost + calls.cache_read_cost + calls.cache_write_cost END`
+
 func (db *DB) budgetSpendStatement(ctx context.Context, ruleID uuid.UUID, groupJSON []byte, since time.Time) *gorm.DB {
 	return db.gorm.WithContext(ctx).
 		Table("captain_model_calls AS calls").
@@ -275,7 +528,7 @@ func (db *DB) BudgetSpendUSD(ctx context.Context, ruleID uuid.UUID, groupValues 
 	}
 	var total float64
 	if err := db.budgetSpendStatement(ctx, ruleID, groupJSON, since).
-		Select(`COALESCE(SUM(CASE WHEN calls.provider_cost_usd > 0 THEN calls.provider_cost_usd ELSE calls.input_cost + calls.output_cost + calls.reasoning_cost + calls.cache_read_cost + calls.cache_write_cost END), 0)`).
+		Select("COALESCE(SUM(" + modelCallCostSQL + "), 0)").
 		Scan(&total).Error; err != nil {
 		return 0, fmt.Errorf("aggregate completed budget spend: %w", err)
 	}

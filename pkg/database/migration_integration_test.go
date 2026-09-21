@@ -51,6 +51,7 @@ func TestCaptainMigrationsAreIdempotentAndShareOnePool(t *testing.T) {
 		"captain_model_calls",
 		"captain_budget_rules",
 		"captain_model_call_budgets",
+		"captain_budget_reservations",
 		"captain_events",
 		"captain_turn_requests",
 	} {
@@ -87,6 +88,7 @@ func TestCaptainMigrationsAreIdempotentAndShareOnePool(t *testing.T) {
 		"captain_model_calls":           {"id", "turn_id", "prompt_run_id", "iteration_id", "status"},
 		"captain_budget_rules":          {"id", "name", "match", "group_by", "amount", "window"},
 		"captain_model_call_budgets":    {"model_call_id", "budget_rule_id", "group_values"},
+		"captain_budget_reservations":   {"turn_id", "budget_rule_id", "group_values", "amount", "released_at"},
 		"captain_events":                {"id", "session_id", "turn_id", "prompt_run_id", "iteration_id", "kind"},
 		"captain_turn_requests":         {"id", "session_id", "turn_id", "prompt_run_id", "plan_id", "state", "version"},
 	} {

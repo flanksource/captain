@@ -113,6 +113,9 @@ func (a *DatabaseExecutionAuthority) Begin(
 			return fmt.Errorf("chat turn %q already exists in state %s", request.RequestID, turn.Status)
 		}
 		resumed = !created
+		if err := reserveTurnBudgets(ctx, tx, turn.ID, budgetAdmission, primaryAttributions); err != nil {
+			return err
+		}
 		run, createErr := tx.CreatePromptRun(ctx, database.CreatePromptRunInput{
 			SessionID: session.ID, TurnID: &turn.ID, AdmissionKey: executionAdmissionKey(request),
 			Origin: "aichat", RenderedSpec: renderedSpec,
@@ -324,7 +327,7 @@ func (a *DatabaseExecutionAuthority) resolveToolApproval(
 
 func (a *DatabaseExecutionAuthority) budgetAdmission(ctx context.Context, dimensions map[string]string, models []api.Model, budget api.Budget) (*budgets.Admission, error) {
 	if a.budgets == nil {
-		return budgets.Enforce(ctx, nil, dimensions, models, a.now().UTC(), a.db)
+		return budgets.Enforce(nil, dimensions, models, budget.Cost, a.now().UTC())
 	}
 	rules, err := a.budgets.List(ctx)
 	if err != nil {
@@ -336,7 +339,7 @@ func (a *DatabaseExecutionAuthority) budgetAdmission(ctx context.Context, dimens
 	if len(rules) > 0 && budget.Cost <= 0 {
 		return nil, &budgets.Refusal{Reason: "budget rules require a positive resolved per-run budget cost"}
 	}
-	return budgets.Enforce(ctx, rules, dimensions, models, a.now().UTC(), a.db)
+	return budgets.Enforce(rules, dimensions, models, budget.Cost, a.now().UTC())
 }
 
 func databaseAttributions(input []budgets.Attribution) []database.BudgetAttribution {
@@ -345,6 +348,30 @@ func databaseAttributions(input []budgets.Attribution) []database.BudgetAttribut
 		out = append(out, database.BudgetAttribution{RuleID: attribution.RuleID, GroupValues: attribution.GroupValues})
 	}
 	return out
+}
+
+func reserveTurnBudgets(ctx context.Context, db *database.DB, turnID uuid.UUID, admission *budgets.Admission, input []budgets.Attribution) error {
+	if admission == nil || len(admission.Rules) == 0 {
+		return nil
+	}
+	reservations := make([]database.BudgetReservation, 0, len(input))
+	for _, attribution := range input {
+		reservations = append(reservations, database.BudgetReservation{
+			RuleID: attribution.RuleID, Rule: attribution.Rule, GroupValues: attribution.GroupValues,
+			Amount: admission.Amount, Limit: attribution.Limit, WindowStart: attribution.WindowStart,
+		})
+	}
+	if err := db.ReserveChatTurnBudgets(ctx, turnID, reservations); err != nil {
+		var capacity *database.BudgetCapacityError
+		if errors.As(err, &capacity) {
+			return &budgets.Refusal{
+				Rule: capacity.Rule, GroupValues: capacity.GroupValues,
+				Spend: capacity.Committed, Limit: capacity.Limit,
+			}
+		}
+		return err
+	}
+	return nil
 }
 
 func isBudgetRefusal(err error) bool {
