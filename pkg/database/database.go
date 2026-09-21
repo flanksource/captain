@@ -6,6 +6,7 @@ package database
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -180,15 +181,30 @@ func (db *DB) Schema() string {
 // transaction. The scoped handle never owns or closes the underlying pool, so
 // hosts can atomically update Captain rows and their own rows in one database.
 func (db *DB) Transaction(ctx context.Context, fn func(*DB) error) error {
+	return db.transaction(ctx, nil, fn)
+}
+
+// ReadCommittedTransaction runs fn in a transaction whose statements observe
+// commits made before each statement. A host transaction keeps its existing
+// isolation, so callers that require this contract must verify it in fn.
+func (db *DB) ReadCommittedTransaction(ctx context.Context, fn func(*DB) error) error {
+	return db.transaction(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, fn)
+}
+
+func (db *DB) transaction(ctx context.Context, options *sql.TxOptions, fn func(*DB) error) error {
 	if db == nil || db.gorm == nil {
 		return errors.New("captain database is not initialized")
 	}
 	if fn == nil {
 		return errors.New("captain database transaction callback is nil")
 	}
-	return db.gorm.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	run := func(tx *gorm.DB) error {
 		return fn(&DB{gorm: tx, schema: db.schema})
-	})
+	}
+	if options == nil {
+		return db.gorm.WithContext(ctx).Transaction(run)
+	}
+	return db.gorm.WithContext(ctx).Transaction(run, options)
 }
 
 // Close releases a pool opened by Captain. It is a no-op for injected pools.
