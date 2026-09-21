@@ -53,15 +53,16 @@ type sessionSourceRecord struct {
 func (sessionSourceRecord) TableName() string { return "captain_session_sources" }
 
 type turnRecord struct {
-	ID             uuid.UUID  `gorm:"column:id;type:uuid;primaryKey;default:gen_random_uuid()"`
-	SessionID      uuid.UUID  `gorm:"column:session_id;type:uuid"`
-	ProviderTurnID *string    `gorm:"column:provider_turn_id"`
-	TurnIndex      int        `gorm:"column:turn_index"`
-	Description    *string    `gorm:"column:description"`
-	Status         TurnStatus `gorm:"column:status"`
-	StopReason     *string    `gorm:"column:stop_reason"`
-	StartedAt      *time.Time `gorm:"column:started_at"`
-	EndedAt        *time.Time `gorm:"column:ended_at"`
+	ID             uuid.UUID         `gorm:"column:id;type:uuid;primaryKey;default:gen_random_uuid()"`
+	SessionID      uuid.UUID         `gorm:"column:session_id;type:uuid"`
+	ProviderTurnID *string           `gorm:"column:provider_turn_id"`
+	TurnIndex      int               `gorm:"column:turn_index"`
+	Description    *string           `gorm:"column:description"`
+	Status         TurnStatus        `gorm:"column:status"`
+	StopReason     *string           `gorm:"column:stop_reason"`
+	Dimensions     map[string]string `gorm:"column:dimensions;serializer:json;type:jsonb"`
+	StartedAt      *time.Time        `gorm:"column:started_at"`
+	EndedAt        *time.Time        `gorm:"column:ended_at"`
 }
 
 func (turnRecord) TableName() string { return "captain_turns" }
@@ -485,7 +486,7 @@ func turnRecords(sessionID uuid.UUID, turns []IngestTurn) ([]turnRecord, error) 
 		record := turnRecord{
 			ID: uuid.New(), SessionID: sessionID, TurnIndex: turn.Index,
 			ProviderTurnID: nullableTrimmed(turn.ProviderTurnID), Description: nullableTrimmed(turn.Description),
-			Status: status, StopReason: nullableTrimmed(turn.StopReason),
+			Status: status, StopReason: nullableTrimmed(turn.StopReason), Dimensions: map[string]string{},
 			StartedAt: turn.StartedAt, EndedAt: turn.EndedAt,
 		}
 		if at, ok := position[turn.Index]; ok {

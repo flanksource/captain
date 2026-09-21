@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/approval"
 	"github.com/flanksource/captain/pkg/ai/callertools"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/budgets"
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/google/uuid"
 )
@@ -41,6 +43,8 @@ type databaseExecution struct {
 	approvalIDs           map[string]uuid.UUID
 	providerToolUses      []api.Event
 	providerToolUseReady  chan struct{}
+	budgetAdmission       *budgets.Admission
+	budgetNow             func() time.Time
 }
 
 // finishModelCall persists a terminal model call with its priced cost breakdown.
@@ -90,12 +94,28 @@ func (e *databaseExecution) BindRuntime(ctx context.Context, runtime api.Model) 
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	var attributions []budgets.Attribution
+	if e.budgetAdmission != nil {
+		now := time.Now().UTC()
+		if e.budgetNow != nil {
+			now = e.budgetNow().UTC()
+		}
+		attributions, err = e.budgetAdmission.CheckModel(ctx, runtime, now, e.db)
+		if err != nil {
+			return err
+		}
+	}
 	runID, runVersion, runRuntime := e.run.ID, e.run.Version, e.run.Runtime
 	runRuntime.Resolved = runtimeSelection(api.Model{
 		Name: identity.Model, Provider: identity.ToModel().Provider, Mode: identity.Mode, Effort: runtime.Effort,
 	})
 	var updatedRun *database.PromptRun
 	err = e.db.Transaction(ctx, func(tx *database.DB) error {
+		if e.budgetAdmission != nil {
+			if budgetErr := tx.SetChatTurnBudgets(ctx, e.turn.ID, e.budgetAdmission.Dimensions, databaseAttributions(attributions)); budgetErr != nil {
+				return budgetErr
+			}
+		}
 		if bindErr := tx.SetSessionMetadataOnce(ctx, e.session.ID, threadRuntimeMetadataKey,
 			runtimeSelection(identity.ToModel())); bindErr != nil {
 			if errors.Is(bindErr, database.ErrSessionConflict) {

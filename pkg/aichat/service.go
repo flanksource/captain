@@ -212,10 +212,13 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 			ThreadID: chat.ThreadID, RequestID: turnID, Title: title,
 			ExpectedThreadUpdatedAt: thread.UpdatedAt,
 			Spec:                    spec, Profile: resolved, Definitions: definitions,
+			Dimensions: profile.Dimensions,
 		})
 		if err != nil {
 			status := http.StatusInternalServerError
-			if errors.Is(err, database.ErrOpenChatTurn) || errors.Is(err, database.ErrSessionConflict) ||
+			if isBudgetRefusal(err) {
+				status = http.StatusPaymentRequired
+			} else if errors.Is(err, database.ErrOpenChatTurn) || errors.Is(err, database.ErrSessionConflict) ||
 				errors.Is(err, ErrThreadRuntimeConflict) {
 				status = http.StatusConflict
 			}

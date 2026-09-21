@@ -3,24 +3,53 @@ package aichat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"strings"
+	"time"
 
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/budgets"
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/google/uuid"
 )
 
 type DatabaseExecutionAuthority struct {
-	db *database.DB
+	db      *database.DB
+	budgets *budgets.Catalog
+	now     func() time.Time
 }
 
-func NewDatabaseExecutionAuthority(db *database.DB) (*DatabaseExecutionAuthority, error) {
+type DatabaseExecutionAuthorityOption func(*DatabaseExecutionAuthority)
+
+// WithBudgetCatalog enables multidimensional budgeting for an execution
+// authority. An empty catalog keeps budgeting disabled until its first rule.
+func WithBudgetCatalog(catalog *budgets.Catalog) DatabaseExecutionAuthorityOption {
+	return func(authority *DatabaseExecutionAuthority) { authority.budgets = catalog }
+}
+
+// WithBudgetNow injects the clock shared by all window calculations in one
+// admission. It is primarily useful to embedding applications with a fixed
+// request clock.
+func WithBudgetNow(now func() time.Time) DatabaseExecutionAuthorityOption {
+	return func(authority *DatabaseExecutionAuthority) { authority.now = now }
+}
+
+func NewDatabaseExecutionAuthority(db *database.DB, options ...DatabaseExecutionAuthorityOption) (*DatabaseExecutionAuthority, error) {
 	if db == nil || db.Gorm() == nil {
 		return nil, fmt.Errorf("captain execution authority requires a database")
 	}
-	return &DatabaseExecutionAuthority{db: db}, nil
+	authority := &DatabaseExecutionAuthority{db: db, now: time.Now}
+	for _, option := range options {
+		if option != nil {
+			option(authority)
+		}
+	}
+	if authority.now == nil {
+		authority.now = time.Now
+	}
+	return authority, nil
 }
 
 func (a *DatabaseExecutionAuthority) Begin(
@@ -34,6 +63,19 @@ func (a *DatabaseExecutionAuthority) Begin(
 	if request.Spec.Mode == "" || request.Spec.Provider == nil {
 		return nil, fmt.Errorf("authoritative chat execution requires a resolved (provider, mode) runtime")
 	}
+	rules, err := a.budgetRules(ctx)
+	if err != nil {
+		if errors.Is(err, budgets.ErrInvalid) {
+			return nil, &budgets.Refusal{Reason: err.Error()}
+		}
+		return nil, fmt.Errorf("load budget rules: %w", err)
+	}
+	now := a.now().UTC()
+	budgetAdmission, err := budgets.Evaluate(ctx, rules, request.Dimensions, request.Spec.Model.Candidates(), now, a.db)
+	if err != nil {
+		return nil, err
+	}
+	primaryAttributions, _ := budgetAdmission.ForModel(request.Spec.Model)
 	renderedSpec, err := renderedSpecMap(request.Spec, request.Profile)
 	if err != nil {
 		return nil, err
@@ -80,6 +122,9 @@ func (a *DatabaseExecutionAuthority) Begin(
 			return fmt.Errorf("chat turn %q already exists in state %s", request.RequestID, turn.Status)
 		}
 		resumed = !created
+		if createErr := tx.SetChatTurnBudgets(ctx, turn.ID, request.Dimensions, databaseAttributions(primaryAttributions)); createErr != nil {
+			return createErr
+		}
 		run, createErr := tx.CreatePromptRun(ctx, database.CreatePromptRunInput{
 			SessionID: session.ID, TurnID: &turn.ID, AdmissionKey: executionAdmissionKey(request),
 			Origin: "aichat", RenderedSpec: renderedSpec,
@@ -108,6 +153,7 @@ func (a *DatabaseExecutionAuthority) Begin(
 		execution = &databaseExecution{
 			db: tx, ctx: ctx, session: session, turn: turn, run: run, modelCallID: modelCallID,
 			model: request.Spec.Name, provider: request.Spec.Provider, mode: request.Spec.Mode,
+			budgetAdmission: budgetAdmission, budgetNow: a.now,
 			events: make(chan api.Event, 16), definitions: append([]api.ToolDefinition(nil), request.Definitions...),
 			approvalIDs: map[string]uuid.UUID{}, providerToolUseReady: make(chan struct{}, 1),
 		}
@@ -139,7 +185,7 @@ func (a *DatabaseExecutionAuthority) ResolveToolApproval(
 	var continuation *ApprovalContinuation
 	err := a.db.Transaction(ctx, func(tx *database.DB) error {
 		var resolveErr error
-		continuation, resolveErr = (&DatabaseExecutionAuthority{db: tx}).resolveToolApproval(ctx, resolution)
+		continuation, resolveErr = (&DatabaseExecutionAuthority{db: tx, budgets: a.budgets, now: a.now}).resolveToolApproval(ctx, resolution)
 		return resolveErr
 	})
 	if err != nil {
@@ -246,6 +292,16 @@ func (a *DatabaseExecutionAuthority) resolveToolApproval(
 	if err != nil {
 		return nil, err
 	}
+	now := a.now().UTC()
+	budgetAdmission, err := a.checkApprovalBudget(ctx, turn, now)
+	if err != nil {
+		return nil, err
+	}
+	for _, candidate := range spec.Model.Candidates() {
+		if _, err := budgetAdmission.CheckModel(ctx, candidate, now, a.db); err != nil {
+			return nil, err
+		}
+	}
 	running := database.PromptRunStateRunning
 	phase := database.PromptRunPhaseGenerate
 	var resumed *database.PromptRun
@@ -271,6 +327,7 @@ func (a *DatabaseExecutionAuthority) resolveToolApproval(
 	execution := &databaseExecution{
 		db: a.db, ctx: ctx, session: sessionRecord, turn: turn, run: resumed, modelCallID: modelCallID,
 		model: spec.Name, provider: spec.Provider, mode: spec.Mode,
+		budgetAdmission: budgetAdmission, budgetNow: a.now,
 		events: make(chan api.Event, 16), approvalIDs: map[string]uuid.UUID{},
 		providerToolUseReady: make(chan struct{}, 1),
 	}
@@ -278,6 +335,53 @@ func (a *DatabaseExecutionAuthority) resolveToolApproval(
 		return nil, err
 	}
 	return &ApprovalContinuation{Execution: execution, Spec: spec}, nil
+}
+
+func (a *DatabaseExecutionAuthority) budgetRules(ctx context.Context) ([]budgets.Rule, error) {
+	if a.budgets == nil {
+		return nil, nil
+	}
+	return a.budgets.List(ctx)
+}
+
+func (a *DatabaseExecutionAuthority) checkApprovalBudget(ctx context.Context, turn *database.ChatTurn, now time.Time) (*budgets.Admission, error) {
+	rules, err := a.budgetRules(ctx)
+	if err != nil {
+		if errors.Is(err, budgets.ErrInvalid) {
+			return nil, &budgets.Refusal{Reason: err.Error()}
+		}
+		return nil, fmt.Errorf("load budget rules: %w", err)
+	}
+	recorded, err := a.db.ListChatTurnBudgets(ctx, turn.ID)
+	if err != nil {
+		return nil, err
+	}
+	attributions := budgetAttributions(recorded)
+	if err := budgets.CheckRecorded(ctx, rules, attributions, now, a.db); err != nil {
+		return nil, err
+	}
+	return budgets.AdmissionFromRecorded(rules, attributions, turn.Dimensions)
+}
+
+func databaseAttributions(input []budgets.Attribution) []database.BudgetAttribution {
+	out := make([]database.BudgetAttribution, 0, len(input))
+	for _, attribution := range input {
+		out = append(out, database.BudgetAttribution{RuleID: attribution.RuleID, GroupValues: attribution.GroupValues})
+	}
+	return out
+}
+
+func budgetAttributions(input []database.BudgetAttribution) []budgets.Attribution {
+	out := make([]budgets.Attribution, 0, len(input))
+	for _, attribution := range input {
+		out = append(out, budgets.Attribution{RuleID: attribution.RuleID, GroupValues: attribution.GroupValues})
+	}
+	return out
+}
+
+func isBudgetRefusal(err error) bool {
+	var refusal *budgets.Refusal
+	return errors.As(err, &refusal)
 }
 
 func approvalDecisions(state api.ToolApprovalState, requests []database.TurnRequest) ([]api.ToolApprovalDecision, error) {

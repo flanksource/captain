@@ -18,6 +18,7 @@ type RuntimeProfileBase struct {
 	Layers         []api.SpecLayer
 	Saved          *captainconfig.AIDefaults
 	ProviderConfig api.Config
+	Dimensions     map[string]string
 }
 
 // RuntimeProfileBaseProvider loads application-owned profile facts per request.
@@ -82,6 +83,7 @@ func NewLayeredRuntimeProfileProvider(options LayeredRuntimeProfileProviderOptio
 		}
 		return RuntimeProfile{
 			System: base.System, Composed: composed, Saved: base.Saved, ProviderConfig: base.ProviderConfig,
+			Dimensions: base.Dimensions,
 		}, nil
 	}), nil
 }

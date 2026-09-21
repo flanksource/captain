@@ -31,6 +31,12 @@ table "captain_turns" {
     null = true
     type = text
   }
+  # Trusted request-scoped attribution supplied by the embedding application.
+  column "dimensions" {
+    null    = false
+    type    = jsonb
+    default = sql("'{}'::jsonb")
+  }
   column "error" {
     null = true
     type = text
@@ -301,6 +307,12 @@ table "captain_model_calls" {
   # iteration_id index -- that one was dead in both senses and is gone.
   index "captain_model_calls_prompt_run_id_idx" {
     columns = [column.prompt_run_id]
+  }
+
+  # Budget windows aggregate terminal calls by completion time.
+  index "captain_model_calls_ended_at_idx" {
+    columns = [column.ended_at]
+    where   = "ended_at IS NOT NULL"
   }
 
   # captain_model_calls_started_at_idx, captain_model_calls_model_idx and
