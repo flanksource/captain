@@ -121,7 +121,7 @@ func (e *databaseExecution) BindRuntime(ctx context.Context, runtime api.Model) 
 		Name: identity.Model, Provider: identity.ToModel().Provider, Mode: identity.Mode, Effort: runtime.Effort,
 	})
 	var updatedRun *database.PromptRun
-	err = e.db.Transaction(ctx, func(tx *database.DB) error {
+	err = e.db.ReadCommittedTransaction(ctx, func(tx *database.DB) error {
 		if e.budgetAdmission != nil {
 			if budgetErr := reserveTurnBudgets(ctx, tx, e.turn.ID, e.budgetAdmission, attributions); budgetErr != nil {
 				return budgetErr

@@ -298,12 +298,19 @@ func (db *DB) ReserveChatTurnBudgets(ctx context.Context, turnID uuid.UUID, rese
 	if turnID == uuid.Nil {
 		return fmt.Errorf("%w: budget reservation turn ID is required", ErrBudgetInvalid)
 	}
-	return db.Transaction(ctx, func(tx *DB) error {
+	return db.ReadCommittedTransaction(ctx, func(tx *DB) error {
 		return tx.reserveChatTurnBudgets(ctx, turnID, reservations)
 	})
 }
 
 func (db *DB) reserveChatTurnBudgets(ctx context.Context, turnID uuid.UUID, reservations []BudgetReservation) error {
+	var isolation string
+	if err := db.gorm.WithContext(ctx).Raw("SHOW transaction_isolation").Scan(&isolation).Error; err != nil {
+		return fmt.Errorf("inspect budget reservation transaction isolation: %w", err)
+	}
+	if isolation != "read committed" {
+		return fmt.Errorf("budget reservations require READ COMMITTED transaction isolation, got %s", strings.ToUpper(isolation))
+	}
 	prepared := make([]preparedBudgetReservation, 0, len(reservations))
 	seen := make(map[string]bool, len(reservations))
 	for _, reservation := range reservations {
@@ -354,9 +361,7 @@ func (db *DB) reserveChatTurnBudgets(ctx context.Context, turnID uuid.UUID, rese
 	if err := db.gorm.WithContext(ctx).Where("turn_id = ? AND released_at IS NULL", turnID).Find(&current).Error; err != nil {
 		return fmt.Errorf("reload active turn budget reservations: %w", err)
 	}
-	if reservationsEqual(current, prepared) {
-		return nil
-	}
+	unchanged := reservationsEqual(current, prepared)
 
 	for _, reservation := range prepared {
 		committed, turnSpend, err := db.budgetCommittedUSD(ctx, reservation.RuleID, reservation.groupJSON, reservation.WindowStart, turnID)
@@ -374,6 +379,9 @@ func (db *DB) reserveChatTurnBudgets(ctx context.Context, turnID uuid.UUID, rese
 				Committed: committed, Limit: reservation.Limit,
 			}
 		}
+	}
+	if unchanged {
+		return nil
 	}
 	if err := db.gorm.WithContext(ctx).Model(&budgetReservationRecord{}).
 		Where("turn_id = ? AND released_at IS NULL", turnID).Update("released_at", time.Now().UTC()).Error; err != nil {

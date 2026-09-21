@@ -75,7 +75,7 @@ func (a *DatabaseExecutionAuthority) Begin(
 	var execution *databaseExecution
 	var recovered *database.ChatTurn
 	resumed := false
-	err = a.db.Transaction(ctx, func(tx *database.DB) error {
+	err = a.db.ReadCommittedTransaction(ctx, func(tx *database.DB) error {
 		if !request.ExpectedThreadUpdatedAt.IsZero() {
 			locked, lockErr := tx.LockSessionForUpdate(ctx, sessionID)
 			if lockErr != nil {
@@ -177,7 +177,7 @@ func (a *DatabaseExecutionAuthority) ResolveToolApproval(
 	resolution ToolApprovalResolution,
 ) (*ApprovalContinuation, error) {
 	var continuation *ApprovalContinuation
-	err := a.db.Transaction(ctx, func(tx *database.DB) error {
+	err := a.db.ReadCommittedTransaction(ctx, func(tx *database.DB) error {
 		var resolveErr error
 		continuation, resolveErr = (&DatabaseExecutionAuthority{db: tx, budgets: a.budgets, now: a.now}).resolveToolApproval(ctx, resolution)
 		return resolveErr
@@ -288,6 +288,10 @@ func (a *DatabaseExecutionAuthority) resolveToolApproval(
 	}
 	budgetAdmission, err := a.budgetAdmission(ctx, turn.Dimensions, spec.Model.Candidates(), spec.Budget)
 	if err != nil {
+		return nil, err
+	}
+	attributions, _ := budgetAdmission.ForModel(spec.Model)
+	if err := reserveTurnBudgets(ctx, a.db, turn.ID, budgetAdmission, attributions); err != nil {
 		return nil, err
 	}
 	running := database.PromptRunStateRunning
