@@ -11,6 +11,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/cli"
 	"github.com/flanksource/captain/pkg/runtimeprofiles"
+	"github.com/flanksource/clicky/route"
 	"github.com/flanksource/clicky/rpc"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -34,7 +35,7 @@ var _ = Describe("runtime entity routes", func() {
 			},
 		}, root, openAPIConfig)
 		mux := http.NewServeMux()
-		server.RegisterExecutionRoutes(mux)
+		server.RegisterExecutionRoutes(route.NewRouter(mux))
 		return mux
 	}
 

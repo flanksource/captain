@@ -10,7 +10,7 @@ require (
 	github.com/charmbracelet/huh v1.0.0
 	github.com/firebase/genkit/go v1.11.0
 	github.com/flanksource/clicky v1.21.68
-	github.com/flanksource/clicky/aichat v1.21.61
+	github.com/flanksource/clicky/aichat v1.21.68
 	github.com/flanksource/commons v1.59.0
 	github.com/flanksource/sandbox-runtime v1.0.2
 	github.com/fsnotify/fsnotify v1.10.1
