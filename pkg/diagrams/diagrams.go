@@ -448,12 +448,14 @@ func matchingBrace(source string, start, limit int) (int, bool) {
 func scanTags(source string, mdx bool) []tag {
 	fences := fencedCodeRanges(source, mdx)
 	fenceIndex := 0
+	afterTag := false
 	var tags []tag
 	for i := 0; i < len(source); {
 		if fenceIndex < len(fences) && i >= fences[fenceIndex][0] {
 			if i < fences[fenceIndex][1] {
 				i = fences[fenceIndex][1]
 				fenceIndex++
+				afterTag = false
 				continue
 			}
 			fenceIndex++
@@ -476,9 +478,17 @@ func scanTags(source string, mdx bool) []tag {
 				i = skipBlockComment(source, i+2, len(source))
 				continue
 			}
+			if !afterTag && canStartRegex(source, i) {
+				if end, ok := skipRegexLiteral(source, i); ok {
+					i = end
+					afterTag = false
+					continue
+				}
+			}
 		}
 		if source[i] == '\'' || source[i] == '"' || source[i] == '`' {
 			i = skipQuoted(source, i, len(source))
+			afterTag = false
 			continue
 		}
 		if source[i] == '<' {
@@ -487,8 +497,12 @@ func scanTags(source string, mdx bool) []tag {
 					tags = append(tags, parsed)
 				}
 				i = parsed.end
+				afterTag = true
 				continue
 			}
+		}
+		if !unicode.IsSpace(rune(source[i])) {
+			afterTag = false
 		}
 		i++
 	}
@@ -567,7 +581,7 @@ func fencedCodeRanges(source string, enabled bool) [][2]int {
 			if count >= 3 {
 				if openStart < 0 {
 					openStart, marker, markerLength = lineStart, trimmed[0], count
-				} else if trimmed[0] == marker && count >= markerLength {
+				} else if trimmed[0] == marker && count >= markerLength && strings.TrimSpace(trimmed[count:]) == "" {
 					end := lineEnd
 					if end < len(source) {
 						end++
@@ -586,6 +600,86 @@ func fencedCodeRanges(source string, enabled bool) [][2]int {
 		ranges = append(ranges, [2]int{openStart, len(source)})
 	}
 	return ranges
+}
+
+// canStartRegex reports whether a slash at start can begin a regular-expression
+// literal. It intentionally recognizes only the unambiguous expression-start
+// contexts needed by this scanner; ambiguous cases are left alone so division
+// expressions cannot hide valid JSX tags.
+func canStartRegex(source string, start int) bool {
+	// A slash immediately following '<' is a JSX closing-tag marker, not a
+	// regular-expression literal.
+	if start > 0 && source[start-1] == '<' {
+		return false
+	}
+	i := start - 1
+	for i >= 0 && (source[i] == ' ' || source[i] == '\t' || source[i] == '\n' || source[i] == '\r') {
+		i--
+	}
+	if i < 0 {
+		return true
+	}
+
+	switch source[i] {
+	case '(', '[', '{', ',', ';', ':', '=', '!', '?', '&', '|', '+', '-', '*', '%', '^', '~', '<', '>':
+		if (source[i] == '+' || source[i] == '-') && i > 0 && source[i-1] == source[i] {
+			return false
+		}
+		return true
+	case ')', ']', '}', '.', '"', '\'':
+		return false
+	}
+
+	if !isIdentifierPart(source[i]) {
+		return false
+	}
+	end := i + 1
+	for i >= 0 && isIdentifierPart(source[i]) {
+		i--
+	}
+	switch source[i+1 : end] {
+	case "await", "case", "delete", "do", "else", "in", "instanceof", "new", "of", "return", "throw", "typeof", "void", "yield":
+		return true
+	default:
+		return false
+	}
+}
+
+// skipRegexLiteral skips a JavaScript regular-expression literal, including
+// escaped bytes, character classes, and trailing flags. It does not attempt
+// to validate the expression; an unterminated literal is left to the normal
+// tag scanner for conservative behavior.
+func skipRegexLiteral(source string, start int) (int, bool) {
+	inClass := false
+	for i := start + 1; i < len(source); i++ {
+		switch source[i] {
+		case '\\':
+			if i+1 >= len(source) {
+				return 0, false
+			}
+			i++
+		case '\n', '\r':
+			return 0, false
+		case '[':
+			if !inClass {
+				inClass = true
+			}
+		case ']':
+			if inClass {
+				inClass = false
+			}
+		case '/':
+			if inClass {
+				continue
+			}
+			i++
+			for i < len(source) && isIdentifierPart(source[i]) {
+				i++
+			}
+			return i, true
+		}
+	}
+	return 0, false
 }
 
 func skipSpaceAndComments(source string, start, limit int) int {

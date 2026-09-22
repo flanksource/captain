@@ -158,6 +158,44 @@ func TestAnalyzeFilesAnalyzesMDXButNotFencesAndAcceptsMarkdownAsNoOp(t *testing.
 	require.Equal(t, 9, report.Diagnostics[0].Line)
 }
 
+func TestAnalyzeFilesSkipsRegexLiteralsButKeepsJSX(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "regex.tsx")
+	source := `const simple = /<Diagram>/;
+const escapedSlash = /<Diagram>\/literal/;
+const characterClass = /[/<Diagram>]/;
+const flagged = /<Diagram>/giu;
+const quotient = value / 2 / 3;
+<div />; /<Diagram>/;
+const jsxQuotient = <div /> / divisor; <Diagram>{(id) => <><BoxNode id={id('source')} /><BoxNode id={id('target')} /><Arrow from={id('source')} to={id('target')} /></>}</Diagram>`
+	require.NoError(t, os.WriteFile(path, []byte(source), 0o600))
+
+	report, err := AnalyzeFiles([]string{path})
+	require.NoError(t, err)
+	require.Equal(t, 1, report.DiagramsAnalyzed)
+	require.Empty(t, report.Diagnostics)
+}
+
+func TestAnalyzeFilesRequiresWhitespaceAfterMarkdownClosingFence(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "fences.mdx")
+	source := "```tsx\n" +
+		"<Diagram>{(id) => <Arrow from={id('x')} to={id('y')} />}</Diagram>\n" +
+		"```tsx\n" +
+		"<Diagram>{(id) => <Arrow from={id('x')} to={id('y')} />}</Diagram>\n" +
+		"```   \n" +
+		"~~~~tsx\n" +
+		"<Diagram>{(id) => <Arrow from={id('x')} to={id('y')} />}</Diagram>\n" +
+		"~~~\n" +
+		"<Diagram>{(id) => <Arrow from={id('x')} to={id('y')} />}</Diagram>\n" +
+		"~~~~\t\n" +
+		"<Diagram>{(id) => <><BoxNode id={id('x')} /><BoxNode id={id('y')} /><Arrow from={id('x')} to={id('y')} /></>}</Diagram>\n"
+	require.NoError(t, os.WriteFile(path, []byte(source), 0o600))
+
+	report, err := AnalyzeFiles([]string{path})
+	require.NoError(t, err)
+	require.Equal(t, 1, report.DiagramsAnalyzed)
+	require.Empty(t, report.Diagnostics)
+}
+
 func TestAnalyzeFilesUsesOneBasedUnicodeColumns(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "unicode.tsx")
 	require.NoError(t, os.WriteFile(path, []byte(`<Diagram>{(id) => <>é<Arrow from={id('x')} to={id('y')} /></>}</Diagram>`), 0o600))
