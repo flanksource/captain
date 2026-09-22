@@ -278,6 +278,8 @@ github.com/firebase/genkit/go v1.11.0 h1:dmf219fDGP6IcKwPkJoTnXpcTEya7o5Bi+z5iP+
 github.com/firebase/genkit/go v1.11.0/go.mod h1:x9h3TsbMLiuK1hgbwnkUmKQ9bmTNPORHaqG9XQhI0K8=
 github.com/flanksource/clicky v1.21.61 h1:4OO6RpxGpDJr2VDvDLHEnodcXSNbk+ELU/WnERtLO8E=
 github.com/flanksource/clicky v1.21.61/go.mod h1:L+RlBYG6Ngay9pWs6iuRanfIArxEOttcQPXRL73qXrA=
+github.com/flanksource/clicky v1.21.68 h1:dGa1UGeyGJDhfKEpUIezGT8jjajv+q5UuCwKo5YJidw=
+github.com/flanksource/clicky v1.21.68/go.mod h1:L+RlBYG6Ngay9pWs6iuRanfIArxEOttcQPXRL73qXrA=
 github.com/flanksource/clicky/aichat v1.21.61 h1:hTy7CHeUQ7zNd/bil4k0Zk0ajM5I3fZfGA4eWRmf4L8=
 github.com/flanksource/clicky/aichat v1.21.61/go.mod h1:CD/LUlP4ZX5mTTECKEQsLFeYEu2hfdF3f2zPqEe4VbY=
 github.com/flanksource/commons v1.59.0 h1:RP3K/HtcqyCN4qfXGD51X1hneLpWC5SE6aQ0WtuMV0g=
