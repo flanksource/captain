@@ -22,6 +22,7 @@ import (
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/gitagent"
 	"github.com/flanksource/captain/pkg/monitor"
+	"github.com/flanksource/clicky/route"
 	"github.com/flanksource/clicky/rpc"
 	rpchttp "github.com/flanksource/clicky/rpc/http"
 	"github.com/flanksource/clicky/task"
@@ -183,7 +184,7 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	mux.Handle("GET /api/openapi.json", handleCaptainOpenAPI(openAPISpec, false))
 	mux.Handle("GET /api/openapi.yaml", handleCaptainOpenAPI(openAPISpec, true))
 	mux.HandleFunc("GET /health", rpcServer.HandleHealth)
-	rpcServer.RegisterExecutionRoutes(mux)
+	rpcServer.RegisterExecutionRoutes(route.NewRouter(mux))
 	mux.HandleFunc("POST /api/captain/chat/threads/from-agent", handleThreadFromAgent(threadStore))
 	mux.HandleFunc("GET /api/captain/contexts", handleContexts())
 	mux.HandleFunc("GET /api/captain/projects", handleProjects())
@@ -202,7 +203,7 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	mux.HandleFunc("GET /api/attachments/{id}", handleAttachmentGet(attachmentStore))
 	// Task tracking: /api/captain/tasks, /tasks/stream, /tasks/{id}, and the
 	// /tasks/runs/stream run-list SSE the clicky-ui useTaskRuns hook subscribes to.
-	task.RegisterHandlers(mux, "/api/captain")
+	task.RegisterHandlers(route.NewRouter(mux), "/api/captain")
 	// Live session history for a prompt run.
 	mux.Handle("GET /api/captain/prompt/runs/{runId}/stream", handlePromptRunStream(promptRuns))
 	mux.Handle("GET /api/captain/prompt/runs/{runId}", handlePromptRunSnapshot(promptRuns))
