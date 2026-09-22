@@ -14,8 +14,8 @@
 //     shutdown           -> reply {} then exit
 //   server -> client notifications:
 //     session/init   {session_id, model, tools}
-//     message/text   {text}
-//     message/thinking {text}
+//     message/text   {text}      (one per streamed delta; the host concatenates)
+//     message/thinking {text}    (likewise)
 //     message/tool_use {tool, input, id}
 //     message/tool_result {id, content, is_error}
 //     turn/completed {success, subtype, session_id, cost_usd, usage, num_turns,
@@ -136,6 +136,12 @@ function buildOptions(params: InitializeParams): Options {
     maxTurns: params.maxTurns || undefined,
     maxBudgetUsd: params.maxBudgetUsd || undefined,
     permissionMode,
+    // Stream text and thinking as they are produced. Without it the SDK reports
+    // only whole assistant messages, so a host rendering live progress showed
+    // nothing for the length of a reasoning block and then the whole block at
+    // once — the one way this runtime read as frozen next to a delta-streaming
+    // one. handleMessage drops the final copy of a block already streamed.
+    includePartialMessages: true,
     sandbox: params.sandbox,
     allowDangerouslySkipPermissions:
       !brokered && permissionMode === "bypassPermissions",
@@ -436,8 +442,41 @@ function stringifyToolResult(content: unknown): string {
   return JSON.stringify(content);
 }
 
+// streamedBlocks records which content blocks of the assistant message now
+// being produced were already sent as deltas, keyed by the block index the
+// stream events carry. The SDK repeats each block whole when the message
+// completes, and forwarding both would print everything twice.
+const streamedBlocks = new Set<number>();
+
+function handleStreamEvent(message: SDKMessage) {
+  const event = (message as { event?: Record<string, unknown> }).event;
+  if (!event || event.type !== "content_block_delta") {
+    return;
+  }
+  const index = typeof event.index === "number" ? event.index : 0;
+  const delta = event.delta as Record<string, unknown> | undefined;
+  if (!delta) {
+    return;
+  }
+  if (delta.type === "text_delta" && typeof delta.text === "string" && delta.text) {
+    streamedBlocks.add(index);
+    notify("message/text", { text: delta.text });
+  } else if (
+    delta.type === "thinking_delta" &&
+    typeof delta.thinking === "string" &&
+    delta.thinking
+  ) {
+    streamedBlocks.add(index);
+    notify("message/thinking", { text: delta.thinking });
+  }
+}
+
 function handleMessage(message: SDKMessage) {
   switch (message.type) {
+    case "stream_event":
+      handleStreamEvent(message);
+      break;
+
     case "system":
       if ((message as { subtype?: string }).subtype === "init") {
         notify("session/init", {
@@ -451,11 +490,18 @@ function handleMessage(message: SDKMessage) {
     case "assistant": {
       const content =
         (message as { message?: { content?: unknown[] } }).message?.content ?? [];
-      for (const block of content as Array<Record<string, unknown>>) {
+      const blocks = content as Array<Record<string, unknown>>;
+      for (let index = 0; index < blocks.length; index++) {
+        const block = blocks[index];
+        const streamed = streamedBlocks.has(index);
         if (block.type === "text") {
-          notify("message/text", { text: block.text });
+          if (!streamed) {
+            notify("message/text", { text: block.text });
+          }
         } else if (block.type === "thinking") {
-          notify("message/thinking", { text: block.thinking });
+          if (!streamed) {
+            notify("message/thinking", { text: block.thinking });
+          }
         } else if (block.type === "tool_use") {
           notify("message/tool_use", {
             tool: callerToolName(String(block.name)) ?? block.name,
@@ -464,6 +510,8 @@ function handleMessage(message: SDKMessage) {
           });
         }
       }
+      // The next message's blocks are indexed from zero again.
+      streamedBlocks.clear();
       break;
     }
 

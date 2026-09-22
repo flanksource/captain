@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/claude"
@@ -19,6 +21,8 @@ type turnState struct {
 	model              string
 	streamed           map[string]string
 	toolOutput         map[string]string
+	toolNames          map[string]string
+	toolProgressAt     map[string]time.Time
 	pendingToolResults []ai.Event
 	toolResultsMu      sync.Mutex
 	toolResultsClosed  bool
@@ -37,6 +41,58 @@ type turnState struct {
 }
 
 func (ts *turnState) signalTerminal() { ts.termOnce.Do(func() { close(ts.terminal) }) }
+
+// toolProgressInterval is the floor between two in-flight reports of the same
+// tool call. Codex streams command output by the line; a build emits thousands,
+// and each one reaching a renderer would be a redraw nobody can read.
+const toolProgressInterval = 500 * time.Millisecond
+
+// rememberToolName records what a tool call is called, so its later progress
+// reports can name it. The call always arrives before its output.
+func (ts *turnState) rememberToolName(toolCallID, tool string) {
+	if toolCallID == "" || tool == "" {
+		return
+	}
+	if ts.toolNames == nil {
+		ts.toolNames = map[string]string{}
+	}
+	ts.toolNames[toolCallID] = tool
+}
+
+// toolProgressEvent reports the newest line of a still-running tool call, or
+// reports nothing when the last report for that call was too recent. The output
+// itself is still accumulated for the final result either way — this is a
+// superseded snapshot, so dropping one loses nothing.
+func (ts *turnState) toolProgressEvent(toolCallID string) (ai.Event, bool) {
+	if ts.toolProgressAt == nil {
+		ts.toolProgressAt = map[string]time.Time{}
+	}
+	if since, ok := ts.toolProgressAt[toolCallID]; ok && time.Since(since) < toolProgressInterval {
+		return ai.Event{}, false
+	}
+	line := lastNonBlankLine(ts.toolOutput[toolCallID])
+	if line == "" {
+		return ai.Event{}, false
+	}
+	ts.toolProgressAt[toolCallID] = time.Now()
+	return ai.Event{
+		Kind:       ai.EventToolProgress,
+		Tool:       ts.toolNames[toolCallID],
+		Text:       line,
+		ToolCallID: toolCallID,
+		Model:      ts.model,
+	}, true
+}
+
+func lastNonBlankLine(text string) string {
+	lines := strings.Split(text, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if line := strings.TrimSpace(lines[i]); line != "" {
+			return line
+		}
+	}
+	return ""
+}
 
 func (ts *turnState) setIDs(threadID, turnID string) {
 	ts.idMu.Lock()

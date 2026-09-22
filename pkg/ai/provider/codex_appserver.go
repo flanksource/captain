@@ -548,6 +548,12 @@ func (c *CodexAppServer) handleNotification(method string, params json.RawMessag
 		n := parseAppServerNotif(params)
 		if n.ItemID != "" && n.Delta != "" {
 			ts.toolOutput[n.ItemID] += n.Delta
+			// The full output is still buffered for the tool result; this only
+			// reports where a long command has got to, so a turn spent inside a
+			// build is not silent for its whole length.
+			if ev, ok := ts.toolProgressEvent(n.ItemID); ok {
+				ts.send(ev)
+			}
 		}
 		return
 	case "item/completed":
@@ -583,6 +589,18 @@ func (c *CodexAppServer) handleNotification(method string, params json.RawMessag
 	if ev, ok := mapAppServerNotification(method, params, ctx); ok {
 		if ev.Kind == ai.EventResult && len(ts.outputSchema) > 0 {
 			ev.StructuredData = json.RawMessage(ts.lastAgentMessage)
+		}
+		// Codex reports tokens but never a price, so a consumer reading the event
+		// saw a free run. The loop backfills the same way for its own rollup; doing
+		// it here as well means the event and the rollup agree instead of one of
+		// them reading zero.
+		if ev.Kind == ai.EventResult && ev.CostUSD == 0 && ev.Usage != nil {
+			modelProvider, _ := c.GetRuntime().ModelProvider()
+			model := firstNonEmpty(ev.Model, c.model)
+			ev.CostUSD = ai.PriceUsage(modelProvider, model, *ev.Usage, 0).Total()
+		}
+		if ev.Kind == ai.EventToolUse {
+			ts.rememberToolName(ev.ToolCallID, ev.Tool)
 		}
 		if method == "item/completed" && ev.Kind == ai.EventToolResult {
 			it := parseAppServerNotif(params).Item

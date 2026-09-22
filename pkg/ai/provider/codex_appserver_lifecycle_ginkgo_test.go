@@ -35,13 +35,21 @@ var _ = Describe("Codex app-server tool lifecycle", func() {
 		}`))
 
 		started := drainEvents(turn)
-		Expect(started).To(HaveLen(1), "the partial item result waits for the raw function output")
+		Expect(started).To(HaveLen(2), "the partial item result waits for the raw function output")
 		Expect(started[0]).To(MatchFields(IgnoreExtras, Fields{
 			"Kind":       Equal(ai.EventToolUse),
 			"Tool":       Equal("Bash"),
 			"Input":      Equal(map[string]any{"command": "printf lines"}),
 			"ToolCallID": Equal("cmd-1"),
 			"SessionID":  Equal("thread-1"),
+		}))
+		// The command's newest line while it is still running: a superseded
+		// snapshot, correlated with the call it belongs to.
+		Expect(started[1]).To(MatchFields(IgnoreExtras, Fields{
+			"Kind":       Equal(ai.EventToolProgress),
+			"Tool":       Equal("Bash"),
+			"Text":       Equal("line 3"),
+			"ToolCallID": Equal("cmd-1"),
 		}))
 		client.handleNotification("rawResponseItem/completed", json.RawMessage(`{
 			"threadId":"thread-1",
@@ -86,13 +94,20 @@ var _ = Describe("Codex app-server tool lifecycle", func() {
 		}`))
 
 		events := drainEvents(turn)
-		Expect(events).To(HaveLen(3))
+		Expect(events).To(HaveLen(4))
 		Expect(events[0].Kind).To(Equal(ai.EventToolUse))
+		// Only the first delta reports: the second lands inside the interval and
+		// is dropped, which costs nothing because the next one supersedes it
+		// anyway and the full output still reaches the result below.
 		Expect(events[1]).To(MatchFields(IgnoreExtras, Fields{
+			"Kind": Equal(ai.EventToolProgress), "Text": Equal("/wo"),
+			"ToolCallID": Equal("cmd-fallback"),
+		}))
+		Expect(events[2]).To(MatchFields(IgnoreExtras, Fields{
 			"Kind": Equal(ai.EventToolResult), "Text": Equal("/work\n"),
 			"ToolCallID": Equal("cmd-fallback"), "Success": BeTrue(),
 		}))
-		Expect(events[2].Kind).To(Equal(ai.EventResult))
+		Expect(events[3].Kind).To(Equal(ai.EventResult))
 	})
 
 	It("flushes a completed command before a transport terminal error", func() {
