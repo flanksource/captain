@@ -49,6 +49,7 @@ const (
 	EventVerified       = api.EventVerified
 	EventVerifyFailed   = api.EventVerifyFailed
 	EventVerifyProgress = api.EventVerifyProgress
+	EventToolProgress   = api.EventToolProgress
 )
 
 // Usage is an alias for the canonical api.Usage (per-call token breakdown).

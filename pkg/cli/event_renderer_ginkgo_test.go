@@ -218,4 +218,98 @@ var _ = Describe("Captain event renderer", func() {
 			Expect(strings.Count(strings.TrimRight(output.String(), "\n"), "\n")).To(Equal(0))
 		})
 	})
+
+	// A tool result is re-emitted under the id of the call it completes, so
+	// keying the "already written" check on the id alone dropped every outcome:
+	// a fix loop could spend a turn on an edit that never applied and show
+	// nothing about it until the next verify verdict.
+	Describe("tool outcomes", func() {
+		toolCall := ai.Event{
+			Kind: ai.EventToolUse, Tool: "Edit", ToolCallID: "call-1",
+			Input: map[string]any{"file_path": "internal/apply/runner.go"},
+		}
+
+		It("prints a failed call's reason under the call", func() {
+			var output bytes.Buffer
+			renderer := newEventRenderer(&output, false)
+
+			renderer.Handle(0, toolCall)
+			renderer.Handle(0, ai.Event{
+				Kind: ai.EventToolResult, ToolCallID: "call-1", Success: false,
+				Text: "String to replace not found in file.\nstring: func Run(",
+			})
+			Expect(renderer.Flush()).To(Succeed())
+
+			text := output.String()
+			Expect(text).To(ContainSubstring("internal/apply/runner.go"))
+			Expect(text).To(ContainSubstring("String to replace not found in file."))
+			Expect(strings.Count(text, "String to replace not found in file.")).To(Equal(1))
+		})
+
+		It("stays silent on a successful call, whose output is the bulk of a run", func() {
+			var output bytes.Buffer
+			renderer := newEventRenderer(&output, false)
+
+			renderer.Handle(0, toolCall)
+			renderer.Handle(0, ai.Event{
+				Kind: ai.EventToolResult, ToolCallID: "call-1", Success: true,
+				Text: "applied 1 edit",
+			})
+			Expect(renderer.Flush()).To(Succeed())
+
+			Expect(output.String()).NotTo(ContainSubstring("applied 1 edit"))
+		})
+	})
+
+	// Which runtime answered is otherwise invisible: a run that fell back from
+	// its primary model to another one read exactly like one that did not.
+	It("names the session and model once", func() {
+		var output bytes.Buffer
+		renderer := newEventRenderer(&output, false)
+
+		for i := 0; i < 2; i++ {
+			renderer.Handle(0, ai.Event{
+				Kind: ai.EventSystem, Tool: "SessionInit",
+				SessionID: "thread-1", Model: "gpt-5.6-sol",
+			})
+		}
+		renderer.Handle(0, ai.Event{
+			Kind: ai.EventSystem, Tool: "SessionInit",
+			SessionID: "session-2", Model: "opus",
+		})
+		Expect(renderer.Flush()).To(Succeed())
+
+		text := output.String()
+		Expect(strings.Count(text, "session thread-1")).To(Equal(1))
+		Expect(text).To(ContainSubstring("gpt-5.6-sol"))
+		Expect(text).To(ContainSubstring("session session-2"))
+	})
+
+	Describe("running tool output", func() {
+		It("draws the newest line in place and commits none of it", func() {
+			var output bytes.Buffer
+			renderer := newEventRenderer(&output, true)
+
+			for _, line := range []string{"ok internal/apply", "ok internal/models"} {
+				renderer.Handle(0, ai.Event{
+					Kind: ai.EventToolProgress, Tool: "Bash", ToolCallID: "call-1", Text: line,
+				})
+			}
+			Expect(renderer.Flush()).To(Succeed())
+
+			text := output.String()
+			Expect(text).To(ContainSubstring("ok internal/models"))
+			Expect(strings.Count(text, "\n")).To(Equal(0), "a superseded snapshot never ends a line")
+		})
+
+		It("writes nothing at all to a redirected run", func() {
+			var output bytes.Buffer
+			renderer := newEventRenderer(&output, false)
+
+			renderer.Handle(0, ai.Event{Kind: ai.EventToolProgress, Tool: "Bash", Text: "ok internal/apply"})
+			Expect(renderer.Flush()).To(Succeed())
+
+			Expect(output.String()).To(BeEmpty())
+		})
+	})
 })
