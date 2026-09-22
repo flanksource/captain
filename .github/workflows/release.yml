@@ -54,7 +54,14 @@ jobs:
           node-version: "24.x"
       - uses: pnpm/action-setup@v4
       - run: pnpm --dir pkg/cli/webapp install --frozen-lockfile
-      - run: pnpm --dir pkg/cli/webapp build
+      - name: Build webapp
+        run: |
+          pnpm --dir pkg/cli/webapp build
+          # Vite rewrites the tracked entrypoint with content-hashed asset names.
+          # Keep the generated file in place for go:embed, but hide that one
+          # expected worktree change from GoReleaser's clean-tree validation.
+          git diff --exit-code -- . ':(exclude)pkg/cli/webapp/dist/index.html'
+          git update-index --assume-unchanged pkg/cli/webapp/dist/index.html
       - uses: goreleaser/goreleaser-action@v6
         with:
           args: release --clean
