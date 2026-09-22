@@ -70,6 +70,45 @@ var (
 	captainBuildErr  error
 )
 
+// captainBinaryEnv names an already-compiled captain for the e2e suite to use.
+// Without it the suite builds one itself, which is fine locally but happens
+// inside a test and so competes with that test's deadline. A dependency bump
+// empties the build cache and turns that build from seconds into minutes, which
+// is when it starts timing the package out rather than the code under test.
+const captainBinaryEnv = "CAPTAIN_TEST_BINARY"
+
+// prebuiltCaptainBinary returns the binary named by captainBinaryEnv, or an
+// empty path when the variable is unset. A path that is set but unusable is an
+// error: the caller asked for a specific binary and silently building a
+// different one would hide the mistake behind several minutes of work.
+func prebuiltCaptainBinary() (string, error) {
+	path := strings.TrimSpace(os.Getenv(captainBinaryEnv))
+	if path == "" {
+		return "", nil
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", fmt.Errorf("%s=%q: %w", captainBinaryEnv, path, err)
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("%s=%q is a directory, not a binary", captainBinaryEnv, path)
+	}
+	return path, nil
+}
+
+// resolveCaptainBinary returns the binary the e2e suite should run.
+func resolveCaptainBinary(t *testing.T) string {
+	t.Helper()
+	path, err := prebuiltCaptainBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != "" {
+		return path
+	}
+	return captainBinary(t)
+}
+
 // captainBinary builds cmd/captain once per test binary.
 func captainBinary(t *testing.T) string {
 	t.Helper()
@@ -115,7 +154,7 @@ type host struct {
 
 func newHost(t *testing.T) *host {
 	t.Helper()
-	return &host{t: t, home: t.TempDir(), bin: captainBinary(t)}
+	return &host{t: t, home: t.TempDir(), bin: resolveCaptainBinary(t)}
 }
 
 func (h *host) env() []string {

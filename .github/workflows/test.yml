@@ -50,6 +50,14 @@ jobs:
         with:
           path: ${{ runner.temp }}/commons-db/bin
           key: embedded-postgres-${{ runner.os }}-${{ runner.arch }}
+      # The gitagent e2e suite drives the compiled binary. Building it here
+      # rather than inside a test keeps the build out of that test's deadline:
+      # a dependency bump empties the build cache, and the build then takes
+      # minutes, timing out the package for reasons unrelated to the code.
+      - name: Build captain for the e2e suite
+        run: |
+          go build -o "${{ runner.temp }}/captain" ./cmd/captain
+          echo "CAPTAIN_TEST_BINARY=${{ runner.temp }}/captain" >> "$GITHUB_ENV"
       # dbtest shares one embedded PostgreSQL server while isolating each test
       # with a leased ephemeral database.
       # pkg/cli/webapp is ignored: its vitest suite needs a sibling clicky-ui
