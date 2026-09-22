@@ -254,10 +254,10 @@ describe("runtimeProfilesClient", () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(RESOLVED));
     vi.stubGlobal("fetch", fetchMock);
 
-    await resolveRuntimeProfile({
-      profile: { _id: PROFILE.id, ...PROFILE },
-      presets: [{ _id: PRESET.id, ...PRESET }],
-    });
+    const profile = { _id: PROFILE.id, ...PROFILE };
+    const presets = [{ _id: PRESET.id, ...PRESET }];
+
+    await resolveRuntimeProfile({ profile, presets });
 
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
       profile: {
