@@ -31,10 +31,11 @@ func TestRegistryDerivedCapabilities(t *testing.T) {
 		wantPreferred bool
 		wantAdaptive  bool
 	}{
-		{"claude-opus-5", true, false, true, true},
+		{"claude-opus-5-5", true, false, true, true},
+		{"claude-opus-5", true, false, false, true},
 		{"claude-sonnet-5", true, false, true, true},
-		{"claude-fable-5", true, false, true, true},
-		{"claude-opus-4-8", true, false, true, true},
+		{"claude-fable-5", true, false, false, true},
+		{"claude-opus-4-8", true, false, false, true},
 		{"claude-opus-4-7", true, false, false, true},
 		{"claude-sonnet-4-6", true, true, false, false},
 		{"claude-haiku-4-5", true, true, true, false},
@@ -65,7 +66,7 @@ func TestRegistryDerivedCapabilities(t *testing.T) {
 // hardcoded in pkg/ai (normalizeCodexVariantAlias, isSupersededRegistryExact) and
 // is now catalog data, reachable from every entry point.
 func TestRegistryDataCarriesAliasesAndSuccessors(t *testing.T) {
-	for alias, want := range map[string]string{"sol": "gpt-5.6-sol", "terra": "gpt-5.6-terra", "luna": "gpt-5.6-luna"} {
+	for alias, want := range map[string]string{"sol": "gpt-6-sol", "terra": "gpt-5.6-terra", "luna": "gpt-6-luna"} {
 		if got := resolveAlias(alias); got != want {
 			t.Errorf("resolveAlias(%q) = %q, want %q", alias, got, want)
 		}

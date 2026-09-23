@@ -3,17 +3,22 @@
     "preferred": true,
     "defaultEffort": "high"
   },
+  "claude-opus-5-5": {
+    "preferred": true,
+    "priority": 1,
+    "defaultEffort": "medium"
+  },
   "claude-opus-5": {
-    "preferred": true
+    "preferred": false
   },
   "claude-sonnet-5": {
     "preferred": true
   },
   "claude-fable-5": {
-    "preferred": true
+    "preferred": false
   },
   "claude-opus-4-8": {
-    "preferred": true
+    "preferred": false
   },
   "claude-sonnet-4-6": {
     "preferred": false
@@ -24,19 +29,34 @@
   "gpt-6-astra": {
     "preferred": true,
     "availability": ["api", "cli", "agent", "cmux"],
+    "priority": 2,
     "aliases": ["astra"]
   },
-  "gpt-5.6": {
+  "gpt-6-sol": {
     "preferred": true,
+    "availability": ["api", "cli", "agent", "cmux"],
+    "priority": 1,
+    "aliases": ["sol"]
+  },
+  "gpt-6-luna": {
+    "preferred": true,
+    "availability": ["api", "cli", "agent", "cmux"],
+    "priority": 3,
+    "aliases": ["luna"]
+  },
+  "gpt-5.6": {
+    "preferred": false,
     "availability": [
       "api"
     ]
   },
   "gpt-5.6-sol": {
-    "preferred": true,
+    "preferred": false,
     "availability": [
       "api",
-      "codex"
+      "cli",
+      "agent",
+      "cmux"
     ],
     "supportedEfforts": [
       "low",
@@ -46,16 +66,15 @@
       "max",
       "ultra"
     ],
-    "priority": 1,
-    "aliases": [
-      "sol"
-    ]
+    "aliases": null
   },
   "gpt-5.6-terra": {
-    "preferred": true,
+    "preferred": false,
     "availability": [
       "api",
-      "codex"
+      "cli",
+      "agent",
+      "cmux"
     ],
     "supportedEfforts": [
       "low",
@@ -65,21 +84,19 @@
       "max",
       "ultra"
     ],
-    "priority": 2,
     "aliases": [
       "terra"
     ]
   },
   "gpt-5.6-luna": {
-    "preferred": true,
+    "preferred": false,
     "availability": [
       "api",
-      "codex"
+      "cli",
+      "agent",
+      "cmux"
     ],
-    "priority": 3,
-    "aliases": [
-      "luna"
-    ]
+    "aliases": null
   },
   "gpt-5.5": {
     "preferred": false
@@ -100,7 +117,8 @@
     "preferred": true
   },
   "deepseek-flash": {
-    "preferred": true
+    "preferred": true,
+    "priority": 1
   },
   "deepseek-v4-flash": {
     "preferred": false

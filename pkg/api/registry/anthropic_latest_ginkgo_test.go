@@ -8,6 +8,16 @@ import (
 var _ = Describe("Claude Fable 5.1", func() {
 	const model = "claude-fable-5-1"
 
+	DescribeTable("resolves the bare Claude sentinel to Opus", func(mode RuntimeMode) {
+		resolved, ok := Anthropic.ResolveExact(mode, "claude")
+		Expect(ok).To(BeTrue())
+		Expect(resolved).To(Equal("claude-opus-5-5"))
+	},
+		Entry("CLI", ModeCLI),
+		Entry("agent", ModeAgent),
+		Entry("cmux", ModeCmux),
+	)
+
 	DescribeTable("resolves the latest family on every Claude runtime", func(mode RuntimeMode) {
 		for _, token := range []string{"fable", model} {
 			resolved, ok := Anthropic.ResolveExact(mode, token)

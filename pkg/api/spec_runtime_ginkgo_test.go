@@ -39,7 +39,7 @@ var _ = Describe("Effective layered runtime validation", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(resolved.Warnings).To(ConsistOf(
 			"resource policy plugins=enabled is not available for anthropic agent",
-			`fallback[0] "gpt-5.6-sol": resource policy plugins=enabled is not available for openai cli`,
+			`fallback[0] "gpt-6-sol": resource policy plugins=enabled is not available for openai cli`,
 		))
 		Expect(resolved.Trace).To(Equal([]SpecLayer{layer}))
 	})
@@ -101,7 +101,7 @@ var _ = Describe("Effective layered runtime validation", func() {
 		}
 		resolved, err := ResolveSpecLayers(ResolveSpecOptions{Layers: []SpecLayer{layer}})
 		Expect(err).NotTo(HaveOccurred())
-		Expect(resolved.Spec.Name).To(Equal("gpt-5.6-sol"))
+		Expect(resolved.Spec.Name).To(Equal("gpt-6-sol"))
 		Expect(resolved.Spec.Fallbacks[0].Name).To(Equal("claude-sonnet-5"))
 	})
 })

@@ -30,7 +30,7 @@ func TestResolveCompactSelectors(t *testing.T) {
 		{
 			name:     "agent claude shorthand",
 			in:       api.Model{Name: "agent:opus"},
-			wantName: "claude-opus-5",
+			wantName: "claude-opus-5-5",
 			wantMode: api.ModeAgent,
 		},
 		{
@@ -44,7 +44,7 @@ func TestResolveCompactSelectors(t *testing.T) {
 			// model name, so the two together name exactly one adapter.
 			name:     "exact mode",
 			in:       api.Model{Name: "cmux:opus"},
-			wantName: "claude-opus-5",
+			wantName: "claude-opus-5-5",
 			wantMode: api.ModeCmux,
 		},
 	}
@@ -135,8 +135,8 @@ func TestResolve_FallbackSelectors(t *testing.T) {
 	if len(got.Fallbacks) != 1 {
 		t.Fatalf("fallback count = %d, want 1", len(got.Fallbacks))
 	}
-	if fb := got.Fallbacks[0]; fb.Name != "claude-opus-5" || fb.Provider != api.Anthropic || fb.Mode != api.ModeCmux {
-		t.Fatalf("fallback = %s %s/%s, want anthropic cmux/claude-opus-5", fb.Provider.Name, fb.Mode, fb.Name)
+	if fb := got.Fallbacks[0]; fb.Name != "claude-opus-5-5" || fb.Provider != api.Anthropic || fb.Mode != api.ModeCmux {
+		t.Fatalf("fallback = %s %s/%s, want anthropic cmux/claude-opus-5-5", fb.Provider.Name, fb.Mode, fb.Name)
 	}
 }
 
@@ -154,7 +154,7 @@ func TestResolveMulti_ExpandsEachSelector(t *testing.T) {
 	}
 	want := []string{
 		"anthropic cli:claude-sonnet-5",
-		"anthropic cmux:claude-opus-5",
+		"anthropic cmux:claude-opus-5-5",
 		"openai api:gpt-5.5",
 		"openai agent:gpt-5.5",
 		"openai cli:gpt-5.5",
@@ -211,8 +211,8 @@ func TestResolve_EffortQualifiedAlias(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if got.Provider != api.OpenAI || got.Mode != api.ModeAgent || got.Name != "gpt-5.6-sol" || got.Effort != api.EffortHigh {
-		t.Fatalf("got %s:%s:%s, want agent:gpt-5.6-sol:high", got.Mode, got.Name, got.Effort)
+	if got.Provider != api.OpenAI || got.Mode != api.ModeAgent || got.Name != "gpt-6-sol" || got.Effort != api.EffortHigh {
+		t.Fatalf("got %s:%s:%s, want agent:gpt-6-sol:high", got.Mode, got.Name, got.Effort)
 	}
 }
 
@@ -232,8 +232,8 @@ func TestResolveMulti_PerSelectorEffortAndDedup(t *testing.T) {
 		effort api.Effort
 	}
 	want := []runtime{
-		{"gpt-5.6-sol", api.ModeAgent, api.EffortHigh},
-		{"gpt-5.6-sol", api.ModeAgent, api.EffortXHigh},
+		{"gpt-6-sol", api.ModeAgent, api.EffortHigh},
+		{"gpt-6-sol", api.ModeAgent, api.EffortXHigh},
 		{"gpt-5.6-terra", api.ModeCmux, api.EffortMax},
 	}
 	gotRuntimes := make([]runtime, 0, len(got))
@@ -338,7 +338,7 @@ func TestResolveMulti_WildcardRespectsAvailability(t *testing.T) {
 			t.Fatalf("provider = %v, want openai", model.Provider)
 		}
 		modes = append(modes, model.Mode)
-		if model.Name != "gpt-5.6-sol" || model.Effort != api.EffortHigh {
+		if model.Name != "gpt-6-sol" || model.Effort != api.EffortHigh {
 			t.Fatalf("unexpected model: %+v", model)
 		}
 	}
@@ -354,10 +354,10 @@ func TestResolve_EffortErrors(t *testing.T) {
 	}
 }
 
-func TestResolve_OpenAI56VariantsAvailableViaAPI(t *testing.T) {
+func TestResolve_OpenAIVariantsAvailableViaAPI(t *testing.T) {
 	for alias, want := range map[string]string{
-		"luna":  "gpt-5.6-luna",
-		"sol":   "gpt-5.6-sol",
+		"luna":  "gpt-6-luna",
+		"sol":   "gpt-6-sol",
 		"terra": "gpt-5.6-terra",
 	} {
 		t.Run(alias, func(t *testing.T) {

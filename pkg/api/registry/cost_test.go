@@ -6,6 +6,7 @@ import "testing"
 // from the provider pricing pages rather than from captain's own catalog, so
 // this test fails if a regenerated models.json ever drifts from reality.
 var publishedRates = map[string]ModelCost{
+	"claude-opus-5-5":   {Input: 4, Output: 20, CacheRead: 0.2, CacheWrite: 5},
 	"claude-opus-5":     {Input: 5, Output: 25, CacheRead: 0.5, CacheWrite: 6.25},
 	"claude-opus-4-8":   {Input: 5, Output: 25, CacheRead: 0.5, CacheWrite: 6.25},
 	"claude-sonnet-5":   {Input: 2, Output: 10, CacheRead: 0.2, CacheWrite: 2.5},
@@ -79,8 +80,8 @@ func TestCostForAcceptsIDSpellings(t *testing.T) {
 	if !ok {
 		t.Fatal("codename alias sol must resolve to a priced model")
 	}
-	if exact, _ := CostFor("gpt-5.6-sol"); viaAlias != exact {
-		t.Errorf("alias sol priced %+v, want gpt-5.6-sol rate %+v", viaAlias, exact)
+	if exact, _ := CostFor("gpt-6-sol"); viaAlias != exact {
+		t.Errorf("alias sol priced %+v, want gpt-6-sol rate %+v", viaAlias, exact)
 	}
 }
 
