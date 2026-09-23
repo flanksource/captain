@@ -28,7 +28,7 @@ func TestParseVars(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := parseVars(tc.in)
+			got, _, err := parseVars(tc.in, "")
 			if tc.wantErr {
 				if err == nil {
 					t.Fatalf("parseVars(%v) = nil error, want error", tc.in)

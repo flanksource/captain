@@ -21,7 +21,7 @@ func applicationProfile(layers []api.SpecLayer, saved *captainconfig.AIDefaults)
 }
 ```
 
-`ComposeSpecLayers` validates authored structures and merges their values and constraints. Its `Trace` retains the raw layers; its `Spec` is a partial projection with no promise of runtime capability validity. Supply the composition result intact, including `Trace`. A nonempty profile projection without its composition trace is rejected. `System` and `ProviderConfig` retain their existing meanings.
+`ComposeSpecLayers` validates authored structures and merges their values. Its `Trace` retains the raw layers; its `Spec` is a partial projection with no promise of runtime capability validity. Supply the composition result intact, including `Trace`. A nonempty profile projection without its composition trace is rejected. `System` and `ProviderConfig` retain their existing meanings.
 
 The chat service adds the explicit request to that raw trace and performs final resolution. Applications that own a different request pipeline use the same boundary:
 

@@ -67,11 +67,24 @@ func (s Spec) Merge(override Spec) Spec {
 		tokens := strings.Split(strings.TrimPrefix(path, "/"), "/")
 		source := serializedField(reflect.ValueOf(cloned), tokens)
 		target := serializedField(reflect.ValueOf(&merged).Elem(), tokens)
-		if source.IsValid() && target.IsValid() && target.CanSet() {
+		if source.IsValid() && target.IsValid() && target.CanSet() && !blanksSubtree(source) {
 			target.Set(source)
 		}
 	}
 	return merged
+}
+
+// blanksSubtree reports an explicit path that names a struct and supplies
+// nothing inside it — a decoded `"permissions": {}` or `"budget": {}`.
+//
+// Such a path says "I mentioned this section", not "I am clearing it": every
+// value the override actually supplied inside the section carries its own
+// explicit path and replaces on its own, including a deliberately emptied
+// collection like `"tools": {}`. Overwriting the merged struct with the zero one
+// would instead drop every inherited sibling the override never named, which is
+// how an empty object in a request used to erase a project's tool policy.
+func blanksSubtree(source reflect.Value) bool {
+	return source.Kind() == reflect.Struct && source.IsZero()
 }
 
 func (s Spec) withoutReplacedPresence(override Spec) Spec {

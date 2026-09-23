@@ -200,7 +200,7 @@ describe("fetchRuntimeProfileResolution", () => {
     const resolution = {
       profile: { ...PRESET, presets: ["preset-1"] },
       presets: [PRESET],
-      resolved: { spec: { mode: "cli" }, constraints: {}, trace: [] },
+      resolved: { spec: { mode: "cli" }, trace: [] },
     };
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(resolution));
     vi.stubGlobal("fetch", fetchMock);
@@ -223,7 +223,7 @@ describe("fetchRuntimeProfileResolution", () => {
 
 describe("runtimeProfilesClient", () => {
   const RESOLVED = {
-    resolved: { spec: { mode: "cli" }, constraints: {}, trace: [] },
+    resolved: { spec: { mode: "cli" }, trace: [] },
     tools: [],
     permissions: {},
     permissionSupport: {},

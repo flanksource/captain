@@ -75,7 +75,17 @@ type Template struct {
 
 // Load parses a .prompt source string.
 func Load(source string) *Template {
-	return &Template{dp: dp.NewDotprompt(nil), source: source, name: "<inline>"}
+	return LoadNamed("<inline>", source)
+}
+
+// LoadNamed parses a .prompt source string under a caller-supplied name. The
+// name is what render errors are reported against, so a body that came from a
+// pipe says so instead of claiming to be inline.
+func LoadNamed(name, source string) *Template {
+	if strings.TrimSpace(name) == "" {
+		name = "<inline>"
+	}
+	return &Template{dp: dp.NewDotprompt(nil), source: source, name: name}
 }
 
 // LoadFile reads and parses a .prompt file from disk.
