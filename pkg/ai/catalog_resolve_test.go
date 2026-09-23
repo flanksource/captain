@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -137,6 +138,51 @@ func TestResolveModels_TokensUnionDedup(t *testing.T) {
 	}
 	if bareCount != 1 {
 		t.Fatalf("claude-sonnet-5 appears %d times, want deduped to 1", bareCount)
+	}
+}
+
+func TestResolveModels_LiveOnlyRowKeepsFetchedCapabilities(t *testing.T) {
+	efforts := []api.Effort{api.EffortLow, api.EffortMedium, api.EffortHigh}
+	fetched := ModelDef{
+		ID:                "claude-live-only",
+		Name:              "Claude Live Only",
+		Provider:          Anthropic.Name,
+		Mode:              ModeAPI,
+		ReleaseDate:       "2026-07-24",
+		CapabilitiesKnown: true,
+		Reasoning:         true,
+		Temperature:       true,
+		SupportedEfforts:  efforts,
+		DefaultEffort:     api.EffortMedium,
+		Priority:          3,
+	}
+	stubLiveFetcher(t, func(p *ModelProvider) ([]ModelDef, error) {
+		if p != Anthropic {
+			return nil, nil
+		}
+		return []ModelDef{fetched}, nil
+	})
+	t.Setenv("ANTHROPIC_API_KEY", "k") // after stub clears the key set
+
+	rows, err := ResolveModels(context.Background(), ResolveOptions{Provider: Anthropic, Mode: ModeAPI, UseTokens: true})
+	if err != nil {
+		t.Fatalf("ResolveModels: %v", err)
+	}
+	row, ok := hasModelID(rows, fetched.ID)
+	if !ok {
+		t.Fatalf("live-only row %q missing", fetched.ID)
+	}
+	type capabilities struct {
+		Label, ReleaseDate     string
+		Reasoning, Temperature bool
+		SupportedEfforts       []api.Effort
+		DefaultEffort          api.Effort
+		Priority               int
+	}
+	got := capabilities{row.Label, row.ReleaseDate, row.Reasoning, row.Temperature, row.SupportedEfforts, row.DefaultEffort, row.Priority}
+	want := capabilities{fetched.Name, fetched.ReleaseDate, true, true, efforts, api.EffortMedium, 3}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("live-only row dropped fetched capabilities:\n got %+v\nwant %+v", got, want)
 	}
 }
 
