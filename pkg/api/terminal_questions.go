@@ -53,7 +53,11 @@ func terminalQuestionFromMap(values map[string]any) (TerminalQuestion, error) {
 	if err != nil {
 		return TerminalQuestion{}, err
 	}
-	question := TerminalQuestion{Text: text, Context: context}
+	id, err := firstOptionalString(values, "id")
+	if err != nil {
+		return TerminalQuestion{}, err
+	}
+	question := TerminalQuestion{ID: id, Text: text, Context: context}
 	if question.MultiSelect, err = firstOptionalBool(values, "multiSelect", "multi_select"); err != nil {
 		return TerminalQuestion{}, err
 	}

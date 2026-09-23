@@ -21,6 +21,10 @@ type TerminalPlan struct {
 
 // TerminalQuestion is one question returned by a native ask-user tool.
 type TerminalQuestion struct {
+	// ID is the identity the agent gave the question, when it gave one. Codex
+	// always does and keys its answers on it; Claude's AskUserQuestion never
+	// does, and keys on the text instead.
+	ID      string   `json:"id,omitempty"`
 	Text    string   `json:"text"`
 	Context string   `json:"context,omitempty"`
 	Options []string `json:"options,omitempty"`
