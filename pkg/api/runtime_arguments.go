@@ -125,6 +125,7 @@ var codexAgentArguments = []runtimeArgumentBinding{
 	mappedArgument("turn/start.cwd", "setup.cwd"),
 	mappedArgument("turn/start.approvalPolicy", "permissions.mode"),
 	mappedArgument("turn/start.approvalsReviewer", "permissions.mode"),
+	mappedArgument("turn/start.collaborationMode", "permissions.mode|model|effort"),
 	mappedArgument("turn/start.runtimeWorkspaceRoots", "permissions.directories"),
 	mappedArgument("thread/start.config.mcp_servers", "permissions.mcp.disabled"),
 	mappedArgument("thread/resume.config.mcp_servers", "permissions.mcp.disabled"),

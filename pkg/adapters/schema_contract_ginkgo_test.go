@@ -120,6 +120,7 @@ var _ = ginkgo.Describe("Adapter schema contract", func() {
 			"turnStart": map[string]any{
 				"threadId": "thread-1", "input": []any{map[string]any{"type": "text", "text": "inspect"}},
 				"approvalPolicy": "on-request", "permissions": "workspace", "sandboxPolicy": map[string]any{"type": "workspaceWrite", "writableRoots": []any{"/shared"}},
+				"collaborationMode": map[string]any{"mode": "plan", "settings": map[string]any{"model": "gpt-5.6", "reasoning_effort": "high", "developer_instructions": nil}},
 			},
 		})
 		assertJSONRoundTrip[OpenAICLIOptions](map[string]any{"model": "gpt-5.6", "json": true, "oss": true})

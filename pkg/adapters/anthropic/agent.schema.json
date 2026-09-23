@@ -8,7 +8,7 @@
     "provider": "anthropic",
     "mode": "agent",
     "sources": [
-      {"kind": "sdk", "reference": "@anthropic-ai/claude-agent-sdk.Options", "version": "0.3.210"},
+      {"kind": "sdk", "reference": "@anthropic-ai/claude-agent-sdk.Options", "version": "0.3.280"},
       {"kind": "protocol", "reference": "pkg/ai/provider/claudeagent/protocol.ts InitializeParams and PromptParams", "version": "6a2b56cbd26702b18905865f21fc66d44cc864cc"},
       {"kind": "implementation", "reference": "pkg/ai/provider/claudeagent/agent.ts and bridge_params.go", "version": "6a2b56cbd26702b18905865f21fc66d44cc864cc"}
     ]
@@ -30,8 +30,8 @@
       "x-captain-option": {"nativeName": "cwd", "support": "mapped", "specPath": "context.dir"}
     },
     "systemPrompt": {
-      "title": "System prompt", "description": "System prompt string or preset configuration used for the session.",
-      "oneOf": [{"type": "string"}, {"type": "object", "additionalProperties": true}], "x-clicky-section": "prompt", "x-clicky-order": 40,
+      "title": "System prompt", "description": "System prompt string, string blocks, or custom/preset configuration used for the session.",
+      "oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}, {"type": "object", "additionalProperties": true}], "x-clicky-section": "prompt", "x-clicky-order": 40,
       "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
       "x-captain-option": {"nativeName": "systemPrompt", "support": "mapped", "specPath": "prompt.system"}
     },
@@ -389,6 +389,36 @@
       "type": "object", "additionalProperties": true, "readOnly": true, "x-clicky-section": "environment", "x-clicky-order": 700,
       "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
       "x-captain-option": {"nativeName": "spawnClaudeCodeProcess", "support": "unsupported", "note": "Captain's packaged bridge uses the SDK default process spawner."}
+    },
+    "projectConfigRoot": {
+      "title": "Project config root", "description": "Trusted checkout that cwd is a worktree of; project settings, .mcp.json and .claude config trees load from here instead of cwd.",
+      "type": "string", "format": "path", "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 710,
+      "x-captain-option": {"nativeName": "projectConfigRoot", "support": "unsupported", "note": "Captain loads project configuration from the run's working directory."}
+    },
+    "perTaskStopAffordance": {
+      "title": "Per-task stop affordance", "description": "Declares that the host can stop individual background tasks, so an interrupt only aborts the current turn.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 720,
+      "x-captain-option": {"nativeName": "perTaskStopAffordance", "support": "unsupported", "note": "Captain interrupts stop the whole query, including background tasks."}
+    },
+    "verbatimPrompts": {
+      "title": "Verbatim prompts", "description": "Deliver prompt text as written, without @path expansion, slash-command dispatch or turn-start attachments.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "prompt", "x-clicky-order": 730,
+      "x-captain-option": {"nativeName": "verbatimPrompts", "support": "unsupported", "note": "Captain sends prompts with the SDK default mention and slash-command handling."}
+    },
+    "permissionPrompts": {
+      "title": "Permission prompts", "description": "Who answers permission prompts: the host through canUseTool, or nobody so prompting requests are denied.",
+      "type": "string", "enum": ["host", "none"], "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 740,
+      "x-captain-option": {"nativeName": "permissionPrompts", "support": "unsupported", "note": "Captain always answers permission prompts through its canUseTool callback."}
+    },
+    "pluginDelivery": {
+      "title": "Plugin delivery", "description": "How plugins reach the Claude Code process: --plugin-dir arguments or the initialize request.",
+      "type": "string", "enum": ["argv", "initialize"], "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 750,
+      "x-captain-option": {"nativeName": "pluginDelivery", "support": "unsupported", "note": "Captain does not expose Agent SDK plugin loading."}
+    },
+    "resumeDropsTurn": {
+      "title": "Resume drops turn", "description": "Guarded fork point paired with resumeSessionAt that discards the turn after the kept chain entry.",
+      "type": "string", "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 760,
+      "x-captain-option": {"nativeName": "resumeDropsTurn", "support": "unsupported", "note": "Captain resumes the latest point of an explicit session."}
     }
   }
 }

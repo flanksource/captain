@@ -135,11 +135,19 @@ type AnthropicAgentOptions struct {
 	// Filesystem path to the Claude Code executable launched by the SDK.
 	PathToClaudeCodeExecutable *string `json:"pathToClaudeCodeExecutable,omitempty,omitzero"`
 
+	// Declares that the host can stop individual background tasks, so an interrupt
+	// only aborts the current turn.
+	PerTaskStopAffordance *bool `json:"perTaskStopAffordance,omitempty,omitzero"`
+
 	// Claude Code permission posture translated from Captain's runtime policy.
 	PermissionMode *AnthropicAgentOptionsPermissionMode `json:"permissionMode,omitempty,omitzero"`
 
 	// MCP tool name used by Claude Code to request permission decisions.
 	PermissionPromptToolName *string `json:"permissionPromptToolName,omitempty,omitzero"`
+
+	// Who answers permission prompts: the host through canUseTool, or nobody so
+	// prompting requests are denied.
+	PermissionPrompts *AnthropicAgentOptionsPermissionPrompts `json:"permissionPrompts,omitempty,omitzero"`
 
 	// Whether the Agent SDK persists the session to disk.
 	PersistSession *bool `json:"persistSession,omitempty,omitzero"`
@@ -147,8 +155,16 @@ type AnthropicAgentOptions struct {
 	// Additional instructions injected when Claude enters plan mode.
 	PlanModeInstructions *string `json:"planModeInstructions,omitempty,omitzero"`
 
+	// How plugins reach the Claude Code process: --plugin-dir arguments or the
+	// initialize request.
+	PluginDelivery *AnthropicAgentOptionsPluginDelivery `json:"pluginDelivery,omitempty,omitzero"`
+
 	// Local Claude Code plugin directories loaded for the query.
 	Plugins *json.RawMessage `json:"plugins,omitempty,omitzero"`
+
+	// Trusted checkout that cwd is a worktree of; project settings, .mcp.json and
+	// .claude config trees load from here instead of cwd.
+	ProjectConfigRoot *string `json:"projectConfigRoot,omitempty,omitzero"`
 
 	// File and image attachments sent in a Captain bridge prompt request.
 	PromptAttachments *json.RawMessage `json:"promptAttachments,omitempty,omitzero"`
@@ -161,6 +177,10 @@ type AnthropicAgentOptions struct {
 
 	// Claude session identifier resumed by the Agent SDK.
 	Resume *string `json:"resume,omitempty,omitzero"`
+
+	// Guarded fork point paired with resumeSessionAt that discards the turn after the
+	// kept chain entry.
+	ResumeDropsTurn *string `json:"resumeDropsTurn,omitempty,omitzero"`
 
 	// Message identifier at which an existing session is resumed.
 	ResumeSessionAt *string `json:"resumeSessionAt,omitempty,omitzero"`
@@ -198,7 +218,8 @@ type AnthropicAgentOptions struct {
 	// User-dialog kinds the host declares it can render.
 	SupportedDialogKinds []string `json:"supportedDialogKinds,omitempty,omitzero"`
 
-	// System prompt string or preset configuration used for the session.
+	// System prompt string, string blocks, or custom/preset configuration used for
+	// the session.
 	SystemPrompt *json.RawMessage `json:"systemPrompt,omitempty,omitzero"`
 
 	// Native budget constraints applied to SDK task execution.
@@ -218,6 +239,10 @@ type AnthropicAgentOptions struct {
 
 	// Built-in tool preset or explicit SDK tool-name list.
 	Tools *json.RawMessage `json:"tools,omitempty,omitzero"`
+
+	// Deliver prompt text as written, without @path expansion, slash-command dispatch
+	// or turn-start attachments.
+	VerbatimPrompts *bool `json:"verbatimPrompts,omitempty,omitzero"`
 }
 
 type AnthropicAgentOptionsApprovalMode string
@@ -240,6 +265,16 @@ const AnthropicAgentOptionsPermissionModeBypassPermissions AnthropicAgentOptions
 const AnthropicAgentOptionsPermissionModeDefault AnthropicAgentOptionsPermissionMode = "default"
 const AnthropicAgentOptionsPermissionModeDontAsk AnthropicAgentOptionsPermissionMode = "dontAsk"
 const AnthropicAgentOptionsPermissionModePlan AnthropicAgentOptionsPermissionMode = "plan"
+
+type AnthropicAgentOptionsPermissionPrompts string
+
+const AnthropicAgentOptionsPermissionPromptsHost AnthropicAgentOptionsPermissionPrompts = "host"
+const AnthropicAgentOptionsPermissionPromptsNone AnthropicAgentOptionsPermissionPrompts = "none"
+
+type AnthropicAgentOptionsPluginDelivery string
+
+const AnthropicAgentOptionsPluginDeliveryArgv AnthropicAgentOptionsPluginDelivery = "argv"
+const AnthropicAgentOptionsPluginDeliveryInitialize AnthropicAgentOptionsPluginDelivery = "initialize"
 
 type AnthropicAgentOptionsSettingSourcesElem string
 

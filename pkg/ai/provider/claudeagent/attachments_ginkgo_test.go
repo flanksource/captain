@@ -15,7 +15,7 @@ var _ = Describe("Claude Agent prompt parameters", func() {
 	It("derives the required SDK version from the embedded package manifest", func() {
 		version, err := requiredSDKVersion()
 		Expect(err).NotTo(HaveOccurred())
-		Expect(version).To(Equal("0.3.210"))
+		Expect(version).To(Equal("0.3.280"))
 	})
 
 	It("materializes the SDK bridge source", func() {

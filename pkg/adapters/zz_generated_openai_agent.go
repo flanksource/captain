@@ -139,6 +139,10 @@ type ThreadStart struct {
 	// Initial working directory for the Codex thread.
 	Cwd *string `json:"cwd,omitempty,omitzero"`
 
+	// Initial Daybreak choice for a persistent Codex thread; not supported for
+	// ephemeral threads.
+	DaybreakEnabled *bool `json:"daybreakEnabled,omitempty,omitzero"`
+
 	// Developer instruction text attached to the Codex thread.
 	DeveloperInstructions *string `json:"developerInstructions,omitempty,omitzero"`
 
@@ -217,13 +221,17 @@ type TurnStart struct {
 	ClientUserMessageId *string `json:"clientUserMessageId,omitempty,omitzero"`
 
 	// Codex collaboration mode applied for the turn.
-	CollaborationMode *string `json:"collaborationMode,omitempty,omitzero"`
+	CollaborationMode *json.RawMessage `json:"collaborationMode,omitempty,omitzero"`
 
 	// Working-directory override for the turn.
 	Cwd *string `json:"cwd,omitempty,omitzero"`
 
 	// Codex cyber-access program configuration for the turn.
 	CyberAccessProgram *json.RawMessage `json:"cyberAccessProgram,omitempty,omitzero"`
+
+	// Replacement list of plugin identifiers disabled for the thread; an empty list
+	// clears it.
+	DisabledPluginIds []string `json:"disabledPluginIds,omitempty,omitzero"`
 
 	// Reasoning effort used for this Codex turn.
 	Effort *string `json:"effort,omitempty,omitzero"`
