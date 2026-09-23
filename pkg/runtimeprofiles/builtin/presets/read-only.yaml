@@ -1,0 +1,13 @@
+name: Read-only
+description: >-
+  Denies edit, write, shell, web search and web fetch. It sets no read policy, so reads keep what other layers or the runtime decide. It sets no permission mode, so it combines with any posture, and it blocks plan files too.
+  MCP tools, tools outside the runtime's built-in vocabulary, and the sandbox are not covered.
+scope: context
+spec:
+  permissions:
+    tools:
+      edit: deny
+      write: deny
+      shell: deny
+      web_search: deny
+      web_fetch: deny

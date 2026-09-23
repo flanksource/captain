@@ -50,11 +50,13 @@ var _ = Describe("promptrun.Preflight", func() {
 			in.Request.Workflow = &api.Workflow{Verify: &api.Verify{Prompts: []string{filepath.Join(GinkgoT().TempDir(), "absent.prompt")}}}
 		}, "absent.prompt"),
 		Entry("invalid permission value", func(in *promptrun.Input) { in.Request.Permissions.Mode = "invalid" }, "invalid permission mode"),
+		// A Bash deny on the API mode is ignored (it ships no built-ins), so the
+		// refusal is pinned on the codex CLI, which has a shell it cannot filter.
 		Entry("unsupported existing tool denial", func(in *promptrun.Input) {
 			in.Provider = nil
-			in.Config.Model = api.Model{Name: "gpt-5", Provider: api.OpenAI, Mode: api.ModeAPI}
+			in.Config.Model = api.Model{Name: "gpt-5", Provider: api.OpenAI, Mode: api.ModeCLI}
 			in.Request.Permissions.Tools = api.Tools{"Bash": api.ToolPolicyDeny}
-		}, "cannot enforce a per-tool policy"),
+		}, "shell (from Bash)"),
 		Entry("missing generating model", func(in *promptrun.Input) { in.Provider = nil; in.Request.Model = api.Model{} }, "model"),
 		Entry("unknown generating model", func(in *promptrun.Input) {
 			in.Provider = nil

@@ -1,27 +1,28 @@
 package cache
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
+	"github.com/flanksource/commons-db/db/sqlitetable"
+	sqlitedb "github.com/flanksource/commons-db/sqlite"
 	"github.com/flanksource/commons/logger"
 	"github.com/samber/lo"
-
-	// Pure Go, so the cache works on the CGO_ENABLED=0 binaries goreleaser and
-	// the sandbox image ship. commons-db/connection blank-imports the same
-	// driver, and the name "sqlite" may only be registered once — see the
-	// github.com/glebarez/sqlite replace in go.mod before adding another.
-	_ "modernc.org/sqlite"
 )
 
 // log is the package-scoped logger for AI providers. Its level follows
 // -v/--log-level and can be tuned with -Plog.level.ai=debug.
 var log = logger.GetLogger("ai")
+
+// sweepInterval is how often an open cache deletes the entries past their TTL.
+const sweepInterval = time.Hour
 
 var (
 	ErrCacheDisabled = errors.New("caching is disabled")
@@ -77,11 +78,17 @@ type StatsEntry struct {
 }
 
 type Cache struct {
-	db     *sql.DB
-	config Config
+	database *sqlitedb.DB
+	config   Config
+
+	// stopSweeper cancels the sweeper goroutine and swept reports it gone.
+	stopSweeper context.CancelFunc
+	swept       chan struct{}
+	closeOnce   sync.Once
+	closeErr    error
 }
 
-func (c Cache) GetTTL() time.Duration { return c.config.TTL }
+func (c *Cache) GetTTL() time.Duration { return c.config.TTL }
 
 func New(config Config) (*Cache, error) {
 	if config.DBPath == "" {
@@ -96,34 +103,36 @@ func New(config Config) (*Cache, error) {
 		return nil, fmt.Errorf("failed to create cache directory: %w", err)
 	}
 
-	db, err := sql.Open("sqlite", config.DBPath)
+	database, err := sqlitedb.Open(sqlitedb.Options{
+		Path:         config.DBPath,
+		OnWriteError: func(err error) { log.Errorf("llm cache %s: %v", config.DBPath, err) },
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
-	for _, pragma := range []string{
-		"PRAGMA journal_mode = WAL",
-		"PRAGMA synchronous = NORMAL",
-		"PRAGMA cache_size = -64000",
-		"PRAGMA busy_timeout = 5000",
-	} {
-		if _, err := db.Exec(pragma); err != nil {
-			db.Close()
-			return nil, fmt.Errorf("failed to set pragma %s: %w", pragma, err)
-		}
+	if err := database.Write(func(writer *sql.DB) error {
+		_, err := writer.Exec(embeddedSchema)
+		return err
+	}); err != nil {
+		return nil, errors.Join(fmt.Errorf("failed to initialize schema: %w", err), database.Close())
 	}
 
-	cache := &Cache{db: db, config: config}
-	if _, err := db.Exec(embeddedSchema); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to initialize schema: %w", err)
-	}
-
-	go cache.cleanupExpired()
+	cache := &Cache{database: database, config: config}
+	cache.startSweeper(sweepInterval)
 	return cache, nil
 }
 
-func (c *Cache) Close() error { return c.db.Close() }
+// Close stops the sweeper, waiting out a sweep in progress, then closes the
+// database once its queued access-time updates are written.
+func (c *Cache) Close() error {
+	c.closeOnce.Do(func() {
+		c.stopSweeper()
+		<-c.swept
+		c.closeErr = c.database.Close()
+	})
+	return c.closeErr
+}
 
 func generateCacheKey(prompt, model string) string {
 	h := sha256.Sum256([]byte(fmt.Sprintf("%s|%s", prompt, model)))
@@ -139,7 +148,7 @@ func (c *Cache) Get(prompt, model string) (*Entry, error) {
 
 	var entry Entry
 	var expiresAt sql.NullTime
-	err := c.db.QueryRow(`
+	err := c.database.Reader().QueryRow(`
 		SELECT id, cache_key, prompt_hash, model, prompt, response, error,
 		       tokens_input, tokens_output, tokens_reasoning,
 		       tokens_cache_read, tokens_cache_write, tokens_total,
@@ -147,10 +156,10 @@ func (c *Cache) Get(prompt, model string) (*Entry, error) {
 		       created_at, accessed_at, expires_at
 		FROM llm_cache
 		WHERE cache_key = ?
-		  AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
+		  AND (expires_at IS NULL OR expires_at > ?)
 		ORDER BY created_at DESC
 		LIMIT 1
-	`, cacheKey).Scan(
+	`, cacheKey, sqlitetable.FormatTime(time.Now())).Scan(
 		&entry.ID, &entry.CacheKey, &entry.PromptHash, &entry.Model,
 		&entry.Prompt, &entry.Response, &entry.Error,
 		&entry.TokensInput, &entry.TokensOutput, &entry.TokensReasoning,
@@ -174,7 +183,9 @@ func (c *Cache) Get(prompt, model string) (*Entry, error) {
 		}
 	}
 
-	_, _ = c.db.Exec("UPDATE llm_cache SET accessed_at = CURRENT_TIMESTAMP WHERE id = ?", entry.ID)
+	if err := c.database.ExecAsync("UPDATE llm_cache SET accessed_at = CURRENT_TIMESTAMP WHERE id = ?", entry.ID); err != nil {
+		return nil, fmt.Errorf("failed to queue cache access time update: %w", err)
+	}
 	return &entry, nil
 }
 
@@ -189,40 +200,52 @@ func (c *Cache) Set(entry *Entry) error {
 
 	log.Tracef("[%s] caching response for %s (hash:%s)", entry.Model, lo.Ellipsis(entry.Prompt, 20), entry.PromptHash)
 
-	var expiresAt *time.Time
+	var expiresAt any
 	if c.config.TTL > 0 {
-		exp := time.Now().Add(c.config.TTL)
-		expiresAt = &exp
+		expiresAt = sqlitetable.FormatTime(entry.CreatedAt.Add(c.config.TTL))
 	}
 
-	_, err := c.db.Exec(`
-		INSERT OR REPLACE INTO llm_cache (
-			cache_key, prompt_hash, model, prompt, response, error,
-			tokens_input, tokens_output, tokens_reasoning,
-			tokens_cache_read, tokens_cache_write, tokens_total,
-			cost_usd, duration_ms, provider, temperature, max_tokens, expires_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		entry.CacheKey, entry.PromptHash, entry.Model, entry.Prompt, entry.Response, entry.Error,
-		entry.TokensInput, entry.TokensOutput, entry.TokensReasoning,
-		entry.TokensCacheRead, entry.TokensCacheWrite, entry.TokensTotal,
-		entry.CostUSD, entry.DurationMS, entry.Provider, entry.Temperature, entry.MaxTokens,
-		expiresAt,
-	)
+	err := c.database.Write(func(writer *sql.DB) error {
+		tx, err := writer.Begin()
+		if err != nil {
+			return err
+		}
+		defer func() { _ = tx.Rollback() }()
+		if _, err := tx.Exec(`
+			INSERT OR REPLACE INTO llm_cache (
+				cache_key, prompt_hash, model, prompt, response, error,
+				tokens_input, tokens_output, tokens_reasoning,
+				tokens_cache_read, tokens_cache_write, tokens_total,
+				cost_usd, duration_ms, provider, temperature, max_tokens, expires_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			entry.CacheKey, entry.PromptHash, entry.Model, entry.Prompt, entry.Response, entry.Error,
+			entry.TokensInput, entry.TokensOutput, entry.TokensReasoning,
+			entry.TokensCacheRead, entry.TokensCacheWrite, entry.TokensTotal,
+			entry.CostUSD, entry.DurationMS, entry.Provider, entry.Temperature, entry.MaxTokens,
+			expiresAt,
+		); err != nil {
+			return err
+		}
+		if err := updateStats(tx, entry); err != nil {
+			return fmt.Errorf("update stats: %w", err)
+		}
+		return tx.Commit()
+	})
 	if err != nil {
 		return fmt.Errorf("failed to set cache entry: %w", err)
 	}
-
-	c.updateStats(entry)
 	return nil
 }
 
 func (c *Cache) Clear() error {
-	_, err := c.db.Exec("DELETE FROM llm_cache")
-	return err
+	return c.database.Write(func(writer *sql.DB) error {
+		_, err := writer.Exec("DELETE FROM llm_cache")
+		return err
+	})
 }
 
 func (c *Cache) GetStats() ([]StatsEntry, error) {
-	rows, err := c.db.Query(`
+	rows, err := c.database.Reader().Query(`
 		SELECT model, provider,
 		       COUNT(*) as total_requests,
 		       SUM(CASE WHEN error IS NULL OR error = '' THEN 1 ELSE 0 END),
@@ -288,6 +311,9 @@ func (c *Cache) GetStats() ([]StatsEntry, error) {
 
 		stats = append(stats, s)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to read stats: %w", err)
+	}
 	return stats, nil
 }
 
@@ -313,18 +339,52 @@ func parseTimestamp(value sql.NullString) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("unrecognised timestamp %q", value.String)
 }
 
-func (c *Cache) cleanupExpired() {
-	ticker := time.NewTicker(1 * time.Hour)
-	defer ticker.Stop()
-
-	for range ticker.C {
-		_, _ = c.db.Exec("DELETE FROM llm_cache WHERE expires_at IS NOT NULL AND expires_at < CURRENT_TIMESTAMP")
+// Sweep deletes the entries whose TTL has passed and reports how many it
+// removed. expires_at is stored in sqlitetable.TimeLayout, so the bound must be
+// too: the text comparison only orders as time when both sides share a layout.
+func (c *Cache) Sweep(ctx context.Context) (int64, error) {
+	var removed int64
+	err := c.database.Write(func(writer *sql.DB) error {
+		result, err := writer.ExecContext(ctx,
+			"DELETE FROM llm_cache WHERE expires_at IS NOT NULL AND expires_at <= ?",
+			sqlitetable.FormatTime(time.Now()))
+		if err != nil {
+			return err
+		}
+		removed, err = result.RowsAffected()
+		return err
+	})
+	if err != nil {
+		return 0, fmt.Errorf("failed to sweep expired cache entries: %w", err)
 	}
+	return removed, nil
 }
 
-func (c *Cache) updateStats(entry *Entry) {
+// startSweeper sweeps every interval until Close. A failed sweep is logged and
+// retried on the next tick: there is no caller to hand the error to.
+func (c *Cache) startSweeper(interval time.Duration) {
+	ctx, cancel := context.WithCancel(context.Background())
+	c.stopSweeper, c.swept = cancel, make(chan struct{})
+	go func() {
+		defer close(c.swept)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if _, err := c.Sweep(ctx); err != nil && ctx.Err() == nil {
+					log.Errorf("llm cache %s: %v", c.database.Path(), err)
+				}
+			}
+		}
+	}()
+}
+
+func updateStats(tx *sql.Tx, entry *Entry) error {
 	date := entry.CreatedAt.Format("2006-01-02")
-	_, _ = c.db.Exec(`
+	_, err := tx.Exec(`
 		INSERT INTO llm_stats (
 			date, model, provider, request_count,
 			total_input_tokens, total_output_tokens, total_reasoning_tokens,
@@ -345,4 +405,5 @@ func (c *Cache) updateStats(entry *Entry) {
 		entry.TokensCacheRead, entry.TokensCacheWrite,
 		entry.CostUSD,
 	)
+	return err
 }

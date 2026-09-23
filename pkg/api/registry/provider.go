@@ -37,6 +37,8 @@ type ModeCapabilities struct {
 	Interrupt bool
 	// Steer: the adapter implements SteerableProvider.
 	Steer bool
+	// SetPermissionMode: the adapter implements PermissionSwitchableProvider.
+	SetPermissionMode bool
 	// CallerTools reports that the adapter can expose caller-supplied
 	// api.Config.Tools rather than only its built-in tool ecosystem.
 	CallerTools bool

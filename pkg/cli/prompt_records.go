@@ -272,6 +272,7 @@ func parsedPromptDetail(record promptRecord, content string) (PromptDetail, erro
 		Metadata:      inspection.Metadata,
 		Run: PromptRenderRequest{
 			Variables:      maps.Clone(inspection.InputDefault),
+			Presets:        append([]string(nil), summary.Presets...),
 			RuntimeProfile: summary.RuntimeProfile,
 			Spec:           spec,
 			Runtimes:       promptRunModels(summary.Runtimes),
@@ -319,6 +320,7 @@ func promptSummaryFromContent(record promptRecord, content string) (PromptSummar
 	}
 	summary.Model = firstNonEmpty(cfg.Model.Name, req.Name)
 	summary.Mode = firstNonEmpty(string(cfg.Model.Mode), string(req.Mode))
+	summary.Presets = append([]string(nil), inspection.Presets...)
 	summary.RuntimeProfile = inspection.RuntimeProfile
 	summary.Runtimes = inspection.Runtimes
 	summary.Variables = inspection.Variables
@@ -398,6 +400,7 @@ func inspectPrompt(content string, data map[string]any) (promptInspection, error
 		InputDefault:   inputDefault,
 		OutputSchema:   anyToMap(rendered.Output.Schema),
 		Runtimes:       doc.Runtimes,
+		Presets:        append([]string(nil), doc.Presets...),
 		RuntimeProfile: doc.RuntimeProfile,
 		Variables:      variablesFromSchema(inputSchema),
 	}, nil

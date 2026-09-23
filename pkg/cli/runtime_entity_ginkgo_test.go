@@ -131,7 +131,7 @@ var _ = Describe("runtime entities over file sources", func() {
 		Expect(record.ID).To(Equal(runtimeprofiles.EncodeID(runtimeprofiles.KindPreset, f.presets.ID, "organization")))
 		Expect(record.Source.Kind).To(Equal(runtimeprofiles.SourceFile))
 		Expect(record.Spec.Budget.MaxTurns).To(Equal(20))
-		Expect(jsonKeys(record)).To(ConsistOf("id", "key", "source", "name", "description", "scope", "spec", "updatedAt"))
+		Expect(jsonKeys(record)).To(ConsistOf("id", "key", "source", "name", "description", "scope", "spec", "presets", "updatedAt"))
 		Expect(jsonKeys(record.Source)).To(ConsistOf("kind", "id", "label", "root", "writable", "implicit", "records"))
 		printJSON("preset list item", record)
 	})
@@ -153,6 +153,24 @@ var _ = Describe("runtime entities over file sources", func() {
 		Expect(listRuntimePresets(f.ctx, RuntimePresetListOptions{Scope: "user"})).To(HaveLen(1))
 		_, err = listRuntimePresets(f.ctx, RuntimePresetListOptions{Scope: "team"})
 		Expect(statusOf(err)).To(Equal(http.StatusBadRequest))
+	})
+
+	It("lists built-in presets after every other source and refuses to delete one", func() {
+		f := newRuntimeEntityFixture(runtimeprofiles.NewBuiltinSource())
+		f.createPreset(withTarget(map[string]any{"name": "Zeta", "scope": "user"}, f.presets.ID))
+
+		listed, err := listRuntimePresets(f.ctx, RuntimePresetListOptions{})
+		Expect(err).NotTo(HaveOccurred())
+		names := make([]string, 0, len(listed))
+		for _, record := range listed {
+			names = append(names, string(record.Source.Kind)+":"+record.Name)
+		}
+		Expect(names).To(Equal([]string{"file:Zeta", "builtin:Edit", "builtin:Plan", "builtin:Read-only"}))
+		Expect(listRuntimePresets(f.ctx, RuntimePresetListOptions{Source: "builtin"})).To(HaveLen(3))
+
+		err = deleteRuntimePreset(f.ctx, "plan")
+		Expect(statusOf(err)).To(Equal(http.StatusConflict))
+		Expect(err).To(MatchError(ContainSubstring(runtimeprofiles.ErrReadOnly.Error())))
 	})
 
 	It("gets a preset by unique name or encoded id", func() {

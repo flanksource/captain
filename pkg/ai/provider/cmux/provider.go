@@ -339,6 +339,11 @@ func (p *Provider) execute(ctx context.Context, req ai.Request, r *run) (*ai.Usa
 	if err != nil {
 		return nil, 0, fmt.Errorf("cmux: invalid cliArgs: %w", err)
 	}
+	permissions, ignored := req.Permissions.ForRuntime(p.provider, api.ModeCmux)
+	for _, warning := range ignored {
+		log.Warnf("cmux: %s", warning)
+	}
+	tools := permissions.Tools
 	agentCommand := withEnv(AgentCommand(AgentCommandOpts{
 		Agent:           agent,
 		Model:           model,
@@ -346,8 +351,8 @@ func (p *Provider) execute(ctx context.Context, req ai.Request, r *run) (*ai.Usa
 		Resume:          resume,
 		Plan:            approval == api.PermissionPlan,
 		PermissionMode:  approval,
-		AllowedTools:    req.Permissions.Tools.AllowList(),
-		DisallowedTools: req.Permissions.Tools.DenyList(),
+		AllowedTools:    tools.AllowList(),
+		DisallowedTools: tools.DenyList(),
 		Directories:     req.Permissions.CleanDirectories(),
 		Effort:          req.Effort,
 		Memory:          req.Memory,

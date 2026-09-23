@@ -76,23 +76,32 @@ func TestLoadPromptContent_Sources(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// filepath positional
-	content, _, usedStdin, _, err := loadPromptContent(ctx, promptContentOptions{ID: path})
-	if err != nil || content != body || usedStdin {
-		t.Fatalf("file source: content=%q usedStdin=%v err=%v", content, usedStdin, err)
+	// filepath positional — an authored template, never literal
+	got, err := loadPromptContent(ctx, promptContentOptions{ID: path})
+	if err != nil || got.Text != body || got.UsedStdin || got.Literal {
+		t.Fatalf("file source: %+v err=%v", got, err)
 	}
 	// --prompt/-p text (positional empty)
-	content, _, _, _, err = loadPromptContent(ctx, promptContentOptions{Prompt: AIPromptOptions{Prompt: "inline body"}})
-	if err != nil || content != "inline body" {
-		t.Fatalf("prompt source: content=%q err=%v", content, err)
+	got, err = loadPromptContent(ctx, promptContentOptions{Prompt: AIPromptOptions{Prompt: "inline body"}})
+	if err != nil || got.Text != "inline body" || !got.Literal {
+		t.Fatalf("prompt source: %+v err=%v", got, err)
 	}
 	// stdin
-	content, _, usedStdin, _, err = loadPromptContent(ctx, promptContentOptions{Stdin: "piped body"})
-	if err != nil || content != "piped body" || !usedStdin {
-		t.Fatalf("stdin source: content=%q usedStdin=%v err=%v", content, usedStdin, err)
+	got, err = loadPromptContent(ctx, promptContentOptions{Stdin: "piped body"})
+	if err != nil || got.Text != "piped body" || !got.UsedStdin || !got.Literal {
+		t.Fatalf("stdin source: %+v err=%v", got, err)
+	}
+	// stdin named explicitly by the positional
+	got, err = loadPromptContent(ctx, promptContentOptions{ID: "-", Stdin: "piped body"})
+	if err != nil || got.Text != "piped body" || !got.UsedStdin {
+		t.Fatalf("dash source: %+v err=%v", got, err)
+	}
+	// `-` with nothing piped is a mistake worth naming, not a prompt lookup
+	if _, err = loadPromptContent(ctx, promptContentOptions{ID: "-"}); err == nil {
+		t.Error("expected error when - is given but nothing is piped")
 	}
 	// nothing
-	if _, _, _, _, err = loadPromptContent(ctx, promptContentOptions{}); err == nil {
+	if _, err = loadPromptContent(ctx, promptContentOptions{}); err == nil {
 		t.Error("expected error when no source is given")
 	}
 }

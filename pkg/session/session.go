@@ -11,7 +11,7 @@ import (
 // TranscriptParserVersion identifies the persisted transcript projection shape.
 // Consumers that parse a complete source use it when registering that source so
 // the monitor resumes from the recorded offset instead of replaying old events.
-const TranscriptParserVersion = 4
+const TranscriptParserVersion = 6
 
 // Session is the unified session aggregate. It is the single source of truth the
 // history/sessions commands render, the viewer consumes, and the chat/live
@@ -44,7 +44,9 @@ type Session struct {
 	Runtime         *api.RuntimeIdentity `json:"runtime,omitempty"`
 	ForkedFrom      string               `json:"forkedFrom,omitempty"`
 	ReasoningEffort string               `json:"reasoningEffort,omitempty"`
-	HistoryFile     string               `json:"historyFile,omitempty"`
+	// PermissionMode is the last permission posture the transcript recorded.
+	PermissionMode api.PermissionMode `json:"permissionMode,omitempty"`
+	HistoryFile    string             `json:"historyFile,omitempty"`
 
 	Git       GitState   `json:"git,omitempty"`
 	StartedAt *time.Time `json:"startedAt,omitempty"`
@@ -81,6 +83,9 @@ type Session struct {
 	// StructuredOutput is the decoded object returned by a schema-constrained
 	// prompt run. Messages retain the JSON text for transcript compatibility.
 	StructuredOutput map[string]any `json:"structuredOutput,omitempty"`
+
+	// AwaitingInput holds the questions the last turn left unanswered.
+	AwaitingInput *AwaitingInput `json:"awaitingInput,omitempty"`
 }
 
 // TranscriptWindow records the session's real transcript size when Messages

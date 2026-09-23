@@ -378,6 +378,31 @@ func (p *Provider) Interrupt(ctx context.Context) error {
 	return nil
 }
 
+// SetPermissionMode switches the live SDK session's posture; the SDK applies it
+// to the in-flight turn as well as later ones. It refuses the same
+// bypass-while-brokered combination initialize refuses.
+func (p *Provider) SetPermissionMode(ctx context.Context, mode api.PermissionMode) error {
+	runtime := api.RuntimeOf(api.Anthropic, api.ModeAgent)
+	if mode == "" || !api.PermissionCapabilitiesFor(runtime).ModeSupport(mode).Honoured() {
+		return fmt.Errorf("permissions.mode %q is not supported by %s", mode, runtime)
+	}
+	if p.cfg.CanUseTool != nil && mode == api.PermissionBypass {
+		return fmt.Errorf("claude-agent: bypassPermissions cannot bypass brokered tool approvals")
+	}
+	select {
+	case <-p.initDone:
+		if p.initErr != nil {
+			return fmt.Errorf("claude-agent: provider not started: %w", p.initErr)
+		}
+	default:
+		return fmt.Errorf("claude-agent: provider not started")
+	}
+	if _, err := p.rpc.Call(ctx, methodSetPermissionMode, map[string]string{"mode": string(mode)}); err != nil {
+		return fmt.Errorf("claude-agent set_permission_mode failed: %w", err)
+	}
+	return nil
+}
+
 func (p *Provider) interrupt() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

@@ -21,12 +21,10 @@ import {
   type RuntimeRecordKind,
   type RuntimeRecordSource,
   type StoredRuntimePreset,
-  type StoredRuntimeProfile,
 } from "./runtimeProfilesApi";
 import {
   useRuntimeDrafts,
   useRuntimePresets,
-  useRuntimeProfiles,
   type RuntimeCreateTargets,
 } from "./runtimeProfilesData";
 import {
@@ -49,16 +47,21 @@ export function RuntimeProfilesPage({
 }) {
   const selection = parseRuntimeProfilesSearch(search);
   const whoami = useWhoamiCatalog();
-  const schema = useQuery({ queryKey: ["prompt-schema"], queryFn: fetchPromptSchema });
+  const schema = useQuery({
+    queryKey: ["prompt-schema"],
+    queryFn: fetchPromptSchema,
+  });
   const presets = useRuntimePresets();
-  const profiles = useRuntimeProfiles();
   const families = useMemo(
-    () => (whoami.data ? familiesFromRuntimeCatalog(whoami.data.runtimes) : undefined),
+    () =>
+      whoami.data
+        ? familiesFromRuntimeCatalog(whoami.data.runtimes)
+        : undefined,
     [whoami.data],
   );
-  const loading = whoami.isLoading || schema.isLoading || presets.isLoading || profiles.isLoading;
-  const error = whoami.error ?? schema.error ?? presets.error ?? profiles.error;
-  const refetching = presets.isFetching || profiles.isFetching;
+  const loading = whoami.isLoading || schema.isLoading || presets.isLoading;
+  const error = whoami.error ?? schema.error ?? presets.error;
+  const refetching = presets.isFetching;
 
   return (
     <div className="h-full overflow-auto">
@@ -66,37 +69,44 @@ export function RuntimeProfilesPage({
         <header className="flex flex-wrap items-start justify-between gap-density-3">
           <div className="max-w-4xl space-y-density-2">
             <p className="text-xs font-semibold uppercase tracking-wide text-primary">
-              Captain · /runtime-profiles
+              Captain · /runtime-presets
             </p>
-            <h1 className="text-2xl font-semibold tracking-tight">Runtime profiles</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">
+              Runtime presets
+            </h1>
             <p className="text-sm text-muted-foreground">
-              Compose reusable presets into runtime profiles and inspect the spec Captain resolves
-              from them. Presets carry shared behavior and permissions by scope; a profile orders
-              its presets under one task-specific spec.
+              Author complete reusable task specifications and inspect the
+              effective spec Captain resolves from an ordered preset selection.
             </p>
           </div>
-          <Button size="sm" variant="outline" disabled={refetching} onClick={() => void Promise.all([presets.refetch(), profiles.refetch()])}>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={refetching}
+            onClick={() => void presets.refetch()}
+          >
             <UiRefresh className={refetching ? "animate-spin" : undefined} />
             Refresh library
           </Button>
         </header>
 
         {loading ? (
-          <StateMessage>Loading presets and profiles...</StateMessage>
+          <StateMessage>Loading presets...</StateMessage>
         ) : error ? (
           <StateMessage tone="error">{errorMessage(error)}</StateMessage>
-        ) : families && schema.data && presets.data && profiles.data ? (
+        ) : families && schema.data && presets.data ? (
           <RuntimeProfilesLibrary
             selection={selection}
             onNavigate={onNavigate}
             presets={presets.data}
-            profiles={profiles.data}
             families={families}
             sources={runtimeSourcesOf(schema.data)}
             sandboxes={schema.data.sandboxes}
           />
         ) : (
-          <StateMessage tone="error">The runtime library returned no result.</StateMessage>
+          <StateMessage tone="error">
+            The runtime library returned no result.
+          </StateMessage>
         )}
       </div>
     </div>
@@ -107,7 +117,6 @@ function RuntimeProfilesLibrary({
   selection,
   onNavigate,
   presets,
-  profiles,
   families,
   sources,
   sandboxes,
@@ -115,7 +124,6 @@ function RuntimeProfilesLibrary({
   selection: RuntimeProfilesSelection;
   onNavigate: Navigate;
   presets: StoredRuntimePreset[];
-  profiles: StoredRuntimeProfile[];
   families: SpecRuntimeFamily[];
   sources: RuntimeRecordSource[];
   sandboxes: SpecRuntimeSandboxCatalog | undefined;
@@ -123,39 +131,51 @@ function RuntimeProfilesLibrary({
   const [targets, setTargets] = useState(() => defaultCreateTargets(sources));
   const targetId = useId();
   const navigateTo = (next: Partial<RuntimeProfilesSelection>) =>
-    onNavigate(runtimeProfilesLocation({ ...selection, ...next }), { replace: true });
+    onNavigate(runtimeProfilesLocation({ ...selection, ...next }), {
+      replace: true,
+    });
   const drafts = useRuntimeDrafts({
     presets,
-    profiles,
+    profiles: [],
     targets,
     onCreatedPreset: (presetId) => navigateTo({ presetId }),
-    onCreatedProfile: (profileId) => navigateTo({ profileId }),
+    onCreatedProfile: () => undefined,
   });
   const effective = effectiveRuntimeSelection(selection, drafts);
-  const kind: RuntimeRecordKind = selection.view === "presets" ? "preset" : "profile";
+  const kind: RuntimeRecordKind = "preset";
   const eligible = createTargetsFor(sources, kind);
 
   return (
     <div className="space-y-density-4">
       {eligible.length > 1 && (
-        <Field label="Create in" htmlFor={targetId} labelClassName="text-xs" className="max-w-sm">
+        <Field
+          label="Create in"
+          htmlFor={targetId}
+          labelClassName="text-xs"
+          className="max-w-sm"
+        >
           <Select
             id={targetId}
             value={targets[kind]}
-            onChange={(event) => setTargets({ ...targets, [kind]: event.target.value })}
-            options={eligible.map((source) => ({ value: source.id, label: source.label }))}
+            onChange={(event) =>
+              setTargets({ ...targets, [kind]: event.target.value })
+            }
+            options={eligible.map((source) => ({
+              value: source.id,
+              label: source.label,
+            }))}
           />
         </Field>
       )}
       <RuntimeProfilesWorkspace
         presets={drafts.presets}
-        profiles={drafts.profiles}
-        view={effective.view}
-        onViewChange={(view) => navigateTo({ view })}
+        profiles={[]}
+        view="presets"
+        onViewChange={() => undefined}
         selectedPresetId={effective.presetId}
         selectedProfileId={effective.profileId}
         onSelectPreset={(presetId) => navigateTo({ presetId })}
-        onSelectProfile={(profileId) => navigateTo({ profileId })}
+        onSelectProfile={() => undefined}
         store={drafts.store}
         client={runtimeProfilesClient}
         families={families}
@@ -169,11 +189,14 @@ function RuntimeProfilesLibrary({
 }
 
 /** The database when it accepts the kind, else the first eligible source; a kind nobody accepts stays unset. */
-function defaultCreateTargets(sources: RuntimeRecordSource[]): RuntimeCreateTargets {
+function defaultCreateTargets(
+  sources: RuntimeRecordSource[],
+): RuntimeCreateTargets {
   const targets: RuntimeCreateTargets = {};
-  for (const kind of ["preset", "profile"] as const) {
+  for (const kind of ["preset"] as const) {
     const eligible = createTargetsFor(sources, kind);
-    const target = eligible.find((source) => source.id === RUNTIME_DB_TARGET) ?? eligible[0];
+    const target =
+      eligible.find((source) => source.id === RUNTIME_DB_TARGET) ?? eligible[0];
     if (target) targets[kind] = target.id;
   }
   return targets;

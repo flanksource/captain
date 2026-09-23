@@ -33,10 +33,10 @@ var _ = Describe("Structural spec layer validation", func() {
 		Entry("sandbox", Spec{Sandbox: &SandboxRef{Mode: "invalid"}}, "sandbox"),
 	)
 
-	It("attributes malformed layer metadata and constraints", func() {
+	It("attributes malformed layer metadata", func() {
 		for _, layer := range []SpecLayer{
 			{Name: "scope", Scope: "invalid"},
-			{Name: "limits", Scope: SpecLayerGlobal, Constraints: RuntimeConstraints{Limits: RunLimits{MaxInputTokens: -1}}},
+			{Name: "budget", Scope: SpecLayerGlobal, Spec: Spec{Budget: Budget{Timeout: "tomorrow"}}},
 		} {
 			err := ValidateSpecLayers(layer)
 			var structural *LayerValidationError

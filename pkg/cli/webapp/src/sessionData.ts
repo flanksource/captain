@@ -1,9 +1,11 @@
 import type {
   SessionCost,
   SessionUIMessage,
+  SpecPermissionMode,
   UnifiedSessionInput,
 } from "@flanksource/clicky-ui/ai";
 import { apiClient } from "./api";
+import type { AwaitingInput } from "./askAnswer";
 import { parseServerTiming, type TimingMetric } from "./serverTiming";
 import type {
   ChatCapabilities,
@@ -59,6 +61,9 @@ export type UnifiedSession = UnifiedSessionInput & {
   title?: string;
   initialPrompt?: string;
   structuredOutput?: Record<string, unknown>;
+  /** Last permission mode the transcript recorded. */
+  permissionMode?: SpecPermissionMode;
+  awaitingInput?: AwaitingInput;
 };
 
 export type SessionGetItem = {
@@ -73,6 +78,8 @@ export type SessionGetItem = {
   activeRunId?: string;
   chat?: ChatCapabilities;
   chatState?: ChatStateFrame;
+  permissionModes?: SpecPermissionMode[];
+  execution?: { captainId: string; source: string; cwd?: string; model?: string };
 };
 
 export type SessionGetResult = {

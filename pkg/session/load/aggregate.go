@@ -73,6 +73,9 @@ func mergeIdentity(aggregate, from *session.Session) {
 	setString(&aggregate.Provider, from.Provider)
 	setString(&aggregate.Model, from.Model)
 	setString(&aggregate.ReasoningEffort, from.ReasoningEffort)
+	if aggregate.PermissionMode == "" {
+		aggregate.PermissionMode = from.PermissionMode
+	}
 	setString(&aggregate.HistoryFile, from.HistoryFile)
 	setString(&aggregate.ForkedFrom, from.ForkedFrom)
 	setMode(&aggregate.ModelMode, from.ModelMode)

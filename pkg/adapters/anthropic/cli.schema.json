@@ -1,0 +1,351 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AnthropicCLIOptions",
+  "description": "Native Claude Code CLI arguments used by Captain's Anthropic CLI runtime.",
+  "type": "object",
+  "additionalProperties": false,
+  "x-captain-adapter": {
+    "provider": "anthropic",
+    "mode": "cli",
+    "sources": [
+      {"kind": "cli-help", "reference": "claude -p --help", "version": "2.1.268"},
+      {"kind": "implementation", "reference": "pkg/ai/provider/claude_cli.go", "version": "6a2b56cbd26702b18905865f21fc66d44cc864cc"}
+    ]
+  },
+  "properties": {
+    "prompt": {
+      "title": "Prompt", "description": "Prompt text written to Claude Code standard input.",
+      "type": "string", "x-clicky-section": "prompt", "x-clicky-order": 10,
+      "x-captain-option": {"nativeName": "stdin", "support": "mapped", "specPath": ["prompt.user", "prompt.attachments"]}
+    },
+    "model": {
+      "title": "Model", "description": "Model alias or full model identifier passed to Claude Code.",
+      "type": "string", "x-clicky-section": "model", "x-clicky-order": 20, "x-icon": "sparkles",
+      "x-captain-option": {"nativeName": "--model", "support": "mapped", "specPath": "model.name"}
+    },
+    "systemPrompt": {
+      "title": "System prompt", "description": "System prompt replacing Claude Code's default instructions.",
+      "type": "string", "x-clicky-section": "prompt", "x-clicky-order": 30,
+      "x-captain-option": {"nativeName": "--system-prompt", "support": "mapped", "specPath": "prompt.system"}
+    },
+    "appendSystemPrompt": {
+      "title": "Append system prompt", "description": "Additional instructions appended to Claude Code's system prompt.",
+      "type": "string", "x-clicky-section": "prompt", "x-clicky-order": 40,
+      "x-captain-option": {"nativeName": "--append-system-prompt", "support": "mapped", "specPath": "prompt.appendSystem"}
+    },
+    "resume": {
+      "title": "Resume session", "description": "Session identifier resumed by Claude Code.",
+      "type": "string", "x-clicky-section": "workspace", "x-clicky-order": 50,
+      "x-captain-option": {"nativeName": "--resume", "support": "mapped", "specPath": "sessionId"}
+    },
+    "effort": {
+      "title": "Effort", "description": "Reasoning effort requested from supported Claude models.",
+      "type": "string", "enum": ["low", "medium", "high", "xhigh", "max"], "x-clicky-section": "model", "x-clicky-order": 60, "x-enum-display": "combobox",
+      "x-captain-option": {"nativeName": "--effort", "support": "mapped", "specPath": "model.effort"}
+    },
+    "maxBudgetUsd": {
+      "title": "Maximum budget", "description": "Maximum spend in US dollars for the CLI request.",
+      "type": "number", "minimum": 0, "x-clicky-section": "model", "x-clicky-order": 70,
+      "x-captain-option": {"nativeName": "--max-budget-usd", "support": "mapped", "specPath": "budget.cost"}
+    },
+    "permissionMode": {
+      "title": "Permission mode", "description": "Claude Code permission posture translated from Captain policy.",
+      "type": "string", "enum": ["acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan"], "x-clicky-section": "permissions", "x-clicky-order": 80, "x-enum-display": "combobox",
+      "x-captain-option": {"nativeName": "--permission-mode", "support": "mapped", "specPath": "permissions.mode"}
+    },
+    "allowedTools": {
+      "title": "Allowed tools", "description": "Claude Code tools allowed by Captain's tool policy.",
+      "type": "array", "items": {"type": "string"}, "x-clicky-section": "permissions", "x-clicky-order": 90, "x-array-display": "list",
+      "x-captain-option": {"nativeName": "--allowedTools", "support": "mapped", "specPath": "permissions.tools.allow"}
+    },
+    "disallowedTools": {
+      "title": "Disallowed tools", "description": "Claude Code tools denied by Captain's tool policy.",
+      "type": "array", "items": {"type": "string"}, "x-clicky-section": "permissions", "x-clicky-order": 100, "x-array-display": "list",
+      "x-captain-option": {"nativeName": "--disallowedTools", "support": "mapped", "specPath": "permissions.tools.deny"}
+    },
+    "addDir": {
+      "title": "Additional directories", "description": "Directories outside the working directory that Claude Code may access.",
+      "type": "array", "items": {"type": "string", "format": "path"}, "x-clicky-section": "workspace", "x-clicky-order": 110, "x-array-display": "list",
+      "x-captain-option": {"nativeName": "--add-dir", "support": "mapped", "specPath": "permissions.directories"}
+    },
+    "pluginDir": {
+      "title": "Plugin directories", "description": "Claude Code plugin directories loaded for this session.",
+      "type": "array", "items": {"type": "string", "format": "path"}, "x-clicky-section": "workspace", "x-clicky-order": 120, "x-array-display": "list",
+      "x-captain-option": {"nativeName": "--plugin-dir", "support": "mapped", "specPath": "memory.skills"}
+    },
+    "disableSlashCommands": {
+      "title": "Disable slash commands", "description": "Whether skills and slash commands are disabled.",
+      "type": "boolean", "x-clicky-section": "workspace", "x-clicky-order": 130,
+      "x-captain-option": {"nativeName": "--disable-slash-commands", "support": "mapped", "specPath": "memory.skipSkills"}
+    },
+    "bare": {
+      "title": "Bare mode", "description": "Whether Claude starts without hooks, skills, plugins, or settings.",
+      "type": "boolean", "x-clicky-section": "workspace", "x-clicky-order": 140,
+      "x-captain-option": {"nativeName": "--bare", "support": "mapped", "specPath": ["memory.bare", "permissions.presets"]}
+    },
+    "mcpConfig": {
+      "title": "MCP configuration", "description": "MCP server configuration files or inline JSON passed to Claude Code.",
+      "type": "array", "items": {"type": "string"}, "x-clicky-section": "permissions", "x-clicky-order": 150, "x-array-display": "list",
+      "x-captain-option": {"nativeName": "--mcp-config", "support": "mapped", "specPath": "permissions.mcp"}
+    },
+    "settings": {
+      "title": "Settings", "description": "Settings file or inline JSON generated for sandbox and monitoring behavior.",
+      "type": "string", "x-clicky-section": "environment", "x-clicky-order": 160,
+      "x-captain-option": {"nativeName": "--settings", "support": "mapped", "specPath": ["permissions", "monitoring"]}
+    },
+    "jsonSchema": {
+      "title": "JSON Schema", "description": "JSON Schema constraining Claude's final response.",
+      "type": "object", "additionalProperties": true, "x-clicky-section": "prompt", "x-clicky-order": 170,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "--json-schema", "support": "mapped", "specPath": ["prompt.schema", "prompt.schemaJson"]}
+    },
+    "print": {
+      "title": "Print mode", "description": "Whether Claude prints one response and exits instead of opening an interactive session.",
+      "type": "boolean", "const": true, "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 180,
+      "x-captain-option": {"nativeName": "--print", "support": "managed", "note": "Captain always invokes Claude Code in print mode."}
+    },
+    "verbose": {
+      "title": "Verbose", "description": "Whether Claude emits complete stream-json diagnostic events.",
+      "type": "boolean", "const": true, "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 190,
+      "x-captain-option": {"nativeName": "--verbose", "support": "managed", "note": "Captain enables verbose output so the adapter receives the complete event stream."}
+    },
+    "outputFormat": {
+      "title": "Output format", "description": "Format used for Claude Code output.",
+      "type": "string", "const": "stream-json", "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 200,
+      "x-captain-option": {"nativeName": "--output-format", "support": "managed", "note": "Captain requires stream-json for typed event parsing."}
+    },
+    "strictMcpConfig": {
+      "title": "Strict MCP configuration", "description": "Whether Claude uses only MCP servers supplied by --mcp-config.",
+      "type": "boolean", "const": true, "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 210,
+      "x-captain-option": {"nativeName": "--strict-mcp-config", "support": "managed", "note": "Captain enables strict MCP configuration whenever it supplies or disables MCP servers."}
+    },
+    "agent": {
+      "title": "Agent", "description": "Named agent selected for the current session.",
+      "type": "string", "readOnly": true, "x-clicky-section": "prompt", "x-clicky-order": 220,
+      "x-captain-option": {"nativeName": "--agent", "support": "unsupported", "note": "Captain does not select a named Claude Code agent."}
+    },
+    "agents": {
+      "title": "Agent definitions", "description": "Inline JSON object defining custom agents.",
+      "type": "object", "additionalProperties": true, "readOnly": true, "x-clicky-section": "prompt", "x-clicky-order": 230,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "--agents", "support": "unsupported", "note": "Captain does not expose inline Claude Code agent definitions."}
+    },
+    "allowDangerouslySkipPermissions": {
+      "title": "Allow permission bypass", "description": "Whether permission bypass may be selected without being the default mode.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 240,
+      "x-captain-option": {"nativeName": "--allow-dangerously-skip-permissions", "support": "unsupported", "note": "Captain expresses bypass through its validated permission-mode mapping."}
+    },
+    "autocompact": {
+      "title": "Autocompact", "description": "Whether Claude compacts conversation context automatically.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "model", "x-clicky-order": 250,
+      "x-captain-option": {"nativeName": "--autocompact", "support": "unsupported", "note": "Captain does not override Claude Code context compaction."}
+    },
+    "axScreenReader": {
+      "title": "Screen reader mode", "description": "Whether terminal output is optimized for screen readers.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 260,
+      "x-captain-option": {"nativeName": "--ax-screen-reader", "support": "unsupported", "note": "Captain consumes machine-readable output and does not expose terminal accessibility flags."}
+    },
+    "background": {
+      "title": "Background mode", "description": "Whether the Claude Code session runs in the background.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 270,
+      "x-captain-option": {"nativeName": "--background", "support": "unsupported", "note": "Captain supervises a foreground child process."}
+    },
+    "betas": {
+      "title": "Beta headers", "description": "Anthropic beta feature identifiers included in API requests.",
+      "type": "array", "items": {"type": "string"}, "readOnly": true, "x-clicky-section": "model", "x-clicky-order": 280, "x-array-display": "list",
+      "x-captain-option": {"nativeName": "--betas", "support": "unsupported", "note": "Captain does not expose per-run Claude beta headers."}
+    },
+    "brief": {
+      "title": "Brief mode", "description": "Whether Claude emits a shorter initial response.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "prompt", "x-clicky-order": 290,
+      "x-captain-option": {"nativeName": "--brief", "support": "unsupported", "note": "Captain does not enable Claude Code brief mode."}
+    },
+    "chrome": {
+      "title": "Chrome integration", "description": "Whether Claude Code connects to the Chrome browser integration.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "environment", "x-clicky-order": 300,
+      "x-captain-option": {"nativeName": "--chrome", "support": "unsupported", "note": "Captain does not control Claude Code's Chrome integration."}
+    },
+    "noChrome": {
+      "title": "Disable Chrome integration", "description": "Whether Claude Code explicitly avoids the Chrome browser integration.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "environment", "x-clicky-order": 310,
+      "x-captain-option": {"nativeName": "--no-chrome", "support": "unsupported", "note": "Captain does not control Claude Code's Chrome integration."}
+    },
+    "cloud": {
+      "title": "Cloud session", "description": "Whether the prompt is executed as a Claude Code cloud session.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "environment", "x-clicky-order": 320,
+      "x-captain-option": {"nativeName": "--cloud", "support": "unsupported", "note": "Captain runs the installed local Claude Code process."}
+    },
+    "continue": {
+      "title": "Continue recent session", "description": "Whether Claude continues the most recent session in the working directory.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 330,
+      "x-captain-option": {"nativeName": "--continue", "support": "unsupported", "note": "Captain resumes only an explicit session identifier."}
+    },
+    "dangerouslySkipPermissions": {
+      "title": "Skip permissions", "description": "Whether all permission checks are bypassed.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 340,
+      "x-captain-option": {"nativeName": "--dangerously-skip-permissions", "support": "unsupported", "note": "Captain maps explicit bypass requests through --permission-mode after policy validation."}
+    },
+    "debug": {
+      "title": "Debug", "description": "Debug category selector or switch for Claude Code diagnostics.",
+      "oneOf": [{"type": "boolean"}, {"type": "string"}], "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 350,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "--debug", "support": "unsupported", "note": "Captain does not expose Claude Code debug categories."}
+    },
+    "debugFile": {
+      "title": "Debug file", "description": "Path receiving Claude Code diagnostic logs.",
+      "type": "string", "format": "path", "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 360,
+      "x-captain-option": {"nativeName": "--debug-file", "support": "unsupported", "note": "Captain captures the child process streams instead of configuring a native debug file."}
+    },
+    "environment": {
+      "title": "Environment", "description": "Remote cloud environment selected for the session.",
+      "type": "string", "readOnly": true, "x-clicky-section": "environment", "x-clicky-order": 370,
+      "x-captain-option": {"nativeName": "--environment", "support": "unsupported", "note": "Captain runs the local Claude Code environment."}
+    },
+    "excludeDynamicSystemPromptSections": {
+      "title": "Excluded system prompt sections", "description": "Dynamic Claude Code system-prompt sections omitted from the request.",
+      "type": "array", "items": {"type": "string"}, "readOnly": true, "x-clicky-section": "prompt", "x-clicky-order": 380, "x-array-display": "list",
+      "x-captain-option": {"nativeName": "--exclude-dynamic-system-prompt-sections", "support": "unsupported", "note": "Captain does not filter Claude Code's dynamic system prompt."}
+    },
+    "fallbackModel": {
+      "title": "Fallback model", "description": "Model used if the requested model is overloaded.",
+      "type": "string", "readOnly": true, "x-clicky-section": "model", "x-clicky-order": 390,
+      "x-captain-option": {"nativeName": "--fallback-model", "support": "unsupported", "note": "Captain performs fallback selection in its provider registry."}
+    },
+    "file": {
+      "title": "Files", "description": "File resources downloaded and supplied to the conversation at startup.",
+      "type": "array", "items": {"type": "string"}, "readOnly": true, "x-clicky-section": "prompt", "x-clicky-order": 400, "x-array-display": "list",
+      "x-captain-option": {"nativeName": "--file", "support": "unsupported", "note": "Captain sends local attachments through its composed prompt rather than file-resource mappings."}
+    },
+    "forkSession": {
+      "title": "Fork session", "description": "Whether resuming creates a new session identifier.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 410,
+      "x-captain-option": {"nativeName": "--fork-session", "support": "unsupported", "note": "Captain resumes the requested session in place."}
+    },
+    "forwardSubagentText": {
+      "title": "Forward subagent text", "description": "Whether subagent text is forwarded into the parent output stream.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 420,
+      "x-captain-option": {"nativeName": "--forward-subagent-text", "support": "unsupported", "note": "Captain does not enable native Claude subagent text forwarding."}
+    },
+    "fromPr": {
+      "title": "Resume from pull request", "description": "Pull request number whose linked Claude session is resumed.",
+      "type": "integer", "minimum": 1, "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 430,
+      "x-captain-option": {"nativeName": "--from-pr", "support": "unsupported", "note": "Captain resumes by session identifier, not pull request."}
+    },
+    "ide": {
+      "title": "IDE integration", "description": "Whether Claude Code connects automatically to an available IDE.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "environment", "x-clicky-order": 440,
+      "x-captain-option": {"nativeName": "--ide", "support": "unsupported", "note": "Captain does not enable Claude Code IDE integration."}
+    },
+    "includeHookEvents": {
+      "title": "Include hook events", "description": "Whether hook lifecycle events appear in stream-json output.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 450,
+      "x-captain-option": {"nativeName": "--include-hook-events", "support": "unsupported", "note": "Captain receives monitoring hooks through generated settings."}
+    },
+    "includePartialMessages": {
+      "title": "Include partial messages", "description": "Whether partial assistant chunks appear in stream-json output.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 460,
+      "x-captain-option": {"nativeName": "--include-partial-messages", "support": "unsupported", "note": "Captain parses complete stream-json message events."}
+    },
+    "inputFormat": {
+      "title": "Input format", "description": "Format used to parse standard input.",
+      "type": "string", "enum": ["text", "stream-json"], "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 470, "x-enum-display": "segmented",
+      "x-captain-option": {"nativeName": "--input-format", "support": "unsupported", "note": "Captain writes plain prompt text to standard input."}
+    },
+    "name": {
+      "title": "Session name", "description": "Display name assigned to the Claude Code session.",
+      "type": "string", "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 480,
+      "x-captain-option": {"nativeName": "--name", "support": "unsupported", "note": "Captain does not assign a native Claude session name."}
+    },
+    "noSessionPersistence": {
+      "title": "Disable session persistence", "description": "Whether Claude Code avoids saving the session to disk.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 490,
+      "x-captain-option": {"nativeName": "--no-session-persistence", "support": "unsupported", "note": "Captain does not override Claude Code session persistence."}
+    },
+    "permissionPrompts": {
+      "title": "Permission prompts", "description": "Transport used for permission prompts in non-interactive mode.",
+      "type": "string", "enum": ["host", "none"], "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 500, "x-enum-display": "segmented",
+      "x-captain-option": {"nativeName": "--permission-prompts", "support": "unsupported", "note": "Captain uses Claude Code's permission mode and tool allow or deny lists."}
+    },
+    "pluginUrl": {
+      "title": "Plugin URLs", "description": "Remote plugin URLs downloaded and loaded for the session.",
+      "type": "array", "items": {"type": "string", "format": "uri"}, "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 510, "x-array-display": "list",
+      "x-captain-option": {"nativeName": "--plugin-url", "support": "unsupported", "note": "Captain accepts local skill directories and does not download Claude plugins."}
+    },
+    "promptSuggestions": {
+      "title": "Prompt suggestions", "description": "Whether Claude emits suggested follow-up prompts.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "prompt", "x-clicky-order": 520,
+      "x-captain-option": {"nativeName": "--prompt-suggestions", "support": "unsupported", "note": "Captain does not request native prompt suggestions."}
+    },
+    "remoteControl": {
+      "title": "Remote control", "description": "Whether the local session can be controlled from claude.ai.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "environment", "x-clicky-order": 530,
+      "x-captain-option": {"nativeName": "--remote-control", "support": "unsupported", "note": "Captain owns the local child process and does not enable remote control."}
+    },
+    "remoteControlSessionNamePrefix": {
+      "title": "Remote session name prefix", "description": "Prefix used for remote-control session names.",
+      "type": "string", "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 540,
+      "x-captain-option": {"nativeName": "--remote-control-session-name-prefix", "support": "unsupported", "note": "Captain does not enable Claude remote-control sessions."}
+    },
+    "replayUserMessages": {
+      "title": "Replay user messages", "description": "Whether stdin user messages are echoed back into stream-json output.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 550,
+      "x-captain-option": {"nativeName": "--replay-user-messages", "support": "unsupported", "note": "Captain already owns the canonical input message."}
+    },
+    "restricted": {
+      "title": "Restricted mode", "description": "Whether networking and filesystem access are restricted.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "sandbox", "x-clicky-order": 560,
+      "x-captain-option": {"nativeName": "--restricted", "support": "unsupported", "note": "Captain maps its explicit permissions instead of enabling this CLI preset."}
+    },
+    "safeMode": {
+      "title": "Safe mode", "description": "Whether built-in skills, hooks, filesystem MCP servers, and command files are disabled.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "sandbox", "x-clicky-order": 570,
+      "x-captain-option": {"nativeName": "--safe-mode", "support": "unsupported", "note": "Captain maps its bare and permission settings separately."}
+    },
+    "sessionId": {
+      "title": "New session ID", "description": "Explicit UUID assigned to a new Claude Code session.",
+      "type": "string", "format": "uuid", "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 580,
+      "x-captain-option": {"nativeName": "--session-id", "support": "unsupported", "note": "Captain reads the session identifier emitted by Claude Code."}
+    },
+    "settingSources": {
+      "title": "Setting sources", "description": "Filesystem setting scopes loaded by Claude Code.",
+      "type": "array", "items": {"type": "string", "enum": ["user", "project", "local"]}, "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 590, "x-array-display": "list",
+      "x-captain-option": {"nativeName": "--setting-sources", "support": "unsupported", "note": "Captain does not override Claude Code's settings-source discovery."}
+    },
+    "systemPromptSnapshot": {
+      "title": "System prompt snapshot", "description": "Snapshot file supplying system-prompt content.",
+      "type": "string", "format": "path", "readOnly": true, "x-clicky-section": "prompt", "x-clicky-order": 600,
+      "x-captain-option": {"nativeName": "--system-prompt-snapshot", "support": "unsupported", "note": "Captain sends its system prompt directly."}
+    },
+    "teleport": {
+      "title": "Teleport session", "description": "Whether a remote Claude session is teleported into the local terminal.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 610,
+      "x-captain-option": {"nativeName": "--teleport", "support": "unsupported", "note": "Captain does not import remote Claude sessions."}
+    },
+    "tmux": {
+      "title": "Tmux mode", "description": "Whether Claude creates a tmux worktree session.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 620,
+      "x-captain-option": {"nativeName": "--tmux", "support": "unsupported", "note": "Captain manages its own process and working directory."}
+    },
+    "tools": {
+      "title": "Tool set", "description": "Built-in Claude Code tool names made available to the session.",
+      "type": "array", "items": {"type": "string"}, "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 630, "x-array-display": "list",
+      "x-captain-option": {"nativeName": "--tools", "support": "unsupported", "note": "Captain maps allow and deny policies instead of replacing Claude's tool set."}
+    },
+    "worktree": {
+      "title": "Worktree", "description": "Whether Claude starts in an isolated Git worktree, optionally using a supplied name.",
+      "oneOf": [{"type": "boolean"}, {"type": "string"}], "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 640,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "--worktree", "support": "unsupported", "note": "Captain executes in the working directory supplied by its context."}
+    },
+    "help": {
+      "title": "Help", "description": "Whether Claude Code prints command help and exits.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 650,
+      "x-captain-option": {"nativeName": "--help", "support": "unsupported", "note": "Captain executes requests rather than CLI help."}
+    },
+    "version": {
+      "title": "Version", "description": "Whether Claude Code prints its version and exits.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 660,
+      "x-captain-option": {"nativeName": "--version", "support": "unsupported", "note": "Captain resolves the installed CLI version outside request execution."}
+    }
+  }
+}

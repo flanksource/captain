@@ -71,7 +71,11 @@ func observePromptAction(ctx context.Context, id string, flags map[string]string
 	// Seed the renderer so --runtime works without saved defaults.
 	opts.Model = selector
 
-	rendered, err := renderPromptCLI(ctx, id, opts, flags["vars"], readStdinIfCLI(ctx))
+	stdin, err := readStdinIfCLI(ctx)
+	if err != nil {
+		return api.RuntimeObservation{}, err
+	}
+	rendered, err := renderPromptCLI(ctx, id, opts, opts.Vars, stdin)
 	if err != nil {
 		return api.RuntimeObservation{}, err
 	}

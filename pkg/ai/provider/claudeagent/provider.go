@@ -41,6 +41,8 @@ const (
 	methodPrompt     = "prompt"
 	methodInterrupt  = "interrupt"
 	methodShutdown   = "shutdown"
+	// methodSetPermissionMode switches the live query's posture (Query.setPermissionMode).
+	methodSetPermissionMode = "set_permission_mode"
 )
 
 // methodCanUseTool is the server→client request agent.ts sends to broker a
@@ -451,8 +453,14 @@ func (p *Provider) initializeParams(req ai.Request) (initializeParams, error) {
 	}
 	// AllowList/DenyList, not the raw Allow/Deny slices: an `off` tool mode is a
 	// deny that only the normalized policy map reports, and forwarding the raw
-	// slice would let `tools: {Bash: off}` run.
-	allowed := req.Permissions.Tools.AllowList()
+	// slice would let `tools: {Bash: off}` run. The lists are built from the
+	// tools as claude names them, so a portable `shell: deny` reaches Bash.
+	permissions, ignored := req.Permissions.ForRuntime(api.Anthropic, api.ModeAgent)
+	for _, warning := range ignored {
+		log.Warnf("%s", warning)
+	}
+	tools := permissions.Tools
+	allowed := tools.AllowList()
 	if req.Permissions.HasPreset(api.PresetEdit) {
 		if len(allowed) == 0 {
 			allowed = safeEditAllowlist
@@ -489,10 +497,11 @@ func (p *Provider) initializeParams(req ai.Request) (initializeParams, error) {
 	return initializeParams{
 		Cwd:                req.Cwd(),
 		Model:              bridgeModel(p.model),
+		Effort:             req.Effort,
 		SystemPrompt:       req.Prompt.System,
 		AppendSystemPrompt: req.Prompt.AppendSystem,
 		AllowedTools:       allowed,
-		DisallowedTools:    req.Permissions.Tools.DenyList(),
+		DisallowedTools:    tools.DenyList(),
 		AdditionalDirs:     req.Permissions.CleanDirectories(),
 		MaxTurns:           req.Budget.MaxTurns,
 		MaxBudgetUsd:       maxBudget,
@@ -503,6 +512,7 @@ func (p *Provider) initializeParams(req ai.Request) (initializeParams, error) {
 		OutputSchema:       p.sessionSchema,
 		MonitorURL:         monitorHooksURL(req),
 		MCPServers:         callerToolServers(p.callerTools),
+		StrictMCPConfig:    req.Permissions.MCP.Disabled,
 		CallerToolUseIDKey: callerToolUseIDKey(p.callerTools),
 	}, nil
 }

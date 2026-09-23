@@ -27,21 +27,26 @@ var _ = Describe("Owned runtime layer validation", func() {
 
 	It("rejects malformed catalog fields before a request can overwrite them", func(ctx SpecContext) {
 		source := newMemSource("db", SourceDB, true)
-		profile := source.profiles.put("review", ProfileInput{Name: "Review", Spec: api.Spec{Budget: api.Budget{Timeout: "invalid"}}})
+		preset := source.presets.put("review", PresetInput{
+			Name: "Review", Scope: api.SpecLayerSurface,
+			Spec: api.RuntimePresetSpec(api.Spec{Budget: api.Budget{Timeout: "invalid"}}),
+		})
 		catalog, err := NewCatalog(source)
 		Expect(err).NotTo(HaveOccurred())
 		resolver := NewResolver(func(context.Context) (*Catalog, error) { return catalog, nil })
-		_, err = resolver.Layers(ctx, ResolveOptions{RequestedProfile: profile.ID,
+		_, err = resolver.Layers(ctx, ResolveOptions{RequestedPresets: []string{preset.ID}, RequestedPresetsSet: true,
 			RequestLayers: []api.SpecLayer{api.RequestSpecLayer("request", api.Spec{Budget: api.Budget{Timeout: "1m"}})},
 		})
 		var owned *OwnedLayersError
 		var structural *api.LayerValidationError
 		var selected *SelectionError
 		Expect(errors.As(err, &owned)).To(BeTrue())
+		Expect(owned.Kind).To(Equal(KindPreset))
+		Expect(err).To(MatchError(ContainSubstring("runtime preset")))
 		Expect(errors.As(err, &structural)).To(BeTrue())
 		Expect(errors.As(err, &selected)).To(BeTrue())
 		Expect(selected.Origin).To(Equal(SelectionRequested))
-		Expect(structural.Layer).To(Equal("Review run spec"))
+		Expect(structural.Layer).To(Equal("Review"))
 	})
 
 	It("rejects invalid caller layers without claiming catalog ownership", func(ctx SpecContext) {

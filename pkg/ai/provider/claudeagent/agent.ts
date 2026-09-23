@@ -4,12 +4,13 @@
 //
 // Protocol (newline-delimited JSON, one object per line on stdout):
 //   client -> server requests:
-//     initialize {cwd, model, systemPrompt, appendSystemPrompt, allowedTools,
-//                 maxTurns, maxBudgetUsd, permissionMode, resume, approvalMode,
+//     initialize {cwd, model, effort, systemPrompt, appendSystemPrompt,
+//                 allowedTools, maxTurns, maxBudgetUsd, permissionMode, resume, approvalMode,
 //                 outputSchema, mcpServers}
 //                 -> reply {ok:true}
 //     prompt {text, attachments?} -> reply {accepted:true}
 //     interrupt          -> reply {}
+//     set_permission_mode {mode} -> reply {} (applies to the live query)
 //     shutdown           -> reply {} then exit
 //   server -> client notifications:
 //     session/init   {session_id, model, tools}
@@ -61,6 +62,7 @@ delete process.env.CLAUDE_CODE_ENTRYPOINT;
 interface InitializeParams {
   cwd?: string;
   model?: string;
+  effort?: Options["effort"];
   systemPrompt?: string;
   appendSystemPrompt?: string;
   allowedTools?: string[];
@@ -86,6 +88,9 @@ interface InitializeParams {
     string,
     { type: "http"; url: string; headers?: Record<string, string> }
   >;
+  // strictMcpConfig limits the session to mcpServers. Absent, the SDK also
+  // loads every ambient server: .mcp.json, user settings, plugins.
+  strictMcpConfig?: boolean;
   callerToolUseIDKey?: string;
 }
 
@@ -99,6 +104,9 @@ interface HostDecision {
 let turns: TurnQueue | null = null;
 let activeQuery: Query | null = null;
 let callerToolServers: string[] = [];
+// bypassAllowed mirrors the query's allowDangerouslySkipPermissions, which the
+// SDK requires before it will enter bypassPermissions.
+let bypassAllowed = false;
 
 function callerToolName(toolName: string): string | undefined {
   for (const server of callerToolServers) {
@@ -124,6 +132,7 @@ function buildOptions(params: InitializeParams): Options {
   const options: Options = {
     cwd: params.cwd,
     model: params.model,
+    effort: params.effort,
     maxTurns: params.maxTurns || undefined,
     maxBudgetUsd: params.maxBudgetUsd || undefined,
     permissionMode,
@@ -143,6 +152,7 @@ function buildOptions(params: InitializeParams): Options {
         ? params.additionalDirectories
         : undefined,
     mcpServers: params.mcpServers,
+    strictMcpConfig: params.strictMcpConfig || undefined,
     stderr: (data: string) => process.stderr.write(data),
     hooks: {
       PreToolUse: [
@@ -320,7 +330,9 @@ function handleInitialize(id: JsonRpcId, params: InitializeParams) {
   try {
     callerToolServers = Object.keys(params.mcpServers ?? {});
     turns = new TurnQueue();
-    activeQuery = query({ prompt: turns, options: buildOptions(params) });
+    const options = buildOptions(params);
+    bypassAllowed = options.allowDangerouslySkipPermissions === true;
+    activeQuery = query({ prompt: turns, options });
     reply(id, { ok: true });
     pump(activeQuery).catch((err) => {
       notify("turn/error", { message: err?.message || String(err) });
@@ -355,6 +367,38 @@ async function handleInterrupt(id: JsonRpcId) {
     diag(`interrupt: ${(err as Error)?.message || err}`);
   }
   reply(id, {});
+}
+
+async function handleSetPermissionMode(
+  id: JsonRpcId,
+  params: { mode?: Options["permissionMode"] },
+) {
+  if (!activeQuery) {
+    replyError(id, -32002, "not initialized");
+    return;
+  }
+  if (!params.mode) {
+    replyError(id, -32602, "set_permission_mode requires a mode");
+    return;
+  }
+  if (params.mode === "bypassPermissions" && !bypassAllowed) {
+    replyError(
+      id,
+      -32602,
+      "bypassPermissions requires a session started in bypassPermissions",
+    );
+    return;
+  }
+  try {
+    await activeQuery.setPermissionMode(params.mode);
+    reply(id, {});
+  } catch (err) {
+    replyError(
+      id,
+      -32603,
+      `set_permission_mode failed: ${(err as Error)?.message || err}`,
+    );
+  }
 }
 
 function handleShutdown(id: JsonRpcId) {
@@ -488,6 +532,12 @@ rl.on("line", (line) => {
       break;
     case "interrupt":
       handleInterrupt(id);
+      break;
+    case "set_permission_mode":
+      handleSetPermissionMode(
+        id,
+        (req.params as { mode?: Options["permissionMode"] }) || {},
+      );
       break;
     case "shutdown":
       handleShutdown(id);

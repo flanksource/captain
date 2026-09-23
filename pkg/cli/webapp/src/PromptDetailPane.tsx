@@ -103,8 +103,9 @@ export function PromptDetailPane({
   promptSchema?: PromptSchemaDoc;
   tools: ToolMeta[];
   permissionCatalog?: AISpecRuntimePermissionCatalog;
-  /** Saved runtime presets and profiles; both present enables the profile picker in the spec editor. */
+  /** Saved runtime presets; enables the "Runtime presets" picker in the spec editor on its own. */
   presets?: RuntimePreset[];
+  /** Saved runtime profiles; passed independently of presets, and enables the profile picker when present. */
   profiles?: RuntimeProfile[];
   onSaveProfile?: (profile: RuntimeProfile) => Promise<RuntimeProfile>;
   onCreateProfile?: (profile: RuntimeProfile) => Promise<RuntimeProfile>;
@@ -246,7 +247,8 @@ export function PromptDetailPane({
                 {...(promptSchema?.sandboxes
                   ? { sandboxCatalog: promptSchema.sandboxes }
                   : {})}
-                {...(profiles && presets ? { profiles, presets } : {})}
+                {...(presets ? { presets } : {})}
+                {...(profiles ? { profiles } : {})}
                 {...(onSaveProfile ? { onSaveProfile } : {})}
                 {...(onCreateProfile ? { onCreateProfile } : {})}
                 {...(onResolveProfile ? { onResolveProfile } : {})}

@@ -30,7 +30,7 @@ func RegisterRuntimeEntities() {
 }
 
 // runtimeSourceMatches accepts an empty filter, a source id, or a source kind
-// ("db" or "file").
+// ("db", "file" or "builtin").
 func runtimeSourceMatches(source runtimeprofiles.SourceInfo, filter string) bool {
 	filter = strings.ToLower(strings.TrimSpace(filter))
 	return filter == "" || filter == strings.ToLower(source.ID) || filter == string(source.Kind)
@@ -58,13 +58,21 @@ func runtimeScopeFilter(raw string) (api.SpecLayerScope, error) {
 	return "", runtimeBodyError("unknown scope %q; use global, context, surface or user", raw)
 }
 
-// sortRuntimeRecords orders database records before file records, then by name
-// case-insensitively, so a mixed listing reads the same on every host.
+// sortRuntimeRecords orders database records before file records and built-ins
+// last, then by name case-insensitively, so a mixed listing reads the same on
+// every host.
 func sortRuntimeRecords[T any](items []T, identity func(T) (runtimeprofiles.SourceKind, string)) {
+	builtinRank := func(kind runtimeprofiles.SourceKind) int {
+		if kind == runtimeprofiles.SourceBuiltin {
+			return 1
+		}
+		return 0
+	}
 	slices.SortStableFunc(items, func(left, right T) int {
 		leftKind, leftName := identity(left)
 		rightKind, rightName := identity(right)
 		return cmp.Or(
+			cmp.Compare(builtinRank(leftKind), builtinRank(rightKind)),
 			cmp.Compare(leftKind, rightKind),
 			cmp.Compare(strings.ToLower(leftName), strings.ToLower(rightName)),
 		)

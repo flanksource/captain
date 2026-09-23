@@ -28,6 +28,7 @@ describe("resolveChatState", () => {
     steer: false,
     followUp: true,
     resume: true,
+    setPermissionMode: false,
   };
 
   it("uses a polled idle state when the SSE state is behind on the same turn", () => {

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/captainconfig"
 	"github.com/flanksource/captain/pkg/database"
 
@@ -36,6 +37,7 @@ var _ = Describe("Default runtime catalog", func() {
 			defaultFileInfo(KindProfile, filepath.Join(configHome, "profiles"), true),
 			defaultFileInfo(KindPreset, filepath.Join(cwd, ".captain", "presets"), true),
 			defaultFileInfo(KindProfile, filepath.Join(cwd, ".captain", "profiles"), true),
+			NewBuiltinSource().Info(),
 		}))
 		resolution, err := catalog.Resolve(ctx, "Review")
 		Expect(err).NotTo(HaveOccurred())
@@ -56,6 +58,7 @@ var _ = Describe("Default runtime catalog", func() {
 			defaultFileInfo(KindProfile, filepath.Join(home, ".config", "captain", "profiles"), true),
 			defaultFileInfo(KindPreset, filepath.Join(actualCwd, ".captain", "presets"), true),
 			defaultFileInfo(KindProfile, filepath.Join(actualCwd, ".captain", "profiles"), true),
+			NewBuiltinSource().Info(),
 		}))
 	})
 
@@ -87,8 +90,22 @@ var _ = Describe("Default runtime catalog", func() {
 		cfg := captainconfig.Config{Runtime: captainconfig.RuntimeDefaults{PresetDirs: []string{presets, alias}}}
 		catalog, err := NewDefaultCatalog(ctx, DefaultCatalogOptions{Cwd: cwd, Config: &cfg})
 		Expect(err).NotTo(HaveOccurred())
-		Expect(catalog.Sources()).To(HaveLen(5))
-		Expect(catalog.ListPresets(ctx)).To(HaveLen(1))
+		Expect(catalog.Sources()).To(HaveLen(6))
+		Expect(catalog.ListPresets(ctx)).To(HaveLen(4), "the configured preset plus the three built-ins")
+	})
+
+	It("registers the built-ins last and lets a repo preset override one by name", func(ctx SpecContext) {
+		writeRecordFile(filepath.Join(cwd, ".captain", "presets"), "plan.yaml", "name: Plan\nscope: context\nspec:\n  permissions:\n    mode: default\n")
+		catalog, err := NewDefaultCatalog(ctx, DefaultCatalogOptions{Cwd: cwd, Config: &captainconfig.Config{}})
+		Expect(err).NotTo(HaveOccurred())
+		sources := catalog.Sources()
+		Expect(sources[len(sources)-1]).To(Equal(NewBuiltinSource().Info()))
+		listed, err := catalog.ListPresets(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(presetSummaries(listed)).To(Equal([][2]string{{"file", "Plan"}, {"builtin", "Edit"}, {"builtin", "Read-only"}}))
+		resolution, err := catalog.ResolvePresets(ctx, []string{"plan"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resolution.Resolved.Spec.Permissions.Mode).To(Equal(api.PermissionDefault))
 	})
 
 	It("registers the database first and defers opener failures until records are read", func(ctx SpecContext) {
