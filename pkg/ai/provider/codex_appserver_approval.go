@@ -117,7 +117,8 @@ func (c *CodexAppServer) handleUserInput(raw json.RawMessage) (map[string]any, e
 	if request.ThreadID != threadID || request.TurnID != turnID {
 		return nil, fmt.Errorf("codex question request names thread %q turn %q; active thread %q turn %q", request.ThreadID, request.TurnID, threadID, turnID)
 	}
-	ids := make(map[string]struct{}, len(request.Questions))
+	questions := make([]api.TerminalQuestion, 0, len(request.Questions))
+	seen := make(map[string]struct{}, len(request.Questions))
 	for _, question := range request.Questions {
 		if question.ID == "" || strings.TrimSpace(question.Question) == "" {
 			return nil, fmt.Errorf("codex question request has an empty question id or text")
@@ -125,10 +126,15 @@ func (c *CodexAppServer) handleUserInput(raw json.RawMessage) (map[string]any, e
 		if question.IsSecret {
 			return nil, fmt.Errorf("codex question %q is secret and cannot use the durable question broker", question.ID)
 		}
-		if _, exists := ids[question.ID]; exists {
+		if _, exists := seen[question.ID]; exists {
 			return nil, fmt.Errorf("codex question request repeats id %q", question.ID)
 		}
-		ids[question.ID] = struct{}{}
+		seen[question.ID] = struct{}{}
+		// MultiSelect: Codex takes a list of answers per question whatever the
+		// question was, so every one of them accepts several.
+		questions = append(questions, api.TerminalQuestion{
+			ID: question.ID, Text: strings.TrimSpace(question.Question), MultiSelect: true,
+		})
 	}
 	var input map[string]any
 	if err := json.Unmarshal(raw, &input); err != nil {
@@ -158,54 +164,23 @@ func (c *CodexAppServer) handleUserInput(raw json.RawMessage) (map[string]any, e
 	if !decision.Allow {
 		return nil, fmt.Errorf("codex question %s rejected: %s", request.ItemID, strings.TrimSpace(decision.Message))
 	}
-	answers, err := codexUserInputAnswers(ids, decision.UpdatedInput["answers"])
+	answers, err := codexUserInputAnswers(questions, decision.UpdatedInput["answers"])
 	if err != nil {
 		return nil, fmt.Errorf("codex question %s: %w", request.ItemID, err)
 	}
 	return map[string]any{"answers": answers}, nil
 }
 
-func codexUserInputAnswers(ids map[string]struct{}, value any) (map[string]any, error) {
-	raw, ok := value.(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("broker response needs answers keyed by question id")
+// codexUserInputAnswers shapes the broker's answers the way app-server wants
+// them: keyed by the question id Codex issued, each a list of chosen texts.
+func codexUserInputAnswers(questions []api.TerminalQuestion, value any) (map[string]any, error) {
+	resolved, err := api.AnswersForQuestions(questions, value)
+	if err != nil {
+		return nil, fmt.Errorf("broker response: %w", err)
 	}
-	if len(raw) != len(ids) {
-		return nil, fmt.Errorf("broker response has %d answers for %d questions", len(raw), len(ids))
-	}
-	answers := make(map[string]any, len(ids))
-	for id := range ids {
-		value, exists := raw[id]
-		if !exists {
-			return nil, fmt.Errorf("broker response is missing question %q", id)
-		}
-		var choices []string
-		switch answer := value.(type) {
-		case string:
-			choices = []string{answer}
-		case []string:
-			choices = answer
-		case []any:
-			for _, choice := range answer {
-				text, ok := choice.(string)
-				if !ok {
-					return nil, fmt.Errorf("broker response for %q contains a non-text answer", id)
-				}
-				choices = append(choices, text)
-			}
-		default:
-			return nil, fmt.Errorf("broker response for %q has unsupported answer type %T", id, value)
-		}
-		if len(choices) == 0 {
-			return nil, fmt.Errorf("broker response for %q is empty", id)
-		}
-		for i, choice := range choices {
-			if strings.TrimSpace(choice) == "" {
-				return nil, fmt.Errorf("broker response for %q has a blank answer", id)
-			}
-			choices[i] = strings.TrimSpace(choice)
-		}
-		answers[id] = map[string]any{"answers": choices}
+	answers := make(map[string]any, len(resolved))
+	for _, answer := range resolved {
+		answers[answer.Question.ID] = map[string]any{"answers": answer.Choices}
 	}
 	return answers, nil
 }

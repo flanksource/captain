@@ -324,11 +324,55 @@ func (p *Provider) handleCanUseTool(params json.RawMessage) (any, *jsonrpc.RPCEr
 	if err != nil {
 		return canUseToolResult{Allow: false, Message: err.Error()}, nil
 	}
+	updated := decision.UpdatedInput
+	if in.Tool == askUserQuestionTool && decision.Allow {
+		if updated, err = askQuestionInput(in.Input, updated); err != nil {
+			return canUseToolResult{Allow: false, Message: err.Error()}, nil
+		}
+	}
 	return canUseToolResult{
 		Allow:        decision.Allow,
 		Message:      decision.Message,
-		UpdatedInput: decision.UpdatedInput,
+		UpdatedInput: updated,
 	}, nil
+}
+
+const askUserQuestionTool = "AskUserQuestion"
+
+// askQuestionInput shapes a broker's answers the way AskUserQuestion wants them:
+// the input the agent asked with, plus one answer per question keyed by that
+// question's exact text — a string, or a list when the question is multi-select.
+//
+// It rebuilds from the agent's own input rather than forwarding what the host
+// sent, because the SDK rejects an updated input whose other fields differ from
+// the original, and a rejected input leaves the run waiting on an unanswerable
+// question. A decision carrying no answers is a plain approval and passes through.
+func askQuestionInput(asked, updated map[string]any) (map[string]any, error) {
+	if updated == nil || updated["answers"] == nil {
+		return updated, nil
+	}
+	questions, err := api.TerminalQuestionsFromInput(asked)
+	if err != nil {
+		return nil, fmt.Errorf("AskUserQuestion input: %w", err)
+	}
+	resolved, err := api.AnswersForQuestions(questions, updated["answers"])
+	if err != nil {
+		return nil, fmt.Errorf("AskUserQuestion answers: %w", err)
+	}
+	answers := make(map[string]any, len(resolved))
+	for _, answer := range resolved {
+		if answer.Question.MultiSelect {
+			answers[answer.Question.Text] = answer.Choices
+			continue
+		}
+		answers[answer.Question.Text] = answer.Choices[0]
+	}
+	input := make(map[string]any, len(asked)+1)
+	for key, value := range asked {
+		input[key] = value
+	}
+	input["answers"] = answers
+	return input, nil
 }
 
 // deliver forwards ev to the active turn without blocking past the turn's life:

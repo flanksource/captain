@@ -243,11 +243,11 @@ func (p *Provider) claim(token string) bool {
 	return false
 }
 
-// bareID strips this provider's catalog namespace (and the Gemini "models/"
-// namespace) from an id.
+// bareID strips this provider's catalog and agent namespaces (and the Gemini
+// "models/" namespace) from an id.
 func (p *Provider) bareID(model string) string {
 	model = strings.TrimSpace(model)
-	for _, prefix := range []string{p.CatalogPrefix + "/", p.PricingPrefix + "/", p.Name + "/", "models/"} {
+	for _, prefix := range []string{p.CatalogPrefix + "/", p.PricingPrefix + "/", p.Name + "/", p.AgentName + "/", "models/"} {
 		model = strings.TrimPrefix(model, prefix)
 	}
 	return model
