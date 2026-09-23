@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"strings"
+	"time"
 
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/database"
@@ -132,10 +133,82 @@ func (a *DatabaseExecutionAuthority) Begin(
 	return execution, nil
 }
 
+const (
+	// suspendedRunWait bounds how long a resolution waits for the run it answers
+	// to finish parking, and suspendedRunInterval is how often that is re-read.
+	// They match the seed wait's budget: the two wait out the two halves of the
+	// same in-flight suspension.
+	suspendedRunWait     = 5 * time.Second
+	suspendedRunInterval = 25 * time.Millisecond
+)
+
+// awaitSuspendedRun waits for a provider approval's prompt run to reach
+// `waiting`, the one state ResolveToolApprovalRequest accepts an answer in.
+//
+// A provider approval is recorded — and so becomes visible on the session and
+// goes out on the event stream carrying its approval ID — while the stream that
+// raised it is still finishing the turn and encoding its checkpoint. The run
+// only reaches `waiting` several statements later. So anything that answers the
+// question the moment it is asked raced the suspension and got a 409 telling it
+// to retry something that was never wrong: a person clicking Approve promptly,
+// or a poller in a test.
+//
+// The guard being waited for is not removable. A resolution applied before the
+// run parks yields no continuation (see resolveToolApproval), and the suspension
+// then parks the run on an already-answered approval that nothing ever resumes.
+// So wait the parking out — the same treatment awaitSuspendedSeed gives the
+// other half of this window — and fail loudly when it never happens.
+//
+// This runs outside the resolving transaction deliberately: a snapshot taken
+// inside one would never observe the suspending connection's commit.
+func (a *DatabaseExecutionAuthority) awaitSuspendedRun(ctx context.Context, approvalID string) error {
+	requestID, err := uuid.Parse(approvalID)
+	if err != nil {
+		return nil // resolveToolApproval reports a malformed ID, with its own message
+	}
+	deadline := time.Now().Add(suspendedRunWait)
+	for {
+		request, err := a.db.GetTurnRequest(ctx, requestID)
+		if err != nil {
+			return nil // the resolve path owns not-found and read failures alike
+		}
+		// A caller-tool approval carries its own authority and is answerable
+		// whatever its run is doing. Anything already decided, or with no run to
+		// resume, is likewise the store's answer to give, not this wait's.
+		if request.CredentialID != nil || request.PromptRunID == nil ||
+			request.State != database.TurnRequestStatePending {
+			return nil
+		}
+		run, err := a.db.GetPromptRun(ctx, *request.PromptRunID)
+		if err != nil {
+			return err
+		}
+		switch run.State {
+		case database.PromptRunStateWaiting:
+			return nil
+		case database.PromptRunStateSucceeded, database.PromptRunStateFailed, database.PromptRunStateCancelled:
+			return fmt.Errorf("%w: approval %s cannot be resolved, its prompt run %s already ended (%s)",
+				database.ErrTurnRequestConflict, request.ID, run.ID, run.State)
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("%w: approval %s is still pending after %s with its prompt run %s in state %q rather than waiting",
+				database.ErrTurnRequestConflict, request.ID, suspendedRunWait, run.ID, run.State)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(suspendedRunInterval):
+		}
+	}
+}
+
 func (a *DatabaseExecutionAuthority) ResolveToolApproval(
 	ctx context.Context,
 	resolution ToolApprovalResolution,
 ) (*ApprovalContinuation, error) {
+	if err := a.awaitSuspendedRun(ctx, resolution.ApprovalID); err != nil {
+		return nil, err
+	}
 	var continuation *ApprovalContinuation
 	err := a.db.Transaction(ctx, func(tx *database.DB) error {
 		var resolveErr error

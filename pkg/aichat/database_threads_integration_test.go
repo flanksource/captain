@@ -218,8 +218,6 @@ var _ = Describe("Database chat sessions", func() {
 		resolution := aichat.ToolApprovalResolution{
 			ThreadID: thread.ID, ApprovalID: permission.ApprovalID, Approved: false, Reason: "not now",
 		}
-		_, err = authority.ResolveToolApproval(ctx, resolution)
-		Expect(err).To(MatchError(ContainSubstring("cannot be resolved before its prompt run is waiting")))
 		assistant := aichat.UIMessage{
 			ID: execution.TurnID() + "-assistant", TurnID: execution.TurnID(), Role: "assistant",
 			Parts: []aichat.UIPart{{
@@ -229,21 +227,7 @@ var _ = Describe("Database chat sessions", func() {
 			}},
 		}
 		Expect(store.AppendMessage(ctx, thread.ID, assistant)).To(Succeed())
-		_, err = execution.Observe(ctx, api.Event{
-			Kind: api.EventResult, Success: true,
-			ToolApproval: &api.ToolApprovalState{
-				Messages: []api.Message{{Role: api.RoleAssistant, Parts: []api.Part{{
-					Type: api.PartToolRequest, ToolRequest: &api.ToolRequest{
-						ToolCallID: "call-account-1", Name: "accounts_edit", Input: json.RawMessage(`{"id":"acc-1"}`),
-					},
-				}}}},
-				Calls: []api.ToolApprovalCall{{Request: api.ToolApprovalRequest{
-					ToolCallID: "call-account-1", Tool: "accounts_edit", Input: json.RawMessage(`{"id":"acc-1"}`),
-				}}},
-				ProviderCheckpoint: &api.ProviderCheckpoint{Codec: "test-provider", Version: 1, Payload: []byte("checkpoint")},
-			},
-		})
-		Expect(err).NotTo(HaveOccurred())
+		Expect(suspendOnAccountsApproval(ctx, execution)).To(Succeed())
 
 		aggregate, err := store.GetSession(ctx, thread.ID)
 		Expect(err).NotTo(HaveOccurred())
