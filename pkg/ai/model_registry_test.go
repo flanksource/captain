@@ -7,13 +7,13 @@ func TestRegistryModelDefsIncludeFableCapabilities(t *testing.T) {
 		defs := RegistryModelDefs(Anthropic, mode)
 		var fable *ModelDef
 		for i := range defs {
-			if defs[i].ID == "claude-fable-5" {
+			if defs[i].ID == "claude-fable-5-1" {
 				fable = &defs[i]
 				break
 			}
 		}
 		if fable == nil {
-			t.Fatalf("anthropic %s registry models omit claude-fable-5: %+v", mode, defs)
+			t.Fatalf("anthropic %s registry models omit claude-fable-5-1: %+v", mode, defs)
 		}
 		if !fable.CapabilitiesKnown || !fable.Reasoning || fable.Temperature {
 			t.Fatalf("anthropic %s fable capabilities = %+v", mode, *fable)

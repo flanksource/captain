@@ -30,7 +30,7 @@ var _ = Describe("canonical model runtime mode", func() {
 		resolved, err := ResolveModel(Model{Name: "agent:opus:high", Mode: ModeAPI})
 
 		Expect(err).NotTo(HaveOccurred())
-		Expect(resolved.Name).To(Equal("claude-opus-5"))
+		Expect(resolved.Name).To(Equal("claude-opus-5-5"))
 		Expect(resolved.Mode).To(Equal(ModeAgent))
 		Expect(resolved.Provider).To(Equal(Anthropic))
 		Expect(resolved.Effort).To(Equal(EffortHigh))
