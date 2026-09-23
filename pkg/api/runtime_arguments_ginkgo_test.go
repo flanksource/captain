@@ -108,6 +108,7 @@ var _ = Describe("Runtime argument mappings", func() {
 			{path: "permissions.mode", name: "thread/start.approvalPolicy"},
 			{path: "permissions.mode", name: "thread/resume.approvalPolicy"},
 			{path: "permissions.mode", name: "turn/start.approvalPolicy"},
+			{path: "permissions.mode", name: "turn/start.collaborationMode"},
 			{path: "sandbox.mode", name: "thread/start.sandbox"},
 			{path: "sandbox.mode", name: "thread/resume.sandbox"},
 			{path: "sandbox.mode", name: "turn/start.sandboxPolicy"},

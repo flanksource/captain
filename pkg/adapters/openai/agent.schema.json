@@ -8,7 +8,7 @@
     "provider": "openai",
     "mode": "agent",
     "sources": [
-      {"kind": "protocol", "reference": "codex app-server generate-json-schema --experimental", "version": "codex-cli 0.154.0"},
+      {"kind": "protocol", "reference": "codex app-server generate-json-schema --experimental", "version": "codex-cli 0.156.1"},
       {"kind": "implementation", "reference": "pkg/ai/provider/codex_appserver.go and codex_appserver_protocol.go", "version": "7220b7c99be01dfd9809a1fc237dafda9aa712b3"}
     ]
   },
@@ -97,6 +97,11 @@
           "type": "array", "items": {"type": "object", "additionalProperties": true}, "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 140, "x-array-display": "stacked",
           "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
           "x-captain-option": {"nativeName": "thread/start.dynamicTools", "support": "unsupported", "note": "Captain exposes caller tools through MCP rather than Codex dynamic tools."}
+        },
+        "daybreakEnabled": {
+          "title": "Daybreak enabled", "description": "Initial Daybreak choice for a persistent Codex thread; not supported for ephemeral threads.",
+          "type": "boolean", "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 145,
+          "x-captain-option": {"nativeName": "thread/start.daybreakEnabled", "support": "unsupported", "note": "Captain leaves the Codex Daybreak choice unset."}
         },
         "environments": {
           "title": "Environments", "description": "Named execution environments available to the Codex thread.",
@@ -325,16 +330,16 @@
         },
         "collaborationMode": {
           "title": "Collaboration mode", "description": "Codex collaboration mode applied for the turn.",
-          "type": "object", "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 560,
-          "properties": {
+          "allOf": [{"type": "object", "additionalProperties": false, "required": ["mode", "settings"], "properties": {
             "mode": {"type": "string", "enum": ["default", "plan"]},
-            "settings": {"type": "object", "properties": {
+            "settings": {"type": "object", "additionalProperties": false, "required": ["model"], "properties": {
               "model": {"type": "string"},
               "reasoning_effort": {"type": ["string", "null"]},
-              "developer_instructions": {"type": "null"}
+              "developer_instructions": {"type": ["string", "null"]}
             }}
-          },
-          "x-captain-option": {"nativeName": "turn/start.collaborationMode", "support": "mapped", "specPath": "permissions.mode"}
+          }}],
+          "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]}, "x-clicky-section": "permissions", "x-clicky-order": 560,
+          "x-captain-option": {"nativeName": "turn/start.collaborationMode", "support": "mapped", "specPath": ["permissions.mode", "model", "effort"]}
         },
         "cwd": {
           "title": "Working directory", "description": "Working-directory override for the turn.",
@@ -346,6 +351,11 @@
           "type": "object", "additionalProperties": true, "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 580,
           "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
           "x-captain-option": {"nativeName": "turn/start.cyberAccessProgram", "support": "unsupported", "note": "Captain does not configure native Codex cyber-access programs."}
+        },
+        "disabledPluginIds": {
+          "title": "Disabled plugin IDs", "description": "Replacement list of plugin identifiers disabled for the thread; an empty list clears it.",
+          "type": "array", "items": {"type": "string"}, "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 585, "x-array-display": "list",
+          "x-captain-option": {"nativeName": "turn/start.disabledPluginIds", "support": "unsupported", "note": "Captain does not manage Codex plugin enablement."}
         },
         "environments": {
           "title": "Environments", "description": "Execution environments made available for this turn.",

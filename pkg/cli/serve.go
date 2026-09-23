@@ -182,6 +182,7 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	task.SetNoRender(true)
 
 	mux := http.NewServeMux()
+	router := route.NewRouter(mux)
 	mux.Handle("GET /api/openapi.json", handleCaptainOpenAPI(openAPISpec, false))
 	mux.Handle("GET /api/openapi.yaml", handleCaptainOpenAPI(openAPISpec, true))
 	mux.HandleFunc("GET /health", rpcServer.HandleHealth)
