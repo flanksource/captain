@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/flanksource/captain/pkg/api"
@@ -81,6 +82,10 @@ func RunSessionGet(ctx context.Context, opts SessionGetOptions) (SessionGetResul
 	if err != nil {
 		return SessionGetResult{}, err
 	}
+	if opts.Follow {
+		// The transcript is printed as it streams, so nothing is left to render.
+		return SessionGetResult{}, followSessionGet(ctx, db, opts, os.Stdout)
+	}
 	return runSessionGet(ctx, db, opts)
 }
 
@@ -90,7 +95,7 @@ func runSessionGet(ctx context.Context, db sessionGetStore, opts SessionGetOptio
 		return SessionGetResult{}, fmt.Errorf("id is required")
 	}
 	stopLookup := rpchttp.Track(ctx, "lookup")
-	sessions, err := resolveFoldedSessions(ctx, db, id)
+	sessions, err := sessionquery.ResolveFolded(ctx, db, id)
 	stopLookup()
 	if err != nil {
 		return SessionGetResult{}, err
@@ -115,17 +120,6 @@ func runSessionGet(ctx context.Context, db sessionGetStore, opts SessionGetOptio
 		rootID = items[0].CaptainID
 	}
 	return SessionGetResult{RootSessionID: rootID, Sessions: items, Total: len(items)}, nil
-}
-
-// resolveFoldedSessions resolves an identity to the sessions it names, each
-// paired with the transcript row it executed in, so that one conversation is
-// one item however the identity reached it.
-func resolveFoldedSessions(ctx context.Context, db sessionGetStore, id string) ([]sessionquery.FoldedOverview, error) {
-	overviews, err := resolveOverviewsByIdentity(ctx, db, id)
-	if err != nil {
-		return nil, err
-	}
-	return sessionquery.FoldTranscripts(ctx, db, overviews)
 }
 
 func buildSessionGetItem(ctx context.Context, db sessionGetStore, folded sessionquery.FoldedOverview, opts SessionGetOptions) (SessionGetItem, error) {
@@ -160,6 +154,11 @@ func buildSessionGetItem(ctx context.Context, db sessionGetStore, folded session
 	if err != nil {
 		return SessionGetItem{}, err
 	}
+	// Provenance travels with the detail so an unread session is distinguishable
+	// from an empty one: messages sourced from "prompt-run" mean the transcript
+	// has not been ingested, not that nothing happened. It is kept without a
+	// detail too, so a caller can say which sources had nothing.
+	item.DetailSource = provenance.Facets()
 	if detail == nil {
 		return item, nil
 	}
@@ -170,10 +169,6 @@ func buildSessionGetItem(ctx context.Context, db sessionGetStore, folded session
 	if chatRunning || (item.Summary.Live != nil && item.Summary.Live.Active) {
 		detail.AwaitingInput = nil
 	}
-	// Provenance travels with the detail so an unread session is distinguishable
-	// from an empty one: messages sourced from "prompt-run" mean the transcript
-	// has not been ingested, not that nothing happened.
-	item.DetailSource = provenance.Facets()
 	item.DetailAvailable = true
 	item.Summary.DetailAvailable = true
 	item.Summary.Messages = max(item.Summary.Messages, len(detail.Messages))

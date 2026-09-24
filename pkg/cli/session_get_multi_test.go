@@ -446,6 +446,10 @@ func (s *sessionGetOverviewStore) ListPromptRuns(_ context.Context, filter datab
 	return s.promptRuns[*filter.SessionID], nil
 }
 
+func (s *sessionGetOverviewStore) ListPromptRunIterations(context.Context, uuid.UUID) ([]database.PromptRunIteration, error) {
+	return nil, nil
+}
+
 func (s *sessionGetOverviewStore) ListTurnRequests(context.Context, database.TurnRequestFilter) ([]database.TurnRequest, error) {
 	return nil, nil
 }

@@ -26,6 +26,17 @@ type FoldedOverview struct {
 	Transcript *database.SessionOverview
 }
 
+// ResolveFolded resolves an identity to the sessions it names, each paired with
+// the transcript row it executed in, so one conversation is one item however
+// the identity reached it. Every session read and follow resolves through here.
+func ResolveFolded(ctx context.Context, store FoldStore, identity string) ([]FoldedOverview, error) {
+	overviews, err := Resolve(ctx, store, identity)
+	if err != nil {
+		return nil, err
+	}
+	return FoldTranscripts(ctx, store, overviews)
+}
+
 // FoldTranscripts presents a session and its `transcript` child as one session.
 //
 // A launcher that books a run before the provider session exists (a Gavel run,

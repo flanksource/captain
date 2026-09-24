@@ -37,7 +37,9 @@ type promptRunRecordInput struct {
 
 // persistPromptRun records a captain-launched run against its session in the
 // native store and registers the transcript for live tailing. Persistence
-// failures are reported loudly but never fail the completed run itself.
+// failures are reported loudly but never fail the completed run itself. The
+// session lifecycle is not written here: migration 84 projects the run's state
+// onto its admission and transcript sessions.
 func persistPromptRun(ctx context.Context, input promptRunRecordInput) {
 	if input.Binding == nil && strings.TrimSpace(input.SessionID) == "" {
 		return
@@ -112,11 +114,6 @@ func persistPromptRun(ctx context.Context, input promptRunRecordInput) {
 	if err := upsertPromptRunIterations(ctx, db, runID, input.Iterations); err != nil {
 		log.Errorf("persist prompt run %s iterations for session %s: %v", input.RunID, firstNonEmpty(input.SessionID, bindingSessionID(input.Binding)), err)
 	}
-	lifecycle := database.SessionLifecycleSucceeded
-	if input.Error != "" || input.State == database.PromptRunStateCancelled {
-		lifecycle = database.SessionLifecycleFailed
-	}
-	updatePromptSessionLifecycle(ctx, session.ID, lifecycle, input.Error)
 	trackLaunchedTranscript(input, transcriptSource(input.Provider, input.Mode))
 }
 

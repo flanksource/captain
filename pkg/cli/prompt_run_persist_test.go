@@ -92,16 +92,16 @@ func TestPersistPromptRunRecordsEveryIteration(t *testing.T) {
 		{Valid: true, Iteration: 2, Report: verdictReport(2, true)},
 	}
 	verdicts[0].Report.Feedback = "TestFoo failed"
-	final, err := promptrun.FinalReport(verdicts)
+	result := promptrun.Result{
+		Response: &api.Response{Text: "fixed"}, StructuredData: map[string]any{"answer": "42"},
+		Loop: loop, Verdicts: verdicts, Report: verdicts[1].Report, Passed: true,
+		SessionID: providerSession, Model: "claude-sonnet-5",
+	}
+	record := promptRunRecord(rendered, "run-iter", nil, result, false)
+	structured, err := completeRunRecord(&record, result)
 	require.NoError(t, err)
-
-	persistPromptRun(t.Context(), promptRunRecordInput{
-		Rendered: rendered, RunID: "run-iter", SessionID: providerSession,
-		Model: "claude-sonnet-5", Provider: api.Anthropic, Mode: api.ModeAgent,
-		ResultText: "fixed",
-		ResultJSON: resultJSONWithVerify(map[string]any{"answer": "42"}, final),
-		Iterations: promptrun.IterationRecords(promptrun.Result{Loop: loop, Verdicts: verdicts}, false),
-	})
+	assert.Equal(t, map[string]any{"answer": "42"}, structured)
+	persistPromptRun(t.Context(), record)
 
 	session, err := db.GetSessionByIdentity(t.Context(), providerSession, "claude", "", "")
 	require.NoError(t, err)
@@ -134,12 +134,7 @@ func TestPersistPromptRunRecordsEveryIteration(t *testing.T) {
 	require.NotNil(t, second.VerificationResult)
 	assert.True(t, second.VerificationResult.Passed)
 
-	// The final report also lands on the run itself, beside the prompt's answer.
-	require.NotNil(t, runs[0].ResultJSON)
-	assert.Equal(t, "42", runs[0].ResultJSON["answer"])
-	verify, ok := runs[0].ResultJSON["verify"].(map[string]any)
-	require.True(t, ok, "result_json.verify = %#v", runs[0].ResultJSON["verify"])
-	assert.Equal(t, true, verify["passed"])
+	assert.Equal(t, map[string]any{"answer": "42"}, runs[0].ResultJSON)
 
 	report, iteration, err := db.LatestPromptRunVerification(t.Context(), runs[0].ID)
 	require.NoError(t, err)
@@ -151,7 +146,7 @@ func TestPersistPromptRunRecordsEveryIteration(t *testing.T) {
 // A run the stop button ended on turn 2 of 3 is still a run: the turn that
 // completed, the verdict that judged it, and a row that says it was cancelled
 // rather than that it failed. Returning before persistence left a stopped run
-// with no row at all — no iterations, no result_json.verify, nothing to read.
+// with no row at all — no iterations and no verdict to read.
 func TestPersistPromptRunRecordsACancelledRun(t *testing.T) {
 	db := withTestCaptainDB(t)
 	const providerSession = "0195c1de-4ab8-7000-8000-0000000abce0"
