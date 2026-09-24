@@ -70,7 +70,7 @@ describe("promptDetailReducer", () => {
     const request = { runtimeProfile: 'review-profile', spec: {} };
     const runtime = promptRuntimeForDisplay(request, {
       id: alpha.id, name: alpha.name,
-      resolution: { spec: { model: 'preset-model', mode: 'cmux' }, trace: [] },
+      resolution: { spec: { model: 'preset-model', mode: 'cmux' }, constraints: {}, trace: [] },
     });
     expect(runtime).toEqual({ model: 'preset-model', mode: 'cmux' });
     expect(request).toEqual({ runtimeProfile: 'review-profile', spec: {} });
