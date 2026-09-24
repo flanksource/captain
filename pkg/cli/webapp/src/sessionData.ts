@@ -61,6 +61,7 @@ export type UnifiedSession = UnifiedSessionInput & {
   title?: string;
   initialPrompt?: string;
   structuredOutput?: Record<string, unknown>;
+	verifications?: Array<{ iteration: number; report: unknown }>;
   /** Last permission mode the transcript recorded. */
   permissionMode?: SpecPermissionMode;
   awaitingInput?: AwaitingInput;

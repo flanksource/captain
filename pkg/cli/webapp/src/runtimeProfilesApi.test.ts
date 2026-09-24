@@ -384,6 +384,8 @@ describe("runtimeProfilesClient", () => {
   it("sends only the contract fields of catalog records, dropping key, source, updatedAt and _id", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(RESOLVED));
     vi.stubGlobal("fetch", fetchMock);
+    const profileWithEntityId = { _id: PROFILE.id, ...PROFILE };
+    const presetWithEntityId = { _id: PRESET.id, ...PRESET };
 
     const profile = { _id: PROFILE.id, ...PROFILE };
     const presets = [{ _id: PRESET.id, ...PRESET }];
@@ -413,10 +415,11 @@ describe("runtimeProfilesClient", () => {
   it("sends only preset contract fields and keeps nested references", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(RESOLVED));
     vi.stubGlobal("fetch", fetchMock);
+    const presetWithEntityId = { _id: PRESET.id, ...PRESET, presets: ["base"] };
 
     await resolveRuntimePresets({
       selected: [PRESET.id],
-      presets: [{ _id: PRESET.id, ...PRESET, presets: ["base"] }],
+      presets: [presetWithEntityId],
     });
 
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({

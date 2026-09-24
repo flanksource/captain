@@ -75,7 +75,7 @@ export function SessionDetail({
         </div>
         {result.sessions.map((item) => (
           <RunVerification key={item.captainId}
-            storedReport={item.detail?.structuredOutput?.verify}
+            storedReport={item.detail?.verifications?.slice(-1)[0]?.report}
             title={`Verification · ${item.summary.title || item.captainId}`}
           />
         ))}
@@ -221,7 +221,7 @@ function SessionGetItemDetail({
           Transcript unavailable.
         </div>
       )}
-      <RunVerification frame={chat.verify} storedReport={detail?.structuredOutput?.verify} />
+      <RunVerification frame={chat.verify} storedReport={detail?.verifications?.slice(-1)[0]?.report} />
     </section>
   );
 }
