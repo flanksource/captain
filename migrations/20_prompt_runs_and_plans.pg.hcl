@@ -207,6 +207,12 @@ table "captain_prompt_runs" {
     columns = [column.admission_key]
     where   = "admission_key IS NOT NULL"
   }
+  # The partial active key above covers only live runs; the session overview's
+  # per-session run count and the lifecycle projection's latest-run lookup scan
+  # every run of a session.
+  index "captain_prompt_runs_session_created_idx" {
+    columns = [column.session_id, column.created_at]
+  }
   index "captain_prompt_runs_batch_id_idx" {
     columns = [column.batch_id]
   }

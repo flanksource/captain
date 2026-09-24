@@ -72,8 +72,9 @@ type PromptRunCheckpoint struct {
 
 // PromptRunFilter limits ListPromptRuns. Nil fields are not filtered.
 type PromptRunFilter struct {
-	SessionID *uuid.UUID
-	State     *PromptRunState
+	SessionID          *uuid.UUID
+	ExecutionSessionID *uuid.UUID
+	State              *PromptRunState
 }
 
 type CreatePromptRunInput struct {
