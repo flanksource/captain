@@ -83,9 +83,15 @@ type Session struct {
 	// StructuredOutput is the decoded object returned by a schema-constrained
 	// prompt run. Messages retain the JSON text for transcript compatibility.
 	StructuredOutput map[string]any `json:"structuredOutput,omitempty"`
+	Verifications    []Verification `json:"verifications,omitempty"`
 
 	// AwaitingInput holds the questions the last turn left unanswered.
 	AwaitingInput *AwaitingInput `json:"awaitingInput,omitempty"`
+}
+
+type Verification struct {
+	Iteration int              `json:"iteration"`
+	Report    api.VerifyReport `json:"report"`
 }
 
 // TranscriptWindow records the session's real transcript size when Messages

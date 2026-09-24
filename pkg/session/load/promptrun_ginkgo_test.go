@@ -2,11 +2,13 @@ package load_test
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/session"
 	"github.com/flanksource/captain/pkg/session/load"
 )
@@ -116,6 +118,31 @@ var _ = Describe("PromptRun", func() {
 		Expect(result.Session.StructuredOutput).To(Equal(map[string]any{"source": "stored"}))
 		Expect(result.Session.Messages).To(HaveLen(2))
 		Expect(result.Session.Messages[1].Parts[0].Text).To(Equal(`{"source":"text"}`))
+	})
+
+	It("projects typed verification into the session and a transcript without a notice", func() {
+		verified := run
+		verified.ResultJSON = map[string]any{"verdict": "pass"}
+		report := api.VerifyReport{Kind: api.VerifyKindFixture, Name: "fixture", Ran: true, Passed: true, State: api.VerifyStatePassed, Iteration: 1}
+		verified.Verifications = []session.Verification{{Iteration: 1, Report: report}}
+
+		result, failures := load.Load(context.Background(), load.PromptRun(verified))
+
+		Expect(failures).To(BeEmpty())
+		Expect(result.Session.StructuredOutput).To(Equal(map[string]any{"verdict": "pass"}))
+		Expect(result.Session.Verifications).To(Equal(verified.Verifications))
+		Expect(result.Session.Messages).To(HaveLen(3))
+		Expect(result.Session.Messages[2].Role).To(Equal(session.RoleVerified))
+		Expect(result.Session.Messages[2].Parts[0].Text).To(ContainSubstring("fixture"))
+		Expect(result.Session.Messages[2].Parts[1].Type).To(Equal(session.PartVerify))
+
+		raw, err := json.Marshal(report)
+		Expect(err).NotTo(HaveOccurred())
+		withNotice, failures := load.Load(context.Background(), load.Transcript(&session.Session{Messages: []session.Message{{
+			ID: "notice", Role: session.RoleVerified, Parts: []session.Part{{Type: session.PartVerify, Data: raw}},
+		}}}), load.PromptRun(verified))
+		Expect(failures).To(BeEmpty())
+		Expect(withNotice.Session.Messages).To(HaveLen(1), "an existing notice already carries the report")
 	})
 
 	It("fills runtime and timing facts the overview left absent, without overwriting it", func() {

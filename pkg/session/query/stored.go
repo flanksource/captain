@@ -152,19 +152,29 @@ func sessionFromOverview(overview database.SessionOverview) *session.Session {
 func projectSessionMessages(rows []database.TranscriptMessage) ([]session.Message, error) {
 	messages := make([]session.Message, len(rows))
 	for i := range rows {
-		if err := json.Unmarshal(rows[i].Parts, &messages[i].Parts); err != nil {
-			return nil, fmt.Errorf("decode Captain message %s parts: %w", rows[i].ID, err)
+		message, err := projectSessionMessage(rows[i])
+		if err != nil {
+			return nil, err
 		}
-		messages[i].ID = stringValue(rows[i].ProviderMessageID)
-		if messages[i].ID == "" {
-			messages[i].ID = rows[i].ID.String()
-		}
-		messages[i].Role = rows[i].Role
-		if rows[i].TurnID != nil {
-			messages[i].TurnID = rows[i].TurnID.String()
-		}
+		messages[i] = message
 	}
 	return messages, nil
+}
+
+// projectSessionMessage is the one row-to-message projection, so a followed
+// message carries the same id as the aggregate's copy and replaces it.
+func projectSessionMessage(row database.TranscriptMessage) (session.Message, error) {
+	message := session.Message{ID: stringValue(row.ProviderMessageID), Role: row.Role}
+	if err := json.Unmarshal(row.Parts, &message.Parts); err != nil {
+		return session.Message{}, fmt.Errorf("decode Captain message %s parts: %w", row.ID, err)
+	}
+	if message.ID == "" {
+		message.ID = row.ID.String()
+	}
+	if row.TurnID != nil {
+		message.TurnID = row.TurnID.String()
+	}
+	return message, nil
 }
 
 func projectSessionTurns(rows []database.SessionTurn, messages []session.Message) []session.Turn {

@@ -93,16 +93,13 @@ func preparePromptRun(ctx context.Context, req *ai.Request, cfg ai.Config) (ai.P
 
 // promptRunRecord is the run as it will be persisted, assembled before the error
 // branch so that an interrupted run — or one that broke on turn 2 of 3 — is
-// still written down. Its verdict travels two ways: one row per turn (what was
-// asked, what the check said, how long it took) and result_json.verify, the
-// round's report beside the prompt's own structured output. Returning on the
-// error path before this left a stopped run with no rows and no report at all.
+// still written down. Verification lives on its iteration row; result_json is
+// reserved for the prompt's own structured output.
 func promptRunRecord(rendered PromptRenderResult, runID string, binding *promptSessionBinding, result promptrun.Result, interrupted bool) promptRunRecordInput {
 	runtime := api.Runtime{Provider: rendered.Provider, Mode: api.RuntimeMode(rendered.Mode)}
 	return promptRunRecordInput{
 		Rendered: rendered, RunID: runID, Binding: binding, SessionID: result.SessionID,
 		Model: firstNonEmpty(result.Model, rendered.Model), Provider: providerOf(runtime), Mode: runtime.Mode,
-		ResultJSON: resultJSONWithVerify(nil, result.Report),
 		Iterations: promptrun.IterationRecords(result, interrupted),
 	}
 }
@@ -118,7 +115,7 @@ func completeRunRecord(record *promptRunRecordInput, result promptrun.Result) (m
 	if record.ResultText, err = structuredOutputText(result.Response.Text, structured); err != nil {
 		return nil, err
 	}
-	record.ResultJSON = resultJSONWithVerify(structured, result.Report)
+	record.ResultJSON = structured
 	if !result.Passed {
 		record.Error = promptrun.FailureReason(result.Verdicts)
 	}
