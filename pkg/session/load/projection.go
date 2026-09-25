@@ -57,6 +57,9 @@ func (c projectionContributor) Contribute(_ context.Context, aggregate *session.
 	if aggregate.Plan == nil {
 		aggregate.Plan = metadata.Plan
 	}
+	if aggregate.PermissionMode == "" {
+		aggregate.PermissionMode = metadata.PermissionMode
+	}
 	if aggregate.Git == (session.GitState{}) {
 		aggregate.Git = c.facts.Git
 	}

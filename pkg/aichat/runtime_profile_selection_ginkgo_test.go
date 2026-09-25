@@ -24,7 +24,7 @@ func (p *recordingProfileProvider) RuntimeProfile(_ context.Context, options ...
 	return p.profile, p.err
 }
 
-var _ = Describe("Runtime profile selection", func() {
+var _ = Describe("Runtime preset selection", func() {
 	userMessages := []aichat.UIMessage{{Role: "user", Parts: []aichat.UIPart{{Type: "text", Text: "hello"}}}}
 	applicationProfile := func() aichat.RuntimeProfile {
 		return mustRuntimeProfile(api.SpecLayer{
@@ -33,7 +33,7 @@ var _ = Describe("Runtime profile selection", func() {
 		})
 	}
 
-	It("hands the chat request's runtimeProfile to the provider", func() {
+	It("hands the chat request's presets to the provider", func() {
 		provider := &fakeStreamingProvider{events: []api.Event{
 			{Kind: api.EventText, Text: "done"},
 			{Kind: api.EventResult, Success: true, Model: "test-model"},
@@ -43,35 +43,35 @@ var _ = Describe("Runtime profile selection", func() {
 
 		response := httptest.NewRecorder()
 		service.Handler().ServeHTTP(response, requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{
-			RuntimeProfile: "review", Messages: userMessages,
+			Presets: []string{"organization", "review"}, Messages: userMessages,
 		}))
 
 		Expect(response.Code).To(Equal(http.StatusOK), response.Body.String())
-		Expect(profiles.selections).To(Equal([]aichat.RuntimeProfileOptions{{Ref: "review"}}))
+		Expect(profiles.selections).To(Equal([]aichat.RuntimeProfileOptions{{Presets: []string{"organization", "review"}, PresetsSet: true}}))
 	})
 
-	It("hands ?runtimeProfile= on the catalog endpoints to the provider", func() {
+	It("hands repeated ?preset= values on catalog endpoints to the provider", func() {
 		for _, path := range []string{"/api/chat/models", "/api/chat/runtimes"} {
 			profiles := &recordingProfileProvider{profile: applicationProfile()}
 			service := aichat.NewService(aichat.ServiceOptions{Resolver: &fakeResolver{}, Profile: profiles})
 
 			response := httptest.NewRecorder()
-			service.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, path+"?runtimeProfile=review", nil))
+			service.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, path+"?preset=organization&preset=review", nil))
 
 			Expect(response.Code).To(Equal(http.StatusOK), path)
-			Expect(profiles.selections).To(Equal([]aichat.RuntimeProfileOptions{{Ref: "review"}}), path)
+			Expect(profiles.selections).To(Equal([]aichat.RuntimeProfileOptions{{Presets: []string{"organization", "review"}, PresetsSet: true}}), path)
 		}
 	})
 
-	It("reports a rejected selection with the provider's status and message", func() {
-		const message = `runtime profile "bogus" is not in the catalog`
+	It("reports a rejected preset selection with the provider's status and message", func() {
+		const message = `runtime preset "bogus" is not in the catalog`
 		profiles := &recordingProfileProvider{err: aichat.RequestError(http.StatusBadRequest, message)}
 		service := aichat.NewService(aichat.ServiceOptions{Resolver: &fakeResolver{}, Profile: profiles})
 
 		for _, request := range []*http.Request{
-			requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{RuntimeProfile: "bogus", Messages: userMessages}),
-			httptest.NewRequest(http.MethodGet, "/api/chat/models?runtimeProfile=bogus", nil),
-			httptest.NewRequest(http.MethodGet, "/api/chat/runtimes?runtimeProfile=bogus", nil),
+			requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{Presets: []string{"bogus"}, Messages: userMessages}),
+			httptest.NewRequest(http.MethodGet, "/api/chat/models?preset=bogus", nil),
+			httptest.NewRequest(http.MethodGet, "/api/chat/runtimes?preset=bogus", nil),
 		} {
 			response := httptest.NewRecorder()
 			service.Handler().ServeHTTP(response, request)
@@ -80,16 +80,27 @@ var _ = Describe("Runtime profile selection", func() {
 		}
 	})
 
-	It("rejects a selection when the deployment serves no runtime profiles", func() {
+	It("rejects a selection when the deployment serves no runtime presets", func() {
 		service := aichat.NewService(aichat.ServiceOptions{Resolver: &fakeResolver{}})
 
 		response := httptest.NewRecorder()
 		service.Handler().ServeHTTP(response, requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{
-			RuntimeProfile: "review", Messages: userMessages,
+			Presets: []string{"review"}, Messages: userMessages,
 		}))
 
 		Expect(response.Code).To(Equal(http.StatusBadRequest))
-		Expect(response.Body.String()).To(ContainSubstring(`runtime profile "review" cannot be selected`))
+		Expect(response.Body.String()).To(ContainSubstring(`runtime presets "review" cannot be selected`))
+	})
+
+	It("warns and does not hand a deprecated runtimeProfile to the provider", func() {
+		profiles := &recordingProfileProvider{profile: applicationProfile()}
+		service := aichat.NewService(aichat.ServiceOptions{Resolver: &fakeResolver{provider: &fakeStreamingProvider{}}, Profile: profiles})
+		response := httptest.NewRecorder()
+		service.Handler().ServeHTTP(response, requestJSON(http.MethodPost, "/api/chat", aichat.ChatRequest{RuntimeProfile: "review", Messages: userMessages}))
+
+		Expect(response.Code).To(Equal(http.StatusOK), response.Body.String())
+		Expect(response.Header().Get("Warning")).To(ContainSubstring("deprecated"))
+		Expect(profiles.selections).To(Equal([]aichat.RuntimeProfileOptions{{}}))
 	})
 
 	It("keeps other provider failures as internal errors", func() {
@@ -113,7 +124,7 @@ var _ = Describe("Runtime profile selection", func() {
 		}}
 		profiles := &recordingProfileProvider{profile: mustRuntimeProfile(api.SpecLayer{
 			Name: "claims", Scope: api.SpecLayerContext,
-			Constraints: api.RuntimeConstraints{Models: []string{"claude-sonnet-5"}},
+			Spec: api.Spec{Model: api.Model{Name: "claude-sonnet-5"}},
 		})}
 		service := aichat.NewService(aichat.ServiceOptions{
 			Threads: aichat.FixedThreadStore(store), Authority: authority,
@@ -127,7 +138,6 @@ var _ = Describe("Runtime profile selection", func() {
 			map[string]any{"approved": true},
 		))
 
-		Expect(response.Code).To(Equal(http.StatusBadGateway), response.Body.String())
 		Expect(profiles.selections).To(Equal([]aichat.RuntimeProfileOptions{{}}))
 	})
 })

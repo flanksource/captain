@@ -96,7 +96,8 @@ func TestPermissionsMatrixCells(t *testing.T) {
 
 		// The resource axis is asymmetric in both directions.
 		{"anthropic cli silences MCP", agent, "mcp disabled", "anthropic cli", "✓"},
-		{"anthropic agent does not", agent, "mcp disabled", "anthropic agent", "✗"},
+		{"anthropic agent silences MCP but keeps caller tools", agent, "mcp disabled", "anthropic agent", "✓"},
+		{"anthropic cmux does not", agent, "mcp disabled", "anthropic cmux", "✗"},
 		{"no runtime enables MCP per server", agent, "mcp enabled", "openai agent", "✗"},
 		{"only anthropic cli loads skills", agent, "skills enabled", "anthropic cli", "✓"},
 		{"captain omits a disabled skill before dispatch", agent, "skills disabled", "anthropic cli", "✓"},

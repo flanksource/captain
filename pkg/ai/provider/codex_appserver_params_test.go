@@ -123,7 +123,8 @@ func TestBuildThreadStartParams_CwdAndModel(t *testing.T) {
 }
 
 func TestBuildResumeParams(t *testing.T) {
-	p := buildResumeParams(ai.Request{SessionID: "thread-9", Setup: &shell.Setup{Cwd: "/repo"}}, nil)
+	p, err := buildResumeParams(ai.Request{SessionID: "thread-9", Setup: &shell.Setup{Cwd: "/repo"}}, nil)
+	require.NoError(t, err)
 	assert.Equal(t, "thread-9", p["threadId"])
 	assert.Equal(t, "/repo", p["cwd"])
 }

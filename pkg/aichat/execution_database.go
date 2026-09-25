@@ -137,6 +137,9 @@ func (e *databaseExecution) CallerTools() *api.CallerToolEndpoint {
 func (e *databaseExecution) startCallerTools(ctx context.Context, provider *api.ModelProvider, mode api.RuntimeMode) error {
 	var credentialID uuid.UUID
 	runtime, err := callertools.New(callertools.Options{
+		// The admitting request: the execution is closed before its handler returns,
+		// so request-scoped values stay valid for every call.
+		Context:     ctx,
 		Definitions: e.definitions, SessionID: e.session.ID.String(),
 		ApprovalTimeout: approval.CallerToolTimeout,
 		ValidateCredential: func(ctx context.Context) error {

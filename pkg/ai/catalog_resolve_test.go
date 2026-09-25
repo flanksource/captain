@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -140,6 +141,51 @@ func TestResolveModels_TokensUnionDedup(t *testing.T) {
 	}
 }
 
+func TestResolveModels_LiveOnlyRowKeepsFetchedCapabilities(t *testing.T) {
+	efforts := []api.Effort{api.EffortLow, api.EffortMedium, api.EffortHigh}
+	fetched := ModelDef{
+		ID:                "claude-live-only",
+		Name:              "Claude Live Only",
+		Provider:          Anthropic.Name,
+		Mode:              ModeAPI,
+		ReleaseDate:       "2026-07-24",
+		CapabilitiesKnown: true,
+		Reasoning:         true,
+		Temperature:       true,
+		SupportedEfforts:  efforts,
+		DefaultEffort:     api.EffortMedium,
+		Priority:          3,
+	}
+	stubLiveFetcher(t, func(p *ModelProvider) ([]ModelDef, error) {
+		if p != Anthropic {
+			return nil, nil
+		}
+		return []ModelDef{fetched}, nil
+	})
+	t.Setenv("ANTHROPIC_API_KEY", "k") // after stub clears the key set
+
+	rows, err := ResolveModels(context.Background(), ResolveOptions{Provider: Anthropic, Mode: ModeAPI, UseTokens: true})
+	if err != nil {
+		t.Fatalf("ResolveModels: %v", err)
+	}
+	row, ok := hasModelID(rows, fetched.ID)
+	if !ok {
+		t.Fatalf("live-only row %q missing", fetched.ID)
+	}
+	type capabilities struct {
+		Label, ReleaseDate     string
+		Reasoning, Temperature bool
+		SupportedEfforts       []api.Effort
+		DefaultEffort          api.Effort
+		Priority               int
+	}
+	got := capabilities{row.Label, row.ReleaseDate, row.Reasoning, row.Temperature, row.SupportedEfforts, row.DefaultEffort, row.Priority}
+	want := capabilities{fetched.Name, fetched.ReleaseDate, true, true, efforts, api.EffortMedium, 3}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("live-only row dropped fetched capabilities:\n got %+v\nwant %+v", got, want)
+	}
+}
+
 func TestResolveModels_LiveErrorFailsLoud(t *testing.T) {
 	stubLiveFetcher(t, func(p *ModelProvider) ([]ModelDef, error) {
 		return nil, errors.New("boom")
@@ -183,6 +229,9 @@ func TestResolveModels_PreferredOpenAIVariantsRemainVisible(t *testing.T) {
 			return nil, nil
 		}
 		return []ModelDef{
+			{ID: "gpt-6-astra", Provider: OpenAI.Name, Mode: ModeAPI},
+			{ID: "gpt-6-sol", Provider: OpenAI.Name, Mode: ModeAPI},
+			{ID: "gpt-6-luna", Provider: OpenAI.Name, Mode: ModeAPI},
 			{ID: "gpt-5.6-sol", Provider: OpenAI.Name, Mode: ModeAPI},
 			{ID: "gpt-5.6-terra", Provider: OpenAI.Name, Mode: ModeAPI},
 			{ID: "gpt-5.6-luna", Provider: OpenAI.Name, Mode: ModeAPI},
@@ -195,10 +244,15 @@ func TestResolveModels_PreferredOpenAIVariantsRemainVisible(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveModels: %v", err)
 	}
-	for _, id := range []string{"openai/gpt-5.6-sol", "openai/gpt-5.6-terra", "openai/gpt-5.6-luna"} {
+	for _, id := range []string{"openai/gpt-6-astra", "openai/gpt-6-sol", "openai/gpt-6-luna"} {
 		row, ok := hasModelID(rows, id)
 		if !ok || !row.Live {
 			t.Errorf("preferred API model %q = %+v, present=%v", id, row, ok)
+		}
+	}
+	for _, id := range []string{"openai/gpt-5.6-sol", "openai/gpt-5.6-terra", "openai/gpt-5.6-luna"} {
+		if _, ok := hasModelID(rows, id); ok {
+			t.Errorf("older API model %q should not be preferred", id)
 		}
 	}
 	if _, ok := hasModelID(rows, "gpt-5.5-pro"); ok {

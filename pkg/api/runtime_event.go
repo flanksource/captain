@@ -65,6 +65,16 @@ const (
 	// carries the same *VerifyReport the verdict will, so a renderer redraws the
 	// tree from one shape whether the check is running or done.
 	EventVerifyProgress EventKind = "verify_progress"
+
+	// EventToolProgress is one in-flight line of output from a tool call that has
+	// not returned yet — a long build or test run inside a turn, which otherwise
+	// shows nothing between the call and its result. Tool names the tool,
+	// ToolCallID correlates it with the call, and Text is the most recent line.
+	//
+	// Like EventVerifyProgress it is a superseded snapshot, not transcript: a
+	// consumer redraws it in place and never commits it, and a runtime with no
+	// incremental tool output simply never sends one.
+	EventToolProgress EventKind = "tool_progress"
 )
 
 // Event is one item in a streaming provider's output channel.

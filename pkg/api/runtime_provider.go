@@ -28,6 +28,14 @@ type SteerableProvider interface {
 	Steer(context.Context, Spec) error
 }
 
+// PermissionSwitchableProvider changes the permission posture of a live session
+// without restarting it, as early as its runtime allows: the claude agent
+// switches the in-flight turn, while codex answers approvals under the new
+// posture at once and hands it to Codex on the next turn.
+type PermissionSwitchableProvider interface {
+	SetPermissionMode(context.Context, PermissionMode) error
+}
+
 type CloseableProvider interface {
 	Close() error
 }

@@ -4,17 +4,18 @@
 //
 // Protocol (newline-delimited JSON, one object per line on stdout):
 //   client -> server requests:
-//     initialize {cwd, model, systemPrompt, appendSystemPrompt, allowedTools,
-//                 maxTurns, maxBudgetUsd, permissionMode, resume, approvalMode,
+//     initialize {cwd, model, effort, systemPrompt, appendSystemPrompt,
+//                 allowedTools, maxTurns, maxBudgetUsd, permissionMode, resume, approvalMode,
 //                 outputSchema, mcpServers}
 //                 -> reply {ok:true}
 //     prompt {text, attachments?} -> reply {accepted:true}
 //     interrupt          -> reply {}
+//     set_permission_mode {mode} -> reply {} (applies to the live query)
 //     shutdown           -> reply {} then exit
 //   server -> client notifications:
 //     session/init   {session_id, model, tools}
-//     message/text   {text}
-//     message/thinking {text}
+//     message/text   {text}      (one per streamed delta; the host concatenates)
+//     message/thinking {text}    (likewise)
 //     message/tool_use {tool, input, id}
 //     message/tool_result {id, content, is_error}
 //     turn/completed {success, subtype, session_id, cost_usd, usage, num_turns,
@@ -61,6 +62,7 @@ delete process.env.CLAUDE_CODE_ENTRYPOINT;
 interface InitializeParams {
   cwd?: string;
   model?: string;
+  effort?: Options["effort"];
   systemPrompt?: string;
   appendSystemPrompt?: string;
   allowedTools?: string[];
@@ -86,6 +88,9 @@ interface InitializeParams {
     string,
     { type: "http"; url: string; headers?: Record<string, string> }
   >;
+  // strictMcpConfig limits the session to mcpServers. Absent, the SDK also
+  // loads every ambient server: .mcp.json, user settings, plugins.
+  strictMcpConfig?: boolean;
   callerToolUseIDKey?: string;
 }
 
@@ -99,6 +104,9 @@ interface HostDecision {
 let turns: TurnQueue | null = null;
 let activeQuery: Query | null = null;
 let callerToolServers: string[] = [];
+// bypassAllowed mirrors the query's allowDangerouslySkipPermissions, which the
+// SDK requires before it will enter bypassPermissions.
+let bypassAllowed = false;
 
 function callerToolName(toolName: string): string | undefined {
   for (const server of callerToolServers) {
@@ -124,9 +132,16 @@ function buildOptions(params: InitializeParams): Options {
   const options: Options = {
     cwd: params.cwd,
     model: params.model,
+    effort: params.effort,
     maxTurns: params.maxTurns || undefined,
     maxBudgetUsd: params.maxBudgetUsd || undefined,
     permissionMode,
+    // Stream text and thinking as they are produced. Without it the SDK reports
+    // only whole assistant messages, so a host rendering live progress showed
+    // nothing for the length of a reasoning block and then the whole block at
+    // once — the one way this runtime read as frozen next to a delta-streaming
+    // one. handleMessage drops the final copy of a block already streamed.
+    includePartialMessages: true,
     sandbox: params.sandbox,
     allowDangerouslySkipPermissions:
       !brokered && permissionMode === "bypassPermissions",
@@ -143,6 +158,7 @@ function buildOptions(params: InitializeParams): Options {
         ? params.additionalDirectories
         : undefined,
     mcpServers: params.mcpServers,
+    strictMcpConfig: params.strictMcpConfig || undefined,
     stderr: (data: string) => process.stderr.write(data),
     hooks: {
       PreToolUse: [
@@ -320,7 +336,9 @@ function handleInitialize(id: JsonRpcId, params: InitializeParams) {
   try {
     callerToolServers = Object.keys(params.mcpServers ?? {});
     turns = new TurnQueue();
-    activeQuery = query({ prompt: turns, options: buildOptions(params) });
+    const options = buildOptions(params);
+    bypassAllowed = options.allowDangerouslySkipPermissions === true;
+    activeQuery = query({ prompt: turns, options });
     reply(id, { ok: true });
     pump(activeQuery).catch((err) => {
       notify("turn/error", { message: err?.message || String(err) });
@@ -355,6 +373,38 @@ async function handleInterrupt(id: JsonRpcId) {
     diag(`interrupt: ${(err as Error)?.message || err}`);
   }
   reply(id, {});
+}
+
+async function handleSetPermissionMode(
+  id: JsonRpcId,
+  params: { mode?: Options["permissionMode"] },
+) {
+  if (!activeQuery) {
+    replyError(id, -32002, "not initialized");
+    return;
+  }
+  if (!params.mode) {
+    replyError(id, -32602, "set_permission_mode requires a mode");
+    return;
+  }
+  if (params.mode === "bypassPermissions" && !bypassAllowed) {
+    replyError(
+      id,
+      -32602,
+      "bypassPermissions requires a session started in bypassPermissions",
+    );
+    return;
+  }
+  try {
+    await activeQuery.setPermissionMode(params.mode);
+    reply(id, {});
+  } catch (err) {
+    replyError(
+      id,
+      -32603,
+      `set_permission_mode failed: ${(err as Error)?.message || err}`,
+    );
+  }
 }
 
 function handleShutdown(id: JsonRpcId) {
@@ -392,8 +442,41 @@ function stringifyToolResult(content: unknown): string {
   return JSON.stringify(content);
 }
 
+// streamedBlocks records which content blocks of the assistant message now
+// being produced were already sent as deltas, keyed by the block index the
+// stream events carry. The SDK repeats each block whole when the message
+// completes, and forwarding both would print everything twice.
+const streamedBlocks = new Set<number>();
+
+function handleStreamEvent(message: SDKMessage) {
+  const event = (message as { event?: Record<string, unknown> }).event;
+  if (!event || event.type !== "content_block_delta") {
+    return;
+  }
+  const index = typeof event.index === "number" ? event.index : 0;
+  const delta = event.delta as Record<string, unknown> | undefined;
+  if (!delta) {
+    return;
+  }
+  if (delta.type === "text_delta" && typeof delta.text === "string" && delta.text) {
+    streamedBlocks.add(index);
+    notify("message/text", { text: delta.text });
+  } else if (
+    delta.type === "thinking_delta" &&
+    typeof delta.thinking === "string" &&
+    delta.thinking
+  ) {
+    streamedBlocks.add(index);
+    notify("message/thinking", { text: delta.thinking });
+  }
+}
+
 function handleMessage(message: SDKMessage) {
   switch (message.type) {
+    case "stream_event":
+      handleStreamEvent(message);
+      break;
+
     case "system":
       if ((message as { subtype?: string }).subtype === "init") {
         notify("session/init", {
@@ -407,11 +490,18 @@ function handleMessage(message: SDKMessage) {
     case "assistant": {
       const content =
         (message as { message?: { content?: unknown[] } }).message?.content ?? [];
-      for (const block of content as Array<Record<string, unknown>>) {
+      const blocks = content as Array<Record<string, unknown>>;
+      for (let index = 0; index < blocks.length; index++) {
+        const block = blocks[index];
+        const streamed = streamedBlocks.has(index);
         if (block.type === "text") {
-          notify("message/text", { text: block.text });
+          if (!streamed) {
+            notify("message/text", { text: block.text });
+          }
         } else if (block.type === "thinking") {
-          notify("message/thinking", { text: block.thinking });
+          if (!streamed) {
+            notify("message/thinking", { text: block.thinking });
+          }
         } else if (block.type === "tool_use") {
           notify("message/tool_use", {
             tool: callerToolName(String(block.name)) ?? block.name,
@@ -420,6 +510,8 @@ function handleMessage(message: SDKMessage) {
           });
         }
       }
+      // The next message's blocks are indexed from zero again.
+      streamedBlocks.clear();
       break;
     }
 
@@ -488,6 +580,12 @@ rl.on("line", (line) => {
       break;
     case "interrupt":
       handleInterrupt(id);
+      break;
+    case "set_permission_mode":
+      handleSetPermissionMode(
+        id,
+        (req.params as { mode?: Options["permissionMode"] }) || {},
+      );
       break;
     case "shutdown":
       handleShutdown(id);

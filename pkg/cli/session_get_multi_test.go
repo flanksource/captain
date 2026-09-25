@@ -384,7 +384,11 @@ var _ = Describe("session get multi-result output", func() {
 })
 
 type sessionGetOverviewStore struct {
-	identity    []database.SessionOverview
+	identity []database.SessionOverview
+	// byIdentity, when it names an identity, answers that lookup instead of
+	// identity — how a spec gives a parent row its own UUID lookup.
+	byIdentity  map[string][]database.SessionOverview
+	children    []database.SessionOverview
 	thread      []database.SessionOverview
 	list        []database.SessionListSummary
 	listFilter  database.SessionListFilter
@@ -407,7 +411,22 @@ func (s *sessionGetOverviewStore) ListSessionSummaries(_ context.Context, filter
 
 func (s *sessionGetOverviewStore) ListSessionOverviewsByIdentity(_ context.Context, identity string) ([]database.SessionOverview, error) {
 	s.identities = append(s.identities, identity)
+	if rows, ok := s.byIdentity[identity]; ok {
+		return rows, nil
+	}
 	return s.identity, nil
+}
+
+func (s *sessionGetOverviewStore) ListTranscriptChildOverviews(_ context.Context, parentIDs []uuid.UUID) ([]database.SessionOverview, error) {
+	var rows []database.SessionOverview
+	for _, child := range s.children {
+		for _, parentID := range parentIDs {
+			if child.ParentSessionID != nil && *child.ParentSessionID == parentID {
+				rows = append(rows, child)
+			}
+		}
+	}
+	return rows, nil
 }
 
 func (s *sessionGetOverviewStore) ListSessionOverviews(context.Context, database.SessionOverviewFilter) ([]database.SessionOverview, error) {
@@ -425,6 +444,10 @@ func (s *sessionGetOverviewStore) ListPromptRuns(_ context.Context, filter datab
 		return nil, nil
 	}
 	return s.promptRuns[*filter.SessionID], nil
+}
+
+func (s *sessionGetOverviewStore) ListPromptRunIterations(context.Context, uuid.UUID) ([]database.PromptRunIteration, error) {
+	return nil, nil
 }
 
 func (s *sessionGetOverviewStore) ListTurnRequests(context.Context, database.TurnRequestFilter) ([]database.TurnRequest, error) {

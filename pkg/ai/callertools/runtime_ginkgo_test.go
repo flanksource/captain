@@ -17,10 +17,82 @@ import (
 	. "github.com/onsi/gomega"
 )
 
+type tenantKey struct{}
+
 var _ = Describe("Authenticated caller-tool runtime", func() {
+	It("runs handlers with the values of the context that opened the runtime", func(ctx SpecContext) {
+		seen := make(chan any, 1)
+		runtime, err := callertools.New(callertools.Options{
+			Context: context.WithValue(ctx, tenantKey{}, "tenant-x"),
+			Definitions: []api.ToolDefinition{{
+				Name: "tenant_get", DefaultPermission: api.ToolPolicyAllow,
+				Handler: func(ctx context.Context, _ map[string]any) (any, error) {
+					seen <- ctx.Value(tenantKey{})
+					return "ok", nil
+				},
+			}},
+			SessionID: "tenant-session",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(runtime.Close)
+
+		client := authenticatedClient(ctx, runtime.Endpoint())
+		DeferCleanup(client.Close)
+		request := mcp.CallToolRequest{}
+		request.Params.Name = "tenant_get"
+		result, err := client.CallTool(ctx, request)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.IsError).To(BeFalse())
+		Expect(seen).To(Receive(Equal("tenant-x")))
+	})
+
+	It("cancels an in-flight call when the context that opened the runtime ends", func(ctx SpecContext) {
+		opening, cancelOpening := context.WithCancel(ctx)
+		DeferCleanup(cancelOpening)
+		started := make(chan struct{})
+		runtime, err := callertools.New(callertools.Options{
+			Context: opening,
+			Definitions: []api.ToolDefinition{{
+				Name: "report_run", DefaultPermission: api.ToolPolicyAllow,
+				Handler: func(ctx context.Context, _ map[string]any) (any, error) {
+					close(started)
+					<-ctx.Done()
+					return nil, ctx.Err()
+				},
+			}},
+			SessionID: "cancel-session",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(runtime.Close)
+
+		client := authenticatedClient(ctx, runtime.Endpoint())
+		DeferCleanup(client.Close)
+		go func() {
+			<-started
+			cancelOpening()
+		}()
+		request := mcp.CallToolRequest{}
+		request.Params.Name = "report_run"
+		result, err := client.CallTool(ctx, request)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.IsError).To(BeTrue())
+	}, SpecTimeout(10*time.Second))
+
+	It("rejects a runtime without a context", func() {
+		_, err := callertools.New(callertools.Options{
+			Definitions: []api.ToolDefinition{{
+				Name: "lookup", DefaultPermission: api.ToolPolicyAllow,
+				Handler: func(context.Context, map[string]any) (any, error) { return "ok", nil },
+			}},
+			SessionID: "contextless-session",
+		})
+		Expect(err).To(MatchError(ContainSubstring("requires a context")))
+	})
+
 	It("omits denied tools and rejects unauthenticated requests", func(ctx SpecContext) {
 		var hiddenCalls atomic.Int32
 		runtime, err := callertools.New(callertools.Options{
+			Context: ctx,
 			Definitions: []api.ToolDefinition{
 				{
 					Name: "invoice_get", Description: "Read an invoice",
@@ -67,6 +139,7 @@ var _ = Describe("Authenticated caller-tool runtime", func() {
 	It("brokers ask tools and applies updated input", func(ctx SpecContext) {
 		var calls atomic.Int32
 		runtime, err := callertools.New(callertools.Options{
+			Context: ctx,
 			Definitions: []api.ToolDefinition{{
 				Name: "invoice_update", DefaultPermission: api.ToolPolicyAsk,
 				Handler: func(_ context.Context, input map[string]any) (any, error) {
@@ -102,6 +175,7 @@ var _ = Describe("Authenticated caller-tool runtime", func() {
 		var handledInput map[string]any
 		permissionRequests := make(chan api.PermissionRequest, 1)
 		runtime, err := callertools.New(callertools.Options{
+			Context: ctx,
 			Definitions: []api.ToolDefinition{{
 				Name: "invoice_update", DefaultPermission: api.ToolPolicyAsk,
 				Handler: func(_ context.Context, input map[string]any) (any, error) {
@@ -135,10 +209,10 @@ var _ = Describe("Authenticated caller-tool runtime", func() {
 		Expect(handledInput).To(Equal(map[string]any{"status": "draft"}))
 	})
 
-	It("rejects wrong-session credentials and browser origins", func() {
-		first := newRuntime("captain-session-1", "first")
+	It("rejects wrong-session credentials and browser origins", func(ctx SpecContext) {
+		first := newRuntime(ctx, "captain-session-1", "first")
 		DeferCleanup(first.Close)
-		second := newRuntime("captain-session-2", "second")
+		second := newRuntime(ctx, "captain-session-2", "second")
 		DeferCleanup(second.Close)
 
 		request, err := http.NewRequest(http.MethodPost, first.Endpoint().URL, nil)
@@ -163,8 +237,9 @@ var _ = Describe("Authenticated caller-tool runtime", func() {
 		Expect(response.Body.Close()).To(Succeed())
 	})
 
-	It("expires and explicitly revokes capabilities", func() {
+	It("expires and explicitly revokes capabilities", func(ctx SpecContext) {
 		expiring, err := callertools.New(callertools.Options{
+			Context: ctx,
 			Definitions: []api.ToolDefinition{{
 				Name: "lookup", DefaultPermission: api.ToolPolicyAllow,
 				Handler: func(context.Context, map[string]any) (any, error) { return "ok", nil },
@@ -178,7 +253,7 @@ var _ = Describe("Authenticated caller-tool runtime", func() {
 			return authenticatedStatus(expiring.Endpoint())
 		}).Should(Equal(http.StatusUnauthorized))
 
-		revoked := newRuntime("revoked-session", "revoked")
+		revoked := newRuntime(ctx, "revoked-session", "revoked")
 		DeferCleanup(revoked.Close)
 		revoked.Revoke()
 		Expect(authenticatedStatus(revoked.Endpoint())).To(Equal(http.StatusUnauthorized))
@@ -187,6 +262,7 @@ var _ = Describe("Authenticated caller-tool runtime", func() {
 	It("times out approvals and returns handler failures without executing past the boundary", func(ctx SpecContext) {
 		var calls atomic.Int32
 		runtime, err := callertools.New(callertools.Options{
+			Context: ctx,
 			Definitions: []api.ToolDefinition{{
 				Name: "invoice_update", DefaultPermission: api.ToolPolicyAsk,
 				Handler: func(context.Context, map[string]any) (any, error) {
@@ -217,6 +293,7 @@ var _ = Describe("Authenticated caller-tool runtime", func() {
 	It("returns handler failures as MCP tool errors", func(ctx SpecContext) {
 		var calls atomic.Int32
 		runtime, err := callertools.New(callertools.Options{
+			Context: ctx,
 			Definitions: []api.ToolDefinition{{
 				Name: "invoice_get", DefaultPermission: api.ToolPolicyAllow,
 				Handler: func(context.Context, map[string]any) (any, error) {
@@ -242,6 +319,7 @@ var _ = Describe("Authenticated caller-tool runtime", func() {
 	It("rejects approval-updated input that violates the tool schema", func(ctx SpecContext) {
 		var calls atomic.Int32
 		runtime, err := callertools.New(callertools.Options{
+			Context: ctx,
 			Definitions: []api.ToolDefinition{{
 				Name: "invoice_update", DefaultPermission: api.ToolPolicyAsk,
 				InputSchema: map[string]any{
@@ -276,9 +354,9 @@ var _ = Describe("Authenticated caller-tool runtime", func() {
 	})
 
 	It("isolates concurrently active session capabilities", func(ctx SpecContext) {
-		first := newRuntime("captain-session-1", "first")
+		first := newRuntime(ctx, "captain-session-1", "first")
 		DeferCleanup(first.Close)
-		second := newRuntime("captain-session-2", "second")
+		second := newRuntime(ctx, "captain-session-2", "second")
 		DeferCleanup(second.Close)
 		firstClient := authenticatedClient(ctx, first.Endpoint())
 		DeferCleanup(firstClient.Close)
@@ -337,8 +415,9 @@ func authenticatedStatus(endpoint api.CallerToolEndpoint) int {
 	return response.StatusCode
 }
 
-func newRuntime(sessionID, marker string) *callertools.Runtime {
+func newRuntime(ctx context.Context, sessionID, marker string) *callertools.Runtime {
 	runtime, err := callertools.New(callertools.Options{
+		Context: ctx,
 		Definitions: []api.ToolDefinition{{
 			Name: "identity", DefaultPermission: api.ToolPolicyAllow,
 			Handler: func(context.Context, map[string]any) (any, error) {

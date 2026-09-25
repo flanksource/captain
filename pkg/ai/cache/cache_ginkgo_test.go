@@ -1,6 +1,8 @@
 package cache_test
 
 import (
+	"context"
+	"database/sql"
 	"go/parser"
 	"go/token"
 	"io/fs"
@@ -13,19 +15,26 @@ import (
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gstruct"
 
+	sqlitedb "github.com/flanksource/commons-db/sqlite"
+
 	"github.com/flanksource/captain/pkg/ai/cache"
 )
 
 // cgoOnlySQLiteDrivers register their driver only under `//go:build cgo`, so a
 // binary built with CGO_ENABLED=0 — which is every goreleaser artifact and the
 // linux binary baked into the sandbox image — links a stub that fails on the
-// first query. modernc.org/sqlite is pure Go and is already linked through
-// commons-db/connection, so it is the only sqlite engine this repo may import.
+// first query. modernc.org/sqlite is pure Go and arrives through
+// commons-db/sqlite, so it is the only sqlite engine this repo may import.
 var cgoOnlySQLiteDrivers = []string{"github.com/mattn/go-sqlite3"}
 
 func newCache(ttl time.Duration) *cache.Cache {
 	GinkgoHelper()
-	c, err := cache.New(cache.Config{DBPath: filepath.Join(GinkgoT().TempDir(), "cache.db"), TTL: ttl})
+	return openCache(cache.Config{DBPath: filepath.Join(GinkgoT().TempDir(), "cache.db"), TTL: ttl})
+}
+
+func openCache(config cache.Config) *cache.Cache {
+	GinkgoHelper()
+	c, err := cache.New(config)
 	Expect(err).NotTo(HaveOccurred())
 	DeferCleanup(c.Close)
 	return c
@@ -136,6 +145,55 @@ var _ = Describe("AI response cache", func() {
 
 		_, err := c.Get("drop me", "claude-opus-5")
 		Expect(err).To(MatchError(cache.ErrNotFound))
+	})
+
+	It("sweeps entries past their TTL and keeps live ones", func() {
+		path := filepath.Join(GinkgoT().TempDir(), "cache.db")
+		stale := openCache(cache.Config{DBPath: path, TTL: time.Millisecond})
+		fresh := openCache(cache.Config{DBPath: path, TTL: time.Hour})
+		Expect(stale.Set(entry("stale", "old answer"))).To(Succeed())
+		Expect(fresh.Set(entry("fresh", "new answer"))).To(Succeed())
+
+		Eventually(func() (int64, error) {
+			return fresh.Sweep(context.Background())
+		}, time.Second, 10*time.Millisecond).Should(Equal(int64(1)))
+
+		stats, err := fresh.GetStats()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(stats).To(ConsistOf(MatchFields(IgnoreExtras, Fields{"TotalRequests": Equal(int64(1))})))
+		got, err := fresh.Get("fresh", "claude-opus-5")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got.Response).To(Equal("new answer"))
+	})
+
+	It("flushes a hit's access-time update before Close returns", func() {
+		path := filepath.Join(GinkgoT().TempDir(), "cache.db")
+		c := openCache(cache.Config{DBPath: path, TTL: time.Hour})
+		Expect(c.Set(entry("touch me", "touched"))).To(Succeed())
+
+		raw, err := sql.Open("sqlite", path)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(raw.Close)
+		longAgo := time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
+		_, err = raw.Exec(`UPDATE llm_cache SET accessed_at = ?`, longAgo.Format(time.DateTime))
+		Expect(err).NotTo(HaveOccurred())
+
+		got, err := c.Get("touch me", "claude-opus-5")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got.AccessedAt).To(BeTemporally("==", longAgo))
+		Expect(c.Close()).To(Succeed())
+
+		var accessedAt time.Time
+		Expect(raw.QueryRow(`SELECT accessed_at FROM llm_cache`).Scan(&accessedAt)).To(Succeed())
+		Expect(accessedAt).To(BeTemporally("~", time.Now(), time.Minute))
+	})
+
+	It("rejects writes after Close and closes idempotently", func() {
+		c := newCache(time.Hour)
+		Expect(c.Close()).To(Succeed())
+
+		Expect(c.Set(entry("too late", "rejected"))).To(MatchError(sqlitedb.ErrClosed))
+		Expect(c.Close()).To(Succeed())
 	})
 })
 

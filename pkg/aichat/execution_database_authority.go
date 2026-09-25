@@ -347,9 +347,8 @@ func renderedSpecMap(spec api.Spec, profile api.ResolvedSpec) (map[string]any, e
 	}
 	if len(profile.Trace) > 0 {
 		resolution, err := json.Marshal(struct {
-			Constraints api.RuntimeConstraints `json:"constraints"`
-			Trace       []api.SpecLayer        `json:"trace"`
-		}{Constraints: profile.Constraints, Trace: profile.Trace})
+			Trace []api.SpecLayer `json:"trace"`
+		}{Trace: profile.Trace})
 		if err != nil {
 			return nil, fmt.Errorf("encode authoritative chat profile: %w", err)
 		}

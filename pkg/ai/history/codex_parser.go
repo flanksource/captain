@@ -195,13 +195,16 @@ type CodexParser struct {
 	currentTurn   string
 	currentModel  string
 	currentEffort string
-	pendingCall   map[string]codexPendingCall
-	reasoning     codexReasoningCollapser
-	deduper       codexDeduper
-	info          *CodexSessionInfo
-	event         CodexEvent
-	lineNumber    int64
-	ignored       bool
+	// currentPermissionMode is the posture of the latest turn_context that
+	// declared one; older rollouts without posture fields leave it unchanged.
+	currentPermissionMode api.PermissionMode
+	pendingCall           map[string]codexPendingCall
+	reasoning             codexReasoningCollapser
+	deduper               codexDeduper
+	info                  *CodexSessionInfo
+	event                 CodexEvent
+	lineNumber            int64
+	ignored               bool
 }
 
 func NewCodexParser() *CodexParser {
@@ -252,6 +255,11 @@ func (p *CodexParser) ConsumeLine(line string) []ToolUse {
 		p.currentTurn = firstNonEmpty(p.event.Payload.TurnID, p.currentTurn)
 		p.currentModel = firstNonEmpty(p.event.Payload.Model, p.currentModel)
 		p.currentEffort = firstNonEmpty(p.event.Payload.Effort, p.currentEffort)
+		if mode, err := p.event.Payload.PermissionMode(); err != nil {
+			log.Warnf("codex turn_context line %d: %v", p.lineNumber, err)
+		} else if mode != "" {
+			p.currentPermissionMode = mode
+		}
 		p.observeTurnInfo()
 		if IsCodexAutoReviewModel(p.currentModel) {
 			p.ignored = true
@@ -289,6 +297,9 @@ func (p *CodexParser) stamp(uses []ToolUse) []ToolUse {
 		}
 		if uses[index].ReasoningEffort == "" {
 			uses[index].ReasoningEffort = p.currentEffort
+		}
+		if uses[index].PermissionMode == "" {
+			uses[index].PermissionMode = p.currentPermissionMode
 		}
 		if uses[index].SourceLine == 0 {
 			uses[index].SourceLine = p.lineNumber

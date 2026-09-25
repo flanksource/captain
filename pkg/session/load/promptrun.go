@@ -20,6 +20,7 @@ type PromptRunFacts struct {
 	PromptMarkdown   string
 	ResultText       string
 	ResultJSON       map[string]any
+	Verifications    []session.Verification
 	RenderedSpec     map[string]any
 	Error            string
 	Provider         string
@@ -53,6 +54,10 @@ func (c promptRunContributor) Contribute(_ context.Context, aggregate *session.S
 		return ErrNoFacts
 	}
 	c.mergeRuntime(aggregate)
+	aggregate.Verifications = c.facts.Verifications
+	if err := c.enrichAttachments(aggregate); err != nil {
+		return err
+	}
 	resultText, err := c.resultText()
 	if err != nil {
 		return err
@@ -64,6 +69,9 @@ func (c promptRunContributor) Contribute(_ context.Context, aggregate *session.S
 		if resultText != "" {
 			aggregate.Messages = append(aggregate.Messages, c.message("assistant", resultText))
 		}
+	}
+	if err := c.appendVerificationMessages(aggregate); err != nil {
+		return err
 	}
 	if c.facts.Error != "" {
 		aggregate.Events = append(aggregate.Events, session.Event{
@@ -84,6 +92,88 @@ func (c promptRunContributor) Contribute(_ context.Context, aggregate *session.S
 	output, err := c.structuredOutput()
 	aggregate.StructuredOutput = output
 	return err
+}
+
+func (c promptRunContributor) appendVerificationMessages(aggregate *session.Session) error {
+	seen := map[int]bool{}
+	for _, message := range aggregate.Messages {
+		for _, part := range message.Parts {
+			if part.Type != session.PartVerify {
+				continue
+			}
+			var report api.VerifyReport
+			if err := json.Unmarshal(part.Data, &report); err != nil {
+				return fmt.Errorf("decode session verification notice: %w", err)
+			}
+			seen[report.Iteration] = true
+		}
+	}
+	for _, verification := range c.facts.Verifications {
+		if seen[verification.Iteration] {
+			continue
+		}
+		raw, err := json.Marshal(verification.Report)
+		if err != nil {
+			return fmt.Errorf("encode prompt run %s verification %d: %w", c.facts.RunID, verification.Iteration, err)
+		}
+		role := session.RoleVerifyFailed
+		if verification.Report.Passed {
+			role = session.RoleVerified
+		}
+		aggregate.Messages = append(aggregate.Messages, session.Message{
+			ID: fmt.Sprintf("%s-verify-%d", c.facts.RunID, verification.Iteration), Role: role,
+			Parts: []session.Part{
+				{Type: session.PartText, Text: fmt.Sprintf("%s · %s · iteration %d", verification.Report.Kind, verification.Report.State, verification.Iteration)},
+				{Type: session.PartVerify, Data: raw},
+			},
+		})
+	}
+	return nil
+}
+
+func (c promptRunContributor) enrichAttachments(aggregate *session.Session) error {
+	input, ok := c.facts.RenderedSpec["input"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	prompt, ok := input["prompt"].(map[string]any)
+	if !ok || prompt["attachments"] == nil {
+		return nil
+	}
+	raw, err := json.Marshal(prompt["attachments"])
+	if err != nil {
+		return fmt.Errorf("encode prompt run %s attachments: %w", c.facts.RunID, err)
+	}
+	var attachments []api.AttachmentRef
+	if err := json.Unmarshal(raw, &attachments); err != nil {
+		return fmt.Errorf("decode prompt run %s attachments: %w", c.facts.RunID, err)
+	}
+	byID := make(map[string]api.AttachmentRef, len(attachments))
+	for _, attachment := range attachments {
+		if err := attachment.Validate(); err != nil {
+			return fmt.Errorf("validate prompt run %s attachment: %w", c.facts.RunID, err)
+		}
+		byID[attachment.ID] = attachment
+	}
+	for messageIndex := range aggregate.Messages {
+		for partIndex := range aggregate.Messages[messageIndex].Parts {
+			part := &aggregate.Messages[messageIndex].Parts[partIndex]
+			attachment, ok := byID[part.AttachmentID]
+			if part.Type != session.PartFile || !ok {
+				continue
+			}
+			if attachment.Filename != "" {
+				part.Filename = attachment.Filename
+			}
+			if attachment.MediaType != "" {
+				part.MediaType = attachment.MediaType
+			}
+			if part.URL == "" {
+				part.URL = "/api/attachments/" + attachment.ID
+			}
+		}
+	}
+	return nil
 }
 
 func (c promptRunContributor) mergeRuntime(aggregate *session.Session) {

@@ -1,14 +1,19 @@
 package claudeagent
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/flanksource/captain/pkg/api"
+)
 
 type initializeParams struct {
-	Cwd                string   `json:"cwd,omitempty"`
-	Model              string   `json:"model,omitempty"`
-	SystemPrompt       string   `json:"systemPrompt,omitempty"`
-	AppendSystemPrompt string   `json:"appendSystemPrompt,omitempty"`
-	AllowedTools       []string `json:"allowedTools,omitempty"`
-	DisallowedTools    []string `json:"disallowedTools,omitempty"`
+	Cwd                string     `json:"cwd,omitempty"`
+	Model              string     `json:"model,omitempty"`
+	Effort             api.Effort `json:"effort,omitempty"`
+	SystemPrompt       string     `json:"systemPrompt,omitempty"`
+	AppendSystemPrompt string     `json:"appendSystemPrompt,omitempty"`
+	AllowedTools       []string   `json:"allowedTools,omitempty"`
+	DisallowedTools    []string   `json:"disallowedTools,omitempty"`
 	// AdditionalDirs are paths outside Cwd the SDK's own tools may reach. Without
 	// them a run in a worktree raises a permission request for every read of its
 	// parent checkout, and a headless run has nobody to answer one.
@@ -23,4 +28,7 @@ type initializeParams struct {
 	MonitorURL         string                      `json:"monitorUrl,omitempty"`
 	MCPServers         map[string]callerToolServer `json:"mcpServers,omitempty"`
 	CallerToolUseIDKey string                      `json:"callerToolUseIDKey,omitempty"`
+	// StrictMCPConfig limits the SDK to MCPServers. Without it every ambient
+	// server (.mcp.json, user settings, plugins) loads alongside them.
+	StrictMCPConfig bool `json:"strictMcpConfig,omitempty"`
 }

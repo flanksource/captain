@@ -164,6 +164,7 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	addCaptainProviderTokenPaths(openAPISpec)
 	addCaptainProviderDefaultsPaths(openAPISpec)
 	addCaptainDisabledPaths(openAPISpec)
+	addCaptainAdapterSchemaPaths(openAPISpec)
 	chat, mcpTools, err := newCaptainChatService(ctx, rootCmd, opts, cwd, authority, attachmentStore)
 	if err != nil {
 		return err
@@ -181,6 +182,7 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	task.SetNoRender(true)
 
 	mux := http.NewServeMux()
+	router := route.NewRouter(mux)
 	mux.Handle("GET /api/openapi.json", handleCaptainOpenAPI(openAPISpec, false))
 	mux.Handle("GET /api/openapi.yaml", handleCaptainOpenAPI(openAPISpec, true))
 	mux.HandleFunc("GET /health", rpcServer.HandleHealth)
@@ -193,6 +195,7 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	mux.HandleFunc("POST /api/captain/hooks/{provider}", handleMonitorHookEvent())
 	mux.HandleFunc("GET /api/captain/ai/permissions/catalog", handlePermissionCatalog(cwd))
 	mux.HandleFunc("GET /api/captain/ai/prompt/schema", handlePromptSchema())
+	registerAdapterSchemaHandlers(mux)
 	registerSandboxHandlers(mux)
 	registerProviderTokenHandlers(mux)
 	registerProviderDefaultsHandlers(mux)
@@ -210,7 +213,8 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	mux.Handle("POST /api/captain/prompt/runs/{runId}/message", handlePromptRunMessage(promptChats))
 	mux.Handle("POST /api/captain/prompt/runs/{runId}/interrupt", handlePromptRunInterrupt(promptChats))
 	mux.Handle("POST /api/captain/prompt/runs/{runId}/stop", handlePromptRunStop(promptRuns, promptChats))
-	mux.Handle("POST /api/captain/sessions/{id}/message", handleSessionMessage(promptChats))
+	mux.Handle("POST /api/captain/prompt/runs/{runId}/permission-mode", handlePromptRunPermissionMode(promptChats))
+	registerSessionRoutes(mux, promptChats)
 	chatHandler := chat.Handler()
 	mux.Handle("/api/chat", chatHandler)
 	mux.Handle("/api/chat/", chatHandler)

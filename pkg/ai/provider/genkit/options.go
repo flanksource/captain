@@ -44,8 +44,8 @@ func modelRef(provider *ai.ModelProvider, model string) (string, error) {
 
 // generateOptions assembles the genkit Generate options for one turn: model,
 // system prompt, user prompt, effort config, and (when streaming) the callback.
-// WithOutputType is added only for the non-streaming structured-output path;
-// ExecuteStream rejects structured output before calling this.
+// Structured-output options apply to buffered and streaming calls alike; the
+// streaming provider publishes only the validated final JSON.
 func generateOptions(p *Provider, req ai.Request, stream gkai.ModelStreamCallback, emit func(ai.Event)) ([]gkai.GenerateOption, error) {
 	if err := req.ValidateRequestMode(); err != nil {
 		return nil, err
@@ -122,20 +122,18 @@ func generateOptions(p *Provider, req ai.Request, stream gkai.ModelStreamCallbac
 	if stream != nil {
 		opts = append(opts, gkai.WithStreaming(stream))
 	}
-	if stream == nil {
-		if schema, handled, err := runtimeOutputSchema(p.provider, req); err != nil {
-			return nil, err
-		} else if handled {
-			opts = append(opts, gkai.WithOutputSchema(schema))
-		} else if len(req.Prompt.SchemaJSON) > 0 {
-			var schema map[string]any
-			if err := json.Unmarshal(req.Prompt.SchemaJSON, &schema); err != nil {
-				return nil, fmt.Errorf("genkit %s: invalid Prompt.SchemaJSON: %w", p.provider.Name, err)
-			}
-			opts = append(opts, gkai.WithOutputSchema(schema))
-		} else if req.Prompt.Schema != nil {
-			opts = append(opts, gkai.WithOutputType(req.Prompt.Schema))
+	if schema, handled, err := runtimeOutputSchema(p.provider, req); err != nil {
+		return nil, err
+	} else if handled {
+		opts = append(opts, gkai.WithOutputSchema(schema))
+	} else if len(req.Prompt.SchemaJSON) > 0 {
+		var schema map[string]any
+		if err := json.Unmarshal(req.Prompt.SchemaJSON, &schema); err != nil {
+			return nil, fmt.Errorf("genkit %s: invalid Prompt.SchemaJSON: %w", p.provider.Name, err)
 		}
+		opts = append(opts, gkai.WithOutputSchema(schema))
+	} else if req.Prompt.Schema != nil {
+		opts = append(opts, gkai.WithOutputType(req.Prompt.Schema))
 	}
 	return opts, nil
 }

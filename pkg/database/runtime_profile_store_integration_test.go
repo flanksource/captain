@@ -23,8 +23,10 @@ func openRuntimeDB(t *testing.T, name string) *DB {
 // shape is produced by hand-written marshalers (Tools and MCP), so a jsonb
 // round trip that dropped or reshaped them would be caught here.
 func presetSpecWithCustomMarshalers() api.RuntimePresetSpec {
-	return api.RuntimePresetSpec{
-		Model: api.Model{Name: "claude-sonnet-4-6", Mode: api.ModeCLI},
+	return api.RuntimePresetSpec(api.Spec{
+		Model:    api.Model{Name: "claude-sonnet-4-6", Mode: api.ModeCLI},
+		Prompt:   api.Prompt{System: "Keep the review focused."},
+		Workflow: &api.Workflow{AutoVerifyWithoutFixture: true},
 		Permissions: api.Permissions{
 			Mode:  api.PermissionPlan,
 			Tools: api.Tools{"Bash": api.ToolPolicyAllow, "Write": api.ToolPolicyDeny},
@@ -33,7 +35,7 @@ func presetSpecWithCustomMarshalers() api.RuntimePresetSpec {
 				Modes:   api.ResourcePolicies{"jira": api.ResourceDisabled},
 			},
 		},
-	}
+	})
 }
 
 func TestRuntimePresetStoreRoundTripsSpecThroughJSONB(t *testing.T) {
@@ -41,16 +43,18 @@ func TestRuntimePresetStoreRoundTripsSpecThroughJSONB(t *testing.T) {
 
 	created, err := db.CreateRuntimePreset(t.Context(), RuntimePresetInput{
 		Name: "Personal", Description: "my defaults", Scope: api.SpecLayerUser,
-		Spec: presetSpecWithCustomMarshalers(),
+		Spec: presetSpecWithCustomMarshalers(), Presets: []string{" organization ", "team"},
 	})
 	require.NoError(t, err)
 	assert.NotEqual(t, uuid.Nil, created.ID)
 	assert.Equal(t, presetSpecWithCustomMarshalers(), created.Spec)
+	assert.Equal(t, []string{"organization", "team"}, created.Presets)
 
 	stored, err := db.GetRuntimePreset(t.Context(), created.ID)
 	require.NoError(t, err)
 	assert.Equal(t, *created, *stored)
 	assert.Equal(t, presetSpecWithCustomMarshalers(), stored.Spec)
+	assert.Equal(t, []string{"organization", "team"}, stored.Presets)
 	assert.Equal(t, "my defaults", stored.Description)
 	assert.Equal(t, api.SpecLayerUser, stored.Scope)
 	assert.False(t, stored.CreatedAt.IsZero())
@@ -119,6 +123,11 @@ func TestRuntimePresetStoreRejectsInvalidInputBeforeWriting(t *testing.T) {
 	_, err = db.CreateRuntimePreset(t.Context(), RuntimePresetInput{
 		Name: "Bad model", Scope: api.SpecLayerUser,
 		Spec: api.RuntimePresetSpec{Model: api.Model{Name: "gpt-5", Mode: "telepathy"}},
+	})
+	assert.ErrorIs(t, err, ErrRuntimeInvalid)
+
+	_, err = db.CreateRuntimePreset(t.Context(), RuntimePresetInput{
+		Name: "Blank nested ref", Scope: api.SpecLayerUser, Presets: []string{"organization", "  "},
 	})
 	assert.ErrorIs(t, err, ErrRuntimeInvalid)
 

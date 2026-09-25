@@ -14,51 +14,49 @@ import (
 	"github.com/flanksource/captain/pkg/api"
 )
 
-var _ = Describe("Runtime profile HTTP resolution", func() {
-	It("serves Captain's resolved preset and profile layers", func() {
+var _ = Describe("Runtime preset HTTP resolution", func() {
+	It("serves Captain's resolved preset layers with complete task specs", func() {
 		service := aichat.NewService(aichat.ServiceOptions{})
 		response := httptest.NewRecorder()
 		service.Handler().ServeHTTP(response, requestJSON(
 			http.MethodPost,
-			"/api/chat/runtime-profiles/resolve",
-			api.RuntimeProfileResolveRequest{
-				Profile: api.RuntimeProfile{
-					ID: "review", Name: "Review", Presets: []string{"defaults"},
-					Spec: api.Spec{Prompt: api.Prompt{User: "Review the diff."}},
-				},
+			"/api/chat/runtime-presets/resolve",
+			api.RuntimePresetResolveRequest{
+				Selected: []string{"defaults"},
 				Presets: []api.RuntimePreset{{
 					ID: "defaults", Name: "Defaults", Scope: api.SpecLayerGlobal,
-					Spec: api.RuntimePresetSpec{Model: api.Model{
-						Name: "gpt-5", Mode: api.ModeAgent,
-					}},
+					Spec: api.RuntimePresetSpec(api.Spec{
+						Model:  api.Model{Name: "gpt-5", Mode: api.ModeAgent},
+						Prompt: api.Prompt{User: "Review the diff."},
+					}),
 				}},
 			},
 		))
 
 		Expect(response.Code).To(Equal(http.StatusOK))
-		var payload api.RuntimeProfileResolveResponse
+		var payload api.RuntimePresetResolveResponse
 		Expect(json.Unmarshal(response.Body.Bytes(), &payload)).To(Succeed())
 		Expect(payload.Resolved.Spec.Model.Name).To(Equal("gpt-5"))
 		Expect(payload.Resolved.Spec.Prompt.User).To(Equal("Review the diff."))
-		Expect(payload.Resolved.Trace).To(HaveLen(2))
+		Expect(payload.Resolved.Trace).To(HaveLen(1))
 	})
 
-	It("rejects task-owned fields inside a preset", func() {
+	It("refuses nested preset execution while accepting the API shape", func() {
 		service := aichat.NewService(aichat.ServiceOptions{})
 		response := httptest.NewRecorder()
 		request := httptest.NewRequest(
 			http.MethodPost,
-			"/api/chat/runtime-profiles/resolve",
+			"/api/chat/runtime-presets/resolve",
 			strings.NewReader(`{
-				"profile":{"id":"review","name":"Review","spec":{}},
-				"presets":[{"id":"bad","name":"Bad","scope":"global","spec":{"prompt":{"user":"task"}}}]
+				"selected":["bad"],
+				"presets":[{"id":"bad","name":"Bad","scope":"global","spec":{"prompt":{"user":"task"}},"presets":["base"]}]
 			}`),
 		)
 		request.Header.Set("Content-Type", "application/json")
 		service.Handler().ServeHTTP(response, request)
 
 		Expect(response.Code).To(Equal(http.StatusBadRequest))
-		Expect(response.Body.String()).To(ContainSubstring(`unknown field "prompt"`))
+		Expect(response.Body.String()).To(ContainSubstring(api.ErrRuntimePresetNestingUnsupported.Error()))
 	})
 
 	It("returns Captain's effective caller-tool permissions", func() {
@@ -83,16 +81,15 @@ var _ = Describe("Runtime profile HTTP resolution", func() {
 		response := httptest.NewRecorder()
 		service.Handler().ServeHTTP(response, requestJSON(
 			http.MethodPost,
-			"/api/chat/runtime-profiles/resolve",
-			api.RuntimeProfileResolveRequest{Profile: api.RuntimeProfile{
-				ID: "review", Name: "Review", Spec: api.Spec{Model: api.Model{
-					Name: "gpt-5", Mode: api.ModeAgent,
-				}},
-			}},
+			"/api/chat/runtime-presets/resolve",
+			api.RuntimePresetResolveRequest{Selected: []string{"review"}, Presets: []api.RuntimePreset{{
+				ID: "review", Name: "Review", Scope: api.SpecLayerSurface,
+				Spec: api.RuntimePresetSpec(api.Spec{Model: api.Model{Name: "gpt-5", Mode: api.ModeAgent}}),
+			}}},
 		))
 
 		Expect(response.Code).To(Equal(http.StatusOK))
-		var payload api.RuntimeProfileResolveResponse
+		var payload api.RuntimePresetResolveResponse
 		Expect(json.Unmarshal(response.Body.Bytes(), &payload)).To(Succeed())
 		Expect(payload.Tools).To(HaveLen(2))
 		Expect(payload.Permissions).To(Equal(map[string]api.ToolPolicy{
@@ -106,7 +103,7 @@ var _ = Describe("Runtime profile HTTP resolution", func() {
 	// The deployment's own tool policy can ask for a posture the selected runtime
 	// cannot express. That is a fact about the deployment for the UI to show
 	// through permissionSupport, not a defect in the profile being resolved.
-	It("reports caller-tool support gaps instead of rejecting the profile", func() {
+	It("reports caller-tool support gaps instead of rejecting the preset", func() {
 		runtime := api.RuntimeOf(api.Anthropic, api.ModeCLI)
 		Expect(api.PermissionCapabilitiesFor(runtime).ToolPolicySupport(api.ProvenanceCaller, api.ToolPolicyAsk).Kind).
 			To(Equal(api.SupportUnsupported))
@@ -124,17 +121,31 @@ var _ = Describe("Runtime profile HTTP resolution", func() {
 		response := httptest.NewRecorder()
 		service.Handler().ServeHTTP(response, requestJSON(
 			http.MethodPost,
-			"/api/chat/runtime-profiles/resolve",
-			api.RuntimeProfileResolveRequest{Profile: api.RuntimeProfile{
-				ID: "review", Name: "Review", Spec: api.Spec{Model: api.Model{Name: "sonnet", Mode: api.ModeCLI}},
-			}},
+			"/api/chat/runtime-presets/resolve",
+			api.RuntimePresetResolveRequest{Selected: []string{"review"}, Presets: []api.RuntimePreset{{
+				ID: "review", Name: "Review", Scope: api.SpecLayerSurface,
+				Spec: api.RuntimePresetSpec(api.Spec{Model: api.Model{Name: "sonnet", Mode: api.ModeCLI}}),
+			}}},
 		))
 
 		Expect(response.Code).To(Equal(http.StatusOK), response.Body.String())
-		var payload api.RuntimeProfileResolveResponse
+		var payload api.RuntimePresetResolveResponse
 		Expect(json.Unmarshal(response.Body.Bytes(), &payload)).To(Succeed())
 		Expect(payload.Resolved.Spec.Mode).To(Equal(api.ModeCLI))
 		Expect(payload.Permissions["version"]).To(Equal(api.ToolPolicyAsk))
 		Expect(payload.PermissionSupport["version"].Kind).To(Equal(api.SupportUnsupported))
+	})
+
+	It("keeps the profile endpoint as a warning-only no-op", func() {
+		service := aichat.NewService(aichat.ServiceOptions{})
+		response := httptest.NewRecorder()
+		service.Handler().ServeHTTP(response, requestJSON(http.MethodPost, "/api/chat/runtime-profiles/resolve", map[string]any{"invalid": true}))
+
+		Expect(response.Code).To(Equal(http.StatusOK))
+		Expect(response.Header().Get("Warning")).To(ContainSubstring("deprecated"))
+		var payload api.RuntimeProfileResolveResponse
+		Expect(json.Unmarshal(response.Body.Bytes(), &payload)).To(Succeed())
+		Expect(payload.Resolved.Trace).To(BeEmpty())
+		Expect(payload.Resolved.Warnings).To(Equal([]string{api.RuntimeProfileDeprecationWarning}))
 	})
 })

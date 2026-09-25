@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/captainconfig"
@@ -26,10 +25,14 @@ type RuntimeProfileBaseProvider func(context.Context) (RuntimeProfileBase, error
 // RuntimeProfileDefaultProvider lazily loads the host's default profile ref.
 type RuntimeProfileDefaultProvider func(context.Context) (string, error)
 
+// RuntimePresetDefaultProvider lazily loads the host's ordered default presets.
+type RuntimePresetDefaultProvider func(context.Context) ([]string, error)
+
 // LayeredRuntimeProfileProviderOptions configures a shared profile provider.
 type LayeredRuntimeProfileProviderOptions struct {
 	Resolver       *runtimeprofiles.Resolver
 	Base           RuntimeProfileBaseProvider
+	DefaultPresets RuntimePresetDefaultProvider
 	DefaultProfile RuntimeProfileDefaultProvider
 }
 
@@ -55,15 +58,17 @@ func NewLayeredRuntimeProfileProvider(options LayeredRuntimeProfileProviderOptio
 				return RuntimeProfile{}, fmt.Errorf("chat saved defaults: %w", err)
 			}
 		}
-		var defaultProfile string
-		if request.Ref == "" && options.DefaultProfile != nil {
-			defaultProfile, err = options.DefaultProfile(ctx)
+		var defaultPresets []string
+		if !request.PresetsSet && options.DefaultPresets != nil {
+			defaultPresets, err = options.DefaultPresets(ctx)
 			if err != nil {
-				return RuntimeProfile{}, fmt.Errorf("load default runtime profile: %w", err)
+				return RuntimeProfile{}, fmt.Errorf("load default runtime presets: %w", err)
 			}
 		}
 		result, err := options.Resolver.Layers(ctx, runtimeprofiles.ResolveOptions{
-			BaseLayers: base.Layers, RequestedProfile: request.Ref, DefaultProfile: strings.TrimSpace(defaultProfile),
+			BaseLayers:       base.Layers,
+			RequestedPresets: request.Presets, RequestedPresetsSet: request.PresetsSet,
+			DefaultPresets: defaultPresets, RequestedProfile: request.Ref,
 		})
 		if err != nil {
 			var selection *runtimeprofiles.SelectionError
@@ -76,10 +81,14 @@ func NewLayeredRuntimeProfileProvider(options LayeredRuntimeProfileProviderOptio
 			}
 			return RuntimeProfile{}, err
 		}
+		if options.DefaultProfile != nil {
+			result.Warnings = append(result.Warnings, api.RuntimeProfileDeprecationWarning)
+		}
 		composed, err := api.ComposeSpecLayers(api.ResolveSpecOptions{Layers: result.Layers, Saved: base.Saved})
 		if err != nil {
 			return RuntimeProfile{}, fmt.Errorf("compose chat runtime profile: %w", err)
 		}
+		composed.Warnings = append(composed.Warnings, result.Warnings...)
 		return RuntimeProfile{
 			System: base.System, Composed: composed, Saved: base.Saved, ProviderConfig: base.ProviderConfig,
 		}, nil

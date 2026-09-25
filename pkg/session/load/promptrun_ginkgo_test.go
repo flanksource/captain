@@ -2,11 +2,13 @@ package load_test
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/session"
 	"github.com/flanksource/captain/pkg/session/load"
 )
@@ -41,6 +43,35 @@ var _ = Describe("PromptRun", func() {
 		Expect(result.Session.Events[0].Data).To(HaveKeyWithValue("message", "provider hung up"))
 		Expect(result.Provenance.Of(load.FacetPrompt)).To(Equal(load.SourcePromptRun))
 		Expect(result.Provenance.Of(load.FacetMessages)).To(Equal(load.SourceTranscript))
+	})
+
+	It("enriches transcript file parts from the realized prompt attachment metadata", func() {
+		const attachmentID = "sha256:7d432b84dfb5e1cda66c73adae2848da8f2afea3f6f1bd255f517ebce71b3d8e"
+		withAttachment := run
+		withAttachment.RenderedSpec = map[string]any{
+			"model":        "claude-opus-4",
+			"outputSchema": map[string]any{"type": "object"},
+			"input": map[string]any{
+				"prompt": map[string]any{
+					"attachments": []any{map[string]any{
+						"id": attachmentID, "filename": "scorecard.png", "mediaType": "image/png", "size": float64(492991),
+					}},
+				},
+			},
+		}
+		transcript := &session.Session{Messages: []session.Message{{
+			ID: "transcript-m1", Role: "user", Parts: []session.Part{{
+				Type: session.PartFile, AttachmentID: attachmentID, URL: "/api/attachments/" + attachmentID,
+			}},
+		}}}
+
+		result, failures := load.Load(context.Background(), load.Transcript(transcript), load.PromptRun(withAttachment))
+
+		Expect(failures).To(BeEmpty())
+		Expect(result.Session.Messages[0].Parts[0]).To(Equal(session.Part{
+			Type: session.PartFile, AttachmentID: attachmentID, URL: "/api/attachments/" + attachmentID,
+			Filename: "scorecard.png", MediaType: "image/png",
+		}))
 	})
 
 	It("synthesises the prompt and result messages when nothing else supplied any", func() {
@@ -87,6 +118,31 @@ var _ = Describe("PromptRun", func() {
 		Expect(result.Session.StructuredOutput).To(Equal(map[string]any{"source": "stored"}))
 		Expect(result.Session.Messages).To(HaveLen(2))
 		Expect(result.Session.Messages[1].Parts[0].Text).To(Equal(`{"source":"text"}`))
+	})
+
+	It("projects typed verification into the session and a transcript without a notice", func() {
+		verified := run
+		verified.ResultJSON = map[string]any{"verdict": "pass"}
+		report := api.VerifyReport{Kind: api.VerifyKindFixture, Name: "fixture", Ran: true, Passed: true, State: api.VerifyStatePassed, Iteration: 1}
+		verified.Verifications = []session.Verification{{Iteration: 1, Report: report}}
+
+		result, failures := load.Load(context.Background(), load.PromptRun(verified))
+
+		Expect(failures).To(BeEmpty())
+		Expect(result.Session.StructuredOutput).To(Equal(map[string]any{"verdict": "pass"}))
+		Expect(result.Session.Verifications).To(Equal(verified.Verifications))
+		Expect(result.Session.Messages).To(HaveLen(3))
+		Expect(result.Session.Messages[2].Role).To(Equal(session.RoleVerified))
+		Expect(result.Session.Messages[2].Parts[0].Text).To(ContainSubstring("fixture"))
+		Expect(result.Session.Messages[2].Parts[1].Type).To(Equal(session.PartVerify))
+
+		raw, err := json.Marshal(report)
+		Expect(err).NotTo(HaveOccurred())
+		withNotice, failures := load.Load(context.Background(), load.Transcript(&session.Session{Messages: []session.Message{{
+			ID: "notice", Role: session.RoleVerified, Parts: []session.Part{{Type: session.PartVerify, Data: raw}},
+		}}}), load.PromptRun(verified))
+		Expect(failures).To(BeEmpty())
+		Expect(withNotice.Session.Messages).To(HaveLen(1), "an existing notice already carries the report")
 	})
 
 	It("fills runtime and timing facts the overview left absent, without overwriting it", func() {

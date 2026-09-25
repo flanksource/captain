@@ -1,6 +1,7 @@
 package session
 
 import (
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/claude/tools"
 	"github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -15,6 +16,8 @@ var _ = ginkgo.Describe("session metadata projection", func() {
 		Todos:     []tools.TodoItem{{Text: "ship it", Status: "pending"}},
 		Approvals: ApprovalStats{Approved: 3, Denied: 1},
 		Plan:      &Plan{Path: "/plans/p.md", Slug: "p"},
+		// PermissionMode is the transcript's last recorded posture.
+		PermissionMode: api.PermissionAuto,
 	}
 
 	ginkgo.It("round-trips every key it writes", func() {
@@ -38,6 +41,7 @@ var _ = ginkgo.Describe("session metadata projection", func() {
 		ginkgo.Entry("no approvals", Metadata{Model: "m"}, "approvals"),
 		ginkgo.Entry("zero approvals", Metadata{Model: "m", Approvals: ApprovalStats{}}, "approvals"),
 		ginkgo.Entry("no plan", Metadata{Model: "m"}, "plan"),
+		ginkgo.Entry("no permission mode", Metadata{Model: "m"}, "permissionMode"),
 	)
 
 	ginkgo.It("ignores sibling keys written by other producers", func() {

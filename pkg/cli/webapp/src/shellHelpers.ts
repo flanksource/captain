@@ -8,10 +8,11 @@ import {
   UiFileText,
   UiFingerprint,
   UiHistory,
+  UiListTree,
   UiRobotAi,
   UiServer,
   UiSliders,
-} from "@flanksource/clicky-ui/data";
+} from "@flanksource/clicky-ui/icons";
 import { DEFAULT_DB_CONTEXT, type DbContextOption } from "./dbContext";
 import {
   ALL_PROJECTS_SCOPE,
@@ -28,6 +29,7 @@ export type PrimaryRoute =
   | "whoami"
   | "sandboxes"
   | "runtime-profiles"
+  | "adapter-schemas"
   | "operations";
 
 export const CAPTAIN_SIDEBAR_COLLAPSE_KEY = "captain:sidebar:collapsed";
@@ -50,7 +52,13 @@ export function captainNavSections(
           icon: UiActivity,
           active: active === "dashboard",
         },
-        { key: "agent", label: "Agent", to: "/agent", icon: UiRobotAi, active: active === "agent" },
+        {
+          key: "agent",
+          label: "Agent",
+          to: "/agent",
+          icon: UiRobotAi,
+          active: active === "agent",
+        },
         {
           key: "whoami",
           label: "Whoami",
@@ -65,13 +73,26 @@ export function captainNavSections(
           icon: UiHistory,
           active: active === "sessions",
         },
-        { key: "prompts", label: "Prompts", to: "/prompts", icon: UiFileText, active: active === "prompts" },
+        {
+          key: "prompts",
+          label: "Prompts",
+          to: "/prompts",
+          icon: UiFileText,
+          active: active === "prompts",
+        },
         {
           key: "runtime-profiles",
-          label: "Runtime profiles",
-          to: "/runtime-profiles",
+          label: "Runtime presets",
+          to: "/runtime-presets",
           icon: UiSliders,
           active: active === "runtime-profiles",
+        },
+        {
+          key: "adapter-schemas",
+          label: "Adapter schemas",
+          to: "/adapter-schemas",
+          icon: UiListTree,
+          active: active === "adapter-schemas",
         },
         {
           key: "sandboxes",
@@ -114,7 +135,11 @@ export function projectOptions(
       group: "Projects",
     });
   }
-  if (projectScope && projectScope !== ALL_PROJECTS_SCOPE && !seen.has(projectScope)) {
+  if (
+    projectScope &&
+    projectScope !== ALL_PROJECTS_SCOPE &&
+    !seen.has(projectScope)
+  ) {
     options.push({
       value: projectScope,
       label: projectLabel(projectScope),
@@ -179,7 +204,9 @@ export function setProjectScopeInLocation(
   search: string,
 ) {
   const nextScope = projectScope || ALL_PROJECTS_SCOPE;
-  navigate(withProjectScope(`${pathname}${search}`, nextScope), { replace: true });
+  navigate(withProjectScope(`${pathname}${search}`, nextScope), {
+    replace: true,
+  });
   notifyProjectScopeChanged();
 }
 

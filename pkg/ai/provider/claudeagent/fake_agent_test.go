@@ -70,10 +70,10 @@ func runFakeServer() {
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	for scanner.Scan() {
 		var frame struct {
-			ID     json.RawMessage      `json:"id"`
-			Method string               `json:"method"`
-			Result json.RawMessage      `json:"result"`
-			Params fakeInitializeParams `json:"params"`
+			ID     json.RawMessage `json:"id"`
+			Method string          `json:"method"`
+			Result json.RawMessage `json:"result"`
+			Params json.RawMessage `json:"params"`
 		}
 		if json.Unmarshal(scanner.Bytes(), &frame) != nil {
 			continue
@@ -84,8 +84,8 @@ func runFakeServer() {
 		}
 		switch frame.Method {
 		case "initialize":
-			initialization = frame.Params
-			initHadSchema = len(frame.Params.OutputSchema) > 0
+			_ = json.Unmarshal(frame.Params, &initialization)
+			initHadSchema = len(initialization.OutputSchema) > 0
 			enc(map[string]any{"jsonrpc": "2.0", "id": id(frame.ID), "result": map[string]any{"ok": true}})
 			enc(map[string]any{"jsonrpc": "2.0", "method": "session/init", "params": map[string]any{
 				"session_id": "fake-sess", "model": "claude-sonnet-4-5", "tools": []string{"Read", "Bash"},
@@ -98,6 +98,15 @@ func runFakeServer() {
 		case "interrupt":
 			if marker != "" {
 				_ = os.WriteFile(marker, []byte("interrupted"), 0o644)
+			}
+			enc(map[string]any{"jsonrpc": "2.0", "id": id(frame.ID), "result": map[string]any{}})
+		case "set_permission_mode":
+			var params struct {
+				Mode string `json:"mode"`
+			}
+			_ = json.Unmarshal(frame.Params, &params)
+			if marker != "" {
+				_ = os.WriteFile(marker, []byte("set_permission_mode "+params.Mode), 0o644)
 			}
 			enc(map[string]any{"jsonrpc": "2.0", "id": id(frame.ID), "result": map[string]any{}})
 		case "shutdown":
@@ -210,12 +219,19 @@ func runFakeCallerTool(
 	return nil
 }
 
-func withFakeAgentProcess(t *testing.T) {
+// fakeAgentT is satisfied by both *testing.T and GinkgoT().
+type fakeAgentT interface {
+	require.TestingT
+	Helper()
+	Cleanup(func())
+}
+
+func withFakeAgentProcess(t fakeAgentT) {
 	t.Helper()
 	withFakeAgentProcessEnv(t, map[string]string{fakeServerEnv: "1"})
 }
 
-func withFakeAgentProcessEnv(t *testing.T, env map[string]string) {
+func withFakeAgentProcessEnv(t fakeAgentT, env map[string]string) {
 	t.Helper()
 	self, err := os.Executable()
 	require.NoError(t, err)

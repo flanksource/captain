@@ -115,7 +115,16 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	profile, err := s.runtimeProfile(request.Context(), WithRuntimeProfileRef(chat.RuntimeProfile))
+	selection := make([]RuntimeProfileOption, 0, 2)
+	if chat.Presets != nil {
+		selection = append(selection, WithRuntimePresets(chat.Presets))
+	}
+	if strings.TrimSpace(chat.RuntimeProfile) != "" {
+		serviceLog.Warnf("%s", api.RuntimeProfileDeprecationWarning)
+		w.Header().Set("Warning", `299 Captain "`+api.RuntimeProfileDeprecationWarning+`"`)
+		selection = append(selection, WithRuntimeProfileRef(chat.RuntimeProfile))
+	}
+	profile, err := s.runtimeProfile(request.Context(), selection...)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("load chat runtime profile: %v", err), runtimeProfileStatus(err))
 		return
@@ -143,10 +152,6 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 		return
 	}
 	if err := bindAuthoritativeHistory(&chat, thread); err != nil {
-		http.Error(w, err.Error(), requestErrorStatus(err))
-		return
-	}
-	if err := enforceRuntimeProfile(chat, profile.Composed); err != nil {
 		http.Error(w, err.Error(), requestErrorStatus(err))
 		return
 	}

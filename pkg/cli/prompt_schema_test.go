@@ -72,11 +72,11 @@ func TestPromptSchemaDocumentRuntimeAdaptersAndConditionals(t *testing.T) {
 	if !hasModels || len(openAICLIModels) == 0 {
 		t.Fatalf("openai cli should expose exact registry models without API provider data: %+v", openAICLI)
 	}
-	if got := openAICLIModels[0]; got != "gpt-5.6-sol" {
-		t.Errorf("openai cli first model = %q, want gpt-5.6-sol", got)
+	if got := openAICLIModels[0]; got != "gpt-6-sol" {
+		t.Errorf("openai cli first model = %q, want gpt-6-sol", got)
 	}
 	flat := doc["models"].([]PromptModelCatalogEntry)
-	codexModel := schemaModelForMode(t, flat, "gpt-5.6-sol", "cli")
+	codexModel := schemaModelForMode(t, flat, "gpt-6-sol", "cli")
 	// The provider is the catalog namespace, not a runtime: every openai mode
 	// buckets under "openai" so one family filter reaches all of them.
 	if got := codexModel.Provider; got != "openai" {
@@ -88,8 +88,8 @@ func TestPromptSchemaDocumentRuntimeAdaptersAndConditionals(t *testing.T) {
 	if !codexModel.Reasoning {
 		t.Error("flat model reasoning = false, want true")
 	}
-	if !containsString(codexModel.SupportedEfforts, "max") || !containsString(codexModel.SupportedEfforts, "ultra") {
-		t.Errorf("flat model supportedEfforts = %#v, want patched Codex ultra", codexModel.SupportedEfforts)
+	if !containsString(codexModel.SupportedEfforts, "max") || containsString(codexModel.SupportedEfforts, "ultra") {
+		t.Errorf("flat model supportedEfforts = %#v, want API-supported levels through max", codexModel.SupportedEfforts)
 	}
 	if codexModel.DefaultEffort != "" {
 		t.Errorf("flat model should not have a locally patched default effort: %#v", codexModel.DefaultEffort)
@@ -97,7 +97,7 @@ func TestPromptSchemaDocumentRuntimeAdaptersAndConditionals(t *testing.T) {
 	if codexModel.Configured {
 		t.Error("flat model configured = true, want false for fake unauthenticated CLI")
 	}
-	if got := codexModel.Runtime; !reflect.DeepEqual(got, api.Model{Name: "gpt-5.6-sol"}) {
+	if got := codexModel.Runtime; !reflect.DeepEqual(got, api.Model{Name: "gpt-6-sol"}) {
 		t.Errorf("flat model runtime = %#v, want provider-independent model", got)
 	}
 
