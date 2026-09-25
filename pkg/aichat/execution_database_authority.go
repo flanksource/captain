@@ -316,7 +316,10 @@ func (a *DatabaseExecutionAuthority) budgetAdmission(ctx context.Context, dimens
 	}
 	rules, err := a.budgets.List(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("load budget rules: %w", err)
+		// Observe-only: fail open until budgets are enforced, so a broken rule
+		// source costs attribution rather than chat availability.
+		serviceLog.Warnf("load budget rules (observe-only, continuing without attribution): %v", err)
+		return budgets.Evaluate(nil, dimensions, models), nil
 	}
 	return budgets.Evaluate(rules, dimensions, models), nil
 }
