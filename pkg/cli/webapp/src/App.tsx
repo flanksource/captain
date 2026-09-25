@@ -19,6 +19,7 @@ import { ChatRoute } from "./ChatRoute";
 import { HomeDashboard } from "./HomeDashboard";
 import { PromptWorkbench } from "./PromptWorkbench";
 import { RuntimeProfilesPage } from "./RuntimeProfilesPage";
+import { BudgetRulesPage } from "./BudgetRulesPage";
 import { SessionBrowser } from "./SessionBrowser";
 import {
   getSessionListSearchSnapshot,
@@ -111,6 +112,8 @@ export function App() {
                 <SandboxesPage />
               ) : route.kind === "runtime-profiles" ? (
                 <RuntimeProfilesPage search={locationSearch} onNavigate={router.navigate} />
+              ) : route.kind === "budgets" ? (
+                <BudgetRulesPage />
               ) : route.kind === "operations" ? (
                 <EntityExplorerApp
                   client={apiClient}
@@ -198,6 +201,7 @@ type Route =
   | { kind: "whoami" }
   | { kind: "sandboxes" }
   | { kind: "runtime-profiles" }
+  | { kind: "budgets" }
   | { kind: "operations" }
   | { kind: "chat"; threadId: string; model?: string };
 
@@ -207,6 +211,7 @@ function primaryRoute(route: Route): PrimaryRoute {
   if (route.kind === "whoami") return "whoami";
   if (route.kind === "sandboxes") return "sandboxes";
   if (route.kind === "runtime-profiles") return "runtime-profiles";
+  if (route.kind === "budgets") return "budgets";
   if (route.kind === "prompts") return "prompts";
   if (route.kind === "sessions") return "sessions";
   return "agent";
@@ -217,6 +222,7 @@ function parseRoute(pathname: string, search: string): Route {
   if (pathname.startsWith("/whoami")) return { kind: "whoami" };
   if (pathname.startsWith("/sandboxes")) return { kind: "sandboxes" };
   if (pathname.startsWith("/runtime-profiles")) return { kind: "runtime-profiles" };
+  if (pathname.startsWith("/budgets")) return { kind: "budgets" };
   if (pathname.startsWith("/prompts")) {
     const raw = pathname.slice("/prompts".length).replace(/^\/+/, "");
     const promptId = raw ? decodeURIComponent(raw.split("/")[0] ?? "") : undefined;
