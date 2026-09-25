@@ -309,12 +309,6 @@ table "captain_model_calls" {
     columns = [column.prompt_run_id]
   }
 
-  # Budget windows aggregate terminal calls by completion time.
-  index "captain_model_calls_ended_at_idx" {
-    columns = [column.ended_at]
-    where   = "ended_at IS NOT NULL"
-  }
-
   # captain_model_calls_started_at_idx, captain_model_calls_model_idx and
   # captain_model_calls_iteration_id_idx were removed. This table served 18.5M
   # index scans in one measurement window and not one of them touched these

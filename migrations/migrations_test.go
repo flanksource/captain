@@ -141,7 +141,7 @@ func TestSchemaBundleContainsGavelIntegrationContract(t *testing.T) {
 		`column "group_by"`,
 		`column "amount"`,
 		`column "window"`,
-		`table "captain_turn_budgets"`,
+		`table "captain_model_call_budgets"`,
 		`column "budget_rule_id"`,
 		`column "group_values"`,
 	)

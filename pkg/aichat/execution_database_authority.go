@@ -101,9 +101,6 @@ func (a *DatabaseExecutionAuthority) Begin(
 			return fmt.Errorf("chat turn %q already exists in state %s", request.RequestID, turn.Status)
 		}
 		resumed = !created
-		if createErr := tx.SetChatTurnBudgets(ctx, turn.ID, request.Dimensions, databaseAttributions(primaryAttributions)); createErr != nil {
-			return createErr
-		}
 		run, createErr := tx.CreatePromptRun(ctx, database.CreatePromptRunInput{
 			SessionID: session.ID, TurnID: &turn.ID, AdmissionKey: executionAdmissionKey(request),
 			Origin: "aichat", RenderedSpec: renderedSpec,
@@ -127,6 +124,9 @@ func (a *DatabaseExecutionAuthority) Begin(
 			Provider: request.Spec.Provider.Name, Mode: string(request.Spec.Mode), Effort: string(request.Spec.Effort),
 		})
 		if createErr != nil {
+			return createErr
+		}
+		if createErr := tx.SetModelCallBudgets(ctx, turn.ID, modelCallID, request.Dimensions, databaseAttributions(primaryAttributions)); createErr != nil {
 			return createErr
 		}
 		execution = &databaseExecution{
