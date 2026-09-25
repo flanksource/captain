@@ -336,6 +336,22 @@ func (a *DatabaseExecutionAuthority) budgetAdmission(ctx context.Context, dimens
 	return budgets.Enforce(ctx, rules, dimensions, models, a.now().UTC(), a.db)
 }
 
+// AdmitStateless refuses thread-less turns while budget rules are active:
+// without a thread there is no turn to attribute settled spend to.
+func (a *DatabaseExecutionAuthority) AdmitStateless(ctx context.Context) error {
+	if a.budgets == nil {
+		return nil
+	}
+	rules, err := a.budgets.List(ctx)
+	if err != nil {
+		return fmt.Errorf("load budget rules: %w", err)
+	}
+	if len(rules) > 0 {
+		return &budgets.Refusal{Reason: "budget rules are active; chat requests must carry a threadId so spend can be attributed"}
+	}
+	return nil
+}
+
 func databaseAttributions(input []budgets.Attribution) []database.BudgetAttribution {
 	out := make([]database.BudgetAttribution, 0, len(input))
 	for _, attribution := range input {

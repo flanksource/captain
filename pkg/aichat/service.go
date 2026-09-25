@@ -201,6 +201,16 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 		http.Error(w, err.Error(), requestErrorStatus(err))
 		return
 	}
+	if admitter, ok := s.options.Authority.(statelessAdmitter); ok && chat.ThreadID == "" {
+		if err := admitter.AdmitStateless(request.Context()); err != nil {
+			status := http.StatusInternalServerError
+			if isBudgetRefusal(err) {
+				status = http.StatusPaymentRequired
+			}
+			http.Error(w, fmt.Sprintf("admit chat execution: %v", err), status)
+			return
+		}
+	}
 	var execution Execution
 	var callerToolEvents <-chan api.Event
 	if s.options.Authority != nil && chat.ThreadID != "" {
