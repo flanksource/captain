@@ -17,6 +17,9 @@ var (
 	ErrBudgetRuleNotFound = errors.New("captain budget rule not found")
 	ErrBudgetNameTaken    = errors.New("captain budget rule name is already taken")
 	ErrBudgetInvalid      = errors.New("invalid captain budget rule")
+	// ErrBudgetSpendNotUSD marks a ledger that cannot be summed in USD. It is a
+	// budget decision (fail closed), not an operational failure.
+	ErrBudgetSpendNotUSD = errors.New("budget ledger contains completed non-USD model calls")
 )
 
 // BudgetRuleMatch is the persisted match portion of a budget rule.
@@ -271,7 +274,7 @@ func (db *DB) BudgetSpendUSD(ctx context.Context, ruleID uuid.UUID, groupValues 
 		return 0, fmt.Errorf("inspect budget ledger currency: %w", err)
 	}
 	if nonUSD > 0 {
-		return 0, fmt.Errorf("budget ledger contains %d completed non-USD model calls", nonUSD)
+		return 0, fmt.Errorf("%w: %d calls", ErrBudgetSpendNotUSD, nonUSD)
 	}
 	var total float64
 	if err := db.budgetSpendStatement(ctx, ruleID, groupJSON, since).
