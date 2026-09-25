@@ -5,6 +5,7 @@ import type {
 import {
   UiActivity,
   UiBox,
+  UiCoins,
   UiFileText,
   UiFingerprint,
   UiHistory,
@@ -28,6 +29,7 @@ export type PrimaryRoute =
   | "whoami"
   | "sandboxes"
   | "runtime-profiles"
+  | "budgets"
   | "operations";
 
 export const CAPTAIN_SIDEBAR_COLLAPSE_KEY = "captain:sidebar:collapsed";
@@ -72,6 +74,13 @@ export function captainNavSections(
           to: "/runtime-profiles",
           icon: UiSliders,
           active: active === "runtime-profiles",
+        },
+        {
+          key: "budgets",
+          label: "Budgets",
+          to: "/budgets",
+          icon: UiCoins,
+          active: active === "budgets",
         },
         {
           key: "sandboxes",
