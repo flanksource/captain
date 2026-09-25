@@ -110,7 +110,7 @@ func requestSpec(request ChatRequest, profile RuntimeProfile, attachments map[pa
 		if err != nil {
 			return api.ResolvedSpec{}, err
 		}
-		if spec.Mode == api.ModeAgent {
+		if spec.Mode == api.ModeAgent || spec.Mode == api.ModeCLI {
 			user, promptAttachments, err := agentPrompt(messages, request.ProviderSessionID != "")
 			if err != nil {
 				return api.ResolvedSpec{}, err
