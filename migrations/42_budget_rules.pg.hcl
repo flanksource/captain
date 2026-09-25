@@ -1,6 +1,6 @@
 # Multidimensional AI budgets. Rules are authored either here or as catalog
-# YAML. Turn attribution deliberately stores the catalog id as text: YAML rules
-# have no row to reference, and retained attribution must survive rule deletion.
+# YAML. Attribution deliberately stores the catalog id as text: YAML rules have
+# no row to reference, and retained attribution must survive rule deletion.
 
 table "captain_budget_rules" {
   schema = schema.public
@@ -69,10 +69,12 @@ table "captain_budget_rules" {
   }
 }
 
-table "captain_turn_budgets" {
+# Attribution is keyed by model call, the unit whose cost settles, so rebinding a
+# later run in the same turn never moves spend already recorded by an earlier one.
+table "captain_model_call_budgets" {
   schema = schema.public
 
-  column "turn_id" {
+  column "model_call_id" {
     null = false
     type = uuid
   }
@@ -88,21 +90,21 @@ table "captain_turn_budgets" {
   }
 
   primary_key {
-    columns = [column.turn_id, column.budget_rule_id]
+    columns = [column.model_call_id, column.budget_rule_id]
   }
-  foreign_key "captain_turn_budgets_turn_id_fkey" {
-    columns     = [column.turn_id]
-    ref_columns = [table.captain_turns.column.id]
+  foreign_key "captain_model_call_budgets_model_call_id_fkey" {
+    columns     = [column.model_call_id]
+    ref_columns = [table.captain_model_calls.column.id]
     on_update   = NO_ACTION
     on_delete   = CASCADE
   }
-  index "captain_turn_budgets_rule_group_idx" {
+  index "captain_model_call_budgets_rule_group_idx" {
     columns = [column.budget_rule_id, column.group_values]
   }
-  check "captain_turn_budgets_rule_id" {
+  check "captain_model_call_budgets_rule_id" {
     expr = "length(btrim(budget_rule_id)) > 0"
   }
-  check "captain_turn_budgets_group_values" {
+  check "captain_model_call_budgets_group_values" {
     expr = "jsonb_typeof(group_values) = 'object'"
   }
 }

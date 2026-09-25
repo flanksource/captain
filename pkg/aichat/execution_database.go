@@ -103,7 +103,7 @@ func (e *databaseExecution) BindRuntime(ctx context.Context, runtime api.Model) 
 	var updatedRun *database.PromptRun
 	err = e.db.Transaction(ctx, func(tx *database.DB) error {
 		if e.budgetAdmission != nil {
-			if budgetErr := tx.SetChatTurnBudgets(ctx, e.turn.ID, e.budgetAdmission.Dimensions, databaseAttributions(attributions)); budgetErr != nil {
+			if budgetErr := tx.SetModelCallBudgets(ctx, e.turn.ID, e.modelCallID, e.budgetAdmission.Dimensions, databaseAttributions(attributions)); budgetErr != nil {
 				return budgetErr
 			}
 		}

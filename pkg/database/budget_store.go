@@ -182,23 +182,25 @@ func trimNonempty(input []string) []string {
 	return out
 }
 
-type turnBudgetRecord struct {
-	TurnID       uuid.UUID         `gorm:"column:turn_id;type:uuid;primaryKey"`
+type modelCallBudgetRecord struct {
+	ModelCallID  uuid.UUID         `gorm:"column:model_call_id;type:uuid;primaryKey"`
 	BudgetRuleID string            `gorm:"column:budget_rule_id;primaryKey"`
 	GroupValues  map[string]string `gorm:"column:group_values;serializer:json;type:jsonb"`
 }
 
-func (turnBudgetRecord) TableName() string { return "captain_turn_budgets" }
+func (modelCallBudgetRecord) TableName() string { return "captain_model_call_budgets" }
 
-// BudgetAttribution is the concrete rule group recorded for an admitted turn.
+// BudgetAttribution is the concrete rule group recorded for an admitted model call.
 type BudgetAttribution struct {
 	RuleID      string
 	GroupValues map[string]string
 }
 
-// SetChatTurnBudgets atomically records the host dimensions and the concrete
-// rule groups selected for a turn before provider execution starts.
-func (db *DB) SetChatTurnBudgets(ctx context.Context, turnID uuid.UUID, dimensions map[string]string, attributions []BudgetAttribution) error {
+// SetModelCallBudgets atomically records the turn's host dimensions and the
+// concrete rule groups selected for one model call before its provider
+// execution starts. Replacement is scoped to that call, so attribution already
+// recorded for earlier calls in the same turn never moves.
+func (db *DB) SetModelCallBudgets(ctx context.Context, turnID, modelCallID uuid.UUID, dimensions map[string]string, attributions []BudgetAttribution) error {
 	dimensionJSON, err := json.Marshal(cloneStrings(dimensions))
 	if err != nil {
 		return fmt.Errorf("encode Captain turn dimensions: %w", err)
@@ -211,29 +213,29 @@ func (db *DB) SetChatTurnBudgets(ctx context.Context, turnID uuid.UUID, dimensio
 	if result.RowsAffected != 1 {
 		return fmt.Errorf("store Captain turn dimensions: turn %s not found", turnID)
 	}
-	if err := db.gorm.WithContext(ctx).Where("turn_id = ?", turnID).Delete(&turnBudgetRecord{}).Error; err != nil {
-		return fmt.Errorf("replace Captain turn budget attribution: %w", err)
+	if err := db.gorm.WithContext(ctx).Where("model_call_id = ?", modelCallID).Delete(&modelCallBudgetRecord{}).Error; err != nil {
+		return fmt.Errorf("replace Captain model call budget attribution: %w", err)
 	}
-	records := make([]turnBudgetRecord, 0, len(attributions))
+	records := make([]modelCallBudgetRecord, 0, len(attributions))
 	for _, attribution := range attributions {
 		if strings.TrimSpace(attribution.RuleID) == "" {
 			return fmt.Errorf("%w: budget attribution rule ID is required", ErrBudgetInvalid)
 		}
-		records = append(records, turnBudgetRecord{TurnID: turnID, BudgetRuleID: attribution.RuleID, GroupValues: cloneStrings(attribution.GroupValues)})
+		records = append(records, modelCallBudgetRecord{ModelCallID: modelCallID, BudgetRuleID: attribution.RuleID, GroupValues: cloneStrings(attribution.GroupValues)})
 	}
 	if len(records) == 0 {
 		return nil
 	}
 	if err := db.gorm.WithContext(ctx).Create(&records).Error; err != nil {
-		return fmt.Errorf("store Captain turn budget attribution: %w", err)
+		return fmt.Errorf("store Captain model call budget attribution: %w", err)
 	}
 	return nil
 }
 
-func (db *DB) ListChatTurnBudgets(ctx context.Context, turnID uuid.UUID) ([]BudgetAttribution, error) {
-	var records []turnBudgetRecord
-	if err := db.gorm.WithContext(ctx).Where("turn_id = ?", turnID).Order("budget_rule_id").Find(&records).Error; err != nil {
-		return nil, fmt.Errorf("list Captain turn budget attribution: %w", err)
+func (db *DB) ListModelCallBudgets(ctx context.Context, modelCallID uuid.UUID) ([]BudgetAttribution, error) {
+	var records []modelCallBudgetRecord
+	if err := db.gorm.WithContext(ctx).Where("model_call_id = ?", modelCallID).Order("budget_rule_id").Find(&records).Error; err != nil {
+		return nil, fmt.Errorf("list Captain model call budget attribution: %w", err)
 	}
 	out := make([]BudgetAttribution, 0, len(records))
 	for _, record := range records {
@@ -245,7 +247,7 @@ func (db *DB) ListChatTurnBudgets(ctx context.Context, turnID uuid.UUID) ([]Budg
 func (db *DB) budgetSpendStatement(ctx context.Context, ruleID string, groupJSON []byte, since time.Time) *gorm.DB {
 	return db.gorm.WithContext(ctx).
 		Table("captain_model_calls AS calls").
-		Joins("JOIN captain_turn_budgets AS budgets ON budgets.turn_id = calls.turn_id").
+		Joins("JOIN captain_model_call_budgets AS budgets ON budgets.model_call_id = calls.id").
 		Where("budgets.budget_rule_id = ? AND budgets.group_values = ?::jsonb", ruleID, string(groupJSON)).
 		Where("calls.ended_at IS NOT NULL AND calls.ended_at >= ?", since)
 }
