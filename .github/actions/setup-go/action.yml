@@ -1,0 +1,46 @@
+name: Setup Go
+description: >
+  Install Go and restore the module and build caches. Restore only: the test
+  workflow's test job saves the cache on pushes to main, using the cache-key
+  output.
+
+inputs:
+  go-version:
+    description: Go version to install.
+    default: "1.26.x"
+
+outputs:
+  cache-key:
+    description: Key to save the Go cache under for this commit.
+    value: ${{ steps.key.outputs.key }}
+
+runs:
+  using: composite
+  steps:
+    # setup-go's built-in cache is disabled: it gives every job the same key,
+    # so whichever job finished first saved it. The lint job, whose Go work
+    # happens inside gavel, usually won and saved a near-empty cache that
+    # every later run then hit exactly and never replaced.
+    - uses: actions/setup-go@v5
+      id: setup-go
+      with:
+        go-version: ${{ inputs.go-version }}
+        cache: false
+    - id: key
+      shell: bash
+      run: |
+        base='go-${{ runner.os }}-${{ runner.arch }}-${{ steps.setup-go.outputs.go-version }}'
+        echo "base=$base" >> "$GITHUB_OUTPUT"
+        echo "gosum=$base-${{ hashFiles('go.sum') }}" >> "$GITHUB_OUTPUT"
+        # The commit in the key lets each push to main refresh the build cache.
+        echo "key=$base-${{ hashFiles('go.sum') }}-${{ github.sha }}" >> "$GITHUB_OUTPUT"
+    - name: Restore Go cache
+      uses: actions/cache/restore@v4
+      with:
+        path: |
+          ~/go/pkg/mod
+          ~/.cache/go-build
+        key: ${{ steps.key.outputs.key }}
+        restore-keys: |
+          ${{ steps.key.outputs.gosum }}-
+          ${{ steps.key.outputs.base }}-
