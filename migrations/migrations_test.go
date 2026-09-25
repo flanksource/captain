@@ -144,6 +144,8 @@ func TestSchemaBundleContainsGavelIntegrationContract(t *testing.T) {
 		`table "captain_model_call_budgets"`,
 		`column "budget_rule_id"`,
 		`column "group_values"`,
+		`table "captain_budget_reservations"`,
+		`column "released_at"`,
 	)
 	assertContainsNone(t, "41_runtime_profiles.pg.hcl", `table "captain_runtime_profile_presets"`)
 	assertContainsAll(t, "50_constraints.sql",

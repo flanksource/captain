@@ -3,11 +3,13 @@ package aichat_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/flanksource/captain/pkg/aichat"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/budgets"
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/commons-db/dbtest"
 	"github.com/google/uuid"
@@ -21,6 +23,66 @@ import (
 )
 
 var _ = Describe("Database execution authority", func() {
+	It("allows only one concurrent admission when a budget bucket fits one reservation", func(ctx SpecContext) {
+		testDB := dbtest.ForGinkgo(dbtest.Options{Name: "captain_aichat_budget_reservation"})
+		db, err := database.Open(ctx, database.WithDSN(testDB.DSN()), database.WithMigrations())
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(db.Close)
+
+		catalog, err := budgets.NewCatalog(budgets.CatalogOptions{
+			Read:  func(context.Context) (*database.DB, error) { return db, nil },
+			Write: func(context.Context) (*database.DB, error) { return db, nil },
+		})
+		Expect(err).NotTo(HaveOccurred())
+		_, err = catalog.Create(ctx, budgets.RuleInput{
+			Name: "Team budget", GroupBy: []string{"team"}, Amount: 1.5, Window: "now/M",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		authority, err := aichat.NewDatabaseExecutionAuthority(db, aichat.WithBudgetCatalog(catalog))
+		Expect(err).NotTo(HaveOccurred())
+
+		type result struct {
+			execution aichat.Execution
+			err       error
+		}
+		start := make(chan struct{})
+		results := make(chan result, 2)
+		var ready sync.WaitGroup
+		ready.Add(2)
+		for range 2 {
+			go func() {
+				ready.Done()
+				<-start
+				execution, beginErr := authority.Begin(ctx, aichat.ExecutionRequest{
+					ThreadID: uuid.NewString(), RequestID: uuid.NewString(), Title: "Budget race",
+					Dimensions: map[string]string{"team": "platform"},
+					Spec: api.Spec{
+						Model:  withCaps(api.Model{Name: "gpt-5.5", Mode: api.ModeAPI}),
+						Budget: api.Budget{Cost: 1},
+					},
+				})
+				results <- result{execution: execution, err: beginErr}
+			}()
+		}
+		ready.Wait()
+		close(start)
+
+		var admitted []aichat.Execution
+		var refused []error
+		for range 2 {
+			outcome := <-results
+			if outcome.err != nil {
+				refused = append(refused, outcome.err)
+			} else {
+				admitted = append(admitted, outcome.execution)
+			}
+		}
+		Expect(admitted).To(HaveLen(1))
+		Expect(refused).To(HaveLen(1))
+		Expect(refused[0]).To(MatchError(ContainSubstring("refused admission")))
+		DeferCleanup(admitted[0].Close)
+	})
+
 	It("blocks an ask tool on its durable approval and revokes the credential at completion", func(ctx SpecContext) {
 		testDB := dbtest.ForGinkgo(dbtest.Options{Name: "captain_aichat_execution"})
 		db, err := database.Open(ctx, database.WithDSN(testDB.DSN()), database.WithMigrations())

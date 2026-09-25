@@ -146,6 +146,9 @@ func (db *DB) RecoverIncompleteChatAdmission(ctx context.Context, input RecoverI
 		if err := tx.FinishChatTurn(ctx, turn.ID, TurnStatusError, incompleteChatAdmissionReason); err != nil {
 			return err
 		}
+		if err := tx.ReleaseChatTurnBudgetReservations(ctx, turn.ID); err != nil {
+			return err
+		}
 		recovered = chatTurnFromRecord(turn)
 		recovered.Status = TurnStatusError
 		return nil

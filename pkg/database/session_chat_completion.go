@@ -57,6 +57,9 @@ func (db *DB) CompleteChatExecution(ctx context.Context, input CompleteChatExecu
 		if err := tx.FinishChatTurn(ctx, input.TurnID, input.TurnStatus, input.TurnReason); err != nil {
 			return err
 		}
+		if err := tx.ReleaseChatTurnBudgetReservations(ctx, input.TurnID); err != nil {
+			return err
+		}
 		session, err := tx.GetSession(ctx, input.SessionID)
 		if err != nil {
 			return err

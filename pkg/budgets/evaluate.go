@@ -1,7 +1,6 @@
 package budgets
 
 import (
-	"context"
 	"fmt"
 	"time"
 
@@ -9,21 +8,20 @@ import (
 	"github.com/google/uuid"
 )
 
-// SpendReader derives settled USD spend for a concrete attributed group.
-type SpendReader interface {
-	BudgetSpendUSD(context.Context, string, map[string]string, time.Time) (float64, error)
-}
-
 // Attribution identifies one rule and the concrete group selected at admission.
 type Attribution struct {
 	RuleID      uuid.UUID
+	Rule        string
 	GroupValues map[string]string
+	Limit       float64
+	WindowStart time.Time
 }
 
 // Admission is the rule snapshot and attribution plan for one turn.
 type Admission struct {
 	Rules      []Rule
 	Dimensions map[string]string
+	Amount     float64
 	byModel    map[string][]Attribution
 }
 
@@ -40,7 +38,7 @@ func (e *Refusal) Error() string {
 	if e.Rule == "" {
 		return e.Reason
 	}
-	return fmt.Sprintf("budget rule %q group %v refused admission: settled spend $%.8f, limit $%.8f%s",
+	return fmt.Sprintf("budget rule %q group %v refused admission: committed amount $%.8f, limit $%.8f%s",
 		e.Rule, e.GroupValues, e.Spend, e.Limit, reasonSuffix(e.Reason))
 }
 
@@ -61,15 +59,18 @@ func Evaluate(rules []Rule, dimensions map[string]string, models []api.Model) *A
 	return admission
 }
 
-// Enforce requires every candidate to have rule coverage and every matching
-// rule group to remain below its settled-spend limit.
-func Enforce(ctx context.Context, rules []Rule, dimensions map[string]string, models []api.Model, now time.Time, spend SpendReader) (*Admission, error) {
-	admission := &Admission{Rules: append([]Rule(nil), rules...), Dimensions: cloneMap(dimensions), byModel: map[string][]Attribution{}}
+// Enforce requires every candidate to have rule coverage and resolves the
+// bucket/window inputs used by the database's atomic reservation check.
+func Enforce(rules []Rule, dimensions map[string]string, models []api.Model, amount float64, now time.Time) (*Admission, error) {
+	admission := &Admission{
+		Rules: append([]Rule(nil), rules...), Dimensions: cloneMap(dimensions), Amount: amount,
+		byModel: map[string][]Attribution{},
+	}
 	if len(rules) == 0 {
 		return admission, nil
 	}
 	for _, model := range models {
-		attributions, err := enforceModel(ctx, rules, dimensions, model, now, spend)
+		attributions, err := enforceModel(rules, dimensions, model, now)
 		if err != nil {
 			return nil, err
 		}
@@ -78,7 +79,7 @@ func Enforce(ctx context.Context, rules []Rule, dimensions map[string]string, mo
 	return admission, nil
 }
 
-func enforceModel(ctx context.Context, rules []Rule, dimensions map[string]string, model api.Model, now time.Time, spend SpendReader) ([]Attribution, error) {
+func enforceModel(rules []Rule, dimensions map[string]string, model api.Model, now time.Time) ([]Attribution, error) {
 	matched := make([]Attribution, 0)
 	for _, rule := range rules {
 		if !ruleMatches(rule, dimensions, model) {
@@ -92,14 +93,9 @@ func enforceModel(ctx context.Context, rules []Rule, dimensions map[string]strin
 		if err != nil {
 			return nil, &Refusal{Rule: rule.Name, GroupValues: group, Limit: rule.Amount, Reason: err.Error()}
 		}
-		used, err := spend.BudgetSpendUSD(ctx, rule.ID, group, start)
-		if err != nil {
-			return nil, &Refusal{Rule: rule.Name, GroupValues: group, Limit: rule.Amount, Reason: err.Error()}
-		}
-		if used >= rule.Amount {
-			return nil, &Refusal{Rule: rule.Name, GroupValues: group, Spend: used, Limit: rule.Amount}
-		}
-		matched = append(matched, Attribution{RuleID: rule.ID, GroupValues: group})
+		matched = append(matched, Attribution{
+			RuleID: rule.ID, Rule: rule.Name, GroupValues: group, Limit: rule.Amount, WindowStart: start,
+		})
 	}
 	if len(matched) == 0 {
 		return nil, &Refusal{Reason: fmt.Sprintf("no budget rule covers model %q and dimensions %v", model.Name, dimensions)}
@@ -143,13 +139,13 @@ func (a *Admission) ForModel(model api.Model) ([]Attribution, bool) {
 	return append([]Attribution(nil), attributions...), true
 }
 
-// CheckModel enforces the admission's rule snapshot for the runtime actually
-// selected by fallback.
-func (a *Admission) CheckModel(ctx context.Context, model api.Model, now time.Time, spend SpendReader) ([]Attribution, error) {
+// CheckModel resolves the admission's rule snapshot for the runtime actually
+// selected by fallback. The caller atomically moves the reservation to it.
+func (a *Admission) CheckModel(model api.Model, now time.Time) ([]Attribution, error) {
 	if len(a.Rules) == 0 {
 		return nil, nil
 	}
-	return enforceModel(ctx, a.Rules, a.Dimensions, model, now, spend)
+	return enforceModel(a.Rules, a.Dimensions, model, now)
 }
 
 func modelKey(model api.Model) string {
