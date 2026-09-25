@@ -9,42 +9,41 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/google/uuid"
 	"github.com/timberio/go-datemath"
 )
 
 // RuleMatch selects requests by host dimensions and resolved model identity.
 type RuleMatch struct {
-	Dimensions map[string]string `json:"dimensions,omitempty" yaml:"dimensions,omitempty"`
-	Models     []string          `json:"models,omitempty" yaml:"models,omitempty"`
+	Dimensions map[string]string `json:"dimensions,omitempty"`
+	Models     []string          `json:"models,omitempty"`
 }
 
-// Rule is a catalog budget rule with its source identity.
+// Rule is a live database budget rule.
 type Rule struct {
-	ID        string     `json:"id" yaml:"-"`
-	Key       string     `json:"key" yaml:"-"`
-	Source    SourceInfo `json:"source" yaml:"-"`
-	Name      string     `json:"name" yaml:"name"`
-	Match     RuleMatch  `json:"match,omitempty" yaml:"match,omitempty"`
-	GroupBy   []string   `json:"groupBy,omitempty" yaml:"groupBy,omitempty"`
-	Amount    float64    `json:"amount" yaml:"amount"`
-	Window    string     `json:"window" yaml:"window"`
-	UpdatedAt time.Time  `json:"updatedAt" yaml:"-"`
+	ID        uuid.UUID `json:"id"`
+	Name      string    `json:"name"`
+	Match     RuleMatch `json:"match"`
+	GroupBy   []string  `json:"groupBy"`
+	Amount    float64   `json:"amount"`
+	Window    string    `json:"window"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
-// RuleInput is the one-rule-per-file YAML shape and catalog write contract.
+// RuleInput is the authored rule accepted by catalog writes.
 type RuleInput struct {
-	Name    string    `json:"name" yaml:"name"`
-	Match   RuleMatch `json:"match,omitempty" yaml:"match,omitempty"`
-	GroupBy []string  `json:"groupBy,omitempty" yaml:"groupBy,omitempty"`
-	Amount  float64   `json:"amount" yaml:"amount"`
-	Window  string    `json:"window" yaml:"window"`
+	Name    string    `json:"name"`
+	Match   RuleMatch `json:"match,omitempty"`
+	GroupBy []string  `json:"groupBy,omitempty"`
+	Amount  float64   `json:"amount"`
+	Window  string    `json:"window"`
 }
 
 var (
 	ErrNotFound  = errors.New("budget rule not found")
-	ErrAmbiguous = errors.New("budget rule name is ambiguous")
 	ErrNameTaken = errors.New("budget rule name is already taken")
-	ErrReadOnly  = errors.New("budget source is read-only")
+	ErrReadOnly  = errors.New("budget catalog is read-only")
 	ErrInvalid   = errors.New("invalid budget rule")
 )
 

@@ -2,141 +2,91 @@ package budgets
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/flanksource/captain/pkg/database"
+	"github.com/google/uuid"
 )
 
-// SourceKind distinguishes database and YAML-directory sources.
-type SourceKind string
-
-const (
-	SourceDB   SourceKind = "db"
-	SourceFile SourceKind = "file"
-)
-
-// SourceInfo describes one budget catalog source.
-type SourceInfo struct {
-	Kind     SourceKind `json:"kind"`
-	ID       string     `json:"id"`
-	Label    string     `json:"label"`
-	Root     string     `json:"root,omitempty"`
-	Writable bool       `json:"writable"`
-	Implicit bool       `json:"implicit,omitempty"`
+// CatalogOptions supplies lazy read and write database openers. Write may be
+// nil for a read-only catalog, such as the one chat admission evaluates.
+type CatalogOptions struct {
+	Read  func(context.Context) (*database.DB, error)
+	Write func(context.Context) (*database.DB, error)
 }
 
-// Store is the persistence contract implemented by each catalog source.
-type Store interface {
-	List(context.Context) ([]Rule, error)
-	Get(context.Context, string) (Rule, error)
-	Create(context.Context, RuleInput) (Rule, error)
-	Update(context.Context, string, RuleInput) (Rule, error)
-	Delete(context.Context, string) error
-}
-
-// Source exposes one budget rule store and its catalog metadata.
-type Source interface {
-	Info() SourceInfo
-	Rules() Store
-}
-
-// Catalog combines budget rule sources and routes writes to their owner.
+// Catalog reads and writes budget rules. The database is the only source.
 type Catalog struct {
-	sources []Source
-	byID    map[string]Source
+	options CatalogOptions
 }
 
-// NewCatalog registers sources in read order. Source IDs must be unique.
-func NewCatalog(sources ...Source) (*Catalog, error) {
-	if len(sources) == 0 {
-		return nil, fmt.Errorf("budget catalog requires at least one source")
+// NewCatalog creates a database-backed budget rule catalog.
+func NewCatalog(options CatalogOptions) (*Catalog, error) {
+	if options.Read == nil {
+		return nil, fmt.Errorf("budget catalog requires a Read opener")
 	}
-	catalog := &Catalog{byID: make(map[string]Source, len(sources))}
-	for _, source := range sources {
-		info := source.Info()
-		if info.ID == "" || catalog.byID[info.ID] != nil {
-			return nil, fmt.Errorf("budget source id %q is empty or registered twice", info.ID)
-		}
-		catalog.sources = append(catalog.sources, source)
-		catalog.byID[info.ID] = source
-	}
-	return catalog, nil
+	return &Catalog{options: options}, nil
 }
 
-// Sources lists the configured catalog sources.
-func (c *Catalog) Sources() []SourceInfo {
-	out := make([]SourceInfo, 0, len(c.sources))
-	for _, source := range c.sources {
-		out = append(out, source.Info())
-	}
-	return out
-}
-
+// List returns the live rules ordered by name.
 func (c *Catalog) List(ctx context.Context) ([]Rule, error) {
-	rules := []Rule{}
-	for _, source := range c.sources {
-		items, err := source.Rules().List(ctx)
-		if err != nil {
-			return nil, err
-		}
-		for index := range items {
-			normalized, err := normalizeInput(RuleInput{
-				Name: items[index].Name, Match: items[index].Match, GroupBy: items[index].GroupBy,
-				Amount: items[index].Amount, Window: items[index].Window,
-			})
-			if err != nil {
-				return nil, fmt.Errorf("budget source %s rule %q: %w", source.Info().Label, items[index].Name, err)
-			}
-			items[index].Name, items[index].Match, items[index].GroupBy = normalized.Name, normalized.Match, normalized.GroupBy
-			items[index].Amount, items[index].Window = normalized.Amount, normalized.Window
-		}
-		rules = append(rules, items...)
+	db, err := c.options.Read(ctx)
+	if err != nil {
+		return nil, err
 	}
-	return rules, nil
+	rows, err := db.ListBudgetRules(ctx)
+	if err != nil {
+		return nil, mapDBError(err)
+	}
+	out := make([]Rule, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, ruleFrom(row))
+	}
+	return out, nil
 }
 
+// Get resolves a live rule by id or, case-insensitively, by name.
 func (c *Catalog) Get(ctx context.Context, ref string) (Rule, error) {
-	if sourceID, key, ok := decodeID(ref); ok {
-		source := c.byID[sourceID]
-		if source == nil {
-			return Rule{}, fmt.Errorf("%w: source %q", ErrNotFound, sourceID)
+	ref = strings.TrimSpace(ref)
+	if id, err := uuid.Parse(ref); err == nil {
+		db, err := c.options.Read(ctx)
+		if err != nil {
+			return Rule{}, err
 		}
-		return source.Rules().Get(ctx, key)
+		row, err := db.GetBudgetRule(ctx, id)
+		if err != nil {
+			return Rule{}, mapDBError(err)
+		}
+		return ruleFrom(*row), nil
 	}
-	var matches []Rule
 	rules, err := c.List(ctx)
 	if err != nil {
 		return Rule{}, err
 	}
 	for _, rule := range rules {
-		if strings.EqualFold(rule.Name, strings.TrimSpace(ref)) {
-			matches = append(matches, rule)
+		if strings.EqualFold(rule.Name, ref) {
+			return rule, nil
 		}
 	}
-	if len(matches) == 0 {
-		return Rule{}, fmt.Errorf("%w: %q", ErrNotFound, ref)
-	}
-	if len(matches) > 1 {
-		return Rule{}, fmt.Errorf("%w: %q; use an id", ErrAmbiguous, ref)
-	}
-	return matches[0], nil
+	return Rule{}, fmt.Errorf("%w: %q", ErrNotFound, ref)
 }
 
-func (c *Catalog) Create(ctx context.Context, target string, input RuleInput) (Rule, error) {
+func (c *Catalog) Create(ctx context.Context, input RuleInput) (Rule, error) {
 	input, err := normalizeInput(input)
 	if err != nil {
 		return Rule{}, err
 	}
-	if err := c.requireNameFree(ctx, input.Name, ""); err != nil {
-		return Rule{}, err
-	}
-	source, err := c.target(target)
+	db, err := c.writer(ctx)
 	if err != nil {
 		return Rule{}, err
 	}
-	if !source.Info().Writable {
-		return Rule{}, fmt.Errorf("%w: %s", ErrReadOnly, source.Info().Label)
+	row, err := db.CreateBudgetRule(ctx, dbInput(input))
+	if err != nil {
+		return Rule{}, mapDBError(err)
 	}
-	return source.Rules().Create(ctx, input)
+	return ruleFrom(*row), nil
 }
 
 func (c *Catalog) Update(ctx context.Context, ref string, input RuleInput) (Rule, error) {
@@ -148,65 +98,61 @@ func (c *Catalog) Update(ctx context.Context, ref string, input RuleInput) (Rule
 	if err != nil {
 		return Rule{}, err
 	}
-	if !current.Source.Writable {
-		return Rule{}, fmt.Errorf("%w: %s", ErrReadOnly, current.Source.Label)
-	}
-	if err := c.requireNameFree(ctx, input.Name, current.ID); err != nil {
+	db, err := c.writer(ctx)
+	if err != nil {
 		return Rule{}, err
 	}
-	return c.byID[current.Source.ID].Rules().Update(ctx, current.Key, input)
+	row, err := db.UpdateBudgetRule(ctx, current.ID, dbInput(input))
+	if err != nil {
+		return Rule{}, mapDBError(err)
+	}
+	return ruleFrom(*row), nil
 }
 
+// Delete soft-deletes a rule; spend it already attributed stays attached.
 func (c *Catalog) Delete(ctx context.Context, ref string) error {
 	current, err := c.Get(ctx, ref)
 	if err != nil {
 		return err
 	}
-	if !current.Source.Writable {
-		return fmt.Errorf("%w: %s", ErrReadOnly, current.Source.Label)
-	}
-	return c.byID[current.Source.ID].Rules().Delete(ctx, current.Key)
-}
-
-func (c *Catalog) target(id string) (Source, error) {
-	id = strings.TrimSpace(id)
-	if id == "" {
-		for _, source := range c.sources {
-			if source.Info().Kind == SourceDB {
-				return source, nil
-			}
-		}
-		return nil, fmt.Errorf("budget catalog has no database source; name a target source")
-	}
-	if source := c.byID[id]; source != nil {
-		return source, nil
-	}
-	return nil, fmt.Errorf("unknown budget source %q", id)
-}
-
-func (c *Catalog) requireNameFree(ctx context.Context, name, except string) error {
-	rules, err := c.List(ctx)
+	db, err := c.writer(ctx)
 	if err != nil {
 		return err
 	}
-	for _, rule := range rules {
-		if rule.ID != except && strings.EqualFold(rule.Name, name) {
-			return fmt.Errorf("%w: %q already exists in %s", ErrNameTaken, rule.Name, rule.Source.Label)
-		}
-	}
-	return nil
+	return mapDBError(db.DeleteBudgetRule(ctx, current.ID))
 }
 
-func encodeID(source, key string) string { return "budget:" + source + ":" + key }
-
-func decodeID(id string) (string, string, bool) {
-	parts := strings.SplitN(strings.TrimSpace(id), ":", 3)
-	return value(parts, 1), value(parts, 2), len(parts) == 3 && parts[0] == "budget" && parts[1] != "" && parts[2] != ""
+func (c *Catalog) writer(ctx context.Context) (*database.DB, error) {
+	if c.options.Write == nil {
+		return nil, ErrReadOnly
+	}
+	return c.options.Write(ctx)
 }
 
-func value(parts []string, index int) string {
-	if index >= len(parts) {
-		return ""
+func ruleFrom(row database.BudgetRule) Rule {
+	return Rule{ID: row.ID, Name: row.Name,
+		Match:   RuleMatch{Dimensions: row.Match.Dimensions, Models: row.Match.Models},
+		GroupBy: row.GroupBy, Amount: row.Amount, Window: row.Window,
+		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
+}
+
+func dbInput(input RuleInput) database.BudgetRuleInput {
+	return database.BudgetRuleInput{Name: input.Name,
+		Match:   database.BudgetRuleMatch{Dimensions: input.Match.Dimensions, Models: input.Match.Models},
+		GroupBy: input.GroupBy, Amount: input.Amount, Window: input.Window}
+}
+
+func mapDBError(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, database.ErrBudgetRuleNotFound):
+		return fmt.Errorf("%w: %w", ErrNotFound, err)
+	case errors.Is(err, database.ErrBudgetNameTaken):
+		return fmt.Errorf("%w: %w", ErrNameTaken, err)
+	case errors.Is(err, database.ErrBudgetInvalid):
+		return fmt.Errorf("%w: %w", ErrInvalid, err)
+	default:
+		return err
 	}
-	return parts[index]
 }

@@ -34,11 +34,13 @@ type budgetRuleRecord struct {
 	Window    string          `gorm:"column:window"`
 	CreatedAt time.Time       `gorm:"column:created_at"`
 	UpdatedAt time.Time       `gorm:"column:updated_at"`
+	DeletedAt *time.Time      `gorm:"column:deleted_at"`
 }
 
 func (budgetRuleRecord) TableName() string { return "captain_budget_rules" }
 
-// BudgetRule is one database-backed budget catalog record.
+// BudgetRule is one live budget rule. Deleted rules are retained for spend
+// history but never returned.
 type BudgetRule struct {
 	ID        uuid.UUID       `json:"id"`
 	Name      string          `json:"name"`
@@ -64,7 +66,7 @@ func (db *DB) ListBudgetRules(ctx context.Context) ([]BudgetRule, error) {
 		return nil, err
 	}
 	var records []budgetRuleRecord
-	if err := db.gorm.WithContext(ctx).Order("lower(name), id").Find(&records).Error; err != nil {
+	if err := db.gorm.WithContext(ctx).Where("deleted_at IS NULL").Order("lower(name), id").Find(&records).Error; err != nil {
 		return nil, fmt.Errorf("list captain budget rules: %w", err)
 	}
 	rules := make([]BudgetRule, 0, len(records))
@@ -79,7 +81,7 @@ func (db *DB) GetBudgetRule(ctx context.Context, id uuid.UUID) (*BudgetRule, err
 		return nil, err
 	}
 	var record budgetRuleRecord
-	if err := db.gorm.WithContext(ctx).First(&record, "id = ?", id).Error; err != nil {
+	if err := db.gorm.WithContext(ctx).First(&record, "id = ? AND deleted_at IS NULL", id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, fmt.Errorf("%w: %s", ErrBudgetRuleNotFound, id)
 		}
@@ -113,7 +115,7 @@ func (db *DB) UpdateBudgetRule(ctx context.Context, id uuid.UUID, input BudgetRu
 	if err != nil {
 		return nil, fmt.Errorf("encode captain budget rule groupBy: %w", err)
 	}
-	result := db.gorm.WithContext(ctx).Model(&budgetRuleRecord{}).Where("id = ?", id).Updates(map[string]any{
+	result := db.gorm.WithContext(ctx).Model(&budgetRuleRecord{}).Where("id = ? AND deleted_at IS NULL", id).Updates(map[string]any{
 		"name": record.Name, "match": gorm.Expr("?::jsonb", string(matchJSON)),
 		"group_by": gorm.Expr("?::jsonb", string(groupJSON)), "amount": record.Amount,
 		"window": record.Window, "updated_at": clause.Expr{SQL: "now()"},
@@ -127,8 +129,11 @@ func (db *DB) UpdateBudgetRule(ctx context.Context, id uuid.UUID, input BudgetRu
 	return db.GetBudgetRule(ctx, id)
 }
 
+// DeleteBudgetRule soft-deletes a live rule: admission stops matching it, while
+// the model calls it already attributed keep their foreign key.
 func (db *DB) DeleteBudgetRule(ctx context.Context, id uuid.UUID) error {
-	result := db.gorm.WithContext(ctx).Delete(&budgetRuleRecord{}, "id = ?", id)
+	result := db.gorm.WithContext(ctx).Model(&budgetRuleRecord{}).Where("id = ? AND deleted_at IS NULL", id).
+		Updates(map[string]any{"deleted_at": clause.Expr{SQL: "now()"}, "updated_at": clause.Expr{SQL: "now()"}})
 	if result.Error != nil {
 		return fmt.Errorf("delete captain budget rule: %w", result.Error)
 	}
@@ -184,7 +189,7 @@ func trimNonempty(input []string) []string {
 
 type modelCallBudgetRecord struct {
 	ModelCallID  uuid.UUID         `gorm:"column:model_call_id;type:uuid;primaryKey"`
-	BudgetRuleID string            `gorm:"column:budget_rule_id;primaryKey"`
+	BudgetRuleID uuid.UUID         `gorm:"column:budget_rule_id;type:uuid;primaryKey"`
 	GroupValues  map[string]string `gorm:"column:group_values;serializer:json;type:jsonb"`
 }
 
@@ -192,7 +197,7 @@ func (modelCallBudgetRecord) TableName() string { return "captain_model_call_bud
 
 // BudgetAttribution is the concrete rule group recorded for an admitted model call.
 type BudgetAttribution struct {
-	RuleID      string
+	RuleID      uuid.UUID
 	GroupValues map[string]string
 }
 
@@ -218,7 +223,7 @@ func (db *DB) SetModelCallBudgets(ctx context.Context, turnID, modelCallID uuid.
 	}
 	records := make([]modelCallBudgetRecord, 0, len(attributions))
 	for _, attribution := range attributions {
-		if strings.TrimSpace(attribution.RuleID) == "" {
+		if attribution.RuleID == uuid.Nil {
 			return fmt.Errorf("%w: budget attribution rule ID is required", ErrBudgetInvalid)
 		}
 		records = append(records, modelCallBudgetRecord{ModelCallID: modelCallID, BudgetRuleID: attribution.RuleID, GroupValues: cloneStrings(attribution.GroupValues)})
@@ -244,7 +249,7 @@ func (db *DB) ListModelCallBudgets(ctx context.Context, modelCallID uuid.UUID) (
 	return out, nil
 }
 
-func (db *DB) budgetSpendStatement(ctx context.Context, ruleID string, groupJSON []byte, since time.Time) *gorm.DB {
+func (db *DB) budgetSpendStatement(ctx context.Context, ruleID uuid.UUID, groupJSON []byte, since time.Time) *gorm.DB {
 	return db.gorm.WithContext(ctx).
 		Table("captain_model_calls AS calls").
 		Joins("JOIN captain_model_call_budgets AS budgets ON budgets.model_call_id = calls.id").
@@ -255,7 +260,7 @@ func (db *DB) budgetSpendStatement(ctx context.Context, ruleID string, groupJSON
 // BudgetSpendUSD derives completed spend from the model-call ledger. Any
 // non-USD completed call in the group fails closed because no conversion rate
 // is authoritative here.
-func (db *DB) BudgetSpendUSD(ctx context.Context, ruleID string, groupValues map[string]string, since time.Time) (float64, error) {
+func (db *DB) BudgetSpendUSD(ctx context.Context, ruleID uuid.UUID, groupValues map[string]string, since time.Time) (float64, error) {
 	groupJSON, err := json.Marshal(cloneStrings(groupValues))
 	if err != nil {
 		return 0, fmt.Errorf("encode budget group: %w", err)

@@ -119,7 +119,7 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 		return err
 	}
 	fixedBudgetDB := func(context.Context) (*database.DB, error) { return db, nil }
-	budgetCatalog, err := budgets.NewDefaultCatalog(ctx, budgets.DefaultCatalogOptions{Read: fixedBudgetDB, Write: fixedBudgetDB})
+	budgetCatalog, err := budgets.NewCatalog(budgets.CatalogOptions{Read: fixedBudgetDB})
 	if err != nil {
 		return err
 	}

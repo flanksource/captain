@@ -1,6 +1,6 @@
-# Multidimensional AI budgets. Rules are authored either here or as catalog
-# YAML. Attribution deliberately stores the catalog id as text: YAML rules have
-# no row to reference, and retained attribution must survive rule deletion.
+# Multidimensional AI budgets. The database is the only source of budget rules.
+# Rules are soft-deleted so attribution keeps a foreign key to every rule that
+# ever settled spend.
 
 table "captain_budget_rules" {
   schema = schema.public
@@ -42,15 +42,21 @@ table "captain_budget_rules" {
     type    = timestamptz
     default = sql("now()")
   }
+  column "deleted_at" {
+    null = true
+    type = timestamptz
+  }
 
   primary_key {
     columns = [column.id]
   }
+  # Names are unique among live rules, so a deleted rule's name can be reused.
   index "captain_budget_rules_name_key" {
     unique = true
     on {
       expr = "lower(name)"
     }
+    where = "deleted_at IS NULL"
   }
   check "captain_budget_rules_name" {
     expr = "length(btrim(name)) > 0"
@@ -78,10 +84,9 @@ table "captain_model_call_budgets" {
     null = false
     type = uuid
   }
-  # Encoded catalog id. It may identify a database row or a YAML file.
   column "budget_rule_id" {
     null = false
-    type = text
+    type = uuid
   }
   column "group_values" {
     null    = false
@@ -98,11 +103,14 @@ table "captain_model_call_budgets" {
     on_update   = NO_ACTION
     on_delete   = CASCADE
   }
+  foreign_key "captain_model_call_budgets_budget_rule_id_fkey" {
+    columns     = [column.budget_rule_id]
+    ref_columns = [table.captain_budget_rules.column.id]
+    on_update   = NO_ACTION
+    on_delete   = RESTRICT
+  }
   index "captain_model_call_budgets_rule_group_idx" {
     columns = [column.budget_rule_id, column.group_values]
-  }
-  check "captain_model_call_budgets_rule_id" {
-    expr = "length(btrim(budget_rule_id)) > 0"
   }
   check "captain_model_call_budgets_group_values" {
     expr = "jsonb_typeof(group_values) = 'object'"
