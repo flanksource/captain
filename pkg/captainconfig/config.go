@@ -51,12 +51,11 @@ func (v VerifyDefaults) IsZero() bool { return len(v.FixtureRunner) == 0 }
 type RuntimeDefaults struct {
 	PresetDirs  []string `yaml:"presetDirs,omitempty"`
 	ProfileDirs []string `yaml:"profileDirs,omitempty"`
-	BudgetDirs  []string `yaml:"budgetDirs,omitempty"`
 }
 
 // IsZero lets yaml omit an empty runtime block instead of writing `runtime: {}`.
 func (r RuntimeDefaults) IsZero() bool {
-	return len(r.PresetDirs) == 0 && len(r.ProfileDirs) == 0 && len(r.BudgetDirs) == 0
+	return len(r.PresetDirs) == 0 && len(r.ProfileDirs) == 0
 }
 
 // ChatDefaults is the chat block of ~/.captain.yaml.

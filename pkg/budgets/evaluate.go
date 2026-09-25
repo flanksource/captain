@@ -2,11 +2,12 @@ package budgets
 
 import (
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/google/uuid"
 )
 
 // Attribution identifies one rule and the concrete group selected at admission.
 type Attribution struct {
-	RuleID      string
+	RuleID      uuid.UUID
 	GroupValues map[string]string
 }
 

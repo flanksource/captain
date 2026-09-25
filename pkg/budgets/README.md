@@ -1,23 +1,25 @@
 # Captain budget rules
 
-Captain loads budget rules from the database, from one YAML file per rule in
-`~/.config/captain/budgets`, and from directories listed in
-`runtime.budgetDirs` in `~/.captain.yaml`. The database is the default catalog
-write target. A YAML filename supplies the catalog key; the file contains the
-authored rule only:
+Budget rules live only in Captain's database. Manage them from the Budgets page
+in `captain serve`, with `captain budget-rule list|get|create|update|delete`, or
+through `/api/v1/budget-rule`. A rule has this shape:
 
-```yaml
-name: Team monthly budget
-match:
-  dimensions:
-    team: platform-*
-  models:
-    - anthropic/claude-*
-groupBy:
-  - team
-amount: 100
-window: now/M
+```json
+{
+  "name": "Team monthly budget",
+  "match": {
+    "dimensions": { "team": "platform-*" },
+    "models": ["anthropic/claude-*"]
+  },
+  "groupBy": ["team"],
+  "amount": 100,
+  "window": "now/M"
+}
 ```
+
+Rule names are unique among live rules. Deleting a rule soft-deletes it: new
+requests stop matching it, while the spend it already attributed keeps its
+foreign key, and its name can be reused.
 
 Amounts and settled-spend reports are USD. Windows are relative Elasticsearch
 datemath such as `now/M`, `now/w`, `now-30d`, or `now-1M`; `M` is month and `m`
