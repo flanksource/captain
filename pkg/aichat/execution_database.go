@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/approval"
@@ -43,6 +44,7 @@ type databaseExecution struct {
 	providerToolUses      []api.Event
 	providerToolUseReady  chan struct{}
 	budgetAdmission       *budgets.Admission
+	budgetNow             func() time.Time
 }
 
 // finishModelCall persists a terminal model call with its priced cost breakdown.
@@ -94,7 +96,14 @@ func (e *databaseExecution) BindRuntime(ctx context.Context, runtime api.Model) 
 	defer e.mu.Unlock()
 	var attributions []budgets.Attribution
 	if e.budgetAdmission != nil {
-		attributions, _ = e.budgetAdmission.ForModel(runtime)
+		now := time.Now().UTC()
+		if e.budgetNow != nil {
+			now = e.budgetNow().UTC()
+		}
+		attributions, err = e.budgetAdmission.CheckModel(ctx, runtime, now, e.db)
+		if err != nil {
+			return err
+		}
 	}
 	runID, runVersion, runRuntime := e.run.ID, e.run.Version, e.run.Runtime
 	runRuntime.Resolved = runtimeSelection(api.Model{

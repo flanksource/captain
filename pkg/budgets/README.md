@@ -25,7 +25,9 @@ Amounts and settled-spend reports are USD. Windows are relative Elasticsearch
 datemath such as `now/M`, `now/w`, `now-30d`, or `now-1M`; `M` is month and `m`
 is minute. Absolute anchors and future starts are rejected.
 
-Captain records the concrete rule groups selected for each model call and can
-derive their completed `captain_model_calls` spend for inspection. Rules in this
-foundation are observe-only: coverage, grouping, amount, and window state do
-not change whether a chat request proceeds.
+Captain records the concrete rule groups selected for each model call and derives
+their settled `captain_model_calls` spend at admission. Once any rule exists,
+every primary and fallback model must have coverage and every matching rule
+must remain below its amount. In-flight turns are not yet counted: concurrent
+active turns can proceed from the same settled balance until reservation
+support closes that gap.

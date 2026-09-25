@@ -216,7 +216,9 @@ func (s *Service) handleChat(w http.ResponseWriter, request *http.Request) {
 		})
 		if err != nil {
 			status := http.StatusInternalServerError
-			if errors.Is(err, database.ErrOpenChatTurn) || errors.Is(err, database.ErrSessionConflict) ||
+			if isBudgetRefusal(err) {
+				status = http.StatusPaymentRequired
+			} else if errors.Is(err, database.ErrOpenChatTurn) || errors.Is(err, database.ErrSessionConflict) ||
 				errors.Is(err, ErrThreadRuntimeConflict) {
 				status = http.StatusConflict
 			}
