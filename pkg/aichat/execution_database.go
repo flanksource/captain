@@ -44,7 +44,6 @@ type databaseExecution struct {
 	providerToolUses      []api.Event
 	providerToolUseReady  chan struct{}
 	budgetAdmission       *budgets.Admission
-	budgetNow             func() time.Time
 }
 
 // finishModelCall persists a terminal model call with its priced cost breakdown.
@@ -96,12 +95,10 @@ func (e *databaseExecution) BindRuntime(ctx context.Context, runtime api.Model) 
 	defer e.mu.Unlock()
 	var attributions []budgets.Attribution
 	if e.budgetAdmission != nil {
-		now := time.Now().UTC()
-		if e.budgetNow != nil {
-			now = e.budgetNow().UTC()
+		if err := e.budgetAdmission.CanSpend(ctx, runtime, time.Now().UTC(), e.db); err != nil {
+			return err
 		}
-		attributions, err = e.budgetAdmission.CheckModel(ctx, runtime, now, e.db)
-		if err != nil {
+		if attributions, err = e.budgetAdmission.Attributions(runtime); err != nil {
 			return err
 		}
 	}

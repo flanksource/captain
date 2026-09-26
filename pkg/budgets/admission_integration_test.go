@@ -14,12 +14,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestEnforceAgainstSettledLedger classifies admission outcomes against real
+// TestAdmitAgainstSettledLedger classifies admission outcomes against real
 // settled spend: exhausted and non-USD ledgers are budget refusals, while a
 // failed spend query stays an operational error.
-func TestEnforceAgainstSettledLedger(t *testing.T) {
+func TestAdmitAgainstSettledLedger(t *testing.T) {
 	ctx := t.Context()
-	handle := dbtest.ForT(t, dbtest.Options{Name: "captain_budget_enforce"})
+	handle := dbtest.ForT(t, dbtest.Options{Name: "captain_budget_admission"})
 	db, err := database.Open(ctx, database.WithDSN(handle.DSN()), database.WithMigrations())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
@@ -46,28 +46,31 @@ func TestEnforceAgainstSettledLedger(t *testing.T) {
 
 	models := []api.Model{{Name: "claude-sonnet-5"}}
 	now := time.Now().UTC()
-	enforce := func(ctx context.Context, rules []budgets.Rule) error {
-		_, err := budgets.Enforce(ctx, rules, nil, models, now, db)
+	admit := func(ctx context.Context, rules []budgets.Rule) error {
+		_, err := budgets.Admit(ctx, rules, nil, models, api.Budget{Cost: 1}, now, db)
 		return err
 	}
 	var refusal *budgets.Refusal
 
+	_, err = budgets.Admit(ctx, ruleNamed("usd-hourly"), nil, models, api.Budget{}, now, db)
+	require.ErrorAs(t, err, &refusal, "active rules without a per-run budget cost refuse")
+
 	settle(t, db, usdRule.ID, "USD", 0.004)
-	require.NoError(t, enforce(ctx, ruleNamed("usd-hourly")), "settled spend below the amount admits")
+	require.NoError(t, admit(ctx, ruleNamed("usd-hourly")), "settled spend below the amount admits")
 
 	settle(t, db, usdRule.ID, "USD", 0.006)
-	err = enforce(ctx, ruleNamed("usd-hourly"))
+	err = admit(ctx, ruleNamed("usd-hourly"))
 	require.ErrorAs(t, err, &refusal, "settled spend at the amount refuses")
 	require.InDelta(t, 0.01, refusal.Spend, 1e-9)
 
 	settle(t, db, eurRule.ID, "EUR", 0.001)
-	err = enforce(ctx, ruleNamed("eur-hourly"))
+	err = admit(ctx, ruleNamed("eur-hourly"))
 	require.ErrorAs(t, err, &refusal, "a non-USD ledger fails closed as a refusal")
 	require.Contains(t, refusal.Reason, database.ErrBudgetSpendNotUSD.Error())
 
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
-	err = enforce(cancelled, ruleNamed("usd-hourly"))
+	err = admit(cancelled, ruleNamed("usd-hourly"))
 	require.Error(t, err)
 	require.False(t, errors.As(err, &refusal), "a failed spend query is operational, not a refusal: %v", err)
 }

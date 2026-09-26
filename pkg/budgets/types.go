@@ -111,14 +111,29 @@ func windowStart(raw string, now time.Time) (time.Time, error) {
 	return start, nil
 }
 
-func ruleMatches(rule Rule, dimensions map[string]string, model api.Model) bool {
-	for key, pattern := range rule.Match.Dimensions {
+// Matches reports whether the rule applies to a turn's dimensions and model.
+func (r Rule) Matches(dimensions map[string]string, model api.Model) bool {
+	for key, pattern := range r.Match.Dimensions {
 		value, ok := dimensions[key]
 		if !ok || !(api.MatchPatterns{pattern}).Matches(value) {
 			return false
 		}
 	}
-	return modelMatches(rule.Match.Models, model)
+	return modelMatches(r.Match.Models, model)
+}
+
+// Group selects the rule's groupBy values from a turn's dimensions: the
+// concrete bucket whose spend the rule meters.
+func (r Rule) Group(dimensions map[string]string) (map[string]string, error) {
+	group := make(map[string]string, len(r.GroupBy))
+	for _, key := range r.GroupBy {
+		value, ok := dimensions[key]
+		if !ok {
+			return group, fmt.Errorf("required groupBy dimension %q is missing", key)
+		}
+		group[key] = value
+	}
+	return group, nil
 }
 
 func modelMatches(patterns []string, model api.Model) bool {
