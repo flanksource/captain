@@ -95,6 +95,11 @@ func cleanList(values []string) []string {
 	return out
 }
 
+// WindowStart resolves the rule's relative window against now.
+func (r Rule) WindowStart(now time.Time) (time.Time, error) {
+	return windowStart(r.Window, now)
+}
+
 func windowStart(raw string, now time.Time) (time.Time, error) {
 	raw = strings.TrimSpace(raw)
 	if !strings.HasPrefix(raw, "now") {

@@ -1,14 +1,10 @@
 package budgets
 
 import (
-	"context"
-	"errors"
 	"fmt"
 	"maps"
-	"time"
 
 	"github.com/flanksource/captain/pkg/api"
-	"github.com/flanksource/captain/pkg/database"
 )
 
 // Attribution identifies one rule and the concrete group it meters for a turn.
@@ -29,6 +25,10 @@ type Admission struct {
 	liveRules []Rule
 
 	Dimensions map[string]string
+
+	// Amount is the per-run hold reserved in every attributed bucket: the
+	// resolved per-run budget cost.
+	Amount float64
 }
 
 // Attributions returns the rule groups that meter model. Once any rule exists,
@@ -58,48 +58,16 @@ func (a *Admission) Attributions(model api.Model) ([]Attribution, error) {
 	return attributions, nil
 }
 
-// CanSpend returns nil when every bucket model would charge has room, a
-// *Refusal when one is full or the model is uncovered, and any other error
-// when spend could not be read.
-func (a *Admission) CanSpend(ctx context.Context, model api.Model, now time.Time, db *database.DB) error {
-	attributions, err := a.Attributions(model)
-	if err != nil {
-		return err
-	}
-
-	for _, attribution := range attributions {
-		rule, group := attribution.Rule, attribution.GroupValues
-		start, err := windowStart(rule.Window, now)
-		if err != nil {
-			return &Refusal{Rule: rule.Name, GroupValues: group, Limit: rule.Amount, Reason: err.Error()}
-		}
-
-		used, err := db.BudgetSpendUSD(ctx, rule.ID, group, start)
-		if errors.Is(err, database.ErrBudgetSpendNotUSD) {
-			return &Refusal{Rule: rule.Name, GroupValues: group, Limit: rule.Amount, Reason: err.Error()}
-		}
-		if err != nil {
-			return fmt.Errorf("read settled spend for budget rule %q: %w", rule.Name, err)
-		}
-
-		if used >= rule.Amount {
-			return &Refusal{Rule: rule.Name, GroupValues: group, Spend: used, Limit: rule.Amount}
-		}
-	}
-
-	return nil
-}
-
-// Admit requires a positive per-run budget cost once any rule exists, rule
-// coverage for every candidate, and every matching rule group to remain below
-// its settled-spend limit.
-func Admit(ctx context.Context, rules []Rule, dimensions map[string]string, models []api.Model, budget api.Budget, now time.Time, db *database.DB) (*Admission, error) {
+// Admit requires a positive per-run budget cost once any rule exists and rule
+// coverage for every candidate. Whether a bucket has room is decided when the
+// turn reserves its hold, atomically with every other turn.
+func Admit(rules []Rule, dimensions map[string]string, models []api.Model, budget api.Budget) (*Admission, error) {
 	if len(rules) > 0 && budget.Cost <= 0 {
 		return nil, &Refusal{Reason: "budget rules require a positive resolved per-run budget cost"}
 	}
-	admission := &Admission{liveRules: append([]Rule(nil), rules...), Dimensions: maps.Clone(dimensions)}
+	admission := &Admission{liveRules: append([]Rule(nil), rules...), Dimensions: maps.Clone(dimensions), Amount: budget.Cost}
 	for _, model := range models {
-		if err := admission.CanSpend(ctx, model, now, db); err != nil {
+		if _, err := admission.Attributions(model); err != nil {
 			return nil, err
 		}
 	}

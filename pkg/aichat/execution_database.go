@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/approval"
@@ -70,6 +69,17 @@ func (e *databaseExecution) finishModelCall(
 	return e.db.FinishChatModelCall(ctx, input)
 }
 
+// finishTurn commits the terminal turn state and reservation release together.
+// A model-call settlement failure skips this boundary and leaves the hold active.
+func (e *databaseExecution) finishTurn(ctx context.Context, status database.TurnStatus, reason string) error {
+	return e.db.Transaction(ctx, func(tx *database.DB) error {
+		if err := tx.FinishChatTurn(ctx, e.turn.ID, status, reason); err != nil {
+			return err
+		}
+		return tx.ReleaseChatTurnBudgetReservations(ctx, e.turn.ID)
+	})
+}
+
 // providerKey is a provider descriptor's stored key, or "" when the runtime
 // resolved to no provider.
 func providerKey(p *api.ModelProvider) string {
@@ -95,9 +105,6 @@ func (e *databaseExecution) BindRuntime(ctx context.Context, runtime api.Model) 
 	defer e.mu.Unlock()
 	var attributions []budgets.Attribution
 	if e.budgetAdmission != nil {
-		if err := e.budgetAdmission.CanSpend(ctx, runtime, time.Now().UTC(), e.db); err != nil {
-			return err
-		}
 		if attributions, err = e.budgetAdmission.Attributions(runtime); err != nil {
 			return err
 		}
@@ -107,8 +114,11 @@ func (e *databaseExecution) BindRuntime(ctx context.Context, runtime api.Model) 
 		Name: identity.Model, Provider: identity.ToModel().Provider, Mode: identity.Mode, Effort: runtime.Effort,
 	})
 	var updatedRun *database.PromptRun
-	err = e.db.Transaction(ctx, func(tx *database.DB) error {
+	err = e.db.ReadCommittedTransaction(ctx, func(tx *database.DB) error {
 		if e.budgetAdmission != nil {
+			if budgetErr := reserveTurnBudgets(ctx, tx, e.turn.ID, e.budgetAdmission, attributions); budgetErr != nil {
+				return budgetErr
+			}
 			if budgetErr := tx.SetModelCallBudgets(ctx, e.turn.ID, e.modelCallID, e.budgetAdmission.Dimensions, databaseAttributions(attributions)); budgetErr != nil {
 				return budgetErr
 			}
@@ -331,8 +341,9 @@ func (e *databaseExecution) Interrupt(ctx context.Context, reason string) error 
 		runtime.Revoke()
 	}
 	var errs []error
-	errs = append(errs, e.finishModelCall(ctx, database.ModelCallStatusCancelled, "interrupt",
-		api.Event{Kind: api.EventInterrupted, Reason: reason}))
+	modelCallErr := e.finishModelCall(ctx, database.ModelCallStatusCancelled, "interrupt",
+		api.Event{Kind: api.EventInterrupted, Reason: reason})
+	errs = append(errs, modelCallErr)
 	errs = append(errs, e.db.CancelPendingTurnRequests(ctx, e.session.ID, e.run.ID, "execution interrupted"))
 	if credential != nil {
 		errs = append(errs, e.db.RevokeCallerToolCredential(ctx, credential.ID, "execution interrupted"))
@@ -342,7 +353,9 @@ func (e *databaseExecution) Interrupt(ctx context.Context, reason string) error 
 	errs = append(errs, e.updateRun(ctx, runUpdate{
 		Phase: &phase, State: &state, ClearApprovalState: true, ClearProviderCheckpoint: true,
 	}))
-	errs = append(errs, e.db.FinishChatTurn(ctx, e.turn.ID, database.TurnStatusInterrupted, "interrupt"))
+	if modelCallErr == nil {
+		errs = append(errs, e.finishTurn(ctx, database.TurnStatusInterrupted, "interrupt"))
+	}
 	errs = append(errs, e.updateSessionState(
 		ctx, database.SessionLifecycleInterrupted, database.SessionActivityIdle, reason,
 	))
@@ -412,7 +425,8 @@ func (e *databaseExecution) finish(ctx context.Context, success bool, message st
 		callStatus = database.ModelCallStatusSucceeded
 		stopReason = "stop"
 	}
-	errs = append(errs, e.finishModelCall(ctx, callStatus, stopReason, event))
+	modelCallErr := e.finishModelCall(ctx, callStatus, stopReason, event)
+	errs = append(errs, modelCallErr)
 	if credential != nil {
 		errs = append(errs, e.db.RevokeCallerToolCredential(ctx, credential.ID, "prompt run terminal"))
 	}
@@ -431,7 +445,9 @@ func (e *databaseExecution) finish(ctx context.Context, success bool, message st
 		turnState = database.TurnStatusEnded
 		turnStopReason = "stop"
 	}
-	errs = append(errs, e.db.FinishChatTurn(ctx, e.turn.ID, turnState, turnStopReason))
+	if modelCallErr == nil {
+		errs = append(errs, e.finishTurn(ctx, turnState, turnStopReason))
+	}
 	lifecycle := database.SessionLifecycleFailed
 	if success {
 		lifecycle = database.SessionLifecycleSucceeded
