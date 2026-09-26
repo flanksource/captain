@@ -8,6 +8,11 @@ inputs:
   go-version:
     description: Go version to install.
     default: "1.26.x"
+  restore:
+    description: >
+      Restore the module and build caches. Pass false for jobs that only need
+      the toolchain, to skip downloading the cache.
+    default: "true"
 
 outputs:
   cache-key:
@@ -21,7 +26,7 @@ runs:
     # so whichever job finished first saved it. The lint job, whose Go work
     # happens inside gavel, usually won and saved a near-empty cache that
     # every later run then hit exactly and never replaced.
-    - uses: actions/setup-go@v5
+    - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
       id: setup-go
       with:
         go-version: ${{ inputs.go-version }}
@@ -35,6 +40,7 @@ runs:
         # The commit in the key lets each push to main refresh the build cache.
         echo "key=$base-${{ hashFiles('go.sum') }}-${{ github.sha }}" >> "$GITHUB_OUTPUT"
     - name: Restore Go cache
+      if: inputs.restore == 'true'
       uses: actions/cache/restore@v4
       with:
         path: |
