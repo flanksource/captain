@@ -70,6 +70,12 @@ type TerminalExecution interface {
 	CommitTerminal(context.Context, TerminalCommit) error
 }
 
+// statelessAdmitter is implemented by authorities that must vet turns carrying
+// no thread, which never reach Begin.
+type statelessAdmitter interface {
+	AdmitStateless(context.Context) error
+}
+
 // executionRuntimeBinder commits the provider runtime selected after fallback
 // resolution, before any provider session identity from that runtime is stored.
 type executionRuntimeBinder interface {

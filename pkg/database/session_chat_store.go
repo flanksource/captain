@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -465,6 +466,6 @@ func (db *DB) touchChatSession(ctx context.Context, id uuid.UUID) error {
 func chatTurnFromRecord(record turnRecord) *ChatTurn {
 	return &ChatTurn{
 		ID: record.ID, SessionID: record.SessionID, ProviderTurnID: optionalString(record.ProviderTurnID),
-		Index: record.TurnIndex, Status: record.Status, Dimensions: cloneStrings(record.Dimensions),
+		Index: record.TurnIndex, Status: record.Status, Dimensions: maps.Clone(record.Dimensions),
 	}
 }

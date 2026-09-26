@@ -3,9 +3,11 @@ package aichat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"strings"
+	"time"
 
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/budgets"
@@ -50,11 +52,14 @@ func (a *DatabaseExecutionAuthority) Begin(
 	if request.Spec.Mode == "" || request.Spec.Provider == nil {
 		return nil, fmt.Errorf("authoritative chat execution requires a resolved (provider, mode) runtime")
 	}
-	budgetAdmission, err := a.budgetAdmission(ctx, request.Dimensions, request.Spec.Model.Candidates())
+	budgetAdmission, err := a.budgetAdmission(ctx, request.Dimensions, request.Spec.Model.Candidates(), request.Spec.Budget)
 	if err != nil {
 		return nil, err
 	}
-	primaryAttributions, _ := budgetAdmission.ForModel(request.Spec.Model)
+	primaryAttributions, err := budgetAdmission.Attributions(request.Spec.Model)
+	if err != nil {
+		return nil, err
+	}
 	renderedSpec, err := renderedSpecMap(request.Spec, request.Profile)
 	if err != nil {
 		return nil, err
@@ -271,7 +276,7 @@ func (a *DatabaseExecutionAuthority) resolveToolApproval(
 	if err != nil {
 		return nil, err
 	}
-	budgetAdmission, err := a.budgetAdmission(ctx, turn.Dimensions, spec.Model.Candidates())
+	budgetAdmission, err := a.budgetAdmission(ctx, turn.Dimensions, spec.Model.Candidates(), spec.Budget)
 	if err != nil {
 		return nil, err
 	}
@@ -310,26 +315,44 @@ func (a *DatabaseExecutionAuthority) resolveToolApproval(
 	return &ApprovalContinuation{Execution: execution, Spec: spec}, nil
 }
 
-func (a *DatabaseExecutionAuthority) budgetAdmission(ctx context.Context, dimensions map[string]string, models []api.Model) (*budgets.Admission, error) {
+func (a *DatabaseExecutionAuthority) budgetAdmission(ctx context.Context, dimensions map[string]string, models []api.Model, budget api.Budget) (*budgets.Admission, error) {
+	var rules []budgets.Rule
+	if a.budgets != nil {
+		var err error
+		if rules, err = a.budgets.List(ctx); err != nil {
+			return nil, fmt.Errorf("load budget rules: %w", err)
+		}
+	}
+	return budgets.Admit(ctx, rules, dimensions, models, budget, time.Now().UTC(), a.db)
+}
+
+// AdmitStateless refuses thread-less turns while budget rules are active:
+// without a thread there is no turn to attribute settled spend to.
+func (a *DatabaseExecutionAuthority) AdmitStateless(ctx context.Context) error {
 	if a.budgets == nil {
-		return budgets.Evaluate(nil, dimensions, models), nil
+		return nil
 	}
 	rules, err := a.budgets.List(ctx)
 	if err != nil {
-		// Observe-only: fail open until budgets are enforced, so a broken rule
-		// source costs attribution rather than chat availability.
-		serviceLog.Warnf("load budget rules (observe-only, continuing without attribution): %v", err)
-		return budgets.Evaluate(nil, dimensions, models), nil
+		return fmt.Errorf("load budget rules: %w", err)
 	}
-	return budgets.Evaluate(rules, dimensions, models), nil
+	if len(rules) > 0 {
+		return &budgets.Refusal{Reason: "budget rules are active; chat requests must carry a threadId so spend can be attributed"}
+	}
+	return nil
 }
 
 func databaseAttributions(input []budgets.Attribution) []database.BudgetAttribution {
 	out := make([]database.BudgetAttribution, 0, len(input))
 	for _, attribution := range input {
-		out = append(out, database.BudgetAttribution{RuleID: attribution.RuleID, GroupValues: attribution.GroupValues})
+		out = append(out, database.BudgetAttribution{RuleID: attribution.Rule.ID, GroupValues: attribution.GroupValues})
 	}
 	return out
+}
+
+func isBudgetRefusal(err error) bool {
+	var refusal *budgets.Refusal
+	return errors.As(err, &refusal)
 }
 
 func approvalDecisions(state api.ToolApprovalState, requests []database.TurnRequest) ([]api.ToolApprovalDecision, error) {

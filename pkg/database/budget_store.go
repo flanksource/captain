@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -17,6 +18,9 @@ var (
 	ErrBudgetRuleNotFound = errors.New("captain budget rule not found")
 	ErrBudgetNameTaken    = errors.New("captain budget rule name is already taken")
 	ErrBudgetInvalid      = errors.New("invalid captain budget rule")
+	// ErrBudgetSpendNotUSD marks a ledger that cannot be summed in USD. It is a
+	// budget decision (fail closed), not an operational failure.
+	ErrBudgetSpendNotUSD = errors.New("budget ledger contains completed non-USD model calls")
 )
 
 // BudgetRuleMatch is the persisted match portion of a budget rule.
@@ -149,7 +153,7 @@ func budgetRuleRecordFrom(id uuid.UUID, input BudgetRuleInput) (budgetRuleRecord
 	if input.Name == "" || input.Amount <= 0 || input.Window == "" {
 		return budgetRuleRecord{}, fmt.Errorf("%w: name, positive amount, and window are required", ErrBudgetInvalid)
 	}
-	input.Match.Dimensions = cloneStrings(input.Match.Dimensions)
+	input.Match.Dimensions = maps.Clone(input.Match.Dimensions)
 	input.Match.Models = trimNonempty(input.Match.Models)
 	input.GroupBy = trimNonempty(input.GroupBy)
 	return budgetRuleRecord{ID: id, Name: input.Name, Match: input.Match, GroupBy: input.GroupBy, Amount: input.Amount, Window: input.Window}, nil
@@ -164,17 +168,6 @@ func budgetWriteError(action, name string, err error) error {
 		return fmt.Errorf("%w: %q", ErrBudgetNameTaken, name)
 	}
 	return fmt.Errorf("%s: %w", action, err)
-}
-
-func cloneStrings(input map[string]string) map[string]string {
-	if input == nil {
-		return nil
-	}
-	out := make(map[string]string, len(input))
-	for key, value := range input {
-		out[key] = value
-	}
-	return out
 }
 
 func trimNonempty(input []string) []string {
@@ -206,7 +199,11 @@ type BudgetAttribution struct {
 // execution starts. Replacement is scoped to that call, so attribution already
 // recorded for earlier calls in the same turn never moves.
 func (db *DB) SetModelCallBudgets(ctx context.Context, turnID, modelCallID uuid.UUID, dimensions map[string]string, attributions []BudgetAttribution) error {
-	dimensionJSON, err := json.Marshal(cloneStrings(dimensions))
+	if dimensions == nil {
+		// The column is NOT NULL DEFAULT '{}'; never store a JSON null.
+		dimensions = map[string]string{}
+	}
+	dimensionJSON, err := json.Marshal(dimensions)
 	if err != nil {
 		return fmt.Errorf("encode Captain turn dimensions: %w", err)
 	}
@@ -226,7 +223,7 @@ func (db *DB) SetModelCallBudgets(ctx context.Context, turnID, modelCallID uuid.
 		if attribution.RuleID == uuid.Nil {
 			return fmt.Errorf("%w: budget attribution rule ID is required", ErrBudgetInvalid)
 		}
-		records = append(records, modelCallBudgetRecord{ModelCallID: modelCallID, BudgetRuleID: attribution.RuleID, GroupValues: cloneStrings(attribution.GroupValues)})
+		records = append(records, modelCallBudgetRecord{ModelCallID: modelCallID, BudgetRuleID: attribution.RuleID, GroupValues: maps.Clone(attribution.GroupValues)})
 	}
 	if len(records) == 0 {
 		return nil
@@ -261,7 +258,7 @@ func (db *DB) budgetSpendStatement(ctx context.Context, ruleID uuid.UUID, groupJ
 // non-USD completed call in the group fails closed because no conversion rate
 // is authoritative here.
 func (db *DB) BudgetSpendUSD(ctx context.Context, ruleID uuid.UUID, groupValues map[string]string, since time.Time) (float64, error) {
-	groupJSON, err := json.Marshal(cloneStrings(groupValues))
+	groupJSON, err := json.Marshal(groupValues)
 	if err != nil {
 		return 0, fmt.Errorf("encode budget group: %w", err)
 	}
@@ -271,7 +268,7 @@ func (db *DB) BudgetSpendUSD(ctx context.Context, ruleID uuid.UUID, groupValues 
 		return 0, fmt.Errorf("inspect budget ledger currency: %w", err)
 	}
 	if nonUSD > 0 {
-		return 0, fmt.Errorf("budget ledger contains %d completed non-USD model calls", nonUSD)
+		return 0, fmt.Errorf("%w: %d calls", ErrBudgetSpendNotUSD, nonUSD)
 	}
 	var total float64
 	if err := db.budgetSpendStatement(ctx, ruleID, groupJSON, since).

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/approval"
@@ -94,7 +95,12 @@ func (e *databaseExecution) BindRuntime(ctx context.Context, runtime api.Model) 
 	defer e.mu.Unlock()
 	var attributions []budgets.Attribution
 	if e.budgetAdmission != nil {
-		attributions, _ = e.budgetAdmission.ForModel(runtime)
+		if err := e.budgetAdmission.CanSpend(ctx, runtime, time.Now().UTC(), e.db); err != nil {
+			return err
+		}
+		if attributions, err = e.budgetAdmission.Attributions(runtime); err != nil {
+			return err
+		}
 	}
 	runID, runVersion, runRuntime := e.run.ID, e.run.Version, e.run.Runtime
 	runRuntime.Resolved = runtimeSelection(api.Model{
