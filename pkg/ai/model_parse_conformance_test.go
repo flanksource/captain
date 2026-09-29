@@ -56,7 +56,7 @@ func model(name string, provider *api.ModelProvider, mode api.RuntimeMode, effor
 // are pure regression pins: the unified parser must not change any of them.
 var agreedCases = []parseCase{
 	// Family aliases resolve to the exact current registry model.
-	{in: "sonnet", want: model("claude-sonnet-5", api.Anthropic, api.ModeAgent, "")},
+	{in: "sonnet", want: model("claude-sonnet-5-5", api.Anthropic, api.ModeAgent, "")},
 	{in: "opus", want: model("claude-opus-5-5", api.Anthropic, api.ModeAgent, "")},
 	{in: "fable", want: model("claude-fable-5-1", api.Anthropic, api.ModeAgent, "")},
 
@@ -69,8 +69,8 @@ var agreedCases = []parseCase{
 	{in: "models/gemini-3.5-flash", want: model("gemini-3.5-flash", api.Google, api.ModeAPI, "")},
 
 	// Mode prefix and effort suffix.
-	{in: "cli:sonnet:high", want: model("claude-sonnet-5", api.Anthropic, api.ModeCLI, api.EffortHigh)},
-	{in: "agent:sonnet", want: model("claude-sonnet-5", api.Anthropic, api.ModeAgent, "")},
+	{in: "cli:sonnet:high", want: model("claude-sonnet-5-5", api.Anthropic, api.ModeCLI, api.EffortHigh)},
+	{in: "agent:sonnet", want: model("claude-sonnet-5-5", api.Anthropic, api.ModeAgent, "")},
 
 	// Codex codenames are catalog aliases, so they resolve wherever a model name
 	// is accepted. `--model agent:sol` used to error while the identical value in
@@ -171,7 +171,7 @@ var _ = Describe("model parse conformance", func() {
 		It("keeps the primary first and resolves each element independently", func() {
 			got, err := specPath("sonnet,cli:opus:high")
 			Expect(err).NotTo(HaveOccurred())
-			expectModel(got, model("claude-sonnet-5", api.Anthropic, api.ModeAgent, ""))
+			expectModel(got, model("claude-sonnet-5-5", api.Anthropic, api.ModeAgent, ""))
 			Expect(got.Fallbacks).To(HaveLen(1))
 			expectModel(got.Fallbacks[0], model("claude-opus-5-5", api.Anthropic, api.ModeCLI, api.EffortHigh))
 		})

@@ -18,7 +18,7 @@ func TestResolveCompactSelectors(t *testing.T) {
 		{
 			name:     "api claude shorthand",
 			in:       api.Model{Name: "api:sonnet-5"},
-			wantName: "claude-sonnet-5",
+			wantName: "claude-sonnet-5-5",
 			wantMode: api.ModeAPI,
 		},
 		{
@@ -74,7 +74,7 @@ func TestResolveRendersTheDriverModelID(t *testing.T) {
 		{"cmux:claude-opus-4-8", "claude-opus-4-8"},
 		{"cli:fable-5", "claude-fable-5-1"},
 		{"api:opus-4-8", "claude-opus-4-8"},
-		{"agent:sonnet", "claude-sonnet-5"},
+		{"agent:sonnet", "claude-sonnet-5-5"},
 		{"agent:sonnet-4", "claude-sonnet-4-6"},
 		{"agent:claude-sonnet-4-5", "claude-sonnet-4-6"},
 		{"agent:haiku", "claude-haiku-4-5"},
@@ -129,7 +129,7 @@ func TestResolve_FallbackSelectors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if got.Name != "claude-sonnet-5" || got.Provider != api.Anthropic || got.Mode != api.ModeAPI {
+	if got.Name != "claude-sonnet-5-5" || got.Provider != api.Anthropic || got.Mode != api.ModeAPI {
 		t.Fatalf("primary = %s %s/%s", got.Provider.Name, got.Mode, got.Name)
 	}
 	if len(got.Fallbacks) != 1 {
@@ -153,7 +153,7 @@ func TestResolveMulti_ExpandsEachSelector(t *testing.T) {
 		labels = append(labels, model.Provider.Name+" "+string(model.Mode)+":"+model.Name)
 	}
 	want := []string{
-		"anthropic cli:claude-sonnet-5",
+		"anthropic cli:claude-sonnet-5-5",
 		"anthropic cmux:claude-opus-5-5",
 		"openai api:gpt-5.5",
 		"openai agent:gpt-5.5",
