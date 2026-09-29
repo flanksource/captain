@@ -21,6 +21,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/agent"
+	"github.com/flanksource/clicky/exec"
 	dbcontext "github.com/flanksource/commons-db/context"
 	"github.com/flanksource/commons-db/shell"
 )
@@ -118,6 +119,14 @@ type Plugin struct {
 	BaseDir string
 
 	prepared *shell.SetupResult
+	// relocation describes the tree PreRun moved the run into, so teardown can
+	// report what became of it; nil when the setup relocated nothing.
+	relocation *relocation
+}
+
+type relocation struct {
+	kind, path string
+	keep       bool
 }
 
 func (p *Plugin) Name() string { return "setup" }
@@ -140,13 +149,57 @@ func (p *Plugin) PreRun(hc *agent.HookContext) error {
 	if baseDir == "" {
 		baseDir = hc.Workspace().Cwd
 	}
+	// Read before Apply, which consumes the checkout it performs.
+	checkout := hc.Request.Setup.Checkout
 	res, err := Apply(hc, hc.Request, baseDir)
 	if err != nil {
 		return err
 	}
 	p.prepared = res
 	hc.Workspace().Cwd = res.Cwd
+	if Relocates(checkout) {
+		p.relocation = &relocation{kind: "checkout", path: res.Cwd}
+		if checkout.Worktree != nil && checkout.Worktree.Mode != "" && checkout.Worktree.Mode != shell.WorktreeNone {
+			p.relocation.kind, p.relocation.keep = "worktree", checkout.Worktree.Keep
+			// Branch is how later hooks tell an isolated tree from the caller's own
+			// checkout — the commit hook stages the whole tree only when it is set —
+			// so a worktree that does not record one reads as shared.
+			ws := hc.Workspace()
+			if ws.Branch, ws.Repo, err = worktreeOrigin(res.Cwd); err != nil {
+				return err
+			}
+		}
+		hc.Notify("[pre-run] %s %s", p.relocation.kind, res.Cwd)
+	}
 	return nil
+}
+
+// worktreeOrigin reads the branch a worktree has checked out and the repository
+// it was added from. The source is git's main worktree — the first entry of
+// `git worktree list` — rather than the checkout's path, which a remote checkout
+// does not have.
+func worktreeOrigin(dir string) (branch, repo string, err error) {
+	git := func(args ...string) (string, error) {
+		res := exec.NewExec("git", args...).WithCwd(dir).Run().Result()
+		if res.Error != nil || res.ExitCode != 0 {
+			return "", fmt.Errorf("setup: git %s in worktree %s: exit %d: %v: %s",
+				strings.Join(args, " "), dir, res.ExitCode, res.Error, strings.TrimSpace(res.Stderr))
+		}
+		return strings.TrimSpace(res.Stdout), nil
+	}
+	if branch, err = git("symbolic-ref", "--short", "HEAD"); err != nil {
+		return "", "", err
+	}
+	list, err := git("worktree", "list", "--porcelain")
+	if err != nil {
+		return "", "", err
+	}
+	first, _, _ := strings.Cut(list, "\n")
+	repo, ok := strings.CutPrefix(first, "worktree ")
+	if !ok || repo == "" {
+		return "", "", fmt.Errorf("setup: git worktree list in %s: unexpected first record %q", dir, first)
+	}
+	return branch, repo, nil
 }
 
 // Phases declares teardown as the final phase, so a hook that commits at
@@ -156,11 +209,23 @@ func (p *Plugin) Phases() []agent.Phase { return []agent.Phase{agent.PhaseRun} }
 // Post tears the prepared setup down. It runs even when the run failed — that is
 // what makes teardown reliable — and clears its own state so a re-dispatched
 // phase cannot tear the same workspace down twice.
-func (p *Plugin) Post(_ *agent.HookContext, _ agent.Phase) error {
-	if p.prepared == nil || p.prepared.Cleanup == nil {
+func (p *Plugin) Post(hc *agent.HookContext, _ agent.Phase) error {
+	if p.prepared == nil {
 		return nil
 	}
-	cleanup := p.prepared.Cleanup
-	p.prepared = nil
-	return cleanup()
+	cleanup, moved := p.prepared.Cleanup, p.relocation
+	p.prepared, p.relocation = nil, nil
+	if cleanup != nil {
+		if err := cleanup(); err != nil {
+			return err
+		}
+	}
+	if moved != nil {
+		verb := "removed"
+		if moved.keep || cleanup == nil {
+			verb = "kept"
+		}
+		hc.Notify("[post-run] %s %s %s", verb, moved.kind, moved.path)
+	}
+	return nil
 }
