@@ -39,17 +39,38 @@ func SetupAgentWorkspace(ctx context.Context, sidecarRepo, task, dispatchCommit,
 	if _, err := os.Stat(workdir); err == nil {
 		return workdir, nil // re-dispatch onto an existing workspace is a no-op
 	}
+	// Build the workspace beside its final path and move it in with one rename.
+	// `git clone` creates its target directory first and writes the local branch
+	// ref and its upstream config last, so cloning straight onto workdir
+	// publishes a directory whose HEAD names a branch that does not exist yet —
+	// `git rev-parse @{u}` there fails with "no such branch". Anything that
+	// watches the task directory to know the workspace is ready (the e2e suite,
+	// an operator, the re-dispatch check above) would be reading a worktree that
+	// is not one yet, and an interrupted clone would leave a partial workspace
+	// that every later dispatch mistakes for a finished one.
+	staging, err := os.MkdirTemp(filepath.Dir(workdir), ".worktree-")
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = os.RemoveAll(staging) }() // the rename leaves nothing to remove
+	// MkdirTemp is 0700; a clone is not. Restore the mode the agent would see.
+	if err := os.Chmod(staging, 0o755); err != nil {
+		return "", err
+	}
 	branchName := "captain/" + task
 	if _, err := runGit(ctx, filepath.Dir(workdir), env,
-		"clone", "--quiet", "--shared", "--branch", branchName, sidecarRepo, workdir); err != nil {
+		"clone", "--quiet", "--shared", "--branch", branchName, sidecarRepo, staging); err != nil {
 		return "", err
 	}
 	// Pin the selected runtime so a bare `git commit` needs no global config
 	// and still records which model and effort produced it.
 	for _, kv := range [][2]string{{"user.name", runtimeIdentity}, {"user.email", "agent@captain.local"}} {
-		if _, err := runGit(ctx, workdir, env, "config", kv[0], kv[1]); err != nil {
+		if _, err := runGit(ctx, staging, env, "config", kv[0], kv[1]); err != nil {
 			return "", err
 		}
+	}
+	if err := os.Rename(staging, workdir); err != nil {
+		return "", fmt.Errorf("publish agent workspace %s: %w", workdir, err)
 	}
 	return workdir, nil
 }
