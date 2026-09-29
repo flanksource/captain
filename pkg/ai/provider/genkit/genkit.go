@@ -281,7 +281,7 @@ func (p *Provider) correlatedGenerateOptions(
 	emit func(ai.Event),
 	correlation *toolEventCorrelation,
 ) ([]gkai.GenerateOption, error) {
-	// Caller tools are gated by ToolPreferences and CanUseTool; Permissions.Tools
+	// Caller tools are gated by ToolPreferences and OnApproval; Permissions.Tools
 	// is a separate policy the API mode has no seam for, so it must not be
 	// accepted and ignored.
 	if err := api.RequireToolPolicySupport(p.provider, ai.ModeAPI, req.Permissions); err != nil {

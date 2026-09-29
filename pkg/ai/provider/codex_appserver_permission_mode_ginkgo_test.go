@@ -2,6 +2,9 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
+
+	"github.com/flanksource/captain/pkg/ai/provider/jsonrpc"
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
@@ -11,7 +14,7 @@ import (
 
 var _ = Describe("Codex app-server permission mode", func() {
 	commandApproval := func(c *CodexAppServer) string {
-		answer, rpcErr := c.handleApproval("item/commandExecution/requestApproval", nil)
+		answer, rpcErr := c.handleApproval(jsonrpc.ServerRequest{ID: json.RawMessage(`1`), Method: "item/commandExecution/requestApproval", Params: nil})
 		Expect(rpcErr).To(BeNil())
 		return answer.(map[string]string)["decision"]
 	}

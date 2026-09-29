@@ -11,8 +11,8 @@ import (
 	gkai "github.com/firebase/genkit/go/ai"
 )
 
-func newToolProvider(canUse api.PermissionFunc) *Provider {
-	return &Provider{cfg: ai.Config{Model: api.Model{Name: "test-model"}, CanUseTool: canUse}}
+func newToolProvider(canUse api.ApprovalFunc) *Provider {
+	return &Provider{cfg: ai.Config{Model: api.Model{Name: "test-model"}, OnApproval: canUse}}
 }
 
 func collectEvents() (func(ai.Event), *[]ai.Event) {
@@ -62,8 +62,8 @@ func TestRunToolAutoRunsAndEmitsCorrelatedEvents(t *testing.T) {
 
 func TestRunToolApprovalDeniedSkipsHandler(t *testing.T) {
 	ran := false
-	deny := func(_ context.Context, _ api.PermissionRequest) (api.PermissionDecision, error) {
-		return api.PermissionDecision{Allow: false, Message: "nope"}, nil
+	deny := func(_ context.Context, _ api.ApprovalRequest) (api.ApprovalDecision, error) {
+		return api.ApprovalDecision{Allow: false, Message: "nope"}, nil
 	}
 	p := newToolProvider(deny)
 	emit, events := collectEvents()
@@ -94,8 +94,8 @@ func TestRunToolApprovalDeniedSkipsHandler(t *testing.T) {
 }
 
 func TestRunToolApprovalAllowsAndSubstitutesInput(t *testing.T) {
-	allow := func(_ context.Context, _ api.PermissionRequest) (api.PermissionDecision, error) {
-		return api.PermissionDecision{Allow: true, UpdatedInput: map[string]any{"amount": 5}}, nil
+	allow := func(_ context.Context, _ api.ApprovalRequest) (api.ApprovalDecision, error) {
+		return api.ApprovalDecision{Allow: true, UpdatedInput: map[string]any{"amount": 5}}, nil
 	}
 	p := newToolProvider(allow)
 	emit, _ := collectEvents()

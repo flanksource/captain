@@ -38,6 +38,18 @@ type turnState struct {
 	turnID           string
 	sendMu           sync.Mutex
 	closed           bool
+
+	// fileChanges holds each fileChange item's latest changes by item id: the
+	// approval Codex raises for it names the item but carries no files.
+	fileChangesMu sync.Mutex
+	fileChanges   map[string]json.RawMessage
+}
+
+// ids returns the thread and turn the turn runs in, once they are known.
+func (ts *turnState) ids() (string, string) {
+	ts.idMu.Lock()
+	defer ts.idMu.Unlock()
+	return ts.threadID, ts.turnID
 }
 
 func (ts *turnState) signalTerminal() { ts.termOnce.Do(func() { close(ts.terminal) }) }

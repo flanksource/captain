@@ -1,8 +1,11 @@
 package provider
 
 import (
+	"encoding/json"
 	"runtime"
 	"testing"
+
+	"github.com/flanksource/captain/pkg/ai/provider/jsonrpc"
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
@@ -133,15 +136,12 @@ func TestBuildResumeParams(t *testing.T) {
 // request is codex asking to exceed the sandbox it was started with, so only a
 // run that declared full access may accept one — otherwise buildThreadStartParams'
 // sandbox and approvalPolicy are advisory and `mode: plan` gates nothing.
-// The decision vocabularies are codex's own, from `codex app-server
-// generate-json-schema`: accept|decline (item/*) and approved|denied (legacy).
+// The decision vocabulary is codex's own, from `codex app-server
+// generate-json-schema`: accept|decline.
 func TestHandleApproval_AnswersFromPosture(t *testing.T) {
 	methods := []struct{ method, accept, decline string }{
-		{"execCommandApproval", "approved", "denied"},
-		{"applyPatchApproval", "approved", "denied"},
 		{"item/commandExecution/requestApproval", "accept", "decline"},
 		{"item/fileChange/requestApproval", "accept", "decline"},
-		{"some/unknown/approval", "approved", "denied"},
 	}
 	postures := []struct {
 		name       string
@@ -184,7 +184,7 @@ func TestHandleApproval_AnswersFromPosture(t *testing.T) {
 				if posture.wantAccept {
 					want = m.accept
 				}
-				res, rpcErr := c.handleApproval(m.method, nil)
+				res, rpcErr := c.handleApproval(jsonrpc.ServerRequest{ID: json.RawMessage(`1`), Method: m.method, Params: nil})
 				assert.Nil(t, rpcErr)
 				decision, ok := res.(map[string]string)
 				require.True(t, ok, "%s returns a string map", m.method)
@@ -193,7 +193,7 @@ func TestHandleApproval_AnswersFromPosture(t *testing.T) {
 
 			// Additional permissions are never granted: the thread already carries
 			// everything the run declared.
-			res, rpcErr := c.handleApproval("item/permissions/requestApproval", nil)
+			res, rpcErr := c.handleApproval(jsonrpc.ServerRequest{ID: json.RawMessage(`1`), Method: "item/permissions/requestApproval", Params: nil})
 			assert.Nil(t, rpcErr)
 			perm, ok := res.(map[string]any)
 			require.True(t, ok)
@@ -223,7 +223,7 @@ func TestBeginTurn_ConcurrentTurnCannotEscalateTheInFlightPosture(t *testing.T) 
 	// The queued turn is blocked on turnMu, so approvals raised by the still
 	// in-flight restricted turn keep declining.
 	for i := 0; i < 50; i++ {
-		res, rpcErr := c.handleApproval("item/commandExecution/requestApproval", nil)
+		res, rpcErr := c.handleApproval(jsonrpc.ServerRequest{ID: json.RawMessage(`1`), Method: "item/commandExecution/requestApproval", Params: nil})
 		assert.Nil(t, rpcErr)
 		require.Equal(t, "decline", res.(map[string]string)["decision"],
 			"the queued bypass turn overwrote the in-flight restricted posture")
@@ -232,7 +232,7 @@ func TestBeginTurn_ConcurrentTurnCannotEscalateTheInFlightPosture(t *testing.T) 
 
 	c.turnMu.Unlock()
 	<-queued
-	res, rpcErr := c.handleApproval("item/commandExecution/requestApproval", nil)
+	res, rpcErr := c.handleApproval(jsonrpc.ServerRequest{ID: json.RawMessage(`1`), Method: "item/commandExecution/requestApproval", Params: nil})
 	assert.Nil(t, rpcErr)
 	assert.Equal(t, "accept", res.(map[string]string)["decision"],
 		"the bypass turn's posture takes effect once it owns the turn")
@@ -243,7 +243,7 @@ func TestBeginTurn_ConcurrentTurnCannotEscalateTheInFlightPosture(t *testing.T) 
 func TestHandleApproval_PostureDefaultsClosed(t *testing.T) {
 	c, err := NewCodexAppServer(ai.Config{Model: api.Model{Name: "m"}})
 	require.NoError(t, err)
-	res, rpcErr := c.handleApproval("item/commandExecution/requestApproval", nil)
+	res, rpcErr := c.handleApproval(jsonrpc.ServerRequest{ID: json.RawMessage(`1`), Method: "item/commandExecution/requestApproval", Params: nil})
 	assert.Nil(t, rpcErr)
 	assert.Equal(t, "decline", res.(map[string]string)["decision"])
 }

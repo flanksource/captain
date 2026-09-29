@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"context"
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
@@ -95,5 +96,17 @@ var _ = Describe("Codex app-server permissions", func() {
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(options.ApprovalTimeout).To(Equal(45 * time.Minute))
+	})
+
+	It("supplies the active Codex turn context to caller tools", func() {
+		type turnKey struct{}
+		provider, err := NewCodexAppServer(ai.Config{})
+		Expect(err).NotTo(HaveOccurred())
+		options, err := provider.callerToolOptions(ai.Request{}, []api.ToolDefinition{{Name: "invoice_get"}})
+		Expect(err).NotTo(HaveOccurred())
+		turnCtx := context.WithValue(context.Background(), turnKey{}, "turn-1")
+		Expect(options.ContextForCall()).To(BeNil())
+		provider.setActive(&turnState{ctx: turnCtx})
+		Expect(options.ContextForCall().Value(turnKey{})).To(Equal("turn-1"))
 	})
 })

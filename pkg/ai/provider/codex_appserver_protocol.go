@@ -472,19 +472,11 @@ func codexRuntimeWorkspaceRoots(req ai.Request) ([]string, error) {
 	if len(directories) == 0 {
 		return nil, nil
 	}
-	cwd := req.Cwd()
-	if cwd == "" {
-		var err error
-		cwd, err = os.Getwd()
-		if err != nil {
-			return nil, fmt.Errorf("resolve Codex runtime workspace cwd: %w", err)
-		}
-	}
-	absCwd, err := filepath.Abs(cwd)
+	absCwd, err := codexRunCwd(req)
 	if err != nil {
-		return nil, fmt.Errorf("resolve Codex runtime workspace cwd %q: %w", cwd, err)
+		return nil, err
 	}
-	roots := []string{filepath.Clean(absCwd)}
+	roots := []string{absCwd}
 	seen := map[string]struct{}{roots[0]: {}}
 	for _, directory := range directories {
 		if !filepath.IsAbs(directory) {
@@ -498,6 +490,24 @@ func codexRuntimeWorkspaceRoots(req ai.Request) ([]string, error) {
 		roots = append(roots, directory)
 	}
 	return roots, nil
+}
+
+// codexRunCwd is the absolute directory a run's Codex thread works in: the
+// request's cwd, or the process's when the request names none.
+func codexRunCwd(req ai.Request) (string, error) {
+	cwd := req.Cwd()
+	if cwd == "" {
+		var err error
+		cwd, err = os.Getwd()
+		if err != nil {
+			return "", fmt.Errorf("resolve Codex runtime workspace cwd: %w", err)
+		}
+	}
+	absCwd, err := filepath.Abs(cwd)
+	if err != nil {
+		return "", fmt.Errorf("resolve Codex runtime workspace cwd %q: %w", cwd, err)
+	}
+	return filepath.Clean(absCwd), nil
 }
 
 func applyCodexThreadSafety(params map[string]any, translation api.CodexSandboxTranslation, roots []string) {

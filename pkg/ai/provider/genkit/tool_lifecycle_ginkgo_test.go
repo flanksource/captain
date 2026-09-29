@@ -93,9 +93,9 @@ var _ = Describe("Genkit tool event correlation", func() {
 	})
 
 	It("keeps permission events on the provider reference", func() {
-		provider = newToolProvider(func(_ context.Context, request api.PermissionRequest) (api.PermissionDecision, error) {
+		provider = newToolProvider(func(_ context.Context, request api.ApprovalRequest) (api.ApprovalDecision, error) {
 			Expect(request.ToolUseID).To(Equal("toolu_approved"))
-			return api.PermissionDecision{Allow: true}, nil
+			return api.ApprovalDecision{Allow: true}, nil
 		})
 		tool.DefaultPermission = api.ToolPolicyAsk
 		correlation := newToolEventCorrelation()

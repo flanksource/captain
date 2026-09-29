@@ -250,7 +250,9 @@ func (c *CodexAppServer) SetPermissionMode(_ context.Context, mode api.Permissio
 		return err
 	}
 	c.permissionMode = mode
-	c.posture = postureFor(ai.Request{Sandbox: c.sandbox, Permissions: api.Permissions{Mode: mode}})
+	run := c.posture.run
+	run.Sandbox, run.Permissions.Mode = c.sandbox, mode
+	c.posture = postureFor(run)
 	return nil
 }
 
@@ -374,6 +376,7 @@ func (c *CodexAppServer) startThread(ctx context.Context, req ai.Request) (strin
 		if err != nil {
 			return "", err
 		}
+		c.applyApprovalPolicy(params)
 		raw, err := rpc.Call(ctx, "thread/resume", params)
 		if err != nil {
 			return "", err
@@ -386,6 +389,7 @@ func (c *CodexAppServer) startThread(ctx context.Context, req ai.Request) (strin
 	if err != nil {
 		return "", err
 	}
+	c.applyApprovalPolicy(params)
 	raw, err := rpc.Call(ctx, "thread/start", params)
 	if err != nil {
 		return "", err
@@ -413,6 +417,7 @@ func (c *CodexAppServer) startTurn(ctx context.Context, req ai.Request, threadID
 	if err != nil {
 		return "", err
 	}
+	c.applyApprovalPolicy(params)
 	effort, present := params["effort"].(string)
 	observation.RecordReasoningDispatch(ctx, "codex.turn/start", present, effort)
 	raw, err := rpc.Call(ctx, "turn/start", params)
@@ -501,9 +506,15 @@ func (c *CodexAppServer) callerToolOptions(req ai.Request, definitions []api.Too
 	}
 	return callertools.Options{
 		// Owned by the provider, which outlives any one request.
-		Context:         context.Background(),
+		Context: context.Background(),
+		ContextForCall: func() context.Context {
+			if turn := c.currentTurn(); turn != nil {
+				return turn.ctx
+			}
+			return nil
+		},
 		Definitions:     definitions,
-		CanUseTool:      c.cfg.CanUseTool,
+		OnApproval:      c.cfg.OnApproval,
 		SessionID:       firstNonEmpty(c.cfg.CaptainSessionID, req.SessionID, c.cfg.SessionID),
 		ApprovalTimeout: approvalTimeout,
 	}, nil
@@ -529,6 +540,9 @@ func (c *CodexAppServer) handleNotification(method string, params json.RawMessag
 		return
 	}
 	ctx := appServerEventContext{Model: ts.model, Usage: ts.usage, UsagePresent: &ts.usagePresent}
+	if ts.recordFileChange(method, params) {
+		return
+	}
 	switch method {
 	case "item/agentMessage/delta":
 		notification := parseAppServerNotif(params)

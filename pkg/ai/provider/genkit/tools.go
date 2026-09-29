@@ -126,7 +126,7 @@ func (p *Provider) genkitTool(def api.ToolDefinition, emit func(ai.Event), corre
 	return gkai.NewTool(def.Name, def.Description, handler, options...)
 }
 
-// runTool gates a caller tool through Config.CanUseTool (when it needs approval),
+// runTool gates a caller tool through Config.OnApproval (when it needs approval),
 // runs its handler, and publishes the use/permission/result events. On a denied
 // or errored call it feeds a message back to the model as the tool result so the
 // model can react rather than the whole generation failing.
@@ -162,14 +162,16 @@ func (p *Provider) runTool(
 		if emit != nil {
 			emit(ai.Event{Kind: ai.EventPermission, Tool: def.Name, Input: args, ToolCallID: callID, Model: p.cfg.Model.Name})
 		}
-		if p.cfg.CanUseTool == nil {
+		if p.cfg.OnApproval == nil {
 			return nil, gkai.NewToolInterruptError(map[string]any{"approvalRequired": true})
 		}
-		decision, err := p.cfg.CanUseTool(ctx, api.PermissionRequest{
-			Tool:      def.Name,
-			Input:     args,
-			ToolUseID: callID,
-			SessionID: p.cfg.SessionID,
+		decision, err := p.cfg.OnApproval(ctx, api.ApprovalRequest{
+			Tool:           def.Name,
+			Input:          args,
+			ToolUseID:      callID,
+			SessionID:      p.cfg.SessionID,
+			Kind:           api.ApprovalKindTool,
+			LegacyContract: true,
 		})
 		if err != nil {
 			return p.toolDenied(def.Name, callID, err.Error(), emit, correlation)
