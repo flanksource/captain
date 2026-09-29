@@ -60,6 +60,11 @@ table "captain_prompt_runs" {
     type    = jsonb
     default = sql("'{}'::jsonb")
   }
+  column "metadata" {
+    null    = false
+    type    = jsonb
+    default = sql("'{}'::jsonb")
+  }
   column "prompt_markdown" {
     null = true
     type = text

@@ -45,6 +45,7 @@ type PromptRun struct {
 	SpecProfile          string                 `json:"specProfile,omitempty"`
 	AdmissionKey         string                 `json:"admissionKey,omitempty"`
 	RenderedSpec         map[string]any         `json:"renderedSpec,omitempty"`
+	Metadata             map[string]any         `json:"metadata,omitempty"`
 	Runtime              PromptRunRuntime       `json:"runtime,omitempty"`
 	PromptMarkdown       string                 `json:"promptMarkdown,omitempty"`
 	VerificationMarkdown string                 `json:"verificationMarkdown,omitempty"`
@@ -91,19 +92,23 @@ type CreatePromptRunInput struct {
 	SpecProfile          string
 	AdmissionKey         string
 	RenderedSpec         map[string]any
+	Metadata             map[string]any
 	Runtime              PromptRunRuntime
 	PromptMarkdown       string
 	VerificationMarkdown string
 }
 
 type UpdatePromptRunInput struct {
-	ID                      uuid.UUID
-	ExpectedVersion         int64
-	Phase                   *PromptRunPhase
-	State                   *PromptRunState
-	CurrentIteration        *int
-	ExecutionSessionID      *uuid.UUID
-	RenderedSpec            *map[string]any
+	ID                 uuid.UUID
+	ExpectedVersion    int64
+	Phase              *PromptRunPhase
+	State              *PromptRunState
+	CurrentIteration   *int
+	ExecutionSessionID *uuid.UUID
+	RenderedSpec       *map[string]any
+	// Metadata merges its top-level keys into the stored object; keys it does
+	// not name keep their stored values.
+	Metadata                *map[string]any
 	Runtime                 *PromptRunRuntime
 	ResultText              *string
 	ResultJSON              *map[string]any
@@ -128,6 +133,7 @@ type promptRunRecord struct {
 	SpecProfile               *string                `gorm:"column:spec_profile"`
 	AdmissionKey              *string                `gorm:"column:admission_key"`
 	RenderedSpec              map[string]any         `gorm:"column:rendered_spec;serializer:json;type:jsonb"`
+	Metadata                  map[string]any         `gorm:"column:metadata;serializer:json;type:jsonb"`
 	Runtime                   PromptRunRuntime       `gorm:"column:runtime;serializer:json;type:jsonb"`
 	PromptMarkdown            *string                `gorm:"column:prompt_markdown"`
 	VerificationMarkdown      *string                `gorm:"column:verification_markdown"`
