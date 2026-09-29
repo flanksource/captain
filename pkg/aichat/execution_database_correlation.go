@@ -23,7 +23,7 @@ func (e *databaseExecution) rememberProviderToolUse(event api.Event) {
 	}
 }
 
-func (e *databaseExecution) claimProviderToolUse(ctx context.Context, request api.PermissionRequest) (string, error) {
+func (e *databaseExecution) claimProviderToolUse(ctx context.Context, request api.ApprovalRequest) (string, error) {
 	timer := time.NewTimer(providerToolCorrelationTTL)
 	defer timer.Stop()
 	for {

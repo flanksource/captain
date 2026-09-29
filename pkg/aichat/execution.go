@@ -30,6 +30,9 @@ type ToolApprovalResolution struct {
 	Approved       bool
 	UpdatedInput   map[string]any
 	Reason         string
+	Interrupt      bool
+	Scope          api.ApprovalScope
+	Grants         *api.NativeSandboxPolicy
 }
 
 type ApprovalContinuation struct {

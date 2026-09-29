@@ -148,8 +148,8 @@ func (e *databaseExecution) startCallerTools(ctx context.Context, provider *api.
 			}
 			return e.db.ValidateCallerToolCredential(ctx, credentialID)
 		},
-		CanUseTool: func(ctx context.Context, request api.PermissionRequest) (api.PermissionDecision, error) {
-			return e.approvalBroker(credentialID).CanUseTool(ctx, request)
+		OnApproval: func(ctx context.Context, request api.ApprovalRequest) (api.ApprovalDecision, error) {
+			return e.approvalBroker(credentialID).OnApproval(ctx, request)
 		},
 	})
 	if err != nil {
@@ -193,7 +193,7 @@ func (e *databaseExecution) approvalBroker(credentialID uuid.UUID) *approval.Bro
 		DB: e.db, SessionID: e.session.ID, PromptRunID: runID,
 		TurnID: &turnID, ModelCallID: &modelCallID, CredentialID: credentialID,
 		RequestedBy: "caller_tool", Timeout: approval.CallerToolTimeout,
-		Notify: e.emit, OnWaiting: e.markWaiting, OnRunning: e.markRunning,
+		Notify: e.emit, OnRunState: e.adoptApprovalPosture,
 		ClaimToolUseID: e.claimProviderToolUse,
 	}
 }
