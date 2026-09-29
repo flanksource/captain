@@ -23,6 +23,49 @@ export function findSessionForApproval(
   )?.captainId;
 }
 
+/** Mirrors clicky-ui's `ApprovalDecisionFields` (data/ai/approval-request), the
+ *  typed part of a decision beyond approve/deny + message. Kept local for the
+ *  same reason as `ApprovalResolveAction`; import it once the pinned clicky-ui
+ *  release carries it. `grants` is captain's `api.NativeSandboxPolicy` JSON. */
+export interface ApprovalDecisionExtras {
+  answers?: Record<string, string | string[]>;
+  interrupt?: boolean;
+  scope?: "turn" | "session";
+  grants?: object;
+  content?: Record<string, unknown>;
+}
+
+/** The POST body for a decision. Answers travel as `updatedInput.answers` and
+ *  form content as `updatedInput` itself, the conventions captain's
+ *  `api.ApprovalDecision` documents. A combination captain would refuse is
+ *  refused here, so it fails on the row instead of being silently trimmed. */
+export function approvalDecisionBody(params: {
+  approved: boolean;
+  reason?: string;
+  decision?: ApprovalDecisionExtras;
+}): Record<string, unknown> {
+  const { approved, reason, decision = {} } = params;
+  const { answers, interrupt, scope, grants, content } = decision;
+  if (!approved && (answers || content || scope || grants)) {
+    throw new Error("A denied approval cannot carry answers, content, a scope or grants.");
+  }
+  if (approved && interrupt) {
+    throw new Error("Interrupt needs a denial: cancel an approval by denying it.");
+  }
+  if (answers && content) {
+    throw new Error("A decision carries either answers or content, not both.");
+  }
+  const updatedInput = answers ? { answers } : content;
+  return {
+    approved,
+    ...(reason ? { reason } : {}),
+    ...(updatedInput ? { updatedInput } : {}),
+    ...(interrupt ? { interrupt } : {}),
+    ...(scope ? { scope } : {}),
+    ...(grants ? { grants } : {}),
+  };
+}
+
 /** POSTs an approve/deny decision to the existing tool-approval endpoint:
  *  `POST {sessionsApi}/{sessionId}/approvals/{approvalId}`. The server
  *  refuses when the approval's prompt run is no longer `waiting`; that
@@ -36,6 +79,7 @@ export async function resolveSessionApproval(
     approvalId: string;
     approved: boolean;
     reason?: string;
+    decision?: ApprovalDecisionExtras;
   },
   fetcher: ApprovalFetch = fetch,
 ): Promise<void> {
@@ -46,11 +90,7 @@ export async function resolveSessionApproval(
       Accept: "application/json",
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(
-      params.reason
-        ? { approved: params.approved, reason: params.reason }
-        : { approved: params.approved },
-    ),
+    body: JSON.stringify(approvalDecisionBody(params)),
   });
   if (!response.ok) {
     const detail = (await response.text()).trim();

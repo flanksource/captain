@@ -95,6 +95,80 @@ describe("resolveSessionApproval", () => {
     );
   });
 
+  const postedBody = (fetcher: ReturnType<typeof vi.fn>): unknown =>
+    JSON.parse((fetcher.mock.lastCall?.[1] as RequestInit).body as string);
+
+  const resolveWith = async (
+    approved: boolean,
+    decision: Parameters<typeof resolveSessionApproval>[0]["decision"],
+    reason?: string,
+  ): Promise<unknown> => {
+    const fetcher = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
+    await resolveSessionApproval(
+      {
+        sessionsApi: "/api/chat/sessions",
+        sessionId: "session-a",
+        approvalId: "approval-1",
+        approved,
+        ...(reason ? { reason } : {}),
+        ...(decision ? { decision } : {}),
+      },
+      fetcher,
+    );
+    return postedBody(fetcher);
+  };
+
+  it("sends a plain approval exactly as before when the decision carries nothing typed", async () => {
+    expect(await resolveWith(true, {})).toEqual({ approved: true });
+  });
+
+  it("sends Cancel as a denial with interrupt", async () => {
+    expect(await resolveWith(false, { interrupt: true }, "stop")).toEqual({
+      approved: false,
+      reason: "stop",
+      interrupt: true,
+    });
+  });
+
+  it("sends scope and the granted subset of a permissions request", async () => {
+    const grants = { filesystem: { writableRoots: ["/repo/.git"] } };
+    expect(await resolveWith(true, { scope: "session", grants })).toEqual({
+      approved: true,
+      scope: "session",
+      grants,
+    });
+  });
+
+  it("sends form content as the updated input", async () => {
+    expect(await resolveWith(true, { content: { repo: "flanksource/captain" } })).toEqual({
+      approved: true,
+      updatedInput: { repo: "flanksource/captain" },
+    });
+  });
+
+  it("sends question answers under updatedInput.answers", async () => {
+    expect(await resolveWith(true, { answers: { data_model: "Replace Forex" } })).toEqual({
+      approved: true,
+      updatedInput: { answers: { data_model: "Replace Forex" } },
+    });
+  });
+
+  it("refuses a denial that carries input, scope or grants instead of dropping them", async () => {
+    await expect(resolveWith(false, { content: { a: "b" } })).rejects.toThrow(/denied approval cannot carry/);
+    await expect(resolveWith(false, { scope: "turn" })).rejects.toThrow(/denied approval cannot carry/);
+    await expect(resolveWith(false, { grants: {} })).rejects.toThrow(/denied approval cannot carry/);
+  });
+
+  it("refuses interrupt on an approval", async () => {
+    await expect(resolveWith(true, { interrupt: true })).rejects.toThrow(/Interrupt needs a denial/);
+  });
+
+  it("refuses content together with answers", async () => {
+    await expect(resolveWith(true, { content: { a: "b" }, answers: { q: "x" } })).rejects.toThrow(
+      /either answers or content/,
+    );
+  });
+
   it("throws the server's refusal text when the prompt run is not waiting", async () => {
     const fetcher = vi.fn().mockResolvedValue(
       new Response("prompt run is not waiting", { status: 409 }),

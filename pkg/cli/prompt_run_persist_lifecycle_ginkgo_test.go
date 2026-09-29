@@ -3,6 +3,7 @@ package cli
 import (
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/database"
+	"github.com/flanksource/captain/pkg/promptrun"
 	"github.com/flanksource/commons-db/dbtest"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -34,11 +35,13 @@ var _ = Describe("persisted prompt run session lifecycle", func() {
 		member := batch.Runs[0]
 		const providerSessionID = "0195c1de-4ab8-7000-8000-0000000c0de1"
 
-		persistPromptRun(ctx, promptRunRecordInput{
+		interrupted := answeredRun(rendered, member.Runtime, providerSessionID, "")
+		interrupted.Outcome = promptrun.Outcome{
+			State: database.PromptRunStateCancelled, Phase: database.PromptRunPhaseFinished, Error: "interrupted by user",
+		}
+		Expect(recordCompletedRun(ctx, promptRecordingInput{
 			Rendered: rendered, RunID: "interrupted-member", Binding: promptBinding(batch, 0),
-			SessionID: providerSessionID, Model: member.Runtime.Name, Provider: member.Runtime.Provider,
-			Mode: member.Runtime.Mode, State: database.PromptRunStateCancelled, Error: "interrupted by user",
-		})
+		}, interrupted)).To(Succeed())
 
 		admission, err := db.GetSession(ctx, member.SessionID)
 		Expect(err).NotTo(HaveOccurred())

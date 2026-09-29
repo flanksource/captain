@@ -117,7 +117,41 @@ var _ = Describe("plan identity resolution", func() {
 		_, err := resolveIdentityPlan(ctx, store, providerSessionID, "all")
 
 		Expect(err).To(MatchError(ContainSubstring("has no transcript recorded on this host")))
+		Expect(err).To(MatchError(ErrNoPlan), "a session with neither a persisted plan nor a transcript has no plan")
 		Expect(errors.Is(err, database.ErrSessionConflict)).To(BeFalse())
+	})
+
+	It("reports ErrNoPlan for a transcript that never left a plan", func(ctx SpecContext) {
+		historyPath := filepath.Join(GinkgoT().TempDir(), "no-plan.jsonl")
+		entry, err := json.Marshal(map[string]any{
+			"type": "assistant", "sessionId": providerSessionID, "uuid": "assistant-1",
+			"timestamp": "2026-08-05T10:00:00Z",
+			"message":   map[string]any{"role": "assistant", "content": []any{map[string]any{"type": "text", "text": "done"}}},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(os.WriteFile(historyPath, append(entry, '\n'), 0o644)).To(Succeed())
+		providerID := providerSessionID
+		store := &planIdentityStoreStub{overviews: []database.SessionOverview{
+			{ID: uuid.New(), ProviderSessionID: &providerID, Source: "claude", Path: &historyPath},
+		}}
+
+		_, err = resolveIdentityPlan(ctx, store, providerSessionID, "all")
+
+		Expect(err).To(MatchError(ErrNoPlan))
+		Expect(err).To(MatchError(ContainSubstring(providerSessionID)))
+	})
+
+	It("keeps a transcript it cannot read a resolver error, not a missing plan", func(ctx SpecContext) {
+		unreadable := filepath.Join(GinkgoT().TempDir(), "missing.jsonl")
+		providerID := providerSessionID
+		store := &planIdentityStoreStub{overviews: []database.SessionOverview{
+			{ID: uuid.New(), ProviderSessionID: &providerID, Source: "claude", Path: &unreadable},
+		}}
+
+		_, err := resolveIdentityPlan(ctx, store, providerSessionID, "all")
+
+		Expect(err).To(HaveOccurred())
+		Expect(errors.Is(err, ErrNoPlan)).To(BeFalse())
 	})
 
 	It("narrows matches to the requested source", func(ctx SpecContext) {
@@ -131,5 +165,6 @@ var _ = Describe("plan identity resolution", func() {
 		_, err := resolveIdentityPlan(ctx, store, providerSessionID, "codex")
 
 		Expect(errors.Is(err, database.ErrSessionNotFound)).To(BeTrue())
+		Expect(errors.Is(err, ErrNoPlan)).To(BeFalse(), "an unknown session is not a session without a plan")
 	})
 })

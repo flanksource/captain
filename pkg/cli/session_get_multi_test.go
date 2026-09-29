@@ -263,8 +263,8 @@ var _ = Describe("session get multi-result output", func() {
 				childID: {{
 					ID: runID, SessionID: childID, RootSessionID: rootID,
 					RenderedSpec: map[string]any{
-						"name":         "structured-ui-review",
-						"outputSchema": map[string]any{"type": "object"},
+						"name":   "structured-ui-review",
+						"prompt": map[string]any{"schemaJSON": map[string]any{"type": "object"}},
 					},
 					PromptMarkdown: "Review the attached form screenshot.",
 					ResultText:     `{"summary":"Use a single-column form layout."}`,
@@ -309,7 +309,7 @@ var _ = Describe("session get multi-result output", func() {
 		Expect(child.Detail.EndedAt).To(PointTo(Equal(finishedAt)))
 		Expect(child.Detail.Prompt).To(MatchJSON(`{
 			"name":"structured-ui-review",
-			"outputSchema":{"type":"object"}
+			"prompt":{"schemaJSON":{"type":"object"}}
 		}`))
 		Expect(child.Detail.StructuredOutput).To(Equal(map[string]any{
 			"summary": "Use a single-column form layout.",

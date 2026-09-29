@@ -18,6 +18,7 @@ import { sessionResultCollection } from "./sessionCollection";
 import {
   findSessionForApproval,
   resolveSessionApproval,
+  type ApprovalDecisionExtras,
   type ApprovalResolveAction,
 } from "./sessionApprovals";
 import { RunVerification } from "./RunVerification";
@@ -110,6 +111,7 @@ function SessionGetItemDetail({
     approvalId: string,
     action: ApprovalResolveAction,
     message?: string,
+    decision?: ApprovalDecisionExtras,
   ) => Promise<void>;
 }) {
   const chat = useSessionChat({
@@ -235,7 +237,12 @@ function useResolveApproval(
   onRefresh: () => Promise<unknown>,
 ) {
   return useCallback(
-    async (approvalId: string, action: ApprovalResolveAction, message?: string) => {
+    async (
+      approvalId: string,
+      action: ApprovalResolveAction,
+      message?: string,
+      decision?: ApprovalDecisionExtras,
+    ) => {
       const sessionId = findSessionForApproval(sessions ?? [], approvalId);
       if (!sessionId) {
         throw new Error(`No session found for approval ${approvalId}.`);
@@ -246,6 +253,7 @@ function useResolveApproval(
         approvalId,
         approved: action === "approve",
         ...(message ? { reason: message } : {}),
+        ...(decision ? { decision } : {}),
       });
       await onRefresh();
     },

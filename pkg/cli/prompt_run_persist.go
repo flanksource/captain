@@ -2,210 +2,141 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/database"
+	"github.com/flanksource/captain/pkg/promptrun"
 	"github.com/google/uuid"
 )
 
-// promptRunRecordInput is a completed captain-launched prompt run to persist.
-type promptRunRecordInput struct {
-	Rendered   PromptRenderResult
-	RunID      string
-	Binding    *promptSessionBinding
-	SessionID  string
-	Model      string
-	Provider   *api.ModelProvider
-	Mode       api.RuntimeMode
-	BatchID    *uuid.UUID
-	ResultText string
-	ResultJSON map[string]any
-	Error      string
-	// State overrides the state the run row is recorded under. Empty derives it
-	// from Error, which is what a run that reached its own end needs. An
-	// interrupted run is neither succeeded nor failed — its work was cut off, not
-	// judged — so the run path stamps `cancelled` explicitly.
-	State database.PromptRunState
-	// Iterations is one row per executed loop turn (1-based), built by
-	// promptRunIterationRecords from the runner's own loop and verdicts.
-	Iterations []database.UpsertPromptRunIterationInput
+// promptRecordingInput names where a captain-launched run is filed.
+type promptRecordingInput struct {
+	Rendered PromptRenderResult
+	// RunID is the run's admission key: the stream id the run is watched under.
+	RunID   string
+	Binding *promptSessionBinding
+	// SessionID is the captain session a run with neither a batch binding nor
+	// a provider session to continue is admitted on — a chat's, shared by all of
+	// its turns. Nil gives the run a session of its own.
+	SessionID uuid.UUID
 }
 
-// persistPromptRun records a captain-launched run against its session in the
-// native store and registers the transcript for live tailing. Persistence
-// failures are reported loudly but never fail the completed run itself. The
-// session lifecycle is not written here: migration 84 projects the run's state
-// onto its admission and transcript sessions.
-func persistPromptRun(ctx context.Context, input promptRunRecordInput) {
-	if input.Binding == nil && strings.TrimSpace(input.SessionID) == "" {
-		return
+// promptRecording is how `captain prompt run` hands its run to promptrun to
+// file: captain owns the placement, promptrun every write. It is nil when the
+// session store cannot be opened (see unrecordedWithoutStore); once the store
+// is open, every placement and write error is the run's.
+func promptRecording(ctx context.Context, input promptRecordingInput) (*promptrun.Recording, error) {
+	db := unrecordedWithoutStore(ctx, input.RunID)
+	if db == nil {
+		return nil, nil
 	}
+	placement, err := promptPlacement(ctx, db, input)
+	if err != nil {
+		return nil, fmt.Errorf("record prompt run: %w", err)
+	}
+	rendered := input.Rendered
+	rec := &promptrun.Recording{
+		DB: db, Placement: placement, Origin: "captain", AdmissionKey: input.RunID,
+		PromptMarkdown: rendered.Input.Prompt.User,
+		Runtime: database.PromptRunRuntime{Mode: "run", Requested: database.PromptRunRuntimeSelection{
+			Provider: rendered.Provider, Mode: rendered.Mode, Model: rendered.Model, Effort: string(rendered.Config.Model.Effort),
+		}},
+	}
+	if input.Binding != nil {
+		rec.BatchID = &input.Binding.BatchID
+	}
+	return rec, nil
+}
+
+// unrecordedWithoutStore opens the session store a CLI run is filed in, or
+// returns nil when there is none to open — CAPTAIN_SESSION_DB_URL=off, or no
+// embedded postgres on this machine. The CLI runs prompts without a store, as
+// it always has: the failure is logged as an error naming the run, and the run
+// goes unrecorded. It is the only store failure that does not fail the run.
+func unrecordedWithoutStore(ctx context.Context, runID string) *database.DB {
 	db, err := captainDefaultDB(ctx)
 	if err != nil {
-		log.Errorf("persist prompt run for session %s: %v", input.SessionID, err)
-		return
-	}
-	batchID := input.BatchID
-	if input.Binding != nil {
-		batchID = &input.Binding.BatchID
-	}
-	var session *database.Session
-	var runID uuid.UUID
-	err = db.Transaction(ctx, func(tx *database.DB) error {
-		var executionSessionID *uuid.UUID
-		var sessionErr error
-		session, executionSessionID, sessionErr = preparePromptRunSession(ctx, tx, input)
-		if sessionErr != nil {
-			return sessionErr
-		}
-		run, createErr := tx.CreatePromptRun(ctx, database.CreatePromptRunInput{
-			SessionID:          session.ID,
-			ExecutionSessionID: executionSessionID,
-			BatchID:            batchID,
-			Origin:             "captain",
-			AdmissionKey:       input.RunID,
-			RenderedSpec:       renderedSpecMap(input.Rendered),
-			Runtime: database.PromptRunRuntime{
-				Mode: "run",
-				Resolved: database.PromptRunRuntimeSelection{
-					Provider: providerName(input.Provider), Mode: string(input.Mode),
-					Model: input.Model, Effort: string(input.Rendered.Config.Model.Effort),
-				},
-			},
-			PromptMarkdown: input.Rendered.Input.Prompt.User,
-		})
-		if createErr != nil {
-			return createErr
-		}
-		finished := database.PromptRunPhaseFinished
-		state := input.State
-		if state == "" {
-			state = database.PromptRunStateSucceeded
-			if input.Error != "" {
-				state = database.PromptRunStateFailed
-			}
-		}
-		update := database.UpdatePromptRunInput{
-			ID: run.ID, ExpectedVersion: run.Version, Phase: &finished, State: &state,
-		}
-		if input.ResultText != "" {
-			update.ResultText = &input.ResultText
-		}
-		if input.ResultJSON != nil {
-			update.ResultJSON = &input.ResultJSON
-		}
-		if input.Error != "" {
-			update.Error = &input.Error
-		}
-		if _, updateErr := tx.UpdatePromptRun(ctx, update); updateErr != nil {
-			return updateErr
-		}
-		runID = run.ID
+		log.Errorf("prompt run %q will not be recorded: %v", runID, err)
 		return nil
-	})
+	}
+	return db
+}
+
+// promptPlacement is the session a run is admitted on: a batch member's own
+// session; the chat's session; the transcript session of the provider session
+// a run continues, which is where a host that parked a run looks for the
+// continuation; or a fresh captain session.
+func promptPlacement(ctx context.Context, db *database.DB, input promptRecordingInput) (promptrun.Placement, error) {
+	rendered := input.Rendered
+	switch {
+	case input.Binding != nil:
+		return promptrun.Placement{SessionID: input.Binding.SessionID}, nil
+	case input.SessionID != uuid.Nil:
+		return promptrun.Placement{Sessions: []database.CreateSessionInput{captainPromptSession(input.SessionID, rendered)}}, nil
+	}
+	resumed := strings.TrimSpace(rendered.Input.SessionID)
+	source := promptrun.TranscriptSource(api.Runtime{Provider: rendered.Provider, Mode: api.RuntimeMode(rendered.Mode)})
+	if resumed == "" || source == "" {
+		return promptrun.Placement{Sessions: []database.CreateSessionInput{captainPromptSession(uuid.New(), rendered)}}, nil
+	}
+	session, err := db.GetSessionByIdentity(ctx, resumed, source, "", "")
+	if err == nil {
+		return promptrun.Placement{SessionID: session.ID}, nil
+	}
+	if !errors.Is(err, database.ErrSessionNotFound) {
+		return promptrun.Placement{}, err
+	}
+	return promptrun.Placement{Sessions: []database.CreateSessionInput{{
+		ProviderSessionID: resumed, Source: source, Provider: rendered.Provider,
+		HostID: captainHostID(), CWD: rendered.Input.Cwd(),
+	}}}, nil
+}
+
+func captainPromptSession(id uuid.UUID, rendered PromptRenderResult) database.CreateSessionInput {
+	return database.CreateSessionInput{
+		ID: id, Source: "captain", Provider: rendered.Provider, HostID: captainHostID(),
+		CWD: rendered.Input.Cwd(), Title: rendered.Name, InitialPrompt: rendered.Input.Prompt.User, AgentType: "prompt",
+	}
+}
+
+// promptResolution is the render's resolution with the spec that actually
+// runs: the request after attachments were resolved against the local store.
+func promptResolution(rendered PromptRenderResult, spec api.Spec) api.ResolvedSpec {
+	resolved := rendered.Resolution
+	resolved.Spec = spec
+	return resolved
+}
+
+// recordCompletedRun files a run that executed outside promptrun.Run — a
+// direct provider call, a chat turn, a run that failed before dispatch.
+func recordCompletedRun(ctx context.Context, input promptRecordingInput, done promptrun.Completed) error {
+	rec, err := promptRecording(context.WithoutCancel(ctx), input)
 	if err != nil {
-		log.Errorf("persist prompt run for session %s: %v", firstNonEmpty(input.SessionID, bindingSessionID(input.Binding)), err)
-		return
+		return err
 	}
-	if err := upsertPromptRunIterations(ctx, db, runID, input.Iterations); err != nil {
-		log.Errorf("persist prompt run %s iterations for session %s: %v", input.RunID, firstNonEmpty(input.SessionID, bindingSessionID(input.Binding)), err)
-	}
-	trackLaunchedTranscript(input, transcriptSource(input.Provider, input.Mode))
+	return recordCompleted(ctx, rec, done)
 }
 
-func preparePromptRunSession(ctx context.Context, tx *database.DB, input promptRunRecordInput) (*database.Session, *uuid.UUID, error) {
-	if input.Binding == nil {
-		source := transcriptSource(input.Provider, input.Mode)
-		if source == "" {
-			source = "claude"
-		}
-		session, err := tx.CreateOrGetSession(ctx, database.CreateSessionInput{
-			ProviderSessionID: input.SessionID, Source: source, HostID: captainHostID(),
-			Provider: providerName(input.Provider), CWD: input.Rendered.Input.Cwd(),
-		})
-		return session, nil, err
+// recordCompleted files a completed run through a recording already made; a
+// nil recording is a run with no store to file it in.
+func recordCompleted(ctx context.Context, rec *promptrun.Recording, done promptrun.Completed) error {
+	if rec == nil {
+		return nil
 	}
-
-	session, err := tx.GetSession(ctx, input.Binding.SessionID)
-	providerSessionID := strings.TrimSpace(input.SessionID)
-	if err != nil || providerSessionID == "" {
-		return session, nil, err
+	if _, err := promptrun.RecordCompleted(context.WithoutCancel(ctx), rec, done); err != nil {
+		return fmt.Errorf("record prompt run %q: %w", rec.AdmissionKey, err)
 	}
-	session, err = tx.UpdateSessionState(ctx, database.UpdateSessionStateInput{
-		ID: session.ID, ExpectedVersion: session.StateVersion, ProviderSessionID: &providerSessionID,
-	})
-	if err != nil {
-		return nil, nil, err
-	}
-	source := transcriptSource(input.Provider, input.Mode)
-	if source == "" {
-		return session, nil, nil
-	}
-	transcript, err := tx.CreateOrGetSession(ctx, database.CreateSessionInput{
-		ProviderSessionID: providerSessionID, Source: source, HostID: session.HostID,
-		Provider: providerName(input.Provider), CWD: session.CWD,
-		ParentSessionID: &session.ID, ParentRelation: database.SessionParentRelationTranscript,
-	})
-	if err != nil {
-		return nil, nil, err
-	}
-	return session, &transcript.ID, nil
+	return nil
 }
 
-// upsertPromptRunIterations writes the run's per-turn rows after the run row
-// has been committed, one row at a time and all of them: a turn the store
-// refuses (a report that fails its own validation) must cost exactly that row.
-// Writing them inside the run's transaction took the run itself down with a bad
-// turn, leaving no record that the run had happened at all; and stopping at the
-// first refusal hid the turns after it. Every refusal is reported.
-func upsertPromptRunIterations(ctx context.Context, db *database.DB, runID uuid.UUID, records []database.UpsertPromptRunIterationInput) error {
-	var errs []error
-	for _, record := range records {
-		record.PromptRunID = runID
-		if _, err := db.UpsertPromptRunIteration(ctx, record); err != nil {
-			errs = append(errs, fmt.Errorf("iteration %d: %w", record.Iteration, err))
-		}
-	}
-	return errors.Join(errs...)
-}
-
-func bindingSessionID(binding *promptSessionBinding) string {
-	if binding == nil {
-		return ""
-	}
-	return binding.SessionID.String()
-}
-
-// trackLaunchedTranscript arms the serve monitor's fsnotify tail on the
-// freshly launched session's transcript so it ingests immediately instead of
-// waiting for the next process poll or backfill.
-func trackLaunchedTranscript(input promptRunRecordInput, source string) {
-	mon := serveMonitor()
-	if mon == nil {
-		return
-	}
-	path := historyFileForRun(input.Provider, input.Mode, input.SessionID, input.Rendered.Input.Cwd())
-	if path != "" {
-		mon.TrackTranscript(path, source)
-	}
-}
-
-// transcriptSource names the transcript a runtime leaves behind. It is a
-// property of the provider family plus running locally at all: every local
-// Claude mode writes a `claude` transcript, and the API mode writes none.
-func transcriptSource(provider *api.ModelProvider, mode api.RuntimeMode) string {
-	if provider == nil || mode.Kind() != "cli" {
-		return ""
-	}
-	switch provider {
-	case api.Anthropic, api.OpenAI:
-		return provider.AgentName
-	default:
-		return ""
+// unstartedRun is a run that failed before it reached a provider.
+func unstartedRun(rendered PromptRenderResult, err error) promptrun.Completed {
+	return promptrun.Completed{
+		Resolved: promptResolution(rendered, rendered.Input),
+		Outcome:  promptrun.Outcome{State: database.PromptRunStateFailed, Error: err.Error()},
 	}
 }
 
@@ -214,18 +145,4 @@ func providerName(p *api.ModelProvider) string {
 		return ""
 	}
 	return p.Name
-}
-
-// renderedSpecMap round-trips the realized prompt render into the jsonb shape
-// stored on the prompt run.
-func renderedSpecMap(rendered PromptRenderResult) map[string]any {
-	raw, err := json.Marshal(rendered)
-	if err != nil {
-		return map[string]any{}
-	}
-	var out map[string]any
-	if err := json.Unmarshal(raw, &out); err != nil {
-		return map[string]any{}
-	}
-	return out
 }

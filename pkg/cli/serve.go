@@ -186,7 +186,7 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	mux.Handle("GET /api/openapi.json", handleCaptainOpenAPI(openAPISpec, false))
 	mux.Handle("GET /api/openapi.yaml", handleCaptainOpenAPI(openAPISpec, true))
 	mux.HandleFunc("GET /health", rpcServer.HandleHealth)
-	rpcServer.RegisterExecutionRoutes(route.NewRouter(mux))
+	rpcServer.RegisterExecutionRoutes(router)
 	mux.HandleFunc("POST /api/captain/chat/threads/from-agent", handleThreadFromAgent(threadStore))
 	mux.HandleFunc("GET /api/captain/contexts", handleContexts())
 	mux.HandleFunc("GET /api/captain/projects", handleProjects())

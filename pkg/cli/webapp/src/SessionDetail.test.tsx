@@ -23,11 +23,30 @@ type TranscriptProps = {
   onPendingToolDecision?: (decision: { allow: boolean; answers?: Record<string, string | string[]> }) => unknown;
 };
 
+type ResolveApproval = (
+  approvalId: string,
+  action: "approve" | "deny",
+  message?: string,
+  decision?: Record<string, unknown>,
+) => Promise<void>;
+
 vi.mock("@flanksource/clicky-ui/ai", async (importOriginal) => ({
   ...await importOriginal<typeof import("@flanksource/clicky-ui/ai")>(),
-  SessionInspector: ({ composer, transcriptProps }: { composer?: ReactNode; transcriptProps?: TranscriptProps }) => (
+  SessionInspector: ({ composer, transcriptProps, onResolveApproval }: {
+    composer?: ReactNode;
+    transcriptProps?: TranscriptProps;
+    onResolveApproval?: ResolveApproval;
+  }) => (
     <div>
       Stored transcript{composer}
+      {onResolveApproval && (
+        <button onClick={() => void onResolveApproval("approval-7", "approve", undefined, {
+          scope: "session", grants: { filesystem: { writableRoots: ["/repo/.git"] } },
+        })}>Grant for session</button>
+      )}
+      {onResolveApproval && (
+        <button onClick={() => void onResolveApproval("approval-7", "deny", "stop", { interrupt: true })}>Cancel run</button>
+      )}
       {transcriptProps?.pendingTools?.map((tool) => <span key={tool.tool}>Pending {tool.tool}</span>)}
       {transcriptProps?.onPendingToolDecision && (
         <button onClick={() => transcriptProps.onPendingToolDecision?.({
@@ -105,6 +124,50 @@ describe("SessionDetail verification", () => {
     expect(screen.getByText("Retrying acceptance check")).toBeInTheDocument();
     expect(screen.getByText("Running verification…")).toBeInTheDocument();
     expect(screen.queryByText("Persisted acceptance check")).not.toBeInTheDocument();
+  });
+});
+
+describe("SessionDetail typed approval decisions", () => {
+  const withApproval = (): SessionGetResult => {
+    const result = storedSession(undefined);
+    result.sessions[0]!.detail!.requests = [
+      { id: "approval-7", kind: "tool_approval", state: "pending", tool: "request_permissions" },
+    ];
+    return result;
+  };
+
+  const postedTo = (fetcher: ReturnType<typeof vi.fn>) => ({
+    url: fetcher.mock.lastCall?.[0],
+    body: JSON.parse((fetcher.mock.lastCall?.[1] as RequestInit).body as string),
+  });
+
+  it("posts scope and grants to the owning session's approval endpoint and refreshes", async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetcher);
+    const onRefresh = vi.fn().mockResolvedValue(undefined);
+    render(<SessionDetail result={withApproval()} loading={false} error={undefined} onRefresh={onRefresh} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Grant for session" }));
+
+    await vi.waitFor(() => expect(onRefresh).toHaveBeenCalled());
+    expect(postedTo(fetcher)).toEqual({
+      url: "/api/chat/sessions/stored-session/approvals/approval-7",
+      body: { approved: true, scope: "session", grants: { filesystem: { writableRoots: ["/repo/.git"] } } },
+    });
+    vi.unstubAllGlobals();
+  });
+
+  it("posts Cancel as a denial with the reason and interrupt", async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetcher);
+    const onRefresh = vi.fn().mockResolvedValue(undefined);
+    render(<SessionDetail result={withApproval()} loading={false} error={undefined} onRefresh={onRefresh} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel run" }));
+
+    await vi.waitFor(() => expect(onRefresh).toHaveBeenCalled());
+    expect(postedTo(fetcher).body).toEqual({ approved: false, reason: "stop", interrupt: true });
+    vi.unstubAllGlobals();
   });
 });
 

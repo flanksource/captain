@@ -13,6 +13,7 @@ import (
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/database"
+	"github.com/flanksource/captain/pkg/promptrun"
 	"github.com/flanksource/captain/pkg/session"
 	"github.com/flanksource/clicky/task"
 	"github.com/google/uuid"
@@ -43,6 +44,9 @@ type chatSession struct {
 	terminal        bool
 	startedAt       time.Time
 	binding         *promptSessionBinding
+	// admissionSessionID is the captain session a fresh chat files every turn
+	// on; nil for a batch member or a chat that continues a provider session.
+	admissionSessionID uuid.UUID
 	// permissionMode is the posture explicitly requested for the run — the
 	// rendered one until a switch replaces it — and what follow-up turns carry.
 	permissionMode api.PermissionMode
@@ -57,6 +61,9 @@ func newChatSession(runID string, rendered PromptRenderResult, timeout time.Dura
 		state: ChatStateFrame{
 			RunID: runID, Status: "starting", Capabilities: capabilities,
 		},
+	}
+	if binding == nil && strings.TrimSpace(rendered.Input.SessionID) == "" {
+		chat.admissionSessionID = uuid.New()
 	}
 	p, _ := api.ProviderByName(rendered.Provider)
 	chat.setPermissionModesLocked(api.RuntimeOf(p, api.RuntimeMode(rendered.Mode)))
@@ -142,8 +149,11 @@ func (c *chatSession) endTurn(req ai.Request, turn chatTurn, turnErr error) erro
 	if c.stream.wasStopped() {
 		turnErr = errors.New("stopped")
 	}
-	if turn.Delivered {
-		c.persistTurn(req, turn, turnErr)
+	if !turn.Delivered {
+		return turnErr
+	}
+	if err := c.persistTurn(req, turn, turnErr); err != nil {
+		return errors.Join(turnErr, err)
 	}
 	return turnErr
 }
@@ -461,7 +471,7 @@ func (c *chatSession) rememberSession(sessionID string) {
 
 // persistTurn records a turn under its own run: succeeded, failed with the
 // error that ended it, or cancelled when the person interrupted or stopped it.
-func (c *chatSession) persistTurn(req ai.Request, turn chatTurn, turnErr error) {
+func (c *chatSession) persistTurn(req ai.Request, turn chatTurn, turnErr error) error {
 	c.mu.Lock()
 	number := c.state.Turn
 	c.recordedTurns++
@@ -473,33 +483,47 @@ func (c *chatSession) persistTurn(req ai.Request, turn chatTurn, turnErr error) 
 	rendered := c.rendered
 	rendered.Input = req
 	summary := turn.Summary
-	record := promptRunRecordInput{
-		Rendered: rendered, RunID: runID, SessionID: firstNonEmpty(summary.SessionID, c.sessionID()),
-		Binding: c.binding, Model: summary.Model, Provider: providerOf(api.Runtime{Provider: summary.Provider, Mode: api.RuntimeMode(summary.Mode)}), Mode: api.RuntimeMode(summary.Mode),
-		ResultText: summary.Text, ResultJSON: summary.StructuredOutput,
+	done := promptrun.Completed{
+		Resolved: promptResolution(rendered, req),
+		Runtime:  api.Runtime{Provider: summary.Provider, Mode: api.RuntimeMode(summary.Mode)},
+		Model:    summary.Model, ProviderSessionID: firstNonEmpty(summary.SessionID, c.sessionID()),
+		Outcome: chatTurnOutcome(summary, turn.Interrupted || c.stream.wasStopped(), turnErr),
+	}
+	return recordCompletedRun(context.Background(), c.recording(rendered, runID), done)
+}
+
+// chatTurnOutcome is how a turn ended: cancelled when the person interrupted
+// or stopped it, failed with the error that ended it, or answered.
+func chatTurnOutcome(summary PromptRunSummary, cancelled bool, turnErr error) promptrun.Outcome {
+	outcome := promptrun.Outcome{
+		State: database.PromptRunStateSucceeded, Phase: database.PromptRunPhaseFinished,
+		Text: summary.Text, JSON: summary.StructuredOutput,
 	}
 	if turnErr != nil {
-		record.Error = turnErr.Error()
+		outcome.State, outcome.Phase, outcome.Error = database.PromptRunStateFailed, "", turnErr.Error()
 	}
-	if turn.Interrupted || c.stream.wasStopped() {
-		record.State = database.PromptRunStateCancelled
+	if cancelled {
+		outcome.State, outcome.Phase = database.PromptRunStateCancelled, database.PromptRunPhaseFinished
 	}
-	persistPromptRun(context.Background(), record)
+	return outcome
+}
+
+// recording places every turn of one chat on the same session: the batch
+// member's, the provider session it continues, or the chat's own.
+func (c *chatSession) recording(rendered PromptRenderResult, runID string) promptRecordingInput {
+	return promptRecordingInput{Rendered: rendered, RunID: runID, Binding: c.binding, SessionID: c.admissionSessionID}
 }
 
 // recordFailedRun gives a batch chat that failed before any of its turns was
 // recorded its run row. A chat with a recorded turn already has its record.
-func (c *chatSession) recordFailedRun(err error) {
+func (c *chatSession) recordFailedRun(err error) error {
 	c.mu.Lock()
 	recorded := c.recordedTurns > 0
 	c.mu.Unlock()
 	if c.binding == nil || recorded {
-		return
+		return nil
 	}
-	persistPromptRun(context.Background(), promptRunRecordInput{
-		Rendered: c.rendered, RunID: c.runID, Binding: c.binding,
-		Model: c.rendered.Model, Provider: providerOf(api.Runtime{Provider: c.rendered.Provider, Mode: api.RuntimeMode(c.rendered.Mode)}), Mode: api.RuntimeMode(c.rendered.Mode), Error: err.Error(),
-	})
+	return recordCompletedRun(context.Background(), c.recording(c.rendered, c.runID), unstartedRun(c.rendered, err))
 }
 
 func (c *chatSession) complete(t *task.Task, summary PromptRunSummary) PromptRunSummary {
@@ -518,7 +542,7 @@ func (c *chatSession) fail(t *task.Task, err error) (PromptRunSummary, error) {
 	c.terminal = true
 	c.mu.Unlock()
 	promptChats.finish(c)
-	c.recordFailedRun(err)
+	err = errors.Join(err, c.recordFailedRun(err))
 	summary := c.stream.fail(err.Error())
 	_, _ = t.FailedWithError(err)
 	return summary, err

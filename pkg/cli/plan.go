@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -15,6 +16,12 @@ import (
 	"github.com/flanksource/clicky/api"
 	"github.com/flanksource/clicky/api/icons"
 )
+
+// ErrNoPlan reports that ResolvePlan found no plan: the session has neither a
+// persisted plan revision nor a transcript on this host that left one, or no
+// session in scope has a plan. A session that does not exist, a transcript that
+// cannot be read, or a store failure is a different error.
+var ErrNoPlan = errors.New("no plan")
 
 type PlanOptions struct {
 	SessionID string `flag:"session-id" args:"true" help:"Session ID (exact or prefix) to resolve the plan for; defaults to the most recent session with a plan in the current directory" short:"s"`
@@ -40,21 +47,29 @@ type PlanResult struct {
 	pathOnly bool
 }
 
+// RunPlan is the captain CLI command: it freshens the monitored database with a
+// monitor pass so a just-written transcript is visible, then resolves the plan.
 func RunPlan(opts PlanOptions) (PlanResult, error) {
 	ctx := context.Background()
-	source, err := normalizeSessionSource(opts.Source)
-	if err != nil {
-		return PlanResult{}, err
-	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return PlanResult{}, err
-	}
 	db, err := freshenSessionDB(ctx)
 	if err != nil {
 		return PlanResult{}, err
 	}
+	return ResolvePlan(ctx, db, opts)
+}
 
+// ResolvePlan resolves a plan from db without ingesting transcripts or polling
+// processes, so hosts can read a session's plan without a read turning into a
+// write. Persisted plan revisions win over transcript recovery. A session with
+// no plan is ErrNoPlan; every other error is the resolver's own.
+func ResolvePlan(ctx context.Context, db *captaindb.DB, opts PlanOptions) (PlanResult, error) {
+	if db == nil {
+		return PlanResult{}, fmt.Errorf("resolve plan: captain database handle is nil")
+	}
+	source, err := normalizeSessionSource(opts.Source)
+	if err != nil {
+		return PlanResult{}, err
+	}
 	id := strings.TrimSpace(opts.SessionID)
 	if id != "" {
 		plan, err := resolveIdentityPlan(ctx, db, id, source)
@@ -65,6 +80,10 @@ func RunPlan(opts PlanOptions) (PlanResult, error) {
 		return *plan, nil
 	}
 
+	cwd, err := os.Getwd()
+	if err != nil {
+		return PlanResult{}, err
+	}
 	_, projectRoot, _ := resolveSessionScope(cwd, opts.All, "")
 	plan, err := resolveLatestTranscriptPlan(ctx, db, latestTranscriptPlanQuery{
 		Source: source, ProjectRoot: projectRoot,
@@ -73,7 +92,7 @@ func RunPlan(opts PlanOptions) (PlanResult, error) {
 		return PlanResult{}, err
 	}
 	if plan == nil {
-		return PlanResult{}, fmt.Errorf("no session with a plan found in %s", scopeLabel(cwd, opts.All))
+		return PlanResult{}, fmt.Errorf("%w: no session with a plan found in %s", ErrNoPlan, scopeLabel(cwd, opts.All))
 	}
 	plan.pathOnly = opts.PathOnly
 	return *plan, nil
@@ -196,9 +215,9 @@ func resolveIdentityPlan(ctx context.Context, db planIdentityStore, identity, so
 		if plan != nil {
 			return plan, nil
 		}
-		return nil, fmt.Errorf("session %q has no plan", identity)
+		return nil, fmt.Errorf("%w: session %q has no plan", ErrNoPlan, identity)
 	}
-	return nil, fmt.Errorf("session %q has no transcript recorded on this host", identity)
+	return nil, fmt.Errorf("%w: session %q has no transcript recorded on this host", ErrNoPlan, identity)
 }
 
 // resolveNativePlan resolves persisted plan content for one Captain session

@@ -145,7 +145,7 @@ func observePromptAction(ctx context.Context, id string, flags map[string]string
 	}
 	defer cancel()
 
-	cfg.CanUseTool = recorder.PermissionBroker(cfg.CanUseTool)
+	cfg.OnApproval = recorder.ApprovalBroker(cfg.OnApproval)
 	if err := preparePromptAttachments(runCtx, &req, cfg); err != nil {
 		return api.RuntimeObservation{}, err
 	}
