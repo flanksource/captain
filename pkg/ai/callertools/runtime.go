@@ -37,15 +37,22 @@ const (
 
 // Options defines one private caller-tool capability.
 type Options struct {
-	// Context is the context of the request that opened the capability. Tool
-	// handlers run with its values, as in-process providers run them on the turn's
-	// context, and cancelling it cancels calls still in flight.
-	Context     context.Context
-	Definitions []api.ToolDefinition
-	Preferences api.ToolPreferences
+	// Context owns the capability. By default, tool handlers run with its values;
+	// cancelling it cancels calls still in flight.
+	Context context.Context
+	// ContextForCall resolves the active turn when a capability survives multiple
+	// turns. A nil result rejects the call because no turn is active.
+	ContextForCall func() context.Context
+	Definitions    []api.ToolDefinition
+	Preferences    api.ToolPreferences
 	// Policy is the ordered, last-match-wins rule list layered after Preferences.
 	Policy     api.PermissionPolicy
-	CanUseTool api.PermissionFunc
+	OnApproval api.ApprovalFunc
+	// CanUseTool is the pre-rename OnApproval; a callback set here runs in
+	// legacy mode.
+	//
+	// Deprecated: use OnApproval. Removed in the unified-approval Phase 6.
+	CanUseTool api.ApprovalFunc
 	SessionID  string
 	ExpiresAt  time.Time
 	// ValidateCredential rechecks the persisted lease on every request and
@@ -60,7 +67,7 @@ type Options struct {
 type Runtime struct {
 	definitions map[string]api.ToolDefinition
 	schemas     map[string]*jsonschema.Schema
-	canUseTool  api.PermissionFunc
+	onApproval  api.ApprovalFunc
 	validate    func(context.Context) error
 	sessionID   string
 	token       string
@@ -69,6 +76,7 @@ type Runtime struct {
 
 	approvalTimeout time.Duration
 	ctx             context.Context
+	contextForCall  func() context.Context
 	cancel          context.CancelFunc
 	revoked         atomic.Bool
 
@@ -94,6 +102,13 @@ func New(options Options) (*Runtime, error) {
 	if options.ApprovalTimeout == 0 {
 		options.ApprovalTimeout = defaultApprovalTimeout
 	}
+	// COMPAT(unified-approval): remove in Phase 6.
+	switch {
+	case options.OnApproval != nil && options.CanUseTool != nil:
+		return nil, fmt.Errorf("caller-tool options set both OnApproval and the deprecated CanUseTool; set only OnApproval")
+	case options.CanUseTool != nil:
+		options.OnApproval = api.LegacyApprovalFunc(options.CanUseTool, "callertools.Options.CanUseTool", "")
+	}
 	definitions, err := aitools.ResolveDefinitions(options.Definitions, aitools.ResolveOptions{Preferences: options.Preferences, Policy: options.Policy})
 	if err != nil {
 		return nil, err
@@ -113,7 +128,7 @@ func New(options Options) (*Runtime, error) {
 	runtime := &Runtime{
 		definitions:     make(map[string]api.ToolDefinition, len(definitions)),
 		schemas:         make(map[string]*jsonschema.Schema, len(definitions)),
-		canUseTool:      options.CanUseTool,
+		onApproval:      options.OnApproval,
 		validate:        options.ValidateCredential,
 		sessionID:       options.SessionID,
 		token:           token,
@@ -121,6 +136,7 @@ func New(options Options) (*Runtime, error) {
 		expiresAt:       options.ExpiresAt,
 		approvalTimeout: options.ApprovalTimeout,
 		ctx:             ctx,
+		contextForCall:  options.ContextForCall,
 		cancel:          cancel,
 		listener:        listener,
 	}
@@ -212,12 +228,25 @@ func (r *Runtime) handler(definition api.ToolDefinition) server.ToolHandlerFunc 
 		if _, ok := r.definitions[definition.Name]; !ok {
 			return nil, fmt.Errorf("caller tool %q is not authorized", definition.Name)
 		}
-		// The MCP request's context knows nothing about the caller; values come from
-		// the runtime's, and the call ends with whichever finishes first.
-		callCtx, cancel := context.WithCancel(r.ctx)
+		// The MCP request's context knows nothing about the caller.
+		parent := r.ctx
+		if r.contextForCall != nil {
+			parent = r.contextForCall()
+			if parent == nil {
+				return mcp.NewToolResultError("caller tool has no active turn"), nil
+			}
+		}
+		callCtx, cancel := context.WithCancel(parent)
+		if r.contextForCall != nil {
+			stopRuntime := context.AfterFunc(r.ctx, cancel)
+			defer stopRuntime()
+		}
 		stop := context.AfterFunc(ctx, cancel)
 		defer stop()
 		defer cancel()
+		if err := callCtx.Err(); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		input := request.GetArguments()
 		if input == nil {
 			input = map[string]any{}
@@ -227,13 +256,14 @@ func (r *Runtime) handler(definition api.ToolDefinition) server.ToolHandlerFunc 
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 		if definition.NeedsApproval() {
-			if r.canUseTool == nil {
+			if r.onApproval == nil {
 				return mcp.NewToolResultError("tool approval is required but no approval broker is configured"), nil
 			}
 			approvalCtx, approvalCancel := context.WithTimeout(callCtx, r.approvalTimeout)
-			decision, err := r.canUseTool(approvalCtx, api.PermissionRequest{
+			decision, err := r.onApproval(approvalCtx, api.ApprovalRequest{
 				Tool: definition.Name, Input: input, ToolUseID: toolUseID,
 				ToolUseIDGenerated: generatedToolUseID, SessionID: r.sessionID,
+				Kind: api.ApprovalKindTool, LegacyContract: true,
 			})
 			approvalCancel()
 			if err != nil {

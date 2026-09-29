@@ -20,6 +20,93 @@ import (
 type tenantKey struct{}
 
 var _ = Describe("Authenticated caller-tool runtime", func() {
+	It("uses each active turn context for approval callbacks across turns", func(ctx SpecContext) {
+		first, cancelFirst := context.WithCancel(context.WithValue(ctx, tenantKey{}, "first"))
+		DeferCleanup(cancelFirst)
+		active := first
+		seen := make(chan struct {
+			value    any
+			deadline bool
+		}, 2)
+		runtime, err := callertools.New(callertools.Options{
+			Context:        ctx,
+			ContextForCall: func() context.Context { return active },
+			Definitions: []api.ToolDefinition{{
+				Name: "invoice_update", DefaultPermission: api.ToolPolicyAsk,
+				Handler: func(callCtx context.Context, _ map[string]any) (any, error) {
+					return callCtx.Value(tenantKey{}), nil
+				},
+			}},
+			OnApproval: func(callCtx context.Context, _ api.ApprovalRequest) (api.ApprovalDecision, error) {
+				_, deadline := callCtx.Deadline()
+				seen <- struct {
+					value    any
+					deadline bool
+				}{callCtx.Value(tenantKey{}), deadline}
+				return api.ApprovalDecision{Allow: true}, nil
+			},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(runtime.Close)
+		client := authenticatedClient(ctx, runtime.Endpoint())
+		DeferCleanup(client.Close)
+		request := mcp.CallToolRequest{}
+		request.Params.Name = "invoice_update"
+
+		result, err := client.CallTool(ctx, request)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.StructuredContent).To(Equal("first"))
+		Expect(<-seen).To(Equal(struct {
+			value    any
+			deadline bool
+		}{"first", true}))
+
+		cancelFirst()
+		active = context.WithValue(ctx, tenantKey{}, "second")
+		result, err = client.CallTool(ctx, request)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.StructuredContent).To(Equal("second"))
+		Expect(<-seen).To(Equal(struct {
+			value    any
+			deadline bool
+		}{"second", true}))
+	}, SpecTimeout(10*time.Second))
+
+	It("cancels an approval callback with its active turn", func(ctx SpecContext) {
+		turnCtx, cancelTurn := context.WithCancel(ctx)
+		DeferCleanup(cancelTurn)
+		waiting := make(chan context.Context, 1)
+		runtime, err := callertools.New(callertools.Options{
+			Context:        ctx,
+			ContextForCall: func() context.Context { return turnCtx },
+			Definitions: []api.ToolDefinition{{
+				Name: "invoice_update", DefaultPermission: api.ToolPolicyAsk,
+				Handler: func(context.Context, map[string]any) (any, error) { return "ok", nil },
+			}},
+			OnApproval: func(callCtx context.Context, _ api.ApprovalRequest) (api.ApprovalDecision, error) {
+				waiting <- callCtx
+				<-callCtx.Done()
+				return api.ApprovalDecision{}, callCtx.Err()
+			},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(runtime.Close)
+		client := authenticatedClient(ctx, runtime.Endpoint())
+		DeferCleanup(client.Close)
+		request := mcp.CallToolRequest{}
+		request.Params.Name = "invoice_update"
+		finished := make(chan struct{}, 1)
+		go func() {
+			_, _ = client.CallTool(ctx, request)
+			finished <- struct{}{}
+		}()
+		var approvalCtx context.Context
+		Eventually(waiting).Should(Receive(&approvalCtx))
+		cancelTurn()
+		Eventually(approvalCtx.Done()).Should(BeClosed())
+		Eventually(finished).Should(Receive())
+	}, SpecTimeout(10*time.Second))
+
 	It("runs handlers with the values of the context that opened the runtime", func(ctx SpecContext) {
 		seen := make(chan any, 1)
 		runtime, err := callertools.New(callertools.Options{
@@ -147,11 +234,11 @@ var _ = Describe("Authenticated caller-tool runtime", func() {
 					return input, nil
 				},
 			}},
-			CanUseTool: func(_ context.Context, request api.PermissionRequest) (api.PermissionDecision, error) {
+			OnApproval: func(_ context.Context, request api.ApprovalRequest) (api.ApprovalDecision, error) {
 				Expect(request.Tool).To(Equal("invoice_update"))
 				Expect(request.SessionID).To(Equal("captain-session-2"))
 				Expect(request.ToolUseID).To(Equal("approval-call-1"))
-				return api.PermissionDecision{Allow: true, UpdatedInput: map[string]any{"status": "approved"}}, nil
+				return api.ApprovalDecision{Allow: true, UpdatedInput: map[string]any{"status": "approved"}}, nil
 			},
 			SessionID: "captain-session-2",
 		})
@@ -173,7 +260,7 @@ var _ = Describe("Authenticated caller-tool runtime", func() {
 
 	It("uses the provider tool-use ID without exposing transport input to the handler", func(ctx SpecContext) {
 		var handledInput map[string]any
-		permissionRequests := make(chan api.PermissionRequest, 1)
+		permissionRequests := make(chan api.ApprovalRequest, 1)
 		runtime, err := callertools.New(callertools.Options{
 			Context: ctx,
 			Definitions: []api.ToolDefinition{{
@@ -183,9 +270,9 @@ var _ = Describe("Authenticated caller-tool runtime", func() {
 					return input, nil
 				},
 			}},
-			CanUseTool: func(_ context.Context, request api.PermissionRequest) (api.PermissionDecision, error) {
+			OnApproval: func(_ context.Context, request api.ApprovalRequest) (api.ApprovalDecision, error) {
 				permissionRequests <- request
-				return api.PermissionDecision{Allow: true}, nil
+				return api.ApprovalDecision{Allow: true}, nil
 			},
 			SessionID: "provider-correlation-session",
 		})
@@ -202,7 +289,7 @@ var _ = Describe("Authenticated caller-tool runtime", func() {
 		result, err := client.CallTool(ctx, request)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result.IsError).To(BeFalse())
-		var permission api.PermissionRequest
+		var permission api.ApprovalRequest
 		Eventually(permissionRequests).Should(Receive(&permission))
 		Expect(permission.ToolUseID).To(Equal("claude-tool-use-1"))
 		Expect(permission.Input).To(Equal(map[string]any{"status": "draft"}))
@@ -270,9 +357,9 @@ var _ = Describe("Authenticated caller-tool runtime", func() {
 					return nil, errors.New("must not execute")
 				},
 			}},
-			CanUseTool: func(ctx context.Context, _ api.PermissionRequest) (api.PermissionDecision, error) {
+			OnApproval: func(ctx context.Context, _ api.ApprovalRequest) (api.ApprovalDecision, error) {
 				<-ctx.Done()
-				return api.PermissionDecision{}, ctx.Err()
+				return api.ApprovalDecision{}, ctx.Err()
 			},
 			SessionID:       "approval-session",
 			ApprovalTimeout: 25 * time.Millisecond,
@@ -334,8 +421,8 @@ var _ = Describe("Authenticated caller-tool runtime", func() {
 					return "updated", nil
 				},
 			}},
-			CanUseTool: func(context.Context, api.PermissionRequest) (api.PermissionDecision, error) {
-				return api.PermissionDecision{Allow: true, UpdatedInput: map[string]any{"id": 42}}, nil
+			OnApproval: func(context.Context, api.ApprovalRequest) (api.ApprovalDecision, error) {
+				return api.ApprovalDecision{Allow: true, UpdatedInput: map[string]any{"id": 42}}, nil
 			},
 			SessionID: "validation-session",
 		})

@@ -54,12 +54,14 @@ func newCallerToolRun(ctx context.Context, db *database.DB) *callerToolRun {
 	})
 	Expect(err).NotTo(HaveOccurred())
 
-	return &callerToolRun{
+	started := &callerToolRun{
 		providerRun: &providerRun{
 			db: db, session: session.ID, run: run.ID, events: make(chan api.Event, 4),
 		},
 		turn: turn.ID, modelCall: modelCall, credential: credential.ID,
 	}
+	started.setState(ctx, database.PromptRunStateRunning)
+	return started
 }
 
 // uniqueSecretHash is the 32 bytes a credential is keyed on. The column is
@@ -76,6 +78,6 @@ func (r *callerToolRun) callerBroker() *approval.Broker {
 		DB: r.db, SessionID: r.session, PromptRunID: r.run,
 		TurnID: &r.turn, ModelCallID: &r.modelCall, CredentialID: r.credential,
 		RequestedBy: "caller_tool", Timeout: approval.CallerToolTimeout, Poll: brokerPoll,
-		Notify: r.notify, OnWaiting: r.markWaiting, OnRunning: r.markRunning,
+		Notify: r.notify,
 	}
 }

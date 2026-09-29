@@ -14,7 +14,7 @@ import (
 // A turn that issues parallel tool calls raises one approval per call, and the
 // broker answers each on its own goroutine, so several waits overlap on one
 // prompt run. The waiting posture therefore cannot be a bracket around any one
-// wait: OnRunning fired from the first wait to finish un-waits a run that other
+// wait: a release from the first wait to finish un-waits a run that other
 // waits are still blocking.
 //
 // That is not cosmetic. ResolveToolApprovalRequest only accepts a
@@ -38,9 +38,9 @@ var _ = Describe("Approvals raised in parallel on one prompt run", Ordered, func
 		// knowable from here. Merging the outcomes keeps the spec about the run's
 		// posture rather than about an ordering the broker never promises.
 		finished := make(chan outcome, 2)
-		for _, call := range []api.PermissionRequest{
-			{Tool: "Read", Input: map[string]any{"file_path": "a.d.ts"}, ToolUseID: "toolu_parallel_a"},
-			{Tool: "Read", Input: map[string]any{"file_path": "b.d.ts"}, ToolUseID: "toolu_parallel_b"},
+		for _, call := range []api.ApprovalRequest{
+			{Kind: api.ApprovalKindTool, Tool: "Read", Input: map[string]any{"file_path": "a.d.ts"}, ToolUseID: "toolu_parallel_a"},
+			{Kind: api.ApprovalKindTool, Tool: "Read", Input: map[string]any{"file_path": "b.d.ts"}, ToolUseID: "toolu_parallel_b"},
 		} {
 			outcomes := run.callTool(detached, broker, call)
 			go func() {
@@ -85,7 +85,8 @@ var _ = Describe("Approvals raised in parallel on one prompt run", Ordered, func
 		run := newProviderRun(ctx, db)
 		broker := run.broker(time.Minute)
 
-		outcomes := run.callTool(context.WithoutCancel(ctx), broker, api.PermissionRequest{
+		outcomes := run.callTool(context.WithoutCancel(ctx), broker, api.ApprovalRequest{
+			Kind: api.ApprovalKindTool,
 			Tool: "Read", Input: map[string]any{"file_path": "solo.d.ts"}, ToolUseID: "toolu_solo",
 		})
 		event := run.awaitPermission()
