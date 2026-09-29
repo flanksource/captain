@@ -34,7 +34,7 @@ const (
 	// Effects. The run is honoured, but not literally as written.
 	SupportApproximated SupportKind = "approximated"
 	// SupportRequiresBroker: enforceable only when an approval broker is
-	// attached (Config.CanUseTool, or a cmux terminal interceptor). Without one
+	// attached (Config.OnApproval, or a cmux terminal interceptor). Without one
 	// the setting cannot be honoured and the run must be refused.
 	SupportRequiresBroker SupportKind = "requires-broker"
 	// SupportUnsupported: the runtime cannot express it at all.
@@ -271,7 +271,7 @@ func callerTools() map[ToolPolicy]Support {
 		ToolPolicyAuto:  native(""),
 		ToolPolicyAllow: native("registered without an approval gate"),
 		ToolPolicyDeny:  native("omitted from the served tool list"),
-		ToolPolicyAsk:   broker("enforced through Config.CanUseTool when a broker is attached"),
+		ToolPolicyAsk:   broker("enforced through Config.OnApproval when a broker is attached"),
 	}
 }
 

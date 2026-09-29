@@ -72,7 +72,7 @@ type ToolHandler func(ctx context.Context, input map[string]any) (any, error)
 
 // ToolDefinition is a caller-supplied tool that a tool-capable provider (see
 // ToolCapableProvider) exposes to the model and executes in-process. It carries
-// a Go handler, so — like CanUseTool — it is a runtime concern that lives on
+// a Go handler, so — like OnApproval — it is a runtime concern that lives on
 // Config, never on the serializable Spec, and is never marshaled.
 type ToolDefinition struct {
 	// Name is the tool id the model calls (provider-safe: letters, digits, _-).
@@ -98,7 +98,7 @@ type ToolDefinition struct {
 	// Handler executes the tool in-process. Required.
 	Handler ToolHandler `json:"-"`
 	// DefaultPermission controls exposure: deny omits the tool, ask routes calls
-	// through Config.CanUseTool, allow auto-runs, and auto defers to runtime policy.
+	// through Config.OnApproval, allow auto-runs, and auto defers to runtime policy.
 	DefaultPermission ToolPolicy
 	// Operation is the clicky RPC operation this tool projects, when it projects
 	// one. It carries the originating entity, verb, scope, method and path as the
@@ -113,7 +113,7 @@ type ToolDefinition struct {
 }
 
 // NeedsApproval reports whether a call to this tool must go through
-// Config.CanUseTool before running.
+// Config.OnApproval before running.
 func (t ToolDefinition) NeedsApproval() bool {
 	policy, ok := NormalizeToolPolicy(string(t.DefaultPermission))
 	return ok && policy == ToolPolicyAsk

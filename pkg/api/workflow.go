@@ -18,8 +18,9 @@ import (
 type Workflow struct {
 	Verify *Verify `json:"verify,omitempty" yaml:"verify,omitempty"`
 	// Commits declares when and how the run's work is committed. Empty commits
-	// nothing.
-	Commits []Commit `json:"commits,omitempty" yaml:"commits,omitempty"`
+	// nothing. Layers merge it by phase: a stanza only changes the fields it sets
+	// on the inherited stanza with the same `on`.
+	Commits []Commit `json:"commits,omitempty" yaml:"commits,omitempty" patchStrategy:"merge" patchMergeKey:"on"`
 
 	// AutoVerifyWithoutFixture is the explicit policy opt-in for hosts that
 	// project a successful generate-only run into a durable verified state. A

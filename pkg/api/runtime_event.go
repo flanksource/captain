@@ -41,9 +41,9 @@ const (
 	EventError       EventKind = "error"
 	EventInterrupted EventKind = "interrupted"
 	EventSystem      EventKind = "system"
-	// EventPermission surfaces a tool-permission request brokered via CanUseTool
+	// EventPermission surfaces a tool-permission request brokered via OnApproval
 	// so callers can observe what is awaiting approval. Tool/Input/ToolCallID carry
-	// the requested tool; the decision itself flows back through the CanUseTool
+	// the requested tool; the decision itself flows back through the OnApproval
 	// callback, not through the event stream.
 	EventPermission EventKind = "permission"
 
@@ -92,6 +92,9 @@ type Event struct {
 	// ApprovalID is the durable captain_turn_requests UUID associated with an
 	// EventPermission. It is distinct from the provider's tool-call ID.
 	ApprovalID string
+	// Request is the full approval request behind an EventPermission. Tool,
+	// Input and ToolCallID stay set alongside it for hosts that read only those.
+	Request *ApprovalRequest
 
 	Usage     *Usage  // when Kind == EventResult
 	CostUSD   float64 // when Kind == EventResult

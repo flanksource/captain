@@ -77,8 +77,9 @@ func ComposeSpecLayers(options ResolveSpecOptions) (ComposedSpec, error) {
 	layers := OrderSpecLayers(options.Layers...)
 	resolved := ComposedSpec{Trace: make([]SpecLayer, 0, len(layers)), Provenance: map[string]FieldProvenance{}}
 	for _, layer := range layers {
-		resolved.recordLayer(layer)
-		resolved.Spec = resolved.Spec.Merge(layer.Spec)
+		merged := resolved.Spec.Merge(layer.Spec)
+		resolved.recordLayer(layer, merged)
+		resolved.Spec = merged
 		resolved.Trace = append(resolved.Trace, cloneSpecLayer(layer))
 	}
 

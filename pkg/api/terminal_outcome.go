@@ -32,6 +32,8 @@ type TerminalQuestion struct {
 	OptionDescriptions map[string]string `json:"optionDescriptions,omitempty"`
 	// MultiSelect lets the person pick several options.
 	MultiSelect bool `json:"multiSelect,omitempty"`
+	// Secret marks an answer that must not be persisted, such as a credential.
+	Secret bool `json:"secret,omitempty"`
 }
 
 // TerminalOutcome carries native plan or question completion independently of

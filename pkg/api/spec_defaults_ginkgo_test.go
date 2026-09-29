@@ -16,7 +16,7 @@ var _ = Describe("Saved spec defaults", func() {
 		request := RequestSpecLayer("request", Spec{Budget: Budget{Cost: 2}})
 		result, err := ResolveSpecLayers(ResolveSpecOptions{Layers: []SpecLayer{project, request}, Saved: &saved, RequireModel: true})
 		Expect(err).NotTo(HaveOccurred())
-		Expect(result.Spec.Name).To(Equal("claude-sonnet-5"))
+		Expect(result.Spec.Name).To(Equal("claude-sonnet-5-5"))
 		Expect(result.Spec.Mode).To(Equal(ModeAPI))
 		Expect(result.Spec.Effort).To(Equal(EffortHigh))
 		Expect(result.Spec.Prompt.User).To(Equal("review"))

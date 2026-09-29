@@ -13,7 +13,7 @@ import (
 // ai.Config project onto. Model/Budget derive from ai.Config; Prompt/Memory/
 // Permissions/Setup derive from ai.Request.
 //
-// Runtime-only concerns (API key and the CanUseTool callback) are deliberately
+// Runtime-only concerns (API key and the OnApproval callback) are deliberately
 // excluded; they live in provider runtime config, not in this serializable
 // domain object.
 type Spec struct {
