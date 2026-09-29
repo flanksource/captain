@@ -3,29 +3,16 @@ package query
 import (
 	"context"
 	"database/sql"
-	"database/sql/driver"
 	"errors"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/flanksource/captain/pkg/database"
-	"github.com/flanksource/commons/logger"
-	"github.com/jackc/pgx/v5/stdlib"
 )
 
 // SessionChangeChannel is the PostgreSQL channel migration 83 notifies with a
 // session UUID whenever a session's transcript, state or plan changes.
 const SessionChangeChannel = "captain_session_change"
-
-// relistenBackoff bounds how long a lost listener connection is retried before
-// every subscriber is failed. Notifications sent while it is down are lost, so
-// a reconnect is always followed by one catch-up signal to every subscriber.
-var relistenBackoff = []time.Duration{
-	100 * time.Millisecond, 250 * time.Millisecond, 500 * time.Millisecond, time.Second, 2 * time.Second,
-}
-
-const unlistenTimeout = 5 * time.Second
 
 var followHubs = struct {
 	sync.Mutex
@@ -86,7 +73,7 @@ func (h *followHub) subscribe(ctx context.Context, ids []string) (*sessionSubscr
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.listener == nil {
-		conn, err := h.listen(ctx)
+		conn, err := database.Listen(ctx, h.pool, SessionChangeChannel)
 		if err != nil {
 			return nil, err
 		}
@@ -190,103 +177,17 @@ func (s *sessionSubscription) wake() {
 	}
 }
 
-// run waits for notifications until ctx is cancelled. A lost connection is
-// replaced and re-LISTENed, then every subscriber gets one catch-up signal.
-func (h *followHub) run(ctx context.Context, listener *hubListener, conn *sql.Conn) {
+// run waits for notifications until ctx is cancelled. The shared listener
+// replaces and re-LISTENs a lost connection, then every subscriber gets one
+// catch-up signal; one that cannot be re-established fails every subscriber.
+func (h *followHub) run(ctx context.Context, listener *hubListener, conn *database.Listener) {
 	defer close(listener.done)
-	for {
-		err := waitForSessionChanges(ctx, conn, h.dispatch)
-		if ctx.Err() != nil {
-			releaseListenConn(conn)
-			return
-		}
-		logger.Warnf("captain session follow: listener connection lost, re-listening: %v", err)
-		conn, err = h.relisten(ctx)
-		if ctx.Err() != nil {
-			if conn != nil {
-				releaseListenConn(conn)
-			}
-			return
-		}
-		if err != nil {
-			h.failAll(listener, fmt.Errorf("re-establish LISTEN %s: %w", SessionChangeChannel, err))
-			return
-		}
-		h.wakeAll()
-	}
-}
-
-func (h *followHub) relisten(ctx context.Context) (*sql.Conn, error) {
-	var lastErr error
-	for _, delay := range relistenBackoff {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(delay):
-		}
-		conn, err := h.listen(ctx)
-		if err == nil {
-			return conn, nil
-		}
-		lastErr = err
-	}
-	return nil, lastErr
-}
-
-// listen takes a dedicated connection out of the pool and LISTENs on it.
-func (h *followHub) listen(ctx context.Context) (*sql.Conn, error) {
-	conn, err := h.pool.Conn(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("acquire LISTEN connection for %s: %w", SessionChangeChannel, err)
-	}
-	err = conn.Raw(func(driverConn any) error {
-		pgxConn, ok := driverConn.(*stdlib.Conn)
-		if !ok {
-			return fmt.Errorf("captain session follow requires the pgx stdlib driver, got %T", driverConn)
-		}
-		_, execErr := pgxConn.Conn().Exec(ctx, "LISTEN "+SessionChangeChannel)
-		return execErr
-	})
-	if err != nil {
-		closeErr := conn.Close()
-		return nil, errors.Join(fmt.Errorf("LISTEN %s: %w", SessionChangeChannel, err), closeErr)
-	}
-	return conn, nil
-}
-
-// waitForSessionChanges blocks in WaitForNotification until ctx is cancelled
-// or the connection fails. A failed connection is reported as ErrBadConn so
-// database/sql discards it instead of returning it to the pool.
-func waitForSessionChanges(ctx context.Context, conn *sql.Conn, dispatch func(string)) error {
-	return conn.Raw(func(driverConn any) error {
-		pgxConn := driverConn.(*stdlib.Conn).Conn()
-		for {
-			notification, err := pgxConn.WaitForNotification(ctx)
-			if err != nil {
-				if ctx.Err() != nil {
-					return ctx.Err()
-				}
-				return fmt.Errorf("%w: %w", driver.ErrBadConn, err)
-			}
-			if notification.Channel == SessionChangeChannel {
-				dispatch(notification.Payload)
-			}
-		}
-	})
-}
-
-// releaseListenConn UNLISTENs and returns the connection to the pool. A
-// connection that cannot UNLISTEN is discarded rather than pooled, so no pooled
-// connection ever keeps a stale subscription.
-func releaseListenConn(conn *sql.Conn) {
-	ctx, cancel := context.WithTimeout(context.Background(), unlistenTimeout)
-	defer cancel()
-	if _, err := conn.ExecContext(ctx, "UNLISTEN "+SessionChangeChannel); err != nil {
-		logger.Warnf("captain session follow: UNLISTEN failed, discarding connection: %v", err)
-		_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+	err := conn.Run(ctx,
+		func(sessionID string) error { h.dispatch(sessionID); return nil },
+		func() error { h.wakeAll(); return nil },
+	)
+	if ctx.Err() != nil {
 		return
 	}
-	if err := conn.Close(); err != nil {
-		logger.Warnf("captain session follow: release LISTEN connection: %v", err)
-	}
+	h.failAll(listener, err)
 }

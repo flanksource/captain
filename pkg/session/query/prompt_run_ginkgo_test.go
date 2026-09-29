@@ -57,6 +57,14 @@ var _ = Describe("PromptRunFacts", func() {
 		Expect(facts.Provider).To(Equal("openai"))
 	})
 
+	It("carries how the run's spec was resolved", func() {
+		metadata := map[string]any{"specTrace": []any{map[string]any{"name": ".gavel.yaml ai"}}}
+
+		facts := PromptRunFacts(database.PromptRun{Metadata: metadata})
+
+		Expect(facts.Metadata).To(Equal(metadata))
+	})
+
 	It("carries the run's failure, which the enricher branch used to drop", func() {
 		facts := PromptRunFacts(database.PromptRun{
 			Error: "provider refused: caller tools require MCP but MCP is disabled",

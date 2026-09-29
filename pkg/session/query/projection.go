@@ -92,13 +92,17 @@ func projectSessionRequests(rows []database.TurnRequest) ([]session.Request, err
 		if err != nil {
 			return nil, fmt.Errorf("encode Captain request %s input: %w", rows[i].ID, err)
 		}
+		document, err := json.Marshal(rows[i].Request)
+		if err != nil {
+			return nil, fmt.Errorf("encode Captain request %s document: %w", rows[i].ID, err)
+		}
 		updatedInput, err := json.Marshal(rows[i].Response["updatedInput"])
 		if err != nil {
 			return nil, fmt.Errorf("encode Captain request %s updated input: %w", rows[i].ID, err)
 		}
 		requests[i] = session.Request{
 			ID: rows[i].ID.String(), ToolCallID: rows[i].ToolCallID, Kind: rows[i].Kind, State: string(rows[i].State),
-			Tool: fmt.Sprint(rows[i].Request["tool"]), Input: input, RequestedBy: rows[i].RequestedBy,
+			Tool: fmt.Sprint(rows[i].Request["tool"]), Input: input, Request: document, RequestedBy: rows[i].RequestedBy,
 			ResolvedBy: rows[i].ResolvedBy, Reason: rows[i].Reason, Version: rows[i].Version,
 			ExpiresAt: rows[i].ExpiresAt, CreatedAt: rows[i].CreatedAt, ResolvedAt: rows[i].ResolvedAt,
 		}

@@ -22,6 +22,7 @@ type PromptRunFacts struct {
 	ResultJSON       map[string]any
 	Verifications    []session.Verification
 	RenderedSpec     map[string]any
+	Metadata         map[string]any
 	Error            string
 	Provider         string
 	Model            string
@@ -89,6 +90,9 @@ func (c promptRunContributor) Contribute(_ context.Context, aggregate *session.S
 		}
 		aggregate.Prompt = rendered
 	}
+	if len(c.facts.Metadata) > 0 {
+		aggregate.PromptRunMetadata = c.facts.Metadata
+	}
 	output, err := c.structuredOutput()
 	aggregate.StructuredOutput = output
 	return err
@@ -132,11 +136,7 @@ func (c promptRunContributor) appendVerificationMessages(aggregate *session.Sess
 }
 
 func (c promptRunContributor) enrichAttachments(aggregate *session.Session) error {
-	input, ok := c.facts.RenderedSpec["input"].(map[string]any)
-	if !ok {
-		return nil
-	}
-	prompt, ok := input["prompt"].(map[string]any)
+	prompt, ok := c.facts.RenderedSpec["prompt"].(map[string]any)
 	if !ok || prompt["attachments"] == nil {
 		return nil
 	}
@@ -229,7 +229,13 @@ func (c promptRunContributor) structuredOutput() (map[string]any, error) {
 	return output, nil
 }
 
+// declaresOutputSchema reads the rendered spec, which is the plain api.Spec the
+// run executed: its output schema is prompt.schemaJSON.
 func declaresOutputSchema(rendered map[string]any) bool {
-	schema, ok := rendered["outputSchema"].(map[string]any)
+	prompt, ok := rendered["prompt"].(map[string]any)
+	if !ok {
+		return false
+	}
+	schema, ok := prompt["schemaJSON"].(map[string]any)
 	return ok && len(schema) > 0
 }

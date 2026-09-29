@@ -75,10 +75,12 @@ type Session struct {
 	Health    []Health          `json:"health,omitempty"`
 	Live      *LiveProcess      `json:"live,omitempty"`
 
-	// Prompt is the realized prompt that launched this session (opaque JSON of
-	// the render result), attached from the persistent store for captain-launched
-	// sessions; nil for external sessions.
+	// Prompt is the spec the captain-launched run executed (the prompt run's
+	// rendered spec), attached from the persistent store; nil for external sessions.
 	Prompt json.RawMessage `json:"prompt,omitempty"`
+	// PromptRunMetadata is how that spec was resolved — its layer trace,
+	// provenance, warnings and runtime catalog selections — as the run recorded it.
+	PromptRunMetadata map[string]any `json:"promptRunMetadata,omitempty"`
 
 	// StructuredOutput is the decoded object returned by a schema-constrained
 	// prompt run. Messages retain the JSON text for transcript compatibility.

@@ -21,10 +21,11 @@ var _ = Describe("PromptRun", func() {
 		RunID: "9b1d0a5e-0000-4000-8000-0000000000aa", State: "failed",
 		PromptMarkdown: "review the diff", ResultText: `{"verdict":"pass"}`,
 		RenderedSpec: map[string]any{
-			"model":        "claude-opus-4",
-			"outputSchema": map[string]any{"type": "object"},
+			"model":  "claude-opus-4",
+			"prompt": map[string]any{"schemaJSON": map[string]any{"type": "object"}},
 		},
-		Error: "provider hung up", Provider: "anthropic", Model: "claude-opus-4",
+		Metadata: map[string]any{"specTrace": []any{map[string]any{"name": "request"}}},
+		Error:    "provider hung up", Provider: "anthropic", Model: "claude-opus-4",
 		Mode: "cli", Effort: "high", QueuedAt: queued, FinishedAt: &finished,
 	}
 
@@ -37,7 +38,7 @@ var _ = Describe("PromptRun", func() {
 
 		Expect(failures).To(BeEmpty())
 		Expect(messageIDs(result.Session)).To(Equal([]string{"transcript-m1"}))
-		Expect(string(result.Session.Prompt)).To(ContainSubstring(`"outputSchema"`))
+		Expect(string(result.Session.Prompt)).To(ContainSubstring(`"schemaJSON"`))
 		Expect(result.Session.StructuredOutput).To(Equal(map[string]any{"verdict": "pass"}))
 		Expect(result.Session.Events).To(HaveLen(1))
 		Expect(result.Session.Events[0].Data).To(HaveKeyWithValue("message", "provider hung up"))
@@ -49,14 +50,12 @@ var _ = Describe("PromptRun", func() {
 		const attachmentID = "sha256:7d432b84dfb5e1cda66c73adae2848da8f2afea3f6f1bd255f517ebce71b3d8e"
 		withAttachment := run
 		withAttachment.RenderedSpec = map[string]any{
-			"model":        "claude-opus-4",
-			"outputSchema": map[string]any{"type": "object"},
-			"input": map[string]any{
-				"prompt": map[string]any{
-					"attachments": []any{map[string]any{
-						"id": attachmentID, "filename": "scorecard.png", "mediaType": "image/png", "size": float64(492991),
-					}},
-				},
+			"model": "claude-opus-4",
+			"prompt": map[string]any{
+				"schemaJSON": map[string]any{"type": "object"},
+				"attachments": []any{map[string]any{
+					"id": attachmentID, "filename": "scorecard.png", "mediaType": "image/png", "size": float64(492991),
+				}},
 			},
 		}
 		transcript := &session.Session{Messages: []session.Message{{
@@ -168,6 +167,30 @@ var _ = Describe("PromptRun", func() {
 		result, _ := load.Load(context.Background(), load.PromptRun(run))
 
 		Expect(result.Session.InitialPrompt).To(Equal("review the diff"))
+	})
+
+	It("exposes how the run's spec was resolved as its prompt-run metadata", func() {
+		result, failures := load.Load(context.Background(), load.PromptRun(run))
+
+		Expect(failures).To(BeEmpty())
+		Expect(result.Session.PromptRunMetadata).To(Equal(map[string]any{
+			"specTrace": []any{map[string]any{"name": "request"}},
+		}))
+		raw, err := json.Marshal(result.Session)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(raw)).To(ContainSubstring(`"promptRunMetadata":{"specTrace":[{"name":"request"}]}`))
+	})
+
+	It("omits prompt-run metadata the run never recorded", func() {
+		bare := run
+		bare.Metadata = map[string]any{}
+
+		result, _ := load.Load(context.Background(), load.PromptRun(bare))
+
+		Expect(result.Session.PromptRunMetadata).To(BeNil())
+		raw, err := json.Marshal(result.Session)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(raw)).NotTo(ContainSubstring("promptRunMetadata"))
 	})
 
 	It("treats an absent run as having nothing to say", func() {
