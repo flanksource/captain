@@ -3,7 +3,7 @@ package promptrun
 import (
 	"context"
 
-	. "github.com/onsi/ginkgo/v2"
+	"github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"github.com/flanksource/captain/pkg/ai"
@@ -49,8 +49,8 @@ func drain(events <-chan ai.Event) []ai.Event {
 	return got
 }
 
-var _ = Describe("runnerProvider", func() {
-	It("replays a buffered-only provider's response as completed events", func() {
+var _ = ginkgo.Describe("runnerProvider", func() {
+	ginkgo.It("replays a buffered-only provider's response as completed events", func() {
 		provider := &bufferedOnlyProvider{}
 		runner, err := runnerProvider(provider, false, false)
 		Expect(err).NotTo(HaveOccurred())
@@ -68,7 +68,7 @@ var _ = Describe("runnerProvider", func() {
 		Expect(got[1].CostUSD).To(Equal(0.01))
 	})
 
-	It("forces a streaming provider through Execute under NoStream", func() {
+	ginkgo.It("forces a streaming provider through Execute under NoStream", func() {
 		provider := &streamingProvider{}
 		runner, err := runnerProvider(provider, true, false)
 		Expect(err).NotTo(HaveOccurred())
@@ -80,7 +80,7 @@ var _ = Describe("runnerProvider", func() {
 		Expect(provider.streamCalls).To(BeZero())
 	})
 
-	It("leaves a streaming provider alone otherwise", func() {
+	ginkgo.It("leaves a streaming provider alone otherwise", func() {
 		provider := &streamingProvider{}
 		runner, err := runnerProvider(provider, false, false)
 		Expect(err).NotTo(HaveOccurred())
@@ -92,7 +92,7 @@ var _ = Describe("runnerProvider", func() {
 		Expect(provider.executeCalls).To(BeZero())
 	})
 
-	It("needs no provider for a verify-only run and refuses to generate without one", func() {
+	ginkgo.It("needs no provider for a verify-only run and refuses to generate without one", func() {
 		runner, err := runnerProvider(nil, false, true)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(runner).To(BeNil())

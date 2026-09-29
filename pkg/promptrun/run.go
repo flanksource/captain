@@ -10,8 +10,10 @@
 // provider discover it mid-run. One function means one definition of a run.
 //
 // What stays with the caller: rendering the prompt and resolving its spec,
-// resolving attachments against a store, persisting the run, and streaming
-// events to whoever is watching (OnEvent is the tap for that).
+// resolving attachments against a store, and streaming events to whoever is
+// watching (OnEvent is the tap for that). Recording the run is Captain's: a
+// caller that sets Input.Record describes where the run belongs and writes only
+// its own rows, through Recording.Link.
 package promptrun
 
 import (
@@ -24,17 +26,30 @@ import (
 	"github.com/flanksource/captain/pkg/ai/agent/verify"
 	"github.com/flanksource/captain/pkg/ai/middleware"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/runtimeprofiles"
 	"github.com/flanksource/commons/logger"
 )
 
 // Input is everything one run needs.
 type Input struct {
-	// Request is the rendered prompt and its resolved spec. Attachments must
-	// already be resolved (see api.AttachmentRef.IsPrepared): the store that
-	// resolves them belongs to the caller.
-	Request ai.Request
+	// Resolved is the rendered prompt's spec and the layer trace it was resolved
+	// through. Resolved.Spec is what runs; the trace, provenance and warnings are
+	// what a recorded run files next to it. Attachments must already be resolved
+	// (see api.AttachmentRef.IsPrepared): the store that resolves them belongs to
+	// the caller.
+	Resolved api.ResolvedSpec
+	// RuntimePresets and RuntimeProfile are the runtime catalog selections the
+	// spec was resolved from, recorded on the run when Record is set. Nil means
+	// the run used none.
+	RuntimePresets *runtimeprofiles.PresetResolution
+	RuntimeProfile *runtimeprofiles.Resolution
+	// Record files the run in Captain's store: admitted before dispatch, started
+	// once setup has run, and finished with its outcome. Nil runs unrecorded.
+	Record *Recording
+	// Approvals enables Captain's durable, per-run tool approval broker.
+	Approvals *ApprovalOptions
 	// Config builds the provider: model, credentials, sandbox, cache, and the
-	// CanUseTool broker. Ignored for construction when Provider is set.
+	// OnApproval broker. Ignored for construction when Provider is set.
 	Config ai.Config
 	// Provider, when set, is used as-is and is taken to own the workspace — a
 	// remote-executing sandbox that materialises the checkout on its own side,
@@ -81,14 +96,42 @@ type Input struct {
 	Repo string
 }
 
+type ApprovalOptions struct {
+	RequestedBy string
+}
+
 // Run executes one prompt run and returns its outcome. A failing verdict is a
 // Result with Passed=false, not an error; an error means the run itself could
 // not complete — a hook failed, the provider failed, the policy is unenforceable.
+//
+// With Input.Record set the run is filed as it happens: admitted before
+// anything else (a Link failure dispatches nothing), started by a hook that
+// trails setup, and finished with its outcome whether it passed, failed or was
+// stopped. Result.PromptRunID names the row; a store error fails the run.
 func Run(ctx context.Context, in Input) (Result, error) {
+	if err := validateApprovalOptions(in, true); err != nil {
+		return Result{}, err
+	}
+	if in.Record == nil {
+		result, _, err := execute(ctx, in, nil)
+		return result, err
+	}
+	run, err := Admit(ctx, in)
+	if err != nil {
+		return Result{}, err
+	}
+	rec := newRecorder(ctx, in.Record, run)
+	result, stopped, runErr := execute(ctx, in, rec)
+	return rec.complete(in.Record.Outcome, result, runErr, stopped)
+}
+
+// execute is one run, recorded through rec when it is non-nil. stopped reports
+// that the run ended because its context did — cancelled or out of time.
+func execute(ctx context.Context, in Input, rec *recorder) (Result, bool, error) {
 	start := time.Now()
 	admission, err := preflight(in)
 	if err != nil {
-		return Result{}, err
+		return Result{}, false, err
 	}
 	for _, warning := range admission.warnings {
 		logger.Warnf("promptrun: %s", warning)
@@ -96,32 +139,34 @@ func Run(ctx context.Context, in Input) (Result, error) {
 	in.Config.Model = admission.model
 	ctx, cancel := context.WithTimeout(ctx, admission.timeout)
 	defer cancel()
+	if err := bindApprovals(ctx, &in, rec); err != nil {
+		return Result{}, false, err
+	}
+	announceApprovals(&in)
 	provider, release, err := buildProvider(in)
 	if err != nil {
-		return Result{}, err
+		return Result{}, false, err
 	}
 	defer release()
 
-	hooks, err := Hooks(ctx, in, provider)
+	hooks, err := runHooks(ctx, &in, provider, admission.model, rec)
 	if err != nil {
-		return Result{}, err
+		return Result{}, false, err
 	}
-	streamer, err := runnerProvider(provider, in.NoStream, in.Request.IsVerifyOnly())
+	streamer, err := runnerProvider(provider, in.NoStream, in.Resolved.Spec.IsVerifyOnly())
 	if err != nil {
-		return Result{}, err
+		return Result{}, false, err
 	}
 
 	var identity runIdentity
 	runner := &agent.Runner[string]{
-		Provider:      streamer,
-		Request:       in.Request,
-		Hooks:         hooks,
-		MaxIterations: maxIterations(in),
-		Repo:          repoOf(in),
-		Cwd:           in.Request.Cwd(),
-		Scope:         scopeOf(in),
+		Provider: streamer, Request: in.Resolved.Spec, Hooks: hooks,
+		MaxIterations: maxIterations(in), Repo: repoOf(in), Cwd: in.Resolved.Spec.Cwd(), Scope: scopeOf(in),
 		OnEvent: func(iter int, ev ai.Event) {
 			identity.observe(ev)
+			if rec != nil {
+				rec.observe(iter, ev)
+			}
 			if in.OnEvent != nil {
 				in.OnEvent(iter, ev)
 			}
@@ -129,24 +174,63 @@ func Run(ctx context.Context, in Input) (Result, error) {
 	}
 	out, runErr := runner.Run(ctx)
 	result, resultErr := newResult(out, identity, time.Since(start))
-	if runErr != nil {
-		return result, runErr
+	if ctx.Err() != nil {
+		// A stream the stop closed can end the turn before the loop sees the
+		// context: the run still did not complete, and must not read as done.
+		if runErr == nil {
+			runErr = fmt.Errorf("promptrun: run stopped: %w", context.Cause(ctx))
+		}
+		return result, true, runErr
 	}
-	return result, resultErr
+	if runErr != nil {
+		return result, false, runErr
+	}
+	return result, false, resultErr
+}
+
+// runHooks is Hooks plus, for a recorded run, the recorder: its progress tap
+// wraps the caller's, and its hook trails setup so it records the spec setup
+// produced.
+func runHooks(ctx context.Context, in *Input, provider ai.Provider, model api.Model, rec *recorder) ([]any, error) {
+	if rec == nil {
+		return Hooks(ctx, *in, provider)
+	}
+	rec.prepare(executingRuntime(provider, model), model, in.Resolved.Spec, in.Config.SessionID)
+	callerProgress := in.Verify.Progress
+	in.Verify.Progress = func(report api.VerifyReport) {
+		rec.progress(report)
+		if callerProgress != nil {
+			callerProgress(report)
+		}
+	}
+	hooks, err := Hooks(ctx, *in, provider)
+	if err != nil {
+		return nil, err
+	}
+	return append(hooks, rec.hook()), nil
+}
+
+// executingRuntime is the runtime that actually serves the run: the provider's
+// own, or — for a verify-only run that built none — the resolved model's.
+func executingRuntime(provider ai.Provider, model api.Model) api.Runtime {
+	if provider != nil {
+		return provider.GetRuntime()
+	}
+	return api.RuntimeOf(model.Provider, model.Mode)
 }
 
 func maxIterations(in Input) int {
 	if in.MaxIterations > 0 {
 		return in.MaxIterations
 	}
-	return verify.MaxIterationsForWorkflow(in.Request.Workflow)
+	return verify.MaxIterationsForWorkflow(in.Resolved.Spec.Workflow)
 }
 
 func scopeOf(in Input) agent.Scope {
 	if in.Scope != "" {
 		return in.Scope
 	}
-	return verify.ScopeForWorkflow(in.Request.Workflow)
+	return verify.ScopeForWorkflow(in.Resolved.Spec.Workflow)
 }
 
 // validateAttachments refuses a request whose attachments were never resolved
@@ -170,13 +254,13 @@ func executingModel(in Input) api.Model {
 	if in.Provider != nil {
 		return suppliedModel(in.Provider)
 	}
-	if in.Request.IsVerifyOnly() && in.Verify.Provider != nil {
+	if in.Resolved.Spec.IsVerifyOnly() && in.Verify.Provider != nil {
 		return suppliedModel(in.Verify.Provider)
 	}
 	if in.Config.Model.Name != "" || in.Config.Model.Provider != nil {
 		return in.Config.Model
 	}
-	return in.Request.Model
+	return in.Resolved.Spec.Model
 }
 
 func suppliedModel(provider ai.Provider) api.Model {
@@ -193,7 +277,7 @@ func suppliedModel(provider ai.Provider) api.Model {
 // declared nothing, so a job that legitimately needed an hour died at two
 // minutes with a deadline nobody had chosen and nothing naming it.
 func runTimeout(in Input) (time.Duration, error) {
-	timeout, err := in.Request.Budget.ParseTimeout()
+	timeout, err := in.Resolved.Spec.Budget.ParseTimeout()
 	if err != nil {
 		return 0, fmt.Errorf("promptrun: %w", err)
 	}
@@ -221,7 +305,7 @@ func buildProvider(in Input) (ai.Provider, func(), error) {
 	}
 	cfg := in.Config
 	cfg.Model = executingModel(in)
-	if in.Request.NoCache {
+	if in.Resolved.Spec.NoCache {
 		cfg.NoCache = true
 	}
 	provider, err := middleware.NewProvider(cfg)
@@ -245,5 +329,5 @@ func repoOf(in Input) string {
 	if in.Repo != "" {
 		return in.Repo
 	}
-	return in.Request.Cwd()
+	return in.Resolved.Spec.Cwd()
 }

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/promptrun"
 	. "github.com/onsi/ginkgo/v2"
@@ -16,19 +17,19 @@ var _ = Describe("promptrun.Preflight runtime configuration", func() {
 	var in promptrun.Input
 	BeforeEach(func() {
 		in = promptrun.Input{
-			Request: api.Spec{Model: api.Model{Name: "sonnet", Mode: api.ModeAgent}, Prompt: api.Prompt{User: "review"}},
-			Timeout: time.Minute,
+			Resolved: api.ResolvedSpec{Spec: api.Spec{Model: api.Model{Name: "sonnet", Mode: api.ModeAgent}, Prompt: api.Prompt{User: "review"}}},
+			Timeout:  time.Minute,
 		}
 	})
 
 	It("resolves a construction alias before comparing policies and judge models", func() {
 		path := filepath.Join(GinkgoT().TempDir(), "judge.prompt")
 		Expect(os.WriteFile(path, []byte("---\nmodel: claude-sonnet-5\n---\n{{role \"user\"}}\nReview."), 0o600)).To(Succeed())
-		in.Request.Permissions.Tools = api.Tools{"Bash": api.ToolPolicyDeny}
-		in.Request.Workflow = &api.Workflow{Verify: &api.Verify{Prompts: []string{path}}}
+		in.Resolved.Spec.Permissions.Tools = api.Tools{"Bash": api.ToolPolicyDeny}
+		in.Resolved.Spec.Workflow = &api.Workflow{Verify: &api.Verify{Prompts: []string{path}}}
 		_, err := promptrun.Preflight(in)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(in.Request.Name).To(Equal("sonnet"))
+		Expect(in.Resolved.Spec.Name).To(Equal("sonnet"))
 	})
 
 	DescribeTable("refuses invalid construction configuration",
@@ -40,9 +41,9 @@ var _ = Describe("promptrun.Preflight runtime configuration", func() {
 			Expect(runErr).To(MatchError(err.Error()))
 		},
 		Entry("unknown sandbox selection", func(in *promptrun.Input) { in.Config.SandboxSelection = &api.SandboxConfig{Kind: "invalid"} }, "sandbox"),
-		Entry("missing external selection", func(in *promptrun.Input) { in.Request.Sandbox = &api.SandboxRef{Mode: api.SandboxDocker} }, "SandboxSelection"),
+		Entry("missing external selection", func(in *promptrun.Input) { in.Resolved.Spec.Sandbox = &api.SandboxRef{Mode: api.SandboxDocker} }, "SandboxSelection"),
 		Entry("mismatched external selection", func(in *promptrun.Input) {
-			in.Request.Sandbox = &api.SandboxRef{Mode: api.SandboxGitAgent}
+			in.Resolved.Spec.Sandbox = &api.SandboxRef{Mode: api.SandboxGitAgent}
 			in.Config.SandboxSelection = &api.SandboxConfig{Kind: api.SandboxOff}
 		}, "SandboxSelection"),
 		Entry("unsupported sandbox selection", func(in *promptrun.Input) {
@@ -54,12 +55,12 @@ var _ = Describe("promptrun.Preflight runtime configuration", func() {
 		Entry("invalid scope", func(in *promptrun.Input) { in.Scope = "invalid" }, "scope"),
 		Entry("invalid loop bound", func(in *promptrun.Input) { in.MaxIterations = -1 }, "MaxIterations"),
 		Entry("unsupported Codex policy field", func(in *promptrun.Input) {
-			in.Request.Model = api.Model{Name: "gpt-5", Mode: api.ModeAgent}
-			in.Request.Sandbox = &api.SandboxRef{Mode: api.SandboxNative, Policy: &api.NativeSandboxPolicy{Network: &api.SandboxNetworkPolicy{AllowedDomains: []string{"example.com"}}}}
+			in.Resolved.Spec.Model = api.Model{Name: "gpt-5", Mode: api.ModeAgent}
+			in.Resolved.Spec.Sandbox = &api.SandboxRef{Mode: api.SandboxNative, Policy: &api.NativeSandboxPolicy{Network: &api.SandboxNetworkPolicy{AllowedDomains: []string{"example.com"}}}}
 		}, "allowedDomains"),
 		Entry("unsupported Claude policy field", func(in *promptrun.Input) {
 			include := false
-			in.Request.Sandbox = &api.SandboxRef{Mode: api.SandboxNative, Policy: &api.NativeSandboxPolicy{Filesystem: &api.SandboxFilesystemPolicy{IncludeSystemTemp: &include}}}
+			in.Resolved.Spec.Sandbox = &api.SandboxRef{Mode: api.SandboxNative, Policy: &api.NativeSandboxPolicy{Filesystem: &api.SandboxFilesystemPolicy{IncludeSystemTemp: &include}}}
 		}, "includeSystemTemp"),
 	)
 
@@ -73,14 +74,14 @@ var _ = Describe("promptrun.Preflight runtime configuration", func() {
 	})
 
 	It("warns for an absent approval broker and never calls an attached broker", func() {
-		in.Request.ToolPreferences = api.ToolPreferences{"review": api.ToolPolicyAsk}
+		in.Resolved.Spec.ToolPreferences = api.ToolPreferences{"review": api.ToolPolicyAsk}
 		warnings, err := promptrun.Preflight(in)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(warnings).To(ContainElement(ContainSubstring("CanUseTool")))
+		Expect(warnings).To(ContainElement(ContainSubstring("OnApproval")))
 		calls := 0
-		in.Config.CanUseTool = func(context.Context, api.PermissionRequest) (api.PermissionDecision, error) {
+		in.Config.OnApproval = func(context.Context, api.ApprovalRequest) (api.ApprovalDecision, error) {
 			calls++
-			return api.PermissionDecision{}, nil
+			return api.ApprovalDecision{}, nil
 		}
 		warnings, err = promptrun.Preflight(in)
 		Expect(err).NotTo(HaveOccurred())
@@ -88,10 +89,40 @@ var _ = Describe("promptrun.Preflight runtime configuration", func() {
 		Expect(calls).To(BeZero())
 	})
 
+	It("validates an approval opt-in before admission and suppresses the missing broker warning", func() {
+		in.Resolved.Spec.ToolPreferences = api.ToolPreferences{"review": api.ToolPolicyAsk}
+		in.Approvals = &promptrun.ApprovalOptions{RequestedBy: "dashboard"}
+		in.OnEvent = func(int, ai.Event) {}
+		warnings, err := promptrun.Preflight(in)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(warnings).To(BeEmpty())
+
+		in.Config.OnApproval = func(context.Context, api.ApprovalRequest) (api.ApprovalDecision, error) {
+			return api.ApprovalDecision{}, nil
+		}
+		_, err = promptrun.Preflight(in)
+		Expect(err).To(MatchError(ContainSubstring("Config.OnApproval")))
+		in.Config.OnApproval = nil
+
+		in.OnEvent = nil
+		_, err = promptrun.Preflight(in)
+		Expect(err).To(MatchError(ContainSubstring("OnEvent")))
+		in.OnEvent = func(int, ai.Event) {}
+
+		in.Provider = &scriptedProvider{model: "claude-sonnet-5"}
+		_, err = promptrun.Preflight(in)
+		Expect(err).To(MatchError(ContainSubstring("Provider")))
+		in.Provider = nil
+
+		in.Approvals.RequestedBy = ""
+		_, err = promptrun.Preflight(in)
+		Expect(err).To(MatchError(ContainSubstring("RequestedBy")))
+	})
+
 	It("reports a disabled skill still explicitly loaded through memory", func() {
-		in.Request.Mode = api.ModeCLI
-		in.Request.Permissions.Skills = api.ResourcePolicies{"review-tools": api.ResourceDisabled}
-		in.Request.Memory.Skills = []string{"review-tools"}
+		in.Resolved.Spec.Mode = api.ModeCLI
+		in.Resolved.Spec.Permissions.Skills = api.ResourcePolicies{"review-tools": api.ResourceDisabled}
+		in.Resolved.Spec.Memory.Skills = []string{"review-tools"}
 		warnings, err := promptrun.Preflight(in)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(warnings).To(ContainElement(ContainSubstring("memory.skills")))
@@ -99,7 +130,7 @@ var _ = Describe("promptrun.Preflight runtime configuration", func() {
 
 	DescribeTable("refuses providerless verification whose isolation would never be applied",
 		func(sandbox *api.SandboxRef, selection *api.SandboxConfig) {
-			in.Request = api.Spec{Sandbox: sandbox, Workflow: &api.Workflow{Verify: &api.Verify{Commands: []string{"true"}}}}
+			in.Resolved.Spec = api.Spec{Sandbox: sandbox, Workflow: &api.Workflow{Verify: &api.Verify{Commands: []string{"true"}}}}
 			in.Config.SandboxSelection = selection
 			var hookLog []string
 			in.Hooks = []any{&recordingHook{name: "setup", log: &hookLog}}
@@ -117,7 +148,7 @@ var _ = Describe("promptrun.Preflight runtime configuration", func() {
 
 	DescribeTable("requires external selection to preserve authored restrictions",
 		func(selection api.SandboxConfig, message string) {
-			in.Request.Sandbox = &api.SandboxRef{Mode: api.SandboxGitAgent, Backend: "review-pool", Agent: "review-worker", Dispatch: &api.SandboxDispatchPolicy{MaxAttempts: 1, Paths: []string{"allowed/**"}}}
+			in.Resolved.Spec.Sandbox = &api.SandboxRef{Mode: api.SandboxGitAgent, Backend: "review-pool", Agent: "review-worker", Dispatch: &api.SandboxDispatchPolicy{MaxAttempts: 1, Paths: []string{"allowed/**"}}}
 			in.Config.SandboxSelection = &selection
 			_, err := promptrun.Preflight(in)
 			Expect(err).To(MatchError(ContainSubstring(message)))
@@ -128,7 +159,7 @@ var _ = Describe("promptrun.Preflight runtime configuration", func() {
 	)
 
 	It("accepts an external selection with the exact authored restrictions", func() {
-		in.Request.Sandbox = &api.SandboxRef{Mode: api.SandboxGitAgent, Backend: "review-pool", Agent: "review-worker", Dispatch: &api.SandboxDispatchPolicy{MaxAttempts: 1, Paths: []string{"allowed/**"}}}
+		in.Resolved.Spec.Sandbox = &api.SandboxRef{Mode: api.SandboxGitAgent, Backend: "review-pool", Agent: "review-worker", Dispatch: &api.SandboxDispatchPolicy{MaxAttempts: 1, Paths: []string{"allowed/**"}}}
 		in.Config.SandboxSelection = &api.SandboxConfig{Kind: api.SandboxGitAgent, Name: "review-pool", Agent: "review-worker", Dispatch: &api.SandboxDispatchPolicy{MaxAttempts: 1, Paths: []string{"allowed/**"}}}
 		_, err := promptrun.Preflight(in)
 		Expect(err).NotTo(HaveOccurred())

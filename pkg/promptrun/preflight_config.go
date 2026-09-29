@@ -8,14 +8,14 @@ import (
 )
 
 func constructsProvider(in Input) bool {
-	return in.Provider == nil && (!in.Request.IsVerifyOnly() || declaresPrompts(in.Request.Workflow) && in.Verify.Provider == nil)
+	return in.Provider == nil && (!in.Resolved.Spec.IsVerifyOnly() || declaresPrompts(in.Resolved.Spec.Workflow) && in.Verify.Provider == nil)
 }
 
 func validateVerificationIsolation(in Input) error {
-	if !in.Request.IsVerifyOnly() || in.Provider != nil || constructsProvider(in) {
+	if !in.Resolved.Spec.IsVerifyOnly() || in.Provider != nil || constructsProvider(in) {
 		return nil
 	}
-	if sandbox := in.Request.Sandbox; sandbox != nil && sandbox.Mode != api.SandboxOff {
+	if sandbox := in.Resolved.Spec.Sandbox; sandbox != nil && sandbox.Mode != api.SandboxOff {
 		return fmt.Errorf("promptrun: verify-only execution without a run provider cannot apply sandbox mode %q", sandbox.Mode)
 	}
 	if selection := in.Config.SandboxSelection; selection != nil && selection.Kind != api.SandboxOff {
@@ -42,7 +42,7 @@ func validateConstructionConfig(in Input) error {
 			return err
 		}
 	}
-	if declared := in.Request.Sandbox; declared != nil {
+	if declared := in.Resolved.Spec.Sandbox; declared != nil {
 		if selection == nil && (declared.Mode == api.SandboxDocker || declared.Mode == api.SandboxGitAgent) {
 			return fmt.Errorf("sandbox mode %q requires a resolved Config.SandboxSelection before running", declared.Mode)
 		}
