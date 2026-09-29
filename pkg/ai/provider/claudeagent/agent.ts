@@ -7,7 +7,7 @@
 //     initialize {cwd, model, effort, systemPrompt, appendSystemPrompt,
 //                 allowedTools, maxTurns, maxBudgetUsd, permissionMode, resume, approvalMode,
 //                 outputSchema, mcpServers}
-//                 -> reply {ok:true}
+//                 -> reply {ok:true, protocolVersion}
 //     prompt {text, attachments?} -> reply {accepted:true}
 //     interrupt          -> reply {}
 //     set_permission_mode {mode} -> reply {} (applies to the live query)
@@ -23,10 +23,13 @@
 //     turn/error     {message}
 //   server -> client requests (only when approvalMode === "ask"):
 //     can_use_tool {tool, input, tool_use_id}
-//                 -> reply {allow, message?, updatedInput?}
-//   The transport is bidirectional: the host's reply to can_use_tool arrives on
-//   stdin as an id-bearing response (no method) and resolves the pending callHost
-//   promise, so a tool call blocks only until the host decides.
+//                 -> reply {allow, message?, updatedInput?, interrupt?}
+//     elicit {bridgeId, requestId, serverName, message, mode, requestedSchema?,
+//             url?, elicitationId?}
+//                 -> reply {action: accept|decline|cancel, content?}
+//   The transport is bidirectional: the host's reply arrives on stdin as an
+//   id-bearing response (no method) and resolves the pending callHost promise,
+//   so a tool call or elicitation blocks only until the host decides.
 //
 // One query({prompt, options}) SDK session stays alive for the whole process;
 // turns are fed by pushing user messages onto TurnQueue (a push async-iterable),
@@ -37,15 +40,17 @@ import type {
   Options,
   PreToolUseHookInput,
   Query,
-  SDKMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import { createInterface } from "readline";
+import { elicitHost } from "./elicitation.js";
+import { handleMessage } from "./messages.js";
 import {
   callHost,
   diag,
   handleResponse,
   type JsonRpcId,
   notify,
+  PROTOCOL_VERSION,
   type PromptParams,
   reply,
   replyError,
@@ -94,11 +99,13 @@ interface InitializeParams {
   callerToolUseIDKey?: string;
 }
 
-// HostDecision is the can_use_tool reply shape from the Go host.
+// HostDecision is the can_use_tool reply shape from the Go host. interrupt
+// denies the tool and ends the turn.
 interface HostDecision {
   allow?: boolean;
   message?: string;
   updatedInput?: Record<string, unknown>;
+  interrupt?: boolean;
 }
 
 let turns: TurnQueue | null = null;
@@ -319,8 +326,15 @@ function buildOptions(params: InitializeParams): Options {
       if (decision?.allow) {
         return { behavior: "allow", updatedInput: decision.updatedInput ?? input };
       }
-      return { behavior: "deny", message: decision?.message || "denied by host" };
+      return {
+        behavior: "deny",
+        message: decision?.message || "denied by host",
+        interrupt: decision?.interrupt === true,
+      };
     };
+    // MCP elicitations are answered by the same host broker. Without this the
+    // SDK declines every elicitation no hook handles.
+    options.onElicitation = (request) => elicitHost(request);
   }
 
   return options;
@@ -330,7 +344,7 @@ function handleInitialize(id: JsonRpcId, params: InitializeParams) {
   if (turns) {
     // Already initialized; treat as idempotent so a re-bind after a restart is
     // not fatal.
-    reply(id, { ok: true });
+    reply(id, { ok: true, protocolVersion: PROTOCOL_VERSION });
     return;
   }
   try {
@@ -339,7 +353,7 @@ function handleInitialize(id: JsonRpcId, params: InitializeParams) {
     const options = buildOptions(params);
     bypassAllowed = options.allowDangerouslySkipPermissions === true;
     activeQuery = query({ prompt: turns, options });
-    reply(id, { ok: true });
+    reply(id, { ok: true, protocolVersion: PROTOCOL_VERSION });
     pump(activeQuery).catch((err) => {
       notify("turn/error", { message: err?.message || String(err) });
     });
@@ -418,132 +432,7 @@ function handleShutdown(id: JsonRpcId) {
 
 async function pump(stream: Query) {
   for await (const message of stream) {
-    handleMessage(message);
-  }
-}
-
-// stringifyToolResult flattens an SDK tool_result `content` (a string, or an
-// array of content blocks) into plain text for the message/tool_result payload.
-function stringifyToolResult(content: unknown): string {
-  if (typeof content === "string") {
-    return content;
-  }
-  if (Array.isArray(content)) {
-    return content
-      .map((block) => {
-        const rec = block as Record<string, unknown>;
-        return typeof rec.text === "string" ? rec.text : JSON.stringify(block);
-      })
-      .join("");
-  }
-  if (content == null) {
-    return "";
-  }
-  return JSON.stringify(content);
-}
-
-// streamedBlocks records which content blocks of the assistant message now
-// being produced were already sent as deltas, keyed by the block index the
-// stream events carry. The SDK repeats each block whole when the message
-// completes, and forwarding both would print everything twice.
-const streamedBlocks = new Set<number>();
-
-function handleStreamEvent(message: SDKMessage) {
-  const event = (message as { event?: Record<string, unknown> }).event;
-  if (!event || event.type !== "content_block_delta") {
-    return;
-  }
-  const index = typeof event.index === "number" ? event.index : 0;
-  const delta = event.delta as Record<string, unknown> | undefined;
-  if (!delta) {
-    return;
-  }
-  if (delta.type === "text_delta" && typeof delta.text === "string" && delta.text) {
-    streamedBlocks.add(index);
-    notify("message/text", { text: delta.text });
-  } else if (
-    delta.type === "thinking_delta" &&
-    typeof delta.thinking === "string" &&
-    delta.thinking
-  ) {
-    streamedBlocks.add(index);
-    notify("message/thinking", { text: delta.thinking });
-  }
-}
-
-function handleMessage(message: SDKMessage) {
-  switch (message.type) {
-    case "stream_event":
-      handleStreamEvent(message);
-      break;
-
-    case "system":
-      if ((message as { subtype?: string }).subtype === "init") {
-        notify("session/init", {
-          session_id: message.session_id,
-          model: (message as { model?: string }).model,
-          tools: (message as { tools?: string[] }).tools,
-        });
-      }
-      break;
-
-    case "assistant": {
-      const content =
-        (message as { message?: { content?: unknown[] } }).message?.content ?? [];
-      const blocks = content as Array<Record<string, unknown>>;
-      for (let index = 0; index < blocks.length; index++) {
-        const block = blocks[index];
-        const streamed = streamedBlocks.has(index);
-        if (block.type === "text") {
-          if (!streamed) {
-            notify("message/text", { text: block.text });
-          }
-        } else if (block.type === "thinking") {
-          if (!streamed) {
-            notify("message/thinking", { text: block.thinking });
-          }
-        } else if (block.type === "tool_use") {
-          notify("message/tool_use", {
-            tool: callerToolName(String(block.name)) ?? block.name,
-            input: block.input,
-            id: block.id,
-          });
-        }
-      }
-      // The next message's blocks are indexed from zero again.
-      streamedBlocks.clear();
-      break;
-    }
-
-    case "user": {
-      // Tool results arrive as tool_result blocks on user-role messages.
-      const content =
-        (message as { message?: { content?: unknown[] } }).message?.content ?? [];
-      for (const block of content as Array<Record<string, unknown>>) {
-        if (block.type === "tool_result") {
-          notify("message/tool_result", {
-            id: block.tool_use_id,
-            content: stringifyToolResult(block.content),
-            is_error: block.is_error === true,
-          });
-        }
-      }
-      break;
-    }
-
-    case "result":
-      notify("turn/completed", {
-        success: !(message as { is_error?: boolean }).is_error,
-        subtype: (message as { subtype?: string }).subtype,
-        session_id: message.session_id,
-        cost_usd: (message as { total_cost_usd?: number }).total_cost_usd,
-        usage: (message as { usage?: unknown }).usage,
-        num_turns: (message as { num_turns?: number }).num_turns,
-        result_text: (message as { result?: string }).result,
-        structured_output: (message as { structured_output?: unknown })
-          .structured_output,
-      });
-      break;
+    handleMessage(message, (name) => callerToolName(name) ?? name);
   }
 }
 

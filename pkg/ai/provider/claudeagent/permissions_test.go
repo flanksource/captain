@@ -14,18 +14,18 @@ import (
 // TestInitializeParams_PermissionMode pins the posture the SDK child is started
 // with. An absent permissions block must resolve to the ask/deny default, never
 // to bypass: "the caller declared no policy" is not "the caller granted
-// everything", and CanUseTool is nil on every path except the chat server, so
+// everything", and OnApproval is nil on every path except the chat server, so
 // the unbrokered branch is the common one rather than the exotic one.
 func TestInitializeParams_PermissionMode(t *testing.T) {
-	broker := func(context.Context, ai.PermissionRequest) (ai.PermissionDecision, error) {
-		return ai.PermissionDecision{Allow: true}, nil
+	broker := func(context.Context, ai.ApprovalRequest) (ai.ApprovalDecision, error) {
+		return ai.ApprovalDecision{Allow: true}, nil
 	}
 
 	tests := []struct {
 		name         string
 		mode         api.PermissionMode
 		presets      []api.Preset
-		broker       ai.PermissionFunc
+		broker       ai.ApprovalFunc
 		wantMode     string
 		wantApproval string
 	}{
@@ -62,7 +62,7 @@ func TestInitializeParams_PermissionMode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p := &Provider{cfg: ai.Config{CanUseTool: tt.broker}}
+			p := &Provider{cfg: ai.Config{OnApproval: tt.broker}}
 			params, err := p.initializeParams(ai.Request{
 				Permissions: api.Permissions{Mode: tt.mode, Presets: tt.presets},
 			})

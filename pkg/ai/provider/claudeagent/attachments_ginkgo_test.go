@@ -29,6 +29,15 @@ var _ = Describe("Claude Agent prompt parameters", func() {
 		Expect(string(agent)).To(ContainSubstring(`from "./protocol.js"`))
 		Expect(string(agent)).To(ContainSubstring(`effort?: Options["effort"]`))
 		Expect(string(agent)).To(ContainSubstring("effort: params.effort"))
+		for module, export := range map[string]string{
+			"elicitation": "export async function elicitHost(",
+			"messages":    "export function handleMessage(",
+		} {
+			Expect(string(agent)).To(ContainSubstring(`from "./` + module + `.js"`))
+			source, err := os.ReadFile(filepath.Join(directory, module+".ts"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(source)).To(ContainSubstring(export))
+		}
 	})
 
 	It("encodes prepared image and PDF data as ordered structured inputs", func() {

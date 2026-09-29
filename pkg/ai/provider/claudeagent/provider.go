@@ -50,7 +50,7 @@ const (
 const methodCanUseTool = "can_use_tool"
 
 const (
-	defaultModel     = "claude-sonnet-5"
+	defaultModel     = "claude-sonnet-5-5"
 	errorOutputLimit = 16 * 1024
 	// initTimeout bounds the initialize handshake (after provisioning). The npm
 	// install / tsx cold start happen synchronously before this window.
@@ -418,11 +418,12 @@ func (p *Provider) onChildStarted(child *exec.Process, req ai.Request) {
 		p.setInitResult(err)
 		return
 	}
-	if _, err := rpc.Call(ctx, methodInitialize, params); err != nil {
+	reply, err := rpc.Call(ctx, methodInitialize, params)
+	if err != nil {
 		p.setInitResult(fmt.Errorf("claude-agent: initialize failed: %w", err))
 		return
 	}
-	p.setInitResult(nil)
+	p.setInitResult(checkBridgeProtocol(reply))
 }
 
 // initializeParams maps the first request + provider config onto the SDK
@@ -432,7 +433,7 @@ func (p *Provider) initializeParams(req ai.Request) (initializeParams, error) {
 	// round-trip, so the SDK must consult canUseTool instead of auto-approving:
 	// bypassPermissions / allowDangerouslySkipPermissions would skip it entirely.
 	// The broker callback is a runtime concern, carried on the provider's Config.
-	brokered := p.cfg.CanUseTool != nil
+	brokered := p.cfg.OnApproval != nil
 
 	// The posture and the isolation boundary are independent: the mode comes from
 	// permissions and applies whether or not a sandbox was requested.
@@ -468,7 +469,7 @@ func (p *Provider) initializeParams(req ai.Request) (initializeParams, error) {
 	}
 	// An absent permissions block is "the caller declared no policy", never "the
 	// caller granted everything" — so it resolves to the ask/deny default whether
-	// or not a broker is attached. CanUseTool is nil on every path but the chat
+	// or not a broker is attached. OnApproval is nil on every path but the chat
 	// server, so the unbrokered branch is the common one: defaulting it to bypass
 	// meant a prompt with no `permissions:` ran unconfined here while the same
 	// prompt on claude-cli got the default posture.

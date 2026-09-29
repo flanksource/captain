@@ -1,5 +1,10 @@
 import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 
+// PROTOCOL_VERSION is the bridge contract the initialize reply announces. It
+// must equal bridgeProtocolVersion in bridge_params.go, which refuses an older
+// bridge. Version 2 added can_use_tool interrupt and the elicit request.
+export const PROTOCOL_VERSION = 2;
+
 export type JsonRpcId = number | string | null;
 
 export interface PromptAttachment {

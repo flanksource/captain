@@ -18,11 +18,17 @@ var agentTS string
 //go:embed protocol.ts
 var protocolTS string
 
+//go:embed elicitation.ts
+var elicitationTS string
+
+//go:embed messages.ts
+var messagesTS string
+
 //go:embed package.json
 var agentPackageJSON string
 
-// prepareAgentDir materialises the embedded agent.ts and package.json into a
-// stable per-user cache directory so the supervised tsx process and `npm
+// prepareAgentDir materialises the embedded bridge sources and package.json
+// into a stable per-user cache directory so the supervised tsx process and `npm
 // install` have a real working tree. The directory is reused across runs;
 // writeIfChanged avoids spurious rewrites (and the npm reinstall they imply).
 func prepareAgentDir() (string, error) {
@@ -36,16 +42,18 @@ func prepareAgentDir() (string, error) {
 		return "", fmt.Errorf("failed to create agent dir %s: %w", agentDir, err)
 	}
 
-	if err := writeIfChanged(filepath.Join(agentDir, "agent.ts"), agentTS); err != nil {
-		return "", err
+	sources := []struct{ name, content string }{
+		{"agent.ts", agentTS},
+		{"protocol.ts", protocolTS},
+		{"elicitation.ts", elicitationTS},
+		{"messages.ts", messagesTS},
+		{"package.json", agentPackageJSON},
 	}
-	if err := writeIfChanged(filepath.Join(agentDir, "protocol.ts"), protocolTS); err != nil {
-		return "", err
+	for _, source := range sources {
+		if err := writeIfChanged(filepath.Join(agentDir, source.name), source.content); err != nil {
+			return "", err
+		}
 	}
-	if err := writeIfChanged(filepath.Join(agentDir, "package.json"), agentPackageJSON); err != nil {
-		return "", err
-	}
-
 	return agentDir, nil
 }
 

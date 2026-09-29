@@ -239,21 +239,23 @@ func TestProvider_MultiTurnSerialized(t *testing.T) {
 
 // TestProvider_CanUseTool drives the can_use_tool control round-trip end to end:
 // the fake agent emits a can_use_tool request, the provider routes it to the
-// request's CanUseTool callback, surfaces an EventPermission, and the decision
-// round-trips back to the agent (which echoes it into the result).
+// request's OnApproval callback as a command approval, and the decision
+// round-trips back to the agent (which echoes it into the result). The
+// EventPermission belongs to the seam that binds the callback, so the provider
+// emits none of its own.
 func TestProvider_CanUseTool(t *testing.T) {
 	withFakeAgentProcessEnv(t, map[string]string{fakeServerEnv: "1", fakeModeEnv: "approval"})
 
-	var gotReq ai.PermissionRequest
+	var gotReq ai.ApprovalRequest
 	called := make(chan struct{}, 1)
-	canUseTool := func(_ context.Context, r ai.PermissionRequest) (ai.PermissionDecision, error) {
+	onApproval := func(_ context.Context, r ai.ApprovalRequest) (ai.ApprovalDecision, error) {
 		gotReq = r
 		called <- struct{}{}
-		return ai.PermissionDecision{Allow: true, UpdatedInput: map[string]any{"command": "ls -la"}}, nil
+		return ai.ApprovalDecision{Allow: true, UpdatedInput: map[string]any{"command": "ls -la"}}, nil
 	}
 
-	// CanUseTool is a runtime concern, set on the provider's Config (not the request).
-	p, err := New(ai.Config{Model: api.Model{Name: "claude-sonnet-5"}, CanUseTool: canUseTool})
+	// OnApproval is a runtime concern, set on the provider's Config (not the request).
+	p, err := New(ai.Config{Model: api.Model{Name: "claude-sonnet-5"}, OnApproval: onApproval})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = p.Close() })
 
@@ -263,14 +265,11 @@ func TestProvider_CanUseTool(t *testing.T) {
 	events, err := p.ExecuteStream(ctx, ai.Request{Prompt: api.Prompt{User: "use a tool"}})
 	require.NoError(t, err)
 
-	var sawPermission bool
-	var permEvent ai.Event
 	var result *ai.Event
 	for ev := range events {
 		switch ev.Kind {
 		case ai.EventPermission:
-			sawPermission = true
-			permEvent = ev
+			t.Errorf("the provider must not emit its own EventPermission, got one for %s", ev.Tool)
 		case ai.EventResult:
 			cp := ev
 			result = &cp
@@ -282,16 +281,14 @@ func TestProvider_CanUseTool(t *testing.T) {
 	select {
 	case <-called:
 	default:
-		t.Fatal("CanUseTool callback was not invoked")
+		t.Fatal("OnApproval callback was not invoked")
 	}
 	assert.Equal(t, "Bash", gotReq.Tool)
 	assert.Equal(t, "tu1", gotReq.ToolUseID)
 	assert.Equal(t, "fake-sess", gotReq.SessionID)
 	assert.Equal(t, "ls", gotReq.Input["command"])
-
-	// The same request surfaced as an observable EventPermission.
-	assert.True(t, sawPermission, "expected an EventPermission")
-	assert.Equal(t, "Bash", permEvent.Tool)
+	assert.Equal(t, api.ApprovalKindCommand, gotReq.Kind)
+	assert.Equal(t, &api.CommandApproval{Command: "ls"}, gotReq.Command)
 
 	// The allow decision (with the updated input) round-tripped back to the agent.
 	require.NotNil(t, result, "expected a terminal result event")
@@ -309,12 +306,12 @@ func TestProvider_CanUseTool(t *testing.T) {
 func TestProvider_PlanModeExitPlanModeAutoDenied(t *testing.T) {
 	withFakeAgentProcessEnv(t, map[string]string{fakeServerEnv: "1", fakeModeEnv: "plan-approval"})
 
-	canUseTool := func(_ context.Context, r ai.PermissionRequest) (ai.PermissionDecision, error) {
-		t.Errorf("CanUseTool must not be invoked for ExitPlanMode in plan mode, got %s", r.Tool)
-		return ai.PermissionDecision{Allow: true}, nil
+	onApproval := func(_ context.Context, r ai.ApprovalRequest) (ai.ApprovalDecision, error) {
+		t.Errorf("OnApproval must not be invoked for ExitPlanMode in plan mode, got %s", r.Tool)
+		return ai.ApprovalDecision{Allow: true}, nil
 	}
 
-	p, err := New(ai.Config{Model: api.Model{Name: "claude-sonnet-5"}, CanUseTool: canUseTool})
+	p, err := New(ai.Config{Model: api.Model{Name: "claude-sonnet-5"}, OnApproval: onApproval})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = p.Close() })
 

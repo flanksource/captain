@@ -8,11 +8,15 @@
     "priority": 1,
     "defaultEffort": "medium"
   },
+  "claude-sonnet-5-5": {
+    "preferred": true,
+    "defaultEffort": "high"
+  },
   "claude-opus-5": {
     "preferred": false
   },
   "claude-sonnet-5": {
-    "preferred": true
+    "preferred": false
   },
   "claude-fable-5": {
     "preferred": false

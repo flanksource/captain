@@ -49,13 +49,13 @@ var _ = Describe("Claude Agent caller tools", func() {
 		DeferCleanup(func() { newAgentProcess = original })
 
 		var calls atomic.Int32
-		permissions := make(chan api.PermissionRequest, 1)
+		permissions := make(chan api.ApprovalRequest, 1)
 		provider, err := New(ai.Config{
 			Model:            api.Model{Name: "claude-sonnet-5"},
 			CaptainSessionID: "captain-thread-1",
-			CanUseTool: func(_ context.Context, request api.PermissionRequest) (api.PermissionDecision, error) {
+			OnApproval: func(_ context.Context, request api.ApprovalRequest) (api.ApprovalDecision, error) {
 				permissions <- request
-				return api.PermissionDecision{Allow: true}, nil
+				return api.ApprovalDecision{Allow: true}, nil
 			},
 			Tools: []api.ToolDefinition{{
 				Name: "invoice_get", DefaultPermission: api.ToolPolicyAsk,
@@ -82,7 +82,7 @@ var _ = Describe("Claude Agent caller tools", func() {
 		Expect(calls.Load()).To(Equal(int32(1)))
 		Expect(toolUse.Tool).To(Equal("invoice_get"))
 		Expect(toolUse.ToolCallID).To(Equal("claude-tool-use-1"))
-		var permission api.PermissionRequest
+		var permission api.ApprovalRequest
 		Eventually(permissions).Should(Receive(&permission))
 		Expect(permission.Tool).To(Equal(toolUse.Tool))
 		Expect(permission.ToolUseID).To(Equal(toolUse.ToolCallID))

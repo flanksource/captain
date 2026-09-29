@@ -50,7 +50,7 @@ func TestDeclaredDefaultPostureIsSentExplicitly(t *testing.T) {
 }
 
 // TestDeclaredCallerToolBrokerMatchesApprovalMode pins the requires-broker cell.
-// `ask` on a caller tool is only enforceable when CanUseTool is attached — the
+// `ask` on a caller tool is only enforceable when OnApproval is attached — the
 // SDK is told to consult the broker instead of auto-approving — which is exactly
 // what SupportRequiresBroker means and why it is not simply "supported".
 func TestDeclaredCallerToolBrokerMatchesApprovalMode(t *testing.T) {
@@ -62,8 +62,8 @@ func TestDeclaredCallerToolBrokerMatchesApprovalMode(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "auto", unbrokered.ApprovalMode, "without a broker there is nothing to ask")
 
-	brokered, err := (&Provider{cfg: ai.Config{CanUseTool: func(context.Context, ai.PermissionRequest) (ai.PermissionDecision, error) {
-		return ai.PermissionDecision{Allow: true}, nil
+	brokered, err := (&Provider{cfg: ai.Config{OnApproval: func(context.Context, ai.ApprovalRequest) (ai.ApprovalDecision, error) {
+		return ai.ApprovalDecision{Allow: true}, nil
 	}}}).initializeParams(ai.Request{})
 	require.NoError(t, err)
 	assert.Equal(t, "ask", brokered.ApprovalMode, "a broker is what makes ask enforceable")

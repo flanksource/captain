@@ -17,14 +17,14 @@ var _ = Describe("Claude Agent AskUserQuestion answers", func() {
 		{"header":"Areas","question":"Which areas?","multiSelect":true,"options":[{"label":"API","description":"Go"},{"label":"UI","description":"React"}]}
 	]}}`)
 
-	answer := func(decision ai.PermissionDecision, err error) (canUseToolResult, *string) {
+	answer := func(decision ai.ApprovalDecision, err error) (canUseToolResult, *string) {
 		provider := &Provider{model: testModel, baseCtx: context.Background()}
 		provider.setActive(&turnState{
 			ctx:        context.Background(),
 			inbox:      make(chan ai.Event, 4),
 			term:       make(chan struct{}),
 			quit:       make(chan struct{}),
-			canUseTool: func(context.Context, ai.PermissionRequest) (ai.PermissionDecision, error) { return decision, err },
+			onApproval: func(context.Context, ai.ApprovalRequest) (ai.ApprovalDecision, error) { return decision, err },
 		})
 		raw, rpcErr := provider.handleCanUseTool(params)
 		Expect(rpcErr).To(BeNil())
@@ -37,7 +37,7 @@ var _ = Describe("Claude Agent AskUserQuestion answers", func() {
 	}
 
 	It("rebuilds the updated input with answers keyed by question text", func() {
-		result, _ := answer(ai.PermissionDecision{Allow: true, UpdatedInput: map[string]any{
+		result, _ := answer(ai.ApprovalDecision{Allow: true, UpdatedInput: map[string]any{
 			"answers": map[string]any{"1": "Phase 1", "2": []any{"API", "UI"}},
 			// The dashboard echoes the original questions back; the rebuild drops
 			// its copy so the SDK never sees a changed or unknown field.
@@ -54,7 +54,7 @@ var _ = Describe("Claude Agent AskUserQuestion answers", func() {
 
 	DescribeTable("accepts every identity a host can key an answer on",
 		func(answers map[string]any) {
-			result, _ := answer(ai.PermissionDecision{Allow: true, UpdatedInput: map[string]any{"answers": answers}}, nil)
+			result, _ := answer(ai.ApprovalDecision{Allow: true, UpdatedInput: map[string]any{"answers": answers}}, nil)
 			Expect(result.Allow).To(BeTrue())
 			Expect(result.UpdatedInput["answers"]).To(HaveKeyWithValue("How far should this land?", "Phase 1"))
 		},
@@ -63,7 +63,7 @@ var _ = Describe("Claude Agent AskUserQuestion answers", func() {
 	)
 
 	It("denies rather than sending answers the SDK would drop", func() {
-		result, message := answer(ai.PermissionDecision{Allow: true, UpdatedInput: map[string]any{
+		result, message := answer(ai.ApprovalDecision{Allow: true, UpdatedInput: map[string]any{
 			"answers": map[string]any{"9": "Phase 1"},
 		}}, nil)
 
@@ -74,7 +74,7 @@ var _ = Describe("Claude Agent AskUserQuestion answers", func() {
 	})
 
 	It("leaves a plain approval untouched", func() {
-		result, _ := answer(ai.PermissionDecision{Allow: true}, nil)
+		result, _ := answer(ai.ApprovalDecision{Allow: true}, nil)
 
 		Expect(result.Allow).To(BeTrue())
 		Expect(result.UpdatedInput).To(BeNil())

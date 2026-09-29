@@ -86,7 +86,7 @@ func runFakeServer() {
 		case "initialize":
 			_ = json.Unmarshal(frame.Params, &initialization)
 			initHadSchema = len(initialization.OutputSchema) > 0
-			enc(map[string]any{"jsonrpc": "2.0", "id": id(frame.ID), "result": map[string]any{"ok": true}})
+			enc(map[string]any{"jsonrpc": "2.0", "id": id(frame.ID), "result": fakeInitializeReply(mode)})
 			enc(map[string]any{"jsonrpc": "2.0", "method": "session/init", "params": map[string]any{
 				"session_id": "fake-sess", "model": "claude-sonnet-4-5", "tools": []string{"Read", "Bash"},
 			}})
@@ -114,6 +114,21 @@ func runFakeServer() {
 			os.Exit(0)
 		}
 	}
+}
+
+const (
+	fakeModeUnversionedBridge = "bridge-unversioned"
+	fakeModeOldBridge         = "bridge-old"
+)
+
+func fakeInitializeReply(mode string) map[string]any {
+	switch mode {
+	case fakeModeUnversionedBridge:
+		return map[string]any{"ok": true}
+	case fakeModeOldBridge:
+		return map[string]any{"ok": true, "protocolVersion": bridgeProtocolVersion - 1}
+	}
+	return map[string]any{"ok": true, "protocolVersion": bridgeProtocolVersion}
 }
 
 func runFakeTurn(

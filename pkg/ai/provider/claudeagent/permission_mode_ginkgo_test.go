@@ -62,8 +62,8 @@ var _ = Describe("Claude Agent permission mode switch", func() {
 	It("refuses bypassPermissions while tool approvals are brokered", func() {
 		provider := startedProvider(ai.Config{
 			Model: api.Model{Name: testModel},
-			CanUseTool: func(context.Context, ai.PermissionRequest) (ai.PermissionDecision, error) {
-				return ai.PermissionDecision{}, nil
+			OnApproval: func(context.Context, ai.ApprovalRequest) (ai.ApprovalDecision, error) {
+				return ai.ApprovalDecision{}, nil
 			},
 		})
 
