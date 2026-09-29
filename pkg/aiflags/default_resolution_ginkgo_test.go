@@ -16,6 +16,12 @@ func TestDefaultResolution(t *testing.T) {
 }
 
 var _ = Describe("final model saved defaults", func() {
+	It("proposes the current Sonnet for an unconfigured Anthropic provider", func() {
+		view, err := EffectiveDefaults(captainconfig.AIDefaults{}, registry.Anthropic)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(view.Model).To(Equal("claude-sonnet-5-5"))
+	})
+
 	DescribeTable("keeps unknown authored candidates repairable only for partial composition", func(allow bool) {
 		input := registry.Model{Name: "unknown-primary-example", Fallbacks: registry.ModelList{{Name: "unknown-fallback-example"}}}
 		result, err := ApplyDefaults(DefaultOptions{Model: input, Saved: captainconfig.AIDefaults{Temperature: 0.4, NoCache: true}, CatalogDefaults: true, AllowUnknownModel: allow})

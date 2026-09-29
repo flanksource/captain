@@ -62,3 +62,45 @@ var _ = Describe("Claude Fable 5.1", func() {
 		Expect(Anthropic.GenerationConfig(ModeAPI, model, EffortNone, 4096, nil)).To(Equal(map[string]any{"max_tokens": 4096}))
 	})
 })
+
+var _ = Describe("Claude Sonnet 5.5", func() {
+	const model = "claude-sonnet-5-5"
+
+	DescribeTable("resolves the latest Sonnet on every Claude runtime", func(mode RuntimeMode) {
+		resolved, ok := Anthropic.ResolveExact(mode, "sonnet")
+		Expect(ok).To(BeTrue())
+		Expect(resolved).To(Equal(model))
+		known, available := Anthropic.Availability(mode, model)
+		Expect(known).To(BeTrue())
+		Expect(available).To(BeTrue())
+	},
+		Entry("API", ModeAPI),
+		Entry("CLI", ModeCLI),
+		Entry("agent", ModeAgent),
+		Entry("cmux", ModeCmux),
+	)
+
+	It("publishes Anthropic's current capabilities and price", func() {
+		entry, ok := Anthropic.Lookup(model)
+		Expect(ok).To(BeTrue())
+		Expect(entry.Preferred).To(BeTrue())
+		Expect(entry.ReleaseDate).To(Equal("2026-09-28"))
+		Expect(entry.ContextWindow).To(Equal(1_000_000))
+		Expect(entry.Temperature).To(BeFalse())
+		Expect(entry.AdaptiveThinking).To(BeTrue())
+		Expect(entry.SupportedEfforts).To(Equal([]Effort{EffortLow, EffortMedium, EffortHigh, EffortXHigh, EffortMax}))
+		Expect(entry.DefaultEffort).To(Equal(EffortHigh))
+		price, ok := CostFor(model)
+		Expect(ok).To(BeTrue())
+		Expect(price).To(Equal(ModelCost{Input: 2, Output: 10, CacheRead: 0.2, CacheWrite: 2.5}))
+	})
+
+	It("uses adaptive thinking and omits unsupported temperature", func() {
+		temperature := 0.7
+		Expect(Anthropic.GenerationConfig(ModeAPI, model, EffortHigh, 4096, &temperature)).To(Equal(map[string]any{
+			"max_tokens":    28672,
+			"thinking":      map[string]any{"type": "adaptive"},
+			"output_config": map[string]any{"effort": "high"},
+		}))
+	})
+})

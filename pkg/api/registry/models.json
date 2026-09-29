@@ -1,5 +1,35 @@
 [
   {
+    "id": "claude-sonnet-5-5",
+    "provider": "anthropic",
+    "family": "sonnet",
+    "version": "5.5",
+    "label": "Claude Sonnet 5.5",
+    "releaseDate": "2026-09-28",
+    "reasoning": true,
+    "contextWindow": 1000000,
+    "cost": {
+      "input": 2,
+      "output": 10,
+      "cacheRead": 0.2,
+      "cacheWrite": 2.5
+    },
+    "inputMediaTypes": [
+      "image/*",
+      "application/pdf"
+    ],
+    "preferred": true,
+    "adaptiveThinking": true,
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ],
+    "defaultEffort": "high"
+  },
+  {
     "id": "claude-opus-5-5",
     "provider": "anthropic",
     "family": "opus",
@@ -107,7 +137,6 @@
       "image/*",
       "application/pdf"
     ],
-    "preferred": true,
     "adaptiveThinking": true,
     "supportedEfforts": [
       "low",

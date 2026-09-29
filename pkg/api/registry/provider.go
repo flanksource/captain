@@ -187,7 +187,7 @@ func (p *Provider) PricingIDs(model string) []string {
 // DefaultModelID is captain's declared default: the model a run that names none
 // receives, and the id a picker seeds itself with wherever the chosen backend
 // can run it. Exactly one catalog row projects to it.
-const DefaultModelID = "anthropic/claude-sonnet-5"
+const DefaultModelID = "anthropic/claude-sonnet-5-5"
 
 // DefaultModel is this provider's current top pick for a mode — the id a picker
 // should seed itself with. It honours the opt-out set, so a disabled model is

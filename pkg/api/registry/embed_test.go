@@ -33,7 +33,8 @@ func TestRegistryDerivedCapabilities(t *testing.T) {
 	}{
 		{"claude-opus-5-5", true, false, true, true},
 		{"claude-opus-5", true, false, false, true},
-		{"claude-sonnet-5", true, false, true, true},
+		{"claude-sonnet-5-5", true, false, true, true},
+		{"claude-sonnet-5", true, false, false, true},
 		{"claude-fable-5", true, false, false, true},
 		{"claude-opus-4-8", true, false, false, true},
 		{"claude-opus-4-7", true, false, false, true},
