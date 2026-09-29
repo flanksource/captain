@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
+	aitools "github.com/flanksource/captain/pkg/ai/tools"
 	"github.com/flanksource/captain/pkg/api"
 )
 
@@ -100,14 +101,17 @@ type runConfig struct {
 }
 
 // run drives one cmux session: it owns the cmux client, the run's tuning config,
-// the event sink (emit), and the optional tool-permission broker (canUseTool).
+// the event sink (emit), and the optional tool-permission broker (onApproval).
 // The last* fields capture the live surface/session from the most recent run so a
 // follow-up (resume) can reuse the same agent REPL.
 type run struct {
 	client     *Client
 	cfg        runConfig
 	emit       func(ai.Event)
-	canUseTool ai.PermissionFunc
+	onApproval ai.ApprovalFunc
+	// toolPolicy is checked before onApproval so a denied tool is refused on the
+	// surface without asking anyone.
+	toolPolicy aitools.ResolveOptions
 
 	// approvals tracks the in-flight approval handlers spawned by the stall
 	// watchdog so the driver can wait for them (and the EventPermission they emit)

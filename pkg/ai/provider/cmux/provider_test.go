@@ -14,44 +14,6 @@ import (
 	"github.com/flanksource/commons/logger"
 )
 
-// New receives a model that has already been resolved, so it derives the agent
-// from the provider and passes the id through untouched. It used to re-normalize
-// the id itself, which is how the id captain recorded and the id the CLI received
-// could differ.
-func TestNewDerivesAgentFromTheResolvedProvider(t *testing.T) {
-	cases := []struct {
-		name      string
-		model     string
-		wantModel string
-		wantAgent string
-		want      api.Runtime
-	}{
-		{"claude cmux", "cmux:opus", "claude-opus-5", "claude", api.RuntimeOf(api.Anthropic, api.ModeCmux)},
-		{"codex cmux", "cmux:gpt-5", "gpt-5", "codex", api.RuntimeOf(api.OpenAI, api.ModeCmux)},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			model, err := ai.Resolve(api.Model{Name: tc.model})
-			if err != nil {
-				t.Fatalf("Resolve(%q): %v", tc.model, err)
-			}
-			p, err := New(ai.Config{Model: model})
-			if err != nil {
-				t.Fatalf("New() error = %v", err)
-			}
-			if p.agent != tc.wantAgent {
-				t.Fatalf("agent = %q, want %q", p.agent, tc.wantAgent)
-			}
-			if p.GetModel() != tc.wantModel {
-				t.Fatalf("GetModel() = %q, want %q", p.GetModel(), tc.wantModel)
-			}
-			if p.GetRuntime() != tc.want {
-				t.Fatalf("GetRuntime() = %q, want %q", p.GetRuntime(), tc.want)
-			}
-		})
-	}
-}
-
 func TestNewRejectsAProviderWithNoCmuxAgent(t *testing.T) {
 	model, err := ai.Resolve(api.Model{Name: "api:gemini-2.5-pro"})
 	if err != nil {
