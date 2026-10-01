@@ -38,12 +38,15 @@ func TestPlugin_ReportsTheWorktreeItCreatesAndRemoves(t *testing.T) {
 	if err := plugin.PreRun(hc); err != nil {
 		t.Fatalf("PreRun: %v", err)
 	}
-	path := hc.Workspace().Cwd
+	path, wt := hc.Workspace().Cwd, hc.Workspace().Worktree
 	if err := plugin.Post(hc, agent.PhaseRun); err != nil {
 		t.Fatalf("Post: %v", err)
 	}
 
-	want := []string{"[pre-run] worktree " + path, "[post-run] removed worktree " + path}
+	want := []string{
+		"[pre-run] worktree " + path + " on " + wt.Branch + " from " + wt.Base[:7],
+		"[post-run] removed worktree " + path + "; deleted branch " + wt.Branch,
+	}
 	if got := noticeTexts(hc); strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("notices = %q, want %q", got, want)
 	}
@@ -55,14 +58,14 @@ func TestPlugin_ReportsAKeptWorktree(t *testing.T) {
 	if err := plugin.PreRun(hc); err != nil {
 		t.Fatalf("PreRun: %v", err)
 	}
-	path := hc.Workspace().Cwd
+	path, branch := hc.Workspace().Cwd, hc.Workspace().Worktree.Branch
 	t.Cleanup(func() { _ = os.RemoveAll(path) })
 	if err := plugin.Post(hc, agent.PhaseRun); err != nil {
 		t.Fatalf("Post: %v", err)
 	}
 
 	got := noticeTexts(hc)
-	if len(got) != 2 || got[1] != "[post-run] kept worktree "+path {
+	if len(got) != 2 || got[1] != "[post-run] kept worktree "+path+" on "+branch+": keep requested" {
 		t.Errorf("notices = %q, want the kept worktree %q reported at teardown", got, path)
 	}
 }

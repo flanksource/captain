@@ -167,7 +167,7 @@ func gitAgentResponse(task string, verdict *gitagent.TierVerdict) *api.Response 
 	resp := &api.Response{Text: text, StructuredData: verdict}
 	for _, f := range verdict.Findings {
 		if f.Hook == "integrate" && f.Path != "" {
-			resp.Workspace = &api.Workspace{Branch: f.Path}
+			resp.Workspace = &api.Workspace{Worktree: &api.WorktreeState{Branch: f.Path}}
 		}
 	}
 	return resp

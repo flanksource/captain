@@ -111,10 +111,14 @@ func shared(dir string) *agent.HookContext {
 }
 
 func newContext(dir, branch string) *agent.HookContext {
+	ws := &api.Workspace{Repo: dir, Cwd: dir}
+	if branch != "" {
+		ws.Worktree = &api.WorktreeState{Repo: dir, Path: dir, Branch: branch}
+	}
 	return &agent.HookContext{
 		Context:  context.Background(),
 		Request:  &ai.Request{Prompt: api.Prompt{User: testPrompt}},
-		Response: &ai.Response{Workspace: &api.Workspace{Repo: dir, Cwd: dir, Branch: branch}},
+		Response: &ai.Response{Workspace: ws},
 	}
 }
 

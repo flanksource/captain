@@ -14,7 +14,7 @@ import (
 )
 
 // TestSetupWorktreeCommitsShellEdits drives isolation through the real setup
-// plugin rather than a faked Branch: a worktree created by spec.setup.checkout
+// plugin rather than a faked Worktree: a worktree created by spec.setup.checkout
 // must read as isolated, so a stage-less policy commits a file the agent wrote
 // through the shell — one no edit tool recorded — instead of refusing the run.
 func TestSetupWorktreeCommitsShellEdits(t *testing.T) {

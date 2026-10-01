@@ -418,7 +418,7 @@ func (h *Hook) stageMode(hc *agent.HookContext) api.CommitStage {
 	if h.Stage != "" {
 		return h.Stage
 	}
-	if hc.Workspace().Branch != "" {
+	if hc.Workspace().Worktree != nil {
 		return api.CommitStageWorktree
 	}
 	return api.CommitStageChanged

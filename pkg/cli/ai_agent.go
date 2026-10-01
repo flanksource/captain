@@ -243,7 +243,9 @@ func RunAIAgent(opts AIAgentOptions) (any, error) {
 	if ws := responseWorkspace(result.Response); ws != nil {
 		res.ChangedFiles = ws.Changed
 		res.SessionID = ws.SessionID
-		res.Branch = ws.Branch
+		if ws.Worktree != nil {
+			res.Branch = ws.Worktree.Branch
+		}
 	}
 	if result.Loop != nil {
 		res.Iterations = len(result.Loop.Iterations)
