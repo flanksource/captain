@@ -24,6 +24,7 @@ import { ChatRoute } from "./ChatRoute";
 import { HomeDashboard } from "./HomeDashboard";
 import { PromptWorkbench } from "./PromptWorkbench";
 import { RuntimeProfilesPage } from "./RuntimeProfilesPage";
+import { BudgetRulesPage } from "./BudgetRulesPage";
 import { SessionBrowser } from "./SessionBrowser";
 import {
   getSessionListSearchSnapshot,
@@ -135,6 +136,8 @@ export function App() {
                   selection={route.selection}
                   onNavigate={router.navigate}
                 />
+              ) : route.kind === "budgets" ? (
+                <BudgetRulesPage />
               ) : route.kind === "operations" ? (
                 <EntityExplorerApp
                   client={apiClient}
@@ -223,6 +226,7 @@ type Route =
   | { kind: "sandboxes" }
   | { kind: "runtime-profiles" }
   | { kind: "adapter-schemas"; selection: AdapterSchemaSelection }
+  | { kind: "budgets" }
   | { kind: "operations" }
   | { kind: "chat"; threadId: string; model?: string };
 
@@ -233,6 +237,7 @@ function primaryRoute(route: Route): PrimaryRoute {
   if (route.kind === "sandboxes") return "sandboxes";
   if (route.kind === "runtime-profiles") return "runtime-profiles";
   if (route.kind === "adapter-schemas") return "adapter-schemas";
+  if (route.kind === "budgets") return "budgets";
   if (route.kind === "prompts") return "prompts";
   if (route.kind === "sessions") return "sessions";
   return "agent";
@@ -254,6 +259,7 @@ function parseRoute(pathname: string, search: string): Route {
       selection: parseAdapterSchemaPath(pathname),
     };
   }
+  if (pathname.startsWith("/budgets")) return { kind: "budgets" };
   if (pathname.startsWith("/prompts")) {
     const raw = pathname.slice("/prompts".length).replace(/^\/+/, "");
     const promptId = raw

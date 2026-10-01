@@ -31,6 +31,12 @@ table "captain_turns" {
     null = true
     type = text
   }
+  # Trusted request-scoped attribution supplied by the embedding application.
+  column "dimensions" {
+    null    = false
+    type    = jsonb
+    default = sql("'{}'::jsonb")
+  }
   column "error" {
     null = true
     type = text

@@ -20,6 +20,7 @@ type RuntimeProfile struct {
 	Composed       api.ComposedSpec
 	Saved          *captainconfig.AIDefaults
 	ProviderConfig api.Config
+	Dimensions     map[string]string
 }
 
 // RuntimeProfileOptions contains request-scoped runtime profile selections.

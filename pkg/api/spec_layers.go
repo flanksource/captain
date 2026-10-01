@@ -122,6 +122,22 @@ func scopeRank(scope SpecLayerScope) int {
 	}
 }
 
+// ModelSelectorMatches reports whether an authored model selector names the
+// resolved model, comparing canonical runtimes rather than spellings, for
+// policy packages that match rules against the model a run used.
+func ModelSelectorMatches(selector string, model Model) bool {
+	selector = strings.TrimSpace(selector)
+	if selector == model.Name || selector == model.ID {
+		return true
+	}
+	actual, actualErr := ResolveModel(model)
+	if actualErr != nil {
+		return false
+	}
+	allowed, allowedErr := ResolveModel(Model{Name: selector, Mode: actual.Mode})
+	return allowedErr == nil && allowed.Name == actual.Name && allowed.Mode == actual.Mode && allowed.Provider == actual.Provider
+}
+
 func cloneSpecLayer(layer SpecLayer) SpecLayer {
 	layer.Spec = Spec{}.Merge(layer.Spec)
 	return layer

@@ -8,20 +8,36 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai/approval"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/budgets"
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/promptrun"
 	"github.com/google/uuid"
 )
 
 type DatabaseExecutionAuthority struct {
-	db *database.DB
+	db      *database.DB
+	budgets *budgets.Catalog
 }
 
-func NewDatabaseExecutionAuthority(db *database.DB) (*DatabaseExecutionAuthority, error) {
+type DatabaseExecutionAuthorityOption func(*DatabaseExecutionAuthority)
+
+// WithBudgetCatalog enables multidimensional budget attribution for an
+// execution authority.
+func WithBudgetCatalog(catalog *budgets.Catalog) DatabaseExecutionAuthorityOption {
+	return func(authority *DatabaseExecutionAuthority) { authority.budgets = catalog }
+}
+
+func NewDatabaseExecutionAuthority(db *database.DB, options ...DatabaseExecutionAuthorityOption) (*DatabaseExecutionAuthority, error) {
 	if db == nil || db.Gorm() == nil {
 		return nil, fmt.Errorf("captain execution authority requires a database")
 	}
-	return &DatabaseExecutionAuthority{db: db}, nil
+	authority := &DatabaseExecutionAuthority{db: db}
+	for _, option := range options {
+		if option != nil {
+			option(authority)
+		}
+	}
+	return authority, nil
 }
 
 func (a *DatabaseExecutionAuthority) Begin(
@@ -35,6 +51,11 @@ func (a *DatabaseExecutionAuthority) Begin(
 	if request.Spec.Mode == "" || request.Spec.Provider == nil {
 		return nil, fmt.Errorf("authoritative chat execution requires a resolved (provider, mode) runtime")
 	}
+	budgetAdmission, err := a.budgetAdmission(ctx, request.Dimensions, request.Spec.Model.Candidates())
+	if err != nil {
+		return nil, err
+	}
+	primaryAttributions, _ := budgetAdmission.ForModel(request.Spec.Model)
 	renderedSpec, err := promptrun.SpecDocument(request.Spec)
 	if err != nil {
 		return nil, fmt.Errorf("authoritative chat spec: %w", err)
@@ -112,10 +133,14 @@ func (a *DatabaseExecutionAuthority) Begin(
 		if createErr != nil {
 			return createErr
 		}
+		if createErr := tx.SetModelCallBudgets(ctx, turn.ID, modelCallID, request.Dimensions, databaseAttributions(primaryAttributions)); createErr != nil {
+			return createErr
+		}
 		execution = &databaseExecution{
 			db: tx, ctx: ctx, session: session, turn: turn, run: run, modelCallID: modelCallID,
 			model: request.Spec.Name, provider: request.Spec.Provider, mode: request.Spec.Mode,
-			events: make(chan api.Event, 16), definitions: append([]api.ToolDefinition(nil), request.Definitions...),
+			budgetAdmission: budgetAdmission,
+			events:          make(chan api.Event, 16), definitions: append([]api.ToolDefinition(nil), request.Definitions...),
 			approvalIDs: map[string]uuid.UUID{}, providerToolUseReady: make(chan struct{}, 1),
 		}
 		return execution.markRunning(ctx)
@@ -146,7 +171,7 @@ func (a *DatabaseExecutionAuthority) ResolveToolApproval(
 	var continuation *ApprovalContinuation
 	err := a.db.Transaction(ctx, func(tx *database.DB) error {
 		var resolveErr error
-		continuation, resolveErr = (&DatabaseExecutionAuthority{db: tx}).resolveToolApproval(ctx, resolution)
+		continuation, resolveErr = (&DatabaseExecutionAuthority{db: tx, budgets: a.budgets}).resolveToolApproval(ctx, resolution)
 		return resolveErr
 	})
 	if err != nil {
@@ -251,6 +276,10 @@ func (a *DatabaseExecutionAuthority) resolveToolApproval(
 	if err != nil {
 		return nil, err
 	}
+	budgetAdmission, err := a.budgetAdmission(ctx, turn.Dimensions, spec.Model.Candidates())
+	if err != nil {
+		return nil, err
+	}
 	running := database.PromptRunStateRunning
 	phase := database.PromptRunPhaseGenerate
 	var resumed *database.PromptRun
@@ -276,13 +305,36 @@ func (a *DatabaseExecutionAuthority) resolveToolApproval(
 	execution := &databaseExecution{
 		db: a.db, ctx: ctx, session: sessionRecord, turn: turn, run: resumed, modelCallID: modelCallID,
 		model: spec.Name, provider: spec.Provider, mode: spec.Mode,
-		events: make(chan api.Event, 16), approvalIDs: map[string]uuid.UUID{},
+		budgetAdmission: budgetAdmission,
+		events:          make(chan api.Event, 16), approvalIDs: map[string]uuid.UUID{},
 		providerToolUseReady: make(chan struct{}, 1),
 	}
 	if err := execution.updateSessionActivity(ctx, database.SessionActivityWorking); err != nil {
 		return nil, err
 	}
 	return &ApprovalContinuation{Execution: execution, Spec: spec}, nil
+}
+
+func (a *DatabaseExecutionAuthority) budgetAdmission(ctx context.Context, dimensions map[string]string, models []api.Model) (*budgets.Admission, error) {
+	if a.budgets == nil {
+		return budgets.Evaluate(nil, dimensions, models), nil
+	}
+	rules, err := a.budgets.List(ctx)
+	if err != nil {
+		// Observe-only: fail open until budgets are enforced, so a broken rule
+		// source costs attribution rather than chat availability.
+		serviceLog.Warnf("load budget rules (observe-only, continuing without attribution): %v", err)
+		return budgets.Evaluate(nil, dimensions, models), nil
+	}
+	return budgets.Evaluate(rules, dimensions, models), nil
+}
+
+func databaseAttributions(input []budgets.Attribution) []database.BudgetAttribution {
+	out := make([]database.BudgetAttribution, 0, len(input))
+	for _, attribution := range input {
+		out = append(out, database.BudgetAttribution{RuleID: attribution.RuleID, GroupValues: attribution.GroupValues})
+	}
+	return out
 }
 
 func approvalDecisions(state api.ToolApprovalState, requests []database.TurnRequest) ([]api.ToolApprovalDecision, error) {
