@@ -16,10 +16,12 @@
 //     session/init   {session_id, model, tools}
 //     message/text   {text}      (one per streamed delta; the host concatenates)
 //     message/thinking {text}    (likewise)
-//     message/tool_use {tool, input, id}
-//     message/tool_result {id, content, is_error}
+//     message/tool_use {tool, input, id, parent_tool_use_id}
+//     message/tool_result {id, content, is_error, parent_tool_use_id}
 //     turn/completed {success, subtype, session_id, cost_usd, usage, num_turns,
 //                     result_text, structured_output}
+//     session/state  {state}     (idle | running | requires_action; idle ends
+//                                 the host's turn, after background agents)
 //     turn/error     {message}
 //   server -> client requests (only when approvalMode === "ask"):
 //     can_use_tool {tool, input, tool_use_id}
@@ -63,6 +65,10 @@ import {
 // the SDK reads process.env at query() time.
 delete process.env.CLAUDECODE;
 delete process.env.CLAUDE_CODE_ENTRYPOINT;
+// The host ends a turn on session_state_changed "idle", which the CLI emits only
+// with this set: a turn's first result can precede background agents' follow-up
+// turns.
+process.env.CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS = "1";
 
 interface InitializeParams {
   cwd?: string;

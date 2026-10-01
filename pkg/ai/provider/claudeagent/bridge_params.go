@@ -10,7 +10,9 @@ import (
 // bridgeProtocolVersion is the agent.ts protocol this provider speaks. It must
 // equal PROTOCOL_VERSION in protocol.ts; bump both when the bridge contract
 // changes. Version 2 added can_use_tool interrupt and the elicit request.
-const bridgeProtocolVersion = 2
+// Version 3 added session/state, which ends a turn, and parent_tool_use_id on
+// subagent tool notifications.
+const bridgeProtocolVersion = 3
 
 // initializeReply is agent.ts's answer to initialize.
 type initializeReply struct {

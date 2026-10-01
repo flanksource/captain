@@ -87,6 +87,22 @@ func TestMapNotification_ToolUse(t *testing.T) {
 	assert.Equal(t, "ls -la", tu.Input["command"])
 }
 
+func TestMapNotification_SubagentToolCarriesParent(t *testing.T) {
+	const parentID = "toolu_agent"
+	use := mustMap(t, notifyToolUse,
+		`{"tool":"Bash","id":"toolu_sub","input":{"command":"ls"},"parent_tool_use_id":"`+parentID+`"}`)
+	result := mustMap(t, notifyToolResult,
+		`{"id":"toolu_sub","content":"ok","is_error":false,"parent_tool_use_id":"`+parentID+`"}`)
+
+	for _, ev := range []ai.Event{use, result} {
+		assert.Equal(t, parentID, ev.ParentToolCallID)
+		assert.True(t, ev.Raw.(claude.ToolUse).IsSidechain, "a subagent's call renders as sidechain")
+	}
+	top := mustMap(t, notifyToolUse, `{"tool":"Bash","id":"toolu_top","input":{},"parent_tool_use_id":null}`)
+	assert.Empty(t, top.ParentToolCallID)
+	assert.False(t, top.Raw.(claude.ToolUse).IsSidechain)
+}
+
 func TestMapNotification_ToolResult(t *testing.T) {
 	ev := mustMap(t, notifyToolResult,
 		`{"id":"toolu_42","content":"total 8\ndrwxr-xr-x","is_error":false}`)

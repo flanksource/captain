@@ -12,6 +12,7 @@ import (
 type toolState struct {
 	name              string
 	input             map[string]any
+	parent            string
 	approvalRequested bool
 }
 
@@ -204,11 +205,11 @@ func (s *eventStream) toolUse(event api.Event) error {
 	}
 	if err := s.writer.WritePart(Part{
 		Type: "tool-input-available", ToolCallID: event.ToolCallID,
-		ToolName: event.Tool, Input: input, Dynamic: true,
+		ToolName: event.Tool, Input: input, Dynamic: true, ToolMetadata: toolMetadataOf(event),
 	}); err != nil {
 		return err
 	}
-	s.tools[event.ToolCallID] = toolState{name: event.Tool, input: event.Input}
+	s.tools[event.ToolCallID] = toolState{name: event.Tool, input: event.Input, parent: event.ParentToolCallID}
 	return nil
 }
 
@@ -278,6 +279,9 @@ func (s *eventStream) result(event api.Event) error {
 		return err
 	}
 	if err := s.unresolvedToolError(event.ToolApproval != nil); err != nil {
+		return err
+	}
+	if err := s.closeSubagentTools(); err != nil {
 		return err
 	}
 	if event.ToolApproval != nil {
@@ -427,10 +431,31 @@ func (s *eventStream) closeBlock() error {
 	return err
 }
 
+// closeSubagentTools errors out the subagent calls still in flight when the
+// stream ends; a pending approval stays open for the resumed turn.
+func (s *eventStream) closeSubagentTools() error {
+	ids := make([]string, 0, len(s.tools))
+	for id, state := range s.tools {
+		if state.parent != "" && !state.approvalRequested {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		if err := s.writer.WritePart(Part{
+			Type: "tool-output-error", ToolCallID: id, ErrorText: subagentUnfinished,
+		}); err != nil {
+			return err
+		}
+		delete(s.tools, id)
+	}
+	return nil
+}
+
 func (s *eventStream) unresolvedToolError(allowApproval bool) error {
 	ids := make([]string, 0, len(s.tools))
 	for id, state := range s.tools {
-		if allowApproval && state.approvalRequested {
+		if state.parent != "" || (allowApproval && state.approvalRequested) {
 			continue
 		}
 		ids = append(ids, id)
@@ -454,6 +479,9 @@ func (s *eventStream) finish() error {
 	}
 	if !s.terminal {
 		if err := s.unresolvedToolError(true); err != nil {
+			return err
+		}
+		if err := s.closeSubagentTools(); err != nil {
 			return err
 		}
 	}

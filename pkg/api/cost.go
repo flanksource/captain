@@ -24,6 +24,17 @@ func (u Usage) TotalTokens() int {
 	return u.InputTokens + u.OutputTokens + u.ReasoningTokens + u.CacheReadTokens + u.CacheWriteTokens
 }
 
+// Add sums two disjoint usages bucket by bucket.
+func (u Usage) Add(other Usage) Usage {
+	return Usage{
+		InputTokens:      u.InputTokens + other.InputTokens,
+		OutputTokens:     u.OutputTokens + other.OutputTokens,
+		ReasoningTokens:  u.ReasoningTokens + other.ReasoningTokens,
+		CacheReadTokens:  u.CacheReadTokens + other.CacheReadTokens,
+		CacheWriteTokens: u.CacheWriteTokens + other.CacheWriteTokens,
+	}
+}
+
 // NetInputTokens returns input tokens with the cached prompt subset removed, per
 // the disjoint-bucket contract (InputTokens must exclude cache reads). If the
 // cached count is absent or inconsistent (exceeds input), the input is returned

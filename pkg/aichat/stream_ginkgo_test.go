@@ -235,6 +235,34 @@ var _ = Describe("AI SDK v6 event stream", func() {
 		Expect(recorder.Body.String()).NotTo(ContainSubstring(`"type":"error"`))
 	})
 
+	It("nests subagent tools under their parent and closes the ones the turn outlived", func() {
+		// An async Agent call returns at once; the subagent's own tool calls keep
+		// streaming and can still be in flight when the parent turn's result lands.
+		recorder, err := recordEvents(
+			api.Event{Kind: api.EventToolUse, ToolCallID: "agent-1", Tool: "Agent"},
+			api.Event{Kind: api.EventToolResult, ToolCallID: "agent-1", Tool: "Agent", Text: "launched", Success: true},
+			api.Event{Kind: api.EventToolUse, ToolCallID: "sub-1", Tool: "Bash", ParentToolCallID: "agent-1"},
+			api.Event{Kind: api.EventToolResult, ToolCallID: "sub-1", Text: "ok", Success: true, ParentToolCallID: "agent-1"},
+			api.Event{Kind: api.EventToolUse, ToolCallID: "sub-2", Tool: "Bash", ParentToolCallID: "agent-1"},
+			api.Event{Kind: api.EventResult, Success: true},
+		)
+		Expect(err).NotTo(HaveOccurred())
+		parts := decodedDataLines(recorder.Body.String())
+		Expect(partTypes(parts)).To(Equal([]string{
+			"start", "start-step",
+			"tool-input-available", "tool-output-available",
+			"tool-input-available", "tool-output-available",
+			"tool-input-available", "tool-output-error",
+			"data-result", "finish-step", "finish",
+		}))
+		Expect(parts[2]).NotTo(HaveKey("toolMetadata"))
+		Expect(parts[4]["toolMetadata"]).To(Equal(map[string]any{"parentToolCallId": "agent-1"}))
+		Expect(parts[7]).To(SatisfyAll(
+			HaveKeyWithValue("toolCallId", "sub-2"),
+			HaveKeyWithValue("errorText", "subagent did not finish before the turn ended"),
+		))
+	})
+
 	It("finishes a suspended turn with its approval card still pending", func() {
 		recorder, err := recordEvents(
 			api.Event{Kind: api.EventToolUse, ToolCallID: "call-1", Tool: "invoice_update", Input: map[string]any{"id": "inv-1"}},

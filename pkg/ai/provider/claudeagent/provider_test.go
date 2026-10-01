@@ -10,6 +10,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/clicky/exec"
 	"github.com/flanksource/commons/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -411,11 +412,70 @@ func TestProvider_SteerKeepsTurnOpenForEveryAcceptedPrompt(t *testing.T) {
 	}
 	require.NoError(t, p.Steer(context.Background(), ai.Request{Prompt: api.Prompt{User: "btw"}}))
 
-	results := 0
+	var results []ai.Event
 	for event := range events {
 		if event.Kind == ai.EventResult {
-			results++
+			results = append(results, event)
 		}
 	}
-	assert.Equal(t, 2, results)
+	// Both prompts settle inside one turn, reported as one result covering both.
+	require.Len(t, results, 1)
+	assert.Equal(t, &ai.Usage{InputTokens: 20, OutputTokens: 10}, results[0].Usage)
+}
+
+func TestProvider_CloseLetsTheBridgeExitCleanly(t *testing.T) {
+	withFakeAgentProcess(t)
+
+	p, err := New(ai.Config{Model: api.Model{Name: "claude-sonnet-5"}})
+	require.NoError(t, err)
+	events, err := p.ExecuteStream(context.Background(), ai.Request{Prompt: api.Prompt{User: "hi"}})
+	require.NoError(t, err)
+	for range events {
+	}
+
+	require.NoError(t, p.Close())
+	// The bridge honours shutdown by exiting 0; stopping it first would record
+	// the run's task as cancelled, which a run summary reports as failed.
+	assert.Equal(t, exec.StatusExited, p.sup.Status())
+}
+
+func TestProvider_TurnOutlastsItsBackgroundAgents(t *testing.T) {
+	withFakeAgentProcessEnv(t, map[string]string{
+		fakeServerEnv: "1",
+		fakeModeEnv:   "background",
+	})
+
+	p, err := New(ai.Config{Model: api.Model{Name: "claude-sonnet-5"}})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = p.Close() })
+
+	events, err := p.ExecuteStream(context.Background(), ai.Request{Prompt: api.Prompt{User: "fan out"}})
+	require.NoError(t, err)
+	type seen struct {
+		Kind   ai.EventKind
+		ID     string
+		Parent string
+		Text   string
+	}
+	var got []seen
+	var result ai.Event
+	for event := range events {
+		if event.Kind == ai.EventResult {
+			result = event
+		}
+		got = append(got, seen{Kind: event.Kind, ID: event.ToolCallID, Parent: event.ParentToolCallID, Text: event.Text})
+	}
+
+	assert.Equal(t, []seen{
+		{Kind: ai.EventText, Text: "hi from fake"},
+		{Kind: ai.EventToolUse, ID: "agent-1"},
+		{Kind: ai.EventToolResult, ID: "agent-1", Text: "Async agent launched successfully."},
+		{Kind: ai.EventToolUse, ID: "sub-1", Parent: "agent-1"},
+		{Kind: ai.EventToolResult, ID: "sub-1", Parent: "agent-1", Text: "ok"},
+		{Kind: ai.EventText, Text: "subagent reported"},
+		{Kind: ai.EventResult},
+	}, got, "the main turn's first result must not end the stream while its subagent runs")
+	// Usage is per settled turn and sums; cost_usd is the query's running total.
+	assert.Equal(t, &ai.Usage{InputTokens: 20, OutputTokens: 10}, result.Usage)
+	assert.InDelta(t, 0.03, result.CostUSD, 1e-9)
 }

@@ -43,6 +43,9 @@ type turnState struct {
 	promptMu sync.Mutex
 	pending  int
 	ended    bool
+	// result is the captain turn's result, merged across every SDK result the
+	// turn settled before the session went idle.
+	result *ai.Event
 
 	interrupting atomic.Bool
 }
@@ -164,18 +167,45 @@ func (p *Provider) onNotification(method string, params json.RawMessage) {
 		return
 	}
 
-	if ts.interrupting.Load() && (method == notifyTurnDone || method == notifyTurnError) {
-		ok = false
+	switch method {
+	case notifyTurnDone:
+		// A settled turn is not the end of the captain turn: background agents
+		// may still be running and wake a follow-up turn. Hold the result until
+		// the session goes idle.
+		ts.settled(ev, ok && !ts.interrupting.Load())
+		return
+	case notifySessionState:
+		if sessionState(params) != sessionIdle {
+			return
+		}
+		result, done := ts.idle()
+		if !done {
+			return
+		}
+		if result != nil {
+			p.deliver(ts, *result)
+		}
+		close(ts.term)
+		return
+	case notifyTurnError:
+		if ok && !ts.interrupting.Load() {
+			p.deliver(ts, ev)
+		}
+		ts.completePrompt()
+		return
 	}
 	if ok {
-		select {
-		case ts.inbox <- ev:
-		case <-ts.quit:
-		case <-p.baseCtx.Done():
-		}
+		p.deliver(ts, ev)
 	}
-	if method == notifyTurnDone || method == notifyTurnError {
-		ts.completePrompt()
+}
+
+// deliver hands ev to the turn without blocking past the turn's or the
+// provider's lifetime.
+func (p *Provider) deliver(ts *turnState, ev ai.Event) {
+	select {
+	case ts.inbox <- ev:
+	case <-ts.quit:
+	case <-p.baseCtx.Done():
 	}
 }
 
@@ -387,6 +417,40 @@ func (ts *turnState) addPrompt() bool {
 	}
 	ts.pending++
 	return true
+}
+
+// settled records one SDK result, and when keep is set folds its event into the
+// result held for the captain turn. A follow-up turn woken by a background
+// agent answers no prompt, so pending never drops below zero.
+func (ts *turnState) settled(ev ai.Event, keep bool) {
+	ts.promptMu.Lock()
+	defer ts.promptMu.Unlock()
+	if ts.ended {
+		return
+	}
+	if ts.pending > 0 {
+		ts.pending--
+	}
+	if keep {
+		merged := mergeResult(ts.result, ev)
+		ts.result = &merged
+	}
+}
+
+// idle ends the turn once every accepted prompt has settled, returning the
+// held result to deliver (nil when an interrupt dropped it). The caller closes
+// term after delivering it, so the result is queued before the turn drains.
+func (ts *turnState) idle() (*ai.Event, bool) {
+	ts.promptMu.Lock()
+	defer ts.promptMu.Unlock()
+	if ts.ended || ts.pending > 0 {
+		return nil, false
+	}
+	ts.ended = true
+	if ts.interrupting.Load() {
+		return nil, true
+	}
+	return ts.result, true
 }
 
 func (ts *turnState) completePrompt() {

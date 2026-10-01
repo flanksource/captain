@@ -58,12 +58,14 @@ func runFakeServer() {
 		}
 		return raw
 	}
+	// Like the CLI, every settled turn is followed by an idle session state.
 	completed := func(resultText string) {
 		enc(map[string]any{"jsonrpc": "2.0", "method": "turn/completed", "params": map[string]any{
 			"success": true, "session_id": "fake-sess", "cost_usd": 0.01,
 			"result_text": resultText,
 			"usage":       map[string]any{"input_tokens": 10, "output_tokens": 5},
 		}})
+		enc(fakeSessionState("idle"))
 	}
 
 	scanner := bufio.NewScanner(os.Stdin)
@@ -172,6 +174,9 @@ func runFakeTurn(
 				"company_name": "Anthropic", "founded_year": 2021, "received_schema": initHadSchema,
 			},
 		}})
+		enc(fakeSessionState("idle"))
+	case "background":
+		runFakeBackgroundAgent(enc)
 	case "caller-tools":
 		if err := runFakeCallerTool(initialization, enc, completed); err != nil {
 			enc(map[string]any{"jsonrpc": "2.0", "method": "turn/error", "params": map[string]any{"message": err.Error()}})
@@ -182,6 +187,38 @@ func runFakeTurn(
 		}})
 		completed("hi from fake")
 	}
+}
+
+func fakeSessionState(state string) map[string]any {
+	return map[string]any{"jsonrpc": "2.0", "method": "session/state", "params": map[string]any{"state": state}}
+}
+
+// runFakeBackgroundAgent replays the CLI's async Agent sequence: the Agent call
+// returns at once, the main turn settles while the subagent still works, and
+// the subagent's completion wakes a follow-up turn before the session idles.
+func runFakeBackgroundAgent(enc func(map[string]any)) {
+	result := func(cost float64) {
+		enc(map[string]any{"jsonrpc": "2.0", "method": "turn/completed", "params": map[string]any{
+			"success": true, "session_id": "fake-sess", "cost_usd": cost,
+			"usage": map[string]any{"input_tokens": 10, "output_tokens": 5},
+		}})
+	}
+	enc(map[string]any{"jsonrpc": "2.0", "method": "message/tool_use", "params": map[string]any{
+		"tool": "Agent", "id": "agent-1", "input": map[string]any{"run_in_background": true},
+	}})
+	enc(map[string]any{"jsonrpc": "2.0", "method": "message/tool_result", "params": map[string]any{
+		"id": "agent-1", "content": "Async agent launched successfully.",
+	}})
+	result(0.01)
+	enc(map[string]any{"jsonrpc": "2.0", "method": "message/tool_use", "params": map[string]any{
+		"tool": "Bash", "id": "sub-1", "input": map[string]any{"command": "ls"}, "parent_tool_use_id": "agent-1",
+	}})
+	enc(map[string]any{"jsonrpc": "2.0", "method": "message/tool_result", "params": map[string]any{
+		"id": "sub-1", "content": "ok", "parent_tool_use_id": "agent-1",
+	}})
+	enc(map[string]any{"jsonrpc": "2.0", "method": "message/text", "params": map[string]any{"text": "subagent reported"}})
+	result(0.03)
+	enc(fakeSessionState("idle"))
 }
 
 func runFakeCallerTool(

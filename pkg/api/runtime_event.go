@@ -89,6 +89,11 @@ type Event struct {
 	// (the call) and EventToolResult (its complete output). Backends that stream
 	// output incrementally accumulate it and emit a single EventToolResult.
 	ToolCallID string
+	// ParentToolCallID is set on a subagent's EventToolUse / EventToolResult: the
+	// call ID of the parent's Agent tool call that spawned the subagent. A
+	// background subagent can outlive the parent turn, so its calls do not count
+	// toward the turn's own completeness.
+	ParentToolCallID string
 	// ApprovalID is the durable captain_turn_requests UUID associated with an
 	// EventPermission. It is distinct from the provider's tool-call ID.
 	ApprovalID string

@@ -64,6 +64,10 @@ const (
 	// exits, and only an error that truly wrote nothing pays the full bound.
 	processOutputDrain = 250 * time.Millisecond
 	processOutputPoll  = 5 * time.Millisecond
+	// shutdownExitGrace bounds how long Close waits for a bridge that
+	// acknowledged shutdown to exit (it flushes stdout, then exits ~50ms later)
+	// before the supervisor stops it.
+	shutdownExitGrace = 2 * time.Second
 )
 
 // safeEditAllowlist is the curated allowlist applied by --edit. It is kept local
@@ -325,11 +329,21 @@ func requestSchemaJSON(req ai.Request) (json.RawMessage, error) {
 
 // Close shuts the SDK session down (best-effort shutdown RPC), stops the
 // supervised process, and cancels the provider's base context.
+//
+// A bridge that acknowledges shutdown exits on its own; Stop is only the
+// fallback. Stopping a process the supervisor still sees running records its
+// task as cancelled, so a clean run would otherwise always end "failed".
 func (p *Provider) Close() error {
 	if p.rpc != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		_, _ = p.rpc.Call(ctx, methodShutdown, nil)
+		_, err := p.rpc.Call(ctx, methodShutdown, nil)
 		cancel()
+		if err == nil {
+			select {
+			case <-p.procExited:
+			case <-time.After(shutdownExitGrace):
+			}
+		}
 	}
 	if p.sup != nil {
 		p.sup.Stop()
