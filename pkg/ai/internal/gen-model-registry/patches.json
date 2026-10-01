@@ -36,11 +36,18 @@
     "priority": 2,
     "aliases": ["astra"]
   },
-  "gpt-6-sol": {
+  "gpt-6.1-sol": {
     "preferred": true,
     "availability": ["api", "cli", "agent", "cmux"],
     "priority": 1,
+    "defaultEffort": "medium",
     "aliases": ["sol"]
+  },
+  "gpt-6-sol": {
+    "preferred": false,
+    "availability": ["api", "cli", "agent", "cmux"],
+    "priority": 0,
+    "aliases": null
   },
   "gpt-6-luna": {
     "preferred": true,

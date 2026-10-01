@@ -211,8 +211,8 @@ func TestResolve_EffortQualifiedAlias(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if got.Provider != api.OpenAI || got.Mode != api.ModeAgent || got.Name != "gpt-6-sol" || got.Effort != api.EffortHigh {
-		t.Fatalf("got %s:%s:%s, want agent:gpt-6-sol:high", got.Mode, got.Name, got.Effort)
+	if got.Provider != api.OpenAI || got.Mode != api.ModeAgent || got.Name != "gpt-6.1-sol" || got.Effort != api.EffortHigh {
+		t.Fatalf("got %s:%s:%s, want agent:gpt-6.1-sol:high", got.Mode, got.Name, got.Effort)
 	}
 }
 
@@ -232,8 +232,8 @@ func TestResolveMulti_PerSelectorEffortAndDedup(t *testing.T) {
 		effort api.Effort
 	}
 	want := []runtime{
-		{"gpt-6-sol", api.ModeAgent, api.EffortHigh},
-		{"gpt-6-sol", api.ModeAgent, api.EffortXHigh},
+		{"gpt-6.1-sol", api.ModeAgent, api.EffortHigh},
+		{"gpt-6.1-sol", api.ModeAgent, api.EffortXHigh},
 		{"gpt-5.6-terra", api.ModeCmux, api.EffortMax},
 	}
 	gotRuntimes := make([]runtime, 0, len(got))
@@ -338,7 +338,7 @@ func TestResolveMulti_WildcardRespectsAvailability(t *testing.T) {
 			t.Fatalf("provider = %v, want openai", model.Provider)
 		}
 		modes = append(modes, model.Mode)
-		if model.Name != "gpt-6-sol" || model.Effort != api.EffortHigh {
+		if model.Name != "gpt-6.1-sol" || model.Effort != api.EffortHigh {
 			t.Fatalf("unexpected model: %+v", model)
 		}
 	}
@@ -357,7 +357,7 @@ func TestResolve_EffortErrors(t *testing.T) {
 func TestResolve_OpenAIVariantsAvailableViaAPI(t *testing.T) {
 	for alias, want := range map[string]string{
 		"luna":  "gpt-6-luna",
-		"sol":   "gpt-6-sol",
+		"sol":   "gpt-6.1-sol",
 		"terra": "gpt-5.6-terra",
 	} {
 		t.Run(alias, func(t *testing.T) {

@@ -66,17 +66,56 @@ var _ = Describe("Follow before the transcript is ingested", Ordered, func() {
 		appendClaudeEntry(logPath, providerID, cwd, "a2", "the log is no longer followed")
 		expectNoMessage(events)
 	})
+
+	// Claude Code writes ai-title lines without a uuid; streamed as-is they
+	// became id-less entry frames the session inspector rejects.
+	It("streams only conversational messages from the log, each with an id", func(ctx SpecContext) {
+		home := GinkgoT().TempDir()
+		GinkgoT().Setenv("HOME", home)
+		const cwd = "/work/follow_tail_synthetic"
+		providerID := uuid.NewString()
+		launcher, err := db.CreateOrGetSession(ctx, database.CreateSessionInput{
+			ProviderSessionID: providerID, Source: "gavel", Provider: "agent-claude", HostID: "follow-tail", CWD: cwd,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		_, err = db.CreateOrGetSession(ctx, database.CreateSessionInput{
+			ProviderSessionID: providerID, Source: "claude", Provider: "anthropic", HostID: "follow-tail", CWD: cwd,
+			ParentSessionID: &launcher.ID, RootSessionID: &launcher.ID, ParentRelation: database.SessionParentRelationTranscript,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		logPath := filepath.Join(home, ".claude", "projects", claude.NormalizePath(cwd), providerID+".jsonl")
+		appendClaudeLine(logPath, map[string]any{"type": "ai-title", "aiTitle": "Untitled follow", "sessionId": providerID})
+		appendClaudeEntry(logPath, providerID, cwd, "a1", "conversational")
+
+		followCtx, cancel := context.WithCancel(ctx)
+		events, err := Follow(followCtx, db, launcher.ID.String(), FollowOptions{Replay: true})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() {
+			cancel()
+			Eventually(events, followWait).Should(BeClosed())
+		})
+
+		streamed := nextMessages(events, 1)
+		Expect(streamed[0].Message.ID).To(Equal("a1"))
+		Expect(bodies(streamed)).To(Equal([]string{"conversational"}))
+		expectNoMessage(events)
+	})
 })
 
 func appendClaudeEntry(path, sessionID, cwd, id, text string) {
 	GinkgoHelper()
-	entry, err := json.Marshal(map[string]any{
+	appendClaudeLine(path, map[string]any{
 		"type": "assistant", "sessionId": sessionID, "uuid": id, "cwd": cwd,
 		"timestamp": "2026-09-24T10:00:00Z",
 		"message": map[string]any{"id": id, "role": "assistant", "content": []any{
 			map[string]any{"type": "text", "text": text},
 		}},
 	})
+}
+
+func appendClaudeLine(path string, line map[string]any) {
+	GinkgoHelper()
+	entry, err := json.Marshal(line)
 	Expect(err).NotTo(HaveOccurred())
 	Expect(os.MkdirAll(filepath.Dir(path), 0o755)).To(Succeed())
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)

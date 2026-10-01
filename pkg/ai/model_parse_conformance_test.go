@@ -76,13 +76,13 @@ var agreedCases = []parseCase{
 	// is accepted. `--model agent:sol` used to error while the identical value in
 	// prompt frontmatter ran: the compact grammar could not see pkg/ai's alias
 	// table. This is the divergence the single parser exists to remove.
-	{in: "agent:sol", want: model("gpt-6-sol", api.OpenAI, api.ModeAgent, "")},
-	{in: "agent:sol:high", want: model("gpt-6-sol", api.OpenAI, api.ModeAgent, api.EffortHigh)},
-	{in: "api:sol", want: model("gpt-6-sol", api.OpenAI, api.ModeAPI, "")},
+	{in: "agent:sol", want: model("gpt-6.1-sol", api.OpenAI, api.ModeAgent, "")},
+	{in: "agent:sol:high", want: model("gpt-6.1-sol", api.OpenAI, api.ModeAgent, api.EffortHigh)},
+	{in: "api:sol", want: model("gpt-6.1-sol", api.OpenAI, api.ModeAPI, "")},
 	// A bare codename resolves too. It used to fail on both paths only because
 	// the bare path went through an alias-blind claim — an accident of which
 	// parser ran, not a decision.
-	{in: "sol", want: model("gpt-6-sol", api.OpenAI, api.ModeAgent, "")},
+	{in: "sol", want: model("gpt-6.1-sol", api.OpenAI, api.ModeAgent, "")},
 	{in: "terra", want: model("gpt-5.6-terra", api.OpenAI, api.ModeAgent, "")},
 	{in: "luna", want: model("gpt-6-luna", api.OpenAI, api.ModeAgent, "")},
 	{in: "astra", want: model("gpt-6-astra", api.OpenAI, api.ModeAgent, "")},
@@ -94,16 +94,16 @@ var agreedCases = []parseCase{
 	// the provider defaults to. It used to be asymmetric — "codex" forced the CLI
 	// and "claude" stayed a literal sentinel — because the name itself carried a
 	// mode. It no longer does, so both now read the same way.
-	{in: "codex", want: model("gpt-6-sol", api.OpenAI, api.ModeAgent, "")},
-	{in: "codex/gpt", want: model("gpt-6-sol", api.OpenAI, api.ModeAgent, "")},
+	{in: "codex", want: model("gpt-6.1-sol", api.OpenAI, api.ModeAgent, "")},
+	{in: "codex/gpt", want: model("gpt-6.1-sol", api.OpenAI, api.ModeAgent, "")},
 	{in: "claude", want: model("claude-opus-5-5", api.Anthropic, api.ModeAgent, "")},
 
 	// A sentinel with an explicit mode resolves too. This does NOT go through the
 	// agent-sentinel shortcut (that one only fires off the API mode), so it lands
 	// on the provider's emptyFamily — which must be a family name. An id there
 	// matched no catalog row and left "api:codex" as the literal "codex".
-	{in: "api:codex", want: model("gpt-6-sol", api.OpenAI, api.ModeAPI, "")},
-	{in: "cli:codex", want: model("gpt-6-sol", api.OpenAI, api.ModeCLI, "")},
+	{in: "api:codex", want: model("gpt-6.1-sol", api.OpenAI, api.ModeAPI, "")},
+	{in: "cli:codex", want: model("gpt-6.1-sol", api.OpenAI, api.ModeCLI, "")},
 
 	// A multi-slash id resolves off its LAST segment and keeps its name verbatim,
 	// so OpenRouter-style proxied names survive. (api.ProviderFor alone cannot do

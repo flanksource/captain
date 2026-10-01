@@ -146,8 +146,11 @@ func (t *transcriptTail) close() {
 	}
 }
 
-// messages parses the log. A log that does not exist yet, or holds no
-// conversation entry yet, has no messages; any other parse failure is an error.
+// messages parses the log into the conversational messages ingest would store,
+// so the stream does not change shape when the database takes over; synthetic
+// event rows (ai-title and the like) carry no id to key an upsert by. A log
+// that does not exist yet, or holds no conversation entry yet, has no
+// messages; any other parse failure is an error.
 func (t *transcriptTail) messages() ([]session.Message, error) {
 	if _, err := os.Stat(t.path); os.IsNotExist(err) {
 		return nil, nil
@@ -171,7 +174,13 @@ func (t *transcriptTail) messages() ([]session.Message, error) {
 	if parsed == nil {
 		return nil, nil
 	}
-	return parsed.Messages, nil
+	messages := make([]session.Message, 0, len(parsed.Messages))
+	for _, message := range parsed.Messages {
+		if session.IsConversationalMessage(message) {
+			messages = append(messages, message)
+		}
+	}
+	return messages, nil
 }
 
 // buildClaudeTail builds a growing Claude log. BuildTranscriptFile refuses a

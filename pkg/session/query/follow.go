@@ -179,6 +179,10 @@ func (f *follower) cycle(ctx context.Context, sub *sessionSubscription) ([]Follo
 func (f *follower) changedMessages(messages []session.Message) ([]FollowEvent, error) {
 	var pending []FollowEvent
 	for i := range messages {
+		if messages[i].ID == "" {
+			return nil, fmt.Errorf("follow Captain session %s: %s message at source line %d has no id",
+				f.identity, messages[i].Role, messages[i].SourceLine)
+		}
 		fingerprint, err := json.Marshal(messages[i])
 		if err != nil {
 			return nil, fmt.Errorf("fingerprint Captain message %s: %w", messages[i].ID, err)

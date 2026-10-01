@@ -81,8 +81,8 @@ func TestCostForAcceptsIDSpellings(t *testing.T) {
 	if !ok {
 		t.Fatal("codename alias sol must resolve to a priced model")
 	}
-	if exact, _ := CostFor("gpt-6-sol"); viaAlias != exact {
-		t.Errorf("alias sol priced %+v, want gpt-6-sol rate %+v", viaAlias, exact)
+	if exact, _ := CostFor("gpt-6.1-sol"); viaAlias != exact {
+		t.Errorf("alias sol priced %+v, want gpt-6.1-sol rate %+v", viaAlias, exact)
 	}
 }
 

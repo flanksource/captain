@@ -67,7 +67,7 @@ func TestRegistryDerivedCapabilities(t *testing.T) {
 // hardcoded in pkg/ai (normalizeCodexVariantAlias, isSupersededRegistryExact) and
 // is now catalog data, reachable from every entry point.
 func TestRegistryDataCarriesAliasesAndSuccessors(t *testing.T) {
-	for alias, want := range map[string]string{"sol": "gpt-6-sol", "terra": "gpt-5.6-terra", "luna": "gpt-6-luna"} {
+	for alias, want := range map[string]string{"sol": "gpt-6.1-sol", "terra": "gpt-5.6-terra", "luna": "gpt-6-luna"} {
 		if got := resolveAlias(alias); got != want {
 			t.Errorf("resolveAlias(%q) = %q, want %q", alias, got, want)
 		}
