@@ -1,6 +1,9 @@
 package api
 
-import "time"
+import (
+	"slices"
+	"time"
+)
 
 // Workspace is the runtime state of a run's working directory — the output
 // counterpart to Spec.Setup (the input checkout/worktree config). It records
@@ -79,6 +82,33 @@ func (w *Workspace) AddCommit(sha, message string) {
 		return
 	}
 	w.Commits = append(w.Commits, CommitRecord{SHA: sha, Message: message})
+}
+
+// ReplaceCommits swaps the entries whose SHA is in old for with — the record of
+// a hook whose history was rewritten (autosquash, amend). with lands where the
+// first replaced entry stood, or at the end when none was recorded, so other
+// hooks' entries keep their places. Nil-safe like AddCommit.
+func (w *Workspace) ReplaceCommits(old []string, with []CommitRecord) {
+	if w == nil {
+		return
+	}
+	drop := make(map[string]bool, len(old))
+	for _, sha := range old {
+		drop[sha] = true
+	}
+	kept := make([]CommitRecord, 0, len(w.Commits)+len(with))
+	at := -1
+	for _, c := range w.Commits {
+		if !drop[c.SHA] {
+			kept = append(kept, c)
+		} else if at < 0 {
+			at = len(kept)
+		}
+	}
+	if at < 0 {
+		at = len(kept)
+	}
+	w.Commits = slices.Insert(kept, at, with...)
 }
 
 // Notice is one thing a lifecycle hook did, reported in the run's own voice —

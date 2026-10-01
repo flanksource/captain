@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/agent"
@@ -71,14 +70,20 @@ type Hook struct {
 	// the Stage policy entirely.
 	StagePaths func(*agent.HookContext) ([]string, error)
 	// Do replaces the built-in git implementation with the host's commit
-	// pipeline, returning the new SHA (or "" when it committed nothing). This is
-	// what gates: full requires, and how gavel reuses its own fixup machinery.
+	// pipeline. It may cut several commits under messages of its own; it returns
+	// the last one's SHA (the anchor later fixups fold into), or "" when it
+	// committed nothing. The workspace record is read from git — every commit
+	// between the pre-cut HEAD and HEAD, with git's stored messages — not built
+	// from the return value, which must be among those commits. This is what
+	// gates: full requires, and how gavel reuses its own fixup machinery.
 	Do func(*agent.HookContext, Plan) (string, error)
 
-	anchor  string // SHA the chain fixes up onto, set by the run's first commit
-	subject string // resolved once, shared by every commit in the run
-	fixups  int    // fixup commits cut so far; a chain of 0 needs no squash
-	failed  error  // first commit failure, so the agent-phase sweep does not repeat it
+	anchor   string   // SHA the chain fixes up onto, set by the run's first commit
+	subject  string   // resolved once, shared by every commit in the run
+	fixups   int      // fixup commits cut so far; a chain of 0 needs no squash
+	failed   error    // first commit failure, so the agent-phase sweep does not repeat it
+	start    string   // HEAD before this hook's first recorded commit; "" when unborn
+	recorded []string // SHAs this hook put on the workspace record, oldest first
 }
 
 // New builds a Hook for a policy.
@@ -198,17 +203,23 @@ func (h *Hook) commit(hc *agent.HookContext, phase agent.Phase) error {
 	// hang. A turn that resolved no paths says nothing at all — silence there
 	// already means "nothing happened", and a line per read-only turn is noise.
 	hc.Notify("[post-%s] committing %d file(s)", phase, len(paths))
-	sha, err := h.cut(hc, plan)
-	return h.record(hc, plan, sha, err)
+	pre, sha, err := h.cut(hc, plan)
+	return h.record(hc, plan, pre, sha, err)
 }
 
 // cut delegates to the host's commit pipeline when one is supplied, else to the
-// built-in git implementation.
-func (h *Hook) cut(hc *agent.HookContext, plan Plan) (string, error) {
-	if h.Do != nil {
-		return h.Do(hc, plan)
+// built-in git implementation. pre is HEAD before the cut ("" when unborn), the
+// lower bound record reads what was committed from.
+func (h *Hook) cut(hc *agent.HookContext, plan Plan) (pre, sha string, err error) {
+	if pre, err = headSHA(plan.Dir); err != nil {
+		return "", "", err
 	}
-	return h.run(plan)
+	if h.Do != nil {
+		sha, err = h.Do(hc, plan)
+	} else {
+		sha, err = h.run(plan)
+	}
+	return pre, sha, err
 }
 
 // run is the built-in git implementation of a Plan.
@@ -237,74 +248,6 @@ func (h *Hook) run(plan Plan) (string, error) {
 	default:
 		return commitStaged(plan.Dir, plan.Subject)
 	}
-}
-
-// record folds a cut commit into the run's workspace and updates the chain
-// state: the first commit of a fixup/amend run becomes the anchor everything
-// after it folds into.
-func (h *Hook) record(hc *agent.HookContext, plan Plan, sha string, err error) error {
-	if err != nil {
-		return err
-	}
-	if sha == "" {
-		// The paths resolved but the pipeline staged nothing (an earlier phase
-		// already took them). Said out loud because the "committing" line above
-		// has already promised a commit.
-		hc.Notify("[post-%s] nothing left to stage", plan.Phase)
-		return nil
-	}
-	message := plan.Subject
-	if plan.Anchor != "" {
-		message = "fixup! " + plan.Subject
-		h.fixups++
-	} else if h.anchor == "" {
-		h.anchor = sha
-	} else if plan.Mode == api.CommitModeAmend {
-		h.anchor = sha // amend rewrote the anchor
-	}
-	hc.Workspace().AddCommit(sha, message)
-	hc.Notify("[post-%s] committed %s: %s", plan.Phase, shortSHA(sha), message)
-	return nil
-}
-
-// shortSHA abbreviates to git's conventional display width. A host pipeline may
-// hand back a short hash already, so this truncates rather than assuming 40.
-func shortSHA(sha string) string {
-	if len(sha) <= 7 {
-		return sha
-	}
-	return sha[:7]
-}
-
-// squash collapses the fixup chain back into its anchor. A chain of zero fixups
-// is already one commit, so the rebase is skipped rather than run as a no-op
-// that could still fail.
-func (h *Hook) squash(hc *agent.HookContext) error {
-	if h.fixups == 0 || h.anchor == "" || h.DryRun {
-		return nil
-	}
-	fixups := h.fixups
-	dir, err := workDir(hc)
-	if err != nil {
-		return err
-	}
-	base, root := h.Base, false
-	if base == "" {
-		if base, root, err = autosquashBase(dir, h.anchor); err != nil {
-			return err
-		}
-	}
-	if err := autosquash(dir, base, root); err != nil {
-		return err
-	}
-	h.fixups = 0
-	head, err := git(dir, "rev-parse", "HEAD")
-	if err != nil {
-		return err
-	}
-	h.anchor = head
-	hc.Notify("[post-run] squashed %d fixup(s) into %s", fixups, shortSHA(head))
-	return nil
 }
 
 // shouldCommit applies the outcome gate. A per-turn policy never reaches the
@@ -509,72 +452,6 @@ func (h *Hook) resolveAnchor(dir string, mode api.CommitMode) (string, error) {
 		h.anchor = sha
 		return sha, nil
 	}
-}
-
-// commitSubject resolves the run's commit subject once and reuses it, so every
-// commit in a chain shares the anchor's subject.
-func (h *Hook) commitSubject(hc *agent.HookContext) (string, error) {
-	if h.subject != "" {
-		return h.subject, nil
-	}
-	switch {
-	case h.Subject != nil:
-		s, err := h.Subject(hc)
-		if err != nil {
-			return "", fmt.Errorf("commit: subject callback: %w", err)
-		}
-		h.subject = strings.TrimSpace(s)
-	case h.Message != "":
-		h.subject = h.Message
-	default:
-		h.subject = deriveSubject(hc.Request)
-	}
-	if h.subject == "" {
-		return "", fmt.Errorf("commit: resolved an empty commit subject")
-	}
-	return h.subject, nil
-}
-
-// maxSubject keeps the summary line inside the width git and review tools assume.
-const maxSubject = 72
-
-// deriveSubject builds a conventional-commit subject from the run's prompt. It
-// never asks a model: the subject has to exist before the first turn's commit,
-// and a commit that can fail on a network call is not a durability mechanism.
-func deriveSubject(req *ai.Request) string {
-	summary := ""
-	if req != nil {
-		summary = firstLine(req.Prompt.User)
-		if summary == "" {
-			summary = strings.TrimSpace(req.Prompt.Source)
-		}
-	}
-	if summary == "" {
-		summary = "agent run"
-	}
-	subject := "chore(agent): " + summary
-	if len(subject) > maxSubject {
-		// Cut on a rune boundary, and budget for the ellipsis in bytes — the
-		// limit git and review tools apply is a column count, not a rune count.
-		const ellipsis = "…"
-		cut := maxSubject - len(ellipsis)
-		for cut > 0 && !utf8.RuneStart(subject[cut]) {
-			cut--
-		}
-		subject = strings.TrimRight(subject[:cut], " ") + ellipsis
-	}
-	return subject
-}
-
-// firstLine is the first non-empty, non-heading line of a prompt body.
-func firstLine(body string) string {
-	for _, line := range strings.Split(body, "\n") {
-		line = strings.TrimSpace(strings.TrimLeft(line, "#> "))
-		if line != "" {
-			return line
-		}
-	}
-	return ""
 }
 
 // workDir is the directory commits are cut in: the root of the working tree the

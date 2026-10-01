@@ -15,11 +15,19 @@ import (
 
 const testPrompt = "add a greeting helper"
 
+// testingT is the part of testing.TB the repo helpers need, so ginkgo specs can
+// hand them GinkgoT() as readily as a plain test hands them its *testing.T.
+type testingT interface {
+	Helper()
+	Fatalf(format string, args ...any)
+	Cleanup(func())
+}
+
 // newRepo creates a real git repo with one seed commit under the project's
 // .tmp/, and returns its path. Real repos rather than fakes: every behaviour
 // worth testing here (fixup chains, autosquash, staged deletions, rename
 // records) is git's, and a stub of git would only assert our own assumptions.
-func newRepo(t *testing.T) string {
+func newRepo(t testingT) string {
 	t.Helper()
 	base := filepath.Join("..", "..", "..", "..", ".tmp")
 	if err := os.MkdirAll(base, 0o755); err != nil {
@@ -48,7 +56,7 @@ func newRepo(t *testing.T) string {
 
 // newRepoWithoutCommits creates an initialized but empty repo, so the run's
 // first commit is a root commit with no parent.
-func newRepoWithoutCommits(t *testing.T) string {
+func newRepoWithoutCommits(t testingT) string {
 	t.Helper()
 	base := filepath.Join("..", "..", "..", "..", ".tmp")
 	if err := os.MkdirAll(base, 0o755); err != nil {
@@ -71,7 +79,7 @@ func newRepoWithoutCommits(t *testing.T) string {
 	return dir
 }
 
-func mustGit(t *testing.T, dir string, args ...string) string {
+func mustGit(t testingT, dir string, args ...string) string {
 	t.Helper()
 	out, err := git(dir, args...)
 	if err != nil {
@@ -80,7 +88,7 @@ func mustGit(t *testing.T, dir string, args ...string) string {
 	return out
 }
 
-func write(t *testing.T, dir, rel, body string) {
+func write(t testingT, dir, rel, body string) {
 	t.Helper()
 	path := filepath.Join(dir, rel)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
