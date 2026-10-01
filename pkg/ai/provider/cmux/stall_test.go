@@ -161,7 +161,7 @@ func TestDetectApprovalRequest(t *testing.T) {
 		{"working screen", "claude working, no surface change", false, ""},
 	}
 	for _, tc := range cases {
-		req, ok := detectApprovalRequest("sess", tc.screen)
+		req, ok := detectApprovalRequest("sess", tc.screen, loggedPlan)
 		if ok != tc.wantOK {
 			t.Fatalf("detectApprovalRequest(%s) ok = %v, want %v", tc.name, ok, tc.wantOK)
 		}
@@ -174,11 +174,11 @@ func TestDetectApprovalRequest(t *testing.T) {
 func TestHandleApprovalPlanAllowSendsEnter(t *testing.T) {
 	runner := &stallRunner{}
 	r, events := recordingRun(runConfig{}, runner.run)
-	r.canUseTool = func(_ context.Context, _ ai.PermissionRequest) (ai.PermissionDecision, error) {
-		return ai.PermissionDecision{Allow: true}, nil
+	r.onApproval = func(_ context.Context, _ ai.ApprovalRequest) (ai.ApprovalDecision, error) {
+		return ai.ApprovalDecision{Allow: true}, nil
 	}
 
-	r.handleApproval(context.Background(), testSurface, parsePlanApprovalRequest("plan-allow"))
+	r.handleApproval(context.Background(), testSurface, parsePlanApprovalRequest("plan-allow", *loggedPlan))
 
 	if runner.enterCount() != 1 {
 		t.Fatalf("approve key sent %d times, want 1 (Enter selects auto-accept edits)", runner.enterCount())
@@ -186,19 +186,19 @@ func TestHandleApprovalPlanAllowSendsEnter(t *testing.T) {
 	if runner.escapeCount() != 0 {
 		t.Fatalf("escape sent on plan approve: %d", runner.escapeCount())
 	}
-	if !hasPermissionEvent(*events, "ExitPlanMode") {
-		t.Fatalf("no EventPermission emitted for ExitPlanMode, got %v", *events)
+	if hasPermissionEvent(*events, "ExitPlanMode") {
+		t.Fatalf("provider emitted EventPermission for ExitPlanMode; the binding seam owns it, got %v", *events)
 	}
 }
 
 func TestHandleApprovalPlanDenyKeepsPlanning(t *testing.T) {
 	runner := &stallRunner{}
 	r, events := recordingRun(runConfig{}, runner.run)
-	r.canUseTool = func(_ context.Context, _ ai.PermissionRequest) (ai.PermissionDecision, error) {
-		return ai.PermissionDecision{Allow: false, Message: "keep planning"}, nil
+	r.onApproval = func(_ context.Context, _ ai.ApprovalRequest) (ai.ApprovalDecision, error) {
+		return ai.ApprovalDecision{Allow: false, Message: "keep planning"}, nil
 	}
 
-	r.handleApproval(context.Background(), testSurface, parsePlanApprovalRequest("plan-deny"))
+	r.handleApproval(context.Background(), testSurface, parsePlanApprovalRequest("plan-deny", *loggedPlan))
 
 	if runner.escapeCount() != 1 {
 		t.Fatalf("deny key sent %d times, want 1 (Escape keeps planning)", runner.escapeCount())
@@ -206,8 +206,8 @@ func TestHandleApprovalPlanDenyKeepsPlanning(t *testing.T) {
 	if runner.enterCount() != 0 {
 		t.Fatalf("enter sent on plan deny: %d", runner.enterCount())
 	}
-	if !hasPermissionEvent(*events, "ExitPlanMode") {
-		t.Fatalf("no EventPermission emitted for ExitPlanMode, got %v", *events)
+	if hasPermissionEvent(*events, "ExitPlanMode") {
+		t.Fatalf("provider emitted EventPermission for ExitPlanMode; the binding seam owns it, got %v", *events)
 	}
 }
 
@@ -216,7 +216,7 @@ func TestStallWatchdogPlanDialogSuppressesStall(t *testing.T) {
 	writeSessionLog(t, logPath, "seed") // static log
 	runner := &stallRunner{}
 	runner.setScreen(planApprovalScreen) // plan-approval dialog stays up
-	// No CanUseTool broker: an interactive terminal user answers, so the dialog is
+	// No OnApproval broker: an interactive terminal user answers, so the dialog is
 	// left up and the stall clock is held while it is present (no nudges, no give-up).
 	r := newTestRun(runConfig{}, runner.run)
 	wd := newWatchdog(r, "plan-await", logPath, nil)
@@ -285,11 +285,13 @@ func TestStallWatchdogPlanApprovalBrokeredOnce(t *testing.T) {
 	}
 	r := newTestRun(runConfig{}, runner)
 	var broker atomic.Int32
-	r.canUseTool = func(_ context.Context, _ ai.PermissionRequest) (ai.PermissionDecision, error) {
+	r.onApproval = func(_ context.Context, _ ai.ApprovalRequest) (ai.ApprovalDecision, error) {
 		broker.Add(1)
-		return ai.PermissionDecision{Allow: true}, nil
+		return ai.ApprovalDecision{Allow: true}, nil
 	}
-	wd := newWatchdog(r, "plan-once", logPath, nil)
+	acc := &SessionAccumulator{}
+	acc.AddLine([]byte(planCallLine))
+	wd := newWatchdog(r, "plan-once", logPath, acc)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan bool, 1)
@@ -318,9 +320,9 @@ func TestStallWatchdogPlanRunNeverApprovesExitPlanMode(t *testing.T) {
 	r := newTestRun(runConfig{}, runner.run)
 	r.planMode = true
 	var broker atomic.Int32
-	r.canUseTool = func(_ context.Context, _ ai.PermissionRequest) (ai.PermissionDecision, error) {
+	r.onApproval = func(_ context.Context, _ ai.ApprovalRequest) (ai.ApprovalDecision, error) {
 		broker.Add(1)
-		return ai.PermissionDecision{Allow: true}, nil
+		return ai.ApprovalDecision{Allow: true}, nil
 	}
 	wd := newWatchdog(r, "plan-safe", filepath.Join(t.TempDir(), "s.jsonl"), nil)
 
@@ -445,7 +447,7 @@ func TestStallWatchdogAwaitingHumanSuppressesStall(t *testing.T) {
 	writeSessionLog(t, logPath, "seed") // static log
 	runner := &stallRunner{}
 	runner.setScreen("╭────╮\n│ Do you want to proceed? │\n╰────╯") // approval dialog stays up
-	// No CanUseTool broker: an interactive terminal user answers, so the dialog is
+	// No OnApproval broker: an interactive terminal user answers, so the dialog is
 	// left up and the stall clock is held while it is present (no nudges, no give-up).
 	r := newTestRun(runConfig{}, runner.run)
 	wd := newWatchdog(r, "await-human", logPath, nil)
@@ -490,10 +492,10 @@ func TestStallWatchdogApprovalSurfacesAskState(t *testing.T) {
 func TestHandleApprovalAllowSendsAccept(t *testing.T) {
 	runner := &stallRunner{}
 	r, events := recordingRun(runConfig{}, runner.run)
-	r.canUseTool = func(_ context.Context, _ ai.PermissionRequest) (ai.PermissionDecision, error) {
-		return ai.PermissionDecision{Allow: true}, nil
+	r.onApproval = func(_ context.Context, _ ai.ApprovalRequest) (ai.ApprovalDecision, error) {
+		return ai.ApprovalDecision{Allow: true}, nil
 	}
-	req := ai.PermissionRequest{SessionID: "allow", Tool: "Edit", Input: map[string]any{"prompt": "Do you want to make this edit?"}}
+	req := ai.ApprovalRequest{SessionID: "allow", Tool: "Edit", Input: map[string]any{"prompt": "Do you want to make this edit?"}}
 
 	r.handleApproval(context.Background(), testSurface, req)
 
@@ -503,18 +505,18 @@ func TestHandleApprovalAllowSendsAccept(t *testing.T) {
 	if runner.escapeCount() != 0 {
 		t.Fatalf("escape sent on allow: %d", runner.escapeCount())
 	}
-	if !hasPermissionEvent(*events, "Edit") {
-		t.Fatalf("no EventPermission emitted for the brokered tool, got %v", *events)
+	if hasPermissionEvent(*events, "Edit") {
+		t.Fatalf("provider emitted EventPermission for Edit; the binding seam owns it, got %v", *events)
 	}
 }
 
 func TestHandleApprovalDenySendsEscape(t *testing.T) {
 	runner := &stallRunner{}
 	r, events := recordingRun(runConfig{}, runner.run)
-	r.canUseTool = func(_ context.Context, _ ai.PermissionRequest) (ai.PermissionDecision, error) {
-		return ai.PermissionDecision{Allow: false, Message: "no"}, nil
+	r.onApproval = func(_ context.Context, _ ai.ApprovalRequest) (ai.ApprovalDecision, error) {
+		return ai.ApprovalDecision{Allow: false, Message: "no"}, nil
 	}
-	req := ai.PermissionRequest{SessionID: "deny", Tool: "Bash", Input: map[string]any{"prompt": "Do you want to run this command?"}}
+	req := ai.ApprovalRequest{SessionID: "deny", Tool: "Bash", Input: map[string]any{"prompt": "Do you want to run this command?"}}
 
 	r.handleApproval(context.Background(), testSurface, req)
 
@@ -524,8 +526,8 @@ func TestHandleApprovalDenySendsEscape(t *testing.T) {
 	if runner.enterCount() != 0 {
 		t.Fatalf("accept sent on deny: %d", runner.enterCount())
 	}
-	if !hasPermissionEvent(*events, "Bash") {
-		t.Fatalf("no EventPermission emitted for the brokered tool, got %v", *events)
+	if hasPermissionEvent(*events, "Bash") {
+		t.Fatalf("provider emitted EventPermission for Bash; the binding seam owns it, got %v", *events)
 	}
 }
 

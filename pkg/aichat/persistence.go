@@ -357,7 +357,7 @@ func (b *assistantMessageBuilder) toolUse(event api.Event) error {
 	b.toolParts[event.ToolCallID] = len(b.message.Parts)
 	b.message.Parts = append(b.message.Parts, UIPart{
 		Type: "dynamic-tool", ToolName: event.Tool, ToolCallID: event.ToolCallID,
-		State: "input-available", Input: input,
+		State: "input-available", Input: input, ToolMetadata: toolMetadataOf(event),
 	})
 	return nil
 }
@@ -409,6 +409,7 @@ func (b *assistantMessageBuilder) result(event api.Event) error {
 	if err := b.validateToolStates(event.ToolApproval != nil); err != nil {
 		return err
 	}
+	b.closeSubagentTools()
 	dataType := "data-result"
 	data := event.StructuredData
 	if event.ToolApproval != nil {
@@ -434,9 +435,27 @@ func (b *assistantMessageBuilder) result(event api.Event) error {
 	return nil
 }
 
+// closeSubagentTools errors out the subagent calls still in flight when the
+// turn ends; a pending approval stays open for the resumed turn.
+func (b *assistantMessageBuilder) closeSubagentTools() {
+	for i := range b.message.Parts {
+		part := &b.message.Parts[i]
+		if !part.isSubagentTool() {
+			continue
+		}
+		switch part.State {
+		case "output-available", "output-error", "output-denied", "approval-requested":
+			continue
+		}
+		part.State = "output-error"
+		part.Output = nil
+		part.ErrorText = subagentUnfinished
+	}
+}
+
 func (b *assistantMessageBuilder) validateToolStates(allowApproval bool) error {
 	for _, part := range b.message.Parts {
-		if !part.IsTool() {
+		if !part.IsTool() || part.isSubagentTool() {
 			continue
 		}
 		switch part.State {

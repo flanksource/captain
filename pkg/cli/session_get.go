@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/flanksource/captain/pkg/api"
@@ -42,13 +43,29 @@ type SessionGetItem struct {
 	ActiveRunID string            `json:"activeRunId,omitempty"`
 	Chat        *ChatCapabilities `json:"chat,omitempty"`
 	ChatState   *ChatStateFrame   `json:"chatState,omitempty"`
-	notice      transcriptNotice
+	// PermissionModes are the postures a continued session may start with;
+	// absent when the session cannot be resumed.
+	PermissionModes []api.PermissionMode `json:"permissionModes,omitempty"`
+	// Execution is the transcript row a launcher-owned session ran in. It is set
+	// when the provider's log landed on a separate row; the session keeps its own
+	// identity while its usage, working directory and resume target come from here.
+	Execution *SessionExecution `json:"execution,omitempty"`
+	notice    transcriptNotice
+}
+
+// SessionExecution names the provider transcript row a session executed in.
+type SessionExecution struct {
+	CaptainID string `json:"captainId"`
+	Source    string `json:"source"`
+	CWD       string `json:"cwd,omitempty"`
+	Model     string `json:"model,omitempty"`
 }
 
 type sessionGetStore interface {
 	sessionOverviewStore
 	sessionquery.Store
 	sessionquery.TranscriptStore
+	sessionquery.TranscriptChildStore
 }
 
 // RunSessionGet returns every Captain session matching an exact Captain UUID
@@ -65,6 +82,10 @@ func RunSessionGet(ctx context.Context, opts SessionGetOptions) (SessionGetResul
 	if err != nil {
 		return SessionGetResult{}, err
 	}
+	if opts.Follow {
+		// The transcript is printed as it streams, so nothing is left to render.
+		return SessionGetResult{}, followSessionGet(ctx, db, opts, os.Stdout)
+	}
 	return runSessionGet(ctx, db, opts)
 }
 
@@ -74,16 +95,16 @@ func runSessionGet(ctx context.Context, db sessionGetStore, opts SessionGetOptio
 		return SessionGetResult{}, fmt.Errorf("id is required")
 	}
 	stopLookup := rpchttp.Track(ctx, "lookup")
-	overviews, err := resolveOverviewsByIdentity(ctx, db, id)
+	sessions, err := sessionquery.ResolveFolded(ctx, db, id)
 	stopLookup()
 	if err != nil {
 		return SessionGetResult{}, err
 	}
 
-	items := make([]SessionGetItem, 0, len(overviews))
-	for i := range overviews {
+	items := make([]SessionGetItem, 0, len(sessions))
+	for i := range sessions {
 		stopHydrate := rpchttp.Track(ctx, "hydrate")
-		item, itemErr := buildSessionGetItem(ctx, db, overviews[i], opts)
+		item, itemErr := buildSessionGetItem(ctx, db, sessions[i], opts)
 		stopHydrate()
 		if itemErr != nil {
 			return SessionGetResult{}, itemErr
@@ -101,7 +122,8 @@ func runSessionGet(ctx context.Context, db sessionGetStore, opts SessionGetOptio
 	return SessionGetResult{RootSessionID: rootID, Sessions: items, Total: len(items)}, nil
 }
 
-func buildSessionGetItem(ctx context.Context, db sessionGetStore, overview database.SessionOverview, opts SessionGetOptions) (SessionGetItem, error) {
+func buildSessionGetItem(ctx context.Context, db sessionGetStore, folded sessionquery.FoldedOverview, opts SessionGetOptions) (SessionGetItem, error) {
+	overview := folded.Session
 	item := SessionGetItem{
 		CaptainID: overview.ID.String(), ProviderSessionID: stringOr(overview.ProviderSessionID, ""),
 		Host: overview.HostID, Aggregate: stringOr(overview.AgentType, "") == "batch",
@@ -113,29 +135,40 @@ func buildSessionGetItem(ctx context.Context, db sessionGetStore, overview datab
 	if overview.RootSessionID != nil {
 		item.RootSessionID = overview.RootSessionID.String()
 	}
-	capabilities := sessionChatCapabilities(item.Summary)
-	item.Chat = &capabilities
-	active, ok := promptChats.getRun(item.CaptainID)
-	if !ok && item.ProviderSessionID != "" {
-		active, ok = promptChats.getSession(item.ProviderSessionID)
+	if folded.Transcript != nil {
+		applyExecution(&item, *folded.Transcript)
 	}
-	if ok {
+	capabilities := sessionChatCapabilities(item)
+	item.Chat = &capabilities
+	if capabilities.Resume {
+		item.PermissionModes = resumePermissionModes(resumeTargetOf(item).Source)
+	}
+	chatRunning := false
+	if active, ok := activeSessionChat(item); ok {
 		var activeCapabilities ChatCapabilities
 		item.ActiveRunID, activeCapabilities, item.ChatState = active.projection()
 		item.Chat = &activeCapabilities
+		chatRunning = !active.terminalState()
 	}
-	detail, provenance, err := loadSessionDetail(ctx, db, overview)
+	detail, provenance, err := loadSessionDetail(ctx, db, overview, folded.Transcript)
 	if err != nil {
 		return SessionGetItem{}, err
 	}
+	// Provenance travels with the detail so an unread session is distinguishable
+	// from an empty one: messages sourced from "prompt-run" mean the transcript
+	// has not been ingested, not that nothing happened. It is kept without a
+	// detail too, so a caller can say which sources had nothing.
+	item.DetailSource = provenance.Facets()
 	if detail == nil {
 		return item, nil
 	}
 	enrichSessionDetail(detail, item.Summary)
-	// Provenance travels with the detail so an unread session is distinguishable
-	// from an empty one: messages sourced from "prompt-run" mean the transcript
-	// has not been ingested, not that nothing happened.
-	item.DetailSource = provenance.Facets()
+	// A question is not waiting on a person while the agent still has the turn: a
+	// chat running on the session, or the agent's own process still alive (an
+	// interactive TUI asking in place).
+	if chatRunning || (item.Summary.Live != nil && item.Summary.Live.Active) {
+		detail.AwaitingInput = nil
+	}
 	item.DetailAvailable = true
 	item.Summary.DetailAvailable = true
 	item.Summary.Messages = max(item.Summary.Messages, len(detail.Messages))
@@ -168,14 +201,22 @@ func loadSessionDetail(
 	ctx context.Context,
 	db sessionGetStore,
 	overview database.SessionOverview,
+	execution *database.SessionOverview,
 ) (*session.Session, load.Provenance, error) {
 	stored, err := storedSource(ctx, db, overview)
 	if err != nil {
 		return nil, load.Provenance{}, err
 	}
+	// A launcher row stores nothing of the conversation; the monitor ingested it
+	// onto the transcript row, which is the only copy when the log is unreadable.
+	if stored == nil && execution != nil {
+		if stored, err = storedSource(ctx, db, *execution); err != nil {
+			return nil, load.Provenance{}, err
+		}
+	}
 
 	stopCompose := rpchttp.Track(ctx, "compose")
-	transcript, err := parsedTranscript(ctx, db, overview)
+	transcript, err := parsedTranscript(ctx, db, overview, execution)
 	if err != nil {
 		stopCompose()
 		return nil, load.Provenance{}, err
@@ -196,15 +237,20 @@ func loadSessionDetail(
 	return result.Session, result.Provenance, nil
 }
 
-// parsedTranscript parses the transcript of the row that actually holds one,
-// which for a Gavel run is a sibling rather than the session asked for: the
-// admission root is a provider-identity bridge and carries no log.
+// parsedTranscript parses the transcript of the row that actually holds one.
+// For a launcher-owned session that is its execution row — the transcript child
+// the provider's log was ingested into — rather than the session asked for.
 //
 // A transcript that cannot be resolved or parsed is not an error — it is the
 // normal state of a run whose log has not been ingested yet — so this reports
 // nothing and lets the other sources answer.
-func parsedTranscript(ctx context.Context, db sessionGetStore, overview database.SessionOverview) (*session.Session, error) {
-	candidate, ok, err := sessionquery.TranscriptCandidate(ctx, db, overview)
+func parsedTranscript(
+	ctx context.Context,
+	db sessionGetStore,
+	overview database.SessionOverview,
+	execution *database.SessionOverview,
+) (*session.Session, error) {
+	candidate, ok, err := transcriptCandidateFor(ctx, db, overview, execution)
 	if err != nil {
 		return nil, err
 	}
@@ -222,6 +268,69 @@ func parsedTranscript(ctx context.Context, db sessionGetStore, overview database
 	parsed.ProviderSessionID = stringOr(overview.ProviderSessionID, "")
 	parsed.Revision = overview.StateVersion
 	return parsed, nil
+}
+
+func transcriptCandidateFor(
+	ctx context.Context,
+	db sessionGetStore,
+	overview database.SessionOverview,
+	execution *database.SessionOverview,
+) (sessionquery.Candidate, bool, error) {
+	if execution == nil {
+		return sessionquery.TranscriptCandidate(ctx, db, overview)
+	}
+	candidate := sessionquery.CandidateFromOverview(*execution)
+	return candidate, candidate.Path != "", nil
+}
+
+// applyExecution folds the transcript row a session executed in into the
+// session's summary. Identity and prompt facts stay with the session; usage,
+// liveness, working directory and the resume target belong to the provider's
+// log, and a value the execution row has wins over the session's.
+func applyExecution(item *SessionGetItem, transcript database.SessionOverview) {
+	execution := recordFromOverview(transcript)
+	item.Execution = &SessionExecution{
+		CaptainID: execution.Key, Source: execution.Source, CWD: execution.CWD, Model: execution.Model,
+	}
+	summary := &item.Summary
+	summary.ToolCalls = max(summary.ToolCalls, execution.ToolCalls)
+	summary.Messages = max(summary.Messages, execution.Messages)
+	if execution.Tokens != nil {
+		summary.Tokens = execution.Tokens
+	}
+	if execution.Context != nil {
+		summary.Context = execution.Context
+	}
+	if execution.CostUSD > 0 {
+		summary.CostUSD = execution.CostUSD
+	}
+	if execution.Live != nil {
+		summary.Live = execution.Live
+	}
+	if summary.StartedAt == nil {
+		summary.StartedAt = execution.StartedAt
+	}
+	if execution.EndedAt != nil {
+		summary.EndedAt = execution.EndedAt
+	}
+	summary.CWD = firstNonEmpty(execution.CWD, summary.CWD)
+	summary.Version = firstNonEmpty(execution.Version, summary.Version)
+	summary.GitBranch = firstNonEmpty(execution.GitBranch, summary.GitBranch)
+	summary.Model = firstNonEmpty(summary.Model, execution.Model)
+	summary.DetailAvailable = summary.DetailAvailable || execution.DetailAvailable
+	summary.Health = deriveSessionHealth(*summary)
+}
+
+// activeSessionChat finds a chat whose run is the session itself (a batch run's
+// chat), or one resumed on its provider session.
+func activeSessionChat(item SessionGetItem) (*chatSession, bool) {
+	if active, ok := promptChats.getRun(item.CaptainID); ok {
+		return active, true
+	}
+	if item.ProviderSessionID == "" {
+		return nil, false
+	}
+	return promptChats.getSession(item.ProviderSessionID)
 }
 
 // storedSource loads the aggregate the database holds, when it holds one.
@@ -244,9 +353,9 @@ func storedSource(ctx context.Context, db sessionGetStore, overview database.Ses
 	return stored, nil
 }
 
-func sessionChatCapabilities(summary SessionRecord) ChatCapabilities {
-	capabilities := chatCapabilitiesFor(summary.Provider, summary.ModelMode)
-	if summary.Source == "claude" || summary.Source == "codex" {
+func sessionChatCapabilities(item SessionGetItem) ChatCapabilities {
+	capabilities := chatCapabilitiesFor(item.Summary.Provider, item.Summary.ModelMode)
+	if source := resumeTargetOf(item).Source; source == "claude" || source == "codex" {
 		capabilities.Resume = true
 	}
 	return capabilities

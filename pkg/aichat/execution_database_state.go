@@ -17,11 +17,19 @@ func (e *databaseExecution) markRunning(ctx context.Context) error {
 	return e.updateSessionActivity(ctx, activity)
 }
 
-func (e *databaseExecution) markWaiting(ctx context.Context) error {
-	state := database.PromptRunStateWaiting
-	activity := database.SessionActivityApproval
-	if err := e.updateRun(ctx, runUpdate{State: &state}); err != nil {
-		return err
+// adoptApprovalPosture takes the prompt run the approval broker just moved
+// between waiting and running as this execution's own copy — its version is the
+// one the next optimistic update has to name — and mirrors the posture onto the
+// session's activity. A copy this execution already advanced past is kept.
+func (e *databaseExecution) adoptApprovalPosture(ctx context.Context, run *database.PromptRun) error {
+	e.mu.Lock()
+	if run.Version > e.run.Version {
+		e.run = run
+	}
+	e.mu.Unlock()
+	activity := database.SessionActivityWorking
+	if run.State == database.PromptRunStateWaiting {
+		activity = database.SessionActivityApproval
 	}
 	return e.updateSessionActivity(ctx, activity)
 }

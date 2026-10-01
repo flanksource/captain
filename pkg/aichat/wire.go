@@ -25,6 +25,7 @@ type ChatRequest struct {
 	Budget          api.Budget              `json:"budget,omitempty"`
 	ToolPreferences api.ToolPreferences     `json:"toolPreferences,omitempty"`
 	PermissionMode  api.PermissionMode      `json:"permissionMode,omitempty"`
+	Presets         []string                `json:"presets,omitempty"`
 	RuntimeProfile  string                  `json:"runtimeProfile,omitempty"`
 	ToolApproval    *api.ToolApprovalResume `json:"-"`
 
@@ -88,7 +89,26 @@ type UIPart struct {
 	ErrorText  string          `json:"errorText,omitempty"`
 	Data       json.RawMessage `json:"data,omitempty"`
 	Approval   *Approval       `json:"approval,omitempty"`
+
+	ToolMetadata *ToolMetadata `json:"toolMetadata,omitempty"`
 }
+
+// ToolMetadata is the AI SDK v6 toolMetadata object Captain attaches to a tool
+// part. ParentToolCallID names the Agent call whose subagent made the call.
+type ToolMetadata struct {
+	ParentToolCallID string `json:"parentToolCallId,omitempty"`
+}
+
+func toolMetadataOf(event api.Event) *ToolMetadata {
+	if event.ParentToolCallID == "" {
+		return nil
+	}
+	return &ToolMetadata{ParentToolCallID: event.ParentToolCallID}
+}
+
+// subagentUnfinished is the error a subagent's tool call is closed with when the
+// parent turn ends first: the stream it was reported on carries nothing more.
+const subagentUnfinished = "subagent did not finish before the turn ended"
 
 // Approval is the AI SDK tool approval envelope attached to a tool UI part.
 type Approval struct {
@@ -100,6 +120,10 @@ type Approval struct {
 // IsTool reports whether the part is a static or dynamic tool part.
 func (p UIPart) IsTool() bool {
 	return p.Type == "dynamic-tool" || strings.HasPrefix(p.Type, "tool-")
+}
+
+func (p UIPart) isSubagentTool() bool {
+	return p.IsTool() && p.ToolMetadata != nil && p.ToolMetadata.ParentToolCallID != ""
 }
 
 // EffectiveToolName returns a dynamic tool's explicit name or a static tool's type suffix.

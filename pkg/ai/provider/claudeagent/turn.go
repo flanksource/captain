@@ -13,6 +13,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/provider/jsonrpc"
+	aitools "github.com/flanksource/captain/pkg/ai/tools"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/clicky/exec"
 )
@@ -22,7 +23,7 @@ import (
 // path; term is closed by the handler on a terminal notification; quit is closed
 // by the turn goroutine on exit so a late handler send does not block.
 //
-// ctx and canUseTool let the server-request handler (onRequest, which runs on its
+// ctx and onApproval let the server-request handler (onRequest, which runs on its
 // own goroutine) reach the turn's deadline and permission callback so a
 // can_use_tool round-trip is scoped to the turn and unblocks on cancellation.
 type turnState struct {
@@ -31,7 +32,10 @@ type turnState struct {
 	quit  chan struct{}
 
 	ctx        context.Context
-	canUseTool ai.PermissionFunc
+	onApproval ai.ApprovalFunc
+	// toolPolicy is the run's tool policy, checked before the callback so a denied
+	// tool is refused without asking anyone.
+	toolPolicy aitools.ResolveOptions
 	// planMode marks a plan-only turn: ExitPlanMode is then the terminal signal
 	// and its can_use_tool is answered by the shared policy, never the broker.
 	planMode bool
@@ -39,6 +43,9 @@ type turnState struct {
 	promptMu sync.Mutex
 	pending  int
 	ended    bool
+	// result is the captain turn's result, merged across every SDK result the
+	// turn settled before the session went idle.
+	result *ai.Event
 
 	interrupting atomic.Bool
 }
@@ -96,7 +103,8 @@ func (p *Provider) runTurn(ctx context.Context, req ai.Request, events chan ai.E
 		term:       make(chan struct{}),
 		quit:       make(chan struct{}),
 		ctx:        ctx,
-		canUseTool: p.cfg.CanUseTool,
+		onApproval: p.cfg.OnApproval,
+		toolPolicy: aitools.ResolveOptions{Preferences: req.ToolPreferences, Policy: req.ToolPolicy},
 		planMode:   req.Permissions.Mode == api.PermissionPlan,
 		pending:    1,
 	}
@@ -159,18 +167,45 @@ func (p *Provider) onNotification(method string, params json.RawMessage) {
 		return
 	}
 
-	if ts.interrupting.Load() && (method == notifyTurnDone || method == notifyTurnError) {
-		ok = false
+	switch method {
+	case notifyTurnDone:
+		// A settled turn is not the end of the captain turn: background agents
+		// may still be running and wake a follow-up turn. Hold the result until
+		// the session goes idle.
+		ts.settled(ev, ok && !ts.interrupting.Load())
+		return
+	case notifySessionState:
+		if sessionState(params) != sessionIdle {
+			return
+		}
+		result, done := ts.idle()
+		if !done {
+			return
+		}
+		if result != nil {
+			p.deliver(ts, *result)
+		}
+		close(ts.term)
+		return
+	case notifyTurnError:
+		if ok && !ts.interrupting.Load() {
+			p.deliver(ts, ev)
+		}
+		ts.completePrompt()
+		return
 	}
 	if ok {
-		select {
-		case ts.inbox <- ev:
-		case <-ts.quit:
-		case <-p.baseCtx.Done():
-		}
+		p.deliver(ts, ev)
 	}
-	if method == notifyTurnDone || method == notifyTurnError {
-		ts.completePrompt()
+}
+
+// deliver hands ev to the turn without blocking past the turn's or the
+// provider's lifetime.
+func (p *Provider) deliver(ts *turnState, ev ai.Event) {
+	select {
+	case ts.inbox <- ev:
+	case <-ts.quit:
+	case <-p.baseCtx.Done():
 	}
 }
 
@@ -250,95 +285,28 @@ func outputTail(output string) string {
 
 // onRequest answers a server→client request from agent.ts. It runs on its own
 // goroutine (per jsonrpc.Handlers.OnRequest), so blocking on a human approval is
-// safe. The only request is can_use_tool; unknown methods get method-not-found.
-func (p *Provider) onRequest(method string, params json.RawMessage) (any, *jsonrpc.RPCError) {
-	if method != methodCanUseTool {
-		return nil, &jsonrpc.RPCError{Code: -32601, Message: "method not found: " + method}
+// safe. Unknown methods get method-not-found.
+func (p *Provider) onRequest(req jsonrpc.ServerRequest) (any, *jsonrpc.RPCError) {
+	switch req.Method {
+	case methodCanUseTool:
+		return p.handleCanUseTool(req.Params)
+	case methodElicit:
+		return p.handleElicit(req.Params)
 	}
-	return p.handleCanUseTool(params)
+	return nil, &jsonrpc.RPCError{Code: -32601, Message: "method not found: " + req.Method}
 }
 
-// canUseToolParams is the agent.ts can_use_tool request payload.
-type canUseToolParams struct {
-	Tool      string         `json:"tool"`
-	Input     map[string]any `json:"input"`
-	ToolUseID string         `json:"tool_use_id"`
-}
-
-// canUseToolResult is the decision agent.ts maps onto an SDK PermissionResult.
-type canUseToolResult struct {
-	Allow        bool           `json:"allow"`
-	Message      string         `json:"message,omitempty"`
-	UpdatedInput map[string]any `json:"updatedInput,omitempty"`
-}
-
-// handleCanUseTool routes a tool-permission request to the active turn's
-// CanUseTool callback, surfacing an EventPermission so callers can observe what
-// is awaiting approval. With no callback (or no active turn) it allows the tool,
-// matching the bypass default for non-brokered runs.
-func (p *Provider) handleCanUseTool(params json.RawMessage) (any, *jsonrpc.RPCError) {
-	var in canUseToolParams
-	if err := json.Unmarshal(params, &in); err != nil {
-		return nil, &jsonrpc.RPCError{Code: -32602, Message: "invalid can_use_tool params: " + err.Error()}
-	}
-
+// activeTurn is the turn in flight, or nil between turns.
+func (p *Provider) activeTurn() *turnState {
 	p.activeMu.Lock()
-	ts := p.active
-	p.activeMu.Unlock()
-	if ts == nil {
-		return canUseToolResult{Allow: true, UpdatedInput: in.Input}, nil
-	}
-
-	p.sessMu.Lock()
-	sessionID := p.sessionID
-	p.sessMu.Unlock()
-
-	// The plan-mode terminal signal is answered here, never brokered: nothing is
-	// awaiting a human, so no EventPermission is surfaced either. The tool_use
-	// already streamed, so the turn still ends in a plan terminal outcome.
-	if decision, handled := ai.PlanTerminalPermission(ts.planMode, ai.PermissionRequest{
-		Tool: in.Tool, Input: in.Input, ToolUseID: in.ToolUseID, SessionID: sessionID,
-	}); handled {
-		return canUseToolResult{Allow: decision.Allow, Message: decision.Message}, nil
-	}
-
-	if ts.canUseTool == nil {
-		return canUseToolResult{Allow: true, UpdatedInput: in.Input}, nil
-	}
-
-	p.deliver(ts, ai.Event{
-		Kind:       ai.EventPermission,
-		Tool:       in.Tool,
-		Input:      in.Input,
-		ToolCallID: in.ToolUseID,
-		SessionID:  sessionID,
-		Model:      p.model,
-	})
-
-	decision, err := ts.canUseTool(ts.ctx, ai.PermissionRequest{
-		Tool:      in.Tool,
-		Input:     in.Input,
-		ToolUseID: in.ToolUseID,
-		SessionID: sessionID,
-	})
-	if err != nil {
-		return canUseToolResult{Allow: false, Message: err.Error()}, nil
-	}
-	return canUseToolResult{
-		Allow:        decision.Allow,
-		Message:      decision.Message,
-		UpdatedInput: decision.UpdatedInput,
-	}, nil
+	defer p.activeMu.Unlock()
+	return p.active
 }
 
-// deliver forwards ev to the active turn without blocking past the turn's life:
-// it returns once enqueued, the turn exits, or the provider closes.
-func (p *Provider) deliver(ts *turnState, ev ai.Event) {
-	select {
-	case ts.inbox <- ev:
-	case <-ts.quit:
-	case <-p.baseCtx.Done():
-	}
+func (p *Provider) currentSessionID() string {
+	p.sessMu.Lock()
+	defer p.sessMu.Unlock()
+	return p.sessionID
 }
 
 func (p *Provider) Steer(ctx context.Context, req api.Spec) error {
@@ -374,6 +342,31 @@ func (p *Provider) Interrupt(ctx context.Context) error {
 	if _, err := p.rpc.Call(ctx, methodInterrupt, nil); err != nil {
 		ts.interrupting.Store(false)
 		return fmt.Errorf("claude-agent interrupt failed: %w", err)
+	}
+	return nil
+}
+
+// SetPermissionMode switches the live SDK session's posture; the SDK applies it
+// to the in-flight turn as well as later ones. It refuses the same
+// bypass-while-brokered combination initialize refuses.
+func (p *Provider) SetPermissionMode(ctx context.Context, mode api.PermissionMode) error {
+	runtime := api.RuntimeOf(api.Anthropic, api.ModeAgent)
+	if mode == "" || !api.PermissionCapabilitiesFor(runtime).ModeSupport(mode).Honoured() {
+		return fmt.Errorf("permissions.mode %q is not supported by %s", mode, runtime)
+	}
+	if p.cfg.OnApproval != nil && mode == api.PermissionBypass {
+		return fmt.Errorf("claude-agent: bypassPermissions cannot bypass brokered tool approvals")
+	}
+	select {
+	case <-p.initDone:
+		if p.initErr != nil {
+			return fmt.Errorf("claude-agent: provider not started: %w", p.initErr)
+		}
+	default:
+		return fmt.Errorf("claude-agent: provider not started")
+	}
+	if _, err := p.rpc.Call(ctx, methodSetPermissionMode, map[string]string{"mode": string(mode)}); err != nil {
+		return fmt.Errorf("claude-agent set_permission_mode failed: %w", err)
 	}
 	return nil
 }
@@ -424,6 +417,40 @@ func (ts *turnState) addPrompt() bool {
 	}
 	ts.pending++
 	return true
+}
+
+// settled records one SDK result, and when keep is set folds its event into the
+// result held for the captain turn. A follow-up turn woken by a background
+// agent answers no prompt, so pending never drops below zero.
+func (ts *turnState) settled(ev ai.Event, keep bool) {
+	ts.promptMu.Lock()
+	defer ts.promptMu.Unlock()
+	if ts.ended {
+		return
+	}
+	if ts.pending > 0 {
+		ts.pending--
+	}
+	if keep {
+		merged := mergeResult(ts.result, ev)
+		ts.result = &merged
+	}
+}
+
+// idle ends the turn once every accepted prompt has settled, returning the
+// held result to deliver (nil when an interrupt dropped it). The caller closes
+// term after delivering it, so the result is queued before the turn drains.
+func (ts *turnState) idle() (*ai.Event, bool) {
+	ts.promptMu.Lock()
+	defer ts.promptMu.Unlock()
+	if ts.ended || ts.pending > 0 {
+		return nil, false
+	}
+	ts.ended = true
+	if ts.interrupting.Load() {
+		return nil, true
+	}
+	return ts.result, true
 }
 
 func (ts *turnState) completePrompt() {

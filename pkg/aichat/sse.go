@@ -23,6 +23,8 @@ type Part struct {
 	Dynamic    bool   `json:"dynamic,omitempty"`
 	ApprovalID string `json:"approvalId,omitempty"`
 
+	ToolMetadata *ToolMetadata `json:"toolMetadata,omitempty"`
+
 	Data            any              `json:"data,omitempty"`
 	ErrorText       string           `json:"errorText,omitempty"`
 	MessageMetadata *MessageMetadata `json:"messageMetadata,omitempty"`

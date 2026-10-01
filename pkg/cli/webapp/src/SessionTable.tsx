@@ -1,4 +1,5 @@
 import type { ComponentProps, KeyboardEvent, ReactNode } from "react";
+import { ContextMeter } from "@flanksource/clicky-ui/ai";
 import { Button } from "@flanksource/clicky-ui/components";
 import {
   CopyBadge,
@@ -288,27 +289,41 @@ export function ContextCell({
   session: SessionRecord;
   expanded?: boolean;
 }) {
-  const percent = session.context?.freePercent;
-  if (percent === undefined) {
+  const context = session.context;
+  if (!context) {
     return <MetricText value="--" />;
   }
   return (
-    <div className="min-w-0">
-      <div className="flex items-center justify-between gap-2 text-xs">
-        <span className={contextTone(percent)}>{percent}% free</span>
-        {expanded && session.context?.windowTokens ? (
-          <span className="text-muted-foreground">
-            {formatCompactNumber(session.context.windowTokens)}
-          </span>
-        ) : null}
-      </div>
-      <div className="mt-1 h-1.5 overflow-hidden rounded bg-muted">
-        <div
-          className={`h-full rounded ${contextBarTone(percent)}`}
-          style={{ width: `${Math.max(0, Math.min(100, percent))}%` }}
-        />
-      </div>
-    </div>
+    <ContextMeter
+      mode={expanded ? "bar" : "gauge"}
+      usedPercent={
+        context.windowTokens && context.usedTokens !== undefined
+          ? (context.usedTokens / context.windowTokens) * 100
+          : 100 - context.freePercent
+      }
+      usedTokens={context.usedTokens}
+      windowTokens={context.windowTokens}
+      messageCount={session.messages}
+      captainSessionId={session.key}
+      providerSessionId={session.id}
+      provider={session.provider}
+      executionMode={session.modelMode}
+      model={session.model}
+      effort={session.reasoningEffort}
+      tokens={
+        session.tokens
+          ? {
+              input: session.tokens.inputTokens,
+              output: session.tokens.outputTokens,
+              cacheRead: session.tokens.cacheReadTokens,
+              cacheWrite: session.tokens.cacheCreationTokens,
+              total: session.tokens.totalTokens,
+            }
+          : undefined
+      }
+      cost={session.costUsd ? { total: session.costUsd } : undefined}
+      className="max-w-full"
+    />
   );
 }
 
@@ -372,18 +387,6 @@ function handleSessionKeyDown(
 
 function formatPercent(value: number | undefined) {
   return value === undefined ? "--" : `${value.toFixed(1)}%`;
-}
-
-function contextTone(percent: number) {
-  if (percent <= 10) return "font-medium text-destructive";
-  if (percent <= 25) return "font-medium text-amber-700";
-  return "font-medium text-emerald-700";
-}
-
-function contextBarTone(percent: number) {
-  if (percent <= 10) return "bg-destructive";
-  if (percent <= 25) return "bg-amber-500";
-  return "bg-emerald-500";
 }
 
 function copySessionRef(session: SessionRecord) {

@@ -18,7 +18,7 @@ What stays with the caller: rendering the prompt and resolving its spec, resolvi
 <CodeExample client:load language="go" title="pkg/promptrun.Input" source={`
 type Input struct {
     Request           ai.Request        // rendered prompt + resolved spec; attachments must already be resolved
-    Config            ai.Config         // builds the provider when Provider is nil: model, credentials, sandbox, cache, CanUseTool
+    Config            ai.Config         // builds the provider when Provider is nil: model, credentials, sandbox, cache, OnApproval
     Provider          ai.Provider       // set to use as-is; taken to own the workspace (a remote sandbox, or a test double)
     Hooks             []any             // the caller's own agent hooks
     CallerOwnsCommits bool              // hands committing to Hooks; Run builds no commit hook of its own

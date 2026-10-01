@@ -25,7 +25,10 @@ type admission struct {
 
 func preflight(in Input) (admission, error) {
 	var out admission
-	if err := in.Request.ValidateRunnable(); err != nil {
+	if err := validateApprovalOptions(in, false); err != nil {
+		return out, err
+	}
+	if err := in.Resolved.Spec.ValidateRunnable(); err != nil {
 		return out, fmt.Errorf("promptrun: %w", err)
 	}
 	var err error
@@ -46,11 +49,11 @@ func preflight(in Input) (admission, error) {
 	}
 	out.model = executingModel(in)
 	if out.model.Provider != nil {
-		if err := api.RequireToolPolicySupport(out.model.Provider, out.model.Mode, in.Request.Permissions); err != nil {
+		if err := api.RequireToolPolicySupport(out.model.Provider, out.model.Mode, in.Resolved.Spec.Permissions); err != nil {
 			return out, err
 		}
 	}
-	needsModel := !in.Request.IsVerifyOnly() || declaresPrompts(in.Request.Workflow)
+	needsModel := !in.Resolved.Spec.IsVerifyOnly() || declaresPrompts(in.Resolved.Spec.Workflow)
 	if constructsProvider(in) {
 		candidates, err := ai.ResolveCandidates(out.model)
 		if err != nil {
@@ -59,10 +62,10 @@ func preflight(in Input) (admission, error) {
 		out.model = candidates[0]
 		out.model.Fallbacks = candidates[1:]
 	}
-	if err := verify.ValidateDeclarations(in.Request.Workflow, verify.DeclarationOptions{Provider: in.Verify.Provider, Model: out.model.Name}); err != nil {
+	if err := verify.ValidateDeclarations(in.Resolved.Spec.Workflow, verify.DeclarationOptions{Provider: in.Verify.Provider, Model: out.model.Name}); err != nil {
 		return out, err
 	}
-	spec := in.Request
+	spec := in.Resolved.Spec
 	if spec.Name == "" {
 		spec.Name = out.model.Name
 	}
@@ -83,7 +86,7 @@ func preflight(in Input) (admission, error) {
 		}
 	}
 	spec.Budget.Timeout = out.timeout.String()
-	return out, api.ValidateRuntimeConstraints(api.ResolvedSpec{Spec: spec, Constraints: in.Constraints}, out.model, estimatedInputTokens(in.Request))
+	return out, nil
 }
 
 func validateRuntime(in Input, spec api.Spec) ([]string, error) {
@@ -106,8 +109,12 @@ func validateRuntime(in Input, spec api.Spec) ([]string, error) {
 			}
 		}
 		caps := api.PermissionCapabilitiesFor(api.RuntimeOf(model.Provider, model.Mode))
-		if constructsProvider(in) && in.Config.CanUseTool == nil && requiresBroker(candidate, caps) {
-			warnings = append(warnings, fmt.Sprintf("caller-tool policy ask requires Config.CanUseTool for %s", api.RuntimeOf(model.Provider, model.Mode)))
+		binding, err := in.Config.Approvals()
+		if err != nil {
+			return warnings, err
+		}
+		if constructsProvider(in) && binding.Func == nil && in.Approvals == nil && requiresBroker(candidate, caps) {
+			warnings = append(warnings, fmt.Sprintf("caller-tool policy ask requires Config.OnApproval for %s", api.RuntimeOf(model.Provider, model.Mode)))
 		}
 	}
 	return warnings, nil
@@ -128,14 +135,4 @@ func requiresBroker(spec api.Spec, caps api.PermissionCapabilities) bool {
 		}
 	}
 	return false
-}
-
-func estimatedInputTokens(request api.Spec) int {
-	size := len(request.Prompt.System) + len(request.Prompt.AppendSystem) + len(request.Prompt.User)
-	for _, message := range request.Messages {
-		for _, part := range message.Parts {
-			size += len(part.Text)
-		}
-	}
-	return (size + 3) / 4
 }

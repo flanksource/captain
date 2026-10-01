@@ -124,7 +124,12 @@ func open(ctx context.Context, deps dependencies, optionFns ...Option) (*DB, err
 			return nil, fmt.Errorf("scope Captain database: %w", err)
 		}
 	}
-	gormDB, err := deps.open(scopedDSN, commonsdb.DefaultGormConfig())
+	// Name columns instead of SELECT *: hosts share this database and migrate it
+	// while other pools stay open, and an added column would otherwise change
+	// the result type of statements those pools already prepared.
+	config := commonsdb.DefaultGormConfig()
+	config.QueryFields = true
+	gormDB, err := deps.open(scopedDSN, config)
 	if err != nil {
 		return nil, fmt.Errorf("open Captain database: %w", err)
 	}

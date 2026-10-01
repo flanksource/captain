@@ -41,6 +41,8 @@ const (
 	methodPrompt     = "prompt"
 	methodInterrupt  = "interrupt"
 	methodShutdown   = "shutdown"
+	// methodSetPermissionMode switches the live query's posture (Query.setPermissionMode).
+	methodSetPermissionMode = "set_permission_mode"
 )
 
 // methodCanUseTool is the server→client request agent.ts sends to broker a
@@ -48,7 +50,7 @@ const (
 const methodCanUseTool = "can_use_tool"
 
 const (
-	defaultModel     = "claude-sonnet-5"
+	defaultModel     = "claude-sonnet-5-5"
 	errorOutputLimit = 16 * 1024
 	// initTimeout bounds the initialize handshake (after provisioning). The npm
 	// install / tsx cold start happen synchronously before this window.
@@ -62,6 +64,10 @@ const (
 	// exits, and only an error that truly wrote nothing pays the full bound.
 	processOutputDrain = 250 * time.Millisecond
 	processOutputPoll  = 5 * time.Millisecond
+	// shutdownExitGrace bounds how long Close waits for a bridge that
+	// acknowledged shutdown to exit (it flushes stdout, then exits ~50ms later)
+	// before the supervisor stops it.
+	shutdownExitGrace = 2 * time.Second
 )
 
 // safeEditAllowlist is the curated allowlist applied by --edit. It is kept local
@@ -323,11 +329,21 @@ func requestSchemaJSON(req ai.Request) (json.RawMessage, error) {
 
 // Close shuts the SDK session down (best-effort shutdown RPC), stops the
 // supervised process, and cancels the provider's base context.
+//
+// A bridge that acknowledges shutdown exits on its own; Stop is only the
+// fallback. Stopping a process the supervisor still sees running records its
+// task as cancelled, so a clean run would otherwise always end "failed".
 func (p *Provider) Close() error {
 	if p.rpc != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		_, _ = p.rpc.Call(ctx, methodShutdown, nil)
+		_, err := p.rpc.Call(ctx, methodShutdown, nil)
 		cancel()
+		if err == nil {
+			select {
+			case <-p.procExited:
+			case <-time.After(shutdownExitGrace):
+			}
+		}
 	}
 	if p.sup != nil {
 		p.sup.Stop()
@@ -416,11 +432,12 @@ func (p *Provider) onChildStarted(child *exec.Process, req ai.Request) {
 		p.setInitResult(err)
 		return
 	}
-	if _, err := rpc.Call(ctx, methodInitialize, params); err != nil {
+	reply, err := rpc.Call(ctx, methodInitialize, params)
+	if err != nil {
 		p.setInitResult(fmt.Errorf("claude-agent: initialize failed: %w", err))
 		return
 	}
-	p.setInitResult(nil)
+	p.setInitResult(checkBridgeProtocol(reply))
 }
 
 // initializeParams maps the first request + provider config onto the SDK
@@ -430,7 +447,7 @@ func (p *Provider) initializeParams(req ai.Request) (initializeParams, error) {
 	// round-trip, so the SDK must consult canUseTool instead of auto-approving:
 	// bypassPermissions / allowDangerouslySkipPermissions would skip it entirely.
 	// The broker callback is a runtime concern, carried on the provider's Config.
-	brokered := p.cfg.CanUseTool != nil
+	brokered := p.cfg.OnApproval != nil
 
 	// The posture and the isolation boundary are independent: the mode comes from
 	// permissions and applies whether or not a sandbox was requested.
@@ -451,8 +468,14 @@ func (p *Provider) initializeParams(req ai.Request) (initializeParams, error) {
 	}
 	// AllowList/DenyList, not the raw Allow/Deny slices: an `off` tool mode is a
 	// deny that only the normalized policy map reports, and forwarding the raw
-	// slice would let `tools: {Bash: off}` run.
-	allowed := req.Permissions.Tools.AllowList()
+	// slice would let `tools: {Bash: off}` run. The lists are built from the
+	// tools as claude names them, so a portable `shell: deny` reaches Bash.
+	permissions, ignored := req.Permissions.ForRuntime(api.Anthropic, api.ModeAgent)
+	for _, warning := range ignored {
+		log.Warnf("%s", warning)
+	}
+	tools := permissions.Tools
+	allowed := tools.AllowList()
 	if req.Permissions.HasPreset(api.PresetEdit) {
 		if len(allowed) == 0 {
 			allowed = safeEditAllowlist
@@ -460,7 +483,7 @@ func (p *Provider) initializeParams(req ai.Request) (initializeParams, error) {
 	}
 	// An absent permissions block is "the caller declared no policy", never "the
 	// caller granted everything" — so it resolves to the ask/deny default whether
-	// or not a broker is attached. CanUseTool is nil on every path but the chat
+	// or not a broker is attached. OnApproval is nil on every path but the chat
 	// server, so the unbrokered branch is the common one: defaulting it to bypass
 	// meant a prompt with no `permissions:` ran unconfined here while the same
 	// prompt on claude-cli got the default posture.
@@ -489,10 +512,11 @@ func (p *Provider) initializeParams(req ai.Request) (initializeParams, error) {
 	return initializeParams{
 		Cwd:                req.Cwd(),
 		Model:              bridgeModel(p.model),
+		Effort:             req.Effort,
 		SystemPrompt:       req.Prompt.System,
 		AppendSystemPrompt: req.Prompt.AppendSystem,
 		AllowedTools:       allowed,
-		DisallowedTools:    req.Permissions.Tools.DenyList(),
+		DisallowedTools:    tools.DenyList(),
 		AdditionalDirs:     req.Permissions.CleanDirectories(),
 		MaxTurns:           req.Budget.MaxTurns,
 		MaxBudgetUsd:       maxBudget,
@@ -503,6 +527,7 @@ func (p *Provider) initializeParams(req ai.Request) (initializeParams, error) {
 		OutputSchema:       p.sessionSchema,
 		MonitorURL:         monitorHooksURL(req),
 		MCPServers:         callerToolServers(p.callerTools),
+		StrictMCPConfig:    req.Permissions.MCP.Disabled,
 		CallerToolUseIDKey: callerToolUseIDKey(p.callerTools),
 	}, nil
 }

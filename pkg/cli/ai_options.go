@@ -135,11 +135,23 @@ type AIPromptOptions struct {
 	MultiModels  []string `flag:"multi-models" help:"Run prompt once per runtime selector in parallel, e.g. cli:sonnet-5,cmux:opus (repeatable; comma-separated allowed)" short:"M"`
 	Timeout      string   `flag:"timeout" help:"Request timeout (default 120s; a relocating sandbox waits for the remote agent instead)"`
 	NoStream     bool     `flag:"no-stream" help:"Disable streaming; print only the final text to stdout"`
+	Presets      []string
+	PresetsSet   bool
 
 	// RuntimeProfile is the catalog profile (id or name) `captain prompt
-	// run|render --runtime-profile` layers beneath the frontmatter. It is not a
-	// flag here: the deprecated `captain ai prompt` alias does not grow it.
+	// run|render --runtime-profile` used to layer beneath the frontmatter. It is
+	// retained only to warn and no-op.
 	RuntimeProfile string
+
+	// Vars is the --vars JSON object. Not a flag here for the same reason as
+	// RuntimeProfile.
+	Vars string
+
+	// PromptRef is the raw --prompt/-p value as typed, before an @reference was
+	// expanded into the file's contents. The expansion is what makes `-p @file`
+	// work, but it also erases the path — and the path is what says whether the
+	// caller pointed at an authored .prompt template or at a document.
+	PromptRef string
 }
 
 type AIPromptResult struct {

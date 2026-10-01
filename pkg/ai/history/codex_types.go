@@ -1,8 +1,12 @@
 package history
 
 import (
-	"github.com/segmentio/encoding/json"
+	"fmt"
 	"time"
+
+	"github.com/segmentio/encoding/json"
+
+	"github.com/flanksource/captain/pkg/api"
 )
 
 type CodexEvent struct {
@@ -127,6 +131,40 @@ type CodexPayload struct {
 	// older payloads also expose `reasoning_effort` inside collaboration_mode.
 	Model  string `json:"model,omitempty"`
 	Effort string `json:"effort,omitempty"`
+
+	// turn_context: the approval posture. approval_policy is a string, or an
+	// object keyed by the policy name ({"granular":{...}}).
+	ApprovalPolicy    json.RawMessage         `json:"approval_policy,omitempty"`
+	ApprovalsReviewer string                  `json:"approvals_reviewer,omitempty"`
+	CollaborationMode *CodexCollaborationMode `json:"collaboration_mode,omitempty"`
+}
+
+type CodexCollaborationMode struct {
+	Mode string `json:"mode,omitempty"`
+}
+
+// PermissionMode maps the turn_context posture onto captain's permission mode,
+// or "" when the record predates posture fields.
+func (p CodexPayload) PermissionMode() (api.PermissionMode, error) {
+	var approval string
+	if len(p.ApprovalPolicy) > 0 && p.ApprovalPolicy[0] == '{' {
+		var named map[string]json.RawMessage
+		if err := json.Unmarshal(p.ApprovalPolicy, &named); err != nil || len(named) != 1 {
+			return "", fmt.Errorf("codex approval_policy %s: want a string or a single named policy", p.ApprovalPolicy)
+		}
+		for name := range named {
+			approval = name
+		}
+	} else if len(p.ApprovalPolicy) > 0 {
+		if err := json.Unmarshal(p.ApprovalPolicy, &approval); err != nil {
+			return "", fmt.Errorf("codex approval_policy %s: %w", p.ApprovalPolicy, err)
+		}
+	}
+	var collaboration string
+	if p.CollaborationMode != nil {
+		collaboration = p.CollaborationMode.Mode
+	}
+	return api.CodexPermissionMode(approval, api.CodexApprovalsReviewer(p.ApprovalsReviewer), collaboration), nil
 }
 
 func (p *CodexPayload) UnmarshalJSON(data []byte) error {
@@ -173,8 +211,9 @@ type CodexReasoningSummary struct {
 }
 
 type CodexContent struct {
-	Type string `json:"type"`
-	Text string `json:"text,omitempty"`
+	Type     string `json:"type"`
+	Text     string `json:"text,omitempty"`
+	ImageURL string `json:"image_url,omitempty"`
 }
 
 type CodexTokenInfo struct {

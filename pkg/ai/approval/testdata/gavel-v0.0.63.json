@@ -1,0 +1,68 @@
+{
+  "source": "gavel v0.0.63: pr/ui/todo_session.go todoSessionApprovePayload, pr/ui/todo_approvals.go todoApprovalOf + resolveApproval",
+  "cases": [
+    {
+      "name": "approve a command",
+      "request": "command",
+      "listed": {"tool": "exec_command", "input": {"command": "git rebase --continue"}},
+      "body": {"action": "approve"},
+      "decision": {"Allow": true}
+    },
+    {
+      "name": "deny a command with a reason",
+      "request": "command",
+      "listed": {"tool": "exec_command", "input": {"command": "git rebase --continue"}},
+      "body": {"action": "deny", "message": "  not on main  "},
+      "decision": {"Message": "not on main"}
+    },
+    {
+      "name": "respond to a command with edited input",
+      "request": "command",
+      "listed": {"tool": "exec_command", "input": {"command": "git rebase --continue"}},
+      "body": {"action": "respond", "input": {"command": "git rebase --abort"}},
+      "decision": {"Allow": true, "UpdatedInput": {"command": "git rebase --abort"}}
+    },
+    {
+      "name": "answer a question",
+      "request": "question",
+      "listed": {"tool": "AskUserQuestion", "input": {"questions": [{"id": "scope", "question": "How far?"}]}},
+      "body": {"action": "respond", "input": {"answers": {"scope": "Phase 1"}}},
+      "decision": {"Allow": true, "UpdatedInput": {"answers": {"scope": "Phase 1"}}}
+    },
+    {
+      "name": "deny a question",
+      "request": "question",
+      "listed": {"tool": "AskUserQuestion", "input": {"questions": [{"id": "scope", "question": "How far?"}]}},
+      "body": {"action": "deny", "message": "skip it"},
+      "decision": {"Message": "skip it"}
+    },
+    {
+      "name": "fill an elicitation form",
+      "request": "elicitation",
+      "listed": {"tool": "Elicitation", "input": {"serverName": "linear", "message": "Pick a team"}},
+      "body": {"action": "respond", "input": {"team": "platform"}},
+      "decision": {"Allow": true, "UpdatedInput": {"team": "platform"}}
+    },
+    {
+      "name": "approve a plan",
+      "request": "plan",
+      "listed": {"tool": "ExitPlanMode", "input": {"plan": "1. Add the plan kind", "planFilePath": "/repo/.claude/plans/p.md"}},
+      "body": {"action": "approve"},
+      "decision": {"Allow": true}
+    },
+    {
+      "name": "send a plan back with feedback",
+      "request": "plan",
+      "listed": {"tool": "ExitPlanMode", "input": {"plan": "1. Add the plan kind", "planFilePath": "/repo/.claude/plans/p.md"}},
+      "body": {"action": "deny", "message": "Split phase 2"},
+      "decision": {"Message": "Split phase 2"}
+    },
+    {
+      "name": "decline an elicitation",
+      "request": "elicitation",
+      "listed": {"tool": "Elicitation", "input": {"serverName": "linear", "message": "Pick a team"}},
+      "body": {"action": "deny"},
+      "decision": {"Message": "tool call denied"}
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Agent Adapter Mapper"
+  short_description: "Map native agent options into schemas"
+  default_prompt: "Use $agents-mapper to map Captain native API, Agent, and CLI options into annotated JSON Schemas and generated Go DTOs."

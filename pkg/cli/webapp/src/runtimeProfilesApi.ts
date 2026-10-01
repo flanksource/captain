@@ -2,18 +2,22 @@ import type {
   ResolvedRuntimeProfile,
   ResolvedRuntimeSpec,
   RuntimePreset,
+  RuntimePresetResolveRequest,
   RuntimeProfile,
   RuntimeProfileResolveRequest,
   RuntimeProfilesClient,
 } from "@flanksource/clicky-ui/ai";
-import { fetchPermissionCatalog, type PromptSchemaDoc } from "./promptWorkbenchApi";
+import {
+  fetchPermissionCatalog,
+  type PromptSchemaDoc,
+} from "./promptWorkbenchApi";
 import { readError } from "./sandboxData";
 
 export type RuntimeRecordKind = "preset" | "profile";
 
 /** Where a preset or profile record lives, as reported by the catalog. */
 export type RuntimeRecordSource = {
-  kind: "db" | "file";
+  kind: "db" | "file" | "builtin";
   id: string;
   label: string;
   root?: string;
@@ -34,7 +38,7 @@ export type StoredRuntimeProfile = RuntimeProfile & StoredRecord;
 
 export type RuntimePresetWrite = Pick<
   RuntimePreset,
-  "name" | "description" | "scope" | "spec"
+  "name" | "description" | "scope" | "spec" | "presets"
 >;
 export type RuntimeProfileWrite = Pick<
   RuntimeProfile,
@@ -46,7 +50,10 @@ export function presetWrite(preset: RuntimePreset): RuntimePresetWrite {
     name: preset.name,
     scope: preset.scope,
     spec: preset.spec,
-    ...(preset.description !== undefined ? { description: preset.description } : {}),
+    presets: preset.presets ?? [],
+    ...(preset.description !== undefined
+      ? { description: preset.description }
+      : {}),
   };
 }
 
@@ -55,7 +62,9 @@ export function profileWrite(profile: RuntimeProfile): RuntimeProfileWrite {
     name: profile.name,
     spec: profile.spec,
     presets: profile.presets,
-    ...(profile.description !== undefined ? { description: profile.description } : {}),
+    ...(profile.description !== undefined
+      ? { description: profile.description }
+      : {}),
   };
 }
 
@@ -69,6 +78,7 @@ export type RuntimeProfileResolution = {
 export const RUNTIME_DB_TARGET = "db";
 export const RUNTIME_PRESETS_URL = "/api/v1/runtime-preset";
 export const RUNTIME_PROFILES_URL = "/api/v1/runtime-profile";
+export const RUNTIME_PRESET_RESOLVE_URL = "/api/chat/runtime-presets/resolve";
 export const RUNTIME_PROFILE_RESOLVE_URL = "/api/chat/runtime-profiles/resolve";
 
 const JSON_HEADERS = {
@@ -92,7 +102,10 @@ export function createRuntimePreset(
 
 /** Updates go to the collection URL with the id in the body; clicky routes no `PUT …/{id}`. */
 export function updateRuntimePreset(id: string, input: RuntimePresetWrite) {
-  return writeRecord<StoredRuntimePreset>(RUNTIME_PRESETS_URL, "PUT", { id, ...input });
+  return writeRecord<StoredRuntimePreset>(RUNTIME_PRESETS_URL, "PUT", {
+    id,
+    ...input,
+  });
 }
 
 export function deleteRuntimePreset(id: string) {
@@ -106,7 +119,10 @@ export function createRuntimeProfile(
 }
 
 export function updateRuntimeProfile(id: string, input: RuntimeProfileWrite) {
-  return writeRecord<StoredRuntimeProfile>(RUNTIME_PROFILES_URL, "PUT", { id, ...input });
+  return writeRecord<StoredRuntimeProfile>(RUNTIME_PROFILES_URL, "PUT", {
+    id,
+    ...input,
+  });
 }
 
 export function deleteRuntimeProfile(id: string) {
@@ -118,7 +134,9 @@ export async function fetchRuntimeProfileResolution(
   id: string,
 ): Promise<RuntimeProfileResolution> {
   const url = `${recordURL(RUNTIME_PROFILES_URL, id)}/resolve`;
-  const response = await fetch(url, { headers: { Accept: "application/json" } });
+  const response = await fetch(url, {
+    headers: { Accept: "application/json" },
+  });
   if (!response.ok) await readError(response, `GET ${url} failed`);
   const value: unknown = await response.json();
   if (!isResolution(value)) {
@@ -138,7 +156,10 @@ export async function resolveRuntimeProfile(
 ): Promise<ResolvedRuntimeProfile> {
   const body: RuntimeProfileResolveRequest = {
     profile: { id: request.profile.id, ...profileWrite(request.profile) },
-    presets: request.presets.map((preset) => ({ id: preset.id, ...presetWrite(preset) })),
+    presets: request.presets.map((preset) => ({
+      id: preset.id,
+      ...presetWrite(preset),
+    })),
   };
   const response = await fetch(RUNTIME_PROFILE_RESOLVE_URL, {
     method: "POST",
@@ -158,14 +179,47 @@ export async function resolveRuntimeProfile(
   return value;
 }
 
+/** Resolves an ordered direct preset selection against the chat tool catalog. */
+export async function resolveRuntimePresets(
+  request: RuntimePresetResolveRequest,
+  signal?: AbortSignal,
+): Promise<ResolvedRuntimeProfile> {
+  const body: RuntimePresetResolveRequest = {
+    selected: request.selected,
+    presets: request.presets.map((preset) => ({
+      id: preset.id,
+      ...presetWrite(preset),
+    })),
+  };
+  const response = await fetch(RUNTIME_PRESET_RESOLVE_URL, {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(body),
+    ...(signal ? { signal } : {}),
+  });
+  if (!response.ok) {
+    await readError(response, `POST ${RUNTIME_PRESET_RESOLVE_URL} failed`);
+  }
+  const value: unknown = await response.json();
+  if (!isResolvedProfile(value)) {
+    throw new Error(
+      `${RUNTIME_PRESET_RESOLVE_URL} must return resolved, tools and permissions`,
+    );
+  }
+  return value;
+}
+
 export const runtimeProfilesClient: RuntimeProfilesClient = {
+  resolvePresets: resolveRuntimePresets,
   resolve: resolveRuntimeProfile,
   loadPermissionCatalog: fetchPermissionCatalog,
 };
 
 /** The catalog sources served in the prompt schema document; a server without them predates runtime profiles. */
 export function runtimeSourcesOf(doc: PromptSchemaDoc): RuntimeRecordSource[] {
-  const sources: unknown = (doc as PromptSchemaDoc & { runtimeSources?: unknown }).runtimeSources;
+  const sources: unknown = (
+    doc as PromptSchemaDoc & { runtimeSources?: unknown }
+  ).runtimeSources;
   if (!Array.isArray(sources) || !sources.every(isSource)) {
     throw new Error(
       "Prompt schema document has no runtimeSources list; this server does not serve runtime profiles.",
@@ -179,7 +233,9 @@ function recordURL(base: string, id: string) {
 }
 
 async function fetchRecords<T extends StoredRecord>(url: string): Promise<T[]> {
-  const response = await fetch(url, { headers: { Accept: "application/json" } });
+  const response = await fetch(url, {
+    headers: { Accept: "application/json" },
+  });
   if (!response.ok) await readError(response, `GET ${url} failed`);
   const value: unknown = await response.json();
   if (!Array.isArray(value)) {
@@ -220,7 +276,10 @@ async function deleteRecord(url: string): Promise<void> {
   if (!response.ok) await readError(response, `DELETE ${url} failed`);
 }
 
-function assertRecord(value: unknown, where: string): asserts value is StoredRecord {
+function assertRecord(
+  value: unknown,
+  where: string,
+): asserts value is StoredRecord {
   const record = asObject(value);
   if (
     !record ||
@@ -239,27 +298,32 @@ function isSource(value: unknown): value is RuntimeRecordSource {
   const source = asObject(value);
   return Boolean(
     source &&
-      (source.kind === "db" || source.kind === "file") &&
-      typeof source.id === "string" &&
-      typeof source.label === "string" &&
-      typeof source.writable === "boolean" &&
-      Array.isArray(source.records) &&
-      source.records.every((kind) => kind === "preset" || kind === "profile"),
+    (source.kind === "db" || source.kind === "file" || source.kind === "builtin") &&
+    typeof source.id === "string" &&
+    typeof source.label === "string" &&
+    typeof source.writable === "boolean" &&
+    Array.isArray(source.records) &&
+    source.records.every((kind) => kind === "preset" || kind === "profile"),
   );
 }
 
 /** The writable sources a new record of `kind` can be created in. */
-export function createTargetsFor(sources: RuntimeRecordSource[], kind: RuntimeRecordKind) {
-  return sources.filter((source) => source.writable && source.records.includes(kind));
+export function createTargetsFor(
+  sources: RuntimeRecordSource[],
+  kind: RuntimeRecordKind,
+) {
+  return sources.filter(
+    (source) => source.writable && source.records.includes(kind),
+  );
 }
 
 function isResolution(value: unknown): value is RuntimeProfileResolution {
   const result = asObject(value);
   return Boolean(
     result &&
-      asObject(result.profile) &&
-      Array.isArray(result.presets) &&
-      isResolvedSpec(result.resolved),
+    asObject(result.profile) &&
+    Array.isArray(result.presets) &&
+    isResolvedSpec(result.resolved),
   );
 }
 
@@ -267,9 +331,9 @@ function isResolvedProfile(value: unknown): value is ResolvedRuntimeProfile {
   const result = asObject(value);
   return Boolean(
     result &&
-      isResolvedSpec(result.resolved) &&
-      Array.isArray(result.tools) &&
-      asObject(result.permissions),
+    isResolvedSpec(result.resolved) &&
+    Array.isArray(result.tools) &&
+    asObject(result.permissions),
   );
 }
 

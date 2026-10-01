@@ -57,13 +57,14 @@ func (p *Provider) resolveCalls(
 		emit(ctx, out, ai.Event{Kind: ai.EventToolUse, Tool: call.Name, Input: args, ToolCallID: call.ID, Model: p.model})
 		if definition.NeedsApproval() {
 			emit(ctx, out, ai.Event{Kind: ai.EventPermission, Tool: call.Name, Input: args, ToolCallID: call.ID, Model: p.model})
-			if p.cfg.CanUseTool == nil {
+			if p.cfg.OnApproval == nil {
 				pending = true
 				resolved = append(resolved, resolvedCall{})
 				continue
 			}
-			decision, decisionErr := p.cfg.CanUseTool(ctx, api.PermissionRequest{
+			decision, decisionErr := p.cfg.OnApproval(ctx, api.ApprovalRequest{
 				Tool: call.Name, Input: args, ToolUseID: call.ID, SessionID: p.cfg.SessionID,
+				Kind: api.ApprovalKindTool, LegacyContract: true,
 			})
 			if decisionErr != nil || !decision.Allow {
 				reason := "tool call denied"

@@ -6,6 +6,7 @@ import (
 
 	rpchttp "github.com/flanksource/clicky/rpc/http"
 	"github.com/flanksource/commons/logger"
+	"github.com/google/uuid"
 
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/session"
@@ -14,6 +15,7 @@ import (
 
 type Store interface {
 	ListPromptRuns(context.Context, database.PromptRunFilter) ([]database.PromptRun, error)
+	ListPromptRunIterations(context.Context, uuid.UUID) ([]database.PromptRunIteration, error)
 	RequestStore
 	OverviewProjectionStore
 }
@@ -58,8 +60,26 @@ func ComposeSession(
 	if err != nil {
 		return load.Result{}, nil, fmt.Errorf("list prompt runs for Captain session %s: %w", overview.ID, err)
 	}
+	if len(runs) == 0 {
+		runs, err = db.ListPromptRuns(ctx, database.PromptRunFilter{ExecutionSessionID: &overview.ID})
+		if err != nil {
+			return load.Result{}, nil, fmt.Errorf("list prompt runs executed by Captain session %s: %w", overview.ID, err)
+		}
+	}
 	if len(runs) > 0 {
 		facts := PromptRunFacts(runs[0])
+		iterations, listErr := db.ListPromptRunIterations(ctx, runs[0].ID)
+		if listErr != nil {
+			return load.Result{}, nil, fmt.Errorf("list verifications for Captain prompt run %s: %w", runs[0].ID, listErr)
+		}
+		for _, iteration := range iterations {
+			if iteration.VerificationResult != nil {
+				if err := iteration.VerificationResult.Validate(); err != nil {
+					return load.Result{}, nil, fmt.Errorf("invalid verification for Captain prompt run %s iteration %d: %w", runs[0].ID, iteration.Iteration, err)
+				}
+				facts.Verifications = append(facts.Verifications, session.Verification{Iteration: iteration.Iteration, Report: *iteration.VerificationResult})
+			}
+		}
 		facts.SuppressMessages = opts.SuppressPromptRunMessages
 		contributors = append(contributors, load.PromptRun(facts))
 	}

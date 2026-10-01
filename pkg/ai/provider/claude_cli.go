@@ -123,10 +123,15 @@ func buildClaudeCLIArgsWithMCP(model string, req ai.Request, mcpConfigs []string
 	if mode := cliClaudePermissionMode(permissionMode(req)); mode != "" {
 		args = append(args, "--permission-mode", mode)
 	}
-	if allow := req.Permissions.Tools.AllowList(); len(allow) > 0 {
+	permissions, ignored := req.Permissions.ForRuntime(api.Anthropic, api.ModeCLI)
+	for _, warning := range ignored {
+		log.Warnf("%s", warning)
+	}
+	tools := permissions.Tools
+	if allow := tools.AllowList(); len(allow) > 0 {
 		args = append(args, "--allowedTools", strings.Join(allow, ","))
 	}
-	if deny := req.Permissions.Tools.DenyList(); len(deny) > 0 {
+	if deny := tools.DenyList(); len(deny) > 0 {
 		args = append(args, "--disallowedTools", strings.Join(deny, ","))
 	}
 	if dirs := req.Permissions.CleanDirectories(); len(dirs) > 0 {

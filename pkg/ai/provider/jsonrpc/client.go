@@ -115,7 +115,7 @@ func (c *Client) handleServerRequest(f Frame) {
 		_ = c.write(Frame{ID: f.ID, Error: &RPCError{Code: -32601, Message: "method not found: " + f.Method}})
 		return
 	}
-	result, rpcErr := c.h.OnRequest(f.Method, f.Params)
+	result, rpcErr := c.h.OnRequest(ServerRequest{ID: f.ID, Method: f.Method, Params: f.Params})
 	reply := Frame{ID: f.ID}
 	if rpcErr != nil {
 		reply.Error = rpcErr

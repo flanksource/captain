@@ -10,6 +10,7 @@ import (
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/database"
+	"github.com/flanksource/captain/pkg/promptrun"
 	clickyrpc "github.com/flanksource/clicky/rpc"
 	"github.com/flanksource/clicky/task"
 	flanksourceContext "github.com/flanksource/commons/context"
@@ -62,7 +63,11 @@ func runPromptAction(ctx context.Context, id string, flags map[string]string) (P
 		if opts, err = actionFlagsToOptions(flags); err != nil {
 			return PromptRunResult{}, err
 		}
-		if rendered, err = renderPromptCLI(ctx, id, opts, flags["vars"], readStdinIfCLI(ctx)); err != nil {
+		stdin, err := readStdinIfCLI(ctx)
+		if err != nil {
+			return PromptRunResult{}, err
+		}
+		if rendered, err = renderPromptCLI(ctx, id, opts, opts.Vars, stdin); err != nil {
 			return PromptRunResult{}, err
 		}
 	}
@@ -163,20 +168,11 @@ func executeSyncRunSingleDirect(ctx context.Context, t *task.Task, rendered Prom
 	if workflowConfigured(rendered.Input.Workflow) {
 		return executeSyncWorkflowRun(t, rendered, opts.NoStream, binding)
 	}
-	timeout, err := renderedTimeout(rendered)
-	if err != nil {
-		return PromptRunResult{}, err
+	r, err := executeDirectPrompt(ctx, rendered, opts)
+	recording := promptRecordingInput{Rendered: rendered, Binding: binding}
+	if recordErr := recordCompletedRun(ctx, recording, directRun(rendered, r, err)); err != nil || recordErr != nil {
+		return PromptRunResult{}, errors.Join(err, recordErr)
 	}
-	out, err := executePromptRequestFunc(ctx, rendered.Input, rendered.Config, timeout, opts.NoStream)
-	if err != nil {
-		return PromptRunResult{}, err
-	}
-	r, _ := out.(AIPromptResult)
-	persistPromptRun(context.WithoutCancel(ctx), promptRunRecordInput{
-		Rendered: rendered, SessionID: r.SessionID, Model: r.Model,
-		Provider: providerOf(api.Runtime{Provider: r.Provider, Mode: api.RuntimeMode(r.Mode)}), Mode: api.RuntimeMode(r.Mode),
-		Binding: binding, ResultText: r.Text, ResultJSON: r.StructuredOutput,
-	})
 	return PromptRunResult{
 		Status:           "completed",
 		Model:            r.Model,
@@ -192,6 +188,41 @@ func executeSyncRunSingleDirect(ctx context.Context, t *task.Task, rendered Prom
 		CostUSD:          r.CostUSD,
 		Duration:         r.Duration,
 	}, nil
+}
+
+// executeDirectPrompt is one direct provider call: no runner, no hooks.
+func executeDirectPrompt(ctx context.Context, rendered PromptRenderResult, opts AIPromptOptions) (AIPromptResult, error) {
+	timeout, err := renderedTimeout(rendered)
+	if err != nil {
+		return AIPromptResult{}, err
+	}
+	out, err := executePromptRequestFunc(ctx, rendered.Input, rendered.Config, timeout, opts.NoStream)
+	if err != nil {
+		return AIPromptResult{}, err
+	}
+	result, ok := out.(AIPromptResult)
+	if !ok {
+		return AIPromptResult{}, fmt.Errorf("direct prompt execution returned %T, not AIPromptResult", out)
+	}
+	return result, nil
+}
+
+// directRun is a direct provider call as promptrun files it: answered, or
+// failed with the error that ended it.
+func directRun(rendered PromptRenderResult, r AIPromptResult, err error) promptrun.Completed {
+	done := promptrun.Completed{
+		Resolved: promptResolution(rendered, rendered.Input),
+		Runtime:  api.Runtime{Provider: r.Provider, Mode: api.RuntimeMode(r.Mode)},
+		Model:    r.Model, ProviderSessionID: r.SessionID,
+		Outcome: promptrun.Outcome{
+			State: database.PromptRunStateSucceeded, Phase: database.PromptRunPhaseFinished,
+			Text: r.Text, JSON: r.StructuredOutput,
+		},
+	}
+	if err != nil {
+		done.Outcome = promptrun.Outcome{State: database.PromptRunStateFailed, Error: err.Error()}
+	}
+	return done
 }
 
 // executeSyncWorkflowRun executes a workflow-bearing CLI run through the same
@@ -324,10 +355,6 @@ func executeSyncBatch(ctx context.Context, rendered PromptRenderResult, opts AIP
 				item.Status = "failed"
 				item.HistoryFile = historyFileForRun(model.Provider, model.Mode, item.SessionID, item.Dir)
 				item.Error = err.Error()
-				persistPromptRun(context.WithoutCancel(taskCtx), promptRunRecordInput{
-					Rendered: variant, RunID: binding.SessionID.String(), Binding: binding,
-					Model: model.Name, Provider: model.Provider, Mode: model.Mode, Error: err.Error(),
-				})
 				return item, err
 			}
 			item.Status = result.Status

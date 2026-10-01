@@ -4,7 +4,7 @@ import "strings"
 
 func runtimeFieldArrayDisplay(path string) string {
 	switch path {
-	case "prompt.attachments", "cliArgs.addDir", "cliArgs.image", "sandbox.dispatch.paths",
+	case "prompt.attachments", "permissions.directories", "cliArgs.addDir", "cliArgs.image", "sandbox.dispatch.paths",
 		"sandbox.policy.filesystem.writableRoots", "sandbox.policy.filesystem.readableRoots",
 		"sandbox.policy.filesystem.deniedReadRoots", "sandbox.policy.filesystem.deniedWriteRoots",
 		"sandbox.policy.network.allowedDomains", "sandbox.policy.network.deniedDomains",

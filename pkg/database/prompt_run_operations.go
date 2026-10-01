@@ -71,12 +71,15 @@ func (db *DB) CreatePromptRun(ctx context.Context, input CreatePromptRunInput) (
 		ID: input.ID, SessionID: input.SessionID, TurnID: input.TurnID, RootSessionID: rootID, ExecutionSessionID: input.ExecutionSessionID, BatchID: input.BatchID,
 		ParentRunID: input.ParentRunID, InputPlanID: input.InputPlanID, InputPlanRevisionID: input.InputPlanRevisionID,
 		Origin: nullableTrimmed(input.Origin), SpecProfile: nullableTrimmed(input.SpecProfile),
-		AdmissionKey: nullableTrimmed(input.AdmissionKey), RenderedSpec: input.RenderedSpec, Runtime: input.Runtime,
+		AdmissionKey: nullableTrimmed(input.AdmissionKey), RenderedSpec: input.RenderedSpec, Metadata: input.Metadata, Runtime: input.Runtime,
 		PromptMarkdown: nullableTrimmed(input.PromptMarkdown), VerificationMarkdown: nullableTrimmed(input.VerificationMarkdown),
 		Phase: PromptRunPhaseQueued, State: PromptRunStatePending, QueuedAt: now,
 	}
 	if record.RenderedSpec == nil {
 		record.RenderedSpec = map[string]any{}
+	}
+	if record.Metadata == nil {
+		record.Metadata = map[string]any{}
 	}
 	result := db.gorm.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&record)
 	if result.Error != nil {
@@ -151,6 +154,12 @@ func (db *DB) ListPromptRuns(ctx context.Context, filter PromptRunFilter) ([]Pro
 			return nil, fmt.Errorf("%w: session ID filter cannot be empty", ErrInvalidPromptRun)
 		}
 		query = query.Where("session_id = ?", *filter.SessionID)
+	}
+	if filter.ExecutionSessionID != nil {
+		if *filter.ExecutionSessionID == uuid.Nil {
+			return nil, fmt.Errorf("%w: execution session ID filter cannot be empty", ErrInvalidPromptRun)
+		}
+		query = query.Where("execution_session_id = ?", *filter.ExecutionSessionID)
 	}
 	if filter.State != nil {
 		if !validPromptRunState(*filter.State) {
@@ -236,6 +245,18 @@ func (db *DB) UpdatePromptRun(ctx context.Context, input UpdatePromptRunInput) (
 		distinctPredicates = append(distinctPredicates, "rendered_spec IS DISTINCT FROM CAST(? AS jsonb)")
 		distinctArgs = append(distinctArgs, string(encoded))
 	}
+	if input.Metadata != nil {
+		if *input.Metadata == nil {
+			return nil, fmt.Errorf("%w: metadata cannot be null", ErrInvalidPromptRun)
+		}
+		encoded, err := json.Marshal(*input.Metadata)
+		if err != nil {
+			return nil, fmt.Errorf("%w: encode metadata: %v", ErrInvalidPromptRun, err)
+		}
+		updates["metadata"] = gorm.Expr("metadata || CAST(? AS jsonb)", string(encoded))
+		distinctPredicates = append(distinctPredicates, "metadata IS DISTINCT FROM metadata || CAST(? AS jsonb)")
+		distinctArgs = append(distinctArgs, string(encoded))
+	}
 	if input.Runtime != nil {
 		encoded, err := json.Marshal(*input.Runtime)
 		if err != nil {
@@ -263,6 +284,15 @@ func (db *DB) UpdatePromptRun(ctx context.Context, input UpdatePromptRunInput) (
 			distinctPredicates = append(distinctPredicates, "result_json IS DISTINCT FROM CAST(? AS jsonb)")
 			distinctArgs = append(distinctArgs, string(encoded))
 		}
+	}
+	if input.Workspace != nil {
+		encoded, err := json.Marshal(input.Workspace)
+		if err != nil {
+			return nil, fmt.Errorf("%w: encode workspace: %v", ErrInvalidPromptRun, err)
+		}
+		updates["workspace"] = input.Workspace
+		distinctPredicates = append(distinctPredicates, "workspace IS DISTINCT FROM CAST(? AS jsonb)")
+		distinctArgs = append(distinctArgs, string(encoded))
 	}
 	if input.ApprovalState != nil {
 		state := *input.ApprovalState
@@ -351,10 +381,10 @@ func promptRunFromRecord(record promptRunRecord) PromptRun {
 		ID: record.ID, SessionID: record.SessionID, TurnID: record.TurnID, RootSessionID: record.RootSessionID, ExecutionSessionID: record.ExecutionSessionID, BatchID: record.BatchID,
 		ParentRunID: record.ParentRunID, InputPlanID: record.InputPlanID, InputPlanRevisionID: record.InputPlanRevisionID,
 		Origin: optionalString(record.Origin), SpecProfile: optionalString(record.SpecProfile), AdmissionKey: optionalString(record.AdmissionKey),
-		RenderedSpec: record.RenderedSpec, Runtime: record.Runtime, PromptMarkdown: optionalString(record.PromptMarkdown),
+		RenderedSpec: record.RenderedSpec, Metadata: record.Metadata, Runtime: record.Runtime, PromptMarkdown: optionalString(record.PromptMarkdown),
 		VerificationMarkdown: optionalString(record.VerificationMarkdown), Phase: record.Phase, State: record.State,
 		CurrentIteration: record.CurrentIteration, ResultText: optionalString(record.ResultText), ResultJSON: record.ResultJSON,
-		ApprovalState: record.ApprovalState, ProviderCheckpoint: checkpoint,
+		Workspace: record.Workspace, ApprovalState: record.ApprovalState, ProviderCheckpoint: checkpoint,
 		Error: optionalString(record.Error), Version: record.Version, QueuedAt: record.QueuedAt, StartedAt: record.StartedAt,
 		FinishedAt: record.FinishedAt, CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt,
 	}

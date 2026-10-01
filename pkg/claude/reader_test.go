@@ -457,9 +457,13 @@ func TestReadHistory_SessionFileEvents(t *testing.T) {
 	}
 
 	// Entries: user message + 4 surfaced events (title, turn_duration,
-	// stop_hook_summary, away_summary). Storage types are silently dropped.
-	if len(entries) != 5 {
-		t.Fatalf("expected 5 entries (user + 4 events), got %d:\n%+v", len(entries), entries)
+	// stop_hook_summary, away_summary) + the permission-mode checkpoint, which
+	// carries the session's posture. Other storage types are silently dropped.
+	if len(entries) != 6 {
+		t.Fatalf("expected 6 entries (user + 4 events + permission mode), got %d:\n%+v", len(entries), entries)
+	}
+	if event := entries[5].Event; event == nil || event.Type != PermissionModeEvent || event.Data["permissionMode"] != "plan" {
+		t.Errorf("entry[5] expected permission-mode event for plan, got %+v", event)
 	}
 
 	wantNames := []string{"", "SessionTitle", "TurnDuration", "StopHookSummary", "AwaySummary"}

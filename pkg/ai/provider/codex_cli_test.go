@@ -93,6 +93,9 @@ func TestBuildCodexCLIArgsEmitsApprovalPolicy(t *testing.T) {
 		mode         api.PermissionMode
 		wantSandbox  string
 		wantApproval string
+		// wantReviewer is the approvals_reviewer override; empty asserts none is
+		// emitted, so the user's own Codex configuration stays in force.
+		wantReviewer string
 	}{
 		{
 			name:         "default is read-only and still asks",
@@ -100,6 +103,15 @@ func TestBuildCodexCLIArgsEmitsApprovalPolicy(t *testing.T) {
 			mode:         api.PermissionDefault,
 			wantSandbox:  "read-only",
 			wantApproval: `approval_policy="on-request"`,
+			wantReviewer: `approvals_reviewer="user"`,
+		},
+		{
+			name:         "auto hands approvals to the auto-review subagent",
+			sandbox:      api.SandboxRef{Mode: api.SandboxNative},
+			mode:         api.PermissionAuto,
+			wantSandbox:  "read-only",
+			wantApproval: `approval_policy="on-request"`,
+			wantReviewer: `approvals_reviewer="auto_review"`,
 		},
 		{
 			name: "edit widens the sandbox but keeps asking",
@@ -112,6 +124,7 @@ func TestBuildCodexCLIArgsEmitsApprovalPolicy(t *testing.T) {
 			mode:         api.PermissionAcceptEdits,
 			wantSandbox:  "workspace-write",
 			wantApproval: `approval_policy="on-request"`,
+			wantReviewer: `approvals_reviewer="user"`,
 		},
 		{
 			name:         "bypass grants full access and stops asking",
@@ -119,6 +132,7 @@ func TestBuildCodexCLIArgsEmitsApprovalPolicy(t *testing.T) {
 			mode:         api.PermissionBypass,
 			wantSandbox:  "danger-full-access",
 			wantApproval: `approval_policy="never"`,
+			wantReviewer: `approvals_reviewer="user"`,
 		},
 		{
 			// Turning isolation off no longer implies never-ask: the posture is
@@ -146,9 +160,15 @@ func TestBuildCodexCLIArgsEmitsApprovalPolicy(t *testing.T) {
 			defer cleanup()
 			requireFlagValue(t, args, "--sandbox", tt.wantSandbox)
 			requireFlagPair(t, args, "-c", tt.wantApproval)
+			if tt.wantReviewer != "" {
+				requireFlagPair(t, args, "-c", tt.wantReviewer)
+			}
 			for _, arg := range args {
 				if arg == "--ask-for-approval" {
 					t.Fatalf("emitted --ask-for-approval, which codex exec does not accept: %v", args)
+				}
+				if tt.wantReviewer == "" && strings.HasPrefix(arg, "approvals_reviewer=") {
+					t.Fatalf("emitted %s for an unstated posture: %v", arg, args)
 				}
 			}
 		})

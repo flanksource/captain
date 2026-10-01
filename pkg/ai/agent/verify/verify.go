@@ -111,7 +111,10 @@ func (p *Plugin) watchProgress(hc *agent.HookContext) *progressEmitter {
 	sinks := append([]func(api.VerifyReport){p.notifyProgress(hc)}, p.progress...)
 	emitter := newProgressEmitter(ProgressInterval, sinks...)
 	if pv, ok := p.v.(ProgressVerifier); ok {
-		pv.SetProgress(emitter.publish)
+		pv.SetProgress(func(report api.VerifyReport) {
+			report.Iteration = hc.Iteration + 1
+			emitter.publish(report)
+		})
 	}
 	return emitter
 }

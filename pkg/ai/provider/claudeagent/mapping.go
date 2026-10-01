@@ -2,6 +2,7 @@ package claudeagent
 
 import (
 	"encoding/json"
+	"maps"
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/claude"
@@ -16,7 +17,57 @@ const (
 	notifyToolResult   = "message/tool_result"
 	notifyTurnDone     = "turn/completed"
 	notifyTurnError    = "turn/error"
+	// notifySessionState relays the CLI's session_state_changed. "idle" is the
+	// authoritative end of a turn: it follows the last result, after background
+	// agents settled and the follow-up turns they woke finished.
+	notifySessionState = "session/state"
 )
+
+const sessionIdle = "idle"
+
+func sessionState(params json.RawMessage) string {
+	var p struct {
+		State string `json:"state"`
+	}
+	_ = json.Unmarshal(params, &p)
+	return p.State
+}
+
+// mergeResult folds a later settled turn's result into the one held for the
+// captain turn. Usage is per settled turn and sums; cost_usd is the query's
+// running total, so the latest wins.
+func mergeResult(held *ai.Event, next ai.Event) ai.Event {
+	if held == nil {
+		return next
+	}
+	merged := next
+	if held.Usage != nil || next.Usage != nil {
+		var total ai.Usage
+		if held.Usage != nil {
+			total = *held.Usage
+		}
+		if next.Usage != nil {
+			total = total.Add(*next.Usage)
+		}
+		merged.Usage = &total
+	}
+	if len(merged.StructuredData) == 0 {
+		merged.StructuredData = held.StructuredData
+	}
+	if merged.SessionID == "" {
+		merged.SessionID = held.SessionID
+	}
+	if turns, _ := held.Input["num_turns"].(int); turns > 0 {
+		later, _ := next.Input["num_turns"].(int)
+		merged.Input = maps.Clone(next.Input)
+		if merged.Input == nil {
+			merged.Input = map[string]any{}
+		}
+		merged.Input["num_turns"] = turns + later
+	}
+	merged.Raw = resultToolUse(merged, merged.SessionID)
+	return merged
+}
 
 // claudeSource tags the synthetic claude.ToolUse rows stashed on Event.Raw so
 // the shared pkg/cli renderer treats live claude-agent events exactly like
@@ -73,36 +124,44 @@ func mapNotification(method string, params json.RawMessage, model string) (ai.Ev
 
 	case notifyToolUse:
 		var p struct {
-			Tool  string         `json:"tool"`
-			Input map[string]any `json:"input"`
-			ID    string         `json:"id"`
+			Tool     string         `json:"tool"`
+			Input    map[string]any `json:"input"`
+			ID       string         `json:"id"`
+			ParentID string         `json:"parent_tool_use_id"`
 		}
 		_ = json.Unmarshal(params, &p)
 		ev := ai.Event{
-			Kind:       ai.EventToolUse,
-			Tool:       p.Tool,
-			Input:      p.Input,
-			ToolCallID: p.ID,
-			Model:      model,
+			Kind:             ai.EventToolUse,
+			Tool:             p.Tool,
+			Input:            p.Input,
+			ToolCallID:       p.ID,
+			ParentToolCallID: p.ParentID,
+			Model:            model,
 		}
-		ev.Raw = toolUse(p.Tool, p.Input, p.ID, model)
+		tu := toolUse(p.Tool, p.Input, p.ID, model)
+		tu.IsSidechain = p.ParentID != ""
+		ev.Raw = tu
 		return ev, true
 
 	case notifyToolResult:
 		var p struct {
-			ID      string `json:"id"`
-			Content string `json:"content"`
-			IsError bool   `json:"is_error"`
+			ID       string `json:"id"`
+			Content  string `json:"content"`
+			IsError  bool   `json:"is_error"`
+			ParentID string `json:"parent_tool_use_id"`
 		}
 		_ = json.Unmarshal(params, &p)
 		ev := ai.Event{
-			Kind:       ai.EventToolResult,
-			Text:       p.Content,
-			ToolCallID: p.ID,
-			Success:    !p.IsError,
-			Model:      model,
+			Kind:             ai.EventToolResult,
+			Text:             p.Content,
+			ToolCallID:       p.ID,
+			ParentToolCallID: p.ParentID,
+			Success:          !p.IsError,
+			Model:            model,
 		}
-		ev.Raw = toolResultUse(p.ID, p.Content, p.IsError, model)
+		tu := toolResultUse(p.ID, p.Content, p.IsError, model)
+		tu.IsSidechain = p.ParentID != ""
+		ev.Raw = tu
 		return ev, true
 
 	case notifyTurnDone:

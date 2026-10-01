@@ -56,7 +56,7 @@ import (
 // Explicit records changed flags whose zero values must override saved values.
 type ModelFlags struct {
 	Explicit    registry.FieldPresence `flag:"-" json:"-" yaml:"-"`
-	Model       string                 `flag:"model" help:"Model name(s), e.g. claude-sonnet-5, a compact selector like agent:opus:high, or a comma-separated primary,fallback list (defaults to the value saved by 'captain configure')"`
+	Model       string                 `flag:"model" help:"Model name(s), e.g. claude-sonnet-5-5, a compact selector like agent:opus:high, or a comma-separated primary,fallback list (defaults to the value saved by 'captain configure')"`
 	Fallback    []string               `flag:"fallback" help:"Model to try if the primary is unavailable (repeatable; comma-separated allowed)"`
 	Mode        string                 `flag:"mode" help:"Runtime mechanism: api|cli|agent|cmux (sdk aliases agent). The provider comes from the model name; a mode prefix on --model wins, and contradicting it fails loud"`
 	Effort      string                 `flag:"effort" help:"Reasoning effort: low|medium|high|xhigh|max|ultra (model-dependent)"`

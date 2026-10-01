@@ -6,12 +6,14 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/x/ansi"
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/session"
 	"github.com/flanksource/clicky"
+	"github.com/segmentio/encoding/json"
 	"golang.org/x/term"
 )
 
@@ -25,14 +27,28 @@ type EventRenderer struct {
 	width       int
 	accumulator *promptEventAccumulator
 	pending     *session.Message
-	rendered    map[string]bool
-	err         error
-	iteration   int
-	hasIter     bool
+	// rendered maps a tool message id to the last part state written for it, so
+	// the call row and its later outcome are each written once. Keying on the id
+	// alone dropped every outcome, because a result is re-emitted under the id of
+	// the call it completes.
+	rendered  map[string]string
+	err       error
+	iteration int
+	hasIter   bool
 	// progressDrawn records that the cursor is sitting on an in-place verify
 	// status line, so the next thing written erases it first instead of landing
 	// on top of it.
 	progressDrawn bool
+	// sessionShown guards the one-off header naming the session and model. A
+	// fallback runtime re-announces itself, which is the case the line exists
+	// for, so it is keyed by session id rather than by a bare bool.
+	sessionShown map[string]bool
+	// lastRedraw and pendingDirty throttle the in-place assistant line. A
+	// delta-streaming backend emits hundreds of events a second, each one a full
+	// transcript row render; pendingDirty records that a redraw was skipped so
+	// the final state is still written when the turn ends.
+	lastRedraw   time.Time
+	pendingDirty bool
 }
 
 func NewEventRenderer(output *os.File) *EventRenderer {
@@ -53,10 +69,11 @@ const defaultRenderWidth = 120
 
 func newEventRenderer(output io.Writer, interactive bool) *EventRenderer {
 	renderer := &EventRenderer{
-		output:      output,
-		interactive: interactive,
-		width:       defaultRenderWidth,
-		rendered:    map[string]bool{},
+		output:       output,
+		interactive:  interactive,
+		width:        defaultRenderWidth,
+		rendered:     map[string]string{},
+		sessionShown: map[string]bool{},
 	}
 	renderer.accumulator = newPromptEventAccumulator(renderer.consume, discardTaskSink{}, "", "")
 	if cwd, err := os.Getwd(); err == nil {
@@ -80,6 +97,13 @@ func (r *EventRenderer) Handle(iteration int, event ai.Event) {
 		r.renderProgress(event)
 		return
 	}
+	// A running tool's newest line, redrawn over the last one for the same
+	// reason: it is superseded state, not transcript. A runtime that reports no
+	// incremental tool output simply never sends one, and the line is absent.
+	if event.Kind == ai.EventToolProgress {
+		r.renderToolProgress(event)
+		return
+	}
 	r.clearProgress()
 
 	// A verdict is rendered here rather than through the transcript row the
@@ -91,6 +115,16 @@ func (r *EventRenderer) Handle(iteration int, event ai.Event) {
 		r.flushPending()
 		r.renderVerdict(event)
 		return
+	}
+
+	// Which runtime is actually answering is otherwise invisible here: the
+	// accumulator reports it to a task, and this renderer has no task. A run that
+	// fell back from its primary model to another one looked identical to one
+	// that did not, so the session line is written here instead.
+	if event.Kind == ai.EventSystem && event.SessionID != "" && !r.sessionShown[event.SessionID] {
+		r.sessionShown[event.SessionID] = true
+		r.flushPending()
+		r.renderSessionHeader(event)
 	}
 
 	if r.pendingBoundary(event.Kind) {
@@ -119,6 +153,22 @@ func (r *EventRenderer) renderProgress(event ai.Event) {
 	}
 	r.flushPending()
 	line := clicky.Text("⟳ ", "text-blue-500").Append(verifyProgressStatus(*report), "text-muted").ANSI()
+	r.write("\r" + ansi.EraseEntireLine + truncateANSI(line, r.width))
+	r.progressDrawn = true
+}
+
+// renderToolProgress redraws a running tool's newest output line in place, on a
+// terminal only — the same constraint as renderProgress, for the same reason.
+func (r *EventRenderer) renderToolProgress(event ai.Event) {
+	if !r.interactive || event.Text == "" {
+		return
+	}
+	r.flushPending()
+	label := event.Tool
+	if label == "" {
+		label = "tool"
+	}
+	line := clicky.Text("⟳ "+label+" ", "text-blue-500").Append(event.Text, "text-muted").ANSI()
 	r.write("\r" + ansi.EraseEntireLine + truncateANSI(line, r.width))
 	r.progressDrawn = true
 }
@@ -168,22 +218,91 @@ func (r *EventRenderer) consume(message session.Message) {
 			r.err = errors.Join(r.err, fmt.Errorf("tool result for call %q has no matching tool use", part.ToolCallID))
 			return
 		}
-		if r.rendered[message.ID] {
+		last, seen := r.rendered[message.ID]
+		if seen && last == part.State {
 			return
 		}
-		r.rendered[message.ID] = true
-		r.renderMessage(message)
+		r.rendered[message.ID] = part.State
+		if !seen {
+			r.renderMessage(message)
+			return
+		}
+		r.renderToolOutcome(part)
 	}
 }
+
+// renderToolOutcome writes the one line a failed tool call is worth: that it
+// failed, and the head of what it said. A successful call stays silent — its
+// output is the bulk of a run and the call row already said what ran — but a
+// failure was invisible until the next verify verdict, which is how a fix loop
+// could spend a whole turn on an edit that never applied.
+//
+// The merged row the accumulator re-emits cannot carry this: a transcript row
+// renders a tool part from its input whenever there is one, so re-rendering it
+// would reprint the call and still not show the outcome.
+func (r *EventRenderer) renderToolOutcome(part session.Part) {
+	if part.State != session.ToolStateOutputError && part.State != session.ToolStateOutputDenied {
+		return
+	}
+	head := firstNonBlankLine(decodeToolOutput(part.Output))
+	if head == "" {
+		head = part.State
+	}
+	line := clicky.Text("  ↳ ✗ ", "text-red-500").Append(head, "text-muted").ANSI()
+	r.write(truncateANSI(line, r.width) + "\n")
+}
+
+// renderSessionHeader names the session and the model answering in it.
+func (r *EventRenderer) renderSessionHeader(event ai.Event) {
+	text := "session " + event.SessionID
+	if event.Model != "" {
+		text += " · " + event.Model
+	}
+	r.write(truncateANSI(clicky.Text(text, "text-muted").ANSI(), r.width) + "\n")
+}
+
+func decodeToolOutput(raw []byte) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		return text
+	}
+	return string(raw)
+}
+
+func firstNonBlankLine(text string) string {
+	for _, line := range strings.Split(text, "\n") {
+		if strings.TrimSpace(line) != "" {
+			return strings.TrimSpace(line)
+		}
+	}
+	return ""
+}
+
+// redrawThrottle is the floor between two in-place redraws of the same pending
+// turn. A delta-streaming runtime emits far faster than a terminal can be read,
+// and every redraw is a full transcript row render.
+const redrawThrottle = 50 * time.Millisecond
 
 func (r *EventRenderer) redrawPending() {
 	if r.pending == nil {
 		return
 	}
+	if time.Since(r.lastRedraw) < redrawThrottle {
+		r.pendingDirty = true
+		return
+	}
+	r.writePending()
+}
+
+func (r *EventRenderer) writePending() {
 	text, ok := transcriptMessageANSI(*r.pending)
 	if !ok {
 		return
 	}
+	r.lastRedraw, r.pendingDirty = time.Now(), false
 	r.write("\r" + ansi.EraseEntireLine + text)
 }
 
@@ -192,11 +311,16 @@ func (r *EventRenderer) flushPending() {
 		return
 	}
 	if r.interactive {
+		// A throttled redraw may have left the line showing an earlier state of
+		// the turn that is now finished, so the last one is always written.
+		if r.pendingDirty {
+			r.writePending()
+		}
 		r.write("\n")
 	} else {
 		r.renderMessage(*r.pending)
 	}
-	r.pending = nil
+	r.pending, r.pendingDirty = nil, false
 }
 
 // renderVerdict writes one verify verdict at the output's own width: the

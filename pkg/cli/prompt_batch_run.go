@@ -63,14 +63,7 @@ func launchAsyncBatch(ctx context.Context, id string, rendered PromptRenderResul
 				promptChats.register(chatSession)
 				return chatSession.run(t)
 			}
-			summary, runErr := runPromptStream(t, variant, timeout, runID, stream, binding)
-			if runErr != nil {
-				persistPromptRun(context.WithoutCancel(t.Context()), promptRunRecordInput{
-					Rendered: variant, RunID: runID, Binding: binding,
-					Model: run.Runtime.Name, Provider: run.Runtime.Provider, Mode: run.Runtime.Mode, Error: runErr.Error(),
-				})
-			}
-			return summary, runErr
+			return runPromptStream(t, variant, timeout, runID, stream, binding)
 		}, task.WithModel(run.Runtime.Name), task.WithPrompt(rendered.Input.Prompt.User))
 	}
 

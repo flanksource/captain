@@ -74,7 +74,8 @@ SELECT
   COALESCE(call_stats.output_cost, 0::numeric) AS output_cost,
   COALESCE(call_stats.reasoning_cost, 0::numeric) AS reasoning_cost,
   COALESCE(call_stats.cache_read_cost, 0::numeric) AS cache_read_cost,
-  COALESCE(call_stats.cache_write_cost, 0::numeric) AS cache_write_cost
+  COALESCE(call_stats.cache_write_cost, 0::numeric) AS cache_write_cost,
+  r.workspace
 FROM public.captain_prompt_runs r
 LEFT JOIN LATERAL (
   SELECT
@@ -137,4 +138,4 @@ LEFT JOIN LATERAL (
 ) plan_stats ON true;
 
 COMMENT ON VIEW public.captain_prompt_run_overview IS
-  'Prompt-run control-plane state with iteration, plan, usage, provider-reported/list-price cost, and verification summaries.';
+  'Prompt-run control-plane state with iteration, plan, usage, provider-reported/list-price cost, and verification summaries, and the finished run''s workspace record.';

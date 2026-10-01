@@ -140,7 +140,7 @@ func DefaultModelFor(p *registry.Provider, mode registry.RuntimeMode) string {
 	}
 	switch p.Name {
 	case registry.Anthropic.Name:
-		return "claude-sonnet-5"
+		return "claude-sonnet-5-5"
 	case registry.OpenAI.Name:
 		// The only provider whose local transports seed a different model than its
 		// API: codex names its own coding-tuned id.

@@ -8,6 +8,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/aiflags"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/api/registry"
 	"github.com/flanksource/captain/pkg/captainconfig"
 	"github.com/flanksource/captain/pkg/runtimeprofiles"
 	g "github.com/onsi/ginkgo/v2"
@@ -33,7 +34,11 @@ var _ = g.Describe("Chat saved defaults", func() {
 		Expect(loaded.Composed.Spec.Budget.Cost).To(Equal(float64(4)))
 		resolved, err := requestSpec(request, loaded, nil)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(resolved.Spec.Name).To(Equal("claude-sonnet-5"))
+		// Which model "sonnet" names is the catalog's call, pinned by the registry's
+		// own tests; this spec only checks the saved alias reached resolution.
+		sonnet, ok := registry.Anthropic.ResolveExact(api.ModeAPI, "sonnet")
+		Expect(ok).To(BeTrue())
+		Expect(resolved.Spec.Name).To(Equal(sonnet))
 		Expect(resolved.Spec.Fallbacks).To(HaveLen(1))
 		Expect(resolved.Spec.Fallbacks[0].Mode).To(Equal(api.ModeAPI))
 		Expect(resolved.Trace).To(HaveLen(2))

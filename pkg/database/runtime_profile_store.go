@@ -34,6 +34,7 @@ type runtimePresetRecord struct {
 	Description *string               `gorm:"column:description"`
 	Scope       api.SpecLayerScope    `gorm:"column:scope"`
 	Spec        api.RuntimePresetSpec `gorm:"column:spec;serializer:json;type:jsonb"`
+	Presets     []string              `gorm:"column:presets;serializer:json;type:jsonb"`
 	CreatedAt   time.Time             `gorm:"column:created_at"`
 	UpdatedAt   time.Time             `gorm:"column:updated_at"`
 }
@@ -47,6 +48,7 @@ type RuntimePreset struct {
 	Description string                `json:"description,omitempty"`
 	Scope       api.SpecLayerScope    `json:"scope"`
 	Spec        api.RuntimePresetSpec `json:"spec"`
+	Presets     []string              `json:"presets"`
 	CreatedAt   time.Time             `json:"createdAt"`
 	UpdatedAt   time.Time             `json:"updatedAt"`
 }
@@ -58,6 +60,7 @@ type RuntimePresetInput struct {
 	Description string
 	Scope       api.SpecLayerScope
 	Spec        api.RuntimePresetSpec
+	Presets     []string
 }
 
 // ListRuntimePresets returns every preset ordered by name, always as a slice so
@@ -128,9 +131,14 @@ func (db *DB) UpdateRuntimePreset(ctx context.Context, id uuid.UUID, input Runti
 	if err != nil {
 		return nil, fmt.Errorf("encode captain runtime preset spec: %w", err)
 	}
+	presets, err := json.Marshal(record.Presets)
+	if err != nil {
+		return nil, fmt.Errorf("encode captain runtime preset references: %w", err)
+	}
 	result := db.gorm.WithContext(ctx).Model(&runtimePresetRecord{}).Where("id = ?", id).Updates(map[string]any{
 		"name": record.Name, "description": record.Description, "scope": record.Scope,
-		"spec": gorm.Expr("?::jsonb", string(spec)), "updated_at": clause.Expr{SQL: "now()"},
+		"spec": gorm.Expr("?::jsonb", string(spec)), "presets": gorm.Expr("?::jsonb", string(presets)),
+		"updated_at": clause.Expr{SQL: "now()"},
 	})
 	if result.Error != nil {
 		return nil, runtimeWriteError("update captain runtime preset", record.Name, result.Error)
@@ -163,13 +171,19 @@ func runtimePresetRecordFrom(id uuid.UUID, input RuntimePresetInput) (runtimePre
 	if input.Name == "" {
 		return runtimePresetRecord{}, fmt.Errorf("%w: preset name is required", ErrRuntimeInvalid)
 	}
-	preset := api.RuntimePreset{ID: id.String(), Name: input.Name, Scope: input.Scope, Spec: input.Spec}
+	for index := range input.Presets {
+		input.Presets[index] = strings.TrimSpace(input.Presets[index])
+	}
+	if input.Presets == nil {
+		input.Presets = []string{}
+	}
+	preset := api.RuntimePreset{ID: id.String(), Name: input.Name, Scope: input.Scope, Spec: input.Spec, Presets: input.Presets}
 	if err := api.ValidateRuntimePreset(preset); err != nil {
 		return runtimePresetRecord{}, fmt.Errorf("%w: %v", ErrRuntimeInvalid, err)
 	}
 	return runtimePresetRecord{
 		ID: id, Name: input.Name, Description: nullableTrimmed(input.Description),
-		Scope: input.Scope, Spec: input.Spec,
+		Scope: input.Scope, Spec: input.Spec, Presets: input.Presets,
 	}, nil
 }
 
@@ -183,6 +197,6 @@ func runtimeWriteError(action, name string, err error) error {
 func (r runtimePresetRecord) toPreset() RuntimePreset {
 	return RuntimePreset{
 		ID: r.ID, Name: r.Name, Description: optionalString(r.Description), Scope: r.Scope,
-		Spec: r.Spec, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+		Spec: r.Spec, Presets: r.Presets, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 	}
 }

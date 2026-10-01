@@ -24,6 +24,7 @@ const HANDLE: PromptBatchHandle = {
         steer: true,
         followUp: true,
         resume: true,
+        setPermissionMode: false,
       },
     },
     {
@@ -77,6 +78,7 @@ describe("batch session collection", () => {
         steer: false,
         followUp: true,
         resume: true,
+        setPermissionMode: false,
       },
     };
 

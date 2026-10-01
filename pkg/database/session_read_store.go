@@ -331,6 +331,26 @@ func (db *DB) GetTranscriptSessionByIdentity(ctx context.Context, providerSessio
 	}
 }
 
+// ListTranscriptChildOverviews returns the transcript-owned child rows of the
+// given parents: the row a launcher's provider log was ingested into beneath the
+// session it booked. Sub-agent children are not transcripts and are excluded.
+func (db *DB) ListTranscriptChildOverviews(ctx context.Context, parentIDs []uuid.UUID) ([]SessionOverview, error) {
+	if err := db.requireGorm(); err != nil {
+		return nil, err
+	}
+	if len(parentIDs) == 0 {
+		return nil, nil
+	}
+	var rows []SessionOverview
+	if err := db.gorm.WithContext(ctx).
+		Where("parent_session_id IN ? AND parent_relation = ?", parentIDs, SessionParentRelationTranscript).
+		Order("parent_session_id, created_at, id").
+		Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("list Captain transcript child sessions: %w", err)
+	}
+	return rows, nil
+}
+
 // ListSessionIdentityMatches resolves prefixes against the lightweight base
 // table so ambiguous lookups do not evaluate every overview aggregate.
 func (db *DB) ListSessionIdentityMatches(ctx context.Context, identity string) ([]SessionIdentityMatch, error) {

@@ -3,6 +3,7 @@ package cli
 import (
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/database"
+	"github.com/flanksource/captain/pkg/promptrun"
 	"github.com/flanksource/commons-db/dbtest"
 	"github.com/google/uuid"
 	. "github.com/onsi/ginkgo/v2"
@@ -99,18 +100,16 @@ var _ = Describe("prompt batch sessions", func() {
 		providerSessionID := "0195c1de-4ab8-7000-8000-00000000ba7c"
 		observed, err := db.CreateOrGetSession(GinkgoT().Context(), database.CreateSessionInput{
 			ProviderSessionID: providerSessionID,
-			Source:            transcriptSource(local.Runtime.Provider, local.Runtime.Mode),
+			Source:            promptrun.TranscriptSource(api.RuntimeOf(local.Runtime.Provider, local.Runtime.Mode)),
 			Provider:          providerName(local.Runtime.Provider),
 			HostID:            captainHostID(),
 			CWD:               rendered.Input.Cwd(),
 		})
 		Expect(err).NotTo(HaveOccurred())
 
-		persistPromptRun(GinkgoT().Context(), promptRunRecordInput{
-			Rendered: rendered, RunID: "monitor-first-run", Binding: promptBinding(batch, 0),
-			SessionID: providerSessionID, Model: local.Runtime.Name,
-			Provider: local.Runtime.Provider, Mode: local.Runtime.Mode, ResultText: "done",
-		})
+		Expect(recordCompletedRun(GinkgoT().Context(),
+			promptRecordingInput{Rendered: rendered, RunID: "monitor-first-run", Binding: promptBinding(batch, 0)},
+			answeredRun(rendered, local.Runtime, providerSessionID, "done"))).To(Succeed())
 
 		admission, err := db.GetSession(GinkgoT().Context(), local.SessionID)
 		Expect(err).NotTo(HaveOccurred())
@@ -131,11 +130,9 @@ var _ = Describe("prompt batch sessions", func() {
 		Expect(runs[0].State).To(Equal(database.PromptRunStateSucceeded))
 
 		apiRun := batch.Runs[1]
-		persistPromptRun(GinkgoT().Context(), promptRunRecordInput{
-			Rendered: rendered, RunID: "api-run", Binding: promptBinding(batch, 1),
-			Model: apiRun.Runtime.Name, Provider: apiRun.Runtime.Provider,
-			Mode: apiRun.Runtime.Mode, ResultText: "done",
-		})
+		Expect(recordCompletedRun(GinkgoT().Context(),
+			promptRecordingInput{Rendered: rendered, RunID: "api-run", Binding: promptBinding(batch, 1)},
+			answeredRun(rendered, apiRun.Runtime, "", "done"))).To(Succeed())
 		apiRuns, err := db.ListPromptRuns(GinkgoT().Context(), database.PromptRunFilter{SessionID: &apiRun.SessionID})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(apiRuns).To(HaveLen(1))

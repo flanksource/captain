@@ -145,9 +145,9 @@ var _ = Describe("promptrun.Run", func() {
 			var log []string
 
 			hooks, err := promptrun.Hooks(context.Background(), promptrun.Input{
-				Request: request,
-				Hooks:   []any{&recordingHook{name: "host", log: &log}},
-				Verify:  verify.Options{Provider: provider},
+				Resolved: api.ResolvedSpec{Spec: request},
+				Hooks:    []any{&recordingHook{name: "host", log: &log}},
+				Verify:   verify.Options{Provider: provider},
 			}, provider)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(hookNames(hooks)).To(Equal([]string{
@@ -157,14 +157,14 @@ var _ = Describe("promptrun.Run", func() {
 
 		It("adds no setup hook when the caller supplies the provider that owns the workspace", func() {
 			request.Setup = &shell.Setup{}
-			hooks, err := promptrun.Hooks(context.Background(), promptrun.Input{Request: request, Provider: provider}, provider)
+			hooks, err := promptrun.Hooks(context.Background(), promptrun.Input{Resolved: api.ResolvedSpec{Spec: request}, Provider: provider}, provider)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(hookNames(hooks)).To(BeEmpty())
 		})
 
 		It("refuses a fixture the process has no runner for", func() {
 			request.Workflow = &api.Workflow{Verify: &api.Verify{Fixture: "acceptance"}}
-			_, err := promptrun.Hooks(context.Background(), promptrun.Input{Request: request}, provider)
+			_, err := promptrun.Hooks(context.Background(), promptrun.Input{Resolved: api.ResolvedSpec{Spec: request}}, provider)
 			Expect(err).To(MatchError(ContainSubstring("no fixture verifier is registered")))
 		})
 	})
@@ -178,7 +178,7 @@ var _ = Describe("promptrun.Run", func() {
 		})
 
 		It("builds captain's own commit hook from the workflow by default", func() {
-			hooks, err := promptrun.Hooks(context.Background(), promptrun.Input{Request: request}, provider)
+			hooks, err := promptrun.Hooks(context.Background(), promptrun.Input{Resolved: api.ResolvedSpec{Spec: request}}, provider)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(hookNames(hooks)).To(Equal([]string{"commit:run", "verify:true", "setup"}))
 		})
@@ -190,7 +190,7 @@ var _ = Describe("promptrun.Run", func() {
 		It("adds no commit hook when the caller owns commits, and leaves the declaration on the request", func() {
 			var log []string
 			in := promptrun.Input{
-				Request:           request,
+				Resolved:          api.ResolvedSpec{Spec: request},
 				Hooks:             []any{&recordingHook{name: "host", log: &log}},
 				CallerOwnsCommits: true,
 			}
@@ -205,7 +205,7 @@ var _ = Describe("promptrun.Run", func() {
 
 		It("refuses caller-owned commits with no caller hook to do the committing", func() {
 			_, err := promptrun.Hooks(context.Background(),
-				promptrun.Input{Request: request, CallerOwnsCommits: true}, provider)
+				promptrun.Input{Resolved: api.ResolvedSpec{Spec: request}, CallerOwnsCommits: true}, provider)
 			Expect(err).To(MatchError(ContainSubstring("CallerOwnsCommits")))
 		})
 	})
@@ -225,7 +225,7 @@ var _ = Describe("promptrun.Run", func() {
 			request.Workflow = &api.Workflow{Verify: &api.Verify{Fixture: "acceptance"}}
 
 			res, err := promptrun.Run(context.Background(), promptrun.Input{
-				Request: request, Provider: provider, Timeout: testTimeout,
+				Resolved: api.ResolvedSpec{Spec: request}, Provider: provider, Timeout: testTimeout,
 			})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(res.Passed).To(BeTrue())
@@ -243,7 +243,7 @@ var _ = Describe("promptrun.Run", func() {
 			request.Prompt = api.Prompt{}
 			request.Workflow = &api.Workflow{Verify: &api.Verify{Commands: []string{"true"}}}
 
-			res, err := promptrun.Run(context.Background(), promptrun.Input{Request: request, Provider: provider, Timeout: testTimeout})
+			res, err := promptrun.Run(context.Background(), promptrun.Input{Resolved: api.ResolvedSpec{Spec: request}, Provider: provider, Timeout: testTimeout})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(provider.Calls()).To(BeZero())
 			Expect(res.Passed).To(BeTrue())
@@ -260,7 +260,7 @@ var _ = Describe("promptrun.Run", func() {
 
 			// A Config no provider can be built from: were one constructed, this
 			// would fail there rather than at the verdict.
-			res, err := promptrun.Run(context.Background(), promptrun.Input{Request: request, Config: ai.Config{}, Timeout: testTimeout})
+			res, err := promptrun.Run(context.Background(), promptrun.Input{Resolved: api.ResolvedSpec{Spec: request}, Config: ai.Config{}, Timeout: testTimeout})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(res.Passed).To(BeFalse())
 			Expect(res.Report.State).To(Equal(api.VerifyStateFailed))
@@ -278,7 +278,7 @@ var _ = Describe("promptrun.Run", func() {
 				mutate(&request)
 
 				_, err := promptrun.Run(context.Background(), promptrun.Input{
-					Request: request, Provider: provider, Timeout: testTimeout,
+					Resolved: api.ResolvedSpec{Spec: request}, Provider: provider, Timeout: testTimeout,
 				})
 				Expect(err).To(MatchError(ContainSubstring("workflow.verify")))
 				Expect(provider.Calls()).To(BeZero())
@@ -297,7 +297,7 @@ var _ = Describe("promptrun.Run", func() {
 		// DefaultTimeout silently capped a host run at two minutes. A run nobody
 		// bounded is a configuration error the host can fix, not a limit to invent.
 		It("refuses a run with no budget.timeout and no caller timeout", func() {
-			_, err := promptrun.Run(context.Background(), promptrun.Input{Request: request, Provider: provider})
+			_, err := promptrun.Run(context.Background(), promptrun.Input{Resolved: api.ResolvedSpec{Spec: request}, Provider: provider})
 			Expect(err).To(MatchError(ContainSubstring("no timeout")))
 			Expect(err).To(MatchError(ContainSubstring("budget.timeout")))
 			Expect(provider.Calls()).To(BeZero())
@@ -307,7 +307,7 @@ var _ = Describe("promptrun.Run", func() {
 			request.Budget.Timeout = "45m"
 			request.Workflow = &api.Workflow{Verify: &api.Verify{Commands: []string{"true"}}}
 			_, err := promptrun.Run(context.Background(), promptrun.Input{
-				Request: request, Provider: provider, Timeout: time.Millisecond,
+				Resolved: api.ResolvedSpec{Spec: request}, Provider: provider, Timeout: time.Millisecond,
 			})
 			Expect(err).NotTo(HaveOccurred(), "a one-millisecond host default must not outrank the declared 45m")
 		})
@@ -321,11 +321,15 @@ var _ = Describe("promptrun.Run", func() {
 			request.Model = api.Model{Name: "claude-sonnet-5", Provider: api.Anthropic, Mode: api.ModeAgent}
 			request.Permissions.Tools = api.Tools{"Bash": api.ToolPolicyDeny}
 
+			// The API modes ship no built-ins and ignore a Bash deny, so the
+			// executing model is the codex CLI, which has a shell it cannot filter.
 			_, err := promptrun.Run(context.Background(), promptrun.Input{
-				Request: request, Timeout: testTimeout,
-				Config: ai.Config{Model: api.Model{Name: "gpt-5", Provider: api.OpenAI, Mode: api.ModeAPI}},
+				Resolved: api.ResolvedSpec{Spec: request}, Timeout: testTimeout,
+				Config: ai.Config{Model: api.Model{Name: "gpt-5", Provider: api.OpenAI, Mode: api.ModeCLI}},
 			})
-			Expect(err).To(MatchError(ContainSubstring(api.RuntimeOf(api.OpenAI, api.ModeAPI).String())))
+			Expect(err).To(MatchError(And(
+				ContainSubstring(api.RuntimeOf(api.OpenAI, api.ModeCLI).String()+" cannot enforce a per-tool policy"),
+				ContainSubstring("shell (from Bash)"))))
 			Expect(provider.Calls()).To(BeZero())
 		})
 
@@ -334,7 +338,7 @@ var _ = Describe("promptrun.Run", func() {
 			request.Prompt.Attachments = []api.AttachmentRef{preparedAttachment("image/png")}
 
 			_, err := promptrun.Run(context.Background(), promptrun.Input{
-				Request: request, Timeout: testTimeout,
+				Resolved: api.ResolvedSpec{Spec: request}, Timeout: testTimeout,
 				Config: ai.Config{Model: api.Model{Name: "claude-sonnet-5", Provider: api.Anthropic, Mode: api.ModeCLI}},
 			})
 			Expect(err).To(MatchError(ContainSubstring("image/png")))
@@ -348,7 +352,7 @@ var _ = Describe("promptrun.Run", func() {
 		// the error, not the policy.
 		It("fails on an unenforceable per-tool policy before any provider is built", func() {
 			unbuildable := promptrun.Input{
-				Request: request, Timeout: testTimeout,
+				Resolved: api.ResolvedSpec{Spec: request}, Timeout: testTimeout,
 				Config: ai.Config{Model: api.Model{Name: "no-such-model-at-all", Provider: api.Anthropic, Mode: api.ModeAgent}},
 			}
 			// The premise: this config cannot produce a provider, so reaching
@@ -357,7 +361,7 @@ var _ = Describe("promptrun.Run", func() {
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).NotTo(ContainSubstring("per-tool policy"))
 
-			unbuildable.Request.Permissions.Tools = api.Tools{"Bash": api.ToolPolicyAsk}
+			unbuildable.Resolved.Spec.Permissions.Tools = api.Tools{"Bash": api.ToolPolicyAsk}
 			_, err = promptrun.Run(context.Background(), unbuildable)
 			Expect(err).To(MatchError(ContainSubstring(`per-tool policy "ask" (Bash)`)))
 		})
@@ -370,7 +374,7 @@ var _ = Describe("promptrun.Run", func() {
 
 			var iterations []int
 			res, err := promptrun.Run(context.Background(), promptrun.Input{
-				Request: request, Provider: provider, Timeout: testTimeout,
+				Resolved: api.ResolvedSpec{Spec: request}, Provider: provider, Timeout: testTimeout,
 				OnEvent: func(iter int, ev ai.Event) {
 					events = append(events, ev)
 					iterations = append(iterations, iter)
@@ -406,7 +410,7 @@ var _ = Describe("promptrun.Run", func() {
 			var progressEvents []ai.Event
 
 			res, err := promptrun.Run(context.Background(), promptrun.Input{
-				Request: request, Provider: provider, Timeout: testTimeout,
+				Resolved: api.ResolvedSpec{Spec: request}, Provider: provider, Timeout: testTimeout,
 				Verify: verify.Options{Progress: func(r api.VerifyReport) { snapshots = append(snapshots, r) }},
 				OnEvent: func(_ int, ev ai.Event) {
 					if ev.Kind == ai.EventVerifyProgress {
@@ -427,7 +431,7 @@ var _ = Describe("promptrun.Run", func() {
 		It("reports the failing check's reason", func() {
 			request.Workflow = &api.Workflow{Verify: &api.Verify{Commands: []string{"echo nope; exit 1"}}}
 
-			res, err := promptrun.Run(context.Background(), promptrun.Input{Request: request, Provider: provider, Timeout: testTimeout})
+			res, err := promptrun.Run(context.Background(), promptrun.Input{Resolved: api.ResolvedSpec{Spec: request}, Provider: provider, Timeout: testTimeout})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(res.Passed).To(BeFalse())
 			Expect(promptrun.FailureReason(res.Verdicts)).To(Equal(res.Report.Reason))
@@ -438,7 +442,7 @@ var _ = Describe("promptrun.Run", func() {
 	Describe("attachments", func() {
 		It("refuses an attachment the caller did not resolve", func() {
 			request.Prompt.Attachments = []api.AttachmentRef{{Path: "notes.txt"}}
-			_, err := promptrun.Run(context.Background(), promptrun.Input{Request: request, Provider: provider, Timeout: testTimeout})
+			_, err := promptrun.Run(context.Background(), promptrun.Input{Resolved: api.ResolvedSpec{Spec: request}, Provider: provider, Timeout: testTimeout})
 			Expect(err).To(MatchError(ContainSubstring("attachment")))
 			Expect(provider.Calls()).To(BeZero())
 		})

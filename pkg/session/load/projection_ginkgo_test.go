@@ -6,6 +6,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/claude/tools"
 	"github.com/flanksource/captain/pkg/session"
 	"github.com/flanksource/captain/pkg/session/load"
@@ -15,9 +16,10 @@ var _ = Describe("Projection", func() {
 	facts := load.ProjectionFacts{
 		Metadata: session.Metadata{
 			Model: "stored-model", Provider: "stored-provider",
-			Files: session.ChangedFiles{Written: []string{"stored.go"}},
-			Todos: []tools.TodoItem{{Text: "ship the slice", Status: "in_progress"}},
-			Plan:  &session.Plan{Slug: "metadata-plan"},
+			Files:          session.ChangedFiles{Written: []string{"stored.go"}},
+			Todos:          []tools.TodoItem{{Text: "ship the slice", Status: "in_progress"}},
+			Plan:           &session.Plan{Slug: "metadata-plan"},
+			PermissionMode: api.PermissionAuto,
 		},
 		Git:     session.GitState{Branch: "feat/session-load"},
 		Context: &session.Context{UsedTokens: 1200, WindowTokens: 4000, FreePercent: 70},
@@ -34,17 +36,20 @@ var _ = Describe("Projection", func() {
 		Expect(result.Session.Plan.Slug).To(Equal("metadata-plan"))
 		Expect(result.Session.Git.Branch).To(Equal("feat/session-load"))
 		Expect(result.Session.Context.FreePercent).To(Equal(70))
+		Expect(result.Session.PermissionMode).To(Equal(api.PermissionAuto))
 	})
 
 	It("keeps a transcript-derived value, which is fresher than the stored copy", func() {
 		result, _ := load.Load(context.Background(),
 			load.Transcript(&session.Session{
-				Model: "transcript-model",
-				Git:   session.GitState{Branch: "transcript-branch"},
-				Files: session.ChangedFiles{Written: []string{"transcript.go"}},
+				Model:          "transcript-model",
+				Git:            session.GitState{Branch: "transcript-branch"},
+				Files:          session.ChangedFiles{Written: []string{"transcript.go"}},
+				PermissionMode: api.PermissionPlan,
 			}),
 			load.Projection(facts))
 
+		Expect(result.Session.PermissionMode).To(Equal(api.PermissionPlan))
 		Expect(result.Session.Model).To(Equal("transcript-model"))
 		Expect(result.Session.Git.Branch).To(Equal("transcript-branch"))
 		Expect(result.Session.Files.Written).To(Equal([]string{"transcript.go"}))

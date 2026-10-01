@@ -75,10 +75,15 @@ func (p *Plugin) PreRun(hc *agent.HookContext) error {
 		return fmt.Errorf("wt switch --create %s: parse JSON result: %w (stdout=%q)", p.Branch, err, res.Stdout)
 	}
 
+	// `wt switch --create` leaves the new worktree on its start point, so its
+	// HEAD is the base commit; wt reports the base only as a branch name.
+	base, err := revParseHead(sw.Path)
+	if err != nil {
+		return err
+	}
 	ws.Repo = repo
 	ws.Cwd = sw.Path
-	ws.Branch = p.Branch
-	ws.Base = sw.BaseBranch
+	ws.Worktree = &api.WorktreeState{Repo: repo, Path: sw.Path, Branch: p.Branch, Base: base, Setup: base}
 	// The same transform the setup hook performs: the request said "isolate this
 	// run", the tree now exists, so the spec stops describing the request and
 	// starts describing where the work is. HookContext.Original keeps the former.
@@ -99,10 +104,10 @@ func (p *Plugin) Phases() []agent.Phase { return []agent.Phase{agent.PhaseRun} }
 // Merge/Cleanup and the run's outcome (hc.Failed / hc.Verified).
 func (p *Plugin) Post(hc *agent.HookContext, _ agent.Phase) error {
 	ws := hc.Workspace()
-	// PreRun records its effect on the workspace and nothing else writes Branch,
-	// so a workspace not standing on p.Branch means no worktree was created —
-	// PreRun never ran, or failed before `wt switch`.
-	if p.Branch == "" || ws.Branch != p.Branch || ws.Cwd == "" {
+	// PreRun records its effect on the workspace and nothing else writes a
+	// Worktree on p.Branch, so a workspace not standing on it means no worktree
+	// was created — PreRun never ran, or failed before `wt switch`.
+	if p.Branch == "" || ws.Worktree == nil || ws.Worktree.Branch != p.Branch || ws.Cwd == "" {
 		return nil
 	}
 	path := ws.Cwd
@@ -121,9 +126,21 @@ func (p *Plugin) Post(hc *agent.HookContext, _ agent.Phase) error {
 	}
 
 	if p.Cleanup.shouldCleanup(merged, hc.Verified) {
-		return p.remove(ws.Repo)
+		if err := p.remove(ws.Repo); err != nil {
+			return err
+		}
+		ws.Worktree.Removed = true
 	}
 	return nil
+}
+
+// revParseHead reads the commit dir has checked out, failing loud with stderr.
+func revParseHead(dir string) (string, error) {
+	res := exec.NewExec("git", "rev-parse", "HEAD").WithCwd(dir).Run().Result()
+	if res.Error != nil || res.ExitCode != 0 {
+		return "", fmt.Errorf("worktree: git rev-parse HEAD in %s: exit %d: %v: %s", dir, res.ExitCode, res.Error, strings.TrimSpace(res.Stderr))
+	}
+	return strings.TrimSpace(res.Stdout), nil
 }
 
 // merge runs `wt merge`, always passing --no-remove so Cleanup independently

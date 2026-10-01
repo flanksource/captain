@@ -38,10 +38,10 @@ var _ = Describe("Genkit tool policy", func() {
 
 	It("lets tool-level ask override group-level on and invokes Captain approval", func() {
 		approved := 0
-		provider := newToolProvider(func(_ context.Context, request api.PermissionRequest) (api.PermissionDecision, error) {
+		provider := newToolProvider(func(_ context.Context, request api.ApprovalRequest) (api.ApprovalDecision, error) {
 			approved++
 			Expect(request.Tool).To(Equal("invoice_delete"))
-			return api.PermissionDecision{Allow: true}, nil
+			return api.ApprovalDecision{Allow: true}, nil
 		})
 		def := api.ToolDefinition{
 			Name: "invoice_delete", Group: "billing", DefaultPermission: api.ToolPolicyAllow, Handler: noop,

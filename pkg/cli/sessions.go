@@ -29,6 +29,7 @@ type SessionGetOptions struct {
 	Offset     int      `flag:"offset" help:"Skip this many transcript rows from the start"`
 	Limit      int      `flag:"limit" help:"Maximum transcript rows to return; 0 means all" default:"200" short:"l"`
 	Tail       int      `flag:"tail" help:"Return only the last N transcript rows (overrides offset/limit)"`
+	Follow     bool     `flag:"follow" help:"Print the whole transcript, then each message as it arrives, until the session ends"`
 }
 
 func (SessionGetOptions) GetName() string { return "get <id>" }

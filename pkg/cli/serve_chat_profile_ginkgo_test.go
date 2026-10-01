@@ -12,9 +12,8 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-var _ = Describe("chat runtime profile provider", func() {
-	// chatCatalog seeds a context-scoped "Team" preset under a "Review" profile
-	// and a preset-less "Plan" profile.
+var _ = Describe("chat runtime preset provider", func() {
+	// chatCatalog seeds independently selectable context and surface presets.
 	chatCatalog := func() runtimeCatalogFixture {
 		GinkgoHelper()
 		f, _, _ := newRuntimeCatalogFixture()
@@ -24,39 +23,41 @@ var _ = Describe("chat runtime profile provider", func() {
 				Model: api.Model{Name: "claude-sonnet-4-6", Mode: api.ModeAgent}, Budget: api.Budget{MaxTurns: 20},
 			},
 		})
-		f.profile(runtimeprofiles.ProfileInput{
-			Name: "Review", Presets: []string{"team"}, Spec: api.Spec{Budget: api.Budget{MaxTurns: 5}},
+		f.preset(runtimeprofiles.PresetInput{
+			Name: "Review", Scope: api.SpecLayerSurface,
+			Spec: api.RuntimePresetSpec(api.Spec{Budget: api.Budget{MaxTurns: 5}}),
 		})
-		f.profile(runtimeprofiles.ProfileInput{
-			Name: "Plan", Spec: api.Spec{Model: api.Model{Name: "claude-sonnet-4-6", Mode: api.ModeAgent}},
+		f.preset(runtimeprofiles.PresetInput{
+			Name: "Plan", Scope: api.SpecLayerSurface,
+			Spec: api.RuntimePresetSpec(api.Spec{Model: api.Model{Name: "claude-sonnet-4-6", Mode: api.ModeAgent}}),
 		})
 		return f
 	}
-	saveChatDefault := func(ref string) {
+	saveChatDefault := func(refs ...string) {
 		GinkgoHelper()
-		Expect(captainconfig.Save(captainconfig.Config{Chat: captainconfig.ChatDefaults{RuntimeProfile: ref}})).To(Succeed())
+		Expect(captainconfig.Save(captainconfig.Config{Chat: captainconfig.ChatDefaults{Presets: refs}})).To(Succeed())
 	}
 
-	It("layers the served base, the presets and the profile spec in scope order", func() {
+	It("layers the served base and selected presets in scope order", func() {
 		f := chatCatalog()
 		cwd := GinkgoT().TempDir()
 
-		profile, err := captainChatProfileProvider(cwd).RuntimeProfile(f.ctx, aichat.WithRuntimeProfileRef("review"))
+		profile, err := captainChatProfileProvider(cwd).RuntimeProfile(f.ctx, aichat.WithRuntimePresets([]string{"team", "review"}))
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(profile.System).To(Equal(captainChatSystemPrompt))
-		Expect(profile.Composed.Trace).To(HaveExactElements(HaveField("Name", "captain serve"), HaveField("Name", "Team"), HaveField("Name", "Review run spec")))
+		Expect(profile.Composed.Trace).To(HaveExactElements(HaveField("Name", "captain serve"), HaveField("Name", "Team"), HaveField("Name", "Review")))
 		Expect(profile.Composed.Trace).To(HaveExactElements(
 			HaveField("Scope", api.SpecLayerGlobal),
 			HaveField("Scope", api.SpecLayerContext),
 			HaveField("Scope", api.SpecLayerSurface),
 		))
 		Expect(profile.Composed.Spec.Model.Name).To(Equal("claude-sonnet-4-6"), "the preset overrides the base model")
-		Expect(profile.Composed.Spec.Budget.MaxTurns).To(Equal(5), "the profile spec overrides the preset")
+		Expect(profile.Composed.Spec.Budget.MaxTurns).To(Equal(5), "the surface preset overrides the context preset")
 		Expect(profile.Composed.Spec.Cwd()).To(Equal(cwd), "the base layer survives")
 	})
 
-	It("serves a model-free base layer when nothing selects a profile or saved model", func() {
+	It("serves a model-free base layer when nothing selects presets or a saved model", func() {
 		f, _, _ := newRuntimeCatalogFixture()
 
 		profile, err := captainChatProfileProvider(GinkgoT().TempDir()).RuntimeProfile(f.ctx)
@@ -82,46 +83,56 @@ var _ = Describe("chat runtime profile provider", func() {
 		Expect(profile.Saved.DefaultModel).To(Equal("agent:sonnet:high"))
 	})
 
-	It("rejects malformed saved settings even when an explicit profile supplies a valid model", func() {
+	It("rejects malformed saved settings even when an explicit preset supplies a valid model", func() {
 		f := chatCatalog()
 		Expect(captainconfig.Save(captainconfig.Config{AI: captainconfig.AIDefaults{Temperature: 3}})).To(Succeed())
-		_, err := captainChatProfileProvider(GinkgoT().TempDir()).RuntimeProfile(f.ctx, aichat.WithRuntimeProfileRef("plan"))
+		_, err := captainChatProfileProvider(GinkgoT().TempDir()).RuntimeProfile(f.ctx, aichat.WithRuntimePresets([]string{"plan"}))
 		Expect(err).To(MatchError(ContainSubstring("ai.temperature")))
 	})
 
-	It("applies the configured chat default when the request names no profile", func() {
+	It("applies configured chat defaults when the request names no presets", func() {
 		f := chatCatalog()
-		saveChatDefault("review")
+		saveChatDefault("team", "review")
 
 		profile, err := captainChatProfileProvider(GinkgoT().TempDir()).RuntimeProfile(f.ctx)
 
 		Expect(err).NotTo(HaveOccurred())
-		Expect(profile.Composed.Trace).To(HaveExactElements(HaveField("Name", "captain serve"), HaveField("Name", "Team"), HaveField("Name", "Review run spec")))
+		Expect(profile.Composed.Trace).To(HaveExactElements(HaveField("Name", "captain serve"), HaveField("Name", "Team"), HaveField("Name", "Review")))
 	})
 
-	It("lets the request's profile override the configured default", func() {
+	It("lets request presets override configured defaults", func() {
 		f := chatCatalog()
-		saveChatDefault("review")
+		saveChatDefault("team", "review")
 
-		profile, err := captainChatProfileProvider(GinkgoT().TempDir()).RuntimeProfile(f.ctx, aichat.WithRuntimeProfileRef("plan"))
+		profile, err := captainChatProfileProvider(GinkgoT().TempDir()).RuntimeProfile(f.ctx, aichat.WithRuntimePresets([]string{"plan"}))
 
 		Expect(err).NotTo(HaveOccurred())
-		Expect(profile.Composed.Trace).To(HaveExactElements(HaveField("Name", "captain serve"), HaveField("Name", "Plan run spec")))
+		Expect(profile.Composed.Trace).To(HaveExactElements(HaveField("Name", "captain serve"), HaveField("Name", "Plan")))
 	})
 
-	It("rejects an unknown request profile as a 400 and a broken default as a server error", func() {
+	It("rejects an unknown request preset as a 400 and a broken default as a server error", func() {
 		f := chatCatalog()
 		service := aichat.NewService(aichat.ServiceOptions{Profile: captainChatProfileProvider(GinkgoT().TempDir())})
 
 		response := httptest.NewRecorder()
-		service.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/chat/models?runtimeProfile=nope", nil).WithContext(f.ctx))
+		service.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/chat/models?preset=nope", nil).WithContext(f.ctx))
 		Expect(response.Code).To(Equal(http.StatusBadRequest), response.Body.String())
-		Expect(response.Body.String()).To(ContainSubstring(`runtime profile "nope"`))
+		Expect(response.Body.String()).To(ContainSubstring(`runtime presets "nope"`))
 
 		saveChatDefault("ghost")
 		response = httptest.NewRecorder()
 		service.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/chat/models", nil).WithContext(f.ctx))
 		Expect(response.Code).To(Equal(http.StatusInternalServerError), response.Body.String())
-		Expect(response.Body.String()).To(ContainSubstring(`runtime profile "ghost"`))
+		Expect(response.Body.String()).To(ContainSubstring(`runtime presets "ghost"`))
+	})
+
+	It("warns and ignores deprecated profile selections and defaults", func() {
+		f := chatCatalog()
+		Expect(captainconfig.Save(captainconfig.Config{Chat: captainconfig.ChatDefaults{RuntimeProfile: "review"}})).To(Succeed())
+
+		profile, err := captainChatProfileProvider(GinkgoT().TempDir()).RuntimeProfile(f.ctx, aichat.WithRuntimeProfileRef("plan"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(profile.Composed.Trace).To(HaveExactElements(HaveField("Name", "captain serve")))
+		Expect(profile.Composed.Warnings).To(Equal([]string{api.RuntimeProfileDeprecationWarning}))
 	})
 })

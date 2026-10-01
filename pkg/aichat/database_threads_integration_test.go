@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"time"
 
+	"github.com/flanksource/captain/pkg/ai/approval"
 	"github.com/flanksource/captain/pkg/aichat"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/database"
@@ -262,7 +263,13 @@ var _ = Describe("Database chat sessions", func() {
 		Expect(aggregate.Requests[0].Tool).To(Equal("accounts_edit"))
 		Expect(aggregate.Requests[0].Input).To(MatchJSON(`{"id":"acc-1"}`))
 		Expect(aggregate.Requests[0].RequestedBy).To(Equal("provider"))
+		Expect(aggregate.Requests[0].Request).To(MatchJSON(`{"tool":"accounts_edit","input":{"id":"acc-1"}}`), "a kindless document, read as a tool approval")
 		Expect(aggregate.Messages[1].Parts[0].Approval.ID).To(Equal(permission.ApprovalID))
+
+		unoffered := resolution
+		unoffered.Approved, unoffered.Reason, unoffered.Scope = true, "", api.ApprovalScopeSession
+		_, err = authority.ResolveToolApproval(ctx, unoffered)
+		Expect(err).To(MatchError(approval.ErrInvalidResolution), "a scope the request does not offer is refused before the row is written")
 
 		continuation, err := authority.ResolveToolApproval(ctx, resolution)
 		Expect(err).NotTo(HaveOccurred())

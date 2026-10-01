@@ -115,6 +115,6 @@ var _ = Describe("codex twin dedupe", func() {
 			`{"timestamp":"2026-01-21T12:43:43.000Z","type":"event_msg","payload":{"type":"user_message","message":"<turn_aborted>"}}`,
 		)
 
-		Expect(toolNames(uses)).To(Equal([]string{"User", "Assistant", "User"}))
+		Expect(toolNames(uses)).To(Equal([]string{"System", "Assistant", "System"}))
 	})
 })

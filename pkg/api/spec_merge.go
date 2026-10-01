@@ -47,10 +47,18 @@ func MergePolicy() merge.Policy {
 // its siblings. Decoded explicit zero values, or fields marked by WithExplicit,
 // replace inherited values, including false booleans and empty collections.
 //
+// A list tagged `patchStrategy:"merge" patchMergeKey:"<key>"` — Workflow.Commits,
+// keyed by `on` — follows a Kubernetes strategic merge patch instead: elements
+// sharing a key merge field by field, inherited elements the override does not
+// name are kept, and new keys are added. Only an explicitly empty list (a
+// decoded `"commits": []`) clears it. A commit stanza's implicit phase is
+// resolved to run on both operands first, so the result always spells out `on`.
+//
 // Neither operand is mutated and the result shares no mutable memory with
 // either, so a merged spec can be edited without reaching back into the config
 // it inherited from.
 func (s Spec) Merge(override Spec) Spec {
+	s, override = s.withCommitPhases(), override.withCommitPhases()
 	s = s.withoutReplacedPresence(override)
 	merged := merge.Apply(s, override, MergePolicy())
 	if s.Sandbox != nil && override.Sandbox != nil && s.Sandbox.Mode == override.Sandbox.Mode {
@@ -64,21 +72,45 @@ func (s Spec) Merge(override Spec) Spec {
 	}
 	sort.Strings(paths)
 	for _, path := range paths {
-		tokens := strings.Split(strings.TrimPrefix(path, "/"), "/")
+		tokens := splitPath(path)
 		source := serializedField(reflect.ValueOf(cloned), tokens)
-		target := serializedField(reflect.ValueOf(&merged).Elem(), tokens)
-		if source.IsValid() && target.IsValid() && target.CanSet() {
+		if keyed, replaces := keyedListReplaces(tokens, source, true); !source.IsValid() || keyed && !replaces || blanksSubtree(source) {
+			continue
+		}
+		target := serializedField(reflect.ValueOf(&merged).Elem(), splitPath(keyedPath(path, cloned, merged)))
+		if target.IsValid() && target.CanSet() {
 			target.Set(source)
 		}
 	}
+	merged.Explicit = merged.keyedPresence(s, override)
 	return merged
+}
+
+// blanksSubtree reports an explicit path that names a struct and supplies
+// nothing inside it — a decoded `"permissions": {}` or `"budget": {}`.
+//
+// Such a path says "I mentioned this section", not "I am clearing it": every
+// value the override actually supplied inside the section carries its own
+// explicit path and replaces on its own, including a deliberately emptied
+// collection like `"tools": {}`. Overwriting the merged struct with the zero one
+// would instead drop every inherited sibling the override never named, which is
+// how an empty object in a request used to erase a project's tool policy.
+func blanksSubtree(source reflect.Value) bool {
+	return source.Kind() == reflect.Struct && source.IsZero()
 }
 
 func (s Spec) withoutReplacedPresence(override Spec) Spec {
 	s.Explicit = s.Explicit.Clone()
 	s.Model.Explicit = s.Model.Explicit.Clone()
+	explicit := override.explicitFields()
 	for path := range override.Fields() {
-		value := serializedField(reflect.ValueOf(override), strings.Split(strings.TrimPrefix(path, "/"), "/"))
+		tokens := splitPath(path)
+		value := serializedField(reflect.ValueOf(override), tokens)
+		// Markers inside key-merged elements are re-addressed after the merge
+		// (keyedPresence), and a key-merged list only replaces when emptied.
+		if keyed, replaces := keyedListReplaces(tokens, value, explicit[path]); inKeyedElement(tokens) || keyed && !replaces {
+			continue
+		}
 		if !replacesField(value) && path != "/toolApproval" && (path != "/sandbox" || s.Sandbox == nil || override.Sandbox == nil || s.Sandbox.Mode == override.Sandbox.Mode) {
 			continue
 		}

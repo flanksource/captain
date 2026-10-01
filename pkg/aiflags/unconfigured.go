@@ -49,7 +49,7 @@ func (e *UnconfiguredError) Error() string {
 		fmt.Fprintf(&b, " %s", e.Provider.Name)
 	}
 	b.WriteString("\n    gavel configure                 (per-repo, writes .gavel.yaml)")
-	b.WriteString("\n  or name one inline, e.g. --model agent:claude-sonnet-5")
+	b.WriteString("\n  or name one inline, e.g. --model agent:claude-sonnet-5-5")
 	if e.Field == "mode" && e.Provider != nil {
 		fmt.Fprintf(&b, "\n  modes available for %s: %s", e.Provider.AgentName, modeList(e.Provider.Modes()))
 	}

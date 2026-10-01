@@ -7,6 +7,36 @@ import (
 )
 
 var _ = Describe("Runtime profile layers", func() {
+	It("materializes an ordered flat preset selection with the complete spec", func() {
+		workflow := &api.Workflow{AutoVerifyWithoutFixture: true}
+		presetSpec := api.RuntimePresetSpec(api.Spec{
+			Model:    api.Model{Name: "gpt-5", Mode: api.ModeAgent},
+			Prompt:   api.Prompt{System: "Review the change."},
+			Workflow: workflow,
+		})
+		layers, err := api.RuntimePresetLayers(api.RuntimePresetResolveRequest{
+			Selected: []string{"review"},
+			Presets: []api.RuntimePreset{{
+				ID: "review", Name: "Review", Scope: api.SpecLayerSurface, Spec: presetSpec,
+			}},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(layers).To(Equal([]api.SpecLayer{{
+			ID: "review", Name: "Review", Scope: api.SpecLayerSurface, Source: api.SpecLayerSourcePreset,
+			Spec: api.Spec{Model: api.Model{Name: "gpt-5", Mode: api.ModeAgent}, Prompt: api.Prompt{System: "Review the change."}, Workflow: workflow},
+		}}))
+	})
+
+	It("refuses nested preset execution until the deferred resolver lands", func() {
+		_, err := api.RuntimePresetLayers(api.RuntimePresetResolveRequest{
+			Selected: []string{"review"},
+			Presets: []api.RuntimePreset{{
+				ID: "review", Name: "Review", Scope: api.SpecLayerSurface, Presets: []string{"organization"},
+			}},
+		})
+		Expect(err).To(MatchError(ContainSubstring(`runtime preset "Review" declares nested presets, which are not supported yet`)))
+	})
+
 	It("preserves authored models and reference order without resolving or merging", func() {
 		layers, err := api.RuntimeProfileLayers(api.RuntimeProfileResolveRequest{
 			Profile: api.RuntimeProfile{

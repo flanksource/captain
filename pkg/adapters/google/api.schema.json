@@ -1,0 +1,208 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GoogleAPIOptions",
+  "description": "Native Google Gen AI GenerateContent arguments and configuration used by Captain's API runtime.",
+  "type": "object",
+  "additionalProperties": false,
+  "x-captain-adapter": {
+    "provider": "google",
+    "mode": "api",
+    "sources": [
+      {"kind": "sdk", "reference": "google.golang.org/genai.GenerateContentConfig", "version": "v1.57.0"},
+      {"kind": "official-docs", "reference": "https://googleapis.github.io/js-genai/release_docs/interfaces/types.GenerateContentConfig.html", "version": "retrieved 2026-09-11"},
+      {"kind": "implementation", "reference": "pkg/ai/provider/genkit/options.go and firebase/genkit plugins/googlegenai", "version": "6a2b56cbd26702b18905865f21fc66d44cc864cc"}
+    ]
+  },
+  "required": ["model", "contents"],
+  "properties": {
+    "model": {
+      "title": "Model", "description": "Google model identifier passed to GenerateContent.",
+      "type": "string", "minLength": 1, "x-clicky-section": "model", "x-clicky-order": 10, "x-icon": "sparkles",
+      "x-captain-option": {"nativeName": "model", "support": "mapped", "specPath": "model.name"}
+    },
+    "contents": {
+      "title": "Contents", "description": "Conversation parts, user input, attachments, and tool results sent to the model.",
+      "type": "array", "items": {"type": "object", "additionalProperties": true}, "x-clicky-section": "prompt", "x-clicky-order": 20, "x-array-display": "stacked",
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "contents", "support": "mapped", "specPath": ["messages", "prompt.user", "prompt.attachments", "toolApproval"]}
+    },
+    "systemInstruction": {
+      "title": "System instruction", "description": "System instruction content supplied separately from the conversation.",
+      "type": "object", "additionalProperties": true, "x-clicky-section": "prompt", "x-clicky-order": 30,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "systemInstruction", "support": "mapped", "specPath": "prompt.system"}
+    },
+    "temperature": {
+      "title": "Temperature", "description": "Sampling temperature used for response generation.",
+      "type": "number", "minimum": 0, "maximum": 2, "x-clicky-section": "model", "x-clicky-order": 40,
+      "x-captain-option": {"nativeName": "temperature", "support": "mapped", "specPath": "model.temperature"}
+    },
+    "maxOutputTokens": {
+      "title": "Maximum output tokens", "description": "Maximum number of tokens generated in the response.",
+      "type": "integer", "minimum": 1, "x-clicky-section": "model", "x-clicky-order": 50,
+      "x-captain-option": {"nativeName": "maxOutputTokens", "support": "mapped", "specPath": "budget.maxTokens"}
+    },
+    "thinkingConfig": {
+      "title": "Thinking configuration", "description": "Thinking budget and inclusion settings for reasoning-capable Gemini models.",
+      "type": "object", "additionalProperties": true, "x-clicky-section": "model", "x-clicky-order": 60,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "thinkingConfig", "support": "mapped", "specPath": "model.effort"}
+    },
+    "responseMimeType": {
+      "title": "Response MIME type", "description": "MIME type requested for structured or plain-text output.",
+      "type": "string", "x-clicky-section": "prompt", "x-clicky-order": 70,
+      "x-captain-option": {"nativeName": "responseMimeType", "support": "mapped", "specPath": ["prompt.schema", "prompt.schemaJson"]}
+    },
+    "responseSchema": {
+      "title": "Response schema", "description": "Google schema constraining a structured response.",
+      "type": "object", "additionalProperties": true, "x-clicky-section": "prompt", "x-clicky-order": 80,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "responseSchema", "support": "mapped", "specPath": ["prompt.schema", "prompt.schemaJson"]}
+    },
+    "candidateCount": {
+      "title": "Candidate count", "description": "Number of candidate responses requested from the model.",
+      "type": "integer", "const": 1, "readOnly": true, "x-clicky-section": "model", "x-clicky-order": 90,
+      "x-captain-option": {"nativeName": "candidateCount", "support": "managed", "note": "Captain requests exactly one candidate so each execution has one canonical response."}
+    },
+    "tools": {
+      "title": "Tools", "description": "Native Google tool declarations derived from Captain caller tools.",
+      "type": "array", "items": {"type": "object", "additionalProperties": true}, "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 100, "x-array-display": "stacked",
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "tools", "support": "managed", "note": "Captain converts runtime Config.Tools into provider-native function declarations."}
+    },
+    "toolConfig": {
+      "title": "Tool configuration", "description": "Native policy controlling Google function-calling behavior.",
+      "type": "object", "additionalProperties": true, "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 110,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "toolConfig", "support": "managed", "note": "Captain derives the function-calling policy from its tool loop."}
+    },
+    "stream": {
+      "title": "Stream", "description": "Whether GenerateContent returns a stream of response chunks.",
+      "type": "boolean", "const": true, "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 120,
+      "x-captain-option": {"nativeName": "stream", "support": "managed", "note": "Captain selects the streaming generation method for ExecuteStream."}
+    },
+    "httpOptions": {
+      "title": "HTTP options", "description": "Per-request HTTP transport and API version settings.",
+      "type": "object", "additionalProperties": true, "readOnly": true, "x-clicky-section": "environment", "x-clicky-order": 130,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "httpOptions", "support": "unsupported", "note": "Captain configures the SDK client rather than exposing per-request transport overrides."}
+    },
+    "topP": {
+      "title": "Top P", "description": "Cumulative probability mass retained during nucleus sampling.",
+      "type": "number", "minimum": 0, "maximum": 1, "readOnly": true, "x-clicky-section": "model", "x-clicky-order": 140,
+      "x-captain-option": {"nativeName": "topP", "support": "unsupported", "note": "Captain has no native top-p Spec field."}
+    },
+    "topK": {
+      "title": "Top K", "description": "Number of highest-probability tokens retained during sampling.",
+      "type": "number", "minimum": 0, "readOnly": true, "x-clicky-section": "model", "x-clicky-order": 150,
+      "x-captain-option": {"nativeName": "topK", "support": "unsupported", "note": "Captain has no native top-k Spec field."}
+    },
+    "stopSequences": {
+      "title": "Stop sequences", "description": "Text sequences that stop generation when encountered.",
+      "type": "array", "items": {"type": "string"}, "readOnly": true, "x-clicky-section": "model", "x-clicky-order": 160, "x-array-display": "list",
+      "x-captain-option": {"nativeName": "stopSequences", "support": "unsupported", "note": "Captain has no stop-sequence Spec field."}
+    },
+    "responseLogprobs": {
+      "title": "Response log probabilities", "description": "Whether token log probabilities are included in the response.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "model", "x-clicky-order": 170,
+      "x-captain-option": {"nativeName": "responseLogprobs", "support": "unsupported", "note": "Captain does not request token log probabilities."}
+    },
+    "logprobs": {
+      "title": "Log probabilities", "description": "Number of top token log probabilities returned per decoding step.",
+      "type": "integer", "minimum": 0, "readOnly": true, "x-clicky-section": "model", "x-clicky-order": 180,
+      "x-captain-option": {"nativeName": "logprobs", "support": "unsupported", "note": "Captain does not expose Google log-probability controls."}
+    },
+    "presencePenalty": {
+      "title": "Presence penalty", "description": "Penalty applied when a token has appeared in the generated text.",
+      "type": "number", "readOnly": true, "x-clicky-section": "model", "x-clicky-order": 190,
+      "x-captain-option": {"nativeName": "presencePenalty", "support": "unsupported", "note": "Captain has no native presence-penalty Spec field."}
+    },
+    "frequencyPenalty": {
+      "title": "Frequency penalty", "description": "Penalty scaled by how often a token has appeared in generated text.",
+      "type": "number", "readOnly": true, "x-clicky-section": "model", "x-clicky-order": 200,
+      "x-captain-option": {"nativeName": "frequencyPenalty", "support": "unsupported", "note": "Captain has no native frequency-penalty Spec field."}
+    },
+    "seed": {
+      "title": "Seed", "description": "Fixed sampling seed used for best-effort deterministic generation.",
+      "type": "integer", "readOnly": true, "x-clicky-section": "model", "x-clicky-order": 210,
+      "x-captain-option": {"nativeName": "seed", "support": "unsupported", "note": "Captain does not expose a generation seed."}
+    },
+    "responseJsonSchema": {
+      "title": "Response JSON Schema", "description": "Raw JSON Schema constraining generated JSON output.",
+      "type": "object", "additionalProperties": true, "readOnly": true, "x-clicky-section": "prompt", "x-clicky-order": 220,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "responseJsonSchema", "support": "unsupported", "note": "Captain's Genkit adapter converts structured output through responseSchema."}
+    },
+    "routingConfig": {
+      "title": "Routing configuration", "description": "Model routing behavior for supported Google endpoints.",
+      "type": "object", "additionalProperties": true, "readOnly": true, "x-clicky-section": "model", "x-clicky-order": 230,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "routingConfig", "support": "unsupported", "note": "Captain resolves one concrete model before calling the provider."}
+    },
+    "modelSelectionConfig": {
+      "title": "Model selection configuration", "description": "Constraints used by automatic model selection.",
+      "type": "object", "additionalProperties": true, "readOnly": true, "x-clicky-section": "model", "x-clicky-order": 240,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "modelSelectionConfig", "support": "unsupported", "note": "Captain's registry selects a concrete model before execution."}
+    },
+    "safetySettings": {
+      "title": "Safety settings", "description": "Per-category content safety thresholds applied to the request.",
+      "type": "array", "items": {"type": "object", "additionalProperties": true}, "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 250, "x-array-display": "stacked",
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "safetySettings", "support": "unsupported", "note": "Captain does not expose per-request Google safety thresholds."}
+    },
+    "labels": {
+      "title": "Labels", "description": "String key-value labels attached to the request for billing and reporting.",
+      "type": "object", "additionalProperties": {"type": "string"}, "readOnly": true, "x-clicky-section": "environment", "x-clicky-order": 260,
+      "x-captain-option": {"nativeName": "labels", "support": "unsupported", "note": "Captain does not forward per-request Google labels."}
+    },
+    "cachedContent": {
+      "title": "Cached content", "description": "Resource name of previously cached content included in the request.",
+      "type": "string", "readOnly": true, "x-clicky-section": "prompt", "x-clicky-order": 270,
+      "x-captain-option": {"nativeName": "cachedContent", "support": "unsupported", "note": "Captain does not reference provider-managed cached content."}
+    },
+    "responseModalities": {
+      "title": "Response modalities", "description": "Requested output modalities such as text, image, or audio.",
+      "type": "array", "items": {"type": "string"}, "readOnly": true, "x-clicky-section": "prompt", "x-clicky-order": 280, "x-array-display": "list",
+      "x-captain-option": {"nativeName": "responseModalities", "support": "unsupported", "note": "Captain's API runtime currently consumes text and tool response parts."}
+    },
+    "mediaResolution": {
+      "title": "Media resolution", "description": "Resolution requested when the model processes media inputs.",
+      "type": "string", "readOnly": true, "x-clicky-section": "prompt", "x-clicky-order": 290,
+      "x-captain-option": {"nativeName": "mediaResolution", "support": "unsupported", "note": "Captain does not expose media-resolution selection."}
+    },
+    "speechConfig": {
+      "title": "Speech configuration", "description": "Voice and language settings used for generated speech.",
+      "type": "object", "additionalProperties": true, "readOnly": true, "x-clicky-section": "prompt", "x-clicky-order": 300,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "speechConfig", "support": "unsupported", "note": "Captain's API runtime does not request speech output."}
+    },
+    "audioTimestamp": {
+      "title": "Audio timestamp", "description": "Whether timestamps are requested for audio input or output.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "prompt", "x-clicky-order": 310,
+      "x-captain-option": {"nativeName": "audioTimestamp", "support": "unsupported", "note": "Captain does not expose Google audio timestamps."}
+    },
+    "imageConfig": {
+      "title": "Image configuration", "description": "Generation options for image response modalities.",
+      "type": "object", "additionalProperties": true, "readOnly": true, "x-clicky-section": "prompt", "x-clicky-order": 320,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "imageConfig", "support": "unsupported", "note": "Captain's API runtime does not request generated images."}
+    },
+    "enableEnhancedCivicAnswers": {
+      "title": "Enhanced civic answers", "description": "Whether enhanced civic-information answers are enabled.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 330,
+      "x-captain-option": {"nativeName": "enableEnhancedCivicAnswers", "support": "unsupported", "note": "Captain does not expose this Google search behavior."}
+    },
+    "modelArmorConfig": {
+      "title": "Model Armor configuration", "description": "Model Armor template and filtering behavior applied to the request.",
+      "type": "object", "additionalProperties": true, "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 340,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "modelArmorConfig", "support": "unsupported", "note": "Captain does not expose per-request Model Armor configuration."}
+    },
+    "serviceTier": {
+      "title": "Service tier", "description": "Google processing tier used for the request.",
+      "type": "string", "readOnly": true, "x-clicky-section": "model", "x-clicky-order": 350,
+      "x-captain-option": {"nativeName": "serviceTier", "support": "unsupported", "note": "Captain does not select a Google service tier."}
+    }
+  }
+}

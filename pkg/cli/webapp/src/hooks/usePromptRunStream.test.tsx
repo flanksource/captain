@@ -75,6 +75,29 @@ describe("usePromptRunStream", () => {
     });
   });
 
+  it("keeps a successful terminal summary when the EventSource closes", () => {
+    const { result } = renderHook(() => usePromptRunStream("run-success-1"));
+    const onEvent = lastOnEvent();
+    const summary = {
+      runId: "run-success-1",
+      model: "gemini-3.8-flash",
+      provider: "google",
+      mode: "api",
+      success: true,
+    };
+
+    act(() => {
+      onEvent("done", JSON.stringify(summary));
+      onEvent("error", "");
+    });
+
+    expect(result.current).toMatchObject({
+      summary,
+      status: "done",
+      error: undefined,
+    });
+  });
+
   it("keeps the latest verify snapshot, ending on the done verdict", () => {
     const { result } = renderHook(() => usePromptRunStream("run-verify-1"));
     const onEvent = lastOnEvent();

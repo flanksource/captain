@@ -28,9 +28,13 @@ type Document struct {
 	Spec api.Spec
 	// Runtimes are the prompt's default parallel execution targets.
 	Runtimes []api.Model
-	// RuntimeProfile pins the runtime profile (id or name) the prompt resolves
-	// under; empty when the prompt leaves the selection to the caller.
+	// Presets are the ordered reusable task specs selected by the prompt.
+	Presets    []string
+	PresetsSet bool
+	// RuntimeProfile is retained for parsing compatibility. It is deprecated and
+	// ignored by execution; callers should surface Warnings to users.
 	RuntimeProfile string
+	Warnings       []string
 	// Body is the unrendered Handlebars template body.
 	Body string
 }
@@ -56,14 +60,45 @@ func Parse(source string) (*Document, error) {
 		return nil, fmt.Errorf("decode prompt runtimes: %w", err)
 	}
 	doc.Runtimes = runtimes
+	doc.Presets, doc.PresetsSet, err = decodePromptPresets(raw)
+	if err != nil {
+		return nil, fmt.Errorf("decode prompt presets: %w", err)
+	}
 	doc.RuntimeProfile, err = decodePromptRuntimeProfile(raw)
 	if err != nil {
 		return nil, fmt.Errorf("decode prompt runtime profile: %w", err)
+	}
+	if doc.RuntimeProfile != "" {
+		doc.Warnings = append(doc.Warnings, api.RuntimeProfileDeprecationWarning)
 	}
 	if err := decodeSpecFrontmatter(raw, &doc.Spec); err != nil {
 		return nil, fmt.Errorf("decode prompt frontmatter into spec: %w", err)
 	}
 	return doc, nil
+}
+
+func decodePromptPresets(raw map[string]any) ([]string, bool, error) {
+	value, ok := raw["presets"]
+	if !ok {
+		return nil, false, nil
+	}
+	values, ok := value.([]any)
+	if !ok {
+		return nil, true, fmt.Errorf("presets must be a list")
+	}
+	presets := make([]string, 0, len(values))
+	for i, value := range values {
+		ref, ok := value.(string)
+		if !ok {
+			return nil, true, fmt.Errorf("preset %d must be a string, got %T", i+1, value)
+		}
+		ref = strings.TrimSpace(ref)
+		if ref == "" {
+			return nil, true, fmt.Errorf("preset %d must name a preset", i+1)
+		}
+		presets = append(presets, ref)
+	}
+	return presets, true, nil
 }
 
 func decodePromptRuntimeProfile(raw map[string]any) (string, error) {

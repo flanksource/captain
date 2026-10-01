@@ -75,13 +75,17 @@ var _ = Describe("Database chat sessions", func() {
 		Expect(runs[0].Runtime.Requested.Model).To(Equal(primary.Name))
 		Expect(runs[0].Runtime.Resolved.Model).To(Equal("gemini-2.5-pro"))
 		Expect(runs[0].Runtime.Resolved.Effort).To(BeEmpty(), "the catalog declares no effort tiers for this model")
-		resolutionJSON, err := json.Marshal(runs[0].RenderedSpec["resolution"])
+		renderedJSON, err := json.Marshal(runs[0].RenderedSpec)
 		Expect(err).NotTo(HaveOccurred())
-		var resolution struct {
-			Trace []api.SpecLayer `json:"trace"`
-		}
-		Expect(json.Unmarshal(resolutionJSON, &resolution)).To(Succeed())
-		Expect(resolution.Trace[0].Spec.Fallbacks[0].Effort).To(Equal(api.EffortHigh), "raw authored effort survives final catalog normalization")
+		var rendered api.Spec
+		Expect(json.Unmarshal(renderedJSON, &rendered)).To(Succeed())
+		Expect(json.Marshal(rendered)).To(MatchJSON(renderedJSON), "rendered_spec is the plain spec, with no resolution trace folded in")
+		traceJSON, err := json.Marshal(runs[0].Metadata["specTrace"])
+		Expect(err).NotTo(HaveOccurred())
+		var trace []api.SpecLayer
+		Expect(json.Unmarshal(traceJSON, &trace)).To(Succeed())
+		Expect(trace).NotTo(BeEmpty(), "the spec trace is recorded in the run metadata")
+		Expect(trace[0].Spec.Fallbacks[0].Effort).To(Equal(api.EffortHigh), "raw authored effort survives final catalog normalization")
 
 		conflict := submit("fallback-user-conflict", primary)
 		Expect(conflict.Code).To(Equal(http.StatusConflict), conflict.Body.String())

@@ -7,8 +7,6 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/middleware"
-	"github.com/flanksource/captain/pkg/api"
-	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/promptrun"
 	"github.com/flanksource/clicky/task"
 )
@@ -32,48 +30,57 @@ func runPromptWorkflow(t *task.Task, rendered PromptRenderResult, timeout time.D
 	defer cancel()
 	ctx = ai.ContextWithLogger(ctx, t)
 
-	req := rendered.Input
-	remote, err := preparePromptRun(ctx, &req, rendered.Config)
+	rec, err := promptRecording(ctx, promptRecordingInput{Rendered: rendered, RunID: runID, Binding: binding})
 	if err != nil {
 		return failRun(t, stream, err)
 	}
+	req := rendered.Input
+	remote, err := preparePromptRun(ctx, &req, rendered.Config)
+	if err != nil {
+		return failRun(t, stream, errors.Join(err, recordCompleted(ctx, rec, unstartedRun(rendered, err))))
+	}
 	if remote != nil {
 		defer closeProvider(remote)
+	}
+	if rec != nil {
+		rec.Outcome = stoppedAsStopped(stream)
 	}
 
 	start := time.Now()
 	acc := newPromptEventAccumulator(stream.publish, t, rendered.Model, rendered.Mode)
 	acc.cwd, acc.idPrefix, acc.verify = req.Cwd(), runID, stream.setVerify
 	result, err := promptrun.Run(ctx, promptrun.Input{
-		Request:  req,
+		Resolved: promptResolution(rendered, req),
 		Config:   rendered.Config,
 		Provider: remote,
 		OnEvent:  acc.handle,
 		Timeout:  timeout,
 		NoStream: noStream,
+		Record:   rec,
 	})
 	stream.setRunMetadata(result.SessionID, firstNonEmpty(result.Model, rendered.Model))
-
-	interrupted := contextEndedRun(ctx, err)
-	record := promptRunRecord(rendered, runID, binding, result, interrupted)
 	if err != nil {
-		if stream.wasStopped() {
-			err = errors.New("stopped")
-		}
-		persistPromptRun(context.WithoutCancel(ctx), failedRunRecord(record, err, interrupted))
 		return failRun(t, stream, err)
 	}
-	structured, err := completeRunRecord(&record, result)
+	summary, err := completedRunSummary(runID, rendered, result, binding, time.Since(start))
 	if err != nil {
-		persistPromptRun(context.WithoutCancel(ctx), failedRunRecord(record, err, false))
 		return failRun(t, stream, err)
 	}
-	persistPromptRun(context.WithoutCancel(ctx), record)
-
-	summary := completedRunSummary(record, result, binding, structured, time.Since(start))
 	stream.complete(summary)
 	t.Success()
 	return summary, nil
+}
+
+// stoppedAsStopped files a run the stop button ended the way the stream
+// reports it — "stopped" — rather than as the context error that ended it.
+func stoppedAsStopped(stream *runStream) func(promptrun.Result, error, bool) (promptrun.Outcome, error) {
+	return func(result promptrun.Result, runErr error, stopped bool) (promptrun.Outcome, error) {
+		outcome, err := promptrun.DefaultOutcome(result, runErr, stopped)
+		if stopped && stream.wasStopped() {
+			outcome.Error = "stopped"
+		}
+		return outcome, err
+	}
 }
 
 // preparePromptRun is everything this process must do to the request before the
@@ -91,63 +98,38 @@ func preparePromptRun(ctx context.Context, req *ai.Request, cfg ai.Config) (ai.P
 	return remoteWorkflowProvider(req, cfg)
 }
 
-// promptRunRecord is the run as it will be persisted, assembled before the error
-// branch so that an interrupted run — or one that broke on turn 2 of 3 — is
-// still written down. Its verdict travels two ways: one row per turn (what was
-// asked, what the check said, how long it took) and result_json.verify, the
-// round's report beside the prompt's own structured output. Returning on the
-// error path before this left a stopped run with no rows and no report at all.
-func promptRunRecord(rendered PromptRenderResult, runID string, binding *promptSessionBinding, result promptrun.Result, interrupted bool) promptRunRecordInput {
-	runtime := api.Runtime{Provider: rendered.Provider, Mode: api.RuntimeMode(rendered.Mode)}
-	return promptRunRecordInput{
-		Rendered: rendered, RunID: runID, Binding: binding, SessionID: result.SessionID,
-		Model: firstNonEmpty(result.Model, rendered.Model), Provider: providerOf(runtime), Mode: runtime.Mode,
-		ResultJSON: resultJSONWithVerify(nil, result.Report),
-		Iterations: promptrun.IterationRecords(result, interrupted),
-	}
-}
-
-// completeRunRecord fills in what only a run that reached its own end has: the
-// answer, as text and as structured output, and the failure reason of a run
-// whose checks said no.
-func completeRunRecord(record *promptRunRecordInput, result promptrun.Result) (map[string]any, error) {
+// completedRunSummary is the finished run as the CLI prints it and the stream
+// reports it: the answer as text and as structured output, and the failure
+// reason of a run whose checks said no. The session it names is the captain
+// session when the run is bound to one, not the provider's own id.
+func completedRunSummary(runID string, rendered PromptRenderResult, result promptrun.Result, binding *promptSessionBinding, elapsed time.Duration) (PromptRunSummary, error) {
 	structured, err := structuredOutputMap(result.StructuredData)
 	if err != nil {
-		return nil, err
+		return PromptRunSummary{}, err
 	}
-	if record.ResultText, err = structuredOutputText(result.Response.Text, structured); err != nil {
-		return nil, err
+	text, err := structuredOutputText(result.Response.Text, structured)
+	if err != nil {
+		return PromptRunSummary{}, err
 	}
-	record.ResultJSON = resultJSONWithVerify(structured, result.Report)
-	if !result.Passed {
-		record.Error = promptrun.FailureReason(result.Verdicts)
-	}
-	return structured, nil
-}
-
-// completedRunSummary is the finished run as the CLI prints it and the stream
-// reports it. The session it names is the captain session when the run is bound
-// to one, not the provider's own id.
-func completedRunSummary(record promptRunRecordInput, result promptrun.Result, binding *promptSessionBinding, structured map[string]any, elapsed time.Duration) PromptRunSummary {
-	sessionID := record.SessionID
+	sessionID := result.SessionID
 	if binding != nil {
 		sessionID = binding.SessionID.String()
 	}
 	return PromptRunSummary{
-		RunID:            record.RunID,
+		RunID:            runID,
 		SessionID:        sessionID,
-		Model:            record.Model,
-		Provider:         record.Rendered.Provider,
-		Mode:             record.Rendered.Mode,
+		Model:            firstNonEmpty(result.Model, rendered.Model),
+		Provider:         rendered.Provider,
+		Mode:             rendered.Mode,
 		InputTokens:      result.Usage.InputTokens,
 		OutputTokens:     result.Usage.OutputTokens,
 		CostUSD:          result.CostUSD,
 		Duration:         elapsed.Round(time.Millisecond).String(),
 		Success:          result.Passed,
-		Text:             record.ResultText,
+		Text:             text,
 		StructuredOutput: structured,
-		Error:            record.Error,
-	}
+		Error:            promptrun.FailureReason(result.Verdicts),
+	}, nil
 }
 
 // remoteWorkflowProvider is the whole-run relocation branch: when the resolved
@@ -165,28 +147,6 @@ func remoteWorkflowProvider(req *ai.Request, cfg ai.Config) (ai.Provider, error)
 		return nil, err
 	}
 	return bufferedOnlyProvider{Provider: wrapped}, nil
-}
-
-// contextEndedRun reports whether the loop stopped because its context did —
-// the stop button, or the run's own deadline. Both leave the last turn cut off
-// rather than judged, and neither is the work's fault.
-func contextEndedRun(ctx context.Context, err error) bool {
-	if err == nil {
-		return false
-	}
-	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil
-}
-
-// failedRunRecord stamps the record of a run that ended in an error: an
-// interrupted run is cancelled — its work was cut off, not judged — and anything
-// else failed.
-func failedRunRecord(record promptRunRecordInput, err error, interrupted bool) promptRunRecordInput {
-	record.Error = err.Error()
-	record.State = database.PromptRunStateFailed
-	if interrupted {
-		record.State = database.PromptRunStateCancelled
-	}
-	return record
 }
 
 func failRun(t *task.Task, stream *runStream, err error) (PromptRunSummary, error) {

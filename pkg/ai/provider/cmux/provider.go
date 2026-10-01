@@ -7,7 +7,7 @@
 // Each ExecuteStream spawns a goroutine that ensures a cmux workspace + terminal
 // surface, launches the agent, submits the host-assembled prompt, and streams the
 // resulting session events back as ai.Events, always ending in exactly one
-// EventResult. Tool-permission dialogs are brokered through cfg.CanUseTool.
+// EventResult. Tool-permission dialogs are brokered through cfg.OnApproval.
 //
 // Prompt assembly stays with the host: this provider pastes req.Prompt.User as-is.
 package cmux
@@ -23,6 +23,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/flanksource/captain/pkg/ai"
+	aitools "github.com/flanksource/captain/pkg/ai/tools"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/commons/logger"
 )
@@ -205,7 +206,8 @@ func (p *Provider) drive(ctx context.Context, req ai.Request, schema json.RawMes
 	var outcomeErr error
 	r := &run{
 		client:     NewClient(""),
-		canUseTool: p.cfg.CanUseTool,
+		onApproval: p.cfg.OnApproval,
+		toolPolicy: aitools.ResolveOptions{Preferences: req.ToolPreferences, Policy: req.ToolPolicy},
 	}
 	r.emit = func(ev ai.Event) {
 		switch ev.Kind {
@@ -339,6 +341,11 @@ func (p *Provider) execute(ctx context.Context, req ai.Request, r *run) (*ai.Usa
 	if err != nil {
 		return nil, 0, fmt.Errorf("cmux: invalid cliArgs: %w", err)
 	}
+	permissions, ignored := req.Permissions.ForRuntime(p.provider, api.ModeCmux)
+	for _, warning := range ignored {
+		log.Warnf("cmux: %s", warning)
+	}
+	tools := permissions.Tools
 	agentCommand := withEnv(AgentCommand(AgentCommandOpts{
 		Agent:           agent,
 		Model:           model,
@@ -346,8 +353,8 @@ func (p *Provider) execute(ctx context.Context, req ai.Request, r *run) (*ai.Usa
 		Resume:          resume,
 		Plan:            approval == api.PermissionPlan,
 		PermissionMode:  approval,
-		AllowedTools:    req.Permissions.Tools.AllowList(),
-		DisallowedTools: req.Permissions.Tools.DenyList(),
+		AllowedTools:    tools.AllowList(),
+		DisallowedTools: tools.DenyList(),
 		Directories:     req.Permissions.CleanDirectories(),
 		Effort:          req.Effort,
 		Memory:          req.Memory,

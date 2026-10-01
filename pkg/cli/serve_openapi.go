@@ -3,6 +3,7 @@ package cli
 import (
 	"net/http"
 
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/clicky/rpc"
 )
 
@@ -39,6 +40,24 @@ func addCaptainPromptRunPaths(spec *rpc.OpenAPISpec) {
 	}
 	spec.Paths["/api/captain/prompt/runs/{runId}/stop"] = rpc.OpenAPIPath{
 		"post": promptRunOperation("stopPromptRun", "Stop the entire prompt run", pathParameter, nil, jsonResponse(statusSchema())),
+	}
+	permissionModeBody := &rpc.OpenAPIRequestBody{
+		Required: true,
+		Content: map[string]rpc.OpenAPIMediaType{
+			"application/json": {Schema: &rpc.OpenAPISchema{
+				Type: "object", Required: []string{"mode"},
+				Properties: map[string]*rpc.OpenAPISchema{"mode": permissionModeSchema()},
+			}},
+		},
+	}
+	spec.Paths["/api/captain/prompt/runs/{runId}/permission-mode"] = rpc.OpenAPIPath{
+		"post": promptRunOperation("setPromptRunPermissionMode", "Switch the live prompt run's permission mode", pathParameter, permissionModeBody,
+			jsonResponse(&rpc.OpenAPISchema{
+				Type: "object", Required: []string{"runId", "permissionMode"},
+				Properties: map[string]*rpc.OpenAPISchema{
+					"runId": {Type: "string"}, "permissionMode": permissionModeSchema(),
+				},
+			})),
 	}
 	sessionParameter := pathParameter
 	sessionParameter.Name = "id"
@@ -174,6 +193,26 @@ func addCaptainDisabledPaths(spec *rpc.OpenAPISpec) {
 	}}
 }
 
+func addCaptainAdapterSchemaPaths(spec *rpc.OpenAPISpec) {
+	if spec.Paths == nil {
+		spec.Paths = map[string]rpc.OpenAPIPath{}
+	}
+	document := &rpc.OpenAPISchema{
+		Type: "object", Required: []string{"provider", "mode", "title", "description", "schema"},
+		Properties: map[string]*rpc.OpenAPISchema{
+			"provider": {Type: "string"}, "mode": {Type: "string"}, "title": {Type: "string"},
+			"description": {Type: "string"}, "schema": {Type: "object"},
+		},
+	}
+	spec.Paths["/api/captain/ai/adapter-schemas"] = rpc.OpenAPIPath{"get": {
+		Tags: []string{"Adapter schemas"}, Summary: "List native runtime adapter schemas", OperationID: "listAdapterSchemas",
+		Responses: map[string]rpc.OpenAPIResponse{
+			"200": jsonResponse(&rpc.OpenAPISchema{Type: "array", Items: document}),
+			"500": {Description: "Embedded adapter schema is invalid"},
+		},
+	}}
+}
+
 func promptRunOperation(
 	id, summary string,
 	parameter rpc.OpenAPIParameter,
@@ -210,8 +249,17 @@ func chatMessageRequestSchema() *rpc.OpenAPISchema {
 		Properties: map[string]*rpc.OpenAPISchema{
 			"text": {Type: "string"}, "messageId": {Type: "string"},
 			"model": {Type: "string"}, "mode": {Type: "string"},
+			"permissionMode": permissionModeSchema(),
 		},
 	}
+}
+
+func permissionModeSchema() *rpc.OpenAPISchema {
+	modes := make([]any, 0, len(api.AllPermissionModes()))
+	for _, mode := range api.AllPermissionModes() {
+		modes = append(modes, string(mode))
+	}
+	return &rpc.OpenAPISchema{Type: "string", Enum: modes}
 }
 
 func chatMessageResponseSchema() *rpc.OpenAPISchema {
@@ -231,6 +279,7 @@ func chatCapabilitiesSchema() *rpc.OpenAPISchema {
 		Type: "object",
 		Properties: map[string]*rpc.OpenAPISchema{
 			"interrupt": boolean(), "steer": boolean(), "followUp": boolean(), "resume": boolean(),
+			"setPermissionMode": boolean(),
 		},
 	}
 }

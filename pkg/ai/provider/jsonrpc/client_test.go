@@ -102,8 +102,9 @@ func TestClient_ServerNotification(t *testing.T) {
 
 func TestClient_ServerRequestGetsReply(t *testing.T) {
 	c, peerIn, peerOut := pipePair(t, Handlers{
-		OnRequest: func(method string, _ json.RawMessage) (any, *RPCError) {
-			assert.Equal(t, "permission/request", method)
+		OnRequest: func(req ServerRequest) (any, *RPCError) {
+			assert.Equal(t, "permission/request", req.Method)
+			assert.NotEmpty(t, req.ID)
 			return map[string]string{"decision": "approve"}, nil
 		},
 	})

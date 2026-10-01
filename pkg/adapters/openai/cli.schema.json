@@ -1,0 +1,177 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "OpenAICLIOptions",
+  "description": "Native Codex exec CLI arguments used by Captain's OpenAI CLI runtime.",
+  "type": "object",
+  "additionalProperties": false,
+  "x-captain-adapter": {
+    "provider": "openai",
+    "mode": "cli",
+    "sources": [
+      {"kind": "cli-help", "reference": "codex exec --help and codex exec resume --help", "version": "codex-cli 0.154.0"},
+      {"kind": "implementation", "reference": "pkg/ai/provider/codex_cli.go", "version": "6a2b56cbd26702b18905865f21fc66d44cc864cc"}
+    ]
+  },
+  "properties": {
+    "prompt": {
+      "title": "Prompt", "description": "Prompt text written to Codex standard input.",
+      "type": "string", "x-clicky-section": "prompt", "x-clicky-order": 10,
+      "x-captain-option": {"nativeName": "stdin", "support": "mapped", "specPath": "prompt.user"}
+    },
+    "model": {
+      "title": "Model", "description": "Codex model identifier used for the execution.",
+      "type": "string", "x-clicky-section": "model", "x-clicky-order": 20, "x-icon": "sparkles",
+      "x-captain-option": {"nativeName": "--model", "support": "mapped", "specPath": "model.name"}
+    },
+    "config": {
+      "title": "Configuration overrides", "description": "Codex TOML key-value overrides emitted on the command line.",
+      "type": "array", "items": {"type": "string"}, "x-clicky-section": "environment", "x-clicky-order": 30, "x-array-display": "list",
+      "x-captain-option": {"nativeName": "--config", "support": "mapped", "specPath": ["model.apiUrl", "model.effort", "permissions", "monitoring"]}
+    },
+    "image": {
+      "title": "Images", "description": "Local image paths attached to the initial prompt.",
+      "type": "array", "items": {"type": "string", "format": "path"}, "x-clicky-section": "prompt", "x-clicky-order": 40, "x-array-display": "list",
+      "x-captain-option": {"nativeName": "--image", "support": "mapped", "specPath": "prompt.attachments"}
+    },
+    "cd": {
+      "title": "Working directory", "description": "Directory used as the Codex workspace root.",
+      "type": "string", "format": "path", "x-clicky-section": "workspace", "x-clicky-order": 50,
+      "x-captain-option": {"nativeName": "--cd", "support": "mapped", "specPath": "context.dir"}
+    },
+    "addDir": {
+      "title": "Additional directories", "description": "Additional directories granted write access alongside the primary workspace.",
+      "type": "array", "items": {"type": "string", "format": "path"}, "x-clicky-section": "workspace", "x-clicky-order": 60, "x-array-display": "list",
+      "x-captain-option": {"nativeName": "--add-dir", "support": "mapped", "specPath": "permissions.directories"}
+    },
+    "sandbox": {
+      "title": "Sandbox", "description": "Codex command-execution sandbox mode.",
+      "type": "string", "enum": ["read-only", "workspace-write", "danger-full-access"], "x-clicky-section": "sandbox", "x-clicky-order": 70, "x-enum-display": "segmented",
+      "x-captain-option": {"nativeName": "--sandbox", "support": "mapped", "specPath": "permissions"}
+    },
+    "ephemeral": {
+      "title": "Ephemeral", "description": "Whether Codex avoids persisting session files.",
+      "type": "boolean", "x-clicky-section": "workspace", "x-clicky-order": 80,
+      "x-captain-option": {"nativeName": "--ephemeral", "support": "mapped", "specPath": ["memory.skip", "memory.bare", "permissions.presets"]}
+    },
+    "ignoreUserConfig": {
+      "title": "Ignore user configuration", "description": "Whether Codex skips user-level configuration and instructions.",
+      "type": "boolean", "x-clicky-section": "workspace", "x-clicky-order": 90,
+      "x-captain-option": {"nativeName": "--ignore-user-config", "support": "mapped", "specPath": "memory.skipUser"}
+    },
+    "ignoreRules": {
+      "title": "Ignore rules", "description": "Whether Codex skips repository instructions and hooks.",
+      "type": "boolean", "x-clicky-section": "workspace", "x-clicky-order": 100,
+      "x-captain-option": {"nativeName": "--ignore-rules", "support": "mapped", "specPath": ["memory.skipProject", "memory.skipHooks"]}
+    },
+    "outputSchema": {
+      "title": "Output schema", "description": "Path to a JSON Schema constraining the final response.",
+      "type": "string", "format": "path", "x-clicky-section": "prompt", "x-clicky-order": 110,
+      "x-captain-option": {"nativeName": "--output-schema", "support": "mapped", "specPath": ["prompt.schema", "prompt.schemaJson"]}
+    },
+    "resume": {
+      "title": "Resume session", "description": "Codex thread identifier passed to the exec resume subcommand.",
+      "type": "string", "x-clicky-section": "workspace", "x-clicky-order": 120,
+      "x-captain-option": {"nativeName": "exec resume SESSION_ID", "support": "mapped", "specPath": "sessionId"}
+    },
+    "command": {
+      "title": "Exec command", "description": "Codex non-interactive execution subcommand.",
+      "type": "string", "const": "exec", "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 130,
+      "x-captain-option": {"nativeName": "exec", "support": "managed", "note": "Captain always selects Codex's non-interactive exec command."}
+    },
+    "json": {
+      "title": "JSON events", "description": "Whether Codex prints newline-delimited JSON events.",
+      "type": "boolean", "const": true, "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 140,
+      "x-captain-option": {"nativeName": "--json", "support": "managed", "note": "Captain requires JSON events for typed stream parsing."}
+    },
+    "enable": {
+      "title": "Enable features", "description": "Codex feature flags enabled for this invocation.",
+      "type": "array", "items": {"type": "string"}, "readOnly": true, "x-clicky-section": "environment", "x-clicky-order": 150, "x-array-display": "list",
+      "x-captain-option": {"nativeName": "--enable", "support": "unsupported", "note": "Captain does not expose raw Codex feature flags."}
+    },
+    "disable": {
+      "title": "Disable features", "description": "Codex feature flags disabled for this invocation.",
+      "type": "array", "items": {"type": "string"}, "readOnly": true, "x-clicky-section": "environment", "x-clicky-order": 160, "x-array-display": "list",
+      "x-captain-option": {"nativeName": "--disable", "support": "unsupported", "note": "Captain does not expose raw Codex feature flags."}
+    },
+    "strictConfig": {
+      "title": "Strict configuration", "description": "Whether unknown configuration keys cause an error.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "environment", "x-clicky-order": 170,
+      "x-captain-option": {"nativeName": "--strict-config", "support": "unsupported", "note": "Captain emits known configuration keys but does not enable strict parsing."}
+    },
+    "oss": {
+      "title": "Open-source provider", "description": "Whether Codex uses a local open-source model provider.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "model", "x-clicky-order": 180,
+      "x-captain-option": {"nativeName": "--oss", "support": "unsupported", "note": "Captain's OpenAI CLI runtime uses the configured Codex provider."}
+    },
+    "localProvider": {
+      "title": "Local provider", "description": "Local model provider selected when --oss is active.",
+      "type": "string", "readOnly": true, "x-clicky-section": "model", "x-clicky-order": 190,
+      "x-captain-option": {"nativeName": "--local-provider", "support": "unsupported", "note": "Captain does not expose Codex local-provider selection."}
+    },
+    "profile": {
+      "title": "Configuration profile", "description": "Named Codex configuration profile loaded for the invocation.",
+      "type": "string", "readOnly": true, "x-clicky-section": "environment", "x-clicky-order": 200,
+      "x-captain-option": {"nativeName": "--profile", "support": "unsupported", "note": "Captain does not select a Codex configuration profile."}
+    },
+    "approveForMe": {
+      "title": "Automatic approvals", "description": "Whether Codex chooses when to request command approval.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 210,
+      "x-captain-option": {"nativeName": "--approve-for-me", "support": "unsupported", "note": "Captain maps its permission mode through Codex approval_policy and approvals_reviewer configuration."}
+    },
+    "dangerouslyBypassApprovalsAndSandbox": {
+      "title": "Bypass approvals and sandbox", "description": "Whether Codex executes without approval prompts or sandbox isolation.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 220,
+      "x-captain-option": {"nativeName": "--dangerously-bypass-approvals-and-sandbox", "support": "unsupported", "note": "Captain maps validated sandbox and approval settings separately."}
+    },
+    "dangerouslyBypassHookTrust": {
+      "title": "Bypass hook trust", "description": "Whether Codex runs project hooks without trust confirmation.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 230,
+      "x-captain-option": {"nativeName": "--dangerously-bypass-hook-trust", "support": "unsupported", "note": "Captain does not bypass Codex hook trust checks."}
+    },
+    "worktree": {
+      "title": "Worktree", "description": "Whether Codex creates and uses a temporary Git worktree.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 240,
+      "x-captain-option": {"nativeName": "--worktree", "support": "unsupported", "note": "Captain executes in the explicitly supplied working directory."}
+    },
+    "threadSource": {
+      "title": "Thread source", "description": "Source label attached to the created Codex thread.",
+      "type": "string", "readOnly": true, "x-clicky-section": "environment", "x-clicky-order": 250,
+      "x-captain-option": {"nativeName": "--thread-source", "support": "unsupported", "note": "Captain does not set a native Codex thread-source label."}
+    },
+    "skipGitRepoCheck": {
+      "title": "Skip Git repository check", "description": "Whether Codex runs when the working directory is outside a Git repository.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 260,
+      "x-captain-option": {"nativeName": "--skip-git-repo-check", "support": "unsupported", "note": "Captain leaves Codex's repository safety check enabled."}
+    },
+    "color": {
+      "title": "Color", "description": "Color policy used for human-readable Codex output.",
+      "type": "string", "enum": ["always", "never", "auto"], "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 270, "x-enum-display": "segmented",
+      "x-captain-option": {"nativeName": "--color", "support": "unsupported", "note": "Captain consumes JSON event output rather than colored terminal text."}
+    },
+    "outputLastMessage": {
+      "title": "Last message output", "description": "File path receiving the final assistant message.",
+      "type": "string", "format": "path", "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 280,
+      "x-captain-option": {"nativeName": "--output-last-message", "support": "unsupported", "note": "Captain receives the final message through the JSON event stream."}
+    },
+    "resumeLast": {
+      "title": "Resume last session", "description": "Whether exec resume selects the most recent Codex thread.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 290,
+      "x-captain-option": {"nativeName": "exec resume --last", "support": "unsupported", "note": "Captain resumes only an explicit session identifier."}
+    },
+    "resumeAll": {
+      "title": "List all resumable sessions", "description": "Whether exec resume ignores cwd filtering while selecting a thread.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 300,
+      "x-captain-option": {"nativeName": "exec resume --all", "support": "unsupported", "note": "Captain does not open the interactive resume picker."}
+    },
+    "help": {
+      "title": "Help", "description": "Whether Codex prints exec command help and exits.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 310,
+      "x-captain-option": {"nativeName": "--help", "support": "unsupported", "note": "Captain executes requests rather than CLI help."}
+    },
+    "version": {
+      "title": "Version", "description": "Whether Codex prints its version and exits.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 320,
+      "x-captain-option": {"nativeName": "--version", "support": "unsupported", "note": "Captain resolves the installed CLI version outside request execution."}
+    }
+  }
+}

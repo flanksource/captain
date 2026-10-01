@@ -17,6 +17,7 @@ var _ = Describe("Caller-tool credential lease", func() {
 	It("exposes only the credential hash and revalidates the persisted lease", func(ctx SpecContext) {
 		var revoked atomic.Bool
 		runtime, err := callertools.New(callertools.Options{
+			Context: ctx,
 			Definitions: []api.ToolDefinition{{
 				Name: "account_edit", DefaultPermission: api.ToolPolicyAllow,
 				Handler: func(context.Context, map[string]any) (any, error) {

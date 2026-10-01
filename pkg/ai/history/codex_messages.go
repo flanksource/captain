@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/flanksource/captain/pkg/ai/assistanttags"
+	"github.com/flanksource/captain/pkg/api"
 )
 
 // codexPendingCall is a tool call awaiting its output, kept with the line it
@@ -38,18 +39,23 @@ func extractResponseItem(event CodexEvent, pendingCall map[string]codexPendingCa
 	case "message":
 		var tool string
 		var text string
+		var attachments []api.AttachmentRef
 		switch event.Payload.Role {
 		case "assistant":
 			text = codexContentText(event.Payload.Content, "output_text", "text")
 			return extractCodexAssistantText(text, event, cwd, sessionID, "response_item.message")
 		case "user":
-			text = codexContentText(event.Payload.Content, "input_text", "text")
-			if shell, ok := parseCodexUserShellCommand(text); ok {
+			text, attachments = codexUserContent(event.Payload.Content)
+			if shell, ok := parseCodexUserShellCommand(text); ok && len(attachments) == 0 {
 				return []ToolUse{buildCodexUserShellCommandUse(shell, event, cwd, sessionID, "response_item.message.user_shell_command")}
 			}
-			var ok bool
-			if tool, ok = codexUserMessageTool(text); !ok {
-				return nil
+			if len(attachments) > 0 {
+				tool = "User"
+			} else {
+				var ok bool
+				if tool, ok = codexUserMessageTool(text); !ok {
+					return nil
+				}
 			}
 		case "developer":
 			// A developer message is briefing, never conversation: the
@@ -63,18 +69,19 @@ func extractResponseItem(event CodexEvent, pendingCall map[string]codexPendingCa
 		default:
 			return nil
 		}
-		if text == "" {
+		if text == "" && len(attachments) == 0 {
 			return nil
 		}
 		return []ToolUse{{
-			Tool:       tool,
-			Input:      map[string]any{"text": text},
-			Timestamp:  event.Time(),
-			CWD:        cwd,
-			SessionID:  sessionID,
-			TurnID:     codexEventTurnID(event),
-			Source:     "codex",
-			RecordType: "response_item.message",
+			Tool:        tool,
+			Input:       map[string]any{"text": text},
+			Attachments: attachments,
+			Timestamp:   event.Time(),
+			CWD:         cwd,
+			SessionID:   sessionID,
+			TurnID:      codexEventTurnID(event),
+			Source:      "codex",
+			RecordType:  "response_item.message",
 		}}
 	}
 	return nil
@@ -289,6 +296,61 @@ func codexContentText(content []CodexContent, accepted ...string) string {
 	return text
 }
 
+func codexUserContent(content []CodexContent) (string, []api.AttachmentRef) {
+	var text strings.Builder
+	var attachments []api.AttachmentRef
+	for index := 0; index < len(content); index++ {
+		item := content[index]
+		if item.Type == "input_text" && index+2 < len(content) {
+			filename, path, ok := codexImageWrapper(item.Text)
+			image, close := content[index+1], content[index+2]
+			if ok && image.Type == "input_image" && strings.TrimSpace(close.Text) == "</image>" {
+				attachments = append(attachments, api.AttachmentRef{
+					Path: path, Filename: filename, MediaType: codexImageMediaType(image.ImageURL),
+				})
+				index += 2
+				continue
+			}
+		}
+		if item.Type == "input_image" {
+			attachments = append(attachments, api.AttachmentRef{
+				URL: item.ImageURL, MediaType: codexImageMediaType(item.ImageURL),
+			})
+			continue
+		}
+		if (item.Type == "input_text" || item.Type == "text") && item.Text != "" {
+			text.WriteString(item.Text)
+		}
+	}
+	return text.String(), attachments
+}
+
+func codexImageWrapper(text string) (string, string, bool) {
+	value, ok := strings.CutPrefix(strings.TrimSpace(text), "<image name=")
+	if !ok {
+		return "", "", false
+	}
+	name, path, ok := strings.Cut(value, ` path="`)
+	if !ok || !strings.HasSuffix(path, `">`) {
+		return "", "", false
+	}
+	name = strings.TrimSpace(strings.Trim(name, "[]"))
+	path = strings.TrimSuffix(path, `">`)
+	return name, path, name != "" && path != ""
+}
+
+func codexImageMediaType(url string) string {
+	value, ok := strings.CutPrefix(url, "data:")
+	if !ok {
+		return ""
+	}
+	mediaType, _, _ := strings.Cut(value, ";")
+	if mediaType == value {
+		mediaType, _, _ = strings.Cut(value, ",")
+	}
+	return mediaType
+}
+
 type codexUserShellCommand struct {
 	Command         string
 	ExitCode        int
@@ -401,7 +463,7 @@ func codexUserMessageTool(text string) (string, bool) {
 	if text == "" {
 		return "", false
 	}
-	if strings.HasPrefix(text, "# AGENTS.md") ||
+	if strings.HasPrefix(text, "# AGENTS.md") || strings.HasPrefix(text, "<turn_aborted>") ||
 		strings.HasPrefix(text, "<recommended_plugins>") && strings.Contains(text, "# AGENTS.md instructions") {
 		return "System", true
 	}

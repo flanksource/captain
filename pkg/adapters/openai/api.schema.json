@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "OpenAIAPIOptions",
+  "description": "Native OpenAI Responses API request options used by Captain's API runtime.",
+  "type": "object",
+  "additionalProperties": false,
+  "x-captain-adapter": {
+    "provider": "openai",
+    "mode": "api",
+    "sources": [
+      {"kind": "sdk", "reference": "github.com/openai/openai-go/responses.ResponseNewParams", "version": "v1.12.0"},
+      {"kind": "official-docs", "reference": "https://developers.openai.com/api/reference/resources/responses/methods/create", "version": "retrieved 2026-09-11"},
+      {"kind": "implementation", "reference": "pkg/ai/provider/openai/input.go", "version": "6a2b56cbd26702b18905865f21fc66d44cc864cc"}
+    ]
+  },
+  "required": ["model", "input"],
+  "properties": {
+    "model": {
+      "title": "Model", "description": "OpenAI model identifier used to generate the response.",
+      "type": "string", "minLength": 1, "x-clicky-section": "model", "x-clicky-order": 10, "x-icon": "sparkles",
+      "x-captain-option": {"nativeName": "model", "support": "mapped", "specPath": "model.name"}
+    },
+    "input": {
+      "title": "Input", "description": "Text, image, file, conversation, and function-result items sent to the model.",
+      "oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "object", "additionalProperties": true}}], "x-clicky-section": "prompt", "x-clicky-order": 20, "x-array-display": "stacked",
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "input", "support": "mapped", "specPath": ["messages", "prompt.user", "prompt.attachments", "toolApproval"]}
+    },
+    "instructions": {
+      "title": "Instructions", "description": "System or developer instructions inserted into the model context.",
+      "type": "string", "x-clicky-section": "prompt", "x-clicky-order": 30,
+      "x-captain-option": {"nativeName": "instructions", "support": "mapped", "specPath": "prompt.system"}
+    },
+    "max_output_tokens": {
+      "title": "Maximum output tokens", "description": "Upper bound covering visible output and reasoning tokens.",
+      "type": "integer", "minimum": 1, "x-clicky-section": "model", "x-clicky-order": 40, "x-icon": "hash",
+      "x-captain-option": {"nativeName": "max_output_tokens", "support": "mapped", "specPath": "budget.maxTokens"}
+    },
+    "temperature": {
+      "title": "Temperature", "description": "Sampling temperature between zero and two.",
+      "type": "number", "minimum": 0, "maximum": 2, "x-clicky-section": "model", "x-clicky-order": 50,
+      "x-captain-option": {"nativeName": "temperature", "support": "mapped", "specPath": "model.temperature"}
+    },
+    "reasoning": {
+      "title": "Reasoning", "description": "Reasoning effort and summary configuration for reasoning models.",
+      "type": "object", "additionalProperties": true, "x-clicky-section": "model", "x-clicky-order": 60,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "reasoning", "support": "mapped", "specPath": "model.effort"}
+    },
+    "text": {
+      "title": "Text output", "description": "Plain-text or JSON Schema output configuration.",
+      "type": "object", "additionalProperties": true, "x-clicky-section": "prompt", "x-clicky-order": 70,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "text", "support": "mapped", "specPath": ["prompt.schema", "prompt.schemaJson"]}
+    },
+    "tools": {
+      "title": "Tools", "description": "Native Responses API tool definitions derived from Captain caller tools.",
+      "type": "array", "items": {"type": "object", "additionalProperties": true}, "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 80, "x-array-display": "stacked",
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "tools", "support": "managed", "note": "Captain derives function tools from runtime Config.Tools and the Spec tool policy."}
+    },
+    "include": {
+      "title": "Included output data", "description": "Additional response fields requested from the Responses API.",
+      "type": "array", "items": {"type": "string"}, "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 90, "x-array-display": "list",
+      "x-captain-option": {"nativeName": "include", "support": "managed", "note": "Captain always requests reasoning.encrypted_content for stateless tool loops."}
+    },
+    "store": {
+      "title": "Store response", "description": "Whether OpenAI stores the generated response for later retrieval.",
+      "type": "boolean", "const": false, "readOnly": true, "x-clicky-section": "environment", "x-clicky-order": 100,
+      "x-captain-option": {"nativeName": "store", "support": "managed", "note": "Captain always disables remote response storage and replays its own history."}
+    },
+    "stream": {
+      "title": "Stream", "description": "Whether the response is returned as server-sent streaming events.",
+      "type": "boolean", "const": true, "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 110,
+      "x-captain-option": {"nativeName": "stream", "support": "managed", "note": "Captain uses Responses.NewStreaming for its streaming provider."}
+    },
+    "background": {
+      "title": "Background", "description": "Whether OpenAI runs the response asynchronously in the background.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 120,
+      "x-captain-option": {"nativeName": "background", "support": "unsupported", "note": "Captain expects one foreground streaming response."}
+    },
+    "max_tool_calls": {
+      "title": "Maximum tool calls", "description": "Maximum total built-in tool calls processed in the response.",
+      "type": "integer", "minimum": 0, "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 130,
+      "x-captain-option": {"nativeName": "max_tool_calls", "support": "unsupported", "note": "Captain bounds its local tool loop rather than setting this native limit."}
+    },
+    "parallel_tool_calls": {
+      "title": "Parallel tool calls", "description": "Whether the model may issue tool calls in parallel.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 140,
+      "x-captain-option": {"nativeName": "parallel_tool_calls", "support": "unsupported", "note": "Captain does not expose this native option."}
+    },
+    "previous_response_id": {
+      "title": "Previous response ID", "description": "Remote response identifier used for OpenAI-managed conversation state.",
+      "type": "string", "readOnly": true, "x-clicky-section": "workspace", "x-clicky-order": 150,
+      "x-captain-option": {"nativeName": "previous_response_id", "support": "unsupported", "note": "Captain replays canonical messages instead of referencing stored responses."}
+    },
+    "top_logprobs": {
+      "title": "Top log probabilities", "description": "Number of likely tokens returned with log probabilities at each position.",
+      "type": "integer", "minimum": 0, "maximum": 20, "readOnly": true, "x-clicky-section": "model", "x-clicky-order": 160,
+      "x-captain-option": {"nativeName": "top_logprobs", "support": "unsupported", "note": "Captain does not request token log probabilities."}
+    },
+    "top_p": {
+      "title": "Top P", "description": "Cumulative probability mass retained during nucleus sampling.",
+      "type": "number", "minimum": 0, "maximum": 1, "readOnly": true, "x-clicky-section": "model", "x-clicky-order": 170,
+      "x-captain-option": {"nativeName": "top_p", "support": "unsupported", "note": "Captain has no native top-p Spec field."}
+    },
+    "prompt_cache_key": {
+      "title": "Prompt cache key", "description": "Stable key used by OpenAI to improve prompt-cache routing.",
+      "type": "string", "readOnly": true, "x-clicky-section": "model", "x-clicky-order": 180,
+      "x-captain-option": {"nativeName": "prompt_cache_key", "support": "unsupported", "note": "Captain does not send a prompt cache routing key."}
+    },
+    "safety_identifier": {
+      "title": "Safety identifier", "description": "Stable hashed identifier used for abuse detection.",
+      "type": "string", "readOnly": true, "x-clicky-section": "environment", "x-clicky-order": 190,
+      "x-captain-option": {"nativeName": "safety_identifier", "support": "unsupported", "note": "Captain does not send per-user safety identifiers."}
+    },
+    "user": {
+      "title": "Legacy user identifier", "description": "Deprecated end-user identifier replaced by safety_identifier and prompt_cache_key.",
+      "type": "string", "readOnly": true, "x-clicky-section": "environment", "x-clicky-order": 200,
+      "x-captain-option": {"nativeName": "user", "support": "unsupported", "note": "Captain does not send the deprecated user field."}
+    },
+    "metadata": {
+      "title": "Metadata", "description": "Up to sixteen string key-value pairs attached to the response.",
+      "type": "object", "additionalProperties": {"type": "string"}, "readOnly": true, "x-clicky-section": "environment", "x-clicky-order": 210,
+      "x-captain-option": {"nativeName": "metadata", "support": "unsupported", "note": "Captain does not forward per-request OpenAI metadata."}
+    },
+    "prompt": {
+      "title": "Prompt template", "description": "Reusable OpenAI prompt template reference and variables.",
+      "type": "object", "additionalProperties": true, "readOnly": true, "x-clicky-section": "prompt", "x-clicky-order": 220,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "prompt", "support": "unsupported", "note": "Captain renders its own prompt and does not select remote prompt templates."}
+    },
+    "service_tier": {
+      "title": "Service tier", "description": "Processing tier used to serve the response.",
+      "type": "string", "enum": ["auto", "default", "flex", "scale", "priority"], "readOnly": true, "x-clicky-section": "model", "x-clicky-order": 230, "x-enum-display": "combobox",
+      "x-captain-option": {"nativeName": "service_tier", "support": "unsupported", "note": "Captain does not select an OpenAI service tier."}
+    },
+    "truncation": {
+      "title": "Truncation", "description": "Strategy applied when conversation input exceeds the model context window.",
+      "type": "string", "enum": ["auto", "disabled"], "readOnly": true, "x-clicky-section": "model", "x-clicky-order": 240, "x-enum-display": "segmented",
+      "x-captain-option": {"nativeName": "truncation", "support": "unsupported", "note": "Captain does not opt into OpenAI input truncation."}
+    },
+    "tool_choice": {
+      "title": "Tool choice", "description": "Policy selecting whether and which tool the model should call.",
+      "oneOf": [{"type": "string"}, {"type": "object", "additionalProperties": true}], "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 250,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "tool_choice", "support": "unsupported", "note": "Captain supplies function tools but does not set Responses tool_choice."}
+    }
+  }
+}

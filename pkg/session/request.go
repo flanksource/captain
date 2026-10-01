@@ -7,15 +7,18 @@ import (
 )
 
 type Request struct {
-	ID           string          `json:"id"`
-	TurnID       string          `json:"turnId,omitempty"`
-	PromptRunID  string          `json:"promptRunId,omitempty"`
-	ModelCallID  string          `json:"modelCallId,omitempty"`
-	ToolCallID   string          `json:"toolCallId,omitempty"`
-	Kind         string          `json:"kind"`
-	State        string          `json:"state"`
-	Tool         string          `json:"tool,omitempty"`
-	Input        json.RawMessage `json:"input,omitempty"`
+	ID          string          `json:"id"`
+	TurnID      string          `json:"turnId,omitempty"`
+	PromptRunID string          `json:"promptRunId,omitempty"`
+	ModelCallID string          `json:"modelCallId,omitempty"`
+	ToolCallID  string          `json:"toolCallId,omitempty"`
+	Kind        string          `json:"kind"`
+	State       string          `json:"state"`
+	Tool        string          `json:"tool,omitempty"`
+	Input       json.RawMessage `json:"input,omitempty"`
+	// Request is the stored request document: tool and input, plus the approval
+	// kind and its typed payload when the provider recorded one.
+	Request      json.RawMessage `json:"request,omitempty"`
 	UpdatedInput json.RawMessage `json:"updatedInput,omitempty"`
 	RequestedBy  string          `json:"requestedBy,omitempty"`
 	ResolvedBy   string          `json:"resolvedBy,omitempty"`

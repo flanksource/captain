@@ -468,10 +468,13 @@ func TestDoCallbackReceivesAResolvedPlan(t *testing.T) {
 	hc := isolated(dir)
 
 	var got Plan
+	const hostMessage = "feat: cut by the host pipeline"
 	h := New(api.Commit{On: api.CommitOnAgent, Gates: api.CommitGatesFull, Message: "feat: hosted"})
 	h.Do = func(_ *agent.HookContext, plan Plan) (string, error) {
 		got = plan
-		return "0123456789abcdef0123456789abcdef01234567", nil
+		mustGit(t, plan.Dir, append([]string{"add", "--"}, plan.Paths...)...)
+		mustGit(t, plan.Dir, "commit", "--no-verify", "-m", hostMessage)
+		return mustGit(t, plan.Dir, "rev-parse", "HEAD"), nil
 	}
 
 	write(t, dir, "hosted.go", "package main\n")
@@ -490,11 +493,13 @@ func TestDoCallbackReceivesAResolvedPlan(t *testing.T) {
 	if fmt.Sprint(got.Paths) != fmt.Sprint([]string{"hosted.go"}) {
 		t.Errorf("plan paths = %v, want [hosted.go]", got.Paths)
 	}
-	if commitCount(t, dir) != 1 {
-		t.Errorf("the host owns the commit; captain should not have cut one: %v", subjects(t, dir))
+	// The host owns the commit: exactly its one commit lands, under its message.
+	if log := subjects(t, dir); fmt.Sprint(log) != fmt.Sprint([]string{hostMessage, "chore: seed"}) {
+		t.Errorf("subjects = %v, want only the host's commit on top of the seed", log)
 	}
-	if len(hc.Workspace().Commits) != 1 || hc.Workspace().Commits[0].SHA != got.Subject && hc.Workspace().Commits[0].Message != "feat: hosted" {
-		t.Errorf("host commit not recorded on the workspace: %+v", hc.Workspace().Commits)
+	want := []api.CommitRecord{{SHA: mustGit(t, dir, "rev-parse", "HEAD"), Message: hostMessage}}
+	if fmt.Sprint(hc.Workspace().Commits) != fmt.Sprint(want) {
+		t.Errorf("workspace commits = %+v, want the host's commit %+v", hc.Workspace().Commits, want)
 	}
 }
 

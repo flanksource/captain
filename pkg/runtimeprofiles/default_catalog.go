@@ -24,7 +24,8 @@ type DefaultCatalogOptions struct {
 	Config *captainconfig.Config
 }
 
-// NewDefaultCatalog discovers the database, user, configured and repo sources.
+// NewDefaultCatalog discovers the database, user, configured and repo sources,
+// and registers the built-in presets last as the lowest-precedence source.
 // Database openers run only when records are read or written.
 func NewDefaultCatalog(ctx context.Context, options DefaultCatalogOptions) (*Catalog, error) {
 	if err := ctx.Err(); err != nil {
@@ -49,7 +50,7 @@ func NewDefaultCatalog(ctx context.Context, options DefaultCatalogOptions) (*Cat
 		}
 		sources = append(sources, source)
 	}
-	return NewCatalog(sources...)
+	return NewCatalog(append(sources, NewBuiltinSource())...)
 }
 
 func runtimeRecordDirs(options DefaultCatalogOptions) ([]FileSourceOptions, error) {

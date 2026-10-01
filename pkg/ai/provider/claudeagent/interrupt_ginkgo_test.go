@@ -26,6 +26,7 @@ var _ = Describe("Claude Agent interruption", func() {
 			"subtype":"error_during_execution",
 			"session_id":"session-interrupted"
 		}`))
+		provider.onNotification(notifySessionState, json.RawMessage(`{"state":"idle"}`))
 
 		Consistently(turn.inbox, 50*time.Millisecond).ShouldNot(Receive())
 		Eventually(turn.term).Should(BeClosed())

@@ -81,8 +81,8 @@ func (f runtimeCatalogFixture) prompt(name, content string) PromptDetail {
 	return detail
 }
 
-// reviewCatalog seeds the fixture with a global "Org" preset and a "Review"
-// profile layering it under a profile-level budget.
+// reviewCatalog seeds the fixture with independently selectable global and
+// surface presets.
 func (f runtimeCatalogFixture) reviewCatalog() {
 	GinkgoHelper()
 	f.preset(runtimeprofiles.PresetInput{
@@ -94,8 +94,9 @@ func (f runtimeCatalogFixture) reviewCatalog() {
 			Memory:      api.Memory{SkipUser: true},
 		},
 	})
-	f.profile(runtimeprofiles.ProfileInput{
-		Name: "Review", Presets: []string{"org"}, Spec: api.Spec{Budget: api.Budget{MaxTurns: 10}},
+	f.preset(runtimeprofiles.PresetInput{
+		Name: "Review", Scope: api.SpecLayerSurface,
+		Spec: api.RuntimePresetSpec(api.Spec{Budget: api.Budget{MaxTurns: 10}}),
 	})
 }
 
@@ -119,13 +120,13 @@ Review the diff.
 `
 
 var _ = Describe("prompt layers", func() {
-	It("resolves profile < frontmatter < request and reports the trace", func() {
+	It("resolves presets < frontmatter < request and reports the trace", func() {
 		f, _, _ := newRuntimeCatalogFixture()
 		f.reviewCatalog()
 		detail := f.prompt("layered", layeredPromptSource)
 
 		rendered, err := renderPrompt(f.ctx, detail.ID, PromptRenderRequest{
-			RuntimeProfile: "review",
+			Presets: []string{"org", "review"},
 			Spec: &api.Spec{
 				Model:  api.Model{Name: "gpt-4o", Mode: api.ModeAPI},
 				Budget: api.Budget{MaxTurns: 3},
@@ -134,15 +135,15 @@ var _ = Describe("prompt layers", func() {
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(rendered.ValidationError).To(BeEmpty())
-		Expect(rendered.Model).To(Equal("gpt-4o"), "the request replaces the profile's model")
+		Expect(rendered.Model).To(Equal("gpt-4o"), "the request replaces the preset's model")
 		Expect(rendered.Provider).To(Equal(api.OpenAI.Name))
-		Expect(rendered.Input.Budget.MaxTurns).To(Equal(3), "the request beats frontmatter and profile")
-		Expect(rendered.Input.Permissions.Mode).To(Equal(api.PermissionPlan), "frontmatter beats the profile")
+		Expect(rendered.Input.Budget.MaxTurns).To(Equal(3), "the request beats frontmatter and presets")
+		Expect(rendered.Input.Permissions.Mode).To(Equal(api.PermissionPlan), "frontmatter beats the preset")
 		Expect(rendered.Input.Memory.SkipUser).To(BeTrue(), "an unopposed preset value survives")
-		Expect(traceNames(rendered.Resolution)).To(Equal([]string{"Org", "Review run spec", "layered.prompt", "render request"}))
+		Expect(traceNames(rendered.Resolution)).To(Equal([]string{"Org", "Review", "layered.prompt", "render request"}))
 		Expect(rendered.Resolution.Trace).To(HaveExactElements(
 			HaveField("Source", api.SpecLayerSourcePreset),
-			HaveField("Source", api.SpecLayerSourceProfile),
+			HaveField("Source", api.SpecLayerSourcePreset),
 			HaveField("Source", api.SpecLayerSourcePrompt),
 			HaveField("Source", api.SpecLayerSourceRequest),
 		))
@@ -155,19 +156,19 @@ var _ = Describe("prompt layers", func() {
 		Expect(rendered.Resolution.Spec).To(Equal(rendered.Input))
 	})
 
-	It("lets the frontmatter override the profile when the request is silent", func() {
+	It("lets the frontmatter override presets when the request is silent", func() {
 		f, _, _ := newRuntimeCatalogFixture()
 		f.reviewCatalog()
 		detail := f.prompt("layered", layeredPromptSource)
 
-		rendered, err := renderPrompt(f.ctx, detail.ID, PromptRenderRequest{RuntimeProfile: "review"})
+		rendered, err := renderPrompt(f.ctx, detail.ID, PromptRenderRequest{Presets: []string{"org", "review"}})
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(rendered.ValidationError).To(BeEmpty())
-		Expect(rendered.Model).To(Equal("claude-sonnet-4-6"), "the profile supplies the model the frontmatter lacks")
+		Expect(rendered.Model).To(Equal("claude-sonnet-4-6"), "the preset supplies the model the frontmatter lacks")
 		Expect(rendered.Mode).To(Equal(string(api.ModeAgent)))
 		Expect(rendered.Input.Budget.MaxTurns).To(Equal(7))
-		Expect(traceNames(rendered.Resolution)).To(Equal([]string{"Org", "Review run spec", "layered.prompt"}))
+		Expect(traceNames(rendered.Resolution)).To(Equal([]string{"Org", "Review", "layered.prompt"}))
 	})
 
 	It("orders presets by scope so a user preset outranks the frontmatter but not the request", func() {
@@ -179,26 +180,25 @@ var _ = Describe("prompt layers", func() {
 			Name: "Org", Scope: api.SpecLayerGlobal,
 			Spec: api.RuntimePresetSpec{Model: api.Model{Name: "claude-sonnet-4-6", Mode: api.ModeAgent}},
 		})
-		f.profile(runtimeprofiles.ProfileInput{Name: "Review", Presets: []string{"personal", "org"}})
 		detail := f.prompt("layered", layeredPromptSource)
 
-		byPreset, err := renderPrompt(f.ctx, detail.ID, PromptRenderRequest{RuntimeProfile: "review"})
+		byPreset, err := renderPrompt(f.ctx, detail.ID, PromptRenderRequest{Presets: []string{"personal", "org"}})
 		Expect(err).NotTo(HaveOccurred())
 		byRequest, err := renderPrompt(f.ctx, detail.ID, PromptRenderRequest{
-			RuntimeProfile: "review", Spec: &api.Spec{Budget: api.Budget{MaxTurns: 3}},
+			Presets: []string{"personal", "org"}, Spec: &api.Spec{Budget: api.Budget{MaxTurns: 3}},
 		})
 		Expect(err).NotTo(HaveOccurred())
 
-		Expect(traceNames(byPreset.Resolution)).To(Equal([]string{"Org", "Review run spec", "layered.prompt", "Personal"}))
+		Expect(traceNames(byPreset.Resolution)).To(Equal([]string{"Org", "layered.prompt", "Personal"}))
 		Expect(byPreset.Input.Budget.MaxTurns).To(Equal(9), "a user preset outranks the surface frontmatter")
-		Expect(traceNames(byRequest.Resolution)).To(Equal([]string{"Org", "Review run spec", "layered.prompt", "Personal", "render request"}))
+		Expect(traceNames(byRequest.Resolution)).To(Equal([]string{"Org", "layered.prompt", "Personal", "render request"}))
 		Expect(byRequest.Input.Budget.MaxTurns).To(Equal(3), "the request is appended last and wins the user-scope tie")
 	})
 
-	It("selects the profile pinned in the frontmatter and seeds the run request with it", func() {
+	It("selects presets pinned in the frontmatter and seeds the run request with them", func() {
 		f, _, _ := newRuntimeCatalogFixture()
 		f.reviewCatalog()
-		detail := f.prompt("pinned", "---\nname: Pinned\nruntimeProfile: review\n---\n{{role \"user\"}}\nReview.\n")
+		detail := f.prompt("pinned", "---\nname: Pinned\npresets: [org, review]\n---\n{{role \"user\"}}\nReview.\n")
 
 		rendered, err := renderPrompt(f.ctx, detail.ID, PromptRenderRequest{})
 
@@ -206,34 +206,34 @@ var _ = Describe("prompt layers", func() {
 		Expect(rendered.ValidationError).To(BeEmpty())
 		Expect(rendered.Model).To(Equal("claude-sonnet-4-6"))
 		Expect(rendered.Input.Budget.MaxTurns).To(Equal(10))
-		Expect(traceNames(rendered.Resolution)).To(Equal([]string{"Org", "Review run spec", "pinned.prompt"}))
-		Expect(detail.RuntimeProfile).To(Equal("review"))
-		Expect(detail.Run.RuntimeProfile).To(Equal("review"))
+		Expect(traceNames(rendered.Resolution)).To(Equal([]string{"Org", "Review", "pinned.prompt"}))
+		Expect(detail.Presets).To(Equal([]string{"org", "review"}))
+		Expect(detail.Run.Presets).To(Equal([]string{"org", "review"}))
 	})
 
-	It("lets a request profile override the frontmatter pin", func() {
+	It("lets request presets override the frontmatter pin", func() {
 		f, _, _ := newRuntimeCatalogFixture()
 		f.reviewCatalog()
-		f.profile(runtimeprofiles.ProfileInput{Name: "Plan", Spec: api.Spec{
+		f.preset(runtimeprofiles.PresetInput{Name: "Plan", Scope: api.SpecLayerSurface, Spec: api.RuntimePresetSpec(api.Spec{
 			Model: api.Model{Name: "claude-sonnet-4-6", Mode: api.ModeAgent}, Budget: api.Budget{MaxTurns: 4},
-		}})
-		detail := f.prompt("pinned", "---\nname: Pinned\nruntimeProfile: review\n---\n{{role \"user\"}}\nReview.\n")
+		})})
+		detail := f.prompt("pinned", "---\nname: Pinned\npresets: [org, review]\n---\n{{role \"user\"}}\nReview.\n")
 
-		rendered, err := renderPrompt(f.ctx, detail.ID, PromptRenderRequest{RuntimeProfile: "plan"})
+		rendered, err := renderPrompt(f.ctx, detail.ID, PromptRenderRequest{Presets: []string{"plan"}})
 
 		Expect(err).NotTo(HaveOccurred())
-		Expect(traceNames(rendered.Resolution)).To(Equal([]string{"Plan run spec", "pinned.prompt"}))
+		Expect(traceNames(rendered.Resolution)).To(Equal([]string{"Plan", "pinned.prompt"}))
 		Expect(rendered.Input.Budget.MaxTurns).To(Equal(4))
 	})
 
-	It("fails loudly naming a profile reference that resolves nowhere", func() {
+	It("fails loudly naming a preset reference that resolves nowhere", func() {
 		f, _, _ := newRuntimeCatalogFixture()
 		detail := f.prompt("layered", layeredPromptSource)
 
-		_, err := renderPrompt(f.ctx, detail.ID, PromptRenderRequest{RuntimeProfile: "nope"})
+		_, err := renderPrompt(f.ctx, detail.ID, PromptRenderRequest{Presets: []string{"nope"}})
 
 		Expect(err).To(MatchError(runtimeprofiles.ErrNotFound))
-		Expect(err).To(MatchError(ContainSubstring(`runtime profile "nope"`)))
+		Expect(err).To(MatchError(ContainSubstring(`runtime presets "nope"`)))
 	})
 
 	It("folds enabled permission skills into the memory skill directories", func() {
@@ -248,41 +248,41 @@ var _ = Describe("prompt layers", func() {
 		Expect(rendered.Input.Memory.Skills).To(Equal([]string{"/mine", "/team-skills"}))
 	})
 
-	It("layers the ephemeral request over a selected profile", func() {
+	It("layers the ephemeral request over selected presets", func() {
 		f, _, _ := newRuntimeCatalogFixture()
 		f.reviewCatalog()
 
 		rendered, err := renderPrompt(f.ctx, "", PromptRenderRequest{
-			RuntimeProfile: "review", Spec: &api.Spec{Prompt: api.Prompt{User: "Draft a plan"}},
+			Presets: []string{"org", "review"}, Spec: &api.Spec{Prompt: api.Prompt{User: "Draft a plan"}},
 		})
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(rendered.ValidationError).To(BeEmpty())
 		Expect(rendered.Model).To(Equal("claude-sonnet-4-6"))
 		Expect(rendered.Input.Prompt.Source).To(Equal("<ephemeral>"))
-		Expect(traceNames(rendered.Resolution)).To(Equal([]string{"Org", "Review run spec", "scratch.prompt", "render request"}))
+		Expect(traceNames(rendered.Resolution)).To(Equal([]string{"Org", "Review", "scratch.prompt", "render request"}))
 	})
 
-	It("layers --runtime-profile beneath the CLI flags", func() {
+	It("layers --preset beneath the CLI flags", func() {
 		f, _, _ := newRuntimeCatalogFixture()
 		f.reviewCatalog()
 		detail := f.prompt("layered", layeredPromptSource)
-		opts := AIPromptOptions{RuntimeProfile: "review"}
+		opts := AIPromptOptions{Presets: []string{"org", "review"}, PresetsSet: true}
 		opts.MaxTurns = 2
 
 		rendered, err := renderPromptCLI(f.ctx, detail.Path, opts, "", "")
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(rendered.ValidationError).To(BeEmpty())
-		Expect(rendered.Model).To(Equal("claude-sonnet-4-6"), "the profile supplies the model")
+		Expect(rendered.Model).To(Equal("claude-sonnet-4-6"), "the preset supplies the model")
 		Expect(rendered.Input.Budget.MaxTurns).To(Equal(2), "the flag stays above the resolved layers")
 		Expect(rendered.Input.Permissions.Mode).To(Equal(api.PermissionPlan))
 		Expect(rendered.Input.Memory.SkipUser).To(BeTrue())
-		Expect(traceNames(rendered.Resolution)).To(Equal([]string{"Org", "Review run spec", "layered.prompt", "CLI flags"}))
+		Expect(traceNames(rendered.Resolution)).To(Equal([]string{"Org", "Review", "layered.prompt", "CLI flags"}))
 		Expect(rendered.Resolution.Provenance["/budget/maxTurns"].Source.Name).To(Equal("CLI flags"))
 	})
 
-	It("never consults the catalog for a render without a profile reference or pin", func() {
+	It("never consults the catalog without presets and ignores deprecated profiles", func() {
 		f, presetProbe, profileProbe := newRuntimeCatalogFixture()
 		f.reviewCatalog()
 		presetProbe.reads.Store(0)
@@ -297,8 +297,13 @@ var _ = Describe("prompt layers", func() {
 		Expect(presetProbe.reads.Load()).To(BeZero())
 		Expect(profileProbe.reads.Load()).To(BeZero())
 
-		_, err = renderPrompt(f.ctx, detail.ID, PromptRenderRequest{RuntimeProfile: "review"})
+		deprecated, err := renderPrompt(f.ctx, detail.ID, PromptRenderRequest{RuntimeProfile: "review"})
 		Expect(err).NotTo(HaveOccurred())
-		Expect(profileProbe.reads.Load()).NotTo(BeZero(), "the probe sees a render that does name a profile")
+		Expect(deprecated.Resolution.Warnings).To(ContainElement(api.RuntimeProfileDeprecationWarning))
+		Expect(profileProbe.reads.Load()).To(BeZero())
+
+		_, err = renderPrompt(f.ctx, detail.ID, PromptRenderRequest{Presets: []string{"org"}})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(presetProbe.reads.Load()).NotTo(BeZero(), "the probe sees a render that names a preset")
 	})
 })

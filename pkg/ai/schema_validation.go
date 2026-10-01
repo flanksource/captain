@@ -8,6 +8,8 @@ import (
 	"github.com/xeipuuv/gojsonschema"
 )
 
+const maxValidationResponseChars = 500
+
 // ValidateStructuredJSON returns joined schema violations, or a hard error when
 // the schema or JSON document cannot be evaluated.
 func ValidateStructuredJSON(schema json.RawMessage, document string) (string, error) {
@@ -19,7 +21,8 @@ func ValidateStructuredJSON(schema json.RawMessage, document string) (string, er
 	}
 	result, err := gojsonschema.Validate(gojsonschema.NewBytesLoader(schema), gojsonschema.NewStringLoader(document))
 	if err != nil {
-		return "", fmt.Errorf("%w: validation could not run: %v", ErrSchemaValidation, err)
+		return "", fmt.Errorf("%w: validation could not run: %v (response preview, first %d chars: %q)",
+			ErrSchemaValidation, err, maxValidationResponseChars, validationResponsePreview(document))
 	}
 	if result.Valid() {
 		return "", nil
@@ -29,4 +32,12 @@ func ValidateStructuredJSON(schema json.RawMessage, document string) (string, er
 		messages = append(messages, validationErr.String())
 	}
 	return strings.Join(messages, "; "), nil
+}
+
+func validationResponsePreview(document string) string {
+	preview := []rune(document)
+	if len(preview) > maxValidationResponseChars {
+		preview = preview[:maxValidationResponseChars]
+	}
+	return string(preview)
 }

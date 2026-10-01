@@ -170,6 +170,55 @@ func TestPlugin_PreRun_LeavesOriginalIntact(t *testing.T) {
 	}
 }
 
+// A run moved into a worktree is isolated, and the commit hook reads that from
+// Workspace.Worktree: left nil, it treats the worktree as the caller's shared
+// checkout and refuses to commit edits the agent made through the shell. A local
+// checkout that stays in the caller's tree must not claim a worktree.
+func TestPlugin_PreRun_RecordsTheWorktreeBranchAndSourceRepo(t *testing.T) {
+	tests := []struct {
+		name         string
+		worktree     *shell.Worktree
+		branchPrefix string
+		wantRepo     bool
+	}{
+		{name: "local checkout", worktree: nil},
+		{name: "new worktree", worktree: &shell.Worktree{Mode: shell.WorktreeNew}, branchPrefix: "shell/", wantRepo: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			repo := gitRepo(t)
+			source, err := filepath.EvalSymlinks(repo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req := &ai.Request{Setup: &shell.Setup{Checkout: &shell.Checkout{
+				Mode: shell.CheckoutLocal, Path: repo, Worktree: test.worktree,
+			}}}
+			plugin := &setup.Plugin{BaseDir: t.TempDir()}
+			hc := newHookContext(t, req, "", plugin)
+
+			if err := plugin.PreRun(hc); err != nil {
+				t.Fatalf("PreRun: %v", err)
+			}
+			t.Cleanup(func() { _ = plugin.Post(hc, agent.PhaseRun) })
+
+			ws := hc.Workspace()
+			if test.branchPrefix == "" && ws.Worktree != nil {
+				t.Errorf("Workspace.Worktree = %+v, want nil for a run left in the caller's tree", ws.Worktree)
+			}
+			if test.branchPrefix != "" && (ws.Worktree == nil || !strings.HasPrefix(ws.Worktree.Branch, test.branchPrefix)) {
+				t.Errorf("Workspace.Worktree = %+v, want the worktree's %q branch", ws.Worktree, test.branchPrefix)
+			}
+			if test.wantRepo && ws.Repo != source {
+				t.Errorf("Workspace.Repo = %q, want the source repo %q", ws.Repo, source)
+			}
+			if !test.wantRepo && ws.Repo != "" {
+				t.Errorf("Workspace.Repo = %q, want it untouched", ws.Repo)
+			}
+		})
+	}
+}
+
 // Two hooks that each relocate the run produce two trees and work in one. The
 // run then edits a tree nothing merges, which is silent — so it must be an error.
 func TestPlugin_PreRun_RejectsASecondIsolator(t *testing.T) {

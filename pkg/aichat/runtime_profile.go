@@ -2,10 +2,10 @@ package aichat
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/flanksource/captain/pkg/api"
@@ -13,8 +13,8 @@ import (
 )
 
 // RuntimeProfile is the request-scoped application configuration for a chat.
-// Composed carries structurally validated defaults, constraints and raw layers;
-// runtime capability validation waits for the complete chat request.
+// Composed carries structurally validated defaults and raw layers; runtime
+// capability validation waits for the complete chat request.
 type RuntimeProfile struct {
 	System         string
 	Composed       api.ComposedSpec
@@ -25,6 +25,9 @@ type RuntimeProfile struct {
 
 // RuntimeProfileOptions contains request-scoped runtime profile selections.
 type RuntimeProfileOptions struct {
+	Presets    []string
+	PresetsSet bool
+	// Ref is deprecated and ignored by providers.
 	Ref string
 }
 
@@ -35,6 +38,17 @@ type RuntimeProfileOption func(*RuntimeProfileOptions)
 func WithRuntimeProfileRef(ref string) RuntimeProfileOption {
 	return func(options *RuntimeProfileOptions) {
 		options.Ref = strings.TrimSpace(ref)
+	}
+}
+
+// WithRuntimePresets selects ordered runtime presets by catalog id or name.
+func WithRuntimePresets(refs []string) RuntimeProfileOption {
+	return func(options *RuntimeProfileOptions) {
+		options.Presets = append([]string(nil), refs...)
+		if refs != nil && options.Presets == nil {
+			options.Presets = []string{}
+		}
+		options.PresetsSet = true
 	}
 }
 
@@ -69,28 +83,44 @@ func (f RuntimeProfileProviderFunc) RuntimeProfile(ctx context.Context, options 
 func (s *Service) runtimeProfile(ctx context.Context, options ...RuntimeProfileOption) (RuntimeProfile, error) {
 	selection := ApplyRuntimeProfileOptions(options...)
 	if s.options.Profile == nil {
-		if selection.Ref != "" {
+		if len(selection.Presets) > 0 {
 			return RuntimeProfile{}, RequestError(http.StatusBadRequest, fmt.Sprintf(
-				"runtime profile %q cannot be selected: this deployment serves no runtime profiles", selection.Ref,
+				"runtime presets %q cannot be selected: this deployment serves no runtime presets", strings.Join(selection.Presets, ","),
 			))
 		}
-		return RuntimeProfile{}, nil
+		return RuntimeProfile{Composed: api.ComposedSpec{Warnings: deprecatedProfileWarnings(selection.Ref)}}, nil
 	}
-	profile, err := s.options.Profile.RuntimeProfile(ctx, options...)
+	providerOptions := make([]RuntimeProfileOption, 0, 1)
+	if selection.PresetsSet {
+		providerOptions = append(providerOptions, WithRuntimePresets(selection.Presets))
+	}
+	profile, err := s.options.Profile.RuntimeProfile(ctx, providerOptions...)
 	if err != nil {
 		return RuntimeProfile{}, err
 	}
-	if len(profile.Composed.Trace) == 0 {
-		if (profile.Saved == nil && !api.IsEmpty(profile.Composed.Spec)) || !api.IsEmpty(profile.Composed.Constraints) {
-			return RuntimeProfile{}, fmt.Errorf("chat runtime profile must include its composition trace")
-		}
+	if len(profile.Composed.Trace) == 0 && profile.Saved == nil && !api.IsEmpty(profile.Composed.Spec) {
+		return RuntimeProfile{}, fmt.Errorf("chat runtime profile must include its composition trace")
 	}
+	warnings := append([]string(nil), profile.Composed.Warnings...)
 	composed, err := api.ComposeSpecLayers(api.ResolveSpecOptions{Layers: profile.Composed.Trace, Saved: profile.Saved})
 	if err != nil {
 		return RuntimeProfile{}, fmt.Errorf("resolve chat runtime profile: %w", err)
 	}
 	profile.Composed = composed
+	profile.Composed.Warnings = warnings
+	for _, warning := range deprecatedProfileWarnings(selection.Ref) {
+		if !slices.Contains(profile.Composed.Warnings, warning) {
+			profile.Composed.Warnings = append(profile.Composed.Warnings, warning)
+		}
+	}
 	return profile, nil
+}
+
+func deprecatedProfileWarnings(ref string) []string {
+	if strings.TrimSpace(ref) == "" {
+		return nil
+	}
+	return []string{api.RuntimeProfileDeprecationWarning}
 }
 
 type requestError struct {
@@ -129,32 +159,9 @@ func requestErrorStatus(err error) int {
 	return http.StatusBadRequest
 }
 
-func enforceRuntimeProfile(request ChatRequest, resolved api.ComposedSpec) error {
-	maxInputTokens := resolved.Constraints.Limits.MaxInputTokens
-	if maxInputTokens <= 0 {
-		return nil
-	}
-	raw, err := json.Marshal(struct {
-		Messages     []UIMessage       `json:"messages,omitempty"`
-		Context      string            `json:"context,omitempty"`
-		ContextItems []ChatContextItem `json:"contextItems,omitempty"`
-	}{Messages: request.Messages, Context: request.Context, ContextItems: request.ContextItems})
-	if err != nil {
-		return fmt.Errorf("estimate chat input tokens: %w", err)
-	}
-	estimated := (len(raw) + 3) / 4
-	if estimated > maxInputTokens {
-		return requestError{status: http.StatusRequestEntityTooLarge, text: fmt.Sprintf(
-			"chat input is about %d tokens, exceeding the configured per-turn limit of %d",
-			estimated, maxInputTokens,
-		)}
-	}
-	return nil
-}
-
 func (s *Service) handleRuntimes(w http.ResponseWriter, request *http.Request) {
-	profile, err := s.runtimeProfile(request.Context(), WithRuntimeProfileRef(request.URL.Query().Get("runtimeProfile")))
-	if err != nil {
+	options := runtimeSelectionOptions(w, request)
+	if _, err := s.runtimeProfile(request.Context(), options...); err != nil {
 		http.Error(w, fmt.Sprintf("load chat runtime profile: %v", err), runtimeProfileStatus(err))
 		return
 	}
@@ -167,15 +174,14 @@ func (s *Service) handleRuntimes(w http.ResponseWriter, request *http.Request) {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
-	annotateProfileRuntimes(profile.Composed, runtimes)
 	if err := writeJSON(w, http.StatusOK, runtimes); err != nil {
 		serviceLog.Errorf("write chat runtimes response: %v", err)
 	}
 }
 
 func (s *Service) handleModels(w http.ResponseWriter, request *http.Request) {
-	profile, err := s.runtimeProfile(request.Context(), WithRuntimeProfileRef(request.URL.Query().Get("runtimeProfile")))
-	if err != nil {
+	options := runtimeSelectionOptions(w, request)
+	if _, err := s.runtimeProfile(request.Context(), options...); err != nil {
 		http.Error(w, fmt.Sprintf("load chat runtime profile: %v", err), runtimeProfileStatus(err))
 		return
 	}
@@ -188,8 +194,21 @@ func (s *Service) handleModels(w http.ResponseWriter, request *http.Request) {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
-	annotateProfileModels(profile.Composed, models)
 	if err := writeJSON(w, http.StatusOK, models); err != nil {
 		serviceLog.Errorf("write chat models response: %v", err)
 	}
+}
+
+func runtimeSelectionOptions(w http.ResponseWriter, request *http.Request) []RuntimeProfileOption {
+	query := request.URL.Query()
+	options := make([]RuntimeProfileOption, 0, 2)
+	if refs, present := query["preset"]; present {
+		options = append(options, WithRuntimePresets(refs))
+	}
+	if ref := strings.TrimSpace(query.Get("runtimeProfile")); ref != "" {
+		serviceLog.Warnf("%s", api.RuntimeProfileDeprecationWarning)
+		w.Header().Set("Warning", `299 Captain "`+api.RuntimeProfileDeprecationWarning+`"`)
+		options = append(options, WithRuntimeProfileRef(ref))
+	}
+	return options
 }
